@@ -25,7 +25,7 @@ UNIT_TRACKS = {
     "alu-unit": {"tid": 20, "label": "ALU"},
     "sfu-unit": {"tid": 21, "label": "SFU"},
     "fpu-unit": {"tid": 22, "label": "FPU"},
-    "FEDP":  {"tid": 23, "label": "TCU"},
+    "tcu":  {"tid": 23, "label": "TCU"},
     # Vortex에서 쓰는 이름 더 있으면 여기에 추가
 }
 
