@@ -126,7 +126,9 @@ static void __attribute__ ((noinline)) process_thread_groups() {
 
   uint32_t iterations = warp_batches + (warp_id < remaining_warps);
 
-  uint32_t local_group_id = warp_id / warps_per_group;
+  // in one iteration, multiple groups can be processed.
+  // local_group_id : ID for the group within the core in a iteration.
+  uint32_t local_group_id = warp_id / warps_per_group; 
   uint32_t group_warp_id = warp_id - local_group_id * warps_per_group;
   uint32_t local_task_id = group_warp_id * threads_per_warp + thread_id;
 
