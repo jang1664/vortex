@@ -202,15 +202,17 @@ int vx_spawn_threads(uint32_t dimension,
 
   if (group_size > 1) {
     // calculate number of warps per group
-    uint32_t warps_per_group = group_size / threads_per_warp;
+    uint32_t warps_per_group = group_size / threads_per_warp; // maximum => NUM_WARPS
     uint32_t remaining_threads = group_size - warps_per_group * threads_per_warp;
     uint32_t remaining_mask = -1;
     if (remaining_threads != 0) {
-      remaining_mask = (1 << remaining_threads) - 1;
+      remaining_mask = (1 << remaining_threads) - 1; // last warp's active threads
       ++warps_per_group;
     }
 
     // calculate necessary active cores
+    // group distribution is not interleaved. If warps_per_groupd is 1 and num_groups 3,
+    // and warps_per_core is 4, then only core0 will be active (3 groups on core0).
     uint32_t needed_warps = num_groups * warps_per_group;
     uint32_t needed_cores = (needed_warps + warps_per_core-1) / warps_per_core;
     uint32_t active_cores = MIN(needed_cores, num_cores);
@@ -222,21 +224,26 @@ int vx_spawn_threads(uint32_t dimension,
     // total number of groups per core
     uint32_t total_groups_per_core = num_groups / active_cores;
     uint32_t remaining_groups_per_core = num_groups - active_cores * total_groups_per_core;
-    if (core_id < remaining_groups_per_core)
-      ++total_groups_per_core;
+    if (core_id < remaining_groups_per_core) {
+      // each core can has different value at [warp0, thread0]. range : [0 ~ big]
+      // earlier cores get one more group if there is remainder.
+      ++total_groups_per_core; 
+    }
 
     // calculate number of warps to activate
-    uint32_t groups_per_core = warps_per_core / warps_per_group;
-    uint32_t total_warps_per_core = total_groups_per_core * warps_per_group;
+    uint32_t groups_per_core = warps_per_core / warps_per_group; // range : [1 ~ warps_per_core]
+    uint32_t total_warps_per_core = total_groups_per_core * warps_per_group; // range [0 ~ big]
     uint32_t active_warps = total_warps_per_core;
     uint32_t warp_batches = 1, remaining_warps = 0;
     if (active_warps > warps_per_core) {
-      active_warps = groups_per_core * warps_per_group;
+      active_warps = groups_per_core * warps_per_group; // it can fit in a core.
       warp_batches = total_warps_per_core / active_warps;
       remaining_warps = total_warps_per_core - warp_batches * active_warps;
     }
 
     // calculate offsets for group distribution
+    // each core can has different group num. earlier cores get one more group if there is remainder.
+    // so MIN(...) is used to calculate the offset.
     uint32_t group_offset = core_id * total_groups_per_core + MIN(core_id, remaining_groups_per_core);
 
     // set scheduler arguments
