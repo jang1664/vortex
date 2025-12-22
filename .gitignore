@@ -3,3 +3,17 @@
 *.cache
 *.code-workspace
 miscs/apptainer/vortex.sif
+
+/hw/syn/xilinx/xrt/test*
+/hw/syn/**/_x/
+/hw/syn/**/.runs/
+/hw/syn/**/.cache/
+/hw/syn/**/.ip_user_files/
+/hw/syn/**/vivado*
+*.dcp
+*.rpt
+*.bit
+*.jou
+*.log
+.tags
+.dvt/

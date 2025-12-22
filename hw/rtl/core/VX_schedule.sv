@@ -69,8 +69,8 @@ module VX_schedule import VX_gpu_pkg::*; #(
 
     reg [PERF_CTR_BITS-1:0] cycles;
 
-    wire schedule_fire = schedule_valid && schedule_ready;
-    wire schedule_if_fire = schedule_if.valid && schedule_if.ready;
+    wire schedule_fire = schedule_valid && schedule_ready; // goto elastic buffer
+    wire schedule_if_fire = schedule_if.valid && schedule_if.ready; // goto next stage
 
     // branch
     wire [`NUM_ALU_BLOCKS-1:0]               branch_valid;
@@ -123,12 +123,12 @@ module VX_schedule import VX_gpu_pkg::*; #(
         end
 
         // wspawn handling
-        if (wspawn.valid && is_single_warp) begin
+        if (wspawn.valid && is_single_warp) begin // from vx_wspawn
             active_warps_n |= wspawn.wmask;
             for (integer i = 0; i < `NUM_WARPS; ++i) begin
                 if (wspawn.wmask[i]) begin
                     thread_masks_n[i][0] = 1;
-                    warp_pcs_n[i] = wspawn.pc;
+                    warp_pcs_n[i] = wspawn.pc; // all warps have same start PC
                 end
             end
             stalled_warps_n[wspawn_wid] = 0; // unlock warp
@@ -257,7 +257,7 @@ module VX_schedule import VX_gpu_pkg::*; #(
             if (warp_ctl_if.valid && warp_ctl_if.barrier.valid
              && warp_ctl_if.barrier.is_global
              && !warp_ctl_if.barrier.is_noop
-             && (curr_barrier_mask_p1 == active_warps)) begin
+             && (curr_barrier_mask_p1 == active_warps)) begin // all warps have reached the barrier
                 gbar_req_valid <= 1;
                 gbar_req_id <= warp_ctl_if.barrier.id;
                 gbar_req_size_m1 <= NC_WIDTH'(warp_ctl_if.barrier.size_m1);

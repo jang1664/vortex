@@ -16,9 +16,9 @@
 interface VX_gbar_bus_if import VX_gpu_pkg::*; ();
 
     typedef struct packed {
-        logic [NB_WIDTH-1:0] id;
-        logic [NC_WIDTH-1:0] size_m1;
-        logic [NC_WIDTH-1:0] core_id;
+        logic [NB_WIDTH-1:0] id;       // global barrier request ID
+        logic [NC_WIDTH-1:0] size_m1;  // how many cores participate
+        logic [NC_WIDTH-1:0] core_id;  // current core ID
     } req_data_t;
 
     typedef struct packed {
