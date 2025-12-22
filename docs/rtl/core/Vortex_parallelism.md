@@ -250,9 +250,285 @@ Cycle 2: Warp 4 (isw=0) + Warp 5 (isw=1) 동시 issue
 - 각 issue slice는 독립적인 scoreboard 관리
 - PER_ISSUE_WARPS = NUM_WARPS / ISSUE_WIDTH 만큼의 warp만 추적
 
-## 5. 병렬성 분석
+## 5. Execution Unit 병렬성
 
-### 5.1 TLP (Thread Level Parallelism)
+### 5.1 개요
+
+Vortex의 각 Execution Unit (ALU, FPU, LSU, SFU, VPU, TCU)은 두 가지 차원의 병렬성을 가집니다:
+
+1. **LANES (레인 병렬성)**: SIMT 모델에 따른 데이터 병렬성 - 한 warp 내 여러 threads를 동시 처리
+2. **BLOCKS (블록 병렬성)**: Issue 병렬성 - 여러 warps의 명령을 동시 처리
+
+#### 기본 구조
+```
+Execution Unit (예: ALU)
+ ├─ Block 0 [NUM_ALU_BLOCKS]
+ │   ├─ Lane 0 [NUM_ALU_LANES]
+ │   ├─ Lane 1
+ │   ├─ Lane 2
+ │   └─ Lane 3
+ └─ Block 1
+     ├─ Lane 0
+     ├─ Lane 1
+     ├─ Lane 2
+     └─ Lane 3
+```
+
+### 5.2 NUM_*_LANES (레인 수)
+
+**의미**: 한 블록 내에서 동시에 처리할 수 있는 SIMT 레인(thread) 수
+
+**설정값** (`VX_config.vh`):
+```verilog
+// 대부분의 execution units는 SIMD_WIDTH와 동일
+`ifndef NUM_ALU_LANES
+`define NUM_ALU_LANES   `SIMD_WIDTH   // = NUM_THREADS (기본 4)
+`endif
+
+`ifndef NUM_FPU_LANES
+`define NUM_FPU_LANES   `SIMD_WIDTH   // = NUM_THREADS (기본 4)
+`endif
+
+`ifndef NUM_LSU_LANES
+`define NUM_LSU_LANES   `SIMD_WIDTH   // = NUM_THREADS (기본 4)
+`endif
+
+`ifndef NUM_SFU_LANES
+`define NUM_SFU_LANES   `SIMD_WIDTH   // = NUM_THREADS (기본 4)
+`endif
+
+`ifndef NUM_VPU_LANES
+`define NUM_VPU_LANES   `SIMD_WIDTH   // = NUM_THREADS (기본 4)
+`endif
+
+// TCU는 NUM_THREADS 고정
+`define NUM_TCU_LANES   `NUM_THREADS  // (기본 4)
+```
+
+**동작**:
+- 하나의 warp가 execution unit에 도착하면 NUM_LANES개의 processing element가 병렬 실행
+- 각 lane은 warp 내의 한 thread를 담당
+- Thread mask로 비활성 thread는 skip 가능
+
+**예시** (NUM_ALU_LANES=4):
+```
+Warp 0: ADD x1, x2, x3
+→ Lane 0: Thread 0의 x1 = x2 + x3
+   Lane 1: Thread 1의 x1 = x2 + x3
+   Lane 2: Thread 2의 x1 = x2 + x3
+   Lane 3: Thread 3의 x1 = x2 + x3
+→ 4개 연산이 1 사이클에 완료
+```
+
+### 5.3 NUM_*_BLOCKS (블록 수)
+
+**의미**: 동시에 처리할 수 있는 독립적인 execution unit 블록 수
+
+**설정값** (`VX_config.vh`):
+```verilog
+// ALU, FPU, VPU, TCU는 ISSUE_WIDTH와 동일
+`ifndef NUM_ALU_BLOCKS
+`define NUM_ALU_BLOCKS  `ISSUE_WIDTH  // (기본 1)
+`endif
+
+`ifndef NUM_FPU_BLOCKS
+`define NUM_FPU_BLOCKS  `ISSUE_WIDTH  // (기본 1)
+`endif
+
+`ifndef NUM_VPU_BLOCKS
+`define NUM_VPU_BLOCKS  `ISSUE_WIDTH  // (기본 1)
+`endif
+
+`ifndef NUM_TCU_BLOCKS
+`define NUM_TCU_BLOCKS  `ISSUE_WIDTH  // (기본 1)
+`endif
+
+// LSU와 SFU는 1로 고정 (병렬화 제약)
+`ifndef NUM_LSU_BLOCKS
+`define NUM_LSU_BLOCKS  1
+`endif
+
+`define NUM_SFU_BLOCKS  1
+```
+
+**동작**:
+- 각 블록은 독립적인 execution unit pipeline
+- NUM_BLOCKS > 1이면 서로 다른 warps의 명령을 동시에 실행 가능
+- Issue stage에서 warp를 블록에 분배
+
+**예시** (NUM_ALU_BLOCKS=2, NUM_ALU_LANES=4):
+```
+Cycle N:
+  Block 0: Warp 0의 ADD 실행 (4 lanes)
+  Block 1: Warp 1의 SUB 실행 (4 lanes)
+→ 8개 연산이 동시 진행
+```
+
+### 5.4 각 Execution Unit별 특성
+
+#### ALU (Arithmetic Logic Unit)
+```verilog
+NUM_ALU_LANES  = SIMD_WIDTH (기본 4)
+NUM_ALU_BLOCKS = ISSUE_WIDTH (기본 1)
+```
+- **용도**: 정수 연산 (ADD, SUB, AND, OR, XOR, Shift 등)
+- **특성**: 
+  - 가장 빈번히 사용되는 unit
+  - BLOCKS를 늘리면 다중 warp의 정수 연산 병렬 처리
+  - Latency: 1 사이클
+- **병렬도**: BLOCKS × LANES = 1 × 4 = 4 ops/cycle
+
+#### FPU (Floating-Point Unit)
+```verilog
+NUM_FPU_LANES  = SIMD_WIDTH (기본 4)
+NUM_FPU_BLOCKS = ISSUE_WIDTH (기본 1)
+```
+- **용도**: 부동소수점 연산 (FADD, FMUL, FMA, FDIV, FSQRT 등)
+- **특성**:
+  - Multi-cycle latency (FMA: 4-16 cycles, FDIV: 15-28 cycles)
+  - Pipelined execution
+  - BLOCKS 증가로 FP-intensive workload 가속
+- **병렬도**: BLOCKS × LANES = 1 × 4 = 4 ops/cycle (issue)
+
+#### LSU (Load-Store Unit)
+```verilog
+NUM_LSU_LANES  = SIMD_WIDTH (기본 4)
+NUM_LSU_BLOCKS = 1 (고정)
+```
+- **용도**: 메모리 load/store 연산
+- **특성**:
+  - **BLOCKS=1 고정 이유**: D-cache 접근 충돌 방지
+  - LANES로만 병렬화 (coalesced memory access)
+  - Multi-cycle latency (cache hit: ~10 cycles, miss: 100+ cycles)
+- **병렬도**: 1 × LANES = 4 memory ops/cycle
+- **LSU_LINE_SIZE**: `MIN(NUM_LSU_LANES * (XLEN/8), L1_LINE_SIZE)`
+
+#### SFU (Special Function Unit)
+```verilog
+NUM_SFU_LANES  = SIMD_WIDTH (기본 4)
+NUM_SFU_BLOCKS = 1 (고정)
+```
+- **용도**: Warp control (TMC, WSPAWN, SPLIT, JOIN, PRED, BAR), CSR 연산
+- **특성**:
+  - **BLOCKS=1 고정 이유**: Warp 상태는 전역적으로 관리 (VX_schedule)
+  - 병렬화 불필요 (warp-level operation)
+  - TMC/PRED만 thread-level 연산 → LANES 사용
+- **병렬도**: 1 block만 존재
+
+#### VPU (Vector Processing Unit)
+```verilog
+NUM_VPU_LANES  = SIMD_WIDTH (기본 4)
+NUM_VPU_BLOCKS = ISSUE_WIDTH (기본 1)
+```
+- **용도**: RISC-V Vector Extension (EXT_V_ENABLE)
+- **특성**:
+  - Vector register 연산
+  - BLOCKS 증가로 다중 warp의 vector 연산 병렬화
+- **병렬도**: BLOCKS × LANES ops/cycle
+
+#### TCU (Tensor Core Unit)
+```verilog
+NUM_TCU_LANES  = NUM_THREADS (기본 4)
+NUM_TCU_BLOCKS = ISSUE_WIDTH (기본 1)
+```
+- **용도**: Tensor/Matrix 연산 (EXT_TCU_ENABLE)
+- **특성**:
+  - 행렬 곱셈 가속
+  - LANES는 NUM_THREADS 고정 (SIMD_WIDTH와 다를 수 있음)
+  - BLOCKS 증가로 병렬 tensor 연산
+
+### 5.5 병렬성 계산
+
+#### 총 Execution 병렬도
+```
+각 Unit별 병렬도 = NUM_*_BLOCKS × NUM_*_LANES
+
+예: 기본 설정 (ISSUE_WIDTH=1, SIMD_WIDTH=4)
+- ALU: 1 × 4 = 4 ops/cycle
+- FPU: 1 × 4 = 4 ops/cycle
+- LSU: 1 × 4 = 4 ops/cycle
+- SFU: 1 × 4 = 4 ops/cycle (실제로는 warp-level)
+
+총 병렬도 (이론적): 16 ops/cycle (각 unit 동시 사용 시)
+```
+
+#### 확장 예시 (ISSUE_WIDTH=2, SIMD_WIDTH=8)
+```
+NUM_ALU_BLOCKS = 2, NUM_ALU_LANES = 8
+→ ALU 병렬도 = 2 × 8 = 16 ops/cycle
+
+NUM_FPU_BLOCKS = 2, NUM_FPU_LANES = 8
+→ FPU 병렬도 = 2 × 8 = 16 ops/cycle
+
+NUM_LSU_BLOCKS = 1 (고정), NUM_LSU_LANES = 8
+→ LSU 병렬도 = 1 × 8 = 8 ops/cycle
+```
+
+### 5.6 LANES vs BLOCKS 트레이드오프
+
+#### LANES 증가 (NUM_THREADS 증가)
+**장점**:
+- 데이터 병렬성 향상 (벡터/배열 연산 가속)
+- 단일 warp의 throughput 증가
+- 메모리 coalescing 효율 향상
+
+**단점**:
+- 하드웨어 면적 증가 (각 lane마다 ALU/FPU 필요)
+- 레지스터 파일 크기 증가 (NUM_WARPS × NUM_THREADS × 32 registers)
+- Thread divergence 시 낭비 증가
+
+**적합한 경우**: 벡터 연산, 정규 메모리 접근 패턴
+
+#### BLOCKS 증가 (ISSUE_WIDTH 증가)
+**장점**:
+- 다중 warp 병렬 처리로 throughput 증가
+- Latency hiding 능력 향상
+- 다양한 workload 동시 실행 가능
+
+**단점**:
+- Issue stage 복잡도 증가 (scoreboard, operand collector 복제)
+- Warp 수 증가 필요 (NUM_WARPS >= ISSUE_WIDTH × 16 권장)
+- LSU/SFU는 제약 (BLOCKS=1 고정)
+
+**적합한 경우**: 높은 warp count, 다양한 instruction mix
+
+### 5.7 설계 가이드라인
+
+#### 1. 균형 잡힌 설정
+```verilog
+NUM_THREADS = 4-8    // 적당한 데이터 병렬성
+NUM_WARPS   = 16-32  // 충분한 latency hiding
+ISSUE_WIDTH = 1-2    // Issue throughput
+→ LANES = 4-8, BLOCKS = 1-2
+```
+
+#### 2. 데이터 병렬 최적화
+```verilog
+NUM_THREADS = 16-32  // 높은 SIMT width
+NUM_WARPS   = 8-16   // 적은 warp count
+ISSUE_WIDTH = 1      // 단일 issue
+→ LANES = 16-32, BLOCKS = 1
+```
+
+#### 3. Latency Hiding 최적화
+```verilog
+NUM_THREADS = 4      // 적은 thread count
+NUM_WARPS   = 32-64  // 많은 warp count
+ISSUE_WIDTH = 2-4    // 다중 issue
+→ LANES = 4, BLOCKS = 2-4
+```
+
+#### 4. 면적 제약 설정
+```verilog
+NUM_THREADS = 2-4    // 최소 SIMT
+NUM_WARPS   = 4-8    // 최소 warp
+ISSUE_WIDTH = 1      // 단일 issue
+→ LANES = 2-4, BLOCKS = 1
+```
+
+## 6. 병렬성 분석
+
+### 6.1 TLP (Thread Level Parallelism)
 
 #### Core당 동시 상주 Warp 수
 ```verilog
@@ -272,7 +548,7 @@ Cycle 3: Warp 3 Sub 명령 issue
 Cycle 4: Warp 0 Load 완료 → stalled_warps[0] = 0
 ```
 
-### 5.2 DLP (Data Level Parallelism)
+### 6.2 DLP (Data Level Parallelism)
 
 #### Warp당 Thread 수
 ```verilog
@@ -282,20 +558,20 @@ Cycle 4: Warp 0 Load 완료 → stalled_warps[0] = 0
 
 - **의미**: 하나의 warp가 4개의 thread를 동시 실행
 - **효과**: 벡터/배열 연산을 병렬 처리
-- **메커니즘**: 4개의 ALU/FPU가 동일 명령을 다른 데이터로 수행
+- **메커니즘**: NUM_*_LANES개의 ALU/FPU가 동일 명령을 다른 데이터로 수행
 
 #### 예시: 벡터 덧셈
 ```c
 // a[0:3] + b[0:3] = c[0:3]
 Warp 0 실행: ADD c, a, b
-→ Thread 0: c[0] = a[0] + b[0]
-   Thread 1: c[1] = a[1] + b[1]
-   Thread 2: c[2] = a[2] + b[2]
-   Thread 3: c[3] = a[3] + b[3]
-→ 4개 덧셈이 1 사이클에 완료
+→ Lane 0/Thread 0: c[0] = a[0] + b[0]
+   Lane 1/Thread 1: c[1] = a[1] + b[1]
+   Lane 2/Thread 2: c[2] = a[2] + b[2]
+   Lane 3/Thread 3: c[3] = a[3] + b[3]
+→ NUM_ALU_LANES(4)개 덧셈이 1 사이클에 완료
 ```
 
-### 5.3 ILP (Instruction Level Parallelism)
+### 6.3 ILP (Instruction Level Parallelism)
 
 #### Issue 병렬도
 ```verilog
@@ -303,18 +579,24 @@ Warp 0 실행: ADD c, a, b
 ```
 
 - **의미**: 한 사이클에 issue 가능한 명령 수
-- **효과**: Issue 단계의 throughput 향상
-- **메커니즘**: 다중 issue slice가 병렬로 scoreboard/operand read 수행
+- **효과**: Issue 단계의 throughput 향상, Execute 단계의 블록 수 결정
+- **메커니즘**: 
+  - 다중 issue slice가 병렬로 scoreboard/operand read 수행
+  - NUM_*_BLOCKS를 결정하여 execution unit 병렬화
 
 #### 예시: ISSUE_WIDTH=2
 ```
-Cycle N: 
+Issue Stage:
   Issue Slice 0: Warp 0 명령 issue
   Issue Slice 1: Warp 1 명령 issue
-→ 2개 명령이 동시에 issue stage 통과
+
+Execute Stage:
+  ALU Block 0: Warp 0 ADD 실행 (4 lanes)
+  ALU Block 1: Warp 1 SUB 실행 (4 lanes)
+→ Issue와 Execute 모두 병렬 처리
 ```
 
-### 5.4 전체 병렬성 계산
+### 6.4 전체 병렬성 계산
 
 #### 총 처리 가능 Thread 수
 ```
@@ -323,23 +605,31 @@ Total Threads = NUM_CLUSTERS × NUM_CORES × NUM_WARPS × NUM_THREADS
               = 16 threads (기본 설정)
 ```
 
-#### 사이클당 최대 연산 수
+#### 사이클당 최대 연산 수 (각 Execution Unit별)
 ```
-Ops/Cycle = ISSUE_WIDTH × NUM_THREADS
-          = 1 × 4
-          = 4 ops/cycle (기본 설정)
+ALU: NUM_ALU_BLOCKS × NUM_ALU_LANES = 1 × 4 = 4 ops/cycle
+FPU: NUM_FPU_BLOCKS × NUM_FPU_LANES = 1 × 4 = 4 ops/cycle
+LSU: NUM_LSU_BLOCKS × NUM_LSU_LANES = 1 × 4 = 4 ops/cycle
+
+이론적 최대 (모든 unit 동시 사용): 12 ops/cycle
 ```
 
-#### 확장 예시 (NUM_WARPS=16, NUM_THREADS=32)
+#### 확장 예시 (NUM_WARPS=16, NUM_THREADS=32, ISSUE_WIDTH=2)
 ```
 Total Threads = 1 × 1 × 16 × 32 = 512 threads
-ISSUE_WIDTH   = UP(16/16) = 1
-Ops/Cycle     = 1 × 32 = 32 ops/cycle
+ISSUE_WIDTH   = 2
+SIMD_WIDTH    = 32
+
+ALU: 2 × 32 = 64 ops/cycle
+FPU: 2 × 32 = 64 ops/cycle
+LSU: 1 × 32 = 32 ops/cycle (BLOCKS는 여전히 1)
+
+이론적 최대: 160 ops/cycle
 ```
 
-## 6. NVIDIA GPU와 비교
+## 7. NVIDIA GPU와 비교
 
-### 6.1 용어 매핑
+### 7.1 용어 매핑
 
 | Vortex | NVIDIA GPU | 설명 |
 |--------|-----------|------|
@@ -348,8 +638,10 @@ Ops/Cycle     = 1 × 32 = 32 ops/cycle
 | Thread | Thread | SIMT 레인 |
 | NUM_WARPS | Max Resident Warps | SM당 상주 가능한 warp 수 |
 | ISSUE_WIDTH | Issue Bandwidth | 사이클당 issue 가능한 명령 수 |
+| NUM_*_LANES | CUDA Cores per SM | Execution unit의 SIMT 레인 수 |
+| NUM_*_BLOCKS | Concurrent Execution Units | 병렬 execution unit 수 |
 
-### 6.2 주요 차이점
+### 7.2 주요 차이점
 
 #### 1. Concurrent Warp Execution
 **NVIDIA (예: Ampere):**
@@ -363,28 +655,43 @@ Ops/Cycle     = 1 × 32 = 32 ops/cycle
 - Schedule 단계에서 1개 warp 선택 → Issue → Execute
 - ISSUE_WIDTH=2라도 execution은 여전히 순차적 (issue만 병렬)
 
-#### 2. Thread 수
-**NVIDIA:**
+#### 2. Thread 수 및 Execution Units
+**NVIDIA (예: Ampere GA102):**
 - Warp당 32 threads (고정)
-- SM당 최대 1536 threads (48 warps × 32 threads)
+- SM당 128 CUDA cores (INT32/FP32)
+- SM당 64 FP64 cores
+- SM당 4개의 독립적인 warp scheduler
 
 **Vortex:**
 - Warp당 NUM_THREADS (기본 4, 설정 가능)
-- Core당 NUM_WARPS × NUM_THREADS (기본 16)
+- Core당 NUM_ALU_LANES (기본 4) ALUs
+- Core당 NUM_FPU_LANES (기본 4) FPUs
+- NUM_*_BLOCKS로 execution unit 복제 (기본 1)
 
-#### 3. Issue 메커니즘
+**핵심 차이**:
+- NVIDIA: 고정된 많은 수의 execution cores
+- Vortex: 파라미터화로 유연한 설정 가능
+
+#### 3. Issue 메커니즘 및 Execution 병렬성
 **NVIDIA:**
 - 4-way warp scheduler
 - 매 사이클 최대 4개 warp의 명령을 동시에 issue
+- 각 warp scheduler는 독립적인 execution pipeline 사용
+- 128개 CUDA cores가 여러 warps의 명령을 동시 처리
 
 **Vortex:**
 - ISSUE_WIDTH-way issue (기본 1)
-- Issue 단계의 throughput 향상이 목적
-- Execution은 여전히 순차적 (in-order)
+- Issue 단계: ISSUE_WIDTH개 명령 병렬 처리
+- Execute 단계: NUM_*_BLOCKS개 unit이 병렬 실행
+- NUM_*_LANES로 각 unit 내 SIMT 병렬성 구현
 
-## 7. 성능 최적화 고려사항
+**핵심 차이**:
+- NVIDIA: 물리적으로 많은 cores, 여러 warps가 진짜 병렬 실행
+- Vortex: BLOCKS×LANES 구조로 병렬성 구현, 더 작은 규모
 
-### 7.1 Warp 수 조정
+## 8. 성능 최적화 고려사항
+
+### 8.1 Warp 수 조정
 ```verilog
 `define NUM_WARPS 8  // 증가
 ```
@@ -393,28 +700,75 @@ Ops/Cycle     = 1 × 32 = 32 ops/cycle
 - Context 저장 공간 증가 (레지스터 파일, PC, masks)
 - Branch divergence 처리 overhead 증가
 
-### 7.2 Thread 수 조정
+**권장**: NUM_WARPS >= ISSUE_WIDTH × 16
+
+### 8.2 Thread 수 조정 (LANES 증가)
 ```verilog
 `define NUM_THREADS 16  // 증가
+→ NUM_ALU_LANES = 16
+→ NUM_FPU_LANES = 16
+→ NUM_LSU_LANES = 16
 ```
 **효과:**
 - SIMT 병렬도 향상 (벡터 연산 가속)
-- Execution unit (ALU/FPU) 수 증가 필요
+- 각 Execution unit의 processing elements 증가 필요
 - Thread mask 복잡도 증가
+- 레지스터 파일 크기: NUM_WARPS × NUM_THREADS × 32 × XLEN
 
-### 7.3 Issue Width 조정
+**트레이드오프**: 
+- 장점: 데이터 병렬성 최대화
+- 단점: 면적/전력 증가, divergence 낭비
+
+### 8.3 Issue Width 조정 (BLOCKS 증가)
 ```verilog
 `define ISSUE_WIDTH 2  // 증가
+→ NUM_ALU_BLOCKS = 2
+→ NUM_FPU_BLOCKS = 2
+→ NUM_VPU_BLOCKS = 2
+→ NUM_LSU_BLOCKS = 1 (여전히 고정)
 ```
 **효과:**
 - Issue 단계 throughput 증가
+- Execute 단계의 execution unit 병렬화
 - Scoreboard/Operand read 병렬화
-- 면적 증가 (issue slice 복제)
-- NUM_WARPS >= ISSUE_WIDTH × 16 권장
+- 면적 증가 (issue slice, execution blocks 복제)
 
-## 8. 설정 예시
+**권장**: NUM_WARPS >= ISSUE_WIDTH × 16
 
-### 8.1 기본 설정 (저전력)
+**주의**: LSU와 SFU는 BLOCKS=1로 고정되어 이득 제한적
+
+### 8.4 균형 잡힌 병렬성 설계
+
+#### Compute-Bound Workload (연산 집약적)
+```verilog
+`define NUM_THREADS 16-32   // 높은 SIMT
+`define NUM_WARPS   8-16    // 적당한 warp
+`define ISSUE_WIDTH 1-2     // 낮은 issue
+→ NUM_ALU_LANES = 16-32, NUM_ALU_BLOCKS = 1-2
+→ 고밀도 데이터 병렬성
+```
+
+#### Memory-Bound Workload (메모리 집약적)
+```verilog
+`define NUM_THREADS 4-8     // 적당한 SIMT
+`define NUM_WARPS   32-64   // 높은 warp (latency hiding)
+`define ISSUE_WIDTH 1-2     // 적당한 issue
+→ NUM_LSU_LANES = 4-8, NUM_LSU_BLOCKS = 1 (고정)
+→ 많은 warps로 메모리 latency 숨김
+```
+
+#### 혼합 Workload
+```verilog
+`define NUM_THREADS 8       // 균형
+`define NUM_WARPS   16-32   // 균형
+`define ISSUE_WIDTH 2       // 균형
+→ LANES = 8, BLOCKS = 2 (LSU 제외)
+→ 모든 병렬성 골고루 활용
+```
+
+## 9. 설정 예시
+
+### 9.1 기본 설정 (저전력)
 ```verilog
 `define NUM_CLUSTERS 1
 `define NUM_CORES    1
@@ -422,10 +776,14 @@ Ops/Cycle     = 1 × 32 = 32 ops/cycle
 `define NUM_THREADS  4
 `define ISSUE_WIDTH  1  // UP(4/16)
 
-→ 16 threads, 4 ops/cycle
+→ Execution Units:
+  - NUM_ALU_LANES = 4, NUM_ALU_BLOCKS = 1 → 4 ops/cycle
+  - NUM_FPU_LANES = 4, NUM_FPU_BLOCKS = 1 → 4 ops/cycle
+  - NUM_LSU_LANES = 4, NUM_LSU_BLOCKS = 1 → 4 ops/cycle
+→ 총 16 threads, 이론적 12 ops/cycle
 ```
 
-### 8.2 중급 설정 (균형)
+### 9.2 중급 설정 (균형)
 ```verilog
 `define NUM_CLUSTERS 1
 `define NUM_CORES    2
@@ -433,10 +791,14 @@ Ops/Cycle     = 1 × 32 = 32 ops/cycle
 `define NUM_THREADS  8
 `define ISSUE_WIDTH  1  // UP(16/16)
 
-→ 256 threads, 16 ops/cycle
+→ Execution Units (per core):
+  - NUM_ALU_LANES = 8, NUM_ALU_BLOCKS = 1 → 8 ops/cycle
+  - NUM_FPU_LANES = 8, NUM_FPU_BLOCKS = 1 → 8 ops/cycle
+  - NUM_LSU_LANES = 8, NUM_LSU_BLOCKS = 1 → 8 ops/cycle
+→ 총 256 threads, 이론적 48 ops/cycle (2 cores)
 ```
 
-### 8.3 고성능 설정
+### 9.3 고성능 설정
 ```verilog
 `define NUM_CLUSTERS 2
 `define NUM_CORES    4
@@ -444,14 +806,55 @@ Ops/Cycle     = 1 × 32 = 32 ops/cycle
 `define NUM_THREADS  32
 `define ISSUE_WIDTH  2  // UP(32/16)
 
-→ 8192 threads, 128 ops/cycle
+→ Execution Units (per core):
+  - NUM_ALU_LANES = 32, NUM_ALU_BLOCKS = 2 → 64 ops/cycle
+  - NUM_FPU_LANES = 32, NUM_FPU_BLOCKS = 2 → 64 ops/cycle
+  - NUM_LSU_LANES = 32, NUM_LSU_BLOCKS = 1 → 32 ops/cycle
+→ 총 8192 threads, 이론적 1280 ops/cycle (8 cores)
 ```
 
-## 9. 핵심 파일
+## 10. 핵심 파일
 
+### 설정 파일
 - **VX_config.vh**: 모든 병렬성 파라미터 정의
+  - NUM_CLUSTERS, NUM_CORES, NUM_WARPS, NUM_THREADS
+  - ISSUE_WIDTH, SIMD_WIDTH
+  - NUM_*_LANES, NUM_*_BLOCKS (각 execution unit별)
+
+### 패키지 파일
 - **VX_gpu_pkg.sv**: Warp ID 매핑 함수, 상수 정의
+
+### 하드웨어 모듈
 - **VX_schedule.sv**: Warp 스케줄링 및 상태 관리
 - **VX_issue.sv**: Multi-issue 분배
 - **VX_issue_slice.sv**: Issue slice 내부 로직
 - **VX_execute.sv**: Execution unit 실행
+- **VX_alu_unit.sv**: ALU execution blocks
+- **VX_fpu_unit.sv**: FPU execution blocks
+- **VX_lsu_unit.sv**: LSU execution blocks
+- **VX_sfu_unit.sv**: SFU execution blocks
+
+## 11. 요약
+
+### 병렬성 3단계
+1. **TLP (Warp Level)**: NUM_WARPS - latency hiding
+2. **DLP (Thread Level)**: NUM_THREADS = SIMD_WIDTH = NUM_*_LANES - 데이터 병렬성
+3. **ILP (Issue Level)**: ISSUE_WIDTH = NUM_*_BLOCKS - instruction throughput
+
+### Execution Unit 병렬성
+```
+각 Unit의 총 병렬도 = NUM_*_BLOCKS × NUM_*_LANES
+
+기본 설정: BLOCKS=1, LANES=4 → 4 ops/cycle
+확장 설정: BLOCKS=2, LANES=32 → 64 ops/cycle
+```
+
+### 주요 제약사항
+- **LSU**: NUM_LSU_BLOCKS = 1 (고정) - D-cache 충돌 방지
+- **SFU**: NUM_SFU_BLOCKS = 1 (고정) - warp 전역 상태 관리
+- **권장**: NUM_WARPS >= ISSUE_WIDTH × 16
+
+### 설계 원칙
+- **면적 제약**: LANES 증가 → 하드웨어 복제
+- **성능 요구**: BLOCKS 증가 → throughput 향상
+- **균형**: Workload 특성에 맞춰 LANES/BLOCKS 조정
