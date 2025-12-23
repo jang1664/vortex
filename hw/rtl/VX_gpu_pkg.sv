@@ -629,21 +629,22 @@ package VX_gpu_pkg;
     } operands_t;
 
     // warning: this layout should not be modified without updating VX_dispatch_unit!!!
+    // Issue → Execute 명령어 전달 구조체
     typedef struct packed {
-        logic [UUID_WIDTH-1:0]              uuid;
-        logic [ISSUE_WIS_W-1:0]             wis;
-        logic [SIMD_IDX_W-1:0]              sid;
-        logic [`SIMD_WIDTH-1:0]             tmask;
-        logic [PC_BITS-1:0]                 PC;
-        logic [INST_ALU_BITS-1:0]           op_type;
-        op_args_t                           op_args;
-        logic                               wb;
-        logic [NUM_REGS_BITS-1:0]           rd;
-        logic [`SIMD_WIDTH-1:0][`XLEN-1:0]  rs1_data;
-        logic [`SIMD_WIDTH-1:0][`XLEN-1:0]  rs2_data;
-        logic [`SIMD_WIDTH-1:0][`XLEN-1:0]  rs3_data;
-        logic                               sop;
-        logic                               eop;
+        logic [UUID_WIDTH-1:0]              uuid;       // 디버깅용 고유 ID
+        logic [ISSUE_WIS_W-1:0]             wis;        // Warp Issue Slot (스케줄러 관점 warp ID)
+        logic [SIMD_IDX_W-1:0]              sid;        // SIMD 그룹 인덱스 (0 ~ SIMD_COUNT-1)
+        logic [`SIMD_WIDTH-1:0]             tmask;      // Thread Mask (활성 스레드 비트맵)
+        logic [PC_BITS-1:0]                 PC;         // Program Counter
+        logic [INST_ALU_BITS-1:0]           op_type;    // 연산 타입 (ADD, SUB, MUL 등)
+        op_args_t                           op_args;    // 연산 인자 (즉시값, 시프트량 등)
+        logic                               wb;         // Writeback 필요 여부
+        logic [NUM_REGS_BITS-1:0]           rd;         // 목적지 레지스터 번호
+        logic [`SIMD_WIDTH-1:0][`XLEN-1:0]  rs1_data;   // 소스 레지스터 1 데이터 (스레드별)
+        logic [`SIMD_WIDTH-1:0][`XLEN-1:0]  rs2_data;   // 소스 레지스터 2 데이터 (스레드별)
+        logic [`SIMD_WIDTH-1:0][`XLEN-1:0]  rs3_data;   // 소스 레지스터 3 데이터 (FMA용)
+        logic                               sop;        // Start of Packet (warp 내 첫 SIMD 그룹)
+        logic                               eop;        // End of Packet (warp 내 마지막 SIMD 그룹)
     } dispatch_t;
 
     typedef struct packed {

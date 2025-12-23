@@ -109,7 +109,7 @@ module VX_dispatch_unit import VX_gpu_pkg::*; #(
 
     wire [BLOCK_SIZE-1:0][ISSUE_W-1:0] issue_indices;
     for (genvar block_idx = 0; block_idx < BLOCK_SIZE; ++block_idx) begin : g_issue_indices
-        assign issue_indices[block_idx] = ISSUE_W'(batch_idx * BLOCK_SIZE) + ISSUE_W'(block_idx);
+        assign issue_indices[block_idx] = ISSUE_W'(batch_idx * BLOCK_SIZE) + ISSUE_W'(block_idx); // issue slot idx
     end
 
     for (genvar block_idx = 0; block_idx < BLOCK_SIZE; ++block_idx) begin : g_blocks

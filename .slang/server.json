@@ -1,0 +1,5 @@
+{
+  "indexGlobs": ["./.../*.sv", "./.../*.svh", "./.../*.v", "./.../*.vh"],
+  "build" : ".slang/build.f",
+  "buildPattern" : ".slang/{}.f"
+}
