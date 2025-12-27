@@ -50,6 +50,7 @@ VX_lsu_slice [NUM_LSU_BLOCKS]
   - 각 블록별로 독립적인 LSU 처리
   - execute_if → result_if (처리 결과)
   - lsu_mem_if (메모리 요청/응답)
+    - bitwidth는 XLEN [bit]
 
 VX_gather_unit
   - result_if[NUM_LSU_BLOCKS] → commit_if[ISSUE_WIDTH]
@@ -282,6 +283,215 @@ __kernel void mixed_access(__global int *g_data, __local int *l_data) {
 - Lane 0~7: Local memory 주소 → `flags[0~7][LOCAL] = 1`
 - Lane 8~15: Global memory 주소 → `flags[8~15][LOCAL] = 0`
 - **하나의 load 명령, 하나의 warp, 하지만 두 메모리 타입 동시 접근!**
+
+---
+
+## Bitwidth 변화 과정
+
+LSU에서 메모리까지의 데이터 경로에서 bitwidth가 어떻게 변화하는지 정리한다.
+
+### 주요 파라미터 정의
+
+| 파라미터 | 정의 | 예시 (RV32, 4 lanes) |
+|----------|------|----------------------|
+| `XLEN` | 레지스터 폭 | 32 bits |
+| `XLENB` | XLEN을 바이트로 | 4 bytes |
+| `NUM_LSU_LANES` | LSU 레인 수 | 4 |
+| `LSU_WORD_SIZE` | LSU 워드 크기 = XLENB | 4 bytes |
+| `LSU_LINE_SIZE` | LSU 라인 크기 = MIN(LANES × XLENB, L1_LINE_SIZE) | 16 bytes |
+| `DCACHE_WORD_SIZE` | D-Cache 워드 크기 = LSU_LINE_SIZE | 16 bytes |
+| `DCACHE_CHANNELS` | D-Cache 채널 수 = (LANES × LSU_WORD_SIZE) / DCACHE_WORD_SIZE | 1 |
+
+### Global Memory 경로
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│                           Global Memory Path                                        │
+├─────────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                     │
+│  Execute Stage                                                                      │
+│       │                                                                             │
+│       │  rs1_data, rs2_data: NUM_LSU_LANES × XLEN bits                             │
+│       │  예: 4 lanes × 32 bits = 128 bits (데이터)                                  │
+│       ▼                                                                             │
+│  ┌─────────────────────────────────────────────────────────────────────────────┐   │
+│  │ VX_lsu_slice                                                                │   │
+│  │   Interface: VX_lsu_mem_if                                                  │   │
+│  │   - mask:   NUM_LSU_LANES bits (4 bits)                                     │   │
+│  │   - addr:   NUM_LSU_LANES × LSU_ADDR_WIDTH                                  │   │
+│  │   - data:   NUM_LSU_LANES × LSU_WORD_SIZE × 8 = 4 × 4 × 8 = 128 bits       │   │
+│  │   - byteen: NUM_LSU_LANES × LSU_WORD_SIZE = 4 × 4 = 16 bits                │   │
+│  └─────────────────────────────────────────────────────────────────────────────┘   │
+│       │                                                                             │
+│       │  VX_lsu_mem_if (NUM_LANES=4, DATA_SIZE=LSU_WORD_SIZE=4)                    │
+│       ▼                                                                             │
+│  ┌─────────────────────────────────────────────────────────────────────────────┐   │
+│  │ VX_lmem_switch                                                              │   │
+│  │   Input:  lsu_in_if (4 lanes × 32-bit words)                                │   │
+│  │   Output: global_out_if (동일, mask만 필터링)                                │   │
+│  │                                                                             │   │
+│  │   ※ Bitwidth 변화 없음, mask만 분리                                         │   │
+│  │   REQ_DATAW = NUM_LSU_LANES + 1 + NUM_LSU_LANES × (LSU_WORD_SIZE +          │   │
+│  │               LSU_ADDR_WIDTH + MEM_FLAGS_WIDTH + LSU_WORD_SIZE × 8)         │   │
+│  └─────────────────────────────────────────────────────────────────────────────┘   │
+│       │                                                                             │
+│       │  VX_lsu_mem_if (NUM_LANES=4, DATA_SIZE=4)                                  │
+│       ▼                                                                             │
+│  ┌─────────────────────────────────────────────────────────────────────────────┐   │
+│  │ VX_mem_coalescer (조건부: NUM_LSU_LANES > 1 && LSU_WORD_SIZE != DCACHE_WORD)│   │
+│  │                                                                             │   │
+│  │   Input:  NUM_REQS = NUM_LSU_LANES = 4                                      │   │
+│  │           DATA_IN_SIZE = LSU_WORD_SIZE = 4 bytes                            │   │
+│  │           → 4 lanes × 32 bits = 128 bits                                    │   │
+│  │                                                                             │   │
+│  │   Output: OUT_REQS = NUM_REQS / DATA_RATIO                                  │   │
+│  │                    = 4 / (16/4) = 4 / 4 = 1                                 │   │
+│  │           DATA_OUT_SIZE = DCACHE_WORD_SIZE = 16 bytes                       │   │
+│  │           → 1 channel × 128 bits = 128 bits                                 │   │
+│  │                                                                             │   │
+│  │   ※ 레인 수 감소 (4 → 1), 워드 크기 증가 (4B → 16B)                         │   │
+│  │   ※ 인접 주소 요청을 하나의 라인 요청으로 병합                               │   │
+│  └─────────────────────────────────────────────────────────────────────────────┘   │
+│       │                                                                             │
+│       │  VX_lsu_mem_if (NUM_LANES=DCACHE_CHANNELS=1, DATA_SIZE=16)                 │
+│       ▼                                                                             │
+│  ┌─────────────────────────────────────────────────────────────────────────────┐   │
+│  │ VX_lsu_adapter                                                              │   │
+│  │                                                                             │   │
+│  │   Input:  VX_lsu_mem_if (SIMD 스타일, 마스크 기반)                           │   │
+│  │           NUM_LANES = DCACHE_CHANNELS = 1                                   │   │
+│  │           DATA_SIZE = DCACHE_WORD_SIZE = 16 bytes                           │   │
+│  │                                                                             │   │
+│  │   Output: VX_mem_bus_if[DCACHE_CHANNELS] (개별 버스 스타일)                  │   │
+│  │           각 채널: DATA_SIZE = 16 bytes = 128 bits                          │   │
+│  │                                                                             │   │
+│  │   ※ Bitwidth 변화 없음, 인터페이스 스타일만 변환                            │   │
+│  │   ※ VX_stream_unpack으로 SIMD → 개별 요청 분리                              │   │
+│  │   ※ VX_stream_pack으로 개별 응답 → SIMD 병합                                │   │
+│  └─────────────────────────────────────────────────────────────────────────────┘   │
+│       │                                                                             │
+│       │  VX_mem_bus_if[DCACHE_CHANNELS] (DATA_SIZE=16)                             │
+│       ▼                                                                             │
+│  ┌─────────────────────────────────────────────────────────────────────────────┐   │
+│  │ D-Cache                                                                     │   │
+│  │                                                                             │   │
+│  │   요청: DCACHE_CHANNELS × DCACHE_WORD_SIZE × 8                              │   │
+│  │       = 1 × 16 × 8 = 128 bits                                               │   │
+│  └─────────────────────────────────────────────────────────────────────────────┘   │
+│                                                                                     │
+└─────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Global 경로 요약** (RV32, 4 lanes 예시):
+
+| 단계 | 모듈 | Lanes/Channels | Word Size | Total Data Bits |
+|------|------|----------------|-----------|-----------------|
+| 1 | VX_lsu_slice | 4 | 4 bytes | 128 bits |
+| 2 | VX_lmem_switch | 4 | 4 bytes | 128 bits |
+| 3 | VX_mem_coalescer | 1 | 16 bytes | 128 bits |
+| 4 | VX_lsu_adapter | 1 | 16 bytes | 128 bits |
+| 5 | D-Cache | 1 | 16 bytes | 128 bits |
+
+※ **총 bitwidth는 동일 (128 bits)**, 레인 수와 워드 크기가 트레이드오프
+
+---
+
+### Local Memory 경로
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│                           Local Memory Path                                         │
+├─────────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                     │
+│  Execute Stage                                                                      │
+│       │                                                                             │
+│       │  rs1_data, rs2_data: NUM_LSU_LANES × XLEN bits                             │
+│       ▼                                                                             │
+│  ┌─────────────────────────────────────────────────────────────────────────────┐   │
+│  │ VX_lsu_slice                                                                │   │
+│  │   Interface: VX_lsu_mem_if                                                  │   │
+│  │   - data: NUM_LSU_LANES × LSU_WORD_SIZE × 8 = 4 × 4 × 8 = 128 bits         │   │
+│  └─────────────────────────────────────────────────────────────────────────────┘   │
+│       │                                                                             │
+│       │  VX_lsu_mem_if (NUM_LANES=4, DATA_SIZE=4)                                  │
+│       ▼                                                                             │
+│  ┌─────────────────────────────────────────────────────────────────────────────┐   │
+│  │ VX_lmem_switch                                                              │   │
+│  │   Input:  lsu_in_if (4 lanes × 32-bit words)                                │   │
+│  │   Output: local_out_if (동일, mask만 필터링)                                 │   │
+│  │                                                                             │   │
+│  │   ※ Bitwidth 변화 없음                                                      │   │
+│  └─────────────────────────────────────────────────────────────────────────────┘   │
+│       │                                                                             │
+│       │  VX_lsu_mem_if (NUM_LANES=4, DATA_SIZE=4)                                  │
+│       ▼                                                                             │
+│  ┌─────────────────────────────────────────────────────────────────────────────┐   │
+│  │ VX_lsu_mem_arb (NUM_LSU_BLOCKS > 1인 경우)                                  │   │
+│  │                                                                             │   │
+│  │   Input:  NUM_LSU_BLOCKS개의 VX_lsu_mem_if                                  │   │
+│  │   Output: 1개의 VX_lsu_mem_if (Round-Robin 중재)                            │   │
+│  │                                                                             │   │
+│  │   ※ 여러 LSU 블록의 요청을 하나로 중재                                       │   │
+│  │   ※ 한 번에 하나의 블록만 통과 → Bitwidth 동일                              │   │
+│  └─────────────────────────────────────────────────────────────────────────────┘   │
+│       │                                                                             │
+│       │  VX_lsu_mem_if (NUM_LANES=4, DATA_SIZE=4)                                  │
+│       ▼                                                                             │
+│  ┌─────────────────────────────────────────────────────────────────────────────┐   │
+│  │ VX_lsu_adapter (for Local Memory)                                           │   │
+│  │                                                                             │   │
+│  │   Input:  VX_lsu_mem_if (SIMD 스타일)                                        │   │
+│  │           NUM_LANES = NUM_LSU_LANES = 4                                     │   │
+│  │           DATA_SIZE = LSU_WORD_SIZE = 4 bytes                               │   │
+│  │                                                                             │   │
+│  │   Output: VX_mem_bus_if[NUM_LSU_LANES] (개별 버스)                          │   │
+│  │           각 레인: DATA_SIZE = 4 bytes = 32 bits                            │   │
+│  │                                                                             │   │
+│  │   ※ SIMD 요청을 개별 메모리 포트 요청으로 분리                               │   │
+│  │   ※ 총 Bitwidth 동일, 4개의 독립 포트로 분리                                │   │
+│  └─────────────────────────────────────────────────────────────────────────────┘   │
+│       │                                                                             │
+│       │  VX_mem_bus_if[NUM_LSU_LANES] (각 DATA_SIZE=4)                             │
+│       ▼                                                                             │
+│  ┌─────────────────────────────────────────────────────────────────────────────┐   │
+│  │ VX_local_mem                                                                │   │
+│  │                                                                             │   │
+│  │   NUM_REQS = NUM_LSU_LANES = 4                                              │   │
+│  │   WORD_SIZE = LSU_WORD_SIZE = 4 bytes                                       │   │
+│  │   NUM_BANKS = LMEM_NUM_BANKS (configurable)                                 │   │
+│  │                                                                             │   │
+│  │   요청: 4 ports × 32 bits = 128 bits (병렬 액세스)                          │   │
+│  │                                                                             │   │
+│  │   ※ 뱅크 충돌 시 직렬화됨                                                    │   │
+│  └─────────────────────────────────────────────────────────────────────────────┘   │
+│                                                                                     │
+└─────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Local 경로 요약** (RV32, 4 lanes 예시):
+
+| 단계 | 모듈 | Lanes/Ports | Word Size | Total Data Bits |
+|------|------|-------------|-----------|-----------------|
+| 1 | VX_lsu_slice | 4 | 4 bytes | 128 bits |
+| 2 | VX_lmem_switch | 4 | 4 bytes | 128 bits |
+| 3 | VX_lsu_mem_arb | 4 | 4 bytes | 128 bits |
+| 4 | VX_lsu_adapter | 4 × 1 | 4 bytes | 128 bits |
+| 5 | VX_local_mem | 4 ports | 4 bytes | 128 bits |
+
+※ **Local Memory는 Coalescing 없음** → 레인 수와 워드 크기 유지
+※ 각 레인이 독립적인 메모리 포트로 변환되어 병렬 액세스
+
+---
+
+### Global vs Local 경로 비교
+
+| 특성 | Global Memory | Local Memory |
+|------|---------------|--------------|
+| Coalescing | 있음 (4 lanes → 1 channel) | 없음 |
+| Word Size | 작음 → 큼 (4B → 16B) | 유지 (4B) |
+| 레이턴시 | 높음 (Cache miss 가능) | 낮음 (SRAM 직접 액세스) |
+| 대역폭 | Cache line 기반 | 레인별 독립 포트 |
+| 병목 | Memory coalescing 효율 | 뱅크 충돌 |
 
 ---
 

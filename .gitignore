@@ -17,3 +17,7 @@ miscs/apptainer/vortex.sif
 *.log
 .tags
 .dvt/
+.library_mapping.xml
+.project
+.settings/
+verible.filelist
