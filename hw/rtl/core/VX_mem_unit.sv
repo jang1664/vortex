@@ -47,6 +47,7 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
     ) lsu_lmem_if[`NUM_LSU_BLOCKS]();
 
     for (genvar i = 0; i < `NUM_LSU_BLOCKS; ++i) begin : g_lmem_switches
+        //TODO: add DMA and gemm config register target
         VX_lmem_switch #(
             .GLOBAL_OUT_BUF(1),
             .LOCAL_OUT_BUF(1),
@@ -103,6 +104,8 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
         .lsu_mem_if (lmem_arb_if[0]),
         .mem_bus_if (lmem_adapt_if)
     );
+
+    //TODO: add arbiter. arbitrate normal lsu, gemm, dma requests
 
     VX_local_mem #(
         .INSTANCE_ID(`SFORMATF(("%s-lmem", INSTANCE_ID))),

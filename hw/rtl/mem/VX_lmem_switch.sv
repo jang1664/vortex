@@ -13,6 +13,7 @@
 
 `include "VX_define.vh"
 
+//TODO: add DMA and gemm register target
 module VX_lmem_switch import VX_gpu_pkg::*; #(
     parameter GLOBAL_OUT_BUF = 0,
     parameter LOCAL_OUT_BUF = 0,
