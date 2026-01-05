@@ -65,7 +65,7 @@ module VX_socket import VX_gpu_pkg::*; #(
 `ifdef PERF_ENABLE
     cache_perf_t icache_perf, dcache_perf;
     sysmem_perf_t sysmem_perf_tmp;
-    always @(*) begin
+    always_comb begin
         sysmem_perf_tmp = sysmem_perf;
         sysmem_perf_tmp.icache = icache_perf;
         sysmem_perf_tmp.dcache = dcache_perf;

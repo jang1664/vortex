@@ -101,6 +101,7 @@ package VX_gpu_pkg;
     localparam MEM_REQ_FLAG_FLUSH =  0;
     localparam MEM_REQ_FLAG_IO =     1;
     localparam MEM_REQ_FLAG_LOCAL =  2; // shoud be last since optional
+    //TODO: should we add gemm and dma flag?
     localparam MEM_FLAGS_WIDTH = (MEM_REQ_FLAG_LOCAL + `LMEM_ENABLED);
 
     localparam VX_DCR_ADDR_WIDTH = `VX_DCR_ADDR_BITS;

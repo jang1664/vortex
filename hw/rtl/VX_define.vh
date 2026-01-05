@@ -36,6 +36,29 @@
 
 ///////////////////////////////////////////////////////////////////////////////
 
+// GEMM Unit Parameters
+`ifndef GEMM_INPUT_DATA_SIZE
+`define GEMM_INPUT_DATA_SIZE    16  // input data size in bytes
+`endif
+
+`ifndef GEMM_WEIGHT_DATA_SIZE
+`define GEMM_WEIGHT_DATA_SIZE   16  // weight data size in bytes
+`endif
+
+`ifndef GEMM_SCALE_ZERO_DATA_SIZE
+`define GEMM_SCALE_ZERO_DATA_SIZE 4 // scale/zero data size in bytes
+`endif
+
+`ifndef GEMM_OUTPUT_DATA_SIZE
+`define GEMM_OUTPUT_DATA_SIZE   16  // output data size in bytes
+`endif
+
+`ifndef GEMM_MEM_TAG_WIDTH
+`define GEMM_MEM_TAG_WIDTH      8   // GEMM memory tag width
+`endif
+
+///////////////////////////////////////////////////////////////////////////////
+
 `define ITF_TO_AOS(prefix, itf, count, dataw) \
     wire [(count)-1:0] prefix``_valid; \
     wire [(count)-1:0][(dataw)-1:0] prefix``_data; \
@@ -369,6 +392,45 @@
     assign itf.rsp_valid = 0; \
     assign itf.rsp_data  = '0; \
     `UNUSED_VAR (itf.rsp_ready)
+
+`define DECLARE_MEM_BUS_WIRES(prefix, DATA_SIZE, ADDR_WIDTH, TAG_WIDTH) \
+    logic                       prefix``_req_valid; \
+    logic [ADDR_WIDTH-1:0]      prefix``_req_addr; \
+    logic                       prefix``_req_rw; \
+    logic [DATA_SIZE-1:0]       prefix``_req_byteen; \
+    logic [DATA_SIZE*8-1:0]     prefix``_req_data; \
+    logic [TAG_WIDTH-1:0]       prefix``_req_tag; \
+    logic                       prefix``_req_ready; \
+    logic                       prefix``_rsp_valid; \
+    logic [DATA_SIZE*8-1:0]     prefix``_rsp_data; \
+    logic [TAG_WIDTH-1:0]       prefix``_rsp_tag; \
+    logic                       prefix``_rsp_ready
+
+`define MEM_BUS_IF_TO_WIRES(prefix, itf) \
+    assign prefix``_req_valid  = itf.req_valid; \
+    assign prefix``_req_addr   = itf.req_data.addr; \
+    assign prefix``_req_rw     = itf.req_data.rw; \
+    assign prefix``_req_byteen = itf.req_data.byteen; \
+    assign prefix``_req_data   = itf.req_data.data; \
+    assign prefix``_req_tag    = itf.req_data.tag; \
+    assign itf.req_ready       = prefix``_req_ready; \
+    assign itf.rsp_valid       = prefix``_rsp_valid; \
+    assign itf.rsp_data.data   = prefix``_rsp_data; \
+    assign itf.rsp_data.tag    = prefix``_rsp_tag; \
+    assign prefix``_rsp_ready  = itf.rsp_ready
+
+`define WIRES_TO_MEM_BUS_IF(itf, prefix) \
+    assign itf.req_valid       = prefix``_req_valid; \
+    assign itf.req_data.addr   = prefix``_req_addr; \
+    assign itf.req_data.rw     = prefix``_req_rw; \
+    assign itf.req_data.byteen = prefix``_req_byteen; \
+    assign itf.req_data.data   = prefix``_req_data; \
+    assign itf.req_data.tag    = prefix``_req_tag; \
+    assign prefix``_req_ready  = itf.req_ready; \
+    assign prefix``_rsp_valid  = itf.rsp_valid; \
+    assign prefix``_rsp_data   = itf.rsp_data.data; \
+    assign prefix``_rsp_tag    = itf.rsp_data.tag; \
+    assign itf.rsp_ready       = prefix``_rsp_ready
 
 `define BUFFER_DCR_BUS_IF(dst, src, ena, latency) \
     /* verilator lint_off GENUNNAMED */ \

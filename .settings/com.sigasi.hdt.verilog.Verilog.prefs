@@ -1,2 +1,2 @@
 includePath=hw/rtl;hw/rtl/libs;hw/rtl/core;hw/rtl/cache;hw/rtl/mem;hw/rtl/fpu;hw/rtl/tcu;hw/rtl/interfaces;hw/rtl/afu/opae;hw/rtl/afu/opae/ccip;hw/rtl/afu/xrt;hw/dpi
-propertiesDefine=`define SCOPE\n`define PERF_ENABLE\n`define VIVADO
+propertiesDefine=`define SCOPE\n`define PERF_ENABLE\n`define VIVADO\n`define GBAR_ENABLE\n`define SIMULATION

@@ -13,7 +13,6 @@
 
 `include "VX_define.vh"
 
-//TODO: add DMA and gemm register target
 module VX_lmem_switch import VX_gpu_pkg::*; #(
     parameter GLOBAL_OUT_BUF = 0,
     parameter LOCAL_OUT_BUF = 0,
@@ -24,8 +23,19 @@ module VX_lmem_switch import VX_gpu_pkg::*; #(
     input wire              reset,
     VX_lsu_mem_if.slave     lsu_in_if,
     VX_lsu_mem_if.master    global_out_if,
-    VX_lsu_mem_if.master    local_out_if
+    VX_lsu_mem_if.master    local_out_if,
+    VX_lsu_mem_if.master    gemm_ctrl_if,
+    VX_lsu_mem_if.master    dma_ctrl_if
 );
+    //TODO: implement gemm_ctrl and dma_ctrl switch
+    assign gemm_ctrl_if.req_valid = 1'b0;
+    assign gemm_ctrl_if.req_data = '0;
+    assign gemm_ctrl_if.rsp_ready = 1'b1;
+
+    assign dma_ctrl_if.req_valid = 1'b0;
+    assign dma_ctrl_if.req_data = '0;
+    assign dma_ctrl_if.rsp_ready = 1'b1;
+
     localparam REQ_DATAW = `NUM_LSU_LANES + 1 + `NUM_LSU_LANES * (LSU_WORD_SIZE + LSU_ADDR_WIDTH + MEM_FLAGS_WIDTH + LSU_WORD_SIZE * 8) + LSU_TAG_WIDTH;
     localparam RSP_DATAW = `NUM_LSU_LANES + `NUM_LSU_LANES * (LSU_WORD_SIZE * 8) + LSU_TAG_WIDTH;
 

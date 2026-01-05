@@ -9,5 +9,7 @@ module VX_gemm_quant_param_read_ctrl import VX_gpu_pkg::*; #(
 
     VX_gemm_ctrl_if.slave   gemm_ctrl_if
 );
+  assign gemm_ctrl_if.quant_param_read_flag.idle = 1'b1;
+  assign gemm_ctrl_if.quant_param_read_flag.done = 1'b1;
 
 endmodule
