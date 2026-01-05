@@ -57,6 +57,11 @@
 `define GEMM_MEM_TAG_WIDTH      8   // GEMM memory tag width
 `endif
 
+`define GEMM_CFG_REG_NUM 16
+
+// DMA parameters
+`define DMA_CFG_REG_NUM 16
+
 ///////////////////////////////////////////////////////////////////////////////
 
 `define ITF_TO_AOS(prefix, itf, count, dataw) \

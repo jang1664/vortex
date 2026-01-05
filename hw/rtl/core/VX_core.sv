@@ -96,6 +96,15 @@ module VX_core import VX_gpu_pkg::*; #(
         .TAG_WIDTH (LMEM_TAG_WIDTH)
     ) gemm_data_if();
 
+    VX_config_reg_if #(
+      .NUM(16),
+      .DW(64)
+    ) dma_cfg_regs_if ();
+    VX_config_reg_if #(
+      .NUM(16),
+      .DW(64)
+    ) gemm_cfg_regs_if ();
+
 `ifdef PERF_ENABLE
     lmem_perf_t lmem_perf;
     coalescer_perf_t coalescer_perf;
@@ -238,23 +247,47 @@ module VX_core import VX_gpu_pkg::*; #(
         .lmem_perf        (lmem_perf),
         .coalescer_perf   (coalescer_perf),
     `endif
-        .lsu_mem_if       (lsu_mem_if),
-        .dcache_bus_if    (dcache_bus_if),
-        .dma_ctrl_if      (dma_ctrl_if[0:`NUM_LSU_BLOCKS]),
-        .gemm_ctrl_if     (gemm_ctrl_if),
-        .dma_local_data_if(dma_local_data_if),
+        .lsu_mem_if        (lsu_mem_if),
+        .dcache_bus_if     (dcache_bus_if),
+        .dma_ctrl_if       (dma_ctrl_if[0:`NUM_LSU_BLOCKS]),
+        .gemm_ctrl_if      (gemm_ctrl_if),
+        .dma_local_data_if (dma_local_data_if),
         .dma_global_data_if(dma_global_data_if),
-        .gemm_data_if     (gemm_data_if)
+        .gemm_data_if      (gemm_data_if)
     );
 
-    VX_dma #(
-        .INSTANCE_ID (`SFORMATF(("%s-dma", INSTANCE_ID)))
-    ) dma (
-        .clk          (clk),
-        .reset        (reset),
-        .lsu_mem_if   (dma_ctrl_if[0:`NUM_LSU_BLOCKS]),
-        .dcache_bus_if(dma_global_data_if),
-        .lmem_bus_if  (dma_local_data_if)
+    VX_config_registers #(
+      .INSTANCE_ID(INSTANCE_ID),
+      .NUM_REGS(`DMA_CFG_REG_NUM),
+      .START_BIT(0),
+      .MAS_NUM(`NUM_LSU_BLOCKS+1)
+    ) dma_cfg_regs (
+      .clk(clk),
+      .reset(reset),
+      .lsu_mem_if(dma_ctrl_if),
+      .regs_out(dma_cfg_regs_if)
+    );
+
+    VX_dma_node #(
+      .INSTANCE_ID(INSTANCE_ID)
+    ) u_VX_dma_node (
+      .clk(clk),
+      .reset(reset),
+      .cfg_reg_if(dma_cfg_regs_if),
+      .dcache_bus_if(dma_global_data_if),
+      .lmem_bus_if(dma_local_data_if)
+    );
+
+    VX_config_registers #(
+      .INSTANCE_ID(INSTANCE_ID),
+      .NUM_REGS(`GEMM_CFG_REG_NUM),
+      .START_BIT(0),
+      .MAS_NUM(`NUM_LSU_BLOCKS)
+    ) gemm_cfg_regs (
+      .clk(clk),
+      .reset(reset),
+      .lsu_mem_if(gemm_ctrl_if),
+      .regs_out(gemm_cfg_regs_if)
     );
 
     VX_gemm_node #(
@@ -262,7 +295,7 @@ module VX_core import VX_gpu_pkg::*; #(
     ) gemm_node (
         .clk        (clk),
         .reset      (reset),
-        .lsu_mem_if (gemm_ctrl_if),
+        .cfg_reg_if (gemm_cfg_regs_if),
         .dma_if     (dma_ctrl_if[`NUM_LSU_BLOCKS]),
         .lmem_bus_if(gemm_data_if)
     );
