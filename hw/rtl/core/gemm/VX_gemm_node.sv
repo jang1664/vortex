@@ -23,19 +23,53 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     VX_mem_bus_if # (
       .DATA_SIZE(`GEMM_INPUT_DATA_SIZE),
       .TAG_WIDTH(`GEMM_MEM_TAG_WIDTH)
-    ) i_lmem_bus_if (); // for inputs
+    ) i_gemm_bus_if (); // for inputs
     VX_mem_bus_if # (
       .DATA_SIZE(`GEMM_WEIGHT_DATA_SIZE),
       .TAG_WIDTH(`GEMM_MEM_TAG_WIDTH)
-    ) w_lmem_bus_if (); // for weights
+    ) w_gemm_bus_if (); // for weights
     VX_mem_bus_if # (
       .DATA_SIZE(`GEMM_SCALE_ZERO_DATA_SIZE),
       .TAG_WIDTH(`GEMM_MEM_TAG_WIDTH)
-    ) sz_lmem_bus_if (); // for scale and zero params
+    ) sz_gemm_bus_if (); // for scale and zero params
     VX_mem_bus_if # (
       .DATA_SIZE(`GEMM_OUTPUT_DATA_SIZE),
       .TAG_WIDTH(`GEMM_MEM_TAG_WIDTH)
-    ) o_lmem_bus_if (); // for read output
+    ) o_gemm_bus_if (); // for read output
+
+    VX_mem_bus_if # (
+      .DATA_SIZE(LSU_WORD_SIZE),
+      .TAG_WIDTH(`GEMM_MEM_TAG_WIDTH)
+    ) i_dma_lmem_bus_if (); // for inputs
+    VX_mem_bus_if # (
+      .DATA_SIZE(LSU_WORD_SIZE),
+      .TAG_WIDTH(`GEMM_MEM_TAG_WIDTH)
+    ) w_dma_lmem_bus_if (); // for weights
+    VX_mem_bus_if # (
+      .DATA_SIZE(LSU_WORD_SIZE),
+      .TAG_WIDTH(`GEMM_MEM_TAG_WIDTH)
+    ) sz_dma_lmem_bus_if (); // for scale and zero params
+    VX_mem_bus_if # (
+      .DATA_SIZE(LSU_WORD_SIZE),
+      .TAG_WIDTH(`GEMM_MEM_TAG_WIDTH)
+    ) o_dma_lmem_bus_if (); // for read output
+
+    VX_mem_bus_if # (
+      .DATA_SIZE(LSU_WORD_SIZE),
+      .TAG_WIDTH(`GEMM_MEM_TAG_WIDTH)
+    ) i_dma_gemm_bus_if (); // for inputs
+    VX_mem_bus_if # (
+      .DATA_SIZE(LSU_WORD_SIZE),
+      .TAG_WIDTH(`GEMM_MEM_TAG_WIDTH)
+    ) w_dma_gemm_bus_if (); // for weights
+    VX_mem_bus_if # (
+      .DATA_SIZE(LSU_WORD_SIZE),
+      .TAG_WIDTH(`GEMM_MEM_TAG_WIDTH)
+    ) sz_dma_gemm_bus_if (); // for scale and zero params
+    VX_mem_bus_if # (
+      .DATA_SIZE(LSU_WORD_SIZE),
+      .TAG_WIDTH(`GEMM_MEM_TAG_WIDTH)
+    ) o_dma_gemm_bus_if (); // for read output
 
     VX_gemm_unit_if gemm_unit_if ();
 
@@ -99,6 +133,10 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
 
     // lmem arbiter
     //   - arbitrate input, weight, output, scale/zero mem bus ifs to top lmem bus if
+    `ASSIGN_VX_MEM_BUS_IF(lmem_arb_in_if[0], i_dma_lmem_bus_if); // from input dma
+    `ASSIGN_VX_MEM_BUS_IF(lmem_arb_in_if[1], w_dma_lmem_bus_if); // from weight dma
+    `ASSIGN_VX_MEM_BUS_IF(lmem_arb_in_if[2], sz_dma_lmem_bus_if); // from scale/
+    `ASSIGN_VX_MEM_BUS_IF(lmem_arb_in_if[3], o_dma_lmem_bus_if); // from output dma
     VX_mem_arb #(
       .NUM_INPUTS(4),
       .NUM_OUTPUTS(1),
@@ -111,10 +149,10 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     ) lmem_membus_arbiter (
       .clk(clk),
       .reset(reset),
-      .bus_in_if(lmem_arb_in_if),
+      .bus_in_if(lmem_arb_in_if), // input, weight, output, scale/zero
       .bus_out_if(lmem_arb_out_if)
     );
-    `ASSIGN_VX_MEM_BUS_IF(lmem_bus_if, lmem_arb_out_if[0]);
+    `ASSIGN_VX_MEM_BUS_IF(lmem_bus_if, lmem_arb_out_if[0]); // to output
 
     // data width converter parameters
     localparam I_SRC_ADDR_WIDTH = `MEM_ADDR_WIDTH - `CLOG2(`GEMM_INPUT_DATA_SIZE);
@@ -133,24 +171,8 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     `DECLARE_MEM_BUS_WIRES(o_src, `GEMM_OUTPUT_DATA_SIZE, O_SRC_ADDR_WIDTH, `GEMM_MEM_TAG_WIDTH);
     `DECLARE_MEM_BUS_WIRES(o_dst, LSU_WORD_SIZE, DST_ADDR_WIDTH, LMEM_TAG_WIDTH);
 
-    // connect interfaces to wires
-    `MEM_BUS_IF_TO_WIRES(i_src, i_lmem_bus_if);
-    `WIRES_TO_MEM_BUS_IF(lmem_arb_in_if[0], i_dst);
-    assign lmem_arb_in_if[0].req_data.flags = i_lmem_bus_if.req_data.flags;
-
-    `MEM_BUS_IF_TO_WIRES(w_src, w_lmem_bus_if);
-    `WIRES_TO_MEM_BUS_IF(lmem_arb_in_if[1], w_dst);
-    assign lmem_arb_in_if[1].req_data.flags = w_lmem_bus_if.req_data.flags;
-
-    `MEM_BUS_IF_TO_WIRES(sz_src, sz_lmem_bus_if);
-    `WIRES_TO_MEM_BUS_IF(lmem_arb_in_if[2], sz_dst);
-    assign lmem_arb_in_if[2].req_data.flags = sz_lmem_bus_if.req_data.flags;
-
-    `MEM_BUS_IF_TO_WIRES(o_src, o_lmem_bus_if);
-    `WIRES_TO_MEM_BUS_IF(lmem_arb_in_if[3], o_dst);
-    assign lmem_arb_in_if[3].req_data.flags = o_lmem_bus_if.req_data.flags;
-
     // input data adapter
+    `MEM_BUS_IF_TO_WIRES(i_src, i_dma_gemm_bus_if);
     VX_mem_data_adapter #(
       .SRC_DATA_WIDTH (`GEMM_INPUT_DATA_SIZE * 8),
       .SRC_ADDR_WIDTH (I_SRC_ADDR_WIDTH),
@@ -186,8 +208,10 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
       .mem_rsp_tag_out  (i_dst_rsp_tag),
       .mem_rsp_ready_out(i_dst_rsp_ready)
     );
+    `WIRES_TO_MEM_BUS_IF(i_gemm_bus_if, i_dst);
 
     // weight data adapter
+    `MEM_BUS_IF_TO_WIRES(w_src, w_dma_gemm_bus_if);
     VX_mem_data_adapter #(
       .SRC_DATA_WIDTH (`GEMM_WEIGHT_DATA_SIZE * 8),
       .SRC_ADDR_WIDTH (W_SRC_ADDR_WIDTH),
@@ -223,8 +247,10 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
       .mem_rsp_tag_out  (w_dst_rsp_tag),
       .mem_rsp_ready_out(w_dst_rsp_ready)
     );
+    `WIRES_TO_MEM_BUS_IF(w_gemm_bus_if, w_dst);
 
     // scale/zero (quant param) data adapter
+    `MEM_BUS_IF_TO_WIRES(sz_src, sz_dma_gemm_bus_if);
     VX_mem_data_adapter #(
       .SRC_DATA_WIDTH (`GEMM_SCALE_ZERO_DATA_SIZE * 8),
       .SRC_ADDR_WIDTH (SZ_SRC_ADDR_WIDTH),
@@ -260,8 +286,10 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
       .mem_rsp_tag_out  (sz_dst_rsp_tag),
       .mem_rsp_ready_out(sz_dst_rsp_ready)
     );
+    `WIRES_TO_MEM_BUS_IF(sz_gemm_bus_if, sz_dst);
 
     // output data adapter
+    `MEM_BUS_IF_TO_WIRES(o_src, o_gemm_bus_if);
     VX_mem_data_adapter #(
       .SRC_DATA_WIDTH (`GEMM_OUTPUT_DATA_SIZE * 8),
       .SRC_ADDR_WIDTH (O_SRC_ADDR_WIDTH),
@@ -297,6 +325,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
       .mem_rsp_tag_out  (o_dst_rsp_tag),
       .mem_rsp_ready_out(o_dst_rsp_ready)
     );
+    `WIRES_TO_MEM_BUS_IF(o_dma_gemm_bus_if, o_dst);
 
     // gemm unit
     VX_gemm_unit #(
@@ -304,10 +333,10 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     ) u_VX_gemm_unit (
       .clk(clk),
       .reset(reset),
-      .i_lmem_bus_if(i_lmem_bus_if),
-      .w_lmem_bus_if(w_lmem_bus_if),
-      .sz_lmem_bus_if(sz_lmem_bus_if),
-      .o_lmem_bus_if(o_lmem_bus_if),
+      .i_lmem_bus_if(i_gemm_bus_if),
+      .w_lmem_bus_if(w_gemm_bus_if),
+      .sz_lmem_bus_if(sz_gemm_bus_if),
+      .o_lmem_bus_if(o_gemm_bus_if),
       .gemm_unit_if(gemm_unit_if)
     );
 
@@ -332,13 +361,8 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
       .clk(clk),
       .reset(reset),
       .ctrl_if(input_dma_ctrl_if),
-      .lmem_bus_if(i_lmem_bus_if),
-      .gemm_data_valid(),
-      .gemm_data_out(),
-      .gemm_data_ready(1'b1),
-      .gemm_data_valid_in(1'b0),
-      .gemm_data_in('0),
-      .gemm_data_ready_out()
+      .lmem_bus_if(i_dma_lmem_bus_if),
+      .gemm_bus_if(i_dma_gemm_bus_if)
     );
 
     // Weight read DMA (LMEM -> GEMM, DIR=0)
@@ -351,13 +375,8 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
       .clk(clk),
       .reset(reset),
       .ctrl_if(weight_dma_ctrl_if),
-      .lmem_bus_if(w_lmem_bus_if),
-      .gemm_data_valid(),
-      .gemm_data_out(),
-      .gemm_data_ready(1'b1),
-      .gemm_data_valid_in(1'b0),
-      .gemm_data_in('0),
-      .gemm_data_ready_out()
+      .lmem_bus_if(w_dma_lmem_bus_if),
+      .gemm_bus_if(w_dma_gemm_bus_if)
     );
 
     // Quant param read DMA (LMEM -> GEMM, DIR=0)
@@ -370,13 +389,8 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
       .clk(clk),
       .reset(reset),
       .ctrl_if(quant_param_dma_ctrl_if),
-      .lmem_bus_if(sz_lmem_bus_if),
-      .gemm_data_valid(),
-      .gemm_data_out(),
-      .gemm_data_ready(1'b1),
-      .gemm_data_valid_in(1'b0),
-      .gemm_data_in('0),
-      .gemm_data_ready_out()
+      .lmem_bus_if(sz_dma_lmem_bus_if),
+      .gemm_bus_if(sz_dma_gemm_bus_if)
     );
 
     // Output write DMA (GEMM -> LMEM, DIR=1)
@@ -389,13 +403,8 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
       .clk(clk),
       .reset(reset),
       .ctrl_if(output_dma_ctrl_if),
-      .lmem_bus_if(o_lmem_bus_if),
-      .gemm_data_valid(),
-      .gemm_data_out(),
-      .gemm_data_ready(1'b1),
-      .gemm_data_valid_in(1'b0),
-      .gemm_data_in('0),
-      .gemm_data_ready_out()
+      .lmem_bus_if(o_dma_lmem_bus_if),
+      .gemm_bus_if(o_dma_gemm_bus_if)
     );
 
     // External DMA control (dcache <-> LMEM)
