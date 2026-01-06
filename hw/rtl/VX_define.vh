@@ -37,25 +37,16 @@
 ///////////////////////////////////////////////////////////////////////////////
 
 // GEMM Unit Parameters
-`ifndef GEMM_INPUT_DATA_SIZE
-`define GEMM_INPUT_DATA_SIZE    16  // input data size in bytes
-`endif
+`define MXU_ROW 16
+`define MXU_COL 16
+`define MXU_ROW_TILE 1
+`define MXU_COL_TILE 1
 
-`ifndef GEMM_WEIGHT_DATA_SIZE
-`define GEMM_WEIGHT_DATA_SIZE   16  // weight data size in bytes
-`endif
-
-`ifndef GEMM_SCALE_ZERO_DATA_SIZE
-`define GEMM_SCALE_ZERO_DATA_SIZE 4 // scale/zero data size in bytes
-`endif
-
-`ifndef GEMM_OUTPUT_DATA_SIZE
-`define GEMM_OUTPUT_DATA_SIZE   16  // output data size in bytes
-`endif
-
-`ifndef GEMM_MEM_TAG_WIDTH
-`define GEMM_MEM_TAG_WIDTH      8   // GEMM memory tag width
-`endif
+`define GEMM_INPUT_DATA_SIZE      (2*`MXU_ROW) // 32 bytes 
+`define GEMM_WEIGHT_DATA_SIZE     (`MXU_COL/2) // 8 bytes
+`define GEMM_SCALE_ZERO_DATA_SIZE (2*`MXU_COL) // 32 bytes
+`define GEMM_OUTPUT_DATA_SIZE     (2*`MXU_COL) // 32 bytes
+`define GEMM_PSUM_DATA_SIZE       (4*`MXU_COL) // 64 bytes
 
 `define GEMM_CFG_REG_NUM 16
 

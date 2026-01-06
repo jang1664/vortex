@@ -22,53 +22,53 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
 
     VX_mem_bus_if # (
       .DATA_SIZE(`GEMM_INPUT_DATA_SIZE),
-      .TAG_WIDTH(`GEMM_MEM_TAG_WIDTH)
+      .TAG_WIDTH(GEMM_MEM_TAG_WIDTH)
     ) i_gemm_bus_if (); // for inputs
     VX_mem_bus_if # (
       .DATA_SIZE(`GEMM_WEIGHT_DATA_SIZE),
-      .TAG_WIDTH(`GEMM_MEM_TAG_WIDTH)
+      .TAG_WIDTH(GEMM_MEM_TAG_WIDTH)
     ) w_gemm_bus_if (); // for weights
     VX_mem_bus_if # (
       .DATA_SIZE(`GEMM_SCALE_ZERO_DATA_SIZE),
-      .TAG_WIDTH(`GEMM_MEM_TAG_WIDTH)
+      .TAG_WIDTH(GEMM_MEM_TAG_WIDTH)
     ) sz_gemm_bus_if (); // for scale and zero params
     VX_mem_bus_if # (
       .DATA_SIZE(`GEMM_OUTPUT_DATA_SIZE),
-      .TAG_WIDTH(`GEMM_MEM_TAG_WIDTH)
+      .TAG_WIDTH(GEMM_MEM_TAG_WIDTH)
     ) o_gemm_bus_if (); // for read output
 
     VX_mem_bus_if # (
       .DATA_SIZE(LSU_WORD_SIZE),
-      .TAG_WIDTH(`GEMM_MEM_TAG_WIDTH)
+      .TAG_WIDTH(GEMM_MEM_TAG_WIDTH)
     ) i_dma_lmem_bus_if (); // for inputs
     VX_mem_bus_if # (
       .DATA_SIZE(LSU_WORD_SIZE),
-      .TAG_WIDTH(`GEMM_MEM_TAG_WIDTH)
+      .TAG_WIDTH(GEMM_MEM_TAG_WIDTH)
     ) w_dma_lmem_bus_if (); // for weights
     VX_mem_bus_if # (
       .DATA_SIZE(LSU_WORD_SIZE),
-      .TAG_WIDTH(`GEMM_MEM_TAG_WIDTH)
+      .TAG_WIDTH(GEMM_MEM_TAG_WIDTH)
     ) sz_dma_lmem_bus_if (); // for scale and zero params
     VX_mem_bus_if # (
       .DATA_SIZE(LSU_WORD_SIZE),
-      .TAG_WIDTH(`GEMM_MEM_TAG_WIDTH)
+      .TAG_WIDTH(GEMM_MEM_TAG_WIDTH)
     ) o_dma_lmem_bus_if (); // for read output
 
     VX_mem_bus_if # (
       .DATA_SIZE(LSU_WORD_SIZE),
-      .TAG_WIDTH(`GEMM_MEM_TAG_WIDTH)
+      .TAG_WIDTH(GEMM_MEM_TAG_WIDTH)
     ) i_dma_gemm_bus_if (); // for inputs
     VX_mem_bus_if # (
       .DATA_SIZE(LSU_WORD_SIZE),
-      .TAG_WIDTH(`GEMM_MEM_TAG_WIDTH)
+      .TAG_WIDTH(GEMM_MEM_TAG_WIDTH)
     ) w_dma_gemm_bus_if (); // for weights
     VX_mem_bus_if # (
       .DATA_SIZE(LSU_WORD_SIZE),
-      .TAG_WIDTH(`GEMM_MEM_TAG_WIDTH)
+      .TAG_WIDTH(GEMM_MEM_TAG_WIDTH)
     ) sz_dma_gemm_bus_if (); // for scale and zero params
     VX_mem_bus_if # (
       .DATA_SIZE(LSU_WORD_SIZE),
-      .TAG_WIDTH(`GEMM_MEM_TAG_WIDTH)
+      .TAG_WIDTH(GEMM_MEM_TAG_WIDTH)
     ) o_dma_gemm_bus_if (); // for read output
 
     VX_gemm_unit_if gemm_unit_if ();
@@ -162,26 +162,38 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     localparam DST_ADDR_WIDTH = `MEM_ADDR_WIDTH - `CLOG2(LSU_WORD_SIZE);
 
     // wire declarations for data adapters
-    `DECLARE_MEM_BUS_WIRES(i_src, `GEMM_INPUT_DATA_SIZE, I_SRC_ADDR_WIDTH, `GEMM_MEM_TAG_WIDTH);
+    `DECLARE_MEM_BUS_WIRES(i_src, `GEMM_INPUT_DATA_SIZE, I_SRC_ADDR_WIDTH, GEMM_MEM_TAG_WIDTH);
     `DECLARE_MEM_BUS_WIRES(i_dst, LSU_WORD_SIZE, DST_ADDR_WIDTH, LMEM_TAG_WIDTH);
-    `DECLARE_MEM_BUS_WIRES(w_src, `GEMM_WEIGHT_DATA_SIZE, W_SRC_ADDR_WIDTH, `GEMM_MEM_TAG_WIDTH);
+    `DECLARE_MEM_BUS_WIRES(w_src, `GEMM_WEIGHT_DATA_SIZE, W_SRC_ADDR_WIDTH, GEMM_MEM_TAG_WIDTH);
     `DECLARE_MEM_BUS_WIRES(w_dst, LSU_WORD_SIZE, DST_ADDR_WIDTH, LMEM_TAG_WIDTH);
-    `DECLARE_MEM_BUS_WIRES(sz_src, `GEMM_SCALE_ZERO_DATA_SIZE, SZ_SRC_ADDR_WIDTH, `GEMM_MEM_TAG_WIDTH);
+    `DECLARE_MEM_BUS_WIRES(sz_src, `GEMM_SCALE_ZERO_DATA_SIZE, SZ_SRC_ADDR_WIDTH, GEMM_MEM_TAG_WIDTH);
     `DECLARE_MEM_BUS_WIRES(sz_dst, LSU_WORD_SIZE, DST_ADDR_WIDTH, LMEM_TAG_WIDTH);
-    `DECLARE_MEM_BUS_WIRES(o_src, `GEMM_OUTPUT_DATA_SIZE, O_SRC_ADDR_WIDTH, `GEMM_MEM_TAG_WIDTH);
+    `DECLARE_MEM_BUS_WIRES(o_src, `GEMM_OUTPUT_DATA_SIZE, O_SRC_ADDR_WIDTH, GEMM_MEM_TAG_WIDTH);
     `DECLARE_MEM_BUS_WIRES(o_dst, LSU_WORD_SIZE, DST_ADDR_WIDTH, LMEM_TAG_WIDTH);
 
     // input data adapter
+    function int get_dst_tag_incr(int src_width, int dst_width);
+      int dst_ldataw; 
+      int src_ldataw; 
+      int D; 
+      int incr; 
+      dst_ldataw = `CLOG2(dst_width / 8);
+      src_ldataw = `CLOG2(src_width / 8);
+      D = `ABS(dst_ldataw - src_ldataw);
+      incr = (dst_ldataw > src_ldataw) ? D : 0;
+      return incr;
+    endfunction
+
     `MEM_BUS_IF_TO_WIRES(i_src, i_dma_gemm_bus_if);
     VX_mem_data_adapter #(
-      .SRC_DATA_WIDTH (`GEMM_INPUT_DATA_SIZE * 8),
-      .SRC_ADDR_WIDTH (I_SRC_ADDR_WIDTH),
-      .DST_DATA_WIDTH (LSU_WORD_SIZE * 8),
-      .DST_ADDR_WIDTH (DST_ADDR_WIDTH),
-      .SRC_TAG_WIDTH  (`GEMM_MEM_TAG_WIDTH),
-      .DST_TAG_WIDTH  (LMEM_TAG_WIDTH),
-      .REQ_OUT_BUF    (0),
-      .RSP_OUT_BUF    (0)
+      .SRC_DATA_WIDTH (LSU_WORD_SIZE * 8),
+      .SRC_ADDR_WIDTH (DST_ADDR_WIDTH),
+      .DST_DATA_WIDTH (`GEMM_INPUT_DATA_SIZE * 8),
+      .DST_ADDR_WIDTH (I_SRC_ADDR_WIDTH),
+      .SRC_TAG_WIDTH  (LMEM_TAG_WIDTH),
+      .DST_TAG_WIDTH  (LMEM_TAG_WIDTH + get_dst_tag_incr(LSU_WORD_SIZE * 8, `GEMM_INPUT_DATA_SIZE * 8)),
+      .REQ_OUT_BUF    (1),
+      .RSP_OUT_BUF    (1)
     ) input_data_adapter (
       .clk              (clk),
       .reset            (reset),
@@ -213,14 +225,14 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     // weight data adapter
     `MEM_BUS_IF_TO_WIRES(w_src, w_dma_gemm_bus_if);
     VX_mem_data_adapter #(
-      .SRC_DATA_WIDTH (`GEMM_WEIGHT_DATA_SIZE * 8),
-      .SRC_ADDR_WIDTH (W_SRC_ADDR_WIDTH),
-      .DST_DATA_WIDTH (LSU_WORD_SIZE * 8),
-      .DST_ADDR_WIDTH (DST_ADDR_WIDTH),
-      .SRC_TAG_WIDTH  (`GEMM_MEM_TAG_WIDTH),
-      .DST_TAG_WIDTH  (LMEM_TAG_WIDTH),
-      .REQ_OUT_BUF    (0),
-      .RSP_OUT_BUF    (0)
+      .SRC_DATA_WIDTH (LSU_WORD_SIZE * 8),
+      .SRC_ADDR_WIDTH (DST_ADDR_WIDTH),
+      .DST_DATA_WIDTH (`GEMM_WEIGHT_DATA_SIZE * 8),
+      .DST_ADDR_WIDTH (W_SRC_ADDR_WIDTH),
+      .SRC_TAG_WIDTH  (LMEM_TAG_WIDTH),
+      .DST_TAG_WIDTH  (LMEM_TAG_WIDTH + get_dst_tag_incr(LSU_WORD_SIZE * 8, `GEMM_WEIGHT_DATA_SIZE * 8)),
+      .REQ_OUT_BUF    (1),
+      .RSP_OUT_BUF    (1)
     ) weight_data_adapter (
       .clk              (clk),
       .reset            (reset),
@@ -252,14 +264,14 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     // scale/zero (quant param) data adapter
     `MEM_BUS_IF_TO_WIRES(sz_src, sz_dma_gemm_bus_if);
     VX_mem_data_adapter #(
-      .SRC_DATA_WIDTH (`GEMM_SCALE_ZERO_DATA_SIZE * 8),
-      .SRC_ADDR_WIDTH (SZ_SRC_ADDR_WIDTH),
-      .DST_DATA_WIDTH (LSU_WORD_SIZE * 8),
-      .DST_ADDR_WIDTH (DST_ADDR_WIDTH),
-      .SRC_TAG_WIDTH  (`GEMM_MEM_TAG_WIDTH),
-      .DST_TAG_WIDTH  (LMEM_TAG_WIDTH),
-      .REQ_OUT_BUF    (0),
-      .RSP_OUT_BUF    (0)
+      .SRC_DATA_WIDTH (LSU_WORD_SIZE * 8),
+      .SRC_ADDR_WIDTH (DST_ADDR_WIDTH),
+      .DST_DATA_WIDTH (`GEMM_SCALE_ZERO_DATA_SIZE * 8),
+      .DST_ADDR_WIDTH (SZ_SRC_ADDR_WIDTH),
+      .SRC_TAG_WIDTH  (LMEM_TAG_WIDTH),
+      .DST_TAG_WIDTH  (LMEM_TAG_WIDTH + get_dst_tag_incr(LSU_WORD_SIZE * 8, `GEMM_SCALE_ZERO_DATA_SIZE * 8)),
+      .REQ_OUT_BUF    (1),
+      .RSP_OUT_BUF    (1)
     ) quant_param_data_adapter (
       .clk              (clk),
       .reset            (reset),
@@ -295,10 +307,10 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
       .SRC_ADDR_WIDTH (O_SRC_ADDR_WIDTH),
       .DST_DATA_WIDTH (LSU_WORD_SIZE * 8),
       .DST_ADDR_WIDTH (DST_ADDR_WIDTH),
-      .SRC_TAG_WIDTH  (`GEMM_MEM_TAG_WIDTH),
-      .DST_TAG_WIDTH  (LMEM_TAG_WIDTH),
-      .REQ_OUT_BUF    (0),
-      .RSP_OUT_BUF    (0)
+      .SRC_TAG_WIDTH  (LMEM_TAG_WIDTH),
+      .DST_TAG_WIDTH  (LMEM_TAG_WIDTH + get_dst_tag_incr(`GEMM_OUTPUT_DATA_SIZE * 8, LSU_WORD_SIZE * 8)),
+      .REQ_OUT_BUF    (1),
+      .RSP_OUT_BUF    (1)
     ) output_data_adapter (
       .clk              (clk),
       .reset            (reset),

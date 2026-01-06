@@ -761,6 +761,9 @@ package VX_gpu_pkg;
     localparam LSU_NUM_REQS	        = `NUM_LSU_BLOCKS * `NUM_LSU_LANES;
     localparam LMEM_TAG_WIDTH       = LSU_TAG_WIDTH + `CLOG2(`NUM_LSU_BLOCKS);
 
+    ///////////////////////// GEMM Unit Parameters ///////////////////////////
+    localparam GEMM_MEM_TAG_WIDTH = LSU_TAG_WIDTH + `CLOG2(`NUM_LSU_BLOCKS);
+
     ////////////////////////// Icache Parameters //////////////////////////////
 
     // Word size in bytes
