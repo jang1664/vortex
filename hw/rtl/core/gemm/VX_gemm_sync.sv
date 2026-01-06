@@ -34,8 +34,6 @@ module VX_gemm_sync import VX_gpu_pkg::*; #(
   generate
     for(genvar i=0; i<N_CHILDREN; i=i+1) begin : GEN_CHILDREN
       assign gemm_fsm_mas_if[i].ctrl = '0;
-      assign gemm_fsm_mas_if[i].flag.done = 1'b0;
-      assign gemm_fsm_mas_if[i].flag.idle = 1'b1;
     end
 
     for(genvar j=0; j<N_NODE; j=j+1) begin : GEN_NODES

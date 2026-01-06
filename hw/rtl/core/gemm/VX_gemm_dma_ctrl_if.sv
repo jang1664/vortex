@@ -12,8 +12,8 @@ interface VX_gemm_dma_ctrl_if import VX_gpu_pkg::*; ();
   );
 
   modport slave (
-    output start,
-    input idle, done
+    input start,
+    output idle, done
   );
   
   

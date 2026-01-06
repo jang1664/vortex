@@ -15,6 +15,6 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
   assign gemm_dma_ctrl_if.done = 1'b1;
   assign dma_if.req_valid = 1'b0;
   assign dma_if.rsp_ready = 1'b1;
-  assign gemm_sync_if.valid = '0;
+  assign gemm_sync_if.ready = '1;
 
 endmodule
