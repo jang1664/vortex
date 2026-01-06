@@ -1,14 +1,15 @@
 /*
-  control registers per warp.
-  arbitrate warps for gemm unit occupancy.
-
-  Future improvements:
-    - support for LMEM multi port
+  - GEMM 연산을 담당하는 노드.
+  - LMEM과 GEMM unit 사이의 data width converter 사용.
+  - 간단하게 하기 위해 single port로 구현.
+  - top control과 cmd control을 구현해서 control 수행.
+    - cmd control은 cmd를 완료할 때, top controller에게 sync 신호를 보냄.
 */
 `include "VX_define.vh"
 
 module VX_gemm_node import VX_gpu_pkg::*; #(
-    parameter `STRING INSTANCE_ID = ""
+    parameter `STRING INSTANCE_ID = "",
+    parameter N_CHILDREN  = 3
 ) (
     // Clock
     input wire              clk,
@@ -19,6 +20,8 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     VX_lsu_mem_if.master    dma_if,     // to DMA engine
     VX_mem_bus_if.master    lmem_bus_if // for inputs, weights, scale/zero, output
 );
+
+    localparam N_NODE   = 5;
 
     VX_mem_bus_if # (
       .DATA_SIZE(`GEMM_INPUT_DATA_SIZE),
@@ -80,6 +83,9 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     VX_lmem_dma_ctrl_if weight_dma_ctrl_if ();
     VX_lmem_dma_ctrl_if quant_param_dma_ctrl_if ();
     VX_lmem_dma_ctrl_if output_dma_ctrl_if ();
+    VX_gemm_dma_ctrl_if gemm_dma_ctrl_if ();
+
+    VX_gemm_sync_if gemm_sync_if[N_NODE] ();// from gemm/dma node
 
     // Connect gemm_ctrl_if to DMA ctrl interfaces
     assign input_dma_ctrl_if.start = gemm_ctrl_if.input_read_ctrl.start;
@@ -121,6 +127,10 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     assign output_dma_ctrl_if.seg_size = 32'd1;
     assign gemm_ctrl_if.output_write_flag.idle = output_dma_ctrl_if.idle;
     assign gemm_ctrl_if.output_write_flag.done = output_dma_ctrl_if.done;
+
+    assign gemm_dma_ctrl_if.start = gemm_ctrl_if.dma_ctrl.start;
+    assign gemm_ctrl_if.dma_flag.idle = gemm_dma_ctrl_if.idle;
+    assign gemm_ctrl_if.dma_flag.done = gemm_dma_ctrl_if.done;
 
     VX_mem_bus_if #(
       .DATA_SIZE(LSU_WORD_SIZE),
@@ -354,12 +364,15 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
 
     // gemm top ctrl
     VX_gemm_ctrl #(
-      .INSTANCE_ID(INSTANCE_ID)
+      .INSTANCE_ID(INSTANCE_ID),
+      .N_CHILDREN(N_CHILDREN),
+      .N_NODE(N_NODE)
     ) u_VX_gemm_ctrl (
       .clk(clk),
       .reset(reset),
       .cfg_reg_if(cfg_reg_if),
-      .gemm_ctrl_if(gemm_ctrl_if)
+      .gemm_ctrl_if(gemm_ctrl_if),
+      .gemm_sync_slv_if(gemm_sync_if)
     );
 
     // LMEM DMA instances for LMEM <-> GEMM data transfer
@@ -373,6 +386,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
       .clk(clk),
       .reset(reset),
       .ctrl_if(input_dma_ctrl_if),
+      .gemm_sync_if(gemm_sync_if[0]),
       .lmem_bus_if(i_dma_lmem_bus_if),
       .gemm_bus_if(i_dma_gemm_bus_if)
     );
@@ -387,6 +401,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
       .clk(clk),
       .reset(reset),
       .ctrl_if(weight_dma_ctrl_if),
+      .gemm_sync_if(gemm_sync_if[1]),
       .lmem_bus_if(w_dma_lmem_bus_if),
       .gemm_bus_if(w_dma_gemm_bus_if)
     );
@@ -401,6 +416,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
       .clk(clk),
       .reset(reset),
       .ctrl_if(quant_param_dma_ctrl_if),
+      .gemm_sync_if(gemm_sync_if[2]),
       .lmem_bus_if(sz_dma_lmem_bus_if),
       .gemm_bus_if(sz_dma_gemm_bus_if)
     );
@@ -415,6 +431,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
       .clk(clk),
       .reset(reset),
       .ctrl_if(output_dma_ctrl_if),
+      .gemm_sync_if(gemm_sync_if[3]),
       .lmem_bus_if(o_dma_lmem_bus_if),
       .gemm_bus_if(o_dma_gemm_bus_if)
     );
@@ -425,7 +442,8 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     ) u_VX_gemm_dma_ctrl (
       .clk(clk),
       .reset(reset),
-      .gemm_ctrl_if(gemm_ctrl_if),
+      .gemm_dma_ctrl_if(gemm_dma_ctrl_if),
+      .gemm_sync_if(gemm_sync_if[4]),
       .dma_if(dma_if)
     );
 

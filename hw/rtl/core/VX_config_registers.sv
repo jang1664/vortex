@@ -1,10 +1,13 @@
 /*
-  VX_config_registers.sv
-
-  Configuration registers for DMA/GEMM control
-  - Receives lsu_mem_if for R/W access
-  - Outputs entire register set as wire
-  - Stalls on start register write until queue_ready is asserted
+  - Configuration registers for DMA/GEMM control
+    - Receives lsu_mem_if for R/W access
+    - Outputs entire register set as wire
+    - register에 첫번째 register를 start하라는 걸 의미하는 register로 사용. START_BIT 파라미터로 첫번째 register에서 몇번째 bit이 start에 해당하는 bit인지 결정.
+      - control과 관련된 bit이 추가적으로 필요하면 첫번째 register를 사용해서 구현 가능.
+      - start를 의미하는 곳에 1을 write하는 request가 lsu_mem_if에서 들어온 경우에, config register는 뒷단에 있는 node가 free할 때 까지 write request에 대한 gnt를 pending해야함.
+        - 뒷단에 있는 node가 free되면, config register는 start signal을 1로 설정하고, 뒷단에 있는 node가 start signal을 받아서 동작을 시작함.
+    - write request를 날리는 master가 여러개인 경우가 일반적일 것임. (from SIMT core + gemm node 등)
+      - 각 master별로 독립적인 register set을 구현. regs_out으로 보내는 register set은 내부에서 Round Robin해서 arbitrate함.
 */
 
 `include "VX_define.vh"

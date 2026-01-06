@@ -751,6 +751,19 @@ package VX_gpu_pkg;
         logic [PERF_CTR_BITS-1:0] load_latency;
    } pipeline_perf_t;
 
+   ////////////////////////// gemm related types    ///////////////////////////
+   typedef struct packed {
+       logic [UUID_WIDTH-1:0]    uuid;
+       logic [NW_WIDTH-1:0]      wid;
+       logic [PC_BITS-1:0]       pc;
+       logic [31:0]              instr;
+       logic [NUM_REGS_BITS-1:0] rs1;
+       logic [NUM_REGS_BITS-1:0] rs2;
+       logic [NUM_REGS_BITS-1:0] rd;
+       logic [`XLEN-1:0]         rs1_data;
+       logic [`XLEN-1:0]         rs2_data;
+   } gemm_unified_cmd_t; // it can be union
+
     ///////////////////////// LSU memory Parameters ///////////////////////////
 
     localparam LSU_WORD_SIZE        = XLENB;

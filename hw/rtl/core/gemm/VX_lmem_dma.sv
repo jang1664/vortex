@@ -23,6 +23,7 @@ module VX_lmem_dma import VX_gpu_pkg::*; #(
 
   // Control interface
   VX_lmem_dma_ctrl_if.slave ctrl_if,
+  VX_gemm_sync_if.master gemm_sync_if,
 
   // LMEM memory bus interface
   VX_mem_bus_if.master lmem_bus_if,
@@ -40,6 +41,8 @@ module VX_lmem_dma import VX_gpu_pkg::*; #(
   assign gemm_bus_if.req_valid = 1'b0;
   assign gemm_bus_if.req_data  = '0;
   assign gemm_bus_if.rsp_ready = 1'b1;
+
+  assign gemm_sync_if.valid = 1'b0;
 
 
 endmodule

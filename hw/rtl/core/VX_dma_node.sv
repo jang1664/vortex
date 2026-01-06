@@ -1,14 +1,14 @@
 /*
-  VX_dma.sv
+  - DMA Engine between data cache and local memory
+  - cfg_reg를 받아서 동작함. cfg_reg에는 stride, bound, segment size, padding 등 정보가 들어있음.
+    - start, idle, done signal을 이용해서 시작 시점을 제어함.
+    - 내부에 wid, tid등 정보도 필요하면 추가해서 현재 요청이 어떤 워크 아이템, 스레드인지 추적할 수 있도록 함.
+  - 3D nested loop를 돌면서 LMEM <-> DCACHE 간 데이터 전송을 수행함.
+    - 각 차원별로 stride, bound, segment size, padding 정보를 이용해서 주소 계산을 수행함.
+    - 단일 포트 LMEM과 DCACHE 인터페이스를 가정함.
 
-  DMA Engine for VX Core
-  dcache <-> local memory
-
-  control registers per warp
-
-  Future improvements:
-    - support multiple port
-
+  - Future improvements:
+    - support multiple port for better performance
 */
 
 `include "VX_define.vh"
