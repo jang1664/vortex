@@ -32,12 +32,14 @@ module VX_lmem_dma import VX_gpu_pkg::*; #(
   assign ctrl_if.idle = 1'b1;
   assign ctrl_if.done = 1'b1;
 
-  assign lmem_bus_if.req_ready = 1'b1;
-  assign lmem_bus_if.rsp_valid = 1'b0;
-  assign lmem_bus_if.rsp_data  = '0;
-  assign gemm_bus_if.req_ready = 1'b1;
-  assign gemm_bus_if.rsp_valid = 1'b0;
-  assign gemm_bus_if.rsp_data  = '0;
+  // Master modport outputs: req_valid, req_data, rsp_ready
+  assign lmem_bus_if.req_valid = 1'b0;
+  assign lmem_bus_if.req_data  = '0;
+  assign lmem_bus_if.rsp_ready = 1'b1;
+
+  assign gemm_bus_if.req_valid = 1'b0;
+  assign gemm_bus_if.req_data  = '0;
+  assign gemm_bus_if.rsp_ready = 1'b1;
 
 
 endmodule

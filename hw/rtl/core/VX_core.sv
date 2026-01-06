@@ -249,7 +249,7 @@ module VX_core import VX_gpu_pkg::*; #(
     `endif
         .lsu_mem_if        (lsu_mem_if),
         .dcache_bus_if     (dcache_bus_if),
-        .dma_ctrl_if       (dma_ctrl_if[0:`NUM_LSU_BLOCKS]),
+        .dma_ctrl_if       (dma_ctrl_if[0:`NUM_LSU_BLOCKS-1]),
         .gemm_ctrl_if      (gemm_ctrl_if),
         .dma_local_data_if (dma_local_data_if),
         .dma_global_data_if(dma_global_data_if),

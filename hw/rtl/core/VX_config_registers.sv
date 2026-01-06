@@ -31,8 +31,11 @@ module VX_config_registers import VX_gpu_pkg::*; #(
     end
   endgenerate
 
-  assign regs_out.ready = 1'b1;
-  assign regs_out.regs = '0;
+  // Master modport outputs: regs, wid, tid, valid
+  assign regs_out.regs  = '0;
+  assign regs_out.wid   = '0;
+  assign regs_out.tid   = '0;
+  assign regs_out.valid = 1'b0;
 
   // config registers
 
