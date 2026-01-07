@@ -1,6 +1,6 @@
 `timescale 1ns / 1ps
 
-module shifter #(
+module VX_shifter #(
     parameter HIDDEN_WIDTH = 1,
     parameter MANTISSA_WIDTH = -1,
     parameter EXTRA_WIDTH = -1,
@@ -32,6 +32,7 @@ module shifter #(
     shift_data_o = data_out_inst;
   end
 
+`ifdef SYNOPSYS
   DW_shifter #(
       .data_width(data_width),
       .sh_width  (sh_width),
@@ -44,5 +45,14 @@ module shifter #(
       .sh_mode(1'b1),
       .data_out(data_out_inst)
   );
+`else
+  always_comb begin
+    if (inst_sh_range >= data_width) begin
+      data_out_inst = {data_width{1'b0}};
+    end else begin
+      data_out_inst = data_i >> inst_sh_range;
+    end
+  end
+`endif
 
 endmodule

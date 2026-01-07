@@ -1,6 +1,6 @@
 `timescale 1ns/1ps
 
-module hidden # (
+module VX_hidden # (
     parameter HIDDEN_WIDTH = 1,
     parameter MANTISSA_WIDTH = -1,
     parameter EXP_WIDTH = -1

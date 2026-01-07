@@ -1,6 +1,6 @@
 `timescale 1ns / 1ps
 
-module compare #(
+module VX_compare #(
     parameter EXP_WIDTH = -1
 ) (
     input logic [EXP_WIDTH-1:0] data_a_i,
