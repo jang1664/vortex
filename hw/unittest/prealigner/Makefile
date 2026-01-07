@@ -48,20 +48,23 @@ include $(SIM_EXEC).mk
 
 fst2vcd:
 	for file in reports/*.fst; do \
-	  fst2vcd $$file reports/$${file##*/}.vcd; \
+	  fst2vcd $$file -o reports/$${file##*/}.vcd; \
 	done
 
 vcd2fsdb:
 	for file in reports/*.vcd; do \
-	  vcd2fsdb -input $$file -output reports/$${file##*/}.fsdb; \
+	  vcd2fsdb $$file -o reports/$${file##*/}.fsdb; \
 	done
 
 fst2fsdb:
 	for file in reports/*.fst; do \
-	  fst2vcd $$file reports/$${file##*/}.vcd; \
-	  vcd2fsdb -input reports/$${file##*/}.vcd -output reports/$${file##*/}.fsdb; \
+	  fst2vcd $$file -o reports/$${file##*/}.vcd; \
+	  vcd2fsdb  reports/$${file##*/}.vcd -o reports/$${file##*/}.fsdb; \
 	  rm reports/$${file##*/}.vcd; \
 	done
 
 clean:
-	rm -rf obj_dir reports logs simv novas* ucli* verdi* csrc* simv.daidir*
+	rm -rf obj_dir 
+	rm -rf reports logs 
+	rm -rf simv novas* ucli* verdi* csrc* simv.daidir*
+	rm -rf vcd2fsdb*
