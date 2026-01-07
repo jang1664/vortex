@@ -1,4 +1,5 @@
 `timescale 1ns / 1ps
+`include "VX_platform.vh"
 /*
 number of stage = $clog2(NUM_UNIT)
 ID of stage = 0 ~ $clog2(NUM_UNIT) - 1
@@ -35,13 +36,33 @@ module VX_prealigner #(
 
   localparam NUM_STAGE = $clog2(NUM_UNIT);
   localparam SEL_BITW = SEL_BLOCK_NUM * BLOCK_SIZE;
+  localparam HIDDEN_MAN_WIDTH = MANTISSA_WIDTH + HIDDEN_WIDTH;
+  localparam SHIFT_MAN_WIDTH = HIDDEN_WIDTH + MANTISSA_WIDTH + EXTRA_WIDTH;
 
+  // Stage 1 signals
   logic [NUM_UNIT-1:0][ACT_WIDTH-1:0] data_i;
   logic [2*NUM_UNIT-1-1:0][EXP_WIDTH-1:0] comp_out;
   logic [NUM_UNIT-1:0][MANTISSA_WIDTH-1:0] mantissa;
   logic [NUM_UNIT-1:0][EXP_WIDTH-1:0] exp;
-  logic [NUM_UNIT-1:0][MANTISSA_WIDTH+HIDDEN_WIDTH-1:0] hidden_man;
-  logic [NUM_UNIT-1:0][HIDDEN_WIDTH+MANTISSA_WIDTH+EXTRA_WIDTH-1:0] shift_man;
+  logic [NUM_UNIT-1:0][HIDDEN_MAN_WIDTH-1:0] hidden_man;
+
+  // Stage 1 pipeline output signals
+  logic valid_s1;
+  logic ready_s1;
+  logic [EXP_WIDTH-1:0] max_exp_q;
+  logic [NUM_UNIT-1:0][HIDDEN_MAN_WIDTH-1:0] hidden_man_q;
+  logic [NUM_UNIT-1:0][ACT_WIDTH-1:0] data_i_q;
+
+  // Stage 2 signals
+  logic [NUM_UNIT-1:0][SHIFT_MAN_WIDTH-1:0] shift_man;
+
+  // Stage 2 pipeline output signals
+  logic valid_s2;
+  logic ready_s2;
+  logic [NUM_UNIT-1:0][SHIFT_MAN_WIDTH-1:0] shift_man_q;
+  logic [NUM_UNIT-1:0][BLK_BITW-1:0] lsb_blk_idx_q;
+  logic [NUM_UNIT-1:0] sign_q;
+  logic [EXP_WIDTH-1:0] max_exp_s2_q;
 
   // parsing input
   generate
@@ -80,12 +101,33 @@ module VX_prealigner #(
     end
   endgenerate
 
+  // Stage 1 -> Stage 2 elastic buffer
+  localparam S1_DATA_WIDTH = EXP_WIDTH + NUM_UNIT * HIDDEN_MAN_WIDTH + NUM_UNIT * ACT_WIDTH;
+  logic [S1_DATA_WIDTH-1:0] s1_data_in, s1_data_out;
+
+  assign s1_data_in = {comp_out[0], hidden_man, data_i};
+
+  VX_elastic_buffer #(
+    .DATAW (S1_DATA_WIDTH),
+    .SIZE  (1)
+  ) u_s1_pipe (
+    .clk       (clk_i),
+    .reset     (~resetn_i),
+    .valid_in  (valid_i),
+    .ready_in  (ready_o),
+    .data_in   (s1_data_in),
+    .data_out  (s1_data_out),
+    .ready_out (ready_s1),
+    .valid_out (valid_s1)
+  );
+
+  assign {max_exp_q, hidden_man_q, data_i_q} = s1_data_out;
+
   // second stage
   //   - do shift
   //   - find valid block indices
   logic [NUM_UNIT-1:0][BLK_BITW-1:0] lsb_blk_idx;
   logic [NUM_UNIT-1:0] sign;
-  logic [NUM_UNIT-1:0][SEL_BITW-1:0] sel_portion;
   generate
     for (genvar i = 0; i < NUM_UNIT; i += 1) begin : unit
       localparam data_width = HIDDEN_WIDTH + MANTISSA_WIDTH + EXTRA_WIDTH;
@@ -95,17 +137,17 @@ module VX_prealigner #(
       logic [sh_width-1:0] shift_amount;
       logic [BLK_IDX_NUM-1:0] is_smaller_blk_idx;
       logic [SHIFT_WIDTH-1:0] enc; // position of first one from MSB side
-      logic no_exist_one; 
-      logic valid_out;
+      logic no_exist_one;
+      logic valid_out_lzc;
 
-      assign shift_amount = comp_out[0] - data_i[i][EXP_WIDTH+MANTISSA_WIDTH-1:MANTISSA_WIDTH];
+      assign shift_amount = max_exp_q - data_i_q[i][EXP_WIDTH+MANTISSA_WIDTH-1:MANTISSA_WIDTH];
 
       VX_shifter #(
         .MANTISSA_WIDTH(MANTISSA_WIDTH),
         .EXTRA_WIDTH(EXTRA_WIDTH),
         .EXP_WIDTH(EXP_WIDTH)
       ) u_shifter (
-        .data_i({hidden_man[i], {EXTRA_WIDTH{1'b0}}}),
+        .data_i({hidden_man_q[i], {EXTRA_WIDTH{1'b0}}}),
         .shift_amount_i(shift_amount),
         .shift_data_o(shift_man[i])
       );
@@ -131,30 +173,108 @@ module VX_prealigner #(
       ) u_lzc (
         .data_in(is_smaller_blk_idx),
         .data_out(enc),
-        .valid_out(valid_out)
+        .valid_out(valid_out_lzc)
       );
-      assign no_exist_one = ~valid_out;
+      assign no_exist_one = ~valid_out_lzc;
 `endif
 
       assign lsb_blk_idx[i] = no_exist_one ? 0 : (BLOCK_NUM - 1) - enc - (SEL_BLOCK_NUM - 1);
+      assign sign[i] = data_i_q[i][SIGN_WIDTH+EXP_WIDTH+MANTISSA_WIDTH-1];
     end
   endgenerate
 
-  // third stage 
+  // Stage 2 -> Stage 3 elastic buffer
+  localparam S2_DATA_WIDTH = NUM_UNIT * SHIFT_MAN_WIDTH + NUM_UNIT * BLK_BITW + NUM_UNIT + EXP_WIDTH;
+  logic [S2_DATA_WIDTH-1:0] s2_data_in, s2_data_out;
+
+  assign s2_data_in = {shift_man, lsb_blk_idx, sign, max_exp_q};
+
+  VX_elastic_buffer #(
+    .DATAW (S2_DATA_WIDTH),
+    .SIZE  (1)
+  ) u_s2_pipe (
+    .clk       (clk_i),
+    .reset     (~resetn_i),
+    .valid_in  (valid_s1),
+    .ready_in  (ready_s1),
+    .data_in   (s2_data_in),
+    .data_out  (s2_data_out),
+    .ready_out (ready_s2),
+    .valid_out (valid_s2)
+  );
+
+  assign {shift_man_q, lsb_blk_idx_q, sign_q, max_exp_s2_q} = s2_data_out;
+
+  // third stage
   //   - transform to 2's complement and concat with block idx
+  logic [NUM_UNIT-1:0][SEL_BITW-1:0] sel_portion;
+  logic [NUM_UNIT-1:0][ALIGNED_WIDTH-1:0] int_data;
+  logic [NUM_UNIT-1:0][BLK_BITW-1:0] blk_idx;
+
   generate
     for (genvar i = 0; i < NUM_UNIT; i += 1) begin : g_output
-        assign sign[i] = data_i[i][SIGN_WIDTH+EXP_WIDTH+MANTISSA_WIDTH-1];
-        assign sel_portion[i] = shift_man[i][BLOCK_SIZE*lsb_blk_idx[i]+:SEL_BITW];
-        assign int_data_o[i] = (sign[i]) ? {1'b0, sel_portion[i]} : ~{1'b0, sel_portion[i]} + 1'b1;
-        assign blk_idx_o[i] = lsb_blk_idx[i];
+        assign sel_portion[i] = shift_man_q[i][BLOCK_SIZE*lsb_blk_idx_q[i]+:SEL_BITW];
+        assign int_data[i] = (sign_q[i]) ? {1'b0, sel_portion[i]} : ~{1'b0, sel_portion[i]} + 1'b1;
+        assign blk_idx[i] = lsb_blk_idx_q[i];
     end
   endgenerate
 
-  assign max_exp_o = comp_out[0];
+  // Stage 3 -> Output elastic buffer
+  localparam S3_DATA_WIDTH = NUM_UNIT * ALIGNED_WIDTH + NUM_UNIT * BLK_BITW + EXP_WIDTH;
+  logic [S3_DATA_WIDTH-1:0] s3_data_in, s3_data_out;
 
-`ifdef TRACE_GEMM
+  assign s3_data_in = {int_data, blk_idx, max_exp_s2_q};
 
+  VX_elastic_buffer #(
+    .DATAW (S3_DATA_WIDTH),
+    .SIZE  (1)
+  ) u_s3_pipe (
+    .clk       (clk_i),
+    .reset     (~resetn_i),
+    .valid_in  (valid_s2),
+    .ready_in  (ready_s2),
+    .data_in   (s3_data_in),
+    .data_out  (s3_data_out),
+    .ready_out (ready_i),
+    .valid_out (valid_o)
+  );
+
+  assign {int_data_o, blk_idx_o, max_exp_o} = s3_data_out;
+
+`ifdef DBG_TRACE_GEMM
+  always @(posedge clk_i) begin
+    // Stage 0 -> Stage 1 handshake (input to first elastic buffer)
+    if (valid_i && ready_o) begin
+      `TRACE(3, ("%t: PREALIGNER S0->S1: max_exp=0x%0h\n", $time, comp_out[0]))
+      for (integer i = 0; i < NUM_UNIT; i++) begin
+        `TRACE(3, ("  unit[%0d]: data_i=0x%0h, hidden_man=0x%0h\n", i, data_i[i], hidden_man[i]))
+      end
+    end
+
+    // Stage 1 -> Stage 2 handshake
+    if (valid_s1 && ready_s1) begin
+      `TRACE(3, ("%t: PREALIGNER S1->S2: max_exp_q=0x%0h\n", $time, max_exp_q))
+      for (integer i = 0; i < NUM_UNIT; i++) begin
+        `TRACE(3, ("  unit[%0d]: shift_man=0x%0h, lsb_blk_idx=%0d, sign=%0b\n", i, shift_man[i], lsb_blk_idx[i], sign[i]))
+      end
+    end
+
+    // Stage 2 -> Stage 3 handshake
+    if (valid_s2 && ready_s2) begin
+      `TRACE(3, ("%t: PREALIGNER S2->S3: max_exp_s2_q=0x%0h\n", $time, max_exp_s2_q))
+      for (integer i = 0; i < NUM_UNIT; i++) begin
+        `TRACE(3, ("  unit[%0d]: int_data=0x%0h, blk_idx=%0d\n", i, int_data[i], blk_idx[i]))
+      end
+    end
+
+    // Stage 3 -> Output handshake
+    if (valid_o && ready_i) begin
+      `TRACE(3, ("%t: PREALIGNER OUTPUT: max_exp_o=0x%0h\n", $time, max_exp_o))
+      for (integer i = 0; i < NUM_UNIT; i++) begin
+        `TRACE(3, ("  unit[%0d]: int_data_o=0x%0h, blk_idx_o=%0d\n", i, int_data_o[i], blk_idx_o[i]))
+      end
+    end
+  end
 `endif
 
 endmodule

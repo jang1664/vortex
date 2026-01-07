@@ -30,6 +30,10 @@ module tb_VX_prealigner;
   logic [NUM_UNIT-1:0][ALIGNED_WIDTH-1:0] int_data_o;
   logic [NUM_UNIT-1:0][BLK_BITW-1:0] blk_idx_o;
   logic [EXP_WIDTH-1:0] max_exp_o;
+  logic valid_i;
+  logic ready_o;
+  logic valid_o;
+  logic ready_i;
 
   integer rpt_fd;
   integer log_fd;
@@ -52,7 +56,11 @@ module tb_VX_prealigner;
       .fp_data_i (fp_data_i),
       .int_data_o(int_data_o),
       .blk_idx_o (blk_idx_o),
-      .max_exp_o (max_exp_o)
+      .max_exp_o (max_exp_o),
+      .valid_i   (valid_i),
+      .ready_o   (ready_o),
+      .valid_o   (valid_o),
+      .ready_i   (ready_i)
   );
 
 
@@ -118,6 +126,8 @@ module tb_VX_prealigner;
     $display("START SIMPLE TEST"); 
     $display("=====================================================================");
     resetn_i = 1'b0;
+    valid_i = 1'b0;
+    ready_i = 1'b1;
     `WAIT_POSEDGE(clk_i, PERIOD);
     resetn_i = 1'b1;
 
@@ -126,6 +136,7 @@ module tb_VX_prealigner;
       $display("please set NUM_UNIT = 4 for func sim. current one is %0d", NUM_UNIT);
       $finish;
     end
+    valid_i = 1'b1;
     fp_data_i[0] = {1'b0, 5'(20), 10'(0)};
     fp_data_i[1] = {1'b0, 5'(15), 10'(0)};
     fp_data_i[2] = {1'b0, 5'(10), 10'(0)};
@@ -162,7 +173,7 @@ module tb_VX_prealigner;
     resetn_i = 1'b1;
 
     for (int i = 0; i < CYCLE; i++) begin
-      $random(fp_data_i);
+      fp_data_i = $urandom();
       `WAIT_POSEDGE(clk_i, PERIOD);
     end
   endtask
