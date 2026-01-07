@@ -1,3 +1,8 @@
 logs/
 reports/
 obj_dir*/
+csrc/
+simv
+simv.daidir/
+ucli.key
+verdi_config_file

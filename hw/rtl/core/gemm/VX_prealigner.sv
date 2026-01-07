@@ -1,25 +1,25 @@
 `timescale 1ns / 1ps
-`include "VX_platform.vh"
+`include "VX_define.vh"
 /*
 number of stage = $clog2(NUM_UNIT)
 ID of stage = 0 ~ $clog2(NUM_UNIT) - 1
 
 origin of input id of stage i = 2**(i + 1) - 1
 */
-module VX_prealigner #(
-  parameter  HIDDEN_WIDTH   = 1,
-  parameter  SIGN_WIDTH     = 1,
-  parameter  MANTISSA_WIDTH = -1,
-  parameter  EXTRA_WIDTH    = -1,
-  parameter  EXP_WIDTH      = -1,
-  parameter  ACT_WIDTH      = -1,
-  parameter  ALIGNED_WIDTH  = -1,
-  parameter  NUM_UNIT       = -1,
-  parameter  BLOCK_SIZE     = -1,
-  parameter  BLOCK_NUM      = -1,
-  parameter  SEL_BLOCK_NUM  = -1,
-  localparam BLK_IDX_NUM    = BLOCK_NUM - SEL_BLOCK_NUM + 1,
-  localparam BLK_BITW       = $clog2(BLK_IDX_NUM)
+module VX_prealigner import VX_gpu_pkg::*; #(
+  parameter  NUM_UNIT       = 4,
+  localparam int HIDDEN_WIDTH   = `HIDDEN_WIDTH,
+  localparam int SIGN_WIDTH     = `IFP_SIGN_WIDTH,
+  localparam int EXP_WIDTH      = `IFP_EXP_WIDTH,
+  localparam int MANTISSA_WIDTH = `IFP_MAN_WIDTH,
+  localparam int ACT_WIDTH      = `IFP_WIDTH,
+  localparam int EXTRA_WIDTH    = `EXTRA_BIT_WIDTH,
+  localparam int BLOCK_SIZE     = `BLOCK_SIZE,
+  localparam int ALIGNED_WIDTH  = `SEL_BLOCK_WIDTH,
+  localparam int BLOCK_NUM      = `BLOCK_NUM,
+  localparam int SEL_BLOCK_NUM  = `SEL_BLOCK_NUM,
+  localparam int BLK_IDX_NUM    = `BLK_IDX_NUM,
+  localparam int BLK_BITW       = `BLOCK_IDX_WIDTH
 ) (
   input logic clk_i,
   input logic resetn_i,
@@ -34,10 +34,10 @@ module VX_prealigner #(
   input logic ready_i
 );
 
-  localparam NUM_STAGE = $clog2(NUM_UNIT);
-  localparam SEL_BITW = SEL_BLOCK_NUM * BLOCK_SIZE;
-  localparam HIDDEN_MAN_WIDTH = MANTISSA_WIDTH + HIDDEN_WIDTH;
-  localparam SHIFT_MAN_WIDTH = HIDDEN_WIDTH + MANTISSA_WIDTH + EXTRA_WIDTH;
+  localparam int NUM_STAGE = $clog2(NUM_UNIT);
+  localparam int SEL_BITW = SEL_BLOCK_NUM * BLOCK_SIZE;
+  localparam int HIDDEN_MAN_WIDTH = MANTISSA_WIDTH + HIDDEN_WIDTH;
+  localparam int SHIFT_MAN_WIDTH = HIDDEN_WIDTH + MANTISSA_WIDTH + EXTRA_WIDTH;
 
   // Stage 1 signals
   logic [NUM_UNIT-1:0][ACT_WIDTH-1:0] data_i;
@@ -214,6 +214,7 @@ module VX_prealigner #(
   generate
     for (genvar i = 0; i < NUM_UNIT; i += 1) begin : g_output
         assign sel_portion[i] = shift_man_q[i][BLOCK_SIZE*lsb_blk_idx_q[i]+:SEL_BITW];
+        // assign sel_portion[i] = shift_man_q[i][BLOCK_SIZE*lsb_blk_idx_q[i]+:2];
         assign int_data[i] = (sign_q[i]) ? {1'b0, sel_portion[i]} : ~{1'b0, sel_portion[i]} + 1'b1;
         assign blk_idx[i] = lsb_blk_idx_q[i];
     end

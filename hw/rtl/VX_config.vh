@@ -963,4 +963,41 @@
 `define ARCHITECTURE_ID     0
 `define IMPLEMENTATION_ID   0
 
+// GEMM Unit Parameters ///////////////////////////////////////////////////////
+`define HIDDEN_WIDTH 1 
+`define IFP_WIDTH 16
+`define IFP_SIGN_WIDTH 1
+`define IFP_EXP_WIDTH 5
+`define IFP_MAN_WIDTH 10
+
+`define W_BIT_WIDTH 4
+
+`define EXTRA_BIT_WIDTH (`W_BIT_WIDTH + 2 + (23-10)) // 19
+
+`define ALIGNED_MAN_FULL_WIDTH (`HIDDEN_WIDTH + `IFP_MAN_WIDTH + `EXTRA_BIT_WIDTH) // 30
+`define ALIGNED_MAN_VALI_WIDTH (`HIDDEN_WIDTH + `IFP_MAN_WIDTH) // 11
+
+`define BLOCK_SIZE 1
+`define BLOCK_NUM  ((`ALIGNED_MAN_FULL_WIDTH + `BLOCK_SIZE - 1) / `BLOCK_SIZE) // 30
+`define SEL_BLOCK_NUM ((`ALIGNED_MAN_VALI_WIDTH / `BLOCK_SIZE) + 1)
+`define BLK_IDX_NUM (`BLOCK_NUM - `SEL_BLOCK_NUM + 1)
+`define BLOCK_IDX_WIDTH `CLOG2(`BLK_IDX_NUM)
+`define SEL_BLOCK_WIDTH (`SEL_BLOCK_NUM * `BLOCK_SIZE + 1)
+
+`define MXU_ROW 16
+`define MXU_COL 16
+`define MXU_ROW_TILE 1
+`define MXU_COL_TILE 1
+
+`define GEMM_INPUT_DATA_SIZE      (2*`MXU_ROW) // 32 bytes 
+`define GEMM_WEIGHT_DATA_SIZE     (`MXU_COL/2) // 8 bytes
+`define GEMM_SCALE_ZERO_DATA_SIZE (2*`MXU_COL) // 32 bytes
+`define GEMM_OUTPUT_DATA_SIZE     (2*`MXU_COL) // 32 bytes
+`define GEMM_PSUM_DATA_SIZE       (4*`MXU_COL) // 64 bytes
+
+`define GEMM_CFG_REG_NUM 16
+
+// DMA parameters
+`define DMA_CFG_REG_NUM 16
+
 `endif // VX_CONFIG_VH

@@ -15,7 +15,8 @@ TIME_SCALE=1ns/1ps
 TOP_MODULE := tb_VX_prealigner
 
 TB   := tb_VX_prealigner.sv
-RTLS := $(RTL_DIR)/core/gemm/VX_prealigner.sv \
+RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
+				$(RTL_DIR)/core/gemm/VX_prealigner.sv \
 				$(RTL_DIR)/core/gemm/VX_compare.sv \
 				$(RTL_DIR)/core/gemm/VX_shifter.sv \
 				$(RTL_DIR)/libs/VX_find_first.sv \
@@ -25,9 +26,9 @@ RTLS := $(RTL_DIR)/core/gemm/VX_prealigner.sv \
 				$(RTL_DIR)/libs/VX_pipe_buffer.sv \
 				$(RTL_DIR)/libs/VX_pipe_register.sv \
 				$(RTL_DIR)/libs/VX_shift_register.sv
-PARAMS_ := NUM_UNIT=4 SEL_BLOCK_NUM=7
+PARAMS_ := NUM_UNIT=4
 INCDIRS_ := $(RTL_DIR)
-DEFINES_ := NUM_UNIT=4 SEL_BLOCK_NUM=7 SIMULATION DEBUG_LEVEL=3 DBG_TRACE_GEMM
+DEFINES_ := SIMULATION DEBUG_LEVEL=3 DBG_TRACE_GEMM
 
 COMPILE_LOG := logs/compile.log
 SIM_LOG     := logs/sim.log

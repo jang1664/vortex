@@ -36,25 +36,6 @@
 
 ///////////////////////////////////////////////////////////////////////////////
 
-// GEMM Unit Parameters
-`define MXU_ROW 16
-`define MXU_COL 16
-`define MXU_ROW_TILE 1
-`define MXU_COL_TILE 1
-
-`define GEMM_INPUT_DATA_SIZE      (2*`MXU_ROW) // 32 bytes 
-`define GEMM_WEIGHT_DATA_SIZE     (`MXU_COL/2) // 8 bytes
-`define GEMM_SCALE_ZERO_DATA_SIZE (2*`MXU_COL) // 32 bytes
-`define GEMM_OUTPUT_DATA_SIZE     (2*`MXU_COL) // 32 bytes
-`define GEMM_PSUM_DATA_SIZE       (4*`MXU_COL) // 64 bytes
-
-`define GEMM_CFG_REG_NUM 16
-
-// DMA parameters
-`define DMA_CFG_REG_NUM 16
-
-///////////////////////////////////////////////////////////////////////////////
-
 `define ITF_TO_AOS(prefix, itf, count, dataw) \
     wire [(count)-1:0] prefix``_valid; \
     wire [(count)-1:0][(dataw)-1:0] prefix``_data; \

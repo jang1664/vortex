@@ -10,8 +10,8 @@ compile: setup
 	+libext+.v+ \
 	${VC_INCDIRS} \
 	$(DEFINES) \
-	$(TB) \
 	$(RTLS) \
+	$(TB) \
 	$(PARAMS)
 
 sim: compile

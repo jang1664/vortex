@@ -917,6 +917,34 @@ package VX_gpu_pkg;
         return reg_num[RV_REGS_BITS-1:0];
     endfunction
 
+    /////////////////////////// FPxINT GEMM functions ///////////////////////////
+    // function automatic int get_block_num();
+    //   int block_size = `BLOCK_SIZE;
+    //   int aligned_full_width = `ALIGNED_MAN_FULL_WIDTH;
+    //   int block_num = (aligned_full_width + block_size -1) / block_size;
+    //   return block_num;
+    // endfunction
+
+    // function automatic int get_sel_block_num();
+    //   int block_size = `BLOCK_SIZE;
+    //   int sel_block_num = (`ALIGNED_MAN_VALI_WIDTH / block_size) + 1;
+    //   return sel_block_num;
+    // endfunction
+
+    // function automatic int get_block_idx_width();
+    //   int BLOCK_NUM = get_block_num();
+    //   int SEL_BLOCK_NUM = get_sel_block_num();
+    //   int blk_idx_width = `CLOG2(BLOCK_NUM - SEL_BLOCK_NUM + 1);
+    //   return blk_idx_width;
+    // endfunction
+
+    // function automatic int get_sel_block_width();
+    //   int block_size = `BLOCK_SIZE;
+    //   int SEL_BLOCK_NUM = get_sel_block_num();
+    //   int sel_block_width = SEL_BLOCK_NUM * block_size + 1;
+    //   return sel_block_width;
+    // endfunction
+
 endpackage
 
 `IGNORE_UNUSED_END

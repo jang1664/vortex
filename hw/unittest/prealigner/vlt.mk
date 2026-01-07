@@ -4,8 +4,8 @@ compile: setup
 		${VL_INCDIRS} \
 		$(DEFINES) \
 		--top-module $(TOP_MODULE) \
-		$(TB) \
 		$(RTLS) \
+		$(TB) \
 		$(PARAMS) \
 		2>&1 | tee $(COMPILE_LOG)
 

@@ -2,7 +2,7 @@
 
 `include "VX_define.vh"
 
-module tb_VX_prealigner;
+module tb_VX_prealigner import VX_gpu_pkg::*;();
   parameter string tb_name = "tb_VX_prealigner";
 
   parameter PERIOD = 10.0;
@@ -10,19 +10,20 @@ module tb_VX_prealigner;
   parameter string OBJ = "func";
   parameter string FILE_POSTFIX = "func";
 
-  parameter int unsigned HIDDEN_WIDTH = 1;
-  parameter int unsigned SIGN_WIDTH = 1;
-  parameter int unsigned MANTISSA_WIDTH = 10;
-  parameter int unsigned EXTRA_WIDTH = 3;
-  parameter int unsigned EXP_WIDTH = 5;
-  parameter int unsigned ACT_WIDTH = 16;
-  parameter int unsigned ALIGNED_WIDTH = 14;
   parameter int unsigned NUM_UNIT = 4;
-  parameter int BLOCK_SIZE = 2;
-  parameter int BLOCK_NUM = 7;
-  parameter int SEL_BLOCK_NUM = 4;
-  parameter BLK_IDX_NUM = BLOCK_NUM - SEL_BLOCK_NUM + 1;
-  parameter BLK_BITW = $clog2(BLK_IDX_NUM);
+
+  localparam int HIDDEN_WIDTH   = `HIDDEN_WIDTH;
+  localparam int SIGN_WIDTH     = `IFP_SIGN_WIDTH;
+  localparam int EXP_WIDTH      = `IFP_EXP_WIDTH;
+  localparam int MANTISSA_WIDTH = `IFP_MAN_WIDTH;
+  localparam int ACT_WIDTH      = `IFP_WIDTH;
+  localparam int EXTRA_WIDTH    = `EXTRA_BIT_WIDTH;
+  localparam int BLOCK_SIZE     = `BLOCK_SIZE;
+  localparam int ALIGNED_WIDTH  = `SEL_BLOCK_WIDTH;
+  localparam int BLOCK_NUM      = `BLOCK_NUM;
+  localparam int SEL_BLOCK_NUM  = `SEL_BLOCK_NUM;
+  localparam int BLK_IDX_NUM    = `BLK_IDX_NUM;
+  localparam int BLK_BITW       = `BLOCK_IDX_WIDTH;
 
   logic clk_i;
   logic resetn_i;
@@ -39,17 +40,7 @@ module tb_VX_prealigner;
   integer log_fd;
 
   VX_prealigner #(
-      .HIDDEN_WIDTH  (HIDDEN_WIDTH),
-      .SIGN_WIDTH    (SIGN_WIDTH),
-      .MANTISSA_WIDTH(MANTISSA_WIDTH),
-      .EXTRA_WIDTH   (EXTRA_WIDTH),
-      .EXP_WIDTH     (EXP_WIDTH),
-      .ACT_WIDTH     (ACT_WIDTH),
-      .ALIGNED_WIDTH (ALIGNED_WIDTH),
-      .NUM_UNIT      (NUM_UNIT),
-      .BLOCK_SIZE    (BLOCK_SIZE),
-      .BLOCK_NUM     (BLOCK_NUM),
-      .SEL_BLOCK_NUM (SEL_BLOCK_NUM)
+      .NUM_UNIT      (NUM_UNIT)
   ) u_prealigner (
       .clk_i     (clk_i),
       .resetn_i  (resetn_i),
@@ -137,10 +128,10 @@ module tb_VX_prealigner;
       $finish;
     end
     valid_i = 1'b1;
-    fp_data_i[0] = {1'b0, 5'(20), 10'(0)};
-    fp_data_i[1] = {1'b0, 5'(15), 10'(0)};
-    fp_data_i[2] = {1'b0, 5'(10), 10'(0)};
-    fp_data_i[3] = {1'b0, 5'(5), 10'(0)};
+    fp_data_i[0] = {1'b0, 5'(20), 10'('b0101010101)};
+    fp_data_i[1] = {1'b0, 5'(19), 10'('b0101010101)};
+    fp_data_i[2] = {1'b0, 5'(18), 10'('b0101010101)};
+    fp_data_i[3] = {1'b0, 5'(17), 10'('b0101010101)};
 
     // wait result
     repeat (3) begin
