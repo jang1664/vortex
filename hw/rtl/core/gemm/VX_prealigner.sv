@@ -1,6 +1,9 @@
 `timescale 1ns / 1ps
 `include "VX_define.vh"
 /*
+  - prealign input vector
+  - if ALIGNED_FULL_MAN_WIDTH % block_size != 0, zero pad to MSB side
+
 number of stage = $clog2(NUM_UNIT)
 ID of stage = 0 ~ $clog2(NUM_UNIT) - 1
 
@@ -135,7 +138,7 @@ module VX_prealigner import VX_gpu_pkg::*; #(
       localparam SHIFT_WIDTH = $clog2(BLK_IDX_NUM) + 1;
 
       logic [sh_width-1:0] shift_amount;
-      logic [BLK_IDX_NUM-1:0] is_smaller_blk_idx;
+      logic [BLK_IDX_NUM-1:0] is_right_of_first_valid_block;
       logic [SHIFT_WIDTH-1:0] enc; // position of first one from MSB side
       logic no_exist_one;
       logic valid_out_lzc;
@@ -156,7 +159,7 @@ module VX_prealigner import VX_gpu_pkg::*; #(
       // find block idx
       always_comb begin
         for (int idx = 0; idx < BLK_IDX_NUM; idx++) begin
-          is_smaller_blk_idx[BLK_IDX_NUM-idx-1] = (shift_amount <= (idx * BLOCK_SIZE));
+          is_right_of_first_valid_block[BLK_IDX_NUM-idx-1] = (shift_amount < ((idx+1) * BLOCK_SIZE));
         end
       end
 
@@ -171,7 +174,7 @@ module VX_prealigner import VX_gpu_pkg::*; #(
       VX_lzc #(
         .N(BLK_IDX_NUM)
       ) u_lzc (
-        .data_in(is_smaller_blk_idx),
+        .data_in(is_right_of_first_valid_block),
         .data_out(enc),
         .valid_out(valid_out_lzc)
       );
@@ -215,7 +218,7 @@ module VX_prealigner import VX_gpu_pkg::*; #(
     for (genvar i = 0; i < NUM_UNIT; i += 1) begin : g_output
         assign sel_portion[i] = shift_man_q[i][BLOCK_SIZE*lsb_blk_idx_q[i]+:SEL_BITW];
         // assign sel_portion[i] = shift_man_q[i][BLOCK_SIZE*lsb_blk_idx_q[i]+:2];
-        assign int_data[i] = (sign_q[i]) ? {1'b0, sel_portion[i]} : ~{1'b0, sel_portion[i]} + 1'b1;
+        assign int_data[i] = (~sign_q[i]) ? {1'b0, sel_portion[i]} : ~{1'b0, sel_portion[i]} + 1'b1;
         assign blk_idx[i] = lsb_blk_idx_q[i];
     end
   endgenerate

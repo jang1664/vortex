@@ -977,9 +977,28 @@
 `define ALIGNED_MAN_FULL_WIDTH (`HIDDEN_WIDTH + `IFP_MAN_WIDTH + `EXTRA_BIT_WIDTH) // 30
 `define ALIGNED_MAN_VALI_WIDTH (`HIDDEN_WIDTH + `IFP_MAN_WIDTH) // 11
 
-`define BLOCK_SIZE 1
-`define BLOCK_NUM  ((`ALIGNED_MAN_FULL_WIDTH + `BLOCK_SIZE - 1) / `BLOCK_SIZE) // 30
-`define SEL_BLOCK_NUM ((`ALIGNED_MAN_VALI_WIDTH / `BLOCK_SIZE) + 1)
+/*
+SEL BLOCK NUM is determined by finding the maximum number of blocks needed.
+Refer below code
+```
+import math
+def get_block_num(block_size, shift, bitwidth):
+    return ((shift + bitwidth - 1) // block_size) - (shift // block_size) + 1
+
+full_bitwidth = 30
+for block_size in range(1, full_bitwidth+1):
+  shift = [i for i in range(block_size)]
+  block_nums = [get_block_num(block_size, s, full_bitwidth) for s in shift]
+  max_block_num = max(block_nums)
+  offset = max_block_num - (math.ceil(full_bitwidth / block_size))
+  print(f"block size : {block_size:2}, offset : {offset}")
+```
+*/
+`define BLOCK_SIZE 4
+`define BLOCK_NUM  ((`ALIGNED_MAN_FULL_WIDTH + `BLOCK_SIZE - 1) / `BLOCK_SIZE)
+`define SEL_BLOCK_NUM_ ((`ALIGNED_MAN_VALI_WIDTH + `BLOCK_SIZE - 1) / `BLOCK_SIZE)
+`define SEL_BLOCK_NUM_INCR_ ((`BLOCK_SIZE == 1) ? 0 : 1)
+`define SEL_BLOCK_NUM (`SEL_BLOCK_NUM_ + `SEL_BLOCK_NUM_INCR_)
 `define BLK_IDX_NUM (`BLOCK_NUM - `SEL_BLOCK_NUM + 1)
 `define BLOCK_IDX_WIDTH `CLOG2(`BLK_IDX_NUM)
 `define SEL_BLOCK_WIDTH (`SEL_BLOCK_NUM * `BLOCK_SIZE + 1)

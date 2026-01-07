@@ -112,6 +112,43 @@ module tb_VX_prealigner import VX_gpu_pkg::*;();
     end
   endgenerate
 
+  /*
+    aligned_man_full_width = 30
+    aligned_man_vali_width = 11
+
+    ----- block size = 2 -----
+    block_num = 15
+    sel_block_num = 6
+    sel_block_width = 12
+
+    shift0 blocks : 14, 13, 12, 11, 10, 9
+    shift1 blocks : 14, 13, 12, 11, 10, 9
+    shift2 blocks : 13, 12, 11, 10, 9, 8
+    shift3 blocks : 13, 12, 11, 10, 9, 8
+
+    shift_man0 : 101010101010000000000000000000
+    shift_man1 : 010101010101000000000000000000
+    shift_man2 : 001010101010100000000000000000
+    shift_man3 : 000101010101010000000000000000
+
+    ----- block size = 3 -----
+    block_num = 10
+    sel_block_num = 5
+    sel_block_width = 15
+    shift0 blocks : 9, 8, 7, 6, 5
+    shift1 blocks : 9, 8, 7, 6, 5
+    shift2 blocks : 9, 8, 7, 6, 5
+    shift3 blocks : 8, 7, 6, 5, 4
+
+    ----- block size = 4 ----
+    block_num = 8
+    sel_block_num = 4
+    sel_block_width = 16
+    shift0 blocks : 7, 6, 5, 4
+    shift1 blocks : 7, 6, 5, 4
+    shift2 blocks : 7, 6, 5, 4
+    shift3 blocks : 7, 6, 5, 4
+  */
   task test_simple();
     $display("=====================================================================");
     $display("START SIMPLE TEST"); 
@@ -153,6 +190,9 @@ module tb_VX_prealigner import VX_gpu_pkg::*;();
     $display("=====================================================================");
     $display("=======================  START SIMULATION  ==========================");
     $display("=====================================================================");
+    $display("BLOCK_SIZE    : %0d", BLOCK_SIZE);
+    $display("BLOCK_NUM     : %0d", BLOCK_NUM);
+    $display("SEL_BLOCK_NUM : %0d", SEL_BLOCK_NUM);
     test_simple();
   endtask
 
