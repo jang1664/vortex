@@ -1,6 +1,6 @@
 # Include Vortex configuration
 ROOT_DIR := $(realpath ../../..)
-include $(ROOT_DIR)/config.mk
+include $(ROOT_DIR)/build/config.mk
 
 RTL_DIR := $(VORTEX_HOME)/hw/rtl
 
