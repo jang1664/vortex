@@ -17,8 +17,6 @@ TOP_MODULE := tb_VX_prealigner
 TB   := tb_VX_prealigner.sv
 RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
 				$(RTL_DIR)/core/gemm/VX_prealigner.sv \
-				$(RTL_DIR)/core/gemm/VX_compare.sv \
-				$(RTL_DIR)/core/gemm/VX_shifter.sv \
 				$(RTL_DIR)/libs/VX_find_first.sv \
 				$(RTL_DIR)/libs/VX_lzc.sv \
 				$(RTL_DIR)/libs/VX_elastic_buffer.sv \

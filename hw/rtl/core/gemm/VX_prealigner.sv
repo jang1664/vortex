@@ -85,14 +85,15 @@ module VX_prealigner import VX_gpu_pkg::*; #(
   //  - make significand
   generate
     for (genvar j = 0; j < NUM_UNIT - 1; j++) begin : cout
-      VX_compare #(
-        .EXP_WIDTH(EXP_WIDTH)
-      ) u_compare (
-        .data_a_i(comp_out[2*j+1]),
-        .data_b_i(comp_out[2*j+2]),
+      assign comp_out[j] = (comp_out[2*j+1] >= comp_out[2*j+2]) ? comp_out[2*j+1] : comp_out[2*j+2];
+      // VX_compare #(
+      //   .EXP_WIDTH(EXP_WIDTH)
+      // ) u_compare (
+      //   .data_a_i(comp_out[2*j+1]),
+      //   .data_b_i(comp_out[2*j+2]),
 
-        .cmp_data_o(comp_out[j])
-      );
+      //   .cmp_data_o(comp_out[j])
+      // );
     end
   endgenerate
 
@@ -145,15 +146,16 @@ module VX_prealigner import VX_gpu_pkg::*; #(
 
       assign shift_amount = max_exp_q - data_i_q[i][EXP_WIDTH+MANTISSA_WIDTH-1:MANTISSA_WIDTH];
 
-      VX_shifter #(
-        .MANTISSA_WIDTH(MANTISSA_WIDTH),
-        .EXTRA_WIDTH(EXTRA_WIDTH),
-        .EXP_WIDTH(EXP_WIDTH)
-      ) u_shifter (
-        .data_i({hidden_man_q[i], {EXTRA_WIDTH{1'b0}}}),
-        .shift_amount_i(shift_amount),
-        .shift_data_o(shift_man[i])
-      );
+      assign shift_man[i] = {hidden_man_q[i], {EXTRA_WIDTH{1'b0}}} >> shift_amount;
+      // VX_shifter #(
+      //   .MANTISSA_WIDTH(MANTISSA_WIDTH),
+      //   .EXTRA_WIDTH(EXTRA_WIDTH),
+      //   .EXP_WIDTH(EXP_WIDTH)
+      // ) u_shifter (
+      //   .data_i({hidden_man_q[i], {EXTRA_WIDTH{1'b0}}}),
+      //   .shift_amount_i(shift_amount),
+      //   .shift_data_o(shift_man[i])
+      // );
 
       // parsing valid blocks and get block idx
       // find block idx
@@ -216,7 +218,7 @@ module VX_prealigner import VX_gpu_pkg::*; #(
 
   generate
     for (genvar i = 0; i < NUM_UNIT; i += 1) begin : g_output
-        assign sel_portion[i] = shift_man_q[i][BLOCK_SIZE*lsb_blk_idx_q[i]+:SEL_BITW];
+        assign sel_portion[i] = {`ALIGNED_MAN_PADDED_FULL_WIDTH'(shift_man_q[i])}[BLOCK_SIZE*lsb_blk_idx_q[i]+:SEL_BITW];
         // assign sel_portion[i] = shift_man_q[i][BLOCK_SIZE*lsb_blk_idx_q[i]+:2];
         assign int_data[i] = (~sign_q[i]) ? {1'b0, sel_portion[i]} : ~{1'b0, sel_portion[i]} + 1'b1;
         assign blk_idx[i] = lsb_blk_idx_q[i];

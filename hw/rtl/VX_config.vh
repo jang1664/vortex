@@ -974,9 +974,6 @@
 
 `define EXTRA_BIT_WIDTH (`W_BIT_WIDTH + 2 + (23-10)) // 19
 
-`define ALIGNED_MAN_FULL_WIDTH (`HIDDEN_WIDTH + `IFP_MAN_WIDTH + `EXTRA_BIT_WIDTH) // 30
-`define ALIGNED_MAN_VALI_WIDTH (`HIDDEN_WIDTH + `IFP_MAN_WIDTH) // 11
-
 /*
 SEL BLOCK NUM is determined by finding the maximum number of blocks needed.
 Refer below code
@@ -994,8 +991,11 @@ for block_size in range(1, full_bitwidth+1):
   print(f"block size : {block_size:2}, offset : {offset}")
 ```
 */
-`define BLOCK_SIZE 4
-`define BLOCK_NUM  ((`ALIGNED_MAN_FULL_WIDTH + `BLOCK_SIZE - 1) / `BLOCK_SIZE)
+`define BLOCK_SIZE 1
+`define ALIGNED_MAN_FULL_WIDTH (`HIDDEN_WIDTH + `IFP_MAN_WIDTH + `EXTRA_BIT_WIDTH) // 30
+`define ALIGNED_MAN_VALI_WIDTH (`HIDDEN_WIDTH + `IFP_MAN_WIDTH) // 11
+`define ALIGNED_MAN_PADDED_FULL_WIDTH (((`ALIGNED_MAN_FULL_WIDTH + `BLOCK_SIZE - 1) / `BLOCK_SIZE) * `BLOCK_SIZE) // 32JK:W
+`define BLOCK_NUM  (`ALIGNED_MAN_PADDED_FULL_WIDTH / `BLOCK_SIZE)
 `define SEL_BLOCK_NUM_ ((`ALIGNED_MAN_VALI_WIDTH + `BLOCK_SIZE - 1) / `BLOCK_SIZE)
 `define SEL_BLOCK_NUM_INCR_ ((`BLOCK_SIZE == 1) ? 0 : 1)
 `define SEL_BLOCK_NUM (`SEL_BLOCK_NUM_ + `SEL_BLOCK_NUM_INCR_)

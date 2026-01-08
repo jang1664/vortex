@@ -166,9 +166,9 @@ module tb_VX_prealigner import VX_gpu_pkg::*;();
     end
     valid_i = 1'b1;
     fp_data_i[0] = {1'b0, 5'(20), 10'('b0101010101)};
-    fp_data_i[1] = {1'b0, 5'(19), 10'('b0101010101)};
-    fp_data_i[2] = {1'b0, 5'(18), 10'('b0101010101)};
-    fp_data_i[3] = {1'b0, 5'(17), 10'('b0101010101)};
+    fp_data_i[1] = {1'b0, 5'(20-(`BLOCK_SIZE)), 10'('b0101010101)};
+    fp_data_i[2] = {1'b0, 5'(20-(2*`BLOCK_SIZE)), 10'('b0101010101)};
+    fp_data_i[3] = {1'b0, 5'(20-(3*`BLOCK_SIZE)), 10'('b0101010101)};
 
     // wait result
     repeat (3) begin

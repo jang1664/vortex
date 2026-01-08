@@ -2,8 +2,11 @@ logs/
 reports/
 obj_dir*/
 csrc/
-simv
 simv.daidir/
+verdiLog/
+
+simv
 ucli.key
 verdi_config_file
 novas_dump.log
+novas.conf
