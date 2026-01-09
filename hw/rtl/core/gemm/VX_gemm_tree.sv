@@ -28,7 +28,8 @@ module VX_gemm_tree #(
     input logic weight_load_dir_i,  // 0: row direction (top to bottom), 1: column direction (left to right)
     input logic [ROW_SIZE-1:0][BLK_BITW-1:0] blk_sidx_i,
 
-    output logic [COL_SIZE-1:0][OUT_DW-1:0] ps_o
+    output logic [COL_SIZE-1:0][OUT_DW-1:0] ps_o,
+    output logic [COL_SIZE/TILE_COL_SIZE-1:0] output_valid_o
 );
 
   localparam int TILE_ROW_SIZE      = ROW_SIZE;
@@ -240,6 +241,7 @@ module VX_gemm_tree #(
   endgenerate
 
   assign ps_o = ps_q[ROW_SIZE/TILE_ROW_SIZE-1];
+  assign output_valid_o = valid_q;
 
 `ifdef DBG_TRACE_GEMM
   always @(posedge clk_i) begin
