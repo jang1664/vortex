@@ -27,25 +27,40 @@ module VX_pe_tree_new #(
     input  logic [TILE_ROW_SIZE-1:0][IN_DW-1:0] ifmap_i,
     input  logic [TILE_ROW_SIZE-1:0][TILE_COL_SIZE-1:0][WEIGHT_DW-1:0] weight_i,  // Changed: direct weight input
     input  logic [TILE_COL_SIZE-1:0][OUT_DW-1:0] ps_i,
-    input  logic ready_input_i,
+    input  logic input_valid_i,
+    input  logic in_weight_sel_i,
+    input  logic out_weight_sel_i,
+    input  logic weight_load_dir_i,
     input  logic [TILE_ROW_SIZE-1:0][BLK_BITW-1:0] blk_sidx_i,
 
     output logic [TILE_ROW_SIZE-1:0][BLK_BITW-1:0] blk_sidx_o,
     output logic [TILE_ROW_SIZE-1:0][IN_DW-1:0] ifmap_o,
-    output logic [TILE_COL_SIZE-1:0][OUT_DW-1:0] ps_o
+    output logic [TILE_COL_SIZE-1:0][OUT_DW-1:0] ps_o,
+    output logic valid_o,
+    output logic in_weight_sel_o,
+    output logic out_weight_sel_o,
+    output logic weight_load_dir_o
 );
 
   localparam int MAC_DW = IN_DW + WEIGHT_DW + BLK_BITW;
 
-  // Pipeline registers for ifmap and blk_sidx
+  // Pipeline registers for ifmap, blk_sidx, and valid
   logic [TILE_ROW_SIZE-1:0][IN_DW-1:0] ifmap_q;
   logic [TILE_ROW_SIZE-1:0][BLK_BITW-1:0] blk_sidx_q;
+  logic valid_q;
+  logic in_weight_sel_q;
+  logic out_weight_sel_q;
+  logic weight_load_dir_q;
 
   always_ff @(posedge clk_i) begin
-    if (ready_input_i) begin
+    if (input_valid_i) begin
       ifmap_q <= ifmap_i;
       blk_sidx_q <= blk_sidx_i;
     end
+    valid_q <= input_valid_i;
+    in_weight_sel_q <= in_weight_sel_i;
+    out_weight_sel_q <= out_weight_sel_i;
+    weight_load_dir_q <= weight_load_dir_i;
   end
 
   assign ifmap_o = ifmap_q;
@@ -75,7 +90,7 @@ module VX_pe_tree_new #(
           logic [BLK_BITW-1:0] blk_idx_q;
           
           always_ff @(posedge clk_i) begin
-            if (ready_input_i) begin
+            if (input_valid_i) begin
               product_q <= ifmap_val * weight_val;
               blk_idx_q <= blk_idx;
             end
@@ -93,7 +108,7 @@ module VX_pe_tree_new #(
         if (PIPE_ALIGN && !PIPE_MULT) begin : gen_pipe_align
           logic signed [MAC_DW-1:0] aligned_q;
           always_ff @(posedge clk_i) begin
-            if (ready_input_i) begin
+            if (input_valid_i) begin
               aligned_q <= aligned;
             end
           end
@@ -106,7 +121,7 @@ module VX_pe_tree_new #(
       // Pipeline stage 0 results if needed
       if ((PIPELINE_STAGES & 1) != 0) begin : gen_pipe_stage0
         always_ff @(posedge clk_i) begin
-          if (ready_input_i) begin
+          if (input_valid_i) begin
             mac_results_q <= mac_results;
           end
         end
@@ -133,7 +148,7 @@ module VX_pe_tree_new #(
           
           if ((PIPELINE_STAGES & (1 << stage)) != 0) begin : gen_pipe_adder
             always_ff @(posedge clk_i) begin
-              if (ready_input_i) begin
+              if (input_valid_i) begin
                 sum_q <= sum;
               end
             end
@@ -160,7 +175,7 @@ module VX_pe_tree_new #(
       assign accumulated_result = final_sum_extended + $signed(ps_i[col]);
       
       always_ff @(posedge clk_i) begin
-        if (ready_input_i) begin
+        if (input_valid_i) begin
           ps_o[col] <= $unsigned(accumulated_result);
         end
       end
@@ -168,9 +183,15 @@ module VX_pe_tree_new #(
     end
   endgenerate
 
+  // Output assignments
+  assign valid_o = valid_q;
+  assign in_weight_sel_o = in_weight_sel_q;
+  assign out_weight_sel_o = out_weight_sel_q;
+  assign weight_load_dir_o = weight_load_dir_q;
+
 `ifdef DBG_TRACE_GEMM
   always @(posedge clk_i) begin
-    if (ready_input_i) begin
+    if (input_valid_i) begin
       `TRACE(3, ("%t: PE_TREE: Processing input\n", $time))
       // Show first two inputs and weights for debugging
       for (integer r = 0; r < 2; r++) begin

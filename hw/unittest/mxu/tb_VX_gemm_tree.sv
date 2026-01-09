@@ -38,7 +38,7 @@ module tb_VX_gemm_tree import VX_gpu_pkg::*;();
   logic in_weight_sel_i;
   logic out_weight_sel_i;
   logic ready_weight_i;
-  logic ready_input_i;
+  logic input_valid_i;
   logic weight_load_dir_i;
   logic [ROW_SIZE-1:0][BLK_BITW-1:0] blk_sidx_i;
   logic [COL_SIZE-1:0][OUT_DW-1:0] ps_o;
@@ -62,7 +62,7 @@ module tb_VX_gemm_tree import VX_gpu_pkg::*;();
       .in_weight_sel_i  (in_weight_sel_i),
       .out_weight_sel_i (out_weight_sel_i),
       .ready_weight_i   (ready_weight_i),
-      .ready_input_i    (ready_input_i),
+      .input_valid_i    (input_valid_i),
       .weight_load_dir_i(weight_load_dir_i),
       .blk_sidx_i       (blk_sidx_i),
       .ps_o             (ps_o)
@@ -181,7 +181,7 @@ module tb_VX_gemm_tree import VX_gpu_pkg::*;();
     weight_i = '0;
     in_weight_sel_i = '0;
     out_weight_sel_i = '0;
-    ready_input_i = '0;
+    input_valid_i = '0;
     ready_weight_i = '0;
     weight_load_dir_i = '0;
     blk_sidx_i = '0;
@@ -213,7 +213,7 @@ module tb_VX_gemm_tree import VX_gpu_pkg::*;();
     blk_sidx_i = '0;
     
     // Start computation
-    ready_input_i = 1;
+    input_valid_i = 1;
     repeat (calc_gemm_latency()) `WAIT_POSEDGE(clk_i, PERIOD);
     
     // Check results
@@ -225,7 +225,7 @@ module tb_VX_gemm_tree import VX_gpu_pkg::*;();
       $fdisplay(log_fd, "[TEST1] ps_o[%0d] = %0d (expected: %0d)", j, $signed(ps_o[j]), expected);
     end
     
-    ready_input_i = 0;
+    input_valid_i = 0;
     `WAIT_POSEDGE(clk_i, PERIOD);
   endtask
 
@@ -243,7 +243,7 @@ module tb_VX_gemm_tree import VX_gpu_pkg::*;();
     // reset
     ifmap_i = '0;
     weight_i = '0;
-    ready_input_i = '0;
+    input_valid_i = '0;
     ready_weight_i = '0;
     blk_sidx_i = '0;
     
@@ -274,7 +274,7 @@ module tb_VX_gemm_tree import VX_gpu_pkg::*;();
     blk_sidx_i = '0;
     
     // Start computation
-    ready_input_i = 1;
+    input_valid_i = 1;
     repeat (calc_gemm_latency()) `WAIT_POSEDGE(clk_i, PERIOD);
     
     // Check results
@@ -286,7 +286,7 @@ module tb_VX_gemm_tree import VX_gpu_pkg::*;();
       $fdisplay(log_fd, "[TEST2] ps_o[%0d] = %0d (expected: %0d)", j, $signed(ps_o[j]), expected);
     end
     
-    ready_input_i = 0;
+    input_valid_i = 0;
     `WAIT_POSEDGE(clk_i, PERIOD);
   endtask
 
@@ -301,7 +301,7 @@ module tb_VX_gemm_tree import VX_gpu_pkg::*;();
     // reset
     ifmap_i = '0;
     weight_i = '0;
-    ready_input_i = '0;
+    input_valid_i = '0;
     ready_weight_i = '0;
     blk_sidx_i = '0;
     
@@ -326,7 +326,7 @@ module tb_VX_gemm_tree import VX_gpu_pkg::*;();
       ifmap_i[i] = 2;
     end
     
-    ready_input_i = 1;
+    input_valid_i = 1;
     
     // Test different block indices
     for (int blk_idx = 0; blk_idx < 3; blk_idx++) begin
@@ -345,7 +345,7 @@ module tb_VX_gemm_tree import VX_gpu_pkg::*;();
                 blk_idx, $signed(ps_o[0]), expected);
     end
     
-    ready_input_i = 0;
+    input_valid_i = 0;
     `WAIT_POSEDGE(clk_i, PERIOD);
   endtask
 
@@ -360,7 +360,7 @@ module tb_VX_gemm_tree import VX_gpu_pkg::*;();
     // reset
     ifmap_i = '0;
     weight_i = '0;
-    ready_input_i = '0;
+    input_valid_i = '0;
     ready_weight_i = '0;
     blk_sidx_i = '0;
     
@@ -391,7 +391,7 @@ module tb_VX_gemm_tree import VX_gpu_pkg::*;();
     blk_sidx_i = '0;
     
     // Start computation
-    ready_input_i = 1;
+    input_valid_i = 1;
     repeat (calc_gemm_latency()) `WAIT_POSEDGE(clk_i, PERIOD);
     
     // Check results
@@ -411,7 +411,7 @@ module tb_VX_gemm_tree import VX_gpu_pkg::*;();
       $fdisplay(log_fd, "[TEST4] ps_o[%0d] = %0d (expected: %0d)", j, $signed(ps_o[j]), expected);
     end
     
-    ready_input_i = 0;
+    input_valid_i = 0;
     `WAIT_POSEDGE(clk_i, PERIOD);
   endtask
 
@@ -432,7 +432,7 @@ module tb_VX_gemm_tree import VX_gpu_pkg::*;();
     // reset
     ifmap_i = '0;
     weight_i = '0;
-    ready_input_i = '0;
+    input_valid_i = '0;
     ready_weight_i = '0;
     blk_sidx_i = '0;
     
@@ -466,7 +466,7 @@ module tb_VX_gemm_tree import VX_gpu_pkg::*;();
     
     // Generate and process random input vectors
     $display("Processing random input vectors...");
-    ready_input_i = 1;
+    input_valid_i = 1;
     
     for (int vec_idx = 0; vec_idx < NUM_INPUT_VECTORS; vec_idx++) begin
       $display("  Input vector %0d:", vec_idx);
@@ -534,7 +534,7 @@ module tb_VX_gemm_tree import VX_gpu_pkg::*;();
     
     $display("Summary: %0d PASS, %0d FAIL out of %0d outputs", pass_count, fail_count, COL_SIZE);
     
-    ready_input_i = 0;
+    input_valid_i = 0;
     `WAIT_POSEDGE(clk_i, PERIOD);
   endtask
 
@@ -551,7 +551,7 @@ module tb_VX_gemm_tree import VX_gpu_pkg::*;();
     // Clear all signals and wait for pipeline to flush
     ifmap_i = '0;
     weight_i = '0;
-    ready_input_i = '0;
+    input_valid_i = '0;
     ready_weight_i = '0;
     blk_sidx_i = '0;
     weight_load_dir_i = 0;
@@ -619,7 +619,7 @@ module tb_VX_gemm_tree import VX_gpu_pkg::*;();
       blk_sidx_i[i] = 0;  // No shift
     end
     
-    ready_input_i = 1;
+    input_valid_i = 1;
     repeat (calc_gemm_latency()) `WAIT_POSEDGE(clk_i, PERIOD);
     
     // Calculate expected output
@@ -653,11 +653,11 @@ module tb_VX_gemm_tree import VX_gpu_pkg::*;();
     
     $display("Summary: %0d PASS, %0d FAIL out of %0d outputs", pass_count, fail_count, COL_SIZE);
     
-    ready_input_i = 0;
+    input_valid_i = 0;
     
     // Reset to row direction for subsequent tests
     weight_load_dir_i = 0;
-    ready_input_i = 0;
+    input_valid_i = 0;
     `WAIT_POSEDGE(clk_i, PERIOD);
   endtask
 
@@ -790,7 +790,7 @@ module tb_VX_gemm_tree import VX_gpu_pkg::*;();
     in_weight_sel_i = '0;
     out_weight_sel_i = '0;
     ready_weight_i = '0;
-    ready_input_i = '0;
+    input_valid_i = '0;
     weight_load_dir_i = '0;
 
     fork
@@ -813,7 +813,7 @@ module tb_VX_gemm_tree import VX_gpu_pkg::*;();
       end
 
       begin
-        ready_input_i = '1;
+        input_valid_i = '1;
         while (1) begin
           std::randomize(ifmap_i);
           for (int k = 0; k < ROW_SIZE; k++) begin
