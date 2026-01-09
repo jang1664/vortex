@@ -209,11 +209,16 @@ module VX_pe_tree #(
           end
         end else begin
           // Column direction: load from left to right
+          // Similar to row direction but with column shifting
           for (int row_offset = 0; row_offset < TILE_ROW_SIZE; row_offset++) begin
             if (i < WEIGHT_LOAD_COL) begin
               // Load new weights for the first WEIGHT_LOAD_COL columns
-              if (ready_weight_i) begin
+              // In column direction, we load WEIGHT_LOAD_ROW rows at a time
+              if (ready_weight_i && (row_offset < WEIGHT_LOAD_ROW)) begin
                 mem[row_offset][i][in_weight_sel_i] <= weight_i[i][row_offset];
+              end else if (ready_weight_i && (row_offset >= WEIGHT_LOAD_ROW)) begin
+                // Shift weights from previous rows (like row direction, but for column 0)
+                mem[row_offset][i][in_weight_sel_i] <= mem[row_offset-WEIGHT_LOAD_ROW][i][in_weight_sel_i];
               end
             end else begin
               // Shift weights from previous columns

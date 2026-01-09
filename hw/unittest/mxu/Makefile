@@ -17,7 +17,8 @@ TOP_MODULE := tb_VX_gemm_tree
 TB   := tb_VX_gemm_tree.sv
 RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
 				$(RTL_DIR)/core/gemm/VX_gemm_tree.sv \
-				$(RTL_DIR)/core/gemm/VX_pe_tree.sv \
+				$(RTL_DIR)/core/gemm/VX_gemm_weight_regs.sv \
+				$(RTL_DIR)/core/gemm/VX_pe_tree_new.sv \
 				$(RTL_DIR)/libs/VX_elastic_buffer.sv \
 				$(RTL_DIR)/libs/VX_stream_buffer.sv \
 				$(RTL_DIR)/libs/VX_pipe_buffer.sv \

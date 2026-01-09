@@ -47,6 +47,9 @@ module VX_gemm_tree #(
   logic [COL_SIZE/TILE_COL_SIZE-1:0][ROW_SIZE-1:0][BLK_BITW-1:0] blk_sidx_q;
   logic [ROW_SIZE/TILE_ROW_SIZE-1:0][COL_SIZE-1:0][WEIGHT_LOAD_ROW_NUM-1:0][WEIGHT_DW-1:0] weight_q;
   logic [ROW_SIZE/TILE_ROW_SIZE-1:0][COL_SIZE-1:0][OUT_DW-1:0] ps_q;
+  
+  // Centralized weight registers output
+  logic [ROW_SIZE-1:0][COL_SIZE-1:0][WEIGHT_DW-1:0] weights;
 
   function automatic int get_pipe_stage(int row_size);
     int num_stages;
@@ -67,12 +70,39 @@ module VX_gemm_tree #(
     return pipe_stages;
   endfunction
 
+  // Centralized weight register management
+  VX_gemm_weight_regs #(
+      .ROW_SIZE(ROW_SIZE),
+      .COL_SIZE(COL_SIZE),
+      .WEIGHT_DW(WEIGHT_DW),
+      .WEIGHT_LOAD_ROW_NUM(WEIGHT_LOAD_ROW_NUM),
+      .WEIGHT_LOAD_COL_NUM(WEIGHT_LOAD_COL_NUM)
+  ) u_weight_regs (
+      .clk_i(clk_i),
+      .weight_i(weight_i),
+      .ready_weight_i(ready_weight_i),
+      .weight_load_dir_i(weight_load_dir_i),
+      .in_weight_sel_i(in_weight_sel_i),
+      .out_weight_sel_i(out_weight_sel_i),
+      .weight_o(weights)
+  );
+
   generate
     for (genvar i = 0; i < ROW_SIZE / TILE_ROW_SIZE; i++) begin : tile_row
       for (genvar j = 0; j < COL_SIZE / TILE_COL_SIZE; j++) begin : tile_col
+        
+        // Extract weight tile for this PE
+        logic [TILE_ROW_SIZE-1:0][TILE_COL_SIZE-1:0][WEIGHT_DW-1:0] weight_tile;
+        
+        for (genvar r = 0; r < TILE_ROW_SIZE; r++) begin : gen_row
+          for (genvar c = 0; c < TILE_COL_SIZE; c++) begin : gen_col
+            assign weight_tile[r][c] = weights[i*TILE_ROW_SIZE + r][j*TILE_COL_SIZE + c];
+          end
+        end
+        
         if (i == 0) begin : trz
           if (j == 0) begin : tcz
-            VX_pe_tree #(
+            VX_pe_tree_new #(
                 .IN_DW(IN_DW),
                 .WEIGHT_DW(WEIGHT_DW),
                 .OUT_DW(OUT_DW),
@@ -81,29 +111,22 @@ module VX_gemm_tree #(
                 .SEL_BLOCK_NUM(SEL_BLOCK_NUM),
                 .TILE_ROW_SIZE(TILE_ROW_SIZE),
                 .TILE_COL_SIZE(TILE_COL_SIZE),
-                .WEIGHT_LOAD_ROW(WEIGHT_LOAD_ROW_NUM),
-                .WEIGHT_LOAD_COL(WEIGHT_LOAD_COL_NUM),
                 .PIPELINE_STAGES(get_pipe_stage(TILE_ROW_SIZE)),
                 .PIPE_MULT(PIPE_MULT),
                 .PIPE_ALIGN(PIPE_ALIGN)
             ) u_pe (
                 .clk_i            (clk_i),
                 .ifmap_i          (ifmap_i[TILE_ROW_SIZE*i+:TILE_ROW_SIZE]),
-                .weight_i         (weight_i[TILE_COL_SIZE*j+:TILE_COL_SIZE]),
+                .weight_i         (weight_tile),
                 .ps_i             ('0),
-                .in_weight_sel_i  (in_weight_sel_i),
-                .out_weight_sel_i (out_weight_sel_i),
                 .ready_input_i    (ready_input_i),
-                .ready_weight_i   (ready_weight_i),
-                .weight_load_dir_i(weight_load_dir_i),
                 .blk_sidx_i       (blk_sidx_i[TILE_ROW_SIZE*i+:TILE_ROW_SIZE]),
                 .blk_sidx_o       (blk_sidx_q[j][TILE_ROW_SIZE*i+:TILE_ROW_SIZE]),
                 .ifmap_o          (ifmap_q[j][TILE_ROW_SIZE*i+:TILE_ROW_SIZE]),
-                .ps_o             (ps_q[i][TILE_COL_SIZE*j+:TILE_COL_SIZE]),
-                .weight_o         (weight_q[i][TILE_COL_SIZE*j+:TILE_COL_SIZE])
+                .ps_o             (ps_q[i][TILE_COL_SIZE*j+:TILE_COL_SIZE])
             );
           end else begin : tcnz
-            VX_pe_tree #(
+            VX_pe_tree_new #(
                 .IN_DW(IN_DW),
                 .WEIGHT_DW(WEIGHT_DW),
                 .OUT_DW(OUT_DW),
@@ -112,31 +135,24 @@ module VX_gemm_tree #(
                 .SEL_BLOCK_NUM(SEL_BLOCK_NUM),
                 .TILE_ROW_SIZE(TILE_ROW_SIZE),
                 .TILE_COL_SIZE(TILE_COL_SIZE),
-                .WEIGHT_LOAD_ROW(WEIGHT_LOAD_ROW_NUM),
-                .WEIGHT_LOAD_COL(WEIGHT_LOAD_COL_NUM),
                 .PIPELINE_STAGES(get_pipe_stage(TILE_ROW_SIZE)),
                 .PIPE_MULT(PIPE_MULT),
                 .PIPE_ALIGN(PIPE_ALIGN)
             ) u_pe (
                 .clk_i            (clk_i),
                 .ifmap_i          (ifmap_q[j-1][TILE_ROW_SIZE*i+:TILE_ROW_SIZE]),
-                .weight_i         (weight_i[TILE_COL_SIZE*j+:TILE_COL_SIZE]),
+                .weight_i         (weight_tile),
                 .ps_i             ('0),
-                .in_weight_sel_i  (in_weight_sel_i),
-                .out_weight_sel_i (out_weight_sel_i),
                 .ready_input_i    (ready_input_i),
-                .ready_weight_i   (ready_weight_i),
-                .weight_load_dir_i(weight_load_dir_i),
                 .blk_sidx_i       (blk_sidx_q[j-1][TILE_ROW_SIZE*i+:TILE_ROW_SIZE]),
                 .blk_sidx_o       (blk_sidx_q[j][TILE_ROW_SIZE*i+:TILE_ROW_SIZE]),
                 .ifmap_o          (ifmap_q[j][TILE_ROW_SIZE*i+:TILE_ROW_SIZE]),
-                .ps_o             (ps_q[i][TILE_COL_SIZE*j+:TILE_COL_SIZE]),
-                .weight_o         (weight_q[i][TILE_COL_SIZE*j+:TILE_COL_SIZE])
+                .ps_o             (ps_q[i][TILE_COL_SIZE*j+:TILE_COL_SIZE])
             );
           end
         end else begin : trnz
           if (j == 0) begin : tcz
-            VX_pe_tree #(
+            VX_pe_tree_new #(
                 .IN_DW(IN_DW),
                 .WEIGHT_DW(WEIGHT_DW),
                 .OUT_DW(OUT_DW),
@@ -145,29 +161,22 @@ module VX_gemm_tree #(
                 .SEL_BLOCK_NUM(SEL_BLOCK_NUM),
                 .TILE_ROW_SIZE(TILE_ROW_SIZE),
                 .TILE_COL_SIZE(TILE_COL_SIZE),
-                .WEIGHT_LOAD_ROW(WEIGHT_LOAD_ROW_NUM),
-                .WEIGHT_LOAD_COL(WEIGHT_LOAD_COL_NUM),
                 .PIPELINE_STAGES(get_pipe_stage(TILE_ROW_SIZE)),
                 .PIPE_MULT(PIPE_MULT),
                 .PIPE_ALIGN(PIPE_ALIGN)
             ) u_pe (
                 .clk_i            (clk_i),
                 .ifmap_i          (ifmap_i[TILE_ROW_SIZE*i+:TILE_ROW_SIZE]),
-                .weight_i         (weight_q[i-1][TILE_COL_SIZE*j+:TILE_COL_SIZE]),
+                .weight_i         (weight_tile),
                 .ps_i             (ps_q[i-1][TILE_COL_SIZE*j+:TILE_COL_SIZE]),
-                .in_weight_sel_i  (in_weight_sel_i),
-                .out_weight_sel_i (out_weight_sel_i),
                 .ready_input_i    (ready_input_i),
-                .ready_weight_i   (ready_weight_i),
-                .weight_load_dir_i(weight_load_dir_i),
                 .blk_sidx_i       (blk_sidx_i[TILE_ROW_SIZE*i+:TILE_ROW_SIZE]),
                 .blk_sidx_o       (blk_sidx_q[j][TILE_ROW_SIZE*i+:TILE_ROW_SIZE]),
                 .ifmap_o          (ifmap_q[j][TILE_ROW_SIZE*i+:TILE_ROW_SIZE]),
-                .ps_o             (ps_q[i][TILE_COL_SIZE*j+:TILE_COL_SIZE]),
-                .weight_o         (weight_q[i][TILE_COL_SIZE*j+:TILE_COL_SIZE])
+                .ps_o             (ps_q[i][TILE_COL_SIZE*j+:TILE_COL_SIZE])
             );
           end else begin : tcnz
-            VX_pe_tree #(
+            VX_pe_tree_new #(
                 .IN_DW(IN_DW),
                 .WEIGHT_DW(WEIGHT_DW),
                 .OUT_DW(OUT_DW),
@@ -176,26 +185,19 @@ module VX_gemm_tree #(
                 .SEL_BLOCK_NUM(SEL_BLOCK_NUM),
                 .TILE_ROW_SIZE(TILE_ROW_SIZE),
                 .TILE_COL_SIZE(TILE_COL_SIZE),
-                .WEIGHT_LOAD_ROW(WEIGHT_LOAD_ROW_NUM),
-                .WEIGHT_LOAD_COL(WEIGHT_LOAD_COL_NUM),
                 .PIPELINE_STAGES(get_pipe_stage(TILE_ROW_SIZE)),
                 .PIPE_MULT(PIPE_MULT),
                 .PIPE_ALIGN(PIPE_ALIGN)
             ) u_pe (
                 .clk_i            (clk_i),
                 .ifmap_i          (ifmap_q[j-1][TILE_ROW_SIZE*i+:TILE_ROW_SIZE]),
-                .weight_i         (weight_q[i-1][TILE_COL_SIZE*j+:TILE_COL_SIZE]),
+                .weight_i         (weight_tile),
                 .ps_i             (ps_q[i-1][TILE_COL_SIZE*j+:TILE_COL_SIZE]),
-                .in_weight_sel_i  (in_weight_sel_i),
-                .out_weight_sel_i (out_weight_sel_i),
                 .ready_input_i    (ready_input_i),
-                .ready_weight_i   (ready_weight_i),
-                .weight_load_dir_i(weight_load_dir_i),
                 .blk_sidx_i       (blk_sidx_q[j-1][TILE_ROW_SIZE*i+:TILE_ROW_SIZE]),
                 .blk_sidx_o       (blk_sidx_q[j][TILE_ROW_SIZE*i+:TILE_ROW_SIZE]),
                 .ifmap_o          (ifmap_q[j][TILE_ROW_SIZE*i+:TILE_ROW_SIZE]),
-                .ps_o             (ps_q[i][TILE_COL_SIZE*j+:TILE_COL_SIZE]),
-                .weight_o         (weight_q[i][TILE_COL_SIZE*j+:TILE_COL_SIZE])
+                .ps_o             (ps_q[i][TILE_COL_SIZE*j+:TILE_COL_SIZE])
             );
           end
         end
@@ -204,5 +206,17 @@ module VX_gemm_tree #(
   endgenerate
 
   assign ps_o = ps_q[ROW_SIZE/TILE_ROW_SIZE-1];
+
+`ifdef DBG_TRACE_GEMM
+  always @(posedge clk_i) begin
+    if (ready_weight_i) begin
+      `TRACE(3, ("%t: GEMM_TREE: Weight loading dir=%0d\n", $time, weight_load_dir_i))
+    end
+    
+    if (ready_input_i) begin
+      `TRACE(3, ("%t: GEMM_TREE: Input processing\n", $time))
+    end
+  end
+`endif
 
 endmodule
