@@ -5,7 +5,7 @@
   psum scale will be treated with simple shifter
 */
 
-module pe_tree #(
+module VX_pe_tree #(
     parameter  int IN_DW            = -1,
     parameter  int WEIGHT_DW        = -1,
     parameter  int OUT_DW           = -1,
@@ -15,6 +15,7 @@ module pe_tree #(
     parameter  int TILE_ROW_SIZE    = -1, // this is total row size of gemm_unit
     parameter  int TILE_COL_SIZE    = -1,
     parameter  int WEIGHT_LOAD_ROW  = 1,  // Number of weight rows loaded at once (TILE_ROW_SIZE % WEIGHT_LOAD_ROW == 0)
+    parameter  int WEIGHT_LOAD_COL  = 1,  // Number of weight columns loaded at once (TILE_COL_SIZE % WEIGHT_LOAD_COL == 0)
     parameter  int PIPE_MULT        = 0,  // 1 to enable pipelined multiplier
     parameter  int PIPE_ALIGN       = 0,  // 1 to enable pipelined aligner
     parameter  int PIPELINE_STAGES  = 0,  // Bitmask for pipeline stages (e.g., 3'b101 = pipeline stage 0 and 2)
@@ -30,6 +31,7 @@ module pe_tree #(
     input logic out_weight_sel_i,
     input logic ready_input_i,
     input logic ready_weight_i,
+    input logic weight_load_dir_i,  // 0: row direction (top to bottom), 1: column direction (left to right)
     input logic [TILE_ROW_SIZE-1:0][BLK_BITW-1:0] blk_sidx_i,
 
     output logic [TILE_ROW_SIZE-1:0][BLK_BITW-1:0] blk_sidx_o,
@@ -37,6 +39,15 @@ module pe_tree #(
     output logic [TILE_COL_SIZE-1:0][OUT_DW-1:0] ps_o,
     output logic [TILE_COL_SIZE-1:0][WEIGHT_LOAD_ROW-1:0][WEIGHT_DW-1:0] weight_o
 );
+
+  // Static assertion: WEIGHT_LOAD_ROW must equal WEIGHT_LOAD_COL
+  initial begin
+    if (WEIGHT_LOAD_ROW != WEIGHT_LOAD_COL) begin
+      $error("WEIGHT_LOAD_ROW (%0d) must equal WEIGHT_LOAD_COL (%0d)", 
+             WEIGHT_LOAD_ROW, WEIGHT_LOAD_COL);
+      $finish;
+    end
+  end
 
   logic signed [WEIGHT_DW-1:0] mem[TILE_ROW_SIZE-1:0][TILE_COL_SIZE-1:0][1:0];
   logic signed [IN_DW-1:0] signed_ifmap_i[TILE_ROW_SIZE-1:0][TILE_COL_SIZE-1:0];
@@ -179,18 +190,36 @@ module pe_tree #(
         end
       end
 
-      // Weight memory management - load WEIGHT_LOAD_ROW rows at once
+      // Weight memory management - load based on direction
       always_ff @(posedge clk_i) begin
-        for (int row_offset = 0; row_offset < TILE_ROW_SIZE; row_offset++) begin
-          if (row_offset < WEIGHT_LOAD_ROW) begin
-            // Load new weights for the first WEIGHT_LOAD_ROW rows
-            if (ready_weight_i) begin
-              mem[row_offset][i][in_weight_sel_i] <= weight_i[i][row_offset];
+        if (weight_load_dir_i == 0) begin
+          // Row direction: load from top to bottom (original behavior)
+          for (int row_offset = 0; row_offset < TILE_ROW_SIZE; row_offset++) begin
+            if (row_offset < WEIGHT_LOAD_ROW) begin
+              // Load new weights for the first WEIGHT_LOAD_ROW rows
+              if (ready_weight_i) begin
+                mem[row_offset][i][in_weight_sel_i] <= weight_i[i][row_offset];
+              end
+            end else begin
+              // Shift weights from previous rows
+              if (ready_weight_i) begin
+                mem[row_offset][i][in_weight_sel_i] <= mem[row_offset-WEIGHT_LOAD_ROW][i][in_weight_sel_i];
+              end
             end
-          end else begin
-            // Shift weights from previous rows
-            if (ready_weight_i) begin
-              mem[row_offset][i][in_weight_sel_i] <= mem[row_offset-WEIGHT_LOAD_ROW][i][in_weight_sel_i];
+          end
+        end else begin
+          // Column direction: load from left to right
+          for (int row_offset = 0; row_offset < TILE_ROW_SIZE; row_offset++) begin
+            if (i < WEIGHT_LOAD_COL) begin
+              // Load new weights for the first WEIGHT_LOAD_COL columns
+              if (ready_weight_i) begin
+                mem[row_offset][i][in_weight_sel_i] <= weight_i[i][row_offset];
+              end
+            end else begin
+              // Shift weights from previous columns
+              if (ready_weight_i) begin
+                mem[row_offset][i][in_weight_sel_i] <= mem[row_offset][i-WEIGHT_LOAD_COL][in_weight_sel_i];
+              end
             end
           end
         end

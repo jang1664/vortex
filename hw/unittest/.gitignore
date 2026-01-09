@@ -10,3 +10,4 @@ ucli.key
 verdi_config_file
 novas_dump.log
 novas.conf
+novas.rc

@@ -8,6 +8,20 @@
         - 뒷단에 있는 node가 free되면, config register는 start signal을 1로 설정하고, 뒷단에 있는 node가 start signal을 받아서 동작을 시작함.
     - write request를 날리는 master가 여러개인 경우가 일반적일 것임. (from SIMT core + gemm node 등)
       - 각 master별로 독립적인 register set을 구현. regs_out으로 보내는 register set은 내부에서 Round Robin해서 arbitrate함.
+    - entry가 occupy되어 있는지 확인할 수 있는 signal을 내부에 가지고 있어야함.
+
+    - configure registers -> one entry of set
+    - register set -> whole entry
+
+    - register set
+      - R0
+        - control_reg
+        - stride
+        - bnd
+      - R1
+        - control reg
+        - stride
+        -bnd
 */
 
 `include "VX_define.vh"
@@ -15,6 +29,7 @@
 module VX_config_registers import VX_gpu_pkg::*; #(
   parameter `STRING INSTANCE_ID = "",
   parameter NUM_REGS  = 16,           // Number of 32-bit registers
+  parameter NUM_ENTRY = 2,
   parameter START_BIT = 0,             // Bit position of start signal in register space
   parameter MAS_NUM   = 1
 ) (
@@ -23,7 +38,7 @@ module VX_config_registers import VX_gpu_pkg::*; #(
 
   // LSU memory interface for register access
   VX_lsu_mem_if.slave lsu_mem_if[MAS_NUM],
-  VX_config_reg_if.master regs_out // entire register set output
+  VX_config_reg_if.master regs_out // entire register output
 );
 
   generate

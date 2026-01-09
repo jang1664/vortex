@@ -1,22 +1,21 @@
 `timescale 1ns / 1ps
 
-module gemm_tree #(
-    parameter  int IN_DW              = 16,
-    parameter  int WEIGHT_DW          = 4,
-    parameter  int OUT_DW             = 41,
-    parameter  int BLOCK_SIZE         = 5,
-    parameter  int BLOCK_NUM          = 6,
-    parameter  int SEL_BLOCK_NUM      = 3,
-    parameter  int ROW_SIZE           = 32,
-    parameter  int COL_SIZE           = 32,
-    parameter  int TILE_COL_SIZE      = 32,
+module VX_gemm_tree #(
+    parameter  int IN_DW               = `IFP_WIDTH,
+    parameter  int WEIGHT_DW           = `W_BIT_WIDTH,
+    parameter  int OUT_DW              = `O_BIT_WIDTH,
+    parameter  int BLOCK_SIZE          = `BLOCK_SIZE,
+    parameter  int BLOCK_NUM           = `BLOCK_NUM,
+    parameter  int SEL_BLOCK_NUM       = `SEL_BLOCK_NUM,
+    parameter  int ROW_SIZE            = 32,
+    parameter  int COL_SIZE            = 32,
+    parameter  int TILE_COL_SIZE       = 32,
     parameter  int WEIGHT_LOAD_ROW_NUM = 1,  // Number of weight rows loaded at once (ROW_SIZE % WEIGHT_LOAD_ROW_NUM == 0)
-    parameter  int PIPE_MULT          = 1,  // 1 to enable pipelined multiplier
-    parameter  int PIPE_ALIGN         = 1,  // 1 to enable pipelined aligner
-    localparam int TILE_ROW_SIZE      = ROW_SIZE,
-    localparam int BLK_IDX_NUM        = BLOCK_NUM - SEL_BLOCK_NUM + 1,
-    localparam int BLK_BITW           = $clog2(BLK_IDX_NUM),
-    localparam int PIPE_INTERVAL      = 2  // Pipeline every N stages
+    parameter  int WEIGHT_LOAD_COL_NUM = 1,  // Number of weight columns loaded at once (COL_SIZE % WEIGHT_LOAD_COL_NUM == 0)
+    parameter  int PIPE_INTERVAL       = 2,  // Pipeline every N stages
+    parameter  int PIPE_MULT           = 1,  // 1 to enable pipelined multiplier
+    parameter  int PIPE_ALIGN          = 1,  // 1 to enable pipelined aligner
+    localparam int BLK_BITW            = `BLOCK_IDX_WIDTH
 ) (
 
     input logic clk_i,
@@ -26,10 +25,22 @@ module gemm_tree #(
     input logic out_weight_sel_i,
     input logic ready_weight_i,
     input logic ready_input_i,
+    input logic weight_load_dir_i,  // 0: row direction (top to bottom), 1: column direction (left to right)
     input logic [ROW_SIZE-1:0][BLK_BITW-1:0] blk_sidx_i,
 
     output logic [COL_SIZE-1:0][OUT_DW-1:0] ps_o
 );
+
+  localparam int TILE_ROW_SIZE      = ROW_SIZE;
+
+  // Static assertion: WEIGHT_LOAD_ROW_NUM must equal WEIGHT_LOAD_COL_NUM
+  initial begin
+    if (WEIGHT_LOAD_ROW_NUM != WEIGHT_LOAD_COL_NUM) begin
+      $error("WEIGHT_LOAD_ROW_NUM (%0d) must equal WEIGHT_LOAD_COL_NUM (%0d)", 
+             WEIGHT_LOAD_ROW_NUM, WEIGHT_LOAD_COL_NUM);
+      $finish;
+    end
+  end
 
   //internal siganls
   logic [COL_SIZE/TILE_COL_SIZE-1:0][ROW_SIZE-1:0][IN_DW-1:0] ifmap_q;
@@ -61,7 +72,7 @@ module gemm_tree #(
       for (genvar j = 0; j < COL_SIZE / TILE_COL_SIZE; j++) begin : tile_col
         if (i == 0) begin : trz
           if (j == 0) begin : tcz
-            pe_tree #(
+            VX_pe_tree #(
                 .IN_DW(IN_DW),
                 .WEIGHT_DW(WEIGHT_DW),
                 .OUT_DW(OUT_DW),
@@ -71,26 +82,28 @@ module gemm_tree #(
                 .TILE_ROW_SIZE(TILE_ROW_SIZE),
                 .TILE_COL_SIZE(TILE_COL_SIZE),
                 .WEIGHT_LOAD_ROW(WEIGHT_LOAD_ROW_NUM),
+                .WEIGHT_LOAD_COL(WEIGHT_LOAD_COL_NUM),
                 .PIPELINE_STAGES(get_pipe_stage(TILE_ROW_SIZE)),
                 .PIPE_MULT(PIPE_MULT),
                 .PIPE_ALIGN(PIPE_ALIGN)
             ) u_pe (
-                .clk_i           (clk_i),
-                .ifmap_i         (ifmap_i[TILE_ROW_SIZE*i+:TILE_ROW_SIZE]),
-                .weight_i        (weight_i[TILE_COL_SIZE*j+:TILE_COL_SIZE]),
-                .ps_i            ('0),
-                .in_weight_sel_i (in_weight_sel_i),
-                .out_weight_sel_i(out_weight_sel_i),
-                .ready_input_i   (ready_input_i),
-                .ready_weight_i  (ready_weight_i),
-                .blk_sidx_i      (blk_sidx_i[TILE_ROW_SIZE*i+:TILE_ROW_SIZE]),
-                .blk_sidx_o      (blk_sidx_q[j][TILE_ROW_SIZE*i+:TILE_ROW_SIZE]),
-                .ifmap_o         (ifmap_q[j][TILE_ROW_SIZE*i+:TILE_ROW_SIZE]),
-                .ps_o            (ps_q[i][TILE_COL_SIZE*j+:TILE_COL_SIZE]),
-                .weight_o        (weight_q[i][TILE_COL_SIZE*j+:TILE_COL_SIZE])
+                .clk_i            (clk_i),
+                .ifmap_i          (ifmap_i[TILE_ROW_SIZE*i+:TILE_ROW_SIZE]),
+                .weight_i         (weight_i[TILE_COL_SIZE*j+:TILE_COL_SIZE]),
+                .ps_i             ('0),
+                .in_weight_sel_i  (in_weight_sel_i),
+                .out_weight_sel_i (out_weight_sel_i),
+                .ready_input_i    (ready_input_i),
+                .ready_weight_i   (ready_weight_i),
+                .weight_load_dir_i(weight_load_dir_i),
+                .blk_sidx_i       (blk_sidx_i[TILE_ROW_SIZE*i+:TILE_ROW_SIZE]),
+                .blk_sidx_o       (blk_sidx_q[j][TILE_ROW_SIZE*i+:TILE_ROW_SIZE]),
+                .ifmap_o          (ifmap_q[j][TILE_ROW_SIZE*i+:TILE_ROW_SIZE]),
+                .ps_o             (ps_q[i][TILE_COL_SIZE*j+:TILE_COL_SIZE]),
+                .weight_o         (weight_q[i][TILE_COL_SIZE*j+:TILE_COL_SIZE])
             );
           end else begin : tcnz
-            pe_tree #(
+            VX_pe_tree #(
                 .IN_DW(IN_DW),
                 .WEIGHT_DW(WEIGHT_DW),
                 .OUT_DW(OUT_DW),
@@ -100,28 +113,30 @@ module gemm_tree #(
                 .TILE_ROW_SIZE(TILE_ROW_SIZE),
                 .TILE_COL_SIZE(TILE_COL_SIZE),
                 .WEIGHT_LOAD_ROW(WEIGHT_LOAD_ROW_NUM),
+                .WEIGHT_LOAD_COL(WEIGHT_LOAD_COL_NUM),
                 .PIPELINE_STAGES(get_pipe_stage(TILE_ROW_SIZE)),
                 .PIPE_MULT(PIPE_MULT),
                 .PIPE_ALIGN(PIPE_ALIGN)
             ) u_pe (
-                .clk_i           (clk_i),
-                .ifmap_i         (ifmap_q[j-1][TILE_ROW_SIZE*i+:TILE_ROW_SIZE]),
-                .weight_i        (weight_i[TILE_COL_SIZE*j+:TILE_COL_SIZE]),
-                .ps_i            ('0),
-                .in_weight_sel_i (in_weight_sel_i),
-                .out_weight_sel_i(out_weight_sel_i),
-                .ready_input_i   (ready_input_i),
-                .ready_weight_i  (ready_weight_i),
-                .blk_sidx_i      (blk_sidx_q[j-1][TILE_ROW_SIZE*i+:TILE_ROW_SIZE]),
-                .blk_sidx_o      (blk_sidx_q[j][TILE_ROW_SIZE*i+:TILE_ROW_SIZE]),
-                .ifmap_o         (ifmap_q[j][TILE_ROW_SIZE*i+:TILE_ROW_SIZE]),
-                .ps_o            (ps_q[i][TILE_COL_SIZE*j+:TILE_COL_SIZE]),
-                .weight_o        (weight_q[i][TILE_COL_SIZE*j+:TILE_COL_SIZE])
+                .clk_i            (clk_i),
+                .ifmap_i          (ifmap_q[j-1][TILE_ROW_SIZE*i+:TILE_ROW_SIZE]),
+                .weight_i         (weight_i[TILE_COL_SIZE*j+:TILE_COL_SIZE]),
+                .ps_i             ('0),
+                .in_weight_sel_i  (in_weight_sel_i),
+                .out_weight_sel_i (out_weight_sel_i),
+                .ready_input_i    (ready_input_i),
+                .ready_weight_i   (ready_weight_i),
+                .weight_load_dir_i(weight_load_dir_i),
+                .blk_sidx_i       (blk_sidx_q[j-1][TILE_ROW_SIZE*i+:TILE_ROW_SIZE]),
+                .blk_sidx_o       (blk_sidx_q[j][TILE_ROW_SIZE*i+:TILE_ROW_SIZE]),
+                .ifmap_o          (ifmap_q[j][TILE_ROW_SIZE*i+:TILE_ROW_SIZE]),
+                .ps_o             (ps_q[i][TILE_COL_SIZE*j+:TILE_COL_SIZE]),
+                .weight_o         (weight_q[i][TILE_COL_SIZE*j+:TILE_COL_SIZE])
             );
           end
         end else begin : trnz
           if (j == 0) begin : tcz
-            pe_tree #(
+            VX_pe_tree #(
                 .IN_DW(IN_DW),
                 .WEIGHT_DW(WEIGHT_DW),
                 .OUT_DW(OUT_DW),
@@ -131,26 +146,28 @@ module gemm_tree #(
                 .TILE_ROW_SIZE(TILE_ROW_SIZE),
                 .TILE_COL_SIZE(TILE_COL_SIZE),
                 .WEIGHT_LOAD_ROW(WEIGHT_LOAD_ROW_NUM),
+                .WEIGHT_LOAD_COL(WEIGHT_LOAD_COL_NUM),
                 .PIPELINE_STAGES(get_pipe_stage(TILE_ROW_SIZE)),
                 .PIPE_MULT(PIPE_MULT),
                 .PIPE_ALIGN(PIPE_ALIGN)
             ) u_pe (
-                .clk_i           (clk_i),
-                .ifmap_i         (ifmap_i[TILE_ROW_SIZE*i+:TILE_ROW_SIZE]),
-                .weight_i        (weight_q[i-1][TILE_COL_SIZE*j+:TILE_COL_SIZE]),
-                .ps_i            (ps_q[i-1][TILE_COL_SIZE*j+:TILE_COL_SIZE]),
-                .in_weight_sel_i (in_weight_sel_i),
-                .out_weight_sel_i(out_weight_sel_i),
-                .ready_input_i   (ready_input_i),
-                .ready_weight_i  (ready_weight_i),
-                .blk_sidx_i      (blk_sidx_i[TILE_ROW_SIZE*i+:TILE_ROW_SIZE]),
-                .blk_sidx_o      (blk_sidx_q[j][TILE_ROW_SIZE*i+:TILE_ROW_SIZE]),
-                .ifmap_o         (ifmap_q[j][TILE_ROW_SIZE*i+:TILE_ROW_SIZE]),
-                .ps_o            (ps_q[i][TILE_COL_SIZE*j+:TILE_COL_SIZE]),
-                .weight_o        (weight_q[i][TILE_COL_SIZE*j+:TILE_COL_SIZE])
+                .clk_i            (clk_i),
+                .ifmap_i          (ifmap_i[TILE_ROW_SIZE*i+:TILE_ROW_SIZE]),
+                .weight_i         (weight_q[i-1][TILE_COL_SIZE*j+:TILE_COL_SIZE]),
+                .ps_i             (ps_q[i-1][TILE_COL_SIZE*j+:TILE_COL_SIZE]),
+                .in_weight_sel_i  (in_weight_sel_i),
+                .out_weight_sel_i (out_weight_sel_i),
+                .ready_input_i    (ready_input_i),
+                .ready_weight_i   (ready_weight_i),
+                .weight_load_dir_i(weight_load_dir_i),
+                .blk_sidx_i       (blk_sidx_i[TILE_ROW_SIZE*i+:TILE_ROW_SIZE]),
+                .blk_sidx_o       (blk_sidx_q[j][TILE_ROW_SIZE*i+:TILE_ROW_SIZE]),
+                .ifmap_o          (ifmap_q[j][TILE_ROW_SIZE*i+:TILE_ROW_SIZE]),
+                .ps_o             (ps_q[i][TILE_COL_SIZE*j+:TILE_COL_SIZE]),
+                .weight_o         (weight_q[i][TILE_COL_SIZE*j+:TILE_COL_SIZE])
             );
           end else begin : tcnz
-            pe_tree #(
+            VX_pe_tree #(
                 .IN_DW(IN_DW),
                 .WEIGHT_DW(WEIGHT_DW),
                 .OUT_DW(OUT_DW),
@@ -160,23 +177,25 @@ module gemm_tree #(
                 .TILE_ROW_SIZE(TILE_ROW_SIZE),
                 .TILE_COL_SIZE(TILE_COL_SIZE),
                 .WEIGHT_LOAD_ROW(WEIGHT_LOAD_ROW_NUM),
+                .WEIGHT_LOAD_COL(WEIGHT_LOAD_COL_NUM),
                 .PIPELINE_STAGES(get_pipe_stage(TILE_ROW_SIZE)),
                 .PIPE_MULT(PIPE_MULT),
                 .PIPE_ALIGN(PIPE_ALIGN)
             ) u_pe (
-                .clk_i           (clk_i),
-                .ifmap_i         (ifmap_q[j-1][TILE_ROW_SIZE*i+:TILE_ROW_SIZE]),
-                .weight_i        (weight_q[i-1][TILE_COL_SIZE*j+:TILE_COL_SIZE]),
-                .ps_i            (ps_q[i-1][TILE_COL_SIZE*j+:TILE_COL_SIZE]),
-                .in_weight_sel_i (in_weight_sel_i),
-                .out_weight_sel_i(out_weight_sel_i),
-                .ready_input_i   (ready_input_i),
-                .ready_weight_i  (ready_weight_i),
-                .blk_sidx_i      (blk_sidx_q[j-1][TILE_ROW_SIZE*i+:TILE_ROW_SIZE]),
-                .blk_sidx_o      (blk_sidx_q[j][TILE_ROW_SIZE*i+:TILE_ROW_SIZE]),
-                .ifmap_o         (ifmap_q[j][TILE_ROW_SIZE*i+:TILE_ROW_SIZE]),
-                .ps_o            (ps_q[i][TILE_COL_SIZE*j+:TILE_COL_SIZE]),
-                .weight_o        (weight_q[i][TILE_COL_SIZE*j+:TILE_COL_SIZE])
+                .clk_i            (clk_i),
+                .ifmap_i          (ifmap_q[j-1][TILE_ROW_SIZE*i+:TILE_ROW_SIZE]),
+                .weight_i         (weight_q[i-1][TILE_COL_SIZE*j+:TILE_COL_SIZE]),
+                .ps_i             (ps_q[i-1][TILE_COL_SIZE*j+:TILE_COL_SIZE]),
+                .in_weight_sel_i  (in_weight_sel_i),
+                .out_weight_sel_i (out_weight_sel_i),
+                .ready_input_i    (ready_input_i),
+                .ready_weight_i   (ready_weight_i),
+                .weight_load_dir_i(weight_load_dir_i),
+                .blk_sidx_i       (blk_sidx_q[j-1][TILE_ROW_SIZE*i+:TILE_ROW_SIZE]),
+                .blk_sidx_o       (blk_sidx_q[j][TILE_ROW_SIZE*i+:TILE_ROW_SIZE]),
+                .ifmap_o          (ifmap_q[j][TILE_ROW_SIZE*i+:TILE_ROW_SIZE]),
+                .ps_o             (ps_q[i][TILE_COL_SIZE*j+:TILE_COL_SIZE]),
+                .weight_o         (weight_q[i][TILE_COL_SIZE*j+:TILE_COL_SIZE])
             );
           end
         end

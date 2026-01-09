@@ -972,6 +972,8 @@
 
 `define W_BIT_WIDTH 4
 
+`define O_BIT_WIDTH 41
+
 `define EXTRA_BIT_WIDTH (`W_BIT_WIDTH + 2 + (23-10)) // 19
 
 /*
