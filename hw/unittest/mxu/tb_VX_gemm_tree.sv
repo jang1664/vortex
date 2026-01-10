@@ -32,6 +32,8 @@ module tb_VX_gemm_tree import VX_gpu_pkg::*;();
   localparam int WEIGHT_LOAD_COL_NUM = 1;
   localparam int BLK_BITW           = `BLOCK_IDX_WIDTH;
 
+  logic resetn;
+
   logic clk_i;
   logic [ROW_SIZE-1:0][IN_DW-1:0] ifmap_i;
   logic [COL_SIZE-1:0][WEIGHT_LOAD_ROW_NUM-1:0][WEIGHT_DW-1:0] weight_i;
@@ -43,6 +45,8 @@ module tb_VX_gemm_tree import VX_gpu_pkg::*;();
   logic [ROW_SIZE-1:0][BLK_BITW-1:0] blk_sidx_i;
   logic [COL_SIZE-1:0][OUT_DW-1:0] ps_o;
   logic [COL_SIZE/TILE_COL_SIZE-1:0] output_valid_o;
+
+  logic test_5_active;
 
   VX_gemm_tree #(
       .IN_DW              (IN_DW),
@@ -69,6 +73,36 @@ module tb_VX_gemm_tree import VX_gpu_pkg::*;();
       .ps_o             (ps_o),
       .output_valid_o   (output_valid_o)
   );
+
+  VX_stream_intf #(
+    .DATA_WIDTH(TILE_COL_SIZE*OUT_DW)
+  ) output_in [COL_SIZE/TILE_COL_SIZE](
+    .clk(clk_i)
+  );
+  VX_stream_intf #(
+    .DATA_WIDTH(TILE_COL_SIZE*OUT_DW)
+  ) output_out [COL_SIZE/TILE_COL_SIZE](
+    .clk(clk_i)
+  );
+
+  generate
+    for(genvar i=0; i<COL_SIZE/TILE_COL_SIZE; i=i+1) begin : gen_output_fifo
+      VX_stream_slave_always_ready #(
+        .DATA_WIDTH(COL_SIZE*OUT_DW)
+      ) u_fifo (
+        .clk_i(clk_i),
+        .rst_ni(resetn),
+        .clear_i('0),
+        .flags_o(/*unused*/),
+        .push_i(output_in[i]),
+        .pop_o(output_out[i])
+      );
+      assign output_out[i].ready=1'b0;
+      assign output_in[i].data = ps_o[i*(TILE_COL_SIZE*OUT_DW) +: TILE_COL_SIZE*OUT_DW];
+      assign output_in[i].strb = '1;
+      assign output_in[i].valid = output_valid_o[i] & test_5_active;
+    end
+  endgenerate
 
   integer rpt_fd;
   integer log_fd;
@@ -143,6 +177,10 @@ module tb_VX_gemm_tree import VX_gpu_pkg::*;();
     $display("WEIGHT_DW     : %0d", WEIGHT_DW);
     $display("OUT_DW        : %0d", OUT_DW);
     $display("GEMM_LATENCY  : %0d cycles", calc_gemm_latency());
+
+    resetn = 0;
+    `WAIT_POSEDGE(clk_i, PERIOD);
+    resetn = 1;
     
     // Test 1: Simple all-ones test
     test_all_ones();
@@ -156,13 +194,11 @@ module tb_VX_gemm_tree import VX_gpu_pkg::*;();
     // Test 4: Different weight values
     test_different_weights();
     
-`ifdef ENABLE_RANDOM_TEST_DISABLED
-    // Test 5: Random test with multiple input vectors
-    test_random_matrix();
-`endif
-    
-    // Test 6: Column direction weight loading
+    // Test 5: Column direction weight loading
     test_column_direction_loading();
+
+    // Test 6: Random test with multiple input vectors
+    test_random_matrix();
     
     $display("=====================================================================");
     $display("=====================  ALL TESTS COMPLETED  =========================");
@@ -481,8 +517,10 @@ module tb_VX_gemm_tree import VX_gpu_pkg::*;();
     automatic int seed = 12345;
     automatic int pass_count;
     automatic int fail_count;
+
+    test_5_active = 1;
     
-    $display("\n[TEST 5] Random Test");
+    $display("\n[TEST 6] Random Test");
     $display("Processing %0d input vectors (MAX_INPUT_CYCLES=%0d)", NUM_INPUT_VECTORS, `MAX_INPUT_CYCLES);
     
     // reset
@@ -537,34 +575,53 @@ module tb_VX_gemm_tree import VX_gpu_pkg::*;();
     // Calculate expected output using reference function
     calc_gemm_reference(ifmap_history, weight_ref, blk_idx_history, NUM_INPUT_VECTORS, expected_output);
     
-    // Wait for pipeline latency
-    repeat (calc_gemm_latency()) `WAIT_POSEDGE(clk_i, PERIOD);
+    // Wait for all outputs to be captured in queue
+    repeat (calc_gemm_latency() + NUM_INPUT_VECTORS + 5) `WAIT_POSEDGE(clk_i, PERIOD);
     
-    // Check results for each output cycle
+    test_5_active = 0;
+    `WAIT_POSEDGE(clk_i, PERIOD);
+    
+    // Check queue size
+    $display("Queue size: %0d (expected: %0d)", gen_output_fifo[0].u_fifo.get_queue_size(), NUM_INPUT_VECTORS);
+    
+    // Validate all outputs from queue
     pass_count = 0;
     fail_count = 0;
+    
     for (int cycle = 0; cycle < NUM_INPUT_VECTORS; cycle++) begin
-      for (int j = 0; j < COL_SIZE; j++) begin
-        automatic logic match = ($signed(ps_o[j]) == $signed(expected_output[cycle][j]));
-        
-        if (cycle < 2 || !match) begin  // Print first 2 cycles or failures
-          $display("  [Cycle %0d] ps_o[%0d] = %0d (expected: %0d) %s", 
-                   cycle, j, $signed(ps_o[j]), $signed(expected_output[cycle][j]),
-                   match ? "PASS" : "FAIL");
-        end
-        
-        if (match) begin
-          pass_count++;
-        end else begin
-          fail_count++;
-        end
-        
-        $fdisplay(log_fd, "[TEST5] cycle%0d ps_o[%0d] = %0d (expected: %0d) %s", 
-                  cycle, j, $signed(ps_o[j]), $signed(expected_output[cycle][j]),
-                  match ? "PASS" : "FAIL");
-      end
+      automatic logic [TILE_COL_SIZE*OUT_DW-1:0] queue_data;
       
-      `WAIT_POSEDGE(clk_i, PERIOD);
+      if (cycle < gen_output_fifo[0].u_fifo.get_queue_size()) begin
+        queue_data = gen_output_fifo[0].u_fifo.get_queue_data(cycle);
+        
+        for (int j = 0; j < COL_SIZE; j++) begin
+          automatic logic [OUT_DW-1:0] hw_output;
+          automatic logic match;
+          
+          // Extract individual column output from packed data
+          hw_output = queue_data[j*OUT_DW +: OUT_DW];
+          match = ($signed(hw_output) == $signed(expected_output[cycle][j]));
+          
+          if (cycle < 2 || !match) begin  // Print first 2 cycles or failures
+            $display("  [Cycle %0d] Queue data[%0d] = %0d (expected: %0d) %s", 
+                     cycle, j, $signed(hw_output), $signed(expected_output[cycle][j]),
+                     match ? "PASS" : "FAIL");
+          end
+          
+          if (match) begin
+            pass_count++;
+          end else begin
+            fail_count++;
+          end
+          
+          $fdisplay(log_fd, "[TEST5] cycle%0d col[%0d] = %0d (expected: %0d) %s", 
+                    cycle, j, $signed(hw_output), $signed(expected_output[cycle][j]),
+                    match ? "PASS" : "FAIL");
+        end
+      end else begin
+        $display("  [Cycle %0d] Queue index out of range!", cycle);
+        fail_count += COL_SIZE;
+      end
     end
     
     $display("Summary: %0d PASS, %0d FAIL out of %0d total outputs (%0d cycles x %0d cols)", 
@@ -582,7 +639,7 @@ module tb_VX_gemm_tree import VX_gpu_pkg::*;();
     automatic logic [`MAX_INPUT_CYCLES-1:0][COL_SIZE-1:0][OUT_DW-1:0] expected_output;
     automatic int pass_count, fail_count;
     
-    $display("\n[TEST 6] Column Direction Weight Loading Test");
+    $display("\n[TEST 5] Column Direction Weight Loading Test");
     $display("Testing weight_load_dir_i=1 (column direction)");
     $display("Expected: Each ps_o[i] = ROW_SIZE * 1 * 1 = %0d", ROW_SIZE);
     

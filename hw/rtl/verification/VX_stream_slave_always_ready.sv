@@ -164,6 +164,31 @@ module VX_stream_slave_always_ready import VX_mem_pkg::*; #(
   assign pop_o.data = (pop_o.valid == 1'b1) ? data_out_int[DATA_WIDTH+(DATA_WIDTH+7)/8-1:(DATA_WIDTH+7)/8] : '0;
   assign pop_o.strb = (pop_o.valid == 1'b1) ? data_out_int[(DATA_WIDTH+7)/8-1:0] : '0;
 
+  // Queue accessor functions
+  function int get_queue_size();
+    if (cs == EMPTY) return 0;
+    else if (cs == FULL) return FIFO_DEPTH;
+    else if (push_pointer_q >= pop_pointer_q)
+      return push_pointer_q - pop_pointer_q;
+    else
+      return FIFO_DEPTH - pop_pointer_q + push_pointer_q;
+  endfunction
+
+  function logic [DATA_WIDTH-1:0] get_queue_data(input int index);
+    automatic int actual_index;
+    if (index >= get_queue_size()) begin
+      $error("Index %0d out of range (queue size: %0d)", index, get_queue_size());
+      return '0;
+    end
+    actual_index = (pop_pointer_q + index) % FIFO_DEPTH;
+    return fifo_registers[actual_index][DATA_WIDTH+(DATA_WIDTH+7)/8-1:(DATA_WIDTH+7)/8];
+  endfunction
+
+  function void clear_queue();
+    // This function is meant to be called from testbench
+    // Actual clearing is done by asserting clear_i signal
+  endfunction
+
 `ifdef FUNCTIONAL
   int fd;
 
