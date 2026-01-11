@@ -1,3 +1,49 @@
+interface VX_stream_slave_always_ready_dbg_if # (
+  parameter int DATA_WIDTH = 32,
+  parameter int unsigned STRB_WIDTH = (DATA_WIDTH+7) / 8
+) (
+    input logic clk
+);
+  localparam int unsigned FIFO_DEPTH = 2**20;
+  localparam ADDR_DEPTH = (FIFO_DEPTH == 1) ? 1 : $clog2(FIFO_DEPTH);
+
+  logic [ADDR_DEPTH-1:0] pop_pointer_q, pop_pointer_d;
+  logic [ADDR_DEPTH-1:0] push_pointer_q, push_pointer_d;
+  logic   [DATA_WIDTH+(DATA_WIDTH+7)/8-1:0] fifo_registers[FIFO_DEPTH-1:0];
+  logic [1:0] cs;  // Current state
+
+  // Queue accessor functions - implemented to read from internal signals
+  function int get_queue_size();
+    if (cs == 2'b00) return 0;  // EMPTY
+    else if (cs == 2'b01) return FIFO_DEPTH;  // FULL
+    else if (push_pointer_q >= pop_pointer_q)  // MIDDLE
+      return push_pointer_q - pop_pointer_q;
+    else
+      return FIFO_DEPTH - pop_pointer_q + push_pointer_q;
+  endfunction
+
+  function logic [DATA_WIDTH-1:0] get_queue_data(input int index);
+    automatic int actual_index;
+    automatic int queue_size;
+    
+    queue_size = get_queue_size();
+    if (index >= queue_size) begin
+      $error("Index %0d out of range (queue size: %0d)", index, queue_size);
+      return '0;
+    end
+    
+    actual_index = (pop_pointer_q + index) % FIFO_DEPTH;
+    return fifo_registers[actual_index][DATA_WIDTH+(DATA_WIDTH+7)/8-1:(DATA_WIDTH+7)/8];
+  endfunction
+
+  function void clear_queue();
+    // This function is informational only
+    // Actual clearing is done by asserting clear_i signal in the DUT
+    $display("To clear queue, assert clear_i signal in the module");
+  endfunction
+
+endinterface;
+
 module VX_stream_slave_always_ready import VX_mem_pkg::*; #(
     parameter int unsigned DATA_WIDTH = 32
 ) (
@@ -10,6 +56,8 @@ module VX_stream_slave_always_ready import VX_mem_pkg::*; #(
     VX_stream_intf.sink   push_i,
     VX_stream_intf.source pop_o
 );
+
+  VX_stream_slave_always_ready_dbg_if#(.DATA_WIDTH(DATA_WIDTH)) dbg_if(.clk(clk_i));
 
   localparam int unsigned FIFO_DEPTH = 2**20;
   // Local Parameter
@@ -27,6 +75,18 @@ module VX_stream_slave_always_ready import VX_mem_pkg::*; #(
   logic [ADDR_DEPTH-1:0] push_pointer_q, push_pointer_d;
   logic   [DATA_WIDTH+(DATA_WIDTH+7)/8-1:0] fifo_registers[FIFO_DEPTH-1:0];
   integer                               i;
+
+  // Connect internal signals to debug interface
+  assign dbg_if.pop_pointer_q = pop_pointer_q;
+  assign dbg_if.push_pointer_q = push_pointer_q;
+  assign dbg_if.cs = cs;
+  
+  // Connect FIFO registers to debug interface
+  always_comb begin
+    for (int j = 0; j < FIFO_DEPTH; j++) begin
+      dbg_if.fifo_registers[j] = fifo_registers[j];
+    end
+  end
 
   assign flags_o.empty = (cs == EMPTY) ? 1'b1 : 1'b0;
 

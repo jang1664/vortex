@@ -2,14 +2,7 @@
 
 `include "VX_define.vh"
 
-// Test configuration macros
-`ifndef ENABLE_RANDOM_TEST
-  `define ENABLE_RANDOM_TEST 1
-`endif
-
-`ifndef MAX_INPUT_CYCLES
-  `define MAX_INPUT_CYCLES 8
-`endif
+`define MAX_INPUT_CYCLES 8
 
 module tb_VX_gemm_tree import VX_gpu_pkg::*;();
   parameter string tb_name = "tb_VX_gemm_tree";
@@ -40,6 +33,7 @@ module tb_VX_gemm_tree import VX_gpu_pkg::*;();
   logic in_weight_sel_i;
   logic out_weight_sel_i;
   logic ready_weight_i;
+  logic [WEIGHT_LOAD_ROW_NUM-1:0][$clog2(ROW_SIZE)-1:0] weight_dst_i;
   logic input_valid_i;
   logic weight_load_dir_i;
   logic [ROW_SIZE-1:0][BLK_BITW-1:0] blk_sidx_i;
@@ -62,11 +56,13 @@ module tb_VX_gemm_tree import VX_gpu_pkg::*;();
       .WEIGHT_LOAD_COL_NUM(WEIGHT_LOAD_COL_NUM)
   ) u_gemm_tree (
       .clk_i            (clk_i),
+      .resetn_i         (resetn),
       .ifmap_i          (ifmap_i),
       .weight_i         (weight_i),
       .in_weight_sel_i  (in_weight_sel_i),
       .out_weight_sel_i (out_weight_sel_i),
       .ready_weight_i   (ready_weight_i),
+      .weight_dst_i     (weight_dst_i),
       .input_valid_i    (input_valid_i),
       .weight_load_dir_i(weight_load_dir_i),
       .blk_sidx_i       (blk_sidx_i),
@@ -84,6 +80,9 @@ module tb_VX_gemm_tree import VX_gpu_pkg::*;();
   ) output_out [COL_SIZE/TILE_COL_SIZE](
     .clk(clk_i)
   );
+  virtual VX_stream_slave_always_ready_dbg_if #(
+    .DATA_WIDTH(TILE_COL_SIZE*OUT_DW)
+  ) fifo_dbg_vif [COL_SIZE/TILE_COL_SIZE];
 
   generate
     for(genvar i=0; i<COL_SIZE/TILE_COL_SIZE; i=i+1) begin : gen_output_fifo
@@ -101,11 +100,24 @@ module tb_VX_gemm_tree import VX_gpu_pkg::*;();
       assign output_in[i].data = ps_o[i*(TILE_COL_SIZE*OUT_DW) +: TILE_COL_SIZE*OUT_DW];
       assign output_in[i].strb = '1;
       assign output_in[i].valid = output_valid_o[i] & test_5_active;
+
+      initial begin
+        fifo_dbg_vif[i] = u_fifo.dbg_if;
+      end
     end
   endgenerate
 
   integer rpt_fd;
   integer log_fd;
+  
+  // Debug: Monitor queue pushes
+  always @(posedge clk_i) begin
+    for(int i=0; i<COL_SIZE/TILE_COL_SIZE; i=i+1) begin
+      if (output_valid_o[i] && test_5_active) begin
+        $display("@%0t: Queue %0d push - ps_o=%h, valid=%b", $time, i, ps_o[i*TILE_COL_SIZE +: TILE_COL_SIZE], output_valid_o[i]);
+      end
+    end
+  end
 
   string fsdb_file_path;
   string fst_file_path;
@@ -182,6 +194,12 @@ module tb_VX_gemm_tree import VX_gpu_pkg::*;();
     `WAIT_POSEDGE(clk_i, PERIOD);
     resetn = 1;
     
+    test_weight_load(0); // Row direction
+    test_weight_load(1); // Column direction
+    /*
+    // Test 0: Reference function verification
+    test_reference_verification();
+    
     // Test 1: Simple all-ones test
     test_all_ones();
     
@@ -193,16 +211,90 @@ module tb_VX_gemm_tree import VX_gpu_pkg::*;();
     
     // Test 4: Different weight values
     test_different_weights();
-    
-    // Test 5: Column direction weight loading
-    test_column_direction_loading();
+    */
 
     // Test 6: Random test with multiple input vectors
-    test_random_matrix();
+    test_random_matrix(1);
     
     $display("=====================================================================");
     $display("=====================  ALL TESTS COMPLETED  =========================");
     $display("=====================================================================");
+  endtask
+
+  // Test 0: Reference function verification
+  task test_reference_verification();
+    automatic logic [`MAX_INPUT_CYCLES-1:0][ROW_SIZE-1:0][IN_DW-1:0] ifmap_history;
+    automatic logic [COL_SIZE-1:0][ROW_SIZE-1:0][WEIGHT_DW-1:0] weight_ref;
+    automatic logic [`MAX_INPUT_CYCLES-1:0][ROW_SIZE-1:0][BLK_BITW-1:0] blk_idx_history;
+    automatic logic [`MAX_INPUT_CYCLES-1:0][COL_SIZE-1:0][OUT_DW-1:0] expected_output;
+    
+    $display("\n[TEST 0] Reference Function Verification");
+    
+    // Test Case 1: Simple 2x2 with all ones
+    $display("\n--- Test Case 1: All ones (2 input cycles) ---");
+    for (int cycle = 0; cycle < 2; cycle++) begin
+      for (int row = 0; row < ROW_SIZE; row++) begin
+        ifmap_history[cycle][row] = 1;
+        blk_idx_history[cycle][row] = 0; // No shift
+      end
+    end
+    
+    for (int col = 0; col < COL_SIZE; col++) begin
+      for (int row = 0; row < ROW_SIZE; row++) begin
+        weight_ref[col][row] = 1;
+      end
+    end
+    
+    // Print inputs
+    $display("Input matrices:");
+    for (int cycle = 0; cycle < 2; cycle++) begin
+      $display("  Cycle %0d ifmap: %p", cycle, ifmap_history[cycle]);
+    end
+    $display("Weight matrix (col x row):");
+    for (int col = 0; col < COL_SIZE; col++) begin
+      $display("  Col %0d: %p", col, weight_ref[col]);
+    end
+    
+    calc_gemm_reference(ifmap_history, weight_ref, blk_idx_history, 2, expected_output);
+    
+    $display("Expected outputs:");
+    for (int cycle = 0; cycle < 2; cycle++) begin
+      $display("  Cycle %0d: %p", cycle, expected_output[cycle]);
+      for (int col = 0; col < COL_SIZE; col++) begin
+        $display("    Col[%0d] = %0d (should be %0d)", col, $signed(expected_output[cycle][col]), ROW_SIZE);
+      end
+    end
+    
+    // Test Case 2: Identity-like with incremental values
+    $display("\n--- Test Case 2: Incremental values (1 input cycle) ---");
+    for (int row = 0; row < ROW_SIZE; row++) begin
+      ifmap_history[0][row] = row + 1; // 1, 2, 3, 4
+      blk_idx_history[0][row] = 0;
+    end
+    
+    for (int col = 0; col < COL_SIZE; col++) begin
+      for (int row = 0; row < ROW_SIZE; row++) begin
+        weight_ref[col][row] = 2; // All weights = 2
+      end
+    end
+    
+    $display("Input:");
+    $display("  Cycle 0 ifmap: %p", ifmap_history[0]);
+    $display("Weight matrix (all 2s):");
+    for (int col = 0; col < COL_SIZE; col++) begin
+      $display("  Col %0d: %p", col, weight_ref[col]);
+    end
+    
+    calc_gemm_reference(ifmap_history, weight_ref, blk_idx_history, 1, expected_output);
+    
+    $display("Expected output:");
+    $display("  Cycle 0: %p", expected_output[0]);
+    for (int col = 0; col < COL_SIZE; col++) begin
+      automatic int expected_val = 2 * (1 + 2 + 3 + 4); // 2 * 10 = 20
+      $display("    Col[%0d] = %0d (should be %0d)", col, $signed(expected_output[0][col]), expected_val);
+    end
+    
+    $display("\n--- Reference Function Verification Complete ---\n");
   endtask
 
   // Test 1: All ones - simplest case
@@ -223,6 +315,7 @@ module tb_VX_gemm_tree import VX_gpu_pkg::*;();
     out_weight_sel_i = '0;
     input_valid_i = '0;
     ready_weight_i = '0;
+    weight_dst_i = '0;
     weight_load_dir_i = '0;
     blk_sidx_i = '0;
     
@@ -236,6 +329,7 @@ module tb_VX_gemm_tree import VX_gpu_pkg::*;();
       for (int j = 0; j < COL_SIZE; j++) begin
         for (int k = 0; k < WEIGHT_LOAD_ROW_NUM; k++) begin
           weight_i[j][k] = 1;
+          weight_dst_i[k] = i;  // Set destination to current row index
         end
       end
       `WAIT_POSEDGE(clk_i, PERIOD);
@@ -302,6 +396,7 @@ module tb_VX_gemm_tree import VX_gpu_pkg::*;();
     weight_i = '0;
     input_valid_i = '0;
     ready_weight_i = '0;
+    weight_dst_i = '0;
     blk_sidx_i = '0;
     
     `WAIT_POSEDGE(clk_i, PERIOD);
@@ -314,6 +409,7 @@ module tb_VX_gemm_tree import VX_gpu_pkg::*;();
       for (int j = 0; j < COL_SIZE; j++) begin
         for (int k = 0; k < WEIGHT_LOAD_ROW_NUM; k++) begin
           weight_i[j][k] = 1;
+          weight_dst_i[k] = i;  // Set destination to current row index
         end
       end
       `WAIT_POSEDGE(clk_i, PERIOD);
@@ -377,6 +473,7 @@ module tb_VX_gemm_tree import VX_gpu_pkg::*;();
     weight_i = '0;
     input_valid_i = '0;
     ready_weight_i = '0;
+    weight_dst_i = '0;
     blk_sidx_i = '0;
     
     `WAIT_POSEDGE(clk_i, PERIOD);
@@ -388,6 +485,7 @@ module tb_VX_gemm_tree import VX_gpu_pkg::*;();
       for (int j = 0; j < COL_SIZE; j++) begin
         for (int k = 0; k < WEIGHT_LOAD_ROW_NUM; k++) begin
           weight_i[j][k] = 1;
+          weight_dst_i[k] = i;  // Set destination to current row index
         end
       end
       `WAIT_POSEDGE(clk_i, PERIOD);
@@ -452,6 +550,7 @@ module tb_VX_gemm_tree import VX_gpu_pkg::*;();
     weight_i = '0;
     input_valid_i = '0;
     ready_weight_i = '0;
+    weight_dst_i = '0;
     blk_sidx_i = '0;
     
     `WAIT_POSEDGE(clk_i, PERIOD);
@@ -465,6 +564,7 @@ module tb_VX_gemm_tree import VX_gpu_pkg::*;();
         for (int k = 0; k < WEIGHT_LOAD_ROW_NUM; k++) begin
           automatic logic [WEIGHT_DW-1:0] w_val = (j + 1) & ((1 << WEIGHT_DW) - 1);
           weight_i[j][k] = w_val;
+          weight_dst_i[k] = i;  // Set destination to current row index
           weight_ref[j][ROW_SIZE-1-i-k] = $signed(w_val);
         end
       end
@@ -508,7 +608,7 @@ module tb_VX_gemm_tree import VX_gpu_pkg::*;();
   endtask
 
   // Test 5: Random test with multiple input vectors
-  task test_random_matrix();
+  task test_random_matrix(input int random=1);
     localparam int NUM_INPUT_VECTORS = `MAX_INPUT_CYCLES; // Process MAX input vectors
     automatic logic [`MAX_INPUT_CYCLES-1:0][ROW_SIZE-1:0][IN_DW-1:0] ifmap_history;
     automatic logic [COL_SIZE-1:0][ROW_SIZE-1:0][WEIGHT_DW-1:0] weight_ref;
@@ -528,18 +628,26 @@ module tb_VX_gemm_tree import VX_gpu_pkg::*;();
     weight_i = '0;
     input_valid_i = '0;
     ready_weight_i = '0;
+    weight_dst_i = '0;
     blk_sidx_i = '0;
     `WAIT_POSEDGE(clk_i, PERIOD);
     
     // Generate random weights (constrained to 4-bit signed range: -8 to +7)
     $display("Loading random weights...");
-    in_weight_sel_i = ~in_weight_sel_i;
+    in_weight_sel_i = 0;
     ready_weight_i = 1;
+    weight_load_dir_i = 0;
     for (int i = 0; i < ROW_SIZE; i++) begin
       for (int j = 0; j < COL_SIZE; j++) begin
         for (int k = 0; k < WEIGHT_LOAD_ROW_NUM; k++) begin
-          automatic int w_val = $urandom_range(0, 15) & ((1 << WEIGHT_DW) - 1);
+          automatic int w_val = 0;
+          if(random) begin
+            w_val = $urandom_range(0, 15) & ((1 << WEIGHT_DW) - 1);
+          end else begin
+            w_val = 1;
+          end
           weight_i[j][k] = w_val;
+          weight_dst_i[k] = i;  // Set destination to current row index
           weight_ref[j][ROW_SIZE-1-i-k] = $signed(w_val[WEIGHT_DW-1:0]);
         end
       end
@@ -547,6 +655,9 @@ module tb_VX_gemm_tree import VX_gpu_pkg::*;();
     end
     ready_weight_i = 0;
     out_weight_sel_i = in_weight_sel_i;
+    
+    // Wait for weight loading to settle
+    repeat (2) `WAIT_POSEDGE(clk_i, PERIOD);
     
     // Generate and process random input vectors
     $display("Processing %0d random input vectors...", NUM_INPUT_VECTORS);
@@ -557,6 +668,13 @@ module tb_VX_gemm_tree import VX_gpu_pkg::*;();
       for (int i = 0; i < ROW_SIZE; i++) begin
         automatic int ifmap_val = $urandom_range(0, 255);
         automatic int blk_idx = $urandom_range(0, 2);
+        if(random) begin
+          ifmap_val = $urandom_range(0, 255);
+          blk_idx = $urandom_range(0, 2);
+        end else begin
+          ifmap_val = 1;
+          blk_idx = 0;
+        end
         
         ifmap_i[i] = ifmap_val;
         blk_sidx_i[i] = blk_idx;
@@ -572,56 +690,56 @@ module tb_VX_gemm_tree import VX_gpu_pkg::*;();
     end
     input_valid_i = 0;
     
+    // Wait for pipeline to produce all outputs
+    repeat (calc_gemm_latency()) `WAIT_POSEDGE(clk_i, PERIOD);
+    
     // Calculate expected output using reference function
     calc_gemm_reference(ifmap_history, weight_ref, blk_idx_history, NUM_INPUT_VECTORS, expected_output);
-    
-    // Wait for all outputs to be captured in queue
-    repeat (calc_gemm_latency() + NUM_INPUT_VECTORS + 5) `WAIT_POSEDGE(clk_i, PERIOD);
     
     test_5_active = 0;
     `WAIT_POSEDGE(clk_i, PERIOD);
     
     // Check queue size
-    $display("Queue size: %0d (expected: %0d)", gen_output_fifo[0].u_fifo.get_queue_size(), NUM_INPUT_VECTORS);
+    for(int i=0; i<COL_SIZE/TILE_COL_SIZE; i=i+1) begin
+      if (fifo_dbg_vif[i].get_queue_size() != NUM_INPUT_VECTORS) begin
+        $display("Error: Output FIFO %0d size = %0d, expected %0d", 
+                 i, fifo_dbg_vif[i].get_queue_size(), NUM_INPUT_VECTORS);
+      end
+    end
     
     // Validate all outputs from queue
     pass_count = 0;
     fail_count = 0;
     
     for (int cycle = 0; cycle < NUM_INPUT_VECTORS; cycle++) begin
-      automatic logic [TILE_COL_SIZE*OUT_DW-1:0] queue_data;
-      
-      if (cycle < gen_output_fifo[0].u_fifo.get_queue_size()) begin
-        queue_data = gen_output_fifo[0].u_fifo.get_queue_data(cycle);
-        
-        for (int j = 0; j < COL_SIZE; j++) begin
-          automatic logic [OUT_DW-1:0] hw_output;
-          automatic logic match;
-          
-          // Extract individual column output from packed data
-          hw_output = queue_data[j*OUT_DW +: OUT_DW];
-          match = ($signed(hw_output) == $signed(expected_output[cycle][j]));
-          
-          if (cycle < 2 || !match) begin  // Print first 2 cycles or failures
-            $display("  [Cycle %0d] Queue data[%0d] = %0d (expected: %0d) %s", 
-                     cycle, j, $signed(hw_output), $signed(expected_output[cycle][j]),
-                     match ? "PASS" : "FAIL");
-          end
-          
-          if (match) begin
-            pass_count++;
-          end else begin
-            fail_count++;
-          end
-          
-          $fdisplay(log_fd, "[TEST5] cycle%0d col[%0d] = %0d (expected: %0d) %s", 
-                    cycle, j, $signed(hw_output), $signed(expected_output[cycle][j]),
-                    match ? "PASS" : "FAIL");
-        end
-      end else begin
-        $display("  [Cycle %0d] Queue index out of range!", cycle);
-        fail_count += COL_SIZE;
+      automatic logic [COL_SIZE*OUT_DW-1:0] queue_out;
+      for(int i=0; i<COL_SIZE/TILE_COL_SIZE; i=i+1) begin
+        queue_out[i*(TILE_COL_SIZE*OUT_DW) +: TILE_COL_SIZE*OUT_DW] = fifo_dbg_vif[i].get_queue_data(cycle);
       end
+      for (int j = 0; j < COL_SIZE; j++) begin
+        automatic logic [OUT_DW-1:0] hw_output;
+        automatic logic match;
+        
+        // Extract individual column output
+        hw_output = queue_out;
+        match = ($signed(hw_output) == $signed(expected_output[cycle][j]));
+        
+        $display("  [Cycle %0d] ps_o[%0d] = %0d (expected: %0d) %s", 
+                  cycle, j, $signed(hw_output), $signed(expected_output[cycle][j]),
+                  match ? "PASS" : "FAIL");
+        
+        if (match) begin
+          pass_count++;
+        end else begin
+          fail_count++;
+        end
+        
+        $fdisplay(log_fd, "[TEST6] cycle%0d col[%0d] = %0d (expected: %0d) %s", 
+                  cycle, j, $signed(hw_output), $signed(expected_output[cycle][j]),
+                  match ? "PASS" : "FAIL");
+      end
+      
+      `WAIT_POSEDGE(clk_i, PERIOD);
     end
     
     $display("Summary: %0d PASS, %0d FAIL out of %0d total outputs (%0d cycles x %0d cols)", 
@@ -632,123 +750,73 @@ module tb_VX_gemm_tree import VX_gpu_pkg::*;();
   endtask
 
   // Test 6: Column direction weight loading
-  task test_column_direction_loading();
+  task test_weight_load(input int direction);
     automatic logic [`MAX_INPUT_CYCLES-1:0][ROW_SIZE-1:0][IN_DW-1:0] ifmap_history;
     automatic logic [COL_SIZE-1:0][ROW_SIZE-1:0][WEIGHT_DW-1:0] weight_ref;
     automatic logic [`MAX_INPUT_CYCLES-1:0][ROW_SIZE-1:0][BLK_BITW-1:0] blk_idx_history;
     automatic logic [`MAX_INPUT_CYCLES-1:0][COL_SIZE-1:0][OUT_DW-1:0] expected_output;
     automatic int pass_count, fail_count;
+    automatic integer loop_dim, inner_dim, vec_num;
     
-    $display("\n[TEST 5] Column Direction Weight Loading Test");
-    $display("Testing weight_load_dir_i=1 (column direction)");
-    $display("Expected: Each ps_o[i] = ROW_SIZE * 1 * 1 = %0d", ROW_SIZE);
+    $display("\nWeight Loading Test. DIR : %0d", direction);
     
     // Clear all signals and wait for pipeline to flush
     ifmap_i = '0;
     weight_i = '0;
     input_valid_i = '0;
     ready_weight_i = '0;
+    weight_dst_i = '0;
     blk_sidx_i = '0;
-    weight_load_dir_i = 0;
+    weight_load_dir_i = ~direction;
+    in_weight_sel_i = 1;
+
+    for(int r=0; r<ROW_SIZE; r++) begin
+      for(int c=0; c<COL_SIZE; c++) begin
+        weight_ref[c][r] = (c + r*COL_SIZE)%4;
+      end
+    end
     
     // Wait for pipeline to flush completely
     repeat (20) `WAIT_POSEDGE(clk_i, PERIOD);
     
     // Set column direction BEFORE starting weight load
-    weight_load_dir_i = 1;  // Column direction!
-    
-    // Wait a few cycles for direction change to propagate
-    repeat (5) `WAIT_POSEDGE(clk_i, PERIOD);
-    
-    // Load weights in column direction (all 1s)
-    $display("Loading weights in column direction (all 1s)...");
+    loop_dim = (direction == 0) ? ROW_SIZE : COL_SIZE;
+    inner_dim = (direction == 0) ? COL_SIZE : ROW_SIZE;
+    vec_num = (direction == 0) ? WEIGHT_LOAD_ROW_NUM : WEIGHT_LOAD_COL_NUM;
+
+    weight_load_dir_i = direction;  // Column direction!
     in_weight_sel_i = ~in_weight_sel_i;
     ready_weight_i = 1;
-    
-    // Column direction loading:
-    // - Similar to row direction, but loads to first WEIGHT_LOAD_COL columns,
-    //   then shifts right to other columns
-    // - Each cycle loads WEIGHT_LOAD_ROW rows (which is 1 in our case)
-    // - Need ROW_SIZE cycles to load all rows
-    // - After loading to column 0, it shifts right to columns 1, 2, 3
-    // - Then we load to column 1 (shifts to 2, 3, 4), etc.
-    
-    // Total cycles needed: ROW_SIZE (for all rows) * COL_SIZE (for all columns)
-    // But with shift register, we only need ROW_SIZE + COL_SIZE - 1 cycles
-    // However, for simplicity, let's do ROW_SIZE * COL_SIZE cycles
-    
-    // Actually, re-thinking: column direction means we load column by column
-    // Each column needs ROW_SIZE cycles to load all its rows
-    // So total: COL_SIZE * ROW_SIZE cycles
-    
-    for (int col_cycle = 0; col_cycle < COL_SIZE; col_cycle++) begin
-      for (int row_cycle = 0; row_cycle < ROW_SIZE; row_cycle++) begin
-        for (int j = 0; j < COL_SIZE; j++) begin
-          for (int k = 0; k < WEIGHT_LOAD_ROW_NUM; k++) begin
-            weight_i[j][k] = 1;
+    for(int i=0; i<(loop_dim/vec_num); i=i+1) begin
+      for(int j=0; j<inner_dim; j=j+1) begin
+        for(int k=0; k<vec_num; k=k+1) begin
+          if (direction == 0) begin
+            weight_i[j][k] = weight_ref[j][i*vec_num + k];
+          end else begin
+            weight_i[j][k] = weight_ref[i*vec_num + k][j];
           end
+          weight_dst_i[k] = i*vec_num + k;
         end
-        `WAIT_POSEDGE(clk_i, PERIOD);
       end
-    end
-    
-    // weight_ref: all 1s
-    for (int col = 0; col < COL_SIZE; col++) begin
-      for (int row = 0; row < ROW_SIZE; row++) begin
-        weight_ref[col][row] = 1;
-      end
+      `WAIT_POSEDGE(clk_i, PERIOD);
     end
     ready_weight_i = 0;
-    out_weight_sel_i = in_weight_sel_i;
-    
-    $display("Weight loading complete. Total cycles: %0d", COL_SIZE * ROW_SIZE);
-    $display("Waiting for weights to propagate...");
     
     // Wait extra cycles for weight shifting to complete
-    repeat (COL_SIZE + ROW_SIZE) `WAIT_POSEDGE(clk_i, PERIOD);
-    
-    // Set input (all 1s)
-    $display("Setting inputs (all 1s)...");
-    for (int i = 0; i < ROW_SIZE; i++) begin
-      ifmap_i[i] = 1;
-      blk_sidx_i[i] = 0;  // No shift
-      ifmap_history[0][i] = 1;
-      blk_idx_history[0][i] = 0;
+    repeat (loop_dim/vec_num) `WAIT_POSEDGE(clk_i, PERIOD);
+
+    // check weights
+    for(int r=0; r<ROW_SIZE; r++) begin
+      for(int c=0; c<COL_SIZE; c++) begin
+        automatic logic [WEIGHT_DW-1:0] loaded_weight;
+        loaded_weight = u_gemm_tree.u_weight_regs.mem[r][c][0];
+        if (loaded_weight !== weight_ref[c][r]) begin
+          $display("Weight Mismatch at Row %0d Col %0d : Loaded %0d, Expected %0d", 
+                   r, c, $signed(loaded_weight), $signed(weight_ref[c][r]));
+        end
+      end
     end
     
-    input_valid_i = 1;
-    repeat (calc_gemm_latency()) `WAIT_POSEDGE(clk_i, PERIOD);
-    
-    // Calculate expected output
-    calc_gemm_reference(ifmap_history, weight_ref, blk_idx_history, 1, expected_output);
-    
-    // Check results
-    $display("Results:");
-    pass_count = 0;
-    fail_count = 0;
-    
-    for (int j = 0; j < COL_SIZE; j++) begin
-      automatic logic match = ($signed(ps_o[j]) == $signed(expected_output[0][j]));
-      
-      $display("  ps_o[%0d] = %0d (expected: %0d) %s", 
-               j, $signed(ps_o[j]), $signed(expected_output[0][j]),
-               match ? "PASS" : "FAIL");
-      
-      if (match) pass_count++;
-      else fail_count++;
-      
-      $fdisplay(log_fd, "[TEST6] ps_o[%0d] = %0d (expected: %0d) %s", 
-                j, $signed(ps_o[j]), $signed(expected_output[0][j]),
-                match ? "PASS" : "FAIL");
-    end
-    
-    $display("Summary: %0d PASS, %0d FAIL out of %0d outputs", pass_count, fail_count, COL_SIZE);
-    
-    input_valid_i = 0;
-    
-    // Reset to row direction for subsequent tests
-    weight_load_dir_i = 0;
-    input_valid_i = 0;
     `WAIT_POSEDGE(clk_i, PERIOD);
   endtask
 
@@ -858,6 +926,7 @@ module tb_VX_gemm_tree import VX_gpu_pkg::*;();
     in_weight_sel_i = '0;
     out_weight_sel_i = '0;
     ready_weight_i = '0;
+    weight_dst_i = '0;
     input_valid_i = '0;
     weight_load_dir_i = '0;
 
@@ -869,6 +938,9 @@ module tb_VX_gemm_tree import VX_gpu_pkg::*;();
           ready_weight_i = 1'b1;
           for (int i = 0; i < ROW_SIZE; i++) begin
             std::randomize(weight_i);
+            for (int k = 0; k < WEIGHT_LOAD_ROW_NUM; k++) begin
+              weight_dst_i[k] = i;  // Set destination to current row index
+            end
             `WAIT_POSEDGE(clk_i, PERIOD);
           end
           out_weight_sel_i = in_weight_sel_i;

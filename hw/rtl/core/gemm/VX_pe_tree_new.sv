@@ -14,67 +14,41 @@ module VX_pe_tree_new #(
     parameter  int BLOCK_SIZE       = -1,
     parameter  int BLOCK_NUM        = -1,
     parameter  int SEL_BLOCK_NUM    = -1,
-    parameter  int TILE_ROW_SIZE    = -1,
+    parameter  int ROW_SIZE         = -1,
     parameter  int TILE_COL_SIZE    = -1,
     parameter  int PIPE_MULT        = 0,
     parameter  int PIPE_ALIGN       = 0,
     parameter  int PIPELINE_STAGES  = 0,
     localparam int BLK_IDX_NUM      = BLOCK_NUM - SEL_BLOCK_NUM + 1,
     localparam int BLK_BITW         = $clog2(BLK_IDX_NUM),
-    localparam int NUM_STAGES       = $clog2(TILE_ROW_SIZE) + 1
+    localparam int NUM_STAGES       = $clog2(ROW_SIZE) + 1
 ) (
     input  logic clk_i,
-    input  logic [TILE_ROW_SIZE-1:0][IN_DW-1:0] ifmap_i,
-    input  logic [TILE_ROW_SIZE-1:0][TILE_COL_SIZE-1:0][WEIGHT_DW-1:0] weight_i,  // Changed: direct weight input
+    input  logic resetn_i,
+    input  logic [ROW_SIZE-1:0][IN_DW-1:0] ifmap_i,
+    input  logic [ROW_SIZE-1:0][TILE_COL_SIZE-1:0][WEIGHT_DW-1:0] weight_i,  // Changed: direct weight input
     input  logic [TILE_COL_SIZE-1:0][OUT_DW-1:0] ps_i,
     input  logic input_valid_i,
-    input  logic in_weight_sel_i,
-    input  logic out_weight_sel_i,
-    input  logic weight_load_dir_i,
-    input  logic [TILE_ROW_SIZE-1:0][BLK_BITW-1:0] blk_sidx_i,
+    input  logic [ROW_SIZE-1:0][BLK_BITW-1:0] blk_sidx_i,
 
-    output logic [TILE_ROW_SIZE-1:0][BLK_BITW-1:0] blk_sidx_o,
-    output logic [TILE_ROW_SIZE-1:0][IN_DW-1:0] ifmap_o,
     output logic [TILE_COL_SIZE-1:0][OUT_DW-1:0] ps_o,
-    output logic valid_o,
-    output logic in_weight_sel_o,
-    output logic out_weight_sel_o,
-    output logic weight_load_dir_o
+    output logic valid_o
 );
 
   localparam int MAC_DW = IN_DW + WEIGHT_DW + BLK_BITW;
 
-  // Pipeline registers for ifmap, blk_sidx, and valid
-  logic [TILE_ROW_SIZE-1:0][IN_DW-1:0] ifmap_q;
-  logic [TILE_ROW_SIZE-1:0][BLK_BITW-1:0] blk_sidx_q;
-  logic valid_q;
-  logic in_weight_sel_q;
-  logic out_weight_sel_q;
-  logic weight_load_dir_q;
-
-  always_ff @(posedge clk_i) begin
-    if (input_valid_i) begin
-      ifmap_q <= ifmap_i;
-      blk_sidx_q <= blk_sidx_i;
-    end
-    valid_q <= input_valid_i;
-    in_weight_sel_q <= in_weight_sel_i;
-    out_weight_sel_q <= out_weight_sel_i;
-    weight_load_dir_q <= weight_load_dir_i;
-  end
-
-  assign ifmap_o = ifmap_q;
-  assign blk_sidx_o = blk_sidx_q;
+  // Output assignments
+  assign valid_o = input_valid_i;
 
   // MAC and Adder Tree for each column
   generate
     for (genvar col = 0; col < TILE_COL_SIZE; col++) begin : gen_col
       
       // Stage 0: MAC operations
-      logic signed [TILE_ROW_SIZE-1:0][MAC_DW-1:0] mac_results;
-      logic signed [TILE_ROW_SIZE-1:0][MAC_DW-1:0] mac_results_q;
+      logic signed [ROW_SIZE-1:0][MAC_DW-1:0] mac_results;
+      logic signed [ROW_SIZE-1:0][MAC_DW-1:0] mac_results_q;
       
-      for (genvar row = 0; row < TILE_ROW_SIZE; row++) begin : gen_mac
+      for (genvar row = 0; row < ROW_SIZE; row++) begin : gen_mac
         logic signed [IN_DW-1:0] ifmap_val;
         logic signed [WEIGHT_DW-1:0] weight_val;
         logic [BLK_BITW-1:0] blk_idx;
@@ -130,17 +104,17 @@ module VX_pe_tree_new #(
       end
       
       // Adder Tree
-      logic signed [NUM_STAGES-1:0][TILE_ROW_SIZE-1:0][MAC_DW-1:0] adder_tree;
+      logic signed [NUM_STAGES-1:0][ROW_SIZE-1:0][MAC_DW-1:0] adder_tree;
       assign adder_tree[0] = mac_results_q;
       
       for (genvar stage = 1; stage < NUM_STAGES; stage++) begin : gen_stage
-        localparam int NUM_ADDERS = TILE_ROW_SIZE >> stage;
+        localparam int NUM_ADDERS = ROW_SIZE >> stage;
         
         for (genvar k = 0; k < NUM_ADDERS; k++) begin : gen_adder
           logic signed [MAC_DW-1:0] sum;
           logic signed [MAC_DW-1:0] sum_q;
           
-          if (k*2+1 < (TILE_ROW_SIZE >> (stage-1))) begin : gen_both_operands
+          if (k*2+1 < (ROW_SIZE >> (stage-1))) begin : gen_both_operands
             assign sum = adder_tree[stage-1][k*2] + adder_tree[stage-1][k*2+1];
           end else begin : gen_one_operand
             assign sum = adder_tree[stage-1][k*2];
@@ -159,7 +133,7 @@ module VX_pe_tree_new #(
         end
         
         // Unused positions
-        for (genvar k = NUM_ADDERS; k < TILE_ROW_SIZE; k++) begin : gen_unused
+        for (genvar k = NUM_ADDERS; k < ROW_SIZE; k++) begin : gen_unused
           assign adder_tree[stage][k] = '0;
         end
       end
@@ -182,12 +156,6 @@ module VX_pe_tree_new #(
       
     end
   endgenerate
-
-  // Output assignments
-  assign valid_o = valid_q;
-  assign in_weight_sel_o = in_weight_sel_q;
-  assign out_weight_sel_o = out_weight_sel_q;
-  assign weight_load_dir_o = weight_load_dir_q;
 
 `ifdef DBG_TRACE_GEMM
   always @(posedge clk_i) begin

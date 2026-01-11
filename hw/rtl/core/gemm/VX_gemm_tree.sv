@@ -19,11 +19,13 @@ module VX_gemm_tree #(
 ) (
 
     input logic clk_i,
+    input logic resetn_i,
     input logic [ROW_SIZE-1:0][IN_DW-1:0] ifmap_i,
     input logic [COL_SIZE-1:0][WEIGHT_LOAD_ROW_NUM-1:0][WEIGHT_DW-1:0] weight_i,
     input logic in_weight_sel_i,
     input logic out_weight_sel_i,
     input logic ready_weight_i,
+    input logic [WEIGHT_LOAD_ROW_NUM-1:0][$clog2(ROW_SIZE)-1:0] weight_dst_i,
     input logic input_valid_i,
     input logic weight_load_dir_i,  // 0: row direction (top to bottom), 1: column direction (left to right)
     input logic [ROW_SIZE-1:0][BLK_BITW-1:0] blk_sidx_i,
@@ -31,8 +33,6 @@ module VX_gemm_tree #(
     output logic [COL_SIZE-1:0][OUT_DW-1:0] ps_o,
     output logic [COL_SIZE/TILE_COL_SIZE-1:0] output_valid_o
 );
-
-  localparam int TILE_ROW_SIZE      = ROW_SIZE;
 
   // Static assertion: WEIGHT_LOAD_ROW_NUM must equal WEIGHT_LOAD_COL_NUM
   initial begin
@@ -46,24 +46,50 @@ module VX_gemm_tree #(
   //internal siganls
   logic [COL_SIZE/TILE_COL_SIZE-1:0][ROW_SIZE-1:0][IN_DW-1:0] ifmap_q;
   logic [COL_SIZE/TILE_COL_SIZE-1:0][ROW_SIZE-1:0][BLK_BITW-1:0] blk_sidx_q;
-  logic [ROW_SIZE/TILE_ROW_SIZE-1:0][COL_SIZE-1:0][WEIGHT_LOAD_ROW_NUM-1:0][WEIGHT_DW-1:0] weight_q;
-  logic [ROW_SIZE/TILE_ROW_SIZE-1:0][COL_SIZE-1:0][OUT_DW-1:0] ps_q;
   
   // Valid and weight_sel signal propagation (column direction)
-  logic [COL_SIZE/TILE_COL_SIZE-1:0] valid_q;
-  logic [COL_SIZE/TILE_COL_SIZE-1:0] in_weight_sel_q;
+  logic [COL_SIZE/TILE_COL_SIZE-1:0] in_valid_q;
   logic [COL_SIZE/TILE_COL_SIZE-1:0] out_weight_sel_q;
-  logic [COL_SIZE/TILE_COL_SIZE-1:0] weight_load_dir_q;
   
   // Centralized weight registers output
   logic [ROW_SIZE-1:0][COL_SIZE-1:0][WEIGHT_DW-1:0] weights;
+
+  // Pipeline registers for column propagation
+  generate
+    for (genvar j = 0; j < COL_SIZE / TILE_COL_SIZE; j++) begin : gen_col_pipe
+      always_ff @(posedge clk_i or negedge resetn_i) begin
+        if (!resetn_i) begin
+          in_valid_q[j] <= 1'b0;
+          out_weight_sel_q[j] <= 1'b0;
+        end else begin
+          if (j == 0) begin
+            // First column receives inputs directly
+            if (input_valid_i) begin
+              ifmap_q[j] <= ifmap_i;
+              blk_sidx_q[j] <= blk_sidx_i;
+            end
+            in_valid_q[j] <= input_valid_i;
+            out_weight_sel_q[j] <= out_weight_sel_i;
+          end else begin
+            // Subsequent columns propagate from previous column
+            if (in_valid_q[j-1]) begin
+              ifmap_q[j] <= ifmap_q[j-1];
+              blk_sidx_q[j] <= blk_sidx_q[j-1];
+            end
+            in_valid_q[j] <= in_valid_q[j-1];
+            out_weight_sel_q[j] <= out_weight_sel_q[j-1];
+          end
+        end
+      end
+    end
+  endgenerate
 
   function automatic int get_pipe_stage(int row_size);
     int num_stages;
     int pipe_stages;
     
     // Calculate number of adder tree stages
-    // NUM_STAGES = $clog2(TILE_ROW_SIZE) + 1
+    // NUM_STAGES = $clog2(ROW_SIZE) + 1
     num_stages = $clog2(row_size) + 1;
     
     // Generate bitmask: set bit to 1 every PIPE_INTERVAL stages
@@ -86,162 +112,79 @@ module VX_gemm_tree #(
       .WEIGHT_LOAD_COL_NUM(WEIGHT_LOAD_COL_NUM)
   ) u_weight_regs (
       .clk_i(clk_i),
+      .resetn_i(resetn_i),
       .weight_i(weight_i),
       .ready_weight_i(ready_weight_i),
-      .weight_load_dir_i(weight_load_dir_q[COL_SIZE/TILE_COL_SIZE-1]),  // Use propagated signal from last column
-      .in_weight_sel_i(in_weight_sel_i),  // Input directly from top
+      .weight_dst_i(weight_dst_i),
+      .weight_load_dir_i(weight_load_dir_i),  // Use input directly
+      .in_weight_sel_i(in_weight_sel_i),
       .out_weight_sel_i(out_weight_sel_i),
       .weight_o(weights)
   );
 
   generate
-    for (genvar i = 0; i < ROW_SIZE / TILE_ROW_SIZE; i++) begin : tile_row
-      for (genvar j = 0; j < COL_SIZE / TILE_COL_SIZE; j++) begin : tile_col
-        
-        // Extract weight tile for this PE
-        logic [TILE_ROW_SIZE-1:0][TILE_COL_SIZE-1:0][WEIGHT_DW-1:0] weight_tile;
-        
-        for (genvar r = 0; r < TILE_ROW_SIZE; r++) begin : gen_row
-          for (genvar c = 0; c < TILE_COL_SIZE; c++) begin : gen_col
-            assign weight_tile[r][c] = weights[i*TILE_ROW_SIZE + r][j*TILE_COL_SIZE + c];
-          end
+    for (genvar j = 0; j < COL_SIZE / TILE_COL_SIZE; j++) begin : tile_col
+      
+      // Extract weight tile for this PE
+      logic [ROW_SIZE-1:0][TILE_COL_SIZE-1:0][WEIGHT_DW-1:0] weight_tile;
+      
+      for (genvar r = 0; r < ROW_SIZE; r++) begin : gen_row
+        for (genvar c = 0; c < TILE_COL_SIZE; c++) begin : gen_col
+          assign weight_tile[r][c] = weights[r][j*TILE_COL_SIZE + c];
         end
+      end
         
-        if (i == 0) begin : trz
-          if (j == 0) begin : tcz
-            VX_pe_tree_new #(
-                .IN_DW(IN_DW),
-                .WEIGHT_DW(WEIGHT_DW),
-                .OUT_DW(OUT_DW),
-                .BLOCK_SIZE(BLOCK_SIZE),
-                .BLOCK_NUM(BLOCK_NUM),
-                .SEL_BLOCK_NUM(SEL_BLOCK_NUM),
-                .TILE_ROW_SIZE(TILE_ROW_SIZE),
-                .TILE_COL_SIZE(TILE_COL_SIZE),
-                .PIPELINE_STAGES(get_pipe_stage(TILE_ROW_SIZE)),
-                .PIPE_MULT(PIPE_MULT),
-                .PIPE_ALIGN(PIPE_ALIGN)
-            ) u_pe (
-                .clk_i            (clk_i),
-                .ifmap_i          (ifmap_i[TILE_ROW_SIZE*i+:TILE_ROW_SIZE]),
-                .weight_i         (weight_tile),
-                .ps_i             ('0),
-                .input_valid_i    (input_valid_i),
-                .in_weight_sel_i  (in_weight_sel_i),
-                .out_weight_sel_i (out_weight_sel_i),
-                .weight_load_dir_i(weight_load_dir_i),
-                .blk_sidx_i       (blk_sidx_i[TILE_ROW_SIZE*i+:TILE_ROW_SIZE]),
-                .blk_sidx_o       (blk_sidx_q[j][TILE_ROW_SIZE*i+:TILE_ROW_SIZE]),
-                .ifmap_o          (ifmap_q[j][TILE_ROW_SIZE*i+:TILE_ROW_SIZE]),
-                .ps_o             (ps_q[i][TILE_COL_SIZE*j+:TILE_COL_SIZE]),
-                .valid_o          (valid_q[j]),
-                .in_weight_sel_o  (in_weight_sel_q[j]),
-                .out_weight_sel_o (out_weight_sel_q[j]),
-                .weight_load_dir_o(weight_load_dir_q[j])
-            );
-          end else begin : tcnz
-            VX_pe_tree_new #(
-                .IN_DW(IN_DW),
-                .WEIGHT_DW(WEIGHT_DW),
-                .OUT_DW(OUT_DW),
-                .BLOCK_SIZE(BLOCK_SIZE),
-                .BLOCK_NUM(BLOCK_NUM),
-                .SEL_BLOCK_NUM(SEL_BLOCK_NUM),
-                .TILE_ROW_SIZE(TILE_ROW_SIZE),
-                .TILE_COL_SIZE(TILE_COL_SIZE),
-                .PIPELINE_STAGES(get_pipe_stage(TILE_ROW_SIZE)),
-                .PIPE_MULT(PIPE_MULT),
-                .PIPE_ALIGN(PIPE_ALIGN)
-            ) u_pe (
-                .clk_i            (clk_i),
-                .ifmap_i          (ifmap_q[j-1][TILE_ROW_SIZE*i+:TILE_ROW_SIZE]),
-                .weight_i         (weight_tile),
-                .ps_i             ('0),
-                .input_valid_i    (valid_q[j-1]),
-                .in_weight_sel_i  (in_weight_sel_q[j-1]),
-                .out_weight_sel_i (out_weight_sel_q[j-1]),
-                .weight_load_dir_i(weight_load_dir_q[j-1]),
-                .blk_sidx_i       (blk_sidx_q[j-1][TILE_ROW_SIZE*i+:TILE_ROW_SIZE]),
-                .blk_sidx_o       (blk_sidx_q[j][TILE_ROW_SIZE*i+:TILE_ROW_SIZE]),
-                .ifmap_o          (ifmap_q[j][TILE_ROW_SIZE*i+:TILE_ROW_SIZE]),
-                .ps_o             (ps_q[i][TILE_COL_SIZE*j+:TILE_COL_SIZE]),
-                .valid_o          (valid_q[j]),
-                .in_weight_sel_o  (in_weight_sel_q[j]),
-                .out_weight_sel_o (out_weight_sel_q[j]),
-                .weight_load_dir_o(weight_load_dir_q[j])
-            );
-          end
-        end else begin : trnz
-          if (j == 0) begin : tcz
-            VX_pe_tree_new #(
-                .IN_DW(IN_DW),
-                .WEIGHT_DW(WEIGHT_DW),
-                .OUT_DW(OUT_DW),
-                .BLOCK_SIZE(BLOCK_SIZE),
-                .BLOCK_NUM(BLOCK_NUM),
-                .SEL_BLOCK_NUM(SEL_BLOCK_NUM),
-                .TILE_ROW_SIZE(TILE_ROW_SIZE),
-                .TILE_COL_SIZE(TILE_COL_SIZE),
-                .PIPELINE_STAGES(get_pipe_stage(TILE_ROW_SIZE)),
-                .PIPE_MULT(PIPE_MULT),
-                .PIPE_ALIGN(PIPE_ALIGN)
-            ) u_pe (
-                .clk_i            (clk_i),
-                .ifmap_i          (ifmap_i[TILE_ROW_SIZE*i+:TILE_ROW_SIZE]),
-                .weight_i         (weight_tile),
-                .ps_i             (ps_q[i-1][TILE_COL_SIZE*j+:TILE_COL_SIZE]),
-                .input_valid_i    (input_valid_i),
-                .in_weight_sel_i  (in_weight_sel_i),
-                .out_weight_sel_i (out_weight_sel_i),
-                .weight_load_dir_i(weight_load_dir_i),
-                .blk_sidx_i       (blk_sidx_i[TILE_ROW_SIZE*i+:TILE_ROW_SIZE]),
-                .blk_sidx_o       (blk_sidx_q[j][TILE_ROW_SIZE*i+:TILE_ROW_SIZE]),
-                .ifmap_o          (ifmap_q[j][TILE_ROW_SIZE*i+:TILE_ROW_SIZE]),
-                .ps_o             (ps_q[i][TILE_COL_SIZE*j+:TILE_COL_SIZE]),
-                .valid_o          (valid_q[j]),
-                .in_weight_sel_o  (in_weight_sel_q[j]),
-                .out_weight_sel_o (out_weight_sel_q[j]),
-                .weight_load_dir_o(weight_load_dir_q[j])
-            );
-          end else begin : tcnz
-            VX_pe_tree_new #(
-                .IN_DW(IN_DW),
-                .WEIGHT_DW(WEIGHT_DW),
-                .OUT_DW(OUT_DW),
-                .BLOCK_SIZE(BLOCK_SIZE),
-                .BLOCK_NUM(BLOCK_NUM),
-                .SEL_BLOCK_NUM(SEL_BLOCK_NUM),
-                .TILE_ROW_SIZE(TILE_ROW_SIZE),
-                .TILE_COL_SIZE(TILE_COL_SIZE),
-                .PIPELINE_STAGES(get_pipe_stage(TILE_ROW_SIZE)),
-                .PIPE_MULT(PIPE_MULT),
-                .PIPE_ALIGN(PIPE_ALIGN)
-            ) u_pe (
-                .clk_i            (clk_i),
-                .ifmap_i          (ifmap_q[j-1][TILE_ROW_SIZE*i+:TILE_ROW_SIZE]),
-                .weight_i         (weight_tile),
-                .ps_i             (ps_q[i-1][TILE_COL_SIZE*j+:TILE_COL_SIZE]),
-                .input_valid_i    (valid_q[j-1]),
-                .in_weight_sel_i  (in_weight_sel_q[j-1]),
-                .out_weight_sel_i (out_weight_sel_q[j-1]),
-                .weight_load_dir_i(weight_load_dir_q[j-1]),
-                .blk_sidx_i       (blk_sidx_q[j-1][TILE_ROW_SIZE*i+:TILE_ROW_SIZE]),
-                .blk_sidx_o       (blk_sidx_q[j][TILE_ROW_SIZE*i+:TILE_ROW_SIZE]),
-                .ifmap_o          (ifmap_q[j][TILE_ROW_SIZE*i+:TILE_ROW_SIZE]),
-                .ps_o             (ps_q[i][TILE_COL_SIZE*j+:TILE_COL_SIZE]),
-                .valid_o          (valid_q[j]),
-                .in_weight_sel_o  (in_weight_sel_q[j]),
-                .out_weight_sel_o (out_weight_sel_q[j]),
-                .weight_load_dir_o(weight_load_dir_q[j])
-            );
-          end
-        end
+      if (j == 0) begin : gen_col_zero
+        VX_pe_tree_new #(
+            .IN_DW(IN_DW),
+            .WEIGHT_DW(WEIGHT_DW),
+            .OUT_DW(OUT_DW),
+            .BLOCK_SIZE(BLOCK_SIZE),
+            .BLOCK_NUM(BLOCK_NUM),
+            .SEL_BLOCK_NUM(SEL_BLOCK_NUM),
+            .ROW_SIZE(ROW_SIZE),
+            .TILE_COL_SIZE(TILE_COL_SIZE),
+            .PIPELINE_STAGES(get_pipe_stage(ROW_SIZE)),
+            .PIPE_MULT(PIPE_MULT),
+            .PIPE_ALIGN(PIPE_ALIGN)
+        ) u_pe (
+            .clk_i            (clk_i),
+            .resetn_i         (resetn_i),
+            .ifmap_i          (ifmap_i),
+            .weight_i         (weight_tile),
+            .ps_i             ('0),
+            .input_valid_i    (input_valid_i),
+            .blk_sidx_i       (blk_sidx_i),
+            .ps_o             (ps_o[TILE_COL_SIZE*j+:TILE_COL_SIZE]),
+            .valid_o          (output_valid_o[j])
+        );
+      end else begin : gen_col_not_zero
+        VX_pe_tree_new #(
+            .IN_DW(IN_DW),
+            .WEIGHT_DW(WEIGHT_DW),
+            .OUT_DW(OUT_DW),
+            .BLOCK_SIZE(BLOCK_SIZE),
+            .BLOCK_NUM(BLOCK_NUM),
+            .SEL_BLOCK_NUM(SEL_BLOCK_NUM),
+            .ROW_SIZE(ROW_SIZE),
+            .TILE_COL_SIZE(TILE_COL_SIZE),
+            .PIPELINE_STAGES(get_pipe_stage(ROW_SIZE)),
+            .PIPE_MULT(PIPE_MULT),
+            .PIPE_ALIGN(PIPE_ALIGN)
+        ) u_pe (
+            .clk_i            (clk_i),
+            .resetn_i         (resetn_i),
+            .ifmap_i          (ifmap_q[j-1]),
+            .weight_i         (weight_tile),
+            .ps_i             ('0),
+            .input_valid_i    (in_valid_q[j-1]),
+            .blk_sidx_i       (blk_sidx_q[j-1]),
+            .ps_o             (ps_o[TILE_COL_SIZE*j+:TILE_COL_SIZE]),
+            .valid_o          (output_valid_o[j])
+        );
       end
     end
   endgenerate
-
-  assign ps_o = ps_q[ROW_SIZE/TILE_ROW_SIZE-1];
-  assign output_valid_o = valid_q;
 
 `ifdef DBG_TRACE_GEMM
   always @(posedge clk_i) begin
