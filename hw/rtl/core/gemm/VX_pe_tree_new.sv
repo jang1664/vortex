@@ -20,8 +20,7 @@ module VX_pe_tree_new #(
     parameter  int PIPE_ALIGN       = 0,
     parameter  int PIPELINE_STAGES  = 0,
     localparam int BLK_IDX_NUM      = BLOCK_NUM - SEL_BLOCK_NUM + 1,
-    localparam int BLK_BITW         = $clog2(BLK_IDX_NUM),
-    localparam int NUM_STAGES       = $clog2(ROW_SIZE) + 1
+    localparam int BLK_BITW         = $clog2(BLK_IDX_NUM)
 ) (
     input  logic clk_i,
     input  logic resetn_i,
@@ -36,122 +35,130 @@ module VX_pe_tree_new #(
 );
 
   localparam int MAC_DW = IN_DW + WEIGHT_DW + BLK_BITW;
-
-  // Output assignments
-  assign valid_o = input_valid_i;
+  localparam int NUM_ADDER_STAGES = $clog2(ROW_SIZE);
 
   // MAC and Adder Tree for each column
   generate
     for (genvar col = 0; col < TILE_COL_SIZE; col++) begin : gen_col
       
-      // Stage 0: MAC operations
-      logic signed [ROW_SIZE-1:0][MAC_DW-1:0] mac_results;
-      logic signed [ROW_SIZE-1:0][MAC_DW-1:0] mac_results_q;
+      // Valid signals for pipeline stages
+      logic valid_mult, valid_align;
       
+      // Stage 0: MAC operations
       for (genvar row = 0; row < ROW_SIZE; row++) begin : gen_mac
         logic signed [IN_DW-1:0] ifmap_val;
         logic signed [WEIGHT_DW-1:0] weight_val;
         logic [BLK_BITW-1:0] blk_idx;
         logic signed [IN_DW+WEIGHT_DW-1:0] product;
+        logic signed [IN_DW+WEIGHT_DW-1:0] product_out;
+        logic [BLK_BITW-1:0] blk_idx_out;
         logic signed [MAC_DW-1:0] aligned;
+        logic signed [MAC_DW-1:0] aligned_out;
+        logic valid_mult_row, valid_align_row;
         
         assign ifmap_val = $signed(ifmap_i[row]);
         assign weight_val = $signed(weight_i[row][col]);
         assign blk_idx = blk_sidx_i[row];
         
-        if (PIPE_MULT) begin : gen_pipe_mult
-          logic signed [IN_DW+WEIGHT_DW-1:0] product_q;
-          logic [BLK_BITW-1:0] blk_idx_q;
-          
-          always_ff @(posedge clk_i) begin
-            if (input_valid_i) begin
-              product_q <= ifmap_val * weight_val;
-              blk_idx_q <= blk_idx;
-            end
-          end
-          
-          assign product = product_q;
-          assign aligned = (PIPE_ALIGN) ? 
-                           (product <<< blk_idx_q) : 
-                           (product <<< blk_idx);
-        end else begin : gen_no_pipe_mult
-          assign product = ifmap_val * weight_val;
-          assign aligned = product <<< blk_idx;
-        end
+        // Multiply
+        assign product = ifmap_val * weight_val;
         
-        if (PIPE_ALIGN && !PIPE_MULT) begin : gen_pipe_align
-          logic signed [MAC_DW-1:0] aligned_q;
-          always_ff @(posedge clk_i) begin
-            if (input_valid_i) begin
-              aligned_q <= aligned;
-            end
-          end
-          assign mac_results[row] = aligned_q;
-        end else begin : gen_no_pipe_align
-          assign mac_results[row] = aligned;
+        // Elastic buffer for multiplier output (includes blk_idx for align stage)
+        VX_elastic_buffer #(
+          .DATAW   (IN_DW+WEIGHT_DW+BLK_BITW),
+          .SIZE    (PIPE_MULT),
+          .OUT_REG (PIPE_MULT)
+        ) mult_buffer (
+          .clk       (clk_i),
+          .reset     (~resetn_i),
+          .valid_in  (input_valid_i),
+          .ready_in  (),
+          .data_in   ({product, blk_idx}),
+          .data_out  ({product_out, blk_idx_out}),
+          .ready_out (1'b1),
+          .valid_out (valid_mult_row)
+        );
+        
+        // Align (shift)
+        assign aligned = product_out <<< blk_idx_out;
+        
+        // Elastic buffer for align output
+        VX_elastic_buffer #(
+          .DATAW   (MAC_DW),
+          .SIZE    (PIPE_ALIGN),
+          .OUT_REG (PIPE_ALIGN)
+        ) align_buffer (
+          .clk       (clk_i),
+          .reset     (~resetn_i),
+          .valid_in  (valid_mult_row),
+          .ready_in  (),
+          .data_in   (aligned),
+          .data_out  (aligned_out),
+          .ready_out (1'b1),
+          .valid_out (valid_align_row)
+        );
+        
+        // Use row 0's valid for the entire column
+        if (row == 0) begin : gen_valid_assign
+          assign valid_mult = valid_mult_row;
+          assign valid_align = valid_align_row;
         end
       end
       
-      // Pipeline stage 0 results if needed
-      if ((PIPELINE_STAGES & 1) != 0) begin : gen_pipe_stage0
-        always_ff @(posedge clk_i) begin
-          if (input_valid_i) begin
-            mac_results_q <= mac_results;
-          end
-        end
-      end else begin : gen_no_pipe_stage0
-        assign mac_results_q = mac_results;
+      // Collect MAC results for reduction
+      logic signed [ROW_SIZE-1:0][MAC_DW-1:0] mac_results_collected;
+      for (genvar row = 0; row < ROW_SIZE; row++) begin : gen_collect
+        assign mac_results_collected[row] = gen_mac[row].aligned_out;
       end
       
-      // Adder Tree
-      logic signed [NUM_STAGES-1:0][ROW_SIZE-1:0][MAC_DW-1:0] adder_tree;
-      assign adder_tree[0] = mac_results_q;
-      
-      for (genvar stage = 1; stage < NUM_STAGES; stage++) begin : gen_stage
-        localparam int NUM_ADDERS = ROW_SIZE >> stage;
-        
-        for (genvar k = 0; k < NUM_ADDERS; k++) begin : gen_adder
-          logic signed [MAC_DW-1:0] sum;
-          logic signed [MAC_DW-1:0] sum_q;
-          
-          if (k*2+1 < (ROW_SIZE >> (stage-1))) begin : gen_both_operands
-            assign sum = adder_tree[stage-1][k*2] + adder_tree[stage-1][k*2+1];
-          end else begin : gen_one_operand
-            assign sum = adder_tree[stage-1][k*2];
-          end
-          
-          if ((PIPELINE_STAGES & (1 << stage)) != 0) begin : gen_pipe_adder
-            always_ff @(posedge clk_i) begin
-              if (input_valid_i) begin
-                sum_q <= sum;
-              end
-            end
-            assign adder_tree[stage][k] = sum_q;
-          end else begin : gen_no_pipe_adder
-            assign adder_tree[stage][k] = sum;
-          end
-        end
-        
-        // Unused positions
-        for (genvar k = NUM_ADDERS; k < ROW_SIZE; k++) begin : gen_unused
-          assign adder_tree[stage][k] = '0;
-        end
-      end
+      // Reduction tree using VX_reduce_tree_pipelined
+      logic signed [MAC_DW-1:0] reduced_sum;
+      logic valid_reduced;
+      VX_reduce_tree_pipelined #(
+        .IN_W  (MAC_DW),
+        .OUT_W (MAC_DW),
+        .N     (ROW_SIZE),
+        .OP    ("+"),
+        .PIPELINE_STAGES (PIPELINE_STAGES),
+        .STAGE_NUM (0),
+        .EB_SIZE (1),
+        .EB_OUT_REG (1)
+      ) reduce_tree (
+        .clk       (clk_i),
+        .reset     (~resetn_i),
+        .data_in   (mac_results_collected),
+        .valid_in  (valid_align),
+        .data_out  (reduced_sum),
+        .valid_out (valid_reduced)
+      );
       
       // Output stage
       logic signed [OUT_DW-1:0] final_sum_extended;
       logic signed [OUT_DW-1:0] accumulated_result;
+      logic valid_output;
       
       // Sign-extend final_sum from MAC_DW to OUT_DW
-      assign final_sum_extended = $signed(adder_tree[NUM_STAGES-1][0]);
+      assign final_sum_extended = $signed(reduced_sum);
       
       // Add to partial sum from previous PE
       assign accumulated_result = final_sum_extended + $signed(ps_i[col]);
       
-      always_ff @(posedge clk_i) begin
-        if (input_valid_i) begin
-          ps_o[col] <= $unsigned(accumulated_result);
+      // Output register with valid
+      always_ff @(posedge clk_i or negedge resetn_i) begin
+        if (!resetn_i) begin
+          ps_o[col] <= '0;
+          valid_output <= 1'b0;
+        end else begin
+          if (valid_reduced) begin
+            ps_o[col] <= $unsigned(accumulated_result);
+          end
+          valid_output <= valid_reduced;
         end
+      end
+      
+      // Use column 0's valid for output
+      if (col == 0) begin : gen_valid_out
+        assign valid_o = valid_output;
       end
       
     end

@@ -7,7 +7,7 @@
   - Supports both row direction and column direction weight loading
 */
 
-module VX_gemm_weight_regs #(
+module VX_gemm_weight_regs_v2 #(
     parameter int ROW_SIZE            = 32,
     parameter int COL_SIZE            = 32,
     parameter int WEIGHT_DW           = 4,

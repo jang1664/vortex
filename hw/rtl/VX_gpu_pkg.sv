@@ -764,6 +764,25 @@ package VX_gpu_pkg;
        logic [`XLEN-1:0]         rs2_data;
    } gemm_unified_cmd_t; // it can be union
 
+    function automatic int get_pipe_stage(input int row_size, input int PIPE_INTERVAL);
+      int num_stages;
+      int pipe_stages;
+      
+      // Calculate number of adder tree stages
+      // NUM_STAGES = $clog2(ROW_SIZE) + 1
+      num_stages = $clog2(row_size) + 1;
+      
+      // Generate bitmask: set bit to 1 every PIPE_INTERVAL stages
+      pipe_stages = 0;
+      for (int i = 0; i < num_stages; i++) begin
+        if (i % PIPE_INTERVAL == 0) begin
+          pipe_stages = pipe_stages | (1 << i);
+        end
+      end
+      
+      return pipe_stages;
+    endfunction
+
     ///////////////////////// LSU memory Parameters ///////////////////////////
 
     localparam LSU_WORD_SIZE        = XLENB;

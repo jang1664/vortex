@@ -1,4 +1,3 @@
-#--debug --gdbbt
 compile: setup
 	verilator -Wall --binary --trace-fst -Wno-fatal \
 		-MAKEFLAGS "CXX=$(CXX) CC=$(CC)" \

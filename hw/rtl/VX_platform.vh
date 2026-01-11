@@ -141,7 +141,7 @@
 
 `define SFORMATF(x) $sformatf x
 
-`define WAIT_POSEDGE(clk, period) @(posedge clk); #((period)*0.1)
+`define WAIT_POSEDGE(clk, period) @(posedge clk);
 
 `define WAIT_UNTIL_POS(clk, cond) \
   do begin \
