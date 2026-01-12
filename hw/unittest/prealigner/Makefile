@@ -23,7 +23,10 @@ RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
 				$(RTL_DIR)/libs/VX_stream_buffer.sv \
 				$(RTL_DIR)/libs/VX_pipe_buffer.sv \
 				$(RTL_DIR)/libs/VX_pipe_register.sv \
-				$(RTL_DIR)/libs/VX_shift_register.sv
+				$(RTL_DIR)/libs/VX_shift_register.sv \
+				$(RTL_DIR)/verification/VX_mem_pkg.sv \
+				$(RTL_DIR)/verification/VX_stream_intf.sv \
+				$(RTL_DIR)/verification/VX_stream_slave_always_ready.sv
 PARAMS_ := NUM_UNIT=4
 INCDIRS_ := $(RTL_DIR)
 DEFINES_ := SIMULATION DEBUG_LEVEL=3 DBG_TRACE_GEMM
