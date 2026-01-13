@@ -84,8 +84,9 @@ module tb_VX_fp32_add();
     .push_i  (output_in),
     .pop_o   (output_out)
   );
-  
-  assign output_out.ready = 1'b0;
+
+  // Must be 1 to allow FIFO to pop data
+  assign output_out.ready = 1'b1;
   assign output_in.data   = result_data;
   assign output_in.strb   = '1;
   assign output_in.valid  = result_valid;
@@ -103,6 +104,9 @@ module tb_VX_fp32_add();
   task automatic test_add(input real a, input real b);
     reg [31:0] a_bits;
     reg [31:0] b_bits;
+    shortreal a_fp32;
+    shortreal b_fp32;
+    shortreal expected_fp32;
     real expected;
     int a_wait, b_wait;
     reg [31:0] result_bits;
@@ -112,7 +116,11 @@ module tb_VX_fp32_add();
     
     a_bits = $shortrealtobits(a);
     b_bits = $shortrealtobits(b);
-    expected = a + b;
+    // Compute expected using FP32-rounded operands (matches DUT behavior better)
+    a_fp32 = $bitstoshortreal(a_bits);
+    b_fp32 = $bitstoshortreal(b_bits);
+    expected_fp32 = a_fp32 + b_fp32;
+    expected = expected_fp32;
     
     // Randomize when each input becomes valid
     a_wait = $urandom_range(0, 5);
@@ -146,6 +154,7 @@ module tb_VX_fp32_add();
     while (fifo_dbg_vif.get_queue_size() == 0) @(posedge clk);
     
     result_bits = fifo_dbg_vif.get_queue_data(0);
+    @(posedge clk);  // Allow one cycle for FIFO to pop the data
     result = $bitstoshortreal(result_bits);
     abs_error = (result > expected) ? (result - expected) : (expected - result);
     rel_error = (expected != 0.0) ? abs_error / ((expected > 0) ? expected : -expected) : abs_error;
@@ -161,7 +170,7 @@ module tb_VX_fp32_add();
       $display("  Rel Error = %e", rel_error);
       error_count++;
     end else begin
-      $display("PASS: Test %0d - %f + %f = %f", test_count, a, b, result);
+      $display("PASS: Test %0d - %f + %f = %f", test_count, a, b, shortreal'(result));
     end
   endtask
   
