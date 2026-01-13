@@ -1,54 +1,71 @@
 `timescale 1ns / 1ps
 
-module reformatter 
-  import modes::*;
-#(
-    parameter NUM_UNIT = -1,
-    parameter IN_DW = -1,
-    parameter ACT_ADD_WIDTH = -1,
-    parameter TILE_SIZE = -1,
-    parameter OUT_DW = -1
-
+module VX_reformatter import VX_gpu_pkg::*; #(
+    parameter IN_DW = 16,
+    parameter NUM_UNIT = 8,
+    parameter ACT_ADD_WIDTH = 16,
+    parameter OUT_DW = 32
 ) (
     input logic clk_i,
     input logic resetn_i,
     input logic [NUM_UNIT-1:0][IN_DW-1:0] data_i,
     input logic [ACT_ADD_WIDTH-1:0] act_sum_i,
-    input weight_mode_t weight_mode_i,
+    input logic valid_i,
 
-    output logic [NUM_UNIT-1:0][OUT_DW-1:0] data_o
+    output logic [NUM_UNIT-1:0][OUT_DW-1:0] data_o,
+    output logic valid_o
 );
 
-  logic signed [ACT_ADD_WIDTH-1:0] act_sum_q[NUM_UNIT/TILE_SIZE-1:0];
-  logic signed [NUM_UNIT-1:0][IN_DW+1-1:0] data_o_int;
-  logic signed [NUM_UNIT-1:0][OUT_DW-1:0] final_data_o_int;
+  logic signed [NUM_UNIT-1:0][OUT_DW-1:0] mul_out;
+  logic signed [NUM_UNIT-1:0][OUT_DW-1:0] mul_out_q;
+  logic mul_out_valid;
+  logic signed [ACT_ADD_WIDTH-1:0] act_sum_q;
 
-  assign act_sum_q[0] = (weight_mode_i == W_SYM) ? act_sum_i : '0;
-  always_ff @(posedge clk_i) begin
-    for (int i = 1; i < NUM_UNIT / TILE_SIZE; i++) begin
-      if(weight_mode_i == W_SYM) begin
-        act_sum_q[i] <= act_sum_q[i-1];
-      end
+  logic signed [NUM_UNIT-1:0][OUT_DW-1:0] add_out;
+  logic signed [NUM_UNIT-1:0][OUT_DW-1:0] add_out_q;
+  logic add_out_valid;
+
+  always_comb begin
+    for(int i=0; i<NUM_UNIT; i++) begin
+      mul_out[i] = $signed(IN_DW'(data_i[i])) << 1;
     end
   end
 
-  generate
-    for (genvar i = 0; i < NUM_UNIT / TILE_SIZE; i++) begin : cg
-      for (genvar j = 0; j < TILE_SIZE; j++) begin : col_off
-        always_comb begin
-          data_o_int[i*TILE_SIZE+j] = (weight_mode_i == W_SYM) ? data_i[TILE_SIZE*i+j] << 1 : '0;
-          final_data_o_int[i*TILE_SIZE+j] = data_o_int[i*TILE_SIZE+j] + act_sum_q[i];
-        end
-      end
-    end
-  endgenerate
+  VX_elastic_buffer #(
+    .DATAW(OUT_DW * NUM_UNIT + ACT_ADD_WIDTH),
+    .SIZE(1)
+  ) u_mul_out_buf (
+    .clk(clk_i),
+    .reset(~resetn_i),
+    .valid_in(valid_i),
+    .ready_in(),
+    .data_in({mul_out, act_sum_i}),
+    .data_out({mul_out_q, act_sum_q}),
+    .ready_out(1'b1),
+    .valid_out(mul_out_valid)
+  );
 
-  always_ff @(posedge clk_i) begin
-    if(weight_mode_i == W_SYM) begin
-      data_o <= final_data_o_int;
-    end else begin
-      data_o <= data_i;
+  always_comb begin
+    for(int i=0; i<NUM_UNIT; i++) begin
+      add_out[i] = $signed(mul_out_q[i]) + act_sum_q;
     end
   end
+
+  VX_elastic_buffer #(
+    .DATAW(OUT_DW * NUM_UNIT),
+    .SIZE(1)
+  ) u_add_out_buf (
+    .clk(clk_i),
+    .reset(~resetn_i),
+    .valid_in(mul_out_valid),
+    .ready_in(),
+    .data_in(add_out),
+    .data_out(add_out_q),
+    .ready_out(1'b1),
+    .valid_out(add_out_valid)
+  );
+
+  assign valid_o = add_out_valid;
+  assign data_o = add_out_q;
 
 endmodule
