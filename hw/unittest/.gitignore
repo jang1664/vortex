@@ -6,6 +6,7 @@ simv.daidir/
 verdiLog/
 
 *.log
+*.fsdb
 simv
 ucli.key
 verdi_config_file

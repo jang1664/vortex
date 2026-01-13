@@ -995,6 +995,7 @@ for block_size in range(1, full_bitwidth+1):
 */
 `define BLOCK_SIZE 1
 `define ALIGNED_MAN_FULL_WIDTH (`HIDDEN_WIDTH + `IFP_MAN_WIDTH + `EXTRA_BIT_WIDTH) // 30
+`define SIGNED_ALIGNED_MAN_FULL_WIDTH (`ALIGNED_MAN_FULL_WIDTH + 1) // 31
 `define ALIGNED_MAN_VALI_WIDTH (`HIDDEN_WIDTH + `IFP_MAN_WIDTH) // 11
 `define ALIGNED_MAN_PADDED_FULL_WIDTH (((`ALIGNED_MAN_FULL_WIDTH + `BLOCK_SIZE - 1) / `BLOCK_SIZE) * `BLOCK_SIZE) // 32JK:W
 `define BLOCK_NUM  (`ALIGNED_MAN_PADDED_FULL_WIDTH / `BLOCK_SIZE)
@@ -1004,6 +1005,8 @@ for block_size in range(1, full_bitwidth+1):
 `define BLK_IDX_NUM (`BLOCK_NUM - `SEL_BLOCK_NUM + 1)
 `define BLOCK_IDX_WIDTH `CLOG2(`BLK_IDX_NUM)
 `define SEL_BLOCK_WIDTH (`SEL_BLOCK_NUM * `BLOCK_SIZE + 1)
+
+`define SAMF_SUM_WIDTH (`SIGNED_ALIGNED_MAN_FULL_WIDTH + `CLOG2(`MXU_ROW)) // 36
 
 `define MXU_ROW 16
 `define MXU_COL 16
@@ -1017,6 +1020,10 @@ for block_size in range(1, full_bitwidth+1):
 `define GEMM_PSUM_DATA_SIZE       (4*`MXU_COL) // 64 bytes
 
 `define GEMM_CFG_REG_NUM 16
+
+`define ZP_WIDTH 16
+`define ZP_TRANS_WIDTH (`ZP_WIDTH + 3)
+`define ZP_MUL_OUT_WIDTH (`SAMF_SUM_WIDTH + `ZP_TRANS_WIDTH)
 
 // DMA parameters
 `define DMA_CFG_REG_NUM 16
