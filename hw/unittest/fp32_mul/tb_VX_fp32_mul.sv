@@ -2,6 +2,8 @@
 
 `include "VX_define.vh"
 
+import cf_math_pkg::*;
+
 module tb_VX_fp32_mul();
   parameter string tb_name = "tb_VX_fp32_mul";
   parameter PERIOD = 10.0;
@@ -100,30 +102,14 @@ module tb_VX_fp32_mul();
   int error_count = 0;
   int test_count = 0;
   
-  // Convert FP32 bits to real
+  // Convert FP32 bits to real using cf_math_pkg
   function real bits_to_float(input [31:0] bits);
-    real result;
-    int fd;
-    fd = $fopen("/tmp/fp_convert.bin", "wb");
-    $fwrite(fd, "%u", bits);
-    $fclose(fd);
-    fd = $fopen("/tmp/fp_convert.bin", "rb");
-    $fscanf(fd, "%f", result);
-    $fclose(fd);
-    return result;
+    return fp32_bit_to_fp32_val(bits);
   endfunction
   
-  // Convert real to FP32 bits
+  // Convert real to FP32 bits using cf_math_pkg
   function [31:0] float_to_bits(input real value);
-    int fd;
-    int bits;
-    fd = $fopen("/tmp/fp_convert.bin", "wb");
-    $fwrite(fd, "%f", value);
-    $fclose(fd);
-    fd = $fopen("/tmp/fp_convert.bin", "rb");
-    $fscanf(fd, "%u", bits);
-    $fclose(fd);
-    return bits;
+    return $shortrealtobits(value);
   endfunction
   
   // Test task with randomized valid timing

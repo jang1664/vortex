@@ -16,16 +16,17 @@ TOP_MODULE := tb_VX_fp16_mul
 
 TB   := tb_VX_fp16_mul.sv
 RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
-        $(RTL_DIR)/core/gemm/VX_fp16_mul.sv \
+        $(RTL_DIR)/verification/cf_math_pkg.sv \
+        $(RTL_DIR)/verification/VX_mem_pkg.sv \
+        $(RTL_DIR)/verification/VX_stream_intf.sv \
+        $(RTL_DIR)/verification/VX_stream_slave_always_ready.sv \
         $(RTL_DIR)/core/gemm/VX_stream_fence.sv \
+        $(RTL_DIR)/core/gemm/VX_fp16_mul.sv \
         $(RTL_DIR)/libs/VX_elastic_buffer.sv \
         $(RTL_DIR)/libs/VX_stream_buffer.sv \
         $(RTL_DIR)/libs/VX_pipe_buffer.sv \
         $(RTL_DIR)/libs/VX_pipe_register.sv \
-        $(RTL_DIR)/libs/VX_shift_register.sv \
-        $(RTL_DIR)/verification/VX_mem_pkg.sv \
-        $(RTL_DIR)/verification/VX_stream_intf.sv \
-        $(RTL_DIR)/verification/VX_stream_slave_always_ready.sv
+        $(RTL_DIR)/libs/VX_shift_register.sv
 
 DPI_SRCS := $(VORTEX_HOME)/hw/dpi/float_dpi.cpp \
             $(VORTEX_HOME)/sim/common/util.cpp \

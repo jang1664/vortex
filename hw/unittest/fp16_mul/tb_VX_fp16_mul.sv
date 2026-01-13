@@ -2,6 +2,8 @@
 
 `include "VX_define.vh"
 
+import cf_math_pkg::*;
+
 module tb_VX_fp16_mul();
   parameter string tb_name = "tb_VX_fp16_mul";
   parameter PERIOD = 10.0;
@@ -55,6 +57,13 @@ module tb_VX_fp16_mul();
     $finish;
   end
   
+  // Monitor VX_fp16_mul output for debugging
+  // always @(posedge clk) begin
+  //   if (result_valid && result_ready) begin
+  //     $display("DEBUG: VX_fp16_mul output = 0x%04h", result_data);
+  //   end
+  // end
+  
   // Output FIFO for capturing results
   localparam int OUTPUT_DATA_WIDTH = 16;
   
@@ -85,85 +94,29 @@ module tb_VX_fp16_mul();
     .pop_o   (output_out)
   );
   
-  assign output_out.ready = 1'b0;
-  assign output_in.data   = result_data;
-  assign output_in.strb   = '1;
-  assign output_in.valid  = result_valid;
-  assign result_ready     = output_in.ready;
-  
-  initial begin
-    fifo_dbg_vif = u_output_fifo.dbg_if;
-  end
-  
-  // Test variables
-  int error_count = 0;
-  int test_count = 0;
-  
-  // FP16 to FP32 conversion for display
-  function automatic real fp16_to_float(input [15:0] fp16);
-    logic        sign;
-    logic [4:0]  exp_fp16;
-    logic [9:0]  frac_fp16;
-    logic [31:0] fp32;
-    logic [7:0]  exp_fp32;
-    logic [22:0] frac_fp32;
-    
-    sign     = fp16[15];
-    exp_fp16 = fp16[14:10];
-    frac_fp16= fp16[9:0];
-    
-    if (exp_fp16 == 5'b0) begin
-      fp32 = {sign, 31'b0};
-    end else if (exp_fp16 == 5'b11111) begin
-      exp_fp32 = 8'hFF;
-      frac_fp32 = {frac_fp16, 13'b0};
-      fp32 = {sign, exp_fp32, frac_fp32};
-    end else begin
-      exp_fp32 = {3'b0, exp_fp16} + 8'd112;
-      frac_fp32 = {frac_fp16, 13'b0};
-      fp32 = {sign, exp_fp32, frac_fp32};
-    end
-    
-    return $bitstoshortreal(fp32);
-  endfunction
-  
-  // FP32 to FP16 conversion
-  function automatic [15:0] float_to_fp16(input real value);
-    logic        sign;
-    logic [7:0]  exp_fp32;
-    logic [22:0] frac_fp32;
-    logic [4:0]  exp_fp16;
-    logic [9:0]  frac_fp16;
-    logic [7:0]  exp_adjusted;
-    logic [31:0] fp32;
-    
-    fp32 = $shortrealtobits(value);
-    sign     = fp32[31];
-    exp_fp32 = fp32[30:23];
-    frac_fp32= fp32[22:0];
-    
-    if (exp_fp32 == 8'b0) begin
-      return {sign, 15'b0};
-    end else if (exp_fp32 == 8'hFF) begin
-      exp_fp16 = 5'b11111;
-      frac_fp16 = frac_fp32[22:13];
-      return {sign, exp_fp16, frac_fp16};
-    end else begin
-      exp_adjusted = exp_fp32 - 8'd112;
-      
-      if (exp_adjusted >= 8'd31) begin
-        // Overflow -> Infinity
-        return {sign, 5'b11111, 10'b0};
-      end else if (exp_adjusted <= 8'd0) begin
-        // Underflow -> Zero
-        return {sign, 15'b0};
-      end else begin
-        exp_fp16 = exp_adjusted[4:0];
-        frac_fp16 = frac_fp32[22:13];
-        return {sign, exp_fp16, frac_fp16};
-      end
-    end
-  endfunction
+assign output_out.ready = 1'b1;  // Must be 1 to allow FIFO to pop data
+assign output_in.data   = result_data;
+assign output_in.strb   = '1;
+assign output_in.valid  = result_valid;
+assign result_ready     = output_in.ready;
+
+initial begin
+  fifo_dbg_vif = u_output_fifo.dbg_if;
+end
+
+// Test variables
+int error_count = 0;
+int test_count = 0;
+
+// FP16 to real conversion using cf_math_pkg
+function automatic real fp16_to_float(input [15:0] fp16);
+  return fp16_bit_to_fp16_val(fp16);
+endfunction
+
+// Real to FP16 conversion using cf_math_pkg
+function automatic [15:0] float_to_fp16(input real value);
+  return fp32_val_to_fp16_bit(value);
+endfunction
   
   // Test task with randomized valid timing
   task automatic test_multiply(input real a, input real b);
@@ -219,6 +172,8 @@ module tb_VX_fp16_mul();
     while (fifo_dbg_vif.get_queue_size() == 0) @(posedge clk);
     
     result_fp16 = fifo_dbg_vif.get_queue_data(0);
+    @(posedge clk);  // Allow one cycle for FIFO to pop the data
+    
     result = fp16_to_float(result_fp16);
     expected_val = fp16_to_float(expected_fp16);
     abs_error = (result > expected_val) ? (result - expected_val) : (expected_val - result);
@@ -235,7 +190,8 @@ module tb_VX_fp16_mul();
       $display("  Rel Error   = %e", rel_error);
       error_count++;
     end else begin
-      $display("PASS: Test %0d - %f * %f = %f", test_count, a_converted, b_converted, result);
+      $display("PASS: Test %0d - FP16(0x%04h * 0x%04h) = 0x%04h (expected: 0x%04h)", 
+        test_count, a_fp16, b_fp16, result_fp16, expected_fp16);
     end
   endtask
   

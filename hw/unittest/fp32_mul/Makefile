@@ -15,6 +15,7 @@ TOP_MODULE := tb_VX_fp32_mul
 
 TB   := tb_VX_fp32_mul.sv
 RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
+        $(RTL_DIR)/verification/cf_math_pkg.sv \
         $(RTL_DIR)/core/gemm/VX_fp32_mul.sv \
         $(RTL_DIR)/core/gemm/VX_stream_fence.sv \
         $(RTL_DIR)/libs/VX_elastic_buffer.sv \
