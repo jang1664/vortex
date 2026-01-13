@@ -167,7 +167,7 @@ module VX_prealigner import VX_gpu_pkg::*; #(
 
 `ifdef SYNOPSYS
       DW_lzd #(BLK_IDX_NUM) u_DW_lzd (
-          .a(is_smaller_blk_idx),  // input
+          .a(is_right_of_first_valid_block),  // input
           .dec(),
           .enc(enc)  // from MSB detect first 1
       );
