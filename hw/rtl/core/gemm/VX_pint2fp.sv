@@ -1,3 +1,19 @@
+/*
+  - input의 각 field는 다음과 같다.
+    - |carries|sign|hidden|mantissa|extra bits| 
+    - mantissa, extra bits는 gemm unit의 input의 mantissa이고, extra bits는 prealigner의 extra bits이다.
+      - FP32 -> mantissa:23, FP16 -> mantissa:10
+      - carriess는 mxu 와 그 뒷단 연산에 의해 추가된 bit들이다.
+    - scale : mantissa width + extra bit width
+      - LSB에서 scale bit 까지가 소수점 부분이고 그 위가 정수 부분이다.
+  - prealigner에서 계산한 max_exp가 input으로 들어온다. 원래 input의 max exp field이다.
+    - input으로 들어오는 fixed point format에 max_exp를 고려해서 scale 해줘야한다.
+  - input format과 output format은 parameter로 받는다.
+    - input format은 gemm unit의 format이다. (FP32 or FP16 or BF16)
+    - output format은 FP16 or FP32 or BF16 등 원하는 floating point format이다.
+    - input format: IN_EXP_WIDTH, IN_EXP_BIAS
+    - output format: OUT_EXP_WIDTH, OUT_EXP_BIAS, OUT_MANTISSA_WIDTH
+*/
 `timescale 1ns / 1ps
 
 `include "VX_platform.vh"
