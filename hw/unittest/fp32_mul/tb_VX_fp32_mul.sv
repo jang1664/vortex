@@ -85,7 +85,7 @@ module tb_VX_fp32_mul();
     .pop_o   (output_out)
   );
   
-  assign output_out.ready = 1'b0;
+  assign output_out.ready = 1'b1;  // Always ready to pop from FIFO
   assign output_in.data   = result_data;
   assign output_in.strb   = '1;
   assign output_in.valid  = result_valid;
@@ -169,13 +169,24 @@ module tb_VX_fp32_mul();
       end
     join
     
+    $display("[DEBUG] %t: Sent inputs - a=%f (0x%h), b=%f (0x%h), expected=%f", 
+        $time, a, a_bits, b, b_bits, expected);
+    
     // Wait for result
     while (fifo_dbg_vif.get_queue_size() == 0) @(posedge clk);
+    
+    $display("[DEBUG] %t: FIFO has data, size=%0d", $time, fifo_dbg_vif.get_queue_size());
     
     result_bits = fifo_dbg_vif.get_queue_data(0);
     result = $bitstoshortreal(result_bits);
     abs_error = (result > expected) ? (result - expected) : (expected - result);
     rel_error = (expected != 0.0) ? abs_error / ((expected > 0) ? expected : -expected) : abs_error;
+    
+    $display("[DEBUG] %t: Read result - result=%f (0x%h), fifo_size=%0d", 
+        $time, result, result_bits, fifo_dbg_vif.get_queue_size());
+    
+    // Pop the data from FIFO by pulsing ready
+    @(posedge clk);
     
     test_count++;
     
