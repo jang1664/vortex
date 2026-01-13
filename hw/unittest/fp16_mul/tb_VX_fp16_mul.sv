@@ -115,7 +115,7 @@ endfunction
 
 // Real to FP16 conversion using cf_math_pkg
 function automatic [15:0] float_to_fp16(input real value);
-  return fp32_val_to_fp16_bit(value);
+  return fp32_val_to_fp16_bit(shortreal'(value));
 endfunction
   
   // Test task with randomized valid timing
