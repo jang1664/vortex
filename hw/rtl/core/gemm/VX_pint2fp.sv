@@ -1,6 +1,8 @@
 `timescale 1ns / 1ps
 
-module int2fp #(
+`include "VX_platform.vh"
+
+module VX_pint2fp #(
     parameter int unsigned IN_DW = 0,
     parameter int unsigned OUT_DW = 0,
     parameter int unsigned IN_EXP_WIDTH = 0,
@@ -14,7 +16,10 @@ module int2fp #(
     input logic resetn_i,
     input logic [IN_DW-1:0] int_data_i,
     input logic [IN_EXP_WIDTH-1:0] max_exp_i,
-    output logic [OUT_DW-1:0] fp_data_o
+    input logic valid_i,
+
+    output logic [OUT_DW-1:0] fp_data_o,
+    output logic valid_o
 );
 
   localparam SHIFT_WIDTH = $clog2(IN_DW) + 1;
@@ -22,7 +27,6 @@ module int2fp #(
       OUT_MANTISSA_WIDTH + 1
   );  // over 1+m mantissa width shift occur zero
   localparam TOTAL_SHIFT_WIDTH = (SHIFT_WIDTH > RIGHT_SHIFT_WIDTH) ? SHIFT_WIDTH : RIGHT_SHIFT_WIDTH; // left_shift - right_shift
-  localparam MAX_SCALE = (IN_DW - 1);  // max value of (in mantissa width + in extra bit)
   localparam EXP_LIMIT = {OUT_EXP_WIDTH{1'b1}};  // max exp of output fp format
 
   logic [IN_DW-1:0] abs_int;
@@ -40,7 +44,6 @@ module int2fp #(
   logic [IN_DW-1:0] ls_abs_int;
   logic [IN_DW-1:0] rs_abs_int;
   logic [IN_DW-1:0] shifted_signif;
-  logic [0:0][IN_DW-1:0] shifted_signif_q;
   logic mantissa_clear;
 
   logic carry;
@@ -57,11 +60,30 @@ module int2fp #(
 
   logic [OUT_DW-1:0] fp_data;
 
-  DW_lzd #(IN_DW) U1 (
-      .a  (abs_int),
-      .dec(),
-      .enc(enc)
-  );
+  logic stage0_valid;
+
+  logic [IN_DW-1:0] shifted_signif_s1;
+  logic [IN_DW-1:0] abs_int_s1;
+  logic sign_s1;
+  logic [OUT_EXP_WIDTH-1:0] exp_valid_s1;
+  logic exp_inf_flag_s1;
+  logic signed [(TOTAL_SHIFT_WIDTH+1)-1:0] total_shift_s1;
+
+`ifdef SYNOPSYS
+      DW_lzd #(IN_DW) U1 (
+          .a  (abs_int),
+          .dec(),
+          .enc(enc)
+      );
+`else
+      VX_lzc #(
+        .N(IN_DW)
+      ) u_lzc (
+        .data_in(abs_int),
+        .data_out(enc),
+        .valid_out()
+      );
+`endif
 
   always_comb begin
     sign = int_data_i[IN_DW-1];
@@ -79,30 +101,36 @@ module int2fp #(
     shifted_signif = (total_shift >= 1'sb0) ? ls_abs_int : rs_abs_int;
   end
 
-  always @(posedge clk_i, negedge resetn_i) begin
-    if (~resetn_i) begin
-      shifted_signif_q[0] <= '0;
-    end else begin
-      shifted_signif_q[0] <= shifted_signif;
-    end
-  end
+  VX_elastic_buffer #(
+    .DATAW(2 * IN_DW + OUT_EXP_WIDTH + (TOTAL_SHIFT_WIDTH + 1) + 2),
+    .SIZE(1)
+  ) u_stage0_buf (
+    .clk      (clk_i),
+    .reset    (~resetn_i),
+    .valid_in (valid_i),
+    .ready_in (),
+    .data_in  ({shifted_signif, abs_int, sign, exp_valid, exp_inf_flag, total_shift}),
+    .data_out ({shifted_signif_s1, abs_int_s1, sign_s1, exp_valid_s1, exp_inf_flag_s1, total_shift_s1}),
+    .ready_out(1'b1),
+    .valid_out(stage0_valid)
+  );
 
   generate
     if (IN_DW >= (OUT_MANTISSA_WIDTH + 4)) begin
       always_comb begin
-        guard  = shifted_signif_q[0][IN_DW-1-(OUT_MANTISSA_WIDTH+1)];
-        round  = shifted_signif_q[0][IN_DW-1-(OUT_MANTISSA_WIDTH+1)-1];
-        stitch = |shifted_signif_q[0][IN_DW-1-(OUT_MANTISSA_WIDTH+1)-2:0];
+        guard  = shifted_signif_s1[IN_DW-1-(OUT_MANTISSA_WIDTH+1)];
+        round  = shifted_signif_s1[IN_DW-1-(OUT_MANTISSA_WIDTH+1)-1];
+        stitch = |shifted_signif_s1[IN_DW-1-(OUT_MANTISSA_WIDTH+1)-2:0];
       end
     end else if (IN_DW >= (OUT_MANTISSA_WIDTH + 3)) begin
       always_comb begin
-        guard  = shifted_signif_q[0][IN_DW-1-(OUT_MANTISSA_WIDTH+1)];
-        round  = shifted_signif_q[0][IN_DW-1-(OUT_MANTISSA_WIDTH+1)-1];
+        guard  = shifted_signif_s1[IN_DW-1-(OUT_MANTISSA_WIDTH+1)];
+        round  = shifted_signif_s1[IN_DW-1-(OUT_MANTISSA_WIDTH+1)-1];
         stitch = '0;
       end
     end else if (IN_DW >= (OUT_MANTISSA_WIDTH + 2)) begin
       always_comb begin
-        guard  = shifted_signif_q[0][IN_DW-1-(OUT_MANTISSA_WIDTH+1)];
+        guard  = shifted_signif_s1[IN_DW-1-(OUT_MANTISSA_WIDTH+1)];
         round  = '0;
         stitch = '0;
       end
@@ -118,16 +146,16 @@ module int2fp #(
   generate
     if (IN_DW >= (OUT_MANTISSA_WIDTH + 2)) begin
       always_comb begin
-        if ((guard && (round | stitch)) || (guard && (round | stitch == 1'b0) && (shifted_signif_q[0][IN_DW-1-(OUT_MANTISSA_WIDTH+1)+1] == 1'b1))) begin : round_up
-          {carry, signif_rounded} = shifted_signif_q[0][IN_DW-1-:(OUT_MANTISSA_WIDTH+1)] + 1'b1;
+        if ((guard && (round | stitch)) || (guard && (round | stitch == 1'b0) && (shifted_signif_s1[IN_DW-1-(OUT_MANTISSA_WIDTH+1)+1] == 1'b1))) begin : round_up
+          {carry, signif_rounded} = shifted_signif_s1[IN_DW-1-:(OUT_MANTISSA_WIDTH+1)] + 1'b1;
         end else begin
-          {carry, signif_rounded} = shifted_signif_q[0][IN_DW-1-:(OUT_MANTISSA_WIDTH+1)];
+          {carry, signif_rounded} = shifted_signif_s1[IN_DW-1-:(OUT_MANTISSA_WIDTH+1)];
         end
       end
     end else begin
       always_comb begin
         {carry, signif_rounded} = {
-          1'b0, shifted_signif_q[0][IN_DW-1:0], {(OUT_MANTISSA_WIDTH - IN_DW + 1) {1'b0}}
+          1'b0, shifted_signif_s1[IN_DW-1:0], {(OUT_MANTISSA_WIDTH - IN_DW + 1) {1'b0}}
         };
       end
     end
@@ -135,21 +163,21 @@ module int2fp #(
 
   always_comb begin
     if (carry == 1'b1) begin
-      exp_valid_norm   = exp_valid + 1'b1;
+      exp_valid_norm   = exp_valid_s1 + 1'b1;
       mantissa_rounded = signif_rounded[OUT_MANTISSA_WIDTH-:OUT_MANTISSA_WIDTH];
     end else begin
-      exp_valid_norm   = exp_valid;
+      exp_valid_norm   = exp_valid_s1;
       mantissa_rounded = signif_rounded[OUT_MANTISSA_WIDTH-1-:OUT_MANTISSA_WIDTH];
     end
 
-    mantissa_clear = exp_inf_flag | (total_shift <= (-signed'(IN_DW) + 1));
+    mantissa_clear = exp_inf_flag_s1 | (total_shift_s1 <= (-signed'(IN_DW) + 1));
     if (mantissa_clear == 1'b1) begin
       mantissa_valid = {OUT_MANTISSA_WIDTH{1'b0}};
     end else begin
       mantissa_valid = mantissa_rounded;
     end
 
-    if (abs_int == 0) begin
+    if (abs_int_s1 == 0) begin
       eout = '0;
       mout = '0;
     end else begin
@@ -157,15 +185,57 @@ module int2fp #(
       eout = exp_valid_norm;
     end
 
-    fp_data = {sign, eout, mout};
+    fp_data = {sign_s1, eout, mout};
   end
 
-  always_ff @(posedge clk_i) begin
-    if (~resetn_i) begin
-      fp_data_o <= '0;
-    end else begin
-      fp_data_o <= fp_data;
+  VX_elastic_buffer #(
+    .DATAW(OUT_DW),
+    .SIZE(1)
+  ) u_stage1_buf (
+    .clk      (clk_i),
+    .reset    (~resetn_i),
+    .valid_in (stage0_valid),
+    .ready_in (),
+    .data_in  (fp_data),
+    .data_out (fp_data_o),
+    .ready_out(1'b1),
+    .valid_out(valid_o)
+  );
+
+`ifdef DBG_TRACE_GEMM
+  always @(posedge clk_i) begin
+    if (resetn_i) begin
+      // Stage 0: Input -> Stage 0 buffer
+      if (valid_i) begin
+        `TRACE(3, ("%t: PINT2FP INPUT: int_data_i=0x%0h, max_exp_i=0x%0h, sign=%0b\n", 
+                   $time, int_data_i, max_exp_i, sign))
+        `TRACE(3, ("  abs_int=0x%0h, enc=%0d, left_shift=%0d\n", 
+                   abs_int, enc, left_shift))
+        `TRACE(3, ("  exp_fused=%0d, exp_valid=0x%0h, total_shift=%0d\n", 
+                   exp_fused, exp_valid, total_shift))
+        `TRACE(3, ("  shifted_signif=0x%0h\n", shifted_signif))
+      end
+
+      // Stage 1: Stage 0 buffer -> Stage 1 buffer
+      if (stage0_valid) begin
+        `TRACE(3, ("%t: PINT2FP S0->S1: shifted_signif_s1=0x%0h, abs_int_s1=0x%0h, sign_s1=%0b\n",
+                   $time, shifted_signif_s1, abs_int_s1, sign_s1))
+        `TRACE(3, ("  exp_valid_s1=0x%0h, exp_inf_flag_s1=%0b, total_shift_s1=%0d\n",
+                   exp_valid_s1, exp_inf_flag_s1, total_shift_s1))
+        `TRACE(3, ("  guard=%0b, round=%0b, stitch=%0b, carry=%0b\n",
+                   guard, round, stitch, carry))
+        `TRACE(3, ("  exp_valid_norm=0x%0h, mantissa_rounded=0x%0h, mantissa_clear=%0b\n",
+                   exp_valid_norm, mantissa_rounded, mantissa_clear))
+        `TRACE(3, ("  fp_data=0x%0h (sign=%0b, exp=0x%0h, mant=0x%0h)\n",
+                   fp_data, sign_s1, eout, mout))
+      end
+
+      // Output
+      if (valid_o) begin
+        `TRACE(3, ("%t: PINT2FP OUTPUT: fp_data_o=0x%0h\n", $time, fp_data_o))
+      end
     end
   end
+`endif
 
 endmodule
