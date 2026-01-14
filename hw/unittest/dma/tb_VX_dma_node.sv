@@ -7,9 +7,6 @@
 // - OBJ = "func" / "power"
 // - dump fsdb(fst) + logs/reports
 // - task-based tests
-//
-// Supports seg_size = BUS_BYTES * {1,2,4}  (requires DUT beat_off support)
-// NOTE: DUT has no explicit done output; TB detects done by cfg_reg_if.ready toggling.
 // -----------------------------------------------------------------------------
 
 module tb_VX_dma_node import VX_gpu_pkg::*; ();
@@ -26,9 +23,23 @@ module tb_VX_dma_node import VX_gpu_pkg::*; ();
   localparam int CFG_DW     = 64;
   localparam int DESC_WORDS = 14;
 
-  localparam int DATA_SIZE_BYTES = 8;      // bus beat bytes
-  localparam int MEM_BYTES       = 64*1024;
+  localparam int MEM_BYTES  = 64*1024;
 
+  // Handy locals that match the interface widths
+  localparam int DCACHE_BYTES = 32;
+  localparam int LMEM_BYTES   = 16;
+
+  localparam int SEG_SIZE_1   = 32;
+  localparam int SEG_SIZE_2   = 64;
+  localparam int SEG_SIZE_3   = 128;
+  localparam int PADDING_1    = 3;   //padding < LMEM_BYTES 인 경우
+  localparam int PADDING_2    = 16;  //padding == LMEM_BYTES 인 경우
+  localparam int PADDING_3    = 18;  //padding > LMEM_BYTES 인 경우
+  
+  // SEG_SIZE_3 용 BIG_PADDING
+  localparam int BIG_PADDING_1 = 15;  //padding < DCACHE_BYTES 인 경우
+  localparam int BIG_PADDING_2 = 32;  //padding == DCACHE_BYTES 인 경우
+  localparam int BIG_PADDING_3 = 75;  //padding > DCACHE_BYTES 인 경우
   // -----------------------------
   // Clock / reset
   // -----------------------------
@@ -49,15 +60,18 @@ module tb_VX_dma_node import VX_gpu_pkg::*; ();
   // -----------------------------
   VX_config_reg_if #(.NUM(CFG_NUM), .DW(CFG_DW)) cfg_reg_if();
 
+
+  // Make DCACHE bus wider than LMEM bus to test width mismatch
   VX_mem_bus_if #(
-    .DATA_SIZE(DATA_SIZE_BYTES),
+    .DATA_SIZE(DCACHE_BYTES), // DCACHE = 16B/beat
     .TAG_WIDTH(8)
   ) dcache_bus_if();
 
   VX_mem_bus_if #(
-    .DATA_SIZE(DATA_SIZE_BYTES),
+    .DATA_SIZE(LMEM_BYTES),   // LMEM = 8B/beat
     .TAG_WIDTH(8)
   ) lmem_bus_if();
+
 
   // -----------------------------
   // DUT
@@ -104,9 +118,9 @@ module tb_VX_dma_node import VX_gpu_pkg::*; ();
   end
 
   // -----------------------------
-  // Memory models
+  // Memory models (byte-addressed)
   // -----------------------------
-  byte dcache_mem [0:MEM_BYTES-1];  //byte 단위
+  byte dcache_mem [0:MEM_BYTES-1];
   byte lmem_mem   [0:MEM_BYTES-1];
 
   // always ready
@@ -118,29 +132,42 @@ module tb_VX_dma_node import VX_gpu_pkg::*; ();
       logic [8-`UP(UUID_WIDTH)-1:0] value;
   } tag_t;
 
+  // Pending structs MUST match each bus width
   typedef struct packed {
-    logic                         valid;
-    logic                         rw;
+    logic                               valid;
+    logic                               rw;
     logic [dcache_bus_if.ADDR_WIDTH-1:0] addr_beats;
-    logic [DATA_SIZE_BYTES*8-1:0] data;
-    logic [DATA_SIZE_BYTES-1:0]   byteen;
-    tag_t                         tag;
-  } pend_t;
+    logic [DCACHE_BYTES*8-1:0]          data;
+    logic [DCACHE_BYTES-1:0]            byteen;
+    tag_t                               tag;
+  } d_pend_t;
 
-  pend_t d_pend, l_pend;
+  typedef struct packed {
+    logic                               valid;
+    logic                               rw;
+    logic [lmem_bus_if.ADDR_WIDTH-1:0]  addr_beats;
+    logic [LMEM_BYTES*8-1:0]            data;
+    logic [LMEM_BYTES-1:0]              byteen;
+    tag_t                               tag;
+  } l_pend_t;
 
-  // dcache slave: 1-cycle latency, rsp_valid asserted for 1 cycle
+  d_pend_t d_pend;
+  l_pend_t l_pend;
+
+  // -----------------------------
+  // DCACHE slave: 1-cycle latency, rsp_valid asserted for 1 cycle
+  // -----------------------------
   always @(posedge clk) begin
     if (reset) begin
       dcache_bus_if.rsp_valid <= 1'b0;
       dcache_bus_if.rsp_data  <= '0;
       d_pend.valid            <= 1'b0;
     end else begin
-      // default clear rsp_valid when accepted
+      // clear rsp_valid after handshake
       if (dcache_bus_if.rsp_valid && dcache_bus_if.rsp_ready)
         dcache_bus_if.rsp_valid <= 1'b0;
 
-      // capture req into pending
+      // capture req into pending (one-cycle response)
       d_pend.valid <= 1'b0;
       if (dcache_bus_if.req_valid && dcache_bus_if.req_ready) begin
         d_pend.valid      <= 1'b1;
@@ -154,14 +181,14 @@ module tb_VX_dma_node import VX_gpu_pkg::*; ();
       // respond from pending
       if (d_pend.valid) begin
         int unsigned base_b;
-        base_b = (d_pend.addr_beats << $clog2(DATA_SIZE_BYTES));
+        base_b = (d_pend.addr_beats << $clog2(DCACHE_BYTES)); // IMPORTANT: use DCACHE_BYTES
 
         dcache_bus_if.rsp_valid    <= 1'b1;
         dcache_bus_if.rsp_data.tag <= d_pend.tag;
 
         if (!d_pend.rw) begin
           // READ
-          for (int i = 0; i < DATA_SIZE_BYTES; i++) begin
+          for (int i = 0; i < DCACHE_BYTES; i++) begin
             if (base_b + i < MEM_BYTES)
               dcache_bus_if.rsp_data.data[i*8 +: 8] <= dcache_mem[base_b + i];
             else
@@ -169,7 +196,7 @@ module tb_VX_dma_node import VX_gpu_pkg::*; ();
           end
         end else begin
           // WRITE
-          for (int i = 0; i < DATA_SIZE_BYTES; i++) begin
+          for (int i = 0; i < DCACHE_BYTES; i++) begin
             if (d_pend.byteen[i] && (base_b + i < MEM_BYTES))
               dcache_mem[base_b + i] <= d_pend.data[i*8 +: 8];
           end
@@ -179,7 +206,9 @@ module tb_VX_dma_node import VX_gpu_pkg::*; ();
     end
   end
 
-  // lmem slave
+  // -----------------------------
+  // LMEM slave: 1-cycle latency, rsp_valid asserted for 1 cycle
+  // -----------------------------
   always @(posedge clk) begin
     if (reset) begin
       lmem_bus_if.rsp_valid <= 1'b0;
@@ -201,20 +230,22 @@ module tb_VX_dma_node import VX_gpu_pkg::*; ();
 
       if (l_pend.valid) begin
         int unsigned base_b;
-        base_b = (l_pend.addr_beats << $clog2(DATA_SIZE_BYTES));
+        base_b = (l_pend.addr_beats << $clog2(LMEM_BYTES)); // IMPORTANT: use LMEM_BYTES
 
         lmem_bus_if.rsp_valid    <= 1'b1;
         lmem_bus_if.rsp_data.tag <= l_pend.tag;
 
         if (!l_pend.rw) begin
-          for (int i = 0; i < DATA_SIZE_BYTES; i++) begin
+          // READ
+          for (int i = 0; i < LMEM_BYTES; i++) begin
             if (base_b + i < MEM_BYTES)
               lmem_bus_if.rsp_data.data[i*8 +: 8] <= lmem_mem[base_b + i];
             else
               lmem_bus_if.rsp_data.data[i*8 +: 8] <= 8'h00;
           end
         end else begin
-          for (int i = 0; i < DATA_SIZE_BYTES; i++) begin
+          // WRITE
+          for (int i = 0; i < LMEM_BYTES; i++) begin
             if (l_pend.byteen[i] && (base_b + i < MEM_BYTES))
               lmem_mem[base_b + i] <= l_pend.data[i*8 +: 8];
           end
@@ -234,7 +265,7 @@ module tb_VX_dma_node import VX_gpu_pkg::*; ();
     end
   endtask
 
-  //주소 base부터 1씩 증가하면서 nbytes번 채우기
+  // fill global from base, incrementing bytes
   task automatic mem_fill_inc_global(input int unsigned base, input int unsigned nbytes, input byte start);
     byte v;
     v = start;
@@ -257,7 +288,7 @@ module tb_VX_dma_node import VX_gpu_pkg::*; ();
     for (int unsigned i = 0; i < nbytes; i++) begin
       if ((g_base + i) >= MEM_BYTES || (l_base + i) >= MEM_BYTES)
         $fatal(1, "OOR %s i=%0d", msg, i);
-      
+
       if (i % seg_size >= seg_size - padding) begin
         if (lmem_mem[l_base + i] !== 8'h00) begin
           $fatal(1, "Padding Mismatch %s @+%0d: G=%02x L=%02x",
@@ -282,7 +313,7 @@ module tb_VX_dma_node import VX_gpu_pkg::*; ();
     for (int unsigned i = 0; i < nbytes; i++) begin
       if ((g_base + i) >= MEM_BYTES || (l_base + i) >= MEM_BYTES)
         $fatal(1, "OOR %s i=%0d", msg, i);
-      
+
       if (i % seg_size >= seg_size - padding) begin
         if (dcache_mem[g_base + i] !== 8'h00) begin
           $fatal(1, "Padding Mismatch %s @+%0d: L=%02x G=%02x",
@@ -333,12 +364,13 @@ module tb_VX_dma_node import VX_gpu_pkg::*; ();
     input int unsigned seg_bytes,
     input int unsigned b0,
     input int unsigned b1,
-    input int unsigned b2
+    input int unsigned b2,
+    input int unsigned padding
   );
     int unsigned total_bytes;
     int unsigned stride0, stride1, stride2;
     int unsigned g_src_base, l_dst_base, g_dst_base;
-    int unsigned padding;
+
 
     logic [31:0] d1 [0:DESC_WORDS-1];
     logic [31:0] d2 [0:DESC_WORDS-1];
@@ -349,12 +381,10 @@ module tb_VX_dma_node import VX_gpu_pkg::*; ();
     stride1 = b0 * seg_bytes;
     stride2 = b0 * b1 * seg_bytes;
 
-    // base addresses (keep simple; ensure they fit)
+    // base addresses
     g_src_base = 16'h1000;
     l_dst_base = 16'h2000;
     g_dst_base = 16'h3000;
-
-    padding = 2; //DATA_SIZE_BYTES 넘어가는 경우도 테스트 완료
 
     mem_clear_all();
     mem_fill_inc_global(g_src_base, total_bytes, 8'h10);
@@ -370,10 +400,10 @@ module tb_VX_dma_node import VX_gpu_pkg::*; ();
     d1[7]  = stride2; d1[8]  = stride2;
     d1[9]  = b0;      d1[10] = b1; d1[11] = b2;
     d1[12] = seg_bytes;
-    d1[13] = padding; // padding
+    d1[13] = padding;
 
-    $display("\n[CASE] seg=%0d bnd=(%0d,%0d,%0d)  GLOBAL->LMEM", seg_bytes, b0, b1, b2);
-    $fdisplay(log_fd, "[CASE] seg=%0d bnd=(%0d,%0d,%0d)  G->L", seg_bytes, b0, b1, b2);
+    $display("\n[CASE] seg=%0d bnd=(%0d,%0d,%0d) padding=%0d  GLOBAL->LMEM", seg_bytes, b0, b1, b2, padding);
+    $fdisplay(log_fd, "[CASE] seg=%0d bnd=(%0d,%0d,%0d) padding=%0d  G->L", seg_bytes, b0, b1, b2, padding);
 
     cfg_send_desc(d1, 32'd5, 32'd7);
     wait_dma_done();
@@ -396,8 +426,8 @@ module tb_VX_dma_node import VX_gpu_pkg::*; ();
     d2[12] = seg_bytes;
     d2[13] = padding;
 
-    $display("[CASE] seg=%0d bnd=(%0d,%0d,%0d)  LMEM->GLOBAL", seg_bytes, b0, b1, b2);
-    $fdisplay(log_fd, "[CASE] seg=%0d bnd=(%0d,%0d,%0d)  L->G", seg_bytes, b0, b1, b2);
+    $display("[CASE] seg=%0d bnd=(%0d,%0d,%0d) padding=%0d  LMEM->GLOBAL", seg_bytes, b0, b1, b2, padding);
+    $fdisplay(log_fd, "[CASE] seg=%0d bnd=(%0d,%0d,%0d) padding=%0d  L->G", seg_bytes, b0, b1, b2, padding);
 
     cfg_send_desc(d2, 32'd9, 32'd11);
     wait_dma_done();
@@ -411,7 +441,6 @@ module tb_VX_dma_node import VX_gpu_pkg::*; ();
   // sim_func / sim_power
   // -----------------------------
   task sim_func();
-    // bounds
     int unsigned b0 = 2;
     int unsigned b1 = 2;
     int unsigned b2 = 2;
@@ -419,7 +448,8 @@ module tb_VX_dma_node import VX_gpu_pkg::*; ();
     $display("=====================================================================");
     $display("=======================  START SIMULATION  ==========================");
     $display("=====================================================================");
-    $display("BUS_BYTES: %0d", DATA_SIZE_BYTES);
+    $display("LMEM_BYTES: %0d", LMEM_BYTES);
+    $display("DCACHE_BYTES: %0d", DCACHE_BYTES);
 
     // cfg defaults
     cfg_reg_if.valid = 1'b0;
@@ -427,13 +457,20 @@ module tb_VX_dma_node import VX_gpu_pkg::*; ();
     cfg_reg_if.tid   = '0;
     for (int r = 0; r < CFG_NUM; r++) cfg_reg_if.regs[r] = '0;
 
-    // Wait stable
     repeat (5) @(posedge clk);
 
-    // seg_size sweep (requires DUT beat_off support)
-    run_case(DATA_SIZE_BYTES * 1, b0, b1, b2);
-    run_case(DATA_SIZE_BYTES * 2, b0, b1, b2);
-    run_case(DATA_SIZE_BYTES * 4, b0, b1, b2);
+    // seg_size sweep (based on LMEM beat bytes in this TB)
+    run_case(SEG_SIZE_1, b0, b1, b2, PADDING_1);
+    run_case(SEG_SIZE_1, b0, b1, b2, PADDING_2);
+    run_case(SEG_SIZE_1, b0, b1, b2, PADDING_3);
+
+    run_case(SEG_SIZE_2, b0, b1, b2, PADDING_1);
+    run_case(SEG_SIZE_2, b0, b1, b2, PADDING_2);
+    run_case(SEG_SIZE_2, b0, b1, b2, PADDING_3);
+
+    run_case(SEG_SIZE_3, b0, b1, b2, BIG_PADDING_1);
+    run_case(SEG_SIZE_3, b0, b1, b2, BIG_PADDING_2);
+    run_case(SEG_SIZE_3, b0, b1, b2, BIG_PADDING_3);
 
     $display("=====================================================================");
     $display("=====================  ALL TESTS COMPLETED  =========================");
@@ -441,16 +478,15 @@ module tb_VX_dma_node import VX_gpu_pkg::*; ();
   endtask
 
   task sim_power();
-    // Create steady activity by issuing random DMAs
     int unsigned seg_choices [0:2];
     int unsigned b0 = 2;
     int unsigned b1 = 2;
     int unsigned b2 = 2;
 
-    seg_choices[0] = DATA_SIZE_BYTES;
-    seg_choices[1] = DATA_SIZE_BYTES * 2;
-    seg_choices[2] = DATA_SIZE_BYTES * 4;
-    
+    seg_choices[0] = SEG_SIZE_1;
+    seg_choices[1] = SEG_SIZE_2;
+    seg_choices[2] = SEG_SIZE_3;
+
     $display("=====================================================================");
     $display("=======================  START POWER SIM  ===========================");
     $display("=====================================================================");
@@ -462,7 +498,7 @@ module tb_VX_dma_node import VX_gpu_pkg::*; ();
 
     for (int iter = 0; iter < 300; iter++) begin
       int unsigned seg_bytes = seg_choices[$urandom_range(0,2)];
-      run_case(seg_bytes, b0, b1, b2);
+      run_case(seg_bytes, b0, b1, b2, PADDING_1);
       repeat (3) @(posedge clk);
     end
 
