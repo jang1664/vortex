@@ -382,13 +382,17 @@ module tb_VX_dma_node import VX_gpu_pkg::*; ();
     stride2 = b0 * b1 * seg_bytes;
 
     // base addresses
-    g_src_base = 16'h1000;
-    l_dst_base = 16'h2000;
-    g_dst_base = 16'h3000;
+    g_src_base = 16'h1020;
+    l_dst_base = 16'h2010;
+    g_dst_base = 16'h3020;
 
     mem_clear_all();
     mem_fill_inc_global(g_src_base, total_bytes, 8'h10);
 
+    $display("[DEBUG] g_src_base=0x%h, l_dst_base=0x%h, g_dst_base=0x%h", 
+             g_src_base, l_dst_base, g_dst_base);
+    $display("[DEBUG] total_bytes=%0d, seg_bytes=%0d", total_bytes, seg_bytes);
+    
     // -------------------------
     // GLOBAL -> LMEM
     // -------------------------
@@ -461,6 +465,7 @@ module tb_VX_dma_node import VX_gpu_pkg::*; ();
 
     // seg_size sweep (based on LMEM beat bytes in this TB)
     run_case(SEG_SIZE_1, b0, b1, b2, PADDING_1);
+    
     run_case(SEG_SIZE_1, b0, b1, b2, PADDING_2);
     run_case(SEG_SIZE_1, b0, b1, b2, PADDING_3);
 
