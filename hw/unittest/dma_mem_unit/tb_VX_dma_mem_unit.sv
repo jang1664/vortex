@@ -3,15 +3,18 @@
 `include "VX_define.vh"
 
 // -----------------------------------------------------------------------------
-// Testbench for VX_dma_node (VX_gemm_tree TB style-ish):
-// - OBJ = "func" / "power"
-// - dump fsdb(fst) + logs/reports
+// Testbench for VX_dma_node
+// - DCACHE: byte-array slave model (1-cycle latency)
+// - LMEM  : real VX_local_mem instance (banked, xbar, ready/valid behavior)
+//   - LMEM has 1 port (NUM_REQS=1): driven only by DMA
+//   - Therefore TB cannot directly read LMEM; correctness is validated end-to-end:
+//       GLOBAL(src) -> LMEM -> GLOBAL(dst), then compare src vs dst (with padding rules)
 // - task-based tests
 // -----------------------------------------------------------------------------
 
-module tb_VX_dma_node import VX_gpu_pkg::*; ();
+module tb_VX_dma_mem_unit import VX_gpu_pkg::*; ();
 
-  parameter string tb_name = "tb_VX_dma_node";
+  parameter string tb_name = "tb_VX_dma_mem_unit";
   parameter real   PERIOD       = 10.0;
   parameter string OBJ          = "func";  // "func" or "power"
   parameter string FILE_POSTFIX = "func";
@@ -24,22 +27,30 @@ module tb_VX_dma_node import VX_gpu_pkg::*; ();
   localparam int DESC_WORDS = 14;
 
   localparam int MEM_BYTES  = 64*1024;
-
-  // Handy locals that match the interface widths
+  localparam int TAG_WIDTH  = 45;  // 일단 `UP(UUID_WIDTH) 보다 크기만 하면 됨
+  // Make DCACHE wider than LMEM to test width mismatch
   localparam int DCACHE_BYTES = 32;
-  localparam int LMEM_BYTES   = 16;
+  localparam int LMEM_BYTES   = 16; // IMPORTANT: match VX_local_mem word size (usually 8)
 
+  // LMEM instance: 1 port
+  localparam int LMEM_PORTS = 1;
+  localparam int NUM_REQS   = LMEM_PORTS;
+  localparam int NUM_BANKS  = 4;
+  
+  // segment/padding cases
   localparam int SEG_SIZE_1   = 32;
   localparam int SEG_SIZE_2   = 64;
   localparam int SEG_SIZE_3   = 128;
-  localparam int PADDING_1    = 3;   //padding < LMEM_BYTES 인 경우
-  localparam int PADDING_2    = 16;  //padding == LMEM_BYTES 인 경우
-  localparam int PADDING_3    = 18;  //padding > LMEM_BYTES 인 경우
-  
-  // SEG_SIZE_3 용 BIG_PADDING
-  localparam int BIG_PADDING_1 = 15;  //padding < DCACHE_BYTES 인 경우
-  localparam int BIG_PADDING_2 = 32;  //padding == DCACHE_BYTES 인 경우
-  localparam int BIG_PADDING_3 = 75;  //padding > DCACHE_BYTES 인 경우
+
+  // Note: LMEM_BYTES is usually 8, but keep these as your original intent.
+  localparam int PADDING_1     = 3;   // padding < LMEM_BYTES (if XLEN=64)
+  localparam int PADDING_2     = 8;   // padding == LMEM_BYTES (if XLEN=64)
+  localparam int PADDING_3     = 18;  // padding > LMEM_BYTES
+
+  localparam int BIG_PADDING_1 = 15;  // padding < DCACHE_BYTES
+  localparam int BIG_PADDING_2 = 32;  // padding == DCACHE_BYTES
+  localparam int BIG_PADDING_3 = 75;  // padding > DCACHE_BYTES
+
   // -----------------------------
   // Clock / reset
   // -----------------------------
@@ -60,18 +71,15 @@ module tb_VX_dma_node import VX_gpu_pkg::*; ();
   // -----------------------------
   VX_config_reg_if #(.NUM(CFG_NUM), .DW(CFG_DW)) cfg_reg_if();
 
-
-  // Make DCACHE bus wider than LMEM bus to test width mismatch
   VX_mem_bus_if #(
-    .DATA_SIZE(DCACHE_BYTES), // DCACHE = 16B/beat
-    .TAG_WIDTH(8)
+    .DATA_SIZE(DCACHE_BYTES),
+    .TAG_WIDTH(TAG_WIDTH)
   ) dcache_bus_if();
 
   VX_mem_bus_if #(
-    .DATA_SIZE(LMEM_BYTES),   // LMEM = 8B/beat
-    .TAG_WIDTH(8)
-  ) lmem_bus_if();
-
+    .DATA_SIZE(LMEM_BYTES),
+    .TAG_WIDTH(TAG_WIDTH)
+  ) lmem_bus_ifs [LMEM_PORTS](); // [0]=DMA only
 
   // -----------------------------
   // DUT
@@ -81,11 +89,44 @@ module tb_VX_dma_node import VX_gpu_pkg::*; ();
     .reset        (reset),
     .cfg_reg_if   (cfg_reg_if),
     .dcache_bus_if(dcache_bus_if),
-    .lmem_bus_if  (lmem_bus_if)
+    .lmem_bus_if  (lmem_bus_ifs[0])     // DMA uses LMEM port 0
   );
 
   // -----------------------------
-  // Files / dump (gemm TB style)
+  // Real LMEM (banked) instance
+  // NUM_REQS=1, NUM_BANKS=4 as requested
+  // -----------------------------
+  initial begin
+    $display("[LMEM PARAMS] ADDR_WIDTH=%0d BANK_ADDR_WIDTH=%0d NUM_BANKS=%0d CLOG2(NUM_BANKS)=%0d WORD_WIDTH=%0d",
+            u_lmem.ADDR_WIDTH,
+            u_lmem.BANK_ADDR_WIDTH,
+            u_lmem.NUM_BANKS,
+            $clog2(u_lmem.NUM_BANKS),
+            u_lmem.WORD_WIDTH);
+  end
+
+  localparam NUM_WORDS       = MEM_BYTES / LMEM_BYTES;
+
+  VX_local_mem #(
+    .INSTANCE_ID ("lmem0"),
+    .SIZE        (MEM_BYTES),
+    .NUM_REQS    (NUM_REQS),
+    .NUM_BANKS   (NUM_BANKS),
+    .ADDR_WIDTH  (`CLOG2(NUM_WORDS)),   // ★ 핵심 수정
+    .WORD_SIZE   (LMEM_BYTES),
+    .TAG_WIDTH   (TAG_WIDTH),
+    .OUT_BUF     (0)
+  ) u_lmem (
+    .clk       (clk),
+    .reset     (reset),
+`ifdef PERF_ENABLE
+    .lmem_perf (),
+`endif
+    .mem_bus_if(lmem_bus_ifs)
+  );
+
+  // -----------------------------
+  // Files / dump
   // -----------------------------
   integer rpt_fd;
   integer log_fd;
@@ -110,7 +151,7 @@ module tb_VX_dma_node import VX_gpu_pkg::*; ();
     $fsdbDumpvars(0, "+all", "+parameter", "+functions");
 `else
     $dumpfile(fst_file_path);
-    $dumpvars(0, tb_VX_dma_node);
+    $dumpvars(0, tb_VX_dma_mem_unit);
 `endif
 
     rpt_fd = $fopen(rpt_file_path, "w");
@@ -118,45 +159,32 @@ module tb_VX_dma_node import VX_gpu_pkg::*; ();
   end
 
   // -----------------------------
-  // Memory models (byte-addressed)
+  // DCACHE memory model (byte-addressed)
   // -----------------------------
   byte dcache_mem [0:MEM_BYTES-1];
-  byte lmem_mem   [0:MEM_BYTES-1];
 
-  // always ready
+  // always ready for DCACHE model
   assign dcache_bus_if.req_ready = 1'b1;
-  assign lmem_bus_if.req_ready   = 1'b1;
-
-  typedef struct packed {
-      logic [`UP(UUID_WIDTH)-1:0]   uuid;
-      logic [8-`UP(UUID_WIDTH)-1:0] value;
-  } tag_t;
-
-  // Pending structs MUST match each bus width
-  typedef struct packed {
-    logic                               valid;
-    logic                               rw;
-    logic [dcache_bus_if.ADDR_WIDTH-1:0] addr_beats;
-    logic [DCACHE_BYTES*8-1:0]          data;
-    logic [DCACHE_BYTES-1:0]            byteen;
-    tag_t                               tag;
-  } d_pend_t;
-
-  typedef struct packed {
-    logic                               valid;
-    logic                               rw;
-    logic [lmem_bus_if.ADDR_WIDTH-1:0]  addr_beats;
-    logic [LMEM_BYTES*8-1:0]            data;
-    logic [LMEM_BYTES-1:0]              byteen;
-    tag_t                               tag;
-  } l_pend_t;
-
-  d_pend_t d_pend;
-  l_pend_t l_pend;
 
   // -----------------------------
   // DCACHE slave: 1-cycle latency, rsp_valid asserted for 1 cycle
   // -----------------------------
+  typedef struct packed {
+    logic [`UP(UUID_WIDTH)-1:0]        uuid;
+    logic [TAG_WIDTH -`UP(UUID_WIDTH)-1:0]      value;
+  } dtag_t;
+
+  typedef struct packed {
+    logic                                valid;
+    logic                                rw;
+    logic [dcache_bus_if.ADDR_WIDTH-1:0]  addr_beats;
+    logic [DCACHE_BYTES*8-1:0]            data;
+    logic [DCACHE_BYTES-1:0]              byteen;
+    dtag_t                                tag;
+  } d_pend_t;
+
+  d_pend_t d_pend;
+
   always @(posedge clk) begin
     if (reset) begin
       dcache_bus_if.rsp_valid <= 1'b0;
@@ -181,7 +209,7 @@ module tb_VX_dma_node import VX_gpu_pkg::*; ();
       // respond from pending
       if (d_pend.valid) begin
         int unsigned base_b;
-        base_b = (d_pend.addr_beats << $clog2(DCACHE_BYTES)); // IMPORTANT: use DCACHE_BYTES
+        base_b = (d_pend.addr_beats << $clog2(DCACHE_BYTES));
 
         dcache_bus_if.rsp_valid    <= 1'b1;
         dcache_bus_if.rsp_data.tag <= d_pend.tag;
@@ -206,66 +234,17 @@ module tb_VX_dma_node import VX_gpu_pkg::*; ();
     end
   end
 
-  // -----------------------------
-  // LMEM slave: 1-cycle latency, rsp_valid asserted for 1 cycle
-  // -----------------------------
-  always @(posedge clk) begin
-    if (reset) begin
-      lmem_bus_if.rsp_valid <= 1'b0;
-      lmem_bus_if.rsp_data  <= '0;
-      l_pend.valid          <= 1'b0;
-    end else begin
-      if (lmem_bus_if.rsp_valid && lmem_bus_if.rsp_ready)
-        lmem_bus_if.rsp_valid <= 1'b0;
 
-      l_pend.valid <= 1'b0;
-      if (lmem_bus_if.req_valid && lmem_bus_if.req_ready) begin
-        l_pend.valid      <= 1'b1;
-        l_pend.rw         <= lmem_bus_if.req_data.rw;
-        l_pend.addr_beats <= lmem_bus_if.req_data.addr;
-        l_pend.data       <= lmem_bus_if.req_data.data;
-        l_pend.byteen     <= lmem_bus_if.req_data.byteen;
-        l_pend.tag        <= lmem_bus_if.req_data.tag;
-      end
-
-      if (l_pend.valid) begin
-        int unsigned base_b;
-        base_b = (l_pend.addr_beats << $clog2(LMEM_BYTES)); // IMPORTANT: use LMEM_BYTES
-
-        lmem_bus_if.rsp_valid    <= 1'b1;
-        lmem_bus_if.rsp_data.tag <= l_pend.tag;
-
-        if (!l_pend.rw) begin
-          // READ
-          for (int i = 0; i < LMEM_BYTES; i++) begin
-            if (base_b + i < MEM_BYTES)
-              lmem_bus_if.rsp_data.data[i*8 +: 8] <= lmem_mem[base_b + i];
-            else
-              lmem_bus_if.rsp_data.data[i*8 +: 8] <= 8'h00;
-          end
-        end else begin
-          // WRITE
-          for (int i = 0; i < LMEM_BYTES; i++) begin
-            if (l_pend.byteen[i] && (base_b + i < MEM_BYTES))
-              lmem_mem[base_b + i] <= l_pend.data[i*8 +: 8];
-          end
-          lmem_bus_if.rsp_data.data <= '0;
-        end
-      end
-    end
-  end
 
   // -----------------------------
   // Utilities
   // -----------------------------
-  task automatic mem_clear_all();
+  task automatic mem_clear_global();
     for (int unsigned i = 0; i < MEM_BYTES; i++) begin
       dcache_mem[i] = 8'h00;
-      lmem_mem[i]   = 8'h00;
     end
   endtask
 
-  // fill global from base, incrementing bytes
   task automatic mem_fill_inc_global(input int unsigned base, input int unsigned nbytes, input byte start);
     byte v;
     v = start;
@@ -277,57 +256,37 @@ module tb_VX_dma_node import VX_gpu_pkg::*; ();
     end
   endtask
 
-  task automatic mem_check_equal_g_to_l(
-    input int unsigned g_base,
-    input int unsigned l_base,
+  // src vs dst compare in GLOBAL (dcache_mem), with padding rule:
+  // - within each segment of seg_size bytes, the last 'padding' bytes must be zero in dst.
+  task automatic mem_check_equal_g_to_g_with_padding(
+    input int unsigned src_base,
+    input int unsigned dst_base,
     input int unsigned nbytes,
     input int unsigned seg_size,
     input int unsigned padding,
     input string msg
   );
     for (int unsigned i = 0; i < nbytes; i++) begin
-      if ((g_base + i) >= MEM_BYTES || (l_base + i) >= MEM_BYTES)
+      if ((src_base + i) >= MEM_BYTES || (dst_base + i) >= MEM_BYTES)
         $fatal(1, "OOR %s i=%0d", msg, i);
 
-      if (i % seg_size >= seg_size - padding) begin
-        if (lmem_mem[l_base + i] !== 8'h00) begin
-          $fatal(1, "Padding Mismatch %s @+%0d: G=%02x L=%02x",
-               msg, i, dcache_mem[g_base + i], lmem_mem[l_base + i]);
+      if ((i % seg_size) >= (seg_size - padding)) begin
+        if (dcache_mem[dst_base + i] !== 8'h00) begin
+          $fatal(1, "Padding Mismatch %s @+%0d: SRC=%02x DST=%02x",
+                 msg, i, dcache_mem[src_base + i], dcache_mem[dst_base + i]);
         end
-      end
-      else if (dcache_mem[g_base + i] !== lmem_mem[l_base + i]) begin
-        $fatal(1, "Mismatch %s @+%0d: G=%02x L=%02x",
-               msg, i, dcache_mem[g_base + i], lmem_mem[l_base + i]);
+      end else begin
+        if (dcache_mem[src_base + i] !== dcache_mem[dst_base + i]) begin
+          $fatal(1, "Mismatch %s @+%0d: SRC=%02x DST=%02x",
+                 msg, i, dcache_mem[src_base + i], dcache_mem[dst_base + i]);
+        end
       end
     end
   endtask
 
-  task automatic mem_check_equal_l_to_g(
-    input int unsigned l_base,
-    input int unsigned g_base,
-    input int unsigned nbytes,
-    input int unsigned seg_size,
-    input int unsigned padding,
-    input string msg
-  );
-    for (int unsigned i = 0; i < nbytes; i++) begin
-      if ((g_base + i) >= MEM_BYTES || (l_base + i) >= MEM_BYTES)
-        $fatal(1, "OOR %s i=%0d", msg, i);
-
-      if (i % seg_size >= seg_size - padding) begin
-        if (dcache_mem[g_base + i] !== 8'h00) begin
-          $fatal(1, "Padding Mismatch %s @+%0d: L=%02x G=%02x",
-               msg, i, lmem_mem[l_base + i], dcache_mem[g_base + i]);
-        end
-      end
-      else if (lmem_mem[l_base + i] !== dcache_mem[g_base + i]) begin
-        $fatal(1, "Mismatch %s @+%0d: L=%02x G=%02x",
-               msg, i, lmem_mem[l_base + i], dcache_mem[g_base + i]);
-      end
-    end
-  endtask
-
-  // pack 14x32 words into 7x64 regs and pulse valid until accepted
+  // -----------------------------
+  // cfg helpers
+  // -----------------------------
   task automatic cfg_send_desc(
     input logic [31:0] w [0:DESC_WORDS-1],
     input logic [31:0] wid,
@@ -369,8 +328,7 @@ module tb_VX_dma_node import VX_gpu_pkg::*; ();
   );
     int unsigned total_bytes;
     int unsigned stride0, stride1, stride2;
-    int unsigned g_src_base, l_dst_base, g_dst_base;
-
+    int unsigned g_src_base, l_mid_base, g_dst_base;
 
     logic [31:0] d1 [0:DESC_WORDS-1];
     logic [31:0] d2 [0:DESC_WORDS-1];
@@ -381,24 +339,30 @@ module tb_VX_dma_node import VX_gpu_pkg::*; ();
     stride1 = b0 * seg_bytes;
     stride2 = b0 * b1 * seg_bytes;
 
-    // base addresses
-    g_src_base = 16'h1020;
-    l_dst_base = 16'h2010;
-    g_dst_base = 16'h3020;
+    // base addresses (keep aligned-ish)
+    g_src_base = 16'h1000;
+    l_mid_base = 16'h2000;
+    g_dst_base = 16'h3000;
 
-    mem_clear_all();
+    // init global
+    mem_clear_global();
     mem_fill_inc_global(g_src_base, total_bytes, 8'h10);
+    // clear destination
+    for (int unsigned i = 0; i < total_bytes; i++) begin
+      if (g_dst_base + i < MEM_BYTES) dcache_mem[g_dst_base + i] = 8'h00;
+    end
 
-    $display("[DEBUG] g_src_base=0x%h, l_dst_base=0x%h, g_dst_base=0x%h", 
-             g_src_base, l_dst_base, g_dst_base);
-    $display("[DEBUG] total_bytes=%0d, seg_bytes=%0d", total_bytes, seg_bytes);
-    
+    $display("\n[CASE] seg=%0d bnd=(%0d,%0d,%0d) padding=%0d  G->L->G",
+             seg_bytes, b0, b1, b2, padding);
+    $fdisplay(log_fd, "[CASE] seg=%0d bnd=(%0d,%0d,%0d) padding=%0d  G->L->G",
+             seg_bytes, b0, b1, b2, padding);
+
     // -------------------------
     // GLOBAL -> LMEM
     // -------------------------
     d1[0]  = 32'h0000_0003; // start=1, dir=1 (GLOBAL->LMEM)
     d1[1]  = g_src_base;
-    d1[2]  = l_dst_base;
+    d1[2]  = l_mid_base;
     d1[3]  = stride0; d1[4]  = stride0;
     d1[5]  = stride1; d1[6]  = stride1;
     d1[7]  = stride2; d1[8]  = stride2;
@@ -406,22 +370,14 @@ module tb_VX_dma_node import VX_gpu_pkg::*; ();
     d1[12] = seg_bytes;
     d1[13] = padding;
 
-    $display("\n[CASE] seg=%0d bnd=(%0d,%0d,%0d) padding=%0d  GLOBAL->LMEM", seg_bytes, b0, b1, b2, padding);
-    $fdisplay(log_fd, "[CASE] seg=%0d bnd=(%0d,%0d,%0d) padding=%0d  G->L", seg_bytes, b0, b1, b2, padding);
-
     cfg_send_desc(d1, 32'd5, 32'd7);
     wait_dma_done();
-    mem_check_equal_g_to_l(g_src_base, l_dst_base, total_bytes, seg_bytes, padding, "G->L");
 
     // -------------------------
     // LMEM -> GLOBAL
     // -------------------------
-    for (int unsigned i = 0; i < total_bytes; i++) begin
-      if (g_dst_base + i < MEM_BYTES) dcache_mem[g_dst_base + i] = 8'h00;
-    end
-
     d2[0]  = 32'h0000_0001; // start=1, dir=0 (LMEM->GLOBAL)
-    d2[1]  = l_dst_base;
+    d2[1]  = l_mid_base;
     d2[2]  = g_dst_base;
     d2[3]  = stride0; d2[4]  = stride0;
     d2[5]  = stride1; d2[6]  = stride1;
@@ -430,15 +386,17 @@ module tb_VX_dma_node import VX_gpu_pkg::*; ();
     d2[12] = seg_bytes;
     d2[13] = padding;
 
-    $display("[CASE] seg=%0d bnd=(%0d,%0d,%0d) padding=%0d  LMEM->GLOBAL", seg_bytes, b0, b1, b2, padding);
-    $fdisplay(log_fd, "[CASE] seg=%0d bnd=(%0d,%0d,%0d) padding=%0d  L->G", seg_bytes, b0, b1, b2, padding);
-
     cfg_send_desc(d2, 32'd9, 32'd11);
     wait_dma_done();
-    mem_check_equal_l_to_g(l_dst_base, g_dst_base, total_bytes, seg_bytes, padding, "L->G");
+
+    // -------------------------
+    // FINAL CHECK: GLOBAL src vs GLOBAL dst
+    // -------------------------
+    mem_check_equal_g_to_g_with_padding(g_src_base, g_dst_base, total_bytes, seg_bytes, padding, "G->L->G");
 
     $display("[CASE] PASS ✅");
-    $fdisplay(rpt_fd, "[CASE] seg=%0d bnd=(%0d,%0d,%0d) PASS", seg_bytes, b0, b1, b2);
+    $fdisplay(rpt_fd, "[CASE] seg=%0d bnd=(%0d,%0d,%0d) padding=%0d PASS",
+              seg_bytes, b0, b1, b2, padding);
   endtask
 
   // -----------------------------
@@ -452,7 +410,7 @@ module tb_VX_dma_node import VX_gpu_pkg::*; ();
     $display("=====================================================================");
     $display("=======================  START SIMULATION  ==========================");
     $display("=====================================================================");
-    $display("LMEM_BYTES: %0d", LMEM_BYTES);
+    $display("LMEM_BYTES:   %0d", LMEM_BYTES);
     $display("DCACHE_BYTES: %0d", DCACHE_BYTES);
 
     // cfg defaults
@@ -463,9 +421,7 @@ module tb_VX_dma_node import VX_gpu_pkg::*; ();
 
     repeat (5) @(posedge clk);
 
-    // seg_size sweep (based on LMEM beat bytes in this TB)
     run_case(SEG_SIZE_1, b0, b1, b2, PADDING_1);
-    
     run_case(SEG_SIZE_1, b0, b1, b2, PADDING_2);
     run_case(SEG_SIZE_1, b0, b1, b2, PADDING_3);
 
@@ -499,7 +455,7 @@ module tb_VX_dma_node import VX_gpu_pkg::*; ();
     cfg_reg_if.valid = 1'b0;
     for (int r = 0; r < CFG_NUM; r++) cfg_reg_if.regs[r] = '0;
 
-    mem_clear_all();
+    mem_clear_global();
 
     for (int iter = 0; iter < 300; iter++) begin
       int unsigned seg_bytes = seg_choices[$urandom_range(0,2)];

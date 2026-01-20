@@ -103,7 +103,7 @@ module VX_dma_node import VX_gpu_pkg::*; #(
     S_G2L_RD_REQ,
     S_G2L_RD_WAIT,
     S_G2L_WR_REQ,
-    S_G2L_WR_WAIT,
+    //S_G2L_WR_WAIT,
     S_G2L_NEXT_SUB,
 
     // LMEM -> GLOBAL (gather)
@@ -343,12 +343,13 @@ module VX_dma_node import VX_gpu_pkg::*; #(
         lmem_bus_if.req_data.flags      = '0;
         lmem_bus_if.req_data.tag.uuid   = dma_uuid;
         lmem_bus_if.req_data.tag.value  = '0;
-        if (lmem_bus_if.req_ready) state_n = S_G2L_WR_WAIT;
+        if (lmem_bus_if.req_ready) state_n = S_G2L_NEXT_SUB;
       end
 
+      /*
       S_G2L_WR_WAIT: begin
         if (lmem_rsp_fire) state_n = S_G2L_NEXT_SUB;
-      end
+      end*/
 
       S_G2L_NEXT_SUB: begin
         if (sub_last) state_n = S_ADV_BEAT;
