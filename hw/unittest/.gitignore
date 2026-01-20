@@ -14,3 +14,5 @@ novas_dump.log
 novas.conf
 novas.rc
 vc_hdrs.h
+*.pyc
+*.png
