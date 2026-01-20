@@ -47,6 +47,7 @@ module VX_prealigner import VX_gpu_pkg::*; #(
   logic [2*NUM_UNIT-1-1:0][EXP_WIDTH-1:0] comp_out;
   logic [NUM_UNIT-1:0][MANTISSA_WIDTH-1:0] mantissa;
   logic [NUM_UNIT-1:0][EXP_WIDTH-1:0] exp;
+  logic [NUM_UNIT-1:0][EXP_WIDTH-1:0] exp_;
   logic [NUM_UNIT-1:0][HIDDEN_MAN_WIDTH-1:0] hidden_man;
 
   // Stage 1 pipeline output signals
@@ -75,8 +76,17 @@ module VX_prealigner import VX_gpu_pkg::*; #(
   endgenerate
 
   generate
+    for (genvar i = 0; i < NUM_UNIT; i += 1) begin : hidden
+      assign exp_[i] = data_i[i][EXP_WIDTH+MANTISSA_WIDTH-1:MANTISSA_WIDTH];
+      assign exp[i] = (exp_[i] == 0) ? 1'b1 : exp_[i];
+      assign mantissa[i] = data_i[i][MANTISSA_WIDTH-1:0];
+      assign hidden_man[i] = ~(|exp_[i]) ? {1'b0,mantissa[i]} : {1'b1,mantissa[i]};
+    end
+  endgenerate
+
+  generate
     for (genvar i = 0; i < NUM_UNIT; i += 1) begin : in_lev
-      assign comp_out[2**(NUM_STAGE)-1+i] = data_i[i][EXP_WIDTH+MANTISSA_WIDTH-1-:EXP_WIDTH];
+      assign comp_out[2**(NUM_STAGE)-1+i] = exp[i];
     end
   endgenerate
 
@@ -94,14 +104,6 @@ module VX_prealigner import VX_gpu_pkg::*; #(
 
       //   .cmp_data_o(comp_out[j])
       // );
-    end
-  endgenerate
-
-  generate
-    for (genvar i = 0; i < NUM_UNIT; i += 1) begin : hidden
-      assign exp[i] = data_i[i][EXP_WIDTH+MANTISSA_WIDTH-1:MANTISSA_WIDTH];
-      assign mantissa[i] = data_i[i][MANTISSA_WIDTH-1:0];
-      assign hidden_man[i] = ~(|exp[i]) ? {1'b0,mantissa[i]} : {1'b1,mantissa[i]};
     end
   endgenerate
 
@@ -143,8 +145,12 @@ module VX_prealigner import VX_gpu_pkg::*; #(
       logic [SHIFT_WIDTH-1:0] enc; // position of first one from MSB side
       logic no_exist_one;
       logic valid_out_lzc;
+      logic [EXP_WIDTH-1:0] exp_stage2_;
+      logic [EXP_WIDTH-1:0] exp_stage2;
 
-      assign shift_amount = max_exp_q - data_i_q[i][EXP_WIDTH+MANTISSA_WIDTH-1:MANTISSA_WIDTH];
+      assign exp_stage2_ = data_i_q[i][EXP_WIDTH+MANTISSA_WIDTH-1:MANTISSA_WIDTH];
+      assign exp_stage2 = (exp_stage2_ == 0) ? 1'b1 : exp_stage2_;
+      assign shift_amount = max_exp_q - exp_stage2;
 
       assign shift_man[i] = {hidden_man_q[i], {EXTRA_WIDTH{1'b0}}} >> shift_amount;
       // VX_shifter #(

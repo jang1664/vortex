@@ -379,6 +379,66 @@ module tb_VX_prealigner import VX_gpu_pkg::*;();
     else
       fail_count++;
     
+    // Test Case 4: Subnormal (denormal) numbers
+    $display("\n--- Test Case 4: Subnormal numbers ---");
+    fp_input[0] = {1'b0, 5'd0, 10'h3FF}; // +, exp=0 (denormal), man=0x3FF
+    fp_input[1] = {1'b0, 5'd0, 10'h200}; // +, exp=0 (denormal), man=0x200
+    fp_input[2] = {1'b1, 5'd0, 10'h100}; // -, exp=0 (denormal), man=0x100
+    fp_input[3] = {1'b0, 5'd5, 10'h0AA}; // +, exp=5 (normal),   man=0x0AA
+    
+    calc_prealigner_reference(fp_input, expected_int_data, expected_blk_idx, expected_max_exp);
+    
+    fp_data_i = fp_input;
+    valid_i = 1'b1;
+    `WAIT_POSEDGE(clk_i, PERIOD);
+    valid_i = 1'b0;
+    
+    while (fifo_dbg_vif.get_queue_size() == 0) `WAIT_POSEDGE(clk_i, PERIOD);
+    fifo_data = fifo_dbg_vif.get_queue_data(0);
+    fifo_clear = 1'b1;
+    `WAIT_POSEDGE(clk_i, PERIOD);
+    fifo_clear = 1'b0;
+    
+    actual_int_data = fifo_data[NUM_UNIT*ALIGNED_WIDTH-1:0];
+    actual_blk_idx = fifo_data[NUM_UNIT*ALIGNED_WIDTH +: NUM_UNIT*BLK_BITW];
+    actual_max_exp = fifo_data[NUM_UNIT*ALIGNED_WIDTH + NUM_UNIT*BLK_BITW +: EXP_WIDTH];
+    
+    if (compare_results(expected_int_data, expected_blk_idx, expected_max_exp,
+                        actual_int_data, actual_blk_idx, actual_max_exp, "TC4"))
+      pass_count++;
+    else
+      fail_count++;
+    
+    // Test Case 5: All subnormal numbers
+    $display("\n--- Test Case 5: All subnormal numbers ---");
+    fp_input[0] = {1'b0, 5'd0, 10'h3FF}; // +, exp=0 (denormal), man=0x3FF
+    fp_input[1] = {1'b0, 5'd0, 10'h200}; // +, exp=0 (denormal), man=0x200
+    fp_input[2] = {1'b1, 5'd0, 10'h100}; // -, exp=0 (denormal), man=0x100
+    fp_input[3] = {1'b1, 5'd0, 10'h0AA}; // -, exp=0 (denormal), man=0x0AA
+    
+    calc_prealigner_reference(fp_input, expected_int_data, expected_blk_idx, expected_max_exp);
+    
+    fp_data_i = fp_input;
+    valid_i = 1'b1;
+    `WAIT_POSEDGE(clk_i, PERIOD);
+    valid_i = 1'b0;
+    
+    while (fifo_dbg_vif.get_queue_size() == 0) `WAIT_POSEDGE(clk_i, PERIOD);
+    fifo_data = fifo_dbg_vif.get_queue_data(0);
+    fifo_clear = 1'b1;
+    `WAIT_POSEDGE(clk_i, PERIOD);
+    fifo_clear = 1'b0;
+    
+    actual_int_data = fifo_data[NUM_UNIT*ALIGNED_WIDTH-1:0];
+    actual_blk_idx = fifo_data[NUM_UNIT*ALIGNED_WIDTH +: NUM_UNIT*BLK_BITW];
+    actual_max_exp = fifo_data[NUM_UNIT*ALIGNED_WIDTH + NUM_UNIT*BLK_BITW +: EXP_WIDTH];
+    
+    if (compare_results(expected_int_data, expected_blk_idx, expected_max_exp,
+                        actual_int_data, actual_blk_idx, actual_max_exp, "TC5"))
+      pass_count++;
+    else
+      fail_count++;
+    
     $display("\n=====================================================================");
     $display("BASIC TEST SUMMARY: %0d PASS, %0d FAIL", pass_count, fail_count);
     $display("=====================================================================\n");
@@ -450,11 +510,14 @@ module tb_VX_prealigner import VX_gpu_pkg::*;();
       mantissas[i] = fp_input[i][MANTISSA_WIDTH-1:0];
     end
     
-    // Find maximum exponent
-    max_exp = exponents[0];
+    // Find maximum exponent using (exp == 0 ? 1 : exp) for comparison
+    // This matches HW: comp_out uses exp[i] where exp = (exp_ == 0) ? 1 : exp_
+    max_exp = (exponents[0] == 0) ? 1 : exponents[0];
     for (int i = 1; i < NUM_UNIT; i++) begin
-      if (exponents[i] > max_exp) begin
-        max_exp = exponents[i];
+      automatic logic [EXP_WIDTH-1:0] exp_cmp;
+      exp_cmp = (exponents[i] == 0) ? 1 : exponents[i];
+      if (exp_cmp > max_exp) begin
+        max_exp = exp_cmp;
       end
     end
     expected_max_exp = max_exp;
@@ -462,6 +525,7 @@ module tb_VX_prealigner import VX_gpu_pkg::*;();
     // Stage 2: Align mantissas and calculate block indices
     for (int i = 0; i < NUM_UNIT; i++) begin
       automatic int shift_amount;
+      automatic logic [EXP_WIDTH-1:0] exp_stage2;
       automatic logic [MANTISSA_WIDTH:0] hidden_man;
       automatic logic [MANTISSA_WIDTH+EXTRA_WIDTH:0] shift_man;
       automatic logic [BLK_IDX_NUM-1:0] is_right_of_first_valid_block;
@@ -472,10 +536,13 @@ module tb_VX_prealigner import VX_gpu_pkg::*;();
       automatic logic [29:0] shift_man_padded;
       
       // Create hidden mantissa (add implicit 1 for normalized, 0 for denormalized)
+      // Use original exponent to determine hidden bit
       hidden_man = (|exponents[i]) ? {1'b1, mantissas[i]} : {1'b0, mantissas[i]};
       
-      // Calculate shift amount
-      shift_amount = max_exp - exponents[i];
+      // Calculate shift amount using MIN(exp, 1) for denormal case
+      // This matches HW: exp_stage2 = (exp_stage2_ == 0) ? 1 : exp_stage2_
+      exp_stage2 = (exponents[i] == 0) ? 1 : exponents[i];
+      shift_amount = max_exp - exp_stage2;
       
       // Shift mantissa right (add EXTRA_WIDTH zeros to LSB first)
       shift_man = {hidden_man, {EXTRA_WIDTH{1'b0}}} >> shift_amount;

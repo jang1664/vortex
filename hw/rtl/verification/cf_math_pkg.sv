@@ -143,5 +143,11 @@ package cf_math_pkg;
       return val;
     end
   endfunction
+
+  function automatic real rel_err_fp32(input shortreal val, input shortreal ref_val);
+    real ref_val_no_zero = (ref_val == 0) ? 1e-6 : ref_val;
+    return (val - ref_val) / abs_real(ref_val_no_zero);
+  endfunction
+
 `endif
 endpackage
