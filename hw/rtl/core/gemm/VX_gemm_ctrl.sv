@@ -11,8 +11,7 @@
     - dma cmd controller에게 제어 신호를 보냄.
   
 */
-
-// gemm_cmd_queue도 필요함
+// gemm cmd queue 없어도 됨, i_cmd_queue 가 그 역할을 일부 대신함
 
 `include "VX_define.vh"
 
@@ -26,7 +25,7 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
     input wire              reset,
 
     VX_config_reg_if.slave  cfg_reg_if, // from gemm node
-    VX_gemm_ctrl_if.master  gemm_ctrl_if, // to dma, ldma, and gemm unit
+    VX_gemm_ctrl_if.master  gemm_ctrl_if, // to gemm unit
     VX_gemm_sync_if.slave gemm_sync_slv_if[N_NODE] // from cmd CTRLs
 );
 
@@ -41,8 +40,7 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
     assign gemm_ctrl_if.weight_read_ctrl.start = 1'b0;
     assign gemm_ctrl_if.quant_param_read_ctrl.start = 1'b0;
     assign gemm_ctrl_if.dma_ctrl.start = 1'b0;
-    assign gemm_ctrl_if.gemm_unit_ctrl.start = 1'b0;
-    
+
     // control registers
 
     // top level FSM
