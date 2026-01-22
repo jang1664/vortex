@@ -14,6 +14,7 @@ import numpy as np
 from sfpy import Float16
 from fxpmath import Fxp
 from typing import Tuple, Optional
+from enum import Enum
 
 
 # Constants
@@ -37,6 +38,7 @@ POST_RESULT_WIDTH = 64
 
 EXTRA_BIT = 19
 EXTRA_BIT_FOR_REDUCE = 3
+EXTRA_BIT_FOR_REDUCE_QROW = 10
 IN_MAN_WIDTH = 10
 MAX_EXTRA_WIDTH = 19
 
@@ -51,6 +53,19 @@ HIDDEN_WIDTH = 1
 # Quantization direction
 QCOL = 0
 QROW = 1
+
+# Enums
+class RefImplType(str, Enum):
+    FP64_REF         = "FP64_REF"
+    GPU              = "GPU"
+
+class FpIntImplType(str, Enum):
+    """FPINT Implementation Types"""
+    QCOL_2SCOMP      = "QCOL_2SCOMP"
+    QCOL_ZERO_LESS   = "QCOL_ZERO_LESS"
+    QROW_2SCOMP      = "QROW_2SCOMP"
+    QROW_ZERO_LESS   = "QROW_ZERO_LESS"
+    QROW_REAL_2SCOMP = "QROW_REAL_2SCOMP"
 
 
 class FixedPointArray:
@@ -240,7 +255,7 @@ def prealign(
     return aligned_fx_data, aligned_exp_data
 
 
-def fpint_gemm_ref(
+def fpint_gemm_gpu(
     input_data: np.ndarray,   # Shape: (M, K), dtype: uint16 (FP16 bits)
     weight_data: np.ndarray,  # Shape: (K, N), dtype: uint8 (4-bit weights)
     scale_data: np.ndarray,   # Shape: (KG, N) or (K, NG), dtype: uint16 (FP16 bits)
@@ -249,7 +264,6 @@ def fpint_gemm_ref(
     N: int,
     K: int,
     qdir: int = QCOL,
-    version: int = 1,
     debug: bool = False
 ) -> np.ndarray:
     """
@@ -277,15 +291,11 @@ def fpint_gemm_ref(
     Returns:
         output_data: FP16 output, shape (M, N) as uint16
     """
-    if version == 2:
-        return _fpint_gemm_ref_v2(input_data, weight_data, scale_data, zero_data,
-                                   M, N, K, qdir, debug)
-
     # Version 1: Bit-exact FP16 arithmetic
     output_data = np.zeros((M, N), dtype=np.uint16)
 
     if debug:
-        print("[FPINT_EMUL.GEMM_REF_V1] m n k in(fp16) wt(int) sc(fp16) ze(int) prod(fp16) acc(fp32)")
+        print("[FPINT_EMUL.GEMM_GPU] m n k in(fp16) wt(int) sc(fp16) ze(int) prod(fp16) acc(fp32)")
 
     for m in range(M):
         for n in range(N):
@@ -328,7 +338,7 @@ def fpint_gemm_ref(
                     in_val = fp16_bit_to_float(in_fp16_bits)
                     sc_val = fp16_bit_to_float(sc_fp16_bits)
                     prod_val = fp16_bit_to_float(prod_fp16_bits)
-                    print(f"[FPINT_EMUL.GEMM_REF_V1] {m} {n} {k} "
+                    print(f"[FPINT_EMUL.GEMM_GPU] {m} {n} {k} "
                           f"{in_val:.6f} {int(wt_val_int)} "
                           f"{sc_val:.6f} {int(ze_val_int)} "
                           f"{prod_val:.6f} {float(acc_fp32):.6f}")
@@ -339,7 +349,7 @@ def fpint_gemm_ref(
     return output_data
 
 
-def _fpint_gemm_ref_v2(
+def fpint_gemm_ref(
     input_data: np.ndarray,
     weight_data: np.ndarray,
     scale_data: np.ndarray,
@@ -359,7 +369,7 @@ def _fpint_gemm_ref_v2(
     output_data = np.zeros((M, N), dtype=np.uint16)
 
     if debug:
-        print("[FPINT_EMUL.GEMM_REF_V2] m n k in(fp64) wt(int) sc(fp64) ze(int) prod(fp64) acc(fp64)")
+        print("[FPINT_EMUL.GEMM_REF] m n k in(fp64) wt(int) sc(fp64) ze(int) prod(fp64) acc(fp64)")
 
     for m in range(M):
         for n in range(N):
@@ -397,7 +407,7 @@ def _fpint_gemm_ref_v2(
                 acc_fp64 += prod_fp64
 
                 if debug:
-                    print(f"[FPINT_EMUL.GEMM_REF_V2] {m} {n} {k} "
+                    print(f"[FPINT_EMUL.GEMM_REF] {m} {n} {k} "
                           f"{in_fp64:.6f} {int(wt_val_int)} "
                           f"{sc_fp64:.6f} {int(ze_val_int)} "
                           f"{prod_fp64:.6f} {float(acc_fp64):.6f}")
@@ -704,9 +714,9 @@ def fpint_gemm_qrow_2scomp(
                     aligned_fx_data, aligned_exp_data = prealign(scaled_input_2d, EXTRA_BIT, 1, K, debug)
 
                     if debug:
-                        print(f"[FPINT_EMUL.QROW_2SCOMP] ===== Prealign for reduce (extra_bit={EXTRA_BIT_FOR_REDUCE}) =====")
+                        print(f"[FPINT_EMUL.QROW_2SCOMP] ===== Prealign for reduce (extra_bit={EXTRA_BIT_FOR_REDUCE_QROW}) =====")
                     aligned_fx_data_for_reduce, aligned_exp_data_for_reduce = prealign(
-                        scaled_input_2d, EXTRA_BIT_FOR_REDUCE, 1, K, debug
+                        scaled_input_2d, EXTRA_BIT_FOR_REDUCE_QROW, 1, K, debug
                     )
 
                     for kt in range(K // MXU_K):
@@ -729,7 +739,7 @@ def fpint_gemm_qrow_2scomp(
                         post_inner_product = (
                             2 * inner_product +
                             act_sum -
-                            (act_sum_for_reduce << (EXTRA_BIT - EXTRA_BIT_FOR_REDUCE))
+                            (act_sum_for_reduce << (EXTRA_BIT - EXTRA_BIT_FOR_REDUCE_QROW))
                         )
                         
                         post_inner_product_fp = (
@@ -801,15 +811,15 @@ def fpint_gemm_qrow_zero_less(
             weight_data_2scomp[k, n] = (np.int8(weight_data[k, n]) - 1) // 2
 
     # Do prealign (for input without scale - will be overwritten per n)
-    if debug:
-        print(f"[FPINT_EMUL.QROW_ZERO_LESS] ===== Prealign for main (extra_bit={EXTRA_BIT}) =====")
-    aligned_fx_data, aligned_exp_data = prealign(input_data, EXTRA_BIT, M, K, debug)
+    # if debug:
+    #     print(f"[FPINT_EMUL.QROW_ZERO_LESS] ===== Prealign for main (extra_bit={EXTRA_BIT}, before input scale) =====")
+    #     aligned_fx_data, aligned_exp_data = prealign(input_data, EXTRA_BIT, M, K, debug)
 
-    if debug:
-        print(f"[FPINT_EMUL.QROW_ZERO_LESS] ===== Prealign for reduce (extra_bit={EXTRA_BIT_FOR_REDUCE}) =====")
-    aligned_fx_data_for_reduce, aligned_exp_data_for_reduce = prealign(
-        input_data, EXTRA_BIT_FOR_REDUCE, M, K, debug
-    )
+    # if debug:
+    #     print(f"[FPINT_EMUL.QROW_ZERO_LESS] ===== Prealign for reduce (extra_bit={EXTRA_BIT_FOR_REDUCE_QROW}, before input scale) =====")
+    #     aligned_fx_data_for_reduce, aligned_exp_data_for_reduce = prealign(
+    #         input_data, EXTRA_BIT_FOR_REDUCE_QROW, M, K, debug
+    #     )
 
     output_data = np.zeros((M, N), dtype=np.uint16)
 
@@ -843,7 +853,7 @@ def fpint_gemm_qrow_zero_less(
 
                     aligned_fx_data, aligned_exp_data = prealign(scaled_input_2d, EXTRA_BIT, 1, K, debug)
                     aligned_fx_data_for_reduce, aligned_exp_data_for_reduce = prealign(
-                        scaled_input_2d, EXTRA_BIT_FOR_REDUCE, 1, K, debug
+                        scaled_input_2d, EXTRA_BIT_FOR_REDUCE_QROW, 1, K, debug
                     )
 
                     for kt in range(K // MXU_K):
@@ -865,7 +875,7 @@ def fpint_gemm_qrow_zero_less(
                         post_inner_product = (
                             2 * inner_product +
                             act_sum -
-                            (act_sum_for_reduce << (EXTRA_BIT - EXTRA_BIT_FOR_REDUCE))
+                            (act_sum_for_reduce << (EXTRA_BIT - EXTRA_BIT_FOR_REDUCE_QROW))
                         )
 
                         post_inner_product_fp = (
@@ -932,15 +942,15 @@ def fpint_gemm_qrow_real_2scomp(
             scale_data_fp[k, ng] = fp16_bit_to_float(scale_data[k, ng])
 
     # Do prealign
-    if debug:
-        print(f"[FPINT_EMUL.QROW_REAL_2SCOMP] ===== Prealign for main (extra_bit={EXTRA_BIT}) =====")
-    aligned_fx_data, aligned_exp_data = prealign(input_data, EXTRA_BIT, M, K, debug)
+    # if debug:
+    #     print(f"[FPINT_EMUL.QROW_REAL_2SCOMP] ===== Prealign for main (extra_bit={EXTRA_BIT}, before input scale) =====")
+    #     aligned_fx_data, aligned_exp_data = prealign(input_data, EXTRA_BIT, M, K, debug)
 
-    if debug:
-        print(f"[FPINT_EMUL.QROW_REAL_2SCOMP] ===== Prealign for reduce (extra_bit={EXTRA_BIT_FOR_REDUCE}) =====")
-    aligned_fx_data_for_reduce, aligned_exp_data_for_reduce = prealign(
-        input_data, EXTRA_BIT_FOR_REDUCE, M, K, debug
-    )
+    # if debug:
+    #     print(f"[FPINT_EMUL.QROW_REAL_2SCOMP] ===== Prealign for reduce (extra_bit={EXTRA_BIT_FOR_REDUCE_QROW}, before input scale) =====")
+    #     aligned_fx_data_for_reduce, aligned_exp_data_for_reduce = prealign(
+    #         input_data, EXTRA_BIT_FOR_REDUCE_QROW, M, K, debug
+    #     )
 
     output_data = np.zeros((M, N), dtype=np.uint16)
 
@@ -974,7 +984,7 @@ def fpint_gemm_qrow_real_2scomp(
 
                     aligned_fx_data, aligned_exp_data = prealign(scaled_input_2d, EXTRA_BIT, 1, K, debug)
                     aligned_fx_data_for_reduce, aligned_exp_data_for_reduce = prealign(
-                        scaled_input_2d, EXTRA_BIT_FOR_REDUCE, 1, K, debug
+                        scaled_input_2d, EXTRA_BIT_FOR_REDUCE_QROW, 1, K, debug
                     )
 
                     for kt in range(K // MXU_K):
@@ -998,7 +1008,7 @@ def fpint_gemm_qrow_real_2scomp(
                         # Post-processing (simpler than 2scomp: just inner_product - zero_term)
                         post_inner_product = (
                             inner_product -
-                            (act_sum_for_reduce << (EXTRA_BIT - EXTRA_BIT_FOR_REDUCE))
+                            (act_sum_for_reduce << (EXTRA_BIT - EXTRA_BIT_FOR_REDUCE_QROW))
                         )
 
                         post_inner_product_fp = (
