@@ -7,8 +7,8 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
     input wire              clk,
     input wire              reset,
 
-    VX_gemm_dma_ctrl_if.slave  gemm_dma_ctrl_if, // to gemm ctrl
-    VX_gemm_sync_if.slave      gemm_sync_if, // from gemm/dma node
+    VX_gemm_dma_ctrl_if.slave  gemm_dma_ctrl_if, // from gemm ctrl
+    VX_gemm_sync_if.master      gemm_sync_if, // to gemm/dma node, 이거 마스터여야 함
     VX_lsu_mem_if.master       dma_if
 );
   assign gemm_dma_ctrl_if.idle = 1'b1;

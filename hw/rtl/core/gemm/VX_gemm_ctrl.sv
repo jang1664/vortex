@@ -11,6 +11,7 @@
     - dma cmd controller에게 제어 신호를 보냄.
   
 */
+// gemm cmd queue 없어도 됨, i_cmd_queue 가 그 역할을 일부 대신함
 
 `include "VX_define.vh"
 
