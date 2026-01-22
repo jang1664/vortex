@@ -5,9 +5,31 @@ This module provides visualization functions for comparing reference and
 evaluated GEMM results using heatmaps.
 """
 
+import math
 import numpy as np
 import matplotlib.pyplot as plt
 from typing import Callable, Dict, Union, Optional, Tuple
+
+
+def calculate_subplot_grid(n: int, max_cols: int = 4) -> Tuple[int, int]:
+    """
+    Calculate optimal subplot grid dimensions (rows, cols) for n items.
+
+    Uses sqrt-based approach to get close to square, with max column limit.
+
+    Args:
+        n: Number of subplots needed
+        max_cols: Maximum number of columns allowed
+
+    Returns:
+        Tuple of (rows, cols)
+    """
+    if n <= 0:
+        return (1, 1)
+
+    cols = min(math.ceil(math.sqrt(n)), max_cols)
+    rows = math.ceil(n / cols)
+    return (rows, cols)
 
 
 # Predefined difference functions
@@ -47,96 +69,74 @@ def log_absolute_diff(ref: np.ndarray, eval: np.ndarray, epsilon: float = 1e-10)
     return np.log10(abs_diff + epsilon)
 
 
+def _float32_to_ulp_int(val: np.float32) -> int:
+    """Convert float32 to its ULP integer representation (for comparison)"""
+    # Reinterpret float32 bits as int32, then convert to Python int
+    int_val = int(np.frombuffer(np.float32(val).tobytes(), dtype=np.int32)[0])
+    # Handle negative numbers: convert to two's complement-like representation
+    # This maps negative floats to negative integers in a way that preserves ordering
+    if int_val < 0:
+        int_val = -int_val ^ 0x80000000
+    return int_val
+
+
+def ulp_diff(ref: np.ndarray, eval: np.ndarray) -> np.ndarray:
+    """
+    Calculate ULP (Units in Last Place) difference between reference and evaluation.
+
+    ULP measures the number of representable floating-point numbers between two values.
+    This is more meaningful for floating-point comparison than relative error,
+    especially when values are close to zero.
+
+    Args:
+        ref: Reference values (float32)
+        eval: Evaluation values (float32)
+
+    Returns:
+        ULP difference as integer array
+    """
+    ref_flat = ref.flatten().astype(np.float32)
+    eval_flat = eval.flatten().astype(np.float32)
+
+    result = np.zeros(ref_flat.shape, dtype=np.float64)
+
+    for i in range(len(ref_flat)):
+        ref_ulp = _float32_to_ulp_int(ref_flat[i])
+        eval_ulp = _float32_to_ulp_int(eval_flat[i])
+        result[i] = abs(ref_ulp - eval_ulp)
+
+    return result.reshape(ref.shape)
+
+
+def ulp_diff_fp16(ref: np.ndarray, eval: np.ndarray) -> np.ndarray:
+    """
+    Calculate ULP difference for FP16 values stored as float32.
+
+    Since FP16 has fewer mantissa bits (10 vs 23), we scale the ULP
+    to be meaningful for FP16 precision.
+
+    For FP16: 1 ULP ≈ 2^(-10) * 2^exp relative error
+
+    Args:
+        ref: Reference values (float32, but representing FP16 precision)
+        eval: Evaluation values (float32, but representing FP16 precision)
+
+    Returns:
+        ULP difference scaled for FP16
+    """
+    # FP16 has 10 mantissa bits, FP32 has 23
+    # Scale factor: 2^(23-10) = 2^13 = 8192
+    FP16_TO_FP32_MANTISSA_SHIFT = 13
+
+    fp32_ulp = ulp_diff(ref, eval)
+
+    # Scale down to FP16 ULPs
+    return fp32_ulp / (1 << FP16_TO_FP32_MANTISSA_SHIFT)
+
+
 def plot_heatmap_comparison(
     ref_value: np.ndarray,
     eval_val: Union[np.ndarray, Dict[str, np.ndarray]],
-    diff_func: Callable[[np.ndarray, np.ndarray], np.ndarray] = absolute_diff,
-    diff_func_name: str = "Absolute Difference",
-    title: Optional[str] = None,
-    figsize: Tuple[int, int] = (15, 5),
-    cmap: str = "RdYlGn_r",
-    save_path: Optional[str] = None,
-    show: bool = True,
-    vmin: Optional[float] = None,
-    vmax: Optional[float] = None
-) -> plt.Figure:
-    """
-    Plot heatmap comparison between reference and evaluation values
-    
-    Args:
-        ref_value: Reference matrix values (M x N)
-        eval_val: Evaluation matrix values or dict of evaluation matrices
-        diff_func: Function to calculate difference (signature: func(ref, eval) -> diff)
-        diff_func_name: Name of the difference function for labeling
-        title: Overall title for the figure
-        figsize: Figure size (width, height)
-        cmap: Colormap for heatmap
-        save_path: Path to save the figure (if None, won't save)
-        show: Whether to display the plot
-        vmin: Minimum value for colorbar
-        vmax: Maximum value for colorbar
-    
-    Returns:
-        matplotlib Figure object
-    """
-    # Handle dict input for eval_val
-    if isinstance(eval_val, dict):
-        # Use the first key's value as the main eval
-        first_key = list(eval_val.keys())[0]
-        eval_matrix = eval_val[first_key]
-        eval_label = first_key
-    else:
-        eval_matrix = eval_val
-        eval_label = "Evaluation"
-    
-    # Calculate difference
-    diff_matrix = diff_func(ref_value, eval_matrix)
-    
-    # Create figure with subplots
-    fig, axes = plt.subplots(1, 3, figsize=figsize)
-    
-    # Plot 1: Reference values
-    im1 = axes[0].imshow(ref_value, aspect='auto', cmap='viridis')
-    axes[0].set_title('Reference Values')
-    axes[0].set_xlabel('Column')
-    axes[0].set_ylabel('Row')
-    plt.colorbar(im1, ax=axes[0])
-    
-    # Plot 2: Evaluation values
-    im2 = axes[1].imshow(eval_matrix, aspect='auto', cmap='viridis')
-    axes[1].set_title(f'{eval_label} Values')
-    axes[1].set_xlabel('Column')
-    axes[1].set_ylabel('Row')
-    plt.colorbar(im2, ax=axes[1])
-    
-    # Plot 3: Difference heatmap
-    im3 = axes[2].imshow(diff_matrix, aspect='auto', cmap=cmap, vmin=vmin, vmax=vmax)
-    axes[2].set_title(f'{diff_func_name}')
-    axes[2].set_xlabel('Column')
-    axes[2].set_ylabel('Row')
-    plt.colorbar(im3, ax=axes[2])
-    
-    # Overall title
-    if title:
-        fig.suptitle(title, fontsize=14, fontweight='bold')
-    
-    plt.tight_layout()
-    
-    # Save if path provided
-    if save_path:
-        plt.savefig(save_path, dpi=300, bbox_inches='tight')
-        print(f"Figure saved to: {save_path}")
-    
-    # Show if requested
-    if show:
-        plt.show()
-    
-    return fig
-
-
-def plot_multi_eval_comparison(
-    ref_value: np.ndarray,
-    eval_dict: Dict[str, np.ndarray],
     diff_func: Callable[[np.ndarray, np.ndarray], np.ndarray] = absolute_diff,
     diff_func_name: str = "Absolute Difference",
     title: Optional[str] = None,
@@ -145,73 +145,114 @@ def plot_multi_eval_comparison(
     save_path: Optional[str] = None,
     show: bool = True,
     vmin: Optional[float] = None,
-    vmax: Optional[float] = None
+    vmax: Optional[float] = None,
+    max_cols: int = 4,
+    auto_scale: bool = True,
+    shared_scale: bool = True
 ) -> plt.Figure:
     """
-    Plot comparison of reference with multiple evaluation results
-    
+    Plot heatmap comparison between reference and evaluation values
+
     Args:
         ref_value: Reference matrix values (M x N)
-        eval_dict: Dictionary of evaluation matrices {name: matrix}
-        diff_func: Function to calculate difference
+        eval_val: Evaluation matrix values or dict of evaluation matrices
+        diff_func: Function to calculate difference (signature: func(ref, eval) -> diff)
         diff_func_name: Name of the difference function for labeling
         title: Overall title for the figure
         figsize: Figure size (width, height), auto-calculated if None
-        cmap: Colormap for difference heatmaps
-        save_path: Path to save the figure
+        cmap: Colormap for heatmap
+        save_path: Path to save the figure (if None, won't save)
         show: Whether to display the plot
-        vmin: Minimum value for difference colorbar
-        vmax: Maximum value for difference colorbar
-    
+        vmin: Minimum value for colorbar (overrides auto_scale)
+        vmax: Maximum value for colorbar (overrides auto_scale)
+        max_cols: Maximum number of columns in subplot grid
+        auto_scale: If True and vmin/vmax not provided, use data min/max for colorbar
+        shared_scale: If True, use same vmin/vmax across all subplots
+
     Returns:
         matplotlib Figure object
     """
-    n_evals = len(eval_dict)
-    
+    # Handle dict input for eval_val
+    if not isinstance(eval_val, dict):
+        eval_val = {"Evaluation": eval_val}
+
+    n_evals = len(eval_val)
+
+    # Calculate subplot grid
+    rows, cols = calculate_subplot_grid(n_evals, max_cols)
+
     # Auto-calculate figure size if not provided
     if figsize is None:
-        figsize = (5 * (n_evals + 1), 5)
-    
-    # Create figure with subplots (1 for ref + n for each eval)
-    fig, axes = plt.subplots(1, n_evals + 1, figsize=figsize)
-    
-    if n_evals == 1:
-        axes = [axes[0], axes[1]]
-    
-    # Plot reference
-    im_ref = axes[0].imshow(ref_value, aspect='auto', cmap='viridis')
-    axes[0].set_title('Reference Values')
-    axes[0].set_xlabel('Column')
-    axes[0].set_ylabel('Row')
-    plt.colorbar(im_ref, ax=axes[0])
-    
-    # Plot each evaluation difference
-    for idx, (name, eval_matrix) in enumerate(eval_dict.items(), start=1):
-        diff_matrix = diff_func(ref_value, eval_matrix)
-        
-        im = axes[idx].imshow(diff_matrix, aspect='auto', cmap=cmap, vmin=vmin, vmax=vmax)
-        axes[idx].set_title(f'{name}\n{diff_func_name}')
-        axes[idx].set_xlabel('Column')
-        axes[idx].set_ylabel('Row')
-        plt.colorbar(im, ax=axes[idx])
-    
+        figsize = (5 * cols, 4 * rows)
+
+    # Pre-compute all diff matrices for auto-scaling
+    diff_matrices = {}
+    for name, eval_matrix in eval_val.items():
+        diff_matrices[name] = diff_func(ref_value, eval_matrix)
+
+    # Auto-scale: compute global vmin/vmax from all diff matrices
+    if auto_scale and (vmin is None or vmax is None):
+        if shared_scale:
+            all_diffs = np.concatenate([d.flatten() for d in diff_matrices.values()])
+            computed_vmin = np.min(all_diffs)
+            computed_vmax = np.max(all_diffs)
+        else:
+            computed_vmin = None
+            computed_vmax = None
+
+        if vmin is None:
+            vmin = computed_vmin
+        if vmax is None:
+            vmax = computed_vmax
+
+    # Create figure with subplots
+    fig, axes = plt.subplots(rows, cols, figsize=figsize, squeeze=False)
+
+    # Flatten axes for easy iteration
+    axes_flat = axes.flatten()
+
+    # Plot each evaluation's difference heatmap
+    for idx, (name, eval_matrix) in enumerate(eval_val.items()):
+        ax = axes_flat[idx]
+        diff_matrix = diff_matrices[name]
+
+        # Per-subplot scaling if not shared
+        if not shared_scale and auto_scale:
+            plot_vmin = np.min(diff_matrix)
+            plot_vmax = np.max(diff_matrix)
+        else:
+            plot_vmin = vmin
+            plot_vmax = vmax
+
+        im = ax.imshow(diff_matrix, aspect='auto', cmap=cmap, vmin=plot_vmin, vmax=plot_vmax)
+        ax.set_title(f'{name}\n{diff_func_name}')
+        ax.set_xlabel('Column')
+        ax.set_ylabel('Row')
+        cbar = plt.colorbar(im, ax=ax)
+        # Add min/max annotation to colorbar
+        cbar.ax.set_ylabel(f'min={np.min(diff_matrix):.2e}\nmax={np.max(diff_matrix):.2e}',
+                          rotation=270, labelpad=15, fontsize=8)
+
+    # Hide unused subplots
+    for idx in range(n_evals, len(axes_flat)):
+        axes_flat[idx].axis('off')
+
     # Overall title
     if title:
         fig.suptitle(title, fontsize=14, fontweight='bold')
-    
+
     plt.tight_layout()
-    
+
     # Save if path provided
     if save_path:
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
         print(f"Figure saved to: {save_path}")
-    
+
     # Show if requested
     if show:
         plt.show()
-    
-    return fig
 
+    return fig
 
 def print_diff_statistics(
     ref_value: np.ndarray,
