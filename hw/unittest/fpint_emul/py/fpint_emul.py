@@ -37,7 +37,7 @@ MAX_EXP_WIDTH = 8
 POST_RESULT_WIDTH = 64
 
 EXTRA_BIT = 19
-EXTRA_BIT_FOR_REDUCE = 3
+EXTRA_BIT_FOR_REDUCE = 10
 EXTRA_BIT_FOR_REDUCE_QROW = 10
 IN_MAN_WIDTH = 10
 MAX_EXTRA_WIDTH = 19
@@ -63,6 +63,7 @@ class FpIntImplType(str, Enum):
     """FPINT Implementation Types"""
     QCOL_2SCOMP      = "QCOL_2SCOMP"
     QCOL_ZERO_LESS   = "QCOL_ZERO_LESS"
+    QCOL_REAL_2SCOMP = "QCOL_REAL_2SCOMP"
     QROW_2SCOMP      = "QROW_2SCOMP"
     QROW_ZERO_LESS   = "QROW_ZERO_LESS"
     QROW_REAL_2SCOMP = "QROW_REAL_2SCOMP"
@@ -641,6 +642,110 @@ def fpint_gemm_qcol_zero_less(
                 if debug:
                     print(f"[FPINT_EMUL.QCOL_ZERO_LESS] RESULT: m={m} n={n} final_acc={acc_fp:.6f} output=0x{output_data[m, n]:04x}")
 
+    return output_data
+
+def fpint_gemm_qcol_real_2scomp(
+    input_data: np.ndarray,   # Shape: (M, K), dtype: uint16
+    weight_data: np.ndarray,  # Shape: (K, N), dtype: uint8
+    scale_data: np.ndarray,   # Shape: (KG, N), dtype: uint16
+    zero_data: np.ndarray,    # Shape: (KG, N), dtype: int16
+    M: int,
+    N: int,
+    K: int,
+    debug: bool = False
+) -> np.ndarray:
+    """
+    FPINT GEMM with column-wise quantization (qcol) using 2's complement weight encoding
+    
+    Args:
+        input_data: FP16 input activations, shape (M, K)
+        weight_data: Quantized weights, shape (K, N)
+        scale_data: FP16 scale factors, shape (K//QBLOCK, N)
+        zero_data: Zero points, shape (K//QBLOCK, N)
+        M, N, K: Matrix dimensions (K and N must be multiples of QBLOCK and MXU_K/MXU_N)
+        debug: Enable debug printing
+        
+    Returns:
+        output_data: FP16 output, shape (M, N) as uint16
+    """
+    assert K % QBLOCK == 0 and K % MXU_K == 0
+    assert N % MXU_N == 0
+    
+    KG = K // QBLOCK
+    
+    # Convert scale data to float
+    scale_data_fp = np.zeros((KG, N), dtype=np.float32)
+    for kg in range(KG):
+        for n in range(N):
+            scale_data_fp[kg, n] = fp16_bit_to_float(scale_data[kg, n])
+    
+    # Do prealign
+    if debug:
+        print(f"[FPINT_EMUL.QCOL_REAL_2SCOMP] ===== Prealign for main (extra_bit={EXTRA_BIT}) =====")
+    aligned_fx_data, aligned_exp_data = prealign(input_data, EXTRA_BIT, M, K, debug)
+    
+    if debug:
+        print(f"[FPINT_EMUL.QCOL_REAL_2SCOMP] ===== Prealign for reduce (extra_bit={EXTRA_BIT_FOR_REDUCE}) =====")
+    aligned_fx_data_for_reduce, aligned_exp_data_for_reduce = prealign(
+        input_data, EXTRA_BIT_FOR_REDUCE, M, K, debug
+    )
+    
+    # Calculation
+    output_data = np.zeros((M, N), dtype=np.uint16)
+    
+    if debug:
+        print("[FPINT_EMUL.QCOL_REAL_2SCOMP] ===== Start GEMM calculation =====")
+    
+    for m in range(M):
+        for nt in range(N // MXU_N):
+            for nt2 in range(MXU_N):
+                acc_fp = 0.0
+                n = nt * MXU_N + nt2
+                
+                for kt in range(K // QBLOCK):
+                    for kt2 in range(QBLOCK // MXU_K):
+                        inner_product = np.int64(0)
+                        act_sum = np.int64(0)
+                        act_sum_for_reduce = np.int64(0)
+                        
+                        k = kt * QBLOCK + kt2 * MXU_K
+                        kg = k // QBLOCK
+                        
+                        for kt3 in range(MXU_K):
+                            k_idx = kt * QBLOCK + kt2 * MXU_K + kt3
+                            
+                            wt_signed = np.int8(weight_data[k_idx, n])
+                            inner_product += aligned_fx_data[m, k_idx] * wt_signed
+                            act_sum += aligned_fx_data[m, k_idx]
+                            act_sum_for_reduce += aligned_fx_data_for_reduce[m, k_idx]
+                        
+                        # Post-processing
+                        zero_signed = np.int16(zero_data[kg, n])
+                        post_inner_product = inner_product + ((-(zero_signed * act_sum_for_reduce) << (EXTRA_BIT - EXTRA_BIT_FOR_REDUCE)))
+                        
+                        # Convert to float
+                        post_inner_product_fp = (
+                            float(post_inner_product) *
+                            (2.0 ** (int(aligned_exp_data[m, kg]) - IN_EXP_BIAS)) *
+                            (2.0 ** (-(IN_MAN_WIDTH + EXTRA_BIT)))
+                        )
+                        
+                        scaled_post_inner_product = scale_data_fp[kg, n] * post_inner_product_fp
+                        
+                        if debug:
+                            print(f"[FPINT_EMUL.QCOL_REAL_2SCOMP] m={m} n={n} kt={kt} kt2={kt2} kg={kg}")
+                            print(f"  inner_prod={inner_product}, act_sum={act_sum}, act_sum_reduce={act_sum_for_reduce}")
+                            print(f"  zero_data=0x{zero_data[kg, n]:04x} ({zero_signed}), post_inner={post_inner_product}")
+                            print(f"  aligned_exp={aligned_exp_data[m, kg]}, post_fp={post_inner_product_fp:.6f}, "
+                                  f"scale={scale_data_fp[kg, n]:.6f}, scaled={scaled_post_inner_product:.6f}, acc={acc_fp:.6f}")
+                        
+                        acc_fp += scaled_post_inner_product
+                
+                output_data[m, n] = float_to_fp16_bit(acc_fp)
+                
+                if debug:
+                    print(f"[FPINT_EMUL.QCOL_REAL_2SCOMP] RESULT: m={m} n={n} final_acc={acc_fp:.6f} output=0x{output_data[m, n]:04x}")
+    
     return output_data
 
 

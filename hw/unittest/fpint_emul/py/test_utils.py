@@ -8,15 +8,15 @@ running tests, and visualizing results.
 import numpy as np
 import matplotlib.pyplot as plt
 from dataclasses import dataclass, field
-from typing import Dict, Callable, List, Tuple, Optional, Any
-from enum import Enum
+from typing import Dict, Callable, List, Tuple, Optional, Any, Union
+from enum import Enum, IntEnum
 from fpint_emul import FpIntImplType
 import vsc
 
 from fpint_emul import (
     float_to_fp16_bit, fp16_bit_to_float,
     fpint_gemm_ref, fpint_gemm_gpu,
-    fpint_gemm_qcol_2scomp, fpint_gemm_qcol_zero_less,
+    fpint_gemm_qcol_2scomp, fpint_gemm_qcol_zero_less, fpint_gemm_qcol_real_2scomp,
     fpint_gemm_qrow_2scomp, fpint_gemm_qrow_zero_less, fpint_gemm_qrow_real_2scomp,
     QCOL, QROW, QBLOCK, MXU_K
 )
@@ -38,6 +38,32 @@ class ErrorType(str, Enum):
     REF_VS_EMUL = 'err_ref_vs_emul'
     ULP_DIFF = 'err_ulp_diff'
     GPU_VS_EMUL = 'err_gpu_vs_emul'
+
+class TagKey(str, Enum):
+    """
+    Keys for TestResult.tags dict.
+
+    Inherits from str for easy use as dict keys and in filtering.
+    Add new analysis categories here as needed.
+    """
+    # Input characteristics
+    HAS_LARGE_EXP_DIFF = 'has_large_exp_diff'  # bool: exp diff > threshold
+    HAS_SUBNORMAL = 'has_subnormal'            # bool: contains subnormal values
+    MAX_EXP_DIFF = 'max_exp_diff'              # int: maximum exponent difference
+
+    # Weight characteristics
+    HAS_ZERO_WEIGHT = 'has_zero_weight'        # bool: contains zero weights
+    HAS_MAX_WEIGHT = 'has_max_weight'          # bool: contains max value weights
+    ZERO_WEIGHT_RATIO = 'zero_weight_ratio'    # float: ratio of zero weights
+
+    # Cross characteristics (MXU group level)
+    MAX_MEETS_ZERO = 'max_meets_zero'          # bool: max input meets zero weight
+
+    # Sign combinations
+    SIGN_PP = 'sign_pp'  # bool: positive input × positive weight
+    SIGN_PN = 'sign_pn'  # bool: positive input × negative weight
+    SIGN_NP = 'sign_np'  # bool: negative input × positive weight
+    SIGN_NN = 'sign_nn'  # bool: negative input × negative weight
 
 # Type alias for store predicate function
 # Input: Dict[ErrorType, float] mapping error types to their max values
@@ -396,6 +422,11 @@ class TestResult:
     output_gpu_float: Optional[np.ndarray] = None
     output_emul_float: Optional[np.ndarray] = None
 
+    # Analysis tags (flexible dict for coverage analysis results)
+    # Keys should be TagKey enum values for consistency
+    # Values can be bool (flags) or numeric (measurements)
+    tags: Dict[TagKey, Any] = field(default_factory=dict)
+
     # === Computed properties for err_ref_vs_gpu ===
     @property
     def gpu_max_error(self) -> float:
@@ -685,44 +716,65 @@ class TestResultAnalyzer:
     # Grouping Methods
     # -------------------------------------------------------------------------
 
+    def group_by(
+        self,
+        key: Union[str, Callable[[TestResult], Any]],
+        skip_none: bool = True,
+        sort_keys: bool = False
+    ) -> Dict[Any, 'TestResultAnalyzer']:
+        """
+        Group results by arbitrary key.
+
+        Args:
+            key: Attribute name (str) or function that extracts grouping key from TestResult
+            skip_none: If True, skip results where key value is None
+            sort_keys: If True, sort the result dict by keys
+
+        Returns:
+            Dict mapping key values to TestResultAnalyzer for each group
+
+        Examples:
+            >>> analyzer.group_by('name')  # by attribute
+            >>> analyzer.group_by(lambda r: r.M // 16)  # by custom function
+            >>> analyzer.group_by('K', sort_keys=True)  # sorted by K
+        """
+        # Convert string key to attribute accessor
+        if isinstance(key, str):
+            attr_name = key
+            key_func = lambda r: getattr(r, attr_name)
+        else:
+            key_func = key
+
+        groups: Dict[Any, List[TestResult]] = {}
+        for r in self.results:
+            k = key_func(r)
+            if skip_none and k is None:
+                continue
+            if k not in groups:
+                groups[k] = []
+            groups[k].append(r)
+
+        result = {k: TestResultAnalyzer(v) for k, v in groups.items()}
+        if sort_keys:
+            result = dict(sorted(result.items()))
+        return result
+
+    # Predefined grouping methods (use group_by internally)
     def by_impl(self) -> Dict[str, 'TestResultAnalyzer']:
         """Group results by implementation name"""
-        groups: Dict[str, List[TestResult]] = {}
-        for r in self.results:
-            if r.name not in groups:
-                groups[r.name] = []
-            groups[r.name].append(r)
-        return {name: TestResultAnalyzer(results) for name, results in groups.items()}
+        return self.group_by('name')
 
     def by_size(self, key: str = 'K') -> Dict[int, 'TestResultAnalyzer']:
         """Group results by matrix dimension (M, K, or N)"""
-        groups: Dict[int, List[TestResult]] = {}
-        for r in self.results:
-            val = getattr(r, key)
-            if val not in groups:
-                groups[val] = []
-            groups[val].append(r)
-        return {val: TestResultAnalyzer(results) for val, results in sorted(groups.items())}
+        return self.group_by(key, sort_keys=True)
 
     def by_input_dist(self) -> Dict[int, 'TestResultAnalyzer']:
         """Group results by input distribution type"""
-        groups: Dict[int, List[TestResult]] = {}
-        for r in self.results:
-            if r.input_dist is not None:
-                if r.input_dist not in groups:
-                    groups[r.input_dist] = []
-                groups[r.input_dist].append(r)
-        return {dist: TestResultAnalyzer(results) for dist, results in sorted(groups.items())}
+        return self.group_by('input_dist', sort_keys=True)
 
     def by_weight_dist(self) -> Dict[int, 'TestResultAnalyzer']:
         """Group results by weight distribution type"""
-        groups: Dict[int, List[TestResult]] = {}
-        for r in self.results:
-            if r.weight_dist is not None:
-                if r.weight_dist not in groups:
-                    groups[r.weight_dist] = []
-                groups[r.weight_dist].append(r)
-        return {dist: TestResultAnalyzer(results) for dist, results in sorted(groups.items())}
+        return self.group_by('weight_dist', sort_keys=True)
 
     # -------------------------------------------------------------------------
     # Filtering Methods
@@ -749,41 +801,202 @@ class TestResultAnalyzer:
         return sorted(self.results, key=lambda r: r.max_error)[:n]
 
     # -------------------------------------------------------------------------
-    # Statistics by Group
+    # Statistics Methods
     # -------------------------------------------------------------------------
 
-    def stats_by_impl(self) -> Dict[str, Dict[str, float]]:
-        """Get statistics grouped by implementation"""
-        result = {}
-        for name, analyzer in self.by_impl().items():
-            max_errors = [r.max_error for r in analyzer.results]
-            result[name] = {
-                'count': len(analyzer),
-                'pass_rate': sum(1 for r in analyzer.results if r.passed) / len(analyzer),
-                'max_error_mean': np.mean(max_errors),
-                'max_error_std': np.std(max_errors),
-                'max_error_max': max(max_errors),
+    def stats(self) -> Dict[str, Any]:
+        """
+        Compute standardized statistics for this analyzer's results.
+
+        Returns:
+            Dict with standardized keys:
+            - count: number of results
+            - pass_rate: ratio of passed tests
+            - gpu_max_error_avg, gpu_mean_error_avg: GPU error averages
+            - gpu_error_percentiles: list of {percentile, value} for GPU errors
+            - emul_max_error_avg, emul_mean_error_avg: Emul error averages
+            - emul_error_percentiles: list of {percentile, value} for Emul errors
+            - gpu_vs_emul_max_error_avg: direct comparison stat
+            - gpu_vs_emul_mean_error_avg: direct comparison stat
+        """
+        percentile_boundaries = [10, 20, 30, 40, 50, 60, 70, 80, 90, 95, 99, 99.9, 99.99]
+        if not self.results:
+            return {
+                'count': 0,
+                'pass_rate': 0.0,
+                'gpu_max_error_avg': 0.0,
+                'gpu_mean_error_avg': 0.0,
+                'gpu_error_percentiles': [],
+                'emul_max_error_avg': 0.0,
+                'emul_mean_error_avg': 0.0,
+                'emul_error_percentiles': [],
+                'gpu_vs_emul_max_error_avg': 0.0,
+                'gpu_vs_emul_mean_error_avg': 0.0,
             }
+
+        # Collect error values
+        gpu_max_errors = [r.gpu_max_error for r in self.results]
+        gpu_mean_errors = [r.gpu_mean_error for r in self.results]
+        emul_max_errors = [r.emul_max_error for r in self.results]
+        emul_mean_errors = [r.emul_mean_error for r in self.results]
+        gpu_vs_emul_max_errors = [r.gpu_vs_emul_max_error for r in self.results]
+        gpu_vs_emul_mean_errors = [r.gpu_vs_emul_mean_error for r in self.results]
+
+        # Compute percentiles
+        gpu_error_percentiles = [
+            {'percentile': p, 'value': float(np.mean([np.percentile(r.err_ref_vs_gpu, p) for r in self.results]) )}
+            for p in percentile_boundaries
+        ]
+        emul_error_percentiles = [
+            {'percentile': p, 'value': float(np.mean([np.percentile(r.err_ref_vs_emul, p) for r in self.results]) )}
+            for p in percentile_boundaries
+        ]
+
+        return {
+            'count': len(self.results),
+            'pass_rate': sum(1 for r in self.results if r.passed) / len(self.results),
+            'gpu_max_error_avg': float(np.mean(gpu_max_errors)),
+            'gpu_mean_error_avg': float(np.mean(gpu_mean_errors)),
+            'gpu_error_percentiles': gpu_error_percentiles,
+            'emul_max_error_avg': float(np.mean(emul_max_errors)),
+            'emul_mean_error_avg': float(np.mean(emul_mean_errors)),
+            'emul_error_percentiles': emul_error_percentiles,
+            'gpu_vs_emul_max_error_avg': float(np.mean(gpu_vs_emul_max_errors)),
+            'gpu_vs_emul_mean_error_avg': float(np.mean(gpu_vs_emul_mean_errors)),
+        }
+
+    def stats_by(
+        self,
+        key: Union[str, Callable[[TestResult], Any]],
+        sort_keys: bool = False
+    ) -> Dict[Any, Dict[str, Any]]:
+        """
+        Group by key and compute stats for each group.
+
+        Args:
+            key: Attribute name (str) or function that extracts grouping key
+            sort_keys: If True, sort result dict by keys
+
+        Returns:
+            Dict mapping group keys to their stats dicts (standardized keys)
+
+        Examples:
+            >>> analyzer.stats_by('name')  # stats by implementation
+            >>> analyzer.stats_by('K', sort_keys=True)  # stats by K dimension
+            >>> analyzer.stats_by(lambda r: r.input_dist)  # stats by input distribution
+        """
+        groups = self.group_by(key, sort_keys=sort_keys)
+        return {k: v.stats() for k, v in groups.items()}
+
+    # Predefined stats methods (use stats_by with post-processing)
+    def stats_by_impl(self) -> Dict[str, Dict[str, Any]]:
+        """Get statistics grouped by implementation"""
+        return self.stats_by('name')
+
+    def stats_by_input_dist(self) -> Dict[int, Dict[str, Any]]:
+        """Get statistics grouped by input distribution (with human-readable names)"""
+        result = self.stats_by('input_dist', sort_keys=True)
+        # Post-process: add human-readable name using IntEnum
+        for dist, stats in result.items():
+            try:
+                stats['name'] = InputDistType(dist).label
+            except ValueError:
+                stats['name'] = f'dist_{dist}'
         return result
 
-    def stats_by_input_dist(self) -> Dict[int, Dict[str, float]]:
-        """Get statistics grouped by input distribution"""
-        dist_names = {0: 'normal', 1: 'mixed_exp', 2: 'mixed_subnormal'}
-        result = {}
-        for dist, analyzer in self.by_input_dist().items():
-            max_errors = [r.max_error for r in analyzer.results]
-            result[dist] = {
-                'name': dist_names.get(dist, f'dist_{dist}'),
-                'count': len(analyzer),
-                'max_error_mean': np.mean(max_errors),
-                'max_error_std': np.std(max_errors),
-                'max_error_max': max(max_errors),
-            }
+    def stats_by_weight_dist(self) -> Dict[int, Dict[str, Any]]:
+        """Get statistics grouped by weight distribution (with human-readable names)"""
+        result = self.stats_by('weight_dist', sort_keys=True)
+        # Post-process: add human-readable name using IntEnum
+        for dist, stats in result.items():
+            try:
+                stats['name'] = WeightDistType(dist).label
+            except ValueError:
+                stats['name'] = f'dist_{dist}'
         return result
 
     # -------------------------------------------------------------------------
     # Visualization Methods
     # -------------------------------------------------------------------------
+
+    def plot_by(
+        self,
+        key: Union[str, Callable[[TestResult], Any]],
+        plot_type: str = 'boxplot',
+        labels: Optional[Dict[Any, str]] = None,
+        title: Optional[str] = None,
+        ylabel: str = 'Max ULP Error',
+        figsize: Tuple[int, int] = (10, 6)
+    ) -> plt.Figure:
+        """
+        Plot error distribution grouped by arbitrary key.
+
+        Args:
+            key: Attribute name (str) or function that extracts grouping key
+            plot_type: 'boxplot', 'violin', 'bar' (mean with std), or 'hist'
+            labels: Optional dict mapping group keys to display labels
+            title: Plot title (auto-generated if None)
+            ylabel: Y-axis label
+            figsize: Figure size
+
+        Returns:
+            matplotlib Figure
+
+        Examples:
+            >>> analyzer.plot_by('name')  # boxplot by implementation
+            >>> analyzer.plot_by('K', plot_type='bar', title='Error by K')
+            >>> analyzer.plot_by('input_dist', labels={0: 'normal', 1: 'mixed_exp', 2: 'mixed_subnormal'})
+        """
+        groups = self.group_by(key, sort_keys=True)
+
+        if not groups:
+            fig, ax = plt.subplots(figsize=figsize)
+            ax.text(0.5, 0.5, 'No data to display', ha='center', va='center', transform=ax.transAxes)
+            return fig
+
+        # Prepare data
+        group_keys = list(groups.keys())
+        group_labels = [labels.get(k, str(k)) if labels else str(k) for k in group_keys]
+        group_errors = [[r.max_error for r in groups[k].results] for k in group_keys]
+
+        fig, ax = plt.subplots(figsize=figsize)
+
+        if plot_type == 'boxplot':
+            ax.boxplot(group_errors, labels=group_labels)
+            ax.set_xticklabels(group_labels, rotation=45, ha='right')
+
+        elif plot_type == 'violin':
+            parts = ax.violinplot(group_errors, positions=range(len(group_keys)), showmeans=True, showmedians=True)
+            ax.set_xticks(range(len(group_keys)))
+            ax.set_xticklabels(group_labels, rotation=45, ha='right')
+
+        elif plot_type == 'bar':
+            stats = {k: groups[k].stats() for k in group_keys}
+            means = [stats[k]['emul_max_error_avg'] for k in group_keys]
+            x = np.arange(len(group_keys))
+            ax.bar(x, means, capsize=5, alpha=0.7)
+            ax.set_xticks(x)
+            ax.set_xticklabels(group_labels, rotation=45, ha='right')
+
+        elif plot_type == 'hist':
+            for k, label in zip(group_keys, group_labels):
+                errors = [r.max_error for r in groups[k].results]
+                ax.hist(errors, bins=20, alpha=0.5, label=label)
+            ax.legend()
+
+        else:
+            raise ValueError(f"Unknown plot_type: {plot_type}. Use 'boxplot', 'violin', 'bar', or 'hist'")
+
+        # Set labels and title
+        ax.set_ylabel(ylabel)
+        if title:
+            ax.set_title(title)
+        else:
+            key_name = key if isinstance(key, str) else 'custom'
+            ax.set_title(f'Error Distribution by {key_name}')
+
+        plt.tight_layout()
+        return fig
 
     def plot_summary(self, figsize: Tuple[int, int] = (14, 10)) -> plt.Figure:
         """Plot comprehensive summary of results"""
@@ -836,10 +1049,9 @@ class TestResultAnalyzer:
 
         # 4. Error statistics by implementation
         ax = axes[1, 1]
-        means = [impl_stats[name]['max_error_mean'] for name in impl_names]
-        stds = [impl_stats[name]['max_error_std'] for name in impl_names]
-        ax.bar(impl_names, means, yerr=stds, capsize=5, alpha=0.7)
-        ax.set_ylabel('Max Error (mean ± std)')
+        means = [impl_stats[name]['emul_max_error_avg'] for name in impl_names]
+        ax.bar(impl_names, means, capsize=5, alpha=0.7)
+        ax.set_ylabel('Max Error (mean)')
         ax.set_title('Error Statistics by Implementation')
         ax.set_xticklabels(impl_names, rotation=45, ha='right')
 
@@ -922,7 +1134,7 @@ class TestResultAnalyzer:
         plt.tight_layout()
 
         return fig
-    
+
     def plot_error_percentile(
         self,
         impl_types: List[FpIntImplType] = [FpIntImplType.QCOL_2SCOMP, FpIntImplType.QROW_2SCOMP],
@@ -1036,230 +1248,295 @@ class TestResultAnalyzer:
 
         return fig
 
+# # =============================================================================
+# # Single Test Function
+# # =============================================================================
 
-# =============================================================================
-# Single Test Function
-# =============================================================================
+# def run_single_test(
+#     name: str,
+#     impl_func: Callable,
+#     qdir: int,
+#     M: int = 8,
+#     K: int = 32,
+#     N: int = 32,
+#     seed: int = 200,
+#     err_func: Callable = None,
+#     err_name: str = 'ULP Error (FP16)',
+#     error_threshold: float = 500.0,
+#     make_weight_odd: bool = False,
+#     visualize: bool = False,
+#     debug: bool = False
+# ) -> TestResult:
+#     """Generic test function for any FPINT GEMM implementation."""
+#     if err_func is None:
+#         err_func = ulp_diff_fp16
 
-def run_single_test(
-    name: str,
-    impl_func: Callable,
-    qdir: int,
-    M: int = 8,
-    K: int = 32,
-    N: int = 32,
-    seed: int = 200,
-    err_func: Callable = None,
-    err_name: str = 'ULP Error (FP16)',
-    error_threshold: float = 500.0,
-    make_weight_odd: bool = False,
-    visualize: bool = False,
-    debug: bool = False
-) -> TestResult:
-    """Generic test function for any FPINT GEMM implementation."""
-    if err_func is None:
-        err_func = ulp_diff_fp16
+#     print("=" * 60)
+#     print(f"Test: {name} (err={err_name})")
+#     print("=" * 60)
 
-    print("=" * 60)
-    print(f"Test: {name} (err={err_name})")
-    print("=" * 60)
+#     if qdir == QCOL:
+#         KG = K // QBLOCK
+#         scale_shape = (KG, N)
+#         zero_shape = (KG, N)
+#         print(f"Dimensions: M={M}, K={K}, N={N}, KG={KG}")
+#     else:
+#         NG = (N + QBLOCK - 1) // QBLOCK
+#         scale_shape = (K, NG)
+#         zero_shape = (K, NG)
+#         print(f"Dimensions: M={M}, K={K}, N={N}, NG={NG}")
 
-    if qdir == QCOL:
-        KG = K // QBLOCK
-        scale_shape = (KG, N)
-        zero_shape = (KG, N)
-        print(f"Dimensions: M={M}, K={K}, N={N}, KG={KG}")
-    else:
-        NG = (N + QBLOCK - 1) // QBLOCK
-        scale_shape = (K, NG)
-        zero_shape = (K, NG)
-        print(f"Dimensions: M={M}, K={K}, N={N}, NG={NG}")
+#     input_data = generate_random_fp16((M, K), value_range=(-2.0, 2.0), seed=seed)
+#     weight_data = generate_random_weights((K, N), w_width=4, seed=seed+1)
+#     if make_weight_odd:
+#         weight_data = weight_data * 2 + 1
+#     scale_data = generate_random_fp16(scale_shape, value_range=(0.1, 1.0), seed=seed+2)
+#     zero_data = generate_random_zero_points(zero_shape, z_range=(-4, 4), seed=seed+3)
 
-    input_data = generate_random_fp16((M, K), value_range=(-2.0, 2.0), seed=seed)
-    weight_data = generate_random_weights((K, N), w_width=4, seed=seed+1)
-    if make_weight_odd:
-        weight_data = weight_data * 2 + 1
-    scale_data = generate_random_fp16(scale_shape, value_range=(0.1, 1.0), seed=seed+2)
-    zero_data = generate_random_zero_points(zero_shape, z_range=(-4, 4), seed=seed+3)
+#     output = impl_func(input_data, weight_data, scale_data, zero_data, M, N, K, debug=debug)
+#     output_ref = fpint_gemm_ref(input_data, weight_data, scale_data, zero_data,
+#                                 M, N, K, qdir=qdir, debug=debug)
 
-    output = impl_func(input_data, weight_data, scale_data, zero_data, M, N, K, debug=debug)
-    output_ref = fpint_gemm_ref(input_data, weight_data, scale_data, zero_data,
-                                M, N, K, qdir=qdir, debug=debug)
+#     output_float = to_float_matrix(output)
+#     ref_float = to_float_matrix(output_ref)
 
-    output_float = to_float_matrix(output)
-    ref_float = to_float_matrix(output_ref)
+#     error = print_error_stats(f"{name} vs ref", output_float, ref_float, err_func, err_name)
 
-    error = print_error_stats(f"{name} vs ref", output_float, ref_float, err_func, err_name)
+#     max_err = float(np.max(error))
+#     passed = max_err <= error_threshold
 
-    max_err = float(np.max(error))
-    passed = max_err <= error_threshold
+#     if visualize:
+#         plot_heatmap_comparison(
+#             ref_float, {name: output_float},
+#             diff_func=err_func, diff_func_name=err_name,
+#             title=f"{name} vs Reference)",
+#             show=True, auto_scale=True, shared_scale=False
+#         )
 
-    if visualize:
-        plot_heatmap_comparison(
-            ref_float, {name: output_float},
-            diff_func=err_func, diff_func_name=err_name,
-            title=f"{name} vs Reference)",
-            show=True, auto_scale=True, shared_scale=False
-        )
+#     status = "PASSED" if passed else "FAILED"
+#     print(f"  {status} (max_err={max_err:.2f}, threshold={error_threshold})")
 
-    status = "PASSED" if passed else "FAILED"
-    print(f"  {status} (max_err={max_err:.2f}, threshold={error_threshold})")
-
-    return TestResult(
-        name=name, M=M, K=K, N=N, seed=seed,
-        error=error, passed=passed, error_threshold=error_threshold,
-        err_func_name=err_name, qdir=qdir,
-        input_data=input_data, weight_data=weight_data,
-        scale_data=scale_data, zero_data=zero_data,
-        output=output, output_ref=output_ref,
-        output_float=output_float, ref_float=ref_float,
-    )
-
-
-# =============================================================================
-# Run All Tests Function
-# =============================================================================
-
-def run_all_tests(
-    M: int = 8,
-    K: int = 32,
-    N: int = 32,
-    err_func: Callable = None,
-    err_name: str = 'ULP Error (FP16)',
-    visualize: bool = False,
-    debug: bool = False
-) -> Dict[str, TestResult]:
-    """Run all 5 FPINT GEMM tests and return results."""
-    if err_func is None:
-        err_func = ulp_diff_fp16
-
-    print("\n" + "=" * 60)
-    print(f"FPINT GEMM INTEGRATION TEST SUITE")
-    print(f"  err_func={err_name}")
-    print("=" * 60)
-
-    results = {}
-    test_configs = [
-        (FpIntImplType.QCOL_2SCOMP, fpint_gemm_qcol_2scomp, QCOL, 200, False),
-        (FpIntImplType.QCOL_ZERO_LESS, fpint_gemm_qcol_zero_less, QCOL, 210, True),
-        (FpIntImplType.QROW_2SCOMP, fpint_gemm_qrow_2scomp, QROW, 220, False),
-        (FpIntImplType.QROW_ZERO_LESS, fpint_gemm_qrow_zero_less, QROW, 230, True),
-        (FpIntImplType.QROW_REAL_2SCOMP, fpint_gemm_qrow_real_2scomp, QROW, 240, False),
-    ]
-
-    for impl_type, impl_func, qdir, seed, make_weight_odd in test_configs:
-        results[impl_type] = run_single_test(
-            name=impl_type.value, impl_func=impl_func, qdir=qdir,
-            M=M, K=K, N=N, seed=seed,
-            err_func=err_func, err_name=err_name,
-            make_weight_odd=make_weight_odd, visualize=visualize, debug=debug
-        )
-
-    print("\n" + "=" * 60)
-    print(f"Error Summary ({err_name})")
-    print("=" * 60)
-
-    for name, result in results.items():
-        print(f"{name:20s}: Max={np.max(result.error):10.4f}, Mean={np.mean(result.error):10.4f}, Median={np.median(result.error):10.4f}")
-
-    print("\n" + "=" * 60)
-    print("ALL TESTS PASSED")
-    print("=" * 60)
-
-    return results
+#     return TestResult(
+#         name=name, M=M, K=K, N=N, seed=seed,
+#         error=error, passed=passed, error_threshold=error_threshold,
+#         err_func_name=err_name, qdir=qdir,
+#         input_data=input_data, weight_data=weight_data,
+#         scale_data=scale_data, zero_data=zero_data,
+#         output=output, output_ref=output_ref,
+#         output_float=output_float, ref_float=ref_float,
+#     )
 
 
-# =============================================================================
-# Visualization Functions
-# =============================================================================
+# # =============================================================================
+# # Run All Tests Function
+# # =============================================================================
 
-def visualize_all_results(
-    results: Dict[str, TestResult],
-    title_suffix: str = "",
-    cmap: str = "hot"
-) -> plt.Figure:
-    """Plot all errors in one figure."""
-    fig, axes = plt.subplots(2, 3, figsize=(15, 10))
-    axes_flat = axes.flatten()
+# def run_all_tests(
+#     M: int = 8,
+#     K: int = 32,
+#     N: int = 32,
+#     err_func: Callable = None,
+#     err_name: str = 'ULP Error (FP16)',
+#     visualize: bool = False,
+#     debug: bool = False
+# ) -> Dict[str, TestResult]:
+#     """Run all 5 FPINT GEMM tests and return results."""
+#     if err_func is None:
+#         err_func = ulp_diff_fp16
 
-    all_errors = [result.error for result in results.values()]
-    global_vmin = min(np.min(e) for e in all_errors)
-    global_vmax = max(np.max(e) for e in all_errors)
+#     print("\n" + "=" * 60)
+#     print(f"FPINT GEMM INTEGRATION TEST SUITE")
+#     print(f"  err_func={err_name}")
+#     print("=" * 60)
 
-    for idx, (name, result) in enumerate(results.items()):
-        ax = axes_flat[idx]
-        err = result.error
+#     results = {}
+#     test_configs = [
+#         (FpIntImplType.QCOL_2SCOMP, fpint_gemm_qcol_2scomp, QCOL, 200, False),
+#         (FpIntImplType.QCOL_ZERO_LESS, fpint_gemm_qcol_zero_less, QCOL, 210, True),
+#         (FpIntImplType.QCOL_REAL_2SCOMP, fpint_gemm_qcol_real_2scomp, QCOL, 250, False),
+#         (FpIntImplType.QROW_2SCOMP, fpint_gemm_qrow_2scomp, QROW, 220, False),
+#         (FpIntImplType.QROW_ZERO_LESS, fpint_gemm_qrow_zero_less, QROW, 230, True),
+#         (FpIntImplType.QROW_REAL_2SCOMP, fpint_gemm_qrow_real_2scomp, QROW, 240, False),
+#     ]
 
-        im = ax.imshow(err, aspect='auto', cmap=cmap, vmin=global_vmin, vmax=global_vmax)
-        ax.set_title(f'{name}\n{result.err_func_name}: max={np.max(err):.2f}, mean={np.mean(err):.2f}')
-        ax.set_xlabel('Column')
-        ax.set_ylabel('Row')
-        plt.colorbar(im, ax=ax, label=result.err_func_name)
+#     for impl_type, impl_func, qdir, seed, make_weight_odd in test_configs:
+#         results[impl_type] = run_single_test(
+#             name=impl_type.value, impl_func=impl_func, qdir=qdir,
+#             M=M, K=K, N=N, seed=seed,
+#             err_func=err_func, err_name=err_name,
+#             make_weight_odd=make_weight_odd, visualize=visualize, debug=debug
+#         )
 
-    axes_flat[-1].axis('off')
+#     print("\n" + "=" * 60)
+#     print(f"Error Summary ({err_name})")
+#     print("=" * 60)
 
-    first_result = next(iter(results.values()))
-    M, K, N = first_result.M, first_result.K, first_result.N
-    err_name = first_result.err_func_name
+#     for name, result in results.items():
+#         print(f"{name:20s}: Max={np.max(result.error):10.4f}, Mean={np.mean(result.error):10.4f}, Median={np.median(result.error):10.4f}")
 
-    fig.suptitle(f'All FPINT GEMM Implementations vs Reference\n'
-                 f'(M={M}, K={K}, N={N}) - {err_name}{title_suffix}',
-                fontsize=14, fontweight='bold')
-    plt.tight_layout()
+#     print("\n" + "=" * 60)
+#     print("ALL TESTS PASSED")
+#     print("=" * 60)
 
-    return fig
+#     return results
 
 
-def plot_error_histogram(
-    results: Dict[str, TestResult],
-    title_suffix: str = ""
-) -> plt.Figure:
-    """Plot histogram of errors for all implementations."""
-    fig, axes = plt.subplots(2, 3, figsize=(15, 8))
-    axes_flat = axes.flatten()
+# # =============================================================================
+# # Visualization Functions
+# # =============================================================================
 
-    for idx, (name, result) in enumerate(results.items()):
-        ax = axes_flat[idx]
-        err_flat = result.error.flatten()
+# def visualize_all_results(
+#     results: Dict[str, TestResult],
+#     title_suffix: str = "",
+#     cmap: str = "hot"
+# ) -> plt.Figure:
+#     """Plot all errors in one figure."""
+#     fig, axes = plt.subplots(2, 3, figsize=(15, 10))
+#     axes_flat = axes.flatten()
 
-        ax.hist(err_flat, bins=50, edgecolor='black', alpha=0.7)
-        ax.axvline(np.mean(err_flat), color='r', linestyle='--', label=f'Mean={np.mean(err_flat):.2f}')
-        ax.axvline(np.median(err_flat), color='g', linestyle='--', label=f'Median={np.median(err_flat):.2f}')
-        ax.set_title(f'{name}')
-        ax.set_xlabel(result.err_func_name)
-        ax.set_ylabel('Count')
-        ax.legend(fontsize=8)
+#     all_errors = [result.error for result in results.values()]
+#     global_vmin = min(np.min(e) for e in all_errors)
+#     global_vmax = max(np.max(e) for e in all_errors)
 
-    axes_flat[-1].axis('off')
+#     for idx, (name, result) in enumerate(results.items()):
+#         ax = axes_flat[idx]
+#         err = result.error
 
-    first_result = next(iter(results.values()))
-    err_name = first_result.err_func_name
+#         im = ax.imshow(err, aspect='auto', cmap=cmap, vmin=global_vmin, vmax=global_vmax)
+#         ax.set_title(f'{name}\n{result.err_func_name}: max={np.max(err):.2f}, mean={np.mean(err):.2f}')
+#         ax.set_xlabel('Column')
+#         ax.set_ylabel('Row')
+#         plt.colorbar(im, ax=ax, label=result.err_func_name)
 
-    fig.suptitle(f'{err_name} Distribution{title_suffix}',
-                fontsize=14, fontweight='bold')
-    plt.tight_layout()
+#     axes_flat[-1].axis('off')
 
-    return fig
+#     first_result = next(iter(results.values()))
+#     M, K, N = first_result.M, first_result.K, first_result.N
+#     err_name = first_result.err_func_name
 
+#     fig.suptitle(f'All FPINT GEMM Implementations vs Reference\n'
+#                  f'(M={M}, K={K}, N={N}) - {err_name}{title_suffix}',
+#                 fontsize=14, fontweight='bold')
+#     plt.tight_layout()
+
+#     return fig
+
+
+# def plot_error_histogram(
+#     results: Dict[str, TestResult],
+#     title_suffix: str = ""
+# ) -> plt.Figure:
+#     """Plot histogram of errors for all implementations."""
+#     fig, axes = plt.subplots(2, 3, figsize=(15, 8))
+#     axes_flat = axes.flatten()
+
+#     for idx, (name, result) in enumerate(results.items()):
+#         ax = axes_flat[idx]
+#         err_flat = result.error.flatten()
+
+#         ax.hist(err_flat, bins=50, edgecolor='black', alpha=0.7)
+#         ax.axvline(np.mean(err_flat), color='r', linestyle='--', label=f'Mean={np.mean(err_flat):.2f}')
+#         ax.axvline(np.median(err_flat), color='g', linestyle='--', label=f'Median={np.median(err_flat):.2f}')
+#         ax.set_title(f'{name}')
+#         ax.set_xlabel(result.err_func_name)
+#         ax.set_ylabel('Count')
+#         ax.legend(fontsize=8)
+
+#     axes_flat[-1].axis('off')
+
+#     first_result = next(iter(results.values()))
+#     err_name = first_result.err_func_name
+
+#     fig.suptitle(f'{err_name} Distribution{title_suffix}',
+#                 fontsize=14, fontweight='bold')
+#     plt.tight_layout()
+
+#     return fig
 
 # =============================================================================
 # PyVSC Coverage-Driven Testing
 # =============================================================================
 
 # -----------------------------------------------------------------------------
-# Input Distribution Types
+# Distribution Types (IntEnum for type safety and easy int/name conversion)
 # -----------------------------------------------------------------------------
 
-class InputDistType:
+class InputDistType(IntEnum):
+    """
+    Input distribution type for data generation.
+
+    Usage:
+        InputDistType.NORMAL.name  -> 'NORMAL'
+        InputDistType.NORMAL.value -> 0
+        InputDistType(0)           -> InputDistType.NORMAL
+    """
     NORMAL = 0           # 정규분포
     MIXED_EXP = 1        # 큰값/작은값 혼합 (exp 차이 큰 경우)
     MIXED_SUBNORMAL = 2  # normal/subnormal 혼합
 
+    @property
+    def label(self) -> str:
+        """Human-readable label for display"""
+        return _INPUT_DIST_LABELS[self]
 
-class WeightDistType:
-    UNIFORM = 0          # 균일 분포
-    SPARSE_ZERO = 1      # zero가 많은 경우
-    HAS_MAX = 2          # max 값이 있는 경우
+
+class WeightDistType(IntEnum):
+    """
+    Weight distribution type.
+
+    - UNIFORM, SPARSE_ZERO, HAS_MAX: For data generation
+    - ZERO_AND_MAX, ZERO_ONLY, MAX_ONLY, NONE: From analysis (use from_flags)
+
+    Usage:
+        WeightDistType.UNIFORM.name  -> 'UNIFORM'
+        WeightDistType.UNIFORM.value -> 0
+        WeightDistType.from_flags(has_zero=True, has_max=True) -> ZERO_AND_MAX
+    """
+    # Generation types
+    UNIFORM = 0          # 균일 분포 (생성용)
+    SPARSE_ZERO = 1      # zero가 많은 경우 (생성용)
+    HAS_MAX = 2          # max 값이 있는 경우 (생성용)
+
+    # Analysis types (from actual data content)
+    ZERO_AND_MAX = 3     # zero 있고 max 있고
+    ZERO_ONLY = 4        # zero 있고 max 없고
+    MAX_ONLY = 5         # zero 없고 max 있고
+    NONE = 6             # zero 없고 max 없고
+
+    @classmethod
+    def from_flags(cls, has_zero: bool, has_max: bool) -> 'WeightDistType':
+        """Determine category from analysis flags"""
+        if has_zero and has_max:
+            return cls.ZERO_AND_MAX
+        elif has_zero:
+            return cls.ZERO_ONLY
+        elif has_max:
+            return cls.MAX_ONLY
+        else:
+            return cls.NONE
+
+    @property
+    def label(self) -> str:
+        """Human-readable label for display"""
+        return _WEIGHT_DIST_LABELS[self]
+
+
+# Human-readable labels for display
+_INPUT_DIST_LABELS = {
+    InputDistType.NORMAL: 'normal',
+    InputDistType.MIXED_EXP: 'mixed_exp',
+    InputDistType.MIXED_SUBNORMAL: 'mixed_subnormal',
+}
+
+_WEIGHT_DIST_LABELS = {
+    WeightDistType.UNIFORM: 'uniform',
+    WeightDistType.SPARSE_ZERO: 'sparse_zero',
+    WeightDistType.HAS_MAX: 'has_max',
+    WeightDistType.ZERO_AND_MAX: 'zero_and_max',
+    WeightDistType.ZERO_ONLY: 'zero_only',
+    WeightDistType.MAX_ONLY: 'max_only',
+    WeightDistType.NONE: 'none',
+}
 
 
 # -----------------------------------------------------------------------------
@@ -1370,11 +1647,12 @@ class FpintWeightCoverage:
             has_max=vsc.bit_t(1)
         )
 
-        # Weight distribution type coverage
+        # Weight distribution type coverage (analysis-based)
         self.cp_weight_dist = vsc.coverpoint(self.weight_dist, bins={
-            "uniform": vsc.bin(WeightDistType.UNIFORM),
-            "sparse_zero": vsc.bin(WeightDistType.SPARSE_ZERO),
-            "has_max": vsc.bin(WeightDistType.HAS_MAX)
+            "zero_and_max": vsc.bin(WeightDistType.ZERO_AND_MAX),
+            "zero_only": vsc.bin(WeightDistType.ZERO_ONLY),
+            "max_only": vsc.bin(WeightDistType.MAX_ONLY),
+            "none": vsc.bin(WeightDistType.NONE)
         })
 
         # Zero weight coverage
@@ -1461,6 +1739,16 @@ class FpintMatrixSizeCoverage:
 class FpintCoverageTestRunner:
     """Coverage-driven test runner for FPINT GEMM"""
 
+    # All available test configurations
+    ALL_TEST_CONFIGS = [
+        (FpIntImplType.QCOL_2SCOMP, fpint_gemm_qcol_2scomp, QCOL, False),
+        (FpIntImplType.QCOL_ZERO_LESS, fpint_gemm_qcol_zero_less, QCOL, True),
+        (FpIntImplType.QCOL_REAL_2SCOMP, fpint_gemm_qcol_real_2scomp, QCOL, False),
+        (FpIntImplType.QROW_2SCOMP, fpint_gemm_qrow_2scomp, QROW, False),
+        (FpIntImplType.QROW_ZERO_LESS, fpint_gemm_qrow_zero_less, QROW, True),
+        (FpIntImplType.QROW_REAL_2SCOMP, fpint_gemm_qrow_real_2scomp, QROW, False),
+    ]
+
     def __init__(
         self,
         err_func: Callable = None,
@@ -1469,17 +1757,37 @@ class FpintCoverageTestRunner:
         self.err_func = err_func or ulp_diff_fp16
         self.error_threshold = error_threshold
 
-        # Coverage groups
-        self.input_cov = FpintInputCoverage()
-        self.weight_cov = FpintWeightCoverage()
-        self.cross_cov = FpintCrossCoverage()
-        self.size_cov = FpintMatrixSizeCoverage()
+        # Coverage groups per impl_type (initialized in run_coverage_test)
+        self.coverage: Dict[FpIntImplType, Dict[str, Any]] = {}
 
         # Test vector
         self.tv = FpintTestVector()
 
         # Results
         self.results: List[TestResult] = []
+
+    def _create_coverage_for_impl(self, impl_type: FpIntImplType) -> Dict[str, Any]:
+        """Create coverage groups for a specific implementation type"""
+        impl_name = impl_type.value
+
+        input_cov = FpintInputCoverage()
+        input_cov.set_name(f"{impl_name}_input")
+
+        weight_cov = FpintWeightCoverage()
+        weight_cov.set_name(f"{impl_name}_weight")
+
+        cross_cov = FpintCrossCoverage()
+        cross_cov.set_name(f"{impl_name}_cross")
+
+        size_cov = FpintMatrixSizeCoverage()
+        size_cov.set_name(f"{impl_name}_size")
+
+        return {
+            'input': input_cov,
+            'weight': weight_cov,
+            'cross': cross_cov,
+            'size': size_cov,
+        }
 
     def generate_input_data(self, M: int, K: int, seed: int) -> np.ndarray:
         """Generate input data based on test vector distribution type"""
@@ -1510,62 +1818,96 @@ class FpintCoverageTestRunner:
 
     def analyze_and_sample_coverage(
         self,
+        impl_type: FpIntImplType,
         input_data: np.ndarray,
         weight_data: np.ndarray
-    ):
-        """Analyze data and sample coverage"""
+    ) -> Dict[TagKey, Any]:
+        """
+        Analyze data and sample coverage for a specific implementation type.
+
+        Returns:
+            Dict[TagKey, Any]: Analysis results to be stored in TestResult.tags
+        """
         M, K = input_data.shape
         _, N = weight_data.shape
 
+        # Get coverage groups for this impl_type
+        cov = self.coverage[impl_type]
+
         # Analyze input characteristics
-        has_large_exp_diff = 0
-        has_subnormal = 0
+        has_large_exp_diff = False
+        has_subnormal = False
+        max_exp_diff = 0
 
         for m in range(M):
             exps = [get_fp16_exp(int(x)) for x in input_data[m, :]]
             max_exp = max(exps)
             min_exp = min(e for e in exps if e > 0) if any(e > 0 for e in exps) else 0
-            if max_exp - min_exp > 10:
-                has_large_exp_diff = 1
+            exp_diff = max_exp - min_exp
+            if exp_diff > max_exp_diff:
+                max_exp_diff = exp_diff
+            if exp_diff > 10:
+                has_large_exp_diff = True
             if any(is_subnormal(int(x)) for x in input_data[m, :]):
-                has_subnormal = 1
+                has_subnormal = True
 
-        self.input_cov.sample(int(self.tv.input_dist), has_large_exp_diff, has_subnormal)
+        cov['input'].sample(int(self.tv.input_dist), int(has_large_exp_diff), int(has_subnormal))
 
         # Analyze weight characteristics
-        has_zero = 1 if np.any(weight_data == 0) else 0
-        has_max = 1 if np.any(weight_data == 15) else 0
+        has_zero_weight = bool(np.any(weight_data == 0))
+        has_max_weight = bool(np.any(weight_data == 15))
+        zero_weight_ratio = float(np.sum(weight_data == 0)) / weight_data.size
 
-        self.weight_cov.sample(int(self.tv.weight_dist), has_zero, has_max)
+        analysis_weight_dist = WeightDistType.from_flags(has_zero_weight, has_max_weight)
+        cov['weight'].sample(int(analysis_weight_dist), int(has_zero_weight), int(has_max_weight))
 
         # Analyze cross coverage (MXU group level)
-        max_meets_zero = 0
-        sign_pp = sign_pn = sign_np = sign_nn = 0
+        max_meets_zero = False
+        sign_pp = sign_pn = sign_np = sign_nn = False
 
         for m in range(M):
             for n in range(N):
                 analysis = analyze_mxu_group(input_data[m, :], weight_data[:, n])
                 for group in analysis:
                     if group['max_meets_zero']:
-                        max_meets_zero = 1
+                        max_meets_zero = True
                     for (inp_sign, w_sign) in group['sign_combinations']:
                         if inp_sign == 0 and w_sign == 0:
-                            sign_pp = 1
+                            sign_pp = True
                         elif inp_sign == 0 and w_sign == 1:
-                            sign_pn = 1
+                            sign_pn = True
                         elif inp_sign == 1 and w_sign == 0:
-                            sign_np = 1
+                            sign_np = True
                         else:
-                            sign_nn = 1
+                            sign_nn = True
 
-        self.cross_cov.sample(max_meets_zero, sign_pp, sign_pn, sign_np, sign_nn)
+        cov['cross'].sample(int(max_meets_zero), int(sign_pp), int(sign_pn), int(sign_np), int(sign_nn))
 
         # Size coverage
-        self.size_cov.sample(M, K, N)
+        cov['size'].sample(M, K, N)
+
+        # Return analysis results as tags dict
+        return {
+            # Input characteristics
+            TagKey.HAS_LARGE_EXP_DIFF: has_large_exp_diff,
+            TagKey.HAS_SUBNORMAL: has_subnormal,
+            TagKey.MAX_EXP_DIFF: max_exp_diff,
+            # Weight characteristics
+            TagKey.HAS_ZERO_WEIGHT: has_zero_weight,
+            TagKey.HAS_MAX_WEIGHT: has_max_weight,
+            TagKey.ZERO_WEIGHT_RATIO: zero_weight_ratio,
+            # Cross characteristics
+            TagKey.MAX_MEETS_ZERO: max_meets_zero,
+            # Sign combinations
+            TagKey.SIGN_PP: sign_pp,
+            TagKey.SIGN_PN: sign_pn,
+            TagKey.SIGN_NP: sign_np,
+            TagKey.SIGN_NN: sign_nn,
+        }
 
     def run_single_test(
         self,
-        impl_name: str,
+        impl_type: FpIntImplType,
         impl_func: Callable,
         qdir: int,
         make_weight_odd: bool = False,
@@ -1582,6 +1924,7 @@ class FpintCoverageTestRunner:
         4. err_gpu_vs_emul: fpint_gemm_gpu vs fpint_emul (GPU as reference)
 
         Args:
+            impl_type: Implementation type enum
             store_preds: List of predicate functions. Each takes Dict[ErrorType, float]
                          and returns bool. Data is stored if ANY predicate returns True (OR).
                          Use AND logic inside a single predicate if needed.
@@ -1600,8 +1943,8 @@ class FpintCoverageTestRunner:
         if make_weight_odd:
             weight_data = weight_data * 2 + 1
 
-        # Analyze and sample coverage
-        self.analyze_and_sample_coverage(input_data, weight_data)
+        # Analyze and sample coverage (returns tags dict)
+        tags = self.analyze_and_sample_coverage(impl_type, input_data, weight_data)
 
         # Generate scale and zero
         if qdir == QCOL:
@@ -1656,7 +1999,7 @@ class FpintCoverageTestRunner:
 
         # Create TestResult
         result = TestResult(
-            name=impl_name,
+            name=impl_type.value,
             M=M, K=K, N=N,
             seed=seed,
             passed=passed,
@@ -1669,7 +2012,10 @@ class FpintCoverageTestRunner:
             # Config
             qdir=qdir,
             input_dist=input_dist,
-            weight_dist=weight_dist,
+            weight_dist=int(WeightDistType.from_flags(
+                tags[TagKey.HAS_ZERO_WEIGHT],
+                tags[TagKey.HAS_MAX_WEIGHT]
+            )),
             # Store data only if error thresholds exceeded (saves memory)
             input_data=input_data if should_store else None,
             weight_data=weight_data if should_store else None,
@@ -1681,6 +2027,8 @@ class FpintCoverageTestRunner:
             output_ref_float=ref_float if should_store else None,
             output_gpu_float=gpu_float if should_store else None,
             output_emul_float=emul_float if should_store else None,
+            # Analysis tags (always stored for filtering)
+            tags=tags,
         )
 
         self.results.append(result)
@@ -1689,7 +2037,7 @@ class FpintCoverageTestRunner:
             status = "PASS" if passed else "FAIL"
             gpu_max = float(np.max(err_ref_vs_gpu))
             gpu_vs_emul_max = float(np.max(err_gpu_vs_emul))
-            print(f"  [{status}] {impl_name}: M={M}, K={K}, N={N}, "
+            print(f"  [{status}] {impl_type.value}: M={M}, K={K}, N={N}, "
                   f"gpu_err={gpu_max:.1f}, emul_err={max_emul_err:.1f}, "
                   f"gpu_vs_emul={gpu_vs_emul_max:.1f}, same={result.gpu_emul_same_pct:.0f}%")
 
@@ -1698,6 +2046,7 @@ class FpintCoverageTestRunner:
     def run_coverage_test(
         self,
         n_tests: int = 100,
+        impl_types: Optional[List[FpIntImplType]] = None,
         verbose: bool = True,
         store_preds: Optional[List[StorePredicate]] = None
     ) -> TestResultAnalyzer:
@@ -1706,6 +2055,7 @@ class FpintCoverageTestRunner:
 
         Args:
             n_tests: Number of tests per implementation
+            impl_types: List of implementation types to test. If None, tests all.
             verbose: Print progress
             store_preds: List of predicate functions for conditional data storage.
                          Data is stored if ANY predicate returns True (OR condition).
@@ -1713,25 +2063,29 @@ class FpintCoverageTestRunner:
         Returns:
             TestResultAnalyzer with all results
         """
-        # Reset coverage by creating new covergroup instances
-        self.input_cov = FpintInputCoverage()
-        self.weight_cov = FpintWeightCoverage()
-        self.cross_cov = FpintCrossCoverage()
-        self.size_cov = FpintMatrixSizeCoverage()
+        # Clear all previous coverage instances
+        vsc.CoverageRegistry.inst().clear()
+
+        # Reset results
         self.results = []
 
-        test_configs = [
-            (FpIntImplType.QCOL_2SCOMP, fpint_gemm_qcol_2scomp, QCOL, False),
-            (FpIntImplType.QCOL_ZERO_LESS, fpint_gemm_qcol_zero_less, QCOL, True),
-            (FpIntImplType.QROW_2SCOMP, fpint_gemm_qrow_2scomp, QROW, False),
-            (FpIntImplType.QROW_ZERO_LESS, fpint_gemm_qrow_zero_less, QROW, True),
-            (FpIntImplType.QROW_REAL_2SCOMP, fpint_gemm_qrow_real_2scomp, QROW, False),
-        ]
+        # Filter test configs based on impl_types
+        if impl_types is None:
+            test_configs = self.ALL_TEST_CONFIGS
+        else:
+            impl_type_set = set(impl_types)
+            test_configs = [cfg for cfg in self.ALL_TEST_CONFIGS if cfg[0] in impl_type_set]
+
+        # Create coverage groups for each impl_type
+        self.coverage = {}
+        for impl_type, _, _, _ in test_configs:
+            self.coverage[impl_type] = self._create_coverage_for_impl(impl_type)
 
         if verbose:
             print("=" * 70)
             print(f"FPINT Coverage-Driven Test")
             print(f"  n_tests={n_tests}, error_threshold={self.error_threshold}")
+            print(f"  impl_types={[t.value for t, _, _, _ in test_configs]}")
             print("=" * 70)
 
         for impl_type, impl_func, qdir, make_weight_odd in test_configs:
@@ -1740,15 +2094,18 @@ class FpintCoverageTestRunner:
 
             for _ in range(n_tests):
                 self.tv.randomize()
-                self.run_single_test(impl_type.value, impl_func, qdir, make_weight_odd, verbose, store_preds)
+                self.run_single_test(impl_type, impl_func, qdir, make_weight_odd, verbose, store_preds)
 
         # Summary
         passed = sum(1 for r in self.results if r.passed)
-        failed = len(self.results) - passed
+        total = len(self.results)
 
         if verbose:
             print("\n" + "=" * 70)
-            print(f"Summary: {passed}/{len(self.results)} passed ({100*passed/len(self.results):.1f}%)")
+            if total > 0:
+                print(f"Summary: {passed}/{total} passed ({100*passed/total:.1f}%)")
+            else:
+                print("Summary: No tests run")
             print("=" * 70)
 
             # Print coverage
@@ -1757,84 +2114,42 @@ class FpintCoverageTestRunner:
 
         return self.get_analyzer()
 
-    def get_coverage(self) -> Dict[str, float]:
-        """Get coverage percentages for all groups"""
-        return {
-            'input': self.input_cov.get_inst_coverage(),
-            'weight': self.weight_cov.get_inst_coverage(),
-            'cross': self.cross_cov.get_inst_coverage(),
-            'size': self.size_cov.get_inst_coverage()
-        }
+    def get_coverage(self, impl_type: Optional[FpIntImplType] = None) -> Dict[str, Any]:
+        """
+        Get coverage percentages.
+
+        Args:
+            impl_type: If specified, returns coverage for that impl_type only.
+                       If None, returns coverage for all impl_types.
+
+        Returns:
+            If impl_type is specified: Dict[str, float] with coverage percentages
+            If impl_type is None: Dict[FpIntImplType, Dict[str, float]]
+        """
+        if impl_type is not None:
+            if impl_type not in self.coverage:
+                return {'input': 0.0, 'weight': 0.0, 'cross': 0.0, 'size': 0.0}
+            cov = self.coverage[impl_type]
+            return {
+                'input': cov['input'].get_inst_coverage(),
+                'weight': cov['weight'].get_inst_coverage(),
+                'cross': cov['cross'].get_inst_coverage(),
+                'size': cov['size'].get_inst_coverage()
+            }
+        else:
+            result = {}
+            for it, cov in self.coverage.items():
+                result[it] = {
+                    'input': cov['input'].get_inst_coverage(),
+                    'weight': cov['weight'].get_inst_coverage(),
+                    'cross': cov['cross'].get_inst_coverage(),
+                    'size': cov['size'].get_inst_coverage()
+                }
+            return result
 
     def get_analyzer(self) -> TestResultAnalyzer:
         """Get TestResultAnalyzer for the results"""
         return TestResultAnalyzer(self.results)
-
-    def plot_results(self) -> plt.Figure:
-        """Plot test results and coverage"""
-        fig, axes = plt.subplots(2, 2, figsize=(14, 10))
-
-        # 1. Pass/Fail by implementation
-        ax = axes[0, 0]
-        impl_names = list(set(r.name for r in self.results))
-        pass_counts = [sum(1 for r in self.results if r.name == name and r.passed) for name in impl_names]
-        fail_counts = [sum(1 for r in self.results if r.name == name and not r.passed) for name in impl_names]
-
-        x = np.arange(len(impl_names))
-        width = 0.35
-        ax.bar(x - width/2, pass_counts, width, label='Pass', color='green', alpha=0.7)
-        ax.bar(x + width/2, fail_counts, width, label='Fail', color='red', alpha=0.7)
-        ax.set_xticks(x)
-        ax.set_xticklabels(impl_names, rotation=45, ha='right')
-        ax.set_ylabel('Count')
-        ax.set_title('Pass/Fail by Implementation')
-        ax.legend()
-
-        # 2. Max error distribution
-        ax = axes[0, 1]
-        for impl_name in impl_names:
-            errors = [r.max_error for r in self.results if r.name == impl_name]
-            ax.hist(errors, bins=20, alpha=0.5, label=impl_name)
-        ax.set_xlabel('Max ULP Error')
-        ax.set_ylabel('Count')
-        ax.set_title('Max Error Distribution')
-        ax.legend(fontsize=8)
-
-        # 3. Error by input distribution type
-        ax = axes[1, 0]
-        input_dist_names = ['normal', 'mixed_exp', 'mixed_subnormal']
-        for i, dist_name in enumerate(input_dist_names):
-            errors = [r.max_error for r in self.results if r.input_dist == i]
-            if errors:
-                ax.boxplot([errors], positions=[i], widths=0.6)
-        ax.set_xticks(range(len(input_dist_names)))
-        ax.set_xticklabels(input_dist_names)
-        ax.set_xlabel('Input Distribution')
-        ax.set_ylabel('Max ULP Error')
-        ax.set_title('Error by Input Distribution')
-
-        # 4. Coverage summary
-        ax = axes[1, 1]
-        coverage = self.get_coverage()
-        names = list(coverage.keys())
-        values = [coverage[n] for n in names]
-        colors = ['green' if v >= 80 else 'orange' if v >= 50 else 'red' for v in values]
-        bars = ax.bar(names, values, color=colors, alpha=0.7)
-        ax.axhline(y=80, color='green', linestyle='--', label='80% target')
-        ax.set_ylabel('Coverage (%)')
-        ax.set_title('Coverage Summary')
-        ax.set_ylim(0, 100)
-        for bar, val in zip(bars, values):
-            ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 1,
-                   f'{val:.1f}%', ha='center', va='bottom', fontsize=9)
-
-        passed = sum(1 for r in self.results if r.passed)
-        fig.suptitle(f'FPINT Coverage Test Results: {passed}/{len(self.results)} passed',
-                     fontsize=14, fontweight='bold')
-        plt.tight_layout()
-
-        return fig
-
 
 # -----------------------------------------------------------------------------
 # Convenience Function
@@ -1842,6 +2157,7 @@ class FpintCoverageTestRunner:
 
 def run_fpint_coverage_test(
     n_tests: int = 20,
+    impl_types: Optional[List[FpIntImplType]] = None,
     error_threshold: float = 500.0,
     verbose: bool = True,
     store_preds: Optional[List[StorePredicate]] = None
@@ -1851,6 +2167,7 @@ def run_fpint_coverage_test(
 
     Args:
         n_tests: Number of tests per implementation
+        impl_types: List of implementation types to test. If None, tests all.
         error_threshold: Max allowed ULP error
         verbose: Print progress
         store_preds: List of predicate functions for conditional data storage.
@@ -1861,6 +2178,11 @@ def run_fpint_coverage_test(
         Tuple of (FpintCoverageTestRunner, TestResultAnalyzer)
 
     Example:
+        >>> # Test only QCOL_2SCOMP
+        >>> runner, analyzer = run_fpint_coverage_test(
+        ...     n_tests=50,
+        ...     impl_types=[FpIntImplType.QCOL_2SCOMP]
+        ... )
         >>> # Store when gpu_vs_emul > 10 OR ref_vs_emul > 100
         >>> runner, analyzer = run_fpint_coverage_test(
         ...     n_tests=50,
@@ -1882,5 +2204,10 @@ def run_fpint_coverage_test(
     runner = FpintCoverageTestRunner(
         error_threshold=error_threshold
     )
-    analyzer = runner.run_coverage_test(n_tests=n_tests, verbose=verbose, store_preds=store_preds)
+    analyzer = runner.run_coverage_test(
+        n_tests=n_tests,
+        impl_types=impl_types,
+        verbose=verbose,
+        store_preds=store_preds
+    )
     return runner, analyzer
