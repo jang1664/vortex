@@ -166,8 +166,8 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; ();
       cfg_reg_if.regs[2] = output_base;
       cfg_reg_if.regs[3] = scale_base;
       cfg_reg_if.regs[4] = zp_base;
-      cfg_reg_if.regs[6] = {N[31:0], M[31:0]};
-      cfg_reg_if.regs[7] = {qblk[31:0], K[31:0]};
+      cfg_reg_if.regs[5] = {N[31:0], M[31:0]};
+      cfg_reg_if.regs[6] = {qblk[31:0], K[31:0]};
 
       // 2) assert valid BEFORE the sampling edge (use blocking)
       //    -> now at next posedge, DUT definitely sees valid=1
@@ -246,9 +246,9 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; ();
       64'h3000_0000, // output_base
       64'h4000_0000, // scale_base
       64'h5000_0000, // zp_base
-      128,           // M
-      128,           // N
-      128,           // K
+      256,           // M
+      256,           // N
+      256,           // K
       32             // qblk
     );
 
