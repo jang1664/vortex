@@ -6,6 +6,7 @@ interface VX_gemm_ctrl_if import VX_gpu_pkg::*; #(
 
   // Unified LMEM DMA control structure
   typedef struct packed {
+    gemm_unified_cmd_t cmd;
     logic start;
   } lmem_dma_ctrl_t;
 
@@ -17,6 +18,7 @@ interface VX_gemm_ctrl_if import VX_gpu_pkg::*; #(
 
   // External DMA control (dcache <-> LMEM)
   typedef struct packed {
+    gemm_unified_cmd_t cmd;
     logic start;
   } dma_ctrl_t;
 
