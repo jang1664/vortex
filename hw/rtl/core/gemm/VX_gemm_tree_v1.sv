@@ -7,11 +7,11 @@ module VX_gemm_tree_v1 #(
     parameter  int BLOCK_SIZE            = `BLOCK_SIZE,
     parameter  int BLOCK_NUM             = `BLOCK_NUM,
     parameter  int SEL_BLOCK_NUM         = `SEL_BLOCK_NUM,
-    parameter  int ROW_SIZE              = 32,
-    parameter  int COL_SIZE              = 32,
-    parameter  int TILE_COL_SIZE         = 32,
-    parameter  int WEIGHT_LOAD_ROW_NUM   = 1,  // Number of weight rows loaded at once (ROW_SIZE % WEIGHT_LOAD_ROW_NUM == 0)
-    parameter  int WEIGHT_LOAD_COL_NUM   = 1,  // Number of weight columns loaded at once (COL_SIZE % WEIGHT_LOAD_COL_NUM == 0)
+    parameter  int ROW_SIZE              = `MXU_ROW,
+    parameter  int COL_SIZE              = `MXU_COL,
+    parameter  int TILE_COL_SIZE         = `MXU_COL_TILE,
+    parameter  int WEIGHT_LOAD_ROW_NUM   = `MXU_WLOAD_NUM,  // Number of weight rows loaded at once (ROW_SIZE % WEIGHT_LOAD_ROW_NUM == 0)
+    parameter  int WEIGHT_LOAD_COL_NUM   = `MXU_WLOAD_NUM,  // Number of weight columns loaded at once (COL_SIZE % WEIGHT_LOAD_COL_NUM == 0)
     parameter  int PIPELINE_STAGES       = 2,  // Pipeline every N stages
     parameter  int PIPE_MULT             = 1,  // 1 to enable pipelined multiplier
     parameter  int PIPE_ALIGN            = 1,  // 1 to enable pipelined aligner

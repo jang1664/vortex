@@ -23,56 +23,29 @@ module VX_act_sum #(
     output logic valid_o
 );
 
-  logic signed [NUM_UNIT-1:0][ALIGNED_DW-1:0] aligned_data_i;
-  logic signed [NUM_UNIT-1:0][ALIGNED_DW-1:0] aligned_data_q;
-  logic aligned_data_out_valid;
+  localparam REDUCE_OUT_DW = IN_DW + `CLOG2(NUM_UNIT);
 
-  logic signed [NUM_UNIT-1:0][OUT_DW-1:0] aligned_data_ext;
-
-  logic signed [OUT_DW-1:0] sum_act_q;
+  logic signed [REDUCE_OUT_DW-1:0] sum_act_q;
   logic reduce_valid;
-
-  always_comb begin
-    for (int i = 0; i < NUM_UNIT; i++) begin
-      aligned_data_i[i] = $signed(ALIGNED_DW'(data_i[i])) <<< (BLOCK_SIZE*blk_idx_i[i]);
-    end
-  end
-
-  always_comb begin
-    for (int i = 0; i < NUM_UNIT; i++) begin
-      aligned_data_ext[i] = $signed(aligned_data_q[i]);
-    end
-  end
-
-  VX_elastic_buffer #(
-    .DATAW(ALIGNED_DW * NUM_UNIT),
-    .SIZE(1)
-  ) u_aligned_data_out (
-    .clk(clk_i),
-    .reset(~resetn_i),
-    .valid_in(valid_i),
-    .ready_in(ready_o),
-    .data_in(aligned_data_i),
-    .data_out(aligned_data_q),
-    .ready_out(1'b1),
-    .valid_out(aligned_data_out_valid)
-  );
+  logic signed [OUT_DW-1:0] sum_shifted;
 
   // sum of aligned_data_out_valid
   VX_reduce_tree_pipelined #(
-    .IN_W  (OUT_DW),
-    .OUT_W (OUT_DW),
+    .IN_W  (REDUCE_OUT_DW),
+    .OUT_W (REDUCE_OUT_DW),
     .N     (NUM_UNIT),
     .OP    ("+"),
     .PIPELINE_STAGES (PIPELINE_STAGES)
   ) reduce_tree (
     .clk       (clk_i),
     .reset     (~resetn_i),
-    .data_in   (aligned_data_ext),
-    .valid_in  (aligned_data_out_valid),
+    .data_in   (data_i),
+    .valid_in  (valid_i),
     .data_out  (sum_act_q),
     .valid_out (reduce_valid)
   );
+
+  assign sum_shifted = $signed(OUT_DW'(sum_act_q)) <<< (BLOCK_SIZE*blk_idx_i);
 
   // Fixed-cycle output delay: valid/data are delayed by exactly DLY_CYCLES cycles.
   VX_shift_register #(
@@ -84,7 +57,7 @@ module VX_act_sum #(
     .clk      (clk_i),
     .reset    (~resetn_i),
     .enable   (1'b1),
-    .data_in  ({sum_act_q, reduce_valid}),
+    .data_in  ({sum_shifted, reduce_valid}),
     .data_out ({sum_act_o, valid_o})
   );
 

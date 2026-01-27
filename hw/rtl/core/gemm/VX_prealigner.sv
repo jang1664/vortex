@@ -11,18 +11,18 @@ origin of input id of stage i = 2**(i + 1) - 1
 */
 module VX_prealigner import VX_gpu_pkg::*; #(
   parameter  NUM_UNIT       = 4,
-  localparam int HIDDEN_WIDTH   = `HIDDEN_WIDTH,
-  localparam int SIGN_WIDTH     = `IFP_SIGN_WIDTH,
-  localparam int EXP_WIDTH      = `IFP_EXP_WIDTH,
-  localparam int MANTISSA_WIDTH = `IFP_MAN_WIDTH,
-  localparam int ACT_WIDTH      = `IFP_WIDTH,
-  localparam int EXTRA_WIDTH    = `EXTRA_BIT_WIDTH,
-  localparam int BLOCK_SIZE     = `BLOCK_SIZE,
-  localparam int ALIGNED_WIDTH  = `SEL_BLOCK_WIDTH,
-  localparam int BLOCK_NUM      = `BLOCK_NUM,
-  localparam int SEL_BLOCK_NUM  = `SEL_BLOCK_NUM,
-  localparam int BLK_IDX_NUM    = `BLK_IDX_NUM,
-  localparam int BLK_BITW       = `BLOCK_IDX_WIDTH
+  localparam int HIDDEN_WIDTH     = `HIDDEN_WIDTH,
+  localparam int SIGN_WIDTH       = `IFP_SIGN_WIDTH,
+  localparam int EXP_WIDTH        = `IFP_EXP_WIDTH,
+  localparam int MANTISSA_WIDTH   = `IFP_MAN_WIDTH,
+  localparam int ACT_WIDTH        = `IFP_WIDTH,
+  localparam int EXTRA_WIDTH      = `EXTRA_BIT_WIDTH,
+  localparam int BLOCK_SIZE       = `BLOCK_SIZE,
+  localparam int SEL_BLOCK_WIDTH  = `SEL_BLOCK_WIDTH,
+  localparam int BLOCK_NUM        = `BLOCK_NUM,
+  localparam int SEL_BLOCK_NUM    = `SEL_BLOCK_NUM,
+  localparam int BLK_IDX_NUM      = `BLK_IDX_NUM,
+  localparam int BLK_BITW         = `BLOCK_IDX_WIDTH
 ) (
   input logic clk_i,
   input logic resetn_i,
@@ -30,7 +30,7 @@ module VX_prealigner import VX_gpu_pkg::*; #(
   input logic valid_i,
   output logic ready_o,
 
-  output logic [NUM_UNIT-1:0][ALIGNED_WIDTH-1:0] int_data_o,
+  output logic [NUM_UNIT-1:0][SEL_BLOCK_WIDTH-1:0] int_data_o,
   output logic [NUM_UNIT-1:0][BLK_BITW-1:0] blk_idx_o,
   output logic [EXP_WIDTH-1:0] max_exp_o,
   output logic valid_o,
@@ -219,7 +219,7 @@ module VX_prealigner import VX_gpu_pkg::*; #(
   // third stage
   //   - transform to 2's complement and concat with block idx
   logic [NUM_UNIT-1:0][SEL_BITW-1:0] sel_portion;
-  logic [NUM_UNIT-1:0][ALIGNED_WIDTH-1:0] int_data;
+  logic [NUM_UNIT-1:0][SEL_BLOCK_WIDTH-1:0] int_data;
   logic [NUM_UNIT-1:0][BLK_BITW-1:0] blk_idx;
 
   generate
@@ -232,7 +232,7 @@ module VX_prealigner import VX_gpu_pkg::*; #(
   endgenerate
 
   // Stage 3 -> Output elastic buffer
-  localparam S3_DATA_WIDTH = NUM_UNIT * ALIGNED_WIDTH + NUM_UNIT * BLK_BITW + EXP_WIDTH;
+  localparam S3_DATA_WIDTH = NUM_UNIT * SEL_BLOCK_WIDTH + NUM_UNIT * BLK_BITW + EXP_WIDTH;
   logic [S3_DATA_WIDTH-1:0] s3_data_in, s3_data_out;
 
   assign s3_data_in = {int_data, blk_idx, max_exp_s2_q};

@@ -1,14 +1,26 @@
 `timescale 1ns / 1ps
 
-module fp32_to_fp16_converter
-  import constants::*;
-(
+module VX_f32_to_f16 (
     input logic                  clk_i,
     input logic                  resetn_i,
+    input logic                  valid_i,
     input logic [FP32_WIDTH-1:0] data_i,
 
+    output logic                  valid_o,
     output logic [FP16_WIDTH-1:0] data_o
 );
+  // FP32 format: 1 sign + 8 exp + 23 mantissa = 32 bits
+  localparam FP32_WIDTH = 32;
+  localparam FP32_SIGN_WIDTH = 1;
+  localparam FP32_EXP_WIDTH = 8;
+  localparam FP32_MANTISSA_WIDTH = 23;
+
+  // FP16 format: 1 sign + 5 exp + 10 mantissa = 16 bits
+  localparam FP16_WIDTH = 16;
+  localparam FP16_SIGN_WIDTH = 1;
+  localparam FP16_EXP_WIDTH = 5;
+  localparam FP16_MANTISSA_WIDTH = 10;
+
   localparam FP32_SIGN_BP = FP32_WIDTH - 1;
   localparam FP32_EXP_BP = FP32_WIDTH - FP32_EXP_WIDTH - 1;
   localparam FP32_MANT_BP = FP32_WIDTH - FP32_EXP_WIDTH - FP32_MANTISSA_WIDTH - 1;
@@ -174,9 +186,11 @@ module fp32_to_fp16_converter
 
   always_ff @(posedge clk_i) begin
     if (~resetn_i) begin
-      data_o <= '0;
+      valid_o <= 1'b0;
+      data_o  <= '0;
     end else begin
-      data_o <= {fp16_sign, fp16_exp, fp16_mant};
+      valid_o <= valid_i;
+      data_o  <= {fp16_sign, fp16_exp, fp16_mant};
     end
   end
 

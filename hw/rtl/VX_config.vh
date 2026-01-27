@@ -971,6 +971,8 @@
 `define IFP_MAN_WIDTH 10
 
 `define W_BIT_WIDTH 4
+`define ZP_WIDTH 8
+`define SCALE_WIDTH 16
 
 `define O_BIT_WIDTH 41
 
@@ -1007,11 +1009,20 @@ for block_size in range(1, full_bitwidth+1):
 `define SEL_BLOCK_WIDTH (`SEL_BLOCK_NUM * `BLOCK_SIZE + 1)
 
 `define SAMF_SUM_WIDTH (`SIGNED_ALIGNED_MAN_FULL_WIDTH + `CLOG2(`MXU_ROW)) // 36
+`define ACT_REDUCE_IN_WIDTH (`SEL_BLOCK_WIDTH + `ZP_WIDTH)
+`define ACT_REDUCE_OUT_WIDTH (`ACT_REDUCE_IN_WIDTH + `CLOG2(`MXU_ROW))
+
+`define ZP_MUL_IN_WIDTH (`SEL_BLOCK_WIDTH + `CLOG2(`MXU_ROW))
+`define ZP_MUL_OUT_WIDTH (`ZP_MUL_IN_WIDTH + `ZP_WIDTH)
+
+`define PRE_PROC_OUT_DW (`ALIGNED_MAN_PADDED_FULL_WIDTH + `ZP_WIDTH + `CLOG2(`MXU_ROW))
 
 `define MXU_ROW 16
 `define MXU_COL 16
+`define MXU_MAX_DIM `MAX(`MXU_ROW, `MXU_COL)
 `define MXU_ROW_TILE 1
 `define MXU_COL_TILE 1
+`define MXU_WLOAD_NUM 2
 
 `define GEMM_INPUT_DATA_SIZE      (2*`MXU_ROW) // 32 bytes 
 `define GEMM_WEIGHT_DATA_SIZE     (`MXU_COL/2) // 8 bytes
@@ -1021,11 +1032,23 @@ for block_size in range(1, full_bitwidth+1):
 
 `define GEMM_CFG_REG_NUM 16
 
-`define ZP_WIDTH 16
 `define ZP_TRANS_WIDTH (`ZP_WIDTH + 3)
 `define ZP_MUL_OUT_WIDTH (`SAMF_SUM_WIDTH + `ZP_TRANS_WIDTH)
 
+`define GEMM_ACC_MEM_DEPTH 1024
+`define GEMM_ACC_MEM_TOT_SIZE ((`GEMM_ACC_MEM_DEPTH) * (`GEMM_PSUM_DATA_SIZE) * 4)
+`define GEMM_ACC_MEM_ADDR_WIDTH `CLOG2(`GEMM_ACC_MEM_TOT_SIZE)
+`define GEMM_ACC_MEM_BANK_WIDTH (`MXU_COL * 4) // 64 bytes per bank
+`define GEMM_ACC_MEM_BANK_ADDR_WIDTH (`GEMM_ACC_MEM_ADDR_WIDTH - 2)
+`define GEMM_ACC_MAX_CNT `CLOG2((2*`GEMM_ACC_MEM_DEPTH))
+
+`define MERGE_OUT_BW (`O_BIT_WIDTH + 1)
+
 // DMA parameters
 `define DMA_CFG_REG_NUM 16
+
+// quant
+`define QDIR_COL 0
+`define QDIR_ROW 1
 
 `endif // VX_CONFIG_VH

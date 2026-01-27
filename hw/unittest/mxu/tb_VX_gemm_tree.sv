@@ -18,11 +18,11 @@ module tb_VX_gemm_tree import VX_gpu_pkg::*;();
   localparam int BLOCK_SIZE          = `BLOCK_SIZE;
   localparam int BLOCK_NUM           = `BLOCK_NUM;
   localparam int SEL_BLOCK_NUM       = `SEL_BLOCK_NUM;
-  localparam int ROW_SIZE            = 16;
-  localparam int COL_SIZE            = 16;
-  localparam int TILE_COL_SIZE       = 2;
-  localparam int WEIGHT_LOAD_ROW_NUM = 2;
-  localparam int WEIGHT_LOAD_COL_NUM = 2;
+  localparam int ROW_SIZE            = `MXU_ROW;
+  localparam int COL_SIZE            = `MXU_COL;
+  localparam int TILE_COL_SIZE       = `MXU_COL_TILE;
+  localparam int WEIGHT_LOAD_ROW_NUM = `MXU_WLOAD_NUM;
+  localparam int WEIGHT_LOAD_COL_NUM = `MXU_WLOAD_NUM;
   localparam int BLK_BITW            = `BLOCK_IDX_WIDTH;
 
   parameter int PIPE_MULT        = 1;
