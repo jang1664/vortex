@@ -764,6 +764,21 @@ package VX_gpu_pkg;
        logic [`XLEN-1:0]         rs2_data;
    } gemm_unified_cmd_t; // it can be union
 
+   typedef struct packed {
+      logic quant_dir; // 0:col, 1:row
+      logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0] acc_mem_base_addr;
+      logic [`GEMM_ACC_MAX_CNT-1:0] acc_cnt;
+
+      logic wreg_use_idx;
+      logic sreg_use_idx;
+      logic zreg_use_idx;
+
+      logic wreg_wr_idx, sreg_wr_idx, zreg_wr_idx;
+      logic weight_load_dir;
+
+      logic is_load;
+   } gemm_unit_ctrl_t;
+
     function automatic int get_pipe_stage(input int row_size, input int PIPE_INTERVAL);
       int num_stages;
       int pipe_stages;
