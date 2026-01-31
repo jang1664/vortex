@@ -65,6 +65,7 @@ parse_args() {
             --threads=*) CONFIGS=$(add_option "$CONFIGS" "-DNUM_THREADS=${i#*=}") ;;
             --l2cache)  CONFIGS=$(add_option "$CONFIGS" "-DL2_ENABLE") ;;
             --l3cache)  CONFIGS=$(add_option "$CONFIGS" "-DL3_ENABLE") ;;
+            --tcu_enable) CONFIGS=$(add_option "$CONFIGS" "-DEXT_TCU_ENABLE") ;;
             --perf=*)   CONFIGS=$(add_option "$CONFIGS" "-DPERF_ENABLE"); PERF_CLASS=${i#*=} ;;
             --debug=*)  DEBUG=1; DEBUG_LEVEL=${i#*=} ;;
             --scope)    SCOPE=1; ;;
