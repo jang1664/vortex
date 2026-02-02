@@ -6,48 +6,6 @@ Example: Using Vortex operations in PyTorch
 import os
 import sys
 
-# Setup environment before importing torch and vortex_torch
-def setup_vortex_env():
-    # Set VORTEX_DRIVER (default: simx, can override via existing env var)
-    if 'VORTEX_DRIVER' not in os.environ:
-        os.environ['VORTEX_DRIVER'] = 'simx'
-    
-    # Get vortex paths
-    vortex_home = os.environ.get('VORTEX_HOME', '/root/workspace/vortex')
-    vortex_runtime = os.path.join(vortex_home, 'build', 'runtime')
-    
-    # Check if we need to re-exec with proper LD_LIBRARY_PATH
-    ld_library_path = os.environ.get('LD_LIBRARY_PATH', '')
-    needs_reexec = False
-    
-    # Check if vortex runtime is in LD_LIBRARY_PATH
-    if vortex_runtime not in ld_library_path:
-        needs_reexec = True
-        if ld_library_path:
-            ld_library_path = f"{vortex_runtime}:{ld_library_path}"
-        else:
-            ld_library_path = vortex_runtime
-    
-    # Re-execute this script with proper environment if needed
-    if needs_reexec and '__VORTEX_ENV_SET__' not in os.environ:
-        print(f"Setting up Vortex environment and re-executing...")
-        print(f"  VORTEX_DRIVER={os.environ['VORTEX_DRIVER']}")
-        print(f"  LD_LIBRARY_PATH={ld_library_path}")
-        print()
-        
-        env = os.environ.copy()
-        env['LD_LIBRARY_PATH'] = ld_library_path
-        env['__VORTEX_ENV_SET__'] = '1'
-        
-        os.execve(sys.executable, [sys.executable] + sys.argv, env)
-    
-    # If we're here, environment is already set
-    print(f"Vortex Driver: {os.environ['VORTEX_DRIVER']}")
-    print(f"Vortex Runtime: {vortex_runtime}")
-    print()
-
-setup_vortex_env()
-
 import torch
 import vortex_torch as vx
 
@@ -56,19 +14,19 @@ def test_rmsnorm():
     
     # Create input tensors
     batch, seq, hidden = 2, 8, 128
-    x = torch.randn(batch, seq, hidden, dtype=torch.float32)
-    gamma = torch.ones(hidden, dtype=torch.float32)
+    x = torch.randn(batch, seq, hidden, dtype=torch.float16)
+    gamma = torch.ones(hidden, dtype=torch.float16)
     eps = 1e-6
     
-    # CPU reference implementation
+    # CPU reference implementation (use fp32 for fair comparison)
     def rmsnorm_cpu(input, gamma, eps):
         # RMS = sqrt(mean(x^2))
         variance = input.pow(2).mean(dim=-1, keepdim=True)
         input_normed = input * torch.rsqrt(variance + eps)
         return input_normed * gamma
     
-    # Run on CPU
-    output_cpu = rmsnorm_cpu(x, gamma, eps)
+    # Run on CPU (convert to fp32 for fair comparison with Vortex internal computation)
+    output_cpu = rmsnorm_cpu(x.float(), gamma.float(), eps).half()
     
     # Run on Vortex
     output_vortex = vx.rmsnorm(x, gamma, eps=eps)
@@ -76,7 +34,7 @@ def test_rmsnorm():
     # Compare results
     max_diff = (output_cpu - output_vortex).abs().max().item()
     mean_diff = (output_cpu - output_vortex).abs().mean().item()
-    max_rel_error = ((output_cpu - output_vortex).abs() / (output_cpu.abs() + 1e-8)).max().item()
+    max_rel_error = ((output_cpu - output_vortex).abs() / (output_cpu.abs() + 1e-5)).max().item()
     
     print(f"  Input shape: {x.shape}")
     print(f"  Output shape: {output_vortex.shape}")
@@ -102,17 +60,17 @@ def test_rmsnorm():
 def test_silu():
     print("\nTesting SiLU...")
     
-    x = torch.randn(2, 8, 128, dtype=torch.float32)
+    x = torch.randn(2, 8, 128, dtype=torch.float16)
     
-    # CPU reference
-    output_cpu = x * torch.sigmoid(x)
+    # CPU reference (use fp32 for fair comparison)
+    output_cpu = (x.float() * torch.sigmoid(x.float())).half()
     
     # Vortex
     output_vortex = vx.silu(x)
     
     # Compare
     max_diff = (output_cpu - output_vortex).abs().max().item()
-    max_rel_error = ((output_cpu - output_vortex).abs() / (output_cpu.abs() + 1e-8)).max().item()
+    max_rel_error = ((output_cpu - output_vortex).abs() / (output_cpu.abs() + 1e-5)).max().item()
     
     print(f"  Input shape: {x.shape}")
     print(f"  Output shape: {output_vortex.shape}")
@@ -128,11 +86,11 @@ def test_silu():
 def test_eladd():
     print("\nTesting Element-wise Add...")
     
-    a = torch.randn(2, 8, 128, dtype=torch.float32)
-    b = torch.randn(2, 8, 128, dtype=torch.float32)
+    a = torch.randn(2, 8, 128, dtype=torch.float16)
+    b = torch.randn(2, 8, 128, dtype=torch.float16)
     
-    # CPU reference
-    output_cpu = a + b
+    # CPU reference (use fp32 for fair comparison)
+    output_cpu = (a.float() + b.float()).half()
     
     # Vortex
     output_vortex = vx.eladd(a, b)
@@ -149,18 +107,134 @@ def test_eladd():
         raise RuntimeError(f"Element-wise Add failed: max diff {max_diff} > 1e-5")
 
 
+def test_elmul():
+    print("\nTesting Element-wise Multiply...")
+    
+    a = torch.randn(2, 8, 128, dtype=torch.float16)
+    b = torch.randn(2, 8, 128, dtype=torch.float16)
+    
+    # CPU reference (use fp32 for fair comparison)
+    output_cpu = (a.float() * b.float()).half()
+    
+    # Vortex
+    output_vortex = vx.elmul(a, b)
+    
+    # Compare
+    max_diff = (output_cpu - output_vortex).abs().max().item()
+    max_rel_error = ((output_cpu - output_vortex).abs() / (output_cpu.abs() + 1e-5)).max().item()
+    
+    print(f"  Output shape: {output_vortex.shape}")
+    print(f"  Max absolute diff: {max_diff:.6f}")
+    print(f"  Max relative error: {max_rel_error*100:.2f}%")
+    
+    if max_rel_error < 0.01:
+        print("  ✓ Element-wise Multiply passed")
+    else:
+        raise RuntimeError(f"Element-wise Multiply failed: max relative error {max_rel_error*100:.2f}% > 1%")
+
+
+def test_softmax():
+    print("\nTesting Softmax...")
+    
+    batch, num_heads, seq_q, seq_k = 2, 4, 8, 8
+    x = torch.randn(batch, num_heads, seq_q, seq_k, dtype=torch.float16)
+    scale = 0.125  # 1/sqrt(64) for head_dim=64
+    
+    # CPU reference (use fp32 for fair comparison)
+    output_cpu = torch.softmax(x.float() * scale, dim=-1).half()
+    
+    # Vortex
+    output_vortex = vx.softmax(x, dim=-1, scale=scale)
+    
+    # Compare
+    max_diff = (output_cpu - output_vortex).abs().max().item()
+    max_rel_error = ((output_cpu - output_vortex).abs() / (output_cpu.abs() + 1e-5)).max().item()
+    
+    print(f"  Input shape: {x.shape}")
+    print(f"  Output shape: {output_vortex.shape}")
+    print(f"  Max absolute diff: {max_diff:.6f}")
+    print(f"  Max relative error: {max_rel_error*100:.2f}%")
+    
+    # Check if sum is close to 1.0
+    sum_check = output_vortex.sum(dim=-1)
+    sum_diff = (sum_check - 1.0).abs().max().item()
+    print(f"  Sum check (should be 1.0): max diff = {sum_diff:.6f}")
+    
+    if max_rel_error < 0.01 and sum_diff < 0.01:
+        print("  ✓ Softmax passed")
+    else:
+        raise RuntimeError(f"Softmax failed: max relative error {max_rel_error*100:.2f}% > 1% or sum check failed")
+
+
+def test_rope():
+    print("\nTesting RoPE (Rotary Position Embedding)...")
+    
+    batch, seq_len, num_heads, head_dim = 2, 4, 4, 64
+    x = torch.randn(batch, seq_len, num_heads, head_dim, dtype=torch.float16)
+    
+    # Precompute cos/sin cache
+    max_seq_len = 128
+    half_dim = head_dim // 2
+    freqs = 1.0 / (10000.0 ** (torch.arange(0, half_dim, dtype=torch.float16) / half_dim))
+    positions = torch.arange(max_seq_len, dtype=torch.float16)
+    angles = positions.unsqueeze(1) * freqs.unsqueeze(0)
+    cos_cache = torch.cos(angles)
+    sin_cache = torch.sin(angles)
+    
+    # CPU reference RoPE implementation
+    def rope_cpu(x, cos_cache, sin_cache):
+        batch, seq_len, num_heads, head_dim = x.shape
+        half_dim = head_dim // 2
+        
+        # Split into two halves
+        x1 = x[..., :half_dim]
+        x2 = x[..., half_dim:]
+        
+        # Get cos/sin for current positions
+        cos = cos_cache[:seq_len].unsqueeze(0).unsqueeze(2)  # [1, seq_len, 1, half_dim]
+        sin = sin_cache[:seq_len].unsqueeze(0).unsqueeze(2)
+        
+        # Apply rotation
+        out1 = x1 * cos - x2 * sin
+        out2 = x1 * sin + x2 * cos
+        
+        return torch.cat([out1, out2], dim=-1)
+    
+    # Run on CPU (use fp32 for fair comparison)
+    output_cpu = rope_cpu(x.float(), cos_cache.float(), sin_cache.float()).half()
+    
+    # Run on Vortex
+    output_vortex = vx.rope(x, cos_cache, sin_cache)
+    
+    # Compare
+    max_diff = (output_cpu - output_vortex).abs().max().item()
+    max_rel_error = ((output_cpu - output_vortex).abs() / (output_cpu.abs() + 1e-5)).max().item()
+    
+    print(f"  Input shape: {x.shape}")
+    print(f"  Output shape: {output_vortex.shape}")
+    print(f"  Max absolute diff: {max_diff:.6f}")
+    print(f"  Max relative error: {max_rel_error*100:.2f}%")
+    
+    # fp16 has lower precision, especially with trig functions
+    # Allow 1% relative error or 0.005 absolute error
+    if max_rel_error < 0.01 or max_diff < 0.005:
+        print("  ✓ RoPE passed")
+    else:
+        raise RuntimeError(f"RoPE failed: max relative error {max_rel_error*100:.2f}% > 1% and max diff {max_diff:.6f} > 0.005")
+
+
 def test_transformer_block():
     """Simulate a transformer block using Vortex ops"""
     print("\n" + "="*60)
     print("Transformer Block Simulation")
     print("="*60)
     
-    batch, seq, hidden = 1, 4, 64
+    batch, seq, hidden = 4, 16, 128
     
     # Input
-    x_vortex = torch.randn(batch, seq, hidden, dtype=torch.float32)
+    x_vortex = torch.randn(batch, seq, hidden, dtype=torch.float16)
     x_cpu = x_vortex.clone()
-    gamma = torch.ones(hidden, dtype=torch.float32)
+    gamma = torch.ones(hidden, dtype=torch.float16)
     
     # CPU reference rmsnorm
     def rmsnorm_cpu(input, gamma, eps):
@@ -176,11 +250,11 @@ def test_transformer_block():
     attn_out_vortex = x_vortex  # placeholder
     x_vortex = vx.eladd(attn_out_vortex, residual_vortex)
     
-    # Attention block - CPU
+    # Attention block - CPU (use fp32 for fair comparison)
     residual_cpu = x_cpu.clone()
-    x_cpu = rmsnorm_cpu(x_cpu, gamma, 1e-6)
+    x_cpu = rmsnorm_cpu(x_cpu.float(), gamma.float(), 1e-6).half()
     attn_out_cpu = x_cpu  # placeholder
-    x_cpu = attn_out_cpu + residual_cpu
+    x_cpu = (attn_out_cpu.float() + residual_cpu.float()).half()
     
     diff1 = (x_cpu - x_vortex).abs().max().item()
     print(f"2. After attention block - max diff: {diff1:.6f}")
@@ -191,22 +265,22 @@ def test_transformer_block():
     gate = torch.randn_like(x_vortex)
     up = torch.randn_like(x_vortex)
     gate_act_vortex = vx.silu(gate)
-    ffn_out_vortex = gate_act_vortex * up
+    ffn_out_vortex = vx.elmul(gate_act_vortex, up)  # Use elmul instead of *
     x_vortex = vx.eladd(ffn_out_vortex, residual_vortex)
     
-    # FFN block - CPU
+    # FFN block - CPU (use fp32 for fair comparison)
     residual_cpu = x_cpu.clone()
-    x_cpu = rmsnorm_cpu(x_cpu, gamma, 1e-6)
-    gate_act_cpu = gate * torch.sigmoid(gate)
-    ffn_out_cpu = gate_act_cpu * up
-    x_cpu = ffn_out_cpu + residual_cpu
+    x_cpu = rmsnorm_cpu(x_cpu.float(), gamma.float(), 1e-6).half()
+    gate_act_cpu = (gate.float() * torch.sigmoid(gate.float())).half()
+    ffn_out_cpu = (gate_act_cpu.float() * up.float()).half()
+    x_cpu = (ffn_out_cpu.float() + residual_cpu.float()).half()
     
     diff2 = (x_cpu - x_vortex).abs().max().item()
     print(f"3. After FFN block - max diff: {diff2:.6f}")
     
     # Final comparison
     max_diff = (x_cpu - x_vortex).abs().max().item()
-    max_rel_error = ((x_cpu - x_vortex).abs() / (x_cpu.abs() + 1e-8)).max().item()
+    max_rel_error = ((x_cpu - x_vortex).abs() / (x_cpu.abs() + 1e-5)).max().item()
     
     print(f"\n✓ Transformer block complete!")
     print(f"  Final max diff: {max_diff:.6f}")
@@ -227,6 +301,9 @@ if __name__ == '__main__':
         test_rmsnorm()
         test_silu()
         test_eladd()
+        test_elmul()
+        test_softmax()
+        test_rope()
         test_transformer_block()
         
         print("\n" + "="*60)
