@@ -3,3 +3,8 @@
 *.cache
 *.code-workspace
 miscs/apptainer/vortex.sif
+/python/trace/
+/python/__pycache__/
+/python/vortex_torch.egg-info/
+/python/vortex_torch/__pycache__/
+/python/vortex_torch/_C.cpython-*-linux-*.so
