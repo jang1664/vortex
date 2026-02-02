@@ -7,20 +7,20 @@
   - Focus on MAC operations and adder tree
 */
 
-module VX_pe_tree_new #(
-    parameter  int IN_DW            = -1,
-    parameter  int WEIGHT_DW        = -1,
-    parameter  int OUT_DW           = -1,
-    parameter  int BLOCK_SIZE       = -1,
-    parameter  int BLOCK_NUM        = -1,
-    parameter  int SEL_BLOCK_NUM    = -1,
-    parameter  int ROW_SIZE         = -1,
-    parameter  int TILE_COL_SIZE    = -1,
-    parameter  int PIPE_MULT        = 0,
-    parameter  int PIPE_ALIGN       = 0,
-    parameter  int PIPELINE_STAGES  = 0,
-    localparam int BLK_IDX_NUM      = BLOCK_NUM - SEL_BLOCK_NUM + 1,
-    localparam int BLK_BITW         = $clog2(BLK_IDX_NUM)
+module VX_pe_tree_new import VX_gpu_pkg::*; #(
+    parameter  int IN_DW                = -1,
+    parameter  int WEIGHT_DW            = -1,
+    parameter  int OUT_DW               = -1,
+    parameter  int BLOCK_SIZE           = -1,
+    parameter  int BLOCK_NUM            = -1,
+    parameter  int SEL_BLOCK_NUM        = -1,
+    parameter  int ROW_SIZE             = -1,
+    parameter  int TILE_COL_SIZE        = -1,
+    parameter  int PIPE_MULT            = 0,
+    parameter  int PIPE_ALIGN           = 0,
+    parameter  int PIPELINE_STAGE_INTV  = 0,
+    localparam int BLK_IDX_NUM          = BLOCK_NUM - SEL_BLOCK_NUM + 1,
+    localparam int BLK_BITW             = $clog2(BLK_IDX_NUM)
 ) (
     input  logic clk_i,
     input  logic resetn_i,
@@ -35,7 +35,7 @@ module VX_pe_tree_new #(
 );
 
   localparam int MAC_DW = IN_DW + WEIGHT_DW + BLK_BITW;
-  localparam int NUM_ADDER_STAGES = $clog2(ROW_SIZE);
+  localparam int PIPELINE_STAGES = get_pipe_stage_bitmask(ROW_SIZE, PIPELINE_STAGE_INTV);
 
   // MAC and Adder Tree for each column
   generate
@@ -166,14 +166,19 @@ module VX_pe_tree_new #(
 
 `ifdef DBG_TRACE_GEMM
   always @(posedge clk_i) begin
-    if (input_valid_i) begin
-      `TRACE(3, ("%t: PE_TREE: Processing input\n", $time))
-      // Show first two inputs and weights for debugging
-      for (integer r = 0; r < 2; r++) begin
-        `TRACE(3, ("  ifmap_i[%0d]=0x%0h, blk_sidx_i[%0d]=%0d\n", r, ifmap_i[r], r, blk_sidx_i[r]))
-        for (integer c = 0; c < 2; c++) begin
-          `TRACE(3, ("    weight_i[%0d][%0d]=0x%0h\n", r, c, weight_i[r][c]))
-        end
+    if (resetn_i) begin
+      // Input processing
+      if (input_valid_i) begin
+        `TRACE(3, ("%t: PE_TREE: Input - ifmap[0]=0x%0h, blk_idx[0]=%0d\n",
+            $time, ifmap_i[0], blk_sidx_i[0]))
+        `TRACE(4, ("%t: PE_TREE: weight[0][0:1]={0x%0h, 0x%0h}, weight[1][0:1]={0x%0h, 0x%0h}\n",
+            $time, weight_i[0][0], weight_i[0][1], weight_i[1][0], weight_i[1][1]))
+      end
+
+      // Output valid
+      if (valid_o) begin
+        `TRACE(3, ("%t: PE_TREE: Output valid - ps[0]=0x%0h, ps[1]=0x%0h\n",
+            $time, ps_o[0], ps_o[1]))
       end
     end
   end

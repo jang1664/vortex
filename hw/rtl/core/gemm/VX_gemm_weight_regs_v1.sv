@@ -56,6 +56,7 @@ module VX_gemm_weight_regs_v1 #(
               end
             end else begin
               // Shift weights from previous rows
+              //TODO: use generate if for avoiding warning
               if (ready_weight_i) begin
                 mem[row][col][in_weight_sel_i] <= mem[row - WEIGHT_LOAD_ROW_NUM][col][in_weight_sel_i];
               end

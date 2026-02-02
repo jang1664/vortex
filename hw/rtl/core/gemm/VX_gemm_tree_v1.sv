@@ -1,6 +1,7 @@
 `timescale 1ns / 1ps
+`include "VX_define.vh"
 
-module VX_gemm_tree_v1 #(
+module VX_gemm_tree_v1 import VX_gpu_pkg::*; #(
     parameter  int IN_DW                 = `IFP_WIDTH,
     parameter  int WEIGHT_DW             = `W_BIT_WIDTH,
     parameter  int OUT_DW                = `O_BIT_WIDTH,
@@ -12,9 +13,9 @@ module VX_gemm_tree_v1 #(
     parameter  int TILE_COL_SIZE         = `MXU_COL_TILE,
     parameter  int WEIGHT_LOAD_ROW_NUM   = `MXU_WLOAD_NUM,  // Number of weight rows loaded at once (ROW_SIZE % WEIGHT_LOAD_ROW_NUM == 0)
     parameter  int WEIGHT_LOAD_COL_NUM   = `MXU_WLOAD_NUM,  // Number of weight columns loaded at once (COL_SIZE % WEIGHT_LOAD_COL_NUM == 0)
-    parameter  int PIPELINE_STAGES       = 2,  // Pipeline every N stages
-    parameter  int PIPE_MULT             = 1,  // 1 to enable pipelined multiplier
-    parameter  int PIPE_ALIGN            = 1,  // 1 to enable pipelined aligner
+    parameter  int PIPELINE_STAGE_INTV   = `MXU_PIPE_ADD_INTV,  // Pipeline stage interval
+    parameter  int PIPE_MULT             = `MXU_PIPE_MUL_EN,  // 1 to enable pipelined multiplier
+    parameter  int PIPE_ALIGN            = `MXU_PIPE_ALIGN_EN,  // 1 to enable pipelined aligner
     localparam int BLK_BITW              = `BLOCK_IDX_WIDTH
 ) (
 
@@ -34,13 +35,14 @@ module VX_gemm_tree_v1 #(
 );
 
   // Static assertion: WEIGHT_LOAD_ROW_NUM must equal WEIGHT_LOAD_COL_NUM
-  initial begin
-    if (WEIGHT_LOAD_ROW_NUM != WEIGHT_LOAD_COL_NUM) begin
-      $error("WEIGHT_LOAD_ROW_NUM (%0d) must equal WEIGHT_LOAD_COL_NUM (%0d)", 
-             WEIGHT_LOAD_ROW_NUM, WEIGHT_LOAD_COL_NUM);
-      $finish;
-    end
-  end
+  `STATIC_ASSERT(WEIGHT_LOAD_ROW_NUM == WEIGHT_LOAD_COL_NUM, ("WEIGHT_LOAD_ROW_NUM (%0d) must equal WEIGHT_LOAD_COL_NUM (%0d)", 
+                                                               WEIGHT_LOAD_ROW_NUM, WEIGHT_LOAD_COL_NUM))
+  `STATIC_ASSERT(ROW_SIZE == COL_SIZE, ("ROW_SIZE (%0d) must equal COL_SIZE (%0d) for GEMM tree structure", 
+                                        ROW_SIZE, COL_SIZE))
+  `STATIC_ASSERT(ROW_SIZE % WEIGHT_LOAD_ROW_NUM == 0, ("ROW_SIZE (%0d) must be multiple of WEIGHT_LOAD_ROW_NUM (%0d)", 
+                                                       ROW_SIZE, WEIGHT_LOAD_ROW_NUM))
+  `STATIC_ASSERT(COL_SIZE%TILE_COL_SIZE == 0, ("COL_SIZE (%0d) must be multiple of TILE_COL_SIZE (%0d)", 
+                                               COL_SIZE, TILE_COL_SIZE))
 
   //internal siganls
   logic [COL_SIZE/TILE_COL_SIZE-1:0][ROW_SIZE-1:0][IN_DW-1:0] ifmap_q;
@@ -122,7 +124,7 @@ module VX_gemm_tree_v1 #(
             .SEL_BLOCK_NUM(SEL_BLOCK_NUM),
             .ROW_SIZE(ROW_SIZE),
             .TILE_COL_SIZE(TILE_COL_SIZE),
-            .PIPELINE_STAGES(PIPELINE_STAGES),
+            .PIPELINE_STAGE_INTV(PIPELINE_STAGE_INTV),
             .PIPE_MULT(PIPE_MULT),
             .PIPE_ALIGN(PIPE_ALIGN)
         ) u_pe (
@@ -146,7 +148,7 @@ module VX_gemm_tree_v1 #(
             .SEL_BLOCK_NUM(SEL_BLOCK_NUM),
             .ROW_SIZE(ROW_SIZE),
             .TILE_COL_SIZE(TILE_COL_SIZE),
-            .PIPELINE_STAGES(PIPELINE_STAGES),
+            .PIPELINE_STAGE_INTV(PIPELINE_STAGE_INTV),
             .PIPE_MULT(PIPE_MULT),
             .PIPE_ALIGN(PIPE_ALIGN)
         ) u_pe (
@@ -166,12 +168,29 @@ module VX_gemm_tree_v1 #(
 
 `ifdef DBG_TRACE_GEMM
   always @(posedge clk_i) begin
-    if (ready_weight_i) begin
-      `TRACE(3, ("%t: GEMM_TREE: Weight loading dir=%0d\n", $time, weight_load_dir_i))
-    end
-    
-    if (input_valid_i) begin
-      `TRACE(3, ("%t: GEMM_TREE: Input processing\n", $time))
+    if (resetn_i) begin
+      // Weight loading event
+      if (ready_weight_i) begin
+        `TRACE(2, ("%t: GEMM_TREE: Weight load - dir=%0d, in_sel=%0d, out_sel=%0d\n",
+            $time, weight_load_dir_i, in_weight_sel_i, out_weight_sel_i))
+        `TRACE(4, ("%t: GEMM_TREE: Weight[0][0:3]={0x%0h, 0x%0h, 0x%0h, 0x%0h}\n",
+            $time, weight_i[0][0], weight_i[0][1], weight_i[0][2], weight_i[0][3]))
+      end
+
+      // Input processing event
+      if (input_valid_i) begin
+        `TRACE(2, ("%t: GEMM_TREE: Input valid - blk_idx[0]=%0d\n", $time, blk_sidx_i[0]))
+        `TRACE(4, ("%t: GEMM_TREE: ifmap[0:3]={0x%0h, 0x%0h, 0x%0h, 0x%0h}\n",
+            $time, ifmap_i[0], ifmap_i[1], ifmap_i[2], ifmap_i[3]))
+      end
+
+      // Output valid events (per tile)
+      for (integer t = 0; t < COL_SIZE/TILE_COL_SIZE; t++) begin
+        if (output_valid_o[t]) begin
+          `TRACE(2, ("%t: GEMM_TREE: Tile[%0d] output valid - ps[0]=0x%0h\n",
+              $time, t, ps_o[t*TILE_COL_SIZE]))
+        end
+      end
     end
   end
 `endif
