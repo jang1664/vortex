@@ -1042,6 +1042,15 @@ for block_size in range(1, full_bitwidth+1):
 `define GEMM_ACC_MEM_BANK_ADDR_WIDTH (`GEMM_ACC_MEM_ADDR_WIDTH - 2)
 `define GEMM_ACC_MAX_CNT `CLOG2((2*`GEMM_ACC_MEM_DEPTH))
 
+// -------------------------------------------------------
+//  gemm unit pipeline delays
+// -------------------------------------------------------
+`define MXU_PIPE_MUL_EN 1
+`define MXU_PIPE_ALIGN_EN 1
+`define MXU_PIPE_ADD_INTV 2
+
+`define ACT_REDUCE_PIPE_INTV 2
+
 `define MERGE_OUT_BW (`O_BIT_WIDTH + 1)
 
 // DMA parameters

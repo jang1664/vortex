@@ -773,25 +773,53 @@ package VX_gpu_pkg;
       logic sreg_use_idx;
       logic zreg_use_idx;
 
-      logic wreg_wr_idx, sreg_wr_idx, zreg_wr_idx;
-      logic weight_load_dir;
-
       logic is_load;
    } gemm_unit_ctrl_t;
 
-    function automatic int get_pipe_stage(input int row_size, input int PIPE_INTERVAL);
+    function automatic int get_pipe_stage_bitmask(input int row_size, input int PIPE_INTERVAL);
+      /*
+        - output of component : one stage
+          - If adder tree with 4 inputs, it has 2 stages.
+        - PIPE_INTERVAL : interval for insert pipeline reg
+          - if 2, stage 1, 3, 5, ...
+          - if 3, stage 2, 5, 8, ...
+      */
       int num_stages;
       int pipe_stages;
       
       // Calculate number of adder tree stages
-      // NUM_STAGES = $clog2(ROW_SIZE) + 1
-      num_stages = $clog2(row_size) + 1;
+      num_stages = $clog2(row_size);
       
       // Generate bitmask: set bit to 1 every PIPE_INTERVAL stages
       pipe_stages = 0;
       for (int i = 0; i < num_stages; i++) begin
-        if (i % PIPE_INTERVAL == 0) begin
+        if ((i+1) % PIPE_INTERVAL == 0) begin
           pipe_stages = pipe_stages | (1 << i);
+        end
+      end
+      
+      return pipe_stages;
+    endfunction
+
+    function automatic int get_pipe_stage_num(input int row_size, input int PIPE_INTERVAL);
+      /*
+        - output of component : one stage
+          - If adder tree with 4 inputs, it has 2 stages.
+        - PIPE_INTERVAL : interval for insert pipeline reg
+          - if 2, stage 1, 3, 5, ...
+          - if 3, stage 2, 5, 8, ...
+      */
+      int num_stages;
+      int pipe_stages;
+      
+      // Calculate number of adder tree stages
+      num_stages = $clog2(row_size);
+      
+      // Generate bitmask: set bit to 1 every PIPE_INTERVAL stages
+      pipe_stages = 0;
+      for (int i = 0; i < num_stages; i++) begin
+        if ((i+1) % PIPE_INTERVAL == 0) begin
+          pipe_stages += 1; 
         end
       end
       
