@@ -1,5 +1,12 @@
 `include "VX_define.vh"
 
+/*
+  - weight write features
+    - addr[0]: wreg_wr_idx
+    - addr[1]: weight_load_dir
+    weights are written like fifo
+*/
+
 module VX_gemm_unit import VX_gpu_pkg::*; #(
     parameter `STRING INSTANCE_ID = ""
 ) (
@@ -35,6 +42,16 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     localparam SCALE_REG1_BASE = SCALE_REG_SIZE;
     localparam ZP_REG0_BASE    = SCALE_REG_SIZE * 2;
     localparam ZP_REG1_BASE    = SCALE_REG_SIZE * 2 + ZP_REG_SIZE;
+
+    // pipeline delays (reference point is prealigner output)
+    localparam DEFAULT_OUT_DLY = 1;
+    localparam ACT_REDUCE_OUT_DLY = get_pipe_stage_num(`MXU_ROW, `ACT_REDUCE_PIPE_INTV);
+    localparam BLK_IDX_DLY = ACT_REDUCE_OUT_DLY;
+    localparam MXU_OUT_DLY = `MXU_PIPE_MUL_EN + `MXU_PIPE_ALIGN_EN + get_pipe_stage_num(`MXU_ROW, `MXU_PIPE_ADD_INTV) + (`MXU_COL / `MXU_COL_TILE);
+    localparam MAX_EXP_IN_DELAY = MXU_OUT_DLY + DEFAULT_OUT_DLY;
+    `STATIC_ASSERT(MXU_OUT_DLY >= ACT_REDUCE_OUT_DLY + DEFAULT_OUT_DLY, ("MXU_OUT_DLY must be >= ACT_REDUCE_OUT_DLY + DEFAULT_OUT_DLY"));
+    localparam PRE_PROC_OUT_DLY = MXU_OUT_DLY - (ACT_REDUCE_OUT_DLY + DEFAULT_OUT_DLY);
+    localparam INTTOFP_OUT_DLY = 2;
 
     // =========================================================================
     // Type Definitions
@@ -161,6 +178,8 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     logic [`MXU_COL/`MXU_COL_TILE-1:0]                          mxu_output_valid;
     logic [`MXU_COL-1:0][`O_BIT_WIDTH-1:0]                      mxu_output_dly;
     logic [`MXU_COL/`MXU_COL_TILE-1:0]                          mxu_output_valid_dly;
+    logic wreg_wr_idx;
+    logic wreg_load_dir;
 
     // -------------------------------------------------------------------------
     // Merger Signals
@@ -173,7 +192,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     // -------------------------------------------------------------------------
     // Int to FP Converter Signals
     // -------------------------------------------------------------------------
-    logic [`MXU_COL-1:0][FP32_WIDTH-1:0]           fp_data_o;
+    logic [`MXU_COL-1:0][FP32_WIDTH-1:0]           int2fp_out_data;
     logic [`MXU_COL-1:0]                           int2fp_output_valid;
 
     // -------------------------------------------------------------------------
@@ -187,7 +206,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     // -------------------------------------------------------------------------
     logic [`MXU_COL-1:0][FP32_WIDTH-1:0]           acc_output_data;
     logic [`MXU_COL-1:0]                           acc_output_valid;
-    logic [`MXU_COL-1:0][FP32_WIDTH-1:0]           acc_mem_in_data;
+    logic [3:0][`MXU_COL-1:0][FP32_WIDTH-1:0]      acc_mem_in_data;
 
     // -------------------------------------------------------------------------
     // Accumulator Memory Signals
@@ -241,13 +260,37 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     assign gemm_unit_if.idle = gemm_idle;
 
     assign mxu_weight              = w_lmem_bus_if.req_data;
-    assign mxu_ready_weight        = w_lmem_bus_if.req_valid;
-    assign w_lmem_bus_if.req_ready = 1'b1;
+    assign w_lmem_bus_if.req_ready = ~in_flight | (gemm_unit_ctrl.wreg_use_idx != w_lmem_bus_if.req_data.addr[0]);
+    assign mxu_ready_weight        = w_lmem_bus_if.req_valid & w_lmem_bus_if.req_ready;
+    assign wreg_wr_idx             = w_lmem_bus_if.req_data.addr[0];
+    assign wreg_load_dir           = w_lmem_bus_if.req_data.addr[1];
 
     assign sz_req_valid = sz_lmem_bus_if.req_valid & sz_lmem_bus_if.req_ready;
     assign sz_req_rw    = sz_lmem_bus_if.req_data.rw;
     assign sz_req_addr  = sz_lmem_bus_if.req_data.addr;
     assign sz_req_data  = sz_lmem_bus_if.req_data.data;
+    always_comb begin
+        sz_lmem_bus_if.req_ready = ~in_flight;
+        case({scale_reg0_wr_en, scale_reg1_wr_en, zp_reg0_wr_en, zp_reg1_wr_en})
+            4'b0001: begin
+              sz_lmem_bus_if.req_ready |= (gemm_unit_ctrl.zreg_use_idx != 1'b1);
+            end
+
+            4'b0010: begin
+              sz_lmem_bus_if.req_ready |= (gemm_unit_ctrl.zreg_use_idx != 1'b0);
+            end
+
+            4'b0100: begin
+              sz_lmem_bus_if.req_ready |= (gemm_unit_ctrl.sreg_use_idx != 1'b1);
+            end
+
+            4'b1000: begin
+              sz_lmem_bus_if.req_ready |= (gemm_unit_ctrl.sreg_use_idx != 1'b0);
+            end
+
+            default: sz_lmem_bus_if.req_ready = 1'b0;
+        endcase
+    end
 
     assign o_lmem_bus_if.rsp_valid = fp16_out_valid[0];
     assign o_lmem_bus_if.rsp_data  = fp16_out_data;
@@ -583,7 +626,8 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     // Input Pipeline Buffer
     // -------------------------------------------------------------------------
     VX_pipe_buffer #(
-        .DATAW(`MXU_ROW * `IFP_WIDTH)
+        .DATAW(`MXU_ROW * `IFP_WIDTH),
+        .DEPTH(DEFAULT_OUT_DLY)
     ) u_in_pipe (
         .clk       (clk),
         .reset     (reset),
@@ -649,7 +693,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
 
     VX_pipe_buffer #(
         .DATAW (`MXU_ROW * `BLOCK_IDX_WIDTH),
-        .DEPTH (1)
+        .DEPTH (BLK_IDX_DLY)
     ) u_prealign_blk_idx_pipe (
         .clk       (clk),
         .reset     (reset),
@@ -663,7 +707,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
 
     VX_pipe_buffer #(
         .DATAW (`IFP_EXP_WIDTH),
-        .DEPTH (1)
+        .DEPTH (MAX_EXP_IN_DELAY)
     ) u_prealign_max_exp_pipe (
         .clk       (clk),
         .reset     (reset),
@@ -685,12 +729,14 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
             assign act_reduce_blk_idx[i] = is_qcol ? prealigner_blk_idx[i] :
                                                      prealigner_blk_idx_q[i];
             assign act_reduce_data_in_shifted[i] = act_reduce_data_in[i] <<< (`BLOCK_SIZE * act_reduce_blk_idx[i]);
-            assign act_reduce_valid_in = is_qcol ? prealigner_out_valid :
-                                                   zp_mul_out_valid;
+            if(i == 0) begin
+              assign act_reduce_valid_in = is_qcol ? prealigner_out_valid : zp_mul_out_valid; // only need to assign once
+            end
             assign zp_mul_in_data[i] = is_qcol ? signed'(act_reduce_data_out) :
                                                  signed'(prealigner_int_data[i]);
-            assign zp_mul_in_valid = is_qcol ? act_reduce_valid_out :
-                                               prealigner_out_valid;
+            if(i == 0) begin
+              assign zp_mul_in_valid = is_qcol ? act_reduce_valid_out : prealigner_out_valid;
+            end
         end
     endgenerate
 
@@ -702,7 +748,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
         .OUT_W           (`ACT_REDUCE_OUT_WIDTH),
         .N               (`MXU_ROW),
         .OP              ("+"),
-        .PIPELINE_STAGES (2)
+        .PIPELINE_STAGES (ACT_REDUCE_OUT_DLY)
     ) u_act_reduce (
         .clk       (clk),
         .reset     (reset),
@@ -716,7 +762,8 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     // Zero Point Multiply Output Register
     // -------------------------------------------------------------------------
     VX_pipe_buffer #(
-        .DATAW(`MXU_MAX_DIM * `ZP_MUL_OUT_WIDTH)
+        .DATAW(`MXU_MAX_DIM * `ZP_MUL_OUT_WIDTH),
+        .DEPTH(DEFAULT_OUT_DLY)
     ) u_zp_mul_out_reg (
         .clk       (clk),
         .reset     (reset),
@@ -733,16 +780,16 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     // -------------------------------------------------------------------------
     generate
         for (genvar i = 0; i < `MXU_COL; i++) begin : gen_pre_proc_out
-            assign pre_proc_out[i]    = is_qcol ? signed'(zp_mul_out_data_q[i]) :
-                                                  act_reduce_data_out;
-            assign pre_proc_in_valid  = is_qcol ? zp_mul_out_valid :
-                                                  act_reduce_valid_out;
+            assign pre_proc_out[i]    = is_qcol ? signed'(zp_mul_out_data_q[i]) : act_reduce_data_out;
+            if(i == 0) begin
+              assign pre_proc_in_valid  = is_qcol ? zp_mul_out_valid : act_reduce_valid_out;
+            end
         end
     endgenerate
 
     VX_pipe_buffer #(
         .DATAW (`MXU_COL * `PRE_PROC_OUT_DW),
-        .DEPTH (2)
+        .DEPTH (PRE_PROC_OUT_DLY)
     ) u_pre_proc_pipe_buffer (
         .clk       (clk),
         .reset     (reset),
@@ -762,11 +809,11 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
         .resetn_i         (~reset),
         .ifmap_i          (prealigner_int_data),
         .weight_i         (mxu_weight),
-        .in_weight_sel_i  (gemm_unit_ctrl.wreg_wr_idx),
+        .in_weight_sel_i  (wreg_wr_idx),
         .out_weight_sel_i (gemm_unit_ctrl.wreg_use_idx),
         .ready_weight_i   (mxu_ready_weight),
         .input_valid_i    (prealigner_out_valid),
-        .weight_load_dir_i(gemm_unit_ctrl.weight_load_dir),
+        .weight_load_dir_i(wreg_load_dir),
         .blk_sidx_i       (prealigner_blk_idx),
         .ps_o             (mxu_output),
         .output_valid_o   (mxu_output_valid)
@@ -803,7 +850,8 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     endgenerate
 
     VX_pipe_buffer #(
-        .DATAW(`MERGE_OUT_BW)
+        .DATAW(`MERGE_OUT_BW),
+        .DEPTH(DEFAULT_OUT_DLY)
     ) u_merge_out_reg (
         .clk       (clk),
         .reset     (reset),
@@ -835,7 +883,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
                 .int_data_i (merger_out_data_q[i]),
                 .max_exp_i  (prealigner_max_exp_q),
                 .valid_i    (merger_out_valid),
-                .fp_data_o  (fp_data_o[i]),
+                .fp_data_o  (int2fp_out_data[i]),
                 .valid_o    (int2fp_output_valid[i])
             );
         end
@@ -851,11 +899,11 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
 
             assign a_valid = int2fp_output_valid[i];
             assign b_valid = int2fp_output_valid[i];
-            assign a_data  = int2fp_output_valid[i] ? fp_data_o[i] : '0;
+            assign a_data  = int2fp_output_valid[i] ? int2fp_out_data[i] : '0;
             assign b_data  = int2fp_output_valid[i] ? scale_regs[gemm_unit_ctrl.sreg_use_idx][i] : '0;
 
             VX_fp16_mul #(
-                .LATENCY (2),
+                .LATENCY (1),
                 .OUT_BUF (1)
             ) u_out_scaler (
                 .clk          (clk),
@@ -879,9 +927,19 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     generate
         for (genvar i = 0; i < `MXU_COL; i++) begin : gen_accumulator
             logic a_valid, b_valid;
+            logic [FP32_WIDTH-1:0] a_data;
+            logic [FP16_EXP_WIDTH-1:0] exp;
+            logic inf;
 
             assign a_valid = scaler_output_valid[0] & ~gemm_unit_ctrl.is_load;
             assign b_valid = a_valid;
+
+            assign exp = scaled_fp_out_data[i][14:7];
+            assign inf = &exp;
+
+            assign a_data[31] = scaled_fp_out_data[i][15];
+            assign a_data[30:23] = inf ? '1 : exp + (FP32_EXP_BIAS - FP16_EXP_BIAS);
+            assign a_data[22:0] = {scaled_fp_out_data[i][6:0], 13'b0};
 
             VX_fp32_add #(
                 .LATENCY (1),
@@ -891,7 +949,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
                 .reset        (reset),
                 .a_valid      (a_valid),
                 .a_ready      (),
-                .a_data       (scaled_fp_out_data[i]),
+                .a_data       (a_data),
                 .b_valid      (b_valid),
                 .b_ready      (),
                 .b_data       (acc_mem_out_data[acc_mem_accum_rd_bank][i]),
@@ -934,7 +992,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
             assign acc_mem_wr_addr[i] = acc_mem_accum_wr_bank_addr;
             assign acc_mem_rd_addr[i] = (acc_mem_accum_rd_bank == i) ? acc_mem_accum_rd_bank_addr :
                                         (acc_mem_out_rd_bank == i)   ? acc_mem_out_rd_bank_addr : '0;
-            assign acc_mem_in_data    = gemm_unit_ctrl.is_load ? scaled_fp_out_data :
+            assign acc_mem_in_data[i] = (gemm_unit_ctrl.is_load && acc_mem_accum_wr_bank == i) ? scaled_fp_out_data :
                                         acc_output_data;
 
             VX_sp_ram #(
@@ -945,9 +1003,9 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
                 .reset (reset),
                 .read  (~acc_mem_wr_en[i]),
                 .write (acc_mem_wr_en[i]),
-                .wren  ('1),
+                .wren  (1'b1),
                 .addr  (acc_mem_wr_en[i] ? acc_mem_wr_addr[i] : acc_mem_rd_addr[i]),
-                .wdata (acc_mem_in_data),
+                .wdata (acc_mem_in_data[i]),
                 .rdata (acc_mem_out_data[i])
             );
         end
@@ -968,5 +1026,125 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
             );
         end
     endgenerate
+
+    // =========================================================================
+    // Debug Tracing
+    // =========================================================================
+`ifdef DBG_TRACE_GEMM
+    // FSM state names for debug
+    function automatic string state_to_str(input gemm_state_t s);
+        case (s)
+            IDLE:    return "IDLE";
+            COMPUTE: return "COMPUTE";
+            default: return "UNKNOWN";
+        endcase
+    endfunction
+
+    always @(posedge clk) begin
+        if (~reset) begin
+            // FSM state transition
+            if (state != next_state) begin
+                `TRACE(2, ("%t: %s: FSM state: %s -> %s\n", $time, INSTANCE_ID, state_to_str(state), state_to_str(next_state)))
+            end
+
+            // GEMM start event
+            if (gemm_unit_if.start) begin
+                `TRACE(1, ("%t: %s: GEMM START - is_load=%b, quant_dir=%b, acc_cnt=%0d, acc_base=0x%0h, wreg=%0d, sreg=%0d, zreg=%0d\n",
+                    $time, INSTANCE_ID,
+                    gemm_unit_if.gemm_unit_ctrl.is_load,
+                    gemm_unit_if.gemm_unit_ctrl.quant_dir,
+                    gemm_unit_if.gemm_unit_ctrl.acc_cnt,
+                    gemm_unit_if.gemm_unit_ctrl.acc_mem_base_addr,
+                    gemm_unit_if.gemm_unit_ctrl.wreg_use_idx,
+                    gemm_unit_if.gemm_unit_ctrl.sreg_use_idx,
+                    gemm_unit_if.gemm_unit_ctrl.zreg_use_idx))
+            end
+
+            // GEMM done event
+            if (gemm_done) begin
+                `TRACE(1, ("%t: %s: GEMM DONE\n", $time, INSTANCE_ID))
+            end
+
+            // Weight loading
+            if (mxu_ready_weight) begin
+                `TRACE(2, ("%t: %s: Weight load - wr_idx=%0d, load_dir=%0d\n",
+                    $time, INSTANCE_ID, wreg_wr_idx, wreg_load_dir))
+            end
+
+            // Scale/Zero register writes
+            if (scale_reg0_wr_en) begin
+                `TRACE(3, ("%t: %s: Scale reg[0][%0d] write: 0x%0h\n",
+                    $time, INSTANCE_ID, sz_reg_idx, sz_req_data[`SCALE_WIDTH-1:0]))
+            end
+            if (scale_reg1_wr_en) begin
+                `TRACE(3, ("%t: %s: Scale reg[1][%0d] write: 0x%0h\n",
+                    $time, INSTANCE_ID, sz_reg_idx, sz_req_data[`SCALE_WIDTH-1:0]))
+            end
+            if (zp_reg0_wr_en) begin
+                `TRACE(3, ("%t: %s: ZP reg[0][%0d] write: 0x%0h\n",
+                    $time, INSTANCE_ID, sz_reg_idx, sz_req_data[`ZP_WIDTH-1:0]))
+            end
+            if (zp_reg1_wr_en) begin
+                `TRACE(3, ("%t: %s: ZP reg[1][%0d] write: 0x%0h\n",
+                    $time, INSTANCE_ID, sz_reg_idx, sz_req_data[`ZP_WIDTH-1:0]))
+            end
+
+            // Input data arrival
+            if (in_pipe_valid_out & in_flight) begin
+                `TRACE(3, ("%t: %s: Input valid - data[0]=0x%0h\n",
+                    $time, INSTANCE_ID, in_pipe_data_out[`IFP_WIDTH-1:0]))
+            end
+
+            // Prealigner output
+            if (prealigner_out_valid) begin
+                `TRACE(3, ("%t: %s: Prealigner out - max_exp=0x%0h, int_data[0]=0x%0h, blk_idx[0]=%0d\n",
+                    $time, INSTANCE_ID, prealigner_max_exp, prealigner_int_data[0], prealigner_blk_idx[0]))
+            end
+
+            // MXU output valid
+            if (merger_in_valid) begin
+                `TRACE(2, ("%t: %s: MXU output valid - out[0]=0x%0h, out[1]=0x%0h\n",
+                    $time, INSTANCE_ID, mxu_output_dly[0], mxu_output_dly[1]))
+            end
+
+            // Merger output
+            if (merger_out_valid) begin
+                `TRACE(3, ("%t: %s: Merger out - data[0]=0x%0h\n",
+                    $time, INSTANCE_ID, merger_out_data_q[0]))
+            end
+
+            // Int2FP output
+            if (int2fp_output_valid[0]) begin
+                `TRACE(3, ("%t: %s: Int2FP out - fp32[0]=0x%0h\n",
+                    $time, INSTANCE_ID, int2fp_out_data[0]))
+            end
+
+            // Scaler output
+            if (scaler_output_valid[0]) begin
+                `TRACE(3, ("%t: %s: Scaler out - fp32[0]=0x%0h\n",
+                    $time, INSTANCE_ID, scaled_fp_out_data[0]))
+            end
+
+            // Accumulator write
+            if (acc_mem_accum_wr_req) begin
+                `TRACE(2, ("%t: %s: Acc mem write - addr=0x%0h, bank=%0d, is_load=%b, cnt=%0d\n",
+                    $time, INSTANCE_ID, acc_mem_accum_wr_addr, acc_mem_accum_wr_bank,
+                    gemm_unit_ctrl.is_load, acc_mem_accum_wr_cnt))
+            end
+
+            // Accumulator read
+            if (acc_mem_accum_rd_req) begin
+                `TRACE(3, ("%t: %s: Acc mem read - addr=0x%0h, bank=%0d, cnt=%0d\n",
+                    $time, INSTANCE_ID, acc_mem_accum_rd_addr, acc_mem_accum_rd_bank, acc_mem_accum_rd_cnt))
+            end
+
+            // FP16 output valid
+            if (fp16_out_valid[0]) begin
+                `TRACE(2, ("%t: %s: FP16 output - data[0]=0x%0h\n",
+                    $time, INSTANCE_ID, fp16_out_data[0]))
+            end
+        end
+    end
+`endif
 
 endmodule

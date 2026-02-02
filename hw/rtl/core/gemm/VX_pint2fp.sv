@@ -13,6 +13,7 @@
     - output format은 FP16 or FP32 or BF16 등 원하는 floating point format이다.
     - input format: IN_EXP_WIDTH, IN_EXP_BIAS
     - output format: OUT_EXP_WIDTH, OUT_EXP_BIAS, OUT_MANTISSA_WIDTH
+  - 2 stage pipeline
 */
 `timescale 1ns / 1ps
 
