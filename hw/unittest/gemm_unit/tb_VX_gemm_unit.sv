@@ -2,7 +2,7 @@
 
 `include "VX_define.vh"
 
-module tb_VX_gemm_unit import VX_gpu_pkg::*;();
+module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*;();
 
     // =========================================================================
     // Parameters
@@ -48,30 +48,35 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*;();
     always #(PERIOD / 2) clk = ~clk;
 
     // =========================================================================
+    // Events
+    // =========================================================================
+    event weight_loaded;
+
+    // =========================================================================
     // Interface Instantiations
     // =========================================================================
 
     // Input data interface
     VX_mem_bus_if #(
-        .DATA_SIZE(GEMM_INPUT_DATA_SIZE),
+        .DATA_SIZE(GEMM_INPUT_DATA_SIZE),  // DATA_SIZE is in bytes
         .TAG_WIDTH(1)
     ) i_lmem_bus_if();
 
     // Weight interface
     VX_mem_bus_if #(
-        .DATA_SIZE(GEMM_WEIGHT_DATA_SIZE),
+        .DATA_SIZE(GEMM_WEIGHT_DATA_SIZE),  // DATA_SIZE is in bytes
         .TAG_WIDTH(1)
     ) w_lmem_bus_if();
 
     // Scale/Zero interface
     VX_mem_bus_if #(
-        .DATA_SIZE(GEMM_SCALE_ZERO_DATA_SIZE),
+        .DATA_SIZE(GEMM_SCALE_ZERO_DATA_SIZE),  // DATA_SIZE is in bytes
         .TAG_WIDTH(1)
     ) sz_lmem_bus_if();
 
     // Output interface
     VX_mem_bus_if #(
-        .DATA_SIZE(GEMM_OUTPUT_DATA_SIZE),
+        .DATA_SIZE(GEMM_OUTPUT_DATA_SIZE),  // DATA_SIZE is in bytes
         .TAG_WIDTH(1)
     ) o_lmem_bus_if();
 
@@ -425,6 +430,51 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*;();
         return $urandom_range(0, (1 << W_BIT_WIDTH) - 1);
     endfunction
 
+    // =========================================================================
+    // Read Output from Accumulator Memory
+    // =========================================================================
+    task read_output(
+        input logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0] addr,
+        output logic [MXU_COL-1:0][FP16_WIDTH-1:0] output_data
+    );
+        @(posedge clk);
+        o_lmem_bus_if.req_valid = 1'b1;
+        o_lmem_bus_if.req_data.addr = addr;
+        o_lmem_bus_if.req_data.rw = 1'b0;  // Read
+
+        @(posedge clk);
+        o_lmem_bus_if.req_valid = 1'b0;
+
+        // Wait for response
+        while (!o_lmem_bus_if.rsp_valid) begin
+            @(posedge clk);
+        end
+        output_data = o_lmem_bus_if.rsp_data.data;
+        @(posedge clk);
+    endtask
+
+    // =========================================================================
+    // Compare FP16 Values with Tolerance
+    // =========================================================================
+    function automatic int compare_fp16(
+        input logic [FP16_WIDTH-1:0] actual,
+        input logic [FP16_WIDTH-1:0] expected,
+        input shortreal tolerance = 0.01
+    );
+        shortreal actual_fp, expected_fp, diff;
+        actual_fp = cf_math_pkg::fp16_bit_to_fp16_val(actual);
+        expected_fp = cf_math_pkg::fp16_bit_to_fp16_val(expected);
+
+        if (expected_fp == 0.0) begin
+            diff = (actual_fp >= 0) ? actual_fp : -actual_fp;
+        end else begin
+            diff = (actual_fp - expected_fp) / expected_fp;
+            diff = (diff >= 0) ? diff : -diff;
+        end
+
+        return (diff <= tolerance) ? 1 : 0;
+    endfunction
+
     // ==========================================================================
     // TESTS
     // ==========================================================================
@@ -572,6 +622,7 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*;();
     // ------------------------------------------------------------------
     task test_weight_writing();
         logic [MXU_ROW-1:0][MXU_COL-1:0][W_BIT_WIDTH-1:0] weight_data;
+        logic [MXU_ROW-1:0][MXU_COL-1:0][W_BIT_WIDTH-1:0] zero_weight_data;
         int i, j;
         int test_pass;
 
@@ -582,6 +633,13 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*;();
 
         test_pass = 1;
 
+        // Initialize zero weight data for clearing
+        for (i = 0; i < MXU_ROW; i++) begin
+            for (j = 0; j < MXU_COL; j++) begin
+                zero_weight_data[i][j] = '0;
+            end
+        end
+
         // -----------------------------------------------------------------
         // Test 1: Write weights to bank 0, load_dir=0 (row direction), IDLE
         // -----------------------------------------------------------------
@@ -591,7 +649,7 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*;();
         // Generate test weight pattern: row index in each element
         for (i = 0; i < MXU_ROW; i++) begin
             for (j = 0; j < MXU_COL; j++) begin
-                weight_data[i][j] = W_BIT_WIDTH'(i);  // row index
+                weight_data[i][j] = W_BIT_WIDTH'(i + 1);  // row index + 1 (avoid 0)
             end
         end
 
@@ -599,19 +657,46 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*;();
         repeat(5) @(posedge clk);
 
         $display("[%0t]   Weight bank 0 (row dir) write complete", $time);
-        $fdisplay(log_fd, "[%0t]   Weight bank 0 write: w[0][0]=0x%0h, w[1][0]=0x%0h",
-                  $time, u_dut.u_mxu.u_weight_regs.mem[0][0][0],
-                  u_dut.u_mxu.u_weight_regs.mem[1][0][0]);
+
+        // Verify all weights in bank 0
+        $display("[%0t]   Verifying all weights in bank 0...", $time);
+        for (i = 0; i < MXU_ROW; i++) begin
+            for (j = 0; j < MXU_COL; j++) begin
+                if (u_dut.u_mxu.u_weight_regs.mem[i][j][0] !== W_BIT_WIDTH'(i + 1)) begin
+                    $display("[%0t]   ERROR: mem[%0d][%0d][0] mismatch: expected=0x%0h, got=0x%0h",
+                             $time, i, j, W_BIT_WIDTH'(i + 1), u_dut.u_mxu.u_weight_regs.mem[i][j][0]);
+                    test_pass = 0;
+                end
+            end
+        end
+        if (test_pass) $display("[%0t]   PASS: All weights in bank 0 verified correctly", $time);
+
+        // Clear bank 0
+        $display("[%0t]   Clearing bank 0...", $time);
+        write_weight(zero_weight_data, 1'b0, 1'b0);
+        repeat(5) @(posedge clk);
+
+        // Verify bank 0 is cleared
+        for (i = 0; i < MXU_ROW; i++) begin
+            for (j = 0; j < MXU_COL; j++) begin
+                if (u_dut.u_mxu.u_weight_regs.mem[i][j][0] !== '0) begin
+                    $display("[%0t]   ERROR: Bank 0 not cleared at mem[%0d][%0d][0]=0x%0h",
+                             $time, i, j, u_dut.u_mxu.u_weight_regs.mem[i][j][0]);
+                    test_pass = 0;
+                end
+            end
+        end
+        $display("[%0t]   Bank 0 cleared", $time);
 
         // -----------------------------------------------------------------
         // Test 2: Write weights to bank 1, load_dir=0 (row direction), IDLE
         // -----------------------------------------------------------------
         $display("[%0t] Test 2: Write weights to bank 1, load_dir=0 (row), IDLE...", $time);
 
-        // Generate different test weight pattern: col index
+        // Generate different test weight pattern: col index + 10
         for (i = 0; i < MXU_ROW; i++) begin
             for (j = 0; j < MXU_COL; j++) begin
-                weight_data[i][j] = W_BIT_WIDTH'(j);  // col index
+                weight_data[i][j] = W_BIT_WIDTH'(j + 10);  // col index + 10
             end
         end
 
@@ -619,19 +704,46 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*;();
         repeat(5) @(posedge clk);
 
         $display("[%0t]   Weight bank 1 (row dir) write complete", $time);
-        $fdisplay(log_fd, "[%0t]   Weight bank 1 write: w[0][0]=0x%0h, w[0][1]=0x%0h",
-                  $time, u_dut.u_mxu.u_weight_regs.mem[0][0][1],
-                  u_dut.u_mxu.u_weight_regs.mem[0][1][1]);
+
+        // Verify all weights in bank 1
+        $display("[%0t]   Verifying all weights in bank 1...", $time);
+        for (i = 0; i < MXU_ROW; i++) begin
+            for (j = 0; j < MXU_COL; j++) begin
+                if (u_dut.u_mxu.u_weight_regs.mem[i][j][1] !== W_BIT_WIDTH'(j + 10)) begin
+                    $display("[%0t]   ERROR: mem[%0d][%0d][1] mismatch: expected=0x%0h, got=0x%0h",
+                             $time, i, j, W_BIT_WIDTH'(j + 10), u_dut.u_mxu.u_weight_regs.mem[i][j][1]);
+                    test_pass = 0;
+                end
+            end
+        end
+        if (test_pass) $display("[%0t]   PASS: All weights in bank 1 verified correctly", $time);
+
+        // Clear bank 1
+        $display("[%0t]   Clearing bank 1...", $time);
+        write_weight(zero_weight_data, 1'b1, 1'b0);
+        repeat(5) @(posedge clk);
+
+        // Verify bank 1 is cleared
+        for (i = 0; i < MXU_ROW; i++) begin
+            for (j = 0; j < MXU_COL; j++) begin
+                if (u_dut.u_mxu.u_weight_regs.mem[i][j][1] !== '0) begin
+                    $display("[%0t]   ERROR: Bank 1 not cleared at mem[%0d][%0d][1]=0x%0h",
+                             $time, i, j, u_dut.u_mxu.u_weight_regs.mem[i][j][1]);
+                    test_pass = 0;
+                end
+            end
+        end
+        $display("[%0t]   Bank 1 cleared", $time);
 
         // -----------------------------------------------------------------
         // Test 3: Write weights to bank 0, load_dir=1 (col direction), IDLE
         // -----------------------------------------------------------------
         $display("[%0t] Test 3: Write weights to bank 0, load_dir=1 (col), IDLE...", $time);
 
-        // Generate test weight pattern: i+j
+        // Generate test weight pattern: i*MXU_COL + j + 20
         for (i = 0; i < MXU_ROW; i++) begin
             for (j = 0; j < MXU_COL; j++) begin
-                weight_data[i][j] = W_BIT_WIDTH'(i + j);
+                weight_data[i][j] = W_BIT_WIDTH'(i * MXU_COL + j + 20);
             end
         end
 
@@ -639,31 +751,43 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*;();
         repeat(5) @(posedge clk);
 
         $display("[%0t]   Weight bank 0 (col dir) write complete", $time);
-        $fdisplay(log_fd, "[%0t]   Weight bank 0 (col dir): w[0][0]=0x%0h, w[1][1]=0x%0h",
-                  $time, u_dut.u_mxu.u_weight_regs.mem[0][0][0],
-                  u_dut.u_mxu.u_weight_regs.mem[1][1][0]);
 
-        // -----------------------------------------------------------------
-        // Test 4: Verify weight values in bank 0 (last write pattern)
-        // -----------------------------------------------------------------
-        $display("[%0t] Test 4: Verifying weight values in bank 0...", $time);
-
-        // Note: Due to column direction loading, values may be transposed
-        // For now just verify write completed without error
-        $display("[%0t]   Weight verification: checking first few elements...", $time);
-
-        for (i = 0; i < 4; i++) begin
-            for (j = 0; j < 4; j++) begin
-                $fdisplay(log_fd, "[%0t]   mem[%0d][%0d][0]=0x%0h",
-                          $time, i, j, u_dut.u_mxu.u_weight_regs.mem[i][j][0]);
+        // Verify all weights in bank 0 (col direction: transposed)
+        $display("[%0t]   Verifying all weights in bank 0 (col direction - transposed)...", $time);
+        for (i = 0; i < MXU_ROW; i++) begin
+            for (j = 0; j < MXU_COL; j++) begin
+                // col direction writes: weight_data[i][j] goes to mem[j][i][bank]
+                if (u_dut.u_mxu.u_weight_regs.mem[j][i][0] !== W_BIT_WIDTH'(i * MXU_COL + j + 20)) begin
+                    $display("[%0t]   ERROR: mem[%0d][%0d][0] mismatch: expected=0x%0h, got=0x%0h",
+                             $time, j, i, W_BIT_WIDTH'(i * MXU_COL + j + 20), u_dut.u_mxu.u_weight_regs.mem[j][i][0]);
+                    test_pass = 0;
+                end
             end
         end
+        if (test_pass) $display("[%0t]   PASS: All weights in bank 0 (col dir) verified correctly", $time);
+
+        // Clear bank 0
+        $display("[%0t]   Clearing bank 0...", $time);
+        write_weight(zero_weight_data, 1'b0, 1'b1);  // clear with col direction
+        repeat(5) @(posedge clk);
+
+        // Verify bank 0 is cleared
+        for (i = 0; i < MXU_ROW; i++) begin
+            for (j = 0; j < MXU_COL; j++) begin
+                if (u_dut.u_mxu.u_weight_regs.mem[i][j][0] !== '0) begin
+                    $display("[%0t]   ERROR: Bank 0 not cleared at mem[%0d][%0d][0]=0x%0h",
+                             $time, i, j, u_dut.u_mxu.u_weight_regs.mem[i][j][0]);
+                    test_pass = 0;
+                end
+            end
+        end
+        $display("[%0t]   Bank 0 cleared", $time);
 
         // -----------------------------------------------------------------
-        // Test 5: Write weights while inflight=1, wr_idx != use_idx
+        // Test 4: Write weights while inflight=1, wr_idx != use_idx
         //         Should succeed (ready=1)
         // -----------------------------------------------------------------
-        $display("[%0t] Test 5: Write weights while inflight=1, wr_idx != use_idx...", $time);
+        $display("[%0t] Test 4: Write weights while inflight=1, wr_idx != use_idx...", $time);
 
         // First, setup scale/zp for GEMM operation
         begin
@@ -701,13 +825,6 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*;();
         end
 
         // Try to write to bank 1 (wr_idx=1 != use_idx=0) -> should succeed
-        // Generate test pattern
-        for (i = 0; i < MXU_ROW; i++) begin
-            for (j = 0; j < MXU_COL; j++) begin
-                weight_data[i][j] = W_BIT_WIDTH'(i * 2);  // unique pattern
-            end
-        end
-
         // Check ready signal before write attempt
         @(posedge clk);
         w_lmem_bus_if.req_valid <= 1'b1;
@@ -724,10 +841,10 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*;();
         w_lmem_bus_if.req_valid <= 1'b0;
 
         // -----------------------------------------------------------------
-        // Test 6: Write weights while inflight=1, wr_idx == use_idx
+        // Test 5: Write weights while inflight=1, wr_idx == use_idx
         //         Should be blocked (ready=0)
         // -----------------------------------------------------------------
-        $display("[%0t] Test 6: Write weights while inflight=1, wr_idx == use_idx...", $time);
+        $display("[%0t] Test 5: Write weights while inflight=1, wr_idx == use_idx...", $time);
 
         // Verify still in COMPUTE state
         if (u_dut.in_flight !== 1'b1) begin
@@ -764,9 +881,9 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*;();
         wait_for_idle();
 
         // -----------------------------------------------------------------
-        // Test 7: Verify ready returns to 1 after inflight=0
+        // Test 6: Verify ready returns to 1 after inflight=0
         // -----------------------------------------------------------------
-        $display("[%0t] Test 7: Verify ready returns to 1 after inflight=0...", $time);
+        $display("[%0t] Test 6: Verify ready returns to 1 after inflight=0...", $time);
 
         // Now try to write to bank 0 again (should succeed since inflight=0)
         @(posedge clk);
@@ -798,14 +915,27 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*;();
     task test_one_in_vector();
         logic [MXU_ROW-1:0][IFP_WIDTH-1:0] input_data;
         logic [MXU_ROW-1:0][MXU_COL-1:0][W_BIT_WIDTH-1:0] weight_data;
-        logic [`MXU_MAX_DIM-1:0][SCALE_WIDTH-1:0] scale_values;
-        logic [`MXU_MAX_DIM-1:0][ZP_WIDTH-1:0] zp_values;
+        logic [`MXU_MAX_DIM-1:0][SCALE_WIDTH-1:0] scale_values_0, scale_values_1;
+        logic [`MXU_MAX_DIM-1:0][ZP_WIDTH-1:0] zp_values_0, zp_values_1;
         int i, j;
+        int test_pass;
+
+        // Arrays for reference calculation (fpint_emul format)
+        logic [fpint_emul::IN_WIDTH-1:0] ref_input[fpint_emul::MAX_M*fpint_emul::MAX_K];
+        logic [fpint_emul::MAX_W_WIDTH-1:0] ref_weight[fpint_emul::MAX_K*fpint_emul::MAX_N];
+        logic [fpint_emul::S_WIDTH-1:0] ref_scale[fpint_emul::MAX_KG*fpint_emul::MAX_N];
+        logic [fpint_emul::Z_WIDTH-1:0] ref_zero[fpint_emul::MAX_KG*fpint_emul::MAX_N];
+        logic [fpint_emul::O_WIDTH-1:0] ref_output[fpint_emul::MAX_M*fpint_emul::MAX_N];
+
+        // DUT output
+        logic [MXU_COL-1:0][FP16_WIDTH-1:0] dut_output;
 
         $display("\n[%0t] ============================================", $time);
         $display("[%0t] TEST: One Input Vector Test", $time);
         $display("[%0t] ============================================", $time);
         $fdisplay(log_fd, "[%0t] TEST: One Input Vector Test", $time);
+
+        test_pass = 1;
 
         // -----------------------------------------------------------------
         // Step 1: Setup scale registers (both banks)
@@ -814,15 +944,15 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*;();
 
         // Scale register 0: all 1.0 (FP16: 0x3C00)
         for (i = 0; i < `MXU_MAX_DIM; i++) begin
-            scale_values[i] = 16'h3C00;  // 1.0 in FP16
+            scale_values_0[i] = 16'h3C00;  // 1.0 in FP16
         end
-        write_scale_reg(0, scale_values);
+        write_scale_reg(0, scale_values_0);
 
         // Scale register 1: all 2.0 (FP16: 0x4000)
         for (i = 0; i < `MXU_MAX_DIM; i++) begin
-            scale_values[i] = 16'h4000;  // 2.0 in FP16
+            scale_values_1[i] = 16'h4000;  // 2.0 in FP16
         end
-        write_scale_reg(1, scale_values);
+        write_scale_reg(1, scale_values_1);
 
         // -----------------------------------------------------------------
         // Step 2: Setup zero point registers (both banks)
@@ -831,15 +961,15 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*;();
 
         // Zero point register 0: all 0
         for (i = 0; i < `MXU_MAX_DIM; i++) begin
-            zp_values[i] = '0;
+            zp_values_0[i] = '0;
         end
-        write_zp_reg(0, zp_values);
+        write_zp_reg(0, zp_values_0);
 
         // Zero point register 1: all 1
         for (i = 0; i < `MXU_MAX_DIM; i++) begin
-            zp_values[i] = 8'd1;
+            zp_values_1[i] = 8'd1;
         end
-        write_zp_reg(1, zp_values);
+        write_zp_reg(1, zp_values_1);
 
         repeat(5) @(posedge clk);
 
@@ -856,75 +986,46 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*;();
         end
         // Write to weight register bank 0, load_dir = 0
         write_weight(weight_data, 1'b0, 1'b0);
+        ->weight_loaded;
 
         repeat(5) @(posedge clk);
 
-        // -----------------------------------------------------------------
-        // Step 4: Run GEMM with one input vector (is_load mode)
-        // Test configuration: quant_dir=QDIR_COL, wreg_use_idx=0, sreg_use_idx=0, zreg_use_idx=0
-        // -----------------------------------------------------------------
-        $display("[%0t] Starting GEMM with one input vector (is_load=1, QDIR_COL)...", $time);
-
-        wait_for_idle();
-
-        start_gemm(
-            .is_load(1'b1),           // Load mode (no accumulation)
-            .quant_dir(`QDIR_COL),    // Column-wise quantization
-            .acc_mem_base_addr('0),
-            .acc_cnt(1),              // Only 1 output vector
-            .wreg_use_idx(1'b0),      // Use weight register 0
-            .sreg_use_idx(1'b0),      // Use scale register 0
-            .zreg_use_idx(1'b0)       // Use zero point register 0
-        );
-
-        // Generate and send one input vector (all 1.0)
+        // Generate input vector (all 1.0)
         for (i = 0; i < MXU_ROW; i++) begin
             input_data[i] = 16'h3C00;  // 1.0 in FP16
         end
-        send_input(input_data);
 
-        wait_for_done();
-        $display("[%0t] GEMM with one input vector completed (config 1)", $time);
+        // Prepare reference arrays (M=1, K=MXU_ROW, N=MXU_COL)
+        // Initialize arrays to zero
+        for (i = 0; i < fpint_emul::MAX_M * fpint_emul::MAX_K; i++) ref_input[i] = '0;
+        for (i = 0; i < fpint_emul::MAX_K * fpint_emul::MAX_N; i++) ref_weight[i] = '0;
+        for (i = 0; i < fpint_emul::MAX_KG * fpint_emul::MAX_N; i++) ref_scale[i] = '0;
+        for (i = 0; i < fpint_emul::MAX_KG * fpint_emul::MAX_N; i++) ref_zero[i] = '0;
 
-        repeat(10) @(posedge clk);
+        // Copy input data (M=1 row, K=MXU_ROW columns)
+        for (i = 0; i < MXU_ROW; i++) begin
+            ref_input[i] = input_data[i];
+        end
+
+        // Copy weight data (K=MXU_ROW rows, N=MXU_COL columns)
+        for (i = 0; i < MXU_ROW; i++) begin
+            for (j = 0; j < MXU_COL; j++) begin
+                ref_weight[i * MXU_COL + j] = weight_data[i][j];
+            end
+        end
 
         // -----------------------------------------------------------------
-        // Step 5: Test with different register indices
-        // Test configuration: quant_dir=QDIR_COL, wreg_use_idx=0, sreg_use_idx=1, zreg_use_idx=1
+        // Step 4: Run GEMM Config 1
+        // quant_dir=QDIR_COL, wreg_use_idx=0, sreg_use_idx=0, zreg_use_idx=0
         // -----------------------------------------------------------------
-        $display("[%0t] Starting GEMM with different register indices (sreg=1, zreg=1)...", $time);
+        $display("[%0t] Config 1: GEMM (is_load=1, QDIR_COL, sreg=0, zreg=0)...", $time);
 
         wait_for_idle();
 
         start_gemm(
-            .is_load(1'b1),           // Load mode
-            .quant_dir(`QDIR_COL),    // Column-wise quantization
-            .acc_mem_base_addr(32'h80),  // Different base address
-            .acc_cnt(1),              // Only 1 output vector
-            .wreg_use_idx(1'b0),      // Use weight register 0
-            .sreg_use_idx(1'b1),      // Use scale register 1 (2.0)
-            .zreg_use_idx(1'b1)       // Use zero point register 1 (1)
-        );
-
-        // Send same input vector
-        send_input(input_data);
-
-        wait_for_done();
-        $display("[%0t] GEMM with different register indices completed (config 2)", $time);
-
-        repeat(10) @(posedge clk);
-
-        // -----------------------------------------------------------------
-        // Step 6: Test with QDIR_ROW quantization direction
-        // -----------------------------------------------------------------
-        $display("[%0t] Starting GEMM with QDIR_ROW...", $time);
-
-        wait_for_idle();
-
-        start_gemm(
-            .is_load(1'b1),           // Load mode
-            .quant_dir(`QDIR_ROW),    // Row-wise quantization
-            .acc_mem_base_addr(32'h100),
+            .is_load(1'b1),
+            .quant_dir(`QDIR_COL),
+            .acc_mem_base_addr('0),
             .acc_cnt(1),
             .wreg_use_idx(1'b0),
             .sreg_use_idx(1'b0),
@@ -932,16 +1033,154 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*;();
         );
 
         send_input(input_data);
-
         wait_for_done();
-        $display("[%0t] GEMM with QDIR_ROW completed (config 3)", $time);
 
         repeat(10) @(posedge clk);
 
+        // Compare Config 1
+        $display("[%0t]   Comparing Config 1...", $time);
+
+        // Setup scale and zero for QDIR_COL (scale/zero per column)
+        for (j = 0; j < MXU_COL; j++) begin
+            ref_scale[j] = scale_values_0[j];
+            ref_zero[j] = zp_values_0[j];
+        end
+
+        fpint_emul::fpint_gemm_ref(
+            ref_input, ref_weight, ref_scale, ref_zero,
+            1, MXU_COL, MXU_ROW,
+            ref_output,
+            fpint_emul::QCOL,
+            fpint_emul::WNOTRANS,
+            1'b0
+        );
+
+        read_output('0, dut_output);
+
+        for (j = 0; j < MXU_COL; j++) begin
+            if (!compare_fp16(dut_output[j], ref_output[j], 0.1)) begin
+                $display("[%0t]   ERROR: output[%0d] mismatch - DUT=0x%h (%f), REF=0x%h (%f)",
+                         $time, j, dut_output[j], cf_math_pkg::fp16_bit_to_fp16_val(dut_output[j]),
+                         ref_output[j], cf_math_pkg::fp16_bit_to_fp16_val(ref_output[j]));
+                test_pass = 0;
+            end
+        end
+        $display("[%0t]   Config 1 %s", $time, test_pass ? "PASSED" : "FAILED");
+
+        // -----------------------------------------------------------------
+        // Step 5: Run GEMM Config 2
+        // quant_dir=QDIR_COL, wreg_use_idx=0, sreg_use_idx=1, zreg_use_idx=1
+        // -----------------------------------------------------------------
+        $display("[%0t] Config 2: GEMM (is_load=1, QDIR_COL, sreg=1, zreg=1)...", $time);
+
+        wait_for_idle();
+
+        start_gemm(
+            .is_load(1'b1),
+            .quant_dir(`QDIR_COL),
+            .acc_mem_base_addr('0),
+            .acc_cnt(1),
+            .wreg_use_idx(1'b0),
+            .sreg_use_idx(1'b1),
+            .zreg_use_idx(1'b1)
+        );
+
+        send_input(input_data);
+        wait_for_done();
+
+        repeat(10) @(posedge clk);
+
+        // Compare Config 2
+        $display("[%0t]   Comparing Config 2...", $time);
+
+        // Setup scale and zero for QDIR_COL with register 1
+        for (j = 0; j < MXU_COL; j++) begin
+            ref_scale[j] = scale_values_1[j];
+            ref_zero[j] = zp_values_1[j];
+        end
+
+        fpint_emul::fpint_gemm_ref(
+            ref_input, ref_weight, ref_scale, ref_zero,
+            1, MXU_COL, MXU_ROW,
+            ref_output,
+            fpint_emul::QCOL,
+            fpint_emul::WNOTRANS,
+            1'b0
+        );
+
+        read_output('0, dut_output);
+
+        for (j = 0; j < MXU_COL; j++) begin
+            if (!compare_fp16(dut_output[j], ref_output[j], 0.1)) begin
+                $display("[%0t]   ERROR: output[%0d] mismatch - DUT=0x%h (%f), REF=0x%h (%f)",
+                         $time, j, dut_output[j], cf_math_pkg::fp16_bit_to_fp16_val(dut_output[j]),
+                         ref_output[j], cf_math_pkg::fp16_bit_to_fp16_val(ref_output[j]));
+                test_pass = 0;
+            end
+        end
+        $display("[%0t]   Config 2 %s", $time, test_pass ? "PASSED" : "FAILED");
+
+        // -----------------------------------------------------------------
+        // Step 6: Run GEMM Config 3
+        // quant_dir=QDIR_ROW, wreg_use_idx=0, sreg_use_idx=0, zreg_use_idx=0
+        // -----------------------------------------------------------------
+        $display("[%0t] Config 3: GEMM (is_load=1, QDIR_ROW, sreg=0, zreg=0)...", $time);
+
+        wait_for_idle();
+
+        start_gemm(
+            .is_load(1'b1),
+            .quant_dir(`QDIR_ROW),
+            .acc_mem_base_addr('0),
+            .acc_cnt(1),
+            .wreg_use_idx(1'b0),
+            .sreg_use_idx(1'b0),
+            .zreg_use_idx(1'b0)
+        );
+
+        send_input(input_data);
+        wait_for_done();
+
+        repeat(10) @(posedge clk);
+
+        // Compare Config 3
+        $display("[%0t]   Comparing Config 3...", $time);
+
+        // Setup scale and zero for QDIR_ROW (scale/zero per row/K dimension)
+        for (i = 0; i < fpint_emul::MAX_KG * fpint_emul::MAX_N; i++) begin
+            ref_scale[i] = '0;
+            ref_zero[i] = '0;
+        end
+        for (i = 0; i < MXU_ROW; i++) begin
+            ref_scale[i] = scale_values_0[i];
+            ref_zero[i] = zp_values_0[i];
+        end
+
+        fpint_emul::fpint_gemm_ref(
+            ref_input, ref_weight, ref_scale, ref_zero,
+            1, MXU_COL, MXU_ROW,
+            ref_output,
+            fpint_emul::QROW,
+            fpint_emul::WNOTRANS,
+            1'b0
+        );
+
+        read_output('0, dut_output);
+
+        for (j = 0; j < MXU_COL; j++) begin
+            if (!compare_fp16(dut_output[j], ref_output[j], 0.1)) begin
+                $display("[%0t]   ERROR: output[%0d] mismatch - DUT=0x%h (%f), REF=0x%h (%f)",
+                         $time, j, dut_output[j], cf_math_pkg::fp16_bit_to_fp16_val(dut_output[j]),
+                         ref_output[j], cf_math_pkg::fp16_bit_to_fp16_val(ref_output[j]));
+                test_pass = 0;
+            end
+        end
+        $display("[%0t]   Config 3 %s", $time, test_pass ? "PASSED" : "FAILED");
+
         $display("[%0t] ============================================", $time);
-        $display("[%0t] One Input Vector Test COMPLETE", $time);
+        $display("[%0t] One Input Vector Test %s", $time, test_pass ? "PASSED" : "FAILED");
         $display("[%0t] ============================================\n", $time);
-        $fdisplay(log_fd, "[%0t] One Input Vector Test COMPLETE", $time);
+        $fdisplay(log_fd, "[%0t] One Input Vector Test %s", $time, test_pass ? "PASSED" : "FAILED");
     endtask
 
     /*

@@ -17,6 +17,8 @@ TB   := tb_VX_gemm_unit.sv
 RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
 				$(RTL_DIR)/mem/VX_mem_bus_if.sv \
         $(RTL_DIR)/verification/cf_math_pkg.sv \
+        $(RTL_DIR)/verification/fpint_emul.sv \
+        $(RTL_DIR)/verification/utils.sv \
         $(RTL_DIR)/core/gemm/VX_fp32_add.sv \
         $(RTL_DIR)/core/gemm/VX_fp16_mul.sv \
         $(RTL_DIR)/core/gemm/VX_stream_fence.sv \
@@ -30,7 +32,7 @@ RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
         $(RTL_DIR)/core/gemm/VX_gemm_tree_v1.sv \
         $(RTL_DIR)/core/gemm/VX_gemm_weight_regs_v1.sv \
         $(RTL_DIR)/core/gemm/VX_pe_tree_new.sv \
-        $(RTL_DIR)/libs/VX_reduce_tree_pipelined.sv \
+        $(RTL_DIR)/libs/VX_reduce_tree_pipelined_v2.sv \
         $(RTL_DIR)/libs/VX_reduce_tree.sv \
         $(RTL_DIR)/core/gemm/VX_gemm_unit.sv \
         $(RTL_DIR)/core/gemm/VX_gemm_unit_if.sv \
