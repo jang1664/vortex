@@ -2,7 +2,7 @@
 `include "VX_define.vh"
 
 module VX_gemm_tree_v1 import VX_gpu_pkg::*; #(
-    parameter  int IN_DW                 = `IFP_WIDTH,
+    parameter  int IN_DW                 = `SEL_BLOCK_WIDTH,
     parameter  int WEIGHT_DW             = `W_BIT_WIDTH,
     parameter  int OUT_DW                = `O_BIT_WIDTH,
     parameter  int BLOCK_SIZE            = `BLOCK_SIZE,

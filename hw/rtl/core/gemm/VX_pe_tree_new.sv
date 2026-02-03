@@ -1,4 +1,5 @@
 `timescale 1ns / 1ps
+`include "VX_define.vh"
 
 /*
   PE Tree for GEMM operations
@@ -8,17 +9,17 @@
 */
 
 module VX_pe_tree_new import VX_gpu_pkg::*; #(
-    parameter  int IN_DW                = -1,
-    parameter  int WEIGHT_DW            = -1,
-    parameter  int OUT_DW               = -1,
-    parameter  int BLOCK_SIZE           = -1,
-    parameter  int BLOCK_NUM            = -1,
-    parameter  int SEL_BLOCK_NUM        = -1,
-    parameter  int ROW_SIZE             = -1,
-    parameter  int TILE_COL_SIZE        = -1,
-    parameter  int PIPE_MULT            = 0,
-    parameter  int PIPE_ALIGN           = 0,
-    parameter  int PIPELINE_STAGE_INTV  = 0,
+    parameter  int IN_DW                = `SEL_BLOCK_WIDTH,
+    parameter  int WEIGHT_DW            = `W_BIT_WIDTH,
+    parameter  int OUT_DW               = `O_BIT_WIDTH,
+    parameter  int BLOCK_SIZE           = `BLOCK_SIZE,
+    parameter  int BLOCK_NUM            = `BLOCK_NUM,
+    parameter  int SEL_BLOCK_NUM        = `SEL_BLOCK_NUM,
+    parameter  int ROW_SIZE             = `MXU_ROW,
+    parameter  int TILE_COL_SIZE        = `MXU_COL_TILE,
+    parameter  int PIPE_MULT            = `MXU_PIPE_MUL_EN,
+    parameter  int PIPE_ALIGN           = `MXU_PIPE_ALIGN_EN,
+    parameter  int PIPELINE_STAGE_INTV  = `MXU_PIPE_ADD_INTV,
     localparam int BLK_IDX_NUM          = BLOCK_NUM - SEL_BLOCK_NUM + 1,
     localparam int BLK_BITW             = $clog2(BLK_IDX_NUM)
 ) (
@@ -34,7 +35,7 @@ module VX_pe_tree_new import VX_gpu_pkg::*; #(
     output logic valid_o
 );
 
-  localparam int MAC_DW = IN_DW + WEIGHT_DW + BLK_BITW;
+  localparam int MAC_DW = `ALIGNED_MAN_PADDED_FULL_WIDTH + `W_BIT_WIDTH;
   localparam int PIPELINE_STAGES = get_pipe_stage_bitmask(ROW_SIZE, PIPELINE_STAGE_INTV);
 
   // MAC and Adder Tree for each column
@@ -114,13 +115,12 @@ module VX_pe_tree_new import VX_gpu_pkg::*; #(
       // Reduction tree using VX_reduce_tree_pipelined
       logic signed [MAC_DW-1:0] reduced_sum;
       logic valid_reduced;
-      VX_reduce_tree_pipelined #(
+      VX_reduce_tree_pipelined_v2 #(
         .IN_W  (MAC_DW),
         .OUT_W (MAC_DW),
         .N     (ROW_SIZE),
         .OP    ("+"),
         .PIPELINE_STAGES (PIPELINE_STAGES),
-        .STAGE_NUM (0),
         .EB_SIZE (1),
         .EB_OUT_REG (1)
       ) reduce_tree (
@@ -169,16 +169,28 @@ module VX_pe_tree_new import VX_gpu_pkg::*; #(
     if (resetn_i) begin
       // Input processing
       if (input_valid_i) begin
-        `TRACE(3, ("%t: PE_TREE: Input - ifmap[0]=0x%0h, blk_idx[0]=%0d\n",
-            $time, ifmap_i[0], blk_sidx_i[0]))
-        `TRACE(4, ("%t: PE_TREE: weight[0][0:1]={0x%0h, 0x%0h}, weight[1][0:1]={0x%0h, 0x%0h}\n",
-            $time, weight_i[0][0], weight_i[0][1], weight_i[1][0], weight_i[1][1]))
+        `TRACE(3, ("%t: PE_TREE: Input valid\n", $time))
+        `TRACE(3, ("%t: PE_TREE:   ifmap=%s\n",
+            $time, parseWordNoNormal(ifmap_i, ROW_SIZE * IN_DW, IN_DW, "int")))
+        `TRACE(3, ("%t: PE_TREE:   blk_idx=%s\n",
+            $time, parseWordNoNormal(blk_sidx_i, ROW_SIZE * BLK_BITW, BLK_BITW, "uint")))
+        `TRACE(4, ("%t: PE_TREE:   ps_i=%s\n",
+            $time, parseWordNoNormal(ps_i, TILE_COL_SIZE * OUT_DW, OUT_DW, "int")))
+        for (int c = 0; c < TILE_COL_SIZE; c++) begin
+          logic [ROW_SIZE-1:0][WEIGHT_DW-1:0] weights_col;
+          for (int r = 0; r < ROW_SIZE; r++) begin
+            weights_col[r] = weight_i[r][c];
+          end
+          `TRACE(4, ("%t: PE_TREE:   weight[col=%0d]=%s\n",
+              $time, c, parseWordNoNormal(weights_col, ROW_SIZE * WEIGHT_DW, WEIGHT_DW, "int")))
+        end
       end
 
       // Output valid
       if (valid_o) begin
-        `TRACE(3, ("%t: PE_TREE: Output valid - ps[0]=0x%0h, ps[1]=0x%0h\n",
-            $time, ps_o[0], ps_o[1]))
+        `TRACE(2, ("%t: PE_TREE: Output valid\n", $time))
+        `TRACE(2, ("%t: PE_TREE:   ps_o=%s\n",
+            $time, parseWordNoNormal(ps_o, TILE_COL_SIZE * OUT_DW, OUT_DW, "int")))
       end
     end
   end

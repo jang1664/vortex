@@ -119,6 +119,7 @@ function automatic string parseWordNoNormal(input logic [9999:0] data, input int
 
   num_iter = (word_width + data_width - 1) / data_width;
 
+  sdata = "{";
   for(int i=0; i<num_iter; i++) begin
     if(is_floating) begin
       if(data_width == 16) begin
@@ -138,6 +139,7 @@ function automatic string parseWordNoNormal(input logic [9999:0] data, input int
       sdata = {sdata, " ", $sformatf("%0d", signed'(slice(data, (i+1)*data_width-1, i*data_width, sign)))};
     end
   end
+  sdata = {sdata, " }"};
 
   return sdata;
 endfunction

@@ -94,8 +94,8 @@ module VX_gemm_weight_regs_v1 #(
 `ifdef DBG_TRACE_GEMM
   always @(posedge clk_i) begin
     if (ready_weight_i) begin
-      `TRACE(3, ("%t: WEIGHT_REGS: Loading dir=%0d, in_sel=%0d, out_sel=%0d\n", 
-                 $time, weight_load_dir_i, in_weight_sel_i, out_weight_sel_i))
+      `TRACE(3, ("%t: WEIGHT_REGS: Loading dir=%0d, in_sel=%0d, out_sel=%0d, weights=%0h\n", 
+                 $time, weight_load_dir_i, in_weight_sel_i, out_weight_sel_i, weight_i))
     end
   end
 `endif
