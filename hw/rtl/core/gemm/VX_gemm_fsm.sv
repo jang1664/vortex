@@ -11,14 +11,27 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 );
 
   /*
-  cfg_reg_if 레지스터
-    [0] : INPUT_BASE (DRAM)
-    [1] : WEIGHT_BASE (DRAM)
-    [2] : OUTPUT_BASE (DRAM)
-    [3] : SCALE_BASE (DRAM)
-    [4] : ZP_BASE (DRAM)
-    [5] : {N, M}
-    [6] : {qblk, K}
+  cfg_reg 레지스터
+    [0] : control reg (LSB가 start bit)
+    [1] : INPUT_BASE (DRAM)
+    [2] : WEIGHT_BASE (DRAM)
+    [3] : OUTPUT_BASE (DRAM)
+    [4] : SCALE_BASE (DRAM)
+    [5] : ZP_BASE (DRAM)
+    [6] : {N, M}
+    [7] : {qblk, K}
+    [8] : {input stride0, input bnd0} (DRAM 쪽 레이아웃)
+    [9] : {input stride1, input bnd1}
+    [10]: {input stride2, input bnd2}
+    [11]: {weight stride0, weight bnd0}
+    [12]: {weight stride1, weight bnd1}
+    [13]: {weight stride2, weight bnd2}
+    [14]: {output stride0, output bnd0}
+    [15]: {output stride1, output bnd1}
+    [16]: {output stride2, output bnd2}
+    [17]: {scale stride0, zp stride0}  //weight bnd0 공유
+    [18]: {scale stride1, zp stride1}  //weight bnd1 공유
+    [19]: {scale stride2, zp stride2}  //weight bnd2 공유
   */
   
   /*
@@ -80,7 +93,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
   [8] GEMM completion 모델 가정
   - gemm 연산이 끝나면 sync 모듈로 끝났다는 신호를 보낸다.
-  - 즉 gemm_unit 에서 sync_if 가 나가야 함 (추가 필요!!)
+  - 즉 i_l_dma에서 sync_if 가 나가는 길이 gemm 연산이 끝났다는 신호라고 가정.
 
   ================================================================================
   */
@@ -97,9 +110,9 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
   localparam int NT = 128;
   localparam int KT = 128;
 
-  // MXU micro tile sizes (kernel: 32x128)
+  // MXU micro tile sizes (kernel: 32x32)
   localparam int MXU_KT = 32;
-  localparam int MXU_NT = 128;
+  localparam int MXU_NT = 32;
 
   // --------------------------------------------------------------------------
   // LMEM base addresses (DMA tile double buffering), 고정이라고 가정
@@ -146,11 +159,11 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
   localparam int RID_T0  = 0, RID_W0  = 1, RID_SZ0 = 2, RID_G0 = 3, RID_O0 = 4;
   localparam int RID_T1  = 5, RID_W1  = 6, RID_SZ1 = 7, RID_G1 = 8, RID_O1 = 9;
 
-  function automatic int rid_tile (input logic buf_sel);  return buf_sel ? RID_T1  : RID_T0;  endfunction  // dma tile preload done
-  function automatic int rid_w    (input logic buf_sel);  return buf_sel ? RID_W1  : RID_W0;  endfunction  // mxu weight preload done
-  function automatic int rid_sz   (input logic buf_sel);  return buf_sel ? RID_SZ1 : RID_SZ0; endfunction  // mxu scale/zp preload done (after ZP cmd)
-  function automatic int rid_g    (input logic buf_sel);  return buf_sel ? RID_G1  : RID_G0;  endfunction  // gemm done marker (per microtile)
-  function automatic int rid_o    (input logic buf_sel);  return buf_sel ? RID_O1  : RID_O0;  endfunction  // output store done marker
+  function automatic int rid_tile   (input logic buf_sel);  return buf_sel ? RID_T1  : RID_T0;  endfunction  // dma tile preload done
+  function automatic int rid_w_mxu  (input logic mxu_buf);  return mxu_buf ? RID_W1  : RID_W0;  endfunction  // mxu weight preload done
+  function automatic int rid_sz_mxu (input logic mxu_buf);  return mxu_buf ? RID_SZ1 : RID_SZ0; endfunction  // mxu scale/zp preload done (after ZP cmd)
+  function automatic int rid_g_mxu  (input logic mxu_buf);  return mxu_buf ? RID_G1  : RID_G0;  endfunction  // gemm done marker (per microtile)
+  function automatic int rid_o      (input logic buf_sel);  return buf_sel ? RID_O1  : RID_O0;  endfunction  // output store done marker
 
   // buf generation: buf0 for tile 0,2,4.. => gen 1,2,3..
   //                 buf1 for tile 1,3,5.. => gen 1,2,3..
@@ -185,8 +198,8 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     begin
       t = '0;
       t.instr   = {24'd0, OP_NOTIFY};
-      t.rs1_data = {{(`XLEN-9){1'b0}}, set_mode, reg_id[7:0]};
-      t.rs2_data = {{(`XLEN-32){1'b0}}, value[31:0]};
+      t.rs1_data = {{(`XLEN-8){1'b0}}, reg_id[7:0]};
+      t.rs2_data = {{(`XLEN-32){1'b0}}, set_mode, value[30:0]};
       return t;
     end
   endfunction
@@ -206,15 +219,6 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
       c.instr   = make_instr(OP_DMA_LD, flags, size_bytes);
       c.rs1_data = lmem_dst; // dst LMEM
       c.rs2_data = dram_src; // src DRAM
-
-      c.rs1 = 5;
-      c.rs2 = 6;
-      /*
-      job_d.M           = cfg_reg_if.regs[5][31:0];
-      job_d.N           = cfg_reg_if.regs[5][63:32];
-      job_d.K           = cfg_reg_if.regs[6][31:0];
-      job_d.qblk        = cfg_reg_if.regs[6][63:32];
-      */
       return c;
     end
   endfunction
@@ -234,15 +238,6 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
       c.instr   = make_instr(OP_DMA_ST, flags, size_bytes);
       c.rs1_data = dram_dst; // dst DRAM
       c.rs2_data = lmem_src; // src LMEM
-
-      c.rs1 = 5;
-      c.rs2 = 6;
-      /*
-      job_d.M           = cfg_reg_if.regs[5][31:0];
-      job_d.N           = cfg_reg_if.regs[5][63:32];
-      job_d.K           = cfg_reg_if.regs[6][31:0];
-      job_d.qblk        = cfg_reg_if.regs[6][63:32];
-      */
       return c;
     end
   endfunction
@@ -408,7 +403,6 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     S_MXU_WAIT_GEMM_DONE,
 
     // output 2-stage: acc->lmem then lmem->dram (with wait between)
-    S_O_KICK_SET,
     S_O_ACC2LMEM,      S_O_ACC2LMEM_NTF,
     S_O_WAIT_ACC2LMEM_DONE,
     S_O_LMEM2DRAM,     S_O_LMEM2DRAM_NTF,
@@ -445,6 +439,8 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     cfg_reg_if.ready = (state_q == S_IDLE);
   end
 
+  assign tile_total_q = ceil_div(job_d.N, NT) * ceil_div(job_d.M, MT) * ceil_div(job_d.K, KT);
+  
   // --------------------------------------------------------------------------
   // sequential
   // --------------------------------------------------------------------------
@@ -455,7 +451,6 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
       job_q <= '0;
       mt_dim_q <= 0; nt_dim_q <= 0; kt_dim_q <= 0;
       m_last_q <= 0; n_last_q <= 0; k_last_q <= 0;
-      tile_total_q <= 0;
 
       tile_cur_q <= 0;
       tile_pre_q <= 0;
@@ -480,7 +475,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
       waited_reuse_q <= waited_reuse_d;
 
-      if (state_q == S_IDLE && cfg_reg_if.valid && cfg_reg_if.ready) begin
+      if (state_q == S_IDLE && cfg_reg_if.regs[0][0] && cfg_reg_if.valid && cfg_reg_if.ready) begin
         mt_dim_q <= ceil_div(job_d.M, MT);
         nt_dim_q <= ceil_div(job_d.N, NT);
         kt_dim_q <= ceil_div(job_d.K, KT);
@@ -488,8 +483,6 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
         m_last_q <= job_d.M - (ceil_div(job_d.M, MT)-1) * MT;
         n_last_q <= job_d.N - (ceil_div(job_d.N, NT)-1) * NT;
         k_last_q <= job_d.K - (ceil_div(job_d.K, KT)-1) * KT;
-
-        tile_total_q <= ceil_div(job_d.N, NT) * ceil_div(job_d.M, MT) * ceil_div(job_d.K, KT);
       end
     end
   end
@@ -618,17 +611,17 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
         mxu_buf_d   = 1'b0;
         waited_reuse_d = 1'b0;
 
-        if (cfg_reg_if.valid) begin
-          job_d.input_base  = cfg_reg_if.regs[0];
-          job_d.weight_base = cfg_reg_if.regs[1];
-          job_d.output_base = cfg_reg_if.regs[2];
-          job_d.scale_base  = cfg_reg_if.regs[3];
-          job_d.zp_base     = cfg_reg_if.regs[4];
+        if (cfg_reg_if.regs[0][0] && cfg_reg_if.valid) begin
+          job_d.input_base  = cfg_reg_if.regs[1];
+          job_d.weight_base = cfg_reg_if.regs[2];
+          job_d.output_base = cfg_reg_if.regs[3];
+          job_d.scale_base  = cfg_reg_if.regs[4];
+          job_d.zp_base     = cfg_reg_if.regs[5];
 
-          job_d.M           = cfg_reg_if.regs[5][31:0];
-          job_d.N           = cfg_reg_if.regs[5][63:32];
-          job_d.K           = cfg_reg_if.regs[6][31:0];
-          job_d.qblk        = cfg_reg_if.regs[6][63:32];
+          job_d.M           = cfg_reg_if.regs[6][31:0];
+          job_d.N           = cfg_reg_if.regs[6][63:32];
+          job_d.K           = cfg_reg_if.regs[7][31:0];
+          job_d.qblk        = cfg_reg_if.regs[7][63:32];
 
           state_d = S_PRE0_LD_I;
         end
@@ -857,7 +850,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           logic [7:0] flags;
           c = '0;
 
-          flags     = {6'd0, 1'b0 /*mxu_buf*/, buf_cur};
+          flags     = {6'd0, mxu_buf_q, buf_cur};
 
           c.instr   = make_instr(OP_W_LDMA_MXU, flags, (MXU_KT*(MXU_NT/2)));
           c.rs1_data = 64'd0;
@@ -870,7 +863,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
       S_MXU_PRE_CUR_W_NTF: begin
         if (can_emit) begin
-          out_cmd_d   = make_notify_cmd(rid_w(buf_cur), (mxu_linear+1), 1'b1 /*set*/);
+          out_cmd_d   = make_notify_cmd(rid_w_mxu(mxu_buf_q), (mxu_linear+1), 1'b1 /*set*/);
           out_start_d = 1'b1;
           state_d     = S_MXU_PRE_CUR_SC;
         end
@@ -888,7 +881,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           c = '0;
           sc_bytes = groups_mxu * MXU_NT * 4;
 
-          flags     = {5'd0, QDIR_COL, 1'b0 /*mxu_buf*/, buf_cur};
+          flags     = {5'd0, QDIR_COL, mxu_buf_q, buf_cur};
 
           c.instr   = make_instr(OP_SC_LDMA_MXU, flags, sc_bytes);
           c.rs1_data = 64'd0;
@@ -908,7 +901,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           c = '0;
           zp_bytes = groups_mxu * MXU_NT * 1;
 
-          flags     = {5'd0, QDIR_COL, 1'b0 /*mxu_buf*/, buf_cur};
+          flags     = {5'd0, QDIR_COL, mxu_buf_q, buf_cur};
 
           c.instr   = make_instr(OP_ZP_LDMA_MXU, flags, zp_bytes);
           c.rs1_data = 64'd0;
@@ -921,7 +914,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
       S_MXU_PRE_CUR_SZ_NTF: begin
         if (can_emit) begin
-          out_cmd_d   = make_notify_cmd(rid_sz(buf_cur), (mxu_linear+1), 1'b1 /*set*/);
+          out_cmd_d   = make_notify_cmd(rid_sz_mxu(mxu_buf_q), (mxu_linear+1), 1'b1 /*set*/);
           out_start_d = 1'b1;
           state_d     = S_MXU_WAIT_CUR_W;
         end
@@ -929,7 +922,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
       S_MXU_WAIT_CUR_W: begin
         if (can_emit) begin
-          out_cmd_d   = make_wait_cmd(rid_w(buf_cur), (mxu_linear+1));
+          out_cmd_d   = make_wait_cmd(rid_w_mxu(mxu_buf_q), (mxu_linear+1));
           out_start_d = 1'b1;
           state_d     = S_MXU_WAIT_CUR_SZ;
         end
@@ -937,7 +930,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
       S_MXU_WAIT_CUR_SZ: begin
         if (can_emit) begin
-          out_cmd_d   = make_wait_cmd(rid_sz(buf_cur), (mxu_linear+1));
+          out_cmd_d   = make_wait_cmd(rid_sz_mxu(mxu_buf_q), (mxu_linear+1));
           out_start_d = 1'b1;
           state_d     = S_MXU_PRE_NEXT_W;
         end
@@ -972,7 +965,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
       S_MXU_PRE_NEXT_W_NTF: begin
         if (can_emit) begin
-          out_cmd_d   = make_notify_cmd(rid_w(buf_cur), (next_mxu_linear+1), 1'b1 /*set*/);
+          out_cmd_d   = make_notify_cmd(rid_w_mxu(~mxu_buf_q), (next_mxu_linear+1), 1'b1 /*set*/);
           out_start_d = 1'b1;
           state_d     = S_MXU_PRE_NEXT_SC;
         end
@@ -1032,7 +1025,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
       S_MXU_PRE_NEXT_SZ_NTF: begin
         if (can_emit) begin
           if (has_next_mxu) begin
-            out_cmd_d   = make_notify_cmd(rid_sz(buf_cur), (next_mxu_linear+1), 1'b1 /*set*/);
+            out_cmd_d   = make_notify_cmd(rid_sz_mxu(~mxu_buf_q), (next_mxu_linear+1), 1'b1 /*set*/);
             out_start_d = 1'b1;
           end
           state_d     = S_MXU_ARM_GEMM;
@@ -1066,7 +1059,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
       S_MXU_ARM_GEMM_NTF: begin
         if (can_emit) begin
-          out_cmd_d   = make_notify_cmd(rid_g(buf_cur), gemm_done_target, 1'b1 /*set*/);
+          out_cmd_d   = make_notify_cmd(rid_g_mxu(mxu_buf_q), gemm_done_target, 1'b1 /*set*/);
           out_start_d = 1'b1;
           state_d     = S_MXU_WAIT_GEMM_DONE;
         end
@@ -1074,7 +1067,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
       S_MXU_WAIT_GEMM_DONE: begin
         if (can_emit) begin
-          out_cmd_d   = make_wait_cmd(rid_g(buf_cur), gemm_done_target);
+          out_cmd_d   = make_wait_cmd(rid_g_mxu(mxu_buf_q), gemm_done_target);
           out_start_d = 1'b1;
 
           if (has_next_mxu) begin
@@ -1083,7 +1076,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
             mxu_buf_d = ~mxu_buf_q;
             state_d   = S_MXU_WAIT_CUR_W;
           end else begin
-            state_d   = S_O_KICK_SET;
+            state_d   = S_O_ACC2LMEM;
           end
         end
       end
@@ -1091,13 +1084,6 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
       // ----------------------------------------------------------------------
       // Output: acc->lmem then lmem->dram
       // ----------------------------------------------------------------------
-      S_O_KICK_SET: begin
-        if (can_emit) begin
-          out_cmd_d   = make_notify_cmd(rid_o(buf_cur), (2*gen_cur), 1'b1 /*set*/);
-          out_start_d = 1'b1;
-          state_d     = S_O_ACC2LMEM;
-        end
-      end
 
       S_O_ACC2LMEM: begin
         if (can_emit) begin
@@ -1122,7 +1108,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
       S_O_ACC2LMEM_NTF: begin
         if (can_emit) begin
-          out_cmd_d   = make_notify_cmd(rid_o(buf_cur), 1, 1'b0 /*add*/);
+          out_cmd_d   = make_notify_cmd(rid_o(buf_cur), (2*gen_cur + 1), 1'b1 /*set*/);
           out_start_d = 1'b1;
           state_d     = S_O_WAIT_ACC2LMEM_DONE;
         end

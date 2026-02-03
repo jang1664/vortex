@@ -11,63 +11,184 @@
     - dma cmd controller에게 제어 신호를 보냄.
   
 */
-// gemm cmd queue 없어도 됨, i_cmd_queue 가 그 역할을 일부 대신함
+
+/*
+  - parent queue랑 child queue는 VX_fifo_queue를 사용
+  - child queue는 5개 (input micro-tile read, weight micro-tile read, sz micro-tile read, output micro-tile write, global dma)
+  - child queue는 node가 busy하면 대기 (idle 신호를 ready로 사용)
+  - 각 node가 notify를 만났을 때 gemm_sync_slv_if로 직접 올린다는 가정
+  - done은 현재 구조에서 사용하지 않으므로 0으로 둠. 
+*/
 
 `include "VX_define.vh"
 
 module VX_gemm_ctrl import VX_gpu_pkg::*; #(
     parameter `STRING INSTANCE_ID = "",
-    parameter N_CHILDREN  = 1,
-    parameter N_NODE   = 2
+    parameter int N_CHILDREN = 5,
+    parameter int N_NODE     = 5
 ) (
-    // Clock
-    input wire              clk,
-    input wire              reset,
+    input  wire              clk,
+    input  wire              reset,
 
-    VX_config_reg_if.slave  cfg_reg_if, // from gemm node
-    VX_gemm_ctrl_if.master  gemm_ctrl_if, // to gemm unit
-    VX_gemm_sync_if.slave gemm_sync_slv_if[N_NODE] // from cmd CTRLs
+    VX_config_reg_if.slave    cfg_reg_if,         // from gemm node
+    VX_gemm_ctrl_if.master    gemm_ctrl_if,       // to gemm unit + cmd ctrls
+    VX_gemm_sync_if.slave     gemm_sync_slv_if[N_NODE] // from cmd ctrls (notify events)
 );
 
-    VX_gemm_fsm_if gemm_fsm_if ();
-    VX_gemm_fsm_if gemm_pqueue_out ();
+    // -------------------------------------------------------------------------
+    // Local interfaces
+    // -------------------------------------------------------------------------
+    VX_gemm_fsm_if gemm_fsm_if        ();
+    VX_gemm_fsm_if gemm_pqueue_out    ();
     VX_gemm_fsm_if gemm_sync_out[N_CHILDREN] ();
+    VX_gemm_fsm_if gemm_cqueue_out[N_CHILDREN] ();
 
-    //TODO: implementation
-    assign cfg_reg_if.ready = 1'b0;
-    assign gemm_ctrl_if.input_read_ctrl.start = 1'b0;
-    assign gemm_ctrl_if.output_write_ctrl.start = 1'b0;
-    assign gemm_ctrl_if.weight_read_ctrl.start = 1'b0;
-    assign gemm_ctrl_if.quant_param_read_ctrl.start = 1'b0;
-    assign gemm_ctrl_if.dma_ctrl.start = 1'b0;
-
-    // control registers
-
-    // top level FSM
+    // -------------------------------------------------------------------------
+    // GEMM FSM: produces parent cmd stream (cmd + start pulse)
+    // -------------------------------------------------------------------------
     VX_gemm_fsm #(
       .INSTANCE_ID(INSTANCE_ID)
     ) u_VX_gemm_fsm (
-      .clk(clk),
-      .reset(reset),
-      .cfg_reg_if(cfg_reg_if),
+      .clk        (clk),
+      .reset      (reset),
+      .cfg_reg_if (cfg_reg_if),
       .gemm_fsm_if(gemm_fsm_if)
     );
 
-    // parent cmd queue
+    // -------------------------------------------------------------------------
+    // Parent cmd queue: store ONLY cmd payload (NOT start)
+    //   - start is regenerated as (valid && sync_ready) pulse.
+    //   - FSM sees idle=~full (buffer-only).
+    // -------------------------------------------------------------------------
+    localparam int PARENT_QUEUE_DATAW = $bits(gemm_unified_cmd_t);
 
-    // sync
-    VX_gemm_sync #(
-      .INSTANCE_ID(INSTANCE_ID),
-      .N_CHILDREN(N_CHILDREN),
-      .N_NODE(N_NODE)
-    ) VX_gemm_sync_instance (
-      .clk(clk),
-      .reset(reset),
-      .gemm_fsm_slv_if(gemm_pqueue_out),
-      .gemm_fsm_mas_if(gemm_sync_out),
-      .gemm_sync_slv_if(gemm_sync_slv_if)
+    wire                        parent_q_full, parent_q_empty;
+    wire [PARENT_QUEUE_DATAW-1:0] parent_q_dout;
+
+    wire parent_q_push  = gemm_fsm_if.ctrl.start && gemm_fsm_if.flag.idle;
+    wire parent_out_fire  = !parent_q_empty && gemm_pqueue_out.flag.idle;
+
+    // Backpressure to FSM: do not emit start if queue full
+    assign gemm_fsm_if.flag.idle = ~parent_q_full;  //sync에서 stall 되어도 parent queue에 버퍼링 가능
+    assign gemm_fsm_if.flag.done = '0; // unused
+
+    // Drive payload to sync; generate start pulse from fire
+    assign gemm_pqueue_out.ctrl.cmd   = parent_q_dout;
+    assign gemm_pqueue_out.ctrl.start = ~parent_q_empty;
+
+    VX_fifo_queue #(
+      .DATAW (PARENT_QUEUE_DATAW),
+      .DEPTH (4)
+    ) u_parent_cmd_queue (
+      .clk      (clk),
+      .reset    (reset),
+      .push     (parent_q_push),
+      .pop      (parent_out_fire),
+      .data_in  (gemm_fsm_if.ctrl.cmd),
+      .data_out (parent_q_dout),
+      .empty    (parent_q_empty),
+      .full     (parent_q_full),
+      .alm_empty(),
+      .alm_full (),
+      .size     ()
     );
 
-    // child cmd queue
+    // -------------------------------------------------------------------------
+    // Sync: wait/notify 처리 + child demux
+    //   - gemm_pqueue_out is "slave" into sync: sync drives gemm_pqueue_out.flag.idle
+    // -------------------------------------------------------------------------
+    VX_gemm_sync #(
+      .INSTANCE_ID (INSTANCE_ID),
+      .N_CHILDREN  (N_CHILDREN),
+      .N_NODE      (N_NODE)
+    ) u_VX_gemm_sync (
+      .clk             (clk),
+      .reset           (reset),
+      .gemm_fsm_slv_if  (gemm_pqueue_out),
+      .gemm_fsm_mas_if  (gemm_sync_out),
+      .gemm_sync_slv_if (gemm_sync_slv_if)
+    );
+
+    // -------------------------------------------------------------------------
+    // Child cmd queues: store ONLY cmd payload (NOT start)
+    //   - sync_out[i].flag.idle provides backpressure to sync:
+    //       here: buffer-only => idle = ~child_full
+    //   - unit stall is handled at queue output: fire = valid && unit_idle
+    // -------------------------------------------------------------------------
+    localparam int CHILD_QUEUE_DATAW = $bits(gemm_unified_cmd_t);
+
+    genvar i;
+    generate
+      for (i = 0; i < N_CHILDREN; i = i + 1) begin : gen_child_cmd_queues
+        wire                        child_q_full, child_q_empty;
+        wire [CHILD_QUEUE_DATAW-1:0] child_q_dout;
+
+        // push when sync issues and we report ready (buffer-only)
+        wire child_q_push = gemm_sync_out[i].ctrl.start && gemm_sync_out[i].flag.idle;
+
+        // output to unit: valid if not empty, ready is unit idle
+        wire child_out_fire  = !child_q_empty && gemm_cqueue_out[i].flag.idle;
+
+        // backpressure to sync: only depends on queue capacity
+        assign gemm_sync_out[i].flag.idle = ~child_q_full;
+        assign gemm_sync_out[i].flag.done = '0; // unused
+
+        // drive payload to unit-side interface; generate start from fire
+        assign gemm_cqueue_out[i].ctrl.cmd   = child_q_dout;
+        assign gemm_cqueue_out[i].ctrl.start = child_out_fire;
+
+        VX_fifo_queue #(
+          .DATAW (CHILD_QUEUE_DATAW),
+          .DEPTH (4)
+        ) u_child_cmd_queue (
+          .clk      (clk),
+          .reset    (reset),
+          .push     (child_q_push),
+          .pop      (child_out_fire),
+          .data_in  (gemm_sync_out[i].ctrl.cmd),
+          .data_out (child_q_dout),
+          .empty    (child_q_empty),
+          .full     (child_q_full),
+          .alm_empty(),
+          .alm_full (),
+          .size     ()
+        );
+      end
+    endgenerate
+
+    // -------------------------------------------------------------------------
+    // Connect child cmd queues to gemm_ctrl_if outputs
+    // Mapping (as you wrote):
+    //   0=input_read, 1=weight_read, 2=quant_param_read, 3=output_write, 4=dma
+    // -------------------------------------------------------------------------
+    // child 0: input read
+    assign gemm_ctrl_if.input_read_ctrl.cmd   = gemm_cqueue_out[0].ctrl.cmd;
+    assign gemm_ctrl_if.input_read_ctrl.start = gemm_cqueue_out[0].ctrl.start;
+    assign gemm_cqueue_out[0].flag.idle       = gemm_ctrl_if.input_read_flag.idle;
+    assign gemm_cqueue_out[0].flag.done       = '0;
+
+    // child 1: weight read
+    assign gemm_ctrl_if.weight_read_ctrl.cmd   = gemm_cqueue_out[1].ctrl.cmd;
+    assign gemm_ctrl_if.weight_read_ctrl.start = gemm_cqueue_out[1].ctrl.start;
+    assign gemm_cqueue_out[1].flag.idle        = gemm_ctrl_if.weight_read_flag.idle;
+    assign gemm_cqueue_out[1].flag.done        = '0;
+
+    // child 2: quant param read (scale/zp)
+    assign gemm_ctrl_if.quant_param_read_ctrl.cmd   = gemm_cqueue_out[2].ctrl.cmd;
+    assign gemm_ctrl_if.quant_param_read_ctrl.start = gemm_cqueue_out[2].ctrl.start;
+    assign gemm_cqueue_out[2].flag.idle             = gemm_ctrl_if.quant_param_read_flag.idle;
+    assign gemm_cqueue_out[2].flag.done             = '0;
+
+    // child 3: output write
+    assign gemm_ctrl_if.output_write_ctrl.cmd   = gemm_cqueue_out[3].ctrl.cmd;
+    assign gemm_ctrl_if.output_write_ctrl.start = gemm_cqueue_out[3].ctrl.start;
+    assign gemm_cqueue_out[3].flag.idle         = gemm_ctrl_if.output_write_flag.idle;
+    assign gemm_cqueue_out[3].flag.done         = '0;
+
+    // child 4: global DMA (dcache <-> lmem)
+    assign gemm_ctrl_if.dma_ctrl.cmd   = gemm_cqueue_out[4].ctrl.cmd;
+    assign gemm_ctrl_if.dma_ctrl.start = gemm_cqueue_out[4].ctrl.start;
+    assign gemm_cqueue_out[4].flag.idle = gemm_ctrl_if.dma_flag.idle;
+    assign gemm_cqueue_out[4].flag.done = '0;
 
 endmodule
