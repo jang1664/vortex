@@ -29,6 +29,13 @@ struct fp32 {
   static constexpr const char* name = "fp32";
 };
 
+struct tf32 {
+  using dtype = uint32_t;
+  static constexpr uint32_t id = 3;
+  static constexpr uint32_t bits = 19;
+  static constexpr const char* name = "tf32";
+};
+
 struct fp16 {
   using dtype = uint16_t;
   static constexpr uint32_t id = 1;

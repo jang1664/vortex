@@ -6,6 +6,9 @@ Example: Using Vortex operations in PyTorch
 import os
 import sys
 
+# IMPORTANT: Disable auto-setup BEFORE importing vortex_torch
+os.environ['VORTEX_NO_AUTO_SETUP'] = '1'
+
 import torch
 import vortex_torch as vx
 
@@ -298,6 +301,15 @@ if __name__ == '__main__':
     print("="*60)
     
     try:
+        # Setup XRT backend
+        print("\nConfiguring Vortex for XRT backend...")
+        vx.setup_vortex_env(
+            driver='xrt', 
+            fpga_bin_dir='/root/workspace/vortex/hw/syn/xilinx/xrt/test_tcu_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/bin'
+        )
+        print(f"✓ Driver configured: {os.environ.get('VORTEX_DRIVER')}")
+        print(f"✓ XCLBIN path: {os.environ.get('XRT_XCLBIN_PATH')}\n")
+        
         test_rmsnorm()
         test_silu()
         test_eladd()
