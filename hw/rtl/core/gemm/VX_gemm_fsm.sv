@@ -20,21 +20,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     [5] : ZP_BASE (DRAM)
     [6] : {N, M}
     [7] : {qblk, K}
-    [8] : {input stride0, input bnd0} (DRAM 쪽 레이아웃)
-    [9] : {input stride1, input bnd1}
-    [10]: {input stride2, input bnd2}
-    [11]: {weight stride0, weight bnd0}
-    [12]: {weight stride1, weight bnd1}
-    [13]: {weight stride2, weight bnd2}
-    [14]: {output stride0, output bnd0}
-    [15]: {output stride1, output bnd1}
-    [16]: {output stride2, output bnd2}
-    [17]: {scale stride0, zp stride0}  //weight bnd0 공유
-    [18]: {scale stride1, zp stride1}  //weight bnd1 공유
-    [19]: {scale stride2, zp stride2}  //weight bnd2 공유
-  */
   
-  /*
   ================================================================================
   VX_gemm_fsm.sv — Bring-up FSM Assumptions / Contract
   ================================================================================
@@ -642,6 +628,9 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
                                    input_tile_addr(job_q, /*mt*/mt0, /*kt*/kt0),
                                    (mt_eff0*kt_eff0*2),
                                    1'b0, 1);
+          out_cmd_d.rs1 = mt0;
+          out_cmd_d.rs2 = kt0;
+          out_cmd_d.rd = 0;  // input tile load
           out_start_d = 1'b1;
           state_d     = S_PRE0_LD_W;
         end
@@ -658,6 +647,9 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
                                    weight_tile_addr(job_q, nt0, kt0),
                                    (kt_eff0*(nt_eff0/2)),
                                    1'b0, 1);
+          out_cmd_d.rs1 = kt0;
+          out_cmd_d.rs2 = nt0;
+          out_cmd_d.rd = 1;  // weight tile load
           out_start_d = 1'b1;
           state_d     = S_PRE0_LD_SC;
         end
@@ -678,6 +670,9 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
                                    scale_tile_addr(job_q, nt0, kt0),
                                    (groups_eff*nt_eff0*4),
                                    1'b0, 1);
+          out_cmd_d.rs1 = groups_eff;
+          out_cmd_d.rs2 = nt0;
+          out_cmd_d.rd = 2;  // scale tile load
           out_start_d = 1'b1;
           state_d     = S_PRE0_LD_ZP;
         end
@@ -700,6 +695,9 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
                                    zp_tile_addr(job_q, nt0, kt0),
                                    (groups_eff*nt_eff0*1),
                                    1'b0, 1);
+          out_cmd_d.rs1 = groups_eff;
+          out_cmd_d.rs2 = nt0;
+          out_cmd_d.rd = 3;  // zp tile load
           out_start_d = 1'b1;
           state_d     = S_PRE0_LD_DONE_NTF;
         end
@@ -735,6 +733,9 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
                                    input_tile_addr(job_q, mt1, kt1),
                                    (mt_eff1*kt_eff1*2),
                                    1'b1, 1);
+          out_cmd_d.rs1 = mt1;
+          out_cmd_d.rs2 = kt1;
+          out_cmd_d.rd = 0;  // input tile load
           out_start_d = 1'b1;
           state_d     = S_PRE1_LD_W;
         end
@@ -751,6 +752,9 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
                                    weight_tile_addr(job_q, nt1, kt1),
                                    (kt_eff1*(nt_eff1/2)),
                                    1'b1, 1);
+          out_cmd_d.rs1 = kt1;
+          out_cmd_d.rs2 = nt1;
+          out_cmd_d.rd = 1;  // weight tile load
           out_start_d = 1'b1;
           state_d     = S_PRE1_LD_SC;
         end
@@ -771,6 +775,9 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
                                    scale_tile_addr(job_q, nt1, kt1),
                                    (groups_eff*nt_eff1*4),
                                    1'b1, 1);
+          out_cmd_d.rs1 = groups_eff;
+          out_cmd_d.rs2 = nt1;
+          out_cmd_d.rd = 2;  // scale tile load
           out_start_d = 1'b1;
           state_d     = S_PRE1_LD_ZP;
         end
@@ -794,6 +801,9 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
                                    zp_tile_addr(job_q, nt1, kt1),
                                    (groups_eff*nt_eff1*1),
                                    1'b1, 1);
+          out_cmd_d.rs1 = groups_eff;
+          out_cmd_d.rs2 = nt1;
+          out_cmd_d.rd = 3;  // zp tile load
           out_start_d = 1'b1;
           state_d     = S_PRE1_LD_DONE_NTF;
         end
@@ -1127,6 +1137,9 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           int unsigned out_bytes;
           out_bytes   = mt_eff_cur * nt_eff_cur * 2;
           out_cmd_d   = make_dma_st(out_tile_addr(job_q, mt_cur, nt_cur), OBASE_cur, out_bytes, buf_cur, gen_cur);
+          out_cmd_d.rs1 = mt_cur;
+          out_cmd_d.rs2 = nt_cur;
+          out_cmd_d.rd = 4;  // output tile store
           out_start_d = 1'b1;
           state_d     = S_O_LMEM2DRAM_NTF;
         end
@@ -1206,6 +1219,9 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           gen_pre = buf_gen(tile_pre_d);
 
           out_cmd_d   = make_dma_ld(ibuf_base(buf_pre), input_tile_addr(job_q, mtp, ktp), (mt_effp*kt_effp*2), buf_pre, gen_pre);
+          out_cmd_d.rs1 = mtp;
+          out_cmd_d.rs2 = ktp;
+          out_cmd_d.rd = 0;  // input tile load
           out_start_d = 1'b1;
           state_d     = S_PRE_NEXT_LD_W;
         end
@@ -1224,6 +1240,9 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           gen_pre = buf_gen(tile_pre_d);
 
           out_cmd_d   = make_dma_ld(wbuf_base(buf_pre), weight_tile_addr(job_q, ntp, ktp), (kt_effp*(nt_effp/2)), buf_pre, gen_pre);
+          out_cmd_d.rs1 = ktp;
+          out_cmd_d.rs2 = ntp;
+          out_cmd_d.rd = 1;  // weight tile load          
           out_start_d = 1'b1;
           state_d     = S_PRE_NEXT_LD_SC;
         end
@@ -1245,6 +1264,9 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           groups_eff = ceil_div(kt_effp, job_q.qblk);
 
           out_cmd_d   = make_dma_ld(pbuf_base(buf_pre), scale_tile_addr(job_q, ntp, ktp), (groups_eff*nt_effp*4), buf_pre, gen_pre);
+          out_cmd_d.rs1 = groups_eff;
+          out_cmd_d.rs2 = ntp;
+          out_cmd_d.rd = 2;  // scale tile load
           out_start_d = 1'b1;
           state_d     = S_PRE_NEXT_LD_ZP;
         end
@@ -1269,6 +1291,9 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           zp_dst      = pbuf_base(buf_pre) + (groups_full * NT * 4);
 
           out_cmd_d   = make_dma_ld(zp_dst, zp_tile_addr(job_q, ntp, ktp), (groups_eff*nt_effp*1), buf_pre, gen_pre);
+          out_cmd_d.rs1 = groups_eff;
+          out_cmd_d.rs2 = ntp;
+          out_cmd_d.rd = 3;  // zp tile load
           out_start_d = 1'b1;
           state_d     = S_PRE_NEXT_LD_DONE_NTF;
         end
