@@ -16,8 +16,8 @@ signalSpacing 5
 
 ; windowTimeUnit is used for zoom, cursor & marker
 ; waveform viewport range
-zoom 2214101.562500 2773476.562500
-cursor 2455000.000000
+zoom 0.000000 4489450.000000
+cursor 1265000.000000
 marker 0.000000
 
 ; user define markers
@@ -29,9 +29,9 @@ userMarker 2265204.187 M1 ID_GREEN5 long_dashed
 showMarkerValue relative
 
 ; visible top row signal index
-top 93
+top 0
 ; marker line index
-markerPos 264
+markerPos 270
 
 ; event list
 ; addEvent event_name event_expression
@@ -62,7 +62,7 @@ addSignal -h 15 -holdScope scale_regs[0][15:0]
 addSignal -expanded -h 15 -holdScope zero_regs[1:0]
 addSignal -h 15 -holdScope zero_regs[1][15:0]
 addSignal -h 15 -holdScope zero_regs[0][15:0]
-addGroup "weights"
+addGroup "weights" -e FALSE
 addSubGroup "w_lmem_bus_if" -e FALSE
 addSignal -h 15 /tb_VX_gemm_unit/u_dut/w_lmem_bus_if/req_valid
 addSignal -expanded -h 15 -holdScope req_data
@@ -139,7 +139,7 @@ addSignal -expanded -h 15 /tb_VX_gemm_unit/u_dut/mxu_weight[1:0]
 addSignal -h 15 -holdScope mxu_weight[1][15:0]
 addSignal -h 15 -holdScope mxu_weight[0][15:0]
 addSignal -h 15 /tb_VX_gemm_unit/u_dut/u_mxu/weight_i[1:0]
-addGroup "out_bus"
+addGroup "out_bus" -e FALSE
 addSignal -h 15 /tb_VX_gemm_unit/u_dut/acc_mem_out_data[3:0]
 addSignal -h 15 -UNSIGNED -HEX -holdScope acc_mem_out_rd_addr[17:0]
 addSignal -h 15 -UNSIGNED -HEX -holdScope acc_mem_out_rd_bank[1:0]
@@ -158,7 +158,7 @@ addSignal -h 15 -holdScope rsp_data
 endSubGroup "o_lmem_bus_if"
 addSignal -h 15 /tb_VX_gemm_unit/u_dut/gemm_done
 addSignal -h 15 -holdScope gemm_idle
-addGroup "input side" -e FALSE
+addGroup "input side"
 addSubGroup "in_pipe"
 addSignal -h 15 /tb_VX_gemm_unit/u_dut/u_in_pipe/clk
 addSignal -h 15 -UNSIGNED -HEX -holdScope data_in[255:0]
@@ -304,7 +304,7 @@ addSignal -h 15 -UNSIGNED -HEX -holdScope wdata[511:0]
 addSignal -h 15 -holdScope wren[0:0]
 addSignal -h 15 -holdScope write
 endSubGroup "acc_mem0"
-addGroup "act_reduce"
+addGroup "act_reduce" -e FALSE
 addSignal -h 15 /tb_VX_gemm_unit/u_dut/act_reduce_blk_idx[15:0]
 addSignal -h 15 -holdScope act_reduce_data_in[15:0]
 addSignal -expanded -h 15 -holdScope act_reduce_data_in_shifted[15:0]
@@ -327,7 +327,14 @@ addSignal -h 15 -UNSIGNED -HEX -holdScope act_reduce_data_in_shifted[0][38:0]
 addSignal -h 15 -UNSIGNED -HEX -holdScope act_reduce_data_out[42:0]
 addSignal -h 15 -holdScope act_reduce_valid_in
 addSignal -h 15 -holdScope act_reduce_valid_out
-addGroup "G10"
+addGroup "input scaler"
+addSignal -h 15 -UNSIGNED -HEX /tb_VX_gemm_unit/u_dut/in_scaler_a_ready[15:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope in_scaler_b_ready[15:0]
+addSignal -h 15 -holdScope in_scaler_result_data[15:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope in_scaler_result_valid[15:0]
+addSubGroup "input scaler-1"
+endSubGroup "input scaler-1"
+addGroup "G11"
 
 ; getSignalForm Scope Hierarchy Status
 ; active file of getSignalForm

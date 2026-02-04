@@ -133,7 +133,6 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     logic [`MXU_ROW-1:0]                           in_scaler_b_ready;
     logic [`MXU_ROW-1:0][`IFP_WIDTH-1:0]           in_scaler_result_data;
     logic [`MXU_ROW-1:0]                           in_scaler_result_valid;
-    logic [`MXU_ROW-1:0]                           in_scaler_result_ready;
 
     // -------------------------------------------------------------------------
     // Prealigner Signals
@@ -656,7 +655,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
 
             assign activated = (gemm_unit_ctrl.quant_dir == `QDIR_ROW) & in_flight;
             assign a_valid   = in_pipe_valid_out & activated;
-            assign b_valid   = activated;
+            assign b_valid   = a_valid;
             assign a_data    = activated ? in_pipe_data_out[`IFP_WIDTH*i +: `IFP_WIDTH] : '0;
             assign b_data    = activated ? scale_regs[gemm_unit_ctrl.sreg_use_idx][i] : '0;
 
@@ -673,7 +672,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
                 .b_ready      (in_scaler_b_ready[i]),
                 .b_data       (b_data),
                 .result_valid (in_scaler_result_valid[i]),
-                .result_ready (in_scaler_result_ready[i]),
+                .result_ready (1'b1),
                 .result_data  (in_scaler_result_data[i])
             );
         end
@@ -1099,6 +1098,11 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
                     $time, INSTANCE_ID, parseWordNoNormal(in_pipe_data_out, `MXU_ROW * `IFP_WIDTH, `IFP_WIDTH, "fp")))
             end
 
+            if (in_scaler_result_valid) begin
+                `TRACE(3, ("%t: %s: Input scaler result - data=%s\n",
+                    $time, INSTANCE_ID, parseWordNoNormal(in_scaler_result_data, `MXU_ROW * `IFP_WIDTH, `IFP_WIDTH, "fp")))
+            end
+
             // Prealigner output
             if (prealigner_out_valid) begin
                 `TRACE(3, ("%t: %s: Prealigner out - max_exp=0x%0h\n",
@@ -1138,8 +1142,8 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
 
             // Int2FP output
             if (int2fp_output_valid[0]) begin
-                `TRACE(3, ("%t: %s: Int2FP out - fp32=%s\n",
-                    $time, INSTANCE_ID, parseWordNoNormal(int2fp_out_data, `MXU_ROW * FP32_WIDTH, FP32_WIDTH, "fp")))
+                `TRACE(3, ("%t: %s: Int2FP out - fp16=%s\n",
+                    $time, INSTANCE_ID, parseWordNoNormal(int2fp_out_data, `MXU_ROW * FP16_WIDTH, FP16_WIDTH, "fp")))
             end
 
             // Scaler output
