@@ -235,6 +235,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     logic [3:0][`GEMM_ACC_MEM_ADDR_WIDTH-1:0]      acc_mem_wr_addr;
     logic [3:0][`GEMM_ACC_MEM_ADDR_WIDTH-1:0]      acc_mem_rd_addr;
     logic [3:0]                                    acc_mem_wr_en;
+    logic [3:0]                                    acc_mem_rd_en;
 
     // -------------------------------------------------------------------------
     // Accumulator Read FSM Signals
@@ -300,7 +301,9 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     assign o_lmem_bus_if.req_ready = ~in_flight | (gemm_unit_ctrl.is_load && acc_mem_out_rd_bank != acc_mem_accum_wr_bank) |
                                      (~gemm_unit_ctrl.is_load && acc_mem_out_rd_bank != acc_mem_accum_rd_bank && acc_mem_out_rd_bank != acc_mem_accum_wr_bank);
     assign o_lmem_bus_if.rsp_valid = fp16_out_valid[0];
-    assign o_lmem_bus_if.rsp_data  = fp16_out_data;
+    assign o_lmem_bus_if.rsp_data.data  = fp16_out_data;
+    assign o_lmem_bus_if.rsp_data.tag  = '0;
+    assign acc_mem_out_rd_addr = o_lmem_bus_if.req_data.addr;
 
     // =========================================================================
     // Accumulator Memory Bank Address Calculation
@@ -581,7 +584,9 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
             zero_regs <= '0;
         end else begin
             if (zp_reg_wr_en) begin
-                zero_regs[zp_reg_idx] <= sz_req_data;
+                for(int i=0; i<`MAX(`MXU_ROW, `MXU_COL); i++) begin
+                  zero_regs[zp_reg_idx][i] <= -1*signed'(sz_req_data[i*`ZP_WIDTH +: `ZP_WIDTH]);
+                end
             end
         end
     end
@@ -745,7 +750,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     // Activation Reduce Tree
     // -------------------------------------------------------------------------
     VX_reduce_tree_pipelined_v2 #(
-        .IN_W            (`MXU_ROW * `ACT_REDUCE_IN_WIDTH),
+        .IN_W            (`ACT_REDUCE_IN_WIDTH),
         .OUT_W           (`ACT_REDUCE_OUT_WIDTH),
         .N               (`MXU_ROW),
         .OP              ("+"),
@@ -930,7 +935,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
             assign inf = &exp;
             assign scaled_fp32_out_data[i][31] = scaled_fp_out_data[i][15];
             assign scaled_fp32_out_data[i][30:23] = inf ? '1 : exp + (FP32_EXP_BIAS - FP16_EXP_BIAS);
-            assign scaled_fp32_out_data[i][22:0] = {scaled_fp_out_data[i][6:0], 13'b0};
+            assign scaled_fp32_out_data[i][22:0] = {scaled_fp_out_data[i][9:0], 13'b0};
         end
     endgenerate
 
@@ -994,6 +999,8 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
         for (genvar i = 0; i < 4; i++) begin : gen_acc_mem
             assign acc_mem_wr_en[i] = gemm_unit_ctrl.is_load ? scaler_output_valid[0] :
                                       (acc_output_valid[0] & (acc_mem_accum_wr_bank == i));
+            assign acc_mem_rd_en[i] = (acc_mem_accum_rd_bank == i) ? acc_mem_accum_rd_req :
+                                      (acc_mem_out_rd_bank == i)   ? o_lmem_bus_if.req_valid & o_lmem_bus_if.req_ready : 1'b0;
             assign acc_mem_wr_addr[i] = acc_mem_accum_wr_bank_addr;
             assign acc_mem_rd_addr[i] = (acc_mem_accum_rd_bank == i) ? acc_mem_accum_rd_bank_addr :
                                         (acc_mem_out_rd_bank == i)   ? acc_mem_out_rd_bank_addr : '0;
@@ -1006,7 +1013,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
             ) VX_sp_ram_instance (
                 .clk   (clk),
                 .reset (reset),
-                .read  (~acc_mem_wr_en[i]),
+                .read  (acc_mem_rd_en[i]),
                 .write (acc_mem_wr_en[i]),
                 .wren  (1'b1),
                 .addr  (acc_mem_wr_en[i] ? acc_mem_wr_addr[i] : acc_mem_rd_addr[i]),

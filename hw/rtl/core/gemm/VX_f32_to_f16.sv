@@ -2,7 +2,9 @@
 
 `include "VX_define.vh"
 
-module VX_f32_to_f16 (
+module VX_f32_to_f16 # (
+  parameter OUT_REG = 0
+) (
     input logic                  clk_i,
     input logic                  resetn_i,
     input logic                  valid_i,
@@ -186,16 +188,26 @@ module VX_f32_to_f16 (
     endcase
   end
 
-  always_ff @(posedge clk_i) begin
-    if (~resetn_i) begin
-      valid_o <= 1'b0;
-      data_o  <= '0;
+  generate
+    if(OUT_REG == 0) begin
+      always_comb begin
+        valid_o = valid_i;
+        data_o  = {fp16_sign, fp16_exp, fp16_mant};
+      end
     end else begin
-      valid_o <= valid_i;
-      data_o  <= {fp16_sign, fp16_exp, fp16_mant};
+      // output register
+      always_ff @(posedge clk_i) begin
+        if (~resetn_i) begin
+          valid_o <= 1'b0;
+          data_o  <= '0;
+        end else begin
+          valid_o <= valid_i;
+          data_o  <= {fp16_sign, fp16_exp, fp16_mant};
+        end
+      end
     end
-  end
-
+  endgenerate
+  
 `ifdef DBG_TRACE_GEMM
   always @(posedge clk_i) begin
     if (resetn_i) begin
