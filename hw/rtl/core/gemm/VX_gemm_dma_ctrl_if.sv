@@ -5,14 +5,15 @@ interface VX_gemm_dma_ctrl_if import VX_gpu_pkg::*; ();
   logic start;
   logic idle;
   logic done;
+  gemm_unified_cmd_t cmd;
 
   modport master (
-    output start,
+    output start, cmd,
     input idle, done
   );
 
   modport slave (
-    input start,
+    input start, cmd,
     output idle, done
   );
   
