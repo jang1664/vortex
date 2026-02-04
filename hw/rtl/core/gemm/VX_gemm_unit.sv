@@ -56,6 +56,13 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     localparam PRE_PROC_OUT_DLY = MXU_OUT_DLY - (ACT_REDUCE_OUT_DLY + DEFAULT_OUT_DLY);
     localparam INTTOFP_OUT_DLY = 2;
 
+    // output scale config
+`ifdef GEMM_UNIT_FP16_OUT_SCALE
+    localparam GEMM_UNIT_FP16_OUT_SCALE = 1;
+`else 
+    localparam GEMM_UNIT_FP16_OUT_SCALE = 0;
+`endif
+
     // =========================================================================
     // Type Definitions
     // =========================================================================
@@ -195,18 +202,32 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     // -------------------------------------------------------------------------
     // Int to FP Converter Signals
     // -------------------------------------------------------------------------
+`ifdef GEMM_UNIT_FP16_OUT_SCALE
     logic [`MXU_COL-1:0][FP16_WIDTH-1:0]           int2fp_out_data;
+`else
+    logic [`MXU_COL-1:0][FP32_WIDTH-1:0]           int2fp_out_data;
+`endif
+
     logic [`MXU_COL-1:0]                           int2fp_output_valid;
 
     // -------------------------------------------------------------------------
     // Output Scaler Signals
     // -------------------------------------------------------------------------
+`ifdef GEMM_UNIT_FP16_OUT_SCALE
     logic [`MXU_COL-1:0][FP16_WIDTH-1:0]           scaled_fp_out_data;
     logic [`MXU_COL-1:0]                           scaler_output_valid;
     logic [`MXU_COL-1:0][FP16_WIDTH-1:0]           scaler_bypass_data;
     logic                                          scaler_bypass_valid;
     logic [`MXU_COL-1:0][FP16_WIDTH-1:0]           final_scaled_fp_out_data;
     logic                                          final_scaler_output_valid;
+`else
+    logic [`MXU_COL-1:0][FP32_WIDTH-1:0]           scaled_fp_out_data;
+    logic [`MXU_COL-1:0]                           scaler_output_valid;
+    logic [`MXU_COL-1:0][FP32_WIDTH-1:0]           scaler_bypass_data;
+    logic                                          scaler_bypass_valid;
+    logic [`MXU_COL-1:0][FP32_WIDTH-1:0]           final_scaled_fp_out_data;
+    logic                                          final_scaler_output_valid;
+`endif
 
     // -------------------------------------------------------------------------
     // scaled output to fp32
@@ -879,13 +900,13 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
         for (genvar i = 0; i < `MXU_COL; i++) begin : gen_int2fp
             VX_pint2fp #(
                 .IN_DW             (`MERGE_OUT_BW),
-                .OUT_DW            (FP16_WIDTH),
+                .OUT_DW            (GEMM_UNIT_FP16_OUT_SCALE ? FP16_WIDTH : FP32_WIDTH),
                 .IN_EXP_WIDTH      (FP16_EXP_WIDTH),
-                .OUT_EXP_WIDTH     (FP16_EXP_WIDTH),
+                .OUT_EXP_WIDTH     (GEMM_UNIT_FP16_OUT_SCALE ? FP16_EXP_WIDTH : FP32_EXP_WIDTH),
                 .IN_EXP_BIAS       (FP16_EXP_BIAS),
-                .OUT_EXP_BIAS      (FP16_EXP_BIAS),
-                .OUT_MANTISSA_WIDTH(FP16_MAN_WIDTH),
-                .SCALE             (FP16_MAN_WIDTH + `EXTRA_BIT_WIDTH)
+                .OUT_EXP_BIAS      (GEMM_UNIT_FP16_OUT_SCALE ? FP16_EXP_BIAS : FP32_EXP_BIAS),
+                .OUT_MANTISSA_WIDTH(GEMM_UNIT_FP16_OUT_SCALE ? FP16_MAN_WIDTH : FP32_MAN_WIDTH),
+                .SCALE             (FP16_MAN_WIDTH + `EXTRA_BIT_WIDTH) // extra bit already reflect FP16 and FP32 mantissa diff
             ) u_int2fp (
                 .clk_i      (clk),
                 .resetn_i   (~reset),
@@ -906,13 +927,28 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     generate
         for (genvar i = 0; i < `MXU_COL; i++) begin : gen_out_scaler
             logic a_valid, b_valid;
+
+`ifdef GEMM_UNIT_FP16_OUT_SCALE
             logic [FP16_WIDTH-1:0] a_data, b_data;
+`else
+            logic [FP32_WIDTH-1:0] a_data, b_data;
+            logic [FP16_EXP_WIDTH-1:0] exp;
+`endif
 
             assign a_valid = int2fp_output_valid[i] & is_qcol;
             assign b_valid = int2fp_output_valid[i] & is_qcol;
             assign a_data  = (int2fp_output_valid[i] & is_qcol) ? int2fp_out_data[i] : '0;
-            assign b_data  = (int2fp_output_valid[i] & is_qcol) ? scale_regs[gemm_unit_ctrl.sreg_use_idx][i] : '0;
 
+`ifdef GEMM_UNIT_FP16_OUT_SCALE
+            assign b_data  = (int2fp_output_valid[i] & is_qcol) ? scale_regs[gemm_unit_ctrl.sreg_use_idx][i] : '0;
+`else
+            assign b_data[31]  = (int2fp_output_valid[i] & is_qcol) ? scale_regs[gemm_unit_ctrl.sreg_use_idx][i][15] : '0;
+            assign exp = scale_regs[gemm_unit_ctrl.sreg_use_idx][i][14:10];
+            assign b_data[30:23] = (int2fp_output_valid[i] & is_qcol) ? (&exp==1'b1 ? '1 : exp + (FP32_EXP_BIAS - FP16_EXP_BIAS)) : '0;
+            assign b_data[22:0]  = (int2fp_output_valid[i] & is_qcol) ? {scale_regs[gemm_unit_ctrl.sreg_use_idx][i][9:0], 13'b0} : '0;
+`endif
+
+`ifdef GEMM_UNIT_FP16_OUT_SCALE
             VX_fp16_mul #(
                 .LATENCY (0),
                 .OUT_BUF (1)
@@ -930,11 +966,34 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
                 .result_data  (scaled_fp_out_data[i])
             );
         end
+`else
+            VX_fp32_mul #(
+                .LATENCY (0),
+                .OUT_BUF (1)
+            ) u_out_scaler (
+                .clk          (clk),
+                .reset        (reset),
+                .a_valid      (a_valid),
+                .a_ready      (),
+                .a_data       (a_data),
+                .b_valid      (b_valid),
+                .b_ready      (),
+                .b_data       (b_data),
+                .result_valid (scaler_output_valid[i]),
+                .result_ready (1'b1),
+                .result_data  (scaled_fp_out_data[i])
+            );
+        end
+`endif
     endgenerate
 
     // Bypass pipe buffer for QROW mode (1 cycle delay to match scaler latency)
     VX_pipe_buffer #(
+`ifdef GEMM_UNIT_FP16_OUT_SCALE
         .DATAW (`MXU_COL * FP16_WIDTH),
+`else
+        .DATAW (`MXU_COL * FP32_WIDTH),
+`endif
         .DEPTH (1)
     ) u_scaler_bypass_pipe (
         .clk       (clk),
@@ -952,14 +1011,17 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     assign final_scaler_output_valid = is_qcol ? scaler_output_valid[0] : scaler_bypass_valid;
     generate
         for (genvar i = 0; i < `MXU_COL; i++) begin : gen_f16_to_f32
+`ifdef GEMM_UNIT_FP16_OUT_SCALE
             logic [FP16_EXP_WIDTH-1:0] exp;
             logic inf;
-
             assign exp = final_scaled_fp_out_data[i][14:10];
             assign inf = &exp;
             assign scaled_fp32_out_data[i][31] = final_scaled_fp_out_data[i][15];
             assign scaled_fp32_out_data[i][30:23] = inf ? '1 : exp + (FP32_EXP_BIAS - FP16_EXP_BIAS);
             assign scaled_fp32_out_data[i][22:0] = {final_scaled_fp_out_data[i][9:0], 13'b0};
+`else
+            assign scaled_fp32_out_data[i] = final_scaled_fp_out_data[i];
+`endif
         end
     endgenerate
 
@@ -1233,6 +1295,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
             end
 
             // Int2FP output
+`ifdef GEMM_UNIT_FP16_OUT_SCALE
             if (int2fp_output_valid[0]) begin
                 `TRACE(3, ("%t: %s: Int2FP out - fp16=%s\n",
                     $time, INSTANCE_ID, parseWordNoNormal(int2fp_out_data, `MXU_ROW * FP16_WIDTH, FP16_WIDTH, "fp")))
@@ -1243,6 +1306,18 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
                 `TRACE(3, ("%t: %s: Scaler out (bypass=%b) - fp16=%s\n",
                     $time, INSTANCE_ID, ~is_qcol, parseWordNoNormal(final_scaled_fp_out_data, `MXU_ROW * FP16_WIDTH, FP16_WIDTH, "fp")))
             end
+`else
+            if (int2fp_output_valid[0]) begin
+                `TRACE(3, ("%t: %s: Int2FP out - fp32=%s\n",
+                    $time, INSTANCE_ID, parseWordNoNormal(int2fp_out_data, `MXU_ROW * FP32_WIDTH, FP32_WIDTH, "fp")))
+            end
+
+            // Scaler output (or bypass for QROW)
+            if (final_scaler_output_valid) begin
+                `TRACE(3, ("%t: %s: Scaler out (bypass=%b) - fp32=%s\n",
+                    $time, INSTANCE_ID, ~is_qcol, parseWordNoNormal(final_scaled_fp_out_data, `MXU_ROW * FP32_WIDTH, FP32_WIDTH, "fp")))
+            end
+`endif
 
             // Accumulator write
             if (acc_mem_accum_wr_req) begin
