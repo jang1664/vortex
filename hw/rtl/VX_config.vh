@@ -1032,6 +1032,8 @@ for block_size in range(1, full_bitwidth+1):
 
 `define GEMM_CFG_REG_NUM 16
 
+// `define GEMM_UNIT_FP16_OUT_SCALE
+
 `define ZP_TRANS_WIDTH (`ZP_WIDTH + 3)
 `define ZP_MUL_OUT_WIDTH (`SAMF_SUM_WIDTH + `ZP_TRANS_WIDTH)
 

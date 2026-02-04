@@ -190,7 +190,69 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*;();
         // Test Case 3: One input vector test
         $display("\n[TEST 3] One Input Vector Test");
         $fdisplay(log_fd, "[%0t] TEST 3: One Input Vector Test", $time);
-        test_one_in_vector();
+        begin
+          bit fail = 0;
+
+          test_one_in_vector(
+            .is_load(1), .quant_dir(`QDIR_COL), 
+            .acc_mem_base_addr(`GEMM_PSUM_DATA_SIZE*4 + 0),
+            .wreg_use_idx(0),
+            .sreg_use_idx(0),
+            .zreg_use_idx(0),
+            .fail(fail)
+          );
+
+          // other register idx test
+          test_one_in_vector(
+            .is_load(1), .quant_dir(`QDIR_COL), 
+            .acc_mem_base_addr(`GEMM_PSUM_DATA_SIZE*4 + 0),
+            .wreg_use_idx(1),
+            .sreg_use_idx(1),
+            .zreg_use_idx(1),
+            .fail(fail)
+          );
+          if(fail) $display("TEST 3 FAILED on other register idx test");
+          else      $display("TEST 3 PASSED on other register idx test");
+
+          // other accum mem addr test
+          for(int i=0; i<4; i++) begin
+            test_one_in_vector(
+              .is_load(1), .quant_dir(`QDIR_COL), 
+              .acc_mem_base_addr(`GEMM_PSUM_DATA_SIZE*4 + i*4),
+              .wreg_use_idx(1),
+              .sreg_use_idx(1),
+              .zreg_use_idx(1),
+              .fail(fail)
+            );
+          end
+          if(fail) $display("TEST 3 FAILED on other accum mem addr test");
+          else      $display("TEST 3 PASSED on other accum mem addr test");
+
+          // different quantization direction
+          test_one_in_vector(
+            .is_load(1), .quant_dir(`QDIR_ROW), 
+            .acc_mem_base_addr(`GEMM_PSUM_DATA_SIZE*4 + 0),
+            .wreg_use_idx(0),
+            .sreg_use_idx(0),
+            .zreg_use_idx(0),
+            .fail(fail)
+          );
+          if(fail) $display("TEST 3 FAILED on different quantization direction test");
+          else      $display("TEST 3 PASSED on different quantization direction test");
+
+          // is_load = 0 test
+          test_one_in_vector(
+            .is_load(0), .quant_dir(`QDIR_COL), 
+            .acc_mem_base_addr(`GEMM_PSUM_DATA_SIZE*4 + 0),
+            .wreg_use_idx(0),
+            .sreg_use_idx(0),
+            .zreg_use_idx(0),
+            .fail(fail)
+          );
+          if(fail) $display("TEST 3 FAILED on is_load = 0 test");
+          else      $display("TEST 3 PASSED on is_load = 0 test");
+        end
+
 
         // Wait for completion
         repeat(100) @(posedge clk);
@@ -912,13 +974,22 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*;();
     //       write weight, scale, zero point first and feed one input vector.
     //       we test it by changing member values of gemm_unit_ctrl_t.
     // -----------------------------------------------------------------
-    task test_one_in_vector();
+    task test_one_in_vector(
+      input logic is_load,
+      input logic quant_dir,
+      input int   acc_mem_base_addr,
+      input int   wreg_use_idx,
+      input int   sreg_use_idx,
+      input int   zreg_use_idx,
+      ref   bit   fail
+    );
         logic [MXU_ROW-1:0][IFP_WIDTH-1:0] input_data;
         logic [MXU_ROW-1:0][MXU_COL-1:0][W_BIT_WIDTH-1:0] weight_data;
-        logic [`MXU_MAX_DIM-1:0][SCALE_WIDTH-1:0] scale_values_0, scale_values_1;
-        logic [`MXU_MAX_DIM-1:0][ZP_WIDTH-1:0] zp_values_0, zp_values_1;
+        logic [1:0][`MXU_MAX_DIM-1:0][SCALE_WIDTH-1:0] scale_values;
+        logic [1:0][`MXU_MAX_DIM-1:0][ZP_WIDTH-1:0] zp_values;
         int i, j;
         int test_pass;
+        logic [`MXU_COL-1:0][FP32_WIDTH-1:0] acc_init_value;
 
         // Arrays for reference calculation (fpint_emul format)
         logic [fpint_emul::IN_WIDTH-1:0] ref_input[fpint_emul::MAX_M*fpint_emul::MAX_K];
@@ -926,6 +997,7 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*;();
         logic [fpint_emul::S_WIDTH-1:0] ref_scale[fpint_emul::MAX_KG*fpint_emul::MAX_N];
         logic [fpint_emul::Z_WIDTH-1:0] ref_zero[fpint_emul::MAX_KG*fpint_emul::MAX_N];
         logic [fpint_emul::O_WIDTH-1:0] ref_output[fpint_emul::MAX_M*fpint_emul::MAX_N];
+        logic [fpint_emul::P_WIDTH-1:0] ref_psum[fpint_emul::MAX_M*fpint_emul::MAX_N];
 
         // DUT output
         logic [MXU_COL-1:0][FP16_WIDTH-1:0] dut_output;
@@ -941,35 +1013,21 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*;();
         // Step 1: Setup scale registers (both banks)
         // -----------------------------------------------------------------
         $display("[%0t] Setting up scale registers...", $time);
-
-        // Scale register 0: all 1.0 (FP16: 0x3C00)
+        // Scale register: all 2.0 (FP16: 0x4000)
         for (i = 0; i < `MXU_MAX_DIM; i++) begin
-            scale_values_0[i] = 16'h3C00;  // 1.0 in FP16
+            scale_values[sreg_use_idx][i] = 16'h4000;  // 2.0 in FP16
         end
-        write_scale_reg(0, scale_values_0);
-
-        // Scale register 1: all 2.0 (FP16: 0x4000)
-        for (i = 0; i < `MXU_MAX_DIM; i++) begin
-            scale_values_1[i] = 16'h4000;  // 2.0 in FP16
-        end
-        write_scale_reg(1, scale_values_1);
+        write_scale_reg(sreg_use_idx, scale_values[sreg_use_idx]);
 
         // -----------------------------------------------------------------
         // Step 2: Setup zero point registers (both banks)
         // -----------------------------------------------------------------
         $display("[%0t] Setting up zero point registers...", $time);
-
-        // Zero point register 0: all 0
+        // Zero point register: all 1
         for (i = 0; i < `MXU_MAX_DIM; i++) begin
-            zp_values_0[i] = '0;
+            zp_values[zreg_use_idx][i] = 8'd1;
         end
-        write_zp_reg(0, zp_values_0);
-
-        // Zero point register 1: all 1
-        for (i = 0; i < `MXU_MAX_DIM; i++) begin
-            zp_values_1[i] = 8'd1;
-        end
-        write_zp_reg(1, zp_values_1);
+        write_zp_reg(zreg_use_idx, zp_values[zreg_use_idx]);
 
         repeat(5) @(posedge clk);
 
@@ -985,10 +1043,23 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*;();
             end
         end
         // Write to weight register bank 0, load_dir = 0
-        write_weight(weight_data, 1'b0, 1'b0);
+        write_weight(weight_data, wreg_use_idx, 1'b0);
         ->weight_loaded;
 
         repeat(5) @(posedge clk);
+
+        // ----------------------------------------------------------------
+        // Step 3: initialize acc mem if accum test
+        // ----------------------------------------------------------------
+        if(is_load == 1'b0) begin
+            $display("[%0t] Initializing accumulator memory...", $time);
+            for (j = 0; j < `MXU_COL; j++) begin
+                acc_init_value[j] = 32'h3F800000; // 1.0 in FP32
+                ref_psum[j]       = 32'h3F800000; // 1.0 in FP32
+            end
+            u_dut.initialize_acc_mem(acc_mem_base_addr, 4, acc_init_value);
+            repeat(5) @(posedge clk);
+        end
 
         // Generate input vector (all 1.0)
         for (i = 0; i < MXU_ROW; i++) begin
@@ -1014,22 +1085,20 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*;();
             end
         end
 
-        // -----------------------------------------------------------------
-        // Step 4: Run GEMM Config 1
-        // quant_dir=QDIR_COL, wreg_use_idx=0, sreg_use_idx=0, zreg_use_idx=0
-        // -----------------------------------------------------------------
-        $display("[%0t] Config 1: GEMM (is_load=1, QDIR_COL, sreg=0, zreg=0)...", $time);
+        // RUN TEST
+        $display("[%0t] GEMM ONE INPUT TEST (is_load=%b, QDIR_COL=%b, wreg=%b, sreg=%b, zreg=%b, acc_addr=%0d)...", 
+                  $time, is_load, quant_dir, wreg_use_idx, sreg_use_idx, zreg_use_idx, acc_mem_base_addr);
 
         wait_for_idle();
 
         start_gemm(
-            .is_load(1'b1),
-            .quant_dir(`QDIR_COL),
-            .acc_mem_base_addr('0),
+            .is_load(is_load),
+            .quant_dir(quant_dir),
+            .acc_mem_base_addr(acc_mem_base_addr),
             .acc_cnt(1),
-            .wreg_use_idx(1'b0),
-            .sreg_use_idx(1'b0),
-            .zreg_use_idx(1'b0)
+            .wreg_use_idx(wreg_use_idx),
+            .sreg_use_idx(sreg_use_idx),
+            .zreg_use_idx(zreg_use_idx)
         );
 
         send_input(input_data);
@@ -1038,149 +1107,36 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*;();
         repeat(10) @(posedge clk);
 
         // Compare Config 1
-        $display("[%0t]   Comparing Config 1...", $time);
+        $display("[%0t]   Comparing REF vs EVAL...", $time);
 
         // Setup scale and zero for QDIR_COL (scale/zero per column)
         for (j = 0; j < MXU_COL; j++) begin
-            ref_scale[j] = scale_values_0[j];
-            ref_zero[j] = zp_values_0[j];
+            ref_scale[j] = scale_values[sreg_use_idx][j];
+            ref_zero[j] = zp_values[zreg_use_idx][j];
         end
 
         fpint_emul::fpint_gemm_ref(
             ref_input, ref_weight, ref_scale, ref_zero,
             1, MXU_COL, MXU_ROW,
             ref_output,
-            fpint_emul::QCOL,
+            quant_dir,
             fpint_emul::WNOTRANS,
-            1'b0
+            1'b0,
+            ref_psum
         );
 
-        read_output('0, dut_output);
+        read_output(acc_mem_base_addr, dut_output);
 
         for (j = 0; j < MXU_COL; j++) begin
-            if (!compare_fp16(dut_output[j], ref_output[j], 0.1)) begin
+            if (!compare_fp16(dut_output[j], ref_output[j], 0.01)) begin
                 $display("[%0t]   ERROR: output[%0d] mismatch - DUT=0x%h (%f), REF=0x%h (%f)",
                          $time, j, dut_output[j], cf_math_pkg::fp16_bit_to_fp16_val(dut_output[j]),
                          ref_output[j], cf_math_pkg::fp16_bit_to_fp16_val(ref_output[j]));
                 test_pass = 0;
             end
         end
-        $display("[%0t]   Config 1 %s", $time, test_pass ? "PASSED" : "FAILED");
-
-        // -----------------------------------------------------------------
-        // Step 5: Run GEMM Config 2
-        // quant_dir=QDIR_COL, wreg_use_idx=0, sreg_use_idx=1, zreg_use_idx=1
-        // -----------------------------------------------------------------
-        $display("[%0t] Config 2: GEMM (is_load=1, QDIR_COL, sreg=1, zreg=1)...", $time);
-
-        wait_for_idle();
-
-        start_gemm(
-            .is_load(1'b1),
-            .quant_dir(`QDIR_COL),
-            .acc_mem_base_addr('0),
-            .acc_cnt(1),
-            .wreg_use_idx(1'b0),
-            .sreg_use_idx(1'b1),
-            .zreg_use_idx(1'b1)
-        );
-
-        send_input(input_data);
-        wait_for_done();
-
-        repeat(10) @(posedge clk);
-
-        // Compare Config 2
-        $display("[%0t]   Comparing Config 2...", $time);
-
-        // Setup scale and zero for QDIR_COL with register 1
-        for (j = 0; j < MXU_COL; j++) begin
-            ref_scale[j] = scale_values_1[j];
-            ref_zero[j] = zp_values_1[j];
-        end
-
-        fpint_emul::fpint_gemm_ref(
-            ref_input, ref_weight, ref_scale, ref_zero,
-            1, MXU_COL, MXU_ROW,
-            ref_output,
-            fpint_emul::QCOL,
-            fpint_emul::WNOTRANS,
-            1'b0
-        );
-
-        read_output('0, dut_output);
-
-        for (j = 0; j < MXU_COL; j++) begin
-            if (!compare_fp16(dut_output[j], ref_output[j], 0.1)) begin
-                $display("[%0t]   ERROR: output[%0d] mismatch - DUT=0x%h (%f), REF=0x%h (%f)",
-                         $time, j, dut_output[j], cf_math_pkg::fp16_bit_to_fp16_val(dut_output[j]),
-                         ref_output[j], cf_math_pkg::fp16_bit_to_fp16_val(ref_output[j]));
-                test_pass = 0;
-            end
-        end
-        $display("[%0t]   Config 2 %s", $time, test_pass ? "PASSED" : "FAILED");
-
-        // -----------------------------------------------------------------
-        // Step 6: Run GEMM Config 3
-        // quant_dir=QDIR_ROW, wreg_use_idx=0, sreg_use_idx=0, zreg_use_idx=0
-        // -----------------------------------------------------------------
-        $display("[%0t] Config 3: GEMM (is_load=1, QDIR_ROW, sreg=0, zreg=0)...", $time);
-
-        wait_for_idle();
-
-        start_gemm(
-            .is_load(1'b1),
-            .quant_dir(`QDIR_ROW),
-            .acc_mem_base_addr('0),
-            .acc_cnt(1),
-            .wreg_use_idx(1'b0),
-            .sreg_use_idx(1'b0),
-            .zreg_use_idx(1'b0)
-        );
-
-        send_input(input_data);
-        wait_for_done();
-
-        repeat(10) @(posedge clk);
-
-        // Compare Config 3
-        $display("[%0t]   Comparing Config 3...", $time);
-
-        // Setup scale and zero for QDIR_ROW (scale/zero per row/K dimension)
-        for (i = 0; i < fpint_emul::MAX_KG * fpint_emul::MAX_N; i++) begin
-            ref_scale[i] = '0;
-            ref_zero[i] = '0;
-        end
-        for (i = 0; i < MXU_ROW; i++) begin
-            ref_scale[i] = scale_values_0[i];
-            ref_zero[i] = zp_values_0[i];
-        end
-
-        fpint_emul::fpint_gemm_ref(
-            ref_input, ref_weight, ref_scale, ref_zero,
-            1, MXU_COL, MXU_ROW,
-            ref_output,
-            fpint_emul::QROW,
-            fpint_emul::WNOTRANS,
-            1'b0
-        );
-
-        read_output('0, dut_output);
-
-        for (j = 0; j < MXU_COL; j++) begin
-            if (!compare_fp16(dut_output[j], ref_output[j], 0.1)) begin
-                $display("[%0t]   ERROR: output[%0d] mismatch - DUT=0x%h (%f), REF=0x%h (%f)",
-                         $time, j, dut_output[j], cf_math_pkg::fp16_bit_to_fp16_val(dut_output[j]),
-                         ref_output[j], cf_math_pkg::fp16_bit_to_fp16_val(ref_output[j]));
-                test_pass = 0;
-            end
-        end
-        $display("[%0t]   Config 3 %s", $time, test_pass ? "PASSED" : "FAILED");
-
-        $display("[%0t] ============================================", $time);
-        $display("[%0t] One Input Vector Test %s", $time, test_pass ? "PASSED" : "FAILED");
-        $display("[%0t] ============================================\n", $time);
-        $fdisplay(log_fd, "[%0t] One Input Vector Test %s", $time, test_pass ? "PASSED" : "FAILED");
+        $display("[%0t] GEMM ONE IN VECTOR TEST : %s", $time, test_pass ? "PASSED" : "FAILED");
+        fail |= ~test_pass;
     endtask
 
     /*

@@ -21,6 +21,7 @@ RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
         $(RTL_DIR)/verification/utils.sv \
         $(RTL_DIR)/core/gemm/VX_fp32_add.sv \
         $(RTL_DIR)/core/gemm/VX_fp16_mul.sv \
+        $(RTL_DIR)/core/gemm/VX_fp32_mul.sv \
         $(RTL_DIR)/core/gemm/VX_stream_fence.sv \
         $(RTL_DIR)/libs/VX_elastic_buffer.sv \
         $(RTL_DIR)/libs/VX_stream_buffer.sv \
@@ -59,7 +60,7 @@ INCDIRS_ := $(VORTEX_HOME)/build/hw \
             $(VORTEX_HOME)/hw/dpi \
             $(THIRD_PARTY_DIR)/softfloat/source/include
 
-DEFINES_ := SIMULATION DEBUG_LEVEL=3 DBG_TRACE_GEMM 
+DEFINES_ := SIMULATION DEBUG_LEVEL=3 DBG_TRACE_GEMM
 
 CFLAGS  := "-std=c++17 -Wall -Wextra -Wno-array-bounds -Wno-maybe-uninitialized -fPIC -I$(VORTEX_HOME)/build/hw -I$(VORTEX_HOME)/hw -I$(VORTEX_HOME)/sim/common -I$(VORTEX_HOME)/hw/dpi -I$(RTL_DIR) -I$(THIRD_PARTY_DIR)/softfloat/source/include -DXLEN_$(XLEN)"
 LDFLAGS := 
