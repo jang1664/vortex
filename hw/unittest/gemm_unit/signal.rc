@@ -16,8 +16,8 @@ signalSpacing 5
 
 ; windowTimeUnit is used for zoom, cursor & marker
 ; waveform viewport range
-zoom 1975312.500000 2534687.500000
-cursor 2065000.000000
+zoom 2214101.562500 2773476.562500
+cursor 2455000.000000
 marker 0.000000
 
 ; user define markers
@@ -29,9 +29,9 @@ userMarker 2265204.187 M1 ID_GREEN5 long_dashed
 showMarkerValue relative
 
 ; visible top row signal index
-top 175
+top 93
 ; marker line index
-markerPos 201
+markerPos 264
 
 ; event list
 ; addEvent event_name event_expression
@@ -139,17 +139,22 @@ addSignal -expanded -h 15 /tb_VX_gemm_unit/u_dut/mxu_weight[1:0]
 addSignal -h 15 -holdScope mxu_weight[1][15:0]
 addSignal -h 15 -holdScope mxu_weight[0][15:0]
 addSignal -h 15 /tb_VX_gemm_unit/u_dut/u_mxu/weight_i[1:0]
-addGroup "out_bus" -e FALSE
+addGroup "out_bus"
+addSignal -h 15 /tb_VX_gemm_unit/u_dut/acc_mem_out_data[3:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope acc_mem_out_rd_addr[17:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope acc_mem_out_rd_bank[1:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope acc_mem_out_rd_bank_addr[15:0]
+addSignal -h 15 -holdScope acc_mem_rd_addr[3:0]
+addSignal -h 15 -holdScope acc_mem_rd_data_valid
+addSignal -h 15 -holdScope acc_mem_rd_out_valid
 addSubGroup "o_lmem_bus_if"
 addSignal -h 15 /tb_VX_gemm_unit/u_dut/clk
 addSignal -h 15 /tb_VX_gemm_unit/u_dut/o_lmem_bus_if/req_valid
 addSignal -h 15 -holdScope req_data
 addSignal -h 15 -holdScope req_ready
 addSignal -h 15 -holdScope rsp_valid
-addSignal -expanded -h 15 -holdScope rsp_data
-addSignal -h 15 -UNSIGNED -HEX -holdScope rsp_data.data[255:0]
-addSignal -h 15 -holdScope rsp_data.tag
 addSignal -h 15 -holdScope rsp_ready
+addSignal -h 15 -holdScope rsp_data
 endSubGroup "o_lmem_bus_if"
 addSignal -h 15 /tb_VX_gemm_unit/u_dut/gemm_done
 addSignal -h 15 -holdScope gemm_idle
@@ -218,7 +223,7 @@ addSignal -h 15 -holdScope blk_idx_o[15:0]
 addSignal -h 15 -holdScope int_data_o[15:0]
 addSignal -h 15 -UNSIGNED -HEX -holdScope max_exp_o[4:0]
 addSignal -h 15 -holdScope valid_o
-addGroup "mxu"
+addGroup "mxu" -e FALSE
 addSignal -h 15 /tb_VX_gemm_unit/u_dut/u_mxu/clk_i
 addSignal -h 15 /tb_VX_gemm_unit/weight_loaded
 addSignal -h 15 /tb_VX_gemm_unit/u_dut/u_mxu/ifmap_i[15:0]
@@ -249,7 +254,7 @@ addSignal -h 15 -UNSIGNED -HEX -holdScope blk_idx_out[4:0]
 addSignal -h 15 -UNSIGNED -HEX -holdScope product[15:0]
 addSignal -h 15 -UNSIGNED -HEX -holdScope product_out[15:0]
 endSubGroup "pe_col_0"
-addGroup "delay_match"
+addGroup "delay_match" -e FALSE
 addSignal -h 15 -UNSIGNED -UDEC /tb_VX_gemm_unit/u_dut/ACT_REDUCE_OUT_DLY[31:0]
 addSignal -h 15 -UNSIGNED -UDEC -holdScope BLK_IDX_DLY[31:0]
 addSignal -h 15 -UNSIGNED -UDEC -holdScope DEFAULT_OUT_DLY[31:0]
@@ -258,7 +263,7 @@ addSignal -h 15 -UNSIGNED -UDEC -holdScope MXU_OUT_DLY[31:0]
 addSignal -h 15 -UNSIGNED -UDEC -holdScope PRE_PROC_OUT_DLY[31:0]
 addSignal -h 15 -holdScope pre_proc_out_valid
 addSignal -h 15 -UNSIGNED -HEX -holdScope mxu_output_valid_dly[15:0]
-addGroup "acc_mem"
+addGroup "acc_mem" -e FALSE
 addSubGroup "acc_mem3" -e FALSE
 addSignal -h 15 -UNSIGNED -HEX /tb_VX_gemm_unit/u_dut/gen_acc_mem[3]/VX_sp_ram_instance/addr[15:0]
 addSignal -h 15 -holdScope clk
@@ -299,7 +304,30 @@ addSignal -h 15 -UNSIGNED -HEX -holdScope wdata[511:0]
 addSignal -h 15 -holdScope wren[0:0]
 addSignal -h 15 -holdScope write
 endSubGroup "acc_mem0"
-addGroup "G9"
+addGroup "act_reduce"
+addSignal -h 15 /tb_VX_gemm_unit/u_dut/act_reduce_blk_idx[15:0]
+addSignal -h 15 -holdScope act_reduce_data_in[15:0]
+addSignal -expanded -h 15 -holdScope act_reduce_data_in_shifted[15:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope act_reduce_data_in_shifted[15][38:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope act_reduce_data_in_shifted[14][38:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope act_reduce_data_in_shifted[13][38:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope act_reduce_data_in_shifted[12][38:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope act_reduce_data_in_shifted[11][38:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope act_reduce_data_in_shifted[10][38:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope act_reduce_data_in_shifted[9][38:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope act_reduce_data_in_shifted[8][38:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope act_reduce_data_in_shifted[7][38:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope act_reduce_data_in_shifted[6][38:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope act_reduce_data_in_shifted[5][38:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope act_reduce_data_in_shifted[4][38:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope act_reduce_data_in_shifted[3][38:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope act_reduce_data_in_shifted[2][38:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope act_reduce_data_in_shifted[1][38:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope act_reduce_data_in_shifted[0][38:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope act_reduce_data_out[42:0]
+addSignal -h 15 -holdScope act_reduce_valid_in
+addSignal -h 15 -holdScope act_reduce_valid_out
+addGroup "G10"
 
 ; getSignalForm Scope Hierarchy Status
 ; active file of getSignalForm
@@ -345,6 +373,7 @@ SCOPE_LIST_BEGIN
 "/tb_VX_gemm_unit/u_dut/gen_acc_mem[1]/VX_sp_ram_instance"
 "/tb_VX_gemm_unit/u_dut/gen_acc_mem[2]/VX_sp_ram_instance"
 "/tb_VX_gemm_unit/u_dut/gen_acc_mem[3]/VX_sp_ram_instance"
+"/tb_VX_gemm_unit/test_weight_writing"
 SCOPE_LIST_END
 
 GETSIGNALFORM_SCOPE_HIERARCHY_END
