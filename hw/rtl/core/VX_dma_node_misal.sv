@@ -32,19 +32,20 @@ module VX_dma_node_misal import VX_gpu_pkg::*; #(
   // 하나의 entry 
   // - R0 (base 포함)
     //   0  control_reg : start bit, direction bit가 있어야 함
-    //   1  src_base
-    //   2  dst_base
-    //   3  src_stride0
-    //   4  dst_stride0
-    //   5  src_stride1
-    //   6  dst_stride1
-    //   7  src_stride2
-    //   8  dst_stride2
-    //   9  bound0
-    //  10  bound1
-    //  11  bound2
-    //  12  seg_size
-    //  13  padding
+    //   1  reserved
+    //   2  src_base
+    //   3  dst_base
+    //   4  src_stride0
+    //   5  dst_stride0
+    //   6  src_stride1
+    //   7  dst_stride1
+    //   8  src_stride2
+    //   9  dst_stride2
+    //  10  bound0
+    //  11  bound1
+    //  12  bound2
+    //  13  seg_size
+    //  14  padding
 
   VX_mem_bus_if.master    dcache_bus_if, // to dcache
   VX_mem_bus_if.master    lmem_bus_if    // to local memory
@@ -53,7 +54,7 @@ module VX_dma_node_misal import VX_gpu_pkg::*; #(
   // ------------------------------------------------------------
   // Descriptor layout
   // ------------------------------------------------------------
-  localparam int DESC_WORDS   = 14;
+  localparam int DESC_WORDS   = 15;
   localparam int REGS_NEEDED  = (DESC_WORDS + 1) / 2;
   localparam int NDIM         = 3;
 
@@ -167,15 +168,15 @@ module VX_dma_node_misal import VX_gpu_pkg::*; #(
   always_comb begin
     for (i = 0; i < DESC_WORDS; i++) begin
       r = i / 2;
-      desc_w[i] = (i % 2 == 0) ? regs_latched[r][31:0] : regs_latched[r][63:32];
+      desc_w[i] = (i % 2 == 0) ? regs_latched[r][31:0] : regs_latched[r][63:32];  //하위 32bit가 작은 번호
     end
   end
 
   // interpret descriptor
   logic [31:0] control_reg;
-  logic [31:0] base_addr[2];
-  logic [31:0] stride[2][NDIM];
-  logic [31:0] bound[NDIM];
+  logic [31:0] base_addr[2];    //src, dst
+  logic [31:0] stride[2][NDIM]; //src, dst
+  logic [31:0] bound[NDIM];  //src, dst가 공유
   logic [31:0] seg_size;
   logic [31:0] padding;
   logic start_bit;
@@ -183,22 +184,23 @@ module VX_dma_node_misal import VX_gpu_pkg::*; #(
 
   always_comb begin
     control_reg   = desc_w[0];
-    base_addr[0]  = desc_w[1];
-    base_addr[1]  = desc_w[2];
 
-    stride[0][0]  = desc_w[3];
-    stride[1][0]  = desc_w[4];
-    stride[0][1]  = desc_w[5];
-    stride[1][1]  = desc_w[6];
-    stride[0][2]  = desc_w[7];
-    stride[1][2]  = desc_w[8];
+    base_addr[0]  = desc_w[2];
+    base_addr[1]  = desc_w[3];
 
-    bound[0]      = desc_w[9];
-    bound[1]      = desc_w[10];
-    bound[2]      = desc_w[11];
+    stride[0][0]  = desc_w[4];
+    stride[1][0]  = desc_w[5];
+    stride[0][1]  = desc_w[6];
+    stride[1][1]  = desc_w[7];
+    stride[0][2]  = desc_w[8];
+    stride[1][2]  = desc_w[9];
 
-    seg_size      = desc_w[12];
-    padding       = desc_w[13];
+    bound[0]      = desc_w[10];
+    bound[1]      = desc_w[11];
+    bound[2]      = desc_w[12];
+  
+    seg_size      = desc_w[13];
+    padding       = desc_w[14];
 
     start_bit     = control_reg[0];
     direction_bit = control_reg[1];

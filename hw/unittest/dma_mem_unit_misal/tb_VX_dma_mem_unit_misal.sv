@@ -22,9 +22,9 @@ module tb_VX_dma_mem_unit_misal import VX_gpu_pkg::*; ();
   // -----------------------------
   // Params
   // -----------------------------
-  localparam int CFG_NUM    = 7;
+  localparam int CFG_NUM    = 8;
   localparam int CFG_DW     = 64;
-  localparam int DESC_WORDS = 14;
+  localparam int DESC_WORDS = 15;
 
   localparam int MEM_BYTES  = 64*1024;
   localparam int TAG_WIDTH  = 45;  // >= `UP(UUID_WIDTH) is enough
@@ -361,14 +361,15 @@ module tb_VX_dma_mem_unit_misal import VX_gpu_pkg::*; ();
     // GLOBAL -> LMEM
     // -------------------------
     d1[0]  = 32'h0000_0003; // start=1, dir=1 (GLOBAL->LMEM)
-    d1[1]  = g_src_base;
-    d1[2]  = l_mid_base;
-    d1[3]  = stride0; d1[4]  = stride0;
-    d1[5]  = stride1; d1[6]  = stride1;
-    d1[7]  = stride2; d1[8]  = stride2;
-    d1[9]  = b0;      d1[10] = b1; d1[11] = b2;
-    d1[12] = seg_bytes;
-    d1[13] = padding;
+    d1[1]  = 32'd0;      // reserved
+    d1[2]  = g_src_base;
+    d1[3]  = l_mid_base;
+    d1[4]  = stride0; d1[5]  = stride0;
+    d1[6]  = stride1; d1[7]  = stride1;
+    d1[8]  = stride2; d1[9]  = stride2;
+    d1[10] = b0;      d1[11] = b1; d1[12] = b2;
+    d1[13] = seg_bytes;
+    d1[14] = padding;
 
     cfg_send_desc(d1, 32'd5, 32'd7);
     wait_dma_done();
@@ -377,14 +378,15 @@ module tb_VX_dma_mem_unit_misal import VX_gpu_pkg::*; ();
     // LMEM -> GLOBAL
     // -------------------------
     d2[0]  = 32'h0000_0001; // start=1, dir=0 (LMEM->GLOBAL)
-    d2[1]  = l_mid_base;
-    d2[2]  = g_dst_base;
-    d2[3]  = stride0; d2[4]  = stride0;
-    d2[5]  = stride1; d2[6]  = stride1;
-    d2[7]  = stride2; d2[8]  = stride2;
-    d2[9]  = b0;      d2[10] = b1; d2[11] = b2;
-    d2[12] = seg_bytes;
-    d2[13] = padding;
+    d2[1]  = 32'd0;      // reserved
+    d2[2]  = l_mid_base;
+    d2[3]  = g_dst_base;
+    d2[4]  = stride0; d2[5]  = stride0;
+    d2[6]  = stride1; d2[7]  = stride1;
+    d2[8]  = stride2; d2[9]  = stride2;
+    d2[10] = b0;      d2[11] = b1; d2[12] = b2;
+    d2[13] = seg_bytes;
+    d2[14] = padding;
 
     cfg_send_desc(d2, 32'd9, 32'd11);
     wait_dma_done();
