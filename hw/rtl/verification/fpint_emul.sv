@@ -8,6 +8,7 @@ package fpint_emul;
   localparam int W_WIDTH  = 4;
   localparam int MAX_W_WIDTH  = 5;
   localparam int O_WIDTH  = 16;
+  localparam int P_WIDTH  = 32;
   localparam int S_WIDTH  = 16;
   localparam int Z_WIDTH  = 16;
   localparam int QBLOCK = 16;
@@ -136,22 +137,23 @@ package fpint_emul;
     ref logic [O_WIDTH-1:0] output_data[MAX_M*MAX_N],
     input int qdir = 0, // 0: qcol, 1: qrow
     input int wtrans = 0, // 0: no transposed, 1: transposed
-    input bit DEBUG = 0
+    input bit DEBUG = 0,
+    input logic [31:0] psum_data[MAX_M*MAX_N] = '{default: '0}  // FP32 partial sum for accumulation
   );
-    
-    shortreal acc_fp; 
-    shortreal prod; 
-    shortreal in_val; 
-    shortreal wt_val; 
-    shortreal sc_val; 
-    shortreal ze_val; 
+
+    shortreal acc_fp;
+    shortreal prod;
+    shortreal in_val;
+    shortreal wt_val;
+    shortreal sc_val;
+    shortreal ze_val;
 
     if(DEBUG) begin
       $display("[FPINT_EMUL.GEMM_REF] m n k in wt sc ze prod acc");
     end
     for(int m=0; m<M; m++) begin
       for(int n=0; n<N; n++) begin
-        acc_fp = 0.0;
+        acc_fp = $bitstoshortreal(psum_data[m*N + n]);  // Initialize from psum
         for(int k=0; k<K; k++) begin
           in_val = cf_math_pkg::fp16_bit_to_fp16_val(input_data[m*K + k]);
           wt_val = shortreal'($signed(weight_data[k*N + n]));
@@ -180,7 +182,8 @@ package fpint_emul;
     input logic [Z_WIDTH-1:0] zero_data[MAX_KG*MAX_N],
     input int M, N, K,
     ref logic [O_WIDTH-1:0] output_data[MAX_M*MAX_N],
-    bit DEBUG=0
+    input bit DEBUG = 0,
+    input logic [31:0] psum_data[MAX_M*MAX_N] = '{default: '0}  // FP32 partial sum for accumulation
   );
 
     logic signed [MAX_ALIGN_WIDTH-1:0] aligned_fx_data[MAX_M*MAX_K];
@@ -208,8 +211,8 @@ package fpint_emul;
     for(int m=0; m<M; m++) begin
       for(int nt=0; nt<(N/MXU_N); nt++) begin
         for(int nt2=0; nt2<MXU_N; nt2++) begin
-          shortreal acc_fp = 0.0;
           int n = nt*MXU_N + nt2;
+          shortreal acc_fp = $bitstoshortreal(psum_data[m*N + n]);  // Initialize from psum
           for(int kt=0; kt<(K/QBLOCK); kt++) begin
             for(int kt2=0; kt2<(QBLOCK/MXU_K); kt2++) begin
               logic signed [MAX_ALIGN_WIDTH+MAX_W_WIDTH+$clog2(MXU_K)-1:0] inner_product = '0; // for mxu
@@ -220,10 +223,8 @@ package fpint_emul;
               shortreal scaled_post_inner_product;
               int k = kt*QBLOCK + kt2*MXU_K;
               int kg = k/QBLOCK;
-              int n = nt*MXU_N + nt2;
               for(int kt3=0; kt3<MXU_K; kt3++) begin
                 int k = kt*QBLOCK + kt2*MXU_K + kt3;
-                int n = nt*MXU_N + nt2;
                 inner_product += (aligned_fx_data[m*K+k] * signed'(weight_data[k*N + n]));
                 act_sum += aligned_fx_data[m*K+k];
                 act_sum_for_reduce += aligned_fx_data_for_reduce[m*K+k];
@@ -259,7 +260,8 @@ package fpint_emul;
     input logic [Z_WIDTH-1:0] zero_data[MAX_KG*MAX_N],
     input int M, N, K,
     ref logic [O_WIDTH-1:0] output_data[MAX_M*MAX_N],
-    input bit DEBUG = 0
+    input bit DEBUG = 0,
+    input logic [31:0] psum_data[MAX_M*MAX_N] = '{default: '0}  // FP32 partial sum for accumulation
   );
     logic signed [MAX_ALIGN_WIDTH-1:0] aligned_fx_data[MAX_M*MAX_K];
     logic [MAX_EXP_WIDTH-1:0] aligned_exp_data[MAX_M*(MAX_K/MXU_K)];
@@ -289,12 +291,12 @@ package fpint_emul;
     prealign(input_data, EXTRA_BIT_FOR_REDUCE, M, K, aligned_fx_data_for_reduce, aligned_exp_data_for_reduce, DEBUG);
 
     // calculation
-    if(DEBUG) $display("[FPINT_EMUL.QCOL_2SCOMP] ===== Start GEMM calculation =====");
+    if(DEBUG) $display("[FPINT_EMUL.QCOL_ZERO_LESS] ===== Start GEMM calculation =====");
     for(int m=0; m<M; m++) begin
       for(int nt=0; nt<(N/MXU_N); nt++) begin
         for(int nt2=0; nt2<MXU_N; nt2++) begin
-          shortreal acc_fp = 0.0;
           int n = nt*MXU_N + nt2;
+          shortreal acc_fp = $bitstoshortreal(psum_data[m*N + n]);  // Initialize from psum
           for(int kt=0; kt<(K/QBLOCK); kt++) begin
             for(int kt2=0; kt2<(QBLOCK/MXU_K); kt2++) begin
               logic signed [MAX_ALIGN_WIDTH+MAX_W_WIDTH+$clog2(MXU_K)-1:0] inner_product = '0; // for mxu
@@ -305,10 +307,8 @@ package fpint_emul;
               shortreal scaled_post_inner_product;
               int k = kt*QBLOCK + kt2*MXU_K;
               int kg = k/QBLOCK;
-              int n = nt*MXU_N + nt2;
               for(int kt3=0; kt3<MXU_K; kt3++) begin
                 int k = kt*QBLOCK + kt2*MXU_K + kt3;
-                int n = nt*MXU_N + nt2;
                 inner_product += (aligned_fx_data[m*K+k] * weight_data_2scomp[k*N + n]);
                 act_sum += aligned_fx_data[m*K+k];
                 act_sum_for_reduce += aligned_fx_data_for_reduce[m*K+k];
@@ -344,7 +344,8 @@ package fpint_emul;
     input logic [Z_WIDTH-1:0] zero_data[MAX_K*MAX_NG],
     input int M, N, K,
     ref logic [O_WIDTH-1:0] output_data[MAX_M*MAX_N],
-    input bit DEBUG = 0
+    input bit DEBUG = 0,
+    input logic [31:0] psum_data[MAX_M*MAX_N] = '{default: '0}  // FP32 partial sum for accumulation
   );
     logic [IN_WIDTH-1:0] scaled_input_data[MAX_M*MAX_K];
     logic signed [MAX_ALIGN_WIDTH-1:0] aligned_fx_data[MAX_M*MAX_K];
@@ -380,8 +381,8 @@ package fpint_emul;
       for(int nt=0; nt<(N/QBLOCK); nt++) begin
         for(int nt2=0; nt2<(QBLOCK/MXU_N); nt2++) begin
           for(int nt3=0; nt3<MXU_N; nt3++) begin
-            shortreal acc_fp = 0.0;
             int n = nt*QBLOCK + nt2*MXU_N + nt3;
+            shortreal acc_fp = $bitstoshortreal(psum_data[m*N + n]);  // Initialize from psum
 
             // scale input and prealign
             for(int k=0; k<K; k++) begin
@@ -389,7 +390,6 @@ package fpint_emul;
               shortreal scale_fp = scale_data_fp[k*(N/QBLOCK) + n/QBLOCK];
               shortreal scaled_in_fp = in_fp * scale_fp;
               scaled_input_data[k] = cf_math_pkg::fp32_val_to_fp16_bit(scaled_in_fp);
-              // scaled_input_data[k] = input_data[m*K + k] * scale_data_fp[k*(N/QBLOCK) + n/QBLOCK];
             end
             prealign(scaled_input_data, EXTRA_BIT, 1, K, aligned_fx_data, aligned_exp_data, DEBUG);
             prealign(scaled_input_data, EXTRA_BIT_FOR_REDUCE, 1, K, aligned_fx_data_for_reduce, aligned_exp_data_for_reduce, DEBUG);
@@ -403,7 +403,6 @@ package fpint_emul;
               shortreal scaled_post_inner_product;
               for(int kt2=0; kt2<MXU_K; kt2++) begin
                 int k = kt*MXU_K + kt2;
-                int n = nt*QBLOCK + nt2*MXU_N + nt3;
                 inner_product += (aligned_fx_data[k] * signed'(weight_data[k*N + n])); // mxu
                 act_sum += aligned_fx_data[k]; // act_sum
                 act_sum_for_reduce += (aligned_fx_data_for_reduce[k] * (1 + 2*$signed(zero_data[k*(N/QBLOCK) + n/QBLOCK]))); // act_sum for reduce
@@ -439,7 +438,8 @@ package fpint_emul;
     input logic [Z_WIDTH-1:0] zero_data[MAX_K*MAX_NG],
     input int M, N, K,
     ref logic [O_WIDTH-1:0] output_data[MAX_M*MAX_N],
-    input bit DEBUG = 0
+    input bit DEBUG = 0,
+    input logic [31:0] psum_data[MAX_M*MAX_N] = '{default: '0}  // FP32 partial sum for accumulation
   );
     logic [IN_WIDTH-1:0] scaled_input_data[MAX_M*MAX_K];
     logic signed [MAX_ALIGN_WIDTH-1:0] aligned_fx_data[MAX_M*MAX_K];
@@ -470,13 +470,13 @@ package fpint_emul;
     prealign(input_data, EXTRA_BIT_FOR_REDUCE, M, K, aligned_fx_data_for_reduce, aligned_exp_data_for_reduce, DEBUG);
 
     // calculation
-    if(DEBUG) $display("[FPINT_EMUL.QROW_2SCOMP] ===== Start GEMM calculation =====");
+    if(DEBUG) $display("[FPINT_EMUL.QROW_ZERO_LESS] ===== Start GEMM calculation =====");
     for(int m=0; m<M; m++) begin
       for(int nt=0; nt<(N/QBLOCK); nt++) begin
         for(int nt2=0; nt2<(QBLOCK/MXU_N); nt2++) begin
           for(int nt3=0; nt3<MXU_N; nt3++) begin
-            shortreal acc_fp = 0.0;
             int n = nt*QBLOCK + nt2*MXU_N + nt3;
+            shortreal acc_fp = $bitstoshortreal(psum_data[m*N + n]);  // Initialize from psum
 
             // scale input and prealign
             for(int k=0; k<K; k++) begin
@@ -484,7 +484,6 @@ package fpint_emul;
               shortreal scale_fp = scale_data_fp[k*(N/QBLOCK) + n/QBLOCK];
               shortreal scaled_in_fp = in_fp * scale_fp;
               scaled_input_data[k] = cf_math_pkg::fp32_val_to_fp16_bit(scaled_in_fp);
-              // scaled_input_data[k] = input_data[m*K + k] * scale_data_fp[k*(N/QBLOCK) + n/QBLOCK];
             end
             prealign(scaled_input_data, EXTRA_BIT, 1, K, aligned_fx_data, aligned_exp_data, DEBUG);
             prealign(scaled_input_data, EXTRA_BIT_FOR_REDUCE, 1, K, aligned_fx_data_for_reduce, aligned_exp_data_for_reduce, DEBUG);
@@ -498,7 +497,6 @@ package fpint_emul;
               shortreal scaled_post_inner_product;
               for(int kt2=0; kt2<MXU_K; kt2++) begin
                 int k = kt*MXU_K + kt2;
-                int n = nt*QBLOCK + nt2*MXU_N + nt3;
                 inner_product += (aligned_fx_data[k] * signed'(weight_data_2scomp[k*N + n])); // mxu
                 act_sum += aligned_fx_data[k]; // act_sum
                 act_sum_for_reduce += (aligned_fx_data_for_reduce[k] * ($signed(zero_data[k*(N/QBLOCK) + n/QBLOCK]))); // act_sum for reduce
@@ -535,7 +533,8 @@ package fpint_emul;
     input logic [Z_WIDTH-1:0] zero_data[MAX_K*MAX_NG],
     input int M, N, K,
     ref logic [O_WIDTH-1:0] output_data[MAX_M*MAX_N],
-    input bit DEBUG = 0
+    input bit DEBUG = 0,
+    input logic [31:0] psum_data[MAX_M*MAX_N] = '{default: '0}  // FP32 partial sum for accumulation
   );
     logic [IN_WIDTH-1:0] scaled_input_data[MAX_M*MAX_K];
     logic signed [MAX_ALIGN_WIDTH-1:0] aligned_fx_data[MAX_M*MAX_K];
@@ -564,8 +563,8 @@ package fpint_emul;
       for(int nt=0; nt<(N/QBLOCK); nt++) begin
         for(int nt2=0; nt2<(QBLOCK/MXU_N); nt2++) begin
           for(int nt3=0; nt3<MXU_N; nt3++) begin
-            shortreal acc_fp = 0.0;
             int n = nt*QBLOCK + nt2*MXU_N + nt3;
+            shortreal acc_fp = $bitstoshortreal(psum_data[m*N + n]);
 
             // scale input and prealign
             for(int k=0; k<K; k++) begin

@@ -111,14 +111,12 @@ module VX_fp32_mul #(
 `ifdef DBG_TRACE_GEMM
     always @(posedge clk) begin
         if (!reset) begin
-            `TRACE(2, ("%t: VX_fp32_mul - INPUT: a_valid=%b, a_data=0x%h, a_ready=%b, b_valid=%b, b_data=0x%h, b_ready=%b\n", 
-                $time, a_valid, a_data, a_ready, b_valid, b_data, b_ready))
-            `TRACE(2, ("%t: VX_fp32_mul - FENCE: pop[0].valid=%b, pop[0].data=0x%h, pop[1].valid=%b, pop[1].data=0x%h\n", 
-                $time, pop_streams[0].valid, pop_streams[0].data, pop_streams[1].valid, pop_streams[1].data))
-            `TRACE(2, ("%t: VX_fp32_mul - DPI: inputs_valid=%b, inputs_ready=%b, result=0x%h\n", 
-                $time, inputs_valid, inputs_ready, dpi_result[31:0]))
-            `TRACE(2, ("%t: VX_fp32_mul - OUTPUT: result_valid=%b, result_ready=%b, result_data=0x%h\n", 
-                $time, result_valid, result_ready, result_data))
+          if(a_valid && a_ready && b_valid && b_ready) begin
+            `TRACE(2, ("%t: VX_fp32_mul - INPUT HS: a_data=0x%h, b_data=0x%h\n", $time, a_data, b_data))
+          end
+          if(result_valid && result_ready) begin
+            `TRACE(2, ("%t: VX_fp32_mul - OUTPUT HS: result_data=0x%h\n", $time, result_data))
+          end
         end
     end
 `endif

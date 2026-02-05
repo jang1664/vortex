@@ -9,8 +9,39 @@ module tb_VX_gemm_dma_ctrl;
   // ------------------------------------------------------------
   logic clk, reset;
 
+  localparam string TB_NAME     = "tb_VX_gemm_dma_ctrl";
+  
   initial clk = 1'b0;
   always #5 clk = ~clk;  // 100MHz
+  integer rpt_fd;
+  integer log_fd;
+
+  string fsdb_file_path;
+  string fst_file_path;
+  string rpt_file_path;
+  string log_file_path;
+  string name;
+
+  initial begin
+    $timeformat(-9, 0, "ns", 0);
+
+    $sformat(name, "%s", TB_NAME);
+    $sformat(fsdb_file_path, "./reports/%s.fsdb", name);
+    $sformat(fst_file_path,  "./reports/%s.fst",  name);
+    $sformat(log_file_path,  "./logs/%s.log",     name);
+    $sformat(rpt_file_path,  "./reports/%s.rpt",  name);
+
+`ifdef VCS
+    $fsdbDumpfile(fsdb_file_path);
+    $fsdbDumpvars(0, "+all", "+parameter", "+functions");
+`else
+    $dumpfile(fst_file_path);
+    $dumpvars(0, tb_VX_gemm_ctrl);
+`endif
+
+    rpt_fd = $fopen(rpt_file_path, "w");
+    log_fd = $fopen(log_file_path, "w");
+  end
 
   initial begin
     reset = 1'b1;
