@@ -240,6 +240,13 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     logic [`MXU_COL-1:0][FP32_WIDTH-1:0]           acc_output_data;
     logic [`MXU_COL-1:0]                           acc_output_valid;
     logic [3:0][`MXU_COL-1:0][FP32_WIDTH-1:0]      acc_mem_in_data;
+    logic [`MXU_COL-1:0]                           acc_in_data_valid;
+    logic [`MXU_COL-1:0]                           acc_psum_data_valid;
+
+    // -------------------------------------------------------------------------
+    // Accumulator fifo
+    // -------------------------------------------------------------------------
+    logic [`MXU_COL-1:0][FP32_WIDTH-1:0]           acc_rd_fifo_in_data;
 
     // -------------------------------------------------------------------------
     // Accumulator Memory Signals
@@ -250,6 +257,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
 
     logic [`GEMM_ACC_MEM_BANK_ADDR_WIDTH-1:0]      acc_mem_accum_rd_bank_addr;
     logic [1:0]                                    acc_mem_accum_rd_bank;
+    logic [1:0]                                    acc_mem_accum_rd_bank_q;
     logic [`GEMM_ACC_MEM_BANK_ADDR_WIDTH-1:0]      acc_mem_accum_wr_bank_addr;
     logic [1:0]                                    acc_mem_accum_wr_bank;
     logic [`GEMM_ACC_MEM_BANK_ADDR_WIDTH-1:0]      acc_mem_out_rd_bank_addr;
@@ -266,7 +274,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     // -------------------------------------------------------------------------
     acc_mem_accum_rd_state_t                       acc_mem_accum_rd_state, acc_mem_accum_rd_state_next;
     logic                                          acc_mem_accum_rd_req;
-    logic                                          acc_mem_accum_rd_cnt, acc_mem_accum_rd_cnt_next;
+    logic [`GEMM_ACC_MAX_CNT-1:0]                  acc_mem_accum_rd_cnt, acc_mem_accum_rd_cnt_next;
     logic                                          acc_rd_fifo_push, acc_rd_fifo_pop;
     logic                                          acc_rd_fifo_full, acc_rd_fifo_empty;
     logic                                          acc_mem_rd_data_valid;
@@ -1030,12 +1038,13 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     // -------------------------------------------------------------------------
     generate
         for (genvar i = 0; i < `MXU_COL; i++) begin : gen_accumulator
-            logic a_valid, b_valid;
             logic [FP32_WIDTH-1:0] a_data;
+            logic [FP32_WIDTH-1:0] b_data;
 
-            assign a_valid = final_scaler_output_valid & ~gemm_unit_ctrl.is_load;
-            assign b_valid = a_valid;
+            assign acc_in_data_valid[i] = final_scaler_output_valid & ~gemm_unit_ctrl.is_load;
+            assign acc_psum_data_valid[i] = ~acc_rd_fifo_empty & ~gemm_unit_ctrl.is_load & acc_in_data_valid[i];
             assign a_data  = final_scaler_output_valid ? scaled_fp32_out_data[i] : '0;
+            assign b_data  = ~acc_rd_fifo_empty ? acc_rd_fifo_out_data[i] : '0;
 
             VX_fp32_add #(
                 .LATENCY (1),
@@ -1043,12 +1052,12 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
             ) u_accumulator (
                 .clk          (clk),
                 .reset        (reset),
-                .a_valid      (a_valid),
+                .a_valid      (acc_in_data_valid[i]),
                 .a_ready      (),
                 .a_data       (a_data),
-                .b_valid      (b_valid),
+                .b_valid      (acc_psum_data_valid[i]),
                 .b_ready      (),
-                .b_data       (acc_mem_out_data[acc_mem_accum_rd_bank][i]),
+                .b_data       (b_data),  // Use FIFO output, not direct memory read
                 .result_valid (acc_output_valid[i]),
                 .result_ready (1'b1),
                 .result_data  (acc_output_data[i])
@@ -1059,8 +1068,16 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     // -------------------------------------------------------------------------
     // Accumulator Read FIFO
     // -------------------------------------------------------------------------
+    always_ff @(posedge clk, posedge reset) begin
+      if(reset) begin
+        acc_mem_accum_rd_bank_q <= '0;
+      end else begin
+        acc_mem_accum_rd_bank_q <= acc_mem_accum_rd_bank;
+      end
+    end
+    assign acc_rd_fifo_in_data = acc_mem_out_data[acc_mem_accum_rd_bank_q];
     VX_fifo_v2 #(
-        .FALL_THROUGH (1),
+        .FALL_THROUGH (0),
         .DATA_WIDTH   (`MXU_COL * FP32_WIDTH),
         .DEPTH        (2)
     ) u_acc_rd_fifo (
@@ -1072,7 +1089,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
         .empty_o     (acc_rd_fifo_empty),
         .alm_full_o  (),
         .alm_empty_o (),
-        .data_i      (acc_mem_out_data[acc_mem_accum_rd_bank]),
+        .data_i      (acc_rd_fifo_in_data),
         .push_i      (acc_rd_fifo_push),
         .data_o      (acc_rd_fifo_out_data),
         .pop_i       (acc_rd_fifo_pop)
@@ -1087,9 +1104,9 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
             logic this_bank_out_rd; 
             logic this_bank_accum_wr; 
 
-            assign this_bank_accum_rd = (~gemm_unit_ctrl.is_load && acc_mem_accum_rd_bank == i);
-            assign this_bank_out_rd   = (acc_mem_out_rd_bank == i);
-            assign this_bank_accum_wr = (acc_mem_accum_wr_bank == i);
+            assign this_bank_accum_rd = (~gemm_unit_ctrl.is_load && acc_mem_accum_rd_bank == i && acc_mem_accum_rd_req && in_flight);
+            assign this_bank_out_rd   = (acc_mem_out_rd_bank == i && (o_lmem_bus_if.req_valid & o_lmem_bus_if.req_ready));
+            assign this_bank_accum_wr = (acc_mem_accum_wr_bank == i && acc_mem_accum_wr_req && in_flight);
 
             assign acc_mem_wr_en[i] = this_bank_accum_wr && (gemm_unit_ctrl.is_load ? final_scaler_output_valid : acc_output_valid[0]);
             assign acc_mem_rd_en[i] = this_bank_accum_rd ? acc_mem_accum_rd_req :
@@ -1100,8 +1117,9 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
             assign acc_mem_in_data[i] = this_bank_accum_wr ? (gemm_unit_ctrl.is_load ? scaled_fp32_out_data : acc_output_data) : '0;
 
             VX_sp_ram #(
-                .DATAW (`MXU_COL * FP32_WIDTH),
-                .SIZE  (`GEMM_ACC_MEM_DEPTH * `MXU_COL * (FP32_WIDTH/8))
+                .DATAW  (`MXU_COL * FP32_WIDTH),
+                .SIZE   (`GEMM_ACC_MEM_DEPTH * `MXU_COL * (FP32_WIDTH/8)),
+                .OUT_REG(1)
             ) VX_sp_ram_instance (
                 .clk   (clk),
                 .reset (reset),
@@ -1332,6 +1350,34 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
                     $time, INSTANCE_ID, acc_mem_accum_rd_addr, acc_mem_accum_rd_bank, acc_mem_accum_rd_cnt))
             end
 
+            // FIFO push
+            if (acc_rd_fifo_push) begin
+                `TRACE(2, ("%t: %s: FIFO PUSH - data=%s, full=%b, empty=%b\n",
+                    $time, INSTANCE_ID, parseWordNoNormal(acc_mem_out_data[acc_mem_accum_rd_bank], `MXU_ROW * FP32_WIDTH, FP32_WIDTH, "fp"),
+                    acc_rd_fifo_full, acc_rd_fifo_empty))
+            end
+
+            // FIFO pop
+            if (acc_rd_fifo_pop) begin
+                `TRACE(2, ("%t: %s: FIFO POP - out_data=%s, full=%b, empty=%b\n",
+                    $time, INSTANCE_ID, parseWordNoNormal(acc_rd_fifo_out_data, `MXU_ROW * FP32_WIDTH, FP32_WIDTH, "fp"),
+                    acc_rd_fifo_full, acc_rd_fifo_empty))
+            end
+
+            // Accumulator input (when not is_load)
+            if (final_scaler_output_valid && ~gemm_unit_ctrl.is_load) begin
+                `TRACE(2, ("%t: %s: ACCUM INPUT - a_data=%s, b_data(fifo)=%s, fifo_empty=%b\n",
+                    $time, INSTANCE_ID, parseWordNoNormal(scaled_fp32_out_data, `MXU_ROW * FP32_WIDTH, FP32_WIDTH, "fp"),
+                    parseWordNoNormal(acc_rd_fifo_out_data, `MXU_ROW * FP32_WIDTH, FP32_WIDTH, "fp"),
+                    acc_rd_fifo_empty))
+            end
+
+            // Accumulator output
+            if (acc_output_valid[0] && ~gemm_unit_ctrl.is_load) begin
+                `TRACE(2, ("%t: %s: ACCUM OUTPUT - data=%s\n",
+                    $time, INSTANCE_ID, parseWordNoNormal(acc_output_data, `MXU_ROW * FP32_WIDTH, FP32_WIDTH, "fp")))
+            end
+
             // Accumulation mem read data
             if (acc_mem_rd_out_valid) begin
                 `TRACE(2, ("%t: %s: Acc mem read out - data=%s\n",
@@ -1365,6 +1411,11 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
       if(merger_out_valid ^ prealigner_max_exp_q_valid) begin
         `ERROR(("%t: %s: ERROR - Merger output valid and Prealigner max exp valid are not aligned! merger_out_valid=%b, prealigner_max_exp_q_valid=%b\n",
             $time, INSTANCE_ID, merger_out_valid, prealigner_max_exp_q_valid));
+      end
+
+      if(~gemm_unit_ctrl.is_load && (&acc_in_data_valid == 1 &&  &acc_psum_data_valid == 0)) begin
+        `ERROR(("%t: %s: ERROR - Accumulator input data valid and psum data valid are not aligned! acc_in_data_valid=%b, acc_psum_data_valid=%b\n",
+            $time, INSTANCE_ID, acc_in_data_valid, acc_psum_data_valid));
       end
     end
 `endif
