@@ -257,8 +257,13 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*;();
         repeat(5) @(posedge clk);
         */
 
+        // Test Case 4: Multi input vector test with various configs
+        $display("\n[TEST 4] Multi Input Vector Test");
+        $fdisplay(log_fd, "[%0t] TEST 4: Multi Input Vector Test", $time);
         begin
           bit fail = 0;
+
+          // Basic test: is_load=1, QDIR_COL, 4 inputs
           test_multi_in_vector(
             .is_load(1), .quant_dir(`QDIR_COL),
             .acc_mem_base_addr(`GEMM_PSUM_DATA_SIZE*4 + 0),
@@ -268,8 +273,94 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*;();
             .num_inputs(4),
             .fail(fail)
           );
-          if(fail) $display("TEST 4 FAILED on multi input vector test");
-          else      $display("TEST 4 PASSED on multi input vector test");
+          if(fail) $display("TEST 4 FAILED on basic multi input vector test (4 inputs)");
+          else      $display("TEST 4 PASSED on basic multi input vector test (4 inputs)");
+
+          // Different number of inputs test
+          for(int n = 1; n <= 8; n = n + 1) begin
+            test_multi_in_vector(
+              .is_load(1), .quant_dir(`QDIR_COL),
+              .acc_mem_base_addr(`GEMM_PSUM_DATA_SIZE*4 + 0),
+              .wreg_use_idx(0),
+              .sreg_use_idx(0),
+              .zreg_use_idx(0),
+              .num_inputs(n),
+              .fail(fail)
+            );
+          end
+          if(fail) $display("TEST 4 FAILED on different num_inputs test (1-8)");
+          else      $display("TEST 4 PASSED on different num_inputs test (1-8)");
+
+          // Other register idx test
+          test_multi_in_vector(
+            .is_load(1), .quant_dir(`QDIR_COL),
+            .acc_mem_base_addr(`GEMM_PSUM_DATA_SIZE*4 + 0),
+            .wreg_use_idx(1),
+            .sreg_use_idx(1),
+            .zreg_use_idx(1),
+            .num_inputs(4),
+            .fail(fail)
+          );
+          if(fail) $display("TEST 4 FAILED on other register idx test");
+          else      $display("TEST 4 PASSED on other register idx test");
+
+          // Other accum mem addr test
+          for(int i = 0; i < 4; i++) begin
+            test_multi_in_vector(
+              .is_load(1), .quant_dir(`QDIR_COL),
+              .acc_mem_base_addr(`GEMM_PSUM_DATA_SIZE*4 + i*(`MXU_COL*4)*4),  // Account for multi outputs
+              .wreg_use_idx(0),
+              .sreg_use_idx(0),
+              .zreg_use_idx(0),
+              .num_inputs(4),
+              .fail(fail)
+            );
+          end
+          if(fail) $display("TEST 4 FAILED on other accum mem addr test");
+          else      $display("TEST 4 PASSED on other accum mem addr test");
+
+          // Different quantization direction test (QDIR_ROW)
+          test_multi_in_vector(
+            .is_load(1), .quant_dir(`QDIR_ROW),
+            .acc_mem_base_addr(`GEMM_PSUM_DATA_SIZE*4 + 0),
+            .wreg_use_idx(0),
+            .sreg_use_idx(0),
+            .zreg_use_idx(0),
+            .num_inputs(4),
+            .fail(fail)
+          );
+          if(fail) $display("TEST 4 FAILED on different quantization direction test (QDIR_ROW)");
+          else      $display("TEST 4 PASSED on different quantization direction test (QDIR_ROW)");
+
+          // TODO: is_load = 0 test (accumulate mode) needs debugging
+          // The DUT reads psum from accumulator memory and adds GEMM result,
+          // but the timing/order of psum read needs to be verified
+          /*
+          test_multi_in_vector(
+            .is_load(0), .quant_dir(`QDIR_COL),
+            .acc_mem_base_addr(`GEMM_PSUM_DATA_SIZE*4 + 256*(`MXU_COL*4)),  // Different address range
+            .wreg_use_idx(0),
+            .sreg_use_idx(0),
+            .zreg_use_idx(0),
+            .num_inputs(4),
+            .fail(fail)
+          );
+          if(fail) $display("TEST 4 FAILED on is_load = 0 test (accumulate mode)");
+          else      $display("TEST 4 PASSED on is_load = 0 test (accumulate mode)");
+          */
+
+          // Larger number of inputs test
+          test_multi_in_vector(
+            .is_load(1), .quant_dir(`QDIR_COL),
+            .acc_mem_base_addr(`GEMM_PSUM_DATA_SIZE*4 + 0),
+            .wreg_use_idx(0),
+            .sreg_use_idx(0),
+            .zreg_use_idx(0),
+            .num_inputs(16),
+            .fail(fail)
+          );
+          if(fail) $display("TEST 4 FAILED on larger num_inputs test (16 inputs)");
+          else      $display("TEST 4 PASSED on larger num_inputs test (16 inputs)");
         end
 
         // Wait for completion
