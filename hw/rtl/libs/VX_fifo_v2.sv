@@ -44,7 +44,7 @@ module VX_fifo_v2 #(
   // keep a counter to keep track of the current queue status
   logic [ADDR_DEPTH:0] status_cnt_n, status_cnt_q; // this integer will be truncated by the synthesis tool
   // actual memory
-  logic [DATA_WIDTH-1:0][FIFO_DEPTH - 1:0] mem_n, mem_q;
+  logic [FIFO_DEPTH - 1:0][DATA_WIDTH-1:0] mem_n, mem_q;
 
   if (DEPTH == 0) begin
     assign empty_o     = ~push_i;
