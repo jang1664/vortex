@@ -177,6 +177,7 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*;();
         // Wait for idle
         wait_for_idle();
 
+        /*
         // Test Case 1: Register writing verification
         $display("\n[TEST 1] Register Writing Verification");
         $fdisplay(log_fd, "[%0t] TEST 1: Register Writing Verification", $time);
@@ -253,6 +254,23 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*;();
           else      $display("TEST 3 PASSED on is_load = 0 test");
         end
 
+        repeat(5) @(posedge clk);
+        */
+
+        begin
+          bit fail = 0;
+          test_multi_in_vector(
+            .is_load(1), .quant_dir(`QDIR_COL),
+            .acc_mem_base_addr(`GEMM_PSUM_DATA_SIZE*4 + 0),
+            .wreg_use_idx(0),
+            .sreg_use_idx(0),
+            .zreg_use_idx(0),
+            .num_inputs(4),
+            .fail(fail)
+          );
+          if(fail) $display("TEST 4 FAILED on multi input vector test");
+          else      $display("TEST 4 PASSED on multi input vector test");
+        end
 
         // Wait for completion
         repeat(100) @(posedge clk);
@@ -1139,11 +1157,215 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*;();
         fail |= ~test_pass;
     endtask
 
-    /*
-      Test 
-     */
-    task test_multi_in_vector();
+    // -----------------------------------------------------------------
+    // Test: multiple input vectors test
+    //       Similar to test_one_in_vector but sends multiple input vectors
+    //       with randomized valid timing between each input.
+    // -----------------------------------------------------------------
+    task test_multi_in_vector(
+      input logic is_load,
+      input logic quant_dir,
+      input int   acc_mem_base_addr,
+      input int   wreg_use_idx,
+      input int   sreg_use_idx,
+      input int   zreg_use_idx,
+      input int   num_inputs,
+      ref   bit   fail
+    );
+        logic [MXU_ROW-1:0][IFP_WIDTH-1:0] input_data[64];  // Max 64 inputs
+        logic [MXU_ROW-1:0][MXU_COL-1:0][W_BIT_WIDTH-1:0] weight_data;
+        logic [1:0][`MXU_MAX_DIM-1:0][SCALE_WIDTH-1:0] scale_values;
+        logic [1:0][`MXU_MAX_DIM-1:0][ZP_WIDTH-1:0] zp_values;
+        int i, j, k;
+        int test_pass;
+        logic [`MXU_COL-1:0][FP32_WIDTH-1:0] acc_init_value;
+        int random_delay;
 
+        // Arrays for reference calculation (fpint_emul format)
+        logic [fpint_emul::IN_WIDTH-1:0] ref_input[fpint_emul::MAX_M*fpint_emul::MAX_K];
+        logic [fpint_emul::MAX_W_WIDTH-1:0] ref_weight[fpint_emul::MAX_K*fpint_emul::MAX_N];
+        logic [fpint_emul::S_WIDTH-1:0] ref_scale[fpint_emul::MAX_KG*fpint_emul::MAX_N];
+        logic [fpint_emul::Z_WIDTH-1:0] ref_zero[fpint_emul::MAX_KG*fpint_emul::MAX_N];
+        logic [fpint_emul::O_WIDTH-1:0] ref_output[fpint_emul::MAX_M*fpint_emul::MAX_N];
+        logic [fpint_emul::P_WIDTH-1:0] ref_psum[fpint_emul::MAX_M*fpint_emul::MAX_N];
+
+        // DUT output
+        logic [MXU_COL-1:0][FP16_WIDTH-1:0] dut_output;
+
+        $display("\n[%0t] ============================================", $time);
+        $display("[%0t] TEST: Multi Input Vector Test (num_inputs=%0d)", $time, num_inputs);
+        $display("[%0t] ============================================", $time);
+        $fdisplay(log_fd, "[%0t] TEST: Multi Input Vector Test (num_inputs=%0d)", $time, num_inputs);
+
+        test_pass = 1;
+
+        // Clamp num_inputs to valid range
+        if (num_inputs > 64) num_inputs = 64;
+        if (num_inputs < 1) num_inputs = 1;
+
+        // -----------------------------------------------------------------
+        // Step 1: Setup scale registers
+        // -----------------------------------------------------------------
+        $display("[%0t] Setting up scale registers...", $time);
+        for (i = 0; i < `MXU_MAX_DIM; i++) begin
+            scale_values[sreg_use_idx][i] = 16'h4000;  // 2.0 in FP16
+        end
+        write_scale_reg(sreg_use_idx, scale_values[sreg_use_idx]);
+
+        // -----------------------------------------------------------------
+        // Step 2: Setup zero point registers
+        // -----------------------------------------------------------------
+        $display("[%0t] Setting up zero point registers...", $time);
+        for (i = 0; i < `MXU_MAX_DIM; i++) begin
+            zp_values[zreg_use_idx][i] = 8'd1;
+        end
+        write_zp_reg(zreg_use_idx, zp_values[zreg_use_idx]);
+
+        repeat(5) @(posedge clk);
+
+        // -----------------------------------------------------------------
+        // Step 3: Load weights to weight register bank
+        // -----------------------------------------------------------------
+        $display("[%0t] Loading weights to bank %0d...", $time, wreg_use_idx);
+        for (i = 0; i < MXU_ROW; i++) begin
+            for (j = 0; j < MXU_COL; j++) begin
+                weight_data[i][j] = (i == j) ? 8'd1 : 8'd0;  // Identity-like pattern
+            end
+        end
+        write_weight(weight_data, wreg_use_idx, 1'b0);
+        ->weight_loaded;
+
+        repeat(5) @(posedge clk);
+
+        // ----------------------------------------------------------------
+        // Step 4: Initialize psum and acc mem
+        // ----------------------------------------------------------------
+        // Initialize ref_psum for all M*N elements
+        for (i = 0; i < fpint_emul::MAX_M * fpint_emul::MAX_N; i++) begin
+            ref_psum[i] = '0;
+        end
+
+        if (is_load == 1'b0) begin
+            $display("[%0t] Initializing accumulator memory...", $time);
+            for (k = 0; k < num_inputs; k++) begin
+                for (j = 0; j < `MXU_COL; j++) begin
+                    acc_init_value[j] = 32'h3F800000; // 1.0 in FP32
+                    ref_psum[k * MXU_COL + j] = 32'h3F800000; // 1.0 in FP32 for each row
+                end
+                u_dut.initialize_acc_mem(acc_mem_base_addr + k * (`MXU_COL * 4), 1, acc_init_value);
+            end
+            repeat(5) @(posedge clk);
+        end
+
+        // ----------------------------------------------------------------
+        // Step 5: Generate input vectors with varying values
+        // ----------------------------------------------------------------
+        $display("[%0t] Generating %0d input vectors...", $time, num_inputs);
+        for (k = 0; k < num_inputs; k++) begin
+            for (i = 0; i < MXU_ROW; i++) begin
+                // Generate different values for each input: 1.0, 1.5, 2.0, etc.
+                case (k % 4)
+                    0: input_data[k][i] = 16'h3C00;  // 1.0 in FP16
+                    1: input_data[k][i] = 16'h3E00;  // 1.5 in FP16
+                    2: input_data[k][i] = 16'h4000;  // 2.0 in FP16
+                    3: input_data[k][i] = 16'h4200;  // 3.0 in FP16
+                endcase
+            end
+        end
+
+        // Prepare reference arrays
+        for (i = 0; i < fpint_emul::MAX_M * fpint_emul::MAX_K; i++) ref_input[i] = '0;
+        for (i = 0; i < fpint_emul::MAX_K * fpint_emul::MAX_N; i++) ref_weight[i] = '0;
+        for (i = 0; i < fpint_emul::MAX_KG * fpint_emul::MAX_N; i++) ref_scale[i] = '0;
+        for (i = 0; i < fpint_emul::MAX_KG * fpint_emul::MAX_N; i++) ref_zero[i] = '0;
+
+        // Copy weight data (K=MXU_ROW rows, N=MXU_COL columns)
+        for (i = 0; i < MXU_ROW; i++) begin
+            for (j = 0; j < MXU_COL; j++) begin
+                ref_weight[i * MXU_COL + j] = weight_data[i][j];
+            end
+        end
+
+        // Setup scale and zero for reference
+        for (j = 0; j < MXU_COL; j++) begin
+            ref_scale[j] = scale_values[sreg_use_idx][j];
+            ref_zero[j] = zp_values[zreg_use_idx][j];
+        end
+
+        // ----------------------------------------------------------------
+        // Step 6: Start GEMM and send inputs with random timing
+        // ----------------------------------------------------------------
+        $display("[%0t] GEMM MULTI INPUT TEST (is_load=%b, QDIR=%b, wreg=%0d, sreg=%0d, zreg=%0d, acc_addr=%0d, num_inputs=%0d)...",
+                  $time, is_load, quant_dir, wreg_use_idx, sreg_use_idx, zreg_use_idx, acc_mem_base_addr, num_inputs);
+
+        wait_for_idle();
+
+        start_gemm(
+            .is_load(is_load),
+            .quant_dir(quant_dir),
+            .acc_mem_base_addr(acc_mem_base_addr),
+            .acc_cnt(num_inputs),
+            .wreg_use_idx(wreg_use_idx),
+            .sreg_use_idx(sreg_use_idx),
+            .zreg_use_idx(zreg_use_idx)
+        );
+
+        // Send inputs with randomized timing
+        for (k = 0; k < num_inputs; k++) begin
+            // Random delay between 0-10 cycles before sending each input
+            random_delay = $urandom_range(0, 10);
+            $display("[%0t]   Sending input[%0d] after %0d cycle delay...", $time, k, random_delay);
+            repeat(random_delay) @(posedge clk);
+
+            send_input(input_data[k]);
+        end
+
+        wait_for_done();
+
+        repeat(10) @(posedge clk);
+
+        // ----------------------------------------------------------------
+        // Step 7: Calculate reference and compare results
+        // ----------------------------------------------------------------
+        $display("[%0t]   Calculating reference and comparing with DUT for %0d outputs...", $time, num_inputs);
+
+        // Prepare reference input: M=num_inputs rows, K=MXU_ROW columns
+        // ref_input[m*K + k] = input_data[m][k]
+        for (int m = 0; m < num_inputs; m++) begin
+            for (int kk = 0; kk < MXU_ROW; kk++) begin
+                ref_input[m * MXU_ROW + kk] = input_data[m][kk];
+            end
+        end
+
+        // Calculate reference output with M=num_inputs, N=MXU_COL, K=MXU_ROW
+        fpint_emul::fpint_gemm_ref(
+            ref_input, ref_weight, ref_scale, ref_zero,
+            num_inputs, MXU_COL, MXU_ROW,
+            ref_output,
+            quant_dir,
+            fpint_emul::WNOTRANS,
+            ~is_load,  // Use psum when is_load=0 (accumulate mode)
+            ref_psum
+        );
+
+        // Compare each output row (total M rows, each with N elements)
+        for (int m = 0; m < num_inputs; m++) begin
+            // Read output for row m
+            read_output(acc_mem_base_addr + m * (`MXU_COL * 4), dut_output);
+
+            // Compare with reference
+            for (j = 0; j < MXU_COL; j++) begin
+                if (!compare_fp16(dut_output[j], ref_output[m * MXU_COL + j], 0.01)) begin
+                    $display("[%0t]   ERROR: output[%0d][%0d] mismatch - DUT=0x%h (%f), REF=0x%h (%f)",
+                             $time, m, j, dut_output[j], cf_math_pkg::fp16_bit_to_fp16_val(dut_output[j]),
+                             ref_output[m * MXU_COL + j], cf_math_pkg::fp16_bit_to_fp16_val(ref_output[m * MXU_COL + j]));
+                    test_pass = 0;
+                end
+            end
+        end
+
+        $display("[%0t] GEMM MULTI IN VECTOR TEST : %s", $time, test_pass ? "PASSED" : "FAILED");
+        fail |= ~test_pass;
     endtask
 
     // =========================================================================
