@@ -6,12 +6,18 @@ High-level Python interface for Vortex GPU operations
 import os
 import sys
 import torch
+from typing import Optional, Dict
+
+
+# Global Vortex device handle (initialized once)
+_vortex_device = None
+_vortex_initialized = False
 
 
 def setup_vortex_env(driver='simx', auto_reexec=True, xrt_xclbin_path=None, 
-                     xrt_device_index=0, fpga_bin_dir=None):
+                     xrt_device_index=0, fpga_bin_dir=None, init_device=True):
     """
-    Setup Vortex environment variables
+    Setup Vortex environment variables and initialize device
     
     Args:
         driver: Vortex driver to use ('simx', 'rtlsim', 'opae', 'xrt', 'gpu')
@@ -19,10 +25,12 @@ def setup_vortex_env(driver='simx', auto_reexec=True, xrt_xclbin_path=None,
         xrt_xclbin_path: Path to .xclbin file (required for xrt driver)
         xrt_device_index: XRT device index (default: 0)
         fpga_bin_dir: FPGA bin directory (for xrt driver, contains .xclbin and emconfig.json)
+        init_device: If True, initialize Vortex device immediately
         
     Returns:
         True if environment is ready, False if re-execution is needed
     """
+    global _vortex_device, _vortex_initialized
     # Set VORTEX_DRIVER
     if 'VORTEX_DRIVER' not in os.environ:
         os.environ['VORTEX_DRIVER'] = driver
@@ -116,7 +124,41 @@ def setup_vortex_env(driver='simx', auto_reexec=True, xrt_xclbin_path=None,
         
         os.execve(sys.executable, [sys.executable] + sys.argv, env)
     
+    # Initialize Vortex device if requested and not already initialized
+    if init_device and not _vortex_initialized:
+        _init_vortex_device()
+    
     return not needs_reexec
+
+
+def _init_vortex_device():
+    """Initialize Vortex device (called once)"""
+    global _vortex_device, _vortex_initialized
+    
+    if _vortex_initialized:
+        return _vortex_device
+    
+    try:
+        # Call C++ device initialization (via Python C API, not torch.ops)
+        _vortex_device = _C.device_open()
+        _vortex_initialized = True
+        print(f"✓ Vortex device initialized (driver: {os.environ.get('VORTEX_DRIVER', 'unknown')})")
+        return _vortex_device
+    except Exception as e:
+        print(f"✗ Failed to initialize Vortex device: {e}")
+        raise
+
+
+def get_vortex_device():
+    """Get global Vortex device handle"""
+    if not _vortex_initialized:
+        _init_vortex_device()
+    return _vortex_device
+
+
+def is_vortex_available():
+    """Check if Vortex device is available"""
+    return _vortex_initialized
 
 
 # Auto-setup on import (can be disabled by setting VORTEX_NO_AUTO_SETUP=1)
@@ -146,6 +188,13 @@ if sys.platform.startswith('linux') or sys.platform == 'darwin':
         ctypes.CDLL(libvortex_path, mode=ctypes.RTLD_GLOBAL)
 
 from . import _C
+
+
+###############################################################################
+# Operation wrappers (direct pass-through to C++ kernels)
+# Note: VortexTensor removed - C++ kernels handle device memory internally
+# TODO: Implement zero-copy with device pointers when refactoring C++ kernels
+###############################################################################
 
 def rmsnorm(input: torch.Tensor, gamma: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
     """
@@ -237,9 +286,7 @@ def rope(input: torch.Tensor, cos_cache: torch.Tensor, sin_cache: torch.Tensor, 
 
 def matmul(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
     """
-    Matrix multiplication (CPU fallback for now)
-    TODO: Implement w4a16 quantized GEMM using gemm_fpint kernel
-    
+    Matrix multiplication on Vortex GPU
     Args:
         a: First tensor
         b: Second tensor
@@ -250,4 +297,9 @@ def matmul(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
     return torch.ops.vortex_torch.matmul(a, b)
 
 
-__all__ = ['rmsnorm', 'eladd', 'elmul', 'silu', 'softmax', 'rope', 'matmul', 'setup_vortex_env']
+__all__ = [
+    # Operations
+    'rmsnorm', 'eladd', 'elmul', 'silu', 'softmax', 'rope', 'matmul',
+    # Device management
+    'setup_vortex_env', 'get_vortex_device', 'is_vortex_available',
+]
