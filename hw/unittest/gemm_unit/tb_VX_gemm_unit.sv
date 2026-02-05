@@ -263,6 +263,7 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*;();
         begin
           bit fail = 0;
 
+          /*
           // Basic test: is_load=1, QDIR_COL, 4 inputs
           test_multi_in_vector(
             .is_load(1), .quant_dir(`QDIR_COL),
@@ -331,11 +332,11 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*;();
           );
           if(fail) $display("TEST 4 FAILED on different quantization direction test (QDIR_ROW)");
           else      $display("TEST 4 PASSED on different quantization direction test (QDIR_ROW)");
+          */
 
           // TODO: is_load = 0 test (accumulate mode) needs debugging
           // The DUT reads psum from accumulator memory and adds GEMM result,
           // but the timing/order of psum read needs to be verified
-          /*
           test_multi_in_vector(
             .is_load(0), .quant_dir(`QDIR_COL),
             .acc_mem_base_addr(`GEMM_PSUM_DATA_SIZE*4 + 256*(`MXU_COL*4)),  // Different address range
@@ -347,8 +348,8 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*;();
           );
           if(fail) $display("TEST 4 FAILED on is_load = 0 test (accumulate mode)");
           else      $display("TEST 4 PASSED on is_load = 0 test (accumulate mode)");
-          */
 
+          /*
           // Larger number of inputs test
           test_multi_in_vector(
             .is_load(1), .quant_dir(`QDIR_COL),
@@ -361,6 +362,7 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*;();
           );
           if(fail) $display("TEST 4 FAILED on larger num_inputs test (16 inputs)");
           else      $display("TEST 4 PASSED on larger num_inputs test (16 inputs)");
+          */
         end
 
         // Wait for completion
@@ -1428,6 +1430,28 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*;();
             end
         end
 
+        // Log reference inputs for debugging
+        $display("[%0t]   === REF INPUT (M=%0d, K=%0d) ===", $time, num_inputs, MXU_ROW);
+        for (int m = 0; m < num_inputs; m++) begin
+            $write("[%0t]     ref_input[%0d]: ", $time, m);
+            for (int kk = 0; kk < MXU_ROW; kk++) begin
+                $write("%f ", cf_math_pkg::fp16_bit_to_fp16_val(ref_input[m * MXU_ROW + kk]));
+            end
+            $write("\n");
+        end
+
+        // Log reference psum for debugging (if accumulate mode)
+        if (~is_load) begin
+            $display("[%0t]   === REF PSUM (M=%0d, N=%0d) ===", $time, num_inputs, MXU_COL);
+            for (int m = 0; m < num_inputs; m++) begin
+                $write("[%0t]     ref_psum[%0d]: ", $time, m);
+                for (int n = 0; n < MXU_COL; n++) begin
+                    $write("%f ", $bitstoshortreal(ref_psum[m * MXU_COL + n]));
+                end
+                $write("\n");
+            end
+        end
+
         // Calculate reference output with M=num_inputs, N=MXU_COL, K=MXU_ROW
         fpint_emul::fpint_gemm_ref(
             ref_input, ref_weight, ref_scale, ref_zero,
@@ -1439,10 +1463,27 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*;();
             ref_psum
         );
 
+        // Log reference output for debugging
+        $display("[%0t]   === REF OUTPUT (M=%0d, N=%0d) ===", $time, num_inputs, MXU_COL);
+        for (int m = 0; m < num_inputs; m++) begin
+            $write("[%0t]     ref_output[%0d]: ", $time, m);
+            for (int n = 0; n < MXU_COL; n++) begin
+                $write("%f ", cf_math_pkg::fp16_bit_to_fp16_val(ref_output[m * MXU_COL + n]));
+            end
+            $write("\n");
+        end
+
         // Compare each output row (total M rows, each with N elements)
         for (int m = 0; m < num_inputs; m++) begin
             // Read output for row m
             read_output(acc_mem_base_addr + m * (`MXU_COL * 4), dut_output);
+
+            // Log DUT output for debugging
+            $write("[%0t]   dut_output[%0d]: ", $time, m);
+            for (int n = 0; n < MXU_COL; n++) begin
+                $write("%f ", cf_math_pkg::fp16_bit_to_fp16_val(dut_output[n]));
+            end
+            $write("\n");
 
             // Compare with reference
             for (j = 0; j < MXU_COL; j++) begin
@@ -1490,6 +1531,21 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*;();
         end
         if (!reset && gemm_unit_if.done) begin
             $fdisplay(log_fd, "[%0t] GEMM DONE", $time);
+        end
+    end
+
+    // =========================================================================
+    // Monitor: Accumulator FIFO (for debugging)
+    // =========================================================================
+    always @(posedge clk) begin
+        if (!reset) begin
+            // Monitor FIFO state - always print during accumulate mode
+            if (!u_dut.gemm_unit_ctrl.is_load && u_dut.state == 1) begin  // COMPUTE state = 1
+                $fdisplay(log_fd, "[%0t] ACC RD FSM: state=%0d, cnt=%0d, rd_req=%b, rd_data_valid=%b, fifo_push=%b, fifo_empty=%b",
+                         $time, u_dut.acc_mem_accum_rd_state, u_dut.acc_mem_accum_rd_cnt,
+                         u_dut.acc_mem_accum_rd_req, u_dut.acc_mem_rd_data_valid,
+                         u_dut.acc_rd_fifo_push, u_dut.acc_rd_fifo_empty);
+            end
         end
     end
 
