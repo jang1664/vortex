@@ -1117,16 +1117,18 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
             assign acc_mem_in_data[i] = this_bank_accum_wr ? (gemm_unit_ctrl.is_load ? scaled_fp32_out_data : acc_output_data) : '0;
 
             VX_sp_ram #(
-                .DATAW  (`MXU_COL * FP32_WIDTH),
-                .SIZE   (`GEMM_ACC_MEM_DEPTH * `MXU_COL * (FP32_WIDTH/8)),
-                .OUT_REG(1)
+                .DATAW   (`MXU_COL * FP32_WIDTH),
+                .SIZE    (`GEMM_ACC_MEM_DEPTH),
+                .OUT_REG (1),
+                .RDW_MODE("R")  // Read-first mode for accumulator, enables URAM
             ) VX_sp_ram_instance (
                 .clk   (clk),
                 .reset (reset),
                 .read  (acc_mem_rd_en[i]),
                 .write (acc_mem_wr_en[i]),
                 .wren  (1'b1),
-                .addr  (acc_mem_wr_en[i] ? acc_mem_wr_addr[i] : acc_mem_rd_addr[i]),
+                .addr  (acc_mem_wr_en[i] ? acc_mem_wr_addr[i][`GEMM_ACC_MEM_ADDR_WIDTH-1:`CLOG2(`MXU_COL*FP32_WIDTH/8)] : 
+                                           acc_mem_rd_addr[i][`GEMM_ACC_MEM_ADDR_WIDTH-1:`CLOG2(`MXU_COL*FP32_WIDTH/8)]),
                 .wdata (acc_mem_in_data[i]),
                 .rdata (acc_mem_out_data[i])
             );
