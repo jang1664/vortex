@@ -27,7 +27,7 @@ module VX_pe_tree_new import VX_gpu_pkg::*; #(
     input  logic resetn_i,
     input  logic [ROW_SIZE-1:0][IN_DW-1:0] ifmap_i,
     input  logic [ROW_SIZE-1:0][TILE_COL_SIZE-1:0][WEIGHT_DW-1:0] weight_i,  // Changed: direct weight input
-    input  logic [TILE_COL_SIZE-1:0][OUT_DW-1:0] ps_i,
+    // input  logic [TILE_COL_SIZE-1:0][OUT_DW-1:0] ps_i,
     input  logic input_valid_i,
     input  logic [ROW_SIZE-1:0][BLK_BITW-1:0] blk_sidx_i,
 
@@ -35,34 +35,54 @@ module VX_pe_tree_new import VX_gpu_pkg::*; #(
     output logic valid_o
 );
 
-  localparam int MAC_DW = `ALIGNED_MAN_PADDED_FULL_WIDTH + `W_BIT_WIDTH;
+  localparam int MAC_DW = `SIGNED_ALIGNED_MAN_PADDED_FULL_WIDTH + `W_BIT_WIDTH;
   localparam int PIPELINE_STAGES = get_pipe_stage_bitmask(ROW_SIZE, PIPELINE_STAGE_INTV);
 
   // MAC and Adder Tree for each column
+  logic signed [IN_DW-1:0] ifmap_val[TILE_COL_SIZE][ROW_SIZE];
+  logic signed [WEIGHT_DW-1:0] weight_val[TILE_COL_SIZE][ROW_SIZE];
+  logic [BLK_BITW-1:0] blk_idx[TILE_COL_SIZE][ROW_SIZE];
+  logic signed [IN_DW+WEIGHT_DW-1:0] product[TILE_COL_SIZE][ROW_SIZE];
+  logic signed [IN_DW+WEIGHT_DW-1:0] product_out[TILE_COL_SIZE][ROW_SIZE];
+  logic [BLK_BITW-1:0] blk_idx_out[TILE_COL_SIZE][ROW_SIZE];
+  logic signed [MAC_DW-1:0] aligned[TILE_COL_SIZE][ROW_SIZE];
+  logic signed [MAC_DW-1:0] aligned_out[TILE_COL_SIZE][ROW_SIZE];
+  logic valid_mult_row[TILE_COL_SIZE][ROW_SIZE];
+  logic valid_align_row[TILE_COL_SIZE][ROW_SIZE];
+  logic valid_mult[TILE_COL_SIZE];
+  logic valid_align[TILE_COL_SIZE];
+  logic signed [MAC_DW-1:0] mac_results_collected[TILE_COL_SIZE][ROW_SIZE];
+  logic [ROW_SIZE-1:0][MAC_DW-1:0] mac_results_collected_flat[TILE_COL_SIZE];
+  logic signed [MAC_DW+$clog2(ROW_SIZE)-1:0] reduced_sum[TILE_COL_SIZE];
+  logic valid_reduced[TILE_COL_SIZE];
+  logic signed [MAC_DW + $clog2(ROW_SIZE)-1:0] final_sum_extended[TILE_COL_SIZE];
+  logic signed [MAC_DW + $clog2(ROW_SIZE)-1:0] accumulated_result[TILE_COL_SIZE];
+  logic valid_output[TILE_COL_SIZE];
+
   generate
     for (genvar col = 0; col < TILE_COL_SIZE; col++) begin : gen_col
       
       // Valid signals for pipeline stages
-      logic valid_mult, valid_align;
+      // logic valid_mult, valid_align;
       
       // Stage 0: MAC operations
       for (genvar row = 0; row < ROW_SIZE; row++) begin : gen_mac
-        logic signed [IN_DW-1:0] ifmap_val;
-        logic signed [WEIGHT_DW-1:0] weight_val;
-        logic [BLK_BITW-1:0] blk_idx;
-        logic signed [IN_DW+WEIGHT_DW-1:0] product;
-        logic signed [IN_DW+WEIGHT_DW-1:0] product_out;
-        logic [BLK_BITW-1:0] blk_idx_out;
-        logic signed [MAC_DW-1:0] aligned;
-        logic signed [MAC_DW-1:0] aligned_out;
-        logic valid_mult_row, valid_align_row;
+        // logic signed [IN_DW-1:0] ifmap_val;
+        // logic signed [WEIGHT_DW-1:0] weight_val;
+        // logic [BLK_BITW-1:0] blk_idx;
+        // logic signed [IN_DW+WEIGHT_DW-1:0] product;
+        // logic signed [IN_DW+WEIGHT_DW-1:0] product_out;
+        // logic [BLK_BITW-1:0] blk_idx_out;
+        // logic signed [MAC_DW-1:0] aligned;
+        // logic signed [MAC_DW-1:0] aligned_out;
+        // logic valid_mult_row, valid_align_row;
         
-        assign ifmap_val = $signed(ifmap_i[row]);
-        assign weight_val = $signed(weight_i[row][col]);
-        assign blk_idx = blk_sidx_i[row];
+        assign ifmap_val[col][row] = $signed(ifmap_i[row]);
+        assign weight_val[col][row] = $signed(weight_i[row][col]);
+        assign blk_idx[col][row] = blk_sidx_i[row];
         
         // Multiply
-        assign product = ifmap_val * weight_val;
+        assign product[col][row] = ifmap_val[col][row] * weight_val[col][row];
         
         // Elastic buffer for multiplier output (includes blk_idx for align stage)
         VX_elastic_buffer #(
@@ -74,14 +94,17 @@ module VX_pe_tree_new import VX_gpu_pkg::*; #(
           .reset     (~resetn_i),
           .valid_in  (input_valid_i),
           .ready_in  (),
-          .data_in   ({product, blk_idx}),
-          .data_out  ({product_out, blk_idx_out}),
+          .data_in   ({product[col][row], blk_idx[col][row]}),
+          .data_out  ({product_out[col][row], blk_idx_out[col][row]}),
           .ready_out (1'b1),
-          .valid_out (valid_mult_row)
+          .valid_out (valid_mult_row[col][row])
         );
         
-        // Align (shift)
-        assign aligned = product_out <<< blk_idx_out;
+        // Align (shift) - sign-extend product_out to MAC_DW before shift to avoid overflow
+        always_comb begin
+          aligned[col][row] = $signed(product_out[col][row]);
+          aligned[col][row] = aligned[col][row] << blk_idx_out[col][row];
+        end
         
         // Elastic buffer for align output
         VX_elastic_buffer #(
@@ -91,33 +114,33 @@ module VX_pe_tree_new import VX_gpu_pkg::*; #(
         ) align_buffer (
           .clk       (clk_i),
           .reset     (~resetn_i),
-          .valid_in  (valid_mult_row),
+          .valid_in  (valid_mult_row[col][row]),
           .ready_in  (),
-          .data_in   (aligned),
-          .data_out  (aligned_out),
+          .data_in   (aligned[col][row]),
+          .data_out  (aligned_out[col][row]),
           .ready_out (1'b1),
-          .valid_out (valid_align_row)
+          .valid_out (valid_align_row[col][row])
         );
         
         // Use row 0's valid for the entire column
         if (row == 0) begin : gen_valid_assign
-          assign valid_mult = valid_mult_row;
-          assign valid_align = valid_align_row;
+          assign valid_mult[col] = valid_mult_row[col][row];
+          assign valid_align[col] = valid_align_row[col][row];
         end
-      end
-      
-      // Collect MAC results for reduction
-      logic signed [ROW_SIZE-1:0][MAC_DW-1:0] mac_results_collected;
-      for (genvar row = 0; row < ROW_SIZE; row++) begin : gen_collect
-        assign mac_results_collected[row] = gen_mac[row].aligned_out;
+
+        assign mac_results_collected[col][row] = aligned_out[col][row];
       end
       
       // Reduction tree using VX_reduce_tree_pipelined
-      logic signed [MAC_DW-1:0] reduced_sum;
-      logic valid_reduced;
+      always_comb begin
+        // Flatten mac_results_collected for reduction tree input
+        for (int r = 0; r < ROW_SIZE; r++) begin
+          mac_results_collected_flat[col][r] = mac_results_collected[col][r];
+        end
+      end
       VX_reduce_tree_pipelined_v2 #(
         .IN_W  (MAC_DW),
-        .OUT_W (MAC_DW),
+        .OUT_W (MAC_DW + $clog2(ROW_SIZE)),  // Width increases due to addition
         .N     (ROW_SIZE),
         .OP    ("+"),
         .PIPELINE_STAGES (PIPELINE_STAGES),
@@ -126,39 +149,37 @@ module VX_pe_tree_new import VX_gpu_pkg::*; #(
       ) reduce_tree (
         .clk       (clk_i),
         .reset     (~resetn_i),
-        .data_in   (mac_results_collected),
-        .valid_in  (valid_align),
-        .data_out  (reduced_sum),
-        .valid_out (valid_reduced)
+        .data_in   (mac_results_collected_flat[col]),
+        .valid_in  (valid_align[col]),
+        .data_out  (reduced_sum[col]),
+        .valid_out (valid_reduced[col])
       );
       
       // Output stage
-      logic signed [OUT_DW-1:0] final_sum_extended;
-      logic signed [OUT_DW-1:0] accumulated_result;
-      logic valid_output;
       
       // Sign-extend final_sum from MAC_DW to OUT_DW
-      assign final_sum_extended = $signed(reduced_sum);
+      assign final_sum_extended[col] = $signed(reduced_sum[col]);
       
       // Add to partial sum from previous PE
-      assign accumulated_result = final_sum_extended + $signed(ps_i[col]);
+      // assign accumulated_result = final_sum_extended + $signed(ps_i[col]);
+      assign accumulated_result[col] = final_sum_extended[col]; // No ps_i addition for now
       
       // Output register with valid
       always_ff @(posedge clk_i or negedge resetn_i) begin
         if (!resetn_i) begin
           ps_o[col] <= '0;
-          valid_output <= 1'b0;
+          valid_output[col] <= 1'b0;
         end else begin
-          if (valid_reduced) begin
-            ps_o[col] <= $unsigned(accumulated_result);
+          if (valid_reduced[col]) begin
+            ps_o[col] <= accumulated_result[col];
           end
-          valid_output <= valid_reduced;
+          valid_output[col] <= valid_reduced[col];
         end
       end
       
       // Use column 0's valid for output
       if (col == 0) begin : gen_valid_out
-        assign valid_o = valid_output;
+        assign valid_o = valid_output[col];
       end
       
     end
@@ -174,8 +195,8 @@ module VX_pe_tree_new import VX_gpu_pkg::*; #(
             $time, parseWordNoNormal(ifmap_i, ROW_SIZE * IN_DW, IN_DW, "int")))
         `TRACE(3, ("%t: PE_TREE:   blk_idx=%s\n",
             $time, parseWordNoNormal(blk_sidx_i, ROW_SIZE * BLK_BITW, BLK_BITW, "uint")))
-        `TRACE(4, ("%t: PE_TREE:   ps_i=%s\n",
-            $time, parseWordNoNormal(ps_i, TILE_COL_SIZE * OUT_DW, OUT_DW, "int")))
+        // `TRACE(4, ("%t: PE_TREE:   ps_i=%s\n",
+        //     $time, parseWordNoNormal(ps_i, TILE_COL_SIZE * OUT_DW, OUT_DW, "int")))
         for (int c = 0; c < TILE_COL_SIZE; c++) begin
           logic [ROW_SIZE-1:0][WEIGHT_DW-1:0] weights_col;
           for (int r = 0; r < ROW_SIZE; r++) begin
