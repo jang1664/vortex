@@ -4,7 +4,7 @@ module VX_gemm_sync import VX_gpu_pkg::*; #(
     parameter `STRING INSTANCE_ID = "",
     parameter int N_CHILDREN    = 5,
     parameter int N_NODE        = 5,
-    parameter int NUM_SYNC_REGS = 10
+    parameter int NUM_SYNC_REGS = 9
 ) (
     input  wire               clk,
     input  wire               reset,
@@ -28,9 +28,10 @@ module VX_gemm_sync import VX_gpu_pkg::*; #(
   localparam logic [7:0] OP_DMA_ST        = 8'h11;
   localparam logic [7:0] OP_W_LDMA_MXU    = 8'h20;
   localparam logic [7:0] OP_SC_LDMA_MXU   = 8'h21;
+  localparam logic [7:0] OP_ZP_LDMA_MXU   = 8'h24;
   localparam logic [7:0] OP_I_LDMA_ARM    = 8'h22;
   localparam logic [7:0] OP_O_ACC2LMEM    = 8'h23;
-  localparam logic [7:0] OP_ZP_LDMA_MXU   = 8'h24;
+
 
   // --------------------------------------------------------------------------
   // Sync registers
