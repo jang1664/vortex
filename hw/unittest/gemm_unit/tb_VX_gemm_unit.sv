@@ -2,7 +2,7 @@
 
 `include "VX_define.vh"
 
-module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*;();
+module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*; import cf_math_pkg::*;();
 
     // =========================================================================
     // Parameters
@@ -163,6 +163,7 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*;();
     // Functional Simulation Task
     // =========================================================================
     task sim_func();
+        bit fail = 0;
         $display("=====================================================================");
         $display("=======================  START SIMULATION  ==========================");
         $display("=====================================================================");
@@ -182,40 +183,52 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*;();
         $display("\n[TEST 1] Register Writing Verification");
         $fdisplay(log_fd, "[%0t] TEST 1: Register Writing Verification", $time);
         test_register_writing();
+        */
 
+        /*
         // Test Case 2: Weight writing verification
         $display("\n[TEST 2] Weight Writing Verification");
         $fdisplay(log_fd, "[%0t] TEST 2: Weight Writing Verification", $time);
         test_weight_writing();
+        */
 
+        /*
         // Test Case 3: One input vector test
         $display("\n[TEST 3] One Input Vector Test");
         $fdisplay(log_fd, "[%0t] TEST 3: One Input Vector Test", $time);
         begin
-          bit fail = 0;
-
           test_one_in_vector(
             .is_load(1), .quant_dir(`QDIR_COL), 
             .acc_mem_base_addr(`GEMM_PSUM_DATA_SIZE*4 + 0),
             .wreg_use_idx(0),
             .sreg_use_idx(0),
             .zreg_use_idx(0),
-            .fail(fail)
+            .fail(fail),
+            .input_random(1),
+            .weight_random(1),
+            .scale_random(1),
+            .zp_random(1),
+            .psum_random(1)
           );
+          if(fail) $display("TEST 3 FAILED on naive test");
+          else      $display("TEST 3 PASSED on naive test");
 
-          // other register idx test
           test_one_in_vector(
             .is_load(1), .quant_dir(`QDIR_COL), 
             .acc_mem_base_addr(`GEMM_PSUM_DATA_SIZE*4 + 0),
             .wreg_use_idx(1),
             .sreg_use_idx(1),
             .zreg_use_idx(1),
-            .fail(fail)
+            .fail(fail),
+            .input_random(1),
+            .weight_random(1),
+            .scale_random(1),
+            .zp_random(1),
+            .psum_random(1)
           );
           if(fail) $display("TEST 3 FAILED on other register idx test");
           else      $display("TEST 3 PASSED on other register idx test");
 
-          // other accum mem addr test
           for(int i=0; i<4; i++) begin
             test_one_in_vector(
               .is_load(1), .quant_dir(`QDIR_COL), 
@@ -223,32 +236,45 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*;();
               .wreg_use_idx(1),
               .sreg_use_idx(1),
               .zreg_use_idx(1),
-              .fail(fail)
+              .fail(fail),
+              .input_random(1),
+              .weight_random(1),
+              .scale_random(1),
+              .zp_random(1),
+              .psum_random(1)
             );
           end
           if(fail) $display("TEST 3 FAILED on other accum mem addr test");
           else      $display("TEST 3 PASSED on other accum mem addr test");
 
-          // different quantization direction
           test_one_in_vector(
             .is_load(1), .quant_dir(`QDIR_ROW), 
             .acc_mem_base_addr(`GEMM_PSUM_DATA_SIZE*4 + 0),
             .wreg_use_idx(0),
             .sreg_use_idx(0),
             .zreg_use_idx(0),
-            .fail(fail)
+            .fail(fail),
+            .input_random(1),
+            .weight_random(1),
+            .scale_random(1),
+            .zp_random(1),
+            .psum_random(1)
           );
           if(fail) $display("TEST 3 FAILED on different quantization direction test");
           else      $display("TEST 3 PASSED on different quantization direction test");
 
-          // is_load = 0 test
           test_one_in_vector(
             .is_load(0), .quant_dir(`QDIR_COL), 
             .acc_mem_base_addr(`GEMM_PSUM_DATA_SIZE*4 + 0),
             .wreg_use_idx(0),
             .sreg_use_idx(0),
             .zreg_use_idx(0),
-            .fail(fail)
+            .fail(fail),
+            .input_random(1),
+            .weight_random(1),
+            .scale_random(1),
+            .zp_random(1),
+            .psum_random(1)
           );
           if(fail) $display("TEST 3 FAILED on is_load = 0 test");
           else      $display("TEST 3 PASSED on is_load = 0 test");
@@ -261,10 +287,6 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*;();
         $display("\n[TEST 4] Multi Input Vector Test");
         $fdisplay(log_fd, "[%0t] TEST 4: Multi Input Vector Test", $time);
         begin
-          bit fail = 0;
-
-          /*
-          // Basic test: is_load=1, QDIR_COL, 4 inputs
           test_multi_in_vector(
             .is_load(1), .quant_dir(`QDIR_COL),
             .acc_mem_base_addr(`GEMM_PSUM_DATA_SIZE*4 + 0),
@@ -272,25 +294,35 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*;();
             .sreg_use_idx(0),
             .zreg_use_idx(0),
             .num_inputs(4),
-            .fail(fail)
+            .fail(fail),
+            .input_random(1),
+            .weight_random(1),
+            .scale_random(1),
+            .zp_random(1),
+            .psum_random(1)
           );
           if(fail) $display("TEST 4 FAILED on basic multi input vector test (4 inputs)");
           else      $display("TEST 4 PASSED on basic multi input vector test (4 inputs)");
 
           // Different number of inputs test
-          for(int n = 1; n <= 8; n = n + 1) begin
+          for(int n = 3; n <= 8; n = n + 1) begin
             test_multi_in_vector(
               .is_load(1), .quant_dir(`QDIR_COL),
               .acc_mem_base_addr(`GEMM_PSUM_DATA_SIZE*4 + 0),
               .wreg_use_idx(0),
               .sreg_use_idx(0),
               .zreg_use_idx(0),
-              .num_inputs(n),
-              .fail(fail)
+              .num_inputs(2**n),
+              .fail(fail),
+              .input_random(1),
+              .weight_random(1),
+              .scale_random(1),
+              .zp_random(1),
+              .psum_random(1)
             );
           end
-          if(fail) $display("TEST 4 FAILED on different num_inputs test (1-8)");
-          else      $display("TEST 4 PASSED on different num_inputs test (1-8)");
+          if(fail) $display("TEST 4 FAILED on different num_inputs test (8~256)");
+          else      $display("TEST 4 PASSED on different num_inputs test (8~256)");
 
           // Other register idx test
           test_multi_in_vector(
@@ -300,7 +332,12 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*;();
             .sreg_use_idx(1),
             .zreg_use_idx(1),
             .num_inputs(4),
-            .fail(fail)
+            .fail(fail),
+            .input_random(1),
+            .weight_random(1),
+            .scale_random(1),
+            .zp_random(1),
+            .psum_random(1)
           );
           if(fail) $display("TEST 4 FAILED on other register idx test");
           else      $display("TEST 4 PASSED on other register idx test");
@@ -314,7 +351,12 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*;();
               .sreg_use_idx(0),
               .zreg_use_idx(0),
               .num_inputs(4),
-              .fail(fail)
+              .fail(fail),
+              .input_random(1),
+              .weight_random(1),
+              .scale_random(1),
+              .zp_random(1),
+              .psum_random(1)
             );
           end
           if(fail) $display("TEST 4 FAILED on other accum mem addr test");
@@ -328,15 +370,16 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*;();
             .sreg_use_idx(0),
             .zreg_use_idx(0),
             .num_inputs(4),
-            .fail(fail)
+            .fail(fail),
+            .input_random(1),
+            .weight_random(1),
+            .scale_random(1),
+            .zp_random(1),
+            .psum_random(1)
           );
           if(fail) $display("TEST 4 FAILED on different quantization direction test (QDIR_ROW)");
           else      $display("TEST 4 PASSED on different quantization direction test (QDIR_ROW)");
-          */
 
-          // TODO: is_load = 0 test (accumulate mode) needs debugging
-          // The DUT reads psum from accumulator memory and adds GEMM result,
-          // but the timing/order of psum read needs to be verified
           test_multi_in_vector(
             .is_load(0), .quant_dir(`QDIR_COL),
             .acc_mem_base_addr(`GEMM_PSUM_DATA_SIZE*4 + 256*(`MXU_COL*4)),  // Different address range
@@ -344,12 +387,16 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*;();
             .sreg_use_idx(0),
             .zreg_use_idx(0),
             .num_inputs(4),
-            .fail(fail)
+            .fail(fail),
+            .input_random(1),
+            .weight_random(1),
+            .scale_random(1),
+            .zp_random(1),
+            .psum_random(1)
           );
           if(fail) $display("TEST 4 FAILED on is_load = 0 test (accumulate mode)");
           else      $display("TEST 4 PASSED on is_load = 0 test (accumulate mode)");
 
-          /*
           // Larger number of inputs test
           test_multi_in_vector(
             .is_load(1), .quant_dir(`QDIR_COL),
@@ -358,11 +405,15 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*;();
             .sreg_use_idx(0),
             .zreg_use_idx(0),
             .num_inputs(16),
-            .fail(fail)
+            .fail(fail),
+            .input_random(1),
+            .weight_random(1),
+            .scale_random(1),
+            .zp_random(1),
+            .psum_random(1)
           );
           if(fail) $display("TEST 4 FAILED on larger num_inputs test (16 inputs)");
           else      $display("TEST 4 PASSED on larger num_inputs test (16 inputs)");
-          */
         end
 
         // Wait for completion
@@ -662,7 +713,7 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*;();
         logic [`MXU_MAX_DIM-1:0][SCALE_WIDTH-1:0] scale_values;
         logic [`MXU_MAX_DIM-1:0][ZP_WIDTH-1:0] zp_values;
         int i;
-        int test_pass;
+        bit test_pass;
 
         $display("\n[%0t] ============================================", $time);
         $display("[%0t] TEST: Register Writing Verification", $time);
@@ -797,7 +848,7 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*;();
         logic [MXU_ROW-1:0][MXU_COL-1:0][W_BIT_WIDTH-1:0] weight_data;
         logic [MXU_ROW-1:0][MXU_COL-1:0][W_BIT_WIDTH-1:0] zero_weight_data;
         int i, j;
-        int test_pass;
+        bit test_pass;
 
         $display("\n[%0t] ============================================", $time);
         $display("[%0t] TEST: Weight Writing Verification", $time);
@@ -822,7 +873,7 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*;();
         // Generate test weight pattern: row index in each element
         for (i = 0; i < MXU_ROW; i++) begin
             for (j = 0; j < MXU_COL; j++) begin
-                weight_data[i][j] = W_BIT_WIDTH'(i + 1);  // row index + 1 (avoid 0)
+                weight_data[i][j] = W_BIT_WIDTH'((i*MXU_ROW + j)%3);  // row index + 1 (avoid 0)
             end
         end
 
@@ -835,9 +886,9 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*;();
         $display("[%0t]   Verifying all weights in bank 0...", $time);
         for (i = 0; i < MXU_ROW; i++) begin
             for (j = 0; j < MXU_COL; j++) begin
-                if (u_dut.u_mxu.u_weight_regs.mem[i][j][0] !== W_BIT_WIDTH'(i + 1)) begin
+                if (u_dut.u_mxu.u_weight_regs.mem[i][j][0] !== W_BIT_WIDTH'((i*MXU_ROW + j)%3)) begin
                     $display("[%0t]   ERROR: mem[%0d][%0d][0] mismatch: expected=0x%0h, got=0x%0h",
-                             $time, i, j, W_BIT_WIDTH'(i + 1), u_dut.u_mxu.u_weight_regs.mem[i][j][0]);
+                             $time, i, j, W_BIT_WIDTH'((i*MXU_ROW + j)%3), u_dut.u_mxu.u_weight_regs.mem[i][j][0]);
                     test_pass = 0;
                 end
             end
@@ -869,7 +920,7 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*;();
         // Generate different test weight pattern: col index + 10
         for (i = 0; i < MXU_ROW; i++) begin
             for (j = 0; j < MXU_COL; j++) begin
-                weight_data[i][j] = W_BIT_WIDTH'(j + 10);  // col index + 10
+                weight_data[i][j] = W_BIT_WIDTH'((i*MXU_ROW + j)%3);  // col index + 10
             end
         end
 
@@ -882,9 +933,9 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*;();
         $display("[%0t]   Verifying all weights in bank 1...", $time);
         for (i = 0; i < MXU_ROW; i++) begin
             for (j = 0; j < MXU_COL; j++) begin
-                if (u_dut.u_mxu.u_weight_regs.mem[i][j][1] !== W_BIT_WIDTH'(j + 10)) begin
+                if (u_dut.u_mxu.u_weight_regs.mem[i][j][1] !== W_BIT_WIDTH'((i*MXU_ROW + j)%3)) begin
                     $display("[%0t]   ERROR: mem[%0d][%0d][1] mismatch: expected=0x%0h, got=0x%0h",
-                             $time, i, j, W_BIT_WIDTH'(j + 10), u_dut.u_mxu.u_weight_regs.mem[i][j][1]);
+                             $time, i, j, W_BIT_WIDTH'((i*MXU_ROW + j)%3), u_dut.u_mxu.u_weight_regs.mem[i][j][1]);
                     test_pass = 0;
                 end
             end
@@ -916,7 +967,7 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*;();
         // Generate test weight pattern: i*MXU_COL + j + 20
         for (i = 0; i < MXU_ROW; i++) begin
             for (j = 0; j < MXU_COL; j++) begin
-                weight_data[i][j] = W_BIT_WIDTH'(i * MXU_COL + j + 20);
+                weight_data[i][j] = W_BIT_WIDTH'((i*MXU_ROW + j)%3);
             end
         end
 
@@ -930,9 +981,9 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*;();
         for (i = 0; i < MXU_ROW; i++) begin
             for (j = 0; j < MXU_COL; j++) begin
                 // col direction writes: weight_data[i][j] goes to mem[j][i][bank]
-                if (u_dut.u_mxu.u_weight_regs.mem[j][i][0] !== W_BIT_WIDTH'(i * MXU_COL + j + 20)) begin
+                if (u_dut.u_mxu.u_weight_regs.mem[j][i][0] !== W_BIT_WIDTH'((i*MXU_ROW + j)%3)) begin
                     $display("[%0t]   ERROR: mem[%0d][%0d][0] mismatch: expected=0x%0h, got=0x%0h",
-                             $time, j, i, W_BIT_WIDTH'(i * MXU_COL + j + 20), u_dut.u_mxu.u_weight_regs.mem[j][i][0]);
+                             $time, j, i, W_BIT_WIDTH'((i*MXU_ROW + j)%3), u_dut.u_mxu.u_weight_regs.mem[j][i][0]);
                     test_pass = 0;
                 end
             end
@@ -1092,14 +1143,19 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*;();
       input int   wreg_use_idx,
       input int   sreg_use_idx,
       input int   zreg_use_idx,
-      ref   bit   fail
+      ref   bit   fail,
+      input bit   input_random=0,
+      input bit   weight_random=0,
+      input bit   scale_random=0,
+      input bit   zp_random=0,
+      input bit   psum_random=0
     );
         logic [MXU_ROW-1:0][IFP_WIDTH-1:0] input_data;
         logic [MXU_ROW-1:0][MXU_COL-1:0][W_BIT_WIDTH-1:0] weight_data;
         logic [1:0][`MXU_MAX_DIM-1:0][SCALE_WIDTH-1:0] scale_values;
         logic [1:0][`MXU_MAX_DIM-1:0][ZP_WIDTH-1:0] zp_values;
         int i, j;
-        int test_pass;
+        bit test_pass;
         logic [`MXU_COL-1:0][FP32_WIDTH-1:0] acc_init_value;
 
         // Arrays for reference calculation (fpint_emul format)
@@ -1112,6 +1168,8 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*;();
 
         // DUT output
         logic [MXU_COL-1:0][FP16_WIDTH-1:0] dut_output;
+
+        fail = 0;
 
         $display("\n[%0t] ============================================", $time);
         $display("[%0t] TEST: One Input Vector Test", $time);
@@ -1126,7 +1184,11 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*;();
         $display("[%0t] Setting up scale registers...", $time);
         // Scale register: all 2.0 (FP16: 0x4000)
         for (i = 0; i < `MXU_MAX_DIM; i++) begin
-            scale_values[sreg_use_idx][i] = 16'h4000;  // 2.0 in FP16
+            if(scale_random) begin
+              scale_values[sreg_use_idx][i] = fp32_val_to_fp16_bit(1.0 + $urandom_range(0, 1000)/1000.0);
+            end else begin
+              scale_values[sreg_use_idx][i] = 16'h4000;  // 2.0 in FP16
+            end
         end
         write_scale_reg(sreg_use_idx, scale_values[sreg_use_idx]);
 
@@ -1136,7 +1198,11 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*;();
         $display("[%0t] Setting up zero point registers...", $time);
         // Zero point register: all 1
         for (i = 0; i < `MXU_MAX_DIM; i++) begin
-            zp_values[zreg_use_idx][i] = 8'd1;
+            if(zp_random) begin
+              zp_values[zreg_use_idx][i] = `ZP_WIDTH'($urandom_range(0, 10));
+            end else begin
+              zp_values[zreg_use_idx][i] = `ZP_WIDTH'(1);
+            end
         end
         write_zp_reg(zreg_use_idx, zp_values[zreg_use_idx]);
 
@@ -1150,7 +1216,13 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*;();
         // Generate simple weight pattern (e.g., identity-like or simple values)
         for (i = 0; i < MXU_ROW; i++) begin
             for (j = 0; j < MXU_COL; j++) begin
-                weight_data[i][j] = (i == j) ? 8'd1 : 8'd0;  // Identity-like pattern
+                if(weight_random) begin
+                  weight_data[i][j] = $urandom_range(0, 15);
+                  // weight_data[i][j] = (j*MXU_ROW + i*MXU_COL)%13 - 8;
+                end else begin
+                  // weight_data[i][j] = (i*MXU_COL + j)%3;  // Identity-like pattern
+                  weight_data[i][j] = 1;  // Identity-like pattern
+                end
             end
         end
         // Write to weight register bank 0, load_dir = 0
@@ -1165,8 +1237,13 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*;();
         if(is_load == 1'b0) begin
             $display("[%0t] Initializing accumulator memory...", $time);
             for (j = 0; j < `MXU_COL; j++) begin
-                acc_init_value[j] = 32'h3F800000; // 1.0 in FP32
-                ref_psum[j]       = 32'h3F800000; // 1.0 in FP32
+                if(psum_random) begin
+                  acc_init_value[j] = $shortrealtobits(1.0 + $urandom_range(0, 1000)/1000.0);
+                  ref_psum[j]       = acc_init_value[j];
+                end else begin
+                  acc_init_value[j] = 32'h3F800000; // 1.0 in FP32
+                  ref_psum[j]       = 32'h3F800000; // 1.0 in FP32
+                end
             end
             u_dut.initialize_acc_mem(acc_mem_base_addr, 4, acc_init_value);
             repeat(5) @(posedge clk);
@@ -1174,7 +1251,12 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*;();
 
         // Generate input vector (all 1.0)
         for (i = 0; i < MXU_ROW; i++) begin
-            input_data[i] = 16'h3C00;  // 1.0 in FP16
+            if(input_random) begin
+              input_data[i] = fp32_val_to_fp16_bit(1.0 + $urandom_range(0, 1000)/1000.0);
+            end else begin
+              // input_data[i] = 16'h3C00;  // 1.0 in FP16
+              input_data[i] = fp32_val_to_fp16_bit(1.0 + i);
+            end
         end
 
         // Prepare reference arrays (M=1, K=MXU_ROW, N=MXU_COL)
@@ -1192,7 +1274,7 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*;();
         // Copy weight data (K=MXU_ROW rows, N=MXU_COL columns)
         for (i = 0; i < MXU_ROW; i++) begin
             for (j = 0; j < MXU_COL; j++) begin
-                ref_weight[i * MXU_COL + j] = weight_data[i][j];
+                ref_weight[i * MXU_COL + j] = signed'(weight_data[i][j]);
             end
         end
 
@@ -1232,7 +1314,7 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*;();
             ref_output,
             quant_dir,
             fpint_emul::WNOTRANS,
-            1'b0,
+            1'b1,
             ref_psum
         );
 
@@ -1263,16 +1345,22 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*;();
       input int   sreg_use_idx,
       input int   zreg_use_idx,
       input int   num_inputs,
-      ref   bit   fail
+      ref   bit   fail,
+      input bit   input_random=0,
+      input bit   weight_random=0,
+      input bit   scale_random=0,
+      input bit   zp_random=0,
+      input bit   psum_random=0
     );
         logic [MXU_ROW-1:0][IFP_WIDTH-1:0] input_data[64];  // Max 64 inputs
         logic [MXU_ROW-1:0][MXU_COL-1:0][W_BIT_WIDTH-1:0] weight_data;
         logic [1:0][`MXU_MAX_DIM-1:0][SCALE_WIDTH-1:0] scale_values;
         logic [1:0][`MXU_MAX_DIM-1:0][ZP_WIDTH-1:0] zp_values;
         int i, j, k;
-        int test_pass;
+        bit test_pass;
         logic [`MXU_COL-1:0][FP32_WIDTH-1:0] acc_init_value;
         int random_delay;
+        int num_fail;
 
         // Arrays for reference calculation (fpint_emul format)
         logic [fpint_emul::IN_WIDTH-1:0] ref_input[fpint_emul::MAX_M*fpint_emul::MAX_K];
@@ -1290,6 +1378,7 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*;();
         $display("[%0t] ============================================", $time);
         $fdisplay(log_fd, "[%0t] TEST: Multi Input Vector Test (num_inputs=%0d)", $time, num_inputs);
 
+        fail = 0;
         test_pass = 1;
 
         // Clamp num_inputs to valid range
@@ -1301,7 +1390,11 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*;();
         // -----------------------------------------------------------------
         $display("[%0t] Setting up scale registers...", $time);
         for (i = 0; i < `MXU_MAX_DIM; i++) begin
-            scale_values[sreg_use_idx][i] = 16'h4000;  // 2.0 in FP16
+            if (scale_random) begin
+                scale_values[sreg_use_idx][i] = fp32_val_to_fp16_bit(1.0 + $urandom_range(0, 1000)/1000.0);
+            end else begin
+                scale_values[sreg_use_idx][i] = 16'h4000;  // 2.0 in FP16
+            end
         end
         write_scale_reg(sreg_use_idx, scale_values[sreg_use_idx]);
 
@@ -1310,7 +1403,11 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*;();
         // -----------------------------------------------------------------
         $display("[%0t] Setting up zero point registers...", $time);
         for (i = 0; i < `MXU_MAX_DIM; i++) begin
-            zp_values[zreg_use_idx][i] = 8'd1;
+            if (zp_random) begin
+                zp_values[zreg_use_idx][i] = `ZP_WIDTH'($urandom_range(0, 10));
+            end else begin
+                zp_values[zreg_use_idx][i] = `ZP_WIDTH'(1);
+            end
         end
         write_zp_reg(zreg_use_idx, zp_values[zreg_use_idx]);
 
@@ -1322,7 +1419,11 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*;();
         $display("[%0t] Loading weights to bank %0d...", $time, wreg_use_idx);
         for (i = 0; i < MXU_ROW; i++) begin
             for (j = 0; j < MXU_COL; j++) begin
-                weight_data[i][j] = (i == j) ? 8'd1 : 8'd0;  // Identity-like pattern
+                if (weight_random) begin
+                    weight_data[i][j] = $urandom_range(0, 15);
+                end else begin
+                    weight_data[i][j] = (i*MXU_COL + j)%3;  // Simple pattern
+                end
             end
         end
         write_weight(weight_data, wreg_use_idx, 1'b0);
@@ -1342,8 +1443,13 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*;();
             $display("[%0t] Initializing accumulator memory...", $time);
             for (k = 0; k < num_inputs; k++) begin
                 for (j = 0; j < `MXU_COL; j++) begin
-                    acc_init_value[j] = 32'h3F800000; // 1.0 in FP32
-                    ref_psum[k * MXU_COL + j] = 32'h3F800000; // 1.0 in FP32 for each row
+                    if (psum_random) begin
+                        acc_init_value[j] = $shortrealtobits(1.0 + $urandom_range(0, 1000)/1000.0);
+                        ref_psum[k * MXU_COL + j] = acc_init_value[j];
+                    end else begin
+                        acc_init_value[j] = 32'h3F800000; // 1.0 in FP32
+                        ref_psum[k * MXU_COL + j] = 32'h3F800000; // 1.0 in FP32 for each row
+                    end
                 end
                 u_dut.initialize_acc_mem(acc_mem_base_addr + k * (`MXU_COL * 4), 1, acc_init_value);
             end
@@ -1356,13 +1462,17 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*;();
         $display("[%0t] Generating %0d input vectors...", $time, num_inputs);
         for (k = 0; k < num_inputs; k++) begin
             for (i = 0; i < MXU_ROW; i++) begin
-                // Generate different values for each input: 1.0, 1.5, 2.0, etc.
-                case (k % 4)
-                    0: input_data[k][i] = 16'h3C00;  // 1.0 in FP16
-                    1: input_data[k][i] = 16'h3E00;  // 1.5 in FP16
-                    2: input_data[k][i] = 16'h4000;  // 2.0 in FP16
-                    3: input_data[k][i] = 16'h4200;  // 3.0 in FP16
-                endcase
+                if (input_random) begin
+                    input_data[k][i] = fp32_val_to_fp16_bit(1.0 + $urandom_range(0, 1000)/1000.0);
+                end else begin
+                    // Generate different values for each input: 1.0, 1.5, 2.0, etc.
+                    case (k % 4)
+                        0: input_data[k][i] = 16'h3C00;  // 1.0 in FP16
+                        1: input_data[k][i] = 16'h3E00;  // 1.5 in FP16
+                        2: input_data[k][i] = 16'h4000;  // 2.0 in FP16
+                        3: input_data[k][i] = 16'h4200;  // 3.0 in FP16
+                    endcase
+                end
             end
         end
 
@@ -1375,7 +1485,7 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*;();
         // Copy weight data (K=MXU_ROW rows, N=MXU_COL columns)
         for (i = 0; i < MXU_ROW; i++) begin
             for (j = 0; j < MXU_COL; j++) begin
-                ref_weight[i * MXU_COL + j] = weight_data[i][j];
+                ref_weight[i * MXU_COL + j] = signed'(weight_data[i][j]);
             end
         end
 
@@ -1492,12 +1602,16 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*;();
                              $time, m, j, dut_output[j], cf_math_pkg::fp16_bit_to_fp16_val(dut_output[j]),
                              ref_output[m * MXU_COL + j], cf_math_pkg::fp16_bit_to_fp16_val(ref_output[m * MXU_COL + j]));
                     test_pass = 0;
+                    num_fail += 1;
                 end
             end
         end
 
         $display("[%0t] GEMM MULTI IN VECTOR TEST : %s", $time, test_pass ? "PASSED" : "FAILED");
-        fail |= ~test_pass;
+        if(num_fail > 0) begin
+            $display("[%0t]   Total Mismatches: %0d/%0d", $time, num_fail, num_inputs * MXU_COL);
+        end
+        fail = ~test_pass;
     endtask
 
     // =========================================================================

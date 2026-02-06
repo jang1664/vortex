@@ -4,13 +4,13 @@ package fpint_emul;
   import VX_gpu_pkg::*;
   import cf_math_pkg::*;
 
-  localparam int IN_WIDTH = 16;
-  localparam int W_WIDTH  = 4;
-  localparam int MAX_W_WIDTH  = 5;
+  localparam int IN_WIDTH = `IFP_WIDTH;
+  localparam int W_WIDTH  = `W_BIT_WIDTH;
+  localparam int MAX_W_WIDTH  = `W_BIT_WIDTH+1;
   localparam int O_WIDTH  = 16;
   localparam int P_WIDTH  = 32;
-  localparam int S_WIDTH  = 16;
-  localparam int Z_WIDTH  = 16;
+  localparam int S_WIDTH  = `SCALE_WIDTH;
+  localparam int Z_WIDTH  = `ZP_WIDTH;
   localparam int QBLOCK = 16;
   localparam int MAX_M=32;
   localparam int MAX_N=512;
@@ -166,9 +166,10 @@ package fpint_emul;
           end
           prod = in_val * (sc_val*(wt_val - ze_val));
           if(DEBUG) begin
-            $display("[FPINT_EMUL.GEMM_REF] %0d %0d %0d %f %f %f %f %f %f", m, n, k, in_val, wt_val, sc_val, ze_val, prod, acc_fp);
+            $write("[FPINT_EMUL.GEMM_REF] %0d %0d %0d %f %f %f %f %f", m, n, k, in_val, wt_val, sc_val, ze_val, prod);
           end
           acc_fp += prod;
+          $display(" %f", acc_fp);
         end
         output_data[m*N + n] = cf_math_pkg::fp32_val_to_fp16_bit(acc_fp);
       end

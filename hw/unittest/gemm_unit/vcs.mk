@@ -5,6 +5,7 @@ compile: setup
 	-sverilog \
 	-full64 \
 	-debug_access+all \
+	+ntb_random_seed=1234 \
 	-l $(COMPILE_LOG) \
 	-timescale=$(TIME_SCALE) \
 	+libext+.v+ \
