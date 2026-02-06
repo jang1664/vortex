@@ -8,7 +8,7 @@ RTL_DIR := $(VORTEX_HOME)/hw/rtl
 export CC := /usr/bin/gcc-11
 export CXX := /usr/bin/g++-11
 
-SIM_EXEC ?= vlt
+SIM_EXEC ?= vcs
 
 TIME_SCALE=1ns/1ps
 TOP_MODULE := tb_VX_gemm_tree
@@ -19,10 +19,12 @@ PIPE_INTERVAL ?= 2
 
 TB   := tb_VX_gemm_tree.sv
 RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
+        $(RTL_DIR)/verification/cf_math_pkg.sv \
+        $(RTL_DIR)/verification/utils.sv \
 				$(RTL_DIR)/core/gemm/VX_gemm_tree_v1.sv \
 				$(RTL_DIR)/core/gemm/VX_gemm_weight_regs_v1.sv \
 				$(RTL_DIR)/core/gemm/VX_pe_tree_new.sv \
-				$(RTL_DIR)/libs/VX_reduce_tree_pipelined.sv \
+				$(RTL_DIR)/libs/VX_reduce_tree_pipelined_v2.sv \
 				$(RTL_DIR)/libs/VX_reduce_tree.sv \
 				$(RTL_DIR)/libs/VX_elastic_buffer.sv \
 				$(RTL_DIR)/libs/VX_stream_buffer.sv \

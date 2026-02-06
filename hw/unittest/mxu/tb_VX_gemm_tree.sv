@@ -27,8 +27,8 @@ module tb_VX_gemm_tree import VX_gpu_pkg::*;();
 
   parameter int PIPE_MULT        = 1;
   parameter int PIPE_ALIGN       = 1;
-  parameter int PIPE_INTERVAL    = 2;
-  localparam int PIPELINE_STAGES  = get_pipe_stage(ROW_SIZE, PIPE_INTERVAL);
+  parameter int PIPELINE_STAGE_INTV = `MXU_PIPE_ADD_INTV;
+  localparam int PIPELINE_STAGES  = get_pipe_stage_bitmask(ROW_SIZE, PIPELINE_STAGE_INTV);
 
   logic resetn;
 
@@ -58,7 +58,7 @@ module tb_VX_gemm_tree import VX_gpu_pkg::*;();
       .TILE_COL_SIZE        (TILE_COL_SIZE),
       .WEIGHT_LOAD_ROW_NUM  (WEIGHT_LOAD_ROW_NUM),
       .WEIGHT_LOAD_COL_NUM  (WEIGHT_LOAD_COL_NUM),
-      .PIPELINE_STAGES      (PIPELINE_STAGES),
+      .PIPELINE_STAGE_INTV  (PIPELINE_STAGE_INTV),
       .PIPE_MULT            (PIPE_MULT),
       .PIPE_ALIGN           (PIPE_ALIGN)
   ) u_gemm_tree (
@@ -140,12 +140,11 @@ module tb_VX_gemm_tree import VX_gpu_pkg::*;();
     $timeformat(-9, 0, "ns", 0);
 
     // file name setting
-    $sformat(name, "%s_%0d_%0d_%0d.%s", tb_name, PIPE_MULT, PIPE_ALIGN, PIPE_INTERVAL, FILE_POSTFIX);
-    $sformat(fsdb_file_path, "./reports/%s_%0d_%0d_%0d.fsdb", name, PIPE_MULT, PIPE_ALIGN, PIPE_INTERVAL);
-    $sformat(fst_file_path, "./reports/%s_%0d_%0d_%0d.fst", name, PIPE_MULT, PIPE_ALIGN, PIPE_INTERVAL);
-    $sformat(log_file_path, "./logs/%s_%0d_%0d_%0d.log", name, PIPE_MULT, PIPE_ALIGN, PIPE_INTERVAL);
-    $sformat(rpt_file_path, "./reports/%s_%0d_%0d_%0d.rpt", name, PIPE_MULT, PIPE_ALIGN, PIPE_INTERVAL);
-
+    $sformat(name, "%s_%0d_%0d_%0d.%s", tb_name, PIPE_MULT, PIPE_ALIGN, PIPELINE_STAGE_INTV , FILE_POSTFIX);
+    $sformat(fsdb_file_path, "./reports/%s_%0d_%0d_%0d.fsdb", name, PIPE_MULT, PIPE_ALIGN, PIPELINE_STAGE_INTV);
+    $sformat(fst_file_path, "./reports/%s_%0d_%0d_%0d.fst", name, PIPE_MULT, PIPE_ALIGN, PIPELINE_STAGE_INTV);
+    $sformat(log_file_path, "./logs/%s_%0d_%0d_%0d.log", name, PIPE_MULT, PIPE_ALIGN, PIPELINE_STAGE_INTV);
+    $sformat(rpt_file_path, "./reports/%s_%0d_%0d_%0d.rpt", name, PIPE_MULT, PIPE_ALIGN, PIPELINE_STAGE_INTV);
     // fsdb setting
 `ifdef VCS
     $fsdbDumpfile(fsdb_file_path);
