@@ -60,6 +60,42 @@ def test_rmsnorm():
         raise RuntimeError(f"RMSNorm failed: max relative error {max_rel_error*100:.2f}% > 1%")
 
 
+def test_matmul():
+    print("\nTesting MatMul (SGEMM TCU)...")
+    
+    # Matrix dimensions must be multiples of tile sizes
+    # For NUM_THREADS=4, fp16: tileM=16, tileN=16, tileK=32
+    M, K, N = 64, 128, 96
+    
+    a = torch.randn(M, K, dtype=torch.float16)
+    b = torch.randn(K, N, dtype=torch.float16)
+    
+    # CPU reference (use fp32 for fair comparison)
+    output_cpu = torch.matmul(a.float(), b.float()).half()
+    
+    # Vortex
+    output_vortex = vx.matmul(a, b)
+    
+    # Compare
+    max_diff = (output_cpu - output_vortex).abs().max().item()
+    max_rel_error = ((output_cpu - output_vortex).abs() / (output_cpu.abs() + 1e-5)).max().item()
+    
+    print(f"  Matrix A: {a.shape}, B: {b.shape}")
+    print(f"  Output shape: {output_vortex.shape}")
+    print(f"  Expected: [{M}, {N}]")
+    print(f"  CPU output samples [0,:5]: {output_cpu[0, :5]}")
+    print(f"  Vortex output samples [0,:5]: {output_vortex[0, :5]}")
+    print(f"  Max absolute diff: {max_diff:.6f}")
+    print(f"  Max relative error: {max_rel_error*100:.2f}%")
+    
+    # MatMul can have higher error due to accumulation
+    # Allow 2% relative error for fp16
+    if max_rel_error < 0.02:
+        print("  ✓ MatMul passed")
+    else:
+        raise RuntimeError(f"MatMul failed: max relative error {max_rel_error*100:.2f}% > 2%")
+
+
 def test_silu():
     print("\nTesting SiLU...")
     
@@ -300,17 +336,28 @@ if __name__ == '__main__':
     print("Vortex PyTorch Extension Test")
     print("="*60)
     
+    # Set random seed for reproducibility
+    import random
+    import numpy as np
+    seed = int(os.environ.get('TEST_SEED', '42'))
+    print(f"\nUsing random seed: {seed}")
+    torch.manual_seed(seed)
+    random.seed(seed)
+    np.random.seed(seed)
+    
     try:
-        # Setup XRT backend
-        print("\nConfiguring Vortex for XRT backend...")
-        vx.setup_vortex_env(
-            driver='xrt', 
-            fpga_bin_dir='/root/workspace/vortex/hw/syn/xilinx/xrt/test_tcu_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/bin'
-        )
+        # Setup Vortex backend
+        print("\nConfiguring Vortex backend...")
+        # vx.setup_vortex_env(
+        #     driver='xrt', 
+        #     fpga_bin_dir='/root/workspace/vortex/hw/syn/xilinx/xrt/test_tcu_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/bin'
+        # )
+        vx.setup_vortex_env(driver='simx')
         print(f"✓ Driver configured: {os.environ.get('VORTEX_DRIVER')}")
         print(f"✓ XCLBIN path: {os.environ.get('XRT_XCLBIN_PATH')}\n")
         
         test_rmsnorm()
+        test_matmul()
         test_silu()
         test_eladd()
         test_elmul()

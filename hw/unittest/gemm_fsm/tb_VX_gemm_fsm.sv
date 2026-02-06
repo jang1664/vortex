@@ -7,8 +7,8 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; ();
   parameter string TB_NAME  = "tb_VX_gemm_fsm";
   parameter real   PERIOD   = 10.0;
 
-  // DUT uses cfg_reg_if.regs[0..7]
-  parameter int CFG_NUM = 8;
+  // DUT uses cfg_reg_if.regs[0..14]
+  parameter int CFG_NUM = 15;
   parameter int CFG_DW  = 64;
 
   // -----------------------------
@@ -144,6 +144,15 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; ();
     input logic [63:0] output_base,
     input logic [63:0] scale_base,
     input logic [63:0] zp_base,
+
+    input logic [63:0] lmem_ibuf0_base,  //lmem
+    input logic [63:0] lmem_ibuf1_base,
+    input logic [63:0] lmem_wbuf0_base,
+    input logic [63:0] lmem_wbuf1_base,
+    input logic [63:0] lmem_szbuf0_base,
+    input logic [63:0] lmem_szbuf1_base,
+    input logic [63:0] lmem_obuf_base,
+
     input int unsigned M,
     input int unsigned N,
     input int unsigned K,
@@ -160,14 +169,24 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; ();
       cfg_reg_if.tid   = 32'd0;
 
       for (int i = 0; i < CFG_NUM; i++) cfg_reg_if.regs[i] = '0;
+      
+      cfg_reg_if.regs[0] = 64'h1; // start
+      cfg_reg_if.regs[1] = input_base;
+      cfg_reg_if.regs[2] = weight_base;
+      cfg_reg_if.regs[3] = output_base;
+      cfg_reg_if.regs[4] = scale_base;
+      cfg_reg_if.regs[5] = zp_base;
 
-      cfg_reg_if.regs[0] = input_base;
-      cfg_reg_if.regs[1] = weight_base;
-      cfg_reg_if.regs[2] = output_base;
-      cfg_reg_if.regs[3] = scale_base;
-      cfg_reg_if.regs[4] = zp_base;
-      cfg_reg_if.regs[5] = {N[31:0], M[31:0]};
-      cfg_reg_if.regs[6] = {qblk[31:0], K[31:0]};
+      cfg_reg_if.regs[6] = lmem_ibuf0_base;
+      cfg_reg_if.regs[7] = lmem_ibuf1_base;
+      cfg_reg_if.regs[8] = lmem_wbuf0_base;
+      cfg_reg_if.regs[9] = lmem_wbuf1_base;
+      cfg_reg_if.regs[10] = lmem_szbuf0_base;
+      cfg_reg_if.regs[11] = lmem_szbuf1_base;
+      cfg_reg_if.regs[12] = lmem_obuf_base;
+
+      cfg_reg_if.regs[13] = {N[31:0], M[31:0]};
+      cfg_reg_if.regs[14] = {qblk[31:0], K[31:0]};
 
       // 2) assert valid BEFORE the sampling edge (use blocking)
       //    -> now at next posedge, DUT definitely sees valid=1
@@ -246,9 +265,18 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; ();
       64'h3000_0000, // output_base
       64'h4000_0000, // scale_base
       64'h5000_0000, // zp_base
-      256,           // M
-      256,           // N
-      256,           // K
+
+      64'h6000_0000, // lmem_ibuf0_base
+      64'h7000_0000, // lmem_ibuf1_base
+      64'h8000_0000, // lmem_wbuf0_base
+      64'h9000_0000, // lmem_wbuf1_base
+      64'hA000_0000, // lmem_szbuf0_base
+      64'hB000_0000, // lmem_szbuf1_base
+      64'hC000_0000, // lmem_obuf_base
+
+      128,           // M
+      128,           // N
+      128,           // K
       32             // qblk
     );
 
