@@ -179,8 +179,9 @@ module VX_fp16_add #(
     wire        result_fp32_ready;
     wire [31:0] result_fp32_data;
 
-    xil_fadd xil_fadd_inst (
+    xil_f16add xil_f16add_inst (
         .aclk                (clk),
+        .aclken              (1'b1),
 
         // Input A (AXI Stream)
         .s_axis_a_tvalid     (a_valid),

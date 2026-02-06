@@ -211,8 +211,9 @@ module VX_fp16_mul #(
     wire result_fp32_ready;
     wire [31:0] result_fp32_data;
 
-    xil_fmul xil_fmul_inst (
+    xil_f16mul xil_f16mul_inst (
         .aclk                (clk),
+        .aclken              (1'b1),
 
         // Input A (AXI Stream)
         .s_axis_a_tvalid     (a_valid),

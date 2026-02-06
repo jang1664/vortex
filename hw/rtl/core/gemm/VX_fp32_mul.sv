@@ -124,8 +124,9 @@ module VX_fp32_mul #(
 `else // Vivado IP
     
     // Xilinx Floating Point IP (AXI Stream interface)
-    xil_fmul xil_fmul_inst (
+    xil_f32mul xil_f32mul_inst (
         .aclk                (clk),
+        .aclken              (1'b1),
         
         // Input A (AXI Stream)
         .s_axis_a_tvalid     (a_valid),
