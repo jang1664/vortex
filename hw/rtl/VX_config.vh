@@ -964,23 +964,44 @@
 `define IMPLEMENTATION_ID   0
 
 // GEMM Unit Parameters ///////////////////////////////////////////////////////
-`define HIDDEN_WIDTH 1 
-`define IFP_WIDTH 16
-`define IFP_SIGN_WIDTH 1
-`define IFP_EXP_WIDTH 5
-`define IFP_MAN_WIDTH 10
 
-`define W_BIT_WIDTH 4
-`define ZP_WIDTH 8
-`define SCALE_WIDTH 16
+// -------------------------------------------------------
+// Input Format (FP16) Parameters
+// -------------------------------------------------------
+// Input activation format: FP16 (1 sign + 5 exp + 10 mantissa)
+`define IFP_WIDTH 16              // Total input floating-point bitwidth
+`define IFP_SIGN_WIDTH 1          // Sign bit width
+`define IFP_EXP_WIDTH 5           // Exponent width (FP16)
+`define IFP_MAN_WIDTH 10          // Mantissa width (FP16)
+`define HIDDEN_WIDTH 1            // Hidden bit (implicit 1) for normalized FP
 
-`define O_BIT_WIDTH 41
+// -------------------------------------------------------
+// Weight & Quantization Parameters
+// -------------------------------------------------------
+// Quantized weight and zero-point parameters
+`define W_BIT_WIDTH 4             // Weight bitwidth (INT4)
+`define ZP_WIDTH 16               // Zero-point bitwidth
+`define SCALE_WIDTH 16            // Scale factor bitwidth (FP16)
 
+// Quantization direction modes
+`define QDIR_COL 0                // Per-column quantization (scale applied at output)
+`define QDIR_ROW 1                // Per-row quantization (scale applied at input)
+
+// -------------------------------------------------------
+// Block Floating-Point (Prealigner) Parameters
+// -------------------------------------------------------
+// Extra bits for precision preservation during FP16->INT conversion
+// Accounts for: weight bits + guard bits + FP32/FP16 mantissa difference
 `define EXTRA_BIT_WIDTH (`W_BIT_WIDTH + 2 + (23-10)) // 19
 
+// Aligned mantissa widths after block floating-point conversion
+`define ALIGNED_MAN_FULL_WIDTH (`HIDDEN_WIDTH + `IFP_MAN_WIDTH + `EXTRA_BIT_WIDTH) // 30
+`define SIGNED_ALIGNED_MAN_FULL_WIDTH (`ALIGNED_MAN_FULL_WIDTH + 1) // 31
+`define ALIGNED_MAN_VALI_WIDTH (`HIDDEN_WIDTH + `IFP_MAN_WIDTH) // 11 (valid data width)
+
 /*
-SEL BLOCK NUM is determined by finding the maximum number of blocks needed.
-Refer below code
+SEL_BLOCK_NUM is determined by finding the maximum number of blocks needed.
+Refer below code:
 ```
 import math
 def get_block_num(block_size, shift, bitwidth):
@@ -996,10 +1017,12 @@ for block_size in range(1, full_bitwidth+1):
 ```
 */
 `define BLOCK_SIZE 1
-`define ALIGNED_MAN_FULL_WIDTH (`HIDDEN_WIDTH + `IFP_MAN_WIDTH + `EXTRA_BIT_WIDTH) // 30
-`define SIGNED_ALIGNED_MAN_FULL_WIDTH (`ALIGNED_MAN_FULL_WIDTH + 1) // 31
-`define ALIGNED_MAN_VALI_WIDTH (`HIDDEN_WIDTH + `IFP_MAN_WIDTH) // 11
-`define ALIGNED_MAN_PADDED_FULL_WIDTH (((`ALIGNED_MAN_FULL_WIDTH + `BLOCK_SIZE - 1) / `BLOCK_SIZE) * `BLOCK_SIZE) // 32JK:W
+
+// Padded widths (aligned to BLOCK_SIZE boundary)
+`define ALIGNED_MAN_PADDED_FULL_WIDTH (((`ALIGNED_MAN_FULL_WIDTH + `BLOCK_SIZE - 1) / `BLOCK_SIZE) * `BLOCK_SIZE) // 30
+`define SIGNED_ALIGNED_MAN_PADDED_FULL_WIDTH (`ALIGNED_MAN_PADDED_FULL_WIDTH + 1) // 31
+
+// Block indexing parameters for alignment shift
 `define BLOCK_NUM  (`ALIGNED_MAN_PADDED_FULL_WIDTH / `BLOCK_SIZE)
 `define SEL_BLOCK_NUM_ ((`ALIGNED_MAN_VALI_WIDTH + `BLOCK_SIZE - 1) / `BLOCK_SIZE)
 `define SEL_BLOCK_NUM_INCR_ ((`BLOCK_SIZE == 1) ? 0 : 1)
@@ -1008,58 +1031,75 @@ for block_size in range(1, full_bitwidth+1):
 `define BLOCK_IDX_WIDTH `CLOG2(`BLK_IDX_NUM)
 `define SEL_BLOCK_WIDTH (`SEL_BLOCK_NUM * `BLOCK_SIZE + 1)
 
-`define SAMF_SUM_WIDTH (`SIGNED_ALIGNED_MAN_FULL_WIDTH + `CLOG2(`MXU_ROW)) // 36
+// -------------------------------------------------------
+// MXU (Matrix Multiply Unit) Dimensions
+// -------------------------------------------------------
+// Matrix dimensions: MXU computes [MXU_ROW x K] * [K x MXU_COL]
+`define MXU_ROW 16                // Number of input rows (activation vector length)
+`define MXU_COL 16                // Number of output columns (output vector length)
+`define MXU_MAX_DIM `MAX(`MXU_ROW, `MXU_COL)
+
+// Tiling parameters for parallel processing
+`define MXU_ROW_TILE 1            // Row tile size for pipelined processing
+`define MXU_COL_TILE 1            // Column tile size for pipelined processing
+`define MXU_WLOAD_NUM 2           // Number of weight loads per cycle
+
+// -------------------------------------------------------
+// MXU Pipeline Configuration
+// -------------------------------------------------------
+// Pipeline stage enable flags and intervals
+`define MXU_PIPE_MUL_EN 1         // Enable pipeline register after multiplier
+`define MXU_PIPE_ALIGN_EN 1       // Enable pipeline register after alignment shift
+`define MXU_PIPE_ADD_INTV 2       // Pipeline insertion interval in adder tree (every N stages)
+`define ACT_REDUCE_PIPE_INTV 2    // Pipeline interval for activation reduce tree
+
+// -------------------------------------------------------
+// Internal Datapath Bitwidths
+// -------------------------------------------------------
+// MXU output width: aligned_mantissa + weight_bits + log2(reduction_count)
+`define O_BIT_WIDTH (`SIGNED_ALIGNED_MAN_PADDED_FULL_WIDTH + `W_BIT_WIDTH + `CLOG2(`MXU_ROW)) // 39
+
+// Activation reduce tree (for zero-point subtraction path)
 `define ACT_REDUCE_IN_WIDTH (`SIGNED_ALIGNED_MAN_FULL_WIDTH + `ZP_WIDTH)
 `define ACT_REDUCE_OUT_WIDTH (`ACT_REDUCE_IN_WIDTH + `CLOG2(`MXU_ROW))
 
+// Zero-point multiply widths
+`define ZP_TRANS_WIDTH (`ZP_WIDTH + 3)
 `define ZP_MUL_IN_WIDTH (`SIGNED_ALIGNED_MAN_FULL_WIDTH + `CLOG2(`MXU_ROW))
 `define ZP_MUL_OUT_WIDTH (`ZP_MUL_IN_WIDTH + `ZP_WIDTH)
 
-`define PRE_PROC_OUT_DW (`ALIGNED_MAN_PADDED_FULL_WIDTH + `ZP_WIDTH + `CLOG2(`MXU_ROW))
+// Pre-processor output width (after zero-point correction)
+`define PRE_PROC_OUT_DW (`SIGNED_ALIGNED_MAN_PADDED_FULL_WIDTH + `ZP_WIDTH + `CLOG2(`MXU_ROW))
 
-`define MXU_ROW 16
-`define MXU_COL 16
-`define MXU_MAX_DIM `MAX(`MXU_ROW, `MXU_COL)
-`define MXU_ROW_TILE 1
-`define MXU_COL_TILE 1
-`define MXU_WLOAD_NUM 2
+// Merger output width (MXU output + pre-processor output)
+`define MERGE_OUT_BW (`O_BIT_WIDTH + 1)
 
-`define GEMM_INPUT_DATA_SIZE      (2*`MXU_ROW) // 32 bytes 
-`define GEMM_WEIGHT_DATA_SIZE     ((`MXU_COL*`MXU_WLOAD_NUM)/2) // 8 bytes
-`define GEMM_SCALE_ZERO_DATA_SIZE (2*`MXU_COL) // 32 bytes
-`define GEMM_OUTPUT_DATA_SIZE     (2*`MXU_COL) // 32 bytes
-`define GEMM_PSUM_DATA_SIZE       (4*`MXU_COL) // 64 bytes
+// -------------------------------------------------------
+// Data Transfer Sizes (in bytes)
+// -------------------------------------------------------
+`define GEMM_INPUT_DATA_SIZE      ((`IFP_WIDTH/8)*`MXU_ROW)             // 32 bytes (16 FP16 inputs)
+`define GEMM_WEIGHT_DATA_SIZE     ((`MXU_COL*`MXU_WLOAD_NUM*`W_BIT_WIDTH)/8) // 16 bytes (32 INT4 weights)
+`define GEMM_SCALE_ZERO_DATA_SIZE ((`SCALE_WIDTH*`MXU_COL)/8)           // 32 bytes (16 FP16 scales)
+`define GEMM_OUTPUT_DATA_SIZE     (2*`MXU_COL)                          // 32 bytes (16 FP16 outputs)
+`define GEMM_PSUM_DATA_SIZE       (4*`MXU_COL)                          // 64 bytes (16 FP32 psums)
 
-`define GEMM_CFG_REG_NUM 16
-
-// `define GEMM_UNIT_FP16_OUT_SCALE
-
-`define ZP_TRANS_WIDTH (`ZP_WIDTH + 3)
-`define ZP_MUL_OUT_WIDTH (`SAMF_SUM_WIDTH + `ZP_TRANS_WIDTH)
-
+// -------------------------------------------------------
+// Accumulator Memory Configuration
+// -------------------------------------------------------
 `define GEMM_ACC_MEM_DEPTH 1024
 `define GEMM_ACC_MEM_TOT_SIZE ((`GEMM_ACC_MEM_DEPTH) * (`GEMM_PSUM_DATA_SIZE) * 4)
 `define GEMM_ACC_MEM_ADDR_WIDTH `CLOG2(`GEMM_ACC_MEM_TOT_SIZE)
-`define GEMM_ACC_MEM_BANK_WIDTH (`MXU_COL * 4) // 64 bytes per bank
+`define GEMM_ACC_MEM_BANK_WIDTH (`MXU_COL * 4)                           // 64 bytes per bank
 `define GEMM_ACC_MEM_BANK_ADDR_WIDTH (`GEMM_ACC_MEM_ADDR_WIDTH - 2)
 `define GEMM_ACC_MAX_CNT `CLOG2((2*`GEMM_ACC_MEM_DEPTH))
 
 // -------------------------------------------------------
-//  gemm unit pipeline delays
+// Configuration Registers
 // -------------------------------------------------------
-`define MXU_PIPE_MUL_EN 1
-`define MXU_PIPE_ALIGN_EN 1
-`define MXU_PIPE_ADD_INTV 2
+`define GEMM_CFG_REG_NUM 16       // Number of GEMM configuration registers
+`define DMA_CFG_REG_NUM 16        // Number of DMA configuration registers
 
-`define ACT_REDUCE_PIPE_INTV 2
-
-`define MERGE_OUT_BW (`O_BIT_WIDTH + 1)
-
-// DMA parameters
-`define DMA_CFG_REG_NUM 16
-
-// quant
-`define QDIR_COL 0
-`define QDIR_ROW 1
+// Output scaling mode (uncomment to enable FP16 output scaling)
+// `define GEMM_UNIT_FP16_OUT_SCALE
 
 `endif // VX_CONFIG_VH
