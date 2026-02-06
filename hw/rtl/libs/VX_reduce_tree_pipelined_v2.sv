@@ -75,10 +75,10 @@ module VX_reduce_tree_pipelined_v2 #(
         wire                        stage_valid_out[NUM_STAGES];
 
         // ---------------------------------------------------------------------
-        // Input Conversion (IN_W -> OUT_W)
+        // Input Conversion (IN_W -> OUT_W) with sign extension
         // ---------------------------------------------------------------------
         for (genvar i = 0; i < N; i++) begin : g_input
-            assign stage_data_in[0][i] = OUT_W'(data_in[i]);
+            assign stage_data_in[0][i] = OUT_W'($signed(data_in[i]));
         end
         for (genvar i = N; i < MAX_N; i++) begin : g_input_pad
             assign stage_data_in[0][i] = '0;
@@ -113,7 +113,7 @@ module VX_reduce_tree_pipelined_v2 #(
             // Perform pairwise operations
             for (genvar i = 0; i < CURR_N / 2; i++) begin : g_pair
                 if (OP == "+") begin : g_op
-                    assign reduce_result[i] = stage_data_in[s][2*i] + stage_data_in[s][2*i + 1];
+                    assign reduce_result[i] = signed'(stage_data_in[s][2*i]) + signed'(stage_data_in[s][2*i + 1]);
                 end else if (OP == "^") begin : g_op
                     assign reduce_result[i] = stage_data_in[s][2*i] ^ stage_data_in[s][2*i + 1];
                 end else if (OP == "&") begin : g_op
