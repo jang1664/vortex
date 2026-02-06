@@ -49,7 +49,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     localparam DEFAULT_OUT_DLY = 1;
     localparam ACT_REDUCE_OUT_DLY = get_pipe_stage_num(`MXU_ROW, `ACT_REDUCE_PIPE_INTV);
     localparam ACT_REDUCE_PIPE_STAGES = get_pipe_stage_bitmask(`MXU_ROW, `ACT_REDUCE_PIPE_INTV);
-    localparam BLK_IDX_DLY = ACT_REDUCE_OUT_DLY;
+    localparam BLK_IDX_DLY = DEFAULT_OUT_DLY;
     localparam MXU_OUT_DLY = (`MXU_PIPE_MUL_EN + `MXU_PIPE_ALIGN_EN + 1) + get_pipe_stage_num(`MXU_ROW, `MXU_PIPE_ADD_INTV) + ((`MXU_COL / `MXU_COL_TILE) - 1);
     localparam MAX_EXP_IN_DELAY = MXU_OUT_DLY + DEFAULT_OUT_DLY;
     `STATIC_ASSERT(MXU_OUT_DLY >= ACT_REDUCE_OUT_DLY + DEFAULT_OUT_DLY, ("MXU_OUT_DLY must be >= ACT_REDUCE_OUT_DLY + DEFAULT_OUT_DLY"));
@@ -1303,13 +1303,13 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
             // MXU output valid
             if (merger_in_valid) begin
                 `TRACE(2, ("%t: %s: MXU output valid - data=%s\n",
-                    $time, INSTANCE_ID, parseWordNoNormal(mxu_output_dly, `MXU_ROW * `O_BIT_WIDTH, `O_BIT_WIDTH, "int")))
+                    $time, INSTANCE_ID, parseWordNoNormal(mxu_output_dly, `MXU_COL * `O_BIT_WIDTH, `O_BIT_WIDTH, "int")))
             end
 
             // Merger output
             if (merger_out_valid) begin
                 `TRACE(3, ("%t: %s: Merger out - data=%s\n",
-                    $time, INSTANCE_ID, parseWordNoNormal(merger_out_data_q, `MXU_ROW * `MERGE_OUT_BW, `MERGE_OUT_BW, "int")))
+                    $time, INSTANCE_ID, parseWordNoNormal(merger_out_data_q, `MXU_COL * `MERGE_OUT_BW, `MERGE_OUT_BW, "int")))
             end
 
             // Int2FP output
