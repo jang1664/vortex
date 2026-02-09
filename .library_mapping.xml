@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <com.sigasi.hdt.shared.librarymapping.model:LibraryMappings xmlns:com.sigasi.hdt.shared.librarymapping.model="com.sigasi.hdt.vhdl.scoping.librarymapping" Version="2">
+  <Mappings Location="hw/syn" Library="not mapped"/>
   <Mappings Location="hw" Library="work"/>
 </com.sigasi.hdt.shared.librarymapping.model:LibraryMappings>
