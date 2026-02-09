@@ -118,14 +118,16 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     logic [1:0][`MAX(`MXU_ROW, `MXU_COL)-1:0][`ZP_WIDTH-1:0]    zero_regs;
 
     // Scale/Zero write control signals
-    logic                                            sz_req_valid;
+    logic                                            sz_req_hs;
     logic                                            sz_req_rw;
     logic [`CLOG2(`GEMM_SCALE_ZERO_DATA_SIZE*4)-1:0] sz_req_addr;
     logic [`GEMM_SCALE_ZERO_DATA_SIZE*8-1:0]         sz_req_data;
     logic                                            scale_reg_wr_en;
+    logic                                            scale_reg_wr_req;
     logic                                            scale_reg_idx;
     logic                                            zp_reg_wr_en;
     logic                                            zp_reg_idx;
+    logic                                            zp_reg_wr_req;
 
     // -------------------------------------------------------------------------
     // Input Pipeline Signals
@@ -313,16 +315,16 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     assign wreg_load_dir           = w_lmem_bus_if.req_data.addr[1];
     assign w_lmem_bus_if.rsp_valid = 1'b0;
 
-    assign sz_req_valid = sz_lmem_bus_if.req_valid & sz_lmem_bus_if.req_ready;
+    assign sz_req_hs    = sz_lmem_bus_if.req_valid & sz_lmem_bus_if.req_ready;
     assign sz_req_rw    = sz_lmem_bus_if.req_data.rw;
     assign sz_req_addr  = sz_lmem_bus_if.req_data.addr;
     assign sz_req_data  = sz_lmem_bus_if.req_data.data;
     always_comb begin
         if (~in_flight) begin
             sz_lmem_bus_if.req_ready = 1'b1;
-        end else if (zp_reg_wr_en) begin
+        end else if (zp_reg_wr_req) begin
             sz_lmem_bus_if.req_ready = (gemm_unit_ctrl.zreg_use_idx != zp_reg_idx);
-        end else if (scale_reg_wr_en) begin
+        end else if (scale_reg_wr_req) begin
             sz_lmem_bus_if.req_ready = (gemm_unit_ctrl.sreg_use_idx != scale_reg_idx);
         end else begin
             sz_lmem_bus_if.req_ready = 1'b1;
@@ -581,20 +583,34 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
         scale_reg_idx   = 0;
         zp_reg_wr_en    = 0;
         zp_reg_idx      = 0;
+        scale_reg_wr_req = 0;
+        zp_reg_wr_req    = 0;
 
-        if (sz_req_valid & sz_req_rw) begin
+        if(sz_lmem_bus_if.req_valid && sz_req_rw) begin
+            if (sz_req_addr >= SCALE_REG0_BASE && sz_req_addr < SCALE_REG1_BASE) begin
+                scale_reg_idx   = 1'b0;
+                scale_reg_wr_req = 1'b1;
+            end else if (sz_req_addr >= SCALE_REG1_BASE && sz_req_addr < ZP_REG0_BASE) begin
+                scale_reg_idx   = 1'b1;
+                scale_reg_wr_req = 1'b1;
+            end else if (sz_req_addr >= ZP_REG0_BASE && sz_req_addr < ZP_REG1_BASE) begin
+                zp_reg_idx      = 1'b0;
+                zp_reg_wr_req    = 1'b1;
+            end else if (sz_req_addr >= ZP_REG1_BASE) begin
+                zp_reg_idx      = 1'b1;
+                zp_reg_wr_req    = 1'b1;
+            end
+        end
+
+        if (sz_req_hs & sz_req_rw) begin
             if (sz_req_addr >= SCALE_REG0_BASE && sz_req_addr < SCALE_REG1_BASE) begin
                 scale_reg_wr_en = 1'b1;
-                scale_reg_idx   = 1'b0;
             end else if (sz_req_addr >= SCALE_REG1_BASE && sz_req_addr < ZP_REG0_BASE) begin
                 scale_reg_wr_en = 1'b1;
-                scale_reg_idx   = 1'b1;
             end else if (sz_req_addr >= ZP_REG0_BASE && sz_req_addr < ZP_REG1_BASE) begin
                 zp_reg_wr_en    = 1'b1;
-                zp_reg_idx      = 1'b0;
             end else if (sz_req_addr >= ZP_REG1_BASE) begin
                 zp_reg_wr_en    = 1'b1;
-                zp_reg_idx      = 1'b1;
             end
         end
     end
