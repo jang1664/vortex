@@ -46,6 +46,66 @@ set_property -dict [list CONFIG.Operation_Type {Multiply} CONFIG.A_Precision_Typ
 create_ip -name floating_point -vendor xilinx.com -library ip -version 7.1 -module_name xil_fadd -dir ${ip_dir}
 set_property -dict [list CONFIG.Operation_Type {Add_Subtract} CONFIG.A_Precision_Type {Single} CONFIG.Result_Precision_Type {Single} CONFIG.Has_RESULT_TREADY {false} CONFIG.Flow_Control {NonBlocking} CONFIG.Has_ACLKEN {true} CONFIG.C_Rate {1} CONFIG.C_Mult_Usage {Full_Usage}] [get_ips xil_fadd]
 
+# ======================================================================================================
+# FIGNA FP IPs
+# ======================================================================================================
+create_ip -name floating_point -vendor xilinx.com -library ip -version 7.1 -module_name xil_f32add -dir ${ip_dir}
+set_property -dict [list \
+  CONFIG.Add_Sub_Value {Add} \
+  CONFIG.Has_ACLKEN {true} \
+] [get_ips xil_f32add]
+
+create_ip -name floating_point -vendor xilinx.com -library ip -version 7.1 -module_name xil_f32mul -dir ${ip_dir}
+set_property -dict [list \
+  CONFIG.A_Precision_Type {Single} \
+  CONFIG.C_A_Exponent_Width {8} \
+  CONFIG.C_A_Fraction_Width {24} \
+  CONFIG.C_Latency {9} \
+  CONFIG.C_Mult_Usage {Full_Usage} \
+  CONFIG.C_Rate {1} \
+  CONFIG.C_Result_Exponent_Width {8} \
+  CONFIG.C_Result_Fraction_Width {24} \
+  CONFIG.Has_ACLKEN {true} \
+  CONFIG.Operation_Type {Multiply} \
+  CONFIG.Result_Precision_Type {Single} \
+] [get_ips xil_f32mul]
+
+create_ip -name floating_point -vendor xilinx.com -library ip -version 7.1 -module_name xil_f16add -dir ${ip_dir}
+set_property -dict [list \
+  CONFIG.Has_ACLKEN {true} \
+  CONFIG.A_Precision_Type {Half} \
+  CONFIG.Add_Sub_Value {Add} \
+  CONFIG.C_A_Exponent_Width {5} \
+  CONFIG.C_A_Fraction_Width {11} \
+  CONFIG.C_Accum_Input_Msb {15} \
+  CONFIG.C_Accum_Lsb {-24} \
+  CONFIG.C_Accum_Msb {32} \
+  CONFIG.C_Latency {12} \
+  CONFIG.C_Mult_Usage {Full_Usage} \
+  CONFIG.C_Rate {1} \
+  CONFIG.C_Result_Exponent_Width {5} \
+  CONFIG.C_Result_Fraction_Width {11} \
+  CONFIG.Result_Precision_Type {Half} \
+] [get_ips xil_f16add]
+
+create_ip -name floating_point -vendor xilinx.com -library ip -version 7.1 -module_name xil_f16mul -dir ${ip_dir}
+set_property -dict [list \
+  CONFIG.A_Precision_Type {Half} \
+  CONFIG.C_A_Exponent_Width {5} \
+  CONFIG.C_A_Fraction_Width {11} \
+  CONFIG.C_Accum_Input_Msb {15} \
+  CONFIG.C_Accum_Lsb {-24} \
+  CONFIG.C_Accum_Msb {32} \
+  CONFIG.C_Latency {7} \
+  CONFIG.C_Mult_Usage {Full_Usage} \
+  CONFIG.C_Rate {1} \
+  CONFIG.C_Result_Exponent_Width {5} \
+  CONFIG.C_Result_Fraction_Width {11} \
+  CONFIG.Has_ACLKEN {true} \
+  CONFIG.Operation_Type {Multiply} \
+  CONFIG.Result_Precision_Type {Half} \
+] [get_ips xil_f16mul]
+
 generate_target all [get_ips]
 
 close_project -delete
