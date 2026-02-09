@@ -19,7 +19,7 @@ module VX_gemm_unit_top import VX_gpu_pkg::*; #(
     parameter I_DATA_SIZE  = `GEMM_INPUT_DATA_SIZE,
     parameter W_DATA_SIZE  = `GEMM_WEIGHT_DATA_SIZE,
     parameter SZ_DATA_SIZE = `GEMM_SCALE_ZERO_DATA_SIZE,
-    parameter O_DATA_SIZE  = `GEMM_PSUM_DATA_SIZE,
+    parameter O_DATA_SIZE  = `GEMM_OUTPUT_DATA_SIZE,
     parameter TAG_WIDTH    = 1,
     parameter ADDR_WIDTH   = `MEM_ADDR_WIDTH
 ) (
