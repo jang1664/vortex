@@ -70,6 +70,7 @@ module VX_sp_ram #(
     parameter WRENW       = 1,
     parameter OUT_REG     = 0,
     parameter LUTRAM      = 0,
+    parameter USE_URAM    = 0, // 0: auto (BRAM/URAM based on size), 1: force URAM, 2: force BRAM
     parameter `STRING RDW_MODE = "W", // W: write-first, R: read-first, N: no-change
     parameter RADDR_REG   = 0, // read address registered hint
     parameter RADDR_RESET = 0, // read address has reset
@@ -100,8 +101,38 @@ module VX_sp_ram #(
 
 `ifdef SYNTHESIS
     localparam FORCE_BRAM = !LUTRAM && `FORCE_BRAM(SIZE, DATAW);
+    // USE_URAM: 0=auto (use URAM if size >= 256Kb), 1=force URAM, 2=force BRAM
+    localparam SELECT_URAM = (USE_URAM == 1) || (USE_URAM == 0 && `FORCE_URAM(SIZE, DATAW));
+    // URAM constraints: no write-first mode, no byte-enable
+    localparam URAM_COMPATIBLE = (RDW_MODE != "W") && (WRENW == 1);
+    localparam USE_URAM_FINAL = FORCE_BRAM && SELECT_URAM && (USE_URAM != 2) && URAM_COMPATIBLE;
     if (OUT_REG) begin : g_sync
-        if (FORCE_BRAM) begin : g_bram
+        if (USE_URAM_FINAL) begin : g_uram
+            // URAM path: read-first or no-change mode only, no byte-enable
+            if (RDW_MODE == "R") begin : g_read_first
+                `USE_ULTRA_BRAM reg [DATAW-1:0] ram [0:SIZE-1];
+                `RAM_INITIALIZATION
+                reg [DATAW-1:0] rdata_r;
+                always @(posedge clk) begin
+                    `RAM_WRITE_ALL
+                    if (read) begin
+                        rdata_r <= ram[addr];
+                    end
+                end
+                assign rdata = rdata_r;
+            end else begin : g_no_change
+                `USE_ULTRA_BRAM reg [DATAW-1:0] ram [0:SIZE-1];
+                `RAM_INITIALIZATION
+                reg [DATAW-1:0] rdata_r;
+                always @(posedge clk) begin
+                    `RAM_WRITE_ALL
+                    else if (read) begin
+                        rdata_r <= ram[addr];
+                    end
+                end
+                assign rdata = rdata_r;
+            end
+        end else if (FORCE_BRAM) begin : g_bram
             if (RDW_MODE == "W") begin : g_write_first
                 if (WRENW != 1) begin : g_wren
                     `RW_RAM_CHECK `USE_BLOCK_BRAM `RAM_ARRAY_WREN
