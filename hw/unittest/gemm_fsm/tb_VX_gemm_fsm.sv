@@ -7,9 +7,9 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; ();
   parameter string TB_NAME  = "tb_VX_gemm_fsm";
   parameter real   PERIOD   = 10.0;
 
-  // DUT uses cfg_reg_if.regs[0..14]
-  parameter int CFG_NUM = 15;
-  parameter int CFG_DW  = 64;
+  // DUT uses cfg_reg_if.regs[0..28]
+  parameter int CFG_NUM = 29;
+  parameter int CFG_DW  = 32;
 
   // -----------------------------
   // Clock / Reset
@@ -170,23 +170,51 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; ();
 
       for (int i = 0; i < CFG_NUM; i++) cfg_reg_if.regs[i] = '0;
       
-      cfg_reg_if.regs[0] = 64'h1; // start
-      cfg_reg_if.regs[1] = input_base;
-      cfg_reg_if.regs[2] = weight_base;
-      cfg_reg_if.regs[3] = output_base;
-      cfg_reg_if.regs[4] = scale_base;
-      cfg_reg_if.regs[5] = zp_base;
+      // [0] CONTROL (bit0=start)
+      cfg_reg_if.regs[0] = 32'h1;
 
-      cfg_reg_if.regs[6] = lmem_ibuf0_base;
-      cfg_reg_if.regs[7] = lmem_ibuf1_base;
-      cfg_reg_if.regs[8] = lmem_wbuf0_base;
-      cfg_reg_if.regs[9] = lmem_wbuf1_base;
-      cfg_reg_if.regs[10] = lmem_szbuf0_base;
-      cfg_reg_if.regs[11] = lmem_szbuf1_base;
-      cfg_reg_if.regs[12] = lmem_obuf_base;
+      // 64-bit bases as {HI,LO} in 32-bit regs
+      cfg_reg_if.regs[1]  = input_base[31:0];   // INPUT_BASE_LO
+      cfg_reg_if.regs[2]  = input_base[63:32];  // INPUT_BASE_HI
 
-      cfg_reg_if.regs[13] = {N[31:0], M[31:0]};
-      cfg_reg_if.regs[14] = {qblk[31:0], K[31:0]};
+      cfg_reg_if.regs[3]  = weight_base[31:0];  // WEIGHT_BASE_LO
+      cfg_reg_if.regs[4]  = weight_base[63:32]; // WEIGHT_BASE_HI
+
+      cfg_reg_if.regs[5]  = output_base[31:0];  // OUTPUT_BASE_LO
+      cfg_reg_if.regs[6]  = output_base[63:32]; // OUTPUT_BASE_HI
+
+      cfg_reg_if.regs[7]  = scale_base[31:0];   // SCALE_BASE_LO
+      cfg_reg_if.regs[8]  = scale_base[63:32];  // SCALE_BASE_HI
+
+      cfg_reg_if.regs[9]  = zp_base[31:0];      // ZP_BASE_LO
+      cfg_reg_if.regs[10] = zp_base[63:32];     // ZP_BASE_HI
+
+      cfg_reg_if.regs[11] = lmem_ibuf0_base[31:0];
+      cfg_reg_if.regs[12] = lmem_ibuf0_base[63:32];
+
+      cfg_reg_if.regs[13] = lmem_ibuf1_base[31:0];
+      cfg_reg_if.regs[14] = lmem_ibuf1_base[63:32];
+
+      cfg_reg_if.regs[15] = lmem_wbuf0_base[31:0];
+      cfg_reg_if.regs[16] = lmem_wbuf0_base[63:32];
+
+      cfg_reg_if.regs[17] = lmem_wbuf1_base[31:0];
+      cfg_reg_if.regs[18] = lmem_wbuf1_base[63:32];
+
+      cfg_reg_if.regs[19] = lmem_szbuf0_base[31:0];
+      cfg_reg_if.regs[20] = lmem_szbuf0_base[63:32];
+
+      cfg_reg_if.regs[21] = lmem_szbuf1_base[31:0];
+      cfg_reg_if.regs[22] = lmem_szbuf1_base[63:32];
+
+      cfg_reg_if.regs[23] = lmem_obuf_base[31:0];
+      cfg_reg_if.regs[24] = lmem_obuf_base[63:32];
+
+      // scalar dims (32-bit regs)
+      cfg_reg_if.regs[25] = M[31:0];
+      cfg_reg_if.regs[26] = N[31:0];
+      cfg_reg_if.regs[27] = K[31:0];
+      cfg_reg_if.regs[28] = qblk[31:0];
 
       // 2) assert valid BEFORE the sampling edge (use blocking)
       //    -> now at next posedge, DUT definitely sees valid=1
