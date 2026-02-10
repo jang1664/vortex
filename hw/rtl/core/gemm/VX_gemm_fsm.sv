@@ -11,22 +11,38 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 );
 
   /*
-  cfg_reg 레지스터, base address 는 모두 64bit로 가정
-    [0] : control reg (LSB가 start bit)
-    [1] : INPUT_BASE (DRAM)
-    [2] : WEIGHT_BASE (DRAM)
-    [3] : OUTPUT_BASE (DRAM)
-    [4] : SCALE_BASE (DRAM)
-    [5] : ZP_BASE (DRAM)
-    [6] : LMEM_IBUF0_BASE (LMEM)
-    [7] : LMEM_IBUF1_BASE (LMEM)
-    [8] : LMEM_WBUF0_BASE (LMEM)
-    [9] : LMEM_WBUF1_BASE (LMEM)
-    [10]: LMEM_SZBUF0_BASE (LMEM)
-    [11]: LMEM_SZBUF1_BASE (LMEM)
-    [12]: LMEM_OBUF_BASE (LMEM)
-    [13]: {N, M}
-    [14]: {qblk, K}
+  gemm_node cfg_reg 레지스터 맵 (32b regs):
+    [ 0] CONTROL (bit0=start)
+    [ 1] INPUT_BASE_LO
+    [ 2] INPUT_BASE_HI
+    [ 3] WEIGHT_BASE_LO
+    [ 4] WEIGHT_BASE_HI
+    [ 5] OUTPUT_BASE_LO
+    [ 6] OUTPUT_BASE_HI
+    [ 7] SCALE_BASE_LO
+    [ 8] SCALE_BASE_HI
+    [ 9] ZP_BASE_LO
+    [10] ZP_BASE_HI
+
+    [11] LMEM_IBUF0_BASE_LO
+    [12] LMEM_IBUF0_BASE_HI
+    [13] LMEM_IBUF1_BASE_LO
+    [14] LMEM_IBUF1_BASE_HI
+    [15] LMEM_WBUF0_BASE_LO
+    [16] LMEM_WBUF0_BASE_HI
+    [17] LMEM_WBUF1_BASE_LO
+    [18] LMEM_WBUF1_BASE_HI
+    [19] LMEM_SZBUF0_BASE_LO
+    [20] LMEM_SZBUF0_BASE_HI
+    [21] LMEM_SZBUF1_BASE_LO
+    [22] LMEM_SZBUF1_BASE_HI
+    [23] LMEM_OBUF_BASE_LO
+    [24] LMEM_OBUF_BASE_HI
+
+    [25] M (32b)
+    [26] N (32b)
+    [27] K (32b)
+    [28] qblk (32b)
   
   ================================================================================
   VX_gemm_fsm.sv — Bring-up FSM Assumptions / Contract
@@ -90,6 +106,46 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
   ================================================================================
   */
+
+  // ----------------------------
+  // cfg reg indices (32-bit)
+  // ----------------------------
+  localparam int CFG_R_CONTROL          = 0;
+
+  localparam int CFG_R_INPUT_BASE_LO    = 1;
+  localparam int CFG_R_INPUT_BASE_HI    = 2;
+  localparam int CFG_R_WEIGHT_BASE_LO   = 3;
+  localparam int CFG_R_WEIGHT_BASE_HI   = 4;
+  localparam int CFG_R_OUTPUT_BASE_LO   = 5;
+  localparam int CFG_R_OUTPUT_BASE_HI   = 6;
+  localparam int CFG_R_SCALE_BASE_LO    = 7;
+  localparam int CFG_R_SCALE_BASE_HI    = 8;
+  localparam int CFG_R_ZP_BASE_LO       = 9;
+  localparam int CFG_R_ZP_BASE_HI       = 10;
+
+  localparam int CFG_R_LMEM_IBUF0_LO    = 11;
+  localparam int CFG_R_LMEM_IBUF0_HI    = 12;
+  localparam int CFG_R_LMEM_IBUF1_LO    = 13;
+  localparam int CFG_R_LMEM_IBUF1_HI    = 14;
+  localparam int CFG_R_LMEM_WBUF0_LO    = 15;
+  localparam int CFG_R_LMEM_WBUF0_HI    = 16;
+  localparam int CFG_R_LMEM_WBUF1_LO    = 17;
+  localparam int CFG_R_LMEM_WBUF1_HI    = 18;
+  localparam int CFG_R_LMEM_SZBUF0_LO   = 19;
+  localparam int CFG_R_LMEM_SZBUF0_HI   = 20;
+  localparam int CFG_R_LMEM_SZBUF1_LO   = 21;
+  localparam int CFG_R_LMEM_SZBUF1_HI   = 22;
+  localparam int CFG_R_LMEM_OBUF_LO     = 23;
+  localparam int CFG_R_LMEM_OBUF_HI     = 24;
+
+  localparam int CFG_R_M               = 25;
+  localparam int CFG_R_N               = 26;
+  localparam int CFG_R_K               = 27;
+  localparam int CFG_R_QBLK            = 28;
+
+  function automatic logic [63:0] cfg_get_u64(input int lo_idx, input int hi_idx);
+    cfg_get_u64 = {cfg_reg_if.regs[hi_idx][31:0], cfg_reg_if.regs[lo_idx][31:0]};
+  endfunction
 
   // --------------------------------------------------------------------------
   // Bring-up fixed (QDIR_COL, weight transpose 없음, is_bias 없음)
@@ -258,6 +314,15 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
   int unsigned mt_dim_q, nt_dim_q, kt_dim_q;
   int unsigned m_last_q, n_last_q, k_last_q;
   int unsigned tile_total_q;
+
+
+  logic [31:0] M_tot, N_tot, K_tot;
+  logic [31:0] wid;
+
+  assign gemm_fsm_if.M_tot = M_tot;
+  assign gemm_fsm_if.N_tot = N_tot;
+  assign gemm_fsm_if.K_tot = K_tot;
+  assign gemm_fsm_if.wid   = wid;
 
   // linear tile index: tile = ((nt * mt_dim) + mt) * kt_dim + kt
   task automatic tile_decode(
@@ -473,7 +538,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
       waited_reuse_q <= waited_reuse_d;
 
-      if (state_q == S_IDLE && cfg_reg_if.regs[0][0] && cfg_reg_if.valid && cfg_reg_if.ready) begin
+      if (state_q == S_IDLE && cfg_reg_if.regs[CFG_R_CONTROL][0] && cfg_reg_if.valid && cfg_reg_if.ready) begin
         mt_dim_q <= ceil_div(job_d.M, MT);
         nt_dim_q <= ceil_div(job_d.N, NT);
         kt_dim_q <= ceil_div(job_d.K, KT);
@@ -481,6 +546,23 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
         m_last_q <= job_d.M - (ceil_div(job_d.M, MT)-1) * MT;
         n_last_q <= job_d.N - (ceil_div(job_d.N, NT)-1) * NT;
         k_last_q <= job_d.K - (ceil_div(job_d.K, KT)-1) * KT;
+      end
+    end
+  end
+
+  always_ff @(posedge clk) begin
+    if (reset) begin
+      M_tot <= 32'd0;
+      N_tot <= 32'd0;
+      K_tot <= 32'd0;
+      wid   <= 32'd0;
+    end
+    else begin
+      if (cfg_reg_if.regs[CFG_R_CONTROL][0] && cfg_reg_if.valid && cfg_reg_if.ready) begin
+        M_tot <= cfg_reg_if.regs[CFG_R_M][31:0];
+        N_tot <= cfg_reg_if.regs[CFG_R_N][31:0];
+        K_tot <= cfg_reg_if.regs[CFG_R_K][31:0];
+        wid   <= cfg_reg_if.wid;
       end
     end
   end
@@ -602,25 +684,25 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
         mxu_buf_d   = 1'b0;
         waited_reuse_d = 1'b0;
 
-        if (cfg_reg_if.regs[0][0] && cfg_reg_if.valid && cfg_reg_if.ready) begin
-          job_d.input_base  = cfg_reg_if.regs[1];
-          job_d.weight_base = cfg_reg_if.regs[2];
-          job_d.output_base = cfg_reg_if.regs[3];
-          job_d.scale_base  = cfg_reg_if.regs[4];
-          job_d.zp_base     = cfg_reg_if.regs[5];
+        if (cfg_reg_if.regs[CFG_R_CONTROL][0] && cfg_reg_if.valid && cfg_reg_if.ready) begin
+          job_d.input_base  = cfg_get_u64(CFG_R_INPUT_BASE_LO,  CFG_R_INPUT_BASE_HI);
+          job_d.weight_base = cfg_get_u64(CFG_R_WEIGHT_BASE_LO, CFG_R_WEIGHT_BASE_HI);
+          job_d.output_base = cfg_get_u64(CFG_R_OUTPUT_BASE_LO, CFG_R_OUTPUT_BASE_HI);
+          job_d.scale_base  = cfg_get_u64(CFG_R_SCALE_BASE_LO,  CFG_R_SCALE_BASE_HI);
+          job_d.zp_base     = cfg_get_u64(CFG_R_ZP_BASE_LO,     CFG_R_ZP_BASE_HI);
 
-          job_d.lmem_ibuf0_base  = cfg_reg_if.regs[6];
-          job_d.lmem_ibuf1_base  = cfg_reg_if.regs[7];
-          job_d.lmem_wbuf0_base  = cfg_reg_if.regs[8];
-          job_d.lmem_wbuf1_base  = cfg_reg_if.regs[9];
-          job_d.lmem_szbuf0_base = cfg_reg_if.regs[10];
-          job_d.lmem_szbuf1_base = cfg_reg_if.regs[11];
-          job_d.lmem_obuf_base   = cfg_reg_if.regs[12];
+          job_d.lmem_ibuf0_base  = cfg_get_u64(CFG_R_LMEM_IBUF0_LO,  CFG_R_LMEM_IBUF0_HI);
+          job_d.lmem_ibuf1_base  = cfg_get_u64(CFG_R_LMEM_IBUF1_LO,  CFG_R_LMEM_IBUF1_HI);
+          job_d.lmem_wbuf0_base  = cfg_get_u64(CFG_R_LMEM_WBUF0_LO,  CFG_R_LMEM_WBUF0_HI);
+          job_d.lmem_wbuf1_base  = cfg_get_u64(CFG_R_LMEM_WBUF1_LO,  CFG_R_LMEM_WBUF1_HI);
+          job_d.lmem_szbuf0_base = cfg_get_u64(CFG_R_LMEM_SZBUF0_LO, CFG_R_LMEM_SZBUF0_HI);
+          job_d.lmem_szbuf1_base = cfg_get_u64(CFG_R_LMEM_SZBUF1_LO, CFG_R_LMEM_SZBUF1_HI);
+          job_d.lmem_obuf_base   = cfg_get_u64(CFG_R_LMEM_OBUF_LO,   CFG_R_LMEM_OBUF_HI);
 
-          job_d.M           = cfg_reg_if.regs[13][31:0];
-          job_d.N           = cfg_reg_if.regs[13][63:32];
-          job_d.K           = cfg_reg_if.regs[14][31:0];
-          job_d.qblk        = cfg_reg_if.regs[14][63:32];
+          job_d.M    = cfg_reg_if.regs[CFG_R_M][31:0];
+          job_d.N    = cfg_reg_if.regs[CFG_R_N][31:0];
+          job_d.K    = cfg_reg_if.regs[CFG_R_K][31:0];
+          job_d.qblk = cfg_reg_if.regs[CFG_R_QBLK][31:0];
 
           state_d = S_PRE0_LD_I;
         end
