@@ -20,6 +20,7 @@ TOP_MODULE := tb_VX_dma_mem_unit_misal
 
 TB   := tb_VX_dma_mem_unit_misal.sv
 RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
+				$(RTL_DIR)/core/VX_gemm_dma_ctrl_with_dma.sv \
 				$(RTL_DIR)/core/VX_dma_node_misal.sv \
 				$(RTL_DIR)/mem/VX_local_mem.sv \
 				$(RTL_DIR)/mem/VX_mem_bus_if.sv \
@@ -38,7 +39,8 @@ RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
 				$(RTL_DIR)/libs/VX_priority_arbiter.sv \
 				$(RTL_DIR)/libs/VX_priority_encoder.sv \
 				$(RTL_DIR)/libs/VX_lzc.sv \
-				$(RTL_DIR)/libs/VX_find_first.sv
+				$(RTL_DIR)/libs/VX_find_first.sv \
+				$(RTL_DIR)/core/VX_node_done_if.sv
 #PARAMS_  := PIPE_MULT=$(PIPE_MULT) PIPE_ALIGN=$(PIPE_ALIGN) PIPE_INTERVAL=$(PIPE_INTERVAL)
 INCDIRS_ := $(RTL_DIR)
 DEFINES_ := SIMULATION DEBUG_LEVEL=3 DBG_TRACE_GEMM

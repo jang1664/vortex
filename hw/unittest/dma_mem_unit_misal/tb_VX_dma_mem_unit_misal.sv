@@ -22,9 +22,8 @@ module tb_VX_dma_mem_unit_misal import VX_gpu_pkg::*; ();
   // -----------------------------
   // Params
   // -----------------------------
-  localparam int CFG_NUM    = 8;
-  localparam int CFG_DW     = 64;
-  localparam int DESC_WORDS = 15;
+  localparam int CFG_NUM    = 16;
+  localparam int CFG_DW     = 32;
 
   localparam int MEM_BYTES  = 64*1024;
   localparam int TAG_WIDTH  = 45;  // >= `UP(UUID_WIDTH) is enough
@@ -88,6 +87,7 @@ module tb_VX_dma_mem_unit_misal import VX_gpu_pkg::*; ();
     .TAG_WIDTH(TAG_WIDTH)
   ) lmem_bus_ifs [LMEM_PORTS](); // [0]=DMA only
 
+  VX_node_done_if done_if();
   // -----------------------------
   // DUT
   // -----------------------------
@@ -96,7 +96,8 @@ module tb_VX_dma_mem_unit_misal import VX_gpu_pkg::*; ();
     .reset        (reset),
     .cfg_reg_if   (cfg_reg_if),
     .dcache_bus_if(dcache_bus_if),
-    .lmem_bus_if  (lmem_bus_ifs[0])
+    .lmem_bus_if  (lmem_bus_ifs[0]),
+    .done_if      (done_if)
   );
 
   // -----------------------------
@@ -182,6 +183,8 @@ module tb_VX_dma_mem_unit_misal import VX_gpu_pkg::*; ();
 
   d_pend_t d_pend;
 
+  assign done_if.ready = 1'b1;
+
   always @(posedge clk) begin
     if (reset) begin
       dcache_bus_if.rsp_valid <= 1'b0;
@@ -252,8 +255,8 @@ module tb_VX_dma_mem_unit_misal import VX_gpu_pkg::*; ();
   endtask
 
   task automatic mem_check_equal_g_to_g_with_padding(
-    input int unsigned src_base,
-    input int unsigned dst_base,
+    input logic [63:0] src_base,
+    input logic [63:0] dst_base,
     input int unsigned nbytes,
     input int unsigned seg_size,
     input int unsigned padding,
@@ -281,7 +284,7 @@ module tb_VX_dma_mem_unit_misal import VX_gpu_pkg::*; ();
   // cfg helpers
   // -----------------------------
   task automatic cfg_send_desc(
-    input logic [31:0] w [0:DESC_WORDS-1],
+    input logic [31:0] w [0:CFG_NUM-1],
     input logic [31:0] wid,
     input logic [31:0] tid
   );
@@ -290,10 +293,8 @@ module tb_VX_dma_mem_unit_misal import VX_gpu_pkg::*; ();
 
     for (int r = 0; r < CFG_NUM; r++) cfg_reg_if.regs[r] = '0;
 
-    for (int i = 0; i < DESC_WORDS; i++) begin
-      int r = i / 2;
-      if ((i % 2) == 0) cfg_reg_if.regs[r][31:0]  = w[i];
-      else              cfg_reg_if.regs[r][63:32] = w[i];
+    for (int i = 0; i < CFG_NUM; i++) begin
+      cfg_reg_if.regs[i] = w[i];
     end
 
     cfg_reg_if.valid = 1'b1;
@@ -303,9 +304,12 @@ module tb_VX_dma_mem_unit_misal import VX_gpu_pkg::*; ();
   endtask
 
   task automatic wait_dma_done();
-    do @(posedge clk); while (cfg_reg_if.ready);
-    do @(posedge clk); while (!cfg_reg_if.ready);
+    // wait until DUT asserts done
+    do @(posedge clk); while (!done_if.valid);
+    // handshake happens because ready=1
+    @(posedge clk); // one more cycle to let DUT drop valid if it wants
   endtask
+
 
   // -----------------------------
   // Test case runner (supports misalign offsets)
@@ -323,10 +327,10 @@ module tb_VX_dma_mem_unit_misal import VX_gpu_pkg::*; ();
     int unsigned total_bytes;
     int unsigned stride0, stride1, stride2;
 
-    int unsigned g_src_base, l_mid_base, g_dst_base;
+    logic [63:0] g_src_base, l_mid_base, g_dst_base;
 
-    logic [31:0] d1 [0:DESC_WORDS-1];
-    logic [31:0] d2 [0:DESC_WORDS-1];
+    logic [31:0] d1 [0:CFG_NUM-1];
+    logic [31:0] d2 [0:CFG_NUM-1];
 
     total_bytes = b0*b1*b2*seg_bytes;
 
@@ -336,9 +340,9 @@ module tb_VX_dma_mem_unit_misal import VX_gpu_pkg::*; ();
     stride2 = b0 * b1 * seg_bytes;
 
     // bases with offsets (misalign)
-    g_src_base = 16'h1000 + g_src_off;
-    l_mid_base = 16'h2000 + l_mid_off;
-    g_dst_base = 16'h3000 + g_dst_off;
+    g_src_base = 64'h1000 + 64'(g_src_off);
+    l_mid_base = 64'h2000 + 64'(l_mid_off);
+    g_dst_base = 64'h3000 + 64'(g_dst_off);
 
     // bounds safety
     if ((g_src_base + total_bytes) >= MEM_BYTES) $fatal(1, "SRC OOR: base=%0h total=%0d", g_src_base, total_bytes);
@@ -361,15 +365,16 @@ module tb_VX_dma_mem_unit_misal import VX_gpu_pkg::*; ();
     // GLOBAL -> LMEM
     // -------------------------
     d1[0]  = 32'h0000_0003; // start=1, dir=1 (GLOBAL->LMEM)
-    d1[1]  = 32'd0;      // reserved
-    d1[2]  = g_src_base;
-    d1[3]  = l_mid_base;
-    d1[4]  = stride0; d1[5]  = stride0;
-    d1[6]  = stride1; d1[7]  = stride1;
-    d1[8]  = stride2; d1[9]  = stride2;
-    d1[10] = b0;      d1[11] = b1; d1[12] = b2;
-    d1[13] = seg_bytes;
-    d1[14] = padding;
+    d1[1]  = l_mid_base[31:0];      // reserved
+    d1[2]  = l_mid_base[63:32];
+    d1[3]  = g_src_base[31:0];
+    d1[4]  = g_src_base[63:32];
+    d1[5]  = stride0; d1[6]  = stride0;
+    d1[7]  = stride1; d1[8]  = stride1;
+    d1[9]  = stride2; d1[10] = stride2;
+    d1[11] = b0;      d1[12] = b1; d1[13] = b2;
+    d1[14] = seg_bytes;
+    d1[15] = padding;
 
     cfg_send_desc(d1, 32'd5, 32'd7);
     wait_dma_done();
@@ -378,15 +383,16 @@ module tb_VX_dma_mem_unit_misal import VX_gpu_pkg::*; ();
     // LMEM -> GLOBAL
     // -------------------------
     d2[0]  = 32'h0000_0001; // start=1, dir=0 (LMEM->GLOBAL)
-    d2[1]  = 32'd0;      // reserved
-    d2[2]  = l_mid_base;
-    d2[3]  = g_dst_base;
-    d2[4]  = stride0; d2[5]  = stride0;
-    d2[6]  = stride1; d2[7]  = stride1;
-    d2[8]  = stride2; d2[9]  = stride2;
-    d2[10] = b0;      d2[11] = b1; d2[12] = b2;
-    d2[13] = seg_bytes;
-    d2[14] = padding;
+    d2[1]  = g_dst_base[31:0];      // reserved
+    d2[2]  = g_dst_base[63:32];
+    d2[3]  = l_mid_base[31:0];
+    d2[4]  = l_mid_base[63:32];
+    d2[5]  = stride0; d2[6]  = stride0;
+    d2[7]  = stride1; d2[8]  = stride1;
+    d2[9]  = stride2; d2[10] = stride2;
+    d2[11] = b0;      d2[12] = b1; d2[13] = b2;
+    d2[14] = seg_bytes;
+    d2[15] = padding;
 
     cfg_send_desc(d2, 32'd9, 32'd11);
     wait_dma_done();
