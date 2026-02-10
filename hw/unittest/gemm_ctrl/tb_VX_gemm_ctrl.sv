@@ -43,7 +43,7 @@ module tb_VX_gemm_ctrl;
   logic clk;
   logic reset;
 
-  VX_config_reg_if #(.NUM(20), .DW(64)) cfg_reg_if();
+  VX_config_reg_if #(.NUM(29), .DW(32)) cfg_reg_if();
   VX_gemm_ctrl_if                      gemm_ctrl_if();
   VX_gemm_sync_if                      gemm_sync_slv_if[N_NODE]();
 
@@ -121,25 +121,69 @@ module tb_VX_gemm_ctrl;
     input logic [63:0] output_base,
     input logic [63:0] scale_base,
     input logic [63:0] zp_base,
+
+    input logic [63:0] lmem_ibuf0_base,  //lmem
+    input logic [63:0] lmem_ibuf1_base,
+    input logic [63:0] lmem_wbuf0_base,
+    input logic [63:0] lmem_wbuf1_base,
+    input logic [63:0] lmem_szbuf0_base,
+    input logic [63:0] lmem_szbuf1_base,
+    input logic [63:0] lmem_obuf_base,
+
     input logic [31:0] M,
     input logic [31:0] N,
     input logic [31:0] K,
     input logic [31:0] qblk,
+
     input logic [31:0] wid_val,
     input logic [31:0] tid_val
   );
     begin
       @(posedge clk);
 
-      cfg_reg_if.regs[0] = 64'h1; // start
-      cfg_reg_if.regs[1] = input_base;
-      cfg_reg_if.regs[2] = weight_base;
-      cfg_reg_if.regs[3] = output_base;
-      cfg_reg_if.regs[4] = scale_base;
-      cfg_reg_if.regs[5] = zp_base;
-      cfg_reg_if.regs[6] = {N, M};
-      cfg_reg_if.regs[7] = {qblk, K};
-      for (int i = 8; i < 20; i++) cfg_reg_if.regs[i] = 64'h0;
+      cfg_reg_if.regs[0]  = 32'h1;
+
+      cfg_reg_if.regs[1]  = input_base[31:0];
+      cfg_reg_if.regs[2]  = input_base[63:32];
+
+      cfg_reg_if.regs[3]  = weight_base[31:0];
+      cfg_reg_if.regs[4]  = weight_base[63:32];
+
+      cfg_reg_if.regs[5]  = output_base[31:0];
+      cfg_reg_if.regs[6]  = output_base[63:32];
+
+      cfg_reg_if.regs[7]  = scale_base[31:0];
+      cfg_reg_if.regs[8]  = scale_base[63:32];
+
+      cfg_reg_if.regs[9]  = zp_base[31:0];
+      cfg_reg_if.regs[10] = zp_base[63:32];
+
+      cfg_reg_if.regs[11] = lmem_ibuf0_base[31:0];
+      cfg_reg_if.regs[12] = lmem_ibuf0_base[63:32];
+
+      cfg_reg_if.regs[13] = lmem_ibuf1_base[31:0];
+      cfg_reg_if.regs[14] = lmem_ibuf1_base[63:32];
+
+      cfg_reg_if.regs[15] = lmem_wbuf0_base[31:0];
+      cfg_reg_if.regs[16] = lmem_wbuf0_base[63:32];
+
+      cfg_reg_if.regs[17] = lmem_wbuf1_base[31:0];
+      cfg_reg_if.regs[18] = lmem_wbuf1_base[63:32];
+
+      cfg_reg_if.regs[19] = lmem_szbuf0_base[31:0];
+      cfg_reg_if.regs[20] = lmem_szbuf0_base[63:32];
+
+      cfg_reg_if.regs[21] = lmem_szbuf1_base[31:0];
+      cfg_reg_if.regs[22] = lmem_szbuf1_base[63:32];
+
+      cfg_reg_if.regs[23] = lmem_obuf_base[31:0];
+      cfg_reg_if.regs[24] = lmem_obuf_base[63:32];
+
+      // scalar dims (32-bit regs)
+      cfg_reg_if.regs[25] = M[31:0];
+      cfg_reg_if.regs[26] = N[31:0];
+      cfg_reg_if.regs[27] = K[31:0];
+      cfg_reg_if.regs[28] = qblk[31:0];
 
       cfg_reg_if.wid   = wid_val;
       cfg_reg_if.tid   = tid_val;
@@ -152,6 +196,10 @@ module tb_VX_gemm_ctrl;
 
       $display("[%0t] CFG sent: M=%0d N=%0d K=%0d qblk=%0d wid=%0d tid=%0d",
                $time, M, N, K, qblk, wid_val, tid_val);
+      $display("[%0t] CFG_REGS: M=%0d N=%0d K=%0d qblk=%0d wid=%0d tid=%0d",
+         $time,
+         cfg_reg_if.regs[25], cfg_reg_if.regs[26], cfg_reg_if.regs[27], cfg_reg_if.regs[28],
+         cfg_reg_if.wid, cfg_reg_if.tid);
     end
   endtask
 
@@ -428,6 +476,19 @@ module tb_VX_gemm_ctrl;
     end
   end
 
+  always_ff @(posedge clk) begin
+    if (!reset) begin
+      if (gemm_ctrl_if.dma_ctrl.start) begin
+        $display("[%0t] GEMM_CTRL START: M=%0d N=%0d K=%0d wid=%0d",
+                $time,
+                gemm_ctrl_if.M_tot,
+                gemm_ctrl_if.N_tot,
+                gemm_ctrl_if.K_tot,
+                gemm_ctrl_if.wid);
+      end
+    end
+  end
+
   // --------------------------------------------------------------------------
   // Single-driver: comp[] and dropped_events, and drives gemm_sync_slv_if[*]
   // --------------------------------------------------------------------------
@@ -560,13 +621,27 @@ module tb_VX_gemm_ctrl;
     reset_dut();
 
     send_config(
-      64'h1000_0000, 64'h2000_0000, 64'h3000_0000, 64'h4000_0000, 64'h5000_0000,
-      256, //M
-      256, //N
-      256, //K
-      32,  //qblk
-      0, 0
+      64'h1000_0000, // input_base
+      64'h2000_0000, // weight_base
+      64'h3000_0000, // output_base
+      64'h4000_0000, // scale_base
+      64'h5000_0000, // zp_base
+
+      64'h6000_0000, // lmem_ibuf0_base
+      64'h7000_0000, // lmem_ibuf1_base
+      64'h8000_0000, // lmem_wbuf0_base
+      64'h9000_0000, // lmem_wbuf1_base
+      64'hA000_0000, // lmem_szbuf0_base
+      64'hB000_0000, // lmem_szbuf1_base
+      64'hC000_0000, // lmem_obuf_base
+
+      32'd128,           // M
+      32'd128,           // N
+      32'd128,           // K
+      32'd32,            // qblk
+      32'd0, 32'd0       // wid, tid
     );
+
 
     wait_return_to_idle(150000);
 
