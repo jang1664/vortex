@@ -12,20 +12,35 @@ interface VX_gemm_fsm_if import VX_gpu_pkg::*; ();
   } ctrl_t;
 
   typedef struct packed {
-    logic idle;
+    logic idle;  //ready처럼 사용
     logic done;
   } flag_t;
+
+  logic [31:0] M_tot;
+  logic [31:0] N_tot;
+  logic [31:0] K_tot;
+
+  // 이 DMA 커맨드 스트림의 소유자(워프 ID)
+  logic [31:0] wid;     // = warp_id
 
   ctrl_t  ctrl;
   flag_t  flag;
 
   modport master (
     output ctrl,
+    output M_tot,
+    output N_tot,
+    output K_tot,
+    output wid,
     input  flag
   );
   
   modport slave (
     input  ctrl,
+    input  M_tot,
+    input  N_tot,
+    input  K_tot,
+    input  wid,
     output flag
   );
   
