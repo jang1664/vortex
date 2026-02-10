@@ -44,6 +44,13 @@ interface VX_gemm_ctrl_if import VX_gpu_pkg::*; #(
   dma_ctrl_t  dma_ctrl;
   dma_flag_t  dma_flag;
 
+  logic [31:0] M_tot;
+  logic [31:0] N_tot;
+  logic [31:0] K_tot;
+
+  // 이 DMA 커맨드 스트림의 소유자(워프 ID)
+  logic [31:0] wid;     // = warp_id
+
   modport master (
     output input_read_ctrl,
     input  input_read_flag,
@@ -54,7 +61,9 @@ interface VX_gemm_ctrl_if import VX_gpu_pkg::*; #(
     output quant_param_read_ctrl,
     input  quant_param_read_flag,
     output dma_ctrl,
-    input  dma_flag
+    input  dma_flag,
+    output M_tot, N_tot, K_tot,
+    output wid
   );
 
   modport slave (
@@ -67,7 +76,9 @@ interface VX_gemm_ctrl_if import VX_gpu_pkg::*; #(
     input  quant_param_read_ctrl,
     output quant_param_read_flag,
     input  dma_ctrl,
-    output dma_flag
+    output dma_flag,
+    input  M_tot, N_tot, K_tot,
+    input  wid
   );
 
 endinterface
