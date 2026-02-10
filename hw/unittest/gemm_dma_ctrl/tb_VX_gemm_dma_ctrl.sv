@@ -1,343 +1,495 @@
 `timescale 1ns/1ps
 `include "VX_define.vh"
 
+// -----------------------------------------------------------------------------
+// tb_VX_gemm_dma_ctrl.sv
+//
+// - alloc_if: TB가 allocator(slave)로서 ready/entry_id를 구동
+// - dma_if  : DUT가 master, TB가 slave로서 req를 받아 MMIO 메모리 모델링
+// - gemm_dma_ctrl_if: TB가 master처럼 start/cmd/...를 구동 (DUT는 slave)
+//
+// 이 TB는 아래를 검증:
+//  1) S_PROG_W에서 "DATA_SIZE 바이트" 단위 packed write가 실제 32-bit reg 공간에
+//     올바르게 반영되는지 (mem_byte 기반으로 reg32 읽어서 체크)
+//  2) S_KICK_W의 CONTROL(start=1) write 이후, POLL read에서 start bit이 0이 될 때까지
+//     기다리는 흐름이 정상인지 (TB가 LAT_DMA_DONE 후 start bit clear)
+//  3) OP_NOTIFY가 gemm_sync_if로 나가는지(ready=1로 sink)
+//
+// NOTE: gemm_sync_if 인터페이스 정의는 여기서 제공되지 않았으니,
+//       아래에서 gemm_sync_if.valid/reg_idx/value/ready 가 있다고 가정.
+//       만약 필드명이 다르면 그 3~4줄만 바꿔주면 됨.
+//
+// IMPORTANT (VCS ICPD 방지):
+//  - always_ff로 구동되는 변수(saw_notify, done_ev.* 등)는
+//    다른 프로세스(initial/task/다른 always_ff)에서 절대 쓰지 않음.
+//  - 필요한 경우 "요청 신호(clear_notify_req)"는 initial에서만 구동하고,
+//    always_ff에서는 그 신호를 읽기만 함.
+// -----------------------------------------------------------------------------
+
 module tb_VX_gemm_dma_ctrl;
   import VX_gpu_pkg::*;
 
-  // ------------------------------------------------------------
-  // Clock / Reset
-  // ------------------------------------------------------------
+  // -----------------------
+  // TB parameters
+  // -----------------------
+  localparam int CLK_PERIOD_NS = 10;
+  localparam int LAT_DMA_DONE  = 8;
+
+  // DUT 파라미터와 맞춰야 함
+  localparam longint unsigned DMA_CFG_BASE_ADDR_TB      = 64'h0;
+  localparam int              DMA_CFG_STRIDE_BYTES_TB   = 4;
+  localparam int              DMA_ENTRY_STRIDE_BYTES_TB = 16 * 4; // 64B
+
+  // 엔트리 내부 레지스터 인덱스 (DUT와 동일)
+  localparam int DMA_R_CONTROL     = 0;
+  localparam int DMA_R_DST_BASE_LO = 1;
+  localparam int DMA_R_DST_BASE_HI = 2;
+  localparam int DMA_R_SRC_BASE_LO = 3;
+  localparam int DMA_R_SRC_BASE_HI = 4;
+
+  localparam int DMA_R_SRC_ST0     = 5;
+  localparam int DMA_R_DST_ST0     = 6;
+  localparam int DMA_R_SRC_ST1     = 7;
+  localparam int DMA_R_DST_ST1     = 8;
+  localparam int DMA_R_SRC_ST2     = 9;
+  localparam int DMA_R_DST_ST2     = 10;
+
+  localparam int DMA_R_BND0        = 11;
+  localparam int DMA_R_BND1        = 12;
+  localparam int DMA_R_BND2        = 13;
+  localparam int DMA_R_SEG_SIZE    = 14;
+  localparam int DMA_R_PAD         = 15;
+
+  localparam int DMA_CTRL_START_BIT = 0;
+  localparam int DMA_CTRL_DIR_BIT   = 1;
+
+  // -----------------------
+  // clock/reset
+  // -----------------------
   logic clk, reset;
-
-  localparam string TB_NAME     = "tb_VX_gemm_dma_ctrl";
-  
   initial clk = 1'b0;
-  always #5 clk = ~clk;  // 100MHz
-  integer rpt_fd;
-  integer log_fd;
+  always #(CLK_PERIOD_NS/2) clk = ~clk;
 
-  string fsdb_file_path;
-  string fst_file_path;
-  string rpt_file_path;
-  string log_file_path;
-  string name;
-
-  initial begin
-    $timeformat(-9, 0, "ns", 0);
-
-    $sformat(name, "%s", TB_NAME);
-    $sformat(fsdb_file_path, "./reports/%s.fsdb", name);
-    $sformat(fst_file_path,  "./reports/%s.fst",  name);
-    $sformat(log_file_path,  "./logs/%s.log",     name);
-    $sformat(rpt_file_path,  "./reports/%s.rpt",  name);
-
-`ifdef VCS
-    $fsdbDumpfile(fsdb_file_path);
-    $fsdbDumpvars(0, "+all", "+parameter", "+functions");
-`else
-    $dumpfile(fst_file_path);
-    $dumpvars(0, tb_VX_gemm_ctrl);
-`endif
-
-    rpt_fd = $fopen(rpt_file_path, "w");
-    log_fd = $fopen(log_file_path, "w");
-  end
-
-  initial begin
-    reset = 1'b1;
-    repeat (10) @(posedge clk);
-    reset = 1'b0;
-  end
-
-  // ------------------------------------------------------------
-  // Interface instances
-  //  - IMPORTANT: cfg_reg_if.NUM must cover regs[0..19]
-  // ------------------------------------------------------------
-  localparam int CFG_NUM = 20;
-
-  VX_config_reg_if #(.NUM(CFG_NUM), .DW(64)) cfg_reg_if();
-  VX_gemm_dma_ctrl_if gemm_dma_ctrl_if();
-  VX_gemm_sync_if     gemm_sync_if();
-
-  // MMIO IF for DMA node cfg regs
-  // - 64-bit regs => DATA_SIZE=8 bytes
-  // - single lane
+  // -----------------------
+  // Interfaces
+  // -----------------------
+  VX_config_entry_alloc_if alloc_if();
+  VX_gemm_dma_ctrl_if      gemm_dma_ctrl_if();
+  VX_gemm_sync_if          gemm_sync_if();
   VX_lsu_mem_if #(
-    .NUM_LANES(1),
-    .DATA_SIZE(8), //8 bytes = 64 bits
+    // 필요하면 프로젝트 기본값에 맞게 override
+    .NUM_LANES(4),
+    .DATA_SIZE(16),
     .TAG_WIDTH(1)
   ) dma_if();
 
-  // ------------------------------------------------------------
+  // -----------------------
   // DUT
-  // ------------------------------------------------------------
-  localparam logic [63:0] DMA_CFG_BASE_ADDR = 64'h0000_1000;
-  localparam int          DMA_CFG_STRIDE_BYTES = 8;
-  localparam int          POLL_GAP_CYCLES = 1;
+  // -----------------------
   VX_gemm_dma_ctrl #(
     .INSTANCE_ID("tb"),
-    .DMA_CFG_BASE_ADDR(DMA_CFG_BASE_ADDR),
-    .DMA_CFG_STRIDE_BYTES(DMA_CFG_STRIDE_BYTES),
-    .POLL_GAP_CYCLES(POLL_GAP_CYCLES)
+    .DMA_CFG_BASE_ADDR(DMA_CFG_BASE_ADDR_TB),
+    .DMA_CFG_STRIDE_BYTES(DMA_CFG_STRIDE_BYTES_TB),
+    .DMA_ENTRY_STRIDE_BYTES(DMA_ENTRY_STRIDE_BYTES_TB),
+    .ENTRYID_W(8),
+    .POLL_GAP_CYCLES(1),
+    .ALLOC_RETRY_GAP_CYCLES(0)
   ) dut (
     .clk(clk),
     .reset(reset),
-    .cfg_reg_if(cfg_reg_if),
+
+    .alloc_if(alloc_if),
     .gemm_dma_ctrl_if(gemm_dma_ctrl_if),
     .gemm_sync_if(gemm_sync_if),
     .dma_if(dma_if)
   );
 
-  // ------------------------------------------------------------
-  // Constants (must match DUT)
-  // ------------------------------------------------------------
-  localparam logic [7:0] OP_NOTIFY = 8'hF1;
-  localparam logic [7:0] OP_DMA_LD = 8'h10;
-  localparam logic [7:0] OP_DMA_ST = 8'h11;
+  localparam int NUM_LANES = 4;
+  localparam int DATA_SIZE = 16;
+  localparam int SHIFT     = `CLOG2(DATA_SIZE);
 
-  // ------------------------------------------------------------
-  // TB-owned command variable (module-scope for Verilator)
-  // ------------------------------------------------------------
-  gemm_unified_cmd_t cmd;
+  typedef struct packed {
+      logic [0:0] uuid;
+      logic [1:0] value;
+  } tag_t;
 
-  // ------------------------------------------------------------
-  // Helpers: make instr
-  // instr[7:0]=op, instr[15:8]=flags, instr[31:16]=size_bytes[15:0]
-  // ------------------------------------------------------------
-  function automatic logic [31:0] make_instr(
-    input logic [7:0]  op,
-    input logic [7:0]  flags,
-    input logic [15:0] size_bytes
-  );
-    logic [31:0] x;
-    begin
-      x = 32'd0;
-      x[7:0]   = op;
-      x[15:8]  = flags;
-      x[31:16] = size_bytes;
-      return x;
-    end
-  endfunction
+  typedef struct packed {
+      logic [NUM_LANES-1:0]                  mask;
+      logic [NUM_LANES-1:0][DATA_SIZE*8-1:0] data;
+      tag_t                                  tag;
+  } rsp_data_t;
 
-  // ------------------------------------------------------------
-  // cfg_reg programming (DUT uses indices 6,7)
-  // CFG_N_M    = 6 : {N, M}
-  // CFG_QBLK_K = 7 : {qblk, K}
-  // ------------------------------------------------------------
-  task automatic drive_cfg_totals(
-    input int unsigned M,
-    input int unsigned N,
-    input int unsigned K,
-    input int unsigned qblk
-  );
-    begin
-      cfg_reg_if.regs[6] = {logic'(N[31:0]), logic'(M[31:0])};
-      cfg_reg_if.regs[7] = {logic'(qblk[31:0]), logic'(K[31:0])};
-      $display("[%0t] CFG set: M=%0d N=%0d K=%0d qblk=%0d", $time, M, N, K, qblk);
-    end
-  endtask
+  // =============================================================================
+  // 1) alloc_if model (TB = slave allocator)
+  // =============================================================================
+  logic [7:0] alloc_next_id;
 
-  // ------------------------------------------------------------
-  // Send cmd via gemm_dma_ctrl_if (start pulse + wait done)
-  // ------------------------------------------------------------
-  task automatic send_cmd(input gemm_unified_cmd_t c);
-    begin
-      // wait until DUT reports idle
-      while (!gemm_dma_ctrl_if.idle) @(posedge clk);
-
-      gemm_dma_ctrl_if.cmd   <= c;
-      gemm_dma_ctrl_if.start <= 1'b1;
-      @(posedge clk);
-      gemm_dma_ctrl_if.start <= 1'b0;
-
-      $display("[%0t] TB: START op=0x%02h rd=%0d rs1=%0d rs2=%0d rs1_data=0x%016h rs2_data=0x%016h instr=0x%08h",
-               $time, c.instr[7:0], c.rd, c.rs1, c.rs2, c.rs1_data, c.rs2_data, c.instr);
-
-      // DUT done is 1-cycle pulse
-      while (!gemm_dma_ctrl_if.done) @(posedge clk);
-      $display("[%0t] TB: DONE pulse seen", $time);
-      @(posedge clk);
-    end
-  endtask
-
-  // ------------------------------------------------------------
-  // Default drives (SINGLE DRIVER discipline)
-  // ------------------------------------------------------------
-  initial begin
-    // cfg_reg_if: DUT가 handshake 안 쓰고 regs만 읽는 방식이어도 안전하게 고정
-    cfg_reg_if.valid = 1'b1;
-    cfg_reg_if.wid   = 32'd0;
-    cfg_reg_if.tid   = 32'd0;
-    cfg_reg_if.ready = 1'b1;
-
-    for (int i = 0; i < CFG_NUM; i++) begin
-      cfg_reg_if.regs[i] = 64'd0;
-    end
-
-    // gemm_dma_ctrl_if: TB drives start/cmd only
-    gemm_dma_ctrl_if.start = 1'b0;
-    gemm_dma_ctrl_if.cmd   = '0;
-
-    // gemm_sync_if: TB provides ready only (DUT is master)
-    gemm_sync_if.ready = 1'b1;
-
-    // dma_if: TB is slave
-    //  - TB drives req_ready
-    //  - TB MUST NOT drive rsp_ready (DUT drives it)
-    dma_if.req_ready = 1'b1;
-  end
-
-  // ------------------------------------------------------------
-  // MMIO register model (0..7)
-  // ------------------------------------------------------------
-  localparam int DMA_REGS = 8;
-  logic [63:0] mmio_regs [0:DMA_REGS-1];  //DMA config regs
-
-  int run_countdown;
-  localparam int DMA_RUN_LAT = 15;
-
-  // decode idx from dma_if.req_data.addr[0]
-  // lsu_addr is in units of DATA_SIZE bytes
-  function automatic int decode_mmio_idx(input logic [dma_if.ADDR_WIDTH-1:0] lsu_addr);
-    logic [63:0] byte_addr;
-    int idx;
-    begin
-      byte_addr = 64'(lsu_addr) * dma_if.DATA_SIZE; // DATA_SIZE=8
-      idx = int'((byte_addr - DMA_CFG_BASE_ADDR) / DMA_CFG_STRIDE_BYTES);  // stride=8
-      return idx;
-    end
-  endfunction
-
-  // ------------------------------------------------------------
-  // MMIO responder: SINGLE DRIVER for rsp_valid/rsp_data
-  // ------------------------------------------------------------
   always_ff @(posedge clk) begin
     if (reset) begin
-      for (int i = 0; i < DMA_REGS; i++) begin
-        mmio_regs[i] <= 64'd0;
-      end
-      run_countdown <= 0;
-
-      dma_if.rsp_valid <= 1'b0;
-      dma_if.rsp_data  <= '0;
+      alloc_next_id     <= 8'd1;
+      alloc_if.ready    <= 1'b0;
+      alloc_if.entry_id <= '0;
     end else begin
-      // default: when accepted, drop rsp_valid
+      alloc_if.ready <= 1'b1;
+
+      if (alloc_if.valid && alloc_if.ready) begin
+        alloc_if.entry_id <= alloc_next_id;
+        $display("[%0t] ALLOC: owner_warp=%0d -> entry_id=%0d",
+                 $time, alloc_if.owner_warp, alloc_next_id);
+        alloc_next_id <= alloc_next_id + 8'd1;
+      end
+    end
+  end
+
+  // =============================================================================
+  // 2) gemm_sync_if sink (always ready) + notify monitor
+  // =============================================================================
+  assign gemm_sync_if.ready = 1'b1;
+
+  logic        saw_notify;
+  logic [31:0] saw_notify_reg;
+  logic [31:0] saw_notify_val;
+
+  // clear 요청은 initial에서만 구동 (always_ff는 읽기만 함)
+  logic clear_notify_req = 1'b0;
+
+  always_ff @(posedge clk) begin
+    if (reset) begin
+      saw_notify     <= 1'b0;
+      saw_notify_reg <= '0;
+      saw_notify_val <= '0;
+    end else begin
+      // clear 요청 처리 (요청 신호 자체는 여기서 쓰지 않음!)
+      if (clear_notify_req) begin
+        saw_notify     <= 1'b0;
+        saw_notify_reg <= '0;
+        saw_notify_val <= '0;
+      end
+
+      if (gemm_sync_if.valid && gemm_sync_if.ready) begin
+        saw_notify     <= 1'b1;
+        saw_notify_reg <= gemm_sync_if.reg_idx;
+        saw_notify_val <= gemm_sync_if.value;
+        $display("[%0t] NOTIFY: reg=%0d val=0x%08x", $time, gemm_sync_if.reg_idx, gemm_sync_if.value);
+      end
+    end
+  end
+
+  // =============================================================================
+  // 3) dma_if model (TB = slave)
+  // =============================================================================
+
+  // byte-addressable sparse memory
+  typedef logic [7:0] byte_t;
+  byte_t mem_byte [longint unsigned];
+
+  // slave outputs we drive
+  always_ff @(posedge clk) begin
+    if (reset) begin
+      dma_if.req_ready <= 1'b0;
+    end else begin
+      dma_if.req_ready <= 1'b1;
+    end
+  end
+
+  // pending read response (hold until rsp_ready handshake)
+  logic      pending_rsp;
+  rsp_data_t pending_rsp_data;
+
+  // CONTROL done event (단, done_ev는 "딱 한 always_ff"에서만 구동!)
+  typedef struct packed {
+    bit              valid;
+    longint unsigned ctrl_base_ba; // aligned byte address (DATA_SIZE aligned)
+    int              countdown;
+  } done_ev_t;
+
+  done_ev_t done_ev;
+
+  function automatic longint unsigned lsu_addr_to_byte(input logic [dma_if.ADDR_WIDTH-1:0] a);
+    longint unsigned ua;
+    begin
+      ua = $unsigned(a);
+      return (ua << SHIFT);
+    end
+  endfunction
+
+  task automatic mmio_write_lane(
+    input longint unsigned base_ba,
+    input logic [DATA_SIZE*8-1:0] wdata,
+    input logic [DATA_SIZE-1:0]   byteen
+  );
+    for (int b = 0; b < DATA_SIZE; b++) begin
+      if (byteen[b]) begin
+        mem_byte[base_ba + b] = wdata[(8*b) +: 8];
+      end
+    end
+  endtask
+
+  function automatic logic [DATA_SIZE*8-1:0] mmio_read_lane(input longint unsigned base_ba);
+    logic [DATA_SIZE*8-1:0] r;
+    r = '0;
+    for (int b = 0; b < DATA_SIZE; b++) begin
+      if (mem_byte.exists(base_ba + b))
+        r[(8*b) +: 8] = mem_byte[base_ba + b];
+      else
+        r[(8*b) +: 8] = 8'h00;
+    end
+    return r;
+  endfunction
+
+  // req 받아 처리 + read rsp 만들기 + done_ev countdown/clear까지 "한 always_ff"에서 처리
+  always_ff @(posedge clk) begin
+    if (reset) begin
+      dma_if.rsp_valid    <= 1'b0;
+      dma_if.rsp_data     <= '0;
+      pending_rsp         <= 1'b0;
+      pending_rsp_data    <= '0;
+
+      done_ev.valid        <= 1'b0;
+      done_ev.ctrl_base_ba <= '0;
+      done_ev.countdown    <= 0;
+    end else begin
+      // -------------------------
+      // (A) done_ev 진행/완료 처리
+      // -------------------------
+      if (done_ev.valid) begin
+        if (done_ev.countdown > 0) begin
+          done_ev.countdown <= done_ev.countdown - 1;
+        end else begin
+          // clear CONTROL start bit: byte0 bit0
+          if (!mem_byte.exists(done_ev.ctrl_base_ba + 0))
+            mem_byte[done_ev.ctrl_base_ba + 0] = 8'h00;
+          else
+            mem_byte[done_ev.ctrl_base_ba + 0] = mem_byte[done_ev.ctrl_base_ba + 0] & 8'hFE;
+
+          $display("[%0t] DMA DONE: clear start bit @0x%0h", $time, done_ev.ctrl_base_ba);
+          done_ev.valid <= 1'b0;
+        end
+      end
+
+      // -------------------------
+      // (B) rsp_valid handshake
+      // -------------------------
       if (dma_if.rsp_valid && dma_if.rsp_ready) begin
         dma_if.rsp_valid <= 1'b0;
       end
 
-      // "DMA running" model: clear CONTROL.start(bit0) after some cycles
-      if (run_countdown > 0) begin
-        run_countdown <= run_countdown - 1;
-        if (run_countdown == 1) begin
-          mmio_regs[0][0] <= 1'b0; // CONTROL.start cleared
-          $display("[%0t] MMIO: DONE -> CONTROL.start cleared", $time);
-        end
+      // pending rsp가 있고 아직 rsp_valid가 아니면 올려줌
+      if (pending_rsp && !dma_if.rsp_valid) begin
+        dma_if.rsp_valid <= 1'b1;
+        dma_if.rsp_data  <= pending_rsp_data;
+        pending_rsp      <= 1'b0;
       end
 
-      // handle request if any
+      // -------------------------
+      // (C) request accept
+      // -------------------------
       if (dma_if.req_valid && dma_if.req_ready) begin
-        int idx;
-        idx = decode_mmio_idx(dma_if.req_data.addr[0]);
+        if (dma_if.req_data.rw) begin
+          // WRITE
+          for (int l = 0; l < NUM_LANES; l++) begin
+            if (dma_if.req_data.mask[l]) begin
+              longint unsigned ba;
+              ba = lsu_addr_to_byte(dma_if.req_data.addr[l]);
 
-        if (idx < 0 || idx >= DMA_REGS) begin
-          $display("[%0t] MMIO: WARNING invalid idx=%0d (addr=0x%0h)",
-                   $time, idx, dma_if.req_data.addr[0]);
-        end else begin
-          if (dma_if.req_data.rw) begin
-            // WRITE
-            mmio_regs[idx] <= dma_if.req_data.data[0];
-            $display("[%0t] MMIO: W idx=%0d data=0x%016h",
-                     $time, idx, dma_if.req_data.data[0]);
+              mmio_write_lane(ba, dma_if.req_data.data[l], dma_if.req_data.byteen[l]);
 
-            // if CONTROL written with start_bit=1 -> start "running"
-            if (idx == 0 && dma_if.req_data.data[0][0]) begin
-              run_countdown <= DMA_RUN_LAT;
-              $display("[%0t] MMIO: CONTROL.start=1 dir=%0d -> running %0d cycles",
-                       $time, dma_if.req_data.data[0][1], DMA_RUN_LAT);
+              // CONTROL kick 감지:
+              // - start bit은 data의 byte0 bit0 (LSB)
+              // - CONTROL reg0의 base byte addr는 entry_base + 0 이고,
+              //   entry_base는 64B 단위이므로 (ba % 64 == 0)로 판별
+              if ((ba % DMA_ENTRY_STRIDE_BYTES_TB) == 0) begin
+                // byte0 enable + start bit 1이면 schedule done
+                if (dma_if.req_data.byteen[l][0] && dma_if.req_data.data[l][0]) begin
+                  done_ev.valid        <= 1'b1;
+                  done_ev.ctrl_base_ba <= ba;
+                  done_ev.countdown    <= LAT_DMA_DONE;
+                  $display("[%0t] CONTROL START seen @0x%0h (done in %0d cycles)",
+                           $time, ba, LAT_DMA_DONE);
+                end
+              end
             end
-          end else begin
-            // READ -> immediate response (same cycle registered)
-            dma_if.rsp_valid <= 1'b1;
-            dma_if.rsp_data  <= '0;
-            dma_if.rsp_data.mask[0] <= 1'b1;
-            dma_if.rsp_data.data[0] <= mmio_regs[idx];
+          end
+        end else begin
+          // READ -> rsp 생성해서 pending에 넣기
+          rsp_data_t tmp_rsp;
+          tmp_rsp = '0;
+          tmp_rsp.mask = dma_if.req_data.mask;
+          tmp_rsp.tag  = dma_if.req_data.tag;
 
-            $display("[%0t] MMIO: R idx=%0d -> 0x%016h",
-                     $time, idx, mmio_regs[idx]);
+          for (int l = 0; l < NUM_LANES; l++) begin
+            if (dma_if.req_data.mask[l]) begin
+              longint unsigned ba;
+              ba = lsu_addr_to_byte(dma_if.req_data.addr[l]);
+              tmp_rsp.data[l] = mmio_read_lane(ba);
+            end else begin
+              tmp_rsp.data[l] = '0;
+            end
+          end
+
+          // rsp_valid가 비어있으면 바로 올리고, 아니면 pending에 적재
+          if (!dma_if.rsp_valid && !pending_rsp) begin
+            dma_if.rsp_valid <= 1'b1;
+            dma_if.rsp_data  <= tmp_rsp;
+          end else begin
+            pending_rsp      <= 1'b1;
+            pending_rsp_data <= tmp_rsp;
           end
         end
       end
     end
   end
 
-  // ------------------------------------------------------------
-  // Monitor gemm_sync_if (NOTIFY path)
-  // ------------------------------------------------------------
-  always_ff @(posedge clk) begin
-    if (!reset) begin
-      if (gemm_sync_if.valid && gemm_sync_if.ready) begin
-        $display("[%0t] SYNC: reg_idx=%0d value=%0d (0x%08h)",
-                 $time, gemm_sync_if.reg_idx, gemm_sync_if.value, gemm_sync_if.value);
-      end
+  // =============================================================================
+  // 4) TB stimulus helpers
+  // =============================================================================
+  localparam logic [7:0] OP_NOTIFY  = 8'hF1;
+  localparam logic [7:0] OP_DMA_LD  = 8'h10;
+  localparam logic [7:0] OP_DMA_ST  = 8'h11;
+
+  function automatic logic [31:0] make_instr(input logic [7:0] op);
+    return {24'd0, op};
+  endfunction
+
+  task automatic pulse_start();
+    gemm_dma_ctrl_if.start <= 1'b1;
+    @(posedge clk);
+    gemm_dma_ctrl_if.start <= 1'b0;
+  endtask
+
+  task automatic wait_done();
+    while (!gemm_dma_ctrl_if.done) @(posedge clk);
+    @(posedge clk);
+  endtask
+
+  // =============================================================================
+  // 5) Scoreboard: reg32 read helper from mem_byte
+  // =============================================================================
+  function automatic longint unsigned entry_reg_addr_byte(input int entry_id, input int reg_idx);
+    int idx;
+    idx = (entry_id > 0) ? (entry_id - 1) : 0;  // entry_id=1 -> idx=0
+    return DMA_CFG_BASE_ADDR_TB
+        + (64'(idx)     * DMA_ENTRY_STRIDE_BYTES_TB)
+        + (64'(reg_idx) * DMA_CFG_STRIDE_BYTES_TB);
+  endfunction
+
+  function automatic logic [31:0] mmio_read_reg32(input int entry_id, input int reg_idx);
+    longint unsigned a;
+    logic [31:0] v;
+    a = entry_reg_addr_byte(entry_id, reg_idx);
+    v = '0;
+    for (int b=0; b<4; b++) begin
+      if (mem_byte.exists(a+b)) v[(8*b)+:8] = mem_byte[a+b];
+      else                      v[(8*b)+:8] = 8'h00;
     end
-  end
+    return v;
+  endfunction
 
-  // ------------------------------------------------------------
-  // Main stimulus
-  // ------------------------------------------------------------
+  task automatic expect_reg32(input int entry_id, input int reg_idx, input logic [31:0] exp);
+    logic [31:0] got;
+    got = mmio_read_reg32(entry_id, reg_idx);
+    if (got !== exp) begin
+      $fatal(1, "REG MISMATCH entry=%0d reg[%0d]: got=0x%08x exp=0x%08x",
+             entry_id, reg_idx, got, exp);
+    end else begin
+      $display("[%0t] OK entry=%0d reg[%0d]=0x%08x", $time, entry_id, reg_idx, got);
+    end
+  endtask
+
+  // =============================================================================
+  // 6) Main test
+  // =============================================================================
   initial begin
-    // wait reset release
-    while (reset) @(posedge clk);
+    int used_entry;
+    gemm_unified_cmd_t c;
 
-    // Set totals (for mt_eff/nt_eff/kt_eff)
-    drive_cfg_totals(128, 256, 192, 32);
+    // defaults
+    gemm_dma_ctrl_if.start <= 1'b0;
+    gemm_dma_ctrl_if.cmd   <= '0;
+    gemm_dma_ctrl_if.M_tot <= 32'd0;
+    gemm_dma_ctrl_if.N_tot <= 32'd0;
+    gemm_dma_ctrl_if.K_tot <= 32'd0;
+    gemm_dma_ctrl_if.wid   <= 32'd0;
 
-    // ----------------------------------------------------------
-    // 1) DMA_LD INPUT (rd=0) : mt_idx=0, kt_idx=0
-    //    LD: rs1_data=lmem_dst, rs2_data=dram_src
-    // ----------------------------------------------------------
-    cmd = '0;
-    cmd.instr    = make_instr(OP_DMA_LD, 8'h00, 16'(32768));
-    cmd.rd       = 'd0; // INPUT
-    cmd.rs1      = 'd0; // mt_idx
-    cmd.rs2      = 'd0; // kt_idx
-    cmd.rs1_data = 64'h0000_0000_0010_0000; // LMEM dst base
-    cmd.rs2_data = 64'h0000_0001_0000_0000; // DRAM src base
-    send_cmd(cmd);
+    reset = 1'b1;
+    repeat (5) @(posedge clk);
+    reset = 1'b0;
+    repeat (2) @(posedge clk);
 
-    $display("---- MMIO regs after INPUT LD ----");
-    for (int i = 0; i < DMA_REGS; i++) $display("  R[%0d]=0x%016h", i, mmio_regs[i]);
+    // -------------------------
+    // Test #1: DMA_LD INPUT tile
+    // -------------------------
+    used_entry = 1; // alloc_next_id 초기값이 1이므로 첫 할당은 entry 1
 
-    // ----------------------------------------------------------
-    // 2) DMA_ST OUTPUT (rd=4) : mt_idx=0, nt_idx=1
-    //    ST: rs1_data=dram_dst, rs2_data=lmem_src
-    // ----------------------------------------------------------
-    cmd = '0;
-    cmd.instr    = make_instr(OP_DMA_ST, 8'h00, 16'(16384));
-    cmd.rd       = 'd4; // OUTPUT
-    cmd.rs1      = 'd0; // mt_idx
-    cmd.rs2      = 'd1; // nt_idx
-    cmd.rs1_data = 64'h0000_0002_0000_0000; // DRAM dst base
-    cmd.rs2_data = 64'h0000_0000_0030_0000; // LMEM src base
-    send_cmd(cmd);
+    c = '0;
+    c.instr    = make_instr(OP_DMA_LD);
+    c.rd       = '0;   // T_INPUT 선택: rd==0
+    c.rs1      = '0;   // mt_idx
+    c.rs2      = '0;   // kt_idx
+    c.rs1_data = 64'h0000_0000_0000_1000; // LMEM dst base
+    c.rs2_data = 64'h0000_0000_0000_8000; // DRAM src base
 
-    $display("---- MMIO regs after OUTPUT ST ----");
-    for (int i = 0; i < DMA_REGS; i++) $display("  R[%0d]=0x%016h", i, mmio_regs[i]);
+    gemm_dma_ctrl_if.cmd   <= c;
+    gemm_dma_ctrl_if.M_tot <= 32'd128;
+    gemm_dma_ctrl_if.N_tot <= 32'd128;
+    gemm_dma_ctrl_if.K_tot <= 32'd128;
+    gemm_dma_ctrl_if.wid   <= 32'd7;
 
-    // ----------------------------------------------------------
-    // 3) NOTIFY
-    // notify_rid   = rs1_data[7:0]
-    // notify_value = rs2_data[31:0]
-    // ----------------------------------------------------------
-    cmd = '0;
-    cmd.instr    = make_instr(OP_NOTIFY, 8'h00, 16'd0);
-    cmd.rs1_data = 64'h0000_0000_0000_0003; // rid=3
-    cmd.rs2_data = 64'h0000_0000_0000_00AA; // value=0xAA
-    send_cmd(cmd);
+    $display("[%0t] Send DMA_LD INPUT", $time);
+    pulse_start();
+    wait_done();
+    $display("[%0t] DMA_LD done", $time);
 
-    $display("[%0t] TB: ALL TESTS DONE", $time);
-    repeat (20) @(posedge clk);
+    // 기대값 (네 DUT의 always_comb 기준)
+    // INPUT:
+    //   seg_size = KT*2 = 256
+    //   padding  = 0
+    //   dram_s0  = K_tot*2 = 256
+    //   dram_b0  = mt_eff = 128
+    // LD:
+    //   src_st0=256, dst_st0=256, bnd0=128, bnd1=1, bnd2=1
+    expect_reg32(used_entry, DMA_R_DST_BASE_LO, 32'h0000_1000);
+    expect_reg32(used_entry, DMA_R_DST_BASE_HI, 32'h0000_0000);
+    expect_reg32(used_entry, DMA_R_SRC_BASE_LO, 32'h0000_8000);
+    expect_reg32(used_entry, DMA_R_SRC_BASE_HI, 32'h0000_0000);
+
+    expect_reg32(used_entry, DMA_R_SRC_ST0,   32'd256);
+    expect_reg32(used_entry, DMA_R_DST_ST0,   32'd256);
+    expect_reg32(used_entry, DMA_R_SRC_ST1,   32'd0);
+    expect_reg32(used_entry, DMA_R_DST_ST1,   32'd0);
+    expect_reg32(used_entry, DMA_R_SRC_ST2,   32'd0);
+    expect_reg32(used_entry, DMA_R_DST_ST2,   32'd0);
+
+    expect_reg32(used_entry, DMA_R_BND0,      32'd128);
+    expect_reg32(used_entry, DMA_R_BND1,      32'd1);
+    expect_reg32(used_entry, DMA_R_BND2,      32'd1);
+    expect_reg32(used_entry, DMA_R_SEG_SIZE,  32'd256);
+    expect_reg32(used_entry, DMA_R_PAD,       32'd0);
+
+    // -------------------------
+    // Test #2: NOTIFY
+    // -------------------------
+    // saw_notify는 always_ff에서만 구동되므로, clear 요청만 펄스로 넣어줌
+    clear_notify_req <= 1'b1;
+    @(posedge clk);
+    clear_notify_req <= 1'b0;
+
+    c = '0;
+    c.instr    = make_instr(OP_NOTIFY);
+    c.rs1_data = 64'h0000_0000_0000_0003; // rid=3 (low8)
+    c.rs2_data = 64'h0000_0000_DEAD_BEEF; // value (low32)
+
+    gemm_dma_ctrl_if.cmd <= c;
+    $display("[%0t] Send NOTIFY", $time);
+    pulse_start();
+    wait_done();
+
+    if (!saw_notify)                      $fatal(1, "Expected notify but did not see gemm_sync_if handshake");
+    if (saw_notify_reg !== 32'd3)         $fatal(1, "notify reg mismatch: got %0d exp 3", saw_notify_reg);
+    if (saw_notify_val !== 32'hDEAD_BEEF) $fatal(1, "notify val mismatch: got 0x%08x exp 0xDEADBEEF", saw_notify_val);
+
+    $display("[%0t] ALL TESTS PASSED", $time);
+    #50;
     $finish;
   end
 
