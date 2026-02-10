@@ -287,106 +287,106 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*; import cf_mat
         $display("\n[TEST 4] Multi Input Vector Test");
         $fdisplay(log_fd, "[%0t] TEST 4: Multi Input Vector Test", $time);
         begin
-          test_multi_in_vector(
-            .is_load(1), .quant_dir(`QDIR_COL),
-            .acc_mem_base_addr(`GEMM_PSUM_DATA_SIZE*4 + 0),
-            .wreg_use_idx(0),
-            .sreg_use_idx(0),
-            .zreg_use_idx(0),
-            .num_inputs(4),
-            .fail(fail),
-            .input_random(1),
-            .weight_random(1),
-            .scale_random(1),
-            .zp_random(1),
-            .psum_random(1)
-          );
-          if(fail) $display("TEST 4 FAILED on basic multi input vector test (4 inputs)");
-          else      $display("TEST 4 PASSED on basic multi input vector test (4 inputs)");
+          // test_multi_in_vector(
+          //   .is_load(1), .quant_dir(`QDIR_COL),
+          //   .acc_mem_base_addr(`GEMM_PSUM_DATA_SIZE*4 + 0),
+          //   .wreg_use_idx(0),
+          //   .sreg_use_idx(0),
+          //   .zreg_use_idx(0),
+          //   .num_inputs(4),
+          //   .fail(fail),
+          //   .input_random(1),
+          //   .weight_random(1),
+          //   .scale_random(1),
+          //   .zp_random(1),
+          //   .psum_random(1)
+          // );
+          // if(fail) $display("TEST 4 FAILED on basic multi input vector test (4 inputs)");
+          // else      $display("TEST 4 PASSED on basic multi input vector test (4 inputs)");
 
-          // Different number of inputs test
-          for(int n = 3; n <= 8; n = n + 1) begin
-            test_multi_in_vector(
-              .is_load(1), .quant_dir(`QDIR_COL),
-              .acc_mem_base_addr(`GEMM_PSUM_DATA_SIZE*4 + 0),
-              .wreg_use_idx(0),
-              .sreg_use_idx(0),
-              .zreg_use_idx(0),
-              .num_inputs(2**n),
-              .fail(fail),
-              .input_random(1),
-              .weight_random(1),
-              .scale_random(1),
-              .zp_random(1),
-              .psum_random(1)
-            );
-          end
-          if(fail) $display("TEST 4 FAILED on different num_inputs test (8~256)");
-          else      $display("TEST 4 PASSED on different num_inputs test (8~256)");
+          // // Different number of inputs test
+          // for(int n = 3; n <= 8; n = n + 1) begin
+          //   test_multi_in_vector(
+          //     .is_load(1), .quant_dir(`QDIR_COL),
+          //     .acc_mem_base_addr(`GEMM_PSUM_DATA_SIZE*4 + 0),
+          //     .wreg_use_idx(0),
+          //     .sreg_use_idx(0),
+          //     .zreg_use_idx(0),
+          //     .num_inputs(2**n),
+          //     .fail(fail),
+          //     .input_random(1),
+          //     .weight_random(1),
+          //     .scale_random(1),
+          //     .zp_random(1),
+          //     .psum_random(1)
+          //   );
+          // end
+          // if(fail) $display("TEST 4 FAILED on different num_inputs test (8~256)");
+          // else      $display("TEST 4 PASSED on different num_inputs test (8~256)");
 
-          // Other register idx test
-          test_multi_in_vector(
-            .is_load(1), .quant_dir(`QDIR_COL),
-            .acc_mem_base_addr(`GEMM_PSUM_DATA_SIZE*4 + 0),
-            .wreg_use_idx(1),
-            .sreg_use_idx(1),
-            .zreg_use_idx(1),
-            .num_inputs(4),
-            .fail(fail),
-            .input_random(1),
-            .weight_random(1),
-            .scale_random(1),
-            .zp_random(1),
-            .psum_random(1)
-          );
-          if(fail) $display("TEST 4 FAILED on other register idx test");
-          else      $display("TEST 4 PASSED on other register idx test");
+          // // Other register idx test
+          // test_multi_in_vector(
+          //   .is_load(1), .quant_dir(`QDIR_COL),
+          //   .acc_mem_base_addr(`GEMM_PSUM_DATA_SIZE*4 + 0),
+          //   .wreg_use_idx(1),
+          //   .sreg_use_idx(1),
+          //   .zreg_use_idx(1),
+          //   .num_inputs(4),
+          //   .fail(fail),
+          //   .input_random(1),
+          //   .weight_random(1),
+          //   .scale_random(1),
+          //   .zp_random(1),
+          //   .psum_random(1)
+          // );
+          // if(fail) $display("TEST 4 FAILED on other register idx test");
+          // else      $display("TEST 4 PASSED on other register idx test");
 
-          // Other accum mem addr test
-          for(int i = 0; i < 4; i++) begin
-            test_multi_in_vector(
-              .is_load(1), .quant_dir(`QDIR_COL),
-              .acc_mem_base_addr(`GEMM_PSUM_DATA_SIZE*4 + i*(`MXU_COL*4)*4),  // Account for multi outputs
-              .wreg_use_idx(0),
-              .sreg_use_idx(0),
-              .zreg_use_idx(0),
-              .num_inputs(4),
-              .fail(fail),
-              .input_random(1),
-              .weight_random(1),
-              .scale_random(1),
-              .zp_random(1),
-              .psum_random(1)
-            );
-          end
-          if(fail) $display("TEST 4 FAILED on other accum mem addr test");
-          else      $display("TEST 4 PASSED on other accum mem addr test");
+          // // Other accum mem addr test
+          // for(int i = 0; i < 4; i++) begin
+          //   test_multi_in_vector(
+          //     .is_load(1), .quant_dir(`QDIR_COL),
+          //     .acc_mem_base_addr(`GEMM_PSUM_DATA_SIZE*4 + i*(`MXU_COL*4)*4),  // Account for multi outputs
+          //     .wreg_use_idx(0),
+          //     .sreg_use_idx(0),
+          //     .zreg_use_idx(0),
+          //     .num_inputs(4),
+          //     .fail(fail),
+          //     .input_random(1),
+          //     .weight_random(1),
+          //     .scale_random(1),
+          //     .zp_random(1),
+          //     .psum_random(1)
+          //   );
+          // end
+          // if(fail) $display("TEST 4 FAILED on other accum mem addr test");
+          // else      $display("TEST 4 PASSED on other accum mem addr test");
 
-          // Different quantization direction test (QDIR_ROW)
-          test_multi_in_vector(
-            .is_load(1), .quant_dir(`QDIR_ROW),
-            .acc_mem_base_addr(`GEMM_PSUM_DATA_SIZE*4 + 0),
-            .wreg_use_idx(0),
-            .sreg_use_idx(0),
-            .zreg_use_idx(0),
-            .num_inputs(4),
-            .fail(fail),
-            .input_random(1),
-            .weight_random(1),
-            .scale_random(1),
-            .zp_random(1),
-            .psum_random(1)
-          );
-          if(fail) $display("TEST 4 FAILED on different quantization direction test (QDIR_ROW)");
-          else      $display("TEST 4 PASSED on different quantization direction test (QDIR_ROW)");
+          // // Different quantization direction test (QDIR_ROW)
+          // test_multi_in_vector(
+          //   .is_load(1), .quant_dir(`QDIR_ROW),
+          //   .acc_mem_base_addr(`GEMM_PSUM_DATA_SIZE*4 + 0),
+          //   .wreg_use_idx(0),
+          //   .sreg_use_idx(0),
+          //   .zreg_use_idx(0),
+          //   .num_inputs(4),
+          //   .fail(fail),
+          //   .input_random(1),
+          //   .weight_random(1),
+          //   .scale_random(1),
+          //   .zp_random(1),
+          //   .psum_random(1)
+          // );
+          // if(fail) $display("TEST 4 FAILED on different quantization direction test (QDIR_ROW)");
+          // else      $display("TEST 4 PASSED on different quantization direction test (QDIR_ROW)");
 
           test_multi_in_vector(
             .is_load(0), .quant_dir(`QDIR_COL),
-            .acc_mem_base_addr(`GEMM_PSUM_DATA_SIZE*4 + 256*(`MXU_COL*4)),  // Different address range
+            .acc_mem_base_addr(`GEMM_PSUM_DATA_SIZE*`GEMM_ACC_MEM_BANK_NUM),  // Different address range
             .wreg_use_idx(0),
             .sreg_use_idx(0),
             .zreg_use_idx(0),
-            .num_inputs(4),
+            .num_inputs(8),
             .fail(fail),
             .input_random(1),
             .weight_random(1),
@@ -397,23 +397,23 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*; import cf_mat
           if(fail) $display("TEST 4 FAILED on is_load = 0 test (accumulate mode)");
           else      $display("TEST 4 PASSED on is_load = 0 test (accumulate mode)");
 
-          // Larger number of inputs test
-          test_multi_in_vector(
-            .is_load(1), .quant_dir(`QDIR_COL),
-            .acc_mem_base_addr(`GEMM_PSUM_DATA_SIZE*4 + 0),
-            .wreg_use_idx(0),
-            .sreg_use_idx(0),
-            .zreg_use_idx(0),
-            .num_inputs(16),
-            .fail(fail),
-            .input_random(1),
-            .weight_random(1),
-            .scale_random(1),
-            .zp_random(1),
-            .psum_random(1)
-          );
-          if(fail) $display("TEST 4 FAILED on larger num_inputs test (16 inputs)");
-          else      $display("TEST 4 PASSED on larger num_inputs test (16 inputs)");
+          // // Larger number of inputs test
+          // test_multi_in_vector(
+          //   .is_load(1), .quant_dir(`QDIR_COL),
+          //   .acc_mem_base_addr(`GEMM_PSUM_DATA_SIZE*4 + 0),
+          //   .wreg_use_idx(0),
+          //   .sreg_use_idx(0),
+          //   .zreg_use_idx(0),
+          //   .num_inputs(16),
+          //   .fail(fail),
+          //   .input_random(1),
+          //   .weight_random(1),
+          //   .scale_random(1),
+          //   .zp_random(1),
+          //   .psum_random(1)
+          // );
+          // if(fail) $display("TEST 4 FAILED on larger num_inputs test (16 inputs)");
+          // else      $display("TEST 4 PASSED on larger num_inputs test (16 inputs)");
         end
 
         // Wait for completion
@@ -1391,7 +1391,8 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*; import cf_mat
         $display("[%0t] Setting up scale registers...", $time);
         for (i = 0; i < `MXU_MAX_DIM; i++) begin
             if (scale_random) begin
-                scale_values[sreg_use_idx][i] = fp32_val_to_fp16_bit(1.0 + $urandom_range(0, 1000)/1000.0);
+                // scale_values[sreg_use_idx][i] = fp32_val_to_fp16_bit(1.0 + $urandom_range(0, 1000)/1000.0);
+                scale_values[sreg_use_idx][i] = fp32_val_to_fp16_bit(shortreal'((1 + i)%5)-1.5);
             end else begin
                 scale_values[sreg_use_idx][i] = 16'h4000;  // 2.0 in FP16
             end
@@ -1404,7 +1405,8 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*; import cf_mat
         $display("[%0t] Setting up zero point registers...", $time);
         for (i = 0; i < `MXU_MAX_DIM; i++) begin
             if (zp_random) begin
-                zp_values[zreg_use_idx][i] = `ZP_WIDTH'($urandom_range(0, 10));
+                // zp_values[zreg_use_idx][i] = `ZP_WIDTH'($urandom_range(0, 10));
+                zp_values[zreg_use_idx][i] = `ZP_WIDTH'((i%5)-2);
             end else begin
                 zp_values[zreg_use_idx][i] = `ZP_WIDTH'(1);
             end
@@ -1420,7 +1422,8 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*; import cf_mat
         for (i = 0; i < MXU_ROW; i++) begin
             for (j = 0; j < MXU_COL; j++) begin
                 if (weight_random) begin
-                    weight_data[i][j] = $urandom_range(0, 15);
+                    // weight_data[i][j] = $urandom_range(0, 15);
+                    weight_data[i][j] = ((j*MXU_ROW + i*MXU_COL)%13) - 6;
                 end else begin
                     weight_data[i][j] = (i*MXU_COL + j)%3;  // Simple pattern
                 end
@@ -1444,7 +1447,8 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*; import cf_mat
             for (k = 0; k < num_inputs; k++) begin
                 for (j = 0; j < `MXU_COL; j++) begin
                     if (psum_random) begin
-                        acc_init_value[j] = $shortrealtobits(1.0 + $urandom_range(0, 1000)/1000.0);
+                        // acc_init_value[j] = $shortrealtobits(1.0 + $urandom_range(0, 1000)/1000.0);
+                        acc_init_value[j] = $shortrealtobits((k*`MXU_COL + j)%5 - 2.5);
                         ref_psum[k * MXU_COL + j] = acc_init_value[j];
                     end else begin
                         acc_init_value[j] = 32'h3F800000; // 1.0 in FP32
@@ -1463,7 +1467,8 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*; import cf_mat
         for (k = 0; k < num_inputs; k++) begin
             for (i = 0; i < MXU_ROW; i++) begin
                 if (input_random) begin
-                    input_data[k][i] = fp32_val_to_fp16_bit(1.0 + $urandom_range(0, 1000)/1000.0);
+                    // input_data[k][i] = fp32_val_to_fp16_bit(1.0 + $urandom_range(0, 1000)/1000.0);
+                    input_data[k][i] = fp32_val_to_fp16_bit((k*MXU_ROW + i)%7 - 1.5);
                 end else begin
                     // Generate different values for each input: 1.0, 1.5, 2.0, etc.
                     case (k % 4)

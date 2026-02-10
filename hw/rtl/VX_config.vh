@@ -965,6 +965,16 @@
 
 // GEMM Unit Parameters ///////////////////////////////////////////////////////
 
+// ------------------------------------------------------
+// common FP bitwidths
+// ------------------------------------------------------
+`define FP32_WIDTH 32             // Total FP32 bitwidth
+`define FP32_EXP_WIDTH 8          // Exponent width (FP32)
+`define FP32_MAN_WIDTH 23         // Mantissa width (FP32)
+`define FP16_WIDTH 16             // Total FP16 bitwidth
+`define FP16_EXP_WIDTH 5          // Exponent width (FP16)
+`define FP16_MAN_WIDTH 10         // Mantissa width (FP16)
+
 // -------------------------------------------------------
 // Input Format (FP16) Parameters
 // -------------------------------------------------------
@@ -1080,17 +1090,19 @@ for block_size in range(1, full_bitwidth+1):
 `define GEMM_INPUT_DATA_SIZE      ((`IFP_WIDTH/8)*`MXU_ROW)             // 32 bytes (16 FP16 inputs)
 `define GEMM_WEIGHT_DATA_SIZE     ((`MXU_COL*`MXU_WLOAD_NUM*`W_BIT_WIDTH)/8) // 16 bytes (32 INT4 weights)
 `define GEMM_SCALE_ZERO_DATA_SIZE ((`SCALE_WIDTH*`MXU_COL)/8)           // 32 bytes (16 FP16 scales)
-`define GEMM_OUTPUT_DATA_SIZE     (2*`MXU_COL)                          // 32 bytes (16 FP16 outputs)
-`define GEMM_PSUM_DATA_SIZE       (4*`MXU_COL)                          // 64 bytes (16 FP32 psums)
+`define GEMM_OUTPUT_DATA_SIZE     ((`FP16_WIDTH/8)*`MXU_COL)                          // 32 bytes (16 FP16 outputs)
+`define GEMM_PSUM_DATA_SIZE       ((`FP32_WIDTH/8)*`MXU_COL)                          // 64 bytes (16 FP32 psums)
 
 // -------------------------------------------------------
 // Accumulator Memory Configuration
 // -------------------------------------------------------
 `define GEMM_ACC_MEM_DEPTH 1024
-`define GEMM_ACC_MEM_TOT_SIZE ((`GEMM_ACC_MEM_DEPTH) * (`GEMM_PSUM_DATA_SIZE) * 4)
+`define GEMM_ACC_MEM_BANK_NUM 4
+`define GEMM_ACC_MEM_TOT_SIZE ((`GEMM_ACC_MEM_DEPTH) * (`GEMM_PSUM_DATA_SIZE) * `GEMM_ACC_MEM_BANK_NUM)
 `define GEMM_ACC_MEM_ADDR_WIDTH `CLOG2(`GEMM_ACC_MEM_TOT_SIZE)
-`define GEMM_ACC_MEM_BANK_WIDTH (`MXU_COL * 4)                           // 64 bytes per bank
-`define GEMM_ACC_MEM_BANK_ADDR_WIDTH (`GEMM_ACC_MEM_ADDR_WIDTH - 2)
+`define GEMM_ACC_MEM_BANK_WIDTH (`MXU_COL * `GEMM_ACC_MEM_BANK_NUM) // 64 bytes per bank
+`define GEMM_ACC_MEM_BANK_ADDR_WIDTH (`GEMM_ACC_MEM_ADDR_WIDTH - `CLOG2(`GEMM_ACC_MEM_BANK_NUM))
+`define GEMM_ACC_MEM_BANK_DEPTH_ADDR_WIDTH (`GEMM_ACC_MEM_BANK_ADDR_WIDTH - `CLOG2(`GEMM_PSUM_DATA_SIZE))
 `define GEMM_ACC_MAX_CNT `CLOG2((2*`GEMM_ACC_MEM_DEPTH))
 
 // -------------------------------------------------------

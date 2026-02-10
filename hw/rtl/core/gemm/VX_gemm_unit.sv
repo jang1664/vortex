@@ -97,6 +97,13 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
                 addr[`CLOG2(`GEMM_ACC_MEM_BANK_WIDTH)-1:0]};
     endfunction
 
+    function automatic [`GEMM_ACC_MEM_BANK_DEPTH_ADDR_WIDTH-1:0] get_acc_mem_bank_depth_addr (
+        input logic [`GEMM_ACC_MEM_BANK_ADDR_WIDTH-1:0] addr
+    );
+        return addr[`GEMM_ACC_MEM_BANK_ADDR_WIDTH-1:`CLOG2(`GEMM_PSUM_DATA_SIZE)];
+    endfunction
+
+
     // =========================================================================
     // Signal Declarations
     // =========================================================================
@@ -265,11 +272,13 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     logic [`GEMM_ACC_MEM_BANK_ADDR_WIDTH-1:0]      acc_mem_out_rd_bank_addr;
     logic [1:0]                                    acc_mem_out_rd_bank;
 
-    logic [3:0][`MXU_COL-1:0][FP32_WIDTH-1:0]      acc_mem_out_data;
-    logic [3:0][`GEMM_ACC_MEM_ADDR_WIDTH-1:0]      acc_mem_wr_addr;
-    logic [3:0][`GEMM_ACC_MEM_ADDR_WIDTH-1:0]      acc_mem_rd_addr;
-    logic [3:0]                                    acc_mem_wr_en;
-    logic [3:0]                                    acc_mem_rd_en;
+    logic [3:0][`MXU_COL-1:0][FP32_WIDTH-1:0]            acc_mem_out_data;
+    logic [3:0][`GEMM_ACC_MEM_ADDR_WIDTH-1:0]            acc_mem_wr_addr;
+    logic [3:0][`GEMM_ACC_MEM_BANK_DEPTH_ADDR_WIDTH-1:0] acc_mem_rd_depth_addr;
+    logic [3:0][`GEMM_ACC_MEM_BANK_DEPTH_ADDR_WIDTH-1:0] acc_mem_wr_depth_addr;
+    logic [3:0][`GEMM_ACC_MEM_ADDR_WIDTH-1:0]            acc_mem_rd_addr;
+    logic [3:0]                                          acc_mem_wr_en;
+    logic [3:0]                                          acc_mem_rd_en;
 
     // -------------------------------------------------------------------------
     // Accumulator Read FSM Signals
@@ -1088,7 +1097,9 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
       if(reset) begin
         acc_mem_accum_rd_bank_q <= '0;
       end else begin
-        acc_mem_accum_rd_bank_q <= acc_mem_accum_rd_bank;
+        if(acc_mem_accum_rd_req) begin
+          acc_mem_accum_rd_bank_q <= acc_mem_accum_rd_bank;
+        end
       end
     end
     assign acc_rd_fifo_in_data = acc_mem_out_data[acc_mem_accum_rd_bank_q];
@@ -1132,6 +1143,9 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
                                         this_bank_out_rd   ? acc_mem_out_rd_bank_addr : '0;
             assign acc_mem_in_data[i] = this_bank_accum_wr ? (gemm_unit_ctrl.is_load ? scaled_fp32_out_data : acc_output_data) : '0;
 
+            assign acc_mem_wr_depth_addr[i] = get_acc_mem_bank_depth_addr(acc_mem_wr_addr[i]);
+            assign acc_mem_rd_depth_addr[i] = get_acc_mem_bank_depth_addr(acc_mem_rd_addr[i]);
+
             VX_sp_ram #(
                 .DATAW   (`MXU_COL * FP32_WIDTH),
                 .SIZE    (`GEMM_ACC_MEM_DEPTH),
@@ -1143,8 +1157,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
                 .read  (acc_mem_rd_en[i]),
                 .write (acc_mem_wr_en[i]),
                 .wren  (1'b1),
-                .addr  (acc_mem_wr_en[i] ? acc_mem_wr_addr[i][`GEMM_ACC_MEM_ADDR_WIDTH-1:`CLOG2(`MXU_COL*FP32_WIDTH/8)] : 
-                                           acc_mem_rd_addr[i][`GEMM_ACC_MEM_ADDR_WIDTH-1:`CLOG2(`MXU_COL*FP32_WIDTH/8)]),
+                .addr  (acc_mem_wr_en[i] ? acc_mem_wr_depth_addr[i] : acc_mem_rd_depth_addr[i]),
                 .wdata (acc_mem_in_data[i]),
                 .rdata (acc_mem_out_data[i])
             );
@@ -1158,6 +1171,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
         input logic [`MXU_COL-1:0][FP32_WIDTH-1:0] init_value = '0
     );
         logic [`GEMM_ACC_MEM_BANK_ADDR_WIDTH-1:0] bank_addr;
+        logic [`GEMM_ACC_MEM_BANK_DEPTH_ADDR_WIDTH-1:0] bank_depth_addr;
         logic [1:0] bank_idx;
 
         for (int i = 0; i < size; i++) begin
@@ -1165,12 +1179,13 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
             addr = base_addr + i * (`MXU_COL * (FP32_WIDTH/8));
             bank_idx  = get_acc_mem_idx(addr);
             bank_addr = get_acc_mem_bank_addr(addr);
+            bank_depth_addr = get_acc_mem_bank_depth_addr(bank_addr);
 
             case (bank_idx)
-                2'd0: gen_acc_mem[0].VX_sp_ram_instance.ram[bank_addr] = init_value;
-                2'd1: gen_acc_mem[1].VX_sp_ram_instance.ram[bank_addr] = init_value;
-                2'd2: gen_acc_mem[2].VX_sp_ram_instance.ram[bank_addr] = init_value;
-                2'd3: gen_acc_mem[3].VX_sp_ram_instance.ram[bank_addr] = init_value;
+                2'd0: gen_acc_mem[0].VX_sp_ram_instance.ram[bank_depth_addr] = init_value;
+                2'd1: gen_acc_mem[1].VX_sp_ram_instance.ram[bank_depth_addr] = init_value;
+                2'd2: gen_acc_mem[2].VX_sp_ram_instance.ram[bank_depth_addr] = init_value;
+                2'd3: gen_acc_mem[3].VX_sp_ram_instance.ram[bank_depth_addr] = init_value;
             endcase
         end
     endtask
@@ -1180,16 +1195,19 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
         output logic [`MXU_COL-1:0][FP32_WIDTH-1:0] data
     );
         logic [`GEMM_ACC_MEM_BANK_ADDR_WIDTH-1:0] bank_addr;
+        logic [`GEMM_ACC_MEM_BANK_DEPTH_ADDR_WIDTH-1:0] bank_depth_addr;
         logic [1:0] bank_idx;
 
         bank_idx  = get_acc_mem_idx(addr);
         bank_addr = get_acc_mem_bank_addr(addr);
+        bank_depth_addr = get_acc_mem_bank_depth_addr(bank_addr);
+
 
         case (bank_idx)
-            2'd0: data = gen_acc_mem[0].VX_sp_ram_instance.ram[bank_addr];
-            2'd1: data = gen_acc_mem[1].VX_sp_ram_instance.ram[bank_addr];
-            2'd2: data = gen_acc_mem[2].VX_sp_ram_instance.ram[bank_addr];
-            2'd3: data = gen_acc_mem[3].VX_sp_ram_instance.ram[bank_addr];
+            2'd0: data = gen_acc_mem[0].VX_sp_ram_instance.ram[bank_depth_addr];
+            2'd1: data = gen_acc_mem[1].VX_sp_ram_instance.ram[bank_depth_addr];
+            2'd2: data = gen_acc_mem[2].VX_sp_ram_instance.ram[bank_depth_addr];
+            2'd3: data = gen_acc_mem[3].VX_sp_ram_instance.ram[bank_depth_addr];
         endcase
     endtask
 
@@ -1198,16 +1216,18 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
         input logic [`MXU_COL-1:0][FP32_WIDTH-1:0] data
     );
         logic [`GEMM_ACC_MEM_BANK_ADDR_WIDTH-1:0] bank_addr;
+        logic [`GEMM_ACC_MEM_BANK_DEPTH_ADDR_WIDTH-1:0] bank_depth_addr;
         logic [1:0] bank_idx;
 
         bank_idx  = get_acc_mem_idx(addr);
         bank_addr = get_acc_mem_bank_addr(addr);
+        bank_depth_addr = get_acc_mem_bank_depth_addr(bank_addr);
 
         case (bank_idx)
-            2'd0: gen_acc_mem[0].VX_sp_ram_instance.ram[bank_addr] = data;
-            2'd1: gen_acc_mem[1].VX_sp_ram_instance.ram[bank_addr] = data;
-            2'd2: gen_acc_mem[2].VX_sp_ram_instance.ram[bank_addr] = data;
-            2'd3: gen_acc_mem[3].VX_sp_ram_instance.ram[bank_addr] = data;
+            2'd0: gen_acc_mem[0].VX_sp_ram_instance.ram[bank_depth_addr] = data;
+            2'd1: gen_acc_mem[1].VX_sp_ram_instance.ram[bank_depth_addr] = data;
+            2'd2: gen_acc_mem[2].VX_sp_ram_instance.ram[bank_depth_addr] = data;
+            2'd3: gen_acc_mem[3].VX_sp_ram_instance.ram[bank_depth_addr] = data;
         endcase
     endtask
 `endif
