@@ -211,11 +211,11 @@ module tb_VX_dma_mem_unit_misal import VX_gpu_pkg::*; ();
         int unsigned base_b;
         base_b = (d_pend.addr_beats << $clog2(DCACHE_BYTES));
 
-        dcache_bus_if.rsp_valid    <= 1'b1;
-        dcache_bus_if.rsp_data.tag <= d_pend.tag;
-
         if (!d_pend.rw) begin
-          // READ
+          // READ - send response
+          dcache_bus_if.rsp_valid    <= 1'b1;
+          dcache_bus_if.rsp_data.tag <= d_pend.tag;
+          
           for (int i = 0; i < DCACHE_BYTES; i++) begin
             if (base_b + i < MEM_BYTES)
               dcache_bus_if.rsp_data.data[i*8 +: 8] <= dcache_mem[base_b + i];
@@ -223,12 +223,11 @@ module tb_VX_dma_mem_unit_misal import VX_gpu_pkg::*; ();
               dcache_bus_if.rsp_data.data[i*8 +: 8] <= 8'h00;
           end
         end else begin
-          // WRITE
+          // WRITE - no response, just write to memory
           for (int i = 0; i < DCACHE_BYTES; i++) begin
             if (d_pend.byteen[i] && (base_b + i < MEM_BYTES))
               dcache_mem[base_b + i] <= d_pend.data[i*8 +: 8];
           end
-          dcache_bus_if.rsp_data.data <= '0;
         end
       end
     end
@@ -364,7 +363,7 @@ module tb_VX_dma_mem_unit_misal import VX_gpu_pkg::*; ();
     // -------------------------
     // GLOBAL -> LMEM
     // -------------------------
-    d1[0]  = 32'h0000_0003; // start=1, dir=1 (GLOBAL->LMEM)
+    d1[0]  = 32'h0000_0001; // start=1, dir=0 (GLOBAL->LMEM) load
     d1[1]  = l_mid_base[31:0];      // reserved
     d1[2]  = l_mid_base[63:32];
     d1[3]  = g_src_base[31:0];
@@ -382,7 +381,7 @@ module tb_VX_dma_mem_unit_misal import VX_gpu_pkg::*; ();
     // -------------------------
     // LMEM -> GLOBAL
     // -------------------------
-    d2[0]  = 32'h0000_0001; // start=1, dir=0 (LMEM->GLOBAL)
+    d2[0]  = 32'h0000_0003; // start=1, dir=1 (LMEM->GLOBAL)  store
     d2[1]  = g_dst_base[31:0];      // reserved
     d2[2]  = g_dst_base[63:32];
     d2[3]  = l_mid_base[31:0];

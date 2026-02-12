@@ -20,7 +20,6 @@ TOP_MODULE := tb_VX_dma_mem_unit_misal
 
 TB   := tb_VX_dma_mem_unit_misal.sv
 RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
-				$(RTL_DIR)/core/VX_gemm_dma_ctrl_with_dma.sv \
 				$(RTL_DIR)/core/VX_dma_node_misal.sv \
 				$(RTL_DIR)/mem/VX_local_mem.sv \
 				$(RTL_DIR)/mem/VX_mem_bus_if.sv \
