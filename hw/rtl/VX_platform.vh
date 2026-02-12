@@ -38,7 +38,7 @@
 `else
 `define PACKAGE_ASSERT(cond) \
     /* verilator lint_on UNUSED */ \
-    typedef bit [((cond) ? 0 : -1) : 0] static_assertion_at_line_`__LINE__; \
+    typedef bit [((cond) ? 0 : -1) : 0] static_assertion_at_line_```__LINE__; \
     /* verilator lint_off UNUSED */
 `endif
 

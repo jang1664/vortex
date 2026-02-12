@@ -1045,8 +1045,8 @@ for block_size in range(1, full_bitwidth+1):
 // MXU (Matrix Multiply Unit) Dimensions
 // -------------------------------------------------------
 // Matrix dimensions: MXU computes [MXU_ROW x K] * [K x MXU_COL]
-`define MXU_ROW 16                // Number of input rows (activation vector length)
-`define MXU_COL 16                // Number of output columns (output vector length)
+`define MXU_ROW 32                // Number of input rows (activation vector length)
+`define MXU_COL 32                // Number of output columns (output vector length)
 `define MXU_MAX_DIM `MAX(`MXU_ROW, `MXU_COL)
 
 // Tiling parameters for parallel processing
