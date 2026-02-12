@@ -94,6 +94,7 @@ module VX_sp_ram #(
     `UNUSED_PARAM (LUTRAM)
     `UNUSED_PARAM (RADDR_REG)
     `UNUSED_PARAM (RADDR_RESET)
+    `UNUSED_PARAM (USE_URAM)
 
     `STATIC_ASSERT(!(WRENW * WSELW != DATAW), ("invalid parameter"))
     `STATIC_ASSERT((RDW_MODE == "R" || RDW_MODE == "W" || RDW_MODE == "N"), ("invalid parameter"))
