@@ -296,7 +296,7 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
       T_WEIGHT: lmem_s0 = (NT >> 1);
       T_SCALE:  lmem_s0 = NT * BPE_FP16;
       T_ZP:     lmem_s0 = NT * BPE_INT16;
-      T_OUTPUT: lmem_s0 = NT * BPE_FP16;
+      T_OUTPUT: lmem_s0 = NT * BPE_FP16;  //lmem에는 padding 포함
       default: ;
     endcase
   end
