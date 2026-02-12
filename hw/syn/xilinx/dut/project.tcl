@@ -152,7 +152,15 @@ proc run_implementation {} {
 
 proc run_report {} {
   # Generate the synthesis report
-  report_place_status -file place.rpt
+  if {[llength [info commands report_place_status]]} {
+    report_place_status -file place.rpt
+  } else {
+    # fallback. vivado 2022.2 does not have report_place_status
+    set placed_ok [report_route_status -boolean_check PLACED_FULLY]
+    set fp [open "place.rpt" w]
+    puts $fp "PLACED_FULLY = $placed_ok"
+    close $fp
+  }
   report_route_status -file route.rpt
 
   # Generate timing report
