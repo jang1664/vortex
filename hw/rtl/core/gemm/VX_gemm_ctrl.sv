@@ -194,5 +194,6 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
     assign gemm_ctrl_if.M_tot = gemm_fsm_if.M_tot;
     assign gemm_ctrl_if.N_tot = gemm_fsm_if.N_tot;
     assign gemm_ctrl_if.K_tot = gemm_fsm_if.K_tot;
+    assign gemm_ctrl_if.qblk_tot = gemm_fsm_if.qblk_tot;
     assign gemm_ctrl_if.wid   = gemm_fsm_if.wid;
 endmodule

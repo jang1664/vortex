@@ -43,7 +43,7 @@ module tb_VX_gemm_ctrl;
   logic clk;
   logic reset;
 
-  VX_config_reg_if #(.NUM(29), .DW(32)) cfg_reg_if();
+  VX_config_reg_if #(.NUM(33), .DW(32)) cfg_reg_if();
   VX_gemm_ctrl_if                      gemm_ctrl_if();
   VX_gemm_sync_if                      gemm_sync_slv_if[N_NODE]();
 
@@ -126,8 +126,10 @@ module tb_VX_gemm_ctrl;
     input logic [63:0] lmem_ibuf1_base,
     input logic [63:0] lmem_wbuf0_base,
     input logic [63:0] lmem_wbuf1_base,
-    input logic [63:0] lmem_szbuf0_base,
-    input logic [63:0] lmem_szbuf1_base,
+    input logic [63:0] lmem_scbuf0_base,
+    input logic [63:0] lmem_scbuf1_base,
+    input logic [63:0] lmem_zpbuf0_base,
+    input logic [63:0] lmem_zpbuf1_base,
     input logic [63:0] lmem_obuf_base,
 
     input logic [31:0] M,
@@ -170,35 +172,43 @@ module tb_VX_gemm_ctrl;
       cfg_reg_if.regs[17] = lmem_wbuf1_base[31:0];
       cfg_reg_if.regs[18] = lmem_wbuf1_base[63:32];
 
-      cfg_reg_if.regs[19] = lmem_szbuf0_base[31:0];
-      cfg_reg_if.regs[20] = lmem_szbuf0_base[63:32];
+      cfg_reg_if.regs[19] = lmem_scbuf0_base[31:0];
+      cfg_reg_if.regs[20] = lmem_scbuf0_base[63:32];
 
-      cfg_reg_if.regs[21] = lmem_szbuf1_base[31:0];
-      cfg_reg_if.regs[22] = lmem_szbuf1_base[63:32];
+      cfg_reg_if.regs[21] = lmem_scbuf1_base[31:0];
+      cfg_reg_if.regs[22] = lmem_scbuf1_base[63:32];
 
-      cfg_reg_if.regs[23] = lmem_obuf_base[31:0];
-      cfg_reg_if.regs[24] = lmem_obuf_base[63:32];
+      cfg_reg_if.regs[23] = lmem_zpbuf0_base[31:0];
+      cfg_reg_if.regs[24] = lmem_zpbuf0_base[63:32];
+
+      cfg_reg_if.regs[25] = lmem_zpbuf1_base[31:0];
+      cfg_reg_if.regs[26] = lmem_zpbuf1_base[63:32];
+
+      cfg_reg_if.regs[27] = lmem_obuf_base[31:0];
+      cfg_reg_if.regs[28] = lmem_obuf_base[63:32];
 
       // scalar dims (32-bit regs)
-      cfg_reg_if.regs[25] = M[31:0];
-      cfg_reg_if.regs[26] = N[31:0];
-      cfg_reg_if.regs[27] = K[31:0];
-      cfg_reg_if.regs[28] = qblk[31:0];
+      cfg_reg_if.regs[29] = M[31:0];
+      cfg_reg_if.regs[30] = N[31:0];
+      cfg_reg_if.regs[31] = K[31:0];
+      cfg_reg_if.regs[32] = qblk[31:0];
 
       cfg_reg_if.wid   = wid_val;
       cfg_reg_if.tid   = tid_val;
       cfg_reg_if.valid = 1'b1;
 
-      while (!cfg_reg_if.ready) @(posedge clk);
-
       @(posedge clk);
+
+      // 4) valid 내림 (regs는 1사이클 더 유지하면 더 안전)
+      @(negedge clk);
       cfg_reg_if.valid = 1'b0;
+      @(posedge clk);
 
       $display("[%0t] CFG sent: M=%0d N=%0d K=%0d qblk=%0d wid=%0d tid=%0d",
                $time, M, N, K, qblk, wid_val, tid_val);
       $display("[%0t] CFG_REGS: M=%0d N=%0d K=%0d qblk=%0d wid=%0d tid=%0d",
          $time,
-         cfg_reg_if.regs[25], cfg_reg_if.regs[26], cfg_reg_if.regs[27], cfg_reg_if.regs[28],
+         cfg_reg_if.regs[29], cfg_reg_if.regs[30], cfg_reg_if.regs[31], cfg_reg_if.regs[32],
          cfg_reg_if.wid, cfg_reg_if.tid);
     end
   endtask
@@ -476,6 +486,7 @@ module tb_VX_gemm_ctrl;
     end
   end
 
+  /*
   always_ff @(posedge clk) begin
     if (!reset) begin
       if (gemm_ctrl_if.dma_ctrl.start) begin
@@ -488,6 +499,7 @@ module tb_VX_gemm_ctrl;
       end
     end
   end
+  */
 
   // --------------------------------------------------------------------------
   // Single-driver: comp[] and dropped_events, and drives gemm_sync_slv_if[*]
@@ -631,13 +643,15 @@ module tb_VX_gemm_ctrl;
       64'h7000_0000, // lmem_ibuf1_base
       64'h8000_0000, // lmem_wbuf0_base
       64'h9000_0000, // lmem_wbuf1_base
-      64'hA000_0000, // lmem_szbuf0_base
-      64'hB000_0000, // lmem_szbuf1_base
-      64'hC000_0000, // lmem_obuf_base
+      64'hA000_0000, // lmem_scbuf0_base
+      64'hB000_0000, // lmem_scbuf1_base
+      64'hC000_0000, // lmem_zpbuf0_base
+      64'hD000_0000, // lmem_zpbuf1_base
+      64'hE000_0000, // lmem_obuf_base
 
-      32'd128,           // M
-      32'd128,           // N
-      32'd128,           // K
+      32'd256,           // M
+      32'd256,           // N
+      32'd256,           // K
       32'd32,            // qblk
       32'd0, 32'd0       // wid, tid
     );

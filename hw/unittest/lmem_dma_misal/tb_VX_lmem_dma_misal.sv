@@ -5,20 +5,15 @@
 // -----------------------------------------------------------------------------
 // Testbench for VX_lmem_dma_misal with REAL VX_local_mem + byte-addressed GEMM node
 //
-// What we test:
-//   Roundtrip:
-//     (1) GEMM(src) -> LMEM(tmp) using DIR=1
-//     (2) LMEM(tmp) -> GEMM(dst) using DIR=0
-//   Verification:
-//     Compare only GEMM memory: gemm_mem[src..] == gemm_mem[dst..]
+// Updates in this version:
+//   - GEMM slave model: **NO write response** (rsp_valid asserted only for READ)
+//   - LMEM slave (VX_local_mem) output: **mask/drop write responses** so the DMA
+//     never sees a write rsp (but we still internally "consume" them so VX_local_mem
+//     doesn't stall).
 //
-// Key points:
-//   - One shared LMEM slave bus (VX_local_mem instance)
-//   - One shared GEMM slave bus (byte-addressed array model)
-//   - Two DMA DUTs (DIR=0/1) act as masters; TB multiplexes their buses
-//   - Start is pulse-style (1 cycle), accepted only when ctrl_if.idle=1
-//   - Completion detected by idle toggling (idle->busy->idle)
-//   - Also checks gemm_sync_if.valid/reg_idx/value at end of each run
+// Assumptions for rsp masking:
+//   - Single outstanding request (in-order) on LMEM bus during a DMA run.
+//     (TB runs one DMA at a time, and VX_local_mem OUT_BUF=0).
 // -----------------------------------------------------------------------------
 
 module tb_VX_lmem_dma_misal import VX_gpu_pkg::*; ();
@@ -72,11 +67,14 @@ module tb_VX_lmem_dma_misal import VX_gpu_pkg::*; ();
   // -----------------------------
   // Shared slave buses
   // -----------------------------
+  // This is the LMEM bus "seen by DMAs" (after mux). We will connect this to
+  // VX_local_mem through a small "no-write-rsp" filter.
   VX_mem_bus_if #(
     .DATA_SIZE(DATA_SIZE_BYTES),
     .TAG_WIDTH(TAG_WIDTH)
-  ) lmem_bus_ifs[LMEM_PORTS]();  // [0]=LDMA only
+  ) lmem_bus_s();
 
+  // GEMM shared slave bus (byte-addressed array model)
   VX_mem_bus_if #(
     .DATA_SIZE(DATA_SIZE_BYTES),
     .TAG_WIDTH(TAG_WIDTH)
@@ -90,7 +88,7 @@ module tb_VX_lmem_dma_misal import VX_gpu_pkg::*; ();
 
   VX_mem_bus_if #(.DATA_SIZE(DATA_SIZE_BYTES), .TAG_WIDTH(TAG_WIDTH)) lmem1_bus_m();
   VX_mem_bus_if #(.DATA_SIZE(DATA_SIZE_BYTES), .TAG_WIDTH(TAG_WIDTH)) gemm1_bus_m();
-  
+
   // -----------------------------
   // DUTs
   // -----------------------------
@@ -125,26 +123,23 @@ module tb_VX_lmem_dma_misal import VX_gpu_pkg::*; ();
   //
   // sel = 1 -> DIR1 active (GEMM->LMEM)
   // sel = 0 -> DIR0 active (LMEM->GEMM)
-  //
-  // We choose sel based on ctrl1_if.idle:
-  //   During DIR1 operation: ctrl1_if.idle=0 => sel=1
-  //   Otherwise sel=0
   // -----------------------------
   wire sel = ~ctrl1_if.idle;
 
   // LMEM mux: drive shared slave inputs from selected master
-  assign lmem_bus_ifs[0].req_valid = sel ? lmem1_bus_m.req_valid : lmem0_bus_m.req_valid;
-  assign lmem_bus_ifs[0].req_data  = sel ? lmem1_bus_m.req_data  : lmem0_bus_m.req_data;
-  assign lmem_bus_ifs[0].rsp_ready = sel ? lmem1_bus_m.rsp_ready : lmem0_bus_m.rsp_ready;
+  assign lmem_bus_s.req_valid = sel ? lmem1_bus_m.req_valid : lmem0_bus_m.req_valid;
+  assign lmem_bus_s.req_data  = sel ? lmem1_bus_m.req_data  : lmem0_bus_m.req_data;
+  assign lmem_bus_s.rsp_ready = sel ? lmem1_bus_m.rsp_ready : lmem0_bus_m.rsp_ready;
 
   // return slave outputs to the selected master; deassert to unselected
-  assign lmem0_bus_m.req_ready = sel ? 1'b0 : lmem_bus_ifs[0].req_ready;
-  assign lmem1_bus_m.req_ready = sel ? lmem_bus_ifs[0].req_ready : 1'b0;
-  assign lmem0_bus_m.rsp_valid = sel ? 1'b0 : lmem_bus_ifs[0].rsp_valid;
-  assign lmem1_bus_m.rsp_valid = sel ? lmem_bus_ifs[0].rsp_valid : 1'b0;
+  assign lmem0_bus_m.req_ready = sel ? 1'b0 : lmem_bus_s.req_ready;
+  assign lmem1_bus_m.req_ready = sel ? lmem_bus_s.req_ready : 1'b0;
+  assign lmem0_bus_m.rsp_valid = sel ? 1'b0 : lmem_bus_s.rsp_valid;
+  assign lmem1_bus_m.rsp_valid = sel ? lmem_bus_s.rsp_valid : 1'b0;
 
-  assign lmem0_bus_m.rsp_data  = lmem_bus_ifs[0].rsp_data;
-  assign lmem1_bus_m.rsp_data  = lmem_bus_ifs[0].rsp_data;
+  assign lmem0_bus_m.rsp_data  = lmem_bus_s.rsp_data;
+  assign lmem1_bus_m.rsp_data  = lmem_bus_s.rsp_data;
+
   // GEMM mux
   assign gemm_bus_s.req_valid = sel ? gemm1_bus_m.req_valid : gemm0_bus_m.req_valid;
   assign gemm_bus_s.req_data  = sel ? gemm1_bus_m.req_data  : gemm0_bus_m.req_data;
@@ -161,9 +156,15 @@ module tb_VX_lmem_dma_misal import VX_gpu_pkg::*; ();
 
   // -----------------------------
   // VX_local_mem instance (LMEM slave)
+  //   BUT: we insert a "no write rsp" filter between lmem_bus_s and VX_local_mem.
   // -----------------------------
-
   localparam int NUM_WORDS = MEM_BYTES / DATA_SIZE_BYTES;
+
+  // Raw LMEM bus that actually connects to VX_local_mem
+  VX_mem_bus_if #(
+    .DATA_SIZE(DATA_SIZE_BYTES),
+    .TAG_WIDTH(TAG_WIDTH)
+  ) lmem_bus_raw_ifs[LMEM_PORTS]();
 
   VX_local_mem #(
     .INSTANCE_ID ("lmem0"),
@@ -180,11 +181,48 @@ module tb_VX_lmem_dma_misal import VX_gpu_pkg::*; ();
 `ifdef PERF_ENABLE
     .lmem_perf (),
 `endif
-    .mem_bus_if(lmem_bus_ifs)
+    .mem_bus_if(lmem_bus_raw_ifs)
   );
+
+  // ---- LMEM "no write rsp" filter wiring ----
+  // Master->slave (req)
+  assign lmem_bus_raw_ifs[0].req_valid = lmem_bus_s.req_valid;
+  assign lmem_bus_raw_ifs[0].req_data  = lmem_bus_s.req_data;
+
+  // Slave->master (ready)
+  assign lmem_bus_s.req_ready = lmem_bus_raw_ifs[0].req_ready;
+
+  // IMPORTANT: we ALWAYS keep raw rsp_ready asserted so VX_local_mem never stalls,
+  // even if we mask the response to the DMA.
+  assign lmem_bus_raw_ifs[0].rsp_ready = 1'b1;
+
+  // Track the rw bit of the request that will generate the next response
+  logic lmem_pend_is_write;
+
+  wire lmem_raw_req_fire = lmem_bus_raw_ifs[0].req_valid && lmem_bus_raw_ifs[0].req_ready;
+  wire lmem_raw_rsp_fire = lmem_bus_raw_ifs[0].rsp_valid && lmem_bus_raw_ifs[0].rsp_ready;
+
+  always_ff @(posedge clk) begin
+    if (reset) begin
+      lmem_pend_is_write <= 1'b0;
+    end else begin
+      if (lmem_raw_req_fire) begin
+        lmem_pend_is_write <= lmem_bus_raw_ifs[0].req_data.rw;
+      end else if (lmem_raw_rsp_fire) begin
+        // response consumed internally
+        lmem_pend_is_write <= 1'b0;
+      end
+    end
+  end
+
+  // Pass rsp_data through (harmless). Mask rsp_valid for writes.
+  assign lmem_bus_s.rsp_data  = lmem_bus_raw_ifs[0].rsp_data;
+  assign lmem_bus_s.rsp_valid = lmem_bus_raw_ifs[0].rsp_valid && ~lmem_pend_is_write;
 
   // -----------------------------
   // GEMM node memory model (byte-addressed) + bus slave (1-cycle latency)
+  //   UPDATED: **NO write response**
+  //     - rsp_valid asserted only for READs
   // -----------------------------
   byte gemm_mem [0:MEM_BYTES-1];
 
@@ -194,12 +232,12 @@ module tb_VX_lmem_dma_misal import VX_gpu_pkg::*; ();
   } tag_t;
 
   typedef struct packed {
-    logic                            valid;
-    logic                            rw;
-    logic [gemm_bus_s.ADDR_WIDTH-1:0] addr_beats;
-    logic [DATA_SIZE_BYTES*8-1:0]     data;
-    logic [DATA_SIZE_BYTES-1:0]       byteen;
-    tag_t                            tag;
+    logic                             valid;
+    logic                             rw;
+    logic [gemm_bus_s.ADDR_WIDTH-1:0]  addr_beats;
+    logic [DATA_SIZE_BYTES*8-1:0]      data;
+    logic [DATA_SIZE_BYTES-1:0]        byteen;
+    tag_t                             tag;
   } pend_t;
 
   pend_t g_pend;
@@ -234,11 +272,11 @@ module tb_VX_lmem_dma_misal import VX_gpu_pkg::*; ();
         int unsigned base_b;
         base_b = (g_pend.addr_beats << $clog2(DATA_SIZE_BYTES));
 
-        gemm_bus_s.rsp_valid    <= 1'b1;
-        gemm_bus_s.rsp_data.tag <= g_pend.tag;
-
         if (!g_pend.rw) begin
-          // READ
+          // READ => produce response
+          gemm_bus_s.rsp_valid    <= 1'b1;
+          gemm_bus_s.rsp_data.tag <= g_pend.tag;
+
           for (int i = 0; i < DATA_SIZE_BYTES; i++) begin
             if (base_b + i < MEM_BYTES)
               gemm_bus_s.rsp_data.data[i*8 +: 8] <= gemm_mem[base_b + i];
@@ -246,12 +284,13 @@ module tb_VX_lmem_dma_misal import VX_gpu_pkg::*; ();
               gemm_bus_s.rsp_data.data[i*8 +: 8] <= 8'h00;
           end
         end else begin
-          // WRITE (respect byteen)
+          // WRITE => update memory, NO response
           for (int i = 0; i < DATA_SIZE_BYTES; i++) begin
             if (g_pend.byteen[i] && (base_b + i < MEM_BYTES))
               gemm_mem[base_b + i] <= g_pend.data[i*8 +: 8];
           end
-          gemm_bus_s.rsp_data.data <= '0;
+          // Ensure no spurious rsp_valid is raised
+          // (keep previous rsp_valid handling intact)
         end
       end
     end
@@ -334,7 +373,7 @@ module tb_VX_lmem_dma_misal import VX_gpu_pkg::*; ();
 
   // -----------------------------
   // Start pulse + program ctrl regs
-  // NOTE: dst_strides are set equal to src_strides here (like your old TB)
+  // NOTE: dst_strides are set equal to src_strides here
   // -----------------------------
   task automatic ctrl0_pulse_start(
     input logic [31:0] src_base,
@@ -454,9 +493,6 @@ module tb_VX_lmem_dma_misal import VX_gpu_pkg::*; ();
 
   // -----------------------------
   // Roundtrip test case
-  //   1) GEMM(src)->LMEM(tmp)  (DIR=1)
-  //   2) LMEM(tmp)->GEMM(dst)  (DIR=0)
-  // Verify only GEMM memory: src == dst
   // -----------------------------
   task automatic run_case_roundtrip(
     input int unsigned seg_bytes,
@@ -562,9 +598,9 @@ module tb_VX_lmem_dma_misal import VX_gpu_pkg::*; ();
     run_case_roundtrip(DATA_SIZE_BYTES*2 + 3, b0,b1,b2, 5,1,9);
     run_case_roundtrip(DATA_SIZE_BYTES*4 - 1, b0,b1,b2, 9,13,7);
 
-    run_case_roundtrip(DATA_SIZE_BYTES - 5,   b0,b1,b2, 3,11,1);
+    run_case_roundtrip(DATA_SIZE_BYTES - 5, b0,b1,b2, 3,11,1);
     run_case_roundtrip(DATA_SIZE_BYTES - 1, b0,b1,b2, 5,1,9);
-    run_case_roundtrip(DATA_SIZE_BYTES, b0,b1,b2, 9,13,7);
+    run_case_roundtrip(DATA_SIZE_BYTES,     b0,b1,b2, 9,13,7);
 
     $display("=====================================================================");
     $display("=====================  ALL TESTS COMPLETED  =========================");
@@ -591,11 +627,11 @@ module tb_VX_lmem_dma_misal import VX_gpu_pkg::*; ();
 
     for (int iter = 0; iter < 300; iter++) begin
       int unsigned seg_bytes = seg_choices[$urandom_range(0,5)];
-      int unsigned so = $urandom_range(0, DATA_SIZE_BYTES-1);
-      int unsigned doff = $urandom_range(0, DATA_SIZE_BYTES-1);
-      int unsigned lo = $urandom_range(0, DATA_SIZE_BYTES-1);
+      int unsigned so  = $urandom_range(0, DATA_SIZE_BYTES-1);
+      int unsigned dof = $urandom_range(0, DATA_SIZE_BYTES-1);
+      int unsigned lo  = $urandom_range(0, DATA_SIZE_BYTES-1);
 
-      run_case_roundtrip(seg_bytes, b0,b1,b2, so, doff, lo);
+      run_case_roundtrip(seg_bytes, b0,b1,b2, so, dof, lo);
       repeat (3) @(posedge clk);
     end
 

@@ -211,7 +211,8 @@ module VX_config_registers import VX_gpu_pkg::*; #(
     //  - rw=0: read  (regs32 여러 개를 beat로 pack해서 반환)
     // -----------------------
     if (mmio_if.req_valid && mmio_if.req_ready) begin
-      rsp_valid_d = 1'b1;
+      rsp_valid_d = ~mmio_if.req_data.rw;
+      rsp_data_d  = '0;
 
       for (int l = 0; l < mmio_if.NUM_LANES; l++) begin
         if (mmio_if.req_data.mask[l]) begin
@@ -254,33 +255,37 @@ module VX_config_registers import VX_gpu_pkg::*; #(
             end
 
             // READ: regs32 여러 개를 beat로 pack
-            rsp_data_d[l] = '0;
-            for (int i = 0; i < WORDS_PER_BEAT; i++) begin
-              int r32;
-              r32 = base32 + i;
-              if (r32 < NUM_REGS32) begin
-                rsp_data_d[l][i*32 +: 32] = regs32_q[eid][r32];
+            else begin
+              rsp_data_d[l] = '0;
+              for (int i = 0; i < WORDS_PER_BEAT; i++) begin
+                int r32;
+                r32 = base32 + i;
+                if (r32 < NUM_REGS32) begin
+                  rsp_data_d[l][i*32 +: 32] = regs32_q[eid][r32];
+                end
               end
-            end
+            end 
           end else begin
-            rsp_data_d[l] = '0;
+            if (!mmio_if.req_data.rw) begin
+              rsp_data_d[l] = '0;
+            end
           end
         end
       end
     end
 
     // -----------------------
-    // DMA done 처리: wid로 엔트리 찾아 해제
+    // DMA done 처리: entry id로 엔트리 찾아 해제
     // -----------------------
     if (dma_done_if.valid && dma_done_if.ready) begin
-      for (int e = 0; e < NUM_ENTRIES; e++) begin
-        if (occupy_q[e] && (owner_warp_q[e] == dma_done_if.wid)) begin
+      int e;
+      e = int'(dma_done_if.entry_id);
+
+      if (e >= 0 && e < NUM_ENTRIES && occupy_q[e] && working_q[e]) begin
           regs32_d[e][CONTROL_IDX][DMA_CTRL_START_BIT] = 1'b0;
           working_d[e]    = 1'b0;
           occupy_d[e]     = 1'b0;
           owner_warp_d[e] = 32'd0;
-          break;
-        end
       end
     end
 

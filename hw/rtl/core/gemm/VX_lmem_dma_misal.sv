@@ -50,23 +50,23 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
     end
   end
 
-  function automatic logic [lmem_bus_if.ADDR_WIDTH-1:0] to_bus_addr(input logic [31:0] byte_addr);
+  function automatic logic [lmem_bus_if.ADDR_WIDTH-1:0] to_bus_addr(input logic [63:0] byte_addr);
     // VX_mem_bus_if.addr is beat address (byte_addr / BUS_BYTES)
-    to_bus_addr = byte_addr[31:BUS_LG2];
+    to_bus_addr = lmem_bus_if.ADDR_WIDTH'(byte_addr>>BUS_LG2);
   endfunction
 
-  function automatic logic [31:0] align_down(input logic [31:0] a);
-    logic [31:0] m;
+  function automatic logic [63:0] align_down(input logic [63:0] a);
+    logic [63:0] m;
     begin
-      m = 32'(BUS_BYTES-1);
+      m = 64'(BUS_BYTES-1);
       align_down = (a & ~m);
     end
   endfunction
 
-  function automatic logic [31:0] align_up(input logic [31:0] a);
-    logic [31:0] m;
+  function automatic logic [63:0] align_up(input logic [63:0] a);
+    logic [63:0] m;
     begin
-      m = 32'(BUS_BYTES-1);
+      m = 64'(BUS_BYTES-1);
       align_up = (a + m) & ~m;
     end
   endfunction
@@ -91,8 +91,8 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
   // ------------------------------------------------------------
   // Select source/dest bus by DIR
   // ------------------------------------------------------------
-  // DIR=0: src=lmem, dst=gemm (dst write expects rsp)
-  // DIR=1: src=gemm, dst=lmem (dst write may have no rsp; commit on req handshake)
+  // DIR=0: src=lmem, dst=gemm (dst write expects rsp) load
+  // DIR=1: src=gemm, dst=lmem (dst write may have no rsp; commit on req handshake) store
   wire src_is_gemm = (DIR != 0);
   wire dst_is_gemm = (DIR == 0);
 
@@ -106,7 +106,7 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
     S_SRC_RD_REQ,
     S_SRC_RD_WAIT,
     S_DST_WR_REQ,
-    S_DST_WR_WAIT, // only used when dst_is_gemm (DIR=0)
+    //S_DST_WR_WAIT, // only used when dst_is_gemm (DIR=0)
     S_ADV_SEG,
     S_SYNC,
     S_DONE
@@ -117,7 +117,7 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
   // ------------------------------------------------------------
   // Latched control regs on start
   // ------------------------------------------------------------
-  logic [31:0] base_addr_r[2];          // [0]=src, [1]=dst
+  logic [63:0] base_addr_r[2];          // [0]=src, [1]=dst
   logic [31:0] stride_r[2][NDIM];
   logic [31:0] bound_r[NDIM];
   logic [31:0] seg_size_r;
@@ -138,6 +138,12 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
         bound_r[d]     <= '0;
       end
     end else if (cmd_start) begin
+      if (ctrl_if.bounds[0] == 0 ||
+          ctrl_if.bounds[1] == 0 ||
+          ctrl_if.bounds[2] == 0) begin
+        $fatal(1, "%s: VX_lmem_dma_misal: ERROR - bounds cannot be zero!", INSTANCE_ID);
+      end
+      
       base_addr_r[0] <= ctrl_if.src_base_addr;
       base_addr_r[1] <= ctrl_if.dst_base_addr;
       for (int d=0; d<NDIM; d++) begin
@@ -178,20 +184,20 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
   // ------------------------------------------------------------
   // Base address per segment (byte)
   // ------------------------------------------------------------
-  logic [31:0] base_src_seg, base_dst_seg;
+  logic [63:0] base_src_seg, base_dst_seg;
 
   always_comb begin
     base_src_seg =
         base_addr_r[0]
-      + i_dim[0] * stride_r[0][0]
-      + i_dim[1] * stride_r[0][1]
-      + i_dim[2] * stride_r[0][2];
+      + 64'(i_dim[0]) * 64'(stride_r[0][0])
+      + 64'(i_dim[1]) * 64'(stride_r[0][1])
+      + 64'(i_dim[2]) * 64'(stride_r[0][2]);
 
     base_dst_seg =
         base_addr_r[1]
-      + i_dim[0] * stride_r[1][0]
-      + i_dim[1] * stride_r[1][1]
-      + i_dim[2] * stride_r[1][2];
+      + 64'(i_dim[0]) * 64'(stride_r[1][0])
+      + 64'(i_dim[1]) * 64'(stride_r[1][1])
+      + 64'(i_dim[2]) * 64'(stride_r[1][2]);
   end
 
   // ------------------------------------------------------------
@@ -204,18 +210,18 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
   logic [WIN_BITS-1:0]  win;
   logic [WIN_VALID_W-1:0] win_valid;
 
-  logic [31:0] src_rd_ptr; // aligned byte address for next src read
-  logic [31:0] src_rd_end; // aligned end (exclusive)
+  logic [63:0] src_rd_ptr; // aligned byte address for next src read
+  logic [63:0] src_rd_end; // aligned end (exclusive)
   logic [31:0] src_drop;   // initial misalign bytes to drop
 
   // ------------------------------------------------------------
   // Current src/dst byte addresses for this out_off
   // ------------------------------------------------------------
-  logic [31:0] src_byte_addr, dst_byte_addr;
+  logic [63:0] src_byte_addr, dst_byte_addr;
 
   always_comb begin
-    src_byte_addr = base_src_seg + out_off;
-    dst_byte_addr = base_dst_seg + out_off;
+    src_byte_addr = base_src_seg + 64'(out_off);
+    dst_byte_addr = base_dst_seg + 64'(out_off);
   end
 
   // ------------------------------------------------------------
@@ -342,11 +348,11 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
 
       S_DST_WR_REQ: begin
         // write to destination bus, beat-aligned addr (dst_byte_addr - lane)
-        logic [31:0] dst_aligned;
-        dst_aligned = dst_byte_addr - logic'(lane);
+        logic [63:0] dst_aligned;
+        dst_aligned = dst_byte_addr - 64'($unsigned(lane));
 
         if (dst_is_gemm) begin
-          // LMEM -> GEMM : write to GEMM (expects rsp)
+          // LMEM -> GEMM : write to GEMM (NO rsp) => commit on req handshake
           gemm_bus_if.req_valid         = 1'b1;
           gemm_bus_if.req_data.rw       = 1'b1;
           gemm_bus_if.req_data.addr     = to_bus_addr(dst_aligned);
@@ -355,7 +361,10 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
           gemm_bus_if.req_data.flags    = '0;
           gemm_bus_if.req_data.tag.uuid = '0;
           gemm_bus_if.req_data.tag.value= '0;
-          if (gemm_bus_if.req_ready) state_n = S_DST_WR_WAIT;
+          if (gemm_bus_if.req_ready) begin
+            if (out_off + wr_nbytes >= seg_size_r) state_n = S_ADV_SEG;
+            else                                   state_n = S_DECIDE;
+          end
         end else begin
           // GEMM -> LMEM : write to LMEM (assume no rsp) => commit on handshake
           lmem_bus_if.req_valid         = 1'b1;
@@ -376,7 +385,7 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
           end
         end
       end
-
+/*
       S_DST_WR_WAIT: begin
         // only used for dst_is_gemm
         if (dst_rsp_fire) begin
@@ -385,7 +394,7 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
           else
             state_n = S_DECIDE;
         end
-      end
+      end*/
 
       S_ADV_SEG: begin
         // index update done in sequential; next state chosen there via state override OR here
@@ -445,9 +454,9 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
 
         // Source pointer setup (aligned)
         // We need to read seg_size_r bytes starting from base_src_seg (misaligned allowed)
-        src_drop   <= (base_src_seg & (BUS_BYTES-1));                 // base_src_seg % BUS_BYTES
+        src_drop   <= 32'(base_src_seg[BUS_LG2-1:0]);                 // base_src_seg % BUS_BYTES
         src_rd_ptr <= align_down(base_src_seg);                       // aligned start
-        src_rd_end <= align_up(base_src_seg + seg_size_r);            // aligned end (exclusive)
+        src_rd_end <= align_up(base_src_seg + 64'(seg_size_r));            // aligned end (exclusive)
       end
 
       // --------------------------------------------------------
@@ -481,15 +490,12 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
       //  - dst_is_gemm: commit on rsp in S_DST_WR_WAIT
       //  - dst_is_lmem: commit on req_fire in S_DST_WR_REQ
       // --------------------------------------------------------
-      if ((dst_is_gemm && state == S_DST_WR_WAIT && dst_rsp_fire) ||
-          (!dst_is_gemm && state == S_DST_WR_REQ  && dst_req_fire)) begin
-
+      if (state == S_DST_WR_REQ  && dst_req_fire) begin
         // consume exactly wr_nbytes from window (these are the bytes we used)
         if (wr_nbytes != 0) begin
           win       <= win >> (wr_nbytes * 8);
           win_valid <= win_valid - wr_nbytes[WIN_VALID_W-1:0];
         end
-
         out_off <= out_off + wr_nbytes;
       end
 

@@ -4,7 +4,7 @@
 // VX_dma_node_misal
 //  - cfg_reg_if.DW must be 32
 //  - desc word layout (32b words):
-//      0  control_reg : [0]=start, [1]=direction (0:L2G, 1:G2L)
+//      0  control_reg : [0]=start, [1]=direction (0:G2L, 1:L2G)
 //      1  dst_base_lo
 //      2  dst_base_hi
 //      3  src_base_lo
@@ -135,7 +135,6 @@ module VX_dma_node_misal import VX_gpu_pkg::*; #(
     S_L2G_SRC_RD_REQ,
     S_L2G_SRC_RD_WAIT,
     S_L2G_DST_WR_REQ,
-    S_L2G_DST_WR_WAIT,
 
     // G2L (DCACHE -> LMEM)
     S_G2L_DECIDE,
@@ -284,7 +283,8 @@ module VX_dma_node_misal import VX_gpu_pkg::*; #(
   always_comb begin
     done_if.valid = 1'b0;
     done_if.wid   = wid_latched;
-
+    done_if.entry_id = tid_latched; // use tid as entry_id for now
+    
     if (state == S_DONE)
       done_if.valid = 1'b1;
   end
@@ -398,28 +398,12 @@ module VX_dma_node_misal import VX_gpu_pkg::*; #(
         dcache_bus_if.req_data.tag.uuid  = dma_uuid;
         dcache_bus_if.req_data.tag.value = '0;
 
-        if (dcache_bus_if.req_ready) state_n = S_L2G_DST_WR_WAIT;
-      end
-
-      S_L2G_DST_WR_WAIT: begin
-        if (dcache_rsp_fire) begin
-          logic [63:0] dst_byte;
-          int          lane;
-          logic [31:0] remaining;
-          logic [31:0] beat_room;
-          logic [31:0] wr_nbytes;
-
-          dst_byte   = base_dst_seg + 64'(out_off);
-          lane       = int'(dst_byte[DCACHE_LG2-1:0]);
-          remaining  = (out_off < seg_size) ? (seg_size - out_off) : 32'd0;
-          beat_room  = DCACHE_BYTES - lane;
-          wr_nbytes  = umin32(remaining, beat_room);
-
-          if (out_off + wr_nbytes >= seg_size) state_n = S_ADV_SEG;
-          else                                 state_n = S_L2G_DECIDE;
+        if (dcache_bus_if.req_ready) begin
+            if (out_off + wr_nbytes >= seg_size) state_n = S_ADV_SEG;
+            else                                 state_n = S_L2G_DECIDE;
         end
       end
-
+  
       // ==========================================================
       // G2L (DCACHE -> LMEM)
       // ==========================================================
@@ -622,7 +606,7 @@ module VX_dma_node_misal import VX_gpu_pkg::*; #(
       // ==========================================================
       // L2G: after DCACHE write response, consume src bytes + advance out_off
       // ==========================================================
-      if (state == S_L2G_DST_WR_WAIT && dcache_rsp_fire) begin
+      if (state == S_L2G_DST_WR_REQ && dcache_req_fire) begin
         logic [63:0] dst_byte;
         int          lane;
         logic [31:0] remaining;
