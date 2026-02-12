@@ -48,7 +48,7 @@ module VX_gemm_sync import VX_gpu_pkg::*; #(
   wire is_notify = (opcode == OP_NOTIFY);
 
   wire [7:0]  wait_reg_id = gemm_fsm_slv_if.ctrl.cmd.rs1_data[7:0];
-  wire [31:0] wait_target = {1'b0, gemm_fsm_slv_if.ctrl.cmd.rs2_data[30:0]};
+  wire [31:0] wait_target = gemm_fsm_slv_if.ctrl.cmd.rs2_data[31:0];
 
   wire        wait_reg_in_range = (wait_reg_id < NUM_SYNC_REGS);
   wire [31:0] wait_reg_val      = wait_reg_in_range ? sync_regs[wait_reg_id] : 32'd0;
@@ -239,6 +239,19 @@ module VX_gemm_sync import VX_gpu_pkg::*; #(
         rid4 = gemm_sync_slv_if[4].reg_idx[7:0];
         if (rid4 < NUM_SYNC_REGS)
           sync_regs[rid4] <= apply_update(sync_regs[rid4], gemm_sync_slv_if[4].value);
+      end
+    end
+  end
+
+// --------------------------------------------------------------------------
+  // Runtime Assertion: Unknown Opcode Check
+  // --------------------------------------------------------------------------
+  always_ff @(posedge clk) begin
+    if (!reset && in_valid) begin
+      // 입력은 유효한데(Wait/Notify 아님), 디코딩 로직(case문)에서 cmd_valid를 1로 만들지 못한 경우
+      if (!is_wait && !is_notify && !cmd_valid) begin
+        $error("%t %s: [ERROR] Unknown Opcode detected! Opcode=0x%02h", $time, INSTANCE_ID, opcode);
+        // $fatal(1, "%s: Simulation stopped due to unknown opcode 0x%02h", INSTANCE_ID, opcode);
       end
     end
   end
