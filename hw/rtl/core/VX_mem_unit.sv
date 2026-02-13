@@ -44,6 +44,8 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
     `STATIC_ASSERT(0 == (`LMEM_BASE_ADDR % (1 << `LMEM_LOG_SIZE)), ("invalid parameter"))
 
     localparam LMEM_ADDR_WIDTH = `LMEM_LOG_SIZE - `CLOG2(LSU_WORD_SIZE);
+    localparam logic [63:0] GEMM_MMIO_SIZE_B = 64'd4096;
+    localparam logic [63:0] DMA_MMIO_SIZE_B  = 64'd4096;
 
     VX_lsu_mem_if #(
         .NUM_LANES (`NUM_LSU_LANES),
@@ -52,11 +54,16 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
     ) lsu_lmem_if[`NUM_LSU_BLOCKS]();
 
     for (genvar i = 0; i < `NUM_LSU_BLOCKS; ++i) begin : g_lmem_switches
-        //TODO: add DMA and gemm config register target
         VX_lmem_switch #(
             .GLOBAL_OUT_BUF(1),
             .LOCAL_OUT_BUF(1),
+            .GEMM_OUT_BUF (1),
+            .DMA_OUT_BUF  (1),
             .RSP_OUT_BUF  (1),
+            .GEMM_MMIO_BASE_ADDR(`GEMM_REG_BASE_ADDR),
+            .DMA_MMIO_BASE_ADDR (`DMA_REG_BASE_ADDR),
+            .GEMM_MMIO_SIZE     (GEMM_MMIO_SIZE_B),
+            .DMA_MMIO_SIZE      (DMA_MMIO_SIZE_B),
             .ARBITER      ("P")
         ) lmem_switch (
             .clk          (clk),
