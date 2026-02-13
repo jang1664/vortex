@@ -281,7 +281,7 @@ module tb_VX_gemm_dma_ctrl;
     gemm_dma_ctrl_if.M_tot <= 32'd0;
     gemm_dma_ctrl_if.N_tot <= 32'd0;
     gemm_dma_ctrl_if.K_tot <= 32'd0;
-    gemm_dma_ctrl_if.wid   <= 32'd0;
+    gemm_dma_ctrl_if.entry_id <= 32'd0;
     clear_notify_req       <= 1'b0;
 
     reset = 1'b1;
@@ -306,7 +306,7 @@ module tb_VX_gemm_dma_ctrl;
     gemm_dma_ctrl_if.M_tot <= 32'd128;
     gemm_dma_ctrl_if.N_tot <= 32'd128;
     gemm_dma_ctrl_if.K_tot <= 32'd128;
-    gemm_dma_ctrl_if.wid   <= 32'd7;
+    gemm_dma_ctrl_if.entry_id <= 32'd7;
 
     $display("[%0t] Send DMA_LD INPUT", $time);
     pulse_start();
@@ -359,7 +359,7 @@ module tb_VX_gemm_dma_ctrl;
     gemm_dma_ctrl_if.M_tot <= 32'd130; // mt_eff=2
     gemm_dma_ctrl_if.N_tot <= 32'd130; // nt_eff=2
     gemm_dma_ctrl_if.K_tot <= 32'd128;
-    gemm_dma_ctrl_if.wid   <= 32'd9;
+    gemm_dma_ctrl_if.entry_id <= 32'd9;
 
     $display("[%0t] Send DMA_ST OUTPUT", $time);
     pulse_start();
