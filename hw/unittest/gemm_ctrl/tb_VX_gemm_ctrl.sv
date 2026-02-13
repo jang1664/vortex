@@ -45,6 +45,7 @@ module tb_VX_gemm_ctrl;
 
   VX_config_reg_if #(.NUM(33), .DW(32)) cfg_reg_if();
   VX_gemm_ctrl_if                      gemm_ctrl_if();
+  VX_node_done_if                      done_if();
   VX_gemm_sync_if                      gemm_sync_slv_if[N_NODE]();
 
   VX_gemm_ctrl #(
@@ -55,6 +56,7 @@ module tb_VX_gemm_ctrl;
     .clk              (clk),
     .reset            (reset),
     .cfg_reg_if       (cfg_reg_if.slave),
+    .done_if          (done_if.master),
     .gemm_ctrl_if     (gemm_ctrl_if.master),
     .gemm_sync_slv_if (gemm_sync_slv_if)
   );
@@ -104,10 +106,10 @@ module tb_VX_gemm_ctrl;
     begin
       reset = 1'b1;
 
-      cfg_reg_if.valid = 1'b0;
-      cfg_reg_if.regs  = '0;
-      cfg_reg_if.wid   = '0;
-      cfg_reg_if.tid   = '0;
+      cfg_reg_if.valid      = 1'b0;
+      cfg_reg_if.regs       = '0;
+      cfg_reg_if.entry_id   = '0;
+      done_if.ready    = 1'b1;
 
       repeat (10) @(posedge clk);
       reset = 1'b0;
@@ -137,8 +139,7 @@ module tb_VX_gemm_ctrl;
     input logic [31:0] K,
     input logic [31:0] qblk,
 
-    input logic [31:0] wid_val,
-    input logic [31:0] tid_val
+    input logic [31:0] entry_id_val
   );
     begin
       @(posedge clk);
@@ -193,9 +194,8 @@ module tb_VX_gemm_ctrl;
       cfg_reg_if.regs[31] = K[31:0];
       cfg_reg_if.regs[32] = qblk[31:0];
 
-      cfg_reg_if.wid   = wid_val;
-      cfg_reg_if.tid   = tid_val;
-      cfg_reg_if.valid = 1'b1;
+      cfg_reg_if.entry_id   = entry_id_val;
+      cfg_reg_if.valid      = 1'b1;
 
       @(posedge clk);
 
@@ -204,12 +204,12 @@ module tb_VX_gemm_ctrl;
       cfg_reg_if.valid = 1'b0;
       @(posedge clk);
 
-      $display("[%0t] CFG sent: M=%0d N=%0d K=%0d qblk=%0d wid=%0d tid=%0d",
-               $time, M, N, K, qblk, wid_val, tid_val);
-      $display("[%0t] CFG_REGS: M=%0d N=%0d K=%0d qblk=%0d wid=%0d tid=%0d",
+      $display("[%0t] CFG sent: M=%0d N=%0d K=%0d qblk=%0d entry_id=%0d",
+               $time, M, N, K, qblk, entry_id_val);
+      $display("[%0t] CFG_REGS: M=%0d N=%0d K=%0d qblk=%0d entry_id=%0d",
          $time,
          cfg_reg_if.regs[29], cfg_reg_if.regs[30], cfg_reg_if.regs[31], cfg_reg_if.regs[32],
-         cfg_reg_if.wid, cfg_reg_if.tid);
+         cfg_reg_if.entry_id);
     end
   endtask
 
@@ -653,7 +653,7 @@ module tb_VX_gemm_ctrl;
       32'd256,           // N
       32'd256,           // K
       32'd32,            // qblk
-      32'd0, 32'd0       // wid, tid
+      32'd0              // entry_id
     );
 
 
