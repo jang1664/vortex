@@ -40,26 +40,6 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
   // ============================================================
   localparam int REGS_PER_LANE = (dma_if.DATA_SIZE / DMA_CFG_STRIDE_BYTES);
 
-  initial begin
-    if ((dma_if.DATA_SIZE % DMA_CFG_STRIDE_BYTES) != 0) begin
-      $fatal(1, "%s: dma_if.DATA_SIZE(%0d) must be multiple of %0d",
-             INSTANCE_ID, dma_if.DATA_SIZE, DMA_CFG_STRIDE_BYTES);
-    end
-    if (REGS_PER_LANE <= 0) begin
-      $fatal(1, "%s: REGS_PER_LANE must be >= 1 (DATA_SIZE=%0d)",
-             INSTANCE_ID, dma_if.DATA_SIZE);
-    end
-    if (CTRL_OWNER_W <= 0) begin
-      $fatal(1, "%s: CTRL_OWNER_W must be >= 1", INSTANCE_ID);
-    end
-    if (CTRL_GEN_W <= 0) begin
-      $fatal(1, "%s: CTRL_GEN_W must be >= 1", INSTANCE_ID);
-    end
-    if ((DMA_CTRL_GEN_LSB + CTRL_GEN_W) > 32) begin
-      $fatal(1, "%s: CONTROL owner/gen field exceeds 32b", INSTANCE_ID);
-    end
-  end
-
   // ============================================================
   // Opcodes
   // ============================================================
@@ -109,6 +89,30 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
   localparam int ALLOC_GEN_LSB      = ALLOC_OWNER_LSB + ALLOC_OWNER_BITS;
   localparam int ALLOC_GEN_AVAIL    = (32 > ALLOC_GEN_LSB) ? (32 - ALLOC_GEN_LSB) : 0;
   localparam int ALLOC_GEN_BITS     = (CTRL_GEN_W < ALLOC_GEN_AVAIL) ? CTRL_GEN_W : ALLOC_GEN_AVAIL;
+
+  // ----------------------------------------------------
+  // Parameter sanity checks
+  // ----------------------------------------------------
+  initial begin
+    if ((dma_if.DATA_SIZE % DMA_CFG_STRIDE_BYTES) != 0) begin
+      $fatal(1, "%s: dma_if.DATA_SIZE(%0d) must be multiple of %0d",
+             INSTANCE_ID, dma_if.DATA_SIZE, DMA_CFG_STRIDE_BYTES);
+    end
+    if (REGS_PER_LANE <= 0) begin
+      $fatal(1, "%s: REGS_PER_LANE must be >= 1 (DATA_SIZE=%0d)",
+             INSTANCE_ID, dma_if.DATA_SIZE);
+    end
+    if (CTRL_OWNER_W <= 0) begin
+      $fatal(1, "%s: CTRL_OWNER_W must be >= 1", INSTANCE_ID);
+    end
+    if (CTRL_GEN_W <= 0) begin
+      $fatal(1, "%s: CTRL_GEN_W must be >= 1", INSTANCE_ID);
+    end
+    if ((DMA_CTRL_GEN_LSB + CTRL_GEN_W) > 32) begin
+      $fatal(1, "%s: CONTROL owner/gen field exceeds 32b", INSTANCE_ID);
+    end
+  end
+
 
   // ============================================================
   // 타일 크기
