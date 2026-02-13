@@ -217,13 +217,13 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
   // totals exported (debug/host)
   logic [31:0] M_tot, N_tot, K_tot, qblk_tot;
-  logic [31:0] wid;
+  logic [31:0] entry_id;
 
   assign gemm_fsm_if.M_tot = M_tot;
   assign gemm_fsm_if.N_tot = N_tot;
   assign gemm_fsm_if.K_tot = K_tot;
   assign gemm_fsm_if.qblk_tot = qblk_tot;
-  assign gemm_fsm_if.wid   = wid;
+  assign gemm_fsm_if.entry_id   = entry_id;
 
   // --------------------------------------------------------------------------
   // LMEM base helpers (DMA tile level ping-pong)
@@ -557,14 +557,14 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
       N_tot <= 32'd0;
       K_tot <= 32'd0;
       qblk_tot <= 32'd0;
-      wid   <= 32'd0;
+      entry_id   <= 32'd0;
     end else begin
       if (cfg_reg_if.regs[CFG_R_CONTROL][0] && cfg_reg_if.valid && cfg_reg_if.ready) begin
         M_tot <= cfg_reg_if.regs[CFG_R_M][31:0];
         N_tot <= cfg_reg_if.regs[CFG_R_N][31:0];
         K_tot <= cfg_reg_if.regs[CFG_R_K][31:0];
         qblk_tot <= cfg_reg_if.regs[CFG_R_QBLK][31:0];
-        wid   <= cfg_reg_if.wid;
+        entry_id   <= cfg_reg_if.entry_id;
       end
     end
   end

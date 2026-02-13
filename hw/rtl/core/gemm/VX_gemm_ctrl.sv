@@ -32,8 +32,47 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
 
     VX_config_reg_if.slave    cfg_reg_if,         // from gemm node
     VX_gemm_ctrl_if.master    gemm_ctrl_if,       // to gemm unit + cmd ctrls
+    VX_node_done_if.master    done_if,            // to job frontend (notify done)
     VX_gemm_sync_if.slave     gemm_sync_slv_if[N_NODE] // from cmd ctrls (notify events)
 );
+
+    // -------------------------------------------------------------------------
+    // Job completion tracking for job_frontend done_if
+    // -------------------------------------------------------------------------
+    localparam int CFG_R_CONTROL = 0;
+
+    logic                        job_active_q;
+    logic [31:0]                 active_entry_id_q;
+    logic [N_CHILDREN-1:0]       child_q_empty_v;
+    logic                        parent_q_empty;
+
+    wire cfg_start_fire = cfg_reg_if.valid && cfg_reg_if.ready && cfg_reg_if.regs[CFG_R_CONTROL][0];
+    wire workers_idle   = gemm_ctrl_if.input_read_flag.idle
+                        && gemm_ctrl_if.weight_read_flag.idle
+                        && gemm_ctrl_if.quant_param_read_flag.idle
+                        && gemm_ctrl_if.output_write_flag.idle
+                        && gemm_ctrl_if.dma_flag.idle;
+    wire queues_idle    = parent_q_empty && (&child_q_empty_v);
+    wire all_idle_now   = cfg_reg_if.ready && queues_idle && workers_idle;
+    wire done_fire      = done_if.valid && done_if.ready;
+
+    // done_if is held until handshake so dispatcher never misses completion.
+    assign done_if.valid    = job_active_q && all_idle_now;
+    assign done_if.entry_id = active_entry_id_q;
+
+    always_ff @(posedge clk) begin
+      if (reset) begin
+        job_active_q     <= 1'b0;
+        active_entry_id_q <= '0;
+      end else begin
+        if (cfg_start_fire) begin
+          job_active_q      <= 1'b1;
+          active_entry_id_q <= cfg_reg_if.entry_id;
+        end else if (done_fire) begin
+          job_active_q      <= 1'b0;
+        end
+      end
+    end
 
     // -------------------------------------------------------------------------
     // Local interfaces
@@ -62,7 +101,7 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
     // -------------------------------------------------------------------------
     localparam int PARENT_QUEUE_DATAW = $bits(gemm_unified_cmd_t);
 
-    wire                        parent_q_full, parent_q_empty;
+    wire                        parent_q_full;
     wire [PARENT_QUEUE_DATAW-1:0] parent_q_dout;
 
     wire parent_q_push  = gemm_fsm_if.ctrl.start && gemm_fsm_if.flag.idle;
@@ -153,6 +192,8 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
           .alm_full (),
           .size     ()
         );
+
+        assign child_q_empty_v[i] = child_q_empty;
       end
     endgenerate
 
@@ -195,5 +236,5 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
     assign gemm_ctrl_if.N_tot = gemm_fsm_if.N_tot;
     assign gemm_ctrl_if.K_tot = gemm_fsm_if.K_tot;
     assign gemm_ctrl_if.qblk_tot = gemm_fsm_if.qblk_tot;
-    assign gemm_ctrl_if.wid   = gemm_fsm_if.wid;
+    assign gemm_ctrl_if.entry_id = gemm_fsm_if.entry_id;
 endmodule

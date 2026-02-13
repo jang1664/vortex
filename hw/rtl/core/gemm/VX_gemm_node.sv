@@ -185,12 +185,12 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     assign output_dma_ctrl_if.reg_idx          = gemm_ctrl_if.output_write_ctrl.cmd.rs1_data;
     assign output_dma_ctrl_if.reg_value        = gemm_ctrl_if.output_write_ctrl.cmd.rs2_data;
   
-    assign gemm_dma_ctrl_if.start = gemm_ctrl_if.dma_ctrl.start;
-    assign gemm_dma_ctrl_if.cmd   = gemm_ctrl_if.dma_ctrl.cmd;
-    assign gemm_dma_ctrl_if.M_tot = gemm_ctrl_if.M_tot;
-    assign gemm_dma_ctrl_if.N_tot = gemm_ctrl_if.N_tot;
-    assign gemm_dma_ctrl_if.K_tot = gemm_ctrl_if.K_tot;
-    assign gemm_dma_ctrl_if.wid   = gemm_ctrl_if.wid;
+    assign gemm_dma_ctrl_if.start      = gemm_ctrl_if.dma_ctrl.start;
+    assign gemm_dma_ctrl_if.cmd        = gemm_ctrl_if.dma_ctrl.cmd;
+    assign gemm_dma_ctrl_if.M_tot      = gemm_ctrl_if.M_tot;
+    assign gemm_dma_ctrl_if.N_tot      = gemm_ctrl_if.N_tot;
+    assign gemm_dma_ctrl_if.K_tot      = gemm_ctrl_if.K_tot;
+    assign gemm_dma_ctrl_if.entry_id   = gemm_ctrl_if.entry_id;
 
     assign gemm_ctrl_if.dma_flag.idle = gemm_dma_ctrl_if.idle;
     assign gemm_ctrl_if.dma_flag.done = gemm_dma_ctrl_if.done;

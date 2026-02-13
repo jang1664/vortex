@@ -11,16 +11,15 @@ interface VX_gemm_dma_ctrl_if import VX_gpu_pkg::*; ();
   logic [31:0] N_tot;
   logic [31:0] K_tot;
 
-  // 이 DMA 커맨드 스트림의 소유자(워프 ID)
-  logic [31:0] wid;     // = warp_id
+  logic [31:0] entry_id;     // mmio reg entry id
 
   modport master (
-    output start, cmd, M_tot, N_tot, K_tot, wid,
+    output start, cmd, M_tot, N_tot, K_tot, entry_id,
     input idle, done
   );
 
   modport slave (
-    input start, cmd, M_tot, N_tot, K_tot, wid,
+    input start, cmd, M_tot, N_tot, K_tot, entry_id,
     output idle, done
   );
   
