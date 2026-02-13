@@ -256,46 +256,24 @@ module VX_core import VX_gpu_pkg::*; #(
         .gemm_data_if      (gemm_data_if)
     );
 
-    VX_config_registers #(
-      .INSTANCE_ID(INSTANCE_ID),
-      .NUM_REGS(`DMA_CFG_REG_NUM),
-      .START_BIT(0),
-      .MAS_NUM(`NUM_LSU_BLOCKS+1)
-    ) dma_cfg_regs (
-      .clk(clk),
-      .reset(reset),
-      .lsu_mem_if(dma_ctrl_if),
-      .regs_out(dma_cfg_regs_if)
-    );
-
     VX_dma_node #(
-      .INSTANCE_ID(INSTANCE_ID)
+      .INSTANCE_ID(INSTANCE_ID),
+      .N_MASTER(`NUM_LSU_BLOCKS+1)
     ) u_VX_dma_node (
       .clk(clk),
       .reset(reset),
-      .cfg_reg_if(dma_cfg_regs_if),
+      .mmio_if(dma_ctrl_if),
       .dcache_bus_if(dma_global_data_if),
       .lmem_bus_if(dma_local_data_if)
     );
 
-    VX_config_registers #(
-      .INSTANCE_ID(INSTANCE_ID),
-      .NUM_REGS(`GEMM_CFG_REG_NUM),
-      .START_BIT(0),
-      .MAS_NUM(`NUM_LSU_BLOCKS)
-    ) gemm_cfg_regs (
-      .clk(clk),
-      .reset(reset),
-      .lsu_mem_if(gemm_ctrl_if),
-      .regs_out(gemm_cfg_regs_if)
-    );
-
     VX_gemm_node #(
-        .INSTANCE_ID (`SFORMATF(("%s-gemm", INSTANCE_ID)))
+        .INSTANCE_ID (`SFORMATF(("%s-gemm", INSTANCE_ID))),
+        .N_MASTER (`NUM_LSU_BLOCKS)
     ) gemm_node (
         .clk        (clk),
         .reset      (reset),
-        .cfg_reg_if (gemm_cfg_regs_if),
+        .mmio_if    (gemm_ctrl_if),
         .dma_if     (dma_ctrl_if[`NUM_LSU_BLOCKS]),
         .lmem_bus_if(gemm_data_if)
     );
