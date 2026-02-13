@@ -9,13 +9,14 @@
 
 module VX_gemm_node import VX_gpu_pkg::*; #(
     parameter `STRING INSTANCE_ID = "",
+    parameter N_MASTER    = 1,
     parameter N_CHILDREN  = 3
 ) (
     // Clock
     input wire              clk,
     input wire              reset,
 
-    VX_config_reg_if.slave  cfg_reg_if,
+    VX_lsu_mem_if.slave     mmio_if[N_MASTER],
 
     VX_lsu_mem_if.master    dma_if,     // to DMA engine
     VX_mem_bus_if.master    lmem_bus_if // for inputs, weights, scale/zero, output
@@ -87,6 +88,9 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
 
     VX_gemm_sync_if gemm_sync_if[N_NODE] ();// from gemm/dma node
 
+    VX_config_reg_if issue_if();
+    VX_node_done_if  done_if();
+
     // Connect gemm_ctrl_if to DMA ctrl interfaces
     assign input_dma_ctrl_if.start = gemm_ctrl_if.input_read_ctrl.start;
     assign input_dma_ctrl_if.src_base_addr = '0;
@@ -140,6 +144,24 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
       .DATA_SIZE(LSU_WORD_SIZE),
       .TAG_WIDTH(LMEM_TAG_WIDTH)
     ) lmem_arb_out_if[1]();
+
+
+    // ----------------------------------------------------
+    // job frontend
+    // ----------------------------------------------------
+    VX_job_frontend #(
+      .INSTANCE_ID(INSTANCE_ID),
+      .NUM_MASTERS(N_MASTER),
+      .NUM_ENTRIES(4),
+      .NUM_REGS32(32),
+      .CFG_BASE_ADDR(`GEMM_REG_BASE_ADDR)
+    ) VX_job_frontend_instance (
+      .clk(clk),
+      .reset(reset),
+      .mmio_if(mmio_if),
+      .issue_if(issue_if),
+      .done_if(done_if)
+    );
 
     // lmem arbiter
     //   - arbitrate input, weight, output, scale/zero mem bus ifs to top lmem bus if
@@ -370,7 +392,8 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     ) u_VX_gemm_ctrl (
       .clk(clk),
       .reset(reset),
-      .cfg_reg_if(cfg_reg_if),
+      .cfg_reg_if(issue_if),
+      .done_if(done_if),
       .gemm_ctrl_if(gemm_ctrl_if),
       .gemm_sync_slv_if(gemm_sync_if)
     );
