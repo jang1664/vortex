@@ -1,10 +1,10 @@
 `include "VX_define.vh"
 
 //==============================================================================
-// VX_dma_node_misal
+// VX_dma_unit_misal
 //  - cfg_reg_if.DW must be 32
 //  - desc word layout (32b words):
-//      0  control_reg : [0]=start, [1]=direction (0:G2L, 1:L2G)
+//      0  control_reg : [0]=start(valid), [3]=direction (0:G2L, 1:L2G)
 //      1  dst_base_lo
 //      2  dst_base_hi
 //      3  src_base_lo
@@ -26,7 +26,7 @@
 //    - holds valid until done_if.ready handshake
 //==============================================================================
 
-module VX_dma_node_misal import VX_gpu_pkg::*; #(
+module VX_dma_unit_misal import VX_gpu_pkg::*; #(
   parameter `STRING INSTANCE_ID = ""
 ) (
   input wire clk,
@@ -157,22 +157,20 @@ module VX_dma_node_misal import VX_gpu_pkg::*; #(
 
   // Since cfg_reg_if.DW=32, regs_latched[*] is 32-bit.
   logic [cfg_reg_if.NUM-1:0][cfg_reg_if.DW-1:0] regs_latched;
-  logic [31:0] wid_latched, tid_latched;
+  logic [31:0] entry_id_latched;
 
   always_ff @(posedge clk) begin
     if (reset) begin
-      wid_latched <= '0;
-      tid_latched <= '0;
+      entry_id_latched <= '0;
       for (int k = 0; k < cfg_reg_if.NUM; k++) regs_latched[k] <= '0;
     end else if (cfg_fire) begin
-      wid_latched <= cfg_reg_if.wid;
-      tid_latched <= cfg_reg_if.tid;
+      entry_id_latched <= cfg_reg_if.entry_id;
       for (int k = 0; k < cfg_reg_if.NUM; k++) regs_latched[k] <= cfg_reg_if.regs[k];
     end
   end
 
   logic [`UP(UUID_WIDTH)-1:0] dma_uuid;
-  assign dma_uuid = {wid_latched[`UP(UUID_WIDTH/2)-1:0], tid_latched[`UP(UUID_WIDTH/2)-1:0]};
+  assign dma_uuid = `UP(UUID_WIDTH)'(entry_id_latched);
 
   // unpack regs to 32-bit words (direct)
   logic [NUM_REGS-1:0][31:0] desc_w;
@@ -213,7 +211,7 @@ module VX_dma_node_misal import VX_gpu_pkg::*; #(
     padding       = desc_w[15];
 
     start_bit     = control_reg[0];
-    direction_bit = control_reg[1];
+    direction_bit = control_reg[3];
   end
 
   wire cmd_start = cfg_fire && cfg_reg_if.regs[0][0];
@@ -282,8 +280,7 @@ module VX_dma_node_misal import VX_gpu_pkg::*; #(
   // ------------------------------------------------------------
   always_comb begin
     done_if.valid = 1'b0;
-    done_if.wid   = wid_latched;
-    done_if.entry_id = tid_latched; // use tid as entry_id for now
+    done_if.entry_id = entry_id_latched;
     
     if (state == S_DONE)
       done_if.valid = 1'b1;
