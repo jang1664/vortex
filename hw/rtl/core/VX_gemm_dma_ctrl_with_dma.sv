@@ -28,12 +28,7 @@ module VX_gemm_dma_ctrl_with_dma import VX_gpu_pkg::*; #(
     .NUM_LANES(CFG_NUM_LANES),
     .DATA_SIZE(CFG_DATA_SIZE),
     .TAG_WIDTH(45)
-  ) dma_if();
-
-  VX_config_entry_alloc_if #(
-    .OWNER_W(32),
-    .ENTRYID_W(ENTRYID_W)
-  ) alloc_if();
+  ) dma_if[1]();
 
   VX_config_reg_if #(
     .NUM(NUM_REGS),
@@ -58,13 +53,12 @@ module VX_gemm_dma_ctrl_with_dma import VX_gpu_pkg::*; #(
     .clk(clk),
     .reset(reset),
 
-    .alloc_if(alloc_if.master),
     .gemm_dma_ctrl_if(gemm_dma_ctrl_if),
     .gemm_sync_if(gemm_sync_if),
-    .dma_if(dma_if.master)
+    .dma_if(dma_if[0].master)
   );
 
-  VX_config_registers #(
+  VX_job_frontend #(
     .NUM_ENTRIES(NUM_ENTRIES),
     .NUM_REGS32(NUM_REGS),
     .ENTRYID_W(ENTRYID_W)
@@ -72,13 +66,12 @@ module VX_gemm_dma_ctrl_with_dma import VX_gpu_pkg::*; #(
     .clk(clk),
     .reset(reset),
 
-    .alloc_if(alloc_if.slave),
-    .mmio_if(dma_if.slave),
-    .dma_issue_if(config_reg_if.master),
-    .dma_done_if(node_done_if.slave)
+    .mmio_if(dma_if),
+    .issue_if(config_reg_if.master),
+    .done_if(node_done_if.slave)
   );
 
-  VX_dma_node_misal #(.INSTANCE_ID("dma0")) dma_node (
+  VX_dma_unit_misal #(.INSTANCE_ID("dma0")) dma_node (
     .clk          (clk),
     .reset        (reset),
     .cfg_reg_if   (config_reg_if.slave),

@@ -308,7 +308,7 @@ module tb_VX_gemm_dma_ctrl_with_dma import VX_gpu_pkg::*; ();
     gemm_dma_ctrl_if.M_tot <= M_tot_i;
     gemm_dma_ctrl_if.N_tot <= N_tot_i;
     gemm_dma_ctrl_if.K_tot <= K_tot_i;
-    gemm_dma_ctrl_if.wid   <= wid_i;
+    gemm_dma_ctrl_if.entry_id <= wid_i;
     gemm_dma_ctrl_if.start <= 1'b1;
     @(posedge clk);
     gemm_dma_ctrl_if.start <= 1'b0;
@@ -535,7 +535,7 @@ module tb_VX_gemm_dma_ctrl_with_dma import VX_gpu_pkg::*; ();
     gemm_dma_ctrl_if.M_tot <= '0;
     gemm_dma_ctrl_if.N_tot <= '0;
     gemm_dma_ctrl_if.K_tot <= '0;
-    gemm_dma_ctrl_if.wid   <= '0;
+    gemm_dma_ctrl_if.entry_id   <= '0;
 
     repeat (10) @(posedge clk);
 
@@ -571,7 +571,7 @@ module tb_VX_gemm_dma_ctrl_with_dma import VX_gpu_pkg::*; ();
     gemm_dma_ctrl_if.M_tot <= '0;
     gemm_dma_ctrl_if.N_tot <= '0;
     gemm_dma_ctrl_if.K_tot <= '0;
-    gemm_dma_ctrl_if.wid   <= '0;
+    gemm_dma_ctrl_if.entry_id   <= '0;
 
     repeat (10) @(posedge clk);
 
