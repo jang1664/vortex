@@ -8,7 +8,7 @@ RTL_DIR := $(VORTEX_HOME)/hw/rtl
 export CC := /usr/bin/gcc-11
 export CXX := /usr/bin/g++-11
 
-SIM_EXEC ?= vlt
+SIM_EXEC ?= vcs
 
 TIME_SCALE=1ns/1ps
 TOP_MODULE := tb_VX_gemm_dma_ctrl
@@ -20,11 +20,35 @@ TOP_MODULE := tb_VX_gemm_dma_ctrl
 
 TB   := tb_VX_gemm_dma_ctrl.sv
 RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
-				$(RTL_DIR)/core/gemm/VX_gemm_dma_ctrl.sv \
-				$(RTL_DIR)/core/gemm/VX_config_entry_alloc_if.sv \
-				$(RTL_DIR)/core/gemm/VX_gemm_dma_ctrl_if.sv \
-				$(RTL_DIR)/core/gemm/VX_gemm_sync_if.sv \
-				$(RTL_DIR)/mem/VX_lsu_mem_if.sv
+					$(RTL_DIR)/core/gemm/VX_gemm_dma_ctrl.sv \
+					$(RTL_DIR)/core/gemm/VX_gemm_dma_ctrl_if.sv \
+					$(RTL_DIR)/core/gemm/VX_gemm_sync_if.sv \
+					$(RTL_DIR)/core/VX_job_desc_mmio_regs.sv \
+					$(RTL_DIR)/core/VX_job_dispatcher.sv \
+					$(RTL_DIR)/core/VX_job_frontend.sv \
+					$(RTL_DIR)/core/VX_config_reg_if.sv \
+					$(RTL_DIR)/core/VX_node_done_if.sv \
+					$(RTL_DIR)/mem/VX_lsu_mem_arb.sv \
+					$(RTL_DIR)/libs/VX_stream_arb.sv \
+					$(RTL_DIR)/libs/VX_stream_switch.sv \
+					$(RTL_DIR)/libs/VX_bits_insert.sv \
+					$(RTL_DIR)/libs/VX_bits_remove.sv \
+					$(RTL_DIR)/libs/VX_elastic_buffer.sv \
+					$(RTL_DIR)/libs/VX_stream_buffer.sv \
+					$(RTL_DIR)/libs/VX_pipe_buffer.sv \
+					$(RTL_DIR)/libs/VX_pipe_register.sv \
+					$(RTL_DIR)/libs/VX_generic_arbiter.sv \
+					$(RTL_DIR)/libs/VX_rr_arbiter.sv \
+					$(RTL_DIR)/libs/VX_priority_arbiter.sv \
+					$(RTL_DIR)/libs/VX_priority_encoder.sv \
+					$(RTL_DIR)/libs/VX_find_first.sv \
+					$(RTL_DIR)/libs/VX_lzc.sv \
+					$(RTL_DIR)/libs/VX_popcount.sv \
+					$(RTL_DIR)/libs/VX_onehot_encoder.sv \
+					$(RTL_DIR)/libs/VX_demux.sv \
+					$(RTL_DIR)/libs/VX_matrix_arbiter.sv \
+					$(RTL_DIR)/libs/VX_cyclic_arbiter.sv \
+					$(RTL_DIR)/mem/VX_lsu_mem_if.sv
 				
 #PARAMS_  := PIPE_MULT=$(PIPE_MULT) PIPE_ALIGN=$(PIPE_ALIGN) PIPE_INTERVAL=$(PIPE_INTERVAL)
 INCDIRS_ := $(RTL_DIR)

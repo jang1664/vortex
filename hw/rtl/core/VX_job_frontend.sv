@@ -25,7 +25,10 @@ module VX_job_frontend import VX_gpu_pkg::*; #(
   logic [NUM_ENTRIES-1:0] working;
   logic [NUM_ENTRIES-1:0][NUM_REGS32-1:0][31:0] regs32;
 
-  localparam int MMIO_ARB_TAG_WIDTH = LSU_TAG_WIDTH + `ARB_SEL_BITS(NUM_MASTERS, 1);
+  localparam int MMIO_ARB_SEL_BITS = `ARB_SEL_BITS(NUM_MASTERS, 1);
+  localparam int MMIO_ARB_TAG_WIDTH = LSU_TAG_WIDTH + MMIO_ARB_SEL_BITS;
+  localparam int OWNER_W = (NUM_MASTERS <= 1) ? 1 : MMIO_ARB_SEL_BITS;
+  localparam bit OWNER_FROM_TAG = (NUM_MASTERS > 1);
 
   logic                 reg_set_working_valid;
   logic [ENTRYID_W-1:0] reg_set_working_entry_id;
@@ -60,6 +63,8 @@ module VX_job_frontend import VX_gpu_pkg::*; #(
     .NUM_ENTRIES       (NUM_ENTRIES),
     .NUM_REGS32        (NUM_REGS32),
     .ENTRYID_W         (ENTRYID_W),
+    .OWNER_W           (OWNER_W),
+    .OWNER_FROM_TAG    (OWNER_FROM_TAG),
     .CFG_BASE_ADDR     (CFG_BASE_ADDR)
   ) u_job_desc_mmio_regs (
     .clk                        (clk),

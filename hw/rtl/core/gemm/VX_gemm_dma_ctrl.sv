@@ -21,6 +21,8 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
     parameter int          DMA_CFG_STRIDE_BYTES   = 4,        // 32-bit regs
     parameter int          DMA_ENTRY_STRIDE_BYTES = 16 * 4,   // 16 regs * 4 bytes = 64 bytes/entry
     parameter int          ENTRYID_W              = 8,
+    parameter int          CTRL_OWNER_W           = 1,
+    parameter int          CTRL_GEN_W             = 16,
 
     parameter int          POLL_GAP_CYCLES        = 1,
     parameter int          ALLOC_RETRY_GAP_CYCLES = 0
@@ -28,7 +30,6 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
     input  wire                   clk,
     input  wire                   reset,
 
-    VX_config_entry_alloc_if.master alloc_if,
     VX_gemm_dma_ctrl_if.slave       gemm_dma_ctrl_if,
     VX_gemm_sync_if.master          gemm_sync_if,
     VX_lsu_mem_if.master            dma_if
@@ -47,6 +48,15 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
     if (REGS_PER_LANE <= 0) begin
       $fatal(1, "%s: REGS_PER_LANE must be >= 1 (DATA_SIZE=%0d)",
              INSTANCE_ID, dma_if.DATA_SIZE);
+    end
+    if (CTRL_OWNER_W <= 0) begin
+      $fatal(1, "%s: CTRL_OWNER_W must be >= 1", INSTANCE_ID);
+    end
+    if (CTRL_GEN_W <= 0) begin
+      $fatal(1, "%s: CTRL_GEN_W must be >= 1", INSTANCE_ID);
+    end
+    if ((DMA_CTRL_GEN_LSB + CTRL_GEN_W) > 32) begin
+      $fatal(1, "%s: CONTROL owner/gen field exceeds 32b", INSTANCE_ID);
     end
   end
 
@@ -82,7 +92,23 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
   localparam int DMA_R_LAST        = DMA_R_PAD;
 
   localparam int DMA_CTRL_START_BIT = 0;
-  localparam int DMA_CTRL_DIR_BIT   = 1;
+  localparam int DMA_CTRL_OCCUPY_BIT = 1;
+  localparam int DMA_CTRL_WORKING_BIT = 2;
+  // VX_job_desc_mmio_regs uses CONTROL[1]=occupy, [2]=working (RO),
+  // so direction must be encoded on a different writable bit.
+  localparam int DMA_CTRL_DIR_BIT   = 3;
+  localparam int DMA_CTRL_OWNER_LSB = 4;
+  localparam int DMA_CTRL_GEN_LSB   = DMA_CTRL_OWNER_LSB + CTRL_OWNER_W;
+
+  localparam int ALLOC_SUCCESS_BIT  = 0;
+  localparam int ALLOC_ENTRY_LSB    = 1;
+  localparam int ALLOC_ENTRY_BITS   = (ENTRYID_W > 31) ? 31 : ENTRYID_W;
+  localparam int ALLOC_OWNER_LSB    = ALLOC_ENTRY_LSB + ALLOC_ENTRY_BITS;
+  localparam int ALLOC_OWNER_AVAIL  = (32 > ALLOC_OWNER_LSB) ? (32 - ALLOC_OWNER_LSB) : 0;
+  localparam int ALLOC_OWNER_BITS   = (CTRL_OWNER_W < ALLOC_OWNER_AVAIL) ? CTRL_OWNER_W : ALLOC_OWNER_AVAIL;
+  localparam int ALLOC_GEN_LSB      = ALLOC_OWNER_LSB + ALLOC_OWNER_BITS;
+  localparam int ALLOC_GEN_AVAIL    = (32 > ALLOC_GEN_LSB) ? (32 - ALLOC_GEN_LSB) : 0;
+  localparam int ALLOC_GEN_BITS     = (CTRL_GEN_W < ALLOC_GEN_AVAIL) ? CTRL_GEN_W : ALLOC_GEN_AVAIL;
 
   // ============================================================
   // 타일 크기
@@ -94,11 +120,14 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
   // ============================================================
   // 주소 헬퍼
   // ============================================================
+  localparam int GLOBAL_ALLOC_B = dma_if.DATA_SIZE;
+
   function automatic logic [63:0] entry_reg_byte_addr(
       input logic [ENTRYID_W-1:0] entry_id,
       input int                   reg_idx
   );
     return DMA_CFG_BASE_ADDR
+         + 64'(GLOBAL_ALLOC_B)
          + 64'(entry_id) * 64'(DMA_ENTRY_STRIDE_BYTES)
          + 64'(reg_idx * DMA_CFG_STRIDE_BYTES);
   endfunction
@@ -129,8 +158,6 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
 
   logic [31:0] M_tot_q, N_tot_q, K_tot_q;
   logic [31:0] M_tot_d, N_tot_d, K_tot_d;
-  logic [31:0] owner_warp_q, owner_warp_d;
-
   // ============================================================
   // DMA 주소 매핑
   // ============================================================
@@ -370,6 +397,7 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
     S_IDLE,
     S_DECODE,
     S_ALLOC_REQ,
+    S_ALLOC_R_WAIT,
     S_ALLOC_WAIT_GAP,
     S_NOTIFY,
     S_PROG_W,
@@ -385,6 +413,8 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
   int     poll_gap_q, poll_gap_d;
   int     alloc_gap_q, alloc_gap_d;
   logic [ENTRYID_W-1:0] entry_id_q, entry_id_d;
+  logic [CTRL_OWNER_W-1:0] alloc_owner_q, alloc_owner_d;
+  logic [CTRL_GEN_W-1:0]   alloc_gen_q, alloc_gen_d;
 
   assign gemm_dma_ctrl_if.idle = (state_q == S_IDLE);
   assign gemm_dma_ctrl_if.done = (state_q == S_DONE);
@@ -398,8 +428,9 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
     poll_gap_d   = poll_gap_q;
     alloc_gap_d  = alloc_gap_q;
     entry_id_d   = entry_id_q;
+    alloc_owner_d = alloc_owner_q;
+    alloc_gen_d   = alloc_gen_q;
 
-    owner_warp_d = owner_warp_q;
     M_tot_d      = M_tot_q;
     N_tot_d      = N_tot_q;
     K_tot_d      = K_tot_q;
@@ -420,10 +451,6 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
     gemm_sync_if.reg_idx = 32'd0;
     gemm_sync_if.value   = 32'd0;
 
-    // alloc_if 기본값
-    alloc_if.valid      = 1'b0;
-    alloc_if.owner_warp = 32'd0;
-
     unique case (state_q)
       S_IDLE: begin
         poll_gap_d  = 0;
@@ -437,19 +464,51 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
       end
 
       S_ALLOC_REQ: begin
-        alloc_if.valid      = 1'b1;
-        alloc_if.owner_warp = owner_warp_q;
+        // Global alloc register read at DMA_CFG_BASE_ADDR + 0.
+        dma_if.req_valid   = 1'b1;
+        dma_if.req_data.rw = 1'b0;
 
-        if (alloc_if.ready) begin
-          entry_id_d = alloc_if.entry_id[ENTRYID_W-1:0];
+        dma_if.req_data.mask   = '0;
+        dma_if.req_data.byteen = '0;
+        dma_if.req_data.addr   = '0;
+        dma_if.req_data.data   = '0;
 
-          // IMPORTANT: 0부터 시작해서 항상 DATA_SIZE 정렬 번들로 write
-          wr_idx_d   = DMA_R_CONTROL;
+        dma_if.req_data.mask[0] = 1'b1;
+        dma_if.req_data.addr[0] = to_lsu_addr(DMA_CFG_BASE_ADDR);
 
-          state_d    = S_PROG_W;
-        end else if (ALLOC_RETRY_GAP_CYCLES > 0) begin
-          alloc_gap_d = ALLOC_RETRY_GAP_CYCLES;
-          state_d     = S_ALLOC_WAIT_GAP;
+        if (dma_if.req_valid && dma_if.req_ready) begin
+          state_d = S_ALLOC_R_WAIT;
+        end
+      end
+
+      S_ALLOC_R_WAIT: begin
+        if (dma_if.rsp_valid) begin
+          logic [31:0] alloc_rsp_w;
+          alloc_rsp_w = dma_if.rsp_data.data[0][31:0];
+
+          if (alloc_rsp_w[ALLOC_SUCCESS_BIT]) begin
+            entry_id_d = '0;
+            alloc_owner_d = '0;
+            alloc_gen_d   = '0;
+            if (ALLOC_ENTRY_BITS > 0) begin
+              entry_id_d[ALLOC_ENTRY_BITS-1:0] = alloc_rsp_w[ALLOC_ENTRY_LSB +: ALLOC_ENTRY_BITS];
+            end
+            if (ALLOC_OWNER_BITS > 0) begin
+              alloc_owner_d[ALLOC_OWNER_BITS-1:0] = alloc_rsp_w[ALLOC_OWNER_LSB +: ALLOC_OWNER_BITS];
+            end
+            if (ALLOC_GEN_BITS > 0) begin
+              alloc_gen_d[ALLOC_GEN_BITS-1:0] = alloc_rsp_w[ALLOC_GEN_LSB +: ALLOC_GEN_BITS];
+            end
+
+            // IMPORTANT: 0부터 시작해서 항상 DATA_SIZE 정렬 번들로 write
+            wr_idx_d = DMA_R_CONTROL;
+            state_d  = S_PROG_W;
+          end else if (ALLOC_RETRY_GAP_CYCLES > 0) begin
+            alloc_gap_d = ALLOC_RETRY_GAP_CYCLES;
+            state_d     = S_ALLOC_WAIT_GAP;
+          end else begin
+            state_d = S_ALLOC_REQ;
+          end
         end
       end
 
@@ -567,9 +626,20 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
       S_POLL_R_WAIT: begin
         if (dma_if.rsp_valid) begin
           logic [63:0] rdata;
+          logic [CTRL_OWNER_W-1:0] ctrl_owner;
+          logic [CTRL_GEN_W-1:0]   ctrl_gen;
           rdata = dma_if.rsp_data.data[0];
+          ctrl_owner = '0;
+          ctrl_gen   = '0;
+          ctrl_owner = rdata[DMA_CTRL_OWNER_LSB +: CTRL_OWNER_W];
+          ctrl_gen   = rdata[DMA_CTRL_GEN_LSB +: CTRL_GEN_W];
 
-          if (rdata[DMA_CTRL_START_BIT] == 1'b0) begin
+          // Completion condition:
+          //   1) entry released by backend (occupy=0 && working=0), or
+          //   2) token changed (another requester re-allocated same entry).
+          if ((rdata[DMA_CTRL_OCCUPY_BIT] == 1'b0 && rdata[DMA_CTRL_WORKING_BIT] == 1'b0)
+           || (ctrl_owner != alloc_owner_q)
+           || (ctrl_gen   != alloc_gen_q)) begin
             state_d = S_DONE;
           end else begin
             poll_gap_d = (POLL_GAP_CYCLES > 0) ? (POLL_GAP_CYCLES-1) : 0;
@@ -597,8 +667,9 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
       alloc_gap_q  <= 0;
       cmd_q        <= '0;
       entry_id_q   <= '0;
+      alloc_owner_q <= '0;
+      alloc_gen_q   <= '0;
 
-      owner_warp_q <= 32'd0;
       M_tot_q      <= 32'd0;
       N_tot_q      <= 32'd0;
       K_tot_q      <= 32'd0;
@@ -608,8 +679,9 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
       poll_gap_q   <= poll_gap_d;
       alloc_gap_q  <= alloc_gap_d;
       entry_id_q   <= entry_id_d;
+      alloc_owner_q <= alloc_owner_d;
+      alloc_gen_q   <= alloc_gen_d;
 
-      owner_warp_q <= owner_warp_d;
       M_tot_q      <= M_tot_d;
       N_tot_q      <= N_tot_d;
       K_tot_q      <= K_tot_d;
@@ -620,7 +692,6 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
         M_tot_q      <= gemm_dma_ctrl_if.M_tot;
         N_tot_q      <= gemm_dma_ctrl_if.N_tot;
         K_tot_q      <= gemm_dma_ctrl_if.K_tot;
-        owner_warp_q <= gemm_dma_ctrl_if.wid;
       end
     end
   end

@@ -18,6 +18,22 @@ module tb_VX_job_frontend;
   localparam int WORDS_PER_BEAT = (TB_DATA_SIZE / 4);
   localparam int NUM_BEATS      = (NUM_REGS32 + WORDS_PER_BEAT - 1) / WORDS_PER_BEAT;
   localparam int ENTRY_BASE_BEAT= 1; // beat0 is global alloc register
+  localparam int OWNER_W        = `ARB_SEL_BITS(NUM_MASTERS, 1);
+  localparam int GEN_W          = 16;
+
+  localparam int CTRL_VALID_BIT   = 0;
+  localparam int CTRL_OCCUPY_BIT  = 1;
+  localparam int CTRL_WORKING_BIT = 2;
+  localparam int CTRL_OWNER_LSB   = 4;
+  localparam int CTRL_GEN_LSB     = CTRL_OWNER_LSB + OWNER_W;
+
+  localparam int ALLOC_SUCCESS_BIT = 0;
+  localparam int ALLOC_ENTRY_LSB   = 1;
+  localparam int ALLOC_ENTRY_BITS  = ENTRYID_W;
+  localparam int ALLOC_OWNER_LSB   = ALLOC_ENTRY_LSB + ALLOC_ENTRY_BITS;
+  localparam int ALLOC_OWNER_BITS  = OWNER_W;
+  localparam int ALLOC_GEN_LSB     = ALLOC_OWNER_LSB + ALLOC_OWNER_BITS;
+  localparam int ALLOC_GEN_BITS    = GEN_W;
 
   logic clk, reset;
 
@@ -266,6 +282,41 @@ module tb_VX_job_frontend;
     end
   endtask
 
+  task automatic mmio_read_lane0_m1(
+    input  logic [mmio_if[1].ADDR_WIDTH-1:0] addr,
+    output logic [TB_DATA_SIZE*8-1:0]        data
+  );
+    int guard;
+    begin
+      mmio_if[1].req_data        = '0;
+      mmio_if[1].req_data.rw     = 1'b0;
+      mmio_if[1].req_data.mask   = '0;
+      mmio_if[1].req_data.mask[0]= 1'b1;
+      mmio_if[1].req_data.addr[0]= addr;
+
+      @(negedge clk);
+      mmio_if[1].req_valid = 1'b1;
+      guard = 0;
+      while (!(mmio_if[1].req_valid && mmio_if[1].req_ready)) begin
+        @(posedge clk);
+        guard++;
+        if (guard > 200) $fatal(1, "mmio_read_lane0_m1 timeout waiting req_ready");
+      end
+      @(negedge clk); // deassert after handshake edge
+      mmio_if[1].req_valid = 1'b0;
+
+      if (!mmio_if[1].rsp_valid) begin
+        guard = 0;
+        do begin
+          @(posedge clk);
+          guard++;
+          if (guard > 200) $fatal(1, "mmio_read_lane0_m1 timeout waiting rsp_valid");
+        end while (!mmio_if[1].rsp_valid);
+      end
+      data = mmio_if[1].rsp_data.data[0];
+    end
+  endtask
+
   task automatic check_rsp_hold(input logic [mmio_if[0].ADDR_WIDTH-1:0] addr);
     int guard;
     logic [TB_DATA_SIZE*8-1:0] hold_data;
@@ -318,16 +369,41 @@ module tb_VX_job_frontend;
 
   task automatic alloc_try(
     output logic success,
-    output int   entry_id
+    output int   entry_id,
+    output int   owner_id,
+    output int   generation
   );
     logic [TB_DATA_SIZE*8-1:0] rd;
     logic [31:0] w;
     begin
       mmio_read_lane0(alloc_addr(), rd);
       w = rd[31:0];
-      success  = w[0];
-      entry_id = int'(w[ENTRYID_W:1]);
-      $display("[%0t] ALLOC success=%0d entry=%0d", $time, success, entry_id);
+      success    = w[ALLOC_SUCCESS_BIT];
+      entry_id   = int'(w[ALLOC_ENTRY_LSB +: ALLOC_ENTRY_BITS]);
+      owner_id   = int'(w[ALLOC_OWNER_LSB +: ALLOC_OWNER_BITS]);
+      generation = int'(w[ALLOC_GEN_LSB +: ALLOC_GEN_BITS]);
+      $display("[%0t] ALLOC(m0) success=%0d entry=%0d owner=%0d gen=%0d",
+               $time, success, entry_id, owner_id, generation);
+    end
+  endtask
+
+  task automatic alloc_try_m1(
+    output logic success,
+    output int   entry_id,
+    output int   owner_id,
+    output int   generation
+  );
+    logic [TB_DATA_SIZE*8-1:0] rd;
+    logic [31:0] w;
+    begin
+      mmio_read_lane0_m1(alloc_addr(), rd);
+      w = rd[31:0];
+      success    = w[ALLOC_SUCCESS_BIT];
+      entry_id   = int'(w[ALLOC_ENTRY_LSB +: ALLOC_ENTRY_BITS]);
+      owner_id   = int'(w[ALLOC_OWNER_LSB +: ALLOC_OWNER_BITS]);
+      generation = int'(w[ALLOC_GEN_LSB +: ALLOC_GEN_BITS]);
+      $display("[%0t] ALLOC(m1) success=%0d entry=%0d owner=%0d gen=%0d",
+               $time, success, entry_id, owner_id, generation);
     end
   endtask
 
@@ -392,6 +468,8 @@ module tb_VX_job_frontend;
   initial begin : test_main
     logic ok;
     int eid;
+    int owner;
+    int gen;
     int l;
     int ml_used;
     logic [31:0] ctrl;
@@ -424,11 +502,11 @@ module tb_VX_job_frontend;
       $fatal(1, "This test expects NUM_MASTERS >= 2 for arbitration check");
 
     // 1) Global ALLOC RR: expect 0,1,2,3 then fail
-    alloc_try(ok, eid); if (!ok || eid != 0) $fatal(1, "alloc #0 mismatch");
-    alloc_try(ok, eid); if (!ok || eid != 1) $fatal(1, "alloc #1 mismatch");
-    alloc_try(ok, eid); if (!ok || eid != 2) $fatal(1, "alloc #2 mismatch");
-    alloc_try(ok, eid); if (!ok || eid != 3) $fatal(1, "alloc #3 mismatch");
-    alloc_try(ok, eid); if (ok)             $fatal(1, "alloc must fail when full");
+    alloc_try(ok, eid, owner, gen); if (!ok || eid != 0 || owner != 0 || gen != 1) $fatal(1, "alloc #0 mismatch");
+    alloc_try(ok, eid, owner, gen); if (!ok || eid != 1 || owner != 0 || gen != 1) $fatal(1, "alloc #1 mismatch");
+    alloc_try(ok, eid, owner, gen); if (!ok || eid != 2 || owner != 0 || gen != 1) $fatal(1, "alloc #2 mismatch");
+    alloc_try(ok, eid, owner, gen); if (!ok || eid != 3 || owner != 0 || gen != 1) $fatal(1, "alloc #3 mismatch");
+    alloc_try(ok, eid, owner, gen); if (ok)                                         $fatal(1, "alloc must fail when full");
 
     // 2) Basic MMIO write/read sanity on entry2 beat1
     wr_pat = (TB_DATA_SIZE*8)'(64'h1122_3344_AABB_CCDD);
@@ -504,7 +582,11 @@ module tb_VX_job_frontend;
 
     // CONTROL[0]=valid, [1]=occupy, [2]=working
     read_control_word(0, ctrl);
-    if ((ctrl[0] !== 1'b1) || (ctrl[1] !== 1'b1) || (ctrl[2] !== 1'b0))
+    if ((ctrl[CTRL_VALID_BIT] !== 1'b1)
+     || (ctrl[CTRL_OCCUPY_BIT] !== 1'b1)
+     || (ctrl[CTRL_WORKING_BIT] !== 1'b0)
+     || (ctrl[CTRL_OWNER_LSB +: OWNER_W] !== OWNER_W'(0))
+     || (ctrl[CTRL_GEN_LSB +: GEN_W] != GEN_W'(1)))
       $fatal(1, "entry0 control mismatch before issue: ctrl=0x%08x", ctrl);
 
     // 4) Enable dispatch and check RR order
@@ -529,9 +611,21 @@ module tb_VX_job_frontend;
       $fatal(1, "entry3 control mismatch after done: ctrl=0x%08x", ctrl);
 
     // 6) Re-alloc freed entries with RR pointer continuation: 1 then 3
-    alloc_try(ok, eid); if (!ok || eid != 1) $fatal(1, "re-alloc #0 mismatch");
-    alloc_try(ok, eid); if (!ok || eid != 3) $fatal(1, "re-alloc #1 mismatch");
-    alloc_try(ok, eid); if (ok)              $fatal(1, "alloc must fail when full again");
+    alloc_try_m1(ok, eid, owner, gen); if (!ok || eid != 1 || owner != 1 || gen != 2) $fatal(1, "re-alloc #0 mismatch");
+    alloc_try(ok, eid, owner, gen);    if (!ok || eid != 3 || owner != 0 || gen != 2) $fatal(1, "re-alloc #1 mismatch");
+    alloc_try(ok, eid, owner, gen);    if (ok)                                          $fatal(1, "alloc must fail when full again");
+
+    read_control_word(1, ctrl);
+    if ((ctrl[CTRL_OCCUPY_BIT] !== 1'b1)
+     || (ctrl[CTRL_OWNER_LSB +: OWNER_W] !== OWNER_W'(1))
+     || (ctrl[CTRL_GEN_LSB +: GEN_W] != GEN_W'(2)))
+      $fatal(1, "entry1 token mismatch after re-alloc: ctrl=0x%08x", ctrl);
+
+    read_control_word(3, ctrl);
+    if ((ctrl[CTRL_OCCUPY_BIT] !== 1'b1)
+     || (ctrl[CTRL_OWNER_LSB +: OWNER_W] !== OWNER_W'(0))
+     || (ctrl[CTRL_GEN_LSB +: GEN_W] != GEN_W'(2)))
+      $fatal(1, "entry3 token mismatch after re-alloc: ctrl=0x%08x", ctrl);
 
     // valid is SW-owned, so set it again before re-dispatch
     set_entry_valid(1);

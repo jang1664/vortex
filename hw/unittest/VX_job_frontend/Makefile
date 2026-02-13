@@ -23,7 +23,6 @@ RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
 					$(RTL_DIR)/core/VX_job_desc_mmio_regs.sv \
 					$(RTL_DIR)/core/VX_job_dispatcher.sv \
 					$(RTL_DIR)/core/VX_job_frontend.sv \
-					$(RTL_DIR)/core/gemm/VX_config_entry_alloc_if.sv \
 					$(RTL_DIR)/core/VX_config_reg_if.sv \
 					$(RTL_DIR)/core/VX_node_done_if.sv \
 					$(RTL_DIR)/mem/VX_lsu_mem_arb.sv \
