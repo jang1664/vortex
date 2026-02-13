@@ -13,8 +13,8 @@ interface VX_lmem_dma_ctrl_if import VX_gpu_pkg::*; #(
 
   // Control signals (master -> slave)
   logic        start;
-  logic [31:0] src_base_addr;
-  logic [31:0] dst_base_addr;
+  logic [63:0] src_base_addr;
+  logic [63:0] dst_base_addr;
   logic [31:0] src_strides [NDIM];
   logic [31:0] dst_strides [NDIM];
   logic [31:0] bounds      [NDIM];

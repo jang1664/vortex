@@ -269,7 +269,7 @@ module tb_VX_gemm_ctrl;
     logic [7:0] op;
     begin
       op = op_of(c);
-      $display("[%0t] %-10s op=0x%02h (%s) instr=0x%016h rs1_data=0x%016h rs2_data=0x%016h",
+      $display("[%0t] %-10s op=0x%02h (%s) instr=0x%08h rs1_data=0x%016h rs2_data=0x%016h",
         $time, who, op, op_name(op), c.instr, c.rs1_data, c.rs2_data);
 
       if (op == OP_WAIT) begin
