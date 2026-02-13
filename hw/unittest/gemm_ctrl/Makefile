@@ -8,7 +8,7 @@ RTL_DIR := $(VORTEX_HOME)/hw/rtl
 export CC := /usr/bin/gcc-11
 export CXX := /usr/bin/g++-11
 
-SIM_EXEC ?= vlt
+SIM_EXEC ?= vcs
 
 TIME_SCALE=1ns/1ps
 TOP_MODULE := tb_VX_gemm_ctrl
@@ -22,6 +22,7 @@ TB   := tb_VX_gemm_ctrl.sv
 RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
 				$(RTL_DIR)/core/gemm/VX_gemm_ctrl.sv \
 				$(RTL_DIR)/core/VX_config_reg_if.sv \
+				$(RTL_DIR)/core/VX_node_done_if.sv \
 				$(RTL_DIR)/core/gemm/VX_gemm_sync_if.sv \
 				$(RTL_DIR)/core/gemm/VX_gemm_ctrl_if.sv \
 				$(RTL_DIR)/core/gemm/VX_gemm_fsm_if.sv \
