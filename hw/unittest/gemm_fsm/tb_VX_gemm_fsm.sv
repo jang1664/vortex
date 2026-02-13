@@ -66,8 +66,7 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; ();
   // -----------------------------
   initial begin
     cfg_reg_if.valid = 1'b0;
-    cfg_reg_if.wid   = '0;
-    cfg_reg_if.tid   = '0;
+    cfg_reg_if.entry_id   = '0;
     for (int i = 0; i < CFG_NUM; i++) cfg_reg_if.regs[i] = '0;
 
     // keep stable until reset is released
@@ -167,8 +166,7 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; ();
       // 1) drive regs at negedge so they are stable before next posedge
       @(negedge clk);
       cfg_reg_if.valid = 1'b0;
-      cfg_reg_if.wid   = 32'd0;
-      cfg_reg_if.tid   = 32'd0;
+      cfg_reg_if.entry_id   = 32'd0;
 
       for (int i = 0; i < CFG_NUM; i++) cfg_reg_if.regs[i] = '0;
       
