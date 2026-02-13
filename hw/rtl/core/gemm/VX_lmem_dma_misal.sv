@@ -91,7 +91,7 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
   // ------------------------------------------------------------
   // Select source/dest bus by DIR
   // ------------------------------------------------------------
-  // DIR=0: src=lmem, dst=gemm (dst write expects rsp) load
+  // DIR=0: src=lmem, dst=gemm (dst write may have no rsp; commit on req handshake) load
   // DIR=1: src=gemm, dst=lmem (dst write may have no rsp; commit on req handshake) store
   wire src_is_gemm = (DIR != 0);
   wire dst_is_gemm = (DIR == 0);
