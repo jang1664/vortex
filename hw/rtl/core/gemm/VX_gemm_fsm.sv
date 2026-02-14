@@ -213,6 +213,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
   // Tile dims and last sizes (latched at start)
   int unsigned mt_dim_q, nt_dim_q, kt_dim_q;
+  int unsigned mt_dim_lg2_q, kt_dim_lg2_q;
   int unsigned m_last_q, n_last_q, k_last_q;
 
   // totals exported (debug/host)
@@ -275,6 +276,25 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
   // --------------------------------------------------------------------------
   function automatic int unsigned ceil_div(input int unsigned a, input int unsigned b);
     return (a + b - 1) / b;
+  endfunction
+
+  function automatic logic is_pow2(input int unsigned x);
+    return (x != 0) && ((x & (x - 1)) == 0);
+  endfunction
+
+  function automatic int unsigned lg2_pow2(input int unsigned x);
+    int unsigned s;
+    int i;
+    begin
+      s = 0;
+      // x is expected to be power-of-two; pick the asserted bit index.
+      for (i = 0; i < $bits(x); i = i + 1) begin
+        if (x[i]) begin
+          s = i;
+        end
+      end
+      return s;
+    end
   endfunction
 
   // buf generation (kept for DMA flags only)
@@ -347,20 +367,26 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
   endfunction
 
   // tile decode: tile = ((nt * mt_dim) + mt) * kt_dim + kt  (kt fastest)
+  // mt_dim/kt_dim are power-of-two, so decode is shift+mask (no / or %).
   task automatic tile_decode(
     input int unsigned tile,
-    input int unsigned mt_dim,
-    input int unsigned kt_dim,
+    input int unsigned mt_dim_lg2,
+    input int unsigned kt_dim_lg2,
     output int unsigned nt,
     output int unsigned mt,
     output int unsigned kt
   );
     int unsigned tmp;
+    int unsigned kt_mask;
+    int unsigned mt_mask;
     begin
-      kt  = tile % kt_dim;
-      tmp = tile / kt_dim;
-      mt  = tmp % mt_dim;
-      nt  = tmp / mt_dim;
+      kt_mask = (kt_dim_lg2 == 0) ? 0 : ((32'd1 << kt_dim_lg2) - 1);
+      mt_mask = (mt_dim_lg2 == 0) ? 0 : ((32'd1 << mt_dim_lg2) - 1);
+
+      kt  = (kt_dim_lg2 == 0) ? 0 : (tile & kt_mask);
+      tmp = tile >> kt_dim_lg2;
+      mt  = (mt_dim_lg2 == 0) ? 0 : (tmp & mt_mask);
+      nt  = tmp >> mt_dim_lg2;
     end
   endtask
 
@@ -516,6 +542,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
       job_q <= '0;
       mt_dim_q <= 0; nt_dim_q <= 0; kt_dim_q <= 0;
+      mt_dim_lg2_q <= 0; kt_dim_lg2_q <= 0;
       m_last_q <= 0; n_last_q <= 0; k_last_q <= 0;
 
       tile_cur_q <= 0;
@@ -540,13 +567,35 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
       o_store_issue_q <= o_store_issue_d;
 
       if (state_q == S_IDLE && cfg_reg_if.regs[CFG_R_CONTROL][0] && cfg_reg_if.valid && cfg_reg_if.ready) begin
-        mt_dim_q <= ceil_div(job_d.M, MT);
-        nt_dim_q <= ceil_div(job_d.N, NT);
-        kt_dim_q <= ceil_div(job_d.K, KT);
+        int unsigned mt_dim_n;
+        int unsigned nt_dim_n;
+        int unsigned kt_dim_n;
+        int unsigned mt_rem;
+        int unsigned nt_rem;
+        int unsigned kt_rem;
 
-        m_last_q <= job_d.M - (ceil_div(job_d.M, MT)-1) * MT;
-        n_last_q <= job_d.N - (ceil_div(job_d.N, NT)-1) * NT;
-        k_last_q <= job_d.K - (ceil_div(job_d.K, KT)-1) * KT;
+        mt_dim_n = ceil_div(job_d.M, MT);
+        nt_dim_n = ceil_div(job_d.N, NT);
+        kt_dim_n = ceil_div(job_d.K, KT);
+
+        if (!is_pow2(mt_dim_n) || !is_pow2(kt_dim_n)) begin
+          $fatal(1, "%s: mt_dim(%0d) and kt_dim(%0d) must be power-of-two", INSTANCE_ID, mt_dim_n, kt_dim_n);
+        end
+
+        mt_dim_q <= mt_dim_n;
+        nt_dim_q <= nt_dim_n;
+        kt_dim_q <= kt_dim_n;
+
+        mt_dim_lg2_q <= lg2_pow2(mt_dim_n);
+        kt_dim_lg2_q <= lg2_pow2(kt_dim_n);
+
+        mt_rem = (job_d.M & (MT - 1));
+        nt_rem = (job_d.N & (NT - 1));
+        kt_rem = (job_d.K & (KT - 1));
+
+        m_last_q <= (mt_rem == 0) ? MT : mt_rem;
+        n_last_q <= (nt_rem == 0) ? NT : nt_rem;
+        k_last_q <= (kt_rem == 0) ? KT : kt_rem;
       end
     end
   end
@@ -640,7 +689,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     tile_total = mt_dim_q * nt_dim_q * kt_dim_q;
 
     // decode current tile
-    tile_decode(tile_cur_q, mt_dim_q, kt_dim_q, nt_cur, mt_cur, kt_cur);
+    tile_decode(tile_cur_q, mt_dim_lg2_q, kt_dim_lg2_q, nt_cur, mt_cur, kt_cur);
 
     mt_eff_cur = (mt_cur == mt_dim_q-1) ? m_last_q : MT;
     nt_eff_cur = (nt_cur == nt_dim_q-1) ? n_last_q : NT;
@@ -777,7 +826,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
         if (can_emit) begin
           int unsigned nt0, mt0, kt0;
           int unsigned mt_eff0, nt_eff0, kt_eff0;
-          tile_decode(0, mt_dim_q, kt_dim_q, nt0, mt0, kt0);
+          tile_decode(0, mt_dim_lg2_q, kt_dim_lg2_q, nt0, mt0, kt0);
           tile_eff_sizes(nt0, mt0, kt0, mt_eff0, nt_eff0, kt_eff0);
 
           out_cmd_d   = make_dma_ld(job_q.lmem_ibuf0_base,
@@ -796,7 +845,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
         if (can_emit) begin
           int unsigned nt0, mt0, kt0;
           int unsigned mt_eff0, nt_eff0, kt_eff0;
-          tile_decode(0, mt_dim_q, kt_dim_q, nt0, mt0, kt0);
+          tile_decode(0, mt_dim_lg2_q, kt_dim_lg2_q, nt0, mt0, kt0);
           tile_eff_sizes(nt0, mt0, kt0, mt_eff0, nt_eff0, kt_eff0);
 
           out_cmd_d   = make_dma_ld(job_q.lmem_wbuf0_base,
@@ -816,7 +865,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           int unsigned nt0, mt0, kt0;
           int unsigned mt_eff0, nt_eff0, kt_eff0;
           int unsigned groups_eff;
-          tile_decode(0, mt_dim_q, kt_dim_q, nt0, mt0, kt0);
+          tile_decode(0, mt_dim_lg2_q, kt_dim_lg2_q, nt0, mt0, kt0);
           tile_eff_sizes(nt0, mt0, kt0, mt_eff0, nt_eff0, kt_eff0);
 
           groups_eff = ceil_div(kt_eff0, job_q.qblk);
@@ -839,7 +888,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           int unsigned mt_eff0, nt_eff0, kt_eff0;
           int unsigned groups_eff, groups_full;
 
-          tile_decode(0, mt_dim_q, kt_dim_q, nt0, mt0, kt0);
+          tile_decode(0, mt_dim_lg2_q, kt_dim_lg2_q, nt0, mt0, kt0);
           tile_eff_sizes(nt0, mt0, kt0, mt_eff0, nt_eff0, kt_eff0);
 
           groups_eff  = ceil_div(kt_eff0, job_q.qblk);
@@ -878,7 +927,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
         if (can_emit) begin
           int unsigned nt1, mt1, kt1;
           int unsigned mt_eff1, nt_eff1, kt_eff1;
-          tile_decode(1, mt_dim_q, kt_dim_q, nt1, mt1, kt1);
+          tile_decode(1, mt_dim_lg2_q, kt_dim_lg2_q, nt1, mt1, kt1);
           tile_eff_sizes(nt1, mt1, kt1, mt_eff1, nt_eff1, kt_eff1);
 
           out_cmd_d   = make_dma_ld(job_q.lmem_ibuf1_base,
@@ -897,7 +946,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
         if (can_emit) begin
           int unsigned nt1, mt1, kt1;
           int unsigned mt_eff1, nt_eff1, kt_eff1;
-          tile_decode(1, mt_dim_q, kt_dim_q, nt1, mt1, kt1);
+          tile_decode(1, mt_dim_lg2_q, kt_dim_lg2_q, nt1, mt1, kt1);
           tile_eff_sizes(nt1, mt1, kt1, mt_eff1, nt_eff1, kt_eff1);
 
           out_cmd_d   = make_dma_ld(job_q.lmem_wbuf1_base,
@@ -917,7 +966,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           int unsigned nt1, mt1, kt1;
           int unsigned mt_eff1, nt_eff1, kt_eff1;
           int unsigned groups_eff;
-          tile_decode(1, mt_dim_q, kt_dim_q, nt1, mt1, kt1);
+          tile_decode(1, mt_dim_lg2_q, kt_dim_lg2_q, nt1, mt1, kt1);
           tile_eff_sizes(nt1, mt1, kt1, mt_eff1, nt_eff1, kt_eff1);
 
           groups_eff = ceil_div(kt_eff1, job_q.qblk);
@@ -940,7 +989,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           int unsigned mt_eff1, nt_eff1, kt_eff1;
           int unsigned groups_eff, groups_full;
 
-          tile_decode(1, mt_dim_q, kt_dim_q, nt1, mt1, kt1);
+          tile_decode(1, mt_dim_lg2_q, kt_dim_lg2_q, nt1, mt1, kt1);
           tile_eff_sizes(nt1, mt1, kt1, mt_eff1, nt_eff1, kt_eff1);
 
           groups_eff  = ceil_div(kt_eff1, job_q.qblk);
@@ -1349,7 +1398,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           logic buf_pre;
           int unsigned gen_pre;
 
-          tile_decode(tile_pre_d, mt_dim_q, kt_dim_q, ntp, mtp, ktp);
+          tile_decode(tile_pre_d, mt_dim_lg2_q, kt_dim_lg2_q, ntp, mtp, ktp);
           tile_eff_sizes(ntp, mtp, ktp, mt_effp, nt_effp, kt_effp);
           buf_pre = tile_pre_d[0];
           gen_pre = buf_gen(tile_pre_d);
@@ -1373,7 +1422,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           logic buf_pre;
           int unsigned gen_pre;
 
-          tile_decode(tile_pre_d, mt_dim_q, kt_dim_q, ntp, mtp, ktp);
+          tile_decode(tile_pre_d, mt_dim_lg2_q, kt_dim_lg2_q, ntp, mtp, ktp);
           tile_eff_sizes(ntp, mtp, ktp, mt_effp, nt_effp, kt_effp);
           buf_pre = tile_pre_d[0];
           gen_pre = buf_gen(tile_pre_d);
@@ -1398,7 +1447,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           int unsigned gen_pre;
           int unsigned groups_eff;
 
-          tile_decode(tile_pre_d, mt_dim_q, kt_dim_q, ntp, mtp, ktp);
+          tile_decode(tile_pre_d, mt_dim_lg2_q, kt_dim_lg2_q, ntp, mtp, ktp);
           tile_eff_sizes(ntp, mtp, ktp, mt_effp, nt_effp, kt_effp);
           buf_pre = tile_pre_d[0];
           gen_pre = buf_gen(tile_pre_d);
@@ -1425,7 +1474,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           int unsigned gen_pre;
           int unsigned groups_eff, groups_full;
 
-          tile_decode(tile_pre_d, mt_dim_q, kt_dim_q, ntp, mtp, ktp);
+          tile_decode(tile_pre_d, mt_dim_lg2_q, kt_dim_lg2_q, ntp, mtp, ktp);
           tile_eff_sizes(ntp, mtp, ktp, mt_effp, nt_effp, kt_effp);
           buf_pre = tile_pre_d[0];
           gen_pre = buf_gen(tile_pre_d);
