@@ -18,7 +18,7 @@ TB   := tb_VX_fp16_mul.sv
 RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
         $(RTL_DIR)/verification/cf_math_pkg.sv \
         $(RTL_DIR)/verification/VX_mem_pkg.sv \
-        $(RTL_DIR)/verification/VX_stream_intf.sv \
+        $(RTL_DIR)/core/gemm/VX_stream_intf.sv \
         $(RTL_DIR)/verification/VX_stream_slave_always_ready.sv \
         $(RTL_DIR)/core/gemm/VX_stream_fence.sv \
         $(RTL_DIR)/core/gemm/VX_fp16_mul.sv \

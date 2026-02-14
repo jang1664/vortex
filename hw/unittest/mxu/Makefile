@@ -33,7 +33,7 @@ RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
 				$(RTL_DIR)/libs/VX_shift_register.sv \
 				$(RTL_DIR)/libs/VX_fifo_queue.sv \
 				$(RTL_DIR)/verification/VX_mem_pkg.sv \
-				$(RTL_DIR)/verification/VX_stream_intf.sv \
+				$(RTL_DIR)/core/gemm/VX_stream_intf.sv \
 				$(RTL_DIR)/verification/VX_stream_slave_always_ready.sv
 PARAMS_  := PIPE_MULT=$(PIPE_MULT) PIPE_ALIGN=$(PIPE_ALIGN) PIPE_INTERVAL=$(PIPE_INTERVAL)
 INCDIRS_ := $(RTL_DIR)
