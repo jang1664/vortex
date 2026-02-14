@@ -133,6 +133,7 @@ proc run_synthesis {} {
   wait_on_run synth_1
   open_run synth_1
   report_utilization -file post_synth_util.rpt -hierarchical -hierarchical_percentages
+  report_timing_summary -max_paths 100 -report_unconstrained -delay_type max -file post_synth_timing_summary.rpt
   write_checkpoint -force post_synth.dcp
 }
 
