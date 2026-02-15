@@ -21,8 +21,8 @@ module VX_gemm_dma_ctrl_with_dma import VX_gpu_pkg::*; #(
   localparam int NUM_ENTRIES  = 4;
   localparam int ENTRYID_W    = 4;
 
-  localparam int CFG_NUM_LANES = 4;
-  localparam int CFG_DATA_SIZE = 16; // bytes
+  localparam int CFG_NUM_LANES = `NUM_LSU_LANES;
+  localparam int CFG_DATA_SIZE = LSU_WORD_SIZE; // bytes
 
   VX_lsu_mem_if #(
     .NUM_LANES(CFG_NUM_LANES),
