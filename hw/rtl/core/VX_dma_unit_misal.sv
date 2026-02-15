@@ -128,6 +128,7 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
   // ------------------------------------------------------------
   typedef enum logic [3:0] {
     S_IDLE,
+    S_PRECALC,
     S_PREP_SEG,
 
     // L2G (LMEM -> DCACHE)
@@ -172,49 +173,143 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
   logic [`UP(UUID_WIDTH)-1:0] dma_uuid;
   assign dma_uuid = `UP(UUID_WIDTH)'(entry_id_latched);
 
-  // unpack regs to 32-bit words (direct)
-  logic [NUM_REGS-1:0][31:0] desc_w;
-  always_comb begin
-    for (int i = 0; i < NUM_REGS; i++) begin
-      desc_w[i] = regs_latched[i][31:0];
+  wire cmd_start = cfg_fire && cfg_reg_if.regs[0][0];
+
+  // Latched descriptor fields (captured atomically at cmd_start)
+  logic [63:0] base_addr_r[2];     // [0]=src, [1]=dst
+  logic [31:0] stride_r[2][NDIM];  // [src/dst][dim]
+  // Precomputed stride * (bound - 1), used for carry-step base address correction.
+  logic [63:0] stride_bound_r[2][NDIM];
+  logic [31:0] bound_r[NDIM];
+  logic [31:0] seg_size_r;
+  logic [31:0] padding_r;
+  logic        direction_bit_r;    // 0: GLOBAL->LMEM (load), 1: LMEM->GLOBAL (store)
+  logic [63:0] base_src_seg_r, base_dst_seg_r;
+  logic        precalc_pending_r;
+
+  wire precalc_issue = (state == S_PRECALC) && precalc_pending_r;
+
+  logic [5:0]       precalc_valid;
+  logic [5:0][63:0] precalc_result;
+  wire              precalc_done = &precalc_valid;
+
+  // 6 parallel pipelined multipliers:
+  //   [0] src d0, [1] dst d0, [2] src d1, [3] dst d1, [4] src d2, [5] dst d2
+  VX_mul_u32_pipe #(.OUT_REGS(0)) mul_src_d0 (
+    .clk(clk),
+    .reset(reset),
+    .valid_in(precalc_issue),
+    .a(stride_r[0][0]),
+    .b(bound_r[0] - 32'd1),
+    .valid_out(precalc_valid[0]),
+    .result(precalc_result[0])
+  );
+
+  VX_mul_u32_pipe #(.OUT_REGS(0)) mul_dst_d0 (
+    .clk(clk),
+    .reset(reset),
+    .valid_in(precalc_issue),
+    .a(stride_r[1][0]),
+    .b(bound_r[0] - 32'd1),
+    .valid_out(precalc_valid[1]),
+    .result(precalc_result[1])
+  );
+
+  VX_mul_u32_pipe #(.OUT_REGS(0)) mul_src_d1 (
+    .clk(clk),
+    .reset(reset),
+    .valid_in(precalc_issue),
+    .a(stride_r[0][1]),
+    .b(bound_r[1] - 32'd1),
+    .valid_out(precalc_valid[2]),
+    .result(precalc_result[2])
+  );
+
+  VX_mul_u32_pipe #(.OUT_REGS(0)) mul_dst_d1 (
+    .clk(clk),
+    .reset(reset),
+    .valid_in(precalc_issue),
+    .a(stride_r[1][1]),
+    .b(bound_r[1] - 32'd1),
+    .valid_out(precalc_valid[3]),
+    .result(precalc_result[3])
+  );
+
+  VX_mul_u32_pipe #(.OUT_REGS(0)) mul_src_d2 (
+    .clk(clk),
+    .reset(reset),
+    .valid_in(precalc_issue),
+    .a(stride_r[0][2]),
+    .b(bound_r[2] - 32'd1),
+    .valid_out(precalc_valid[4]),
+    .result(precalc_result[4])
+  );
+
+  VX_mul_u32_pipe #(.OUT_REGS(0)) mul_dst_d2 (
+    .clk(clk),
+    .reset(reset),
+    .valid_in(precalc_issue),
+    .a(stride_r[1][2]),
+    .b(bound_r[2] - 32'd1),
+    .valid_out(precalc_valid[5]),
+    .result(precalc_result[5])
+  );
+
+  always_ff @(posedge clk) begin
+    if (reset) begin
+      base_addr_r[0] <= '0;
+      base_addr_r[1] <= '0;
+      base_src_seg_r <= '0;
+      base_dst_seg_r <= '0;
+      seg_size_r     <= '0;
+      padding_r      <= '0;
+      direction_bit_r <= 1'b0;
+      precalc_pending_r <= 1'b0;
+      for (int d = 0; d < NDIM; d++) begin
+        stride_r[0][d] <= '0;
+        stride_r[1][d] <= '0;
+        stride_bound_r[0][d] <= '0;
+        stride_bound_r[1][d] <= '0;
+        bound_r[d] <= '0;
+      end
+    end else if (cmd_start) begin
+      if (cfg_reg_if.regs[11][31:0] == 0 ||
+          cfg_reg_if.regs[12][31:0] == 0 ||
+          cfg_reg_if.regs[13][31:0] == 0) begin
+        $fatal(1, "%s: VX_dma_unit_misal: ERROR - bounds cannot be zero!", INSTANCE_ID);
+      end
+
+      base_addr_r[0] <= {cfg_reg_if.regs[4][31:0], cfg_reg_if.regs[3][31:0]}; // src
+      base_addr_r[1] <= {cfg_reg_if.regs[2][31:0], cfg_reg_if.regs[1][31:0]}; // dst
+      base_src_seg_r <= {cfg_reg_if.regs[4][31:0], cfg_reg_if.regs[3][31:0]};
+      base_dst_seg_r <= {cfg_reg_if.regs[2][31:0], cfg_reg_if.regs[1][31:0]};
+
+      for (int d = 0; d < NDIM; d++) begin
+        stride_r[0][d] <= cfg_reg_if.regs[5 + 2*d][31:0];
+        stride_r[1][d] <= cfg_reg_if.regs[6 + 2*d][31:0];
+        bound_r[d]     <= cfg_reg_if.regs[11 + d][31:0];
+        stride_bound_r[0][d] <= '0;
+        stride_bound_r[1][d] <= '0;
+      end
+
+      seg_size_r      <= cfg_reg_if.regs[14][31:0];
+      padding_r       <= cfg_reg_if.regs[15][31:0];
+      direction_bit_r <= cfg_reg_if.regs[0][3];
+      precalc_pending_r <= 1'b1;
+    end else begin
+      if (precalc_issue)
+        precalc_pending_r <= 1'b0;
+
+      if (precalc_done) begin
+        stride_bound_r[0][0] <= precalc_result[0];
+        stride_bound_r[1][0] <= precalc_result[1];
+        stride_bound_r[0][1] <= precalc_result[2];
+        stride_bound_r[1][1] <= precalc_result[3];
+        stride_bound_r[0][2] <= precalc_result[4];
+        stride_bound_r[1][2] <= precalc_result[5];
+      end
     end
   end
-
-  // interpret descriptor
-  logic [31:0] control_reg;
-  logic [63:0] base_addr[2];     // [0]=src, [1]=dst
-  logic [31:0] stride[2][NDIM];  // [src/dst][dim]
-  logic [31:0] bound[NDIM];      // shared
-  logic [31:0] seg_size;
-  logic [31:0] padding;
-  logic        start_bit;
-  logic        direction_bit;    // 0: GLOBAL->LMEM (load), 1: LMEM->GLOBAL (store)
-
-  always_comb begin
-    control_reg   = desc_w[0];
-
-    base_addr[0]  = {desc_w[4], desc_w[3]}; // src
-    base_addr[1]  = {desc_w[2], desc_w[1]}; // dst
-
-    stride[0][0]  = desc_w[5];
-    stride[1][0]  = desc_w[6];
-    stride[0][1]  = desc_w[7];
-    stride[1][1]  = desc_w[8];
-    stride[0][2]  = desc_w[9];
-    stride[1][2]  = desc_w[10];
-
-    bound[0]      = desc_w[11];
-    bound[1]      = desc_w[12];
-    bound[2]      = desc_w[13];
-
-    seg_size      = desc_w[14];
-    padding       = desc_w[15];
-
-    start_bit     = control_reg[0];
-    direction_bit = control_reg[3];
-  end
-
-  wire cmd_start = cfg_fire && cfg_reg_if.regs[0][0];
 
   // ------------------------------------------------------------
   // 3D indices + segment byte offset
@@ -230,25 +325,15 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
   // ------------------------------------------------------------
   logic [63:0] base_src_seg, base_dst_seg;
 
-  always_comb begin
-    base_src_seg =
-        base_addr[0]
-      + 64'(i_dim[0]) * 64'(stride[0][0])
-      + 64'(i_dim[1]) * 64'(stride[0][1])
-      + 64'(i_dim[2]) * 64'(stride[0][2]);
-
-    base_dst_seg =
-        base_addr[1]
-      + 64'(i_dim[0]) * 64'(stride[1][0])
-      + 64'(i_dim[1]) * 64'(stride[1][1])
-      + 64'(i_dim[2]) * 64'(stride[1][2]);
-  end
+  // Segment bases are maintained incrementally in S_ADV_SEG to avoid per-cycle 64-bit mul/add.
+  assign base_src_seg = base_src_seg_r;
+  assign base_dst_seg = base_dst_seg_r;
 
   // ------------------------------------------------------------
   // valid/padding boundary
   // ------------------------------------------------------------
   logic [31:0] valid_total;
-  assign valid_total = (seg_size > padding) ? (seg_size - padding) : 32'd0;
+  assign valid_total = (seg_size_r > padding_r) ? (seg_size_r - padding_r) : 32'd0;
 
   // ------------------------------------------------------------
   // Window buffers (streaming) for misaligned support
@@ -303,11 +388,16 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
 
     unique case (state)
       S_IDLE: begin
-        if (cmd_start) state_n = S_PREP_SEG;
+        if (cmd_start) state_n = S_PRECALC;
+      end
+
+      S_PRECALC: begin
+        if (precalc_done)
+          state_n = S_PREP_SEG;
       end
 
       S_PREP_SEG: begin
-        if (direction_bit) state_n = S_L2G_DECIDE;
+        if (direction_bit_r) state_n = S_L2G_DECIDE;
         else               state_n = S_G2L_DECIDE;
       end
 
@@ -327,7 +417,7 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
 
           dst_byte   = base_dst_seg + 64'(out_off);
           lane       = int'(dst_byte[DCACHE_LG2-1:0]);
-          remaining  = (out_off < seg_size) ? (seg_size - out_off) : 32'd0;
+          remaining  = (out_off < seg_size_r) ? (seg_size_r - out_off) : 32'd0;
           beat_room  = DCACHE_BYTES - lane;
           wr_nbytes  = umin32(remaining, beat_room);
 
@@ -369,7 +459,7 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
 
         dst_byte   = base_dst_seg + 64'(out_off);
         lane       = int'(dst_byte[DCACHE_LG2-1:0]);
-        remaining  = (out_off < seg_size) ? (seg_size - out_off) : 32'd0;
+        remaining  = (out_off < seg_size_r) ? (seg_size_r - out_off) : 32'd0;
         beat_room  = DCACHE_BYTES - lane;
         wr_nbytes  = umin32(remaining, beat_room);
 
@@ -396,7 +486,7 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
         dcache_bus_if.req_data.tag.value = '0;
 
         if (dcache_bus_if.req_ready) begin
-            if (out_off + wr_nbytes >= seg_size) state_n = S_ADV_SEG;
+            if (out_off + wr_nbytes >= seg_size_r) state_n = S_ADV_SEG;
             else                                 state_n = S_L2G_DECIDE;
         end
       end
@@ -417,7 +507,7 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
 
           dst_byte   = base_dst_seg + 64'(out_off);
           lane       = int'(dst_byte[LMEM_LG2-1:0]);
-          remaining  = (out_off < seg_size) ? (seg_size - out_off) : 32'd0;
+          remaining  = (out_off < seg_size_r) ? (seg_size_r - out_off) : 32'd0;
           beat_room  = LMEM_BYTES - lane;
           wr_nbytes  = umin32(remaining, beat_room);
 
@@ -459,7 +549,7 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
 
         dst_byte   = base_dst_seg + 64'(out_off);
         lane       = int'(dst_byte[LMEM_LG2-1:0]);
-        remaining  = (out_off < seg_size) ? (seg_size - out_off) : 32'd0;
+        remaining  = (out_off < seg_size_r) ? (seg_size_r - out_off) : 32'd0;
         beat_room  = LMEM_BYTES - lane;
         wr_nbytes  = umin32(remaining, beat_room);
 
@@ -487,7 +577,7 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
 
         // local mem may not return write response
         if (lmem_bus_if.req_ready) begin
-          if (out_off + wr_nbytes >= seg_size) state_n = S_ADV_SEG;
+          if (out_off + wr_nbytes >= seg_size_r) state_n = S_ADV_SEG;
           else                                 state_n = S_G2L_DECIDE;
         end
       end
@@ -568,7 +658,7 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
         lmem_drop   <= 32'd0;
         dcache_drop <= 32'd0;
 
-        if (direction_bit) begin
+        if (direction_bit_r) begin
           // L2G: source=LMEM
           lmem_drop   <= (base_src_seg & 64'(LMEM_BYTES-1));
           lmem_rd_ptr <= align_down(base_src_seg, LMEM_BYTES);
@@ -613,7 +703,7 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
 
         dst_byte   = base_dst_seg + 64'(out_off);
         lane       = int'(dst_byte[DCACHE_LG2-1:0]);
-        remaining  = (out_off < seg_size) ? (seg_size - out_off) : 32'd0;
+        remaining  = (out_off < seg_size_r) ? (seg_size_r - out_off) : 32'd0;
         beat_room  = DCACHE_BYTES - lane;
         wr_nbytes  = umin32(remaining, beat_room);
 
@@ -660,7 +750,7 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
 
         dst_byte   = base_dst_seg + 64'(out_off);
         lane       = int'(dst_byte[LMEM_LG2-1:0]);
-        remaining  = (out_off < seg_size) ? (seg_size - out_off) : 32'd0;
+        remaining  = (out_off < seg_size_r) ? (seg_size_r - out_off) : 32'd0;
         beat_room  = LMEM_BYTES - lane;
         wr_nbytes  = umin32(remaining, beat_room);
 
@@ -681,26 +771,32 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
       //   - Set finished when the last segment completes
       // ==========================================================
       if (state == S_ADV_SEG) begin
-        if (out_off >= seg_size) begin
+        if (out_off >= seg_size_r) begin
           out_off  <= 32'd0;
           finished <= 1'b0;
 
-          if (bound[0] == 0 || bound[1] == 0 || bound[2] == 0) begin
+          if (bound_r[0] == 0 || bound_r[1] == 0 || bound_r[2] == 0) begin
             // degenerate: no work, treat as finished
             finished <= 1'b1;
             i_dim[0] <= 32'd0;
             i_dim[1] <= 32'd0;
             i_dim[2] <= 32'd0;
-          end else if (i_dim[0] + 1 < bound[0]) begin
+          end else if (i_dim[0] + 1 < bound_r[0]) begin
             i_dim[0] <= i_dim[0] + 1;
+            base_src_seg_r <= base_src_seg_r + 64'(stride_r[0][0]);
+            base_dst_seg_r <= base_dst_seg_r + 64'(stride_r[1][0]);
           end else begin
             i_dim[0] <= 32'd0;
-            if (i_dim[1] + 1 < bound[1]) begin
+            if (i_dim[1] + 1 < bound_r[1]) begin
               i_dim[1] <= i_dim[1] + 1;
+              base_src_seg_r <= base_src_seg_r + 64'(stride_r[0][1]) - stride_bound_r[0][0];
+              base_dst_seg_r <= base_dst_seg_r + 64'(stride_r[1][1]) - stride_bound_r[1][0];
             end else begin
               i_dim[1] <= 32'd0;
-              if (i_dim[2] + 1 < bound[2]) begin
+              if (i_dim[2] + 1 < bound_r[2]) begin
                 i_dim[2] <= i_dim[2] + 1;
+                base_src_seg_r <= base_src_seg_r + 64'(stride_r[0][2]) - stride_bound_r[0][1] - stride_bound_r[0][0];
+                base_dst_seg_r <= base_dst_seg_r + 64'(stride_r[1][2]) - stride_bound_r[1][1] - stride_bound_r[1][0];
               end else begin
                 i_dim[2] <= 32'd0;
                 finished <= 1'b1;

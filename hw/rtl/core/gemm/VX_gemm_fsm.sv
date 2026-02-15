@@ -274,10 +274,6 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
   // --------------------------------------------------------------------------
   // Small helpers
   // --------------------------------------------------------------------------
-  function automatic int unsigned ceil_div(input int unsigned a, input int unsigned b);
-    return (a + b - 1) / b;
-  endfunction
-
   function automatic logic is_pow2(input int unsigned x);
     return (x != 0) && ((x & (x - 1)) == 0);
   endfunction
@@ -295,6 +291,14 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
       end
       return s;
     end
+  endfunction
+
+  function automatic int unsigned div_pow2(input int unsigned a, input int unsigned b);
+    return a >> lg2_pow2(b);
+  endfunction
+
+  function automatic int unsigned ceil_div(input int unsigned a, input int unsigned b);
+    return (a + b - 1) >> lg2_pow2(b);
   endfunction
 
   // buf generation (kept for DMA flags only)
@@ -426,8 +430,8 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     int unsigned col0_bytes;
     begin
       row0       = kt * KT;            // K-dim block start
-      col0_bytes = nt * (NT/2);        // N-dim block start in bytes
-      weight_tile_addr = j.weight_base + 64'(row0) * 64'(j.N/2) + 64'(col0_bytes);
+      col0_bytes = nt * (NT >> 1);        // N-dim block start in bytes
+      weight_tile_addr = j.weight_base + 64'(row0) * 64'(j.N >> 1) + 64'(col0_bytes);
     end
   endfunction
 
@@ -439,7 +443,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     int unsigned col0;
     begin
       groups_full = ceil_div(j.K, j.qblk);
-      group_row0  = (kt * KT) / j.qblk;
+      group_row0  = div_pow2((kt * KT), j.qblk);
       col0        = nt * NT;
       scale_tile_addr = j.scale_base + 64'((group_row0 * j.N + col0) * FP16_BYTES);
     end
@@ -452,7 +456,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     int unsigned col0;
     begin
       groups_full = ceil_div(j.K, j.qblk);
-      group_row0  = (kt * KT) / j.qblk;
+      group_row0  = div_pow2((kt * KT), j.qblk);
       col0        = nt * NT;
       zp_tile_addr = j.zp_base + 64'((group_row0 * j.N + col0) * INT16_BYTES);
     end
@@ -705,7 +709,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
     // MXU dims within current DMA tile
     nt_mxu_dim = ceil_div(nt_eff_cur, MXU_NT);
-    kt_mxu_dim = (kt_eff_cur / MXU_KT); // assume divisible
+    kt_mxu_dim = div_pow2(kt_eff_cur, MXU_KT); // assume divisible
 
     mxu_linear = kt_mxu_q * nt_mxu_dim + nt_mxu_q;
 
@@ -741,10 +745,10 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     // row = kt_mxu_q*MXU_KT (within tile-K)
     // col(bytes) = (nt_mxu_q*MXU_NT)/2
     k0_w       = kt_mxu_q * MXU_KT;
-    n0_w_bytes = (nt_mxu_q * MXU_NT) / 2;
+    n0_w_bytes = (nt_mxu_q * MXU_NT) >> 1;
 
     // group row offset inside this KT tile
-    g0 = (kt_mxu_q * MXU_KT) / job_q.qblk;
+    g0 = div_pow2((kt_mxu_q * MXU_KT), job_q.qblk);
 
     // Input slice (mt_eff_cur rows, MXU_KT cols)
     lmem_in_mxu = ibuf_base(buf_cur) + 64'(k0_in) * FP16_BYTES;
@@ -753,7 +757,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     lmem_out_slice = ACCUM_BASE + 64'(n0_out) * FP32_BYTES;
 
     // Weight slice base (MXU_KT rows, MXU_NT cols packed)
-    lmem_w_mxu = wbuf_base(buf_cur) + 64'(k0_w) * 64'(NT/2) + 64'(n0_w_bytes);
+    lmem_w_mxu = wbuf_base(buf_cur) + 64'(k0_w) * 64'(NT >> 1) + 64'(n0_w_bytes);
 
     // Scale/ZP slice base (groups_mxu rows, MXU_NT cols)
     lmem_sc_mxu = scbuf_base(buf_cur) + 64'(g0) * 64'(NT * FP16_BYTES) + 64'(n0_out) * FP16_BYTES;
@@ -764,10 +768,10 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     k0_in_n      = n_kt_mxu * MXU_KT;
     n0_out_n     = n_nt_mxu * MXU_NT;
     k0_w_n       = n_kt_mxu * MXU_KT;
-    n0_w_bytes_n = (n_nt_mxu * MXU_NT) / 2;
-    g0_n         = (n_kt_mxu * MXU_KT) / job_q.qblk;
+    n0_w_bytes_n = (n_nt_mxu * MXU_NT) >> 1;
+    g0_n         = div_pow2((n_kt_mxu * MXU_KT), job_q.qblk);
 
-    lmem_w_mxu_next = wbuf_base(buf_cur) + 64'(k0_w_n) * 64'(NT/2) + 64'(n0_w_bytes_n);
+    lmem_w_mxu_next = wbuf_base(buf_cur) + 64'(k0_w_n) * 64'(NT >> 1) + 64'(n0_w_bytes_n);
 
     lmem_sc_mxu_next = scbuf_base(buf_cur) + 64'(g0_n) * 64'(NT * FP16_BYTES) + 64'(n0_out_n) * FP16_BYTES;
 
@@ -850,7 +854,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
           out_cmd_d   = make_dma_ld(job_q.lmem_wbuf0_base,
                                    weight_tile_addr(job_q, nt0, kt0),
-                                   (kt_eff0*(nt_eff0/INT4_BYTES)),
+                                   (kt_eff0 * div_pow2(nt_eff0, INT4_BYTES)),
                                    1'b0, 1);
           out_cmd_d.rs1 = kt0;
           out_cmd_d.rs2 = nt0;
@@ -951,7 +955,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
           out_cmd_d   = make_dma_ld(job_q.lmem_wbuf1_base,
                                    weight_tile_addr(job_q, nt1, kt1),
-                                   (kt_eff1*(nt_eff1/INT4_BYTES)),
+                                   (kt_eff1 * div_pow2(nt_eff1, INT4_BYTES)),
                                    1'b1, 1);
           out_cmd_d.rs1 = kt1;
           out_cmd_d.rs2 = nt1;
@@ -1046,7 +1050,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           c = '0;
 
           flags      = {6'd0, mxu_buf_q, buf_cur};
-          c.instr    = make_instr(OP_W_LDMA_MXU, flags, (MXU_KT*(MXU_NT/INT4_BYTES)));
+          c.instr    = make_instr(OP_W_LDMA_MXU, flags, (MXU_KT * (MXU_NT >> 1)));
           c.rs1_data  = {63'd0, mxu_buf_q};
           c.rs2_data  = lmem_w_mxu;
 
@@ -1145,7 +1149,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
             c = '0;
 
             flags      = {6'd0, next_mxu_buf, buf_cur};
-            c.instr    = make_instr(OP_W_LDMA_MXU, flags, (MXU_KT*(MXU_NT/INT4_BYTES)));
+            c.instr    = make_instr(OP_W_LDMA_MXU, flags, (MXU_KT * (MXU_NT >> 1)));
             c.rs1_data  = {63'd0, next_mxu_buf};
             c.rs2_data  = lmem_w_mxu_next;
 
@@ -1429,7 +1433,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
           out_cmd_d   = make_dma_ld(wbuf_base(buf_pre),
                                     weight_tile_addr(job_q, ntp, ktp),
-                                    (kt_effp*(nt_effp/INT4_BYTES)),
+                                    (kt_effp * div_pow2(nt_effp, INT4_BYTES)),
                                     buf_pre, gen_pre);
           out_cmd_d.rs1 = ktp;
           out_cmd_d.rs2 = ntp;

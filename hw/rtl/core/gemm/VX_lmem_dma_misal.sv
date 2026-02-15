@@ -101,6 +101,7 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
   // ------------------------------------------------------------
   typedef enum logic [3:0] {
     S_IDLE,
+    S_PRECALC,
     S_PREP_SEG,
     S_DECIDE,
     S_SRC_RD_REQ,
@@ -119,12 +120,83 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
   // ------------------------------------------------------------
   logic [63:0] base_addr_r[2];          // [0]=src, [1]=dst
   logic [31:0] stride_r[2][NDIM];
+  // Precomputed stride * (bound - 1), used for carry-step base address correction.
+  logic [63:0] stride_bound_r[2][NDIM];
   logic [31:0] bound_r[NDIM];
   logic [31:0] seg_size_r;
   logic [31:0] reg_idx_r;
   logic [31:0] reg_value_r;
+  logic [63:0] base_src_seg_r, base_dst_seg_r;
+  logic        precalc_pending_r;
 
   wire cmd_start = ctrl_if.start && (state == S_IDLE);
+  wire precalc_issue = (state == S_PRECALC) && precalc_pending_r;
+
+  logic [5:0]       precalc_valid;
+  logic [5:0][63:0] precalc_result;
+  wire              precalc_done = &precalc_valid;
+
+  // 6 parallel pipelined multipliers:
+  //   [0] src d0, [1] dst d0, [2] src d1, [3] dst d1, [4] src d2, [5] dst d2
+  VX_mul_u32_pipe #(.OUT_REGS(0)) mul_src_d0 (
+    .clk(clk),
+    .reset(reset),
+    .valid_in(precalc_issue),
+    .a(stride_r[0][0]),
+    .b(bound_r[0] - 32'd1),
+    .valid_out(precalc_valid[0]),
+    .result(precalc_result[0])
+  );
+
+  VX_mul_u32_pipe #(.OUT_REGS(0)) mul_dst_d0 (
+    .clk(clk),
+    .reset(reset),
+    .valid_in(precalc_issue),
+    .a(stride_r[1][0]),
+    .b(bound_r[0] - 32'd1),
+    .valid_out(precalc_valid[1]),
+    .result(precalc_result[1])
+  );
+
+  VX_mul_u32_pipe #(.OUT_REGS(0)) mul_src_d1 (
+    .clk(clk),
+    .reset(reset),
+    .valid_in(precalc_issue),
+    .a(stride_r[0][1]),
+    .b(bound_r[1] - 32'd1),
+    .valid_out(precalc_valid[2]),
+    .result(precalc_result[2])
+  );
+
+  VX_mul_u32_pipe #(.OUT_REGS(0)) mul_dst_d1 (
+    .clk(clk),
+    .reset(reset),
+    .valid_in(precalc_issue),
+    .a(stride_r[1][1]),
+    .b(bound_r[1] - 32'd1),
+    .valid_out(precalc_valid[3]),
+    .result(precalc_result[3])
+  );
+
+  VX_mul_u32_pipe #(.OUT_REGS(0)) mul_src_d2 (
+    .clk(clk),
+    .reset(reset),
+    .valid_in(precalc_issue),
+    .a(stride_r[0][2]),
+    .b(bound_r[2] - 32'd1),
+    .valid_out(precalc_valid[4]),
+    .result(precalc_result[4])
+  );
+
+  VX_mul_u32_pipe #(.OUT_REGS(0)) mul_dst_d2 (
+    .clk(clk),
+    .reset(reset),
+    .valid_in(precalc_issue),
+    .a(stride_r[1][2]),
+    .b(bound_r[2] - 32'd1),
+    .valid_out(precalc_valid[5]),
+    .result(precalc_result[5])
+  );
 
   always_ff @(posedge clk) begin
     if (reset) begin
@@ -132,9 +204,14 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
       seg_size_r     <= '0;
       reg_idx_r      <= '0;
       reg_value_r    <= '0;
+      base_src_seg_r <= '0;
+      base_dst_seg_r <= '0;
+      precalc_pending_r <= 1'b0;
       for (int d=0; d<NDIM; d++) begin
         stride_r[0][d] <= '0;
         stride_r[1][d] <= '0;
+        stride_bound_r[0][d] <= '0;
+        stride_bound_r[1][d] <= '0;
         bound_r[d]     <= '0;
       end
     end else if (cmd_start) begin
@@ -146,14 +223,31 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
       
       base_addr_r[0] <= ctrl_if.src_base_addr;
       base_addr_r[1] <= ctrl_if.dst_base_addr;
+      base_src_seg_r <= ctrl_if.src_base_addr;
+      base_dst_seg_r <= ctrl_if.dst_base_addr;
       for (int d=0; d<NDIM; d++) begin
         stride_r[0][d] <= ctrl_if.src_strides[d];
         stride_r[1][d] <= ctrl_if.dst_strides[d];
+        stride_bound_r[0][d] <= '0;
+        stride_bound_r[1][d] <= '0;
         bound_r[d]     <= ctrl_if.bounds[d];
       end
       seg_size_r   <= ctrl_if.seg_size;
       reg_idx_r    <= ctrl_if.reg_idx;
       reg_value_r  <= ctrl_if.reg_value;
+      precalc_pending_r <= 1'b1;
+    end else begin
+      if (precalc_issue)
+        precalc_pending_r <= 1'b0;
+
+      if (precalc_done) begin
+        stride_bound_r[0][0] <= precalc_result[0];
+        stride_bound_r[1][0] <= precalc_result[1];
+        stride_bound_r[0][1] <= precalc_result[2];
+        stride_bound_r[1][1] <= precalc_result[3];
+        stride_bound_r[0][2] <= precalc_result[4];
+        stride_bound_r[1][2] <= precalc_result[5];
+      end
     end
   end
 
@@ -186,19 +280,9 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
   // ------------------------------------------------------------
   logic [63:0] base_src_seg, base_dst_seg;
 
-  always_comb begin
-    base_src_seg =
-        base_addr_r[0]
-      + 64'(i_dim[0]) * 64'(stride_r[0][0])
-      + 64'(i_dim[1]) * 64'(stride_r[0][1])
-      + 64'(i_dim[2]) * 64'(stride_r[0][2]);
-
-    base_dst_seg =
-        base_addr_r[1]
-      + 64'(i_dim[0]) * 64'(stride_r[1][0])
-      + 64'(i_dim[1]) * 64'(stride_r[1][1])
-      + 64'(i_dim[2]) * 64'(stride_r[1][2]);
-  end
+  // Segment bases are maintained incrementally in S_ADV_SEG to avoid per-cycle 64-bit mul/add.
+  assign base_src_seg = base_src_seg_r;
+  assign base_dst_seg = base_dst_seg_r;
 
   // ------------------------------------------------------------
   // Window (byte-stream) for source
@@ -295,7 +379,12 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
 
     unique case (state)
       S_IDLE: begin
-        if (cmd_start) state_n = S_PREP_SEG;
+        if (cmd_start) state_n = S_PRECALC;
+      end
+
+      S_PRECALC: begin
+        if (precalc_done)
+          state_n = S_PREP_SEG;
       end
 
       S_PREP_SEG: begin
@@ -511,14 +600,20 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
           // NDIM carry
           if (i_dim[0] + 1 < bound_r[0]) begin
             i_dim[0] <= i_dim[0] + 1;
+            base_src_seg_r <= base_src_seg_r + 64'(stride_r[0][0]);
+            base_dst_seg_r <= base_dst_seg_r + 64'(stride_r[1][0]);
           end else begin
             i_dim[0] <= 32'd0;
             if (i_dim[1] + 1 < bound_r[1]) begin
               i_dim[1] <= i_dim[1] + 1;
+              base_src_seg_r <= base_src_seg_r + 64'(stride_r[0][1]) - stride_bound_r[0][0];
+              base_dst_seg_r <= base_dst_seg_r + 64'(stride_r[1][1]) - stride_bound_r[1][0];
             end else begin
               i_dim[1] <= 32'd0;
               if (i_dim[2] + 1 < bound_r[2]) begin
                 i_dim[2] <= i_dim[2] + 1;
+                base_src_seg_r <= base_src_seg_r + 64'(stride_r[0][2]) - stride_bound_r[0][1] - stride_bound_r[0][0];
+                base_dst_seg_r <= base_dst_seg_r + 64'(stride_r[1][2]) - stride_bound_r[1][1] - stride_bound_r[1][0];
               end else begin
                 i_dim[2] <= 32'd0;
               end

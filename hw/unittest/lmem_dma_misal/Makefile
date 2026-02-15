@@ -34,8 +34,9 @@ RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
 				$(RTL_DIR)/libs/VX_elastic_buffer.sv \
 				$(RTL_DIR)/libs/VX_stream_buffer.sv \
 				$(RTL_DIR)/libs/VX_generic_arbiter.sv \
-				$(RTL_DIR)/libs/VX_shift_register.sv \
-				$(RTL_DIR)/libs/VX_priority_arbiter.sv \
+					$(RTL_DIR)/libs/VX_shift_register.sv \
+					$(RTL_DIR)/libs/VX_mul_u32_pipe.sv \
+					$(RTL_DIR)/libs/VX_priority_arbiter.sv \
 				$(RTL_DIR)/libs/VX_priority_encoder.sv \
 				$(RTL_DIR)/libs/VX_lzc.sv \
 				$(RTL_DIR)/libs/VX_find_first.sv
