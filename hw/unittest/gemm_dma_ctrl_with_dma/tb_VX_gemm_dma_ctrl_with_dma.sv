@@ -142,7 +142,7 @@ module tb_VX_gemm_dma_ctrl_with_dma import VX_gpu_pkg::*; ();
 
   // ---------------------------------------------------------------------------
   // DCACHE memory model (byte-addressed)
-  //  - VX_dma_node_misal expects read *and* write responses (it waits on rsp_fire)
+  //  - VX_dma_unit_misal expects read *and* write responses (it waits on rsp_fire)
   //  - 1-cycle latency model
   // ---------------------------------------------------------------------------
   byte dcache_mem[0:MEM_BYTES-1];
@@ -442,6 +442,8 @@ module tb_VX_gemm_dma_ctrl_with_dma import VX_gpu_pkg::*; ();
              M_tot, N_tot, mt_idx, nt_idx, mt_eff, nt_eff, g_row_stride, seg_bytes, g_src_off, l_mid_off, g_dst_off);
     $fdisplay(log_fd, "[CASE][OUTPUT][COMPACT-G] M_tot=%0d N_tot=%0d mt_idx=%0d nt_idx=%0d  mt_eff=%0d nt_eff=%0d  Gstride=%0d  Lseg=%0d  offs=(Gs:%0d L:%0d Gd:%0d)",
               M_tot, N_tot, mt_idx, nt_idx, mt_eff, nt_eff, g_row_stride, seg_bytes, g_src_off, l_mid_off, g_dst_off);
+
+    $display("XLEN %0d", `XLEN);
 
     // DRAM -> LMEM : OP_DMA_LD
     cmd_ld = make_dma_cmd(
