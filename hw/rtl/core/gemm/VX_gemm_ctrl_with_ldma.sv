@@ -14,7 +14,7 @@ module VX_gemm_ctrl_with_ldma import VX_gpu_pkg::*; #(
   VX_mem_bus_if.master    sz_dma_gemm_bus_if,
   VX_mem_bus_if.master    o_dma_gemm_bus_if,
   VX_lsu_mem_if.master    dma_if,
-  VX_config_entry_alloc_if.master alloc_if
+  VX_node_done_if.master  gemm_node_done_if
 );
 
   // DMA tile sizes
@@ -137,13 +137,11 @@ module VX_gemm_ctrl_with_ldma import VX_gpu_pkg::*; #(
   assign output_dma_ctrl_if.reg_idx = gemm_ctrl_if.output_write_ctrl.cmd.rs1_data;
   assign output_dma_ctrl_if.reg_value = gemm_ctrl_if.output_write_ctrl.cmd.rs2_data;
   
-
   assign gemm_dma_ctrl_if.start = gemm_ctrl_if.dma_ctrl.start;
   assign gemm_dma_ctrl_if.cmd   = gemm_ctrl_if.dma_ctrl.cmd;
   assign gemm_dma_ctrl_if.M_tot = gemm_ctrl_if.M_tot;
   assign gemm_dma_ctrl_if.N_tot = gemm_ctrl_if.N_tot;
   assign gemm_dma_ctrl_if.K_tot = gemm_ctrl_if.K_tot;
-  assign gemm_dma_ctrl_if.wid   = gemm_ctrl_if.wid;
 
   assign gemm_ctrl_if.dma_flag.idle = gemm_dma_ctrl_if.idle;
   assign gemm_ctrl_if.dma_flag.done = gemm_dma_ctrl_if.done;
@@ -155,6 +153,7 @@ module VX_gemm_ctrl_with_ldma import VX_gpu_pkg::*; #(
     .reset(reset),
     .cfg_reg_if(cfg_reg_if),
     .gemm_ctrl_if(gemm_ctrl_if),
+    .done_if(gemm_node_done_if),
     .gemm_sync_slv_if(gemm_sync_if)
   );
 
@@ -163,7 +162,6 @@ module VX_gemm_ctrl_with_ldma import VX_gpu_pkg::*; #(
   ) u_VX_gemm_dma_ctrl_with_dma (
     .clk(clk),
     .reset(reset),
-    .alloc_if(alloc_if),
     .gemm_dma_ctrl_if(gemm_dma_ctrl_if),
     .gemm_sync_if(gemm_sync_if[4]),
     .dma_if(dma_if)
