@@ -124,7 +124,7 @@ module tb_VX_gemm_ctrl;
     input logic [63:0] scale_base,
     input logic [63:0] zp_base,
 
-    input logic [63:0] lmem_ibuf0_base,  //lmem
+    input logic [63:0] lmem_ibuf0_base,
     input logic [63:0] lmem_ibuf1_base,
     input logic [63:0] lmem_wbuf0_base,
     input logic [63:0] lmem_wbuf1_base,
@@ -142,7 +142,16 @@ module tb_VX_gemm_ctrl;
     input logic [31:0] entry_id_val
   );
     begin
-      @(posedge clk);
+      // 0) wait until DUT is ready (state==S_IDLE)
+      do @(posedge clk); while (!cfg_reg_if.ready);
+
+      // 1) drive regs at negedge so they are stable before next posedge
+      @(negedge clk);
+      cfg_reg_if.valid    = 1'b0;
+      cfg_reg_if.entry_id = entry_id_val;
+
+      // (optional) clear all regs
+      for (int i = 0; i < 33; i++) cfg_reg_if.regs[i] = '0;
 
       cfg_reg_if.regs[0]  = 32'h1;
 
@@ -188,30 +197,28 @@ module tb_VX_gemm_ctrl;
       cfg_reg_if.regs[27] = lmem_obuf_base[31:0];
       cfg_reg_if.regs[28] = lmem_obuf_base[63:32];
 
-      // scalar dims (32-bit regs)
-      cfg_reg_if.regs[29] = M[31:0];
-      cfg_reg_if.regs[30] = N[31:0];
-      cfg_reg_if.regs[31] = K[31:0];
-      cfg_reg_if.regs[32] = qblk[31:0];
+      cfg_reg_if.regs[29] = M;
+      cfg_reg_if.regs[30] = N;
+      cfg_reg_if.regs[31] = K;
+      cfg_reg_if.regs[32] = qblk;
 
-      cfg_reg_if.entry_id   = entry_id_val;
-      cfg_reg_if.valid      = 1'b1;
+      // 2) assert valid BEFORE the sampling posedge
+      cfg_reg_if.valid = 1'b1;
 
+      // 3) handshake edge
       @(posedge clk);
 
-      // 4) valid 내림 (regs는 1사이클 더 유지하면 더 안전)
+      // 4) drop valid at negedge, keep regs stable one more cycle
       @(negedge clk);
       cfg_reg_if.valid = 1'b0;
+
       @(posedge clk);
 
-      $display("[%0t] CFG sent: M=%0d N=%0d K=%0d qblk=%0d entry_id=%0d",
-               $time, M, N, K, qblk, entry_id_val);
-      $display("[%0t] CFG_REGS: M=%0d N=%0d K=%0d qblk=%0d entry_id=%0d",
-         $time,
-         cfg_reg_if.regs[29], cfg_reg_if.regs[30], cfg_reg_if.regs[31], cfg_reg_if.regs[32],
-         cfg_reg_if.entry_id);
+      $display("[%0t] CFG sent (safe): M=%0d N=%0d K=%0d qblk=%0d entry_id=%0d",
+              $time, M, N, K, qblk, entry_id_val);
     end
   endtask
+
 
   // --------------------------------------------------------------------------
   // Helpers: opcode / notify fields
