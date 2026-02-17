@@ -152,6 +152,17 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     // Control-plane wiring
     // -------------------------------------------------------------------------
 
+    // GEMM unit direct control bridge (temporary/static mapping).
+    // TODO: replace with full command mapping from gemm_ctrl.
+    assign gemm_unit_if.start                            = gemm_ctrl_if.input_read_ctrl.start; // start signal로 동기화
+    assign gemm_unit_if.gemm_unit_ctrl.acc_cnt           = MT;
+    assign gemm_unit_if.gemm_unit_ctrl.acc_mem_base_addr = '0;
+    assign gemm_unit_if.gemm_unit_ctrl.quant_dir         = gemm_ctrl_if.input_read_ctrl.cmd.flags[4]; //QDIR
+    assign gemm_unit_if.gemm_unit_ctrl.wreg_use_idx      = gemm_ctrl_if.input_read_ctrl.cmd.flags[1]; //mxu tile double buffering 번호
+    assign gemm_unit_if.gemm_unit_ctrl.sreg_use_idx      = gemm_ctrl_if.input_read_ctrl.cmd.flags[1]; //mxu tile double buffering 번호
+    assign gemm_unit_if.gemm_unit_ctrl.zreg_use_idx      = gemm_ctrl_if.input_read_ctrl.cmd.flags[1]; //mxu tile double buffering 번호
+    assign gemm_unit_if.gemm_unit_ctrl.is_load           = ~gemm_ctrl_if.input_read_ctrl.cmd.flags[2];
+
     // Connect gemm_ctrl_if to DMA ctrl interfaces
     assign input_dma_ctrl_if.start           = gemm_ctrl_if.input_read_ctrl.start;
     assign input_dma_ctrl_if.src_base_addr   = gemm_ctrl_if.input_read_ctrl.cmd.rs2_data;
@@ -167,21 +178,9 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     assign input_dma_ctrl_if.bounds[0]       = MT;
     assign input_dma_ctrl_if.bounds[1]       = 32'd1;
     assign input_dma_ctrl_if.bounds[2]       = 32'd1;
-
-    // GEMM unit direct control bridge (temporary/static mapping).
-    // TODO: replace with full command mapping from gemm_ctrl.
-    assign gemm_unit_if.start                            = gemm_ctrl_if.input_read_ctrl.start; // start signal로 동기화
-    assign gemm_unit_if.gemm_unit_ctrl.acc_cnt           = MT;
-    assign gemm_unit_if.gemm_unit_ctrl.acc_mem_base_addr = '0;
-    assign gemm_unit_if.gemm_unit_ctrl.quant_dir         = 0;
-    assign gemm_unit_if.gemm_unit_ctrl.wreg_use_idx      = 0;
-    assign gemm_unit_if.gemm_unit_ctrl.sreg_use_idx      = 0;
-    assign gemm_unit_if.gemm_unit_ctrl.zreg_use_idx      = 0;
-    assign gemm_unit_if.gemm_unit_ctrl.is_load           = 0;
-
     assign input_dma_ctrl_if.seg_size        = MXU_KT*16/8;
-    assign gemm_ctrl_if.input_read_flag.idle = input_dma_ctrl_if.idle;
-    assign gemm_ctrl_if.input_read_flag.done = input_dma_ctrl_if.done;
+    assign gemm_ctrl_if.input_read_flag.idle = gemm_unit_if.idle;
+    assign gemm_ctrl_if.input_read_flag.done = gemm_unit_if.done;  //gemm 연산이 끝나야 ildma 가 끝
     assign input_dma_ctrl_if.reg_idx         = gemm_ctrl_if.input_read_ctrl.cmd.rs1_data;
     assign input_dma_ctrl_if.reg_value       = gemm_ctrl_if.input_read_ctrl.cmd.rs2_data;
 
@@ -513,7 +512,25 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
 
     // load paths: gemm_unit (slave ports) <-> load ldmAs (master ports)
     `ASSIGN_VX_MEM_BUS_IF(i_gemm_bus_if, i_dma_gemm_bus_if);
-    `ASSIGN_VX_MEM_BUS_IF(w_gemm_bus_if, w_dma_gemm_bus_if);
+    //`ASSIGN_VX_MEM_BUS_IF(w_gemm_bus_if, w_dma_gemm_bus_if);
+    assign w_gemm_bus_if.req_valid  = w_dma_gemm_bus_if.req_valid;
+
+    assign w_dma_gemm_bus_if.req_ready  = w_gemm_bus_if.req_ready;
+    assign w_dma_gemm_bus_if.rsp_valid  = w_gemm_bus_if.rsp_valid;
+    assign w_dma_gemm_bus_if.rsp_data   = w_gemm_bus_if.rsp_data;
+    assign w_gemm_bus_if.rsp_ready      = w_dma_gemm_bus_if.rsp_ready;
+
+    assign w_gemm_bus_if.req_data.rw    = w_dma_gemm_bus_if.req_data.rw;
+    assign w_gemm_bus_if.req_data.addr
+      = { {($bits(w_gemm_bus_if.req_data.addr)-2){1'b0}},
+          gemm_ctrl_if.weight_read_ctrl.cmd.flags[2],
+          gemm_ctrl_if.weight_read_ctrl.cmd.flags[1]
+        };
+    assign w_gemm_bus_if.req_data.data   = w_dma_gemm_bus_if.req_data.data;
+    assign w_gemm_bus_if.req_data.byteen = w_dma_gemm_bus_if.req_data.byteen;
+    assign w_gemm_bus_if.req_data.flags  = w_dma_gemm_bus_if.req_data.flags;
+    assign w_gemm_bus_if.req_data.tag    = w_dma_gemm_bus_if.req_data.tag;
+   
     `ASSIGN_VX_MEM_BUS_IF(sz_gemm_bus_if, sz_dma_gemm_bus_if);
 
     // output path: gemm_unit (slave port) <-> output ldma (master port)
@@ -538,7 +555,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     // -------------------------------------------------------------------------
 
     // Input DMA (LMEM -> GEMM, DIR=0)
-    VX_lmem_dma #(
+    VX_lmem_dma_misal #(
       .INSTANCE_ID({INSTANCE_ID, "_input_dma"}),
       .DIR(0),
       .LMEM_DW(`GEMM_INPUT_DATA_SIZE * 8),
@@ -553,7 +570,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     );
 
     // Weight DMA (LMEM -> GEMM, DIR=0)
-    VX_lmem_dma #(
+    VX_lmem_dma_misal #(
       .INSTANCE_ID({INSTANCE_ID, "_weight_dma"}),
       .DIR(0),
       .LMEM_DW(`GEMM_WEIGHT_DATA_SIZE * 8),
@@ -568,7 +585,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     );
 
     // Quant param DMA (LMEM -> GEMM, DIR=0)
-    VX_lmem_dma #(
+    VX_lmem_dma_misal #(
       .INSTANCE_ID({INSTANCE_ID, "_quant_param_dma"}),
       .DIR(0),
       .LMEM_DW(`GEMM_SCALE_ZERO_DATA_SIZE * 8),
@@ -583,7 +600,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     );
 
     // Output DMA (GEMM -> LMEM, DIR=1)
-    VX_lmem_dma #(
+    VX_lmem_dma_misal #(
       .INSTANCE_ID({INSTANCE_ID, "_output_dma"}),
       .DIR(1),
       .LMEM_DW(`GEMM_OUTPUT_DATA_SIZE * 8),
