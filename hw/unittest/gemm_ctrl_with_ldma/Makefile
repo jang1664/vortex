@@ -61,14 +61,14 @@ RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
 				$(RTL_DIR)/libs/VX_stream_xbar.sv \
 				$(RTL_DIR)/libs/VX_stream_switch.sv \
 				$(RTL_DIR)/libs/VX_popcount.sv \
+				$(RTL_DIR)/libs/VX_mul_u32_pipe.sv \
 				$(RTL_DIR)/core/gemm/VX_gemm_dma_ctrl.sv \
-				$(RTL_DIR)/core/gemm/VX_config_entry_alloc_if.sv 
+				$(RTL_DIR)/core/VX_node_done_if.sv
 
-				
 				
 #PARAMS_  := PIPE_MULT=$(PIPE_MULT) PIPE_ALIGN=$(PIPE_ALIGN) PIPE_INTERVAL=$(PIPE_INTERVAL)
 INCDIRS_ := $(RTL_DIR)
-DEFINES_ := SIMULATION DEBUG_LEVEL=3 DBG_TRACE_GEMM
+DEFINES_ := SIMULATION DEBUG_LEVEL=3 DBG_TRACE_GEMM XLEN_64
 
 COMPILE_LOG := logs/compile.log
 SIM_LOG     := logs/sim.log

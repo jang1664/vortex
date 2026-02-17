@@ -24,6 +24,7 @@ endmodule
 
 //------------------------------------------------------------------------------
 // GEMM-side dummy memory slave (VX_mem_bus_if)
+//  - returns 1-cycle response for BOTH reads and writes
 //------------------------------------------------------------------------------
 module vx_mem_bus_dummy_slave #(
   parameter int DATA_SIZE = 16,
@@ -45,7 +46,6 @@ module vx_mem_bus_dummy_slave #(
   assign bus_if.rsp_data.tag  = pending_tag_bits;
 
   wire fire_req = bus_if.req_valid && bus_if.req_ready;
-  wire is_read  = fire_req && ~bus_if.req_data.rw;
   wire fire_rsp = bus_if.rsp_valid && bus_if.rsp_ready;
 
   function automatic logic [DATA_SIZE*8-1:0] make_data(input logic [ADDR_WIDTH-1:0] a);
@@ -69,26 +69,35 @@ module vx_mem_bus_dummy_slave #(
       if (pending && fire_rsp)
         pending <= 1'b0;
 
-      if (~pending && is_read) begin
+      if (~pending && fire_req) begin
         pending          <= 1'b1;
-        pending_rdata    <= make_data(bus_if.req_data.addr);
         pending_tag_bits <= bus_if.req_data.tag;
+
+        if (~bus_if.req_data.rw) begin
+          // READ
+          pending_rdata <= make_data(bus_if.req_data.addr);
+        end else begin
+          // WRITE (ack only)
+          pending_rdata <= '0;
+        end
       end
-      // writes ignored
     end
   end
 endmodule
 
 //------------------------------------------------------------------------------
 // MMIO model for VX_lsu_mem_if (VX_gemm_dma_ctrl uses this)
-// - returns response for both reads and writes (1-cycle)
-// - byte-addressable backing store
 //
-// ★ "CONTROL reg start bit auto-clear" (정확한 주소 기반):
-//    control word byte addr = DMA_CFG_BASE_ADDR + entry*DMA_ENTRY_STRIDE_BYTES + 0
-//    => (byte_addr - DMA_CFG_BASE_ADDR) % DMA_ENTRY_STRIDE_BYTES == 0..3  (word 범위)
-//    => 특히 offset==0 byte에서 bit0이 1로 써지면 "start"로 간주하고
-//       LAT_DMA_DONE 후 그 byte bit0만 clear
+// This model MATCHES your VX_gemm_dma_ctrl semantics:
+//  - Global alloc register is at DMA_CFG_BASE_ADDR (+0), size = DATA_SIZE bytes.
+//  - Entry regs start at DMA_CFG_BASE_ADDR + DATA_SIZE (GLOBAL_ALLOC_B).
+//  - CONTROL completion is detected by occupy=0 && working=0 (bits [1],[2]).
+//
+// Behavior implemented:
+//  1) ALLOC read returns success=1 and fixed tokens (entry_id=0, owner=1, gen=1)
+//  2) When CONTROL.start(=bit0) is written for an entry, we:
+//        - set occupy/working bits (bit1, bit2) to 1 immediately
+//        - after LAT_DMA_DONE cycles, clear occupy/working (and also clear start)
 //------------------------------------------------------------------------------
 module vx_lsu_mmio_model #(
   parameter int NUM_LANES    = 1,
@@ -97,24 +106,46 @@ module vx_lsu_mmio_model #(
   parameter int MEM_BYTES    = 64*1024,
   parameter int ADDR_WIDTH   = (`MEM_ADDR_WIDTH - `CLOG2(DATA_SIZE)),
 
-  // ★ config register mapping (must match VX_gemm_dma_ctrl params)
+  // must match VX_gemm_dma_ctrl params
   parameter logic [63:0] DMA_CFG_BASE_ADDR      = 64'h0,
   parameter int          DMA_ENTRY_STRIDE_BYTES = 64,     // 16 regs * 4B
-  parameter int          LAT_DMA_DONE           = 50,
+  parameter int          LAT_DMA_DONE           = 80,
 
-  // logging
+  // must match VX_gemm_dma_ctrl packing fields
+  parameter int          ENTRYID_W              = 8,
+  parameter int          CTRL_OWNER_W           = 1,
+  parameter int          CTRL_GEN_W             = 16,
+
+  // bits in CONTROL (must match VX_gemm_dma_ctrl)
+  parameter int          DMA_CTRL_START_BIT     = 0,
+  parameter int          DMA_CTRL_OCCUPY_BIT    = 1,
+  parameter int          DMA_CTRL_WORKING_BIT   = 2,
+  parameter int          DMA_CTRL_OWNER_LSB     = 4,
+  parameter int          DMA_CTRL_GEN_LSB       = (DMA_CTRL_OWNER_LSB + CTRL_OWNER_W),
+
+  // alloc response layout (must match VX_gemm_dma_ctrl)
+  parameter int          ALLOC_SUCCESS_BIT      = 0,
+  parameter int          ALLOC_ENTRY_LSB        = 1,
+  parameter int          ALLOC_ENTRY_BITS       = (ENTRYID_W > 31) ? 31 : ENTRYID_W,
+  parameter int          ALLOC_OWNER_LSB        = (ALLOC_ENTRY_LSB + ALLOC_ENTRY_BITS),
+  parameter int          ALLOC_OWNER_BITS       = CTRL_OWNER_W,
+  parameter int          ALLOC_GEN_LSB          = (ALLOC_OWNER_LSB + ALLOC_OWNER_BITS),
+  parameter int          ALLOC_GEN_BITS         = CTRL_GEN_W,
+
   parameter bit          VERBOSE                = 1
 ) (
   input  wire clk,
   input  wire reset,
   VX_lsu_mem_if.slave mmio_if
 );
+  // backing store is BASE-RELATIVE:
+  //   mem_idx = abs_byte_addr - DMA_CFG_BASE_ADDR
   byte mem [0:MEM_BYTES-1];
 
   // one outstanding response
   logic pending;
 
-  // rsp fields (raw bits to avoid typedef mismatch)
+  // rsp fields (raw bits)
   logic [TAG_WIDTH-1:0] pending_tag_bits;
   logic [NUM_LANES-1:0] pending_mask;
   logic [NUM_LANES-1:0][DATA_SIZE*8-1:0] pending_data;
@@ -122,7 +153,6 @@ module vx_lsu_mmio_model #(
   assign mmio_if.req_ready = ~pending;
   assign mmio_if.rsp_valid = pending;
 
-  // pack response
   always_comb begin
     mmio_if.rsp_data       = '0;
     mmio_if.rsp_data.tag   = pending_tag_bits;
@@ -133,31 +163,78 @@ module vx_lsu_mmio_model #(
   wire fire_req = mmio_if.req_valid && mmio_if.req_ready;
   wire fire_rsp = mmio_if.rsp_valid && mmio_if.rsp_ready;
 
-  function automatic int unsigned lane_byte_base(input logic [ADDR_WIDTH-1:0] a_lane);
-    return int'(a_lane) * DATA_SIZE; // addr is in DATA_SIZE-byte units
+  // helpers
+  function automatic longint unsigned lane_abs_base(input logic [ADDR_WIDTH-1:0] a_lane);
+    // addr is in DATA_SIZE-byte units (already shifted in DUT via to_lsu_addr)
+    return longint'(a_lane) * longint'(DATA_SIZE);
   endfunction
 
-  function automatic bit is_control_word_byte(input longint unsigned byte_addr, output int unsigned off_in_entry);
+  function automatic bit in_mem_range(input longint unsigned abs_byte_addr);
+    if (abs_byte_addr < DMA_CFG_BASE_ADDR) return 0;
+    if ((abs_byte_addr - DMA_CFG_BASE_ADDR) >= MEM_BYTES) return 0;
+    return 1;
+  endfunction
+
+  function automatic int unsigned mem_index(input longint unsigned abs_byte_addr);
+    // caller should ensure in range
+    return int'(abs_byte_addr - DMA_CFG_BASE_ADDR);
+  endfunction
+
+  localparam int unsigned GLOBAL_ALLOC_B = DATA_SIZE;
+  localparam longint unsigned ENTRY_BASE_ABS = (DMA_CFG_BASE_ADDR + longint'(GLOBAL_ALLOC_B));
+
+  // decode CONTROL word byte (absolute address)
+  function automatic bit is_control_word_byte_abs(
+    input longint unsigned abs_byte_addr,
+    output int unsigned off_in_entry,
+    output int unsigned entry_idx
+  );
     longint unsigned diff;
     begin
       off_in_entry = 0;
-      if (byte_addr < DMA_CFG_BASE_ADDR) return 0;
-      diff = byte_addr - DMA_CFG_BASE_ADDR;
+      entry_idx    = 0;
+      if (abs_byte_addr < ENTRY_BASE_ABS) return 0;
+      diff = abs_byte_addr - ENTRY_BASE_ABS;
       if (DMA_ENTRY_STRIDE_BYTES <= 0) return 0;
       off_in_entry = int'(diff % DMA_ENTRY_STRIDE_BYTES);
-      // CONTROL reg is first 32-bit word => byte offsets 0..3
+      entry_idx    = int'(diff / DMA_ENTRY_STRIDE_BYTES);
+      // CONTROL word occupies byte offsets 0..3 within each entry
       return (off_in_entry < 4);
     end
   endfunction
 
   // --------------------------------------------------------------------------
-  // start-bit auto-clear state
+  // auto-complete (clear occupy/working) state
   // --------------------------------------------------------------------------
-  logic        pend_clear;
-  int unsigned clear_cnt;
-  int unsigned clear_byte_addr; // which byte contains bit0 (CONTROL LSB byte)
+  logic        pend_complete;
+  int unsigned complete_cnt;
+  int unsigned ctrl_byte0_memidx; // mem index of CONTROL byte0 (bit0/1/2 live here)
 
   integer li, bi;
+
+  // build a fixed ALLOC response (32-bit word in LSB of lane0 read)
+  function automatic logic [31:0] make_alloc_rsp();
+    logic [31:0] w;
+    logic [ENTRYID_W-1:0]    entry_id;
+    logic [CTRL_OWNER_W-1:0] owner;
+    logic [CTRL_GEN_W-1:0]   gen;
+    begin
+      w = 32'd0;
+      entry_id = '0;         // fixed entry 0
+      owner    = '0; owner[0] = 1'b1; // owner = 1
+      gen      = '0; gen[0]   = 1'b1; // gen = 1
+
+      w[ALLOC_SUCCESS_BIT] = 1'b1;
+      if (ALLOC_ENTRY_BITS > 0)
+        w[ALLOC_ENTRY_LSB +: ALLOC_ENTRY_BITS] = entry_id[ALLOC_ENTRY_BITS-1:0];
+      if (ALLOC_OWNER_BITS > 0)
+        w[ALLOC_OWNER_LSB +: ALLOC_OWNER_BITS] = owner[ALLOC_OWNER_BITS-1:0];
+      if (ALLOC_GEN_BITS > 0)
+        w[ALLOC_GEN_LSB   +: ALLOC_GEN_BITS]   = gen[ALLOC_GEN_BITS-1:0];
+
+      return w;
+    end
+  endfunction
 
   always_ff @(posedge clk) begin
     if (reset) begin
@@ -166,24 +243,39 @@ module vx_lsu_mmio_model #(
       pending_mask     <= '0;
       pending_data     <= '0;
 
-      pend_clear      <= 1'b0;
-      clear_cnt       <= 0;
-      clear_byte_addr <= 0;
+      pend_complete    <= 1'b0;
+      complete_cnt     <= 0;
+      ctrl_byte0_memidx <= 0;
 
+      // clear memory
       for (bi = 0; bi < MEM_BYTES; bi++) begin
         mem[bi] <= 8'h00;
       end
+
+      // preload alloc register word0 (at DMA_CFG_BASE_ADDR + 0)
+      if (MEM_BYTES >= 4) begin
+        logic [31:0] alloc_w;
+        alloc_w = make_alloc_rsp();
+        mem[0] <= alloc_w[7:0];
+        mem[1] <= alloc_w[15:8];
+        mem[2] <= alloc_w[23:16];
+        mem[3] <= alloc_w[31:24];
+      end
     end else begin
-      // countdown and clear start bit
-      if (pend_clear) begin
-        if (clear_cnt == 0) begin
-          if (clear_byte_addr < MEM_BYTES) begin
-            mem[clear_byte_addr] <= mem[clear_byte_addr] & 8'hFE; // clear bit0 only
-            if (VERBOSE) $display("[%0t] DMA_DONE auto-clear CONTROL.start @byte_addr=0x%0h", $time, clear_byte_addr);
+      // complete countdown: clear occupy/working (+ start) bits in CONTROL byte0
+      if (pend_complete) begin
+        if (complete_cnt == 0) begin
+          if (ctrl_byte0_memidx < MEM_BYTES) begin
+            // clear bit0(start), bit1(occupy), bit2(working)
+            mem[ctrl_byte0_memidx] <= mem[ctrl_byte0_memidx] & 8'hF8;
+            if (VERBOSE) $display("[%0t] DMA_DONE: clear start/occupy/working @mem_idx=0x%0h (abs=0x%0h)",
+                                  $time,
+                                  ctrl_byte0_memidx,
+                                  DMA_CFG_BASE_ADDR + longint'(ctrl_byte0_memidx));
           end
-          pend_clear <= 1'b0;
+          pend_complete <= 1'b0;
         end else begin
-          clear_cnt <= clear_cnt - 1;
+          complete_cnt <= complete_cnt - 1;
         end
       end
 
@@ -200,38 +292,52 @@ module vx_lsu_mmio_model #(
           pending_data[li] <= '0;
         end
 
+        // per-lane handling
         for (li = 0; li < NUM_LANES; li++) begin
           if (mmio_if.req_data.mask[li]) begin
-            int unsigned base;
-            base = lane_byte_base(mmio_if.req_data.addr[li]);
+            longint unsigned abs_base;
+            abs_base = lane_abs_base(mmio_if.req_data.addr[li]);
 
             if (mmio_if.req_data.rw) begin
               // WRITE
               for (bi = 0; bi < DATA_SIZE; bi++) begin
                 if (mmio_if.req_data.byteen[li][bi]) begin
-                  int unsigned baddr;
-                  baddr = base + bi;
+                  longint unsigned abs_byte;
+                  abs_byte = abs_base + longint'(bi);
 
-                  if (baddr < MEM_BYTES) begin
-                    byte newb;
+                  if (in_mem_range(abs_byte)) begin
+                    int unsigned midx;
                     int unsigned off_in_entry;
+                    int unsigned entry_idx;
                     bit is_ctrl_word;
 
-                    newb = mmio_if.req_data.data[li][bi*8 +: 8];
-                    mem[baddr] <= newb;
+                    midx = mem_index(abs_byte);
+                    mem[midx] <= mmio_if.req_data.data[li][bi*8 +: 8];
 
-                    // detect CONTROL.start set
-                    is_ctrl_word = is_control_word_byte(baddr, off_in_entry);
-                    if (is_ctrl_word && (off_in_entry == 0) && newb[0]) begin
-                      pend_clear      <= 1'b1;
-                      clear_cnt       <= LAT_DMA_DONE;
-                      clear_byte_addr <= baddr;
-                      if (VERBOSE) $display("[%0t] DMA_START detected (CONTROL.start=1) @byte_addr=0x%0h -> will clear after %0d cycles",
-                                            $time, baddr, LAT_DMA_DONE);
+                    // detect CONTROL.start write on CONTROL byte0 (off_in_entry==0) with bit0=1
+                    is_ctrl_word = is_control_word_byte_abs(abs_byte, off_in_entry, entry_idx);
+                    if (is_ctrl_word && (off_in_entry == 0)) begin
+                      byte newb;
+                      newb = mmio_if.req_data.data[li][bi*8 +: 8];
+                      if (newb[DMA_CTRL_START_BIT]) begin
+                        // Immediately set occupy/working bits as if backend accepted the job
+                        mem[midx] <= (newb | (8'(1 << DMA_CTRL_OCCUPY_BIT)) | (8'(1 << DMA_CTRL_WORKING_BIT)));
+
+                        // Schedule completion
+                        pend_complete     <= 1'b1;
+                        complete_cnt      <= LAT_DMA_DONE;
+                        ctrl_byte0_memidx <= midx;
+
+                        if (VERBOSE) begin
+                          $display("[%0t] DMA_START: CONTROL.start seen @abs=0x%0h entry=%0d -> set occupy/working, complete after %0d cyc",
+                                   $time, abs_byte, entry_idx, LAT_DMA_DONE);
+                        end
+                      end
                     end
                   end
                 end
               end
+              // write response data can be 0
               pending_data[li] <= '0;
 
             end else begin
@@ -239,8 +345,12 @@ module vx_lsu_mmio_model #(
               logic [DATA_SIZE*8-1:0] rtmp;
               rtmp = '0;
               for (bi = 0; bi < DATA_SIZE; bi++) begin
-                if ((base + bi) < MEM_BYTES) begin
-                  rtmp[bi*8 +: 8] = mem[base + bi];
+                longint unsigned abs_byte;
+                abs_byte = abs_base + longint'(bi);
+                if (in_mem_range(abs_byte)) begin
+                  int unsigned midx;
+                  midx = mem_index(abs_byte);
+                  rtmp[bi*8 +: 8] = mem[midx];
                 end
               end
               pending_data[li] <= rtmp;
@@ -253,47 +363,20 @@ module vx_lsu_mmio_model #(
 endmodule
 
 //------------------------------------------------------------------------------
-// alloc stub for VX_config_entry_alloc_if
-//------------------------------------------------------------------------------
-module vx_alloc_stub #(
-  parameter int OWNER_W   = 32,
-  parameter int ENTRYID_W = 8
-) (
-  input  wire clk,
-  input  wire reset,
-  VX_config_entry_alloc_if.slave alloc_if
-);
-  logic [ENTRYID_W-1:0] next_id;
-
-  assign alloc_if.ready    = 1'b1;
-  assign alloc_if.entry_id = next_id;
-
-  always_ff @(posedge clk) begin
-    if (reset) begin
-      next_id <= '0;
-    end else if (alloc_if.valid && alloc_if.ready) begin
-      next_id <= next_id + 1'b1;
-    end
-  end
-endmodule
-
-//------------------------------------------------------------------------------
 // TB: VX_gemm_ctrl_with_ldma + VX_local_mem
 //------------------------------------------------------------------------------
 module tb_VX_gemm_ctrl_with_ldma;
   import VX_gpu_pkg::*;
 
-  localparam TOTAL_CYC = 100000*50;
-
+  localparam int    TOTAL_CYC = 100000*50;
   localparam string TB_NAME     = "tb_VX_gemm_ctrl_with_ldma";
   localparam string INSTANCE_ID = "tb";
+  localparam real   PERIOD = 10.0;
 
-  localparam real PERIOD = 10.0;
-
-  // emulate DMA completion latency (CONTROL.start auto-clear)
+  // emulate backend completion latency (occupy/working clear)
   localparam int LAT_DMA_DONE = 80;
 
-  // IMPORTANT: must match VX_gemm_dma_ctrl defaults (or your overridden params)
+  // IMPORTANT: must match VX_gemm_dma_ctrl params
   localparam logic [63:0] DMA_CFG_BASE_ADDR_TB      = 64'h0;
   localparam int          DMA_ENTRY_STRIDE_BYTES_TB = 16 * 4; // 64 bytes/entry
 
@@ -325,7 +408,7 @@ module tb_VX_gemm_ctrl_with_ldma;
 `endif
   end
 
-  // cfg interface: 33 regs x 32b
+  // cfg interface: 33 regs x 32b (NOTE: assumes your VX_config_reg_if includes entry_id)
   VX_config_reg_if #(.NUM(33), .DW(32)) cfg_reg_if();
 
   // lmem bus from DUT
@@ -347,7 +430,8 @@ module tb_VX_gemm_ctrl_with_ldma;
     .TAG_WIDTH(GEMM_MEM_TAG_WIDTH)
   ) dma_if();
 
-  VX_config_entry_alloc_if #(.OWNER_W(32), .ENTRYID_W(8)) alloc_if();
+  VX_node_done_if gemm_node_done_if();
+  assign gemm_node_done_if.ready = 1'b1;
 
   // DUT
   VX_gemm_ctrl_with_ldma #(
@@ -365,7 +449,7 @@ module tb_VX_gemm_ctrl_with_ldma;
     .o_dma_gemm_bus_if(o_dma_gemm_bus_if.master),
 
     .dma_if(dma_if.master),
-    .alloc_if(alloc_if.master)
+    .gemm_node_done_if(gemm_node_done_if.master)
   );
 
   // ---------------------------------------------------------------------------
@@ -407,7 +491,7 @@ module tb_VX_gemm_ctrl_with_ldma;
     .mem_bus_if(lmem_ports)
   );
 
-  // GEMM-side dummy memories
+  // GEMM-side dummy memories (read+write ack)
   vx_mem_bus_dummy_slave #(.DATA_SIZE(LSU_WORD_SIZE), .TAG_WIDTH(GEMM_MEM_TAG_WIDTH)) u_i_gemm_mem
     (.clk(clk), .reset(reset), .bus_if(i_dma_gemm_bus_if.slave));
   vx_mem_bus_dummy_slave #(.DATA_SIZE(LSU_WORD_SIZE), .TAG_WIDTH(GEMM_MEM_TAG_WIDTH)) u_w_gemm_mem
@@ -417,7 +501,7 @@ module tb_VX_gemm_ctrl_with_ldma;
   vx_mem_bus_dummy_slave #(.DATA_SIZE(LSU_WORD_SIZE), .TAG_WIDTH(GEMM_MEM_TAG_WIDTH)) u_o_gemm_mem
     (.clk(clk), .reset(reset), .bus_if(o_dma_gemm_bus_if.slave));
 
-  // ★ MMIO model: CONTROL.start auto-clear using base/stride mapping (+ verbose)
+  // MMIO model: alloc success + occupy/working complete
   vx_lsu_mmio_model #(
     .NUM_LANES(1),
     .DATA_SIZE(LSU_WORD_SIZE),
@@ -426,14 +510,22 @@ module tb_VX_gemm_ctrl_with_ldma;
     .DMA_CFG_BASE_ADDR(DMA_CFG_BASE_ADDR_TB),
     .DMA_ENTRY_STRIDE_BYTES(DMA_ENTRY_STRIDE_BYTES_TB),
     .LAT_DMA_DONE(LAT_DMA_DONE),
+
+    // these match your VX_gemm_dma_ctrl defaults
+    .ENTRYID_W(8),
+    .CTRL_OWNER_W(1),
+    .CTRL_GEN_W(16),
+
+    .DMA_CTRL_START_BIT(0),
+    .DMA_CTRL_OCCUPY_BIT(1),
+    .DMA_CTRL_WORKING_BIT(2),
+    .DMA_CTRL_OWNER_LSB(4),
+    .DMA_CTRL_GEN_LSB(4 + 1),
+
     .VERBOSE(1)
   ) u_mmio (
     .clk(clk), .reset(reset), .mmio_if(dma_if.slave)
   );
-
-  // Allocator stub
-  vx_alloc_stub #(.OWNER_W(32), .ENTRYID_W(8)) u_alloc
-    (.clk(clk), .reset(reset), .alloc_if(alloc_if.slave));
 
   // ---------------------------------------------------------------------------
   // Reset / send_config
@@ -444,8 +536,7 @@ module tb_VX_gemm_ctrl_with_ldma;
 
       cfg_reg_if.valid = 1'b0;
       cfg_reg_if.regs  = '0;
-      cfg_reg_if.wid   = '0;
-      cfg_reg_if.tid   = '0;
+      cfg_reg_if.entry_id = '0;
 
       repeat (10) @(posedge clk);
       reset = 1'b0;
@@ -475,11 +566,17 @@ module tb_VX_gemm_ctrl_with_ldma;
     input logic [31:0] K,
     input logic [31:0] qblk,
 
-    input logic [31:0] wid_val,
-    input logic [31:0] tid_val
+    input logic [31:0] entry_id_val
   );
     begin
-      @(posedge clk);
+      // wait until DUT ready
+      do @(posedge clk); while (!cfg_reg_if.ready);
+
+      @(negedge clk);
+      cfg_reg_if.valid    = 1'b0;
+      cfg_reg_if.entry_id = entry_id_val;
+
+      for (int i = 0; i < 33; i++) cfg_reg_if.regs[i] = '0;
 
       cfg_reg_if.regs[0]  = 32'h1;
 
@@ -530,18 +627,16 @@ module tb_VX_gemm_ctrl_with_ldma;
       cfg_reg_if.regs[31] = K;
       cfg_reg_if.regs[32] = qblk;
 
-      cfg_reg_if.wid   = wid_val;
-      cfg_reg_if.tid   = tid_val;
       cfg_reg_if.valid = 1'b1;
 
       @(posedge clk);
-
       @(negedge clk);
       cfg_reg_if.valid = 1'b0;
+
       @(posedge clk);
 
-      $display("[%0t] CFG sent: M=%0d N=%0d K=%0d qblk=%0d wid=%0d tid=%0d",
-               $time, M, N, K, qblk, wid_val, tid_val);
+      $display("[%0t] CFG sent: M=%0d N=%0d K=%0d qblk=%0d entry_id=%0d",
+              $time, M, N, K, qblk, entry_id_val);
     end
   endtask
 
@@ -550,11 +645,8 @@ module tb_VX_gemm_ctrl_with_ldma;
   endtask
 
   // ---------------------------------------------------------------------------
-  // Pretty-print opcodes (same names you used)
+  // Pretty-print opcodes
   // ---------------------------------------------------------------------------
-  localparam logic [7:0] OP_WAIT   = 8'hF0;
-  localparam logic [7:0] OP_NOTIFY = 8'hF1;
-
   function automatic [7:0] op_of(input gemm_unified_cmd_t c);
     return c.instr[7:0];
   endfunction
@@ -585,34 +677,23 @@ module tb_VX_gemm_ctrl_with_ldma;
     end
   endtask
 
-  // ---------------------------------------------------------------------------
-  // ★ REQUIRED: log node0~4 start ALWAYS when start pulses happen
-  //
-  // Note: In VX_gemm_ctrl_with_ldma, gemm_ctrl_if is an internal interface.
-  // We access it hierarchically through dut.gemm_ctrl_if.*.start/cmd exactly
-  // like you already did earlier.
-  // ---------------------------------------------------------------------------
+  // log node0~4 start pulses (hierarchical)
   always_ff @(posedge clk) begin
     if (!reset) begin
       if (dut.gemm_ctrl_if.input_read_ctrl.start) begin
         print_cmd("NODE0_IN", dut.gemm_ctrl_if.input_read_ctrl.cmd);
-        $display("[%0t] NODE0 start", $time);
       end
       if (dut.gemm_ctrl_if.weight_read_ctrl.start) begin
         print_cmd("NODE1_W", dut.gemm_ctrl_if.weight_read_ctrl.cmd);
-        $display("[%0t] NODE1 start", $time);
       end
       if (dut.gemm_ctrl_if.quant_param_read_ctrl.start) begin
         print_cmd("NODE2_QP", dut.gemm_ctrl_if.quant_param_read_ctrl.cmd);
-        $display("[%0t] NODE2 start", $time);
       end
       if (dut.gemm_ctrl_if.output_write_ctrl.start) begin
         print_cmd("NODE3_OUT", dut.gemm_ctrl_if.output_write_ctrl.cmd);
-        $display("[%0t] NODE3 start", $time);
       end
       if (dut.gemm_ctrl_if.dma_ctrl.start) begin
         print_cmd("NODE4_DMA", dut.gemm_ctrl_if.dma_ctrl.cmd);
-        $display("[%0t] NODE4 start", $time);
       end
     end
   end
@@ -649,7 +730,7 @@ module tb_VX_gemm_ctrl_with_ldma;
       32'd256,       // N
       32'd256,       // K
       32'd32,        // qblk
-      32'd0, 32'd0   // wid, tid
+      32'd0          // entry_id_val
     );
 
     wait_cycles(TOTAL_CYC);
