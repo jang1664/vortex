@@ -306,8 +306,8 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     return (t >> 1) + 1;
   endfunction
 
-  function automatic logic [31:0] make_instr(input logic [7:0] op, input logic [7:0] flags, input int unsigned size_bytes);
-    make_instr = {size_bytes[15:0], flags, op};
+  function automatic logic [31:0] make_instr(input logic [7:0] op, input int unsigned size_bytes);
+    make_instr = {size_bytes[23:0], op};
   endfunction
 
   function automatic gemm_unified_cmd_t make_wait_cmd(input int unsigned reg_id, input int unsigned target);
@@ -344,7 +344,8 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     begin
       c = '0;
       flags    = {gen[6:0], buf_sel};
-      c.instr  = make_instr(OP_DMA_LD, flags, size_bytes);
+      c.flags  = flags;
+      c.instr  = make_instr(OP_DMA_LD, size_bytes);
       c.rs1_data = lmem_dst;
       c.rs2_data = dram_src;
       return c;
@@ -363,7 +364,8 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     begin
       c = '0;
       flags    = {gen[6:0], buf_sel};
-      c.instr  = make_instr(OP_DMA_ST, flags, size_bytes);
+      c.flags  = flags;
+      c.instr  = make_instr(OP_DMA_ST, size_bytes);
       c.rs1_data = dram_dst;
       c.rs2_data = lmem_src;
       return c;
@@ -1049,10 +1051,11 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           logic [7:0] flags;
           c = '0;
 
-          flags      = {6'd0, mxu_buf_q, buf_cur};
-          c.instr    = make_instr(OP_W_LDMA_MXU, flags, (MXU_KT * (MXU_NT >> 1)));
-          c.rs1_data  = {63'd0, mxu_buf_q};
-          c.rs2_data  = lmem_w_mxu;
+          flags      = {5'd0, QDIR_COL, mxu_buf_q, buf_cur};
+          c.flags    = flags;
+          c.instr    = make_instr(OP_W_LDMA_MXU, (MXU_KT * (MXU_NT >> 1)));
+          c.rs1_data = {63'd0, mxu_buf_q};
+          c.rs2_data = lmem_w_mxu;
 
           out_cmd_d   = c;
           out_start_d = 1'b1;
@@ -1081,7 +1084,8 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           sc_bytes = groups_mxu * MXU_NT * FP16_BYTES;
 
           flags      = {5'd0, QDIR_COL, mxu_buf_q, buf_cur};
-          c.instr    = make_instr(OP_SC_LDMA_MXU, flags, sc_bytes);
+          c.flags    = flags;
+          c.instr    = make_instr(OP_SC_LDMA_MXU, sc_bytes);
           c.rs1_data  = {63'd0, mxu_buf_q};
           c.rs2_data  = lmem_sc_mxu;
 
@@ -1101,7 +1105,8 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           zp_bytes = groups_mxu * MXU_NT * INT16_BYTES;
 
           flags      = {5'd0, QDIR_COL, mxu_buf_q, buf_cur};
-          c.instr    = make_instr(OP_ZP_LDMA_MXU, flags, zp_bytes);
+          c.flags    = flags;
+          c.instr    = make_instr(OP_ZP_LDMA_MXU, zp_bytes);
           c.rs1_data  = {63'd0, mxu_buf_q};
           c.rs2_data  = lmem_zp_mxu;
 
@@ -1148,8 +1153,9 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
             next_mxu_buf = ~mxu_buf_q;
             c = '0;
 
-            flags      = {6'd0, next_mxu_buf, buf_cur};
-            c.instr    = make_instr(OP_W_LDMA_MXU, flags, (MXU_KT * (MXU_NT >> 1)));
+            flags      = {5'd0, QDIR_COL, next_mxu_buf, buf_cur};
+            c.flags    = flags;
+            c.instr    = make_instr(OP_W_LDMA_MXU, (MXU_KT * (MXU_NT >> 1)));
             c.rs1_data  = {63'd0, next_mxu_buf};
             c.rs2_data  = lmem_w_mxu_next;
 
@@ -1186,7 +1192,8 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
             sc_bytes = groups_mxu * MXU_NT * FP16_BYTES;
 
             flags      = {5'd0, QDIR_COL, next_mxu_buf, buf_cur};
-            c.instr    = make_instr(OP_SC_LDMA_MXU, flags, sc_bytes);
+            c.flags    = flags;
+            c.instr    = make_instr(OP_SC_LDMA_MXU, sc_bytes);
             c.rs1_data  = {63'd0, next_mxu_buf};
             c.rs2_data  = lmem_sc_mxu_next;
 
@@ -1211,7 +1218,8 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           zp_bytes = groups_mxu * MXU_NT * INT16_BYTES;
 
           flags      = {5'd0, QDIR_COL, next_mxu_buf, buf_cur};
-          c.instr    = make_instr(OP_ZP_LDMA_MXU, flags, zp_bytes);
+          c.flags    = flags;
+          c.instr    = make_instr(OP_ZP_LDMA_MXU, zp_bytes);
           c.rs1_data  = {63'd0, next_mxu_buf};
           c.rs2_data  = lmem_zp_mxu_next;
 
@@ -1245,7 +1253,8 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           flags     = {3'd0, QDIR_COL, is_last, is_accum, mxu_buf_q, buf_cur};
           in_bytes  = mt_eff_cur * MXU_KT * FP16_BYTES;
 
-          c.instr   = make_instr(OP_I_LDMA_ARM, flags, in_bytes);
+          c.flags   = flags;
+          c.instr   = make_instr(OP_I_LDMA_ARM, in_bytes);
           c.rs1_data = lmem_out_slice;
           c.rs2_data = lmem_in_mxu;
 
@@ -1306,7 +1315,8 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           c = '0;
           flags      = {7'd0, buf_cur};
 
-          c.instr    = make_instr(OP_O_ACC2LMEM, flags, out_bytes_acc);
+          c.flags    = flags;
+          c.instr    = make_instr(OP_O_ACC2LMEM, out_bytes_acc);
           c.rs1_data  = job_q.lmem_obuf_base; // dst
           c.rs2_data  = ACCUM_BASE;           // src
 
