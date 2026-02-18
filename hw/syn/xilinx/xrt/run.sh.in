@@ -1,0 +1,9 @@
+#!/bin/bash
+
+set -o pipefail
+
+PREFIX=build_u55c_1c \
+PLATFORM=xilinx_u55c_gen3x16_xdma_3_202210_1 \
+NUM_CORES=4 \
+TARGET=hw \
+make 2>&1 | tee build_u55c_1c.log
