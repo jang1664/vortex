@@ -5,6 +5,8 @@ csrc/
 simv.daidir/
 verdiLog/
 
+!requirements.txt
+*.txt
 *.log
 *.fsdb
 *.fst
