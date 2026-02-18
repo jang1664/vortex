@@ -259,8 +259,6 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
     if (reset) begin
       base_addr_r[0] <= '0;
       base_addr_r[1] <= '0;
-      base_src_seg_r <= '0;
-      base_dst_seg_r <= '0;
       seg_size_r     <= '0;
       padding_r      <= '0;
       direction_bit_r <= 1'b0;
@@ -281,8 +279,6 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
 
       base_addr_r[0] <= {cfg_reg_if.regs[4][31:0], cfg_reg_if.regs[3][31:0]}; // src
       base_addr_r[1] <= {cfg_reg_if.regs[2][31:0], cfg_reg_if.regs[1][31:0]}; // dst
-      base_src_seg_r <= {cfg_reg_if.regs[4][31:0], cfg_reg_if.regs[3][31:0]};
-      base_dst_seg_r <= {cfg_reg_if.regs[2][31:0], cfg_reg_if.regs[1][31:0]};
 
       for (int d = 0; d < NDIM; d++) begin
         stride_r[0][d] <= cfg_reg_if.regs[5 + 2*d][31:0];
@@ -623,6 +619,8 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
       dcache_rd_ptr    <= '0;
       dcache_rd_end    <= '0;
       dcache_drop      <= '0;
+      base_src_seg_r   <= '0;
+      base_dst_seg_r   <= '0;
 
     end else begin
       state <= state_n;
@@ -636,6 +634,8 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
         i_dim[2]  <= 32'd0;
         out_off   <= 32'd0;
         finished  <= 1'b0;
+        base_src_seg_r <= {cfg_reg_if.regs[4][31:0], cfg_reg_if.regs[3][31:0]};
+        base_dst_seg_r <= {cfg_reg_if.regs[2][31:0], cfg_reg_if.regs[1][31:0]};
       end
 
       // After DONE handshake, clear finished for safety

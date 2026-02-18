@@ -185,6 +185,30 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
   localparam int INT16_BYTES = 2;
   localparam int INT4_BYTES  = 2; // packed: bytes = elems/2  => divide by 2
 
+  // Width limits from VX_config.vh
+  // M/N/K: <= 2^MM_MAX_LOG_DIM, tile size: <= 2^MM_MAX_LOG_TILEDIM.
+  localparam int MM_DIM_W      = `MM_MAX_LOG_DIM + 1;
+  localparam int TILE_SZ_W     = `MM_MAX_LOG_TILEDIM + 1;
+  localparam int MM_DIM_LG2_W  = `CLOG2(`MM_MAX_LOG_DIM + 1);
+  localparam int RID_W         = 4;
+
+  localparam int MXU_NT_DIM_MAX = ((1 << `MM_MAX_LOG_TILEDIM) + MXU_NT - 1) / MXU_NT;
+  localparam int MXU_KT_DIM_MAX = ((1 << `MM_MAX_LOG_TILEDIM) + MXU_KT - 1) / MXU_KT;
+  localparam int MXU_DIM_W      = `CLOG2(`MAX(MXU_NT_DIM_MAX, MXU_KT_DIM_MAX) + 1);
+  localparam int MXU_LINEAR_W   = `CLOG2((MXU_NT_DIM_MAX * MXU_KT_DIM_MAX) + 1);
+  localparam int GROUP_W        = TILE_SZ_W;
+  localparam int BYTE_CNT_W     = (2 * TILE_SZ_W) + 2;
+
+  typedef logic [31:0]              u32_t;
+  typedef logic [MM_DIM_W-1:0]      dim_t;
+  typedef logic [TILE_SZ_W-1:0]     tile_sz_t;
+  typedef logic [MM_DIM_LG2_W-1:0]  dim_lg2_t;
+  typedef logic [RID_W-1:0]         rid_t;
+  typedef logic [MXU_DIM_W-1:0]     mxu_dim_t;
+  typedef logic [MXU_LINEAR_W-1:0]  mxu_linear_t;
+  typedef logic [GROUP_W-1:0]       group_t;
+  typedef logic [BYTE_CNT_W-1:0]    bytecnt_t;
+
   // --------------------------------------------------------------------------
   // Job/config
   // --------------------------------------------------------------------------
@@ -212,9 +236,9 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
   job_t job_q, job_d;
 
   // Tile dims and last sizes (latched at start)
-  int unsigned mt_dim_q, nt_dim_q, kt_dim_q;
-  int unsigned mt_dim_lg2_q, kt_dim_lg2_q;
-  int unsigned m_last_q, n_last_q, k_last_q;
+  dim_t      mt_dim_q, nt_dim_q, kt_dim_q;
+  dim_lg2_t  mt_dim_lg2_q, kt_dim_lg2_q;
+  tile_sz_t  m_last_q, n_last_q, k_last_q;
 
   // totals exported (debug/host)
   logic [31:0] M_tot, N_tot, K_tot, qblk_tot;
@@ -264,69 +288,69 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
   localparam int RID_T0  = 0, RID_W0  = 1, RID_SZ0 = 2, RID_G0 = 3, RID_O = 4;
   localparam int RID_T1  = 5, RID_W1  = 6, RID_SZ1 = 7, RID_G1 = 8;
 
-  function automatic int rid_tile   (input logic buf_sel);  return buf_sel ? RID_T1  : RID_T0;  endfunction
-  function automatic int rid_w_mxu  (input logic mxu_buf);  return mxu_buf ? RID_W1  : RID_W0;  endfunction
-  function automatic int rid_sz_mxu (input logic mxu_buf);  return mxu_buf ? RID_SZ1 : RID_SZ0; endfunction
-  function automatic int rid_g_mxu  (input logic mxu_buf);  return mxu_buf ? RID_G1  : RID_G0;  endfunction
+  function automatic rid_t rid_tile   (input logic buf_sel);  return rid_t'(buf_sel ? RID_T1  : RID_T0);  endfunction
+  function automatic rid_t rid_w_mxu  (input logic mxu_buf);  return rid_t'(mxu_buf ? RID_W1  : RID_W0);  endfunction
+  function automatic rid_t rid_sz_mxu (input logic mxu_buf);  return rid_t'(mxu_buf ? RID_SZ1 : RID_SZ0); endfunction
+  function automatic rid_t rid_g_mxu  (input logic mxu_buf);  return rid_t'(mxu_buf ? RID_G1  : RID_G0);  endfunction
 
-  int rid_o = RID_O;  // output sequencing (local to store stage only)
-  int unsigned o_store_issue_q, o_store_issue_d;
+  rid_t rid_o = rid_t'(RID_O);  // output sequencing (local to store stage only)
+  u32_t o_store_issue_q, o_store_issue_d;
   // --------------------------------------------------------------------------
   // Small helpers
   // --------------------------------------------------------------------------
-  function automatic logic is_pow2(input int unsigned x);
+  function automatic logic is_pow2(input dim_t x);
     return (x != 0) && ((x & (x - 1)) == 0);
   endfunction
 
-  function automatic int unsigned lg2_pow2(input int unsigned x);
-    int unsigned s;
+  function automatic dim_lg2_t lg2_pow2(input dim_t x);
+    dim_lg2_t s;
     int i;
     begin
       s = 0;
       // x is expected to be power-of-two; pick the asserted bit index.
       for (i = 0; i < $bits(x); i = i + 1) begin
         if (x[i]) begin
-          s = i;
+          s = dim_lg2_t'(i);
         end
       end
       return s;
     end
   endfunction
 
-  function automatic int unsigned div_pow2(input int unsigned a, input int unsigned b);
-    return a >> lg2_pow2(b);
+  function automatic u32_t div_pow2(input u32_t a, input u32_t b);
+    return a >> lg2_pow2(dim_t'(b));
   endfunction
 
-  function automatic int unsigned ceil_div(input int unsigned a, input int unsigned b);
-    return (a + b - 1) >> lg2_pow2(b);
+  function automatic u32_t ceil_div(input u32_t a, input u32_t b);
+    return (a + b - 1) >> lg2_pow2(dim_t'(b));
   endfunction
 
   // buf generation (kept for DMA flags only)
-  function automatic int unsigned buf_gen(input int unsigned t);
+  function automatic u32_t buf_gen(input u32_t t);
     return (t >> 1) + 1;
   endfunction
 
-  function automatic logic [31:0] make_instr(input logic [7:0] op, input logic [7:0] flags, input int unsigned size_bytes);
+  function automatic logic [31:0] make_instr(input logic [7:0] op, input logic [7:0] flags, input u32_t size_bytes);
     make_instr = {size_bytes[15:0], flags, op};
   endfunction
 
-  function automatic gemm_unified_cmd_t make_wait_cmd(input int unsigned reg_id, input int unsigned target);
+  function automatic gemm_unified_cmd_t make_wait_cmd(input rid_t reg_id, input u32_t target);
     gemm_unified_cmd_t t;
     begin
       t = '0;
       t.instr    = {24'd0, OP_WAIT};
-      t.rs1_data  = {{(`XLEN-8){1'b0}}, reg_id[7:0]};
+      t.rs1_data  = {{(`XLEN-RID_W){1'b0}}, reg_id};
       t.rs2_data  = {{(`XLEN-32){1'b0}}, target[31:0]};
       return t;
     end
   endfunction
 
-  function automatic gemm_unified_cmd_t make_notify_cmd(input int unsigned reg_id, input int unsigned value, input logic set_mode);
+  function automatic gemm_unified_cmd_t make_notify_cmd(input rid_t reg_id, input u32_t value, input logic set_mode);
     gemm_unified_cmd_t t;
     begin
       t = '0;
       t.instr   = {24'd0, OP_NOTIFY};
-      t.rs1_data = {{(`XLEN-8){1'b0}}, reg_id[7:0]};
+      t.rs1_data = {{(`XLEN-RID_W){1'b0}}, reg_id};
       t.rs2_data = {{(`XLEN-32){1'b0}}, set_mode, value[30:0]};
       return t;
     end
@@ -335,9 +359,9 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
   function automatic gemm_unified_cmd_t make_dma_ld(
     input logic [`XLEN-1:0] lmem_dst,
     input logic [`XLEN-1:0] dram_src,
-    input int unsigned size_bytes,
+    input u32_t size_bytes,
     input logic buf_sel,
-    input int unsigned gen
+    input u32_t gen
   );
     gemm_unified_cmd_t c;
     logic [7:0] flags;
@@ -354,9 +378,9 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
   function automatic gemm_unified_cmd_t make_dma_st(
     input logic [`XLEN-1:0] dram_dst,
     input logic [`XLEN-1:0] lmem_src,
-    input int unsigned size_bytes,
+    input u32_t size_bytes,
     input logic buf_sel,
-    input int unsigned gen
+    input u32_t gen
   );
     gemm_unified_cmd_t c;
     logic [7:0] flags;
@@ -373,49 +397,49 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
   // tile decode: tile = ((nt * mt_dim) + mt) * kt_dim + kt  (kt fastest)
   // mt_dim/kt_dim are power-of-two, so decode is shift+mask (no / or %).
   task automatic tile_decode(
-    input int unsigned tile,
-    input int unsigned mt_dim_lg2,
-    input int unsigned kt_dim_lg2,
-    output int unsigned nt,
-    output int unsigned mt,
-    output int unsigned kt
+    input u32_t tile,
+    input dim_lg2_t mt_dim_lg2,
+    input dim_lg2_t kt_dim_lg2,
+    output dim_t nt,
+    output dim_t mt,
+    output dim_t kt
   );
-    int unsigned tmp;
-    int unsigned kt_mask;
-    int unsigned mt_mask;
+    u32_t tmp;
+    u32_t kt_mask;
+    u32_t mt_mask;
     begin
       kt_mask = (kt_dim_lg2 == 0) ? 0 : ((32'd1 << kt_dim_lg2) - 1);
       mt_mask = (mt_dim_lg2 == 0) ? 0 : ((32'd1 << mt_dim_lg2) - 1);
 
-      kt  = (kt_dim_lg2 == 0) ? 0 : (tile & kt_mask);
+      kt  = dim_t'((kt_dim_lg2 == 0) ? 0 : (tile & kt_mask));
       tmp = tile >> kt_dim_lg2;
-      mt  = (mt_dim_lg2 == 0) ? 0 : (tmp & mt_mask);
-      nt  = tmp >> mt_dim_lg2;
+      mt  = dim_t'((mt_dim_lg2 == 0) ? 0 : (tmp & mt_mask));
+      nt  = dim_t'(tmp >> mt_dim_lg2);
     end
   endtask
 
   task automatic tile_eff_sizes(
-    input  int unsigned nt,
-    input  int unsigned mt,
-    input  int unsigned kt,
-    output int unsigned mt_eff,
-    output int unsigned nt_eff,
-    output int unsigned kt_eff
+    input  dim_t nt,
+    input  dim_t mt,
+    input  dim_t kt,
+    output tile_sz_t mt_eff,
+    output tile_sz_t nt_eff,
+    output tile_sz_t kt_eff
   );
     begin
-      mt_eff = (mt == mt_dim_q-1) ? m_last_q : MT;
-      nt_eff = (nt == nt_dim_q-1) ? n_last_q : NT;
-      kt_eff = (kt == kt_dim_q-1) ? k_last_q : KT;
+      mt_eff = (mt == mt_dim_q-1) ? m_last_q : tile_sz_t'(MT);
+      nt_eff = (nt == nt_dim_q-1) ? n_last_q : tile_sz_t'(NT);
+      kt_eff = (kt == kt_dim_q-1) ? k_last_q : tile_sz_t'(KT);
     end
   endtask
 
   // --------------------------------------------------------------------------
   // DRAM address helpers (full-tile stride 유지)
   // --------------------------------------------------------------------------
-  function automatic logic [63:0] input_tile_addr(input job_t j, input int unsigned mt, input int unsigned kt);
+  function automatic logic [63:0] input_tile_addr(input job_t j, input dim_t mt, input dim_t kt);
     // input: [M, K] fp16
     // base + ((row0 * K) + col0) * 2
-    int unsigned row0, col0;
+    u32_t row0, col0;
     begin
       row0 = mt * MT;
       col0 = kt * KT;
@@ -423,11 +447,11 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     end
   endfunction
 
-  function automatic logic [63:0] weight_tile_addr(input job_t j, input int unsigned nt, input int unsigned kt);
+  function automatic logic [63:0] weight_tile_addr(input job_t j, input dim_t nt, input dim_t kt);
     // weight: [K, N] int4 packed (N/2 bytes per row)
     // base + (row0 * (N/2) + col0_bytes)
-    int unsigned row0;
-    int unsigned col0_bytes;
+    u32_t row0;
+    u32_t col0_bytes;
     begin
       row0       = kt * KT;            // K-dim block start
       col0_bytes = nt * (NT >> 1);        // N-dim block start in bytes
@@ -435,40 +459,36 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     end
   endfunction
 
-  function automatic logic [63:0] scale_tile_addr(input job_t j, input int unsigned nt, input int unsigned kt);
+  function automatic logic [63:0] scale_tile_addr(input job_t j, input dim_t nt, input dim_t kt);
     // scale: [groups_full, N] fp16, where groups_full = ceil_div(K, qblk)
     // tile's group rows correspond to k-range => group_row0 = (kt*KT)/qblk
-    int unsigned groups_full;
-    int unsigned group_row0;
-    int unsigned col0;
+    u32_t group_row0;
+    u32_t col0;
     begin
-      groups_full = ceil_div(j.K, j.qblk);
       group_row0  = div_pow2((kt * KT), j.qblk);
       col0        = nt * NT;
-      scale_tile_addr = j.scale_base + 64'((group_row0 * j.N + col0) * FP16_BYTES);
+      scale_tile_addr = j.scale_base + ((64'(group_row0) * 64'(j.N) + 64'(col0)) * FP16_BYTES);
     end
   endfunction
 
-  function automatic logic [63:0] zp_tile_addr(input job_t j, input int unsigned nt, input int unsigned kt);
+  function automatic logic [63:0] zp_tile_addr(input job_t j, input dim_t nt, input dim_t kt);
     // zp: [groups_full, N] int16
-    int unsigned groups_full;
-    int unsigned group_row0;
-    int unsigned col0;
+    u32_t group_row0;
+    u32_t col0;
     begin
-      groups_full = ceil_div(j.K, j.qblk);
       group_row0  = div_pow2((kt * KT), j.qblk);
       col0        = nt * NT;
-      zp_tile_addr = j.zp_base + 64'((group_row0 * j.N + col0) * INT16_BYTES);
+      zp_tile_addr = j.zp_base + ((64'(group_row0) * 64'(j.N) + 64'(col0)) * INT16_BYTES);
     end
   endfunction
 
-  function automatic logic [63:0] out_tile_addr(input job_t j, input int unsigned mt, input int unsigned nt);
+  function automatic logic [63:0] out_tile_addr(input job_t j, input dim_t mt, input dim_t nt);
     // output: [M, N] fp16
-    int unsigned row0, col0;
+    u32_t row0, col0;
     begin
       row0 = mt * MT;
       col0 = nt * NT;
-      out_tile_addr = j.output_base + 64'((row0 * j.N + col0) * FP16_BYTES);
+      out_tile_addr = j.output_base + ((64'(row0) * 64'(j.N) + 64'(col0)) * FP16_BYTES);
     end
   endfunction
 
@@ -523,13 +543,13 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
   state_t state_q, state_d;
 
   // tile pipeline registers
-  int unsigned tile_cur_q, tile_cur_d;
-  int unsigned tile_pre_q, tile_pre_d;   // next tile being/been preloaded
+  u32_t tile_cur_q, tile_cur_d;
+  u32_t tile_pre_q, tile_pre_d;   // next tile being/been preloaded
   logic        pre_valid_q, pre_valid_d; // whether tile_pre exists
 
   // mxu loop regs for current tile
-  int unsigned nt_mxu_q, nt_mxu_d;
-  int unsigned kt_mxu_q, kt_mxu_d;
+  mxu_dim_t nt_mxu_q, nt_mxu_d;
+  mxu_dim_t kt_mxu_q, kt_mxu_d;
   logic        mxu_buf_q, mxu_buf_d;
 
   // cfg only in idle
@@ -571,16 +591,16 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
       o_store_issue_q <= o_store_issue_d;
 
       if (state_q == S_IDLE && cfg_reg_if.regs[CFG_R_CONTROL][0] && cfg_reg_if.valid && cfg_reg_if.ready) begin
-        int unsigned mt_dim_n;
-        int unsigned nt_dim_n;
-        int unsigned kt_dim_n;
-        int unsigned mt_rem;
-        int unsigned nt_rem;
-        int unsigned kt_rem;
+        dim_t mt_dim_n;
+        dim_t nt_dim_n;
+        dim_t kt_dim_n;
+        tile_sz_t mt_rem;
+        tile_sz_t nt_rem;
+        tile_sz_t kt_rem;
 
-        mt_dim_n = ceil_div(job_d.M, MT);
-        nt_dim_n = ceil_div(job_d.N, NT);
-        kt_dim_n = ceil_div(job_d.K, KT);
+        mt_dim_n = dim_t'(ceil_div(job_d.M, MT));
+        nt_dim_n = dim_t'(ceil_div(job_d.N, NT));
+        kt_dim_n = dim_t'(ceil_div(job_d.K, KT));
 
         if (!is_pow2(mt_dim_n) || !is_pow2(kt_dim_n)) begin
           $fatal(1, "%s: mt_dim(%0d) and kt_dim(%0d) must be power-of-two", INSTANCE_ID, mt_dim_n, kt_dim_n);
@@ -593,13 +613,13 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
         mt_dim_lg2_q <= lg2_pow2(mt_dim_n);
         kt_dim_lg2_q <= lg2_pow2(kt_dim_n);
 
-        mt_rem = (job_d.M & (MT - 1));
-        nt_rem = (job_d.N & (NT - 1));
-        kt_rem = (job_d.K & (KT - 1));
+        mt_rem = tile_sz_t'(job_d.M & (MT - 1));
+        nt_rem = tile_sz_t'(job_d.N & (NT - 1));
+        kt_rem = tile_sz_t'(job_d.K & (KT - 1));
 
-        m_last_q <= (mt_rem == 0) ? MT : mt_rem;
-        n_last_q <= (nt_rem == 0) ? NT : nt_rem;
-        k_last_q <= (kt_rem == 0) ? KT : kt_rem;
+        m_last_q <= (mt_rem == 0) ? tile_sz_t'(MT) : mt_rem;
+        n_last_q <= (nt_rem == 0) ? tile_sz_t'(NT) : nt_rem;
+        k_last_q <= (kt_rem == 0) ? tile_sz_t'(KT) : kt_rem;
       end
     end
   end
@@ -629,47 +649,48 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     // defaults
     logic can_emit;
 
-    int unsigned nt_cur, mt_cur, kt_cur;
-    int unsigned mt_eff_cur, nt_eff_cur, kt_eff_cur;
+    dim_t nt_cur, mt_cur, kt_cur;
+    tile_sz_t mt_eff_cur, nt_eff_cur, kt_eff_cur;
     logic        buf_cur;
-    int unsigned gen_cur;
+    u32_t gen_cur;
 
-    int unsigned tile_total;
+    u32_t tile_total;
 
-    int unsigned in_ready_target_cur;
+    u32_t in_ready_target_cur;
 
     // mxu dims
-    int unsigned nt_mxu_dim, kt_mxu_dim;
-    int unsigned mxu_linear;
-    int unsigned n_nt_mxu, n_kt_mxu;
+    mxu_dim_t nt_mxu_dim, kt_mxu_dim;
+    mxu_linear_t mxu_linear;
+    mxu_dim_t n_nt_mxu, n_kt_mxu;
     logic        has_next_mxu;
-    int unsigned next_mxu_linear;
+    mxu_linear_t next_mxu_linear;
 
     // gemm control
-    int unsigned global_k;
+    u32_t global_k;
     logic is_accum, is_last;   // per microtile
     logic last_kt_tile;        // per DMA tile (kt_cur)
-    int unsigned gemm_done_target;
+    mxu_linear_t gemm_done_target;
 
     // LMEM addresses
     logic [63:0] lmem_in_mxu, lmem_out_slice;
     logic [63:0] lmem_w_mxu, lmem_sc_mxu, lmem_zp_mxu;
     logic [63:0] lmem_w_mxu_next, lmem_sc_mxu_next, lmem_zp_mxu_next;
-    int unsigned groups_tile, groups_mxu;
+    group_t groups_tile, groups_mxu;
 
-    int unsigned k0_in;      // col in K for input tile
-    int unsigned n0_out;     // col in N for output/accum tile
-    int unsigned k0_w;       // row in K for weight tile
-    int unsigned n0_w_bytes; // col in N bytes for weight tile
-    int unsigned g0;         // group row offset inside (kt tile)
-    int unsigned k0_in_n, n0_out_n, k0_w_n, n0_w_bytes_n, g0_n;
+    tile_sz_t k0_in;      // col in K for input tile
+    tile_sz_t n0_out;     // col in N for output/accum tile
+    tile_sz_t k0_w;       // row in K for weight tile
+    tile_sz_t n0_w_bytes; // col in N bytes for weight tile
+    group_t g0;           // group row offset inside (kt tile)
+    tile_sz_t k0_in_n, n0_out_n, k0_w_n, n0_w_bytes_n;
+    group_t g0_n;
 
     // output
-    int unsigned out_bytes_acc;
-    int unsigned out_bytes_fp16;
+    bytecnt_t out_bytes_acc;
+    bytecnt_t out_bytes_fp16;
 
-    groups_tile = ceil_div(KT, job_q.qblk);
-    groups_mxu  = ceil_div(MXU_KT, job_q.qblk);
+    groups_tile = group_t'(ceil_div(KT, job_q.qblk));
+    groups_mxu  = group_t'(ceil_div(MXU_KT, job_q.qblk));
 
     // regs next
     state_d = state_q;
@@ -695,9 +716,9 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     // decode current tile
     tile_decode(tile_cur_q, mt_dim_lg2_q, kt_dim_lg2_q, nt_cur, mt_cur, kt_cur);
 
-    mt_eff_cur = (mt_cur == mt_dim_q-1) ? m_last_q : MT;
-    nt_eff_cur = (nt_cur == nt_dim_q-1) ? n_last_q : NT;
-    kt_eff_cur = (kt_cur == kt_dim_q-1) ? k_last_q : KT;
+    mt_eff_cur = (mt_cur == mt_dim_q-1) ? m_last_q : tile_sz_t'(MT);
+    nt_eff_cur = (nt_cur == nt_dim_q-1) ? n_last_q : tile_sz_t'(NT);
+    kt_eff_cur = (kt_cur == kt_dim_q-1) ? k_last_q : tile_sz_t'(KT);
 
     buf_cur = tile_cur_q[0];
     gen_cur = buf_gen(tile_cur_q);
@@ -708,17 +729,19 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     in_ready_target_cur = 4*gen_cur + 4;
 
     // MXU dims within current DMA tile
-    nt_mxu_dim = ceil_div(nt_eff_cur, MXU_NT);
-    kt_mxu_dim = div_pow2(kt_eff_cur, MXU_KT); // assume divisible
+    nt_mxu_dim = mxu_dim_t'(ceil_div(u32_t'(nt_eff_cur), MXU_NT));
+    kt_mxu_dim = mxu_dim_t'(div_pow2(u32_t'(kt_eff_cur), MXU_KT)); // assume divisible
 
-    mxu_linear = kt_mxu_q * nt_mxu_dim + nt_mxu_q;
+    mxu_linear = mxu_linear_t'((mxu_linear_t'(kt_mxu_q) * mxu_linear_t'(nt_mxu_dim))
+                             +  mxu_linear_t'(nt_mxu_q));
 
     // next mxu indices (linear order)
     n_nt_mxu = (nt_mxu_q + 1 == nt_mxu_dim) ? 0 : (nt_mxu_q + 1);
     n_kt_mxu = (nt_mxu_q + 1 == nt_mxu_dim) ? (kt_mxu_q + 1) : kt_mxu_q;
 
     has_next_mxu     = (n_kt_mxu < kt_mxu_dim);
-    next_mxu_linear  = n_kt_mxu * nt_mxu_dim + n_nt_mxu;
+    next_mxu_linear  = mxu_linear_t'((mxu_linear_t'(n_kt_mxu) * mxu_linear_t'(nt_mxu_dim))
+                                   +  mxu_linear_t'(n_nt_mxu));
 
     // global_k determines accumulate/last for microtile
     global_k = kt_cur * KT + kt_mxu_q * MXU_KT;
@@ -736,19 +759,19 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     //   ACCUM_BASE stores [MT x NT] fp32 row-major, row-stride = NT*4 bytes
 
     // input microtile starts at K = kt_mxu_q*MXU_KT (within tile)
-    k0_in  = kt_mxu_q * MXU_KT;
+    k0_in  = tile_sz_t'(kt_mxu_q * MXU_KT);
 
     // output/accum microtile starts at N = nt_mxu_q*MXU_NT (within tile)
-    n0_out = nt_mxu_q * MXU_NT;
+    n0_out = tile_sz_t'(nt_mxu_q * MXU_NT);
 
     // weight microtile:
     // row = kt_mxu_q*MXU_KT (within tile-K)
     // col(bytes) = (nt_mxu_q*MXU_NT)/2
-    k0_w       = kt_mxu_q * MXU_KT;
-    n0_w_bytes = (nt_mxu_q * MXU_NT) >> 1;
+    k0_w       = tile_sz_t'(kt_mxu_q * MXU_KT);
+    n0_w_bytes = tile_sz_t'((nt_mxu_q * MXU_NT) >> 1);
 
     // group row offset inside this KT tile
-    g0 = div_pow2((kt_mxu_q * MXU_KT), job_q.qblk);
+    g0 = group_t'(div_pow2((kt_mxu_q * MXU_KT), job_q.qblk));
 
     // Input slice (mt_eff_cur rows, MXU_KT cols)
     lmem_in_mxu = ibuf_base(buf_cur) + 64'(k0_in) * FP16_BYTES;
@@ -765,11 +788,11 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     lmem_zp_mxu = zpbuf_base(buf_cur) + 64'(g0) * 64'(NT * INT16_BYTES) + 64'(n0_out) * INT16_BYTES;
 
     // next microtile addresses (for preload next)
-    k0_in_n      = n_kt_mxu * MXU_KT;
-    n0_out_n     = n_nt_mxu * MXU_NT;
-    k0_w_n       = n_kt_mxu * MXU_KT;
-    n0_w_bytes_n = (n_nt_mxu * MXU_NT) >> 1;
-    g0_n         = div_pow2((n_kt_mxu * MXU_KT), job_q.qblk);
+    k0_in_n      = tile_sz_t'(n_kt_mxu * MXU_KT);
+    n0_out_n     = tile_sz_t'(n_nt_mxu * MXU_NT);
+    k0_w_n       = tile_sz_t'(n_kt_mxu * MXU_KT);
+    n0_w_bytes_n = tile_sz_t'((n_nt_mxu * MXU_NT) >> 1);
+    g0_n         = group_t'(div_pow2((n_kt_mxu * MXU_KT), job_q.qblk));
 
     lmem_w_mxu_next = wbuf_base(buf_cur) + 64'(k0_w_n) * 64'(NT >> 1) + 64'(n0_w_bytes_n);
 
@@ -778,10 +801,10 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     lmem_zp_mxu_next = zpbuf_base(buf_cur) + 64'(g0_n) * 64'(NT * INT16_BYTES) + 64'(n0_out_n) * INT16_BYTES;
 
 
-    gemm_done_target = (mxu_linear + 1);
+    gemm_done_target = mxu_linear_t'(mxu_linear + 1);
 
-    out_bytes_acc  = mt_eff_cur * nt_eff_cur * FP32_BYTES;
-    out_bytes_fp16 = mt_eff_cur * nt_eff_cur * FP16_BYTES;
+    out_bytes_acc  = bytecnt_t'(mt_eff_cur * nt_eff_cur * FP32_BYTES);
+    out_bytes_fp16 = bytecnt_t'(mt_eff_cur * nt_eff_cur * FP16_BYTES);
 
     unique case (state_q)
 
@@ -828,8 +851,8 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
       // ----------------------------------------------------------------------
       S_PRE0_LD_I: begin
         if (can_emit) begin
-          int unsigned nt0, mt0, kt0;
-          int unsigned mt_eff0, nt_eff0, kt_eff0;
+          dim_t nt0, mt0, kt0;
+          tile_sz_t mt_eff0, nt_eff0, kt_eff0;
           tile_decode(0, mt_dim_lg2_q, kt_dim_lg2_q, nt0, mt0, kt0);
           tile_eff_sizes(nt0, mt0, kt0, mt_eff0, nt_eff0, kt_eff0);
 
@@ -847,8 +870,8 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
       S_PRE0_LD_W: begin
         if (can_emit) begin
-          int unsigned nt0, mt0, kt0;
-          int unsigned mt_eff0, nt_eff0, kt_eff0;
+          dim_t nt0, mt0, kt0;
+          tile_sz_t mt_eff0, nt_eff0, kt_eff0;
           tile_decode(0, mt_dim_lg2_q, kt_dim_lg2_q, nt0, mt0, kt0);
           tile_eff_sizes(nt0, mt0, kt0, mt_eff0, nt_eff0, kt_eff0);
 
@@ -866,9 +889,9 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
       S_PRE0_LD_SC: begin
         if (can_emit) begin
-          int unsigned nt0, mt0, kt0;
-          int unsigned mt_eff0, nt_eff0, kt_eff0;
-          int unsigned groups_eff;
+          dim_t nt0, mt0, kt0;
+          tile_sz_t mt_eff0, nt_eff0, kt_eff0;
+          group_t groups_eff;
           tile_decode(0, mt_dim_lg2_q, kt_dim_lg2_q, nt0, mt0, kt0);
           tile_eff_sizes(nt0, mt0, kt0, mt_eff0, nt_eff0, kt_eff0);
 
@@ -888,9 +911,9 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
       S_PRE0_LD_ZP: begin
         if (can_emit) begin
-          int unsigned nt0, mt0, kt0;
-          int unsigned mt_eff0, nt_eff0, kt_eff0;
-          int unsigned groups_eff, groups_full;
+          dim_t nt0, mt0, kt0;
+          tile_sz_t mt_eff0, nt_eff0, kt_eff0;
+          group_t groups_eff, groups_full;
 
           tile_decode(0, mt_dim_lg2_q, kt_dim_lg2_q, nt0, mt0, kt0);
           tile_eff_sizes(nt0, mt0, kt0, mt_eff0, nt_eff0, kt_eff0);
@@ -929,8 +952,8 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
       // ----------------------------------------------------------------------
       S_PRE1_LD_I: begin
         if (can_emit) begin
-          int unsigned nt1, mt1, kt1;
-          int unsigned mt_eff1, nt_eff1, kt_eff1;
+          dim_t nt1, mt1, kt1;
+          tile_sz_t mt_eff1, nt_eff1, kt_eff1;
           tile_decode(1, mt_dim_lg2_q, kt_dim_lg2_q, nt1, mt1, kt1);
           tile_eff_sizes(nt1, mt1, kt1, mt_eff1, nt_eff1, kt_eff1);
 
@@ -948,8 +971,8 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
       S_PRE1_LD_W: begin
         if (can_emit) begin
-          int unsigned nt1, mt1, kt1;
-          int unsigned mt_eff1, nt_eff1, kt_eff1;
+          dim_t nt1, mt1, kt1;
+          tile_sz_t mt_eff1, nt_eff1, kt_eff1;
           tile_decode(1, mt_dim_lg2_q, kt_dim_lg2_q, nt1, mt1, kt1);
           tile_eff_sizes(nt1, mt1, kt1, mt_eff1, nt_eff1, kt_eff1);
 
@@ -967,9 +990,9 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
       S_PRE1_LD_SC: begin
         if (can_emit) begin
-          int unsigned nt1, mt1, kt1;
-          int unsigned mt_eff1, nt_eff1, kt_eff1;
-          int unsigned groups_eff;
+          dim_t nt1, mt1, kt1;
+          tile_sz_t mt_eff1, nt_eff1, kt_eff1;
+          group_t groups_eff;
           tile_decode(1, mt_dim_lg2_q, kt_dim_lg2_q, nt1, mt1, kt1);
           tile_eff_sizes(nt1, mt1, kt1, mt_eff1, nt_eff1, kt_eff1);
 
@@ -989,9 +1012,9 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
       S_PRE1_LD_ZP: begin
         if (can_emit) begin
-          int unsigned nt1, mt1, kt1;
-          int unsigned mt_eff1, nt_eff1, kt_eff1;
-          int unsigned groups_eff, groups_full;
+          dim_t nt1, mt1, kt1;
+          tile_sz_t mt_eff1, nt_eff1, kt_eff1;
+          group_t groups_eff, groups_full;
 
           tile_decode(1, mt_dim_lg2_q, kt_dim_lg2_q, nt1, mt1, kt1);
           tile_eff_sizes(nt1, mt1, kt1, mt_eff1, nt_eff1, kt_eff1);
@@ -1075,7 +1098,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
         if (can_emit) begin
           gemm_unified_cmd_t c;
           logic [7:0] flags;
-          int unsigned sc_bytes;
+          bytecnt_t sc_bytes;
 
           c = '0;
           sc_bytes = groups_mxu * MXU_NT * FP16_BYTES;
@@ -1095,7 +1118,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
         if (can_emit) begin
           gemm_unified_cmd_t c;
           logic [7:0] flags;
-          int unsigned zp_bytes;
+          bytecnt_t zp_bytes;
 
           c = '0;
           zp_bytes = groups_mxu * MXU_NT * INT16_BYTES;
@@ -1179,7 +1202,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
             logic next_mxu_buf;
             gemm_unified_cmd_t c;
             logic [7:0] flags;
-            int unsigned sc_bytes;
+            bytecnt_t sc_bytes;
 
             next_mxu_buf = ~mxu_buf_q;
             c = '0;
@@ -1204,7 +1227,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           logic next_mxu_buf;
           gemm_unified_cmd_t c;
           logic [7:0] flags;
-          int unsigned zp_bytes;
+          bytecnt_t zp_bytes;
 
           next_mxu_buf = ~mxu_buf_q;
           c = '0;
@@ -1238,7 +1261,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
         if (can_emit) begin
           gemm_unified_cmd_t c;
           logic [7:0] flags;
-          int unsigned in_bytes;
+          bytecnt_t in_bytes;
 
           c = '0;
 
@@ -1366,7 +1389,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
         mxu_buf_d = 1'b0;
 
         if (pre_valid_q) begin
-          int unsigned next_tile;
+          u32_t next_tile;
 
           tile_cur_d = tile_pre_q;
           next_tile  = tile_pre_q + 1;
@@ -1397,10 +1420,10 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
       // ----------------------------------------------------------------------
       S_PRE_NEXT_LD_I: begin
         if (can_emit) begin
-          int unsigned ntp, mtp, ktp;
-          int unsigned mt_effp, nt_effp, kt_effp;
+          dim_t ntp, mtp, ktp;
+          tile_sz_t mt_effp, nt_effp, kt_effp;
           logic buf_pre;
-          int unsigned gen_pre;
+          u32_t gen_pre;
 
           tile_decode(tile_pre_d, mt_dim_lg2_q, kt_dim_lg2_q, ntp, mtp, ktp);
           tile_eff_sizes(ntp, mtp, ktp, mt_effp, nt_effp, kt_effp);
@@ -1421,10 +1444,10 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
       S_PRE_NEXT_LD_W: begin
         if (can_emit) begin
-          int unsigned ntp, mtp, ktp;
-          int unsigned mt_effp, nt_effp, kt_effp;
+          dim_t ntp, mtp, ktp;
+          tile_sz_t mt_effp, nt_effp, kt_effp;
           logic buf_pre;
-          int unsigned gen_pre;
+          u32_t gen_pre;
 
           tile_decode(tile_pre_d, mt_dim_lg2_q, kt_dim_lg2_q, ntp, mtp, ktp);
           tile_eff_sizes(ntp, mtp, ktp, mt_effp, nt_effp, kt_effp);
@@ -1445,11 +1468,11 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
       S_PRE_NEXT_LD_SC: begin
         if (can_emit) begin
-          int unsigned ntp, mtp, ktp;
-          int unsigned mt_effp, nt_effp, kt_effp;
+          dim_t ntp, mtp, ktp;
+          tile_sz_t mt_effp, nt_effp, kt_effp;
           logic buf_pre;
-          int unsigned gen_pre;
-          int unsigned groups_eff;
+          u32_t gen_pre;
+          group_t groups_eff;
 
           tile_decode(tile_pre_d, mt_dim_lg2_q, kt_dim_lg2_q, ntp, mtp, ktp);
           tile_eff_sizes(ntp, mtp, ktp, mt_effp, nt_effp, kt_effp);
@@ -1472,11 +1495,11 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
       S_PRE_NEXT_LD_ZP: begin
         if (can_emit) begin
-          int unsigned ntp, mtp, ktp;
-          int unsigned mt_effp, nt_effp, kt_effp;
+          dim_t ntp, mtp, ktp;
+          tile_sz_t mt_effp, nt_effp, kt_effp;
           logic buf_pre;
-          int unsigned gen_pre;
-          int unsigned groups_eff, groups_full;
+          u32_t gen_pre;
+          group_t groups_eff, groups_full;
 
           tile_decode(tile_pre_d, mt_dim_lg2_q, kt_dim_lg2_q, ntp, mtp, ktp);
           tile_eff_sizes(ntp, mtp, ktp, mt_effp, nt_effp, kt_effp);
@@ -1501,7 +1524,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
       S_PRE_NEXT_LD_DONE_NTF: begin
         if (can_emit) begin
           logic buf_pre;
-          int unsigned gen_pre;
+          u32_t gen_pre;
 
           buf_pre = tile_pre_d[0];
           gen_pre = buf_gen(tile_pre_d);
