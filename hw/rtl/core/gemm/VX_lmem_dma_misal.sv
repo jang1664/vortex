@@ -204,8 +204,6 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
       seg_size_r     <= '0;
       reg_idx_r      <= '0;
       reg_value_r    <= '0;
-      //base_src_seg_r <= '0;
-      //base_dst_seg_r <= '0;
       precalc_pending_r <= 1'b0;
       for (int d=0; d<NDIM; d++) begin
         stride_r[0][d] <= '0;
@@ -223,8 +221,6 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
       
       base_addr_r[0] <= ctrl_if.src_base_addr;
       base_addr_r[1] <= ctrl_if.dst_base_addr;
-      //base_src_seg_r <= ctrl_if.src_base_addr;
-      //base_dst_seg_r <= ctrl_if.dst_base_addr;
       for (int d=0; d<NDIM; d++) begin
         stride_r[0][d] <= ctrl_if.src_strides[d];
         stride_r[1][d] <= ctrl_if.dst_strides[d];
@@ -523,6 +519,8 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
       src_rd_ptr <= '0;
       src_rd_end <= '0;
       src_drop   <= '0;
+      base_src_seg_r <= '0;
+      base_dst_seg_r <= '0;
 
     end else begin
       state <= state_n;
