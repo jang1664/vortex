@@ -20,10 +20,11 @@ TOP_MODULE := tb_VX_dma_mem_unit_misal
 
 TB   := tb_VX_dma_mem_unit_misal.sv
 RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
-				$(RTL_DIR)/core/VX_dma_node_misal.sv \
+				$(RTL_DIR)/core/VX_dma_unit_misal.sv \
 				$(RTL_DIR)/mem/VX_local_mem.sv \
 				$(RTL_DIR)/mem/VX_mem_bus_if.sv \
 				$(RTL_DIR)/core/VX_config_reg_if.sv \
+				$(RTL_DIR)/libs/VX_mul_u32_pipe.sv \
 				$(RTL_DIR)/libs/VX_stream_xbar.sv \
 				$(RTL_DIR)/libs/VX_sp_ram.sv \
 				$(RTL_DIR)/libs/VX_pipe_buffer.sv \

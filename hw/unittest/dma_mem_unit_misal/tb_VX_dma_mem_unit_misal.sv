@@ -91,7 +91,7 @@ module tb_VX_dma_mem_unit_misal import VX_gpu_pkg::*; ();
   // -----------------------------
   // DUT
   // -----------------------------
-  VX_dma_node_misal #(.INSTANCE_ID("dma0")) dut (
+  VX_dma_unit_misal #(.INSTANCE_ID("dma0")) dut (
     .clk          (clk),
     .reset        (reset),
     .cfg_reg_if   (cfg_reg_if),
@@ -284,11 +284,9 @@ module tb_VX_dma_mem_unit_misal import VX_gpu_pkg::*; ();
   // -----------------------------
   task automatic cfg_send_desc(
     input logic [31:0] w [0:CFG_NUM-1],
-    input logic [31:0] wid,
-    input logic [31:0] tid
+    input logic [31:0] wid
   );
-    cfg_reg_if.wid = wid;
-    cfg_reg_if.tid = tid;
+    cfg_reg_if.entry_id = wid;
 
     for (int r = 0; r < CFG_NUM; r++) cfg_reg_if.regs[r] = '0;
 
@@ -296,8 +294,9 @@ module tb_VX_dma_mem_unit_misal import VX_gpu_pkg::*; ();
       cfg_reg_if.regs[i] = w[i];
     end
 
+    // Wait until DUT can accept a descriptor, then pulse valid for one cycle.
+    while (!cfg_reg_if.ready) @(posedge clk);
     cfg_reg_if.valid = 1'b1;
-    do @(posedge clk); while (!cfg_reg_if.ready);
     @(posedge clk);
     cfg_reg_if.valid = 1'b0;
   endtask
@@ -375,13 +374,13 @@ module tb_VX_dma_mem_unit_misal import VX_gpu_pkg::*; ();
     d1[14] = seg_bytes;
     d1[15] = padding;
 
-    cfg_send_desc(d1, 32'd5, 32'd7);
+    cfg_send_desc(d1, 32'd0);
     wait_dma_done();
 
     // -------------------------
     // LMEM -> GLOBAL
     // -------------------------
-    d2[0]  = 32'h0000_0003; // start=1, dir=1 (LMEM->GLOBAL)  store
+    d2[0]  = 32'h0000_0009; // start=1, dir(bit3)=1 (LMEM->GLOBAL)
     d2[1]  = g_dst_base[31:0];      // reserved
     d2[2]  = g_dst_base[63:32];
     d2[3]  = l_mid_base[31:0];
@@ -393,7 +392,7 @@ module tb_VX_dma_mem_unit_misal import VX_gpu_pkg::*; ();
     d2[14] = seg_bytes;
     d2[15] = padding;
 
-    cfg_send_desc(d2, 32'd9, 32'd11);
+    cfg_send_desc(d2, 32'd1);
     wait_dma_done();
 
     // -------------------------
@@ -472,8 +471,7 @@ module tb_VX_dma_mem_unit_misal import VX_gpu_pkg::*; ();
 
     // cfg defaults
     cfg_reg_if.valid = 1'b0;
-    cfg_reg_if.wid   = '0;
-    cfg_reg_if.tid   = '0;
+    cfg_reg_if.entry_id   = '0;
     for (int r = 0; r < CFG_NUM; r++) cfg_reg_if.regs[r] = '0;
 
     repeat (5) @(posedge clk);
