@@ -128,6 +128,8 @@ module tb_VX_dma_mem_unit_misal import VX_gpu_pkg::*; ();
   // -----------------------------
   integer rpt_fd;
   integer log_fd;
+  int unsigned case_total_count;
+  int unsigned case_pass_count;
 
   string fsdb_file_path;
   string fst_file_path;
@@ -330,6 +332,7 @@ module tb_VX_dma_mem_unit_misal import VX_gpu_pkg::*; ();
     logic [31:0] d1 [0:CFG_NUM-1];
     logic [31:0] d2 [0:CFG_NUM-1];
 
+    case_total_count++;
     total_bytes = b0*b1*b2*seg_bytes;
 
     // nominal strides
@@ -400,6 +403,7 @@ module tb_VX_dma_mem_unit_misal import VX_gpu_pkg::*; ();
     // -------------------------
     mem_check_equal_g_to_g_with_padding(g_src_base, g_dst_base, total_bytes, seg_bytes, padding, "G->L->G");
 
+    case_pass_count++;
     $display("[CASE] PASS ✅");
     $fdisplay(rpt_fd, "[CASE] seg=%0d bnd=(%0d,%0d,%0d) pad=%0d offs=(%0d,%0d,%0d) PASS",
               seg_bytes, b0, b1, b2, padding, g_src_off, l_mid_off, g_dst_off);
@@ -453,6 +457,18 @@ module tb_VX_dma_mem_unit_misal import VX_gpu_pkg::*; ();
         end
       end
     end
+  endtask
+
+  task automatic print_summary();
+    string pass_s;
+    string total_s;
+
+    pass_s.itoa(case_pass_count);
+    total_s.itoa(case_total_count);
+
+    $display({"[SUMMARY] PASS/TOTAL = ", pass_s, "/", total_s});
+    $fdisplay(log_fd, {"[SUMMARY] PASS/TOTAL = ", pass_s, "/", total_s});
+    $fdisplay(rpt_fd, {"[SUMMARY] PASS/TOTAL = ", pass_s, "/", total_s});
   endtask
 
   // -----------------------------
@@ -559,6 +575,8 @@ module tb_VX_dma_mem_unit_misal import VX_gpu_pkg::*; ();
     initial begin
       @(negedge reset);
       repeat (5) @(posedge clk);
+      case_total_count = 0;
+      case_pass_count  = 0;
 
       if (OBJ_ == "power") begin
         sim_power();
@@ -567,6 +585,8 @@ module tb_VX_dma_mem_unit_misal import VX_gpu_pkg::*; ();
       end else begin
         $display("please set proper objective of the simulation");
       end
+
+      print_summary();
 
 `ifdef VCS
       $fsdbDumpoff();
