@@ -87,3 +87,14 @@ else()
   message(WARNING "eladd kernel binary not found at ${_ELADD_VXBIN} — "
                   "native aten::add will not work.  Build the eladd test first.")
 endif()
+
+set(_ELMUL_VXBIN "${VORTEX_BUILD_DIR}/tests/regression/elmul/kernel.vxbin")
+if(EXISTS ${_ELMUL_VXBIN})
+  install(FILES ${_ELMUL_VXBIN}
+          DESTINATION ${CMAKE_INSTALL_PREFIX}/kernels
+          RENAME elmul.vxbin)
+  message(STATUS "Will install elmul kernel: ${_ELMUL_VXBIN}")
+else()
+  message(WARNING "elmul kernel binary not found at ${_ELMUL_VXBIN} — "
+                  "native aten::mul will not work.  Build the elmul test first.")
+endif()
