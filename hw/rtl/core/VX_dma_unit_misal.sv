@@ -393,8 +393,12 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
       end
 
       S_PREP_SEG: begin
-        if (direction_bit_r) state_n = S_L2G_DECIDE;
-        else               state_n = S_G2L_DECIDE;
+        // finished is computed/latched in sequential block at the moment indices wrap
+        if (finished) state_n = S_DONE;
+        else begin
+          if (direction_bit_r) state_n = S_L2G_DECIDE;
+          else               state_n = S_G2L_DECIDE;
+        end        
       end
 
       // ==========================================================
@@ -582,9 +586,7 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
       // advance segment / 3D loop
       // ==========================================================
       S_ADV_SEG: begin
-        // finished is computed/latched in sequential block at the moment indices wrap
-        if (finished) state_n = S_DONE;
-        else          state_n = S_PREP_SEG;
+        state_n = S_PREP_SEG;
       end
 
       S_DONE: begin
