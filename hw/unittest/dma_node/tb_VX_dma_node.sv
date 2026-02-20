@@ -1049,31 +1049,59 @@ module tb_VX_dma_node import VX_gpu_pkg::*; #(
   endtask
 
   task automatic run_misaligned_sweep_case();
-    int unsigned g_offs[0:4];
-    int unsigned l_offs[0:4];
-    int unsigned seg_choices[0:2];
-    int unsigned pad_choices[0:1];
+    int unsigned g_offs[0:8];
+    int unsigned l_offs[0:7];
+    int unsigned seg_choices[0:7];
+    int unsigned pad_choices[0:4];
+    int unsigned b0_choices[0:3];
+    int unsigned b1_choices[0:3];
+    int unsigned b2_choices[0:3];
+    int unsigned g_half;
+    int unsigned l_half;
     string cname;
     int unsigned case_seed;
     begin
+      g_half = DCACHE_BYTES / 2;
+      l_half = LMEM_BYTES / 2;
+
       g_offs[0] = 0;
       g_offs[1] = 1;
-      g_offs[2] = DCACHE_BYTES / 2;
-      g_offs[3] = DCACHE_BYTES - 1;
-      g_offs[4] = 3;
+      g_offs[2] = 2;
+      g_offs[3] = 3;
+      g_offs[4] = (g_half > 0) ? (g_half - 1) : 0;
+      g_offs[5] = g_half;
+      g_offs[6] = (g_half + 1 < DCACHE_BYTES) ? (g_half + 1) : (DCACHE_BYTES - 1);
+      g_offs[7] = (DCACHE_BYTES > 1) ? (DCACHE_BYTES - 2) : 0;
+      g_offs[8] = (DCACHE_BYTES > 0) ? (DCACHE_BYTES - 1) : 0;
 
       l_offs[0] = 0;
       l_offs[1] = 1;
-      l_offs[2] = LMEM_BYTES / 2;
-      l_offs[3] = LMEM_BYTES - 1;
-      l_offs[4] = 2;
+      l_offs[2] = 2;
+      l_offs[3] = (l_half > 0) ? (l_half - 1) : 0;
+      l_offs[4] = l_half;
+      l_offs[5] = (l_half + 1 < LMEM_BYTES) ? (l_half + 1) : (LMEM_BYTES - 1);
+      l_offs[6] = (LMEM_BYTES > 1) ? (LMEM_BYTES - 2) : 0;
+      l_offs[7] = (LMEM_BYTES > 0) ? (LMEM_BYTES - 1) : 0;
 
-      seg_choices[0] = 17;
-      seg_choices[1] = 32;
-      seg_choices[2] = 96;
+      seg_choices[0] = 13;
+      seg_choices[1] = 17;
+      seg_choices[2] = 24;
+      seg_choices[3] = 31;
+      seg_choices[4] = 32;
+      seg_choices[5] = 47;
+      seg_choices[6] = 64;
+      seg_choices[7] = 96;
 
-      pad_choices[0] = 1;
-      pad_choices[1] = 3;
+      pad_choices[0] = 0;
+      pad_choices[1] = 1;
+      pad_choices[2] = 2;
+      pad_choices[3] = 3;
+      pad_choices[4] = 7;
+
+      b0_choices[0] = 2; b1_choices[0] = 2; b2_choices[0] = 2;
+      b0_choices[1] = 3; b1_choices[1] = 2; b2_choices[1] = 1;
+      b0_choices[2] = 1; b1_choices[2] = 3; b2_choices[2] = 2;
+      b0_choices[3] = 2; b1_choices[3] = 1; b2_choices[3] = 4;
 
       case_seed = 100;
 
@@ -1081,53 +1109,97 @@ module tb_VX_dma_node import VX_gpu_pkg::*; #(
       $fdisplay(log_fd, "[SWEEP] misaligned sweep start");
 
       // source global offset sweep
-      for (int i = 0; i < 5; ++i) begin
+      for (int i = 0; i < 9; ++i) begin
         $sformat(cname, "sweep_src_off_%0d", g_offs[i]);
         run_roundtrip_case_cfg(cname, case_seed + i, 48, 2, 2, 2, 3, g_offs[i], 0, 0, 1'b0, 1'b0, 1'b0);
       end
-      case_seed += 5;
+      case_seed += 9;
 
       // local memory offset sweep
-      for (int i = 0; i < 5; ++i) begin
+      for (int i = 0; i < 8; ++i) begin
         $sformat(cname, "sweep_lmid_off_%0d", l_offs[i]);
         run_roundtrip_case_cfg(cname, case_seed + i, 48, 2, 2, 2, 3, 0, l_offs[i], 0, 1'b0, 1'b0, 1'b0);
       end
-      case_seed += 5;
+      case_seed += 8;
 
       // destination global offset sweep
-      for (int i = 0; i < 5; ++i) begin
+      for (int i = 0; i < 9; ++i) begin
         $sformat(cname, "sweep_dst_off_%0d", g_offs[i]);
         run_roundtrip_case_cfg(cname, case_seed + i, 48, 2, 2, 2, 3, 0, 0, g_offs[i], 1'b0, 1'b0, 1'b0);
       end
-      case_seed += 5;
+      case_seed += 9;
 
-      // mixed offset sweep
-      for (int i = 0; i < 5; ++i) begin
+      // mixed offset/segment sweep
+      for (int i = 0; i < 18; ++i) begin
         int unsigned src_off;
         int unsigned l_off;
         int unsigned dst_off;
-        src_off = g_offs[i];
-        l_off = l_offs[(i + 1) % 5];
-        dst_off = g_offs[(i + 3) % 5];
-        $sformat(cname, "sweep_mix_s%0d_l%0d_d%0d", src_off, l_off, dst_off);
-        run_roundtrip_case_cfg(cname, case_seed + i, 96, 2, 2, 2, 3, src_off, l_off, dst_off, 1'b0, 1'b0, 1'b0);
+        int unsigned seg_b;
+        int unsigned pad_eff;
+        src_off = g_offs[i % 9];
+        l_off = l_offs[(i * 3 + 1) % 8];
+        dst_off = g_offs[(i * 5 + 2) % 9];
+        seg_b = (i % 3 == 0) ? 17 : ((i % 3 == 1) ? 48 : 96);
+        pad_eff = i % 4;
+        $sformat(cname, "sweep_mix_%0d_s%0d_l%0d_d%0d_seg%0d_pad%0d", i, src_off, l_off, dst_off, seg_b, pad_eff);
+        run_roundtrip_case_cfg(cname, case_seed + i, seg_b, 2, 2, 2, pad_eff, src_off, l_off, dst_off, 1'b0, 1'b0, 1'b0);
       end
-      case_seed += 5;
+      case_seed += 18;
 
-      // seg/padding sweep on fixed mixed offsets
-      for (int si = 0; si < 3; ++si) begin
-        for (int pi = 0; pi < 2; ++pi) begin
+      // seg/padding/shape sweep on varied offsets
+      for (int si = 0; si < 8; ++si) begin
+        for (int pi = 0; pi < 5; ++pi) begin
           int unsigned seg_b;
           int unsigned pad_b;
           int unsigned pad_eff;
+          int unsigned shape_idx;
+          int unsigned src_off;
+          int unsigned l_off;
+          int unsigned dst_off;
           int unsigned case_idx;
           seg_b = seg_choices[si];
           pad_b = pad_choices[pi];
           pad_eff = (pad_b < seg_b) ? pad_b : (seg_b - 1);
-          case_idx = case_seed + (si * 2) + pi;
-          $sformat(cname, "sweep_seg%0d_pad%0d", seg_b, pad_eff);
-          run_roundtrip_case_cfg(cname, case_idx, seg_b, 2, 2, 2, pad_eff, g_offs[1], l_offs[2], g_offs[3], 1'b0, 1'b0, 1'b0);
+          shape_idx = (si + pi) % 4;
+          src_off = g_offs[(si + pi) % 9];
+          l_off = l_offs[(si * 2 + pi) % 8];
+          dst_off = g_offs[(si * 3 + pi) % 9];
+          case_idx = case_seed + (si * 5) + pi;
+          $sformat(cname, "sweep_seg%0d_pad%0d_b%0dx%0dx%0d_s%0d_l%0d_d%0d",
+            seg_b, pad_eff, b0_choices[shape_idx], b1_choices[shape_idx], b2_choices[shape_idx], src_off, l_off, dst_off);
+          run_roundtrip_case_cfg(
+            cname, case_idx, seg_b,
+            b0_choices[shape_idx], b1_choices[shape_idx], b2_choices[shape_idx], pad_eff,
+            src_off, l_off, dst_off,
+            1'b0, 1'b0, 1'b0
+          );
         end
+      end
+      case_seed += 40;
+
+      // contention sweep with varied background traffic toggles
+      for (int i = 0; i < 12; ++i) begin
+        int unsigned seg_b;
+        int unsigned pad_eff;
+        int unsigned shape_idx;
+        bit bg_g;
+        bit bg_l;
+        bit bg_r;
+        seg_b = seg_choices[i % 8];
+        pad_eff = (i % 5 < seg_b) ? (i % 5) : (seg_b - 1);
+        shape_idx = i % 4;
+        bg_g = (i % 2 == 0);
+        bg_l = (i % 3 != 0);
+        // bg_global_if is a single master stream: avoid concurrent read/write generators.
+        bg_r = (i % 4 == 0) && !bg_g;
+        $sformat(cname, "sweep_cont_%0d_seg%0d_pad%0d_bg%0d%0d%0d",
+          i, seg_b, pad_eff, bg_g, bg_l, bg_r);
+        run_roundtrip_case_cfg(
+          cname, case_seed + i, seg_b,
+          b0_choices[shape_idx], b1_choices[shape_idx], b2_choices[shape_idx], pad_eff,
+          g_offs[(i * 3) % 9], l_offs[(i * 5 + 1) % 8], g_offs[(i * 7 + 2) % 9],
+          bg_g, bg_l, bg_r
+        );
       end
 
       $display("[SWEEP] misaligned sweep done");
