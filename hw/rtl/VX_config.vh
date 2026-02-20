@@ -1052,7 +1052,7 @@ for block_size in range(1, full_bitwidth+1):
 // Tiling parameters for parallel processing
 `define MXU_ROW_TILE 1            // Row tile size for pipelined processing
 `define MXU_COL_TILE 1            // Column tile size for pipelined processing
-`define MXU_WLOAD_NUM 2           // Number of weight loads per cycle
+`define MXU_WLOAD_NUM 1           // Number of weight loads per cycle
 
 // -------------------------------------------------------
 // MXU Pipeline Configuration
@@ -1087,11 +1087,11 @@ for block_size in range(1, full_bitwidth+1):
 // -------------------------------------------------------
 // Data Transfer Sizes (in bytes)
 // -------------------------------------------------------
-`define GEMM_INPUT_DATA_SIZE      ((`IFP_WIDTH/8)*`MXU_ROW)             // 32 bytes (16 FP16 inputs)
-`define GEMM_WEIGHT_DATA_SIZE     ((`MXU_COL*`MXU_WLOAD_NUM*`W_BIT_WIDTH)/8) // 16 bytes (32 INT4 weights)
-`define GEMM_SCALE_ZERO_DATA_SIZE ((`SCALE_WIDTH*`MXU_COL)/8)           // 32 bytes (16 FP16 scales)
-`define GEMM_OUTPUT_DATA_SIZE     ((`FP16_WIDTH/8)*`MXU_COL)                          // 32 bytes (16 FP16 outputs)
-`define GEMM_PSUM_DATA_SIZE       ((`FP32_WIDTH/8)*`MXU_COL)                          // 64 bytes (16 FP32 psums)
+`define GEMM_INPUT_DATA_SIZE      ((`IFP_WIDTH/8)*`MXU_ROW)             // 64 bytes (32 FP16 inputs)
+`define GEMM_WEIGHT_DATA_SIZE     ((`MXU_COL*`MXU_WLOAD_NUM*`W_BIT_WIDTH)/8) // 16 bytes (1*32 INT4 weights)
+`define GEMM_SCALE_ZERO_DATA_SIZE ((`SCALE_WIDTH*`MXU_COL)/8)           // 64 bytes (32 FP16 scales)
+`define GEMM_OUTPUT_DATA_SIZE     ((`FP16_WIDTH/8)*`MXU_COL)                          // 64 bytes (32 FP16 outputs)
+`define GEMM_PSUM_DATA_SIZE       ((`FP32_WIDTH/8)*`MXU_COL)                          // 128 bytes (32 FP32 psums)
 
 // -------------------------------------------------------
 // Accumulator Memory Configuration
