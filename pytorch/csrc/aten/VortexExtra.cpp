@@ -18,6 +18,7 @@ namespace at::vortex {
 namespace {
 
 // ---- eladd kernel argument struct (must match tests/regression/eladd/common.h) ----
+// ---- same in elmul kernel arg struct (tests/regression/elmul/common.h) ----
 struct eladd_kernel_arg_t {
   uint32_t kernel_id;
   uint32_t grid_dim[3];
@@ -28,7 +29,8 @@ struct eladd_kernel_arg_t {
   uint32_t size;
 };
 
-static constexpr uint32_t KERNEL_ELADD = 0;
+static constexpr uint32_t KERNEL_ELADD = 0;  // must match eladd/common.h
+static constexpr uint32_t KERNEL_ELMUL = 0;  // must match elmul/common.h
 
 /// Find the eladd kernel binary (.vxbin).
 /// Search order:
@@ -52,6 +54,27 @@ static std::string find_eladd_kernel() {
   TORCH_CHECK(false,
     "Cannot find eladd kernel binary.  Set VORTEX_HOME or install the "
     "kernel to <torch_vortex>/kernels/eladd.vxbin");
+  return "";
+}
+
+static std::string find_elmul_kernel() {
+  // 1. Bundled location (set by CMake install)
+  const char* pkg = std::getenv("TORCH_VORTEX_PACKAGE_DIR");
+  if (pkg) {
+    std::string p = std::string(pkg) + "/kernels/elmul.vxbin";
+    if (FILE* f = std::fopen(p.c_str(), "r")) { std::fclose(f); return p; }
+  }
+
+  // 2. Dev-tree fallback
+  const char* home = std::getenv("VORTEX_HOME");
+  if (home) {
+    std::string p = std::string(home) + "/build/tests/regression/elmul/kernel.vxbin";
+    if (FILE* f = std::fopen(p.c_str(), "r")) { std::fclose(f); return p; }
+  }
+
+  TORCH_CHECK(false,
+    "Cannot find elmul kernel binary.  Set VORTEX_HOME or install the "
+    "kernel to <torch_vortex>/kernels/elmul.vxbin");
   return "";
 }
 
@@ -161,11 +184,90 @@ at::Tensor vortex_add_Tensor(
   return output;
 }
 
+at::Tensor vortex_mul_Tensor(
+    const at::Tensor& self,
+    const at::Tensor& other) {
+  TORCH_CHECK(self.is_privateuseone(), "self must be a vortex tensor");
+  TORCH_CHECK(other.is_privateuseone(), "other must be a vortex tensor");
+  TORCH_CHECK(self.dtype() == at::kFloat,
+    "vortex native mul currently supports float32 only, got ", self.dtype());
+  TORCH_CHECK(other.dtype() == at::kFloat,
+    "vortex native mul currently supports float32 only, got ", other.dtype());
+  TORCH_CHECK(self.is_contiguous(), "self must be contiguous");
+  TORCH_CHECK(other.is_contiguous(), "other must be contiguous");
+  TORCH_CHECK(self.sizes() == other.sizes(),
+    "self and other must have the same shape");
+
+  auto& rt = c10::vortex::VortexRuntime::instance();
+  vx_device_h device = rt.deviceHandle();
+
+  // Allocate output tensor on the same device
+  auto output = at::empty(self.sizes(), self.options());
+
+  // Get device addresses for the staging pointers
+  uint64_t a_addr = rt.deviceAddress(self.data_ptr());
+  uint64_t b_addr = rt.deviceAddress(other.data_ptr());
+  uint64_t o_addr = rt.deviceAddress(output.data_ptr());
+
+  TORCH_CHECK(a_addr != 0, "Failed to get device address for self");
+  TORCH_CHECK(b_addr != 0, "Failed to get device address for other");
+  TORCH_CHECK(o_addr != 0, "Failed to get device address for output");
+
+  // Query device capabilities for grid/block sizing
+  uint64_t num_cores, num_warps, num_threads;
+  vx_dev_caps(device, VX_CAPS_NUM_CORES, &num_cores);
+  vx_dev_caps(device, VX_CAPS_NUM_WARPS, &num_warps);
+  vx_dev_caps(device, VX_CAPS_NUM_THREADS, &num_threads); 
+
+  uint32_t threads_per_block = static_cast<uint32_t>(
+      std::min<uint64_t>(256, num_warps * num_threads));
+  uint32_t num_blocks = (self.numel() + threads_per_block - 1) / threads_per_block;
+
+  // Build the kernel argument struct
+  eladd_kernel_arg_t karg{};
+  karg.kernel_id   = KERNEL_ELMUL;
+  karg.grid_dim[0] = num_blocks;
+  karg.grid_dim[1] = 1;
+  karg.grid_dim[2] = 1;
+  karg.block_dim[0] = threads_per_block;
+  karg.block_dim[1] = 1;
+  karg.block_dim[2] = 1;
+  karg.input_a_addr = a_addr;
+  karg.input_b_addr = b_addr;
+  karg.output_addr  = o_addr;
+  karg.size          = static_cast<uint32_t>(self.numel());
+
+  // Upload kernel args to device
+  vx_buffer_h args_buf = nullptr;
+  int ret = vx_upload_bytes(device, &karg, sizeof(karg), &args_buf);
+  TORCH_CHECK(ret == 0, "Failed to upload kernel arguments (err=", ret, ")");
+
+  // Upload kernel binary
+  static std::string kernel_path = find_elmul_kernel();
+  vx_buffer_h krnl_buf = nullptr;
+  ret = vx_upload_kernel_file(device, kernel_path.c_str(), &krnl_buf);
+  TORCH_CHECK(ret == 0, "Failed to upload elmul kernel binary (err=", ret, ")");
+
+  // Launch!
+  ret = vx_start(device, krnl_buf, args_buf);
+  TORCH_CHECK(ret == 0, "vx_start failed (err=", ret, ")");
+  ret = vx_ready_wait(device, VX_MAX_TIMEOUT);
+  TORCH_CHECK(ret == 0, "vx_ready_wait failed (err=", ret, ")");
+
+  // Clean up kernel-launch buffers (NOT the input/output data buffers —
+  // those are owned by the tensor allocator)
+  vx_mem_free(krnl_buf);
+  vx_mem_free(args_buf);
+
+  return output;
+}
+
 } // namespace
 
 // ---- Register native Vortex implementation for aten::add.Tensor ----
 TORCH_LIBRARY_IMPL(aten, PrivateUse1, m) {
   m.impl("add.Tensor", &vortex_add_Tensor);
+  m.impl("mul.Tensor", &vortex_mul_Tensor);
 }
 
 } // namespace at::vortex

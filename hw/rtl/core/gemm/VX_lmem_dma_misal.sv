@@ -12,7 +12,6 @@
   - Assumptions:
     - seg_size에 대한 제한이 없다
     - lmem_bus_if의 data width와 gemm_bus_if의 data width는 같다고 가정
-    - ctrl interface에 sync를 위한 reg_idx, reg_value 신호가 있다고 가정
     - ctrl interface의 start 신호는 idle 일때 한 펄스만 주는 것으로 가정
     - idle과 done 신호는 상태를 나타내는 신호, idle 상태면 idle=1이 유지, done 상태면 done=1이 유지
     - done 상태는 1사이클만 유지되고 다시 idle 상태로 돌아감
@@ -30,7 +29,6 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
   input  wire reset,
 
   VX_lmem_dma_ctrl_if.slave ctrl_if,
-  VX_gemm_sync_if.master    gemm_sync_if,
 
   VX_mem_bus_if.master      lmem_bus_if,
   VX_mem_bus_if.master      gemm_bus_if
@@ -109,7 +107,6 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
     S_DST_WR_REQ,
     //S_DST_WR_WAIT, // only used when dst_is_gemm (DIR=0)
     S_ADV_SEG,
-    S_SYNC,
     S_DONE
   } state_e;
 
@@ -124,8 +121,6 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
   logic [63:0] stride_bound_r[2][NDIM];
   logic [31:0] bound_r[NDIM];
   logic [31:0] seg_size_r;
-  logic [31:0] reg_idx_r;
-  logic [31:0] reg_value_r;
   logic [63:0] base_src_seg_r, base_dst_seg_r;
   logic        precalc_pending_r;
 
@@ -202,8 +197,6 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
     if (reset) begin
       base_addr_r[0] <= '0; base_addr_r[1] <= '0;
       seg_size_r     <= '0;
-      reg_idx_r      <= '0;
-      reg_value_r    <= '0;
       precalc_pending_r <= 1'b0;
       for (int d=0; d<NDIM; d++) begin
         stride_r[0][d] <= '0;
@@ -229,8 +222,6 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
         bound_r[d]     <= ctrl_if.bounds[d];
       end
       seg_size_r   <= ctrl_if.seg_size;
-      reg_idx_r    <= ctrl_if.reg_idx;
-      reg_value_r  <= ctrl_if.reg_value;
       precalc_pending_r <= 1'b1;
     end else begin
       if (precalc_issue)
@@ -366,11 +357,6 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
     gemm_bus_if.req_data  = '0;
     gemm_bus_if.rsp_ready = 1'b1;
 
-    // sync defaults
-    gemm_sync_if.valid   = 1'b0;
-    gemm_sync_if.reg_idx = reg_idx_r;
-    gemm_sync_if.value   = reg_value_r;
-
     state_n = state;
 
     unique case (state)
@@ -483,13 +469,7 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
 
       S_ADV_SEG: begin
         // index update done in sequential; next state chosen there via state override OR here
-        // we'll just go to S_PREP_SEG by default; sequential may redirect to S_SYNC when last
         state_n = S_PREP_SEG;
-      end
-
-      S_SYNC: begin
-        gemm_sync_if.valid = 1'b1;
-        if (gemm_sync_if.ready) state_n = S_DONE;
       end
 
       S_DONE: begin
@@ -595,10 +575,10 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
       // Segment done -> advance NDIM indices in S_ADV_SEG
       // --------------------------------------------------------
       if (state == S_ADV_SEG) begin
-        // If we just finished the last segment of the last index, go to SYNC.
+        // If we just finished the last segment of the last index, go to S_DONE.
         // NOTE: segment is considered finished when out_off already reached seg_size_r.
         if (at_last_idx) begin
-          state <= S_SYNC; // override next-state to sync
+          state <= S_DONE; // override next-state to done
         end else begin
           // NDIM carry
           if (i_dim[0] + 1 < bound_r[0]) begin

@@ -24,11 +24,6 @@ interface VX_lmem_dma_ctrl_if import VX_gpu_pkg::*; #(
   logic        idle;
   logic        done;
 
-  // 새로운 인터페이스 신호 추가
-  logic [31:0] reg_idx;
-  logic [31:0] reg_value;
-
-
   modport master (
     output start,
     output src_base_addr,
@@ -38,10 +33,7 @@ interface VX_lmem_dma_ctrl_if import VX_gpu_pkg::*; #(
     output bounds,
     output seg_size,
     input  idle,
-    input  done,
-    
-    output reg_idx,
-    output reg_value
+    input  done
   );
 
   modport slave (
@@ -53,10 +45,7 @@ interface VX_lmem_dma_ctrl_if import VX_gpu_pkg::*; #(
     input  bounds,
     input  seg_size,
     output idle,
-    output done,
-
-    input reg_idx,
-    input reg_value
+    output done
   );
 
 endinterface
