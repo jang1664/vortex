@@ -205,7 +205,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     assign input_dma_ctrl_if.start           = gemm_ctrl_if.input_read_ctrl.start && !input_is_notify;
     assign input_dma_ctrl_if.src_base_addr   = gemm_ctrl_if.input_read_ctrl.cmd.rs2_data;
     assign input_dma_ctrl_if.dst_base_addr   = '0;  //gemm_unit 으로 들어가는 input activation의 주소는 안 중요함
-    assign input_dma_ctrl_if.src_strides[0]  = MXU_KT*16/8;
+    assign input_dma_ctrl_if.src_strides[0]  = KT*16/8;
     assign input_dma_ctrl_if.src_strides[1]  = 0;
     assign input_dma_ctrl_if.src_strides[2]  = 0;
 
