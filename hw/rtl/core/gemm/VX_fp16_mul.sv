@@ -178,23 +178,23 @@ module VX_fp16_mul #(
     always @(posedge clk) begin
         if (!reset) begin
             if (a_valid && a_ready) begin
-                `TRACE(4, ("%t: VX_fp16_mul INPUT_A: data=0x%0h\n", $time, a_data));
+                `TRACE(4, ("%m : [%0t] | FP16_MUL_INPUT_A | {data=0x%0h}\n", $time, a_data));
             end
             if (b_valid && b_ready) begin
-                `TRACE(4, ("%t: VX_fp16_mul INPUT_B: data=0x%0h\n", $time, b_data));
+                `TRACE(4, ("%m : [%0t] | FP16_MUL_INPUT_B | {data=0x%0h}\n", $time, b_data));
             end
             if (inputs_valid) begin
-                `TRACE(4, ("%t: VX_fp16_mul FENCE: a_data=0x%0h, b_data=0x%0h\n",
+                `TRACE(4, ("%m : [%0t] | FP16_MUL_FENCE | {a_data=0x%0h, b_data=0x%0h}\n",
                     $time, pop_streams[0].data, pop_streams[1].data));
-                `TRACE(4, ("%t: VX_fp16_mul FP16_TO_FP32: a_fp32=0x%0h, b_fp32=0x%0h\n",
+                `TRACE(4, ("%m : [%0t] | FP16_MUL_FP16_TO_FP32 | {a_fp32=0x%0h, b_fp32=0x%0h}\n",
                     $time, a_fp32[31:0], b_fp32[31:0]));
-                `TRACE(4, ("%t: VX_fp16_mul DPI_MUL: result=0x%0h\n",
+                `TRACE(4, ("%m : [%0t] | FP16_MUL_DPI_MUL | {result=0x%0h}\n",
                     $time, dpi_result_fp32[31:0]));
-                `TRACE(4, ("%t: VX_fp16_mul FP32_TO_FP16: fp32=0x%0h, fp16=0x%0h\n",
+                `TRACE(4, ("%m : [%0t] | FP16_MUL_FP32_TO_FP16 | {fp32=0x%0h, fp16=0x%0h}\n",
                     $time, dpi_result_fp32[31:0], result_fp16));
             end
             if (result_valid && result_ready) begin
-                `TRACE(4, ("%t: VX_fp16_mul OUTPUT: result=0x%0h\n", $time, result_data));
+                `TRACE(4, ("%m : [%0t] | FP16_MUL_OUTPUT | {result=0x%0h}\n", $time, result_data));
             end
         end
     end

@@ -365,14 +365,14 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
   always_ff @(posedge clk) begin
     if (!reset) begin
       if (cmd_start) begin
-        `TRACE(2, ("%t: %s dma-start: entry_id=%0d, dir=%0d, src_base=0x%0h, dst_base=0x%0h, seg_size=%0d, padding=%0d, bound=(%0d,%0d,%0d)\n",
+        `TRACE(2, ("%m : [%0t] | DMA_START | {inst=%s, entry_id=%0d, dir=%0d, src_base=0x%0h, dst_base=0x%0h, seg_size=%0d, padding=%0d, bound=[%0d,%0d,%0d]}\n",
                   $time, INSTANCE_ID, cfg_reg_if.entry_id, cfg_reg_if.regs[DESC_DIR_IDX][0],
                   {cfg_reg_if.regs[4][31:0], cfg_reg_if.regs[3][31:0]},
                   {cfg_reg_if.regs[2][31:0], cfg_reg_if.regs[1][31:0]},
                   cfg_reg_if.regs[14][31:0], cfg_reg_if.regs[15][31:0],
                   cfg_reg_if.regs[11][31:0], cfg_reg_if.regs[12][31:0], cfg_reg_if.regs[13][31:0]))
         for (int k = 0; k < NUM_REGS; k++) begin
-          `TRACE(3, ("%t: %s dma-start-reg[%0d]=0x%08h\n", $time, INSTANCE_ID, k, cfg_reg_if.regs[k][31:0]))
+          `TRACE(3, ("%m : [%0t] | DMA_START_REG | {inst=%s, reg_idx=%0d, reg_val=0x%08h}\n", $time, INSTANCE_ID, k, cfg_reg_if.regs[k][31:0]))
         end
       end
 
@@ -381,50 +381,50 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
         b0m1 = bound_r[0] - 32'd1;
         b1m1 = bound_r[1] - 32'd1;
         b2m1 = bound_r[2] - 32'd1;
-        `TRACE(2, ("%t: %s dma-setup-mul-issue: src=(%0d*%0d,%0d*%0d,%0d*%0d), dst=(%0d*%0d,%0d*%0d,%0d*%0d)\n",
+        `TRACE(2, ("%m : [%0t] | DMA_SETUP_MUL_ISSUE | {inst=%s, src_stride0=%0d, src_bound0_m1=%0d, src_stride1=%0d, src_bound1_m1=%0d, src_stride2=%0d, src_bound2_m1=%0d, dst_stride0=%0d, dst_bound0_m1=%0d, dst_stride1=%0d, dst_bound1_m1=%0d, dst_stride2=%0d, dst_bound2_m1=%0d}\n",
                   $time, INSTANCE_ID,
                   stride_r[0][0], b0m1, stride_r[0][1], b1m1, stride_r[0][2], b2m1,
                   stride_r[1][0], b0m1, stride_r[1][1], b1m1, stride_r[1][2], b2m1))
       end
 
       if (precalc_done) begin
-        `TRACE(2, ("%t: %s dma-setup-mul-done: src_stride_bound=(0x%0h,0x%0h,0x%0h), dst_stride_bound=(0x%0h,0x%0h,0x%0h)\n",
+        `TRACE(2, ("%m : [%0t] | DMA_SETUP_MUL_DONE | {inst=%s, src_stride_bound0=0x%0h, src_stride_bound1=0x%0h, src_stride_bound2=0x%0h, dst_stride_bound0=0x%0h, dst_stride_bound1=0x%0h, dst_stride_bound2=0x%0h}\n",
                   $time, INSTANCE_ID,
                   precalc_result[0], precalc_result[2], precalc_result[4],
                   precalc_result[1], precalc_result[3], precalc_result[5]))
       end
 
       if (state == S_L2G_SRC_RD_REQ && lmem_req_fire) begin
-        `TRACE(2, ("%t: %s dma-run L2G rd-req(lmem): addr=0x%0h, byte_addr=0x%0h, tag=0x%0h, out_off=%0d\n",
+        `TRACE(2, ("%m : [%0t] | DMA_RUN_L2G_RD_REQ_LMEM | {inst=%s, addr=0x%0h, byte_addr=0x%0h, tag=0x%0h, out_off=%0d}\n",
                   $time, INSTANCE_ID, lmem_bus_if.req_data.addr,
                   (64'(lmem_bus_if.req_data.addr) << LMEM_LG2), lmem_bus_if.req_data.tag, out_off))
       end
 
       if (state == S_L2G_SRC_RD_WAIT && lmem_rsp_fire) begin
-        `TRACE(2, ("%t: %s dma-run L2G rd-rsp(lmem): data=0x%0h, tag=0x%0h, win_valid=%0d\n",
+        `TRACE(2, ("%m : [%0t] | DMA_RUN_L2G_RD_RSP_LMEM | {inst=%s, data=0x%0h, tag=0x%0h, win_valid=%0d}\n",
                   $time, INSTANCE_ID, lmem_bus_if.rsp_data.data, lmem_bus_if.rsp_data.tag, win_lmem_valid))
       end
 
       if (state == S_L2G_DST_WR_REQ && dcache_req_fire) begin
-        `TRACE(2, ("%t: %s dma-run L2G wr-req(dcache): addr=0x%0h, byte_addr=0x%0h, byteen=0x%0h, data=0x%0h, tag=0x%0h, out_off=%0d\n",
+        `TRACE(2, ("%m : [%0t] | DMA_RUN_L2G_WR_REQ_DCACHE | {inst=%s, addr=0x%0h, byte_addr=0x%0h, byteen=0x%0h, data=0x%0h, tag=0x%0h, out_off=%0d}\n",
                   $time, INSTANCE_ID, dcache_bus_if.req_data.addr,
                   (64'(dcache_bus_if.req_data.addr) << DCACHE_LG2),
                   dcache_bus_if.req_data.byteen, dcache_bus_if.req_data.data, dcache_bus_if.req_data.tag, out_off))
       end
 
       if (state == S_G2L_SRC_RD_REQ && dcache_req_fire) begin
-        `TRACE(2, ("%t: %s dma-run G2L rd-req(dcache): addr=0x%0h, byte_addr=0x%0h, tag=0x%0h, out_off=%0d\n",
+        `TRACE(2, ("%m : [%0t] | DMA_RUN_G2L_RD_REQ_DCACHE | {inst=%s, addr=0x%0h, byte_addr=0x%0h, tag=0x%0h, out_off=%0d}\n",
                   $time, INSTANCE_ID, dcache_bus_if.req_data.addr,
                   (64'(dcache_bus_if.req_data.addr) << DCACHE_LG2), dcache_bus_if.req_data.tag, out_off))
       end
 
       if (state == S_G2L_SRC_RD_WAIT && dcache_rsp_fire) begin
-        `TRACE(2, ("%t: %s dma-run G2L rd-rsp(dcache): data=0x%0h, tag=0x%0h, win_valid=%0d\n",
+        `TRACE(2, ("%m : [%0t] | DMA_RUN_G2L_RD_RSP_DCACHE | {inst=%s, data=0x%0h, tag=0x%0h, win_valid=%0d}\n",
                   $time, INSTANCE_ID, dcache_bus_if.rsp_data.data, dcache_bus_if.rsp_data.tag, win_dcache_valid))
       end
 
       if (state == S_G2L_DST_WR_REQ && lmem_req_fire) begin
-        `TRACE(2, ("%t: %s dma-run G2L wr-req(lmem): addr=0x%0h, byte_addr=0x%0h, byteen=0x%0h, data=0x%0h, tag=0x%0h, out_off=%0d\n",
+        `TRACE(2, ("%m : [%0t] | DMA_RUN_G2L_WR_REQ_LMEM | {inst=%s, addr=0x%0h, byte_addr=0x%0h, byteen=0x%0h, data=0x%0h, tag=0x%0h, out_off=%0d}\n",
                   $time, INSTANCE_ID, lmem_bus_if.req_data.addr,
                   (64'(lmem_bus_if.req_data.addr) << LMEM_LG2),
                   lmem_bus_if.req_data.byteen, lmem_bus_if.req_data.data, lmem_bus_if.req_data.tag, out_off))

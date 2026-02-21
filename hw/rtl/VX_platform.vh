@@ -135,7 +135,6 @@
 `else
 `define TRACE(level, args) \
     if (level <= `DEBUG_LEVEL) begin \
-        $write("%m: "); \
         $write args; \
     end
 `endif

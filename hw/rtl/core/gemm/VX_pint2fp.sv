@@ -224,32 +224,32 @@ module VX_pint2fp #(
     if (resetn_i) begin
       // Stage 0: Input -> Stage 0 buffer
       if (valid_i) begin
-        `TRACE(3, ("%t: PINT2FP INPUT: int_data_i=0x%0h, max_exp_i=0x%0h, sign=%0b\n", 
+        `TRACE(3, ("%m : [%0t] | PINT2FP_INPUT | {int_data_i=0x%0h, max_exp_i=0x%0h, sign=%0b}\n",
                    $time, int_data_i, max_exp_i, sign))
-        `TRACE(3, ("  abs_int=0x%0h, enc=%0d, left_shift=%0d\n", 
-                   abs_int, enc, left_shift))
-        `TRACE(3, ("  exp_fused=%0d, exp_valid=0x%0h, total_shift=%0d\n", 
-                   exp_fused, exp_valid, total_shift))
-        `TRACE(3, ("  shifted_signif=0x%0h\n", shifted_signif))
+        `TRACE(3, ("%m : [%0t] | PINT2FP_INPUT_ABS | {abs_int=0x%0h, enc=%0d, left_shift=%0d}\n",
+                   $time, abs_int, enc, left_shift))
+        `TRACE(3, ("%m : [%0t] | PINT2FP_INPUT_EXP | {exp_fused=%0d, exp_valid=0x%0h, total_shift=%0d}\n",
+                   $time, exp_fused, exp_valid, total_shift))
+        `TRACE(3, ("%m : [%0t] | PINT2FP_INPUT_SHIFTED_SIGNIF | {shifted_signif=0x%0h}\n", $time, shifted_signif))
       end
 
       // Stage 1: Stage 0 buffer -> Stage 1 buffer
       if (stage0_valid) begin
-        `TRACE(3, ("%t: PINT2FP S0->S1: shifted_signif_s1=0x%0h, abs_int_s1=0x%0h, sign_s1=%0b\n",
+        `TRACE(3, ("%m : [%0t] | PINT2FP_S0_S1 | {shifted_signif_s1=0x%0h, abs_int_s1=0x%0h, sign_s1=%0b}\n",
                    $time, shifted_signif_s1, abs_int_s1, sign_s1))
-        `TRACE(3, ("  exp_valid_s1=0x%0h, exp_inf_flag_s1=%0b, total_shift_s1=%0d\n",
-                   exp_valid_s1, exp_inf_flag_s1, total_shift_s1))
-        `TRACE(3, ("  guard=%0b, round=%0b, stitch=%0b, carry=%0b\n",
-                   guard, round, stitch, carry))
-        `TRACE(3, ("  exp_valid_norm=0x%0h, mantissa_rounded=0x%0h, mantissa_clear=%0b\n",
-                   exp_valid_norm, mantissa_rounded, mantissa_clear))
-        `TRACE(3, ("  fp_data=0x%0h (sign=%0b, exp=0x%0h, mant=0x%0h)\n",
-                   fp_data, sign_s1, eout, mout))
+        `TRACE(3, ("%m : [%0t] | PINT2FP_S0_S1_EXP | {exp_valid_s1=0x%0h, exp_inf_flag_s1=%0b, total_shift_s1=%0d}\n",
+                   $time, exp_valid_s1, exp_inf_flag_s1, total_shift_s1))
+        `TRACE(3, ("%m : [%0t] | PINT2FP_S0_S1_GRS | {guard=%0b, round=%0b, stitch=%0b, carry=%0b}\n",
+                   $time, guard, round, stitch, carry))
+        `TRACE(3, ("%m : [%0t] | PINT2FP_S0_S1_ROUND | {exp_valid_norm=0x%0h, mantissa_rounded=0x%0h, mantissa_clear=%0b}\n",
+                   $time, exp_valid_norm, mantissa_rounded, mantissa_clear))
+        `TRACE(3, ("%m : [%0t] | PINT2FP_S0_S1_FP_DATA | {fp_data=0x%0h, sign=%0b, exp=0x%0h, mant=0x%0h}\n",
+                   $time, fp_data, sign_s1, eout, mout))
       end
 
       // Output
       if (valid_o) begin
-        `TRACE(3, ("%t: PINT2FP OUTPUT: fp_data_o=0x%0h\n", $time, fp_data_o))
+        `TRACE(3, ("%m : [%0t] | PINT2FP_OUTPUT | {fp_data_o=0x%0h}\n", $time, fp_data_o))
       end
     end
   end

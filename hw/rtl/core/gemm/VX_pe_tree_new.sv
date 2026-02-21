@@ -190,10 +190,10 @@ module VX_pe_tree_new import VX_gpu_pkg::*; #(
     if (resetn_i) begin
       // Input processing
       if (input_valid_i) begin
-        `TRACE(3, ("%t: PE_TREE: Input valid\n", $time))
-        `TRACE(3, ("%t: PE_TREE:   ifmap=%s\n",
+        `TRACE(3, ("%m : [%0t] | PE_TREE_INPUT_VALID | {}\n", $time))
+        `TRACE(3, ("%m : [%0t] | PE_TREE_IFMAP | {ifmap=%s}\n",
             $time, parseWordNoNormal(ifmap_i, ROW_SIZE * IN_DW, IN_DW, "int")))
-        `TRACE(3, ("%t: PE_TREE:   blk_idx=%s\n",
+        `TRACE(3, ("%m : [%0t] | PE_TREE_BLK_IDX | {blk_idx=%s}\n",
             $time, parseWordNoNormal(blk_sidx_i, ROW_SIZE * BLK_BITW, BLK_BITW, "uint")))
         // `TRACE(4, ("%t: PE_TREE:   ps_i=%s\n",
         //     $time, parseWordNoNormal(ps_i, TILE_COL_SIZE * OUT_DW, OUT_DW, "int")))
@@ -202,15 +202,15 @@ module VX_pe_tree_new import VX_gpu_pkg::*; #(
           for (int r = 0; r < ROW_SIZE; r++) begin
             weights_col[r] = weight_i[r][c];
           end
-          `TRACE(4, ("%t: PE_TREE:   weight[col=%0d]=%s\n",
+          `TRACE(4, ("%m : [%0t] | PE_TREE_WEIGHT_COL | {col=%0d, weight=%s}\n",
               $time, c, parseWordNoNormal(weights_col, ROW_SIZE * WEIGHT_DW, WEIGHT_DW, "int")))
         end
       end
 
       // Output valid
       if (valid_o) begin
-        `TRACE(2, ("%t: PE_TREE: Output valid\n", $time))
-        `TRACE(2, ("%t: PE_TREE:   ps_o=%s\n",
+        `TRACE(2, ("%m : [%0t] | PE_TREE_OUTPUT_VALID | {}\n", $time))
+        `TRACE(2, ("%m : [%0t] | PE_TREE_PS_O | {ps_o=%s}\n",
             $time, parseWordNoNormal(ps_o, TILE_COL_SIZE * OUT_DW, OUT_DW, "int")))
       end
     end

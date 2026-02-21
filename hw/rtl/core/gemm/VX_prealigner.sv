@@ -257,33 +257,33 @@ module VX_prealigner import VX_gpu_pkg::*; #(
   always @(posedge clk_i) begin
     // Stage 0 -> Stage 1 handshake (input to first elastic buffer)
     if (valid_i && ready_o) begin
-      `TRACE(3, ("%t: PREALIGNER S0->S1: max_exp=0x%0h\n", $time, comp_out[0]))
+      `TRACE(3, ("%m : [%0t] | PREALIGNER_S0_S1 | {max_exp=0x%0h}\n", $time, comp_out[0]))
       for (int i = 0; i < NUM_UNIT; i++) begin
-        `TRACE(3, ("  unit[%0d]: data_i=0x%0h, hidden_man=0x%0h\n", i, data_i[i], hidden_man[i]))
+        `TRACE(3, ("%m : [%0t] | PREALIGNER_S0_S1_UNIT | {unit=%0d, data_i=0x%0h, hidden_man=0x%0h}\n", $time, i, data_i[i], hidden_man[i]))
       end
     end
 
     // Stage 1 -> Stage 2 handshake
     if (valid_s1 && ready_s1) begin
-      `TRACE(3, ("%t: PREALIGNER S1->S2: max_exp_q=0x%0h\n", $time, max_exp_q))
+      `TRACE(3, ("%m : [%0t] | PREALIGNER_S1_S2 | {max_exp_q=0x%0h}\n", $time, max_exp_q))
       for (int i = 0; i < NUM_UNIT; i++) begin
-        `TRACE(3, ("  unit[%0d]: shift_man=0x%0h, lsb_blk_idx=%0d, sign=%0b\n", i, shift_man[i], lsb_blk_idx[i], sign[i]))
+        `TRACE(3, ("%m : [%0t] | PREALIGNER_S1_S2_UNIT | {unit=%0d, shift_man=0x%0h, lsb_blk_idx=%0d, sign=%0b}\n", $time, i, shift_man[i], lsb_blk_idx[i], sign[i]))
       end
     end
 
     // Stage 2 -> Stage 3 handshake
     if (valid_s2 && ready_s2) begin
-      `TRACE(3, ("%t: PREALIGNER S2->S3: max_exp_s2_q=0x%0h\n", $time, max_exp_s2_q))
+      `TRACE(3, ("%m : [%0t] | PREALIGNER_S2_S3 | {max_exp_s2_q=0x%0h}\n", $time, max_exp_s2_q))
       for (int i = 0; i < NUM_UNIT; i++) begin
-        `TRACE(3, ("  unit[%0d]: int_data=0x%0h, blk_idx=%0d\n", i, int_data[i], blk_idx[i]))
+        `TRACE(3, ("%m : [%0t] | PREALIGNER_S2_S3_UNIT | {unit=%0d, int_data=0x%0h, blk_idx=%0d}\n", $time, i, int_data[i], blk_idx[i]))
       end
     end
 
     // Stage 3 -> Output handshake
     if (valid_o && ready_i) begin
-      `TRACE(3, ("%t: PREALIGNER OUTPUT: max_exp_o=0x%0h\n", $time, max_exp_o))
+      `TRACE(3, ("%m : [%0t] | PREALIGNER_OUTPUT | {max_exp_o=0x%0h}\n", $time, max_exp_o))
       for (int i = 0; i < NUM_UNIT; i++) begin
-        `TRACE(3, ("  unit[%0d]: int_data_o=0x%0h, blk_idx_o=%0d\n", i, int_data_o[i], blk_idx_o[i]))
+        `TRACE(3, ("%m : [%0t] | PREALIGNER_OUTPUT_UNIT | {unit=%0d, int_data_o=0x%0h, blk_idx_o=%0d}\n", $time, i, int_data_o[i], blk_idx_o[i]))
       end
     end
   end

@@ -189,11 +189,11 @@ module VX_gemm_tree_v2 #(
 `ifdef DBG_TRACE_GEMM
   always @(posedge clk_i) begin
     if (ready_weight_i) begin
-      `TRACE(3, ("%t: GEMM_TREE: Weight loading dir=%0d\n", $time, weight_load_dir_i))
+      `TRACE(3, ("%m : [%0t] | GEMM_TREE_WEIGHT_LOADING | {weight_load_dir=%0d}\n", $time, weight_load_dir_i))
     end
     
     if (input_valid_i) begin
-      `TRACE(3, ("%t: GEMM_TREE: Input processing\n", $time))
+      `TRACE(3, ("%m : [%0t] | GEMM_TREE_INPUT_PROCESSING | {}\n", $time))
     end
   end
 `endif

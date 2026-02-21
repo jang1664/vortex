@@ -112,10 +112,10 @@ module VX_fp32_mul #(
     always @(posedge clk) begin
         if (!reset) begin
           if(a_valid && a_ready && b_valid && b_ready) begin
-            `TRACE(2, ("%t: VX_fp32_mul - INPUT HS: a_data=0x%h, b_data=0x%h\n", $time, a_data, b_data))
+            `TRACE(2, ("%m : [%0t] | FP32_MUL_INPUT_HS | {a_data=0x%h, b_data=0x%h}\n", $time, a_data, b_data))
           end
           if(result_valid && result_ready) begin
-            `TRACE(2, ("%t: VX_fp32_mul - OUTPUT HS: result_data=0x%h\n", $time, result_data))
+            `TRACE(2, ("%m : [%0t] | FP32_MUL_OUTPUT_HS | {result_data=0x%h}\n", $time, result_data))
           end
         end
     end

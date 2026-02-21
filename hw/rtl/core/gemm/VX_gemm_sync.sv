@@ -260,14 +260,14 @@ module VX_gemm_sync import VX_gpu_pkg::*; #(
   always_ff @(posedge clk) begin
     if (!reset && in_valid) begin
       if (is_wait) begin
-        $display("%t %s WAIT reg[%0d]=%0d target=%0d satisfied=%0d can_accept=%0d",
-                 $time, INSTANCE_ID, wait_reg_id, wait_reg_val, wait_target, wait_satisfied, can_accept);
+        `TRACE(3, ("%m : [%0t] | GEMM_SYNC_WAIT | {inst=%s, reg_id=%0d, reg_val=%0d, target=%0d, satisfied=%0d, can_accept=%0d}\n",
+                 $time, INSTANCE_ID, wait_reg_id, wait_reg_val, wait_target, wait_satisfied, can_accept))
       end else if (is_notify) begin
-        $display("%t %s NOTIFY route_eff=%0d child_idle_sel=%0d can_accept=%0d",
-                 $time, INSTANCE_ID, route_eff, child_idle_sel, can_accept);
+        `TRACE(3, ("%m : [%0t] | GEMM_SYNC_NOTIFY | {inst=%s, route_eff=%0d, child_idle_sel=%0d, can_accept=%0d}\n",
+                 $time, INSTANCE_ID, route_eff, child_idle_sel, can_accept))
       end else begin
-        $display("%t %s CMD opcode=0x%02h route_eff=%0d cmd_valid=%0d child_idle_sel=%0d can_accept=%0d",
-                 $time, INSTANCE_ID, opcode, route_eff, cmd_valid, child_idle_sel, can_accept);
+        `TRACE(3, ("%m : [%0t] | GEMM_SYNC_CMD | {inst=%s, opcode=0x%02h, route_eff=%0d, cmd_valid=%0d, child_idle_sel=%0d, can_accept=%0d}\n",
+                 $time, INSTANCE_ID, opcode, route_eff, cmd_valid, child_idle_sel, can_accept))
       end
     end
   end

@@ -171,23 +171,23 @@ module VX_gemm_tree_v1 import VX_gpu_pkg::*; #(
     if (resetn_i) begin
       // Weight loading event
       if (ready_weight_i) begin
-        `TRACE(2, ("%t: GEMM_TREE: Weight load - dir=%0d, in_sel=%0d, out_sel=%0d\n",
+        `TRACE(2, ("%m : [%0t] | GEMM_TREE_WEIGHT_LOAD | {dir=%0d, in_sel=%0d, out_sel=%0d}\n",
             $time, weight_load_dir_i, in_weight_sel_i, out_weight_sel_i))
-        `TRACE(4, ("%t: GEMM_TREE: Weight[0][0:3]={0x%0h, 0x%0h, 0x%0h, 0x%0h}\n",
+        `TRACE(4, ("%m : [%0t] | GEMM_TREE_WEIGHT_SAMPLE | {w00=0x%0h, w01=0x%0h, w02=0x%0h, w03=0x%0h}\n",
             $time, weight_i[0][0], weight_i[0][1], weight_i[0][2], weight_i[0][3]))
       end
 
       // Input processing event
       if (input_valid_i) begin
-        `TRACE(2, ("%t: GEMM_TREE: Input valid - blk_idx[0]=%0d\n", $time, blk_sidx_i[0]))
-        `TRACE(4, ("%t: GEMM_TREE: ifmap[0:3]={0x%0h, 0x%0h, 0x%0h, 0x%0h}\n",
+        `TRACE(2, ("%m : [%0t] | GEMM_TREE_INPUT_VALID | {blk_idx0=%0d}\n", $time, blk_sidx_i[0]))
+        `TRACE(4, ("%m : [%0t] | GEMM_TREE_IFMAP_SAMPLE | {ifmap0=0x%0h, ifmap1=0x%0h, ifmap2=0x%0h, ifmap3=0x%0h}\n",
             $time, ifmap_i[0], ifmap_i[1], ifmap_i[2], ifmap_i[3]))
       end
 
       // Output valid events (per tile)
       for (integer t = 0; t < COL_SIZE/TILE_COL_SIZE; t++) begin
         if (output_valid_o[t]) begin
-          `TRACE(2, ("%t: GEMM_TREE: Tile[%0d] output valid - ps[0]=0x%0h\n",
+          `TRACE(2, ("%m : [%0t] | GEMM_TREE_TILE_OUTPUT_VALID | {tile=%0d, ps0=0x%0h}\n",
               $time, t, ps_o[t*TILE_COL_SIZE]))
         end
       end

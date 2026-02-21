@@ -212,13 +212,13 @@ module VX_f32_to_f16 # (
   always @(posedge clk_i) begin
     if (resetn_i) begin
       if (valid_i) begin
-        `TRACE(3, ("%t: F32_TO_F16: Input fp32=0x%0h (sign=%0b, exp=0x%0h, mant=0x%0h)\n",
+        `TRACE(3, ("%m : [%0t] | F32_TO_F16_INPUT | {fp32=0x%0h, sign=%0b, exp=0x%0h, mant=0x%0h}\n",
             $time, data_i, fp32_sign, fp32_exp, fp32_mant))
-        `TRACE(4, ("%t: F32_TO_F16: overflow=%0b, underflow=%0b, nan=%0b\n",
+        `TRACE(4, ("%m : [%0t] | F32_TO_F16_FLAGS | {overflow=%0b, underflow=%0b, nan=%0b}\n",
             $time, fp16_overflow, fp16_underflow, is_fp32_nan))
       end
       if (valid_o) begin
-        `TRACE(3, ("%t: F32_TO_F16: Output fp16=0x%0h (sign=%0b, exp=0x%0h, mant=0x%0h)\n",
+        `TRACE(3, ("%m : [%0t] | F32_TO_F16_OUTPUT | {fp16=0x%0h, sign=%0b, exp=0x%0h, mant=0x%0h}\n",
             $time, data_o, data_o[15], data_o[14:10], data_o[9:0]))
       end
     end
