@@ -47,38 +47,33 @@ module VX_gemm_weight_regs_v1 #(
         always_ff @(posedge clk_i) begin
           if (weight_load_dir_i == 0) begin
             // ============================================================
-            // Row direction: load from top to bottom
+            // Row direction: load from bottom to top
             // ============================================================
-            if (row < WEIGHT_LOAD_ROW_NUM) begin
-              // Load new weights for the first WEIGHT_LOAD_ROW_NUM rows
+            if (row >= (ROW_SIZE - WEIGHT_LOAD_ROW_NUM)) begin
+              // Load new weights into the last WEIGHT_LOAD_ROW_NUM rows
               if (ready_weight_i) begin
-                mem[row][col][in_weight_sel_i] <= weight_i[row][col];
+                mem[row][col][in_weight_sel_i] <= weight_i[row - (ROW_SIZE - WEIGHT_LOAD_ROW_NUM)][col];
               end
             end else begin
-              // Shift weights from previous rows
-              //TODO: use generate if for avoiding warning
+              // Shift weights upward
               if (ready_weight_i) begin
-                mem[row][col][in_weight_sel_i] <= mem[row - WEIGHT_LOAD_ROW_NUM][col][in_weight_sel_i];
+                mem[row][col][in_weight_sel_i] <= mem[row + WEIGHT_LOAD_ROW_NUM][col][in_weight_sel_i];
               end
             end
-            
+
           end else begin
             // ============================================================
-            // Column direction: load from left to right
+            // Column direction: load from right to left
             // ============================================================
-            if (col < WEIGHT_LOAD_COL_NUM) begin
-              // Load new weights for the first WEIGHT_LOAD_COL_NUM columns
-              // Similar to row direction: load WEIGHT_LOAD_ROW_NUM rows at a time
-              if (ready_weight_i && (col < WEIGHT_LOAD_COL_NUM)) begin
-                mem[row][col][in_weight_sel_i] <= weight_i[col][row];
-              end else if (ready_weight_i && (col >= WEIGHT_LOAD_COL_NUM)) begin
-                // Shift weights from previous rows (within the first column(s))
-                mem[row][col][in_weight_sel_i] <= mem[row][col - WEIGHT_LOAD_COL_NUM][in_weight_sel_i];
+            if (col >= (COL_SIZE - WEIGHT_LOAD_COL_NUM)) begin
+              // Load new weights into the last WEIGHT_LOAD_COL_NUM columns
+              if (ready_weight_i) begin
+                mem[row][col][in_weight_sel_i] <= weight_i[col - (COL_SIZE - WEIGHT_LOAD_COL_NUM)][row];
               end
             end else begin
-              // Shift weights from previous columns
+              // Shift weights toward left columns
               if (ready_weight_i) begin
-                mem[row][col][in_weight_sel_i] <= mem[row][col - WEIGHT_LOAD_COL_NUM][in_weight_sel_i];
+                mem[row][col][in_weight_sel_i] <= mem[row][col + WEIGHT_LOAD_COL_NUM][in_weight_sel_i];
               end
             end
           end

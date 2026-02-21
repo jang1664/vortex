@@ -600,11 +600,11 @@ module tb_VX_gemm_node
       end
     end
     for (int n = 0; n < N_TEST; n++) begin
-      // shortreal v = shortreal'((n % 7) - 3.0);
-      shortreal v = shortreal'(1.0);
+      shortreal v = shortreal'((n % 7) - 3.0);
+      // shortreal v = shortreal'(1.0);
 
-      // int z = (n*5 % 13) - 6; // -6..6
-      int z = 2;
+      int z = (n*5 % 13) - 6; // -6..6
+      // int z = 2;
 
       scale_vec[n] = cf_math_pkg::fp32_val_to_fp16_bit(v);
       ref_scale[n] = scale_vec[n];
@@ -800,13 +800,11 @@ module tb_VX_gemm_node
         logic [15:0] exp = ref_output[idx];
         if (!compare_fp16(got, exp, FP16_TOL)) begin
           mismatch_count++;
-          if (printed < 16) begin
-            $display("[%0t] OUTPUT_MISMATCH m=%0d n=%0d addr=0x%0h got=0x%04h exp=0x%04h got_f=%f exp_f=%f",
-                     $time, m, n, addr, got, exp,
-                     cf_math_pkg::fp16_bit_to_fp16_val(got),
-                     cf_math_pkg::fp16_bit_to_fp16_val(exp));
-            printed++;
-          end
+          $display("[%0t] OUTPUT_MISMATCH m=%0d n=%0d addr=0x%0h got=0x%04h exp=0x%04h got_f=%f exp_f=%f",
+                    $time, m, n, addr, got, exp,
+                    cf_math_pkg::fp16_bit_to_fp16_val(got),
+                    cf_math_pkg::fp16_bit_to_fp16_val(exp));
+          printed++;
         end
       end
     end
