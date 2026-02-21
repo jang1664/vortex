@@ -15,6 +15,9 @@ module tb_VX_gemm_node
   parameter int    PERIOD   = 10;
   parameter int    N_MASTER = 1;
 
+  // compare tolerance
+  localparam real FP16_TOL = 0.01; // ~1.5 LSB of FP16
+
   // smoke sizes
   localparam int M_TEST = 2;
   localparam int N_TEST = 32;
@@ -568,7 +571,14 @@ module tb_VX_gemm_node
   logic [FP16_WIDTH-1:0] input_mat [0:M_TEST*K_TEST-1];
   logic [3:0]            weight_mat[0:K_TEST*N_TEST-1];
   logic [FP16_WIDTH-1:0] scale_vec [0:N_TEST-1];
-  logic [FP16_WIDTH-1:0]           zp_vec    [0:N_TEST-1];
+  logic [15:0]           zp_vec    [0:N_TEST-1];
+
+  logic [fpint_emul::IN_WIDTH-1:0] ref_input[fpint_emul::MAX_M*fpint_emul::MAX_K];
+  logic [fpint_emul::MAX_W_WIDTH-1:0] ref_weight[fpint_emul::MAX_K*fpint_emul::MAX_N];
+  logic [fpint_emul::S_WIDTH-1:0] ref_scale[fpint_emul::MAX_KG*fpint_emul::MAX_N];
+  logic [fpint_emul::Z_WIDTH-1:0] ref_zero[fpint_emul::MAX_KG*fpint_emul::MAX_N];
+  logic [fpint_emul::O_WIDTH-1:0] ref_output[fpint_emul::MAX_M*fpint_emul::MAX_N];
+  logic [fpint_emul::P_WIDTH-1:0] ref_psum[fpint_emul::MAX_M*fpint_emul::MAX_N];
 
   task automatic build_test_vectors();
     for (int m = 0; m < M_TEST; m++) begin
@@ -576,6 +586,7 @@ module tb_VX_gemm_node
         // shortreal v = shortreal'(1.0 + ((m+k) % 7));
         shortreal v = shortreal'(1.0);
         input_mat[m*K_TEST + k] = cf_math_pkg::fp32_val_to_fp16_bit(v);
+        ref_input[m*K_TEST + k] = input_mat[m*K_TEST + k];
       end
     end
     for (int k = 0; k < K_TEST; k++) begin
@@ -583,12 +594,27 @@ module tb_VX_gemm_node
         // int w = ((k*3 + n*5) % 13) - 6; // -6..6
         int w = 1; // -6..6
         weight_mat[k*N_TEST + n] = w[3:0];
+        ref_weight[k*N_TEST + n] = signed'(w[3:0]);
       end
     end
     for (int n = 0; n < N_TEST; n++) begin
       scale_vec[n] = 16'h3C00; // 1.0
+      ref_scale[n] = scale_vec[n];
       zp_vec[n]    = 16'h0002;
+      ref_zero[n]  = zp_vec[n];
     end
+
+    fpint_emul::fpint_gemm_ref(
+        ref_input,
+        ref_weight,
+        ref_scale,
+        ref_zero,
+        M_TEST, N_TEST, K_TEST,
+        ref_output,
+        `QDIR_COL,
+        fpint_emul::WNOTRANS,
+        1'b0
+    );
 
     $display("Test Inputs:");
     for (int m = 0; m < M_TEST; m++) begin
@@ -617,6 +643,14 @@ module tb_VX_gemm_node
       $write("%0x ", zp_vec[n]);
     end
     $write("\n");
+
+    $display("Reference Output:");
+    for (int m = 0; m < M_TEST; m++) begin
+      for (int n = 0; n < N_TEST; n++) begin
+        $write("%0x ", ref_output[m*N_TEST + n]);
+      end
+      $write("\n");
+    end
   endtask
 
   task automatic write_gmem_inputs_weights_sc_zp();
@@ -725,15 +759,53 @@ module tb_VX_gemm_node
     return x;
   endfunction
 
-  task automatic check_some_outputs();
-    $display("=== OUTPUT SAMPLE ===");
-    for (int m = 0; m < 4; m++) begin
-      for (int n = 0; n < 8; n++) begin
-        int unsigned addr = GMEM_OUT_BASE + (m*N_TEST + n)*2;
-        logic [15:0] y = dmem_read_u16(addr);
-        $write("%f ", cf_math_pkg::fp16_bit_to_fp16_val(y));
+  function automatic int compare_fp16(
+      input logic [FP16_WIDTH-1:0] actual,
+      input logic [FP16_WIDTH-1:0] expected,
+      input shortreal tolerance = 0.01
+  );
+      shortreal actual_fp, expected_fp, diff;
+      actual_fp = cf_math_pkg::fp16_bit_to_fp16_val(actual);
+      expected_fp = cf_math_pkg::fp16_bit_to_fp16_val(expected);
+
+      if (expected_fp == 0.0) begin
+          diff = (actual_fp >= 0) ? actual_fp : -actual_fp;
+      end else begin
+          diff = (actual_fp - expected_fp) / expected_fp;
+          diff = (diff >= 0) ? diff : -diff;
       end
-      $write("\n");
+
+      return (diff <= tolerance) ? 1 : 0;
+  endfunction
+
+  task automatic check_output();
+    int mismatch_count = 0;
+    int printed = 0;
+
+    $display("=== OUTPUT CHECK ===");
+    for (int m = 0; m < M_TEST; m++) begin
+      for (int n = 0; n < N_TEST; n++) begin
+        int unsigned idx = m * N_TEST + n;
+        int unsigned addr = GMEM_OUT_BASE + (idx * 2);
+        logic [15:0] got = dmem_read_u16(addr);
+        logic [15:0] exp = ref_output[idx];
+        if (!compare_fp16(got, exp, FP16_TOL)) begin
+          mismatch_count++;
+          if (printed < 16) begin
+            $display("[%0t] OUTPUT_MISMATCH m=%0d n=%0d addr=0x%0h got=0x%04h exp=0x%04h got_f=%f exp_f=%f",
+                     $time, m, n, addr, got, exp,
+                     cf_math_pkg::fp16_bit_to_fp16_val(got),
+                     cf_math_pkg::fp16_bit_to_fp16_val(exp));
+            printed++;
+          end
+        end
+      end
+    end
+
+    if (mismatch_count != 0) begin
+      $fatal(1, "[%0t] OUTPUT CHECK FAILED: mismatches=%0d", $time, mismatch_count);
+    end else begin
+      $display("[%0t] OUTPUT CHECK PASSED: compared %0d elements", $time, M_TEST * N_TEST);
     end
   endtask
 
@@ -876,7 +948,7 @@ module tb_VX_gemm_node
     wait_job_done(job_eid, job_gen);
 
     repeat (50) @(posedge clk);
-    check_some_outputs();
+    check_output();
 
     $display("[%0t] TB completed", $time);
 

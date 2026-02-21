@@ -169,7 +169,9 @@ package fpint_emul;
             $write("[FPINT_EMUL.GEMM_REF] %0d %0d %0d %f %f %f %f %f", m, n, k, in_val, wt_val, sc_val, ze_val, prod);
           end
           acc_fp += prod;
-          $display(" %f", acc_fp);
+          if(DEBUG) begin
+            $display(" %f", acc_fp);
+          end
         end
         output_data[m*N + n] = cf_math_pkg::fp32_val_to_fp16_bit(acc_fp);
       end
