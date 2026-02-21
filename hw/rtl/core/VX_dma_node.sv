@@ -14,7 +14,7 @@ module VX_dma_node import VX_gpu_pkg::*; #(
 );
 
   localparam int NUM_REGS32 = `DMA_CFG_REG_NUM;
-  localparam int ENTRYID_W  = `LOG2UP(NUM_ENTRIES);
+  localparam int ENTRYID_W  = `JOB_MMIO_ENTRYID_W;
 
   VX_config_reg_if #(
     .NUM(NUM_REGS32),

@@ -714,7 +714,7 @@ module tb_VX_dma_node import VX_gpu_pkg::*; #(
       stride1 = b0 * seg_bytes;
       stride2 = b0 * b1 * seg_bytes;
 
-      d[0]  = 32'h0000_0001 | (dir_bit ? 32'h0000_0008 : 32'h0000_0000);
+      d[0]  = 32'h0000_0001;
       d[1]  = dst_base[31:0];
       d[2]  = dst_base[63:32];
       d[3]  = src_base[31:0];
@@ -730,6 +730,7 @@ module tb_VX_dma_node import VX_gpu_pkg::*; #(
       d[13] = b2;
       d[14] = seg_bytes;
       d[15] = padding;
+      d[16] = {31'd0, dir_bit};
     end
   endtask
 

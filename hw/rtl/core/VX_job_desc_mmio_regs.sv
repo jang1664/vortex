@@ -64,6 +64,9 @@ module VX_job_desc_mmio_regs import VX_gpu_pkg::*; #(
   localparam int ALLOC_OWNER_BITS  = `JOB_MMIO_ALLOC_OWNER_BITS;
   localparam int ALLOC_GEN_LSB     = `JOB_MMIO_ALLOC_GEN_LSB;
   localparam int ALLOC_GEN_BITS    = `JOB_MMIO_ALLOC_GEN_BITS;
+  localparam int ALLOC_ENTRY_COPY_BITS = (ALLOC_ENTRY_BITS < ENTRYID_W) ? ALLOC_ENTRY_BITS : ENTRYID_W;
+  localparam int ALLOC_OWNER_COPY_BITS = (ALLOC_OWNER_BITS < OWNER_W) ? ALLOC_OWNER_BITS : OWNER_W;
+  localparam int ALLOC_GEN_COPY_BITS   = (ALLOC_GEN_BITS < GEN_W) ? ALLOC_GEN_BITS : GEN_W;
 
   // ------------------------------------------------------------
   // MMIO layout
@@ -138,14 +141,14 @@ module VX_job_desc_mmio_regs import VX_gpu_pkg::*; #(
     begin
       w = '0;
       w[ALLOC_SUCCESS_BIT] = success;
-      if (ALLOC_ENTRY_BITS > 0) begin
-        w[ALLOC_ENTRY_LSB +: ALLOC_ENTRY_BITS] = entry_id[ALLOC_ENTRY_BITS-1:0];
+      if (ALLOC_ENTRY_COPY_BITS > 0) begin
+        w[ALLOC_ENTRY_LSB +: ALLOC_ENTRY_COPY_BITS] = entry_id[ALLOC_ENTRY_COPY_BITS-1:0];
       end
-      if (ALLOC_OWNER_BITS > 0) begin
-        w[ALLOC_OWNER_LSB +: ALLOC_OWNER_BITS] = owner_id[ALLOC_OWNER_BITS-1:0];
+      if (ALLOC_OWNER_COPY_BITS > 0) begin
+        w[ALLOC_OWNER_LSB +: ALLOC_OWNER_COPY_BITS] = owner_id[ALLOC_OWNER_COPY_BITS-1:0];
       end
-      if (ALLOC_GEN_BITS > 0) begin
-        w[ALLOC_GEN_LSB +: ALLOC_GEN_BITS] = generation[ALLOC_GEN_BITS-1:0];
+      if (ALLOC_GEN_COPY_BITS > 0) begin
+        w[ALLOC_GEN_LSB +: ALLOC_GEN_COPY_BITS] = generation[ALLOC_GEN_COPY_BITS-1:0];
       end
       return w;
     end

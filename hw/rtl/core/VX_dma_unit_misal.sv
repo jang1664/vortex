@@ -4,7 +4,7 @@
 // VX_dma_unit_misal
 //  - cfg_reg_if.DW must be 32
 //  - desc word layout (32b words):
-//      0  control_reg : [0]=start(valid), [3]=direction (0:G2L, 1:L2G)
+//      0  control_reg : [0]=start(valid)
 //      1  dst_base_lo
 //      2  dst_base_hi
 //      3  src_base_lo
@@ -20,6 +20,8 @@
 //     13  bound2
 //     14  seg_size
 //     15  padding
+//     16  dir_reg     : [0]=direction (0:G2L, 1:L2G)
+//     17  reserved
 //
 //  done_if:
 //    - asserted when the whole 3D copy completes for the latched descriptor
@@ -43,8 +45,9 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
   // ------------------------------------------------------------
   // Descriptor layout
   // ------------------------------------------------------------
-  localparam int NUM_REGS = 16;
-  localparam int NDIM     = 3;
+  localparam int NUM_REGS      = `DMA_CFG_REG_NUM;
+  localparam int NDIM          = 3;
+  localparam int DESC_DIR_IDX  = 16;
 
   initial begin
     if (cfg_reg_if.DW != 32) $fatal(1, "cfg_reg_if.DW must be 32");
@@ -290,7 +293,7 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
 
       seg_size_r      <= cfg_reg_if.regs[14][31:0];
       padding_r       <= cfg_reg_if.regs[15][31:0];
-      direction_bit_r <= cfg_reg_if.regs[0][3];
+      direction_bit_r <= cfg_reg_if.regs[DESC_DIR_IDX][0];
       precalc_pending_r <= 1'b1;
     end else begin
       if (precalc_issue)
@@ -363,7 +366,7 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
     if (!reset) begin
       if (cmd_start) begin
         `TRACE(2, ("%t: %s dma-start: entry_id=%0d, dir=%0d, src_base=0x%0h, dst_base=0x%0h, seg_size=%0d, padding=%0d, bound=(%0d,%0d,%0d)\n",
-                  $time, INSTANCE_ID, cfg_reg_if.entry_id, cfg_reg_if.regs[0][3],
+                  $time, INSTANCE_ID, cfg_reg_if.entry_id, cfg_reg_if.regs[DESC_DIR_IDX][0],
                   {cfg_reg_if.regs[4][31:0], cfg_reg_if.regs[3][31:0]},
                   {cfg_reg_if.regs[2][31:0], cfg_reg_if.regs[1][31:0]},
                   cfg_reg_if.regs[14][31:0], cfg_reg_if.regs[15][31:0],

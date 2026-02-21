@@ -734,6 +734,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     VX_gemm_dma_ctrl #(
       .INSTANCE_ID(INSTANCE_ID),
       .DMA_CFG_BASE_ADDR(`DMA_REG_BASE_ADDR),
+      .DMA_ENTRY_STRIDE_BYTES(`DMA_CFG_REG_NUM * 4),
       .ENTRYID_W(ENTRYID_W),
       .CTRL_OWNER_W(OWNER_W),
       .CTRL_GEN_W(GEN_W)

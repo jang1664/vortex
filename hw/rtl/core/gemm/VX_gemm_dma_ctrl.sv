@@ -11,7 +11,7 @@
 // DMA 레지스터 맵 (32-bit 단위)
 //  - DMA 엔트리의 레지스터는 32-bit 단위
 //  - src_base/dst_base만 64-bit (LO/HI 2개 레지스터로 분리)
-//  - stride도 src/dst 각각 32-bit 레지스터로 분리 (총 32-bit regs)
+//  - stride도 src/dst 각각 32-bit 레지스터로 분리 (총 18개 regs)
 // ------------------------------------------------------------
 
 module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
@@ -19,10 +19,10 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
 
     parameter logic [63:0] DMA_CFG_BASE_ADDR      = 64'h0,
     parameter int          DMA_CFG_STRIDE_BYTES   = 4,        // 32-bit regs
-    parameter int          DMA_ENTRY_STRIDE_BYTES = 16 * 4,   // 16 regs * 4 bytes = 64 bytes/entry
-    parameter int          ENTRYID_W              = 8,
-    parameter int          CTRL_OWNER_W           = 1,
-    parameter int          CTRL_GEN_W             = 16,
+    parameter int          DMA_ENTRY_STRIDE_BYTES = (`DMA_CFG_REG_NUM * 4),
+    parameter int          ENTRYID_W              = `JOB_MMIO_ENTRYID_W, // 엔트리 구분을 위한 ID 폭 (몇 개 엔트리까지 구분할 수 있나)
+    parameter int          CTRL_OWNER_W           = `JOB_MMIO_OWNER_W,
+    parameter int          CTRL_GEN_W             = `JOB_MMIO_GEN_W,
 
     parameter int          POLL_GAP_CYCLES        = 1,
     parameter int          ALLOC_RETRY_GAP_CYCLES = 0
@@ -68,17 +68,16 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
   localparam int DMA_R_BND2        = 13;  // 32b
   localparam int DMA_R_SEG_SIZE    = 14;  // 32b
   localparam int DMA_R_PAD         = 15;  // 32b
+  localparam int DMA_R_DIR         = 16;  // 32b, bit0 = direction (0: G->L, 1: L->G)
+  localparam int DMA_R_RSVD        = 17;  // 32b, reserved
 
-  localparam int DMA_R_LAST        = DMA_R_PAD;
+  localparam int DMA_R_LAST        = DMA_R_RSVD;
 
-  localparam int DMA_CTRL_START_BIT = 0;
-  localparam int DMA_CTRL_OCCUPY_BIT = 1;
-  localparam int DMA_CTRL_WORKING_BIT = 2;
-  // VX_job_desc_mmio_regs uses CONTROL[1]=occupy, [2]=working (RO),
-  // so direction must be encoded on a different writable bit.
-  localparam int DMA_CTRL_DIR_BIT   = 3;
-  localparam int DMA_CTRL_OWNER_LSB = 4;
-  localparam int DMA_CTRL_GEN_LSB   = DMA_CTRL_OWNER_LSB + CTRL_OWNER_W;
+  localparam int DMA_CTRL_START_BIT   = `JOB_MMIO_CTRL_VALID_BIT;
+  localparam int DMA_CTRL_OCCUPY_BIT  = `JOB_MMIO_CTRL_OCCUPY_BIT;
+  localparam int DMA_CTRL_WORKING_BIT = `JOB_MMIO_CTRL_WORKING_BIT;
+  localparam int DMA_CTRL_OWNER_LSB   = `JOB_MMIO_CTRL_OWNER_LSB;
+  localparam int DMA_CTRL_GEN_LSB     = `JOB_MMIO_CTRL_GEN_LSB;
 
   localparam int ALLOC_SUCCESS_BIT = `JOB_MMIO_ALLOC_SUCC_BIT;
   localparam int ALLOC_ENTRY_LSB   = `JOB_MMIO_ALLOC_ENTRY_LSB;
@@ -87,6 +86,9 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
   localparam int ALLOC_OWNER_BITS  = `JOB_MMIO_ALLOC_OWNER_BITS;
   localparam int ALLOC_GEN_LSB     = `JOB_MMIO_ALLOC_GEN_LSB;
   localparam int ALLOC_GEN_BITS    = `JOB_MMIO_ALLOC_GEN_BITS;
+  localparam int ALLOC_ENTRY_COPY_BITS = (ALLOC_ENTRY_BITS < ENTRYID_W) ? ALLOC_ENTRY_BITS : ENTRYID_W;
+  localparam int ALLOC_OWNER_COPY_BITS = (ALLOC_OWNER_BITS < CTRL_OWNER_W) ? ALLOC_OWNER_BITS : CTRL_OWNER_W;
+  localparam int ALLOC_GEN_COPY_BITS   = (ALLOC_GEN_BITS < CTRL_GEN_W) ? ALLOC_GEN_BITS : CTRL_GEN_W;
 
   // ----------------------------------------------------
   // Parameter sanity checks
@@ -385,6 +387,8 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
         DMA_R_BND2:        v32 = bnd2;
         DMA_R_SEG_SIZE:    v32 = seg_size;
         DMA_R_PAD:         v32 = padding;
+        DMA_R_DIR:         v32 = {31'd0, dir_is_st};
+        DMA_R_RSVD:        v32 = 32'd0;
 
         default:           v32 = 32'd0;
       endcase
@@ -492,14 +496,14 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
             entry_id_d = '0;
             alloc_owner_d = '0;
             alloc_gen_d   = '0;
-            if (ALLOC_ENTRY_BITS > 0) begin
-              entry_id_d[ALLOC_ENTRY_BITS-1:0] = alloc_rsp_w[ALLOC_ENTRY_LSB +: ALLOC_ENTRY_BITS];
+            if (ALLOC_ENTRY_COPY_BITS > 0) begin
+              entry_id_d[ALLOC_ENTRY_COPY_BITS-1:0] = alloc_rsp_w[ALLOC_ENTRY_LSB +: ALLOC_ENTRY_COPY_BITS];
             end
-            if (ALLOC_OWNER_BITS > 0) begin
-              alloc_owner_d[ALLOC_OWNER_BITS-1:0] = alloc_rsp_w[ALLOC_OWNER_LSB +: ALLOC_OWNER_BITS];
+            if (ALLOC_OWNER_COPY_BITS > 0) begin
+              alloc_owner_d[ALLOC_OWNER_COPY_BITS-1:0] = alloc_rsp_w[ALLOC_OWNER_LSB +: ALLOC_OWNER_COPY_BITS];
             end
-            if (ALLOC_GEN_BITS > 0) begin
-              alloc_gen_d[ALLOC_GEN_BITS-1:0] = alloc_rsp_w[ALLOC_GEN_LSB +: ALLOC_GEN_BITS];
+            if (ALLOC_GEN_COPY_BITS > 0) begin
+              alloc_gen_d[ALLOC_GEN_COPY_BITS-1:0] = alloc_rsp_w[ALLOC_GEN_LSB +: ALLOC_GEN_COPY_BITS];
             end
 
             // IMPORTANT: 0부터 시작해서 항상 DATA_SIZE 정렬 번들로 write
@@ -594,7 +598,6 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
         dma_if.req_data.addr[0] = to_lsu_addr(entry_reg_byte_addr(entry_id_q, DMA_R_CONTROL));
 
         ctrl = 64'd0;
-        ctrl[DMA_CTRL_DIR_BIT]   = dir_is_st;
         ctrl[DMA_CTRL_START_BIT] = 1'b1;
         dma_if.req_data.data[0]  = ctrl;
 

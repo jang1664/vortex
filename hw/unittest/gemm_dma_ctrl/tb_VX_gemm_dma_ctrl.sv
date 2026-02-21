@@ -33,13 +33,14 @@ module tb_VX_gemm_dma_ctrl;
   localparam int DMA_R_BND2        = 13;
   localparam int DMA_R_SEG_SIZE    = 14;
   localparam int DMA_R_PAD         = 15;
+  localparam int DMA_R_DIR         = 16;
+  localparam int DMA_R_RSVD        = 17;
 
-  localparam int DMA_CTRL_START_BIT = 0;
-  localparam int DMA_CTRL_DIR_BIT   = 3;
+  localparam int DMA_CTRL_START_BIT = `JOB_MMIO_CTRL_VALID_BIT;
   localparam int CTRL_OWNER_W_TB    = (NUM_MASTERS_TB <= 1) ? 1 : `ARB_SEL_BITS(NUM_MASTERS_TB, 1);
   localparam int CTRL_GEN_W_TB      = 16;
-  localparam int DMA_CTRL_OWNER_LSB = 4;
-  localparam int DMA_CTRL_GEN_LSB   = DMA_CTRL_OWNER_LSB + CTRL_OWNER_W_TB;
+  localparam int DMA_CTRL_OWNER_LSB = `JOB_MMIO_CTRL_OWNER_LSB;
+  localparam int DMA_CTRL_GEN_LSB   = `JOB_MMIO_CTRL_GEN_LSB;
 
   logic clk, reset;
   initial clk = 1'b0;
@@ -252,7 +253,6 @@ module tb_VX_gemm_dma_ctrl;
   endfunction
 
   function automatic logic [31:0] make_exp_ctrl(
-    input logic dir,
     input logic [CTRL_OWNER_W_TB-1:0] owner,
     input logic [CTRL_GEN_W_TB-1:0] gen
   );
@@ -262,7 +262,6 @@ module tb_VX_gemm_dma_ctrl;
       v[0] = 1'b1; // valid
       v[1] = 1'b1; // occupy
       v[2] = 1'b0; // working
-      v[DMA_CTRL_DIR_BIT] = dir;
       v[DMA_CTRL_OWNER_LSB +: CTRL_OWNER_W_TB] = owner;
       v[DMA_CTRL_GEN_LSB +: CTRL_GEN_W_TB] = gen;
       return v;
@@ -335,9 +334,10 @@ module tb_VX_gemm_dma_ctrl;
     expect_issue_reg(DMA_R_BND2, 32'd1);
     expect_issue_reg(DMA_R_SEG_SIZE, 32'd256);
     expect_issue_reg(DMA_R_PAD, 32'd0);
+    expect_issue_reg(DMA_R_DIR, 32'd0);
 
     // CONTROL includes token fields: owner(=0), generation(=1)
-    expect_issue_reg(DMA_R_CONTROL, make_exp_ctrl(1'b0, '0, CTRL_GEN_W_TB'(1)));
+    expect_issue_reg(DMA_R_CONTROL, make_exp_ctrl('0, CTRL_GEN_W_TB'(1)));
 
     wait_done_or_timeout(4000, "DMA_LD done");
     $display("[%0t] DMA_LD done", $time);
@@ -395,9 +395,10 @@ module tb_VX_gemm_dma_ctrl;
     expect_issue_reg(DMA_R_BND2, 32'd1);
     expect_issue_reg(DMA_R_SEG_SIZE, 32'd4);
     expect_issue_reg(DMA_R_PAD, 32'd0);
+    expect_issue_reg(DMA_R_DIR, 32'd1);
 
     // CONTROL includes token fields: owner(=0), generation(=1)
-    expect_issue_reg(DMA_R_CONTROL, make_exp_ctrl(1'b1, '0, CTRL_GEN_W_TB'(1)));
+    expect_issue_reg(DMA_R_CONTROL, make_exp_ctrl('0, CTRL_GEN_W_TB'(1)));
 
     wait_done_or_timeout(4000, "DMA_ST done");
     $display("[%0t] DMA_ST done", $time);
