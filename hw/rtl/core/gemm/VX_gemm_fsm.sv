@@ -494,6 +494,14 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     end
   endfunction
 
+  // Scale/Zero register address map
+  localparam SCALE_REG_SIZE  = `MAX(`MXU_ROW, `MXU_COL) * `SCALE_WIDTH/8; // in bytes, 64bytes
+  localparam ZP_REG_SIZE     = `MAX(`MXU_ROW, `MXU_COL) * `ZP_WIDTH/8; // in bytes
+  localparam SCALE_REG0_BASE = 0;
+  localparam SCALE_REG1_BASE = SCALE_REG_SIZE;
+  localparam ZP_REG0_BASE    = SCALE_REG_SIZE * 2;
+  localparam ZP_REG1_BASE    = SCALE_REG_SIZE * 2 + ZP_REG_SIZE;
+
   // --------------------------------------------------------------------------
   // Output interface driving (pulse start)
   // --------------------------------------------------------------------------
@@ -1109,7 +1117,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           flags      = {5'd0, QDIR_COL, mxu_buf_q, buf_cur};
           c.flags    = flags;
           c.instr    = make_instr(OP_SC_LDMA_MXU, sc_bytes);
-          c.rs1_data  = {63'd0, mxu_buf_q};
+          c.rs1_data  = mxu_buf_q ? SCALE_REG1_BASE : SCALE_REG0_BASE;
           c.rs2_data  = lmem_sc_mxu;
 
           out_cmd_d   = c;
@@ -1130,7 +1138,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           flags      = {5'd0, QDIR_COL, mxu_buf_q, buf_cur};
           c.flags    = flags;
           c.instr    = make_instr(OP_ZP_LDMA_MXU, zp_bytes);
-          c.rs1_data  = {63'd0, mxu_buf_q};
+          c.rs1_data  = mxu_buf_q ? ZP_REG1_BASE : ZP_REG0_BASE;
           c.rs2_data  = lmem_zp_mxu;
 
           out_cmd_d   = c;
@@ -1217,7 +1225,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
             flags      = {5'd0, QDIR_COL, next_mxu_buf, buf_cur};
             c.flags    = flags;
             c.instr    = make_instr(OP_SC_LDMA_MXU, sc_bytes);
-            c.rs1_data  = {63'd0, next_mxu_buf};
+            c.rs1_data  = next_mxu_buf ? SCALE_REG1_BASE : SCALE_REG0_BASE;
             c.rs2_data  = lmem_sc_mxu_next;
 
             out_cmd_d   = c;
@@ -1243,7 +1251,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           flags      = {5'd0, QDIR_COL, next_mxu_buf, buf_cur};
           c.flags    = flags;
           c.instr    = make_instr(OP_ZP_LDMA_MXU, zp_bytes);
-          c.rs1_data  = {63'd0, next_mxu_buf};
+          c.rs1_data  = next_mxu_buf ? ZP_REG1_BASE : ZP_REG0_BASE;
           c.rs2_data  = lmem_zp_mxu_next;
 
           out_cmd_d   = c;
