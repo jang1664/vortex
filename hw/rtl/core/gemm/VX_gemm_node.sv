@@ -51,6 +51,9 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     localparam int MXU_KT = 32;
     localparam int MXU_NT = 32;
 
+    localparam int NUM_ENTRIES = 4;
+    localparam int ENTRYID_W  = `LOG2UP(NUM_ENTRIES);
+    localparam logic [7:0] OP_NOTIFY = 8'hF1;
     // -------------------------------------------------------------------------
     // Data-path interfaces
     // -------------------------------------------------------------------------
@@ -92,21 +95,21 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
 
     // Internal wide buses between load-path adapters and DMAs.
     VX_mem_bus_if # (
-      .DATA_SIZE(`GEMM_INPUT_DATA_SIZE),
+      .DATA_SIZE(`GEMM_INPUT_DATA_SIZE),  //64bytes
       .TAG_WIDTH(LMEM_TAG_WIDTH)
     ) i_dma_lmem_wide_bus_if ();
     VX_mem_bus_if # (
-      .DATA_SIZE(`GEMM_WEIGHT_DATA_SIZE),
+      .DATA_SIZE(`GEMM_WEIGHT_DATA_SIZE),  //16bytes
       .TAG_WIDTH(LMEM_TAG_WIDTH)
     ) w_dma_lmem_wide_bus_if ();
     VX_mem_bus_if # (
-      .DATA_SIZE(`GEMM_SCALE_ZERO_DATA_SIZE),
+      .DATA_SIZE(`GEMM_SCALE_ZERO_DATA_SIZE),  //64bytes
       .TAG_WIDTH(LMEM_TAG_WIDTH)
     ) sz_dma_lmem_wide_bus_if ();
 
     // Output internal bus (wide before split adapter)
     VX_mem_bus_if # (
-      .DATA_SIZE(`GEMM_OUTPUT_DATA_SIZE),
+      .DATA_SIZE(`GEMM_OUTPUT_DATA_SIZE),  //64bytes
       .TAG_WIDTH(LMEM_TAG_WIDTH)
     ) o_dma_lmem_wide_bus_if (); // output ldma -> adapter (wide)
 
@@ -141,12 +144,47 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     VX_lmem_dma_ctrl_if output_dma_ctrl_if ();
     VX_gemm_dma_ctrl_if gemm_dma_ctrl_if ();
 
+    logic        input_notify_pending_r;
+    logic [31:0] input_notify_reg_idx_r;
+    logic [31:0] input_notify_value_r;
+
+    wire input_is_notify   = (gemm_ctrl_if.input_read_ctrl.cmd.instr[7:0] == OP_NOTIFY);
+    wire input_notify_req  = gemm_ctrl_if.input_read_ctrl.start && input_is_notify;
+    wire input_notify_fire = input_notify_pending_r && gemm_sync_if[0].ready;
+
+    logic        weight_notify_pending_r;
+    logic [31:0] weight_notify_reg_idx_r;
+    logic [31:0] weight_notify_value_r;
+
+    wire weight_is_notify   = (gemm_ctrl_if.weight_read_ctrl.cmd.instr[7:0] == OP_NOTIFY);
+    wire weight_notify_req  = gemm_ctrl_if.weight_read_ctrl.start && weight_is_notify;
+    wire weight_notify_fire = weight_notify_pending_r && gemm_sync_if[1].ready;
+
+    logic        sz_notify_pending_r;
+    logic [31:0] sz_notify_reg_idx_r;
+    logic [31:0] sz_notify_value_r;
+
+    wire sz_is_notify   = (gemm_ctrl_if.quant_param_read_ctrl.cmd.instr[7:0] == OP_NOTIFY);
+    wire sz_notify_req  = gemm_ctrl_if.quant_param_read_ctrl.start && sz_is_notify;
+    wire sz_notify_fire = sz_notify_pending_r && gemm_sync_if[2].ready;
+
+    logic        output_notify_pending_r;
+    logic [31:0] output_notify_reg_idx_r;
+    logic [31:0] output_notify_value_r;
+
+    wire output_is_notify   = (gemm_ctrl_if.output_write_ctrl.cmd.instr[7:0] == OP_NOTIFY);
+    wire output_notify_req  = gemm_ctrl_if.output_write_ctrl.start && output_is_notify;
+    wire output_notify_fire = output_notify_pending_r && gemm_sync_if[3].ready;
+
     // Completion/synchronization path from child nodes to gemm_ctrl.
     VX_gemm_sync_if gemm_sync_if[N_NODE] ();
 
     // Job frontend dispatch/done handshake.
-    VX_config_reg_if issue_if();
-    VX_node_done_if  done_if();
+    VX_config_reg_if #(
+      .NUM(`GEMM_CFG_REG_NUM),
+      .DW(32)
+    ) issue_if();
+    VX_node_done_if done_if();
 
     // -------------------------------------------------------------------------
     // Control-plane wiring
@@ -154,8 +192,8 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
 
     // GEMM unit direct control bridge (temporary/static mapping).
     // TODO: replace with full command mapping from gemm_ctrl.
-    assign gemm_unit_if.start                            = gemm_ctrl_if.input_read_ctrl.start; // start signal로 동기화
-    assign gemm_unit_if.gemm_unit_ctrl.acc_cnt           = MT;
+    assign gemm_unit_if.start                            = gemm_ctrl_if.input_read_ctrl.start && !input_is_notify; // start signal로 동기화
+    assign gemm_unit_if.gemm_unit_ctrl.acc_cnt           = KT/MXU_KT;
     assign gemm_unit_if.gemm_unit_ctrl.acc_mem_base_addr = '0;
     assign gemm_unit_if.gemm_unit_ctrl.quant_dir         = gemm_ctrl_if.input_read_ctrl.cmd.flags[4]; //QDIR
     assign gemm_unit_if.gemm_unit_ctrl.wreg_use_idx      = gemm_ctrl_if.input_read_ctrl.cmd.flags[1]; //mxu tile double buffering 번호
@@ -164,10 +202,10 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     assign gemm_unit_if.gemm_unit_ctrl.is_load           = ~gemm_ctrl_if.input_read_ctrl.cmd.flags[2];
 
     // Connect gemm_ctrl_if to DMA ctrl interfaces
-    assign input_dma_ctrl_if.start           = gemm_ctrl_if.input_read_ctrl.start;
+    assign input_dma_ctrl_if.start           = gemm_ctrl_if.input_read_ctrl.start && !input_is_notify;
     assign input_dma_ctrl_if.src_base_addr   = gemm_ctrl_if.input_read_ctrl.cmd.rs2_data;
     assign input_dma_ctrl_if.dst_base_addr   = '0;  //gemm_unit 으로 들어가는 input activation의 주소는 안 중요함
-    assign input_dma_ctrl_if.src_strides[0]  = KT*16/8;
+    assign input_dma_ctrl_if.src_strides[0]  = MXU_KT*16/8;
     assign input_dma_ctrl_if.src_strides[1]  = 0;
     assign input_dma_ctrl_if.src_strides[2]  = 0;
 
@@ -178,16 +216,35 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     assign input_dma_ctrl_if.bounds[0]       = MT;
     assign input_dma_ctrl_if.bounds[1]       = 32'd1;
     assign input_dma_ctrl_if.bounds[2]       = 32'd1;
+
     assign input_dma_ctrl_if.seg_size        = MXU_KT*16/8;
-    assign gemm_ctrl_if.input_read_flag.idle = gemm_unit_if.idle;
-    assign gemm_ctrl_if.input_read_flag.done = gemm_unit_if.done;  //gemm 연산이 끝나야 ildma 가 끝
-    assign input_dma_ctrl_if.reg_idx         = gemm_ctrl_if.input_read_ctrl.cmd.rs1_data;
-    assign input_dma_ctrl_if.reg_value       = gemm_ctrl_if.input_read_ctrl.cmd.rs2_data;
+    assign gemm_ctrl_if.input_read_flag.idle = input_notify_pending_r ? 1'b0 : gemm_unit_if.idle;
+    assign gemm_ctrl_if.input_read_flag.done = input_notify_pending_r ? input_notify_fire : gemm_unit_if.done;  //gemm 연산이 끝나야 ildma 가 끝
+
+    assign gemm_sync_if[0].valid   = input_notify_pending_r;
+    assign gemm_sync_if[0].reg_idx = input_notify_pending_r ? input_notify_reg_idx_r : 32'd0;
+    assign gemm_sync_if[0].value   = input_notify_pending_r ? input_notify_value_r : 32'd0;
+
+    always_ff @(posedge clk) begin
+      if (reset) begin
+        input_notify_pending_r <= 1'b0;
+        input_notify_reg_idx_r <= '0;
+        input_notify_value_r   <= '0;
+      end else begin
+        if (input_notify_req) begin
+          input_notify_pending_r <= 1'b1;
+          input_notify_reg_idx_r <= gemm_ctrl_if.input_read_ctrl.cmd.rs1_data[31:0];
+          input_notify_value_r   <= gemm_ctrl_if.input_read_ctrl.cmd.rs2_data[31:0];
+        end else if (input_notify_fire) begin
+          input_notify_pending_r <= 1'b0;
+        end
+      end
+    end
 
     // Weight load DMA command mapping.
-    assign weight_dma_ctrl_if.start          = gemm_ctrl_if.weight_read_ctrl.start;
+    assign weight_dma_ctrl_if.start          = gemm_ctrl_if.weight_read_ctrl.start && !weight_is_notify;
     assign weight_dma_ctrl_if.src_base_addr  = gemm_ctrl_if.weight_read_ctrl.cmd.rs2_data;
-    assign weight_dma_ctrl_if.dst_base_addr  = gemm_ctrl_if.weight_read_ctrl.cmd.flags[1];  //mxu tile double buffering 번호
+    assign weight_dma_ctrl_if.dst_base_addr  = '0;  //mxu tile double buffering 번호
     assign weight_dma_ctrl_if.src_strides[0] = NT*4/8;
     assign weight_dma_ctrl_if.src_strides[1] = 0;
     assign weight_dma_ctrl_if.src_strides[2] = 0;
@@ -199,16 +256,35 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     assign weight_dma_ctrl_if.bounds[0]      = MXU_KT;
     assign weight_dma_ctrl_if.bounds[1]      = 32'd1;
     assign weight_dma_ctrl_if.bounds[2]      = 32'd1;
+    
     assign weight_dma_ctrl_if.seg_size       = MXU_NT*4/8;  //int4, 바이트 단위
-    assign gemm_ctrl_if.weight_read_flag.idle = weight_dma_ctrl_if.idle;
-    assign gemm_ctrl_if.weight_read_flag.done = weight_dma_ctrl_if.done;
-    assign weight_dma_ctrl_if.reg_idx         = gemm_ctrl_if.weight_read_ctrl.cmd.rs1_data;
-    assign weight_dma_ctrl_if.reg_value       = gemm_ctrl_if.weight_read_ctrl.cmd.rs2_data;
+    assign gemm_ctrl_if.weight_read_flag.idle = weight_notify_pending_r ? 1'b0 : weight_dma_ctrl_if.idle;
+    assign gemm_ctrl_if.weight_read_flag.done = weight_notify_pending_r ? weight_notify_fire : weight_dma_ctrl_if.done;
+
+    assign gemm_sync_if[1].valid   = weight_notify_pending_r;
+    assign gemm_sync_if[1].reg_idx = weight_notify_pending_r ? weight_notify_reg_idx_r : 32'd0;
+    assign gemm_sync_if[1].value   = weight_notify_pending_r ? weight_notify_value_r : 32'd0;
+
+    always_ff @(posedge clk) begin
+      if (reset) begin
+        weight_notify_pending_r <= 1'b0;
+        weight_notify_reg_idx_r <= '0;
+        weight_notify_value_r   <= '0;
+      end else begin
+        if (weight_notify_req) begin
+          weight_notify_pending_r <= 1'b1;
+          weight_notify_reg_idx_r <= gemm_ctrl_if.weight_read_ctrl.cmd.rs1_data[31:0];
+          weight_notify_value_r   <= gemm_ctrl_if.weight_read_ctrl.cmd.rs2_data[31:0];
+        end else if (weight_notify_fire) begin
+          weight_notify_pending_r <= 1'b0;
+        end
+      end
+    end
 
     // Quant parameter load DMA command mapping.
-    assign quant_param_dma_ctrl_if.start         = gemm_ctrl_if.quant_param_read_ctrl.start;
+    assign quant_param_dma_ctrl_if.start         = gemm_ctrl_if.quant_param_read_ctrl.start && !sz_is_notify;
     assign quant_param_dma_ctrl_if.src_base_addr = gemm_ctrl_if.quant_param_read_ctrl.cmd.rs2_data;
-    assign quant_param_dma_ctrl_if.dst_base_addr = gemm_ctrl_if.quant_param_read_ctrl.cmd.flags[1];
+    assign quant_param_dma_ctrl_if.dst_base_addr = gemm_ctrl_if.quant_param_read_ctrl.cmd.rs1_data;
     assign quant_param_dma_ctrl_if.src_strides[0] = NT*16/8;  //scale: fp16, zp: int16
     assign quant_param_dma_ctrl_if.src_strides[1] = 0;
     assign quant_param_dma_ctrl_if.src_strides[2] = 0;
@@ -222,13 +298,31 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     assign quant_param_dma_ctrl_if.bounds[2]       = 32'd1;
 
     assign quant_param_dma_ctrl_if.seg_size        = MXU_NT*16/8;
-    assign gemm_ctrl_if.quant_param_read_flag.idle = quant_param_dma_ctrl_if.idle;
-    assign gemm_ctrl_if.quant_param_read_flag.done = quant_param_dma_ctrl_if.done;
-    assign quant_param_dma_ctrl_if.reg_idx         = gemm_ctrl_if.quant_param_read_ctrl.cmd.rs1_data;
-    assign quant_param_dma_ctrl_if.reg_value       = gemm_ctrl_if.quant_param_read_ctrl.cmd.rs2_data;
+    assign gemm_ctrl_if.quant_param_read_flag.idle = sz_notify_pending_r ? 1'b0 : quant_param_dma_ctrl_if.idle;
+    assign gemm_ctrl_if.quant_param_read_flag.done = sz_notify_pending_r ? sz_notify_fire : quant_param_dma_ctrl_if.done;
+
+    assign gemm_sync_if[2].valid   = sz_notify_pending_r;
+    assign gemm_sync_if[2].reg_idx = sz_notify_pending_r ? sz_notify_reg_idx_r : 32'd0;
+    assign gemm_sync_if[2].value   = sz_notify_pending_r ? sz_notify_value_r : 32'd0;
+
+    always_ff @(posedge clk) begin
+      if (reset) begin
+        sz_notify_pending_r <= 1'b0;
+        sz_notify_reg_idx_r <= '0;
+        sz_notify_value_r   <= '0;
+      end else begin
+        if (sz_notify_req) begin
+          sz_notify_pending_r <= 1'b1;
+          sz_notify_reg_idx_r <= gemm_ctrl_if.quant_param_read_ctrl.cmd.rs1_data[31:0];
+          sz_notify_value_r   <= gemm_ctrl_if.quant_param_read_ctrl.cmd.rs2_data[31:0];
+        end else if (sz_notify_fire) begin
+          sz_notify_pending_r <= 1'b0;
+        end
+      end
+    end
 
     // Output store DMA command mapping.
-    assign output_dma_ctrl_if.start         = gemm_ctrl_if.output_write_ctrl.start;
+    assign output_dma_ctrl_if.start         = gemm_ctrl_if.output_write_ctrl.start && !output_is_notify;
     assign output_dma_ctrl_if.src_base_addr = gemm_ctrl_if.output_write_ctrl.cmd.rs2_data;
     assign output_dma_ctrl_if.dst_base_addr = gemm_ctrl_if.output_write_ctrl.cmd.rs1_data;
 
@@ -245,11 +339,29 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     assign output_dma_ctrl_if.bounds[2] = 32'd1;
 
     assign output_dma_ctrl_if.seg_size         = NT*16/8;  //request가 1이 되면 fp32가 fp16으로 바뀌어서 rsp_data 로 들어옴, 이걸 ldma 하면 됨
-    assign gemm_ctrl_if.output_write_flag.idle = output_dma_ctrl_if.idle;
-    assign gemm_ctrl_if.output_write_flag.done = output_dma_ctrl_if.done;
-    assign output_dma_ctrl_if.reg_idx          = gemm_ctrl_if.output_write_ctrl.cmd.rs1_data;
-    assign output_dma_ctrl_if.reg_value        = gemm_ctrl_if.output_write_ctrl.cmd.rs2_data;
-  
+    assign gemm_ctrl_if.output_write_flag.idle = output_notify_pending_r ? 1'b0 : output_dma_ctrl_if.idle;
+    assign gemm_ctrl_if.output_write_flag.done = output_notify_pending_r ? output_notify_fire : output_dma_ctrl_if.done;
+
+    assign gemm_sync_if[3].valid   = output_notify_pending_r;
+    assign gemm_sync_if[3].reg_idx = output_notify_pending_r ? output_notify_reg_idx_r : 32'd0;
+    assign gemm_sync_if[3].value   = output_notify_pending_r ? output_notify_value_r : 32'd0;
+
+    always_ff @(posedge clk) begin
+      if (reset) begin
+        output_notify_pending_r <= 1'b0;
+        output_notify_reg_idx_r <= '0;
+        output_notify_value_r   <= '0;
+      end else begin
+        if (output_notify_req) begin
+          output_notify_pending_r <= 1'b1;
+          output_notify_reg_idx_r <= gemm_ctrl_if.output_write_ctrl.cmd.rs1_data[31:0];
+          output_notify_value_r   <= gemm_ctrl_if.output_write_ctrl.cmd.rs2_data[31:0];
+        end else if (output_notify_fire) begin
+          output_notify_pending_r <= 1'b0;
+        end
+      end
+    end
+
     // External DMA control mapping (dcache <-> LMEM).
     assign gemm_dma_ctrl_if.start      = gemm_ctrl_if.dma_ctrl.start;
     assign gemm_dma_ctrl_if.cmd        = gemm_ctrl_if.dma_ctrl.cmd;
@@ -278,8 +390,8 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     VX_job_frontend #(
       .INSTANCE_ID(INSTANCE_ID),
       .NUM_MASTERS(N_MASTER),
-      .NUM_ENTRIES(4),
-      .NUM_REGS32(32),
+      .NUM_ENTRIES(NUM_ENTRIES),
+      .NUM_REGS32(`GEMM_CFG_REG_NUM),
       .CFG_BASE_ADDR(`GEMM_REG_BASE_ADDR)
     ) VX_job_frontend_instance (
       .clk(clk),
@@ -337,7 +449,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
 
     // Input adapter (split requests / gather responses)
     `MEM_BUS_IF_TO_WIRES(i_src, i_dma_lmem_wide_bus_if);
-    VX_mem_data_adapter #(
+      VX_mem_data_adapter2 #(
       .SRC_DATA_WIDTH (`GEMM_INPUT_DATA_SIZE * 8),
       .SRC_ADDR_WIDTH (I_SRC_ADDR_WIDTH),
       .DST_DATA_WIDTH (LSU_WORD_SIZE * 8),
@@ -376,8 +488,8 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
 
     // Weight adapter (split requests / gather responses)
     `MEM_BUS_IF_TO_WIRES(w_src, w_dma_lmem_wide_bus_if);
-    VX_mem_data_adapter #(
-      .SRC_DATA_WIDTH (`GEMM_WEIGHT_DATA_SIZE * 8),
+      VX_mem_data_adapter2 #(
+      .SRC_DATA_WIDTH (`GEMM_WEIGHT_DATA_SIZE * 8), //
       .SRC_ADDR_WIDTH (W_SRC_ADDR_WIDTH),
       .DST_DATA_WIDTH (LSU_WORD_SIZE * 8),
       .DST_ADDR_WIDTH (DST_ADDR_WIDTH),
@@ -415,7 +527,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
 
     // Scale/Zero adapter (split requests / gather responses)
     `MEM_BUS_IF_TO_WIRES(sz_src, sz_dma_lmem_wide_bus_if);
-    VX_mem_data_adapter #(
+      VX_mem_data_adapter2 #(
       .SRC_DATA_WIDTH (`GEMM_SCALE_ZERO_DATA_SIZE * 8),
       .SRC_ADDR_WIDTH (SZ_SRC_ADDR_WIDTH),
       .DST_DATA_WIDTH (LSU_WORD_SIZE * 8),
@@ -456,7 +568,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     // Output-path adapter: LDMA (wide) -> LMEM arbiter (LSU width)
     // -------------------------------------------------------------------------
     `MEM_BUS_IF_TO_WIRES(o_src, o_dma_lmem_wide_bus_if);
-    VX_mem_data_adapter #(
+    VX_mem_data_adapter2 #(
       .SRC_DATA_WIDTH (`GEMM_OUTPUT_DATA_SIZE * 8),
       .SRC_ADDR_WIDTH (O_SRC_ADDR_WIDTH),
       .DST_DATA_WIDTH (LSU_WORD_SIZE * 8),
@@ -531,7 +643,21 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     assign w_gemm_bus_if.req_data.flags  = w_dma_gemm_bus_if.req_data.flags;
     assign w_gemm_bus_if.req_data.tag    = w_dma_gemm_bus_if.req_data.tag;
    
-    `ASSIGN_VX_MEM_BUS_IF(sz_gemm_bus_if, sz_dma_gemm_bus_if);
+    //`ASSIGN_VX_MEM_BUS_IF(sz_gemm_bus_if, sz_dma_gemm_bus_if);
+
+    assign sz_gemm_bus_if.req_valid  = sz_dma_gemm_bus_if.req_valid;
+    //assign sz_gemm_bus_if.req_data   = sz_dma_gemm_bus_if.req_data;
+    assign sz_dma_gemm_bus_if.req_ready  = sz_gemm_bus_if.req_ready;
+    assign sz_dma_gemm_bus_if.rsp_valid  = sz_gemm_bus_if.rsp_valid;
+    assign sz_dma_gemm_bus_if.rsp_data   = sz_gemm_bus_if.rsp_data;
+    assign sz_gemm_bus_if.rsp_ready  = sz_dma_gemm_bus_if.rsp_ready;
+    
+    assign sz_gemm_bus_if.req_data.rw    = sz_dma_gemm_bus_if.req_data.rw;
+    assign sz_gemm_bus_if.req_data.addr  = (sz_dma_gemm_bus_if.req_data.addr) << (`CLOG2(`GEMM_SCALE_ZERO_DATA_SIZE)); // beat 단위 주소 -> byte 단위 주소
+    assign sz_gemm_bus_if.req_data.data   = sz_dma_gemm_bus_if.req_data.data;
+    assign sz_gemm_bus_if.req_data.byteen = sz_dma_gemm_bus_if.req_data.byteen;
+    assign sz_gemm_bus_if.req_data.flags  = sz_dma_gemm_bus_if.req_data.flags;
+    assign sz_gemm_bus_if.req_data.tag    = sz_dma_gemm_bus_if.req_data.tag;
 
     // output path: gemm_unit (slave port) <-> output ldma (master port)
     `ASSIGN_VX_MEM_BUS_IF(o_gemm_bus_if, o_dma_gemm_bus_if);
@@ -562,7 +688,6 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
       .clk(clk),
       .reset(reset),
       .ctrl_if(input_dma_ctrl_if),
-      .gemm_sync_if(gemm_sync_if[0]),
       .lmem_bus_if(i_dma_lmem_wide_bus_if),
       .gemm_bus_if(i_dma_gemm_bus_if)
     );
@@ -575,7 +700,6 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
       .clk(clk),
       .reset(reset),
       .ctrl_if(weight_dma_ctrl_if),
-      .gemm_sync_if(gemm_sync_if[1]),
       .lmem_bus_if(w_dma_lmem_wide_bus_if),
       .gemm_bus_if(w_dma_gemm_bus_if)
     );
@@ -588,7 +712,6 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
       .clk(clk),
       .reset(reset),
       .ctrl_if(quant_param_dma_ctrl_if),
-      .gemm_sync_if(gemm_sync_if[2]),
       .lmem_bus_if(sz_dma_lmem_wide_bus_if),
       .gemm_bus_if(sz_dma_gemm_bus_if)
     );
@@ -601,14 +724,15 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
       .clk(clk),
       .reset(reset),
       .ctrl_if(output_dma_ctrl_if),
-      .gemm_sync_if(gemm_sync_if[3]),
       .lmem_bus_if(o_dma_lmem_wide_bus_if),
       .gemm_bus_if(o_dma_gemm_bus_if)
     );
 
     // External DMA control (dcache <-> LMEM)
     VX_gemm_dma_ctrl #(
-      .INSTANCE_ID(INSTANCE_ID)
+      .INSTANCE_ID(INSTANCE_ID),
+      .DMA_CFG_BASE_ADDR(`DMA_REG_BASE_ADDR),
+      .ENTRYID_W(ENTRYID_W)
     ) u_VX_gemm_dma_ctrl (
       .clk(clk),
       .reset(reset),
