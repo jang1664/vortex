@@ -888,7 +888,7 @@ module tb_VX_gemm_node
     $finish;
   end
 
-  parameter longint unsigned SIM_TIMEOUT_NS = 100_000; // 예: 2ms = 2,000,000ns
+  parameter longint unsigned SIM_TIMEOUT_NS = 1_000_000; // 예: 2ms = 2,000,000ns
 
   // =========================================================================
   // Global watchdog timeout (hard stop)

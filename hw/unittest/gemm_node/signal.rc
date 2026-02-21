@@ -2,7 +2,7 @@ Magic 271485
 Revision Verdi_U-2023.03-SP2-9
 
 ; Window Layout <x> <y> <width> <height> <signalwidth> <valuewidth>
-viewPort 0 25 1920 903 399 65
+viewPort 0 25 1920 903 399 146
 
 ; File list:
 ; openDirFile [-d delimiter] [-s time_offset] [-rf auto_bus_rule_file] path_name file_name
@@ -16,8 +16,8 @@ signalSpacing 5
 
 ; windowTimeUnit is used for zoom, cursor & marker
 ; waveform viewport range
-zoom 1170261.461318 1817646.848138
-cursor 1235000.000000
+zoom 0.000000 101000000.000000
+cursor 20945000.000000
 marker 0.000000
 
 ; user define markers
@@ -25,7 +25,7 @@ marker 0.000000
 ; visible top row signal index
 top 0
 ; marker line index
-markerPos 33
+markerPos 95
 
 ; event list
 ; addEvent event_name event_expression
@@ -57,31 +57,94 @@ addSignal -h 15 /tb_VX_gemm_node/u_dut/u_VX_gemm_ctrl/u_VX_gemm_fsm/clk
 addSignal -h 15 -UNSIGNED -holdScope state_d[7:0]
 addSignal -h 15 -UNSIGNED -holdScope state_q[7:0]
 addSignal -h 15 -holdScope job_d
-addGroup "gemm_dma_ctrl"
+addGroup "gemm_dma_ctrl" -e FALSE
+addSignal -h 15 -UNSIGNED -HEX /tb_VX_gemm_node/u_dut/u_VX_gemm_dma_ctrl/K_tot_d[31:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope K_tot_q[31:0]
+addSignal -h 15 -UNSIGNED -UDEC -holdScope LSU_ADDR_SHIFT[31:0]
+addSignal -h 15 -UNSIGNED -UDEC -holdScope MT[31:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope M_tot_d[31:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope M_tot_q[31:0]
+addSignal -h 15 -UNSIGNED -UDEC -holdScope NT[31:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope N_tot_d[31:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope N_tot_q[31:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope OP_DMA_LD[7:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope OP_DMA_ST[7:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope OP_NOTIFY[7:0]
+addSignal -h 15 -UNSIGNED -UDEC -holdScope POLL_GAP_CYCLES[31:0]
+addSignal -h 15 -UNSIGNED -UDEC -holdScope REGS_PER_LANE[31:0]
+addSignal -h 15 -UNSIGNED -UDEC -holdScope alloc_gap_d[31:0]
+addSignal -h 15 -UNSIGNED -UDEC -holdScope alloc_gap_q[31:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope alloc_gen_d[15:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope alloc_gen_q[15:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope alloc_owner_d[3:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope alloc_owner_q[3:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope bnd0[31:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope bnd1[31:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope bnd2[31:0]
+addSignal -h 15 -holdScope clk
+addSignal -h 15 -UNSIGNED -HEX -holdScope cmd_op[7:0]
+addSignal -h 15 -holdScope cmd_q
+addSignal -h 15 -holdScope dir_is_st
+addSignal -h 15 -UNSIGNED -HEX -holdScope dram_b0[31:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope dram_b1[31:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope dram_b2[31:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope dram_s0[31:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope dram_s1[31:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope dram_s2[31:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope dst_base[63:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope dst_s0[31:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope dst_s1[31:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope dst_s2[31:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope entry_id_d[3:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope entry_id_q[3:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope groups_eff[31:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope kt_eff[31:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope kt_idx[31:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope lmem_s0[31:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope lmem_s1[31:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope lmem_s2[31:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope mt_eff[31:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope mt_idx[31:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope notify_rid[7:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope notify_value[31:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope nt_eff[31:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope nt_idx[31:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope padding[31:0]
+addSignal -h 15 -UNSIGNED -UDEC -holdScope poll_gap_d[31:0]
+addSignal -h 15 -UNSIGNED -UDEC -holdScope poll_gap_q[31:0]
+addSignal -h 15 -holdScope reset
+addSignal -h 15 -UNSIGNED -HEX -holdScope seg_size[31:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope src_base[63:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope src_s0[31:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope src_s1[31:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope src_s2[31:0]
+addSignal -h 15 -UNSIGNED -holdScope state_d[4:0]
+addSignal -h 15 -UNSIGNED -holdScope state_q[4:0]
+addSignal -h 15 -UNSIGNED -holdScope tensor_sel[2:0]
+addSignal -h 15 -UNSIGNED -UDEC -holdScope wr_idx_d[31:0]
 addSubGroup "dma_if-1"
-addSignal -expanded -h 15 /tb_VX_gemm_node/u_dut/u_VX_gemm_dma_ctrl/dma_if/req_data
-addSignal -h 15 -UNSIGNED -HEX -holdScope req_data.mask[3:0]
-addSignal -h 15 -holdScope req_data.rw
-addSignal -expanded -h 15 -holdScope req_data.addr[3:0]
-addSignal -h 15 -UNSIGNED -HEX -holdScope req_data.addr[3][44:0]
-addSignal -h 15 -UNSIGNED -HEX -holdScope req_data.addr[2][44:0]
-addSignal -h 15 -UNSIGNED -HEX -holdScope req_data.addr[1][44:0]
-addSignal -h 15 -UNSIGNED -HEX -holdScope req_data.addr[0][44:0]
-addSignal -expanded -h 15 -holdScope req_data.data[3:0]
-addSignal -h 15 -UNSIGNED -HEX -holdScope req_data.data[3][63:0]
-addSignal -h 15 -UNSIGNED -HEX -holdScope req_data.data[2][63:0]
-addSignal -h 15 -UNSIGNED -HEX -holdScope req_data.data[1][63:0]
-addSignal -h 15 -UNSIGNED -HEX -holdScope req_data.data[0][63:0]
-addSignal -h 15 -holdScope req_data.byteen[3:0]
-addSignal -h 15 -holdScope req_data.flags[3:0]
-addSignal -h 15 -holdScope req_data.tag
+addSignal -h 15 /tb_VX_gemm_node/u_dut/u_VX_gemm_dma_ctrl/dma_if/req_data
 addSignal -h 15 -holdScope req_ready
 addSignal -h 15 -holdScope req_valid
-addSignal -h 15 -holdScope rsp_data
+addSignal -expanded -h 15 -holdScope rsp_data
+addSignal -h 15 -UNSIGNED -HEX -holdScope rsp_data.mask[3:0]
+addSignal -expanded -h 15 -holdScope rsp_data.data[3:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope rsp_data.data[3][63:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope rsp_data.data[2][63:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope rsp_data.data[1][63:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope rsp_data.data[0][63:0]
+addSignal -h 15 -holdScope rsp_data.tag
 addSignal -h 15 -holdScope rsp_ready
 addSignal -h 15 -holdScope rsp_valid
 endSubGroup "dma_if-1"
-addGroup "G4"
+addGroup "gemm_ctrl"
+addSignal -h 15 /tb_VX_gemm_node/u_dut/u_VX_gemm_ctrl/clk
+addSubGroup "done_if"
+addSignal -h 15 /tb_VX_gemm_node/u_dut/u_VX_gemm_ctrl/done_if/valid
+addSignal -h 15 -UNSIGNED -HEX -holdScope entry_id[31:0]
+addSignal -h 15 -holdScope ready
+endSubGroup "done_if"
+addGroup "G5"
 
 ; getSignalForm Scope Hierarchy Status
 ; active file of getSignalForm
@@ -94,7 +157,8 @@ getSignalForm close
 "/tb_VX_gemm_node"
 "/tb_VX_gemm_node/u_dut"
 "/tb_VX_gemm_node/u_dut/VX_job_frontend_instance"
-"/tb_VX_gemm_node/u_dut/u_VX_gemm_dma_ctrl"
+"/tb_VX_gemm_node/u_dut/u_VX_gemm_ctrl"
+"/tb_VX_gemm_node/u_dut/u_VX_gemm_ctrl/done_if"
 
 SCOPE_LIST_BEGIN
 "/VX_gpu_pkg"
@@ -107,6 +171,7 @@ SCOPE_LIST_BEGIN
 "/tb_VX_gemm_node/u_dut/u_VX_gemm_ctrl"
 "/tb_VX_gemm_node/u_dut/u_VX_gemm_dma_ctrl"
 "/tb_VX_gemm_node/u_dut/u_VX_gemm_dma_ctrl/dma_if"
+"/tb_VX_gemm_node/u_dut/u_VX_gemm_ctrl/done_if"
 SCOPE_LIST_END
 
 GETSIGNALFORM_SCOPE_HIERARCHY_END
