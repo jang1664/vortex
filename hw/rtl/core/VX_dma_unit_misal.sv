@@ -152,6 +152,25 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
 
   state_e state, state_n;
 
+  function automatic string state_to_str(input state_e s);
+    case (s)
+      S_IDLE:           return "S_IDLE";
+      S_PRECALC:        return "S_PRECALC";
+      S_PREP_SEG:       return "S_PREP_SEG";
+      S_L2G_DECIDE:     return "S_L2G_DECIDE";
+      S_L2G_SRC_RD_REQ: return "S_L2G_SRC_RD_REQ";
+      S_L2G_SRC_RD_WAIT:return "S_L2G_SRC_RD_WAIT";
+      S_L2G_DST_WR_REQ: return "S_L2G_DST_WR_REQ";
+      S_G2L_DECIDE:     return "S_G2L_DECIDE";
+      S_G2L_SRC_RD_REQ: return "S_G2L_SRC_RD_REQ";
+      S_G2L_SRC_RD_WAIT:return "S_G2L_SRC_RD_WAIT";
+      S_G2L_DST_WR_REQ: return "S_G2L_DST_WR_REQ";
+      S_ADV_SEG:        return "S_ADV_SEG";
+      S_DONE:           return "S_DONE";
+      default:          return "S_UNKNOWN";
+    endcase
+  endfunction
+
   // ------------------------------------------------------------
   // cfg handshake / latch
   // ------------------------------------------------------------
@@ -364,6 +383,12 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
   // ------------------------------------------------------------
   always_ff @(posedge clk) begin
     if (!reset) begin
+      if (state != state_n) begin
+        `TRACE(3, ("%m : [%0t] | DMA_STATE_TRANSITION | {inst=%s, from=%s, to=%s, out_off=%0d, finished=%0d, i0=%0d, i1=%0d, i2=%0d}\n",
+                  $time, INSTANCE_ID, state_to_str(state), state_to_str(state_n),
+                  out_off, finished, i_dim[0], i_dim[1], i_dim[2]))
+      end
+
       if (cmd_start) begin
         `TRACE(2, ("%m : [%0t] | DMA_START | {inst=%s, entry_id=%0d, dir=%0d, src_base=0x%0h, dst_base=0x%0h, seg_size=%0d, padding=%0d, bound=[%0d,%0d,%0d]}\n",
                   $time, INSTANCE_ID, cfg_reg_if.entry_id, cfg_reg_if.regs[DESC_DIR_IDX][0],
@@ -392,6 +417,21 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
                   $time, INSTANCE_ID,
                   precalc_result[0], precalc_result[2], precalc_result[4],
                   precalc_result[1], precalc_result[3], precalc_result[5]))
+      end
+
+      if (state == S_PREP_SEG && !finished) begin
+        logic [63:0] src_rd_ptr_aligned;
+        logic [63:0] src_rd_end_aligned;
+        logic [31:0] src_drop_bytes;
+        src_rd_ptr_aligned = direction_bit_r ? align_down(base_src_seg, LMEM_BYTES) : align_down(base_src_seg, DCACHE_BYTES);
+        src_rd_end_aligned = direction_bit_r ? align_up(base_src_seg + 64'(valid_total), LMEM_BYTES)
+                                             : align_up(base_src_seg + 64'(valid_total), DCACHE_BYTES);
+        src_drop_bytes = direction_bit_r ? 32'(base_src_seg & 64'(LMEM_BYTES-1))
+                                         : 32'(base_src_seg & 64'(DCACHE_BYTES-1));
+        `TRACE(2, ("%m : [%0t] | DMA_SEG_PREP | {inst=%s, mode=%s, i0=%0d, i1=%0d, i2=%0d, src_base=0x%0h, dst_base=0x%0h, seg_size=%0d, valid_total=%0d, padding=%0d, src_drop=%0d, src_rd_ptr=0x%0h, src_rd_end=0x%0h}\n",
+                  $time, INSTANCE_ID, direction_bit_r ? "L2G" : "G2L",
+                  i_dim[0], i_dim[1], i_dim[2], base_src_seg, base_dst_seg,
+                  seg_size_r, valid_total, padding_r, src_drop_bytes, src_rd_ptr_aligned, src_rd_end_aligned))
       end
 
       if (state == S_L2G_SRC_RD_REQ && lmem_req_fire) begin
@@ -428,6 +468,28 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
                   $time, INSTANCE_ID, lmem_bus_if.req_data.addr,
                   (64'(lmem_bus_if.req_data.addr) << LMEM_LG2),
                   lmem_bus_if.req_data.byteen, lmem_bus_if.req_data.data, lmem_bus_if.req_data.tag, out_off))
+      end
+
+      if (state == S_ADV_SEG && out_off >= seg_size_r) begin
+        logic will_finish;
+        will_finish = (bound_r[0] == 0 || bound_r[1] == 0 || bound_r[2] == 0)
+                   || ((i_dim[0] + 32'd1 >= bound_r[0])
+                    && (i_dim[1] + 32'd1 >= bound_r[1])
+                    && (i_dim[2] + 32'd1 >= bound_r[2]));
+        `TRACE(2, ("%m : [%0t] | DMA_SEG_ADVANCE | {inst=%s, i0=%0d, i1=%0d, i2=%0d, bound0=%0d, bound1=%0d, bound2=%0d, src_base=0x%0h, dst_base=0x%0h, seg_size=%0d, out_off=%0d, will_finish=%0d}\n",
+                  $time, INSTANCE_ID, i_dim[0], i_dim[1], i_dim[2],
+                  bound_r[0], bound_r[1], bound_r[2], base_src_seg, base_dst_seg,
+                  seg_size_r, out_off, will_finish))
+      end
+
+      if (state != S_DONE && state_n == S_DONE) begin
+        `TRACE(2, ("%m : [%0t] | DMA_DONE_ASSERT | {inst=%s, entry_id=%0d, i0=%0d, i1=%0d, i2=%0d}\n",
+                  $time, INSTANCE_ID, entry_id_latched, i_dim[0], i_dim[1], i_dim[2]))
+      end
+
+      if (state == S_DONE && done_if.ready) begin
+        `TRACE(2, ("%m : [%0t] | DMA_DONE_HANDSHAKE | {inst=%s, entry_id=%0d}\n",
+                  $time, INSTANCE_ID, entry_id_latched))
       end
     end
   end

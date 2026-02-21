@@ -39,6 +39,7 @@ Usage:
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Union
+import re
 
 # Type alias for parsed values
 Value = Union[int, str, dict, list]
@@ -200,12 +201,14 @@ def parse_line(line: str) -> Optional[LogEntry]:
     """
     line = line.rstrip("\n")
 
-    # For pysim logs, strip "HH:MM:SS:module:LEVEL:" prefix.
-    # The structured part always starts with ":[step]", so find that.
+    # Strip any optional prefix before structured RTL payload.
+    # Examples:
+    #   "tb.u_mod : [1355ns] | DMA_START | {...}"
+    #   "22:19:04:mod:DEBUG:[612] | EVENT | {...}"
     if not line.startswith("["):
-        bracket_idx = line.find(":[")
-        if bracket_idx >= 0:
-            line = line[bracket_idx + 1:]  # keep "[step] | ..."
+        structured = re.search(r"\[\s*-?\d+[A-Za-z]*\s*\]\s+\|\s+", line)
+        if structured is not None:
+            line = line[structured.start() :]  # keep "[time] | EVENT | ..."
         else:
             return None
 
@@ -217,10 +220,11 @@ def parse_line(line: str) -> Optional[LogEntry]:
     time_str = parts[0].strip()
     if not time_str.startswith("[") or not time_str.endswith("]"):
         return None
-    try:
-        time_val = int(time_str[1:-1].strip())
-    except ValueError:
+    time_body = time_str[1:-1].strip()
+    m = re.match(r"(-?\d+)", time_body)
+    if m is None:
         return None
+    time_val = int(m.group(1))
 
     event = parts[1].strip()
 

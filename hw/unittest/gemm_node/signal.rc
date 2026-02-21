@@ -16,8 +16,8 @@ signalSpacing 5
 
 ; windowTimeUnit is used for zoom, cursor & marker
 ; waveform viewport range
-zoom 0.000000 101000000.000000
-cursor 20945000.000000
+zoom 58199481.463013 58236271.709595
+cursor 58205000.000000
 marker 0.000000
 
 ; user define markers
@@ -25,7 +25,7 @@ marker 0.000000
 ; visible top row signal index
 top 0
 ; marker line index
-markerPos 95
+markerPos 271
 
 ; event list
 ; addEvent event_name event_expression
@@ -45,14 +45,14 @@ COMPLEX_EVENT_END
 curSTATUS ByChange
 
 
-addGroup "mmio_reg"
+addGroup "mmio_reg" -e FALSE
 activeDirFile "" "/home/jaeyongjang/project.local/vortex/hw/unittest/gemm_node/reports/tb_VX_gemm_node.fsdb"
 addSignal -h 15 /tb_VX_gemm_node/u_dut/VX_job_frontend_instance/u_job_desc_mmio_regs/clk
 addSignal -h 15 -holdScope regs32_o[3:0]
 addSignal -h 15 -holdScope generation_q[3:0]
 addSignal -h 15 -UNSIGNED -HEX -holdScope occupy_q[3:0]
 addSignal -h 15 -holdScope owner_q[3:0]
-addGroup "fsm"
+addGroup "fsm" -e FALSE
 addSignal -h 15 /tb_VX_gemm_node/u_dut/u_VX_gemm_ctrl/u_VX_gemm_fsm/clk
 addSignal -h 15 -UNSIGNED -holdScope state_d[7:0]
 addSignal -h 15 -UNSIGNED -holdScope state_q[7:0]
@@ -122,13 +122,13 @@ addSignal -h 15 -UNSIGNED -holdScope state_d[4:0]
 addSignal -h 15 -UNSIGNED -holdScope state_q[4:0]
 addSignal -h 15 -UNSIGNED -holdScope tensor_sel[2:0]
 addSignal -h 15 -UNSIGNED -UDEC -holdScope wr_idx_d[31:0]
-addSubGroup "dma_if-1"
+addSubGroup "dma_if-1" -e FALSE
 addSignal -h 15 /tb_VX_gemm_node/u_dut/u_VX_gemm_dma_ctrl/dma_if/req_data
 addSignal -h 15 -holdScope req_ready
 addSignal -h 15 -holdScope req_valid
-addSignal -expanded -h 15 -holdScope rsp_data
+addSignal -h 15 -holdScope rsp_data
 addSignal -h 15 -UNSIGNED -HEX -holdScope rsp_data.mask[3:0]
-addSignal -expanded -h 15 -holdScope rsp_data.data[3:0]
+addSignal -h 15 -holdScope rsp_data.data[3:0]
 addSignal -h 15 -UNSIGNED -HEX -holdScope rsp_data.data[3][63:0]
 addSignal -h 15 -UNSIGNED -HEX -holdScope rsp_data.data[2][63:0]
 addSignal -h 15 -UNSIGNED -HEX -holdScope rsp_data.data[1][63:0]
@@ -137,14 +137,194 @@ addSignal -h 15 -holdScope rsp_data.tag
 addSignal -h 15 -holdScope rsp_ready
 addSignal -h 15 -holdScope rsp_valid
 endSubGroup "dma_if-1"
-addGroup "gemm_ctrl"
+addGroup "gemm_ctrl" -e FALSE
 addSignal -h 15 /tb_VX_gemm_node/u_dut/u_VX_gemm_ctrl/clk
+addSignal -h 15 -holdScope job_active_q
+addSignal -h 15 -holdScope all_idle_now
+addSignal -h 15 -holdScope queues_idle
+addSignal -h 15 -holdScope workers_idle
+addSubGroup "gemm_ctrl_if" -e FALSE
+addSignal -h 15 /tb_VX_gemm_node/u_dut/u_VX_gemm_ctrl/gemm_ctrl_if/input_read_ctrl
+addSignal -h 15 -holdScope input_read_flag
+addSignal -h 15 -holdScope input_read_flag.idle
+addSignal -h 15 -holdScope input_read_flag.done
+addSignal -h 15 -holdScope weight_read_ctrl
+addSignal -h 15 -holdScope weight_read_flag
+addSignal -h 15 -holdScope weight_read_flag.idle
+addSignal -h 15 -holdScope weight_read_flag.done
+addSignal -h 15 -holdScope output_write_ctrl
+addSignal -h 15 -holdScope output_write_ctrl.cmd
+addSignal -h 15 -holdScope output_write_ctrl.start
+addSignal -h 15 -holdScope output_write_flag
+addSignal -h 15 -holdScope output_write_flag.idle
+addSignal -h 15 -holdScope output_write_flag.done
+addSignal -h 15 -holdScope quant_param_read_ctrl
+addSignal -h 15 -holdScope quant_param_read_flag
+addSignal -h 15 -holdScope quant_param_read_flag.idle
+addSignal -h 15 -holdScope quant_param_read_flag.done
+addSignal -h 15 -holdScope dma_ctrl
+addSignal -h 15 -holdScope dma_flag
+addSignal -h 15 -holdScope dma_flag.idle
+addSignal -h 15 -holdScope dma_flag.done
+addSignal -h 15 -UNSIGNED -HEX -holdScope M_tot[31:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope N_tot[31:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope K_tot[31:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope qblk_tot[31:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope entry_id[31:0]
+endSubGroup "gemm_ctrl_if"
 addSubGroup "done_if"
 addSignal -h 15 /tb_VX_gemm_node/u_dut/u_VX_gemm_ctrl/done_if/valid
 addSignal -h 15 -UNSIGNED -HEX -holdScope entry_id[31:0]
 addSignal -h 15 -holdScope ready
 endSubGroup "done_if"
-addGroup "G5"
+addGroup "u_output_lmem_dma" -e FALSE
+addSignal -h 15 /tb_VX_gemm_node/u_dut/u_output_lmem_dma/clk
+addSignal -h 15 -holdScope reset
+addSignal -h 15 /tb_VX_gemm_node/u_dut/u_output_lmem_dma/ctrl_if/start
+addSignal -h 15 -UNSIGNED -HEX -holdScope src_base_addr[63:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope dst_base_addr[63:0]
+addSignal -h 15 -holdScope src_strides[0:2]
+addSignal -h 15 -holdScope dst_strides[0:2]
+addSignal -h 15 -holdScope bounds[0:2]
+addSignal -h 15 -UNSIGNED -HEX -holdScope seg_size[31:0]
+addSignal -h 15 -holdScope idle
+addSignal -h 15 -holdScope done
+addSignal -h 15 /tb_VX_gemm_node/u_dut/u_output_lmem_dma/cmd_start
+addSignal -h 15 -UNSIGNED -HEX -holdScope dst_byte_addr[63:0]
+addSignal -h 15 -holdScope dst_is_gemm
+addSignal -h 15 -holdScope dst_req_fire
+addSignal -h 15 -holdScope dst_rsp_fire
+addSignal -h 15 -holdScope gemm_req_fire
+addSignal -h 15 -holdScope gemm_rsp_fire
+addSignal -h 15 -holdScope at_last_idx
+addSignal -h 15 -holdScope base_addr_r[0:1]
+addSignal -h 15 -UNSIGNED -HEX -holdScope base_dst_seg[63:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope base_dst_seg_r[63:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope base_src_seg[63:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope base_src_seg_r[63:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope beat_room[31:0]
+addSignal -h 15 -holdScope bound_r[0:2]
+addSignal -c ID_ORANGE5 -ls solid -lw 1 -h 15 -holdScope i_dim[0:2]
+addSignal -h 15 -UNSIGNED -UDEC -holdScope lane[31:0]
+addSignal -h 15 -holdScope lmem_req_fire
+addSignal -h 15 -holdScope lmem_rsp_fire
+addSignal -h 15 -UNSIGNED -HEX -holdScope need_src[31:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope out_off[31:0]
+addSignal -h 15 -holdScope precalc_done
+addSignal -h 15 -holdScope precalc_issue
+addSignal -h 15 -holdScope precalc_pending_r
+addSignal -h 15 -holdScope precalc_result[5:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope precalc_valid[5:0]
+addSignal -h 15 -UNSIGNED -UDEC -holdScope remaining[31:0]
+addSignal -h 15 -holdScope reset
+addSignal -h 15 -UNSIGNED -HEX -holdScope seg_size_r[31:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope src_byte_addr[63:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope src_drop[31:0]
+addSignal -h 15 -holdScope src_is_gemm
+addSignal -h 15 -UNSIGNED -HEX -holdScope src_rd_end[63:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope src_rd_ptr[63:0]
+addSignal -h 15 -holdScope src_rsp_fire
+addSignal -h 15 -UNSIGNED -holdScope state[3:0]
+addSignal -h 15 -UNSIGNED -holdScope state_n[3:0]
+addSignal -h 15 -holdScope stride_bound_r[0:1]
+addSignal -h 15 -holdScope stride_r[0:1]
+addSignal -h 15 -UNSIGNED -HEX -holdScope win[1023:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope win_valid[7:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope wr_byteen[63:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope wr_data[511:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope wr_nbytes[31:0]
+addSubGroup "lmem_bus_if"
+addSignal -h 15 /tb_VX_gemm_node/u_dut/u_output_lmem_dma/lmem_bus_if/req_valid
+addSignal -expanded -h 15 -holdScope req_data
+addSignal -h 15 -holdScope req_data.rw
+addSignal -h 15 -UNSIGNED -HEX -holdScope req_data.addr[41:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope req_data.data[511:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope req_data.byteen[63:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope req_data.flags[2:0]
+addSignal -h 15 -holdScope req_data.tag
+addSignal -h 15 -holdScope req_ready
+addSignal -h 15 -holdScope rsp_valid
+addSignal -h 15 -holdScope rsp_data
+addSignal -h 15 -holdScope rsp_ready
+endSubGroup "lmem_bus_if"
+addSubGroup "gemm_bus_if"
+addSignal -h 15 /tb_VX_gemm_node/u_dut/u_output_lmem_dma/gemm_bus_if/req_valid
+addSignal -h 15 -holdScope req_data
+addSignal -h 15 -holdScope req_ready
+addSignal -h 15 -holdScope rsp_valid
+addSignal -expanded -h 15 -holdScope rsp_data
+addSignal -h 15 -UNSIGNED -HEX -holdScope rsp_data.data[511:0]
+addSignal -h 15 -holdScope rsp_data.tag
+addSignal -h 15 -holdScope rsp_ready
+endSubGroup "gemm_bus_if"
+addGroup "gemm_unit" -e FALSE
+addSignal -expanded -h 15 /tb_VX_gemm_node/u_dut/u_VX_gemm_unit/gemm_unit_ctrl
+addSignal -h 15 -holdScope gemm_unit_ctrl.quant_dir
+addSignal -h 15 -UNSIGNED -HEX -holdScope gemm_unit_ctrl.acc_mem_base_addr[18:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope gemm_unit_ctrl.acc_cnt[10:0]
+addSignal -h 15 -holdScope gemm_unit_ctrl.wreg_use_idx
+addSignal -h 15 -holdScope gemm_unit_ctrl.sreg_use_idx
+addSignal -h 15 -holdScope gemm_unit_ctrl.zreg_use_idx
+addSignal -h 15 -holdScope gemm_unit_ctrl.is_load
+addSignal -h 15 -holdScope mxu_output_dly[31:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope mxu_output_valid_dly[31:0]
+addSubGroup "o_lmem_bus_if"
+addSignal -h 15 /tb_VX_gemm_node/u_dut/u_VX_gemm_unit/o_lmem_bus_if/req_valid
+addSignal -h 15 -holdScope req_data
+addSignal -h 15 -holdScope req_ready
+addSignal -h 15 -holdScope rsp_valid
+addSignal -expanded -h 15 -holdScope rsp_data
+addSignal -h 15 -UNSIGNED -HEX -holdScope rsp_data.data[511:0]
+addSignal -h 15 -holdScope rsp_data.tag
+addSignal -h 15 -holdScope rsp_ready
+endSubGroup "o_lmem_bus_if"
+addGroup "quant_param_lmem_dma"
+addSignal -h 15 /tb_VX_gemm_node/u_dut/u_quant_param_lmem_dma/at_last_idx
+addSignal -h 15 -holdScope base_addr_r[0:1]
+addSignal -h 15 -UNSIGNED -HEX -holdScope base_dst_seg[63:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope base_dst_seg_r[63:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope base_src_seg[63:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope base_src_seg_r[63:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope beat_room[31:0]
+addSignal -h 15 -holdScope bound_r[0:2]
+addSignal -h 15 -holdScope clk
+addSignal -h 15 -holdScope cmd_start
+addSignal -h 15 -UNSIGNED -HEX -holdScope dst_byte_addr[63:0]
+addSignal -h 15 -holdScope dst_is_gemm
+addSignal -h 15 -holdScope dst_req_fire
+addSignal -h 15 -holdScope dst_rsp_fire
+addSignal -h 15 -holdScope gemm_req_fire
+addSignal -h 15 -holdScope gemm_rsp_fire
+addSignal -h 15 -holdScope i_dim[0:2]
+addSignal -h 15 -UNSIGNED -UDEC -holdScope lane[31:0]
+addSignal -h 15 -holdScope lmem_req_fire
+addSignal -h 15 -holdScope lmem_rsp_fire
+addSignal -h 15 -UNSIGNED -HEX -holdScope need_src[31:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope out_off[31:0]
+addSignal -h 15 -holdScope precalc_done
+addSignal -h 15 -holdScope precalc_issue
+addSignal -h 15 -holdScope precalc_pending_r
+addSignal -h 15 -holdScope precalc_result[5:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope precalc_valid[5:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope remaining[31:0]
+addSignal -h 15 -holdScope reset
+addSignal -h 15 -UNSIGNED -HEX -holdScope seg_size_r[31:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope src_byte_addr[63:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope src_drop[31:0]
+addSignal -h 15 -holdScope src_is_gemm
+addSignal -h 15 -UNSIGNED -HEX -holdScope src_rd_end[63:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope src_rd_ptr[63:0]
+addSignal -h 15 -holdScope src_rsp_fire
+addSignal -h 15 -UNSIGNED -holdScope state[3:0]
+addSignal -h 15 -UNSIGNED -holdScope state_n[3:0]
+addSignal -h 15 -holdScope stride_bound_r[0:1]
+addSignal -h 15 -holdScope stride_r[0:1]
+addSignal -h 15 -UNSIGNED -HEX -holdScope win[1023:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope win_valid[7:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope wr_byteen[63:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope wr_data[511:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope wr_nbytes[31:0]
+addGroup "G8"
 
 ; getSignalForm Scope Hierarchy Status
 ; active file of getSignalForm
@@ -156,9 +336,7 @@ getSignalForm close
 "/VX_gpu_pkg"
 "/tb_VX_gemm_node"
 "/tb_VX_gemm_node/u_dut"
-"/tb_VX_gemm_node/u_dut/VX_job_frontend_instance"
-"/tb_VX_gemm_node/u_dut/u_VX_gemm_ctrl"
-"/tb_VX_gemm_node/u_dut/u_VX_gemm_ctrl/done_if"
+"/tb_VX_gemm_node/u_dut/u_quant_param_lmem_dma"
 
 SCOPE_LIST_BEGIN
 "/VX_gpu_pkg"
@@ -172,8 +350,45 @@ SCOPE_LIST_BEGIN
 "/tb_VX_gemm_node/u_dut/u_VX_gemm_dma_ctrl"
 "/tb_VX_gemm_node/u_dut/u_VX_gemm_dma_ctrl/dma_if"
 "/tb_VX_gemm_node/u_dut/u_VX_gemm_ctrl/done_if"
+"/tb_VX_gemm_node/u_dut/u_VX_gemm_ctrl/gemm_ctrl_if"
+"/tb_VX_gemm_node/u_dut/u_output_lmem_dma"
+"/tb_VX_gemm_node/u_dut/u_output_lmem_dma/lmem_bus_if"
+"/tb_VX_gemm_node/u_dut/u_VX_gemm_unit"
+"/tb_VX_gemm_node/u_dut/u_VX_gemm_unit/gemm_unit_if"
+"/tb_VX_gemm_node/u_dut/u_input_lmem_dma"
+"/tb_VX_gemm_node/u_dut/u_output_lmem_dma/align_down"
+"/tb_VX_gemm_node/u_dut/u_output_lmem_dma/ctrl_if"
+"/tb_VX_gemm_node/u_dut/u_output_lmem_dma/gemm_bus_if"
+"/tb_VX_gemm_node/u_dut/gemm_unit_if"
+"/tb_VX_gemm_node/u_dut/u_VX_gemm_unit/o_lmem_bus_if"
+"/tb_VX_gemm_node/u_dut/u_VX_gemm_unit/sz_lmem_bus_if"
+"/tb_VX_gemm_node/u_dut/u_quant_param_lmem_dma"
 SCOPE_LIST_END
 
 GETSIGNALFORM_SCOPE_HIERARCHY_END
 
 
+
+FILTER_SIGNAL_BEGIN
+
+"*"
+
+FILTER_STRING_LIST_BEGIN
+"*i_dim*"
+FILTER_STRING_LIST_END
+
+FILTER_TYPE_LIST_BEGIN
+"All"
+"Input"
+"Output"
+"Inout"
+"Net"
+"Register"
+"Buffer"
+"Linkage"
+"ClassTransaction"
+"Property"
+"Others"
+FILTER_TYPE_LIST_END
+
+FILTER_SIGNAL_END

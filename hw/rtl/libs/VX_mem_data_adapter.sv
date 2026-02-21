@@ -134,7 +134,7 @@ module VX_mem_data_adapter #(
 
         reg [P-1:0][DST_DATA_WIDTH-1:0] mem_rsp_data_out_r, mem_rsp_data_out_n;
 
-        wire mem_req_out_fire = mem_req_valid_out && mem_req_ready_out;
+        wire mem_req_push_fire = mem_req_valid_out_w && mem_req_ready_out_w;
         wire mem_rsp_in_fire = mem_rsp_valid_out && mem_rsp_ready_out;
 
         wire [P-1:0][DST_DATA_WIDTH-1:0] mem_req_data_in_w = mem_req_data_in;
@@ -152,7 +152,7 @@ module VX_mem_data_adapter #(
                 req_ctr <= '0;
                 rsp_ctr <= '0;
             end else begin
-                if (mem_req_out_fire) begin
+                if (mem_req_push_fire) begin
                     req_ctr <= req_ctr + 1;
                 end
                 if (mem_rsp_in_fire) begin
@@ -160,6 +160,27 @@ module VX_mem_data_adapter #(
                 end
             end
             mem_rsp_data_out_r <= mem_rsp_data_out_n;
+        end
+
+        always @(posedge clk) begin
+            if (!reset) begin
+                if (mem_req_push_fire) begin
+                    `TRACE(3, ("%m : [%0t] | MEM_ADAPT_SRC_GT_DST_REQ_CHUNK | {src_dw=%0d, dst_dw=%0d, chunks=%0d, rw=%0d, req_ctr=%0d, req_addr_in=0x%0h, req_addr_out=0x%0h, req_tag_in=0x%0h, req_tag_out=0x%0h, req_data=0x%0h, req_byteen=0x%0h}\n",
+                              $time, SRC_DATA_WIDTH, DST_DATA_WIDTH, P, mem_req_rw_in, req_ctr,
+                              mem_req_addr_in, mem_req_addr_out_w, mem_req_tag_in, mem_req_tag_out_w,
+                              mem_req_data_out_w, mem_req_byteen_out_w))
+                end
+
+                if (mem_rsp_in_fire) begin
+                    `TRACE(3, ("%m : [%0t] | MEM_ADAPT_SRC_GT_DST_RSP_CHUNK | {src_dw=%0d, dst_dw=%0d, chunks=%0d, rsp_ctr=%0d, rsp_tag=0x%0h, rsp_data=0x%0h}\n",
+                              $time, SRC_DATA_WIDTH, DST_DATA_WIDTH, P, rsp_ctr, mem_rsp_tag_out, mem_rsp_data_out))
+                end
+
+                if (mem_rsp_in_fire && (rsp_ctr == (P-1))) begin
+                    `TRACE(2, ("%m : [%0t] | MEM_ADAPT_SRC_GT_DST_RSP_ASSEMBLED | {src_dw=%0d, dst_dw=%0d, chunks=%0d, rsp_tag=0x%0h, rsp_data=0x%0h}\n",
+                              $time, SRC_DATA_WIDTH, DST_DATA_WIDTH, P, mem_rsp_tag_out, mem_rsp_data_out_n))
+                end
+            end
         end
 
         reg [DST_TAG_WIDTH-1:0] mem_rsp_tag_in_r;

@@ -1,6 +1,7 @@
 """CLI entry point for FSIM Log Analyzer."""
 
 import argparse
+import json
 import sys
 import time
 from datetime import datetime
@@ -11,6 +12,7 @@ from .packet import PacketAnalyzer
 from .sync_trace import SyncTraceAnalyzer
 from .stall_analysis import StallAnalyzer
 from .duration_profile import DurationProfiler, EventCondition, parse_match_expr
+from .dma_analysis import check_dma_transactions
 from .recv_analysis import (
     count_recv_before_step,
     parse_expected_patterns_from_log,
@@ -791,6 +793,55 @@ def cmd_find_stalls(args):
     print("=" * 90)
 
 
+def cmd_dma_check(args):
+    """Handle DMA transaction validation command."""
+    log_file = Path(args.file)
+
+    if not log_file.exists():
+        print(f"Error: Log file not found: {log_file}", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        report = check_dma_transactions(log_file)
+    except Exception as e:
+        print(f"[FAIL] analyzer error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    if args.json:
+        print(json.dumps(report, indent=2))
+    else:
+        print("=" * 70)
+        print("  DMA Transaction Check (GMEM -> LMEM)")
+        print("=" * 70)
+        print(f"  log: {report['log_path']}")
+        print(
+            f"  shape: M={report['shape']['M']} "
+            f"N={report['shape']['N']} K={report['shape']['K']}"
+        )
+        print(
+            f"  checked starts: {report['num_checked_starts']} / "
+            f"total starts: {report['num_dma_starts']}"
+        )
+        print("-" * 70)
+        for c in report["checks"]:
+            print(
+                f"  - start@line{c['start_line']} "
+                f"src={c['src_base']} dst={c['dst_base']} "
+                f"wr {c['observed_wr']}/{c['expected_wr']} "
+                f"rd {c['observed_rd']}/{c['expected_rd']} "
+                f"mism={c['mismatch_count']}"
+            )
+        if report["pass"]:
+            print("\n  [PASS] GMEM->LMEM DMA data check passed")
+        else:
+            print("\n  [FAIL] GMEM->LMEM DMA data check failed")
+            for f in report["failures"]:
+                print(f"    - {f}")
+        print("=" * 70)
+
+    sys.exit(0 if report["pass"] else 1)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="FSIM Log Analyzer Tool",
@@ -832,6 +883,10 @@ Examples:
 
   # IMCE instruction analysis
   %(prog)s recv-before-step --imce IMCE.2.1 -f <log_file>  # Count RECV before STEP
+
+  # DMA validation (GMEM->LMEM transfer correctness)
+  %(prog)s dma-check -f hw/unittest/gemm_node/logs/sim.log
+  %(prog)s dma-check -f hw/unittest/gemm_node/logs/sim.log --json
 
   # Sync trace between nodes (extract set_flag, standby events)
   %(prog)s sync-trace -n inode_0_0 imce_3_4  # Trace sync events between nodes
@@ -1284,6 +1339,25 @@ Examples:
         help="Filter by node type (inode or imce)",
     )
     find_stalls_parser.set_defaults(func=cmd_find_stalls)
+
+    # DMA check command
+    dma_check_parser = subparsers.add_parser(
+        "dma-check",
+        help="Validate GEMM-node DMA operations using structured DMA trace events",
+    )
+    dma_check_parser.add_argument(
+        "--file",
+        "-f",
+        type=Path,
+        default=Path(__file__).resolve().parents[2] / "logs" / "sim.log",
+        help="Path to simulation log file (default: hw/unittest/gemm_node/logs/sim.log)",
+    )
+    dma_check_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print full JSON report",
+    )
+    dma_check_parser.set_defaults(func=cmd_dma_check)
 
     args = parser.parse_args()
 

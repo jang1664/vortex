@@ -11,6 +11,7 @@ from .recv_analysis import (
     parse_expected_patterns_from_log,
     compare_recv_patterns,
 )
+from .dma_analysis import check_dma_transactions, parse_dma_transactions
 
 __all__ = [
     "PacketAnalyzer",
@@ -23,4 +24,6 @@ __all__ = [
     "expand_row_pattern",
     "parse_expected_patterns_from_log",
     "compare_recv_patterns",
+    "check_dma_transactions",
+    "parse_dma_transactions",
 ]

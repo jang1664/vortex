@@ -763,6 +763,7 @@ package VX_gpu_pkg;
        logic [`XLEN-1:0]         rs1_data;
        logic [`XLEN-1:0]         rs2_data;
        logic [7:0]               flags;
+       logic [20:0]              eff_mt;
    } gemm_unified_cmd_t; // it can be union
 
    typedef struct packed {

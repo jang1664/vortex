@@ -53,7 +53,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
   ================================================================================
 
   [1] Scope / Feature gating (bring-up fixed)
-  - Quantization direction(QDIR_COL) = column-wise 로 "고정" (QDIR_COL=1).
+  - Quantization direction(QDIR_COL) = column-wise 로 "고정" (QDIR_COL=0).
   - weight transpose 기능은 사용하지 않음 (W_TP_FIXED=0), 관련 address/layout 분기 없음.
   - bias 사용하지 않음 (IS_BIAS_FIXED=0), bias DMA/LDMA 경로 없음.
   - activation = fp16, weight = int4(packed), scale = fp16, zp = int16 를 가정.
@@ -164,7 +164,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
   // --------------------------------------------------------------------------
   // Bring-up fixed
   // --------------------------------------------------------------------------
-  localparam logic QDIR_COL        = 1'b1;
+  localparam logic QDIR_COL        = `QDIR_COL;
   localparam logic W_TP_FIXED      = 1'b0;
   localparam logic IS_BIAS_FIXED   = 1'b0;
 
@@ -787,7 +787,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     lmem_in_mxu = ibuf_base(buf_cur) + 64'(k0_in) * FP16_BYTES;
 
     // Accum/output slice base (mt_eff_cur rows, MXU_NT cols)
-    lmem_out_slice = ACCUM_BASE + 64'(n0_out) * FP32_BYTES;
+    lmem_out_slice = ACCUM_BASE + 64'(n0_out) * MT * FP32_BYTES;
 
     // Weight slice base (MXU_KT rows, MXU_NT cols packed)
     lmem_w_mxu = wbuf_base(buf_cur) + 64'(k0_w) * 64'(NT >> 1) + 64'(n0_w_bytes);
@@ -1288,6 +1288,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           c.instr   = make_instr(OP_I_LDMA_ARM, in_bytes);
           c.rs1_data = lmem_out_slice;
           c.rs2_data = lmem_in_mxu;
+          c.eff_mt   = mt_eff_cur;
 
           out_cmd_d   = c;
           out_start_d = 1'b1;

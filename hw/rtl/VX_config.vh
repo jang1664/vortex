@@ -1139,6 +1139,13 @@ for block_size in range(1, full_bitwidth+1):
 `define JOB_MMIO_ALLOC_GEN_LSB (`JOB_MMIO_ALLOC_OWNER_LSB + `JOB_MMIO_ALLOC_OWNER_BITS)
 `define JOB_MMIO_ALLOC_GEN_BITS `JOB_MMIO_GEN_W
 
+// gemm fsm dataflow
+`define GEMM_FSM_MT 128
+`define GEMM_FSM_NT 128
+`define GEMM_FSM_KT 128
+`define GEMM_FSM_MXU_KT 32
+`define GEMM_FSM_MXU_NT 32
+
 // Output scaling mode (uncomment to enable FP16 output scaling)
 // `define GEMM_UNIT_FP16_OUT_SCALE
 

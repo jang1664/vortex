@@ -128,6 +128,25 @@ def test_parse_line_nested_payload():
     assert entry.payload["grants"] == ["N"]
 
 
+def test_parse_line_rtl_prefix_and_ns_time():
+    line = "tb_VX_gemm_node.u_dma : [1355ns] | DMA_START | {entry_id=0, dir=0, bound=[2,1,1]}"
+    entry = parse_line(line)
+    assert entry is not None
+    assert entry.time == 1355
+    assert entry.event == "DMA_START"
+    assert entry.payload["entry_id"] == 0
+    assert entry.payload["bound"] == [2, 1, 1]
+
+
+def test_parse_line_pysim_prefix_format():
+    line = "22:19:04:imcflow:DEBUG:[612] | IMCE_TRY_INST | {name=IMCE.2.1}"
+    entry = parse_line(line)
+    assert entry is not None
+    assert entry.time == 612
+    assert entry.event == "IMCE_TRY_INST"
+    assert entry.payload["name"] == "IMCE.2.1"
+
+
 # --- parse_file tests ---
 
 def test_parse_file():

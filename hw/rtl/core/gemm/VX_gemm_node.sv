@@ -43,13 +43,13 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     localparam int SZ_GEMM_TAG_WIDTH = LMEM_TAG_WIDTH;
 
     // DMA tile sizes
-    localparam int MT = 128;
-    localparam int NT = 128;
-    localparam int KT = 128;
+    localparam int MT = `GEMM_FSM_MT;
+    localparam int NT = `GEMM_FSM_NT;
+    localparam int KT = `GEMM_FSM_KT;
 
     // MXU micro tile sizes
-    localparam int MXU_KT = 32;
-    localparam int MXU_NT = 32;
+    localparam int MXU_KT = `GEMM_FSM_MXU_KT;
+    localparam int MXU_NT = `GEMM_FSM_MXU_NT;
 
     localparam int NUM_ENTRIES = 4;
     localparam int ENTRYID_W  = `JOB_MMIO_ENTRYID_W;
@@ -195,8 +195,8 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     // GEMM unit direct control bridge (temporary/static mapping).
     // TODO: replace with full command mapping from gemm_ctrl.
     assign gemm_unit_if.start                            = gemm_ctrl_if.input_read_ctrl.start && !input_is_notify; // start signal로 동기화
-    assign gemm_unit_if.gemm_unit_ctrl.acc_cnt           = KT/MXU_KT;
-    assign gemm_unit_if.gemm_unit_ctrl.acc_mem_base_addr = '0;
+    assign gemm_unit_if.gemm_unit_ctrl.acc_cnt           = MT;
+    assign gemm_unit_if.gemm_unit_ctrl.acc_mem_base_addr = gemm_ctrl_if.input_read_ctrl.cmd.rs1_data;
     assign gemm_unit_if.gemm_unit_ctrl.quant_dir         = gemm_ctrl_if.input_read_ctrl.cmd.flags[4]; //QDIR
     assign gemm_unit_if.gemm_unit_ctrl.wreg_use_idx      = gemm_ctrl_if.input_read_ctrl.cmd.flags[1]; //mxu tile double buffering 번호
     assign gemm_unit_if.gemm_unit_ctrl.sreg_use_idx      = gemm_ctrl_if.input_read_ctrl.cmd.flags[1]; //mxu tile double buffering 번호
@@ -206,12 +206,12 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     // Connect gemm_ctrl_if to DMA ctrl interfaces
     assign input_dma_ctrl_if.start           = gemm_ctrl_if.input_read_ctrl.start && !input_is_notify;
     assign input_dma_ctrl_if.src_base_addr   = gemm_ctrl_if.input_read_ctrl.cmd.rs2_data;
-    assign input_dma_ctrl_if.dst_base_addr   = '0;  //gemm_unit 으로 들어가는 input activation의 주소는 안 중요함
-    assign input_dma_ctrl_if.src_strides[0]  = MXU_KT*16/8;
+    assign input_dma_ctrl_if.src_strides[0]  = KT*16/8;
     assign input_dma_ctrl_if.src_strides[1]  = 0;
     assign input_dma_ctrl_if.src_strides[2]  = 0;
 
-    assign input_dma_ctrl_if.dst_strides[0]  = MXU_KT*16/8;  //fp16, 바이트 단위
+    assign input_dma_ctrl_if.dst_base_addr   = '0;  //gemm_unit 으로 들어가는 input activation의 주소는 안 중요함
+    assign input_dma_ctrl_if.dst_strides[0]  = 0;
     assign input_dma_ctrl_if.dst_strides[1]  = 0;
     assign input_dma_ctrl_if.dst_strides[2]  = 0;
     
@@ -246,12 +246,12 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     // Weight load DMA command mapping.
     assign weight_dma_ctrl_if.start          = gemm_ctrl_if.weight_read_ctrl.start && !weight_is_notify;
     assign weight_dma_ctrl_if.src_base_addr  = gemm_ctrl_if.weight_read_ctrl.cmd.rs2_data;
-    assign weight_dma_ctrl_if.dst_base_addr  = '0;  //mxu tile double buffering 번호
-    assign weight_dma_ctrl_if.src_strides[0] = NT*4/8;
+    assign weight_dma_ctrl_if.src_strides[0] = (NT*4)/8;
     assign weight_dma_ctrl_if.src_strides[1] = 0;
     assign weight_dma_ctrl_if.src_strides[2] = 0;
 
-    assign weight_dma_ctrl_if.dst_strides[0] = MXU_NT*4/8;  //int4, 바이트 단위
+    assign weight_dma_ctrl_if.dst_base_addr  = gemm_ctrl_if.weight_read_ctrl.cmd.rs1_data; //{dir, reg_idx}
+    assign weight_dma_ctrl_if.dst_strides[0] = 0;
     assign weight_dma_ctrl_if.dst_strides[1] = 0;
     assign weight_dma_ctrl_if.dst_strides[2] = 0;
 
@@ -259,7 +259,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     assign weight_dma_ctrl_if.bounds[1]      = 32'd1;
     assign weight_dma_ctrl_if.bounds[2]      = 32'd1;
     
-    assign weight_dma_ctrl_if.seg_size       = MXU_NT*4/8;  //int4, 바이트 단위
+    assign weight_dma_ctrl_if.seg_size       = (MXU_NT*4)/8;  //int4, 바이트 단위
     assign gemm_ctrl_if.weight_read_flag.idle = weight_notify_pending_r ? 1'b0 : weight_dma_ctrl_if.idle;
     assign gemm_ctrl_if.weight_read_flag.done = weight_notify_pending_r ? weight_notify_fire : weight_dma_ctrl_if.done;
 
@@ -286,12 +286,12 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     // Quant parameter load DMA command mapping.
     assign quant_param_dma_ctrl_if.start         = gemm_ctrl_if.quant_param_read_ctrl.start && !sz_is_notify;
     assign quant_param_dma_ctrl_if.src_base_addr = gemm_ctrl_if.quant_param_read_ctrl.cmd.rs2_data;
-    assign quant_param_dma_ctrl_if.dst_base_addr = gemm_ctrl_if.quant_param_read_ctrl.cmd.rs1_data;
     assign quant_param_dma_ctrl_if.src_strides[0] = NT*16/8;  //scale: fp16, zp: int16
     assign quant_param_dma_ctrl_if.src_strides[1] = 0;
     assign quant_param_dma_ctrl_if.src_strides[2] = 0;
 
-    assign quant_param_dma_ctrl_if.dst_strides[0] = MXU_NT*16/8;
+    assign quant_param_dma_ctrl_if.dst_base_addr  = gemm_ctrl_if.quant_param_read_ctrl.cmd.rs1_data;
+    assign quant_param_dma_ctrl_if.dst_strides[0] = 0;
     assign quant_param_dma_ctrl_if.dst_strides[1] = 0;
     assign quant_param_dma_ctrl_if.dst_strides[2] = 0;
 
@@ -326,21 +326,20 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     // Output store DMA command mapping.
     assign output_dma_ctrl_if.start         = gemm_ctrl_if.output_write_ctrl.start && !output_is_notify;
     assign output_dma_ctrl_if.src_base_addr = gemm_ctrl_if.output_write_ctrl.cmd.rs2_data;
-    assign output_dma_ctrl_if.dst_base_addr = gemm_ctrl_if.output_write_ctrl.cmd.rs1_data;
-
-    assign output_dma_ctrl_if.src_strides[0] = NT*32/8;
-    assign output_dma_ctrl_if.src_strides[1] = 0;
+    assign output_dma_ctrl_if.src_strides[0] = MXU_NT*32/8;
+    assign output_dma_ctrl_if.src_strides[1] = MT*MXU_NT*32/8;
     assign output_dma_ctrl_if.src_strides[2] = 0;
 
+    assign output_dma_ctrl_if.dst_base_addr = gemm_ctrl_if.output_write_ctrl.cmd.rs1_data;
     assign output_dma_ctrl_if.dst_strides[0] = NT*16/8;
-    assign output_dma_ctrl_if.dst_strides[1] = 0;
+    assign output_dma_ctrl_if.dst_strides[1] = MXU_NT*16/8;
     assign output_dma_ctrl_if.dst_strides[2] = 0;
 
     assign output_dma_ctrl_if.bounds[0] = MT;  //accum2lmem은 padding 포함
-    assign output_dma_ctrl_if.bounds[1] = 32'd1;
+    assign output_dma_ctrl_if.bounds[1] = NT/MXU_NT;
     assign output_dma_ctrl_if.bounds[2] = 32'd1;
 
-    assign output_dma_ctrl_if.seg_size         = NT*16/8;  //request가 1이 되면 fp32가 fp16으로 바뀌어서 rsp_data 로 들어옴, 이걸 ldma 하면 됨
+    assign output_dma_ctrl_if.seg_size         = MXU_NT*16/8;  //request가 1이 되면 fp32가 fp16으로 바뀌어서 rsp_data 로 들어옴, 이걸 ldma 하면 됨
     assign gemm_ctrl_if.output_write_flag.idle = output_notify_pending_r ? 1'b0 : output_dma_ctrl_if.idle;
     assign gemm_ctrl_if.output_write_flag.done = output_notify_pending_r ? output_notify_fire : output_dma_ctrl_if.done;
 

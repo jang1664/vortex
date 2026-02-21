@@ -112,6 +112,21 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
 
   state_e state, state_n;
 
+  function automatic string state_to_str(input state_e s);
+    case (s)
+      S_IDLE:        return "S_IDLE";
+      S_PRECALC:     return "S_PRECALC";
+      S_PREP_SEG:    return "S_PREP_SEG";
+      S_DECIDE:      return "S_DECIDE";
+      S_SRC_RD_REQ:  return "S_SRC_RD_REQ";
+      S_SRC_RD_WAIT: return "S_SRC_RD_WAIT";
+      S_DST_WR_REQ:  return "S_DST_WR_REQ";
+      S_ADV_SEG:     return "S_ADV_SEG";
+      S_DONE:        return "S_DONE";
+      default:       return "S_UNKNOWN";
+    endcase
+  endfunction
+
   // ------------------------------------------------------------
   // Latched control regs on start
   // ------------------------------------------------------------
@@ -324,6 +339,106 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
   wire src_rsp_fire  = src_is_gemm ? gemm_rsp_fire : lmem_rsp_fire;
   wire dst_req_fire  = dst_is_gemm ? gemm_req_fire : lmem_req_fire;
   wire dst_rsp_fire  = dst_is_gemm ? gemm_rsp_fire : lmem_rsp_fire;
+
+  // ------------------------------------------------------------
+  // Trace logging
+  // ------------------------------------------------------------
+  always_ff @(posedge clk) begin
+    if (!reset) begin
+      if (state != state_n) begin
+        `TRACE(3, ("%m : [%0t] | LMEM_DMA_STATE_TRANSITION | {inst=%s, dir=%0d, from=%s, to=%s, out_off=%0d, i0=%0d, i1=%0d, i2=%0d}\n",
+                  $time, INSTANCE_ID, DIR, state_to_str(state), state_to_str(state_n),
+                  out_off, i_dim[0], i_dim[1], i_dim[2]))
+      end
+
+      if (cmd_start) begin
+        `TRACE(2, ("%m : [%0t] | LMEM_DMA_START | {inst=%s, dir=%0d, src_base=0x%0h, dst_base=0x%0h, seg_size=%0d, bound=[%0d,%0d,%0d]}\n",
+                  $time, INSTANCE_ID, DIR,
+                  ctrl_if.src_base_addr, ctrl_if.dst_base_addr, ctrl_if.seg_size,
+                  ctrl_if.bounds[0], ctrl_if.bounds[1], ctrl_if.bounds[2]))
+      end
+
+      if (precalc_issue) begin
+        logic [31:0] b0m1, b1m1, b2m1;
+        b0m1 = bound_r[0] - 32'd1;
+        b1m1 = bound_r[1] - 32'd1;
+        b2m1 = bound_r[2] - 32'd1;
+        `TRACE(2, ("%m : [%0t] | LMEM_DMA_SETUP_MUL_ISSUE | {inst=%s, dir=%0d, src_stride0=%0d, src_bound0_m1=%0d, src_stride1=%0d, src_bound1_m1=%0d, src_stride2=%0d, src_bound2_m1=%0d, dst_stride0=%0d, dst_bound0_m1=%0d, dst_stride1=%0d, dst_bound1_m1=%0d, dst_stride2=%0d, dst_bound2_m1=%0d}\n",
+                  $time, INSTANCE_ID, DIR,
+                  stride_r[0][0], b0m1, stride_r[0][1], b1m1, stride_r[0][2], b2m1,
+                  stride_r[1][0], b0m1, stride_r[1][1], b1m1, stride_r[1][2], b2m1))
+      end
+
+      if (precalc_done) begin
+        `TRACE(2, ("%m : [%0t] | LMEM_DMA_SETUP_MUL_DONE | {inst=%s, dir=%0d, src_stride_bound0=0x%0h, src_stride_bound1=0x%0h, src_stride_bound2=0x%0h, dst_stride_bound0=0x%0h, dst_stride_bound1=0x%0h, dst_stride_bound2=0x%0h}\n",
+                  $time, INSTANCE_ID, DIR,
+                  precalc_result[0], precalc_result[2], precalc_result[4],
+                  precalc_result[1], precalc_result[3], precalc_result[5]))
+      end
+
+      if (state == S_PREP_SEG) begin
+        logic [63:0] src_rd_ptr_aligned;
+        logic [63:0] src_rd_end_aligned;
+        logic [31:0] src_drop_bytes;
+        src_rd_ptr_aligned = align_down(base_src_seg);
+        src_rd_end_aligned = align_up(base_src_seg + 64'(seg_size_r));
+        src_drop_bytes = 32'(base_src_seg[BUS_LG2-1:0]);
+        `TRACE(2, ("%m : [%0t] | LMEM_DMA_SEG_PREP | {inst=%s, dir=%0d, i0=%0d, i1=%0d, i2=%0d, src_base=0x%0h, dst_base=0x%0h, seg_size=%0d, src_drop=%0d, src_rd_ptr=0x%0h, src_rd_end=0x%0h}\n",
+                  $time, INSTANCE_ID, DIR,
+                  i_dim[0], i_dim[1], i_dim[2], base_src_seg, base_dst_seg,
+                  seg_size_r, src_drop_bytes, src_rd_ptr_aligned, src_rd_end_aligned))
+      end
+
+      if (state == S_SRC_RD_REQ && src_is_gemm && gemm_req_fire) begin
+        `TRACE(2, ("%m : [%0t] | LMEM_DMA_SRC_RD_REQ | {inst=%s, dir=%0d, src_bus=GEMM, addr=0x%0h, byte_addr=0x%0h, out_off=%0d}\n",
+                  $time, INSTANCE_ID, DIR, gemm_bus_if.req_data.addr,
+                  (64'(gemm_bus_if.req_data.addr) << BUS_LG2), out_off))
+      end
+
+      if (state == S_SRC_RD_REQ && !src_is_gemm && lmem_req_fire) begin
+        `TRACE(2, ("%m : [%0t] | LMEM_DMA_SRC_RD_REQ | {inst=%s, dir=%0d, src_bus=LMEM, addr=0x%0h, byte_addr=0x%0h, out_off=%0d}\n",
+                  $time, INSTANCE_ID, DIR, lmem_bus_if.req_data.addr,
+                  (64'(lmem_bus_if.req_data.addr) << BUS_LG2), out_off))
+      end
+
+      if (state == S_SRC_RD_WAIT && src_rsp_fire) begin
+        logic [BUS_BITS-1:0] src_data;
+        src_data = src_is_gemm ? gemm_bus_if.rsp_data.data : lmem_bus_if.rsp_data.data;
+        `TRACE(2, ("%m : [%0t] | LMEM_DMA_SRC_RD_RSP | {inst=%s, dir=%0d, src_bus=%s, data=0x%0h, win_valid=%0d}\n",
+                  $time, INSTANCE_ID, DIR, src_is_gemm ? "GEMM" : "LMEM", src_data, win_valid))
+      end
+
+      if (state == S_DST_WR_REQ && dst_is_gemm && gemm_req_fire) begin
+        `TRACE(2, ("%m : [%0t] | LMEM_DMA_DST_WR_REQ | {inst=%s, dir=%0d, dst_bus=GEMM, addr=0x%0h, byte_addr=0x%0h, byteen=0x%0h, data=0x%0h, out_off=%0d, wr_nbytes=%0d}\n",
+                  $time, INSTANCE_ID, DIR, gemm_bus_if.req_data.addr,
+                  (64'(gemm_bus_if.req_data.addr) << BUS_LG2),
+                  gemm_bus_if.req_data.byteen, gemm_bus_if.req_data.data, out_off, wr_nbytes))
+      end
+
+      if (state == S_DST_WR_REQ && !dst_is_gemm && lmem_req_fire) begin
+        `TRACE(2, ("%m : [%0t] | LMEM_DMA_DST_WR_REQ | {inst=%s, dir=%0d, dst_bus=LMEM, addr=0x%0h, byte_addr=0x%0h, byteen=0x%0h, data=0x%0h, out_off=%0d, wr_nbytes=%0d}\n",
+                  $time, INSTANCE_ID, DIR, lmem_bus_if.req_data.addr,
+                  (64'(lmem_bus_if.req_data.addr) << BUS_LG2),
+                  lmem_bus_if.req_data.byteen, lmem_bus_if.req_data.data, out_off, wr_nbytes))
+      end
+
+      if (state == S_ADV_SEG) begin
+        `TRACE(2, ("%m : [%0t] | LMEM_DMA_SEG_ADVANCE | {inst=%s, dir=%0d, i0=%0d, i1=%0d, i2=%0d, at_last_idx=%0d, src_base=0x%0h, dst_base=0x%0h, out_off=%0d, seg_size=%0d}\n",
+                  $time, INSTANCE_ID, DIR,
+                  i_dim[0], i_dim[1], i_dim[2], at_last_idx,
+                  base_src_seg, base_dst_seg, out_off, seg_size_r))
+      end
+
+      if (state == S_ADV_SEG && at_last_idx) begin
+        `TRACE(2, ("%m : [%0t] | LMEM_DMA_DONE_ASSERT | {inst=%s, dir=%0d, i0=%0d, i1=%0d, i2=%0d}\n",
+                  $time, INSTANCE_ID, DIR, i_dim[0], i_dim[1], i_dim[2]))
+      end
+
+      if (state == S_DONE) begin
+        `TRACE(2, ("%m : [%0t] | LMEM_DMA_DONE | {inst=%s, dir=%0d}\n", $time, INSTANCE_ID, DIR))
+      end
+    end
+  end
 
   // ------------------------------------------------------------
   // Build destination write data/mask from window head
