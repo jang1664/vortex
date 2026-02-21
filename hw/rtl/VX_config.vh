@@ -1116,6 +1116,29 @@ for block_size in range(1, full_bitwidth+1):
 `define MM_MAX_LOG_DIM 20 // Maximum log2 dimension size for matrix (1M)
 `define MM_MAX_LOG_TILEDIM 10 // Maximum log2 tile dimension size (1K)
 
+// job frontend reg idx
+`define JOB_MMIO_CONTROL_REG_IDX 0
+
+// job frontend bitwidth
+`define JOB_MMIO_ENTRYID_W 4
+`define JOB_MMIO_OWNER_W   4
+`define JOB_MMIO_GEN_W     16
+
+// job frontend control reg bit fields
+`define JOB_MMIO_CTRL_VALID_BIT   0
+`define JOB_MMIO_CTRL_OCCUPY_BIT  1
+`define JOB_MMIO_CTRL_WORKING_BIT 2
+`define JOB_MMIO_CTRL_OWNER_LSB   3
+`define JOB_MMIO_CTRL_GEN_LSB     (`JOB_MMIO_CTRL_OWNER_LSB + `JOB_MMIO_OWNER_W)
+
+`define JOB_MMIO_ALLOC_SUCC_BIT 0
+`define JOB_MMIO_ALLOC_ENTRY_LSB 1
+`define JOB_MMIO_ALLOC_ENTRY_BITS `JOB_MMIO_ENTRYID_W
+`define JOB_MMIO_ALLOC_OWNER_LSB (`JOB_MMIO_ALLOC_ENTRY_LSB + `JOB_MMIO_ALLOC_ENTRY_BITS)
+`define JOB_MMIO_ALLOC_OWNER_BITS `JOB_MMIO_OWNER_W
+`define JOB_MMIO_ALLOC_GEN_LSB (`JOB_MMIO_ALLOC_OWNER_LSB + `JOB_MMIO_ALLOC_OWNER_BITS)
+`define JOB_MMIO_ALLOC_GEN_BITS `JOB_MMIO_GEN_W
+
 // Output scaling mode (uncomment to enable FP16 output scaling)
 // `define GEMM_UNIT_FP16_OUT_SCALE
 

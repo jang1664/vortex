@@ -6,18 +6,20 @@
 //  - Global ALLOC register (atomic): read allocates one free entry (RR)
 //  - Receives state update commands from dispatcher
 //  - CONTROL(reg 0) bit policy:
-//      [0] valid   : RW
-//      [1] occupy  : RO (writes ignored, mirrored from state)
-//      [2] working : RO (writes ignored, mirrored from state)
+//      [0]                     valid      : RW
+//      [1]                     occupy     : RO (writes ignored, mirrored from state)
+//      [2]                     working    : RO (writes ignored, mirrored from state)
+//      [3 +: OWNER_W]          owner      : RO (writes ignored, mirrored from state)
+//      [CTRL_GEN_LSB +: GEN_W] generation : RO (writes ignored, mirrored from state)
 // ============================================================================
 module VX_job_desc_mmio_regs import VX_gpu_pkg::*; #(
-  parameter `STRING INSTANCE_ID = "",
-  parameter int NUM_ENTRIES = 16,
-  parameter int NUM_REGS32  = 16,
-  parameter int ENTRYID_W   = 8,
-  parameter int OWNER_W     = 1,
-  parameter bit OWNER_FROM_TAG = 1'b1,
-  parameter int GEN_W       = 16,
+  parameter `STRING INSTANCE_ID        = "",
+  parameter int NUM_ENTRIES            = 16,
+  parameter int NUM_REGS32             = 16,
+  parameter int ENTRYID_W              = `JOB_MMIO_ENTRYID_W,
+  parameter int OWNER_W                = `JOB_MMIO_OWNER_W,
+  parameter bit OWNER_FROM_TAG         = 1'b1,
+  parameter int GEN_W                  = `JOB_MMIO_GEN_W,
   parameter logic [63:0] CFG_BASE_ADDR = 64'h0
 ) (
   input  wire clk,
@@ -48,22 +50,20 @@ module VX_job_desc_mmio_regs import VX_gpu_pkg::*; #(
   localparam int RRW = (NUM_ENTRIES <= 1) ? 1 : $clog2(NUM_ENTRIES);
   logic [RRW-1:0] rr_alloc_q, rr_alloc_d;
 
-  localparam int CONTROL_IDX       = 0;
-  localparam int CTRL_VALID_BIT    = 0;
-  localparam int CTRL_OCCUPY_BIT   = 1;
-  localparam int CTRL_WORKING_BIT  = 2;
-  localparam int CTRL_OWNER_LSB    = 4;
-  localparam int CTRL_GEN_LSB      = CTRL_OWNER_LSB + OWNER_W;
+  localparam int CONTROL_IDX       = `JOB_MMIO_CONTROL_REG_IDX;
+  localparam int CTRL_VALID_BIT    = `JOB_MMIO_CTRL_VALID_BIT;
+  localparam int CTRL_OCCUPY_BIT   = `JOB_MMIO_CTRL_OCCUPY_BIT;
+  localparam int CTRL_WORKING_BIT  = `JOB_MMIO_CTRL_WORKING_BIT;
+  localparam int CTRL_OWNER_LSB    = `JOB_MMIO_CTRL_OWNER_LSB;
+  localparam int CTRL_GEN_LSB      = `JOB_MMIO_CTRL_GEN_LSB;
 
-  localparam int ALLOC_SUCCESS_BIT = 0;
-  localparam int ALLOC_ENTRY_LSB   = 1;
-  localparam int ALLOC_ENTRY_BITS  = (ENTRYID_W > 31) ? 31 : ENTRYID_W;
-  localparam int ALLOC_OWNER_LSB   = ALLOC_ENTRY_LSB + ALLOC_ENTRY_BITS;
-  localparam int ALLOC_OWNER_AVAIL = (32 > ALLOC_OWNER_LSB) ? (32 - ALLOC_OWNER_LSB) : 0;
-  localparam int ALLOC_OWNER_BITS  = (OWNER_W < ALLOC_OWNER_AVAIL) ? OWNER_W : ALLOC_OWNER_AVAIL;
-  localparam int ALLOC_GEN_LSB     = ALLOC_OWNER_LSB + ALLOC_OWNER_BITS;
-  localparam int ALLOC_GEN_AVAIL   = (32 > ALLOC_GEN_LSB) ? (32 - ALLOC_GEN_LSB) : 0;
-  localparam int ALLOC_GEN_BITS    = (GEN_W < ALLOC_GEN_AVAIL) ? GEN_W : ALLOC_GEN_AVAIL;
+  localparam int ALLOC_SUCCESS_BIT = `JOB_MMIO_ALLOC_SUCC_BIT;
+  localparam int ALLOC_ENTRY_LSB   = `JOB_MMIO_ALLOC_ENTRY_LSB;
+  localparam int ALLOC_ENTRY_BITS  = `JOB_MMIO_ALLOC_ENTRY_BITS;
+  localparam int ALLOC_OWNER_LSB   = `JOB_MMIO_ALLOC_OWNER_LSB;
+  localparam int ALLOC_OWNER_BITS  = `JOB_MMIO_ALLOC_OWNER_BITS;
+  localparam int ALLOC_GEN_LSB     = `JOB_MMIO_ALLOC_GEN_LSB;
+  localparam int ALLOC_GEN_BITS    = `JOB_MMIO_ALLOC_GEN_BITS;
 
   // ------------------------------------------------------------
   // MMIO layout
