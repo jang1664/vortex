@@ -9,7 +9,7 @@ module VX_job_frontend import VX_gpu_pkg::*; #(
   parameter int NUM_MASTERS  = 1,
   parameter int NUM_ENTRIES = 16,
   parameter int NUM_REGS32  = 16,
-  parameter int ENTRYID_W   = 8,
+  parameter int ENTRYID_W   = `JOB_MMIO_ENTRYID_W,
   parameter logic [63:0] CFG_BASE_ADDR = 64'h0
 ) (
   input  wire clk,
@@ -27,7 +27,7 @@ module VX_job_frontend import VX_gpu_pkg::*; #(
 
   localparam int MMIO_ARB_SEL_BITS = `ARB_SEL_BITS(NUM_MASTERS, 1);
   localparam int MMIO_ARB_TAG_WIDTH = LSU_TAG_WIDTH + MMIO_ARB_SEL_BITS;
-  localparam int OWNER_W = (NUM_MASTERS <= 1) ? 1 : MMIO_ARB_SEL_BITS;
+  localparam int OWNER_W = `JOB_MMIO_OWNER_W;
   localparam bit OWNER_FROM_TAG = (NUM_MASTERS > 1);
 
   logic                 reg_set_working_valid;

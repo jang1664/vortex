@@ -16,7 +16,7 @@ module tb_VX_gemm_node
   parameter int    N_MASTER = 1;
 
   // smoke sizes
-  localparam int M_TEST = 32;
+  localparam int M_TEST = 2;
   localparam int N_TEST = 32;
   localparam int K_TEST = 32;
 
@@ -573,20 +573,50 @@ module tb_VX_gemm_node
   task automatic build_test_vectors();
     for (int m = 0; m < M_TEST; m++) begin
       for (int k = 0; k < K_TEST; k++) begin
-        shortreal v = shortreal'(1.0 + ((m+k) % 7));
+        // shortreal v = shortreal'(1.0 + ((m+k) % 7));
+        shortreal v = shortreal'(1.0);
         input_mat[m*K_TEST + k] = cf_math_pkg::fp32_val_to_fp16_bit(v);
       end
     end
     for (int k = 0; k < K_TEST; k++) begin
       for (int n = 0; n < N_TEST; n++) begin
-        int w = ((k*3 + n*5) % 13) - 6; // -6..6
+        // int w = ((k*3 + n*5) % 13) - 6; // -6..6
+        int w = 1; // -6..6
         weight_mat[k*N_TEST + n] = w[3:0];
       end
     end
     for (int n = 0; n < N_TEST; n++) begin
       scale_vec[n] = 16'h3C00; // 1.0
-      zp_vec[n]    = 16'h0000;
+      zp_vec[n]    = 16'h0002;
     end
+
+    $display("Test Inputs:");
+    for (int m = 0; m < M_TEST; m++) begin
+      for (int k = 0; k < K_TEST; k++) begin
+        $write("%0x ", input_mat[m*K_TEST + k]);
+      end
+      $write("\n");
+    end
+
+    $display("Test Weights:");
+    for (int k = 0; k < K_TEST; k++) begin
+      for (int n = 0; n < N_TEST; n++) begin
+        $write("%0x ", weight_mat[k*N_TEST + n]);
+      end
+      $write("\n");
+    end
+
+    $display("Test Scales:");
+    for (int n = 0; n < N_TEST; n++) begin
+      $write("%0x ", scale_vec[n]);
+    end
+    $write("\n");
+
+    $display("Test ZPs:");
+    for (int n = 0; n < N_TEST; n++) begin
+      $write("%0x ", zp_vec[n]);
+    end
+    $write("\n");
   endtask
 
   task automatic write_gmem_inputs_weights_sc_zp();

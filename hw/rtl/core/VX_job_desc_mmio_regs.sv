@@ -18,7 +18,7 @@ module VX_job_desc_mmio_regs import VX_gpu_pkg::*; #(
   parameter int NUM_REGS32             = 16,
   parameter int ENTRYID_W              = `JOB_MMIO_ENTRYID_W,
   parameter int OWNER_W                = `JOB_MMIO_OWNER_W,
-  parameter bit OWNER_FROM_TAG         = 1'b1,
+  parameter bit OWNER_FROM_TAG         = 1'b0,
   parameter int GEN_W                  = `JOB_MMIO_GEN_W,
   parameter logic [63:0] CFG_BASE_ADDR = 64'h0
 ) (

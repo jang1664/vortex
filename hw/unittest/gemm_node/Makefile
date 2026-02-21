@@ -139,8 +139,4 @@ clean:
 	rm -rf obj_dir 
 	rm -rf reports logs 
 	rm -rf simv novas* ucli* verdi* csrc* simv.daidir*
-<<<<<<< HEAD
 	rm -rf vcd2fsdb*
-=======
-	rm -rf vcd2fsdb*
->>>>>>> fpint

@@ -52,7 +52,9 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     localparam int MXU_NT = 32;
 
     localparam int NUM_ENTRIES = 4;
-    localparam int ENTRYID_W  = `LOG2UP(NUM_ENTRIES);
+    localparam int ENTRYID_W  = `JOB_MMIO_ENTRYID_W;
+    localparam int OWNER_W    = `JOB_MMIO_OWNER_W;
+    localparam int GEN_W      = `JOB_MMIO_GEN_W;
     localparam logic [7:0] OP_NOTIFY = 8'hF1;
     // -------------------------------------------------------------------------
     // Data-path interfaces
@@ -732,7 +734,9 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     VX_gemm_dma_ctrl #(
       .INSTANCE_ID(INSTANCE_ID),
       .DMA_CFG_BASE_ADDR(`DMA_REG_BASE_ADDR),
-      .ENTRYID_W(ENTRYID_W)
+      .ENTRYID_W(ENTRYID_W),
+      .CTRL_OWNER_W(OWNER_W),
+      .CTRL_GEN_W(GEN_W)
     ) u_VX_gemm_dma_ctrl (
       .clk(clk),
       .reset(reset),

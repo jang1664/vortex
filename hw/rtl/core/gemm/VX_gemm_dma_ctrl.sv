@@ -80,15 +80,13 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
   localparam int DMA_CTRL_OWNER_LSB = 4;
   localparam int DMA_CTRL_GEN_LSB   = DMA_CTRL_OWNER_LSB + CTRL_OWNER_W;
 
-  localparam int ALLOC_SUCCESS_BIT  = 0;
-  localparam int ALLOC_ENTRY_LSB    = 1;
-  localparam int ALLOC_ENTRY_BITS   = (ENTRYID_W > 31) ? 31 : ENTRYID_W;
-  localparam int ALLOC_OWNER_LSB    = ALLOC_ENTRY_LSB + ALLOC_ENTRY_BITS;
-  localparam int ALLOC_OWNER_AVAIL  = (32 > ALLOC_OWNER_LSB) ? (32 - ALLOC_OWNER_LSB) : 0;
-  localparam int ALLOC_OWNER_BITS   = (CTRL_OWNER_W < ALLOC_OWNER_AVAIL) ? CTRL_OWNER_W : ALLOC_OWNER_AVAIL;
-  localparam int ALLOC_GEN_LSB      = ALLOC_OWNER_LSB + ALLOC_OWNER_BITS;
-  localparam int ALLOC_GEN_AVAIL    = (32 > ALLOC_GEN_LSB) ? (32 - ALLOC_GEN_LSB) : 0;
-  localparam int ALLOC_GEN_BITS     = (CTRL_GEN_W < ALLOC_GEN_AVAIL) ? CTRL_GEN_W : ALLOC_GEN_AVAIL;
+  localparam int ALLOC_SUCCESS_BIT = `JOB_MMIO_ALLOC_SUCC_BIT;
+  localparam int ALLOC_ENTRY_LSB   = `JOB_MMIO_ALLOC_ENTRY_LSB;
+  localparam int ALLOC_ENTRY_BITS  = `JOB_MMIO_ALLOC_ENTRY_BITS;
+  localparam int ALLOC_OWNER_LSB   = `JOB_MMIO_ALLOC_OWNER_LSB;
+  localparam int ALLOC_OWNER_BITS  = `JOB_MMIO_ALLOC_OWNER_BITS;
+  localparam int ALLOC_GEN_LSB     = `JOB_MMIO_ALLOC_GEN_LSB;
+  localparam int ALLOC_GEN_BITS    = `JOB_MMIO_ALLOC_GEN_BITS;
 
   // ----------------------------------------------------
   // Parameter sanity checks

@@ -1,0 +1,100 @@
+Magic 271485
+Revision Verdi_U-2023.03-SP2-9
+
+; Window Layout <x> <y> <width> <height> <signalwidth> <valuewidth>
+viewPort 0 25 1920 930 399 65
+
+; File list:
+; openDirFile [-d delimiter] [-s time_offset] [-rf auto_bus_rule_file] path_name file_name
+openDirFile -d / "" "/home/jaeyongjang/project.local/vortex/hw/unittest/gemm_node/reports/tb_VX_gemm_node.fsdb"
+
+; file time scale:
+; fileTimeScale ### s|ms|us|ns|ps
+
+; signal spacing:
+signalSpacing 5
+
+; windowTimeUnit is used for zoom, cursor & marker
+; waveform viewport range
+zoom 844375.000000 1625625.000000
+cursor 1235000.000000
+marker 0.000000
+
+; user define markers
+; userMarker time_pos marker_name color linestyle
+; visible top row signal index
+top 0
+; marker line index
+markerPos 25
+
+; event list
+; addEvent event_name event_expression
+; curEvent event_name
+
+
+
+COMPLEX_EVENT_BEGIN
+
+
+COMPLEX_EVENT_END
+
+
+
+; toolbar current search type
+; curSTATUS search_type
+curSTATUS ByChange
+
+
+addGroup "mmio_reg"
+activeDirFile "" "/home/jaeyongjang/project.local/vortex/hw/unittest/gemm_node/reports/tb_VX_gemm_node.fsdb"
+addSignal -h 15 /tb_VX_gemm_node/u_dut/VX_job_frontend_instance/u_job_desc_mmio_regs/clk
+addSignal -h 15 -holdScope regs32_o[3:0]
+addSignal -h 15 -holdScope generation_q[3:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope occupy_q[3:0]
+addSignal -h 15 -holdScope owner_q[3:0]
+addGroup "fsm"
+addSignal -expanded -h 15 /tb_VX_gemm_node/u_dut/u_VX_gemm_ctrl/u_VX_gemm_fsm/job_d
+addSignal -h 15 -UNSIGNED -HEX -holdScope job_d.input_base[63:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope job_d.weight_base[63:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope job_d.output_base[63:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope job_d.scale_base[63:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope job_d.zp_base[63:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope job_d.lmem_ibuf0_base[63:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope job_d.lmem_ibuf1_base[63:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope job_d.lmem_wbuf0_base[63:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope job_d.lmem_wbuf1_base[63:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope job_d.lmem_scbuf0_base[63:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope job_d.lmem_scbuf1_base[63:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope job_d.lmem_zpbuf0_base[63:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope job_d.lmem_zpbuf1_base[63:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope job_d.lmem_obuf_base[63:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope job_d.M[31:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope job_d.N[31:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope job_d.K[31:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope job_d.qblk[31:0]
+addGroup "G3"
+
+; getSignalForm Scope Hierarchy Status
+; active file of getSignalForm
+activeDirFile "" "/home/jaeyongjang/project.local/vortex/hw/unittest/gemm_node/reports/tb_VX_gemm_node.fsdb"
+
+GETSIGNALFORM_SCOPE_HIERARCHY_BEGIN
+getSignalForm close
+
+"/VX_gpu_pkg"
+"/tb_VX_gemm_node"
+"/tb_VX_gemm_node/u_dut"
+"/tb_VX_gemm_node/u_dut/VX_job_frontend_instance"
+"/tb_VX_gemm_node/u_dut/u_VX_gemm_ctrl"
+
+SCOPE_LIST_BEGIN
+"/VX_gpu_pkg"
+"/tb_VX_gemm_node/u_dut/VX_job_frontend_instance"
+"/tb_VX_gemm_node/u_dut/VX_job_frontend_instance/u_job_desc_mmio_regs"
+"/tb_VX_gemm_node/u_dut/u_VX_gemm_ctrl/gemm_fsm_if"
+"/tb_VX_gemm_node/u_dut/u_VX_gemm_ctrl/u_VX_gemm_fsm"
+SCOPE_LIST_END
+
+GETSIGNALFORM_SCOPE_HIERARCHY_END
+
+
