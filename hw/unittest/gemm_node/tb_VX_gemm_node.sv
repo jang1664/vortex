@@ -18,10 +18,11 @@ module tb_VX_gemm_node
   // compare tolerance
   localparam real FP16_TOL = 0.01; // ~1.5 LSB of FP16
 
-  // smoke sizes
-  localparam int M_TEST = 2;
-  localparam int N_TEST = 32;
-  localparam int K_TEST = 32;
+  // default smoke sizes (runtime-configurable via tasks)
+  localparam int DEFAULT_M_TEST = 2;
+  localparam int DEFAULT_N_TEST = 32;
+  localparam int DEFAULT_K_TEST = 32;
+  localparam int DEFAULT_QBLK   = 32;
 
   localparam int FP16_WIDTH   = 16;
 
@@ -535,43 +536,32 @@ module tb_VX_gemm_node
   // =========================================================================
   // Test: end-to-end one GEMM
   // =========================================================================
-  // Global memory layout (byte addr in DCACHE model dmem[])
-  localparam logic [63:0] GMEM_IN_BASE    = 64'h0000_0000_0010_0000;
-  localparam logic [63:0] GMEM_W_BASE     = 64'h0000_0000_0020_0000;
-  localparam logic [63:0] GMEM_SC_BASE    = 64'h0000_0000_0030_0000;
-  localparam logic [63:0] GMEM_ZP_BASE    = 64'h0000_0000_0040_0000;
-  localparam logic [63:0] GMEM_OUT_BASE   = 64'h0000_0000_0050_0000;
+  // Default global memory layout (byte addr in DCACHE model dmem[])
+  localparam logic [63:0] DEFAULT_GMEM_IN_BASE    = 64'h0000_0000_0010_0000;
+  localparam logic [63:0] DEFAULT_GMEM_W_BASE     = 64'h0000_0000_0020_0000;
+  localparam logic [63:0] DEFAULT_GMEM_SC_BASE    = 64'h0000_0000_0030_0000;
+  localparam logic [63:0] DEFAULT_GMEM_ZP_BASE    = 64'h0000_0000_0040_0000;
+  localparam logic [63:0] DEFAULT_GMEM_OUT_BASE   = 64'h0000_0000_0050_0000;
 
-  // LMEM buffer layout (byte addr in LMEM)
-  localparam logic [63:0] LMEM_IBUF0_BASE = 64'h0000_0000_0000_0000;
-  localparam logic [63:0] LMEM_IBUF1_BASE = 64'h0000_0000_0002_0000;
-  localparam logic [63:0] LMEM_WBUF0_BASE = 64'h0000_0000_0004_0000;
-  localparam logic [63:0] LMEM_WBUF1_BASE = 64'h0000_0000_0006_0000;
-  localparam logic [63:0] LMEM_SCBUF0_BASE= 64'h0000_0000_0008_0000;
-  localparam logic [63:0] LMEM_SCBUF1_BASE= 64'h0000_0000_0009_0000;
-  localparam logic [63:0] LMEM_ZPBUF0_BASE= 64'h0000_0000_000A_0000;
-  localparam logic [63:0] LMEM_ZPBUF1_BASE= 64'h0000_0000_000B_0000;
-  localparam logic [63:0] LMEM_OBUF_BASE  = 64'h0000_0000_000C_0000;
+  // Default LMEM buffer layout (byte addr in LMEM)
+  localparam logic [63:0] DEFAULT_LMEM_IBUF0_BASE = 64'h0000_0000_0000_0000;
+  localparam logic [63:0] DEFAULT_LMEM_IBUF1_BASE = 64'h0000_0000_0002_0000;
+  localparam logic [63:0] DEFAULT_LMEM_WBUF0_BASE = 64'h0000_0000_0004_0000;
+  localparam logic [63:0] DEFAULT_LMEM_WBUF1_BASE = 64'h0000_0000_0006_0000;
+  localparam logic [63:0] DEFAULT_LMEM_SCBUF0_BASE= 64'h0000_0000_0008_0000;
+  localparam logic [63:0] DEFAULT_LMEM_SCBUF1_BASE= 64'h0000_0000_0009_0000;
+  localparam logic [63:0] DEFAULT_LMEM_ZPBUF0_BASE= 64'h0000_0000_000A_0000;
+  localparam logic [63:0] DEFAULT_LMEM_ZPBUF1_BASE= 64'h0000_0000_000B_0000;
+  localparam logic [63:0] DEFAULT_LMEM_OBUF_BASE  = 64'h0000_0000_000C_0000;
 
-  localparam longint unsigned GMEM_IN_BYTES  = longint'(M_TEST) * longint'(K_TEST) * 2;
-  localparam longint unsigned GMEM_W_BYTES   = longint'(K_TEST) * longint'((N_TEST + 1) / 2);
-  localparam longint unsigned GMEM_SC_BYTES  = longint'(N_TEST) * 2;
-  localparam longint unsigned GMEM_ZP_BYTES  = longint'(N_TEST) * 2;
-  localparam longint unsigned GMEM_OUT_BYTES = longint'(M_TEST) * longint'(N_TEST) * 2;
-  localparam longint unsigned DMEM_LIMIT     = longint'(DMEM_SIZE);
-
-  localparam longint unsigned LMEM_IBUF_BYTES  = longint'(M_TEST) * longint'(K_TEST) * 2;
-  localparam longint unsigned LMEM_WBUF_BYTES  = longint'(K_TEST) * longint'((N_TEST + 1) / 2);
-  localparam longint unsigned LMEM_SCBUF_BYTES = longint'(N_TEST) * 2;
-  localparam longint unsigned LMEM_ZPBUF_BYTES = longint'(N_TEST) * 2;
-  localparam longint unsigned LMEM_OBUF_BYTES  = longint'(M_TEST) * longint'(N_TEST) * 2;
-  localparam longint unsigned LMEM_LIMIT       = longint'(LMEM_SIZE);
+  localparam longint unsigned DMEM_LIMIT = longint'(DMEM_SIZE);
+  localparam longint unsigned LMEM_LIMIT = longint'(LMEM_SIZE);
 
   // data generators
-  logic [FP16_WIDTH-1:0] input_mat [0:M_TEST*K_TEST-1];
-  logic [3:0]            weight_mat[0:K_TEST*N_TEST-1];
-  logic [FP16_WIDTH-1:0] scale_vec [0:N_TEST-1];
-  logic [15:0]           zp_vec    [0:N_TEST-1];
+  logic [FP16_WIDTH-1:0] input_mat [0:fpint_emul::MAX_M*fpint_emul::MAX_K-1];
+  logic [3:0]            weight_mat[0:fpint_emul::MAX_K*fpint_emul::MAX_N-1];
+  logic [FP16_WIDTH-1:0] scale_vec [0:fpint_emul::MAX_N-1];
+  logic [15:0]           zp_vec    [0:fpint_emul::MAX_N-1];
 
   logic [fpint_emul::IN_WIDTH-1:0] ref_input[fpint_emul::MAX_M*fpint_emul::MAX_K];
   logic [fpint_emul::MAX_W_WIDTH-1:0] ref_weight[fpint_emul::MAX_K*fpint_emul::MAX_N];
@@ -580,26 +570,37 @@ module tb_VX_gemm_node
   logic [fpint_emul::O_WIDTH-1:0] ref_output[fpint_emul::MAX_M*fpint_emul::MAX_N];
   logic [fpint_emul::P_WIDTH-1:0] ref_psum[fpint_emul::MAX_M*fpint_emul::MAX_N];
 
-  task automatic build_test_vectors();
-    for (int m = 0; m < M_TEST; m++) begin
-      for (int k = 0; k < K_TEST; k++) begin
+  task automatic build_test_vectors(
+    input int test_m,
+    input int test_n,
+    input int test_k
+  );
+    if ((test_m <= 0) || (test_m > fpint_emul::MAX_M))
+      $fatal(1, "Invalid M=%0d (max=%0d)", test_m, fpint_emul::MAX_M);
+    if ((test_n <= 0) || (test_n > fpint_emul::MAX_N))
+      $fatal(1, "Invalid N=%0d (max=%0d)", test_n, fpint_emul::MAX_N);
+    if ((test_k <= 0) || (test_k > fpint_emul::MAX_K))
+      $fatal(1, "Invalid K=%0d (max=%0d)", test_k, fpint_emul::MAX_K);
+
+    for (int m = 0; m < test_m; m++) begin
+      for (int k = 0; k < test_k; k++) begin
         // shortreal v = shortreal'(1.0 + ((m+k) % 7));
-        shortreal v = shortreal'(((m*K_TEST+k) % 5 - 2.0));
+        shortreal v = shortreal'(((m*test_k+k) % 5 - 2.0));
         // shortreal v = shortreal'(1.0);
-        input_mat[m*K_TEST + k] = cf_math_pkg::fp32_val_to_fp16_bit(v);
-        ref_input[m*K_TEST + k] = input_mat[m*K_TEST + k];
+        input_mat[m*test_k + k] = cf_math_pkg::fp32_val_to_fp16_bit(v);
+        ref_input[m*test_k + k] = input_mat[m*test_k + k];
       end
     end
-    for (int k = 0; k < K_TEST; k++) begin
-      for (int n = 0; n < N_TEST; n++) begin
-        int w = ((k*N_TEST + n) % 13) - 6; // -6..6
+    for (int k = 0; k < test_k; k++) begin
+      for (int n = 0; n < test_n; n++) begin
+        int w = ((k*test_n + n) % 13) - 6; // -6..6
         // int w = ((k*3 + n*5) % 13) - 6; // -6..6
         // int w = 1;
-        weight_mat[k*N_TEST + n] = w[3:0];
-        ref_weight[k*N_TEST + n] = signed'(w[3:0]);
+        weight_mat[k*test_n + n] = w[3:0];
+        ref_weight[k*test_n + n] = signed'(w[3:0]);
       end
     end
-    for (int n = 0; n < N_TEST; n++) begin
+    for (int n = 0; n < test_n; n++) begin
       shortreal v = shortreal'((n % 7) - 3.0);
       // shortreal v = shortreal'(1.0);
 
@@ -618,7 +619,7 @@ module tb_VX_gemm_node
         ref_weight,
         ref_scale,
         ref_zero,
-        M_TEST, N_TEST, K_TEST,
+        test_m, test_n, test_k,
         ref_output,
         `QDIR_COL,
         fpint_emul::WNOTRANS,
@@ -626,43 +627,51 @@ module tb_VX_gemm_node
     );
 
     $display("Test Inputs:");
-    for (int m = 0; m < M_TEST; m++) begin
-      for (int k = 0; k < K_TEST; k++) begin
-        $write("%0x ", input_mat[m*K_TEST + k]);
+    for (int m = 0; m < test_m; m++) begin
+      for (int k = 0; k < test_k; k++) begin
+        $write("%0x ", input_mat[m*test_k + k]);
       end
       $write("\n");
     end
 
     $display("Test Weights:");
-    for (int k = 0; k < K_TEST; k++) begin
-      for (int n = 0; n < N_TEST; n++) begin
-        $write("%0x ", weight_mat[k*N_TEST + n]);
+    for (int k = 0; k < test_k; k++) begin
+      for (int n = 0; n < test_n; n++) begin
+        $write("%0x ", weight_mat[k*test_n + n]);
       end
       $write("\n");
     end
 
     $display("Test Scales:");
-    for (int n = 0; n < N_TEST; n++) begin
+    for (int n = 0; n < test_n; n++) begin
       $write("%0x ", scale_vec[n]);
     end
     $write("\n");
 
     $display("Test ZPs:");
-    for (int n = 0; n < N_TEST; n++) begin
+    for (int n = 0; n < test_n; n++) begin
       $write("%0x ", zp_vec[n]);
     end
     $write("\n");
 
     $display("Reference Output:");
-    for (int m = 0; m < M_TEST; m++) begin
-      for (int n = 0; n < N_TEST; n++) begin
-        $write("%0x ", ref_output[m*N_TEST + n]);
+    for (int m = 0; m < test_m; m++) begin
+      for (int n = 0; n < test_n; n++) begin
+        $write("%0x ", ref_output[m*test_n + n]);
       end
       $write("\n");
     end
   endtask
 
-  task automatic write_gmem_inputs_weights_sc_zp();
+  task automatic write_gmem_inputs_weights_sc_zp(
+    input int test_m,
+    input int test_n,
+    input int test_k,
+    input logic [63:0] gmem_in_base,
+    input logic [63:0] gmem_w_base,
+    input logic [63:0] gmem_sc_base,
+    input logic [63:0] gmem_zp_base
+  );
     byte unsigned buf_in[];
     byte unsigned buf_w[];
     byte unsigned buf_sc[];
@@ -670,72 +679,89 @@ module tb_VX_gemm_node
     int idx = 0;
     logic [3:0] w0, w1;
 
-    buf_in = new[M_TEST*K_TEST*2];
-    for (int i = 0; i < M_TEST*K_TEST; i++) begin
+    buf_in = new[test_m*test_k*2];
+    for (int i = 0; i < test_m*test_k; i++) begin
       buf_in[i*2 + 0] = input_mat[i][7:0];
       buf_in[i*2 + 1] = input_mat[i][15:8];
     end
     for (int i = 0; i < buf_in.size(); i++)
-      if ((GMEM_IN_BASE + i) < DMEM_SIZE) dmem[GMEM_IN_BASE + i] = buf_in[i];
+      if ((gmem_in_base + i) < DMEM_SIZE) dmem[gmem_in_base + i] = buf_in[i];
 
-    buf_w = new[K_TEST * ((N_TEST+1)/2)];
-    for (int k = 0; k < K_TEST; k++) begin
-      for (int n = 0; n < N_TEST; n += 2) begin
-        w0 = weight_mat[k*N_TEST + n];
-        w1 = (n+1 < N_TEST) ? weight_mat[k*N_TEST + (n+1)] : 4'h0;
+    buf_w = new[test_k * ((test_n+1)/2)];
+    for (int k = 0; k < test_k; k++) begin
+      for (int n = 0; n < test_n; n += 2) begin
+        w0 = weight_mat[k*test_n + n];
+        w1 = (n+1 < test_n) ? weight_mat[k*test_n + (n+1)] : 4'h0;
         buf_w[idx++] = pack_int4_pair(w0, w1);
       end
     end
     for (int i = 0; i < buf_w.size(); i++)
-      if ((GMEM_W_BASE + i) < DMEM_SIZE) dmem[GMEM_W_BASE + i] = buf_w[i];
+      if ((gmem_w_base + i) < DMEM_SIZE) dmem[gmem_w_base + i] = buf_w[i];
 
-    buf_sc = new[N_TEST*2];
-    for (int n = 0; n < N_TEST; n++) begin
+    buf_sc = new[test_n*2];
+    for (int n = 0; n < test_n; n++) begin
       buf_sc[n*2 + 0] = scale_vec[n][7:0];
       buf_sc[n*2 + 1] = scale_vec[n][15:8];
     end
     for (int i = 0; i < buf_sc.size(); i++)
-      if ((GMEM_SC_BASE + i) < DMEM_SIZE) dmem[GMEM_SC_BASE + i] = buf_sc[i];
+      if ((gmem_sc_base + i) < DMEM_SIZE) dmem[gmem_sc_base + i] = buf_sc[i];
 
-    buf_zp = new[N_TEST*2];
-    for (int n = 0; n < N_TEST; n++) begin
+    buf_zp = new[test_n*2];
+    for (int n = 0; n < test_n; n++) begin
       buf_zp[n*2 + 0] = zp_vec[n][7:0];
       buf_zp[n*2 + 1] = zp_vec[n][15:8];
     end
     for (int i = 0; i < buf_zp.size(); i++)
-      if ((GMEM_ZP_BASE + i) < DMEM_SIZE) dmem[GMEM_ZP_BASE + i] = buf_zp[i];
+      if ((gmem_zp_base + i) < DMEM_SIZE) dmem[gmem_zp_base + i] = buf_zp[i];
   endtask
 
   // =========================================================================
   // Program GEMM node job regs via job_frontend
   // =========================================================================
-  int unsigned job_eid;
-  int unsigned job_gen;
-
-  task automatic program_job_regs(input int unsigned eid);
+  task automatic program_job_regs(
+    input int unsigned eid,
+    input int test_m,
+    input int test_n,
+    input int test_k,
+    input int test_qblk,
+    input logic [63:0] gmem_in_base,
+    input logic [63:0] gmem_w_base,
+    input logic [63:0] gmem_out_base,
+    input logic [63:0] gmem_sc_base,
+    input logic [63:0] gmem_zp_base,
+    input logic [63:0] lmem_ibuf0_base,
+    input logic [63:0] lmem_ibuf1_base,
+    input logic [63:0] lmem_wbuf0_base,
+    input logic [63:0] lmem_wbuf1_base,
+    input logic [63:0] lmem_scbuf0_base,
+    input logic [63:0] lmem_scbuf1_base,
+    input logic [63:0] lmem_zpbuf0_base,
+    input logic [63:0] lmem_zpbuf1_base,
+    input logic [63:0] lmem_obuf_base
+  );
     // globals
-    job_write_reg64(eid, REG_INPUT_BASE_LO,  GMEM_IN_BASE);
-    job_write_reg64(eid, REG_WEIGHT_BASE_LO, GMEM_W_BASE);
-    job_write_reg64(eid, REG_OUTPUT_BASE_LO, GMEM_OUT_BASE);
-    job_write_reg64(eid, REG_SCALE_BASE_LO,  GMEM_SC_BASE);
-    job_write_reg64(eid, REG_ZP_BASE_LO,     GMEM_ZP_BASE);
+    job_write_reg64(eid, REG_INPUT_BASE_LO,  gmem_in_base);
+    job_write_reg64(eid, REG_WEIGHT_BASE_LO, gmem_w_base);
+    job_write_reg64(eid, REG_OUTPUT_BASE_LO, gmem_out_base);
+    job_write_reg64(eid, REG_SCALE_BASE_LO,  gmem_sc_base);
+    job_write_reg64(eid, REG_ZP_BASE_LO,     gmem_zp_base);
 
     // lmem buffers
-    job_write_reg64(eid, REG_LMEM_IBUF0_LO,   LMEM_IBUF0_BASE);
-    job_write_reg64(eid, REG_LMEM_IBUF1_LO,   LMEM_IBUF1_BASE);
-    job_write_reg64(eid, REG_LMEM_WBUF0_LO,   LMEM_WBUF0_BASE);
-    job_write_reg64(eid, REG_LMEM_WBUF1_LO,   LMEM_WBUF1_BASE);
-    job_write_reg64(eid, REG_LMEM_SCBUF0_LO,  LMEM_SCBUF0_BASE);
-    job_write_reg64(eid, REG_LMEM_SCBUF1_LO,  LMEM_SCBUF1_BASE);
-    job_write_reg64(eid, REG_LMEM_ZPBUF0_LO,  LMEM_ZPBUF0_BASE);
-    job_write_reg64(eid, REG_LMEM_ZPBUF1_LO,  LMEM_ZPBUF1_BASE);
-    job_write_reg64(eid, REG_LMEM_OBUF_LO,    LMEM_OBUF_BASE);
+    job_write_reg64(eid, REG_LMEM_IBUF0_LO,   lmem_ibuf0_base);
+    job_write_reg64(eid, REG_LMEM_IBUF1_LO,   lmem_ibuf1_base);
+    job_write_reg64(eid, REG_LMEM_WBUF0_LO,   lmem_wbuf0_base);
+    job_write_reg64(eid, REG_LMEM_WBUF1_LO,   lmem_wbuf1_base);
+    job_write_reg64(eid, REG_LMEM_SCBUF0_LO,  lmem_scbuf0_base);
+    job_write_reg64(eid, REG_LMEM_SCBUF1_LO,  lmem_scbuf1_base);
+    job_write_reg64(eid, REG_LMEM_ZPBUF0_LO,  lmem_zpbuf0_base);
+    job_write_reg64(eid, REG_LMEM_ZPBUF1_LO,  lmem_zpbuf1_base);
+    job_write_reg64(eid, REG_LMEM_OBUF_LO,    lmem_obuf_base);
 
     // sizes
-    job_write_reg32(eid, REG_M, M_TEST);
-    job_write_reg32(eid, REG_N, N_TEST);
-    job_write_reg32(eid, REG_K, K_TEST);
-    job_write_reg32(eid, REG_QBLK, 32);
+    job_write_reg32(eid, REG_M, test_m);
+    job_write_reg32(eid, REG_N, test_n);
+    job_write_reg32(eid, REG_K, test_k);
+    job_write_reg32(eid, REG_QBLK, test_qblk);
 
     // CONTROL.valid(bit0)=1 (start)
     job_write_reg32(eid, REG_CONTROL, 32'h1);
@@ -787,15 +813,19 @@ module tb_VX_gemm_node
       return (diff <= tolerance) ? 1 : 0;
   endfunction
 
-  task automatic check_output();
+  task automatic check_output(
+    input int test_m,
+    input int test_n,
+    input logic [63:0] gmem_out_base
+  );
     int mismatch_count = 0;
     int printed = 0;
 
     $display("=== OUTPUT CHECK ===");
-    for (int m = 0; m < M_TEST; m++) begin
-      for (int n = 0; n < N_TEST; n++) begin
-        int unsigned idx = m * N_TEST + n;
-        int unsigned addr = GMEM_OUT_BASE + (idx * 2);
+    for (int m = 0; m < test_m; m++) begin
+      for (int n = 0; n < test_n; n++) begin
+        int unsigned idx = m * test_n + n;
+        int unsigned addr = gmem_out_base + (idx * 2);
         logic [15:0] got = dmem_read_u16(addr);
         logic [15:0] exp = ref_output[idx];
         if (!compare_fp16(got, exp, FP16_TOL)) begin
@@ -812,7 +842,7 @@ module tb_VX_gemm_node
     if (mismatch_count != 0) begin
       $fatal(1, "[%0t] OUTPUT CHECK FAILED: mismatches=%0d", $time, mismatch_count);
     end else begin
-      $display("[%0t] OUTPUT CHECK PASSED: compared %0d elements", $time, M_TEST * N_TEST);
+      $display("[%0t] OUTPUT CHECK PASSED: compared %0d elements", $time, test_m * test_n);
     end
   endtask
 
@@ -858,75 +888,227 @@ module tb_VX_gemm_node
     end
   endtask
 
-  task automatic check_tensor_layout();
+  task automatic check_tensor_layout(
+    input int test_m,
+    input int test_n,
+    input int test_k,
+    input logic [63:0] gmem_in_base,
+    input logic [63:0] gmem_w_base,
+    input logic [63:0] gmem_sc_base,
+    input logic [63:0] gmem_zp_base,
+    input logic [63:0] gmem_out_base,
+    input logic [63:0] lmem_ibuf0_base,
+    input logic [63:0] lmem_ibuf1_base,
+    input logic [63:0] lmem_wbuf0_base,
+    input logic [63:0] lmem_wbuf1_base,
+    input logic [63:0] lmem_scbuf0_base,
+    input logic [63:0] lmem_scbuf1_base,
+    input logic [63:0] lmem_zpbuf0_base,
+    input logic [63:0] lmem_zpbuf1_base,
+    input logic [63:0] lmem_obuf_base
+  );
+    longint unsigned gmem_in_bytes;
+    longint unsigned gmem_w_bytes;
+    longint unsigned gmem_sc_bytes;
+    longint unsigned gmem_zp_bytes;
+    longint unsigned gmem_out_bytes;
+    longint unsigned lmem_ibuf_bytes;
+    longint unsigned lmem_wbuf_bytes;
+    longint unsigned lmem_scbuf_bytes;
+    longint unsigned lmem_zpbuf_bytes;
+    longint unsigned lmem_obuf_bytes;
     begin
-      // GMEM range checks
-      assert_range_fit("GMEM_IN",  GMEM_IN_BASE,  GMEM_IN_BYTES,  DMEM_LIMIT);
-      assert_range_fit("GMEM_W",   GMEM_W_BASE,   GMEM_W_BYTES,   DMEM_LIMIT);
-      assert_range_fit("GMEM_SC",  GMEM_SC_BASE,  GMEM_SC_BYTES,  DMEM_LIMIT);
-      assert_range_fit("GMEM_ZP",  GMEM_ZP_BASE,  GMEM_ZP_BYTES,  DMEM_LIMIT);
-      assert_range_fit("GMEM_OUT", GMEM_OUT_BASE, GMEM_OUT_BYTES, DMEM_LIMIT);
+      gmem_in_bytes  = longint'(test_m) * longint'(test_k) * 2;
+      gmem_w_bytes   = longint'(test_k) * longint'((test_n + 1) / 2);
+      gmem_sc_bytes  = longint'(test_n) * 2;
+      gmem_zp_bytes  = longint'(test_n) * 2;
+      gmem_out_bytes = longint'(test_m) * longint'(test_n) * 2;
 
-      assert_no_overlap("GMEM_IN",  GMEM_IN_BASE,  GMEM_IN_BYTES,  "GMEM_W",   GMEM_W_BASE,   GMEM_W_BYTES);
-      assert_no_overlap("GMEM_IN",  GMEM_IN_BASE,  GMEM_IN_BYTES,  "GMEM_SC",  GMEM_SC_BASE,  GMEM_SC_BYTES);
-      assert_no_overlap("GMEM_IN",  GMEM_IN_BASE,  GMEM_IN_BYTES,  "GMEM_ZP",  GMEM_ZP_BASE,  GMEM_ZP_BYTES);
-      assert_no_overlap("GMEM_IN",  GMEM_IN_BASE,  GMEM_IN_BYTES,  "GMEM_OUT", GMEM_OUT_BASE, GMEM_OUT_BYTES);
-      assert_no_overlap("GMEM_W",   GMEM_W_BASE,   GMEM_W_BYTES,   "GMEM_SC",  GMEM_SC_BASE,  GMEM_SC_BYTES);
-      assert_no_overlap("GMEM_W",   GMEM_W_BASE,   GMEM_W_BYTES,   "GMEM_ZP",  GMEM_ZP_BASE,  GMEM_ZP_BYTES);
-      assert_no_overlap("GMEM_W",   GMEM_W_BASE,   GMEM_W_BYTES,   "GMEM_OUT", GMEM_OUT_BASE, GMEM_OUT_BYTES);
-      assert_no_overlap("GMEM_SC",  GMEM_SC_BASE,  GMEM_SC_BYTES,  "GMEM_ZP",  GMEM_ZP_BASE,  GMEM_ZP_BYTES);
-      assert_no_overlap("GMEM_SC",  GMEM_SC_BASE,  GMEM_SC_BYTES,  "GMEM_OUT", GMEM_OUT_BASE, GMEM_OUT_BYTES);
-      assert_no_overlap("GMEM_ZP",  GMEM_ZP_BASE,  GMEM_ZP_BYTES,  "GMEM_OUT", GMEM_OUT_BASE, GMEM_OUT_BYTES);
+      lmem_ibuf_bytes  = longint'(test_m) * longint'(test_k) * 2;
+      lmem_wbuf_bytes  = longint'(test_k) * longint'((test_n + 1) / 2);
+      lmem_scbuf_bytes = longint'(test_n) * 2;
+      lmem_zpbuf_bytes = longint'(test_n) * 2;
+      lmem_obuf_bytes  = longint'(test_m) * longint'(test_n) * 2;
+
+      // GMEM range checks
+      assert_range_fit("GMEM_IN",  gmem_in_base,  gmem_in_bytes,  DMEM_LIMIT);
+      assert_range_fit("GMEM_W",   gmem_w_base,   gmem_w_bytes,   DMEM_LIMIT);
+      assert_range_fit("GMEM_SC",  gmem_sc_base,  gmem_sc_bytes,  DMEM_LIMIT);
+      assert_range_fit("GMEM_ZP",  gmem_zp_base,  gmem_zp_bytes,  DMEM_LIMIT);
+      assert_range_fit("GMEM_OUT", gmem_out_base, gmem_out_bytes, DMEM_LIMIT);
+
+      assert_no_overlap("GMEM_IN",  gmem_in_base,  gmem_in_bytes,  "GMEM_W",   gmem_w_base,   gmem_w_bytes);
+      assert_no_overlap("GMEM_IN",  gmem_in_base,  gmem_in_bytes,  "GMEM_SC",  gmem_sc_base,  gmem_sc_bytes);
+      assert_no_overlap("GMEM_IN",  gmem_in_base,  gmem_in_bytes,  "GMEM_ZP",  gmem_zp_base,  gmem_zp_bytes);
+      assert_no_overlap("GMEM_IN",  gmem_in_base,  gmem_in_bytes,  "GMEM_OUT", gmem_out_base, gmem_out_bytes);
+      assert_no_overlap("GMEM_W",   gmem_w_base,   gmem_w_bytes,   "GMEM_SC",  gmem_sc_base,  gmem_sc_bytes);
+      assert_no_overlap("GMEM_W",   gmem_w_base,   gmem_w_bytes,   "GMEM_ZP",  gmem_zp_base,  gmem_zp_bytes);
+      assert_no_overlap("GMEM_W",   gmem_w_base,   gmem_w_bytes,   "GMEM_OUT", gmem_out_base, gmem_out_bytes);
+      assert_no_overlap("GMEM_SC",  gmem_sc_base,  gmem_sc_bytes,  "GMEM_ZP",  gmem_zp_base,  gmem_zp_bytes);
+      assert_no_overlap("GMEM_SC",  gmem_sc_base,  gmem_sc_bytes,  "GMEM_OUT", gmem_out_base, gmem_out_bytes);
+      assert_no_overlap("GMEM_ZP",  gmem_zp_base,  gmem_zp_bytes,  "GMEM_OUT", gmem_out_base, gmem_out_bytes);
 
       // LMEM range checks
-      assert_range_fit("LMEM_IBUF0", LMEM_IBUF0_BASE, LMEM_IBUF_BYTES,  LMEM_LIMIT);
-      assert_range_fit("LMEM_IBUF1", LMEM_IBUF1_BASE, LMEM_IBUF_BYTES,  LMEM_LIMIT);
-      assert_range_fit("LMEM_WBUF0", LMEM_WBUF0_BASE, LMEM_WBUF_BYTES,  LMEM_LIMIT);
-      assert_range_fit("LMEM_WBUF1", LMEM_WBUF1_BASE, LMEM_WBUF_BYTES,  LMEM_LIMIT);
-      assert_range_fit("LMEM_SCBUF0", LMEM_SCBUF0_BASE, LMEM_SCBUF_BYTES, LMEM_LIMIT);
-      assert_range_fit("LMEM_SCBUF1", LMEM_SCBUF1_BASE, LMEM_SCBUF_BYTES, LMEM_LIMIT);
-      assert_range_fit("LMEM_ZPBUF0", LMEM_ZPBUF0_BASE, LMEM_ZPBUF_BYTES, LMEM_LIMIT);
-      assert_range_fit("LMEM_ZPBUF1", LMEM_ZPBUF1_BASE, LMEM_ZPBUF_BYTES, LMEM_LIMIT);
-      assert_range_fit("LMEM_OBUF",  LMEM_OBUF_BASE,  LMEM_OBUF_BYTES,  LMEM_LIMIT);
+      assert_range_fit("LMEM_IBUF0", lmem_ibuf0_base, lmem_ibuf_bytes,  LMEM_LIMIT);
+      assert_range_fit("LMEM_IBUF1", lmem_ibuf1_base, lmem_ibuf_bytes,  LMEM_LIMIT);
+      assert_range_fit("LMEM_WBUF0", lmem_wbuf0_base, lmem_wbuf_bytes,  LMEM_LIMIT);
+      assert_range_fit("LMEM_WBUF1", lmem_wbuf1_base, lmem_wbuf_bytes,  LMEM_LIMIT);
+      assert_range_fit("LMEM_SCBUF0", lmem_scbuf0_base, lmem_scbuf_bytes, LMEM_LIMIT);
+      assert_range_fit("LMEM_SCBUF1", lmem_scbuf1_base, lmem_scbuf_bytes, LMEM_LIMIT);
+      assert_range_fit("LMEM_ZPBUF0", lmem_zpbuf0_base, lmem_zpbuf_bytes, LMEM_LIMIT);
+      assert_range_fit("LMEM_ZPBUF1", lmem_zpbuf1_base, lmem_zpbuf_bytes, LMEM_LIMIT);
+      assert_range_fit("LMEM_OBUF",  lmem_obuf_base,  lmem_obuf_bytes,  LMEM_LIMIT);
 
-      assert_no_overlap("LMEM_IBUF0", LMEM_IBUF0_BASE, LMEM_IBUF_BYTES,  "LMEM_IBUF1", LMEM_IBUF1_BASE, LMEM_IBUF_BYTES);
-      assert_no_overlap("LMEM_IBUF0", LMEM_IBUF0_BASE, LMEM_IBUF_BYTES,  "LMEM_WBUF0", LMEM_WBUF0_BASE, LMEM_WBUF_BYTES);
-      assert_no_overlap("LMEM_IBUF0", LMEM_IBUF0_BASE, LMEM_IBUF_BYTES,  "LMEM_WBUF1", LMEM_WBUF1_BASE, LMEM_WBUF_BYTES);
-      assert_no_overlap("LMEM_IBUF0", LMEM_IBUF0_BASE, LMEM_IBUF_BYTES,  "LMEM_SCBUF0", LMEM_SCBUF0_BASE, LMEM_SCBUF_BYTES);
-      assert_no_overlap("LMEM_IBUF0", LMEM_IBUF0_BASE, LMEM_IBUF_BYTES,  "LMEM_SCBUF1", LMEM_SCBUF1_BASE, LMEM_SCBUF_BYTES);
-      assert_no_overlap("LMEM_IBUF0", LMEM_IBUF0_BASE, LMEM_IBUF_BYTES,  "LMEM_ZPBUF0", LMEM_ZPBUF0_BASE, LMEM_ZPBUF_BYTES);
-      assert_no_overlap("LMEM_IBUF0", LMEM_IBUF0_BASE, LMEM_IBUF_BYTES,  "LMEM_ZPBUF1", LMEM_ZPBUF1_BASE, LMEM_ZPBUF_BYTES);
-      assert_no_overlap("LMEM_IBUF0", LMEM_IBUF0_BASE, LMEM_IBUF_BYTES,  "LMEM_OBUF",  LMEM_OBUF_BASE,  LMEM_OBUF_BYTES);
-      assert_no_overlap("LMEM_IBUF1", LMEM_IBUF1_BASE, LMEM_IBUF_BYTES,  "LMEM_WBUF0", LMEM_WBUF0_BASE, LMEM_WBUF_BYTES);
-      assert_no_overlap("LMEM_IBUF1", LMEM_IBUF1_BASE, LMEM_IBUF_BYTES,  "LMEM_WBUF1", LMEM_WBUF1_BASE, LMEM_WBUF_BYTES);
-      assert_no_overlap("LMEM_IBUF1", LMEM_IBUF1_BASE, LMEM_IBUF_BYTES,  "LMEM_SCBUF0", LMEM_SCBUF0_BASE, LMEM_SCBUF_BYTES);
-      assert_no_overlap("LMEM_IBUF1", LMEM_IBUF1_BASE, LMEM_IBUF_BYTES,  "LMEM_SCBUF1", LMEM_SCBUF1_BASE, LMEM_SCBUF_BYTES);
-      assert_no_overlap("LMEM_IBUF1", LMEM_IBUF1_BASE, LMEM_IBUF_BYTES,  "LMEM_ZPBUF0", LMEM_ZPBUF0_BASE, LMEM_ZPBUF_BYTES);
-      assert_no_overlap("LMEM_IBUF1", LMEM_IBUF1_BASE, LMEM_IBUF_BYTES,  "LMEM_ZPBUF1", LMEM_ZPBUF1_BASE, LMEM_ZPBUF_BYTES);
-      assert_no_overlap("LMEM_IBUF1", LMEM_IBUF1_BASE, LMEM_IBUF_BYTES,  "LMEM_OBUF",  LMEM_OBUF_BASE,  LMEM_OBUF_BYTES);
-      assert_no_overlap("LMEM_WBUF0", LMEM_WBUF0_BASE, LMEM_WBUF_BYTES,  "LMEM_WBUF1", LMEM_WBUF1_BASE, LMEM_WBUF_BYTES);
-      assert_no_overlap("LMEM_WBUF0", LMEM_WBUF0_BASE, LMEM_WBUF_BYTES,  "LMEM_SCBUF0", LMEM_SCBUF0_BASE, LMEM_SCBUF_BYTES);
-      assert_no_overlap("LMEM_WBUF0", LMEM_WBUF0_BASE, LMEM_WBUF_BYTES,  "LMEM_SCBUF1", LMEM_SCBUF1_BASE, LMEM_SCBUF_BYTES);
-      assert_no_overlap("LMEM_WBUF0", LMEM_WBUF0_BASE, LMEM_WBUF_BYTES,  "LMEM_ZPBUF0", LMEM_ZPBUF0_BASE, LMEM_ZPBUF_BYTES);
-      assert_no_overlap("LMEM_WBUF0", LMEM_WBUF0_BASE, LMEM_WBUF_BYTES,  "LMEM_ZPBUF1", LMEM_ZPBUF1_BASE, LMEM_ZPBUF_BYTES);
-      assert_no_overlap("LMEM_WBUF0", LMEM_WBUF0_BASE, LMEM_WBUF_BYTES,  "LMEM_OBUF",  LMEM_OBUF_BASE,  LMEM_OBUF_BYTES);
-      assert_no_overlap("LMEM_WBUF1", LMEM_WBUF1_BASE, LMEM_WBUF_BYTES,  "LMEM_SCBUF0", LMEM_SCBUF0_BASE, LMEM_SCBUF_BYTES);
-      assert_no_overlap("LMEM_WBUF1", LMEM_WBUF1_BASE, LMEM_WBUF_BYTES,  "LMEM_SCBUF1", LMEM_SCBUF1_BASE, LMEM_SCBUF_BYTES);
-      assert_no_overlap("LMEM_WBUF1", LMEM_WBUF1_BASE, LMEM_WBUF_BYTES,  "LMEM_ZPBUF0", LMEM_ZPBUF0_BASE, LMEM_ZPBUF_BYTES);
-      assert_no_overlap("LMEM_WBUF1", LMEM_WBUF1_BASE, LMEM_WBUF_BYTES,  "LMEM_ZPBUF1", LMEM_ZPBUF1_BASE, LMEM_ZPBUF_BYTES);
-      assert_no_overlap("LMEM_WBUF1", LMEM_WBUF1_BASE, LMEM_WBUF_BYTES,  "LMEM_OBUF",  LMEM_OBUF_BASE,  LMEM_OBUF_BYTES);
-      assert_no_overlap("LMEM_SCBUF0", LMEM_SCBUF0_BASE, LMEM_SCBUF_BYTES, "LMEM_SCBUF1", LMEM_SCBUF1_BASE, LMEM_SCBUF_BYTES);
-      assert_no_overlap("LMEM_SCBUF0", LMEM_SCBUF0_BASE, LMEM_SCBUF_BYTES, "LMEM_ZPBUF0", LMEM_ZPBUF0_BASE, LMEM_ZPBUF_BYTES);
-      assert_no_overlap("LMEM_SCBUF0", LMEM_SCBUF0_BASE, LMEM_SCBUF_BYTES, "LMEM_ZPBUF1", LMEM_ZPBUF1_BASE, LMEM_ZPBUF_BYTES);
-      assert_no_overlap("LMEM_SCBUF0", LMEM_SCBUF0_BASE, LMEM_SCBUF_BYTES, "LMEM_OBUF",  LMEM_OBUF_BASE,  LMEM_OBUF_BYTES);
-      assert_no_overlap("LMEM_SCBUF1", LMEM_SCBUF1_BASE, LMEM_SCBUF_BYTES, "LMEM_ZPBUF0", LMEM_ZPBUF0_BASE, LMEM_ZPBUF_BYTES);
-      assert_no_overlap("LMEM_SCBUF1", LMEM_SCBUF1_BASE, LMEM_SCBUF_BYTES, "LMEM_ZPBUF1", LMEM_ZPBUF1_BASE, LMEM_ZPBUF_BYTES);
-      assert_no_overlap("LMEM_SCBUF1", LMEM_SCBUF1_BASE, LMEM_SCBUF_BYTES, "LMEM_OBUF",  LMEM_OBUF_BASE,  LMEM_OBUF_BYTES);
-      assert_no_overlap("LMEM_ZPBUF0", LMEM_ZPBUF0_BASE, LMEM_ZPBUF_BYTES, "LMEM_ZPBUF1", LMEM_ZPBUF1_BASE, LMEM_ZPBUF_BYTES);
-      assert_no_overlap("LMEM_ZPBUF0", LMEM_ZPBUF0_BASE, LMEM_ZPBUF_BYTES, "LMEM_OBUF",  LMEM_OBUF_BASE,  LMEM_OBUF_BYTES);
-      assert_no_overlap("LMEM_ZPBUF1", LMEM_ZPBUF1_BASE, LMEM_ZPBUF_BYTES, "LMEM_OBUF",  LMEM_OBUF_BASE,  LMEM_OBUF_BYTES);
+      assert_no_overlap("LMEM_IBUF0", lmem_ibuf0_base, lmem_ibuf_bytes,  "LMEM_IBUF1", lmem_ibuf1_base, lmem_ibuf_bytes);
+      assert_no_overlap("LMEM_IBUF0", lmem_ibuf0_base, lmem_ibuf_bytes,  "LMEM_WBUF0", lmem_wbuf0_base, lmem_wbuf_bytes);
+      assert_no_overlap("LMEM_IBUF0", lmem_ibuf0_base, lmem_ibuf_bytes,  "LMEM_WBUF1", lmem_wbuf1_base, lmem_wbuf_bytes);
+      assert_no_overlap("LMEM_IBUF0", lmem_ibuf0_base, lmem_ibuf_bytes,  "LMEM_SCBUF0", lmem_scbuf0_base, lmem_scbuf_bytes);
+      assert_no_overlap("LMEM_IBUF0", lmem_ibuf0_base, lmem_ibuf_bytes,  "LMEM_SCBUF1", lmem_scbuf1_base, lmem_scbuf_bytes);
+      assert_no_overlap("LMEM_IBUF0", lmem_ibuf0_base, lmem_ibuf_bytes,  "LMEM_ZPBUF0", lmem_zpbuf0_base, lmem_zpbuf_bytes);
+      assert_no_overlap("LMEM_IBUF0", lmem_ibuf0_base, lmem_ibuf_bytes,  "LMEM_ZPBUF1", lmem_zpbuf1_base, lmem_zpbuf_bytes);
+      assert_no_overlap("LMEM_IBUF0", lmem_ibuf0_base, lmem_ibuf_bytes,  "LMEM_OBUF",  lmem_obuf_base,  lmem_obuf_bytes);
+      assert_no_overlap("LMEM_IBUF1", lmem_ibuf1_base, lmem_ibuf_bytes,  "LMEM_WBUF0", lmem_wbuf0_base, lmem_wbuf_bytes);
+      assert_no_overlap("LMEM_IBUF1", lmem_ibuf1_base, lmem_ibuf_bytes,  "LMEM_WBUF1", lmem_wbuf1_base, lmem_wbuf_bytes);
+      assert_no_overlap("LMEM_IBUF1", lmem_ibuf1_base, lmem_ibuf_bytes,  "LMEM_SCBUF0", lmem_scbuf0_base, lmem_scbuf_bytes);
+      assert_no_overlap("LMEM_IBUF1", lmem_ibuf1_base, lmem_ibuf_bytes,  "LMEM_SCBUF1", lmem_scbuf1_base, lmem_scbuf_bytes);
+      assert_no_overlap("LMEM_IBUF1", lmem_ibuf1_base, lmem_ibuf_bytes,  "LMEM_ZPBUF0", lmem_zpbuf0_base, lmem_zpbuf_bytes);
+      assert_no_overlap("LMEM_IBUF1", lmem_ibuf1_base, lmem_ibuf_bytes,  "LMEM_ZPBUF1", lmem_zpbuf1_base, lmem_zpbuf_bytes);
+      assert_no_overlap("LMEM_IBUF1", lmem_ibuf1_base, lmem_ibuf_bytes,  "LMEM_OBUF",  lmem_obuf_base,  lmem_obuf_bytes);
+      assert_no_overlap("LMEM_WBUF0", lmem_wbuf0_base, lmem_wbuf_bytes,  "LMEM_WBUF1", lmem_wbuf1_base, lmem_wbuf_bytes);
+      assert_no_overlap("LMEM_WBUF0", lmem_wbuf0_base, lmem_wbuf_bytes,  "LMEM_SCBUF0", lmem_scbuf0_base, lmem_scbuf_bytes);
+      assert_no_overlap("LMEM_WBUF0", lmem_wbuf0_base, lmem_wbuf_bytes,  "LMEM_SCBUF1", lmem_scbuf1_base, lmem_scbuf_bytes);
+      assert_no_overlap("LMEM_WBUF0", lmem_wbuf0_base, lmem_wbuf_bytes,  "LMEM_ZPBUF0", lmem_zpbuf0_base, lmem_zpbuf_bytes);
+      assert_no_overlap("LMEM_WBUF0", lmem_wbuf0_base, lmem_wbuf_bytes,  "LMEM_ZPBUF1", lmem_zpbuf1_base, lmem_zpbuf_bytes);
+      assert_no_overlap("LMEM_WBUF0", lmem_wbuf0_base, lmem_wbuf_bytes,  "LMEM_OBUF",  lmem_obuf_base,  lmem_obuf_bytes);
+      assert_no_overlap("LMEM_WBUF1", lmem_wbuf1_base, lmem_wbuf_bytes,  "LMEM_SCBUF0", lmem_scbuf0_base, lmem_scbuf_bytes);
+      assert_no_overlap("LMEM_WBUF1", lmem_wbuf1_base, lmem_wbuf_bytes,  "LMEM_SCBUF1", lmem_scbuf1_base, lmem_scbuf_bytes);
+      assert_no_overlap("LMEM_WBUF1", lmem_wbuf1_base, lmem_wbuf_bytes,  "LMEM_ZPBUF0", lmem_zpbuf0_base, lmem_zpbuf_bytes);
+      assert_no_overlap("LMEM_WBUF1", lmem_wbuf1_base, lmem_wbuf_bytes,  "LMEM_ZPBUF1", lmem_zpbuf1_base, lmem_zpbuf_bytes);
+      assert_no_overlap("LMEM_WBUF1", lmem_wbuf1_base, lmem_wbuf_bytes,  "LMEM_OBUF",  lmem_obuf_base,  lmem_obuf_bytes);
+      assert_no_overlap("LMEM_SCBUF0", lmem_scbuf0_base, lmem_scbuf_bytes, "LMEM_SCBUF1", lmem_scbuf1_base, lmem_scbuf_bytes);
+      assert_no_overlap("LMEM_SCBUF0", lmem_scbuf0_base, lmem_scbuf_bytes, "LMEM_ZPBUF0", lmem_zpbuf0_base, lmem_zpbuf_bytes);
+      assert_no_overlap("LMEM_SCBUF0", lmem_scbuf0_base, lmem_scbuf_bytes, "LMEM_ZPBUF1", lmem_zpbuf1_base, lmem_zpbuf_bytes);
+      assert_no_overlap("LMEM_SCBUF0", lmem_scbuf0_base, lmem_scbuf_bytes, "LMEM_OBUF",  lmem_obuf_base,  lmem_obuf_bytes);
+      assert_no_overlap("LMEM_SCBUF1", lmem_scbuf1_base, lmem_scbuf_bytes, "LMEM_ZPBUF0", lmem_zpbuf0_base, lmem_zpbuf_bytes);
+      assert_no_overlap("LMEM_SCBUF1", lmem_scbuf1_base, lmem_scbuf_bytes, "LMEM_ZPBUF1", lmem_zpbuf1_base, lmem_zpbuf_bytes);
+      assert_no_overlap("LMEM_SCBUF1", lmem_scbuf1_base, lmem_scbuf_bytes, "LMEM_OBUF",  lmem_obuf_base,  lmem_obuf_bytes);
+      assert_no_overlap("LMEM_ZPBUF0", lmem_zpbuf0_base, lmem_zpbuf_bytes, "LMEM_ZPBUF1", lmem_zpbuf1_base, lmem_zpbuf_bytes);
+      assert_no_overlap("LMEM_ZPBUF0", lmem_zpbuf0_base, lmem_zpbuf_bytes, "LMEM_OBUF",  lmem_obuf_base,  lmem_obuf_bytes);
+      assert_no_overlap("LMEM_ZPBUF1", lmem_zpbuf1_base, lmem_zpbuf_bytes, "LMEM_OBUF",  lmem_obuf_base,  lmem_obuf_bytes);
 
       $display("[%0t] Tensor layout check passed", $time);
+    end
+  endtask
+
+  task automatic run_gemm_test(
+    input string case_name,
+    input int test_m,
+    input int test_n,
+    input int test_k,
+    input int test_qblk,
+    input logic [63:0] gmem_in_base,
+    input logic [63:0] gmem_w_base,
+    input logic [63:0] gmem_sc_base,
+    input logic [63:0] gmem_zp_base,
+    input logic [63:0] gmem_out_base,
+    input logic [63:0] lmem_ibuf0_base,
+    input logic [63:0] lmem_ibuf1_base,
+    input logic [63:0] lmem_wbuf0_base,
+    input logic [63:0] lmem_wbuf1_base,
+    input logic [63:0] lmem_scbuf0_base,
+    input logic [63:0] lmem_scbuf1_base,
+    input logic [63:0] lmem_zpbuf0_base,
+    input logic [63:0] lmem_zpbuf1_base,
+    input logic [63:0] lmem_obuf_base
+  );
+    int unsigned job_eid_local;
+    int unsigned job_gen_local;
+    begin
+      $display("\n[%0t] === RUN GEMM TEST: %s (M=%0d, N=%0d, K=%0d) ===",
+               $time, case_name, test_m, test_n, test_k);
+
+      init_memories();
+      apply_reset();
+
+      build_test_vectors(test_m, test_n, test_k);
+      check_tensor_layout(
+        test_m, test_n, test_k,
+        gmem_in_base, gmem_w_base, gmem_sc_base, gmem_zp_base, gmem_out_base,
+        lmem_ibuf0_base, lmem_ibuf1_base, lmem_wbuf0_base, lmem_wbuf1_base,
+        lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base, lmem_obuf_base
+      );
+      write_gmem_inputs_weights_sc_zp(
+        test_m, test_n, test_k,
+        gmem_in_base, gmem_w_base, gmem_sc_base, gmem_zp_base
+      );
+
+      job_alloc(job_eid_local, job_gen_local);
+      program_job_regs(
+        job_eid_local,
+        test_m, test_n, test_k, test_qblk,
+        gmem_in_base, gmem_w_base, gmem_out_base, gmem_sc_base, gmem_zp_base,
+        lmem_ibuf0_base, lmem_ibuf1_base, lmem_wbuf0_base, lmem_wbuf1_base,
+        lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base, lmem_obuf_base
+      );
+      wait_job_done(job_eid_local, job_gen_local);
+
+      repeat (50) @(posedge clk);
+      check_output(test_m, test_n, gmem_out_base);
+    end
+  endtask
+
+  task automatic load_test_cfg(
+    input string test_name,
+    output int test_m,
+    output int test_n,
+    output int test_k,
+    output int test_qblk,
+    output logic [63:0] gmem_in_base,
+    output logic [63:0] gmem_w_base,
+    output logic [63:0] gmem_sc_base,
+    output logic [63:0] gmem_zp_base,
+    output logic [63:0] gmem_out_base,
+    output logic [63:0] lmem_ibuf0_base,
+    output logic [63:0] lmem_ibuf1_base,
+    output logic [63:0] lmem_wbuf0_base,
+    output logic [63:0] lmem_wbuf1_base,
+    output logic [63:0] lmem_scbuf0_base,
+    output logic [63:0] lmem_scbuf1_base,
+    output logic [63:0] lmem_zpbuf0_base,
+    output logic [63:0] lmem_zpbuf1_base,
+    output logic [63:0] lmem_obuf_base
+  );
+    begin
+      // defaults
+      test_m = DEFAULT_M_TEST;
+      test_n = DEFAULT_N_TEST;
+      test_k = DEFAULT_K_TEST;
+      test_qblk = DEFAULT_QBLK;
+      gmem_in_base = DEFAULT_GMEM_IN_BASE;
+      gmem_w_base = DEFAULT_GMEM_W_BASE;
+      gmem_sc_base = DEFAULT_GMEM_SC_BASE;
+      gmem_zp_base = DEFAULT_GMEM_ZP_BASE;
+      gmem_out_base = DEFAULT_GMEM_OUT_BASE;
+      lmem_ibuf0_base = DEFAULT_LMEM_IBUF0_BASE;
+      lmem_ibuf1_base = DEFAULT_LMEM_IBUF1_BASE;
+      lmem_wbuf0_base = DEFAULT_LMEM_WBUF0_BASE;
+      lmem_wbuf1_base = DEFAULT_LMEM_WBUF1_BASE;
+      lmem_scbuf0_base = DEFAULT_LMEM_SCBUF0_BASE;
+      lmem_scbuf1_base = DEFAULT_LMEM_SCBUF1_BASE;
+      lmem_zpbuf0_base = DEFAULT_LMEM_ZPBUF0_BASE;
+      lmem_zpbuf1_base = DEFAULT_LMEM_ZPBUF1_BASE;
+      lmem_obuf_base = DEFAULT_LMEM_OBUF_BASE;
+
+      // add named profiles here
+      if ((test_name == "default") || (test_name == "")) begin
+        // keep defaults
+      end else if (test_name == "M4K32N32") begin
+        test_m = 4;
+        test_k = 32;
+        test_n = 32;
+      end else begin
+        $fatal(1, "[%0t] Unknown TEST=%s (supported: default, M4K32N32)", $time, test_name);
+      end
     end
   endtask
 
@@ -934,28 +1116,33 @@ module tb_VX_gemm_node
   // Main sim
   // =========================================================================
   initial begin
+    string test_name;
+    int test_m, test_n, test_k, test_qblk;
+    logic [63:0] gmem_in_base, gmem_w_base, gmem_sc_base, gmem_zp_base, gmem_out_base;
+    logic [63:0] lmem_ibuf0_base, lmem_ibuf1_base, lmem_wbuf0_base, lmem_wbuf1_base;
+    logic [63:0] lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base, lmem_obuf_base;
+
     $timeformat(-9, 0, "ns", 0);
-
-    init_memories();
-
     reset = 1'b0;
-    apply_reset();
 
-    build_test_vectors();
-    check_tensor_layout();
-    write_gmem_inputs_weights_sc_zp();
+    if (!$value$plusargs("TEST=%s", test_name))
+      test_name = "default";
 
-    // 1) allocate job entry
-    job_alloc(job_eid, job_gen);
+    load_test_cfg(
+      test_name,
+      test_m, test_n, test_k, test_qblk,
+      gmem_in_base, gmem_w_base, gmem_sc_base, gmem_zp_base, gmem_out_base,
+      lmem_ibuf0_base, lmem_ibuf1_base, lmem_wbuf0_base, lmem_wbuf1_base,
+      lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base, lmem_obuf_base
+    );
 
-    // 2) program that entry regs
-    program_job_regs(job_eid);
-
-    // 3) wait done via entry CONTROL.valid clearing
-    wait_job_done(job_eid, job_gen);
-
-    repeat (50) @(posedge clk);
-    check_output();
+    run_gemm_test(
+      test_name,
+      test_m, test_n, test_k, test_qblk,
+      gmem_in_base, gmem_w_base, gmem_sc_base, gmem_zp_base, gmem_out_base,
+      lmem_ibuf0_base, lmem_ibuf1_base, lmem_wbuf0_base, lmem_wbuf1_base,
+      lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base, lmem_obuf_base
+    );
 
     $display("[%0t] TB completed", $time);
 

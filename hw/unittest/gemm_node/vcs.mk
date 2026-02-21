@@ -15,8 +15,10 @@ compile: setup
 	$(RTLS) \
 	$(TB) \
 	$(DPI_SRCS) \
-	$(SOFTFLOAT_LIB) \
-	$(PARAMS)
+		$(SOFTFLOAT_LIB) \
+		$(PARAMS)
 
-sim: compile
-	./simv -reportstats -l $(SIM_LOG)
+run:
+	./simv -reportstats $(SIM_ARGS) -l $(SIM_LOG)
+
+sim: compile run

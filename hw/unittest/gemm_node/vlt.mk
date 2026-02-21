@@ -13,5 +13,7 @@ compile: setup
 		$(PARAMS) \
 		2>&1 | tee $(COMPILE_LOG)
 
-sim: compile
-	./obj_dir/V$(TOP_MODULE) 2>&1 | tee $(SIM_LOG)
+run:
+	./obj_dir/V$(TOP_MODULE) $(SIM_ARGS) 2>&1 | tee $(SIM_LOG)
+
+sim: compile run

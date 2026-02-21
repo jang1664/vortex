@@ -102,7 +102,18 @@ LDFLAGS :=
 PARAMS_  := 
 
 COMPILE_LOG := logs/compile.log
-SIM_LOG     := logs/sim.log
+
+# Runtime test selection
+# - TEST empty: keep legacy logs/sim.log
+# - TEST set:   logs/sim_<TEST>.log and +TEST=<TEST>
+TEST ?=
+ifneq ($(strip $(TEST)),)
+SIM_LOG := logs/sim_$(TEST).log
+SIM_ARGS := +TEST=$(TEST)
+else
+SIM_LOG := logs/sim.log
+SIM_ARGS :=
+endif
 
 VL_INCDIRS  := $(foreach dir,$(INCDIRS_),-I$(dir))
 VC_INCDIRS  := $(foreach dir,$(INCDIRS_),+incdir+$(dir))
@@ -117,6 +128,15 @@ setup:
 	mkdir -p logs reports
 
 include $(SIM_EXEC).mk
+
+TEST_LIST ?= default
+
+regress: compile
+	@set -e; \
+	for t in $(TEST_LIST); do \
+	  echo "[REGRESS] running TEST=$$t"; \
+	  $(MAKE) run SIM_EXEC=$(SIM_EXEC) TEST=$$t; \
+	done
 
 fst2vcd:
 	for file in reports/*.fst; do \
