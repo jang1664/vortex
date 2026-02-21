@@ -584,23 +584,32 @@ module tb_VX_gemm_node
     for (int m = 0; m < M_TEST; m++) begin
       for (int k = 0; k < K_TEST; k++) begin
         // shortreal v = shortreal'(1.0 + ((m+k) % 7));
-        shortreal v = shortreal'(1.0);
+        shortreal v = shortreal'(((m*K_TEST+k) % 5 - 2.0));
+        // shortreal v = shortreal'(1.0);
         input_mat[m*K_TEST + k] = cf_math_pkg::fp32_val_to_fp16_bit(v);
         ref_input[m*K_TEST + k] = input_mat[m*K_TEST + k];
       end
     end
     for (int k = 0; k < K_TEST; k++) begin
       for (int n = 0; n < N_TEST; n++) begin
+        int w = ((k*N_TEST + n) % 13) - 6; // -6..6
         // int w = ((k*3 + n*5) % 13) - 6; // -6..6
-        int w = 1; // -6..6
+        // int w = 1;
         weight_mat[k*N_TEST + n] = w[3:0];
         ref_weight[k*N_TEST + n] = signed'(w[3:0]);
       end
     end
     for (int n = 0; n < N_TEST; n++) begin
-      scale_vec[n] = 16'h3C00; // 1.0
+      // shortreal v = shortreal'((n % 7) - 3.0);
+      shortreal v = shortreal'(1.0);
+
+      // int z = (n*5 % 13) - 6; // -6..6
+      int z = 2;
+
+      scale_vec[n] = cf_math_pkg::fp32_val_to_fp16_bit(v);
       ref_scale[n] = scale_vec[n];
-      zp_vec[n]    = 16'h0002;
+
+      zp_vec[n]    = z[15:0];
       ref_zero[n]  = zp_vec[n];
     end
 

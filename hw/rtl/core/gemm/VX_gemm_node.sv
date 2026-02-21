@@ -250,7 +250,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     assign weight_dma_ctrl_if.src_strides[1] = 0;
     assign weight_dma_ctrl_if.src_strides[2] = 0;
 
-    assign weight_dma_ctrl_if.dst_base_addr  = gemm_ctrl_if.weight_read_ctrl.cmd.rs1_data; //{dir, reg_idx}
+    assign weight_dma_ctrl_if.dst_base_addr  = {gemm_ctrl_if.weight_read_ctrl.cmd.flags[2], gemm_ctrl_if.weight_read_ctrl.cmd.flags[1]}; //{dir, reg_idx}
     assign weight_dma_ctrl_if.dst_strides[0] = 0;
     assign weight_dma_ctrl_if.dst_strides[1] = 0;
     assign weight_dma_ctrl_if.dst_strides[2] = 0;

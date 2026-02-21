@@ -263,6 +263,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0]           acc_mem_accum_rd_addr;
     logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0]           acc_mem_accum_wr_addr;
     logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0]           acc_mem_out_rd_addr;
+    logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0]           acc_mem_out_rd_addr_q;
 
     logic [`GEMM_ACC_MEM_BANK_ADDR_WIDTH-1:0]      acc_mem_accum_rd_bank_addr;
     logic [1:0]                                    acc_mem_accum_rd_bank;
@@ -271,6 +272,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     logic [1:0]                                    acc_mem_accum_wr_bank;
     logic [`GEMM_ACC_MEM_BANK_ADDR_WIDTH-1:0]      acc_mem_out_rd_bank_addr;
     logic [1:0]                                    acc_mem_out_rd_bank;
+    logic [1:0]                                    acc_mem_out_rd_bank_q;
 
     logic [3:0][`MXU_COL-1:0][FP32_WIDTH-1:0]            acc_mem_out_data;
     logic [3:0][`GEMM_ACC_MEM_ADDR_WIDTH-1:0]            acc_mem_wr_addr;
@@ -343,6 +345,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
 
     assign o_lmem_bus_if.req_ready = ~in_flight | (gemm_unit_ctrl.is_load && acc_mem_out_rd_bank != acc_mem_accum_wr_bank) |
                                      (~gemm_unit_ctrl.is_load && acc_mem_out_rd_bank != acc_mem_accum_rd_bank && acc_mem_out_rd_bank != acc_mem_accum_wr_bank);
+    wire out_mem_rd_req_fire = o_lmem_bus_if.req_valid & o_lmem_bus_if.req_ready & ~o_lmem_bus_if.req_data.rw;
     assign o_lmem_bus_if.rsp_valid = fp16_out_valid[0];
     assign o_lmem_bus_if.rsp_data.data  = fp16_out_data;
     assign o_lmem_bus_if.rsp_data.tag  = '0;
@@ -654,9 +657,13 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     always_ff @(posedge clk, posedge reset) begin
         if (reset) begin
             acc_mem_rd_out_valid <= 1'b0;
+            acc_mem_out_rd_addr_q <= '0;
+            acc_mem_out_rd_bank_q <= '0;
         end else begin
-            if (o_lmem_bus_if.req_valid & o_lmem_bus_if.req_ready & ~o_lmem_bus_if.req_data.rw) begin
+            if (out_mem_rd_req_fire) begin
                 acc_mem_rd_out_valid <= 1'b1;
+                acc_mem_out_rd_addr_q <= acc_mem_out_rd_addr;
+                acc_mem_out_rd_bank_q <= acc_mem_out_rd_bank;
             end else if (fp16_out_valid[0] & o_lmem_bus_if.rsp_ready) begin
                 acc_mem_rd_out_valid <= 1'b0;
             end
@@ -1132,12 +1139,12 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
             logic this_bank_accum_wr; 
 
             assign this_bank_accum_rd = (~gemm_unit_ctrl.is_load && acc_mem_accum_rd_bank == i && acc_mem_accum_rd_req && in_flight);
-            assign this_bank_out_rd   = (acc_mem_out_rd_bank == i && (o_lmem_bus_if.req_valid & o_lmem_bus_if.req_ready));
+            assign this_bank_out_rd   = (acc_mem_out_rd_bank == i && out_mem_rd_req_fire);
             assign this_bank_accum_wr = (acc_mem_accum_wr_bank == i && acc_mem_accum_wr_req && in_flight);
 
             assign acc_mem_wr_en[i] = this_bank_accum_wr && (gemm_unit_ctrl.is_load ? final_scaler_output_valid : acc_output_valid[0]);
             assign acc_mem_rd_en[i] = this_bank_accum_rd ? acc_mem_accum_rd_req :
-                                      this_bank_out_rd   ? (o_lmem_bus_if.req_valid & o_lmem_bus_if.req_ready) : 1'b0;
+                                      this_bank_out_rd   ? out_mem_rd_req_fire : 1'b0;
             assign acc_mem_wr_addr[i] = acc_mem_accum_wr_bank_addr;
             assign acc_mem_rd_addr[i] = this_bank_accum_rd ? acc_mem_accum_rd_bank_addr :
                                         this_bank_out_rd   ? acc_mem_out_rd_bank_addr : '0;
@@ -1240,7 +1247,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
             VX_f32_to_f16 u_f32_to_f16 (
                 .clk_i    (clk),
                 .resetn_i (~reset),
-                .data_i   (acc_mem_out_data[acc_mem_out_rd_bank][i]),
+                .data_i   (acc_mem_out_data[acc_mem_out_rd_bank_q][i]),
                 .valid_i  (acc_mem_rd_out_valid),
                 .data_o   (fp16_out_data[i]),
                 .valid_o  (fp16_out_valid[i])
@@ -1429,13 +1436,14 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
             end
 
             // o_lmem_bus
-            if (o_lmem_bus_if.req_valid & o_lmem_bus_if.req_ready & ~o_lmem_bus_if.req_data.rw) begin
+            if (out_mem_rd_req_fire) begin
                 `TRACE(1, ("%m : [%0t] | GEMM_ACC_MEM_OUT_READ_REQ | {inst=%s, addr=0x%0h, bank=%0d}\n",
                     $time, INSTANCE_ID, o_lmem_bus_if.req_data.addr, acc_mem_out_rd_bank))
             end
             if (o_lmem_bus_if.rsp_valid & o_lmem_bus_if.rsp_ready) begin
-                `TRACE(2, ("%m : [%0t] | GEMM_ACC_MEM_OUT_READ_RSP | {inst=%s, data=%s}\n",
-                    $time, INSTANCE_ID, parseWordNoNormal(o_lmem_bus_if.rsp_data.data, `MXU_ROW * FP16_WIDTH, FP16_WIDTH, "fp")))
+                `TRACE(2, ("%m : [%0t] | GEMM_ACC_MEM_OUT_READ_RSP | {inst=%s, addr=0x%0h, bank=%0d, data=%s}\n",
+                    $time, INSTANCE_ID, acc_mem_out_rd_addr_q >> `CLOG2(o_lmem_bus_if.DATA_SIZE), acc_mem_out_rd_bank_q,
+                    parseWordNoNormal(o_lmem_bus_if.rsp_data.data, `MXU_ROW * FP16_WIDTH, FP16_WIDTH, "fp")))
             end
         end
     end
