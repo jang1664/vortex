@@ -533,26 +533,24 @@ module tb_VX_gemm_node
     return {hi, lo};
   endfunction
 
+  function automatic longint unsigned align_up(
+    input longint unsigned value,
+    input longint unsigned alignment
+  );
+    if (alignment == 0) begin
+      align_up = value;
+    end else begin
+      align_up = ((value + alignment - 1) / alignment) * alignment;
+    end
+  endfunction
+
   // =========================================================================
   // Test: end-to-end one GEMM
   // =========================================================================
-  // Default global memory layout (byte addr in DCACHE model dmem[])
-  localparam logic [63:0] DEFAULT_GMEM_IN_BASE    = 64'h0000_0000_0010_0000;
-  localparam logic [63:0] DEFAULT_GMEM_W_BASE     = 64'h0000_0000_0020_0000;
-  localparam logic [63:0] DEFAULT_GMEM_SC_BASE    = 64'h0000_0000_0030_0000;
-  localparam logic [63:0] DEFAULT_GMEM_ZP_BASE    = 64'h0000_0000_0040_0000;
-  localparam logic [63:0] DEFAULT_GMEM_OUT_BASE   = 64'h0000_0000_0050_0000;
-
-  // Default LMEM buffer layout (byte addr in LMEM)
-  localparam logic [63:0] DEFAULT_LMEM_IBUF0_BASE = 64'h0000_0000_0000_0000;
-  localparam logic [63:0] DEFAULT_LMEM_IBUF1_BASE = 64'h0000_0000_0002_0000;
-  localparam logic [63:0] DEFAULT_LMEM_WBUF0_BASE = 64'h0000_0000_0004_0000;
-  localparam logic [63:0] DEFAULT_LMEM_WBUF1_BASE = 64'h0000_0000_0006_0000;
-  localparam logic [63:0] DEFAULT_LMEM_SCBUF0_BASE= 64'h0000_0000_0008_0000;
-  localparam logic [63:0] DEFAULT_LMEM_SCBUF1_BASE= 64'h0000_0000_0009_0000;
-  localparam logic [63:0] DEFAULT_LMEM_ZPBUF0_BASE= 64'h0000_0000_000A_0000;
-  localparam logic [63:0] DEFAULT_LMEM_ZPBUF1_BASE= 64'h0000_0000_000B_0000;
-  localparam logic [63:0] DEFAULT_LMEM_OBUF_BASE  = 64'h0000_0000_000C_0000;
+  // Auto layout base/alignment
+  localparam longint unsigned AUTO_GMEM_BASE = 64'h0000_0000_0010_0000;
+  localparam longint unsigned AUTO_LMEM_BASE = 64'h0000_0000_0000_0000;
+  localparam longint unsigned ADDR_ALIGN_BYTES = 64'd4096;
 
   localparam longint unsigned DMEM_LIMIT = longint'(DMEM_SIZE);
   localparam longint unsigned LMEM_LIMIT = longint'(LMEM_SIZE);
@@ -1057,12 +1055,10 @@ module tb_VX_gemm_node
     end
   endtask
 
-  task automatic load_test_cfg(
-    input string test_name,
-    output int test_m,
-    output int test_n,
-    output int test_k,
-    output int test_qblk,
+  task automatic compute_auto_layout(
+    input int test_m,
+    input int test_n,
+    input int test_k,
     output logic [63:0] gmem_in_base,
     output logic [63:0] gmem_w_base,
     output logic [63:0] gmem_sc_base,
@@ -1078,37 +1074,51 @@ module tb_VX_gemm_node
     output logic [63:0] lmem_zpbuf1_base,
     output logic [63:0] lmem_obuf_base
   );
+    longint unsigned cur_gmem, cur_lmem;
+    longint unsigned gmem_in_bytes, gmem_w_bytes, gmem_sc_bytes, gmem_zp_bytes, gmem_out_bytes;
+    longint unsigned lmem_ibuf_bytes, lmem_wbuf_bytes, lmem_scbuf_bytes, lmem_zpbuf_bytes, lmem_obuf_bytes;
     begin
-      // defaults
-      test_m = DEFAULT_M_TEST;
-      test_n = DEFAULT_N_TEST;
-      test_k = DEFAULT_K_TEST;
-      test_qblk = DEFAULT_QBLK;
-      gmem_in_base = DEFAULT_GMEM_IN_BASE;
-      gmem_w_base = DEFAULT_GMEM_W_BASE;
-      gmem_sc_base = DEFAULT_GMEM_SC_BASE;
-      gmem_zp_base = DEFAULT_GMEM_ZP_BASE;
-      gmem_out_base = DEFAULT_GMEM_OUT_BASE;
-      lmem_ibuf0_base = DEFAULT_LMEM_IBUF0_BASE;
-      lmem_ibuf1_base = DEFAULT_LMEM_IBUF1_BASE;
-      lmem_wbuf0_base = DEFAULT_LMEM_WBUF0_BASE;
-      lmem_wbuf1_base = DEFAULT_LMEM_WBUF1_BASE;
-      lmem_scbuf0_base = DEFAULT_LMEM_SCBUF0_BASE;
-      lmem_scbuf1_base = DEFAULT_LMEM_SCBUF1_BASE;
-      lmem_zpbuf0_base = DEFAULT_LMEM_ZPBUF0_BASE;
-      lmem_zpbuf1_base = DEFAULT_LMEM_ZPBUF1_BASE;
-      lmem_obuf_base = DEFAULT_LMEM_OBUF_BASE;
+      gmem_in_bytes  = longint'(test_m) * longint'(test_k) * 2;
+      gmem_w_bytes   = longint'(test_k) * longint'((test_n + 1) / 2);
+      gmem_sc_bytes  = longint'(test_n) * 2;
+      gmem_zp_bytes  = longint'(test_n) * 2;
+      gmem_out_bytes = longint'(test_m) * longint'(test_n) * 2;
 
-      // add named profiles here
-      if ((test_name == "default") || (test_name == "")) begin
-        // keep defaults
-      end else if (test_name == "M4K32N32") begin
-        test_m = 4;
-        test_k = 32;
-        test_n = 32;
-      end else begin
-        $fatal(1, "[%0t] Unknown TEST=%s (supported: default, M4K32N32)", $time, test_name);
-      end
+      lmem_ibuf_bytes  = gmem_in_bytes;
+      lmem_wbuf_bytes  = gmem_w_bytes;
+      lmem_scbuf_bytes = gmem_sc_bytes;
+      lmem_zpbuf_bytes = gmem_zp_bytes;
+      lmem_obuf_bytes  = gmem_out_bytes;
+
+      cur_gmem = align_up(AUTO_GMEM_BASE, ADDR_ALIGN_BYTES);
+      gmem_in_base = cur_gmem[63:0];
+      cur_gmem += align_up(gmem_in_bytes, ADDR_ALIGN_BYTES);
+      gmem_w_base = cur_gmem[63:0];
+      cur_gmem += align_up(gmem_w_bytes, ADDR_ALIGN_BYTES);
+      gmem_sc_base = cur_gmem[63:0];
+      cur_gmem += align_up(gmem_sc_bytes, ADDR_ALIGN_BYTES);
+      gmem_zp_base = cur_gmem[63:0];
+      cur_gmem += align_up(gmem_zp_bytes, ADDR_ALIGN_BYTES);
+      gmem_out_base = cur_gmem[63:0];
+
+      cur_lmem = align_up(AUTO_LMEM_BASE, ADDR_ALIGN_BYTES);
+      lmem_ibuf0_base = cur_lmem[63:0];
+      cur_lmem += align_up(lmem_ibuf_bytes, ADDR_ALIGN_BYTES);
+      lmem_ibuf1_base = cur_lmem[63:0];
+      cur_lmem += align_up(lmem_ibuf_bytes, ADDR_ALIGN_BYTES);
+      lmem_wbuf0_base = cur_lmem[63:0];
+      cur_lmem += align_up(lmem_wbuf_bytes, ADDR_ALIGN_BYTES);
+      lmem_wbuf1_base = cur_lmem[63:0];
+      cur_lmem += align_up(lmem_wbuf_bytes, ADDR_ALIGN_BYTES);
+      lmem_scbuf0_base = cur_lmem[63:0];
+      cur_lmem += align_up(lmem_scbuf_bytes, ADDR_ALIGN_BYTES);
+      lmem_scbuf1_base = cur_lmem[63:0];
+      cur_lmem += align_up(lmem_scbuf_bytes, ADDR_ALIGN_BYTES);
+      lmem_zpbuf0_base = cur_lmem[63:0];
+      cur_lmem += align_up(lmem_zpbuf_bytes, ADDR_ALIGN_BYTES);
+      lmem_zpbuf1_base = cur_lmem[63:0];
+      cur_lmem += align_up(lmem_zpbuf_bytes, ADDR_ALIGN_BYTES);
+      lmem_obuf_base = cur_lmem[63:0];
     end
   endtask
 
@@ -1116,7 +1126,7 @@ module tb_VX_gemm_node
   // Main sim
   // =========================================================================
   initial begin
-    string test_name;
+    string case_name;
     int test_m, test_n, test_k, test_qblk;
     logic [63:0] gmem_in_base, gmem_w_base, gmem_sc_base, gmem_zp_base, gmem_out_base;
     logic [63:0] lmem_ibuf0_base, lmem_ibuf1_base, lmem_wbuf0_base, lmem_wbuf1_base;
@@ -1125,19 +1135,28 @@ module tb_VX_gemm_node
     $timeformat(-9, 0, "ns", 0);
     reset = 1'b0;
 
-    if (!$value$plusargs("TEST=%s", test_name))
-      test_name = "default";
+    if (!$value$plusargs("M=%d", test_m))
+      test_m = DEFAULT_M_TEST;
+    if (!$value$plusargs("N=%d", test_n))
+      test_n = DEFAULT_N_TEST;
+    if (!$value$plusargs("K=%d", test_k))
+      test_k = DEFAULT_K_TEST;
+    if (!$value$plusargs("QBLK=%d", test_qblk))
+      test_qblk = DEFAULT_QBLK;
+    if (!$value$plusargs("TEST=%s", case_name))
+      $sformat(case_name, "M%0dN%0dK%0d", test_m, test_n, test_k);
 
-    load_test_cfg(
-      test_name,
-      test_m, test_n, test_k, test_qblk,
+    compute_auto_layout(
+      test_m, test_n, test_k,
       gmem_in_base, gmem_w_base, gmem_sc_base, gmem_zp_base, gmem_out_base,
       lmem_ibuf0_base, lmem_ibuf1_base, lmem_wbuf0_base, lmem_wbuf1_base,
       lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base, lmem_obuf_base
     );
 
+    $display("[%0t] TEST_CFG | {name=%s, M=%0d, N=%0d, K=%0d, QBLK=%0d}", $time, case_name, test_m, test_n, test_k, test_qblk);
+
     run_gemm_test(
-      test_name,
+      case_name,
       test_m, test_n, test_k, test_qblk,
       gmem_in_base, gmem_w_base, gmem_sc_base, gmem_zp_base, gmem_out_base,
       lmem_ibuf0_base, lmem_ibuf1_base, lmem_wbuf0_base, lmem_wbuf1_base,

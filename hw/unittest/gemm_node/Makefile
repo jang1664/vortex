@@ -103,17 +103,39 @@ PARAMS_  :=
 
 COMPILE_LOG := logs/compile.log
 
-# Runtime test selection
-# - TEST empty: keep legacy logs/sim.log
-# - TEST set:   logs/sim_<TEST>.log and +TEST=<TEST>
+# Runtime selection
+# - TEST: log/case label
+# - M/N/K/QBLK: GEMM shape/control inputs
 TEST ?=
+M ?=
+N ?=
+K ?=
+QBLK ?=
+EXTRA_SIM_ARGS ?=
+
 ifneq ($(strip $(TEST)),)
 SIM_LOG := logs/sim_$(TEST).log
-SIM_ARGS := +TEST=$(TEST)
 else
 SIM_LOG := logs/sim.log
-SIM_ARGS :=
 endif
+
+SIM_ARGS :=
+ifneq ($(strip $(TEST)),)
+SIM_ARGS += +TEST=$(TEST)
+endif
+ifneq ($(strip $(M)),)
+SIM_ARGS += +M=$(M)
+endif
+ifneq ($(strip $(N)),)
+SIM_ARGS += +N=$(N)
+endif
+ifneq ($(strip $(K)),)
+SIM_ARGS += +K=$(K)
+endif
+ifneq ($(strip $(QBLK)),)
+SIM_ARGS += +QBLK=$(QBLK)
+endif
+SIM_ARGS += $(EXTRA_SIM_ARGS)
 
 VL_INCDIRS  := $(foreach dir,$(INCDIRS_),-I$(dir))
 VC_INCDIRS  := $(foreach dir,$(INCDIRS_),+incdir+$(dir))
@@ -129,13 +151,15 @@ setup:
 
 include $(SIM_EXEC).mk
 
-TEST_LIST ?= default
+CONFIG_LIST ?= 2,32,32
 
 regress: compile
 	@set -e; \
-	for t in $(TEST_LIST); do \
-	  echo "[REGRESS] running TEST=$$t"; \
-	  $(MAKE) run SIM_EXEC=$(SIM_EXEC) TEST=$$t; \
+	for cfg in $(CONFIG_LIST); do \
+	  m=$${cfg%%,*}; rest=$${cfg#*,}; n=$${rest%%,*}; k=$${rest#*,}; \
+	  t="M$${m}N$${n}K$${k}"; \
+	  echo "[REGRESS] running TEST=$$t (M=$$m,N=$$n,K=$$k)"; \
+	  $(MAKE) run SIM_EXEC=$(SIM_EXEC) TEST=$$t M=$$m N=$$n K=$$k; \
 	done
 
 fst2vcd:

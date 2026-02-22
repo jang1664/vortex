@@ -117,9 +117,9 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
   // ============================================================
   // 타일 크기
   // ============================================================
-  localparam int MT = 128;
-  localparam int NT = 128;
-  localparam int KT = 128;
+  localparam int MT = `GEMM_FSM_MT;
+  localparam int NT = `GEMM_FSM_NT;
+  localparam int KT = `GEMM_FSM_KT;
 
   // ============================================================
   // 주소 헬퍼
