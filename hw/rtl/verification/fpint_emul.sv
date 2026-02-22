@@ -12,7 +12,7 @@ package fpint_emul;
   localparam int S_WIDTH  = `SCALE_WIDTH;
   localparam int Z_WIDTH  = `ZP_WIDTH;
   localparam int QBLOCK = `MXU_ROW;
-  localparam int MAX_M=32;
+  localparam int MAX_M=512;
   localparam int MAX_N=512;
   localparam int MAX_K=512;
   localparam int MAX_KG=(MAX_K+QBLOCK-1)/QBLOCK;

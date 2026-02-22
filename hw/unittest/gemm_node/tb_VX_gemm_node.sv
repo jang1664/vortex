@@ -24,6 +24,11 @@ module tb_VX_gemm_node
   localparam int DEFAULT_K_TEST = 32;
   localparam int DEFAULT_QBLK   = 32;
 
+  // GEMM DMA tile/micro-tile shape (must match DUT build-time config)
+  localparam int DMA_MT     = `GEMM_FSM_MT;
+  localparam int DMA_NT     = `GEMM_FSM_NT;
+  localparam int DMA_KT     = `GEMM_FSM_KT;
+
   localparam int FP16_WIDTH   = 16;
 
   // LMEM model
@@ -929,6 +934,7 @@ module tb_VX_gemm_node
     input int test_m,
     input int test_n,
     input int test_k,
+    input int test_qblk,
     input logic [63:0] gmem_in_base,
     input logic [63:0] gmem_w_base,
     input logic [63:0] gmem_sc_base,
@@ -954,18 +960,25 @@ module tb_VX_gemm_node
     longint unsigned lmem_scbuf_bytes;
     longint unsigned lmem_zpbuf_bytes;
     longint unsigned lmem_obuf_bytes;
+    longint unsigned groups_tile;
     begin
+      if (test_qblk <= 0) begin
+        $fatal(1, "[%0t] Invalid QBLK=%0d", $time, test_qblk);
+      end
+
       gmem_in_bytes  = longint'(test_m) * longint'(test_k) * 2;
       gmem_w_bytes   = longint'(test_k) * longint'((test_n + 1) / 2);
       gmem_sc_bytes  = longint'(test_n) * 2;
       gmem_zp_bytes  = longint'(test_n) * 2;
       gmem_out_bytes = longint'(test_m) * longint'(test_n) * 2;
 
-      lmem_ibuf_bytes  = longint'(test_m) * longint'(test_k) * 2;
-      lmem_wbuf_bytes  = longint'(test_k) * longint'((test_n + 1) / 2);
-      lmem_scbuf_bytes = longint'(test_n) * 2;
-      lmem_zpbuf_bytes = longint'(test_n) * 2;
-      lmem_obuf_bytes  = longint'(test_m) * longint'(test_n) * 2;
+      // LMEM allocation must follow DMA tile footprint, not logical tensor bytes.
+      groups_tile      = (longint'(DMA_KT) + longint'(test_qblk) - 1) / longint'(test_qblk);
+      lmem_ibuf_bytes  = longint'(DMA_MT) * longint'(DMA_KT) * 2;               // fp16
+      lmem_wbuf_bytes  = longint'(DMA_KT) * longint'((DMA_NT + 1) / 2);         // int4 packed
+      lmem_scbuf_bytes = groups_tile * longint'(DMA_NT) * 2;                     // fp16 scale
+      lmem_zpbuf_bytes = groups_tile * longint'(DMA_NT) * 2;                     // int16 zp
+      lmem_obuf_bytes  = longint'(DMA_MT) * longint'(DMA_NT) * 2;                // fp16 output
 
       // GMEM range checks
       assert_range_fit("GMEM_IN",  gmem_in_base,  gmem_in_bytes,  DMEM_LIMIT);
@@ -1071,14 +1084,14 @@ module tb_VX_gemm_node
         .test_m(test_m), 
         .test_n(test_n),
         .test_k(test_k),
-        .input_random_type(1),
-        .weight_random_type(1),
-        .scale_random_type(1),
-        .zp_random_type(1)
+        .input_random_type(0),
+        .weight_random_type(0),
+        .scale_random_type(0),
+        .zp_random_type(0)
       );
 
       check_tensor_layout(
-        test_m, test_n, test_k,
+        test_m, test_n, test_k, test_qblk,
         gmem_in_base, gmem_w_base, gmem_sc_base, gmem_zp_base, gmem_out_base,
         lmem_ibuf0_base, lmem_ibuf1_base, lmem_wbuf0_base, lmem_wbuf1_base,
         lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base, lmem_obuf_base
@@ -1107,6 +1120,7 @@ module tb_VX_gemm_node
     input int test_m,
     input int test_n,
     input int test_k,
+    input int test_qblk,
     output logic [63:0] gmem_in_base,
     output logic [63:0] gmem_w_base,
     output logic [63:0] gmem_sc_base,
@@ -1125,18 +1139,24 @@ module tb_VX_gemm_node
     longint unsigned cur_gmem, cur_lmem;
     longint unsigned gmem_in_bytes, gmem_w_bytes, gmem_sc_bytes, gmem_zp_bytes, gmem_out_bytes;
     longint unsigned lmem_ibuf_bytes, lmem_wbuf_bytes, lmem_scbuf_bytes, lmem_zpbuf_bytes, lmem_obuf_bytes;
+    longint unsigned groups_tile;
     begin
+      if (test_qblk <= 0) begin
+        $fatal(1, "[%0t] Invalid QBLK=%0d", $time, test_qblk);
+      end
+
       gmem_in_bytes  = longint'(test_m) * longint'(test_k) * 2;
       gmem_w_bytes   = longint'(test_k) * longint'((test_n + 1) / 2);
       gmem_sc_bytes  = longint'(test_n) * 2;
       gmem_zp_bytes  = longint'(test_n) * 2;
       gmem_out_bytes = longint'(test_m) * longint'(test_n) * 2;
 
-      lmem_ibuf_bytes  = gmem_in_bytes;
-      lmem_wbuf_bytes  = gmem_w_bytes;
-      lmem_scbuf_bytes = gmem_sc_bytes;
-      lmem_zpbuf_bytes = gmem_zp_bytes;
-      lmem_obuf_bytes  = gmem_out_bytes;
+      groups_tile      = (longint'(DMA_KT) + longint'(test_qblk) - 1) / longint'(test_qblk);
+      lmem_ibuf_bytes  = longint'(DMA_MT) * longint'(DMA_KT) * 2;
+      lmem_wbuf_bytes  = longint'(DMA_KT) * longint'((DMA_NT + 1) / 2);
+      lmem_scbuf_bytes = groups_tile * longint'(DMA_NT) * 2;
+      lmem_zpbuf_bytes = groups_tile * longint'(DMA_NT) * 2;
+      lmem_obuf_bytes  = longint'(DMA_MT) * longint'(DMA_NT) * 2;
 
       cur_gmem = align_up(AUTO_GMEM_BASE, ADDR_ALIGN_BYTES);
       gmem_in_base = cur_gmem[63:0];
@@ -1195,7 +1215,7 @@ module tb_VX_gemm_node
       $sformat(case_name, "M%0dN%0dK%0d", test_m, test_n, test_k);
 
     compute_auto_layout(
-      test_m, test_n, test_k,
+      test_m, test_n, test_k, test_qblk,
       gmem_in_base, gmem_w_base, gmem_sc_base, gmem_zp_base, gmem_out_base,
       lmem_ibuf0_base, lmem_ibuf1_base, lmem_wbuf0_base, lmem_wbuf1_base,
       lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base, lmem_obuf_base
