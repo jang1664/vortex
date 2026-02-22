@@ -151,7 +151,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     logic [31:0] input_notify_value_r;
 
     wire input_is_notify   = (gemm_ctrl_if.input_read_ctrl.cmd.instr[7:0] == OP_NOTIFY);
-    wire input_notify_req  = gemm_ctrl_if.input_read_ctrl.start && input_is_notify;
+    wire input_notify_req  = gemm_ctrl_if.input_read_ctrl.start && input_dma_ctrl_if.idle && input_is_notify;
     wire input_notify_fire = input_notify_pending_r && gemm_sync_if[0].ready;
 
     logic        weight_notify_pending_r;
@@ -159,7 +159,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     logic [31:0] weight_notify_value_r;
 
     wire weight_is_notify   = (gemm_ctrl_if.weight_read_ctrl.cmd.instr[7:0] == OP_NOTIFY);
-    wire weight_notify_req  = gemm_ctrl_if.weight_read_ctrl.start && weight_is_notify;
+    wire weight_notify_req  = gemm_ctrl_if.weight_read_ctrl.start && weight_dma_ctrl_if.idle && weight_is_notify;
     wire weight_notify_fire = weight_notify_pending_r && gemm_sync_if[1].ready;
 
     logic        sz_notify_pending_r;
@@ -167,7 +167,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     logic [31:0] sz_notify_value_r;
 
     wire sz_is_notify   = (gemm_ctrl_if.quant_param_read_ctrl.cmd.instr[7:0] == OP_NOTIFY);
-    wire sz_notify_req  = gemm_ctrl_if.quant_param_read_ctrl.start && sz_is_notify;
+    wire sz_notify_req  = gemm_ctrl_if.quant_param_read_ctrl.start && quant_param_dma_ctrl_if.idle && sz_is_notify;
     wire sz_notify_fire = sz_notify_pending_r && gemm_sync_if[2].ready;
 
     logic        output_notify_pending_r;
@@ -175,7 +175,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     logic [31:0] output_notify_value_r;
 
     wire output_is_notify   = (gemm_ctrl_if.output_write_ctrl.cmd.instr[7:0] == OP_NOTIFY);
-    wire output_notify_req  = gemm_ctrl_if.output_write_ctrl.start && output_is_notify;
+    wire output_notify_req  = gemm_ctrl_if.output_write_ctrl.start && output_dma_ctrl_if.idle && output_is_notify;
     wire output_notify_fire = output_notify_pending_r && gemm_sync_if[3].ready;
 
     // Completion/synchronization path from child nodes to gemm_ctrl.

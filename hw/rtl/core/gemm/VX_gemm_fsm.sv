@@ -7,7 +7,8 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     input  wire              reset,
 
     VX_config_reg_if.slave   cfg_reg_if,
-    VX_gemm_fsm_if.master    gemm_fsm_if
+    VX_gemm_fsm_if.master    gemm_fsm_if,
+    output logic gemm_start_o
 );
 
   /*
@@ -287,6 +288,11 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
   // --------------------------------------------------------------------------
   localparam int RID_T0  = 0, RID_W0  = 1, RID_SZ0 = 2, RID_G0 = 3, RID_O = 4;
   localparam int RID_T1  = 5, RID_W1  = 6, RID_SZ1 = 7, RID_G1 = 8;
+  // Global sync sequence stride per DMA tile.
+  // Edge tiles may use fewer MXU steps, but fixed stride preserves monotonicity.
+  localparam int MXU_N_PER_TILE_MAX = (NT + MXU_NT - 1) / MXU_NT;
+  localparam int MXU_K_PER_TILE_MAX = (KT + MXU_KT - 1) / MXU_KT;
+  localparam int MXU_PER_TILE_MAX   = MXU_N_PER_TILE_MAX * MXU_K_PER_TILE_MAX;
 
   function automatic rid_t rid_tile   (input logic buf_sel);  return rid_t'(buf_sel ? RID_T1  : RID_T0);  endfunction
   function automatic rid_t rid_w_mxu  (input logic mxu_buf);  return rid_t'(mxu_buf ? RID_W1  : RID_W0);  endfunction
@@ -674,12 +680,15 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     mxu_dim_t n_nt_mxu, n_kt_mxu;
     logic        has_next_mxu;
     mxu_linear_t next_mxu_linear;
+    u32_t        tile_mxu_base;
+    u32_t        global_mxu_seq;
+    u32_t        next_global_mxu_seq;
 
     // gemm control
     u32_t global_k;
     logic is_accum, is_last;   // per microtile
     logic last_kt_tile;        // per DMA tile (kt_cur)
-    mxu_linear_t gemm_done_target;
+    u32_t gemm_done_target;
 
     // LMEM addresses
     logic [63:0] lmem_in_mxu, lmem_out_slice;
@@ -752,6 +761,9 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     has_next_mxu     = (n_kt_mxu < kt_mxu_dim);
     next_mxu_linear  = mxu_linear_t'((mxu_linear_t'(n_kt_mxu) * mxu_linear_t'(nt_mxu_dim))
                                    +  mxu_linear_t'(n_nt_mxu));
+    tile_mxu_base      = tile_cur_q * u32_t'(MXU_PER_TILE_MAX);
+    global_mxu_seq     = tile_mxu_base + u32_t'(mxu_linear) + 32'd1;
+    next_global_mxu_seq = tile_mxu_base + u32_t'(next_mxu_linear) + 32'd1;
 
     // global_k determines accumulate/last for microtile
     global_k = kt_cur * KT + kt_mxu_q * MXU_KT;
@@ -811,10 +823,12 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     lmem_zp_mxu_next = zpbuf_base(buf_cur) + 64'(g0_n) * 64'(NT * INT16_BYTES) + 64'(n0_out_n) * INT16_BYTES;
 
 
-    gemm_done_target = mxu_linear_t'(mxu_linear + 1);
+    gemm_done_target = global_mxu_seq;
 
     out_bytes_acc  = bytecnt_t'(mt_eff_cur * nt_eff_cur * FP32_BYTES);
     out_bytes_fp16 = bytecnt_t'(mt_eff_cur * nt_eff_cur * FP16_BYTES);
+
+    gemm_start_o = 1'b0;
 
     unique case (state_q)
 
@@ -851,6 +865,8 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           job_d.N    = cfg_reg_if.regs[CFG_R_N][31:0];
           job_d.K    = cfg_reg_if.regs[CFG_R_K][31:0];
           job_d.qblk = cfg_reg_if.regs[CFG_R_QBLK][31:0];
+
+          gemm_start_o = 1'b1;
 
           state_d = S_PRE0_LD_I;
         end
@@ -1096,7 +1112,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
       S_MXU_PRE_CUR_W_NTF: begin
         if (can_emit) begin
-          out_cmd_d   = make_notify_cmd(rid_w_mxu(mxu_buf_q), (mxu_linear+1), 1'b1);
+          out_cmd_d   = make_notify_cmd(rid_w_mxu(mxu_buf_q), global_mxu_seq, 1'b1);
           out_start_d = 1'b1;
           state_d     = S_MXU_PRE_CUR_SC;
         end
@@ -1149,7 +1165,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
       S_MXU_PRE_CUR_SZ_NTF: begin
         if (can_emit) begin
-          out_cmd_d   = make_notify_cmd(rid_sz_mxu(mxu_buf_q), (mxu_linear+1), 1'b1);
+          out_cmd_d   = make_notify_cmd(rid_sz_mxu(mxu_buf_q), global_mxu_seq, 1'b1);
           out_start_d = 1'b1;
           state_d     = S_MXU_WAIT_CUR_W;
         end
@@ -1157,7 +1173,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
       S_MXU_WAIT_CUR_W: begin
         if (can_emit) begin
-          out_cmd_d   = make_wait_cmd(rid_w_mxu(mxu_buf_q), (mxu_linear+1));
+          out_cmd_d   = make_wait_cmd(rid_w_mxu(mxu_buf_q), global_mxu_seq);
           out_start_d = 1'b1;
           state_d     = S_MXU_WAIT_CUR_SZ;
         end
@@ -1165,7 +1181,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
       S_MXU_WAIT_CUR_SZ: begin
         if (can_emit) begin
-          out_cmd_d   = make_wait_cmd(rid_sz_mxu(mxu_buf_q), (mxu_linear+1));
+          out_cmd_d   = make_wait_cmd(rid_sz_mxu(mxu_buf_q), global_mxu_seq);
           out_start_d = 1'b1;
           state_d     = S_MXU_PRE_NEXT_W;
         end
@@ -1201,7 +1217,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
       S_MXU_PRE_NEXT_W_NTF: begin
         if (can_emit) begin
-          out_cmd_d   = make_notify_cmd(rid_w_mxu(~mxu_buf_q), (next_mxu_linear+1), 1'b1);
+          out_cmd_d   = make_notify_cmd(rid_w_mxu(~mxu_buf_q), next_global_mxu_seq, 1'b1);
           out_start_d = 1'b1;
           state_d     = S_MXU_PRE_NEXT_SC;
         end
@@ -1263,7 +1279,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
       S_MXU_PRE_NEXT_SZ_NTF: begin
         if (can_emit) begin
           if (has_next_mxu) begin
-            out_cmd_d   = make_notify_cmd(rid_sz_mxu(~mxu_buf_q), (next_mxu_linear+1), 1'b1);
+            out_cmd_d   = make_notify_cmd(rid_sz_mxu(~mxu_buf_q), next_global_mxu_seq, 1'b1);
             out_start_d = 1'b1;
           end
           state_d     = S_MXU_ARM_GEMM;
@@ -1556,6 +1572,90 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
       default: state_d = S_IDLE;
     endcase
+
   end
+
+`ifndef SYNTHESIS
+  function automatic string op_to_str(input logic [7:0] op);
+    case (op)
+      OP_WAIT:          return "WAIT";
+      OP_NOTIFY:        return "NOTIFY";
+      OP_DMA_LD:        return "DMA_LD";
+      OP_DMA_ST:        return "DMA_ST";
+      OP_W_LDMA_MXU:    return "W_LDMA_MXU";
+      OP_SC_LDMA_MXU:   return "SC_LDMA_MXU";
+      OP_ZP_LDMA_MXU:   return "ZP_LDMA_MXU";
+      OP_I_LDMA_ARM:    return "I_LDMA_ARM";
+      OP_O_ACC2LMEM:    return "O_ACC2LMEM";
+      default:          return "UNKNOWN";
+    endcase
+  endfunction
+
+  task automatic log_gemm_cmd_handshake(
+    input state_t state_i,
+    input gemm_unified_cmd_t cmd_i
+  );
+    logic [7:0]  op;
+    logic [23:0] size_bytes;
+    begin
+      op         = cmd_i.instr[7:0];
+      size_bytes = cmd_i.instr[31:8];
+
+      `TRACE(2, ("%m : [%0t] | GEMM_FSM_CMD_ISSUE | {inst=%s, state=%0d, op=%s, op_raw=0x%02h, size=%0d, flags=0x%02h, rd=%0d, rs1_data=0x%0h, rs2_data=0x%0h, eff_mt=%0d, dbg_rs1=%0d, dbg_rs2=%0d, dbg_rd=%0d}\n",
+                $time, INSTANCE_ID, state_i, op_to_str(op), op, size_bytes, cmd_i.flags, cmd_i.rd, cmd_i.rs1_data, cmd_i.rs2_data, cmd_i.eff_mt, cmd_i.rs1, cmd_i.rs2, cmd_i.rd))
+
+      unique case (op)
+        OP_WAIT: begin
+          `TRACE(3, ("%m : [%0t] | GEMM_FSM_CMD_WAIT | {inst=%s, state=%0d, reg_id=%0d, target=%0d}\n",
+                    $time, INSTANCE_ID, state_i, cmd_i.rs1_data[RID_W-1:0], cmd_i.rs2_data[31:0]))
+        end
+
+        OP_NOTIFY: begin
+          `TRACE(3, ("%m : [%0t] | GEMM_FSM_CMD_NOTIFY | {inst=%s, state=%0d, reg_id=%0d, set_mode=%0d, value=%0d}\n",
+                    $time, INSTANCE_ID, state_i, cmd_i.rs1_data[RID_W-1:0], cmd_i.rs2_data[31], cmd_i.rs2_data[30:0]))
+        end
+
+        OP_DMA_LD: begin
+          `TRACE(3, ("%m : [%0t] | GEMM_FSM_CMD_DMA_LD | {inst=%s, state=%0d, lmem_dst=0x%0h, dram_src=0x%0h, tile_buf=%0d, gen=%0d, dbg_rs1=%0d, dbg_rs2=%0d, dbg_rd=%0d}\n",
+                    $time, INSTANCE_ID, state_i, cmd_i.rs1_data, cmd_i.rs2_data, cmd_i.flags[0], cmd_i.flags[7:1], cmd_i.rs1, cmd_i.rs2, cmd_i.rd))
+        end
+
+        OP_DMA_ST: begin
+          `TRACE(3, ("%m : [%0t] | GEMM_FSM_CMD_DMA_ST | {inst=%s, state=%0d, dram_dst=0x%0h, lmem_src=0x%0h, tile_buf=%0d, gen=%0d, dbg_rs1=%0d, dbg_rs2=%0d, dbg_rd=%0d}\n",
+                    $time, INSTANCE_ID, state_i, cmd_i.rs1_data, cmd_i.rs2_data, cmd_i.flags[0], cmd_i.flags[7:1], cmd_i.rs1, cmd_i.rs2, cmd_i.rd))
+        end
+
+        OP_W_LDMA_MXU, OP_SC_LDMA_MXU, OP_ZP_LDMA_MXU: begin
+          `TRACE(3, ("%m : [%0t] | GEMM_FSM_CMD_MXU_LD | {inst=%s, state=%0d, op=%s, lmem_src=0x%0h, data_sel=0x%0h, qdir=%0d, mxu_buf=%0d, tile_buf=%0d}\n",
+                    $time, INSTANCE_ID, state_i, op_to_str(op), cmd_i.rs1_data, cmd_i.rs2_data, cmd_i.flags[4], cmd_i.flags[1], cmd_i.flags[0]))
+        end
+
+        OP_I_LDMA_ARM: begin
+          `TRACE(3, ("%m : [%0t] | GEMM_FSM_CMD_I_ARM | {inst=%s, state=%0d, accum_dst=0x%0h, input_src=0x%0h, qdir=%0d, is_last=%0d, is_accum=%0d, mxu_buf=%0d, tile_buf=%0d, eff_mt=%0d}\n",
+                    $time, INSTANCE_ID, state_i, cmd_i.rs1_data, cmd_i.rs2_data, cmd_i.flags[4], cmd_i.flags[3], cmd_i.flags[2], cmd_i.flags[1], cmd_i.flags[0], cmd_i.eff_mt))
+        end
+
+        OP_O_ACC2LMEM: begin
+          `TRACE(3, ("%m : [%0t] | GEMM_FSM_CMD_O_ACC2LMEM | {inst=%s, state=%0d, lmem_dst=0x%0h, accum_src=0x%0h, tile_buf=%0d}\n",
+                    $time, INSTANCE_ID, state_i, cmd_i.rs1_data, cmd_i.rs2_data, cmd_i.flags[0]))
+        end
+
+        default: begin
+          `TRACE(3, ("%m : [%0t] | GEMM_FSM_CMD_RAW | {inst=%s, state=%0d, instr=0x%08h, flags=0x%02h, rs1_data=0x%0h, rs2_data=0x%0h, eff_mt=%0d}\n",
+                    $time, INSTANCE_ID, state_i, cmd_i.instr, cmd_i.flags, cmd_i.rs1_data, cmd_i.rs2_data, cmd_i.eff_mt))
+        end
+      endcase
+    end
+  endtask
+
+  always_ff @(posedge clk) begin
+    if (!reset) begin
+      if (out_start_d && gemm_fsm_if.flag.idle) begin
+        log_gemm_cmd_handshake(state_q, out_cmd_d);
+      end
+    end
+  end
+
+`endif
 
 endmodule

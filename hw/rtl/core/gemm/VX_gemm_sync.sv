@@ -11,7 +11,8 @@ module VX_gemm_sync import VX_gpu_pkg::*; #(
 
     VX_gemm_fsm_if.slave       gemm_fsm_slv_if,
     VX_gemm_fsm_if.master      gemm_fsm_mas_if[N_CHILDREN],
-    VX_gemm_sync_if.slave      gemm_sync_slv_if[N_NODE]
+    VX_gemm_sync_if.slave      gemm_sync_slv_if[N_NODE],
+    input logic                gemm_start_i
 );
 
   initial begin
@@ -201,6 +202,11 @@ module VX_gemm_sync import VX_gpu_pkg::*; #(
 
   always_ff @(posedge clk) begin
     if (reset) begin
+      for (int k = 0; k < NUM_SYNC_REGS; k++) begin
+        sync_regs[k] <= 32'd0;
+      end
+    end else if (gemm_start_i) begin
+      // Clear all sync registers at the start of GEMM (optional, depends on SW contract)
       for (int k = 0; k < NUM_SYNC_REGS; k++) begin
         sync_regs[k] <= 32'd0;
       end

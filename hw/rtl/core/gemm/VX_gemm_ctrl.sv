@@ -45,6 +45,7 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
     logic [31:0]                 active_entry_id_q;
     logic [N_CHILDREN-1:0]       child_q_empty_v;
     logic                        parent_q_empty;
+    logic                        gemm_start;
 
     wire cfg_start_fire = cfg_reg_if.valid && cfg_reg_if.ready && cfg_reg_if.regs[CFG_R_CONTROL][0];
     wire workers_idle   = gemm_ctrl_if.input_read_flag.idle
@@ -91,7 +92,8 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
       .clk        (clk),
       .reset      (reset),
       .cfg_reg_if (cfg_reg_if),
-      .gemm_fsm_if(gemm_fsm_if)
+      .gemm_fsm_if(gemm_fsm_if),
+      .gemm_start_o(gemm_start)
     );
 
     // -------------------------------------------------------------------------
@@ -145,7 +147,8 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
       .reset           (reset),
       .gemm_fsm_slv_if  (gemm_pqueue_out),
       .gemm_fsm_mas_if  (gemm_sync_out),
-      .gemm_sync_slv_if (gemm_sync_slv_if)
+      .gemm_sync_slv_if (gemm_sync_slv_if),
+      .gemm_start_i     (gemm_start)
     );
 
     // -------------------------------------------------------------------------
