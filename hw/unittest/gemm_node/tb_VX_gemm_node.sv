@@ -1116,10 +1116,10 @@ module tb_VX_gemm_node
         .test_n(test_n),
         .test_k(test_k),
         .test_qblk(test_qblk),
-        .input_random_type(0),
-        .weight_random_type(0),
-        .scale_random_type(0),
-        .zp_random_type(0)
+        .input_random_type(1),
+        .weight_random_type(1),
+        .scale_random_type(1),
+        .zp_random_type(1)
       );
 
       check_tensor_layout(
