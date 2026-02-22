@@ -45,6 +45,9 @@ RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
         $(RTL_DIR)/libs/VX_find_first.sv \
         $(RTL_DIR)/libs/VX_fifo_v2.sv \
         $(RTL_DIR)/libs/VX_sp_ram.sv \
+        $(RTL_DIR)/libs/VX_async_ram_patch.sv \
+        $(RTL_DIR)/libs/VX_placeholder.sv \
+        $(RTL_DIR)/libs/VX_popcount.sv \
         $(RTL_DIR)/core/gemm/VX_gemm_node.sv \
         $(RTL_DIR)/libs/VX_fifo_queue.sv \
 				$(RTL_DIR)/libs/VX_pending_size.sv \
@@ -74,8 +77,31 @@ RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
         $(RTL_DIR)/libs/VX_onehot_mux.sv \
         $(RTL_DIR)/libs/VX_bits_insert.sv \
         $(RTL_DIR)/libs/VX_bits_remove.sv \
+        $(RTL_DIR)/libs/VX_bits_concat.sv \
         $(RTL_DIR)/libs/VX_priority_encoder.sv \
+        $(RTL_DIR)/libs/VX_onehot_encoder.sv \
+        $(RTL_DIR)/libs/VX_scan.sv \
+        $(RTL_DIR)/libs/VX_mux.sv \
+        $(RTL_DIR)/libs/VX_demux.sv \
+        $(RTL_DIR)/libs/VX_transpose.sv \
         $(RTL_DIR)/libs/VX_generic_arbiter.sv \
+        $(RTL_DIR)/libs/VX_rr_arbiter.sv \
+        $(RTL_DIR)/libs/VX_cyclic_arbiter.sv \
+        $(RTL_DIR)/libs/VX_matrix_arbiter.sv \
+        $(RTL_DIR)/libs/VX_stream_xbar.sv \
+        $(RTL_DIR)/libs/VX_stream_omega.sv \
+        $(RTL_DIR)/mem/VX_mem_switch.sv \
+        $(RTL_DIR)/mem/VX_local_mem.sv \
+        $(RTL_DIR)/cache/VX_cache_data.sv \
+        $(RTL_DIR)/cache/VX_cache_tags.sv \
+        $(RTL_DIR)/cache/VX_cache_repl.sv \
+        $(RTL_DIR)/cache/VX_cache_flush.sv \
+        $(RTL_DIR)/cache/VX_cache_init.sv \
+        $(RTL_DIR)/cache/VX_cache_mshr.sv \
+        $(RTL_DIR)/cache/VX_cache_bank.sv \
+        $(RTL_DIR)/cache/VX_cache.sv \
+        $(RTL_DIR)/cache/VX_cache_bypass.sv \
+        $(RTL_DIR)/cache/VX_cache_wrap.sv \
         $(RTL_DIR)/core/VX_dma_node.sv \
         $(RTL_DIR)/core/VX_dma_unit_misal.sv
 
@@ -91,6 +117,10 @@ INCDIRS_ := $(VORTEX_HOME)/build/hw \
             $(VORTEX_HOME)/hw \
             $(VORTEX_HOME)/sim/common \
             $(RTL_DIR) \
+            $(RTL_DIR)/libs \
+            $(RTL_DIR)/cache \
+            $(RTL_DIR)/mem \
+            $(RTL_DIR)/core \
             $(VORTEX_HOME)/hw/dpi \
             $(THIRD_PARTY_DIR)/softfloat/source/include
 

@@ -1,6 +1,5 @@
 `timescale 1ns / 1ps
 `include "VX_define.vh"
-`include "VX_cache_define.vh"
 
 module tb_VX_gemm_node
   import VX_gpu_pkg::*;
@@ -32,63 +31,19 @@ module tb_VX_gemm_node
 
   localparam int FP16_WIDTH   = 16;
 
-  // LMEM layout footprint (tile-based, double-buffered)
-  localparam longint unsigned LMEM_LAYOUT_ALIGN_BYTES = 64'd4096;
-  localparam longint unsigned LMEM_GROUPS_TILE        = (longint'(DMA_KT) + longint'(DEFAULT_QBLK) - 1) / longint'(DEFAULT_QBLK);
-  localparam longint unsigned LMEM_IBUF_BYTES         = longint'(DMA_MT) * longint'(DMA_KT) * 2;
-  localparam longint unsigned LMEM_WBUF_BYTES         = longint'(DMA_KT) * longint'((DMA_NT + 1) / 2);
-  localparam longint unsigned LMEM_SCBUF_BYTES        = LMEM_GROUPS_TILE * longint'(DMA_NT) * 2;
-  localparam longint unsigned LMEM_ZPBUF_BYTES        = LMEM_GROUPS_TILE * longint'(DMA_NT) * 2;
-  localparam longint unsigned LMEM_OBUF_BYTES         = longint'(DMA_MT) * longint'(DMA_NT) * 2;
-
-  localparam longint unsigned LMEM_IBUF_ALLOC_BYTES   = ((LMEM_IBUF_BYTES  + LMEM_LAYOUT_ALIGN_BYTES - 1) / LMEM_LAYOUT_ALIGN_BYTES) * LMEM_LAYOUT_ALIGN_BYTES;
-  localparam longint unsigned LMEM_WBUF_ALLOC_BYTES   = ((LMEM_WBUF_BYTES  + LMEM_LAYOUT_ALIGN_BYTES - 1) / LMEM_LAYOUT_ALIGN_BYTES) * LMEM_LAYOUT_ALIGN_BYTES;
-  localparam longint unsigned LMEM_SCBUF_ALLOC_BYTES  = ((LMEM_SCBUF_BYTES + LMEM_LAYOUT_ALIGN_BYTES - 1) / LMEM_LAYOUT_ALIGN_BYTES) * LMEM_LAYOUT_ALIGN_BYTES;
-  localparam longint unsigned LMEM_ZPBUF_ALLOC_BYTES  = ((LMEM_ZPBUF_BYTES + LMEM_LAYOUT_ALIGN_BYTES - 1) / LMEM_LAYOUT_ALIGN_BYTES) * LMEM_LAYOUT_ALIGN_BYTES;
-  localparam longint unsigned LMEM_OBUF_ALLOC_BYTES   = ((LMEM_OBUF_BYTES  + LMEM_LAYOUT_ALIGN_BYTES - 1) / LMEM_LAYOUT_ALIGN_BYTES) * LMEM_LAYOUT_ALIGN_BYTES;
-  localparam longint unsigned LMEM_REQUIRED_BYTES     = (2 * LMEM_IBUF_ALLOC_BYTES)
-                                                      + (2 * LMEM_WBUF_ALLOC_BYTES)
-                                                      + (2 * LMEM_SCBUF_ALLOC_BYTES)
-                                                      + (2 * LMEM_ZPBUF_ALLOC_BYTES)
-                                                      + LMEM_OBUF_ALLOC_BYTES;
-
-  // VX_local_mem is most robust with power-of-two footprint.
-  localparam longint unsigned LMEM_SIZE_U = (64'd1 << `CLOG2(LMEM_REQUIRED_BYTES));
-  localparam int LMEM_SIZE             = int'(LMEM_SIZE_U);
-  localparam int LMEM_NUM_BANKS        = 4;
-  localparam int LMEM_WORD_ADDR_WIDTH  = `CLOG2(LMEM_SIZE / LSU_WORD_SIZE);
+  // LMEM model
+  localparam int LMEM_SIZE       = 1024 * 1024;
+  localparam int LMEM_ADDR_WIDTH = `CLOG2(LMEM_SIZE);
 
   // DCACHE model size (byte addressed)
   localparam int DMEM_SIZE       = 7 * 1024 * 1024; // 7MB
   localparam int DMEM_ADDR_WIDTH = `CLOG2(DMEM_SIZE);
-
-  localparam int DCACHE_BYTES = LSU_WORD_SIZE;
-  localparam int CACHE_NUM_REQS     = 1;
-  localparam int CACHE_MEM_PORTS    = 1;
-  localparam int CACHE_SIZE         = 4096;
-  localparam int CACHE_LINE_SIZE    = 64;
-  localparam int CACHE_NUM_BANKS    = 4;
-  localparam int CACHE_NUM_WAYS     = 4;
-  localparam int CACHE_CRSQ_SIZE    = 4;
-  localparam int CACHE_MSHR_SIZE    = 8;
-  localparam int CACHE_MRSQ_SIZE    = 4;
-  localparam int CACHE_MREQ_SIZE    = 4;
-  localparam int CACHE_CORE_OUT_BUF = 2;
-  localparam int CACHE_MEM_OUT_BUF  = 2;
-  localparam int CACHE_MEM_TAG_WIDTH= `CACHE_MEM_TAG_WIDTH(CACHE_MSHR_SIZE, CACHE_NUM_BANKS, CACHE_MEM_PORTS, UUID_WIDTH);
-  localparam int CACHE_MEM_LATENCY  = 6;
 
   // MMIO base (job_frontend CFG_BASE_ADDR)
   localparam logic [63:0] GEMM_BASE = `GEMM_REG_BASE_ADDR;
 
   // dma_node tag width (tb_VX_gemm_dma_ctrl_with_dma 에서 45 사용)
   localparam int DMA_TAG_WIDTH = 45;
-  localparam int G_ARB_NUM_INPUTS = 2;
-  localparam int L_ARB_NUM_INPUTS = 3;
-  localparam int G_ARB_SEL_BITS   = `ARB_SEL_BITS(G_ARB_NUM_INPUTS, 1);
-  localparam int L_ARB_SEL_BITS   = `ARB_SEL_BITS(L_ARB_NUM_INPUTS, 1);
-  localparam int G_ARB_TAG_WIDTH  = DMA_TAG_WIDTH + G_ARB_SEL_BITS;
-  localparam int L_ARB_TAG_WIDTH  = DMA_TAG_WIDTH + L_ARB_SEL_BITS;
 
   // job_frontend params (must match DUT instantiation)
   localparam int JOB_NUM_ENTRIES = 4;
@@ -154,15 +109,9 @@ module tb_VX_gemm_node
     .TAG_WIDTH(LMEM_TAG_WIDTH)
   ) lmem_bus_if ();
 
-  // DUT LMEM tag adaption toward shared LMEM arbiter domain
-  VX_mem_bus_if #(
-    .DATA_SIZE(LSU_WORD_SIZE),
-    .TAG_WIDTH(DMA_TAG_WIDTH)
-  ) lmem_bus_if_dut_arb ();
-
   // dma_node dcache/lmem ports
   VX_mem_bus_if #(
-    .DATA_SIZE(DCACHE_BYTES),
+    .DATA_SIZE(LSU_WORD_SIZE),
     .TAG_WIDTH(DMA_TAG_WIDTH)
   ) dcache_bus_if ();
 
@@ -170,44 +119,6 @@ module tb_VX_gemm_node
     .DATA_SIZE(LSU_WORD_SIZE),
     .TAG_WIDTH(DMA_TAG_WIDTH)
   ) lmem_bus_if_dma ();
-
-  // Optional background ports to drive contention/initialization
-  VX_mem_bus_if #(
-    .DATA_SIZE(DCACHE_BYTES),
-    .TAG_WIDTH(DMA_TAG_WIDTH)
-  ) bg_global_if ();
-
-  VX_mem_bus_if #(
-    .DATA_SIZE(LSU_WORD_SIZE),
-    .TAG_WIDTH(DMA_TAG_WIDTH)
-  ) bg_local_if ();
-
-  // Global path: arbiter -> cache wrap -> backing memory
-  VX_mem_bus_if #(
-    .DATA_SIZE(DCACHE_BYTES),
-    .TAG_WIDTH(DMA_TAG_WIDTH)
-  ) g_arb_in_if[G_ARB_NUM_INPUTS] ();
-
-  VX_mem_bus_if #(
-    .DATA_SIZE(DCACHE_BYTES),
-    .TAG_WIDTH(G_ARB_TAG_WIDTH)
-  ) g_arb_out_if[1] ();
-
-  VX_mem_bus_if #(
-    .DATA_SIZE(CACHE_LINE_SIZE),
-    .TAG_WIDTH(CACHE_MEM_TAG_WIDTH)
-  ) cache_mem_if[CACHE_MEM_PORTS] ();
-
-  // Local path: arbiter -> local mem
-  VX_mem_bus_if #(
-    .DATA_SIZE(LSU_WORD_SIZE),
-    .TAG_WIDTH(DMA_TAG_WIDTH)
-  ) l_arb_in_if[L_ARB_NUM_INPUTS] ();
-
-  VX_mem_bus_if #(
-    .DATA_SIZE(LSU_WORD_SIZE),
-    .TAG_WIDTH(L_ARB_TAG_WIDTH)
-  ) l_arb_out_if[1] ();
 
   // =========================================================================
   // DUT
@@ -279,172 +190,186 @@ module tb_VX_gemm_node
   localparam int REG_QBLK                = 32;
 
   // =========================================================================
-  // Memory fabric (closer to real Vortex path)
-  //   global: dma -> mem_arb -> cache_wrap -> backing memory
-  //   local : gemm+dma(+tb init) -> mem_arb -> local_mem
+  // Shared LMEM byte array (DUT + dma_node share)
   // =========================================================================
+  logic [7:0] lmem [0:LMEM_SIZE-1];
 
-  // DUT LMEM tag-width adaptation into arbiter domain
-  assign lmem_bus_if_dut_arb.req_valid       = lmem_bus_if.req_valid;
-  assign lmem_bus_if_dut_arb.req_data.rw     = lmem_bus_if.req_data.rw;
-  assign lmem_bus_if_dut_arb.req_data.addr   = lmem_bus_if.req_data.addr;
-  assign lmem_bus_if_dut_arb.req_data.data   = lmem_bus_if.req_data.data;
-  assign lmem_bus_if_dut_arb.req_data.byteen = lmem_bus_if.req_data.byteen;
-  assign lmem_bus_if_dut_arb.req_data.flags  = lmem_bus_if.req_data.flags;
-  assign lmem_bus_if_dut_arb.req_data.tag    = DMA_TAG_WIDTH'(lmem_bus_if.req_data.tag);
-  assign lmem_bus_if.req_ready               = lmem_bus_if_dut_arb.req_ready;
-
-  assign lmem_bus_if.rsp_valid               = lmem_bus_if_dut_arb.rsp_valid;
-  assign lmem_bus_if.rsp_data.data           = lmem_bus_if_dut_arb.rsp_data.data;
-  assign lmem_bus_if.rsp_data.tag            = LMEM_TAG_WIDTH'(lmem_bus_if_dut_arb.rsp_data.tag);
-  assign lmem_bus_if_dut_arb.rsp_ready       = lmem_bus_if.rsp_ready;
-
-  `ASSIGN_VX_MEM_BUS_IF(g_arb_in_if[0], dcache_bus_if);
-  `ASSIGN_VX_MEM_BUS_IF(g_arb_in_if[1], bg_global_if);
-
-  VX_mem_arb #(
-    .NUM_INPUTS  (G_ARB_NUM_INPUTS),
-    .NUM_OUTPUTS (1),
-    .DATA_SIZE   (DCACHE_BYTES),
-    .TAG_WIDTH   (DMA_TAG_WIDTH),
-    .TAG_SEL_IDX (DMA_TAG_WIDTH - UUID_WIDTH),
-    .REQ_OUT_BUF (2),
-    .RSP_OUT_BUF (2),
-    .ARBITER     ("P")
-  ) u_g_mem_arb (
-    .clk        (clk),
-    .reset      (reset),
-    .bus_in_if  (g_arb_in_if),
-    .bus_out_if (g_arb_out_if)
-  );
-
-  VX_cache_wrap #(
-    .INSTANCE_ID   ("gemm_node_dcache"),
-    .CACHE_SIZE    (CACHE_SIZE),
-    .LINE_SIZE     (CACHE_LINE_SIZE),
-    .NUM_BANKS     (CACHE_NUM_BANKS),
-    .NUM_WAYS      (CACHE_NUM_WAYS),
-    .WORD_SIZE     (DCACHE_BYTES),
-    .NUM_REQS      (CACHE_NUM_REQS),
-    .MEM_PORTS     (CACHE_MEM_PORTS),
-    .CRSQ_SIZE     (CACHE_CRSQ_SIZE),
-    .MSHR_SIZE     (CACHE_MSHR_SIZE),
-    .MRSQ_SIZE     (CACHE_MRSQ_SIZE),
-    .MREQ_SIZE     (CACHE_MREQ_SIZE),
-    .TAG_WIDTH     (G_ARB_TAG_WIDTH),
-    .WRITE_ENABLE  (1),
-    .WRITEBACK     (0),
-    .DIRTY_BYTES   (0),
-    .CORE_OUT_BUF  (CACHE_CORE_OUT_BUF),
-    .MEM_OUT_BUF   (CACHE_MEM_OUT_BUF)
-  ) u_cache (
-    .clk        (clk),
-    .reset      (reset),
-`ifdef PERF_ENABLE
-    .cache_perf (),
-`endif
-    .core_bus_if(g_arb_out_if),
-    .mem_bus_if (cache_mem_if)
-  );
-
-  `ASSIGN_VX_MEM_BUS_IF(l_arb_in_if[0], lmem_bus_if_dut_arb);
-  `ASSIGN_VX_MEM_BUS_IF(l_arb_in_if[1], lmem_bus_if_dma);
-  `ASSIGN_VX_MEM_BUS_IF(l_arb_in_if[2], bg_local_if);
-
-  VX_mem_arb #(
-    .NUM_INPUTS  (L_ARB_NUM_INPUTS),
-    .NUM_OUTPUTS (1),
-    .DATA_SIZE   (LSU_WORD_SIZE),
-    .TAG_WIDTH   (DMA_TAG_WIDTH),
-    .TAG_SEL_IDX (DMA_TAG_WIDTH - UUID_WIDTH),
-    .REQ_OUT_BUF (2),
-    .RSP_OUT_BUF (2),
-    .ARBITER     ("P")
-  ) u_l_mem_arb (
-    .clk        (clk),
-    .reset      (reset),
-    .bus_in_if  (l_arb_in_if),
-    .bus_out_if (l_arb_out_if)
-  );
-
-  VX_local_mem #(
-    .INSTANCE_ID ("gemm_node_lmem"),
-    .SIZE        (LMEM_SIZE),
-    .NUM_REQS    (1),
-    .NUM_BANKS   (LMEM_NUM_BANKS),
-    .ADDR_WIDTH  (LMEM_WORD_ADDR_WIDTH),
-    .WORD_SIZE   (LSU_WORD_SIZE),
-    .TAG_WIDTH   (L_ARB_TAG_WIDTH),
-    .OUT_BUF     (0)
-  ) u_local_mem (
-    .clk       (clk),
-    .reset     (reset),
-`ifdef PERF_ENABLE
-    .lmem_perf (),
-`endif
-    .mem_bus_if(l_arb_out_if)
-  );
-
-  // Global memory backend (byte addressed, served by cache line interface)
-  byte dmem [0:DMEM_SIZE-1];
-
-  typedef struct {
-    logic [CACHE_LINE_SIZE*8-1:0]   data;
-    logic [CACHE_MEM_TAG_WIDTH-1:0] tag;
-    int unsigned                    delay;
-  } mem_rsp_entry_t;
-
-  mem_rsp_entry_t mem_rsp_queue[$];
-
-  assign cache_mem_if[0].req_ready = 1'b1;
+  // =========================================================================
+  // LMEM slave model #1 : DUT lmem_bus_if
+  // =========================================================================
+  logic                        lmem_req_pending;
+  logic [LMEM_ADDR_WIDTH-1:0]  lmem_req_addr;
+  logic                        lmem_req_rw;
+  logic [LSU_WORD_SIZE*8-1:0]  lmem_req_data;
+  logic [LSU_WORD_SIZE-1:0]    lmem_req_byteen;
+  logic [LMEM_TAG_WIDTH-1:0]   lmem_req_tag;
 
   always @(posedge clk) begin
     if (reset) begin
-      mem_rsp_queue.delete();
-      cache_mem_if[0].rsp_valid <= 1'b0;
-      cache_mem_if[0].rsp_data  <= '0;
+      lmem_bus_if.rsp_valid <= 1'b0;
+      lmem_req_pending      <= 1'b0;
     end else begin
-      if (cache_mem_if[0].req_valid && cache_mem_if[0].req_ready) begin
-        logic [cache_mem_if[0].ADDR_WIDTH-1:0] line_addr;
-        int unsigned base_b;
+      if (lmem_bus_if.req_valid && lmem_bus_if.req_ready && !lmem_req_pending) begin
+        lmem_req_pending <= 1'b1;
+        lmem_req_addr    <= lmem_bus_if.req_data.addr[31:0] * LSU_WORD_SIZE; // beat->byte
+        lmem_req_rw      <= lmem_bus_if.req_data.rw;
+        lmem_req_data    <= lmem_bus_if.req_data.data;
+        lmem_req_byteen  <= lmem_bus_if.req_data.byteen;
+        lmem_req_tag     <= lmem_bus_if.req_data.tag;
 
-        line_addr = cache_mem_if[0].req_data.addr;
-        base_b = int'(line_addr << $clog2(CACHE_LINE_SIZE));
-
-        if (cache_mem_if[0].req_data.rw) begin
-          for (int b = 0; b < CACHE_LINE_SIZE; ++b) begin
-            if (cache_mem_if[0].req_data.byteen[b] && ((base_b + b) < DMEM_SIZE))
-              dmem[base_b + b] = cache_mem_if[0].req_data.data[b*8 +: 8];
+        if (lmem_bus_if.req_data.rw) begin
+          int i;
+          int unsigned baddr;
+          for (i = 0; i < LSU_WORD_SIZE; i++) begin
+            if (lmem_bus_if.req_data.byteen[i]) begin
+              baddr = (lmem_bus_if.req_data.addr[31:0] * LSU_WORD_SIZE + i);
+              if (baddr < LMEM_SIZE)
+                lmem[baddr] <= lmem_bus_if.req_data.data[i*8 +: 8];
+            end
           end
-        end else begin
-          mem_rsp_entry_t e;
-          e.tag   = cache_mem_if[0].req_data.tag;
-          e.delay = CACHE_MEM_LATENCY;
-          for (int b = 0; b < CACHE_LINE_SIZE; ++b) begin
-            if ((base_b + b) < DMEM_SIZE)
-              e.data[b*8 +: 8] = dmem[base_b + b];
-            else
-              e.data[b*8 +: 8] = 8'h00;
-          end
-          mem_rsp_queue.push_back(e);
         end
       end
 
-      foreach (mem_rsp_queue[i]) begin
-        if (mem_rsp_queue[i].delay > 0)
-          mem_rsp_queue[i].delay--;
+      if (lmem_req_pending && !lmem_bus_if.rsp_valid) begin
+        if (!lmem_req_rw) begin
+          lmem_bus_if.rsp_valid    <= 1'b1;
+          lmem_bus_if.rsp_data.tag <= lmem_req_tag;
+          for (int i = 0; i < LSU_WORD_SIZE; i++) begin
+            if ((lmem_req_addr + i) < LMEM_SIZE)
+              lmem_bus_if.rsp_data.data[i*8 +: 8] <= lmem[lmem_req_addr + i];
+            else
+              lmem_bus_if.rsp_data.data[i*8 +: 8] <= 8'h00;
+          end
+        end else begin
+          lmem_req_pending <= 1'b0;
+        end
       end
 
-      if (cache_mem_if[0].rsp_valid && cache_mem_if[0].rsp_ready)
-        cache_mem_if[0].rsp_valid <= 1'b0;
+      if (lmem_bus_if.rsp_valid && lmem_bus_if.rsp_ready) begin
+        lmem_bus_if.rsp_valid <= 1'b0;
+        lmem_req_pending      <= 1'b0;
+      end
+    end
+  end
 
-      if ((!cache_mem_if[0].rsp_valid || cache_mem_if[0].rsp_ready)
-       && (mem_rsp_queue.size() > 0)
-       && (mem_rsp_queue[0].delay == 0)) begin
-        cache_mem_if[0].rsp_valid     <= 1'b1;
-        cache_mem_if[0].rsp_data.data <= mem_rsp_queue[0].data;
-        cache_mem_if[0].rsp_data.tag  <= mem_rsp_queue[0].tag;
-        mem_rsp_queue.delete(0);
+  assign lmem_bus_if.req_ready = !lmem_req_pending;
+
+  // =========================================================================
+  // LMEM slave model #2 : dma_node lmem_bus_if_dma (TAG_WIDTH=DMA_TAG_WIDTH)
+  // =========================================================================
+  logic                        lmem2_req_pending;
+  logic [LMEM_ADDR_WIDTH-1:0]  lmem2_req_addr;
+  logic                        lmem2_req_rw;
+  logic [LSU_WORD_SIZE*8-1:0]  lmem2_req_data;
+  logic [LSU_WORD_SIZE-1:0]    lmem2_req_byteen;
+  logic [DMA_TAG_WIDTH-1:0]    lmem2_req_tag;
+
+  always @(posedge clk) begin
+    if (reset) begin
+      lmem_bus_if_dma.rsp_valid <= 1'b0;
+      lmem2_req_pending         <= 1'b0;
+    end else begin
+      if (lmem_bus_if_dma.req_valid && lmem_bus_if_dma.req_ready && !lmem2_req_pending) begin
+        lmem2_req_pending <= 1'b1;
+        lmem2_req_addr    <= lmem_bus_if_dma.req_data.addr[31:0] * LSU_WORD_SIZE; // beat->byte
+        lmem2_req_rw      <= lmem_bus_if_dma.req_data.rw;
+        lmem2_req_data    <= lmem_bus_if_dma.req_data.data;
+        lmem2_req_byteen  <= lmem_bus_if_dma.req_data.byteen;
+        lmem2_req_tag     <= lmem_bus_if_dma.req_data.tag;
+
+        if (lmem_bus_if_dma.req_data.rw) begin
+          int i;
+          int unsigned baddr;
+          for (i = 0; i < LSU_WORD_SIZE; i++) begin
+            if (lmem_bus_if_dma.req_data.byteen[i]) begin
+              baddr = (lmem_bus_if_dma.req_data.addr[31:0] * LSU_WORD_SIZE + i);
+              if (baddr < LMEM_SIZE)
+                lmem[baddr] <= lmem_bus_if_dma.req_data.data[i*8 +: 8];
+            end
+          end
+        end
+      end
+
+      if (lmem2_req_pending && !lmem_bus_if_dma.rsp_valid) begin
+        if (!lmem2_req_rw) begin
+          lmem_bus_if_dma.rsp_valid    <= 1'b1;
+          lmem_bus_if_dma.rsp_data.tag <= lmem2_req_tag;
+          for (int i = 0; i < LSU_WORD_SIZE; i++) begin
+            if ((lmem2_req_addr + i) < LMEM_SIZE)
+              lmem_bus_if_dma.rsp_data.data[i*8 +: 8] <= lmem[lmem2_req_addr + i];
+            else
+              lmem_bus_if_dma.rsp_data.data[i*8 +: 8] <= 8'h00;
+          end
+        end else begin
+          lmem2_req_pending <= 1'b0;
+        end
+      end
+
+      if (lmem_bus_if_dma.rsp_valid && lmem_bus_if_dma.rsp_ready) begin
+        lmem_bus_if_dma.rsp_valid <= 1'b0;
+        lmem2_req_pending         <= 1'b0;
+      end
+    end
+  end
+
+  assign lmem_bus_if_dma.req_ready = !lmem2_req_pending;
+
+  // =========================================================================
+  // DCACHE model (dma_node.dcache_bus_if): 1-cycle latency for reads, posted writes
+  // =========================================================================
+  byte dmem [0:DMEM_SIZE-1];
+
+  assign dcache_bus_if.req_ready = 1'b1;
+
+  typedef struct packed {
+    logic                               valid;
+    logic                               rw;
+    logic [dcache_bus_if.ADDR_WIDTH-1:0] addr_beats;
+    logic [LSU_WORD_SIZE*8-1:0]         data;
+    logic [LSU_WORD_SIZE-1:0]           byteen;
+    logic [DMA_TAG_WIDTH-1:0]           tag;
+  } dpend_t;
+
+  dpend_t d_pend;
+
+  always @(posedge clk) begin
+    if (reset) begin
+      dcache_bus_if.rsp_valid <= 1'b0;
+      dcache_bus_if.rsp_data  <= '0;
+      d_pend.valid            <= 1'b0;
+    end else begin
+      if (dcache_bus_if.rsp_valid && dcache_bus_if.rsp_ready)
+        dcache_bus_if.rsp_valid <= 1'b0;
+
+      d_pend.valid <= 1'b0;
+      if (dcache_bus_if.req_valid && dcache_bus_if.req_ready) begin
+        d_pend.valid      <= 1'b1;
+        d_pend.rw         <= dcache_bus_if.req_data.rw;
+        d_pend.addr_beats <= dcache_bus_if.req_data.addr;
+        d_pend.data       <= dcache_bus_if.req_data.data;
+        d_pend.byteen     <= dcache_bus_if.req_data.byteen;
+        d_pend.tag        <= dcache_bus_if.req_data.tag;
+      end
+
+      if (d_pend.valid) begin
+        int unsigned base_b;
+        base_b = (int'(d_pend.addr_beats) << $clog2(LSU_WORD_SIZE));
+
+        if (!d_pend.rw) begin
+          dcache_bus_if.rsp_valid    <= 1'b1;
+          dcache_bus_if.rsp_data.tag <= d_pend.tag;
+          for (int i = 0; i < LSU_WORD_SIZE; i++) begin
+            if ((base_b + i) < DMEM_SIZE)
+              dcache_bus_if.rsp_data.data[i*8 +: 8] <= dmem[base_b + i];
+            else
+              dcache_bus_if.rsp_data.data[i*8 +: 8] <= 8'h00;
+          end
+        end else begin
+          for (int i = 0; i < LSU_WORD_SIZE; i++) begin
+            if (d_pend.byteen[i] && ((base_b + i) < DMEM_SIZE))
+              dmem[base_b + i] <= d_pend.data[i*8 +: 8];
+          end
+        end
       end
     end
   end
@@ -456,14 +381,6 @@ module tb_VX_gemm_node
   initial begin
     mmio_if[0].req_valid = 1'b0;
     mmio_if[0].rsp_ready = 1'b1;
-
-    bg_global_if.req_valid = 1'b0;
-    bg_global_if.req_data  = '0;
-    bg_global_if.rsp_ready = 1'b1;
-
-    bg_local_if.req_valid = 1'b0;
-    bg_local_if.req_data  = '0;
-    bg_local_if.rsp_ready = 1'b1;
   end
 
   int unsigned mmio_tag_cnt = 0;
@@ -602,55 +519,9 @@ module tb_VX_gemm_node
   // =========================================================================
   // Reset/init
   // =========================================================================
-  function automatic logic [bg_local_if.ADDR_WIDTH-1:0] to_local_addr(input logic [63:0] byte_addr);
-    return bg_local_if.ADDR_WIDTH'(byte_addr >> $clog2(LSU_WORD_SIZE));
-  endfunction
-
-  task automatic lmem_bg_write_word(
-    input logic [63:0] byte_addr,
-    input logic [LSU_WORD_SIZE*8-1:0] data,
-    input logic [LSU_WORD_SIZE-1:0] byteen
-  );
-    int guard;
-    begin
-      bg_local_if.req_data        = '0;
-      bg_local_if.req_data.rw     = 1'b1;
-      bg_local_if.req_data.addr   = to_local_addr(byte_addr);
-      bg_local_if.req_data.byteen = byteen;
-      bg_local_if.req_data.data   = data;
-      bg_local_if.req_data.flags  = '0;
-      bg_local_if.req_data.tag    = '0;
-
-      @(negedge clk);
-      bg_local_if.req_valid = 1'b1;
-      guard = 0;
-      while (!(bg_local_if.req_valid && bg_local_if.req_ready)) begin
-        @(posedge clk);
-        guard++;
-        if (guard > 200000)
-          $fatal(1, "lmem_bg_write_word timeout waiting req_ready");
-      end
-
-      @(negedge clk);
-      bg_local_if.req_valid = 1'b0;
-      @(posedge clk);
-    end
-  endtask
-
-  task automatic clear_lmem();
-    logic [LSU_WORD_SIZE*8-1:0] zero_data;
-    logic [LSU_WORD_SIZE-1:0]   full_byteen;
-    begin
-      zero_data   = '0;
-      full_byteen = '1;
-      for (longint unsigned addr = 0; addr < longint'(LMEM_SIZE); addr += LSU_WORD_SIZE)
-        lmem_bg_write_word(addr[63:0], zero_data, full_byteen);
-    end
-  endtask
-
   task automatic init_memories();
+    for (int i = 0; i < LMEM_SIZE; i++) lmem[i] = 8'h00;
     for (int i = 0; i < DMEM_SIZE; i++) dmem[i] = 8'h00;
-    clear_lmem();
   endtask
 
   task automatic apply_reset();
@@ -684,7 +555,7 @@ module tb_VX_gemm_node
   // Auto layout base/alignment
   localparam longint unsigned AUTO_GMEM_BASE = 64'h0000_0000_0010_0000;
   localparam longint unsigned AUTO_LMEM_BASE = 64'h0000_0000_0000_0000;
-  localparam longint unsigned ADDR_ALIGN_BYTES = LMEM_LAYOUT_ALIGN_BYTES;
+  localparam longint unsigned ADDR_ALIGN_BYTES = 64'd4096;
 
   localparam longint unsigned DMEM_LIMIT = longint'(DMEM_SIZE);
   localparam longint unsigned LMEM_LIMIT = longint'(LMEM_SIZE);
@@ -1237,8 +1108,8 @@ module tb_VX_gemm_node
       $display("\n[%0t] === RUN GEMM TEST: %s (M=%0d, N=%0d, K=%0d) ===",
                $time, case_name, test_m, test_n, test_k);
 
-      apply_reset();
       init_memories();
+      apply_reset();
 
       build_test_vectors(
         .test_m(test_m), 
