@@ -819,7 +819,11 @@ module tb_VX_gemm_node
     int mismatch_count = 0;
     int printed = 0;
 
-    $display("=== OUTPUT CHECK ===");
+    $display("=========================================================");
+    $display("====                                                 ====");
+    $display("====                  OUTPUT CHECK                   ====");
+    $display("====                                                 ====");
+    $display("=========================================================");
     for (int m = 0; m < test_m; m++) begin
       for (int n = 0; n < test_n; n++) begin
         int unsigned idx = m * test_n + n;
@@ -842,6 +846,7 @@ module tb_VX_gemm_node
     end else begin
       $display("[%0t] OUTPUT CHECK PASSED: compared %0d elements", $time, test_m * test_n);
     end
+    $display("=========================================================");
   endtask
 
   function automatic logic ranges_overlap(

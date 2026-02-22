@@ -1,5 +1,5 @@
 #--debug --gdbbt
-compile: setup
+compile: $(TB) $(RTLS) $(DPI_SRCS) $(SOFTFLOAT_LIB) Makefile vlt.mk | setup
 	verilator -Wall --binary --trace-fst -Wno-fatal \
 		-MAKEFLAGS "CXX=$(CXX) CC=$(CC)" \
 		${VL_INCDIRS} \
@@ -12,8 +12,9 @@ compile: setup
 		$(SOFTFLOAT_LIB) \
 		$(PARAMS) \
 		2>&1 | tee $(COMPILE_LOG)
+	@touch $@
 
-run:
+run: compile
 	./obj_dir/V$(TOP_MODULE) $(SIM_ARGS) 2>&1 | tee $(SIM_LOG)
 
-sim: compile run
+sim: run

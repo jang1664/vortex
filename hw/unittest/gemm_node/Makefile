@@ -184,3 +184,4 @@ clean:
 	rm -rf reports logs 
 	rm -rf simv novas* ucli* verdi* csrc* simv.daidir*
 	rm -rf vcd2fsdb*
+	rm -f compile
