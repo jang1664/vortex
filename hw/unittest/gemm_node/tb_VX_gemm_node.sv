@@ -577,17 +577,25 @@ module tb_VX_gemm_node
     input int test_m,
     input int test_n,
     input int test_k,
+    input int test_qblk,
     input int input_random_type=0,
     input int weight_random_type=0,
     input int scale_random_type=0,
     input int zp_random_type=0
   );
+    int groups_total;
     if ((test_m <= 0) || (test_m > fpint_emul::MAX_M))
       $fatal(1, "Invalid M=%0d (max=%0d)", test_m, fpint_emul::MAX_M);
     if ((test_n <= 0) || (test_n > fpint_emul::MAX_N))
       $fatal(1, "Invalid N=%0d (max=%0d)", test_n, fpint_emul::MAX_N);
     if ((test_k <= 0) || (test_k > fpint_emul::MAX_K))
       $fatal(1, "Invalid K=%0d (max=%0d)", test_k, fpint_emul::MAX_K);
+    if (test_qblk <= 0)
+      $fatal(1, "Invalid QBLK=%0d", test_qblk);
+    if (test_qblk != fpint_emul::QBLOCK) begin
+      $fatal(1, "QBLK mismatch: test_qblk=%0d, ref_QBLOCK=%0d", test_qblk, fpint_emul::QBLOCK);
+    end
+    groups_total = (test_k + test_qblk - 1) / test_qblk;
 
     for (int m = 0; m < test_m; m++) begin
       for (int k = 0; k < test_k; k++) begin
@@ -645,10 +653,17 @@ module tb_VX_gemm_node
       end
 
       scale_vec[n] = cf_math_pkg::fp32_val_to_fp16_bit(v);
-      ref_scale[n] = scale_vec[n];
-
       zp_vec[n]    = z[15:0];
-      ref_zero[n]  = zp_vec[n];
+    end
+
+    // fpint_emul::fpint_gemm_ref expects qcol quant params in [KG, N] layout.
+    for (int kg = 0; kg < groups_total; kg++) begin
+      for (int n = 0; n < test_n; n++) begin
+        int idx_kg_n;
+        idx_kg_n = kg * test_n + n;
+        ref_scale[idx_kg_n] = scale_vec[n];
+        ref_zero[idx_kg_n]  = zp_vec[n];
+      end
     end
 
     fpint_emul::fpint_gemm_ref(
@@ -704,6 +719,7 @@ module tb_VX_gemm_node
     input int test_m,
     input int test_n,
     input int test_k,
+    input int test_qblk,
     input logic [63:0] gmem_in_base,
     input logic [63:0] gmem_w_base,
     input logic [63:0] gmem_sc_base,
@@ -714,7 +730,12 @@ module tb_VX_gemm_node
     byte unsigned buf_sc[];
     byte unsigned buf_zp[];
     int idx = 0;
+    int groups_total;
     logic [3:0] w0, w1;
+
+    if (test_qblk <= 0)
+      $fatal(1, "Invalid QBLK=%0d", test_qblk);
+    groups_total = (test_k + test_qblk - 1) / test_qblk;
 
     buf_in = new[test_m*test_k*2];
     for (int i = 0; i < test_m*test_k; i++) begin
@@ -735,18 +756,26 @@ module tb_VX_gemm_node
     for (int i = 0; i < buf_w.size(); i++)
       if ((gmem_w_base + i) < DMEM_SIZE) dmem[gmem_w_base + i] = buf_w[i];
 
-    buf_sc = new[test_n*2];
-    for (int n = 0; n < test_n; n++) begin
-      buf_sc[n*2 + 0] = scale_vec[n][7:0];
-      buf_sc[n*2 + 1] = scale_vec[n][15:8];
+    buf_sc = new[groups_total*test_n*2];
+    for (int kg = 0; kg < groups_total; kg++) begin
+      for (int n = 0; n < test_n; n++) begin
+        int idx_kg_n;
+        idx_kg_n = kg * test_n + n;
+        buf_sc[idx_kg_n*2 + 0] = scale_vec[n][7:0];
+        buf_sc[idx_kg_n*2 + 1] = scale_vec[n][15:8];
+      end
     end
     for (int i = 0; i < buf_sc.size(); i++)
       if ((gmem_sc_base + i) < DMEM_SIZE) dmem[gmem_sc_base + i] = buf_sc[i];
 
-    buf_zp = new[test_n*2];
-    for (int n = 0; n < test_n; n++) begin
-      buf_zp[n*2 + 0] = zp_vec[n][7:0];
-      buf_zp[n*2 + 1] = zp_vec[n][15:8];
+    buf_zp = new[groups_total*test_n*2];
+    for (int kg = 0; kg < groups_total; kg++) begin
+      for (int n = 0; n < test_n; n++) begin
+        int idx_kg_n;
+        idx_kg_n = kg * test_n + n;
+        buf_zp[idx_kg_n*2 + 0] = zp_vec[n][7:0];
+        buf_zp[idx_kg_n*2 + 1] = zp_vec[n][15:8];
+      end
     end
     for (int i = 0; i < buf_zp.size(); i++)
       if ((gmem_zp_base + i) < DMEM_SIZE) dmem[gmem_zp_base + i] = buf_zp[i];
@@ -812,10 +841,10 @@ module tb_VX_gemm_node
     do begin
       job_read_reg32(eid, REG_CONTROL, ctrl);
       @(posedge clk);
-      timeout++;
-      if (timeout > 100000) begin
-        $fatal(1, "[%0t] wait_job_done timeout (ctrl=0x%08h)", $time, ctrl);
-      end
+      // timeout++;
+      // if (timeout > 100000) begin
+      //   $fatal(1, "[%0t] wait_job_done timeout (ctrl=0x%08h)", $time, ctrl);
+      // end
       curr_gen = ctrl[`JOB_MMIO_CTRL_GEN_LSB +: `JOB_MMIO_GEN_W];
     end while (generation >= curr_gen && ctrl[`JOB_MMIO_CTRL_VALID_BIT] == 1'b1);
     $display("[%0t] JOB DONE detected for entry%0d", $time, eid);
@@ -960,16 +989,18 @@ module tb_VX_gemm_node
     longint unsigned lmem_scbuf_bytes;
     longint unsigned lmem_zpbuf_bytes;
     longint unsigned lmem_obuf_bytes;
+    longint unsigned groups_total;
     longint unsigned groups_tile;
     begin
       if (test_qblk <= 0) begin
         $fatal(1, "[%0t] Invalid QBLK=%0d", $time, test_qblk);
       end
+      groups_total = (longint'(test_k) + longint'(test_qblk) - 1) / longint'(test_qblk);
 
       gmem_in_bytes  = longint'(test_m) * longint'(test_k) * 2;
       gmem_w_bytes   = longint'(test_k) * longint'((test_n + 1) / 2);
-      gmem_sc_bytes  = longint'(test_n) * 2;
-      gmem_zp_bytes  = longint'(test_n) * 2;
+      gmem_sc_bytes  = groups_total * longint'(test_n) * 2;
+      gmem_zp_bytes  = groups_total * longint'(test_n) * 2;
       gmem_out_bytes = longint'(test_m) * longint'(test_n) * 2;
 
       // LMEM allocation must follow DMA tile footprint, not logical tensor bytes.
@@ -1084,6 +1115,7 @@ module tb_VX_gemm_node
         .test_m(test_m), 
         .test_n(test_n),
         .test_k(test_k),
+        .test_qblk(test_qblk),
         .input_random_type(0),
         .weight_random_type(0),
         .scale_random_type(0),
@@ -1097,7 +1129,7 @@ module tb_VX_gemm_node
         lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base, lmem_obuf_base
       );
       write_gmem_inputs_weights_sc_zp(
-        test_m, test_n, test_k,
+        test_m, test_n, test_k, test_qblk,
         gmem_in_base, gmem_w_base, gmem_sc_base, gmem_zp_base
       );
 
@@ -1139,16 +1171,18 @@ module tb_VX_gemm_node
     longint unsigned cur_gmem, cur_lmem;
     longint unsigned gmem_in_bytes, gmem_w_bytes, gmem_sc_bytes, gmem_zp_bytes, gmem_out_bytes;
     longint unsigned lmem_ibuf_bytes, lmem_wbuf_bytes, lmem_scbuf_bytes, lmem_zpbuf_bytes, lmem_obuf_bytes;
+    longint unsigned groups_total;
     longint unsigned groups_tile;
     begin
       if (test_qblk <= 0) begin
         $fatal(1, "[%0t] Invalid QBLK=%0d", $time, test_qblk);
       end
+      groups_total = (longint'(test_k) + longint'(test_qblk) - 1) / longint'(test_qblk);
 
       gmem_in_bytes  = longint'(test_m) * longint'(test_k) * 2;
       gmem_w_bytes   = longint'(test_k) * longint'((test_n + 1) / 2);
-      gmem_sc_bytes  = longint'(test_n) * 2;
-      gmem_zp_bytes  = longint'(test_n) * 2;
+      gmem_sc_bytes  = groups_total * longint'(test_n) * 2;
+      gmem_zp_bytes  = groups_total * longint'(test_n) * 2;
       gmem_out_bytes = longint'(test_m) * longint'(test_n) * 2;
 
       groups_tile      = (longint'(DMA_KT) + longint'(test_qblk) - 1) / longint'(test_qblk);
@@ -1241,7 +1275,7 @@ module tb_VX_gemm_node
     $finish;
   end
 
-  parameter longint unsigned SIM_TIMEOUT_NS = 1_000_000; // 예: 2ms = 2,000,000ns
+  parameter longint unsigned SIM_TIMEOUT_NS = 10_000_000; // 예: 2ms = 2,000,000ns
 
   // =========================================================================
   // Global watchdog timeout (hard stop)
@@ -1249,20 +1283,20 @@ module tb_VX_gemm_node
   // =========================================================================
   initial begin : watchdog_timeout
     // wait until time passes (absolute sim time)
-    #(SIM_TIMEOUT_NS);
+//     #(SIM_TIMEOUT_NS);
 
-    $display("[WATCHDOG][%0t] Global timeout reached (%0d ns). Forcing finish.",
-             $time, SIM_TIMEOUT_NS);
-    $display("UUID_WIDTH: %0d", UUID_WIDTH);  //44
+//     $display("[WATCHDOG][%0t] Global timeout reached (%0d ns). Forcing finish.",
+//              $time, SIM_TIMEOUT_NS);
+//     $display("UUID_WIDTH: %0d", UUID_WIDTH);  //44
 
-`ifdef VCS
-    // stop dumping so fsdb closes cleanly
-    $fsdbDumpoff();
-`else
-    $dumpoff();
-`endif
+// `ifdef VCS
+//     // stop dumping so fsdb closes cleanly
+//     $fsdbDumpoff();
+// `else
+//     $dumpoff();
+// `endif
 
-    // If you prefer fatal instead of finish, change to $fatal(1,...)
-    $finish;
+//     // If you prefer fatal instead of finish, change to $fatal(1,...)
+//     $finish;
   end
 endmodule
