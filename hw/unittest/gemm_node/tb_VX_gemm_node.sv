@@ -571,7 +571,11 @@ module tb_VX_gemm_node
   task automatic build_test_vectors(
     input int test_m,
     input int test_n,
-    input int test_k
+    input int test_k,
+    input int input_random_type=0,
+    input int weight_random_type=0,
+    input int scale_random_type=0,
+    input int zp_random_type=0
   );
     if ((test_m <= 0) || (test_m > fpint_emul::MAX_M))
       $fatal(1, "Invalid M=%0d (max=%0d)", test_m, fpint_emul::MAX_M);
@@ -582,28 +586,58 @@ module tb_VX_gemm_node
 
     for (int m = 0; m < test_m; m++) begin
       for (int k = 0; k < test_k; k++) begin
-        // shortreal v = shortreal'(1.0 + ((m+k) % 7));
-        shortreal v = shortreal'(((m*test_k+k) % 5 - 2.0));
-        // shortreal v = shortreal'(1.0);
+        shortreal v;
+        if(input_random_type == 0) begin
+          v = shortreal'(1.0);
+        end else if(input_random_type == 1) begin
+          v = shortreal'(1.0 + ((m+k) % 7));
+        end else if(input_random_type == 2) begin
+          v = shortreal'(((m*test_k+k) % 5 - 2.0));
+        end else begin
+          v = shortreal'(1.0);
+        end
         input_mat[m*test_k + k] = cf_math_pkg::fp32_val_to_fp16_bit(v);
         ref_input[m*test_k + k] = input_mat[m*test_k + k];
       end
     end
     for (int k = 0; k < test_k; k++) begin
       for (int n = 0; n < test_n; n++) begin
-        int w = ((k*test_n + n) % 13) - 6; // -6..6
-        // int w = ((k*3 + n*5) % 13) - 6; // -6..6
-        // int w = 1;
+        int w;
+        if(weight_random_type == 0) begin
+          w = 1;
+        end else if(weight_random_type == 1) begin
+          w = ((k*test_n + n) % 7) - 3; // -3..3
+        end else if(weight_random_type == 2) begin
+          w = ((k*test_n + n) % 15) - 7; // -7..7
+        end else begin
+          w = 1;
+        end
         weight_mat[k*test_n + n] = w[3:0];
         ref_weight[k*test_n + n] = signed'(w[3:0]);
       end
     end
     for (int n = 0; n < test_n; n++) begin
-      shortreal v = shortreal'((n % 7) - 3.0);
-      // shortreal v = shortreal'(1.0);
+      shortreal v;
+      int       z;
+      if(scale_random_type == 0) begin
+        v = shortreal'(1.0);
+      end else if(scale_random_type == 1) begin
+        v = shortreal'(1.0 + (n % 7));
+      end else if(scale_random_type == 2) begin
+        v = shortreal'(((n*5) % 11 - 5.0));
+      end else begin
+        v = shortreal'(1.0);
+      end
 
-      int z = (n*5 % 13) - 6; // -6..6
-      // int z = 2;
+      if(zp_random_type == 0) begin
+        z = 2;
+      end else if(zp_random_type == 1) begin
+        z = (n % 7) - 3; // -3..3
+      end else if(zp_random_type == 2) begin
+         z = (n % 15) - 7; // -7..7
+      end else begin
+        z = 2;
+      end
 
       scale_vec[n] = cf_math_pkg::fp32_val_to_fp16_bit(v);
       ref_scale[n] = scale_vec[n];
@@ -1033,7 +1067,16 @@ module tb_VX_gemm_node
       init_memories();
       apply_reset();
 
-      build_test_vectors(test_m, test_n, test_k);
+      build_test_vectors(
+        .test_m(test_m), 
+        .test_n(test_n),
+        .test_k(test_k),
+        .input_random_type(1),
+        .weight_random_type(1),
+        .scale_random_type(1),
+        .zp_random_type(1)
+      );
+
       check_tensor_layout(
         test_m, test_n, test_k,
         gmem_in_base, gmem_w_base, gmem_sc_base, gmem_zp_base, gmem_out_base,

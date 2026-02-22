@@ -1,29 +1,14 @@
-"""RTL (FSIM) Log Analyzer - Analysis modules for RTL simulation logs."""
+"""RTL log analyzer package exports."""
 
-from .packet import PacketAnalyzer
-from .sync_trace import SyncTraceAnalyzer
-from .stall_analysis import StallAnalyzer
-from .monitor import LogMonitor, DebugTestDirectory
-from .keyboard import KeyboardHandler
-from .recv_analysis import (
-    count_recv_before_step,
-    expand_row_pattern,
-    parse_expected_patterns_from_log,
-    compare_recv_patterns,
-)
 from .dma_analysis import check_dma_transactions, parse_dma_transactions
+from .duration_profile import DurationProfiler, EventCondition, parse_match_expr
+from .keyboard import KeyboardHandler
 
 __all__ = [
-    "PacketAnalyzer",
-    "SyncTraceAnalyzer",
-    "StallAnalyzer",
-    "LogMonitor",
-    "DebugTestDirectory",
-    "KeyboardHandler",
-    "count_recv_before_step",
-    "expand_row_pattern",
-    "parse_expected_patterns_from_log",
-    "compare_recv_patterns",
     "check_dma_transactions",
     "parse_dma_transactions",
+    "DurationProfiler",
+    "EventCondition",
+    "parse_match_expr",
+    "KeyboardHandler",
 ]

@@ -250,7 +250,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     assign weight_dma_ctrl_if.src_strides[1] = 0;
     assign weight_dma_ctrl_if.src_strides[2] = 0;
 
-    assign weight_dma_ctrl_if.dst_base_addr  = {gemm_ctrl_if.weight_read_ctrl.cmd.flags[2], gemm_ctrl_if.weight_read_ctrl.cmd.flags[1]}; //{dir, reg_idx}
+    assign weight_dma_ctrl_if.dst_base_addr  = {gemm_ctrl_if.weight_read_ctrl.cmd.flags[2], gemm_ctrl_if.weight_read_ctrl.cmd.flags[1]} << `CLOG2(w_dma_gemm_bus_if.DATA_SIZE); //{dir, reg_idx}
     assign weight_dma_ctrl_if.dst_strides[0] = 0;
     assign weight_dma_ctrl_if.dst_strides[1] = 0;
     assign weight_dma_ctrl_if.dst_strides[2] = 0;
@@ -634,11 +634,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     assign w_gemm_bus_if.rsp_ready      = w_dma_gemm_bus_if.rsp_ready;
 
     assign w_gemm_bus_if.req_data.rw    = w_dma_gemm_bus_if.req_data.rw;
-    assign w_gemm_bus_if.req_data.addr
-      = { {($bits(w_gemm_bus_if.req_data.addr)-2){1'b0}},
-          gemm_ctrl_if.weight_read_ctrl.cmd.flags[2],
-          gemm_ctrl_if.weight_read_ctrl.cmd.flags[1]
-        };
+    assign w_gemm_bus_if.req_data.addr  = w_dma_gemm_bus_if.req_data.addr;
     assign w_gemm_bus_if.req_data.data   = w_dma_gemm_bus_if.req_data.data;
     assign w_gemm_bus_if.req_data.byteen = w_dma_gemm_bus_if.req_data.byteen;
     assign w_gemm_bus_if.req_data.flags  = w_dma_gemm_bus_if.req_data.flags;
