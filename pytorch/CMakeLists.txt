@@ -98,3 +98,69 @@ else()
   message(WARNING "elmul kernel binary not found at ${_ELMUL_VXBIN} — "
                   "native aten::mul will not work.  Build the elmul test first.")
 endif()
+
+set(_SOFTMAX_VXBIN "${VORTEX_BUILD_DIR}/tests/regression/softmax/kernel.vxbin")
+if(EXISTS ${_SOFTMAX_VXBIN})
+  install(FILES ${_SOFTMAX_VXBIN}
+          DESTINATION ${CMAKE_INSTALL_PREFIX}/kernels
+          RENAME softmax.vxbin)
+  message(STATUS "Will install softmax kernel: ${_SOFTMAX_VXBIN}")
+else()
+  message(WARNING "softmax kernel binary not found at ${_SOFTMAX_VXBIN} — "
+                  "native aten::_softmax will not work.  Build the softmax test first.")
+endif()
+
+set(_SGEMM_TCU_VXBIN "${VORTEX_BUILD_DIR}/tests/regression/sgemm_tcu/kernel.vxbin")
+if(EXISTS ${_SGEMM_TCU_VXBIN})
+  install(FILES ${_SGEMM_TCU_VXBIN}
+          DESTINATION ${CMAKE_INSTALL_PREFIX}/kernels
+          RENAME sgemm_tcu.vxbin)
+  message(STATUS "Will install sgemm_tcu kernel: ${_SGEMM_TCU_VXBIN}")
+else()
+  message(WARNING "sgemm_tcu kernel binary not found at ${_SGEMM_TCU_VXBIN} — "
+                  "native aten::mm will not work.  Build the sgemm_tcu test first.")
+endif()
+
+set(_SILU_VXBIN "${VORTEX_BUILD_DIR}/tests/regression/silu/kernel.vxbin")
+if(EXISTS ${_SILU_VXBIN})
+  install(FILES ${_SILU_VXBIN}
+          DESTINATION ${CMAKE_INSTALL_PREFIX}/kernels
+          RENAME silu.vxbin)
+  message(STATUS "Will install silu kernel: ${_SILU_VXBIN}")
+else()
+  message(WARNING "silu kernel binary not found at ${_SILU_VXBIN} — "
+                  "native aten::silu will not work.  Build the silu test first.")
+endif()
+
+set(_RMSNORM_VXBIN "${VORTEX_BUILD_DIR}/tests/regression/rmsnorm/kernel.vxbin")
+if(EXISTS ${_RMSNORM_VXBIN})
+  install(FILES ${_RMSNORM_VXBIN}
+          DESTINATION ${CMAKE_INSTALL_PREFIX}/kernels
+          RENAME rmsnorm.vxbin)
+  message(STATUS "Will install rmsnorm kernel: ${_RMSNORM_VXBIN}")
+else()
+  message(WARNING "rmsnorm kernel binary not found at ${_RMSNORM_VXBIN} — "
+                  "vortex::rms_norm will not work.  Build the rmsnorm test first.")
+endif()
+
+set(_ROPE_VXBIN "${VORTEX_BUILD_DIR}/tests/regression/rope/kernel.vxbin")
+if(EXISTS ${_ROPE_VXBIN})
+  install(FILES ${_ROPE_VXBIN}
+          DESTINATION ${CMAKE_INSTALL_PREFIX}/kernels
+          RENAME rope.vxbin)
+  message(STATUS "Will install rope kernel: ${_ROPE_VXBIN}")
+else()
+  message(WARNING "rope kernel binary not found at ${_ROPE_VXBIN} — "
+                  "vortex::apply_rotary_pos_emb will not work.  Build the rope test first.")
+endif()
+
+set(_DROPOUT_VXBIN "${VORTEX_BUILD_DIR}/tests/regression/dropout/kernel.vxbin")
+if(EXISTS ${_DROPOUT_VXBIN})
+  install(FILES ${_DROPOUT_VXBIN}
+          DESTINATION ${CMAKE_INSTALL_PREFIX}/kernels
+          RENAME dropout.vxbin)
+  message(STATUS "Will install dropout kernel: ${_DROPOUT_VXBIN}")
+else()
+  message(WARNING "dropout kernel binary not found at ${_DROPOUT_VXBIN} — "
+                  "native aten::native_dropout will not work.  Build the dropout test first.")
+endif()
