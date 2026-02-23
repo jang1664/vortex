@@ -1110,8 +1110,13 @@ for block_size in range(1, full_bitwidth+1):
 // -------------------------------------------------------
 `define GEMM_CFG_REG_NUM 33       // Number of GEMM configuration registers
 `define DMA_CFG_REG_NUM 18        // Number of DMA configuration registers
+`ifdef XLEN_64
 `define GEMM_REG_BASE_ADDR 64'h0000_FFFF_0000_0000 // Base byte address for GEMM config registers
 `define DMA_REG_BASE_ADDR 64'h0000_FFFF_FFFF_0000  // Base byte address for DMA config registers
+`else
+`define GEMM_REG_BASE_ADDR 64'h0000_0000_0000_1080 // Base byte address for GEMM config registers
+`define DMA_REG_BASE_ADDR 64'h0000_0000_0000_1480  // Base byte address for DMA config registers
+`endif
 
 `define MM_MAX_LOG_DIM 20 // Maximum log2 dimension size for matrix (1M)
 `define MM_MAX_LOG_TILEDIM 10 // Maximum log2 tile dimension size (1K)
