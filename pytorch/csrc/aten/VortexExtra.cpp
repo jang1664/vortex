@@ -200,23 +200,27 @@ at::Tensor vortex_add_Tensor(
     const at::Tensor& self,
     const at::Tensor& other,
     const at::Scalar& alpha) {
-  TORCH_CHECK(self.is_privateuseone(), "self must be a vortex tensor");
-  TORCH_CHECK(other.is_privateuseone(), "other must be a vortex tensor");
-  TORCH_CHECK(self.dtype() == at::kFloat,
-    "vortex native add currently supports float32 only, got ", self.dtype());
-  TORCH_CHECK(other.dtype() == at::kFloat,
-    "vortex native add currently supports float32 only, got ", other.dtype());
-  TORCH_CHECK(self.is_contiguous(), "self must be contiguous");
-  TORCH_CHECK(other.is_contiguous(), "other must be contiguous");
-  TORCH_CHECK(self.sizes() == other.sizes(),
-    "self and other must have the same shape");
+  // Graceful CPU fallback for cases the eladd kernel can't handle:
+  //   - mixed device (one operand is CPU, e.g. scalar broadcast)
+  //   - non-float32 dtypes
+  //   - non-contiguous tensors
+  //   - different shapes (broadcasting)
+  //   - alpha != 1.0
+  bool can_native = self.is_privateuseone()
+      && other.is_privateuseone()
+      && self.dtype() == at::kFloat
+      && other.dtype() == at::kFloat
+      && self.is_contiguous()
+      && other.is_contiguous()
+      && self.sizes() == other.sizes()
+      && alpha.toFloat() == 1.0f;
 
-  float alpha_val = alpha.toFloat();
-  if (alpha_val != 1.0f) {
-    auto cpu_self = self.cpu();
-    auto cpu_other = other.cpu();
+  if (!can_native) {
+    auto cpu_self = self.is_privateuseone() ? self.cpu() : self;
+    auto cpu_other = other.is_privateuseone() ? other.cpu() : other;
     auto cpu_out = at::add(cpu_self, cpu_other, alpha);
-    return cpu_out.to(self.device());
+    auto target_device = self.is_privateuseone() ? self.device() : other.device();
+    return cpu_out.to(target_device);
   }
 
   auto& rt = c10::vortex::VortexRuntime::instance();
@@ -249,16 +253,26 @@ at::Tensor vortex_add_Tensor(
 at::Tensor vortex_mul_Tensor(
     const at::Tensor& self,
     const at::Tensor& other) {
-  TORCH_CHECK(self.is_privateuseone(), "self must be a vortex tensor");
-  TORCH_CHECK(other.is_privateuseone(), "other must be a vortex tensor");
-  TORCH_CHECK(self.dtype() == at::kFloat,
-    "vortex native mul currently supports float32 only, got ", self.dtype());
-  TORCH_CHECK(other.dtype() == at::kFloat,
-    "vortex native mul currently supports float32 only, got ", other.dtype());
-  TORCH_CHECK(self.is_contiguous(), "self must be contiguous");
-  TORCH_CHECK(other.is_contiguous(), "other must be contiguous");
-  TORCH_CHECK(self.sizes() == other.sizes(),
-    "self and other must have the same shape");
+  // Graceful CPU fallback for cases the elmul kernel can't handle:
+  //   - mixed device (one operand is CPU, e.g. broadcast from scalar/weight)
+  //   - non-float32 dtypes
+  //   - non-contiguous tensors
+  //   - different shapes (broadcasting)
+  bool can_native = self.is_privateuseone()
+      && other.is_privateuseone()
+      && self.dtype() == at::kFloat
+      && other.dtype() == at::kFloat
+      && self.is_contiguous()
+      && other.is_contiguous()
+      && self.sizes() == other.sizes();
+
+  if (!can_native) {
+    auto cpu_self = self.is_privateuseone() ? self.cpu() : self;
+    auto cpu_other = other.is_privateuseone() ? other.cpu() : other;
+    auto cpu_out = at::mul(cpu_self, cpu_other);
+    auto target_device = self.is_privateuseone() ? self.device() : other.device();
+    return cpu_out.to(target_device);
+  }
 
   auto& rt = c10::vortex::VortexRuntime::instance();
   vx_device_h device = rt.deviceHandle();
