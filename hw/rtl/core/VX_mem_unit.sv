@@ -44,8 +44,8 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
     `STATIC_ASSERT(0 == (`LMEM_BASE_ADDR % (1 << `LMEM_LOG_SIZE)), ("invalid parameter"))
 
     localparam LMEM_ADDR_WIDTH = `LMEM_LOG_SIZE - `CLOG2(LSU_WORD_SIZE);
-    localparam logic [63:0] GEMM_MMIO_SIZE_B = 64'd4096;
-    localparam logic [63:0] DMA_MMIO_SIZE_B  = 64'd4096;
+    localparam logic [63:0] GEMM_MMIO_SIZE_B = 64'd1024;
+    localparam logic [63:0] DMA_MMIO_SIZE_B  = 64'd1024;
 
     VX_lsu_mem_if #(
         .NUM_LANES (`NUM_LSU_LANES),
