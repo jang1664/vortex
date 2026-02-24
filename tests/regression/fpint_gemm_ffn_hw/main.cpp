@@ -3,9 +3,9 @@
 #include <string.h>
 #include <vector>
 #include <cmath>
+#include <algorithm>
 #include <vortex.h>
 #include "common.h"
-#include <tensor_cfg.h>
 
 #define RT_CHECK(_expr)                                         \
    do {                                                         \
@@ -17,76 +17,95 @@
      exit(-1);                                                  \
    } while (false)
 
-///////////////////////////////////////////////////////////////////////////////
-// Configuration
-///////////////////////////////////////////////////////////////////////////////
-namespace vt = vortex::tensor;
-using cfg = vt::wmma_config_t<NUM_THREADS, vt::ITYPE, vt::OTYPE>;
-using itype_t = typename vt::ITYPE::dtype;
-using otype_t = typename vt::OTYPE::dtype;
+static const char* kernel_file = "kernel.vxbin";
 
-const char* kernel_file = "kernel.vxbin";
-uint32_t M = 32;
-uint32_t N = 32;
-uint32_t K = 64;
-uint32_t group_size = 32;  // Quantization group size
+static uint32_t M = 2;
+static uint32_t N = 32;
+static uint32_t K = 32;
+static uint32_t QBLK = 32;
 
-vx_device_h device = nullptr;
-vx_buffer_h krnl_buffer = nullptr;
-vx_buffer_h args_buffer = nullptr;
+static vx_device_h device = nullptr;
+static vx_buffer_h krnl_buffer = nullptr;
+static vx_buffer_h args_buffer = nullptr;
 
-// Buffers for different kernels
-vx_buffer_h A_buffer = nullptr;       // Activations (fp16)
-vx_buffer_h W_int4_buffer = nullptr;  // Quantized weights (int4, packed)
-vx_buffer_h W_fp16_buffer = nullptr;  // Dequantized weights (fp16)
-vx_buffer_h scales_buffer = nullptr;  // Scales (fp16)
-vx_buffer_h zeros_buffer = nullptr;   // Zero points (fp16)
-vx_buffer_h C_buffer = nullptr;       // Output
+static vx_buffer_h A_buffer = nullptr;       // fp16 [M x K]
+static vx_buffer_h W_int4_buffer = nullptr;  // packed int4 [K x N]
+static vx_buffer_h scales_buffer = nullptr;  // fp16 [KG x N]
+static vx_buffer_h zeros_buffer = nullptr;   // int16 [KG x N]
+static vx_buffer_h C_buffer = nullptr;       // fp16 [M x N]
 
-///////////////////////////////////////////////////////////////////////////////
-// Helper functions
-///////////////////////////////////////////////////////////////////////////////
+static constexpr float FP16_TOL = 0.01f;
+static constexpr uint64_t HOST_WAIT_TIMEOUT_MS = 300000;
+
+static constexpr uint64_t LMEM_LAYOUT_ALIGN_BYTES = 4096;
+static constexpr uint64_t DMA_MT = GEMM_FSM_MT;
+static constexpr uint64_t DMA_NT = GEMM_FSM_NT;
+static constexpr uint64_t DMA_KT = GEMM_FSM_KT;
+
+static constexpr uint64_t GEMM_MMIO_BASE_ADDR_CPP = 0x0000000000001080ull;
+
+static constexpr uint64_t align_up_u64(uint64_t x, uint64_t a) {
+  return (a == 0) ? x : ((x + a - 1) / a) * a;
+}
+
+static const char* status_to_str(uint32_t status) {
+  switch (status) {
+  case MMIO_STATUS_INIT: return "INIT";
+  case MMIO_STATUS_OK: return "OK";
+  case MMIO_STATUS_ALLOC_FAIL: return "ALLOC_FAIL";
+  case MMIO_STATUS_WAIT_STUCK: return "WAIT_STUCK";
+  case MMIO_STATUS_BAD_EID: return "BAD_EID";
+  default: return "UNKNOWN";
+  }
+}
 
 static void cleanup() {
   if (A_buffer) vx_mem_free(A_buffer);
   if (W_int4_buffer) vx_mem_free(W_int4_buffer);
-  if (W_fp16_buffer) vx_mem_free(W_fp16_buffer);
   if (scales_buffer) vx_mem_free(scales_buffer);
   if (zeros_buffer) vx_mem_free(zeros_buffer);
   if (C_buffer) vx_mem_free(C_buffer);
   if (krnl_buffer) vx_mem_free(krnl_buffer);
   if (args_buffer) vx_mem_free(args_buffer);
   if (device) vx_dev_close(device);
+
+  A_buffer = nullptr;
+  W_int4_buffer = nullptr;
+  scales_buffer = nullptr;
+  zeros_buffer = nullptr;
+  C_buffer = nullptr;
+  krnl_buffer = nullptr;
+  args_buffer = nullptr;
+  device = nullptr;
 }
 
 static void show_usage() {
-  std::cout << "Usage: [-m M] [-n N] [-k K] [-g group_size] [-h]" << std::endl;
+  std::cout << "Usage: [-m M] [-n N] [-k K] [-q QBLK] [-h]" << std::endl;
 }
 
 static void parse_args(int argc, char **argv) {
   int c;
-  while ((c = getopt(argc, argv, "m:n:k:g:h")) != -1) {
+  while ((c = getopt(argc, argv, "m:n:k:q:h")) != -1) {
     switch (c) {
     case 'm': M = atoi(optarg); break;
     case 'n': N = atoi(optarg); break;
     case 'k': K = atoi(optarg); break;
-    case 'g': group_size = atoi(optarg); break;
+    case 'q': QBLK = atoi(optarg); break;
     case 'h': show_usage(); exit(0); break;
     default: show_usage(); exit(-1);
     }
   }
 }
 
-// FP16 conversion helpers
 static uint16_t float_to_fp16(float f) {
   union { float f; uint32_t i; } u = {f};
   uint32_t sign = (u.i >> 16) & 0x8000;
   int32_t exp = ((u.i >> 23) & 0xFF) - 127 + 15;
   uint32_t mantissa = (u.i >> 13) & 0x3FF;
-  
-  if (exp <= 0) return sign;  // underflow
-  if (exp >= 31) return sign | 0x7C00;  // overflow to inf
-  
+
+  if (exp <= 0) return sign;
+  if (exp >= 31) return sign | 0x7C00;
+
   return sign | (exp << 10) | mantissa;
 }
 
@@ -94,314 +113,291 @@ static float fp16_to_float(uint16_t h) {
   uint32_t sign = (h >> 15) & 0x1;
   uint32_t exp = (h >> 10) & 0x1F;
   uint32_t mantissa = h & 0x3FF;
-  
+
   if (exp == 0) {
     if (mantissa == 0) return sign ? -0.0f : 0.0f;
-    // Denormal
     float val = mantissa / 1024.0f;
     return sign ? -val / 16384.0f : val / 16384.0f;
   }
   if (exp == 31) return sign ? -INFINITY : INFINITY;
-  
+
   uint32_t f = (sign << 31) | ((exp - 15 + 127) << 23) | (mantissa << 13);
-  return *reinterpret_cast<float*>(&f);
+  float out;
+  __builtin_memcpy(&out, &f, sizeof(float));
+  return out;
 }
 
-// Pack two int4 values into one byte
-static uint8_t pack_int4(int8_t v0, int8_t v1) {
-  return ((v1 & 0x0F) << 4) | (v0 & 0x0F);
+static uint8_t pack_int4_pair(int8_t lo, int8_t hi) {
+  return uint8_t((uint8_t(hi) & 0x0F) << 4) | uint8_t(lo & 0x0F);
 }
 
-// Unpack int4 from byte
-static void unpack_int4(uint8_t packed, int8_t& v0, int8_t& v1) {
-  v0 = (packed & 0x0F);
-  v1 = (packed >> 4) & 0x0F;
-  // Sign extend from 4-bit
-  if (v0 & 0x08) v0 |= 0xF0;
-  if (v1 & 0x08) v1 |= 0xF0;
+static int8_t unpack_int4_from_byte(uint8_t packed, bool high_nibble) {
+  uint8_t v = high_nibble ? ((packed >> 4) & 0x0F) : (packed & 0x0F);
+  return (v & 0x08) ? int8_t(v | 0xF0) : int8_t(v);
 }
 
-// Simple quantization: map float value to int4 [0, 15]
-static int8_t quantize_to_int4(float val, float scale, float zero) {
-  int q = static_cast<int>(val / scale + zero);
-  return std::max(0, std::min(15, q));
-}
+static void build_test_vectors(std::vector<uint16_t>& h_A,
+                               std::vector<uint8_t>& h_W_int4,
+                               std::vector<uint16_t>& h_scales,
+                               std::vector<int16_t>& h_zeros,
+                               std::vector<uint16_t>& h_ref_out_fp16) {
+  uint32_t groups_total = (K + QBLK - 1) / QBLK;
 
-///////////////////////////////////////////////////////////////////////////////
-// Initialize test data
-///////////////////////////////////////////////////////////////////////////////
-
-static void init_test_data(std::vector<uint16_t>& h_A,
-                           std::vector<uint8_t>& h_W_int4,
-                           std::vector<uint16_t>& h_scales,
-                           std::vector<uint16_t>& h_zeros) {
-  uint32_t num_groups = K / group_size;
-  
   h_A.resize(M * K);
-  h_W_int4.resize((K * N + 1) / 2);
-  h_scales.resize(num_groups * N);
-  h_zeros.resize(num_groups * N);
-  
-  // Activations: random fp16 values
-  for (uint32_t i = 0; i < M * K; ++i) {
-    float val = static_cast<float>(rand()) / RAND_MAX - 0.5f;
-    h_A[i] = float_to_fp16(val);
-  }
-  
-  // Generate random fp16 weights first
-  std::vector<float> h_W_float(K * N);
-  for (uint32_t i = 0; i < K * N; ++i) {
-    h_W_float[i] = static_cast<float>(rand()) / RAND_MAX - 0.5f;
-  }
-  
-  // Quantization: compute scales and zeros per group
-  for (uint32_t g = 0; g < num_groups; ++g) {
-    for (uint32_t col = 0; col < N; ++col) {
-      // Find min/max in this group
-      float min_val = 1e10f, max_val = -1e10f;
-      for (uint32_t k = g * group_size; k < (g + 1) * group_size; ++k) {
-        float val = h_W_float[k * N + col];
-        min_val = std::min(min_val, val);
-        max_val = std::max(max_val, val);
-      }
-      
-      // Compute scale and zero (unsigned int4: 0-15)
-      float scale = (max_val - min_val) / 15.0f;
-      if (scale < 1e-6f) scale = 1e-6f;  // avoid division by zero
-      float zero = -min_val / scale;
-      h_scales[g * N + col] = float_to_fp16(scale);
-      h_zeros[g * N + col] = float_to_fp16(zero);
-      
-      // Quantize this group
-      for (uint32_t k = g * group_size; k < (g + 1) * group_size; k += 2) {
-        float v0 = h_W_float[k * N + col];
-        float v1 = h_W_float[(k + 1) * N + col];
-        int8_t q0 = quantize_to_int4(v0, scale, zero);
-        int8_t q1 = quantize_to_int4(v1, scale, zero);
-        
-        // Pack two int4 into one byte
-        uint32_t idx = (k * N + col) / 2;
-        h_W_int4[idx] = pack_int4(q0, q1);
-      }
+  h_W_int4.resize(K * ((N + 1) / 2));
+  h_scales.resize(groups_total * N);
+  h_zeros.resize(groups_total * N);
+  h_ref_out_fp16.resize(M * N);
+
+  for (uint32_t m = 0; m < M; ++m) {
+    for (uint32_t k = 0; k < K; ++k) {
+      float v = 1.0f + float((m + k) % 7);
+      h_A[m * K + k] = float_to_fp16(v);
     }
   }
-}
 
-///////////////////////////////////////////////////////////////////////////////
-// CPU Reference Implementation
-///////////////////////////////////////////////////////////////////////////////
-
-static void cpu_dequantize(std::vector<float>& W_fp16, 
-                           const std::vector<uint8_t>& W_int4,
-                           const std::vector<uint16_t>& scales,
-                           const std::vector<uint16_t>& zeros,
-                           uint32_t K, uint32_t N, uint32_t group_size) {
-  uint32_t num_groups = K / group_size;
-  W_fp16.resize(K * N);
-  
   for (uint32_t k = 0; k < K; ++k) {
-    uint32_t group_id = k / group_size;
-    for (uint32_t n = 0; n < N; ++n) {
-      // Get packed value
-      uint32_t idx = (k * N + n) / 2;
-      uint8_t packed = W_int4[idx];
-      
-      // Unpack
-      int8_t v0, v1;
-      unpack_int4(packed, v0, v1);
-      int8_t val = ((k * N + n) % 2 == 0) ? v0 : v1;
-      
-      // Dequantize
-      float scale = fp16_to_float(scales[group_id * N + n]);
-      float zero = fp16_to_float(zeros[group_id * N + n]);
-      W_fp16[k * N + n] = (val - zero) * scale;
+    for (uint32_t n_pair = 0; n_pair < ((N + 1) / 2); ++n_pair) {
+      uint32_t n0 = n_pair * 2;
+      uint32_t n1 = n0 + 1;
+      int8_t w0 = int8_t(int((k * N + n0) % 7) - 3);
+      int8_t w1 = 0;
+      if (n1 < N) {
+        w1 = int8_t(int((k * N + n1) % 7) - 3);
+      }
+      h_W_int4[k * ((N + 1) / 2) + n_pair] = pack_int4_pair(w0, w1);
     }
   }
-}
 
-static void cpu_matmul(std::vector<float>& C,
-                       const std::vector<uint16_t>& A_fp16,
-                       const std::vector<float>& B,
-                       uint32_t M, uint32_t N, uint32_t K) {
-  C.resize(M * N, 0.0f);
-  
+  for (uint32_t kg = 0; kg < groups_total; ++kg) {
+    for (uint32_t n = 0; n < N; ++n) {
+      float scale = 1.0f + float(n % 7);
+      int16_t zp = int16_t(int(n % 7) - 3);
+      h_scales[kg * N + n] = float_to_fp16(scale);
+      h_zeros[kg * N + n] = zp;
+    }
+  }
+
   for (uint32_t m = 0; m < M; ++m) {
     for (uint32_t n = 0; n < N; ++n) {
       float sum = 0.0f;
       for (uint32_t k = 0; k < K; ++k) {
-        float a = fp16_to_float(A_fp16[m * K + k]);
-        float b = B[k * N + n];
-        sum += a * b;
+        float a = fp16_to_float(h_A[m * K + k]);
+        uint32_t group_id = k / QBLK;
+        float scale = fp16_to_float(h_scales[group_id * N + n]);
+        float zp = float(h_zeros[group_id * N + n]);
+
+        uint32_t packed_idx = k * ((N + 1) / 2) + (n / 2);
+        uint8_t packed = h_W_int4[packed_idx];
+        int8_t w = unpack_int4_from_byte(packed, (n & 1) != 0);
+
+        float dequant = (float(w) - zp) * scale;
+        sum += a * dequant;
       }
-      C[m * N + n] = sum;
+      h_ref_out_fp16[m * N + n] = float_to_fp16(sum);
     }
   }
 }
 
-static int verify_results(vx_buffer_h C_buffer, 
-                          const std::vector<float>& C_ref,
-                          uint32_t M, uint32_t N,
-                          const char* kernel_name) {
-  // Copy results from device
-  std::vector<float> C_gpu(M * N);
-  RT_CHECK(vx_copy_from_dev(C_gpu.data(), C_buffer, 0, M * N * sizeof(float)));
-  
-  // Compare
+static bool compare_fp16(uint16_t actual, uint16_t expected, float tolerance) {
+  float a = fp16_to_float(actual);
+  float e = fp16_to_float(expected);
+
+  float diff;
+  if (e == 0.0f) {
+    diff = std::abs(a);
+  } else {
+    diff = std::abs((a - e) / e);
+  }
+  return diff <= tolerance;
+}
+
+static int verify_results(vx_buffer_h out_buffer, const std::vector<uint16_t>& ref) {
+  std::vector<uint16_t> got(ref.size());
+  RT_CHECK(vx_copy_from_dev(got.data(), out_buffer, 0, ref.size() * sizeof(uint16_t)));
+
   int errors = 0;
-  float max_diff = 0.0f;
-  for (uint32_t i = 0; i < M * N; ++i) {
-    float diff = std::abs(C_gpu[i] - C_ref[i]);
-    max_diff = std::max(max_diff, diff);
-    
-    // Relative error tolerance for fp16
-    float threshold = std::max(0.01f, std::abs(C_ref[i]) * 0.05f);
-    if (diff > threshold) {
+  for (uint32_t i = 0; i < ref.size(); ++i) {
+    if (!compare_fp16(got[i], ref[i], FP16_TOL)) {
       if (errors < 10) {
-        printf("  Error [%d]: expected=%.6f, got=%.6f, diff=%.6f\n", 
-               i, C_ref[i], C_gpu[i], diff);
+        printf("Mismatch[%u]: got=0x%04x (%f), exp=0x%04x (%f)\n",
+               i,
+               unsigned(got[i]), fp16_to_float(got[i]),
+               unsigned(ref[i]), fp16_to_float(ref[i]));
       }
-      errors++;
+      ++errors;
     }
   }
-  
-  printf("  %s: errors=%d/%d, max_diff=%.6f\n", 
-         kernel_name, errors, M * N, max_diff);
+
   return errors;
 }
 
-///////////////////////////////////////////////////////////////////////////////
-// Run kernels
-///////////////////////////////////////////////////////////////////////////////
+static bool compute_lmem_layout(kernel_arg_t& kargs, uint64_t local_mem_size) {
+  uint64_t groups_tile = (DMA_KT + uint64_t(QBLK) - 1ull) / uint64_t(QBLK);
 
-static void run_kernel(uint32_t kernel_id, kernel_arg_t& kargs) {
-  kargs.kernel_id = kernel_id;
-  
-  // Free old args_buffer if exists
-  if (args_buffer) {
-    vx_mem_free(args_buffer);
-    args_buffer = nullptr;
-  }
-  
-  // Upload new args
-  RT_CHECK(vx_upload_bytes(device, &kargs, sizeof(kargs), &args_buffer));
-  
-  RT_CHECK(vx_start(device, krnl_buffer, args_buffer));
-  RT_CHECK(vx_ready_wait(device, VX_MAX_TIMEOUT));
-  
-  // Print cumulative performance statistics after this kernel
-  printf("\n[KERNEL_%d Performance]\n", kernel_id);
-  vx_dump_perf(device, stdout);
+  uint64_t lmem_ibuf_bytes  = DMA_MT * DMA_KT * 2ull;
+  uint64_t lmem_wbuf_bytes  = DMA_KT * ((DMA_NT + 1ull) / 2ull);
+  uint64_t lmem_scbuf_bytes = groups_tile * DMA_NT * 2ull;
+  uint64_t lmem_zpbuf_bytes = groups_tile * DMA_NT * 2ull;
+  uint64_t lmem_obuf_bytes  = DMA_MT * DMA_NT * 2ull;
+
+  uint64_t cur = 0;
+
+  kargs.lmem_ibuf0_base = cur;
+  cur += align_up_u64(lmem_ibuf_bytes, LMEM_LAYOUT_ALIGN_BYTES);
+
+  kargs.lmem_ibuf1_base = cur;
+  cur += align_up_u64(lmem_ibuf_bytes, LMEM_LAYOUT_ALIGN_BYTES);
+
+  kargs.lmem_wbuf0_base = cur;
+  cur += align_up_u64(lmem_wbuf_bytes, LMEM_LAYOUT_ALIGN_BYTES);
+
+  kargs.lmem_wbuf1_base = cur;
+  cur += align_up_u64(lmem_wbuf_bytes, LMEM_LAYOUT_ALIGN_BYTES);
+
+  kargs.lmem_scbuf0_base = cur;
+  cur += align_up_u64(lmem_scbuf_bytes, LMEM_LAYOUT_ALIGN_BYTES);
+
+  kargs.lmem_scbuf1_base = cur;
+  cur += align_up_u64(lmem_scbuf_bytes, LMEM_LAYOUT_ALIGN_BYTES);
+
+  kargs.lmem_zpbuf0_base = cur;
+  cur += align_up_u64(lmem_zpbuf_bytes, LMEM_LAYOUT_ALIGN_BYTES);
+
+  kargs.lmem_zpbuf1_base = cur;
+  cur += align_up_u64(lmem_zpbuf_bytes, LMEM_LAYOUT_ALIGN_BYTES);
+
+  kargs.lmem_obuf_base = cur;
+
+  uint64_t total_needed = align_up_u64(cur + lmem_obuf_bytes, LMEM_LAYOUT_ALIGN_BYTES);
+  return total_needed <= local_mem_size;
 }
-
-///////////////////////////////////////////////////////////////////////////////
-// Main
-///////////////////////////////////////////////////////////////////////////////
 
 int main(int argc, char *argv[]) {
   parse_args(argc, argv);
-  
-  printf("Matrix dimensions: M=%d, N=%d, K=%d\n", M, N, K);
-  printf("Quantization group size: %d\n", group_size);
-  printf("Using kernel: %s\n", kernel_file);
-  
-  // Open device
+
+  if (QBLK == 0) {
+    std::cout << "QBLK must be > 0" << std::endl;
+    return -1;
+  }
+
+  uint32_t groups_total = (K + QBLK - 1) / QBLK;
+
+  std::cout << "TB-style GEMM MMIO test" << std::endl;
+  std::cout << "M=" << M << ", N=" << N << ", K=" << K << ", QBLK=" << QBLK << std::endl;
+
   RT_CHECK(vx_dev_open(&device));
-  
-  uint64_t num_cores, num_warps, num_threads;
+
+  uint64_t num_cores = 0, num_warps = 0, num_threads = 0;
+  uint64_t local_mem_size = 0;
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_CORES, &num_cores));
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_WARPS, &num_warps));
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_THREADS, &num_threads));
-  
-  printf("Device: cores=%ld, warps=%ld, threads=%ld\n", 
-         num_cores, num_warps, num_threads);
-  
-  // Allocate buffers
-  uint32_t num_groups = K / group_size;
-  
-  printf("Initializing test data...\n");
+  RT_CHECK(vx_dev_caps(device, VX_CAPS_LOCAL_MEM_SIZE, &local_mem_size));
+  std::cout << "Device: cores=" << num_cores
+            << ", warps=" << num_warps
+            << ", threads=" << num_threads << std::endl;
+  std::cout << "Device: local_mem_size=" << local_mem_size << " bytes" << std::endl;
+
   std::vector<uint16_t> h_A;
   std::vector<uint8_t> h_W_int4;
   std::vector<uint16_t> h_scales;
-  std::vector<uint16_t> h_zeros;
-  init_test_data(h_A, h_W_int4, h_scales, h_zeros);
-  
-  RT_CHECK(vx_mem_alloc(device, M * K * sizeof(uint16_t), VX_MEM_READ, &A_buffer));
-  RT_CHECK(vx_mem_alloc(device, (K * N + 1) / 2, VX_MEM_READ, &W_int4_buffer));
-  RT_CHECK(vx_mem_alloc(device, K * N * sizeof(uint16_t), VX_MEM_READ | VX_MEM_WRITE, &W_fp16_buffer));
-  RT_CHECK(vx_mem_alloc(device, num_groups * N * sizeof(uint16_t), VX_MEM_READ, &scales_buffer));
-  RT_CHECK(vx_mem_alloc(device, num_groups * N * sizeof(uint16_t), VX_MEM_READ, &zeros_buffer));
-  RT_CHECK(vx_mem_alloc(device, M * N * sizeof(float), VX_MEM_WRITE, &C_buffer));
-  
-  // Upload data to device
-  printf("Uploading data to device...\n");
-  RT_CHECK(vx_copy_to_dev(A_buffer, h_A.data(), 0, M * K * sizeof(uint16_t)));
-  RT_CHECK(vx_copy_to_dev(W_int4_buffer, h_W_int4.data(), 0, (K * N + 1) / 2));
-  RT_CHECK(vx_copy_to_dev(scales_buffer, h_scales.data(), 0, num_groups * N * sizeof(uint16_t)));
-  RT_CHECK(vx_copy_to_dev(zeros_buffer, h_zeros.data(), 0, num_groups * N * sizeof(uint16_t)));
-  
-  // Upload kernel
+  std::vector<int16_t> h_zeros;
+  std::vector<uint16_t> h_ref_out_fp16;
+
+  build_test_vectors(h_A, h_W_int4, h_scales, h_zeros, h_ref_out_fp16);
+
+  RT_CHECK(vx_mem_alloc(device, h_A.size() * sizeof(uint16_t), VX_MEM_READ, &A_buffer));
+  RT_CHECK(vx_mem_alloc(device, h_W_int4.size() * sizeof(uint8_t), VX_MEM_READ, &W_int4_buffer));
+  RT_CHECK(vx_mem_alloc(device, h_scales.size() * sizeof(uint16_t), VX_MEM_READ, &scales_buffer));
+  RT_CHECK(vx_mem_alloc(device, h_zeros.size() * sizeof(int16_t), VX_MEM_READ, &zeros_buffer));
+  RT_CHECK(vx_mem_alloc(device, h_ref_out_fp16.size() * sizeof(uint16_t), VX_MEM_WRITE, &C_buffer));
+
+  RT_CHECK(vx_copy_to_dev(A_buffer, h_A.data(), 0, h_A.size() * sizeof(uint16_t)));
+  RT_CHECK(vx_copy_to_dev(W_int4_buffer, h_W_int4.data(), 0, h_W_int4.size() * sizeof(uint8_t)));
+  RT_CHECK(vx_copy_to_dev(scales_buffer, h_scales.data(), 0, h_scales.size() * sizeof(uint16_t)));
+  RT_CHECK(vx_copy_to_dev(zeros_buffer, h_zeros.data(), 0, h_zeros.size() * sizeof(int16_t)));
+
+  std::vector<uint16_t> zero_out(h_ref_out_fp16.size(), 0);
+  RT_CHECK(vx_copy_to_dev(C_buffer, zero_out.data(), 0, zero_out.size() * sizeof(uint16_t)));
+
   RT_CHECK(vx_upload_kernel_file(device, kernel_file, &krnl_buffer));
-  
-  // Prepare kernel arguments
+
   kernel_arg_t kargs = {};
+  kargs.grid_dim[0] = 1;
+  kargs.grid_dim[1] = 1;
+  kargs.block_dim[0] = 1;
+  kargs.block_dim[1] = 1;
+
   kargs.M = M;
   kargs.N = N;
   kargs.K = K;
-  kargs.group_size = group_size;
-  
-  RT_CHECK(vx_mem_address(A_buffer, &kargs.A_addr));
-  RT_CHECK(vx_mem_address(W_int4_buffer, &kargs.W_int4_addr));
-  RT_CHECK(vx_mem_address(W_fp16_buffer, &kargs.W_fp16_addr));
-  kargs.B_addr = kargs.W_fp16_addr;  // alias
-  RT_CHECK(vx_mem_address(scales_buffer, &kargs.scales_addr));
-  RT_CHECK(vx_mem_address(zeros_buffer, &kargs.zeros_addr));
-  RT_CHECK(vx_mem_address(C_buffer, &kargs.C_addr));
-  
-  
-  kargs.grid_dim[0] = (N + cfg::tileN - 1) / cfg::tileN;
-  kargs.grid_dim[1] = (M + cfg::tileM - 1) / cfg::tileM;
-  kargs.block_dim[0] = NUM_THREADS;  // warp size
-  kargs.block_dim[1] = 1;
-  
-  // Compute CPU reference
-  printf("\nComputing CPU reference...\n");
-  std::vector<float> W_fp16_cpu;
-  cpu_dequantize(W_fp16_cpu, h_W_int4, h_scales, h_zeros, K, N, group_size);
-  
-  std::vector<float> C_ref;
-  cpu_matmul(C_ref, h_A, W_fp16_cpu, M, N, K);
-  printf("CPU reference computed.\n");
-  
-  printf("\n=== Running Kernels ===\n");
-  printf("Grid: [%d, %d], Block: [%d, %d]\n", 
-         kargs.grid_dim[0], kargs.grid_dim[1],
-         kargs.block_dim[0], kargs.block_dim[1]);
-  printf("Tiles: tileM=%d, tileN=%d, tileK=%d\n",
-         cfg::tileM, cfg::tileN, cfg::tileK);
-  
-  int total_errors = 0;
-  
-  // Kernel 0: Dequantization only
-  printf("\n[KERNEL 0: Dequantization]\n");
-  run_kernel(KERNEL_DEQUANT, kargs);
-  
-  // Kernel 1: Standard GEMM (using pre-dequantized weights)
-  printf("\n[KERNEL 1: Standard GEMM]\n");
-  run_kernel(KERNEL_GEMM, kargs);
-  total_errors += verify_results(C_buffer, C_ref, M, N, "GEMM");
+  kargs.QBLK = QBLK;
 
-  // Kernel 2: Fused Dequant + GEMM
-  
-  
-  printf("\n=== Performance Summary ===\n");
-  
-  cleanup();
-  
-  if (total_errors != 0) {
-    printf("\nFAILED! - %d total errors\n", total_errors);
+  RT_CHECK(vx_mem_address(A_buffer, &kargs.input_base));
+  RT_CHECK(vx_mem_address(W_int4_buffer, &kargs.weight_base));
+  RT_CHECK(vx_mem_address(scales_buffer, &kargs.scale_base));
+  RT_CHECK(vx_mem_address(zeros_buffer, &kargs.zp_base));
+  RT_CHECK(vx_mem_address(C_buffer, &kargs.output_base));
+
+  if (!compute_lmem_layout(kargs, local_mem_size)) {
+    std::cerr << "LMEM layout does not fit device local memory (size=" << local_mem_size << ")" << std::endl;
+    cleanup();
     return -1;
   }
-  
-  printf("\nPASSED!\n");
+
+  kargs.status = MMIO_STATUS_INIT;
+  kargs.job_eid = 0;
+  kargs.job_generation = 0;
+  kargs.last_ctrl = 0;
+
+  RT_CHECK(vx_upload_bytes(device, &kargs, sizeof(kargs), &args_buffer));
+
+  RT_CHECK(vx_start(device, krnl_buffer, args_buffer));
+  {
+    int wait_ret = vx_ready_wait(device, HOST_WAIT_TIMEOUT_MS);
+    if (wait_ret != 0) {
+      std::cerr << "vx_ready_wait timeout/error: ret=" << wait_ret << std::endl;
+
+      int arg_ret = vx_copy_from_dev(&kargs, args_buffer, 0, sizeof(kargs));
+      if (arg_ret == 0) {
+        std::cerr << "Kernel status after wait failure: status=" << kargs.status
+                  << " (" << status_to_str(kargs.status) << ")"
+                  << ", eid=" << kargs.job_eid
+                  << ", gen=" << kargs.job_generation
+                  << ", ctrl=0x" << std::hex << kargs.last_ctrl << std::dec
+                  << std::endl;
+      } else {
+        std::cerr << "Failed to read args buffer after wait failure, ret=" << arg_ret << std::endl;
+      }
+
+      cleanup();
+      return -1;
+    }
+  }
+
+  RT_CHECK(vx_copy_from_dev(&kargs, args_buffer, 0, sizeof(kargs)));
+
+  if (kargs.status != MMIO_STATUS_OK) {
+    std::cout << "MMIO kernel failed: status=" << kargs.status
+              << " (" << status_to_str(kargs.status) << ")"
+              << ", eid=" << kargs.job_eid
+              << ", gen=" << kargs.job_generation
+              << ", ctrl=0x" << std::hex << kargs.last_ctrl << std::dec
+              << std::endl;
+    cleanup();
+    return -1;
+  }
+
+  int errors = verify_results(C_buffer, h_ref_out_fp16);
+
+  cleanup();
+
+  if (errors != 0) {
+    std::cout << "FAILED: errors=" << errors << std::endl;
+    return -1;
+  }
+
+  std::cout << "PASSED" << std::endl;
   return 0;
 }

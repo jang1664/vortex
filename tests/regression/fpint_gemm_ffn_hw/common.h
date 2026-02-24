@@ -3,6 +3,7 @@
 #define _COMMON_H_
 
 #include <stdint.h>
+#include <VX_config.h>
 
 #ifndef NUM_THREADS
 #define NUM_THREADS 4
@@ -20,35 +21,82 @@
 #define OTYPE fp32
 #endif
 
-// Kernel IDs
-#define KERNEL_DEQUANT       0  // int4 -> fp16 dequantization
-#define KERNEL_GEMM          1  // fp16 x fp16 GEMM (standard)
-#define KERNEL_FUSED         2  // fused dequant + GEMM
+// TB_VX_gemm_node register indices (0..32)
+#define REG_CONTROL             0
+#define REG_INPUT_BASE_LO       1
+#define REG_INPUT_BASE_HI       2
+#define REG_WEIGHT_BASE_LO      3
+#define REG_WEIGHT_BASE_HI      4
+#define REG_OUTPUT_BASE_LO      5
+#define REG_OUTPUT_BASE_HI      6
+#define REG_SCALE_BASE_LO       7
+#define REG_SCALE_BASE_HI       8
+#define REG_ZP_BASE_LO          9
+#define REG_ZP_BASE_HI          10
+
+#define REG_LMEM_IBUF0_LO       11
+#define REG_LMEM_IBUF0_HI       12
+#define REG_LMEM_IBUF1_LO       13
+#define REG_LMEM_IBUF1_HI       14
+#define REG_LMEM_WBUF0_LO       15
+#define REG_LMEM_WBUF0_HI       16
+#define REG_LMEM_WBUF1_LO       17
+#define REG_LMEM_WBUF1_HI       18
+#define REG_LMEM_SCBUF0_LO      19
+#define REG_LMEM_SCBUF0_HI      20
+#define REG_LMEM_SCBUF1_LO      21
+#define REG_LMEM_SCBUF1_HI      22
+#define REG_LMEM_ZPBUF0_LO      23
+#define REG_LMEM_ZPBUF0_HI      24
+#define REG_LMEM_ZPBUF1_LO      25
+#define REG_LMEM_ZPBUF1_HI      26
+#define REG_LMEM_OBUF_LO        27
+#define REG_LMEM_OBUF_HI        28
+
+#define REG_M                   29
+#define REG_N                   30
+#define REG_K                   31
+#define REG_QBLK                32
+
+#define GEMM_JOB_NUM_REGS32     33
+#define GEMM_JOB_NUM_ENTRIES     4
+
+// kernel status codes
+#define MMIO_STATUS_INIT        0
+#define MMIO_STATUS_OK          1
+#define MMIO_STATUS_ALLOC_FAIL  2
+#define MMIO_STATUS_WAIT_STUCK  3
+#define MMIO_STATUS_BAD_EID     4
 
 typedef struct {
-  uint32_t kernel_id;         // Which kernel to run
-  uint32_t grid_dim[2];       // Grid dimensions
-  uint32_t block_dim[2];      // Block dimensions
-  
-  // Matrix dimensions
-  uint32_t M, N, K;
-  
-  // For all kernels
-  uint64_t A_addr;            // Activations (fp16) [M x K]
-  uint64_t C_addr;            // Output (fp16 or fp32) [M x N]
-  
-  // For KERNEL_DEQUANT
-  uint64_t W_int4_addr;       // Quantized weights (int4, packed) [K x N]
-  uint64_t W_fp16_addr;       // Dequantized weights (fp16) [K x N]
-  uint64_t scales_addr;       // Scales (fp16) [K/group_size x N]
-  uint64_t zeros_addr;        // Zero points (fp16) [K/group_size x N]
-  uint32_t group_size;        // Quantization group size (e.g., 128)
-  
-  // For KERNEL_GEMM (uses W_fp16_addr as B matrix)
-  uint64_t B_addr;            // Weight matrix (fp16) [K x N] - alias for W_fp16_addr
-  
-  // For KERNEL_FUSED (uses W_int4_addr, scales, zeros directly)
-  // Same as KERNEL_DEQUANT inputs but no W_fp16_addr output
+  uint32_t grid_dim[2];
+  uint32_t block_dim[2];
+
+  uint32_t M;
+  uint32_t N;
+  uint32_t K;
+  uint32_t QBLK;
+
+  uint64_t input_base;
+  uint64_t weight_base;
+  uint64_t output_base;
+  uint64_t scale_base;
+  uint64_t zp_base;
+
+  uint64_t lmem_ibuf0_base;
+  uint64_t lmem_ibuf1_base;
+  uint64_t lmem_wbuf0_base;
+  uint64_t lmem_wbuf1_base;
+  uint64_t lmem_scbuf0_base;
+  uint64_t lmem_scbuf1_base;
+  uint64_t lmem_zpbuf0_base;
+  uint64_t lmem_zpbuf1_base;
+  uint64_t lmem_obuf_base;
+
+  uint32_t status;
+  uint32_t job_eid;
+  uint32_t job_generation;
+  uint32_t last_ctrl;
 } kernel_arg_t;
 
 #endif // _COMMON_H_

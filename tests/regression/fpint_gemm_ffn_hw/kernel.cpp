@@ -1,287 +1,220 @@
 #include "common.h"
 #include <vx_spawn.h>
-#include <vx_tensor.h>
+#include <vx_intrinsics.h>
 
-namespace vt = vortex::tensor;
-using ctx = vt::wmma_context<NUM_THREADS, vt::ITYPE, vt::OTYPE>;
+static constexpr uint64_t kGemmRegOffset = 0x0000000000001080ull;
+static uint64_t gGemmRegBaseAddr = kGemmRegOffset;
 
-// Type aliases
-using input_t = ctx::input_t;    // fp16
-using output_t = ctx::output_t;  // fp32 or fp16
-
-// FP16 infinity constant
-#define FP16_INFINITY 0x7C00
-
-///////////////////////////////////////////////////////////////////////////////
-// KERNEL 0: Dequantization (int4 -> fp16)
-///////////////////////////////////////////////////////////////////////////////
-
-// Helper: unpack int4 from byte (same as CPU version)
-inline void unpack_int4(uint8_t packed, int8_t& v0, int8_t& v1) {
-  v0 = (packed & 0x0F);
-  v1 = (packed >> 4) & 0x0F;
-  // Sign extend from 4-bit
-  if (v0 & 0x08) v0 |= 0xF0;
-  if (v1 & 0x08) v1 |= 0xF0;
+static inline uint32_t mmio_read32(uint64_t addr) {
+  return *reinterpret_cast<volatile uint32_t *>(addr);
 }
 
-// Helper: convert int8 to fp16
-inline input_t int8_to_fp16(int8_t val) {
-  float f = static_cast<float>(val);
-  // Simple fp32 to fp16 conversion (assuming input_t is uint16_t)
-  union { float f; uint32_t i; } u = {f};
-  uint32_t sign = (u.i >> 16) & 0x8000;
-  int32_t exp = ((u.i >> 23) & 0xFF) - 127 + 15;
-  uint32_t mantissa = (u.i >> 13) & 0x3FF;
-  
-  if (exp <= 0) return sign;
-  if (exp >= 31) return sign | 0x7C00;
-  
-  return sign | (exp << 10) | mantissa;
+static inline void mmio_write32(uint64_t addr, uint32_t value) {
+  *reinterpret_cast<volatile uint32_t *>(addr) = value;
 }
 
-// Helper: convert fp16 to float
-inline float fp16_to_float(input_t h) {
-  uint32_t sign = (h >> 15) & 0x1;
-  uint32_t exp = (h >> 10) & 0x1F;
-  uint32_t mantissa = h & 0x3FF;
-  
-  if (exp == 0) {
-    if (mantissa == 0) return sign ? -0.0f : 0.0f;
-    float val = mantissa / 1024.0f;
-    return sign ? -val / 16384.0f : val / 16384.0f;
+static inline uint32_t bitfield_mask(uint32_t bits) {
+  return (bits >= 32) ? 0xFFFFFFFFu : ((1u << bits) - 1u);
+}
+
+static constexpr uint32_t kMaxPollIters = 2000000u;
+static constexpr uint32_t kPoisonWord = 0xBAADF00Du;
+
+static inline uint64_t reg64_to_u64(uint32_t lo, uint32_t hi) {
+  return (uint64_t(hi) << 32) | uint64_t(lo);
+}
+
+static inline void split_u64(uint64_t value, uint32_t& lo, uint32_t& hi) {
+  lo = uint32_t(value & 0xFFFFFFFFull);
+  hi = uint32_t(value >> 32);
+}
+
+static constexpr uint32_t kMmioBeatBytes = 8u;
+static constexpr uint32_t kWordsPerBeat = kMmioBeatBytes / 4u;
+static constexpr uint32_t kNumBeats = (GEMM_JOB_NUM_REGS32 + kWordsPerBeat - 1u) / kWordsPerBeat;
+static constexpr uint32_t kEntryStrideBytes = kNumBeats * kMmioBeatBytes;
+static constexpr uint32_t kGlobalAllocBytes = kMmioBeatBytes;
+
+static inline uint32_t mmio_read32_word(uint64_t beat_addr, uint32_t word_in_beat) {
+  volatile uint64_t* ptr = reinterpret_cast<volatile uint64_t*>(beat_addr);
+  uint64_t beat = *ptr;
+  uint32_t shift = word_in_beat * 32u;
+  return uint32_t((beat >> shift) & uint64_t(0xFFFFFFFFu));
+}
+
+static inline void mmio_write32_word(uint64_t beat_addr, uint32_t word_in_beat, uint32_t value) {
+  volatile uint64_t* ptr = reinterpret_cast<volatile uint64_t*>(beat_addr);
+  uint64_t beat = *ptr;
+  uint32_t shift = word_in_beat * 32u;
+  uint64_t mask = uint64_t(0xFFFFFFFFull) << shift;
+  beat = (beat & ~mask) | (uint64_t(value) << shift);
+  *ptr = beat;
+}
+
+static uint64_t job_entry_beat_addr(uint32_t eid, uint32_t beat_idx) {
+  constexpr uint32_t data_size = kMmioBeatBytes;
+  constexpr uint32_t words_per_beat = data_size / 4;
+  constexpr uint32_t num_beats = (GEMM_JOB_NUM_REGS32 + words_per_beat - 1) / words_per_beat;
+  constexpr uint32_t entry_stride_b = num_beats * data_size;
+  constexpr uint32_t global_alloc_b = data_size;
+
+  return gGemmRegBaseAddr
+       + uint64_t(global_alloc_b)
+       + uint64_t(eid) * uint64_t(entry_stride_b)
+       + uint64_t(beat_idx) * uint64_t(data_size);
+}
+
+static inline void job_write_reg32(uint32_t eid, uint32_t reg_idx32, uint32_t value) {
+  uint32_t beat_idx = reg_idx32 / kWordsPerBeat;
+  uint32_t word_in_beat = reg_idx32 % kWordsPerBeat;
+  mmio_write32_word(job_entry_beat_addr(eid, beat_idx), word_in_beat, value);
+}
+
+static inline uint32_t job_read_reg32(uint32_t eid, uint32_t reg_idx32) {
+  uint32_t beat_idx = reg_idx32 / kWordsPerBeat;
+  uint32_t word_in_beat = reg_idx32 % kWordsPerBeat;
+  return mmio_read32_word(job_entry_beat_addr(eid, beat_idx), word_in_beat);
+}
+
+static inline void job_write_reg64(uint32_t eid, uint32_t reg_lo_idx, uint64_t value) {
+  uint32_t lo, hi;
+  split_u64(value, lo, hi);
+  job_write_reg32(eid, reg_lo_idx, lo);
+  job_write_reg32(eid, reg_lo_idx + 1, hi);
+}
+
+static inline void decode_alloc_rsp(uint32_t r, uint32_t& eid, uint32_t& generation) {
+  eid = (r >> JOB_MMIO_ALLOC_ENTRY_LSB) & bitfield_mask(JOB_MMIO_ALLOC_ENTRY_BITS);
+  generation = (r >> JOB_MMIO_ALLOC_GEN_LSB) & bitfield_mask(JOB_MMIO_ALLOC_GEN_BITS);
+}
+
+static bool job_alloc_at(uint64_t base_addr, uint32_t& eid, uint32_t& generation, uint32_t& raw_rsp) {
+  uint32_t r = mmio_read32_word(base_addr, 0);
+  raw_rsp = r;
+  if (((r >> JOB_MMIO_ALLOC_SUCC_BIT) & 1u) == 0)
+    return false;
+
+  decode_alloc_rsp(r, eid, generation);
+  return true;
+}
+
+static bool resolve_gemm_mmio_base(uint32_t& eid, uint32_t& generation, uint32_t& raw_rsp) {
+  uint64_t local_mem_base = csr_read(VX_CSR_LOCAL_MEM_BASE);
+  const uint64_t candidates[2] = {
+    kGemmRegOffset,
+    local_mem_base + kGemmRegOffset,
+  };
+
+  uint32_t probe_eid = 0;
+  uint32_t probe_gen = 0;
+  uint32_t probe_raw = 0;
+
+  for (uint32_t i = 0; i < 2; ++i) {
+    uint64_t base = candidates[i];
+    if (!job_alloc_at(base, probe_eid, probe_gen, probe_raw))
+      continue;
+
+    if (probe_raw == kPoisonWord)
+      continue;
+
+    if (probe_eid < GEMM_JOB_NUM_ENTRIES) {
+      gGemmRegBaseAddr = base;
+      eid = probe_eid;
+      generation = probe_gen;
+      raw_rsp = probe_raw;
+      return true;
+    }
   }
-  if (exp == 31) {
-    // Return a large value instead of INFINITY for device compatibility
-    return sign ? -65504.0f : 65504.0f;  // Max fp16 value
+
+  raw_rsp = mmio_read32_word(kGemmRegOffset, 0);
+  decode_alloc_rsp(raw_rsp, eid, generation);
+  return false;
+}
+
+static void program_job_regs(uint32_t eid, const kernel_arg_t* arg) {
+  job_write_reg64(eid, REG_INPUT_BASE_LO,  arg->input_base);
+  job_write_reg64(eid, REG_WEIGHT_BASE_LO, arg->weight_base);
+  job_write_reg64(eid, REG_OUTPUT_BASE_LO, arg->output_base);
+  job_write_reg64(eid, REG_SCALE_BASE_LO,  arg->scale_base);
+  job_write_reg64(eid, REG_ZP_BASE_LO,     arg->zp_base);
+
+  job_write_reg64(eid, REG_LMEM_IBUF0_LO,  arg->lmem_ibuf0_base);
+  job_write_reg64(eid, REG_LMEM_IBUF1_LO,  arg->lmem_ibuf1_base);
+  job_write_reg64(eid, REG_LMEM_WBUF0_LO,  arg->lmem_wbuf0_base);
+  job_write_reg64(eid, REG_LMEM_WBUF1_LO,  arg->lmem_wbuf1_base);
+  job_write_reg64(eid, REG_LMEM_SCBUF0_LO, arg->lmem_scbuf0_base);
+  job_write_reg64(eid, REG_LMEM_SCBUF1_LO, arg->lmem_scbuf1_base);
+  job_write_reg64(eid, REG_LMEM_ZPBUF0_LO, arg->lmem_zpbuf0_base);
+  job_write_reg64(eid, REG_LMEM_ZPBUF1_LO, arg->lmem_zpbuf1_base);
+  job_write_reg64(eid, REG_LMEM_OBUF_LO,   arg->lmem_obuf_base);
+
+  job_write_reg32(eid, REG_M, arg->M);
+  job_write_reg32(eid, REG_N, arg->N);
+  job_write_reg32(eid, REG_K, arg->K);
+  job_write_reg32(eid, REG_QBLK, arg->QBLK);
+
+  job_write_reg32(eid, REG_CONTROL, 1u);
+}
+
+static bool wait_job_done(uint32_t eid, uint32_t generation, uint32_t& last_ctrl) {
+  for (uint32_t iter = 0; iter < kMaxPollIters; ++iter) {
+    uint32_t ctrl = job_read_reg32(eid, REG_CONTROL);
+    uint32_t curr_gen = (ctrl >> JOB_MMIO_CTRL_GEN_LSB) & bitfield_mask(JOB_MMIO_GEN_W);
+    uint32_t valid = (ctrl >> JOB_MMIO_CTRL_VALID_BIT) & 1u;
+    last_ctrl = ctrl;
+
+    if ((generation < curr_gen) || (valid == 0u))
+      return true;
   }
-  
-  uint32_t f = (sign << 31) | ((exp - 15 + 127) << 23) | (mantissa << 13);
-  float result;
-  __builtin_memcpy(&result, &f, sizeof(float));
-  return result;
+  return false;
 }
 
-// Helper: convert float to fp16
-inline input_t float_to_fp16(float f) {
-  uint32_t i;
-  __builtin_memcpy(&i, &f, sizeof(float));
-  uint32_t sign = (i >> 16) & 0x8000;
-  int32_t exp = ((i >> 23) & 0xFF) - 127 + 15;
-  uint32_t mantissa = (i >> 13) & 0x3FF;
-  
-  if (exp <= 0) return sign;
-  if (exp >= 31) return sign | 0x7C00;
-  
-  return sign | (exp << 10) | mantissa;
-}
+void kernel_mmio_driver(kernel_arg_t *__UNIFORM__ arg) {
+  arg->status = MMIO_STATUS_INIT;
+  arg->last_ctrl = 0;
 
-void kernel_dequant(kernel_arg_t *__UNIFORM__ arg) {
-  auto pW_int4 = reinterpret_cast<uint8_t *>(arg->W_int4_addr);   // packed int4
-  auto pW_fp16 = reinterpret_cast<input_t *>(arg->W_fp16_addr);   // output fp16
-  auto pScales = reinterpret_cast<input_t *>(arg->scales_addr);
-  auto pZeros = reinterpret_cast<input_t *>(arg->zeros_addr);
-  
-  uint32_t K = arg->K;
-  uint32_t N = arg->N;
-  uint32_t group_size = arg->group_size;
-  
-  // Parallelize over K*N elements
-  // Each thread processes multiple elements
-  uint32_t total_threads = gridDim.x * gridDim.y * blockDim.x * blockDim.y;
-  uint32_t thread_id = (blockIdx.y * gridDim.x + blockIdx.x) * (blockDim.x * blockDim.y) +
-                       (threadIdx.y * blockDim.x + threadIdx.x);
-  
-  uint32_t total_elements = K * N;
-  
-  for (uint32_t elem_idx = thread_id; elem_idx < total_elements; elem_idx += total_threads) {
-    uint32_t k = elem_idx / N;
-    uint32_t n = elem_idx % N;
-    
-    // Get group for this k
-    uint32_t group_id = k / group_size;
-    
-    // Load scale and zero for this group and column
-    input_t scale_fp16 = pScales[group_id * N + n];
-    input_t zero_fp16 = pZeros[group_id * N + n];
-    
-    // Load packed int4
-    uint32_t packed_idx = elem_idx / 2;
-    uint8_t packed = pW_int4[packed_idx];
-    
-    // Unpack
-    int8_t v0, v1;
-    unpack_int4(packed, v0, v1);
-    int8_t int4_val = (elem_idx % 2 == 0) ? v0 : v1;
-    
-    // Dequantize: w_fp16 = (w_int4 - zero) * scale
-    // Convert to float for arithmetic
-    float scale = fp16_to_float(scale_fp16);
-    float zero = fp16_to_float(zero_fp16);
-    float dequant_val = (static_cast<float>(int4_val) - zero) * scale;
-    
-    // Convert back to fp16
-    input_t val_fp16 = float_to_fp16(dequant_val);
-    
-    // Store result
-    pW_fp16[elem_idx] = val_fp16;
-  }
-}
-
-///////////////////////////////////////////////////////////////////////////////
-// KERNEL 1: Standard GEMM (fp16 x fp16)
-///////////////////////////////////////////////////////////////////////////////
-void kernel_gemm(kernel_arg_t *__UNIFORM__ arg) {
-  auto pA = reinterpret_cast<input_t *>(arg->A_addr);
-  auto pB = reinterpret_cast<input_t *>(arg->B_addr);  // already dequantized
-  auto pC = reinterpret_cast<output_t *>(arg->C_addr);
-
-  uint32_t M = arg->M;
-  uint32_t N = arg->N;
-  uint32_t K = arg->K;
-
-  ctx::fragment_a   fragA;
-  ctx::fragment_b   fragB;
-  ctx::fragment_acc fragC;
-
-  // Calculate tile position
-  uint32_t tile_row = blockIdx.y * ctx::tileM;
-  uint32_t tile_col = blockIdx.x * ctx::tileN;
-
-  // Initialize accumulator to zero
-  ctx::fill_fragment(fragC, 0);
-
-  // GEMM loop over K dimension
-  for (uint32_t i = 0; i < K; i += ctx::tileK) {
-    // Load A tile (activations)
-    auto pTileA = pA + tile_row * K + i;
-    ctx::load_matrix_sync(fragA, pTileA, K);
-
-    // Load B tile (weights)
-    if constexpr (vt::ITYPE::bits < 8) {
-      // Sub-byte types need col-major
-      auto pTileB = pB + tile_col * K + i;
-      ctx::load_matrix_sync<vt::col_major>(fragB, pTileB, K);
+  uint32_t eid = 0, generation = 0;
+  uint32_t alloc_raw = 0;
+  if (!resolve_gemm_mmio_base(eid, generation, alloc_raw)) {
+    arg->last_ctrl = alloc_raw;
+    if (((alloc_raw >> JOB_MMIO_ALLOC_SUCC_BIT) & 1u) == 0) {
+      arg->status = MMIO_STATUS_ALLOC_FAIL;
     } else {
-      auto pTileB = pB + i * N + tile_col;
-      ctx::load_matrix_sync(fragB, pTileB, N);
+      arg->job_eid = eid;
+      arg->job_generation = generation;
+      arg->status = MMIO_STATUS_BAD_EID;
     }
-
-    // Matrix multiply-accumulate
-    ctx::mma_sync(fragC, fragA, fragB, fragC);
+    return;
   }
 
-  // Store result
-  auto pTileC = pC + tile_row * N + tile_col;
-  ctx::store_matrix_sync(pTileC, fragC, N);
-}
+  arg->last_ctrl = alloc_raw;
 
-///////////////////////////////////////////////////////////////////////////////
-// KERNEL 2: Fused Dequant + GEMM
-///////////////////////////////////////////////////////////////////////////////
-void kernel_fused(kernel_arg_t *__UNIFORM__ arg) {
-  auto pA = reinterpret_cast<input_t *>(arg->A_addr);
-  auto pW_int4 = reinterpret_cast<uint8_t *>(arg->W_int4_addr);   // packed int4
-  auto pScales = reinterpret_cast<input_t *>(arg->scales_addr);
-  auto pZeros = reinterpret_cast<input_t *>(arg->zeros_addr);
-  auto pC = reinterpret_cast<output_t *>(arg->C_addr);
-
-  uint32_t M = arg->M;
-  uint32_t N = arg->N;
-  uint32_t K = arg->K;
-  uint32_t group_size = arg->group_size;
-
-  ctx::fragment_a   fragA;
-  ctx::fragment_b   fragB;
-  ctx::fragment_acc fragC;
-
-  // Calculate tile position
-  uint32_t tile_row = blockIdx.y * ctx::tileM;
-  uint32_t tile_col = blockIdx.x * ctx::tileN;
-
-  // Initialize accumulator to zero
-  ctx::fill_fragment(fragC, 0);
-
-  // Temporary buffer for dequantized weights
-  input_t temp_weights[ctx::tileK * ctx::tileN];
-
-  // GEMM loop with on-the-fly dequantization
-  for (uint32_t k_tile = 0; k_tile < K; k_tile += ctx::tileK) {
-    // Load A tile (activations)
-    auto pTileA = pA + tile_row * K + k_tile;
-    ctx::load_matrix_sync(fragA, pTileA, K);
-
-    // On-the-fly dequantization for B tile
-    // 1. Load and dequantize int4 weights for this tile
-    for (uint32_t k = 0; k < ctx::tileK && (k_tile + k) < K; ++k) {
-      uint32_t group_id = (k_tile + k) / group_size;
-      
-      for (uint32_t n = 0; n < ctx::tileN && (tile_col + n) < N; ++n) {
-        // Get scale and zero for this position
-        input_t scale_fp16 = pScales[group_id * N + (tile_col + n)];
-        input_t zero_fp16 = pZeros[group_id * N + (tile_col + n)];
-        
-        // Load packed int4
-        uint32_t global_idx = (k_tile + k) * N + (tile_col + n);
-        uint32_t packed_idx = global_idx / 2;
-        uint8_t packed = pW_int4[packed_idx];
-        
-        // Unpack
-        int8_t v0, v1;
-        unpack_int4(packed, v0, v1);
-        int8_t int4_val = (global_idx % 2 == 0) ? v0 : v1;
-        
-        // Dequantize and store in temp buffer
-        float scale = fp16_to_float(scale_fp16);
-        float zero = fp16_to_float(zero_fp16);
-        float dequant_val = (static_cast<float>(int4_val) - zero) * scale;
-        input_t val_fp16 = float_to_fp16(dequant_val);
-        temp_weights[k * ctx::tileN + n] = val_fp16;
-      }
-    }
-    
-    // 2. Load from temp buffer into fragB using proper layout
-    if constexpr (vt::ITYPE::bits < 8) {
-      // Sub-byte: col-major
-      ctx::load_matrix_sync<vt::col_major>(fragB, temp_weights, ctx::tileK);
-    } else {
-      // Row-major for this temp buffer (stored as K x N within tile)
-      ctx::load_matrix_sync(fragB, temp_weights, ctx::tileN);
-    }
-
-    // Matrix multiply-accumulate
-    ctx::mma_sync(fragC, fragA, fragB, fragC);
+  if (eid >= GEMM_JOB_NUM_ENTRIES) {
+    arg->job_eid = eid;
+    arg->job_generation = generation;
+    arg->status = MMIO_STATUS_BAD_EID;
+    return;
   }
 
-  // Store result
-  auto pTileC = pC + tile_row * N + tile_col;
-  ctx::store_matrix_sync(pTileC, fragC, N);
-}
+  arg->job_eid = eid;
+  arg->job_generation = generation;
 
-///////////////////////////////////////////////////////////////////////////////
-// Kernel dispatch
-///////////////////////////////////////////////////////////////////////////////
-void kernel_dispatcher(kernel_arg_t *__UNIFORM__ arg) {
-  switch (arg->kernel_id) {
-    case KERNEL_DEQUANT:
-      kernel_dequant(arg);
-      break;
-    case KERNEL_GEMM:
-      kernel_gemm(arg);
-      break;
-    case KERNEL_FUSED:
-      kernel_fused(arg);
-      break;
-    default:
-      break;
+  program_job_regs(eid, arg);
+
+  if (!wait_job_done(eid, generation, arg->last_ctrl)) {
+    arg->status = MMIO_STATUS_WAIT_STUCK;
+    return;
   }
+
+  arg->status = MMIO_STATUS_OK;
 }
 
-///////////////////////////////////////////////////////////////////////////////
-// Main entry point
-///////////////////////////////////////////////////////////////////////////////
 int main() {
-  auto arg = (kernel_arg_t *)csr_read(VX_CSR_MSCRATCH);
-  return vx_spawn_threads(2, arg->grid_dim, arg->block_dim,
-                         (vx_kernel_func_cb)kernel_dispatcher, arg);
-} 
+  if (vx_core_id() != 0 || vx_warp_id() != 0 || vx_thread_id() != 0) {
+    return 0;
+  }
+
+  auto arg = reinterpret_cast<kernel_arg_t *>(csr_read(VX_CSR_MSCRATCH));
+  kernel_mmio_driver(arg);
+  return 0;
+}
