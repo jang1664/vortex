@@ -30,6 +30,8 @@ show_help()
     echo "--app: any subfolder test under regression or opencl"
     echo "--class: 0=disable, 1=pipeline, 2=memsys"
     echo "--nohup: build and run in temp directory"
+    echo "env LOG_MAX_BYTES: keep only last N bytes in debug log (rolling buffer)"
+    echo "env LOG_FLUSH_LINES: flush interval for rolling buffer (default: 200)"
 }
 
 add_option() {
@@ -125,6 +127,62 @@ run_app() {
     [ $TEMPBUILD -eq 1 ] && cmd_opts=$(add_option "$cmd_opts" "VORTEX_RT_PATH=\"$TEMPDIR\"")
     [ $HAS_ARGS -eq 1 ] && cmd_opts=$(add_option "$cmd_opts" "OPTS=\"$ARGS\"")
     cmd_opts=$(add_option "$cmd_opts" "make -C \"$APP_PATH\" run-$DRIVER")
+
+    if [ $DEBUG -ne 0 ] && [ -n "${LOG_MAX_BYTES:-}" ] && [ "${LOG_MAX_BYTES}" -gt 0 ] 2>/dev/null; then
+        local status_file
+        local status
+        local flush_lines
+        status_file=$(mktemp)
+        flush_lines="${LOG_FLUSH_LINES:-200}"
+
+        echo "Running (bounded log): $cmd_opts"
+        (
+            eval "$cmd_opts"
+            echo $? > "$status_file"
+        ) 2>&1 | awk -v max_bytes="${LOG_MAX_BYTES}" -v flush_lines="${flush_lines}" -v file="${LOGFILE}" '
+            BEGIN {
+                buf = "";
+                blen = 0;
+                cnt = 0;
+            }
+            function flush_buf() {
+                if (blen == 0) {
+                    printf "" > file;
+                } else {
+                    printf "%s", buf > file;
+                }
+                close(file);
+            }
+            {
+                line = $0 "\n";
+                buf = buf line;
+                blen += length(line);
+
+                while (blen > max_bytes) {
+                    n = index(buf, "\n");
+                    if (n <= 0) {
+                        buf = "";
+                        blen = 0;
+                        break;
+                    }
+                    buf = substr(buf, n + 1);
+                    blen = length(buf);
+                }
+
+                cnt += 1;
+                if ((cnt % flush_lines) == 0) {
+                    flush_buf();
+                }
+            }
+            END {
+                flush_buf();
+            }'
+
+        status=$(cat "$status_file" 2>/dev/null || echo 1)
+        rm -f "$status_file"
+        return "$status"
+    fi
+
     [ $DEBUG -ne 0 ] && cmd_opts=$(add_option "$cmd_opts" "> $LOGFILE 2>&1")
     echo "Running: $cmd_opts"
     eval "$cmd_opts"

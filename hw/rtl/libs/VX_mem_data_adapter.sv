@@ -162,6 +162,7 @@ module VX_mem_data_adapter #(
             mem_rsp_data_out_r <= mem_rsp_data_out_n;
         end
 
+`ifdef DBG_TRACE_MEM_ADAPT
         always @(posedge clk) begin
             if (!reset) begin
                 if (mem_req_push_fire) begin
@@ -182,6 +183,7 @@ module VX_mem_data_adapter #(
                 end
             end
         end
+`endif
 
         reg [DST_TAG_WIDTH-1:0] mem_rsp_tag_in_r;
         wire [DST_TAG_WIDTH-1:0] mem_rsp_tag_in_x;

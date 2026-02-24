@@ -381,7 +381,7 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
   // ------------------------------------------------------------
   // Trace logging
   // ------------------------------------------------------------
-`ifdef DBG_TRACE_GEMM
+`ifdef DBG_TRACE_GEMM_CTRL
   always_ff @(posedge clk) begin
     if (!reset) begin
       if (state != state_n) begin
@@ -401,7 +401,13 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
           `TRACE(3, ("%m : [%0t] | DMA_START_REG | {inst=%s, reg_idx=%0d, reg_val=0x%08h}\n", $time, INSTANCE_ID, k, cfg_reg_if.regs[k][31:0]))
         end
       end
+    end
+  end
+`endif
 
+`ifdef DBG_TRACE_GEMM
+  always_ff @(posedge clk) begin
+    if (!reset) begin
       if (precalc_issue) begin
         logic [31:0] b0m1, b1m1, b2m1;
         b0m1 = bound_r[0] - 32'd1;

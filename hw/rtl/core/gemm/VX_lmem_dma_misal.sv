@@ -343,7 +343,7 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
   // ------------------------------------------------------------
   // Trace logging
   // ------------------------------------------------------------
-`ifdef DBG_TRACE_GEMM
+`ifdef DBG_TRACE_GEMM_CTRL
   always_ff @(posedge clk) begin
     if (!reset) begin
       if (state != state_n) begin
@@ -358,7 +358,13 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
                   ctrl_if.src_base_addr, ctrl_if.dst_base_addr, ctrl_if.seg_size,
                   ctrl_if.bounds[0], ctrl_if.bounds[1], ctrl_if.bounds[2]))
       end
+    end
+  end
+`endif
 
+`ifdef DBG_TRACE_GEMM
+  always_ff @(posedge clk) begin
+    if (!reset) begin
       if (precalc_issue) begin
         logic [31:0] b0m1, b1m1, b2m1;
         b0m1 = bound_r[0] - 32'd1;

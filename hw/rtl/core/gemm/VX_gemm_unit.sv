@@ -1258,7 +1258,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     // =========================================================================
     // Debug Tracing
     // =========================================================================
-`ifdef DBG_TRACE_GEMM
+`ifdef DBG_TRACE_GEMM_CTRL
     // FSM state names for debug
     function automatic string state_to_str(input gemm_state_t s);
         case (s)
@@ -1292,7 +1292,13 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
             if (gemm_done) begin
                 `TRACE(1, ("%m : [%0t] | GEMM_DONE | {inst=%s}\n", $time, INSTANCE_ID))
             end
+        end
+    end
+`endif
 
+`ifdef DBG_TRACE_GEMM
+    always @(posedge clk) begin
+        if (~reset) begin
             // Weight loading
             if (mxu_ready_weight) begin
                 `TRACE(2, ("%m : [%0t] | GEMM_WEIGHT_LOAD | {inst=%s, wr_idx=%0d, load_dir=%0d}\n",

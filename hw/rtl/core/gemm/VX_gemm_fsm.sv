@@ -1576,7 +1576,35 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
   end
 
 `ifndef SYNTHESIS
-`ifdef DBG_TRACE_GEMM
+  task automatic log_tile_progress(
+    input u32_t tile_i,
+    input u32_t tile_total_i,
+    input dim_t nt_i,
+    input dim_t mt_i,
+    input dim_t kt_i,
+    input logic has_next_i,
+    input u32_t next_tile_i
+  );
+    u32_t tile_pct;
+    u32_t nt_pct;
+    u32_t mt_pct;
+    u32_t kt_pct;
+    begin
+      tile_pct = (tile_total_i != 0) ? (((tile_i + 1) * 100) / tile_total_i) : 0;
+      nt_pct   = (nt_dim_q != 0) ? (((u32_t'(nt_i) + 1) * 100) / u32_t'(nt_dim_q)) : 0;
+      mt_pct   = (mt_dim_q != 0) ? (((u32_t'(mt_i) + 1) * 100) / u32_t'(mt_dim_q)) : 0;
+      kt_pct   = (kt_dim_q != 0) ? (((u32_t'(kt_i) + 1) * 100) / u32_t'(kt_dim_q)) : 0;
+
+      `TRACE(2, ("%m : [%0t] | GEMM_FSM_TILE_ADVANCE | {inst=%s, tile=%0d/%0d(%0d%%), loop_nt=%0d/%0d(%0d%%), loop_mt=%0d/%0d(%0d%%), loop_kt=%0d/%0d(%0d%%), has_next=%0d, next_tile=%0d}\n",
+                $time, INSTANCE_ID,
+                (tile_i + 1), tile_total_i, tile_pct,
+                (u32_t'(nt_i) + 1), nt_dim_q, nt_pct,
+                (u32_t'(mt_i) + 1), mt_dim_q, mt_pct,
+                (u32_t'(kt_i) + 1), kt_dim_q, kt_pct,
+                has_next_i, next_tile_i))
+    end
+  endtask
+
   function automatic string op_to_str(input logic [7:0] op);
     case (op)
       OP_WAIT:          return "WAIT";
@@ -1649,10 +1677,27 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     end
   endtask
 
+`ifdef DBG_TRACE_GEMM_FSM
   always_ff @(posedge clk) begin
     if (!reset) begin
       if (out_start_d && gemm_fsm_if.flag.idle) begin
         log_gemm_cmd_handshake(state_q, out_cmd_d);
+      end
+
+      if ((state_q == S_ADVANCE_TILES) && pre_valid_q) begin
+        dim_t nt_next;
+        dim_t mt_next;
+        dim_t kt_next;
+        u32_t tile_total_next;
+        u32_t next_tile;
+        logic has_next_tile;
+
+        tile_total_next = u32_t'(mt_dim_q) * u32_t'(nt_dim_q) * u32_t'(kt_dim_q);
+        next_tile       = tile_pre_q + 1;
+        has_next_tile   = (next_tile < tile_total_next);
+        tile_decode(tile_pre_q, mt_dim_lg2_q, kt_dim_lg2_q, nt_next, mt_next, kt_next);
+
+        log_tile_progress(tile_pre_q, tile_total_next, nt_next, mt_next, kt_next, has_next_tile, next_tile);
       end
     end
   end
