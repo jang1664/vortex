@@ -35,7 +35,7 @@ static vx_buffer_h zeros_buffer = nullptr;   // int16 [KG x N]
 static vx_buffer_h C_buffer = nullptr;       // fp16 [M x N]
 
 static constexpr float FP16_TOL = 0.01f;
-static constexpr uint64_t HOST_WAIT_TIMEOUT_MS = 300000;
+static constexpr uint64_t HOST_WAIT_TIMEOUT_MS = 3000000;
 
 static constexpr uint64_t LMEM_LAYOUT_ALIGN_BYTES = 4096;
 static constexpr uint64_t DMA_MT = GEMM_FSM_MT;
