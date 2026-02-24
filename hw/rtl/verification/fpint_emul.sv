@@ -2,7 +2,7 @@
 
 package fpint_emul;
   import VX_gpu_pkg::*;
-  import cf_math_pkg::*;
+  import cf_math_util_pkg::*;
 
   localparam int IN_WIDTH = `IFP_WIDTH;
   localparam int W_WIDTH  = `W_BIT_WIDTH;
@@ -155,13 +155,13 @@ package fpint_emul;
       for(int n=0; n<N; n++) begin
         acc_fp = $bitstoshortreal(psum_data[m*N + n]);  // Initialize from psum
         for(int k=0; k<K; k++) begin
-          in_val = cf_math_pkg::fp16_bit_to_fp16_val(input_data[m*K + k]);
+          in_val = cf_math_util_pkg::fp16_bit_to_fp16_val(input_data[m*K + k]);
           wt_val = shortreal'($signed(weight_data[k*N + n]));
           if(qdir == 0) begin
-            sc_val = cf_math_pkg::fp16_bit_to_fp16_val(scale_data[(k/QBLOCK)*N + n]);
+            sc_val = cf_math_util_pkg::fp16_bit_to_fp16_val(scale_data[(k/QBLOCK)*N + n]);
             ze_val = shortreal'($signed(zero_data[(k/QBLOCK)*N + n]));
           end else begin
-            sc_val = cf_math_pkg::fp16_bit_to_fp16_val(scale_data[k*(N/QBLOCK) + n/QBLOCK]);
+            sc_val = cf_math_util_pkg::fp16_bit_to_fp16_val(scale_data[k*(N/QBLOCK) + n/QBLOCK]);
             ze_val = shortreal'($signed(zero_data[k*(N/QBLOCK) + n/QBLOCK]));
           end
           prod = in_val * (sc_val*(wt_val - ze_val));
@@ -173,7 +173,7 @@ package fpint_emul;
             $display(" %f", acc_fp);
           end
         end
-        output_data[m*N + n] = cf_math_pkg::fp32_val_to_fp16_bit(acc_fp);
+        output_data[m*N + n] = cf_math_util_pkg::fp32_val_to_fp16_bit(acc_fp);
       end
     end
   endfunction
@@ -199,7 +199,7 @@ package fpint_emul;
     // converting data
     for(int kg=0; kg<(K+QBLOCK-1)/QBLOCK; kg++) begin
       for(int n=0; n<N; n++) begin
-        scale_data_fp[kg*N + n] = cf_math_pkg::fp16_bit_to_fp16_val(scale_data[kg*N + n]);
+        scale_data_fp[kg*N + n] = cf_math_util_pkg::fp16_bit_to_fp16_val(scale_data[kg*N + n]);
       end
     end
 
@@ -247,7 +247,7 @@ package fpint_emul;
               acc_fp += scaled_post_inner_product;
             end
           end
-          output_data[m*N + n] = cf_math_pkg::fp32_val_to_fp16_bit(acc_fp);
+          output_data[m*N + n] = cf_math_util_pkg::fp32_val_to_fp16_bit(acc_fp);
           if(DEBUG) begin
             $display("[FPINT_EMUL.QCOL_2SCOMP] RESULT: m=%0d n=%0d final_acc=%f output=0x%h", m, n, acc_fp, output_data[m*N + n]);
           end
@@ -277,7 +277,7 @@ package fpint_emul;
     // converting data
     for(int kg=0; kg<(K+QBLOCK-1)/QBLOCK; kg++) begin
       for(int n=0; n<N; n++) begin
-        scale_data_fp[kg*N + n] = cf_math_pkg::fp16_bit_to_fp16_val(scale_data[kg*N + n]);
+        scale_data_fp[kg*N + n] = cf_math_util_pkg::fp16_bit_to_fp16_val(scale_data[kg*N + n]);
       end
     end
 
@@ -331,7 +331,7 @@ package fpint_emul;
               acc_fp += scaled_post_inner_product;
             end
           end
-          output_data[m*N + n] = cf_math_pkg::fp32_val_to_fp16_bit(acc_fp);
+          output_data[m*N + n] = cf_math_util_pkg::fp32_val_to_fp16_bit(acc_fp);
           if(DEBUG) begin
             $display("[FPINT_EMUL.QCOL_2SCOMP] RESULT: m=%0d n=%0d final_acc=%f output=0x%h", m, n, acc_fp, output_data[m*N + n]);
           end
@@ -362,7 +362,7 @@ package fpint_emul;
     // converting data
     for(int k=0; k<K; k++) begin
       for(int ng=0; ng<(N/QBLOCK); ng++) begin
-        scale_data_fp[k*(N/QBLOCK) + ng] = cf_math_pkg::fp16_bit_to_fp16_val(scale_data[k*(N/QBLOCK) + ng]);
+        scale_data_fp[k*(N/QBLOCK) + ng] = cf_math_util_pkg::fp16_bit_to_fp16_val(scale_data[k*(N/QBLOCK) + ng]);
       end
     end
 
@@ -389,10 +389,10 @@ package fpint_emul;
 
             // scale input and prealign
             for(int k=0; k<K; k++) begin
-              shortreal in_fp = cf_math_pkg::fp16_bit_to_fp16_val(input_data[m*K + k]);
+              shortreal in_fp = cf_math_util_pkg::fp16_bit_to_fp16_val(input_data[m*K + k]);
               shortreal scale_fp = scale_data_fp[k*(N/QBLOCK) + n/QBLOCK];
               shortreal scaled_in_fp = in_fp * scale_fp;
-              scaled_input_data[k] = cf_math_pkg::fp32_val_to_fp16_bit(scaled_in_fp);
+              scaled_input_data[k] = cf_math_util_pkg::fp32_val_to_fp16_bit(scaled_in_fp);
             end
             prealign(scaled_input_data, EXTRA_BIT, 1, K, aligned_fx_data, aligned_exp_data, DEBUG);
             prealign(scaled_input_data, EXTRA_BIT_FOR_REDUCE, 1, K, aligned_fx_data_for_reduce, aligned_exp_data_for_reduce, DEBUG);
@@ -424,7 +424,7 @@ package fpint_emul;
               
               acc_fp += scaled_post_inner_product;
             end
-            output_data[m*N + n] = cf_math_pkg::fp32_val_to_fp16_bit(acc_fp);
+            output_data[m*N + n] = cf_math_util_pkg::fp32_val_to_fp16_bit(acc_fp);
             if(DEBUG) begin
               $display("[FPINT_EMUL.QROW_2SCOMP] RESULT: m=%0d n=%0d final_acc=%f output=0x%h", m, n, acc_fp, output_data[m*N + n]);
             end
@@ -456,7 +456,7 @@ package fpint_emul;
     // converting data
     for(int k=0; k<K; k++) begin
       for(int ng=0; ng<(N/QBLOCK); ng++) begin
-        scale_data_fp[k*(N/QBLOCK) + ng] = cf_math_pkg::fp16_bit_to_fp16_val(scale_data[k*(N/QBLOCK) + ng]);
+        scale_data_fp[k*(N/QBLOCK) + ng] = cf_math_util_pkg::fp16_bit_to_fp16_val(scale_data[k*(N/QBLOCK) + ng]);
       end
     end
 
@@ -483,10 +483,10 @@ package fpint_emul;
 
             // scale input and prealign
             for(int k=0; k<K; k++) begin
-              shortreal in_fp = cf_math_pkg::fp16_bit_to_fp16_val(input_data[m*K + k]);
+              shortreal in_fp = cf_math_util_pkg::fp16_bit_to_fp16_val(input_data[m*K + k]);
               shortreal scale_fp = scale_data_fp[k*(N/QBLOCK) + n/QBLOCK];
               shortreal scaled_in_fp = in_fp * scale_fp;
-              scaled_input_data[k] = cf_math_pkg::fp32_val_to_fp16_bit(scaled_in_fp);
+              scaled_input_data[k] = cf_math_util_pkg::fp32_val_to_fp16_bit(scaled_in_fp);
             end
             prealign(scaled_input_data, EXTRA_BIT, 1, K, aligned_fx_data, aligned_exp_data, DEBUG);
             prealign(scaled_input_data, EXTRA_BIT_FOR_REDUCE, 1, K, aligned_fx_data_for_reduce, aligned_exp_data_for_reduce, DEBUG);
@@ -518,7 +518,7 @@ package fpint_emul;
               
               acc_fp += scaled_post_inner_product;
             end
-            output_data[m*N + n] = cf_math_pkg::fp32_val_to_fp16_bit(acc_fp);
+            output_data[m*N + n] = cf_math_util_pkg::fp32_val_to_fp16_bit(acc_fp);
             if(DEBUG) begin
               $display("[FPINT_EMUL.QROW_2SCOMP] RESULT: m=%0d n=%0d final_acc=%f output=0x%h", m, n, acc_fp, output_data[m*N + n]);
             end
@@ -550,7 +550,7 @@ package fpint_emul;
     // converting data
     for(int k=0; k<K; k++) begin
       for(int ng=0; ng<(N/QBLOCK); ng++) begin
-        scale_data_fp[k*(N/QBLOCK) + ng] = cf_math_pkg::fp16_bit_to_fp16_val(scale_data[k*(N/QBLOCK) + ng]);
+        scale_data_fp[k*(N/QBLOCK) + ng] = cf_math_util_pkg::fp16_bit_to_fp16_val(scale_data[k*(N/QBLOCK) + ng]);
       end
     end
 
@@ -571,10 +571,10 @@ package fpint_emul;
 
             // scale input and prealign
             for(int k=0; k<K; k++) begin
-              shortreal in_fp = cf_math_pkg::fp16_bit_to_fp16_val(input_data[m*K + k]);
+              shortreal in_fp = cf_math_util_pkg::fp16_bit_to_fp16_val(input_data[m*K + k]);
               shortreal scale_fp = scale_data_fp[k*(N/QBLOCK) + n/QBLOCK];
               shortreal scaled_in_fp = in_fp * scale_fp;
-              scaled_input_data[k] = cf_math_pkg::fp32_val_to_fp16_bit(scaled_in_fp);
+              scaled_input_data[k] = cf_math_util_pkg::fp32_val_to_fp16_bit(scaled_in_fp);
               // scaled_input_data[k] = input_data[m*K + k] * scale_data_fp[k*(N/QBLOCK) + n/QBLOCK];
             end
             prealign(scaled_input_data, EXTRA_BIT, 1, K, aligned_fx_data, aligned_exp_data, DEBUG);
@@ -608,7 +608,7 @@ package fpint_emul;
               
               acc_fp += scaled_post_inner_product;
             end
-            output_data[m*N + n] = cf_math_pkg::fp32_val_to_fp16_bit(acc_fp);
+            output_data[m*N + n] = cf_math_util_pkg::fp32_val_to_fp16_bit(acc_fp);
             if(DEBUG) begin
               $display("[FPINT_EMUL.QROW_2SCOMP] RESULT: m=%0d n=%0d final_acc=%f output=0x%h", m, n, acc_fp, output_data[m*N + n]);
             end

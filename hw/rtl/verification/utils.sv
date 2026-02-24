@@ -1,4 +1,4 @@
-import cf_math_pkg::*;
+import cf_math_util_pkg::*;
 
 function automatic string parseWord(input logic [9999:0] data, input int word_width, input string data_type);
   string sdata;

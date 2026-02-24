@@ -4,7 +4,7 @@
 set -euo pipefail
 
 # Allow override from environment
-export CONFIGS="${CONFIGS:--DDBG_TRACE_GEMM -DNUM_CORES=1 -DLMEM_LOG_SIZE=17 -DLMEM_BASE_ADDR=8589803520}"
+export CONFIGS="${CONFIGS:--DNUM_CORES=1 -DLMEM_LOG_SIZE=17 -DLMEM_BASE_ADDR=8589803520}"
 DRIVER="${DRIVER:-rtlsim}"
 APP="${APP:-fpint_gemm_ffn_hw}"
 DEBUG_LEVEL="${DEBUG_LEVEL:-3}"
