@@ -99,6 +99,61 @@ else()
                   "native aten::mul will not work.  Build the elmul test first.")
 endif()
 
+set(_ELSUB_VXBIN "${VORTEX_BUILD_DIR}/tests/regression/elsub/kernel.vxbin")
+if(EXISTS ${_ELSUB_VXBIN})
+  install(FILES ${_ELSUB_VXBIN}
+          DESTINATION ${CMAKE_INSTALL_PREFIX}/kernels
+          RENAME elsub.vxbin)
+  message(STATUS "Will install elsub kernel: ${_ELSUB_VXBIN}")
+else()
+  message(WARNING "elsub kernel binary not found at ${_ELSUB_VXBIN} — "
+                  "native aten::sub will not work.  Build the elsub test first.")
+endif()
+
+set(_ELDIV_VXBIN "${VORTEX_BUILD_DIR}/tests/regression/eldiv/kernel.vxbin")
+if(EXISTS ${_ELDIV_VXBIN})
+  install(FILES ${_ELDIV_VXBIN}
+          DESTINATION ${CMAKE_INSTALL_PREFIX}/kernels
+          RENAME eldiv.vxbin)
+  message(STATUS "Will install eldiv kernel: ${_ELDIV_VXBIN}")
+else()
+  message(WARNING "eldiv kernel binary not found at ${_ELDIV_VXBIN} — "
+                  "native aten::div will not work.  Build the eldiv test first.")
+endif()
+
+set(_ELUNARY_VXBIN "${VORTEX_BUILD_DIR}/tests/regression/elunary/kernel.vxbin")
+if(EXISTS ${_ELUNARY_VXBIN})
+  install(FILES ${_ELUNARY_VXBIN}
+          DESTINATION ${CMAKE_INSTALL_PREFIX}/kernels
+          RENAME elunary.vxbin)
+  message(STATUS "Will install elunary kernel: ${_ELUNARY_VXBIN}")
+else()
+  message(WARNING "elunary kernel binary not found at ${_ELUNARY_VXBIN} — "
+                  "native aten::sin/cos/rsqrt/etc will not work.  Build the elunary test first.")
+endif()
+
+set(_ELSCALAR_VXBIN "${VORTEX_BUILD_DIR}/tests/regression/elscalar/kernel.vxbin")
+if(EXISTS ${_ELSCALAR_VXBIN})
+  install(FILES ${_ELSCALAR_VXBIN}
+          DESTINATION ${CMAKE_INSTALL_PREFIX}/kernels
+          RENAME elscalar.vxbin)
+  message(STATUS "Will install elscalar kernel: ${_ELSCALAR_VXBIN}")
+else()
+  message(WARNING "elscalar kernel binary not found at ${_ELSCALAR_VXBIN} — "
+                  "native aten::pow will not work.  Build the elscalar test first.")
+endif()
+
+set(_ELREDUCE_VXBIN "${VORTEX_BUILD_DIR}/tests/regression/elreduce/kernel.vxbin")
+if(EXISTS ${_ELREDUCE_VXBIN})
+  install(FILES ${_ELREDUCE_VXBIN}
+          DESTINATION ${CMAKE_INSTALL_PREFIX}/kernels
+          RENAME elreduce.vxbin)
+  message(STATUS "Will install elreduce kernel: ${_ELREDUCE_VXBIN}")
+else()
+  message(WARNING "elreduce kernel binary not found at ${_ELREDUCE_VXBIN} — "
+                  "native aten::mean will not work.  Build the elreduce test first.")
+endif()
+
 set(_SOFTMAX_VXBIN "${VORTEX_BUILD_DIR}/tests/regression/softmax/kernel.vxbin")
 if(EXISTS ${_SOFTMAX_VXBIN})
   install(FILES ${_SOFTMAX_VXBIN}

@@ -56,7 +56,7 @@ static void launch_kernel(vx_device_h device,
 //  Kernel argument structs (must match tests/regression/<name>/common.h)
 // ===========================================================================
 
-// --- eladd / elmul ---
+// --- eladd / elmul / elsub / eldiv (binary element-wise) ---
 struct eladd_kernel_arg_t {
   uint32_t kernel_id;
   uint32_t grid_dim[3];
@@ -65,6 +65,38 @@ struct eladd_kernel_arg_t {
   uint64_t input_b_addr;
   uint64_t output_addr;
   uint32_t size;
+};
+
+// --- elunary (unary element-wise: rsqrt, sin, cos, exp, log, neg, abs, sqrt) ---
+struct elunary_kernel_arg_t {
+  uint32_t kernel_id;
+  uint32_t grid_dim[3];
+  uint32_t block_dim[3];
+  uint64_t input_addr;
+  uint64_t output_addr;
+  uint32_t size;
+};
+
+// --- elscalar (tensor-scalar ops: pow, mul, add with scalar) ---
+struct elscalar_kernel_arg_t {
+  uint32_t kernel_id;
+  uint32_t grid_dim[3];
+  uint32_t block_dim[3];
+  uint64_t input_addr;
+  uint64_t output_addr;
+  float    scalar;
+  uint32_t size;
+};
+
+// --- elreduce (reduction ops: mean, sum, max, min along last dim) ---
+struct elreduce_kernel_arg_t {
+  uint32_t kernel_id;
+  uint32_t grid_dim[3];
+  uint32_t block_dim[3];
+  uint64_t input_addr;
+  uint64_t output_addr;
+  uint32_t batch_size;
+  uint32_t reduce_dim;
 };
 
 // --- softmax ---
@@ -145,8 +177,34 @@ struct dropout_kernel_arg_t {
 // ===========================================================================
 //  Kernel ID constants (must match each kernel's common.h)
 // ===========================================================================
+// eladd / elmul / elsub / eldiv
 static constexpr uint32_t KERNEL_ELADD    = 0;
 static constexpr uint32_t KERNEL_ELMUL    = 0;
+static constexpr uint32_t KERNEL_ELSUB    = 0;
+static constexpr uint32_t KERNEL_ELDIV    = 0;
+
+// elunary
+static constexpr uint32_t KERNEL_RSQRT    = 0;
+static constexpr uint32_t KERNEL_SIN      = 1;
+static constexpr uint32_t KERNEL_COS      = 2;
+static constexpr uint32_t KERNEL_EXP      = 3;
+static constexpr uint32_t KERNEL_LOG      = 4;
+static constexpr uint32_t KERNEL_NEG      = 5;
+static constexpr uint32_t KERNEL_ABS      = 6;
+static constexpr uint32_t KERNEL_SQRT     = 7;
+
+// elscalar
+static constexpr uint32_t KERNEL_POW_SCALAR = 0;
+static constexpr uint32_t KERNEL_MUL_SCALAR = 1;
+static constexpr uint32_t KERNEL_ADD_SCALAR = 2;
+
+// elreduce
+static constexpr uint32_t KERNEL_MEAN     = 0;
+static constexpr uint32_t KERNEL_SUM      = 1;
+static constexpr uint32_t KERNEL_MAX      = 2;
+static constexpr uint32_t KERNEL_MIN      = 3;
+
+// Other kernels
 static constexpr uint32_t KERNEL_SOFTMAX  = 0;
 static constexpr uint32_t KERNEL_SILU     = 0;
 static constexpr uint32_t KERNEL_RMSNORM  = 0;
@@ -294,6 +352,269 @@ at::Tensor vortex_mul_Tensor(
   karg.size          = numel;
 
   static std::string path = find_kernel("elmul", "elmul");
+  launch_kernel(device, &karg, sizeof(karg), path);
+  return output;
+}
+
+// ===========================================================================
+//  2b. aten::sub.Tensor  ->  elsub kernel
+// ===========================================================================
+at::Tensor vortex_sub_Tensor(
+    const at::Tensor& self,
+    const at::Tensor& other,
+    const at::Scalar& alpha) {
+  bool can_native = self.is_privateuseone()
+      && other.is_privateuseone()
+      && self.dtype() == at::kFloat
+      && other.dtype() == at::kFloat
+      && self.is_contiguous()
+      && other.is_contiguous()
+      && self.sizes() == other.sizes()
+      && alpha.toFloat() == 1.0f;
+
+  if (!can_native) {
+    auto cpu_self = self.is_privateuseone() ? self.cpu() : self;
+    auto cpu_other = other.is_privateuseone() ? other.cpu() : other;
+    auto cpu_out = at::sub(cpu_self, cpu_other, alpha);
+    auto target_device = self.is_privateuseone() ? self.device() : other.device();
+    return cpu_out.to(target_device);
+  }
+
+  auto& rt = c10::vortex::VortexRuntime::instance();
+  vx_device_h device = rt.deviceHandle();
+  auto output = at::empty(self.sizes(), self.options());
+  uint32_t numel = static_cast<uint32_t>(self.numel());
+  auto caps = query_caps(device);
+
+  eladd_kernel_arg_t karg{};
+  karg.kernel_id    = KERNEL_ELSUB;
+  karg.grid_dim[0]  = (numel + caps.threads_per_block - 1) / caps.threads_per_block;
+  karg.grid_dim[1]  = 1;
+  karg.grid_dim[2]  = 1;
+  karg.block_dim[0] = caps.threads_per_block;
+  karg.block_dim[1] = 1;
+  karg.block_dim[2] = 1;
+  karg.input_a_addr = rt.deviceAddress(self.data_ptr());
+  karg.input_b_addr = rt.deviceAddress(other.data_ptr());
+  karg.output_addr  = rt.deviceAddress(output.data_ptr());
+  karg.size          = numel;
+
+  static std::string path = find_kernel("elsub", "elsub");
+  launch_kernel(device, &karg, sizeof(karg), path);
+  return output;
+}
+
+// ===========================================================================
+//  2c. aten::div.Tensor  ->  eldiv kernel
+// ===========================================================================
+at::Tensor vortex_div_Tensor(
+    const at::Tensor& self,
+    const at::Tensor& other) {
+  bool can_native = self.is_privateuseone()
+      && other.is_privateuseone()
+      && self.dtype() == at::kFloat
+      && other.dtype() == at::kFloat
+      && self.is_contiguous()
+      && other.is_contiguous()
+      && self.sizes() == other.sizes();
+
+  if (!can_native) {
+    auto cpu_self = self.is_privateuseone() ? self.cpu() : self;
+    auto cpu_other = other.is_privateuseone() ? other.cpu() : other;
+    auto cpu_out = at::div(cpu_self, cpu_other);
+    auto target_device = self.is_privateuseone() ? self.device() : other.device();
+    return cpu_out.to(target_device);
+  }
+
+  auto& rt = c10::vortex::VortexRuntime::instance();
+  vx_device_h device = rt.deviceHandle();
+  auto output = at::empty(self.sizes(), self.options());
+  uint32_t numel = static_cast<uint32_t>(self.numel());
+  auto caps = query_caps(device);
+
+  eladd_kernel_arg_t karg{};
+  karg.kernel_id    = KERNEL_ELDIV;
+  karg.grid_dim[0]  = (numel + caps.threads_per_block - 1) / caps.threads_per_block;
+  karg.grid_dim[1]  = 1;
+  karg.grid_dim[2]  = 1;
+  karg.block_dim[0] = caps.threads_per_block;
+  karg.block_dim[1] = 1;
+  karg.block_dim[2] = 1;
+  karg.input_a_addr = rt.deviceAddress(self.data_ptr());
+  karg.input_b_addr = rt.deviceAddress(other.data_ptr());
+  karg.output_addr  = rt.deviceAddress(output.data_ptr());
+  karg.size          = numel;
+
+  static std::string path = find_kernel("eldiv", "eldiv");
+  launch_kernel(device, &karg, sizeof(karg), path);
+  return output;
+}
+
+// ===========================================================================
+//  Unary element-wise operations helper
+// ===========================================================================
+static at::Tensor vortex_unary_op(
+    const at::Tensor& self,
+    uint32_t kernel_id,
+    const char* op_name) {
+  if (!self.is_privateuseone() || self.dtype() != at::kFloat || !self.is_contiguous()) {
+    auto cpu_self = self.is_privateuseone() ? self.cpu() : self;
+    at::Tensor cpu_out;
+    switch (kernel_id) {
+      case KERNEL_RSQRT: cpu_out = at::rsqrt(cpu_self); break;
+      case KERNEL_SIN:   cpu_out = at::sin(cpu_self); break;
+      case KERNEL_COS:   cpu_out = at::cos(cpu_self); break;
+      case KERNEL_EXP:   cpu_out = at::exp(cpu_self); break;
+      case KERNEL_LOG:   cpu_out = at::log(cpu_self); break;
+      case KERNEL_NEG:   cpu_out = at::neg(cpu_self); break;
+      case KERNEL_ABS:   cpu_out = at::abs(cpu_self); break;
+      case KERNEL_SQRT:  cpu_out = at::sqrt(cpu_self); break;
+      default: TORCH_CHECK(false, "Unknown unary op"); break;
+    }
+    return self.is_privateuseone() ? cpu_out.to(self.device()) : cpu_out;
+  }
+
+  auto& rt = c10::vortex::VortexRuntime::instance();
+  vx_device_h device = rt.deviceHandle();
+  auto output = at::empty(self.sizes(), self.options());
+  uint32_t numel = static_cast<uint32_t>(self.numel());
+  auto caps = query_caps(device);
+
+  elunary_kernel_arg_t karg{};
+  karg.kernel_id    = kernel_id;
+  karg.grid_dim[0]  = (numel + caps.threads_per_block - 1) / caps.threads_per_block;
+  karg.grid_dim[1]  = 1;
+  karg.grid_dim[2]  = 1;
+  karg.block_dim[0] = caps.threads_per_block;
+  karg.block_dim[1] = 1;
+  karg.block_dim[2] = 1;
+  karg.input_addr   = rt.deviceAddress(self.data_ptr());
+  karg.output_addr  = rt.deviceAddress(output.data_ptr());
+  karg.size         = numel;
+
+  static std::string path = find_kernel("elunary", "elunary");
+  launch_kernel(device, &karg, sizeof(karg), path);
+  return output;
+}
+
+// Individual unary op wrappers
+at::Tensor vortex_rsqrt(const at::Tensor& self) {
+  return vortex_unary_op(self, KERNEL_RSQRT, "rsqrt");
+}
+
+at::Tensor vortex_sin(const at::Tensor& self) {
+  return vortex_unary_op(self, KERNEL_SIN, "sin");
+}
+
+at::Tensor vortex_cos(const at::Tensor& self) {
+  return vortex_unary_op(self, KERNEL_COS, "cos");
+}
+
+at::Tensor vortex_exp(const at::Tensor& self) {
+  return vortex_unary_op(self, KERNEL_EXP, "exp");
+}
+
+at::Tensor vortex_log(const at::Tensor& self) {
+  return vortex_unary_op(self, KERNEL_LOG, "log");
+}
+
+at::Tensor vortex_neg(const at::Tensor& self) {
+  return vortex_unary_op(self, KERNEL_NEG, "neg");
+}
+
+at::Tensor vortex_abs(const at::Tensor& self) {
+  return vortex_unary_op(self, KERNEL_ABS, "abs");
+}
+
+at::Tensor vortex_sqrt(const at::Tensor& self) {
+  return vortex_unary_op(self, KERNEL_SQRT, "sqrt");
+}
+
+// ===========================================================================
+//  aten::pow.Tensor_Scalar  ->  elscalar kernel
+// ===========================================================================
+at::Tensor vortex_pow_Tensor_Scalar(
+    const at::Tensor& self,
+    const at::Scalar& exponent) {
+  if (!self.is_privateuseone() || self.dtype() != at::kFloat || !self.is_contiguous()) {
+    auto cpu_self = self.is_privateuseone() ? self.cpu() : self;
+    auto cpu_out = at::pow(cpu_self, exponent);
+    return self.is_privateuseone() ? cpu_out.to(self.device()) : cpu_out;
+  }
+
+  auto& rt = c10::vortex::VortexRuntime::instance();
+  vx_device_h device = rt.deviceHandle();
+  auto output = at::empty(self.sizes(), self.options());
+  uint32_t numel = static_cast<uint32_t>(self.numel());
+  auto caps = query_caps(device);
+
+  elscalar_kernel_arg_t karg{};
+  karg.kernel_id    = KERNEL_POW_SCALAR;
+  karg.grid_dim[0]  = (numel + caps.threads_per_block - 1) / caps.threads_per_block;
+  karg.grid_dim[1]  = 1;
+  karg.grid_dim[2]  = 1;
+  karg.block_dim[0] = caps.threads_per_block;
+  karg.block_dim[1] = 1;
+  karg.block_dim[2] = 1;
+  karg.input_addr   = rt.deviceAddress(self.data_ptr());
+  karg.output_addr  = rt.deviceAddress(output.data_ptr());
+  karg.scalar       = exponent.toFloat();
+  karg.size         = numel;
+
+  static std::string path = find_kernel("elscalar", "elscalar");
+  launch_kernel(device, &karg, sizeof(karg), path);
+  return output;
+}
+
+// ===========================================================================
+//  aten::mean.dim  ->  elreduce kernel (reduction along last dim)
+// ===========================================================================
+at::Tensor vortex_mean_dim(
+    const at::Tensor& self,
+    at::OptionalIntArrayRef opt_dim,
+    bool keepdim,
+    std::optional<at::ScalarType> dtype) {
+  // Only handle simple case: reduce last dim, keepdim=true, float32
+  auto dim_vec = opt_dim.value_or(at::IntArrayRef{});
+  bool is_last_dim = (dim_vec.size() == 1) && 
+                     (dim_vec[0] == -1 || dim_vec[0] == self.dim() - 1);
+  
+  if (!self.is_privateuseone() || self.dtype() != at::kFloat || 
+      !self.is_contiguous() || !is_last_dim || !keepdim || self.dim() < 2) {
+    auto cpu_self = self.is_privateuseone() ? self.cpu() : self;
+    auto cpu_out = at::mean(cpu_self, opt_dim, keepdim, dtype);
+    return self.is_privateuseone() ? cpu_out.to(self.device()) : cpu_out;
+  }
+
+  auto& rt = c10::vortex::VortexRuntime::instance();
+  vx_device_h device = rt.deviceHandle();
+  
+  // Flatten all dims except last into batch
+  int64_t reduce_dim = self.size(-1);
+  int64_t batch_size = self.numel() / reduce_dim;
+  
+  // Output shape with keepdim=true
+  auto out_sizes = self.sizes().vec();
+  out_sizes.back() = 1;
+  auto output = at::empty(out_sizes, self.options());
+  
+  auto caps = query_caps(device);
+
+  elreduce_kernel_arg_t karg{};
+  karg.kernel_id    = KERNEL_MEAN;
+  karg.grid_dim[0]  = (static_cast<uint32_t>(batch_size) + caps.threads_per_block - 1) 
+                      / caps.threads_per_block;
+  karg.grid_dim[1]  = 1;
+  karg.grid_dim[2]  = 1;
+  karg.block_dim[0] = caps.threads_per_block;
+  karg.block_dim[1] = 1;
+  karg.block_dim[2] = 1;
+  karg.input_addr   = rt.deviceAddress(self.data_ptr());
+  karg.output_addr  = rt.deviceAddress(output.data_ptr());
+  karg.batch_size   = static_cast<uint32_t>(batch_size);
+  karg.reduce_dim   = static_cast<uint32_t>(reduce_dim);
+
+  static std::string path = find_kernel("elreduce", "elreduce");
   launch_kernel(device, &karg, sizeof(karg), path);
   return output;
 }
@@ -763,8 +1084,29 @@ at::Tensor vortex_apply_rotary_pos_emb(
 //  ATen op registrations (auto-dispatch for standard ops)
 // ===========================================================================
 TORCH_LIBRARY_IMPL(aten, PrivateUse1, m) {
+  // Binary element-wise
   m.impl("add.Tensor",     &vortex_add_Tensor);
   m.impl("mul.Tensor",     &vortex_mul_Tensor);
+  m.impl("sub.Tensor",     &vortex_sub_Tensor);
+  m.impl("div.Tensor",     &vortex_div_Tensor);
+  
+  // Unary element-wise
+  m.impl("rsqrt",          &vortex_rsqrt);
+  m.impl("sin",            &vortex_sin);
+  m.impl("cos",            &vortex_cos);
+  m.impl("exp",            &vortex_exp);
+  m.impl("log",            &vortex_log);
+  m.impl("neg",            &vortex_neg);
+  m.impl("abs",            &vortex_abs);
+  m.impl("sqrt",           &vortex_sqrt);
+  
+  // Scalar ops
+  m.impl("pow.Tensor_Scalar", &vortex_pow_Tensor_Scalar);
+  
+  // Reduction ops
+  m.impl("mean.dim",       &vortex_mean_dim);
+  
+  // Complex ops
   m.impl("_softmax",       &vortex_softmax);
   m.impl("mm",             &vortex_mm);
   m.impl("bmm",            &vortex_bmm);
