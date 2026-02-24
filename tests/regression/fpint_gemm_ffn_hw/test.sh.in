@@ -1,0 +1,45 @@
+
+#!/bin/bash
+
+set -euo pipefail
+
+# Allow override from environment
+export CONFIGS="${CONFIGS:--DDBG_TRACE_GEMM -DNUM_CORES=1 -DLMEM_LOG_SIZE=17 -DLMEM_BASE_ADDR=8589803520}"
+DRIVER="${DRIVER:-rtlsim}"
+APP="${APP:-fpint_gemm_ffn_hw}"
+DEBUG_LEVEL="${DEBUG_LEVEL:-3}"
+LOG_DIR="${LOG_DIR:-run_logs_fpint_gemm_ffn_hw}"
+
+mkdir -p "${LOG_DIR}"
+
+# Add/remove cases here
+declare -a CASE_ARGS=(
+  "-m 2 -n 32 -k 32 -q 32"
+  "-m 4 -n 64 -k 64 -q 32"
+  "-m 8 -n 64 -k 128 -q 32"
+)
+
+total="${#CASE_ARGS[@]}"
+failed=0
+
+for i in "${!CASE_ARGS[@]}"; do
+  idx=$((i + 1))
+  args="${CASE_ARGS[$i]}"
+  log_file="${LOG_DIR}/run_case_${idx}.log"
+
+  echo "[${idx}/${total}] Running: ${args}"
+  if ./ci/blackbox.sh \
+      --driver="${DRIVER}" \
+      --app="${APP}" \
+      --debug="${DEBUG_LEVEL}" \
+      --log="${log_file}" \
+      --args="${args}"; then
+    echo "[${idx}/${total}] PASS (log: ${log_file})"
+  else
+    echo "[${idx}/${total}] FAIL (log: ${log_file})"
+    failed=$((failed + 1))
+  fi
+done
+
+echo "Summary: total=${total}, failed=${failed}, passed=$((total - failed))"
+exit "${failed}"
