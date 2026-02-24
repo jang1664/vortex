@@ -262,7 +262,7 @@ module VX_gemm_sync import VX_gpu_pkg::*; #(
     end
   end
 
-`ifdef DBG_TRACE_GEMM_SYNC
+`ifdef DBG_TRACE_GEMM
   always_ff @(posedge clk) begin
     if (!reset && in_valid) begin
       if (is_wait) begin

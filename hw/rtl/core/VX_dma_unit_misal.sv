@@ -381,6 +381,7 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
   // ------------------------------------------------------------
   // Trace logging
   // ------------------------------------------------------------
+`ifdef DBG_TRACE_GEMM
   always_ff @(posedge clk) begin
     if (!reset) begin
       if (state != state_n) begin
@@ -493,6 +494,7 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
       end
     end
   end
+`endif
 
   // ------------------------------------------------------------
   // done_if (combinational)

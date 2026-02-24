@@ -1576,6 +1576,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
   end
 
 `ifndef SYNTHESIS
+`ifdef DBG_TRACE_GEMM
   function automatic string op_to_str(input logic [7:0] op);
     case (op)
       OP_WAIT:          return "WAIT";
@@ -1655,7 +1656,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
       end
     end
   end
-
+`endif
 `endif
 
 endmodule
