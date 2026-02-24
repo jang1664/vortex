@@ -162,7 +162,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     logic [`MXU_ROW-1:0][`BLOCK_IDX_WIDTH-1:0]     prealigner_blk_idx_q;
     logic                                          prealigner_pipe_out_valid;
     logic [`IFP_EXP_WIDTH-1:0]                     prealigner_max_exp_q;
-    logic [`IFP_EXP_WIDTH-1:0]                     prealigner_max_exp_q_valid;
+    logic                                          prealigner_max_exp_q_valid;
 
     // -------------------------------------------------------------------------
     // Activation Reduce and Zero Point Multiply Signals
@@ -1449,19 +1449,23 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     end
 
     always @(posedge clk) begin
-      if(pre_proc_out_valid ^ mxu_output_valid_dly[`MXU_COL/`MXU_COL_TILE-1]) begin
-        `ERROR(("%t: %s: ERROR - Pre-processor output valid and MXU output valid are not aligned! pre_proc_out_valid=%b, mxu_output_valid_dly=%b\n",
-            $time, INSTANCE_ID, pre_proc_out_valid, mxu_output_valid_dly[`MXU_COL/`MXU_COL_TILE-1]));
-      end
+      // Ignore reset/startup transients; alignment checks are meaningful only
+      // while a GEMM command is in flight.
+      if (~reset && in_flight) begin
+        if(pre_proc_out_valid ^ mxu_output_valid_dly[`MXU_COL/`MXU_COL_TILE-1]) begin
+          `ERROR(("%t: %s: ERROR - Pre-processor output valid and MXU output valid are not aligned! pre_proc_out_valid=%b, mxu_output_valid_dly=%b\n",
+              $time, INSTANCE_ID, pre_proc_out_valid, mxu_output_valid_dly[`MXU_COL/`MXU_COL_TILE-1]));
+        end
 
-      if(merger_out_valid ^ prealigner_max_exp_q_valid) begin
-        `ERROR(("%t: %s: ERROR - Merger output valid and Prealigner max exp valid are not aligned! merger_out_valid=%b, prealigner_max_exp_q_valid=%b\n",
-            $time, INSTANCE_ID, merger_out_valid, prealigner_max_exp_q_valid));
-      end
+        if(merger_out_valid ^ prealigner_max_exp_q_valid) begin
+          `ERROR(("%t: %s: ERROR - Merger output valid and Prealigner max exp valid are not aligned! merger_out_valid=%b, prealigner_max_exp_q_valid=%b\n",
+              $time, INSTANCE_ID, merger_out_valid, prealigner_max_exp_q_valid));
+        end
 
-      if(~gemm_unit_ctrl.is_load && (&acc_in_data_valid == 1 &&  &acc_psum_data_valid == 0)) begin
-        `ERROR(("%t: %s: ERROR - Accumulator input data valid and psum data valid are not aligned! acc_in_data_valid=%b, acc_psum_data_valid=%b\n",
-            $time, INSTANCE_ID, acc_in_data_valid, acc_psum_data_valid));
+        if(~gemm_unit_ctrl.is_load && (&acc_in_data_valid == 1 &&  &acc_psum_data_valid == 0)) begin
+          `ERROR(("%t: %s: ERROR - Accumulator input data valid and psum data valid are not aligned! acc_in_data_valid=%b, acc_psum_data_valid=%b\n",
+              $time, INSTANCE_ID, acc_in_data_valid, acc_psum_data_valid));
+        end
       end
     end
 `endif
