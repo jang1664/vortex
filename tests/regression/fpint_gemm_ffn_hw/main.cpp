@@ -324,7 +324,7 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_upload_kernel_file(device, kernel_file, &krnl_buffer));
 
   kernel_arg_t kargs = {};
-  kargs.grid_dim[0] = 1;
+  kargs.grid_dim[0] = static_cast<uint32_t>(num_cores);
   kargs.grid_dim[1] = 1;
   kargs.block_dim[0] = 1;
   kargs.block_dim[1] = 1;

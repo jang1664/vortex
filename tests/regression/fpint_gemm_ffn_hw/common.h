@@ -21,7 +21,7 @@
 #define OTYPE fp32
 #endif
 
-// TB_VX_gemm_node register indices (0..32)
+// TB_VX_gemm_node register indices (0..37)
 #define REG_CONTROL             0
 #define REG_INPUT_BASE_LO       1
 #define REG_INPUT_BASE_HI       2
@@ -53,12 +53,17 @@
 #define REG_LMEM_OBUF_LO        27
 #define REG_LMEM_OBUF_HI        28
 
-#define REG_M                   29
-#define REG_N                   30
-#define REG_K                   31
-#define REG_QBLK                32
+#define REG_M_ORIG              29
+#define REG_N_ORIG              30
+#define REG_K_ORIG              31
+#define REG_QBLK_ORIG           32
+#define REG_M_TARGET            33
+#define REG_N_TARGET            34
+#define REG_K_TARGET            35
+#define REG_M_START             36
+#define REG_N_START             37
 
-#define GEMM_JOB_NUM_REGS32     33
+#define GEMM_JOB_NUM_REGS32     38
 #define GEMM_JOB_NUM_ENTRIES     4
 
 // kernel status codes

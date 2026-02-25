@@ -1,9 +1,22 @@
 #include "common.h"
 #include <vx_spawn.h>
 #include <vx_intrinsics.h>
+#ifdef GEMM_PARTITION_LOG
+#include <vx_print.h>
+#endif
 
 static constexpr uint64_t kGemmRegOffset = 0x0000000000001080ull;
 static uint64_t gGemmRegBaseAddr = kGemmRegOffset;
+static constexpr uint32_t kTileM = 128u;
+static constexpr uint32_t kTileN = 128u;
+
+struct tb_partition_t {
+  bool has_work;
+  uint32_t m_start;
+  uint32_t n_start;
+  uint32_t target_M;
+  uint32_t target_N;
+};
 
 static inline uint32_t mmio_read32(uint64_t addr) {
   return *reinterpret_cast<volatile uint32_t *>(addr);
@@ -15,6 +28,68 @@ static inline void mmio_write32(uint64_t addr, uint32_t value) {
 
 static inline uint32_t bitfield_mask(uint32_t bits) {
   return (bits >= 32) ? 0xFFFFFFFFu : ((1u << bits) - 1u);
+}
+
+static inline uint32_t min_u32(uint32_t a, uint32_t b) {
+  return (a < b) ? a : b;
+}
+
+static inline uint32_t ceil_div_u32(uint32_t a, uint32_t b) {
+  return (a + b - 1u) / b;
+}
+
+static tb_partition_t compute_partition(uint32_t core_id, uint32_t num_tbs, uint32_t M, uint32_t N) {
+  tb_partition_t part = {false, 0u, 0u, 0u, 0u};
+
+  if (num_tbs == 0 || M == 0 || N == 0)
+    return part;
+
+  uint32_t mt_dim = ceil_div_u32(M, kTileM);
+  uint32_t nt_dim = ceil_div_u32(N, kTileN);
+  if (mt_dim == 0 || nt_dim == 0)
+    return part;
+
+  uint32_t bn = min_u32(num_tbs, nt_dim);
+  if (bn == 0)
+    return part;
+
+  uint32_t bm = ceil_div_u32(num_tbs, bn);
+  uint32_t grid_tbs = bm * bn;
+  if (core_id >= grid_tbs)
+    return part;
+
+  uint32_t tb_n = core_id % bn;
+  uint32_t tb_m = core_id / bn;
+  if (tb_m >= bm)
+    return part;
+
+  uint32_t nt_base = nt_dim / bn;
+  uint32_t nt_rem  = nt_dim % bn;
+  uint32_t nt_cnt  = nt_base + ((tb_n < nt_rem) ? 1u : 0u);
+  uint32_t nt0     = tb_n * nt_base + min_u32(tb_n, nt_rem);
+
+  uint32_t mt_base = mt_dim / bm;
+  uint32_t mt_rem  = mt_dim % bm;
+  uint32_t mt_cnt  = mt_base + ((tb_m < mt_rem) ? 1u : 0u);
+  uint32_t mt0     = tb_m * mt_base + min_u32(tb_m, mt_rem);
+
+  if (mt_cnt == 0 || nt_cnt == 0)
+    return part;
+
+  uint32_t m_start = mt0 * kTileM;
+  uint32_t n_start = nt0 * kTileN;
+  if (m_start >= M || n_start >= N)
+    return part;
+
+  uint32_t m_tiles_span = mt_cnt * kTileM;
+  uint32_t n_tiles_span = nt_cnt * kTileN;
+
+  part.has_work = true;
+  part.m_start = m_start;
+  part.n_start = n_start;
+  part.target_M = min_u32(M - m_start, m_tiles_span);
+  part.target_N = min_u32(N - n_start, n_tiles_span);
+  return part;
 }
 
 static constexpr uint32_t kMaxPollIters = 2000000u;
@@ -131,7 +206,7 @@ static bool resolve_gemm_mmio_base(uint32_t& eid, uint32_t& generation, uint32_t
   return false;
 }
 
-static void program_job_regs(uint32_t eid, const kernel_arg_t* arg) {
+static void program_job_regs(uint32_t eid, const kernel_arg_t* arg, const tb_partition_t& part) {
   job_write_reg64(eid, REG_INPUT_BASE_LO,  arg->input_base);
   job_write_reg64(eid, REG_WEIGHT_BASE_LO, arg->weight_base);
   job_write_reg64(eid, REG_OUTPUT_BASE_LO, arg->output_base);
@@ -148,10 +223,16 @@ static void program_job_regs(uint32_t eid, const kernel_arg_t* arg) {
   job_write_reg64(eid, REG_LMEM_ZPBUF1_LO, arg->lmem_zpbuf1_base);
   job_write_reg64(eid, REG_LMEM_OBUF_LO,   arg->lmem_obuf_base);
 
-  job_write_reg32(eid, REG_M, arg->M);
-  job_write_reg32(eid, REG_N, arg->N);
-  job_write_reg32(eid, REG_K, arg->K);
-  job_write_reg32(eid, REG_QBLK, arg->QBLK);
+  job_write_reg32(eid, REG_M_ORIG, arg->M);
+  job_write_reg32(eid, REG_N_ORIG, arg->N);
+  job_write_reg32(eid, REG_K_ORIG, arg->K);
+  job_write_reg32(eid, REG_QBLK_ORIG, arg->QBLK);
+
+  job_write_reg32(eid, REG_M_TARGET, part.target_M);
+  job_write_reg32(eid, REG_N_TARGET, part.target_N);
+  job_write_reg32(eid, REG_K_TARGET, arg->K);
+  job_write_reg32(eid, REG_M_START, part.m_start);
+  job_write_reg32(eid, REG_N_START, part.n_start);
 
   job_write_reg32(eid, REG_CONTROL, 1u);
 }
@@ -170,16 +251,56 @@ static bool wait_job_done(uint32_t eid, uint32_t generation, uint32_t& last_ctrl
 }
 
 void kernel_mmio_driver(kernel_arg_t *__UNIFORM__ arg) {
-  arg->status = MMIO_STATUS_INIT;
-  arg->last_ctrl = 0;
+  uint32_t core_id = vx_core_id();
+  uint32_t num_cores = vx_num_cores();
+  bool reporter = (core_id == 0);
+
+  if (reporter) {
+    arg->status = MMIO_STATUS_INIT;
+    arg->last_ctrl = 0;
+  }
+
+  uint32_t num_tbs = arg->grid_dim[0] * arg->grid_dim[1];
+  if (num_tbs == 0)
+    num_tbs = num_cores;
+
+  tb_partition_t part = compute_partition(core_id, num_tbs, arg->M, arg->N);
+#ifdef GEMM_PARTITION_LOG
+  vx_printf("[gemm-part] cid=%u/%u tbs=%u has_work=%u m_start=%u n_start=%u target_M=%u target_N=%u K=%u\n",
+            core_id, num_cores, num_tbs,
+            part.has_work ? 1u : 0u,
+            part.m_start, part.n_start,
+            part.target_M, part.target_N,
+            arg->K);
+#endif
+
+  if (!part.has_work) {
+    if (reporter)
+      arg->status = MMIO_STATUS_OK;
+    return;
+  }
 
   uint32_t eid = 0, generation = 0;
   uint32_t alloc_raw = 0;
   if (!resolve_gemm_mmio_base(eid, generation, alloc_raw)) {
+    if (reporter) {
+      arg->last_ctrl = alloc_raw;
+      if (((alloc_raw >> JOB_MMIO_ALLOC_SUCC_BIT) & 1u) == 0) {
+        arg->status = MMIO_STATUS_ALLOC_FAIL;
+      } else {
+        arg->job_eid = eid;
+        arg->job_generation = generation;
+        arg->status = MMIO_STATUS_BAD_EID;
+      }
+    }
+    return;
+  }
+
+  if (reporter)
     arg->last_ctrl = alloc_raw;
-    if (((alloc_raw >> JOB_MMIO_ALLOC_SUCC_BIT) & 1u) == 0) {
-      arg->status = MMIO_STATUS_ALLOC_FAIL;
-    } else {
+
+  if (eid >= GEMM_JOB_NUM_ENTRIES) {
+    if (reporter) {
       arg->job_eid = eid;
       arg->job_generation = generation;
       arg->status = MMIO_STATUS_BAD_EID;
@@ -187,30 +308,30 @@ void kernel_mmio_driver(kernel_arg_t *__UNIFORM__ arg) {
     return;
   }
 
-  arg->last_ctrl = alloc_raw;
-
-  if (eid >= GEMM_JOB_NUM_ENTRIES) {
+  if (reporter) {
     arg->job_eid = eid;
     arg->job_generation = generation;
-    arg->status = MMIO_STATUS_BAD_EID;
+  }
+
+  program_job_regs(eid, arg, part);
+
+  uint32_t last_ctrl = 0;
+  if (!wait_job_done(eid, generation, last_ctrl)) {
+    if (reporter) {
+      arg->last_ctrl = last_ctrl;
+      arg->status = MMIO_STATUS_WAIT_STUCK;
+    }
     return;
   }
 
-  arg->job_eid = eid;
-  arg->job_generation = generation;
-
-  program_job_regs(eid, arg);
-
-  if (!wait_job_done(eid, generation, arg->last_ctrl)) {
-    arg->status = MMIO_STATUS_WAIT_STUCK;
-    return;
+  if (reporter) {
+    arg->last_ctrl = last_ctrl;
+    arg->status = MMIO_STATUS_OK;
   }
-
-  arg->status = MMIO_STATUS_OK;
 }
 
 int main() {
-  if (vx_core_id() != 0 || vx_warp_id() != 0 || vx_thread_id() != 0) {
+  if (vx_warp_id() != 0 || vx_thread_id() != 0) {
     return 0;
   }
 
