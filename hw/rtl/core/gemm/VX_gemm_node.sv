@@ -18,7 +18,8 @@
 module VX_gemm_node import VX_gpu_pkg::*; #(
     parameter `STRING INSTANCE_ID = "",
     parameter N_MASTER    = 1,
-    parameter N_CHILDREN  = 5
+    parameter N_CHILDREN  = 5,
+    parameter NUM_ENTRIES = 4
 ) (
     // Clock
     input wire              clk,
@@ -51,7 +52,6 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     localparam int MXU_KT = `GEMM_FSM_MXU_KT;
     localparam int MXU_NT = `GEMM_FSM_MXU_NT;
 
-    localparam int NUM_ENTRIES = 4;
     localparam int ENTRYID_W  = `JOB_MMIO_ENTRYID_W;
     localparam int OWNER_W    = `JOB_MMIO_OWNER_W;
     localparam int GEN_W      = `JOB_MMIO_GEN_W;
