@@ -295,7 +295,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     assign quant_param_dma_ctrl_if.dst_strides[1] = 0;
     assign quant_param_dma_ctrl_if.dst_strides[2] = 0;
 
-    assign quant_param_dma_ctrl_if.bounds[0]       = MXU_KT/gemm_ctrl_if.qblk_tot;  //MXU_KT % qblk == 0 이라고 가정
+    assign quant_param_dma_ctrl_if.bounds[0]       = MXU_KT/gemm_ctrl_if.qblk_orig;  //MXU_KT % qblk == 0 이라고 가정
     assign quant_param_dma_ctrl_if.bounds[1]       = 32'd1;
     assign quant_param_dma_ctrl_if.bounds[2]       = 32'd1;
 
@@ -366,9 +366,12 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     // External DMA control mapping (dcache <-> LMEM).
     assign gemm_dma_ctrl_if.start      = gemm_ctrl_if.dma_ctrl.start;
     assign gemm_dma_ctrl_if.cmd        = gemm_ctrl_if.dma_ctrl.cmd;
-    assign gemm_dma_ctrl_if.M_tot      = gemm_ctrl_if.M_tot;
-    assign gemm_dma_ctrl_if.N_tot      = gemm_ctrl_if.N_tot;
-    assign gemm_dma_ctrl_if.K_tot      = gemm_ctrl_if.K_tot;
+    assign gemm_dma_ctrl_if.M_orig     = gemm_ctrl_if.M_orig;
+    assign gemm_dma_ctrl_if.N_orig     = gemm_ctrl_if.N_orig;
+    assign gemm_dma_ctrl_if.K_orig     = gemm_ctrl_if.K_orig;
+    assign gemm_dma_ctrl_if.M_target   = gemm_ctrl_if.M_target;
+    assign gemm_dma_ctrl_if.N_target   = gemm_ctrl_if.N_target;
+    assign gemm_dma_ctrl_if.K_target   = gemm_ctrl_if.K_target;
     assign gemm_dma_ctrl_if.entry_id   = gemm_ctrl_if.entry_id;
 
     assign gemm_ctrl_if.dma_flag.idle = gemm_dma_ctrl_if.idle;
