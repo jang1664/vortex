@@ -20,6 +20,7 @@ interface VX_gemm_fsm_if import VX_gpu_pkg::*; ();
   logic [31:0] N_tot;
   logic [31:0] K_tot;
   logic [31:0] qblk_tot;
+  logic [31:0] wtrans_tot;
 
   // 이 DMA 커맨드 스트림의 소유자(워프 ID)
   logic [31:0] entry_id;     // = warp_id
@@ -33,6 +34,7 @@ interface VX_gemm_fsm_if import VX_gpu_pkg::*; ();
     output N_tot,
     output K_tot,
     output qblk_tot,
+    output wtrans_tot,
     output entry_id,
     input  flag
   );
@@ -43,6 +45,7 @@ interface VX_gemm_fsm_if import VX_gpu_pkg::*; ();
     input  N_tot,
     input  K_tot,
     input  qblk_tot,
+    input  wtrans_tot,
     input  entry_id,
     output flag
   );

@@ -161,6 +161,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     wire weight_is_notify   = (gemm_ctrl_if.weight_read_ctrl.cmd.instr[7:0] == OP_NOTIFY);
     wire weight_notify_req  = gemm_ctrl_if.weight_read_ctrl.start && weight_dma_ctrl_if.idle && weight_is_notify;
     wire weight_notify_fire = weight_notify_pending_r && gemm_sync_if[1].ready;
+    wire weight_wtrans      = gemm_ctrl_if.weight_read_ctrl.cmd.flags[2];
 
     logic        sz_notify_pending_r;
     logic [31:0] sz_notify_reg_idx_r;
@@ -246,7 +247,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     // Weight load DMA command mapping.
     assign weight_dma_ctrl_if.start          = gemm_ctrl_if.weight_read_ctrl.start && !weight_is_notify;
     assign weight_dma_ctrl_if.src_base_addr  = gemm_ctrl_if.weight_read_ctrl.cmd.rs2_data;
-    assign weight_dma_ctrl_if.src_strides[0] = (NT*4)/8;
+    assign weight_dma_ctrl_if.src_strides[0] = weight_wtrans ? ((KT*4)/8) : ((NT*4)/8);
     assign weight_dma_ctrl_if.src_strides[1] = 0;
     assign weight_dma_ctrl_if.src_strides[2] = 0;
 
@@ -255,11 +256,11 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     assign weight_dma_ctrl_if.dst_strides[1] = 0;
     assign weight_dma_ctrl_if.dst_strides[2] = 0;
 
-    assign weight_dma_ctrl_if.bounds[0]      = MXU_KT;
+    assign weight_dma_ctrl_if.bounds[0]      = weight_wtrans ? MXU_NT : MXU_KT;
     assign weight_dma_ctrl_if.bounds[1]      = 32'd1;
     assign weight_dma_ctrl_if.bounds[2]      = 32'd1;
     
-    assign weight_dma_ctrl_if.seg_size       = (MXU_NT*4)/8;  //int4, 바이트 단위
+    assign weight_dma_ctrl_if.seg_size       = weight_wtrans ? ((MXU_KT*4)/8) : ((MXU_NT*4)/8);  //int4, bytes
     assign gemm_ctrl_if.weight_read_flag.idle = weight_notify_pending_r ? 1'b0 : weight_dma_ctrl_if.idle;
     assign gemm_ctrl_if.weight_read_flag.done = weight_notify_pending_r ? weight_notify_fire : weight_dma_ctrl_if.done;
 
@@ -369,6 +370,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     assign gemm_dma_ctrl_if.M_tot      = gemm_ctrl_if.M_tot;
     assign gemm_dma_ctrl_if.N_tot      = gemm_ctrl_if.N_tot;
     assign gemm_dma_ctrl_if.K_tot      = gemm_ctrl_if.K_tot;
+    assign gemm_dma_ctrl_if.wtrans_tot = gemm_ctrl_if.wtrans_tot;
     assign gemm_dma_ctrl_if.entry_id   = gemm_ctrl_if.entry_id;
 
     assign gemm_ctrl_if.dma_flag.idle = gemm_dma_ctrl_if.idle;

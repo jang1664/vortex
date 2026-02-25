@@ -1108,7 +1108,7 @@ for block_size in range(1, full_bitwidth+1):
 // -------------------------------------------------------
 // Configuration Registers
 // -------------------------------------------------------
-`define GEMM_CFG_REG_NUM 33       // Number of GEMM configuration registers
+`define GEMM_CFG_REG_NUM 35       // Number of GEMM configuration registers
 `define DMA_CFG_REG_NUM 18        // Number of DMA configuration registers
 `ifdef XLEN_64
 `define GEMM_REG_BASE_ADDR 64'h0000_0000_0000_1080 // Base byte address for GEMM config registers

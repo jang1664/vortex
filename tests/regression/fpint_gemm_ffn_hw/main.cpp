@@ -23,6 +23,7 @@ static uint32_t M = 2;
 static uint32_t N = 32;
 static uint32_t K = 32;
 static uint32_t QBLK = 32;
+static uint32_t WTRANS = 0;
 
 static vx_device_h device = nullptr;
 static vx_buffer_h krnl_buffer = nullptr;
@@ -80,17 +81,18 @@ static void cleanup() {
 }
 
 static void show_usage() {
-  std::cout << "Usage: [-m M] [-n N] [-k K] [-q QBLK] [-h]" << std::endl;
+  std::cout << "Usage: [-m M] [-n N] [-k K] [-q QBLK] [-t WTRANS] [-h]" << std::endl;
 }
 
 static void parse_args(int argc, char **argv) {
   int c;
-  while ((c = getopt(argc, argv, "m:n:k:q:h")) != -1) {
+  while ((c = getopt(argc, argv, "m:n:k:q:t:h")) != -1) {
     switch (c) {
     case 'm': M = atoi(optarg); break;
     case 'n': N = atoi(optarg); break;
     case 'k': K = atoi(optarg); break;
     case 'q': QBLK = atoi(optarg); break;
+    case 't': WTRANS = atoi(optarg); break;
     case 'h': show_usage(); exit(0); break;
     default: show_usage(); exit(-1);
     }
@@ -131,11 +133,6 @@ static uint8_t pack_int4_pair(int8_t lo, int8_t hi) {
   return uint8_t((uint8_t(hi) & 0x0F) << 4) | uint8_t(lo & 0x0F);
 }
 
-static int8_t unpack_int4_from_byte(uint8_t packed, bool high_nibble) {
-  uint8_t v = high_nibble ? ((packed >> 4) & 0x0F) : (packed & 0x0F);
-  return (v & 0x08) ? int8_t(v | 0xF0) : int8_t(v);
-}
-
 static void build_test_vectors(std::vector<uint16_t>& h_A,
                                std::vector<uint8_t>& h_W_int4,
                                std::vector<uint16_t>& h_scales,
@@ -144,7 +141,7 @@ static void build_test_vectors(std::vector<uint16_t>& h_A,
   uint32_t groups_total = (K + QBLK - 1) / QBLK;
 
   h_A.resize(M * K);
-  h_W_int4.resize(K * ((N + 1) / 2));
+  h_W_int4.resize((WTRANS == 0) ? (K * ((N + 1) / 2)) : (N * ((K + 1) / 2)));
   h_scales.resize(groups_total * N);
   h_zeros.resize(groups_total * N);
   h_ref_out_fp16.resize(M * N);
@@ -156,16 +153,31 @@ static void build_test_vectors(std::vector<uint16_t>& h_A,
     }
   }
 
-  for (uint32_t k = 0; k < K; ++k) {
-    for (uint32_t n_pair = 0; n_pair < ((N + 1) / 2); ++n_pair) {
-      uint32_t n0 = n_pair * 2;
-      uint32_t n1 = n0 + 1;
-      int8_t w0 = int8_t(int((k * N + n0) % 7) - 3);
-      int8_t w1 = 0;
-      if (n1 < N) {
-        w1 = int8_t(int((k * N + n1) % 7) - 3);
+  if (WTRANS == 0) {
+    for (uint32_t k = 0; k < K; ++k) {
+      for (uint32_t n_pair = 0; n_pair < ((N + 1) / 2); ++n_pair) {
+        uint32_t n0 = n_pair * 2;
+        uint32_t n1 = n0 + 1;
+        int8_t w0 = int8_t(int((k * N + n0) % 7) - 3);
+        int8_t w1 = 0;
+        if (n1 < N) {
+          w1 = int8_t(int((k * N + n1) % 7) - 3);
+        }
+        h_W_int4[k * ((N + 1) / 2) + n_pair] = pack_int4_pair(w0, w1);
       }
-      h_W_int4[k * ((N + 1) / 2) + n_pair] = pack_int4_pair(w0, w1);
+    }
+  } else {
+    for (uint32_t n = 0; n < N; ++n) {
+      for (uint32_t k_pair = 0; k_pair < ((K + 1) / 2); ++k_pair) {
+        uint32_t k0 = k_pair * 2;
+        uint32_t k1 = k0 + 1;
+        int8_t w0 = int8_t(int((k0 * N + n) % 7) - 3);
+        int8_t w1 = 0;
+        if (k1 < K) {
+          w1 = int8_t(int((k1 * N + n) % 7) - 3);
+        }
+        h_W_int4[n * ((K + 1) / 2) + k_pair] = pack_int4_pair(w0, w1);
+      }
     }
   }
 
@@ -187,9 +199,7 @@ static void build_test_vectors(std::vector<uint16_t>& h_A,
         float scale = fp16_to_float(h_scales[group_id * N + n]);
         float zp = float(h_zeros[group_id * N + n]);
 
-        uint32_t packed_idx = k * ((N + 1) / 2) + (n / 2);
-        uint8_t packed = h_W_int4[packed_idx];
-        int8_t w = unpack_int4_from_byte(packed, (n & 1) != 0);
+        int8_t w = int8_t(int((k * N + n) % 7) - 3);
 
         float dequant = (float(w) - zp) * scale;
         sum += a * dequant;
@@ -280,11 +290,14 @@ int main(int argc, char *argv[]) {
     std::cout << "QBLK must be > 0" << std::endl;
     return -1;
   }
-
-  uint32_t groups_total = (K + QBLK - 1) / QBLK;
+  if (WTRANS > 1) {
+    std::cout << "WTRANS must be 0 or 1" << std::endl;
+    return -1;
+  }
 
   std::cout << "TB-style GEMM MMIO test" << std::endl;
-  std::cout << "M=" << M << ", N=" << N << ", K=" << K << ", QBLK=" << QBLK << std::endl;
+  std::cout << "M=" << M << ", N=" << N << ", K=" << K
+            << ", QBLK=" << QBLK << ", WTRANS=" << WTRANS << std::endl;
 
   RT_CHECK(vx_dev_open(&device));
 
@@ -333,6 +346,8 @@ int main(int argc, char *argv[]) {
   kargs.N = N;
   kargs.K = K;
   kargs.QBLK = QBLK;
+  kargs.WTRANS = WTRANS;
+  kargs.QDIR = 0;
 
   RT_CHECK(vx_mem_address(A_buffer, &kargs.input_base));
   RT_CHECK(vx_mem_address(W_int4_buffer, &kargs.weight_base));

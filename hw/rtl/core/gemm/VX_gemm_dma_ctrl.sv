@@ -160,8 +160,8 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
   gemm_unified_cmd_t cmd_q;
   wire logic [7:0] cmd_op = cmd_q.instr[7:0];
 
-  logic [31:0] M_tot_q, N_tot_q, K_tot_q;
-  logic [31:0] M_tot_d, N_tot_d, K_tot_d;
+  logic [31:0] M_tot_q, N_tot_q, K_tot_q, wtrans_tot_q;
+  logic [31:0] M_tot_d, N_tot_d, K_tot_d, wtrans_tot_d;
   // ============================================================
   // DMA 주소 매핑
   // ============================================================
@@ -270,11 +270,21 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
 
       // WEIGHT: int4, shape [K, N] (N방향 2개 packed => N/2 bytes per row)
       T_WEIGHT: begin
-        seg_size = (NT >> 1);
-        padding  = ((NT - nt_eff) >> 1);
+        if (wtrans_tot_q[0]) begin
+          // wtrans=1: source is [N, K] packed row-major
+          seg_size = (KT >> 1);
+          padding  = ((KT - kt_eff) >> 1);
 
-        dram_s0  = (N_tot_q >> 1);
-        dram_b0  = kt_eff;
+          dram_s0  = (K_tot_q >> 1);
+          dram_b0  = nt_eff;
+        end else begin
+          // wtrans=0: source is [K, N] packed row-major
+          seg_size = (NT >> 1);
+          padding  = ((NT - nt_eff) >> 1);
+
+          dram_s0  = (N_tot_q >> 1);
+          dram_b0  = kt_eff;
+        end
       end
 
       // SCALE: fp16
@@ -324,7 +334,7 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
     lmem_s0 = 0; lmem_s1 = 0; lmem_s2 = 0;
     unique case (tensor_sel)
       T_INPUT:  lmem_s0 = KT * BPE_FP16;
-      T_WEIGHT: lmem_s0 = (NT >> 1);
+      T_WEIGHT: lmem_s0 = wtrans_tot_q[0] ? (KT >> 1) : (NT >> 1);
       T_SCALE:  lmem_s0 = NT * BPE_FP16;
       T_ZP:     lmem_s0 = NT * BPE_INT16;
       T_OUTPUT: lmem_s0 = NT * BPE_FP16;  //lmem에는 padding 포함
@@ -440,6 +450,7 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
     M_tot_d      = M_tot_q;
     N_tot_d      = N_tot_q;
     K_tot_d      = K_tot_q;
+    wtrans_tot_d = wtrans_tot_q;
 
     // dma_if 기본값
     dma_if.req_valid = 1'b0;
@@ -678,6 +689,7 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
       M_tot_q      <= 32'd0;
       N_tot_q      <= 32'd0;
       K_tot_q      <= 32'd0;
+      wtrans_tot_q <= 32'd0;
     end else begin
       state_q      <= state_d;
       wr_idx_q     <= wr_idx_d;
@@ -690,6 +702,7 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
       M_tot_q      <= M_tot_d;
       N_tot_q      <= N_tot_d;
       K_tot_q      <= K_tot_d;
+      wtrans_tot_q <= wtrans_tot_d;
 
       if (state_q == S_IDLE && gemm_dma_ctrl_if.start) begin
         cmd_q        <= gemm_dma_ctrl_if.cmd;
@@ -697,6 +710,7 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
         M_tot_q      <= gemm_dma_ctrl_if.M_tot;
         N_tot_q      <= gemm_dma_ctrl_if.N_tot;
         K_tot_q      <= gemm_dma_ctrl_if.K_tot;
+        wtrans_tot_q <= gemm_dma_ctrl_if.wtrans_tot;
       end
     end
   end

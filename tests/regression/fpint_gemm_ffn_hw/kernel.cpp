@@ -152,6 +152,8 @@ static void program_job_regs(uint32_t eid, const kernel_arg_t* arg) {
   job_write_reg32(eid, REG_N, arg->N);
   job_write_reg32(eid, REG_K, arg->K);
   job_write_reg32(eid, REG_QBLK, arg->QBLK);
+  job_write_reg32(eid, REG_WTRANS, arg->WTRANS);
+  job_write_reg32(eid, REG_QDIR, arg->QDIR);
 
   job_write_reg32(eid, REG_CONTROL, 1u);
 }

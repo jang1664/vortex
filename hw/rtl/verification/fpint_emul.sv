@@ -99,8 +99,8 @@ package fpint_emul;
           // Construct hidden_man
           hidden_man = {hidden_bit, mantissa};
           
-          // Add extra bits as zeros
-          hidden_man_ext = {hidden_man, {extra_bitwidth{1'b0}}};
+          // Add extra bits as zeros (Verilator-safe form)
+          hidden_man_ext = hidden_man << extra_bitwidth;
           
           // Calculate shift amount
           exp = (exp == 0) ? 1 : exp; // denormal case

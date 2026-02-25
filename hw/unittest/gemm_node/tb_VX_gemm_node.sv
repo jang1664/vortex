@@ -5,7 +5,7 @@
 module tb_VX_gemm_node
   import VX_gpu_pkg::*;
   import fpint_emul::*;
-  import cf_math_pkg::*;
+  import cf_math_util_pkg::*;
 ();
 
   // =========================================================================
@@ -92,7 +92,7 @@ module tb_VX_gemm_node
 
   // job_frontend params (must match DUT instantiation)
   localparam int JOB_NUM_ENTRIES = 4;
-  localparam int JOB_NUM_REGS32  = 33;
+  localparam int JOB_NUM_REGS32  = 35;
 
   // =========================================================================
   // Clock/Reset
@@ -240,7 +240,7 @@ module tb_VX_gemm_node
   );
 
   // =========================================================================
-  // Job regs indices (your map, 0..32)
+  // Job regs indices (0..34)
   // =========================================================================
   localparam int REG_CONTROL             =  0;
   localparam int REG_INPUT_BASE_LO       =  1;
@@ -277,6 +277,8 @@ module tb_VX_gemm_node
   localparam int REG_N                   = 30;
   localparam int REG_K                   = 31;
   localparam int REG_QBLK                = 32;
+  localparam int REG_WTRANS              = 33;
+  localparam int REG_QDIR                = 34;
 
   // =========================================================================
   // Memory fabric (closer to real Vortex path)
@@ -707,6 +709,7 @@ module tb_VX_gemm_node
     input int test_n,
     input int test_k,
     input int test_qblk,
+    input int test_wtrans = 0,
     input int input_random_type=0,
     input int weight_random_type=0,
     input int scale_random_type=0,
@@ -721,6 +724,8 @@ module tb_VX_gemm_node
       $fatal(1, "Invalid K=%0d (max=%0d)", test_k, fpint_emul::MAX_K);
     if (test_qblk <= 0)
       $fatal(1, "Invalid QBLK=%0d", test_qblk);
+    if ((test_wtrans != 0) && (test_wtrans != 1))
+      $fatal(1, "Invalid WTRANS=%0d", test_wtrans);
     if (test_qblk != fpint_emul::QBLOCK) begin
       $fatal(1, "QBLK mismatch: test_qblk=%0d, ref_QBLOCK=%0d", test_qblk, fpint_emul::QBLOCK);
     end
@@ -738,7 +743,7 @@ module tb_VX_gemm_node
         end else begin
           v = shortreal'(1.0);
         end
-        input_mat[m*test_k + k] = cf_math_pkg::fp32_val_to_fp16_bit(v);
+        input_mat[m*test_k + k] = cf_math_util_pkg::fp32_val_to_fp16_bit(v);
         ref_input[m*test_k + k] = input_mat[m*test_k + k];
       end
     end
@@ -781,7 +786,7 @@ module tb_VX_gemm_node
         z = 2;
       end
 
-      scale_vec[n] = cf_math_pkg::fp32_val_to_fp16_bit(v);
+      scale_vec[n] = cf_math_util_pkg::fp32_val_to_fp16_bit(v);
       zp_vec[n]    = z[15:0];
     end
 
@@ -803,7 +808,7 @@ module tb_VX_gemm_node
         test_m, test_n, test_k,
         ref_output,
         `QDIR_COL,
-        fpint_emul::WNOTRANS,
+        test_wtrans,
         1'b0
     );
 
@@ -849,6 +854,7 @@ module tb_VX_gemm_node
     input int test_n,
     input int test_k,
     input int test_qblk,
+    input int test_wtrans,
     input logic [63:0] gmem_in_base,
     input logic [63:0] gmem_w_base,
     input logic [63:0] gmem_sc_base,
@@ -874,12 +880,23 @@ module tb_VX_gemm_node
     for (int i = 0; i < buf_in.size(); i++)
       if ((gmem_in_base + i) < DMEM_SIZE) dmem[gmem_in_base + i] = buf_in[i];
 
-    buf_w = new[test_k * ((test_n+1)/2)];
-    for (int k = 0; k < test_k; k++) begin
-      for (int n = 0; n < test_n; n += 2) begin
-        w0 = weight_mat[k*test_n + n];
-        w1 = (n+1 < test_n) ? weight_mat[k*test_n + (n+1)] : 4'h0;
-        buf_w[idx++] = pack_int4_pair(w0, w1);
+    if (test_wtrans == 0) begin
+      buf_w = new[test_k * ((test_n+1)/2)];
+      for (int k = 0; k < test_k; k++) begin
+        for (int n = 0; n < test_n; n += 2) begin
+          w0 = weight_mat[k*test_n + n];
+          w1 = (n+1 < test_n) ? weight_mat[k*test_n + (n+1)] : 4'h0;
+          buf_w[idx++] = pack_int4_pair(w0, w1);
+        end
+      end
+    end else begin
+      buf_w = new[test_n * ((test_k+1)/2)];
+      for (int n = 0; n < test_n; n++) begin
+        for (int k = 0; k < test_k; k += 2) begin
+          w0 = weight_mat[k*test_n + n];
+          w1 = (k+1 < test_k) ? weight_mat[(k+1)*test_n + n] : 4'h0;
+          buf_w[idx++] = pack_int4_pair(w0, w1);
+        end
       end
     end
     for (int i = 0; i < buf_w.size(); i++)
@@ -919,6 +936,7 @@ module tb_VX_gemm_node
     input int test_n,
     input int test_k,
     input int test_qblk,
+    input int test_wtrans,
     input logic [63:0] gmem_in_base,
     input logic [63:0] gmem_w_base,
     input logic [63:0] gmem_out_base,
@@ -957,6 +975,8 @@ module tb_VX_gemm_node
     job_write_reg32(eid, REG_N, test_n);
     job_write_reg32(eid, REG_K, test_k);
     job_write_reg32(eid, REG_QBLK, test_qblk);
+    job_write_reg32(eid, REG_WTRANS, test_wtrans);
+    job_write_reg32(eid, REG_QDIR, `QDIR_COL);
 
     // CONTROL.valid(bit0)=1 (start)
     job_write_reg32(eid, REG_CONTROL, 32'h1);
@@ -995,8 +1015,8 @@ module tb_VX_gemm_node
       input shortreal tolerance = 0.01
   );
       shortreal actual_fp, expected_fp, diff;
-      actual_fp = cf_math_pkg::fp16_bit_to_fp16_val(actual);
-      expected_fp = cf_math_pkg::fp16_bit_to_fp16_val(expected);
+      actual_fp = cf_math_util_pkg::fp16_bit_to_fp16_val(actual);
+      expected_fp = cf_math_util_pkg::fp16_bit_to_fp16_val(expected);
 
       if (expected_fp == 0.0) begin
           diff = (actual_fp >= 0) ? actual_fp : -actual_fp;
@@ -1031,8 +1051,8 @@ module tb_VX_gemm_node
           mismatch_count++;
           $display("[%0t] OUTPUT_MISMATCH m=%0d n=%0d addr=0x%0h got=0x%04h exp=0x%04h got_f=%f exp_f=%f",
                     $time, m, n, addr, got, exp,
-                    cf_math_pkg::fp16_bit_to_fp16_val(got),
-                    cf_math_pkg::fp16_bit_to_fp16_val(exp));
+                    cf_math_util_pkg::fp16_bit_to_fp16_val(got),
+                    cf_math_util_pkg::fp16_bit_to_fp16_val(exp));
           printed++;
         end
       end
@@ -1093,6 +1113,7 @@ module tb_VX_gemm_node
     input int test_n,
     input int test_k,
     input int test_qblk,
+    input int test_wtrans,
     input logic [63:0] gmem_in_base,
     input logic [63:0] gmem_w_base,
     input logic [63:0] gmem_sc_base,
@@ -1124,10 +1145,15 @@ module tb_VX_gemm_node
       if (test_qblk <= 0) begin
         $fatal(1, "[%0t] Invalid QBLK=%0d", $time, test_qblk);
       end
+      if ((test_wtrans != 0) && (test_wtrans != 1)) begin
+        $fatal(1, "[%0t] Invalid WTRANS=%0d", $time, test_wtrans);
+      end
       groups_total = (longint'(test_k) + longint'(test_qblk) - 1) / longint'(test_qblk);
 
       gmem_in_bytes  = longint'(test_m) * longint'(test_k) * 2;
-      gmem_w_bytes   = longint'(test_k) * longint'((test_n + 1) / 2);
+      gmem_w_bytes   = (test_wtrans == 0)
+                     ? (longint'(test_k) * longint'((test_n + 1) / 2))
+                     : (longint'(test_n) * longint'((test_k + 1) / 2));
       gmem_sc_bytes  = groups_total * longint'(test_n) * 2;
       gmem_zp_bytes  = groups_total * longint'(test_n) * 2;
       gmem_out_bytes = longint'(test_m) * longint'(test_n) * 2;
@@ -1216,6 +1242,7 @@ module tb_VX_gemm_node
     input int test_n,
     input int test_k,
     input int test_qblk,
+    input int test_wtrans,
     input logic [63:0] gmem_in_base,
     input logic [63:0] gmem_w_base,
     input logic [63:0] gmem_sc_base,
@@ -1234,8 +1261,8 @@ module tb_VX_gemm_node
     int unsigned job_eid_local;
     int unsigned job_gen_local;
     begin
-      $display("\n[%0t] === RUN GEMM TEST: %s (M=%0d, N=%0d, K=%0d) ===",
-               $time, case_name, test_m, test_n, test_k);
+      $display("\n[%0t] === RUN GEMM TEST: %s (M=%0d, N=%0d, K=%0d, WTRANS=%0d) ===",
+               $time, case_name, test_m, test_n, test_k, test_wtrans);
 
       apply_reset();
       init_memories();
@@ -1245,6 +1272,7 @@ module tb_VX_gemm_node
         .test_n(test_n),
         .test_k(test_k),
         .test_qblk(test_qblk),
+        .test_wtrans(test_wtrans),
         .input_random_type(1),
         .weight_random_type(1),
         .scale_random_type(1),
@@ -1252,20 +1280,20 @@ module tb_VX_gemm_node
       );
 
       check_tensor_layout(
-        test_m, test_n, test_k, test_qblk,
+        test_m, test_n, test_k, test_qblk, test_wtrans,
         gmem_in_base, gmem_w_base, gmem_sc_base, gmem_zp_base, gmem_out_base,
         lmem_ibuf0_base, lmem_ibuf1_base, lmem_wbuf0_base, lmem_wbuf1_base,
         lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base, lmem_obuf_base
       );
       write_gmem_inputs_weights_sc_zp(
-        test_m, test_n, test_k, test_qblk,
+        test_m, test_n, test_k, test_qblk, test_wtrans,
         gmem_in_base, gmem_w_base, gmem_sc_base, gmem_zp_base
       );
 
       job_alloc(job_eid_local, job_gen_local);
       program_job_regs(
         job_eid_local,
-        test_m, test_n, test_k, test_qblk,
+        test_m, test_n, test_k, test_qblk, test_wtrans,
         gmem_in_base, gmem_w_base, gmem_out_base, gmem_sc_base, gmem_zp_base,
         lmem_ibuf0_base, lmem_ibuf1_base, lmem_wbuf0_base, lmem_wbuf1_base,
         lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base, lmem_obuf_base
@@ -1282,6 +1310,7 @@ module tb_VX_gemm_node
     input int test_n,
     input int test_k,
     input int test_qblk,
+    input int test_wtrans,
     output logic [63:0] gmem_in_base,
     output logic [63:0] gmem_w_base,
     output logic [63:0] gmem_sc_base,
@@ -1306,10 +1335,15 @@ module tb_VX_gemm_node
       if (test_qblk <= 0) begin
         $fatal(1, "[%0t] Invalid QBLK=%0d", $time, test_qblk);
       end
+      if ((test_wtrans != 0) && (test_wtrans != 1)) begin
+        $fatal(1, "[%0t] Invalid WTRANS=%0d", $time, test_wtrans);
+      end
       groups_total = (longint'(test_k) + longint'(test_qblk) - 1) / longint'(test_qblk);
 
       gmem_in_bytes  = longint'(test_m) * longint'(test_k) * 2;
-      gmem_w_bytes   = longint'(test_k) * longint'((test_n + 1) / 2);
+      gmem_w_bytes   = (test_wtrans == 0)
+                     ? (longint'(test_k) * longint'((test_n + 1) / 2))
+                     : (longint'(test_n) * longint'((test_k + 1) / 2));
       gmem_sc_bytes  = groups_total * longint'(test_n) * 2;
       gmem_zp_bytes  = groups_total * longint'(test_n) * 2;
       gmem_out_bytes = longint'(test_m) * longint'(test_n) * 2;
@@ -1358,7 +1392,7 @@ module tb_VX_gemm_node
   // =========================================================================
   initial begin
     string case_name;
-    int test_m, test_n, test_k, test_qblk;
+    int test_m, test_n, test_k, test_qblk, test_wtrans;
     logic [63:0] gmem_in_base, gmem_w_base, gmem_sc_base, gmem_zp_base, gmem_out_base;
     logic [63:0] lmem_ibuf0_base, lmem_ibuf1_base, lmem_wbuf0_base, lmem_wbuf1_base;
     logic [63:0] lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base, lmem_obuf_base;
@@ -1374,21 +1408,24 @@ module tb_VX_gemm_node
       test_k = DEFAULT_K_TEST;
     if (!$value$plusargs("QBLK=%d", test_qblk))
       test_qblk = DEFAULT_QBLK;
+    if (!$value$plusargs("WTRANS=%d", test_wtrans))
+      test_wtrans = 0;
     if (!$value$plusargs("TEST=%s", case_name))
-      $sformat(case_name, "M%0dN%0dK%0d", test_m, test_n, test_k);
+      $sformat(case_name, "M%0dN%0dK%0d_WT%0d", test_m, test_n, test_k, test_wtrans);
 
     compute_auto_layout(
-      test_m, test_n, test_k, test_qblk,
+      test_m, test_n, test_k, test_qblk, test_wtrans,
       gmem_in_base, gmem_w_base, gmem_sc_base, gmem_zp_base, gmem_out_base,
       lmem_ibuf0_base, lmem_ibuf1_base, lmem_wbuf0_base, lmem_wbuf1_base,
       lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base, lmem_obuf_base
     );
 
-    $display("[%0t] TEST_CFG | {name=%s, M=%0d, N=%0d, K=%0d, QBLK=%0d}", $time, case_name, test_m, test_n, test_k, test_qblk);
+    $display("[%0t] TEST_CFG | {name=%s, M=%0d, N=%0d, K=%0d, QBLK=%0d, WTRANS=%0d}",
+             $time, case_name, test_m, test_n, test_k, test_qblk, test_wtrans);
 
     run_gemm_test(
       case_name,
-      test_m, test_n, test_k, test_qblk,
+      test_m, test_n, test_k, test_qblk, test_wtrans,
       gmem_in_base, gmem_w_base, gmem_sc_base, gmem_zp_base, gmem_out_base,
       lmem_ibuf0_base, lmem_ibuf1_base, lmem_wbuf0_base, lmem_wbuf1_base,
       lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base, lmem_obuf_base
