@@ -296,7 +296,11 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     assign quant_param_dma_ctrl_if.dst_strides[1] = 0;
     assign quant_param_dma_ctrl_if.dst_strides[2] = 0;
 
-    assign quant_param_dma_ctrl_if.bounds[0]       = MXU_KT/gemm_ctrl_if.qblk_tot;  //MXU_KT % qblk == 0 이라고 가정
+    // Quant-group rows needed per MXU-K chunk: ceil(MXU_KT / qblk).
+    // For qblk > MXU_KT this must still be 1 (not 0).
+    assign quant_param_dma_ctrl_if.bounds[0]       = (gemm_ctrl_if.qblk_tot != 0)
+                                                   ? ((MXU_KT + gemm_ctrl_if.qblk_tot - 1) / gemm_ctrl_if.qblk_tot)
+                                                   : 32'd1;
     assign quant_param_dma_ctrl_if.bounds[1]       = 32'd1;
     assign quant_param_dma_ctrl_if.bounds[2]       = 32'd1;
 

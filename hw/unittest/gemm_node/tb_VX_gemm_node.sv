@@ -726,9 +726,6 @@ module tb_VX_gemm_node
       $fatal(1, "Invalid QBLK=%0d", test_qblk);
     if ((test_wtrans != 0) && (test_wtrans != 1))
       $fatal(1, "Invalid WTRANS=%0d", test_wtrans);
-    if (test_qblk != fpint_emul::QBLOCK) begin
-      $fatal(1, "QBLK mismatch: test_qblk=%0d, ref_QBLOCK=%0d", test_qblk, fpint_emul::QBLOCK);
-    end
     groups_total = (test_k + test_qblk - 1) / test_qblk;
 
     for (int m = 0; m < test_m; m++) begin

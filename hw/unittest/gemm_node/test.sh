@@ -1,64 +1,83 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
 
-make clean
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+cd "$SCRIPT_DIR"
 
-############################################################
-#                                                          #
-#                  single L1 tile case                     #
-#                                                          #
-############################################################
-# ------------------------------------------------------
-# scale M
-# ------------------------------------------------------
-# make sim M=4 K=32 N=32 TEST=M4K32N32
-# make sim M=8 K=32 N=32 TEST=M8K32N32
-# make sim M=32 K=32 N=32 TEST=M32K32N32
+SIM_EXEC=${SIM_EXEC:-vlt}
+DO_CLEAN=${DO_CLEAN:-0}
+CCACHE_DIR=${CCACHE_DIR:-/tmp/.ccache}
+mkdir -p logs "$CCACHE_DIR"
 
-# ------------------------------------------------------
-# scale N
-# ------------------------------------------------------
-# make sim M=2 K=32 N=64 TEST=M2K32N64
-# make sim M=2 K=32 N=128 TEST=M2K32N128
+if [[ "$DO_CLEAN" == "1" ]]; then
+  make clean
+fi
 
-# ------------------------------------------------------
-# scale K
-# ------------------------------------------------------
-# make sim M=2 K=64 N=32 TEST=M2K64N32
-# make sim M=2 K=128 N=32 TEST=M2K64N32
+# Larger smoke set (row-major assumptions, QDIR=COL)
+SHAPES=(
+  "2,64,128"
+  "8,32,128"
+  "4,128,128"
+  "2,64,256"
+)
 
+QBLKS=(32 64 128)
+WTRANS_LIST=(0 1)
 
-############################################################
-#                                                          #
-#                  Multiple L1 tile case                   #
-#                                                          #
-############################################################
-# ------------------------------------------------------
-# scale M
-# ------------------------------------------------------
-# make sim M=256 K=32 N=32 TEST=M256K32N32
-# make sim M=512 K=32 N=32 TEST=M512K32N32
+ts=$(date +%Y%m%d_%H%M%S)
+SUMMARY="logs/regress_qblk_wtrans_${ts}.summary"
+: > "$SUMMARY"
 
-# ------------------------------------------------------
-# scale N
-# ------------------------------------------------------
-# make sim M=2 K=32 N=256 TEST=M2K32N256
-# make sim M=2 K=32 N=512 TEST=M2K32N512
+pass=0
+fail=0
 
-# ------------------------------------------------------
-# scale K
-# ------------------------------------------------------
-# make sim M=2 K=256 N=32 TEST=M2K256N32
-# make sim M=2 K=512 N=32 TEST=M2K512N32
+run_case() {
+  local m="$1" n="$2" k="$3" qblk="$4" wtrans="$5"
+  local name="WT${wtrans}_Q${qblk}_M${m}_N${n}_K${k}"
+  local sim_log="logs/sim_${name}.log"
+  local mk_log="logs/make_${name}.log"
+  local start
+  local end
+  local dur
 
-# ------------------------------------------------------
-# scale multi dim (2 dims)
-# ------------------------------------------------------
-# make sim M=2 K=256 N=256 TEST=M2K256N256
-# make sim M=256 K=256 N=32 TEST=M256K256N32
-# make sim M=256 K=32 N=256 TEST=M25632N256
+  echo "[RUN] $name" | tee -a "$SUMMARY"
+  start=$(date +%s)
 
-# ------------------------------------------------------
-# scale all dim
-# ------------------------------------------------------
-# make sim M=256 K=256 N=256 TEST=M256K256N256
-make sim M=256 K=512 N=512 TEST=M256K512N512
+  if CCACHE_DIR="$CCACHE_DIR" make SIM_EXEC="$SIM_EXEC" run \
+      TEST="$name" M="$m" N="$n" K="$k" QBLK="$qblk" \
+      EXTRA_SIM_ARGS="+WTRANS=${wtrans}" >"$mk_log" 2>&1; then
+    :
+  else
+    :
+  fi
+
+  end=$(date +%s)
+  dur=$((end - start))
+
+  if [[ -f "$sim_log" ]] && rg -q "OUTPUT CHECK PASSED" "$sim_log"; then
+    echo "[PASS] $name (${dur}s)" | tee -a "$SUMMARY"
+    pass=$((pass + 1))
+  else
+    echo "[FAIL] $name (${dur}s)" | tee -a "$SUMMARY"
+    if [[ -f "$sim_log" ]]; then
+      rg -n "TEST_CFG|Fatal:|ERROR|OUTPUT CHECK" "$sim_log" | tail -n 20 | tee -a "$SUMMARY"
+    else
+      tail -n 40 "$mk_log" | tee -a "$SUMMARY"
+    fi
+    fail=$((fail + 1))
+  fi
+
+  echo "" >> "$SUMMARY"
+}
+
+for shape in "${SHAPES[@]}"; do
+  IFS=',' read -r m n k <<< "$shape"
+  for qblk in "${QBLKS[@]}"; do
+    for wtrans in "${WTRANS_LIST[@]}"; do
+      run_case "$m" "$n" "$k" "$qblk" "$wtrans"
+    done
+  done
+done
+
+echo "[RESULT] pass=${pass} fail=${fail}" | tee -a "$SUMMARY"
+echo "Summary: $SUMMARY"
