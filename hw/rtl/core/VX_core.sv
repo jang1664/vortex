@@ -96,14 +96,6 @@ module VX_core import VX_gpu_pkg::*; #(
         .TAG_WIDTH (LMEM_TAG_WIDTH)
     ) gemm_data_if();
 
-    VX_config_reg_if #(
-      .NUM(16),
-      .DW(64)
-    ) dma_cfg_regs_if ();
-    VX_config_reg_if #(
-      .NUM(16),
-      .DW(64)
-    ) gemm_cfg_regs_if ();
 
 `ifdef PERF_ENABLE
     lmem_perf_t lmem_perf;
