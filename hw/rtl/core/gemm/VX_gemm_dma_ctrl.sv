@@ -160,8 +160,10 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
   gemm_unified_cmd_t cmd_q;
   wire logic [7:0] cmd_op = cmd_q.instr[7:0];
 
-  logic [31:0] M_tot_q, N_tot_q, K_tot_q;
-  logic [31:0] M_tot_d, N_tot_d, K_tot_d;
+  logic [31:0] M_orig_q, N_orig_q, K_orig_q;
+  logic [31:0] M_orig_d, N_orig_d, K_orig_d;
+  logic [31:0] M_target_q, N_target_q, K_target_q;
+  logic [31:0] M_target_d, N_target_d, K_target_d;
   // ============================================================
   // DMA 주소 매핑
   // ============================================================
@@ -228,14 +230,14 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
   logic [31:0] mt_eff, nt_eff, kt_eff;
 
   always_comb begin
-    if (M_tot_q == 0) mt_eff = MT;
-    else             mt_eff = min_u32(MT, sat_sub_u32(M_tot_q, mt_idx * MT));
+    if (M_target_q == 0) mt_eff = MT;
+    else                mt_eff = min_u32(MT, sat_sub_u32(M_target_q, mt_idx * MT));
 
-    if (N_tot_q == 0) nt_eff = NT;
-    else             nt_eff = min_u32(NT, sat_sub_u32(N_tot_q, nt_idx * NT));
+    if (N_target_q == 0) nt_eff = NT;
+    else                nt_eff = min_u32(NT, sat_sub_u32(N_target_q, nt_idx * NT));
 
-    if (K_tot_q == 0) kt_eff = KT;
-    else             kt_eff = min_u32(KT, sat_sub_u32(K_tot_q, kt_idx * KT));
+    if (K_target_q == 0) kt_eff = KT;
+    else                kt_eff = min_u32(KT, sat_sub_u32(K_target_q, kt_idx * KT));
 
     if (mt_eff == 0) mt_eff = 32'd1;
     if (nt_eff == 0) nt_eff = 32'd1;
@@ -264,7 +266,7 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
         seg_size = KT * BPE_FP16;
         padding  = (KT - kt_eff) * BPE_FP16;
 
-        dram_s0  = K_tot_q * BPE_FP16; // 다음 row(M 방향)로 넘어가는 stride
+        dram_s0  = K_orig_q * BPE_FP16; // 다음 row(M 방향)로 넘어가는 stride
         dram_b0  = mt_eff;             // row 개수
       end
 
@@ -273,7 +275,7 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
         seg_size = (NT >> 1);
         padding  = ((NT - nt_eff) >> 1);
 
-        dram_s0  = (N_tot_q >> 1);
+        dram_s0  = (N_orig_q >> 1);
         dram_b0  = kt_eff;
       end
 
@@ -282,7 +284,7 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
         seg_size = NT * BPE_FP16;
         padding  = (NT - nt_eff) * BPE_FP16;
 
-        dram_s0  = N_tot_q * BPE_FP16;
+        dram_s0  = N_orig_q * BPE_FP16;
         dram_b0  = groups_eff;
       end
 
@@ -291,13 +293,13 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
         seg_size = NT * BPE_INT16;
         padding  = (NT - nt_eff) * BPE_INT16;
 
-        dram_s0  = N_tot_q * BPE_INT16;
+        dram_s0  = N_orig_q * BPE_INT16;
         dram_b0  = groups_eff;
       end
 
       // OUTPUT: fp16, shape [M, N]
       T_OUTPUT: begin
-        dram_s0  = N_tot_q * BPE_FP16;
+        dram_s0  = N_orig_q * BPE_FP16;
         dram_b0  = mt_eff;
 
         if (cmd_op == OP_DMA_LD) begin
@@ -437,9 +439,12 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
     alloc_owner_d = alloc_owner_q;
     alloc_gen_d   = alloc_gen_q;
 
-    M_tot_d      = M_tot_q;
-    N_tot_d      = N_tot_q;
-    K_tot_d      = K_tot_q;
+    M_orig_d      = M_orig_q;
+    N_orig_d      = N_orig_q;
+    K_orig_d      = K_orig_q;
+    M_target_d    = M_target_q;
+    N_target_d    = N_target_q;
+    K_target_d    = K_target_q;
 
     // dma_if 기본값
     dma_if.req_valid = 1'b0;
@@ -675,9 +680,12 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
       alloc_owner_q <= '0;
       alloc_gen_q   <= '0;
 
-      M_tot_q      <= 32'd0;
-      N_tot_q      <= 32'd0;
-      K_tot_q      <= 32'd0;
+      M_orig_q      <= 32'd0;
+      N_orig_q      <= 32'd0;
+      K_orig_q      <= 32'd0;
+      M_target_q    <= 32'd0;
+      N_target_q    <= 32'd0;
+      K_target_q    <= 32'd0;
     end else begin
       state_q      <= state_d;
       wr_idx_q     <= wr_idx_d;
@@ -687,16 +695,22 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
       alloc_owner_q <= alloc_owner_d;
       alloc_gen_q   <= alloc_gen_d;
 
-      M_tot_q      <= M_tot_d;
-      N_tot_q      <= N_tot_d;
-      K_tot_q      <= K_tot_d;
+      M_orig_q      <= M_orig_d;
+      N_orig_q      <= N_orig_d;
+      K_orig_q      <= K_orig_d;
+      M_target_q    <= M_target_d;
+      N_target_q    <= N_target_d;
+      K_target_q    <= K_target_d;
 
       if (state_q == S_IDLE && gemm_dma_ctrl_if.start) begin
         cmd_q        <= gemm_dma_ctrl_if.cmd;
 
-        M_tot_q      <= gemm_dma_ctrl_if.M_tot;
-        N_tot_q      <= gemm_dma_ctrl_if.N_tot;
-        K_tot_q      <= gemm_dma_ctrl_if.K_tot;
+        M_orig_q      <= gemm_dma_ctrl_if.M_orig;
+        N_orig_q      <= gemm_dma_ctrl_if.N_orig;
+        K_orig_q      <= gemm_dma_ctrl_if.K_orig;
+        M_target_q    <= gemm_dma_ctrl_if.M_target;
+        N_target_q    <= gemm_dma_ctrl_if.N_target;
+        K_target_q    <= gemm_dma_ctrl_if.K_target;
       end
     end
   end
