@@ -285,26 +285,46 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     end
 
     // Quant parameter load DMA command mapping.
+    wire sz_qdir = gemm_ctrl_if.quant_param_read_ctrl.cmd.flags[2]; // 0=QCOL, 1=QROW
+
+    // QROW helper: NG_tile = ceil(NT/qblk), NG_mxu = ceil(MXU_NT/qblk)
+    wire [31:0] sz_ng_tile = (gemm_ctrl_if.qblk_tot != 0)
+                           ? ((NT + gemm_ctrl_if.qblk_tot - 1) / gemm_ctrl_if.qblk_tot)
+                           : 32'd1;
+    wire [31:0] sz_ng_mxu  = (gemm_ctrl_if.qblk_tot != 0)
+                           ? ((MXU_NT + gemm_ctrl_if.qblk_tot - 1) / gemm_ctrl_if.qblk_tot)
+                           : 32'd1;
+
     assign quant_param_dma_ctrl_if.start         = gemm_ctrl_if.quant_param_read_ctrl.start && !sz_is_notify;
     assign quant_param_dma_ctrl_if.src_base_addr = gemm_ctrl_if.quant_param_read_ctrl.cmd.rs2_data;
-    assign quant_param_dma_ctrl_if.src_strides[0] = NT*16/8;  //scale: fp16, zp: int16
+    // QCOL: LMEM [groups_tile, NT], row stride = NT*2
+    // QROW: LMEM [KT, NG_tile],    row stride = NG_tile*2
+    assign quant_param_dma_ctrl_if.src_strides[0] = sz_qdir ? (sz_ng_tile * 16 / 8)
+                                                            : (NT * 16 / 8);
     assign quant_param_dma_ctrl_if.src_strides[1] = 0;
     assign quant_param_dma_ctrl_if.src_strides[2] = 0;
 
     assign quant_param_dma_ctrl_if.dst_base_addr  = gemm_ctrl_if.quant_param_read_ctrl.cmd.rs1_data;
-    assign quant_param_dma_ctrl_if.dst_strides[0] = 0;
+    // QCOL: full-width write (seg_size==DATA_SIZE), no stride needed
+    // QROW: sub-beat writes, advance by seg_size each K iteration
+    assign quant_param_dma_ctrl_if.dst_strides[0] = sz_qdir ? (sz_ng_mxu * 16 / 8) : 0;
     assign quant_param_dma_ctrl_if.dst_strides[1] = 0;
     assign quant_param_dma_ctrl_if.dst_strides[2] = 0;
 
-    // Quant-group rows needed per MXU-K chunk: ceil(MXU_KT / qblk).
-    // For qblk > MXU_KT this must still be 1 (not 0).
-    assign quant_param_dma_ctrl_if.bounds[0]       = (gemm_ctrl_if.qblk_tot != 0)
-                                                   ? ((MXU_KT + gemm_ctrl_if.qblk_tot - 1) / gemm_ctrl_if.qblk_tot)
-                                                   : 32'd1;
+    // QCOL: bounds0 = ceil(MXU_KT/qblk) groups per MXU-K chunk
+    // QROW: bounds0 = MXU_KT rows
+    assign quant_param_dma_ctrl_if.bounds[0]       = sz_qdir
+                                                   ? MXU_KT
+                                                   : ((gemm_ctrl_if.qblk_tot != 0)
+                                                      ? ((MXU_KT + gemm_ctrl_if.qblk_tot - 1) / gemm_ctrl_if.qblk_tot)
+                                                      : 32'd1);
     assign quant_param_dma_ctrl_if.bounds[1]       = 32'd1;
     assign quant_param_dma_ctrl_if.bounds[2]       = 32'd1;
 
-    assign quant_param_dma_ctrl_if.seg_size        = MXU_NT*16/8;
+    // QCOL: seg_size = MXU_NT * 2 (one group row, all N columns)
+    // QROW: seg_size = NG_mxu * 2 (one K row, NG_mxu group columns)
+    assign quant_param_dma_ctrl_if.seg_size        = sz_qdir ? (sz_ng_mxu * 16 / 8)
+                                                             : (MXU_NT * 16 / 8);
     assign gemm_ctrl_if.quant_param_read_flag.idle = sz_notify_pending_r ? 1'b0 : quant_param_dma_ctrl_if.idle;
     assign gemm_ctrl_if.quant_param_read_flag.done = sz_notify_pending_r ? sz_notify_fire : quant_param_dma_ctrl_if.done;
 
@@ -375,6 +395,8 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     assign gemm_dma_ctrl_if.N_tot      = gemm_ctrl_if.N_tot;
     assign gemm_dma_ctrl_if.K_tot      = gemm_ctrl_if.K_tot;
     assign gemm_dma_ctrl_if.wtrans_tot = gemm_ctrl_if.wtrans_tot;
+    assign gemm_dma_ctrl_if.qblk_tot  = gemm_ctrl_if.qblk_tot;
+    assign gemm_dma_ctrl_if.qdir_tot  = gemm_ctrl_if.qdir_tot;
     assign gemm_dma_ctrl_if.entry_id   = gemm_ctrl_if.entry_id;
 
     assign gemm_ctrl_if.dma_flag.idle = gemm_dma_ctrl_if.idle;

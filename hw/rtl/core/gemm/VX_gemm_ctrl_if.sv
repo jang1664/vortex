@@ -49,6 +49,7 @@ interface VX_gemm_ctrl_if import VX_gpu_pkg::*; #(
   logic [31:0] K_tot;
   logic [31:0] qblk_tot;
   logic [31:0] wtrans_tot;
+  logic [31:0] qdir_tot;
 
   logic [31:0] entry_id;     // mmio entry id
 
@@ -63,7 +64,7 @@ interface VX_gemm_ctrl_if import VX_gpu_pkg::*; #(
     input  quant_param_read_flag,
     output dma_ctrl,
     input  dma_flag,
-    output M_tot, N_tot, K_tot, qblk_tot, wtrans_tot,
+    output M_tot, N_tot, K_tot, qblk_tot, wtrans_tot, qdir_tot,
     output entry_id
   );
 
@@ -78,7 +79,7 @@ interface VX_gemm_ctrl_if import VX_gpu_pkg::*; #(
     output quant_param_read_flag,
     input  dma_ctrl,
     output dma_flag,
-    input  M_tot, N_tot, K_tot, qblk_tot, wtrans_tot,
+    input  M_tot, N_tot, K_tot, qblk_tot, wtrans_tot, qdir_tot,
     input  entry_id
   );
 

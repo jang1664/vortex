@@ -627,25 +627,33 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
         end
     end
 
-    // ----- Write to scale registers -----
+    // ----- Write to scale registers (byte-enable masked) -----
+    wire [`GEMM_SCALE_ZERO_DATA_SIZE-1:0] sz_req_byteen = sz_lmem_bus_if.req_data.byteen;
+
     always_ff @(posedge clk, posedge reset) begin
         if (reset) begin
             scale_regs <= '0;
         end else begin
             if (scale_reg_wr_en) begin
-                scale_regs[scale_reg_idx] <= sz_req_data;
+                for (int i = 0; i < `MAX(`MXU_ROW, `MXU_COL); i++) begin
+                    if (sz_req_byteen[i * (`SCALE_WIDTH/8) +: (`SCALE_WIDTH/8)] != '0) begin
+                        scale_regs[scale_reg_idx][i] <= sz_req_data[i * `SCALE_WIDTH +: `SCALE_WIDTH];
+                    end
+                end
             end
         end
     end
 
-    // ----- Write to zero point registers -----
+    // ----- Write to zero point registers (byte-enable masked) -----
     always_ff @(posedge clk, posedge reset) begin
         if (reset) begin
             zero_regs <= '0;
         end else begin
             if (zp_reg_wr_en) begin
-                for(int i=0; i<`MAX(`MXU_ROW, `MXU_COL); i++) begin
-                  zero_regs[zp_reg_idx][i] <= -1*signed'(sz_req_data[i*`ZP_WIDTH +: `ZP_WIDTH]);
+                for (int i = 0; i < `MAX(`MXU_ROW, `MXU_COL); i++) begin
+                    if (sz_req_byteen[i * (`ZP_WIDTH/8) +: (`ZP_WIDTH/8)] != '0) begin
+                        zero_regs[zp_reg_idx][i] <= -1*signed'(sz_req_data[i*`ZP_WIDTH +: `ZP_WIDTH]);
+                    end
                 end
             end
         end
