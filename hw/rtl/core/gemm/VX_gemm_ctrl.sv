@@ -235,9 +235,12 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
     assign gemm_cqueue_out[4].flag.idle = gemm_ctrl_if.dma_flag.idle;
     assign gemm_cqueue_out[4].flag.done = '0;
 
-    assign gemm_ctrl_if.M_tot = gemm_fsm_if.M_tot;
-    assign gemm_ctrl_if.N_tot = gemm_fsm_if.N_tot;
-    assign gemm_ctrl_if.K_tot = gemm_fsm_if.K_tot;
-    assign gemm_ctrl_if.qblk_tot = gemm_fsm_if.qblk_tot;
+    assign gemm_ctrl_if.M_orig = gemm_fsm_if.M_orig;
+    assign gemm_ctrl_if.N_orig = gemm_fsm_if.N_orig;
+    assign gemm_ctrl_if.K_orig = gemm_fsm_if.K_orig;
+    assign gemm_ctrl_if.qblk_orig = gemm_fsm_if.qblk_orig;
+    assign gemm_ctrl_if.M_target = gemm_fsm_if.M_target;
+    assign gemm_ctrl_if.N_target = gemm_fsm_if.N_target;
+    assign gemm_ctrl_if.K_target = gemm_fsm_if.K_target;
     assign gemm_ctrl_if.entry_id = gemm_fsm_if.entry_id;
 endmodule
