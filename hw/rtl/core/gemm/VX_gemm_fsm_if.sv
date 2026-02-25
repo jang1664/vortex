@@ -16,10 +16,14 @@ interface VX_gemm_fsm_if import VX_gpu_pkg::*; ();
     logic done;
   } flag_t;
 
-  logic [31:0] M_tot;
-  logic [31:0] N_tot;
-  logic [31:0] K_tot;
-  logic [31:0] qblk_tot;
+  logic [31:0] M_orig;
+  logic [31:0] N_orig;
+  logic [31:0] K_orig;
+  logic [31:0] qblk_orig;
+
+  logic [31:0] M_target;
+  logic [31:0] N_target;
+  logic [31:0] K_target;
 
   // 이 DMA 커맨드 스트림의 소유자(워프 ID)
   logic [31:0] entry_id;     // = warp_id
@@ -29,20 +33,26 @@ interface VX_gemm_fsm_if import VX_gpu_pkg::*; ();
 
   modport master (
     output ctrl,
-    output M_tot,
-    output N_tot,
-    output K_tot,
-    output qblk_tot,
+    output M_orig,
+    output N_orig,
+    output K_orig,
+    output qblk_orig,
+    output M_target,
+    output N_target,
+    output K_target,
     output entry_id,
     input  flag
   );
   
   modport slave (
     input  ctrl,
-    input  M_tot,
-    input  N_tot,
-    input  K_tot,
-    input  qblk_tot,
+    input  M_orig,
+    input  N_orig,
+    input  K_orig,
+    input  qblk_orig,
+    input  M_target,
+    input  N_target,
+    input  K_target,
     input  entry_id,
     output flag
   );
