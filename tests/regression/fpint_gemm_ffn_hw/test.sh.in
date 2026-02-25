@@ -13,12 +13,26 @@ LOG_DIR="${LOG_DIR:-run_logs_fpint_gemm_ffn_hw}"
 
 mkdir -p "${LOG_DIR}"
 
-# Add/remove cases here
-declare -a CASE_ARGS=(
-  "-m 2 -n 32 -k 32 -q 32"
-  "-m 4 -n 64 -k 64 -q 32"
-  "-m 8 -n 64 -k 128 -q 32"
+# Base shape set
+declare -a SHAPES=(
+  "-m 2 -n 32 -k 32"
+  "-m 4 -n 64 -k 64"
+  "-m 8 -n 64 -k 128"
 )
+
+# Sweep axes
+declare -a QBLKS=(32 64 128)
+declare -a WTRANS_LIST=(0 1)
+
+# Expanded cases: shape x qblk x wtrans
+declare -a CASE_ARGS=()
+for shape in "${SHAPES[@]}"; do
+  for qblk in "${QBLKS[@]}"; do
+    for wtrans in "${WTRANS_LIST[@]}"; do
+      CASE_ARGS+=("${shape} -q ${qblk} -t ${wtrans}")
+    done
+  done
+done
 
 total="${#CASE_ARGS[@]}"
 failed=0
