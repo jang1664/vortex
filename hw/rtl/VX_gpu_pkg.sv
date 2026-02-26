@@ -1056,7 +1056,7 @@ package VX_gpu_pkg;
     function automatic logic is_pow2_u32(input logic [31:0] v);
         return (v != 0) && ((v & (v - 1)) == 0);
     endfunction
-
+    /*
     function automatic logic [5:0] log2_pow2_u32(input logic [31:0] v);
         logic [5:0] s;
         begin
@@ -1067,7 +1067,7 @@ package VX_gpu_pkg;
             return s;
         end
     endfunction
-
+    
     function automatic logic [31:0] div_pow2_u32(input logic [31:0] value, input logic [31:0] div_pow2);
         return value >> log2_pow2_u32(div_pow2);
     endfunction
@@ -1082,7 +1082,14 @@ package VX_gpu_pkg;
             return (value + div_pow2 - 1) >> sh;
         end
     endfunction
+    */
+    function automatic logic [31:0] div_log2(input logic [31:0] a, input logic [5:0] b);
+        return a >> b;
+    endfunction
 
+    function automatic logic [31:0] ceil_div_log2(input logic [31:0] a, input logic [5:0] b);
+        return (a + ((32'd1 << b) - 1)) >> b;
+    endfunction
 endpackage
 
 `IGNORE_UNUSED_END

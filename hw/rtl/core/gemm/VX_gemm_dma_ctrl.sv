@@ -159,7 +159,7 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
     return (a > b) ? (a - b) : 32'd0;
   endfunction
 
-  // is_pow2_u32, log2_pow2_u32, ceil_div_pow2_u32 are in VX_gpu_pkg
+  // div_log2, ceil_div_log2 and is_pow2_u32 are in VX_gpu_pkg
 
   // ============================================================
   // 래치
@@ -260,9 +260,9 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
 
   always_comb begin
     if (qblk_orig_q != 0) begin
-      ng_tot  = ceil_div_pow2_u32(N_orig_q, qblk_orig_q);
-      ng_tile = ceil_div_pow2_u32(NT, qblk_orig_q);
-      ng_eff  = ceil_div_pow2_u32(nt_eff, qblk_orig_q);
+      ng_tot  = ceil_div_log2(N_orig_q, qblk_orig_q);
+      ng_tile = ceil_div_log2(NT, qblk_orig_q);
+      ng_eff  = ceil_div_log2(nt_eff, qblk_orig_q);
     end else begin
       ng_tot  = 32'd1;
       ng_tile = 32'd1;
@@ -764,10 +764,11 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
       qdir_tot_q    <= qdir_tot_d;
 
       if (state_q == S_IDLE && gemm_dma_ctrl_if.start) begin
+        /*
         if ((gemm_dma_ctrl_if.qblk_orig != 0) && !is_pow2_u32(gemm_dma_ctrl_if.qblk_orig)) begin
           $fatal(1, "%s: qblk_orig(%0d) must be power-of-two for shift-based division",
                  INSTANCE_ID, gemm_dma_ctrl_if.qblk_orig);
-        end
+        end*/
 
         cmd_q        <= gemm_dma_ctrl_if.cmd;
 

@@ -103,6 +103,12 @@ static inline void split_u64(uint64_t value, uint32_t& lo, uint32_t& hi) {
   hi = uint32_t(value >> 32);
 }
 
+static inline uint32_t log2_pow2_u32(uint32_t x) {
+  uint32_t s = 0;
+  while ((1u << s) != x) ++s;
+  return s;
+}
+
 // ----------------------------------------------------------------------------
 // 32-bit MMIO layout helpers
 //
@@ -196,7 +202,7 @@ static void program_job_regs(uint32_t eid, const kernel_arg_t* arg, const tb_par
   job_write_reg32(eid, REG_M_ORIG, arg->M);
   job_write_reg32(eid, REG_N_ORIG, arg->N);
   job_write_reg32(eid, REG_K_ORIG, arg->K);
-  job_write_reg32(eid, REG_QBLK_ORIG, arg->QBLK);
+  job_write_reg32(eid, REG_QBLK_ORIG, log2_pow2_u32(arg->QBLK));
 
   // Partition sizes/offsets for this job
   job_write_reg32(eid, REG_M_TARGET, part.target_M);

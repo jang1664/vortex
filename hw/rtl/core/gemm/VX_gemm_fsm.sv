@@ -318,13 +318,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
   // --------------------------------------------------------------------------
   // Small helpers
   // --------------------------------------------------------------------------
-  function automatic u32_t div_pow2(input u32_t a, input u32_t b);
-    return u32_t'(div_pow2_u32(a, b));
-  endfunction
 
-  function automatic u32_t ceil_div(input u32_t a, input u32_t b);
-    return u32_t'(ceil_div_pow2_u32(a, b));
-  endfunction
 
   // buf generation (kept for DMA flags only)
   function automatic u32_t buf_gen(input u32_t t);
@@ -477,15 +471,15 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     begin
       if (!j.qdir) begin
         // QCOL: scale layout [KG, N], KG = ceil(K/qblk)
-        row0 = div_pow2((kt * KT), j.orig_qblk);
+        row0 = div_log2((kt * KT), j.orig_qblk);
         col0 = j.n_start + nt * NT;
         scale_tile_addr = j.scale_base + ((64'(row0) * 64'(j.orig_N) + 64'(col0)) * FP16_BYTES);
       end else begin
         // QROW: scale layout [K, NG], NG = ceil(N/qblk)
         u32_t ng_tot;
         row0   = kt * KT;
-        ng_tot = ceil_div(j.orig_N, j.orig_qblk);
-        col0   = div_pow2((j.n_start + nt * NT), j.orig_qblk);
+        ng_tot = ceil_div_log2(j.orig_N, j.orig_qblk);
+        col0   = div_log2((j.n_start + nt * NT), j.orig_qblk);
         scale_tile_addr = j.scale_base + ((64'(row0) * 64'(ng_tot) + 64'(col0)) * FP16_BYTES);
       end
     end
@@ -496,15 +490,15 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     begin
       if (!j.qdir) begin
         // QCOL: zp layout [KG, N]
-        row0 = div_pow2((kt * KT), j.orig_qblk);
+        row0 = div_log2((kt * KT), j.orig_qblk);
         col0 = j.n_start + nt * NT;
         zp_tile_addr = j.zp_base + ((64'(row0) * 64'(j.orig_N) + 64'(col0)) * INT16_BYTES);
       end else begin
         // QROW: zp layout [K, NG]
         u32_t ng_tot;
         row0   = kt * KT;
-        ng_tot = ceil_div(j.orig_N, j.orig_qblk);
-        col0   = div_pow2((j.n_start + nt * NT), j.orig_qblk);
+        ng_tot = ceil_div_log2(j.orig_N, j.orig_qblk);
+        col0   = div_log2((j.n_start + nt * NT), j.orig_qblk);
         zp_tile_addr = j.zp_base + ((64'(row0) * 64'(ng_tot) + 64'(col0)) * INT16_BYTES);
       end
     end
@@ -634,9 +628,9 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
         mm_tile_sz_t nt_rem;
         mm_tile_sz_t kt_rem;
 
-        mt_dim_n = mm_dim_t'(ceil_div(job_d.target_M, MT));
-        nt_dim_n = mm_dim_t'(ceil_div(job_d.target_N, NT));
-        kt_dim_n = mm_dim_t'(ceil_div(job_d.target_K, KT));
+        mt_dim_n = mm_dim_t'(ceil_div_log2(job_d.target_M, `CLOG2(MT)));
+        nt_dim_n = mm_dim_t'(ceil_div_log2(job_d.target_N, `CLOG2(NT)));
+        kt_dim_n = mm_dim_t'(ceil_div_log2(job_d.target_K, `CLOG2(KT)));
 
         if (!mm_is_pow2(mt_dim_n) || !mm_is_pow2(kt_dim_n)) begin
           $fatal(1, "%s: mt_dim(%0d) and kt_dim(%0d) must be power-of-two", INSTANCE_ID, mt_dim_n, kt_dim_n);
@@ -740,10 +734,10 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     mm_bytecnt_t out_bytes_acc;
     mm_bytecnt_t out_bytes_fp16;
 
-    groups_tile = mm_group_t'(ceil_div(KT, job_q.orig_qblk));
-    groups_mxu  = mm_group_t'(ceil_div(MXU_KT, job_q.orig_qblk));
-    ng_tile     = mm_group_t'(ceil_div(NT, job_q.orig_qblk));
-    ng_mxu      = mm_group_t'(ceil_div(MXU_NT, job_q.orig_qblk));
+    groups_tile = mm_group_t'(ceil_div_log2(KT, job_q.orig_qblk));
+    groups_mxu  = mm_group_t'(ceil_div_log2(MXU_KT, job_q.orig_qblk));
+    ng_tile     = mm_group_t'(ceil_div_log2(NT, job_q.orig_qblk));
+    ng_mxu      = mm_group_t'(ceil_div_log2(MXU_NT, job_q.orig_qblk));
 
     // regs next
     state_d = state_q;
@@ -782,8 +776,8 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     in_ready_target_cur = 4*gen_cur + 4;
 
     // MXU dims within current DMA tile
-    nt_mxu_dim = mm_mxu_dim_t'(ceil_div(u32_t'(nt_eff_cur), MXU_NT));
-    kt_mxu_dim = mm_mxu_dim_t'(div_pow2(u32_t'(kt_eff_cur), MXU_KT)); // assume divisible
+    nt_mxu_dim = mm_mxu_dim_t'(ceil_div_log2(u32_t'(nt_eff_cur), `CLOG2(MXU_NT)));
+    kt_mxu_dim = mm_mxu_dim_t'(div_log2(u32_t'(kt_eff_cur), `CLOG2(MXU_KT))); // assume divisible
 
     mxu_linear = mm_mxu_linear_t'((mm_mxu_linear_t'(kt_mxu_q) * mm_mxu_linear_t'(nt_mxu_dim))
                              +  mm_mxu_linear_t'(nt_mxu_q));
@@ -831,7 +825,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
                                       : mm_tile_sz_t'(NT >> 1);
 
     // group row offset inside this KT tile
-    g0 = mm_group_t'(div_pow2((kt_mxu_q * MXU_KT), job_q.orig_qblk));
+    g0 = mm_group_t'(div_log2((kt_mxu_q * MXU_KT), job_q.orig_qblk));
 
     // Input slice (mt_eff_cur rows, MXU_KT cols)
     lmem_in_mxu = ibuf_base(buf_cur) + 64'(k0_in) * FP16_BYTES;
@@ -850,7 +844,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     end else begin
       // QROW: LMEM [KT, NG_tile], row-stride = NG_tile*BPE
       mm_tile_sz_t ng0_cur;
-      ng0_cur = mm_tile_sz_t'(div_pow2((nt_mxu_q * MXU_NT), job_q.orig_qblk));
+      ng0_cur = mm_tile_sz_t'(div_log2((nt_mxu_q * MXU_NT), job_q.orig_qblk));
       lmem_sc_mxu = scbuf_base(buf_cur) + 64'(kt_mxu_q * MXU_KT) * 64'(ng_tile * FP16_BYTES) + 64'(ng0_cur) * FP16_BYTES;
       lmem_zp_mxu = zpbuf_base(buf_cur) + 64'(kt_mxu_q * MXU_KT) * 64'(ng_tile * INT16_BYTES) + 64'(ng0_cur) * INT16_BYTES;
     end
@@ -862,7 +856,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
                                 : mm_tile_sz_t'(n_kt_mxu * MXU_KT);
     w_col0_bytes_n = job_q.wtrans ? mm_tile_sz_t'((n_kt_mxu * MXU_KT) >> 1)
                                   : mm_tile_sz_t'((n_nt_mxu * MXU_NT) >> 1);
-    g0_n         = mm_group_t'(div_pow2((n_kt_mxu * MXU_KT), job_q.orig_qblk));
+    g0_n         = mm_group_t'(div_log2((n_kt_mxu * MXU_KT), job_q.orig_qblk));
 
     lmem_w_mxu_next = wbuf_base(buf_cur) + 64'(w_row0_n) * 64'(w_row_stride_bytes) + 64'(w_col0_bytes_n);
 
@@ -871,7 +865,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
       lmem_zp_mxu_next = zpbuf_base(buf_cur) + 64'(g0_n) * 64'(NT * INT16_BYTES) + 64'(n0_out_n) * INT16_BYTES;
     end else begin
       mm_tile_sz_t ng0_n;
-      ng0_n = mm_tile_sz_t'(div_pow2((n_nt_mxu * MXU_NT), job_q.orig_qblk));
+      ng0_n = mm_tile_sz_t'(div_log2((n_nt_mxu * MXU_NT), job_q.orig_qblk));
       lmem_sc_mxu_next = scbuf_base(buf_cur) + 64'(n_kt_mxu * MXU_KT) * 64'(ng_tile * FP16_BYTES) + 64'(ng0_n) * FP16_BYTES;
       lmem_zp_mxu_next = zpbuf_base(buf_cur) + 64'(n_kt_mxu * MXU_KT) * 64'(ng_tile * INT16_BYTES) + 64'(ng0_n) * INT16_BYTES;
     end
@@ -965,7 +959,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
           out_cmd_d   = make_dma_ld(job_q.lmem_wbuf0_base,
                                    weight_tile_addr(job_q, nt0, kt0),
-                                   (kt_eff0 * div_pow2(nt_eff0, INT4_BYTES)),
+                                   (kt_eff0 * div_log2(nt_eff0, `CLOG2(INT4_BYTES))),
                                    1'b0, 1);
           out_cmd_d.rs1 = kt0;
           out_cmd_d.rs2 = nt0;
@@ -984,7 +978,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           tile_eff_sizes(nt0, mt0, kt0, mt_eff0, nt_eff0, kt_eff0);
 
           if (!job_q.qdir) begin
-            groups_eff = ceil_div(kt_eff0, job_q.orig_qblk);
+            groups_eff = ceil_div_log2(kt_eff0, job_q.orig_qblk);
             out_cmd_d = make_dma_ld(job_q.lmem_scbuf0_base,
                                     scale_tile_addr(job_q, nt0, kt0),
                                     (groups_eff*nt_eff0*FP16_BYTES),
@@ -992,7 +986,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
             out_cmd_d.groups_eff = groups_eff;
           end else begin
             mm_group_t ng_eff;
-            ng_eff = ceil_div(nt_eff0, job_q.orig_qblk);
+            ng_eff = ceil_div_log2(nt_eff0, job_q.orig_qblk);
             out_cmd_d = make_dma_ld(job_q.lmem_scbuf0_base,
                                     scale_tile_addr(job_q, nt0, kt0),
                                     (kt_eff0*ng_eff*FP16_BYTES),
@@ -1015,10 +1009,10 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           tile_decode(0, mt_dim_lg2_q, kt_dim_lg2_q, nt0, mt0, kt0);
           tile_eff_sizes(nt0, mt0, kt0, mt_eff0, nt_eff0, kt_eff0);
 
-          groups_full = ceil_div(KT, job_q.orig_qblk);
+          groups_full = ceil_div_log2(KT, job_q.orig_qblk);
 
           if (!job_q.qdir) begin
-            groups_eff = ceil_div(kt_eff0, job_q.orig_qblk);
+            groups_eff = ceil_div_log2(kt_eff0, job_q.orig_qblk);
             out_cmd_d = make_dma_ld(job_q.lmem_zpbuf0_base,
                                     zp_tile_addr(job_q, nt0, kt0),
                                     (groups_eff*nt_eff0*INT16_BYTES),
@@ -1026,7 +1020,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
             out_cmd_d.groups_eff = groups_eff;
           end else begin
             mm_group_t ng_eff;
-            ng_eff = ceil_div(nt_eff0, job_q.orig_qblk);
+            ng_eff = ceil_div_log2(nt_eff0, job_q.orig_qblk);
             out_cmd_d = make_dma_ld(job_q.lmem_zpbuf0_base,
                                     zp_tile_addr(job_q, nt0, kt0),
                                     (kt_eff0*ng_eff*INT16_BYTES),
@@ -1085,7 +1079,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
           out_cmd_d   = make_dma_ld(job_q.lmem_wbuf1_base,
                                    weight_tile_addr(job_q, nt1, kt1),
-                                   (kt_eff1 * div_pow2(nt_eff1, INT4_BYTES)),
+                                   (kt_eff1 * div_log2(nt_eff1, `CLOG2(INT4_BYTES))),
                                    1'b1, 1);
           out_cmd_d.rs1 = kt1;
           out_cmd_d.rs2 = nt1;
@@ -1104,7 +1098,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           tile_eff_sizes(nt1, mt1, kt1, mt_eff1, nt_eff1, kt_eff1);
 
           if (!job_q.qdir) begin
-            groups_eff = ceil_div(kt_eff1, job_q.orig_qblk);
+            groups_eff = ceil_div_log2(kt_eff1, job_q.orig_qblk);
             out_cmd_d = make_dma_ld(job_q.lmem_scbuf1_base,
                                     scale_tile_addr(job_q, nt1, kt1),
                                     (groups_eff*nt_eff1*FP16_BYTES),
@@ -1112,7 +1106,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
             out_cmd_d.groups_eff = groups_eff;
           end else begin
             mm_group_t ng_eff;
-            ng_eff = ceil_div(nt_eff1, job_q.orig_qblk);
+            ng_eff = ceil_div_log2(nt_eff1, job_q.orig_qblk);
             out_cmd_d = make_dma_ld(job_q.lmem_scbuf1_base,
                                     scale_tile_addr(job_q, nt1, kt1),
                                     (kt_eff1*ng_eff*FP16_BYTES),
@@ -1135,10 +1129,10 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           tile_decode(1, mt_dim_lg2_q, kt_dim_lg2_q, nt1, mt1, kt1);
           tile_eff_sizes(nt1, mt1, kt1, mt_eff1, nt_eff1, kt_eff1);
 
-          groups_full = ceil_div(KT, job_q.orig_qblk);
+          groups_full = ceil_div_log2(KT, job_q.orig_qblk);
 
           if (!job_q.qdir) begin
-            groups_eff = ceil_div(kt_eff1, job_q.orig_qblk);
+            groups_eff = ceil_div_log2(kt_eff1, job_q.orig_qblk);
             out_cmd_d = make_dma_ld(job_q.lmem_zpbuf1_base,
                                     zp_tile_addr(job_q, nt1, kt1),
                                     (groups_eff*nt_eff1*INT16_BYTES),
@@ -1146,7 +1140,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
             out_cmd_d.groups_eff = groups_eff;
           end else begin
             mm_group_t ng_eff;
-            ng_eff = ceil_div(nt_eff1, job_q.orig_qblk);
+            ng_eff = ceil_div_log2(nt_eff1, job_q.orig_qblk);
             out_cmd_d = make_dma_ld(job_q.lmem_zpbuf1_base,
                                     zp_tile_addr(job_q, nt1, kt1),
                                     (kt_eff1*ng_eff*INT16_BYTES),
@@ -1595,7 +1589,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
           out_cmd_d   = make_dma_ld(wbuf_base(buf_pre),
                                     weight_tile_addr(job_q, ntp, ktp),
-                                    (kt_effp * div_pow2(nt_effp, INT4_BYTES)),
+                                    (kt_effp * div_log2(nt_effp, `CLOG2(INT4_BYTES))),
                                     buf_pre, gen_pre);
           out_cmd_d.rs1 = ktp;
           out_cmd_d.rs2 = ntp;
@@ -1619,7 +1613,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           gen_pre = buf_gen(tile_pre_d);
 
           if (!job_q.qdir) begin
-            groups_eff = ceil_div(kt_effp, job_q.orig_qblk);
+            groups_eff = ceil_div_log2(kt_effp, job_q.orig_qblk);
             out_cmd_d = make_dma_ld(scbuf_base(buf_pre),
                                     scale_tile_addr(job_q, ntp, ktp),
                                     (groups_eff*nt_effp*FP16_BYTES),
@@ -1627,7 +1621,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
             out_cmd_d.groups_eff = groups_eff;
           end else begin
             mm_group_t ng_eff;
-            ng_eff = ceil_div(nt_effp, job_q.orig_qblk);
+            ng_eff = ceil_div_log2(nt_effp, job_q.orig_qblk);
             out_cmd_d = make_dma_ld(scbuf_base(buf_pre),
                                     scale_tile_addr(job_q, ntp, ktp),
                                     (kt_effp*ng_eff*FP16_BYTES),
@@ -1654,10 +1648,10 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           buf_pre = tile_pre_d[0];
           gen_pre = buf_gen(tile_pre_d);
 
-          groups_full = ceil_div(KT, job_q.orig_qblk);
+          groups_full = ceil_div_log2(KT, job_q.orig_qblk);
 
           if (!job_q.qdir) begin
-            groups_eff = ceil_div(kt_effp, job_q.orig_qblk);
+            groups_eff = ceil_div_log2(kt_effp, job_q.orig_qblk);
             out_cmd_d = make_dma_ld(zpbuf_base(buf_pre),
                                     zp_tile_addr(job_q, ntp, ktp),
                                     (groups_eff*nt_effp*INT16_BYTES),
@@ -1665,7 +1659,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
             out_cmd_d.groups_eff = groups_eff;
           end else begin
             mm_group_t ng_eff;
-            ng_eff = ceil_div(nt_effp, job_q.orig_qblk);
+            ng_eff = ceil_div_log2(nt_effp, job_q.orig_qblk);
             out_cmd_d = make_dma_ld(zpbuf_base(buf_pre),
                                     zp_tile_addr(job_q, ntp, ktp),
                                     (kt_effp*ng_eff*INT16_BYTES),
