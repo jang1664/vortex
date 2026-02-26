@@ -32,29 +32,33 @@ mkdir -p "${LOG_DIR}"
 #  "-m 256 -n 256 -k 256 -q 32"
 #)
 
-declare -a SHAPES=(
-  "-m 2 -n 32 -k 32"
-  "-m 4 -n 64 -k 64"
-  "-m 8 -n 64 -k 128"
-  "-m 256 -n 256 -k 256"
-)
+# If command-line arguments are provided, use them as test cases directly.
+# Example: bash test.sh "-m 2 -n 32 -k 32 -q 32 -t 1 -d 0" "-m 4 -n 64 -k 64 -q 32 -t 0 -d 1"
+if [[ $# -gt 0 ]]; then
+  declare -a CASE_ARGS=("$@")
+else
+  # Default sweep: shape x qblk x wtrans x qdir
+  declare -a SHAPES=(
+    "-m 2 -n 32 -k 32"
+    "-m 4 -n 64 -k 64"
+    "-m 8 -n 64 -k 128"
+    "-m 256 -n 256 -k 256"
+  )
+  declare -a QBLKS=(32 64 128)
+  declare -a WTRANS_LIST=(0 1)
+  declare -a QDIR_LIST=(0 1)
 
-# Sweep axes
-declare -a QBLKS=(32 64 128)
-declare -a WTRANS_LIST=(0 1)
-declare -a QDIR_LIST=(0 1)
-
-# Expanded cases: shape x qblk x wtrans x qdir
-declare -a CASE_ARGS=()
-for shape in "${SHAPES[@]}"; do
-  for qblk in "${QBLKS[@]}"; do
-    for wtrans in "${WTRANS_LIST[@]}"; do
-      for qdir in "${QDIR_LIST[@]}"; do
-        CASE_ARGS+=("${shape} -q ${qblk} -t ${wtrans} -d ${qdir}")
+  declare -a CASE_ARGS=()
+  for shape in "${SHAPES[@]}"; do
+    for qblk in "${QBLKS[@]}"; do
+      for wtrans in "${WTRANS_LIST[@]}"; do
+        for qdir in "${QDIR_LIST[@]}"; do
+          CASE_ARGS+=("${shape} -q ${qblk} -t ${wtrans} -d ${qdir}")
+        done
       done
     done
   done
-done
+fi
 
 total="${#CASE_ARGS[@]}"
 failed=0
