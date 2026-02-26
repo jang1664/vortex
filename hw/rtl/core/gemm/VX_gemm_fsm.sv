@@ -218,8 +218,8 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
   localparam int MM_DIM_LG2_W  = `CLOG2(`MM_MAX_LOG_DIM + 1);
   localparam int RID_W         = 4;
 
-  localparam int MXU_NT_DIM_MAX = ((1 << `MM_MAX_LOG_TILEDIM) + MXU_NT - 1) / MXU_NT;
-  localparam int MXU_KT_DIM_MAX = ((1 << `MM_MAX_LOG_TILEDIM) + MXU_KT - 1) / MXU_KT;
+  localparam int MXU_NT_DIM_MAX = ((1 << `MM_MAX_LOG_TILEDIM) + MXU_NT - 1) >> `CLOG2(MXU_NT);
+  localparam int MXU_KT_DIM_MAX = ((1 << `MM_MAX_LOG_TILEDIM) + MXU_KT - 1) >> `CLOG2(MXU_KT);
   localparam int MXU_DIM_W      = `CLOG2(`MAX(MXU_NT_DIM_MAX, MXU_KT_DIM_MAX) + 1);
   localparam int MXU_LINEAR_W   = `CLOG2((MXU_NT_DIM_MAX * MXU_KT_DIM_MAX) + 1);
   localparam int GROUP_W        = TILE_SZ_W;
@@ -326,8 +326,8 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
   localparam int RID_T1  = 5, RID_W1  = 6, RID_SZ1 = 7, RID_G1 = 8;
   // Global sync sequence stride per DMA tile.
   // Edge tiles may use fewer MXU steps, but fixed stride preserves monotonicity.
-  localparam int MXU_N_PER_TILE_MAX = (NT + MXU_NT - 1) / MXU_NT;
-  localparam int MXU_K_PER_TILE_MAX = (KT + MXU_KT - 1) / MXU_KT;
+  localparam int MXU_N_PER_TILE_MAX = (NT + MXU_NT - 1) >> `CLOG2(MXU_NT);
+  localparam int MXU_K_PER_TILE_MAX = (KT + MXU_KT - 1) >> `CLOG2(MXU_KT);
   localparam int MXU_PER_TILE_MAX   = MXU_N_PER_TILE_MAX * MXU_K_PER_TILE_MAX;
 
   function automatic rid_t rid_tile   (input logic buf_sel);  return rid_t'(buf_sel ? RID_T1  : RID_T0);  endfunction
@@ -365,6 +365,27 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
   function automatic u32_t ceil_div(input u32_t a, input u32_t b);
     return (a + b - 1) >> lg2_pow2(dim_t'(b));
+  endfunction
+
+  function automatic u32_t u32_div_shift(input u32_t num, input u32_t den);
+    u32_t quot;
+    u32_t rem;
+    begin
+      if (den == 0) begin
+        return 0;
+      end
+
+      quot = '0;
+      rem  = '0;
+      for (int i = $bits(u32_t)-1; i >= 0; --i) begin
+        rem = (rem << 1) | u32_t'((num >> i) & 1);
+        if (rem >= den) begin
+          rem     = rem - den;
+          quot[i] = 1'b1;
+        end
+      end
+      return quot;
+    end
   endfunction
 
   // buf generation (kept for DMA flags only)
@@ -562,8 +583,8 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
   endfunction
 
   // Scale/Zero register address map
-  localparam SCALE_REG_SIZE  = `MAX(`MXU_ROW, `MXU_COL) * `SCALE_WIDTH/8; // in bytes, 64bytes
-  localparam ZP_REG_SIZE     = `MAX(`MXU_ROW, `MXU_COL) * `ZP_WIDTH/8; // in bytes
+  localparam SCALE_REG_SIZE  = `MAX(`MXU_ROW, `MXU_COL) * (`SCALE_WIDTH >> 3); // in bytes, 64bytes
+  localparam ZP_REG_SIZE     = `MAX(`MXU_ROW, `MXU_COL) * (`ZP_WIDTH >> 3); // in bytes
   localparam SCALE_REG0_BASE = 0;
   localparam SCALE_REG1_BASE = SCALE_REG_SIZE;
   localparam ZP_REG0_BASE    = SCALE_REG_SIZE * 2;
@@ -1754,10 +1775,10 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     u32_t mt_pct;
     u32_t kt_pct;
     begin
-      tile_pct = (tile_total_i != 0) ? (((tile_i + 1) * 100) / tile_total_i) : 0;
-      nt_pct   = (nt_dim_q != 0) ? (((u32_t'(nt_i) + 1) * 100) / u32_t'(nt_dim_q)) : 0;
-      mt_pct   = (mt_dim_q != 0) ? (((u32_t'(mt_i) + 1) * 100) / u32_t'(mt_dim_q)) : 0;
-      kt_pct   = (kt_dim_q != 0) ? (((u32_t'(kt_i) + 1) * 100) / u32_t'(kt_dim_q)) : 0;
+      tile_pct = (tile_total_i != 0) ? u32_div_shift(((tile_i + 1) * 100), tile_total_i) : 0;
+      nt_pct   = (nt_dim_q != 0) ? u32_div_shift(((u32_t'(nt_i) + 1) * 100), u32_t'(nt_dim_q)) : 0;
+      mt_pct   = (mt_dim_q != 0) ? u32_div_shift(((u32_t'(mt_i) + 1) * 100), u32_t'(mt_dim_q)) : 0;
+      kt_pct   = (kt_dim_q != 0) ? u32_div_shift(((u32_t'(kt_i) + 1) * 100), u32_t'(kt_dim_q)) : 0;
 
       `TRACE(2, ("%m : [%0t] | GEMM_FSM_TILE_ADVANCE | {inst=%s, tile=%0d/%0d(%0d%%), loop_nt=%0d/%0d(%0d%%), loop_mt=%0d/%0d(%0d%%), loop_kt=%0d/%0d(%0d%%), has_next=%0d, next_tile=%0d}\n",
                 $time, INSTANCE_ID,

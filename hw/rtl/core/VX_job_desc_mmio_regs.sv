@@ -73,13 +73,16 @@ module VX_job_desc_mmio_regs import VX_gpu_pkg::*; #(
   //   [CFG_BASE_ADDR + 0 .. +DATA_SIZE-1] : global alloc register
   //   [CFG_BASE_ADDR + DATA_SIZE .. ]      : per-entry descriptor beats
   // ------------------------------------------------------------
-  localparam int WORDS_PER_BEAT    = (mmio_if.DATA_SIZE / 4);
-  localparam int NUM_BEATS         = (NUM_REGS32 + WORDS_PER_BEAT - 1) / WORDS_PER_BEAT;
+  localparam int DATA_SIZE_SHIFT   = `CLOG2(mmio_if.DATA_SIZE);
+  localparam int WORDS_PER_BEAT    = (mmio_if.DATA_SIZE >> 2);
+  localparam int WORDS_PER_BEAT_SHIFT = `CLOG2(WORDS_PER_BEAT);
+  localparam int NUM_BEATS         = (NUM_REGS32 + WORDS_PER_BEAT - 1) >> WORDS_PER_BEAT_SHIFT;
   localparam int ENTRY_STRIDE_B    = NUM_BEATS * mmio_if.DATA_SIZE;
   localparam int GLOBAL_ALLOC_B    = mmio_if.DATA_SIZE;
   localparam int ENTRY_BASE_OFF_B  = GLOBAL_ALLOC_B;
 
   initial begin
+    if ((mmio_if.DATA_SIZE & (mmio_if.DATA_SIZE - 1)) != 0) $fatal(1, "%s: mmio_if.DATA_SIZE must be power-of-two", INSTANCE_ID);
     if ((mmio_if.DATA_SIZE % 4) != 0) $fatal(1, "%s: mmio_if.DATA_SIZE must be multiple of 4", INSTANCE_ID);
     if (WORDS_PER_BEAT <= 0)          $fatal(1, "%s: WORDS_PER_BEAT invalid", INSTANCE_ID);
     if (ENTRYID_W < $clog2(NUM_ENTRIES)) $fatal(1, "%s: ENTRYID_W too small", INSTANCE_ID);
@@ -91,7 +94,7 @@ module VX_job_desc_mmio_regs import VX_gpu_pkg::*; #(
   // ------------------------------------------------------------
   // MMIO address decode
   // ------------------------------------------------------------
-  localparam int LSU_ADDR_SHIFT = `CLOG2(mmio_if.DATA_SIZE);
+  localparam int LSU_ADDR_SHIFT = DATA_SIZE_SHIFT;
 
   function automatic logic [63:0] addr_to_byte(input logic [mmio_if.ADDR_WIDTH-1:0] a);
     return (64'(a) << LSU_ADDR_SHIFT);
@@ -112,12 +115,18 @@ module VX_job_desc_mmio_regs import VX_gpu_pkg::*; #(
   endfunction
 
   function automatic logic [ENTRYID_W-1:0] off_to_entry(input logic [63:0] off);
-    logic [63:0] e;
     logic [63:0] x;
+    logic [ENTRYID_W-1:0] e;
     begin
       x = off - 64'(ENTRY_BASE_OFF_B);
-      e = x / 64'(ENTRY_STRIDE_B);
-      return e[ENTRYID_W-1:0];
+      e = '0;
+      for (int i = 0; i < NUM_ENTRIES; i++) begin
+        if (x < 64'((i + 1) * ENTRY_STRIDE_B)) begin
+          e = ENTRYID_W'(i);
+          break;
+        end
+      end
+      return e;
     end
   endfunction
 
@@ -126,8 +135,8 @@ module VX_job_desc_mmio_regs import VX_gpu_pkg::*; #(
     logic [63:0] entry_off;
     begin
       x = off - 64'(ENTRY_BASE_OFF_B);
-      entry_off = x % 64'(ENTRY_STRIDE_B);
-      return int'(entry_off / 64'(mmio_if.DATA_SIZE));
+      entry_off = x - 64'(off_to_entry(off)) * 64'(ENTRY_STRIDE_B);
+      return int'(entry_off >> DATA_SIZE_SHIFT);
     end
   endfunction
 
