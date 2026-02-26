@@ -823,7 +823,9 @@ module tb_VX_gemm_node
         ref_output,
         test_qdir ? `QDIR_ROW : `QDIR_COL,
         test_wtrans,
-        1'b0
+        1'b0,
+        '{default: '0},
+        test_qblk
     );
 
     $display("Test Inputs:");
