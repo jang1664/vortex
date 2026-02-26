@@ -1010,6 +1010,79 @@ package VX_gpu_pkg;
     //   return sel_block_width;
     // endfunction
 
+    // ----------------------------------------------------------------
+    // GEMM matrix dimension widths (derived from VX_config.vh)
+    // ----------------------------------------------------------------
+    localparam MM_DIM_W         = `MM_MAX_LOG_DIM + 1;
+    localparam MM_TILE_SZ_W     = `MM_MAX_LOG_TILEDIM + 1;
+    localparam MM_DIM_LG2_W     = `CLOG2(`MM_MAX_LOG_DIM + 1);
+    localparam MM_RID_W         = 4;
+
+    localparam MM_MXU_NT_DIM_MAX = ((1 << `MM_MAX_LOG_TILEDIM) + `GEMM_FSM_MXU_NT - 1) >> `CLOG2(`GEMM_FSM_MXU_NT);
+    localparam MM_MXU_KT_DIM_MAX = ((1 << `MM_MAX_LOG_TILEDIM) + `GEMM_FSM_MXU_KT - 1) >> `CLOG2(`GEMM_FSM_MXU_KT);
+    localparam MM_MXU_DIM_W      = `CLOG2(`MAX(MM_MXU_NT_DIM_MAX, MM_MXU_KT_DIM_MAX) + 1);
+    localparam MM_MXU_LINEAR_W   = `CLOG2((MM_MXU_NT_DIM_MAX * MM_MXU_KT_DIM_MAX) + 1);
+    localparam MM_GROUP_W        = MM_TILE_SZ_W;
+    localparam MM_BYTE_CNT_W     = (2 * MM_TILE_SZ_W) + 2;
+
+    typedef logic [MM_DIM_W-1:0]        mm_dim_t;
+    typedef logic [MM_TILE_SZ_W-1:0]    mm_tile_sz_t;
+    typedef logic [MM_DIM_LG2_W-1:0]    mm_dim_lg2_t;
+    typedef logic [MM_RID_W-1:0]        mm_rid_t;
+    typedef logic [MM_MXU_DIM_W-1:0]    mm_mxu_dim_t;
+    typedef logic [MM_MXU_LINEAR_W-1:0] mm_mxu_linear_t;
+    typedef logic [MM_GROUP_W-1:0]      mm_group_t;
+    typedef logic [MM_BYTE_CNT_W-1:0]   mm_bytecnt_t;
+
+    function automatic logic mm_is_pow2(input mm_dim_t x);
+        return (x != 0) && ((x & (x - 1)) == 0);
+    endfunction
+
+    function automatic mm_dim_lg2_t mm_lg2_pow2(input mm_dim_t x);
+        mm_dim_lg2_t s;
+        begin
+            s = '0;
+            for (int i = 0; i < $bits(x); i++) begin
+                if (x[i]) s = mm_dim_lg2_t'(i);
+            end
+            return s;
+        end
+    endfunction
+
+    // ----------------------------------------------------------------
+    // Power-of-2 division utilities (shift-based, no hardware divider)
+    // ----------------------------------------------------------------
+
+    function automatic logic is_pow2_u32(input logic [31:0] v);
+        return (v != 0) && ((v & (v - 1)) == 0);
+    endfunction
+
+    function automatic logic [5:0] log2_pow2_u32(input logic [31:0] v);
+        logic [5:0] s;
+        begin
+            s = 6'd0;
+            for (int i = 0; i < 32; ++i) begin
+                if (v[i]) s = i[5:0];
+            end
+            return s;
+        end
+    endfunction
+
+    function automatic logic [31:0] div_pow2_u32(input logic [31:0] value, input logic [31:0] div_pow2);
+        return value >> log2_pow2_u32(div_pow2);
+    endfunction
+
+    function automatic logic [31:0] ceil_div_pow2_u32(input logic [31:0] value, input logic [31:0] div_pow2);
+        logic [5:0] sh;
+        begin
+            if (div_pow2 == 0) begin
+                return 32'd1;
+            end
+            sh = log2_pow2_u32(div_pow2);
+            return (value + div_pow2 - 1) >> sh;
+        end
+    endfunction
+
 endpackage
 
 `IGNORE_UNUSED_END

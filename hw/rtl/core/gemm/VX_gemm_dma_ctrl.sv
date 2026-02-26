@@ -159,31 +159,7 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
     return (a > b) ? (a - b) : 32'd0;
   endfunction
 
-  function automatic logic is_pow2_u32(input logic [31:0] v);
-    return (v != 0) && ((v & (v - 1)) == 0);
-  endfunction
-
-  function automatic logic [5:0] log2_pow2_u32(input logic [31:0] v);
-    logic [5:0] s;
-    begin
-      s = 6'd0;
-      for (int i = 0; i < 32; ++i) begin
-        if (v[i]) s = i[5:0];
-      end
-      return s;
-    end
-  endfunction
-
-  function automatic logic [31:0] ceil_div_pow2_u32(input logic [31:0] value, input logic [31:0] div_pow2);
-    logic [5:0] sh;
-    begin
-      if (div_pow2 == 0) begin
-        return 32'd1;
-      end
-      sh = log2_pow2_u32(div_pow2);
-      return (value + div_pow2 - 1) >> sh;
-    end
-  endfunction
+  // is_pow2_u32, log2_pow2_u32, ceil_div_pow2_u32 are in VX_gpu_pkg
 
   // ============================================================
   // 래치

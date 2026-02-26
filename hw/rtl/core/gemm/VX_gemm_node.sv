@@ -288,12 +288,8 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     wire sz_qdir = gemm_ctrl_if.quant_param_read_ctrl.cmd.flags[2]; // 0=QCOL, 1=QROW
 
     // QROW helper: NG_tile = ceil(NT/qblk), NG_mxu = ceil(MXU_NT/qblk)
-    wire [31:0] sz_ng_tile = (gemm_ctrl_if.qblk_orig != 0)
-                           ? ((NT + gemm_ctrl_if.qblk_orig - 1) / gemm_ctrl_if.qblk_orig)
-                           : 32'd1;
-    wire [31:0] sz_ng_mxu  = (gemm_ctrl_if.qblk_orig != 0)
-                           ? ((MXU_NT + gemm_ctrl_if.qblk_orig - 1) / gemm_ctrl_if.qblk_orig)
-                           : 32'd1;
+    wire [31:0] sz_ng_tile = ceil_div_pow2_u32(NT, gemm_ctrl_if.qblk_orig);
+    wire [31:0] sz_ng_mxu  = ceil_div_pow2_u32(MXU_NT, gemm_ctrl_if.qblk_orig);
 
     assign quant_param_dma_ctrl_if.start         = gemm_ctrl_if.quant_param_read_ctrl.start && !sz_is_notify;
     assign quant_param_dma_ctrl_if.src_base_addr = gemm_ctrl_if.quant_param_read_ctrl.cmd.rs2_data;
@@ -315,9 +311,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     // QROW: bounds0 = MXU_KT rows
     assign quant_param_dma_ctrl_if.bounds[0]       = sz_qdir
                                                    ? MXU_KT
-                                                   : ((gemm_ctrl_if.qblk_orig != 0)
-                                                      ? ((MXU_KT + gemm_ctrl_if.qblk_orig - 1) / gemm_ctrl_if.qblk_orig)
-                                                      : 32'd1);
+                                                   : ceil_div_pow2_u32(MXU_KT, gemm_ctrl_if.qblk_orig);
     assign quant_param_dma_ctrl_if.bounds[1]       = 32'd1;
     assign quant_param_dma_ctrl_if.bounds[2]       = 32'd1;
 
