@@ -18,18 +18,22 @@ declare -a SHAPES=(
   "-m 2 -n 32 -k 32"
   "-m 4 -n 64 -k 64"
   "-m 8 -n 64 -k 128"
+  "-m 256 -n 256 -k 256"
 )
 
 # Sweep axes
 declare -a QBLKS=(32 64 128)
 declare -a WTRANS_LIST=(0 1)
+declare -a QDIR_LIST=(0 1)
 
-# Expanded cases: shape x qblk x wtrans
+# Expanded cases: shape x qblk x wtrans x qdir
 declare -a CASE_ARGS=()
 for shape in "${SHAPES[@]}"; do
   for qblk in "${QBLKS[@]}"; do
     for wtrans in "${WTRANS_LIST[@]}"; do
-      CASE_ARGS+=("${shape} -q ${qblk} -t ${wtrans}")
+      for qdir in "${QDIR_LIST[@]}"; do
+        CASE_ARGS+=("${shape} -q ${qblk} -t ${wtrans} -d ${qdir}")
+      done
     done
   done
 done
