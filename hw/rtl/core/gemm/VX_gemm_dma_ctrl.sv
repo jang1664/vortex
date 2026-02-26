@@ -160,10 +160,12 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
   gemm_unified_cmd_t cmd_q;
   wire logic [7:0] cmd_op = cmd_q.instr[7:0];
 
-  logic [31:0] M_orig_q, N_orig_q, K_orig_q;
-  logic [31:0] M_orig_d, N_orig_d, K_orig_d;
+  logic [31:0] M_orig_q, N_orig_q, K_orig_q, qblk_orig_q;
+  logic [31:0] M_orig_d, N_orig_d, K_orig_d, qblk_orig_d;
   logic [31:0] M_target_q, N_target_q, K_target_q;
   logic [31:0] M_target_d, N_target_d, K_target_d;
+  logic [31:0] wtrans_tot_q, qdir_tot_q;
+  logic [31:0] wtrans_tot_d, qdir_tot_d;
   // ============================================================
   // DMA 주소 매핑
   // ============================================================
@@ -219,7 +221,7 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
       T_WEIGHT: begin kt_idx = cmd_q.rs1; nt_idx = cmd_q.rs2; end
       T_OUTPUT: begin mt_idx = cmd_q.rs1; nt_idx = cmd_q.rs2; end
       T_SCALE,
-      T_ZP:     begin groups_eff = cmd_q.rs1; nt_idx = cmd_q.rs2; end
+      T_ZP:     begin groups_eff = cmd_q.groups_eff; nt_idx = cmd_q.rs2; end
       default: ;
     endcase
   end
@@ -242,6 +244,23 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
     if (mt_eff == 0) mt_eff = 32'd1;
     if (nt_eff == 0) nt_eff = 32'd1;
     if (kt_eff == 0) kt_eff = 32'd1;
+  end
+
+  // ============================================================
+  // QROW helpers: NG (number of groups along N dimension)
+  // ============================================================
+  logic [31:0] ng_tot, ng_tile, ng_eff;
+
+  always_comb begin
+    if (qblk_orig_q != 0) begin
+      ng_tot  = (N_orig_q + qblk_orig_q - 1) / qblk_orig_q;
+      ng_tile = (NT + qblk_orig_q - 1) / qblk_orig_q;
+      ng_eff  = (nt_eff + qblk_orig_q - 1) / qblk_orig_q;
+    end else begin
+      ng_tot  = 32'd1;
+      ng_tile = 32'd1;
+      ng_eff  = 32'd1;
+    end
   end
 
   // ============================================================
@@ -272,29 +291,55 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
 
       // WEIGHT: int4, shape [K, N] (N방향 2개 packed => N/2 bytes per row)
       T_WEIGHT: begin
-        seg_size = (NT >> 1);
-        padding  = ((NT - nt_eff) >> 1);
+        if (wtrans_tot_q[0]) begin
+          // wtrans=1: source is [N, K] packed row-major
+          seg_size = (KT >> 1);
+          padding  = ((KT - kt_eff) >> 1);
 
-        dram_s0  = (N_orig_q >> 1);
-        dram_b0  = kt_eff;
+          dram_s0  = (K_orig_q >> 1);
+          dram_b0  = nt_eff;
+        end else begin
+          // wtrans=0: source is [K, N] packed row-major
+          seg_size = (NT >> 1);
+          padding  = ((NT - nt_eff) >> 1);
+
+          dram_s0  = (N_orig_q >> 1);
+          dram_b0  = kt_eff;
+        end
       end
 
       // SCALE: fp16
       T_SCALE: begin
-        seg_size = NT * BPE_FP16;
-        padding  = (NT - nt_eff) * BPE_FP16;
-
-        dram_s0  = N_orig_q * BPE_FP16;
-        dram_b0  = groups_eff;
+        if (qdir_tot_q[0]) begin
+          // QROW: scale layout [K, NG], tile [KT, NG_tile]
+          seg_size = ng_tile * BPE_FP16;
+          padding  = (ng_tile - ng_eff) * BPE_FP16;
+          dram_s0  = ng_tot * BPE_FP16;
+          dram_b0  = groups_eff;  // = kt_eff (from FSM rs1)
+        end else begin
+          // QCOL: scale layout [KG, N], tile [groups_tile, NT]
+          seg_size = NT * BPE_FP16;
+          padding  = (NT - nt_eff) * BPE_FP16;
+          dram_s0  = N_orig_q * BPE_FP16;
+          dram_b0  = groups_eff;
+        end
       end
 
       // ZP: int16
       T_ZP: begin
-        seg_size = NT * BPE_INT16;
-        padding  = (NT - nt_eff) * BPE_INT16;
-
-        dram_s0  = N_orig_q * BPE_INT16;
-        dram_b0  = groups_eff;
+        if (qdir_tot_q[0]) begin
+          // QROW: zp layout [K, NG], tile [KT, NG_tile]
+          seg_size = ng_tile * BPE_INT16;
+          padding  = (ng_tile - ng_eff) * BPE_INT16;
+          dram_s0  = ng_tot * BPE_INT16;
+          dram_b0  = groups_eff;  // = kt_eff (from FSM rs1)
+        end else begin
+          // QCOL: zp layout [KG, N], tile [groups_tile, NT]
+          seg_size = NT * BPE_INT16;
+          padding  = (NT - nt_eff) * BPE_INT16;
+          dram_s0  = N_orig_q * BPE_INT16;
+          dram_b0  = groups_eff;
+        end
       end
 
       // OUTPUT: fp16, shape [M, N]
@@ -326,9 +371,9 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
     lmem_s0 = 0; lmem_s1 = 0; lmem_s2 = 0;
     unique case (tensor_sel)
       T_INPUT:  lmem_s0 = KT * BPE_FP16;
-      T_WEIGHT: lmem_s0 = (NT >> 1);
-      T_SCALE:  lmem_s0 = NT * BPE_FP16;
-      T_ZP:     lmem_s0 = NT * BPE_INT16;
+      T_WEIGHT: lmem_s0 = wtrans_tot_q[0] ? (KT >> 1) : (NT >> 1);
+      T_SCALE:  lmem_s0 = qdir_tot_q[0] ? (ng_tile * BPE_FP16)  : (NT * BPE_FP16);
+      T_ZP:     lmem_s0 = qdir_tot_q[0] ? (ng_tile * BPE_INT16) : (NT * BPE_INT16);
       T_OUTPUT: lmem_s0 = NT * BPE_FP16;  //lmem에는 padding 포함
       default: ;
     endcase
@@ -442,9 +487,12 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
     M_orig_d      = M_orig_q;
     N_orig_d      = N_orig_q;
     K_orig_d      = K_orig_q;
+    qblk_orig_d   = qblk_orig_q;
     M_target_d    = M_target_q;
     N_target_d    = N_target_q;
     K_target_d    = K_target_q;
+    wtrans_tot_d  = wtrans_tot_q;
+    qdir_tot_d    = qdir_tot_q;
 
     // dma_if 기본값
     dma_if.req_valid = 1'b0;
@@ -683,9 +731,12 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
       M_orig_q      <= 32'd0;
       N_orig_q      <= 32'd0;
       K_orig_q      <= 32'd0;
+      qblk_orig_q   <= 32'd0;
       M_target_q    <= 32'd0;
       N_target_q    <= 32'd0;
       K_target_q    <= 32'd0;
+      wtrans_tot_q  <= 32'd0;
+      qdir_tot_q    <= 32'd0;
     end else begin
       state_q      <= state_d;
       wr_idx_q     <= wr_idx_d;
@@ -698,9 +749,12 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
       M_orig_q      <= M_orig_d;
       N_orig_q      <= N_orig_d;
       K_orig_q      <= K_orig_d;
+      qblk_orig_q   <= qblk_orig_d;
       M_target_q    <= M_target_d;
       N_target_q    <= N_target_d;
       K_target_q    <= K_target_d;
+      wtrans_tot_q  <= wtrans_tot_d;
+      qdir_tot_q    <= qdir_tot_d;
 
       if (state_q == S_IDLE && gemm_dma_ctrl_if.start) begin
         cmd_q        <= gemm_dma_ctrl_if.cmd;
@@ -708,9 +762,12 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
         M_orig_q      <= gemm_dma_ctrl_if.M_orig;
         N_orig_q      <= gemm_dma_ctrl_if.N_orig;
         K_orig_q      <= gemm_dma_ctrl_if.K_orig;
+        qblk_orig_q   <= gemm_dma_ctrl_if.qblk_orig;
         M_target_q    <= gemm_dma_ctrl_if.M_target;
         N_target_q    <= gemm_dma_ctrl_if.N_target;
         K_target_q    <= gemm_dma_ctrl_if.K_target;
+        wtrans_tot_q  <= gemm_dma_ctrl_if.wtrans_tot;
+        qdir_tot_q    <= gemm_dma_ctrl_if.qdir_tot;
       end
     end
   end

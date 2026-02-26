@@ -53,6 +53,9 @@ interface VX_gemm_ctrl_if import VX_gpu_pkg::*; #(
   logic [31:0] N_target;
   logic [31:0] K_target;
 
+  logic [31:0] wtrans_tot;
+  logic [31:0] qdir_tot;
+
   logic [31:0] entry_id;     // mmio entry id
 
   modport master (
@@ -68,6 +71,7 @@ interface VX_gemm_ctrl_if import VX_gpu_pkg::*; #(
     input  dma_flag,
     output M_orig, N_orig, K_orig, qblk_orig,
     output M_target, N_target, K_target,
+    output wtrans_tot, qdir_tot,
     output entry_id
   );
 
@@ -84,6 +88,7 @@ interface VX_gemm_ctrl_if import VX_gpu_pkg::*; #(
     output dma_flag,
     input  M_orig, N_orig, K_orig, qblk_orig,
     input  M_target, N_target, K_target,
+    input  wtrans_tot, qdir_tot,
     input  entry_id
   );
 

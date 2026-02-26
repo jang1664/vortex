@@ -17,7 +17,7 @@ TB   := tb_VX_gemm_node.sv
 RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
 				$(RTL_DIR)/mem/VX_mem_bus_if.sv \
         $(RTL_DIR)/mem/VX_lsu_mem_if.sv \
-        $(RTL_DIR)/verification/cf_math_pkg.sv \
+        $(RTL_DIR)/verification/cf_math_util_pkg.sv \
         $(RTL_DIR)/verification/fpint_emul.sv \
         $(RTL_DIR)/verification/utils.sv \
         $(RTL_DIR)/core/gemm/VX_fp32_add.sv \

@@ -205,6 +205,10 @@ static void program_job_regs(uint32_t eid, const kernel_arg_t* arg, const tb_par
   job_write_reg32(eid, REG_M_START, part.m_start);
   job_write_reg32(eid, REG_N_START, part.n_start);
 
+  // WTRANS/QDIR flags
+  job_write_reg32(eid, REG_WTRANS, arg->WTRANS);
+  job_write_reg32(eid, REG_QDIR, arg->QDIR);
+
   // Start (valid=1)
   job_write_reg32(eid, REG_CONTROL, 1u);
 }

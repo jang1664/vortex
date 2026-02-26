@@ -21,7 +21,7 @@
 #define OTYPE fp32
 #endif
 
-// TB_VX_gemm_node register indices (0..37)
+// TB_VX_gemm_node register indices (0..39)
 #define REG_CONTROL             0
 #define REG_INPUT_BASE_LO       1
 #define REG_INPUT_BASE_HI       2
@@ -62,8 +62,10 @@
 #define REG_K_TARGET            35
 #define REG_M_START             36
 #define REG_N_START             37
+#define REG_WTRANS              38
+#define REG_QDIR                39
 
-#define GEMM_JOB_NUM_REGS32     38
+#define GEMM_JOB_NUM_REGS32     40
 #define GEMM_JOB_NUM_ENTRIES     4
 
 // kernel status codes
@@ -81,6 +83,8 @@ typedef struct {
   uint32_t N;
   uint32_t K;
   uint32_t QBLK;
+  uint32_t WTRANS;
+  uint32_t QDIR;
 
   uint64_t input_base;
   uint64_t weight_base;

@@ -242,5 +242,7 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
     assign gemm_ctrl_if.M_target = gemm_fsm_if.M_target;
     assign gemm_ctrl_if.N_target = gemm_fsm_if.N_target;
     assign gemm_ctrl_if.K_target = gemm_fsm_if.K_target;
+    assign gemm_ctrl_if.wtrans_tot = gemm_fsm_if.wtrans_tot;
+    assign gemm_ctrl_if.qdir_tot = gemm_fsm_if.qdir_tot;
     assign gemm_ctrl_if.entry_id = gemm_fsm_if.entry_id;
 endmodule

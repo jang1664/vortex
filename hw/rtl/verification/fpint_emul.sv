@@ -99,8 +99,8 @@ package fpint_emul;
           // Construct hidden_man
           hidden_man = {hidden_bit, mantissa};
           
-          // Add extra bits as zeros
-          hidden_man_ext = {hidden_man, {extra_bitwidth{1'b0}}};
+          // Add extra bits as zeros (Verilator-safe form)
+          hidden_man_ext = hidden_man << extra_bitwidth;
           
           // Calculate shift amount
           exp = (exp == 0) ? 1 : exp; // denormal case
@@ -138,7 +138,8 @@ package fpint_emul;
     input int qdir = 0, // 0: qcol, 1: qrow
     input int wtrans = 0, // 0: no transposed, 1: transposed
     input bit DEBUG = 0,
-    input logic [31:0] psum_data[MAX_M*MAX_N] = '{default: '0}  // FP32 partial sum for accumulation
+    input logic [31:0] psum_data[MAX_M*MAX_N] = '{default: '0},  // FP32 partial sum for accumulation
+    input int qblk = QBLOCK  // quantization block size (default: MXU_ROW)
   );
 
     shortreal acc_fp;
@@ -147,9 +148,12 @@ package fpint_emul;
     shortreal wt_val;
     shortreal sc_val;
     shortreal ze_val;
+    int ng_total;
+
+    ng_total = (N + qblk - 1) / qblk;
 
     if(DEBUG) begin
-      $display("[FPINT_EMUL.GEMM_REF] m n k in wt sc ze prod acc");
+      $display("[FPINT_EMUL.GEMM_REF] m n k in wt sc ze prod acc (qblk=%0d, ng_total=%0d)", qblk, ng_total);
     end
     for(int m=0; m<M; m++) begin
       for(int n=0; n<N; n++) begin
@@ -158,11 +162,11 @@ package fpint_emul;
           in_val = cf_math_util_pkg::fp16_bit_to_fp16_val(input_data[m*K + k]);
           wt_val = shortreal'($signed(weight_data[k*N + n]));
           if(qdir == 0) begin
-            sc_val = cf_math_util_pkg::fp16_bit_to_fp16_val(scale_data[(k/QBLOCK)*N + n]);
-            ze_val = shortreal'($signed(zero_data[(k/QBLOCK)*N + n]));
+            sc_val = cf_math_util_pkg::fp16_bit_to_fp16_val(scale_data[(k/qblk)*N + n]);
+            ze_val = shortreal'($signed(zero_data[(k/qblk)*N + n]));
           end else begin
-            sc_val = cf_math_util_pkg::fp16_bit_to_fp16_val(scale_data[k*(N/QBLOCK) + n/QBLOCK]);
-            ze_val = shortreal'($signed(zero_data[k*(N/QBLOCK) + n/QBLOCK]));
+            sc_val = cf_math_util_pkg::fp16_bit_to_fp16_val(scale_data[k*ng_total + n/qblk]);
+            ze_val = shortreal'($signed(zero_data[k*ng_total + n/qblk]));
           end
           prod = in_val * (sc_val*(wt_val - ze_val));
           if(DEBUG) begin

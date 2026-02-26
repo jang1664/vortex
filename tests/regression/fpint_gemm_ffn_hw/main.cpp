@@ -23,6 +23,8 @@ static uint32_t M = 2;
 static uint32_t N = 32;
 static uint32_t K = 32;
 static uint32_t QBLK = 32;
+static uint32_t WTRANS = 0;
+static uint32_t QDIR = 0;
 
 static vx_device_h device = nullptr;
 static vx_buffer_h krnl_buffer = nullptr;
@@ -78,17 +80,19 @@ static void cleanup() {
 }
 
 static void show_usage() {
-  std::cout << "Usage: [-m M] [-n N] [-k K] [-q QBLK] [-h]" << std::endl;
+  std::cout << "Usage: [-m M] [-n N] [-k K] [-q QBLK] [-t WTRANS] [-d QDIR] [-h]" << std::endl;
 }
 
 static void parse_args(int argc, char **argv) {
   int c;
-  while ((c = getopt(argc, argv, "m:n:k:q:h")) != -1) {
+  while ((c = getopt(argc, argv, "m:n:k:q:t:d:h")) != -1) {
     switch (c) {
     case 'm': M = atoi(optarg); break;
     case 'n': N = atoi(optarg); break;
     case 'k': K = atoi(optarg); break;
     case 'q': QBLK = atoi(optarg); break;
+    case 't': WTRANS = atoi(optarg); break;
+    case 'd': QDIR = atoi(optarg); break;
     case 'h': show_usage(); exit(0); break;
     default: show_usage(); exit(-1);
     }
@@ -129,22 +133,20 @@ static uint8_t pack_int4_pair(int8_t lo, int8_t hi) {
   return uint8_t((uint8_t(hi) & 0x0F) << 4) | uint8_t(lo & 0x0F);
 }
 
-static int8_t unpack_int4_from_byte(uint8_t packed, bool high_nibble) {
-  uint8_t v = high_nibble ? ((packed >> 4) & 0x0F) : (packed & 0x0F);
-  return (v & 0x08) ? int8_t(v | 0xF0) : int8_t(v);
-}
-
 static void build_test_vectors(std::vector<uint16_t>& h_A,
                                std::vector<uint8_t>& h_W_int4,
                                std::vector<uint16_t>& h_scales,
                                std::vector<int16_t>& h_zeros,
                                std::vector<uint16_t>& h_ref_out_fp16) {
   uint32_t groups_total = (K + QBLK - 1) / QBLK;
+  uint32_t ng_total = (N + QBLK - 1) / QBLK;
+
+  uint32_t sc_zp_size = (QDIR == 0) ? (groups_total * N) : (K * ng_total);
 
   h_A.resize(M * K);
-  h_W_int4.resize(K * ((N + 1) / 2));
-  h_scales.resize(groups_total * N);
-  h_zeros.resize(groups_total * N);
+  h_W_int4.resize((WTRANS == 0) ? (K * ((N + 1) / 2)) : (N * ((K + 1) / 2)));
+  h_scales.resize(sc_zp_size);
+  h_zeros.resize(sc_zp_size);
   h_ref_out_fp16.resize(M * N);
 
   for (uint32_t m = 0; m < M; ++m) {
@@ -154,25 +156,51 @@ static void build_test_vectors(std::vector<uint16_t>& h_A,
     }
   }
 
-  for (uint32_t k = 0; k < K; ++k) {
-    for (uint32_t n_pair = 0; n_pair < ((N + 1) / 2); ++n_pair) {
-      uint32_t n0 = n_pair * 2;
-      uint32_t n1 = n0 + 1;
-      int8_t w0 = int8_t(int((k * N + n0) % 7) - 3);
-      int8_t w1 = 0;
-      if (n1 < N) {
-        w1 = int8_t(int((k * N + n1) % 7) - 3);
+  if (WTRANS == 0) {
+    for (uint32_t k = 0; k < K; ++k) {
+      for (uint32_t n_pair = 0; n_pair < ((N + 1) / 2); ++n_pair) {
+        uint32_t n0 = n_pair * 2;
+        uint32_t n1 = n0 + 1;
+        int8_t w0 = int8_t(int((k * N + n0) % 7) - 3);
+        int8_t w1 = 0;
+        if (n1 < N) {
+          w1 = int8_t(int((k * N + n1) % 7) - 3);
+        }
+        h_W_int4[k * ((N + 1) / 2) + n_pair] = pack_int4_pair(w0, w1);
       }
-      h_W_int4[k * ((N + 1) / 2) + n_pair] = pack_int4_pair(w0, w1);
+    }
+  } else {
+    for (uint32_t n = 0; n < N; ++n) {
+      for (uint32_t k_pair = 0; k_pair < ((K + 1) / 2); ++k_pair) {
+        uint32_t k0 = k_pair * 2;
+        uint32_t k1 = k0 + 1;
+        int8_t w0 = int8_t(int((k0 * N + n) % 7) - 3);
+        int8_t w1 = 0;
+        if (k1 < K) {
+          w1 = int8_t(int((k1 * N + n) % 7) - 3);
+        }
+        h_W_int4[n * ((K + 1) / 2) + k_pair] = pack_int4_pair(w0, w1);
+      }
     }
   }
 
-  for (uint32_t kg = 0; kg < groups_total; ++kg) {
-    for (uint32_t n = 0; n < N; ++n) {
-      float scale = 1.0f + float(n % 7);
-      int16_t zp = int16_t(int(n % 7) - 3);
-      h_scales[kg * N + n] = float_to_fp16(scale);
-      h_zeros[kg * N + n] = zp;
+  if (QDIR == 0) {
+    for (uint32_t kg = 0; kg < groups_total; ++kg) {
+      for (uint32_t n = 0; n < N; ++n) {
+        float scale = 1.0f + float(n % 7);
+        int16_t zp = int16_t(int(n % 7) - 3);
+        h_scales[kg * N + n] = float_to_fp16(scale);
+        h_zeros[kg * N + n] = zp;
+      }
+    }
+  } else {
+    for (uint32_t k = 0; k < K; ++k) {
+      for (uint32_t ng = 0; ng < ng_total; ++ng) {
+        float scale = 1.0f + float(ng % 7);
+        int16_t zp = int16_t(int(ng % 7) - 3);
+        h_scales[k * ng_total + ng] = float_to_fp16(scale);
+        h_zeros[k * ng_total + ng] = zp;
+      }
     }
   }
 
@@ -181,13 +209,19 @@ static void build_test_vectors(std::vector<uint16_t>& h_A,
       float sum = 0.0f;
       for (uint32_t k = 0; k < K; ++k) {
         float a = fp16_to_float(h_A[m * K + k]);
-        uint32_t group_id = k / QBLK;
-        float scale = fp16_to_float(h_scales[group_id * N + n]);
-        float zp = float(h_zeros[group_id * N + n]);
 
-        uint32_t packed_idx = k * ((N + 1) / 2) + (n / 2);
-        uint8_t packed = h_W_int4[packed_idx];
-        int8_t w = unpack_int4_from_byte(packed, (n & 1) != 0);
+        float scale, zp;
+        if (QDIR == 0) {
+          uint32_t group_id = k / QBLK;
+          scale = fp16_to_float(h_scales[group_id * N + n]);
+          zp = float(h_zeros[group_id * N + n]);
+        } else {
+          uint32_t ng = n / QBLK;
+          scale = fp16_to_float(h_scales[k * ng_total + ng]);
+          zp = float(h_zeros[k * ng_total + ng]);
+        }
+
+        int8_t w = int8_t(int((k * N + n) % 7) - 3);
 
         float dequant = (float(w) - zp) * scale;
         sum += a * dequant;
@@ -232,11 +266,12 @@ static int verify_results(vx_buffer_h out_buffer, const std::vector<uint16_t>& r
 
 static bool compute_lmem_layout(kernel_arg_t& kargs, uint64_t local_mem_size) {
   uint64_t groups_tile = (DMA_KT + uint64_t(QBLK) - 1ull) / uint64_t(QBLK);
+  uint64_t ng_tile = (DMA_NT + uint64_t(QBLK) - 1ull) / uint64_t(QBLK);
 
   uint64_t lmem_ibuf_bytes  = DMA_MT * DMA_KT * 2ull;
   uint64_t lmem_wbuf_bytes  = DMA_KT * ((DMA_NT + 1ull) / 2ull);
-  uint64_t lmem_scbuf_bytes = groups_tile * DMA_NT * 2ull;
-  uint64_t lmem_zpbuf_bytes = groups_tile * DMA_NT * 2ull;
+  uint64_t lmem_scbuf_bytes = (QDIR == 0) ? (groups_tile * DMA_NT * 2ull) : (DMA_KT * ng_tile * 2ull);
+  uint64_t lmem_zpbuf_bytes = (QDIR == 0) ? (groups_tile * DMA_NT * 2ull) : (DMA_KT * ng_tile * 2ull);
   uint64_t lmem_obuf_bytes  = DMA_MT * DMA_NT * 2ull;
 
   uint64_t cur = 0;
@@ -278,11 +313,19 @@ int main(int argc, char *argv[]) {
     std::cout << "QBLK must be > 0" << std::endl;
     return -1;
   }
-
-  uint32_t groups_total = (K + QBLK - 1) / QBLK;
+  if (WTRANS > 1) {
+    std::cout << "WTRANS must be 0 or 1" << std::endl;
+    return -1;
+  }
+  if (QDIR > 1) {
+    std::cout << "QDIR must be 0 or 1" << std::endl;
+    return -1;
+  }
 
   std::cout << "TB-style GEMM MMIO test" << std::endl;
-  std::cout << "M=" << M << ", N=" << N << ", K=" << K << ", QBLK=" << QBLK << std::endl;
+  std::cout << "M=" << M << ", N=" << N << ", K=" << K
+            << ", QBLK=" << QBLK << ", WTRANS=" << WTRANS
+            << ", QDIR=" << QDIR << std::endl;
 
   RT_CHECK(vx_dev_open(&device));
 
@@ -331,6 +374,8 @@ int main(int argc, char *argv[]) {
   kargs.N = N;
   kargs.K = K;
   kargs.QBLK = QBLK;
+  kargs.WTRANS = WTRANS;
+  kargs.QDIR = QDIR;
 
   RT_CHECK(vx_mem_address(A_buffer, &kargs.input_base));
   RT_CHECK(vx_mem_address(W_int4_buffer, &kargs.weight_base));

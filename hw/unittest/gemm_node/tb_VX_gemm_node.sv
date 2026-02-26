@@ -5,7 +5,7 @@
 module tb_VX_gemm_node
   import VX_gpu_pkg::*;
   import fpint_emul::*;
-  import cf_math_pkg::*;
+  import cf_math_util_pkg::*;
 ();
 
   // =========================================================================
@@ -92,7 +92,7 @@ module tb_VX_gemm_node
 
   // job_frontend params (must match DUT instantiation)
   localparam int JOB_NUM_ENTRIES = 4;
-  localparam int JOB_NUM_REGS32  = 33;
+  localparam int JOB_NUM_REGS32  = 35;
 
   // =========================================================================
   // Clock/Reset
@@ -240,7 +240,7 @@ module tb_VX_gemm_node
   );
 
   // =========================================================================
-  // Job regs indices (your map, 0..32)
+  // Job regs indices (0..34)
   // =========================================================================
   localparam int REG_CONTROL             =  0;
   localparam int REG_INPUT_BASE_LO       =  1;
@@ -277,6 +277,8 @@ module tb_VX_gemm_node
   localparam int REG_N                   = 30;
   localparam int REG_K                   = 31;
   localparam int REG_QBLK                = 32;
+  localparam int REG_WTRANS              = 33;
+  localparam int REG_QDIR                = 34;
 
   // =========================================================================
   // Memory fabric (closer to real Vortex path)
@@ -707,6 +709,8 @@ module tb_VX_gemm_node
     input int test_n,
     input int test_k,
     input int test_qblk,
+    input int test_wtrans = 0,
+    input int test_qdir = 0,
     input int input_random_type=0,
     input int weight_random_type=0,
     input int scale_random_type=0,
@@ -721,9 +725,8 @@ module tb_VX_gemm_node
       $fatal(1, "Invalid K=%0d (max=%0d)", test_k, fpint_emul::MAX_K);
     if (test_qblk <= 0)
       $fatal(1, "Invalid QBLK=%0d", test_qblk);
-    if (test_qblk != fpint_emul::QBLOCK) begin
-      $fatal(1, "QBLK mismatch: test_qblk=%0d, ref_QBLOCK=%0d", test_qblk, fpint_emul::QBLOCK);
-    end
+    if ((test_wtrans != 0) && (test_wtrans != 1))
+      $fatal(1, "Invalid WTRANS=%0d", test_wtrans);
     groups_total = (test_k + test_qblk - 1) / test_qblk;
 
     for (int m = 0; m < test_m; m++) begin
@@ -738,7 +741,7 @@ module tb_VX_gemm_node
         end else begin
           v = shortreal'(1.0);
         end
-        input_mat[m*test_k + k] = cf_math_pkg::fp32_val_to_fp16_bit(v);
+        input_mat[m*test_k + k] = cf_math_util_pkg::fp32_val_to_fp16_bit(v);
         ref_input[m*test_k + k] = input_mat[m*test_k + k];
       end
     end
@@ -781,17 +784,33 @@ module tb_VX_gemm_node
         z = 2;
       end
 
-      scale_vec[n] = cf_math_pkg::fp32_val_to_fp16_bit(v);
+      scale_vec[n] = cf_math_util_pkg::fp32_val_to_fp16_bit(v);
       zp_vec[n]    = z[15:0];
     end
 
-    // fpint_emul::fpint_gemm_ref expects qcol quant params in [KG, N] layout.
-    for (int kg = 0; kg < groups_total; kg++) begin
-      for (int n = 0; n < test_n; n++) begin
-        int idx_kg_n;
-        idx_kg_n = kg * test_n + n;
-        ref_scale[idx_kg_n] = scale_vec[n];
-        ref_zero[idx_kg_n]  = zp_vec[n];
+    if (test_qdir == 0) begin
+      // QCOL: ref_scale/ref_zero in [KG, N] layout
+      for (int kg = 0; kg < groups_total; kg++) begin
+        for (int n = 0; n < test_n; n++) begin
+          int idx_kg_n;
+          idx_kg_n = kg * test_n + n;
+          ref_scale[idx_kg_n] = scale_vec[n];
+          ref_zero[idx_kg_n]  = zp_vec[n];
+        end
+      end
+    end else begin
+      // QROW: ref_scale/ref_zero in [K, NG] layout
+      // scale_vec[n] / zp_vec[n] are per-N-group values
+      int ng_total;
+      ng_total = (test_n + test_qblk - 1) / test_qblk;
+      for (int k = 0; k < test_k; k++) begin
+        for (int ng = 0; ng < ng_total; ng++) begin
+          int idx_k_ng;
+          idx_k_ng = k * ng_total + ng;
+          // Use scale_vec[ng] as all K rows share same per-group scale
+          ref_scale[idx_k_ng] = scale_vec[ng];
+          ref_zero[idx_k_ng]  = zp_vec[ng];
+        end
       end
     end
 
@@ -802,9 +821,11 @@ module tb_VX_gemm_node
         ref_zero,
         test_m, test_n, test_k,
         ref_output,
-        `QDIR_COL,
-        fpint_emul::WNOTRANS,
-        1'b0
+        test_qdir ? `QDIR_ROW : `QDIR_COL,
+        test_wtrans,
+        1'b0,
+        '{default: '0},
+        test_qblk
     );
 
     $display("Test Inputs:");
@@ -849,6 +870,8 @@ module tb_VX_gemm_node
     input int test_n,
     input int test_k,
     input int test_qblk,
+    input int test_wtrans,
+    input int test_qdir,
     input logic [63:0] gmem_in_base,
     input logic [63:0] gmem_w_base,
     input logic [63:0] gmem_sc_base,
@@ -874,38 +897,76 @@ module tb_VX_gemm_node
     for (int i = 0; i < buf_in.size(); i++)
       if ((gmem_in_base + i) < DMEM_SIZE) dmem[gmem_in_base + i] = buf_in[i];
 
-    buf_w = new[test_k * ((test_n+1)/2)];
-    for (int k = 0; k < test_k; k++) begin
-      for (int n = 0; n < test_n; n += 2) begin
-        w0 = weight_mat[k*test_n + n];
-        w1 = (n+1 < test_n) ? weight_mat[k*test_n + (n+1)] : 4'h0;
-        buf_w[idx++] = pack_int4_pair(w0, w1);
+    if (test_wtrans == 0) begin
+      buf_w = new[test_k * ((test_n+1)/2)];
+      for (int k = 0; k < test_k; k++) begin
+        for (int n = 0; n < test_n; n += 2) begin
+          w0 = weight_mat[k*test_n + n];
+          w1 = (n+1 < test_n) ? weight_mat[k*test_n + (n+1)] : 4'h0;
+          buf_w[idx++] = pack_int4_pair(w0, w1);
+        end
+      end
+    end else begin
+      buf_w = new[test_n * ((test_k+1)/2)];
+      for (int n = 0; n < test_n; n++) begin
+        for (int k = 0; k < test_k; k += 2) begin
+          w0 = weight_mat[k*test_n + n];
+          w1 = (k+1 < test_k) ? weight_mat[(k+1)*test_n + n] : 4'h0;
+          buf_w[idx++] = pack_int4_pair(w0, w1);
+        end
       end
     end
     for (int i = 0; i < buf_w.size(); i++)
       if ((gmem_w_base + i) < DMEM_SIZE) dmem[gmem_w_base + i] = buf_w[i];
 
-    buf_sc = new[groups_total*test_n*2];
-    for (int kg = 0; kg < groups_total; kg++) begin
-      for (int n = 0; n < test_n; n++) begin
-        int idx_kg_n;
-        idx_kg_n = kg * test_n + n;
-        buf_sc[idx_kg_n*2 + 0] = scale_vec[n][7:0];
-        buf_sc[idx_kg_n*2 + 1] = scale_vec[n][15:8];
+    if (test_qdir == 0) begin
+      // QCOL: scale/zp layout [KG, N]
+      buf_sc = new[groups_total*test_n*2];
+      for (int kg = 0; kg < groups_total; kg++) begin
+        for (int n = 0; n < test_n; n++) begin
+          int idx_kg_n;
+          idx_kg_n = kg * test_n + n;
+          buf_sc[idx_kg_n*2 + 0] = scale_vec[n][7:0];
+          buf_sc[idx_kg_n*2 + 1] = scale_vec[n][15:8];
+        end
+      end
+
+      buf_zp = new[groups_total*test_n*2];
+      for (int kg = 0; kg < groups_total; kg++) begin
+        for (int n = 0; n < test_n; n++) begin
+          int idx_kg_n;
+          idx_kg_n = kg * test_n + n;
+          buf_zp[idx_kg_n*2 + 0] = zp_vec[n][7:0];
+          buf_zp[idx_kg_n*2 + 1] = zp_vec[n][15:8];
+        end
+      end
+    end else begin
+      // QROW: scale/zp layout [K, NG]
+      int ng_total;
+      ng_total = (test_n + test_qblk - 1) / test_qblk;
+      buf_sc = new[test_k*ng_total*2];
+      for (int k = 0; k < test_k; k++) begin
+        for (int ng = 0; ng < ng_total; ng++) begin
+          int idx_k_ng;
+          idx_k_ng = k * ng_total + ng;
+          buf_sc[idx_k_ng*2 + 0] = scale_vec[ng][7:0];
+          buf_sc[idx_k_ng*2 + 1] = scale_vec[ng][15:8];
+        end
+      end
+
+      buf_zp = new[test_k*ng_total*2];
+      for (int k = 0; k < test_k; k++) begin
+        for (int ng = 0; ng < ng_total; ng++) begin
+          int idx_k_ng;
+          idx_k_ng = k * ng_total + ng;
+          buf_zp[idx_k_ng*2 + 0] = zp_vec[ng][7:0];
+          buf_zp[idx_k_ng*2 + 1] = zp_vec[ng][15:8];
+        end
       end
     end
+
     for (int i = 0; i < buf_sc.size(); i++)
       if ((gmem_sc_base + i) < DMEM_SIZE) dmem[gmem_sc_base + i] = buf_sc[i];
-
-    buf_zp = new[groups_total*test_n*2];
-    for (int kg = 0; kg < groups_total; kg++) begin
-      for (int n = 0; n < test_n; n++) begin
-        int idx_kg_n;
-        idx_kg_n = kg * test_n + n;
-        buf_zp[idx_kg_n*2 + 0] = zp_vec[n][7:0];
-        buf_zp[idx_kg_n*2 + 1] = zp_vec[n][15:8];
-      end
-    end
     for (int i = 0; i < buf_zp.size(); i++)
       if ((gmem_zp_base + i) < DMEM_SIZE) dmem[gmem_zp_base + i] = buf_zp[i];
   endtask
@@ -919,6 +980,8 @@ module tb_VX_gemm_node
     input int test_n,
     input int test_k,
     input int test_qblk,
+    input int test_wtrans,
+    input int test_qdir,
     input logic [63:0] gmem_in_base,
     input logic [63:0] gmem_w_base,
     input logic [63:0] gmem_out_base,
@@ -957,6 +1020,8 @@ module tb_VX_gemm_node
     job_write_reg32(eid, REG_N, test_n);
     job_write_reg32(eid, REG_K, test_k);
     job_write_reg32(eid, REG_QBLK, test_qblk);
+    job_write_reg32(eid, REG_WTRANS, test_wtrans);
+    job_write_reg32(eid, REG_QDIR, test_qdir);
 
     // CONTROL.valid(bit0)=1 (start)
     job_write_reg32(eid, REG_CONTROL, 32'h1);
@@ -995,8 +1060,8 @@ module tb_VX_gemm_node
       input shortreal tolerance = 0.01
   );
       shortreal actual_fp, expected_fp, diff;
-      actual_fp = cf_math_pkg::fp16_bit_to_fp16_val(actual);
-      expected_fp = cf_math_pkg::fp16_bit_to_fp16_val(expected);
+      actual_fp = cf_math_util_pkg::fp16_bit_to_fp16_val(actual);
+      expected_fp = cf_math_util_pkg::fp16_bit_to_fp16_val(expected);
 
       if (expected_fp == 0.0) begin
           diff = (actual_fp >= 0) ? actual_fp : -actual_fp;
@@ -1031,8 +1096,8 @@ module tb_VX_gemm_node
           mismatch_count++;
           $display("[%0t] OUTPUT_MISMATCH m=%0d n=%0d addr=0x%0h got=0x%04h exp=0x%04h got_f=%f exp_f=%f",
                     $time, m, n, addr, got, exp,
-                    cf_math_pkg::fp16_bit_to_fp16_val(got),
-                    cf_math_pkg::fp16_bit_to_fp16_val(exp));
+                    cf_math_util_pkg::fp16_bit_to_fp16_val(got),
+                    cf_math_util_pkg::fp16_bit_to_fp16_val(exp));
           printed++;
         end
       end
@@ -1093,6 +1158,8 @@ module tb_VX_gemm_node
     input int test_n,
     input int test_k,
     input int test_qblk,
+    input int test_wtrans,
+    input int test_qdir,
     input logic [63:0] gmem_in_base,
     input logic [63:0] gmem_w_base,
     input logic [63:0] gmem_sc_base,
@@ -1120,24 +1187,42 @@ module tb_VX_gemm_node
     longint unsigned lmem_obuf_bytes;
     longint unsigned groups_total;
     longint unsigned groups_tile;
+    longint unsigned ng_total, ng_tile;
     begin
       if (test_qblk <= 0) begin
         $fatal(1, "[%0t] Invalid QBLK=%0d", $time, test_qblk);
       end
+      if ((test_wtrans != 0) && (test_wtrans != 1)) begin
+        $fatal(1, "[%0t] Invalid WTRANS=%0d", $time, test_wtrans);
+      end
       groups_total = (longint'(test_k) + longint'(test_qblk) - 1) / longint'(test_qblk);
+      ng_total     = (longint'(test_n) + longint'(test_qblk) - 1) / longint'(test_qblk);
+      ng_tile      = (longint'(DMA_NT)  + longint'(test_qblk) - 1) / longint'(test_qblk);
 
       gmem_in_bytes  = longint'(test_m) * longint'(test_k) * 2;
-      gmem_w_bytes   = longint'(test_k) * longint'((test_n + 1) / 2);
-      gmem_sc_bytes  = groups_total * longint'(test_n) * 2;
-      gmem_zp_bytes  = groups_total * longint'(test_n) * 2;
+      gmem_w_bytes   = (test_wtrans == 0)
+                     ? (longint'(test_k) * longint'((test_n + 1) / 2))
+                     : (longint'(test_n) * longint'((test_k + 1) / 2));
+      if (test_qdir == 0) begin
+        gmem_sc_bytes  = groups_total * longint'(test_n) * 2;
+        gmem_zp_bytes  = groups_total * longint'(test_n) * 2;
+      end else begin
+        gmem_sc_bytes  = longint'(test_k) * ng_total * 2;
+        gmem_zp_bytes  = longint'(test_k) * ng_total * 2;
+      end
       gmem_out_bytes = longint'(test_m) * longint'(test_n) * 2;
 
       // LMEM allocation must follow DMA tile footprint, not logical tensor bytes.
       groups_tile      = (longint'(DMA_KT) + longint'(test_qblk) - 1) / longint'(test_qblk);
       lmem_ibuf_bytes  = longint'(DMA_MT) * longint'(DMA_KT) * 2;               // fp16
       lmem_wbuf_bytes  = longint'(DMA_KT) * longint'((DMA_NT + 1) / 2);         // int4 packed
-      lmem_scbuf_bytes = groups_tile * longint'(DMA_NT) * 2;                     // fp16 scale
-      lmem_zpbuf_bytes = groups_tile * longint'(DMA_NT) * 2;                     // int16 zp
+      if (test_qdir == 0) begin
+        lmem_scbuf_bytes = groups_tile * longint'(DMA_NT) * 2;                   // QCOL: [groups_tile, NT]
+        lmem_zpbuf_bytes = groups_tile * longint'(DMA_NT) * 2;
+      end else begin
+        lmem_scbuf_bytes = longint'(DMA_KT) * ng_tile * 2;                       // QROW: [KT, NG_tile]
+        lmem_zpbuf_bytes = longint'(DMA_KT) * ng_tile * 2;
+      end
       lmem_obuf_bytes  = longint'(DMA_MT) * longint'(DMA_NT) * 2;                // fp16 output
 
       // GMEM range checks
@@ -1216,6 +1301,8 @@ module tb_VX_gemm_node
     input int test_n,
     input int test_k,
     input int test_qblk,
+    input int test_wtrans,
+    input int test_qdir,
     input logic [63:0] gmem_in_base,
     input logic [63:0] gmem_w_base,
     input logic [63:0] gmem_sc_base,
@@ -1234,17 +1321,19 @@ module tb_VX_gemm_node
     int unsigned job_eid_local;
     int unsigned job_gen_local;
     begin
-      $display("\n[%0t] === RUN GEMM TEST: %s (M=%0d, N=%0d, K=%0d) ===",
-               $time, case_name, test_m, test_n, test_k);
+      $display("\n[%0t] === RUN GEMM TEST: %s (M=%0d, N=%0d, K=%0d, WTRANS=%0d, QDIR=%0d) ===",
+               $time, case_name, test_m, test_n, test_k, test_wtrans, test_qdir);
 
       apply_reset();
       init_memories();
 
       build_test_vectors(
-        .test_m(test_m), 
+        .test_m(test_m),
         .test_n(test_n),
         .test_k(test_k),
         .test_qblk(test_qblk),
+        .test_wtrans(test_wtrans),
+        .test_qdir(test_qdir),
         .input_random_type(1),
         .weight_random_type(1),
         .scale_random_type(1),
@@ -1252,20 +1341,20 @@ module tb_VX_gemm_node
       );
 
       check_tensor_layout(
-        test_m, test_n, test_k, test_qblk,
+        test_m, test_n, test_k, test_qblk, test_wtrans, test_qdir,
         gmem_in_base, gmem_w_base, gmem_sc_base, gmem_zp_base, gmem_out_base,
         lmem_ibuf0_base, lmem_ibuf1_base, lmem_wbuf0_base, lmem_wbuf1_base,
         lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base, lmem_obuf_base
       );
       write_gmem_inputs_weights_sc_zp(
-        test_m, test_n, test_k, test_qblk,
+        test_m, test_n, test_k, test_qblk, test_wtrans, test_qdir,
         gmem_in_base, gmem_w_base, gmem_sc_base, gmem_zp_base
       );
 
       job_alloc(job_eid_local, job_gen_local);
       program_job_regs(
         job_eid_local,
-        test_m, test_n, test_k, test_qblk,
+        test_m, test_n, test_k, test_qblk, test_wtrans, test_qdir,
         gmem_in_base, gmem_w_base, gmem_out_base, gmem_sc_base, gmem_zp_base,
         lmem_ibuf0_base, lmem_ibuf1_base, lmem_wbuf0_base, lmem_wbuf1_base,
         lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base, lmem_obuf_base
@@ -1282,6 +1371,8 @@ module tb_VX_gemm_node
     input int test_n,
     input int test_k,
     input int test_qblk,
+    input int test_wtrans,
+    input int test_qdir,
     output logic [63:0] gmem_in_base,
     output logic [63:0] gmem_w_base,
     output logic [63:0] gmem_sc_base,
@@ -1302,23 +1393,45 @@ module tb_VX_gemm_node
     longint unsigned lmem_ibuf_bytes, lmem_wbuf_bytes, lmem_scbuf_bytes, lmem_zpbuf_bytes, lmem_obuf_bytes;
     longint unsigned groups_total;
     longint unsigned groups_tile;
+    longint unsigned ng_total, ng_tile;
     begin
       if (test_qblk <= 0) begin
         $fatal(1, "[%0t] Invalid QBLK=%0d", $time, test_qblk);
       end
+      if ((test_wtrans != 0) && (test_wtrans != 1)) begin
+        $fatal(1, "[%0t] Invalid WTRANS=%0d", $time, test_wtrans);
+      end
       groups_total = (longint'(test_k) + longint'(test_qblk) - 1) / longint'(test_qblk);
+      ng_total     = (longint'(test_n) + longint'(test_qblk) - 1) / longint'(test_qblk);
+      ng_tile      = (longint'(DMA_NT)  + longint'(test_qblk) - 1) / longint'(test_qblk);
 
       gmem_in_bytes  = longint'(test_m) * longint'(test_k) * 2;
-      gmem_w_bytes   = longint'(test_k) * longint'((test_n + 1) / 2);
-      gmem_sc_bytes  = groups_total * longint'(test_n) * 2;
-      gmem_zp_bytes  = groups_total * longint'(test_n) * 2;
+      gmem_w_bytes   = (test_wtrans == 0)
+                     ? (longint'(test_k) * longint'((test_n + 1) / 2))
+                     : (longint'(test_n) * longint'((test_k + 1) / 2));
+      if (test_qdir == 0) begin
+        // QCOL: [KG, N]
+        gmem_sc_bytes  = groups_total * longint'(test_n) * 2;
+        gmem_zp_bytes  = groups_total * longint'(test_n) * 2;
+      end else begin
+        // QROW: [K, NG]
+        gmem_sc_bytes  = longint'(test_k) * ng_total * 2;
+        gmem_zp_bytes  = longint'(test_k) * ng_total * 2;
+      end
       gmem_out_bytes = longint'(test_m) * longint'(test_n) * 2;
 
       groups_tile      = (longint'(DMA_KT) + longint'(test_qblk) - 1) / longint'(test_qblk);
       lmem_ibuf_bytes  = longint'(DMA_MT) * longint'(DMA_KT) * 2;
       lmem_wbuf_bytes  = longint'(DMA_KT) * longint'((DMA_NT + 1) / 2);
-      lmem_scbuf_bytes = groups_tile * longint'(DMA_NT) * 2;
-      lmem_zpbuf_bytes = groups_tile * longint'(DMA_NT) * 2;
+      if (test_qdir == 0) begin
+        // QCOL: [groups_tile, NT]
+        lmem_scbuf_bytes = groups_tile * longint'(DMA_NT) * 2;
+        lmem_zpbuf_bytes = groups_tile * longint'(DMA_NT) * 2;
+      end else begin
+        // QROW: [KT, NG_tile]
+        lmem_scbuf_bytes = longint'(DMA_KT) * ng_tile * 2;
+        lmem_zpbuf_bytes = longint'(DMA_KT) * ng_tile * 2;
+      end
       lmem_obuf_bytes  = longint'(DMA_MT) * longint'(DMA_NT) * 2;
 
       cur_gmem = align_up(AUTO_GMEM_BASE, ADDR_ALIGN_BYTES);
@@ -1358,7 +1471,7 @@ module tb_VX_gemm_node
   // =========================================================================
   initial begin
     string case_name;
-    int test_m, test_n, test_k, test_qblk;
+    int test_m, test_n, test_k, test_qblk, test_wtrans, test_qdir;
     logic [63:0] gmem_in_base, gmem_w_base, gmem_sc_base, gmem_zp_base, gmem_out_base;
     logic [63:0] lmem_ibuf0_base, lmem_ibuf1_base, lmem_wbuf0_base, lmem_wbuf1_base;
     logic [63:0] lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base, lmem_obuf_base;
@@ -1374,21 +1487,26 @@ module tb_VX_gemm_node
       test_k = DEFAULT_K_TEST;
     if (!$value$plusargs("QBLK=%d", test_qblk))
       test_qblk = DEFAULT_QBLK;
+    if (!$value$plusargs("WTRANS=%d", test_wtrans))
+      test_wtrans = 0;
+    if (!$value$plusargs("QDIR=%d", test_qdir))
+      test_qdir = 0;
     if (!$value$plusargs("TEST=%s", case_name))
-      $sformat(case_name, "M%0dN%0dK%0d", test_m, test_n, test_k);
+      $sformat(case_name, "M%0dN%0dK%0d_WT%0d_QD%0d", test_m, test_n, test_k, test_wtrans, test_qdir);
 
     compute_auto_layout(
-      test_m, test_n, test_k, test_qblk,
+      test_m, test_n, test_k, test_qblk, test_wtrans, test_qdir,
       gmem_in_base, gmem_w_base, gmem_sc_base, gmem_zp_base, gmem_out_base,
       lmem_ibuf0_base, lmem_ibuf1_base, lmem_wbuf0_base, lmem_wbuf1_base,
       lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base, lmem_obuf_base
     );
 
-    $display("[%0t] TEST_CFG | {name=%s, M=%0d, N=%0d, K=%0d, QBLK=%0d}", $time, case_name, test_m, test_n, test_k, test_qblk);
+    $display("[%0t] TEST_CFG | {name=%s, M=%0d, N=%0d, K=%0d, QBLK=%0d, WTRANS=%0d, QDIR=%0d}",
+             $time, case_name, test_m, test_n, test_k, test_qblk, test_wtrans, test_qdir);
 
     run_gemm_test(
       case_name,
-      test_m, test_n, test_k, test_qblk,
+      test_m, test_n, test_k, test_qblk, test_wtrans, test_qdir,
       gmem_in_base, gmem_w_base, gmem_sc_base, gmem_zp_base, gmem_out_base,
       lmem_ibuf0_base, lmem_ibuf1_base, lmem_wbuf0_base, lmem_wbuf1_base,
       lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base, lmem_obuf_base

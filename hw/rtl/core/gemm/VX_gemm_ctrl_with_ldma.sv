@@ -142,6 +142,8 @@ module VX_gemm_ctrl_with_ldma import VX_gpu_pkg::*; #(
   assign gemm_dma_ctrl_if.M_tot = gemm_ctrl_if.M_tot;
   assign gemm_dma_ctrl_if.N_tot = gemm_ctrl_if.N_tot;
   assign gemm_dma_ctrl_if.K_tot = gemm_ctrl_if.K_tot;
+  assign gemm_dma_ctrl_if.wtrans_tot = gemm_ctrl_if.wtrans_tot;
+  assign gemm_dma_ctrl_if.entry_id = gemm_ctrl_if.entry_id;
 
   assign gemm_ctrl_if.dma_flag.idle = gemm_dma_ctrl_if.idle;
   assign gemm_ctrl_if.dma_flag.done = gemm_dma_ctrl_if.done;
