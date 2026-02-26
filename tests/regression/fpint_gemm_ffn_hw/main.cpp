@@ -42,8 +42,6 @@ static constexpr uint64_t DMA_MT = GEMM_FSM_MT;
 static constexpr uint64_t DMA_NT = GEMM_FSM_NT;
 static constexpr uint64_t DMA_KT = GEMM_FSM_KT;
 
-static constexpr uint64_t GEMM_MMIO_BASE_ADDR_CPP = 0x0000000000001080ull;
-
 static constexpr uint64_t align_up_u64(uint64_t x, uint64_t a) {
   return (a == 0) ? x : ((x + a - 1) / a) * a;
 }
