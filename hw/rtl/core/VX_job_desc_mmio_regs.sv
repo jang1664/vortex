@@ -18,9 +18,12 @@ module VX_job_desc_mmio_regs import VX_gpu_pkg::*; #(
   parameter int NUM_REGS32             = 16,
   parameter int ENTRYID_W              = `JOB_MMIO_ENTRYID_W,
   parameter int OWNER_W                = `JOB_MMIO_OWNER_W,
-  parameter bit OWNER_FROM_TAG         = 1'b0,
+
   parameter int GEN_W                  = `JOB_MMIO_GEN_W,
-  parameter logic [63:0] CFG_BASE_ADDR = 64'h0
+  parameter logic [63:0] CFG_BASE_ADDR = 64'h0,
+  parameter int NUM_LANES              = 1,
+  parameter int DATA_SIZE              = 4,
+  parameter int TAG_WIDTH              = 1
 ) (
   input  wire clk,
   input  wire reset,
@@ -73,17 +76,18 @@ module VX_job_desc_mmio_regs import VX_gpu_pkg::*; #(
   //   [CFG_BASE_ADDR + 0 .. +DATA_SIZE-1] : global alloc register
   //   [CFG_BASE_ADDR + DATA_SIZE .. ]      : per-entry descriptor beats
   // ------------------------------------------------------------
-  localparam int DATA_SIZE_SHIFT   = `CLOG2(mmio_if.DATA_SIZE);
-  localparam int WORDS_PER_BEAT    = (mmio_if.DATA_SIZE >> 2);
+  localparam int DATA_SIZE_SHIFT   = `CLOG2(DATA_SIZE);
+  localparam int WORDS_PER_BEAT    = (DATA_SIZE >> 2);
   localparam int WORDS_PER_BEAT_SHIFT = `CLOG2(WORDS_PER_BEAT);
   localparam int NUM_BEATS         = (NUM_REGS32 + WORDS_PER_BEAT - 1) >> WORDS_PER_BEAT_SHIFT;
-  localparam int ENTRY_STRIDE_B    = NUM_BEATS * mmio_if.DATA_SIZE;
-  localparam int GLOBAL_ALLOC_B    = mmio_if.DATA_SIZE;
+  localparam int ENTRY_STRIDE_B    = NUM_BEATS * DATA_SIZE;
+  localparam int GLOBAL_ALLOC_B    = DATA_SIZE;
   localparam int ENTRY_BASE_OFF_B  = GLOBAL_ALLOC_B;
+  localparam int ADDR_WIDTH        = `MEM_ADDR_WIDTH - `CLOG2(DATA_SIZE);
 
   initial begin
-    if ((mmio_if.DATA_SIZE & (mmio_if.DATA_SIZE - 1)) != 0) $fatal(1, "%s: mmio_if.DATA_SIZE must be power-of-two", INSTANCE_ID);
-    if ((mmio_if.DATA_SIZE % 4) != 0) $fatal(1, "%s: mmio_if.DATA_SIZE must be multiple of 4", INSTANCE_ID);
+    if ((DATA_SIZE & (DATA_SIZE - 1)) != 0) $fatal(1, "%s: DATA_SIZE must be power-of-two", INSTANCE_ID);
+    if ((DATA_SIZE % 4) != 0) $fatal(1, "%s: DATA_SIZE must be multiple of 4", INSTANCE_ID);
     if (WORDS_PER_BEAT <= 0)          $fatal(1, "%s: WORDS_PER_BEAT invalid", INSTANCE_ID);
     if (ENTRYID_W < $clog2(NUM_ENTRIES)) $fatal(1, "%s: ENTRYID_W too small", INSTANCE_ID);
     if (OWNER_W <= 0)                 $fatal(1, "%s: OWNER_W must be >= 1", INSTANCE_ID);
@@ -96,7 +100,7 @@ module VX_job_desc_mmio_regs import VX_gpu_pkg::*; #(
   // ------------------------------------------------------------
   localparam int LSU_ADDR_SHIFT = DATA_SIZE_SHIFT;
 
-  function automatic logic [63:0] addr_to_byte(input logic [mmio_if.ADDR_WIDTH-1:0] a);
+  function automatic logic [63:0] addr_to_byte(input logic [ADDR_WIDTH-1:0] a);
     return (64'(a) << LSU_ADDR_SHIFT);
   endfunction
 
@@ -167,9 +171,9 @@ module VX_job_desc_mmio_regs import VX_gpu_pkg::*; #(
   // MMIO response registers
   // ------------------------------------------------------------
   logic rsp_valid_q, rsp_valid_d;
-  logic [mmio_if.NUM_LANES-1:0] rsp_mask_q, rsp_mask_d;
-  logic [mmio_if.NUM_LANES-1:0][mmio_if.DATA_SIZE*8-1:0] rsp_data_q, rsp_data_d;
-  logic [$bits(mmio_if.rsp_data.tag)-1:0] rsp_tag_q, rsp_tag_d;
+  logic [NUM_LANES-1:0] rsp_mask_q, rsp_mask_d;
+  logic [NUM_LANES-1:0][DATA_SIZE*8-1:0] rsp_data_q, rsp_data_d;
+  logic [TAG_WIDTH-1:0] rsp_tag_q, rsp_tag_d;
 
   logic [63:0]          byte_addr;
   logic [63:0]          off;
@@ -257,17 +261,13 @@ module VX_job_desc_mmio_regs import VX_gpu_pkg::*; #(
 
     // MMIO request handling
     if (mmio_if.req_valid && mmio_if.req_ready) begin
-      if (OWNER_FROM_TAG) begin
-        req_owner  = mmio_if.req_data.tag[OWNER_W-1:0];
-      end else begin
-        req_owner  = '0;
-      end
+      req_owner  = '0;
       rsp_valid_d = ~mmio_if.req_data.rw;
       rsp_mask_d  = mmio_if.req_data.mask;
       rsp_tag_d   = mmio_if.req_data.tag;
       rsp_data_d  = '0;
 
-      for (int l = 0; l < mmio_if.NUM_LANES; l++) begin
+      for (int l = 0; l < NUM_LANES; l++) begin
         if (mmio_if.req_data.mask[l]) begin
           byte_addr = addr_to_byte(mmio_if.req_data.addr[l]);
           off       = get_off(byte_addr);
