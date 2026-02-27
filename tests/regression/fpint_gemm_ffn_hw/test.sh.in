@@ -5,7 +5,7 @@ set -euo pipefail
 
 # Allow override from environment
 #export CONFIGS="${CONFIGS:--DDBG_TRACE_GEMM_FSM -DNUM_CORES=2 -DLMEM_LOG_SIZE=17 -DLMEM_BASE_ADDR=8589803520}"
-export CONFIGS="${CONFIGS:--DDBG_TRACE_GEMM_FSM -DNUM_CORES=2}"
+export CONFIGS="${CONFIGS:--DDBG_TRACE_GEMM_FSM -DNUM_CORES=1}"
 export MAX_LOG_BYTES="${MAX_LOG_BYTES:-10485760}"  # 10 MB
 DRIVER="${DRIVER:-rtlsim}"
 APP="${APP:-fpint_gemm_ffn_hw}"
@@ -41,11 +41,20 @@ else
   # Default sweep: shape x qblk x wtrans x qdir
   declare -a SHAPES=(
     #"-m 2 -n 32 -k 32"
-    #"-m 4 -n 64 -k 64"
-    #"-m 8 -n 64 -k 128"
-    "-m 256 -n 256 -k 256"
+    #"-m 40 -n 32 -k 32"
+    #"-m 60 -n 32 -k 32"
+    #"-m 140 -n 32 -k 32"
+    #"-m 140 -n 2 -k 32"
+    "-m 384 -n 2 -k 32"
+    "-m 512 -n 2 -k 32"
+    "-m 384 -n 140 -k 32"
+    "-m 384 -n 384 -k 32"
+    "-m 384 -n 384 -k 32"
+    "-m 384 -n 384 -k 64"
+    "-m 384 -n 384 -k 128"
+    "-m 384 -n 384 -k 384"
   )
-  declare -a QBLKS=(32 64 128)
+  declare -a QBLKS=(32)
   declare -a WTRANS_LIST=(0 1)
   declare -a QDIR_LIST=(0 1)
 
