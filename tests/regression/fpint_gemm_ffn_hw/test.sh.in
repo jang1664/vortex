@@ -4,9 +4,9 @@
 set -euo pipefail
 
 # Allow override from environment
-export CONFIGS="${CONFIGS:--DDBG_TRACE_GEMM_FSM -DNUM_CORES=4 -DLMEM_LOG_SIZE=17 -DLMEM_BASE_ADDR=8589803520}"
+export CONFIGS="${CONFIGS:--DDBG_TRACE_GEMM_FSM -DNUM_CORES=2 -DLMEM_LOG_SIZE=17 -DLMEM_BASE_ADDR=8589803520}"
 export MAX_LOG_BYTES="${MAX_LOG_BYTES:-10485760}"  # 10 MB
-DRIVER="${DRIVER:-rtlsim}"
+DRIVER="${DRIVER:-xrt}"
 APP="${APP:-fpint_gemm_ffn_hw}"
 DEBUG_LEVEL="${DEBUG_LEVEL:-3}"
 LOG_DIR="${LOG_DIR:-run_logs_fpint_gemm_ffn_hw}"
@@ -39,12 +39,12 @@ if [[ $# -gt 0 ]]; then
 else
   # Default sweep: shape x qblk x wtrans x qdir
   declare -a SHAPES=(
-    "-m 2 -n 32 -k 32"
+    #"-m 2 -n 32 -k 32"
     #"-m 4 -n 64 -k 64"
     #"-m 8 -n 64 -k 128"
-    #"-m 256 -n 256 -k 256"
+    "-m 256 -n 256 -k 256"
   )
-  declare -a QBLKS=(32)
+  declare -a QBLKS=(32 64 128)
   declare -a WTRANS_LIST=(0 1)
   declare -a QDIR_LIST=(0 1)
 
