@@ -121,18 +121,19 @@ module VX_gemm_sync import VX_gpu_pkg::*; #(
   logic can_accept;
 
   always_comb begin
-    can_accept = 1'b1;
-
-    if (in_valid) begin
-      if (is_wait) begin
-        can_accept = wait_satisfied;     // only gating is the sync condition
-      end else if (is_notify) begin
-        can_accept = child_idle_sel;     // must be able to enqueue notify
-      end else if (cmd_valid) begin
-        can_accept = child_idle_sel;     // must be able to enqueue cmd
-      end else begin
-        can_accept = 1'b0;
-      end
+    // IMPORTANT:
+    // can_accept must not depend on in_valid for decoded commands.
+    // Otherwise, if parent start depends on idle(=can_accept), a comb loop can form.
+    if (is_wait) begin
+      can_accept = wait_satisfied;       // only gating is the sync condition
+    end else if (is_notify) begin
+      can_accept = child_idle_sel;       // must be able to enqueue notify
+    end else if (cmd_valid) begin
+      can_accept = child_idle_sel;       // must be able to enqueue cmd
+    end else if (in_valid) begin
+      can_accept = 1'b0;                 // unknown opcode while parent drives valid
+    end else begin
+      can_accept = 1'b1;                 // no active cmd; report ready
     end
   end
 
@@ -140,7 +141,7 @@ module VX_gemm_sync import VX_gpu_pkg::*; #(
   // - When WAIT not satisfied: idle=0 => parent stops issuing new cmds
   // - When satisfied or no input: idle=1
   always_comb begin
-    gemm_fsm_slv_if.flag.idle = (!in_valid) ? 1'b1 : can_accept;
+    gemm_fsm_slv_if.flag.idle = can_accept;
     gemm_fsm_slv_if.flag.done = 1'b0;
   end
 
@@ -200,6 +201,38 @@ module VX_gemm_sync import VX_gpu_pkg::*; #(
     end
   endfunction
 
+  wire [7:0] rid0 = gemm_sync_slv_if[0].reg_idx[7:0];
+  wire [7:0] rid1 = gemm_sync_slv_if[1].reg_idx[7:0];
+  wire [7:0] rid2 = gemm_sync_slv_if[2].reg_idx[7:0];
+  wire [7:0] rid3 = gemm_sync_slv_if[3].reg_idx[7:0];
+  wire [7:0] rid4 = gemm_sync_slv_if[4].reg_idx[7:0];
+
+  wire upd0_valid = gemm_sync_slv_if[0].valid && (rid0 < NUM_SYNC_REGS);
+  wire upd1_valid = gemm_sync_slv_if[1].valid && (rid1 < NUM_SYNC_REGS);
+  wire upd2_valid = gemm_sync_slv_if[2].valid && (rid2 < NUM_SYNC_REGS);
+  wire upd3_valid = gemm_sync_slv_if[3].valid && (rid3 < NUM_SYNC_REGS);
+  wire upd4_valid = gemm_sync_slv_if[4].valid && (rid4 < NUM_SYNC_REGS);
+
+  logic [31:0] sync_regs_n [NUM_SYNC_REGS];
+
+  always_comb begin
+    for (int k = 0; k < NUM_SYNC_REGS; k++) begin
+      sync_regs_n[k] = sync_regs[k];
+    end
+
+    // Fold all same-cycle updates deterministically (node0 -> node4).
+    if (upd0_valid)
+      sync_regs_n[rid0] = apply_update(sync_regs_n[rid0], gemm_sync_slv_if[0].value);
+    if (upd1_valid)
+      sync_regs_n[rid1] = apply_update(sync_regs_n[rid1], gemm_sync_slv_if[1].value);
+    if (upd2_valid)
+      sync_regs_n[rid2] = apply_update(sync_regs_n[rid2], gemm_sync_slv_if[2].value);
+    if (upd3_valid)
+      sync_regs_n[rid3] = apply_update(sync_regs_n[rid3], gemm_sync_slv_if[3].value);
+    if (upd4_valid)
+      sync_regs_n[rid4] = apply_update(sync_regs_n[rid4], gemm_sync_slv_if[4].value);
+  end
+
   always_ff @(posedge clk) begin
     if (reset) begin
       for (int k = 0; k < NUM_SYNC_REGS; k++) begin
@@ -211,43 +244,33 @@ module VX_gemm_sync import VX_gpu_pkg::*; #(
         sync_regs[k] <= 32'd0;
       end
     end else begin
-      // node 0
-      if (gemm_sync_slv_if[0].valid) begin
-        logic [7:0] rid0;
-        rid0 = gemm_sync_slv_if[0].reg_idx[7:0];
-        if (rid0 < NUM_SYNC_REGS)
-          sync_regs[rid0] <= apply_update(sync_regs[rid0], gemm_sync_slv_if[0].value);
-      end
-      // node 1
-      if (gemm_sync_slv_if[1].valid) begin
-        logic [7:0] rid1;
-        rid1 = gemm_sync_slv_if[1].reg_idx[7:0];
-        if (rid1 < NUM_SYNC_REGS)
-          sync_regs[rid1] <= apply_update(sync_regs[rid1], gemm_sync_slv_if[1].value);
-      end
-      // node 2
-      if (gemm_sync_slv_if[2].valid) begin
-        logic [7:0] rid2;
-        rid2 = gemm_sync_slv_if[2].reg_idx[7:0];
-        if (rid2 < NUM_SYNC_REGS)
-          sync_regs[rid2] <= apply_update(sync_regs[rid2], gemm_sync_slv_if[2].value);
-      end
-      // node 3
-      if (gemm_sync_slv_if[3].valid) begin
-        logic [7:0] rid3;
-        rid3 = gemm_sync_slv_if[3].reg_idx[7:0];
-        if (rid3 < NUM_SYNC_REGS)
-          sync_regs[rid3] <= apply_update(sync_regs[rid3], gemm_sync_slv_if[3].value);
-      end
-      // node 4
-      if (gemm_sync_slv_if[4].valid) begin
-        logic [7:0] rid4;
-        rid4 = gemm_sync_slv_if[4].reg_idx[7:0];
-        if (rid4 < NUM_SYNC_REGS)
-          sync_regs[rid4] <= apply_update(sync_regs[rid4], gemm_sync_slv_if[4].value);
+      for (int k = 0; k < NUM_SYNC_REGS; k++) begin
+        sync_regs[k] <= sync_regs_n[k];
       end
     end
   end
+
+`ifdef DBG_TRACE_GEMM_CTRL
+  always_ff @(posedge clk) begin
+    if (!reset) begin
+      if (upd0_valid)
+        `TRACE(3, ("%m : [%0t] | GEMM_SYNC_UPD | {inst=%s, node=0, reg_id=%0d, value=0x%08h, next_val=%0d}\n",
+                 $time, INSTANCE_ID, rid0, gemm_sync_slv_if[0].value, sync_regs_n[rid0]))
+      if (upd1_valid)
+        `TRACE(3, ("%m : [%0t] | GEMM_SYNC_UPD | {inst=%s, node=1, reg_id=%0d, value=0x%08h, next_val=%0d}\n",
+                 $time, INSTANCE_ID, rid1, gemm_sync_slv_if[1].value, sync_regs_n[rid1]))
+      if (upd2_valid)
+        `TRACE(3, ("%m : [%0t] | GEMM_SYNC_UPD | {inst=%s, node=2, reg_id=%0d, value=0x%08h, next_val=%0d}\n",
+                 $time, INSTANCE_ID, rid2, gemm_sync_slv_if[2].value, sync_regs_n[rid2]))
+      if (upd3_valid)
+        `TRACE(3, ("%m : [%0t] | GEMM_SYNC_UPD | {inst=%s, node=3, reg_id=%0d, value=0x%08h, next_val=%0d}\n",
+                 $time, INSTANCE_ID, rid3, gemm_sync_slv_if[3].value, sync_regs_n[rid3]))
+      if (upd4_valid)
+        `TRACE(3, ("%m : [%0t] | GEMM_SYNC_UPD | {inst=%s, node=4, reg_id=%0d, value=0x%08h, next_val=%0d}\n",
+                 $time, INSTANCE_ID, rid4, gemm_sync_slv_if[4].value, sync_regs_n[rid4]))
+    end
+  end
+`endif
 
 // --------------------------------------------------------------------------
   // Runtime Assertion: Unknown Opcode Check

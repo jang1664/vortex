@@ -42,6 +42,7 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
     localparam int CFG_R_CONTROL = 0;
 
     logic                        job_active_q;
+    logic                        done_pending_q;
     logic [31:0]                 active_entry_id_q;
     logic [N_CHILDREN-1:0]       child_q_empty_v;
     logic                        parent_q_empty;
@@ -58,22 +59,48 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
     wire done_fire      = done_if.valid && done_if.ready;
 
     // done_if is held until handshake so dispatcher never misses completion.
-    assign done_if.valid    = job_active_q && all_idle_now;
+    assign done_if.valid    = done_pending_q;
     assign done_if.entry_id = active_entry_id_q;
 
     always_ff @(posedge clk) begin
       if (reset) begin
         job_active_q     <= 1'b0;
+        done_pending_q   <= 1'b0;
         active_entry_id_q <= '0;
       end else begin
         if (cfg_start_fire) begin
           job_active_q      <= 1'b1;
+          done_pending_q    <= 1'b0;
           active_entry_id_q <= cfg_reg_if.entry_id;
+        end else if (!done_pending_q && job_active_q && all_idle_now) begin
+          done_pending_q <= 1'b1;
         end else if (done_fire) begin
           job_active_q      <= 1'b0;
+          done_pending_q    <= 1'b0;
         end
       end
     end
+
+`ifdef DBG_TRACE_GEMM_CTRL
+    always_ff @(posedge clk) begin
+      if (!reset) begin
+        if (cfg_start_fire) begin
+          `TRACE(2, ("%m : [%0t] | GEMM_CTRL_START | {inst=%s, entry_id=%0d}\n",
+                    $time, INSTANCE_ID, cfg_reg_if.entry_id))
+        end
+
+        if (job_active_q) begin
+          `TRACE(3, ("%m : [%0t] | GEMM_CTRL_IDLE_CHECK | {inst=%s, all_idle=%0d, cfg_ready=%0d, queues_idle=%0d, workers_idle=%0d, parent_q_empty=%0d, child_q_empty=0x%0h, done_pending=%0d}\n",
+                    $time, INSTANCE_ID, all_idle_now, cfg_reg_if.ready, queues_idle, workers_idle, parent_q_empty, child_q_empty_v, done_pending_q))
+        end
+
+        if (done_if.valid && done_if.ready) begin
+          `TRACE(2, ("%m : [%0t] | GEMM_CTRL_DONE | {inst=%s, entry_id=%0d, all_idle=%0d, cfg_ready=%0d, queues_idle=%0d, workers_idle=%0d}\n",
+                    $time, INSTANCE_ID, done_if.entry_id, all_idle_now, cfg_reg_if.ready, queues_idle, workers_idle))
+        end
+      end
+    end
+`endif
 
     // -------------------------------------------------------------------------
     // Local interfaces
@@ -103,17 +130,17 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
     // -------------------------------------------------------------------------
     localparam int PARENT_QUEUE_DATAW = $bits(gemm_unified_cmd_t);
 
-    wire                        parent_q_full;
+    wire                          parent_q_full;
     wire [PARENT_QUEUE_DATAW-1:0] parent_q_dout;
 
-    wire parent_q_push  = gemm_fsm_if.ctrl.start && gemm_fsm_if.flag.idle;
-    wire parent_out_fire  = !parent_q_empty && gemm_pqueue_out.flag.idle;
+    wire parent_q_push   = gemm_fsm_if.ctrl.start && gemm_fsm_if.flag.idle;
+    wire parent_out_fire = !parent_q_empty && gemm_pqueue_out.flag.idle;
 
     // Backpressure to FSM: do not emit start if queue full
-    assign gemm_fsm_if.flag.idle = ~parent_q_full;  //sync에서 stall 되어도 parent queue에 버퍼링 가능
+    assign gemm_fsm_if.flag.idle = ~parent_q_full;  // sync stall시 parent queue에 버퍼링
     assign gemm_fsm_if.flag.done = '0; // unused
 
-    // Drive payload to sync; generate start pulse from fire
+    // Drive payload to sync; generate start pulse from queue valid
     assign gemm_pqueue_out.ctrl.cmd   = parent_q_dout;
     assign gemm_pqueue_out.ctrl.start = ~parent_q_empty;
 

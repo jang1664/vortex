@@ -243,9 +243,8 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
   job_t job_q, job_d;
 
   // Tile dims and last sizes (latched at start)
-  mm_dim_t      mt_dim_q, nt_dim_q, kt_dim_q;
-  mm_dim_lg2_t  mt_dim_lg2_q, kt_dim_lg2_q;
-  mm_tile_sz_t  m_last_q, n_last_q, k_last_q;
+  mm_dim_t     mt_dim_q, nt_dim_q, kt_dim_q;
+  mm_tile_sz_t m_last_q, n_last_q, k_last_q;
 
   // totals exported (debug/host)
   logic [31:0] M_orig, N_orig, K_orig, qblk_orig;
@@ -391,27 +390,36 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     end
   endfunction
 
-  // tile decode: tile = ((nt * mt_dim) + mt) * kt_dim + kt  (kt fastest)
-  // mt_dim/kt_dim are power-of-two, so decode is shift+mask (no / or %).
-  task automatic tile_decode(
-    input u32_t tile,
-    input mm_dim_lg2_t mt_dim_lg2,
-    input mm_dim_lg2_t kt_dim_lg2,
-    output mm_dim_t nt,
-    output mm_dim_t mt,
-    output mm_dim_t kt
+  // Tile scan order: kt fastest -> mt -> nt.
+  // This avoids divide/mod decode from a scalar tile index.
+  task automatic tile_next_coords(
+    input  mm_dim_t nt_i,
+    input  mm_dim_t mt_i,
+    input  mm_dim_t kt_i,
+    output logic has_next,
+    output mm_dim_t nt_o,
+    output mm_dim_t mt_o,
+    output mm_dim_t kt_o
   );
-    u32_t tmp;
-    u32_t kt_mask;
-    u32_t mt_mask;
     begin
-      kt_mask = (kt_dim_lg2 == 0) ? 0 : ((32'd1 << kt_dim_lg2) - 1);
-      mt_mask = (mt_dim_lg2 == 0) ? 0 : ((32'd1 << mt_dim_lg2) - 1);
+      nt_o = nt_i;
+      mt_o = mt_i;
+      kt_o = kt_i;
+      has_next = 1'b0;
 
-      kt  = mm_dim_t'((kt_dim_lg2 == 0) ? 0 : (tile & kt_mask));
-      tmp = tile >> kt_dim_lg2;
-      mt  = mm_dim_t'((mt_dim_lg2 == 0) ? 0 : (tmp & mt_mask));
-      nt  = mm_dim_t'(tmp >> mt_dim_lg2);
+      if (kt_i + 1 < kt_dim_q) begin
+        kt_o = kt_i + 1;
+        has_next = 1'b1;
+      end else if (mt_i + 1 < mt_dim_q) begin
+        kt_o = '0;
+        mt_o = mt_i + 1;
+        has_next = 1'b1;
+      end else if (nt_i + 1 < nt_dim_q) begin
+        kt_o = '0;
+        mt_o = '0;
+        nt_o = nt_i + 1;
+        has_next = 1'b1;
+      end
     end
   endtask
 
@@ -575,6 +583,12 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
   // tile pipeline registers
   u32_t tile_cur_q, tile_cur_d;
   u32_t tile_pre_q, tile_pre_d;   // next tile being/been preloaded
+  mm_dim_t tile_cur_nt_q, tile_cur_nt_d;
+  mm_dim_t tile_cur_mt_q, tile_cur_mt_d;
+  mm_dim_t tile_cur_kt_q, tile_cur_kt_d;
+  mm_dim_t tile_pre_nt_q, tile_pre_nt_d;
+  mm_dim_t tile_pre_mt_q, tile_pre_mt_d;
+  mm_dim_t tile_pre_kt_q, tile_pre_kt_d;
   logic        pre_valid_q, pre_valid_d; // whether tile_pre exists
 
   // mxu loop regs for current tile
@@ -596,11 +610,16 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
       job_q <= '0;
       mt_dim_q <= 0; nt_dim_q <= 0; kt_dim_q <= 0;
-      mt_dim_lg2_q <= 0; kt_dim_lg2_q <= 0;
       m_last_q <= 0; n_last_q <= 0; k_last_q <= 0;
 
       tile_cur_q <= 0;
       tile_pre_q <= 0;
+      tile_cur_nt_q <= '0;
+      tile_cur_mt_q <= '0;
+      tile_cur_kt_q <= '0;
+      tile_pre_nt_q <= '0;
+      tile_pre_mt_q <= '0;
+      tile_pre_kt_q <= '0;
       pre_valid_q <= 1'b0;
 
       nt_mxu_q <= 0;
@@ -613,6 +632,12 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
       tile_cur_q  <= tile_cur_d;
       tile_pre_q  <= tile_pre_d;
+      tile_cur_nt_q <= tile_cur_nt_d;
+      tile_cur_mt_q <= tile_cur_mt_d;
+      tile_cur_kt_q <= tile_cur_kt_d;
+      tile_pre_nt_q <= tile_pre_nt_d;
+      tile_pre_mt_q <= tile_pre_mt_d;
+      tile_pre_kt_q <= tile_pre_kt_d;
       pre_valid_q <= pre_valid_d;
 
       nt_mxu_q  <= nt_mxu_d;
@@ -632,16 +657,9 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
         nt_dim_n = mm_dim_t'(ceil_div_log2(job_d.target_N, `CLOG2(NT)));
         kt_dim_n = mm_dim_t'(ceil_div_log2(job_d.target_K, `CLOG2(KT)));
 
-        if (!mm_is_pow2(mt_dim_n) || !mm_is_pow2(kt_dim_n)) begin
-          $fatal(1, "%s: mt_dim(%0d) and kt_dim(%0d) must be power-of-two", INSTANCE_ID, mt_dim_n, kt_dim_n);
-        end
-
         mt_dim_q <= mt_dim_n;
         nt_dim_q <= nt_dim_n;
         kt_dim_q <= kt_dim_n;
-
-        mt_dim_lg2_q <= mm_lg2_pow2(mt_dim_n);
-        kt_dim_lg2_q <= mm_lg2_pow2(kt_dim_n);
 
         mt_rem = mm_tile_sz_t'(job_d.target_M & (MT - 1));
         nt_rem = mm_tile_sz_t'(job_d.target_N & (NT - 1));
@@ -690,8 +708,10 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     logic can_emit;
 
     mm_dim_t nt_cur, mt_cur, kt_cur;
+    mm_dim_t nt1_init, mt1_init, kt1_init;
     mm_tile_sz_t mt_eff_cur, nt_eff_cur, kt_eff_cur;
     logic        buf_cur;
+    logic        has_tile1_init;
     u32_t gen_cur;
 
     u32_t tile_total;
@@ -745,6 +765,12 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
     tile_cur_d  = tile_cur_q;
     tile_pre_d  = tile_pre_q;
+    tile_cur_nt_d = tile_cur_nt_q;
+    tile_cur_mt_d = tile_cur_mt_q;
+    tile_cur_kt_d = tile_cur_kt_q;
+    tile_pre_nt_d = tile_pre_nt_q;
+    tile_pre_mt_d = tile_pre_mt_q;
+    tile_pre_kt_d = tile_pre_kt_q;
     pre_valid_d = pre_valid_q;
 
     nt_mxu_d  = nt_mxu_q;
@@ -760,8 +786,11 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     // tile totals (after start latch mt_dim_q/.. valid)
     tile_total = mt_dim_q * nt_dim_q * kt_dim_q;
 
-    // decode current tile
-    tile_decode(tile_cur_q, mt_dim_lg2_q, kt_dim_lg2_q, nt_cur, mt_cur, kt_cur);
+    // current tile coords are tracked explicitly
+    nt_cur = tile_cur_nt_q;
+    mt_cur = tile_cur_mt_q;
+    kt_cur = tile_cur_kt_q;
+    tile_next_coords('0, '0, '0, has_tile1_init, nt1_init, mt1_init, kt1_init);
 
     mt_eff_cur = (mt_cur == mt_dim_q-1) ? m_last_q : mm_tile_sz_t'(MT);
     nt_eff_cur = (nt_cur == nt_dim_q-1) ? n_last_q : mm_tile_sz_t'(NT);
@@ -886,6 +915,12 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
       S_IDLE: begin
         tile_cur_d  = 0;
         tile_pre_d  = 0;
+        tile_cur_nt_d = '0;
+        tile_cur_mt_d = '0;
+        tile_cur_kt_d = '0;
+        tile_pre_nt_d = '0;
+        tile_pre_mt_d = '0;
+        tile_pre_kt_d = '0;
         pre_valid_d = 1'b0;
         nt_mxu_d    = 0;
         kt_mxu_d    = 0;
@@ -935,7 +970,9 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
         if (can_emit) begin
           mm_dim_t nt0, mt0, kt0;
           mm_tile_sz_t mt_eff0, nt_eff0, kt_eff0;
-          tile_decode(0, mt_dim_lg2_q, kt_dim_lg2_q, nt0, mt0, kt0);
+          nt0 = '0;
+          mt0 = '0;
+          kt0 = '0;
           tile_eff_sizes(nt0, mt0, kt0, mt_eff0, nt_eff0, kt_eff0);
 
           out_cmd_d   = make_dma_ld(job_q.lmem_ibuf0_base,
@@ -954,7 +991,9 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
         if (can_emit) begin
           mm_dim_t nt0, mt0, kt0;
           mm_tile_sz_t mt_eff0, nt_eff0, kt_eff0;
-          tile_decode(0, mt_dim_lg2_q, kt_dim_lg2_q, nt0, mt0, kt0);
+          nt0 = '0;
+          mt0 = '0;
+          kt0 = '0;
           tile_eff_sizes(nt0, mt0, kt0, mt_eff0, nt_eff0, kt_eff0);
 
           out_cmd_d   = make_dma_ld(job_q.lmem_wbuf0_base,
@@ -974,7 +1013,9 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           mm_dim_t nt0, mt0, kt0;
           mm_tile_sz_t mt_eff0, nt_eff0, kt_eff0;
           mm_group_t groups_eff;
-          tile_decode(0, mt_dim_lg2_q, kt_dim_lg2_q, nt0, mt0, kt0);
+          nt0 = '0;
+          mt0 = '0;
+          kt0 = '0;
           tile_eff_sizes(nt0, mt0, kt0, mt_eff0, nt_eff0, kt_eff0);
 
           if (!job_q.qdir) begin
@@ -1006,7 +1047,9 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           mm_tile_sz_t mt_eff0, nt_eff0, kt_eff0;
           mm_group_t groups_eff, groups_full;
 
-          tile_decode(0, mt_dim_lg2_q, kt_dim_lg2_q, nt0, mt0, kt0);
+          nt0 = '0;
+          mt0 = '0;
+          kt0 = '0;
           tile_eff_sizes(nt0, mt0, kt0, mt_eff0, nt_eff0, kt_eff0);
 
           groups_full = ceil_div_log2(KT, job_q.orig_qblk);
@@ -1038,10 +1081,22 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
         if (can_emit) begin
           out_cmd_d   = make_notify_cmd(rid_tile(1'b0), (4*1 + 4), 1'b1);
           out_start_d = 1'b1;
-          if (tile_total > 1)
-            state_d   = S_PRE1_LD_I;
-          else begin
-            tile_cur_d  = 0;
+          tile_cur_d  = 0;
+          tile_cur_nt_d = '0;
+          tile_cur_mt_d = '0;
+          tile_cur_kt_d = '0;
+          if (has_tile1_init && (tile_total > 1)) begin
+            tile_pre_d  = 1;
+            tile_pre_nt_d = nt1_init;
+            tile_pre_mt_d = mt1_init;
+            tile_pre_kt_d = kt1_init;
+            pre_valid_d = 1'b1;
+            state_d     = S_PRE1_LD_I;
+          end else begin
+            tile_pre_d  = 0;
+            tile_pre_nt_d = '0;
+            tile_pre_mt_d = '0;
+            tile_pre_kt_d = '0;
             pre_valid_d = 1'b0;
             state_d     = S_WAIT_CUR_TILE_READY;
           end
@@ -1055,7 +1110,9 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
         if (can_emit) begin
           mm_dim_t nt1, mt1, kt1;
           mm_tile_sz_t mt_eff1, nt_eff1, kt_eff1;
-          tile_decode(1, mt_dim_lg2_q, kt_dim_lg2_q, nt1, mt1, kt1);
+          nt1 = nt1_init;
+          mt1 = mt1_init;
+          kt1 = kt1_init;
           tile_eff_sizes(nt1, mt1, kt1, mt_eff1, nt_eff1, kt_eff1);
 
           out_cmd_d   = make_dma_ld(job_q.lmem_ibuf1_base,
@@ -1074,7 +1131,9 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
         if (can_emit) begin
           mm_dim_t nt1, mt1, kt1;
           mm_tile_sz_t mt_eff1, nt_eff1, kt_eff1;
-          tile_decode(1, mt_dim_lg2_q, kt_dim_lg2_q, nt1, mt1, kt1);
+          nt1 = nt1_init;
+          mt1 = mt1_init;
+          kt1 = kt1_init;
           tile_eff_sizes(nt1, mt1, kt1, mt_eff1, nt_eff1, kt_eff1);
 
           out_cmd_d   = make_dma_ld(job_q.lmem_wbuf1_base,
@@ -1094,7 +1153,9 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           mm_dim_t nt1, mt1, kt1;
           mm_tile_sz_t mt_eff1, nt_eff1, kt_eff1;
           mm_group_t groups_eff;
-          tile_decode(1, mt_dim_lg2_q, kt_dim_lg2_q, nt1, mt1, kt1);
+          nt1 = nt1_init;
+          mt1 = mt1_init;
+          kt1 = kt1_init;
           tile_eff_sizes(nt1, mt1, kt1, mt_eff1, nt_eff1, kt_eff1);
 
           if (!job_q.qdir) begin
@@ -1126,7 +1187,9 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           mm_tile_sz_t mt_eff1, nt_eff1, kt_eff1;
           mm_group_t groups_eff, groups_full;
 
-          tile_decode(1, mt_dim_lg2_q, kt_dim_lg2_q, nt1, mt1, kt1);
+          nt1 = nt1_init;
+          mt1 = mt1_init;
+          kt1 = kt1_init;
           tile_eff_sizes(nt1, mt1, kt1, mt_eff1, nt_eff1, kt_eff1);
 
           groups_full = ceil_div_log2(KT, job_q.orig_qblk);
@@ -1160,8 +1223,22 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           out_start_d = 1'b1;
 
           tile_cur_d  = 0;
-          tile_pre_d  = 1;
-          pre_valid_d = 1'b1;
+          tile_cur_nt_d = '0;
+          tile_cur_mt_d = '0;
+          tile_cur_kt_d = '0;
+          if (has_tile1_init) begin
+            tile_pre_d  = 1;
+            tile_pre_nt_d = nt1_init;
+            tile_pre_mt_d = mt1_init;
+            tile_pre_kt_d = kt1_init;
+            pre_valid_d = 1'b1;
+          end else begin
+            tile_pre_d  = 0;
+            tile_pre_nt_d = '0;
+            tile_pre_mt_d = '0;
+            tile_pre_kt_d = '0;
+            pre_valid_d = 1'b0;
+          end
 
           state_d     = S_WAIT_CUR_TILE_READY;
         end
@@ -1465,6 +1542,9 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           c.instr    = make_instr(OP_O_ACC2LMEM, out_bytes_acc);
           c.rs1_data  = job_q.lmem_obuf_base; // dst
           c.rs2_data  = ACCUM_BASE;           // src
+          // Pass effective tile extents to output path mapper.
+          c.eff_mt    = mt_eff_cur;
+          c.groups_eff = nt_eff_cur;
 
           out_cmd_d   = c;
           out_start_d = 1'b1;
@@ -1523,17 +1603,27 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
         if (pre_valid_q) begin
           u32_t next_tile;
+          logic has_next_tile;
+          mm_dim_t nt_next, mt_next, kt_next;
 
           tile_cur_d = tile_pre_q;
-          next_tile  = tile_pre_q + 1;
+          tile_cur_nt_d = tile_pre_nt_q;
+          tile_cur_mt_d = tile_pre_mt_q;
+          tile_cur_kt_d = tile_pre_kt_q;
+          next_tile = tile_pre_q + 1;
+          tile_next_coords(tile_pre_nt_q, tile_pre_mt_q, tile_pre_kt_q,
+                           has_next_tile, nt_next, mt_next, kt_next);
 
-          if (next_tile < tile_total) begin
-            tile_pre_d  = next_tile;
+          if (has_next_tile && (next_tile < tile_total)) begin
+            tile_pre_d = next_tile;
+            tile_pre_nt_d = nt_next;
+            tile_pre_mt_d = mt_next;
+            tile_pre_kt_d = kt_next;
             pre_valid_d = 1'b1;
-            state_d     = S_PRE_NEXT_LD_I;
+            state_d = S_PRE_NEXT_LD_I;
           end else begin
             pre_valid_d = 1'b0;
-            state_d     = S_WAIT_CUR_TILE_READY;
+            state_d = S_WAIT_CUR_TILE_READY;
           end
         end else begin
           // no prefetched tile exists: done
@@ -1558,10 +1648,12 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           logic buf_pre;
           u32_t gen_pre;
 
-          tile_decode(tile_pre_d, mt_dim_lg2_q, kt_dim_lg2_q, ntp, mtp, ktp);
+          ntp = tile_pre_nt_q;
+          mtp = tile_pre_mt_q;
+          ktp = tile_pre_kt_q;
           tile_eff_sizes(ntp, mtp, ktp, mt_effp, nt_effp, kt_effp);
-          buf_pre = tile_pre_d[0];
-          gen_pre = buf_gen(tile_pre_d);
+          buf_pre = tile_pre_q[0];
+          gen_pre = buf_gen(tile_pre_q);
 
           out_cmd_d   = make_dma_ld(ibuf_base(buf_pre),
                                     input_tile_addr(job_q, mtp, ktp),
@@ -1582,10 +1674,12 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           logic buf_pre;
           u32_t gen_pre;
 
-          tile_decode(tile_pre_d, mt_dim_lg2_q, kt_dim_lg2_q, ntp, mtp, ktp);
+          ntp = tile_pre_nt_q;
+          mtp = tile_pre_mt_q;
+          ktp = tile_pre_kt_q;
           tile_eff_sizes(ntp, mtp, ktp, mt_effp, nt_effp, kt_effp);
-          buf_pre = tile_pre_d[0];
-          gen_pre = buf_gen(tile_pre_d);
+          buf_pre = tile_pre_q[0];
+          gen_pre = buf_gen(tile_pre_q);
 
           out_cmd_d   = make_dma_ld(wbuf_base(buf_pre),
                                     weight_tile_addr(job_q, ntp, ktp),
@@ -1607,10 +1701,12 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           u32_t gen_pre;
           mm_group_t groups_eff;
 
-          tile_decode(tile_pre_d, mt_dim_lg2_q, kt_dim_lg2_q, ntp, mtp, ktp);
+          ntp = tile_pre_nt_q;
+          mtp = tile_pre_mt_q;
+          ktp = tile_pre_kt_q;
           tile_eff_sizes(ntp, mtp, ktp, mt_effp, nt_effp, kt_effp);
-          buf_pre = tile_pre_d[0];
-          gen_pre = buf_gen(tile_pre_d);
+          buf_pre = tile_pre_q[0];
+          gen_pre = buf_gen(tile_pre_q);
 
           if (!job_q.qdir) begin
             groups_eff = ceil_div_log2(kt_effp, job_q.orig_qblk);
@@ -1643,10 +1739,12 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           u32_t gen_pre;
           mm_group_t groups_eff, groups_full;
 
-          tile_decode(tile_pre_d, mt_dim_lg2_q, kt_dim_lg2_q, ntp, mtp, ktp);
+          ntp = tile_pre_nt_q;
+          mtp = tile_pre_mt_q;
+          ktp = tile_pre_kt_q;
           tile_eff_sizes(ntp, mtp, ktp, mt_effp, nt_effp, kt_effp);
-          buf_pre = tile_pre_d[0];
-          gen_pre = buf_gen(tile_pre_d);
+          buf_pre = tile_pre_q[0];
+          gen_pre = buf_gen(tile_pre_q);
 
           groups_full = ceil_div_log2(KT, job_q.orig_qblk);
 
@@ -1678,8 +1776,8 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
           logic buf_pre;
           u32_t gen_pre;
 
-          buf_pre = tile_pre_d[0];
-          gen_pre = buf_gen(tile_pre_d);
+          buf_pre = tile_pre_q[0];
+          gen_pre = buf_gen(tile_pre_q);
 
           out_cmd_d   = make_notify_cmd(rid_tile(buf_pre), (4*gen_pre + 4), 1'b1);
           out_start_d = 1'b1;
@@ -1812,7 +1910,9 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
         tile_total_next = u32_t'(mt_dim_q) * u32_t'(nt_dim_q) * u32_t'(kt_dim_q);
         next_tile       = tile_pre_q + 1;
         has_next_tile   = (next_tile < tile_total_next);
-        tile_decode(tile_pre_q, mt_dim_lg2_q, kt_dim_lg2_q, nt_next, mt_next, kt_next);
+        nt_next = tile_pre_nt_q;
+        mt_next = tile_pre_mt_q;
+        kt_next = tile_pre_kt_q;
 
         log_tile_progress(tile_pre_q, tile_total_next, nt_next, mt_next, kt_next, has_next_tile, next_tile);
       end

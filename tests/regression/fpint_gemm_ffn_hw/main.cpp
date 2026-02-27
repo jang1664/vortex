@@ -39,13 +39,18 @@ static vx_buffer_h C_buffer = nullptr;       // fp16 [M x N]
 static constexpr float FP16_TOL = 0.01f;
 static constexpr uint64_t HOST_WAIT_TIMEOUT_MS = 3000000;
 
-static constexpr uint64_t LMEM_LAYOUT_ALIGN_BYTES = 4096;
+static constexpr uint64_t LMEM_LAYOUT_ALIGN_BYTES = 64;
+static constexpr uint64_t LMEM_STACK_GUARD_BYTES = (1ull << STACK_LOG2_SIZE);
 static constexpr uint64_t DMA_MT = GEMM_FSM_MT;
 static constexpr uint64_t DMA_NT = GEMM_FSM_NT;
 static constexpr uint64_t DMA_KT = GEMM_FSM_KT;
 
 static constexpr uint64_t align_up_u64(uint64_t x, uint64_t a) {
   return (a == 0) ? x : ((x + a - 1) / a) * a;
+}
+
+static constexpr uint64_t align_down_u64(uint64_t x, uint64_t a) {
+  return (a == 0) ? x : (x / a) * a;
 }
 
 static const char* status_to_str(uint32_t status) {
@@ -274,36 +279,57 @@ static bool compute_lmem_layout(kernel_arg_t& kargs, uint64_t local_mem_size) {
   uint64_t lmem_zpbuf_bytes = (QDIR == 0) ? (groups_tile * DMA_NT * 2ull) : (DMA_KT * ng_tile * 2ull);
   uint64_t lmem_obuf_bytes  = DMA_MT * DMA_NT * 2ull;
 
-  uint64_t cur = 0;
+  // Layout policy:
+  //  - Keep IBUF0/WBUF/SC/ZP in the low region.
+  //  - Place IBUF1 + OBUF from top-down in the high region.
+  //  - Leave an explicit guard gap between low/high to avoid stack collision.
+  uint64_t low_cur = 0;
 
-  kargs.lmem_ibuf0_base = cur;
-  cur += align_up_u64(lmem_ibuf_bytes, LMEM_LAYOUT_ALIGN_BYTES);
+  kargs.lmem_ibuf0_base = low_cur;
+  low_cur += align_up_u64(lmem_ibuf_bytes, LMEM_LAYOUT_ALIGN_BYTES);
 
-  kargs.lmem_ibuf1_base = cur;
-  cur += align_up_u64(lmem_ibuf_bytes, LMEM_LAYOUT_ALIGN_BYTES);
+  kargs.lmem_wbuf0_base = low_cur;
+  low_cur += align_up_u64(lmem_wbuf_bytes, LMEM_LAYOUT_ALIGN_BYTES);
 
-  kargs.lmem_wbuf0_base = cur;
-  cur += align_up_u64(lmem_wbuf_bytes, LMEM_LAYOUT_ALIGN_BYTES);
+  kargs.lmem_wbuf1_base = low_cur;
+  low_cur += align_up_u64(lmem_wbuf_bytes, LMEM_LAYOUT_ALIGN_BYTES);
 
-  kargs.lmem_wbuf1_base = cur;
-  cur += align_up_u64(lmem_wbuf_bytes, LMEM_LAYOUT_ALIGN_BYTES);
+  kargs.lmem_scbuf0_base = low_cur;
+  low_cur += align_up_u64(lmem_scbuf_bytes, LMEM_LAYOUT_ALIGN_BYTES);
 
-  kargs.lmem_scbuf0_base = cur;
-  cur += align_up_u64(lmem_scbuf_bytes, LMEM_LAYOUT_ALIGN_BYTES);
+  kargs.lmem_scbuf1_base = low_cur;
+  low_cur += align_up_u64(lmem_scbuf_bytes, LMEM_LAYOUT_ALIGN_BYTES);
 
-  kargs.lmem_scbuf1_base = cur;
-  cur += align_up_u64(lmem_scbuf_bytes, LMEM_LAYOUT_ALIGN_BYTES);
+  kargs.lmem_zpbuf0_base = low_cur;
+  low_cur += align_up_u64(lmem_zpbuf_bytes, LMEM_LAYOUT_ALIGN_BYTES);
 
-  kargs.lmem_zpbuf0_base = cur;
-  cur += align_up_u64(lmem_zpbuf_bytes, LMEM_LAYOUT_ALIGN_BYTES);
+  kargs.lmem_zpbuf1_base = low_cur;
+  low_cur += align_up_u64(lmem_zpbuf_bytes, LMEM_LAYOUT_ALIGN_BYTES);
 
-  kargs.lmem_zpbuf1_base = cur;
-  cur += align_up_u64(lmem_zpbuf_bytes, LMEM_LAYOUT_ALIGN_BYTES);
+  uint64_t high_cur = align_down_u64(local_mem_size, LMEM_LAYOUT_ALIGN_BYTES);
 
-  kargs.lmem_obuf_base = cur;
+  if (high_cur < lmem_obuf_bytes) {
+    return false;
+  }
+  high_cur = align_down_u64(high_cur - lmem_obuf_bytes, LMEM_LAYOUT_ALIGN_BYTES);
+  kargs.lmem_obuf_base = high_cur;
 
-  uint64_t total_needed = align_up_u64(cur + lmem_obuf_bytes, LMEM_LAYOUT_ALIGN_BYTES);
-  return total_needed <= local_mem_size;
+  if (high_cur < lmem_ibuf_bytes) {
+    return false;
+  }
+  high_cur = align_down_u64(high_cur - lmem_ibuf_bytes, LMEM_LAYOUT_ALIGN_BYTES);
+  kargs.lmem_ibuf1_base = high_cur;
+
+  if (low_cur > kargs.lmem_ibuf1_base) {
+    return false;
+  }
+
+  uint64_t gap_bytes = kargs.lmem_ibuf1_base - low_cur;
+  if (gap_bytes < LMEM_STACK_GUARD_BYTES) {
+    return false;
+  }
+
+  return true;
 }
 
 int main(int argc, char *argv[]) {

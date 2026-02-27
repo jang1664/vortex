@@ -343,6 +343,17 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     end
 
     // Output store DMA command mapping.
+    wire [31:0] output_mt_eff_cmd = {11'd0, gemm_ctrl_if.output_write_ctrl.cmd.eff_mt};
+    wire [31:0] output_nt_eff_cmd = gemm_ctrl_if.output_write_ctrl.cmd.groups_eff;
+    wire [31:0] output_mt_eff_raw = (output_mt_eff_cmd != 0) ? output_mt_eff_cmd : MT;
+    wire [31:0] output_nt_eff_raw = (output_nt_eff_cmd != 0) ? output_nt_eff_cmd : NT;
+    wire [31:0] output_mt_eff     = (output_mt_eff_raw > MT) ? MT : output_mt_eff_raw;
+    wire [31:0] output_nt_eff     = (output_nt_eff_raw > NT) ? NT : output_nt_eff_raw;
+    wire [31:0] output_nt_tiles   = ceil_div_log2(output_nt_eff, `CLOG2(MXU_NT));
+    wire [31:0] output_nt_tiles_s = (output_nt_tiles != 0) ? output_nt_tiles : 32'd1;
+    wire [31:0] output_seg_elems  = (output_nt_tiles_s == 32'd1) ? output_nt_eff : MXU_NT;
+    wire [31:0] output_seg_elems_s = (output_seg_elems != 0) ? output_seg_elems : MXU_NT;
+
     assign output_dma_ctrl_if.start         = gemm_ctrl_if.output_write_ctrl.start && !output_is_notify;
     assign output_dma_ctrl_if.src_base_addr = gemm_ctrl_if.output_write_ctrl.cmd.rs2_data;
     assign output_dma_ctrl_if.src_strides[0] = MXU_NT*32/8;
@@ -354,11 +365,11 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     assign output_dma_ctrl_if.dst_strides[1] = MXU_NT*16/8;
     assign output_dma_ctrl_if.dst_strides[2] = 0;
 
-    assign output_dma_ctrl_if.bounds[0] = MT;  //accum2lmem은 padding 포함
-    assign output_dma_ctrl_if.bounds[1] = NT/MXU_NT;
+    assign output_dma_ctrl_if.bounds[0] = output_mt_eff;
+    assign output_dma_ctrl_if.bounds[1] = output_nt_tiles_s;
     assign output_dma_ctrl_if.bounds[2] = 32'd1;
 
-    assign output_dma_ctrl_if.seg_size         = MXU_NT*16/8;  //request가 1이 되면 fp32가 fp16으로 바뀌어서 rsp_data 로 들어옴, 이걸 ldma 하면 됨
+    assign output_dma_ctrl_if.seg_size         = output_seg_elems_s * 16 / 8;
     assign gemm_ctrl_if.output_write_flag.idle = output_notify_pending_r ? 1'b0 : output_dma_ctrl_if.idle;
     assign gemm_ctrl_if.output_write_flag.done = output_notify_pending_r ? output_notify_fire : output_dma_ctrl_if.done;
 
