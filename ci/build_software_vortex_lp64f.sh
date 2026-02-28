@@ -16,6 +16,7 @@ set -euo pipefail
 SKIP_CLONE=0
 SKIP_TOOLCHAIN=0
 SKIP_RT=0
+INJECT_EXIT_SHIM=1
 CMAKE_BIN="${CMAKE_BIN:-}"
 
 usage() {
@@ -26,6 +27,7 @@ Options:
                      If missing, clone is still performed.
   --skip-tool-chain  Skip riscv-gnu-toolchain build step.
   --skip-rt          Skip compiler-rt (LLVM) build step.
+  --skip-exit-shim   Do not inject _exit shim into lp64f libc.a.
   --cmake <path>     Use a specific CMake binary for compiler-rt (needs >= 3.20).
   -h, --help         Show this help.
 USAGE
@@ -43,6 +45,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --skip-rt)
       SKIP_RT=1
+      shift
+      ;;
+    --skip-exit-shim)
+      INJECT_EXIT_SHIM=0
       shift
       ;;
     --cmake)
@@ -121,6 +127,63 @@ cmake_version_ok() {
   '
 }
 
+inject_exit_shim() {
+  local libc_archive="$LIBC_DST/lib/libc.a"
+  local cc_bin="$RISCV_TC_PREFIX/bin/$RISCV_PREFIX-gcc"
+  local ar_bin="$RISCV_TC_PREFIX/bin/$RISCV_PREFIX-ar"
+  local ranlib_bin="$RISCV_TC_PREFIX/bin/$RISCV_PREFIX-ranlib"
+  local nm_bin="$RISCV_TC_PREFIX/bin/$RISCV_PREFIX-nm"
+
+  if [[ ! -f "$libc_archive" ]]; then
+    echo "ERROR: libc archive not found: $libc_archive" >&2
+    exit 1
+  fi
+
+  need_cmd "$cc_bin"
+  need_cmd "$ar_bin"
+  need_cmd "$ranlib_bin"
+  need_cmd "$nm_bin"
+
+  if "$nm_bin" -A "$libc_archive" 2>/dev/null | grep -Eq '[[:space:]]T[[:space:]]_exit$'; then
+    log "libc.a already defines _exit, skipping shim injection"
+    return
+  fi
+
+  local tmpd
+  tmpd=$(mktemp -d "$WORK_ROOT/.tmp_exit_shim.XXXXXX")
+  local asm_file="$tmpd/vx_exit_shim_lp64f.S"
+  local obj_file="$tmpd/vx_exit_shim_lp64f.o"
+
+  cat > "$asm_file" <<'EOF'
+  .section .text
+  .globl _exit
+  .type  _exit, @function
+_exit:
+  tail _Exit
+  .size _exit, .-_exit
+EOF
+
+  if ! "$cc_bin" -c "$asm_file" -o "$obj_file" \
+      -march="$TOOLCHAIN_ARCH" -mabi="$ABI" -mcmodel="$CODE_MODEL"; then
+    log "WARNING: failed to build _exit shim with -march=$TOOLCHAIN_ARCH, retrying with -march=rv64imaf"
+    "$cc_bin" -c "$asm_file" -o "$obj_file" \
+      -march=rv64imaf -mabi="$ABI" -mcmodel="$CODE_MODEL"
+  fi
+
+  "$ar_bin" d "$libc_archive" "$(basename "$obj_file")" >/dev/null 2>&1 || true
+  "$ar_bin" r "$libc_archive" "$obj_file"
+  "$ranlib_bin" "$libc_archive"
+
+  if "$nm_bin" -A "$libc_archive" 2>/dev/null | grep -Eq '[[:space:]]T[[:space:]]_exit$'; then
+    log "Injected _exit shim into $libc_archive"
+  else
+    echo "ERROR: failed to verify _exit shim injection in $libc_archive" >&2
+    exit 1
+  fi
+
+  rm -rf "$tmpd"
+}
+
 # -----------------------
 # Preconditions
 # -----------------------
@@ -168,6 +231,7 @@ log "  CODE_MODEL=$CODE_MODEL"
 log "  SKIP_CLONE=$SKIP_CLONE"
 log "  SKIP_TOOLCHAIN=$SKIP_TOOLCHAIN"
 log "  SKIP_RT=$SKIP_RT"
+log "  INJECT_EXIT_SHIM=$INJECT_EXIT_SHIM"
 if [[ "$SKIP_RT" -eq 0 ]]; then
   log "  CMAKE_BIN=$CMAKE_BIN"
 fi
@@ -219,6 +283,13 @@ rm -rf "$LIBC_DST"
 mkdir -p "$LIBC_DST"
 cp -a "$RISCV_SYSROOT/include" "$LIBC_DST/"
 cp -a "$RISCV_SYSROOT/lib" "$LIBC_DST/"
+
+if [[ "$INJECT_EXIT_SHIM" -eq 1 ]]; then
+  log "Injecting _exit shim into lp64f libc.a"
+  inject_exit_shim
+else
+  log "Skipping _exit shim injection (--skip-exit-shim)"
+fi
 
 if [[ "$SKIP_RT" -eq 0 ]]; then
   # -----------------------

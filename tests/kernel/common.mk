@@ -28,9 +28,6 @@ CFLAGS += -I$(VORTEX_HOME)/kernel/include -I$(ROOT_DIR)/hw -I$(SW_COMMON_DIR)
 CFLAGS += -DXLEN_$(XLEN) -DNDEBUG $(CONFIGS)
 
 LIBC_LIB += -L$(LIBC_VORTEX)/lib -lm -lc
-ifneq ($(wildcard $(LIBC_VORTEX)/lib/libnosys.a),)
-LIBC_LIB += -lnosys
-endif
 LIBC_LIB += $(LIBCRT_VORTEX)/lib/baremetal/libclang_rt.builtins-riscv$(XLEN).a
 
 LDFLAGS += -Wl,-Bstatic,--gc-sections,-T,$(VORTEX_HOME)/kernel/scripts/link$(XLEN).ld,--defsym=STARTUP_ADDR=$(STARTUP_ADDR) $(VORTEX_KN_PATH)/libvortex.a $(LIBC_LIB)

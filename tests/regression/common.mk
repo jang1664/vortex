@@ -9,12 +9,12 @@ VORTEX_RT_PATH ?= $(ROOT_DIR)/runtime
 VORTEX_KN_PATH ?= $(ROOT_DIR)/kernel
 
 ifeq ($(XLEN),64)
-	ifneq (,$(findstring -DEXT_D_DISABLE,$(CONFIGS)))
-		ifeq ($(EXT_V_ENABLE),1)
-			VX_CFLAGS += -march=rv64imafv_zve64f -mabi=lp64d # vector extension
-		else
-			VX_CFLAGS += -march=rv64imaf -mabi=lp64d
-		endif
+		ifneq (,$(findstring -DEXT_D_DISABLE,$(CONFIGS)))
+			ifeq ($(EXT_V_ENABLE),1)
+				VX_CFLAGS += -march=rv64imafv_zve64f -mabi=lp64f # vector extension
+			else
+				VX_CFLAGS += -march=rv64imaf -mabi=lp64f
+			endif
 	else
 	ifeq ($(EXT_V_ENABLE),1)
 		VX_CFLAGS += -march=rv64imafdv_zve64d -mabi=lp64d # vector extension
@@ -61,9 +61,6 @@ VX_CFLAGS += -DNDEBUG
 VX_CFLAGS += $(CONFIGS)
 
 VX_LIBS += -L$(LIBC_VORTEX)/lib -lm -lc
-ifneq ($(wildcard $(LIBC_VORTEX)/lib/libnosys.a),)
-VX_LIBS += -lnosys
-endif
 
 VX_LIBS += $(LIBCRT_VORTEX)/lib/baremetal/libclang_rt.builtins-riscv$(XLEN).a
 #VX_LIBS += -lgcc
