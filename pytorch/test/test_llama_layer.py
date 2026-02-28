@@ -25,6 +25,7 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.profiler import profile, ProfilerActivity, record_function
 
 if "VORTEX_HOME" not in os.environ:
     os.environ["VORTEX_HOME"] = os.path.normpath(
@@ -118,7 +119,13 @@ class LlamaMLP(nn.Module):
         self.down_proj = nn.Linear(config.intermediate_size, config.hidden_size, bias=config.mlp_bias)
 
     def forward(self, x):
-        return self.down_proj(F.silu(self.gate_proj(x)) * self.up_proj(x))
+        with record_function("VORTEX::mlp_gate_silu"):
+            gate = F.silu(self.gate_proj(x))
+        with record_function("VORTEX::mlp_up_proj"):
+            up = self.up_proj(x)
+        with record_function("VORTEX::mlp_down_proj"):
+            out = self.down_proj(gate * up)
+        return out
 
 
 class LlamaAttention(nn.Module):
@@ -140,22 +147,34 @@ class LlamaAttention(nn.Module):
         bsz, seq_len, _ = hidden_states.shape
         hidden_shape = (bsz, seq_len, -1, self.head_dim)
 
-        query_states = self.q_proj(hidden_states).view(hidden_shape).transpose(1, 2)
-        key_states   = self.k_proj(hidden_states).view(hidden_shape).transpose(1, 2)
-        value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+        with record_function("VORTEX::attn_qkv_proj"):
+            query_states = self.q_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+            key_states   = self.k_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+            value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
 
-        cos, sin = position_embeddings
-        query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
+        with record_function("VORTEX::rope"):
+            cos, sin = position_embeddings
+            query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
 
         # Eager attention
-        attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) * self.scaling
-        if attention_mask is not None:
-            attn_weights = attn_weights + attention_mask[:, :, :, :seq_len]
-        attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
-        attn_output = torch.matmul(attn_weights, value_states)
-        attn_output = attn_output.transpose(1, 2).contiguous()
-        attn_output = attn_output.reshape(bsz, seq_len, -1).contiguous()
-        attn_output = self.o_proj(attn_output)
+        with record_function("VORTEX::attn_score"):
+            attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) * self.scaling
+            if attention_mask is not None:
+                attn_weights = attn_weights + attention_mask[:, :, :, :seq_len]
+
+        with record_function("VORTEX::softmax"):
+            attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
+
+        with record_function("VORTEX::attn_value"):
+            attn_output = torch.matmul(attn_weights, value_states)
+
+        with record_function("VORTEX::attn_reshape"):
+            attn_output = attn_output.transpose(1, 2).contiguous()
+            attn_output = attn_output.reshape(bsz, seq_len, -1).contiguous()
+
+        with record_function("VORTEX::attn_o_proj"):
+            attn_output = self.o_proj(attn_output)
+
         return attn_output
 
 
@@ -170,15 +189,21 @@ class LlamaDecoderLayer(nn.Module):
     def forward(self, hidden_states, position_embeddings, attention_mask=None):
         # Self-Attention with residual
         residual = hidden_states
-        hidden_states = self.input_layernorm(hidden_states)
-        hidden_states = self.self_attn(hidden_states, position_embeddings, attention_mask)
-        hidden_states = residual + hidden_states
+        with record_function("VORTEX::input_layernorm"):
+            hidden_states = self.input_layernorm(hidden_states)
+        with record_function("VORTEX::self_attn"):
+            hidden_states = self.self_attn(hidden_states, position_embeddings, attention_mask)
+        with record_function("VORTEX::residual_add_attn"):
+            hidden_states = residual + hidden_states
 
         # MLP with residual
         residual = hidden_states
-        hidden_states = self.post_attention_layernorm(hidden_states)
-        hidden_states = self.mlp(hidden_states)
-        hidden_states = residual + hidden_states
+        with record_function("VORTEX::post_attn_layernorm"):
+            hidden_states = self.post_attention_layernorm(hidden_states)
+        with record_function("VORTEX::mlp"):
+            hidden_states = self.mlp(hidden_states)
+        with record_function("VORTEX::residual_add_mlp"):
+            hidden_states = residual + hidden_states
         return hidden_states
 
 
@@ -193,11 +218,16 @@ def _check(name, result, expected, atol=0.5, rtol=0.1):
     mean_diff = diff.mean().item()
     rel_err = (diff / (expected.float().abs() + 1e-8)).mean().item()
     print(f"  max_diff={max_diff:.6f}  mean_diff={mean_diff:.6f}  rel_err={rel_err:.6f}")
-    ok = max_diff < atol
+    ok = (max_diff < atol) and (rel_err < rtol)
     if ok:
         print(f"  ✅ {name} PASSED")
     else:
-        print(f"  ❌ {name} FAILED (max_diff={max_diff:.6f} > atol={atol})")
+        reasons = []
+        if max_diff >= atol:
+            reasons.append(f"max_diff={max_diff:.6f} > atol={atol}")
+        if rel_err >= rtol:
+            reasons.append(f"rel_err={rel_err:.6f} > rtol={rtol}")
+        print(f"  ❌ {name} FAILED ({'; '.join(reasons)})")
     return ok
 
 
@@ -387,21 +417,30 @@ if __name__ == "__main__":
         test_decoder_with_causal_mask,
         test_longer_sequence,
     ]
+
+    trace_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "llama_layer_trace.json")
+
     passed = 0
     failed = 0
-    for t in tests:
-        try:
-            ok = t()
-            if ok:
-                passed += 1
-            else:
+
+    with profile(activities=[ProfilerActivity.CPU]) as prof:
+        for t in tests:
+            try:
+                with record_function(f"VORTEX::{t.__name__}"):
+                    ok = t()
+                if ok:
+                    passed += 1
+                else:
+                    failed += 1
+            except Exception as e:
+                print(f"  ❌ {t.__name__} EXCEPTION: {e}")
+                import traceback
+                traceback.print_exc()
                 failed += 1
-        except Exception as e:
-            print(f"  ❌ {t.__name__} EXCEPTION: {e}")
-            import traceback
-            traceback.print_exc()
-            failed += 1
-        print()
+            print()
+
+    prof.export_chrome_trace(trace_path)
+    print(f"\n📊 Chrome trace exported to: {trace_path}")
 
     print("=" * 60)
     print(f"Results: {passed} passed, {failed} failed out of {len(tests)} tests")

@@ -11,9 +11,9 @@ VORTEX_KN_PATH ?= $(ROOT_DIR)/kernel
 ifeq ($(XLEN),64)
 	ifneq (,$(findstring -DEXT_D_DISABLE,$(CONFIGS)))
 		ifeq ($(EXT_V_ENABLE),1)
-			VX_CFLAGS += -march=rv64imafv_zve64f -mabi=lp64f # vector extension
+			VX_CFLAGS += -march=rv64imafv_zve64f -mabi=lp64d # vector extension
 		else
-			VX_CFLAGS += -march=rv64imaf -mabi=lp64f
+			VX_CFLAGS += -march=rv64imaf -mabi=lp64d
 		endif
 	else
 	ifeq ($(EXT_V_ENABLE),1)

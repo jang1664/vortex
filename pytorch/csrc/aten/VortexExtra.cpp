@@ -771,10 +771,15 @@ at::Tensor vortex_mm(
 // ===========================================================================
 //  4b. aten::bmm  ->  batch loop over sgemm_tcu
 //
-//  Views (self[b]) share the parent staging buffer so their data_ptr()
-//  is an offset that deviceAddress() cannot resolve.  Instead we memcpy
-//  each batch slice from the parent staging buffer into a standalone 2D
-//  tensor, sync it to device, call vortex_mm, then copy results back.
+//  For each batch slice we compute the device address directly:
+//    device_addr(batch b) = deviceAddress(base_ptr) + b * batch_bytes
+//  This avoids any staging↔device sync and keeps data on-device
+//  throughout the entire chain (just like CUDA).
+//
+//  Padding path: when dims aren't tile-aligned we must still create
+//  per-batch padded 2D buffers, but we populate them from device
+//  memory (syncFromDevice the source, pad on host, syncToDevice).
+//  The no-padding fast path is fully zero-copy on device.
 // ===========================================================================
 at::Tensor vortex_bmm(
     const at::Tensor& self,
@@ -798,42 +803,136 @@ at::Tensor vortex_bmm(
   int64_t N = mat2_c.size(2);
 
   auto& rt = c10::vortex::VortexRuntime::instance();
+  vx_device_h device = rt.deviceHandle();
 
-  // Output: fp32, one big 3D allocation
+  // Convert entire 3D tensors to fp16 once (stays on device)
+  at::Tensor a_fp16 = (self_c.dtype() == at::kHalf)
+      ? self_c : self_c.to(at::kHalf);
+  at::Tensor b_fp16 = (mat2_c.dtype() == at::kHalf)
+      ? mat2_c : mat2_c.to(at::kHalf);
+
+  uint32_t Mu = static_cast<uint32_t>(M);
+  uint32_t Ku = static_cast<uint32_t>(K);
+  uint32_t Nu = static_cast<uint32_t>(N);
+
+  uint32_t M_pad = ((Mu + TCU_TILE_M - 1) / TCU_TILE_M) * TCU_TILE_M;
+  uint32_t N_pad = ((Nu + TCU_TILE_N - 1) / TCU_TILE_N) * TCU_TILE_N;
+  uint32_t K_pad = ((Ku + TCU_TILE_K - 1) / TCU_TILE_K) * TCU_TILE_K;
+  bool needs_padding = (Mu != M_pad || Nu != N_pad || Ku != K_pad);
+
+  // Output: fp32 [B, M, N] — one contiguous allocation
   auto output = at::empty({B, M, N}, self_c.options().dtype(at::kFloat));
 
-  size_t a_elem = self_c.element_size();   // 4 for fp32
-  size_t b_elem = mat2_c.element_size();
-  size_t a_batch_bytes = (size_t)M * K * a_elem;
-  size_t b_batch_bytes = (size_t)K * N * b_elem;
-  size_t c_batch_bytes = (size_t)M * N * sizeof(float);
+  auto caps = query_caps(device);
+  uint32_t NT = static_cast<uint32_t>(caps.num_threads);
+  static std::string path = find_kernel("sgemm_tcu", "sgemm_tcu");
 
-  for (int64_t b = 0; b < B; ++b) {
-    // Create standalone 2D tensors by memcpy-ing from parent staging buffer
-    auto a_2d = at::empty({M, K}, self_c.options());
-    std::memcpy(a_2d.data_ptr(),
-                static_cast<const char*>(self_c.data_ptr()) + b * a_batch_bytes,
-                a_batch_bytes);
-    rt.syncToDevice(a_2d.data_ptr(), a_2d.nbytes());
+  if (!needs_padding) {
+    // ---- Fast path: no padding, pure device-address arithmetic ----
+    // data_ptr() of a contiguous 3D tensor == allocation base
+    uint64_t base_a = rt.deviceAddress(a_fp16.data_ptr());
+    uint64_t base_b = rt.deviceAddress(b_fp16.data_ptr());
+    uint64_t base_c = rt.deviceAddress(output.data_ptr());
+    TORCH_CHECK(base_a != 0, "Failed to get device address for A");
+    TORCH_CHECK(base_b != 0, "Failed to get device address for B");
+    TORCH_CHECK(base_c != 0, "Failed to get device address for C");
 
-    auto b_2d = at::empty({K, N}, mat2_c.options());
-    std::memcpy(b_2d.data_ptr(),
-                static_cast<const char*>(mat2_c.data_ptr()) + b * b_batch_bytes,
-                b_batch_bytes);
-    rt.syncToDevice(b_2d.data_ptr(), b_2d.nbytes());
+    size_t a_batch_bytes = (size_t)Mu * Ku * sizeof(uint16_t);  // fp16
+    size_t b_batch_bytes = (size_t)Ku * Nu * sizeof(uint16_t);  // fp16
+    size_t c_batch_bytes = (size_t)Mu * Nu * sizeof(float);     // fp32
 
-    // Run sgemm_tcu (handles fp16 conversion + padding internally)
-    auto c_2d = vortex_mm(a_2d, b_2d);  // [M, N] fp32
+    for (int64_t bi = 0; bi < B; ++bi) {
+      sgemm_tcu_kernel_arg_t karg{};
+      karg.grid_dim[0]  = N_pad / TCU_TILE_N;
+      karg.grid_dim[1]  = M_pad / TCU_TILE_M;
+      karg.block_dim[0] = NT;
+      karg.block_dim[1] = 1;
+      karg.M = M_pad;
+      karg.N = N_pad;
+      karg.K = K_pad;
+      karg.A_addr = base_a + bi * a_batch_bytes;
+      karg.B_addr = base_b + bi * b_batch_bytes;
+      karg.C_addr = base_c + bi * c_batch_bytes;
 
-    // Copy result into output's batch slice via staging buffers
-    rt.syncFromDevice(c_2d.data_ptr(), c_2d.nbytes());
+      launch_kernel(device, &karg, sizeof(karg), path);
+    }
+
+    return output;
+  }
+
+  // ---- Padding path: dimensions not tile-aligned ----
+  // We must create padded 2D buffers per batch.  Pull batch source
+  // data from device to staging, pad on host, push padded to device,
+  // run kernel, pull result, extract valid region.
+  //
+  // This is slower but correct for arbitrary shapes.
+
+  // If inputs were already fp16, staging may be stale (native kernels
+  // write only to device memory).  The fp32→fp16 .to(kHalf) path goes
+  // through CPU fallback which syncs automatically, so only the
+  // "already fp16" case needs an explicit sync here.
+  if (self_c.dtype() == at::kHalf) {
+    rt.syncFromDevice(a_fp16.data_ptr(), a_fp16.nbytes());
+  }
+  if (mat2_c.dtype() == at::kHalf) {
+    rt.syncFromDevice(b_fp16.data_ptr(), b_fp16.nbytes());
+  }
+
+  size_t a_batch_bytes_fp16 = (size_t)Mu * Ku * sizeof(uint16_t);
+  size_t b_batch_bytes_fp16 = (size_t)Ku * Nu * sizeof(uint16_t);
+  size_t c_batch_bytes = (size_t)Mu * Nu * sizeof(float);
+
+  for (int64_t bi = 0; bi < B; ++bi) {
+    // Pad A
+    auto a_padded = at::zeros({(int64_t)M_pad, (int64_t)K_pad}, a_fp16.options());
+    {
+      auto dst_view = a_padded.narrow(0, 0, M).narrow(1, 0, K);
+      auto src_ptr = static_cast<const char*>(a_fp16.data_ptr()) + bi * a_batch_bytes_fp16;
+      auto src_2d = at::from_blob(const_cast<char*>(src_ptr),
+                                   {M, K}, a_fp16.options().device(at::kCPU));
+      dst_view.copy_(src_2d);
+    }
+    rt.syncToDevice(a_padded.data_ptr(), a_padded.nbytes());
+
+    // Pad B
+    auto b_padded = at::zeros({(int64_t)K_pad, (int64_t)N_pad}, b_fp16.options());
+    {
+      auto dst_view = b_padded.narrow(0, 0, K).narrow(1, 0, N);
+      auto src_ptr = static_cast<const char*>(b_fp16.data_ptr()) + bi * b_batch_bytes_fp16;
+      auto src_2d = at::from_blob(const_cast<char*>(src_ptr),
+                                   {K, N}, b_fp16.options().device(at::kCPU));
+      dst_view.copy_(src_2d);
+    }
+    rt.syncToDevice(b_padded.data_ptr(), b_padded.nbytes());
+
+    // Output padded
+    auto c_padded = at::empty({(int64_t)M_pad, (int64_t)N_pad},
+        a_padded.options().dtype(at::kFloat));
+
+    sgemm_tcu_kernel_arg_t karg{};
+    karg.grid_dim[0]  = N_pad / TCU_TILE_N;
+    karg.grid_dim[1]  = M_pad / TCU_TILE_M;
+    karg.block_dim[0] = NT;
+    karg.block_dim[1] = 1;
+    karg.M = M_pad;
+    karg.N = N_pad;
+    karg.K = K_pad;
+    karg.A_addr = rt.deviceAddress(a_padded.data_ptr());
+    karg.B_addr = rt.deviceAddress(b_padded.data_ptr());
+    karg.C_addr = rt.deviceAddress(c_padded.data_ptr());
+
+    launch_kernel(device, &karg, sizeof(karg), path);
+
+    // Extract valid [M, N] from padded [M_pad, N_pad]
+    rt.syncFromDevice(c_padded.data_ptr(), c_padded.nbytes());
+    auto c_slice = c_padded.narrow(0, 0, M).narrow(1, 0, N).contiguous();
     std::memcpy(
-        static_cast<char*>(output.data_ptr()) + b * c_batch_bytes,
-        c_2d.data_ptr(),
+        static_cast<char*>(output.data_ptr()) + bi * c_batch_bytes,
+        c_slice.data_ptr(),
         c_batch_bytes);
   }
 
-  // Final sync: push the assembled output to device memory
+  // Push assembled output to device
   rt.syncToDevice(output.data_ptr(), output.nbytes());
   return output;
 }
