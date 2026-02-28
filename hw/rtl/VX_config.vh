@@ -40,6 +40,28 @@
 `define EXT_F_ENABLE
 `endif
 
+`ifndef SV_DPI
+`ifndef DPI_DISABLE
+`define DPI_DISABLE
+`endif
+`endif
+
+`ifndef FPU_FPNEW
+`ifndef FPU_DSP
+`ifndef FPU_DPI
+`ifndef SYNTHESIS
+`ifndef DPI_DISABLE
+`define FPU_DPI
+`else
+`define FPU_DSP
+`endif
+`else
+`define FPU_DSP
+`endif
+`endif
+`endif
+`endif
+
 `ifdef XLEN_64
 `ifndef FPU_DSP
 `ifndef EXT_D_DISABLE
@@ -244,28 +266,6 @@
 
 `ifndef STALL_TIMEOUT
 `define STALL_TIMEOUT   (100000 * (1 ** (`L2_ENABLED + `L3_ENABLED)))
-`endif
-
-`ifndef SV_DPI
-`ifndef DPI_DISABLE
-`define DPI_DISABLE
-`endif
-`endif
-
-`ifndef FPU_FPNEW
-`ifndef FPU_DSP
-`ifndef FPU_DPI
-`ifndef SYNTHESIS
-`ifndef DPI_DISABLE
-`define FPU_DPI
-`else
-`define FPU_DSP
-`endif
-`else
-`define FPU_DSP
-`endif
-`endif
-`endif
 `endif
 
 `ifndef SYNTHESIS

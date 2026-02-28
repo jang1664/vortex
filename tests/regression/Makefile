@@ -17,6 +17,9 @@ all:
 	$(MAKE) -C sgemm
 	$(MAKE) -C conv3
 	$(MAKE) -C relu
+	$(MAKE) -C exp
+	$(MAKE) -C sin
+	$(MAKE) -C cos
 	$(MAKE) -C sgemv
 	$(MAKE) -C sgemm2
 	$(MAKE) -C madmax
@@ -38,6 +41,9 @@ run-simx:
 	$(MAKE) -C sgemm run-simx
 	$(MAKE) -C conv3 run-simx
 	$(MAKE) -C relu run-simx
+	$(MAKE) -C exp run-simx
+	$(MAKE) -C sin run-simx
+	$(MAKE) -C cos run-simx
 	$(MAKE) -C sgemv run-simx
 	$(MAKE) -C sgemm2 run-simx
 	$(MAKE) -C madmax run-simx
@@ -59,6 +65,9 @@ run-rtlsim:
 	$(MAKE) -C sgemm run-rtlsim
 	$(MAKE) -C conv3 run-rtlsim
 	$(MAKE) -C relu run-rtlsim
+	$(MAKE) -C exp run-rtlsim
+	$(MAKE) -C sin run-rtlsim
+	$(MAKE) -C cos run-rtlsim
 	$(MAKE) -C sgemv run-rtlsim
 	$(MAKE) -C sgemm2 run-rtlsim
 	$(MAKE) -C madmax run-rtlsim
@@ -80,6 +89,9 @@ clean:
 	$(MAKE) -C sgemm clean
 	$(MAKE) -C conv3 clean
 	$(MAKE) -C relu clean
+	$(MAKE) -C exp clean
+	$(MAKE) -C sin clean
+	$(MAKE) -C cos clean
 	$(MAKE) -C sgemv clean
 	$(MAKE) -C sgemm2 clean
 	$(MAKE) -C madmax clean
