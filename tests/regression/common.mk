@@ -61,6 +61,9 @@ VX_CFLAGS += -DNDEBUG
 VX_CFLAGS += $(CONFIGS)
 
 VX_LIBS += -L$(LIBC_VORTEX)/lib -lm -lc
+ifneq ($(wildcard $(LIBC_VORTEX)/lib/libnosys.a),)
+VX_LIBS += -lnosys
+endif
 
 VX_LIBS += $(LIBCRT_VORTEX)/lib/baremetal/libclang_rt.builtins-riscv$(XLEN).a
 #VX_LIBS += -lgcc
