@@ -92,7 +92,7 @@ module tb_VX_gemm_node
 
   // job_frontend params (must match DUT instantiation)
   localparam int JOB_NUM_ENTRIES = 4;
-  localparam int JOB_NUM_REGS32  = 35;
+  localparam int JOB_NUM_REGS32  = `GEMM_CFG_REG_NUM;
 
   // =========================================================================
   // Clock/Reset
@@ -240,7 +240,7 @@ module tb_VX_gemm_node
   );
 
   // =========================================================================
-  // Job regs indices (0..34)
+  // Job regs indices (0..39)
   // =========================================================================
   localparam int REG_CONTROL             =  0;
   localparam int REG_INPUT_BASE_LO       =  1;
@@ -273,12 +273,17 @@ module tb_VX_gemm_node
   localparam int REG_LMEM_OBUF_LO        = 27;
   localparam int REG_LMEM_OBUF_HI        = 28;
 
-  localparam int REG_M                   = 29;
-  localparam int REG_N                   = 30;
-  localparam int REG_K                   = 31;
-  localparam int REG_QBLK                = 32;
-  localparam int REG_WTRANS              = 33;
-  localparam int REG_QDIR                = 34;
+  localparam int REG_M_ORIG              = 29;
+  localparam int REG_N_ORIG              = 30;
+  localparam int REG_K_ORIG              = 31;
+  localparam int REG_QBLK_ORIG           = 32;
+  localparam int REG_M_TARGET            = 33;
+  localparam int REG_N_TARGET            = 34;
+  localparam int REG_K_TARGET            = 35;
+  localparam int REG_M_START             = 36;
+  localparam int REG_N_START             = 37;
+  localparam int REG_WTRANS              = 38;
+  localparam int REG_QDIR                = 39;
 
   // =========================================================================
   // Memory fabric (closer to real Vortex path)
@@ -1015,11 +1020,17 @@ module tb_VX_gemm_node
     job_write_reg64(eid, REG_LMEM_ZPBUF1_LO,  lmem_zpbuf1_base);
     job_write_reg64(eid, REG_LMEM_OBUF_LO,    lmem_obuf_base);
 
-    // sizes
-    job_write_reg32(eid, REG_M, test_m);
-    job_write_reg32(eid, REG_N, test_n);
-    job_write_reg32(eid, REG_K, test_k);
-    job_write_reg32(eid, REG_QBLK, test_qblk);
+    // problem shape/control
+    // single-core mode: ORIG == TARGET, START == 0
+    job_write_reg32(eid, REG_M_ORIG, test_m);
+    job_write_reg32(eid, REG_N_ORIG, test_n);
+    job_write_reg32(eid, REG_K_ORIG, test_k);
+    job_write_reg32(eid, REG_QBLK_ORIG, $clog2(test_qblk));
+    job_write_reg32(eid, REG_M_TARGET, test_m);
+    job_write_reg32(eid, REG_N_TARGET, test_n);
+    job_write_reg32(eid, REG_K_TARGET, test_k);
+    job_write_reg32(eid, REG_M_START, 32'd0);
+    job_write_reg32(eid, REG_N_START, 32'd0);
     job_write_reg32(eid, REG_WTRANS, test_wtrans);
     job_write_reg32(eid, REG_QDIR, test_qdir);
 

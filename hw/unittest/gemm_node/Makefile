@@ -111,7 +111,7 @@ DPI_SRCS := $(VORTEX_HOME)/hw/dpi/float_dpi.cpp \
             $(VORTEX_HOME)/sim/common/rvfloats.cpp
 
 SOFTFLOAT_LIB := $(THIRD_PARTY_DIR)/softfloat/build/Linux-x86_64-GCC/softfloat.a
-						
+							
 
 INCDIRS_ := $(VORTEX_HOME)/build/hw \
             $(VORTEX_HOME)/hw \
@@ -125,6 +125,30 @@ INCDIRS_ := $(VORTEX_HOME)/build/hw \
             $(THIRD_PARTY_DIR)/softfloat/source/include
 
 DEFINES_ := SIMULATION DEBUG_LEVEL=3 DBG_TRACE_GEMM XLEN_64
+FPU_NEW_EN ?= 1
+ifeq ($(FPU_NEW_EN),1)
+DEFINES_ += FPU_FPNEW
+endif
+
+ifneq (,$(findstring FPU_FPNEW,$(DEFINES_)))
+INCDIRS_ += $(THIRD_PARTY_DIR)/cvfpu/src/common_cells/include \
+            $(THIRD_PARTY_DIR)/cvfpu/src/common_cells/src \
+            $(THIRD_PARTY_DIR)/cvfpu/src
+
+CVFPU_RTLS := $(THIRD_PARTY_DIR)/cvfpu/src/fpnew_pkg.sv \
+              $(THIRD_PARTY_DIR)/cvfpu/src/common_cells/src/cf_math_pkg.sv \
+              $(THIRD_PARTY_DIR)/cvfpu/src/common_cells/src/lzc.sv \
+              $(THIRD_PARTY_DIR)/cvfpu/src/common_cells/src/rr_arb_tree.sv \
+              $(THIRD_PARTY_DIR)/cvfpu/src/fpnew_rounding.sv \
+              $(THIRD_PARTY_DIR)/cvfpu/src/fpnew_classifier.sv \
+              $(THIRD_PARTY_DIR)/cvfpu/src/fpnew_fma.sv \
+              $(THIRD_PARTY_DIR)/cvfpu/src/fpnew_opgroup_fmt_slice.sv \
+              $(THIRD_PARTY_DIR)/cvfpu/src/fpnew_opgroup_block.sv \
+              $(THIRD_PARTY_DIR)/cvfpu/src/fpnew_top.sv
+
+# Keep packages/modules order deterministic for VCS package imports.
+RTLS := $(CVFPU_RTLS) $(RTLS)
+endif
 
 CFLAGS  := "-std=c++17 -Wall -Wextra -Wno-array-bounds -Wno-maybe-uninitialized -fPIC -I$(VORTEX_HOME)/build/hw -I$(VORTEX_HOME)/hw -I$(VORTEX_HOME)/sim/common -I$(VORTEX_HOME)/hw/dpi -I$(RTL_DIR) -I$(THIRD_PARTY_DIR)/softfloat/source/include -DXLEN_$(XLEN)"
 LDFLAGS := 
