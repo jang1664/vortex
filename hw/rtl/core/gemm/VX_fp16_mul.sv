@@ -13,8 +13,10 @@
 
 `include "VX_define.vh"
 
+`ifndef FPU_FPNEW
 `ifdef SIMULATION
 `include "float_dpi.vh"
+`endif
 `endif
 
 module VX_fp16_mul #(
@@ -97,6 +99,172 @@ module VX_fp16_mul #(
             end
         end
     endfunction
+
+`ifdef FPU_FPNEW
+
+    import fpnew_pkg::*;
+
+    localparam fpnew_pkg::fpu_features_t FPU_FEATURES = '{
+        Width:         32,
+        EnableVectors: 1'b0,
+        EnableNanBox:  1'b1,
+        FpFmtMask:     5'b10000, // FP32 only
+        IntFmtMask:    4'b0010   // INT32 only
+    };
+
+    localparam fpnew_pkg::fpu_implementation_t FPU_IMPLEMENTATION = '{
+        PipeRegs: '{
+            '{32'(LATENCY), 32'(0), 32'(0), 32'(0), 32'(0)}, // ADDMUL
+            '{default: 32'(0)},           // DIVSQRT
+            '{default: 32'(0)},           // NONCOMP
+            '{default: 32'(0)}            // CONV
+        },
+        UnitTypes: '{
+            '{default: fpnew_pkg::PARALLEL}, // ADDMUL
+            '{default: fpnew_pkg::DISABLED}, // DIVSQRT
+            '{default: fpnew_pkg::DISABLED}, // NONCOMP
+            '{default: fpnew_pkg::DISABLED}  // CONV
+        },
+        PipeConfig: fpnew_pkg::DISTRIBUTED
+    };
+
+    // Stream fence: synchronize a and b inputs
+    VX_stream_intf #(.DATA_WIDTH(16)) push_streams [2] (.clk(clk));
+    VX_stream_intf #(.DATA_WIDTH(16)) pop_streams [2] (.clk(clk));
+
+    assign push_streams[0].valid = a_valid;
+    assign push_streams[0].data  = a_data;
+    assign push_streams[0].strb  = '1;
+    assign a_ready               = push_streams[0].ready;
+
+    assign push_streams[1].valid = b_valid;
+    assign push_streams[1].data  = b_data;
+    assign push_streams[1].strb  = '1;
+    assign b_ready               = push_streams[1].ready;
+
+    VX_stream_fence #(
+        .NB_STREAMS(2),
+        .DATA_WIDTH(16)
+    ) input_fence (
+        .clk_i    (clk),
+        .resetn_i (~reset),
+        .clear_i  (1'b0),
+        .push_i   (push_streams),
+        .pop_o    (pop_streams)
+    );
+
+    wire inputs_valid = pop_streams[0].valid && pop_streams[1].valid;
+    wire inputs_ready;
+    wire fpnew_inputs_valid;
+    wire fpnew_inputs_ready;
+    wire [31:0] fpnew_inputs_data;
+
+    assign pop_streams[0].ready = inputs_ready;
+    assign pop_streams[1].ready = inputs_ready;
+
+    VX_elastic_buffer #(
+        .DATAW   (32),
+        .SIZE    (1),
+        .OUT_REG (0)
+    ) input_buffer (
+        .clk       (clk),
+        .reset     (reset),
+        .valid_in  (inputs_valid),
+        .ready_in  (inputs_ready),
+        .data_in   ({pop_streams[1].data, pop_streams[0].data}),
+        .data_out  (fpnew_inputs_data),
+        .valid_out (fpnew_inputs_valid),
+        .ready_out (fpnew_inputs_ready)
+    );
+
+    wire [31:0] a_fp32 = fp16_to_fp32_convert(fpnew_inputs_data[15:0]);
+    wire [31:0] b_fp32 = fp16_to_fp32_convert(fpnew_inputs_data[31:16]);
+
+    logic [2:0][31:0] fpnew_operands;
+    wire [31:0] fpnew_result;
+    wire fpnew_out_valid;
+    wire fpnew_out_ready;
+    fpnew_pkg::status_t fpnew_status;
+    logic fpnew_tag;
+    `UNUSED_VAR (fpnew_status)
+    `UNUSED_VAR (fpnew_tag)
+
+    assign fpnew_operands[0] = a_fp32;
+    assign fpnew_operands[1] = b_fp32;
+    assign fpnew_operands[2] = '0;
+
+    fpnew_top #(
+        .Features       (FPU_FEATURES),
+        .Implementation (FPU_IMPLEMENTATION),
+        .TagType        (logic)
+    ) fpnew_mul (
+        .clk_i          (clk),
+        .rst_ni         (~reset),
+        .operands_i     (fpnew_operands),
+        .rnd_mode_i     (fpnew_pkg::RNE),
+        .op_i           (fpnew_pkg::MUL),
+        .op_mod_i       (1'b0),
+        .src_fmt_i      (fpnew_pkg::FP32),
+        .dst_fmt_i      (fpnew_pkg::FP32),
+        .int_fmt_i      (fpnew_pkg::INT32),
+        .vectorial_op_i (1'b0),
+        .simd_mask_i    (1'b1),
+        .tag_i          (1'b0),
+        .in_valid_i     (fpnew_inputs_valid),
+        .in_ready_o     (fpnew_inputs_ready),
+        .flush_i        (1'b0),
+        .result_o       (fpnew_result),
+        .status_o       (fpnew_status),
+        .tag_o          (fpnew_tag),
+        .out_valid_o    (fpnew_out_valid),
+        .out_ready_i    (fpnew_out_ready),
+        `UNUSED_PIN (busy_o)
+    );
+
+    wire [15:0] result_fp16 = fp32_to_fp16_convert(fpnew_result);
+
+    VX_elastic_buffer #(
+        .DATAW   (16),
+        .SIZE    (`TO_OUT_BUF_SIZE(OUT_BUF)),
+        .OUT_REG (`TO_OUT_BUF_REG(OUT_BUF))
+    ) result_buffer (
+        .clk       (clk),
+        .reset     (reset),
+        .valid_in  (fpnew_out_valid),
+        .ready_in  (fpnew_out_ready),
+        .data_in   (result_fp16),
+        .data_out  (result_data),
+        .valid_out (result_valid),
+        .ready_out (result_ready)
+    );
+
+`ifdef DBG_TRACE_GEMM
+    always @(posedge clk) begin
+        if (!reset) begin
+            if (a_valid && a_ready) begin
+                `TRACE(4, ("%m : [%0t] | FP16_MUL_INPUT_A | {data=0x%0h}\n", $time, a_data));
+            end
+            if (b_valid && b_ready) begin
+                `TRACE(4, ("%m : [%0t] | FP16_MUL_INPUT_B | {data=0x%0h}\n", $time, b_data));
+            end
+            if (inputs_valid) begin
+                `TRACE(4, ("%m : [%0t] | FP16_MUL_FENCE | {a_data=0x%0h, b_data=0x%0h}\n",
+                    $time, pop_streams[0].data, pop_streams[1].data));
+                `TRACE(4, ("%m : [%0t] | FP16_MUL_FP16_TO_FP32 | {a_fp32=0x%0h, b_fp32=0x%0h}\n",
+                    $time, a_fp32, b_fp32));
+                `TRACE(4, ("%m : [%0t] | FP16_MUL_FPNEW_MUL | {result=0x%0h}\n",
+                    $time, fpnew_result));
+                `TRACE(4, ("%m : [%0t] | FP16_MUL_FP32_TO_FP16 | {fp32=0x%0h, fp16=0x%0h}\n",
+                    $time, fpnew_result, result_fp16));
+            end
+            if (result_valid && result_ready) begin
+                `TRACE(4, ("%m : [%0t] | FP16_MUL_OUTPUT | {result=0x%0h}\n", $time, result_data));
+            end
+        end
+    end
+`endif
+
+`else
 
 `ifdef SIMULATION
 
@@ -235,6 +403,8 @@ module VX_fp16_mul #(
     assign result_data       = fp32_to_fp16_convert(result_fp32_data);
     assign result_valid      = result_fp32_valid;
     assign result_fp32_ready = result_ready;
+
+`endif
 
 `endif
 

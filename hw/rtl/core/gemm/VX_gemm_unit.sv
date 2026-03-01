@@ -544,7 +544,9 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
                         end
                     end else begin
                         acc_mem_accum_wr_req = acc_output_valid[0];
-                        acc_rd_fifo_pop      = acc_output_valid[0] & ~acc_rd_fifo_empty;
+                        // Pop psum when accumulator input is accepted (a_valid & b_valid).
+                        // This keeps psum/input alignment even if FP adder latency changes.
+                        acc_rd_fifo_pop      = acc_psum_data_valid[0];
                         if (acc_output_valid[0]) begin
                             acc_mem_accum_wr_cnt_next = acc_mem_accum_wr_cnt - 1;
                         end
@@ -733,7 +735,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
             assign b_data    = activated ? scale_regs[gemm_unit_ctrl.sreg_use_idx][i] : '0;
 
             VX_fp16_mul #(
-                .LATENCY (2),
+                .LATENCY (1),
                 .OUT_BUF (1)
             ) u_in_scaler (
                 .clk          (clk),
@@ -998,7 +1000,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
 
 `ifdef GEMM_UNIT_FP16_OUT_SCALE
             VX_fp16_mul #(
-                .LATENCY (0),
+                .LATENCY (1),
                 .OUT_BUF (1)
             ) u_out_scaler (
                 .clk          (clk),
@@ -1016,7 +1018,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
         end
 `else
             VX_fp32_mul #(
-                .LATENCY (0),
+                .LATENCY (1),
                 .OUT_BUF (1)
             ) u_out_scaler (
                 .clk          (clk),
