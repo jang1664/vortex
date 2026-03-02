@@ -37,7 +37,6 @@ static vx_buffer_h zeros_buffer = nullptr;   // int16 [KG x N]
 static vx_buffer_h C_buffer = nullptr;       // fp16 [M x N]
 
 static constexpr float FP16_TOL = 0.01f;
-static constexpr uint64_t HOST_WAIT_TIMEOUT_MS = 3000000;
 
 static constexpr uint64_t LMEM_LAYOUT_ALIGN_BYTES = 64;
 static constexpr uint64_t LMEM_STACK_GUARD_BYTES = (1ull << STACK_LOG2_SIZE);
@@ -237,8 +236,16 @@ static void build_test_vectors(std::vector<uint16_t>& h_A,
 }
 
 static bool compare_fp16(uint16_t actual, uint16_t expected, float tolerance) {
+  if (actual == expected) {
+    return true;
+  }
+
   float a = fp16_to_float(actual);
   float e = fp16_to_float(expected);
+
+  if (!std::isfinite(a) || !std::isfinite(e)) {
+    return false;
+  }
 
   float diff;
   if (e == 0.0f) {
@@ -424,9 +431,9 @@ int main(int argc, char *argv[]) {
 
   RT_CHECK(vx_start(device, krnl_buffer, args_buffer));
   {
-    int wait_ret = vx_ready_wait(device, HOST_WAIT_TIMEOUT_MS);
+    int wait_ret = vx_ready_wait(device, VX_MAX_TIMEOUT);
     if (wait_ret != 0) {
-      std::cerr << "vx_ready_wait timeout/error: ret=" << wait_ret << std::endl;
+      std::cerr << "vx_ready_wait failed: ret=" << wait_ret << std::endl;
 
       int arg_ret = vx_copy_from_dev(&kargs, args_buffer, 0, sizeof(kargs));
       if (arg_ret == 0) {

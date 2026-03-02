@@ -303,14 +303,14 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
           seg_size = (KT >> 1);
           padding  = ((KT - kt_eff) >> 1);
 
-          dram_s0  = (K_orig_q >> 1);
+          dram_s0  = ((K_orig_q + 32'd1) >> 1);
           dram_b0  = nt_eff;
         end else begin
           // wtrans=0: source is [K, N] packed row-major
           seg_size = (NT >> 1);
           padding  = ((NT - nt_eff) >> 1);
 
-          dram_s0  = (N_orig_q >> 1);
+          dram_s0  = ((N_orig_q + 32'd1) >> 1);
           dram_b0  = kt_eff;
         end
       end
