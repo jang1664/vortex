@@ -125,9 +125,14 @@ def parse_sel_name(xml_doc, xml_node):
     dtype_id = first_child.get("dtype_id")
     const_iter = xml_node.iter("const")
     first_const = next(const_iter)
-    second_const = next(const_iter)
     offset = parse_vl_int(first_const.get("name"))
-    width = parse_vl_int(second_const.get("name"))
+    # Verilator 5.x uses widthConst attribute instead of a second const child
+    width_const_attr = xml_node.get("widthConst")
+    if width_const_attr is not None:
+        width = int(width_const_attr)
+    else:
+        second_const = next(const_iter)
+        width = parse_vl_int(second_const.get("name"))
     return name + parse_sel_field(xml_doc, dtype_id, offset, width)
 
 def parse_arraysel_name(xml_doc, xml_node):

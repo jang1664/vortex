@@ -545,37 +545,37 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
   // FSM
   // --------------------------------------------------------------------------
   typedef enum logic [7:0] {
-    S_IDLE,
+    S_IDLE, // 0
 
     // kickoff: preload tile0 and optionally tile1 (single notify per tile)
-    S_PRE0_LD_I, S_PRE0_LD_W, S_PRE0_LD_SC, S_PRE0_LD_ZP, S_PRE0_LD_DONE_NTF,
-    S_PRE1_LD_I, S_PRE1_LD_W, S_PRE1_LD_SC, S_PRE1_LD_ZP, S_PRE1_LD_DONE_NTF,
+    S_PRE0_LD_I, S_PRE0_LD_W, S_PRE0_LD_SC, S_PRE0_LD_ZP, S_PRE0_LD_DONE_NTF, // 5
+    S_PRE1_LD_I, S_PRE1_LD_W, S_PRE1_LD_SC, S_PRE1_LD_ZP, S_PRE1_LD_DONE_NTF, // 10
 
     // wait current tile preload complete
-    S_WAIT_CUR_TILE_READY,
+    S_WAIT_CUR_TILE_READY, // 11
 
     // MXU preload current W/SZ
-    S_MXU_PRE_CUR_W,  S_MXU_PRE_CUR_W_NTF,
-    S_MXU_PRE_CUR_SC, S_MXU_PRE_CUR_ZP, S_MXU_PRE_CUR_SZ_NTF,
-    S_MXU_WAIT_CUR_W,
-    S_MXU_WAIT_CUR_SZ,
+    S_MXU_PRE_CUR_W,  S_MXU_PRE_CUR_W_NTF, // 13
+    S_MXU_PRE_CUR_SC, S_MXU_PRE_CUR_ZP, S_MXU_PRE_CUR_SZ_NTF, // 16
+    S_MXU_WAIT_CUR_W, // 17
+    S_MXU_WAIT_CUR_SZ, // 18
 
     // preload next MXU tile (ping-pong)
-    S_MXU_PRE_NEXT_W, S_MXU_PRE_NEXT_W_NTF,
-    S_MXU_PRE_NEXT_SC, S_MXU_PRE_NEXT_ZP, S_MXU_PRE_NEXT_SZ_NTF,
+    S_MXU_PRE_NEXT_W, S_MXU_PRE_NEXT_W_NTF, // 20
+    S_MXU_PRE_NEXT_SC, S_MXU_PRE_NEXT_ZP, S_MXU_PRE_NEXT_SZ_NTF, // 23
 
     // ARM + GEMM done
-    S_MXU_ARM_GEMM, S_MXU_ARM_GEMM_NTF, S_MXU_WAIT_GEMM_DONE,
+    S_MXU_ARM_GEMM, S_MXU_ARM_GEMM_NTF, S_MXU_WAIT_GEMM_DONE, // 26
 
     // output stage (only when last-kt tile for this (mt,nt))
-    S_O_WAIT_LMEM2DRAM_DONE, S_O_ACC2LMEM, S_O_ACC2LMEM_NTF,
-    S_O_WAIT_ACC2LMEM_DONE,
-    S_O_LMEM2DRAM, S_O_LMEM2DRAM_NTF,
+    S_O_WAIT_LMEM2DRAM_DONE, S_O_ACC2LMEM, S_O_ACC2LMEM_NTF, // 29
+    S_O_WAIT_ACC2LMEM_DONE, // 30
+    S_O_LMEM2DRAM, S_O_LMEM2DRAM_NTF, // 32
 
     // advance + optionally preload next tile
-    S_ADVANCE_TILES, S_O_WAIT_LMEM2DRAM_FINAL,
+    S_ADVANCE_TILES, S_O_WAIT_LMEM2DRAM_FINAL, // 34
 
-    S_PRE_NEXT_LD_I, S_PRE_NEXT_LD_W, S_PRE_NEXT_LD_SC, S_PRE_NEXT_LD_ZP, S_PRE_NEXT_LD_DONE_NTF
+    S_PRE_NEXT_LD_I, S_PRE_NEXT_LD_W, S_PRE_NEXT_LD_SC, S_PRE_NEXT_LD_ZP, S_PRE_NEXT_LD_DONE_NTF // 39
   } state_t;
 
   state_t state_q, state_d;
@@ -1789,6 +1789,124 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     endcase
 
   end
+
+`ifdef CHIPSCOPE
+`ifdef DBG_SCOPE_GEMM
+  localparam int DBG_GEMM_P0_W = $bits({
+      reset,
+      cfg_reg_if.valid,
+      cfg_reg_if.ready,
+      cfg_reg_if.regs[CFG_R_CONTROL][0],
+      gemm_start_o,
+      out_start_d,
+      gemm_fsm_if.flag.idle,
+      gemm_fsm_if.flag.done,
+      pre_valid_q,
+      mxu_buf_q,
+      state_q,
+      state_d,
+      out_cmd_d.instr[7:0],
+      out_cmd_d.flags
+  });
+  localparam int DBG_GEMM_P1_W = $bits({
+      tile_cur_q,
+      tile_pre_q,
+      u32_t'(tile_cur_nt_q),
+      u32_t'(tile_cur_mt_q),
+      u32_t'(tile_cur_kt_q),
+      u32_t'(tile_pre_nt_q),
+      u32_t'(tile_pre_mt_q),
+      u32_t'(tile_pre_kt_q),
+      u32_t'(nt_mxu_q),
+      u32_t'(kt_mxu_q),
+      o_store_issue_q
+  });
+  localparam int DBG_GEMM_P2_W = $bits({
+      out_cmd_d.instr,
+      out_cmd_d.rs1_data,
+      out_cmd_d.rs2_data,
+      out_cmd_d.flags,
+      out_cmd_d.eff_mt,
+      out_cmd_d.groups_eff,
+      out_cmd_d.rs1,
+      out_cmd_d.rs2,
+      out_cmd_d.rd
+  });
+  localparam int DBG_GEMM_P3_W = $bits({
+      entry_id,
+      M_orig,
+      N_orig,
+      K_orig,
+      qblk_orig,
+      M_target,
+      N_target,
+      K_target,
+      wtrans_tot,
+      qdir_tot
+  });
+
+  (* keep = "true", mark_debug = "true" *) wire [DBG_GEMM_P0_W-1:0] dbg_gemm_probe0 = {
+      reset,
+      cfg_reg_if.valid,
+      cfg_reg_if.ready,
+      cfg_reg_if.regs[CFG_R_CONTROL][0],
+      gemm_start_o,
+      out_start_d,
+      gemm_fsm_if.flag.idle,
+      gemm_fsm_if.flag.done,
+      pre_valid_q,
+      mxu_buf_q,
+      state_q,
+      state_d,
+      out_cmd_d.instr[7:0],
+      out_cmd_d.flags
+  };
+  (* keep = "true", mark_debug = "true" *) wire [DBG_GEMM_P1_W-1:0] dbg_gemm_probe1 = {
+      tile_cur_q,
+      tile_pre_q,
+      u32_t'(tile_cur_nt_q),
+      u32_t'(tile_cur_mt_q),
+      u32_t'(tile_cur_kt_q),
+      u32_t'(tile_pre_nt_q),
+      u32_t'(tile_pre_mt_q),
+      u32_t'(tile_pre_kt_q),
+      u32_t'(nt_mxu_q),
+      u32_t'(kt_mxu_q),
+      o_store_issue_q
+  };
+  (* keep = "true", mark_debug = "true" *) wire [DBG_GEMM_P2_W-1:0] dbg_gemm_probe2 = {
+      out_cmd_d.instr,
+      out_cmd_d.rs1_data,
+      out_cmd_d.rs2_data,
+      out_cmd_d.flags,
+      out_cmd_d.eff_mt,
+      out_cmd_d.groups_eff,
+      out_cmd_d.rs1,
+      out_cmd_d.rs2,
+      out_cmd_d.rd
+  };
+  (* keep = "true", mark_debug = "true" *) wire [DBG_GEMM_P3_W-1:0] dbg_gemm_probe3 = {
+      entry_id,
+      M_orig,
+      N_orig,
+      K_orig,
+      qblk_orig,
+      M_target,
+      N_target,
+      K_target,
+      wtrans_tot,
+      qdir_tot
+  };
+
+  ila_gemm ila_gemm_inst (
+    .clk    (clk),
+    .probe0 (dbg_gemm_probe0),
+    .probe1 (dbg_gemm_probe1),
+    .probe2 (dbg_gemm_probe2),
+    .probe3 (dbg_gemm_probe3)
+  );
+`endif
+`endif
 
 `ifndef SYNTHESIS
   task automatic log_tile_progress(

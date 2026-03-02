@@ -1,4 +1,3 @@
-
 #!/bin/bash
 
 set -euo pipefail
@@ -79,16 +78,29 @@ for i in "${!CASE_ARGS[@]}"; do
   log_file="${LOG_DIR}/run_case_${idx}.log"
 
   echo "[${idx}/${total}] Running: ${args}"
-  if ./ci/blackbox.sh \
-      --driver="${DRIVER}" \
-      --app="${APP}" \
-      --debug="${DEBUG_LEVEL}" \
-      --log="${log_file}" \
-      --args="${args}"; then
-    echo "[${idx}/${total}] PASS (log: ${log_file})"
+  if [[ ${DEBUG_LEVEL} -ge 1 ]]; then
+    if ./ci/blackbox.sh \
+        --driver="${DRIVER}" \
+        --app="${APP}" \
+        --debug="${DEBUG_LEVEL}" \
+        --log="${log_file}" \
+        --args="${args}"; then
+      echo "[${idx}/${total}] PASS (log: ${log_file})"
+    else
+      echo "[${idx}/${total}] FAIL (log: ${log_file})"
+      failed=$((failed + 1))
+    fi
   else
-    echo "[${idx}/${total}] FAIL (log: ${log_file})"
-    failed=$((failed + 1))
+    if ./ci/blackbox.sh \
+        --driver="${DRIVER}" \
+        --app="${APP}" \
+        --log="${log_file}" \
+        --args="${args}"; then
+      echo "[${idx}/${total}] PASS (log: ${log_file})"
+    else
+      echo "[${idx}/${total}] FAIL (log: ${log_file})"
+      failed=$((failed + 1))
+    fi
   fi
 done
 

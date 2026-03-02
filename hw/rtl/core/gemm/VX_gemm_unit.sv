@@ -1265,6 +1265,182 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
         end
     endgenerate
 
+`ifdef CHIPSCOPE
+`ifdef DBG_SCOPE_GEMM
+    localparam int DBG_GEMM_UNIT_P0_W = $bits({
+        reset,
+        gemm_unit_if.start,
+        gemm_idle,
+        gemm_done,
+        in_flight,
+        mxu_ready_weight,
+        is_qcol,
+        state,
+        next_state,
+        acc_mem_accum_rd_state,
+        acc_mem_accum_rd_state_next,
+        acc_mem_accum_wr_state,
+        acc_mem_accum_wr_state_next,
+        acc_mem_accum_wr_state_q,
+        acc_mem_accum_rd_req,
+        acc_mem_accum_wr_req,
+        acc_rd_fifo_push,
+        acc_rd_fifo_pop,
+        acc_rd_fifo_full,
+        acc_rd_fifo_empty,
+        final_scaler_output_valid,
+        acc_output_valid[0],
+        acc_psum_data_valid[0],
+        acc_in_data_valid[0],
+        out_mem_rd_req_fire,
+        acc_mem_rd_out_valid,
+        fp16_out_valid[0]
+    });
+    localparam int DBG_GEMM_UNIT_P1_W = $bits({
+        32'(gemm_unit_if.gemm_unit_ctrl.acc_cnt),
+        32'(gemm_unit_if.gemm_unit_ctrl.acc_mem_base_addr),
+        32'(acc_mem_accum_rd_addr),
+        32'(acc_mem_accum_wr_addr),
+        32'(acc_mem_out_rd_addr),
+        32'(acc_mem_out_rd_addr_q),
+        32'(acc_mem_accum_rd_cnt),
+        32'(acc_mem_accum_wr_cnt)
+    });
+    localparam int DBG_GEMM_UNIT_P2_W = $bits({
+        2'(acc_mem_accum_rd_bank),
+        2'(acc_mem_accum_rd_bank_q),
+        2'(acc_mem_accum_wr_bank),
+        2'(acc_mem_out_rd_bank),
+        2'(acc_mem_out_rd_bank_q),
+        32'(acc_mem_accum_rd_bank_addr),
+        32'(acc_mem_accum_wr_bank_addr),
+        32'(acc_mem_out_rd_bank_addr),
+        32'(acc_mem_rd_depth_addr[0]),
+        32'(acc_mem_wr_depth_addr[0]),
+        32'(o_lmem_bus_if.req_data.addr),
+        o_lmem_bus_if.req_valid,
+        o_lmem_bus_if.req_ready,
+        o_lmem_bus_if.rsp_valid,
+        o_lmem_bus_if.rsp_ready
+    });
+    localparam int DBG_GEMM_UNIT_P3_W = $bits({
+        i_lmem_bus_if.req_valid,
+        i_lmem_bus_if.req_ready,
+        w_lmem_bus_if.req_valid,
+        w_lmem_bus_if.req_ready,
+        sz_lmem_bus_if.req_valid,
+        sz_lmem_bus_if.req_ready,
+        o_lmem_bus_if.req_valid,
+        o_lmem_bus_if.req_ready,
+        32'(i_lmem_bus_if.req_data.addr),
+        32'(w_lmem_bus_if.req_data.addr),
+        32'(sz_lmem_bus_if.req_data.addr),
+        32'(o_lmem_bus_if.req_data.addr),
+        32'(sz_req_addr),
+        sz_req_rw,
+        scale_reg_wr_req,
+        scale_reg_wr_en,
+        zp_reg_wr_req,
+        zp_reg_wr_en,
+        is_qcol,
+        32'(gemm_unit_ctrl.quant_dir),
+        32'(gemm_unit_ctrl.wreg_use_idx),
+        32'(gemm_unit_ctrl.sreg_use_idx),
+        32'(gemm_unit_ctrl.zreg_use_idx)
+    });
+
+    (* keep = "true", mark_debug = "true" *) wire [DBG_GEMM_UNIT_P0_W-1:0] dbg_gemm_unit_probe0 = {
+        reset,
+        gemm_unit_if.start,
+        gemm_idle,
+        gemm_done,
+        in_flight,
+        mxu_ready_weight,
+        is_qcol,
+        state,
+        next_state,
+        acc_mem_accum_rd_state,
+        acc_mem_accum_rd_state_next,
+        acc_mem_accum_wr_state,
+        acc_mem_accum_wr_state_next,
+        acc_mem_accum_wr_state_q,
+        acc_mem_accum_rd_req,
+        acc_mem_accum_wr_req,
+        acc_rd_fifo_push,
+        acc_rd_fifo_pop,
+        acc_rd_fifo_full,
+        acc_rd_fifo_empty,
+        final_scaler_output_valid,
+        acc_output_valid[0],
+        acc_psum_data_valid[0],
+        acc_in_data_valid[0],
+        out_mem_rd_req_fire,
+        acc_mem_rd_out_valid,
+        fp16_out_valid[0]
+    };
+    (* keep = "true", mark_debug = "true" *) wire [DBG_GEMM_UNIT_P1_W-1:0] dbg_gemm_unit_probe1 = {
+        32'(gemm_unit_if.gemm_unit_ctrl.acc_cnt),
+        32'(gemm_unit_if.gemm_unit_ctrl.acc_mem_base_addr),
+        32'(acc_mem_accum_rd_addr),
+        32'(acc_mem_accum_wr_addr),
+        32'(acc_mem_out_rd_addr),
+        32'(acc_mem_out_rd_addr_q),
+        32'(acc_mem_accum_rd_cnt),
+        32'(acc_mem_accum_wr_cnt)
+    };
+    (* keep = "true", mark_debug = "true" *) wire [DBG_GEMM_UNIT_P2_W-1:0] dbg_gemm_unit_probe2 = {
+        2'(acc_mem_accum_rd_bank),
+        2'(acc_mem_accum_rd_bank_q),
+        2'(acc_mem_accum_wr_bank),
+        2'(acc_mem_out_rd_bank),
+        2'(acc_mem_out_rd_bank_q),
+        32'(acc_mem_accum_rd_bank_addr),
+        32'(acc_mem_accum_wr_bank_addr),
+        32'(acc_mem_out_rd_bank_addr),
+        32'(acc_mem_rd_depth_addr[0]),
+        32'(acc_mem_wr_depth_addr[0]),
+        32'(o_lmem_bus_if.req_data.addr),
+        o_lmem_bus_if.req_valid,
+        o_lmem_bus_if.req_ready,
+        o_lmem_bus_if.rsp_valid,
+        o_lmem_bus_if.rsp_ready
+    };
+    (* keep = "true", mark_debug = "true" *) wire [DBG_GEMM_UNIT_P3_W-1:0] dbg_gemm_unit_probe3 = {
+        i_lmem_bus_if.req_valid,
+        i_lmem_bus_if.req_ready,
+        w_lmem_bus_if.req_valid,
+        w_lmem_bus_if.req_ready,
+        sz_lmem_bus_if.req_valid,
+        sz_lmem_bus_if.req_ready,
+        o_lmem_bus_if.req_valid,
+        o_lmem_bus_if.req_ready,
+        32'(i_lmem_bus_if.req_data.addr),
+        32'(w_lmem_bus_if.req_data.addr),
+        32'(sz_lmem_bus_if.req_data.addr),
+        32'(o_lmem_bus_if.req_data.addr),
+        32'(sz_req_addr),
+        sz_req_rw,
+        scale_reg_wr_req,
+        scale_reg_wr_en,
+        zp_reg_wr_req,
+        zp_reg_wr_en,
+        is_qcol,
+        32'(gemm_unit_ctrl.quant_dir),
+        32'(gemm_unit_ctrl.wreg_use_idx),
+        32'(gemm_unit_ctrl.sreg_use_idx),
+        32'(gemm_unit_ctrl.zreg_use_idx)
+    };
+
+    ila_gemm_unit ila_gemm_unit_inst (
+      .clk    (clk),
+      .probe0 (dbg_gemm_unit_probe0),
+      .probe1 (dbg_gemm_unit_probe1),
+      .probe2 (dbg_gemm_unit_probe2),
+      .probe3 (dbg_gemm_unit_probe3)
+    );
+`endif
+`endif
+
     // =========================================================================
     // Debug Tracing
     // =========================================================================

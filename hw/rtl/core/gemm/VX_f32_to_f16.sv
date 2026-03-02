@@ -112,78 +112,50 @@ module VX_f32_to_f16 # (
   endfunction
 
   always_comb begin
-    case ({
-      fp16_overflow, fp16_underflow
-    })
+    // Deterministic defaults (avoid X-propagation / synthesis don't-care behavior).
+    fp16_sign         = fp32_sign;
+    fp16_exp          = '0;
+    fp16_mant         = '0;
+    fp16_exp_         = '0;
+    shifted_fp32_mant = fp32_mant_with_pad;
+
+    case ({fp16_overflow, fp16_underflow})
       2'b00: begin
         // normal case
-        fp16_sign = fp32_sign;
         fp16_exp_ = fp32_exp - (FP32_EXP_BIAS - FP16_EXP_BIAS);
-        // $display("%d, %d, %d", fp32_exp, FP32_EXP_BIAS, FP16_EXP_BIAS);
-        shifted_fp32_mant = fp32_mant_with_pad;
-        // $display("%b, %b", fp16_exp_, shifted_fp32_mant);
         {fp16_exp, fp16_mant} = round_mant({fp16_exp_, shifted_fp32_mant});
-        // $display("%b, %b", fp16_exp, fp16_mant);
       end
 
       2'b10: begin
-        case (is_fp32_nan)
-          // overflow
-          1'b0: begin
-            fp16_sign = fp32_sign;
-            fp16_exp  = (FP16_EXP_BIAS + FP16_MAX_EXP);
-            fp16_mant = '0;
-          end
-
-          // nan
-          1'b1: begin
-            fp16_sign                          = fp32_sign;
-            fp16_exp                           = (FP16_EXP_BIAS + FP16_MAX_EXP);
-            fp16_mant[FP16_MANTISSA_WIDTH-1]   = 1'b1;
-            fp16_mant[FP16_MANTISSA_WIDTH-2:0] = '0;
-          end
-
-          default: begin
-            fp16_sign                          = 'x;
-            fp16_exp                           = 'x;
-            fp16_mant[FP16_MANTISSA_WIDTH-1]   = 'x;
-            fp16_mant[FP16_MANTISSA_WIDTH-2:0] = 'x;
-          end
-        endcase
+        if (is_fp32_nan) begin
+          // NaN: keep sign, set quiet NaN payload
+          fp16_exp                           = (FP16_EXP_BIAS + FP16_MAX_EXP);
+          fp16_mant[FP16_MANTISSA_WIDTH-1]   = 1'b1;
+          fp16_mant[FP16_MANTISSA_WIDTH-2:0] = '0;
+        end else begin
+          // overflow: saturate to infinity
+          fp16_exp  = (FP16_EXP_BIAS + FP16_MAX_EXP);
+          fp16_mant = '0;
+        end
       end
 
       2'b01: begin
-        // $display("too small : %d", is_fp32_exp_too_small);
-        case (is_fp32_exp_too_small)
-          // underflow
-          1'b0: begin
-            fp16_sign = fp32_sign;
-            fp16_exp_ = 0;
-            shifted_fp32_mant = fp32_mant_with_pad >> (FP32_EXP_BIAS + FP16_MIN_EXP + 1 - fp32_exp);
-            {fp16_exp, fp16_mant} = round_mant({fp16_exp_, shifted_fp32_mant});
-          end
-
-          // zero fp16
-          1'b1: begin
-            fp16_sign = fp32_sign;
-            fp16_exp  = 0;
-            fp16_mant = 0;
-          end
-
-          default: begin
-            fp16_sign                          = 'x;
-            fp16_exp                           = 'x;
-            fp16_mant[FP16_MANTISSA_WIDTH-1]   = 'x;
-            fp16_mant[FP16_MANTISSA_WIDTH-2:0] = 'x;
-          end
-        endcase
+        if (is_fp32_exp_too_small) begin
+          // too small: flush to signed zero
+          fp16_exp  = '0;
+          fp16_mant = '0;
+        end else begin
+          // subnormal range
+          fp16_exp_ = '0;
+          shifted_fp32_mant = fp32_mant_with_pad >> (FP32_EXP_BIAS + FP16_MIN_EXP + 1 - fp32_exp);
+          {fp16_exp, fp16_mant} = round_mant({fp16_exp_, shifted_fp32_mant});
+        end
       end
 
       default: begin
-        fp16_sign                          = 'x;
-        fp16_exp                           = 'x;
-        fp16_mant[FP16_MANTISSA_WIDTH-1]   = 'x;
-        fp16_mant[FP16_MANTISSA_WIDTH-2:0] = 'x;
+        // impossible (overflow && underflow) for known inputs; keep deterministic fallback
+        fp16_exp  = (FP16_EXP_BIAS + FP16_MAX_EXP);
+        fp16_mant = '0;
       end
     endcase
   end

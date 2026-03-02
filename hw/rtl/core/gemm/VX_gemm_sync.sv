@@ -250,6 +250,160 @@ module VX_gemm_sync import VX_gpu_pkg::*; #(
     end
   end
 
+`ifdef CHIPSCOPE
+`ifdef DBG_SCOPE_GEMM
+  localparam int DBG_GEMM_SYNC_P0_W = $bits({
+      reset,
+      gemm_start_i,
+      in_valid,
+      can_accept,
+      cmd_valid,
+      is_wait,
+      is_notify,
+      wait_reg_in_range,
+      wait_satisfied,
+      child_idle_sel,
+      opcode,
+      cmd_route,
+      route_eff,
+      last_cmd_route,
+      gemm_fsm_slv_if.ctrl.start,
+      gemm_sync_slv_if[0].valid,
+      gemm_fsm_mas_if[0].ctrl.start,
+      gemm_fsm_mas_if[1].ctrl.start,
+      gemm_fsm_mas_if[2].ctrl.start,
+      gemm_fsm_mas_if[3].ctrl.start,
+      gemm_fsm_mas_if[4].ctrl.start,
+      gemm_fsm_mas_if[0].flag.idle,
+      gemm_fsm_mas_if[1].flag.idle,
+      gemm_fsm_mas_if[2].flag.idle,
+      gemm_fsm_mas_if[3].flag.idle,
+      gemm_fsm_mas_if[4].flag.idle,
+      upd0_valid,
+      upd1_valid,
+      upd2_valid,
+      upd3_valid,
+      upd4_valid
+  });
+  localparam int DBG_GEMM_SYNC_P1_W = $bits({
+      32'(wait_reg_id),
+      wait_target,
+      wait_reg_val,
+      sync_regs[0],
+      sync_regs[1],
+      sync_regs[2],
+      sync_regs[3],
+      sync_regs[4],
+      sync_regs[5],
+      sync_regs[6],
+      sync_regs[7],
+      sync_regs[8]
+  });
+  localparam int DBG_GEMM_SYNC_P2_W = $bits({
+      32'(gemm_sync_slv_if[0].reg_idx),
+      gemm_sync_slv_if[0].value,
+      32'(gemm_sync_slv_if[1].reg_idx),
+      gemm_sync_slv_if[1].value,
+      32'(gemm_sync_slv_if[2].reg_idx),
+      gemm_sync_slv_if[2].value,
+      32'(gemm_sync_slv_if[3].reg_idx),
+      gemm_sync_slv_if[3].value,
+      32'(gemm_sync_slv_if[4].reg_idx),
+      gemm_sync_slv_if[4].value
+  });
+  localparam int DBG_GEMM_SYNC_P3_W = $bits({
+      sync_regs_n[0],
+      sync_regs_n[1],
+      sync_regs_n[2],
+      sync_regs_n[3],
+      sync_regs_n[4],
+      sync_regs_n[5],
+      sync_regs_n[6],
+      sync_regs_n[7],
+      sync_regs_n[8]
+  });
+
+  (* keep = "true", mark_debug = "true" *) wire [DBG_GEMM_SYNC_P0_W-1:0] dbg_gemm_sync_probe0 = {
+      reset,
+      gemm_start_i,
+      in_valid,
+      can_accept,
+      cmd_valid,
+      is_wait,
+      is_notify,
+      wait_reg_in_range,
+      wait_satisfied,
+      child_idle_sel,
+      opcode,
+      cmd_route,
+      route_eff,
+      last_cmd_route,
+      gemm_fsm_slv_if.ctrl.start,
+      gemm_sync_slv_if[0].valid,
+      gemm_fsm_mas_if[0].ctrl.start,
+      gemm_fsm_mas_if[1].ctrl.start,
+      gemm_fsm_mas_if[2].ctrl.start,
+      gemm_fsm_mas_if[3].ctrl.start,
+      gemm_fsm_mas_if[4].ctrl.start,
+      gemm_fsm_mas_if[0].flag.idle,
+      gemm_fsm_mas_if[1].flag.idle,
+      gemm_fsm_mas_if[2].flag.idle,
+      gemm_fsm_mas_if[3].flag.idle,
+      gemm_fsm_mas_if[4].flag.idle,
+      upd0_valid,
+      upd1_valid,
+      upd2_valid,
+      upd3_valid,
+      upd4_valid
+  };
+  (* keep = "true", mark_debug = "true" *) wire [DBG_GEMM_SYNC_P1_W-1:0] dbg_gemm_sync_probe1 = {
+      32'(wait_reg_id),
+      wait_target,
+      wait_reg_val,
+      sync_regs[0],
+      sync_regs[1],
+      sync_regs[2],
+      sync_regs[3],
+      sync_regs[4],
+      sync_regs[5],
+      sync_regs[6],
+      sync_regs[7],
+      sync_regs[8]
+  };
+  (* keep = "true", mark_debug = "true" *) wire [DBG_GEMM_SYNC_P2_W-1:0] dbg_gemm_sync_probe2 = {
+      32'(gemm_sync_slv_if[0].reg_idx),
+      gemm_sync_slv_if[0].value,
+      32'(gemm_sync_slv_if[1].reg_idx),
+      gemm_sync_slv_if[1].value,
+      32'(gemm_sync_slv_if[2].reg_idx),
+      gemm_sync_slv_if[2].value,
+      32'(gemm_sync_slv_if[3].reg_idx),
+      gemm_sync_slv_if[3].value,
+      32'(gemm_sync_slv_if[4].reg_idx),
+      gemm_sync_slv_if[4].value
+  };
+  (* keep = "true", mark_debug = "true" *) wire [DBG_GEMM_SYNC_P3_W-1:0] dbg_gemm_sync_probe3 = {
+      sync_regs_n[0],
+      sync_regs_n[1],
+      sync_regs_n[2],
+      sync_regs_n[3],
+      sync_regs_n[4],
+      sync_regs_n[5],
+      sync_regs_n[6],
+      sync_regs_n[7],
+      sync_regs_n[8]
+  };
+
+  ila_gemm_sync ila_gemm_sync_inst (
+    .clk    (clk),
+    .probe0 (dbg_gemm_sync_probe0),
+    .probe1 (dbg_gemm_sync_probe1),
+    .probe2 (dbg_gemm_sync_probe2),
+    .probe3 (dbg_gemm_sync_probe3)
+  );
+`endif
+`endif
+
 `ifdef DBG_TRACE_GEMM_CTRL
   always_ff @(posedge clk) begin
     if (!reset) begin

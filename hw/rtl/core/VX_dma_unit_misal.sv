@@ -960,4 +960,124 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
     end
   end
 
+`ifdef CHIPSCOPE
+`ifdef DBG_SCOPE_GEMM
+  localparam int DBG_DMA_UNIT_P0_W = $bits({
+      reset,
+      cfg_reg_if.valid,
+      cfg_reg_if.ready,
+      cfg_fire,
+      cmd_start,
+      precalc_issue,
+      precalc_done,
+      direction_bit_r,
+      finished,
+      (state == S_DONE),
+      done_if.ready,
+      dcache_bus_if.req_valid,
+      dcache_bus_if.req_ready,
+      dcache_bus_if.rsp_valid,
+      dcache_bus_if.rsp_ready,
+      lmem_bus_if.req_valid,
+      lmem_bus_if.req_ready,
+      lmem_bus_if.rsp_valid,
+      lmem_bus_if.rsp_ready,
+      dcache_req_fire,
+      lmem_req_fire,
+      dcache_rsp_fire,
+      lmem_rsp_fire,
+      state,
+      state_n
+  });
+  localparam int DBG_DMA_UNIT_P1_W = $bits({
+      32'(entry_id_latched),
+      out_off,
+      seg_size_r,
+      valid_total,
+      i_dim[0],
+      i_dim[1],
+      i_dim[2]
+  });
+  localparam int DBG_DMA_UNIT_P2_W = $bits({
+      base_src_seg,
+      base_dst_seg,
+      lmem_rd_ptr,
+      lmem_rd_end,
+      dcache_rd_ptr,
+      dcache_rd_end
+  });
+  localparam int DBG_DMA_UNIT_P3_W = $bits({
+      lmem_drop,
+      dcache_drop,
+      bound_r[0],
+      bound_r[1],
+      bound_r[2],
+      stride_r[0][0],
+      stride_r[1][0]
+  });
+
+  (* keep = "true", mark_debug = "true" *) wire [DBG_DMA_UNIT_P0_W-1:0] dbg_dma_unit_probe0 = {
+      reset,
+      cfg_reg_if.valid,
+      cfg_reg_if.ready,
+      cfg_fire,
+      cmd_start,
+      precalc_issue,
+      precalc_done,
+      direction_bit_r,
+      finished,
+      (state == S_DONE),
+      done_if.ready,
+      dcache_bus_if.req_valid,
+      dcache_bus_if.req_ready,
+      dcache_bus_if.rsp_valid,
+      dcache_bus_if.rsp_ready,
+      lmem_bus_if.req_valid,
+      lmem_bus_if.req_ready,
+      lmem_bus_if.rsp_valid,
+      lmem_bus_if.rsp_ready,
+      dcache_req_fire,
+      lmem_req_fire,
+      dcache_rsp_fire,
+      lmem_rsp_fire,
+      state,
+      state_n
+  };
+  (* keep = "true", mark_debug = "true" *) wire [DBG_DMA_UNIT_P1_W-1:0] dbg_dma_unit_probe1 = {
+      32'(entry_id_latched),
+      out_off,
+      seg_size_r,
+      valid_total,
+      i_dim[0],
+      i_dim[1],
+      i_dim[2]
+  };
+  (* keep = "true", mark_debug = "true" *) wire [DBG_DMA_UNIT_P2_W-1:0] dbg_dma_unit_probe2 = {
+      base_src_seg,
+      base_dst_seg,
+      lmem_rd_ptr,
+      lmem_rd_end,
+      dcache_rd_ptr,
+      dcache_rd_end
+  };
+  (* keep = "true", mark_debug = "true" *) wire [DBG_DMA_UNIT_P3_W-1:0] dbg_dma_unit_probe3 = {
+      lmem_drop,
+      dcache_drop,
+      bound_r[0],
+      bound_r[1],
+      bound_r[2],
+      stride_r[0][0],
+      stride_r[1][0]
+  };
+
+  ila_dma_unit_misal ila_dma_unit_misal_inst (
+    .clk    (clk),
+    .probe0 (dbg_dma_unit_probe0),
+    .probe1 (dbg_dma_unit_probe1),
+    .probe2 (dbg_dma_unit_probe2),
+    .probe3 (dbg_dma_unit_probe3)
+  );
+`endif
+`endif
+
 endmodule
