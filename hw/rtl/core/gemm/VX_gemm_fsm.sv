@@ -457,19 +457,24 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     // wtrans=1: weight is [N, K] int4 packed (K/2 bytes per row)
     u32_t row0;
     u32_t col0_bytes;
+    u32_t orig_n_bytes;
+    u32_t orig_k_bytes;
     begin
+      // int4 packed rows must use ceil(dim/2) byte stride when dim is odd.
+      orig_n_bytes = (j.orig_N + 1) >> 1;
+      orig_k_bytes = (j.orig_K + 1) >> 1;
       row0       = kt * KT;            // K-dim block start
       col0_bytes = (j.n_start + nt * NT) >> 1; // N-dim block start in bytes
-      weight_tile_addr = j.weight_base + 64'(row0) * 64'(j.orig_N >> 1) + 64'(col0_bytes);
+      weight_tile_addr = j.weight_base + 64'(row0) * 64'(orig_n_bytes) + 64'(col0_bytes);
 
       if (!j.wtrans) begin
         row0       = kt * KT;            // K-dim block start
         col0_bytes = (j.n_start + nt * NT) >> 1; // N-dim block start in bytes
-        weight_tile_addr = j.weight_base + 64'(row0) * 64'(j.orig_N >> 1) + 64'(col0_bytes);
+        weight_tile_addr = j.weight_base + 64'(row0) * 64'(orig_n_bytes) + 64'(col0_bytes);
       end else begin
         row0       = j.n_start + nt*NT;            // N-dim block start
         col0_bytes = kt * (KT >> 1);     // K-dim block start in bytes
-        weight_tile_addr = j.weight_base + 64'(row0) * 64'(j.orig_K >> 1) + 64'(col0_bytes);
+        weight_tile_addr = j.weight_base + 64'(row0) * 64'(orig_k_bytes) + 64'(col0_bytes);
       end
     end
   endfunction
@@ -998,7 +1003,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
           out_cmd_d   = make_dma_ld(job_q.lmem_wbuf0_base,
                                    weight_tile_addr(job_q, nt0, kt0),
-                                   (kt_eff0 * div_log2(nt_eff0, `CLOG2(INT4_BYTES))),
+                                   (kt_eff0 * ceil_div_log2(nt_eff0, `CLOG2(INT4_BYTES))),
                                    1'b0, 1);
           out_cmd_d.rs1 = kt0;
           out_cmd_d.rs2 = nt0;
@@ -1138,7 +1143,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
           out_cmd_d   = make_dma_ld(job_q.lmem_wbuf1_base,
                                    weight_tile_addr(job_q, nt1, kt1),
-                                   (kt_eff1 * div_log2(nt_eff1, `CLOG2(INT4_BYTES))),
+                                   (kt_eff1 * ceil_div_log2(nt_eff1, `CLOG2(INT4_BYTES))),
                                    1'b1, 1);
           out_cmd_d.rs1 = kt1;
           out_cmd_d.rs2 = nt1;
@@ -1683,7 +1688,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
           out_cmd_d   = make_dma_ld(wbuf_base(buf_pre),
                                     weight_tile_addr(job_q, ntp, ktp),
-                                    (kt_effp * div_log2(nt_effp, `CLOG2(INT4_BYTES))),
+                                    (kt_effp * ceil_div_log2(nt_effp, `CLOG2(INT4_BYTES))),
                                     buf_pre, gen_pre);
           out_cmd_d.rs1 = ktp;
           out_cmd_d.rs2 = ntp;
