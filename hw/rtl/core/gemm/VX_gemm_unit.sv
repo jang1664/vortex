@@ -1182,6 +1182,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     endgenerate
 
 `ifdef SIMULATION
+`ifndef SYNTHESIS
     task initialize_acc_mem(
         input logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0] base_addr,
         input int size,
@@ -1247,6 +1248,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
             2'd3: gen_acc_mem[3].VX_sp_ram_instance.ram[bank_depth_addr] = data;
         endcase
     endtask
+`endif
 `endif
 
     // -------------------------------------------------------------------------

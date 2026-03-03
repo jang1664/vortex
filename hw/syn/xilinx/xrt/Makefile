@@ -140,6 +140,8 @@ endif
 
 ifeq ($(TARGET), hw_emu)
 	CFLAGS += -DSIMULATION
+	# XSIM does not support "default disable iff" in some flows; gate those SVA blocks.
+	VPP_FLAGS += --vivado.prop "fileset.sim_1.xsim.compile.xvlog.more_options={-d XSIM}"
 endif
 
 # Debugging

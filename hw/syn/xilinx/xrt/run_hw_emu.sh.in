@@ -1,0 +1,42 @@
+#!/bin/bash
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd -- "${SCRIPT_DIR}/../../../.." && pwd)"
+CVFPU_DIR="${ROOT_DIR}/third_party/cvfpu"
+PATCH_FILE="${SCRIPT_DIR}/patches/cvfpu_xsim_guard.patch"
+
+apply_cvfpu_xsim_patch() {
+  if [[ ! -f "${PATCH_FILE}" ]]; then
+    echo "[run_hw_emu] ERROR: missing patch file: ${PATCH_FILE}" >&2
+    exit 1
+  fi
+  if [[ ! -d "${CVFPU_DIR}" ]]; then
+    echo "[run_hw_emu] ERROR: missing cvfpu submodule dir: ${CVFPU_DIR}" >&2
+    exit 1
+  fi
+
+  if git -C "${CVFPU_DIR}" apply --check "${PATCH_FILE}" >/dev/null 2>&1; then
+    echo "[run_hw_emu] Applying XSIM patch: ${PATCH_FILE}"
+    git -C "${CVFPU_DIR}" apply "${PATCH_FILE}"
+  elif git -C "${CVFPU_DIR}" apply -R --check "${PATCH_FILE}" >/dev/null 2>&1; then
+    echo "[run_hw_emu] XSIM patch already applied, skipping."
+  else
+    echo "[run_hw_emu] ERROR: failed to apply patch cleanly: ${PATCH_FILE}" >&2
+    echo "[run_hw_emu] Check local edits in ${CVFPU_DIR}/src/fpnew_pkg.sv" >&2
+    exit 1
+  fi
+}
+
+CONFIGS="${CONFIGS:--DFPU_FPNEW -DEXT_D_DISABLE}"
+if [[ "${CONFIGS}" == *"-DFPU_FPNEW"* ]]; then
+  apply_cvfpu_xsim_patch
+fi
+
+PREFIX="${PREFIX:-build_u55c_fpnew_ddisable_core1_ila_hw_emu}" \
+PLATFORM="${PLATFORM:-xilinx_u55c_gen3x16_xdma_3_202210_1}" \
+NUM_CORES="${NUM_CORES:-1}" \
+CONFIGS="${CONFIGS}" \
+TARGET=hw_emu \
+make -C "${SCRIPT_DIR}" 2>&1 | tee "${LOG_FILE:-build_u55c_fpnew_ddisable_core1_ila_hw_emu.log}"
