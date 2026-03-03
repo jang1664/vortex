@@ -1,7 +1,7 @@
 #include "common.h"
 #include <vx_spawn.h>
 #include <vx_intrinsics.h>
-#include <math.h>
+#include <vx_math.h>
 
 // Type aliases
 using data_t = float;
@@ -28,7 +28,7 @@ void kernel_silu(kernel_arg_t *__UNIFORM__ arg) {
   for (uint32_t i = thread_id; i < size; i += total_threads) {
     float x = pInput[i];
     // SiLU: x * sigmoid(x) = x / (1 + exp(-x))
-    float sigmoid_x = 1.0f / (1.0f + expf(-x));
+    float sigmoid_x = 1.0f / (1.0f + vx_expf(-x));
     pOutput[i] = x * sigmoid_x;
   }
 }
