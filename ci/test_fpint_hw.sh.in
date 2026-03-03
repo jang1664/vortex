@@ -42,7 +42,7 @@ bash tests/regression/fpint_gemm_ffn_hw/test.sh "$@"
 # ------------------------------------------------------------------------
 # - xrt + hw_emul
 # ------------------------------------------------------------------------
-# FPGA_BIN_DIR=/home/jaeyongjang/project.local/vortex/build/hw/syn/xilinx/xrt/build_u55c_fpnew_ddisable_core1_ila_hw_emu_xilinx_u55c_gen3x16_xdma_3_202210_1_hw_emu/bin \
+# FPGA_BIN_DIR=/home/jaeyongjang/project.local/vortex/build/hw/syn/xilinx/xrt/build_u55c_fpnew_denable_core1_ila_hw_emu_xilinx_u55c_gen3x16_xdma_3_202210_1_hw_emu/bin \
 # TARGET=hw_emu \
 # PLATFORM=xilinx_u55c_gen3x16_xdma_3_202210_1 \
 # DRIVER=xrt \
@@ -52,7 +52,7 @@ bash tests/regression/fpint_gemm_ffn_hw/test.sh "$@"
 # ------------------------------------------------------------------------
 # - FPGA
 # ------------------------------------------------------------------------
-# FPGA_BIN_DIR=/home/jaeyongjang/project.local/vortex/build/hw/syn/xilinx/xrt/build_u55c_fpnew_ddisable_core1_ila_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/bin \
+# FPGA_BIN_DIR=/home/jaeyongjang/project.local/vortex/build/hw/syn/xilinx/xrt/build_u55c_fpnew_denable_core1_ila_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/bin \
 # TARGET=hw \
 # PLATFORM=xilinx_u55c_gen3x16_xdma_3_202210_1 \
 # DRIVER=xrt \
