@@ -2,10 +2,10 @@
 
 set -o pipefail
 
-PREFIX=build_u55c_fpnew_ddisable_core1_ila \
+PREFIX=build_u55c_fpnew_denable_core1_ila \
 PLATFORM=xilinx_u55c_gen3x16_xdma_3_202210_1 \
 NUM_CORES=1 \
-CONFIGS="-DFPU_FPNEW -DEXT_D_DISABLE" \
+CONFIGS="-DFPU_FPNEW" \
 TARGET=hw \
 DEBUG=1 \
-make 2>&1 | tee build_u55c_fpnew_ddisable_core1_ila.log
+make 2>&1 | tee build_u55c_fpnew_denable_core1_ila.log
