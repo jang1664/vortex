@@ -224,7 +224,12 @@ module VX_prealigner import VX_gpu_pkg::*; #(
 
   generate
     for (genvar i = 0; i < NUM_UNIT; i += 1) begin : g_output
-        assign sel_portion[i] = {`ALIGNED_MAN_PADDED_FULL_WIDTH'(shift_man_q[i])}[BLOCK_SIZE*lsb_blk_idx_q[i]+:SEL_BITW];
+        logic [`ALIGNED_MAN_PADDED_FULL_WIDTH-1:0] shift_man_padded;
+        logic [`ALIGNED_MAN_PADDED_FULL_WIDTH-1:0] shift_man_shifted;
+
+        assign shift_man_padded = `ALIGNED_MAN_PADDED_FULL_WIDTH'(shift_man_q[i]);
+        assign shift_man_shifted = shift_man_padded >> (BLOCK_SIZE * lsb_blk_idx_q[i]);
+        assign sel_portion[i] = shift_man_shifted[SEL_BITW-1:0];
         // assign sel_portion[i] = shift_man_q[i][BLOCK_SIZE*lsb_blk_idx_q[i]+:2];
         assign int_data[i] = (~sign_q[i]) ? {1'b0, sel_portion[i]} : ~{1'b0, sel_portion[i]} + 1'b1;
         assign blk_idx[i] = lsb_blk_idx_q[i];

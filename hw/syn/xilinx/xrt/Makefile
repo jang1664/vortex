@@ -44,6 +44,9 @@ CPU_TYPE := $(shell platforminfo -p $(PLATFORM) | grep 'CPU Type' | sed 's/.*://
 
 BUILD_DIR := $(PREFIX)_$(XSA)_$(TARGET)
 BIN_DIR := $(BUILD_DIR)/bin
+CONFIG_STAMP := $(BUILD_DIR)/.config.stamp
+
+CONFIG_FINGERPRINT = TARGET=$(TARGET) PLATFORM=$(PLATFORM) CLOCK_FREQ_HZ=$(CLOCK_FREQ_HZ) NUM_CORES=$(NUM_CORES) CONFIGS=$(CONFIGS) DEBUG=$(DEBUG) PERF=$(PERF) PROFILE=$(PROFILE) SCOPE=$(SCOPE)
 
 XO_CONTAINER := $(BIN_DIR)/vortex_afu.xo
 XCLBIN_CONTAINER := $(BIN_DIR)/vortex_afu.xclbin
@@ -137,6 +140,8 @@ endif
 
 ifeq ($(TARGET), hw_emu)
 	CFLAGS += -DSIMULATION
+	# XSIM does not support "default disable iff" in some flows; gate those SVA blocks.
+	VPP_FLAGS += --vivado.prop "fileset.sim_1.xsim.compile.xvlog.more_options={-d XSIM}"
 endif
 
 # Debugging
@@ -179,8 +184,14 @@ endif
 all: check-devices emconfig $(XCLBIN_CONTAINER) report
 
 gen-sources: $(BUILD_DIR)/sources.txt
-$(BUILD_DIR)/sources.txt:
+$(BUILD_DIR)/sources.txt: $(SRC_DIR)/Makefile $(SRC_DIR)/platforms.mk $(CONFIG_STAMP)
 	mkdir -p $(BUILD_DIR); cd $(BUILD_DIR); $(SCRIPT_DIR)/gen_sources.sh -P $(CFLAGS) -Csrc -Osources.txt
+
+$(CONFIG_STAMP):
+	mkdir -p $(BUILD_DIR); \
+	tmp_file=$@.tmp; \
+	printf "%s\n" "$(CONFIG_FINGERPRINT)" > $$tmp_file; \
+	if [ ! -f $@ ] || ! cmp -s $$tmp_file $@; then mv $$tmp_file $@; else rm -f $$tmp_file; fi
 
 gen-ast: $(BUILD_DIR)/vortex.xml
 $(BUILD_DIR)/vortex.xml:

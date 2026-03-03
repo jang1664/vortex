@@ -204,7 +204,7 @@ if { $chipscope == 1 } {
     create_ip -name ila -vendor xilinx.com -library ip -version 6.2 -module_name ila_gemm
     set_property -dict [list CONFIG.C_ADV_TRIGGER {true} \
                              CONFIG.C_EN_STRG_QUAL {1} \
-                             CONFIG.C_DATA_DEPTH {8192} \
+                             CONFIG.C_DATA_DEPTH {4096} \
                              CONFIG.C_NUM_OF_PROBES {4} \
                              CONFIG.C_PROBE0_WIDTH {64} \
                              CONFIG.C_PROBE1_WIDTH {384} \
@@ -219,7 +219,7 @@ if { $chipscope == 1 } {
     create_ip -name ila -vendor xilinx.com -library ip -version 6.2 -module_name ila_dma_unit_misal
     set_property -dict [list CONFIG.C_ADV_TRIGGER {true} \
                              CONFIG.C_EN_STRG_QUAL {1} \
-                             CONFIG.C_DATA_DEPTH {8192} \
+                             CONFIG.C_DATA_DEPTH {4096} \
                              CONFIG.C_NUM_OF_PROBES {4} \
                              CONFIG.C_PROBE0_WIDTH {31} \
                              CONFIG.C_PROBE1_WIDTH {224} \
@@ -234,7 +234,7 @@ if { $chipscope == 1 } {
     create_ip -name ila -vendor xilinx.com -library ip -version 6.2 -module_name ila_lmem_dma_misal
     set_property -dict [list CONFIG.C_ADV_TRIGGER {true} \
                              CONFIG.C_EN_STRG_QUAL {1} \
-                             CONFIG.C_DATA_DEPTH {8192} \
+                             CONFIG.C_DATA_DEPTH {4096} \
                              CONFIG.C_NUM_OF_PROBES {4} \
                              CONFIG.C_PROBE0_WIDTH {33} \
                              CONFIG.C_PROBE1_WIDTH {288} \
@@ -249,7 +249,7 @@ if { $chipscope == 1 } {
     create_ip -name ila -vendor xilinx.com -library ip -version 6.2 -module_name ila_gemm_dma_ctrl
     set_property -dict [list CONFIG.C_ADV_TRIGGER {true} \
                              CONFIG.C_EN_STRG_QUAL {1} \
-                             CONFIG.C_DATA_DEPTH {8192} \
+                             CONFIG.C_DATA_DEPTH {4096} \
                              CONFIG.C_NUM_OF_PROBES {4} \
                              CONFIG.C_PROBE0_WIDTH {29} \
                              CONFIG.C_PROBE1_WIDTH {320} \
@@ -264,7 +264,7 @@ if { $chipscope == 1 } {
     create_ip -name ila -vendor xilinx.com -library ip -version 6.2 -module_name ila_gemm_ctrl
     set_property -dict [list CONFIG.C_ADV_TRIGGER {true} \
                              CONFIG.C_EN_STRG_QUAL {1} \
-                             CONFIG.C_DATA_DEPTH {8192} \
+                             CONFIG.C_DATA_DEPTH {4096} \
                              CONFIG.C_NUM_OF_PROBES {4} \
                              CONFIG.C_PROBE0_WIDTH {22} \
                              CONFIG.C_PROBE1_WIDTH {20} \
@@ -279,7 +279,7 @@ if { $chipscope == 1 } {
     create_ip -name ila -vendor xilinx.com -library ip -version 6.2 -module_name ila_gemm_unit
     set_property -dict [list CONFIG.C_ADV_TRIGGER {true} \
                              CONFIG.C_EN_STRG_QUAL {1} \
-                             CONFIG.C_DATA_DEPTH {8192} \
+                             CONFIG.C_DATA_DEPTH {4096} \
                              CONFIG.C_NUM_OF_PROBES {4} \
                              CONFIG.C_PROBE0_WIDTH {27} \
                              CONFIG.C_PROBE1_WIDTH {256} \
@@ -294,7 +294,7 @@ if { $chipscope == 1 } {
     create_ip -name ila -vendor xilinx.com -library ip -version 6.2 -module_name ila_gemm_sync
     set_property -dict [list CONFIG.C_ADV_TRIGGER {true} \
                              CONFIG.C_EN_STRG_QUAL {1} \
-                             CONFIG.C_DATA_DEPTH {8192} \
+                             CONFIG.C_DATA_DEPTH {4096} \
                              CONFIG.C_NUM_OF_PROBES {4} \
                              CONFIG.C_PROBE0_WIDTH {44} \
                              CONFIG.C_PROBE1_WIDTH {384} \

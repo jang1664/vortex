@@ -22,6 +22,8 @@
 #include <iostream>
 #include <fstream>
 #include <iomanip>
+#include <cstdlib>
+#include <limits>
 #include <mem.h>
 
 #include <VX_config.h>
@@ -49,6 +51,10 @@
 
 #ifndef VERILATOR_RESET_VALUE
 #define VERILATOR_RESET_VALUE 2
+#endif
+
+#ifndef VERILATOR_SEED
+#define VERILATOR_SEED 50
 #endif
 
 #if (XLEN == 32)
@@ -89,6 +95,25 @@ void sim_trace_enable(bool enable) {
   trace_enabled = enable;
 }
 
+static int get_verilator_seed() {
+  int seed = VERILATOR_SEED;
+  const char* env_seed = std::getenv("VORTEX_VERILATOR_SEED");
+  if (nullptr != env_seed && '\0' != env_seed[0]) {
+    char* end = nullptr;
+    auto parsed = std::strtoll(env_seed, &end, 0);
+    if ('\0' == *end
+     && parsed >= 0
+     && parsed <= std::numeric_limits<int>::max()) {
+      seed = static_cast<int>(parsed);
+    } else {
+      std::cerr << "warning: invalid VORTEX_VERILATOR_SEED=\""
+                << env_seed << "\", falling back to seed=" << seed
+                << std::endl;
+    }
+  }
+  return seed;
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 
 class Processor::Impl {
@@ -96,7 +121,7 @@ public:
   Impl() : dram_sim_(PLATFORM_MEMORY_NUM_BANKS, PLATFORM_MEMORY_DATA_SIZE, MEM_CLOCK_RATIO) {
     // force random values for uninitialized signals
     Verilated::randReset(VERILATOR_RESET_VALUE);
-    Verilated::randSeed(50);
+    Verilated::randSeed(get_verilator_seed());
 
     // turn off assertion before reset
     Verilated::assertOn(false);

@@ -16,6 +16,8 @@ else
 # alveo
 ifneq ($(findstring xilinx_u55c,$(XSA)),)
   # 16 GB of HBM2 with 32 channels (512 MB per channel)
+  # Keep core/global address width aligned with physical HBM aperture.
+  CONFIGS += -DMEM_ADDR_WIDTH=34
   CONFIGS += -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_ADDR_WIDTH=34
   CONFIGS += -DPLATFORM_MERGED_MEMORY_INTERFACE
   VPP_FLAGS += --connectivity.sp vortex_afu_1.m_axi_mem_0:HBM[0:31]

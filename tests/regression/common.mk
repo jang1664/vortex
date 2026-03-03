@@ -94,14 +94,24 @@ endif
 
 all: $(PROJECT) kernel.vxbin kernel.dump
 
+KERNEL_CONFIG_FILE := .kernel.flags.stamp
+
 kernel.dump: kernel.elf
 	$(VX_DP) -D $< > $@
 
 kernel.vxbin: kernel.elf
 	OBJCOPY=$(VX_CP) $(VORTEX_HOME)/kernel/scripts/vxbin.py $< $@
 
-kernel.elf: $(VX_SRCS)
-	$(VX_CXX) $(VX_CFLAGS) $^ $(VX_LDFLAGS) -o kernel.elf
+$(KERNEL_CONFIG_FILE): force
+	@printf '%s\n' "$(VX_CFLAGS) $(VX_LDFLAGS)" > $@.tmp
+	@if ! cmp -s $@.tmp $@; then \
+	  mv $@.tmp $@; \
+	else \
+	  rm $@.tmp; \
+	fi
+
+kernel.elf: $(VX_SRCS) $(KERNEL_CONFIG_FILE)
+	$(VX_CXX) $(VX_CFLAGS) $(VX_SRCS) $(VX_LDFLAGS) -o kernel.elf
 
 $(PROJECT): $(SRCS)
 	$(CXX) $(CXXFLAGS) $^ $(LDFLAGS) -o $@
@@ -134,6 +144,9 @@ clean-host:
 	rm -rf $(PROJECT) *.o *.log .depend
 
 clean: clean-kernel clean-host
+
+.PHONY: force
+force:
 
 ifneq ($(MAKECMDGOALS),clean)
     -include .depend
