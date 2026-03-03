@@ -1,8 +1,8 @@
 diff --git a/src/fpnew_pkg.sv b/src/fpnew_pkg.sv
-index 0167305..ac1d380 100644
+index 0167305..8be4cb2 100644
 --- a/src/fpnew_pkg.sv
 +++ b/src/fpnew_pkg.sv
-@@ -312,7 +312,23 @@ package fpnew_pkg;
+@@ -312,7 +312,18 @@ package fpnew_pkg;
    // -------------------------------------------
    // Returns the width of a FP format
    function automatic int unsigned fp_width(fp_format_e fmt);
@@ -13,12 +13,7 @@ index 0167305..ac1d380 100644
 +      FP16:    return 16;
 +      FP8:     return 8;
 +      FP16ALT: return 16;
-+      default: begin
-+        // pragma translate_off
-+        $fatal(1, "Invalid FP format supplied");
-+        // pragma translate_on
-+        return 0;
-+      end
++      default: return 32;
 +    endcase
 +`else
      return FP_ENCODINGS[fmt].exp_bits + FP_ENCODINGS[fmt].man_bits + 1;
@@ -26,7 +21,7 @@ index 0167305..ac1d380 100644
    endfunction
  
    // Returns the widest FP format present
-@@ -335,17 +351,49 @@ package fpnew_pkg;
+@@ -335,17 +346,39 @@ package fpnew_pkg;
  
    // Returns the number of expoent bits for a format
    function automatic int unsigned exp_bits(fp_format_e fmt);
@@ -37,12 +32,7 @@ index 0167305..ac1d380 100644
 +      FP16:    return 5;
 +      FP8:     return 5;
 +      FP16ALT: return 8;
-+      default: begin
-+        // pragma translate_off
-+        $fatal(1, "Invalid FP format supplied");
-+        // pragma translate_on
-+        return 0;
-+      end
++      default: return 8;
 +    endcase
 +`else
      return FP_ENCODINGS[fmt].exp_bits;
@@ -58,12 +48,7 @@ index 0167305..ac1d380 100644
 +      FP16:    return 10;
 +      FP8:     return 2;
 +      FP16ALT: return 7;
-+      default: begin
-+        // pragma translate_off
-+        $fatal(1, "Invalid FP format supplied");
-+        // pragma translate_on
-+        return 0;
-+      end
++      default: return 23;
 +    endcase
 +`else
      return FP_ENCODINGS[fmt].man_bits;

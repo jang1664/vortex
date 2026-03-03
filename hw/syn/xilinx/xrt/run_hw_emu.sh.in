@@ -3,9 +3,38 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(cd -- "${SCRIPT_DIR}/../../../.." && pwd)"
+
+find_root_dir() {
+  local candidates=()
+  local cand
+  local root
+  if [[ -n "${VORTEX_HOME:-}" ]]; then
+    candidates+=("${VORTEX_HOME}")
+  fi
+  candidates+=("$(cd -- "${SCRIPT_DIR}/../../../.." && pwd)")
+  candidates+=("$(cd -- "${SCRIPT_DIR}/../../../../.." && pwd)")
+
+  for cand in "${candidates[@]}"; do
+    [[ -z "${cand}" ]] && continue
+    root="$(cd -- "${cand}" 2>/dev/null && pwd || true)"
+    [[ -z "${root}" ]] && continue
+    if [[ -f "${root}/hw/syn/xilinx/xrt/patches/cvfpu_xsim_guard.patch" && -d "${root}/third_party/cvfpu" ]]; then
+      echo "${root}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+ROOT_DIR="$(find_root_dir || true)"
+if [[ -z "${ROOT_DIR}" ]]; then
+  echo "[run_hw_emu] ERROR: failed to locate Vortex root directory." >&2
+  echo "[run_hw_emu] Tried VORTEX_HOME, ${SCRIPT_DIR}/../../../.., ${SCRIPT_DIR}/../../../../.." >&2
+  exit 1
+fi
+
 CVFPU_DIR="${ROOT_DIR}/third_party/cvfpu"
-PATCH_FILE="${SCRIPT_DIR}/patches/cvfpu_xsim_guard.patch"
+PATCH_FILE="${ROOT_DIR}/hw/syn/xilinx/xrt/patches/cvfpu_xsim_guard.patch"
 
 apply_cvfpu_xsim_patch() {
   if [[ ! -f "${PATCH_FILE}" ]]; then
@@ -39,4 +68,5 @@ PLATFORM="${PLATFORM:-xilinx_u55c_gen3x16_xdma_3_202210_1}" \
 NUM_CORES="${NUM_CORES:-1}" \
 CONFIGS="${CONFIGS}" \
 TARGET=hw_emu \
+DEBUG=3 \
 make -C "${SCRIPT_DIR}" 2>&1 | tee "${LOG_FILE:-build_u55c_fpnew_ddisable_core1_ila_hw_emu.log}"
