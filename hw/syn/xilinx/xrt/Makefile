@@ -17,7 +17,7 @@ PLATFORM ?=
 
 PREFIX ?= build$(XLEN)
 MAX_JOBS ?= 8
-CLOCK_FREQ_HZ ?= 100000000
+CLOCK_FREQ_HZ ?= 100
 
 SRC_DIR := $(VORTEX_HOME)/hw/syn/xilinx/xrt
 
@@ -116,7 +116,9 @@ endif
 # Kernel compiler global settings
 VPP_FLAGS += --link --target $(TARGET) --platform $(PLATFORM) --save-temps --no_ip_cache
 VPP_FLAGS += --vivado.synth.jobs $(JOBS) --vivado.impl.jobs $(JOBS)
-VPP_FLAGS += --clock.defaultFreqHz $(CLOCK_FREQ_HZ)
+# VPP_FLAGS += --clock.defaultFreqHz $(CLOCK_FREQ_HZ)
+VPP_FLAGS += --kernel_frequency $(CLOCK_FREQ_HZ)
+
 
 # register compilation hooks
 VPP_FLAGS += --xp "vivado_prop:run.impl_1.STEPS.OPT_DESIGN.TCL.PRE=${SRC_DIR}/pre_opt_hook.tcl"
