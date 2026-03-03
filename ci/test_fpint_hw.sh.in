@@ -1,0 +1,61 @@
+#!/bin/bash
+set -euo pipefail
+
+CONFIGS="-DFPU_FPNEW -DEXT_D_ENABLE -DDBG_TRACE_GEMM_FSM \
+  -DNUM_CORES=1 -DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34"
+
+# ------------------------------------------------------------------------
+# - Add DBG flag if you want
+# ------------------------------------------------------------------------
+# CONFIGS+="-DDBG_TRACE_PIPELINE"
+# CONFIGS+="-DDBG_TRACE_MEM"
+# CONFIGS+="-DDBG_TRACE_CACHE"
+# CONFIGS+="-DDBG_TRACE_AFU"
+# CONFIGS+="-DDBG_TRACE_SCOPE"
+# CONFIGS+="-DDBG_TRACE_GBAR"
+# CONFIGS+="-DDBG_TRACE_TCU"
+# CONFIGS+="-DDBG_TRACE_GEMM"
+# CONFIGS+="-DNUM_CORES=2"
+
+export VERILATOR_SEED=$((RANDOM + 1))
+
+export CONFIGS
+# ------------------------------------------------------------------------
+# - clean if you want
+# ------------------------------------------------------------------------
+# make -C runtime/rtlsim clean
+
+# ------------------------------------------------------------------------
+# - rtl
+# ------------------------------------------------------------------------
+DRIVER=rtlsim \
+DEBUG_LEVEL=3 \
+bash tests/regression/fpint_gemm_ffn_hw/test.sh "$@"
+
+# ------------------------------------------------------------------------
+# - xrt + rtl
+# ------------------------------------------------------------------------
+# DRIVER=xrt \
+# DEBUG_LEVEL=3 \
+# bash tests/regression/fpint_gemm_ffn_hw/test.sh "$@"
+
+# ------------------------------------------------------------------------
+# - xrt + hw_emul
+# ------------------------------------------------------------------------
+# FPGA_BIN_DIR=/home/jaeyongjang/project.local/vortex/build/hw/syn/xilinx/xrt/build_u55c_fpnew_ddisable_core1_ila_hw_emu_xilinx_u55c_gen3x16_xdma_3_202210_1_hw_emu/bin \
+# TARGET=hw_emu \
+# PLATFORM=xilinx_u55c_gen3x16_xdma_3_202210_1 \
+# DRIVER=xrt \
+# DEBUG_LEVEL=3 \
+# bash tests/regression/fpint_gemm_ffn_hw/test.sh "$@"
+
+# ------------------------------------------------------------------------
+# - FPGA
+# ------------------------------------------------------------------------
+# FPGA_BIN_DIR=/home/jaeyongjang/project.local/vortex/build/hw/syn/xilinx/xrt/build_u55c_fpnew_ddisable_core1_ila_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/bin \
+# TARGET=hw \
+# PLATFORM=xilinx_u55c_gen3x16_xdma_3_202210_1 \
+# DRIVER=xrt \
+# CHIPSCOPE=1 \
+# DEBUG_LEVEL=0 \
+# bash tests/regression/fpint_gemm_ffn_hw/test.sh "$@"

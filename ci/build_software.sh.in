@@ -1,0 +1,4 @@
+#!/bin/bash
+
+CONFIGS="-DFPU_FPNEW -DEXT_D_ENABLE" \
+make software 2>&1 | tee build_software.log
