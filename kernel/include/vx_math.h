@@ -54,17 +54,19 @@ static inline float vx_nanf() {
 ///////////////////////////////////////////////////////////////////////////////
 // vx_expf: e^x via 2^(x/ln2) decomposition + degree-4 minimax polynomial
 // Max error: < 2e-7 relative
+// ** Branchless ** — safe for Vortex SIMT (no divergent branches)
 ///////////////////////////////////////////////////////////////////////////////
 static inline float vx_expf(float x) {
-  if (x > 88.7f)  return 3.4028235e+38f;  // clamp to FLT_MAX
-  if (x < -87.3f) return 0.0f;
+  // Branchless clamp using fmin.s / fmax.s hardware instructions
+  float clamped = __builtin_fmaxf(__builtin_fminf(x, 88.7f), -87.3f);
 
   const float LOG2E = 1.4426950408889634f;  // 1/ln(2)
-  float t = x * LOG2E;
+  float t = clamped * LOG2E;
 
-  // n = floor(t)
+  // Branchless floor: n = floor(t)
+  // (int) truncates toward zero; fix for negatives with arithmetic
   int n = (int)t;
-  if ((float)n > t) n--;
+  n -= ((float)n > t);  // subtracts 1 when truncation rounded toward zero
   float f = t - (float)n;
 
   // 2^f approximation for f in [0,1), minimax coefficients
@@ -102,6 +104,8 @@ static inline float vx_logf(float x) {
 ///////////////////////////////////////////////////////////////////////////////
 // vx_sinf: Cody-Waite range reduction + polynomial
 // Reduces x to [-pi/4, pi/4], then uses degree-7 sin or degree-6 cos poly
+// ** Completely branchless ** — safe for Vortex SIMT warp divergence.
+// All control flow replaced with arithmetic select (multiply by 0/1).
 ///////////////////////////////////////////////////////////////////////////////
 static inline float vx_sinf(float x) {
   const float TWO_OVER_PI = 0.6366197723675814f;
@@ -109,26 +113,33 @@ static inline float vx_sinf(float x) {
   const float PI_OVER_2_LO = 7.5497894159e-08f;
 
   float j = x * TWO_OVER_PI;
-  int k = (j >= 0.0f) ? (int)(j + 0.5f) : (int)(j - 0.5f);
+
+  // Branchless round-to-nearest: k = floor(j + 0.5)
+  // (int) truncates toward zero; fix for negatives with arithmetic
+  float half_adj = j + 0.5f;
+  int k_trunc = (int)half_adj;
+  // If half_adj < 0 and not exact integer, truncation went wrong way → fix
+  int k = k_trunc - ((half_adj < 0.0f) & ((float)k_trunc != half_adj));
+
   float r = x - (float)k * PI_OVER_2_HI;
   r = r - (float)k * PI_OVER_2_LO;
 
+  // Quadrant: k & 3 is always 0..3 (two's complement bitwise AND)
   int quad = k & 3;
-  if (quad < 0) quad += 4;
-
-  bool negate = (quad == 2 || quad == 3);
-  bool use_cos = (quad == 1 || quad == 3);
 
   float r2 = r * r;
-  float result;
-  if (use_cos) {
-    // cos(r) ≈ 1 - r²/2 + r⁴/24 - r⁶/720
-    result = 1.0f + r2 * (-0.5f + r2 * (0.04166666f + r2 * (-0.001388889f)));
-  } else {
-    // sin(r) ≈ r - r³/6 + r⁵/120 - r⁷/5040
-    result = r * (1.0f + r2 * (-0.16666667f + r2 * (0.008333333f + r2 * (-0.0001984127f))));
-  }
-  return negate ? -result : result;
+
+  // Compute BOTH polynomials (no branch)
+  float sin_r = r * (1.0f + r2 * (-0.16666667f + r2 * (0.008333333f + r2 * (-0.0001984127f))));
+  float cos_r = 1.0f + r2 * (-0.5f + r2 * (0.04166666f + r2 * (-0.001388889f)));
+
+  // Branchless select: use cos when quad is odd (1 or 3)
+  float uc = (float)(quad & 1);           // 0.0f or 1.0f
+  float result = (1.0f - uc) * sin_r + uc * cos_r;
+
+  // Branchless negate: when quad is 2 or 3
+  float sign = 1.0f - 2.0f * (float)((quad >> 1) & 1);  // +1.0f or -1.0f
+  return sign * result;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
