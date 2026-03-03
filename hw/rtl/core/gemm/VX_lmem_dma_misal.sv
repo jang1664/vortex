@@ -733,63 +733,15 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
 
 `ifdef CHIPSCOPE
 `ifdef DBG_SCOPE_GEMM
-  localparam int DBG_LMEM_DMA_P0_W = $bits({
-      reset,
-      ctrl_if.start,
-      (state == S_IDLE),
-      (state == S_DONE),
-      cmd_start,
-      precalc_issue,
-      precalc_done,
-      at_last_idx,
-      src_is_gemm,
-      dst_is_gemm,
-      lmem_bus_if.req_valid,
-      lmem_bus_if.req_ready,
-      lmem_bus_if.rsp_valid,
-      lmem_bus_if.rsp_ready,
-      gemm_bus_if.req_valid,
-      gemm_bus_if.req_ready,
-      gemm_bus_if.rsp_valid,
-      gemm_bus_if.rsp_ready,
-      lmem_req_fire,
-      gemm_req_fire,
-      lmem_rsp_fire,
-      gemm_rsp_fire,
-      src_rsp_fire,
-      dst_req_fire,
-      dst_rsp_fire,
-      state,
-      state_n
-  });
-  localparam int DBG_LMEM_DMA_P1_W = $bits({
-      out_off,
-      seg_size_r,
-      wr_nbytes,
-      need_src,
-      32'(win_valid),
-      src_drop,
-      bound_r[0],
-      bound_r[1],
-      bound_r[2]
-  });
-  localparam int DBG_LMEM_DMA_P2_W = $bits({
-      base_src_seg,
-      base_dst_seg,
-      src_rd_ptr,
-      src_rd_end,
-      src_byte_addr,
-      dst_byte_addr
-  });
-  localparam int DBG_LMEM_DMA_P3_W = $bits({
-      stride_r[0][0],
-      stride_r[1][0],
-      stride_r[0][1],
-      stride_r[1][1],
-      stride_r[0][2],
-      stride_r[1][2],
-      32'(win_valid)
-  });
+  localparam int DBG_BIT_W    = $bits(logic);
+  localparam int DBG_STATE_W  = $bits(state);
+  localparam int DBG_WORD_W   = $bits(logic [31:0]);
+  localparam int DBG_ADDR64_W = $bits(base_src_seg);
+
+  localparam int DBG_LMEM_DMA_P0_W = (25 * DBG_BIT_W) + (2 * DBG_STATE_W);
+  localparam int DBG_LMEM_DMA_P1_W = ((6 + NDIM) * DBG_WORD_W);
+  localparam int DBG_LMEM_DMA_P2_W = (6 * DBG_ADDR64_W);
+  localparam int DBG_LMEM_DMA_P3_W = (((2 * NDIM) + 1) * DBG_WORD_W);
 
   (* keep = "true", mark_debug = "true" *) wire [DBG_LMEM_DMA_P0_W-1:0] dbg_lmem_dma_probe0 = {
       reset,

@@ -275,68 +275,14 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
 
 `ifdef CHIPSCOPE
 `ifdef DBG_SCOPE_GEMM
-    localparam int DBG_GEMM_CTRL_P0_W = $bits({
-        reset,
-        cfg_reg_if.valid,
-        cfg_reg_if.ready,
-        cfg_start_fire,
-        gemm_start,
-        job_active_q,
-        done_pending_q,
-        done_fire,
-        done_if.ready,
-        all_idle_now,
-        queues_idle,
-        workers_idle,
-        parent_q_empty,
-        child_q_empty_v,
-        gemm_fsm_if.ctrl.start,
-        gemm_fsm_if.flag.idle,
-        gemm_pqueue_out.ctrl.start,
-        gemm_pqueue_out.flag.idle
-    });
-    localparam int DBG_GEMM_CTRL_P1_W = $bits({
-        gemm_ctrl_if.input_read_ctrl.start,
-        gemm_ctrl_if.weight_read_ctrl.start,
-        gemm_ctrl_if.quant_param_read_ctrl.start,
-        gemm_ctrl_if.output_write_ctrl.start,
-        gemm_ctrl_if.dma_ctrl.start,
-        gemm_ctrl_if.input_read_flag.idle,
-        gemm_ctrl_if.weight_read_flag.idle,
-        gemm_ctrl_if.quant_param_read_flag.idle,
-        gemm_ctrl_if.output_write_flag.idle,
-        gemm_ctrl_if.dma_flag.idle,
-        gemm_cqueue_out[0].ctrl.start,
-        gemm_cqueue_out[1].ctrl.start,
-        gemm_cqueue_out[2].ctrl.start,
-        gemm_cqueue_out[3].ctrl.start,
-        gemm_cqueue_out[4].ctrl.start,
-        gemm_sync_out[0].flag.idle,
-        gemm_sync_out[1].flag.idle,
-        gemm_sync_out[2].flag.idle,
-        gemm_sync_out[3].flag.idle,
-        gemm_sync_out[4].flag.idle
-    });
-    localparam int DBG_GEMM_CTRL_P2_W = $bits({
-        32'(active_entry_id_q),
-        32'(gemm_fsm_if.entry_id),
-        32'(gemm_ctrl_if.entry_id),
-        gemm_ctrl_if.M_orig,
-        gemm_ctrl_if.N_orig,
-        gemm_ctrl_if.K_orig,
-        gemm_ctrl_if.M_target,
-        gemm_ctrl_if.N_target,
-        gemm_ctrl_if.K_target
-    });
-    localparam int DBG_GEMM_CTRL_P3_W = $bits({
-        64'(gemm_fsm_if.ctrl.cmd.instr),
-        64'(gemm_pqueue_out.ctrl.cmd.instr),
-        64'(gemm_sync_out[0].ctrl.cmd.instr),
-        64'(gemm_sync_out[1].ctrl.cmd.instr),
-        64'(gemm_sync_out[2].ctrl.cmd.instr),
-        64'(gemm_sync_out[3].ctrl.cmd.instr),
-        64'(gemm_sync_out[4].ctrl.cmd.instr)
-    });
+    localparam int DBG_BIT_W   = $bits(logic);
+    localparam int DBG_WORD_W  = $bits(logic [31:0]);
+    localparam int DBG_INSTR_W = 2 * DBG_WORD_W;
+
+    localparam int DBG_GEMM_CTRL_P0_W = (17 * DBG_BIT_W) + $bits(child_q_empty_v);
+    localparam int DBG_GEMM_CTRL_P1_W = (4 * N_CHILDREN * DBG_BIT_W);
+    localparam int DBG_GEMM_CTRL_P2_W = (9 * DBG_WORD_W);
+    localparam int DBG_GEMM_CTRL_P3_W = ((N_CHILDREN + 2) * DBG_INSTR_W);
 
     (* keep = "true", mark_debug = "true" *) wire [DBG_GEMM_CTRL_P0_W-1:0] dbg_gemm_ctrl_probe0 = {
         reset,

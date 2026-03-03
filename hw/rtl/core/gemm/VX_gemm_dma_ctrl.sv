@@ -787,56 +787,15 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
 
 `ifdef CHIPSCOPE
 `ifdef DBG_SCOPE_GEMM
-  localparam int DBG_GEMM_DMA_CTRL_P0_W = $bits({
-      reset,
-      gemm_dma_ctrl_if.start,
-      (state_q == S_IDLE),
-      (state_q == S_DONE),
-      dma_if.req_valid,
-      dma_if.req_ready,
-      dma_if.rsp_valid,
-      dma_if.rsp_ready,
-      gemm_sync_if.valid,
-      gemm_sync_if.ready,
-      state_q,
-      state_d,
-      cmd_op,
-      dir_is_st
-  });
-  localparam int DBG_GEMM_DMA_CTRL_P1_W = $bits({
-      32'(entry_id_q),
-      32'(entry_id_d),
-      32'(alloc_owner_q),
-      32'(alloc_owner_d),
-      32'(alloc_gen_q),
-      32'(alloc_gen_d),
-      32'(wr_idx_q),
-      32'(wr_idx_d),
-      32'(poll_gap_q),
-      32'(alloc_gap_q)
-  });
-  localparam int DBG_GEMM_DMA_CTRL_P2_W = $bits({
-      32'(dma_if.req_data.mask),
-      dma_if.req_data.rw,
-      32'(dma_if.req_data.addr[0]),
-      32'(dma_if.req_data.byteen[0]),
-      64'(dma_if.req_data.data[0]),
-      64'(dma_if.rsp_data.data[0]),
-      32'(gemm_sync_if.reg_idx),
-      32'(gemm_sync_if.value),
-      64'(cmd_q.instr)
-  });
-  localparam int DBG_GEMM_DMA_CTRL_P3_W = $bits({
-      M_orig_q,
-      N_orig_q,
-      K_orig_q,
-      qblk_orig_q,
-      M_target_q,
-      N_target_q,
-      K_target_q,
-      wtrans_tot_q,
-      qdir_tot_q
-  });
+  localparam int DBG_BIT_W   = $bits(logic);
+  localparam int DBG_STATE_W = $bits(state_q);
+  localparam int DBG_WORD_W  = $bits(logic [31:0]);
+  localparam int DBG_XLEN_W  = $bits(cmd_q.rs1_data);
+
+  localparam int DBG_GEMM_DMA_CTRL_P0_W = (11 * DBG_BIT_W) + (2 * DBG_STATE_W) + $bits(cmd_op);
+  localparam int DBG_GEMM_DMA_CTRL_P1_W = (10 * DBG_WORD_W);
+  localparam int DBG_GEMM_DMA_CTRL_P2_W = (5 * DBG_WORD_W) + (3 * DBG_XLEN_W) + DBG_BIT_W;
+  localparam int DBG_GEMM_DMA_CTRL_P3_W = (9 * DBG_WORD_W);
 
   (* keep = "true", mark_debug = "true" *) wire [DBG_GEMM_DMA_CTRL_P0_W-1:0] dbg_gemm_dma_ctrl_probe0 = {
       reset,

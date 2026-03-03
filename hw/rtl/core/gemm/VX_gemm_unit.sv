@@ -1267,87 +1267,17 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
 
 `ifdef CHIPSCOPE
 `ifdef DBG_SCOPE_GEMM
-    localparam int DBG_GEMM_UNIT_P0_W = $bits({
-        reset,
-        gemm_unit_if.start,
-        gemm_idle,
-        gemm_done,
-        in_flight,
-        mxu_ready_weight,
-        is_qcol,
-        state,
-        next_state,
-        acc_mem_accum_rd_state,
-        acc_mem_accum_rd_state_next,
-        acc_mem_accum_wr_state,
-        acc_mem_accum_wr_state_next,
-        acc_mem_accum_wr_state_q,
-        acc_mem_accum_rd_req,
-        acc_mem_accum_wr_req,
-        acc_rd_fifo_push,
-        acc_rd_fifo_pop,
-        acc_rd_fifo_full,
-        acc_rd_fifo_empty,
-        final_scaler_output_valid,
-        acc_output_valid[0],
-        acc_psum_data_valid[0],
-        acc_in_data_valid[0],
-        out_mem_rd_req_fire,
-        acc_mem_rd_out_valid,
-        fp16_out_valid[0]
-    });
-    localparam int DBG_GEMM_UNIT_P1_W = $bits({
-        32'(gemm_unit_if.gemm_unit_ctrl.acc_cnt),
-        32'(gemm_unit_if.gemm_unit_ctrl.acc_mem_base_addr),
-        32'(acc_mem_accum_rd_addr),
-        32'(acc_mem_accum_wr_addr),
-        32'(acc_mem_out_rd_addr),
-        32'(acc_mem_out_rd_addr_q),
-        32'(acc_mem_accum_rd_cnt),
-        32'(acc_mem_accum_wr_cnt)
-    });
-    localparam int DBG_GEMM_UNIT_P2_W = $bits({
-        2'(acc_mem_accum_rd_bank),
-        2'(acc_mem_accum_rd_bank_q),
-        2'(acc_mem_accum_wr_bank),
-        2'(acc_mem_out_rd_bank),
-        2'(acc_mem_out_rd_bank_q),
-        32'(acc_mem_accum_rd_bank_addr),
-        32'(acc_mem_accum_wr_bank_addr),
-        32'(acc_mem_out_rd_bank_addr),
-        32'(acc_mem_rd_depth_addr[0]),
-        32'(acc_mem_wr_depth_addr[0]),
-        32'(o_lmem_bus_if.req_data.addr),
-        o_lmem_bus_if.req_valid,
-        o_lmem_bus_if.req_ready,
-        o_lmem_bus_if.rsp_valid,
-        o_lmem_bus_if.rsp_ready
-    });
-    localparam int DBG_GEMM_UNIT_P3_W = $bits({
-        i_lmem_bus_if.req_valid,
-        i_lmem_bus_if.req_ready,
-        w_lmem_bus_if.req_valid,
-        w_lmem_bus_if.req_ready,
-        sz_lmem_bus_if.req_valid,
-        sz_lmem_bus_if.req_ready,
-        o_lmem_bus_if.req_valid,
-        o_lmem_bus_if.req_ready,
-        32'(i_lmem_bus_if.req_data.addr),
-        32'(w_lmem_bus_if.req_data.addr),
-        32'(sz_lmem_bus_if.req_data.addr),
-        32'(o_lmem_bus_if.req_data.addr),
-        32'(sz_req_addr),
-        sz_req_rw,
-        scale_reg_wr_req,
-        scale_reg_wr_en,
-        zp_reg_wr_req,
-        zp_reg_wr_en,
-        is_qcol,
-        32'(gemm_unit_ctrl.quant_dir),
-        32'(gemm_unit_ctrl.wreg_use_idx),
-        32'(gemm_unit_ctrl.sreg_use_idx),
-        32'(gemm_unit_ctrl.zreg_use_idx)
-    });
+    localparam int DBG_BIT_W      = $bits(logic);
+    localparam int DBG_STATE_W    = $bits(gemm_state_t);
+    localparam int DBG_RD_STATE_W = $bits(acc_mem_accum_rd_state_t);
+    localparam int DBG_WR_STATE_W = $bits(acc_mem_accum_wr_state_t);
+    localparam int DBG_WORD_W     = $bits(logic [31:0]);
+    localparam int DBG_BANK_W     = $bits(acc_mem_accum_rd_bank);
+
+    localparam int DBG_GEMM_UNIT_P0_W = (20 * DBG_BIT_W) + (2 * DBG_STATE_W) + (2 * DBG_RD_STATE_W) + (3 * DBG_WR_STATE_W);
+    localparam int DBG_GEMM_UNIT_P1_W = (8 * DBG_WORD_W);
+    localparam int DBG_GEMM_UNIT_P2_W = (5 * DBG_BANK_W) + (6 * DBG_WORD_W) + (4 * DBG_BIT_W);
+    localparam int DBG_GEMM_UNIT_P3_W = (9 * DBG_WORD_W) + (14 * DBG_BIT_W);
 
     (* keep = "true", mark_debug = "true" *) wire [DBG_GEMM_UNIT_P0_W-1:0] dbg_gemm_unit_probe0 = {
         reset,

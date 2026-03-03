@@ -1792,60 +1792,35 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
 `ifdef CHIPSCOPE
 `ifdef DBG_SCOPE_GEMM
-  localparam int DBG_GEMM_P0_W = $bits({
-      reset,
-      cfg_reg_if.valid,
-      cfg_reg_if.ready,
-      cfg_reg_if.regs[CFG_R_CONTROL][0],
-      gemm_start_o,
-      out_start_d,
-      gemm_fsm_if.flag.idle,
-      gemm_fsm_if.flag.done,
-      pre_valid_q,
-      mxu_buf_q,
-      state_q,
-      state_d,
-      out_cmd_d.instr[7:0],
-      out_cmd_d.flags
-  });
-  localparam int DBG_GEMM_P1_W = $bits({
-      tile_cur_q,
-      tile_pre_q,
-      u32_t'(tile_cur_nt_q),
-      u32_t'(tile_cur_mt_q),
-      u32_t'(tile_cur_kt_q),
-      u32_t'(tile_pre_nt_q),
-      u32_t'(tile_pre_mt_q),
-      u32_t'(tile_pre_kt_q),
-      u32_t'(nt_mxu_q),
-      u32_t'(kt_mxu_q),
-      o_store_issue_q
-  });
-  localparam int DBG_GEMM_P2_W = $bits({
-      out_cmd_d.instr,
-      out_cmd_d.rs1_data,
-      out_cmd_d.rs2_data,
-      out_cmd_d.flags,
-      out_cmd_d.eff_mt,
-      out_cmd_d.groups_eff,
-      out_cmd_d.rs1,
-      out_cmd_d.rs2,
-      out_cmd_d.rd
-  });
-  localparam int DBG_GEMM_P3_W = $bits({
-      entry_id,
-      M_orig,
-      N_orig,
-      K_orig,
-      qblk_orig,
-      M_target,
-      N_target,
-      K_target,
-      wtrans_tot,
-      qdir_tot
-  });
+  localparam int DBG_BIT_W      = $bits(logic);
+  localparam int DBG_U32_W      = $bits(u32_t);
+  localparam int DBG_STATE_W    = $bits(state_t);
+  localparam int DBG_INSTR8_W   = $bits(out_cmd_d.instr[7:0]);
+  localparam int DBG_INSTR_W    = $bits(out_cmd_d.instr);
+  localparam int DBG_FLAGS_W    = $bits(out_cmd_d.flags);
+  localparam int DBG_XLEN_W     = $bits(out_cmd_d.rs1_data);
+  localparam int DBG_REG_W      = $bits(out_cmd_d.rs1);
+  localparam int DBG_EFF_MT_W   = $bits(out_cmd_d.eff_mt);
+
+  localparam int DBG_GEMM_P0_PAYLOAD_W = (10 * DBG_BIT_W) + (2 * DBG_STATE_W) + DBG_INSTR8_W + DBG_FLAGS_W;
+  localparam int DBG_GEMM_P1_PAYLOAD_W = (10 * DBG_U32_W) + DBG_BIT_W;
+  localparam int DBG_GEMM_P2_PAYLOAD_W = DBG_INSTR_W + (2 * DBG_XLEN_W) + DBG_FLAGS_W + DBG_EFF_MT_W + DBG_U32_W + (3 * DBG_REG_W);
+
+  localparam int DBG_GEMM_P0_W = (2 * DBG_U32_W);
+  localparam int DBG_GEMM_P1_W = (12 * DBG_U32_W);
+  localparam int DBG_GEMM_P2_W = (8 * DBG_U32_W);
+  localparam int DBG_GEMM_P3_W = (10 * DBG_U32_W);
+
+  localparam int DBG_GEMM_P0_PAD_W = DBG_GEMM_P0_W - DBG_GEMM_P0_PAYLOAD_W;
+  localparam int DBG_GEMM_P1_PAD_W = DBG_GEMM_P1_W - DBG_GEMM_P1_PAYLOAD_W;
+  localparam int DBG_GEMM_P2_PAD_W = DBG_GEMM_P2_W - DBG_GEMM_P2_PAYLOAD_W;
+
+  `STATIC_ASSERT(DBG_GEMM_P0_PAD_W >= 0, ("DBG_GEMM_P0 width underflow"));
+  `STATIC_ASSERT(DBG_GEMM_P1_PAD_W >= 0, ("DBG_GEMM_P1 width underflow"));
+  `STATIC_ASSERT(DBG_GEMM_P2_PAD_W >= 0, ("DBG_GEMM_P2 width underflow"));
 
   (* keep = "true", mark_debug = "true" *) wire [DBG_GEMM_P0_W-1:0] dbg_gemm_probe0 = {
+      {DBG_GEMM_P0_PAD_W{1'b0}},
       reset,
       cfg_reg_if.valid,
       cfg_reg_if.ready,
@@ -1862,6 +1837,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
       out_cmd_d.flags
   };
   (* keep = "true", mark_debug = "true" *) wire [DBG_GEMM_P1_W-1:0] dbg_gemm_probe1 = {
+      {DBG_GEMM_P1_PAD_W{1'b0}},
       tile_cur_q,
       tile_pre_q,
       u32_t'(tile_cur_nt_q),
@@ -1875,6 +1851,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
       o_store_issue_q
   };
   (* keep = "true", mark_debug = "true" *) wire [DBG_GEMM_P2_W-1:0] dbg_gemm_probe2 = {
+      {DBG_GEMM_P2_PAD_W{1'b0}},
       out_cmd_d.instr,
       out_cmd_d.rs1_data,
       out_cmd_d.rs2_data,
