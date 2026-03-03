@@ -1,7 +1,7 @@
 #include "common.h"
 #include <vx_spawn.h>
 #include <vx_intrinsics.h>
-#include <math.h>
+#include <vx_math.h>
 
 // Type aliases
 using data_t = float;
@@ -60,7 +60,7 @@ void kernel_softmax(kernel_arg_t *__UNIFORM__ arg) {
   //===========================================================================
   // Step 1: Find max value (for numerical stability)
   //===========================================================================
-  float local_max = -INFINITY;
+  float local_max = VX_NEG_INF;
   
   // Each thread finds local max (only if block is active)
   if (active) {
@@ -69,7 +69,7 @@ void kernel_softmax(kernel_arg_t *__UNIFORM__ arg) {
       
       // Apply causal mask if enabled
       if (use_mask && k > q) {
-        val = -INFINITY;
+        val = VX_NEG_INF;
       }
       
       if (val > local_max) {
@@ -115,10 +115,10 @@ void kernel_softmax(kernel_arg_t *__UNIFORM__ arg) {
       
       // Apply causal mask if enabled
       if (use_mask && k > q) {
-        val = -INFINITY;
+        val = VX_NEG_INF;
       }
       
-      float exp_val = expf(val - global_max);
+      float exp_val = vx_expf(val - global_max);
       local_sum += exp_val;
     }
   }
@@ -150,10 +150,10 @@ void kernel_softmax(kernel_arg_t *__UNIFORM__ arg) {
       
       // Apply causal mask if enabled
       if (use_mask && k > q) {
-        val = -INFINITY;
+        val = VX_NEG_INF;
       }
       
-      output_row[k] = expf(val - global_max) * inv_sum;
+      output_row[k] = vx_expf(val - global_max) * inv_sum;
     }
   }
 }

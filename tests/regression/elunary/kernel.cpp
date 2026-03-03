@@ -1,7 +1,7 @@
 #include "common.h"
 #include <vx_spawn.h>
 #include <vx_intrinsics.h>
-#include <cmath>
+#include <vx_math.h>
 
 // Type aliases
 using data_t = float;
@@ -26,7 +26,7 @@ void kernel_rsqrt(kernel_arg_t *__UNIFORM__ arg) {
   uint32_t thread_id = blockIdx.x * blockDim.x + threadIdx.x;
   
   for (uint32_t i = thread_id; i < size; i += total_threads) {
-    pOutput[i] = 1.0f / sqrtf(pInput[i]);
+    pOutput[i] = 1.0f / vx_sqrtf(pInput[i]);
   }
 }
 
@@ -39,7 +39,7 @@ void kernel_sin(kernel_arg_t *__UNIFORM__ arg) {
   uint32_t thread_id = blockIdx.x * blockDim.x + threadIdx.x;
   
   for (uint32_t i = thread_id; i < size; i += total_threads) {
-    pOutput[i] = sinf(pInput[i]);
+    pOutput[i] = vx_sinf(pInput[i]);
   }
 }
 
@@ -52,7 +52,7 @@ void kernel_cos(kernel_arg_t *__UNIFORM__ arg) {
   uint32_t thread_id = blockIdx.x * blockDim.x + threadIdx.x;
   
   for (uint32_t i = thread_id; i < size; i += total_threads) {
-    pOutput[i] = cosf(pInput[i]);
+    pOutput[i] = vx_cosf(pInput[i]);
   }
 }
 
@@ -65,7 +65,7 @@ void kernel_exp(kernel_arg_t *__UNIFORM__ arg) {
   uint32_t thread_id = blockIdx.x * blockDim.x + threadIdx.x;
   
   for (uint32_t i = thread_id; i < size; i += total_threads) {
-    pOutput[i] = expf(pInput[i]);
+    pOutput[i] = vx_expf(pInput[i]);
   }
 }
 
@@ -78,7 +78,7 @@ void kernel_log(kernel_arg_t *__UNIFORM__ arg) {
   uint32_t thread_id = blockIdx.x * blockDim.x + threadIdx.x;
   
   for (uint32_t i = thread_id; i < size; i += total_threads) {
-    pOutput[i] = logf(pInput[i]);
+    pOutput[i] = vx_logf(pInput[i]);
   }
 }
 
@@ -104,7 +104,7 @@ void kernel_abs(kernel_arg_t *__UNIFORM__ arg) {
   uint32_t thread_id = blockIdx.x * blockDim.x + threadIdx.x;
   
   for (uint32_t i = thread_id; i < size; i += total_threads) {
-    pOutput[i] = fabsf(pInput[i]);
+    pOutput[i] = vx_fabsf(pInput[i]);
   }
 }
 
@@ -117,7 +117,7 @@ void kernel_sqrt(kernel_arg_t *__UNIFORM__ arg) {
   uint32_t thread_id = blockIdx.x * blockDim.x + threadIdx.x;
   
   for (uint32_t i = thread_id; i < size; i += total_threads) {
-    pOutput[i] = sqrtf(pInput[i]);
+    pOutput[i] = vx_sqrtf(pInput[i]);
   }
 }
 
