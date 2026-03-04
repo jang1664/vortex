@@ -494,6 +494,10 @@ public:
     return 0;
   }
 
+  void smi_set_kernel_name(const char* /*name*/) {
+    // no-op: opae backend does not export shm status
+  }
+
 private:
 
   int ensure_staging(uint64_t size) {

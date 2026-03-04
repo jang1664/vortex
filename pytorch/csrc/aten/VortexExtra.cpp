@@ -42,6 +42,9 @@ static void launch_kernel(vx_device_h device,
   TORCH_CHECK(ret == 0, "Failed to upload kernel binary: ", kernel_path,
               " (err=", ret, ")");
 
+  // Notify SMI monitoring of the kernel name (best-effort, ignore errors)
+  vx_smi_set_kernel_name(device, kernel_path.c_str());
+
   ret = vx_start(device, krnl_buf, args_buf);
   TORCH_CHECK(ret == 0, "vx_start failed (err=", ret, ")");
 

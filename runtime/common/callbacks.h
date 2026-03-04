@@ -69,6 +69,9 @@ typedef struct {
   // query device performance counter
   int (*mpm_query) (vx_device_h hdevice, uint32_t addr, uint32_t core_id, uint64_t* value);
 
+  // set kernel name for SMI monitoring
+  int (*smi_set_kernel_name) (vx_device_h hdevice, const char* name);
+
 } callbacks_t;
 
 int vx_dev_init(callbacks_t* callbacks);
