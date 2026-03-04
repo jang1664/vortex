@@ -1426,22 +1426,22 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
             // Scale/Zero register writes
             if (scale_reg_wr_en) begin
                 `TRACE(3, ("%m : [%0t] | GEMM_SCALE_REG_WRITE | {inst=%s, reg_idx=%0d, data=%s}\n",
-                    $time, INSTANCE_ID, scale_reg_idx, parseWordNoNormal(sz_req_data, `MAX(`MXU_ROW, `MXU_COL) * `SCALE_WIDTH, `SCALE_WIDTH, "fp")))
+                    $time, INSTANCE_ID, scale_reg_idx, VX_utils_pkg::parseWordNoNormal(sz_req_data, `MAX(`MXU_ROW, `MXU_COL) * `SCALE_WIDTH, `SCALE_WIDTH, "fp")))
             end
             if (zp_reg_wr_en) begin
                 `TRACE(3, ("%m : [%0t] | GEMM_ZP_REG_WRITE | {inst=%s, reg_idx=%0d, data=%s}\n",
-                    $time, INSTANCE_ID, zp_reg_idx, parseWordNoNormal(sz_req_data, `MAX(`MXU_ROW, `MXU_COL) * `ZP_WIDTH, `ZP_WIDTH, "int")))
+                    $time, INSTANCE_ID, zp_reg_idx, VX_utils_pkg::parseWordNoNormal(sz_req_data, `MAX(`MXU_ROW, `MXU_COL) * `ZP_WIDTH, `ZP_WIDTH, "int")))
             end
 
             // Input data arrival
             if (in_pipe_valid_out & in_flight) begin
                 `TRACE(3, ("%m : [%0t] | GEMM_INPUT_VALID | {inst=%s, data=%s}\n",
-                    $time, INSTANCE_ID, parseWordNoNormal(in_pipe_data_out, `MXU_ROW * `IFP_WIDTH, `IFP_WIDTH, "fp")))
+                    $time, INSTANCE_ID, VX_utils_pkg::parseWordNoNormal(in_pipe_data_out, `MXU_ROW * `IFP_WIDTH, `IFP_WIDTH, "fp")))
             end
 
             if (in_scaler_result_valid) begin
                 `TRACE(3, ("%m : [%0t] | GEMM_INPUT_SCALER_RESULT | {inst=%s, data=%s}\n",
-                    $time, INSTANCE_ID, parseWordNoNormal(in_scaler_result_data, `MXU_ROW * `IFP_WIDTH, `IFP_WIDTH, "fp")))
+                    $time, INSTANCE_ID, VX_utils_pkg::parseWordNoNormal(in_scaler_result_data, `MXU_ROW * `IFP_WIDTH, `IFP_WIDTH, "fp")))
             end
 
             // Prealigner output
@@ -1449,60 +1449,60 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
                 `TRACE(3, ("%m : [%0t] | GEMM_PREALIGNER_OUT | {inst=%s, max_exp=0x%0h}\n",
                     $time, INSTANCE_ID, prealigner_max_exp))
                 `TRACE(3, ("%m : [%0t] | GEMM_PREALIGNER_INT_DATA | {inst=%s, int_data=%s}\n",
-                    $time, INSTANCE_ID, parseWordNoNormal(prealigner_int_data, `MXU_ROW * `SEL_BLOCK_WIDTH, `SEL_BLOCK_WIDTH, "uint")))
+                    $time, INSTANCE_ID, VX_utils_pkg::parseWordNoNormal(prealigner_int_data, `MXU_ROW * `SEL_BLOCK_WIDTH, `SEL_BLOCK_WIDTH, "uint")))
                 `TRACE(3, ("%m : [%0t] | GEMM_PREALIGNER_BLK_IDX | {inst=%s, blk_idx=%s}\n",
-                    $time, INSTANCE_ID, parseWordNoNormal(prealigner_blk_idx, `MXU_ROW * `BLOCK_IDX_WIDTH, `BLOCK_IDX_WIDTH, "uint")))
+                    $time, INSTANCE_ID, VX_utils_pkg::parseWordNoNormal(prealigner_blk_idx, `MXU_ROW * `BLOCK_IDX_WIDTH, `BLOCK_IDX_WIDTH, "uint")))
             end
 
             if (act_reduce_valid_out) begin
                 `TRACE(3, ("%m : [%0t] | GEMM_ACT_REDUCE_OUT | {inst=%s, data=%s}\n",
-                    $time, INSTANCE_ID, parseWordNoNormal(act_reduce_data_out, `ACT_REDUCE_OUT_WIDTH, `ACT_REDUCE_OUT_WIDTH, "int")));
+                    $time, INSTANCE_ID, VX_utils_pkg::parseWordNoNormal(act_reduce_data_out, `ACT_REDUCE_OUT_WIDTH, `ACT_REDUCE_OUT_WIDTH, "int")));
             end
 
             if (zp_mul_out_valid) begin
                 `TRACE(3, ("%m : [%0t] | GEMM_ZP_MUL_OUT | {inst=%s, data=%s}\n",
-                    $time, INSTANCE_ID, parseWordNoNormal(zp_mul_out_data_q, `MXU_COL * `ZP_MUL_OUT_WIDTH, `ZP_MUL_OUT_WIDTH, "int")));
+                    $time, INSTANCE_ID, VX_utils_pkg::parseWordNoNormal(zp_mul_out_data_q, `MXU_COL * `ZP_MUL_OUT_WIDTH, `ZP_MUL_OUT_WIDTH, "int")));
             end
 
             if (pre_proc_out_valid) begin
                 `TRACE(2, ("%m : [%0t] | GEMM_PREPROCESSOR_OUT | {inst=%s, data=%s}\n",
-                    $time, INSTANCE_ID, parseWordNoNormal(pre_proc_out_q, `MXU_COL * `PRE_PROC_OUT_DW, `PRE_PROC_OUT_DW, "int")))
+                    $time, INSTANCE_ID, VX_utils_pkg::parseWordNoNormal(pre_proc_out_q, `MXU_COL * `PRE_PROC_OUT_DW, `PRE_PROC_OUT_DW, "int")))
             end
 
             // MXU output valid
             if (merger_in_valid) begin
                 `TRACE(2, ("%m : [%0t] | GEMM_MXU_OUTPUT_VALID | {inst=%s, data=%s}\n",
-                    $time, INSTANCE_ID, parseWordNoNormal(mxu_output_dly, `MXU_COL * `O_BIT_WIDTH, `O_BIT_WIDTH, "int")))
+                    $time, INSTANCE_ID, VX_utils_pkg::parseWordNoNormal(mxu_output_dly, `MXU_COL * `O_BIT_WIDTH, `O_BIT_WIDTH, "int")))
             end
 
             // Merger output
             if (merger_out_valid) begin
                 `TRACE(3, ("%m : [%0t] | GEMM_MERGER_OUT | {inst=%s, data=%s}\n",
-                    $time, INSTANCE_ID, parseWordNoNormal(merger_out_data_q, `MXU_COL * `MERGE_OUT_BW, `MERGE_OUT_BW, "int")))
+                    $time, INSTANCE_ID, VX_utils_pkg::parseWordNoNormal(merger_out_data_q, `MXU_COL * `MERGE_OUT_BW, `MERGE_OUT_BW, "int")))
             end
 
             // Int2FP output
 `ifdef GEMM_UNIT_FP16_OUT_SCALE
             if (int2fp_output_valid[0]) begin
                 `TRACE(3, ("%m : [%0t] | GEMM_INT2FP_OUT | {inst=%s, fp16=%s}\n",
-                    $time, INSTANCE_ID, parseWordNoNormal(int2fp_out_data, `MXU_ROW * FP16_WIDTH, FP16_WIDTH, "fp")))
+                    $time, INSTANCE_ID, VX_utils_pkg::parseWordNoNormal(int2fp_out_data, `MXU_ROW * FP16_WIDTH, FP16_WIDTH, "fp")))
             end
 
             // Scaler output (or bypass for QROW)
             if (final_scaler_output_valid) begin
                 `TRACE(3, ("%m : [%0t] | GEMM_SCALER_OUT | {inst=%s, bypass=%b, fp16=%s}\n",
-                    $time, INSTANCE_ID, ~is_qcol, parseWordNoNormal(final_scaled_fp_out_data, `MXU_ROW * FP16_WIDTH, FP16_WIDTH, "fp")))
+                    $time, INSTANCE_ID, ~is_qcol, VX_utils_pkg::parseWordNoNormal(final_scaled_fp_out_data, `MXU_ROW * FP16_WIDTH, FP16_WIDTH, "fp")))
             end
 `else
             if (int2fp_output_valid[0]) begin
                 `TRACE(3, ("%m : [%0t] | GEMM_INT2FP_OUT | {inst=%s, fp32=%s}\n",
-                    $time, INSTANCE_ID, parseWordNoNormal(int2fp_out_data, `MXU_ROW * FP32_WIDTH, FP32_WIDTH, "fp")))
+                    $time, INSTANCE_ID, VX_utils_pkg::parseWordNoNormal(int2fp_out_data, `MXU_ROW * FP32_WIDTH, FP32_WIDTH, "fp")))
             end
 
             // Scaler output (or bypass for QROW)
             if (final_scaler_output_valid) begin
                 `TRACE(3, ("%m : [%0t] | GEMM_SCALER_OUT | {inst=%s, bypass=%b, fp32=%s}\n",
-                    $time, INSTANCE_ID, ~is_qcol, parseWordNoNormal(final_scaled_fp_out_data, `MXU_ROW * FP32_WIDTH, FP32_WIDTH, "fp")))
+                    $time, INSTANCE_ID, ~is_qcol, VX_utils_pkg::parseWordNoNormal(final_scaled_fp_out_data, `MXU_ROW * FP32_WIDTH, FP32_WIDTH, "fp")))
             end
 `endif
 
@@ -1510,7 +1510,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
             if (acc_mem_accum_wr_req) begin
                 `TRACE(2, ("%m : [%0t] | GEMM_ACC_MEM_WRITE_ACCUM | {inst=%s, addr=0x%0h, bank=%0d, is_load=%b, cnt=%0d, data=%s}\n",
                     $time, INSTANCE_ID, acc_mem_accum_wr_addr, acc_mem_accum_wr_bank,
-                    gemm_unit_ctrl.is_load, acc_mem_accum_wr_cnt, parseWordNoNormal(acc_mem_in_data[acc_mem_accum_wr_bank], `MXU_ROW * FP32_WIDTH, FP32_WIDTH, "fp")))
+                    gemm_unit_ctrl.is_load, acc_mem_accum_wr_cnt, VX_utils_pkg::parseWordNoNormal(acc_mem_in_data[acc_mem_accum_wr_bank], `MXU_ROW * FP32_WIDTH, FP32_WIDTH, "fp")))
             end
 
             // Accumulator read
@@ -1522,41 +1522,41 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
             // FIFO push
             if (acc_rd_fifo_push) begin
                 `TRACE(2, ("%m : [%0t] | GEMM_FIFO_PUSH | {inst=%s, data=%s, full=%b, empty=%b}\n",
-                    $time, INSTANCE_ID, parseWordNoNormal(acc_mem_out_data[acc_mem_accum_rd_bank], `MXU_ROW * FP32_WIDTH, FP32_WIDTH, "fp"),
+                    $time, INSTANCE_ID, VX_utils_pkg::parseWordNoNormal(acc_mem_out_data[acc_mem_accum_rd_bank], `MXU_ROW * FP32_WIDTH, FP32_WIDTH, "fp"),
                     acc_rd_fifo_full, acc_rd_fifo_empty))
             end
 
             // FIFO pop
             if (acc_rd_fifo_pop) begin
                 `TRACE(2, ("%m : [%0t] | GEMM_FIFO_POP | {inst=%s, out_data=%s, full=%b, empty=%b}\n",
-                    $time, INSTANCE_ID, parseWordNoNormal(acc_rd_fifo_out_data, `MXU_ROW * FP32_WIDTH, FP32_WIDTH, "fp"),
+                    $time, INSTANCE_ID, VX_utils_pkg::parseWordNoNormal(acc_rd_fifo_out_data, `MXU_ROW * FP32_WIDTH, FP32_WIDTH, "fp"),
                     acc_rd_fifo_full, acc_rd_fifo_empty))
             end
 
             // Accumulator input (when not is_load)
             if (final_scaler_output_valid && ~gemm_unit_ctrl.is_load) begin
                 `TRACE(2, ("%m : [%0t] | GEMM_ACCUM_INPUT | {inst=%s, a_data=%s, b_data_fifo=%s, fifo_empty=%b}\n",
-                    $time, INSTANCE_ID, parseWordNoNormal(scaled_fp32_out_data, `MXU_ROW * FP32_WIDTH, FP32_WIDTH, "fp"),
-                    parseWordNoNormal(acc_rd_fifo_out_data, `MXU_ROW * FP32_WIDTH, FP32_WIDTH, "fp"),
+                    $time, INSTANCE_ID, VX_utils_pkg::parseWordNoNormal(scaled_fp32_out_data, `MXU_ROW * FP32_WIDTH, FP32_WIDTH, "fp"),
+                    VX_utils_pkg::parseWordNoNormal(acc_rd_fifo_out_data, `MXU_ROW * FP32_WIDTH, FP32_WIDTH, "fp"),
                     acc_rd_fifo_empty))
             end
 
             // Accumulator output
             if (acc_output_valid[0] && ~gemm_unit_ctrl.is_load) begin
                 `TRACE(2, ("%m : [%0t] | GEMM_ACCUM_OUTPUT | {inst=%s, data=%s}\n",
-                    $time, INSTANCE_ID, parseWordNoNormal(acc_output_data, `MXU_ROW * FP32_WIDTH, FP32_WIDTH, "fp")))
+                    $time, INSTANCE_ID, VX_utils_pkg::parseWordNoNormal(acc_output_data, `MXU_ROW * FP32_WIDTH, FP32_WIDTH, "fp")))
             end
 
             // Accumulation mem read data
             if (acc_mem_rd_out_valid) begin
                 `TRACE(2, ("%m : [%0t] | GEMM_ACC_MEM_READ_OUT | {inst=%s, data=%s}\n",
-                    $time, INSTANCE_ID, parseWordNoNormal(acc_rd_fifo_out_data, `MXU_ROW * FP32_WIDTH, FP32_WIDTH, "fp")))
+                    $time, INSTANCE_ID, VX_utils_pkg::parseWordNoNormal(acc_rd_fifo_out_data, `MXU_ROW * FP32_WIDTH, FP32_WIDTH, "fp")))
             end
 
             // FP16 output valid
             if (fp16_out_valid[0]) begin
                 `TRACE(2, ("%m : [%0t] | GEMM_FP16_OUTPUT | {inst=%s, data=%s}\n",
-                    $time, INSTANCE_ID, parseWordNoNormal(fp16_out_data, `MXU_ROW * FP16_WIDTH, FP16_WIDTH, "fp")))
+                    $time, INSTANCE_ID, VX_utils_pkg::parseWordNoNormal(fp16_out_data, `MXU_ROW * FP16_WIDTH, FP16_WIDTH, "fp")))
             end
 
             // o_lmem_bus
@@ -1567,7 +1567,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
             if (o_lmem_bus_if.rsp_valid & o_lmem_bus_if.rsp_ready) begin
                 `TRACE(2, ("%m : [%0t] | GEMM_ACC_MEM_OUT_READ_RSP | {inst=%s, addr=0x%0h, bank=%0d, data=%s}\n",
                     $time, INSTANCE_ID, acc_mem_out_rd_addr_q >> `CLOG2(o_lmem_bus_if.DATA_SIZE), acc_mem_out_rd_bank_q,
-                    parseWordNoNormal(o_lmem_bus_if.rsp_data.data, `MXU_ROW * FP16_WIDTH, FP16_WIDTH, "fp")))
+                    VX_utils_pkg::parseWordNoNormal(o_lmem_bus_if.rsp_data.data, `MXU_ROW * FP16_WIDTH, FP16_WIDTH, "fp")))
             end
         end
     end

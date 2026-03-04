@@ -61,6 +61,9 @@ DBG_TRACE_FLAGS += -DDBG_TRACE_RASTER
 DBG_TRACE_FLAGS += -DDBG_TRACE_OM
 DBG_TRACE_FLAGS += -DDBG_TRACE_GBAR
 DBG_TRACE_FLAGS += -DDBG_TRACE_TCU
+DBG_TRACE_FLAGS += -DDBG_TRACE_GEMM
+DBG_TRACE_FLAGS += -DDBG_TRACE_GEMM_FSM
+DBG_TRACE_FLAGS += -DDBG_TRACE_GEMM_CTRL
 
 # Control logic analyzer monitors
 DBG_SCOPE_FLAGS += -DDBG_SCOPE_AFU
@@ -82,7 +85,7 @@ CONFIGS += $(CONFIGS_$(NUM_CORES)c)
 endif
 
 # include sources
-RTL_PKGS = $(RTL_DIR)/VX_gpu_pkg.sv $(RTL_DIR)/fpu/VX_fpu_pkg.sv
+RTL_PKGS = $(RTL_DIR)/VX_gpu_pkg.sv $(RTL_DIR)/fpu/VX_fpu_pkg.sv $(RTL_DIR)/verification/cf_math_util_pkg.sv $(RTL_DIR)/verification/VX_utils_pkg.sv $(RTL_DIR)/verification/utils.sv
 FPU_INCLUDE = -I$(RTL_DIR)/fpu
 ifneq (,$(findstring -DFPU_FPNEW, $(CONFIGS)))
 	RTL_PKGS += $(THIRD_PARTY_DIR)/cvfpu/src/fpnew_pkg.sv $(THIRD_PARTY_DIR)/cvfpu/src/common_cells/src/cf_math_pkg $(THIRD_PARTY_DIR)/cvfpu/src/fpu_div_sqrt_mvp/hdl/defs_div_sqrt_mvp.sv
@@ -95,6 +98,7 @@ ifneq (,$(findstring -DFPU_FPNEW, $(CONFIGS)))
 	FPU_INCLUDE += -J$(THIRD_PARTY_DIR)/cvfpu/src/common_cells/include -J$(THIRD_PARTY_DIR)/cvfpu/src/common_cells/src -J$(THIRD_PARTY_DIR)/cvfpu/src/fpu_div_sqrt_mvp/hdl -J$(THIRD_PARTY_DIR)/cvfpu/src
 endif
 RTL_INCLUDE = -I$(RTL_DIR) -I$(RTL_DIR)/libs -I$(RTL_DIR)/interfaces -I$(RTL_DIR)/core -I$(RTL_DIR)/core/gemm -I$(RTL_DIR)/mem -I$(RTL_DIR)/cache -I$(AFU_DIR)
+RTL_INCLUDE += -I$(RTL_DIR)/verification
 RTL_INCLUDE += $(FPU_INCLUDE)
 
 # Add V extension sources
@@ -141,7 +145,7 @@ ifdef PROFILE
 endif
 
 ifeq ($(TARGET), hw_emu)
-	CFLAGS += -DSIMULATION
+	CFLAGS += -DSIMULATION -DXSIM
 	# XSIM does not support "default disable iff" in some flows; gate those SVA blocks.
 	VPP_FLAGS += --vivado.prop "fileset.sim_1.xsim.compile.xvlog.more_options={-d XSIM}"
 endif

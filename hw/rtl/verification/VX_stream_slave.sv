@@ -243,7 +243,7 @@ module VX_stream_slave import VX_mem_pkg::*; #(
     end else if (clear_i == 1'b1) begin
     end else begin
       if ((push_i.ready == 1'b1) && (push_i.valid == 1'b1))
-        $fdisplay(fd, "[%0t] push_pointer_q:%d | data : %s", $time, push_pointer_q, parseWordNoNormal(push_i.data, DATA_WIDTH, WORD_SIZE, "int"));
+        $fdisplay(fd, "[%0t] push_pointer_q:%d | data : %s", $time, push_pointer_q, VX_utils_pkg::parseWordNoNormal(push_i.data, DATA_WIDTH, WORD_SIZE, "int"));
     end
   end
 
@@ -252,7 +252,7 @@ module VX_stream_slave import VX_mem_pkg::*; #(
     end else if (clear_i == 1'b1) begin
     end else begin
       if ((pop_o.ready == 1'b1) && (pop_o.valid == 1'b1))
-        $fdisplay(fd, "[%0t] pop_pointer_q:%d | data : %s", $time, pop_pointer_q, parseWordNoNormal(pop_o.data, DATA_WIDTH, WORD_SIZE, "int"));
+        $fdisplay(fd, "[%0t] pop_pointer_q:%d | data : %s", $time, pop_pointer_q, VX_utils_pkg::parseWordNoNormal(pop_o.data, DATA_WIDTH, WORD_SIZE, "int"));
     end
   end
 

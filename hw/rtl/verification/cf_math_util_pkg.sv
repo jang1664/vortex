@@ -64,6 +64,13 @@ package cf_math_util_pkg;
   endfunction
 
 `ifndef SYNTHESIS
+  `define CF_MATH_UTIL_ENABLE_FP_HELPERS
+`endif
+`ifdef XSIM
+  `define CF_MATH_UTIL_ENABLE_FP_HELPERS
+`endif
+
+`ifdef CF_MATH_UTIL_ENABLE_FP_HELPERS
   // fp32 to something
   function automatic shortreal fp32_bit_to_fp32_val(input bit[31:0] val);
     return $bitstoshortreal(val);
@@ -150,4 +157,5 @@ package cf_math_util_pkg;
   endfunction
 
 `endif
+`undef CF_MATH_UTIL_ENABLE_FP_HELPERS
 endpackage

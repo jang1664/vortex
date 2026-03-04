@@ -1,4 +1,5 @@
 `timescale 1ns / 1ps
+`include "VX_define.vh"
 
 /*
   Centralized weight register management for GEMM

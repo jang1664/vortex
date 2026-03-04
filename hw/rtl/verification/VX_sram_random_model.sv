@@ -106,7 +106,7 @@ module VX_sram_random_model #(
   always_ff @(posedge clk_i) begin
     if(port.req & port.gnt) begin
       if(port.wen) begin
-        $fdisplay(fd, "[%0t] REQ | addr:%d | data : %0s | wen : %d", $time, sram_addr, parseWord(sram_wdata, BANK_WIDTH, DATA_TYPE), sram_wen);
+        $fdisplay(fd, "[%0t] REQ | addr:%d | data : %0s | wen : %d", $time, sram_addr, VX_utils_pkg::parseWord(sram_wdata, BANK_WIDTH, DATA_TYPE), sram_wen);
       end else begin
         $fdisplay(fd, "[%0t] REQ | addr:%d | wen : %d", $time, sram_addr, sram_wen);
       end
@@ -116,7 +116,7 @@ module VX_sram_random_model #(
 
   always_ff @(posedge clk_i) begin
     if(port.r_valid & port.r_ready) begin
-      $fdisplay(fd, "[%0t] RESPONSE | addr:%d | data : %0s", $time, rd_addr, parseWord(sram_rdata, BANK_WIDTH, DATA_TYPE));
+      $fdisplay(fd, "[%0t] RESPONSE | addr:%d | data : %0s", $time, rd_addr, VX_utils_pkg::parseWord(sram_rdata, BANK_WIDTH, DATA_TYPE));
     end
   end
 

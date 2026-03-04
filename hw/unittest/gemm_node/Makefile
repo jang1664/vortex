@@ -69,7 +69,7 @@ RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
         $(RTL_DIR)/core/VX_node_done_if.sv \
         $(RTL_DIR)/mem/VX_mem_arb.sv \
         $(RTL_DIR)/libs/VX_stream_switch.sv \
-	      $(RTL_DIR)/libs/VX_mem_data_adapter.sv \
+	      $(RTL_DIR)/libs/VX_mem_data_adapter2.sv \
         $(RTL_DIR)/mem/VX_lsu_mem_arb.sv \
         $(RTL_DIR)/libs/VX_stream_arb.sv \
         $(RTL_DIR)/libs/VX_mul_u32_pipe.sv \
