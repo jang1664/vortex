@@ -11,6 +11,7 @@ DEBUG_LEVEL="${DEBUG_LEVEL:-3}"
 LOG_DIR="${LOG_DIR:-run_logs_fpint_gemm_ffn_hw}"
 
 mkdir -p "${LOG_DIR}"
+rm -rf "${LOG_DIR:?}"/*
 
 # Add/remove cases here
 #declare -a CASE_ARGS=(
@@ -96,7 +97,7 @@ for i in "${!CASE_ARGS[@]}"; do
   args="${CASE_ARGS[$i]}"
   log_file="${LOG_DIR}/run_case_${idx}.log"
 
-  echo "[${idx}/${total}] Running: ${args}"
+  echo "[${idx}/${total}] Running: ${args}" | tee -a "${log_file}"
   if [[ ${DEBUG_LEVEL} -ge 1 ]]; then
     if ./ci/blackbox.sh \
         --driver="${DRIVER}" \
@@ -104,9 +105,9 @@ for i in "${!CASE_ARGS[@]}"; do
         --debug="${DEBUG_LEVEL}" \
         --log="${log_file}" \
         --args="${args}"; then
-      echo "[${idx}/${total}] PASS (log: ${log_file})"
+      echo "[${idx}/${total}] PASS (log: ${log_file})" | tee -a "${log_file}"
     else
-      echo "[${idx}/${total}] FAIL (log: ${log_file})"
+      echo "[${idx}/${total}] FAIL (log: ${log_file})" | tee -a "${log_file}"
       failed=$((failed + 1))
     fi
   else
@@ -115,13 +116,13 @@ for i in "${!CASE_ARGS[@]}"; do
         --app="${APP}" \
         --log="${log_file}" \
         --args="${args}"; then
-      echo "[${idx}/${total}] PASS (log: ${log_file})"
+      echo "[${idx}/${total}] PASS (log: ${log_file})" | tee -a "${log_file}"
     else
-      echo "[${idx}/${total}] FAIL (log: ${log_file})"
+      echo "[${idx}/${total}] FAIL (log: ${log_file})" | tee -a "${log_file}"
       failed=$((failed + 1))
     fi
   fi
 done
 
-echo "Summary: total=${total}, failed=${failed}, passed=$((total - failed))"
+echo "Summary: total=${total}, failed=${failed}, passed=$((total - failed))" | tee -a "${LOG_DIR}/summary.log"
 exit "${failed}"
