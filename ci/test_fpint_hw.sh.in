@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-CONFIGS="-DFPU_FPNEW -DEXT_D_ENABLE -DDBG_TRACE_GEMM_FSM \
+CONFIGS="-DFPU_FPNEW -DDBG_TRACE_GEMM_FSM \
   -DNUM_CORES=1 -DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34"
 
 # ------------------------------------------------------------------------
