@@ -46,13 +46,13 @@ module VX_mem_unit_top import VX_gpu_pkg::*; #(
     output wire [DCACHE_NUM_REQS-1:0][DCACHE_ADDR_WIDTH-1:0] mem_req_addr,
     output wire [DCACHE_NUM_REQS-1:0][MEM_FLAGS_WIDTH-1:0] mem_req_flags,
     output wire [DCACHE_NUM_REQS-1:0][DCACHE_WORD_SIZE*8-1:0] mem_req_data,
-    output wire [DCACHE_NUM_REQS-1:0][DCACHE_TAG_WIDTH-1:0] mem_req_tag,
+    output wire [DCACHE_NUM_REQS-1:0][DCACHE_CORE_TAG_WIDTH-1:0] mem_req_tag,
     input  wire [DCACHE_NUM_REQS-1:0]                   mem_req_ready,
 
     // Memory response
     input wire [DCACHE_NUM_REQS-1:0]                    mem_rsp_valid,
     input wire [DCACHE_NUM_REQS-1:0][DCACHE_WORD_SIZE*8-1:0] mem_rsp_data,
-    input wire [DCACHE_NUM_REQS-1:0][DCACHE_TAG_WIDTH-1:0] mem_rsp_tag,
+    input wire [DCACHE_NUM_REQS-1:0][DCACHE_CORE_TAG_WIDTH-1:0] mem_rsp_tag,
     output wire [DCACHE_NUM_REQS-1:0]                   mem_rsp_ready
 );
     VX_lsu_mem_if #(
@@ -85,7 +85,7 @@ module VX_mem_unit_top import VX_gpu_pkg::*; #(
 
     VX_mem_bus_if #(
         .DATA_SIZE (DCACHE_WORD_SIZE),
-        .TAG_WIDTH (DCACHE_TAG_WIDTH)
+        .TAG_WIDTH (DCACHE_CORE_TAG_WIDTH)
     ) mem_bus_if[DCACHE_NUM_REQS]();
 
     // memory request

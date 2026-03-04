@@ -121,29 +121,29 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
 
     VX_mem_bus_if #(
         .DATA_SIZE (LSU_WORD_SIZE),
-        .TAG_WIDTH (LMEM_TAG_WIDTH)
+        .TAG_WIDTH (LMEM_LOCAL_TAG_WIDTH)
     ) lmem_membus_arb_out_if[`NUM_LSU_LANES]();
     generate
       if(`NUM_LSU_LANES == 1) begin : g_single_lane
         VX_mem_bus_if #(
           .DATA_SIZE(LSU_WORD_SIZE),
-          .TAG_WIDTH(LMEM_TAG_WIDTH)
+          .TAG_WIDTH(GEMM_LMEM_TAG_WIDTH)
         ) arb_in_if[3]();
         VX_mem_bus_if #(
           .DATA_SIZE(LSU_WORD_SIZE),
-          .TAG_WIDTH(LMEM_TAG_WIDTH)
+          .TAG_WIDTH(LMEM_LOCAL_TAG_WIDTH)
         ) arb_out_if[1]();
 
-        `ASSIGN_VX_MEM_BUS_IF(arb_in_if[0], lmem_adapt_if[0]);
-        `ASSIGN_VX_MEM_BUS_IF(arb_in_if[1], dma_local_data_if);
+        `ASSIGN_VX_MEM_BUS_IF_EX(arb_in_if[0], lmem_adapt_if[0], GEMM_LMEM_TAG_WIDTH, LMEM_TAG_WIDTH, UUID_WIDTH);
+        `ASSIGN_VX_MEM_BUS_IF_EX(arb_in_if[1], dma_local_data_if, GEMM_LMEM_TAG_WIDTH, LMEM_TAG_WIDTH, UUID_WIDTH);
         `ASSIGN_VX_MEM_BUS_IF(arb_in_if[2], gemm_data_if);
 
         VX_mem_arb #(
           .NUM_INPUTS(3),
           .NUM_OUTPUTS(1),
           .DATA_SIZE(LSU_WORD_SIZE),
-          .TAG_WIDTH(LMEM_TAG_WIDTH),
-          .TAG_SEL_IDX(LMEM_TAG_WIDTH - UUID_WIDTH),
+          .TAG_WIDTH(GEMM_LMEM_TAG_WIDTH),
+          .TAG_SEL_IDX(GEMM_LMEM_TAG_WIDTH - UUID_WIDTH),
           .REQ_OUT_BUF(3),
           .RSP_OUT_BUF(3),
           .ARBITER("P")
@@ -158,34 +158,34 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
       end else begin : g_multi_lane
         VX_mem_bus_if #(
           .DATA_SIZE(LSU_WORD_SIZE),
-          .TAG_WIDTH(LMEM_TAG_WIDTH)
+          .TAG_WIDTH(GEMM_LMEM_TAG_WIDTH)
         ) lmem_dma_arb_in_if[2]();
         VX_mem_bus_if #(
           .DATA_SIZE(LSU_WORD_SIZE),
-          .TAG_WIDTH(LMEM_TAG_WIDTH)
+          .TAG_WIDTH(LMEM_LOCAL_TAG_WIDTH)
         ) lmem_membus_dma_arb_out_if[1]();
 
         VX_mem_bus_if #(
           .DATA_SIZE(LSU_WORD_SIZE),
-          .TAG_WIDTH(LMEM_TAG_WIDTH)
+          .TAG_WIDTH(GEMM_LMEM_TAG_WIDTH)
         ) lmem_gemm_arb_in_if[2]();
         VX_mem_bus_if #(
           .DATA_SIZE(LSU_WORD_SIZE),
-          .TAG_WIDTH(LMEM_TAG_WIDTH)
+          .TAG_WIDTH(LMEM_LOCAL_TAG_WIDTH)
         ) lmem_membus_gemm_arb_out_if[1]();
 
-        `ASSIGN_VX_MEM_BUS_IF(lmem_dma_arb_in_if[0], lmem_adapt_if[0]);
-        `ASSIGN_VX_MEM_BUS_IF(lmem_dma_arb_in_if[1], dma_local_data_if);
+        `ASSIGN_VX_MEM_BUS_IF_EX(lmem_dma_arb_in_if[0], lmem_adapt_if[0], GEMM_LMEM_TAG_WIDTH, LMEM_TAG_WIDTH, UUID_WIDTH);
+        `ASSIGN_VX_MEM_BUS_IF_EX(lmem_dma_arb_in_if[1], dma_local_data_if, GEMM_LMEM_TAG_WIDTH, LMEM_TAG_WIDTH, UUID_WIDTH);
 
-        `ASSIGN_VX_MEM_BUS_IF(lmem_gemm_arb_in_if[0], lmem_adapt_if[1]);
+        `ASSIGN_VX_MEM_BUS_IF_EX(lmem_gemm_arb_in_if[0], lmem_adapt_if[1], GEMM_LMEM_TAG_WIDTH, LMEM_TAG_WIDTH, UUID_WIDTH);
         `ASSIGN_VX_MEM_BUS_IF(lmem_gemm_arb_in_if[1], gemm_data_if);
 
         VX_mem_arb #(
           .NUM_INPUTS(2),
           .NUM_OUTPUTS(1),
           .DATA_SIZE(LSU_WORD_SIZE),
-          .TAG_WIDTH(LMEM_TAG_WIDTH),
-          .TAG_SEL_IDX(LMEM_TAG_WIDTH - UUID_WIDTH),
+          .TAG_WIDTH(GEMM_LMEM_TAG_WIDTH),
+          .TAG_SEL_IDX(GEMM_LMEM_TAG_WIDTH - UUID_WIDTH),
           .REQ_OUT_BUF(3),
           .RSP_OUT_BUF(3),
           .ARBITER("P")
@@ -200,8 +200,8 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
           .NUM_INPUTS(2),
           .NUM_OUTPUTS(1),
           .DATA_SIZE(LSU_WORD_SIZE),
-          .TAG_WIDTH(LMEM_TAG_WIDTH),
-          .TAG_SEL_IDX(LMEM_TAG_WIDTH - UUID_WIDTH),
+          .TAG_WIDTH(GEMM_LMEM_TAG_WIDTH),
+          .TAG_SEL_IDX(GEMM_LMEM_TAG_WIDTH - UUID_WIDTH),
           .REQ_OUT_BUF(3),
           .RSP_OUT_BUF(3),
           .ARBITER("P")
@@ -215,7 +215,7 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
         `ASSIGN_VX_MEM_BUS_IF(lmem_membus_arb_out_if[0], lmem_membus_dma_arb_out_if[0]);
         `ASSIGN_VX_MEM_BUS_IF(lmem_membus_arb_out_if[1], lmem_membus_gemm_arb_out_if[0]);
         for(genvar i = 2; i < `NUM_LSU_LANES; ++i) begin : g_pass_thru
-          `ASSIGN_VX_MEM_BUS_IF(lmem_membus_arb_out_if[i], lmem_adapt_if[i]);
+          `ASSIGN_VX_MEM_BUS_IF_EX(lmem_membus_arb_out_if[i], lmem_adapt_if[i], LMEM_LOCAL_TAG_WIDTH, LMEM_TAG_WIDTH, UUID_WIDTH);
         end
       end
     endgenerate
@@ -227,7 +227,7 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
         .NUM_BANKS  (`LMEM_NUM_BANKS),
         .WORD_SIZE  (LSU_WORD_SIZE),
         .ADDR_WIDTH (LMEM_ADDR_WIDTH),
-        .TAG_WIDTH  (LMEM_TAG_WIDTH),
+        .TAG_WIDTH  (LMEM_LOCAL_TAG_WIDTH),
         .OUT_BUF    (3)
     ) local_mem (
         .clk        (clk),
@@ -249,6 +249,8 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
     end
 
 `endif
+
+    localparam int DCACHE_ARB_TAG_WIDTH = DCACHE_CORE_TAG_WIDTH;
 
     VX_lsu_mem_if #(
         .NUM_LANES (DCACHE_CHANNELS),
@@ -373,8 +375,13 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
 
         VX_mem_bus_if #(
             .DATA_SIZE (DCACHE_WORD_SIZE),
-            .TAG_WIDTH (DCACHE_TAG_WIDTH)
+            .TAG_WIDTH (DCACHE_ARB_TAG_WIDTH)
         ) dcache_dma_arb_out_if[1]();
+
+        VX_mem_bus_if #(
+            .DATA_SIZE (DCACHE_WORD_SIZE),
+            .TAG_WIDTH (DCACHE_ARB_TAG_WIDTH)
+        ) dcache_bus_out_if[DCACHE_CHANNELS]();
 
         `ASSIGN_VX_MEM_BUS_IF(dcache_dma_arb_in_if[0], dcache_bus_tmp_if[0]);
         `ASSIGN_VX_MEM_BUS_IF(dcache_dma_arb_in_if[1], dma_global_data_if);
@@ -395,10 +402,14 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
             .bus_out_if (dcache_dma_arb_out_if)
         );
 
-        // Channel 0 uses arbiter output, other channels pass through
-        `ASSIGN_VX_MEM_BUS_IF (dcache_bus_if[i * DCACHE_CHANNELS + 0], dcache_dma_arb_out_if[0]);
-        for (genvar j = 1; j < DCACHE_CHANNELS; ++j) begin : g_dcache_bus_if
-            `ASSIGN_VX_MEM_BUS_IF (dcache_bus_if[i * DCACHE_CHANNELS + j], dcache_bus_tmp_if[j]);
+        // Keep channel tag widths uniform after arbitration.
+        `ASSIGN_VX_MEM_BUS_IF (dcache_bus_out_if[0], dcache_dma_arb_out_if[0]);
+        for (genvar j = 1; j < DCACHE_CHANNELS; ++j) begin : g_dcache_bus_expand
+            `ASSIGN_VX_MEM_BUS_IF_EX (dcache_bus_out_if[j], dcache_bus_tmp_if[j], DCACHE_ARB_TAG_WIDTH, DCACHE_TAG_WIDTH, UUID_WIDTH);
+        end
+
+        for (genvar j = 0; j < DCACHE_CHANNELS; ++j) begin : g_dcache_bus_if
+            `ASSIGN_VX_MEM_BUS_IF (dcache_bus_if[i * DCACHE_CHANNELS + j], dcache_bus_out_if[j]);
         end
 
     end

@@ -17,7 +17,7 @@
 */
 `timescale 1ns / 1ps
 
-`include "VX_platform.vh"
+`include "VX_define.vh"
 
 module VX_pint2fp #(
     parameter int unsigned IN_DW = 0,
@@ -39,10 +39,9 @@ module VX_pint2fp #(
     output logic valid_o
 );
 
-  localparam SHIFT_WIDTH = $clog2(IN_DW) + 1;
-  localparam RIGHT_SHIFT_WIDTH = $clog2(
-      OUT_MANTISSA_WIDTH + 1
-  );  // over 1+m mantissa width shift occur zero
+  localparam SHIFT_WIDTH = `LOG2UP(IN_DW);
+  // localparam SHIFT_WIDTH = $clog2(IN_DW)+1;
+  localparam RIGHT_SHIFT_WIDTH = `LOG2UP( OUT_MANTISSA_WIDTH + 1);  // over 1+m mantissa width shift occur zero
   localparam TOTAL_SHIFT_WIDTH = (SHIFT_WIDTH > RIGHT_SHIFT_WIDTH) ? SHIFT_WIDTH : RIGHT_SHIFT_WIDTH; // left_shift - right_shift
   localparam EXP_LIMIT = {OUT_EXP_WIDTH{1'b1}};  // max exp of output fp format
 

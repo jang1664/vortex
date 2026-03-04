@@ -416,7 +416,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     ) lmem_arb_in_if[4]();
     VX_mem_bus_if #(
       .DATA_SIZE(LSU_WORD_SIZE),
-      .TAG_WIDTH(LMEM_TAG_WIDTH)
+      .TAG_WIDTH(GEMM_LMEM_TAG_WIDTH)
     ) lmem_arb_out_if[1]();
 
     // -------------------------------------------------------------------------

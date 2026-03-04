@@ -45,26 +45,51 @@ module VX_shift_register #(
 
         if (RESETW == DATAW) begin : g_full_reset
             for (genvar i = 0; i < DEPTH; ++i) begin : g_stages
-                always_ff @(posedge clk) begin
-                    if (reset) begin
-                        pipe[i] <= INIT_VALUE;
-                    end else if (enable) begin
-                        pipe[i] <= (i == 0) ? data_in : pipe[i-1];
+                if (i == 0) begin : g_stage_0
+                    always_ff @(posedge clk) begin
+                        if (reset) begin
+                            pipe[i] <= INIT_VALUE;
+                        end else if (enable) begin
+                            pipe[i] <= data_in;
+                        end
+                    end
+                end else begin : g_stage_n
+                    always_ff @(posedge clk) begin
+                        if (reset) begin
+                            pipe[i] <= INIT_VALUE;
+                        end else if (enable) begin
+                            pipe[i] <= pipe[i-1];
+                        end
                     end
                 end
             end
         end else if (RESETW != 0) begin : g_partial_reset
             for (genvar i = 0; i < DEPTH; ++i) begin : g_stages
-                always_ff @(posedge clk) begin
-                    if (reset) begin
-                        pipe[i][DATAW-1 : DATAW-RESETW] <= INIT_VALUE;
-                    end else if (enable) begin
-                        pipe[i][DATAW-1 : DATAW-RESETW] <= (i == 0) ? data_in[DATAW-1 : DATAW-RESETW] : pipe[i-1][DATAW-1 : DATAW-RESETW];
+                if (i == 0) begin : g_stage_0
+                    always_ff @(posedge clk) begin
+                        if (reset) begin
+                            pipe[i][DATAW-1 : DATAW-RESETW] <= INIT_VALUE;
+                        end else if (enable) begin
+                            pipe[i][DATAW-1 : DATAW-RESETW] <= data_in[DATAW-1 : DATAW-RESETW];
+                        end
                     end
-                end
-                always_ff @(posedge clk) begin
-                    if (enable) begin
-                        pipe[i][DATAW-RESETW-1 : 0] <= (i == 0) ? data_in[DATAW-RESETW-1 : 0] : pipe[i-1][DATAW-RESETW-1 : 0];
+                    always_ff @(posedge clk) begin
+                        if (enable) begin
+                            pipe[i][DATAW-RESETW-1 : 0] <= data_in[DATAW-RESETW-1 : 0];
+                        end
+                    end
+                end else begin : g_stage_n
+                    always_ff @(posedge clk) begin
+                        if (reset) begin
+                            pipe[i][DATAW-1 : DATAW-RESETW] <= INIT_VALUE;
+                        end else if (enable) begin
+                            pipe[i][DATAW-1 : DATAW-RESETW] <= pipe[i-1][DATAW-1 : DATAW-RESETW];
+                        end
+                    end
+                    always_ff @(posedge clk) begin
+                        if (enable) begin
+                            pipe[i][DATAW-RESETW-1 : 0] <= pipe[i-1][DATAW-RESETW-1 : 0];
+                        end
                     end
                 end
             end
@@ -72,9 +97,17 @@ module VX_shift_register #(
             `UNUSED_VAR (reset)
             `UNUSED_PARAM (INIT_VALUE)
             for (genvar i = 0; i < DEPTH; ++i) begin : g_stages
-                always_ff @(posedge clk) begin
-                    if (enable) begin
-                        pipe[i] <= (i == 0) ? data_in : pipe[i-1];
+                if (i == 0) begin : g_stage_0
+                    always_ff @(posedge clk) begin
+                        if (enable) begin
+                            pipe[i] <= data_in;
+                        end
+                    end
+                end else begin : g_stage_n
+                    always_ff @(posedge clk) begin
+                        if (enable) begin
+                            pipe[i] <= pipe[i-1];
+                        end
                     end
                 end
             end

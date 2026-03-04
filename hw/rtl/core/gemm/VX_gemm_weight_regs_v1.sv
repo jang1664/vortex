@@ -44,38 +44,29 @@ module VX_gemm_weight_regs_v1 #(
   generate
     for (genvar row = 0; row < ROW_SIZE; row++) begin : gen_row
       for (genvar col = 0; col < COL_SIZE; col++) begin : gen_col
-        
-        always_ff @(posedge clk_i) begin
-          if (weight_load_dir_i == 0) begin
-            // ============================================================
-            // Row direction: load from bottom to top
-            // ============================================================
-            if (row >= (ROW_SIZE - WEIGHT_LOAD_ROW_NUM)) begin
-              // Load new weights into the last WEIGHT_LOAD_ROW_NUM rows
-              if (ready_weight_i) begin
-                mem[row][col][in_weight_sel_i] <= weight_i[row - (ROW_SIZE - WEIGHT_LOAD_ROW_NUM)][col];
-              end
-            end else begin
-              // Shift weights upward
-              if (ready_weight_i) begin
-                mem[row][col][in_weight_sel_i] <= mem[row + WEIGHT_LOAD_ROW_NUM][col][in_weight_sel_i];
-              end
-            end
+        logic [WEIGHT_DW-1:0] row_dir_next;
+        logic [WEIGHT_DW-1:0] col_dir_next;
 
-          end else begin
-            // ============================================================
-            // Column direction: load from right to left
-            // ============================================================
-            if (col >= (COL_SIZE - WEIGHT_LOAD_COL_NUM)) begin
-              // Load new weights into the last WEIGHT_LOAD_COL_NUM columns
-              if (ready_weight_i) begin
-                mem[row][col][in_weight_sel_i] <= weight_i[col - (COL_SIZE - WEIGHT_LOAD_COL_NUM)][row];
-              end
+        if (row >= (ROW_SIZE - WEIGHT_LOAD_ROW_NUM)) begin : g_row_dir_load
+          assign row_dir_next = weight_i[row - (ROW_SIZE - WEIGHT_LOAD_ROW_NUM)][col];
+        end else begin : g_row_dir_shift
+          assign row_dir_next = mem[row + WEIGHT_LOAD_ROW_NUM][col][in_weight_sel_i];
+        end
+
+        if (col >= (COL_SIZE - WEIGHT_LOAD_COL_NUM)) begin : g_col_dir_load
+          assign col_dir_next = weight_i[col - (COL_SIZE - WEIGHT_LOAD_COL_NUM)][row];
+        end else begin : g_col_dir_shift
+          assign col_dir_next = mem[row][col + WEIGHT_LOAD_COL_NUM][in_weight_sel_i];
+        end
+
+        always_ff @(posedge clk_i) begin
+          if (ready_weight_i) begin
+            if (weight_load_dir_i == 1'b0) begin
+              // Row direction: load from bottom to top
+              mem[row][col][in_weight_sel_i] <= row_dir_next;
             end else begin
-              // Shift weights toward left columns
-              if (ready_weight_i) begin
-                mem[row][col][in_weight_sel_i] <= mem[row][col + WEIGHT_LOAD_COL_NUM][in_weight_sel_i];
-              end
+              // Column direction: load from right to left
+              mem[row][col][in_weight_sel_i] <= col_dir_next;
             end
           end
         end

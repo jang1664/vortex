@@ -138,7 +138,8 @@ module VX_prealigner import VX_gpu_pkg::*; #(
     for (genvar i = 0; i < NUM_UNIT; i += 1) begin : unit
       localparam data_width = HIDDEN_WIDTH + MANTISSA_WIDTH + EXTRA_WIDTH;
       localparam sh_width = (data_width > {EXP_WIDTH{1'b1}}) ? $clog2( {EXP_WIDTH{1'b1}}) + 1 : $clog2( data_width) + 1;
-      localparam SHIFT_WIDTH = $clog2(BLK_IDX_NUM) + 1;
+      localparam SHIFT_WIDTH = `LOG2UP(BLK_IDX_NUM);
+      // localparam SHIFT_WIDTH = $clog2(BLK_IDX_NUM)+1;
 
       logic [sh_width-1:0] shift_amount;
       logic [BLK_IDX_NUM-1:0] is_right_of_first_valid_block;

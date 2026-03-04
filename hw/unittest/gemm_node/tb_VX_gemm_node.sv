@@ -81,8 +81,8 @@ module tb_VX_gemm_node
   // MMIO base (job_frontend CFG_BASE_ADDR)
   localparam logic [63:0] GEMM_BASE = `GEMM_REG_BASE_ADDR;
 
-  // dma_node tag width (tb_VX_gemm_dma_ctrl_with_dma 에서 45 사용)
-  localparam int DMA_TAG_WIDTH = 45;
+  // Match GEMM node LMEM-facing tag width (includes GEMM internal arb route bits).
+  localparam int DMA_TAG_WIDTH = GEMM_LMEM_TAG_WIDTH;
   localparam int G_ARB_NUM_INPUTS = 2;
   localparam int L_ARB_NUM_INPUTS = 3;
   localparam int G_ARB_SEL_BITS   = `ARB_SEL_BITS(G_ARB_NUM_INPUTS, 1);
@@ -151,7 +151,7 @@ module tb_VX_gemm_node
   // DUT LMEM port
   VX_mem_bus_if #(
     .DATA_SIZE(LSU_WORD_SIZE),
-    .TAG_WIDTH(LMEM_TAG_WIDTH)
+    .TAG_WIDTH(GEMM_LMEM_TAG_WIDTH)
   ) lmem_bus_if ();
 
   // DUT LMEM tag adaption toward shared LMEM arbiter domain
@@ -303,7 +303,7 @@ module tb_VX_gemm_node
 
   assign lmem_bus_if.rsp_valid               = lmem_bus_if_dut_arb.rsp_valid;
   assign lmem_bus_if.rsp_data.data           = lmem_bus_if_dut_arb.rsp_data.data;
-  assign lmem_bus_if.rsp_data.tag            = LMEM_TAG_WIDTH'(lmem_bus_if_dut_arb.rsp_data.tag);
+  assign lmem_bus_if.rsp_data.tag            = GEMM_LMEM_TAG_WIDTH'(lmem_bus_if_dut_arb.rsp_data.tag);
   assign lmem_bus_if_dut_arb.rsp_ready       = lmem_bus_if.rsp_ready;
 
   `ASSIGN_VX_MEM_BUS_IF(g_arb_in_if[0], dcache_bus_if);
@@ -473,7 +473,7 @@ module tb_VX_gemm_node
     bg_local_if.rsp_ready = 1'b1;
   end
 
-  int unsigned mmio_tag_cnt = 0;
+  logic [LSU_TAG_WIDTH-1:0] mmio_tag_cnt = '0;
 
   task automatic mmio_write32_word(
     input logic [63:0] addr,           // byte address of beat
@@ -505,7 +505,7 @@ module tb_VX_gemm_node
     mmio_if[0].req_data.data   <= lane_data;
     mmio_if[0].req_data.byteen <= lane_byteen;
     mmio_if[0].req_data.flags  <= '0;
-    mmio_if[0].req_data.tag    <= mmio_tag_cnt[LSU_TAG_WIDTH-1:0];
+    mmio_if[0].req_data.tag    <= mmio_tag_cnt;
     mmio_if[0].rsp_ready       <= 1'b1;
     mmio_tag_cnt++;
 
@@ -538,7 +538,7 @@ module tb_VX_gemm_node
     mmio_if[0].req_data.data   <= '0;
     mmio_if[0].req_data.byteen <= '0;
     mmio_if[0].req_data.flags  <= '0;
-    mmio_if[0].req_data.tag    <= mmio_tag_cnt[LSU_TAG_WIDTH-1:0];
+    mmio_if[0].req_data.tag    <= mmio_tag_cnt;
     mmio_if[0].rsp_ready       <= 1'b1;
     mmio_tag_cnt++;
 

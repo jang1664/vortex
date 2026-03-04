@@ -58,12 +58,12 @@ module VX_gemm_tree_v1 import VX_gpu_pkg::*; #(
   // Pipeline registers for column propagation
   generate
     for (genvar j = 0; j < COL_SIZE / TILE_COL_SIZE; j++) begin : gen_col_pipe
-      always_ff @(posedge clk_i or negedge resetn_i) begin
-        if (!resetn_i) begin
-          in_valid_q[j] <= 1'b0;
-          out_weight_sel_q[j] <= 1'b0;
-        end else begin
-          if (j == 0) begin
+      if (j == 0) begin : gen_col_pipe_zero
+        always_ff @(posedge clk_i or negedge resetn_i) begin
+          if (!resetn_i) begin
+            in_valid_q[j] <= 1'b0;
+            out_weight_sel_q[j] <= 1'b0;
+          end else begin
             // First column receives inputs directly
             if (input_valid_i) begin
               ifmap_q[j] <= ifmap_i;
@@ -71,6 +71,13 @@ module VX_gemm_tree_v1 import VX_gpu_pkg::*; #(
             end
             in_valid_q[j] <= input_valid_i;
             out_weight_sel_q[j] <= out_weight_sel_i;
+          end
+        end
+      end else begin : gen_col_pipe_nonzero
+        always_ff @(posedge clk_i or negedge resetn_i) begin
+          if (!resetn_i) begin
+            in_valid_q[j] <= 1'b0;
+            out_weight_sel_q[j] <= 1'b0;
           end else begin
             // Subsequent columns propagate from previous column
             if (in_valid_q[j-1]) begin

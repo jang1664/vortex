@@ -93,7 +93,7 @@ module VX_core import VX_gpu_pkg::*; #(
     // GEMM data interface to mem_unit
     VX_mem_bus_if #(
         .DATA_SIZE (LSU_WORD_SIZE),
-        .TAG_WIDTH (LMEM_TAG_WIDTH)
+        .TAG_WIDTH (GEMM_LMEM_TAG_WIDTH)
     ) gemm_data_if();
 
 

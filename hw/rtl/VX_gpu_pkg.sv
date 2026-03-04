@@ -838,6 +838,15 @@ package VX_gpu_pkg;
     localparam LSU_TAG_WIDTH        = (UUID_WIDTH + LSU_TAG_ID_BITS);
     localparam LSU_NUM_REQS	        = `NUM_LSU_BLOCKS * `NUM_LSU_LANES;
     localparam LMEM_TAG_WIDTH       = LSU_TAG_WIDTH + `CLOG2(`NUM_LSU_BLOCKS);
+    // Track explicit +1 tag growth introduced by 2->1 VX_mem_arb routing.
+    localparam MEM_ARB_ROUTE_TAG_BITS = 1;
+    // GEMM node merges 4 LMEM clients into one LMEM port.
+    localparam GEMM_ARB_ROUTE_TAG_BITS = `ARB_SEL_BITS(4, 1);
+    localparam GEMM_LMEM_TAG_WIDTH = (LMEM_TAG_WIDTH + GEMM_ARB_ROUTE_TAG_BITS);
+    // Mem-unit local-memory path adds one more arbitration layer
+    // (3->1 in single-lane mode, otherwise 2->1).
+    localparam LMEM_ARB_ROUTE_TAG_BITS = (`NUM_LSU_LANES == 1) ? `ARB_SEL_BITS(3, 1) : MEM_ARB_ROUTE_TAG_BITS;
+    localparam LMEM_LOCAL_TAG_WIDTH = (GEMM_LMEM_TAG_WIDTH + LMEM_ARB_ROUTE_TAG_BITS);
 
     ///////////////////////// GEMM Unit Parameters ///////////////////////////
     localparam GEMM_MEM_TAG_WIDTH = LSU_TAG_WIDTH + `CLOG2(`NUM_LSU_BLOCKS);
@@ -887,15 +896,17 @@ package VX_gpu_pkg;
 
     // Core request tag bits
     localparam DCACHE_TAG_WIDTH	    = (UUID_WIDTH + DCACHE_TAG_ID_BITS);
+    // Core-facing dcache bus includes the DMA arbiter route tag bit.
+    localparam DCACHE_CORE_TAG_WIDTH = (DCACHE_TAG_WIDTH + MEM_ARB_ROUTE_TAG_BITS);
 
     // Memory request data bits
     localparam DCACHE_MEM_DATA_WIDTH = (DCACHE_LINE_SIZE * 8);
 
     // Memory request tag bits
 `ifdef DCACHE_ENABLE
-    localparam DCACHE_MEM_TAG_WIDTH = `CACHE_CLUSTER_NC_MEM_TAG_WIDTH(`DCACHE_MSHR_SIZE, `DCACHE_NUM_BANKS, DCACHE_NUM_REQS, `L1_MEM_PORTS, DCACHE_LINE_SIZE, DCACHE_WORD_SIZE, DCACHE_TAG_WIDTH, `SOCKET_SIZE, `NUM_DCACHES, UUID_WIDTH);
+    localparam DCACHE_MEM_TAG_WIDTH = `CACHE_CLUSTER_NC_MEM_TAG_WIDTH(`DCACHE_MSHR_SIZE, `DCACHE_NUM_BANKS, DCACHE_NUM_REQS, `L1_MEM_PORTS, DCACHE_LINE_SIZE, DCACHE_WORD_SIZE, DCACHE_CORE_TAG_WIDTH, `SOCKET_SIZE, `NUM_DCACHES, UUID_WIDTH);
 `else
-    localparam DCACHE_MEM_TAG_WIDTH = `CACHE_CLUSTER_BYPASS_MEM_TAG_WIDTH(DCACHE_NUM_REQS, `L1_MEM_PORTS, DCACHE_LINE_SIZE, DCACHE_WORD_SIZE, DCACHE_TAG_WIDTH, `SOCKET_SIZE, `NUM_DCACHES);
+    localparam DCACHE_MEM_TAG_WIDTH = `CACHE_CLUSTER_BYPASS_MEM_TAG_WIDTH(DCACHE_NUM_REQS, `L1_MEM_PORTS, DCACHE_LINE_SIZE, DCACHE_WORD_SIZE, DCACHE_CORE_TAG_WIDTH, `SOCKET_SIZE, `NUM_DCACHES);
 `endif
 
     /////////////////////////////// L1 Parameters /////////////////////////////

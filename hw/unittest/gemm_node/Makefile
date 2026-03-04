@@ -19,7 +19,7 @@ RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
         $(RTL_DIR)/mem/VX_lsu_mem_if.sv \
         $(RTL_DIR)/verification/cf_math_util_pkg.sv \
         $(RTL_DIR)/verification/fpint_emul.sv \
-        $(RTL_DIR)/verification/utils.sv \
+        $(RTL_DIR)/verification/VX_utils_pkg.sv \
         $(RTL_DIR)/core/gemm/VX_fp32_add.sv \
         $(RTL_DIR)/core/gemm/VX_fp16_mul.sv \
         $(RTL_DIR)/core/gemm/VX_fp32_mul.sv \
