@@ -164,9 +164,11 @@ module VX_mem_data_adapter2 #(
         // Any interconnect-inserted routing bits (e.g., VX_mem_arb) are expected to be
         // removed before returning mem_rsp_tag_out to this adapter.
         wire [OOO_SLOT_BITS-1:0] rsp_slot_id = OOO_SLOT_BITS'(mem_rsp_tag_out[D +: OOO_SLOT_BITS]);
-        wire need_new_slot = (req_ctr == 0) && !req_slot_valid_r;
-        wire [OOO_SLOT_BITS-1:0] req_slot_id = req_slot_valid_r ? req_slot_r : free_slot_id;
-        wire req_slot_ready = req_slot_valid_r || free_slot_valid;
+        // Writes may not return a response on this memory path, so only reads consume OOO slots.
+        wire req_needs_rsp = ~mem_req_rw_in;
+        wire need_new_slot = req_needs_rsp && (req_ctr == 0) && !req_slot_valid_r;
+        wire [OOO_SLOT_BITS-1:0] req_slot_id = req_slot_valid_r ? req_slot_r : (req_needs_rsp ? free_slot_id : '0);
+        wire req_slot_ready = req_slot_valid_r || !req_needs_rsp || free_slot_valid;
 
         wire [P-1:0][DST_DATA_WIDTH-1:0] mem_req_data_in_w = mem_req_data_in;
         wire [P-1:0][DST_DATA_SIZE-1:0] mem_req_byteen_in_w = mem_req_byteen_in;
