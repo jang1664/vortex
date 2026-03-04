@@ -250,6 +250,10 @@ public:
     return 0;
   }
 
+  void smi_set_kernel_name(const char* /*name*/) {
+    // no-op: rtlsim backend does not export shm status
+  }
+
 private:
 
   RAM                 ram_;

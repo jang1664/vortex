@@ -181,3 +181,7 @@ extern int vx_mpm_query(vx_device_h hdevice, uint32_t addr, uint32_t core_id, ui
     return (g_callbacks.mpm_query)(hdevice, addr, core_id, value);
   }
 }
+
+extern int vx_smi_set_kernel_name(vx_device_h hdevice, const char* name) {
+  return (g_callbacks.smi_set_kernel_name)(hdevice, name);
+}

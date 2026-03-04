@@ -27,6 +27,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+// vortex-smi shared memory support
+#include <vx_shm_helper.h>
+
 #include <VX_config.h>
 #ifdef VM_ENABLE
 #include <malloc.h>
@@ -59,6 +62,7 @@ public:
   }
 
   ~vx_device() {
+    shm_.close();
 #ifdef VM_ENABLE
     global_mem_.release(PAGE_TABLE_BASE_ADDR);
     // for (auto i = addr_mapping.begin(); i != addr_mapping.end(); i++)
@@ -72,6 +76,14 @@ public:
   }
 
   int init() {
+    // --- vortex-smi: initialize shared memory status ---
+    if (shm_.open()) {
+      shm_.set_device_info("vortex-simx",
+                           NUM_CORES * NUM_CLUSTERS, NUM_WARPS, NUM_THREADS,
+                           PLATFORM_MEMORY_NUM_BANKS, GLOBAL_MEM_SIZE);
+      shm_.set_state(VX_STATE_IDLE);
+      shm_.update_mem(global_mem_.allocated(), global_mem_.free());
+    }
     return 0;
   }
 
@@ -212,6 +224,7 @@ public:
     // VM address translation
     phy_to_virt_map(asize, dev_addr, flags);
 #endif
+    shm_.update_mem(global_mem_.allocated(), global_mem_.free());
     return 0;
   }
 
@@ -235,10 +248,12 @@ public:
   int mem_free(uint64_t dev_addr) {
 #ifdef VM_ENABLE
     uint64_t paddr = page_table_walk(dev_addr);
-    return global_mem_.release(paddr);
+    auto ret = global_mem_.release(paddr);
 #else
-    return global_mem_.release(dev_addr);
+    auto ret = global_mem_.release(dev_addr);
 #endif
+    shm_.update_mem(global_mem_.allocated(), global_mem_.free());
+    return ret;
   }
 
   int mem_access(uint64_t dev_addr, uint64_t size, int flags) {
@@ -259,6 +274,7 @@ public:
   }
 
   int upload(uint64_t dest_addr, const void *src, uint64_t size) {
+    shm_.set_state(VX_STATE_UPLOADING);
     uint64_t asize = aligned_size(size, CACHE_BLOCK_SIZE);
     if (dest_addr + asize > GLOBAL_MEM_SIZE)
       return -1;
@@ -286,10 +302,13 @@ public:
         DBGPRINT("  0x%lx <- 0x%x\n", dest_addr + i, *(uint32_t*)((uint8_t*)src + i));
     }*/
 
+    shm_.record_upload(size);
+    shm_.set_state(VX_STATE_IDLE);
     return 0;
   }
 
   int download(void *dest, uint64_t src_addr, uint64_t size) {
+    shm_.set_state(VX_STATE_DOWNLOADING);
     uint64_t asize = aligned_size(size, CACHE_BLOCK_SIZE);
     if (src_addr + asize > GLOBAL_MEM_SIZE)
       return -1;
@@ -308,6 +327,8 @@ public:
         DBGPRINT("  0x%lx -> 0x%x\n", src_addr + i, *(uint32_t*)((uint8_t*)dest + i));
     }*/
 
+    shm_.record_download(size);
+    shm_.set_state(VX_STATE_IDLE);
     return 0;
   }
 
@@ -329,6 +350,9 @@ public:
     // clear mpm cache
     mpm_cache_.clear();
 
+    shm_.record_kernel(krnl_addr);
+    shm_.set_state(VX_STATE_RUNNING);
+
     return 0;
   }
 
@@ -345,6 +369,7 @@ public:
       if (0 == timeout_sec--)
         return -1;
     }
+    shm_.set_state(VX_STATE_IDLE);
     return 0;
   }
 
@@ -374,6 +399,11 @@ public:
     *value = mpm_cache_.at(core_id).at(offset);
     return 0;
   }
+
+  void smi_set_kernel_name(const char *name) {
+    shm_.set_kernel_name(name);
+  }
+
 #ifdef VM_ENABLE
   /* VM Management */
 
@@ -613,6 +643,7 @@ private:
   DeviceConfig dcrs_;
   std::future<void> future_;
   std::unordered_map<uint32_t, std::array<uint64_t, 32>> mpm_cache_;
+  ShmStatus shm_;
 #ifdef VM_ENABLE
   std::unordered_map<uint64_t, uint64_t> addr_mapping; // HW: key: ppn; value: vpn
   MemoryAllocator *page_table_mem_;
