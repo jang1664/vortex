@@ -40,6 +40,7 @@ static constexpr float FP16_TOL = 0.01f;
 
 static constexpr uint64_t LMEM_LAYOUT_ALIGN_BYTES = 64;
 static constexpr uint64_t LMEM_STACK_GUARD_BYTES = (1ull << STACK_LOG2_SIZE);
+static constexpr uint64_t LMEM_BASE_ADDRESS = static_cast<uint64_t>(LMEM_BASE_ADDR);
 static constexpr uint64_t DMA_MT = GEMM_FSM_MT;
 static constexpr uint64_t DMA_NT = GEMM_FSM_NT;
 static constexpr uint64_t DMA_KT = GEMM_FSM_KT;
@@ -277,64 +278,50 @@ static int verify_results(vx_buffer_h out_buffer, const std::vector<uint16_t>& r
 }
 
 static bool compute_lmem_layout(kernel_arg_t& kargs, uint64_t local_mem_size) {
+  // Tile-local group counts for SC/ZP
   uint64_t groups_tile = (DMA_KT + uint64_t(QBLK) - 1ull) / uint64_t(QBLK);
-  uint64_t ng_tile = (DMA_NT + uint64_t(QBLK) - 1ull) / uint64_t(QBLK);
+  uint64_t ng_tile     = (DMA_NT + uint64_t(QBLK) - 1ull) / uint64_t(QBLK);
 
-  uint64_t lmem_ibuf_bytes  = DMA_MT * DMA_KT * 2ull;
-  uint64_t lmem_wbuf_bytes  = DMA_KT * ((DMA_NT + 1ull) / 2ull);
-  uint64_t lmem_scbuf_bytes = (QDIR == 0) ? (groups_tile * DMA_NT * 2ull) : (DMA_KT * ng_tile * 2ull);
-  uint64_t lmem_zpbuf_bytes = (QDIR == 0) ? (groups_tile * DMA_NT * 2ull) : (DMA_KT * ng_tile * 2ull);
-  uint64_t lmem_obuf_bytes  = DMA_MT * DMA_NT * 2ull;
+  // Scratch sizes (bytes)
+  uint64_t lmem_ibuf_bytes  = DMA_MT * DMA_KT * 2ull;                 // fp16
+  uint64_t lmem_wbuf_bytes  = DMA_KT * ((DMA_NT + 1ull) / 2ull);      // packed int4
+  uint64_t lmem_scbuf_bytes = (QDIR == 0)
+                                ? (groups_tile * DMA_NT * 2ull)       // fp16
+                                : (DMA_KT * ng_tile     * 2ull);      // fp16
+  uint64_t lmem_zpbuf_bytes = (QDIR == 0)
+                                ? (groups_tile * DMA_NT * 2ull)       // int16
+                                : (DMA_KT * ng_tile     * 2ull);      // int16
+  uint64_t lmem_obuf_bytes  = DMA_MT * DMA_NT * 2ull;                 // fp16
 
-  // Layout policy:
-  //  - Keep IBUF0/WBUF/SC/ZP in the low region.
-  //  - Place IBUF1 + OBUF from top-down in the high region.
-  //  - Leave an explicit guard gap between low/high to avoid stack collision.
-  uint64_t low_cur = 0;
+  // LMEM address range: [LMEM_BASE_ADDRESS, LMEM_BASE_ADDRESS + local_mem_size)
+  const uint64_t lmem_begin = LMEM_BASE_ADDRESS;
+  const uint64_t lmem_end   = LMEM_BASE_ADDRESS + local_mem_size;
 
-  kargs.lmem_ibuf0_base = low_cur;
-  low_cur += align_up_u64(lmem_ibuf_bytes, LMEM_LAYOUT_ALIGN_BYTES);
+  uint64_t cur = lmem_begin;
 
-  kargs.lmem_wbuf0_base = low_cur;
-  low_cur += align_up_u64(lmem_wbuf_bytes, LMEM_LAYOUT_ALIGN_BYTES);
+  auto alloc = [&](uint64_t bytes, uint64_t& out_base) -> bool {
+    cur = align_up_u64(cur, LMEM_LAYOUT_ALIGN_BYTES);
+    if (cur > lmem_end) return false;
+    if (bytes > (lmem_end - cur)) return false;
+    out_base = cur;
+    cur += align_up_u64(bytes, LMEM_LAYOUT_ALIGN_BYTES);
+    return true;
+  };
 
-  kargs.lmem_wbuf1_base = low_cur;
-  low_cur += align_up_u64(lmem_wbuf_bytes, LMEM_LAYOUT_ALIGN_BYTES);
+  // Linear layout (no stack gap)
+  if (!alloc(lmem_ibuf_bytes,  kargs.lmem_ibuf0_base)) return false;
+  if (!alloc(lmem_ibuf_bytes,  kargs.lmem_ibuf1_base)) return false;
 
-  kargs.lmem_scbuf0_base = low_cur;
-  low_cur += align_up_u64(lmem_scbuf_bytes, LMEM_LAYOUT_ALIGN_BYTES);
+  if (!alloc(lmem_wbuf_bytes,  kargs.lmem_wbuf0_base)) return false;
+  if (!alloc(lmem_wbuf_bytes,  kargs.lmem_wbuf1_base)) return false;
 
-  kargs.lmem_scbuf1_base = low_cur;
-  low_cur += align_up_u64(lmem_scbuf_bytes, LMEM_LAYOUT_ALIGN_BYTES);
+  if (!alloc(lmem_scbuf_bytes, kargs.lmem_scbuf0_base)) return false;
+  if (!alloc(lmem_scbuf_bytes, kargs.lmem_scbuf1_base)) return false;
 
-  kargs.lmem_zpbuf0_base = low_cur;
-  low_cur += align_up_u64(lmem_zpbuf_bytes, LMEM_LAYOUT_ALIGN_BYTES);
+  if (!alloc(lmem_zpbuf_bytes, kargs.lmem_zpbuf0_base)) return false;
+  if (!alloc(lmem_zpbuf_bytes, kargs.lmem_zpbuf1_base)) return false;
 
-  kargs.lmem_zpbuf1_base = low_cur;
-  low_cur += align_up_u64(lmem_zpbuf_bytes, LMEM_LAYOUT_ALIGN_BYTES);
-
-  uint64_t high_cur = align_down_u64(local_mem_size, LMEM_LAYOUT_ALIGN_BYTES);
-
-  if (high_cur < lmem_obuf_bytes) {
-    return false;
-  }
-  high_cur = align_down_u64(high_cur - lmem_obuf_bytes, LMEM_LAYOUT_ALIGN_BYTES);
-  kargs.lmem_obuf_base = high_cur;
-
-  if (high_cur < lmem_ibuf_bytes) {
-    return false;
-  }
-  high_cur = align_down_u64(high_cur - lmem_ibuf_bytes, LMEM_LAYOUT_ALIGN_BYTES);
-  kargs.lmem_ibuf1_base = high_cur;
-
-  if (low_cur > kargs.lmem_ibuf1_base) {
-    return false;
-  }
-
-  uint64_t gap_bytes = kargs.lmem_ibuf1_base - low_cur;
-  if (gap_bytes < LMEM_STACK_GUARD_BYTES) {
-    return false;
-  }
+  if (!alloc(lmem_obuf_bytes,  kargs.lmem_obuf_base))  return false;
 
   return true;
 }

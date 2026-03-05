@@ -34,6 +34,7 @@ fi
 
 # QCOL shapes (row-major, QDIR=0)
 QCOL_SHAPES=(
+  "32,32,32"
   "2,64,128"
   "8,32,128"
   "4,128,128"

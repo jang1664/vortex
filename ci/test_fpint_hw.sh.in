@@ -16,8 +16,18 @@ CONFIGS="-DFPU_FPNEW -DDBG_TRACE_GEMM_FSM \
 # CONFIGS+=" -DDBG_TRACE_TCU"
 # CONFIGS+=" -DDBG_TRACE_GEMM"
 # CONFIGS+=" -DNUM_CORES=2"
+# CONFIGS+=" -DVCD_OUTPUT"
 
 export VERILATOR_SEED=$((RANDOM + 1))
+
+DEBUG_LEVEL=0
+
+if [[ "${DEBUG_LEVEL}" -eq 0 ]]; then
+  if [[ "${CONFIGS}" == *"-DVCD_OUTPUT"* ]]; then
+    # drop VCD_OUTPUT if DEBUG_LEVEL is 0, since it generates huge log files and isn't useful without debug messages
+    CONFIGS="${CONFIGS//-DVCD_OUTPUT/}"
+  fi
+fi
 
 export CONFIGS
 # ------------------------------------------------------------------------
@@ -29,14 +39,14 @@ export CONFIGS
 # - rtl
 # ------------------------------------------------------------------------
 DRIVER=rtlsim \
-DEBUG_LEVEL=3 \
+DEBUG_LEVEL=${DEBUG_LEVEL} \
 bash tests/regression/fpint_gemm_ffn_hw/test.sh "$@"
 
 # ------------------------------------------------------------------------
 # - xrt + rtl
 # ------------------------------------------------------------------------
 # DRIVER=xrt \
-# DEBUG_LEVEL=3 \
+# DEBUG_LEVEL=${DEBUG_LEVEL} \
 # bash tests/regression/fpint_gemm_ffn_hw/test.sh "$@"
 
 # ------------------------------------------------------------------------
@@ -46,7 +56,7 @@ bash tests/regression/fpint_gemm_ffn_hw/test.sh "$@"
 # TARGET=hw_emu \
 # PLATFORM=xilinx_u55c_gen3x16_xdma_3_202210_1 \
 # DRIVER=xrt \
-# DEBUG_LEVEL=3 \
+# DEBUG_LEVEL=${DEBUG_LEVEL} \
 # bash tests/regression/fpint_gemm_ffn_hw/test.sh "$@"
 
 # ------------------------------------------------------------------------
@@ -57,5 +67,5 @@ bash tests/regression/fpint_gemm_ffn_hw/test.sh "$@"
 # PLATFORM=xilinx_u55c_gen3x16_xdma_3_202210_1 \
 # DRIVER=xrt \
 # CHIPSCOPE=1 \
-# DEBUG_LEVEL=0 \
+# DEBUG_LEVEL=${DEBUG_LEVEL} \
 # bash tests/regression/fpint_gemm_ffn_hw/test.sh "$@"

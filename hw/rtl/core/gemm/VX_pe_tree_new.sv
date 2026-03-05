@@ -8,7 +8,7 @@
   - Focus on MAC operations and adder tree
 */
 
-module VX_pe_tree_new import VX_gpu_pkg::*; #(
+module VX_pe_tree_new import VX_gpu_pkg::*, VX_utils_pkg::*; #(
     parameter  int IN_DW                = `SEL_BLOCK_WIDTH,
     parameter  int WEIGHT_DW            = `W_BIT_WIDTH,
     parameter  int OUT_DW               = `O_BIT_WIDTH,
