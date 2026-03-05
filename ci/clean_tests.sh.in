@@ -1,0 +1,5 @@
+#!/bin/bash
+make -C tests clean
+make -C runtime clean
+make -C hw clean
+rm -rf ~/.ccache
