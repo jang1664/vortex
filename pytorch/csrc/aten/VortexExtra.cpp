@@ -34,25 +34,35 @@ static void launch_kernel(vx_device_h device,
                           const void* args, size_t args_size,
                           const std::string& kernel_path) {
   vx_buffer_h args_buf = nullptr;
-  int ret = vx_upload_bytes(device, args, args_size, &args_buf);
-  TORCH_CHECK(ret == 0, "Failed to upload kernel arguments (err=", ret, ")");
-
   vx_buffer_h krnl_buf = nullptr;
-  ret = vx_upload_kernel_file(device, kernel_path.c_str(), &krnl_buf);
-  TORCH_CHECK(ret == 0, "Failed to upload kernel binary: ", kernel_path,
-              " (err=", ret, ")");
 
-  // Notify SMI monitoring of the kernel name (best-effort, ignore errors)
-  vx_smi_set_kernel_name(device, kernel_path.c_str());
+  // RAII guard: free device buffers on ANY exit (normal or exception)
+  auto cleanup = [&]() {
+    if (krnl_buf) vx_mem_free(krnl_buf);
+    if (args_buf) vx_mem_free(args_buf);
+  };
 
-  ret = vx_start(device, krnl_buf, args_buf);
-  TORCH_CHECK(ret == 0, "vx_start failed (err=", ret, ")");
+  try {
+    int ret = vx_upload_bytes(device, args, args_size, &args_buf);
+    TORCH_CHECK(ret == 0, "Failed to upload kernel arguments (err=", ret, ")");
 
-  ret = vx_ready_wait(device, VX_MAX_TIMEOUT);
-  TORCH_CHECK(ret == 0, "vx_ready_wait failed (err=", ret, ")");
+    ret = vx_upload_kernel_file(device, kernel_path.c_str(), &krnl_buf);
+    TORCH_CHECK(ret == 0, "Failed to upload kernel binary: ", kernel_path,
+                " (err=", ret, ")");
 
-  vx_mem_free(krnl_buf);
-  vx_mem_free(args_buf);
+    // Notify SMI monitoring of the kernel name (best-effort, ignore errors)
+    vx_smi_set_kernel_name(device, kernel_path.c_str());
+
+    ret = vx_start(device, krnl_buf, args_buf);
+    TORCH_CHECK(ret == 0, "vx_start failed (err=", ret, ")");
+
+    ret = vx_ready_wait(device, VX_MAX_TIMEOUT);
+    TORCH_CHECK(ret == 0, "vx_ready_wait failed (err=", ret, ")");
+  } catch (...) {
+    cleanup();
+    throw;  // re-throw after freeing device memory
+  }
+  cleanup();
 }
 
 // ===========================================================================

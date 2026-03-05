@@ -53,11 +53,11 @@ public:
     }
   }
 
-  uint32_t baseAddress() const {
+  uint64_t baseAddress() const {
     return baseAddress_;
   }
 
-  uint32_t capacity() const {
+  uint64_t capacity() const {
     return capacity_;
   }
 
