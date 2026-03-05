@@ -1,0 +1,388 @@
+#!/usr/bin/env python3
+"""
+vortex-smi: Vortex GPGPU System Management Interface
+
+A monitoring tool for Vortex GPGPU on Xilinx FPGAs, similar to nvidia-smi.
+Reads live status from shared memory exported by the Vortex XRT runtime.
+
+Usage:
+  vortex-smi              # one-shot status display
+  vortex-smi -l [SEC]     # loop mode (default: 1s interval)
+  vortex-smi -j           # JSON output
+  vortex-smi --xbutil     # also query xbutil for FPGA-level info
+"""
+
+import argparse
+import ctypes
+import json
+import mmap
+import os
+import signal
+import struct
+import sys
+import time
+from datetime import datetime, timedelta
+from pathlib import Path
+
+# ─── Constants (must match vx_shm_status.h) ──────────────────────────────────
+
+VX_SHM_PATH = "/dev/shm/vortex_status"
+VX_SHM_MAGIC = 0x56584D53  # "VXMS"
+VX_SHM_VERSION = 1
+VX_SHM_MAX_BANKS = 32
+
+STATE_NAMES = {
+    0: "OFFLINE",
+    1: "IDLE",
+    2: "UPLOADING",
+    3: "DOWNLOADING",
+    4: "RUNNING",
+    5: "ERROR",
+}
+
+STATE_COLORS = {
+    0: "\033[90m",   # gray
+    1: "\033[32m",   # green
+    2: "\033[33m",   # yellow
+    3: "\033[33m",   # yellow
+    4: "\033[36m",   # cyan
+    5: "\033[31m",   # red
+}
+
+RESET = "\033[0m"
+BOLD = "\033[1m"
+DIM = "\033[2m"
+
+
+# ─── Data structures ─────────────────────────────────────────────────────────
+
+class BankInfo(ctypes.LittleEndianStructure):
+    _pack_ = 1
+    _fields_ = [
+        ("allocated",  ctypes.c_uint32),
+        ("ref_count",  ctypes.c_uint32),
+        ("bank_size",  ctypes.c_uint64),
+    ]
+
+
+class ShmStatus(ctypes.LittleEndianStructure):
+    _pack_ = 1
+    _fields_ = [
+        # header
+        ("magic",           ctypes.c_uint32),
+        ("version",         ctypes.c_uint32),
+        # device info
+        ("num_cores",       ctypes.c_uint32),
+        ("num_warps",       ctypes.c_uint32),
+        ("num_threads",     ctypes.c_uint32),
+        ("num_banks",       ctypes.c_uint32),
+        ("global_mem_size", ctypes.c_uint64),
+        ("device_name",     ctypes.c_char * 64),
+        # runtime state
+        ("state",           ctypes.c_uint32),
+        ("pid",             ctypes.c_uint32),
+        # memory stats
+        ("mem_used",        ctypes.c_uint64),
+        ("mem_free",        ctypes.c_uint64),
+        # transfer stats
+        ("total_uploaded",  ctypes.c_uint64),
+        ("total_downloaded",ctypes.c_uint64),
+        ("upload_count",    ctypes.c_uint64),
+        ("download_count",  ctypes.c_uint64),
+        # kernel stats
+        ("kernel_launches", ctypes.c_uint64),
+        ("last_kernel_addr",ctypes.c_uint64),
+        ("last_kernel_name",ctypes.c_char * 64),
+        # timing
+        ("init_timestamp",  ctypes.c_uint64),
+        ("last_activity",   ctypes.c_uint64),
+        # per-bank
+        ("banks",           BankInfo * VX_SHM_MAX_BANKS),
+        # reserved
+        ("_reserved",       ctypes.c_uint8 * 192),
+    ]
+
+
+# ─── Helpers ──────────────────────────────────────────────────────────────────
+
+def human_bytes(n):
+    """Format byte count in human-readable form."""
+    if n < 1024:
+        return f"{n} B"
+    for unit in ("KiB", "MiB", "GiB", "TiB"):
+        n /= 1024
+        if n < 1024:
+            return f"{n:.1f} {unit}"
+    return f"{n:.1f} PiB"
+
+
+def human_count(n):
+    """Format large counts with K/M suffixes."""
+    if n < 10000:
+        return str(n)
+    if n < 1000000:
+        return f"{n/1000:.1f}K"
+    return f"{n/1000000:.1f}M"
+
+
+def elapsed_str(ms_timestamp):
+    """Time elapsed since timestamp in human-readable form."""
+    if ms_timestamp == 0:
+        return "N/A"
+    elapsed = time.time() - ms_timestamp / 1000.0
+    if elapsed < 0:
+        return "just now"
+    return str(timedelta(seconds=int(elapsed)))
+
+
+def pid_alive(pid):
+    """Check if a PID is still running."""
+    try:
+        os.kill(pid, 0)
+        return True
+    except (OSError, ProcessLookupError):
+        return False
+
+
+def read_shm():
+    """Read the shared memory status. Returns ShmStatus or None."""
+    if not os.path.exists(VX_SHM_PATH):
+        return None
+    try:
+        fd = os.open(VX_SHM_PATH, os.O_RDONLY)
+        size = os.fstat(fd).st_size
+        if size < ctypes.sizeof(ShmStatus):
+            os.close(fd)
+            return None
+        mm = mmap.mmap(fd, ctypes.sizeof(ShmStatus), access=mmap.ACCESS_READ)
+        status = ShmStatus.from_buffer_copy(mm[:ctypes.sizeof(ShmStatus)])
+        mm.close()
+        os.close(fd)
+        if status.magic != VX_SHM_MAGIC:
+            return None
+        return status
+    except Exception:
+        return None
+
+
+# ─── Display ──────────────────────────────────────────────────────────────────
+
+HEADER = f"""\
+{BOLD}╔══════════════════════════════════════════════════════════════╗
+║                     vortex-smi  v0.1                         ║
+╚══════════════════════════════════════════════════════════════╝{RESET}"""
+
+
+def print_status(status, color=True):
+    """Print nvidia-smi style status display."""
+    if not color:
+        # strip ANSI
+        global RESET, BOLD, DIM
+        RESET = BOLD = DIM = ""
+
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    if status is None:
+        print(HEADER)
+        print(f"  {DIM}Timestamp: {now}{RESET}")
+        print()
+        print(f"  No Vortex device detected ({VX_SHM_PATH} not found)")
+        print(f"  Make sure a Vortex application is running with XRT backend.")
+        print()
+        return
+
+    name = status.device_name.decode("utf-8", errors="replace").rstrip("\x00")
+    state = status.state
+    state_name = STATE_NAMES.get(state, f"UNKNOWN({state})")
+    sc = STATE_COLORS.get(state, "") if color else ""
+
+    alive = pid_alive(status.pid)
+    pid_str = f"{status.pid}" + (" (running)" if alive else " (dead)")
+
+    mem_total = status.mem_used + status.mem_free
+    mem_pct = (status.mem_used / mem_total * 100) if mem_total > 0 else 0
+    bar_len = 30
+    bar_fill = int(bar_len * mem_pct / 100)
+    mem_bar = "█" * bar_fill + "░" * (bar_len - bar_fill)
+
+    print(HEADER)
+    print(f"  {DIM}Timestamp: {now}{RESET}")
+    print()
+
+    # Device info box
+    print(f"  {BOLD}Device:{RESET}  {name}")
+    print(f"  {BOLD}Cores:{RESET}   {status.num_cores}   "
+          f"{BOLD}Warps:{RESET} {status.num_warps}   "
+          f"{BOLD}Threads:{RESET} {status.num_threads}   "
+          f"{BOLD}Banks:{RESET} {status.num_banks}")
+    print(f"  {BOLD}PID:{RESET}     {pid_str}")
+    print(f"  {BOLD}State:{RESET}   {sc}{state_name}{RESET}")
+    print(f"  {BOLD}Uptime:{RESET}  {elapsed_str(status.init_timestamp)}")
+    print()
+
+    # Memory
+    print(f"  {BOLD}Memory Usage:{RESET}")
+    print(f"    [{mem_bar}] {mem_pct:.1f}%")
+    print(f"    Used: {human_bytes(status.mem_used)} / "
+          f"Total: {human_bytes(mem_total)} / "
+          f"Free: {human_bytes(status.mem_free)}")
+    print()
+
+    # Transfer stats
+    print(f"  {BOLD}Transfer Stats:{RESET}")
+    print(f"    Upload:   {human_bytes(status.total_uploaded):>12s}  "
+          f"({human_count(status.upload_count)} calls)")
+    print(f"    Download: {human_bytes(status.total_downloaded):>12s}  "
+          f"({human_count(status.download_count)} calls)")
+    print()
+
+    # Kernel stats
+    kname = status.last_kernel_name.decode("utf-8", errors="replace").rstrip("\x00")
+    print(f"  {BOLD}Kernel Stats:{RESET}")
+    print(f"    Launches: {status.kernel_launches}")
+    if kname:
+        print(f"    Last kernel: {kname}")
+    if status.last_kernel_addr:
+        print(f"    Last kernel addr: 0x{status.last_kernel_addr:x}")
+    print(f"    Last activity: {elapsed_str(status.last_activity)} ago")
+    print()
+
+    # Bank allocation detail
+    active_banks = [(i, status.banks[i]) for i in range(min(status.num_banks, VX_SHM_MAX_BANKS))
+                    if status.banks[i].allocated]
+    if active_banks:
+        print(f"  {BOLD}Active HBM Banks:{RESET}")
+        for idx, bank in active_banks:
+            print(f"    Bank {idx:2d}: refs={bank.ref_count}, "
+                  f"size={human_bytes(bank.bank_size)}")
+        print()
+
+    print(f"  {DIM}─────────────────────────────────────────────────────────{RESET}")
+
+
+def print_json(status):
+    """Output status as JSON."""
+    if status is None:
+        print(json.dumps({"error": "no device found"}, indent=2))
+        return
+
+    name = status.device_name.decode("utf-8", errors="replace").rstrip("\x00")
+    d = {
+        "timestamp": datetime.now().isoformat(),
+        "device_name": name,
+        "state": STATE_NAMES.get(status.state, "UNKNOWN"),
+        "pid": status.pid,
+        "pid_alive": pid_alive(status.pid),
+        "num_cores": status.num_cores,
+        "num_warps": status.num_warps,
+        "num_threads": status.num_threads,
+        "num_banks": status.num_banks,
+        "memory": {
+            "total": status.mem_used + status.mem_free,
+            "used": status.mem_used,
+            "free": status.mem_free,
+            "utilization_pct": round(status.mem_used / max(1, status.mem_used + status.mem_free) * 100, 1),
+        },
+        "transfers": {
+            "total_uploaded": status.total_uploaded,
+            "total_downloaded": status.total_downloaded,
+            "upload_count": status.upload_count,
+            "download_count": status.download_count,
+        },
+        "kernel": {
+            "launches": status.kernel_launches,
+            "last_addr": hex(status.last_kernel_addr),
+            "last_name": status.last_kernel_name.decode("utf-8", errors="replace").rstrip("\x00"),
+        },
+        "timing": {
+            "init_timestamp": status.init_timestamp,
+            "last_activity": status.last_activity,
+            "uptime_sec": int(time.time() - status.init_timestamp / 1000.0) if status.init_timestamp else 0,
+        },
+        "banks": [
+            {"id": i, "ref_count": status.banks[i].ref_count, "bank_size": status.banks[i].bank_size}
+            for i in range(min(status.num_banks, VX_SHM_MAX_BANKS))
+            if status.banks[i].allocated
+        ],
+    }
+    print(json.dumps(d, indent=2))
+
+
+# ─── Main ─────────────────────────────────────────────────────────────────────
+
+def main():
+    parser = argparse.ArgumentParser(
+        prog="vortex-smi",
+        description="Vortex GPGPU System Management Interface",
+    )
+    parser.add_argument(
+        "-l", "--loop", nargs="?", const=1.0, type=float, metavar="SEC",
+        help="Loop mode: refresh every SEC seconds (default: 1)",
+    )
+    parser.add_argument(
+        "-j", "--json", action="store_true",
+        help="Output in JSON format",
+    )
+    parser.add_argument(
+        "--no-color", action="store_true",
+        help="Disable ANSI color output",
+    )
+    parser.add_argument(
+        "--xbutil", action="store_true",
+        help="Also show xbutil examine summary (requires xbutil in PATH)",
+    )
+
+    args = parser.parse_args()
+
+    # Handle Ctrl-C gracefully
+    signal.signal(signal.SIGINT, lambda *_: (print(), sys.exit(0)))
+
+    if args.loop is not None:
+        # loop mode
+        try:
+            while True:
+                os.system("clear")
+                status = read_shm()
+                if args.json:
+                    print_json(status)
+                else:
+                    print_status(status, color=not args.no_color)
+                    if args.xbutil:
+                        print_xbutil_info()
+                time.sleep(args.loop)
+        except KeyboardInterrupt:
+            pass
+    else:
+        # one-shot
+        status = read_shm()
+        if args.json:
+            print_json(status)
+        else:
+            print_status(status, color=not args.no_color)
+            if args.xbutil:
+                print_xbutil_info()
+
+
+def print_xbutil_info():
+    """Optionally print xbutil examine summary."""
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["xbutil", "examine", "-d", "0000:3d:00.1", "--report", "platform"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode == 0:
+            print(f"  {BOLD}xbutil Platform Info:{RESET}")
+            for line in result.stdout.strip().split("\n"):
+                print(f"    {line}")
+            print()
+    except FileNotFoundError:
+        print(f"  {DIM}(xbutil not found in PATH){RESET}")
+    except subprocess.TimeoutExpired:
+        print(f"  {DIM}(xbutil timed out){RESET}")
+    except Exception as e:
+        print(f"  {DIM}(xbutil error: {e}){RESET}")
+
+
+if __name__ == "__main__":
+    main()
