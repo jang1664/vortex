@@ -40,6 +40,58 @@ set vsources_list  [lindex $vlist 0]
 set vincludes_list [lindex $vlist 1]
 set vdefines_list  [lindex $vlist 2]
 
+# Vivado IP packaging can flatten imported HDL/include file names into src/.
+# Rewrite include paths that rely on subdirectories into basename form and
+# copy the matching include file into a temporary patched source dir.
+set patched_src_dir [file normalize "${path_to_tmp_project}/patched_src"]
+set patched_sources_list [list]
+set patched_any 0
+
+foreach src $vsources_list {
+    set ext [file extension $src]
+    if { $ext ne ".sv" && $ext ne ".svh" && $ext ne ".v" } {
+        lappend patched_sources_list $src
+        continue
+    }
+
+    set f [open $src r]
+    set src_text [read $f]
+    close $f
+
+    set patched_text [string map {"common_cells/registers.svh" "registers.svh"} $src_text]
+    if { $patched_text ne $src_text } {
+        if { $patched_any == 0 } {
+            file mkdir $patched_src_dir
+        }
+        set dst [file normalize "${patched_src_dir}/[file tail $src]"]
+        set f [open $dst w]
+        puts -nonewline $f $patched_text
+        close $f
+        lappend patched_sources_list $dst
+        set patched_any 1
+    } else {
+        lappend patched_sources_list $src
+    }
+}
+
+if { $patched_any == 1 } {
+    set registers_file ""
+    foreach idir $vincludes_list {
+        set candidate [file normalize "${idir}/common_cells/registers.svh"]
+        if {[file exists $candidate]} {
+            set registers_file $candidate
+            break
+        }
+    }
+    if { $registers_file eq "" } {
+        puts "ERROR: failed to locate common_cells/registers.svh in include dirs"
+        exit 1
+    }
+    file copy -force $registers_file "${patched_src_dir}/registers.svh"
+    set vsources_list $patched_sources_list
+    lappend vincludes_list $patched_src_dir
+}
+
 #puts ${vsources_list}
 #puts ${vincludes_list}
 #puts ${vdefines_list}

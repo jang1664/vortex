@@ -125,7 +125,7 @@
 
 `ifndef MEM_ADDR_WIDTH
 `ifdef XLEN_64
-`define MEM_ADDR_WIDTH 48
+`define MEM_ADDR_WIDTH 34
 `else
 `define MEM_ADDR_WIDTH 32
 `endif
