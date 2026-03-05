@@ -119,6 +119,9 @@ int vx_dcr_write(vx_device_h hdevice, uint32_t addr, uint32_t value);
 // query device performance counter
 int vx_mpm_query(vx_device_h hdevice, uint32_t addr, uint32_t core_id, uint64_t* value);
 
+// set kernel name for SMI monitoring
+int vx_smi_set_kernel_name(vx_device_h hdevice, const char* name);
+
 ////////////////////////////// UTILITY FUNCTIONS //////////////////////////////
 
 // upload bytes to device

@@ -17,7 +17,7 @@ PLATFORM ?=
 
 PREFIX ?= build$(XLEN)
 MAX_JOBS ?= 8
-CLOCK_FREQ_HZ ?= 100
+CLOCK_FREQ_HZ ?= 300
 
 SRC_DIR := $(VORTEX_HOME)/hw/syn/xilinx/xrt
 

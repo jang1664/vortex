@@ -221,5 +221,13 @@ extern int vx_dev_init(callbacks_t* callbacks) {
     return 0;
   };
 
+  callbacks->smi_set_kernel_name = [](vx_device_h hdevice, const char* name) {
+    if (nullptr == hdevice || nullptr == name)
+      return -1;
+    auto device = ((vx_device*)hdevice);
+    device->smi_set_kernel_name(name);
+    return 0;
+  };
+
   return 0;
 }

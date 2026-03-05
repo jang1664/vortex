@@ -36,6 +36,9 @@
 #include <util.h>
 #include <vector>
 
+// vortex-smi shared memory support
+#include <vx_shm_helper.h>
+
 using namespace vortex;
 
 #ifndef XRTSIM
@@ -111,6 +114,7 @@ public:
   {}
 
   ~vx_device() {
+    shm_.close();
   #ifdef SCOPE
     vx_scope_stop(this);
   #endif
@@ -276,6 +280,18 @@ public:
     std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
   #endif
 
+    // --- vortex-smi: initialize shared memory status ---
+    if (shm_.open()) {
+      uint64_t ncores, nwarps, nthreads;
+      this->get_caps(VX_CAPS_NUM_CORES, &ncores);
+      this->get_caps(VX_CAPS_NUM_WARPS, &nwarps);
+      this->get_caps(VX_CAPS_NUM_THREADS, &nthreads);
+      shm_.set_device_info(device_name.c_str(), ncores, nwarps, nthreads,
+                           num_banks, global_mem_size_);
+      shm_.set_state(VX_STATE_IDLE);
+      shm_.update_mem(global_mem_.allocated(), global_mem_.free());
+    }
+
     return 0;
   }
 
@@ -346,6 +362,7 @@ public:
       return err;
     });
     *dev_addr = addr;
+    shm_.update_mem(global_mem_.allocated(), global_mem_.free());
     return 0;
   }
 
@@ -405,6 +422,7 @@ public:
       return -1;
     }
   #endif
+    shm_.update_mem(global_mem_.allocated(), global_mem_.free());
     return 0;
   }
 
@@ -445,6 +463,7 @@ public:
   }
 
   int upload(uint64_t dev_addr, const void *src, uint64_t size) {
+    shm_.set_state(VX_STATE_UPLOADING);
     auto host_ptr = (const uint8_t *)src;
 
     // check alignment
@@ -487,10 +506,13 @@ public:
       });
 #endif
     }
+    shm_.record_upload(size);
+    shm_.set_state(VX_STATE_IDLE);
     return 0;
   }
 
   int download(void *dest, uint64_t dev_addr, uint64_t size) {
+    shm_.set_state(VX_STATE_DOWNLOADING);
     auto host_ptr = (uint8_t *)dest;
 
     // check alignment
@@ -533,6 +555,8 @@ public:
       });
     #endif
     }
+    shm_.record_download(size);
+    shm_.set_state(VX_STATE_IDLE);
     return 0;
   }
 
@@ -558,6 +582,9 @@ public:
 
     // clear mpm cache
     mpm_cache_.clear();
+
+    shm_.record_kernel(krnl_addr);
+    shm_.set_state(VX_STATE_RUNNING);
 
     return 0;
   }
@@ -590,6 +617,7 @@ public:
       timeout -= sleep_time_ms;
     };
 
+    shm_.set_state(VX_STATE_IDLE);
     return 0;
   }
 
@@ -622,6 +650,10 @@ public:
     return 0;
   }
 
+  void smi_set_kernel_name(const char *name) {
+    shm_.set_kernel_name(name);
+  }
+
 private:
 
   MemoryAllocator global_mem_;
@@ -634,6 +666,7 @@ private:
   std::unordered_map<uint32_t, std::array<uint64_t, 32>> mpm_cache_;
   uint32_t lg2_num_banks_;
   uint32_t lg2_bank_size_;
+  ShmStatus shm_;
 
 #ifdef BANK_INTERLEAVE
 
