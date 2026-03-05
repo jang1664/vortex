@@ -144,25 +144,35 @@ def pid_alive(pid):
         return False
 
 
+def candidate_shm_paths():
+    """Return candidate shared-memory paths in lookup order."""
+    forced = os.environ.get("VORTEX_SHM_PATH", "").strip()
+    if forced:
+        return [forced]
+    return [f"/dev/shm/vortex_status_{os.getuid()}", VX_SHM_PATH]
+
+
 def read_shm():
-    """Read the shared memory status. Returns ShmStatus or None."""
-    if not os.path.exists(VX_SHM_PATH):
-        return None
-    try:
-        fd = os.open(VX_SHM_PATH, os.O_RDONLY)
-        size = os.fstat(fd).st_size
-        if size < ctypes.sizeof(ShmStatus):
+    """Read shared memory status. Returns (ShmStatus|None, path|None)."""
+    for shm_path in candidate_shm_paths():
+        if not os.path.exists(shm_path):
+            continue
+        try:
+            fd = os.open(shm_path, os.O_RDONLY)
+            size = os.fstat(fd).st_size
+            if size < ctypes.sizeof(ShmStatus):
+                os.close(fd)
+                continue
+            mm = mmap.mmap(fd, ctypes.sizeof(ShmStatus), access=mmap.ACCESS_READ)
+            status = ShmStatus.from_buffer_copy(mm[:ctypes.sizeof(ShmStatus)])
+            mm.close()
             os.close(fd)
-            return None
-        mm = mmap.mmap(fd, ctypes.sizeof(ShmStatus), access=mmap.ACCESS_READ)
-        status = ShmStatus.from_buffer_copy(mm[:ctypes.sizeof(ShmStatus)])
-        mm.close()
-        os.close(fd)
-        if status.magic != VX_SHM_MAGIC:
-            return None
-        return status
-    except Exception:
-        return None
+            if status.magic != VX_SHM_MAGIC:
+                continue
+            return status, shm_path
+        except Exception:
+            continue
+    return None, None
 
 
 # ─── Display ──────────────────────────────────────────────────────────────────
@@ -173,7 +183,7 @@ HEADER = f"""\
 ╚══════════════════════════════════════════════════════════════╝{RESET}"""
 
 
-def print_status(status, color=True):
+def print_status(status, color=True, shm_path=None):
     """Print nvidia-smi style status display."""
     if not color:
         # strip ANSI
@@ -186,7 +196,8 @@ def print_status(status, color=True):
         print(HEADER)
         print(f"  {DIM}Timestamp: {now}{RESET}")
         print()
-        print(f"  No Vortex device detected ({VX_SHM_PATH} not found)")
+        paths = ", ".join(candidate_shm_paths())
+        print(f"  No Vortex device detected (checked: {paths})")
         print(f"  Make sure a Vortex application is running with XRT backend.")
         print()
         return
@@ -217,6 +228,8 @@ def print_status(status, color=True):
           f"{BOLD}Banks:{RESET} {status.num_banks}")
     print(f"  {BOLD}PID:{RESET}     {pid_str}")
     print(f"  {BOLD}State:{RESET}   {sc}{state_name}{RESET}")
+    if shm_path:
+        print(f"  {BOLD}SHM:{RESET}     {shm_path}")
     print(f"  {BOLD}Uptime:{RESET}  {elapsed_str(status.init_timestamp)}")
     print()
 
@@ -260,15 +273,16 @@ def print_status(status, color=True):
     print(f"  {DIM}─────────────────────────────────────────────────────────{RESET}")
 
 
-def print_json(status):
+def print_json(status, shm_path=None):
     """Output status as JSON."""
     if status is None:
-        print(json.dumps({"error": "no device found"}, indent=2))
+        print(json.dumps({"error": "no device found", "checked_paths": candidate_shm_paths()}, indent=2))
         return
 
     name = status.device_name.decode("utf-8", errors="replace").rstrip("\x00")
     d = {
         "timestamp": datetime.now().isoformat(),
+        "shm_path": shm_path,
         "device_name": name,
         "state": STATE_NAMES.get(status.state, "UNKNOWN"),
         "pid": status.pid,
@@ -342,11 +356,11 @@ def main():
         try:
             while True:
                 os.system("clear")
-                status = read_shm()
+                status, shm_path = read_shm()
                 if args.json:
-                    print_json(status)
+                    print_json(status, shm_path)
                 else:
-                    print_status(status, color=not args.no_color)
+                    print_status(status, color=not args.no_color, shm_path=shm_path)
                     if args.xbutil:
                         print_xbutil_info()
                 time.sleep(args.loop)
@@ -354,11 +368,11 @@ def main():
             pass
     else:
         # one-shot
-        status = read_shm()
+        status, shm_path = read_shm()
         if args.json:
-            print_json(status)
+            print_json(status, shm_path)
         else:
-            print_status(status, color=not args.no_color)
+            print_status(status, color=not args.no_color, shm_path=shm_path)
             if args.xbutil:
                 print_xbutil_info()
 

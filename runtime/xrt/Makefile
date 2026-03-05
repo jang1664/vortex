@@ -46,6 +46,11 @@ ifdef CHIPSCOPE
 	CXXFLAGS += -DCHIPSCOPE
 endif
 
+# Enable verbose XRT debug prints
+ifdef DEBUG_XRT
+	CXXFLAGS += -DDEBUG_XRT
+endif
+
 .PHONY: all force driver clean-driver clean-runtime clean
 
 all: $(DESTDIR)/$(PROJECT)

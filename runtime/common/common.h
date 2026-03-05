@@ -31,7 +31,7 @@
 #define ALLOC_BASE_ADDR   USER_BASE_ADDR
 
 #if (XLEN == 64)
-#define GLOBAL_MEM_SIZE    0x200000000  // 8 GB
+#define GLOBAL_MEM_SIZE    0x400000000  // 16 GB
 #else
 #define GLOBAL_MEM_SIZE    0x100000000  // 4 GB
 #endif
