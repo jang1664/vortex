@@ -9,10 +9,18 @@ VORTEX_RT_PATH ?= $(ROOT_DIR)/runtime
 VORTEX_KN_PATH ?= $(ROOT_DIR)/kernel
 
 ifeq ($(XLEN),64)
+		ifneq (,$(findstring -DEXT_D_DISABLE,$(CONFIGS)))
+			ifeq ($(EXT_V_ENABLE),1)
+				VX_CFLAGS += -march=rv64imafv_zve64f -mabi=lp64f # vector extension
+			else
+				VX_CFLAGS += -march=rv64imaf -mabi=lp64f
+			endif
+	else
 	ifeq ($(EXT_V_ENABLE),1)
 		VX_CFLAGS += -march=rv64imafdv_zve64d -mabi=lp64d # vector extension
 	else
 		VX_CFLAGS += -march=rv64imafd -mabi=lp64d
+	endif
 	endif
 	STARTUP_ADDR ?= 0x180000000
 else
@@ -86,14 +94,24 @@ endif
 
 all: $(PROJECT) kernel.vxbin kernel.dump
 
+KERNEL_CONFIG_FILE := .kernel.flags.stamp
+
 kernel.dump: kernel.elf
 	$(VX_DP) -D $< > $@
 
 kernel.vxbin: kernel.elf
 	OBJCOPY=$(VX_CP) $(VORTEX_HOME)/kernel/scripts/vxbin.py $< $@
 
-kernel.elf: $(VX_SRCS)
-	$(VX_CXX) $(VX_CFLAGS) $^ $(VX_LDFLAGS) -o kernel.elf
+$(KERNEL_CONFIG_FILE): force
+	@printf '%s\n' "$(VX_CFLAGS) $(VX_LDFLAGS)" > $@.tmp
+	@if ! cmp -s $@.tmp $@; then \
+	  mv $@.tmp $@; \
+	else \
+	  rm $@.tmp; \
+	fi
+
+kernel.elf: $(VX_SRCS) $(KERNEL_CONFIG_FILE)
+	$(VX_CXX) $(VX_CFLAGS) $(VX_SRCS) $(VX_LDFLAGS) -o kernel.elf
 
 $(PROJECT): $(SRCS)
 	$(CXX) $(CXXFLAGS) $^ $(LDFLAGS) -o $@
@@ -126,6 +144,9 @@ clean-host:
 	rm -rf $(PROJECT) *.o *.log .depend
 
 clean: clean-kernel clean-host
+
+.PHONY: force
+force:
 
 ifneq ($(MAKECMDGOALS),clean)
     -include .depend

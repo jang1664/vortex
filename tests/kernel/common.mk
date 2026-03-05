@@ -1,7 +1,11 @@
 ROOT_DIR := $(realpath ../../..)
 
 ifeq ($(XLEN),64)
+ifneq (,$(findstring -DEXT_D_DISABLE,$(CONFIGS)))
+CFLAGS += -march=rv64imaf -mabi=lp64f
+else
 CFLAGS += -march=rv64imafd -mabi=lp64d
+endif
 else
 CFLAGS += -march=rv32imaf -mabi=ilp32f
 endif

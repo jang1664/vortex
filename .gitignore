@@ -3,3 +3,32 @@
 *.cache
 *.code-workspace
 miscs/apptainer/vortex.sif
+/python/trace/
+/python/__pycache__/
+/python/vortex_torch.egg-info/
+/python/vortex_torch/__pycache__/
+/python/vortex_torch/_C.cpython-*-linux-*.so
+
+# ---- pytorch/torch_vortex build artifacts ----
+# CMake build directory
+/pytorch/build/
+# pip / setuptools metadata
+/pytorch/torch_vortex.egg-info/
+# Python bytecode cache
+/pytorch/torch_vortex/__pycache__/
+/pytorch/torch_vortex/vortex/__pycache__/
+/pytorch/torch_vortex/vortex/amp/__pycache__/
+__pycache__/
+# Compiled Python extension (.so)
+/pytorch/torch_vortex/_C.cpython-*.so
+# Bundled runtime libraries (copied by CMake install from vortex/build/runtime/)
+/pytorch/torch_vortex/lib/*.so
+# Bundled kernel binaries (copied by CMake install from vortex/build/tests/)
+/pytorch/torch_vortex/kernels/*.vxbin
+# Vortex SimX simulator trace logs
+/pytorch/trace/
+/pytorch/test/trace/
+# Ramulator stats/logs (generated when SimX runs)
+/pytorch/ramulator.stats.log
+/pytorch/test/ramulator.stats.log
+ramulator.stats.log

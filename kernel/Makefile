@@ -2,7 +2,11 @@ ROOT_DIR := $(realpath ..)
 include $(ROOT_DIR)/config.mk
 
 ifeq ($(XLEN),64)
+ifneq (,$(findstring -DEXT_D_DISABLE,$(CONFIGS)))
+CFLAGS += -march=rv64imaf -mabi=lp64f
+else
 CFLAGS += -march=rv64imafd -mabi=lp64d
+endif
 else
 CFLAGS += -march=rv32imaf -mabi=ilp32f
 endif
@@ -30,7 +34,7 @@ CP  = $(RISCV_TOOLCHAIN_PATH)/bin/$(RISCV_PREFIX)-objcopy
 
 CFLAGS += -O3 -mcmodel=medany -fno-exceptions -fdata-sections -ffunction-sections
 CFLAGS += -I$(INC_DIR) -I$(ROOT_DIR)/hw
-CFLAGS += -DXLEN_$(XLEN)
+CFLAGS += -DXLEN_$(XLEN) $(CONFIGS)
 
 PROJECT := libvortex
 

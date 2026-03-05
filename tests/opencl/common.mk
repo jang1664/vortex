@@ -8,10 +8,18 @@ XRT_DEVICE_INDEX ?= 0
 STARTUP_ADDR ?= 0x80000000
 
 ifeq ($(XLEN),64)
+	ifneq (,$(findstring -DEXT_D_DISABLE,$(CONFIGS)))
+		ifeq ($(EXT_V_ENABLE),1)
+			VX_CFLAGS += -march=rv64imafv_zve64f -mabi=lp64f # vector extension
+		else
+			VX_CFLAGS += -march=rv64imaf -mabi=lp64f
+		endif
+	else
 	ifeq ($(EXT_V_ENABLE),1)
 		VX_CFLAGS += -march=rv64imafdv_zve64d -mabi=lp64d # vector extension
 	else
 		VX_CFLAGS += -march=rv64imafd -mabi=lp64d
+	endif
 	endif
 	POCL_CC_FLAGS += POCL_VORTEX_XLEN=64
 else
