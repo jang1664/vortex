@@ -13,34 +13,54 @@
 
 /// Shared-memory status helper class for vortex-smi.
 /// Include this from any backend runtime (xrt, simx, rtlsim, etc.)
-/// to export live status to /dev/shm/vortex_status.
+/// to export live status to /dev/shm.
 
 #ifndef __VX_SHM_HELPER_H__
 #define __VX_SHM_HELPER_H__
 
 #include <vx_shm_status.h>
 
+#include <cerrno>
+#include <cstdio>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <cstring>
 #include <chrono>
+#include <string>
 
 class ShmStatus {
 public:
-  ShmStatus() : shm_(nullptr), fd_(-1) {}
+  ShmStatus()
+    : shm_(nullptr)
+    , fd_(-1)
+    , path_(VX_SHM_PATH)
+    , unlink_on_close_(true) {}
 
   ~ShmStatus() { close(); }
 
   bool open() {
-    fd_ = ::open(VX_SHM_PATH, O_CREAT | O_RDWR, 0666);
+    return open(VX_SHM_PATH, true);
+  }
+
+  bool open(const std::string& path, bool unlink_on_close = true) {
+    this->close();
+    path_ = path.empty() ? VX_SHM_PATH : path;
+    unlink_on_close_ = unlink_on_close;
+
+    fd_ = ::open(path_.c_str(), O_CREAT | O_RDWR, 0666);
     if (fd_ < 0) {
-      fprintf(stderr, "[VXDRV] Warning: cannot create shm %s\n", VX_SHM_PATH);
+      fprintf(stderr, "[VXDRV] Warning: cannot create shm %s\n", path_.c_str());
       return false;
     }
+    // Ensure cross-user read/write for shared HW status regardless of creator umask.
+    if (::fchmod(fd_, 0666) < 0) {
+      fprintf(stderr, "[VXDRV] Warning: cannot chmod shm %s: %s\n",
+              path_.c_str(), strerror(errno));
+    }
     if (ftruncate(fd_, sizeof(vx_shm_status_t)) < 0) {
-      fprintf(stderr, "[VXDRV] Warning: ftruncate shm failed\n");
+      fprintf(stderr, "[VXDRV] Warning: ftruncate shm failed for %s\n", path_.c_str());
       ::close(fd_); fd_ = -1;
       return false;
     }
@@ -68,7 +88,12 @@ public:
       shm_ = nullptr;
     }
     if (fd_ >= 0) {
-      unlink(VX_SHM_PATH);
+      if (unlink_on_close_) {
+        if (::unlink(path_.c_str()) < 0 && errno != ENOENT) {
+          fprintf(stderr, "[VXDRV] Warning: cannot unlink shm %s: %s\n",
+                  path_.c_str(), strerror(errno));
+        }
+      }
       ::close(fd_);
       fd_ = -1;
     }
@@ -80,6 +105,7 @@ public:
                        uint32_t threads, uint32_t banks, uint64_t mem_size) {
     if (!shm_) return;
     strncpy(shm_->device_name, name, sizeof(shm_->device_name) - 1);
+    shm_->device_name[sizeof(shm_->device_name) - 1] = '\0';
     shm_->num_cores  = cores;
     shm_->num_warps  = warps;
     shm_->num_threads = threads;
@@ -129,6 +155,8 @@ private:
   }
   vx_shm_status_t *shm_;
   int fd_;
+  std::string path_;
+  bool unlink_on_close_;
 };
 
 #endif // __VX_SHM_HELPER_H__
