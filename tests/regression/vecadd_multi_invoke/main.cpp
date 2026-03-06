@@ -4,6 +4,7 @@
 #include <vector>
 #include <vortex.h>
 #include "common.h"
+#include <unistd.h>
 
 #define FLOAT_ULP 6
 
@@ -221,6 +222,27 @@ int main(int argc, char *argv[]) {
     } else {
       std::cout << "Iteration " << (iter + 1) << ": PASSED" << std::endl;
     }
+
+    // sleep(2); // add some delay between iterations
+    // std::cout << "download destination buffer" << std::endl;
+    // RT_CHECK(vx_copy_from_dev(h_dst.data(), dst_buffer, 0, buf_size));
+    // // try one more time
+    // std::cout << "verify result" << std::endl;
+    // errors = 0;
+    // for (uint32_t i = 0; i < num_points; ++i) {
+    //   auto ref = h_src0[i] + h_src1[i];
+    //   auto cur = h_dst[i];
+    //   if (!Comparator<TYPE>::compare(cur, ref, i, errors)) {
+    //     ++errors;
+    //   }
+    // }
+
+    // if (errors != 0) {
+    //   std::cout << "Iteration " << (iter + 1) << ": Found " << std::dec << errors << " errors!" << std::endl;
+    //   total_errors += errors;
+    // } else {
+    //   std::cout << "Iteration " << (iter + 1) << ": PASSED" << std::endl;
+    // }
   }
 
   // cleanup

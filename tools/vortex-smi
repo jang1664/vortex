@@ -9,11 +9,13 @@ Usage:
   vortex-smi              # one-shot status display
   vortex-smi -l [SEC]     # loop mode (default: 1s interval)
   vortex-smi -j           # JSON output
+  vortex-smi --backend hw # choose backend: simx/hw_emu/hw/all
   vortex-smi --xbutil     # also query xbutil for FPGA-level info
 """
 
 import argparse
 import ctypes
+import glob
 import json
 import mmap
 import os
@@ -144,35 +146,98 @@ def pid_alive(pid):
         return False
 
 
-def candidate_shm_paths():
+def candidate_shm_paths(backend="all"):
     """Return candidate shared-memory paths in lookup order."""
     forced = os.environ.get("VORTEX_SHM_PATH", "").strip()
     if forced:
         return [forced]
-    return [f"/dev/shm/vortex_status_{os.getuid()}", VX_SHM_PATH]
+
+    uid = os.getuid()
+    paths = []
+
+    if backend in ("all", "simx"):
+        paths.append(f"/dev/shm/vortex_status_simx_uid_{uid}")
+
+    if backend in ("all", "hw_emu"):
+        paths.append(f"/dev/shm/vortex_status_xrt_emu_uid_{uid}")
+
+    # legacy user-isolated path (older runtimes)
+    if backend in ("all", "simx", "hw_emu"):
+        paths.append(f"/dev/shm/vortex_status_{uid}")
+
+    if backend in ("all", "hw"):
+        bdf_paths = sorted(glob.glob("/dev/shm/vortex_status_xrt_bdf_*"))
+        if bdf_paths:
+            paths.extend(bdf_paths)
+        else:
+            paths.append("/dev/shm/vortex_status_xrt_bdf_*")
+
+        # legacy global path
+        paths.append(VX_SHM_PATH)
+
+    # stable de-dup
+    return list(dict.fromkeys(paths))
 
 
-def read_shm():
-    """Read shared memory status. Returns (ShmStatus|None, path|None)."""
-    for shm_path in candidate_shm_paths():
+def read_shm_file(shm_path):
+    """Read and validate one shared-memory status file."""
+    fd = None
+    mm = None
+    try:
+        fd = os.open(shm_path, os.O_RDONLY)
+        size = os.fstat(fd).st_size
+        if size < ctypes.sizeof(ShmStatus):
+            return None
+        mm = mmap.mmap(fd, ctypes.sizeof(ShmStatus), access=mmap.ACCESS_READ)
+        status = ShmStatus.from_buffer_copy(mm[:ctypes.sizeof(ShmStatus)])
+        if status.magic != VX_SHM_MAGIC:
+            return None
+        if status.version != VX_SHM_VERSION:
+            return None
+        return status
+    except Exception:
+        return None
+    finally:
+        if mm is not None:
+            mm.close()
+        if fd is not None:
+            os.close(fd)
+
+
+def read_shm_candidates(backend="all"):
+    """Read valid shared-memory entries. Returns list[(ShmStatus, path)]."""
+    candidates = []
+    for shm_path in candidate_shm_paths(backend):
+        if "*" in shm_path:
+            continue
         if not os.path.exists(shm_path):
             continue
-        try:
-            fd = os.open(shm_path, os.O_RDONLY)
-            size = os.fstat(fd).st_size
-            if size < ctypes.sizeof(ShmStatus):
-                os.close(fd)
-                continue
-            mm = mmap.mmap(fd, ctypes.sizeof(ShmStatus), access=mmap.ACCESS_READ)
-            status = ShmStatus.from_buffer_copy(mm[:ctypes.sizeof(ShmStatus)])
-            mm.close()
-            os.close(fd)
-            if status.magic != VX_SHM_MAGIC:
-                continue
-            return status, shm_path
-        except Exception:
-            continue
-    return None, None
+        status = read_shm_file(shm_path)
+        if status is not None:
+            candidates.append((status, shm_path))
+    return candidates
+
+
+def select_best_candidate(candidates):
+    """Choose one preferred shared-memory entry from candidates."""
+    if not candidates:
+        return None, None
+
+    # Prefer non-offline + alive PID + recent activity.
+    def rank(item):
+        status, _ = item
+        return (
+            1 if status.state != 0 else 0,
+            1 if pid_alive(status.pid) else 0,
+            status.last_activity,
+        )
+
+    return max(candidates, key=rank)
+
+
+def read_shm(backend="all"):
+    """Read one preferred shared-memory entry. Returns (ShmStatus|None, path|None)."""
+    return select_best_candidate(read_shm_candidates(backend))
 
 
 # ─── Display ──────────────────────────────────────────────────────────────────
@@ -183,7 +248,7 @@ HEADER = f"""\
 ╚══════════════════════════════════════════════════════════════╝{RESET}"""
 
 
-def print_status(status, color=True, shm_path=None):
+def print_status(status, color=True, shm_path=None, checked_paths=None):
     """Print nvidia-smi style status display."""
     if not color:
         # strip ANSI
@@ -196,7 +261,7 @@ def print_status(status, color=True, shm_path=None):
         print(HEADER)
         print(f"  {DIM}Timestamp: {now}{RESET}")
         print()
-        paths = ", ".join(candidate_shm_paths())
+        paths = ", ".join(checked_paths or candidate_shm_paths("all"))
         print(f"  No Vortex device detected (checked: {paths})")
         print(f"  Make sure a Vortex application is running with XRT backend.")
         print()
@@ -273,10 +338,10 @@ def print_status(status, color=True, shm_path=None):
     print(f"  {DIM}─────────────────────────────────────────────────────────{RESET}")
 
 
-def print_json(status, shm_path=None):
+def print_json(status, shm_path=None, checked_paths=None):
     """Output status as JSON."""
     if status is None:
-        print(json.dumps({"error": "no device found", "checked_paths": candidate_shm_paths()}, indent=2))
+        print(json.dumps({"error": "no device found", "checked_paths": checked_paths or candidate_shm_paths("all")}, indent=2))
         return
 
     name = status.device_name.decode("utf-8", errors="replace").rstrip("\x00")
@@ -322,6 +387,79 @@ def print_json(status, shm_path=None):
     print(json.dumps(d, indent=2))
 
 
+def print_status_multi(entries, color=True, checked_paths=None):
+    """Print all entries (used for --backend all)."""
+    if not entries:
+        print_status(None, color=color, checked_paths=checked_paths)
+        return
+
+    # Sort by preference for stable display order.
+    ranked = sorted(
+        entries,
+        key=lambda item: (
+            1 if item[0].state != 0 else 0,
+            1 if pid_alive(item[0].pid) else 0,
+            item[0].last_activity,
+        ),
+        reverse=True,
+    )
+    for idx, (status, shm_path) in enumerate(ranked, 1):
+        print(f"{BOLD}Entry {idx}/{len(ranked)}{RESET}")
+        print_status(status, color=color, shm_path=shm_path)
+
+
+def print_json_multi(entries, checked_paths=None):
+    """Output all entries as JSON (used for --backend all)."""
+    if not entries:
+        print_json(None, checked_paths=checked_paths)
+        return
+
+    payload = []
+    for status, shm_path in entries:
+        name = status.device_name.decode("utf-8", errors="replace").rstrip("\x00")
+        payload.append({
+            "timestamp": datetime.now().isoformat(),
+            "shm_path": shm_path,
+            "device_name": name,
+            "state": STATE_NAMES.get(status.state, "UNKNOWN"),
+            "pid": status.pid,
+            "pid_alive": pid_alive(status.pid),
+            "num_cores": status.num_cores,
+            "num_warps": status.num_warps,
+            "num_threads": status.num_threads,
+            "num_banks": status.num_banks,
+            "memory": {
+                "total": status.mem_used + status.mem_free,
+                "used": status.mem_used,
+                "free": status.mem_free,
+                "utilization_pct": round(status.mem_used / max(1, status.mem_used + status.mem_free) * 100, 1),
+            },
+            "transfers": {
+                "total_uploaded": status.total_uploaded,
+                "total_downloaded": status.total_downloaded,
+                "upload_count": status.upload_count,
+                "download_count": status.download_count,
+            },
+            "kernel": {
+                "launches": status.kernel_launches,
+                "last_addr": hex(status.last_kernel_addr),
+                "last_name": status.last_kernel_name.decode("utf-8", errors="replace").rstrip("\x00"),
+            },
+            "timing": {
+                "init_timestamp": status.init_timestamp,
+                "last_activity": status.last_activity,
+                "uptime_sec": int(time.time() - status.init_timestamp / 1000.0) if status.init_timestamp else 0,
+            },
+            "banks": [
+                {"id": i, "ref_count": status.banks[i].ref_count, "bank_size": status.banks[i].bank_size}
+                for i in range(min(status.num_banks, VX_SHM_MAX_BANKS))
+                if status.banks[i].allocated
+            ],
+        })
+
+    print(json.dumps({"devices": payload, "checked_paths": checked_paths or candidate_shm_paths("all")}, indent=2))
+
+
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
 def main():
@@ -336,6 +474,12 @@ def main():
     parser.add_argument(
         "-j", "--json", action="store_true",
         help="Output in JSON format",
+    )
+    parser.add_argument(
+        "--backend",
+        choices=("simx", "hw_emu", "hw", "all"),
+        default="all",
+        help="Select which backend status to read (default: all)",
     )
     parser.add_argument(
         "--no-color", action="store_true",
@@ -356,25 +500,41 @@ def main():
         try:
             while True:
                 os.system("clear")
-                status, shm_path = read_shm()
-                if args.json:
-                    print_json(status, shm_path)
+                checked = candidate_shm_paths(args.backend)
+                if args.backend == "all":
+                    entries = read_shm_candidates("all")
+                    if args.json:
+                        print_json_multi(entries, checked_paths=checked)
+                    else:
+                        print_status_multi(entries, color=not args.no_color, checked_paths=checked)
                 else:
-                    print_status(status, color=not args.no_color, shm_path=shm_path)
-                    if args.xbutil:
-                        print_xbutil_info()
+                    status, shm_path = read_shm(args.backend)
+                    if args.json:
+                        print_json(status, shm_path, checked_paths=checked)
+                    else:
+                        print_status(status, color=not args.no_color, shm_path=shm_path, checked_paths=checked)
+                if args.xbutil and args.backend in ("hw", "all"):
+                    print_xbutil_info()
                 time.sleep(args.loop)
         except KeyboardInterrupt:
             pass
     else:
         # one-shot
-        status, shm_path = read_shm()
-        if args.json:
-            print_json(status, shm_path)
+        checked = candidate_shm_paths(args.backend)
+        if args.backend == "all":
+            entries = read_shm_candidates("all")
+            if args.json:
+                print_json_multi(entries, checked_paths=checked)
+            else:
+                print_status_multi(entries, color=not args.no_color, checked_paths=checked)
         else:
-            print_status(status, color=not args.no_color, shm_path=shm_path)
-            if args.xbutil:
-                print_xbutil_info()
+            status, shm_path = read_shm(args.backend)
+            if args.json:
+                print_json(status, shm_path, checked_paths=checked)
+            else:
+                print_status(status, color=not args.no_color, shm_path=shm_path, checked_paths=checked)
+        if args.xbutil and args.backend in ("hw", "all"):
+            print_xbutil_info()
 
 
 def print_xbutil_info():

@@ -12,8 +12,8 @@
 // limitations under the License.
 
 /// vortex-smi shared memory status interface
-/// The XRT runtime writes status to /dev/shm/vortex_status, and the
-/// vortex-smi tool reads it for live monitoring.
+/// Runtime backends may choose a custom file path under /dev/shm.
+/// VX_SHM_PATH is the legacy default.
 
 #ifndef __VX_SHM_STATUS_H__
 #define __VX_SHM_STATUS_H__
@@ -46,7 +46,7 @@ typedef struct {
   uint64_t  bank_size;       // total bank capacity (bytes)
 } vx_bank_info_t;
 
-/// Shared-memory status structure (mmap'd at /dev/shm/vortex_status)
+/// Shared-memory status structure (mmap'd at backend-selected /dev/shm path)
 typedef struct {
   // -- header --
   uint32_t  magic;           // VX_SHM_MAGIC - for validation
