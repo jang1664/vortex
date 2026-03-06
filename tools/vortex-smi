@@ -28,7 +28,6 @@ from pathlib import Path
 
 # ─── Constants (must match vx_shm_status.h) ──────────────────────────────────
 
-VX_SHM_PATH = "/dev/shm/vortex_status"
 VX_SHM_MAGIC = 0x56584D53  # "VXMS"
 VX_SHM_VERSION = 1
 VX_SHM_MAX_BANKS = 32
@@ -161,19 +160,12 @@ def candidate_shm_paths(backend="all"):
     if backend in ("all", "hw_emu"):
         paths.append(f"/dev/shm/vortex_status_xrt_emu_uid_{uid}")
 
-    # legacy user-isolated path (older runtimes)
-    if backend in ("all", "simx", "hw_emu"):
-        paths.append(f"/dev/shm/vortex_status_{uid}")
-
     if backend in ("all", "hw"):
         bdf_paths = sorted(glob.glob("/dev/shm/vortex_status_xrt_bdf_*"))
         if bdf_paths:
             paths.extend(bdf_paths)
         else:
             paths.append("/dev/shm/vortex_status_xrt_bdf_*")
-
-        # legacy global path
-        paths.append(VX_SHM_PATH)
 
     # stable de-dup
     return list(dict.fromkeys(paths))
