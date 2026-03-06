@@ -29,6 +29,7 @@
 #include "experimental/xrt_xclbin.h"
 #endif
 
+#include <cctype>
 #include <limits>
 #include <stdarg.h>
 #include <string>
@@ -99,6 +100,55 @@ static void dump_xrt_error(xrtDeviceHandle xrtDevice, xrtErrorCode err) {
 }
 #endif
 
+static std::string sanitize_shm_tag(const std::string& value) {
+  std::string out;
+  out.reserve(value.size());
+  for (char c : value) {
+    if (std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '-') {
+      out.push_back(c);
+    } else {
+      out.push_back('_');
+    }
+  }
+  return out;
+}
+
+static bool is_xrt_emulation() {
+#ifdef XRTSIM
+  return true;
+#else
+  const char* emu_mode = getenv("XCL_EMULATION_MODE");
+  return emu_mode != nullptr && emu_mode[0] != '\0';
+#endif
+}
+
+static void get_xrt_shm_path_policy(
+  int device_index,
+  const std::string& device_bdf,
+  std::string* shm_path,
+  bool* unlink_on_close) {
+  const bool emulation = is_xrt_emulation();
+  const char* forced_shm_path = getenv("VORTEX_SHM_PATH");
+  if (forced_shm_path != nullptr && forced_shm_path[0] != '\0') {
+    *shm_path = forced_shm_path;
+    *unlink_on_close = emulation;
+    return;
+  }
+
+  if (emulation) {
+    *shm_path = "/dev/shm/vortex_status_xrt_emu_uid_" + std::to_string(getuid());
+    *unlink_on_close = true;
+    return;
+  }
+
+  auto tag = sanitize_shm_tag(device_bdf);
+  if (tag.empty()) {
+    tag = "idx_" + std::to_string(device_index);
+  }
+  *shm_path = "/dev/shm/vortex_status_xrt_bdf_" + tag;
+  *unlink_on_close = false;
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 
 class vx_device {
@@ -148,6 +198,8 @@ public:
       xlbin_path_s = DEFAULT_XCLBIN_PATH;
     }
 
+    std::string device_bdf;
+
   #ifdef CPP_API
 
     auto xrtDevice = xrt::device(device_index);
@@ -155,6 +207,7 @@ public:
     auto xrtKernel = xrt::ip(xrtDevice, uuid, KERNEL_NAME);
     auto xclbin = xrt::xclbin(xlbin_path_s);
     auto device_name = xrtDevice.get_info<xrt::info::device::name>();
+    device_bdf = xrtDevice.get_info<xrt::info::device::bdf>();
 
   #else
 
@@ -190,6 +243,7 @@ public:
     std::vector<char> sz_device_name(device_name_size);
     xrtXclbinGetXSAName(xrtDevice, sz_device_name.data(), device_name_size, nullptr);
     std::string device_name(sz_device_name.data(), device_name_size);
+    device_bdf = "idx_" + std::to_string(device_index);
 
   #endif
 
@@ -282,7 +336,12 @@ public:
   #endif
 
     // --- vortex-smi: initialize shared memory status ---
-    if (shm_.open()) {
+    std::string shm_path;
+    bool shm_unlink_on_close;
+    get_xrt_shm_path_policy(device_index, device_bdf, &shm_path, &shm_unlink_on_close);
+    printf("[VXDRV] status shm: path=%s, unlink_on_close=%d\n",
+           shm_path.c_str(), shm_unlink_on_close ? 1 : 0);
+    if (shm_.open(shm_path, shm_unlink_on_close)) {
       uint64_t ncores, nwarps, nthreads;
       this->get_caps(VX_CAPS_NUM_CORES, &ncores);
       this->get_caps(VX_CAPS_NUM_WARPS, &nwarps);
@@ -386,6 +445,7 @@ public:
       global_mem_.release(dev_addr);
       return err;
     });
+    shm_.update_mem(global_mem_.allocated(), global_mem_.free());
     return 0;
   }
 
@@ -464,7 +524,6 @@ public:
   }
 
   int upload(uint64_t dev_addr, const void *src, uint64_t size) {
-    shm_.set_state(VX_STATE_UPLOADING);
     auto host_ptr = (const uint8_t *)src;
 
     // check alignment
@@ -477,13 +536,9 @@ public:
     if (dev_addr + asize > global_mem_size_)
       return -1;
 
-    for (uint64_t end = dev_addr + asize; dev_addr < end;
-         dev_addr += CACHE_BLOCK_SIZE, host_ptr += CACHE_BLOCK_SIZE) {
-    #ifdef BANK_INTERLEAVE
-      asize = CACHE_BLOCK_SIZE;
-    #else
-      end = 0;
-    #endif
+    shm_.set_state(VX_STATE_UPLOADING);
+    uint64_t remaining = size;
+    while (remaining != 0) {
       uint32_t bo_index;
       uint64_t bo_offset;
       xrt_buffer_t xrtBuffer;
@@ -493,19 +548,35 @@ public:
       CHECK_ERR(this->get_buffer(bo_index, &xrtBuffer), {
         return err;
       });
+
+      uint64_t bank_size = 1ull << lg2_bank_size_;
+      uint64_t xfer_size;
+#ifdef BANK_INTERLEAVE
+      xfer_size = (remaining > CACHE_BLOCK_SIZE) ? CACHE_BLOCK_SIZE : remaining;
+#else
+      uint64_t bank_headroom = bank_size - bo_offset;
+      xfer_size = (remaining > bank_headroom) ? bank_headroom : remaining;
+#endif
+      if (xfer_size == 0)
+        return -1;
+
     #ifdef CPP_API
-      xrtBuffer.write(host_ptr, size, bo_offset);
-      xrtBuffer.sync(XCL_BO_SYNC_BO_TO_DEVICE, size, bo_offset);
+      xrtBuffer.write(host_ptr, xfer_size, bo_offset);
+      xrtBuffer.sync(XCL_BO_SYNC_BO_TO_DEVICE, xfer_size, bo_offset);
     #else
-      CHECK_ERR(xrtBOWrite(xrtBuffer, host_ptr, size, bo_offset), {
+      CHECK_ERR(xrtBOWrite(xrtBuffer, host_ptr, xfer_size, bo_offset), {
         dump_xrt_error(xrtDevice_, err);
         return err;
       });
-      CHECK_ERR(xrtBOSync(xrtBuffer, XCL_BO_SYNC_BO_TO_DEVICE, size, bo_offset), {
+      CHECK_ERR(xrtBOSync(xrtBuffer, XCL_BO_SYNC_BO_TO_DEVICE, xfer_size, bo_offset), {
         dump_xrt_error(xrtDevice_, err);
         return err;
       });
 #endif
+
+      dev_addr += xfer_size;
+      host_ptr += xfer_size;
+      remaining -= xfer_size;
     }
     shm_.record_upload(size);
     shm_.set_state(VX_STATE_IDLE);
@@ -513,7 +584,6 @@ public:
   }
 
   int download(void *dest, uint64_t dev_addr, uint64_t size) {
-    shm_.set_state(VX_STATE_DOWNLOADING);
     auto host_ptr = (uint8_t *)dest;
 
     // check alignment
@@ -526,13 +596,9 @@ public:
     if (dev_addr + asize > global_mem_size_)
       return -1;
 
-    for (uint64_t end = dev_addr + asize; dev_addr < end;
-         dev_addr += CACHE_BLOCK_SIZE, host_ptr += CACHE_BLOCK_SIZE) {
-    #ifdef BANK_INTERLEAVE
-      asize = CACHE_BLOCK_SIZE;
-    #else
-      end = 0;
-    #endif
+    shm_.set_state(VX_STATE_DOWNLOADING);
+    uint64_t remaining = size;
+    while (remaining != 0) {
       uint32_t bo_index;
       uint64_t bo_offset;
       xrt_buffer_t xrtBuffer;
@@ -542,19 +608,35 @@ public:
       CHECK_ERR(this->get_buffer(bo_index, &xrtBuffer), {
         return err;
       });
+
+      uint64_t bank_size = 1ull << lg2_bank_size_;
+      uint64_t xfer_size;
+#ifdef BANK_INTERLEAVE
+      xfer_size = (remaining > CACHE_BLOCK_SIZE) ? CACHE_BLOCK_SIZE : remaining;
+#else
+      uint64_t bank_headroom = bank_size - bo_offset;
+      xfer_size = (remaining > bank_headroom) ? bank_headroom : remaining;
+#endif
+      if (xfer_size == 0)
+        return -1;
+
     #ifdef CPP_API
-      xrtBuffer.sync(XCL_BO_SYNC_BO_FROM_DEVICE, size, bo_offset);
-      xrtBuffer.read(host_ptr, size, bo_offset);
+      xrtBuffer.sync(XCL_BO_SYNC_BO_FROM_DEVICE, xfer_size, bo_offset);
+      xrtBuffer.read(host_ptr, xfer_size, bo_offset);
     #else
-      CHECK_ERR(xrtBOSync(xrtBuffer, XCL_BO_SYNC_BO_FROM_DEVICE, size, bo_offset), {
+      CHECK_ERR(xrtBOSync(xrtBuffer, XCL_BO_SYNC_BO_FROM_DEVICE, xfer_size, bo_offset), {
         dump_xrt_error(xrtDevice_, err);
         return err;
       });
-      CHECK_ERR(xrtBORead(xrtBuffer, host_ptr, size, bo_offset), {
+      CHECK_ERR(xrtBORead(xrtBuffer, host_ptr, xfer_size, bo_offset), {
         dump_xrt_error(xrtDevice_, err);
         return err;
       });
     #endif
+
+      dev_addr += xfer_size;
+      host_ptr += xfer_size;
+      remaining -= xfer_size;
     }
     shm_.record_download(size);
     shm_.set_state(VX_STATE_IDLE);
@@ -562,6 +644,12 @@ public:
   }
 
   int start(uint64_t krnl_addr, uint64_t args_addr) {
+    // Pre-flight status read
+    uint32_t status = 0;
+    CHECK_ERR(this->read_register(MMIO_CTL_ADDR, &status), {
+      return err;
+    });
+
     // set kernel info
     CHECK_ERR(this->dcr_write(VX_DCR_BASE_STARTUP_ADDR0, krnl_addr & 0xffffffff), {
       return err;
@@ -576,16 +664,27 @@ public:
       return err;
     });
 
+    // Ordering barrier:
+    // make sure all DCR writes are committed before AP_START.
+    CHECK_ERR(this->read_register(MMIO_CTL_ADDR, &status), {
+      return err;
+    });
+
     // start execution
     CHECK_ERR(this->write_register(MMIO_CTL_ADDR, CTL_AP_START), {
       return err;
     });
 
+    // Barrier after AP_START to avoid posted-write timing surprises.
+    CHECK_ERR(this->read_register(MMIO_CTL_ADDR, &status), {
+      return err;
+    });
+
     // clear mpm cache
     mpm_cache_.clear();
-
     shm_.record_kernel(krnl_addr);
     shm_.set_state(VX_STATE_RUNNING);
+
     return 0;
   }
 
@@ -616,6 +715,26 @@ public:
       nanosleep(&sleep_time, nullptr);
       timeout -= sleep_time_ms;
     };
+
+    // Runtime-only mitigation:
+    // Wait briefly for AP_IDLE and allow outstanding write path to settle
+    // before host-side download starts.
+    {
+      const struct timespec idle_poll = {0, 100000};   // 0.1ms
+      const struct timespec settle_wait = {0, 500000}; // 0.5ms
+      const uint32_t idle_retries = 200;               // up to 20ms
+      for (uint32_t i = 0; i < idle_retries; ++i) {
+        uint32_t status = 0;
+        CHECK_ERR(this->read_register(MMIO_CTL_ADDR, &status), {
+          return err;
+        });
+        bool is_idle = (status & CTL_AP_IDLE) == CTL_AP_IDLE;
+        if (is_idle)
+          break;
+        nanosleep(&idle_poll, nullptr);
+      }
+      nanosleep(&settle_wait, nullptr);
+    }
 
     shm_.set_state(VX_STATE_IDLE);
     return 0;
@@ -650,7 +769,7 @@ public:
     return 0;
   }
 
-  void smi_set_kernel_name(const char *name) {
+  void smi_set_kernel_name(const char* name) {
     shm_.set_kernel_name(name);
   }
 

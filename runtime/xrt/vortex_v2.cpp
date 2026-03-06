@@ -29,6 +29,7 @@
 #include "experimental/xrt_xclbin.h"
 #endif
 
+#include <cctype>
 #include <limits>
 #include <stdarg.h>
 #include <string>
@@ -106,6 +107,55 @@ static void dump_xrt_error(xrtDeviceHandle xrtDevice, xrtErrorCode err) {
   DBG_PRINT("[VXDRV] detail: %s!\n", buf.data());
 }
 #endif
+
+static std::string sanitize_shm_tag(const std::string& value) {
+  std::string out;
+  out.reserve(value.size());
+  for (char c : value) {
+    if (std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '-') {
+      out.push_back(c);
+    } else {
+      out.push_back('_');
+    }
+  }
+  return out;
+}
+
+static bool is_xrt_emulation() {
+#ifdef XRTSIM
+  return true;
+#else
+  const char* emu_mode = getenv("XCL_EMULATION_MODE");
+  return emu_mode != nullptr && emu_mode[0] != '\0';
+#endif
+}
+
+static void get_xrt_shm_path_policy(
+  int device_index,
+  const std::string& device_bdf,
+  std::string* shm_path,
+  bool* unlink_on_close) {
+  const bool emulation = is_xrt_emulation();
+  const char* forced_shm_path = getenv("VORTEX_SHM_PATH");
+  if (forced_shm_path != nullptr && forced_shm_path[0] != '\0') {
+    *shm_path = forced_shm_path;
+    *unlink_on_close = emulation;
+    return;
+  }
+
+  if (emulation) {
+    *shm_path = "/dev/shm/vortex_status_xrt_emu_uid_" + std::to_string(getuid());
+    *unlink_on_close = true;
+    return;
+  }
+
+  auto tag = sanitize_shm_tag(device_bdf);
+  if (tag.empty()) {
+    tag = "idx_" + std::to_string(device_index);
+  }
+  *shm_path = "/dev/shm/vortex_status_xrt_bdf_" + tag;
+  *unlink_on_close = false;
+}
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -190,6 +240,8 @@ public:
       xlbin_path_s = DEFAULT_XCLBIN_PATH;
     }
 
+    std::string device_bdf;
+
   #ifdef CPP_API
 
     auto xrtDevice = xrt::device(device_index);
@@ -197,6 +249,7 @@ public:
     auto xrtKernel = xrt::ip(xrtDevice, uuid, KERNEL_NAME);
     auto xclbin = xrt::xclbin(xlbin_path_s);
     auto device_name = xrtDevice.get_info<xrt::info::device::name>();
+    device_bdf = xrtDevice.get_info<xrt::info::device::bdf>();
 
   #else
 
@@ -232,6 +285,7 @@ public:
     std::vector<char> sz_device_name(device_name_size);
     xrtXclbinGetXSAName(xrtDevice, sz_device_name.data(), device_name_size, nullptr);
     std::string device_name(sz_device_name.data(), device_name_size);
+    device_bdf = "idx_" + std::to_string(device_index);
 
   #endif
 
@@ -341,7 +395,12 @@ public:
   #endif
 
     // --- vortex-smi: initialize shared memory status ---
-    if (shm_.open()) {
+    std::string shm_path;
+    bool shm_unlink_on_close;
+    get_xrt_shm_path_policy(device_index, device_bdf, &shm_path, &shm_unlink_on_close);
+    DBG_PRINT("[VXDRV] status shm: path=%s, unlink_on_close=%d\n",
+              shm_path.c_str(), shm_unlink_on_close ? 1 : 0);
+    if (shm_.open(shm_path, shm_unlink_on_close)) {
       uint64_t ncores, nwarps, nthreads;
       this->get_caps(VX_CAPS_NUM_CORES, &ncores);
       this->get_caps(VX_CAPS_NUM_WARPS, &nwarps);
@@ -555,13 +614,8 @@ public:
     DBG_PRINT("[VXDRV-DIAG] upload: dev_addr=0x%lx, size=0x%lx (%lu), asize=0x%lx\n",
            dev_addr, size, size, asize);
 
-    for (uint64_t end = dev_addr + asize; dev_addr < end;
-         dev_addr += CACHE_BLOCK_SIZE, host_ptr += CACHE_BLOCK_SIZE) {
-    #ifdef BANK_INTERLEAVE
-      asize = CACHE_BLOCK_SIZE;
-    #else
-      end = 0;
-    #endif
+    uint64_t remaining = size;
+    while (remaining != 0) {
       uint32_t bo_index;
       uint64_t bo_offset;
       xrt_buffer_t xrtBuffer;
@@ -574,10 +628,18 @@ public:
 
       // [DIAG] Check for bank overflow
       uint64_t bank_size = 1ull << lg2_bank_size_;
-      uint64_t xfer_size = size;  // NOTE: current code uses 'size', not chunk
-    #ifdef BANK_INTERLEAVE
-      xfer_size = CACHE_BLOCK_SIZE;
-    #endif
+      uint64_t xfer_size;
+#ifdef BANK_INTERLEAVE
+      xfer_size = (remaining > CACHE_BLOCK_SIZE) ? CACHE_BLOCK_SIZE : remaining;
+#else
+      uint64_t bank_headroom = bank_size - bo_offset;
+      xfer_size = (remaining > bank_headroom) ? bank_headroom : remaining;
+#endif
+      if (xfer_size == 0) {
+        fprintf(stderr, "[VXDRV] Error: zero-size upload chunk (addr=0x%lx, bank=%u, off=0x%lx)\n",
+                dev_addr, bo_index, bo_offset);
+        return -1;
+      }
       if (bo_offset + xfer_size > bank_size) {
         DBG_PRINT("[VXDRV-DIAG] *** UPLOAD BANK OVERFLOW: bank=%u, bo_offset=0x%lx, xfer_size=0x%lx, bank_size=0x%lx, overflow=0x%lx ***\n",
                bo_index, bo_offset, xfer_size, bank_size, (bo_offset + xfer_size) - bank_size);
@@ -588,18 +650,21 @@ public:
 
     #ifdef CPP_API
       fflush(stdout);  // flush before DMA that could hang
-      xrtBuffer.write(host_ptr, size, bo_offset);
-      xrtBuffer.sync(XCL_BO_SYNC_BO_TO_DEVICE, size, bo_offset);
+      xrtBuffer.write(host_ptr, xfer_size, bo_offset);
+      xrtBuffer.sync(XCL_BO_SYNC_BO_TO_DEVICE, xfer_size, bo_offset);
     #else
-      CHECK_ERR(xrtBOWrite(xrtBuffer, host_ptr, size, bo_offset), {
+      CHECK_ERR(xrtBOWrite(xrtBuffer, host_ptr, xfer_size, bo_offset), {
         dump_xrt_error(xrtDevice_, err);
         return err;
       });
-      CHECK_ERR(xrtBOSync(xrtBuffer, XCL_BO_SYNC_BO_TO_DEVICE, size, bo_offset), {
+      CHECK_ERR(xrtBOSync(xrtBuffer, XCL_BO_SYNC_BO_TO_DEVICE, xfer_size, bo_offset), {
         dump_xrt_error(xrtDevice_, err);
         return err;
       });
 #endif
+      dev_addr += xfer_size;
+      host_ptr += xfer_size;
+      remaining -= xfer_size;
     }
     shm_.record_upload(size);
     shm_.set_state(VX_STATE_IDLE);
@@ -624,13 +689,8 @@ public:
     DBG_PRINT("[VXDRV-DIAG] download: dev_addr=0x%lx, size=0x%lx (%lu), asize=0x%lx\n",
            dev_addr, size, size, asize);
 
-    for (uint64_t end = dev_addr + asize; dev_addr < end;
-         dev_addr += CACHE_BLOCK_SIZE, host_ptr += CACHE_BLOCK_SIZE) {
-    #ifdef BANK_INTERLEAVE
-      asize = CACHE_BLOCK_SIZE;
-    #else
-      end = 0;
-    #endif
+    uint64_t remaining = size;
+    while (remaining != 0) {
       uint32_t bo_index;
       uint64_t bo_offset;
       xrt_buffer_t xrtBuffer;
@@ -643,28 +703,39 @@ public:
 
       // [DIAG] Check for bank overflow
       uint64_t bank_size = 1ull << lg2_bank_size_;
-      uint64_t xfer_size = size;
-    #ifdef BANK_INTERLEAVE
-      xfer_size = CACHE_BLOCK_SIZE;
-    #endif
+      uint64_t xfer_size;
+#ifdef BANK_INTERLEAVE
+      xfer_size = (remaining > CACHE_BLOCK_SIZE) ? CACHE_BLOCK_SIZE : remaining;
+#else
+      uint64_t bank_headroom = bank_size - bo_offset;
+      xfer_size = (remaining > bank_headroom) ? bank_headroom : remaining;
+#endif
+      if (xfer_size == 0) {
+        fprintf(stderr, "[VXDRV] Error: zero-size download chunk (addr=0x%lx, bank=%u, off=0x%lx)\n",
+                dev_addr, bo_index, bo_offset);
+        return -1;
+      }
       if (bo_offset + xfer_size > bank_size) {
         DBG_PRINT("[VXDRV-DIAG] *** DOWNLOAD BANK OVERFLOW: bank=%u, bo_offset=0x%lx, xfer_size=0x%lx, bank_size=0x%lx, overflow=0x%lx ***\n",
                bo_index, bo_offset, xfer_size, bank_size, (bo_offset + xfer_size) - bank_size);
       }
 
     #ifdef CPP_API
-      xrtBuffer.sync(XCL_BO_SYNC_BO_FROM_DEVICE, size, bo_offset);
-      xrtBuffer.read(host_ptr, size, bo_offset);
+      xrtBuffer.sync(XCL_BO_SYNC_BO_FROM_DEVICE, xfer_size, bo_offset);
+      xrtBuffer.read(host_ptr, xfer_size, bo_offset);
     #else
-      CHECK_ERR(xrtBOSync(xrtBuffer, XCL_BO_SYNC_BO_FROM_DEVICE, size, bo_offset), {
+      CHECK_ERR(xrtBOSync(xrtBuffer, XCL_BO_SYNC_BO_FROM_DEVICE, xfer_size, bo_offset), {
         dump_xrt_error(xrtDevice_, err);
         return err;
       });
-      CHECK_ERR(xrtBORead(xrtBuffer, host_ptr, size, bo_offset), {
+      CHECK_ERR(xrtBORead(xrtBuffer, host_ptr, xfer_size, bo_offset), {
         dump_xrt_error(xrtDevice_, err);
         return err;
       });
     #endif
+      dev_addr += xfer_size;
+      host_ptr += xfer_size;
+      remaining -= xfer_size;
     }
     shm_.record_download(size);
     shm_.set_state(VX_STATE_IDLE);
@@ -963,14 +1034,8 @@ public:
 
       bool ap_done  = (status & CTL_AP_DONE)  != 0;
       bool ap_idle  = (status & CTL_AP_IDLE)  != 0;
-      printf("[VXDRV-DIAG] ready_wait: poll #%u, status=0x%x [start=%d done=%d idle=%d ready=%d]\n",
-             poll_count, status,
-             (status & CTL_AP_START) != 0,
-             ap_done,
-             ap_idle,
-             (status & CTL_AP_READY) != 0);
-       fflush(stdout);
-      if (ap_done || ap_idle) 
+
+      if (ap_done)
         break;
 
       // Track if status is changing (progress detection)
@@ -1189,7 +1254,11 @@ private:
         return -1;
       });
     #endif
-      xrtBuffers_.insert({bank_id, {xrtBuffer, 1}});
+      // pBuf!=nullptr path can be reached by upload/download on a secondary
+      // bank of a cross-bank transfer. Keep refcount at 0 in that case to
+      // avoid leaking logical references.
+      uint32_t init_count = (pBuf != nullptr) ? 0 : 1;
+      xrtBuffers_.insert({bank_id, {xrtBuffer, init_count}});
       if (pBuf) {
         *pBuf = xrtBuffer;
       }
