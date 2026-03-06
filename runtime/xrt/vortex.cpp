@@ -48,14 +48,6 @@ using namespace vortex;
 
 // #define BANK_INTERLEAVE
 
-// Debug print macro: enabled only when compiled with -DDEBUG_XRT
-// Usage: DEBUG_XRT=1 make -C runtime/xrt
-#ifdef DEBUG_XRT
-#define DBG_PRINT(...) printf(__VA_ARGS__)
-#else
-#define DBG_PRINT(...) ((void)0)
-#endif
-
 #define MMIO_CTL_ADDR 0x00
 #define MMIO_DEV_ADDR 0x10
 #define MMIO_ISA_ADDR 0x18
@@ -93,7 +85,7 @@ typedef xrtBufferHandle xrt_buffer_t;
 #define CHECK_HANDLE(handle, _expr, _cleanup)                                  \
   auto handle = _expr;                                                         \
   if (handle == nullptr) {                                                     \
-    DBG_PRINT("[VXDRV] Error: '%s' returned NULL!\n", #_expr);                    \
+    printf("[VXDRV] Error: '%s' returned NULL!\n", #_expr);                    \
     _cleanup                                                                   \
   }
 
@@ -103,7 +95,7 @@ static void dump_xrt_error(xrtDeviceHandle xrtDevice, xrtErrorCode err) {
   xrtErrorGetString(xrtDevice, err, nullptr, 0, &len);
   std::vector<char> buf(len);
   xrtErrorGetString(xrtDevice, err, buf.data(), buf.size(), nullptr);
-  DBG_PRINT("[VXDRV] detail: %s!\n", buf.data());
+  printf("[VXDRV] detail: %s!\n", buf.data());
 }
 #endif
 
@@ -120,21 +112,9 @@ public:
     , xrtDevice_(nullptr)
     , xrtKernel_(nullptr)
   #endif
-    , kernel_timeout_ms_(0)
-    , max_retries_(0)
-    , inter_kernel_delay_us_(0)
-    , kernel_history_avg_ms_(0)
-    , kernel_history_count_(0)
-    , total_kernel_launches_(0)
-    , total_kernel_hangs_(0)
-    , last_krnl_addr_(0)
-    , last_args_addr_(0)
   {}
 
   ~vx_device() {
-    // Send AP_RESET to leave FPGA in clean state for next user
-    this->write_register(MMIO_CTL_ADDR, CTL_AP_RESET);
-    DBG_PRINT("[VXDRV-DIAG] ~vx_device: sent AP_RESET to FPGA\n");
     shm_.close();
   #ifdef SCOPE
     vx_scope_stop(this);
@@ -157,28 +137,6 @@ public:
   }
 
   int init() {
-    // Disable stdout buffering so all diagnostic output is visible even on hang
-    setbuf(stdout, NULL);
-
-    // --- Hang-prevention configuration via environment variables ---
-    // VXDRV_KERNEL_TIMEOUT_MS: Hard timeout per kernel (0 = adaptive, default=10000)
-    //   - If 0: uses adaptive timeout based on kernel execution history
-    //   - If >0: fixed timeout in ms
-    // VXDRV_MAX_RETRIES: How many times to retry a hung kernel (default=3)
-    // VXDRV_INTER_KERNEL_DELAY_US: Microseconds to wait between kernels (default=0)
-    {
-      const char *s;
-      s = getenv("VXDRV_KERNEL_TIMEOUT_MS");
-      kernel_timeout_ms_ = s ? (uint64_t)atoll(s) : 10000;  // default 10s
-      s = getenv("VXDRV_MAX_RETRIES");
-      max_retries_ = s ? (uint32_t)atoi(s) : 3;
-      s = getenv("VXDRV_INTER_KERNEL_DELAY_US");
-      inter_kernel_delay_us_ = s ? (uint64_t)atoll(s) : 0;
-      DBG_PRINT("[VXDRV] Hang-prevention config: timeout=%lu ms (0=adaptive), "
-             "max_retries=%u, inter_kernel_delay=%lu us\n",
-             kernel_timeout_ms_, max_retries_, inter_kernel_delay_us_);
-    }
-
     int device_index = DEFAULT_DEVICE_INDEX;
     const char *device_index_s = getenv("XRT_DEVICE_INDEX");
     if (device_index_s != nullptr) {
@@ -268,24 +226,7 @@ public:
 
     global_mem_size_ = num_banks * bank_size;
 
-    DBG_PRINT("info: device name=%s, memory_capacity=0x%lx bytes, memory_banks=%ld.\n", device_name.c_str(), global_mem_size_, num_banks);
-
-    // [DIAG] Memory size comparison: HW reported vs SW allocator
-    DBG_PRINT("[VXDRV-DIAG] HW global_mem_size=0x%lx (%lu MiB), GLOBAL_MEM_SIZE=0x%lx (%lu MiB), allocator_capacity=0x%lx (%lu MiB)\n",
-           global_mem_size_, global_mem_size_ >> 20,
-           (uint64_t)GLOBAL_MEM_SIZE, (uint64_t)GLOBAL_MEM_SIZE >> 20,
-           (uint64_t)(GLOBAL_MEM_SIZE - ALLOC_BASE_ADDR), (uint64_t)(GLOBAL_MEM_SIZE - ALLOC_BASE_ADDR) >> 20);
-    if (global_mem_size_ > GLOBAL_MEM_SIZE) {
-      DBG_PRINT("[VXDRV-DIAG] *** WARNING: HW reports more memory (0x%lx) than SW allocator limit (0x%lx). %lu MiB inaccessible! ***\n",
-             global_mem_size_, (uint64_t)GLOBAL_MEM_SIZE, (global_mem_size_ - GLOBAL_MEM_SIZE) >> 20);
-    }
-    DBG_PRINT("[VXDRV-DIAG] bank_size=0x%lx (%lu MiB), num_banks=%lu, lg2_bank_size=%u, lg2_num_banks=%u\n",
-           bank_size, bank_size >> 20, num_banks, lg2_bank_size_, lg2_num_banks_);
-  #ifdef BANK_INTERLEAVE
-    DBG_PRINT("[VXDRV-DIAG] Mode: BANK_INTERLEAVE (cache-line striping across banks)\n");
-  #else
-    DBG_PRINT("[VXDRV-DIAG] Mode: NON-INTERLEAVE (contiguous per-bank). Check HW PLATFORM_MEMORY_INTERLEAVE!\n");
-  #endif
+    printf("info: device name=%s, memory_capacity=0x%lx bytes, memory_banks=%ld.\n", device_name.c_str(), global_mem_size_, num_banks);
 
   #ifdef BANK_INTERLEAVE
     xrtBuffers_.reserve(num_banks);
@@ -298,7 +239,7 @@ public:
       });
       xrtBuffers_.push_back(xrtBuffer);
     #endif
-      DBG_PRINT("*** allocated bank%u/%u, size=%lu\n", i, num_banks, bank_size);
+      printf("*** allocated bank%u/%u, size=%lu\n", i, num_banks, bank_size);
     }
   #endif
 
@@ -406,21 +347,6 @@ public:
     CHECK_ERR(global_mem_.allocate(asize, &addr), {
       return err;
     });
-
-#ifdef DEBUG_XRT
-    // [DIAG] Check if allocation crosses a bank boundary
-    {
-      uint64_t bank_size = 1ull << lg2_bank_size_;
-      uint32_t start_bank = (uint32_t)(addr >> lg2_bank_size_);
-      uint32_t end_bank   = (uint32_t)((addr + asize - 1) >> lg2_bank_size_);
-      DBG_PRINT("[VXDRV-DIAG] mem_alloc: addr=0x%lx, size=0x%lx, asize=0x%lx, bank=%u, offset_in_bank=0x%lx\n",
-             addr, size, asize, start_bank, addr & (bank_size - 1));
-      if (start_bank != end_bank) {
-        DBG_PRINT("[VXDRV-DIAG] *** CROSS-BANK ALLOC: addr=0x%lx..0x%lx spans bank %u to %u! (bank_size=0x%lx) ***\n",
-               addr, addr + asize - 1, start_bank, end_bank, bank_size);
-      }
-    }
-#endif
   #ifndef BANK_INTERLEAVE
     uint32_t bank_id;
     CHECK_ERR(this->get_bank_info(addr, &bank_id, nullptr), {
@@ -485,11 +411,11 @@ public:
     if (it != xrtBuffers_.end()) {
       auto count = --it->second.count;
       if (0 == count) {
-        // Keep the BO cached instead of freeing it.
-        // Repeated alloc/free of 512MB DMA buffers causes XRT/kernel
-        // memory fragmentation and eventual allocation failures that
-        // manifest as GPU hangs after many kernel launches.
-        DBG_PRINT("bank%d: refcount=0, keeping BO cached\n", bank_id);
+        printf("freeing bank%d...\n", bank_id);
+      #ifndef CPP_API
+        xrtBOFree(it->second.xrtBuffer);
+      #endif
+        xrtBuffers_.erase(it);
       }
     } else {
       fprintf(stderr, "[VXDRV] Error: invalid device memory address: 0x%lx\n",
@@ -551,10 +477,6 @@ public:
     if (dev_addr + asize > global_mem_size_)
       return -1;
 
-    // [DIAG] Upload entry
-    DBG_PRINT("[VXDRV-DIAG] upload: dev_addr=0x%lx, size=0x%lx (%lu), asize=0x%lx\n",
-           dev_addr, size, size, asize);
-
     for (uint64_t end = dev_addr + asize; dev_addr < end;
          dev_addr += CACHE_BLOCK_SIZE, host_ptr += CACHE_BLOCK_SIZE) {
     #ifdef BANK_INTERLEAVE
@@ -571,23 +493,7 @@ public:
       CHECK_ERR(this->get_buffer(bo_index, &xrtBuffer), {
         return err;
       });
-
-      // [DIAG] Check for bank overflow
-      uint64_t bank_size = 1ull << lg2_bank_size_;
-      uint64_t xfer_size = size;  // NOTE: current code uses 'size', not chunk
-    #ifdef BANK_INTERLEAVE
-      xfer_size = CACHE_BLOCK_SIZE;
-    #endif
-      if (bo_offset + xfer_size > bank_size) {
-        DBG_PRINT("[VXDRV-DIAG] *** UPLOAD BANK OVERFLOW: bank=%u, bo_offset=0x%lx, xfer_size=0x%lx, bank_size=0x%lx, overflow=0x%lx ***\n",
-               bo_index, bo_offset, xfer_size, bank_size, (bo_offset + xfer_size) - bank_size);
-      } else {
-        DBG_PRINT("[VXDRV-DIAG] upload chunk: bank=%u, bo_offset=0x%lx, xfer_size=0x%lx, headroom=0x%lx\n",
-               bo_index, bo_offset, xfer_size, bank_size - (bo_offset + xfer_size));
-      }
-
     #ifdef CPP_API
-      fflush(stdout);  // flush before DMA that could hang
       xrtBuffer.write(host_ptr, size, bo_offset);
       xrtBuffer.sync(XCL_BO_SYNC_BO_TO_DEVICE, size, bo_offset);
     #else
@@ -620,10 +526,6 @@ public:
     if (dev_addr + asize > global_mem_size_)
       return -1;
 
-    // [DIAG] Download entry
-    DBG_PRINT("[VXDRV-DIAG] download: dev_addr=0x%lx, size=0x%lx (%lu), asize=0x%lx\n",
-           dev_addr, size, size, asize);
-
     for (uint64_t end = dev_addr + asize; dev_addr < end;
          dev_addr += CACHE_BLOCK_SIZE, host_ptr += CACHE_BLOCK_SIZE) {
     #ifdef BANK_INTERLEAVE
@@ -640,18 +542,6 @@ public:
       CHECK_ERR(this->get_buffer(bo_index, &xrtBuffer), {
         return err;
       });
-
-      // [DIAG] Check for bank overflow
-      uint64_t bank_size = 1ull << lg2_bank_size_;
-      uint64_t xfer_size = size;
-    #ifdef BANK_INTERLEAVE
-      xfer_size = CACHE_BLOCK_SIZE;
-    #endif
-      if (bo_offset + xfer_size > bank_size) {
-        DBG_PRINT("[VXDRV-DIAG] *** DOWNLOAD BANK OVERFLOW: bank=%u, bo_offset=0x%lx, xfer_size=0x%lx, bank_size=0x%lx, overflow=0x%lx ***\n",
-               bo_index, bo_offset, xfer_size, bank_size, (bo_offset + xfer_size) - bank_size);
-      }
-
     #ifdef CPP_API
       xrtBuffer.sync(XCL_BO_SYNC_BO_FROM_DEVICE, size, bo_offset);
       xrtBuffer.read(host_ptr, size, bo_offset);
@@ -671,171 +561,25 @@ public:
     return 0;
   }
 
-  // =========================================================================
-  // MMIO Read Validation: detect PCIe link errors and transient glitches
-  // =========================================================================
-  int read_register_validated(uint32_t addr, uint32_t *value) {
-    uint32_t val1 = 0, val2 = 0;
-    CHECK_ERR(this->read_register(addr, &val1), { return err; });
-
-    // Check 1: 0xFFFFFFFF typically means PCIe link is dead
-    if (val1 == 0xFFFFFFFF) {
-      // Retry once after short delay before declaring dead
-      struct timespec tiny = {0, 1000000}; // 1ms
-      nanosleep(&tiny, nullptr);
-      CHECK_ERR(this->read_register(addr, &val2), { return err; });
-      if (val2 == 0xFFFFFFFF) {
-        DBG_PRINT("[VXDRV] *** FATAL: MMIO read returns 0xFFFFFFFF — PCIe link may be dead! ***\n");
-        fflush(stdout);
-        *value = val2;
-        return -1;  // Signal unrecoverable error
-      }
-      DBG_PRINT("[VXDRV] WARNING: transient 0xFFFFFFFF on MMIO read, retry got 0x%x\n", val2);
-      *value = val2;
-      return 0;
-    }
-
-    // Check 2: Double-read for consistency on AP_CTRL (bits should be stable)
-    // Only do this occasionally to avoid performance impact
-    // (every 1000th read or when status looks suspicious)
-    bool suspicious = (val1 & 0xFFFFFF00) != 0;  // upper bits should be 0
-    if (suspicious) {
-      CHECK_ERR(this->read_register(addr, &val2), { return err; });
-      if (val1 != val2) {
-        DBG_PRINT("[VXDRV] WARNING: MMIO read inconsistency! first=0x%x, second=0x%x (using second)\n", val1, val2);
-        *value = val2;
-        return 0;
-      }
-    }
-
-    *value = val1;
-    return 0;
-  }
-
-  // =========================================================================
-  // AP_RESET + IDLE verification helper
-  // =========================================================================
-  int force_hw_reset() {
-    DBG_PRINT("[VXDRV] Forcing AP_RESET...\n");
-    fflush(stdout);
-    CHECK_ERR(this->write_register(MMIO_CTL_ADDR, CTL_AP_RESET), { return err; });
-    struct timespec rst_wait = {0, 50000000}; // 50ms
-    nanosleep(&rst_wait, nullptr);
-
-    uint32_t post = 0;
-    CHECK_ERR(this->read_register(MMIO_CTL_ADDR, &post), { return err; });
-    DBG_PRINT("[VXDRV] After AP_RESET: status=0x%x [idle=%d]\n", post, (post & CTL_AP_IDLE) != 0);
-    fflush(stdout);
-
-    if (!(post & CTL_AP_IDLE)) {
-      // Escalated reset: wait longer
-      DBG_PRINT("[VXDRV] WARNING: not IDLE after 50ms, waiting 500ms...\n");
-      struct timespec long_wait = {0, 500000000}; // 500ms
-      nanosleep(&long_wait, nullptr);
-      CHECK_ERR(this->read_register(MMIO_CTL_ADDR, &post), { return err; });
-      if (!(post & CTL_AP_IDLE)) {
-        DBG_PRINT("[VXDRV] *** CRITICAL: HW refuses to IDLE after escalated reset! status=0x%x ***\n", post);
-        return -1;
-      }
-    }
-    return 0;
-  }
-
-  // =========================================================================
-  // Compute effective timeout for this kernel launch
-  // =========================================================================
-  uint64_t compute_effective_timeout() {
-    if (kernel_timeout_ms_ > 0) {
-      return kernel_timeout_ms_;  // User-specified fixed timeout
-    }
-    // Adaptive: 200x average latency, minimum 5000ms, maximum 60000ms
-    if (kernel_history_count_ > 0) {
-      uint64_t adaptive = (uint64_t)(kernel_history_avg_ms_ * 200.0);
-      if (adaptive < 5000) adaptive = 5000;
-      if (adaptive > 60000) adaptive = 60000;
-      return adaptive;
-    }
-    return 10000;  // First kernel: default 10s
-  }
-
-  // =========================================================================
-  // Update kernel latency history (exponential moving average)
-  // =========================================================================
-  void record_kernel_latency(uint64_t latency_ms) {
-    if (kernel_history_count_ == 0) {
-      kernel_history_avg_ms_ = (double)latency_ms;
-    } else {
-      // EMA with alpha=0.1: gives weight to recent but smooths transients
-      double alpha = 0.1;
-      kernel_history_avg_ms_ = alpha * latency_ms + (1.0 - alpha) * kernel_history_avg_ms_;
-    }
-    kernel_history_count_++;
-  }
-
-  // =========================================================================
-  // Internal: single launch attempt (no retry)
-  // =========================================================================
-  int start_once(uint64_t krnl_addr, uint64_t args_addr) {
-    // Pre-flight: verify HW is IDLE
-    {
-      uint32_t pre_status = 0;
-      CHECK_ERR(this->read_register_validated(MMIO_CTL_ADDR, &pre_status), {
-        return err;
-      });
-      DBG_PRINT("[VXDRV-DIAG] start: pre-flight status=0x%x [start=%d done=%d idle=%d ready=%d]\n",
-             pre_status,
-             (pre_status & CTL_AP_START) != 0,
-             (pre_status & CTL_AP_DONE) != 0,
-             (pre_status & CTL_AP_IDLE) != 0,
-             (pre_status & CTL_AP_READY) != 0);
-      if (!(pre_status & CTL_AP_IDLE)) {
-        DBG_PRINT("[VXDRV-DIAG] *** WARNING: HW not IDLE before start()! ***\n");
-        CHECK_ERR(this->force_hw_reset(), { return err; });
-      }
-    }
-
-    // [DIAG] Kernel launch info
-    DBG_PRINT("[VXDRV-DIAG] start: krnl_addr=0x%lx, args_addr=0x%lx\n", krnl_addr, args_addr);
-
-#ifdef DEBUG_XRT
-    // [DIAG] Verify addresses are in valid range
-    {
-      uint64_t bank_size = 1ull << lg2_bank_size_;
-      uint32_t krnl_bank = (uint32_t)(krnl_addr >> lg2_bank_size_);
-      uint32_t args_bank = (uint32_t)(args_addr >> lg2_bank_size_);
-      uint32_t num_banks = 1 << lg2_num_banks_;
-      DBG_PRINT("[VXDRV-DIAG]   krnl maps to bank=%u offset=0x%lx (non-interleave view)\n",
-             krnl_bank, krnl_addr & (bank_size - 1));
-      DBG_PRINT("[VXDRV-DIAG]   args maps to bank=%u offset=0x%lx (non-interleave view)\n",
-             args_bank, args_addr & (bank_size - 1));
-      if (krnl_bank >= num_banks) {
-        DBG_PRINT("[VXDRV-DIAG] *** WARNING: krnl_addr bank index %u >= num_banks %u ***\n", krnl_bank, num_banks);
-      }
-      if (args_bank >= num_banks) {
-        DBG_PRINT("[VXDRV-DIAG] *** WARNING: args_addr bank index %u >= num_banks %u ***\n", args_bank, num_banks);
-      }
-    }
-#endif
-
-    // set kernel info (DCR writes)
-    CHECK_ERR(this->dcr_write(VX_DCR_BASE_STARTUP_ADDR0, krnl_addr & 0xffffffff), { return err; });
-    CHECK_ERR(this->dcr_write(VX_DCR_BASE_STARTUP_ADDR1, krnl_addr >> 32), { return err; });
-    CHECK_ERR(this->dcr_write(VX_DCR_BASE_STARTUP_ARG0, args_addr & 0xffffffff), { return err; });
-    CHECK_ERR(this->dcr_write(VX_DCR_BASE_STARTUP_ARG1, args_addr >> 32), { return err; });
-
-    // Ordering barrier: read back to ensure DCR writes committed before AP_START
-    {
-      uint32_t barrier_status = 0;
-      CHECK_ERR(this->read_register(MMIO_CTL_ADDR, &barrier_status), { return err; });
-      (void)barrier_status;
-    }
+  int start(uint64_t krnl_addr, uint64_t args_addr) {
+    // set kernel info
+    CHECK_ERR(this->dcr_write(VX_DCR_BASE_STARTUP_ADDR0, krnl_addr & 0xffffffff), {
+      return err;
+    });
+    CHECK_ERR(this->dcr_write(VX_DCR_BASE_STARTUP_ADDR1, krnl_addr >> 32), {
+      return err;
+    });
+    CHECK_ERR(this->dcr_write(VX_DCR_BASE_STARTUP_ARG0, args_addr & 0xffffffff), {
+      return err;
+    });
+    CHECK_ERR(this->dcr_write(VX_DCR_BASE_STARTUP_ARG1, args_addr >> 32), {
+      return err;
+    });
 
     // start execution
-    DBG_PRINT("[VXDRV-DIAG] start: sending AP_START...\n");
-    fflush(stdout);
-    CHECK_ERR(this->write_register(MMIO_CTL_ADDR, CTL_AP_START), { return err; });
-    DBG_PRINT("[VXDRV-DIAG] start: AP_START sent, GPU now running\n");
-    fflush(stdout);
+    CHECK_ERR(this->write_register(MMIO_CTL_ADDR, CTL_AP_START), {
+      return err;
+    });
 
     // clear mpm cache
     mpm_cache_.clear();
@@ -845,91 +589,7 @@ public:
     return 0;
   }
 
-  // =========================================================================
-  // start(): launch kernel, saving addresses for potential retry in ready_wait
-  // =========================================================================
-  int start(uint64_t krnl_addr, uint64_t args_addr) {
-    total_kernel_launches_++;
-
-    // Inter-kernel cooldown: let HW settle between rapid-fire launches
-    if (inter_kernel_delay_us_ > 0 && total_kernel_launches_ > 1) {
-      usleep(inter_kernel_delay_us_);
-    }
-
-    // Save for retry in ready_wait
-    last_krnl_addr_ = krnl_addr;
-    last_args_addr_ = args_addr;
-
-    return this->start_once(krnl_addr, args_addr);
-  }
-
-  // =========================================================================
-  // ready_wait(): poll for completion with validated reads, timeout, and
-  //               automatic hang detection + retry.
-  //  Returns: 0 = success, -1 = unrecoverable failure
-  // =========================================================================
   int ready_wait(uint64_t timeout) {
-    // Override timeout with our smart timeout
-    uint64_t eff_timeout = this->compute_effective_timeout();
-    // But if caller passed a shorter timeout, respect it
-    if (timeout > 0 && timeout < eff_timeout) {
-      eff_timeout = timeout;
-    }
-
-    uint32_t attempts = 0;
-    while (attempts <= max_retries_) {
-      DBG_PRINT("[VXDRV-DIAG] ready_wait: effective_timeout=%lu ms (attempt %u/%u, history_avg=%.1f ms)\n",
-             eff_timeout, attempts + 1, max_retries_ + 1, kernel_history_avg_ms_);
-
-      int rc = this->ready_wait_once(eff_timeout);
-      if (rc == 0) {
-        return 0;  // Success
-      }
-
-      if (rc == -2) {
-        // Unrecoverable PCIe error — no point retrying
-        DBG_PRINT("[VXDRV] *** UNRECOVERABLE ERROR in ready_wait, aborting ***\n");
-        return -1;
-      }
-
-      // rc == -1: timeout/hang. Try to recover.
-      total_kernel_hangs_++;
-      DBG_PRINT("[VXDRV] *** KERNEL HANG DETECTED *** (attempt %u/%u, total_hangs=%u/%lu)\n",
-             attempts + 1, max_retries_ + 1, total_kernel_hangs_, total_kernel_launches_);
-      fflush(stdout);
-
-      if (attempts < max_retries_) {
-        DBG_PRINT("[VXDRV] Recovery: AP_RESET + re-launch kernel...\n");
-        int reset_rc = this->force_hw_reset();
-        if (reset_rc != 0) {
-          DBG_PRINT("[VXDRV] *** FATAL: AP_RESET failed during recovery! ***\n");
-          return -1;
-        }
-
-        // Progressive cooldown between retries: 1ms, 2ms, 3ms...
-        usleep(1000 * (attempts + 1));
-
-        // Re-launch the same kernel
-        int start_rc = this->start_once(last_krnl_addr_, last_args_addr_);
-        if (start_rc != 0) {
-          DBG_PRINT("[VXDRV] *** Re-launch failed (rc=%d). Aborting. ***\n", start_rc);
-          return -1;
-        }
-        DBG_PRINT("[VXDRV] Kernel re-launched, waiting again...\n");
-      }
-      attempts++;
-    }
-
-    DBG_PRINT("[VXDRV] *** GIVING UP after %u attempts. Kernel at 0x%lx is unhealable. ***\n",
-           max_retries_ + 1, last_krnl_addr_);
-    return -1;
-  }
-
-  // =========================================================================
-  // ready_wait_once(): single attempt to poll for completion
-  //  Returns: 0 = success, -1 = timeout, -2 = unrecoverable error
-  // =========================================================================
-  int ready_wait_once(uint64_t timeout) {
     struct timespec sleep_time;
   #ifndef NDEBUG
     sleep_time.tv_sec = 1;
@@ -939,109 +599,23 @@ public:
     sleep_time.tv_nsec = 1000000;
   #endif
 
+    // to milliseconds
     uint64_t sleep_time_ms = (sleep_time.tv_sec * 1000) + (sleep_time.tv_nsec / 1000000);
-
-    DBG_PRINT("[VXDRV-DIAG] ready_wait: timeout=%lu ms, poll_interval=%lu ms\n", timeout, sleep_time_ms);
-    uint64_t elapsed_ms = 0;
-    uint32_t poll_count = 0;
-#ifdef DEBUG_XRT
-    uint64_t last_report_ms = 0;
-    uint32_t last_status = 0xDEAD;  // track status changes
-    uint64_t status_unchanged_since_ms = 0;
-#endif
 
     for (;;) {
       uint32_t status = 0;
-      // Use validated read to detect PCIe errors
-      int rrc = this->read_register_validated(MMIO_CTL_ADDR, &status);
-      if (rrc != 0) {
-        DBG_PRINT("[VXDRV] *** MMIO read failed in ready_wait (rc=%d). Unrecoverable. ***\n", rrc);
-        fflush(stdout);
-        return -2;  // Unrecoverable PCIe error
-      }
-      ++poll_count;
-
-      bool ap_done  = (status & CTL_AP_DONE)  != 0;
-      bool ap_idle  = (status & CTL_AP_IDLE)  != 0;
-
-      if (ap_done)
-        break;
-
-      // Track if status is changing (progress detection)
-#ifdef DEBUG_XRT
-      if (status != last_status) {
-        last_status = status;
-        status_unchanged_since_ms = elapsed_ms;
-      }
-#endif
-
-      // [DIAG] Periodic status report (every 2s when things look stuck)
-#ifdef DEBUG_XRT
-      uint64_t report_interval = (elapsed_ms > 3000) ? 2000 : 5000;
-      if (elapsed_ms > 0 && elapsed_ms - last_report_ms >= report_interval) {
-        bool ap_start = (status & CTL_AP_START) != 0;
-        bool ap_ready = (status & CTL_AP_READY) != 0;
-        uint64_t stuck_ms = elapsed_ms - status_unchanged_since_ms;
-        DBG_PRINT("[VXDRV-DIAG] ready_wait: STILL WAITING after %lu ms (%u polls). "
-               "status=0x%x [start=%d done=%d idle=%d ready=%d], "
-               "status_unchanged=%lu ms, remaining=%lu ms\n",
-               elapsed_ms, poll_count, status,
-               ap_start, ap_done, ap_idle, ap_ready,
-               stuck_ms, timeout);
-        fflush(stdout);
-        last_report_ms = elapsed_ms;
-      }
-#endif
-
-      // [DIAG] Detect suspicious states
-      bool ap_start = (status & CTL_AP_START) != 0;
-      if (elapsed_ms > 200 && !ap_start && !ap_done && ap_idle) {
-        // GPU went IDLE without setting DONE — HW may have missed the start
-        DBG_PRINT("[VXDRV-DIAG] *** SUSPICIOUS: AP_IDLE=1 but AP_DONE=0 — "
-               "HW in IDLE without completion. Possibly missed AP_START. (status=0x%x) ***\n", status);
-        fflush(stdout);
-        // This is recoverable by the retry mechanism
-        return -1;
-      }
-
-      // Check timeout
-      if (timeout <= sleep_time_ms) {
-        DBG_PRINT("[VXDRV-DIAG] ready_wait: TIMEOUT after %lu ms (%u polls). "
-               "Last status=0x%x\n",
-               elapsed_ms, poll_count, status);
-        fflush(stdout);
-        return -1;  // Timeout — caller will handle retry
-      }
-
-      nanosleep(&sleep_time, nullptr);
-      timeout -= sleep_time_ms;
-      elapsed_ms += sleep_time_ms;
-    };
-
-    DBG_PRINT("[VXDRV-DIAG] ready_wait: AP_DONE after %lu ms (%u polls)\n", elapsed_ms, poll_count);
-    fflush(stdout);
-
-    // Record latency for adaptive timeout
-    this->record_kernel_latency(elapsed_ms);
-
-    // Verify HW reached IDLE after AP_DONE
-    for (int ack_retry = 0; ack_retry < 100; ++ack_retry) {
-      uint32_t post_status = 0;
-      CHECK_ERR(this->read_register(MMIO_CTL_ADDR, &post_status), {
+      CHECK_ERR(this->read_register(MMIO_CTL_ADDR, &status), {
         return err;
       });
-      if (post_status & CTL_AP_IDLE) {
-        DBG_PRINT("[VXDRV-DIAG] ready_wait: HW confirmed IDLE (status=0x%x) after %d extra reads\n",
-               post_status, ack_retry + 1);
+      bool is_done = (status & CTL_AP_DONE) == CTL_AP_DONE;
+      if (is_done)
         break;
+      if (0 == timeout) {
+        return -1;
       }
-      if (ack_retry == 99) {
-        DBG_PRINT("[VXDRV-DIAG] *** WARNING: HW did NOT reach IDLE after AP_DONE! status=0x%x. Forcing AP_RESET. ***\n", post_status);
-        this->force_hw_reset();
-      }
-      struct timespec ack_wait = {0, 100000}; // 0.1ms
-      nanosleep(&ack_wait, nullptr);
-    }
+      nanosleep(&sleep_time, nullptr);
+      timeout -= sleep_time_ms;
+    };
 
     shm_.set_state(VX_STATE_IDLE);
     return 0;
@@ -1094,17 +668,6 @@ private:
   uint32_t lg2_bank_size_;
   ShmStatus shm_;
 
-  // Hang-prevention state
-  uint64_t kernel_timeout_ms_;     // 0 = adaptive, >0 = fixed ms
-  uint32_t max_retries_;           // max retry count on hang
-  uint64_t inter_kernel_delay_us_; // us delay between kernels
-  double   kernel_history_avg_ms_; // EMA of kernel latencies
-  uint64_t kernel_history_count_;  // number of recorded latencies
-  uint64_t total_kernel_launches_; // lifetime launch count
-  uint32_t total_kernel_hangs_;    // lifetime hang count
-  uint64_t last_krnl_addr_;        // saved for retry
-  uint64_t last_args_addr_;        // saved for retry
-
 #ifdef BANK_INTERLEAVE
 
   std::vector<xrt_buffer_t> xrtBuffers_;
@@ -1120,7 +683,7 @@ private:
     if (pOff) {
       *pOff = offset;
     }
-    //DBG_PRINT("get_bank_info(addr=0x%lx, bank=%d, offset=0x%lx\n", addr, index, offset);
+    //printf("get_bank_info(addr=0x%lx, bank=%d, offset=0x%lx\n", addr, index, offset);
     return 0;
   }
 
@@ -1145,8 +708,8 @@ private:
     uint64_t bank_size = 1ull << lg2_bank_size_;
     uint32_t index = addr >> lg2_bank_size_;
     uint64_t offset = addr & (bank_size - 1);
-    if (index >= num_banks) {
-      fprintf(stderr, "[VXDRV] Error: address out of range: 0x%lx (bank=%u >= num_banks=%u)\n", addr, index, num_banks);
+    if (index > num_banks) {
+      fprintf(stderr, "[VXDRV] Error: address out of range: 0x%lx\n", addr);
       return -1;
     }
     if (pIdx) {
@@ -1155,7 +718,7 @@ private:
     if (pOff) {
       *pOff = offset;
     }
-    //DBG_PRINT("get_bank_info(addr=0x%lx, bank=%d, offset=0x%lx\n", addr, index, offset);
+    //printf("get_bank_info(addr=0x%lx, bank=%d, offset=0x%lx\n", addr, index, offset);
     return 0;
   }
 
@@ -1165,16 +728,11 @@ private:
       if (pBuf) {
         *pBuf = it->second.xrtBuffer;
       } else {
-        // Increment refcount (new allocation referencing this bank)
-        if (it->second.count == 0) {
-          DBG_PRINT("reactivating cached bank%d...\n", bank_id);
-        } else {
-          DBG_PRINT("reusing bank%d...\n", bank_id);
-        }
+        printf("reusing bank%d...\n", bank_id);
         ++it->second.count;
       }
     } else {
-      DBG_PRINT("allocating bank%d...\n", bank_id);
+      printf("allocating bank%d...\n", bank_id);
       uint64_t bank_size = 1ull << lg2_bank_size_;
     #ifdef CPP_API
       xrt::bo xrtBuffer(xrtDevice_, bank_size, xrt::bo::flags::normal, bank_id);
