@@ -1,0 +1,30 @@
+[build-system]
+requires = [
+    "setuptools",
+    "wheel",
+    "patchelf",
+]
+
+# NOTE: torch must be pre-installed in the environment.
+# Use ``pip install --no-build-isolation -e .`` if pip tries to
+# create an isolated build environment (which cannot find torch's
+# CMake config).
+
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "torch_vortex"
+version = "0.0.1"
+description = "PyTorch backend integration for Vortex GPGPU"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+dependencies = [
+    "torch",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Topic :: Software Development :: Libraries",
+    "Programming Language :: C++",
+    "Programming Language :: Python :: 3 :: Only",
+]
