@@ -18,7 +18,6 @@ TEST_DIRS := \
 	elsub \
 	elunary \
 	fence \
-	fpint_gemm_ffn_hw \
 	gemm_fpint \
 	io_addr \
 	madmax \

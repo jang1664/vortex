@@ -81,7 +81,9 @@ module VX_cache_wrap import VX_gpu_pkg::*; #(
 `endif
 
     VX_mem_bus_if.slave     core_bus_if [NUM_REQS],
-    VX_mem_bus_if.master    mem_bus_if [MEM_PORTS]
+    VX_mem_bus_if.master    mem_bus_if [MEM_PORTS],
+
+    output wire             cache_drain
 );
 
     `STATIC_ASSERT(NUM_BANKS == (1 << `CLOG2(NUM_BANKS)), ("invalid parameter"))
@@ -106,6 +108,40 @@ module VX_cache_wrap import VX_gpu_pkg::*; #(
         .DATA_SIZE (LINE_SIZE),
         .TAG_WIDTH (MEM_TAG_WIDTH)
     ) mem_bus_tmp_if[MEM_PORTS]();
+
+    wire [NUM_REQS-1:0] core_in_req_pending;
+    wire [NUM_REQS-1:0] core_in_rsp_pending;
+    wire [NUM_REQS-1:0] core_cache_req_pending;
+    wire [NUM_REQS-1:0] core_cache_rsp_pending;
+
+    wire [MEM_PORTS-1:0] mem_cache_req_pending;
+    wire [MEM_PORTS-1:0] mem_cache_rsp_pending;
+    wire [MEM_PORTS-1:0] mem_out_req_pending;
+    wire [MEM_PORTS-1:0] mem_out_rsp_pending;
+
+    for (genvar i = 0; i < NUM_REQS; ++i) begin : g_drain_core_pending
+        assign core_in_req_pending[i] = core_bus_if[i].req_valid;
+        assign core_in_rsp_pending[i] = core_bus_if[i].rsp_valid;
+        assign core_cache_req_pending[i] = core_bus_cache_if[i].req_valid;
+        assign core_cache_rsp_pending[i] = core_bus_cache_if[i].rsp_valid;
+    end
+
+    for (genvar i = 0; i < MEM_PORTS; ++i) begin : g_drain_mem_pending
+        assign mem_cache_req_pending[i] = mem_bus_cache_if[i].req_valid;
+        assign mem_cache_rsp_pending[i] = mem_bus_cache_if[i].rsp_valid;
+        assign mem_out_req_pending[i] = mem_bus_tmp_if[i].req_valid;
+        assign mem_out_rsp_pending[i] = mem_bus_tmp_if[i].rsp_valid;
+    end
+
+    wire wrap_core_pending = (| core_in_req_pending)
+                          || (| core_in_rsp_pending)
+                          || (| core_cache_req_pending)
+                          || (| core_cache_rsp_pending);
+
+    wire wrap_mem_pending = (| mem_cache_req_pending)
+                         || (| mem_cache_rsp_pending)
+                         || (| mem_out_req_pending)
+                         || (| mem_out_rsp_pending);
 
     if (BYPASS_ENABLE) begin : g_bypass
 
@@ -158,6 +194,7 @@ module VX_cache_wrap import VX_gpu_pkg::*; #(
     end
 
     if (PASSTHRU == 0) begin : g_cache
+        wire cache_core_drain;
 
         VX_cache #(
             .INSTANCE_ID  (INSTANCE_ID),
@@ -186,8 +223,13 @@ module VX_cache_wrap import VX_gpu_pkg::*; #(
             .cache_perf     (cache_perf),
         `endif
             .core_bus_if    (core_bus_cache_if),
-            .mem_bus_if     (mem_bus_cache_if)
+            .mem_bus_if     (mem_bus_cache_if),
+            .cache_drain    (cache_core_drain)
         );
+
+        assign cache_drain = cache_core_drain
+                          && ~wrap_core_pending
+                          && ~wrap_mem_pending;
 
     end else begin : g_passthru
 
@@ -254,6 +296,9 @@ module VX_cache_wrap import VX_gpu_pkg::*; #(
         assign cache_perf.mem_stalls   = perf_mem_stalls;
         assign cache_perf.crsp_stalls  = perf_crsp_stalls;
     `endif
+
+        assign cache_drain = ~wrap_core_pending
+                          && ~wrap_mem_pending;
 
     end
 

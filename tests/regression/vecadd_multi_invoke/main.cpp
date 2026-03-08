@@ -30,7 +30,7 @@ public:
     return "integer";
   }
   static int generate() {
-    return rand();
+    return (rand() % 65) - 32;
   }
   static bool compare(int a, int b, int index, int errors) {
     if (a != b) {
@@ -112,13 +112,30 @@ static void parse_args(int argc, char **argv) {
 }
 
 void cleanup() {
-  if (device) {
+  if (src0_buffer) {
     vx_mem_free(src0_buffer);
+    src0_buffer = nullptr;
+  }
+  if (src1_buffer) {
     vx_mem_free(src1_buffer);
+    src1_buffer = nullptr;
+  }
+  if (dst_buffer) {
     vx_mem_free(dst_buffer);
+    dst_buffer = nullptr;
+  }
+  if (krnl_buffer) {
     vx_mem_free(krnl_buffer);
+    krnl_buffer = nullptr;
+  }
+  if (args_buffer) {
     vx_mem_free(args_buffer);
+    args_buffer = nullptr;
+  }
+
+  if (device) {
     vx_dev_close(device);
+    device = nullptr;
   }
 }
 
@@ -142,22 +159,7 @@ int main(int argc, char *argv[]) {
 
   kernel_arg.num_points = num_points;
 
-  // allocate device memory
-  std::cout << "allocate device memory" << std::endl;
-  RT_CHECK(vx_mem_alloc(device, buf_size, VX_MEM_READ, &src0_buffer));
-  RT_CHECK(vx_mem_address(src0_buffer, &kernel_arg.src0_addr));
-  RT_CHECK(vx_mem_alloc(device, buf_size, VX_MEM_READ, &src1_buffer));
-  RT_CHECK(vx_mem_address(src1_buffer, &kernel_arg.src1_addr));
-  RT_CHECK(vx_mem_alloc(device, buf_size, VX_MEM_WRITE, &dst_buffer));
-  RT_CHECK(vx_mem_address(dst_buffer, &kernel_arg.dst_addr));
-
-  std::cout << "dev_src0=0x" << std::hex << kernel_arg.src0_addr << std::endl;
-  std::cout << "dev_src1=0x" << std::hex << kernel_arg.src1_addr << std::endl;
-  std::cout << "dev_dst=0x" << std::hex << kernel_arg.dst_addr << std::endl;
-
-  // Upload kernel binary (once)
-  std::cout << "Upload kernel binary" << std::endl;
-  RT_CHECK(vx_upload_kernel_file(device, kernel_file, &krnl_buffer));
+  int total_errors = 0;
 
   // allocate host buffers
   std::cout << "allocate host buffers" << std::endl;
@@ -165,7 +167,11 @@ int main(int argc, char *argv[]) {
   std::vector<TYPE> h_src1(num_points);
   std::vector<TYPE> h_dst(num_points);
 
-  int total_errors = 0;
+  // generate random data
+  // for (uint32_t i = 0; i < num_points; ++i) {
+  //   h_src0[i] = Comparator<TYPE>::generate();
+  //   h_src1[i] = Comparator<TYPE>::generate();
+  // }
 
   for (uint32_t iter = 0; iter < num_iterations; ++iter) {
     std::cout << std::dec << std::endl;
@@ -177,6 +183,28 @@ int main(int argc, char *argv[]) {
       h_src1[i] = Comparator<TYPE>::generate();
     }
 
+    // fill dst buffer to fixed pattern
+    for(uint32_t i = 0; i < num_points; ++i) {
+      h_dst[i] = 0xDEADBEEF;
+    }
+
+    // allocate device memory
+    std::cout << "allocate device memory" << std::endl;
+    RT_CHECK(vx_mem_alloc(device, buf_size, VX_MEM_READ, &src0_buffer));
+    RT_CHECK(vx_mem_address(src0_buffer, &kernel_arg.src0_addr));
+    RT_CHECK(vx_mem_alloc(device, buf_size, VX_MEM_READ, &src1_buffer));
+    RT_CHECK(vx_mem_address(src1_buffer, &kernel_arg.src1_addr));
+    RT_CHECK(vx_mem_alloc(device, buf_size, VX_MEM_READ_WRITE, &dst_buffer));
+    RT_CHECK(vx_mem_address(dst_buffer, &kernel_arg.dst_addr));
+
+    std::cout << "dev_src0=0x" << std::hex << kernel_arg.src0_addr << std::endl;
+    std::cout << "dev_src1=0x" << std::hex << kernel_arg.src1_addr << std::endl;
+    std::cout << "dev_dst=0x" << std::hex << kernel_arg.dst_addr << std::endl;
+
+    // Upload kernel binary (once)
+    std::cout << "Upload kernel binary" << std::endl;
+    RT_CHECK(vx_upload_kernel_file(device, kernel_file, &krnl_buffer));
+
     // upload source buffer0
     std::cout << "upload source buffer0" << std::endl;
     RT_CHECK(vx_copy_to_dev(src0_buffer, h_src0.data(), 0, buf_size));
@@ -187,10 +215,6 @@ int main(int argc, char *argv[]) {
 
     // upload kernel argument
     std::cout << "upload kernel argument" << std::endl;
-    if (args_buffer) {
-      vx_mem_free(args_buffer);
-      args_buffer = nullptr;
-    }
     RT_CHECK(vx_upload_bytes(device, &kernel_arg, sizeof(kernel_arg_t), &args_buffer));
 
     // start device
@@ -223,30 +247,31 @@ int main(int argc, char *argv[]) {
       std::cout << "Iteration " << (iter + 1) << ": PASSED" << std::endl;
     }
 
-    // sleep(2); // add some delay between iterations
-    // std::cout << "download destination buffer" << std::endl;
-    // RT_CHECK(vx_copy_from_dev(h_dst.data(), dst_buffer, 0, buf_size));
-    // // try one more time
-    // std::cout << "verify result" << std::endl;
-    // errors = 0;
-    // for (uint32_t i = 0; i < num_points; ++i) {
-    //   auto ref = h_src0[i] + h_src1[i];
-    //   auto cur = h_dst[i];
-    //   if (!Comparator<TYPE>::compare(cur, ref, i, errors)) {
-    //     ++errors;
-    //   }
-    // }
-
-    // if (errors != 0) {
-    //   std::cout << "Iteration " << (iter + 1) << ": Found " << std::dec << errors << " errors!" << std::endl;
-    //   total_errors += errors;
-    // } else {
-    //   std::cout << "Iteration " << (iter + 1) << ": PASSED" << std::endl;
-    // }
+    // free all device buffers for this iteration, keep device open
+    std::cout << std::endl << "free iteration buffers" << std::endl;
+    if (src0_buffer) {
+      RT_CHECK(vx_mem_free(src0_buffer));
+      src0_buffer = nullptr;
+    }
+    if (src1_buffer) {
+      RT_CHECK(vx_mem_free(src1_buffer));
+      src1_buffer = nullptr;
+    }
+    if (dst_buffer) {
+      RT_CHECK(vx_mem_free(dst_buffer));
+      dst_buffer = nullptr;
+    }
+    if (krnl_buffer) {
+      RT_CHECK(vx_mem_free(krnl_buffer));
+      krnl_buffer = nullptr;
+    }
+    if (args_buffer) {
+      RT_CHECK(vx_mem_free(args_buffer));
+      args_buffer = nullptr;
+    }
   }
 
-  // cleanup
-  std::cout << std::endl << "cleanup" << std::endl;
+  std::cout << std::endl << "cleanup device" << std::endl;
   cleanup();
 
   if (total_errors != 0) {

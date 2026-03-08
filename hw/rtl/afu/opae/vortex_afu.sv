@@ -1005,6 +1005,7 @@ module vortex_afu import ccip_if_pkg::*; import local_mem_cfg_pkg::*; import VX_
     wire vx_dcr_wr_valid = (STATE_DCR_WRITE == state);
     wire [VX_DCR_ADDR_WIDTH-1:0] vx_dcr_wr_addr = cmd_dcr_addr;
     wire [VX_DCR_DATA_WIDTH-1:0] vx_dcr_wr_data = cmd_dcr_data;
+    wire vx_cache_drain_unused;
 
     `SCOPE_IO_SWITCH (2);
 
@@ -1035,8 +1036,11 @@ module vortex_afu import ccip_if_pkg::*; import local_mem_cfg_pkg::*; import VX_
         .dcr_wr_data    (vx_dcr_wr_data),
 
         // Status
-        .busy           (vx_busy)
+        .busy           (vx_busy),
+        .cache_drain    (vx_cache_drain_unused)
     );
+
+    `UNUSED_VAR (vx_cache_drain_unused)
 
     // COUT HANDLING //////////////////////////////////////////////////////////
 

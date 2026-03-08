@@ -80,7 +80,8 @@ module Vortex_axi import VX_gpu_pkg::*; #(
     input  wire [VX_DCR_DATA_WIDTH-1:0] dcr_wr_data,
 
     // Status
-    output wire                         busy
+    output wire                         busy,
+    output wire                         cache_drain
 );
     localparam DST_LDATAW = `CLOG2(AXI_DATA_WIDTH);
     localparam SRC_LDATAW = `CLOG2(VX_MEM_DATA_WIDTH);
@@ -100,6 +101,7 @@ module Vortex_axi import VX_gpu_pkg::*; #(
     wire [VX_MEM_DATA_WIDTH-1:0]    mem_rsp_data [VX_MEM_PORTS];
     wire [VX_MEM_TAG_WIDTH-1:0]     mem_rsp_tag [VX_MEM_PORTS];
     wire                            mem_rsp_ready [VX_MEM_PORTS];
+    wire                            vortex_cache_drain;
 
     `SCOPE_IO_SWITCH (1);
 
@@ -126,7 +128,8 @@ module Vortex_axi import VX_gpu_pkg::*; #(
         .dcr_wr_addr    (dcr_wr_addr),
         .dcr_wr_data    (dcr_wr_data),
 
-        .busy           (busy)
+        .busy           (busy),
+        .cache_drain    (vortex_cache_drain)
     );
 
     wire                            mem_req_valid_a [VX_MEM_PORTS];
@@ -257,5 +260,42 @@ module Vortex_axi import VX_gpu_pkg::*; #(
         .m_axi_rid      (m_axi_rid),
         .m_axi_rresp    (m_axi_rresp)
     );
+
+    wire [VX_MEM_PORTS-1:0] mem_req_stall;
+    wire [VX_MEM_PORTS-1:0] mem_rsp_stall;
+    wire [VX_MEM_PORTS-1:0] mem_req_a_stall;
+    wire [VX_MEM_PORTS-1:0] mem_rsp_a_stall;
+
+    for (genvar i = 0; i < VX_MEM_PORTS; ++i) begin : g_drain_mem_stall
+        assign mem_req_stall[i] = mem_req_valid[i] && ~mem_req_ready[i];
+        assign mem_rsp_stall[i] = mem_rsp_valid[i] && ~mem_rsp_ready[i];
+        assign mem_req_a_stall[i] = mem_req_valid_a[i] && ~mem_req_ready_a[i];
+        assign mem_rsp_a_stall[i] = mem_rsp_valid_a[i] && ~mem_rsp_ready_a[i];
+    end
+
+    wire [AXI_NUM_BANKS-1:0] axi_aw_stall;
+    wire [AXI_NUM_BANKS-1:0] axi_w_stall;
+    wire [AXI_NUM_BANKS-1:0] axi_ar_stall;
+    wire [AXI_NUM_BANKS-1:0] axi_b_stall;
+    wire [AXI_NUM_BANKS-1:0] axi_r_stall;
+
+    for (genvar i = 0; i < AXI_NUM_BANKS; ++i) begin : g_drain_axi_stall
+        assign axi_aw_stall[i] = m_axi_awvalid[i] && ~m_axi_awready[i];
+        assign axi_w_stall[i] = m_axi_wvalid[i] && ~m_axi_wready[i];
+        assign axi_ar_stall[i] = m_axi_arvalid[i] && ~m_axi_arready[i];
+        assign axi_b_stall[i] = m_axi_bvalid[i] && ~m_axi_bready[i];
+        assign axi_r_stall[i] = m_axi_rvalid[i] && ~m_axi_rready[i];
+    end
+
+    assign cache_drain = vortex_cache_drain
+                      && ~(| mem_req_stall)
+                      && ~(| mem_rsp_stall)
+                      && ~(| mem_req_a_stall)
+                      && ~(| mem_rsp_a_stall)
+                      && ~(| axi_aw_stall)
+                      && ~(| axi_w_stall)
+                      && ~(| axi_ar_stall)
+                      && ~(| axi_b_stall)
+                      && ~(| axi_r_stall);
 
 endmodule

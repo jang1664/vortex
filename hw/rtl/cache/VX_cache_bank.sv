@@ -111,7 +111,10 @@ module VX_cache_bank import VX_gpu_pkg::*; #(
     // flush
     input wire                          flush_begin,
     input wire [`UP(UUID_WIDTH)-1:0]    flush_uuid,
-    output wire                         flush_end
+    output wire                         flush_end,
+
+    // Status
+    output wire                         drain
 );
 
     localparam PIPELINE_STAGES = 2;
@@ -238,6 +241,19 @@ module VX_cache_bank import VX_gpu_pkg::*; #(
     wire mem_rsp_fire  = mem_rsp_valid && mem_rsp_ready;
     wire flush_fire    = flush_valid && flush_ready;
     wire core_req_fire = core_req_valid && core_req_ready;
+
+    wire bank_drain_pending = init_valid
+                           || flush_valid
+                           || core_req_valid
+                           || replay_valid
+                           || mem_rsp_valid
+                           || valid_st0
+                           || valid_st1
+                           || core_rsp_valid
+                           || ~mshr_empty
+                           || ~mreq_queue_empty;
+
+    assign drain = ~bank_drain_pending;
 
     wire [MSHR_ADDR_WIDTH-1:0] mem_rsp_id = mem_rsp_tag[MSHR_ADDR_WIDTH-1:0];
 

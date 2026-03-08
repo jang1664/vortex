@@ -41,7 +41,8 @@ module Vortex import VX_gpu_pkg::*; (
     input  wire [VX_DCR_DATA_WIDTH-1:0]     dcr_wr_data,
 
     // Status
-    output wire                             busy
+    output wire                             busy,
+    output wire                             cache_drain
 );
 
 `ifdef SCOPE
@@ -71,6 +72,7 @@ module Vortex import VX_gpu_pkg::*; (
     ) mem_bus_if[`L3_MEM_PORTS]();
 
     `RESET_RELAY (l3_reset, reset);
+    wire l3_cache_drain;
 
     VX_cache_wrap #(
         .INSTANCE_ID    ("l3cache"),
@@ -103,8 +105,12 @@ module Vortex import VX_gpu_pkg::*; (
     `endif
 
         .core_bus_if    (per_cluster_mem_bus_if),
-        .mem_bus_if     (mem_bus_if)
+        .mem_bus_if     (mem_bus_if),
+        .cache_drain    (l3_cache_drain)
     );
+
+    wire [`L3_MEM_PORTS-1:0] l3_req_pending;
+    wire [`L3_MEM_PORTS-1:0] l3_rsp_pending;
 
     for (genvar i = 0; i < `L3_MEM_PORTS; ++i) begin : g_mem_bus_if
         assign mem_req_valid[i]  = mem_bus_if[i].req_valid;
@@ -120,6 +126,9 @@ module Vortex import VX_gpu_pkg::*; (
         assign mem_bus_if[i].rsp_data.data = mem_rsp_data[i];
         assign mem_bus_if[i].rsp_data.tag  = mem_rsp_tag[i];
         assign mem_rsp_ready[i] = mem_bus_if[i].rsp_ready;
+
+        assign l3_req_pending[i] = mem_bus_if[i].req_valid;
+        assign l3_rsp_pending[i] = mem_bus_if[i].rsp_valid;
     end
 
     VX_dcr_bus_if dcr_bus_if();
@@ -128,6 +137,7 @@ module Vortex import VX_gpu_pkg::*; (
     assign dcr_bus_if.write_data  = dcr_wr_data;
 
     wire [`NUM_CLUSTERS-1:0] per_cluster_busy;
+    wire [`NUM_CLUSTERS-1:0] per_cluster_cache_drain;
 
     // Generate all clusters
     for (genvar cluster_id = 0; cluster_id < `NUM_CLUSTERS; ++cluster_id) begin : g_clusters
@@ -154,11 +164,16 @@ module Vortex import VX_gpu_pkg::*; (
 
             .mem_bus_if         (per_cluster_mem_bus_if[cluster_id * `L2_MEM_PORTS +: `L2_MEM_PORTS]),
 
-            .busy               (per_cluster_busy[cluster_id])
+            .busy               (per_cluster_busy[cluster_id]),
+            .cache_drain        (per_cluster_cache_drain[cluster_id])
         );
     end
 
     `BUFFER_EX(busy, (| per_cluster_busy), 1'b1, 1, (`NUM_CLUSTERS > 1));
+    assign cache_drain = (& per_cluster_cache_drain)
+                      && l3_cache_drain
+                      && ~(| l3_req_pending)
+                      && ~(| l3_rsp_pending);
 
 `ifdef PERF_ENABLE
 
