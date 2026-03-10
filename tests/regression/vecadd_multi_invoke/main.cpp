@@ -2,9 +2,15 @@
 #include <unistd.h>
 #include <string.h>
 #include <vector>
+#include <fstream>
+#include <sstream>
+#include <iomanip>
+#include <limits>
+#include <type_traits>
+#include <cstdint>
+#include <cstdlib>
 #include <vortex.h>
 #include "common.h"
-#include <unistd.h>
 
 #define FLOAT_ULP 6
 
@@ -71,6 +77,8 @@ public:
 };
 
 const char* kernel_file = "kernel.vxbin";
+const char* input_file = nullptr;
+const char* dump_prefix = nullptr;
 uint32_t size = 16;
 uint32_t num_iterations = 3;
 
@@ -84,12 +92,14 @@ kernel_arg_t kernel_arg = {};
 
 static void show_usage() {
    std::cout << "Vortex Test." << std::endl;
-   std::cout << "Usage: [-k: kernel] [-n words] [-r iterations] [-h: help]" << std::endl;
+   std::cout << "Usage: [-k kernel] [-n words] [-r iterations] [-i input_file] [-d dump_prefix] [-h]" << std::endl;
+   std::cout << "  -i input_file : load fixed src0/src1 inputs from file (forces single iteration)" << std::endl;
+   std::cout << "  -d dump_prefix: dump per-iteration input/output files" << std::endl;
 }
 
 static void parse_args(int argc, char **argv) {
   int c;
-  while ((c = getopt(argc, argv, "n:k:r:h")) != -1) {
+  while ((c = getopt(argc, argv, "n:k:r:i:d:h")) != -1) {
     switch (c) {
     case 'n':
       size = atoi(optarg);
@@ -100,6 +110,12 @@ static void parse_args(int argc, char **argv) {
     case 'r':
       num_iterations = atoi(optarg);
       break;
+    case 'i':
+      input_file = optarg;
+      break;
+    case 'd':
+      dump_prefix = optarg;
+      break;
     case 'h':
       show_usage();
       exit(0);
@@ -109,6 +125,182 @@ static void parse_args(int argc, char **argv) {
       exit(-1);
     }
   }
+}
+
+template <typename T>
+static bool parse_value(const std::string& token, T& value) {
+  std::istringstream iss(token);
+  if constexpr (std::is_same<T, int>::value) {
+    long long temp = 0;
+    iss >> temp;
+    if (iss.fail() || !iss.eof())
+      return false;
+    if (temp < std::numeric_limits<int>::min() || temp > std::numeric_limits<int>::max())
+      return false;
+    value = static_cast<int>(temp);
+    return true;
+  } else {
+    T temp = 0;
+    iss >> temp;
+    if (iss.fail() || !iss.eof())
+      return false;
+    value = temp;
+    return true;
+  }
+}
+
+template <typename T>
+static void write_value(std::ostream& os, T value) {
+  if constexpr (std::is_floating_point<T>::value) {
+    os << std::setprecision(std::numeric_limits<T>::max_digits10) << value;
+  } else {
+    os << value;
+  }
+}
+
+template <typename T>
+static bool load_input_data(const char* path,
+                            uint32_t expected_points,
+                            std::vector<T>& src0,
+                            std::vector<T>& src1) {
+  std::ifstream ifs(path);
+  if (!ifs.is_open()) {
+    std::cerr << "Failed to open input file: " << path << std::endl;
+    return false;
+  }
+
+  std::string header;
+  if (!std::getline(ifs, header)) {
+    std::cerr << "Input file is empty: " << path << std::endl;
+    return false;
+  }
+
+  auto type_pos = header.find("TYPE=");
+  auto size_pos = header.find("SIZE=");
+  if (type_pos == std::string::npos || size_pos == std::string::npos) {
+    std::cerr << "Invalid input file header: " << header << std::endl;
+    return false;
+  }
+
+  auto type_end = header.find(' ', type_pos);
+  auto size_end = header.find(' ', size_pos);
+
+  std::string file_type = header.substr(type_pos + 5,
+    ((type_end == std::string::npos) ? header.size() : type_end) - (type_pos + 5));
+  std::string file_size_str = header.substr(size_pos + 5,
+    ((size_end == std::string::npos) ? header.size() : size_end) - (size_pos + 5));
+
+  if (file_type != Comparator<T>::type_str()) {
+    std::cerr << "Input file type mismatch: file=" << file_type
+              << ", expected=" << Comparator<T>::type_str() << std::endl;
+    return false;
+  }
+
+  char* endptr = nullptr;
+  auto file_size_ul = std::strtoul(file_size_str.c_str(), &endptr, 10);
+  if (endptr == file_size_str.c_str() || *endptr != '\0') {
+    std::cerr << "Invalid SIZE in input file header: " << file_size_str << std::endl;
+    return false;
+  }
+
+  auto file_size = static_cast<uint32_t>(file_size_ul);
+  if (file_size != expected_points) {
+    std::cerr << "Input file size mismatch: file=" << file_size
+              << ", expected=" << expected_points << std::endl;
+    return false;
+  }
+
+  src0.resize(file_size);
+  src1.resize(file_size);
+
+  uint32_t count = 0;
+  std::string line;
+  while (std::getline(ifs, line)) {
+    if (line.empty() || line[0] == '#')
+      continue;
+    if (count >= file_size) {
+      std::cerr << "Input file has too many data rows: " << path << std::endl;
+      return false;
+    }
+
+    std::istringstream iss(line);
+    std::string s0_token, s1_token, extra_token;
+    if (!(iss >> s0_token >> s1_token) || (iss >> extra_token)) {
+      std::cerr << "Invalid data row in input file: " << line << std::endl;
+      return false;
+    }
+
+    if (!parse_value<T>(s0_token, src0[count]) || !parse_value<T>(s1_token, src1[count])) {
+      std::cerr << "Failed to parse data row in input file: " << line << std::endl;
+      return false;
+    }
+
+    ++count;
+  }
+
+  if (count != file_size) {
+    std::cerr << "Input file row count mismatch: file_rows=" << count
+              << ", expected=" << file_size << std::endl;
+    return false;
+  }
+
+  return true;
+}
+
+template <typename T>
+static bool dump_input_data(const char* path,
+                            const std::vector<T>& src0,
+                            const std::vector<T>& src1) {
+  std::ofstream ofs(path);
+  if (!ofs.is_open()) {
+    std::cerr << "Failed to open dump file for input: " << path << std::endl;
+    return false;
+  }
+
+  ofs << "TYPE=" << Comparator<T>::type_str() << " SIZE=" << src0.size() << "\n";
+  for (size_t i = 0; i < src0.size(); ++i) {
+    write_value(ofs, src0[i]);
+    ofs << ' ';
+    write_value(ofs, src1[i]);
+    ofs << '\n';
+  }
+
+  return true;
+}
+
+template <typename T>
+static bool dump_output_data(const char* path,
+                             const std::vector<T>& src0,
+                             const std::vector<T>& src1,
+                             const std::vector<T>& dst) {
+  std::ofstream ofs(path);
+  if (!ofs.is_open()) {
+    std::cerr << "Failed to open dump file for output: " << path << std::endl;
+    return false;
+  }
+
+  ofs << "TYPE=" << Comparator<T>::type_str() << " SIZE=" << src0.size() << "\n";
+  ofs << "# idx src0 src1 expected actual\n";
+  for (size_t i = 0; i < src0.size(); ++i) {
+    auto ref = src0[i] + src1[i];
+    ofs << i << ' ';
+    write_value(ofs, src0[i]);
+    ofs << ' ';
+    write_value(ofs, src1[i]);
+    ofs << ' ';
+    write_value(ofs, ref);
+    ofs << ' ';
+    write_value(ofs, dst[i]);
+    ofs << '\n';
+  }
+
+  return true;
+}
+
+static std::string make_dump_path(const char* prefix, uint32_t iter, const char* kind) {
+  std::ostringstream oss;
+  oss << prefix << "_iter" << std::setw(4) << std::setfill('0') << (iter + 1) << "_" << kind << ".txt";
+  return oss.str();
 }
 
 void cleanup() {
@@ -143,6 +335,12 @@ int main(int argc, char *argv[]) {
   // parse command arguments
   parse_args(argc, argv);
 
+  if (input_file != nullptr && num_iterations != 1) {
+    std::cout << "input file mode enabled: force iterations from "
+              << num_iterations << " to 1" << std::endl;
+    num_iterations = 1;
+  }
+
   std::srand(50);
 
   // open device connection
@@ -166,6 +364,16 @@ int main(int argc, char *argv[]) {
   std::vector<TYPE> h_src0(num_points);
   std::vector<TYPE> h_src1(num_points);
   std::vector<TYPE> h_dst(num_points);
+  std::vector<TYPE> fixed_src0;
+  std::vector<TYPE> fixed_src1;
+
+  if (input_file != nullptr) {
+    std::cout << "load input data from file: " << input_file << std::endl;
+    if (!load_input_data<TYPE>(input_file, num_points, fixed_src0, fixed_src1)) {
+      cleanup();
+      return -1;
+    }
+  }
 
   // generate random data
   // for (uint32_t i = 0; i < num_points; ++i) {
@@ -177,15 +385,29 @@ int main(int argc, char *argv[]) {
     std::cout << std::dec << std::endl;
     std::cout << "=== Iteration " << (iter + 1) << " / " << num_iterations << " ===" << std::endl;
 
-    // generate random data
-    for (uint32_t i = 0; i < num_points; ++i) {
-      h_src0[i] = Comparator<TYPE>::generate();
-      h_src1[i] = Comparator<TYPE>::generate();
+    if (input_file != nullptr) {
+      h_src0 = fixed_src0;
+      h_src1 = fixed_src1;
+    } else {
+      // generate random data
+      for (uint32_t i = 0; i < num_points; ++i) {
+        h_src0[i] = Comparator<TYPE>::generate();
+        h_src1[i] = Comparator<TYPE>::generate();
+      }
     }
 
     // fill dst buffer to fixed pattern
     for(uint32_t i = 0; i < num_points; ++i) {
       h_dst[i] = 0xDEADBEEF;
+    }
+
+    if (dump_prefix != nullptr) {
+      auto input_dump_path = make_dump_path(dump_prefix, iter, "input");
+      std::cout << "dump input: " << input_dump_path << std::endl;
+      if (!dump_input_data<TYPE>(input_dump_path.c_str(), h_src0, h_src1)) {
+        cleanup();
+        return -1;
+      }
     }
 
     // allocate device memory
@@ -228,6 +450,15 @@ int main(int argc, char *argv[]) {
     // download destination buffer
     std::cout << "download destination buffer" << std::endl;
     RT_CHECK(vx_copy_from_dev(h_dst.data(), dst_buffer, 0, buf_size));
+
+    if (dump_prefix != nullptr) {
+      auto output_dump_path = make_dump_path(dump_prefix, iter, "output");
+      std::cout << "dump output: " << output_dump_path << std::endl;
+      if (!dump_output_data<TYPE>(output_dump_path.c_str(), h_src0, h_src1, h_dst)) {
+        cleanup();
+        return -1;
+      }
+    }
 
     // verify result
     std::cout << "verify result" << std::endl;

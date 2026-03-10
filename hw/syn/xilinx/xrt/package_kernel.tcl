@@ -100,6 +100,13 @@ set chipscope 0
 set num_banks 1
 set merged_mem_if 0
 
+# ILA comparator count per probe for advanced trigger.
+# Override with environment variable ILA_SAME_MU_CNT if needed.
+set ila_same_mu_cnt 2
+if {[info exists ::env(ILA_SAME_MU_CNT)]} {
+    set ila_same_mu_cnt $::env(ILA_SAME_MU_CNT)
+}
+
 # parse vdefines_list for configuration parameters
 foreach def $vdefines_list {
     set fields [split $def "="]
@@ -146,10 +153,10 @@ if { $chipscope == 1 } {
                              CONFIG.C_EN_STRG_QUAL {1} \
                              CONFIG.C_DATA_DEPTH {8192} \
                              CONFIG.C_NUM_OF_PROBES {2} \
-                             CONFIG.C_PROBE0_WIDTH {8} \
+                             CONFIG.C_PROBE0_WIDTH {10} \
                              CONFIG.C_PROBE1_WIDTH {64} \
-                             CONFIG.ALL_PROBE_SAME_MU {false} \
-                             CONFIG.ALL_PROBE_SAME_MU_CNT {2} \
+                             CONFIG.ALL_PROBE_SAME_MU {true} \
+                             CONFIG.ALL_PROBE_SAME_MU_CNT $ila_same_mu_cnt \
                         ] [get_ips ila_afu]
     generate_target {instantiation_template} [get_files ila_afu.xci]
     set_property generate_synth_checkpoint false [get_files ila_afu.xci]
@@ -162,8 +169,8 @@ if { $chipscope == 1 } {
                              CONFIG.C_PROBE0_WIDTH {40} \
                              CONFIG.C_PROBE1_WIDTH {80} \
                              CONFIG.C_PROBE2_WIDTH {40} \
-                             CONFIG.ALL_PROBE_SAME_MU {false} \
-                             CONFIG.ALL_PROBE_SAME_MU_CNT {2} \
+                             CONFIG.ALL_PROBE_SAME_MU {true} \
+                             CONFIG.ALL_PROBE_SAME_MU_CNT $ila_same_mu_cnt \
                         ] [get_ips ila_fetch]
     generate_target {instantiation_template} [get_files ila_fetch.xci]
     set_property generate_synth_checkpoint false [get_files ila_fetch.xci]
@@ -177,8 +184,8 @@ if { $chipscope == 1 } {
                              CONFIG.C_PROBE1_WIDTH {112} \
                              CONFIG.C_PROBE2_WIDTH {280} \
                              CONFIG.C_PROBE3_WIDTH {112} \
-                             CONFIG.ALL_PROBE_SAME_MU {false} \
-                             CONFIG.ALL_PROBE_SAME_MU_CNT {2} \
+                             CONFIG.ALL_PROBE_SAME_MU {true} \
+                             CONFIG.ALL_PROBE_SAME_MU_CNT $ila_same_mu_cnt \
                         ] [get_ips ila_issue]
     generate_target {instantiation_template} [get_files ila_issue.xci]
     set_property generate_synth_checkpoint false [get_files ila_issue.xci]
@@ -191,8 +198,8 @@ if { $chipscope == 1 } {
                              CONFIG.C_PROBE0_WIDTH {288} \
                              CONFIG.C_PROBE1_WIDTH {152} \
                              CONFIG.C_PROBE2_WIDTH {72} \
-                             CONFIG.ALL_PROBE_SAME_MU {false} \
-                             CONFIG.ALL_PROBE_SAME_MU_CNT {2} \
+                             CONFIG.ALL_PROBE_SAME_MU {true} \
+                             CONFIG.ALL_PROBE_SAME_MU_CNT $ila_same_mu_cnt \
                         ] [get_ips ila_lsu]
     generate_target {instantiation_template} [get_files ila_lsu.xci]
     set_property generate_synth_checkpoint false [get_files ila_lsu.xci]
