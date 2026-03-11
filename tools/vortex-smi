@@ -154,18 +154,21 @@ def candidate_shm_paths(backend="all"):
     uid = os.getuid()
     paths = []
 
+    # Primary well-known path (shared by all users, like nvidia-smi)
+    if backend in ("all", "hw"):
+        paths.append("/dev/shm/vortex_status")
+
     if backend in ("all", "simx"):
         paths.append(f"/dev/shm/vortex_status_simx_uid_{uid}")
 
     if backend in ("all", "hw_emu"):
         paths.append(f"/dev/shm/vortex_status_xrt_emu_uid_{uid}")
 
+    # Legacy per-BDF paths (for backward compatibility)
     if backend in ("all", "hw"):
         bdf_paths = sorted(glob.glob("/dev/shm/vortex_status_xrt_bdf_*"))
         if bdf_paths:
             paths.extend(bdf_paths)
-        else:
-            paths.append("/dev/shm/vortex_status_xrt_bdf_*")
 
     # stable de-dup
     return list(dict.fromkeys(paths))
