@@ -29,6 +29,7 @@
 #include <cstring>
 #include <chrono>
 #include <string>
+#include <cstdlib>
 
 class ShmStatus {
 public:
@@ -49,15 +50,23 @@ public:
     path_ = path.empty() ? VX_SHM_PATH : path;
     unlink_on_close_ = unlink_on_close;
 
+    // Suppress umask so the file is actually created with 0666 permissions,
+    // allowing any user to read/write (nvidia-smi style shared status).
+    mode_t old_umask = ::umask(0);
     fd_ = ::open(path_.c_str(), O_CREAT | O_RDWR, 0666);
+    ::umask(old_umask);
     if (fd_ < 0) {
-      fprintf(stderr, "[VXDRV] Warning: cannot create shm %s\n", path_.c_str());
+      fprintf(stderr, "[VXDRV] Warning: cannot create shm %s: %s\n",
+              path_.c_str(), strerror(errno));
       return false;
     }
-    // Ensure cross-user read/write for shared HW status regardless of creator umask.
+    // Ensure cross-user read/write in case the file already existed.
     if (::fchmod(fd_, 0666) < 0) {
-      fprintf(stderr, "[VXDRV] Warning: cannot chmod shm %s: %s\n",
-              path_.c_str(), strerror(errno));
+      // Not fatal: we may not own the file, but can still write if perms are ok.
+      if (errno != EPERM) {
+        fprintf(stderr, "[VXDRV] Warning: cannot chmod shm %s: %s\n",
+                path_.c_str(), strerror(errno));
+      }
     }
     if (ftruncate(fd_, sizeof(vx_shm_status_t)) < 0) {
       fprintf(stderr, "[VXDRV] Warning: ftruncate shm failed for %s\n", path_.c_str());
