@@ -746,6 +746,52 @@ module VX_cache_bank import VX_gpu_pkg::*; #(
     wire [`XLEN-1:0] full_addr_st2 = `CS_BANK_TO_FULL_ADDR(addr_st2, BANK_ID);
     wire [`XLEN-1:0] mreq_queue_full_addr = `CS_BANK_TO_FULL_ADDR(mreq_queue_addr, BANK_ID);
 
+    // Track write-through stores accepted from core versus stores emitted to memory.
+    // This helps detect dropped or duplicated store requests under backpressure/flush.
+    if (WRITE_ENABLE && !WRITEBACK) begin : g_wt_store_track
+        reg [31:0] wt_store_pending;
+        reg [31:0] wt_store_issue_seq;
+        reg [31:0] wt_store_emit_seq;
+
+        wire wt_store_accept = core_req_fire && core_req_rw;
+        wire wt_store_emit = mreq_queue_push && do_write_st2 && ~is_replay_st2;
+        wire [31:0] wt_store_pending_n = wt_store_pending
+                                      + (wt_store_accept ? 32'd1 : 32'd0)
+                                      - (wt_store_emit   ? 32'd1 : 32'd0);
+
+        always @(posedge clk) begin
+            if (reset) begin
+                wt_store_pending  <= 0;
+                wt_store_issue_seq <= 0;
+                wt_store_emit_seq <= 0;
+            end else begin
+                if (wt_store_emit && (wt_store_pending == 0)) begin
+                    $error("%t: *** %s wt-store underflow: mreq_addr=0x%0h, mreq_tag=0x%0h, core_tag_st2=0x%0h",
+                        $time, INSTANCE_ID, mreq_queue_full_addr, mreq_queue_tag, tag_st2);
+                end
+
+                wt_store_pending <= wt_store_pending_n;
+
+                if (wt_store_accept) begin
+                    wt_store_issue_seq <= wt_store_issue_seq + 1;
+                    `TRACE(2, ("%t: %s wt-store-accept: seq=%0d, addr=0x%0h, tag=0x%0h, pending=%0d\n",
+                        $time, INSTANCE_ID, wt_store_issue_seq, core_req_full_addr, core_req_tag, wt_store_pending_n))
+                end
+
+                if (wt_store_emit) begin
+                    wt_store_emit_seq <= wt_store_emit_seq + 1;
+                    `TRACE(2, ("%t: %s wt-store-emit: seq=%0d, addr=0x%0h, mreq_tag=0x%0h, pending=%0d\n",
+                        $time, INSTANCE_ID, wt_store_emit_seq, mreq_queue_full_addr, mreq_queue_tag, wt_store_pending_n))
+                end
+
+                if (drain && (wt_store_pending_n != 0)) begin
+                    $error("%t: *** %s wt-store pending at drain: pending=%0d, issue_seq=%0d, emit_seq=%0d",
+                        $time, INSTANCE_ID, wt_store_pending_n, wt_store_issue_seq, wt_store_emit_seq);
+                end
+            end
+        end
+    end
+
     always @(posedge clk) begin
         if (input_stall || pipe_stall) begin
             `TRACE(4, ("%t: *** %s stall: crsq=%b, mreq=%b, mshr=%b\n", $time, INSTANCE_ID,
