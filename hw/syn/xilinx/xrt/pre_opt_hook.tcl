@@ -6,7 +6,7 @@ source ${tool_dir}/xilinx_async_bram_patch.tcl
 # with essentially zero margin on silicon.
 # Adjust the value (in ns) as needed: 0.5ns = 500ps extra guard band.
 set setup_margin_ns 0.3
-set hold_margin_ns 0.01
+set hold_margin_ns 0.03
 foreach clk [get_clocks -quiet *kernel*] {
     set_clock_uncertainty -setup $setup_margin_ns $clk
     set_clock_uncertainty -hold $hold_margin_ns $clk
