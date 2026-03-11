@@ -319,7 +319,8 @@ module VX_cache import VX_gpu_pkg::*; #(
         };
     end
 
-    assign per_bank_core_req_fire = per_bank_core_req_valid & per_bank_mem_req_ready;
+    // assign per_bank_core_req_fire = per_bank_core_req_valid & per_bank_mem_req_ready;
+    assign per_bank_core_req_fire = per_bank_core_req_valid & per_bank_core_req_ready;
 
 `ifdef PERF_ENABLE
     wire [PERF_CTR_BITS-1:0] perf_collisions;

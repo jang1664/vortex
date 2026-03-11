@@ -31,10 +31,16 @@
     end \
     /* verilator lint_on GENUNNAMED */
 
+`ifdef VCS
+// VCS has issues with $bits() in package static assertions
+`define PACKAGE_ASSERT(cond) \
+    // Static assertion disabled for VCS compatibility
+`else
 `define PACKAGE_ASSERT(cond) \
     /* verilator lint_on UNUSED */ \
-    typedef bit [((cond) ? 0 : -1) : 0] static_assertion_at_line_`__LINE__; \
+    typedef bit [((cond) ? 0 : -1) : 0] static_assertion_at_line_```__LINE__; \
     /* verilator lint_off UNUSED */
+`endif
 
 `define ERROR(msg) \
     $error msg
@@ -135,6 +141,13 @@
 
 `define SFORMATF(x) $sformatf x
 
+`define WAIT_POSEDGE(clk, period) @(posedge clk);
+
+`define WAIT_UNTIL_POS(clk, cond) \
+  do begin \
+    @(posedge clk); \
+  end while (~(cond))
+
 `else // SYNTHESIS
 
 `define STATIC_ASSERT(cond, msg)
@@ -184,7 +197,10 @@
 `define MAX_FANOUT      8
 `define LATENCY_IMUL    3
 `define FORCE_BRAM(d,w) (((d) >= 64 || (w) >= 16 || ((d) * (w)) >= 512) && ((d) * (w)) >= 64)
+// URAM: 288Kb (4096x72), use for memories >= 256Kbits
+`define FORCE_URAM(d,w) (((d) * (w)) >= 262144)
 `define USE_BLOCK_BRAM  (* ram_style = "block" *)
+`define USE_ULTRA_BRAM  (* ram_style = "ultra" *)
 `define USE_FAST_BRAM   (* ram_style = "distributed" *)
 `define NO_RW_RAM_CHECK (* rw_addr_collision = "no" *)
 `define RW_RAM_CHECK    (* rw_addr_collision = "yes" *)
@@ -199,7 +215,9 @@
 `define MAX_FANOUT      8
 `define LATENCY_IMUL    3
 `define FORCE_BRAM(d,w) (((d) >= 64 || (w) >= 16 || ((d) * (w)) >= 512) && ((d) * (w)) >= 64)
+`define FORCE_URAM(d,w) (((d) * (w)) >= 262144)
 `define USE_BLOCK_BRAM
+`define USE_ULTRA_BRAM
 `define USE_FAST_BRAM
 `define NO_RW_RAM_CHECK
 `define RW_RAM_CHECK

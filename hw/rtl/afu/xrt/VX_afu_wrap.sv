@@ -128,10 +128,12 @@ module VX_afu_wrap import VX_gpu_pkg::*; #(
 	wire ap_ctrl_read;
 	wire ap_idle  = (state == STATE_IDLE);
 `ifdef AFU_DONE_WAIT_CACHE_DRAIN
-`if (`DCACHE_WRITEBACK == 0) && (`L2_WRITEBACK == 0) && (`L3_WRITEBACK == 0)
-	localparam USE_APDONE_CACHE_DRAIN = 1;
+    localparam USE_APDONE_CACHE_DRAIN =
+        (`DCACHE_WRITEBACK == 0) &&
+        (`L2_WRITEBACK == 0) &&
+        (`L3_WRITEBACK == 0);
 `else
-	localparam USE_APDONE_CACHE_DRAIN = 0;
+    localparam USE_APDONE_CACHE_DRAIN = 0;
 `endif
 
 	wire ap_done_base = (state == STATE_DONE) && (vx_pending_writes == '0);

@@ -335,13 +335,7 @@ int main(int argc, char *argv[]) {
   // parse command arguments
   parse_args(argc, argv);
 
-  if (input_file != nullptr && num_iterations != 1) {
-    std::cout << "input file mode enabled: force iterations from "
-              << num_iterations << " to 1" << std::endl;
-    num_iterations = 1;
-  }
-
-  std::srand(50);
+  std::srand(10);
 
   // open device connection
   std::cout << "open device connection" << std::endl;
@@ -376,30 +370,25 @@ int main(int argc, char *argv[]) {
   }
 
   // generate random data
-  // for (uint32_t i = 0; i < num_points; ++i) {
-  //   h_src0[i] = Comparator<TYPE>::generate();
-  //   h_src1[i] = Comparator<TYPE>::generate();
-  // }
+  for (uint32_t i = 0; i < num_points; ++i) {
+    h_src0[i] = Comparator<TYPE>::generate();
+    h_src1[i] = Comparator<TYPE>::generate();
+  }
 
   for (uint32_t iter = 0; iter < num_iterations; ++iter) {
     std::cout << std::dec << std::endl;
     std::cout << "=== Iteration " << (iter + 1) << " / " << num_iterations << " ===" << std::endl;
 
-    if (input_file != nullptr) {
-      h_src0 = fixed_src0;
-      h_src1 = fixed_src1;
-    } else {
-      // generate random data
-      for (uint32_t i = 0; i < num_points; ++i) {
-        h_src0[i] = Comparator<TYPE>::generate();
-        h_src1[i] = Comparator<TYPE>::generate();
-      }
-    }
-
-    // fill dst buffer to fixed pattern
-    for(uint32_t i = 0; i < num_points; ++i) {
-      h_dst[i] = 0xDEADBEEF;
-    }
+    // if (input_file != nullptr) {
+    //   h_src0 = fixed_src0;
+    //   h_src1 = fixed_src1;
+    // } else {
+    //   // generate random data
+    //   for (uint32_t i = 0; i < num_points; ++i) {
+    //     h_src0[i] = Comparator<TYPE>::generate();
+    //     h_src1[i] = Comparator<TYPE>::generate();
+    //   }
+    // }
 
     if (dump_prefix != nullptr) {
       auto input_dump_path = make_dump_path(dump_prefix, iter, "input");
@@ -423,6 +412,11 @@ int main(int argc, char *argv[]) {
     std::cout << "dev_src1=0x" << std::hex << kernel_arg.src1_addr << std::endl;
     std::cout << "dev_dst=0x" << std::hex << kernel_arg.dst_addr << std::endl;
 
+    // fill dst buffer to fixed pattern
+    for(uint32_t i = 0; i < num_points; ++i) {
+      h_dst[i] = 0xDEADBEEF;
+    }
+
     // Upload kernel binary (once)
     std::cout << "Upload kernel binary" << std::endl;
     RT_CHECK(vx_upload_kernel_file(device, kernel_file, &krnl_buffer));
@@ -435,6 +429,10 @@ int main(int argc, char *argv[]) {
     std::cout << "upload source buffer1" << std::endl;
     RT_CHECK(vx_copy_to_dev(src1_buffer, h_src1.data(), 0, buf_size));
 
+    // upload destination buffer (optional, to verify write capability and initial content doesn't affect result)
+    std::cout << "upload destination buffer" << std::endl;
+    RT_CHECK(vx_copy_to_dev(dst_buffer, h_dst.data(), 0, buf_size));
+
     // upload kernel argument
     std::cout << "upload kernel argument" << std::endl;
     RT_CHECK(vx_upload_bytes(device, &kernel_arg, sizeof(kernel_arg_t), &args_buffer));
@@ -446,6 +444,7 @@ int main(int argc, char *argv[]) {
     // wait for completion
     std::cout << "wait for completion" << std::endl;
     RT_CHECK(vx_ready_wait(device, VX_MAX_TIMEOUT));
+    usleep(1000); // ensure device has finished all memory transactions after ready
 
     // download destination buffer
     std::cout << "download destination buffer" << std::endl;
@@ -511,7 +510,7 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
-  std::cout << "All " << num_iterations << " iterations PASSED!" << std::endl;
+  std::cout << "All " << std::dec << num_iterations << " iterations PASSED!" << std::endl;
 
   return 0;
 }
