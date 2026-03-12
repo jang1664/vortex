@@ -34,7 +34,8 @@ TEST_DIRS := \
 	softmax \
 	sort \
 	stencil3d \
-	vecadd
+	vecadd \
+	vecadd_multi_invoke
 
 all:
 	@for t in $(TEST_DIRS); do \
