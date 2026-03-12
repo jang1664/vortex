@@ -99,6 +99,12 @@ if { $patched_any == 1 } {
 set chipscope 0
 set num_banks 1
 set merged_mem_if 0
+set platform_mem_id_width 32
+set dcr_addr_width 12
+set dcr_data_width 32
+set s_axi_ctrl_addr_width 8
+set s_axi_ctrl_data_width 32
+set pending_wr_sizew 12
 
 # ILA comparator count per probe for advanced trigger.
 # Override with environment variable ILA_SAME_MU_CNT if needed.
@@ -111,16 +117,39 @@ if {[info exists ::env(ILA_SAME_MU_CNT)]} {
 foreach def $vdefines_list {
     set fields [split $def "="]
     set name [lindex $fields 0]
+    set value [lindex $fields 1]
     if { $name == "CHIPSCOPE" } {
         set chipscope 1
     }
-    if { $name == "PLATFORM_MEMORY_NUM_BANKS" } {
-        set num_banks [lindex $fields 1]
+    if { $name == "PLATFORM_MEMORY_NUM_BANKS" && $value ne "" } {
+        set num_banks $value
     }
     if { $name == "PLATFORM_MERGED_MEMORY_INTERFACE" } {
         set merged_mem_if 1
     }
+    if { $name == "PLATFORM_MEMORY_ID_WIDTH" && $value ne "" } {
+        set platform_mem_id_width $value
+    }
+    if { $name == "VX_DCR_ADDR_BITS" && $value ne "" } {
+        set dcr_addr_width $value
+    }
+    if { $name == "VX_DCR_DATA_WIDTH" && $value ne "" } {
+        set dcr_data_width $value
+    }
+    if { $name == "C_S_AXI_CTRL_ADDR_WIDTH" && $value ne "" } {
+        set s_axi_ctrl_addr_width $value
+    }
+    if { $name == "C_S_AXI_CTRL_DATA_WIDTH" && $value ne "" } {
+        set s_axi_ctrl_data_width $value
+    }
 }
+
+# VX_afu_wrap.sv: ila_afu width model
+set ila_afu_probe0_width 34
+set ila_afu_probe1_width [expr {84 + (4 * $platform_mem_id_width)}]
+set ila_afu_probe2_width [expr {$pending_wr_sizew + 1 + $dcr_addr_width + $dcr_data_width + \
+                                 $s_axi_ctrl_addr_width + $s_axi_ctrl_data_width + ($s_axi_ctrl_data_width / 8) + \
+                                 $s_axi_ctrl_addr_width + $s_axi_ctrl_data_width + 2 + 2}]
 
 if { $merged_mem_if == 1 } {
     set num_banks 1
@@ -156,9 +185,10 @@ if { $chipscope == 1 } {
     set_property -dict [list CONFIG.C_ADV_TRIGGER {true} \
                              CONFIG.C_EN_STRG_QUAL {1} \
                              CONFIG.C_DATA_DEPTH {8192} \
-                             CONFIG.C_NUM_OF_PROBES {2} \
-                             CONFIG.C_PROBE0_WIDTH {10} \
-                             CONFIG.C_PROBE1_WIDTH {64} \
+                             CONFIG.C_NUM_OF_PROBES {3} \
+                             CONFIG.C_PROBE0_WIDTH $ila_afu_probe0_width \
+                             CONFIG.C_PROBE1_WIDTH $ila_afu_probe1_width \
+                             CONFIG.C_PROBE2_WIDTH $ila_afu_probe2_width \
                              CONFIG.ALL_PROBE_SAME_MU {true} \
                              CONFIG.ALL_PROBE_SAME_MU_CNT $ila_same_mu_cnt \
                         ] [get_ips ila_afu]
