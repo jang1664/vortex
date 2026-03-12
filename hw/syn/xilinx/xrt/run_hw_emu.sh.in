@@ -58,15 +58,17 @@ apply_cvfpu_xsim_patch() {
   fi
 }
 
-CONFIGS="${CONFIGS:--DFPU_FPNEW}"
+CONFIGS="${CONFIGS:-""}"
+# CONFIGS+="-DEXT_TCU_ENABLE"
+
 if [[ "${CONFIGS}" == *"-DFPU_FPNEW"* ]]; then
   apply_cvfpu_xsim_patch
 fi
 
-PREFIX="${PREFIX:-build_u55c_fpnew_denable_core1_ila_hw_emu}" \
+PREFIX="${PREFIX:-core1_ila_tcu}" \
 PLATFORM="${PLATFORM:-xilinx_u55c_gen3x16_xdma_3_202210_1}" \
 NUM_CORES="${NUM_CORES:-1}" \
 CONFIGS="${CONFIGS}" \
 TARGET=hw_emu \
 DEBUG=3 \
-make -C "${SCRIPT_DIR}" 2>&1 | tee "${LOG_FILE:-build_u55c_fpnew_denable_core1_ila_hw_emu.log}"
+make -C "${SCRIPT_DIR}" 2>&1 | tee "${LOG_FILE:-core1_ila_tcu.log}"

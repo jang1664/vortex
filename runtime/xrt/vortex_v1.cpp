@@ -141,11 +141,9 @@ static void get_xrt_shm_path_policy(
     return;
   }
 
-  auto tag = sanitize_shm_tag(device_bdf);
-  if (tag.empty()) {
-    tag = "idx_" + std::to_string(device_index);
-  }
-  *shm_path = "/dev/shm/vortex_status_xrt_bdf_" + tag;
+  // Real HW: use a single well-known path (like nvidia-smi) so any user
+  // can read the status with vortex-smi.
+  *shm_path = VX_SHM_PATH;
   *unlink_on_close = false;
 }
 

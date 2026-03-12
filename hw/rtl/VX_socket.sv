@@ -38,7 +38,8 @@ module VX_socket import VX_gpu_pkg::*; #(
     VX_gbar_bus_if.master   gbar_bus_if,
 `endif
     // Status
-    output wire             busy
+    output wire             busy,
+    output wire             dcache_drain
 );
 
 `ifdef SCOPE
@@ -84,6 +85,8 @@ module VX_socket import VX_gpu_pkg::*; #(
         .TAG_WIDTH (ICACHE_MEM_TAG_WIDTH)
     ) icache_mem_bus_if[1]();
 
+    wire icache_drain;
+
     `RESET_RELAY (icache_reset, reset);
 
     VX_cache_cluster #(
@@ -115,7 +118,8 @@ module VX_socket import VX_gpu_pkg::*; #(
         .clk            (clk),
         .reset          (icache_reset),
         .core_bus_if    (per_core_icache_bus_if),
-        .mem_bus_if     (icache_mem_bus_if)
+        .mem_bus_if     (icache_mem_bus_if),
+        .cache_drain    (icache_drain)
     );
 
     ///////////////////////////////////////////////////////////////////////////
@@ -129,6 +133,8 @@ module VX_socket import VX_gpu_pkg::*; #(
         .DATA_SIZE (DCACHE_LINE_SIZE),
         .TAG_WIDTH (DCACHE_MEM_TAG_WIDTH)
     ) dcache_mem_bus_if[`L1_MEM_PORTS]();
+
+    wire dcache_cache_drain;
 
     `RESET_RELAY (dcache_reset, reset);
 
@@ -163,8 +169,11 @@ module VX_socket import VX_gpu_pkg::*; #(
         .clk            (clk),
         .reset          (dcache_reset),
         .core_bus_if    (per_core_dcache_bus_if),
-        .mem_bus_if     (dcache_mem_bus_if)
+        .mem_bus_if     (dcache_mem_bus_if),
+        .cache_drain    (dcache_cache_drain)
     );
+
+    `UNUSED_VAR (icache_drain)
 
     ///////////////////////////////////////////////////////////////////////////
 
@@ -210,6 +219,25 @@ module VX_socket import VX_gpu_pkg::*; #(
             `ASSIGN_VX_MEM_BUS_IF (mem_bus_if[i], l1_mem_arb_bus_if);
         end
     end
+
+    wire [`L1_MEM_PORTS-1:0] dcache_mem_req_pending;
+    wire [`L1_MEM_PORTS-1:0] dcache_mem_rsp_pending;
+    wire [`L1_MEM_PORTS-1:0] l1_mem_req_pending;
+    wire [`L1_MEM_PORTS-1:0] l1_mem_rsp_pending;
+
+    for (genvar i = 0; i < `L1_MEM_PORTS; ++i) begin : g_dcache_drain_pending
+        assign dcache_mem_req_pending[i] = dcache_mem_bus_if[i].req_valid;
+        assign dcache_mem_rsp_pending[i] = dcache_mem_bus_if[i].rsp_valid;
+        assign l1_mem_req_pending[i] = mem_bus_if[i].req_valid;
+        assign l1_mem_rsp_pending[i] = mem_bus_if[i].rsp_valid;
+    end
+
+    wire dcache_pending = (| dcache_mem_req_pending)
+                       || (| dcache_mem_rsp_pending)
+                       || (| l1_mem_req_pending)
+                       || (| l1_mem_rsp_pending);
+
+    assign dcache_drain = dcache_cache_drain && ~dcache_pending;
 
     ///////////////////////////////////////////////////////////////////////////
 

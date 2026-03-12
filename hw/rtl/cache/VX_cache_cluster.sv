@@ -79,7 +79,9 @@ module VX_cache_cluster import VX_gpu_pkg::*; #(
 `endif
 
     VX_mem_bus_if.slave     core_bus_if [NUM_INPUTS * NUM_REQS],
-    VX_mem_bus_if.master    mem_bus_if [MEM_PORTS]
+    VX_mem_bus_if.master    mem_bus_if [MEM_PORTS],
+
+    output wire             cache_drain
 );
     localparam NUM_CACHES = `UP(NUM_UNITS);
     localparam PASSTHRU   = (NUM_UNITS == 0);
@@ -106,6 +108,32 @@ module VX_cache_cluster import VX_gpu_pkg::*; #(
         .DATA_SIZE (WORD_SIZE),
         .TAG_WIDTH (ARB_TAG_WIDTH)
     ) arb_core_bus_if[NUM_CACHES * NUM_REQS]();
+
+    wire [NUM_CACHES-1:0] per_cache_drain;
+
+    wire [NUM_INPUTS * NUM_REQS-1:0] core_req_pending;
+    wire [NUM_INPUTS * NUM_REQS-1:0] core_rsp_pending;
+    wire [NUM_CACHES * NUM_REQS-1:0] arb_req_pending;
+    wire [NUM_CACHES * NUM_REQS-1:0] arb_rsp_pending;
+    wire [NUM_CACHES * MEM_PORTS-1:0] cache_mem_req_pending;
+    wire [NUM_CACHES * MEM_PORTS-1:0] cache_mem_rsp_pending;
+    wire [MEM_PORTS-1:0] mem_req_pending;
+    wire [MEM_PORTS-1:0] mem_rsp_pending;
+
+    for (genvar i = 0; i < (NUM_INPUTS * NUM_REQS); ++i) begin : g_drain_core_pending
+        assign core_req_pending[i] = core_bus_if[i].req_valid;
+        assign core_rsp_pending[i] = core_bus_if[i].rsp_valid;
+    end
+
+    for (genvar i = 0; i < (NUM_CACHES * NUM_REQS); ++i) begin : g_drain_arb_pending
+        assign arb_req_pending[i] = arb_core_bus_if[i].req_valid;
+        assign arb_rsp_pending[i] = arb_core_bus_if[i].rsp_valid;
+    end
+
+    for (genvar i = 0; i < (NUM_CACHES * MEM_PORTS); ++i) begin : g_drain_cache_mem_pending
+        assign cache_mem_req_pending[i] = cache_mem_bus_if[i].req_valid;
+        assign cache_mem_rsp_pending[i] = cache_mem_bus_if[i].rsp_valid;
+    end
 
     for (genvar i = 0; i < NUM_REQS; ++i) begin : g_core_arb
         VX_mem_bus_if #(
@@ -174,7 +202,8 @@ module VX_cache_cluster import VX_gpu_pkg::*; #(
             .clk         (clk),
             .reset       (reset),
             .core_bus_if (arb_core_bus_if[i * NUM_REQS +: NUM_REQS]),
-            .mem_bus_if  (cache_mem_bus_if[i * MEM_PORTS +: MEM_PORTS])
+            .mem_bus_if  (cache_mem_bus_if[i * MEM_PORTS +: MEM_PORTS]),
+            .cache_drain (per_cache_drain[i])
         );
     end
 
@@ -214,6 +243,20 @@ module VX_cache_cluster import VX_gpu_pkg::*; #(
         end else begin : g_ro
             `ASSIGN_VX_MEM_BUS_RO_IF (mem_bus_if[i], mem_bus_tmp_if[0]);
         end
+
+        assign mem_req_pending[i] = mem_bus_if[i].req_valid;
+        assign mem_rsp_pending[i] = mem_bus_if[i].rsp_valid;
     end
+
+    wire cluster_pending = (| core_req_pending)
+                        || (| core_rsp_pending)
+                        || (| arb_req_pending)
+                        || (| arb_rsp_pending)
+                        || (| cache_mem_req_pending)
+                        || (| cache_mem_rsp_pending)
+                        || (| mem_req_pending)
+                        || (| mem_rsp_pending);
+
+    assign cache_drain = (& per_cache_drain) && ~cluster_pending;
 
 endmodule

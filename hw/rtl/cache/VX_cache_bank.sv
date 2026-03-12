@@ -111,13 +111,16 @@ module VX_cache_bank import VX_gpu_pkg::*; #(
     // flush
     input wire                          flush_begin,
     input wire [`UP(UUID_WIDTH)-1:0]    flush_uuid,
-    output wire                         flush_end
+    output wire                         flush_end,
+
+    // Status
+    output wire                         drain
 );
 
-    localparam PIPELINE_STAGES = 2;
+    localparam PIPELINE_STAGES = 3;
 
 `IGNORE_UNUSED_BEGIN
-    wire [`UP(UUID_WIDTH)-1:0] req_uuid_sel, req_uuid_st0, req_uuid_st1;
+    wire [`UP(UUID_WIDTH)-1:0] req_uuid_sel, req_uuid_st0, req_uuid_st1, req_uuid_st2;
 `IGNORE_UNUSED_END
 
     wire                            crsp_queue_stall;
@@ -139,33 +142,33 @@ module VX_cache_bank import VX_gpu_pkg::*; #(
     wire                            replay_ready;
 
 
-    wire                            valid_sel, valid_st0, valid_st1;
-    wire                            is_init_st0;
-    wire                            is_creq_st0, is_creq_st1;
-    wire                            is_fill_st0, is_fill_st1;
-    wire                            is_flush_st0, is_flush_st1;
+    wire                            valid_sel, valid_st0, valid_st1, valid_st2;
+    wire                            is_init_st0, is_init_st1;
+    wire                            is_creq_st0, is_creq_st1, is_creq_st2;
+    wire                            is_fill_st0, is_fill_st1, is_fill_st2;
+    wire                            is_flush_st0, is_flush_st1, is_flush_st2;
     wire [`CS_WAY_SEL_WIDTH-1:0]    flush_way_st0, evict_way_st0;
-    wire [`CS_WAY_SEL_WIDTH-1:0]    way_idx_st0, way_idx_st1;
+    wire [`CS_WAY_SEL_WIDTH-1:0]    way_idx_st0, way_idx_st1, way_idx_st2;
 
-    wire [`CS_LINE_ADDR_WIDTH-1:0]  addr_sel, addr_st0, addr_st1;
-    wire [`CS_LINE_SEL_BITS-1:0]    line_idx_sel, line_idx_st0, line_idx_st1;
-    wire [`CS_TAG_SEL_BITS-1:0]     line_tag_st0, line_tag_st1;
-    wire [`CS_TAG_SEL_BITS-1:0]     evict_tag_st0, evict_tag_st1;
-    wire                            rw_sel, rw_st0, rw_st1;
-    wire [WORD_SEL_WIDTH-1:0]       word_idx_sel, word_idx_st0, word_idx_st1;
-    wire [WORD_SIZE-1:0]            byteen_sel, byteen_st0, byteen_st1;
-    wire [REQ_SEL_WIDTH-1:0]        req_idx_sel, req_idx_st0, req_idx_st1;
-    wire [TAG_WIDTH-1:0]            tag_sel, tag_st0, tag_st1;
-    wire [`CS_WORD_WIDTH-1:0]       write_word_st0, write_word_st1;
-    wire [`CS_LINE_WIDTH-1:0]       data_sel, data_st0, data_st1;
-    wire [MSHR_ADDR_WIDTH-1:0]      mshr_id_st0, mshr_id_st1;
+    wire [`CS_LINE_ADDR_WIDTH-1:0]  addr_sel, addr_st0, addr_st1, addr_st2;
+    wire [`CS_LINE_SEL_BITS-1:0]    line_idx_sel, line_idx_st0, line_idx_st1, line_idx_st2;
+    wire [`CS_TAG_SEL_BITS-1:0]     line_tag_st0, line_tag_st1, line_tag_st2;
+    wire [`CS_TAG_SEL_BITS-1:0]     evict_tag_st0, evict_tag_st1, evict_tag_st2;
+    wire                            rw_sel, rw_st0, rw_st1, rw_st2;
+    wire [WORD_SEL_WIDTH-1:0]       word_idx_sel, word_idx_st0, word_idx_st1, word_idx_st2;
+    wire [WORD_SIZE-1:0]            byteen_sel, byteen_st0, byteen_st1, byteen_st2;
+    wire [REQ_SEL_WIDTH-1:0]        req_idx_sel, req_idx_st0, req_idx_st1, req_idx_st2;
+    wire [TAG_WIDTH-1:0]            tag_sel, tag_st0, tag_st1, tag_st2;
+    wire [`CS_WORD_WIDTH-1:0]       write_word_st0, write_word_st1, write_word_st2;
+    wire [`CS_LINE_WIDTH-1:0]       data_sel, data_st0, data_st1, data_st2;
+    wire [MSHR_ADDR_WIDTH-1:0]      mshr_id_st0, mshr_id_st1, mshr_id_st2;
     wire [MSHR_ADDR_WIDTH-1:0]      replay_id_st0;
-    wire                            is_dirty_st0, is_dirty_st1;
-    wire                            is_replay_st0, is_replay_st1;
-    wire                            is_hit_st0, is_hit_st1;
-    wire [`UP(MEM_FLAGS_WIDTH)-1:0] flags_sel, flags_st0, flags_st1;
-    wire                            mshr_pending_st0, mshr_pending_st1;
-    wire [MSHR_ADDR_WIDTH-1:0]      mshr_previd_st0, mshr_previd_st1;
+    wire                            is_dirty_st0, is_dirty_st1, is_dirty_st2;
+    wire                            is_replay_st0, is_replay_st1, is_replay_st2;
+    wire                            is_hit_st0, is_hit_st1, is_hit_st2;
+    wire [`UP(MEM_FLAGS_WIDTH)-1:0] flags_sel, flags_st0, flags_st1, flags_st2;
+    wire                            mshr_pending_st0, mshr_pending_st1, mshr_pending_st2;
+    wire [MSHR_ADDR_WIDTH-1:0]      mshr_previd_st0, mshr_previd_st1, mshr_previd_st2;
     wire                            mshr_empty;
 
     wire flush_valid;
@@ -175,7 +178,7 @@ module VX_cache_bank import VX_gpu_pkg::*; #(
     wire flush_ready;
 
     // ensure we have no pending memory request in the bank
-    wire no_pending_req = ~valid_st0 && ~valid_st1 && mreq_queue_empty;
+    wire no_pending_req = ~valid_st0 && ~valid_st1 && ~valid_st2 && mreq_queue_empty;
 
     VX_cache_flush #(
         .BANK_ID    (BANK_ID),
@@ -222,6 +225,7 @@ module VX_cache_bank import VX_gpu_pkg::*; #(
 
     assign mem_rsp_ready = fill_grant
                         && ~(WRITEBACK && mreq_queue_alm_full) // needed for writeback
+                        && ~(valid_st0 && is_replay_st0) // ensure replay-in-flight resolves before accepting a new fill
                         && ~pipe_stall;
 
     assign flush_ready = flush_grant
@@ -238,6 +242,20 @@ module VX_cache_bank import VX_gpu_pkg::*; #(
     wire mem_rsp_fire  = mem_rsp_valid && mem_rsp_ready;
     wire flush_fire    = flush_valid && flush_ready;
     wire core_req_fire = core_req_valid && core_req_ready;
+
+    wire bank_drain_pending = init_valid
+                           || flush_valid
+                           || core_req_valid
+                           || replay_valid
+                           || mem_rsp_valid
+                           || valid_st0
+                           || valid_st1
+                           || valid_st2
+                           || core_rsp_valid
+                           || ~mshr_empty
+                           || ~mreq_queue_empty;
+
+    assign drain = ~bank_drain_pending;
 
     wire [MSHR_ADDR_WIDTH-1:0] mem_rsp_id = mem_rsp_tag[MSHR_ADDR_WIDTH-1:0];
 
@@ -320,11 +338,21 @@ module VX_cache_bank import VX_gpu_pkg::*; #(
     wire do_write_st0 = valid_st0 && is_write_st0;
     wire do_fill_st0  = valid_st0 && is_fill_st0;
 
+    wire do_init_st1  = valid_st1 && is_init_st1;
+    wire do_fill_st1  = valid_st1 && is_fill_st1;
+    wire do_flush_st1 = valid_st1 && is_flush_st1;
+
     wire is_read_st1  = is_creq_st1 && ~rw_st1;
     wire is_write_st1 = is_creq_st1 && rw_st1;
 
     wire do_read_st1  = valid_st1 && is_read_st1;
     wire do_write_st1 = valid_st1 && is_write_st1;
+
+    wire is_read_st2  = is_creq_st2 && ~rw_st2;
+    wire is_write_st2 = is_creq_st2 && rw_st2;
+
+    wire do_read_st2  = valid_st2 && is_read_st2;
+    wire do_write_st2 = valid_st2 && is_write_st2;
 
     assign line_idx_sel = addr_sel[`CS_LINE_SEL_BITS-1:0];
     assign line_idx_st0 = addr_st0[`CS_LINE_SEL_BITS-1:0];
@@ -334,9 +362,10 @@ module VX_cache_bank import VX_gpu_pkg::*; #(
 
     wire do_lookup_st0 = do_read_st0 || do_write_st0;
     wire do_lookup_st1 = do_read_st1 || do_write_st1;
+    wire do_lookup_st2 = do_read_st2 || do_write_st2;
 
     wire [`CS_WAY_SEL_WIDTH-1:0] victim_way_st0;
-    wire [NUM_WAYS-1:0] tag_matches_st0;
+    wire [NUM_WAYS-1:0] tag_matches_st0, tag_matches_st1;
 
     VX_cache_repl #(
         .CACHE_SIZE  (CACHE_SIZE),
@@ -403,14 +432,14 @@ module VX_cache_bank import VX_gpu_pkg::*; #(
     assign mshr_id_st0 = is_replay_st0 ? replay_id_st0 : mshr_alloc_id_st0;
 
     VX_pipe_register #(
-        .DATAW  (1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + `UP(MEM_FLAGS_WIDTH) + `CS_WAY_SEL_WIDTH + `CS_TAG_SEL_BITS + `CS_TAG_SEL_BITS + `CS_LINE_SEL_BITS + `CS_LINE_WIDTH + WORD_SIZE + WORD_SEL_WIDTH + REQ_SEL_WIDTH + TAG_WIDTH + MSHR_ADDR_WIDTH + MSHR_ADDR_WIDTH + 1),
+        .DATAW  (1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + NUM_WAYS + `UP(MEM_FLAGS_WIDTH) + `CS_WAY_SEL_WIDTH + `CS_TAG_SEL_BITS + `CS_TAG_SEL_BITS + `CS_LINE_SEL_BITS + `CS_LINE_WIDTH + WORD_SIZE + WORD_SEL_WIDTH + REQ_SEL_WIDTH + TAG_WIDTH + MSHR_ADDR_WIDTH + MSHR_ADDR_WIDTH + 1),
         .RESETW (1)
     ) pipe_reg1 (
         .clk      (clk),
         .reset    (reset),
         .enable   (~pipe_stall),
-        .data_in  ({valid_st0, is_fill_st0, is_flush_st0, is_creq_st0, is_replay_st0, is_dirty_st0, is_hit_st0, rw_st0, flags_st0, way_idx_st0, evict_tag_st0, line_tag_st0, line_idx_st0, data_st0, byteen_st0, word_idx_st0, req_idx_st0, tag_st0, mshr_id_st0, mshr_previd_st0, mshr_pending_st0}),
-        .data_out ({valid_st1, is_fill_st1, is_flush_st1, is_creq_st1, is_replay_st1, is_dirty_st1, is_hit_st1, rw_st1, flags_st1, way_idx_st1, evict_tag_st1, line_tag_st1, line_idx_st1, data_st1, byteen_st1, word_idx_st1, req_idx_st1, tag_st1, mshr_id_st1, mshr_previd_st1, mshr_pending_st1})
+        .data_in  ({valid_st0, is_init_st0, is_fill_st0, is_flush_st0, is_creq_st0, is_replay_st0, is_dirty_st0, is_hit_st0, rw_st0, tag_matches_st0, flags_st0, way_idx_st0, evict_tag_st0, line_tag_st0, line_idx_st0, data_st0, byteen_st0, word_idx_st0, req_idx_st0, tag_st0, mshr_id_st0, mshr_previd_st0, mshr_pending_st0}),
+        .data_out ({valid_st1, is_init_st1, is_fill_st1, is_flush_st1, is_creq_st1, is_replay_st1, is_dirty_st1, is_hit_st1, rw_st1, tag_matches_st1, flags_st1, way_idx_st1, evict_tag_st1, line_tag_st1, line_idx_st1, data_st1, byteen_st1, word_idx_st1, req_idx_st1, tag_st1, mshr_id_st1, mshr_previd_st1, mshr_pending_st1})
     );
 
     if (UUID_WIDTH != 0) begin : g_req_uuid_st1
@@ -420,15 +449,34 @@ module VX_cache_bank import VX_gpu_pkg::*; #(
     end
 
     assign addr_st1 = {line_tag_st1, line_idx_st1};
+    assign write_word_st1 = data_st1[`CS_WORD_WIDTH-1:0];
 
     // ensure mshr replay always get a hit
     `RUNTIME_ASSERT (~(valid_st1 && is_replay_st1 && ~is_hit_st1), ("%t: missed mshr replay", $time))
 
-    assign write_word_st1 = data_st1[`CS_WORD_WIDTH-1:0];
-    `UNUSED_VAR (data_st1)
+    VX_pipe_register #(
+        .DATAW  (1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + `UP(MEM_FLAGS_WIDTH) + `CS_WAY_SEL_WIDTH + `CS_TAG_SEL_BITS + `CS_TAG_SEL_BITS + `CS_LINE_SEL_BITS + `CS_LINE_WIDTH + WORD_SIZE + WORD_SEL_WIDTH + REQ_SEL_WIDTH + TAG_WIDTH + MSHR_ADDR_WIDTH + MSHR_ADDR_WIDTH + 1),
+        .RESETW (1)
+    ) pipe_reg2 (
+        .clk      (clk),
+        .reset    (reset),
+        .enable   (~pipe_stall),
+        .data_in  ({valid_st1, is_fill_st1, is_flush_st1, is_creq_st1, is_replay_st1, is_dirty_st1, is_hit_st1, rw_st1, flags_st1, way_idx_st1, evict_tag_st1, line_tag_st1, line_idx_st1, data_st1, byteen_st1, word_idx_st1, req_idx_st1, tag_st1, mshr_id_st1, mshr_previd_st1, mshr_pending_st1}),
+        .data_out ({valid_st2, is_fill_st2, is_flush_st2, is_creq_st2, is_replay_st2, is_dirty_st2, is_hit_st2, rw_st2, flags_st2, way_idx_st2, evict_tag_st2, line_tag_st2, line_idx_st2, data_st2, byteen_st2, word_idx_st2, req_idx_st2, tag_st2, mshr_id_st2, mshr_previd_st2, mshr_pending_st2})
+    );
 
-    wire[`CS_WORDS_PER_LINE-1:0][`CS_WORD_WIDTH-1:0] read_data_st1;
-    wire [LINE_SIZE-1:0] evict_byteen_st1;
+    if (UUID_WIDTH != 0) begin : g_req_uuid_st2
+        assign req_uuid_st2 = tag_st2[TAG_WIDTH-1 -: UUID_WIDTH];
+    end else begin : g_req_uuid_st2_0
+        assign req_uuid_st2 = '0;
+    end
+
+    assign addr_st2 = {line_tag_st2, line_idx_st2};
+    assign write_word_st2 = data_st2[`CS_WORD_WIDTH-1:0];
+    `UNUSED_VAR (data_st2)
+
+    wire[`CS_WORDS_PER_LINE-1:0][`CS_WORD_WIDTH-1:0] read_data_st2;
+    wire [LINE_SIZE-1:0] evict_byteen_st2;
 
     VX_cache_data #(
         .CACHE_SIZE   (CACHE_SIZE),
@@ -443,22 +491,22 @@ module VX_cache_bank import VX_gpu_pkg::*; #(
         .clk        (clk),
         .reset      (reset),
         // inputs
-        .init       (do_init_st0),
-        .fill       (do_fill_st0 && ~pipe_stall),
-        .flush      (do_flush_st0 && ~pipe_stall),
-        .read       (do_read_st0 && ~pipe_stall),
-        .write      (do_write_st0 && ~pipe_stall),
-        .evict_way  (evict_way_st0),
-        .tag_matches(tag_matches_st0),
-        .line_idx   (line_idx_st0),
-        .fill_data  (data_st0),
-        .write_word (write_word_st0),
-        .word_idx   (word_idx_st0),
-        .write_byteen(byteen_st0),
-        .way_idx_r  (way_idx_st1),
+        .init       (do_init_st1),
+        .fill       (do_fill_st1 && ~pipe_stall),
+        .flush      (do_flush_st1 && ~pipe_stall),
+        .read       (do_read_st1 && ~pipe_stall),
+        .write      (do_write_st1 && ~pipe_stall),
+        .evict_way  (way_idx_st1),
+        .tag_matches(tag_matches_st1),
+        .line_idx   (line_idx_st1),
+        .fill_data  (data_st1),
+        .write_word (write_word_st1),
+        .word_idx   (word_idx_st1),
+        .write_byteen(byteen_st1),
+        .way_idx_r  (way_idx_st2),
         // outputs
-        .read_data  (read_data_st1),
-        .evict_byteen(evict_byteen_st1)
+        .read_data  (read_data_st2),
+        .evict_byteen(evict_byteen_st2)
     );
 
     // only allocate MSHR entries for non-replay core requests
@@ -550,10 +598,10 @@ module VX_cache_bank import VX_gpu_pkg::*; #(
     wire [REQ_SEL_WIDTH-1:0] crsp_queue_idx;
     wire [TAG_WIDTH-1:0] crsp_queue_tag;
 
-    assign crsp_queue_valid = do_read_st1 && is_hit_st1;
-    assign crsp_queue_idx   = req_idx_st1;
-    assign crsp_queue_data  = read_data_st1[word_idx_st1];
-    assign crsp_queue_tag   = tag_st1;
+    assign crsp_queue_valid = do_read_st2 && is_hit_st2;
+    assign crsp_queue_idx   = req_idx_st2;
+    assign crsp_queue_data  = read_data_st2[word_idx_st2];
+    assign crsp_queue_tag   = tag_st2;
 
     VX_elastic_buffer #(
         .DATAW   (TAG_WIDTH + `CS_WORD_WIDTH + REQ_SEL_WIDTH),
@@ -582,76 +630,76 @@ module VX_cache_bank import VX_gpu_pkg::*; #(
     wire mreq_queue_rw;
     wire [`UP(MEM_FLAGS_WIDTH)-1:0] mreq_queue_flags;
 
-    wire is_fill_or_flush_st1 = is_fill_st1 || (is_flush_st1 && WRITEBACK);
-    wire do_fill_or_flush_st1 = valid_st1 && is_fill_or_flush_st1;
-    wire do_writeback_st1 = do_fill_or_flush_st1 && is_dirty_st1;
-    wire [`CS_LINE_ADDR_WIDTH-1:0] evict_addr_st1 = {evict_tag_st1, line_idx_st1};
+    wire is_fill_or_flush_st2 = is_fill_st2 || (is_flush_st2 && WRITEBACK);
+    wire do_fill_or_flush_st2 = valid_st2 && is_fill_or_flush_st2;
+    wire do_writeback_st2 = do_fill_or_flush_st2 && is_dirty_st2;
+    wire [`CS_LINE_ADDR_WIDTH-1:0] evict_addr_st2 = {evict_tag_st2, line_idx_st2};
 
     if (WRITE_ENABLE) begin : g_mreq_queue
         if (WRITEBACK) begin : g_wb
             if (DIRTY_BYTES) begin : g_dirty_bytes
                 // ensure dirty bytes match the tag info
-                wire has_dirty_bytes = (| evict_byteen_st1);
-                `RUNTIME_ASSERT (~do_fill_or_flush_st1 || (is_dirty_st1 == has_dirty_bytes), ("%t: missmatch dirty bytes: dirty_line=%b, dirty_bytes=%b, addr=0x%0h", $time, is_dirty_st1, has_dirty_bytes, `CS_BANK_TO_FULL_ADDR(addr_st1, BANK_ID)))
+                wire has_dirty_bytes = (| evict_byteen_st2);
+                `RUNTIME_ASSERT (~do_fill_or_flush_st2 || (is_dirty_st2 == has_dirty_bytes), ("%t: missmatch dirty bytes: dirty_line=%b, dirty_bytes=%b, addr=0x%0h", $time, is_dirty_st2, has_dirty_bytes, `CS_BANK_TO_FULL_ADDR(addr_st2, BANK_ID)))
             end
             // issue a fill request on a read/write miss
             // issue a writeback on a dirty line eviction
-            assign mreq_queue_push = ((do_lookup_st1 && ~is_hit_st1 && ~mshr_pending_st1)
-                                   || do_writeback_st1)
+            assign mreq_queue_push = ((do_lookup_st2 && ~is_hit_st2 && ~mshr_pending_st2)
+                                   || do_writeback_st2)
                                   && ~pipe_stall;
-            assign mreq_queue_addr = is_fill_or_flush_st1 ? evict_addr_st1 : addr_st1;
-            assign mreq_queue_rw = is_fill_or_flush_st1;
-            assign mreq_queue_data = read_data_st1;
-            assign mreq_queue_byteen = is_fill_or_flush_st1 ? evict_byteen_st1 : '1;
-            `UNUSED_VAR (write_word_st1)
-            `UNUSED_VAR (byteen_st1)
+            assign mreq_queue_addr = is_fill_or_flush_st2 ? evict_addr_st2 : addr_st2;
+            assign mreq_queue_rw = is_fill_or_flush_st2;
+            assign mreq_queue_data = read_data_st2;
+            assign mreq_queue_byteen = is_fill_or_flush_st2 ? evict_byteen_st2 : '1;
+            `UNUSED_VAR (write_word_st2)
+            `UNUSED_VAR (byteen_st2)
         end else begin : g_wt
             wire [LINE_SIZE-1:0] line_byteen;
             VX_demux #(
                 .DATAW (WORD_SIZE),
                 .N (`CS_WORDS_PER_LINE)
             ) byteen_demux (
-                .sel_in   (word_idx_st1),
-                .data_in  (byteen_st1),
+                .sel_in   (word_idx_st2),
+                .data_in  (byteen_st2),
                 .data_out (line_byteen)
             );
             // issue a fill request on a read miss
             // issue a memory write on a write request
-            assign mreq_queue_push = ((do_read_st1 && ~is_hit_st1 && ~mshr_pending_st1)
-                                  || do_write_st1)
+            assign mreq_queue_push = ((do_read_st2 && ~is_hit_st2 && ~mshr_pending_st2)
+                                  || do_write_st2)
                                   && ~pipe_stall;
-            assign mreq_queue_addr = addr_st1;
-            assign mreq_queue_rw = rw_st1;
-            assign mreq_queue_data = {`CS_WORDS_PER_LINE{write_word_st1}};
-            assign mreq_queue_byteen = rw_st1 ? line_byteen : '1;
-            `UNUSED_VAR (is_fill_or_flush_st1)
-            `UNUSED_VAR (do_writeback_st1)
-            `UNUSED_VAR (evict_addr_st1)
-            `UNUSED_VAR (evict_byteen_st1)
+            assign mreq_queue_addr = addr_st2;
+            assign mreq_queue_rw = rw_st2;
+            assign mreq_queue_data = {`CS_WORDS_PER_LINE{write_word_st2}};
+            assign mreq_queue_byteen = rw_st2 ? line_byteen : '1;
+            `UNUSED_VAR (is_fill_or_flush_st2)
+            `UNUSED_VAR (do_writeback_st2)
+            `UNUSED_VAR (evict_addr_st2)
+            `UNUSED_VAR (evict_byteen_st2)
         end
     end else begin : g_mreq_queue_ro
         // issue a fill request on a read miss
-        assign mreq_queue_push = (do_read_st1 && ~is_hit_st1 && ~mshr_pending_st1)
+        assign mreq_queue_push = (do_read_st2 && ~is_hit_st2 && ~mshr_pending_st2)
                               && ~pipe_stall;
-        assign mreq_queue_addr = addr_st1;
+        assign mreq_queue_addr = addr_st2;
         assign mreq_queue_rw = 0;
         assign mreq_queue_data = '0;
         assign mreq_queue_byteen = '1;
-        `UNUSED_VAR (do_writeback_st1)
-        `UNUSED_VAR (evict_addr_st1)
-        `UNUSED_VAR (evict_byteen_st1)
-        `UNUSED_VAR (write_word_st1)
-        `UNUSED_VAR (byteen_st1)
+        `UNUSED_VAR (do_writeback_st2)
+        `UNUSED_VAR (evict_addr_st2)
+        `UNUSED_VAR (evict_byteen_st2)
+        `UNUSED_VAR (write_word_st2)
+        `UNUSED_VAR (byteen_st2)
     end
 
     if (UUID_WIDTH != 0) begin : g_mreq_queue_tag_uuid
-        assign mreq_queue_tag = {req_uuid_st1, mshr_id_st1};
+        assign mreq_queue_tag = {req_uuid_st2, mshr_id_st2};
     end else begin : g_mreq_queue_tag
-        assign mreq_queue_tag = mshr_id_st1;
+        assign mreq_queue_tag = mshr_id_st2;
     end
 
     assign mreq_queue_pop = mem_req_valid && mem_req_ready;
-    assign mreq_queue_flags = flags_st1;
+    assign mreq_queue_flags = flags_st2;
 
     VX_fifo_queue #(
         .DATAW    (1 + `CS_LINE_ADDR_WIDTH + LINE_SIZE + `CS_LINE_WIDTH + MEM_TAG_WIDTH + `UP(MEM_FLAGS_WIDTH)),
@@ -675,12 +723,13 @@ module VX_cache_bank import VX_gpu_pkg::*; #(
     assign mem_req_valid = ~mreq_queue_empty;
 
     `UNUSED_VAR (do_lookup_st0)
+    `UNUSED_VAR (do_lookup_st2)
 
 ///////////////////////////////////////////////////////////////////////////////
 
 `ifdef PERF_ENABLE
-    assign perf_read_miss  = do_read_st1 && ~is_hit_st1;
-    assign perf_write_miss = do_write_st1 && ~is_hit_st1;
+    assign perf_read_miss  = do_read_st2 && ~is_hit_st2;
+    assign perf_write_miss = do_write_st2 && ~is_hit_st2;
     assign perf_mshr_stall = mshr_alm_full;
 `endif
 
@@ -694,7 +743,54 @@ module VX_cache_bank import VX_gpu_pkg::*; #(
     wire [`XLEN-1:0] core_req_full_addr = `CS_BANK_TO_FULL_ADDR(core_req_addr, BANK_ID);
     wire [`XLEN-1:0] full_addr_st0 = `CS_BANK_TO_FULL_ADDR(addr_st0, BANK_ID);
     wire [`XLEN-1:0] full_addr_st1 = `CS_BANK_TO_FULL_ADDR(addr_st1, BANK_ID);
+    wire [`XLEN-1:0] full_addr_st2 = `CS_BANK_TO_FULL_ADDR(addr_st2, BANK_ID);
     wire [`XLEN-1:0] mreq_queue_full_addr = `CS_BANK_TO_FULL_ADDR(mreq_queue_addr, BANK_ID);
+
+    // Track write-through stores accepted from core versus stores emitted to memory.
+    // This helps detect dropped or duplicated store requests under backpressure/flush.
+    if (WRITE_ENABLE && !WRITEBACK) begin : g_wt_store_track
+        reg [31:0] wt_store_pending;
+        reg [31:0] wt_store_issue_seq;
+        reg [31:0] wt_store_emit_seq;
+
+        wire wt_store_accept = core_req_fire && core_req_rw;
+        wire wt_store_emit = mreq_queue_push && do_write_st2 && ~is_replay_st2;
+        wire [31:0] wt_store_pending_n = wt_store_pending
+                                      + (wt_store_accept ? 32'd1 : 32'd0)
+                                      - (wt_store_emit   ? 32'd1 : 32'd0);
+
+        always @(posedge clk) begin
+            if (reset) begin
+                wt_store_pending  <= 0;
+                wt_store_issue_seq <= 0;
+                wt_store_emit_seq <= 0;
+            end else begin
+                if (wt_store_emit && (wt_store_pending == 0)) begin
+                    $error("%t: *** %s wt-store underflow: mreq_addr=0x%0h, mreq_tag=0x%0h, core_tag_st2=0x%0h",
+                        $time, INSTANCE_ID, mreq_queue_full_addr, mreq_queue_tag, tag_st2);
+                end
+
+                wt_store_pending <= wt_store_pending_n;
+
+                if (wt_store_accept) begin
+                    wt_store_issue_seq <= wt_store_issue_seq + 1;
+                    `TRACE(2, ("%t: %s wt-store-accept: seq=%0d, addr=0x%0h, tag=0x%0h, pending=%0d\n",
+                        $time, INSTANCE_ID, wt_store_issue_seq, core_req_full_addr, core_req_tag, wt_store_pending_n))
+                end
+
+                if (wt_store_emit) begin
+                    wt_store_emit_seq <= wt_store_emit_seq + 1;
+                    `TRACE(2, ("%t: %s wt-store-emit: seq=%0d, addr=0x%0h, mreq_tag=0x%0h, pending=%0d\n",
+                        $time, INSTANCE_ID, wt_store_emit_seq, mreq_queue_full_addr, mreq_queue_tag, wt_store_pending_n))
+                end
+
+                if (drain && (wt_store_pending_n != 0)) begin
+                    $error("%t: *** %s wt-store pending at drain: pending=%0d, issue_seq=%0d, emit_seq=%0d",
+                        $time, INSTANCE_ID, wt_store_pending_n, wt_store_issue_seq, wt_store_emit_seq);
+                end
+            end
+        end
+    end
 
     always @(posedge clk) begin
         if (input_stall || pipe_stall) begin
@@ -746,9 +842,9 @@ module VX_cache_bank import VX_gpu_pkg::*; #(
             `TRACE(3, ("%t: %s data-flush: addr=0x%0h, way=%0d, line=%0d (#%0d)\n", $time, INSTANCE_ID,
                 full_addr_st0, way_idx_st0, line_idx_st0, req_uuid_st0))
         end
-        if (do_read_st1 && is_hit_st1 && ~pipe_stall) begin
+        if (do_read_st2 && is_hit_st2 && ~pipe_stall) begin
             `TRACE(3, ("%t: %s data-read: addr=0x%0h, way=%0d, line=%0d, wsel=%0d, data=0x%h (#%0d)\n", $time, INSTANCE_ID,
-                full_addr_st1, way_idx_st1, line_idx_st1, word_idx_st1, crsp_queue_data, req_uuid_st1))
+                full_addr_st2, way_idx_st2, line_idx_st2, word_idx_st2, crsp_queue_data, req_uuid_st2))
         end
         if (do_write_st1 && is_hit_st1 && ~pipe_stall) begin
             `TRACE(3, ("%t: %s data-write: addr=0x%0h, way=%0d, line=%0d, wsel=%0d, byteen=0x%h, data=0x%h (#%0d)\n", $time, INSTANCE_ID,
@@ -756,18 +852,18 @@ module VX_cache_bank import VX_gpu_pkg::*; #(
         end
         if (crsp_queue_fire) begin
             `TRACE(2, ("%t: %s core-rd-rsp: addr=0x%0h, tag=0x%0h, req_idx=%0d, data=0x%h (#%0d)\n", $time, INSTANCE_ID,
-                full_addr_st1, crsp_queue_tag, crsp_queue_idx, crsp_queue_data, req_uuid_st1))
+                full_addr_st2, crsp_queue_tag, crsp_queue_idx, crsp_queue_data, req_uuid_st2))
         end
         if (mreq_queue_push) begin
-            if (!WRITEBACK && do_write_st1) begin
+            if (!WRITEBACK && do_write_st2) begin
                 `TRACE(2, ("%t: %s writethrough: addr=0x%0h, byteen=0x%h, data=0x%h (#%0d)\n", $time, INSTANCE_ID,
-                    mreq_queue_full_addr, mreq_queue_byteen, mreq_queue_data, req_uuid_st1))
-            end else if (WRITEBACK && do_writeback_st1) begin
+                    mreq_queue_full_addr, mreq_queue_byteen, mreq_queue_data, req_uuid_st2))
+            end else if (WRITEBACK && do_writeback_st2) begin
                 `TRACE(2, ("%t: %s writeback: addr=0x%0h, byteen=0x%h, data=0x%h (#%0d)\n", $time, INSTANCE_ID,
-                    mreq_queue_full_addr, mreq_queue_byteen, mreq_queue_data, req_uuid_st1))
+                    mreq_queue_full_addr, mreq_queue_byteen, mreq_queue_data, req_uuid_st2))
             end else begin
                 `TRACE(2, ("%t: %s fill-req: addr=0x%0h, mshr_id=%0d (#%0d)\n", $time, INSTANCE_ID,
-                    mreq_queue_full_addr, mshr_id_st1, req_uuid_st1))
+                    mreq_queue_full_addr, mshr_id_st2, req_uuid_st2))
             end
         end
     end

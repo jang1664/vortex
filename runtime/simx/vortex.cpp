@@ -26,6 +26,11 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string>
+#include <unistd.h>
+
+// vortex-smi shared memory support
+#include <vx_shm_helper.h>
 
 // vortex-smi shared memory support
 #include <vx_shm_helper.h>
@@ -77,7 +82,8 @@ public:
 
   int init() {
     // --- vortex-smi: initialize shared memory status ---
-    if (shm_.open()) {
+    std::string shm_path = "/dev/shm/vortex_status_simx_uid_" + std::to_string(getuid());
+    if (shm_.open(shm_path, true)) {
       shm_.set_device_info("vortex-simx",
                            NUM_CORES * NUM_CLUSTERS, NUM_WARPS, NUM_THREADS,
                            PLATFORM_MEMORY_NUM_BANKS, GLOBAL_MEM_SIZE);

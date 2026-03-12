@@ -2,10 +2,14 @@
 
 set -o pipefail
 
+CONFIGS="{CONFIGS:-""}"
+# CONFIGS="${CONFIGS:--DEXT_TCU_ENABLE}"
+
 PREFIX=build_u55c_fpnew_denable_core1_ila \
 PLATFORM=xilinx_u55c_gen3x16_xdma_3_202210_1 \
 NUM_CORES=1 \
-CONFIGS="-DFPU_FPNEW" \
+CONFIGS=${CONFIGS} \
 TARGET=hw \
 DEBUG=1 \
+CLOCK_FREQ_HZ=100 \
 make 2>&1 | tee build_u55c_fpnew_denable_core1_ila.log

@@ -34,7 +34,8 @@ module VX_cluster import VX_gpu_pkg::*; #(
     VX_mem_bus_if.master        mem_bus_if [`L2_MEM_PORTS],
 
     // Status
-    output wire                 busy
+    output wire                 busy,
+    output wire                 cache_drain
 );
 
 `ifdef SCOPE
@@ -82,6 +83,7 @@ module VX_cluster import VX_gpu_pkg::*; #(
     ) per_socket_mem_bus_if[NUM_SOCKETS * `L1_MEM_PORTS]();
 
     `RESET_RELAY (l2_reset, reset);
+    wire l2_cache_drain;
 
     VX_cache_wrap #(
         .INSTANCE_ID    (`SFORMATF(("%s-l2cache", INSTANCE_ID))),
@@ -112,12 +114,14 @@ module VX_cluster import VX_gpu_pkg::*; #(
         .cache_perf     (l2_perf),
     `endif
         .core_bus_if    (per_socket_mem_bus_if),
-        .mem_bus_if     (mem_bus_if)
+        .mem_bus_if     (mem_bus_if),
+        .cache_drain    (l2_cache_drain)
     );
 
     ///////////////////////////////////////////////////////////////////////////
 
     wire [NUM_SOCKETS-1:0] per_socket_busy;
+    wire [NUM_SOCKETS-1:0] per_socket_dcache_drain;
 
     // Generate all sockets
     for (genvar socket_id = 0; socket_id < NUM_SOCKETS; ++socket_id) begin : g_sockets
@@ -149,10 +153,32 @@ module VX_cluster import VX_gpu_pkg::*; #(
             .gbar_bus_if    (per_socket_gbar_bus_if[socket_id]),
         `endif
 
-            .busy           (per_socket_busy[socket_id])
+            .busy           (per_socket_busy[socket_id]),
+            .dcache_drain   (per_socket_dcache_drain[socket_id])
         );
     end
 
+    wire [NUM_SOCKETS * `L1_MEM_PORTS-1:0] l1_req_pending;
+    wire [NUM_SOCKETS * `L1_MEM_PORTS-1:0] l1_rsp_pending;
+    wire [`L2_MEM_PORTS-1:0] l2_req_pending;
+    wire [`L2_MEM_PORTS-1:0] l2_rsp_pending;
+
+    for (genvar i = 0; i < (NUM_SOCKETS * `L1_MEM_PORTS); ++i) begin : g_drain_l1_pending
+        assign l1_req_pending[i] = per_socket_mem_bus_if[i].req_valid;
+        assign l1_rsp_pending[i] = per_socket_mem_bus_if[i].rsp_valid;
+    end
+
+    for (genvar i = 0; i < `L2_MEM_PORTS; ++i) begin : g_drain_l2_pending
+        assign l2_req_pending[i] = mem_bus_if[i].req_valid;
+        assign l2_rsp_pending[i] = mem_bus_if[i].rsp_valid;
+    end
+
+    wire cluster_pending = (| l1_req_pending)
+                        || (| l1_rsp_pending)
+                        || (| l2_req_pending)
+                        || (| l2_rsp_pending);
+
     `BUFFER_EX(busy, (| per_socket_busy), 1'b1, 1, (NUM_SOCKETS > 1));
+    assign cache_drain = (& per_socket_dcache_drain) && l2_cache_drain && ~cluster_pending;
 
 endmodule

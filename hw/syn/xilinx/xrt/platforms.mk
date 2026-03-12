@@ -1,7 +1,7 @@
 # Platform specific configurations
 # Add your platform specific configurations here
 
-CONFIGS += -DPLATFORM_MEMORY_DATA_WIDTH=512
+CONFIGS += -DPLATFORM_MEMORY_DATA_SIZE=64
 
 ifeq ($(DEV_ARCH), zynquplus)
 # zynquplus

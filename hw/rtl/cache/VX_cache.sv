@@ -72,7 +72,8 @@ module VX_cache import VX_gpu_pkg::*; #(
     input wire reset,
 
     VX_mem_bus_if.slave     core_bus_if [NUM_REQS],
-    VX_mem_bus_if.master    mem_bus_if [MEM_PORTS]
+    VX_mem_bus_if.master    mem_bus_if [MEM_PORTS],
+    output wire             cache_drain
 );
 
     `STATIC_ASSERT(NUM_BANKS == (1 << `CLOG2(NUM_BANKS)), ("invalid parameter: number of banks must be power of 2"))
@@ -118,6 +119,7 @@ module VX_cache import VX_gpu_pkg::*; #(
     wire [NUM_BANKS-1:0] per_bank_flush_begin;
     wire [`UP(UUID_WIDTH)-1:0] flush_uuid;
     wire [NUM_BANKS-1:0] per_bank_flush_end;
+    wire [NUM_BANKS-1:0] per_bank_drain;
 
     wire [NUM_BANKS-1:0] per_bank_core_req_fire;
 
@@ -263,6 +265,8 @@ module VX_cache import VX_gpu_pkg::*; #(
     wire [NUM_REQS-1:0][TAG_WIDTH-1:0]       core_req_tag;
     wire [NUM_REQS-1:0][`UP(MEM_FLAGS_WIDTH)-1:0] core_req_flags;
     wire [NUM_REQS-1:0]                      core_req_ready;
+    wire [NUM_REQS-1:0]                      core_req_pending;
+    wire [NUM_REQS-1:0]                      core_rsp_pending;
 
     wire [NUM_REQS-1:0][LINE_ADDR_WIDTH-1:0] core_req_line_addr;
     wire [NUM_REQS-1:0][BANK_SEL_WIDTH-1:0]  core_req_bid;
@@ -280,6 +284,7 @@ module VX_cache import VX_gpu_pkg::*; #(
         assign core_req_tag[i]    = core_bus2_if[i].req_data.tag;
         assign core_req_flags[i]  = `UP(MEM_FLAGS_WIDTH)'(core_bus2_if[i].req_data.flags);
         assign core_bus2_if[i].req_ready = core_req_ready[i];
+        assign core_req_pending[i] = core_bus2_if[i].req_valid;
     end
 
     for (genvar i = 0; i < NUM_REQS; ++i) begin : g_core_req_wsel
@@ -314,7 +319,8 @@ module VX_cache import VX_gpu_pkg::*; #(
         };
     end
 
-    assign per_bank_core_req_fire = per_bank_core_req_valid & per_bank_mem_req_ready;
+    // assign per_bank_core_req_fire = per_bank_core_req_valid & per_bank_mem_req_ready;
+    assign per_bank_core_req_fire = per_bank_core_req_valid & per_bank_core_req_ready;
 
 `ifdef PERF_ENABLE
     wire [PERF_CTR_BITS-1:0] perf_collisions;
@@ -427,7 +433,8 @@ module VX_cache import VX_gpu_pkg::*; #(
             // Flush request
             .flush_begin        (per_bank_flush_begin[bank_id]),
             .flush_uuid         (flush_uuid),
-            .flush_end          (per_bank_flush_end[bank_id])
+            .flush_end          (per_bank_flush_end[bank_id]),
+            .drain              (per_bank_drain[bank_id])
         );
     end
 
@@ -483,6 +490,7 @@ module VX_cache import VX_gpu_pkg::*; #(
             .valid_out (core_bus2_if[i].rsp_valid),
             .ready_out (core_bus2_if[i].rsp_ready)
         );
+        assign core_rsp_pending[i] = core_bus2_if[i].rsp_valid;
     end
 
     // Memory request arbitration /////////////////////////////////////////////
@@ -503,6 +511,8 @@ module VX_cache import VX_gpu_pkg::*; #(
     wire [MEM_PORTS-1:0][MEM_REQ_DATAW-1:0] mem_req_pdata;
     wire [MEM_PORTS-1:0] mem_req_ready;
     wire [MEM_PORTS-1:0][MEM_ARB_SEL_WIDTH-1:0] mem_req_sel_out;
+    wire [MEM_PORTS-1:0] mem_req_pending;
+    wire [MEM_PORTS-1:0] mem_rsp_pending;
 
     VX_stream_arb #(
         .NUM_INPUTS (NUM_BANKS),
@@ -593,7 +603,28 @@ module VX_cache import VX_gpu_pkg::*; #(
         end else begin : g_mem_bus_if_ro
             `ASSIGN_VX_MEM_BUS_RO_IF (mem_bus_if[i], mem_bus_tmp_if[i]);
         end
+
+        assign mem_req_pending[i] = mem_req_valid[i] || mem_bus_tmp_if[i].req_valid;
+        assign mem_rsp_pending[i] = mem_rsp_queue_valid[i] || mem_bus_tmp_if[i].rsp_valid;
     end
+
+    wire core_xbar_pending = (| per_bank_core_req_valid)
+                          || (| per_bank_core_rsp_valid)
+                          || (| core_rsp_valid_s);
+
+    wire mem_xbar_pending = (| per_bank_mem_req_valid)
+                         || (| per_bank_mem_rsp_valid)
+                         || (| mem_rsp_queue_valid)
+                         || (| mem_req_valid);
+
+    wire cache_pending = core_xbar_pending
+                      || mem_xbar_pending
+                      || (| core_req_pending)
+                      || (| core_rsp_pending)
+                      || (| mem_req_pending)
+                      || (| mem_rsp_pending);
+
+    assign cache_drain = (& per_bank_drain) && ~cache_pending;
 
 `ifdef PERF_ENABLE
     wire [NUM_REQS-1:0]  perf_core_reads_per_req;

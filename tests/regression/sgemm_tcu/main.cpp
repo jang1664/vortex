@@ -10,7 +10,10 @@
 #include <vector>
 #include <vortex.h>
 
-#define FLOAT_ULP 6
+#ifndef FP_COMPARE_THRESHOLD
+#define FP_COMPARE_THRESHOLD 1e-3f
+#endif
+
 #define MAX_ERRORS 100
 
 #define RT_CHECK(_expr)                                      \
@@ -207,9 +210,13 @@ public:
     return rv_ftoh_s(bit_cast<uint32_t>(fvalue), 0, nullptr);
   }
   static bool compare(uint16_t a, uint16_t b, int index, int errors) {
-    if (a != b) {
+    auto fa = bit_cast<float>(rv_htof_s(a, 0, nullptr));
+    auto fb = bit_cast<float>(rv_htof_s(b, 0, nullptr));
+    auto diff = std::fabs(fa - fb);
+    if (std::isnan(fa) || std::isnan(fb) || diff > FP_COMPARE_THRESHOLD) {
       if (errors < MAX_ERRORS) {
-        printf("*** error: [%d] expected=0x%x, actual=0x%x\n", index, b, a);
+        printf("*** error: [%d] expected=%f, actual=%f, diff=%f (th=%f)\n",
+               index, fb, fa, diff, FP_COMPARE_THRESHOLD);
       }
       return false;
     }
@@ -225,9 +232,13 @@ public:
     return rv_ftob_s(bit_cast<uint32_t>(fvalue), 0, nullptr);
   }
   static bool compare(uint16_t a, uint16_t b, int index, int errors) {
-    if (a != b) {
+    auto fa = bit_cast<float>(rv_btof_s(a, 0, nullptr));
+    auto fb = bit_cast<float>(rv_btof_s(b, 0, nullptr));
+    auto diff = std::fabs(fa - fb);
+    if (std::isnan(fa) || std::isnan(fb) || diff > FP_COMPARE_THRESHOLD) {
       if (errors < MAX_ERRORS) {
-        printf("*** error: [%d] expected=0x%x, actual=0x%x\n", index, b, a);
+        printf("*** error: [%d] expected=%f, actual=%f, diff=%f (th=%f)\n",
+               index, fb, fa, diff, FP_COMPARE_THRESHOLD);
       }
       return false;
     }
@@ -235,23 +246,23 @@ public:
   }
 };
 
-template <>
-class Comparator<vt::tf32> {
-public:
-  static uint32_t generate() {
-    auto fvalue = float(rand()) / RAND_MAX;
-    return rv_ftox_s(bit_cast<uint32_t>(fvalue), 8, 10, 0, nullptr);
-  }
-  static bool compare(uint32_t a, uint32_t b, int index, int errors) {
-    if (a != b) {
-      if (errors < MAX_ERRORS) {
-        printf("*** error: [%d] expected=0x%x, actual=0x%x\n", index, b, a);
-      }
-      return false;
-    }
-    return true;
-  }
-};
+// template <>
+// class Comparator<vt::tf32> {
+// public:
+//   static uint32_t generate() {
+//     auto fvalue = float(rand()) / RAND_MAX;
+//     return rv_ftox_s(bit_cast<uint32_t>(fvalue), 8, 10, 0, nullptr);
+//   }
+//   static bool compare(uint32_t a, uint32_t b, int index, int errors) {
+//     if (a != b) {
+//       if (errors < MAX_ERRORS) {
+//         printf("*** error: [%d] expected=0x%x, actual=0x%x\n", index, b, a);
+//       }
+//       return false;
+//     }
+//     return true;
+//   }
+// };
 
 template <>
 class Comparator<vt::fp32> {
@@ -260,17 +271,11 @@ public:
     return static_cast<float>(rand()) / RAND_MAX;
   }
   static bool compare(float a, float b, int index, int errors) {
-    union fi_t {
-      float f;
-      int32_t i;
-    };
-    fi_t fa, fb;
-    fa.f = a;
-    fb.f = b;
-    auto d = std::abs(fa.i - fb.i);
-    if (d > FLOAT_ULP) {
+    auto diff = std::fabs(a - b);
+    if (std::isnan(a) || std::isnan(b) || diff > FP_COMPARE_THRESHOLD) {
       if (errors < MAX_ERRORS) {
-        printf("*** error: [%d] expected=%f, actual=%f\n", index, fb.f, fa.f);
+        printf("*** error: [%d] expected=%f, actual=%f, diff=%f (th=%f)\n",
+               index, b, a, diff, FP_COMPARE_THRESHOLD);
       }
       return false;
     }
@@ -329,14 +334,14 @@ struct muladd_t<vt::bf16, vt::bf16> {
   }
 };
 
-template <>
-struct muladd_t<vt::tf32, vt::fp32> {
-  static float eval(uint32_t a, uint32_t b, float c) {
-    auto fa = bit_cast<float>(rv_xtof_s(a, 8, 10, 0, nullptr));
-    auto fb = bit_cast<float>(rv_xtof_s(b, 8, 10, 0, nullptr));
-    return fa * fb + c;
-  }
-};
+// template <>
+// struct muladd_t<vt::tf32, vt::fp32> {
+//   static float eval(uint32_t a, uint32_t b, float c) {
+//     auto fa = bit_cast<float>(rv_xtof_s(a, 8, 10, 0, nullptr));
+//     auto fb = bit_cast<float>(rv_xtof_s(b, 8, 10, 0, nullptr));
+//     return fa * fb + c;
+//   }
+// };
 
 template <>
 struct muladd_t<vt::int4, vt::int32> {

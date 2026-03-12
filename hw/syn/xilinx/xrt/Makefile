@@ -121,7 +121,8 @@ endif
 VPP_FLAGS += --link --target $(TARGET) --platform $(PLATFORM) --save-temps --no_ip_cache
 VPP_FLAGS += --vivado.synth.jobs $(JOBS) --vivado.impl.jobs $(JOBS)
 # VPP_FLAGS += --clock.defaultFreqHz $(CLOCK_FREQ_HZ)
-VPP_FLAGS += --kernel_frequency $(CLOCK_FREQ_HZ)
+# VPP_FLAGS += --kernel_frequency "0:$(CLOCK_FREQ_HZ)|1:$(CLOCK_FREQ_HZ)"
+VPP_FLAGS += --kernel_frequency "0:$(CLOCK_FREQ_HZ)"
 
 
 # register compilation hooks
@@ -132,6 +133,7 @@ include $(SRC_DIR)/platforms.mk
 
 VPP_FLAGS += --report_level 2
 VPP_FLAGS += --config $(SRC_DIR)/vitis.ini
+# VPP_FLAGS += --config $(USER_VITIS_CONFIG)
 
 # Enable perf counters
 ifdef PERF
@@ -186,6 +188,10 @@ ifneq ($(TARGET),$(findstring $(TARGET), hw hw_emu))
 endif
 
 .PHONY: all clean gen-sources gen-ast emconfig check-devices
+
+# $(USER_VITIS_CONFIG): $(SRC_DIR)/post_dbg_profile_overlay.tcl
+# 	mkdir -p $(BUILD_DIR); \
+# 	printf "[advanced]\nparam=compiler.userPostDebugProfileOverlayTcl=%s\n" "$(SRC_DIR)/post_dbg_profile_overlay.tcl" > $@
 
 all: check-devices emconfig $(XCLBIN_CONTAINER) report
 

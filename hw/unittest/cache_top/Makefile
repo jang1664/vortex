@@ -10,6 +10,11 @@ export CXX := /usr/bin/g++-11
 
 SIM_EXEC ?= vcs
 
+CACHE_SIZE ?= 4096
+CRSQ_SIZE ?= 4
+MREQ_SIZE ?= 4
+MEM_LATENCY ?= 10
+
 TIME_SCALE=1ns/1ps
 TOP_MODULE := tb_VX_cache_top
 
@@ -75,7 +80,11 @@ INCDIRS_ := $(VORTEX_HOME)/build/hw \
             $(RTL_DIR)/cache \
             $(RTL_DIR)/mem
 
-DEFINES_ := SIMULATION DEBUG_LEVEL=3 DBG_TRACE_CACHE
+DEFINES_ := SIMULATION DEBUG_LEVEL=3 DBG_TRACE_CACHE \
+            CACHE_TOP_CACHE_SIZE=$(CACHE_SIZE) \
+            CACHE_TOP_CRSQ_SIZE=$(CRSQ_SIZE) \
+            CACHE_TOP_MREQ_SIZE=$(MREQ_SIZE) \
+            CACHE_TOP_MEM_LATENCY=$(MEM_LATENCY)
 
 CFLAGS  := "-std=c++17 -Wall -Wextra -Wno-array-bounds -Wno-maybe-uninitialized -fPIC -I$(VORTEX_HOME)/build/hw -I$(VORTEX_HOME)/hw -I$(RTL_DIR) -DXLEN_$(XLEN)"
 LDFLAGS := 

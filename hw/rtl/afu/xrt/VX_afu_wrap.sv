@@ -115,6 +115,7 @@ module VX_afu_wrap import VX_gpu_pkg::*; #(
 	reg [PENDING_WR_SIZEW-1:0] vx_pending_writes;
 	reg vx_reset = 1; // asserted at initialization
 	wire vx_busy;
+	wire vx_cache_drain;
 
 	wire                         dcr_wr_valid;
 	wire [VX_DCR_ADDR_WIDTH-1:0] dcr_wr_addr;
@@ -126,7 +127,18 @@ module VX_afu_wrap import VX_gpu_pkg::*; #(
 	wire ap_start;
 	wire ap_ctrl_read;
 	wire ap_idle  = (state == STATE_IDLE);
-	wire ap_done  = (state == STATE_DONE) && (vx_pending_writes == '0);
+`ifdef AFU_DONE_WAIT_CACHE_DRAIN
+    localparam USE_APDONE_CACHE_DRAIN =
+        (`DCACHE_WRITEBACK == 0) &&
+        (`L2_WRITEBACK == 0) &&
+        (`L3_WRITEBACK == 0);
+`else
+    localparam USE_APDONE_CACHE_DRAIN = 0;
+`endif
+
+	wire ap_done_base = (state == STATE_DONE) && (vx_pending_writes == '0);
+	wire ap_done_wait_cache = ap_done_base && USE_APDONE_CACHE_DRAIN && !vx_cache_drain;
+	wire ap_done = ap_done_base && (!USE_APDONE_CACHE_DRAIN || vx_cache_drain);
 	wire ap_ready = ap_done;
 
 	wire ap_done_ack = ap_done && ap_ctrl_read;
@@ -228,7 +240,7 @@ module VX_afu_wrap import VX_gpu_pkg::*; #(
 	                                                     (NUM_MEM_BANKS_SIZEW+1)'(cur_wr_rsps);
 
 	always @(posedge clk) begin
-		if (reset) begin
+		if (reset || ap_reset) begin
 			vx_pending_writes <= '0;
 		end else begin
 			vx_pending_writes <= vx_pending_writes + PENDING_WR_SIZEW'(reqs_sub);
@@ -352,7 +364,8 @@ module VX_afu_wrap import VX_gpu_pkg::*; #(
 		.dcr_wr_addr	(dcr_wr_addr),
 		.dcr_wr_data	(dcr_wr_data),
 
-		.busy			(vx_busy)
+		.busy			(vx_busy),
+		.cache_drain	(vx_cache_drain)
 	);
 
     // SCOPE //////////////////////////////////////////////////////////////////////
@@ -369,10 +382,13 @@ module VX_afu_wrap import VX_gpu_pkg::*; #(
 			ap_reset,
 			ap_start,
 			ap_done,
+			ap_done_base,
+			ap_done_wait_cache,
 			ap_idle,
 			interrupt,
 			vx_reset,
 			vx_busy,
+			vx_cache_drain,
 			state,
 			m_axi_mem_awvalid_a[0],
 			m_axi_mem_awready_a[0],
@@ -410,16 +426,19 @@ module VX_afu_wrap import VX_gpu_pkg::*; #(
 
 `ifdef CHIPSCOPE
 `ifdef DBG_SCOPE_AFU
-    ila_afu ila_afu_inst (
+	    ila_afu ila_afu_inst (
       	.clk (clk),
 		.probe0 ({
 			ap_reset,
         	ap_start,
         	ap_done,
+			ap_done_base,
+			ap_done_wait_cache,
 			ap_idle,
 			interrupt,
 			vx_reset,
 			vx_busy,
+			vx_cache_drain,
 			state,
 			s_axi_ctrl_awvalid,
 			s_axi_ctrl_awready,
