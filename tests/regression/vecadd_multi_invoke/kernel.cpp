@@ -7,6 +7,7 @@ void kernel_body(kernel_arg_t* __UNIFORM__ arg) {
 	auto dst_ptr  = reinterpret_cast<TYPE*>(arg->dst_addr);
 	
 	dst_ptr[blockIdx.x] = src0_ptr[blockIdx.x] + src1_ptr[blockIdx.x];
+  // vx_fence();
 }
 
 int main() {
