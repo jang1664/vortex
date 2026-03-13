@@ -45,7 +45,9 @@ CPU_TYPE := $(shell platforminfo -p $(PLATFORM) | grep 'CPU Type' | sed 's/.*://
 BUILD_DIR := $(PREFIX)_$(XSA)_$(TARGET)
 BIN_DIR := $(BUILD_DIR)/bin
 CONFIG_STAMP := $(BUILD_DIR)/.config.stamp
-USER_VITIS_CONFIG := $(BUILD_DIR)/vitis.user.ini
+XRT_BACKUP_DIR := $(BUILD_DIR)/xrt_backup
+XRT_BACKUP_STAMP := $(XRT_BACKUP_DIR)/.stamp
+XRT_BACKUP_FILES := $(sort $(SRC_DIR)/Makefile $(wildcard $(SRC_DIR)/*.mk $(SRC_DIR)/*.ini $(SRC_DIR)/*.tcl $(SRC_DIR)/*.in))
 
 CONFIG_FINGERPRINT = TARGET=$(TARGET) PLATFORM=$(PLATFORM) CLOCK_FREQ_HZ=$(CLOCK_FREQ_HZ) NUM_CORES=$(NUM_CORES) CONFIGS=$(CONFIGS) DEBUG=$(DEBUG) PERF=$(PERF) PROFILE=$(PROFILE) SCOPE=$(SCOPE)
 
@@ -120,20 +122,20 @@ endif
 # Kernel compiler global settings
 VPP_FLAGS += --link --target $(TARGET) --platform $(PLATFORM) --save-temps --no_ip_cache
 VPP_FLAGS += --vivado.synth.jobs $(JOBS) --vivado.impl.jobs $(JOBS)
-# VPP_FLAGS += --clock.defaultFreqHz $(CLOCK_FREQ_HZ)
-# VPP_FLAGS += --kernel_frequency "0:$(CLOCK_FREQ_HZ)|1:$(CLOCK_FREQ_HZ)"
 VPP_FLAGS += --kernel_frequency "0:$(CLOCK_FREQ_HZ)"
 
 
 # register compilation hooks
+VPP_FLAGS += --xp "vivado_prop:run.impl_1.STEPS.INIT_DESIGN.TCL.POST=${SRC_DIR}/post_init_hook.tcl"
 VPP_FLAGS += --xp "vivado_prop:run.impl_1.STEPS.OPT_DESIGN.TCL.PRE=${SRC_DIR}/pre_opt_hook.tcl"
+VPP_FLAGS += --xp "vivado_prop:run.impl_1.STEPS.ROUTE_DESIGN.TCL.POST=${SRC_DIR}/post_route_hook.tcl"
+VPP_FLAGS += --xp "vivado_prop:run.impl_1.STEPS.POST_ROUTE_PHYS_OPT_DESIGN.TCL.POST=${SRC_DIR}/post_physopt_hook.tcl"
 
 # load platform settings
 include $(SRC_DIR)/platforms.mk
 
 VPP_FLAGS += --report_level 2
 VPP_FLAGS += --config $(SRC_DIR)/vitis.ini
-# VPP_FLAGS += --config $(USER_VITIS_CONFIG)
 
 # Enable perf counters
 ifdef PERF
@@ -154,7 +156,7 @@ endif
 
 # Debugging
 ifdef DEBUG
-	VPP_FLAGS += -g --optimize 0 --debug.protocol all
+	VPP_FLAGS += -g --optimize 3 --debug.protocol all
 	ifeq ($(TARGET), hw)
 		VPP_FLAGS += --debug.chipscope vortex_afu_1
 		CFLAGS += -DNDEBUG -DCHIPSCOPE $(DBG_SCOPE_FLAGS)
@@ -187,13 +189,18 @@ ifneq ($(TARGET),$(findstring $(TARGET), hw hw_emu))
 	$(warning WARNING:Application supports only hw hw_emu TARGET. Please use the target for running the application)
 endif
 
-.PHONY: all clean gen-sources gen-ast emconfig check-devices
-
-# $(USER_VITIS_CONFIG): $(SRC_DIR)/post_dbg_profile_overlay.tcl
-# 	mkdir -p $(BUILD_DIR); \
-# 	printf "[advanced]\nparam=compiler.userPostDebugProfileOverlayTcl=%s\n" "$(SRC_DIR)/post_dbg_profile_overlay.tcl" > $@
+.PHONY: all clean gen-sources gen-ast emconfig check-devices backup-xrt
+.DEFAULT_GOAL := all
 
 all: check-devices emconfig $(XCLBIN_CONTAINER) report
+
+backup-xrt: $(XRT_BACKUP_STAMP)
+
+$(XRT_BACKUP_STAMP): $(XRT_BACKUP_FILES) $(CONFIG_STAMP)
+	mkdir -p $(XRT_BACKUP_DIR); \
+	for file in $(XRT_BACKUP_FILES); do cp -f $$file $(XRT_BACKUP_DIR)/; done; \
+	printf "%s\n" "$(CONFIG_FINGERPRINT)" > $(XRT_BACKUP_DIR)/config_fingerprint.txt; \
+	touch $@
 
 gen-sources: $(BUILD_DIR)/sources.txt
 $(BUILD_DIR)/sources.txt: $(SRC_DIR)/Makefile $(SRC_DIR)/platforms.mk $(CONFIG_STAMP)
@@ -218,7 +225,7 @@ $(XO_CONTAINER): $(BUILD_DIR)/sources.txt
 	mkdir -p $(BUILD_DIR); cd $(BUILD_DIR);	TOOL_DIR=$(SCRIPT_DIR) $(VIVADO) -mode batch -source $(SRC_DIR)/gen_xo.tcl -tclargs ../$(XO_CONTAINER) vortex_afu sources.txt ../$(BUILD_DIR)
 
 gen-bin: $(XCLBIN_CONTAINER)
-$(XCLBIN_CONTAINER): $(XO_CONTAINER) $(SCOPE_JSON)
+$(XCLBIN_CONTAINER): $(XO_CONTAINER) $(SCOPE_JSON) $(XRT_BACKUP_STAMP)
 	mkdir -p $(BIN_DIR); cd $(BUILD_DIR); TOOL_DIR=$(SCRIPT_DIR) $(VPP) $(VPP_FLAGS) -o ../$(XCLBIN_CONTAINER) ../$(XO_CONTAINER)
 
 emconfig: $(BIN_DIR)/emconfig.json
