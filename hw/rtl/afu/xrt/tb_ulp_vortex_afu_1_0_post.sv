@@ -1,6 +1,8 @@
 `timescale 1ns/1ps
 
-module tb_ulp_vortex_afu_1_0_post;
+module tb_ulp_vortex_afu_1_0_post #(
+  parameter string SDF_FILE = ""
+);
 
   localparam int CLK_HALF_PERIOD_NS = 5;
   localparam int AXI_TIMEOUT_CYCLES = 2000;
@@ -107,6 +109,16 @@ module tb_ulp_vortex_afu_1_0_post;
     .s_axi_ctrl_bresp(s_axi_ctrl_bresp),
     .interrupt(interrupt)
   );
+
+`ifdef PGSIM_RUNTIME_SDF_ANNOTATE
+  initial begin : annotate_runtime_sdf
+    if (SDF_FILE == "") begin
+      $fatal(1, "[TB] Missing non-empty SDF_FILE parameter for runtime SDF annotation");
+    end
+    $display("[TB] Annotating SDF: %0s", SDF_FILE);
+    $sdf_annotate(SDF_FILE, dut,,, "MAXIMUM");
+  end
+`endif
 
   always #(CLK_HALF_PERIOD_NS) ap_clk = ~ap_clk;
 

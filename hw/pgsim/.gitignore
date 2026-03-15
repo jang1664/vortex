@@ -1,0 +1,6 @@
+logs/
+work/
+*.prj
+*.log
+*.bak
+.cxl*
