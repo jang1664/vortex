@@ -11,15 +11,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-if { $::argc != 3 } {
-    puts "ERROR: Program \"$::argv0\" requires 3 arguments!\n"
-    puts "Usage: $::argv0 <krnl_name> <vcs_file> <build_dir>\n"
+if { $::argc < 3 || $::argc > 4 } {
+    puts "ERROR: Program \"$::argv0\" requires 3 or 4 arguments!\n"
+    puts "Usage: $::argv0 <krnl_name> <vcs_file> <build_dir> [<device_part>]\n"
     exit
 }
 
 set krnl_name [lindex $::argv 0]
 set vcs_file  [lindex $::argv 1]
 set build_dir [lindex $::argv 2]
+set device_part ""
+if { $::argc == 4 } {
+    set device_part [lindex $::argv 3]
+}
 
 set tool_dir $::env(TOOL_DIR)
 set script_dir [ file dirname [ file normalize [ info script ] ] ]
@@ -29,6 +33,9 @@ puts "Using vcs_file=$vcs_file"
 puts "Using tool_dir=$tool_dir"
 puts "Using build_dir=$build_dir"
 puts "Using script_dir=$script_dir"
+if {[string length $device_part] != 0} {
+    puts "Using device_part=$device_part"
+}
 
 set path_to_packaged "${build_dir}/xo/packaged_kernel"
 set path_to_tmp_project "${build_dir}/xo/project"
@@ -126,7 +133,11 @@ if { $merged_mem_if == 1 } {
     set num_banks 1
 }
 
-create_project -force kernel_pack $path_to_tmp_project
+if {[string length $device_part] != 0} {
+    create_project -force kernel_pack $path_to_tmp_project -part $device_part
+} else {
+    create_project -force kernel_pack $path_to_tmp_project
+}
 
 add_files -norecurse ${vsources_list}
 

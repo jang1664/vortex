@@ -41,6 +41,10 @@ XSA := $(call PLATFORM_TO_XSA, $(PLATFORM))
 
 DEV_ARCH := $(shell platforminfo -p $(PLATFORM) | grep 'FPGA Family' | sed 's/.*://' | sed '/ai_engine/d' | sed 's/^[[:space:]]*//')
 CPU_TYPE := $(shell platforminfo -p $(PLATFORM) | grep 'CPU Type' | sed 's/.*://' | sed '/ai_engine/d' | sed 's/^[[:space:]]*//')
+DEVICE_PART ?= $(strip $(shell platforminfo -p $(PLATFORM) | sed -n 's/^Board Part:[[:space:]]*//p'))
+ifeq ($(DEVICE_PART),)
+DEVICE_PART := xcu55c-fsvh2892-2L-e
+endif
 
 BUILD_DIR := $(PREFIX)_$(XSA)_$(TARGET)
 BIN_DIR := $(BUILD_DIR)/bin
@@ -48,8 +52,9 @@ CONFIG_STAMP := $(BUILD_DIR)/.config.stamp
 XRT_BACKUP_DIR := $(BUILD_DIR)/xrt_backup
 XRT_BACKUP_STAMP := $(XRT_BACKUP_DIR)/.stamp
 XRT_BACKUP_FILES := $(sort $(SRC_DIR)/Makefile $(wildcard $(SRC_DIR)/*.mk $(SRC_DIR)/*.ini $(SRC_DIR)/*.tcl $(SRC_DIR)/*.in))
+XRT_RUN_DIR := $(abspath $(XRT_BACKUP_DIR))
 
-CONFIG_FINGERPRINT = TARGET=$(TARGET) PLATFORM=$(PLATFORM) CLOCK_FREQ_HZ=$(CLOCK_FREQ_HZ) NUM_CORES=$(NUM_CORES) CONFIGS=$(CONFIGS) DEBUG=$(DEBUG) PERF=$(PERF) PROFILE=$(PROFILE) SCOPE=$(SCOPE)
+CONFIG_FINGERPRINT = TARGET=$(TARGET) PLATFORM=$(PLATFORM) DEVICE_PART=$(DEVICE_PART) CLOCK_FREQ_HZ=$(CLOCK_FREQ_HZ) NUM_CORES=$(NUM_CORES) CONFIGS=$(CONFIGS) DEBUG=$(DEBUG) PERF=$(PERF) PROFILE=$(PROFILE) SCOPE=$(SCOPE)
 
 XO_CONTAINER := $(BIN_DIR)/vortex_afu.xo
 XCLBIN_CONTAINER := $(BIN_DIR)/vortex_afu.xclbin
@@ -126,16 +131,16 @@ VPP_FLAGS += --kernel_frequency "0:$(CLOCK_FREQ_HZ)"
 
 
 # register compilation hooks
-VPP_FLAGS += --xp "vivado_prop:run.impl_1.STEPS.INIT_DESIGN.TCL.POST=${SRC_DIR}/post_init_hook.tcl"
-VPP_FLAGS += --xp "vivado_prop:run.impl_1.STEPS.OPT_DESIGN.TCL.PRE=${SRC_DIR}/pre_opt_hook.tcl"
-VPP_FLAGS += --xp "vivado_prop:run.impl_1.STEPS.ROUTE_DESIGN.TCL.POST=${SRC_DIR}/post_route_hook.tcl"
-VPP_FLAGS += --xp "vivado_prop:run.impl_1.STEPS.POST_ROUTE_PHYS_OPT_DESIGN.TCL.POST=${SRC_DIR}/post_physopt_hook.tcl"
+VPP_FLAGS += --xp "vivado_prop:run.impl_1.STEPS.INIT_DESIGN.TCL.POST=${XRT_RUN_DIR}/post_init_hook.tcl"
+VPP_FLAGS += --xp "vivado_prop:run.impl_1.STEPS.OPT_DESIGN.TCL.PRE=${XRT_RUN_DIR}/pre_opt_hook.tcl"
+VPP_FLAGS += --xp "vivado_prop:run.impl_1.STEPS.ROUTE_DESIGN.TCL.POST=${XRT_RUN_DIR}/post_route_hook.tcl"
+VPP_FLAGS += --xp "vivado_prop:run.impl_1.STEPS.POST_ROUTE_PHYS_OPT_DESIGN.TCL.POST=${XRT_RUN_DIR}/post_physopt_hook.tcl"
 
 # load platform settings
 include $(SRC_DIR)/platforms.mk
 
 VPP_FLAGS += --report_level 2
-VPP_FLAGS += --config $(SRC_DIR)/vitis.ini
+VPP_FLAGS += --config $(XRT_RUN_DIR)/vitis.ini
 
 # Enable perf counters
 ifdef PERF
@@ -221,8 +226,8 @@ $(BIN_DIR)/scope.json: $(BUILD_DIR)/vortex.xml
 	mkdir -p $(BUILD_DIR); cd $(BUILD_DIR); $(SCRIPT_DIR)/scope.py vortex.xml -o bin/scope.json
 
 gen-xo: $(XO_CONTAINER)
-$(XO_CONTAINER): $(BUILD_DIR)/sources.txt
-	mkdir -p $(BUILD_DIR); cd $(BUILD_DIR);	TOOL_DIR=$(SCRIPT_DIR) $(VIVADO) -mode batch -source $(SRC_DIR)/gen_xo.tcl -tclargs ../$(XO_CONTAINER) vortex_afu sources.txt ../$(BUILD_DIR)
+$(XO_CONTAINER): $(BUILD_DIR)/sources.txt $(XRT_BACKUP_STAMP)
+	mkdir -p $(BUILD_DIR); cd $(BUILD_DIR);	TOOL_DIR=$(SCRIPT_DIR) $(VIVADO) -mode batch -source $(XRT_RUN_DIR)/gen_xo.tcl -tclargs ../$(XO_CONTAINER) vortex_afu sources.txt ../$(BUILD_DIR) $(DEVICE_PART)
 
 gen-bin: $(XCLBIN_CONTAINER)
 $(XCLBIN_CONTAINER): $(XO_CONTAINER) $(SCOPE_JSON) $(XRT_BACKUP_STAMP)
