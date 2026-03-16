@@ -84,7 +84,7 @@ set_driver_path() {
     case $DRIVER in
         gpu) DRIVER_PATH="" ;;
         simx|rtlsim|opae|xrt) DRIVER_PATH="$ROOT_DIR/runtime/$DRIVER" ;;
-        xrt_vcs) DRIVER_PATH="$ROOT_DIR/runtime/xrt" ;;
+        xrt_vcs|xrt_vcs_post) DRIVER_PATH="$ROOT_DIR/runtime/xrt" ;;
         *) echo "Invalid driver: $DRIVER"; exit 1 ;;
     esac
 }
@@ -113,13 +113,19 @@ build_driver() {
     [ $TEMPBUILD -eq 1 ] && cmd_opts=$(add_option "$cmd_opts" "DESTDIR=\"$TEMPDIR\"")
     [ -n "$CONFIGS" ] && cmd_opts=$(add_option "$cmd_opts" "CONFIGS=\"$CONFIGS\"")
 
-    if [ "$DRIVER" = "xrt_vcs" ]; then
-        # Build VCS simv
+    if [ "$DRIVER" = "xrt_vcs" ] || [ "$DRIVER" = "xrt_vcs_post" ]; then
+        # Build VCS simv (RTL or post-impl)
         local vcs_opts=""
         [ $DEBUG -ne 0 ] && vcs_opts=$(add_option "$vcs_opts" "DEBUG=$DEBUG_LEVEL")
         [ -n "$CONFIGS" ] && vcs_opts=$(add_option "$vcs_opts" "CONFIGS=\"$CONFIGS\"")
         [ $TEMPBUILD -eq 1 ] && vcs_opts=$(add_option "$vcs_opts" "DESTDIR=\"$TEMPDIR\"")
         [ -n "${FSDB_DUMP:-}" ] && vcs_opts=$(add_option "$vcs_opts" "FSDB_DUMP=1")
+        if [ "$DRIVER" = "xrt_vcs_post" ]; then
+            vcs_opts=$(add_option "$vcs_opts" "POST_IMPL=1")
+            [ -n "${NETLIST:-}" ] && vcs_opts=$(add_option "$vcs_opts" "NETLIST=$NETLIST")
+            [ -n "${SDF_FILE:-}" ] && vcs_opts=$(add_option "$vcs_opts" "SDF_FILE=$SDF_FILE")
+            [ -n "${SIMLIB_DIR:-}" ] && vcs_opts=$(add_option "$vcs_opts" "SIMLIB_DIR=$SIMLIB_DIR")
+        fi
         vcs_opts=$(add_option "$vcs_opts" "make -C $ROOT_DIR/sim/xrtsim_vcs simv")
         echo "Running (VCS simv): $vcs_opts"
         eval "$vcs_opts"
@@ -161,7 +167,7 @@ run_app() {
     [ $TEMPBUILD -eq 1 ] && cmd_opts=$(add_option "$cmd_opts" "VORTEX_RT_PATH=\"$TEMPDIR\"")
     [ $HAS_ARGS -eq 1 ] && cmd_opts=$(add_option "$cmd_opts" "OPTS=\"$ARGS\"")
 
-    if [ "$DRIVER" = "xrt_vcs" ]; then
+    if [ "$DRIVER" = "xrt_vcs" ] || [ "$DRIVER" = "xrt_vcs_post" ]; then
         local VCS_PORT
         if [ -n "${VCS_SOCKET_PORT:-}" ]; then
             VCS_PORT=$VCS_SOCKET_PORT
@@ -176,7 +182,13 @@ run_app() {
         fi
 
         # Build VCS runtime flags
-        local simv_flags="+SOCKET_PORT=$VCS_PORT +vcs+initreg+0 -suppress=ASLR_DETECTED_INFO"
+        local simv_flags="+SOCKET_PORT=$VCS_PORT -suppress=ASLR_DETECTED_INFO"
+        if [ "$DRIVER" = "xrt_vcs" ]; then
+            simv_flags="$simv_flags +vcs+initreg+0"
+        fi
+        if [ "$DRIVER" = "xrt_vcs_post" ] && [ -n "${SDF_FILE:-}" ]; then
+            simv_flags="$simv_flags +maxdelays +sdfverbose"
+        fi
         [ -n "${VCS_SIMV_FLAGS:-}" ] && simv_flags="$simv_flags $VCS_SIMV_FLAGS"
 
         local SIMV_LOG="$SIMV_DIR/simv.log"

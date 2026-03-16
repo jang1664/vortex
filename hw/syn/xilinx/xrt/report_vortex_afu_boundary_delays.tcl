@@ -1,28 +1,17 @@
-proc usage {} {
-    puts stderr "Usage:"
-    puts stderr "  vivado -mode batch -source hw/syn/xilinx/xrt/report_vortex_afu_boundary_delays.tcl -tclargs \\"
-    puts stderr "    -dcp <impl_routed_dcp> \\"
-    puts stderr "    ?-cell <hier_cell_path_or_glob>? \\"
-    puts stderr "    ?-out_dir <output_dir>? \\"
-    puts stderr "    ?-name <report_prefix>? \\"
-    puts stderr "    ?-pin_limit <N>? \\"
-    puts stderr "    ?-top_n <N>? \\"
-    puts stderr "    ?-exclude_regex <regexp>? \\"
-    puts stderr "    ?-include_control_pins?"
-    puts stderr ""
-    puts stderr "Defaults:"
-    puts stderr "  -cell: auto-detect from *vortex_afu_1"
-    puts stderr "  -out_dir: ./reports/vortex_afu_boundary"
-    puts stderr "  -name: vortex_afu_boundary"
-    puts stderr "  -pin_limit: 0 (all pins)"
-    puts stderr "  -top_n: 20"
-    puts stderr ""
-    puts stderr "Two-phase analysis:"
-    puts stderr "  Phase 1: full design — get_timing_paths -through <cell_pin> (full path delay)"
-    puts stderr "  Phase 2: cell DCP   — get_timing_paths -from/-to <port>    (internal delay)"
-    puts stderr "  external_delay = through_delay - internal_delay"
-    exit 1
-}
+# report_vortex_afu_boundary_delays.tcl
+#
+# Two-phase analysis of external delays at a hierarchical cell boundary.
+#   Phase 1 (full design): get_timing_paths -through <cell_pin>  → through_delay
+#   Phase 2 (cell DCP):    get_timing_paths -from/-to <port>     → internal_delay
+#   external_delay = through_delay - internal_delay
+#
+# Usage (in Vivado Tcl console, after opening a routed DCP):
+#   source hw/syn/xilinx/xrt/report_vortex_afu_boundary_delays.tcl
+#   report_vortex_afu_boundary_delays
+#   report_vortex_afu_boundary_delays -cell level0_i/ulp/vortex_afu_1 -out_dir ./my_reports
+#   report_vortex_afu_boundary_delays -pin_limit 10 -exclude_regex {debug_.*}
+
+namespace eval ::vortex_boundary {
 
 proc csv_escape {value} {
     set escaped [string map {\" \"\"} $value]
@@ -106,15 +95,10 @@ proc find_target_cell {cell_arg} {
         }
 
         if {[llength $matches] > 1} {
-            puts stderr "ERROR: -cell matched multiple cells:"
-            foreach cell $matches {
-                puts stderr "  $cell"
-            }
-            exit 2
+            error "ERROR: -cell matched multiple cells:\n  [join $matches \n\ \ ]"
         }
 
-        puts stderr "ERROR: Could not find cell matching '$cell_arg'"
-        exit 2
+        error "ERROR: Could not find cell matching '$cell_arg'"
     }
 
     foreach pattern {"*vortex_afu_1"} {
@@ -123,20 +107,14 @@ proc find_target_cell {cell_arg} {
             return [lindex $matches 0]
         }
         if {[llength $matches] > 1} {
-            puts stderr "ERROR: Auto-detected multiple candidate vortex_afu cells for pattern '$pattern':"
-            foreach cell $matches {
-                puts stderr "  $cell"
-            }
-            puts stderr "Please rerun with -cell <hierarchy>."
-            exit 2
+            error "ERROR: Auto-detected multiple candidate vortex_afu cells for pattern '$pattern':\n  [join $matches \n\ \ ]\nPlease rerun with -cell <hierarchy>."
         }
     }
 
-    puts stderr "ERROR: Could not auto-detect vortex_afu cell. Please rerun with -cell <hierarchy>."
-    exit 2
+    error "ERROR: Could not auto-detect vortex_afu cell. Please rerun with -cell <hierarchy>."
 }
 
-# Full design: get timing path that crosses the cell boundary through a pin
+# Phase 1: full design — get timing path passing through a cell boundary pin
 proc get_timing_through {pin delay_type} {
     set paths [get_timing_paths -through $pin -delay_type $delay_type \
         -max_paths 1 -nworst 1 -no_report_unconstrained]
@@ -158,16 +136,18 @@ proc get_timing_through {pin delay_type} {
         endpoint_clock [get_property -quiet ENDPOINT_CLOCK $path]]
 }
 
-# Cell DCP: get internal timing path from/to a boundary port
-#   input  port → startpoint → -from
-#   output port → endpoint   → -to
+# Phase 2: cell DCP — get internal delay from/to a boundary port
+#   input  port → -from (port is startpoint of internal path)
+#   output port → -to   (port is endpoint of internal path)
 proc get_timing_internal {direction port delay_type} {
+    # Note: no -no_report_unconstrained here because cell DCP has no clock
+    # constraints, so all paths are unconstrained (Path Group = none).
     if {$direction eq "input"} {
         set paths [get_timing_paths -from $port -delay_type $delay_type \
-            -max_paths 1 -nworst 1 -no_report_unconstrained]
+            -max_paths 1 -nworst 1]
     } else {
         set paths [get_timing_paths -to $port -delay_type $delay_type \
-            -max_paths 1 -nworst 1 -no_report_unconstrained]
+            -max_paths 1 -nworst 1]
     }
 
     if {[llength $paths] == 0} {
@@ -227,320 +207,308 @@ proc emit_summary_block {chan stats_name direction delay_type label} {
     puts $chan [format "  max_pin=%s" $stats($key,max_pin)]
 }
 
-# ---- Option parsing ----
+}; # end namespace eval ::vortex_boundary
 
-set opts(-dcp) ""
-set opts(-cell) ""
-set opts(-out_dir) ""
-set opts(-name) "vortex_afu_boundary"
-set opts(-pin_limit) 0
-set opts(-top_n) 20
-set opts(-exclude_regex) ""
-set opts(-include_control_pins) 0
-
-for {set i 0} {$i < [llength $argv]} {incr i} {
-    set arg [lindex $argv $i]
-    switch -- $arg {
-        -dcp -
-        -cell -
-        -out_dir -
-        -name -
-        -pin_limit -
-        -top_n -
-        -exclude_regex {
-            incr i
-            if {$i >= [llength $argv]} {
-                usage
-            }
-            set opts($arg) [lindex $argv $i]
-        }
-        -include_control_pins {
-            set opts($arg) 1
-        }
-        -h -
-        -help {
-            usage
-        }
-        default {
-            puts stderr "ERROR: Unknown argument '$arg'"
-            usage
-        }
+# ============================================================
+# Main entry point
+# ============================================================
+proc report_vortex_afu_boundary_delays {args} {
+    # ---- Option parsing ----
+    array set opts {
+        -cell               ""
+        -out_dir            ""
+        -name               "vortex_afu_boundary"
+        -pin_limit          0
+        -top_n              20
+        -exclude_regex      ""
+        -include_control_pins 0
     }
-}
 
-if {$opts(-dcp) eq ""} {
-    puts stderr "ERROR: -dcp is required"
-    usage
-}
-
-if {$opts(-out_dir) eq ""} {
-    set opts(-out_dir) [file normalize [file join [pwd] "reports" "vortex_afu_boundary"]]
-}
-
-set dcp_path [file normalize $opts(-dcp)]
-set out_dir [file normalize $opts(-out_dir)]
-file mkdir $out_dir
-set cell_dcp_path [file join $out_dir "${opts(-name)}_cell.dcp"]
-set csv_path [file join $out_dir "${opts(-name)}.csv"]
-set skipped_csv_path [file join $out_dir "${opts(-name)}_skipped.csv"]
-set summary_path [file join $out_dir "${opts(-name)}_summary.rpt"]
-
-# ============================================================
-# Phase 1: Full design — timing paths through cell boundary
-# ============================================================
-puts "INFO: Phase 1 — full design timing through cell boundary pins"
-puts "INFO: opening checkpoint $dcp_path"
-open_checkpoint $dcp_path
-
-set target_cell [find_target_cell $opts(-cell)]
-set target_cell_name [get_property NAME $target_cell]
-puts "INFO: target cell: $target_cell_name"
-
-set all_input_pins [lsort [get_pins -quiet -of [get_cells $target_cell] -filter {DIRECTION == IN}]]
-set all_output_pins [lsort [get_pins -quiet -of [get_cells $target_cell] -filter {DIRECTION == OUT}]]
-
-if {$opts(-pin_limit) > 0} {
-    set input_pins [lrange $all_input_pins 0 [expr {$opts(-pin_limit) - 1}]]
-    set output_pins [lrange $all_output_pins 0 [expr {$opts(-pin_limit) - 1}]]
-} else {
-    set input_pins $all_input_pins
-    set output_pins $all_output_pins
-}
-
-puts [format "INFO: %d input pins, %d output pins (before filtering)" \
-    [llength $input_pins] [llength $output_pins]]
-
-array set through_data {}
-set analyzed_input_names {}
-set analyzed_output_names {}
-set skipped_entries {}
-
-array set counts {
-    input_total 0    input_analyzed 0    input_skipped 0    input_no_through 0
-    output_total 0   output_analyzed 0   output_skipped 0   output_no_through 0
-}
-
-foreach {dir pins} [list input $input_pins output $output_pins] {
-    set total [llength $pins]
-    set index 0
-    foreach pin $pins {
-        incr index
-        incr counts(${dir}_total)
-        set pname [object_short_name $pin]
-
-        lassign [should_skip_pin $pin $opts(-include_control_pins) $opts(-exclude_regex)] skip reason
-        if {$skip} {
-            incr counts(${dir}_skipped)
-            lappend skipped_entries [list $dir $pname $reason]
-            continue
-        }
-
-        incr counts(${dir}_analyzed)
-        lappend analyzed_${dir}_names $pname
-
-        foreach dt {max min} {
-            set t [get_timing_through $pin $dt]
-            set through_data($dir,$pname,$dt) $t
-            if {[dict get $t status] ne "ok"} {
-                incr counts(${dir}_no_through)
+    for {set i 0} {$i < [llength $args]} {incr i} {
+        set arg [lindex $args $i]
+        switch -- $arg {
+            -cell -
+            -out_dir -
+            -name -
+            -pin_limit -
+            -top_n -
+            -exclude_regex {
+                incr i
+                if {$i >= [llength $args]} {
+                    error "Option $arg requires a value"
+                }
+                set opts($arg) [lindex $args $i]
+            }
+            -include_control_pins {
+                set opts($arg) 1
+            }
+            default {
+                error "Unknown option '$arg'.\nUsage: report_vortex_afu_boundary_delays ?-cell <path>? ?-out_dir <dir>? ?-name <prefix>? ?-pin_limit <N>? ?-top_n <N>? ?-exclude_regex <re>? ?-include_control_pins?"
             }
         }
-
-        if {$index % 50 == 0 || $index == $total} {
-            puts [format "INFO: Phase 1 %s %d/%d" $dir $index $total]
-        }
     }
-}
 
-puts [format "INFO: Phase 1 done — analyzed %d input, %d output pins" \
-    [llength $analyzed_input_names] [llength $analyzed_output_names]]
+    if {$opts(-out_dir) eq ""} {
+        set opts(-out_dir) [file normalize [file join [pwd] "reports" "vortex_afu_boundary"]]
+    }
 
-# Export cell DCP for Phase 2
-puts "INFO: exporting cell DCP: $cell_dcp_path"
-write_checkpoint -force -cell $target_cell $cell_dcp_path
-close_design
+    set out_dir [file normalize $opts(-out_dir)]
+    file mkdir $out_dir
+    set cell_dcp_path [file join $out_dir "${opts(-name)}_cell.dcp"]
+    set csv_path [file join $out_dir "${opts(-name)}.csv"]
+    set skipped_csv_path [file join $out_dir "${opts(-name)}_skipped.csv"]
+    set summary_path [file join $out_dir "${opts(-name)}_summary.rpt"]
 
-# ============================================================
-# Phase 2: Cell DCP — internal delays, merge with Phase 1
-# ============================================================
-puts "INFO: Phase 2 — cell DCP internal timing analysis"
-open_checkpoint $cell_dcp_path
+    # ============================================================
+    # Phase 1: Full design — timing paths through cell boundary
+    # ============================================================
+    puts "INFO: Phase 1 — through-path analysis in full design"
 
-set csv_chan [open $csv_path w]
-set skipped_chan [open $skipped_csv_path w]
+    set target_cell [::vortex_boundary::find_target_cell $opts(-cell)]
+    set target_cell_name [get_property NAME $target_cell]
+    puts "INFO: target cell: $target_cell_name"
 
-csv_puts $csv_chan {
-    direction delay_type pin_name status
-    through_delay_ns internal_delay_ns external_delay_ns
-    slack_ns requirement_ns logic_levels
-    startpoint_pin endpoint_pin startpoint_clock endpoint_clock
-}
-csv_puts $skipped_chan {direction pin_name reason}
+    set all_input_pins [lsort [get_pins -quiet -of [get_cells $target_cell] -filter {DIRECTION == IN}]]
+    set all_output_pins [lsort [get_pins -quiet -of [get_cells $target_cell] -filter {DIRECTION == OUT}]]
 
-foreach entry $skipped_entries {
-    csv_puts $skipped_chan $entry
-}
+    if {$opts(-pin_limit) > 0} {
+        set input_pins [lrange $all_input_pins 0 [expr {$opts(-pin_limit) - 1}]]
+        set output_pins [lrange $all_output_pins 0 [expr {$opts(-pin_limit) - 1}]]
+    } else {
+        set input_pins $all_input_pins
+        set output_pins $all_output_pins
+    }
 
-array set ext_stats {}
-array set int_stats {}
-set analyzed_input_ports {}
-set analyzed_output_ports {}
+    puts [format "INFO: %d input pins, %d output pins (before filtering)" \
+        [llength $input_pins] [llength $output_pins]]
 
-foreach {dir port_filter analyzed_var} {input IN analyzed_input_ports output OUT analyzed_output_ports} {
-    set names_var "analyzed_${dir}_names"
-    set names [set $names_var]
-    set ports [lsort [get_ports -quiet -filter "DIRECTION == $port_filter"]]
-    set total [llength $ports]
-    set index 0
+    array set through_data {}
+    set analyzed_input_names {}
+    set analyzed_output_names {}
+    set skipped_entries {}
 
-    foreach port $ports {
-        incr index
-        set pname [object_short_name $port]
+    array set counts {
+        input_total 0    input_analyzed 0    input_skipped 0    input_no_through 0
+        output_total 0   output_analyzed 0   output_skipped 0   output_no_through 0
+    }
 
-        if {[lsearch -exact $names $pname] < 0} {
-            continue
-        }
+    foreach {dir pins} [list input $input_pins output $output_pins] {
+        set total [llength $pins]
+        set index 0
+        foreach pin $pins {
+            incr index
+            incr counts(${dir}_total)
+            set pname [::vortex_boundary::object_short_name $pin]
 
-        lappend $analyzed_var $port
-
-        foreach dt {max min} {
-            # Look up Phase 1 through-path data
-            if {![info exists through_data($dir,$pname,$dt)]} {
-                csv_puts $csv_chan [list $dir $dt $pname no_through \
-                    "" "" "" "" "" "" "" "" "" ""]
+            lassign [::vortex_boundary::should_skip_pin $pin $opts(-include_control_pins) $opts(-exclude_regex)] skip reason
+            if {$skip} {
+                incr counts(${dir}_skipped)
+                lappend skipped_entries [list $dir $pname $reason]
                 continue
             }
 
-            set through $through_data($dir,$pname,$dt)
-            set through_status [dict get $through status]
+            incr counts(${dir}_analyzed)
+            lappend analyzed_${dir}_names $pname
 
-            if {$through_status ne "ok"} {
-                csv_puts $csv_chan [list $dir $dt $pname no_through \
-                    "" "" "" "" "" "" "" "" "" ""]
+            foreach dt {max min} {
+                set t [::vortex_boundary::get_timing_through $pin $dt]
+                set through_data($dir,$pname,$dt) $t
+                if {[dict get $t status] ne "ok"} {
+                    incr counts(${dir}_no_through)
+                }
+            }
+
+            if {$index % 50 == 0 || $index == $total} {
+                puts [format "INFO: Phase 1 %s %d/%d" $dir $index $total]
+            }
+        }
+    }
+
+    puts [format "INFO: Phase 1 done — analyzed %d input, %d output pins" \
+        [llength $analyzed_input_names] [llength $analyzed_output_names]]
+
+    # Export cell DCP for Phase 2
+    puts "INFO: exporting cell DCP: $cell_dcp_path"
+    write_checkpoint -force -cell $target_cell $cell_dcp_path
+
+    # Remember current design name so we can reopen it after Phase 2
+    set current_design_name [get_property NAME [current_design]]
+    close_design
+
+    # ============================================================
+    # Phase 2: Cell DCP — internal delays, compute external delays
+    # ============================================================
+    puts "INFO: Phase 2 — internal delay analysis in cell DCP"
+    open_checkpoint $cell_dcp_path
+
+    set csv_chan [open $csv_path w]
+    set skipped_chan [open $skipped_csv_path w]
+
+    ::vortex_boundary::csv_puts $csv_chan {
+        direction delay_type pin_name status
+        through_delay_ns internal_delay_ns external_delay_ns
+        slack_ns requirement_ns logic_levels
+        startpoint_pin endpoint_pin startpoint_clock endpoint_clock
+    }
+    ::vortex_boundary::csv_puts $skipped_chan {direction pin_name reason}
+
+    foreach entry $skipped_entries {
+        ::vortex_boundary::csv_puts $skipped_chan $entry
+    }
+
+    array set ext_stats {}
+    array set int_stats {}
+
+    foreach {dir port_filter} {input IN output OUT} {
+        set names [set analyzed_${dir}_names]
+        set ports [lsort [get_ports -quiet -filter "DIRECTION == $port_filter"]]
+        set total [llength $ports]
+        set index 0
+
+        foreach port $ports {
+            incr index
+            set pname [::vortex_boundary::object_short_name $port]
+
+            if {[lsearch -exact $names $pname] < 0} {
                 continue
             }
 
-            set through_delay [dict get $through datapath_delay]
+            foreach dt {max min} {
+                if {![info exists through_data($dir,$pname,$dt)]} {
+                    ::vortex_boundary::csv_puts $csv_chan [list $dir $dt $pname no_through \
+                        "" "" "" "" "" "" "" "" "" ""]
+                    continue
+                }
 
-            # Get internal delay (Phase 2)
-            set internal [get_timing_internal $dir $port $dt]
+                set through $through_data($dir,$pname,$dt)
 
-            if {[dict get $internal status] eq "ok"} {
-                set internal_delay [dict get $internal datapath_delay]
-                if {[string is double -strict $through_delay] &&
-                    [string is double -strict $internal_delay]} {
-                    set external_delay [format "%.3f" \
-                        [expr {double($through_delay) - double($internal_delay)}]]
+                if {[dict get $through status] ne "ok"} {
+                    ::vortex_boundary::csv_puts $csv_chan [list $dir $dt $pname no_through \
+                        "" "" "" "" "" "" "" "" "" ""]
+                    continue
+                }
+
+                set through_delay [dict get $through datapath_delay]
+
+                # Get internal delay
+                set internal [::vortex_boundary::get_timing_internal $dir $port $dt]
+
+                if {[dict get $internal status] eq "ok"} {
+                    set internal_delay [dict get $internal datapath_delay]
+                    if {[string is double -strict $through_delay] &&
+                        [string is double -strict $internal_delay]} {
+                        set external_delay [format "%.3f" \
+                            [expr {double($through_delay) - double($internal_delay)}]]
+                    } else {
+                        set external_delay ""
+                    }
                 } else {
+                    set internal_delay ""
                     set external_delay ""
                 }
-            } else {
-                set internal_delay ""
-                set external_delay ""
+
+                ::vortex_boundary::update_stats ext_stats $dir $dt $external_delay $pname
+                ::vortex_boundary::update_stats int_stats $dir $dt $internal_delay $pname
+
+                ::vortex_boundary::csv_puts $csv_chan [list \
+                    $dir $dt $pname ok \
+                    $through_delay $internal_delay $external_delay \
+                    [dict get $through slack] \
+                    [dict get $through requirement] \
+                    [dict get $through logic_levels] \
+                    [dict get $through startpoint_pin] \
+                    [dict get $through endpoint_pin] \
+                    [dict get $through startpoint_clock] \
+                    [dict get $through endpoint_clock]]
             }
 
-            update_stats ext_stats $dir $dt $external_delay $pname
-            update_stats int_stats $dir $dt $internal_delay $pname
-
-            csv_puts $csv_chan [list \
-                $dir $dt $pname ok \
-                $through_delay $internal_delay $external_delay \
-                [dict get $through slack] \
-                [dict get $through requirement] \
-                [dict get $through logic_levels] \
-                [dict get $through startpoint_pin] \
-                [dict get $through endpoint_pin] \
-                [dict get $through startpoint_clock] \
-                [dict get $through endpoint_clock]]
-        }
-
-        if {$index % 50 == 0 || $index == $total} {
-            puts [format "INFO: Phase 2 %s %d/%d" $dir $index $total]
+            if {$index % 50 == 0 || $index == $total} {
+                puts [format "INFO: Phase 2 %s %d/%d" $dir $index $total]
+            }
         }
     }
-}
 
-close $csv_chan
-close $skipped_chan
+    close $csv_chan
+    close $skipped_chan
 
-# ============================================================
-# Summary report
-# ============================================================
-set summary_chan [open $summary_path w]
-puts $summary_chan "Vortex AFU Boundary Delay Report"
-puts $summary_chan ""
-puts $summary_chan [format "DCP: %s" $dcp_path]
-puts $summary_chan [format "Cell: %s" $target_cell_name]
-puts $summary_chan [format "Cell DCP: %s" $cell_dcp_path]
-puts $summary_chan [format "Output directory: %s" $out_dir]
-puts $summary_chan [format "Pin limit: %s" $opts(-pin_limit)]
-puts $summary_chan [format "Include control pins: %s" $opts(-include_control_pins)]
-puts $summary_chan [format "Exclude regex: %s" $opts(-exclude_regex)]
-puts $summary_chan ""
-puts $summary_chan "Counts"
-puts $summary_chan [format "  input:  total=%d analyzed=%d skipped=%d no_through=%d" \
-    $counts(input_total) $counts(input_analyzed) $counts(input_skipped) $counts(input_no_through)]
-puts $summary_chan [format "  output: total=%d analyzed=%d skipped=%d no_through=%d" \
-    $counts(output_total) $counts(output_analyzed) $counts(output_skipped) $counts(output_no_through)]
-puts $summary_chan ""
-puts $summary_chan "External delay ranges (through_delay - internal_delay) (ns)"
-emit_summary_block $summary_chan ext_stats input max "input / max (setup-critical)"
-emit_summary_block $summary_chan ext_stats input min "input / min (hold-critical)"
-emit_summary_block $summary_chan ext_stats output max "output / max (setup-critical)"
-emit_summary_block $summary_chan ext_stats output min "output / min (hold-critical)"
-puts $summary_chan ""
-puts $summary_chan "Internal delay ranges (cell DCP boundary to/from register) (ns)"
-emit_summary_block $summary_chan int_stats input max "input / max"
-emit_summary_block $summary_chan int_stats input min "input / min"
-emit_summary_block $summary_chan int_stats output max "output / max"
-emit_summary_block $summary_chan int_stats output min "output / min"
-puts $summary_chan ""
-puts $summary_chan "Conservative simulation values (ns)"
-if {[info exists ext_stats(input,max,max)]} {
-    puts $summary_chan [format "  INPUT_DELAY_MAX=%.3f  (for TB input delay, setup-critical)" $ext_stats(input,max,max)]
-}
-if {[info exists ext_stats(input,min,min)]} {
-    puts $summary_chan [format "  INPUT_DELAY_MIN=%.3f  (for TB input delay, hold-critical)" $ext_stats(input,min,min)]
-}
-if {[info exists ext_stats(output,max,max)]} {
-    puts $summary_chan [format "  OUTPUT_DELAY_MAX=%.3f (for TB output delay, setup-critical)" $ext_stats(output,max,max)]
-}
-if {[info exists ext_stats(output,min,min)]} {
-    puts $summary_chan [format "  OUTPUT_DELAY_MIN=%.3f (for TB output delay, hold-critical)" $ext_stats(output,min,min)]
-}
-puts $summary_chan ""
-puts $summary_chan "Notes"
-puts $summary_chan "  - through_delay: DATAPATH_DELAY of the full timing path crossing the cell boundary"
-puts $summary_chan "    (queried with get_timing_paths -through <cell_pin> in the full design)"
-puts $summary_chan "  - internal_delay: DATAPATH_DELAY from boundary port to/from the first/last register"
-puts $summary_chan "    (queried with get_timing_paths -from/-to <port> in the cell DCP)"
-puts $summary_chan "  - external_delay = through_delay - internal_delay"
-puts $summary_chan "  - Paths are queried independently per pin; the subtraction is approximate"
-puts $summary_chan "    when the through path and internal path reach different registers."
-puts $summary_chan "  - For post-gate sim TB: use external_delay as input/output delay."
-puts $summary_chan "    SDF covers internal timing, so external_delay avoids double-counting."
-close $summary_chan
+    # ============================================================
+    # Summary report
+    # ============================================================
+    set summary_chan [open $summary_path w]
+    puts $summary_chan "Vortex AFU Boundary Delay Report"
+    puts $summary_chan ""
+    puts $summary_chan [format "Cell: %s" $target_cell_name]
+    puts $summary_chan [format "Cell DCP: %s" $cell_dcp_path]
+    puts $summary_chan [format "Output directory: %s" $out_dir]
+    puts $summary_chan [format "Pin limit: %s" $opts(-pin_limit)]
+    puts $summary_chan [format "Include control pins: %s" $opts(-include_control_pins)]
+    puts $summary_chan [format "Exclude regex: %s" $opts(-exclude_regex)]
+    puts $summary_chan ""
+    puts $summary_chan "Counts"
+    puts $summary_chan [format "  input:  total=%d analyzed=%d skipped=%d no_through=%d" \
+        $counts(input_total) $counts(input_analyzed) $counts(input_skipped) $counts(input_no_through)]
+    puts $summary_chan [format "  output: total=%d analyzed=%d skipped=%d no_through=%d" \
+        $counts(output_total) $counts(output_analyzed) $counts(output_skipped) $counts(output_no_through)]
+    puts $summary_chan ""
+    puts $summary_chan "External delay ranges (through_delay - internal_delay) (ns)"
+    ::vortex_boundary::emit_summary_block $summary_chan ext_stats input max "input / max (setup-critical)"
+    ::vortex_boundary::emit_summary_block $summary_chan ext_stats input min "input / min (hold-critical)"
+    ::vortex_boundary::emit_summary_block $summary_chan ext_stats output max "output / max (setup-critical)"
+    ::vortex_boundary::emit_summary_block $summary_chan ext_stats output min "output / min (hold-critical)"
+    puts $summary_chan ""
+    puts $summary_chan "Internal delay ranges (cell boundary to/from register) (ns)"
+    ::vortex_boundary::emit_summary_block $summary_chan int_stats input max "input / max"
+    ::vortex_boundary::emit_summary_block $summary_chan int_stats input min "input / min"
+    ::vortex_boundary::emit_summary_block $summary_chan int_stats output max "output / max"
+    ::vortex_boundary::emit_summary_block $summary_chan int_stats output min "output / min"
+    puts $summary_chan ""
+    puts $summary_chan "Notes"
+    puts $summary_chan "  - through_delay: DATAPATH_DELAY of get_timing_paths -through <cell_pin>"
+    puts $summary_chan "    (full timing path crossing the cell boundary, queried in full design)"
+    puts $summary_chan "  - internal_delay: DATAPATH_DELAY of get_timing_paths -from/-to <port>"
+    puts $summary_chan "    (boundary port to/from register, queried in cell DCP)"
+    puts $summary_chan "  - external_delay = through_delay - internal_delay"
+    puts $summary_chan "  - Paths are queried independently per pin; the subtraction is approximate"
+    puts $summary_chan "    when the through path and internal path reach different registers."
+    puts $summary_chan "  - For VCS post-gate sim: use external_delay as input/output delay in TB."
+    puts $summary_chan "    Cell-level SDF covers internal timing; external_delay models the shell side."
+    close $summary_chan
 
-# ============================================================
-# Debug timing reports (cell DCP context, correct directions)
-# ============================================================
-if {$opts(-top_n) > 0} {
-    puts "INFO: writing debug timing reports (cell DCP)"
-    if {[llength $analyzed_input_ports] > 0} {
-        report_timing -from $analyzed_input_ports -delay_type max -max_paths $opts(-top_n) \
-            -file [file join $out_dir "${opts(-name)}_internal_input_max.rpt"]
-        report_timing -from $analyzed_input_ports -delay_type min -max_paths $opts(-top_n) \
-            -file [file join $out_dir "${opts(-name)}_internal_input_min.rpt"]
+    # ============================================================
+    # Debug timing reports (cell DCP context)
+    # ============================================================
+    if {$opts(-top_n) > 0} {
+        puts "INFO: writing debug timing reports (cell DCP)"
+
+        set input_ports [get_ports -quiet -filter {DIRECTION == IN}]
+        set output_ports [get_ports -quiet -filter {DIRECTION == OUT}]
+
+        if {[llength $input_ports] > 0} {
+            report_timing -from $input_ports -delay_type max -max_paths $opts(-top_n) \
+                -file [file join $out_dir "${opts(-name)}_internal_input_max.rpt"]
+            report_timing -from $input_ports -delay_type min -max_paths $opts(-top_n) \
+                -file [file join $out_dir "${opts(-name)}_internal_input_min.rpt"]
+        }
+        if {[llength $output_ports] > 0} {
+            report_timing -to $output_ports -delay_type max -max_paths $opts(-top_n) \
+                -file [file join $out_dir "${opts(-name)}_internal_output_max.rpt"]
+            report_timing -to $output_ports -delay_type min -max_paths $opts(-top_n) \
+                -file [file join $out_dir "${opts(-name)}_internal_output_min.rpt"]
+        }
     }
-    if {[llength $analyzed_output_ports] > 0} {
-        report_timing -to $analyzed_output_ports -delay_type max -max_paths $opts(-top_n) \
-            -file [file join $out_dir "${opts(-name)}_internal_output_max.rpt"]
-        report_timing -to $analyzed_output_ports -delay_type min -max_paths $opts(-top_n) \
-            -file [file join $out_dir "${opts(-name)}_internal_output_min.rpt"]
-    }
+
+    close_design
+
+    # Reopen the original implementation design
+    puts "INFO: reopening original design: $current_design_name"
+    open_run $current_design_name
+
+    puts "INFO: wrote $summary_path"
+    puts "INFO: wrote $csv_path"
+    puts "INFO: wrote $skipped_csv_path"
+    return $out_dir
 }
 
-puts "INFO: wrote $summary_path"
-puts "INFO: wrote $csv_path"
-puts "INFO: wrote $skipped_csv_path"
-exit
+puts "INFO: report_vortex_afu_boundary_delays loaded."
+puts "INFO: open an implementation run first (open_run impl_1), then run:"
+puts "INFO:   report_vortex_afu_boundary_delays ?-cell <path>? ?-out_dir <dir>? ..."

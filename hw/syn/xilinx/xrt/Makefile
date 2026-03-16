@@ -127,7 +127,7 @@ endif
 # Kernel compiler global settings
 VPP_FLAGS += --link --target $(TARGET) --platform $(PLATFORM) --save-temps --no_ip_cache
 VPP_FLAGS += --vivado.synth.jobs $(JOBS) --vivado.impl.jobs $(JOBS)
-VPP_FLAGS += --kernel_frequency "0:$(CLOCK_FREQ_HZ)"
+# VPP_FLAGS += --kernel_frequency "0:$(CLOCK_FREQ_HZ)"
 
 
 # register compilation hooks

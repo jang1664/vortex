@@ -114,7 +114,7 @@ ifneq (,$(findstring -DEXT_TCU_ENABLE, $(CONFIGS)))
 endif
 
 # VCS compile flags
-VCS_FLAGS += -full64 -sverilog +v2k -timescale=1ns/1ps +vcs+initreg+random
+VCS_FLAGS += -full64 -sverilog +v2k -timescale=1ns/1ps
 VCS_FLAGS += -CFLAGS "-std=c++17 -I$(SRC_DIR) -I$(ROOT_DIR)/hw -I$(SW_COMMON_DIR) -I/$(THIRD_PARTY_DIR)/softfloat/source/include -DXLEN_$(XLEN)"
 VCS_FLAGS += $(foreach d,$(RTL_DIRS),+incdir+$(d))
 VCS_FLAGS += $(foreach d,$(RTL_DIRS),-y $(d)) +libext+.v+.sv
@@ -135,19 +135,46 @@ ifdef DEBUG_AXI
 	VCS_FLAGS += +define+DEBUG_AXI
 endif
 
-# Post-impl support
+# Post-impl gate-level simulation support
+# Usage: make simv POST_IMPL=1 NETLIST=<netlist.v> [SDF_FILE=<timing.sdf>]
+#                  SIMLIB_DIR=<compiled_simlib/vcs>
+#                  [GLBL=<path/to/glbl.v>]
 ifdef POST_IMPL
-	VCS_FLAGS += +define+VCS_POST_IMPL
+	VCS_FLAGS += +define+VCS_POST_IMPL +define+XIL_TIMING
+
+	# Xilinx compiled simulation libraries (from compile_simlib)
+	SIMLIB_DIR ?= $(ROOT_DIR)/hw/pgsim/compile_simlib/vcs
+	SIMLIB_SETUP := $(SIMLIB_DIR)/synopsys_sim.setup
+
+	# Gate-level netlist
+	ifndef NETLIST
+		$(error POST_IMPL requires NETLIST=<path to gate-level netlist .v>)
+	endif
+	VCS_SRCS_POST += $(NETLIST)
+
+	# Xilinx glbl.v (required for gate-level sim)
+	GLBL ?= $(if $(XILINX_VIVADO),$(XILINX_VIVADO)/data/verilog/src/glbl.v,/tool/Program/Xilinx/Vivado/2023.2/data/verilog/src/glbl.v)
+	VCS_SRCS_POST += $(GLBL)
+
+	# SDF timing annotation (optional — omit for functional gate-level sim)
 	ifdef SDF_FILE
 		VCS_FLAGS += +define+PGSIM_RUNTIME_SDF_ANNOTATE
-		VCS_FLAGS += -sdf typ:$(VCS_TOP).dut:$(SDF_FILE)
+		VCS_FLAGS += -sdfretain -negdelay +neg_tchk
+		VCS_SDF_PARAM = -pvalue+$(VCS_TOP).SDF_FILE=\"$(abspath $(SDF_FILE))\"
+		VCS_FLAGS += $(VCS_SDF_PARAM)
+		SIMV_POST_FLAGS += +maxdelays +sdfverbose
 	endif
-	ifdef NETLIST_DIR
-		VCS_FLAGS += -y $(NETLIST_DIR) +libext+.v+.sv
-	endif
-	ifdef SIMLIB_DIR
-		VCS_FLAGS += -y $(SIMLIB_DIR) +libext+.v+.sv
-	endif
+
+	# synopsys_sim.setup: map work lib + Xilinx libs
+	# For timing sim: unisims_ver → simprims_ver (timing primitives)
+	VCS_SETUP_CMD = mkdir -p $(DESTDIR)/vcs_lib/work && \
+		{ echo "work:$(abspath $(DESTDIR))/vcs_lib/work"; \
+		  $(if $(SDF_FILE),echo "unisims_ver:$(abspath $(SIMLIB_DIR))/simprims_ver";,) \
+		  echo "OTHERS=$(abspath $(SIMLIB_SETUP))"; \
+		} > $(DESTDIR)/synopsys_sim.setup
+
+	# No RTL sources needed for post-impl (netlist replaces RTL)
+	# But DPI sources and TB are still needed
 endif
 
 ifdef FSDB_DUMP
@@ -156,6 +183,7 @@ ifdef FSDB_DUMP
 	VERDI_HOME ?= $(shell dirname $(shell dirname $(shell which verdi 2>/dev/null)))
 	ifneq ($(VERDI_HOME),)
 		VCS_FLAGS += -P $(VERDI_HOME)/share/PLI/VCS/LINUX64/novas.tab $(VERDI_HOME)/share/PLI/VCS/LINUX64/pli.a
+		VCS_FSDB_OPTS = -kdb -P $(VERDI_HOME)/share/PLI/VCS/LINUX64/novas.tab $(VERDI_HOME)/share/PLI/VCS/LINUX64/pli.a
 	endif
 endif
 
@@ -166,6 +194,33 @@ all: simv applib
 # ---- simv (VCS executable) ----
 simv: $(DESTDIR)/simv
 
+ifdef POST_IMPL
+# Post-impl: compile netlist + TB + DPI (no RTL sources)
+$(DESTDIR)/simv: $(SRC_DIR)/tb_vcs_xrtsim.sv $(SRC_DIR)/dpi_vcs_server.cpp
+	@mkdir -p $(DESTDIR)
+	@test -f "$(SIMLIB_SETUP)" || { echo "ERROR: $(SIMLIB_SETUP) not found. Run 'make -C hw/pgsim compile_vcs_libs' first."; exit 1; }
+	@test -f "$(NETLIST)" || { echo "ERROR: NETLIST not found: $(NETLIST)"; exit 1; }
+	$(VCS_SETUP_CMD)
+	cd $(DESTDIR) && vlogan -full64 -sverilog -timescale=1ns/1ps \
+		$(VCS_CONFIGS) +define+SIMULATION +define+SV_DPI +define+VCS +define+NOXRT +define+VCS_POST_IMPL \
+		$(if $(SDF_FILE),+define+PGSIM_RUNTIME_SDF_ANNOTATE +define+XIL_TIMING,) \
+		$(if $(FSDB_DUMP),+define+FSDB_DUMP,) \
+		$(foreach d,$(RTL_DIRS),+incdir+$(d)) \
+		-work work \
+		$(SRC_DIR)/tb_vcs_xrtsim.sv \
+		$(VCS_SRCS_POST) \
+		-l $(DESTDIR)/vlogan.log
+	cd $(DESTDIR) && vcs -full64 -debug_access+all -timescale=1ns/1ps \
+		$(VCS_SDF_PARAM) \
+		$(VCS_FSDB_OPTS) \
+		-CFLAGS "-std=c++17 -I$(SRC_DIR) -I$(ROOT_DIR)/hw -I$(SW_COMMON_DIR) -I/$(THIRD_PARTY_DIR)/softfloat/source/include -DXLEN_$(XLEN)" \
+		-LDFLAGS "-Wl,--whole-archive $(SOFTFLOAT_LIB) -Wl,--no-whole-archive" \
+		$(DPI_SRCS) \
+		$(VCS_TOP) glbl \
+		-l $(DESTDIR)/vcs_elab.log \
+		-o $(DESTDIR)/simv
+else
+# RTL sim: compile RTL + TB + DPI
 $(DESTDIR)/simv: $(SRC_DIR)/tb_vcs_xrtsim.sv $(SRC_DIR)/dpi_vcs_server.cpp
 	@mkdir -p $(DESTDIR)
 	cd $(DESTDIR) && vcs $(VCS_FLAGS) \
@@ -176,6 +231,7 @@ $(DESTDIR)/simv: $(SRC_DIR)/tb_vcs_xrtsim.sv $(SRC_DIR)/dpi_vcs_server.cpp
 		-l compile.log \
 		-top $(VCS_TOP) \
 		-o $(DESTDIR)/simv
+endif
 
 # ---- applib (shared library for App process) ----
 APPLIB_CONFIG_FILE := $(DESTDIR)/.applib_config.stamp
