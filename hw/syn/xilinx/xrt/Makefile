@@ -161,7 +161,7 @@ endif
 
 # Debugging
 ifdef DEBUG
-	VPP_FLAGS += -g --optimize 3 --debug.protocol all
+	VPP_FLAGS += -g --optimize 0 --debug.protocol all
 	ifeq ($(TARGET), hw)
 		VPP_FLAGS += --debug.chipscope vortex_afu_1
 		CFLAGS += -DNDEBUG -DCHIPSCOPE $(DBG_SCOPE_FLAGS)
@@ -170,7 +170,7 @@ ifdef DEBUG
 		CFLAGS += -DDEBUG_LEVEL=$(DEBUG) $(DBG_TRACE_FLAGS)
 	endif
 else
-	VPP_FLAGS += --optimize 3
+	VPP_FLAGS += --optimize 0
 	CFLAGS += -DNDEBUG
 endif
 
