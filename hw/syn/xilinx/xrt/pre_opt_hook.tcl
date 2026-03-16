@@ -13,7 +13,7 @@ source ${tool_dir}/xilinx_async_bram_patch.tcl
 # }
 
 # 2) cache hold-sensitive hotspots only
-set hold_margin_ns 0.3
+set hold_margin_ns 1.0
 
 proc vortex_cache_seq_cells {pattern} {
     return [get_cells -hier -filter [format {
