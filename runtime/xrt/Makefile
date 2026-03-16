@@ -22,6 +22,10 @@ ifeq ($(TARGET), xrtsim)
 	XRTSIM = $(DESTDIR)/libxrtsim.so
 	CXXFLAGS += -DXRTSIM -I$(SIM_DIR)/xrtsim
 	LDFLAGS += -L$(DESTDIR) -lxrtsim
+else ifeq ($(TARGET), xrtsim_vcs)
+	XRTSIM_VCS = $(DESTDIR)/libxrtsim_vcs.so
+	CXXFLAGS += -DXRTSIM -I$(SIM_DIR)/xrtsim
+	LDFLAGS += -L$(DESTDIR) -lxrtsim_vcs
 else
 	LDFLAGS += -luuid -lxrt_coreutil
 endif
@@ -60,7 +64,12 @@ driver: $(DESTDIR)/libxrtsim.so
 $(DESTDIR)/libxrtsim.so: force
 	DESTDIR=$(DESTDIR) $(MAKE) -C $(ROOT_DIR)/sim/xrtsim $(DESTDIR)/libxrtsim.so
 
-$(DESTDIR)/$(PROJECT): $(SRCS) $(XRTSIM) $(CONFIG_FILE)
+driver-vcs: $(DESTDIR)/libxrtsim_vcs.so
+
+$(DESTDIR)/libxrtsim_vcs.so: force
+	DESTDIR=$(DESTDIR) $(MAKE) -C $(ROOT_DIR)/sim/xrtsim_vcs applib
+
+$(DESTDIR)/$(PROJECT): $(SRCS) $(XRTSIM) $(XRTSIM_VCS) $(CONFIG_FILE)
 	$(CXX) $(CXXFLAGS) $(SRCS) $(LDFLAGS) -o $@
 
 # updates the timestamp when flags changed.
@@ -75,6 +84,9 @@ $(CONFIG_FILE): force
 
 clean-driver:
 	DESTDIR=$(DESTDIR) $(MAKE) -C $(ROOT_DIR)/sim/xrtsim clean
+
+clean-driver-vcs:
+	DESTDIR=$(DESTDIR) $(MAKE) -C $(ROOT_DIR)/sim/xrtsim_vcs clean
 
 clean-runtime:
 	rm -f $(DESTDIR)/$(PROJECT)

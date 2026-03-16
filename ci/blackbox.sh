@@ -26,7 +26,7 @@ show_help()
 {
     show_usage
     echo "  where"
-    echo "--driver: gpu, simx, rtlsim, oape, xrt"
+    echo "--driver: gpu, simx, rtlsim, opae, xrt, xrt_vcs"
     echo "--app: any subfolder test under regression or opencl"
     echo "--class: 0=disable, 1=pipeline, 2=memsys"
     echo "--nohup: build and run in temp directory"
@@ -84,6 +84,7 @@ set_driver_path() {
     case $DRIVER in
         gpu) DRIVER_PATH="" ;;
         simx|rtlsim|opae|xrt) DRIVER_PATH="$ROOT_DIR/runtime/$DRIVER" ;;
+        xrt_vcs) DRIVER_PATH="$ROOT_DIR/runtime/xrt" ;;
         *) echo "Invalid driver: $DRIVER"; exit 1 ;;
     esac
 }
@@ -111,7 +112,27 @@ build_driver() {
     [ $SCOPE -eq 1 ] && cmd_opts=$(add_option "$cmd_opts" "SCOPE=1")
     [ $TEMPBUILD -eq 1 ] && cmd_opts=$(add_option "$cmd_opts" "DESTDIR=\"$TEMPDIR\"")
     [ -n "$CONFIGS" ] && cmd_opts=$(add_option "$cmd_opts" "CONFIGS=\"$CONFIGS\"")
-    cmd_opts=$(add_option "$cmd_opts" "make -C $DRIVER_PATH > /dev/null")
+
+    if [ "$DRIVER" = "xrt_vcs" ]; then
+        # Build VCS simv
+        local vcs_opts=""
+        [ $DEBUG -ne 0 ] && vcs_opts=$(add_option "$vcs_opts" "DEBUG=$DEBUG_LEVEL")
+        [ -n "$CONFIGS" ] && vcs_opts=$(add_option "$vcs_opts" "CONFIGS=\"$CONFIGS\"")
+        [ $TEMPBUILD -eq 1 ] && vcs_opts=$(add_option "$vcs_opts" "DESTDIR=\"$TEMPDIR\"")
+        vcs_opts=$(add_option "$vcs_opts" "make -C $ROOT_DIR/sim/xrtsim_vcs simv > /dev/null")
+        echo "Running (VCS simv): $vcs_opts"
+        eval "$vcs_opts"
+        status=$?
+        if [ $status -ne 0 ]; then
+            echo "Error building VCS simv"
+            exit $status
+        fi
+        # Build App runtime with xrtsim_vcs target
+        cmd_opts=$(add_option "$cmd_opts" "TARGET=xrtsim_vcs make -C $DRIVER_PATH > /dev/null")
+    else
+        cmd_opts=$(add_option "$cmd_opts" "make -C $DRIVER_PATH > /dev/null")
+    fi
+
     echo "Running: $cmd_opts"
     eval "$cmd_opts"
     status=$?
@@ -126,7 +147,15 @@ run_app() {
     [ $DEBUG -eq 1 ] && cmd_opts=$(add_option "$cmd_opts" "DEBUG=1")
     [ $TEMPBUILD -eq 1 ] && cmd_opts=$(add_option "$cmd_opts" "VORTEX_RT_PATH=\"$TEMPDIR\"")
     [ $HAS_ARGS -eq 1 ] && cmd_opts=$(add_option "$cmd_opts" "OPTS=\"$ARGS\"")
-    cmd_opts=$(add_option "$cmd_opts" "make -C \"$APP_PATH\" run-$DRIVER")
+
+    if [ "$DRIVER" = "xrt_vcs" ]; then
+        local VCS_PORT=${VCS_SOCKET_PORT:-9999}
+        local vcs_flags="VCS_SOCKET_PORT=$VCS_PORT"
+        [ $TEMPBUILD -eq 1 ] && vcs_flags="$vcs_flags VCS_SIMV_DIR=\"$TEMPDIR\""
+        cmd_opts=$(add_option "$cmd_opts" "$vcs_flags make -C \"$APP_PATH\" run-xrt-vcs")
+    else
+        cmd_opts=$(add_option "$cmd_opts" "make -C \"$APP_PATH\" run-$DRIVER")
+    fi
 
     if [ $DEBUG -ne 0 ] && [ -n "${LOG_MAX_BYTES:-}" ] && [ "${LOG_MAX_BYTES}" -gt 0 ] 2>/dev/null; then
         local status_file
@@ -187,6 +216,7 @@ run_app() {
     echo "Running: $cmd_opts"
     eval "$cmd_opts"
     status=$?
+
     return $status
 }
 
