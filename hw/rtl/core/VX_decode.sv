@@ -108,7 +108,7 @@ module VX_decode import VX_gpu_pkg::*; #(
             3'h5: b_type = INST_BR_BGE;
             3'h6: b_type = INST_BR_BLTU;
             3'h7: b_type = INST_BR_BGEU;
-            default: b_type = 'x;
+            default: b_type = '0;
         endcase
     end
 
@@ -120,7 +120,7 @@ module VX_decode import VX_gpu_pkg::*; #(
             12'h002: s_type = INST_OP_BITS'(INST_BR_URET);
             12'h102: s_type = INST_OP_BITS'(INST_BR_SRET);
             12'h302: s_type = INST_OP_BITS'(INST_BR_MRET);
-            default: s_type = 'x;
+            default: s_type = '0;
         endcase
     end
 
@@ -142,13 +142,13 @@ module VX_decode import VX_gpu_pkg::*; #(
 
     always @(*) begin
 
-        ex_type   = 'x;
-        op_type   = 'x;
-        op_args   = 'x;
-        rd_v      = 'x;
-        rs1_v     = 'x;
-        rs2_v     = 'x;
-        rs3_v     = 'x;
+        ex_type   = '0;
+        op_type   = '0;
+        op_args   = '0;
+        rd_v      = '0;
+        rs1_v     = '0;
+        rs2_v     = '0;
+        rs3_v     = '0;
         use_rd    = 0;
         use_rs1   = 0;
         use_rs2   = 0;

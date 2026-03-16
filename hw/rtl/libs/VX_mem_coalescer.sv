@@ -166,7 +166,7 @@ module VX_mem_coalescer #(
         reg [DATA_RATIO-1:0][DATA_IN_WIDTH-1:0] data_merged;
         always @(*) begin
             byteen_merged = '0;
-            data_merged = 'x;
+            data_merged = '0;
             for (integer j = 0; j < DATA_RATIO; ++j) begin
                 for (integer k = 0; k < DATA_IN_SIZE; ++k) begin
                     // perform byte-level merge since each thread may have different bytes enabled

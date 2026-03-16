@@ -180,7 +180,7 @@ module VX_cache_bypass import VX_gpu_pkg::*; #(
             always @(*) begin
                 core_req_nc_arb_byteen_w = '0;
                 core_req_nc_arb_byteen_w[req_wsel] = core_req_nc_arb_byteen;
-                core_req_nc_arb_data_w = 'x;
+                core_req_nc_arb_data_w = '0;
                 core_req_nc_arb_data_w[req_wsel] = core_req_nc_arb_data;
             end
             VX_bits_insert #(

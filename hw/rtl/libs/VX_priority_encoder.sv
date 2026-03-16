@@ -73,8 +73,8 @@ module VX_priority_encoder #(
             reg [N-1:0]  onehot_w;
 
             always @(*) begin
-                index_w  = 'x;
-                onehot_w = 'x;
+                index_w  = '0;
+                onehot_w = '0;
                 for (integer i = 0; i < N-1; ++i) begin
                     if (data_in[i]) begin
                         index_w  = LN'(i);
@@ -166,8 +166,8 @@ module VX_priority_encoder #(
             reg [N-1:0]  onehot_w;
 
             always @(*) begin
-                index_w  = 'x;
-                onehot_w = 'x;
+                index_w  = '0;
+                onehot_w = '0;
                 for (integer i = N-1; i >= 0; --i) begin
                     if (data_in[i]) begin
                         index_w  = LN'(i);

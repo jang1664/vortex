@@ -106,7 +106,7 @@ module VX_fpu_fpnew
     `UNUSED_VAR (fmt)
 
     always @(*) begin
-        fpu_op          = fpnew_pkg::operation_e'('x);
+        fpu_op          = fpnew_pkg::operation_e'('0);
         fpu_rnd         = frm;
         fpu_op_mod      = 0;
         fpu_has_fflags  = 1;

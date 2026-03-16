@@ -65,7 +65,7 @@ module VX_tcu_fedp_dpi #(
                 end
             end
             default: begin
-                xprod = 'x;
+                xprod = '0;
             end
             endcase
         end

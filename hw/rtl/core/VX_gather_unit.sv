@@ -67,7 +67,7 @@ module VX_gather_unit import VX_gpu_pkg::*; #(
     always @(*) begin
         result_out_valid = '0;
         for (integer i = 0; i < `ISSUE_WIDTH; ++i) begin
-            result_out_data[i] = 'x;
+            result_out_data[i] = '0;
         end
         for (integer i = 0; i < BLOCK_SIZE; ++i) begin
             result_out_valid[result_in_isw[i]] = result_in_valid[i];
@@ -113,7 +113,7 @@ module VX_gather_unit import VX_gpu_pkg::*; #(
             end
             always @(*) begin
                 commit_tmask_w = '0;
-                commit_data_w  = 'x;
+                commit_data_w  = '0;
                 for (integer j = 0; j < NUM_LANES; ++j) begin
                     commit_tmask_w[lpid * NUM_LANES + j] = result_tmp_if.data.tmask[j];
                     commit_data_w[lpid * NUM_LANES + j] = result_tmp_if.data.data[j];

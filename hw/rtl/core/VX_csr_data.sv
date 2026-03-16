@@ -186,8 +186,8 @@ import VX_fpu_pkg::*;
 
             `CSR_READ_64(`VX_CSR_MCYCLE, read_data_ro_w, cycles);
 
-            `VX_CSR_MPM_RESERVED : read_data_ro_w = 'x;
-            `VX_CSR_MPM_RESERVED_H : read_data_ro_w = 'x;
+            `VX_CSR_MPM_RESERVED : read_data_ro_w = '0;
+            `VX_CSR_MPM_RESERVED_H : read_data_ro_w = '0;
 
             `CSR_READ_64(`VX_CSR_MINSTRET, read_data_ro_w, commit_csr_if.instret);
 

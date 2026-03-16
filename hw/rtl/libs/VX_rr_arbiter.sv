@@ -56,7 +56,7 @@ module VX_rr_arbiter #(
             3'b1_?1: begin grant_onehot_w = 2'b01; grant_index_w = LOG_NUM_REQS'(0); end
             3'b0_1?,
             3'b1_10: begin grant_onehot_w = 2'b10; grant_index_w = LOG_NUM_REQS'(1); end
-            default: begin grant_onehot_w = 2'b00; grant_index_w = 'x; end
+            default: begin grant_onehot_w = 2'b00; grant_index_w = '0; end
             endcase
         end
 
@@ -91,7 +91,7 @@ module VX_rr_arbiter #(
             5'b00_10?,
             5'b01_1??,
             5'b10_100: begin grant_onehot_w = 3'b100; grant_index_w = LOG_NUM_REQS'(2); end
-            default:   begin grant_onehot_w = 3'b000; grant_index_w = 'x; end
+            default:   begin grant_onehot_w = 3'b000; grant_index_w = '0; end
             endcase
         end
 
@@ -133,7 +133,7 @@ module VX_rr_arbiter #(
             6'b01_10??,
             6'b10_1???,
             6'b11_1000: begin grant_onehot_w = 4'b1000; grant_index_w = LOG_NUM_REQS'(3); end
-            default:    begin grant_onehot_w = 4'b0000; grant_index_w = 'x; end
+            default:    begin grant_onehot_w = 4'b0000; grant_index_w = '0; end
             endcase
         end
 
@@ -184,7 +184,7 @@ module VX_rr_arbiter #(
             8'b010_10???,
             8'b011_1????,
             8'b100_10000: begin grant_onehot_w = 5'b10000; grant_index_w = LOG_NUM_REQS'(4); end
-            default:      begin grant_onehot_w = 5'b00000; grant_index_w = 'x; end
+            default:      begin grant_onehot_w = 5'b00000; grant_index_w = '0; end
             endcase
         end
 
@@ -246,7 +246,7 @@ module VX_rr_arbiter #(
             9'b011_10????,
             9'b100_1?????,
             9'b101_100000: begin grant_onehot_w = 6'b100000; grant_index_w = LOG_NUM_REQS'(5); end
-            default:       begin grant_onehot_w = 6'b000000; grant_index_w = 'x; end
+            default:       begin grant_onehot_w = 6'b000000; grant_index_w = '0; end
             endcase
         end
 
@@ -321,7 +321,7 @@ module VX_rr_arbiter #(
             10'b100_10?????,
             10'b101_1??????,
             10'b110_1000000: begin grant_onehot_w = 7'b1000000; grant_index_w = LOG_NUM_REQS'(6); end
-            default:        begin grant_onehot_w = 7'b0000000; grant_index_w = 'x; end
+            default:        begin grant_onehot_w = 7'b0000000; grant_index_w = '0; end
             endcase
         end
 
@@ -411,7 +411,7 @@ module VX_rr_arbiter #(
             11'b101_10??????,
             11'b110_1???????,
             11'b111_10000000: begin grant_onehot_w = 8'b10000000; grant_index_w = LOG_NUM_REQS'(7); end
-            default:          begin grant_onehot_w = 8'b00000000; grant_index_w = 'x; end
+            default:          begin grant_onehot_w = 8'b00000000; grant_index_w = '0; end
             endcase
         end
 
@@ -503,7 +503,7 @@ module VX_rr_arbiter #(
 
         for (genvar i = 0; i < NUM_REQS; ++i) begin : g_grant_table
             always @(*) begin
-                grant_table[i] = 'x;
+                grant_table[i] = '0;
                 for (integer j = NUM_REQS-1; j >= 0; --j) begin
                     if (requests[(i+j+1) % NUM_REQS]) begin
                         grant_table[i] = LOG_NUM_REQS'((i+j+1) % NUM_REQS);

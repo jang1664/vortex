@@ -101,7 +101,7 @@ module VX_stream_omega #(
                 assign ready_in[i] = switch_ready_in[0][switch][port];
             end else begin : g_padding
                 assign switch_valid_in[0][switch][port] = 0;
-                assign switch_data_in[0][switch][port] = 'x;
+                assign switch_data_in[0][switch][port] = '0;
                 `UNUSED_VAR (switch_ready_in[0][switch][port])
             end
         end

@@ -174,8 +174,8 @@ module VX_tcu_fedp_dsp #(
                 a_col_sel = b_col_bf16;
             end
             default: begin
-                a_row_sel = 'x;
-                a_col_sel = 'x;
+                a_row_sel = '0;
+                a_col_sel = '0;
             end
             endcase
         end

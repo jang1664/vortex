@@ -448,7 +448,7 @@ module VX_lsu_slice import VX_gpu_pkg::*; #(
         `else
             LSU_FMT_W:  rsp_data[i] = `XLEN'(signed'(rsp_data32));
         `endif
-            default: rsp_data[i] = 'x;
+            default: rsp_data[i] = '0;
             endcase
         end
     end
