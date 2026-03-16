@@ -96,6 +96,21 @@ proc vortex_apply_hold_margin {label margin_ns from_pattern to_pattern} {
     }
 
     puts "INFO: Added ${margin_ns}ns cache hold margin to ${label}: paths=[llength $timing_paths], pairs=${pair_count}, startpoints=[array size start_to_ends]"
+
+    set print_limit 100
+    set printed 0
+    foreach path $timing_paths {
+        if {$printed >= $print_limit} {
+            puts "INFO:   ... (truncated, showing $print_limit of [llength $timing_paths] paths)"
+            break
+        }
+        set sp [get_property STARTPOINT_PIN $path]
+        set ep [get_property ENDPOINT_PIN $path]
+        set slack [get_property SLACK $path]
+        set delay [get_property DATAPATH_DELAY $path]
+        puts [format "INFO:   \[%3d\] slack=%-8s delay=%-8s  %s -> %s" $printed $slack $delay $sp $ep]
+        incr printed
+    }
 }
 
 set cache_base "level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters*.cluster/g_sockets*.socket"
