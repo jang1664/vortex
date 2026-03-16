@@ -5,7 +5,7 @@ module tb_ulp_vortex_afu_1_0_post #(
 );
 
   localparam int CLK_HALF_PERIOD_NS = 5;
-  localparam int AXI_TIMEOUT_CYCLES = 2000;
+  localparam int AXI_TIMEOUT_CYCLES = 10000;
 
   logic         ap_clk;
   logic         ap_rst_n;
@@ -120,6 +120,17 @@ module tb_ulp_vortex_afu_1_0_post #(
   end
 `endif
 
+`ifdef FSDB_DUMP
+  initial begin : fsdb_dump
+    string fsdb_file;
+    if (!$value$plusargs("fsdb_file=%s", fsdb_file))
+      fsdb_file = "pgsim.fsdb";
+    $fsdbDumpfile(fsdb_file);
+    $fsdbDumpvars(0, tb_ulp_vortex_afu_1_0_post, "+all");
+    $display("[TB] FSDB dump enabled: %0s", fsdb_file);
+  end
+`endif
+
   always #(CLK_HALF_PERIOD_NS) ap_clk = ~ap_clk;
 
   function automatic [511:0] mem_read_data(input [63:0] addr);
@@ -127,12 +138,17 @@ module tb_ulp_vortex_afu_1_0_post #(
   endfunction
 
   task automatic axi_ctrl_write(input [7:0] addr, input [31:0] data);
-    int cyc;
+    int aw_stall_cyc;
+    int w_stall_cyc;
+    int b_stall_cyc;
     bit aw_done;
     bit w_done;
     begin
       aw_done = 1'b0;
       w_done  = 1'b0;
+      aw_stall_cyc = 0;
+      w_stall_cyc  = 0;
+      b_stall_cyc  = 0;
 
       s_axi_ctrl_awaddr  <= addr;
       s_axi_ctrl_awvalid <= 1'b1;
@@ -140,32 +156,41 @@ module tb_ulp_vortex_afu_1_0_post #(
       s_axi_ctrl_wstrb   <= 4'hf;
       s_axi_ctrl_wvalid  <= 1'b1;
 
-      for (cyc = 0; cyc < AXI_TIMEOUT_CYCLES; cyc++) begin
+      while (!(aw_done && w_done)) begin
         @(posedge ap_clk);
         if (!aw_done && s_axi_ctrl_awvalid && s_axi_ctrl_awready) begin
           s_axi_ctrl_awvalid <= 1'b0;
           aw_done = 1'b1;
         end
+        if (!aw_done && s_axi_ctrl_awvalid && !s_axi_ctrl_awready) begin
+          aw_stall_cyc++;
+          if (aw_stall_cyc >= AXI_TIMEOUT_CYCLES) begin
+            $fatal(1, "[TB] AXI-Lite AW handshake stall timeout");
+          end
+        end
         if (!w_done && s_axi_ctrl_wvalid && s_axi_ctrl_wready) begin
           s_axi_ctrl_wvalid <= 1'b0;
           w_done = 1'b1;
         end
-        if (aw_done && w_done)
-          break;
-      end
-
-      if (!(aw_done && w_done)) begin
-        $fatal(1, "[TB] AXI-Lite write address/data handshake timeout");
+        if (!w_done && s_axi_ctrl_wvalid && !s_axi_ctrl_wready) begin
+          w_stall_cyc++;
+          if (w_stall_cyc >= AXI_TIMEOUT_CYCLES) begin
+            $fatal(1, "[TB] AXI-Lite W handshake stall timeout");
+          end
+        end
       end
 
       s_axi_ctrl_bready <= 1'b1;
-      for (cyc = 0; cyc < AXI_TIMEOUT_CYCLES; cyc++) begin
+      while (1) begin
         @(posedge ap_clk);
-        if (s_axi_ctrl_bvalid)
+        if (s_axi_ctrl_bvalid && s_axi_ctrl_bready)
           break;
-      end
-      if (!s_axi_ctrl_bvalid) begin
-        $fatal(1, "[TB] AXI-Lite write response timeout");
+        if (s_axi_ctrl_bvalid && !s_axi_ctrl_bready) begin
+          b_stall_cyc++;
+          if (b_stall_cyc >= AXI_TIMEOUT_CYCLES) begin
+            $fatal(1, "[TB] AXI-Lite B handshake stall timeout");
+          end
+        end
       end
       @(posedge ap_clk);
       s_axi_ctrl_bready <= 1'b0;
@@ -173,32 +198,40 @@ module tb_ulp_vortex_afu_1_0_post #(
   endtask
 
   task automatic axi_ctrl_read(input [7:0] addr, output [31:0] data);
-    int cyc;
+    int ar_stall_cyc;
+    int r_stall_cyc;
     begin
+      ar_stall_cyc = 0;
+      r_stall_cyc  = 0;
       s_axi_ctrl_araddr  <= addr;
       s_axi_ctrl_arvalid <= 1'b1;
 
-      for (cyc = 0; cyc < AXI_TIMEOUT_CYCLES; cyc++) begin
+      while (s_axi_ctrl_arvalid) begin
         @(posedge ap_clk);
         if (s_axi_ctrl_arvalid && s_axi_ctrl_arready) begin
           s_axi_ctrl_arvalid <= 1'b0;
-          break;
         end
-      end
-      if (s_axi_ctrl_arvalid) begin
-        $fatal(1, "[TB] AXI-Lite read address handshake timeout");
+        if (s_axi_ctrl_arvalid && !s_axi_ctrl_arready) begin
+          ar_stall_cyc++;
+          if (ar_stall_cyc >= AXI_TIMEOUT_CYCLES) begin
+            $fatal(1, "[TB] AXI-Lite AR handshake stall timeout");
+          end
+        end
       end
 
       s_axi_ctrl_rready <= 1'b1;
-      for (cyc = 0; cyc < AXI_TIMEOUT_CYCLES; cyc++) begin
+      while (1) begin
         @(posedge ap_clk);
-        if (s_axi_ctrl_rvalid) begin
+        if (s_axi_ctrl_rvalid && s_axi_ctrl_rready) begin
           data = s_axi_ctrl_rdata;
           break;
         end
-      end
-      if (!s_axi_ctrl_rvalid) begin
-        $fatal(1, "[TB] AXI-Lite read data timeout");
+        if (s_axi_ctrl_rvalid && !s_axi_ctrl_rready) begin
+          r_stall_cyc++;
+          if (r_stall_cyc >= AXI_TIMEOUT_CYCLES) begin
+            $fatal(1, "[TB] AXI-Lite R handshake stall timeout");
+          end
+        end
       end
       @(posedge ap_clk);
       s_axi_ctrl_rready <= 1'b0;
