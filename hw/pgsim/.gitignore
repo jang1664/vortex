@@ -4,3 +4,5 @@ work/
 *.log
 *.bak
 .cxl*
+novas*
+verdiLog/

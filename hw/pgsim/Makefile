@@ -48,9 +48,14 @@ VLOGAN_OPTS ?= -full64 -sverilog -timescale=1ns/1ps
 VCS_OPTS ?= -full64 -licqueue -debug_access+all -timescale=1ns/1ps
 SIMV ?= $(WORK_DIR_ABS)/simv
 SIMV_OPTS ?=
+USE_FSDB ?= 0
+FSDB_FILE ?= $(WORK_DIR_ABS)/pgsim.fsdb
+VERDI_HOME ?= $(NOVAS_HOME)
+VCS_FSDB_OPTS = $(if $(filter 1,$(USE_FSDB)),-kdb -lca -P $(VERDI_HOME)/share/PLI/VCS/LINUX64/novas.tab $(VERDI_HOME)/share/PLI/VCS/LINUX64/pli.a,)
+SIMV_FSDB_OPTS = $(if $(filter 1,$(USE_FSDB)),+fsdb_file=$(FSDB_FILE),)
 
 SDF_OPT = $(if $(filter 1,$(USE_SDF)),-sdfmax /$(TOP)/$(DUT_INST)=$(SDF),)
-VCS_SDF_DEFINE = $(if $(filter 1,$(USE_SDF)),+define+PGSIM_RUNTIME_SDF_ANNOTATE,)
+VCS_SDF_DEFINE = $(if $(filter 1,$(USE_SDF)),+define+PGSIM_RUNTIME_SDF_ANNOTATE +define+XIL_TIMING,)
 VCS_SDF_PARAM_OPT = $(if $(filter 1,$(USE_SDF)),-pvalue+$(TOP).SDF_FILE=\\\"$(abspath $(SDF))\\\",)
 SIMV_SDF_OPTS = $(if $(filter 1,$(USE_SDF)),+maxdelays +sdfverbose,)
 
@@ -170,24 +175,29 @@ prepare_vcs_setup: compile_vcs_libs check_vcs_libs prep
 	@mkdir -p "$(VCS_LIB_DIR)/$(VCS_WORK_LIB)"
 	@{ \
 		echo "$(VCS_WORK_LIB):$(VCS_LIB_DIR)/$(VCS_WORK_LIB)"; \
+		if [ "$(USE_SDF)" = "1" ]; then \
+			echo "unisims_ver:$(VCS_LIB_MAP_PATH)/simprims_ver"; \
+		fi; \
 		echo "OTHERS=$(VCS_LIB_MAP_PATH)/$(VCS_SETUP_FILE)"; \
 	} > "$(WORK_DIR_ABS)/$(VCS_SETUP_FILE)"
 
 compile_vcs: check_vcs_tools check_inputs prepare_vcs_setup
 	@cd "$(WORK_DIR_ABS)" && \
-	$(VLOGAN) $(VLOGAN_OPTS) $(VCS_SDF_DEFINE) -work "$(VCS_WORK_LIB)" \
+	$(VLOGAN) $(VLOGAN_OPTS) $(VCS_SDF_DEFINE) $(if $(filter 1,$(USE_FSDB)),+define+FSDB_DUMP,) -work "$(VCS_WORK_LIB)" \
 	"$(TB)" "$(NETLIST)" "$(GLBL)" \
 	-l "$(LOG_DIR_ABS)/vlogan.log"
 
 elaborate_vcs: compile_vcs check_sdf
 	@cd "$(WORK_DIR_ABS)" && \
-	$(VCS) $(VCS_OPTS) $(VCS_SDF_PARAM_OPT) "$(TOP)" glbl \
+	$(VCS) $(VCS_OPTS) $(VCS_SDF_PARAM_OPT) $(VCS_FSDB_OPTS) "$(TOP)" glbl \
+	-diag=sdf:verbose -sdfretain -edge_iopath -negdelay +neg_tchk +overlap \
+	-assert svaext \
 	-o "$(SIMV)" \
 	-l "$(LOG_DIR_ABS)/vcs_elab.log"
 
 run_vcs: elaborate_vcs
 	@cd "$(WORK_DIR_ABS)" && \
-	"$(SIMV)" $(SIMV_OPTS) $(SIMV_SDF_OPTS) \
+	"$(SIMV)" $(SIMV_OPTS) $(SIMV_SDF_OPTS) $(SIMV_FSDB_OPTS) \
 	-l "$(LOG_DIR_ABS)/simv.log"
 
 sim_vcs: run_vcs
