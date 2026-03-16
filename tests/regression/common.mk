@@ -134,6 +134,23 @@ else
 	SCOPE_JSON_PATH=$(VORTEX_RT_PATH)/scope.json LD_LIBRARY_PATH=$(XILINX_XRT)/lib:$(VORTEX_RT_PATH):$(LD_LIBRARY_PATH) VORTEX_DRIVER=xrt ./$(PROJECT) $(OPTS)
 endif
 
+VCS_SIMV_DIR ?= $(ROOT_DIR)/sim/xrtsim_vcs
+VCS_SOCKET_PORT ?= 9999
+VCS_SIMV_FLAGS ?= +vcs+initreg+0
+
+run-xrt-vcs: $(PROJECT) kernel.vxbin
+	@echo "Launching VCS simv on port $(VCS_SOCKET_PORT)..."
+	$(VCS_SIMV_DIR)/simv +SOCKET_PORT=$(VCS_SOCKET_PORT) $(VCS_SIMV_FLAGS) > simv.log 2>&1 &
+	@VCS_PID=$$!; \
+	sleep 3; \
+	echo "Running $(PROJECT) with VCS co-simulation..."; \
+	VCS_SOCKET_PORT=$(VCS_SOCKET_PORT) \
+	LD_LIBRARY_PATH=$(VCS_SIMV_DIR):$(VORTEX_RT_PATH):$(XILINX_XRT)/lib:$(LD_LIBRARY_PATH) \
+	VORTEX_DRIVER=xrt ./$(PROJECT) $(OPTS); \
+	status=$$?; \
+	kill $$VCS_PID 2>/dev/null; wait $$VCS_PID 2>/dev/null; \
+	exit $$status
+
 .depend: $(SRCS)
 	$(CXX) $(CXXFLAGS) -MM $^ > .depend;
 
