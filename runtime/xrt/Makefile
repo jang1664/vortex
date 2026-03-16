@@ -67,7 +67,7 @@ $(DESTDIR)/libxrtsim.so: force
 driver-vcs: $(DESTDIR)/libxrtsim_vcs.so
 
 $(DESTDIR)/libxrtsim_vcs.so: force
-	DESTDIR=$(DESTDIR) $(MAKE) -C $(ROOT_DIR)/sim/xrtsim_vcs applib
+	DESTDIR=$(DESTDIR) CONFIGS="$(CONFIGS)" $(MAKE) -C $(ROOT_DIR)/sim/xrtsim_vcs applib
 
 $(DESTDIR)/$(PROJECT): $(SRCS) $(XRTSIM) $(XRTSIM_VCS) $(CONFIG_FILE)
 	$(CXX) $(CXXFLAGS) $(SRCS) $(LDFLAGS) -o $@

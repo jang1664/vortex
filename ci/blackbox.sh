@@ -119,7 +119,8 @@ build_driver() {
         [ $DEBUG -ne 0 ] && vcs_opts=$(add_option "$vcs_opts" "DEBUG=$DEBUG_LEVEL")
         [ -n "$CONFIGS" ] && vcs_opts=$(add_option "$vcs_opts" "CONFIGS=\"$CONFIGS\"")
         [ $TEMPBUILD -eq 1 ] && vcs_opts=$(add_option "$vcs_opts" "DESTDIR=\"$TEMPDIR\"")
-        vcs_opts=$(add_option "$vcs_opts" "make -C $ROOT_DIR/sim/xrtsim_vcs simv > /dev/null")
+        [ -n "${FSDB_DUMP:-}" ] && vcs_opts=$(add_option "$vcs_opts" "FSDB_DUMP=1")
+        vcs_opts=$(add_option "$vcs_opts" "make -C $ROOT_DIR/sim/xrtsim_vcs simv")
         echo "Running (VCS simv): $vcs_opts"
         eval "$vcs_opts"
         status=$?
@@ -127,8 +128,20 @@ build_driver() {
             echo "Error building VCS simv"
             exit $status
         fi
+        # Build applib
+        vcs_opts=""
+        [ -n "$CONFIGS" ] && vcs_opts=$(add_option "$vcs_opts" "CONFIGS=\"$CONFIGS\"")
+        [ $TEMPBUILD -eq 1 ] && vcs_opts=$(add_option "$vcs_opts" "DESTDIR=\"$TEMPDIR\"")
+        vcs_opts=$(add_option "$vcs_opts" "make -C $ROOT_DIR/sim/xrtsim_vcs applib")
+        echo "Running (VCS applib): $vcs_opts"
+        eval "$vcs_opts"
+        status=$?
+        if [ $status -ne 0 ]; then
+            echo "Error building VCS applib"
+            exit $status
+        fi
         # Build App runtime with xrtsim_vcs target
-        cmd_opts=$(add_option "$cmd_opts" "TARGET=xrtsim_vcs make -C $DRIVER_PATH > /dev/null")
+        cmd_opts=$(add_option "$cmd_opts" "TARGET=xrtsim_vcs make -C $DRIVER_PATH")
     else
         cmd_opts=$(add_option "$cmd_opts" "make -C $DRIVER_PATH > /dev/null")
     fi
@@ -149,10 +162,36 @@ run_app() {
     [ $HAS_ARGS -eq 1 ] && cmd_opts=$(add_option "$cmd_opts" "OPTS=\"$ARGS\"")
 
     if [ "$DRIVER" = "xrt_vcs" ]; then
-        local VCS_PORT=${VCS_SOCKET_PORT:-9999}
-        local vcs_flags="VCS_SOCKET_PORT=$VCS_PORT"
-        [ $TEMPBUILD -eq 1 ] && vcs_flags="$vcs_flags VCS_SIMV_DIR=\"$TEMPDIR\""
-        cmd_opts=$(add_option "$cmd_opts" "$vcs_flags make -C \"$APP_PATH\" run-xrt-vcs")
+        local VCS_PORT
+        if [ -n "${VCS_SOCKET_PORT:-}" ]; then
+            VCS_PORT=$VCS_SOCKET_PORT
+        else
+            VCS_PORT=$(python3 -c "import socket; s=socket.socket(); s.bind(('',0)); print(s.getsockname()[1]); s.close()")
+        fi
+        local SIMV_DIR
+        if [ $TEMPBUILD -eq 1 ]; then
+            SIMV_DIR="$(realpath "$TEMPDIR")"
+        else
+            SIMV_DIR="$(realpath "$ROOT_DIR/sim/xrtsim_vcs")"
+        fi
+
+        # Build VCS runtime flags
+        local simv_flags="+SOCKET_PORT=$VCS_PORT +vcs+initreg+0 -suppress=ASLR_DETECTED_INFO"
+        [ -n "${VCS_SIMV_FLAGS:-}" ] && simv_flags="$simv_flags $VCS_SIMV_FLAGS"
+
+        local SIMV_LOG="$SIMV_DIR/simv.log"
+        echo "Launching VCS simv on port $VCS_PORT (log: $SIMV_LOG)..."
+        (cd "$SIMV_DIR" && ./simv $simv_flags > "$SIMV_LOG" 2>&1) &
+        VCS_PID=$!
+        sleep 3
+
+        if ! kill -0 $VCS_PID 2>/dev/null; then
+            echo "Error: VCS simv failed to start. Check $SIMV_LOG"
+            cat "$SIMV_LOG"
+            exit 1
+        fi
+
+        cmd_opts=$(add_option "$cmd_opts" "VCS_SOCKET_PORT=$VCS_PORT LD_LIBRARY_PATH=$SIMV_DIR:\$LD_LIBRARY_PATH make -C \"$APP_PATH\" run-xrt")
     else
         cmd_opts=$(add_option "$cmd_opts" "make -C \"$APP_PATH\" run-$DRIVER")
     fi
@@ -216,6 +255,12 @@ run_app() {
     echo "Running: $cmd_opts"
     eval "$cmd_opts"
     status=$?
+
+    # Clean up VCS process if xrt_vcs driver
+    if [ "$DRIVER" = "xrt_vcs" ] && [ -n "${VCS_PID:-}" ]; then
+        kill $VCS_PID 2>/dev/null
+        wait $VCS_PID 2>/dev/null
+    fi
 
     return $status
 }

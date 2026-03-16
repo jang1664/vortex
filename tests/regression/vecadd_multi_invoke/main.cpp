@@ -444,7 +444,7 @@ int main(int argc, char *argv[]) {
     // wait for completion
     std::cout << "wait for completion" << std::endl;
     RT_CHECK(vx_ready_wait(device, VX_MAX_TIMEOUT));
-    usleep(1000); // ensure device has finished all memory transactions after ready
+    // usleep(1000); // ensure device has finished all memory transactions after ready
 
     // download destination buffer
     std::cout << "download destination buffer" << std::endl;

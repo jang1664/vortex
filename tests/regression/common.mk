@@ -135,16 +135,16 @@ else
 endif
 
 VCS_SIMV_DIR ?= $(ROOT_DIR)/sim/xrtsim_vcs
-VCS_SOCKET_PORT ?= 9999
 VCS_SIMV_FLAGS ?= +vcs+initreg+0
 
 run-xrt-vcs: $(PROJECT) kernel.vxbin
-	@echo "Launching VCS simv on port $(VCS_SOCKET_PORT)..."
-	$(VCS_SIMV_DIR)/simv +SOCKET_PORT=$(VCS_SOCKET_PORT) $(VCS_SIMV_FLAGS) > simv.log 2>&1 &
-	@VCS_PID=$$!; \
+	@VCS_PORT=$${VCS_SOCKET_PORT:-$$(python3 -c "import socket; s=socket.socket(); s.bind(('',0)); print(s.getsockname()[1]); s.close()")}; \
+	echo "Launching VCS simv on port $$VCS_PORT..."; \
+	(cd $(VCS_SIMV_DIR) && ./simv +SOCKET_PORT=$$VCS_PORT $(VCS_SIMV_FLAGS) > simv.log 2>&1) & \
+	VCS_PID=$$!; \
 	sleep 3; \
 	echo "Running $(PROJECT) with VCS co-simulation..."; \
-	VCS_SOCKET_PORT=$(VCS_SOCKET_PORT) \
+	VCS_SOCKET_PORT=$$VCS_PORT \
 	LD_LIBRARY_PATH=$(VCS_SIMV_DIR):$(VORTEX_RT_PATH):$(XILINX_XRT)/lib:$(LD_LIBRARY_PATH) \
 	VORTEX_DRIVER=xrt ./$(PROJECT) $(OPTS); \
 	status=$$?; \

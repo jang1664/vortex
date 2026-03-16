@@ -5,6 +5,8 @@ DESTDIR ?= $(CURDIR)
 CONFIG_FILE := $(DESTDIR)/xrtsim_config.stamp
 SRC_DIR := $(VORTEX_HOME)/sim/xrtsim
 AFU_DIR := $(RTL_DIR)/afu/xrt
+VLT_FILE := $(DESTDIR)/verilator.vlt
+VLT_TEMPLATE := $(SRC_DIR)/verilator.vlt.in
 
 CXXFLAGS += -std=c++17 -Wall -Wextra -Wfatal-errors -Wno-array-bounds
 CXXFLAGS += -fPIC -Wno-maybe-uninitialized
@@ -89,7 +91,7 @@ VL_FLAGS += --x-initial unique --x-assign unique
 VL_FLAGS += -DSIMULATION -DSV_DPI
 VL_FLAGS += -DXLEN_$(XLEN)
 VL_FLAGS += $(CONFIGS)
-VL_FLAGS += verilator.vlt
+VL_FLAGS += $(VLT_FILE)
 VL_FLAGS += $(RTL_INCLUDE)
 VL_FLAGS += $(RTL_PKGS)
 
@@ -136,14 +138,23 @@ PROJECT := libxrtsim.so
 
 all: $(DESTDIR)/$(PROJECT)
 
-$(DESTDIR)/vortex.xml: $(CONFIG_FILE)
+$(DESTDIR)/vortex.xml: $(CONFIG_FILE) $(VLT_FILE)
 	verilator --xml-only -O0 $(VL_FLAGS) $(TOP) --xml-output $@
 
 $(DESTDIR)/scope.json: $(DESTDIR)/vortex.xml
 	$(SCRIPT_DIR)/scope.py $^ -o $@
 
-$(DESTDIR)/$(PROJECT): $(SRCS) $(SCOPE_JSON) $(CONFIG_FILE) $(RTL_SRCS)
+$(DESTDIR)/$(PROJECT): $(SRCS) $(SCOPE_JSON) $(CONFIG_FILE) $(RTL_SRCS) $(VLT_FILE)
 	verilator --build --exe $(VL_FLAGS) --cc $(TOP) --top-module $(TOP) $(SRCS) -CFLAGS '$(CXXFLAGS)' -LDFLAGS '$(LDFLAGS)' --Mdir $@.obj_dir -o $@
+
+$(VLT_FILE): $(VLT_TEMPLATE)
+	@mkdir -p $(@D)
+	@sed 's#@VORTEX_HOME@#$(VORTEX_HOME)#g' $< > $@.tmp
+	@if ! cmp -s $@.tmp $@; then \
+	  mv $@.tmp $@; \
+	else \
+	  rm $@.tmp; \
+	fi
 
 # updates the timestamp when flags changed.
 $(CONFIG_FILE): force

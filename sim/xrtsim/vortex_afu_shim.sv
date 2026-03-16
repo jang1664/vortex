@@ -15,18 +15,26 @@
 
 module vortex_afu_shim #(
     parameter C_S_AXI_CTRL_ADDR_WIDTH = 8,
-	parameter C_S_AXI_CTRL_DATA_WIDTH = 32,
-	parameter C_M_AXI_MEM_ID_WIDTH 	  = `PLATFORM_MEMORY_ID_WIDTH,
-	parameter C_M_AXI_MEM_DATA_WIDTH  = (`PLATFORM_MEMORY_DATA_SIZE * 8),
-	parameter C_M_AXI_MEM_ADDR_WIDTH  = 64,
+		parameter C_S_AXI_CTRL_DATA_WIDTH = 32,
+		parameter C_M_AXI_MEM_ID_WIDTH 	  = `PLATFORM_MEMORY_ID_WIDTH,
+    parameter C_M_AXI_MEM_DATA_WIDTH  = (`PLATFORM_MEMORY_DATA_SIZE * 8),
+    parameter C_M_AXI_MEM_ADDR_WIDTH  = 64,
+`ifdef PLATFORM_MERGED_MEMORY_INTERFACE
+    parameter C_M_AXI_MEM_NUM_BANKS   = 1
+`else
     parameter C_M_AXI_MEM_NUM_BANKS   = `PLATFORM_MEMORY_NUM_BANKS
+`endif
 ) (
-	// System signals
-	input wire 									ap_clk,
-	input wire 									ap_rst_n,
+		// System signals
+		input wire 									ap_clk,
+		input wire 									ap_rst_n,
 
     // AXI4 master interface
+`ifdef PLATFORM_MERGED_MEMORY_INTERFACE
+    `REPEAT (1, GEN_AXI_MEM, REPEAT_COMMA),
+`else
     `REPEAT (`PLATFORM_MEMORY_NUM_BANKS, GEN_AXI_MEM, REPEAT_COMMA),
+`endif
 
     // AXI4-Lite slave interface
     input  wire                                 s_axi_ctrl_awvalid,
@@ -58,12 +66,16 @@ module vortex_afu_shim #(
 		.C_M_AXI_MEM_ADDR_WIDTH  (C_M_AXI_MEM_ADDR_WIDTH),
 		.C_M_AXI_MEM_NUM_BANKS   (C_M_AXI_MEM_NUM_BANKS)
 	) afu_wrap (
-		.clk             	(ap_clk),
-		.reset           	(~ap_rst_n),
+			.clk             	(ap_clk),
+			.reset           	(~ap_rst_n),
 
-		`REPEAT (`PLATFORM_MEMORY_NUM_BANKS, AXI_MEM_ARGS, REPEAT_COMMA),
+`ifdef PLATFORM_MERGED_MEMORY_INTERFACE
+			`REPEAT (1, AXI_MEM_ARGS, REPEAT_COMMA),
+`else
+			`REPEAT (`PLATFORM_MEMORY_NUM_BANKS, AXI_MEM_ARGS, REPEAT_COMMA),
+`endif
 
-		.s_axi_ctrl_awvalid (s_axi_ctrl_awvalid),
+			.s_axi_ctrl_awvalid (s_axi_ctrl_awvalid),
 		.s_axi_ctrl_awready (s_axi_ctrl_awready),
 		.s_axi_ctrl_awaddr  (s_axi_ctrl_awaddr),
 		.s_axi_ctrl_wvalid  (s_axi_ctrl_wvalid),

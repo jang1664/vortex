@@ -152,6 +152,11 @@ endif
 
 ifdef FSDB_DUMP
 	VCS_FLAGS += +define+FSDB_DUMP
+	VCS_FLAGS += -kdb -debug_access+all
+	VERDI_HOME ?= $(shell dirname $(shell dirname $(shell which verdi 2>/dev/null)))
+	ifneq ($(VERDI_HOME),)
+		VCS_FLAGS += -P $(VERDI_HOME)/share/PLI/VCS/LINUX64/novas.tab $(VERDI_HOME)/share/PLI/VCS/LINUX64/pli.a
+	endif
 endif
 
 .PHONY: all simv applib force clean
@@ -166,16 +171,23 @@ $(DESTDIR)/simv: $(SRC_DIR)/tb_vcs_xrtsim.sv $(SRC_DIR)/dpi_vcs_server.cpp
 	cd $(DESTDIR) && vcs $(VCS_FLAGS) \
 		-LDFLAGS "-Wl,--whole-archive $(SOFTFLOAT_LIB) -Wl,--no-whole-archive" \
 		$(RTL_PKGS) \
-		$(XRTSIM_DIR)/vortex_afu_shim.sv \
 		$(SRC_DIR)/tb_vcs_xrtsim.sv \
 		$(DPI_SRCS) \
+		-l compile.log \
 		-top $(VCS_TOP) \
 		-o $(DESTDIR)/simv
 
 # ---- applib (shared library for App process) ----
+APPLIB_CONFIG_FILE := $(DESTDIR)/.applib_config.stamp
+
+$(APPLIB_CONFIG_FILE): force
+	@mkdir -p $(@D)
+	@printf '%s\n' "$(CXXFLAGS)" > $@.tmp
+	@if ! cmp -s $@.tmp $@; then mv $@.tmp $@; else rm $@.tmp; fi
+
 applib: $(DESTDIR)/$(APP_PROJECT)
 
-$(DESTDIR)/$(APP_PROJECT): $(APP_SRCS)
+$(DESTDIR)/$(APP_PROJECT): $(APP_SRCS) $(APPLIB_CONFIG_FILE)
 	@mkdir -p $(DESTDIR)
 	$(CXX) $(CXXFLAGS) $(APP_SRCS) $(LDFLAGS) -o $@
 
