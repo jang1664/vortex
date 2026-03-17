@@ -570,9 +570,46 @@ module VX_lsu_slice import VX_gpu_pkg::*; #(
 `ifdef DBG_SCOPE_LSU
     ila_lsu ila_lsu_inst (
         .clk    (clk),
-        .probe0 ({execute_if.valid, execute_if.data, execute_if.ready}),
-        .probe1 ({lsu_mem_if.req_valid, lsu_mem_if.req_data, lsu_mem_if.req_ready}),
-        .probe2 ({lsu_mem_if.rsp_valid, lsu_mem_if.rsp_data, lsu_mem_if.rsp_ready})
+        // probe0: stall diagnosis — all 1-bit signals (25 bits, config-independent)
+        .probe0 ({
+            // execute_if.ready = (mem_req_ready || req_skip)
+            //                 && ~(no_rsp_buf_enable && ~no_rsp_buf_ready)
+            //                 && ~fence_lock
+            execute_if.valid,       // [24]
+            execute_if.ready,       // [23]
+            mem_req_ready,          // [22] ← 0 = mem_scheduler full
+            no_rsp_buf_ready,       // [21] ← 0 = store rsp buf full
+            fence_lock,             // [20] ← 1 = fence pending
+            req_skip,               // [19]
+            no_rsp_buf_enable,      // [18]
+            mem_req_rw,             // [17]
+            req_is_fence,           // [16]
+            execute_if.data.wb,     // [15]
+            execute_if.data.eop,    // [14]
+            // response path: result → commit
+            result_if.valid,        // [13]
+            result_if.ready,        // [12] ← 0 = commit backpressure
+            // load response path
+            result_rsp_if.valid,    // [11]
+            result_rsp_if.ready,    // [10]
+            // store/skip response path
+            result_no_rsp_if.valid, // [9]
+            result_no_rsp_if.ready, // [8]  ← 0 = rsp_arb backpressure
+            // mem_scheduler core interface
+            mem_rsp_valid,          // [7]
+            mem_rsp_ready,          // [6]
+            no_rsp_buf_valid,       // [5]
+            mem_rsp_sop_pkt,        // [4]
+            mem_rsp_eop_pkt,        // [3]
+            rsp_is_fence,           // [2]
+            // lsu_mem interface (to cache/memory)
+            lsu_mem_if.req_valid,   // [1]
+            lsu_mem_if.req_ready    // [0]
+        }),
+        // probe1-3: original probes (config-dependent widths)
+        .probe1 ({execute_if.valid, execute_if.data, execute_if.ready}),
+        .probe2 ({lsu_mem_if.req_valid, lsu_mem_if.req_data, lsu_mem_if.req_ready}),
+        .probe3 ({lsu_mem_if.rsp_valid, lsu_mem_if.rsp_data, lsu_mem_if.rsp_ready})
     );
 `endif
 `endif

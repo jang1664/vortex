@@ -190,4 +190,35 @@ module VX_commit import VX_gpu_pkg::*; #(
     end
 `endif
 
+`ifdef CHIPSCOPE
+`ifdef DBG_SCOPE_COMMIT
+    // pack per-EU commit valid/ready for ILA observation
+    wire [NUM_EX_UNITS * `ISSUE_WIDTH - 1 : 0] dbg_commit_valid;
+    wire [NUM_EX_UNITS * `ISSUE_WIDTH - 1 : 0] dbg_commit_ready;
+    for (genvar k = 0; k < NUM_EX_UNITS * `ISSUE_WIDTH; ++k) begin : g_dbg_commit
+        assign dbg_commit_valid[k] = commit_if[k].valid;
+        assign dbg_commit_ready[k] = commit_if[k].ready;
+    end
+
+    ila_commit ila_commit_inst (
+        .clk (clk),
+        // probe0: commit control flow (2*NUM_EX_UNITS*ISSUE_WIDTH + 5 bits)
+        // For 4-EU, 1-issue config: 2*4*1 + 5 = 13 bits
+        .probe0 ({
+            // per-EU commit_if (EX_ALU=0, EX_LSU=1, EX_SFU=2, EX_FPU=3)
+            dbg_commit_valid,           // [12:9] valid per EU input
+            dbg_commit_ready,           // [8:5]  ready per EU (from arbiter)
+            // arbiter output
+            commit_arb_if[0].valid,     // [4]
+            commit_arb_if[0].ready,     // [3] should be 1 always (line 174)
+            // downstream
+            writeback_if[0].valid,      // [2]
+            // commit activity
+            per_issue_commit_fire[0],   // [1]
+            commit_fire_any             // [0]
+        })
+    );
+`endif
+`endif
+
 endmodule

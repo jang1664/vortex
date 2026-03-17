@@ -76,4 +76,20 @@ module VX_lsu_unit import VX_gpu_pkg::*; #(
         .commit_if (commit_if)
     );
 
+`ifdef CHIPSCOPE
+`ifdef DBG_SCOPE_GATHER
+    // LSU result → gather → commit handshake
+    ila_gather ila_gather_inst (
+        .clk (clk),
+        // probe0: 4 bits (for BLOCK_SIZE=1, ISSUE_WIDTH=1)
+        .probe0 ({
+            per_block_result_if[0].valid,   // [3] lsu_slice → gather input valid
+            per_block_result_if[0].ready,   // [2] gather accepts lsu_slice result ← 0 = backpressure from commit
+            commit_if[0].valid,             // [1] gather → commit output valid
+            commit_if[0].ready              // [0] commit accepts (from arbiter)
+        })
+    );
+`endif
+`endif
+
 endmodule

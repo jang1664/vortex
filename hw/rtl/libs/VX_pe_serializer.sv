@@ -115,7 +115,11 @@ module VX_pe_serializer #(
         end
 
         always @(posedge clk) begin
-            data_out_r <= data_out_n;
+            if (reset) begin
+                data_out_r <= '0;
+            end else begin
+                data_out_r <= data_out_n;
+            end
         end
 
         assign enable      = ready_out_u || ~valid_out_u;
