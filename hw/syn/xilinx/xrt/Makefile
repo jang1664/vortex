@@ -140,10 +140,11 @@ include $(SRC_DIR)/platforms.mk
 VITIS_INI := $(XRT_BACKUP_DIR)/vitis.gen.ini
 VPP_FLAGS += --config $(VITIS_INI)
 
-# Arguments for gen_vitis_ini.sh
+# Arguments for gen_vitis_ini.py
 VITIS_INI_ARGS  = -o $(VITIS_INI)
 VITIS_INI_ARGS += --target $(TARGET)
 VITIS_INI_ARGS += --hook-dir $(XRT_RUN_DIR)
+VITIS_INI_ARGS += --clock-freq $(CLOCK_FREQ_HZ)
 ifdef DEBUG
 VITIS_INI_ARGS += --debug $(DEBUG)
 endif

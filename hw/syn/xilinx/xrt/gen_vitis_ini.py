@@ -11,7 +11,7 @@ Options:
     --profile        Enable profiling
     --sp SPEC        Memory connectivity (repeatable)
     --hook-dir DIR   Directory containing hook TCL scripts
-    --clock-freq HZ  Kernel clock frequency in Hz (optional)
+    --clock-freq MHZ  Kernel clock frequency in MHz (optional)
 """
 
 import argparse
@@ -20,22 +20,25 @@ from collections import OrderedDict
 
 
 def build_ini(args):
-    """Build ini sections as an ordered dict of {section: [lines]}."""
+    """Build ini sections as an ordered dict of {section: [lines]}.
+
+    Top-level (section-less) lines use the key None.
+    """
     sections = OrderedDict()
+
+    # --- top-level (no section) ---
+    # kernel_frequency is a top-level option for PCIe/Alveo platforms.
+    # [clock] freqHz is for SoC/embedded platforms and doesn't work on Alveo.
+    toplevel = []
+    if args.clock_freq:
+        toplevel.append(f"kernel_frequency=0:{args.clock_freq}")
+    sections[None] = toplevel
 
     # --- [connectivity] ---
     conn = ["nk=vortex_afu:1:vortex_afu_1"]
     for sp in args.sp:
         conn.append(f"sp={sp}")
     sections["connectivity"] = conn
-
-    # --- [clock] ---
-    clock = []
-    if args.clock_freq:
-        clock.append(f"freqHz={args.clock_freq}:vortex_afu_1.ap_clk")
-    else:
-        clock.append("# freqHz=100000000:vortex_afu_1.ap_clk")
-    sections["clock"] = clock
 
     # --- [vivado] ---
     vivado = []
@@ -78,10 +81,16 @@ def build_ini(args):
 
 
 def write_ini(sections, path):
-    """Write sections dict to an ini file."""
+    """Write sections dict to an ini file.
+
+    Entries under the None key are written as top-level lines (no section header).
+    """
     lines = []
     for section, entries in sections.items():
-        lines.append(f"[{section}]")
+        if not entries:
+            continue
+        if section is not None:
+            lines.append(f"[{section}]")
         for entry in entries:
             lines.append(entry)
         lines.append("")
@@ -110,7 +119,8 @@ def main():
     parser.add_argument("--sp", action="append", default=[], metavar="SPEC",
                         help="Memory connectivity spec (repeatable)")
     parser.add_argument("--hook-dir", default=None, metavar="DIR")
-    parser.add_argument("--clock-freq", default=None, metavar="HZ")
+    parser.add_argument("--clock-freq", default=None, metavar="MHZ",
+                        help="Kernel clock frequency in MHz")
     args = parser.parse_args()
 
     sections = build_ini(args)
