@@ -90,7 +90,11 @@ module VX_wctl_unit import VX_gpu_pkg::*; #(
         end
 
         always @(posedge clk) begin
-            if (execute_if.valid) begin
+            if (reset) begin
+                for (integer i = 0; i < `NUM_WARPS; ++i) begin
+                    tmask_table[i] <= '0;
+                end
+            end else if (execute_if.valid) begin
                 tmask_table[execute_if.data.wid] <= {else_tmask, then_tmask};
             end
         end
