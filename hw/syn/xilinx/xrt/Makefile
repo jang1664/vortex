@@ -51,7 +51,7 @@ BIN_DIR := $(BUILD_DIR)/bin
 CONFIG_STAMP := $(BUILD_DIR)/.config.stamp
 XRT_BACKUP_DIR := $(BUILD_DIR)/xrt_backup
 XRT_BACKUP_STAMP := $(XRT_BACKUP_DIR)/.stamp
-XRT_BACKUP_FILES := $(sort $(SRC_DIR)/Makefile $(wildcard $(SRC_DIR)/*.mk $(SRC_DIR)/*.ini $(SRC_DIR)/*.tcl $(SRC_DIR)/*.in))
+XRT_BACKUP_FILES := $(sort $(SRC_DIR)/Makefile $(wildcard $(SRC_DIR)/*.mk $(SRC_DIR)/*.ini $(SRC_DIR)/*.tcl $(SRC_DIR)/*.in $(SRC_DIR)/*.sh $(SRC_DIR)/*.py))
 XRT_RUN_DIR := $(abspath $(XRT_BACKUP_DIR))
 
 CONFIG_FINGERPRINT = TARGET=$(TARGET) PLATFORM=$(PLATFORM) DEVICE_PART=$(DEVICE_PART) CLOCK_FREQ_HZ=$(CLOCK_FREQ_HZ) NUM_CORES=$(NUM_CORES) CONFIGS=$(CONFIGS) DEBUG=$(DEBUG) PERF=$(PERF) PROFILE=$(PROFILE) SCOPE=$(SCOPE)
@@ -78,6 +78,9 @@ DBG_SCOPE_FLAGS += -DDBG_SCOPE_AFU
 DBG_SCOPE_FLAGS += -DDBG_SCOPE_ISSUE
 DBG_SCOPE_FLAGS += -DDBG_SCOPE_FETCH
 DBG_SCOPE_FLAGS += -DDBG_SCOPE_LSU
+DBG_SCOPE_FLAGS += -DDBG_SCOPE_COMMIT
+DBG_SCOPE_FLAGS += -DDBG_SCOPE_GATHER
+DBG_SCOPE_FLAGS += -DDBG_SCOPE_MEMSCHED
 DBG_SCOPE_FLAGS += -DDBG_SCOPE_GEMM
 
 ifdef NUM_CORES
@@ -127,50 +130,48 @@ endif
 # Kernel compiler global settings
 VPP_FLAGS += --link --target $(TARGET) --platform $(PLATFORM) --save-temps --no_ip_cache
 VPP_FLAGS += --vivado.synth.jobs $(JOBS) --vivado.impl.jobs $(JOBS)
-# VPP_FLAGS += --kernel_frequency "0:$(CLOCK_FREQ_HZ)"
+VPP_FLAGS += --report_level 2
 
-
-# register compilation hooks
-VPP_FLAGS += --xp "vivado_prop:run.impl_1.STEPS.INIT_DESIGN.TCL.POST=${XRT_RUN_DIR}/post_init_hook.tcl"
-VPP_FLAGS += --xp "vivado_prop:run.impl_1.STEPS.OPT_DESIGN.TCL.PRE=${XRT_RUN_DIR}/pre_opt_hook.tcl"
-VPP_FLAGS += --xp "vivado_prop:run.impl_1.STEPS.ROUTE_DESIGN.TCL.POST=${XRT_RUN_DIR}/post_route_hook.tcl"
-VPP_FLAGS += --xp "vivado_prop:run.impl_1.STEPS.POST_ROUTE_PHYS_OPT_DESIGN.TCL.POST=${XRT_RUN_DIR}/post_physopt_hook.tcl"
-
-# load platform settings
+# load platform settings (sets CONFIGS and SP_FLAGS)
 include $(SRC_DIR)/platforms.mk
 
-VPP_FLAGS += --report_level 2
-VPP_FLAGS += --config $(XRT_RUN_DIR)/vitis.ini
+# Generated vitis.ini replaces most --xp, --debug.*, --advanced.*, --profile_kernel flags.
+# The script is invoked at build time; see the $(VITIS_INI) recipe below.
+VITIS_INI := $(XRT_BACKUP_DIR)/vitis.gen.ini
+VPP_FLAGS += --config $(VITIS_INI)
+
+# Arguments for gen_vitis_ini.sh
+VITIS_INI_ARGS  = -o $(VITIS_INI)
+VITIS_INI_ARGS += --target $(TARGET)
+VITIS_INI_ARGS += --hook-dir $(XRT_RUN_DIR)
+ifdef DEBUG
+VITIS_INI_ARGS += --debug $(DEBUG)
+endif
+ifdef PROFILE
+VITIS_INI_ARGS += --profile
+endif
+# Forward per-platform --sp flags
+VITIS_INI_ARGS += $(foreach sp,$(SP_FLAGS),--sp $(sp))
 
 # Enable perf counters
 ifdef PERF
 	CFLAGS += -DPERF_ENABLE
 endif
 
-# Generates profile summary report
-ifdef PROFILE
-	VPP_FLAGS += --profile_kernel data:all:all:all
-	VPP_FLAGS += --profile_kernel stall:all:all:all
-endif
-
 ifeq ($(TARGET), hw_emu)
 	CFLAGS += -DSIMULATION -DXSIM
-	# XSIM does not support "default disable iff" in some flows; gate those SVA blocks.
-	VPP_FLAGS += --vivado.prop "fileset.sim_1.xsim.compile.xvlog.more_options={-d XSIM}"
 endif
 
-# Debugging
+# Debugging — only optimization level and CFLAGS remain here
 ifdef DEBUG
-	VPP_FLAGS += -g --optimize 0 --debug.protocol all
+	VPP_FLAGS += -g --optimize quick
 	ifeq ($(TARGET), hw)
-		VPP_FLAGS += --debug.chipscope vortex_afu_1
 		CFLAGS += -DNDEBUG -DCHIPSCOPE $(DBG_SCOPE_FLAGS)
 	else
-		VPP_FLAGS += --vivado.prop fileset.sim_1.xsim.elaborate.debug_level=all
 		CFLAGS += -DDEBUG_LEVEL=$(DEBUG) $(DBG_TRACE_FLAGS)
 	endif
 else
-	VPP_FLAGS += --optimize 0
+	VPP_FLAGS += -g --optimize quick
 	CFLAGS += -DNDEBUG
 endif
 
@@ -229,8 +230,11 @@ gen-xo: $(XO_CONTAINER)
 $(XO_CONTAINER): $(BUILD_DIR)/sources.txt $(XRT_BACKUP_STAMP)
 	mkdir -p $(BUILD_DIR); cd $(BUILD_DIR);	TOOL_DIR=$(SCRIPT_DIR) $(VIVADO) -mode batch -source $(XRT_RUN_DIR)/gen_xo.tcl -tclargs ../$(XO_CONTAINER) vortex_afu sources.txt ../$(BUILD_DIR) $(DEVICE_PART)
 
+$(VITIS_INI): $(SRC_DIR)/gen_vitis_ini.py $(XRT_BACKUP_STAMP)
+	python3 $(SRC_DIR)/gen_vitis_ini.py $(VITIS_INI_ARGS)
+
 gen-bin: $(XCLBIN_CONTAINER)
-$(XCLBIN_CONTAINER): $(XO_CONTAINER) $(SCOPE_JSON) $(XRT_BACKUP_STAMP)
+$(XCLBIN_CONTAINER): $(XO_CONTAINER) $(SCOPE_JSON) $(VITIS_INI)
 	mkdir -p $(BIN_DIR); cd $(BUILD_DIR); TOOL_DIR=$(SCRIPT_DIR) $(VPP) $(VPP_FLAGS) -o ../$(XCLBIN_CONTAINER) ../$(XO_CONTAINER)
 
 emconfig: $(BIN_DIR)/emconfig.json

@@ -70,6 +70,8 @@ export CONFIGS="-DEXT_TCU_ENABLE -DAFU_DONE_WAIT_CACHE_DRAIN"
 export TARGET=hw_emu
 export CLOCK_FREQ_HZ=100
 export CONFIGS
+export DEBUG=1
+export PROFILE=1
 
 if [[ "${CONFIGS}" == *"-DFPU_FPNEW"* ]]; then
   apply_cvfpu_xsim_patch

@@ -201,14 +201,51 @@ if { $chipscope == 1 } {
     generate_target {instantiation_template} [get_files ila_issue.xci]
     set_property generate_synth_checkpoint false [get_files ila_issue.xci]
 
+    create_ip -name ila -vendor xilinx.com -library ip -version 6.2 -module_name ila_gather
+    set_property -dict [list CONFIG.C_ADV_TRIGGER {true} \
+                             CONFIG.C_EN_STRG_QUAL {1} \
+                             CONFIG.C_DATA_DEPTH {8192} \
+                             CONFIG.C_NUM_OF_PROBES {1} \
+                             CONFIG.C_PROBE0_WIDTH {4} \
+                             CONFIG.ALL_PROBE_SAME_MU {true} \
+                             CONFIG.ALL_PROBE_SAME_MU_CNT $ila_same_mu_cnt \
+                        ] [get_ips ila_gather]
+    generate_target {instantiation_template} [get_files ila_gather.xci]
+    set_property generate_synth_checkpoint false [get_files ila_gather.xci]
+
+    create_ip -name ila -vendor xilinx.com -library ip -version 6.2 -module_name ila_memsched
+    set_property -dict [list CONFIG.C_ADV_TRIGGER {true} \
+                             CONFIG.C_EN_STRG_QUAL {1} \
+                             CONFIG.C_DATA_DEPTH {8192} \
+                             CONFIG.C_NUM_OF_PROBES {1} \
+                             CONFIG.C_PROBE0_WIDTH {12} \
+                             CONFIG.ALL_PROBE_SAME_MU {true} \
+                             CONFIG.ALL_PROBE_SAME_MU_CNT $ila_same_mu_cnt \
+                        ] [get_ips ila_memsched]
+    generate_target {instantiation_template} [get_files ila_memsched.xci]
+    set_property generate_synth_checkpoint false [get_files ila_memsched.xci]
+
+    create_ip -name ila -vendor xilinx.com -library ip -version 6.2 -module_name ila_commit
+    set_property -dict [list CONFIG.C_ADV_TRIGGER {true} \
+                             CONFIG.C_EN_STRG_QUAL {1} \
+                             CONFIG.C_DATA_DEPTH {8192} \
+                             CONFIG.C_NUM_OF_PROBES {1} \
+                             CONFIG.C_PROBE0_WIDTH {15} \
+                             CONFIG.ALL_PROBE_SAME_MU {true} \
+                             CONFIG.ALL_PROBE_SAME_MU_CNT $ila_same_mu_cnt \
+                        ] [get_ips ila_commit]
+    generate_target {instantiation_template} [get_files ila_commit.xci]
+    set_property generate_synth_checkpoint false [get_files ila_commit.xci]
+
     create_ip -name ila -vendor xilinx.com -library ip -version 6.2 -module_name ila_lsu
     set_property -dict [list CONFIG.C_ADV_TRIGGER {true} \
                              CONFIG.C_EN_STRG_QUAL {1} \
                              CONFIG.C_DATA_DEPTH {8192} \
-                             CONFIG.C_NUM_OF_PROBES {3} \
-                             CONFIG.C_PROBE0_WIDTH {288} \
-                             CONFIG.C_PROBE1_WIDTH {152} \
-                             CONFIG.C_PROBE2_WIDTH {72} \
+                             CONFIG.C_NUM_OF_PROBES {4} \
+                             CONFIG.C_PROBE0_WIDTH {25} \
+                             CONFIG.C_PROBE1_WIDTH {288} \
+                             CONFIG.C_PROBE2_WIDTH {152} \
+                             CONFIG.C_PROBE3_WIDTH {72} \
                              CONFIG.ALL_PROBE_SAME_MU {true} \
                              CONFIG.ALL_PROBE_SAME_MU_CNT $ila_same_mu_cnt \
                         ] [get_ips ila_lsu]
