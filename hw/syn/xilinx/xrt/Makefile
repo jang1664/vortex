@@ -138,10 +138,10 @@ include $(SRC_DIR)/platforms.mk
 # Generated vitis.ini replaces most --xp, --debug.*, --advanced.*, --profile_kernel flags.
 # The script is invoked at build time; see the $(VITIS_INI) recipe below.
 VITIS_INI := $(XRT_BACKUP_DIR)/vitis.gen.ini
-VPP_FLAGS += --config $(VITIS_INI)
+VPP_FLAGS += --config $(abspath $(VITIS_INI))
 
 # Arguments for gen_vitis_ini.py
-VITIS_INI_ARGS  = -o $(VITIS_INI)
+VITIS_INI_ARGS  = -o $(abspath $(VITIS_INI))
 VITIS_INI_ARGS += --target $(TARGET)
 VITIS_INI_ARGS += --hook-dir $(XRT_RUN_DIR)
 VITIS_INI_ARGS += --clock-freq $(CLOCK_FREQ_HZ)
