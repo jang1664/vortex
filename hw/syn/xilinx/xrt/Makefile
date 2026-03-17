@@ -6,14 +6,19 @@ help:
 	$(ECHO) "Makefile Usage:"
 	$(ECHO) "  make all TARGET=<hw/hw_emu> PLATFORM=<FPGA platform>"
 	$(ECHO) "      Command to generate the design for specified Target and Device."
+	$(ECHO) "  Optional: XO_FLOW=<vortex/tutorial> (default: vortex)"
+	$(ECHO) "      Select packaging + link flow for comparison."
 	$(ECHO) ""
 	$(ECHO) "  make clean"
 	$(ECHO) "      Command to remove the generated non-hardware files."
 	$(ECHO) ""
 endif
 
+.DEFAULT_GOAL := all
+
 TARGET ?= hw
 PLATFORM ?=
+XO_FLOW ?= vortex
 
 PREFIX ?= build$(XLEN)
 MAX_JOBS ?= 8
@@ -46,11 +51,20 @@ BUILD_DIR := $(PREFIX)_$(XSA)_$(TARGET)
 BIN_DIR := $(BUILD_DIR)/bin
 CONFIG_STAMP := $(BUILD_DIR)/.config.stamp
 USER_VITIS_CONFIG := $(BUILD_DIR)/vitis.user.ini
+TUTORIAL_VITIS_CONFIG := $(BUILD_DIR)/vitis.tutorial.ini
 
-CONFIG_FINGERPRINT = TARGET=$(TARGET) PLATFORM=$(PLATFORM) CLOCK_FREQ_HZ=$(CLOCK_FREQ_HZ) NUM_CORES=$(NUM_CORES) CONFIGS=$(CONFIGS) DEBUG=$(DEBUG) PERF=$(PERF) PROFILE=$(PROFILE) SCOPE=$(SCOPE)
+CONFIG_FINGERPRINT = TARGET=$(TARGET) PLATFORM=$(PLATFORM) CLOCK_FREQ_HZ=$(CLOCK_FREQ_HZ) NUM_CORES=$(NUM_CORES) CONFIGS=$(CONFIGS) DEBUG=$(DEBUG) PERF=$(PERF) PROFILE=$(PROFILE) SCOPE=$(SCOPE) XO_FLOW=$(XO_FLOW)
 
 XO_CONTAINER := $(BIN_DIR)/vortex_afu.xo
 XCLBIN_CONTAINER := $(BIN_DIR)/vortex_afu.xclbin
+
+ifeq ($(XO_FLOW),tutorial)
+XO_TCL := $(SRC_DIR)/gen_xo_tutorial.tcl
+else ifeq ($(XO_FLOW),vortex)
+XO_TCL := $(SRC_DIR)/gen_xo.tcl
+else
+$(error XO_FLOW must be one of: vortex, tutorial)
+endif
 
 # Control RTL debug tracing states
 DBG_TRACE_FLAGS += -DDBG_TRACE_PIPELINE
@@ -124,16 +138,20 @@ VPP_FLAGS += --vivado.synth.jobs $(JOBS) --vivado.impl.jobs $(JOBS)
 # VPP_FLAGS += --kernel_frequency "0:$(CLOCK_FREQ_HZ)|1:$(CLOCK_FREQ_HZ)"
 VPP_FLAGS += --kernel_frequency "0:$(CLOCK_FREQ_HZ)"
 
-
-# register compilation hooks
-VPP_FLAGS += --xp "vivado_prop:run.impl_1.STEPS.OPT_DESIGN.TCL.PRE=${SRC_DIR}/pre_opt_hook.tcl"
-
 # load platform settings
 include $(SRC_DIR)/platforms.mk
 
 VPP_FLAGS += --report_level 2
 VPP_FLAGS += --config $(SRC_DIR)/vitis.ini
 # VPP_FLAGS += --config $(USER_VITIS_CONFIG)
+
+ifeq ($(XO_FLOW),tutorial)
+	VPP_FLOW_CONFIG := $(TUTORIAL_VITIS_CONFIG)
+	VPP_FLAGS += --config $(abspath $(VPP_FLOW_CONFIG))
+else
+	# Keep the original command-line flow for non-tutorial mode.
+	VPP_FLAGS += --xp "vivado_prop:run.impl_1.STEPS.OPT_DESIGN.TCL.PRE=${SRC_DIR}/pre_opt_hook.tcl"
+endif
 
 # Enable perf counters
 ifdef PERF
@@ -193,6 +211,10 @@ endif
 # 	mkdir -p $(BUILD_DIR); \
 # 	printf "[advanced]\nparam=compiler.userPostDebugProfileOverlayTcl=%s\n" "$(SRC_DIR)/post_dbg_profile_overlay.tcl" > $@
 
+$(TUTORIAL_VITIS_CONFIG): $(SRC_DIR)/vitis.ini $(SRC_DIR)/pre_opt_hook.tcl
+	mkdir -p $(BUILD_DIR); \
+	printf "[vivado]\nprop=run.impl_1.STEPS.OPT_DESIGN.TCL.PRE=%s\n" "$(SRC_DIR)/pre_opt_hook.tcl" > $@
+
 all: check-devices emconfig $(XCLBIN_CONTAINER) report
 
 gen-sources: $(BUILD_DIR)/sources.txt
@@ -214,11 +236,11 @@ $(BIN_DIR)/scope.json: $(BUILD_DIR)/vortex.xml
 	mkdir -p $(BUILD_DIR); cd $(BUILD_DIR); $(SCRIPT_DIR)/scope.py vortex.xml -o bin/scope.json
 
 gen-xo: $(XO_CONTAINER)
-$(XO_CONTAINER): $(BUILD_DIR)/sources.txt
-	mkdir -p $(BUILD_DIR); cd $(BUILD_DIR);	TOOL_DIR=$(SCRIPT_DIR) $(VIVADO) -mode batch -source $(SRC_DIR)/gen_xo.tcl -tclargs ../$(XO_CONTAINER) vortex_afu sources.txt ../$(BUILD_DIR)
+$(XO_CONTAINER): $(BUILD_DIR)/sources.txt $(SRC_DIR)/gen_xo.tcl $(SRC_DIR)/gen_xo_tutorial.tcl $(SRC_DIR)/package_kernel.tcl $(SRC_DIR)/package_kernel_tutorial.tcl
+	mkdir -p $(BUILD_DIR); cd $(BUILD_DIR);	TOOL_DIR=$(SCRIPT_DIR) $(VIVADO) -mode batch -source $(XO_TCL) -tclargs ../$(XO_CONTAINER) vortex_afu sources.txt ../$(BUILD_DIR)
 
 gen-bin: $(XCLBIN_CONTAINER)
-$(XCLBIN_CONTAINER): $(XO_CONTAINER) $(SCOPE_JSON)
+$(XCLBIN_CONTAINER): $(XO_CONTAINER) $(SCOPE_JSON) $(VPP_FLOW_CONFIG)
 	mkdir -p $(BIN_DIR); cd $(BUILD_DIR); TOOL_DIR=$(SCRIPT_DIR) $(VPP) $(VPP_FLAGS) -o ../$(XCLBIN_CONTAINER) ../$(XO_CONTAINER)
 
 emconfig: $(BIN_DIR)/emconfig.json
