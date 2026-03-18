@@ -119,7 +119,9 @@ build_driver() {
         [ $DEBUG -ne 0 ] && vcs_opts=$(add_option "$vcs_opts" "DEBUG=$DEBUG_LEVEL")
         [ -n "$CONFIGS" ] && vcs_opts=$(add_option "$vcs_opts" "CONFIGS=\"$CONFIGS\"")
         [ $TEMPBUILD -eq 1 ] && vcs_opts=$(add_option "$vcs_opts" "DESTDIR=\"$TEMPDIR\"")
-        [ -n "${FSDB_DUMP:-}" ] && vcs_opts=$(add_option "$vcs_opts" "FSDB_DUMP=1")
+        if [ -n "${FSDB_DUMP:-}" ] || [ "${GUI:-0}" = "1" ]; then
+            vcs_opts=$(add_option "$vcs_opts" "FSDB_DUMP=1")
+        fi
         if [ "$DRIVER" = "xrt_vcs_post" ]; then
             vcs_opts=$(add_option "$vcs_opts" "POST_IMPL=1")
             [ -n "${NETLIST:-}" ] && vcs_opts=$(add_option "$vcs_opts" "NETLIST=$NETLIST")
@@ -193,6 +195,7 @@ run_app() {
         [ -n "${VCS_SIMV_FLAGS:-}" ] && simv_flags="$simv_flags $VCS_SIMV_FLAGS"
 
         local SIMV_LOG="$SIMV_DIR/simv.log"
+        local FSDB_FILE="$SIMV_DIR/vcs_cosim.fsdb"
         echo "Launching VCS simv on port $VCS_PORT (log: $SIMV_LOG)..."
         (cd "$SIMV_DIR" && ./simv $simv_flags > "$SIMV_LOG" 2>&1) &
         VCS_PID=$!
@@ -202,6 +205,24 @@ run_app() {
             echo "Error: VCS simv failed to start. Check $SIMV_LOG"
             cat "$SIMV_LOG"
             exit 1
+        fi
+
+        # Launch Verdi for live waveform viewing
+        if [ "${GUI:-0}" = "1" ]; then
+            echo "Launching Verdi (live FSDB: $FSDB_FILE)..."
+            # Wait for FSDB file to be created by simv
+            local wait_count=0
+            while [ ! -f "$FSDB_FILE" ] && [ $wait_count -lt 10 ]; do
+                sleep 1
+                wait_count=$((wait_count + 1))
+            done
+            if [ -f "$FSDB_FILE" ]; then
+                verdi -ssf "$FSDB_FILE" &
+                VERDI_PID=$!
+                echo "Verdi PID: $VERDI_PID"
+            else
+                echo "WARNING: FSDB file not found after 10s, skipping Verdi launch"
+            fi
         fi
 
         cmd_opts=$(add_option "$cmd_opts" "VCS_SOCKET_PORT=$VCS_PORT LD_LIBRARY_PATH=$SIMV_DIR:\$LD_LIBRARY_PATH make -C \"$APP_PATH\" run-xrt")
@@ -269,8 +290,12 @@ run_app() {
     eval "$cmd_opts"
     status=$?
 
-    # Clean up VCS process if xrt_vcs driver
-    if [ "$DRIVER" = "xrt_vcs" ] && [ -n "${VCS_PID:-}" ]; then
+    # Clean up VCS and Verdi processes
+    if ([ "$DRIVER" = "xrt_vcs" ] || [ "$DRIVER" = "xrt_vcs_post" ]) && [ -n "${VCS_PID:-}" ]; then
+        if [ "${GUI:-0}" = "1" ] && [ -n "${VERDI_PID:-}" ]; then
+            echo "Waiting for Verdi to close (PID: $VERDI_PID)..."
+            wait $VERDI_PID 2>/dev/null
+        fi
         kill $VCS_PID 2>/dev/null
         wait $VCS_PID 2>/dev/null
     fi
