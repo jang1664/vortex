@@ -97,7 +97,7 @@ extern int vx_dev_open(vx_device_h* hdevice) {
 }
 
 extern int vx_dev_close(vx_device_h hdevice) {
-  vx_dump_perf(hdevice, stdout);
+  // vx_dump_perf(hdevice, stdout);
   int ret = (g_callbacks.dev_close)(hdevice);
   dlclose(g_drv_handle);
   return ret;
