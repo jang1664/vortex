@@ -114,6 +114,49 @@ if {[info exists ::env(ILA_SAME_MU_CNT)]} {
     set ila_same_mu_cnt $::env(ILA_SAME_MU_CNT)
 }
 
+# Source auto-generated ILA probe widths
+set ila_params_file "${build_dir}/ila_params.tcl"
+if {[file exists $ila_params_file]} {
+    source $ila_params_file
+    puts "Loaded ILA parameters from $ila_params_file"
+} else {
+    puts "WARNING: $ila_params_file not found, using defaults"
+    # fallback defaults for XLEN=64 NUM_WARPS=4 NUM_THREADS=4 SIMD_WIDTH=4 FPU=1 TCU=1
+    set ILA_AFU_NUM_PROBES 2
+    set ILA_AFU_PROBE0_WIDTH 10
+    set ILA_AFU_PROBE1_WIDTH 59
+    set ILA_SCHED_NUM_PROBES 1
+    set ILA_SCHED_PROBE0_WIDTH 15
+    set ILA_IBUFFER_NUM_PROBES 1
+    set ILA_IBUFFER_PROBE0_WIDTH 18
+    set ILA_SCOREBOARD_NUM_PROBES 1
+    set ILA_SCOREBOARD_PROBE0_WIDTH 21
+    set ILA_DISPATCH_NUM_PROBES 1
+    set ILA_DISPATCH_PROBE0_WIDTH 15
+    set ILA_FPU_NUM_PROBES 1
+    set ILA_FPU_PROBE0_WIDTH 9
+    set ILA_FETCH_NUM_PROBES 3
+    set ILA_FETCH_PROBE0_WIDTH 6
+    set ILA_FETCH_PROBE1_WIDTH 68
+    set ILA_FETCH_PROBE2_WIDTH 35
+    set ILA_ISSUE_NUM_PROBES 4
+    set ILA_ISSUE_PROBE0_WIDTH 7
+    set ILA_ISSUE_PROBE1_WIDTH 82
+    set ILA_ISSUE_PROBE2_WIDTH 84
+    set ILA_ISSUE_PROBE3_WIDTH 13
+    set ILA_COMMIT_NUM_PROBES 1
+    set ILA_COMMIT_PROBE0_WIDTH 15
+    set ILA_GATHER_NUM_PROBES 1
+    set ILA_GATHER_PROBE0_WIDTH 4
+    set ILA_MEMSCHED_NUM_PROBES 1
+    set ILA_MEMSCHED_PROBE0_WIDTH 12
+    set ILA_LSU_NUM_PROBES 4
+    set ILA_LSU_PROBE0_WIDTH 25
+    set ILA_LSU_PROBE1_WIDTH 922
+    set ILA_LSU_PROBE2_WIDTH 430
+    set ILA_LSU_PROBE3_WIDTH 265
+}
+
 # parse vdefines_list for configuration parameters
 foreach def $vdefines_list {
     set fields [split $def "="]
@@ -158,14 +201,14 @@ set obj [get_filesets sources_1]
 set_property -verbose -name "top" -value ${krnl_name} -objects $obj
 
 if { $chipscope == 1 } {
-    # hw debugging
+    # hw debugging — probe widths sourced from ila_params.tcl (auto-generated)
     create_ip -name ila -vendor xilinx.com -library ip -version 6.2 -module_name ila_afu
     set_property -dict [list CONFIG.C_ADV_TRIGGER {true} \
                              CONFIG.C_EN_STRG_QUAL {1} \
                              CONFIG.C_DATA_DEPTH {8192} \
-                             CONFIG.C_NUM_OF_PROBES {2} \
-                             CONFIG.C_PROBE0_WIDTH {10} \
-                             CONFIG.C_PROBE1_WIDTH {64} \
+                             CONFIG.C_NUM_OF_PROBES $ILA_AFU_NUM_PROBES \
+                             CONFIG.C_PROBE0_WIDTH $ILA_AFU_PROBE0_WIDTH \
+                             CONFIG.C_PROBE1_WIDTH $ILA_AFU_PROBE1_WIDTH \
                              CONFIG.ALL_PROBE_SAME_MU {true} \
                              CONFIG.ALL_PROBE_SAME_MU_CNT $ila_same_mu_cnt \
                         ] [get_ips ila_afu]
@@ -176,10 +219,10 @@ if { $chipscope == 1 } {
     set_property -dict [list CONFIG.C_ADV_TRIGGER {true} \
                              CONFIG.C_EN_STRG_QUAL {1} \
                              CONFIG.C_DATA_DEPTH {8192} \
-                             CONFIG.C_NUM_OF_PROBES {3} \
-                             CONFIG.C_PROBE0_WIDTH {40} \
-                             CONFIG.C_PROBE1_WIDTH {80} \
-                             CONFIG.C_PROBE2_WIDTH {40} \
+                             CONFIG.C_NUM_OF_PROBES $ILA_FETCH_NUM_PROBES \
+                             CONFIG.C_PROBE0_WIDTH $ILA_FETCH_PROBE0_WIDTH \
+                             CONFIG.C_PROBE1_WIDTH $ILA_FETCH_PROBE1_WIDTH \
+                             CONFIG.C_PROBE2_WIDTH $ILA_FETCH_PROBE2_WIDTH \
                              CONFIG.ALL_PROBE_SAME_MU {true} \
                              CONFIG.ALL_PROBE_SAME_MU_CNT $ila_same_mu_cnt \
                         ] [get_ips ila_fetch]
@@ -190,11 +233,11 @@ if { $chipscope == 1 } {
     set_property -dict [list CONFIG.C_ADV_TRIGGER {true} \
                              CONFIG.C_EN_STRG_QUAL {1} \
                              CONFIG.C_DATA_DEPTH {8192} \
-                             CONFIG.C_NUM_OF_PROBES {4} \
-                             CONFIG.C_PROBE0_WIDTH {112} \
-                             CONFIG.C_PROBE1_WIDTH {112} \
-                             CONFIG.C_PROBE2_WIDTH {280} \
-                             CONFIG.C_PROBE3_WIDTH {112} \
+                             CONFIG.C_NUM_OF_PROBES $ILA_ISSUE_NUM_PROBES \
+                             CONFIG.C_PROBE0_WIDTH $ILA_ISSUE_PROBE0_WIDTH \
+                             CONFIG.C_PROBE1_WIDTH $ILA_ISSUE_PROBE1_WIDTH \
+                             CONFIG.C_PROBE2_WIDTH $ILA_ISSUE_PROBE2_WIDTH \
+                             CONFIG.C_PROBE3_WIDTH $ILA_ISSUE_PROBE3_WIDTH \
                              CONFIG.ALL_PROBE_SAME_MU {true} \
                              CONFIG.ALL_PROBE_SAME_MU_CNT $ila_same_mu_cnt \
                         ] [get_ips ila_issue]
@@ -205,8 +248,8 @@ if { $chipscope == 1 } {
     set_property -dict [list CONFIG.C_ADV_TRIGGER {true} \
                              CONFIG.C_EN_STRG_QUAL {1} \
                              CONFIG.C_DATA_DEPTH {8192} \
-                             CONFIG.C_NUM_OF_PROBES {1} \
-                             CONFIG.C_PROBE0_WIDTH {4} \
+                             CONFIG.C_NUM_OF_PROBES $ILA_GATHER_NUM_PROBES \
+                             CONFIG.C_PROBE0_WIDTH $ILA_GATHER_PROBE0_WIDTH \
                              CONFIG.ALL_PROBE_SAME_MU {true} \
                              CONFIG.ALL_PROBE_SAME_MU_CNT $ila_same_mu_cnt \
                         ] [get_ips ila_gather]
@@ -217,8 +260,8 @@ if { $chipscope == 1 } {
     set_property -dict [list CONFIG.C_ADV_TRIGGER {true} \
                              CONFIG.C_EN_STRG_QUAL {1} \
                              CONFIG.C_DATA_DEPTH {8192} \
-                             CONFIG.C_NUM_OF_PROBES {1} \
-                             CONFIG.C_PROBE0_WIDTH {12} \
+                             CONFIG.C_NUM_OF_PROBES $ILA_MEMSCHED_NUM_PROBES \
+                             CONFIG.C_PROBE0_WIDTH $ILA_MEMSCHED_PROBE0_WIDTH \
                              CONFIG.ALL_PROBE_SAME_MU {true} \
                              CONFIG.ALL_PROBE_SAME_MU_CNT $ila_same_mu_cnt \
                         ] [get_ips ila_memsched]
@@ -229,23 +272,83 @@ if { $chipscope == 1 } {
     set_property -dict [list CONFIG.C_ADV_TRIGGER {true} \
                              CONFIG.C_EN_STRG_QUAL {1} \
                              CONFIG.C_DATA_DEPTH {8192} \
-                             CONFIG.C_NUM_OF_PROBES {1} \
-                             CONFIG.C_PROBE0_WIDTH {15} \
+                             CONFIG.C_NUM_OF_PROBES $ILA_COMMIT_NUM_PROBES \
+                             CONFIG.C_PROBE0_WIDTH $ILA_COMMIT_PROBE0_WIDTH \
                              CONFIG.ALL_PROBE_SAME_MU {true} \
                              CONFIG.ALL_PROBE_SAME_MU_CNT $ila_same_mu_cnt \
                         ] [get_ips ila_commit]
     generate_target {instantiation_template} [get_files ila_commit.xci]
     set_property generate_synth_checkpoint false [get_files ila_commit.xci]
 
+    create_ip -name ila -vendor xilinx.com -library ip -version 6.2 -module_name ila_sched
+    set_property -dict [list CONFIG.C_ADV_TRIGGER {true} \
+                             CONFIG.C_EN_STRG_QUAL {1} \
+                             CONFIG.C_DATA_DEPTH {8192} \
+                             CONFIG.C_NUM_OF_PROBES $ILA_SCHED_NUM_PROBES \
+                             CONFIG.C_PROBE0_WIDTH $ILA_SCHED_PROBE0_WIDTH \
+                             CONFIG.ALL_PROBE_SAME_MU {true} \
+                             CONFIG.ALL_PROBE_SAME_MU_CNT $ila_same_mu_cnt \
+                        ] [get_ips ila_sched]
+    generate_target {instantiation_template} [get_files ila_sched.xci]
+    set_property generate_synth_checkpoint false [get_files ila_sched.xci]
+
+    create_ip -name ila -vendor xilinx.com -library ip -version 6.2 -module_name ila_ibuffer
+    set_property -dict [list CONFIG.C_ADV_TRIGGER {true} \
+                             CONFIG.C_EN_STRG_QUAL {1} \
+                             CONFIG.C_DATA_DEPTH {8192} \
+                             CONFIG.C_NUM_OF_PROBES $ILA_IBUFFER_NUM_PROBES \
+                             CONFIG.C_PROBE0_WIDTH $ILA_IBUFFER_PROBE0_WIDTH \
+                             CONFIG.ALL_PROBE_SAME_MU {true} \
+                             CONFIG.ALL_PROBE_SAME_MU_CNT $ila_same_mu_cnt \
+                        ] [get_ips ila_ibuffer]
+    generate_target {instantiation_template} [get_files ila_ibuffer.xci]
+    set_property generate_synth_checkpoint false [get_files ila_ibuffer.xci]
+
+    create_ip -name ila -vendor xilinx.com -library ip -version 6.2 -module_name ila_scoreboard
+    set_property -dict [list CONFIG.C_ADV_TRIGGER {true} \
+                             CONFIG.C_EN_STRG_QUAL {1} \
+                             CONFIG.C_DATA_DEPTH {8192} \
+                             CONFIG.C_NUM_OF_PROBES $ILA_SCOREBOARD_NUM_PROBES \
+                             CONFIG.C_PROBE0_WIDTH $ILA_SCOREBOARD_PROBE0_WIDTH \
+                             CONFIG.ALL_PROBE_SAME_MU {true} \
+                             CONFIG.ALL_PROBE_SAME_MU_CNT $ila_same_mu_cnt \
+                        ] [get_ips ila_scoreboard]
+    generate_target {instantiation_template} [get_files ila_scoreboard.xci]
+    set_property generate_synth_checkpoint false [get_files ila_scoreboard.xci]
+
+    create_ip -name ila -vendor xilinx.com -library ip -version 6.2 -module_name ila_dispatch
+    set_property -dict [list CONFIG.C_ADV_TRIGGER {true} \
+                             CONFIG.C_EN_STRG_QUAL {1} \
+                             CONFIG.C_DATA_DEPTH {8192} \
+                             CONFIG.C_NUM_OF_PROBES $ILA_DISPATCH_NUM_PROBES \
+                             CONFIG.C_PROBE0_WIDTH $ILA_DISPATCH_PROBE0_WIDTH \
+                             CONFIG.ALL_PROBE_SAME_MU {true} \
+                             CONFIG.ALL_PROBE_SAME_MU_CNT $ila_same_mu_cnt \
+                        ] [get_ips ila_dispatch]
+    generate_target {instantiation_template} [get_files ila_dispatch.xci]
+    set_property generate_synth_checkpoint false [get_files ila_dispatch.xci]
+
+    create_ip -name ila -vendor xilinx.com -library ip -version 6.2 -module_name ila_fpu
+    set_property -dict [list CONFIG.C_ADV_TRIGGER {true} \
+                             CONFIG.C_EN_STRG_QUAL {1} \
+                             CONFIG.C_DATA_DEPTH {8192} \
+                             CONFIG.C_NUM_OF_PROBES $ILA_FPU_NUM_PROBES \
+                             CONFIG.C_PROBE0_WIDTH $ILA_FPU_PROBE0_WIDTH \
+                             CONFIG.ALL_PROBE_SAME_MU {true} \
+                             CONFIG.ALL_PROBE_SAME_MU_CNT $ila_same_mu_cnt \
+                        ] [get_ips ila_fpu]
+    generate_target {instantiation_template} [get_files ila_fpu.xci]
+    set_property generate_synth_checkpoint false [get_files ila_fpu.xci]
+
     create_ip -name ila -vendor xilinx.com -library ip -version 6.2 -module_name ila_lsu
     set_property -dict [list CONFIG.C_ADV_TRIGGER {true} \
                              CONFIG.C_EN_STRG_QUAL {1} \
                              CONFIG.C_DATA_DEPTH {8192} \
-                             CONFIG.C_NUM_OF_PROBES {4} \
-                             CONFIG.C_PROBE0_WIDTH {25} \
-                             CONFIG.C_PROBE1_WIDTH {288} \
-                             CONFIG.C_PROBE2_WIDTH {152} \
-                             CONFIG.C_PROBE3_WIDTH {72} \
+                             CONFIG.C_NUM_OF_PROBES $ILA_LSU_NUM_PROBES \
+                             CONFIG.C_PROBE0_WIDTH $ILA_LSU_PROBE0_WIDTH \
+                             CONFIG.C_PROBE1_WIDTH $ILA_LSU_PROBE1_WIDTH \
+                             CONFIG.C_PROBE2_WIDTH $ILA_LSU_PROBE2_WIDTH \
+                             CONFIG.C_PROBE3_WIDTH $ILA_LSU_PROBE3_WIDTH \
                              CONFIG.ALL_PROBE_SAME_MU {true} \
                              CONFIG.ALL_PROBE_SAME_MU_CNT $ila_same_mu_cnt \
                         ] [get_ips ila_lsu]

@@ -82,6 +82,11 @@ DBG_SCOPE_FLAGS += -DDBG_SCOPE_COMMIT
 DBG_SCOPE_FLAGS += -DDBG_SCOPE_GATHER
 DBG_SCOPE_FLAGS += -DDBG_SCOPE_MEMSCHED
 DBG_SCOPE_FLAGS += -DDBG_SCOPE_GEMM
+DBG_SCOPE_FLAGS += -DDBG_SCOPE_SCHED
+DBG_SCOPE_FLAGS += -DDBG_SCOPE_IBUFFER
+DBG_SCOPE_FLAGS += -DDBG_SCOPE_SCOREBOARD
+DBG_SCOPE_FLAGS += -DDBG_SCOPE_DISPATCH
+DBG_SCOPE_FLAGS += -DDBG_SCOPE_FPU
 
 ifdef NUM_CORES
 # cluster configuration
@@ -196,7 +201,14 @@ ifneq ($(TARGET),$(findstring $(TARGET), hw hw_emu))
 	$(warning WARNING:Application supports only hw hw_emu TARGET. Please use the target for running the application)
 endif
 
-.PHONY: all clean gen-sources gen-ast emconfig check-devices backup-xrt
+# ILA parameter generation
+ILA_PARAMS := $(BUILD_DIR)/ila_params.tcl
+ILA_GEN_ARGS := --xlen $(XLEN) --configs "$(CONFIGS)"
+ifdef SCOPE
+ILA_GEN_ARGS += --scope
+endif
+
+.PHONY: all clean gen-sources gen-ast emconfig check-devices backup-xrt gen-ila-params
 .DEFAULT_GOAL := all
 
 all: check-devices emconfig $(XCLBIN_CONTAINER) report
@@ -227,8 +239,12 @@ scope-json: $(BIN_DIR)/scope.json
 $(BIN_DIR)/scope.json: $(BUILD_DIR)/vortex.xml
 	mkdir -p $(BUILD_DIR); cd $(BUILD_DIR); $(SCRIPT_DIR)/scope.py vortex.xml -o bin/scope.json
 
+gen-ila-params: $(ILA_PARAMS)
+$(ILA_PARAMS): $(SRC_DIR)/gen_ila_params.py $(CONFIG_STAMP)
+	mkdir -p $(BUILD_DIR); python3 $(SRC_DIR)/gen_ila_params.py -o $@ $(ILA_GEN_ARGS)
+
 gen-xo: $(XO_CONTAINER)
-$(XO_CONTAINER): $(BUILD_DIR)/sources.txt $(XRT_BACKUP_STAMP)
+$(XO_CONTAINER): $(BUILD_DIR)/sources.txt $(XRT_BACKUP_STAMP) $(ILA_PARAMS)
 	mkdir -p $(BUILD_DIR); cd $(BUILD_DIR);	TOOL_DIR=$(SCRIPT_DIR) $(VIVADO) -mode batch -source $(XRT_RUN_DIR)/gen_xo.tcl -tclargs ../$(XO_CONTAINER) vortex_afu sources.txt ../$(BUILD_DIR) $(DEVICE_PART)
 
 $(VITIS_INI): $(SRC_DIR)/gen_vitis_ini.py $(XRT_BACKUP_STAMP)
@@ -245,11 +261,12 @@ $(BIN_DIR)/emconfig.json:
 report: $(XCLBIN_CONTAINER)
 ifeq ($(TARGET), hw)
 	cp $(BUILD_DIR)/_x/logs/link/vivado.log $(BUILD_DIR)/bin
-	cp $(BUILD_DIR)/_x/logs/link/syn/ulp_vortex_afu_1_0_synth_1_runme.log $(BUILD_DIR)/bin
-	cp $(BUILD_DIR)/_x/reports/link/syn/ulp_vortex_afu_1_0_synth_1_ulp_vortex_afu_1_0_utilization_synth.rpt $(BUILD_DIR)/bin
-	cp $(BUILD_DIR)/_x/reports/link/imp/impl_1_hw_bb_locked_utilization_placed.rpt $(BUILD_DIR)/bin
-	cp $(BUILD_DIR)/_x/reports/link/imp/impl_1_hw_bb_locked_timing_summary_routed.rpt $(BUILD_DIR)/bin
-	cp $(BUILD_DIR)/_x/link/vivado/vpl/prj/prj.runs/impl_1/hier_utilization.rpt $(BUILD_DIR)/bin
+	-cp $(BUILD_DIR)/_x/logs/link/syn/ulp_vortex_afu_1_0_synth_1_runme.log $(BUILD_DIR)/bin
+	-cp $(BUILD_DIR)/_x/reports/link/imp/impl_1_kernel_util_synthed.rpt $(BUILD_DIR)/bin
+	-cp $(BUILD_DIR)/_x/reports/link/imp/impl_1_kernel_util_routed.rpt $(BUILD_DIR)/bin
+	-cp $(BUILD_DIR)/_x/reports/link/imp/impl_1_full_util_routed.rpt $(BUILD_DIR)/bin
+	-cp $(BUILD_DIR)/_x/reports/link/imp/impl_1_hw_bb_locked_timing_summary_routed.rpt $(BUILD_DIR)/bin
+	-cp $(BUILD_DIR)/_x/link/vivado/vpl/prj/prj.runs/impl_1/hier_utilization.rpt $(BUILD_DIR)/bin
 endif
 
 chipscope:
