@@ -30,7 +30,7 @@
 #include <errno.h>
 
 // Stubs for sim_trace functions (defined in xrt_sim.cpp for Verilator builds)
-static bool g_trace_enabled = false;
+static bool g_trace_enabled = true;
 bool sim_trace_enabled() { return g_trace_enabled; }
 void sim_trace_enable(bool enable) { g_trace_enabled = enable; }
 
