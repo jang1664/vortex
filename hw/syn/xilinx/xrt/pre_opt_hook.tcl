@@ -1,6 +1,18 @@
 set tool_dir $::env(TOOL_DIR)
 source ${tool_dir}/xilinx_async_bram_patch.tcl
 
+# Prevent opt_design from rewiring vortex_afu boundary pins (lopt optimization).
+# Without this, opt_design replaces hierarchical pins (rvalid, bvalid, etc.)
+# with lopt pins, breaking the original port interface and making post-impl
+# simulation with cell-level SDF extremely difficult.
+set vortex_cell [get_cells -hier -quiet -filter {NAME =~ "*vortex_afu_1"}]
+if {[llength $vortex_cell] == 1} {
+    set_property DONT_TOUCH true $vortex_cell
+    puts "INFO: Set DONT_TOUCH on [get_property NAME $vortex_cell] to preserve boundary pins"
+} else {
+    puts "WARNING: Could not find unique vortex_afu_1 cell for DONT_TOUCH (found [llength $vortex_cell])"
+}
+
 # # Add extra setup margin to kernel clocks so Vivado optimizes harder.
 # # Without this, Vivado stops optimizing at WNS ~0 and the design runs
 # # with essentially zero margin on silicon.
