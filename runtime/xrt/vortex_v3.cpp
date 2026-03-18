@@ -31,6 +31,8 @@
 
 #include <cctype>
 #include <limits>
+#include <map>
+#include <set>
 #include <stdarg.h>
 #include <string>
 #include <unistd.h>
@@ -160,6 +162,13 @@ public:
     , xrtDevice_(nullptr)
     , xrtKernel_(nullptr)
   #endif
+  #ifdef CPP_API
+    , bo_flags_(xrt::bo::flags::normal)
+  #else
+    , bo_flags_(XRT_BO_FLAGS_NONE)
+  #endif
+    , bo_needs_sync_(true)
+    , dedicated_allocated_(0)
   {}
 
   ~vx_device() {
@@ -168,6 +177,11 @@ public:
     vx_scope_stop(this);
   #endif
   #ifndef CPP_API
+  #ifndef BANK_INTERLEAVE
+    for (auto &entry : allocBuffers_) {
+      xrtBOFree(entry.second.xrtBuffer);
+    }
+  #endif
     for (auto &entry : xrtBuffers_) {
     #ifdef BANK_INTERLEAVE
       xrtBOFree(entry);
@@ -194,6 +208,28 @@ public:
     const char *xlbin_path_s = getenv("XRT_XCLBIN_PATH");
     if (xlbin_path_s == nullptr) {
       xlbin_path_s = DEFAULT_XCLBIN_PATH;
+    }
+
+    const char* bo_mode_s = getenv("VORTEX_XRT_BO_MODE");
+    std::string bo_mode = bo_mode_s ? bo_mode_s
+                                    : (is_xrt_emulation() ? "normal" : "device_only");
+    if ("normal" == bo_mode) {
+      bo_needs_sync_ = true;
+    #ifdef CPP_API
+      bo_flags_ = xrt::bo::flags::normal;
+    #else
+      bo_flags_ = XRT_BO_FLAGS_NONE;
+    #endif
+    } else if ("device_only" == bo_mode) {
+      bo_needs_sync_ = false;
+    #ifdef CPP_API
+      bo_flags_ = xrt::bo::flags::device_only;
+    #else
+      bo_flags_ = XRT_BO_FLAGS_DEV_ONLY;
+    #endif
+    } else {
+      fprintf(stderr, "[VXDRV] Error: invalid VORTEX_XRT_BO_MODE=%s\n", bo_mode.c_str());
+      return -1;
     }
 
     std::string device_bdf;
@@ -279,14 +315,16 @@ public:
     global_mem_size_ = num_banks * bank_size;
 
     printf("info: device name=%s, memory_capacity=0x%lx bytes, memory_banks=%ld.\n", device_name.c_str(), global_mem_size_, num_banks);
+    printf("info: xrt_bo_mode=%s.\n", bo_mode.c_str());
+    dedicated_bank_usage_.assign(num_banks, 0);
 
   #ifdef BANK_INTERLEAVE
     xrtBuffers_.reserve(num_banks);
     for (uint32_t i = 0; i < num_banks; ++i) {
     #ifdef CPP_API
-      xrtBuffers_.emplace_back(xrtDevice_, bank_size, xrt::bo::flags::normal, i);
+      xrtBuffers_.emplace_back(xrtDevice_, bank_size, bo_flags_, i);
     #else
-      CHECK_HANDLE(xrtBuffer, xrtBOAlloc(xrtDevice_, bank_size, XRT_BO_FLAGS_NONE, i), {
+      CHECK_HANDLE(xrtBuffer, xrtBOAlloc(xrtDevice_, bank_size, bo_flags_, i), {
          return -1;
       });
       xrtBuffers_.push_back(xrtBuffer);
@@ -400,6 +438,21 @@ public:
 
   int mem_alloc(uint64_t size, int flags, uint64_t *dev_addr) {
     uint64_t asize = aligned_size(size, CACHE_BLOCK_SIZE);
+    uint64_t bank_size = 1ull << lg2_bank_size_;
+    uint64_t bo_size = aligned_size(size, RAM_PAGE_SIZE);
+  #ifndef BANK_INTERLEAVE
+    if (bo_size <= bank_size) {
+      CHECK_ERR(this->alloc_dedicated_buffer(bo_size, dev_addr), {
+        return err;
+      });
+      CHECK_ERR(this->mem_access(*dev_addr, size, flags), {
+        this->mem_free(*dev_addr);
+        return err;
+      });
+      shm_.update_mem(this->memory_used(), this->memory_free());
+      return 0;
+    }
+  #endif
     uint64_t addr;
     CHECK_ERR(global_mem_.allocate(asize, &addr), {
       return err;
@@ -420,7 +473,7 @@ public:
       return err;
     });
     *dev_addr = addr;
-    shm_.update_mem(global_mem_.allocated(), global_mem_.free());
+    shm_.update_mem(this->memory_used(), this->memory_free());
     return 0;
   }
 
@@ -434,6 +487,7 @@ public:
       global_mem_.release(dev_addr);
       return err;
     });
+    reserved_banks_.insert(bank_id);
     CHECK_ERR(get_buffer(bank_id, nullptr), {
       global_mem_.release(dev_addr);
       return err;
@@ -443,11 +497,26 @@ public:
       global_mem_.release(dev_addr);
       return err;
     });
-    shm_.update_mem(global_mem_.allocated(), global_mem_.free());
+    shm_.update_mem(this->memory_used(), this->memory_free());
     return 0;
   }
 
   int mem_free(uint64_t dev_addr) {
+  #ifndef BANK_INTERLEAVE
+    auto alloc_it = allocBuffers_.find(dev_addr);
+    if (alloc_it != allocBuffers_.end()) {
+      dedicated_allocated_ -= alloc_it->second.size;
+      dedicated_bank_usage_.at(alloc_it->second.bank_id) -= alloc_it->second.size;
+      printf("freeing dedicated bank%d, dev_addr=0x%lx, size=0x%lx...\n",
+             alloc_it->second.bank_id, dev_addr, alloc_it->second.size);
+    #ifndef CPP_API
+      xrtBOFree(alloc_it->second.xrtBuffer);
+    #endif
+      allocBuffers_.erase(alloc_it);
+      shm_.update_mem(this->memory_used(), this->memory_free());
+      return 0;
+    }
+  #endif
     CHECK_ERR(global_mem_.release(dev_addr), {
       return err;
     });
@@ -470,10 +539,14 @@ public:
       auto count = --it->second.count;
       if (0 == count) {
         printf("freeing bank%d...\n", bank_id);
+        if (reserved_banks_.count(bank_id) != 0) {
+          printf("keeping reserved bank%d cached...\n", bank_id);
+        } else {
       #ifndef CPP_API
-        xrtBOFree(it->second.xrtBuffer);
+          xrtBOFree(it->second.xrtBuffer);
       #endif
-        xrtBuffers_.erase(it);
+          xrtBuffers_.erase(it);
+        }
       }
     } else {
       fprintf(stderr, "[VXDRV] Error: invalid device memory address: 0x%lx\n",
@@ -481,7 +554,7 @@ public:
       return -1;
     }
   #endif
-    shm_.update_mem(global_mem_.allocated(), global_mem_.free());
+    shm_.update_mem(this->memory_used(), this->memory_free());
     return 0;
   }
 
@@ -491,9 +564,9 @@ public:
 
   int mem_info(uint64_t *mem_free, uint64_t *mem_used) const {
     if (mem_free)
-      *mem_free = global_mem_.free();
+      *mem_free = this->memory_free();
     if (mem_used)
-      *mem_used = global_mem_.allocated();
+      *mem_used = this->memory_used();
     return 0;
   }
 
@@ -535,6 +608,34 @@ public:
       return -1;
 
     shm_.set_state(VX_STATE_UPLOADING);
+  #ifndef BANK_INTERLEAVE
+    {
+      uint64_t bo_offset;
+      xrt_buffer_t xrtBuffer;
+      if (0 == this->get_alloc_buffer(dev_addr, size, &xrtBuffer, &bo_offset)) {
+      #ifdef CPP_API
+        xrtBuffer.write(host_ptr, size, bo_offset);
+        if (bo_needs_sync_) {
+          xrtBuffer.sync(XCL_BO_SYNC_BO_TO_DEVICE, size, bo_offset);
+        }
+      #else
+        CHECK_ERR(xrtBOWrite(xrtBuffer, host_ptr, size, bo_offset), {
+          dump_xrt_error(xrtDevice_, err);
+          return err;
+        });
+        if (bo_needs_sync_) {
+          CHECK_ERR(xrtBOSync(xrtBuffer, XCL_BO_SYNC_BO_TO_DEVICE, size, bo_offset), {
+            dump_xrt_error(xrtDevice_, err);
+            return err;
+          });
+        }
+      #endif
+        shm_.record_upload(size);
+        shm_.set_state(VX_STATE_IDLE);
+        return 0;
+      }
+    }
+  #endif
     uint64_t remaining = size;
     while (remaining != 0) {
       uint32_t bo_index;
@@ -560,16 +661,20 @@ public:
 
     #ifdef CPP_API
       xrtBuffer.write(host_ptr, xfer_size, bo_offset);
-      xrtBuffer.sync(XCL_BO_SYNC_BO_TO_DEVICE, xfer_size, bo_offset);
+      if (bo_needs_sync_) {
+        xrtBuffer.sync(XCL_BO_SYNC_BO_TO_DEVICE, xfer_size, bo_offset);
+      }
     #else
       CHECK_ERR(xrtBOWrite(xrtBuffer, host_ptr, xfer_size, bo_offset), {
         dump_xrt_error(xrtDevice_, err);
         return err;
       });
-      CHECK_ERR(xrtBOSync(xrtBuffer, XCL_BO_SYNC_BO_TO_DEVICE, xfer_size, bo_offset), {
-        dump_xrt_error(xrtDevice_, err);
-        return err;
-      });
+      if (bo_needs_sync_) {
+        CHECK_ERR(xrtBOSync(xrtBuffer, XCL_BO_SYNC_BO_TO_DEVICE, xfer_size, bo_offset), {
+          dump_xrt_error(xrtDevice_, err);
+          return err;
+        });
+      }
 #endif
 
       dev_addr += xfer_size;
@@ -595,6 +700,34 @@ public:
       return -1;
 
     shm_.set_state(VX_STATE_DOWNLOADING);
+  #ifndef BANK_INTERLEAVE
+    {
+      uint64_t bo_offset;
+      xrt_buffer_t xrtBuffer;
+      if (0 == this->get_alloc_buffer(dev_addr, size, &xrtBuffer, &bo_offset)) {
+      #ifdef CPP_API
+        if (bo_needs_sync_) {
+          xrtBuffer.sync(XCL_BO_SYNC_BO_FROM_DEVICE, size, bo_offset);
+        }
+        xrtBuffer.read(host_ptr, size, bo_offset);
+      #else
+        if (bo_needs_sync_) {
+          CHECK_ERR(xrtBOSync(xrtBuffer, XCL_BO_SYNC_BO_FROM_DEVICE, size, bo_offset), {
+            dump_xrt_error(xrtDevice_, err);
+            return err;
+          });
+        }
+        CHECK_ERR(xrtBORead(xrtBuffer, host_ptr, size, bo_offset), {
+          dump_xrt_error(xrtDevice_, err);
+          return err;
+        });
+      #endif
+        shm_.record_download(size);
+        shm_.set_state(VX_STATE_IDLE);
+        return 0;
+      }
+    }
+  #endif
     uint64_t remaining = size;
     while (remaining != 0) {
       uint32_t bo_index;
@@ -619,13 +752,17 @@ public:
         return -1;
 
     #ifdef CPP_API
-      xrtBuffer.sync(XCL_BO_SYNC_BO_FROM_DEVICE, xfer_size, bo_offset);
+      if (bo_needs_sync_) {
+        xrtBuffer.sync(XCL_BO_SYNC_BO_FROM_DEVICE, xfer_size, bo_offset);
+      }
       xrtBuffer.read(host_ptr, xfer_size, bo_offset);
     #else
-      CHECK_ERR(xrtBOSync(xrtBuffer, XCL_BO_SYNC_BO_FROM_DEVICE, xfer_size, bo_offset), {
-        dump_xrt_error(xrtDevice_, err);
-        return err;
-      });
+      if (bo_needs_sync_) {
+        CHECK_ERR(xrtBOSync(xrtBuffer, XCL_BO_SYNC_BO_FROM_DEVICE, xfer_size, bo_offset), {
+          dump_xrt_error(xrtDevice_, err);
+          return err;
+        });
+      }
       CHECK_ERR(xrtBORead(xrtBuffer, host_ptr, xfer_size, bo_offset), {
         dump_xrt_error(xrtDevice_, err);
         return err;
@@ -707,29 +844,36 @@ public:
       bool is_done = (status & CTL_AP_DONE) == CTL_AP_DONE;
       if (is_done)
         break;
-      if (0 == timeout) {
+      if (timeout <= sleep_time_ms) {
+        fprintf(stderr, "[VXDRV] Error: ready_wait timed out\n");
         return -1;
       }
       nanosleep(&sleep_time, nullptr);
       timeout -= sleep_time_ms;
     };
 
-    // Runtime-only mitigation:
-    // Wait briefly for AP_IDLE and allow outstanding write path to settle
-    // before host-side download starts.
+    // Wait for AP_IDLE to confirm the state machine has fully transitioned
+    // and all internal paths have settled before host-side download.
     {
       const struct timespec idle_poll = {0, 100000};   // 0.1ms
       const struct timespec settle_wait = {0, 500000}; // 0.5ms
       const uint32_t idle_retries = 200;               // up to 20ms
+      bool got_idle = false;
       for (uint32_t i = 0; i < idle_retries; ++i) {
         uint32_t status = 0;
         CHECK_ERR(this->read_register(MMIO_CTL_ADDR, &status), {
           return err;
         });
         bool is_idle = (status & CTL_AP_IDLE) == CTL_AP_IDLE;
-        if (is_idle)
+        if (is_idle) {
+          got_idle = true;
           break;
+        }
         nanosleep(&idle_poll, nullptr);
+      }
+      if (!got_idle) {
+        fprintf(stderr, "[VXDRV] Error: AP_IDLE not reached after AP_DONE\n");
+        return -1;
       }
       nanosleep(&settle_wait, nullptr);
     }
@@ -773,9 +917,24 @@ public:
 
 private:
 
+  uint64_t memory_used() const {
+    return global_mem_.allocated() + dedicated_allocated_;
+  }
+
+  uint64_t memory_free() const {
+    auto used = this->memory_used();
+    return (used < global_mem_size_) ? (global_mem_size_ - used) : 0;
+  }
+
   MemoryAllocator global_mem_;
   xrt_device_t xrtDevice_;
   xrt_kernel_t xrtKernel_;
+  #ifdef CPP_API
+  xrt::bo::flags bo_flags_;
+  #else
+  xrtBufferFlags bo_flags_;
+  #endif
+  bool bo_needs_sync_;
   uint64_t dev_caps_;
   uint64_t isa_caps_;
   uint64_t global_mem_size_;
@@ -784,6 +943,8 @@ private:
   uint32_t lg2_num_banks_;
   uint32_t lg2_bank_size_;
   ShmStatus shm_;
+  uint64_t dedicated_allocated_;
+  std::vector<uint64_t> dedicated_bank_usage_;
 
 #ifdef BANK_INTERLEAVE
 
@@ -813,19 +974,107 @@ private:
 
 #else
 
+  struct alloc_info_t {
+    xrt_buffer_t xrtBuffer;
+    uint64_t size;
+    uint32_t bank_id;
+  };
+
   struct buf_cnt_t {
     xrt_buffer_t xrtBuffer;
     uint32_t count;
   };
 
+  std::map<uint64_t, alloc_info_t> allocBuffers_;
+  std::set<uint32_t> reserved_banks_;
   std::unordered_map<uint32_t, buf_cnt_t> xrtBuffers_;
+
+  int create_buffer(uint32_t bank_id, uint64_t size, xrt_buffer_t *pBuf, uint64_t *pAddr) {
+  #ifdef CPP_API
+    try {
+      xrt::bo xrtBuffer(xrtDevice_, size, bo_flags_, bank_id);
+      *pAddr = xrtBuffer.address();
+      *pBuf = std::move(xrtBuffer);
+      return 0;
+    } catch (const std::exception& ex) {
+      fprintf(stderr,
+              "[VXDRV] Warning: BO allocation failed on bank%d, size=0x%lx: %s\n",
+              bank_id, size, ex.what());
+      return -1;
+    }
+  #else
+    auto xrtBuffer = xrtBOAlloc(xrtDevice_, size, bo_flags_, bank_id);
+    if (nullptr == xrtBuffer) {
+      fprintf(stderr,
+              "[VXDRV] Warning: BO allocation failed on bank%d, size=0x%lx\n",
+              bank_id, size);
+      return -1;
+    }
+    auto addr = xrtBOAddress(xrtBuffer);
+    if (uint64_t(-1) == addr) {
+      xrtBOFree(xrtBuffer);
+      fprintf(stderr,
+              "[VXDRV] Warning: BO address query failed on bank%d, size=0x%lx\n",
+              bank_id, size);
+      return -1;
+    }
+    *pAddr = addr;
+    *pBuf = xrtBuffer;
+    return 0;
+  #endif
+  }
+
+  int alloc_dedicated_buffer(uint64_t size, uint64_t *dev_addr) {
+    uint32_t num_banks = 1 << lg2_num_banks_;
+    uint64_t bank_size = 1ull << lg2_bank_size_;
+    for (uint32_t attempt = 0; attempt < num_banks; ++attempt) {
+      uint32_t bank_id = attempt;
+      if (reserved_banks_.count(bank_id) != 0)
+        continue;
+      if (xrtBuffers_.count(bank_id) != 0)
+        continue;
+      if (dedicated_bank_usage_.at(bank_id) + size > bank_size)
+        continue;
+      xrt_buffer_t xrtBuffer;
+      uint64_t addr;
+      if (0 != this->create_buffer(bank_id, size, &xrtBuffer, &addr))
+        continue;
+      printf("allocating dedicated bank%d, size=0x%lx, dev_addr=0x%lx...\n",
+             bank_id, size, addr);
+      allocBuffers_.insert({addr, {xrtBuffer, size, bank_id}});
+      dedicated_allocated_ += size;
+      dedicated_bank_usage_.at(bank_id) += size;
+      *dev_addr = addr;
+      return 0;
+    }
+    fprintf(stderr, "[VXDRV] Error: failed to allocate a dedicated BO, size=0x%lx\n", size);
+    return -1;
+  }
+
+  int get_alloc_buffer(uint64_t addr, uint64_t size, xrt_buffer_t *pBuf, uint64_t *pOff) {
+    auto it = allocBuffers_.upper_bound(addr);
+    if (it == allocBuffers_.begin())
+      return -1;
+    --it;
+    uint64_t base_addr = it->first;
+    uint64_t offset = addr - base_addr;
+    if (offset > it->second.size || size > (it->second.size - offset))
+      return -1;
+    if (pBuf) {
+      *pBuf = it->second.xrtBuffer;
+    }
+    if (pOff) {
+      *pOff = offset;
+    }
+    return 0;
+  }
 
   int get_bank_info(uint64_t addr, uint32_t *pIdx, uint64_t *pOff) {
     uint32_t num_banks = 1 << lg2_num_banks_;
     uint64_t bank_size = 1ull << lg2_bank_size_;
     uint32_t index = addr >> lg2_bank_size_;
     uint64_t offset = addr & (bank_size - 1);
-    if (index > num_banks) {
+    if (index >= num_banks) {
       fprintf(stderr, "[VXDRV] Error: address out of range: 0x%lx\n", addr);
       return -1;
     }
@@ -852,9 +1101,9 @@ private:
       printf("allocating bank%d...\n", bank_id);
       uint64_t bank_size = 1ull << lg2_bank_size_;
     #ifdef CPP_API
-      xrt::bo xrtBuffer(xrtDevice_, bank_size, xrt::bo::flags::normal, bank_id);
+      xrt::bo xrtBuffer(xrtDevice_, bank_size, bo_flags_, bank_id);
     #else
-      CHECK_HANDLE(xrtBuffer, xrtBOAlloc(xrtDevice_, bank_size, XRT_BO_FLAGS_NONE, bank_id), {
+      CHECK_HANDLE(xrtBuffer, xrtBOAlloc(xrtDevice_, bank_size, bo_flags_, bank_id), {
         return -1;
       });
     #endif
