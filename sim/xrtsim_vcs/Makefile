@@ -12,7 +12,7 @@ AFU_DIR := $(RTL_DIR)/afu/xrt
 
 CXXFLAGS += -std=c++17 -Wall -Wextra -Wfatal-errors -Wno-array-bounds
 CXXFLAGS += -fPIC -Wno-maybe-uninitialized
-CXXFLAGS += -I$(SRC_DIR) -I$(XRTSIM_DIR) -I$(ROOT_DIR)/hw -I$(SW_COMMON_DIR) -I$(DESTDIR)
+CXXFLAGS += -I$(SRC_DIR) -I$(XRTSIM_DIR) -I$(ROOT_DIR)/hw -I$(ROOT_DIR)/build/hw -I$(SW_COMMON_DIR) -I$(DESTDIR)
 CXXFLAGS += -I/$(THIRD_PARTY_DIR)/softfloat/source/include
 CXXFLAGS += -I$(THIRD_PARTY_DIR)/ramulator/ext/spdlog/include
 CXXFLAGS += -I$(THIRD_PARTY_DIR)/ramulator/ext/yaml-cpp/include
@@ -137,14 +137,15 @@ endif
 
 # Post-impl gate-level simulation support
 # Usage: make simv POST_IMPL=1 NETLIST=<netlist.v> [SDF_FILE=<timing.sdf>]
-#                  SIMLIB_DIR=<compiled_simlib/vcs>
+#                  [SIMLIB_DIR=<compiled_simlib/vcs>]
 #                  [GLBL=<path/to/glbl.v>]
 ifdef POST_IMPL
 	VCS_FLAGS += +define+VCS_POST_IMPL +define+XIL_TIMING
 
-	# Xilinx compiled simulation libraries (from compile_simlib)
-	SIMLIB_DIR ?= $(ROOT_DIR)/hw/pgsim/compile_simlib/vcs
+	# Xilinx compiled simulation libraries (auto-built if missing)
+	SIMLIB_DIR ?= $(DESTDIR)/compile_simlib/vcs
 	SIMLIB_SETUP := $(SIMLIB_DIR)/synopsys_sim.setup
+	COMPILE_VCS_SIMLIB_TCL := $(SRC_DIR)/compile_vcs_simlib.tcl
 
 	# Gate-level netlist
 	ifndef NETLIST
@@ -198,7 +199,19 @@ ifdef POST_IMPL
 # Post-impl: compile netlist + TB + DPI (no RTL sources)
 $(DESTDIR)/simv: $(SRC_DIR)/tb_vcs_xrtsim.sv $(SRC_DIR)/dpi_vcs_server.cpp
 	@mkdir -p $(DESTDIR)
-	@test -f "$(SIMLIB_SETUP)" || { echo "ERROR: $(SIMLIB_SETUP) not found. Run 'make -C hw/pgsim compile_vcs_libs' first."; exit 1; }
+	@if [ ! -f "$(SIMLIB_SETUP)" ]; then \
+		echo "INFO: Xilinx VCS simlib not found at $(SIMLIB_DIR), compiling..."; \
+		mkdir -p "$(SIMLIB_DIR)"; \
+		vivado -mode batch -nolog -nojournal -notrace \
+			-source "$(COMPILE_VCS_SIMLIB_TCL)" \
+			-tclargs "$(SIMLIB_DIR)" "$$(dirname $$(readlink -f $$(which vlogan)))" "" "0" "all" "verilog" \
+			> "$(DESTDIR)/compile_simlib.log" 2>&1 || { \
+				echo "ERROR: compile_simlib failed. See $(DESTDIR)/compile_simlib.log"; \
+				exit 1; \
+			}; \
+		echo "INFO: simlib compiled to $(SIMLIB_DIR)"; \
+	fi
+	@test -f "$(SIMLIB_SETUP)" || { echo "ERROR: $(SIMLIB_SETUP) not found after compile_simlib."; exit 1; }
 	@test -f "$(NETLIST)" || { echo "ERROR: NETLIST not found: $(NETLIST)"; exit 1; }
 	$(VCS_SETUP_CMD)
 	cd $(DESTDIR) && vlogan -full64 -sverilog -timescale=1ns/1ps \
@@ -213,7 +226,7 @@ $(DESTDIR)/simv: $(SRC_DIR)/tb_vcs_xrtsim.sv $(SRC_DIR)/dpi_vcs_server.cpp
 	cd $(DESTDIR) && vcs -full64 -debug_access+all -timescale=1ns/1ps \
 		$(VCS_SDF_PARAM) \
 		$(VCS_FSDB_OPTS) \
-		-CFLAGS "-std=c++17 -I$(SRC_DIR) -I$(ROOT_DIR)/hw -I$(SW_COMMON_DIR) -I/$(THIRD_PARTY_DIR)/softfloat/source/include -DXLEN_$(XLEN)" \
+		-CFLAGS "-std=c++17 -I$(SRC_DIR) -I$(ROOT_DIR)/hw -I$(ROOT_DIR)/build/hw -I$(SW_COMMON_DIR) -I/$(THIRD_PARTY_DIR)/softfloat/source/include -DXLEN_$(XLEN)" \
 		-LDFLAGS "-Wl,--whole-archive $(SOFTFLOAT_LIB) -Wl,--no-whole-archive" \
 		$(DPI_SRCS) \
 		$(VCS_TOP) glbl \
