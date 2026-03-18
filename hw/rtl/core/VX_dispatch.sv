@@ -86,4 +86,25 @@ module VX_dispatch import VX_gpu_pkg::*; #(
     end
 `endif
 
+`ifdef CHIPSCOPE
+`ifdef DBG_SCOPE_DISPATCH
+    wire [NUM_EX_UNITS-1:0] dispatch_if_valid;
+    wire [NUM_EX_UNITS-1:0] dispatch_if_ready;
+    for (genvar i = 0; i < NUM_EX_UNITS; ++i) begin : g_ila_dispatch
+        assign dispatch_if_valid[i] = dispatch_if[i].valid;
+        assign dispatch_if_ready[i] = dispatch_if[i].ready;
+    end
+    ila_dispatch ila_dispatch_inst (
+        .clk    (clk),
+        .probe0 ({
+            dispatch_if_valid,          // [14:10]
+            dispatch_if_ready,          // [9:5]
+            operands_if.valid,          // [4]
+            operands_if.ready,          // [3]
+            operands_if.data.ex_type    // [2:0]
+        })
+    );
+`endif
+`endif
+
 endmodule

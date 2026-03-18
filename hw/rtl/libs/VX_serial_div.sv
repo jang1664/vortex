@@ -60,6 +60,7 @@ module VX_serial_div #(
     always @(posedge clk) begin
         if (reset) begin
             busy_r <= 0;
+            cntr <= '0;
         end else begin
             if (strobe) begin
                 busy_r <= 1;
@@ -67,10 +68,10 @@ module VX_serial_div #(
             if (busy && cntr == 0) begin
                 busy_r <= 0;
             end
-        end
-        cntr <= cntr - CNTRW'(1);
-        if (strobe) begin
-            cntr <= CNTRW'(WIDTHN-1);
+            cntr <= cntr - CNTRW'(1);
+            if (strobe) begin
+                cntr <= CNTRW'(WIDTHN-1);
+            end
         end
     end
 

@@ -443,4 +443,20 @@ module VX_schedule import VX_gpu_pkg::*; #(
     end
 `endif
 
+`ifdef CHIPSCOPE
+`ifdef DBG_SCOPE_SCHED
+    ila_sched ila_sched_inst (
+        .clk    (clk),
+        .probe0 ({
+            active_warps,           // [14:11]
+            stalled_warps,          // [10:7]
+            pending_warp_empty,     // [6:3]
+            schedule_if.valid,      // [2]
+            schedule_if.ready,      // [1]
+            busy                    // [0]
+        })
+    );
+`endif
+`endif
+
 endmodule

@@ -273,4 +273,23 @@ module VX_fpu_unit import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
         .commit_if (commit_if)
     );
 
+`ifdef CHIPSCOPE
+`ifdef DBG_SCOPE_FPU
+    ila_fpu ila_fpu_inst (
+        .clk    (clk),
+        .probe0 ({
+            g_blocks[0].mdata_full,                     // [8]
+            per_block_execute_if[0].valid,              // [7]
+            per_block_execute_if[0].ready,              // [6]
+            per_block_result_if[0].valid,               // [5]
+            per_block_result_if[0].ready,               // [4]
+            g_blocks[0].fpu_req_valid,                  // [3]
+            g_blocks[0].fpu_req_ready,                  // [2]
+            g_blocks[0].fpu_rsp_valid,                  // [1]
+            g_blocks[0].fpu_rsp_ready                   // [0]
+        })
+    );
+`endif
+`endif
+
 endmodule

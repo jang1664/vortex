@@ -158,10 +158,45 @@ module VX_issue_slice import VX_gpu_pkg::*; #(
 `ifdef DBG_SCOPE_ISSUE
     ila_issue ila_issue_inst (
         .clk    (clk),
-        .probe0 ({decode_if.valid, decode_if.data, decode_if.ready}),
-        .probe1 ({scoreboard_if.valid, scoreboard_if.data, scoreboard_if.ready}),
-        .probe2 ({operands_if.valid, operands_if.data, operands_if.ready}),
-        .probe3 ({writeback_if.valid, writeback_if.data})
+        // probe0: valid/ready handshakes (config-independent, 7 bits)
+        .probe0 ({
+            decode_if.valid,        // [6]
+            decode_if.ready,        // [5]
+            scoreboard_if.valid,    // [4]
+            scoreboard_if.ready,    // [3]
+            operands_if.valid,      // [2]
+            operands_if.ready,      // [1]
+            writeback_if.valid      // [0]
+        }),
+        // probe1: decode context (ex_type, op_type, wid, PC, rd)
+        .probe1 ({
+            decode_if.data.ex_type,
+            decode_if.data.op_type,
+            decode_if.data.wid,
+            decode_if.data.PC,
+            decode_if.data.wb,
+            decode_if.data.rd,
+            decode_if.data.tmask
+        }),
+        // probe2: operands context
+        .probe2 ({
+            operands_if.data.ex_type,
+            operands_if.data.op_type,
+            operands_if.data.wis,
+            operands_if.data.PC,
+            operands_if.data.wb,
+            operands_if.data.rd,
+            operands_if.data.tmask,
+            operands_if.data.sop,
+            operands_if.data.eop
+        }),
+        // probe3: writeback context
+        .probe3 ({
+            writeback_if.data.wis,
+            writeback_if.data.rd,
+            writeback_if.data.tmask,
+            writeback_if.data.eop
+        })
     );
 `endif
 `endif

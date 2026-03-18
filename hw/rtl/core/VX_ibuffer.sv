@@ -97,4 +97,27 @@ module VX_ibuffer import VX_gpu_pkg::*; #(
     assign perf_stalls = perf_ibf_stalls;
 `endif
 
+`ifdef CHIPSCOPE
+`ifdef DBG_SCOPE_IBUFFER
+    wire [PER_ISSUE_WARPS-1:0] ibuffer_if_valid;
+    wire [PER_ISSUE_WARPS-1:0] ibuffer_if_ready;
+    for (genvar w = 0; w < PER_ISSUE_WARPS; ++w) begin : g_ila_ibuffer
+        assign ibuffer_if_valid[w] = ibuffer_if[w].valid;
+        assign ibuffer_if_ready[w] = ibuffer_if[w].ready;
+    end
+    ila_ibuffer ila_ibuffer_inst (
+        .clk    (clk),
+        .probe0 ({
+            decode_wis,             // [17:16]
+            decode_if.valid,        // [15]
+            decode_if.ready,        // [14]
+            ibuf_ready_in,          // [13:10]
+            ibuffer_if_valid,       // [9:6]
+            ibuffer_if_ready,       // [5:2]
+            2'b0                    // [1:0] reserved
+        })
+    );
+`endif
+`endif
+
 endmodule

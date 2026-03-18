@@ -171,9 +171,26 @@ module VX_fetch import VX_gpu_pkg::*; #(
 `ifdef DBG_SCOPE_FETCH
     ila_fetch ila_fetch_inst (
         .clk    (clk),
-        .probe0 ({schedule_if.valid, schedule_if.data, schedule_if.ready}),
-        .probe1 ({icache_bus_if.req_valid, icache_bus_if.req_data, icache_bus_if.req_ready}),
-        .probe2 ({icache_bus_if.rsp_valid, icache_bus_if.rsp_data, icache_bus_if.rsp_ready})
+        // probe0: valid/ready handshakes (6 bits)
+        .probe0 ({
+            schedule_if.valid,          // [5]
+            schedule_if.ready,          // [4]
+            icache_bus_if.req_valid,    // [3]
+            icache_bus_if.req_ready,    // [2]
+            icache_bus_if.rsp_valid,    // [1]
+            icache_bus_if.rsp_ready     // [0]
+        }),
+        // probe1: schedule context (wid + PC + tmask = 2+62+4 = 68 bits)
+        .probe1 ({
+            schedule_if.data.wid,
+            schedule_if.data.PC,
+            schedule_if.data.tmask
+        }),
+        // probe2: icache response data
+        .probe2 ({
+            icache_bus_if.rsp_data.tag,
+            icache_bus_if.rsp_data.data
+        })
     );
 `endif
 `endif

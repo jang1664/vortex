@@ -179,10 +179,11 @@ module VX_scoreboard import VX_gpu_pkg::*; #(
         always @(posedge clk) begin
             if (reset) begin
                 inuse_regs <= '0;
+                operands_ready_r <= 0;
             end else begin
                 inuse_regs <= inuse_regs_n;
+                operands_ready_r <= ~(| regs_busy);
             end
-            operands_ready_r <= ~(| regs_busy);
         end
 
         assign operands_ready[w] = operands_ready_r;
@@ -284,5 +285,29 @@ module VX_scoreboard import VX_gpu_pkg::*; #(
         .ready_out (scoreboard_if.ready),
         .sel_out   (scoreboard_if.data.wis)
     );
+
+`ifdef CHIPSCOPE
+`ifdef DBG_SCOPE_SCOREBOARD
+    wire [PER_ISSUE_WARPS-1:0] staging_if_valid;
+    wire [PER_ISSUE_WARPS-1:0] staging_if_ready;
+    for (genvar w = 0; w < PER_ISSUE_WARPS; ++w) begin : g_ila_scoreboard
+        assign staging_if_valid[w] = staging_if[w].valid;
+        assign staging_if_ready[w] = staging_if[w].ready;
+    end
+    ila_scoreboard ila_scoreboard_inst (
+        .clk    (clk),
+        .probe0 ({
+            staging_if_valid,       // [20:17]
+            staging_if_ready,       // [16:13]
+            operands_ready,         // [12:9]
+            arb_ready_in,           // [8:5]
+            scoreboard_if.valid,    // [4]
+            scoreboard_if.ready,    // [3]
+            writeback_if.valid,     // [2]
+            writeback_if.data.wis   // [1:0]
+        })
+    );
+`endif
+`endif
 
 endmodule
