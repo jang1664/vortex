@@ -114,7 +114,7 @@ ifneq (,$(findstring -DEXT_TCU_ENABLE, $(CONFIGS)))
 endif
 
 # VCS compile flags
-VCS_FLAGS += -full64 -sverilog +v2k -timescale=1ns/1ps
+VCS_FLAGS += -full64 -sverilog +v2k -timescale=1ns/1ps -xprop=tmerge
 VCS_FLAGS += -CFLAGS "-std=c++17 -I$(SRC_DIR) -I$(ROOT_DIR)/hw -I$(SW_COMMON_DIR) -I/$(THIRD_PARTY_DIR)/softfloat/source/include -DXLEN_$(XLEN)"
 VCS_FLAGS += $(foreach d,$(RTL_DIRS),+incdir+$(d))
 VCS_FLAGS += $(foreach d,$(RTL_DIRS),-y $(d)) +libext+.v+.sv

@@ -11,12 +11,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// VCS co-simulation testbench.
+// VCS co-simulation testbench — synthesizable-style rewrite.
 //
-// Coding convention:
-//   - All signal drives use blocking (=) at negedge (mid-cycle).
-//   - DUT evaluates at posedge. TB samples stable DUT outputs at negedge.
-//   - No NBA (<=) used. No race conditions.
+// Architecture:
+//   - AXI signals are driven by always_ff @(posedge) blocks with NBA (<=).
+//   - DPI calls live in a single initial @(negedge) block that pushes queues
+//     and consumes fire/ack flags — the only non-synthesizable part.
+//   - AXI memory slave uses generate-for to avoid VCS automatic variable issues.
+//   - Ready signals are combinational (assign) based on queue depth + stall.
 
 `timescale 1ns/1ps
 
@@ -43,18 +45,25 @@ module tb_vcs_xrtsim #(
   localparam int NUM_BANKS = `PLATFORM_MEMORY_NUM_BANKS;
 `endif
 
-  localparam int CMD_REG_WRITE     = 8'h01;
-  localparam int CMD_REG_READ      = 8'h03;
-  localparam int CMD_SHUTDOWN      = 8'h05;
-  localparam int RSP_AXI_R         = 8'h20;
-  localparam int RSP_AXI_B         = 8'h21;
+  // Response queue depth limit for backpressure
+  localparam int RSP_QUEUE_LIMIT = 16;
 
-  localparam int CTRL_IDLE       = 0;
-  localparam int CTRL_WRITE      = 1;
-  localparam int CTRL_WRITE_DONE = 2;
-  localparam int CTRL_READ       = 3;
-  localparam int CTRL_READ_DONE  = 4;
+  // Packet type constants (must match vcs_protocol.h)
+  localparam int CMD_REG_WRITE = 8'h01;
+  localparam int CMD_REG_READ  = 8'h03;
+  localparam int CMD_SHUTDOWN  = 8'h05;
+  localparam int RSP_AXI_R    = 8'h20;
+  localparam int RSP_AXI_B    = 8'h21;
 
+  // AXI-Lite ctrl FSM states
+  localparam int CTRL_IDLE     = 0;
+  localparam int CTRL_AW_PHASE = 1;
+  localparam int CTRL_W_PHASE  = 2;
+  localparam int CTRL_B_PHASE  = 3;
+  localparam int CTRL_AR_PHASE = 4;
+  localparam int CTRL_R_PHASE  = 5;
+
+  // ---- DPI imports ----
   import "DPI-C" function int socket_server_init(int ctrl_port, int mem_port);
   import "DPI-C" function int socket_server_accept();
   import "DPI-C" function int ctrl_has_command();
@@ -73,7 +82,7 @@ module tb_vcs_xrtsim #(
   logic ap_rst_n;
   always #(CLK_HALF_PERIOD_NS) ap_clk = ~ap_clk;
 
-  // ---- AXI Memory signals ----
+  // ---- AXI Memory signals (per-bank) ----
   logic         m_axi_mem_awvalid [NUM_BANKS];
   logic         m_axi_mem_awready [NUM_BANKS];
   logic [C_M_AXI_MEM_ADDR_WIDTH-1:0]  m_axi_mem_awaddr [NUM_BANKS];
@@ -120,6 +129,60 @@ module tb_vcs_xrtsim #(
   logic [1:0]   s_axi_ctrl_bresp;
   logic         interrupt;
 
+  // ---- Response queue entry types ----
+  typedef struct {
+    logic [C_M_AXI_MEM_ID_WIDTH-1:0]   id;
+    logic [C_M_AXI_MEM_DATA_WIDTH-1:0] data;
+    logic                               last;
+  } r_rsp_t;
+
+  typedef struct {
+    logic [C_M_AXI_MEM_ID_WIDTH-1:0] id;
+  } b_rsp_t;
+
+  // Per-bank response queues (initial pushes, always_ff pops)
+  r_rsp_t r_queue[NUM_BANKS][$];
+  b_rsp_t b_queue[NUM_BANKS][$];
+
+  // ---- Ctrl command queue entry ----
+  typedef struct {
+    int cmd_type;
+    int offset;
+    int value;
+  } ctrl_cmd_t;
+
+  ctrl_cmd_t ctrl_cmd_queue[$];
+
+  // ---- DRAM stall Markov model ----
+  int dram_req_stall_p_enter;
+  int dram_req_stall_p_exit;
+  int dram_rsp_stall_p_enter;
+  int dram_rsp_stall_p_exit;
+  bit req_stalling [NUM_BANKS];
+  bit rsp_stalling [NUM_BANKS];
+
+  // ---- Fire flags: set by always_ff (<=), cleared by initial (=) ----
+  bit ar_fire_flag [NUM_BANKS];
+  logic [C_M_AXI_MEM_ADDR_WIDTH-1:0] ar_fire_addr [NUM_BANKS];
+  logic [C_M_AXI_MEM_ID_WIDTH-1:0]   ar_fire_id   [NUM_BANKS];
+  logic [7:0]                         ar_fire_len  [NUM_BANKS];
+
+  bit aw_fire_flag [NUM_BANKS];
+  logic [C_M_AXI_MEM_ADDR_WIDTH-1:0] aw_fire_addr [NUM_BANKS];
+  logic [C_M_AXI_MEM_ID_WIDTH-1:0]   aw_fire_id   [NUM_BANKS];
+  logic [7:0]                         aw_fire_len  [NUM_BANKS];
+
+  bit w_fire_flag [NUM_BANKS];
+  logic [C_M_AXI_MEM_DATA_WIDTH-1:0]   w_fire_data [NUM_BANKS];
+  logic [C_M_AXI_MEM_DATA_WIDTH/8-1:0] w_fire_strb [NUM_BANKS];
+  logic                                 w_fire_last [NUM_BANKS];
+
+  // ---- Ctrl ack/read_rsp flags: set by always_ff (<=), cleared by initial (=) ----
+  bit ctrl_ack_pending;
+  bit ctrl_read_rsp_pending;
+  int ctrl_read_rsp_value;
+
+  // ---- DUT port connection macro ----
 `define TB_AXI_MEM_CONNECT(i) \
     .m_axi_mem_``i``_awvalid(m_axi_mem_awvalid[i]), \
     .m_axi_mem_``i``_awready(m_axi_mem_awready[i]), \
@@ -147,7 +210,7 @@ module tb_vcs_xrtsim #(
     .m_axi_mem_``i``_bresp(m_axi_mem_bresp[i]), \
     .m_axi_mem_``i``_bid(m_axi_mem_bid[i])
 
-  // ---- DUT ----
+  // ---- DUT Instantiation ----
 `ifdef VCS_POST_IMPL
   ulp_vortex_afu_1_0 dut (
     .ap_clk(ap_clk), .ap_rst_n(ap_rst_n),
@@ -212,174 +275,378 @@ module tb_vcs_xrtsim #(
   end
 `endif
 
+  // ---- Markov stall helper ----
+  function automatic bit markov_step(bit state, int p_enter, int p_exit);
+    int roll;
+    roll = $urandom_range(99, 0);
+    if (state == 0)
+      return (roll < p_enter) ? 1 : 0;
+    else
+      return (roll < p_exit) ? 0 : 1;
+  endfunction
+
+  // ---- Working buffers for DPI ----
   byte unsigned w_data_buf [DATA_SIZE];
   byte unsigned r_data_buf [DATA_SIZE];
 
+  // ---- Ctrl FSM state ----
   int ctrl_state;
-  int ctrl_cmd_type, ctrl_cmd_offset, ctrl_cmd_value;
+  int ctrl_cmd_offset_r; // latched offset for read response display
 
-  initial begin : main_flow
+  // ================================================================
+  // AXI-Lite Ctrl Master FSM — posedge registered
+  // (uses `always` instead of `always_ff` because ctrl_ack_pending etc.
+  //  are also cleared by the initial/negedge DPI block)
+  // ================================================================
+  always @(posedge ap_clk) begin
+    if (!ap_rst_n) begin
+      s_axi_ctrl_awvalid <= 0;
+      s_axi_ctrl_awaddr  <= '0;
+      s_axi_ctrl_wvalid  <= 0;
+      s_axi_ctrl_wdata   <= '0;
+      s_axi_ctrl_wstrb   <= '0;
+      s_axi_ctrl_bready  <= 0;
+      s_axi_ctrl_arvalid <= 0;
+      s_axi_ctrl_araddr  <= '0;
+      s_axi_ctrl_rready  <= 0;
+      ctrl_state         <= CTRL_IDLE;
+      ctrl_ack_pending      <= 0;
+      ctrl_read_rsp_pending <= 0;
+      ctrl_read_rsp_value   <= 0;
+      ctrl_cmd_offset_r     <= 0;
+    end else begin
+      case (ctrl_state)
+        CTRL_IDLE: begin
+          if (ctrl_cmd_queue.size() > 0) begin
+            automatic ctrl_cmd_t cmd = ctrl_cmd_queue.pop_front();
+            if (cmd.cmd_type == CMD_REG_WRITE) begin
+              $display("[TB] REG_WRITE: offset=0x%02x value=0x%08x", cmd.offset, cmd.value);
+              s_axi_ctrl_awaddr  <= cmd.offset[C_S_AXI_CTRL_ADDR_WIDTH-1:0];
+              s_axi_ctrl_awvalid <= 1;
+              s_axi_ctrl_wdata   <= cmd.value;
+              s_axi_ctrl_wstrb   <= '1;
+              s_axi_ctrl_wvalid  <= 1;
+              ctrl_cmd_offset_r  <= cmd.offset;
+              ctrl_state         <= CTRL_AW_PHASE;
+            end else if (cmd.cmd_type == CMD_REG_READ) begin
+              s_axi_ctrl_araddr  <= cmd.offset[C_S_AXI_CTRL_ADDR_WIDTH-1:0];
+              s_axi_ctrl_arvalid <= 1;
+              ctrl_cmd_offset_r  <= cmd.offset;
+              ctrl_state         <= CTRL_AR_PHASE;
+            end
+            // CMD_SHUTDOWN handled by initial block before pushing
+          end
+        end
+
+        CTRL_AW_PHASE: begin
+          // Wait for both AW and W handshakes; they can fire in any order
+          if (s_axi_ctrl_awvalid && s_axi_ctrl_awready)
+            s_axi_ctrl_awvalid <= 0;
+          if (s_axi_ctrl_wvalid && s_axi_ctrl_wready)
+            s_axi_ctrl_wvalid <= 0;
+          // Transition when both done (considering this cycle's fires)
+          if ((!s_axi_ctrl_awvalid || s_axi_ctrl_awready) &&
+              (!s_axi_ctrl_wvalid  || s_axi_ctrl_wready)) begin
+            s_axi_ctrl_awvalid <= 0;
+            s_axi_ctrl_wvalid  <= 0;
+            s_axi_ctrl_bready  <= 1;
+            ctrl_state         <= CTRL_B_PHASE;
+          end
+        end
+
+        CTRL_W_PHASE: begin
+          // Not used in current flow (AW+W asserted together),
+          // but kept for future sequential AW->W if needed
+          if (s_axi_ctrl_wvalid && s_axi_ctrl_wready) begin
+            s_axi_ctrl_wvalid <= 0;
+            s_axi_ctrl_bready <= 1;
+            ctrl_state        <= CTRL_B_PHASE;
+          end
+        end
+
+        CTRL_B_PHASE: begin
+          if (s_axi_ctrl_bvalid && s_axi_ctrl_bready) begin
+            s_axi_ctrl_bready  <= 0;
+            ctrl_ack_pending   <= 1;
+            ctrl_state         <= CTRL_IDLE;
+          end
+        end
+
+        CTRL_AR_PHASE: begin
+          if (s_axi_ctrl_arvalid && s_axi_ctrl_arready) begin
+            s_axi_ctrl_arvalid <= 0;
+            s_axi_ctrl_rready  <= 1;
+            ctrl_state         <= CTRL_R_PHASE;
+          end
+        end
+
+        CTRL_R_PHASE: begin
+          if (s_axi_ctrl_rvalid && s_axi_ctrl_rready) begin
+            s_axi_ctrl_rready     <= 0;
+            ctrl_read_rsp_pending <= 1;
+            ctrl_read_rsp_value   <= s_axi_ctrl_rdata;
+            $display("[TB] REG_READ: offset=0x%02x value=0x%08x",
+                     ctrl_cmd_offset_r, s_axi_ctrl_rdata);
+            ctrl_state            <= CTRL_IDLE;
+          end
+        end
+
+        default: ctrl_state <= CTRL_IDLE;
+      endcase
+    end
+  end
+
+  // ================================================================
+  // AXI Memory Slave — generate for (per-bank)
+  // ================================================================
+  generate
+    for (genvar gi = 0; gi < NUM_BANKS; gi++) begin : mem_bank
+
+      // ---- Ready signals (always_comb — queue.size() requires procedural context) ----
+      always_comb begin
+        m_axi_mem_arready[gi] = !req_stalling[gi]
+                              && (r_queue[gi].size() < RSP_QUEUE_LIMIT);
+        m_axi_mem_awready[gi] = !req_stalling[gi]
+                              && (b_queue[gi].size() < RSP_QUEUE_LIMIT);
+        m_axi_mem_wready[gi]  = !req_stalling[gi]
+                              && (b_queue[gi].size() < RSP_QUEUE_LIMIT);
+      end
+
+      // ---- Response driver (R channel) ----
+      always_ff @(posedge ap_clk) begin
+        if (!ap_rst_n) begin
+          m_axi_mem_rvalid[gi] <= 0;
+          m_axi_mem_rdata[gi]  <= '0;
+          m_axi_mem_rid[gi]    <= '0;
+          m_axi_mem_rlast[gi]  <= 0;
+          m_axi_mem_rresp[gi]  <= 2'b00;
+        end else begin
+          // Deassert on handshake
+          if (m_axi_mem_rvalid[gi] && m_axi_mem_rready[gi])
+            m_axi_mem_rvalid[gi] <= 0;
+          // Drive next response (last NBA wins → zero-bubble back-to-back)
+          if ((!m_axi_mem_rvalid[gi] || (m_axi_mem_rvalid[gi] && m_axi_mem_rready[gi]))
+              && !rsp_stalling[gi] && r_queue[gi].size() > 0) begin
+            automatic r_rsp_t entry = r_queue[gi].pop_front();
+            m_axi_mem_rvalid[gi] <= 1;
+            m_axi_mem_rid[gi]    <= entry.id;
+            m_axi_mem_rdata[gi]  <= entry.data;
+            m_axi_mem_rlast[gi]  <= entry.last;
+            m_axi_mem_rresp[gi]  <= 2'b00;
+          `ifdef DEBUG_AXI
+            $display("[TB] R-DRV: bank=%0d id=%0d last=%0d t=%0t",
+                     gi, entry.id, entry.last, $time);
+          `endif
+          end
+        end
+      end
+
+      // ---- Response driver (B channel) ----
+      always_ff @(posedge ap_clk) begin
+        if (!ap_rst_n) begin
+          m_axi_mem_bvalid[gi] <= 0;
+          m_axi_mem_bid[gi]    <= '0;
+          m_axi_mem_bresp[gi]  <= 2'b00;
+        end else begin
+          if (m_axi_mem_bvalid[gi] && m_axi_mem_bready[gi])
+            m_axi_mem_bvalid[gi] <= 0;
+          if ((!m_axi_mem_bvalid[gi] || (m_axi_mem_bvalid[gi] && m_axi_mem_bready[gi]))
+              && !rsp_stalling[gi] && b_queue[gi].size() > 0) begin
+            automatic b_rsp_t entry = b_queue[gi].pop_front();
+            m_axi_mem_bvalid[gi] <= 1;
+            m_axi_mem_bid[gi]    <= entry.id;
+            m_axi_mem_bresp[gi]  <= 2'b00;
+          `ifdef DEBUG_AXI
+            $display("[TB] B-DRV: bank=%0d id=%0d t=%0t", gi, entry.id, $time);
+          `endif
+          end
+        end
+      end
+
+      // ---- Request capture (fire flags) ----
+      // (uses `always` — flags cleared by initial/negedge DPI block)
+      always @(posedge ap_clk) begin
+        if (!ap_rst_n) begin
+          ar_fire_flag[gi] <= 0;
+          aw_fire_flag[gi] <= 0;
+          w_fire_flag[gi]  <= 0;
+        end else begin
+          if (m_axi_mem_arvalid[gi] && m_axi_mem_arready[gi]) begin
+            ar_fire_flag[gi] <= 1;
+            ar_fire_addr[gi] <= m_axi_mem_araddr[gi];
+            ar_fire_id[gi]   <= m_axi_mem_arid[gi];
+            ar_fire_len[gi]  <= m_axi_mem_arlen[gi];
+          end
+          if (m_axi_mem_awvalid[gi] && m_axi_mem_awready[gi]) begin
+            aw_fire_flag[gi] <= 1;
+            aw_fire_addr[gi] <= m_axi_mem_awaddr[gi];
+            aw_fire_id[gi]   <= m_axi_mem_awid[gi];
+            aw_fire_len[gi]  <= m_axi_mem_awlen[gi];
+          end
+          if (m_axi_mem_wvalid[gi] && m_axi_mem_wready[gi]) begin
+            w_fire_flag[gi] <= 1;
+            w_fire_data[gi] <= m_axi_mem_wdata[gi];
+            w_fire_strb[gi] <= m_axi_mem_wstrb[gi];
+            w_fire_last[gi] <= m_axi_mem_wlast[gi];
+          end
+        end
+      end
+
+      // ---- Markov stall (per-bank) ----
+      // (uses `always` — stall state also initialized by initial block)
+      always @(posedge ap_clk) begin
+        if (!ap_rst_n) begin
+          req_stalling[gi] <= 0;
+          rsp_stalling[gi] <= 0;
+        end else begin
+          req_stalling[gi] <= markov_step(req_stalling[gi],
+                                          dram_req_stall_p_enter, dram_req_stall_p_exit);
+          rsp_stalling[gi] <= markov_step(rsp_stalling[gi],
+                                          dram_rsp_stall_p_enter, dram_rsp_stall_p_exit);
+        end
+      end
+
+    end // for gi
+  endgenerate
+
+  // ================================================================
+  // DPI Polling Block — initial forever @(negedge)
+  // The only non-synthesizable block.
+  // ================================================================
+  initial begin : dpi_block
     int socket_port;
     int ret;
     int rsp_type, rsp_bank, rsp_id, rsp_last;
+    int cmd_type, cmd_offset, cmd_value;
 
     if (!$value$plusargs("SOCKET_PORT=%d", socket_port)) socket_port = 9999;
     $display("[TB] Starting VCS co-simulation testbench");
     $display("[TB] Socket port: ctrl=%0d, mem=%0d", socket_port, socket_port + 1);
 
-    // Initialize
-    ap_clk = 0; ap_rst_n = 0;
-    s_axi_ctrl_awvalid = 0; s_axi_ctrl_awaddr = 0;
-    s_axi_ctrl_wvalid = 0; s_axi_ctrl_wdata = 0; s_axi_ctrl_wstrb = 0;
-    s_axi_ctrl_bready = 0;
-    s_axi_ctrl_arvalid = 0; s_axi_ctrl_araddr = 0;
-    s_axi_ctrl_rready = 0;
-    ctrl_state = CTRL_IDLE;
+    // Read DRAM stall parameters
+    if (!$value$plusargs("DRAM_REQ_STALL_P_ENTER_PCT=%d", dram_req_stall_p_enter))
+      dram_req_stall_p_enter = 0;
+    if (!$value$plusargs("DRAM_REQ_STALL_P_EXIT_PCT=%d", dram_req_stall_p_exit))
+      dram_req_stall_p_exit = 50;
+    if (!$value$plusargs("DRAM_RSP_STALL_P_ENTER_PCT=%d", dram_rsp_stall_p_enter))
+      dram_rsp_stall_p_enter = 0;
+    if (!$value$plusargs("DRAM_RSP_STALL_P_EXIT_PCT=%d", dram_rsp_stall_p_exit))
+      dram_rsp_stall_p_exit = 50;
+    $display("[TB] DRAM stall config: req_enter=%0d%% req_exit=%0d%% rsp_enter=%0d%% rsp_exit=%0d%%",
+             dram_req_stall_p_enter, dram_req_stall_p_exit,
+             dram_rsp_stall_p_enter, dram_rsp_stall_p_exit);
 
-    for (int b = 0; b < NUM_BANKS; b++) begin
-      m_axi_mem_awready[b] = 1; m_axi_mem_wready[b] = 1; m_axi_mem_arready[b] = 1;
-      m_axi_mem_rvalid[b] = 0; m_axi_mem_rdata[b] = 0; m_axi_mem_rid[b] = 0;
-      m_axi_mem_rlast[b] = 0; m_axi_mem_rresp[b] = 0;
-      m_axi_mem_bvalid[b] = 0; m_axi_mem_bid[b] = 0; m_axi_mem_bresp[b] = 0;
+    // Initialize clock and reset
+    ap_clk   = 0;
+    ap_rst_n = 0;
+
+    // Initialize fire flags
+    for (int i = 0; i < NUM_BANKS; i++) begin
+      ar_fire_flag[i] = 0;
+      aw_fire_flag[i] = 0;
+      w_fire_flag[i]  = 0;
     end
+    ctrl_ack_pending      = 0;
+    ctrl_read_rsp_pending = 0;
 
+    // Socket init
     ret = socket_server_init(socket_port, socket_port + 1);
-    if (ret != 0) begin $fatal(1, "[TB] Failed to init socket server"); $finish; end
+    if (ret != 0) begin $fatal(1, "[TB] Failed to init socket server"); end
     ret = socket_server_accept();
-    if (ret != 0) begin $fatal(1, "[TB] Failed to accept connections"); $finish; end
+    if (ret != 0) begin $fatal(1, "[TB] Failed to accept connections"); end
 
-    // Reset (drive at negedge so DUT sees clean values at posedge)
+    // Reset sequence
     repeat (20) @(negedge ap_clk);
     ap_rst_n = 1;
     repeat (20) @(negedge ap_clk);
 
     $display("[TB] Reset done, entering command loop");
 
-    // ---- Main loop at negedge ----
+    // ==== Main negedge loop ====
     forever begin
       @(negedge ap_clk);
 
-      // === AXI Memory: deassert rvalid/bvalid after handshake ===
-      for (int b = 0; b < NUM_BANKS; b++) begin
-        if (m_axi_mem_rvalid[b] && m_axi_mem_rready[b])
-          m_axi_mem_rvalid[b] = 0;
-        if (m_axi_mem_bvalid[b] && m_axi_mem_bready[b])
-          m_axi_mem_bvalid[b] = 0;
-      end
-
-      // === AXI Memory: capture DUT requests ===
-      for (int b = 0; b < NUM_BANKS; b++) begin
-        if (m_axi_mem_arvalid[b] && m_axi_mem_arready[b]) begin
-          `ifdef DEBUG_AXI
-          $display("[TB] AR: bank=%0d addr=0x%016x id=%0d len=%0d t=%0t", b, m_axi_mem_araddr[b], m_axi_mem_arid[b], m_axi_mem_arlen[b], $time);
-          `endif
-          ret = mem_send_axi_ar(b, m_axi_mem_araddr[b], m_axi_mem_arid[b], m_axi_mem_arlen[b]);
+      // ---- 1. Poll ctrl commands → push to ctrl_cmd_queue ----
+      while (ctrl_has_command()) begin
+        ret = ctrl_recv_command(cmd_type, cmd_offset, cmd_value);
+        if (ret != 0) break;
+        if (cmd_type == CMD_SHUTDOWN) begin
+          $display("[TB] Received SHUTDOWN command");
+          socket_server_close();
+          $finish;
         end
-        if (m_axi_mem_awvalid[b] && m_axi_mem_awready[b]) begin
-          `ifdef DEBUG_AXI
-          $display("[TB] AW: bank=%0d addr=0x%016x id=%0d t=%0t", b, m_axi_mem_awaddr[b], m_axi_mem_awid[b], $time);
-          `endif
-          ret = mem_send_axi_aw(b, m_axi_mem_awaddr[b], m_axi_mem_awid[b], m_axi_mem_awlen[b]);
-        end
-        if (m_axi_mem_wvalid[b] && m_axi_mem_wready[b]) begin
-          for (int i = 0; i < DATA_SIZE; i++)
-            w_data_buf[i] = m_axi_mem_wdata[b][i*8 +: 8];
-          ret = mem_send_axi_w(b, w_data_buf, m_axi_mem_wstrb[b], m_axi_mem_wlast[b], DATA_SIZE);
+        begin
+          ctrl_cmd_t enq;
+          enq.cmd_type = cmd_type;
+          enq.offset   = cmd_offset;
+          enq.value    = cmd_value;
+          ctrl_cmd_queue.push_back(enq);
         end
       end
 
-      // === AXI Memory: receive responses from App ===
+      // ---- 2. Poll mem responses → push to r_queue / b_queue ----
       while (mem_has_response()) begin
         ret = mem_recv_response(rsp_type, rsp_bank, rsp_id, r_data_buf, rsp_last, DATA_SIZE);
         if (ret != 0) break;
         if (rsp_type == RSP_AXI_R) begin
-          m_axi_mem_rvalid[rsp_bank] = 1;
-          m_axi_mem_rid[rsp_bank]    = rsp_id;
-          m_axi_mem_rlast[rsp_bank]  = rsp_last;
+          r_rsp_t enq;
+          enq.id   = rsp_id;
+          enq.last = rsp_last;
           for (int i = 0; i < DATA_SIZE; i++)
-            m_axi_mem_rdata[rsp_bank][i*8 +: 8] = r_data_buf[i];
-          `ifdef DEBUG_AXI
-          $display("[TB] R-RSP: bank=%0d id=%0d last=%0d t=%0t", rsp_bank, rsp_id, rsp_last, $time);
-          `endif
+            enq.data[i*8 +: 8] = r_data_buf[i];
+          r_queue[rsp_bank].push_back(enq);
+        `ifdef DEBUG_AXI
+          $display("[TB] R-ENQ: bank=%0d id=%0d last=%0d qlen=%0d t=%0t",
+                   rsp_bank, rsp_id, rsp_last, r_queue[rsp_bank].size(), $time);
+        `endif
         end else if (rsp_type == RSP_AXI_B) begin
-          m_axi_mem_bvalid[rsp_bank] = 1;
-          m_axi_mem_bid[rsp_bank]    = rsp_id;
-          `ifdef DEBUG_AXI
-          $display("[TB] B-RSP: bank=%0d id=%0d t=%0t", rsp_bank, rsp_id, $time);
-          `endif
+          b_rsp_t enq;
+          enq.id = rsp_id;
+          b_queue[rsp_bank].push_back(enq);
+        `ifdef DEBUG_AXI
+          $display("[TB] B-ENQ: bank=%0d id=%0d qlen=%0d t=%0t",
+                   rsp_bank, rsp_id, b_queue[rsp_bank].size(), $time);
+        `endif
         end
       end
 
-      // === AXI-Lite Ctrl state machine ===
-      // Write: hold awvalid+wvalid+bready, wait for bvalid, then release.
-      // Read:  hold arvalid+rready, wait for rvalid, then release.
-      // Deassert happens 1 cycle after seeing response, so DUT can complete handshake.
-      case (ctrl_state)
-        CTRL_IDLE: begin
-          if (ctrl_has_command()) begin
-            ret = ctrl_recv_command(ctrl_cmd_type, ctrl_cmd_offset, ctrl_cmd_value);
-            if (ret != 0) begin
-              // skip
-            end else if (ctrl_cmd_type == CMD_SHUTDOWN) begin
-              $display("[TB] Received SHUTDOWN command");
-              socket_server_close();
-              $finish;
-            end else if (ctrl_cmd_type == CMD_REG_WRITE) begin
-              $display("[TB] REG_WRITE: offset=0x%02x value=0x%08x", ctrl_cmd_offset, ctrl_cmd_value);
-              s_axi_ctrl_awaddr  = ctrl_cmd_offset[C_S_AXI_CTRL_ADDR_WIDTH-1:0];
-              s_axi_ctrl_awvalid = 1;
-              s_axi_ctrl_wdata   = ctrl_cmd_value;
-              s_axi_ctrl_wstrb   = '1;
-              s_axi_ctrl_wvalid  = 1;
-              s_axi_ctrl_bready  = 1;
-              ctrl_state = CTRL_WRITE;
-            end else if (ctrl_cmd_type == CMD_REG_READ) begin
-              s_axi_ctrl_araddr  = ctrl_cmd_offset[C_S_AXI_CTRL_ADDR_WIDTH-1:0];
-              s_axi_ctrl_arvalid = 1;
-              s_axi_ctrl_rready  = 1;
-              ctrl_state = CTRL_READ;
-            end
-          end
+      // ---- 3. Consume fire flags → DPI send ----
+      for (int i = 0; i < NUM_BANKS; i++) begin
+        if (ar_fire_flag[i]) begin
+        `ifdef DEBUG_AXI
+          $display("[TB] AR: bank=%0d addr=0x%016x id=%0d len=%0d t=%0t",
+                   i, ar_fire_addr[i], ar_fire_id[i], ar_fire_len[i], $time);
+        `endif
+          ret = mem_send_axi_ar(i, ar_fire_addr[i], ar_fire_id[i], ar_fire_len[i]);
+          ar_fire_flag[i] = 0;
         end
-
-        CTRL_WRITE: begin
-          // Wait for bvalid (DUT completed ADDR→DATA→RESP internally)
-          if (s_axi_ctrl_bvalid) begin
-            s_axi_ctrl_awvalid = 0;
-            s_axi_ctrl_wvalid  = 0;
-            ctrl_state = CTRL_WRITE_DONE;
-            // Keep bready=1 so DUT can b_fire at next posedge
-          end
+        if (aw_fire_flag[i]) begin
+        `ifdef DEBUG_AXI
+          $display("[TB] AW: bank=%0d addr=0x%016x id=%0d len=%0d t=%0t",
+                   i, aw_fire_addr[i], aw_fire_id[i], aw_fire_len[i], $time);
+        `endif
+          ret = mem_send_axi_aw(i, aw_fire_addr[i], aw_fire_id[i], aw_fire_len[i]);
+          aw_fire_flag[i] = 0;
         end
-
-        CTRL_WRITE_DONE: begin
-          // DUT did b_fire last posedge. Now deassert bready and send ACK.
-          s_axi_ctrl_bready = 0;
-          ret = ctrl_send_ack();
-          ctrl_state = CTRL_IDLE;
+        if (w_fire_flag[i]) begin
+          for (int j = 0; j < DATA_SIZE; j++)
+            w_data_buf[j] = w_fire_data[i][j*8 +: 8];
+          ret = mem_send_axi_w(i, w_data_buf, w_fire_strb[i], w_fire_last[i], DATA_SIZE);
+          w_fire_flag[i] = 0;
         end
+      end
 
-        CTRL_READ: begin
-          // Wait for rvalid (DUT completed ADDR→DATA→RESP internally)
-          if (s_axi_ctrl_rvalid) begin
-            ctrl_cmd_value = s_axi_ctrl_rdata;
-            s_axi_ctrl_arvalid = 0;
-            ctrl_state = CTRL_READ_DONE;
-            // Keep rready=1 so DUT can r_fire at next posedge
-          end
-        end
+      // ---- 4. Consume ctrl ack/read_rsp flags → DPI send ----
+      if (ctrl_ack_pending) begin
+        ret = ctrl_send_ack();
+        ctrl_ack_pending = 0;
+      end
+      if (ctrl_read_rsp_pending) begin
+        ret = ctrl_send_reg_value(ctrl_read_rsp_value);
+        ctrl_read_rsp_pending = 0;
+      end
 
-        CTRL_READ_DONE: begin
-          // DUT did r_fire last posedge. Now deassert rready and send value.
-          s_axi_ctrl_rready = 0;
-          $display("[TB] REG_READ: offset=0x%02x value=0x%08x", ctrl_cmd_offset, ctrl_cmd_value);
-          ret = ctrl_send_reg_value(ctrl_cmd_value);
-          ctrl_state = CTRL_IDLE;
-        end
-
-        default: ctrl_state = CTRL_IDLE;
-      endcase
-    end
-  end
+    end // forever
+  end // dpi_block
 
 endmodule
