@@ -1,0 +1,326 @@
+#!/bin/sh
+
+# Copyright © 2019-2023
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+SCRIPT_DIR=$(dirname "$0")
+ROOT_DIR=$SCRIPT_DIR/..
+
+show_usage()
+{
+    echo "Vortex BlackBox Test Driver v1.0"
+    echo "Usage: $0 [[--clusters=#n] [--cores=#n] [--warps=#n] [--threads=#n] [--l2cache] [--l3cache] [[--driver=#name] [--app=#app] [--args=#args] [--debug=#level] [--scope] [--perf=#class] [--log=logfile] [--nohup] [--help]]"
+}
+
+show_help()
+{
+    show_usage
+    echo "  where"
+    echo "--driver: gpu, simx, rtlsim, opae, xrt, xrt_vcs"
+    echo "--app: any subfolder test under regression or opencl"
+    echo "--class: 0=disable, 1=pipeline, 2=memsys"
+    echo "--nohup: build and run in temp directory"
+    echo "env LOG_MAX_BYTES: keep only last N bytes in debug log (rolling buffer)"
+    echo "env LOG_FLUSH_LINES: flush interval for rolling buffer (default: 200)"
+}
+
+add_option() {
+    if [ -n "$1" ]; then
+        echo "$1 $2"
+    else
+        echo "$2"
+    fi
+}
+
+DEFAULTS() {
+    DRIVER=simx
+    APP=sgemm
+    DEBUG=0
+    DEBUG_LEVEL=0
+    SCOPE=0
+    HAS_ARGS=0
+    PERF_CLASS=0
+    CONFIGS="$CONFIGS"
+    TEMPBUILD=0
+    LOGFILE=run.log
+}
+
+parse_args() {
+    DEFAULTS
+    for i in "$@"; do
+        case $i in
+            --driver=*) DRIVER=${i#*=} ;;
+            --app=*)    APP=${i#*=} ;;
+            --clusters=*) CONFIGS=$(add_option "$CONFIGS" "-DNUM_CLUSTERS=${i#*=}") ;;
+            --cores=*)  CONFIGS=$(add_option "$CONFIGS" "-DNUM_CORES=${i#*=}") ;;
+            --warps=*)  CONFIGS=$(add_option "$CONFIGS" "-DNUM_WARPS=${i#*=}") ;;
+            --threads=*) CONFIGS=$(add_option "$CONFIGS" "-DNUM_THREADS=${i#*=}") ;;
+            --l2cache)  CONFIGS=$(add_option "$CONFIGS" "-DL2_ENABLE") ;;
+            --l3cache)  CONFIGS=$(add_option "$CONFIGS" "-DL3_ENABLE") ;;
+            --tcu_enable) CONFIGS=$(add_option "$CONFIGS" "-DEXT_TCU_ENABLE") ;;
+            --perf=*)   CONFIGS=$(add_option "$CONFIGS" "-DPERF_ENABLE"); PERF_CLASS=${i#*=} ;;
+            --debug=*)  DEBUG=1; DEBUG_LEVEL=${i#*=} ;;
+            --scope)    SCOPE=1; ;;
+            --args=*)   HAS_ARGS=1; ARGS=${i#*=} ;;
+            --log=*)    LOGFILE=${i#*=} ;;
+            --nohup)    TEMPBUILD=1 ;;
+            --help)     show_help; exit 0 ;;
+            *)          show_usage; exit 1 ;;
+        esac
+    done
+}
+
+set_driver_path() {
+    case $DRIVER in
+        gpu) DRIVER_PATH="" ;;
+        simx|rtlsim|opae|xrt) DRIVER_PATH="$ROOT_DIR/runtime/$DRIVER" ;;
+        xrt_vcs|xrt_vcs_post) DRIVER_PATH="$ROOT_DIR/runtime/xrt" ;;
+        *) echo "Invalid driver: $DRIVER"; exit 1 ;;
+    esac
+}
+
+set_app_path() {
+    if [ -d "$APP" ]; then
+        APP_PATH="$APP"
+    elif [ -d "$ROOT_DIR/tests/$APP" ]; then
+        APP_PATH="$ROOT_DIR/tests/$APP"
+    elif [ -d "$ROOT_DIR/tests/regression/$APP" ]; then
+        APP_PATH="$ROOT_DIR/tests/regression/$APP"
+    elif [ -d "$ROOT_DIR/tests/opencl/$APP" ]; then
+        APP_PATH="$ROOT_DIR/tests/opencl/$APP"
+    elif [ -d "$ROOT_DIR/tests/hip/$APP" ]; then
+        APP_PATH="$ROOT_DIR/tests/hip/$APP"
+    else
+        echo "Application folder not found: $APP"
+        exit 1
+    fi
+}
+
+build_driver() {
+    local cmd_opts=""
+    [ $DEBUG -ne 0 ] && cmd_opts=$(add_option "$cmd_opts" "DEBUG=$DEBUG_LEVEL")
+    [ $SCOPE -eq 1 ] && cmd_opts=$(add_option "$cmd_opts" "SCOPE=1")
+    [ $TEMPBUILD -eq 1 ] && cmd_opts=$(add_option "$cmd_opts" "DESTDIR=\"$TEMPDIR\"")
+    [ -n "$CONFIGS" ] && cmd_opts=$(add_option "$cmd_opts" "CONFIGS=\"$CONFIGS\"")
+
+    if [ "$DRIVER" = "xrt_vcs" ] || [ "$DRIVER" = "xrt_vcs_post" ]; then
+        # Build VCS simv (RTL or post-impl)
+        local vcs_opts=""
+        [ $DEBUG -ne 0 ] && vcs_opts=$(add_option "$vcs_opts" "DEBUG=$DEBUG_LEVEL")
+        [ -n "$CONFIGS" ] && vcs_opts=$(add_option "$vcs_opts" "CONFIGS=\"$CONFIGS\"")
+        [ $TEMPBUILD -eq 1 ] && vcs_opts=$(add_option "$vcs_opts" "DESTDIR=\"$TEMPDIR\"")
+        [ -n "${FSDB_DUMP:-}" ] && vcs_opts=$(add_option "$vcs_opts" "FSDB_DUMP=1")
+        if [ "$DRIVER" = "xrt_vcs_post" ]; then
+            vcs_opts=$(add_option "$vcs_opts" "POST_IMPL=1")
+            [ -n "${NETLIST:-}" ] && vcs_opts=$(add_option "$vcs_opts" "NETLIST=$NETLIST")
+            [ -n "${SDF_FILE:-}" ] && vcs_opts=$(add_option "$vcs_opts" "SDF_FILE=$SDF_FILE")
+            [ -n "${SIMLIB_DIR:-}" ] && vcs_opts=$(add_option "$vcs_opts" "SIMLIB_DIR=$SIMLIB_DIR")
+        fi
+        vcs_opts=$(add_option "$vcs_opts" "make -C $ROOT_DIR/sim/xrtsim_vcs simv")
+        echo "Running (VCS simv): $vcs_opts"
+        eval "$vcs_opts"
+        status=$?
+        if [ $status -ne 0 ]; then
+            echo "Error building VCS simv"
+            exit $status
+        fi
+        # Build applib
+        vcs_opts=""
+        [ -n "$CONFIGS" ] && vcs_opts=$(add_option "$vcs_opts" "CONFIGS=\"$CONFIGS\"")
+        [ $TEMPBUILD -eq 1 ] && vcs_opts=$(add_option "$vcs_opts" "DESTDIR=\"$TEMPDIR\"")
+        vcs_opts=$(add_option "$vcs_opts" "make -C $ROOT_DIR/sim/xrtsim_vcs applib")
+        echo "Running (VCS applib): $vcs_opts"
+        eval "$vcs_opts"
+        status=$?
+        if [ $status -ne 0 ]; then
+            echo "Error building VCS applib"
+            exit $status
+        fi
+        # Build App runtime with xrtsim_vcs target
+        cmd_opts=$(add_option "$cmd_opts" "TARGET=xrtsim_vcs make -C $DRIVER_PATH")
+    else
+        cmd_opts=$(add_option "$cmd_opts" "make -C $DRIVER_PATH > /dev/null")
+    fi
+
+    echo "Running: $cmd_opts"
+    eval "$cmd_opts"
+    status=$?
+    if [ $status -ne 0 ]; then
+        echo "Error building driver: $DRIVER_PATH"
+        exit $status
+    fi
+}
+
+run_app() {
+    local cmd_opts=""
+    [ $DEBUG -eq 1 ] && cmd_opts=$(add_option "$cmd_opts" "DEBUG=1")
+    [ $TEMPBUILD -eq 1 ] && cmd_opts=$(add_option "$cmd_opts" "VORTEX_RT_PATH=\"$TEMPDIR\"")
+    [ $HAS_ARGS -eq 1 ] && cmd_opts=$(add_option "$cmd_opts" "OPTS=\"$ARGS\"")
+
+    if [ "$DRIVER" = "xrt_vcs" ] || [ "$DRIVER" = "xrt_vcs_post" ]; then
+        local VCS_PORT
+        if [ -n "${VCS_SOCKET_PORT:-}" ]; then
+            VCS_PORT=$VCS_SOCKET_PORT
+        else
+            VCS_PORT=$(python3 -c "import socket; s=socket.socket(); s.bind(('',0)); print(s.getsockname()[1]); s.close()")
+        fi
+        local SIMV_DIR
+        if [ $TEMPBUILD -eq 1 ]; then
+            SIMV_DIR="$(realpath "$TEMPDIR")"
+        else
+            SIMV_DIR="$(realpath "$ROOT_DIR/sim/xrtsim_vcs")"
+        fi
+
+        # Build VCS runtime flags
+        local simv_flags="+SOCKET_PORT=$VCS_PORT -suppress=ASLR_DETECTED_INFO"
+        if [ "$DRIVER" = "xrt_vcs" ]; then
+            simv_flags="$simv_flags +vcs+initreg+0"
+        fi
+        if [ "$DRIVER" = "xrt_vcs_post" ] && [ -n "${SDF_FILE:-}" ]; then
+            simv_flags="$simv_flags +maxdelays +sdfverbose"
+        fi
+        [ -n "${VCS_SIMV_FLAGS:-}" ] && simv_flags="$simv_flags $VCS_SIMV_FLAGS"
+
+        local SIMV_LOG="$SIMV_DIR/simv.log"
+        echo "Launching VCS simv on port $VCS_PORT (log: $SIMV_LOG)..."
+        (cd "$SIMV_DIR" && ./simv $simv_flags > "$SIMV_LOG" 2>&1) &
+        VCS_PID=$!
+        sleep 3
+
+        if ! kill -0 $VCS_PID 2>/dev/null; then
+            echo "Error: VCS simv failed to start. Check $SIMV_LOG"
+            cat "$SIMV_LOG"
+            exit 1
+        fi
+
+        cmd_opts=$(add_option "$cmd_opts" "VCS_SOCKET_PORT=$VCS_PORT LD_LIBRARY_PATH=$SIMV_DIR:\$LD_LIBRARY_PATH make -C \"$APP_PATH\" run-xrt")
+    else
+        cmd_opts=$(add_option "$cmd_opts" "make -C \"$APP_PATH\" run-$DRIVER")
+    fi
+
+    if [ $DEBUG -ne 0 ] && [ -n "${LOG_MAX_BYTES:-}" ] && [ "${LOG_MAX_BYTES}" -gt 0 ] 2>/dev/null; then
+        local status_file
+        local status
+        local flush_lines
+        status_file=$(mktemp)
+        flush_lines="${LOG_FLUSH_LINES:-200}"
+
+        echo "Running (bounded log): $cmd_opts"
+        (
+            eval "$cmd_opts"
+            echo $? > "$status_file"
+        ) 2>&1 | awk -v max_bytes="${LOG_MAX_BYTES}" -v flush_lines="${flush_lines}" -v file="${LOGFILE}" '
+            BEGIN {
+                buf = "";
+                blen = 0;
+                cnt = 0;
+            }
+            function flush_buf() {
+                if (blen == 0) {
+                    printf "" > file;
+                } else {
+                    printf "%s", buf > file;
+                }
+                close(file);
+            }
+            {
+                line = $0 "\n";
+                buf = buf line;
+                blen += length(line);
+
+                while (blen > max_bytes) {
+                    n = index(buf, "\n");
+                    if (n <= 0) {
+                        buf = "";
+                        blen = 0;
+                        break;
+                    }
+                    buf = substr(buf, n + 1);
+                    blen = length(buf);
+                }
+
+                cnt += 1;
+                if ((cnt % flush_lines) == 0) {
+                    flush_buf();
+                }
+            }
+            END {
+                flush_buf();
+            }'
+
+        status=$(cat "$status_file" 2>/dev/null || echo 1)
+        rm -f "$status_file"
+        return "$status"
+    fi
+
+    [ $DEBUG -ne 0 ] && cmd_opts=$(add_option "$cmd_opts" "> $LOGFILE 2>&1")
+    echo "Running: $cmd_opts"
+    eval "$cmd_opts"
+    status=$?
+
+    # Clean up VCS process if xrt_vcs driver
+    if [ "$DRIVER" = "xrt_vcs" ] && [ -n "${VCS_PID:-}" ]; then
+        kill $VCS_PID 2>/dev/null
+        wait $VCS_PID 2>/dev/null
+    fi
+
+    return $status
+}
+
+main() {
+    parse_args "$@"
+    set_driver_path
+    set_app_path
+
+    # execute on default installed GPU
+    if [ "$DRIVER" = "gpu" ]; then
+        run_app
+        exit $?
+    fi
+
+    if [ -n "$CONFIGS" ]; then
+        echo "CONFIGS=$CONFIGS"
+    fi
+
+    export VORTEX_PROFILING=$PERF_CLASS
+
+    make -C "$ROOT_DIR/hw" config > /dev/null
+    make -C "$ROOT_DIR/runtime/stub" > /dev/null
+
+    if [ $TEMPBUILD -eq 1 ]; then
+        # setup temp directory
+        TEMPDIR=$(mktemp -d)
+        mkdir -p "$TEMPDIR"
+        # build stub driver
+        echo "Running: DESTDIR=$TEMPDIR make -C $ROOT_DIR/runtime/stub"
+        DESTDIR="$TEMPDIR" make -C $ROOT_DIR/runtime/stub > /dev/null
+        # register tempdir cleanup on exit
+        trap "rm -rf $TEMPDIR" EXIT
+    fi
+
+    build_driver
+    run_app
+    status=$?
+
+    if [ $DEBUG -eq 1 ] && [ -f "$APP_PATH/trace.vcd" ]; then
+        mv -f $APP_PATH/trace.vcd .
+    fi
+
+    if [ $SCOPE -eq 1 ] && [ -f "$APP_PATH/scope.vcd" ]; then
+        mv -f $APP_PATH/scope.vcd .
+    fi
+
+    exit $status
+}
+
+main "$@"
