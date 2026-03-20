@@ -209,7 +209,9 @@
 `define BLACKBOX_CELL   (* black_box *)
 `define STRING
 `ifndef SIMULATION
-    // `define ASYNC_BRAM_PATCH
+`ifndef DISABLE_ASYNC_BRAM_PATCH
+    `define ASYNC_BRAM_PATCH
+`endif
 `endif
 `else
 `define MAX_FANOUT      8

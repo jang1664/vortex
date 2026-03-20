@@ -172,14 +172,16 @@ endif
 
 # Debugging — only optimization level and CFLAGS remain here
 ifdef DEBUG
-	VPP_FLAGS += -g --optimize quick
+# 	VPP_FLAGS += -g --optimize quick
+	VPP_FLAGS += -g --optimize 0
 	ifeq ($(TARGET), hw)
 		CFLAGS += -DNDEBUG -DCHIPSCOPE $(DBG_SCOPE_FLAGS)
 	else
 		CFLAGS += -DDEBUG_LEVEL=$(DEBUG) $(DBG_TRACE_FLAGS)
 	endif
 else
-	VPP_FLAGS += -g --optimize quick
+# 	VPP_FLAGS += -g --optimize quick
+	VPP_FLAGS += --optimize 3
 	CFLAGS += -DNDEBUG
 endif
 

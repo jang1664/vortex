@@ -186,9 +186,6 @@ run_app() {
 
         # Build VCS runtime flags
         local simv_flags="+SOCKET_PORT=$VCS_PORT -suppress=ASLR_DETECTED_INFO"
-        if [ "$DRIVER" = "xrt_vcs" ]; then
-            simv_flags="$simv_flags +vcs+initreg+0"
-        fi
         if [ "$DRIVER" = "xrt_vcs_post" ] && [ -n "${SDF_FILE:-}" ]; then
             simv_flags="$simv_flags +maxdelays +sdfverbose"
         fi
