@@ -3,6 +3,7 @@
 #include <torch/library.h>
 #include <vortex.h>
 #include <runtime/VortexRuntime.h>
+#include <VX_config.h>
 
 #include <algorithm>
 #include <atomic>
@@ -30,6 +31,7 @@
 ///   - aten::native_dropout via dropout kernel
 ///   - vortex::rms_norm   via rmsnorm kernel (custom op)
 ///   - vortex::apply_rotary_pos_emb via rope kernel (custom op)
+///   - vortex::mm_w4a16 via fpint_gemm_ffn_hw kernel (W4A16 mixed-precision GEMM)
 
 namespace at::vortex {
 
@@ -395,6 +397,45 @@ struct dropout_kernel_arg_t {
   uint64_t src0_addr;
   uint64_t dst_addr;
 };
+
+// --- fpint_gemm_ffn (W4A16 mixed-precision GEMM via MMIO) ---
+// Must match tests/regression/fpint_gemm_ffn_hw/common.h :: kernel_arg_t
+struct fpint_gemm_kernel_arg_t {
+  uint32_t grid_dim[2];
+  uint32_t block_dim[2];
+
+  uint32_t M;
+  uint32_t N;
+  uint32_t K;
+  uint32_t QBLK;
+  uint32_t WTRANS;
+  uint32_t QDIR;
+
+  uint64_t input_base;
+  uint64_t weight_base;
+  uint64_t output_base;
+  uint64_t scale_base;
+  uint64_t zp_base;
+
+  uint64_t lmem_ibuf0_base;
+  uint64_t lmem_ibuf1_base;
+  uint64_t lmem_wbuf0_base;
+  uint64_t lmem_wbuf1_base;
+  uint64_t lmem_scbuf0_base;
+  uint64_t lmem_scbuf1_base;
+  uint64_t lmem_zpbuf0_base;
+  uint64_t lmem_zpbuf1_base;
+  uint64_t lmem_obuf_base;
+
+  uint32_t status;
+  uint32_t job_eid;
+  uint32_t job_generation;
+  uint32_t last_ctrl;
+};
+
+// MMIO status codes for fpint_gemm
+static constexpr uint32_t FPINT_MMIO_STATUS_INIT = 0;
+static constexpr uint32_t FPINT_MMIO_STATUS_OK   = 1;
 
 // ===========================================================================
 //  Kernel ID constants (must match each kernel's common.h)
@@ -1399,6 +1440,152 @@ at::Tensor vortex_apply_rotary_pos_emb(
   return output;
 }
 
+// ===========================================================================
+//  9. vortex::mm_w4a16  ->  fpint_gemm_ffn_hw kernel (custom op)
+//
+//  Mixed-precision GEMM: A (fp16 [M,K]) x W_int4 (packed [K,N/2])
+//  with per-group scales (fp16) and zero-points (int16).
+//  Output: fp16 [M,N].
+// ===========================================================================
+
+// LMEM layout constants (from VX_config.h / hardware build)
+static constexpr uint64_t FPINT_DMA_MT = GEMM_FSM_MT;  // 128
+static constexpr uint64_t FPINT_DMA_NT = GEMM_FSM_NT;  // 128
+static constexpr uint64_t FPINT_DMA_KT = GEMM_FSM_KT;  // 128
+static constexpr uint64_t FPINT_LMEM_ALIGN = 64;
+static constexpr uint64_t FPINT_LMEM_BASE = static_cast<uint64_t>(LMEM_BASE_ADDR);
+
+static bool compute_fpint_lmem_layout(fpint_gemm_kernel_arg_t& kargs,
+                                      uint64_t local_mem_size,
+                                      uint32_t qblk, uint32_t qdir) {
+  uint64_t groups_tile = (FPINT_DMA_KT + uint64_t(qblk) - 1ull) / uint64_t(qblk);
+  uint64_t ng_tile     = (FPINT_DMA_NT + uint64_t(qblk) - 1ull) / uint64_t(qblk);
+
+  uint64_t ibuf_bytes  = FPINT_DMA_MT * FPINT_DMA_KT * 2ull;                 // fp16
+  uint64_t wbuf_bytes  = FPINT_DMA_KT * ((FPINT_DMA_NT + 1ull) / 2ull);      // packed int4
+  uint64_t scbuf_bytes = (qdir == 0)
+                           ? (groups_tile * FPINT_DMA_NT * 2ull)
+                           : (FPINT_DMA_KT * ng_tile * 2ull);
+  uint64_t zpbuf_bytes = scbuf_bytes;                                          // same layout
+  uint64_t obuf_bytes  = FPINT_DMA_MT * FPINT_DMA_NT * 2ull;                 // fp16
+
+  const uint64_t lmem_end = FPINT_LMEM_BASE + local_mem_size;
+  uint64_t cur = FPINT_LMEM_BASE;
+
+  auto alloc = [&](uint64_t bytes, uint64_t& out) -> bool {
+    cur = ((cur + FPINT_LMEM_ALIGN - 1) / FPINT_LMEM_ALIGN) * FPINT_LMEM_ALIGN;
+    if (cur > lmem_end || bytes > (lmem_end - cur)) return false;
+    out = cur;
+    cur += ((bytes + FPINT_LMEM_ALIGN - 1) / FPINT_LMEM_ALIGN) * FPINT_LMEM_ALIGN;
+    return true;
+  };
+
+  // Double-buffered scratchpads
+  if (!alloc(ibuf_bytes,  kargs.lmem_ibuf0_base))  return false;
+  if (!alloc(ibuf_bytes,  kargs.lmem_ibuf1_base))  return false;
+  if (!alloc(wbuf_bytes,  kargs.lmem_wbuf0_base))  return false;
+  if (!alloc(wbuf_bytes,  kargs.lmem_wbuf1_base))  return false;
+  if (!alloc(scbuf_bytes, kargs.lmem_scbuf0_base)) return false;
+  if (!alloc(scbuf_bytes, kargs.lmem_scbuf1_base)) return false;
+  if (!alloc(zpbuf_bytes, kargs.lmem_zpbuf0_base)) return false;
+  if (!alloc(zpbuf_bytes, kargs.lmem_zpbuf1_base)) return false;
+  if (!alloc(obuf_bytes,  kargs.lmem_obuf_base))   return false;
+
+  return true;
+}
+
+at::Tensor vortex_mm_w4a16(
+    const at::Tensor& input,       // fp16 [M, K]
+    const at::Tensor& weight_int4, // uint8 packed [K, N/2]  (two int4 per byte)
+    const at::Tensor& scales,      // fp16 [num_groups, N]   (or [K, ng] if qdir=1)
+    const at::Tensor& zeros,       // int16 [num_groups, N]  (or [K, ng] if qdir=1)
+    int64_t group_size,
+    int64_t N,
+    int64_t wtrans,
+    int64_t qdir) {
+  // --- input validation ---
+  TORCH_CHECK(input.is_privateuseone(), "input must be a vortex tensor");
+  TORCH_CHECK(weight_int4.is_privateuseone(), "weight must be a vortex tensor");
+  TORCH_CHECK(scales.is_privateuseone(), "scales must be a vortex tensor");
+  TORCH_CHECK(zeros.is_privateuseone(), "zeros must be a vortex tensor");
+
+  TORCH_CHECK(input.dtype() == at::kHalf,
+    "input must be float16, got ", input.dtype());
+  TORCH_CHECK(weight_int4.dtype() == at::kByte,
+    "weight_int4 must be uint8, got ", weight_int4.dtype());
+  TORCH_CHECK(scales.dtype() == at::kHalf,
+    "scales must be float16, got ", scales.dtype());
+  TORCH_CHECK(zeros.dtype() == at::kShort,
+    "zeros must be int16, got ", zeros.dtype());
+
+  TORCH_CHECK(input.is_contiguous(), "input must be contiguous");
+  TORCH_CHECK(weight_int4.is_contiguous(), "weight must be contiguous");
+  TORCH_CHECK(scales.is_contiguous(), "scales must be contiguous");
+  TORCH_CHECK(zeros.is_contiguous(), "zeros must be contiguous");
+
+  TORCH_CHECK(input.dim() == 2, "input must be 2D [M, K], got ", input.dim(), "D");
+  TORCH_CHECK(weight_int4.dim() == 2, "weight must be 2D, got ", weight_int4.dim(), "D");
+
+  TORCH_CHECK(group_size > 0, "group_size must be > 0");
+  TORCH_CHECK(N > 0, "N must be > 0");
+  TORCH_CHECK(wtrans == 0 || wtrans == 1, "wtrans must be 0 or 1");
+  TORCH_CHECK(qdir == 0 || qdir == 1, "qdir must be 0 or 1");
+
+  uint32_t M_val = static_cast<uint32_t>(input.size(0));
+  uint32_t K_val = static_cast<uint32_t>(input.size(1));
+  uint32_t N_val = static_cast<uint32_t>(N);
+  uint32_t QBLK  = static_cast<uint32_t>(group_size);
+
+  // --- allocate output: fp16 [M, N] ---
+  auto& rt = c10::vortex::VortexRuntime::instance();
+  vx_device_h device = rt.deviceHandle();
+
+  auto output = at::empty({(int64_t)M_val, (int64_t)N_val},
+                          input.options());  // fp16
+
+  // --- query device for LMEM size and num_cores ---
+  uint64_t num_cores = 0;
+  uint64_t local_mem_size = 0;
+  vx_dev_caps(device, VX_CAPS_NUM_CORES, &num_cores);
+  vx_dev_caps(device, VX_CAPS_LOCAL_MEM_SIZE, &local_mem_size);
+
+  // --- build kernel args ---
+  fpint_gemm_kernel_arg_t karg{};
+  karg.grid_dim[0]  = static_cast<uint32_t>(num_cores);
+  karg.grid_dim[1]  = 1;
+  karg.block_dim[0] = 1;
+  karg.block_dim[1] = 1;
+
+  karg.M     = M_val;
+  karg.N     = N_val;
+  karg.K     = K_val;
+  karg.QBLK  = QBLK;
+  karg.WTRANS = static_cast<uint32_t>(wtrans);
+  karg.QDIR   = static_cast<uint32_t>(qdir);
+
+  karg.input_base  = rt.deviceAddress(input.data_ptr());
+  karg.weight_base = rt.deviceAddress(weight_int4.data_ptr());
+  karg.output_base = rt.deviceAddress(output.data_ptr());
+  karg.scale_base  = rt.deviceAddress(scales.data_ptr());
+  karg.zp_base     = rt.deviceAddress(zeros.data_ptr());
+
+  TORCH_CHECK(compute_fpint_lmem_layout(karg, local_mem_size, QBLK,
+                                         static_cast<uint32_t>(qdir)),
+    "fpint_gemm: LMEM layout does not fit device local memory (size=",
+    local_mem_size, ")");
+
+  karg.status         = FPINT_MMIO_STATUS_INIT;
+  karg.job_eid        = 0;
+  karg.job_generation = 0;
+  karg.last_ctrl      = 0;
+
+  // --- launch ---
+  static std::string path = find_kernel("fpint_gemm_ffn", "fpint_gemm_ffn_hw");
+  launch_kernel(device, &karg, sizeof(karg), path);
+
+  return output;
+}
+
 } // anonymous namespace
 
 // ===========================================================================
@@ -1442,11 +1629,13 @@ TORCH_LIBRARY_IMPL(aten, PrivateUse1, m) {
 TORCH_LIBRARY(vortex, m) {
   m.def("rms_norm(Tensor input, Tensor weight, float eps) -> Tensor");
   m.def("apply_rotary_pos_emb(Tensor input, Tensor cos, Tensor sin, int pos_offset=0) -> Tensor");
+  m.def("mm_w4a16(Tensor input, Tensor weight_int4, Tensor scales, Tensor zeros, int group_size, int N, int wtrans=0, int qdir=0) -> Tensor");
 }
 
 TORCH_LIBRARY_IMPL(vortex, PrivateUse1, m) {
   m.impl("rms_norm", &vortex_rms_norm);
   m.impl("apply_rotary_pos_emb", &vortex_apply_rotary_pos_emb);
+  m.impl("mm_w4a16", &vortex_mm_w4a16);
 }
 
 } // namespace at::vortex
