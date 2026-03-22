@@ -7,6 +7,7 @@
 #include <torch/csrc/utils/python_numbers.h>
 
 #include <runtime/VortexFunctions.h>
+#include <runtime/VortexDeviceAllocator.h>
 #include <runtime/VortexRuntime.h>
 
 static PyObject* _initExtension(PyObject* self, PyObject* noargs) {
@@ -83,6 +84,60 @@ static PyObject* _getGlobalMemSize(PyObject* self, PyObject* noargs) {
   END_HANDLE_TH_ERRORS
 }
 
+static PyObject* _emptyCache(PyObject* self, PyObject* noargs) {
+  HANDLE_TH_ERRORS
+  c10::vortex::allocator_empty_cache();
+  Py_RETURN_NONE;
+  END_HANDLE_TH_ERRORS
+}
+
+static PyObject* _memoryAllocated(PyObject* self, PyObject* arg) {
+  HANDLE_TH_ERRORS
+  TORCH_CHECK(THPUtils_checkLong(arg), "invalid argument to memory_allocated");
+  auto device = THPUtils_unpackDeviceIndex(arg);
+  return THPUtils_packUInt64(c10::vortex::allocator_memory_allocated(device));
+  END_HANDLE_TH_ERRORS
+}
+
+static PyObject* _memoryReserved(PyObject* self, PyObject* arg) {
+  HANDLE_TH_ERRORS
+  TORCH_CHECK(THPUtils_checkLong(arg), "invalid argument to memory_reserved");
+  auto device = THPUtils_unpackDeviceIndex(arg);
+  return THPUtils_packUInt64(c10::vortex::allocator_memory_reserved(device));
+  END_HANDLE_TH_ERRORS
+}
+
+static PyObject* _maxMemoryAllocated(PyObject* self, PyObject* arg) {
+  HANDLE_TH_ERRORS
+  TORCH_CHECK(THPUtils_checkLong(arg), "invalid argument to max_memory_allocated");
+  auto device = THPUtils_unpackDeviceIndex(arg);
+  return THPUtils_packUInt64(c10::vortex::allocator_max_memory_allocated(device));
+  END_HANDLE_TH_ERRORS
+}
+
+static PyObject* _maxMemoryReserved(PyObject* self, PyObject* arg) {
+  HANDLE_TH_ERRORS
+  TORCH_CHECK(THPUtils_checkLong(arg), "invalid argument to max_memory_reserved");
+  auto device = THPUtils_unpackDeviceIndex(arg);
+  return THPUtils_packUInt64(c10::vortex::allocator_max_memory_reserved(device));
+  END_HANDLE_TH_ERRORS
+}
+
+static PyObject* _resetPeakMemoryStats(PyObject* self, PyObject* arg) {
+  HANDLE_TH_ERRORS
+  TORCH_CHECK(THPUtils_checkLong(arg), "invalid argument to reset_peak_memory_stats");
+  auto device = THPUtils_unpackDeviceIndex(arg);
+  c10::vortex::allocator_reset_peak_memory_stats(device);
+  Py_RETURN_NONE;
+  END_HANDLE_TH_ERRORS
+}
+
+static PyObject* _isAllocatorCachingEnabled(PyObject* self, PyObject* noargs) {
+  HANDLE_TH_ERRORS
+  return PyBool_FromLong(c10::vortex::allocator_is_caching_enabled());
+  END_HANDLE_TH_ERRORS
+}
+
 static PyMethodDef methods[] = {
     {"_init", _initExtension, METH_NOARGS, nullptr},
     {"_isInBadFork", _isInBadFork, METH_NOARGS, nullptr},
@@ -92,6 +147,13 @@ static PyMethodDef methods[] = {
     {"_exchangeDevice", _exchangeDevice, METH_O, nullptr},
     {"_get_device_count", _getDeviceCount, METH_NOARGS, nullptr},
     {"_get_global_mem_size", _getGlobalMemSize, METH_NOARGS, nullptr},
+    {"_empty_cache", _emptyCache, METH_NOARGS, nullptr},
+    {"_memory_allocated", _memoryAllocated, METH_O, nullptr},
+    {"_memory_reserved", _memoryReserved, METH_O, nullptr},
+    {"_max_memory_allocated", _maxMemoryAllocated, METH_O, nullptr},
+    {"_max_memory_reserved", _maxMemoryReserved, METH_O, nullptr},
+    {"_reset_peak_memory_stats", _resetPeakMemoryStats, METH_O, nullptr},
+    {"_is_allocator_caching_enabled", _isAllocatorCachingEnabled, METH_NOARGS, nullptr},
     {nullptr, nullptr, 0, nullptr}};
 
 extern "C" VORTEX_EXPORT PyObject* initVortexModule(void) {

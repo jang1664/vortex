@@ -4,9 +4,17 @@
 #include <vortex.h>
 #include <runtime/VortexRuntime.h>
 
+#include <algorithm>
+#include <atomic>
+#include <cstdio>
 #include <cstring>
 #include <string>
 #include <cmath>
+#include <cstdlib>
+#include <fstream>
+#include <mutex>
+#include <unordered_map>
+#include <vector>
 
 /// @file VortexExtra.cpp
 /// @brief Registration of Vortex-accelerated kernels.
@@ -30,15 +38,217 @@ namespace {
 // ===========================================================================
 //  Helper: launch a kernel on the Vortex device
 // ===========================================================================
+struct KernelBufferCache {
+  struct KernelImage {
+    uint64_t min_vma = 0;
+    uint64_t runtime_size = 0;
+    uint64_t bin_size = 0;
+    std::vector<char> payload;
+  };
+
+  struct ReservedRegion {
+    vx_buffer_h buffer = nullptr;
+    uint64_t min_vma = 0;
+    uint64_t reserved_size = 0;
+    std::string loaded_kernel_path;
+  };
+
+  std::unordered_map<std::string, KernelImage> images;
+  std::unordered_map<uint64_t, ReservedRegion> regions;
+  std::mutex mutex;
+  bool atexit_registered = false;
+};
+
+static KernelBufferCache& kernel_cache() {
+  static KernelBufferCache cache;
+  return cache;
+}
+
+static bool kernel_debug_enabled() {
+  static bool enabled = []() {
+    const char* s = std::getenv("TORCH_VORTEX_KERNEL_DEBUG");
+    return s && std::strcmp(s, "0") != 0;
+  }();
+  return enabled;
+}
+
+static uint64_t next_kernel_launch_id() {
+  static std::atomic<uint64_t> counter{0};
+  return ++counter;
+}
+
+static void log_kernel_launch(const std::string& kernel_path, size_t args_size, uint64_t launch_id) {
+  if (!kernel_debug_enabled()) {
+    return;
+  }
+  std::fprintf(
+      stderr,
+      "[torch_vortex] launch#%llu kernel=%s args_size=%zu\n",
+      static_cast<unsigned long long>(launch_id),
+      kernel_path.c_str(),
+      args_size);
+}
+
+static void log_kernel_buffers(vx_buffer_h krnl_buf, vx_buffer_h args_buf, uint64_t launch_id) {
+  if (!kernel_debug_enabled()) {
+    return;
+  }
+  uint64_t krnl_addr = 0;
+  uint64_t args_addr = 0;
+  (void)vx_mem_address(krnl_buf, &krnl_addr);
+  (void)vx_mem_address(args_buf, &args_addr);
+  std::fprintf(
+      stderr,
+      "[torch_vortex] launch#%llu krnl_addr=0x%llx args_addr=0x%llx\n",
+      static_cast<unsigned long long>(launch_id),
+      static_cast<unsigned long long>(krnl_addr),
+      static_cast<unsigned long long>(args_addr));
+}
+
+static uint64_t kernel_reserve_floor_bytes() {
+  static uint64_t floor_bytes = []() -> uint64_t {
+    const char* s = std::getenv("TORCH_VORTEX_KERNEL_RESERVE_FLOOR_MB");
+    uint64_t mb = 32; // default: reserve 32 MiB for fixed-VMA kernel region.
+    if (s && *s) {
+      char* end = nullptr;
+      unsigned long long parsed = std::strtoull(s, &end, 10);
+      if (end != s && parsed > 0) {
+        mb = static_cast<uint64_t>(parsed);
+      }
+    }
+    return mb * 1024ull * 1024ull;
+  }();
+  return floor_bytes;
+}
+
+static void clear_kernel_cache_atexit() {
+  auto& cache = kernel_cache();
+  std::lock_guard<std::mutex> lock(cache.mutex);
+  for (auto& [_, region] : cache.regions) {
+    if (region.buffer) {
+      (void)vx_mem_free(region.buffer);
+    }
+  }
+  cache.regions.clear();
+  cache.images.clear();
+}
+
+static const KernelBufferCache::KernelImage& get_or_load_kernel_image(
+    KernelBufferCache& cache, const std::string& kernel_path) {
+  auto it = cache.images.find(kernel_path);
+  if (it != cache.images.end()) {
+    return it->second;
+  }
+
+  std::ifstream ifs(kernel_path, std::ios::binary | std::ios::ate);
+  TORCH_CHECK(ifs, "Failed to open kernel binary: ", kernel_path);
+  std::streamsize file_size = ifs.tellg();
+  TORCH_CHECK(file_size > 16, "Kernel binary too small: ", kernel_path);
+  ifs.seekg(0, std::ios::beg);
+
+  std::vector<char> content(static_cast<size_t>(file_size));
+  ifs.read(content.data(), file_size);
+  TORCH_CHECK(ifs, "Failed to read kernel binary: ", kernel_path);
+
+  uint64_t min_vma = 0;
+  uint64_t max_vma = 0;
+  std::memcpy(&min_vma, content.data(), sizeof(uint64_t));
+  std::memcpy(&max_vma, content.data() + sizeof(uint64_t), sizeof(uint64_t));
+  TORCH_CHECK(
+      max_vma > min_vma,
+      "Invalid kernel VMA range in ",
+      kernel_path,
+      ": min=",
+      min_vma,
+      ", max=",
+      max_vma);
+
+  KernelBufferCache::KernelImage image;
+  image.min_vma = min_vma;
+  image.runtime_size = max_vma - min_vma;
+  image.bin_size = static_cast<uint64_t>(file_size) - 16;
+  image.payload.resize(static_cast<size_t>(image.bin_size));
+  std::memcpy(image.payload.data(), content.data() + 16, static_cast<size_t>(image.bin_size));
+
+  auto [ins_it, _] = cache.images.emplace(kernel_path, std::move(image));
+  return ins_it->second;
+}
+
+static vx_buffer_h get_or_upload_kernel_buffer(vx_device_h device, const std::string& kernel_path) {
+  auto& cache = kernel_cache();
+  std::lock_guard<std::mutex> lock(cache.mutex);
+
+  const auto& image = get_or_load_kernel_image(cache, kernel_path);
+  auto& region = cache.regions[image.min_vma];
+
+  if (!region.buffer) {
+    uint64_t reserve_size = std::max(image.runtime_size, kernel_reserve_floor_bytes());
+    vx_buffer_h hbuf = nullptr;
+    int ret = vx_mem_reserve(device, image.min_vma, reserve_size, 0, &hbuf);
+    TORCH_CHECK(
+        ret == 0,
+        "Failed to reserve kernel VMA region for ",
+        kernel_path,
+        " at [",
+        image.min_vma,
+        "-",
+        image.min_vma + reserve_size,
+        "] (err=",
+        ret,
+        ")");
+    region.buffer = hbuf;
+    region.min_vma = image.min_vma;
+    region.reserved_size = reserve_size;
+  } else {
+    TORCH_CHECK(
+        region.reserved_size >= image.runtime_size,
+        "Kernel runtime size grew for VMA ",
+        image.min_vma,
+        " (reserved=",
+        region.reserved_size,
+        ", requested=",
+        image.runtime_size,
+        "). "
+        "Run with kernel prewarm before large allocations.");
+  }
+
+  // Upload only when kernel image changes for this VMA region.
+  if (region.loaded_kernel_path != kernel_path) {
+    int ret = vx_mem_access(region.buffer, 0, image.bin_size, VX_MEM_READ);
+    TORCH_CHECK(ret == 0, "Failed to set kernel code region access (err=", ret, ")");
+
+    if (region.reserved_size > image.bin_size) {
+      ret = vx_mem_access(
+          region.buffer,
+          image.bin_size,
+          region.reserved_size - image.bin_size,
+          VX_MEM_READ_WRITE);
+      TORCH_CHECK(ret == 0, "Failed to set kernel data region access (err=", ret, ")");
+    }
+
+    ret = vx_copy_to_dev(region.buffer, image.payload.data(), 0, image.bin_size);
+    TORCH_CHECK(ret == 0, "Failed to upload kernel binary: ", kernel_path, " (err=", ret, ")");
+    region.loaded_kernel_path = kernel_path;
+  }
+
+  if (!cache.atexit_registered) {
+    std::atexit(clear_kernel_cache_atexit);
+    cache.atexit_registered = true;
+  }
+  return region.buffer;
+}
+
 static void launch_kernel(vx_device_h device,
                           const void* args, size_t args_size,
                           const std::string& kernel_path) {
   vx_buffer_h args_buf = nullptr;
   vx_buffer_h krnl_buf = nullptr;
+  const uint64_t launch_id = next_kernel_launch_id();
+  log_kernel_launch(kernel_path, args_size, launch_id);
 
-  // RAII guard: free device buffers on ANY exit (normal or exception)
+  // RAII guard: free args buffer on ANY exit (normal or exception).
+  // Kernel buffers are cached process-wide by kernel_path.
   auto cleanup = [&]() {
-    if (krnl_buf) vx_mem_free(krnl_buf);
     if (args_buf) vx_mem_free(args_buf);
   };
 
@@ -46,18 +256,17 @@ static void launch_kernel(vx_device_h device,
     int ret = vx_upload_bytes(device, args, args_size, &args_buf);
     TORCH_CHECK(ret == 0, "Failed to upload kernel arguments (err=", ret, ")");
 
-    ret = vx_upload_kernel_file(device, kernel_path.c_str(), &krnl_buf);
-    TORCH_CHECK(ret == 0, "Failed to upload kernel binary: ", kernel_path,
-                " (err=", ret, ")");
+    krnl_buf = get_or_upload_kernel_buffer(device, kernel_path);
+    log_kernel_buffers(krnl_buf, args_buf, launch_id);
 
     // Notify SMI monitoring of the kernel name (best-effort, ignore errors)
     vx_smi_set_kernel_name(device, kernel_path.c_str());
 
     ret = vx_start(device, krnl_buf, args_buf);
-    TORCH_CHECK(ret == 0, "vx_start failed (err=", ret, ")");
+    TORCH_CHECK(ret == 0, "vx_start failed (err=", ret, ", launch#", launch_id, ")");
 
     ret = vx_ready_wait(device, VX_MAX_TIMEOUT);
-    TORCH_CHECK(ret == 0, "vx_ready_wait failed (err=", ret, ")");
+    TORCH_CHECK(ret == 0, "vx_ready_wait failed (err=", ret, ", launch#", launch_id, ")");
   } catch (...) {
     cleanup();
     throw;  // re-throw after freeing device memory

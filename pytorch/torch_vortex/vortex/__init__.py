@@ -69,6 +69,56 @@ def get_device_properties(device=None):
     return props
 
 
+def _resolve_device_index(device=None):
+    if device is None:
+        return current_device()
+    if isinstance(device, int):
+        return device
+    return torch.accelerator._get_device_index(device, optional=False)
+
+
+def empty_cache() -> None:
+    """Release all currently cached free blocks back to the Vortex runtime."""
+    _lazy_init()
+    torch_vortex._C._empty_cache()
+
+
+def memory_allocated(device=None) -> int:
+    """Return active tensor memory (bytes) on the selected Vortex device."""
+    _lazy_init()
+    return torch_vortex._C._memory_allocated(_resolve_device_index(device))
+
+
+def memory_reserved(device=None) -> int:
+    """Return memory (bytes) held by the allocator on the selected device."""
+    _lazy_init()
+    return torch_vortex._C._memory_reserved(_resolve_device_index(device))
+
+
+def max_memory_allocated(device=None) -> int:
+    """Return peak active tensor memory (bytes) since last reset."""
+    _lazy_init()
+    return torch_vortex._C._max_memory_allocated(_resolve_device_index(device))
+
+
+def max_memory_reserved(device=None) -> int:
+    """Return peak allocator-reserved memory (bytes) since last reset."""
+    _lazy_init()
+    return torch_vortex._C._max_memory_reserved(_resolve_device_index(device))
+
+
+def reset_peak_memory_stats(device=None) -> None:
+    """Reset peak memory statistics for the selected Vortex device."""
+    _lazy_init()
+    torch_vortex._C._reset_peak_memory_stats(_resolve_device_index(device))
+
+
+def is_allocator_caching_enabled() -> bool:
+    """Return True when allocator runs in cached mode."""
+    _lazy_init()
+    return bool(torch_vortex._C._is_allocator_caching_enabled())
+
+
 def synchronize(device=None):
     """Wait for all pending Vortex operations to complete."""
     _lazy_init()
@@ -112,6 +162,13 @@ __all__ = [
     "is_available",
     "init",
     "is_initialized",
+    "empty_cache",
+    "memory_allocated",
+    "memory_reserved",
+    "max_memory_allocated",
+    "max_memory_reserved",
+    "reset_peak_memory_stats",
+    "is_allocator_caching_enabled",
     "initial_seed",
     "manual_seed",
     "manual_seed_all",

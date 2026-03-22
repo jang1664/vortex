@@ -41,13 +41,13 @@ DEVICE = "vortex"
 # ============================================================================
 class TinyLlamaConfig:
     """Tiny config for testing — matches LlamaConfig interface used by layers."""
-    hidden_size        = 128         # must be multiple of 8 for TCU tile
-    intermediate_size  = 512         # MLP intermediate
+    hidden_size        = 4096         # must be multiple of 8 for TCU tile
+    intermediate_size  = 11008         # MLP intermediate
     num_attention_heads =32         # must divide hidden_size
     num_key_value_heads = 32         # same as num_attention_heads (MHA, no GQA)
     num_hidden_layers  = 2
-    head_dim           =  4          # hidden_size // num_attention_heads
-    max_position_embeddings = 128
+    head_dim           =  128          # hidden_size // num_attention_heads
+    max_position_embeddings = 4096
     rms_norm_eps       = 1e-5
     attention_dropout  = 0.0
     attention_bias     = False
