@@ -5,8 +5,8 @@ include $(ROOT_DIR)/build/config.mk
 RTL_DIR := $(VORTEX_HOME)/hw/rtl
 
 # Force use of gcc-11/g++-11 for C++20 features
-export CC := /usr/bin/gcc-11
-export CXX := /usr/bin/g++-11
+# export CC := /usr/bin/gcc-11
+# export CXX := /usr/bin/g++-11
 
 SIM_EXEC ?= vlt
 
