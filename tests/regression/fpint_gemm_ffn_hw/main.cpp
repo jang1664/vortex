@@ -359,6 +359,9 @@ int main(int argc, char *argv[]) {
             << ", warps=" << num_warps
             << ", threads=" << num_threads << std::endl;
   std::cout << "Device: local_mem_size=" << local_mem_size << " bytes" << std::endl;
+  std::cout << "Device: stack_base_addr=0x" << std::hex << uint64_t(STACK_BASE_ADDR)
+            << ", lmem_base_addr=0x" << uint64_t(LMEM_BASE_ADDR)
+            << std::dec << std::endl;
 
   std::vector<uint16_t> h_A;
   std::vector<uint8_t> h_W_int4;
