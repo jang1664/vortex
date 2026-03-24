@@ -206,7 +206,7 @@ ifneq ($(TARGET),$(findstring $(TARGET), hw hw_emu))
 	$(warning WARNING:Application supports only hw hw_emu TARGET. Please use the target for running the application)
 endif
 
-.PHONY: all clean gen-sources gen-ast emconfig check-devices backup-xrt
+.PHONY: all clean gen-sources gen-ast preprocess emconfig check-devices backup-xrt
 .DEFAULT_GOAL := all
 
 all: check-devices emconfig $(XCLBIN_CONTAINER) report
@@ -232,6 +232,22 @@ $(CONFIG_STAMP):
 gen-ast: $(BUILD_DIR)/vortex.xml
 $(BUILD_DIR)/vortex.xml:
 	mkdir -p $(BUILD_DIR); cd $(BUILD_DIR); verilator --xml-only -Wno-fatal -O0 $(XML_CFLAGS) vortex_afu.v --xml-output vortex.xml
+
+PREPROCESS_DIR := $(BUILD_DIR)/preprocessed
+PREPROCESS_SRCS := $(AFU_DIR)/VX_afu_wrap.sv $(RTL_DIR)/Vortex_axi.sv $(RTL_DIR)/Vortex.sv
+
+preprocess: $(CONFIG_STAMP)
+	@mkdir -p $(PREPROCESS_DIR)
+	@for src in $(PREPROCESS_SRCS); do \
+		base=$$(basename $$src .sv); \
+		out=$(PREPROCESS_DIR)/$$base.pp.sv; \
+		echo "Preprocessing $$src -> $$out"; \
+		verilator -E -P -Wno-fatal $(CFLAGS) $$src > $$out || true; \
+	done
+	@echo "Generating config dump..."
+	@python3 $(SRC_DIR)/gen_config_dump.py $(RTL_DIR)/VX_config.vh -o $(PREPROCESS_DIR)/_config_dump.sv
+	@verilator -E -P -Wno-fatal $(CFLAGS) $(PREPROCESS_DIR)/_config_dump.sv > $(PREPROCESS_DIR)/VX_config.pp.sv || true
+	$(ECHO) "Preprocessed files in $(PREPROCESS_DIR)/"
 
 scope-json: $(BIN_DIR)/scope.json
 $(BIN_DIR)/scope.json: $(BUILD_DIR)/vortex.xml
