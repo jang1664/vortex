@@ -118,7 +118,8 @@ public:
 
     // Initialize memory allocators
     for (int b = 0; b < PLATFORM_MEMORY_NUM_BANKS; ++b) {
-      mem_alloc_[b] = new MemoryAllocator(0, mem_bank_size_, 4096, 64);
+      uint64_t base = (b == 0) ? USER_BASE_ADDR : 0;
+      mem_alloc_[b] = new MemoryAllocator(base, mem_bank_size_ - base, 4096, 64);
     }
 
     // Launch sim thread for AXI memory event processing

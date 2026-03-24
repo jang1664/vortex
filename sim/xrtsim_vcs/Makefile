@@ -47,7 +47,7 @@ APP_PROJECT := libxrtsim_vcs.so
 # ============================================================
 
 # RTL packages (same as xrtsim/Makefile)
-RTL_PKGS += $(RTL_DIR)/VX_gpu_pkg.sv $(RTL_DIR)/fpu/VX_fpu_pkg.sv
+RTL_PKGS += $(RTL_DIR)/VX_gpu_pkg.sv $(RTL_DIR)/fpu/VX_fpu_pkg.sv $(RTL_DIR)/verification/cf_math_util_pkg.sv $(RTL_DIR)/verification/VX_utils_pkg.sv $(RTL_DIR)/verification/utils.sv
 
 FPU_INCLUDE = -I$(RTL_DIR)/fpu
 ifneq (,$(findstring -DFPU_FPNEW, $(CONFIGS)))
@@ -61,7 +61,8 @@ ifneq (,$(findstring -DFPU_FPNEW, $(CONFIGS)))
 	FPU_INCLUDE += -I$(THIRD_PARTY_DIR)/cvfpu/src/common_cells/include -I$(THIRD_PARTY_DIR)/cvfpu/src/common_cells/src -I$(THIRD_PARTY_DIR)/cvfpu/src/fpu_div_sqrt_mvp/hdl -I$(THIRD_PARTY_DIR)/cvfpu/src
 endif
 
-RTL_INCLUDE = -I$(XRTSIM_DIR) -I$(RTL_DIR) -I$(DPI_DIR) -I$(RTL_DIR)/libs -I$(RTL_DIR)/interfaces -I$(RTL_DIR)/core -I$(RTL_DIR)/mem -I$(RTL_DIR)/cache $(FPU_INCLUDE)
+RTL_INCLUDE = -I$(SRC_DIR) -I$(RTL_DIR) -I$(DPI_DIR) -I$(RTL_DIR)/libs -I$(RTL_DIR)/interfaces -I$(RTL_DIR)/core -I$(RTL_DIR)/core/gemm -I$(RTL_DIR)/mem -I$(RTL_DIR)/cache $(FPU_INCLUDE)
+RTL_INCLUDE += -I$(RTL_DIR)/verification
 RTL_INCLUDE += -I$(AFU_DIR)
 
 # V extension
@@ -98,10 +99,7 @@ DPI_SRCS += $(SW_COMMON_DIR)/softfloat_ext.cpp $(SW_COMMON_DIR)/rvfloats.cpp
 SOFTFLOAT_LIB := $(THIRD_PARTY_DIR)/softfloat/build/Linux-x86_64-GCC/softfloat.a
 
 # Extract RTL directories from include paths
-RTL_DIRS = $(XRTSIM_DIR) $(RTL_DIR) $(DPI_DIR)
-RTL_DIRS += $(RTL_DIR)/libs $(RTL_DIR)/interfaces $(RTL_DIR)/core
-RTL_DIRS += $(RTL_DIR)/mem $(RTL_DIR)/cache $(AFU_DIR)
-RTL_DIRS += $(patsubst -I%,%,$(FPU_INCLUDE))
+RTL_DIRS := $(patsubst -I%,%,$(filter -I%,$(RTL_INCLUDE)))
 
 # V extension directories
 ifneq (,$(findstring -DEXT_V_ENABLE, $(CONFIGS)))
