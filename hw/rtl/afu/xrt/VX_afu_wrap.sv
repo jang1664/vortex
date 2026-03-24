@@ -79,6 +79,13 @@ module VX_afu_wrap import VX_gpu_pkg::*; #(
     wire [C_M_AXI_MEM_ADDR_WIDTH-1:0]    m_axi_mem_awaddr_a [C_M_AXI_MEM_NUM_BANKS];
     wire [C_M_AXI_MEM_ID_WIDTH-1:0]      m_axi_mem_awid_a [C_M_AXI_MEM_NUM_BANKS];
     wire [7:0]                           m_axi_mem_awlen_a [C_M_AXI_MEM_NUM_BANKS];
+    wire [2:0]                           m_axi_mem_awsize_a [C_M_AXI_MEM_NUM_BANKS];
+    wire [1:0]                           m_axi_mem_awburst_a [C_M_AXI_MEM_NUM_BANKS];
+    wire [1:0]                           m_axi_mem_awlock_a [C_M_AXI_MEM_NUM_BANKS];
+    wire [3:0]                           m_axi_mem_awcache_a [C_M_AXI_MEM_NUM_BANKS];
+    wire [2:0]                           m_axi_mem_awprot_a [C_M_AXI_MEM_NUM_BANKS];
+    wire [3:0]                           m_axi_mem_awqos_a [C_M_AXI_MEM_NUM_BANKS];
+    wire [3:0]                           m_axi_mem_awregion_a [C_M_AXI_MEM_NUM_BANKS];
 
     wire                                 m_axi_mem_wvalid_a [C_M_AXI_MEM_NUM_BANKS];
     wire                                 m_axi_mem_wready_a [C_M_AXI_MEM_NUM_BANKS];
@@ -96,6 +103,13 @@ module VX_afu_wrap import VX_gpu_pkg::*; #(
     wire [C_M_AXI_MEM_ADDR_WIDTH-1:0]    m_axi_mem_araddr_a [C_M_AXI_MEM_NUM_BANKS];
     wire [C_M_AXI_MEM_ID_WIDTH-1:0]      m_axi_mem_arid_a [C_M_AXI_MEM_NUM_BANKS];
     wire [7:0]                           m_axi_mem_arlen_a [C_M_AXI_MEM_NUM_BANKS];
+    wire [2:0]                           m_axi_mem_arsize_a [C_M_AXI_MEM_NUM_BANKS];
+    wire [1:0]                           m_axi_mem_arburst_a [C_M_AXI_MEM_NUM_BANKS];
+    wire [1:0]                           m_axi_mem_arlock_a [C_M_AXI_MEM_NUM_BANKS];
+    wire [3:0]                           m_axi_mem_arcache_a [C_M_AXI_MEM_NUM_BANKS];
+    wire [2:0]                           m_axi_mem_arprot_a [C_M_AXI_MEM_NUM_BANKS];
+    wire [3:0]                           m_axi_mem_arqos_a [C_M_AXI_MEM_NUM_BANKS];
+    wire [3:0]                           m_axi_mem_arregion_a [C_M_AXI_MEM_NUM_BANKS];
 
     wire                                 m_axi_mem_rvalid_a [C_M_AXI_MEM_NUM_BANKS];
     wire                                 m_axi_mem_rready_a [C_M_AXI_MEM_NUM_BANKS];
@@ -321,13 +335,13 @@ module VX_afu_wrap import VX_gpu_pkg::*; #(
 		.m_axi_awaddr	(m_axi_mem_awaddr_u),
 		.m_axi_awid		(m_axi_mem_awid_a),
 		.m_axi_awlen    (m_axi_mem_awlen_a),
-		`UNUSED_PIN (m_axi_awsize),
-		`UNUSED_PIN (m_axi_awburst),
-		`UNUSED_PIN (m_axi_awlock),
-		`UNUSED_PIN (m_axi_awcache),
-		`UNUSED_PIN (m_axi_awprot),
-		`UNUSED_PIN (m_axi_awqos),
-    	`UNUSED_PIN (m_axi_awregion),
+		.m_axi_awsize   (m_axi_mem_awsize_a),
+		.m_axi_awburst  (m_axi_mem_awburst_a),
+		.m_axi_awlock   (m_axi_mem_awlock_a),
+		.m_axi_awcache  (m_axi_mem_awcache_a),
+		.m_axi_awprot   (m_axi_mem_awprot_a),
+		.m_axi_awqos    (m_axi_mem_awqos_a),
+		.m_axi_awregion (m_axi_mem_awregion_a),
 
 		.m_axi_wvalid	(m_axi_mem_wvalid_a),
 		.m_axi_wready	(m_axi_mem_wready_a),
@@ -345,13 +359,13 @@ module VX_afu_wrap import VX_gpu_pkg::*; #(
 		.m_axi_araddr	(m_axi_mem_araddr_u),
 		.m_axi_arid		(m_axi_mem_arid_a),
 		.m_axi_arlen	(m_axi_mem_arlen_a),
-		`UNUSED_PIN (m_axi_arsize),
-		`UNUSED_PIN (m_axi_arburst),
-		`UNUSED_PIN (m_axi_arlock),
-		`UNUSED_PIN (m_axi_arcache),
-		`UNUSED_PIN (m_axi_arprot),
-		`UNUSED_PIN (m_axi_arqos),
-        `UNUSED_PIN (m_axi_arregion),
+		.m_axi_arsize   (m_axi_mem_arsize_a),
+		.m_axi_arburst  (m_axi_mem_arburst_a),
+		.m_axi_arlock   (m_axi_mem_arlock_a),
+		.m_axi_arcache  (m_axi_mem_arcache_a),
+		.m_axi_arprot   (m_axi_mem_arprot_a),
+		.m_axi_arqos    (m_axi_mem_arqos_a),
+		.m_axi_arregion (m_axi_mem_arregion_a),
 
 		.m_axi_rvalid	(m_axi_mem_rvalid_a),
 		.m_axi_rready	(m_axi_mem_rready_a),
