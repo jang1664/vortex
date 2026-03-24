@@ -30,6 +30,9 @@
 #include <future>
 #include <list>
 #include <queue>
+#include <array>
+#include <random>
+#include <cstdlib>
 #include <unordered_map>
 #include <util.h>
 #include <mem_alloc.h>
@@ -39,6 +42,12 @@
 
 #ifndef MEM_CLOCK_RATIO
 #define MEM_CLOCK_RATIO 1
+#endif
+
+#ifdef PLATFORM_MERGED_MEMORY_INTERFACE
+#define XRTSIM_AXI_MEM_NUM_BANKS 1
+#else
+#define XRTSIM_AXI_MEM_NUM_BANKS PLATFORM_MEMORY_NUM_BANKS
 #endif
 
 #define CACHE_BLOCK_SIZE  64
@@ -58,6 +67,17 @@
 #define RAM_PAGE_SIZE 4096
 
 #define CPU_GPU_LATENCY 200
+
+// DRAM backpressure configuration (Markov model, set via environment variables)
+// DRAM_REQ_STALL_P_ENTER_PCT: request-side transition probability (%) from ready->stall
+// DRAM_REQ_STALL_P_EXIT_PCT : request-side transition probability (%) from stall->ready
+// DRAM_RSP_STALL_P_ENTER_PCT: response-side transition probability (%) from open->stall
+// DRAM_RSP_STALL_P_EXIT_PCT : response-side transition probability (%) from stall->open
+// DRAM_STALL_SEED: base RNG seed for deterministic backpressure patterns
+//
+// Legacy compatibility (optional): if new P_* vars are not set, these are converted
+// to approximate Markov probabilities:
+// DRAM_REQ_STALL_CYCLES, DRAM_REQ_READY_CYCLES, DRAM_RSP_STALL_CYCLES, DRAM_RSP_READY_CYCLES
 
 #if PLATFORM_MEMORY_DATA_SIZE > 8
   typedef VlWide<(PLATFORM_MEMORY_DATA_SIZE/4)> Vl_m_data_t;
@@ -90,6 +110,49 @@ bool sim_trace_enabled() {
 
 void sim_trace_enable(bool enable) {
   trace_enabled = enable;
+}
+
+static uint64_t read_env_u64(const char* name, uint64_t default_value) {
+  if (auto env = std::getenv(name))
+    return std::strtoull(env, nullptr, 10);
+  return default_value;
+}
+
+static uint32_t read_env_pct(const char* name, uint32_t default_value, bool* has_value = nullptr) {
+  if (has_value) {
+    *has_value = false;
+  }
+  if (auto env = std::getenv(name)) {
+    auto value = std::strtoll(env, nullptr, 10);
+    if (value < 0)
+      value = 0;
+    if (value > 100)
+      value = 100;
+    if (has_value) {
+      *has_value = true;
+    }
+    return uint32_t(value);
+  }
+  return default_value;
+}
+
+static uint32_t cycles_to_prob_pct(uint64_t cycles) {
+  if (cycles <= 1)
+    return 100;
+  auto rounded = (100ull + (cycles / 2)) / cycles;
+  if (rounded == 0)
+    rounded = 1;
+  if (rounded > 100)
+    rounded = 100;
+  return uint32_t(rounded);
+}
+
+static bool sample_percent(std::mt19937_64& rng, uint32_t percent) {
+  if (percent == 0)
+    return false;
+  if (percent >= 100)
+    return true;
+  return (rng() % 100ull) < percent;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -130,6 +193,11 @@ public:
   , ram_(nullptr)
   , dram_sim_(PLATFORM_MEMORY_NUM_BANKS, PLATFORM_MEMORY_DATA_SIZE, MEM_CLOCK_RATIO)
   , stop_(false)
+  , dram_req_stall_p_enter_pct_(0)
+  , dram_req_stall_p_exit_pct_(50)
+  , dram_rsp_stall_p_enter_pct_(0)
+  , dram_rsp_stall_p_exit_pct_(50)
+  , dram_stall_seed_(50)
 #ifdef VCD_OUTPUT
   , tfp_(nullptr)
 #endif
@@ -182,11 +250,65 @@ public:
     ram_ = new RAM(0, RAM_PAGE_SIZE);
 
     // initialize AXI memory interfaces
-    MP_M_AXI_MEM(PLATFORM_MEMORY_NUM_BANKS);
+    MP_M_AXI_MEM(XRTSIM_AXI_MEM_NUM_BANKS);
 
     // initialize memory allocator
     for (int b = 0; b < PLATFORM_MEMORY_NUM_BANKS; ++b) {
       mem_alloc_[b] = new MemoryAllocator(0, mem_bank_size_, 4096, 64);
+    }
+
+    // read DRAM stall configuration from environment (Markov model)
+    bool req_enter_set = false;
+    bool req_exit_set = false;
+    bool rsp_enter_set = false;
+    bool rsp_exit_set = false;
+    dram_req_stall_p_enter_pct_ = read_env_pct("DRAM_REQ_STALL_P_ENTER_PCT", dram_req_stall_p_enter_pct_, &req_enter_set);
+    dram_req_stall_p_exit_pct_  = read_env_pct("DRAM_REQ_STALL_P_EXIT_PCT",  dram_req_stall_p_exit_pct_,  &req_exit_set);
+    dram_rsp_stall_p_enter_pct_ = read_env_pct("DRAM_RSP_STALL_P_ENTER_PCT", dram_rsp_stall_p_enter_pct_, &rsp_enter_set);
+    dram_rsp_stall_p_exit_pct_  = read_env_pct("DRAM_RSP_STALL_P_EXIT_PCT",  dram_rsp_stall_p_exit_pct_,  &rsp_exit_set);
+    dram_stall_seed_            = read_env_u64("DRAM_STALL_SEED", dram_stall_seed_);
+
+    // Legacy compatibility: convert cycle-based stall config to approximate
+    // Markov probabilities when corresponding P_* env vars are absent.
+    bool req_legacy_used = false;
+    bool rsp_legacy_used = false;
+    auto req_stall_cycles = read_env_u64("DRAM_REQ_STALL_CYCLES", 0);
+    auto req_ready_cycles = std::max<uint64_t>(1, read_env_u64("DRAM_REQ_READY_CYCLES", 1));
+    auto rsp_stall_cycles = read_env_u64("DRAM_RSP_STALL_CYCLES", 0);
+    auto rsp_ready_cycles = std::max<uint64_t>(1, read_env_u64("DRAM_RSP_READY_CYCLES", 1));
+
+    if (!req_enter_set && (req_stall_cycles > 0 || std::getenv("DRAM_REQ_STALL_CYCLES") != nullptr)) {
+      dram_req_stall_p_enter_pct_ = (req_stall_cycles == 0) ? 0 : cycles_to_prob_pct(req_ready_cycles);
+      req_legacy_used = true;
+    }
+    if (!req_exit_set && req_stall_cycles > 0) {
+      dram_req_stall_p_exit_pct_ = cycles_to_prob_pct(req_stall_cycles);
+      req_legacy_used = true;
+    }
+    if (!rsp_enter_set && (rsp_stall_cycles > 0 || std::getenv("DRAM_RSP_STALL_CYCLES") != nullptr)) {
+      dram_rsp_stall_p_enter_pct_ = (rsp_stall_cycles == 0) ? 0 : cycles_to_prob_pct(rsp_ready_cycles);
+      rsp_legacy_used = true;
+    }
+    if (!rsp_exit_set && rsp_stall_cycles > 0) {
+      dram_rsp_stall_p_exit_pct_ = cycles_to_prob_pct(rsp_stall_cycles);
+      rsp_legacy_used = true;
+    }
+
+    for (int b = 0; b < XRTSIM_AXI_MEM_NUM_BANKS; ++b) {
+      auto req_seed = dram_stall_seed_ + 0x9e3779b97f4a7c15ull * (2ull * b + 1ull);
+      auto rsp_seed = dram_stall_seed_ + 0x9e3779b97f4a7c15ull * (2ull * b + 2ull);
+      req_stall_rng_[b].seed(req_seed);
+      rsp_stall_rng_[b].seed(rsp_seed);
+    }
+
+    if (dram_req_stall_p_enter_pct_ > 0 || dram_rsp_stall_p_enter_pct_ > 0) {
+      printf("[sim] DRAM Markov backpressure: req(p_enter=%u%%, p_exit=%u%%), rsp(p_enter=%u%%, p_exit=%u%%), seed=%llu\n",
+             dram_req_stall_p_enter_pct_, dram_req_stall_p_exit_pct_,
+             dram_rsp_stall_p_enter_pct_, dram_rsp_stall_p_exit_pct_,
+             (unsigned long long)dram_stall_seed_);
+      if (req_legacy_used || rsp_legacy_used) {
+        printf("[sim] DRAM Markov backpressure: using legacy cycle env conversion\n");
+      }
     }
 
     // reset the device
@@ -319,7 +441,7 @@ private:
       reqs.clear();
     }
 
-    for (int b = 0; b < PLATFORM_MEMORY_NUM_BANKS; ++b) {
+    for (int b = 0; b < XRTSIM_AXI_MEM_NUM_BANKS; ++b) {
       std::queue<mem_req_t*> empty;
       std::swap(dram_queues_[b], empty);
     }
@@ -335,8 +457,10 @@ private:
 
     device_->ap_rst_n = 1;
 
-    // this AXI device is always ready to accept new requests
-    for (int b = 0; b < PLATFORM_MEMORY_NUM_BANKS; ++b) {
+    // initialize request/response stall state
+    for (int b = 0; b < XRTSIM_AXI_MEM_NUM_BANKS; ++b) {
+      req_stall_state_[b] = {false};
+      rsp_stall_state_[b] = {false};
       *m_axi_mem_[b].arready = 1;
       *m_axi_mem_[b].awready = 1;
       *m_axi_mem_[b].wready  = 1;
@@ -356,7 +480,7 @@ private:
 
     dram_sim_.tick();
 
-    for (int b = 0; b < PLATFORM_MEMORY_NUM_BANKS; ++b) {
+    for (int b = 0; b < XRTSIM_AXI_MEM_NUM_BANKS; ++b) {
       if (!dram_queues_[b].empty()) {
         auto mem_req = dram_queues_[b].front();
         dram_sim_.send_request(mem_req->addr, mem_req->write, [](void* arg) {
@@ -408,7 +532,7 @@ private:
   }
 
   void axi_mem_bus_reset() {
-    for (int b = 0; b < PLATFORM_MEMORY_NUM_BANKS; ++b) {
+    for (int b = 0; b < XRTSIM_AXI_MEM_NUM_BANKS; ++b) {
       // read request address
       *m_axi_mem_[b].arready = 0;
 
@@ -432,23 +556,50 @@ private:
 
   void axi_mem_bus_eval(bool clk) {
     if (!clk) {
-      for (int b = 0; b < PLATFORM_MEMORY_NUM_BANKS; ++b) {
+      for (int b = 0; b < XRTSIM_AXI_MEM_NUM_BANKS; ++b) {
         m_axi_states_[b].read_rsp_ready = *m_axi_mem_[b].rready;
         m_axi_states_[b].write_rsp_ready = *m_axi_mem_[b].bready;
       }
       return;
     }
 
-    for (int b = 0; b < PLATFORM_MEMORY_NUM_BANKS; ++b) {
+    for (int b = 0; b < XRTSIM_AXI_MEM_NUM_BANKS; ++b) {
+      // update request-side Markov backpressure (arready/awready/wready)
+      auto& req_st = req_stall_state_[b];
+      if (req_st.stalling) {
+        if (sample_percent(req_stall_rng_[b], dram_req_stall_p_exit_pct_)) {
+          req_st.stalling = false;
+        }
+      } else {
+        if (sample_percent(req_stall_rng_[b], dram_req_stall_p_enter_pct_)) {
+          req_st.stalling = true;
+        }
+      }
+      CData req_ready = req_st.stalling ? 0 : 1;
+      *m_axi_mem_[b].arready = req_ready;
+      *m_axi_mem_[b].awready = req_ready;
+      *m_axi_mem_[b].wready  = req_ready;
+
+      // update response-side Markov stall state
+      auto& rsp_st = rsp_stall_state_[b];
+      if (rsp_st.stalling) {
+        if (sample_percent(rsp_stall_rng_[b], dram_rsp_stall_p_exit_pct_)) {
+          rsp_st.stalling = false;
+        }
+      } else {
+        if (sample_percent(rsp_stall_rng_[b], dram_rsp_stall_p_enter_pct_)) {
+          rsp_st.stalling = true;
+        }
+      }
+      bool rsp_stalling = rsp_st.stalling;
+
       // handle read responses
       if (*m_axi_mem_[b].rvalid && m_axi_states_[b].read_rsp_ready) {
         *m_axi_mem_[b].rvalid = 0;
       }
-      if (!*m_axi_mem_[b].rvalid) {
-        if (!pending_mem_reqs_[b].empty()
-        && (*pending_mem_reqs_[b].begin())->ready
-        && !(*pending_mem_reqs_[b].begin())->write) {
-          auto mem_rsp_it = pending_mem_reqs_[b].begin();
+      if (!*m_axi_mem_[b].rvalid && !rsp_stalling) {
+        auto mem_rsp_it = this->find_ready_mem_rsp(b, false);
+        if (mem_rsp_it != pending_mem_reqs_[b].end()) {
           auto mem_rsp = *mem_rsp_it;
           *m_axi_mem_[b].rvalid = 1;
           *m_axi_mem_[b].rid    = mem_rsp->tag;
@@ -464,11 +615,9 @@ private:
       if (*m_axi_mem_[b].bvalid && m_axi_states_[b].write_rsp_ready) {
         *m_axi_mem_[b].bvalid = 0;
       }
-      if (!*m_axi_mem_[b].bvalid) {
-        if (!pending_mem_reqs_[b].empty()
-        && (*pending_mem_reqs_[b].begin())->ready
-        && (*pending_mem_reqs_[b].begin())->write) {
-          auto mem_rsp_it = pending_mem_reqs_[b].begin();
+      if (!*m_axi_mem_[b].bvalid && !rsp_stalling) {
+        auto mem_rsp_it = this->find_ready_mem_rsp(b, true);
+        if (mem_rsp_it != pending_mem_reqs_[b].end()) {
           auto mem_rsp = *mem_rsp_it;
           *m_axi_mem_[b].bvalid = 1;
           *m_axi_mem_[b].bid    = mem_rsp->tag;
@@ -566,6 +715,34 @@ private:
     bool ready;
   } mem_req_t;
 
+  using mem_req_list_t = std::list<mem_req_t*>;
+  using mem_req_iter_t = mem_req_list_t::iterator;
+
+  mem_req_iter_t find_ready_mem_rsp(int bank, bool is_write) {
+    auto& pending_reqs = pending_mem_reqs_[bank];
+    for (auto it = pending_reqs.begin(); it != pending_reqs.end(); ++it) {
+      auto req = *it;
+      if (!req->ready || req->write != is_write) {
+        continue;
+      }
+
+      // AXI allows out-of-order completion across IDs, but responses for the
+      // same ID must remain ordered within each channel.
+      bool blocked_by_same_id = false;
+      for (auto prev = pending_reqs.begin(); prev != it; ++prev) {
+        auto older_req = *prev;
+        if (older_req->write == is_write && older_req->tag == req->tag) {
+          blocked_by_same_id = true;
+          break;
+        }
+      }
+      if (!blocked_by_same_id) {
+        return it;
+      }
+    }
+    return pending_reqs.end();
+  }
+
   typedef struct {
     CData* awvalid;
     CData* awready;
@@ -604,15 +781,30 @@ private:
 
   std::mutex mutex_;
 
-  std::list<mem_req_t*> pending_mem_reqs_[PLATFORM_MEMORY_NUM_BANKS];
+  mem_req_list_t pending_mem_reqs_[XRTSIM_AXI_MEM_NUM_BANKS];
 
-  m_axi_mem_t m_axi_mem_[PLATFORM_MEMORY_NUM_BANKS];
+  m_axi_mem_t m_axi_mem_[XRTSIM_AXI_MEM_NUM_BANKS];
 
   MemoryAllocator* mem_alloc_[PLATFORM_MEMORY_NUM_BANKS];
 
-  m_axi_state_t m_axi_states_[PLATFORM_MEMORY_NUM_BANKS];
+  m_axi_state_t m_axi_states_[XRTSIM_AXI_MEM_NUM_BANKS];
 
-  std::queue<mem_req_t*> dram_queues_[PLATFORM_MEMORY_NUM_BANKS];
+  std::queue<mem_req_t*> dram_queues_[XRTSIM_AXI_MEM_NUM_BANKS];
+
+  // DRAM stall configuration
+  uint32_t dram_req_stall_p_enter_pct_;
+  uint32_t dram_req_stall_p_exit_pct_;
+  uint32_t dram_rsp_stall_p_enter_pct_;
+  uint32_t dram_rsp_stall_p_exit_pct_;
+  uint64_t dram_stall_seed_;
+
+  struct markov_state_t {
+    bool stalling;
+  };
+  markov_state_t req_stall_state_[XRTSIM_AXI_MEM_NUM_BANKS];
+  markov_state_t rsp_stall_state_[XRTSIM_AXI_MEM_NUM_BANKS];
+  std::mt19937_64 req_stall_rng_[XRTSIM_AXI_MEM_NUM_BANKS];
+  std::mt19937_64 rsp_stall_rng_[XRTSIM_AXI_MEM_NUM_BANKS];
 
 #ifdef VCD_OUTPUT
   VerilatedVcdC* tfp_;

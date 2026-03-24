@@ -113,6 +113,13 @@ extern int xrtBOSync(xrtBufferHandle bhdl, enum xclBOSyncDirection dir, size_t s
   return 0;
 }
 
+extern uint64_t xrtBOAddress(xrtBufferHandle bhdl) {
+  if (bhdl == nullptr)
+    return uint64_t(-1);
+  auto buffer = reinterpret_cast<buffer_t*>(bhdl);
+  return buffer->addr;
+}
+
 extern int xrtKernelWriteRegister(xrtKernelHandle kernelHandle, uint32_t offset, uint32_t data) {
   if (kernelHandle == nullptr)
     return -1;
