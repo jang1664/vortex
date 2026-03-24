@@ -123,7 +123,7 @@ module VX_tcu_fedp_bhf #(
             case(fmt_s_delayed)
                 3'd1: mult_result_mux = mult_result_fp16;
                 3'd2: mult_result_mux = mult_result_bf16;
-                default: mult_result_mux = 'x;
+                default: mult_result_mux = '0;
             endcase
         end
 

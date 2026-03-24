@@ -192,8 +192,8 @@ module VX_fncp_unit import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
                 end
             end
             default: begin
-                fcmp_res_s0       = 'x;
-                fcmp_fflags_NV_s0 = 'x;
+                fcmp_res_s0       = '0;
+                fcmp_fflags_NV_s0 = '0;
             end
         endcase
     end

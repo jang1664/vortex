@@ -107,11 +107,11 @@ module VX_fpu_div import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
             .b      (pe_data_in[i][32 +: 32]),
             .q      (pe_data_out[i][0 +: 32])
         );
-        assign pe_data_out[i][32 +: `FP_FLAGS_BITS] = 'x;
+        assign pe_data_out[i][32 +: `FP_FLAGS_BITS] = '0;
     end
 
     assign has_fflags = 0;
-    assign per_lane_fflags = 'x;
+    assign per_lane_fflags = '0;
     `UNUSED_VAR (fflags_out)
 
 `elsif VIVADO

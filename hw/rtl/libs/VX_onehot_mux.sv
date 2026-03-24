@@ -37,7 +37,7 @@ module VX_onehot_mux #(
                 3'b001:  data_out_w = data_in[0];
                 3'b010:  data_out_w = data_in[1];
                 3'b100:  data_out_w = data_in[2];
-                default: data_out_w = 'x;
+                default: data_out_w = '0;
             endcase
         end
         assign data_out = data_out_w;
@@ -49,7 +49,7 @@ module VX_onehot_mux #(
                 4'b0010: data_out_w = data_in[1];
                 4'b0100: data_out_w = data_in[2];
                 4'b1000: data_out_w = data_in[3];
-                default: data_out_w = 'x;
+                default: data_out_w = '0;
             endcase
         end
         assign data_out = data_out_w;
@@ -62,7 +62,7 @@ module VX_onehot_mux #(
                 5'b00100: data_out_w = data_in[2];
                 5'b01000: data_out_w = data_in[3];
                 5'b10000: data_out_w = data_in[4];
-                default:  data_out_w = 'x;
+                default:  data_out_w = '0;
             endcase
         end
         assign data_out = data_out_w;
@@ -76,7 +76,7 @@ module VX_onehot_mux #(
                 6'b001000: data_out_w = data_in[3];
                 6'b010000: data_out_w = data_in[4];
                 6'b100000: data_out_w = data_in[5];
-                default:   data_out_w = 'x;
+                default:   data_out_w = '0;
             endcase
         end
         assign data_out = data_out_w;
@@ -91,7 +91,7 @@ module VX_onehot_mux #(
                 7'b0010000: data_out_w = data_in[4];
                 7'b0100000: data_out_w = data_in[5];
                 7'b1000000: data_out_w = data_in[6];
-                default:    data_out_w = 'x;
+                default:    data_out_w = '0;
             endcase
         end
         assign data_out = data_out_w;
@@ -107,7 +107,7 @@ module VX_onehot_mux #(
                 8'b00100000: data_out_w = data_in[5];
                 8'b01000000: data_out_w = data_in[6];
                 8'b10000000: data_out_w = data_in[7];
-                default:     data_out_w = 'x;
+                default:     data_out_w = '0;
             endcase
         end
         assign data_out = data_out_w;
@@ -136,7 +136,7 @@ module VX_onehot_mux #(
     end else if (MODEL == 3) begin : g_model3
         reg [DATAW-1:0] data_out_w;
         always @(*) begin
-            data_out_w = 'x;
+            data_out_w = '0;
             for (integer i = 0; i < N; ++i) begin
                 if (sel_in[i]) begin
                     data_out_w = data_in[i];

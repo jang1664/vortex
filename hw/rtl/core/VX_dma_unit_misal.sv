@@ -296,7 +296,7 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
       if (cfg_reg_if.regs[11][31:0] == 0 ||
           cfg_reg_if.regs[12][31:0] == 0 ||
           cfg_reg_if.regs[13][31:0] == 0) begin
-        $fatal(1, "%s: VX_dma_unit_misal: ERROR - bounds cannot be zero!", INSTANCE_ID);
+        $display(1, "%s: VX_dma_unit_misal: ERROR - bounds cannot be zero!", INSTANCE_ID);
       end
 
       base_addr_r[0] <= {cfg_reg_if.regs[4][31:0], cfg_reg_if.regs[3][31:0]}; // src

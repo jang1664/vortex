@@ -286,7 +286,9 @@ module VX_afu_ctrl import VX_gpu_pkg::*; #(
 
     // waddr
     always @(posedge clk) begin
-        if (s_axi_aw_fire) begin
+        if (reset) begin
+            waddr <= '0;
+        end else if (s_axi_aw_fire) begin
             waddr <= s_axi_awaddr[ADDR_BITS-1:0];
         end
     end
@@ -381,7 +383,9 @@ module VX_afu_ctrl import VX_gpu_pkg::*; #(
 
     // raddr
     always @(posedge clk) begin
-        if (s_axi_ar_fire) begin
+        if (reset) begin
+            raddr <= '0;
+        end else if (s_axi_ar_fire) begin
             raddr <= s_axi_araddr[ADDR_BITS-1:0];
         end
     end

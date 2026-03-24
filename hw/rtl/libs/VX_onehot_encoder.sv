@@ -87,7 +87,7 @@ module VX_onehot_encoder #(
 
         if (REVERSE != 0) begin : g_msb
             always @(*) begin
-                index_w = 'x;
+                index_w = '0;
                 for (integer i = N-1; i >= 0; --i) begin
                     if (data_in[i]) begin
                         index_w = LN'(N-1-i);
@@ -96,7 +96,7 @@ module VX_onehot_encoder #(
             end
         end else begin : g_lsb
             always @(*) begin
-                index_w = 'x;
+                index_w = '0;
                 for (integer i = 0; i < N; ++i) begin
                     if (data_in[i]) begin
                         index_w = LN'(i);

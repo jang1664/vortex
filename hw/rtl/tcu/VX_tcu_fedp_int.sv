@@ -111,7 +111,7 @@ module VX_tcu_fedp_int #(
             3'd2: mult_sel = PSELW'(sum_u8);
             3'd3: mult_sel = PSELW'($signed(sum_i4));
             3'd4: mult_sel = PSELW'(sum_u4);
-            default: mult_sel = 'x;
+            default: mult_sel = '0;
             endcase
         end
 

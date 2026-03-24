@@ -179,10 +179,11 @@ module VX_scoreboard import VX_gpu_pkg::*; #(
         always @(posedge clk) begin
             if (reset) begin
                 inuse_regs <= '0;
+                operands_ready_r <= 0;
             end else begin
                 inuse_regs <= inuse_regs_n;
+                operands_ready_r <= ~(| regs_busy);
             end
-            operands_ready_r <= ~(| regs_busy);
         end
 
         assign operands_ready[w] = operands_ready_r;

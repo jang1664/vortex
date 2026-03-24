@@ -385,8 +385,8 @@ module VX_fpu_dpi import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
         end
 
         always @(*) begin
-            result_fncp = 'x;
-            fflags_fncp = 'x;
+            result_fncp = '0;
+            fflags_fncp = '0;
             for (integer i = 0; i < NUM_LANES; ++i) begin
                 case (frm)
                 0:  begin result_fncp[i] = is_fcmp ? result_fle[i][`XLEN-1:0] : result_fsgnj[i][`XLEN-1:0];  fflags_fncp[i] = fflags_fle[i]; end

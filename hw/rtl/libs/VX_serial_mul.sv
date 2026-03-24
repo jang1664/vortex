@@ -59,9 +59,13 @@ module VX_serial_mul #(
                 busy_r <= 0;
             end
         end
-        cntr <= cntr - CNTRW'(1);
-        if (strobe) begin
-            cntr <= CNTRW'(X_WIDTH-1);
+        if (reset) begin
+            cntr <= '0;
+        end else begin
+            cntr <= cntr - CNTRW'(1);
+            if (strobe) begin
+                cntr <= CNTRW'(X_WIDTH-1);
+            end
         end
     end
 

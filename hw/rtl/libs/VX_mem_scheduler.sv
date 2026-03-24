@@ -448,11 +448,17 @@ module VX_mem_scheduler #(
         wire mem_rsp_fire_s = mem_rsp_valid_s && mem_rsp_ready_s;
 
         always @(posedge clk) begin
-            if (ibuf_push) begin
-                rsp_rem_mask[ibuf_waddr] <= core_req_mask;
-            end
-            if (mem_rsp_fire_s) begin
-                rsp_rem_mask[ibuf_raddr] <= rsp_rem_mask_n;
+            if (reset) begin
+                for (integer i = 0; i < CORE_QUEUE_SIZE; ++i) begin
+                    rsp_rem_mask[i] <= '0;
+                end
+            end else begin
+                if (ibuf_push) begin
+                    rsp_rem_mask[ibuf_waddr] <= core_req_mask;
+                end
+                if (mem_rsp_fire_s) begin
+                    rsp_rem_mask[ibuf_raddr] <= rsp_rem_mask_n;
+                end
             end
         end
 
@@ -463,11 +469,15 @@ module VX_mem_scheduler #(
             reg [CORE_QUEUE_SIZE-1:0] rsp_sop_r;
 
             always @(posedge clk) begin
-                if (ibuf_push) begin
-                    rsp_sop_r[ibuf_waddr] <= 1;
-                end
-                if (mem_rsp_fire_s) begin
-                    rsp_sop_r[ibuf_raddr] <= 0;
+                if (reset) begin
+                    rsp_sop_r <= '0;
+                end else begin
+                    if (ibuf_push) begin
+                        rsp_sop_r[ibuf_waddr] <= 1;
+                    end
+                    if (mem_rsp_fire_s) begin
+                        rsp_sop_r[ibuf_raddr] <= 0;
+                    end
                 end
             end
 
@@ -646,6 +656,29 @@ module VX_mem_scheduler #(
             `TRACE(2, (", ibuf_idx=%0d, batch_idx=%0d (#%0d)\n", ibuf_raddr, rsp_batch_idx, mem_rsp_dbg_uuid))
         end
     end
+`endif
+
+`ifdef CHIPSCOPE
+`ifdef DBG_SCOPE_MEMSCHED
+    ila_memsched ila_memsched_inst (
+        .clk (clk),
+        // probe0: 12 bits - request/response control flow
+        .probe0 ({
+            core_req_valid,     // [11] core → scheduler request
+            core_req_ready,     // [10] scheduler can accept
+            core_req_rw,        // [9]  read=0, write=1
+            ibuf_push,          // [8]  new read request registered
+            ibuf_full,          // [7]  ibuf full → blocks new reads
+            ibuf_empty,         // [6]  ibuf empty
+            crsp_valid,         // [5]  response to core valid
+            crsp_ready,         // [4]  core accepts response
+            crsp_sop,           // [3]  start of packet
+            crsp_eop,           // [2]  end of packet (rsp_complete)
+            mem_rsp_valid_s,    // [1]  memory response arrived
+            mem_rsp_ready_s     // [0]  scheduler accepts mem response
+        })
+    );
+`endif
 `endif
 
 endmodule

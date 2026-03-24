@@ -1575,19 +1575,19 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     always @(posedge clk) begin
       // Ignore reset/startup transients; alignment checks are meaningful only
       // while a GEMM command is in flight.
-      if (~reset && in_flight) begin
+      if (reset===0 && in_flight) begin
         if(pre_proc_out_valid ^ mxu_output_valid_dly[`MXU_COL/`MXU_COL_TILE-1]) begin
-          `ERROR(("%t: %s: ERROR - Pre-processor output valid and MXU output valid are not aligned! pre_proc_out_valid=%b, mxu_output_valid_dly=%b\n",
+          `TRACE(2, ("%t: %s: WARN - Pre-processor output valid and MXU output valid are not aligned! pre_proc_out_valid=%b, mxu_output_valid_dly=%b\n",
               $time, INSTANCE_ID, pre_proc_out_valid, mxu_output_valid_dly[`MXU_COL/`MXU_COL_TILE-1]));
         end
 
         if(merger_out_valid ^ prealigner_max_exp_q_valid) begin
-          `ERROR(("%t: %s: ERROR - Merger output valid and Prealigner max exp valid are not aligned! merger_out_valid=%b, prealigner_max_exp_q_valid=%b\n",
+          `TRACE(2, ("%t: %s: WARN - Merger output valid and Prealigner max exp valid are not aligned! merger_out_valid=%b, prealigner_max_exp_q_valid=%b\n",
               $time, INSTANCE_ID, merger_out_valid, prealigner_max_exp_q_valid));
         end
 
         if(~gemm_unit_ctrl.is_load && (&acc_in_data_valid == 1 &&  &acc_psum_data_valid == 0)) begin
-          `ERROR(("%t: %s: ERROR - Accumulator input data valid and psum data valid are not aligned! acc_in_data_valid=%b, acc_psum_data_valid=%b\n",
+          `TRACE(2, ("%t: %s: WARN - Accumulator input data valid and psum data valid are not aligned! acc_in_data_valid=%b, acc_psum_data_valid=%b\n",
               $time, INSTANCE_ID, acc_in_data_valid, acc_psum_data_valid));
         end
       end

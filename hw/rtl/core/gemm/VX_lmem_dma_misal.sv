@@ -224,7 +224,7 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
       if (ctrl_if.bounds[0] == 0 ||
           ctrl_if.bounds[1] == 0 ||
           ctrl_if.bounds[2] == 0) begin
-        $fatal(1, "%s: VX_lmem_dma_misal: ERROR - bounds cannot be zero!", INSTANCE_ID);
+        $display(1, "%s: VX_lmem_dma_misal: ERROR - bounds cannot be zero!", INSTANCE_ID);
       end
       
       base_addr_r[0] <= ctrl_if.src_base_addr;

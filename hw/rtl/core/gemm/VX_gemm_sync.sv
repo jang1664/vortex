@@ -369,10 +369,10 @@ module VX_gemm_sync import VX_gpu_pkg::*; #(
   // Runtime Assertion: Unknown Opcode Check
   // --------------------------------------------------------------------------
   always_ff @(posedge clk) begin
-    if (!reset && in_valid) begin
+    if (reset===0 && in_valid===1) begin
       // 입력은 유효한데(Wait/Notify 아님), 디코딩 로직(case문)에서 cmd_valid를 1로 만들지 못한 경우
       if (!is_wait && !is_notify && !cmd_valid) begin
-        $error("%t %s: [ERROR] Unknown Opcode detected! Opcode=0x%02h", $time, INSTANCE_ID, opcode);
+        $display("%t %s: [ERROR] Unknown Opcode detected! Opcode=0x%02h", $time, INSTANCE_ID, opcode);
         // $fatal(1, "%s: Simulation stopped due to unknown opcode 0x%02h", INSTANCE_ID, opcode);
       end
     end

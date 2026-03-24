@@ -190,7 +190,7 @@
 `ifdef XLEN_64
 
 `ifndef STACK_BASE_ADDR
-`define STACK_BASE_ADDR 64'h1fffe0000
+`define STACK_BASE_ADDR 64'h1ffc00000
 `endif
 
 `ifndef STARTUP_ADDR
@@ -242,7 +242,7 @@
 `define IO_END_ADDR     `USER_BASE_ADDR
 
 `ifndef LMEM_LOG_SIZE
-`define LMEM_LOG_SIZE   17
+`define LMEM_LOG_SIZE   22
 `endif
 
 `ifndef LMEM_BASE_ADDR
