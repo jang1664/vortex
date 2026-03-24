@@ -237,7 +237,13 @@ int vx_spawn_threads(uint32_t dimension,
     }
 
     // calculate offsets for group distribution
-    uint32_t group_offset = core_id * total_groups_per_core + MIN(core_id, remaining_groups_per_core);
+    uint32_t remaining_offset = 0;
+    if (core_id >= remaining_groups_per_core)
+      // The remaining groups per core have been distributed (1 by 1) on the
+      // previous cores (whose core_id are < remaining_groups_per_core), so we
+      // now need to offset by the total remaining groups
+      remaining_offset = remaining_groups_per_core;
+    uint32_t group_offset = core_id * total_groups_per_core + remaining_offset;
 
     // set scheduler arguments
     wspawn_groups_args_t wspawn_args = {
