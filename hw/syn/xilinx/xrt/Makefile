@@ -1,6 +1,8 @@
 ROOT_DIR := $(realpath ../../../..)
 include $(ROOT_DIR)/config.mk
 
+export VORTEX_HOME
+
 ifneq ($(findstring Makefile, $(MAKEFILE_LIST)), Makefile)
 help:
 	$(ECHO) "Makefile Usage:"
@@ -17,7 +19,7 @@ PLATFORM ?=
 
 PREFIX ?= build$(XLEN)
 MAX_JOBS ?= 8
-CLOCK_FREQ_HZ ?= 100
+CLOCK_FREQ_HZ ?= 300
 
 SRC_DIR := $(VORTEX_HOME)/hw/syn/xilinx/xrt
 
@@ -41,12 +43,20 @@ XSA := $(call PLATFORM_TO_XSA, $(PLATFORM))
 
 DEV_ARCH := $(shell platforminfo -p $(PLATFORM) | grep 'FPGA Family' | sed 's/.*://' | sed '/ai_engine/d' | sed 's/^[[:space:]]*//')
 CPU_TYPE := $(shell platforminfo -p $(PLATFORM) | grep 'CPU Type' | sed 's/.*://' | sed '/ai_engine/d' | sed 's/^[[:space:]]*//')
+DEVICE_PART ?= $(strip $(shell platforminfo -p $(PLATFORM) | sed -n 's/^Board Part:[[:space:]]*//p'))
+ifeq ($(DEVICE_PART),)
+DEVICE_PART := xcu55c-fsvh2892-2L-e
+endif
 
 BUILD_DIR := $(PREFIX)_$(XSA)_$(TARGET)
 BIN_DIR := $(BUILD_DIR)/bin
 CONFIG_STAMP := $(BUILD_DIR)/.config.stamp
+XRT_BACKUP_DIR := $(BUILD_DIR)/xrt_backup
+XRT_BACKUP_STAMP := $(XRT_BACKUP_DIR)/.stamp
+XRT_BACKUP_FILES := $(sort $(SRC_DIR)/Makefile $(wildcard $(SRC_DIR)/*.mk $(SRC_DIR)/*.ini $(SRC_DIR)/*.tcl $(SRC_DIR)/*.in $(SRC_DIR)/*.sh $(SRC_DIR)/*.py))
+XRT_RUN_DIR := $(abspath $(XRT_BACKUP_DIR))
 
-CONFIG_FINGERPRINT = TARGET=$(TARGET) PLATFORM=$(PLATFORM) CLOCK_FREQ_HZ=$(CLOCK_FREQ_HZ) NUM_CORES=$(NUM_CORES) CONFIGS=$(CONFIGS) DEBUG=$(DEBUG) PERF=$(PERF) PROFILE=$(PROFILE) SCOPE=$(SCOPE)
+CONFIG_FINGERPRINT = TARGET=$(TARGET) PLATFORM=$(PLATFORM) DEVICE_PART=$(DEVICE_PART) CLOCK_FREQ_HZ=$(CLOCK_FREQ_HZ) NUM_CORES=$(NUM_CORES) CONFIGS=$(CONFIGS) DEBUG=$(DEBUG) PERF=$(PERF) PROFILE=$(PROFILE) SCOPE=$(SCOPE)
 
 XO_CONTAINER := $(BIN_DIR)/vortex_afu.xo
 XCLBIN_CONTAINER := $(BIN_DIR)/vortex_afu.xclbin
@@ -70,7 +80,15 @@ DBG_SCOPE_FLAGS += -DDBG_SCOPE_AFU
 DBG_SCOPE_FLAGS += -DDBG_SCOPE_ISSUE
 DBG_SCOPE_FLAGS += -DDBG_SCOPE_FETCH
 DBG_SCOPE_FLAGS += -DDBG_SCOPE_LSU
+DBG_SCOPE_FLAGS += -DDBG_SCOPE_COMMIT
+DBG_SCOPE_FLAGS += -DDBG_SCOPE_GATHER
+DBG_SCOPE_FLAGS += -DDBG_SCOPE_MEMSCHED
 DBG_SCOPE_FLAGS += -DDBG_SCOPE_GEMM
+DBG_SCOPE_FLAGS += -DDBG_SCOPE_SCHED
+DBG_SCOPE_FLAGS += -DDBG_SCOPE_IBUFFER
+DBG_SCOPE_FLAGS += -DDBG_SCOPE_SCOREBOARD
+DBG_SCOPE_FLAGS += -DDBG_SCOPE_DISPATCH
+DBG_SCOPE_FLAGS += -DDBG_SCOPE_FPU
 
 ifdef NUM_CORES
 # cluster configuration
@@ -120,49 +138,50 @@ endif
 # Kernel compiler global settings
 VPP_FLAGS += --link --target $(TARGET) --platform $(PLATFORM) --save-temps --no_ip_cache --user_ip_repo_paths /home/data/xilinx_ip/clk_metadata_adapter
 VPP_FLAGS += --vivado.synth.jobs $(JOBS) --vivado.impl.jobs $(JOBS)
-# VPP_FLAGS += --clock.defaultFreqHz $(CLOCK_FREQ_HZ)
-# VPP_FLAGS += --kernel_frequency "0:$(CLOCK_FREQ_HZ)|1:$(CLOCK_FREQ_HZ)"
-VPP_FLAGS += --kernel_frequency "0:$(CLOCK_FREQ_HZ)"
+VPP_FLAGS += --report_level 2
 
-
-# register compilation hooks
-VPP_FLAGS += --xp "vivado_prop:run.impl_1.STEPS.OPT_DESIGN.TCL.PRE=${SRC_DIR}/pre_opt_hook.tcl"
-
-# load platform settings
+# load platform settings (sets CONFIGS and SP_FLAGS)
 include $(SRC_DIR)/platforms.mk
 
-VPP_FLAGS += --report_level 2
-VPP_FLAGS += --config $(SRC_DIR)/vitis.ini
-# VPP_FLAGS += --config $(USER_VITIS_CONFIG)
+# Generated vitis.ini replaces most --xp, --debug.*, --advanced.*, --profile_kernel flags.
+# The script is invoked at build time; see the $(VITIS_INI) recipe below.
+VITIS_INI := $(XRT_BACKUP_DIR)/vitis.gen.ini
+VPP_FLAGS += --config $(abspath $(VITIS_INI))
+
+# Arguments for gen_vitis_ini.py
+VITIS_INI_ARGS  = -o $(abspath $(VITIS_INI))
+VITIS_INI_ARGS += --target $(TARGET)
+VITIS_INI_ARGS += --hook-dir $(XRT_RUN_DIR)
+VITIS_INI_ARGS += --clock-freq $(CLOCK_FREQ_HZ)
+ifdef DEBUG
+VITIS_INI_ARGS += --debug $(DEBUG)
+endif
+ifdef PROFILE
+VITIS_INI_ARGS += --profile
+endif
+# Forward per-platform --sp flags
+VITIS_INI_ARGS += $(foreach sp,$(SP_FLAGS),--sp $(sp))
 
 # Enable perf counters
 ifdef PERF
 	CFLAGS += -DPERF_ENABLE
 endif
 
-# Generates profile summary report
-ifdef PROFILE
-	VPP_FLAGS += --profile_kernel data:all:all:all
-	VPP_FLAGS += --profile_kernel stall:all:all:all
-endif
-
 ifeq ($(TARGET), hw_emu)
 	CFLAGS += -DSIMULATION -DXSIM
-	# XSIM does not support "default disable iff" in some flows; gate those SVA blocks.
-	VPP_FLAGS += --vivado.prop "fileset.sim_1.xsim.compile.xvlog.more_options={-d XSIM}"
 endif
 
-# Debugging
+# Debugging — only optimization level and CFLAGS remain here
 ifdef DEBUG
-	VPP_FLAGS += -g --optimize 0 --debug.protocol all
+# 	VPP_FLAGS += -g --optimize quick
+	VPP_FLAGS += -g --optimize 0
 	ifeq ($(TARGET), hw)
-		VPP_FLAGS += --debug.chipscope vortex_afu_1
 		CFLAGS += -DNDEBUG -DCHIPSCOPE $(DBG_SCOPE_FLAGS)
 	else
-		VPP_FLAGS += --vivado.prop fileset.sim_1.xsim.elaborate.debug_level=all
 		CFLAGS += -DDEBUG_LEVEL=$(DEBUG) $(DBG_TRACE_FLAGS)
 	endif
 else
+# 	VPP_FLAGS += -g --optimize quick
 	VPP_FLAGS += --optimize 3
 	CFLAGS += -DNDEBUG
 endif
@@ -187,13 +206,18 @@ ifneq ($(TARGET),$(findstring $(TARGET), hw hw_emu))
 	$(warning WARNING:Application supports only hw hw_emu TARGET. Please use the target for running the application)
 endif
 
-.PHONY: all clean gen-sources gen-ast emconfig check-devices
-
-# $(USER_VITIS_CONFIG): $(SRC_DIR)/post_dbg_profile_overlay.tcl
-# 	mkdir -p $(BUILD_DIR); \
-# 	printf "[advanced]\nparam=compiler.userPostDebugProfileOverlayTcl=%s\n" "$(SRC_DIR)/post_dbg_profile_overlay.tcl" > $@
+.PHONY: all clean gen-sources gen-ast emconfig check-devices backup-xrt
+.DEFAULT_GOAL := all
 
 all: check-devices emconfig $(XCLBIN_CONTAINER) report
+
+backup-xrt: $(XRT_BACKUP_STAMP)
+
+$(XRT_BACKUP_STAMP): $(XRT_BACKUP_FILES) $(CONFIG_STAMP)
+	mkdir -p $(XRT_BACKUP_DIR); \
+	for file in $(XRT_BACKUP_FILES); do cp -f $$file $(XRT_BACKUP_DIR)/; done; \
+	printf "%s\n" "$(CONFIG_FINGERPRINT)" > $(XRT_BACKUP_DIR)/config_fingerprint.txt; \
+	touch $@
 
 gen-sources: $(BUILD_DIR)/sources.txt
 $(BUILD_DIR)/sources.txt: $(SRC_DIR)/Makefile $(SRC_DIR)/platforms.mk $(CONFIG_STAMP)
@@ -214,11 +238,14 @@ $(BIN_DIR)/scope.json: $(BUILD_DIR)/vortex.xml
 	mkdir -p $(BUILD_DIR); cd $(BUILD_DIR); $(SCRIPT_DIR)/scope.py vortex.xml -o bin/scope.json
 
 gen-xo: $(XO_CONTAINER)
-$(XO_CONTAINER): $(BUILD_DIR)/sources.txt
-	mkdir -p $(BUILD_DIR); cd $(BUILD_DIR);	TOOL_DIR=$(SCRIPT_DIR) $(VIVADO) -mode batch -source $(SRC_DIR)/gen_xo.tcl -tclargs ../$(XO_CONTAINER) vortex_afu sources.txt ../$(BUILD_DIR)
+$(XO_CONTAINER): $(BUILD_DIR)/sources.txt $(XRT_BACKUP_STAMP)
+	mkdir -p $(BUILD_DIR); cd $(BUILD_DIR);	TOOL_DIR=$(SCRIPT_DIR) $(VIVADO) -mode batch -source $(XRT_RUN_DIR)/gen_xo.tcl -tclargs ../$(XO_CONTAINER) vortex_afu sources.txt ../$(BUILD_DIR) $(DEVICE_PART)
+
+$(VITIS_INI): $(SRC_DIR)/gen_vitis_ini.py $(XRT_BACKUP_STAMP)
+	python3 $(SRC_DIR)/gen_vitis_ini.py $(VITIS_INI_ARGS)
 
 gen-bin: $(XCLBIN_CONTAINER)
-$(XCLBIN_CONTAINER): $(XO_CONTAINER) $(SCOPE_JSON)
+$(XCLBIN_CONTAINER): $(XO_CONTAINER) $(SCOPE_JSON) $(VITIS_INI)
 	mkdir -p $(BIN_DIR); cd $(BUILD_DIR); TOOL_DIR=$(SCRIPT_DIR) $(VPP) $(VPP_FLAGS) -o ../$(XCLBIN_CONTAINER) ../$(XO_CONTAINER)
 
 emconfig: $(BIN_DIR)/emconfig.json
@@ -227,12 +254,15 @@ $(BIN_DIR)/emconfig.json:
 
 report: $(XCLBIN_CONTAINER)
 ifeq ($(TARGET), hw)
-	cp $(BUILD_DIR)/_x/logs/link/vivado.log $(BUILD_DIR)/bin
-	cp $(BUILD_DIR)/_x/logs/link/syn/ulp_vortex_afu_1_0_synth_1_runme.log $(BUILD_DIR)/bin
-	cp $(BUILD_DIR)/_x/reports/link/syn/ulp_vortex_afu_1_0_synth_1_ulp_vortex_afu_1_0_utilization_synth.rpt $(BUILD_DIR)/bin
-	cp $(BUILD_DIR)/_x/reports/link/imp/impl_1_hw_bb_locked_utilization_placed.rpt $(BUILD_DIR)/bin
-	cp $(BUILD_DIR)/_x/reports/link/imp/impl_1_hw_bb_locked_timing_summary_routed.rpt $(BUILD_DIR)/bin
-	cp $(BUILD_DIR)/_x/link/vivado/vpl/prj/prj.runs/impl_1/hier_utilization.rpt $(BUILD_DIR)/bin
+	-cp $(BUILD_DIR)/_x/logs/link/vivado.log $(BUILD_DIR)/bin
+	-cp $(BUILD_DIR)/_x/logs/link/syn/ulp_vortex_afu_1_0_synth_1_runme.log $(BUILD_DIR)/bin
+	-cp $(BUILD_DIR)/_x/reports/link/syn/ulp_vortex_afu_1_0_synth_1_ulp_vortex_afu_1_0_utilization_synth.rpt $(BUILD_DIR)/bin
+	-cp $(BUILD_DIR)/_x/reports/link/imp/impl_1_hw_bb_locked_utilization_placed.rpt $(BUILD_DIR)/bin
+	-cp $(BUILD_DIR)/_x/reports/link/imp/impl_1_hw_bb_locked_timing_summary_routed.rpt $(BUILD_DIR)/bin
+	-cp $(BUILD_DIR)/_x/reports/link/imp/impl_1_kernel_util_synthed.rpt $(BUILD_DIR)/bin
+	-cp $(BUILD_DIR)/_x/reports/link/imp/impl_1_kernel_util_routed.rpt $(BUILD_DIR)/bin
+	-cp $(BUILD_DIR)/_x/reports/link/imp/impl_1_full_util_routed.rpt $(BUILD_DIR)/bin
+	-cp $(BUILD_DIR)/_x/link/vivado/vpl/prj/prj.runs/impl_1/hier_utilization.rpt $(BUILD_DIR)/bin
 endif
 
 chipscope:

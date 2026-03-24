@@ -11,9 +11,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-if { $::argc != 4 } {
-    puts "ERROR: Program \"$::argv0\" requires 4 arguments!\n"
-    puts "Usage: $::argv0 <xoname> <krnl_name> <vcs_file> <build_dir>\n"
+if { $::argc < 4 || $::argc > 5 } {
+    puts "ERROR: Program \"$::argv0\" requires 4 or 5 arguments!\n"
+    puts "Usage: $::argv0 <xoname> <krnl_name> <vcs_file> <build_dir> [<device_part>]\n"
     exit
 }
 
@@ -21,6 +21,10 @@ set xoname    [lindex $::argv 0]
 set krnl_name [lindex $::argv 1]
 set vcs_file  [lindex $::argv 2]
 set build_dir [lindex $::argv 3]
+set device_part ""
+if { $::argc == 5 } {
+    set device_part [lindex $::argv 4]
+}
 
 set tool_dir $::env(TOOL_DIR)
 set script_dir [ file dirname [ file normalize [ info script ] ] ]

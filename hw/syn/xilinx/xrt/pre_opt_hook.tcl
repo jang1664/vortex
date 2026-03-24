@@ -1,5 +1,5 @@
-set tool_dir $::env(TOOL_DIR)
-source ${tool_dir}/xilinx_async_bram_patch.tcl
+# Pre opt_design hook
+# Runs before OPT_DESIGN — set optimization constraints
 
 # Add extra setup margin to kernel clocks so Vivado optimizes harder.
 # Without this, Vivado stops optimizing at WNS ~0 and the design runs
