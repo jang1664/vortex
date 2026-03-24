@@ -151,7 +151,7 @@ build_driver() {
         # Build App runtime with xrtsim_vcs target
         cmd_opts=$(add_option "$cmd_opts" "TARGET=xrtsim_vcs make -C $DRIVER_PATH")
     else
-        cmd_opts=$(add_option "$cmd_opts" "make -C $DRIVER_PATH > /dev/null")
+        cmd_opts=$(add_option "$cmd_opts" "make -C $DRIVER_PATH")
     fi
 
     echo "Running: $cmd_opts"
