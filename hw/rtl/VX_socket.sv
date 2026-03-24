@@ -198,7 +198,8 @@ module VX_socket import VX_gpu_pkg::*; #(
                 .DATA_SIZE  (`L1_LINE_SIZE),
                 .TAG_WIDTH  (L1_MEM_TAG_WIDTH),
                 .TAG_SEL_IDX(0),
-                .ARBITER    ("P"), // prioritize the icache
+                // .ARBITER    ("P"), // prioritize the icache
+                .ARBITER    ("R"), // prioritize the icache
                 .REQ_OUT_BUF(3),
                 .RSP_OUT_BUF(3)
             ) mem_arb (

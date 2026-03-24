@@ -22,6 +22,7 @@ TEST_DIRS := \
 	io_addr \
 	madmax \
 	mstress \
+	o3stress \
 	printf \
 	relu \
 	rmsnorm \

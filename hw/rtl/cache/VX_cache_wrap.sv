@@ -109,6 +109,11 @@ module VX_cache_wrap import VX_gpu_pkg::*; #(
         .TAG_WIDTH (MEM_TAG_WIDTH)
     ) mem_bus_tmp_if[MEM_PORTS]();
 
+    VX_mem_bus_if #(
+        .DATA_SIZE (LINE_SIZE),
+        .TAG_WIDTH (MEM_TAG_WIDTH)
+    ) mem_bus_stall_if[MEM_PORTS]();
+
     wire [NUM_REQS-1:0] core_in_req_pending;
     wire [NUM_REQS-1:0] core_in_rsp_pending;
     wire [NUM_REQS-1:0] core_cache_req_pending;
@@ -185,11 +190,20 @@ module VX_cache_wrap import VX_gpu_pkg::*; #(
         end
     end
 
+    VX_mem_bus_stall #(
+        .NUM_PORTS (MEM_PORTS)
+    ) mem_bus_stall (
+        .clk       (clk),
+        .reset     (reset),
+        .bus_in_if (mem_bus_tmp_if),
+        .bus_out_if(mem_bus_stall_if)
+    );
+
     for (genvar i = 0; i < MEM_PORTS; ++i) begin : g_mem_bus_if
         if (WRITE_ENABLE) begin : g_we
-            `ASSIGN_VX_MEM_BUS_IF (mem_bus_if[i], mem_bus_tmp_if[i]);
+            `ASSIGN_VX_MEM_BUS_IF (mem_bus_if[i], mem_bus_stall_if[i]);
         end else begin : g_ro
-            `ASSIGN_VX_MEM_BUS_RO_IF (mem_bus_if[i], mem_bus_tmp_if[i]);
+            `ASSIGN_VX_MEM_BUS_RO_IF (mem_bus_if[i], mem_bus_stall_if[i]);
         end
     end
 

@@ -1,0 +1,5 @@
+main.o: \
+ /home/jaeyongjang/project.local/vortex/tests/regression/o3stress/main.cpp \
+ /home/jaeyongjang/project.local/vortex/runtime/include/vortex.h \
+ /home/jaeyongjang/project.local/vortex/hw/VX_config.h \
+ /home/jaeyongjang/project.local/vortex/tests/regression/o3stress/common.h

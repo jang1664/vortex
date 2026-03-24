@@ -30,6 +30,7 @@
 #include <future>
 #include <list>
 #include <queue>
+#include <array>
 #include <random>
 #include <cstdlib>
 #include <unordered_map>
@@ -597,10 +598,8 @@ private:
         *m_axi_mem_[b].rvalid = 0;
       }
       if (!*m_axi_mem_[b].rvalid && !rsp_stalling) {
-        if (!pending_mem_reqs_[b].empty()
-        && (*pending_mem_reqs_[b].begin())->ready
-        && !(*pending_mem_reqs_[b].begin())->write) {
-          auto mem_rsp_it = pending_mem_reqs_[b].begin();
+        auto mem_rsp_it = this->find_ready_mem_rsp(b, false);
+        if (mem_rsp_it != pending_mem_reqs_[b].end()) {
           auto mem_rsp = *mem_rsp_it;
           *m_axi_mem_[b].rvalid = 1;
           *m_axi_mem_[b].rid    = mem_rsp->tag;
@@ -617,10 +616,8 @@ private:
         *m_axi_mem_[b].bvalid = 0;
       }
       if (!*m_axi_mem_[b].bvalid && !rsp_stalling) {
-        if (!pending_mem_reqs_[b].empty()
-        && (*pending_mem_reqs_[b].begin())->ready
-        && (*pending_mem_reqs_[b].begin())->write) {
-          auto mem_rsp_it = pending_mem_reqs_[b].begin();
+        auto mem_rsp_it = this->find_ready_mem_rsp(b, true);
+        if (mem_rsp_it != pending_mem_reqs_[b].end()) {
           auto mem_rsp = *mem_rsp_it;
           *m_axi_mem_[b].bvalid = 1;
           *m_axi_mem_[b].bid    = mem_rsp->tag;
@@ -718,6 +715,34 @@ private:
     bool ready;
   } mem_req_t;
 
+  using mem_req_list_t = std::list<mem_req_t*>;
+  using mem_req_iter_t = mem_req_list_t::iterator;
+
+  mem_req_iter_t find_ready_mem_rsp(int bank, bool is_write) {
+    auto& pending_reqs = pending_mem_reqs_[bank];
+    for (auto it = pending_reqs.begin(); it != pending_reqs.end(); ++it) {
+      auto req = *it;
+      if (!req->ready || req->write != is_write) {
+        continue;
+      }
+
+      // AXI allows out-of-order completion across IDs, but responses for the
+      // same ID must remain ordered within each channel.
+      bool blocked_by_same_id = false;
+      for (auto prev = pending_reqs.begin(); prev != it; ++prev) {
+        auto older_req = *prev;
+        if (older_req->write == is_write && older_req->tag == req->tag) {
+          blocked_by_same_id = true;
+          break;
+        }
+      }
+      if (!blocked_by_same_id) {
+        return it;
+      }
+    }
+    return pending_reqs.end();
+  }
+
   typedef struct {
     CData* awvalid;
     CData* awready;
@@ -756,7 +781,7 @@ private:
 
   std::mutex mutex_;
 
-  std::list<mem_req_t*> pending_mem_reqs_[XRTSIM_AXI_MEM_NUM_BANKS];
+  mem_req_list_t pending_mem_reqs_[XRTSIM_AXI_MEM_NUM_BANKS];
 
   m_axi_mem_t m_axi_mem_[XRTSIM_AXI_MEM_NUM_BANKS];
 

@@ -28,6 +28,13 @@
 	output wire [C_M_AXI_MEM_ADDR_WIDTH-1:0] 	m_axi_mem_``i``_awaddr, \
 	output wire [C_M_AXI_MEM_ID_WIDTH-1:0]   	m_axi_mem_``i``_awid, \
 	output wire [7:0]                           m_axi_mem_``i``_awlen, \
+	output wire [2:0]                           m_axi_mem_``i``_awsize, \
+	output wire [1:0]                           m_axi_mem_``i``_awburst, \
+	output wire [1:0]                           m_axi_mem_``i``_awlock, \
+	output wire [3:0]                           m_axi_mem_``i``_awcache, \
+	output wire [2:0]                           m_axi_mem_``i``_awprot, \
+	output wire [3:0]                           m_axi_mem_``i``_awqos, \
+	output wire [3:0]                           m_axi_mem_``i``_awregion, \
 	output wire                                 m_axi_mem_``i``_wvalid, \
 	input  wire                                 m_axi_mem_``i``_wready, \
 	output wire [C_M_AXI_MEM_DATA_WIDTH-1:0]   	m_axi_mem_``i``_wdata, \
@@ -38,6 +45,13 @@
 	output wire [C_M_AXI_MEM_ADDR_WIDTH-1:0]   	m_axi_mem_``i``_araddr, \
 	output wire [C_M_AXI_MEM_ID_WIDTH-1:0]     	m_axi_mem_``i``_arid, \
 	output wire [7:0]                           m_axi_mem_``i``_arlen, \
+	output wire [2:0]                           m_axi_mem_``i``_arsize, \
+	output wire [1:0]                           m_axi_mem_``i``_arburst, \
+	output wire [1:0]                           m_axi_mem_``i``_arlock, \
+	output wire [3:0]                           m_axi_mem_``i``_arcache, \
+	output wire [2:0]                           m_axi_mem_``i``_arprot, \
+	output wire [3:0]                           m_axi_mem_``i``_arqos, \
+	output wire [3:0]                           m_axi_mem_``i``_arregion, \
 	input  wire                                 m_axi_mem_``i``_rvalid, \
 	output wire                                 m_axi_mem_``i``_rready, \
 	input  wire [C_M_AXI_MEM_DATA_WIDTH-1:0] 	m_axi_mem_``i``_rdata, \
@@ -55,6 +69,13 @@
     .m_axi_mem_``i``_awaddr(m_axi_mem_``i``_awaddr), \
     .m_axi_mem_``i``_awid(m_axi_mem_``i``_awid), \
     .m_axi_mem_``i``_awlen(m_axi_mem_``i``_awlen), \
+    .m_axi_mem_``i``_awsize(m_axi_mem_``i``_awsize), \
+    .m_axi_mem_``i``_awburst(m_axi_mem_``i``_awburst), \
+    .m_axi_mem_``i``_awlock(m_axi_mem_``i``_awlock), \
+    .m_axi_mem_``i``_awcache(m_axi_mem_``i``_awcache), \
+    .m_axi_mem_``i``_awprot(m_axi_mem_``i``_awprot), \
+    .m_axi_mem_``i``_awqos(m_axi_mem_``i``_awqos), \
+    .m_axi_mem_``i``_awregion(m_axi_mem_``i``_awregion), \
     .m_axi_mem_``i``_wvalid(m_axi_mem_``i``_wvalid), \
     .m_axi_mem_``i``_wready(m_axi_mem_``i``_wready), \
     .m_axi_mem_``i``_wdata(m_axi_mem_``i``_wdata), \
@@ -65,6 +86,13 @@
     .m_axi_mem_``i``_araddr(m_axi_mem_``i``_araddr), \
     .m_axi_mem_``i``_arid(m_axi_mem_``i``_arid), \
     .m_axi_mem_``i``_arlen(m_axi_mem_``i``_arlen), \
+    .m_axi_mem_``i``_arsize(m_axi_mem_``i``_arsize), \
+    .m_axi_mem_``i``_arburst(m_axi_mem_``i``_arburst), \
+    .m_axi_mem_``i``_arlock(m_axi_mem_``i``_arlock), \
+    .m_axi_mem_``i``_arcache(m_axi_mem_``i``_arcache), \
+    .m_axi_mem_``i``_arprot(m_axi_mem_``i``_arprot), \
+    .m_axi_mem_``i``_arqos(m_axi_mem_``i``_arqos), \
+    .m_axi_mem_``i``_arregion(m_axi_mem_``i``_arregion), \
     .m_axi_mem_``i``_rvalid(m_axi_mem_``i``_rvalid), \
     .m_axi_mem_``i``_rready(m_axi_mem_``i``_rready), \
     .m_axi_mem_``i``_rdata(m_axi_mem_``i``_rdata), \
@@ -82,6 +110,13 @@
 	assign m_axi_mem_``i``_awaddr = m_axi_mem_awaddr_a[i]; \
 	assign m_axi_mem_``i``_awid = m_axi_mem_awid_a[i]; \
 	assign m_axi_mem_``i``_awlen = m_axi_mem_awlen_a[i]; \
+	assign m_axi_mem_``i``_awsize = m_axi_mem_awsize_a[i]; \
+	assign m_axi_mem_``i``_awburst = m_axi_mem_awburst_a[i]; \
+	assign m_axi_mem_``i``_awlock = m_axi_mem_awlock_a[i]; \
+	assign m_axi_mem_``i``_awcache = m_axi_mem_awcache_a[i]; \
+	assign m_axi_mem_``i``_awprot = m_axi_mem_awprot_a[i]; \
+	assign m_axi_mem_``i``_awqos = m_axi_mem_awqos_a[i]; \
+	assign m_axi_mem_``i``_awregion = m_axi_mem_awregion_a[i]; \
 	assign m_axi_mem_``i``_wvalid = m_axi_mem_wvalid_a[i]; \
 	assign m_axi_mem_wready_a[i] = m_axi_mem_``i``_wready; \
 	assign m_axi_mem_``i``_wdata = m_axi_mem_wdata_a[i]; \
@@ -92,6 +127,13 @@
 	assign m_axi_mem_``i``_araddr = m_axi_mem_araddr_a[i]; \
 	assign m_axi_mem_``i``_arid = m_axi_mem_arid_a[i]; \
 	assign m_axi_mem_``i``_arlen = m_axi_mem_arlen_a[i]; \
+	assign m_axi_mem_``i``_arsize = m_axi_mem_arsize_a[i]; \
+	assign m_axi_mem_``i``_arburst = m_axi_mem_arburst_a[i]; \
+	assign m_axi_mem_``i``_arlock = m_axi_mem_arlock_a[i]; \
+	assign m_axi_mem_``i``_arcache = m_axi_mem_arcache_a[i]; \
+	assign m_axi_mem_``i``_arprot = m_axi_mem_arprot_a[i]; \
+	assign m_axi_mem_``i``_arqos = m_axi_mem_arqos_a[i]; \
+	assign m_axi_mem_``i``_arregion = m_axi_mem_arregion_a[i]; \
 	assign m_axi_mem_rvalid_a[i] = m_axi_mem_``i``_rvalid; \
 	assign m_axi_mem_``i``_rready = m_axi_mem_rready_a[i]; \
 	assign m_axi_mem_rdata_a[i] = m_axi_mem_``i``_rdata; \

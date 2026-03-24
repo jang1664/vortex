@@ -135,7 +135,7 @@ endif
 
 
 # Kernel compiler global settings
-VPP_FLAGS += --link --target $(TARGET) --platform $(PLATFORM) --save-temps --no_ip_cache
+VPP_FLAGS += --link --target $(TARGET) --platform $(PLATFORM) --save-temps --no_ip_cache --user_ip_repo_paths /home/data/xilinx_ip/clk_metadata_adapter
 VPP_FLAGS += --vivado.synth.jobs $(JOBS) --vivado.impl.jobs $(JOBS)
 VPP_FLAGS += --report_level 2
 

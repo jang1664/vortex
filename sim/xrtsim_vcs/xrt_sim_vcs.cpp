@@ -27,6 +27,7 @@
 #include <future>
 #include <list>
 #include <queue>
+#include <array>
 #include <mutex>
 #include <cstdlib>
 #include <cstring>
@@ -228,6 +229,9 @@ private:
     bool ready;
   } mem_req_t;
 
+  using mem_req_list_t = std::list<mem_req_t*>;
+  using mem_req_iter_t = mem_req_list_t::iterator;
+
   // AW state for two-phase write handling (per bank)
   typedef struct {
     uint64_t addr;
@@ -265,6 +269,30 @@ private:
     fprintf(stderr, "[vcs-sim] connect timeout after %d seconds\n", timeout_sec);
     close(fd);
     return -1;
+  }
+
+  mem_req_iter_t find_ready_mem_rsp(int bank) {
+    auto& pending_reqs = pending_mem_reqs_[bank];
+    for (auto it = pending_reqs.begin(); it != pending_reqs.end(); ++it) {
+      auto req = *it;
+      if (!req->ready) {
+        continue;
+      }
+
+      // AXI allows out-of-order completion across IDs, but responses with the
+      // same ID must remain ordered.
+      bool blocked_by_same_id = false;
+      for (auto prev = pending_reqs.begin(); prev != it; ++prev) {
+        if ((*prev)->tag == req->tag) {
+          blocked_by_same_id = true;
+          break;
+        }
+      }
+      if (!blocked_by_same_id) {
+        return it;
+      }
+    }
+    return pending_reqs.end();
   }
 
   void process_axi_events() {
@@ -361,12 +389,13 @@ private:
 
     // 3. Send ready responses back to VCS via mem_sock
     for (int b = 0; b < PLATFORM_MEMORY_NUM_BANKS; ++b) {
-      auto it = pending_mem_reqs_[b].begin();
-      while (it != pending_mem_reqs_[b].end()) {
-        auto mem_req = *it;
-        if (!mem_req->ready) {
-          break; // preserve ordering: stop at first not-ready
+      while (true) {
+        auto it = find_ready_mem_rsp(b);
+        if (it == pending_mem_reqs_[b].end()) {
+          break;
         }
+
+        auto mem_req = *it;
 
         VcsPacket rsp;
         memset(&rsp, 0, sizeof(rsp));
@@ -418,7 +447,7 @@ private:
   int mem_fd_;
 
   MemoryAllocator* mem_alloc_[PLATFORM_MEMORY_NUM_BANKS];
-  std::list<mem_req_t*> pending_mem_reqs_[PLATFORM_MEMORY_NUM_BANKS];
+  mem_req_list_t pending_mem_reqs_[PLATFORM_MEMORY_NUM_BANKS];
   std::queue<mem_req_t*> dram_queues_[PLATFORM_MEMORY_NUM_BANKS];
   aw_state_t aw_state_[PLATFORM_MEMORY_NUM_BANKS];
 };

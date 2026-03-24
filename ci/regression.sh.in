@@ -306,6 +306,8 @@ config2()
     # test memory coalescing
     CONFIGS="-DMEM_BLOCK_SIZE=16" ./ci/blackbox.sh --driver=rtlsim --app=mstress --threads=8
     CONFIGS="-DMEM_BLOCK_SIZE=16" ./ci/blackbox.sh --driver=simx --app=mstress --threads=8
+    CONFIGS="-DMEM_BLOCK_SIZE=16" ./ci/blackbox.sh --driver=rtlsim --app=o3stress --threads=8
+    CONFIGS="-DMEM_BLOCK_SIZE=16" ./ci/blackbox.sh --driver=simx --app=o3stress --threads=8
 
     # test single-bank memory
     if [ "$XLEN" == "64" ]; then
