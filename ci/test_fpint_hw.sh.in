@@ -1,8 +1,21 @@
 #!/bin/bash
 set -euo pipefail
 
-CONFIGS="-DFPU_FPNEW -DDBG_TRACE_GEMM_FSM \
-  -DNUM_CORES=1 -DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34"
+CONFIGS=""
+CONFIGS+=" -DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MERGED_MEMORY_INTERFACE"
+CONFIGS+=" -DFPU_FPNEW"
+CONFIGS+=" -DDCACHE_DISABLE -DL2_ENABLE -DNUM_THREADS=8"
+CONFIGS+=" -DLMEM_LOG_SIZE=22 -DSTACK_BASE_ADDR=8585740288"
+CONFIGS+=" -DDBG_TRACE_PIPELINE"
+CONFIGS+=" -DDBG_TRACE_MEM"
+CONFIGS+=" -DDBG_TRACE_CACHE"
+CONFIGS+=" -DDBG_TRACE_AFU"
+CONFIGS+=" -DDBG_TRACE_SCOPE"
+CONFIGS+=" -DDBG_TRACE_GBAR"
+CONFIGS+=" -DDBG_TRACE_TCU"
+CONFIGS+=" -DDBG_TRACE_GEMM"
+CONFIGS+=" -DAFU_DONE_WAIT_CACHE_DRAIN"
+CONFIGS+=" -DNUM_CORES=1"
 
 # ------------------------------------------------------------------------
 # - Add DBG flag if you want
@@ -15,7 +28,6 @@ CONFIGS="-DFPU_FPNEW -DDBG_TRACE_GEMM_FSM \
 # CONFIGS+=" -DDBG_TRACE_GBAR"
 # CONFIGS+=" -DDBG_TRACE_TCU"
 # CONFIGS+=" -DDBG_TRACE_GEMM"
-# CONFIGS+=" -DNUM_CORES=2"
 # CONFIGS+=" -DVCD_OUTPUT"
 
 export VERILATOR_SEED=$((RANDOM + 1))
@@ -38,9 +50,16 @@ export CONFIGS
 # ------------------------------------------------------------------------
 # - rtl
 # ------------------------------------------------------------------------
-DRIVER=rtlsim \
-DEBUG_LEVEL=${DEBUG_LEVEL} \
-bash tests/regression/fpint_gemm_ffn_hw/test.sh "$@"
+# set +e
+# DRIVER=rtlsim \
+# DEBUG_LEVEL=${DEBUG_LEVEL} \
+# bash tests/regression/fpint_gemm_ffn_hw/test.sh "$@"
+# rc=$?
+# set -e
+# if [ $rc -ne 0 ]; then
+#   echo "ERROR: rtlsim test exited with code $rc (signal=$(( rc > 128 ? rc - 128 : 0 )))"
+#   exit $rc
+# fi
 
 # ------------------------------------------------------------------------
 # - xrt + rtl
@@ -52,12 +71,12 @@ bash tests/regression/fpint_gemm_ffn_hw/test.sh "$@"
 # ------------------------------------------------------------------------
 # - xrt + hw_emul
 # ------------------------------------------------------------------------
-# FPGA_BIN_DIR=/home/jaeyongjang/project.local/vortex/build/hw/syn/xilinx/xrt/hw_emu/bin \
-# TARGET=hw_emu \
-# PLATFORM=xilinx_u55c_gen3x16_xdma_3_202210_1 \
-# DRIVER=xrt \
-# DEBUG_LEVEL=${DEBUG_LEVEL} \
-# bash tests/regression/fpint_gemm_ffn_hw/test.sh "$@"
+FPGA_BIN_DIR=/home/jaeyongjang/project.local/vortex/build/hw/syn/xilinx/xrt/hw_emu/bin \
+TARGET=hw_emu \
+PLATFORM=xilinx_u55c_gen3x16_xdma_3_202210_1 \
+DRIVER=xrt \
+DEBUG_LEVEL=${DEBUG_LEVEL} \
+bash tests/regression/fpint_gemm_ffn_hw/test.sh "$@"
 
 # ------------------------------------------------------------------------
 # - FPGA
