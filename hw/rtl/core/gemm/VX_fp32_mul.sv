@@ -15,7 +15,10 @@
 
 `ifndef FPU_FPNEW
 `ifdef SIMULATION
+`ifndef XSIM
+`define USE_DPI
 `include "float_dpi.vh"
+`endif
 `endif
 `endif
 
@@ -175,22 +178,7 @@ module VX_fp32_mul #(
         .ready_out (result_ready)
     );
 
-`ifdef DBG_TRACE_GEMM
-    always @(posedge clk) begin
-        if (!reset) begin
-            if (a_valid && a_ready && b_valid && b_ready) begin
-                `TRACE(2, ("%m : [%0t] | FP32_MUL_INPUT_HS | {a_data=0x%h, b_data=0x%h}\n", $time, a_data, b_data))
-            end
-            if (result_valid && result_ready) begin
-                `TRACE(2, ("%m : [%0t] | FP32_MUL_OUTPUT_HS | {result_data=0x%h}\n", $time, result_data))
-            end
-        end
-    end
-`endif
-
-`else
-
-`ifdef SIMULATION
+`elsif USE_DPI
 
     // DPI path: stream fence + combinational logic + elastic buffer
 
@@ -258,20 +246,7 @@ module VX_fp32_mul #(
         .ready_out (result_ready)
     );
 
-`ifdef DBG_TRACE_GEMM
-    always @(posedge clk) begin
-        if (!reset) begin
-          if(a_valid && a_ready && b_valid && b_ready) begin
-            `TRACE(2, ("%m : [%0t] | FP32_MUL_INPUT_HS | {a_data=0x%h, b_data=0x%h}\n", $time, a_data, b_data))
-          end
-          if(result_valid && result_ready) begin
-            `TRACE(2, ("%m : [%0t] | FP32_MUL_OUTPUT_HS | {result_data=0x%h}\n", $time, result_data))
-          end
-        end
-    end
-`endif
-
-`else // Vivado IP
+`else // Vivado IP or XSIM
 
     // Xilinx Floating Point IP (AXI Stream interface)
     xil_f32mul xil_f32mul_inst (
@@ -296,6 +271,17 @@ module VX_fp32_mul #(
 
 `endif
 
+`ifdef DBG_TRACE_GEMM
+    always @(posedge clk) begin
+        if (!reset) begin
+            if (a_valid && a_ready && b_valid && b_ready) begin
+                `TRACE(2, ("%m : [%0t] | FP32_MUL_INPUT_HS | {a_data=0x%h, b_data=0x%h}\n", $time, a_data, b_data))
+            end
+            if (result_valid && result_ready) begin
+                `TRACE(2, ("%m : [%0t] | FP32_MUL_OUTPUT_HS | {result_data=0x%h}\n", $time, result_data))
+            end
+        end
+    end
 `endif
 
 endmodule

@@ -15,7 +15,10 @@
 
 `ifndef FPU_FPNEW
 `ifdef SIMULATION
+`ifndef XSIM
+`define USE_DPI
 `include "float_dpi.vh"
+`endif
 `endif
 `endif
 
@@ -99,6 +102,12 @@ module VX_fp16_mul #(
             end
         end
     endfunction
+
+    // Debug signals for unified trace
+    wire [31:0] dbg_a_fp32;
+    wire [31:0] dbg_b_fp32;
+    wire [31:0] dbg_mul_fp32;
+    wire [15:0] dbg_result_fp16;
 
 `ifdef FPU_FPNEW
 
@@ -238,35 +247,12 @@ module VX_fp16_mul #(
         .ready_out (result_ready)
     );
 
-`ifdef DBG_TRACE_GEMM
-    always @(posedge clk) begin
-        if (!reset) begin
-            if (a_valid && a_ready) begin
-                `TRACE(4, ("%m : [%0t] | FP16_MUL_INPUT_A | {data=0x%0h}\n", $time, a_data));
-            end
-            if (b_valid && b_ready) begin
-                `TRACE(4, ("%m : [%0t] | FP16_MUL_INPUT_B | {data=0x%0h}\n", $time, b_data));
-            end
-            if (inputs_valid) begin
-                `TRACE(4, ("%m : [%0t] | FP16_MUL_FENCE | {a_data=0x%0h, b_data=0x%0h}\n",
-                    $time, pop_streams[0].data, pop_streams[1].data));
-                `TRACE(4, ("%m : [%0t] | FP16_MUL_FP16_TO_FP32 | {a_fp32=0x%0h, b_fp32=0x%0h}\n",
-                    $time, a_fp32, b_fp32));
-                `TRACE(4, ("%m : [%0t] | FP16_MUL_FPNEW_MUL | {result=0x%0h}\n",
-                    $time, fpnew_result));
-                `TRACE(4, ("%m : [%0t] | FP16_MUL_FP32_TO_FP16 | {fp32=0x%0h, fp16=0x%0h}\n",
-                    $time, fpnew_result, result_fp16));
-            end
-            if (result_valid && result_ready) begin
-                `TRACE(4, ("%m : [%0t] | FP16_MUL_OUTPUT | {result=0x%0h}\n", $time, result_data));
-            end
-        end
-    end
-`endif
+    assign dbg_a_fp32      = a_fp32;
+    assign dbg_b_fp32      = b_fp32;
+    assign dbg_mul_fp32    = fpnew_result;
+    assign dbg_result_fp16 = result_fp16;
 
-`else
-
-`ifdef SIMULATION
+`elsif USE_DPI
 
     // DPI path: stream fence + FP16 -> FP32 -> DPI mul -> FP32 -> FP16
 
@@ -342,33 +328,12 @@ module VX_fp16_mul #(
         .ready_out (result_ready)
     );
 
-`ifdef DBG_TRACE_GEMM
-    always @(posedge clk) begin
-        if (!reset) begin
-            if (a_valid && a_ready) begin
-                `TRACE(4, ("%m : [%0t] | FP16_MUL_INPUT_A | {data=0x%0h}\n", $time, a_data));
-            end
-            if (b_valid && b_ready) begin
-                `TRACE(4, ("%m : [%0t] | FP16_MUL_INPUT_B | {data=0x%0h}\n", $time, b_data));
-            end
-            if (inputs_valid) begin
-                `TRACE(4, ("%m : [%0t] | FP16_MUL_FENCE | {a_data=0x%0h, b_data=0x%0h}\n",
-                    $time, pop_streams[0].data, pop_streams[1].data));
-                `TRACE(4, ("%m : [%0t] | FP16_MUL_FP16_TO_FP32 | {a_fp32=0x%0h, b_fp32=0x%0h}\n",
-                    $time, a_fp32[31:0], b_fp32[31:0]));
-                `TRACE(4, ("%m : [%0t] | FP16_MUL_DPI_MUL | {result=0x%0h}\n",
-                    $time, dpi_result_fp32[31:0]));
-                `TRACE(4, ("%m : [%0t] | FP16_MUL_FP32_TO_FP16 | {fp32=0x%0h, fp16=0x%0h}\n",
-                    $time, dpi_result_fp32[31:0], result_fp16));
-            end
-            if (result_valid && result_ready) begin
-                `TRACE(4, ("%m : [%0t] | FP16_MUL_OUTPUT | {result=0x%0h}\n", $time, result_data));
-            end
-        end
-    end
-`endif
+    assign dbg_a_fp32      = a_fp32;
+    assign dbg_b_fp32      = b_fp32;
+    assign dbg_mul_fp32    = dpi_result_fp32[31:0];
+    assign dbg_result_fp16 = result_fp16;
 
-`else // Vivado IP
+`else // Vivado IP or XSIM
 
     // Convert FP16 to FP32 using function
     wire [31:0] a_fp32_data = fp16_to_fp32_convert(a_data);
@@ -404,8 +369,29 @@ module VX_fp16_mul #(
     assign result_valid      = result_fp32_valid;
     assign result_fp32_ready = result_ready;
 
+    assign dbg_a_fp32      = a_fp32_data;
+    assign dbg_b_fp32      = b_fp32_data;
+    assign dbg_mul_fp32    = result_fp32_data;
+    assign dbg_result_fp16 = result_data;
+
 `endif
 
+`ifdef DBG_TRACE_GEMM
+    always @(posedge clk) begin
+        if (!reset) begin
+            if (a_valid && a_ready) begin
+                `TRACE(4, ("%m : [%0t] | FP16_MUL_INPUT_A | {data=0x%0h}\n", $time, a_data));
+            end
+            if (b_valid && b_ready) begin
+                `TRACE(4, ("%m : [%0t] | FP16_MUL_INPUT_B | {data=0x%0h}\n", $time, b_data));
+            end
+            if (result_valid && result_ready) begin
+                `TRACE(4, ("%m : [%0t] | FP16_MUL | {a_fp32=0x%0h, b_fp32=0x%0h, mul_fp32=0x%0h, result_fp16=0x%0h}\n",
+                    $time, dbg_a_fp32, dbg_b_fp32, dbg_mul_fp32, dbg_result_fp16));
+                `TRACE(4, ("%m : [%0t] | FP16_MUL_OUTPUT | {result=0x%0h}\n", $time, result_data));
+            end
+        end
+    end
 `endif
 
 endmodule

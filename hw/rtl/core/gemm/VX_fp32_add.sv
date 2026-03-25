@@ -15,7 +15,10 @@
 
 `ifndef FPU_FPNEW
 `ifdef SIMULATION
+`ifndef XSIM
+`define USE_DPI
 `include "float_dpi.vh"
+`endif
 `endif
 `endif
 
@@ -176,9 +179,7 @@ module VX_fp32_add #(
         .ready_out (result_ready)
     );
 
-`else
-
-`ifdef SIMULATION
+`elsif USE_DPI
 
     // DPI path: stream fence + combinational logic + elastic buffer
 
@@ -246,7 +247,7 @@ module VX_fp32_add #(
         .ready_out (result_ready)
     );
 
-`else // Vivado IP
+`else // Vivado IP or XSIM
 
     // Xilinx Floating Point IP (AXI Stream interface)
     xil_f32add xil_f32add_inst (
@@ -268,8 +269,6 @@ module VX_fp32_add #(
         .m_axis_result_tready(result_ready),
         .m_axis_result_tdata (result_data)
     );
-
-`endif
 
 `endif
 

@@ -15,7 +15,10 @@
 
 `ifndef FPU_FPNEW
 `ifdef SIMULATION
+`ifndef XSIM
+`define USE_DPI
 `include "float_dpi.vh"
+`endif
 `endif
 `endif
 
@@ -239,9 +242,7 @@ module VX_fp16_add #(
         .ready_out (result_ready)
     );
 
-`else
-
-`ifdef SIMULATION
+`elsif USE_DPI
 
     // DPI path: stream fence + FP16 -> FP32 -> DPI add -> FP32 -> FP16
 
@@ -311,7 +312,7 @@ module VX_fp16_add #(
         .ready_out (result_ready)
     );
 
-`else // Vivado IP
+`else // Vivado IP or XSIM
 
     // Convert FP16 to FP32 (combinational)
     wire [31:0] a_fp32_data = fp16_to_fp32_convert(a_data);
@@ -345,8 +346,6 @@ module VX_fp16_add #(
     assign result_data       = fp32_to_fp16_convert(result_fp32_data);
     assign result_valid      = result_fp32_valid;
     assign result_fp32_ready = result_ready;
-
-`endif
 
 `endif
 
