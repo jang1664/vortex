@@ -45,73 +45,15 @@ module VX_fp16_add #(
     output wire [15:0] result_data
 );
 
-    // FP16 <-> FP32 conversion helpers (pure combinational)
-    function automatic [31:0] fp16_to_fp32_convert(input [15:0] fp16);
-        logic        sign;
-        logic [4:0]  exp_fp16;
-        logic [9:0]  frac_fp16;
-        logic [7:0]  exp_fp32;
-        logic [22:0] frac_fp32;
-
-        sign      = fp16[15];
-        exp_fp16  = fp16[14:10];
-        frac_fp16 = fp16[9:0];
-
-        if (exp_fp16 == 5'b0) begin
-            return {sign, 31'b0};
-        end else if (exp_fp16 == 5'b11111) begin
-            exp_fp32  = 8'hFF;
-            frac_fp32 = {frac_fp16, 13'b0};
-            return {sign, exp_fp32, frac_fp32};
-        end else begin
-            exp_fp32  = {3'b0, exp_fp16} + 8'd112; // -15 + 127
-            frac_fp32 = {frac_fp16, 13'b0};
-            return {sign, exp_fp32, frac_fp32};
-        end
-    endfunction
-
-    function automatic [15:0] fp32_to_fp16_convert(input [31:0] fp32);
-        logic        sign;
-        logic [7:0]  exp_fp32;
-        logic [22:0] frac_fp32;
-        logic [4:0]  exp_fp16;
-        logic [9:0]  frac_fp16;
-        logic [7:0]  exp_adjusted;
-
-        sign      = fp32[31];
-        exp_fp32  = fp32[30:23];
-        frac_fp32 = fp32[22:0];
-
-        if (exp_fp32 == 8'b0) begin
-            return {sign, 15'b0};
-        end else if (exp_fp32 == 8'hFF) begin
-            exp_fp16  = 5'b11111;
-            frac_fp16 = frac_fp32[22:13];
-            return {sign, exp_fp16, frac_fp16};
-        end else begin
-            exp_adjusted = exp_fp32 - 8'd112; // 127 - 15
-
-            if (exp_adjusted >= 8'd31) begin
-                return {sign, 5'b11111, 10'b0};
-            end else if (exp_adjusted <= 8'd0) begin
-                return {sign, 15'b0};
-            end else begin
-                exp_fp16  = exp_adjusted[4:0];
-                frac_fp16 = frac_fp32[22:13];
-                return {sign, exp_fp16, frac_fp16};
-            end
-        end
-    endfunction
-
 `ifdef FPU_FPNEW
 
     import fpnew_pkg::*;
 
     localparam fpnew_pkg::fpu_features_t FPU_FEATURES = '{
-        Width:         32,
+        Width:         16,
         EnableVectors: 1'b0,
-        EnableNanBox:  1'b1,
-        FpFmtMask:     5'b10000, // FP32 only
+        EnableNanBox:  1'b0,
+        FpFmtMask:     5'b00100, // FP16 only
         IntFmtMask:    4'b0010   // INT32 only
     };
 
@@ -180,11 +122,8 @@ module VX_fp16_add #(
         .ready_out (fpnew_inputs_ready)
     );
 
-    wire [31:0] a_fp32 = fp16_to_fp32_convert(fpnew_inputs_data[15:0]);
-    wire [31:0] b_fp32 = fp16_to_fp32_convert(fpnew_inputs_data[31:16]);
-
-    logic [2:0][31:0] fpnew_operands;
-    wire [31:0] fpnew_result;
+    logic [2:0][15:0] fpnew_operands;
+    wire [15:0] fpnew_result;
     wire fpnew_out_valid;
     wire fpnew_out_ready;
     fpnew_pkg::status_t fpnew_status;
@@ -194,8 +133,8 @@ module VX_fp16_add #(
 
     // ADD mode in FPnew uses operand 1 and operand 2 as addends.
     assign fpnew_operands[0] = '0;
-    assign fpnew_operands[1] = a_fp32;
-    assign fpnew_operands[2] = b_fp32;
+    assign fpnew_operands[1] = fpnew_inputs_data[15:0];
+    assign fpnew_operands[2] = fpnew_inputs_data[31:16];
 
     fpnew_top #(
         .Features       (FPU_FEATURES),
@@ -208,8 +147,8 @@ module VX_fp16_add #(
         .rnd_mode_i     (fpnew_pkg::RNE),
         .op_i           (fpnew_pkg::ADD),
         .op_mod_i       (1'b0),
-        .src_fmt_i      (fpnew_pkg::FP32),
-        .dst_fmt_i      (fpnew_pkg::FP32),
+        .src_fmt_i      (fpnew_pkg::FP16),
+        .dst_fmt_i      (fpnew_pkg::FP16),
         .int_fmt_i      (fpnew_pkg::INT32),
         .vectorial_op_i (1'b0),
         .simd_mask_i    (1'b1),
@@ -225,8 +164,6 @@ module VX_fp16_add #(
         `UNUSED_PIN (busy_o)
     );
 
-    wire [15:0] result_fp16 = fp32_to_fp16_convert(fpnew_result);
-
     VX_elastic_buffer #(
         .DATAW   (16),
         .SIZE    (`TO_OUT_BUF_SIZE(OUT_BUF)),
@@ -236,13 +173,71 @@ module VX_fp16_add #(
         .reset     (reset),
         .valid_in  (fpnew_out_valid),
         .ready_in  (fpnew_out_ready),
-        .data_in   (result_fp16),
+        .data_in   (fpnew_result),
         .data_out  (result_data),
         .valid_out (result_valid),
         .ready_out (result_ready)
     );
 
 `elsif USE_DPI
+
+    // FP16 <-> FP32 conversion helpers for DPI path (DPI operates in FP32)
+    function automatic [31:0] fp16_to_fp32_convert(input [15:0] fp16);
+        logic        sign;
+        logic [4:0]  exp_fp16;
+        logic [9:0]  frac_fp16;
+        logic [7:0]  exp_fp32;
+        logic [22:0] frac_fp32;
+
+        sign      = fp16[15];
+        exp_fp16  = fp16[14:10];
+        frac_fp16 = fp16[9:0];
+
+        if (exp_fp16 == 5'b0) begin
+            return {sign, 31'b0};
+        end else if (exp_fp16 == 5'b11111) begin
+            exp_fp32  = 8'hFF;
+            frac_fp32 = {frac_fp16, 13'b0};
+            return {sign, exp_fp32, frac_fp32};
+        end else begin
+            exp_fp32  = {3'b0, exp_fp16} + 8'd112; // -15 + 127
+            frac_fp32 = {frac_fp16, 13'b0};
+            return {sign, exp_fp32, frac_fp32};
+        end
+    endfunction
+
+    function automatic [15:0] fp32_to_fp16_convert(input [31:0] fp32);
+        logic        sign;
+        logic [7:0]  exp_fp32;
+        logic [22:0] frac_fp32;
+        logic [4:0]  exp_fp16;
+        logic [9:0]  frac_fp16;
+        logic [7:0]  exp_adjusted;
+
+        sign      = fp32[31];
+        exp_fp32  = fp32[30:23];
+        frac_fp32 = fp32[22:0];
+
+        if (exp_fp32 == 8'b0) begin
+            return {sign, 15'b0};
+        end else if (exp_fp32 == 8'hFF) begin
+            exp_fp16  = 5'b11111;
+            frac_fp16 = frac_fp32[22:13];
+            return {sign, exp_fp16, frac_fp16};
+        end else begin
+            exp_adjusted = exp_fp32 - 8'd112; // 127 - 15
+
+            if (exp_adjusted >= 8'd31) begin
+                return {sign, 5'b11111, 10'b0};
+            end else if (exp_adjusted <= 8'd0) begin
+                return {sign, 15'b0};
+            end else begin
+                exp_fp16  = exp_adjusted[4:0];
+                frac_fp16 = frac_fp32[22:13];
+                return {sign, exp_fp16, frac_fp16};
+            end
+        end
+    endfunction
 
     // DPI path: stream fence + FP16 -> FP32 -> DPI add -> FP32 -> FP16
 
@@ -312,16 +307,7 @@ module VX_fp16_add #(
         .ready_out (result_ready)
     );
 
-`else // Vivado IP or XSIM
-
-    // Convert FP16 to FP32 (combinational)
-    wire [31:0] a_fp32_data = fp16_to_fp32_convert(a_data);
-    wire [31:0] b_fp32_data = fp16_to_fp32_convert(b_data);
-
-    // FP32 add using Xilinx IP
-    wire        result_fp32_valid;
-    wire        result_fp32_ready;
-    wire [31:0] result_fp32_data;
+`else // Vivado IP or XSIM — native FP16 Xilinx IP
 
     xil_f16add xil_f16add_inst (
         .aclk                (clk),
@@ -330,22 +316,18 @@ module VX_fp16_add #(
         // Input A (AXI Stream)
         .s_axis_a_tvalid     (a_valid),
         .s_axis_a_tready     (a_ready),
-        .s_axis_a_tdata      (a_fp32_data),
+        .s_axis_a_tdata      (a_data),
 
         // Input B (AXI Stream)
         .s_axis_b_tvalid     (b_valid),
         .s_axis_b_tready     (b_ready),
-        .s_axis_b_tdata      (b_fp32_data),
+        .s_axis_b_tdata      (b_data),
 
         // Output (AXI Stream)
-        .m_axis_result_tvalid(result_fp32_valid),
-        .m_axis_result_tready(result_fp32_ready),
-        .m_axis_result_tdata (result_fp32_data)
+        .m_axis_result_tvalid(result_valid),
+        .m_axis_result_tready(result_ready),
+        .m_axis_result_tdata (result_data)
     );
-
-    assign result_data       = fp32_to_fp16_convert(result_fp32_data);
-    assign result_valid      = result_fp32_valid;
-    assign result_fp32_ready = result_ready;
 
 `endif
 

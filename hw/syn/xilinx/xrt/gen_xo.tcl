@@ -33,12 +33,22 @@ if {[file exists "${xoname}"]} {
     file delete -force "${xoname}"
 }
 
-set argv [list ${build_dir}/ip]
-set argc 1
+if {[string length $device_part] != 0} {
+    set argv [list ${build_dir}/ip ${device_part}]
+    set argc 2
+} else {
+    set argv [list ${build_dir}/ip]
+    set argc 1
+}
 source ${tool_dir}/xilinx_ip_gen.tcl
 
-set argv [list ${krnl_name} ${vcs_file} ${build_dir}]
-set argc 3
+if {[string length $device_part] != 0} {
+    set argv [list ${krnl_name} ${vcs_file} ${build_dir} ${device_part}]
+    set argc 4
+} else {
+    set argv [list ${krnl_name} ${vcs_file} ${build_dir}]
+    set argc 3
+}
 source ${script_dir}/package_kernel.tcl
 
 package_xo -xo_path ${xoname} -kernel_name ${krnl_name} -ip_directory "${build_dir}/xo/packaged_kernel"

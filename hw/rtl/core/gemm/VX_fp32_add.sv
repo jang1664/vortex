@@ -252,6 +252,7 @@ module VX_fp32_add #(
     // Xilinx Floating Point IP (AXI Stream interface)
     xil_f32add xil_f32add_inst (
         .aclk                (clk),
+        .aresetn             (~reset),
         .aclken              (1'b1),
 
         // Input A (AXI Stream)

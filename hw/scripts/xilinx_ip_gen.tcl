@@ -53,6 +53,7 @@ create_ip -name floating_point -vendor xilinx.com -library ip -version 7.1 -modu
 set_property -dict [list \
   CONFIG.Add_Sub_Value {Add} \
   CONFIG.Has_ACLKEN {true} \
+  CONFIG.Has_ARESETn {true} \
 ] [get_ips xil_f32add]
 
 create_ip -name floating_point -vendor xilinx.com -library ip -version 7.1 -module_name xil_f32mul -dir ${ip_dir}
@@ -66,6 +67,7 @@ set_property -dict [list \
   CONFIG.C_Result_Exponent_Width {8} \
   CONFIG.C_Result_Fraction_Width {24} \
   CONFIG.Has_ACLKEN {true} \
+  CONFIG.Has_ARESETn {true} \
   CONFIG.Operation_Type {Multiply} \
   CONFIG.Result_Precision_Type {Single} \
 ] [get_ips xil_f32mul]
@@ -73,6 +75,7 @@ set_property -dict [list \
 create_ip -name floating_point -vendor xilinx.com -library ip -version 7.1 -module_name xil_f16add -dir ${ip_dir}
 set_property -dict [list \
   CONFIG.Has_ACLKEN {true} \
+  CONFIG.Has_ARESETn {true} \
   CONFIG.A_Precision_Type {Half} \
   CONFIG.Add_Sub_Value {Add} \
   CONFIG.C_A_Exponent_Width {5} \
@@ -102,6 +105,7 @@ set_property -dict [list \
   CONFIG.C_Result_Exponent_Width {5} \
   CONFIG.C_Result_Fraction_Width {11} \
   CONFIG.Has_ACLKEN {true} \
+  CONFIG.Has_ARESETn {true} \
   CONFIG.Operation_Type {Multiply} \
   CONFIG.Result_Precision_Type {Half} \
 ] [get_ips xil_f16mul]
