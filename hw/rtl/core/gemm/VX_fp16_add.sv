@@ -311,6 +311,7 @@ module VX_fp16_add #(
 
     xil_f16add xil_f16add_inst (
         .aclk                (clk),
+        .aresetn             (~reset),
         .aclken              (1'b1),
 
         // Input A (AXI Stream)
