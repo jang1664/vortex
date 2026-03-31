@@ -8,6 +8,7 @@ export MAX_LOG_BYTES="${MAX_LOG_BYTES:-10485760}"  # 10 MB
 DRIVER="${DRIVER:-rtlsim}"
 APP="${APP:-fpint_gemm_ffn_hw}"
 DEBUG_LEVEL="${DEBUG_LEVEL:-3}"
+PERF_LEVEL="${PERF_LEVEL:-3}"
 LOG_DIR="${LOG_DIR:-run_logs_fpint_gemm_ffn_hw}"
 
 mkdir -p "${LOG_DIR}"
@@ -103,6 +104,7 @@ for i in "${!CASE_ARGS[@]}"; do
         --driver="${DRIVER}" \
         --app="${APP}" \
         --debug="${DEBUG_LEVEL}" \
+        --perf="${PERF_LEVEL}" \
         --log="${log_file}" \
         --args="${args}"; then
       echo "[${idx}/${total}] PASS (log: ${log_file})" | tee -a "${log_file}"
@@ -114,6 +116,7 @@ for i in "${!CASE_ARGS[@]}"; do
     if ./ci/blackbox.sh \
         --driver="${DRIVER}" \
         --app="${APP}" \
+        --perf="${PERF_LEVEL}" \
         --log="${log_file}" \
         --args="${args}"; then
       echo "[${idx}/${total}] PASS (log: ${log_file})" | tee -a "${log_file}"

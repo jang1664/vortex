@@ -25,6 +25,7 @@ module VX_execute import VX_gpu_pkg::*; #(
 `ifdef PERF_ENABLE
     input sysmem_perf_t     sysmem_perf,
     input pipeline_perf_t   pipeline_perf,
+    input accel_perf_t      accel_perf,
 `endif
 
     input base_dcrs_t       base_dcrs,
@@ -106,6 +107,7 @@ module VX_execute import VX_gpu_pkg::*; #(
     `ifdef PERF_ENABLE
         .sysmem_perf    (sysmem_perf),
         .pipeline_perf  (pipeline_perf),
+        .accel_perf     (accel_perf),
     `endif
         .base_dcrs      (base_dcrs),
         .dispatch_if    (dispatch_if[EX_SFU * `ISSUE_WIDTH +: `ISSUE_WIDTH]),

@@ -22,6 +22,11 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
 
     // Control Interface
     VX_gemm_unit_if.slave   gemm_unit_if      // for ctrl gemm
+`ifdef PERF_ENABLE
+    ,output logic [PERF_CTR_BITS-1:0] perf_gemm_compute_cycles
+    ,output logic [PERF_CTR_BITS-1:0] perf_gemm_stall_cycles
+    ,output logic [PERF_CTR_BITS-1:0] perf_gemm_job_count
+`endif
 );
 
     // =========================================================================
@@ -1592,6 +1597,31 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
         end
       end
     end
+`endif
+
+`ifdef PERF_ENABLE
+    reg [PERF_CTR_BITS-1:0] perf_compute_r;
+    reg [PERF_CTR_BITS-1:0] perf_stall_r;
+    reg [PERF_CTR_BITS-1:0] perf_jobs_r;
+
+    always @(posedge clk) begin
+        if (reset) begin
+            perf_compute_r <= '0;
+            perf_stall_r   <= '0;
+            perf_jobs_r    <= '0;
+        end else begin
+            if (state == COMPUTE)
+                perf_compute_r <= perf_compute_r + PERF_CTR_BITS'(1);
+            if (!gemm_idle && state == IDLE)
+                perf_stall_r <= perf_stall_r + PERF_CTR_BITS'(1);
+            if (gemm_done)
+                perf_jobs_r <= perf_jobs_r + PERF_CTR_BITS'(1);
+        end
+    end
+
+    assign perf_gemm_compute_cycles = perf_compute_r;
+    assign perf_gemm_stall_cycles   = perf_stall_r;
+    assign perf_gemm_job_count      = perf_jobs_r;
 `endif
 
 endmodule

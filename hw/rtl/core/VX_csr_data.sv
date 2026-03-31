@@ -43,6 +43,7 @@ import VX_fpu_pkg::*;
 `ifdef PERF_ENABLE
     input sysmem_perf_t                 sysmem_perf,
     input pipeline_perf_t               pipeline_perf,
+    input accel_perf_t                  accel_perf,
 `endif
 
     VX_commit_csr_if.slave              commit_csr_if,
@@ -274,6 +275,20 @@ import VX_fpu_pkg::*;
                         `CSR_READ_64(`VX_CSR_MPM_MEM_LT, read_data_ro_w, sysmem_perf.mem.latency);
                         // PERF: coalescer
                         `CSR_READ_64(`VX_CSR_MPM_COALESCER_MISS, read_data_ro_w, sysmem_perf.coalescer.misses);
+                        default:;
+                        endcase
+                    end
+                    `VX_DCR_MPM_CLASS_ACCEL: begin
+                        case (read_addr)
+                        // PERF: GEMM
+                        `CSR_READ_64(`VX_CSR_MPM_GEMM_COMPUTE_CYC, read_data_ro_w, accel_perf.gemm_compute_cycles);
+                        `CSR_READ_64(`VX_CSR_MPM_GEMM_STALL_CYC, read_data_ro_w, accel_perf.gemm_stall_cycles);
+                        `CSR_READ_64(`VX_CSR_MPM_GEMM_JOB_CNT, read_data_ro_w, accel_perf.gemm_job_count);
+                        // PERF: DMA
+                        `CSR_READ_64(`VX_CSR_MPM_DMA_RD_BYTES, read_data_ro_w, accel_perf.dma_rd_bytes);
+                        `CSR_READ_64(`VX_CSR_MPM_DMA_WR_BYTES, read_data_ro_w, accel_perf.dma_wr_bytes);
+                        `CSR_READ_64(`VX_CSR_MPM_DMA_STALL_CYC, read_data_ro_w, accel_perf.dma_stall_cycles);
+                        `CSR_READ_64(`VX_CSR_MPM_DMA_XFER_CNT, read_data_ro_w, accel_perf.dma_xfer_count);
                         default:;
                         endcase
                     end

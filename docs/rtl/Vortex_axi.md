@@ -17,3 +17,18 @@
 
 비고
 - 파일명으로부터 역할을 추정했습니다. 상세 신호 맵은 파일 내부 포트 선언부를 확인하세요.
+
+# 핵심 동작
+AXI_NUM_BANKS -> output port 갯수
+VX_MEM_PORTS -> cache system 최상단 port 갯수.
+VX_MEM_PORTS -> AXI_NUM_BANKS로 연결해줌.
+
+vortex -> mem_data_adapter -> axi_adapter -> module 밖
+
+- VX_mem_data_adapter로 VX_MEM_DATA_WIDTH -> AXI_DATA_WIDTH를 변환해줌.
+  - VX_MEM_PORTS개가 있음. 즉 port 마다 하나씩 달려서 data width conversion을 수행함.
+  - adapter output 쪽에 _a postfix를 달아서 signal 이름을 지었음.
+
+- VX_axi_adapter는 두가지 일을 함.
+  - mem_bus를 axi_bus로 protocol 변환
+  - VX_MEM_PORTS <-> AXI_NUM_BANKS 사이의 interconnection (xbar)

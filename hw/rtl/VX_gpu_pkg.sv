@@ -751,6 +751,18 @@ package VX_gpu_pkg;
         logic [PERF_CTR_BITS-1:0] load_latency;
    } pipeline_perf_t;
 
+    typedef struct packed {
+        // GEMM counters
+        logic [PERF_CTR_BITS-1:0] gemm_compute_cycles;
+        logic [PERF_CTR_BITS-1:0] gemm_stall_cycles;
+        logic [PERF_CTR_BITS-1:0] gemm_job_count;
+        // DMA counters
+        logic [PERF_CTR_BITS-1:0] dma_rd_bytes;
+        logic [PERF_CTR_BITS-1:0] dma_wr_bytes;
+        logic [PERF_CTR_BITS-1:0] dma_stall_cycles;
+        logic [PERF_CTR_BITS-1:0] dma_xfer_count;
+    } accel_perf_t;
+
    ////////////////////////// gemm related types    ///////////////////////////
    typedef struct packed {
        logic [UUID_WIDTH-1:0]    uuid;

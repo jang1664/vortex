@@ -160,7 +160,10 @@ puts "xsim.tcl: setting up waveform logging"
 #   }
 # }
 
-log_wave -r *
+log_wave -r /
+# run 50 us
+# close_sim
+
 #open_vcd xsim_dump.vcd
 #log_vcd /*
 #run all

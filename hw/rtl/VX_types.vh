@@ -35,6 +35,7 @@
 `define VX_DCR_MPM_CLASS_NONE           0
 `define VX_DCR_MPM_CLASS_CORE           1
 `define VX_DCR_MPM_CLASS_MEM            2
+`define VX_DCR_MPM_CLASS_ACCEL          3
 
 // User Floating-Point CSRs ///////////////////////////////////////////////////
 
@@ -182,6 +183,25 @@
 // PERF: coalescer
 `define VX_CSR_MPM_COALESCER_MISS       12'hB1F     // coalescer misses
 `define VX_CSR_MPM_COALESCER_MISS_H     12'hB9F
+
+// Machine Performance-monitoring accelerator counters (class 3) //////////////
+
+// PERF: GEMM
+`define VX_CSR_MPM_GEMM_COMPUTE_CYC    12'hB03
+`define VX_CSR_MPM_GEMM_COMPUTE_CYC_H  12'hB83
+`define VX_CSR_MPM_GEMM_STALL_CYC      12'hB04
+`define VX_CSR_MPM_GEMM_STALL_CYC_H    12'hB84
+`define VX_CSR_MPM_GEMM_JOB_CNT        12'hB05
+`define VX_CSR_MPM_GEMM_JOB_CNT_H      12'hB85
+// PERF: DMA
+`define VX_CSR_MPM_DMA_RD_BYTES        12'hB06
+`define VX_CSR_MPM_DMA_RD_BYTES_H      12'hB86
+`define VX_CSR_MPM_DMA_WR_BYTES        12'hB07
+`define VX_CSR_MPM_DMA_WR_BYTES_H      12'hB87
+`define VX_CSR_MPM_DMA_STALL_CYC       12'hB08
+`define VX_CSR_MPM_DMA_STALL_CYC_H     12'hB88
+`define VX_CSR_MPM_DMA_XFER_CNT        12'hB09
+`define VX_CSR_MPM_DMA_XFER_CNT_H      12'hB89
 
 // <Add your own counters: use addresses hB03..B1F, hB83..hB9F>
 

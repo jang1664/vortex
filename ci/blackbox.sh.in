@@ -52,7 +52,7 @@ DEFAULTS() {
     PERF_CLASS=0
     CONFIGS="$CONFIGS"
     TEMPBUILD=0
-    LOGFILE=run.log
+    LOGFILE="run_$(date +%Y%m%d_%H%M%S).log"
 }
 
 parse_args() {

@@ -101,6 +101,7 @@ module VX_core import VX_gpu_pkg::*; #(
     lmem_perf_t lmem_perf;
     coalescer_perf_t coalescer_perf;
     pipeline_perf_t pipeline_perf;
+    accel_perf_t accel_perf;
     sysmem_perf_t sysmem_perf_tmp;
     always @(*) begin
         sysmem_perf_tmp = sysmem_perf;
@@ -200,6 +201,7 @@ module VX_core import VX_gpu_pkg::*; #(
     `ifdef PERF_ENABLE
         .sysmem_perf    (sysmem_perf_tmp),
         .pipeline_perf  (pipeline_perf),
+        .accel_perf     (accel_perf),
     `endif
 
         .base_dcrs      (base_dcrs),
@@ -258,6 +260,12 @@ module VX_core import VX_gpu_pkg::*; #(
       .mmio_if(dma_ctrl_if),
       .dcache_bus_if(dma_global_data_if),
       .lmem_bus_if(dma_local_data_if)
+    `ifdef PERF_ENABLE
+      ,.perf_dma_rd_bytes    (accel_perf.dma_rd_bytes)
+      ,.perf_dma_wr_bytes    (accel_perf.dma_wr_bytes)
+      ,.perf_dma_stall_cycles(accel_perf.dma_stall_cycles)
+      ,.perf_dma_xfer_count  (accel_perf.dma_xfer_count)
+    `endif
     );
 
     VX_gemm_node #(
@@ -270,6 +278,11 @@ module VX_core import VX_gpu_pkg::*; #(
         .mmio_if    (gemm_ctrl_if),
         .dma_if     (dma_ctrl_if[`NUM_LSU_BLOCKS]),
         .lmem_bus_if(gemm_data_if)
+    `ifdef PERF_ENABLE
+        ,.perf_gemm_compute_cycles(accel_perf.gemm_compute_cycles)
+        ,.perf_gemm_stall_cycles  (accel_perf.gemm_stall_cycles)
+        ,.perf_gemm_job_count     (accel_perf.gemm_job_count)
+    `endif
     );
 
 `ifdef PERF_ENABLE

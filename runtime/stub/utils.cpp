@@ -214,6 +214,14 @@ extern int vx_dump_perf(vx_device_h hdevice, FILE* stream) {
   uint64_t mem_writes = 0;
   uint64_t mem_lat = 0;
   uint64_t mem_bank_stalls = 0;
+  // PERF: accelerator (GEMM + DMA)
+  uint64_t gemm_compute_cycles = 0;
+  uint64_t gemm_stall_cycles = 0;
+  uint64_t gemm_job_count = 0;
+  uint64_t dma_rd_bytes = 0;
+  uint64_t dma_wr_bytes = 0;
+  uint64_t dma_stall_cycles = 0;
+  uint64_t dma_xfer_count = 0;
 
   uint64_t num_cores;
   CHECK_ERR(vx_dev_caps(hdevice, VX_CAPS_NUM_CORES, &num_cores), {
@@ -588,6 +596,30 @@ extern int vx_dump_perf(vx_device_h hdevice, FILE* stream) {
         });
       }
     } break;
+    case VX_DCR_MPM_CLASS_ACCEL: {
+      uint64_t val;
+      CHECK_ERR(vx_mpm_query(hdevice, VX_CSR_MPM_GEMM_COMPUTE_CYC, core_id, &val), { return err; });
+      if (num_cores > 1) fprintf(stream, "PERF: core%d: gemm compute=%ld\n", core_id, val);
+      gemm_compute_cycles += val;
+      CHECK_ERR(vx_mpm_query(hdevice, VX_CSR_MPM_GEMM_STALL_CYC, core_id, &val), { return err; });
+      if (num_cores > 1) fprintf(stream, "PERF: core%d: gemm stalls=%ld\n", core_id, val);
+      gemm_stall_cycles += val;
+      CHECK_ERR(vx_mpm_query(hdevice, VX_CSR_MPM_GEMM_JOB_CNT, core_id, &val), { return err; });
+      if (num_cores > 1) fprintf(stream, "PERF: core%d: gemm jobs=%ld\n", core_id, val);
+      gemm_job_count += val;
+      CHECK_ERR(vx_mpm_query(hdevice, VX_CSR_MPM_DMA_RD_BYTES, core_id, &val), { return err; });
+      if (num_cores > 1) fprintf(stream, "PERF: core%d: dma read bytes=%ld\n", core_id, val);
+      dma_rd_bytes += val;
+      CHECK_ERR(vx_mpm_query(hdevice, VX_CSR_MPM_DMA_WR_BYTES, core_id, &val), { return err; });
+      if (num_cores > 1) fprintf(stream, "PERF: core%d: dma write bytes=%ld\n", core_id, val);
+      dma_wr_bytes += val;
+      CHECK_ERR(vx_mpm_query(hdevice, VX_CSR_MPM_DMA_STALL_CYC, core_id, &val), { return err; });
+      if (num_cores > 1) fprintf(stream, "PERF: core%d: dma stalls=%ld\n", core_id, val);
+      dma_stall_cycles += val;
+      CHECK_ERR(vx_mpm_query(hdevice, VX_CSR_MPM_DMA_XFER_CNT, core_id, &val), { return err; });
+      if (num_cores > 1) fprintf(stream, "PERF: core%d: dma transfers=%ld\n", core_id, val);
+      dma_xfer_count += val;
+    } break;
     default:
       break;
     }
@@ -678,6 +710,16 @@ extern int vx_dump_perf(vx_device_h hdevice, FILE* stream) {
       fprintf(stream, "PERF: memory latency=%d cycles\n", mem_avg_lat);
       fprintf(stream, "PERF: memory bank stalls=%ld (utilization=%d%%)\n", mem_bank_stalls, mem_bank_utilization);
     }
+  } break;
+  case VX_DCR_MPM_CLASS_ACCEL: {
+    int gemm_util = calcAvgPercent(gemm_compute_cycles, gemm_compute_cycles + gemm_stall_cycles);
+    fprintf(stream, "PERF: gemm compute cycles=%ld\n", gemm_compute_cycles);
+    fprintf(stream, "PERF: gemm stall cycles=%ld (utilization=%d%%)\n", gemm_stall_cycles, gemm_util);
+    fprintf(stream, "PERF: gemm jobs=%ld\n", gemm_job_count);
+    fprintf(stream, "PERF: dma read bytes=%ld\n", dma_rd_bytes);
+    fprintf(stream, "PERF: dma write bytes=%ld\n", dma_wr_bytes);
+    fprintf(stream, "PERF: dma stall cycles=%ld\n", dma_stall_cycles);
+    fprintf(stream, "PERF: dma transfers=%ld\n", dma_xfer_count);
   } break;
   default:
     break;

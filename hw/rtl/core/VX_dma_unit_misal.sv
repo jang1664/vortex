@@ -40,6 +40,12 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
   VX_mem_bus_if.master   lmem_bus_if,    // to local memory
 
   VX_node_done_if.master done_if
+`ifdef PERF_ENABLE
+  ,output logic [PERF_CTR_BITS-1:0] perf_dma_rd_bytes
+  ,output logic [PERF_CTR_BITS-1:0] perf_dma_wr_bytes
+  ,output logic [PERF_CTR_BITS-1:0] perf_dma_stall_cycles
+  ,output logic [PERF_CTR_BITS-1:0] perf_dma_xfer_count
+`endif
 );
 
   // ------------------------------------------------------------
@@ -1034,6 +1040,48 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
     .probe3 (dbg_dma_unit_probe3)
   );
 `endif
+`endif
+
+`ifdef PERF_ENABLE
+    reg [PERF_CTR_BITS-1:0] perf_rd_bytes_r;
+    reg [PERF_CTR_BITS-1:0] perf_wr_bytes_r;
+    reg [PERF_CTR_BITS-1:0] perf_stalls_r;
+    reg [PERF_CTR_BITS-1:0] perf_xfers_r;
+
+    // G2L: dcache read response received (load direction)
+    wire g2l_rd_beat = (state == S_G2L_SRC_RD_WAIT) && dcache_rsp_fire;
+    // L2G: dcache write request accepted (store direction)
+    wire l2g_wr_beat = (state == S_L2G_DST_WR_REQ) && dcache_req_fire;
+    // Stall: bus request blocked
+    wire dma_stall = ((state == S_G2L_SRC_RD_REQ) && !dcache_req_fire)
+                   | ((state == S_G2L_DST_WR_REQ) && !lmem_req_fire)
+                   | ((state == S_L2G_SRC_RD_REQ) && !lmem_req_fire)
+                   | ((state == S_L2G_DST_WR_REQ) && !dcache_req_fire);
+    // Transfer complete edge
+    wire dma_xfer_done = (state != S_DONE) && (state_n == S_DONE);
+
+    always @(posedge clk) begin
+        if (reset) begin
+            perf_rd_bytes_r <= '0;
+            perf_wr_bytes_r <= '0;
+            perf_stalls_r   <= '0;
+            perf_xfers_r    <= '0;
+        end else begin
+            if (g2l_rd_beat)
+                perf_rd_bytes_r <= perf_rd_bytes_r + PERF_CTR_BITS'(DCACHE_BYTES);
+            if (l2g_wr_beat)
+                perf_wr_bytes_r <= perf_wr_bytes_r + PERF_CTR_BITS'(DCACHE_BYTES);
+            if (dma_stall)
+                perf_stalls_r <= perf_stalls_r + PERF_CTR_BITS'(1);
+            if (dma_xfer_done)
+                perf_xfers_r <= perf_xfers_r + PERF_CTR_BITS'(1);
+        end
+    end
+
+    assign perf_dma_rd_bytes      = perf_rd_bytes_r;
+    assign perf_dma_wr_bytes      = perf_wr_bytes_r;
+    assign perf_dma_stall_cycles  = perf_stalls_r;
+    assign perf_dma_xfer_count    = perf_xfers_r;
 `endif
 
 endmodule

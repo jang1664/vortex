@@ -29,6 +29,11 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
 
     VX_lsu_mem_if.master    dma_if,     // to DMA engine
     VX_mem_bus_if.master    lmem_bus_if // for inputs, weights, scale/zero, output
+`ifdef PERF_ENABLE
+    ,output logic [PERF_CTR_BITS-1:0] perf_gemm_compute_cycles
+    ,output logic [PERF_CTR_BITS-1:0] perf_gemm_stall_cycles
+    ,output logic [PERF_CTR_BITS-1:0] perf_gemm_job_count
+`endif
 );
 
     // -------------------------------------------------------------------------
@@ -662,6 +667,11 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
       .sz_lmem_bus_if(sz_gemm_bus_if),
       .o_lmem_bus_if(o_gemm_bus_if),
       .gemm_unit_if(gemm_unit_if)
+    `ifdef PERF_ENABLE
+      ,.perf_gemm_compute_cycles(perf_gemm_compute_cycles)
+      ,.perf_gemm_stall_cycles  (perf_gemm_stall_cycles)
+      ,.perf_gemm_job_count     (perf_gemm_job_count)
+    `endif
     );
 
     // load paths: gemm_unit (slave ports) <-> load ldmAs (master ports)
