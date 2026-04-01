@@ -377,6 +377,7 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_mem_alloc(device, h_zeros.size() * sizeof(int16_t), VX_MEM_READ, &zeros_buffer));
   RT_CHECK(vx_mem_alloc(device, h_ref_out_fp16.size() * sizeof(uint16_t), VX_MEM_WRITE, &C_buffer));
 
+  std::cout << "Host buffers allocated and initialized" << std::endl;
   RT_CHECK(vx_copy_to_dev(A_buffer, h_A.data(), 0, h_A.size() * sizeof(uint16_t)));
   RT_CHECK(vx_copy_to_dev(W_int4_buffer, h_W_int4.data(), 0, h_W_int4.size() * sizeof(uint8_t)));
   RT_CHECK(vx_copy_to_dev(scales_buffer, h_scales.data(), 0, h_scales.size() * sizeof(uint16_t)));
@@ -385,6 +386,7 @@ int main(int argc, char *argv[]) {
   std::vector<uint16_t> zero_out(h_ref_out_fp16.size(), 0);
   RT_CHECK(vx_copy_to_dev(C_buffer, zero_out.data(), 0, zero_out.size() * sizeof(uint16_t)));
 
+  std::cout << "Kernel file uploaded" << std::endl;
   RT_CHECK(vx_upload_kernel_file(device, kernel_file, &krnl_buffer));
 
   kernel_arg_t kargs = {};
@@ -405,6 +407,12 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_mem_address(scales_buffer, &kargs.scale_base));
   RT_CHECK(vx_mem_address(zeros_buffer, &kargs.zp_base));
   RT_CHECK(vx_mem_address(C_buffer, &kargs.output_base));
+  std::cout << "Device buffer addresses: " << std::endl;
+  std::cout << "  input_base=0x" << std::hex << kargs.input_base << std::endl;
+  std::cout << "  weight_base=0x" << std::hex << kargs.weight_base << std::endl;
+  std::cout << "  scale_base=0x" << std::hex << kargs.scale_base << std::endl;
+  std::cout << "  zp_base=0x" << std::hex << kargs.zp_base << std::endl;
+  std::cout << "  output_base=0x" << std::hex << kargs.output_base << std::dec << std::endl;
 
   if (!compute_lmem_layout(kargs, local_mem_size)) {
     std::cerr << "LMEM layout does not fit device local memory (size=" << local_mem_size << ")" << std::endl;
@@ -417,10 +425,13 @@ int main(int argc, char *argv[]) {
   kargs.job_generation = 0;
   kargs.last_ctrl = 0;
 
+  std::cout << "Uploading kernel arguments and kernel" << std::endl;
   RT_CHECK(vx_upload_bytes(device, &kargs, sizeof(kargs), &args_buffer));
 
+  std::cout << "Starting kernel execution" << std::endl;
   RT_CHECK(vx_start(device, krnl_buffer, args_buffer));
   {
+    std::cout << "Waiting for kernel completion..." << std::endl;
     int wait_ret = vx_ready_wait(device, VX_MAX_TIMEOUT);
     if (wait_ret != 0) {
       std::cerr << "vx_ready_wait failed: ret=" << wait_ret << std::endl;
@@ -442,6 +453,7 @@ int main(int argc, char *argv[]) {
     }
   }
 
+  std::cout << "Kernel execution completed, reading back results" << std::endl;
   RT_CHECK(vx_copy_from_dev(&kargs, args_buffer, 0, sizeof(kargs)));
 
   if (kargs.status != MMIO_STATUS_OK) {
