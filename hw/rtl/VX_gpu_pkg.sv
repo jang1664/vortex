@@ -761,6 +761,19 @@ package VX_gpu_pkg;
         logic [PERF_CTR_BITS-1:0] dma_wr_bytes;
         logic [PERF_CTR_BITS-1:0] dma_stall_cycles;
         logic [PERF_CTR_BITS-1:0] dma_xfer_count;
+        // Phase 1: utilization
+        logic [PERF_CTR_BITS-1:0] gemm_total_cycles;
+        logic [PERF_CTR_BITS-1:0] dma_active_cycles;
+        logic [PERF_CTR_BITS-1:0] overlap_dma_mxu;
+        // Phase 2: stall breakdown
+        logic [PERF_CTR_BITS-1:0] dma_wait_dcache;
+        logic [PERF_CTR_BITS-1:0] dma_wait_lmem;
+        logic [PERF_CTR_BITS-1:0] mxu_input_stall;
+        logic [PERF_CTR_BITS-1:0] mxu_output_stall;
+        // Phase 3: roofline
+        logic [PERF_CTR_BITS-1:0] mxu_mac_count;
+        logic [PERF_CTR_BITS-1:0] lmem_rd_bytes;
+        logic [PERF_CTR_BITS-1:0] lmem_wr_bytes;
     } accel_perf_t;
 
    ////////////////////////// gemm related types    ///////////////////////////

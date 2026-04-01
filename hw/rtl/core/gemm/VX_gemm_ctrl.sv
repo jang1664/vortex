@@ -34,6 +34,9 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
     VX_gemm_ctrl_if.master    gemm_ctrl_if,       // to gemm unit + cmd ctrls
     VX_node_done_if.master    done_if,            // to job frontend (notify done)
     VX_gemm_sync_if.slave     gemm_sync_slv_if[N_NODE] // from cmd ctrls (notify events)
+`ifdef PERF_ENABLE
+    ,output logic [PERF_CTR_BITS-1:0] perf_gemm_total_cycles
+`endif
 );
 
     // -------------------------------------------------------------------------
@@ -355,5 +358,16 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
       .probe3 (dbg_gemm_ctrl_probe3)
     );
 `endif
+`endif
+
+`ifdef PERF_ENABLE
+    reg [PERF_CTR_BITS-1:0] perf_total_cycles_r;
+    always @(posedge clk) begin
+        if (reset)
+            perf_total_cycles_r <= '0;
+        else if (job_active_q)
+            perf_total_cycles_r <= perf_total_cycles_r + PERF_CTR_BITS'(1);
+    end
+    assign perf_gemm_total_cycles = perf_total_cycles_r;
 `endif
 endmodule

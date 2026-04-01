@@ -202,6 +202,29 @@
 `define VX_CSR_MPM_DMA_STALL_CYC_H     12'hB88
 `define VX_CSR_MPM_DMA_XFER_CNT        12'hB09
 `define VX_CSR_MPM_DMA_XFER_CNT_H      12'hB89
+// PERF: utilization (Phase 1)
+`define VX_CSR_MPM_GEMM_TOTAL_CYC      12'hB0A
+`define VX_CSR_MPM_GEMM_TOTAL_CYC_H    12'hB8A
+`define VX_CSR_MPM_DMA_ACTIVE_CYC      12'hB0B
+`define VX_CSR_MPM_DMA_ACTIVE_CYC_H    12'hB8B
+`define VX_CSR_MPM_OVERLAP_DMA_MXU     12'hB0C
+`define VX_CSR_MPM_OVERLAP_DMA_MXU_H   12'hB8C
+// PERF: stall breakdown (Phase 2)
+`define VX_CSR_MPM_DMA_WAIT_DCACHE     12'hB0D
+`define VX_CSR_MPM_DMA_WAIT_DCACHE_H   12'hB8D
+`define VX_CSR_MPM_DMA_WAIT_LMEM       12'hB0E
+`define VX_CSR_MPM_DMA_WAIT_LMEM_H     12'hB8E
+`define VX_CSR_MPM_MXU_INPUT_STALL     12'hB0F
+`define VX_CSR_MPM_MXU_INPUT_STALL_H   12'hB8F
+`define VX_CSR_MPM_MXU_OUTPUT_STALL    12'hB10
+`define VX_CSR_MPM_MXU_OUTPUT_STALL_H  12'hB90
+// PERF: roofline (Phase 3)
+`define VX_CSR_MPM_MXU_MAC_COUNT       12'hB11
+`define VX_CSR_MPM_MXU_MAC_COUNT_H     12'hB91
+`define VX_CSR_MPM_LMEM_RD_BYTES      12'hB12
+`define VX_CSR_MPM_LMEM_RD_BYTES_H    12'hB92
+`define VX_CSR_MPM_LMEM_WR_BYTES      12'hB13
+`define VX_CSR_MPM_LMEM_WR_BYTES_H    12'hB93
 
 // <Add your own counters: use addresses hB03..B1F, hB83..hB9F>
 

@@ -16,6 +16,10 @@ module VX_dma_node import VX_gpu_pkg::*; #(
   ,output logic [PERF_CTR_BITS-1:0] perf_dma_wr_bytes
   ,output logic [PERF_CTR_BITS-1:0] perf_dma_stall_cycles
   ,output logic [PERF_CTR_BITS-1:0] perf_dma_xfer_count
+  ,output logic [PERF_CTR_BITS-1:0] perf_dma_active_cycles
+  ,output logic [PERF_CTR_BITS-1:0] perf_dma_wait_dcache
+  ,output logic [PERF_CTR_BITS-1:0] perf_dma_wait_lmem
+  ,output logic                     perf_dma_busy
 `endif
 );
 
@@ -66,6 +70,10 @@ module VX_dma_node import VX_gpu_pkg::*; #(
     ,.perf_dma_wr_bytes    (perf_dma_wr_bytes)
     ,.perf_dma_stall_cycles(perf_dma_stall_cycles)
     ,.perf_dma_xfer_count  (perf_dma_xfer_count)
+    ,.perf_dma_active_cycles(perf_dma_active_cycles)
+    ,.perf_dma_wait_dcache (perf_dma_wait_dcache)
+    ,.perf_dma_wait_lmem   (perf_dma_wait_lmem)
+    ,.perf_dma_busy        (perf_dma_busy)
   `endif
   );
 

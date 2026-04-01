@@ -33,6 +33,13 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     ,output logic [PERF_CTR_BITS-1:0] perf_gemm_compute_cycles
     ,output logic [PERF_CTR_BITS-1:0] perf_gemm_stall_cycles
     ,output logic [PERF_CTR_BITS-1:0] perf_gemm_job_count
+    ,output logic [PERF_CTR_BITS-1:0] perf_gemm_total_cycles
+    ,output logic [PERF_CTR_BITS-1:0] perf_mxu_input_stall
+    ,output logic [PERF_CTR_BITS-1:0] perf_mxu_output_stall
+    ,output logic [PERF_CTR_BITS-1:0] perf_mxu_mac_count
+    ,output logic [PERF_CTR_BITS-1:0] perf_lmem_rd_bytes
+    ,output logic [PERF_CTR_BITS-1:0] perf_lmem_wr_bytes
+    ,output logic                     perf_gemm_computing
 `endif
 );
 
@@ -671,6 +678,10 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
       ,.perf_gemm_compute_cycles(perf_gemm_compute_cycles)
       ,.perf_gemm_stall_cycles  (perf_gemm_stall_cycles)
       ,.perf_gemm_job_count     (perf_gemm_job_count)
+      ,.perf_mxu_input_stall    (perf_mxu_input_stall)
+      ,.perf_mxu_output_stall   (perf_mxu_output_stall)
+      ,.perf_mxu_mac_count      (perf_mxu_mac_count)
+      ,.perf_gemm_computing     (perf_gemm_computing)
     `endif
     );
 
@@ -722,6 +733,9 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
       .done_if(done_if),
       .gemm_ctrl_if(gemm_ctrl_if),
       .gemm_sync_slv_if(gemm_sync_if)
+    `ifdef PERF_ENABLE
+      ,.perf_gemm_total_cycles(perf_gemm_total_cycles)
+    `endif
     );
 
     // -------------------------------------------------------------------------
@@ -791,5 +805,25 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
       .gemm_sync_if(gemm_sync_if[4]),
       .dma_if(dma_if)
     );
+
+`ifdef PERF_ENABLE
+    // LMEM byte counters: tap the single lmem_bus_if port (all GEMM LMEM traffic)
+    wire lmem_req_fire_perf = lmem_bus_if.req_valid && lmem_bus_if.req_ready;
+    reg [PERF_CTR_BITS-1:0] perf_lmem_rd_r;
+    reg [PERF_CTR_BITS-1:0] perf_lmem_wr_r;
+    always @(posedge clk) begin
+        if (reset) begin
+            perf_lmem_rd_r <= '0;
+            perf_lmem_wr_r <= '0;
+        end else if (lmem_req_fire_perf) begin
+            if (lmem_bus_if.req_data.rw)
+                perf_lmem_wr_r <= perf_lmem_wr_r + PERF_CTR_BITS'(LSU_WORD_SIZE);
+            else
+                perf_lmem_rd_r <= perf_lmem_rd_r + PERF_CTR_BITS'(LSU_WORD_SIZE);
+        end
+    end
+    assign perf_lmem_rd_bytes = perf_lmem_rd_r;
+    assign perf_lmem_wr_bytes = perf_lmem_wr_r;
+`endif
 
 endmodule

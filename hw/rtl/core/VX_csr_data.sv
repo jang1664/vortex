@@ -289,6 +289,19 @@ import VX_fpu_pkg::*;
                         `CSR_READ_64(`VX_CSR_MPM_DMA_WR_BYTES, read_data_ro_w, accel_perf.dma_wr_bytes);
                         `CSR_READ_64(`VX_CSR_MPM_DMA_STALL_CYC, read_data_ro_w, accel_perf.dma_stall_cycles);
                         `CSR_READ_64(`VX_CSR_MPM_DMA_XFER_CNT, read_data_ro_w, accel_perf.dma_xfer_count);
+                        // PERF: utilization
+                        `CSR_READ_64(`VX_CSR_MPM_GEMM_TOTAL_CYC, read_data_ro_w, accel_perf.gemm_total_cycles);
+                        `CSR_READ_64(`VX_CSR_MPM_DMA_ACTIVE_CYC, read_data_ro_w, accel_perf.dma_active_cycles);
+                        `CSR_READ_64(`VX_CSR_MPM_OVERLAP_DMA_MXU, read_data_ro_w, accel_perf.overlap_dma_mxu);
+                        // PERF: stall breakdown
+                        `CSR_READ_64(`VX_CSR_MPM_DMA_WAIT_DCACHE, read_data_ro_w, accel_perf.dma_wait_dcache);
+                        `CSR_READ_64(`VX_CSR_MPM_DMA_WAIT_LMEM, read_data_ro_w, accel_perf.dma_wait_lmem);
+                        `CSR_READ_64(`VX_CSR_MPM_MXU_INPUT_STALL, read_data_ro_w, accel_perf.mxu_input_stall);
+                        `CSR_READ_64(`VX_CSR_MPM_MXU_OUTPUT_STALL, read_data_ro_w, accel_perf.mxu_output_stall);
+                        // PERF: roofline
+                        `CSR_READ_64(`VX_CSR_MPM_MXU_MAC_COUNT, read_data_ro_w, accel_perf.mxu_mac_count);
+                        `CSR_READ_64(`VX_CSR_MPM_LMEM_RD_BYTES, read_data_ro_w, accel_perf.lmem_rd_bytes);
+                        `CSR_READ_64(`VX_CSR_MPM_LMEM_WR_BYTES, read_data_ro_w, accel_perf.lmem_wr_bytes);
                         default:;
                         endcase
                     end

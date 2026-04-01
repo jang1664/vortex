@@ -26,6 +26,10 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     ,output logic [PERF_CTR_BITS-1:0] perf_gemm_compute_cycles
     ,output logic [PERF_CTR_BITS-1:0] perf_gemm_stall_cycles
     ,output logic [PERF_CTR_BITS-1:0] perf_gemm_job_count
+    ,output logic [PERF_CTR_BITS-1:0] perf_mxu_input_stall
+    ,output logic [PERF_CTR_BITS-1:0] perf_mxu_output_stall
+    ,output logic [PERF_CTR_BITS-1:0] perf_mxu_mac_count
+    ,output logic                     perf_gemm_computing
 `endif
 );
 
@@ -1603,12 +1607,25 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     reg [PERF_CTR_BITS-1:0] perf_compute_r;
     reg [PERF_CTR_BITS-1:0] perf_stall_r;
     reg [PERF_CTR_BITS-1:0] perf_jobs_r;
+    reg [PERF_CTR_BITS-1:0] perf_input_stall_r;
+    reg [PERF_CTR_BITS-1:0] perf_output_stall_r;
+    reg [PERF_CTR_BITS-1:0] perf_mac_count_r;
+
+    // MXU input starvation: in COMPUTE but no valid input arriving
+    wire mxu_input_starved = (state == COMPUTE) && !in_pipe_valid_out;
+    // MXU output blocked: accumulator read FIFO is full
+    wire mxu_output_blocked = acc_rd_fifo_full;
+    // MAC ops: each valid MXU output = MXU_ROW * MXU_COL MACs
+    wire mxu_output_fired = |mxu_output_valid;
 
     always @(posedge clk) begin
         if (reset) begin
-            perf_compute_r <= '0;
-            perf_stall_r   <= '0;
-            perf_jobs_r    <= '0;
+            perf_compute_r      <= '0;
+            perf_stall_r        <= '0;
+            perf_jobs_r         <= '0;
+            perf_input_stall_r  <= '0;
+            perf_output_stall_r <= '0;
+            perf_mac_count_r    <= '0;
         end else begin
             if (state == COMPUTE)
                 perf_compute_r <= perf_compute_r + PERF_CTR_BITS'(1);
@@ -1616,12 +1633,22 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
                 perf_stall_r <= perf_stall_r + PERF_CTR_BITS'(1);
             if (gemm_done)
                 perf_jobs_r <= perf_jobs_r + PERF_CTR_BITS'(1);
+            if (mxu_input_starved)
+                perf_input_stall_r <= perf_input_stall_r + PERF_CTR_BITS'(1);
+            if (mxu_output_blocked)
+                perf_output_stall_r <= perf_output_stall_r + PERF_CTR_BITS'(1);
+            if (mxu_output_fired)
+                perf_mac_count_r <= perf_mac_count_r + PERF_CTR_BITS'(`MXU_ROW * `MXU_COL);
         end
     end
 
     assign perf_gemm_compute_cycles = perf_compute_r;
     assign perf_gemm_stall_cycles   = perf_stall_r;
     assign perf_gemm_job_count      = perf_jobs_r;
+    assign perf_mxu_input_stall     = perf_input_stall_r;
+    assign perf_mxu_output_stall    = perf_output_stall_r;
+    assign perf_mxu_mac_count       = perf_mac_count_r;
+    assign perf_gemm_computing      = (state == COMPUTE);
 `endif
 
 endmodule
