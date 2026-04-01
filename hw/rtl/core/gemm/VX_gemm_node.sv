@@ -30,16 +30,8 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     VX_lsu_mem_if.master    dma_if,     // to DMA engine
     VX_mem_bus_if.master    lmem_bus_if // for inputs, weights, scale/zero, output
 `ifdef PERF_ENABLE
-    ,output logic [PERF_CTR_BITS-1:0] perf_gemm_compute_cycles
-    ,output logic [PERF_CTR_BITS-1:0] perf_gemm_stall_cycles
-    ,output logic [PERF_CTR_BITS-1:0] perf_gemm_job_count
-    ,output logic [PERF_CTR_BITS-1:0] perf_gemm_total_cycles
-    ,output logic [PERF_CTR_BITS-1:0] perf_mxu_input_stall
-    ,output logic [PERF_CTR_BITS-1:0] perf_mxu_output_stall
-    ,output logic [PERF_CTR_BITS-1:0] perf_mxu_mac_count
-    ,output logic [PERF_CTR_BITS-1:0] perf_lmem_rd_bytes
-    ,output logic [PERF_CTR_BITS-1:0] perf_lmem_wr_bytes
-    ,output logic                     perf_gemm_computing
+    ,output gemm_unit_perf_t gemm_unit_perf
+    ,output gemm_node_perf_t gemm_node_perf
 `endif
 );
 
@@ -675,13 +667,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
       .o_lmem_bus_if(o_gemm_bus_if),
       .gemm_unit_if(gemm_unit_if)
     `ifdef PERF_ENABLE
-      ,.perf_gemm_compute_cycles(perf_gemm_compute_cycles)
-      ,.perf_gemm_stall_cycles  (perf_gemm_stall_cycles)
-      ,.perf_gemm_job_count     (perf_gemm_job_count)
-      ,.perf_mxu_input_stall    (perf_mxu_input_stall)
-      ,.perf_mxu_output_stall   (perf_mxu_output_stall)
-      ,.perf_mxu_mac_count      (perf_mxu_mac_count)
-      ,.perf_gemm_computing     (perf_gemm_computing)
+      ,.perf(gemm_unit_perf)
     `endif
     );
 
@@ -721,6 +707,10 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     // output path: gemm_unit (slave port) <-> output ldma (master port)
     `ASSIGN_VX_MEM_BUS_IF(o_gemm_bus_if, o_dma_gemm_bus_if);
 
+`ifdef PERF_ENABLE
+    gemm_node_perf_t gemm_ctrl_perf;
+`endif
+
     // GEMM top controller
     VX_gemm_ctrl #(
       .INSTANCE_ID(INSTANCE_ID),
@@ -734,7 +724,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
       .gemm_ctrl_if(gemm_ctrl_if),
       .gemm_sync_slv_if(gemm_sync_if)
     `ifdef PERF_ENABLE
-      ,.perf_gemm_total_cycles(perf_gemm_total_cycles)
+      ,.perf(gemm_ctrl_perf)
     `endif
     );
 
@@ -822,8 +812,11 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
                 perf_lmem_rd_r <= perf_lmem_rd_r + PERF_CTR_BITS'(LSU_WORD_SIZE);
         end
     end
-    assign perf_lmem_rd_bytes = perf_lmem_rd_r;
-    assign perf_lmem_wr_bytes = perf_lmem_wr_r;
+
+    // Assemble gemm_node_perf: total_cycles from ctrl, lmem bytes from here
+    assign gemm_node_perf.total_cycles  = gemm_ctrl_perf.total_cycles;
+    assign gemm_node_perf.lmem_rd_bytes = perf_lmem_rd_r;
+    assign gemm_node_perf.lmem_wr_bytes = perf_lmem_wr_r;
 `endif
 
 endmodule

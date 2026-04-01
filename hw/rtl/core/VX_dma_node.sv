@@ -12,14 +12,7 @@ module VX_dma_node import VX_gpu_pkg::*; #(
   VX_mem_bus_if.master    dcache_bus_if, // to dcache
   VX_mem_bus_if.master    lmem_bus_if // to local memory
 `ifdef PERF_ENABLE
-  ,output logic [PERF_CTR_BITS-1:0] perf_dma_rd_bytes
-  ,output logic [PERF_CTR_BITS-1:0] perf_dma_wr_bytes
-  ,output logic [PERF_CTR_BITS-1:0] perf_dma_stall_cycles
-  ,output logic [PERF_CTR_BITS-1:0] perf_dma_xfer_count
-  ,output logic [PERF_CTR_BITS-1:0] perf_dma_active_cycles
-  ,output logic [PERF_CTR_BITS-1:0] perf_dma_wait_dcache
-  ,output logic [PERF_CTR_BITS-1:0] perf_dma_wait_lmem
-  ,output logic                     perf_dma_busy
+  ,output dma_perf_t perf
 `endif
 );
 
@@ -66,14 +59,7 @@ module VX_dma_node import VX_gpu_pkg::*; #(
     .lmem_bus_if  (lmem_bus_if),
     .done_if      (done_if.master)
   `ifdef PERF_ENABLE
-    ,.perf_dma_rd_bytes    (perf_dma_rd_bytes)
-    ,.perf_dma_wr_bytes    (perf_dma_wr_bytes)
-    ,.perf_dma_stall_cycles(perf_dma_stall_cycles)
-    ,.perf_dma_xfer_count  (perf_dma_xfer_count)
-    ,.perf_dma_active_cycles(perf_dma_active_cycles)
-    ,.perf_dma_wait_dcache (perf_dma_wait_dcache)
-    ,.perf_dma_wait_lmem   (perf_dma_wait_lmem)
-    ,.perf_dma_busy        (perf_dma_busy)
+    ,.perf(perf)
   `endif
   );
 

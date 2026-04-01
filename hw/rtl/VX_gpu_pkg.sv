@@ -751,29 +751,51 @@ package VX_gpu_pkg;
         logic [PERF_CTR_BITS-1:0] load_latency;
    } pipeline_perf_t;
 
+    // Per-module perf structs (used as output ports)
     typedef struct packed {
-        // GEMM counters
-        logic [PERF_CTR_BITS-1:0] gemm_compute_cycles;
-        logic [PERF_CTR_BITS-1:0] gemm_stall_cycles;
-        logic [PERF_CTR_BITS-1:0] gemm_job_count;
-        // DMA counters
-        logic [PERF_CTR_BITS-1:0] dma_rd_bytes;
-        logic [PERF_CTR_BITS-1:0] dma_wr_bytes;
-        logic [PERF_CTR_BITS-1:0] dma_stall_cycles;
-        logic [PERF_CTR_BITS-1:0] dma_xfer_count;
-        // Phase 1: utilization
-        logic [PERF_CTR_BITS-1:0] gemm_total_cycles;
-        logic [PERF_CTR_BITS-1:0] dma_active_cycles;
-        logic [PERF_CTR_BITS-1:0] overlap_dma_mxu;
-        // Phase 2: stall breakdown
-        logic [PERF_CTR_BITS-1:0] dma_wait_dcache;
-        logic [PERF_CTR_BITS-1:0] dma_wait_lmem;
-        logic [PERF_CTR_BITS-1:0] mxu_input_stall;
-        logic [PERF_CTR_BITS-1:0] mxu_output_stall;
-        // Phase 3: roofline
-        logic [PERF_CTR_BITS-1:0] mxu_mac_count;
+        logic [PERF_CTR_BITS-1:0] compute_cycles;   // COMPUTE state cycles
+        logic [PERF_CTR_BITS-1:0] stall_cycles;     // !gemm_idle && IDLE
+        logic [PERF_CTR_BITS-1:0] job_count;
+        logic [PERF_CTR_BITS-1:0] input_fire;       // input valid && ready
+        logic [PERF_CTR_BITS-1:0] input_stall;      // input valid && !ready
+        logic [PERF_CTR_BITS-1:0] weight_fire;
+        logic [PERF_CTR_BITS-1:0] weight_stall;
+        logic [PERF_CTR_BITS-1:0] psum_fire;
+        logic [PERF_CTR_BITS-1:0] psum_stall;
+        logic [PERF_CTR_BITS-1:0] output_fire;
+        logic [PERF_CTR_BITS-1:0] output_stall;
+        logic [PERF_CTR_BITS-1:0] mac_count;
+        logic                     computing;         // 1-bit status for overlap
+    } gemm_unit_perf_t;
+
+    typedef struct packed {
+        logic [PERF_CTR_BITS-1:0] total_cycles;      // job_active cycles
         logic [PERF_CTR_BITS-1:0] lmem_rd_bytes;
         logic [PERF_CTR_BITS-1:0] lmem_wr_bytes;
+    } gemm_node_perf_t;
+
+    typedef struct packed {
+        logic [PERF_CTR_BITS-1:0] rd_bytes;
+        logic [PERF_CTR_BITS-1:0] wr_bytes;
+        logic [PERF_CTR_BITS-1:0] xfer_count;
+        logic [PERF_CTR_BITS-1:0] active_cycles;     // non-idle cycles
+        logic [PERF_CTR_BITS-1:0] src_rd_req_fire;
+        logic [PERF_CTR_BITS-1:0] src_rd_req_stall;
+        logic [PERF_CTR_BITS-1:0] src_rd_data_fire;
+        logic [PERF_CTR_BITS-1:0] src_rd_data_stall;
+        logic [PERF_CTR_BITS-1:0] dst_wr_fire;
+        logic [PERF_CTR_BITS-1:0] dst_wr_stall;
+        logic [PERF_CTR_BITS-1:0] wait_dcache;
+        logic [PERF_CTR_BITS-1:0] wait_lmem;
+        logic                     busy;               // 1-bit status for overlap
+    } dma_perf_t;
+
+    // Top-level accel perf (assembled in VX_core)
+    typedef struct packed {
+        gemm_unit_perf_t gemm_unit;
+        gemm_node_perf_t gemm_node;
+        dma_perf_t       dma;
+        logic [PERF_CTR_BITS-1:0] overlap_dma_mxu;   // measured in VX_core
     } accel_perf_t;
 
    ////////////////////////// gemm related types    ///////////////////////////

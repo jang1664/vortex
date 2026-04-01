@@ -35,7 +35,7 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
     VX_node_done_if.master    done_if,            // to job frontend (notify done)
     VX_gemm_sync_if.slave     gemm_sync_slv_if[N_NODE] // from cmd ctrls (notify events)
 `ifdef PERF_ENABLE
-    ,output logic [PERF_CTR_BITS-1:0] perf_gemm_total_cycles
+    ,output gemm_node_perf_t perf
 `endif
 );
 
@@ -368,6 +368,8 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
         else if (job_active_q)
             perf_total_cycles_r <= perf_total_cycles_r + PERF_CTR_BITS'(1);
     end
-    assign perf_gemm_total_cycles = perf_total_cycles_r;
+    assign perf.total_cycles  = perf_total_cycles_r;
+    assign perf.lmem_rd_bytes = '0;  // filled by gemm_node
+    assign perf.lmem_wr_bytes = '0;  // filled by gemm_node
 `endif
 endmodule

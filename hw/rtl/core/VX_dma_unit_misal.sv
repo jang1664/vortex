@@ -41,14 +41,7 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
 
   VX_node_done_if.master done_if
 `ifdef PERF_ENABLE
-  ,output logic [PERF_CTR_BITS-1:0] perf_dma_rd_bytes
-  ,output logic [PERF_CTR_BITS-1:0] perf_dma_wr_bytes
-  ,output logic [PERF_CTR_BITS-1:0] perf_dma_stall_cycles
-  ,output logic [PERF_CTR_BITS-1:0] perf_dma_xfer_count
-  ,output logic [PERF_CTR_BITS-1:0] perf_dma_active_cycles
-  ,output logic [PERF_CTR_BITS-1:0] perf_dma_wait_dcache
-  ,output logic [PERF_CTR_BITS-1:0] perf_dma_wait_lmem
-  ,output logic                     perf_dma_busy
+  ,output dma_perf_t perf
 `endif
 );
 
@@ -1048,51 +1041,71 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
 
 `ifdef PERF_ENABLE
     reg [PERF_CTR_BITS-1:0] perf_rd_bytes_r;
+    reg [PERF_CTR_BITS-1:0] perf_rd_bytes_r;
     reg [PERF_CTR_BITS-1:0] perf_wr_bytes_r;
-    reg [PERF_CTR_BITS-1:0] perf_stalls_r;
     reg [PERF_CTR_BITS-1:0] perf_xfers_r;
     reg [PERF_CTR_BITS-1:0] perf_active_r;
     reg [PERF_CTR_BITS-1:0] perf_wait_dcache_r;
     reg [PERF_CTR_BITS-1:0] perf_wait_lmem_r;
+    reg [PERF_CTR_BITS-1:0] perf_src_rd_req_fire_r,  perf_src_rd_req_stall_r;
+    reg [PERF_CTR_BITS-1:0] perf_src_rd_data_fire_r, perf_src_rd_data_stall_r;
+    reg [PERF_CTR_BITS-1:0] perf_dst_wr_fire_r,      perf_dst_wr_stall_r;
 
     // G2L: dcache read response received (load direction)
     wire g2l_rd_beat = (state == S_G2L_SRC_RD_WAIT) && dcache_rsp_fire;
     // L2G: dcache write request accepted (store direction)
     wire l2g_wr_beat = (state == S_L2G_DST_WR_REQ) && dcache_req_fire;
-    // Stall: bus request blocked
-    wire dma_stall = ((state == S_G2L_SRC_RD_REQ) && !dcache_req_fire)
-                   | ((state == S_G2L_DST_WR_REQ) && !lmem_req_fire)
-                   | ((state == S_L2G_SRC_RD_REQ) && !lmem_req_fire)
-                   | ((state == S_L2G_DST_WR_REQ) && !dcache_req_fire);
-    // Stall breakdown: dcache side (HBM)
-    wire dma_stall_dcache = ((state == S_G2L_SRC_RD_REQ) && !dcache_req_fire)
-                          | ((state == S_G2L_SRC_RD_WAIT) && !dcache_rsp_fire)
-                          | ((state == S_L2G_DST_WR_REQ) && !dcache_req_fire);
-    // Stall breakdown: lmem side
-    wire dma_stall_lmem = ((state == S_G2L_DST_WR_REQ) && !lmem_req_fire)
-                        | ((state == S_L2G_SRC_RD_REQ) && !lmem_req_fire)
-                        | ((state == S_L2G_SRC_RD_WAIT) && !lmem_rsp_fire);
-    // Active: transferring data, not stalled
-    wire dma_is_active = (state != S_IDLE) && (state != S_DONE) && (state != S_PRECALC) && !dma_stall;
+
+    // Active: DMA is busy (not idle/done)
+    wire dma_is_active = (state != S_IDLE) && (state != S_DONE);
     // Transfer complete edge
     wire dma_xfer_done = (state != S_DONE) && (state_n == S_DONE);
 
+    // Stall breakdown: dcache side (HBM) — valid && !ready
+    wire dma_stall_dcache = ((state == S_G2L_SRC_RD_REQ)  && dcache_bus_if.req_valid && !dcache_bus_if.req_ready)
+                          | ((state == S_G2L_SRC_RD_WAIT) && dcache_bus_if.rsp_valid && !dcache_bus_if.rsp_ready)
+                          | ((state == S_L2G_DST_WR_REQ)  && dcache_bus_if.req_valid && !dcache_bus_if.req_ready);
+    // Stall breakdown: lmem side — valid && !ready
+    wire dma_stall_lmem = ((state == S_G2L_DST_WR_REQ) && lmem_bus_if.req_valid && !lmem_bus_if.req_ready)
+                        | ((state == S_L2G_SRC_RD_REQ) && lmem_bus_if.req_valid && !lmem_bus_if.req_ready)
+                        | ((state == S_L2G_SRC_RD_WAIT) && lmem_bus_if.rsp_valid && !lmem_bus_if.rsp_ready);
+
+    // Fire/stall per port (direction-independent: G2L src=dcache, L2G src=lmem)
+    // src_rd_req: sending read request to source
+    wire perf_src_rd_req_fire  = ((state == S_G2L_SRC_RD_REQ) && dcache_req_fire)
+                               | ((state == S_L2G_SRC_RD_REQ) && lmem_req_fire);
+    wire perf_src_rd_req_stall = ((state == S_G2L_SRC_RD_REQ) && dcache_bus_if.req_valid && !dcache_bus_if.req_ready)
+                               | ((state == S_L2G_SRC_RD_REQ) && lmem_bus_if.req_valid && !lmem_bus_if.req_ready);
+    // src_rd_data: receiving read data from source
+    wire perf_src_rd_data_fire  = ((state == S_G2L_SRC_RD_WAIT) && dcache_rsp_fire)
+                                | ((state == S_L2G_SRC_RD_WAIT) && lmem_rsp_fire);
+    wire perf_src_rd_data_stall = ((state == S_G2L_SRC_RD_WAIT) && dcache_bus_if.rsp_valid && !dcache_bus_if.rsp_ready)
+                                | ((state == S_L2G_SRC_RD_WAIT) && lmem_bus_if.rsp_valid && !lmem_bus_if.rsp_ready);
+    // dst_wr: writing to destination
+    wire perf_dst_wr_fire  = ((state == S_G2L_DST_WR_REQ) && lmem_req_fire)
+                           | ((state == S_L2G_DST_WR_REQ) && dcache_req_fire);
+    wire perf_dst_wr_stall = ((state == S_G2L_DST_WR_REQ) && lmem_bus_if.req_valid && !lmem_bus_if.req_ready)
+                           | ((state == S_L2G_DST_WR_REQ) && dcache_bus_if.req_valid && !dcache_bus_if.req_ready);
+
     always @(posedge clk) begin
         if (reset) begin
-            perf_rd_bytes_r    <= '0;
-            perf_wr_bytes_r    <= '0;
-            perf_stalls_r      <= '0;
-            perf_xfers_r       <= '0;
-            perf_active_r      <= '0;
-            perf_wait_dcache_r <= '0;
-            perf_wait_lmem_r   <= '0;
+            perf_rd_bytes_r         <= '0;
+            perf_wr_bytes_r         <= '0;
+            perf_xfers_r            <= '0;
+            perf_active_r           <= '0;
+            perf_wait_dcache_r      <= '0;
+            perf_wait_lmem_r        <= '0;
+            perf_src_rd_req_fire_r  <= '0;
+            perf_src_rd_req_stall_r <= '0;
+            perf_src_rd_data_fire_r <= '0;
+            perf_src_rd_data_stall_r<= '0;
+            perf_dst_wr_fire_r      <= '0;
+            perf_dst_wr_stall_r     <= '0;
         end else begin
             if (g2l_rd_beat)
                 perf_rd_bytes_r <= perf_rd_bytes_r + PERF_CTR_BITS'(DCACHE_BYTES);
             if (l2g_wr_beat)
                 perf_wr_bytes_r <= perf_wr_bytes_r + PERF_CTR_BITS'(DCACHE_BYTES);
-            if (dma_stall)
-                perf_stalls_r <= perf_stalls_r + PERF_CTR_BITS'(1);
             if (dma_xfer_done)
                 perf_xfers_r <= perf_xfers_r + PERF_CTR_BITS'(1);
             if (dma_is_active)
@@ -1101,17 +1114,34 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
                 perf_wait_dcache_r <= perf_wait_dcache_r + PERF_CTR_BITS'(1);
             if (dma_stall_lmem)
                 perf_wait_lmem_r <= perf_wait_lmem_r + PERF_CTR_BITS'(1);
+            if (perf_src_rd_req_fire)
+                perf_src_rd_req_fire_r <= perf_src_rd_req_fire_r + PERF_CTR_BITS'(1);
+            if (perf_src_rd_req_stall)
+                perf_src_rd_req_stall_r <= perf_src_rd_req_stall_r + PERF_CTR_BITS'(1);
+            if (perf_src_rd_data_fire)
+                perf_src_rd_data_fire_r <= perf_src_rd_data_fire_r + PERF_CTR_BITS'(1);
+            if (perf_src_rd_data_stall)
+                perf_src_rd_data_stall_r <= perf_src_rd_data_stall_r + PERF_CTR_BITS'(1);
+            if (perf_dst_wr_fire)
+                perf_dst_wr_fire_r <= perf_dst_wr_fire_r + PERF_CTR_BITS'(1);
+            if (perf_dst_wr_stall)
+                perf_dst_wr_stall_r <= perf_dst_wr_stall_r + PERF_CTR_BITS'(1);
         end
     end
 
-    assign perf_dma_rd_bytes      = perf_rd_bytes_r;
-    assign perf_dma_wr_bytes      = perf_wr_bytes_r;
-    assign perf_dma_stall_cycles  = perf_stalls_r;
-    assign perf_dma_xfer_count    = perf_xfers_r;
-    assign perf_dma_active_cycles = perf_active_r;
-    assign perf_dma_wait_dcache   = perf_wait_dcache_r;
-    assign perf_dma_wait_lmem     = perf_wait_lmem_r;
-    assign perf_dma_busy          = (state != S_IDLE) && (state != S_DONE);
+    assign perf.rd_bytes          = perf_rd_bytes_r;
+    assign perf.wr_bytes          = perf_wr_bytes_r;
+    assign perf.xfer_count        = perf_xfers_r;
+    assign perf.active_cycles     = perf_active_r;
+    assign perf.src_rd_req_fire   = perf_src_rd_req_fire_r;
+    assign perf.src_rd_req_stall  = perf_src_rd_req_stall_r;
+    assign perf.src_rd_data_fire  = perf_src_rd_data_fire_r;
+    assign perf.src_rd_data_stall = perf_src_rd_data_stall_r;
+    assign perf.dst_wr_fire       = perf_dst_wr_fire_r;
+    assign perf.dst_wr_stall      = perf_dst_wr_stall_r;
+    assign perf.wait_dcache       = perf_wait_dcache_r;
+    assign perf.wait_lmem         = perf_wait_lmem_r;
+    assign perf.busy              = dma_is_active;
 `endif
 
 endmodule

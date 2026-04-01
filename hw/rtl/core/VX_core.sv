@@ -108,15 +108,12 @@ module VX_core import VX_gpu_pkg::*; #(
         sysmem_perf_tmp.lmem = lmem_perf;
         sysmem_perf_tmp.coalescer = coalescer_perf;
     end
-    // Status wires for overlap counting (driven by module instances below)
-    wire perf_dma_busy_w;
-    wire perf_gemm_computing_w;
     // Overlap counter: DMA and MXU active simultaneously
     reg [PERF_CTR_BITS-1:0] perf_overlap_r;
     always @(posedge clk) begin
         if (reset)
             perf_overlap_r <= '0;
-        else if (perf_dma_busy_w && perf_gemm_computing_w)
+        else if (accel_perf.dma.busy && accel_perf.gemm_unit.computing)
             perf_overlap_r <= perf_overlap_r + PERF_CTR_BITS'(1);
     end
     assign accel_perf.overlap_dma_mxu = perf_overlap_r;
@@ -273,14 +270,7 @@ module VX_core import VX_gpu_pkg::*; #(
       .dcache_bus_if(dma_global_data_if),
       .lmem_bus_if(dma_local_data_if)
     `ifdef PERF_ENABLE
-      ,.perf_dma_rd_bytes    (accel_perf.dma_rd_bytes)
-      ,.perf_dma_wr_bytes    (accel_perf.dma_wr_bytes)
-      ,.perf_dma_stall_cycles(accel_perf.dma_stall_cycles)
-      ,.perf_dma_xfer_count  (accel_perf.dma_xfer_count)
-      ,.perf_dma_active_cycles(accel_perf.dma_active_cycles)
-      ,.perf_dma_wait_dcache (accel_perf.dma_wait_dcache)
-      ,.perf_dma_wait_lmem   (accel_perf.dma_wait_lmem)
-      ,.perf_dma_busy        (perf_dma_busy_w)
+      ,.perf(accel_perf.dma)
     `endif
     );
 
@@ -295,16 +285,8 @@ module VX_core import VX_gpu_pkg::*; #(
         .dma_if     (dma_ctrl_if[`NUM_LSU_BLOCKS]),
         .lmem_bus_if(gemm_data_if)
     `ifdef PERF_ENABLE
-        ,.perf_gemm_compute_cycles(accel_perf.gemm_compute_cycles)
-        ,.perf_gemm_stall_cycles  (accel_perf.gemm_stall_cycles)
-        ,.perf_gemm_job_count     (accel_perf.gemm_job_count)
-        ,.perf_gemm_total_cycles  (accel_perf.gemm_total_cycles)
-        ,.perf_mxu_input_stall    (accel_perf.mxu_input_stall)
-        ,.perf_mxu_output_stall   (accel_perf.mxu_output_stall)
-        ,.perf_mxu_mac_count      (accel_perf.mxu_mac_count)
-        ,.perf_lmem_rd_bytes      (accel_perf.lmem_rd_bytes)
-        ,.perf_lmem_wr_bytes      (accel_perf.lmem_wr_bytes)
-        ,.perf_gemm_computing     (perf_gemm_computing_w)
+        ,.gemm_unit_perf(accel_perf.gemm_unit)
+        ,.gemm_node_perf(accel_perf.gemm_node)
     `endif
     );
 

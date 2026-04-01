@@ -214,27 +214,31 @@ extern int vx_dump_perf(vx_device_h hdevice, FILE* stream) {
   uint64_t mem_writes = 0;
   uint64_t mem_lat = 0;
   uint64_t mem_bank_stalls = 0;
-  // PERF: accelerator (GEMM + DMA)
+  // PERF: accelerator — GEMM unit
   uint64_t gemm_compute_cycles = 0;
   uint64_t gemm_stall_cycles = 0;
   uint64_t gemm_job_count = 0;
-  uint64_t dma_rd_bytes = 0;
-  uint64_t dma_wr_bytes = 0;
-  uint64_t dma_stall_cycles = 0;
-  uint64_t dma_xfer_count = 0;
-  // Phase 1: utilization
-  uint64_t gemm_total_cycles = 0;
-  uint64_t dma_active_cycles = 0;
-  uint64_t overlap_dma_mxu = 0;
-  // Phase 2: stall breakdown
-  uint64_t dma_wait_dcache = 0;
-  uint64_t dma_wait_lmem = 0;
-  uint64_t mxu_input_stall = 0;
-  uint64_t mxu_output_stall = 0;
-  // Phase 3: roofline
+  uint64_t mxu_input_fire = 0, mxu_input_stall = 0;
+  uint64_t mxu_weight_fire = 0, mxu_weight_stall = 0;
+  uint64_t mxu_psum_fire = 0, mxu_psum_stall = 0;
+  uint64_t mxu_output_fire = 0, mxu_output_stall = 0;
   uint64_t mxu_mac_count = 0;
+  // PERF: accelerator — GEMM node
+  uint64_t gemm_total_cycles = 0;
   uint64_t lmem_rd_bytes = 0;
   uint64_t lmem_wr_bytes = 0;
+  // PERF: accelerator — DMA
+  uint64_t dma_rd_bytes = 0;
+  uint64_t dma_wr_bytes = 0;
+  uint64_t dma_xfer_count = 0;
+  uint64_t dma_active_cycles = 0;
+  uint64_t dma_wait_dcache = 0;
+  uint64_t dma_wait_lmem = 0;
+  uint64_t dma_src_rd_req_fire = 0, dma_src_rd_req_stall = 0;
+  uint64_t dma_src_rd_data_fire = 0, dma_src_rd_data_stall = 0;
+  uint64_t dma_dst_wr_fire = 0, dma_dst_wr_stall = 0;
+  // PERF: accelerator — overlap
+  uint64_t overlap_dma_mxu = 0;
 
   uint64_t num_cores;
   CHECK_ERR(vx_dev_caps(hdevice, VX_CAPS_NUM_CORES, &num_cores), {
@@ -615,23 +619,38 @@ extern int vx_dump_perf(vx_device_h hdevice, FILE* stream) {
         CHECK_ERR(vx_mpm_query(hdevice, csr, core_id, &_v), { return err; }); \
         accum += _v; \
       } while(0)
+      // GEMM unit
       READ_PERF(VX_CSR_MPM_GEMM_COMPUTE_CYC, gemm_compute_cycles);
       READ_PERF(VX_CSR_MPM_GEMM_STALL_CYC, gemm_stall_cycles);
       READ_PERF(VX_CSR_MPM_GEMM_JOB_CNT, gemm_job_count);
-      READ_PERF(VX_CSR_MPM_DMA_RD_BYTES, dma_rd_bytes);
-      READ_PERF(VX_CSR_MPM_DMA_WR_BYTES, dma_wr_bytes);
-      READ_PERF(VX_CSR_MPM_DMA_STALL_CYC, dma_stall_cycles);
-      READ_PERF(VX_CSR_MPM_DMA_XFER_CNT, dma_xfer_count);
-      READ_PERF(VX_CSR_MPM_GEMM_TOTAL_CYC, gemm_total_cycles);
-      READ_PERF(VX_CSR_MPM_DMA_ACTIVE_CYC, dma_active_cycles);
-      READ_PERF(VX_CSR_MPM_OVERLAP_DMA_MXU, overlap_dma_mxu);
-      READ_PERF(VX_CSR_MPM_DMA_WAIT_DCACHE, dma_wait_dcache);
-      READ_PERF(VX_CSR_MPM_DMA_WAIT_LMEM, dma_wait_lmem);
+      READ_PERF(VX_CSR_MPM_MXU_INPUT_FIRE, mxu_input_fire);
       READ_PERF(VX_CSR_MPM_MXU_INPUT_STALL, mxu_input_stall);
+      READ_PERF(VX_CSR_MPM_MXU_WEIGHT_FIRE, mxu_weight_fire);
+      READ_PERF(VX_CSR_MPM_MXU_WEIGHT_STALL, mxu_weight_stall);
+      READ_PERF(VX_CSR_MPM_MXU_PSUM_FIRE, mxu_psum_fire);
+      READ_PERF(VX_CSR_MPM_MXU_PSUM_STALL, mxu_psum_stall);
+      READ_PERF(VX_CSR_MPM_MXU_OUTPUT_FIRE, mxu_output_fire);
       READ_PERF(VX_CSR_MPM_MXU_OUTPUT_STALL, mxu_output_stall);
       READ_PERF(VX_CSR_MPM_MXU_MAC_COUNT, mxu_mac_count);
+      // GEMM node
+      READ_PERF(VX_CSR_MPM_GEMM_TOTAL_CYC, gemm_total_cycles);
       READ_PERF(VX_CSR_MPM_LMEM_RD_BYTES, lmem_rd_bytes);
       READ_PERF(VX_CSR_MPM_LMEM_WR_BYTES, lmem_wr_bytes);
+      // DMA
+      READ_PERF(VX_CSR_MPM_DMA_RD_BYTES, dma_rd_bytes);
+      READ_PERF(VX_CSR_MPM_DMA_WR_BYTES, dma_wr_bytes);
+      READ_PERF(VX_CSR_MPM_DMA_XFER_CNT, dma_xfer_count);
+      READ_PERF(VX_CSR_MPM_DMA_ACTIVE_CYC, dma_active_cycles);
+      READ_PERF(VX_CSR_MPM_DMA_WAIT_DCACHE, dma_wait_dcache);
+      READ_PERF(VX_CSR_MPM_DMA_WAIT_LMEM, dma_wait_lmem);
+      READ_PERF(VX_CSR_MPM_DMA_SRC_RD_REQ_FIRE, dma_src_rd_req_fire);
+      READ_PERF(VX_CSR_MPM_DMA_SRC_RD_REQ_STALL, dma_src_rd_req_stall);
+      READ_PERF(VX_CSR_MPM_DMA_SRC_RD_DATA_FIRE, dma_src_rd_data_fire);
+      READ_PERF(VX_CSR_MPM_DMA_SRC_RD_DATA_STALL, dma_src_rd_data_stall);
+      READ_PERF(VX_CSR_MPM_DMA_DST_WR_FIRE, dma_dst_wr_fire);
+      READ_PERF(VX_CSR_MPM_DMA_DST_WR_STALL, dma_dst_wr_stall);
+      // Overlap
+      READ_PERF(VX_CSR_MPM_OVERLAP_DMA_MXU, overlap_dma_mxu);
       #undef READ_PERF
     } break;
     default:
@@ -726,65 +745,68 @@ extern int vx_dump_perf(vx_device_h hdevice, FILE* stream) {
     }
   } break;
   case VX_DCR_MPM_CLASS_ACCEL: {
-    fprintf(stream, "PERF: === GEMM Bottleneck Analysis ===\n");
-    // Basic counters
-    fprintf(stream, "PERF: gemm jobs=%ld\n", gemm_job_count);
-    fprintf(stream, "PERF: gemm total cycles=%ld\n", gemm_total_cycles);
-    fprintf(stream, "PERF: dma transfers=%ld\n", dma_xfer_count);
-    // Phase 1: Utilization
-    int mxu_util = calcAvgPercent(gemm_compute_cycles, gemm_total_cycles);
-    int dma_util = calcAvgPercent(dma_active_cycles, gemm_total_cycles);
-    int overlap_pct = calcAvgPercent(overlap_dma_mxu, gemm_total_cycles);
-    fprintf(stream, "PERF: --- Utilization ---\n");
-    fprintf(stream, "PERF: MXU utilization=%d%% (compute=%ld / total=%ld)\n", mxu_util, gemm_compute_cycles, gemm_total_cycles);
-    fprintf(stream, "PERF: DMA utilization=%d%% (active=%ld / total=%ld)\n", dma_util, dma_active_cycles, gemm_total_cycles);
-    fprintf(stream, "PERF: DMA+MXU overlap=%d%% (overlap=%ld)\n", overlap_pct, overlap_dma_mxu);
-    // Phase 2: Stall breakdown
-    fprintf(stream, "PERF: --- Stall Breakdown ---\n");
-    uint64_t dma_wait_total = dma_wait_dcache + dma_wait_lmem;
-    int hbm_ratio = calcAvgPercent(dma_wait_dcache, dma_wait_total);
-    int lmem_ratio = calcAvgPercent(dma_wait_lmem, dma_wait_total);
-    fprintf(stream, "PERF: DMA stalls=%ld (HBM=%ld [%d%%], LMEM=%ld [%d%%])\n",
-            dma_stall_cycles, dma_wait_dcache, hbm_ratio, dma_wait_lmem, lmem_ratio);
-    fprintf(stream, "PERF: DMA bytes: read=%ld, write=%ld\n", dma_rd_bytes, dma_wr_bytes);
-    int input_stall_pct = calcAvgPercent(mxu_input_stall, gemm_compute_cycles);
-    int output_stall_pct = calcAvgPercent(mxu_output_stall, gemm_total_cycles);
-    fprintf(stream, "PERF: MXU input stall=%ld (%d%% of compute)\n", mxu_input_stall, input_stall_pct);
-    fprintf(stream, "PERF: MXU output stall=%ld (%d%% of total)\n", mxu_output_stall, output_stall_pct);
-    // Phase 3: Roofline
+    fprintf(stream, "PERF: === GEMM Performance Analysis ===\n");
+    fprintf(stream, "PERF: gemm jobs=%ld, total_cycles=%ld, dma_transfers=%ld\n",
+            gemm_job_count, gemm_total_cycles, dma_xfer_count);
+    fprintf(stream, "PERF: DMA+MXU overlap=%.3f%% (%ld / %ld)\n",
+            (gemm_total_cycles > 0) ? 100.0 * overlap_dma_mxu / gemm_total_cycles : 0.0,
+            overlap_dma_mxu, gemm_total_cycles);
+
+    // --- MXU Raw Counters ---
+    fprintf(stream, "PERF: --- MXU Raw Counters ---\n");
+    fprintf(stream, "PERF: compute_cycles=%ld, mac_count=%ld\n", gemm_compute_cycles, mxu_mac_count);
+    fprintf(stream, "PERF: input:  fire=%ld, stall=%ld\n", mxu_input_fire, mxu_input_stall);
+    fprintf(stream, "PERF: weight: fire=%ld, stall=%ld\n", mxu_weight_fire, mxu_weight_stall);
+    fprintf(stream, "PERF: psum:   fire=%ld, stall=%ld\n", mxu_psum_fire, mxu_psum_stall);
+    fprintf(stream, "PERF: output: fire=%ld, stall=%ld\n", mxu_output_fire, mxu_output_stall);
+
+    // --- MXU Utilization Table ---
+    fprintf(stream, "PERF: --- MXU Utilization (fire / denominator) ---\n");
+    fprintf(stream, "PERF: %-16s /total_cycles   /active_cycles\n", "");
+    const char* mxu_names[] = {"input_fire", "weight_fire", "psum_fire", "output_fire"};
+    uint64_t mxu_fires[] = {mxu_input_fire, mxu_weight_fire, mxu_psum_fire, mxu_output_fire};
+    for (int i = 0; i < 4; i++) {
+      double pct_total  = (gemm_total_cycles > 0)   ? 100.0 * mxu_fires[i] / gemm_total_cycles   : 0.0;
+      double pct_active = (gemm_compute_cycles > 0) ? 100.0 * mxu_fires[i] / gemm_compute_cycles : 0.0;
+      fprintf(stream, "PERF: %-16s %7.3f%%        %7.3f%%\n", mxu_names[i], pct_total, pct_active);
+    }
+
+    // --- DMA Raw Counters ---
+    fprintf(stream, "PERF: --- DMA Raw Counters ---\n");
+    fprintf(stream, "PERF: active_cycles=%ld, rd_bytes=%ld, wr_bytes=%ld\n",
+            dma_active_cycles, dma_rd_bytes, dma_wr_bytes);
+    fprintf(stream, "PERF: wait_dcache=%ld, wait_lmem=%ld\n", dma_wait_dcache, dma_wait_lmem);
+    fprintf(stream, "PERF: src_rd_req:  fire=%ld, stall=%ld\n", dma_src_rd_req_fire, dma_src_rd_req_stall);
+    fprintf(stream, "PERF: src_rd_data: fire=%ld, stall=%ld\n", dma_src_rd_data_fire, dma_src_rd_data_stall);
+    fprintf(stream, "PERF: dst_wr:      fire=%ld, stall=%ld\n", dma_dst_wr_fire, dma_dst_wr_stall);
+
+    // --- DMA Utilization Table ---
+    fprintf(stream, "PERF: --- DMA Utilization (fire / denominator) ---\n");
+    fprintf(stream, "PERF: %-16s /total_cycles   /active_cycles\n", "");
+    const char* dma_names[] = {"src_rd_req_fire", "src_rd_data_fire", "dst_wr_fire"};
+    uint64_t dma_fires[] = {dma_src_rd_req_fire, dma_src_rd_data_fire, dma_dst_wr_fire};
+    for (int i = 0; i < 3; i++) {
+      double pct_total  = (gemm_total_cycles > 0)  ? 100.0 * dma_fires[i] / gemm_total_cycles  : 0.0;
+      double pct_active = (dma_active_cycles > 0)  ? 100.0 * dma_fires[i] / dma_active_cycles  : 0.0;
+      fprintf(stream, "PERF: %-16s %7.3f%%        %7.3f%%\n", dma_names[i], pct_total, pct_active);
+    }
+
+    // --- Roofline ---
     fprintf(stream, "PERF: --- Roofline ---\n");
-    uint64_t total_flops = mxu_mac_count * 2; // MAC = multiply + add
+    uint64_t total_flops = mxu_mac_count * 2;
     uint64_t hbm_bytes = dma_rd_bytes + dma_wr_bytes;
     uint64_t lmem_bytes = lmem_rd_bytes + lmem_wr_bytes;
-    float op_intensity = (hbm_bytes > 0) ? (float)total_flops / (float)hbm_bytes : 0.0f;
     float achieved_flops_per_cycle = (gemm_total_cycles > 0) ? (float)total_flops / (float)gemm_total_cycles : 0.0f;
     float hbm_bw_per_cycle = (gemm_total_cycles > 0) ? (float)hbm_bytes / (float)gemm_total_cycles : 0.0f;
     float lmem_bw_per_cycle = (gemm_total_cycles > 0) ? (float)lmem_bytes / (float)gemm_total_cycles : 0.0f;
+    float op_intensity = (hbm_bytes > 0) ? (float)total_flops / (float)hbm_bytes : 0.0f;
     fprintf(stream, "PERF: MACs=%ld, FLOPs=%ld\n", mxu_mac_count, total_flops);
     fprintf(stream, "PERF: HBM bytes=%ld (read=%ld, write=%ld)\n", hbm_bytes, dma_rd_bytes, dma_wr_bytes);
     fprintf(stream, "PERF: LMEM bytes=%ld (read=%ld, write=%ld)\n", lmem_bytes, lmem_rd_bytes, lmem_wr_bytes);
-    fprintf(stream, "PERF: Operational Intensity=%.2f FLOPs/byte (HBM)\n", op_intensity);
-    fprintf(stream, "PERF: Achieved throughput=%.2f FLOPs/cycle\n", achieved_flops_per_cycle);
-    fprintf(stream, "PERF: HBM bandwidth=%.2f bytes/cycle\n", hbm_bw_per_cycle);
-    fprintf(stream, "PERF: LMEM bandwidth=%.2f bytes/cycle\n", lmem_bw_per_cycle);
-    // Bottleneck diagnosis
-    fprintf(stream, "PERF: --- Diagnosis ---\n");
-    if (mxu_util < 50 && overlap_pct < 30) {
-      fprintf(stream, "PERF: >> BOTTLENECK: Double-buffering ineffective (overlap=%d%%)\n", overlap_pct);
-    } else if (mxu_util < 50 && dma_util > 70) {
-      if (hbm_ratio > 60)
-        fprintf(stream, "PERF: >> BOTTLENECK: Memory-bound (HBM bandwidth)\n");
-      else
-        fprintf(stream, "PERF: >> BOTTLENECK: Memory-bound (LMEM contention)\n");
-    } else if (mxu_util > 80 && input_stall_pct < 5) {
-      fprintf(stream, "PERF: >> BOTTLENECK: Compute-bound (MXU is the ceiling)\n");
-    } else if (input_stall_pct > 20) {
-      fprintf(stream, "PERF: >> BOTTLENECK: LMEM->MXU feed path (input starvation=%d%%)\n", input_stall_pct);
-    } else if (output_stall_pct > 10) {
-      fprintf(stream, "PERF: >> BOTTLENECK: MXU->LMEM output path (output blocked=%d%%)\n", output_stall_pct);
-    } else {
-      fprintf(stream, "PERF: >> Balanced workload (no single dominant bottleneck)\n");
-    }
+    fprintf(stream, "PERF: Operational Intensity=%.3f FLOPs/byte (HBM)\n", op_intensity);
+    fprintf(stream, "PERF: Achieved throughput=%.3f FLOPs/cycle\n", achieved_flops_per_cycle);
+    fprintf(stream, "PERF: HBM bandwidth=%.3f bytes/cycle\n", hbm_bw_per_cycle);
+    fprintf(stream, "PERF: LMEM bandwidth=%.3f bytes/cycle\n", lmem_bw_per_cycle);
   } break;
   default:
     break;
