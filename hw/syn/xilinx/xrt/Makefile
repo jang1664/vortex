@@ -41,9 +41,15 @@ JOBS ?= $(shell echo $$(( $(NCPUS) > $(MAX_JOBS) ? $(MAX_JOBS) : $(NCPUS) )))
 PLATFORM_TO_XSA = $(strip $(patsubst %.xpfm, % , $(shell basename $(PLATFORM))))
 XSA := $(call PLATFORM_TO_XSA, $(PLATFORM))
 
-DEV_ARCH := $(shell platforminfo -p $(PLATFORM) | grep 'FPGA Family' | sed 's/.*://' | sed '/ai_engine/d' | sed 's/^[[:space:]]*//')
-CPU_TYPE := $(shell platforminfo -p $(PLATFORM) | grep 'CPU Type' | sed 's/.*://' | sed '/ai_engine/d' | sed 's/^[[:space:]]*//')
-DEVICE_PART ?= $(strip $(shell platforminfo -p $(PLATFORM) | sed -n 's/^Board Part:[[:space:]]*//p'))
+# Resolve short platform name to full .xpfm path to avoid platforminfo duplicate-path bug
+PLATFORM_RESOLVED := $(if $(wildcard $(PLATFORM)),$(PLATFORM),$(wildcard /opt/xilinx/platforms/$(PLATFORM)/$(PLATFORM).xpfm))
+ifeq ($(PLATFORM_RESOLVED),)
+PLATFORM_RESOLVED := $(PLATFORM)
+endif
+
+DEV_ARCH := $(shell platforminfo -p $(PLATFORM_RESOLVED) | grep 'FPGA Family' | sed 's/.*://' | sed '/ai_engine/d' | sed 's/^[[:space:]]*//')
+CPU_TYPE := $(shell platforminfo -p $(PLATFORM_RESOLVED) | grep 'CPU Type' | sed 's/.*://' | sed '/ai_engine/d' | sed 's/^[[:space:]]*//')
+DEVICE_PART ?= $(strip $(shell platforminfo -p $(PLATFORM_RESOLVED) | sed -n 's/^Board Part:[[:space:]]*//p'))
 ifeq ($(DEVICE_PART),)
 DEVICE_PART := xcu55c-fsvh2892-2L-e
 endif
