@@ -191,11 +191,18 @@ endif
 all: simv applib
 
 # ---- simv (VCS executable) ----
+SIMV_CONFIG_FILE := $(DESTDIR)/.simv_config.stamp
+
+$(SIMV_CONFIG_FILE): force
+	@mkdir -p $(@D)
+	@printf '%s\n' "$(VCS_FLAGS)" > $@.tmp
+	@if ! cmp -s $@.tmp $@; then mv $@.tmp $@; else rm $@.tmp; fi
+
 simv: $(DESTDIR)/simv
 
 ifdef POST_IMPL
 # Post-impl: compile netlist + TB + DPI (no RTL sources)
-$(DESTDIR)/simv: $(SRC_DIR)/tb_vcs_xrtsim.sv $(SRC_DIR)/dpi_vcs_server.cpp
+$(DESTDIR)/simv: $(SRC_DIR)/tb_vcs_xrtsim.sv $(SRC_DIR)/dpi_vcs_server.cpp $(SIMV_CONFIG_FILE)
 	@mkdir -p $(DESTDIR)
 	@if [ ! -f "$(SIMLIB_SETUP)" ]; then \
 		echo "INFO: Xilinx VCS simlib not found at $(SIMLIB_DIR), compiling..."; \
@@ -232,7 +239,7 @@ $(DESTDIR)/simv: $(SRC_DIR)/tb_vcs_xrtsim.sv $(SRC_DIR)/dpi_vcs_server.cpp
 		-o $(DESTDIR)/simv
 else
 # RTL sim: compile RTL + TB + DPI
-$(DESTDIR)/simv: $(SRC_DIR)/tb_vcs_xrtsim.sv $(SRC_DIR)/dpi_vcs_server.cpp
+$(DESTDIR)/simv: $(SRC_DIR)/tb_vcs_xrtsim.sv $(SRC_DIR)/dpi_vcs_server.cpp $(SIMV_CONFIG_FILE)
 	@mkdir -p $(DESTDIR)
 	cd $(DESTDIR) && vcs $(VCS_FLAGS) \
 		-LDFLAGS "-Wl,--whole-archive $(SOFTFLOAT_LIB) -Wl,--no-whole-archive" \
@@ -262,3 +269,4 @@ clean:
 	rm -rf $(DESTDIR)/simv $(DESTDIR)/simv.daidir $(DESTDIR)/csrc
 	rm -f $(DESTDIR)/$(APP_PROJECT)
 	rm -f $(DESTDIR)/ucli.key $(DESTDIR)/vc_hdrs.h
+	rm -f $(SIMV_CONFIG_FILE) $(APPLIB_CONFIG_FILE)
