@@ -99,25 +99,24 @@ if { $patched_any == 1 } {
     lappend vincludes_list $patched_src_dir
 }
 
-#puts ${vsources_list}
-#puts ${vincludes_list}
-#puts ${vdefines_list}
-
 set chipscope 0
 set num_banks 1
 set merged_mem_if 0
-set platform_mem_id_width 32
-set dcr_addr_width 12
-set dcr_data_width 32
-set s_axi_ctrl_addr_width 8
-set s_axi_ctrl_data_width 32
-set pending_wr_sizew 12
 
 # ILA comparator count per probe for advanced trigger.
 # Override with environment variable ILA_SAME_MU_CNT if needed.
 set ila_same_mu_cnt 2
 if {[info exists ::env(ILA_SAME_MU_CNT)]} {
     set ila_same_mu_cnt $::env(ILA_SAME_MU_CNT)
+}
+
+# Source auto-generated ILA probe widths from gen-ast
+set ila_params_file "${build_dir}/ila_params.tcl"
+if {[file exists $ila_params_file]} {
+    source $ila_params_file
+    puts "Loaded ILA parameters from $ila_params_file"
+} else {
+    puts "WARNING: $ila_params_file not found. Run 'make gen-ast' first if CHIPSCOPE is enabled."
 }
 
 # parse vdefines_list for configuration parameters
@@ -134,29 +133,7 @@ foreach def $vdefines_list {
     if { $name == "PLATFORM_MERGED_MEMORY_INTERFACE" } {
         set merged_mem_if 1
     }
-    if { $name == "PLATFORM_MEMORY_ID_WIDTH" && $value ne "" } {
-        set platform_mem_id_width $value
-    }
-    if { $name == "VX_DCR_ADDR_BITS" && $value ne "" } {
-        set dcr_addr_width $value
-    }
-    if { $name == "VX_DCR_DATA_WIDTH" && $value ne "" } {
-        set dcr_data_width $value
-    }
-    if { $name == "C_S_AXI_CTRL_ADDR_WIDTH" && $value ne "" } {
-        set s_axi_ctrl_addr_width $value
-    }
-    if { $name == "C_S_AXI_CTRL_DATA_WIDTH" && $value ne "" } {
-        set s_axi_ctrl_data_width $value
-    }
 }
-
-# VX_afu_wrap.sv: ila_afu width model
-set ila_afu_probe0_width 34
-set ila_afu_probe1_width [expr {84 + (4 * $platform_mem_id_width)}]
-set ila_afu_probe2_width [expr {$pending_wr_sizew + 1 + $dcr_addr_width + $dcr_data_width + \
-                                 $s_axi_ctrl_addr_width + $s_axi_ctrl_data_width + ($s_axi_ctrl_data_width / 8) + \
-                                 $s_axi_ctrl_addr_width + $s_axi_ctrl_data_width + 2 + 2}]
 
 if { $merged_mem_if == 1 } {
     set num_banks 1
@@ -191,160 +168,46 @@ set obj [get_filesets sources_1]
 set_property -verbose -name "top" -value ${krnl_name} -objects $obj
 
 if { $chipscope == 1 } {
-    # hw debugging — hardcoded probe widths for XLEN=64 NUM_WARPS=4 NUM_THREADS=8
+    # Helper: create ILA IP using variables from ila_params.tcl
+    # Usage: create_ila <module_name> <data_depth> <same_mu>
+    #   Reads ILA_<PREFIX>_NUM_PROBES and ILA_<PREFIX>_PROBE<N>_WIDTH variables
+    proc create_ila {mod_name data_depth same_mu mu_cnt} {
+        set prefix "ILA_[string toupper [string range $mod_name 4 end]]"
+        set nprobes_var "${prefix}_NUM_PROBES"
+        if {![info exists ::$nprobes_var]} {
+            puts "WARNING: $nprobes_var not defined, skipping $mod_name"
+            return
+        }
+        set nprobes [set ::$nprobes_var]
+        set props [list CONFIG.C_ADV_TRIGGER {true} \
+                        CONFIG.C_EN_STRG_QUAL {1} \
+                        CONFIG.C_DATA_DEPTH $data_depth \
+                        CONFIG.C_NUM_OF_PROBES $nprobes \
+                        CONFIG.ALL_PROBE_SAME_MU $same_mu \
+                        CONFIG.ALL_PROBE_SAME_MU_CNT $mu_cnt]
+        for {set i 0} {$i < $nprobes} {incr i} {
+            set width_var "${prefix}_PROBE${i}_WIDTH"
+            if {[info exists ::$width_var]} {
+                lappend props "CONFIG.C_PROBE${i}_WIDTH" [set ::$width_var]
+            }
+        }
+        create_ip -name ila -vendor xilinx.com -library ip -version 6.2 -module_name $mod_name
+        set_property -dict $props [get_ips $mod_name]
+        generate_target {instantiation_template} [get_files ${mod_name}.xci]
+        set_property generate_synth_checkpoint false [get_files ${mod_name}.xci]
+        puts "Created ILA: $mod_name (probes=$nprobes)"
+    }
 
-    create_ip -name ila -vendor xilinx.com -library ip -version 6.2 -module_name ila_afu
-    set_property -dict [list CONFIG.C_ADV_TRIGGER {true} \
-                             CONFIG.C_EN_STRG_QUAL {1} \
-                             CONFIG.C_DATA_DEPTH {8192} \
-                             CONFIG.C_NUM_OF_PROBES {2} \
-                             CONFIG.C_PROBE0_WIDTH {10} \
-                             CONFIG.C_PROBE1_WIDTH {59} \
-                             CONFIG.ALL_PROBE_SAME_MU {true} \
-                             CONFIG.ALL_PROBE_SAME_MU_CNT $ila_same_mu_cnt \
-                        ] [get_ips ila_afu]
-    generate_target {instantiation_template} [get_files ila_afu.xci]
-    set_property generate_synth_checkpoint false [get_files ila_afu.xci]
+    # Core ILAs (8K depth, advanced trigger with shared MU)
+    foreach mod {ila_afu ila_fetch ila_issue ila_lsu ila_memsched} {
+        create_ila $mod 1024 true $ila_same_mu_cnt
+    }
 
-    create_ip -name ila -vendor xilinx.com -library ip -version 6.2 -module_name ila_fetch
-    set_property -dict [list CONFIG.C_ADV_TRIGGER {true} \
-                             CONFIG.C_EN_STRG_QUAL {1} \
-                             CONFIG.C_DATA_DEPTH {8192} \
-                             CONFIG.C_NUM_OF_PROBES {3} \
-                             CONFIG.C_PROBE0_WIDTH {6} \
-                             CONFIG.C_PROBE1_WIDTH {68} \
-                             CONFIG.C_PROBE2_WIDTH {35} \
-                             CONFIG.ALL_PROBE_SAME_MU {true} \
-                             CONFIG.ALL_PROBE_SAME_MU_CNT $ila_same_mu_cnt \
-                        ] [get_ips ila_fetch]
-    generate_target {instantiation_template} [get_files ila_fetch.xci]
-    set_property generate_synth_checkpoint false [get_files ila_fetch.xci]
-
-    create_ip -name ila -vendor xilinx.com -library ip -version 6.2 -module_name ila_issue
-    set_property -dict [list CONFIG.C_ADV_TRIGGER {true} \
-                             CONFIG.C_EN_STRG_QUAL {1} \
-                             CONFIG.C_DATA_DEPTH {8192} \
-                             CONFIG.C_NUM_OF_PROBES {4} \
-                             CONFIG.C_PROBE0_WIDTH {7} \
-                             CONFIG.C_PROBE1_WIDTH {82} \
-                             CONFIG.C_PROBE2_WIDTH {84} \
-                             CONFIG.C_PROBE3_WIDTH {13} \
-                             CONFIG.ALL_PROBE_SAME_MU {true} \
-                             CONFIG.ALL_PROBE_SAME_MU_CNT $ila_same_mu_cnt \
-                        ] [get_ips ila_issue]
-    generate_target {instantiation_template} [get_files ila_issue.xci]
-    set_property generate_synth_checkpoint false [get_files ila_issue.xci]
-
-    create_ip -name ila -vendor xilinx.com -library ip -version 6.2 -module_name ila_gather
-    set_property -dict [list CONFIG.C_ADV_TRIGGER {true} \
-                             CONFIG.C_EN_STRG_QUAL {1} \
-                             CONFIG.C_DATA_DEPTH {8192} \
-                             CONFIG.C_NUM_OF_PROBES {1} \
-                             CONFIG.C_PROBE0_WIDTH {4} \
-                             CONFIG.ALL_PROBE_SAME_MU {true} \
-                             CONFIG.ALL_PROBE_SAME_MU_CNT $ila_same_mu_cnt \
-                        ] [get_ips ila_gather]
-    generate_target {instantiation_template} [get_files ila_gather.xci]
-    set_property generate_synth_checkpoint false [get_files ila_gather.xci]
-
-    create_ip -name ila -vendor xilinx.com -library ip -version 6.2 -module_name ila_memsched
-    set_property -dict [list CONFIG.C_ADV_TRIGGER {true} \
-                             CONFIG.C_EN_STRG_QUAL {1} \
-                             CONFIG.C_DATA_DEPTH {8192} \
-                             CONFIG.C_NUM_OF_PROBES {1} \
-                             CONFIG.C_PROBE0_WIDTH {12} \
-                             CONFIG.ALL_PROBE_SAME_MU {true} \
-                             CONFIG.ALL_PROBE_SAME_MU_CNT $ila_same_mu_cnt \
-                        ] [get_ips ila_memsched]
-    generate_target {instantiation_template} [get_files ila_memsched.xci]
-    set_property generate_synth_checkpoint false [get_files ila_memsched.xci]
-
-    create_ip -name ila -vendor xilinx.com -library ip -version 6.2 -module_name ila_commit
-    set_property -dict [list CONFIG.C_ADV_TRIGGER {true} \
-                             CONFIG.C_EN_STRG_QUAL {1} \
-                             CONFIG.C_DATA_DEPTH {8192} \
-                             CONFIG.C_NUM_OF_PROBES {1} \
-                             CONFIG.C_PROBE0_WIDTH {15} \
-                             CONFIG.ALL_PROBE_SAME_MU {true} \
-                             CONFIG.ALL_PROBE_SAME_MU_CNT $ila_same_mu_cnt \
-                        ] [get_ips ila_commit]
-    generate_target {instantiation_template} [get_files ila_commit.xci]
-    set_property generate_synth_checkpoint false [get_files ila_commit.xci]
-
-    create_ip -name ila -vendor xilinx.com -library ip -version 6.2 -module_name ila_sched
-    set_property -dict [list CONFIG.C_ADV_TRIGGER {true} \
-                             CONFIG.C_EN_STRG_QUAL {1} \
-                             CONFIG.C_DATA_DEPTH {8192} \
-                             CONFIG.C_NUM_OF_PROBES {1} \
-                             CONFIG.C_PROBE0_WIDTH {15} \
-                             CONFIG.ALL_PROBE_SAME_MU {true} \
-                             CONFIG.ALL_PROBE_SAME_MU_CNT $ila_same_mu_cnt \
-                        ] [get_ips ila_sched]
-    generate_target {instantiation_template} [get_files ila_sched.xci]
-    set_property generate_synth_checkpoint false [get_files ila_sched.xci]
-
-    create_ip -name ila -vendor xilinx.com -library ip -version 6.2 -module_name ila_ibuffer
-    set_property -dict [list CONFIG.C_ADV_TRIGGER {true} \
-                             CONFIG.C_EN_STRG_QUAL {1} \
-                             CONFIG.C_DATA_DEPTH {8192} \
-                             CONFIG.C_NUM_OF_PROBES {1} \
-                             CONFIG.C_PROBE0_WIDTH {18} \
-                             CONFIG.ALL_PROBE_SAME_MU {true} \
-                             CONFIG.ALL_PROBE_SAME_MU_CNT $ila_same_mu_cnt \
-                        ] [get_ips ila_ibuffer]
-    generate_target {instantiation_template} [get_files ila_ibuffer.xci]
-    set_property generate_synth_checkpoint false [get_files ila_ibuffer.xci]
-
-    create_ip -name ila -vendor xilinx.com -library ip -version 6.2 -module_name ila_scoreboard
-    set_property -dict [list CONFIG.C_ADV_TRIGGER {true} \
-                             CONFIG.C_EN_STRG_QUAL {1} \
-                             CONFIG.C_DATA_DEPTH {8192} \
-                             CONFIG.C_NUM_OF_PROBES {1} \
-                             CONFIG.C_PROBE0_WIDTH {21} \
-                             CONFIG.ALL_PROBE_SAME_MU {true} \
-                             CONFIG.ALL_PROBE_SAME_MU_CNT $ila_same_mu_cnt \
-                        ] [get_ips ila_scoreboard]
-    generate_target {instantiation_template} [get_files ila_scoreboard.xci]
-    set_property generate_synth_checkpoint false [get_files ila_scoreboard.xci]
-
-    create_ip -name ila -vendor xilinx.com -library ip -version 6.2 -module_name ila_dispatch
-    set_property -dict [list CONFIG.C_ADV_TRIGGER {true} \
-                             CONFIG.C_EN_STRG_QUAL {1} \
-                             CONFIG.C_DATA_DEPTH {8192} \
-                             CONFIG.C_NUM_OF_PROBES {1} \
-                             CONFIG.C_PROBE0_WIDTH {15} \
-                             CONFIG.ALL_PROBE_SAME_MU {true} \
-                             CONFIG.ALL_PROBE_SAME_MU_CNT $ila_same_mu_cnt \
-                        ] [get_ips ila_dispatch]
-    generate_target {instantiation_template} [get_files ila_dispatch.xci]
-    set_property generate_synth_checkpoint false [get_files ila_dispatch.xci]
-
-    create_ip -name ila -vendor xilinx.com -library ip -version 6.2 -module_name ila_fpu
-    set_property -dict [list CONFIG.C_ADV_TRIGGER {true} \
-                             CONFIG.C_EN_STRG_QUAL {1} \
-                             CONFIG.C_DATA_DEPTH {8192} \
-                             CONFIG.C_NUM_OF_PROBES {1} \
-                             CONFIG.C_PROBE0_WIDTH {9} \
-                             CONFIG.ALL_PROBE_SAME_MU {true} \
-                             CONFIG.ALL_PROBE_SAME_MU_CNT $ila_same_mu_cnt \
-                        ] [get_ips ila_fpu]
-    generate_target {instantiation_template} [get_files ila_fpu.xci]
-    set_property generate_synth_checkpoint false [get_files ila_fpu.xci]
-
-    create_ip -name ila -vendor xilinx.com -library ip -version 6.2 -module_name ila_lsu
-    set_property -dict [list CONFIG.C_ADV_TRIGGER {true} \
-                             CONFIG.C_EN_STRG_QUAL {1} \
-                             CONFIG.C_DATA_DEPTH {8192} \
-                             CONFIG.C_NUM_OF_PROBES {4} \
-                             CONFIG.C_PROBE0_WIDTH {25} \
-                             CONFIG.C_PROBE1_WIDTH {922} \
-                             CONFIG.C_PROBE2_WIDTH {430} \
-                             CONFIG.C_PROBE3_WIDTH {265} \
-                             CONFIG.ALL_PROBE_SAME_MU {true} \
-                             CONFIG.ALL_PROBE_SAME_MU_CNT $ila_same_mu_cnt \
-                        ] [get_ips ila_lsu]
-    generate_target {instantiation_template} [get_files ila_lsu.xci]
-    set_property generate_synth_checkpoint false [get_files ila_lsu.xci]
+    # GEMM ILAs (2K depth, independent MU)
+    foreach mod {ila_gemm ila_gemm_unit ila_gemm_ctrl ila_gemm_dma_ctrl
+                 ila_gemm_sync ila_dma_unit_misal ila_lmem_dma_misal} {
+        create_ila $mod 1024 false 2
+    }
 }
 
 update_compile_order -fileset sources_1

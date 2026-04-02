@@ -205,14 +205,14 @@ CFLAGS += $(CONFIGS)
 CFLAGS += $(RTL_INCLUDE)
 
 # ast dump flags
-XML_CFLAGS = $(subst -J,-I,$(filter-out -DSYNTHESIS -DVIVADO -DCHIPSCOPE, $(CFLAGS))) $(RTL_PKGS) -I$(DPI_DIR) -DSV_DPI
+XML_CFLAGS = $(subst -J,-I,$(filter-out -DSYNTHESIS -DVIVADO, $(CFLAGS))) $(RTL_PKGS) -I$(DPI_DIR) -DSV_DPI
 
 # RTL Kernel only supports Hardware and Hardware Emulation.
 ifneq ($(TARGET),$(findstring $(TARGET), hw hw_emu))
 	$(warning WARNING:Application supports only hw hw_emu TARGET. Please use the target for running the application)
 endif
 
-.PHONY: all clean gen-sources gen-ast preprocess emconfig check-devices backup-xrt
+.PHONY: all clean gen-sources gen-ast preprocess emconfig check-devices backup-xrt force
 .DEFAULT_GOAL := all
 
 all: check-devices emconfig $(XCLBIN_CONTAINER) report
@@ -235,9 +235,44 @@ $(CONFIG_STAMP):
 	printf "%s\n" "$(CONFIG_FINGERPRINT)" > $$tmp_file; \
 	if [ ! -f $@ ] || ! cmp -s $$tmp_file $@; then mv $$tmp_file $@; else rm -f $$tmp_file; fi
 
-gen-ast: $(BUILD_DIR)/vortex.xml
-$(BUILD_DIR)/vortex.xml:
-	mkdir -p $(BUILD_DIR); cd $(BUILD_DIR); verilator --xml-only -Wno-fatal -O0 $(XML_CFLAGS) vortex_afu.v --xml-output vortex.xml
+# Xilinx IP and ILA modules that need stubs for Verilator AST generation
+STUB_XIL_FP := xil_fdiv xil_fma xil_fsqrt xil_fmul xil_fadd xil_f32add xil_f32mul xil_f16add xil_f16mul
+STUB_ILA := ila_afu ila_fetch ila_issue ila_lsu ila_memsched \
+            ila_gemm ila_gemm_unit ila_gemm_ctrl ila_gemm_dma_ctrl \
+            ila_gemm_sync ila_dma_unit_misal ila_lmem_dma_misal
+
+XILINX_STUBS := $(BUILD_DIR)/xilinx_stubs.sv
+
+$(XILINX_STUBS): force
+	@mkdir -p $(BUILD_DIR)
+	@echo "// Auto-generated stubs for Verilator AST — do not edit" > $@
+	@echo '/* verilator lint_off PINMISSING */' >> $@
+	@for mod in $(STUB_XIL_FP); do \
+		echo "module $${mod}(" >> $@; \
+		echo "  input aclk, input aresetn, input aclken," >> $@; \
+		echo "  input [4095:0] s_axis_a_tdata, input s_axis_a_tvalid, output s_axis_a_tready," >> $@; \
+		echo "  input [4095:0] s_axis_b_tdata, input s_axis_b_tvalid, output s_axis_b_tready," >> $@; \
+		echo "  input [4095:0] s_axis_c_tdata, input s_axis_c_tvalid, output s_axis_c_tready," >> $@; \
+		echo "  output [4095:0] m_axis_result_tdata, output m_axis_result_tvalid, input m_axis_result_tready" >> $@; \
+		echo "); endmodule" >> $@; \
+	done
+	@for mod in $(STUB_ILA); do \
+		echo "module $${mod}(" >> $@; \
+		echo "  input clk," >> $@; \
+		echo "  input [4095:0] probe0, input [4095:0] probe1," >> $@; \
+		echo "  input [4095:0] probe2, input [4095:0] probe3" >> $@; \
+		echo "); endmodule" >> $@; \
+	done
+
+ILA_PARAMS := $(BUILD_DIR)/ila_params.tcl
+
+gen-ast: $(ILA_PARAMS)
+
+$(BUILD_DIR)/vortex.xml: $(XILINX_STUBS)
+	cd $(BUILD_DIR); verilator --xml-only -Wno-fatal -O0 $(XML_CFLAGS) xilinx_stubs.sv vortex_afu.v --xml-output vortex.xml
+
+$(ILA_PARAMS): $(BUILD_DIR)/vortex.xml
+	python3 $(SRC_DIR)/gen_ila_params.py $< -o $@
 
 PREPROCESS_DIR := $(BUILD_DIR)/preprocessed
 PREPROCESS_SRCS := $(AFU_DIR)/VX_afu_wrap.sv $(RTL_DIR)/Vortex_axi.sv $(RTL_DIR)/Vortex.sv
@@ -260,7 +295,7 @@ $(BIN_DIR)/scope.json: $(BUILD_DIR)/vortex.xml
 	mkdir -p $(BUILD_DIR); cd $(BUILD_DIR); $(SCRIPT_DIR)/scope.py vortex.xml -o bin/scope.json
 
 gen-xo: $(XO_CONTAINER)
-$(XO_CONTAINER): $(BUILD_DIR)/sources.txt $(XRT_BACKUP_STAMP)
+$(XO_CONTAINER): $(BUILD_DIR)/sources.txt $(XRT_BACKUP_STAMP) $(ILA_PARAMS)
 	mkdir -p $(BUILD_DIR); cd $(BUILD_DIR);	TOOL_DIR=$(SCRIPT_DIR) $(VIVADO) -mode batch -source $(XRT_RUN_DIR)/gen_xo.tcl -tclargs ../$(XO_CONTAINER) vortex_afu sources.txt ../$(BUILD_DIR) $(DEVICE_PART)
 
 $(VITIS_INI): $(SRC_DIR)/gen_vitis_ini.py $(XRT_BACKUP_STAMP)
