@@ -762,9 +762,11 @@ package VX_gpu_pkg;
        logic [NUM_REGS_BITS-1:0] rd;
        logic [`XLEN-1:0]         rs1_data;
        logic [`XLEN-1:0]         rs2_data;
+       logic [31:0]              stride;
+       logic [15:0]              bound;
        logic [7:0]               flags;
-       logic [20:0]              eff_mt;
-       logic [31:0]              groups_eff;
+       //logic [20:0]              eff_mt;
+       //logic [31:0]              groups_eff;
    } gemm_unified_cmd_t; // it can be union
 
    typedef struct packed {

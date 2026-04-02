@@ -262,8 +262,7 @@ module VX_core import VX_gpu_pkg::*; #(
 
     VX_gemm_node #(
         .INSTANCE_ID (`SFORMATF(("%s-gemm", INSTANCE_ID))),
-        .N_MASTER (`NUM_LSU_BLOCKS),
-        .NUM_ENTRIES (`JOB_MMIO_NUM_ENTRIES)
+        .N_MASTER (`NUM_LSU_BLOCKS)
     ) gemm_node (
         .clk        (clk),
         .reset      (reset),

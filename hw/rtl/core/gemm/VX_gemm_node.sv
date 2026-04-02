@@ -18,8 +18,7 @@
 module VX_gemm_node import VX_gpu_pkg::*; #(
     parameter `STRING INSTANCE_ID = "",
     parameter N_MASTER    = 1,
-    parameter N_CHILDREN  = 5,
-    parameter NUM_ENTRIES = 4
+    parameter N_CHILDREN  = 5
 ) (
     // Clock
     input wire              clk,
@@ -56,7 +55,8 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     localparam int ENTRYID_W  = `JOB_MMIO_ENTRYID_W;
     localparam int OWNER_W    = `JOB_MMIO_OWNER_W;
     localparam int GEN_W      = `JOB_MMIO_GEN_W;
-    localparam logic [7:0] OP_NOTIFY = 8'hF1;
+
+    localparam logic [3:0] OP_NOTIFY = 4'd3;
     // -------------------------------------------------------------------------
     // Data-path interfaces
     // -------------------------------------------------------------------------
@@ -151,7 +151,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     logic [31:0] input_notify_reg_idx_r;
     logic [31:0] input_notify_value_r;
 
-    wire input_is_notify   = (gemm_ctrl_if.input_read_ctrl.start && gemm_ctrl_if.input_read_ctrl.cmd.instr[7:0] == OP_NOTIFY);
+    wire input_is_notify   = (gemm_ctrl_if.input_read_ctrl.start && gemm_ctrl_if.input_read_ctrl.cmd.instr[3:0] == OP_NOTIFY);
     wire input_notify_req  = gemm_ctrl_if.input_read_ctrl.start && input_dma_ctrl_if.idle && input_is_notify;
     wire input_notify_fire = input_notify_pending_r && gemm_sync_if[0].ready;
 
@@ -159,7 +159,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     logic [31:0] weight_notify_reg_idx_r;
     logic [31:0] weight_notify_value_r;
 
-    wire weight_is_notify   = (gemm_ctrl_if.weight_read_ctrl.start && gemm_ctrl_if.weight_read_ctrl.cmd.instr[7:0] == OP_NOTIFY);
+    wire weight_is_notify   = (gemm_ctrl_if.weight_read_ctrl.start && gemm_ctrl_if.weight_read_ctrl.cmd.instr[3:0] == OP_NOTIFY);
     wire weight_notify_req  = gemm_ctrl_if.weight_read_ctrl.start && weight_dma_ctrl_if.idle && weight_is_notify;
     wire weight_notify_fire = weight_notify_pending_r && gemm_sync_if[1].ready;
     wire weight_wtrans      = gemm_ctrl_if.weight_read_ctrl.cmd.flags[2];
@@ -168,7 +168,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     logic [31:0] sz_notify_reg_idx_r;
     logic [31:0] sz_notify_value_r;
 
-    wire sz_is_notify   = (gemm_ctrl_if.quant_param_read_ctrl.start && gemm_ctrl_if.quant_param_read_ctrl.cmd.instr[7:0] == OP_NOTIFY);
+    wire sz_is_notify   = (gemm_ctrl_if.quant_param_read_ctrl.start && gemm_ctrl_if.quant_param_read_ctrl.cmd.instr[3:0] == OP_NOTIFY);
     wire sz_notify_req  = gemm_ctrl_if.quant_param_read_ctrl.start && quant_param_dma_ctrl_if.idle && sz_is_notify;
     wire sz_notify_fire = sz_notify_pending_r && gemm_sync_if[2].ready;
 
@@ -176,7 +176,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     logic [31:0] output_notify_reg_idx_r;
     logic [31:0] output_notify_value_r;
 
-    wire output_is_notify   = (gemm_ctrl_if.output_write_ctrl.start && gemm_ctrl_if.output_write_ctrl.cmd.instr[7:0] == OP_NOTIFY);
+    wire output_is_notify   = (gemm_ctrl_if.output_write_ctrl.start && gemm_ctrl_if.output_write_ctrl.cmd.instr[3:0] == OP_NOTIFY);
     wire output_notify_req  = gemm_ctrl_if.output_write_ctrl.start && output_dma_ctrl_if.idle && output_is_notify;
     wire output_notify_fire = output_notify_pending_r && gemm_sync_if[3].ready;
 
@@ -184,11 +184,11 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     VX_gemm_sync_if gemm_sync_if[N_NODE] ();
 
     // Job frontend dispatch/done handshake.
-    VX_config_reg_if #(
-      .NUM(`GEMM_CFG_REG_NUM),
-      .DW(32)
+    VX_instruction_if #(
+      .DW(64)
     ) issue_if();
-    VX_node_done_if done_if();
+
+    VX_gemm_node_done_if done_if();
 
     // -------------------------------------------------------------------------
     // Control-plane wiring
@@ -197,18 +197,18 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     // GEMM unit direct control bridge (temporary/static mapping).
     // TODO: replace with full command mapping from gemm_ctrl.
     assign gemm_unit_if.start                            = gemm_ctrl_if.input_read_ctrl.start && !input_is_notify; // start signal로 동기화
-    assign gemm_unit_if.gemm_unit_ctrl.acc_cnt           = gemm_ctrl_if.input_read_ctrl.cmd.eff_mt;
+    assign gemm_unit_if.gemm_unit_ctrl.acc_cnt           = gemm_ctrl_if.input_read_ctrl.cmd.instr[31:4];
     assign gemm_unit_if.gemm_unit_ctrl.acc_mem_base_addr = gemm_ctrl_if.input_read_ctrl.cmd.rs1_data;
-    assign gemm_unit_if.gemm_unit_ctrl.quant_dir         = gemm_ctrl_if.input_read_ctrl.cmd.flags[4]; //QDIR
-    assign gemm_unit_if.gemm_unit_ctrl.wreg_use_idx      = gemm_ctrl_if.input_read_ctrl.cmd.flags[1]; //mxu tile double buffering 번호
+    assign gemm_unit_if.gemm_unit_ctrl.quant_dir         = gemm_ctrl_if.input_read_ctrl.cmd.flags[5]; //QDIR
+    assign gemm_unit_if.gemm_unit_ctrl.wreg_use_idx      = gemm_ctrl_if.input_read_ctrl.cmd.flags[2]; //mxu tile double buffering 번호
     assign gemm_unit_if.gemm_unit_ctrl.sreg_use_idx      = gemm_ctrl_if.input_read_ctrl.cmd.flags[1]; //mxu tile double buffering 번호
-    assign gemm_unit_if.gemm_unit_ctrl.zreg_use_idx      = gemm_ctrl_if.input_read_ctrl.cmd.flags[1]; //mxu tile double buffering 번호
-    assign gemm_unit_if.gemm_unit_ctrl.is_load           = ~gemm_ctrl_if.input_read_ctrl.cmd.flags[2];
+    assign gemm_unit_if.gemm_unit_ctrl.zreg_use_idx      = gemm_ctrl_if.input_read_ctrl.cmd.flags[0]; //mxu tile double buffering 번호
+    assign gemm_unit_if.gemm_unit_ctrl.is_load           = ~gemm_ctrl_if.input_read_ctrl.cmd.flags[3];
 
     // Connect gemm_ctrl_if to DMA ctrl interfaces
     assign input_dma_ctrl_if.start           = gemm_ctrl_if.input_read_ctrl.start && !input_is_notify;
     assign input_dma_ctrl_if.src_base_addr   = gemm_ctrl_if.input_read_ctrl.cmd.rs2_data;
-    assign input_dma_ctrl_if.src_strides[0]  = KT*16/8;
+    assign input_dma_ctrl_if.src_strides[0]  = gemm_ctrl_if.input_read_ctrl.cmd.stride;
     assign input_dma_ctrl_if.src_strides[1]  = 0;
     assign input_dma_ctrl_if.src_strides[2]  = 0;
 
@@ -217,11 +217,11 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     assign input_dma_ctrl_if.dst_strides[1]  = 0;
     assign input_dma_ctrl_if.dst_strides[2]  = 0;
     
-    assign input_dma_ctrl_if.bounds[0]       = gemm_ctrl_if.input_read_ctrl.cmd.eff_mt;
+    assign input_dma_ctrl_if.bounds[0]       = gemm_ctrl_if.input_read_ctrl.cmd.bound;
     assign input_dma_ctrl_if.bounds[1]       = 32'd1;
     assign input_dma_ctrl_if.bounds[2]       = 32'd1;
 
-    assign input_dma_ctrl_if.seg_size        = MXU_KT*16/8;
+    assign input_dma_ctrl_if.seg_size        = MXU_KT*MT*2;
     assign gemm_ctrl_if.input_read_flag.idle = input_notify_pending_r ? 1'b0 : gemm_unit_if.idle;
     assign gemm_ctrl_if.input_read_flag.done = input_notify_pending_r ? input_notify_fire : gemm_unit_if.done;  //gemm 연산이 끝나야 ildma 가 끝
 
@@ -248,20 +248,20 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     // Weight load DMA command mapping.
     assign weight_dma_ctrl_if.start          = gemm_ctrl_if.weight_read_ctrl.start && !weight_is_notify;
     assign weight_dma_ctrl_if.src_base_addr  = gemm_ctrl_if.weight_read_ctrl.cmd.rs2_data;
-    assign weight_dma_ctrl_if.src_strides[0] = weight_wtrans ? ((KT*4)/8) : ((NT*4)/8);
+    assign weight_dma_ctrl_if.src_strides[0] = gemm_ctrl_if.weight_read_ctrl.cmd.stride;
     assign weight_dma_ctrl_if.src_strides[1] = 0;
     assign weight_dma_ctrl_if.src_strides[2] = 0;
 
-    assign weight_dma_ctrl_if.dst_base_addr  = {gemm_ctrl_if.weight_read_ctrl.cmd.flags[2], gemm_ctrl_if.weight_read_ctrl.cmd.flags[1]} << `CLOG2(w_dma_gemm_bus_if.DATA_SIZE); //{dir, reg_idx}
+    assign weight_dma_ctrl_if.dst_base_addr  = {gemm_ctrl_if.weight_read_ctrl.cmd.flags[1], gemm_ctrl_if.weight_read_ctrl.cmd.flags[0]} << `CLOG2(w_dma_gemm_bus_if.DATA_SIZE); //{wtrans, reg_idx}
     assign weight_dma_ctrl_if.dst_strides[0] = 0;
     assign weight_dma_ctrl_if.dst_strides[1] = 0;
     assign weight_dma_ctrl_if.dst_strides[2] = 0;
 
-    assign weight_dma_ctrl_if.bounds[0]      = weight_wtrans ? MXU_NT : MXU_KT;
+    assign weight_dma_ctrl_if.bounds[0]      = gemm_ctrl_if.weight_read_ctrl.cmd.bound;
     assign weight_dma_ctrl_if.bounds[1]      = 32'd1;
     assign weight_dma_ctrl_if.bounds[2]      = 32'd1;
     
-    assign weight_dma_ctrl_if.seg_size       = weight_wtrans ? ((MXU_KT*4)/8) : ((MXU_NT*4)/8);  //int4, bytes
+    assign weight_dma_ctrl_if.seg_size       = MXU_KT * (MXU_NT >> 1);  //int4, bytes
     assign gemm_ctrl_if.weight_read_flag.idle = weight_notify_pending_r ? 1'b0 : weight_dma_ctrl_if.idle;
     assign gemm_ctrl_if.weight_read_flag.done = weight_notify_pending_r ? weight_notify_fire : weight_dma_ctrl_if.done;
 
@@ -286,40 +286,24 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     end
 
     // Quant parameter load DMA command mapping.
-    wire sz_qdir = gemm_ctrl_if.quant_param_read_ctrl.cmd.flags[2]; // 0=QCOL, 1=QROW
-
-    // QROW helper: NG_tile = ceil(NT/qblk), NG_mxu = ceil(MXU_NT/qblk)
-    wire [31:0] sz_ng_tile = ceil_div_log2(NT, gemm_ctrl_if.qblk_orig);
-    wire [31:0] sz_ng_mxu  = ceil_div_log2(MXU_NT, gemm_ctrl_if.qblk_orig);
-
     assign quant_param_dma_ctrl_if.start         = gemm_ctrl_if.quant_param_read_ctrl.start && !sz_is_notify;
     assign quant_param_dma_ctrl_if.src_base_addr = gemm_ctrl_if.quant_param_read_ctrl.cmd.rs2_data;
-    // QCOL: LMEM [groups_tile, NT], row stride = NT*2
-    // QROW: LMEM [KT, NG_tile],    row stride = NG_tile*2
-    assign quant_param_dma_ctrl_if.src_strides[0] = sz_qdir ? (sz_ng_tile * 16 / 8)
-                                                            : (NT * 16 / 8);
+
+    assign quant_param_dma_ctrl_if.src_strides[0] = gemm_ctrl_if.quant_param_read_ctrl.cmd.stride[31:16];
     assign quant_param_dma_ctrl_if.src_strides[1] = 0;
     assign quant_param_dma_ctrl_if.src_strides[2] = 0;
 
     assign quant_param_dma_ctrl_if.dst_base_addr  = gemm_ctrl_if.quant_param_read_ctrl.cmd.rs1_data;
-    // QCOL: full-width write (seg_size==DATA_SIZE), no stride needed
-    // QROW: sub-beat writes, advance by seg_size each K iteration
-    assign quant_param_dma_ctrl_if.dst_strides[0] = sz_qdir ? (sz_ng_mxu * 16 / 8) : 0;
+
+    assign quant_param_dma_ctrl_if.dst_strides[0] = gemm_ctrl_if.quant_param_read_ctrl.cmd.stride[15:0];
     assign quant_param_dma_ctrl_if.dst_strides[1] = 0;
     assign quant_param_dma_ctrl_if.dst_strides[2] = 0;
 
-    // QCOL: bounds0 = ceil(MXU_KT/qblk) groups per MXU-K chunk
-    // QROW: bounds0 = MXU_KT rows
-    assign quant_param_dma_ctrl_if.bounds[0]       = sz_qdir
-                                                   ? MXU_KT
-                                                   : ceil_div_log2(MXU_KT, gemm_ctrl_if.qblk_orig);
+    assign quant_param_dma_ctrl_if.bounds[0]       = gemm_ctrl_if.quant_param_read_ctrl.cmd.bound;
     assign quant_param_dma_ctrl_if.bounds[1]       = 32'd1;
     assign quant_param_dma_ctrl_if.bounds[2]       = 32'd1;
 
-    // QCOL: seg_size = MXU_NT * 2 (one group row, all N columns)
-    // QROW: seg_size = NG_mxu * 2 (one K row, NG_mxu group columns)
-    assign quant_param_dma_ctrl_if.seg_size        = sz_qdir ? (sz_ng_mxu * 16 / 8)
-                                                             : (MXU_NT * 16 / 8);
+    assign quant_param_dma_ctrl_if.seg_size        = MXU_NT * 2; // MXU_NT == MXU_KT 의 가정 하에
     assign gemm_ctrl_if.quant_param_read_flag.idle = sz_notify_pending_r ? 1'b0 : quant_param_dma_ctrl_if.idle;
     assign gemm_ctrl_if.quant_param_read_flag.done = sz_notify_pending_r ? sz_notify_fire : quant_param_dma_ctrl_if.done;
 
@@ -344,33 +328,22 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     end
 
     // Output store DMA command mapping.
-    wire [31:0] output_mt_eff_cmd = {11'd0, gemm_ctrl_if.output_write_ctrl.cmd.eff_mt};
-    wire [31:0] output_nt_eff_cmd = gemm_ctrl_if.output_write_ctrl.cmd.groups_eff;
-    wire [31:0] output_mt_eff_raw = (output_mt_eff_cmd != 0) ? output_mt_eff_cmd : MT;
-    wire [31:0] output_nt_eff_raw = (output_nt_eff_cmd != 0) ? output_nt_eff_cmd : NT;
-    wire [31:0] output_mt_eff     = (output_mt_eff_raw > MT) ? MT : output_mt_eff_raw;
-    wire [31:0] output_nt_eff     = (output_nt_eff_raw > NT) ? NT : output_nt_eff_raw;
-    wire [31:0] output_nt_tiles   = ceil_div_log2(output_nt_eff, `CLOG2(MXU_NT));
-    wire [31:0] output_nt_tiles_s = (output_nt_tiles != 0) ? output_nt_tiles : 32'd1;
-    wire [31:0] output_seg_elems  = (output_nt_tiles_s == 32'd1) ? output_nt_eff : MXU_NT;
-    wire [31:0] output_seg_elems_s = (output_seg_elems != 0) ? output_seg_elems : MXU_NT;
-
     assign output_dma_ctrl_if.start         = gemm_ctrl_if.output_write_ctrl.start && !output_is_notify;
     assign output_dma_ctrl_if.src_base_addr = gemm_ctrl_if.output_write_ctrl.cmd.rs2_data;
-    assign output_dma_ctrl_if.src_strides[0] = MXU_NT*32/8;
-    assign output_dma_ctrl_if.src_strides[1] = MT*MXU_NT*32/8;
+    assign output_dma_ctrl_if.src_strides[0] = 0;
+    assign output_dma_ctrl_if.src_strides[1] = 0;
     assign output_dma_ctrl_if.src_strides[2] = 0;
 
     assign output_dma_ctrl_if.dst_base_addr = gemm_ctrl_if.output_write_ctrl.cmd.rs1_data;
-    assign output_dma_ctrl_if.dst_strides[0] = NT*16/8;
-    assign output_dma_ctrl_if.dst_strides[1] = MXU_NT*16/8;
+    assign output_dma_ctrl_if.dst_strides[0] = gemm_ctrl_if.output_write_ctrl.cmd.stride;
+    assign output_dma_ctrl_if.dst_strides[1] = 0;
     assign output_dma_ctrl_if.dst_strides[2] = 0;
 
-    assign output_dma_ctrl_if.bounds[0] = output_mt_eff;
-    assign output_dma_ctrl_if.bounds[1] = output_nt_tiles_s;
+    assign output_dma_ctrl_if.bounds[0] = gemm_ctrl_if.output_write_ctrl.cmd.bound;
+    assign output_dma_ctrl_if.bounds[1] = 32'd1;
     assign output_dma_ctrl_if.bounds[2] = 32'd1;
 
-    assign output_dma_ctrl_if.seg_size         = output_seg_elems_s * 16 / 8;
+    assign output_dma_ctrl_if.seg_size         = MT * NT * 2;
     assign gemm_ctrl_if.output_write_flag.idle = output_notify_pending_r ? 1'b0 : output_dma_ctrl_if.idle;
     assign gemm_ctrl_if.output_write_flag.done = output_notify_pending_r ? output_notify_fire : output_dma_ctrl_if.done;
 
@@ -397,16 +370,6 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     // External DMA control mapping (dcache <-> LMEM).
     assign gemm_dma_ctrl_if.start      = gemm_ctrl_if.dma_ctrl.start;
     assign gemm_dma_ctrl_if.cmd        = gemm_ctrl_if.dma_ctrl.cmd;
-    assign gemm_dma_ctrl_if.M_orig     = gemm_ctrl_if.M_orig;
-    assign gemm_dma_ctrl_if.N_orig     = gemm_ctrl_if.N_orig;
-    assign gemm_dma_ctrl_if.K_orig     = gemm_ctrl_if.K_orig;
-    assign gemm_dma_ctrl_if.qblk_orig  = gemm_ctrl_if.qblk_orig;
-    assign gemm_dma_ctrl_if.M_target   = gemm_ctrl_if.M_target;
-    assign gemm_dma_ctrl_if.N_target   = gemm_ctrl_if.N_target;
-    assign gemm_dma_ctrl_if.K_target   = gemm_ctrl_if.K_target;
-    assign gemm_dma_ctrl_if.wtrans_tot = gemm_ctrl_if.wtrans_tot;
-    assign gemm_dma_ctrl_if.qdir_tot   = gemm_ctrl_if.qdir_tot;
-    assign gemm_dma_ctrl_if.entry_id   = gemm_ctrl_if.entry_id;
 
     assign gemm_ctrl_if.dma_flag.idle = gemm_dma_ctrl_if.idle;
     assign gemm_ctrl_if.dma_flag.done = gemm_dma_ctrl_if.done;
@@ -425,13 +388,11 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     // -------------------------------------------------------------------------
 
     // Job frontend: MMIO command intake and issue/done interface.
-    VX_job_frontend #(
+    VX_gemm_job_frontend #(
       .INSTANCE_ID(INSTANCE_ID),
       .NUM_MASTERS(N_MASTER),
-      .NUM_ENTRIES(NUM_ENTRIES),
-      .NUM_REGS32(`GEMM_CFG_REG_NUM),
       .CFG_BASE_ADDR(`GEMM_REG_BASE_ADDR)
-    ) VX_job_frontend_instance (
+    ) u_gemm_job_frontend (
       .clk(clk),
       .reset(reset),
       .mmio_if(mmio_if),
@@ -708,9 +669,9 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     ) u_VX_gemm_ctrl (
       .clk(clk),
       .reset(reset),
-      .cfg_reg_if(issue_if),
-      .done_if(done_if),
+      .instruction_if(issue_if),
       .gemm_ctrl_if(gemm_ctrl_if),
+      .done_if(done_if),
       .gemm_sync_slv_if(gemm_sync_if)
     );
 

@@ -44,9 +44,9 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
   // ============================================================
   // Opcodes
   // ============================================================
-  localparam logic [7:0] OP_NOTIFY  = 8'hF1;
-  localparam logic [7:0] OP_DMA_LD  = 8'h10;
-  localparam logic [7:0] OP_DMA_ST  = 8'h11;
+  localparam logic [3:0] OP_DMA_LD  = 4'd1;
+  localparam logic [3:0] OP_DMA_ST  = 4'd2;
+  localparam logic [3:0] OP_NOTIFY  = 4'd3;
 
   // ============================================================
   // 엔트리 내부 레지스터 인덱스 (32-bit regs)
@@ -118,14 +118,6 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
     end
   end
 
-
-  // ============================================================
-  // 타일 크기
-  // ============================================================
-  localparam int MT = `GEMM_FSM_MT;
-  localparam int NT = `GEMM_FSM_NT;
-  localparam int KT = `GEMM_FSM_KT;
-
   // ============================================================
   // 주소 헬퍼
   // ============================================================
@@ -151,268 +143,61 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
     end
   endfunction
 
-  function automatic logic [31:0] min_u32(input logic [31:0] a, input logic [31:0] b);
-    return (a < b) ? a : b;
-  endfunction
-
-  function automatic logic [31:0] sat_sub_u32(input logic [31:0] a, input logic [31:0] b);
-    return (a > b) ? (a - b) : 32'd0;
-  endfunction
-
-  // div_log2, ceil_div_log2 and is_pow2_u32 are in VX_gpu_pkg
-
-  // ============================================================
-  // 래치
-  // ============================================================
   gemm_unified_cmd_t cmd_q;
-  wire logic [7:0] cmd_op = cmd_q.instr[7:0];
+  wire logic [3:0] cmd_op = cmd_q.instr[3:0];
 
-  logic [31:0] M_orig_q, N_orig_q, K_orig_q, qblk_orig_q;
-  logic [31:0] M_orig_d, N_orig_d, K_orig_d, qblk_orig_d;
-  logic [31:0] M_target_q, N_target_q, K_target_q;
-  logic [31:0] M_target_d, N_target_d, K_target_d;
-  logic [31:0] wtrans_tot_q, qdir_tot_q;
-  logic [31:0] wtrans_tot_d, qdir_tot_d;
   // ============================================================
-  // DMA 주소 매핑
+  // Direct command mapping
+  //   - rs2_data: source base
+  //   - rs1_data: destination base
+  //   - stride[31:16]: DRAM-side stride0
+  //   - stride[15:0] : LMEM-side stride0
+  //   - bound       : bound0
+  //   - instr[31:4] : seg_size
   // ============================================================
   logic [63:0] src_base, dst_base;
   logic        dir_is_st;
-
-  always_comb begin
-    dir_is_st = (cmd_op == OP_DMA_ST);
-
-    if (cmd_op == OP_DMA_LD) begin
-      src_base = cmd_q.rs2_data; // DRAM src
-      dst_base = cmd_q.rs1_data; // LMEM dst
-    end else if (cmd_op == OP_DMA_ST) begin
-      src_base = cmd_q.rs2_data; // LMEM src
-      dst_base = cmd_q.rs1_data; // DRAM dst
-    end else begin
-      src_base = 64'd0;
-      dst_base = 64'd0;
-    end
-  end
-
-  // ============================================================
-  // 텐서 선택
-  // ============================================================
-  typedef enum logic [2:0] {T_INPUT, T_WEIGHT, T_OUTPUT, T_SCALE, T_ZP, T_NOTIFY} tensor_t;
-  tensor_t tensor_sel;
-
-  always_comb begin
-    if (cmd_op == OP_DMA_LD || cmd_op == OP_DMA_ST) begin
-      unique case (cmd_q.rd)
-        0: tensor_sel = T_INPUT;
-        1: tensor_sel = T_WEIGHT;
-        2: tensor_sel = T_SCALE;
-        3: tensor_sel = T_ZP;
-        4: tensor_sel = T_OUTPUT;
-        default: tensor_sel = T_INPUT;
-      endcase
-    end else begin
-      tensor_sel = T_NOTIFY;
-    end
-  end
-
-  // ============================================================
-  // 타일 인덱스/그룹
-  // ============================================================
-  logic [31:0] mt_idx, nt_idx, kt_idx;
-  logic [31:0] groups_eff;
-
-  always_comb begin
-    mt_idx = 0; nt_idx = 0; kt_idx = 0; groups_eff = 0;
-    unique case (tensor_sel)
-      T_INPUT:  begin mt_idx = cmd_q.rs1; kt_idx = cmd_q.rs2; end
-      T_WEIGHT: begin kt_idx = cmd_q.rs1; nt_idx = cmd_q.rs2; end
-      T_OUTPUT: begin mt_idx = cmd_q.rs1; nt_idx = cmd_q.rs2; end
-      T_SCALE,
-      T_ZP:     begin groups_eff = cmd_q.groups_eff; nt_idx = cmd_q.rs2; end
-      default: ;
-    endcase
-  end
-
-  // ============================================================
-  // 마지막 타일 축소
-  // ============================================================
-  logic [31:0] mt_eff, nt_eff, kt_eff;
-
-  always_comb begin
-    if (M_target_q == 0) mt_eff = MT;
-    else                mt_eff = min_u32(MT, sat_sub_u32(M_target_q, mt_idx * MT));
-
-    if (N_target_q == 0) nt_eff = NT;
-    else                nt_eff = min_u32(NT, sat_sub_u32(N_target_q, nt_idx * NT));
-
-    if (K_target_q == 0) kt_eff = KT;
-    else                kt_eff = min_u32(KT, sat_sub_u32(K_target_q, kt_idx * KT));
-
-    if (mt_eff == 0) mt_eff = 32'd1;
-    if (nt_eff == 0) nt_eff = 32'd1;
-    if (kt_eff == 0) kt_eff = 32'd1;
-  end
-
-  // ============================================================
-  // QROW helpers: NG (number of groups along N dimension)
-  // ============================================================
-  logic [31:0] ng_tot, ng_tile, ng_eff;
-
-  always_comb begin
-    if (qblk_orig_q != 0) begin
-      ng_tot  = ceil_div_log2(N_orig_q, qblk_orig_q);
-      ng_tile = ceil_div_log2(NT, qblk_orig_q);
-      ng_eff  = ceil_div_log2(nt_eff, qblk_orig_q);
-    end else begin
-      ng_tot  = 32'd1;
-      ng_tile = 32'd1;
-      ng_eff  = 32'd1;
-    end
-  end
-
-  // ============================================================
-  // DRAM 레이아웃(바이트 단위)
-  // ============================================================
-  logic [31:0] dram_s0, dram_s1, dram_s2;
-  logic [31:0] dram_b0, dram_b1, dram_b2;
-  logic [31:0] seg_size;
-  logic [31:0] padding;
-
-  localparam int BPE_FP16  = 2;
-  localparam int BPE_INT16 = 2;
-
-  always_comb begin
-    dram_s0 = 0; dram_s1 = 0; dram_s2 = 0;
-    dram_b0 = 1; dram_b1 = 1; dram_b2 = 1;
-    seg_size = 0; padding = 0;
-
-    unique case (tensor_sel)
-      // INPUT: fp16, shape [M, K]
-      T_INPUT: begin
-        seg_size = KT * BPE_FP16;
-        padding  = (KT - kt_eff) * BPE_FP16;
-
-        dram_s0  = K_orig_q * BPE_FP16; // 다음 row(M 방향)로 넘어가는 stride
-        dram_b0  = mt_eff;             // row 개수
-      end
-
-      // WEIGHT: int4, shape [K, N] (N방향 2개 packed => N/2 bytes per row)
-      T_WEIGHT: begin
-        if (wtrans_tot_q[0]) begin
-          // wtrans=1: source is [N, K] packed row-major
-          seg_size = (KT >> 1);
-          padding  = ((KT - kt_eff) >> 1);
-
-          dram_s0  = ((K_orig_q + 32'd1) >> 1);
-          dram_b0  = nt_eff;
-        end else begin
-          // wtrans=0: source is [K, N] packed row-major
-          seg_size = (NT >> 1);
-          padding  = ((NT - nt_eff) >> 1);
-
-          dram_s0  = ((N_orig_q + 32'd1) >> 1);
-          dram_b0  = kt_eff;
-        end
-      end
-
-      // SCALE: fp16
-      T_SCALE: begin
-        if (qdir_tot_q[0]) begin
-          // QROW: scale layout [K, NG], tile [KT, NG_tile]
-          seg_size = ng_tile * BPE_FP16;
-          padding  = (ng_tile - ng_eff) * BPE_FP16;
-          dram_s0  = ng_tot * BPE_FP16;
-          dram_b0  = groups_eff;  // = kt_eff (from FSM rs1)
-        end else begin
-          // QCOL: scale layout [KG, N], tile [groups_tile, NT]
-          seg_size = NT * BPE_FP16;
-          padding  = (NT - nt_eff) * BPE_FP16;
-          dram_s0  = N_orig_q * BPE_FP16;
-          dram_b0  = groups_eff;
-        end
-      end
-
-      // ZP: int16
-      T_ZP: begin
-        if (qdir_tot_q[0]) begin
-          // QROW: zp layout [K, NG], tile [KT, NG_tile]
-          seg_size = ng_tile * BPE_INT16;
-          padding  = (ng_tile - ng_eff) * BPE_INT16;
-          dram_s0  = ng_tot * BPE_INT16;
-          dram_b0  = groups_eff;  // = kt_eff (from FSM rs1)
-        end else begin
-          // QCOL: zp layout [KG, N], tile [groups_tile, NT]
-          seg_size = NT * BPE_INT16;
-          padding  = (NT - nt_eff) * BPE_INT16;
-          dram_s0  = N_orig_q * BPE_INT16;
-          dram_b0  = groups_eff;
-        end
-      end
-
-      // OUTPUT: fp16, shape [M, N]
-      T_OUTPUT: begin
-        dram_s0  = N_orig_q * BPE_FP16;
-        dram_b0  = mt_eff;
-
-        if (cmd_op == OP_DMA_LD) begin
-          // G->L : LMEM row is padded to NT columns, so write full 256B and pad with zeros
-          seg_size = NT * BPE_FP16;                 // 256
-          padding  = (NT - nt_eff) * BPE_FP16;      // e.g., 2 when nt_eff=127
-        end else if (cmd_op == OP_DMA_ST) begin
-          // L->G : DO NOT write padding into compact GLOBAL (would overwrite next row)
-          seg_size = nt_eff * BPE_FP16;             // e.g., 254
-          padding  = 32'd0;
-        end
-      end
-
-      default: ;
-    endcase
-  end
-
-  // ============================================================
-  // LMEM 레이아웃(바이트 단위)
-  // ============================================================
-  logic [31:0] lmem_s0, lmem_s1, lmem_s2;
-
-  always_comb begin
-    lmem_s0 = 0; lmem_s1 = 0; lmem_s2 = 0;
-    unique case (tensor_sel)
-      T_INPUT:  lmem_s0 = KT * BPE_FP16;
-      T_WEIGHT: lmem_s0 = wtrans_tot_q[0] ? (KT >> 1) : (NT >> 1);
-      T_SCALE:  lmem_s0 = qdir_tot_q[0] ? (ng_tile * BPE_FP16)  : (NT * BPE_FP16);
-      T_ZP:     lmem_s0 = qdir_tot_q[0] ? (ng_tile * BPE_INT16) : (NT * BPE_INT16);
-      T_OUTPUT: lmem_s0 = NT * BPE_FP16;  //lmem에는 padding 포함
-      default: ;
-    endcase
-  end
-
-  // ============================================================
-  // 최종 src/dst stride + bounds
-  // ============================================================
+  logic [15:0] dram_stride0, lmem_stride0;
   logic [31:0] src_s0, src_s1, src_s2;
   logic [31:0] dst_s0, dst_s1, dst_s2;
   logic [31:0] bnd0, bnd1, bnd2;
+  logic [31:0] seg_size;
+  logic [31:0] padding;
 
   always_comb begin
+    dir_is_st = 1'b0;
+    src_base  = 64'd0;
+    dst_base  = 64'd0;
+    dram_stride0 = cmd_q.stride[31:16];
+    lmem_stride0 = cmd_q.stride[15:0];
+
     src_s0 = 0; src_s1 = 0; src_s2 = 0;
     dst_s0 = 0; dst_s1 = 0; dst_s2 = 0;
     bnd0 = 1; bnd1 = 1; bnd2 = 1;
+    seg_size = 0;
+    padding  = 0;
 
-    if (cmd_op == OP_DMA_LD) begin
-      src_s0 = dram_s0; src_s1 = dram_s1; src_s2 = dram_s2;
-      dst_s0 = lmem_s0; dst_s1 = lmem_s1; dst_s2 = lmem_s2;
-      bnd0   = dram_b0; bnd1   = dram_b1; bnd2   = dram_b2;
-    end else if (cmd_op == OP_DMA_ST) begin
-      src_s0 = lmem_s0; src_s1 = lmem_s1; src_s2 = lmem_s2;
-      dst_s0 = dram_s0; dst_s1 = dram_s1; dst_s2 = dram_s2;
-      bnd0   = dram_b0; bnd1   = dram_b1; bnd2   = dram_b2;
+    if (cmd_op == OP_DMA_LD || cmd_op == OP_DMA_ST) begin
+      dir_is_st = (cmd_op == OP_DMA_ST);
+      src_base  = cmd_q.rs2_data;
+      dst_base  = cmd_q.rs1_data;
+      bnd0      = {16'd0, cmd_q.bound};
+      seg_size  = {4'd0, cmd_q.instr[31:4]};
+
+      if (cmd_op == OP_DMA_LD) begin
+        src_s0 = {16'd0, dram_stride0};
+        dst_s0 = {16'd0, lmem_stride0};
+      end else begin
+        src_s0 = {16'd0, lmem_stride0};
+        dst_s0 = {16'd0, dram_stride0};
+      end
     end
   end
 
   // ============================================================
   // NOTIFY
   // ============================================================
-  wire logic [7:0]  notify_rid   = cmd_q.rs1_data[7:0];
+  wire logic [4:0]  notify_rid   = cmd_q.rs1_data[4:0];
   wire logic [31:0] notify_value = cmd_q.rs2_data[31:0];
 
   // ============================================================
@@ -490,16 +275,6 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
     entry_id_d   = entry_id_q;
     alloc_owner_d = alloc_owner_q;
     alloc_gen_d   = alloc_gen_q;
-
-    M_orig_d      = M_orig_q;
-    N_orig_d      = N_orig_q;
-    K_orig_d      = K_orig_q;
-    qblk_orig_d   = qblk_orig_q;
-    M_target_d    = M_target_q;
-    N_target_d    = N_target_q;
-    K_target_d    = K_target_q;
-    wtrans_tot_d  = wtrans_tot_q;
-    qdir_tot_d    = qdir_tot_q;
 
     // dma_if 기본값
     dma_if.req_valid = 1'b0;
@@ -585,7 +360,7 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
 
       S_NOTIFY: begin
         gemm_sync_if.valid   = 1'b1;
-        gemm_sync_if.reg_idx = {24'd0, notify_rid};
+        gemm_sync_if.reg_idx = {27'd0, notify_rid};
         gemm_sync_if.value   = notify_value;
         if (gemm_sync_if.ready) state_d = S_DONE;
       end
@@ -645,10 +420,10 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
         dma_if.req_valid   = 1'b1;
         dma_if.req_data.rw = 1'b1;
 
-        dma_if.req_data.mask      = '0;
-        dma_if.req_data.byteen    = '0;
-        dma_if.req_data.addr      = '0;
-        dma_if.req_data.data      = '0;
+        dma_if.req_data.mask    = '0;
+        dma_if.req_data.byteen  = '0;
+        dma_if.req_data.addr    = '0;
+        dma_if.req_data.data    = '0;
 
         dma_if.req_data.mask[0] = 1'b1;
 
@@ -677,10 +452,10 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
         dma_if.req_valid   = 1'b1;
         dma_if.req_data.rw = 1'b0;
 
-        dma_if.req_data.mask      = '0;
-        dma_if.req_data.byteen    = '0;
-        dma_if.req_data.addr      = '0;
-        dma_if.req_data.data      = '0;
+        dma_if.req_data.mask    = '0;
+        dma_if.req_data.byteen  = '0;
+        dma_if.req_data.addr    = '0;
+        dma_if.req_data.data    = '0;
 
         dma_if.req_data.mask[0] = 1'b1;
         dma_if.req_data.addr[0] = to_lsu_addr(entry_reg_byte_addr(entry_id_q, DMA_R_CONTROL));
@@ -726,61 +501,25 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
   // ============================================================
   always_ff @(posedge clk) begin
     if (reset) begin
-      state_q      <= S_IDLE;
-      wr_idx_q     <= 0;
-      poll_gap_q   <= 0;
-      alloc_gap_q  <= 0;
-      cmd_q        <= '0;
-      entry_id_q   <= '0;
+      state_q       <= S_IDLE;
+      wr_idx_q      <= 0;
+      poll_gap_q    <= 0;
+      alloc_gap_q   <= 0;
+      cmd_q         <= '0;
+      entry_id_q    <= '0;
       alloc_owner_q <= '0;
       alloc_gen_q   <= '0;
-
-      M_orig_q      <= 32'd0;
-      N_orig_q      <= 32'd0;
-      K_orig_q      <= 32'd0;
-      qblk_orig_q   <= 32'd0;
-      M_target_q    <= 32'd0;
-      N_target_q    <= 32'd0;
-      K_target_q    <= 32'd0;
-      wtrans_tot_q  <= 32'd0;
-      qdir_tot_q    <= 32'd0;
     end else begin
-      state_q      <= state_d;
-      wr_idx_q     <= wr_idx_d;
-      poll_gap_q   <= poll_gap_d;
-      alloc_gap_q  <= alloc_gap_d;
-      entry_id_q   <= entry_id_d;
+      state_q       <= state_d;
+      wr_idx_q      <= wr_idx_d;
+      poll_gap_q    <= poll_gap_d;
+      alloc_gap_q   <= alloc_gap_d;
+      entry_id_q    <= entry_id_d;
       alloc_owner_q <= alloc_owner_d;
       alloc_gen_q   <= alloc_gen_d;
 
-      M_orig_q      <= M_orig_d;
-      N_orig_q      <= N_orig_d;
-      K_orig_q      <= K_orig_d;
-      qblk_orig_q   <= qblk_orig_d;
-      M_target_q    <= M_target_d;
-      N_target_q    <= N_target_d;
-      K_target_q    <= K_target_d;
-      wtrans_tot_q  <= wtrans_tot_d;
-      qdir_tot_q    <= qdir_tot_d;
-
       if (state_q == S_IDLE && gemm_dma_ctrl_if.start) begin
-        /*
-        if ((gemm_dma_ctrl_if.qblk_orig != 0) && !is_pow2_u32(gemm_dma_ctrl_if.qblk_orig)) begin
-          $fatal(1, "%s: qblk_orig(%0d) must be power-of-two for shift-based division",
-                 INSTANCE_ID, gemm_dma_ctrl_if.qblk_orig);
-        end*/
-
         cmd_q        <= gemm_dma_ctrl_if.cmd;
-
-        M_orig_q      <= gemm_dma_ctrl_if.M_orig;
-        N_orig_q      <= gemm_dma_ctrl_if.N_orig;
-        K_orig_q      <= gemm_dma_ctrl_if.K_orig;
-        qblk_orig_q   <= gemm_dma_ctrl_if.qblk_orig;
-        M_target_q    <= gemm_dma_ctrl_if.M_target;
-        N_target_q    <= gemm_dma_ctrl_if.N_target;
-        K_target_q    <= gemm_dma_ctrl_if.K_target;
-        wtrans_tot_q  <= gemm_dma_ctrl_if.wtrans_tot;
-        qdir_tot_q    <= gemm_dma_ctrl_if.qdir_tot;
       end
     end
   end
@@ -837,15 +576,15 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
       64'(cmd_q.instr)
   };
   (* keep = "true", mark_debug = "true" *) wire [DBG_GEMM_DMA_CTRL_P3_W-1:0] dbg_gemm_dma_ctrl_probe3 = {
-      M_orig_q,
-      N_orig_q,
-      K_orig_q,
-      qblk_orig_q,
-      M_target_q,
-      N_target_q,
-      K_target_q,
-      wtrans_tot_q,
-      qdir_tot_q
+      src_base[31:0],
+      src_base[63:32],
+      dst_base[31:0],
+      dst_base[63:32],
+      src_s0,
+      dst_s0,
+      bnd0,
+      seg_size,
+      padding
   };
 
   ila_gemm_dma_ctrl ila_gemm_dma_ctrl_inst (

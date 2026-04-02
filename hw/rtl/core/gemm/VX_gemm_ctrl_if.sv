@@ -44,20 +44,6 @@ interface VX_gemm_ctrl_if import VX_gpu_pkg::*; #(
   dma_ctrl_t  dma_ctrl;
   dma_flag_t  dma_flag;
 
-  logic [31:0] M_orig;
-  logic [31:0] N_orig;
-  logic [31:0] K_orig;
-  logic [31:0] qblk_orig;
-
-  logic [31:0] M_target;
-  logic [31:0] N_target;
-  logic [31:0] K_target;
-
-  logic [31:0] wtrans_tot;
-  logic [31:0] qdir_tot;
-
-  logic [31:0] entry_id;     // mmio entry id
-
   modport master (
     output input_read_ctrl,
     input  input_read_flag,
@@ -68,11 +54,7 @@ interface VX_gemm_ctrl_if import VX_gpu_pkg::*; #(
     output quant_param_read_ctrl,
     input  quant_param_read_flag,
     output dma_ctrl,
-    input  dma_flag,
-    output M_orig, N_orig, K_orig, qblk_orig,
-    output M_target, N_target, K_target,
-    output wtrans_tot, qdir_tot,
-    output entry_id
+    input  dma_flag
   );
 
   modport slave (
@@ -85,11 +67,7 @@ interface VX_gemm_ctrl_if import VX_gpu_pkg::*; #(
     input  quant_param_read_ctrl,
     output quant_param_read_flag,
     input  dma_ctrl,
-    output dma_flag,
-    input  M_orig, N_orig, K_orig, qblk_orig,
-    input  M_target, N_target, K_target,
-    input  wtrans_tot, qdir_tot,
-    input  entry_id
+    output dma_flag
   );
 
 endinterface

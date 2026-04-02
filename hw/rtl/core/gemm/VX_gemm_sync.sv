@@ -4,15 +4,14 @@ module VX_gemm_sync import VX_gpu_pkg::*; #(
     parameter `STRING INSTANCE_ID = "",
     parameter int N_CHILDREN    = 5,
     parameter int N_NODE        = 5,
-    parameter int NUM_SYNC_REGS = 9
+    parameter int NUM_SYNC_REGS = 11
 ) (
     input  wire               clk,
     input  wire               reset,
 
     VX_gemm_fsm_if.slave       gemm_fsm_slv_if,
     VX_gemm_fsm_if.master      gemm_fsm_mas_if[N_CHILDREN],
-    VX_gemm_sync_if.slave      gemm_sync_slv_if[N_NODE],
-    input logic                gemm_start_i
+    VX_gemm_sync_if.slave      gemm_sync_slv_if[N_NODE]
 );
 
   initial begin
@@ -23,16 +22,14 @@ module VX_gemm_sync import VX_gpu_pkg::*; #(
   // --------------------------------------------------------------------------
   // Opcodes
   // --------------------------------------------------------------------------
-  localparam logic [7:0] OP_WAIT          = 8'hF0;
-  localparam logic [7:0] OP_NOTIFY        = 8'hF1;
-  localparam logic [7:0] OP_DMA_LD        = 8'h10;
-  localparam logic [7:0] OP_DMA_ST        = 8'h11;
-  localparam logic [7:0] OP_W_LDMA_MXU    = 8'h20;
-  localparam logic [7:0] OP_SC_LDMA_MXU   = 8'h21;
-  localparam logic [7:0] OP_ZP_LDMA_MXU   = 8'h24;
-  localparam logic [7:0] OP_I_LDMA_ARM    = 8'h22;
-  localparam logic [7:0] OP_O_ACC2LMEM    = 8'h23;
-
+  localparam logic [3:0] OP_DMA_LD        = 4'd1;
+  localparam logic [3:0] OP_DMA_ST        = 4'd2;
+  localparam logic [3:0] OP_NOTIFY        = 4'd3;
+  localparam logic [3:0] OP_WAIT          = 4'd4;
+  localparam logic [3:0] OP_W_LDMA_MXU    = 4'd5;
+  localparam logic [3:0] OP_SZ_LDMA_MXU   = 4'd6;
+  localparam logic [3:0] OP_I_LDMA_ARM    = 4'd7;
+  localparam logic [3:0] OP_O_ACC2LMEM    = 4'd8;
 
   // --------------------------------------------------------------------------
   // Sync registers
@@ -43,7 +40,7 @@ module VX_gemm_sync import VX_gpu_pkg::*; #(
   // Decode incoming command
   // --------------------------------------------------------------------------
   wire        in_valid = gemm_fsm_slv_if.ctrl.start;
-  wire [7:0]  opcode   = gemm_fsm_slv_if.ctrl.cmd.instr[7:0];
+  wire [3:0]  opcode   = gemm_fsm_slv_if.ctrl.cmd.instr[3:0];
 
   wire is_wait   = (opcode == OP_WAIT);
   wire is_notify = (opcode == OP_NOTIFY);
@@ -71,8 +68,7 @@ module VX_gemm_sync import VX_gpu_pkg::*; #(
       unique case (opcode)
         OP_I_LDMA_ARM:   cmd_route = 3'd0;
         OP_W_LDMA_MXU:   cmd_route = 3'd1;
-        OP_SC_LDMA_MXU,
-        OP_ZP_LDMA_MXU:  cmd_route = 3'd2;
+        OP_SZ_LDMA_MXU:  cmd_route = 3'd2;
         OP_O_ACC2LMEM:   cmd_route = 3'd3;
         OP_DMA_LD,
         OP_DMA_ST:       cmd_route = 3'd4;
@@ -238,11 +234,6 @@ module VX_gemm_sync import VX_gpu_pkg::*; #(
       for (int k = 0; k < NUM_SYNC_REGS; k++) begin
         sync_regs[k] <= 32'd0;
       end
-    end else if (gemm_start_i) begin
-      // Clear all sync registers at the start of GEMM (optional, depends on SW contract)
-      for (int k = 0; k < NUM_SYNC_REGS; k++) begin
-        sync_regs[k] <= 32'd0;
-      end
     end else begin
       for (int k = 0; k < NUM_SYNC_REGS; k++) begin
         sync_regs[k] <= sync_regs_n[k];
@@ -257,14 +248,13 @@ module VX_gemm_sync import VX_gpu_pkg::*; #(
   localparam int DBG_OPCODE_W = $bits(opcode);
   localparam int DBG_ROUTE_W  = $bits(cmd_route);
 
-  localparam int DBG_GEMM_SYNC_P0_W = ((12 + (2 * N_CHILDREN) + N_NODE) * DBG_BIT_W) + DBG_OPCODE_W + (3 * DBG_ROUTE_W);
+  localparam int DBG_GEMM_SYNC_P0_W = ((11 + (2 * N_CHILDREN) + N_NODE) * DBG_BIT_W) + DBG_OPCODE_W + (3 * DBG_ROUTE_W);
   localparam int DBG_GEMM_SYNC_P1_W = ((3 + NUM_SYNC_REGS) * DBG_WORD_W);
   localparam int DBG_GEMM_SYNC_P2_W = ((2 * N_NODE) * DBG_WORD_W);
   localparam int DBG_GEMM_SYNC_P3_W = (NUM_SYNC_REGS * DBG_WORD_W);
 
   (* keep = "true", mark_debug = "true" *) wire [DBG_GEMM_SYNC_P0_W-1:0] dbg_gemm_sync_probe0 = {
       reset,
-      gemm_start_i,
       in_valid,
       can_accept,
       cmd_valid,
@@ -307,7 +297,9 @@ module VX_gemm_sync import VX_gpu_pkg::*; #(
       sync_regs[5],
       sync_regs[6],
       sync_regs[7],
-      sync_regs[8]
+      sync_regs[8],
+      sync_regs[9],
+      sync_regs[10]
   };
   (* keep = "true", mark_debug = "true" *) wire [DBG_GEMM_SYNC_P2_W-1:0] dbg_gemm_sync_probe2 = {
       32'(gemm_sync_slv_if[0].reg_idx),
@@ -330,7 +322,9 @@ module VX_gemm_sync import VX_gpu_pkg::*; #(
       sync_regs_n[5],
       sync_regs_n[6],
       sync_regs_n[7],
-      sync_regs_n[8]
+      sync_regs_n[8],
+      sync_regs_n[9],
+      sync_regs_n[10]
   };
 
   ila_gemm_sync ila_gemm_sync_inst (
