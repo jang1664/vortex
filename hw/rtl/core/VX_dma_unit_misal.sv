@@ -1041,7 +1041,6 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
 
 `ifdef PERF_ENABLE
     reg [PERF_CTR_BITS-1:0] perf_rd_bytes_r;
-    reg [PERF_CTR_BITS-1:0] perf_rd_bytes_r;
     reg [PERF_CTR_BITS-1:0] perf_wr_bytes_r;
     reg [PERF_CTR_BITS-1:0] perf_xfers_r;
     reg [PERF_CTR_BITS-1:0] perf_active_r;
