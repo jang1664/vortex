@@ -1290,31 +1290,57 @@ module tb_VX_gemm_node_improve
     end
   endtask
 
-  // Weight tiled (non-transposed): (n,MXU_NT),(k,KT),(n,N/MXU_NT),(k,K/KT)
+  // Weight tiled: micro-tiles laid out contiguously per (kt, nt) tile.
+  //   wtrans=0: each micro-tile is [MXU_KT][MXU_NT/2], k outer, n-pairs inner
+  //   wtrans=1: each micro-tile is [MXU_NT][MXU_KT/2], n outer, k-pairs inner
   task automatic write_dram_tiled_weight(
     input int test_n,
     input int test_k,
+    input int test_wtrans,
     input logic [63:0] dram_w_base
   );
-    int k_tiles, n_tiles, dram_idx;
+    int k_tiles, n_tiles, kb_per_kt, dram_idx;
     begin
-      k_tiles  = test_k / DMA_KT;
-      n_tiles  = test_n / DMA_MXU_NT;
-      dram_idx = 0;
+      k_tiles    = test_k / DMA_KT;
+      n_tiles    = test_n / DMA_MXU_NT;
+      kb_per_kt  = DMA_KT / DMA_MXU_KT;
+      dram_idx   = 0;
       for (int kt = 0; kt < k_tiles; kt++) begin
         for (int nt = 0; nt < n_tiles; nt++) begin
-          for (int k = 0; k < DMA_KT; k++) begin
-            for (int n = 0; n < DMA_MXU_NT; n += 2) begin
-              logic [3:0] w0, w1;
-              int gk, gn0, gn1;
-              gk  = kt * DMA_KT + k;
-              gn0 = nt * DMA_MXU_NT + n;
-              gn1 = gn0 + 1;
-              w0 = weight_mat[gk * test_n + gn0];
-              w1 = (gn1 < test_n) ? weight_mat[gk * test_n + gn1] : 4'h0;
-              if ((dram_w_base + dram_idx) < DRAM_SIZE)
-                dram[dram_w_base + dram_idx] = pack_int4_pair(w0, w1);
-              dram_idx += 1;
+          // Write kb_per_kt contiguous micro-tiles
+          for (int kb = 0; kb < kb_per_kt; kb++) begin
+            if (test_wtrans == 0) begin
+              // wtrans=0: [MXU_KT rows][MXU_NT/2 cols]
+              for (int k = 0; k < DMA_MXU_KT; k++) begin
+                for (int n = 0; n < DMA_MXU_NT; n += 2) begin
+                  logic [3:0] w0, w1;
+                  int gk, gn0, gn1;
+                  gk  = kt * DMA_KT + kb * DMA_MXU_KT + k;
+                  gn0 = nt * DMA_MXU_NT + n;
+                  gn1 = gn0 + 1;
+                  w0 = weight_mat[gk * test_n + gn0];
+                  w1 = (gn1 < test_n) ? weight_mat[gk * test_n + gn1] : 4'h0;
+                  if ((dram_w_base + dram_idx) < DRAM_SIZE)
+                    dram[dram_w_base + dram_idx] = pack_int4_pair(w0, w1);
+                  dram_idx += 1;
+                end
+              end
+            end else begin
+              // wtrans=1: [MXU_NT rows][MXU_KT/2 cols]
+              for (int n = 0; n < DMA_MXU_NT; n++) begin
+                for (int k = 0; k < DMA_MXU_KT; k += 2) begin
+                  logic [3:0] w0, w1;
+                  int gk0, gk1, gn;
+                  gk0 = kt * DMA_KT + kb * DMA_MXU_KT + k;
+                  gk1 = gk0 + 1;
+                  gn  = nt * DMA_MXU_NT + n;
+                  w0 = weight_mat[gk0 * test_n + gn];
+                  w1 = (gk1 < test_k) ? weight_mat[gk1 * test_n + gn] : 4'h0;
+                  if ((dram_w_base + dram_idx) < DRAM_SIZE)
+                    dram[dram_w_base + dram_idx] = pack_int4_pair(w0, w1);
+                  dram_idx += 1;
+                end
+              end
             end
           end
         end
@@ -2155,8 +2181,8 @@ module tb_VX_gemm_node_improve
         $fatal(1, "[%0t] QBLK must be %0d (got %0d)", $time, DMA_MXU_KT, test_qblk);
       if (test_qdir != 0)
         $fatal(1, "[%0t] only QDIR=0 supported (got %0d)", $time, test_qdir);
-      if (test_wtrans != 0)
-        $fatal(1, "[%0t] only WTRANS=0 supported for tiled test (got %0d)", $time, test_wtrans);
+      if ((test_wtrans != 0) && (test_wtrans != 1))
+        $fatal(1, "[%0t] invalid WTRANS=%0d for tiled test", $time, test_wtrans);
 
       m_tiles      = (test_m + DMA_MT - 1) / DMA_MT;
       n_tiles      = test_n / DMA_MXU_NT;
@@ -2188,7 +2214,7 @@ module tb_VX_gemm_node_improve
 
       // Write tiled data to DRAM
       write_dram_tiled_input(test_m, test_k, dram_in_base);
-      write_dram_tiled_weight(test_n, test_k, dram_w_base);
+      write_dram_tiled_weight(test_n, test_k, test_wtrans, dram_w_base);
       write_dram_tiled_scale(test_n, test_k, test_qblk, dram_sc_base);
       write_dram_tiled_zp(test_n, test_k, test_qblk, dram_zp_base);
 
@@ -2267,7 +2293,7 @@ module tb_VX_gemm_node_improve
 
               // Weight MXU load
               w_lmem_base = lmem_wbuf0_base + 64'(kb * w_seg_bytes);
-              frontend_stream_send_mxu_weight_cmd(1'b0, 1'b0, 16'd1, 16'd0, w_lmem_base);
+              frontend_stream_send_mxu_weight_cmd(test_wtrans[0], 1'b0, 16'd1, 16'd0, w_lmem_base);
               frontend_stream_send_word(make_raw_notify_word((kb == 0) ? 1'b1 : 1'b0, 32'd1, rid_w0[4:0]));
 
               // Qparam MXU load (first K-block of each k_tile)
