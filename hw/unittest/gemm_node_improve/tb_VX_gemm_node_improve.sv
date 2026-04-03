@@ -20,7 +20,7 @@ module tb_VX_gemm_node_improve
   localparam real FP16_TOL = 0.01; // ~1.5 LSB of FP16
 
   // default smoke sizes (runtime-configurable via tasks)
-  localparam int DEFAULT_M_TEST = 2;
+  localparam int DEFAULT_M_TEST = 32;
   localparam int DEFAULT_N_TEST = 32;
   localparam int DEFAULT_K_TEST = 128;
   localparam int DEFAULT_QBLK   = 32;
@@ -61,8 +61,8 @@ module tb_VX_gemm_node_improve
   localparam int LMEM_WORD_ADDR_WIDTH  = `CLOG2(LMEM_SIZE / LSU_WORD_SIZE);
 
   // DCACHE model size (byte addressed)
-  localparam int DMEM_SIZE       = 7 * 1024 * 1024; // 7MB
-  localparam int DMEM_ADDR_WIDTH = `CLOG2(DMEM_SIZE);
+  localparam int DRAM_SIZE       = 100 * 1024 * 1024; // 100MB
+  localparam int DRAM_ADDR_WIDTH = `CLOG2(DRAM_SIZE);
 
   localparam int DCACHE_BYTES = LSU_WORD_SIZE;
   localparam int CACHE_NUM_REQS     = 1;
@@ -413,7 +413,7 @@ module tb_VX_gemm_node_improve
   );
 
   // Global memory backend (byte addressed, served by cache line interface)
-  byte dmem [0:DMEM_SIZE-1];
+  byte dram [0:DRAM_SIZE-1];
 
   typedef struct {
     logic [CACHE_LINE_SIZE*8-1:0]   data;
@@ -440,16 +440,16 @@ module tb_VX_gemm_node_improve
 
         if (cache_mem_if[0].req_data.rw) begin
           for (int b = 0; b < CACHE_LINE_SIZE; ++b) begin
-            if (cache_mem_if[0].req_data.byteen[b] && ((base_b + b) < DMEM_SIZE))
-              dmem[base_b + b] = cache_mem_if[0].req_data.data[b*8 +: 8];
+            if (cache_mem_if[0].req_data.byteen[b] && ((base_b + b) < DRAM_SIZE))
+              dram[base_b + b] = cache_mem_if[0].req_data.data[b*8 +: 8];
           end
         end else begin
           mem_rsp_entry_t e;
           e.tag   = cache_mem_if[0].req_data.tag;
           e.delay = CACHE_MEM_LATENCY;
           for (int b = 0; b < CACHE_LINE_SIZE; ++b) begin
-            if ((base_b + b) < DMEM_SIZE)
-              e.data[b*8 +: 8] = dmem[base_b + b];
+            if ((base_b + b) < DRAM_SIZE)
+              e.data[b*8 +: 8] = dram[base_b + b];
             else
               e.data[b*8 +: 8] = 8'h00;
           end
@@ -1054,7 +1054,7 @@ module tb_VX_gemm_node_improve
   endtask
 
   task automatic init_memories();
-    for (int i = 0; i < DMEM_SIZE; i++) dmem[i] = 8'h00;
+    for (int i = 0; i < DRAM_SIZE; i++) dram[i] = 8'h00;
     clear_lmem();
   endtask
 
@@ -1066,7 +1066,7 @@ module tb_VX_gemm_node_improve
   endtask
 
   // =========================================================================
-  // Helpers: FP16/INT4 packing into DMEM
+  // Helpers: FP16/INT4 packing into dram
   // =========================================================================
   function automatic logic [7:0] pack_int4_pair(input logic [3:0] lo, input logic [3:0] hi);
     return {hi, lo};
@@ -1087,11 +1087,11 @@ module tb_VX_gemm_node_improve
   // Test: end-to-end one GEMM
   // =========================================================================
   // Auto layout base/alignment
-  localparam longint unsigned AUTO_GMEM_BASE = 64'h0000_0000_0010_0000;
+  localparam longint unsigned AUTO_DRAM_BASE = 64'h0000_0000_0010_0000;
   localparam longint unsigned AUTO_LMEM_BASE = 64'h0000_0000_0000_0000;
   localparam longint unsigned ADDR_ALIGN_BYTES = LMEM_LAYOUT_ALIGN_BYTES;
 
-  localparam longint unsigned DMEM_LIMIT = longint'(DMEM_SIZE);
+  localparam longint unsigned DRAM_LIMIT = longint'(DRAM_SIZE);
   localparam longint unsigned LMEM_LIMIT = longint'(LMEM_SIZE);
 
   // data generators
@@ -1268,17 +1268,17 @@ module tb_VX_gemm_node_improve
     end
   endtask
 
-  task automatic write_gmem_inputs_weights_sc_zp(
+  task automatic write_dram_inputs_weights_sc_zp(
     input int test_m,
     input int test_n,
     input int test_k,
     input int test_qblk,
     input int test_wtrans,
     input int test_qdir,
-    input logic [63:0] gmem_in_base,
-    input logic [63:0] gmem_w_base,
-    input logic [63:0] gmem_sc_base,
-    input logic [63:0] gmem_zp_base
+    input logic [63:0] dram_in_base,
+    input logic [63:0] dram_w_base,
+    input logic [63:0] dram_sc_base,
+    input logic [63:0] dram_zp_base
   );
     byte unsigned buf_in[];
     byte unsigned buf_w[];
@@ -1298,7 +1298,7 @@ module tb_VX_gemm_node_improve
       buf_in[i*2 + 1] = input_mat[i][15:8];
     end
     for (int i = 0; i < buf_in.size(); i++)
-      if ((gmem_in_base + i) < DMEM_SIZE) dmem[gmem_in_base + i] = buf_in[i];
+      if ((dram_in_base + i) < DRAM_SIZE) dram[dram_in_base + i] = buf_in[i];
 
     if (test_wtrans == 0) begin
       buf_w = new[test_k * ((test_n+1)/2)];
@@ -1320,7 +1320,7 @@ module tb_VX_gemm_node_improve
       end
     end
     for (int i = 0; i < buf_w.size(); i++)
-      if ((gmem_w_base + i) < DMEM_SIZE) dmem[gmem_w_base + i] = buf_w[i];
+      if ((dram_w_base + i) < DRAM_SIZE) dram[dram_w_base + i] = buf_w[i];
 
     if (test_qdir == 0) begin
       // QCOL: scale/zp layout [KG, N]
@@ -1369,14 +1369,14 @@ module tb_VX_gemm_node_improve
     end
 
     for (int i = 0; i < buf_sc.size(); i++)
-      if ((gmem_sc_base + i) < DMEM_SIZE) dmem[gmem_sc_base + i] = buf_sc[i];
+      if ((dram_sc_base + i) < DRAM_SIZE) dram[dram_sc_base + i] = buf_sc[i];
     for (int i = 0; i < buf_zp.size(); i++)
-      if ((gmem_zp_base + i) < DMEM_SIZE) dmem[gmem_zp_base + i] = buf_zp[i];
+      if ((dram_zp_base + i) < DRAM_SIZE) dram[dram_zp_base + i] = buf_zp[i];
   endtask
 
-  task automatic write_gmem_stream_qparam_packed_qcol(
+  task automatic write_dram_stream_qparam_packed_qcol(
     input int test_n,
-    input logic [63:0] gmem_qparam_base
+    input logic [63:0] dram_qparam_base
   );
     byte unsigned buf_qparam[];
     begin
@@ -1392,7 +1392,7 @@ module tb_VX_gemm_node_improve
         buf_qparam[base_idx + 1] = zp_vec[n][15:8];
       end
       for (int i = 0; i < buf_qparam.size(); i++)
-        if ((gmem_qparam_base + i) < DMEM_SIZE) dmem[gmem_qparam_base + i] = buf_qparam[i];
+        if ((dram_qparam_base + i) < DRAM_SIZE) dram[dram_qparam_base + i] = buf_qparam[i];
     end
   endtask
 
@@ -1407,11 +1407,11 @@ module tb_VX_gemm_node_improve
     input int test_qblk,
     input int test_wtrans,
     input int test_qdir,
-    input logic [63:0] gmem_in_base,
-    input logic [63:0] gmem_w_base,
-    input logic [63:0] gmem_out_base,
-    input logic [63:0] gmem_sc_base,
-    input logic [63:0] gmem_zp_base,
+    input logic [63:0] dram_in_base,
+    input logic [63:0] dram_w_base,
+    input logic [63:0] dram_out_base,
+    input logic [63:0] dram_sc_base,
+    input logic [63:0] dram_zp_base,
     input logic [63:0] lmem_ibuf0_base,
     input logic [63:0] lmem_ibuf1_base,
     input logic [63:0] lmem_wbuf0_base,
@@ -1423,11 +1423,11 @@ module tb_VX_gemm_node_improve
     input logic [63:0] lmem_obuf_base
   );
     // globals
-    job_write_reg64(eid, REG_INPUT_BASE_LO,  gmem_in_base);
-    job_write_reg64(eid, REG_WEIGHT_BASE_LO, gmem_w_base);
-    job_write_reg64(eid, REG_OUTPUT_BASE_LO, gmem_out_base);
-    job_write_reg64(eid, REG_SCALE_BASE_LO,  gmem_sc_base);
-    job_write_reg64(eid, REG_ZP_BASE_LO,     gmem_zp_base);
+    job_write_reg64(eid, REG_INPUT_BASE_LO,  dram_in_base);
+    job_write_reg64(eid, REG_WEIGHT_BASE_LO, dram_w_base);
+    job_write_reg64(eid, REG_OUTPUT_BASE_LO, dram_out_base);
+    job_write_reg64(eid, REG_SCALE_BASE_LO,  dram_sc_base);
+    job_write_reg64(eid, REG_ZP_BASE_LO,     dram_zp_base);
 
     // lmem buffers
     job_write_reg64(eid, REG_LMEM_IBUF0_LO,   lmem_ibuf0_base);
@@ -1478,10 +1478,10 @@ module tb_VX_gemm_node_improve
   // =========================================================================
   // Simple output checker
   // =========================================================================
-  function automatic logic [15:0] dmem_read_u16(input int unsigned addr);
+  function automatic logic [15:0] dram_read_u16(input int unsigned addr);
     logic [15:0] x;
-    x[7:0]  = (addr < DMEM_SIZE) ? dmem[addr] : 8'h00;
-    x[15:8] = ((addr+1) < DMEM_SIZE) ? dmem[addr+1] : 8'h00;
+    x[7:0]  = (addr < DRAM_SIZE) ? dram[addr] : 8'h00;
+    x[15:8] = ((addr+1) < DRAM_SIZE) ? dram[addr+1] : 8'h00;
     return x;
   endfunction
 
@@ -1507,7 +1507,7 @@ module tb_VX_gemm_node_improve
   task automatic check_output(
     input int test_m,
     input int test_n,
-    input logic [63:0] gmem_out_base
+    input logic [63:0] dram_out_base
   );
     int mismatch_count = 0;
     int printed = 0;
@@ -1520,8 +1520,8 @@ module tb_VX_gemm_node_improve
     for (int m = 0; m < test_m; m++) begin
       for (int n = 0; n < test_n; n++) begin
         int unsigned idx = m * test_n + n;
-        int unsigned addr = gmem_out_base + (idx * 2);
-        logic [15:0] got = dmem_read_u16(addr);
+        int unsigned addr = dram_out_base + (idx * 2);
+        logic [15:0] got = dram_read_u16(addr);
         logic [15:0] exp = ref_output[idx];
         if (!compare_fp16(got, exp, FP16_TOL)) begin
           mismatch_count++;
@@ -1591,11 +1591,11 @@ module tb_VX_gemm_node_improve
     input int test_qblk,
     input int test_wtrans,
     input int test_qdir,
-    input logic [63:0] gmem_in_base,
-    input logic [63:0] gmem_w_base,
-    input logic [63:0] gmem_sc_base,
-    input logic [63:0] gmem_zp_base,
-    input logic [63:0] gmem_out_base,
+    input logic [63:0] dram_in_base,
+    input logic [63:0] dram_w_base,
+    input logic [63:0] dram_sc_base,
+    input logic [63:0] dram_zp_base,
+    input logic [63:0] dram_out_base,
     input logic [63:0] lmem_ibuf0_base,
     input logic [63:0] lmem_ibuf1_base,
     input logic [63:0] lmem_wbuf0_base,
@@ -1606,11 +1606,11 @@ module tb_VX_gemm_node_improve
     input logic [63:0] lmem_zpbuf1_base,
     input logic [63:0] lmem_obuf_base
   );
-    longint unsigned gmem_in_bytes;
-    longint unsigned gmem_w_bytes;
-    longint unsigned gmem_sc_bytes;
-    longint unsigned gmem_zp_bytes;
-    longint unsigned gmem_out_bytes;
+    longint unsigned dram_in_bytes;
+    longint unsigned dram_w_bytes;
+    longint unsigned dram_sc_bytes;
+    longint unsigned dram_zp_bytes;
+    longint unsigned dram_out_bytes;
     longint unsigned lmem_ibuf_bytes;
     longint unsigned lmem_wbuf_bytes;
     longint unsigned lmem_scbuf_bytes;
@@ -1630,18 +1630,18 @@ module tb_VX_gemm_node_improve
       ng_total     = (longint'(test_n) + longint'(test_qblk) - 1) / longint'(test_qblk);
       ng_tile      = (longint'(DMA_NT)  + longint'(test_qblk) - 1) / longint'(test_qblk);
 
-      gmem_in_bytes  = longint'(test_m) * longint'(test_k) * 2;
-      gmem_w_bytes   = (test_wtrans == 0)
+      dram_in_bytes  = longint'(test_m) * longint'(test_k) * 2;
+      dram_w_bytes   = (test_wtrans == 0)
                      ? (longint'(test_k) * longint'((test_n + 1) / 2))
                      : (longint'(test_n) * longint'((test_k + 1) / 2));
       if (test_qdir == 0) begin
-        gmem_sc_bytes  = groups_total * longint'(test_n) * 2;
-        gmem_zp_bytes  = groups_total * longint'(test_n) * 2;
+        dram_sc_bytes  = groups_total * longint'(test_n) * 2;
+        dram_zp_bytes  = groups_total * longint'(test_n) * 2;
       end else begin
-        gmem_sc_bytes  = longint'(test_k) * ng_total * 2;
-        gmem_zp_bytes  = longint'(test_k) * ng_total * 2;
+        dram_sc_bytes  = longint'(test_k) * ng_total * 2;
+        dram_zp_bytes  = longint'(test_k) * ng_total * 2;
       end
-      gmem_out_bytes = longint'(test_m) * longint'(test_n) * 2;
+      dram_out_bytes = longint'(test_m) * longint'(test_n) * 2;
 
       // LMEM allocation must follow DMA tile footprint, not logical tensor bytes.
       groups_tile      = (longint'(DMA_KT) + longint'(test_qblk) - 1) / longint'(test_qblk);
@@ -1656,23 +1656,23 @@ module tb_VX_gemm_node_improve
       end
       lmem_obuf_bytes  = longint'(DMA_MT) * longint'(DMA_NT) * 2;                // fp16 output
 
-      // GMEM range checks
-      assert_range_fit("GMEM_IN",  gmem_in_base,  gmem_in_bytes,  DMEM_LIMIT);
-      assert_range_fit("GMEM_W",   gmem_w_base,   gmem_w_bytes,   DMEM_LIMIT);
-      assert_range_fit("GMEM_SC",  gmem_sc_base,  gmem_sc_bytes,  DMEM_LIMIT);
-      assert_range_fit("GMEM_ZP",  gmem_zp_base,  gmem_zp_bytes,  DMEM_LIMIT);
-      assert_range_fit("GMEM_OUT", gmem_out_base, gmem_out_bytes, DMEM_LIMIT);
+      // dram range checks
+      assert_range_fit("dram_IN",  dram_in_base,  dram_in_bytes,  DRAM_LIMIT);
+      assert_range_fit("dram_W",   dram_w_base,   dram_w_bytes,   DRAM_LIMIT);
+      assert_range_fit("dram_SC",  dram_sc_base,  dram_sc_bytes,  DRAM_LIMIT);
+      assert_range_fit("dram_ZP",  dram_zp_base,  dram_zp_bytes,  DRAM_LIMIT);
+      assert_range_fit("dram_OUT", dram_out_base, dram_out_bytes, DRAM_LIMIT);
 
-      assert_no_overlap("GMEM_IN",  gmem_in_base,  gmem_in_bytes,  "GMEM_W",   gmem_w_base,   gmem_w_bytes);
-      assert_no_overlap("GMEM_IN",  gmem_in_base,  gmem_in_bytes,  "GMEM_SC",  gmem_sc_base,  gmem_sc_bytes);
-      assert_no_overlap("GMEM_IN",  gmem_in_base,  gmem_in_bytes,  "GMEM_ZP",  gmem_zp_base,  gmem_zp_bytes);
-      assert_no_overlap("GMEM_IN",  gmem_in_base,  gmem_in_bytes,  "GMEM_OUT", gmem_out_base, gmem_out_bytes);
-      assert_no_overlap("GMEM_W",   gmem_w_base,   gmem_w_bytes,   "GMEM_SC",  gmem_sc_base,  gmem_sc_bytes);
-      assert_no_overlap("GMEM_W",   gmem_w_base,   gmem_w_bytes,   "GMEM_ZP",  gmem_zp_base,  gmem_zp_bytes);
-      assert_no_overlap("GMEM_W",   gmem_w_base,   gmem_w_bytes,   "GMEM_OUT", gmem_out_base, gmem_out_bytes);
-      assert_no_overlap("GMEM_SC",  gmem_sc_base,  gmem_sc_bytes,  "GMEM_ZP",  gmem_zp_base,  gmem_zp_bytes);
-      assert_no_overlap("GMEM_SC",  gmem_sc_base,  gmem_sc_bytes,  "GMEM_OUT", gmem_out_base, gmem_out_bytes);
-      assert_no_overlap("GMEM_ZP",  gmem_zp_base,  gmem_zp_bytes,  "GMEM_OUT", gmem_out_base, gmem_out_bytes);
+      assert_no_overlap("dram_IN",  dram_in_base,  dram_in_bytes,  "dram_W",   dram_w_base,   dram_w_bytes);
+      assert_no_overlap("dram_IN",  dram_in_base,  dram_in_bytes,  "dram_SC",  dram_sc_base,  dram_sc_bytes);
+      assert_no_overlap("dram_IN",  dram_in_base,  dram_in_bytes,  "dram_ZP",  dram_zp_base,  dram_zp_bytes);
+      assert_no_overlap("dram_IN",  dram_in_base,  dram_in_bytes,  "dram_OUT", dram_out_base, dram_out_bytes);
+      assert_no_overlap("dram_W",   dram_w_base,   dram_w_bytes,   "dram_SC",  dram_sc_base,  dram_sc_bytes);
+      assert_no_overlap("dram_W",   dram_w_base,   dram_w_bytes,   "dram_ZP",  dram_zp_base,  dram_zp_bytes);
+      assert_no_overlap("dram_W",   dram_w_base,   dram_w_bytes,   "dram_OUT", dram_out_base, dram_out_bytes);
+      assert_no_overlap("dram_SC",  dram_sc_base,  dram_sc_bytes,  "dram_ZP",  dram_zp_base,  dram_zp_bytes);
+      assert_no_overlap("dram_SC",  dram_sc_base,  dram_sc_bytes,  "dram_OUT", dram_out_base, dram_out_bytes);
+      assert_no_overlap("dram_ZP",  dram_zp_base,  dram_zp_bytes,  "dram_OUT", dram_out_base, dram_out_bytes);
 
       // LMEM range checks
       assert_range_fit("LMEM_IBUF0", lmem_ibuf0_base, lmem_ibuf_bytes,  LMEM_LIMIT);
@@ -1734,11 +1734,11 @@ module tb_VX_gemm_node_improve
     input int test_qblk,
     input int test_wtrans,
     input int test_qdir,
-    input logic [63:0] gmem_in_base,
-    input logic [63:0] gmem_w_base,
-    input logic [63:0] gmem_sc_base,
-    input logic [63:0] gmem_zp_base,
-    input logic [63:0] gmem_out_base,
+    input logic [63:0] dram_in_base,
+    input logic [63:0] dram_w_base,
+    input logic [63:0] dram_sc_base,
+    input logic [63:0] dram_zp_base,
+    input logic [63:0] dram_out_base,
     input logic [63:0] lmem_ibuf0_base,
     input logic [63:0] lmem_ibuf1_base,
     input logic [63:0] lmem_wbuf0_base,
@@ -1773,27 +1773,27 @@ module tb_VX_gemm_node_improve
 
       check_tensor_layout(
         test_m, test_n, test_k, test_qblk, test_wtrans, test_qdir,
-        gmem_in_base, gmem_w_base, gmem_sc_base, gmem_zp_base, gmem_out_base,
+        dram_in_base, dram_w_base, dram_sc_base, dram_zp_base, dram_out_base,
         lmem_ibuf0_base, lmem_ibuf1_base, lmem_wbuf0_base, lmem_wbuf1_base,
         lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base, lmem_obuf_base
       );
-      write_gmem_inputs_weights_sc_zp(
+      write_dram_inputs_weights_sc_zp(
         test_m, test_n, test_k, test_qblk, test_wtrans, test_qdir,
-        gmem_in_base, gmem_w_base, gmem_sc_base, gmem_zp_base
+        dram_in_base, dram_w_base, dram_sc_base, dram_zp_base
       );
 
       job_alloc(job_eid_local, job_gen_local);
       program_job_regs(
         job_eid_local,
         test_m, test_n, test_k, test_qblk, test_wtrans, test_qdir,
-        gmem_in_base, gmem_w_base, gmem_out_base, gmem_sc_base, gmem_zp_base,
+        dram_in_base, dram_w_base, dram_out_base, dram_sc_base, dram_zp_base,
         lmem_ibuf0_base, lmem_ibuf1_base, lmem_wbuf0_base, lmem_wbuf1_base,
         lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base, lmem_obuf_base
       );
       wait_job_done(job_eid_local, job_gen_local);
 
       repeat (50) @(posedge clk);
-      check_output(test_m, test_n, gmem_out_base);
+      check_output(test_m, test_n, dram_out_base);
     end
   endtask
 
@@ -1804,11 +1804,11 @@ module tb_VX_gemm_node_improve
     input int test_qblk,
     input int test_wtrans,
     input int test_qdir,
-    output logic [63:0] gmem_in_base,
-    output logic [63:0] gmem_w_base,
-    output logic [63:0] gmem_sc_base,
-    output logic [63:0] gmem_zp_base,
-    output logic [63:0] gmem_out_base,
+    output logic [63:0] dram_in_base,
+    output logic [63:0] dram_w_base,
+    output logic [63:0] dram_sc_base,
+    output logic [63:0] dram_zp_base,
+    output logic [63:0] dram_out_base,
     output logic [63:0] lmem_ibuf0_base,
     output logic [63:0] lmem_ibuf1_base,
     output logic [63:0] lmem_wbuf0_base,
@@ -1819,8 +1819,8 @@ module tb_VX_gemm_node_improve
     output logic [63:0] lmem_zpbuf1_base,
     output logic [63:0] lmem_obuf_base
   );
-    longint unsigned cur_gmem, cur_lmem;
-    longint unsigned gmem_in_bytes, gmem_w_bytes, gmem_sc_bytes, gmem_zp_bytes, gmem_out_bytes;
+    longint unsigned cur_dram, cur_lmem;
+    longint unsigned dram_in_bytes, dram_w_bytes, dram_sc_bytes, dram_zp_bytes, dram_out_bytes;
     longint unsigned lmem_ibuf_bytes, lmem_wbuf_bytes, lmem_scbuf_bytes, lmem_zpbuf_bytes, lmem_obuf_bytes;
     longint unsigned groups_total;
     longint unsigned groups_tile;
@@ -1836,20 +1836,20 @@ module tb_VX_gemm_node_improve
       ng_total     = (longint'(test_n) + longint'(test_qblk) - 1) / longint'(test_qblk);
       ng_tile      = (longint'(DMA_NT)  + longint'(test_qblk) - 1) / longint'(test_qblk);
 
-      gmem_in_bytes  = longint'(test_m) * longint'(test_k) * 2;
-      gmem_w_bytes   = (test_wtrans == 0)
+      dram_in_bytes  = longint'(test_m) * longint'(test_k) * 2;
+      dram_w_bytes   = (test_wtrans == 0)
                      ? (longint'(test_k) * longint'((test_n + 1) / 2))
                      : (longint'(test_n) * longint'((test_k + 1) / 2));
       if (test_qdir == 0) begin
         // QCOL: [KG, N]
-        gmem_sc_bytes  = groups_total * longint'(test_n) * 2;
-        gmem_zp_bytes  = groups_total * longint'(test_n) * 2;
+        dram_sc_bytes  = groups_total * longint'(test_n) * 2;
+        dram_zp_bytes  = groups_total * longint'(test_n) * 2;
       end else begin
         // QROW: [K, NG]
-        gmem_sc_bytes  = longint'(test_k) * ng_total * 2;
-        gmem_zp_bytes  = longint'(test_k) * ng_total * 2;
+        dram_sc_bytes  = longint'(test_k) * ng_total * 2;
+        dram_zp_bytes  = longint'(test_k) * ng_total * 2;
       end
-      gmem_out_bytes = longint'(test_m) * longint'(test_n) * 2;
+      dram_out_bytes = longint'(test_m) * longint'(test_n) * 2;
 
       groups_tile      = (longint'(DMA_KT) + longint'(test_qblk) - 1) / longint'(test_qblk);
       lmem_ibuf_bytes  = longint'(DMA_MT) * longint'(DMA_KT) * 2;
@@ -1865,16 +1865,16 @@ module tb_VX_gemm_node_improve
       end
       lmem_obuf_bytes  = longint'(DMA_MT) * longint'(DMA_NT) * 2;
 
-      cur_gmem = align_up(AUTO_GMEM_BASE, ADDR_ALIGN_BYTES);
-      gmem_in_base = cur_gmem[63:0];
-      cur_gmem += align_up(gmem_in_bytes, ADDR_ALIGN_BYTES);
-      gmem_w_base = cur_gmem[63:0];
-      cur_gmem += align_up(gmem_w_bytes, ADDR_ALIGN_BYTES);
-      gmem_sc_base = cur_gmem[63:0];
-      cur_gmem += align_up(gmem_sc_bytes, ADDR_ALIGN_BYTES);
-      gmem_zp_base = cur_gmem[63:0];
-      cur_gmem += align_up(gmem_zp_bytes, ADDR_ALIGN_BYTES);
-      gmem_out_base = cur_gmem[63:0];
+      cur_dram = align_up(AUTO_DRAM_BASE, ADDR_ALIGN_BYTES);
+      dram_in_base = cur_dram[63:0];
+      cur_dram += align_up(dram_in_bytes, ADDR_ALIGN_BYTES);
+      dram_w_base = cur_dram[63:0];
+      cur_dram += align_up(dram_w_bytes, ADDR_ALIGN_BYTES);
+      dram_sc_base = cur_dram[63:0];
+      cur_dram += align_up(dram_sc_bytes, ADDR_ALIGN_BYTES);
+      dram_zp_base = cur_dram[63:0];
+      cur_dram += align_up(dram_zp_bytes, ADDR_ALIGN_BYTES);
+      dram_out_base = cur_dram[63:0];
 
       cur_lmem = align_up(AUTO_LMEM_BASE, ADDR_ALIGN_BYTES);
       lmem_ibuf0_base = cur_lmem[63:0];
@@ -1951,11 +1951,11 @@ module tb_VX_gemm_node_improve
     input int test_qblk,
     input int test_wtrans,
     input int test_qdir,
-    input logic [63:0] gmem_in_base,
-    input logic [63:0] gmem_w_base,
-    input logic [63:0] gmem_sc_base,
-    input logic [63:0] gmem_zp_base,
-    input logic [63:0] gmem_out_base,
+    input logic [63:0] dram_in_base,
+    input logic [63:0] dram_w_base,
+    input logic [63:0] dram_sc_base,
+    input logic [63:0] dram_zp_base,
+    input logic [63:0] dram_out_base,
     input logic [63:0] lmem_ibuf0_base,
     input logic [63:0] lmem_ibuf1_base,
     input logic [63:0] lmem_wbuf0_base,
@@ -2000,8 +2000,8 @@ module tb_VX_gemm_node_improve
       if ((test_wtrans != 0) && (test_wtrans != 1))
         $fatal(1, "[%0t] invalid WTRANS=%0d", $time, test_wtrans);
 
-      if ((gmem_sc_base + 64'(test_n * 4)) > gmem_zp_base)
-        $fatal(1, "[%0t] packed qparam GMEM range overlaps next region", $time);
+      if ((dram_sc_base + 64'(test_n * 4)) > dram_zp_base)
+        $fatal(1, "[%0t] packed qparam dram range overlaps next region", $time);
       if ((lmem_scbuf0_base + 64'(test_n * 4)) > lmem_scbuf1_base)
         $fatal(1, "[%0t] packed qparam LMEM range overlaps next region", $time);
 
@@ -2033,16 +2033,16 @@ module tb_VX_gemm_node_improve
 
       check_tensor_layout(
         test_m, test_n, test_k, test_qblk, test_wtrans, test_qdir,
-        gmem_in_base, gmem_w_base, gmem_sc_base, gmem_zp_base, gmem_out_base,
+        dram_in_base, dram_w_base, dram_sc_base, dram_zp_base, dram_out_base,
         lmem_ibuf0_base, lmem_ibuf1_base, lmem_wbuf0_base, lmem_wbuf1_base,
         lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base, lmem_obuf_base
       );
 
-      write_gmem_inputs_weights_sc_zp(
+      write_dram_inputs_weights_sc_zp(
         test_m, test_n, test_k, test_qblk, test_wtrans, test_qdir,
-        gmem_in_base, gmem_w_base, gmem_sc_base, gmem_zp_base
+        dram_in_base, dram_w_base, dram_sc_base, dram_zp_base
       );
-      write_gmem_stream_qparam_packed_qcol(test_n, gmem_sc_base);
+      write_dram_stream_qparam_packed_qcol(test_n, dram_sc_base);
 
       frontend_stream_alloc(alloc_ok);
       if (!alloc_ok)
@@ -2051,17 +2051,17 @@ module tb_VX_gemm_node_improve
 
       // Preload the single MXU tile into LMEM following the fi_gemm.c raw flow.
       frontend_stream_send_dma_cmd(
-        RAW_OP_DMA_LOAD, lmem_ibuf0_base, gmem_in_base, 16'd0, 16'd0, 16'd1, input_bytes
+        RAW_OP_DMA_LOAD, lmem_ibuf0_base, dram_in_base, 16'd0, 16'd0, 16'd1, input_bytes
       );
       frontend_stream_send_word(make_raw_notify_word(1'b0, 32'd1, rid_ld0[4:0]));
 
       frontend_stream_send_dma_cmd(
-        RAW_OP_DMA_LOAD, lmem_wbuf0_base, gmem_w_base, 16'd0, 16'd0, 16'd1, weight_bytes
+        RAW_OP_DMA_LOAD, lmem_wbuf0_base, dram_w_base, 16'd0, 16'd0, 16'd1, weight_bytes
       );
       frontend_stream_send_word(make_raw_notify_word(1'b0, 32'd1, rid_ld0[4:0]));
 
       frontend_stream_send_dma_cmd(
-        RAW_OP_DMA_LOAD, lmem_scbuf0_base, gmem_sc_base, 16'd0, 16'd0, 16'd1, qparam_bytes
+        RAW_OP_DMA_LOAD, lmem_scbuf0_base, dram_sc_base, 16'd0, 16'd0, 16'd1, qparam_bytes
       );
       frontend_stream_send_word(make_raw_notify_word(1'b0, 32'd1, rid_ld0[4:0]));
       frontend_stream_send_word(make_raw_wait_word(32'd3, rid_ld0[4:0]));
@@ -2088,7 +2088,7 @@ module tb_VX_gemm_node_improve
       frontend_stream_send_word(make_raw_wait_word(32'd1, rid_o0[4:0]));
 
       frontend_stream_send_dma_cmd(
-        RAW_OP_DMA_STORE, lmem_obuf_base, gmem_out_base, 16'd0, 16'd0, 16'd1, output_bytes
+        RAW_OP_DMA_STORE, lmem_obuf_base, dram_out_base, 16'd0, 16'd0, 16'd1, output_bytes
       );
       frontend_stream_send_word(make_raw_notify_word(1'b1, 32'd1, rid_st[4:0]));
       frontend_stream_send_word(make_raw_wait_word(32'd1, rid_st[4:0]));
@@ -2097,7 +2097,7 @@ module tb_VX_gemm_node_improve
       wait_frontend_occupied(1'b0, 20000);
 
       repeat (50) @(posedge clk);
-      check_output(test_m, test_n, gmem_out_base);
+      check_output(test_m, test_n, dram_out_base);
 
       $display("[%0t] STREAM GEMM PASSED: M=%0d N=%0d K=%0d WTRANS=%0d",
                $time, test_m, test_n, test_k, test_wtrans);
@@ -2111,7 +2111,7 @@ module tb_VX_gemm_node_improve
     string case_name;
     int tb_mode;
     int test_m, test_n, test_k, test_qblk, test_wtrans, test_qdir;
-    logic [63:0] gmem_in_base, gmem_w_base, gmem_sc_base, gmem_zp_base, gmem_out_base;
+    logic [63:0] dram_in_base, dram_w_base, dram_sc_base, dram_zp_base, dram_out_base;
     logic [63:0] lmem_ibuf0_base, lmem_ibuf1_base, lmem_wbuf0_base, lmem_wbuf1_base;
     logic [63:0] lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base, lmem_obuf_base;
 
@@ -2148,7 +2148,7 @@ module tb_VX_gemm_node_improve
     end else begin
       compute_auto_layout(
         test_m, test_n, test_k, test_qblk, test_wtrans, test_qdir,
-        gmem_in_base, gmem_w_base, gmem_sc_base, gmem_zp_base, gmem_out_base,
+        dram_in_base, dram_w_base, dram_sc_base, dram_zp_base, dram_out_base,
         lmem_ibuf0_base, lmem_ibuf1_base, lmem_wbuf0_base, lmem_wbuf1_base,
         lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base, lmem_obuf_base
       );
@@ -2159,7 +2159,7 @@ module tb_VX_gemm_node_improve
         run_instruction_stream_gemm_micro(
           case_name,
           test_m, test_n, test_k, test_qblk, test_wtrans, test_qdir,
-          gmem_in_base, gmem_w_base, gmem_sc_base, gmem_zp_base, gmem_out_base,
+          dram_in_base, dram_w_base, dram_sc_base, dram_zp_base, dram_out_base,
           lmem_ibuf0_base, lmem_ibuf1_base, lmem_wbuf0_base, lmem_wbuf1_base,
           lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base, lmem_obuf_base
         );
@@ -2170,7 +2170,7 @@ module tb_VX_gemm_node_improve
         run_gemm_test(
           case_name,
           test_m, test_n, test_k, test_qblk, test_wtrans, test_qdir,
-          gmem_in_base, gmem_w_base, gmem_sc_base, gmem_zp_base, gmem_out_base,
+          dram_in_base, dram_w_base, dram_sc_base, dram_zp_base, dram_out_base,
           lmem_ibuf0_base, lmem_ibuf1_base, lmem_wbuf0_base, lmem_wbuf1_base,
           lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base, lmem_obuf_base
         );
