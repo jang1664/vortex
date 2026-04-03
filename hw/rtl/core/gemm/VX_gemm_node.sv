@@ -102,7 +102,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
       .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
     ) i_dma_lmem_wide_bus_if ();
     VX_mem_bus_if # (
-      .DATA_SIZE(`GEMM_WEIGHT_DATA_SIZE),  //16bytes
+      .DATA_SIZE(`GEMM_WEIGHT_DATA_SIZE),  //64bytes
       .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
     ) w_dma_lmem_wide_bus_if ();
     VX_mem_bus_if # (

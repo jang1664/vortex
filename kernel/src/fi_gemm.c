@@ -315,12 +315,12 @@ static void fi_fpint_gemm_tile_layout_general(
 
                 sz_ready_target[buf_idx] += 1;
                 if(quant_direction == QDIR_COL) {
-                  MXU_LOAD_QPARAM(0, scale_tmem_cur, 6);  //<reg_idx(1b), tmem_base_addr(20b), 6(opcode, 4bit)>
+                  MXU_LOAD_QPARAM(0, scale_tmem_cur, 6);  //<mxu_sz_base_addr(24b), tmem_base_addr(20b), 6(opcode, 4bit)>
                   MXU_LOAD_QPARAM(kt_eff/quant_blk_size * NT, 2*MXU_NT*sizeof(_Float16), 2);  //<tmem_stride0(16b), mxu_stride0(16b), bound0(16b)>
                   //segsize는 hardware 적으로 고정됨. (1 * MXU_NT) 이거 2번
                 }
                 else {
-                  MXU_LOAD_QPARAM(0, scale_tmem_cur, 6);  //<reg_idx(1b), tmem_base_addr(20b), 6(opcode, 4bit)>
+                  MXU_LOAD_QPARAM(0, scale_tmem_cur, 6);  //<mxu_sz_base_addr(24b), tmem_base_addr(20b), 6(opcode, 4bit)>
                   MXU_LOAD_QPARAM(nt_eff/quant_blk_size * KT, 2*MXU_KT*sizeof(_Float16), 2);  //<tmem_stride0(16b), mxu_stride0(16b), bound0(16b)>
                   //segsize는 hardware 적으로 고정됨. (1 * MXU_NT) 이거 2번
                 }                
@@ -372,12 +372,12 @@ static void fi_fpint_gemm_tile_layout_general(
 
                             sz_ready_target[nbuf_idx] += 1;
                             if(quant_direction == QDIR_COL) {
-                              MXU_LOAD_QPARAM(scale_mxu_in_mxu_next, scale_mxu_in_tmem_next, 6);  //<reg_idx(1b), tmem_base_addr(20b), 6(opcode, 4bit)>
+                              MXU_LOAD_QPARAM(scale_mxu_in_mxu_next, scale_mxu_in_tmem_next, 6);  //<mxu_sz_base_addr(24b), tmem_base_addr(20b), 6(opcode, 4bit)>
                               MXU_LOAD_QPARAM(kt_eff/quant_blk_size * NT, 2*MXU_NT*sizeof(_Float16), 2);  //<tmem_stride0(16b), mxu_stride0(16b), bound0(16b)>
                               //segsize는 hardware 적으로 고정됨. (1 * MXU_NT) 이거 2번
                             }
                             else {
-                              MXU_LOAD_QPARAM(scale_mxu_in_mxu_next, scale_mxu_in_tmem_next, 6);  //<reg_idx(1b), tmem_base_addr(20b), 6(opcode, 4bit)>
+                              MXU_LOAD_QPARAM(scale_mxu_in_mxu_next, scale_mxu_in_tmem_next, 6);  //<mxu_sz_base_addr(24b), tmem_base_addr(20b), 6(opcode, 4bit)>
                               MXU_LOAD_QPARAM(nt_eff/quant_blk_size * KT, 2*MXU_KT*sizeof(_Float16), 2);  //<tmem_stride0(16b), mxu_stride0(16b), bound0(16b)>
                               //segsize는 hardware 적으로 고정됨. (1 * MXU_KT) 이거 2번
                             }
@@ -397,7 +397,7 @@ static void fi_fpint_gemm_tile_layout_general(
                         WAIT(sz_ready_target[buf_idx], rid_scale(buf_idx), 4);  //<value(32b), reg_id(5b), 4(opcode, 4bit)>
 
                         MXU_LOAD_INPUT(is_accum, is_last, idx_set, quant_direction, input_mxu_tile_tmem, accum_mxu_tile_shared, 7);  //<is_accum(1b), is_last(1b), wreg_idx(1b), sreg_idx(1b), zreg_idx(1b), qdir(1b), tmem_base_addr(20b), acc_mem_base_addr(20b), 7(opcode, 4bit)>
-                        MXU_LOAD_INPUT(0, 1);  //<stride(20b), bound(20b)>
+                        MXU_LOAD_INPUT(mt_eff, 0, 1);  //<acc_cnt(32b), stride(20b), bound(20b)>
                         g_ready_target[buf_idx] += 1;
                         NOTIFY(1, g_ready_target[buf_idx], rid_gemm(buf_idx), 3);  //<set_mode(1b), value(32b), reg_id(5b), 3(opcode, 4bit)>
                         WAIT(g_ready_target[buf_idx], rid_gemm(buf_idx), 4);  //<value(32b), reg_id(5b), 4(opcode, 4bit)>

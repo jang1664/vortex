@@ -6,6 +6,8 @@ set -euo pipefail
 #
 # Usage:
 #   ./test.sh                          # run all (qcol + qrow)
+#   ./test.sh stream                   # raw instruction-stream smoke
+#   ./test.sh stream_gemm              # minimal real GEMM via raw instruction stream
 #   ./test.sh qcol                     # QDIR=COL tests only
 #   ./test.sh qrow                     # QDIR=ROW tests only
 #   ./test.sh single M,N,K,QBLK,WTRANS,QDIR
@@ -62,6 +64,77 @@ SUMMARY="logs/regress_${ts}.summary"
 
 pass=0
 fail=0
+
+run_stream() {
+  local name="STREAM_SMOKE"
+  local sim_log="logs/sim_${name}.log"
+  local mk_log="logs/make_${name}.log"
+
+  echo "[RUN] $name" | tee -a "$SUMMARY"
+  local start; start=$(date +%s)
+
+  if CCACHE_DIR="$CCACHE_DIR" make SIM_EXEC="$SIM_EXEC" run \
+      TEST="$name" EXTRA_SIM_ARGS="+TB_MODE=1" >"$mk_log" 2>&1; then
+    :
+  else
+    :
+  fi
+
+  local end; end=$(date +%s)
+  local dur=$((end - start))
+
+  if [[ -f "$sim_log" ]] && grep -q "STREAM SMOKE PASSED" "$sim_log"; then
+    echo "[PASS] $name (${dur}s)" | tee -a "$SUMMARY"
+    pass=$((pass + 1))
+  else
+    echo "[FAIL] $name (${dur}s)" | tee -a "$SUMMARY"
+    if [[ -f "$sim_log" ]]; then
+      grep -nE "STREAM_TEST_CFG|STREAM SMOKE|Fatal:|ERROR" "$sim_log" | tail -n 20 | tee -a "$SUMMARY"
+    else
+      tail -n 40 "$mk_log" | tee -a "$SUMMARY"
+    fi
+    fail=$((fail + 1))
+  fi
+
+  echo "" >> "$SUMMARY"
+}
+
+run_stream_gemm() {
+  local m="${STREAM_GEMM_M:-2}"
+  local wtrans="${STREAM_GEMM_WTRANS:-0}"
+  local name="STREAM_GEMM_M${m}_WT${wtrans}"
+  local sim_log="logs/sim_${name}.log"
+  local mk_log="logs/make_${name}.log"
+
+  echo "[RUN] $name" | tee -a "$SUMMARY"
+  local start; start=$(date +%s)
+
+  if CCACHE_DIR="$CCACHE_DIR" make SIM_EXEC="$SIM_EXEC" run \
+      TEST="$name" M="$m" N=32 K=32 QBLK=32 \
+      EXTRA_SIM_ARGS="+TB_MODE=2 +WTRANS=${wtrans} +QDIR=0" >"$mk_log" 2>&1; then
+    :
+  else
+    :
+  fi
+
+  local end; end=$(date +%s)
+  local dur=$((end - start))
+
+  if [[ -f "$sim_log" ]] && grep -q "STREAM GEMM PASSED" "$sim_log"; then
+    echo "[PASS] $name (${dur}s)" | tee -a "$SUMMARY"
+    pass=$((pass + 1))
+  else
+    echo "[FAIL] $name (${dur}s)" | tee -a "$SUMMARY"
+    if [[ -f "$sim_log" ]]; then
+      grep -nE "STREAM_GEMM_TEST_CFG|STREAM GEMM|Fatal:|ERROR|OUTPUT CHECK" "$sim_log" | tail -n 30 | tee -a "$SUMMARY"
+    else
+      tail -n 40 "$mk_log" | tee -a "$SUMMARY"
+    fi
+    fail=$((fail + 1))
+  fi
+
+  echo "" >> "$SUMMARY"
+}
 
 run_case() {
   local m="$1" n="$2" k="$3" qblk="$4" wtrans="$5" qdir="$6"
@@ -127,6 +200,12 @@ run_qrow() {
 MODE="${1:-all}"
 
 case "$MODE" in
+  stream)
+    run_stream
+    ;;
+  stream_gemm)
+    run_stream_gemm
+    ;;
   all)
     run_qcol
     run_qrow
@@ -148,7 +227,7 @@ case "$MODE" in
     ;;
   *)
     echo "Unknown mode: $MODE"
-    echo "Usage: $0 [all|qcol|qrow|single M,N,K,QBLK,WTRANS,QDIR]"
+    echo "Usage: $0 [stream|stream_gemm|all|qcol|qrow|single M,N,K,QBLK,WTRANS,QDIR]"
     exit 1
     ;;
 esac
