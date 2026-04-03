@@ -107,9 +107,10 @@ fi
 # ----------------------------------------------------------------------------
 # - hw_emu
 # ----------------------------------------------------------------------------
+FPGA_EMU_BIN=/home/jaeyongjang/project.local/vortex/build/hw/syn/xilinx/xrt/hw_emu/bin
 if [[ "${mode}" == "hw_emu" || "${mode}" == "all" ]]; then
   CONFIGS=${CONFIGS} \
-  FPGA_BIN_DIR=/home/jaeyongjang/project.local/vortex/build/hw/syn/xilinx/xrt/hw_emu/bin \
+  FPGA_BIN_DIR=$FPGA_EMU_BIN \
   PLATFORM=xilinx_u55c_gen3x16_xdma_3_202210_1 \
   DRIVER=xrt \
   TARGET=hw_emu \
@@ -120,10 +121,11 @@ fi
 # ----------------------------------------------------------------------------
 # - hw
 # ----------------------------------------------------------------------------
+FPGA_BIN=/home/jaeyongjang/project.local/vortex/build/hw/syn/xilinx/xrt/c1_f100_fpint_perf_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/bin
 if [[ "${mode}" == "hw" || "${mode}" == "all" ]]; then
   srun --gres=fpga:u55c:1 --cpus-per-task=4 --mem=16G --time=01:00:00 --pty bash -c '\
   CONFIGS=${CONFIGS} \
-  FPGA_BIN_DIR=/home/jaeyongjang/project.local/vortex/build/hw/syn/xilinx/xrt/hw/bin \
+  FPGA_BIN_DIR=$FPGA_BIN \
   PLATFORM=xilinx_u55c_gen3x16_xdma_3_202210_1 \
   DRIVER=xrt \
   TARGET=hw \

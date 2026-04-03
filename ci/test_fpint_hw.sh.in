@@ -1,6 +1,21 @@
 #!/bin/bash
 set -euo pipefail
 
+mode=$1
+shift
+
+if [[ "${mode}" == "" ]]; then
+  echo "Usage: $0 <mode>"
+  echo "Modes:"
+  echo "  rtlsim   - Run only rtlsim tests"
+  echo "  xrtsim   - Run only xrtsim tests"
+  echo "  xrt-vcs-sim   - Run only xrt-vcs-sim tests"
+  echo "  xrt-vcs-pgsim   - Run only xrt-vcs-pgsim tests"
+  echo "  hw_emu    - Run only hw_emu tests"
+  echo "  hw        - Run only hw tests"
+  exit 1
+fi
+
 CONFIGS=""
 CONFIGS+=" -DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MERGED_MEMORY_INTERFACE"
 # CONFIGS+=" -DFPU_FPNEW"
@@ -37,59 +52,65 @@ if [[ "${DEBUG_LEVEL}" -eq 0 ]]; then
 fi
 
 export CONFIGS
-# ------------------------------------------------------------------------
-# - clean if you want
-# ------------------------------------------------------------------------
-# make -C runtime/rtlsim clean
 
-# ------------------------------------------------------------------------
-# - rtl
-# ------------------------------------------------------------------------
-# DRIVER=rtlsim \
-# DEBUG_LEVEL=${DEBUG_LEVEL} \
-# bash tests/regression/fpint_gemm_ffn_hw/test.sh "$@"
-
-# ------------------------------------------------------------------------
-# - xrt + rtl
-# ------------------------------------------------------------------------
-# DRIVER=xrt \
-# DEBUG_LEVEL=${DEBUG_LEVEL} \
-# PERF_LEVEL=${PERF_LEVEL} \
-# bash tests/regression/fpint_gemm_ffn_hw/test.sh "$@"
-
-# ----------------------------------------------------------------------------
-# - xrt-vcs-sim
-# ----------------------------------------------------------------------------
-DRAM_REQ_STALL_P_ENTER_PCT=0 \
-DRAM_REQ_STALL_P_EXIT_PCT=50 \
-DRAM_RSP_STALL_P_ENTER_PCT=0 \
-DRAM_RSP_STALL_P_EXIT_PCT=50 \
-DRAM_STALL_SEED=1234 \
-DRIVER=xrt_vcs \
-FSDB_DUMP=1 \
-DEBUG_AXI=1 \
-DEBUG_LEVEL=${DEBUG_LEVEL} \
-PERF_LEVEL=${PERF_LEVEL} \
-bash tests/regression/fpint_gemm_ffn_hw/test.sh "$@"
-
-# ------------------------------------------------------------------------
-# - xrt + hw_emul
-# ------------------------------------------------------------------------
-# FPGA_BIN_DIR=/home/jaeyongjang/project.local/vortex/build/hw/syn/xilinx/xrt/hw_emu/bin \
-# TARGET=hw_emu \
-# PLATFORM=xilinx_u55c_gen3x16_xdma_3_202210_1 \
-# DRIVER=xrt \
-# DEBUG_LEVEL=${DEBUG_LEVEL} \
-# PERF_LEVEL=${PERF_LEVEL} \
-# bash tests/regression/fpint_gemm_ffn_hw/test.sh "$@"
-
-# ------------------------------------------------------------------------
-# - FPGA
-# ------------------------------------------------------------------------
-# FPGA_BIN_DIR=/home/jaeyongjang/project.local/vortex/build/hw/syn/xilinx/xrt/hw/bin \
-# TARGET=hw \
-# PLATFORM=xilinx_u55c_gen3x16_xdma_3_202210_1 \
-# DRIVER=xrt \
-# CHIPSCOPE=1 \
-# DEBUG_LEVEL=${DEBUG_LEVEL} \
-# bash tests/regression/fpint_gemm_ffn_hw/test.sh "$@"
+case "${mode}" in
+  rtlsim)
+    DRIVER=rtlsim \
+    DEBUG_LEVEL=${DEBUG_LEVEL} \
+    bash tests/regression/fpint_gemm_ffn_hw/test.sh "$@"
+    ;;
+  xrtsim)
+    DRIVER=xrt \
+    DEBUG_LEVEL=${DEBUG_LEVEL} \
+    PERF_LEVEL=${PERF_LEVEL} \
+    bash tests/regression/fpint_gemm_ffn_hw/test.sh "$@"
+    ;;
+  xrt-vcs-sim)
+    DRAM_REQ_STALL_P_ENTER_PCT=0 \
+    DRAM_REQ_STALL_P_EXIT_PCT=50 \
+    DRAM_RSP_STALL_P_ENTER_PCT=0 \
+    DRAM_RSP_STALL_P_EXIT_PCT=50 \
+    DRAM_STALL_SEED=1234 \
+    DRIVER=xrt_vcs \
+    FSDB_DUMP=1 \
+    DEBUG_AXI=1 \
+    DEBUG_LEVEL=${DEBUG_LEVEL} \
+    PERF_LEVEL=${PERF_LEVEL} \
+    bash tests/regression/fpint_gemm_ffn_hw/test.sh "$@"
+    ;;
+  xrt-vcs-pgsim)
+    DRAM_REQ_STALL_P_ENTER_PCT=0 \
+    DRAM_REQ_STALL_P_EXIT_PCT=50 \
+    DRAM_RSP_STALL_P_ENTER_PCT=0 \
+    DRAM_RSP_STALL_P_EXIT_PCT=50 \
+    DRAM_STALL_SEED=1234 \
+    DRIVER=xrt_vcs \
+    FSDB_DUMP=1 \
+    DEBUG_AXI=1 \
+    DEBUG_LEVEL=${DEBUG_LEVEL} \
+    PERF_LEVEL=${PERF_LEVEL} \
+    bash tests/regression/fpint_gemm_ffn_hw/test.sh "$@"
+    ;;
+  hw_emu)
+    FPGA_BIN_DIR=/home/jaeyongjang/project.local/vortex/build/hw/syn/xilinx/xrt/hw_emu/bin \
+    TARGET=hw_emu \
+    PLATFORM=xilinx_u55c_gen3x16_xdma_3_202210_1 \
+    DRIVER=xrt \
+    DEBUG_LEVEL=${DEBUG_LEVEL} \
+    PERF_LEVEL=${PERF_LEVEL} \
+    bash tests/regression/fpint_gemm_ffn_hw/test.sh "$@"
+    ;;
+  hw)
+    FPGA_BIN_DIR=/home/jaeyongjang/project.local/vortex/build/hw/syn/xilinx/xrt/c1_f100_fpint_perf_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/bin \
+    TARGET=hw \
+    PLATFORM=xilinx_u55c_gen3x16_xdma_3_202210_1 \
+    DRIVER=xrt \
+    CHIPSCOPE=1 \
+    DEBUG_LEVEL=${DEBUG_LEVEL} \
+    bash tests/regression/fpint_gemm_ffn_hw/test.sh "$@"
+    ;;
+  *)
+    echo "Unknown mode: ${mode}"
+    exit 1
+    ;;
+esac
