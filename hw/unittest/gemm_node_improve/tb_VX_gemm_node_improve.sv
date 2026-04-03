@@ -1709,16 +1709,11 @@ module tb_VX_gemm_node_improve
       if ((test_wtrans != 0) && (test_wtrans != 1))
         $fatal(1, "[%0t] invalid WTRANS=%0d", $time, test_wtrans);
 
-      if ((dram_sc_base + 64'(test_n * 4)) > dram_zp_base)
-        $fatal(1, "[%0t] packed qparam dram range overlaps next region", $time);
-      if ((lmem_scbuf0_base + 64'(test_n * 4)) > lmem_scbuf1_base)
-        $fatal(1, "[%0t] packed qparam LMEM range overlaps next region", $time);
-
       input_bytes  = test_m * test_k * 2;
       weight_bytes = test_k * ((test_n + 1) / 2);
-      qparam_bytes = test_n * 4;
+      qparam_bytes = test_n * 2;
       output_bytes = test_m * test_n * 2;
-      qparam_src_stride = test_n * 2;
+      qparam_src_stride = (lmem_zpbuf0_base - lmem_scbuf0_base);
       qparam_dst_stride = DMA_MXU_NT * 4;
 
       $display("\n[%0t] === RUN STREAM GEMM: %s (M=%0d, N=%0d, K=%0d, WTRANS=%0d) ===",
@@ -1751,16 +1746,15 @@ module tb_VX_gemm_node_improve
         test_m, test_n, test_k, test_qblk, test_wtrans, test_qdir,
         dram_in_base, dram_w_base, dram_sc_base, dram_zp_base
       );
-      write_dram_stream_qparam_packed_qcol(test_n, dram_sc_base);
 
       frontend_stream_alloc(alloc_ok);
       if (!alloc_ok)
         $fatal(1, "[%0t] stream GEMM alloc failed", $time);
       wait_frontend_occupied(1'b1);
 
-      // ---- Phase 1: DMA LOAD input, weight, qparam → LMEM ----
-      $display("[%0t] [PHASE 1] DMA LOAD: input(%0d B), weight(%0d B), qparam(%0d B) → LMEM",
-               $time, input_bytes, weight_bytes, qparam_bytes);
+      // ---- Phase 1: DMA LOAD input, weight, scale, zp → LMEM ----
+      $display("[%0t] [PHASE 1] DMA LOAD: input(%0d B), weight(%0d B), scale(%0d B), zp(%0d B) → LMEM",
+               $time, input_bytes, weight_bytes, qparam_bytes, qparam_bytes);
 
       frontend_stream_send_dma_cmd(
         RAW_OP_DMA_LOAD, lmem_ibuf0_base, dram_in_base, 16'd0, 16'd0, 16'd1, input_bytes
@@ -1776,10 +1770,15 @@ module tb_VX_gemm_node_improve
         RAW_OP_DMA_LOAD, lmem_scbuf0_base, dram_sc_base, 16'd0, 16'd0, 16'd1, qparam_bytes
       );
       frontend_stream_send_word(make_raw_notify_word(1'b0, 32'd1, rid_ld0[4:0]));
-      frontend_stream_send_word(make_raw_wait_word(32'd3, rid_ld0[4:0]));
 
-      wait_sync_reg_value(rid_ld0, 32'd3, 50000);
-      $display("[%0t] [PHASE 1] DONE - all 3 DMA loads completed (sync_reg[%0d]=3)", $time, rid_ld0);
+      frontend_stream_send_dma_cmd(
+        RAW_OP_DMA_LOAD, lmem_zpbuf0_base, dram_zp_base, 16'd0, 16'd0, 16'd1, qparam_bytes
+      );
+      frontend_stream_send_word(make_raw_notify_word(1'b0, 32'd1, rid_ld0[4:0]));
+      frontend_stream_send_word(make_raw_wait_word(32'd4, rid_ld0[4:0]));
+
+      wait_sync_reg_value(rid_ld0, 32'd4, 50000);
+      $display("[%0t] [PHASE 1] DONE - all 4 DMA loads completed (sync_reg[%0d]=4)", $time, rid_ld0);
 
       // ---- Phase 2-4: K-block iteration (weight load + qparam load + GEMM compute) ----
       begin
@@ -1809,8 +1808,12 @@ module tb_VX_gemm_node_improve
           frontend_stream_send_word(make_raw_notify_word(is_first ? 1'b1 : 1'b0, 32'd1, rid_w0[4:0]));
 
           // -- Qparam load (only on first K-block; QCOL scale/zp are per-column, not per-K) --
+          //    Single command: bound=2, src_stride = distance between scbuf0 and zpbuf0 in TMEM
+          //    seg0: reads scale from lmem_scbuf0_base → MXU offset 0
+          //    seg1: reads zp    from lmem_scbuf0_base + src_stride (= lmem_zpbuf0_base) → MXU offset dst_stride
           if (is_first) begin
-            $display("[%0t] [K%0d] QPARAM LOAD: src_stride=%0d, dst_stride=%0d", $time, kb, qparam_src_stride, qparam_dst_stride);
+            $display("[%0t] [K%0d] QPARAM LOAD: sc=0x%h, zp=0x%h, src_stride=%0d, dst_stride=%0d",
+                     $time, kb, lmem_scbuf0_base, lmem_zpbuf0_base, qparam_src_stride, qparam_dst_stride);
             frontend_stream_send_mxu_qparam_cmd(
               64'd0, lmem_scbuf0_base, qparam_src_stride, qparam_dst_stride, 16'd2
             );
