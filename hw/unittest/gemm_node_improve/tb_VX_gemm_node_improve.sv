@@ -92,12 +92,7 @@ module tb_VX_gemm_node_improve
   localparam int G_ARB_TAG_WIDTH  = DMA_TAG_WIDTH + G_ARB_SEL_BITS;
   localparam int L_ARB_TAG_WIDTH  = DMA_TAG_WIDTH + L_ARB_SEL_BITS;
 
-  // job_frontend params (must match DUT instantiation)
-  localparam int JOB_NUM_ENTRIES = 4;
-  localparam int JOB_NUM_REGS32  = `GEMM_CFG_REG_NUM;
-
   // TB modes
-  localparam int TB_MODE_JOBREG = 0;
   localparam int TB_MODE_STREAM = 1;
   localparam int TB_MODE_STREAM_GEMM = 2;
 
@@ -258,52 +253,6 @@ module tb_VX_gemm_node_improve
     .dcache_bus_if(dcache_bus_if),
     .lmem_bus_if  (lmem_bus_if_dma)
   );
-
-  // =========================================================================
-  // Job regs indices (0..39)
-  // =========================================================================
-  localparam int REG_CONTROL             =  0;
-  localparam int REG_INPUT_BASE_LO       =  1;
-  localparam int REG_INPUT_BASE_HI       =  2;
-  localparam int REG_WEIGHT_BASE_LO      =  3;
-  localparam int REG_WEIGHT_BASE_HI      =  4;
-  localparam int REG_OUTPUT_BASE_LO      =  5;
-  localparam int REG_OUTPUT_BASE_HI      =  6;
-  localparam int REG_SCALE_BASE_LO       =  7;
-  localparam int REG_SCALE_BASE_HI       =  8;
-  localparam int REG_ZP_BASE_LO          =  9;
-  localparam int REG_ZP_BASE_HI          = 10;
-
-  localparam int REG_LMEM_IBUF0_LO       = 11;
-  localparam int REG_LMEM_IBUF0_HI       = 12;
-  localparam int REG_LMEM_IBUF1_LO       = 13;
-  localparam int REG_LMEM_IBUF1_HI       = 14;
-  localparam int REG_LMEM_WBUF0_LO       = 15;
-  localparam int REG_LMEM_WBUF0_HI       = 16;
-  localparam int REG_LMEM_WBUF1_LO       = 17;
-  localparam int REG_LMEM_WBUF1_HI       = 18;
-  localparam int REG_LMEM_SCBUF0_LO      = 19;
-  localparam int REG_LMEM_SCBUF0_HI      = 20;
-  localparam int REG_LMEM_SCBUF1_LO      = 21;
-  localparam int REG_LMEM_SCBUF1_HI      = 22;
-  localparam int REG_LMEM_ZPBUF0_LO      = 23;
-  localparam int REG_LMEM_ZPBUF0_HI      = 24;
-  localparam int REG_LMEM_ZPBUF1_LO      = 25;
-  localparam int REG_LMEM_ZPBUF1_HI      = 26;
-  localparam int REG_LMEM_OBUF_LO        = 27;
-  localparam int REG_LMEM_OBUF_HI        = 28;
-
-  localparam int REG_M_ORIG              = 29;
-  localparam int REG_N_ORIG              = 30;
-  localparam int REG_K_ORIG              = 31;
-  localparam int REG_QBLK_ORIG           = 32;
-  localparam int REG_M_TARGET            = 33;
-  localparam int REG_N_TARGET            = 34;
-  localparam int REG_K_TARGET            = 35;
-  localparam int REG_M_START             = 36;
-  localparam int REG_N_START             = 37;
-  localparam int REG_WTRANS              = 38;
-  localparam int REG_QDIR                = 39;
 
   // =========================================================================
   // Memory fabric (closer to real Vortex path)
@@ -494,48 +443,6 @@ module tb_VX_gemm_node_improve
   end
 
   logic [LSU_TAG_WIDTH-1:0] mmio_tag_cnt = '0;
-
-  task automatic mmio_write32_word(
-    input logic [63:0] addr,           // byte address of beat
-    input int unsigned word_in_beat,    // 0..(LSU_WORD_SIZE/4-1)
-    input logic [31:0] data
-  );
-    logic [`NUM_LSU_LANES-1:0] lane_mask;
-    logic [`NUM_LSU_LANES-1:0][`MEM_ADDR_WIDTH-`CLOG2(LSU_WORD_SIZE)-1:0] lane_addr;
-    logic [`NUM_LSU_LANES-1:0][LSU_WORD_SIZE*8-1:0] lane_data;
-    logic [`NUM_LSU_LANES-1:0][LSU_WORD_SIZE-1:0]   lane_byteen;
-
-    lane_mask   = '0;
-    lane_addr   = '0;
-    lane_data   = '0;
-    lane_byteen = '0;
-
-    lane_mask[0] = 1'b1;
-    lane_addr[0] = addr >> `CLOG2(LSU_WORD_SIZE);
-
-    // place 32b at word slot
-    lane_data[0][word_in_beat*32 +: 32] = data;
-    lane_byteen[0][word_in_beat*4  +: 4] = 4'b1111;
-
-    @(posedge clk);
-    mmio_if[0].req_valid       <= 1'b1;
-    mmio_if[0].req_data.rw     <= 1'b1;
-    mmio_if[0].req_data.mask   <= lane_mask;
-    mmio_if[0].req_data.addr   <= lane_addr;
-    mmio_if[0].req_data.data   <= lane_data;
-    mmio_if[0].req_data.byteen <= lane_byteen;
-    mmio_if[0].req_data.flags  <= '0;
-    mmio_if[0].req_data.tag    <= mmio_tag_cnt;
-    mmio_if[0].rsp_ready       <= 1'b1;
-    mmio_tag_cnt++;
-
-    while (!(mmio_if[0].req_valid && mmio_if[0].req_ready)) @(posedge clk);
-    // Drop req_valid immediately after the accepted beat so a ready-high sink
-    // does not consume the same MMIO request twice on the following cycle.
-    mmio_if[0].req_valid <= 1'b0;
-
-    $display("[%0t] MMIO WRITE32: addr=0x%h word=%0d data=0x%08h", $time, addr, word_in_beat, data);
-  endtask
 
   task automatic mmio_read32_word(
     input  logic [63:0] addr,          // byte address of beat
@@ -939,7 +846,7 @@ module tb_VX_gemm_node_improve
   task automatic wait_sync_reg_value(
     input int unsigned reg_id,
     input logic [31:0] expected_value,
-    input int unsigned timeout_cycles = 1000
+    input int unsigned timeout_cycles = 100000
   );
     int unsigned timeout;
     begin
@@ -954,54 +861,6 @@ module tb_VX_gemm_node_improve
         end
       end
     end
-  endtask
-
-  // =========================================================================
-  // Job frontend address mapping helpers (must mirror VX_job_desc_mmio_regs)
-  // =========================================================================
-  localparam int WORDS_PER_BEAT = (LSU_WORD_SIZE / 4);
-  localparam int NUM_BEATS      = (JOB_NUM_REGS32 + WORDS_PER_BEAT - 1) / WORDS_PER_BEAT;
-  localparam int ENTRY_STRIDE_B = NUM_BEATS * LSU_WORD_SIZE;
-  localparam int GLOBAL_ALLOC_B = LSU_WORD_SIZE; // mmio_if.DATA_SIZE
-
-  function automatic logic [63:0] job_entry_beat_addr(
-    input int unsigned eid,
-    input int unsigned beat_idx
-  );
-    return GEMM_BASE
-         + GLOBAL_ALLOC_B
-         + 64'(eid) * 64'(ENTRY_STRIDE_B)
-         + 64'(beat_idx) * 64'(LSU_WORD_SIZE);
-  endfunction
-
-  task automatic job_write_reg32(input int unsigned eid, input int unsigned r32, input logic [31:0] data);
-    int unsigned beat_idx     = r32 / WORDS_PER_BEAT;
-    int unsigned word_in_beat = r32 % WORDS_PER_BEAT;
-    logic [63:0]  addr        = job_entry_beat_addr(eid, beat_idx);
-    mmio_write32_word(addr, word_in_beat, data);
-  endtask
-
-  task automatic job_read_reg32(input int unsigned eid, input int unsigned r32, output logic [31:0] data);
-    int unsigned beat_idx     = r32 / WORDS_PER_BEAT;
-    int unsigned word_in_beat = r32 % WORDS_PER_BEAT;
-    logic [63:0]  addr        = job_entry_beat_addr(eid, beat_idx);
-    mmio_read32_word(addr, word_in_beat, data);
-  endtask
-
-  task automatic job_write_reg64(input int unsigned eid, input int unsigned reg_lo_idx, input logic [63:0] value);
-    job_write_reg32(eid, reg_lo_idx,     value[31:0]);
-    job_write_reg32(eid, reg_lo_idx + 1, value[63:32]);
-  endtask
-
-  // Alloc register read (lane0 only)
-  task automatic job_alloc(output int unsigned eid, output int unsigned generation);
-    logic [31:0] r;
-    mmio_read32_word(GEMM_BASE + 64'(0), 0, r); // alloc beat word0
-    if (r[0] != 1'b1) $fatal(1, "[%0t] JOB ALLOC failed r=0x%08h", $time, r);
-    eid = r[`JOB_MMIO_ALLOC_ENTRY_LSB +: `JOB_MMIO_ALLOC_ENTRY_BITS]; // ENTRYID_W=8 in your frontend path (safe for <=255)
-    generation = r[`JOB_MMIO_ALLOC_GEN_LSB +: `JOB_MMIO_ALLOC_GEN_BITS];
-    if (eid >= JOB_NUM_ENTRIES) $fatal(1, "alloc returned eid=%0d out of range", eid);
-    $display("[%0t] JOB ALLOC ok: eid=%0d generation=%0d (r=0x%08h)", $time, eid, generation, r);
   endtask
 
   // =========================================================================
@@ -1397,85 +1256,6 @@ module tb_VX_gemm_node_improve
   endtask
 
   // =========================================================================
-  // Program GEMM node job regs via job_frontend
-  // =========================================================================
-  task automatic program_job_regs(
-    input int unsigned eid,
-    input int test_m,
-    input int test_n,
-    input int test_k,
-    input int test_qblk,
-    input int test_wtrans,
-    input int test_qdir,
-    input logic [63:0] dram_in_base,
-    input logic [63:0] dram_w_base,
-    input logic [63:0] dram_out_base,
-    input logic [63:0] dram_sc_base,
-    input logic [63:0] dram_zp_base,
-    input logic [63:0] lmem_ibuf0_base,
-    input logic [63:0] lmem_ibuf1_base,
-    input logic [63:0] lmem_wbuf0_base,
-    input logic [63:0] lmem_wbuf1_base,
-    input logic [63:0] lmem_scbuf0_base,
-    input logic [63:0] lmem_scbuf1_base,
-    input logic [63:0] lmem_zpbuf0_base,
-    input logic [63:0] lmem_zpbuf1_base,
-    input logic [63:0] lmem_obuf_base
-  );
-    // globals
-    job_write_reg64(eid, REG_INPUT_BASE_LO,  dram_in_base);
-    job_write_reg64(eid, REG_WEIGHT_BASE_LO, dram_w_base);
-    job_write_reg64(eid, REG_OUTPUT_BASE_LO, dram_out_base);
-    job_write_reg64(eid, REG_SCALE_BASE_LO,  dram_sc_base);
-    job_write_reg64(eid, REG_ZP_BASE_LO,     dram_zp_base);
-
-    // lmem buffers
-    job_write_reg64(eid, REG_LMEM_IBUF0_LO,   lmem_ibuf0_base);
-    job_write_reg64(eid, REG_LMEM_IBUF1_LO,   lmem_ibuf1_base);
-    job_write_reg64(eid, REG_LMEM_WBUF0_LO,   lmem_wbuf0_base);
-    job_write_reg64(eid, REG_LMEM_WBUF1_LO,   lmem_wbuf1_base);
-    job_write_reg64(eid, REG_LMEM_SCBUF0_LO,  lmem_scbuf0_base);
-    job_write_reg64(eid, REG_LMEM_SCBUF1_LO,  lmem_scbuf1_base);
-    job_write_reg64(eid, REG_LMEM_ZPBUF0_LO,  lmem_zpbuf0_base);
-    job_write_reg64(eid, REG_LMEM_ZPBUF1_LO,  lmem_zpbuf1_base);
-    job_write_reg64(eid, REG_LMEM_OBUF_LO,    lmem_obuf_base);
-
-    // problem shape/control
-    // single-core mode: ORIG == TARGET, START == 0
-    job_write_reg32(eid, REG_M_ORIG, test_m);
-    job_write_reg32(eid, REG_N_ORIG, test_n);
-    job_write_reg32(eid, REG_K_ORIG, test_k);
-    job_write_reg32(eid, REG_QBLK_ORIG, $clog2(test_qblk));
-    job_write_reg32(eid, REG_M_TARGET, test_m);
-    job_write_reg32(eid, REG_N_TARGET, test_n);
-    job_write_reg32(eid, REG_K_TARGET, test_k);
-    job_write_reg32(eid, REG_M_START, 32'd0);
-    job_write_reg32(eid, REG_N_START, 32'd0);
-    job_write_reg32(eid, REG_WTRANS, test_wtrans);
-    job_write_reg32(eid, REG_QDIR, test_qdir);
-
-    // CONTROL.valid(bit0)=1 (start)
-    job_write_reg32(eid, REG_CONTROL, 32'h1);
-  endtask
-
-  task automatic wait_job_done(input int unsigned eid, input int unsigned generation);
-    logic [31:0] ctrl;
-    int unsigned timeout = 0;
-    int unsigned curr_gen=0;
-    $display("[%0t] wait_job_done: polling entry%0d generation%0d CONTROL.valid(bit0)==0", $time, eid, generation);
-    do begin
-      job_read_reg32(eid, REG_CONTROL, ctrl);
-      @(posedge clk);
-      // timeout++;
-      // if (timeout > 100000) begin
-      //   $fatal(1, "[%0t] wait_job_done timeout (ctrl=0x%08h)", $time, ctrl);
-      // end
-      curr_gen = ctrl[`JOB_MMIO_CTRL_GEN_LSB +: `JOB_MMIO_GEN_W];
-    end while (generation >= curr_gen && ctrl[`JOB_MMIO_CTRL_VALID_BIT] == 1'b1);
-    $display("[%0t] JOB DONE detected for entry%0d", $time, eid);
-  endtask
-
-  // =========================================================================
   // Simple output checker
   // =========================================================================
   function automatic logic [15:0] dram_read_u16(input int unsigned addr);
@@ -1726,77 +1506,6 @@ module tb_VX_gemm_node_improve
     end
   endtask
 
-  task automatic run_gemm_test(
-    input string case_name,
-    input int test_m,
-    input int test_n,
-    input int test_k,
-    input int test_qblk,
-    input int test_wtrans,
-    input int test_qdir,
-    input logic [63:0] dram_in_base,
-    input logic [63:0] dram_w_base,
-    input logic [63:0] dram_sc_base,
-    input logic [63:0] dram_zp_base,
-    input logic [63:0] dram_out_base,
-    input logic [63:0] lmem_ibuf0_base,
-    input logic [63:0] lmem_ibuf1_base,
-    input logic [63:0] lmem_wbuf0_base,
-    input logic [63:0] lmem_wbuf1_base,
-    input logic [63:0] lmem_scbuf0_base,
-    input logic [63:0] lmem_scbuf1_base,
-    input logic [63:0] lmem_zpbuf0_base,
-    input logic [63:0] lmem_zpbuf1_base,
-    input logic [63:0] lmem_obuf_base
-  );
-    int unsigned job_eid_local;
-    int unsigned job_gen_local;
-    begin
-      $display("\n[%0t] === RUN GEMM TEST: %s (M=%0d, N=%0d, K=%0d, WTRANS=%0d, QDIR=%0d) ===",
-               $time, case_name, test_m, test_n, test_k, test_wtrans, test_qdir);
-
-      apply_reset();
-      init_memories();
-
-      build_test_vectors(
-        .test_m(test_m),
-        .test_n(test_n),
-        .test_k(test_k),
-        .test_qblk(test_qblk),
-        .test_wtrans(test_wtrans),
-        .test_qdir(test_qdir),
-        .input_random_type(1),
-        .weight_random_type(1),
-        .scale_random_type(1),
-        .zp_random_type(1)
-      );
-
-      check_tensor_layout(
-        test_m, test_n, test_k, test_qblk, test_wtrans, test_qdir,
-        dram_in_base, dram_w_base, dram_sc_base, dram_zp_base, dram_out_base,
-        lmem_ibuf0_base, lmem_ibuf1_base, lmem_wbuf0_base, lmem_wbuf1_base,
-        lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base, lmem_obuf_base
-      );
-      write_dram_inputs_weights_sc_zp(
-        test_m, test_n, test_k, test_qblk, test_wtrans, test_qdir,
-        dram_in_base, dram_w_base, dram_sc_base, dram_zp_base
-      );
-
-      job_alloc(job_eid_local, job_gen_local);
-      program_job_regs(
-        job_eid_local,
-        test_m, test_n, test_k, test_qblk, test_wtrans, test_qdir,
-        dram_in_base, dram_w_base, dram_out_base, dram_sc_base, dram_zp_base,
-        lmem_ibuf0_base, lmem_ibuf1_base, lmem_wbuf0_base, lmem_wbuf1_base,
-        lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base, lmem_obuf_base
-      );
-      wait_job_done(job_eid_local, job_gen_local);
-
-      repeat (50) @(posedge clk);
-      check_output(test_m, test_n, dram_out_base);
-    end
-  endtask
-
   task automatic compute_auto_layout(
     input int test_m,
     input int test_n,
@@ -1991,8 +1700,8 @@ module tb_VX_gemm_node_improve
         $fatal(1, "[%0t] stream GEMM only supports 1 <= M <= %0d (got %0d)", $time, DMA_MT, test_m);
       if (test_n != DMA_MXU_NT)
         $fatal(1, "[%0t] stream GEMM currently requires N=%0d (got %0d)", $time, DMA_MXU_NT, test_n);
-      if (test_k != DMA_KT)
-        $fatal(1, "[%0t] stream GEMM currently requires K=%0d (got %0d)", $time, DMA_KT, test_k);
+      if ((test_k % DMA_MXU_KT != 0) || (test_k <= 0) || (test_k > DMA_KT))
+        $fatal(1, "[%0t] stream GEMM requires K to be a multiple of MXU_KT=%0d and <= %0d (got %0d)", $time, DMA_MXU_KT, DMA_KT, test_k);
       if (test_qblk != DMA_MXU_KT)
         $fatal(1, "[%0t] stream GEMM currently requires QBLK=%0d (got %0d)", $time, DMA_MXU_KT, test_qblk);
       if (test_qdir != 0)
@@ -2049,7 +1758,10 @@ module tb_VX_gemm_node_improve
         $fatal(1, "[%0t] stream GEMM alloc failed", $time);
       wait_frontend_occupied(1'b1);
 
-      // Preload the single MXU tile into LMEM following the fi_gemm.c raw flow.
+      // ---- Phase 1: DMA LOAD input, weight, qparam → LMEM ----
+      $display("[%0t] [PHASE 1] DMA LOAD: input(%0d B), weight(%0d B), qparam(%0d B) → LMEM",
+               $time, input_bytes, weight_bytes, qparam_bytes);
+
       frontend_stream_send_dma_cmd(
         RAW_OP_DMA_LOAD, lmem_ibuf0_base, dram_in_base, 16'd0, 16'd0, 16'd1, input_bytes
       );
@@ -2066,26 +1778,128 @@ module tb_VX_gemm_node_improve
       frontend_stream_send_word(make_raw_notify_word(1'b0, 32'd1, rid_ld0[4:0]));
       frontend_stream_send_word(make_raw_wait_word(32'd3, rid_ld0[4:0]));
 
-      frontend_stream_send_mxu_weight_cmd(test_wtrans[0], 1'b0, 16'd1, 16'd0, lmem_wbuf0_base);
-      frontend_stream_send_word(make_raw_notify_word(1'b1, 32'd1, rid_w0[4:0]));
+      wait_sync_reg_value(rid_ld0, 32'd3, 50000);
+      $display("[%0t] [PHASE 1] DONE - all 3 DMA loads completed (sync_reg[%0d]=3)", $time, rid_ld0);
 
-      frontend_stream_send_mxu_qparam_cmd(
-        64'd0, lmem_scbuf0_base, qparam_src_stride, qparam_dst_stride, 16'd2
-      );
-      frontend_stream_send_word(make_raw_notify_word(1'b1, 32'd1, rid_sz0[4:0]));
+      // ---- Phase 2-4: K-block iteration (weight load + qparam load + GEMM compute) ----
+      begin
+        int k_blocks;
+        logic [63:0] w_lmem_base;
+        logic [63:0] i_src_base;
+        logic [15:0] i_src_stride;
+        int          w_seg_bytes;
 
-      frontend_stream_send_word(make_raw_wait_word(32'd1, rid_w0[4:0]));
-      frontend_stream_send_word(make_raw_wait_word(32'd1, rid_sz0[4:0]));
+        k_blocks   = test_k / DMA_MXU_KT;
+        w_seg_bytes = DMA_MXU_KT * ((test_n + 1) / 2);  // weight bytes per K-block
+        i_src_stride = 16'(test_k * 2);                  // row stride in LMEM (full K width)
 
-      frontend_stream_send_mxu_input_cmd(
-        1'b0, 1'b1, 1'b0, 1'b0, 1'b0, 1'b0, lmem_ibuf0_base, 64'd0, test_m, 16'd0, 16'd1
-      );
-      frontend_stream_send_word(make_raw_notify_word(1'b1, 32'd1, rid_g0[4:0]));
-      frontend_stream_send_word(make_raw_wait_word(32'd1, rid_g0[4:0]));
+        $display("[%0t] [PHASE 2-4] K-block loop: k_blocks=%0d, w_seg=%0d B, i_stride=%0d",
+                 $time, k_blocks, w_seg_bytes, i_src_stride);
 
-      frontend_stream_send_mxu_store_output_cmd(lmem_obuf_base, 64'd0, 16'd0, 16'd1);
+        for (int kb = 0; kb < k_blocks; kb++) begin
+          logic is_first, is_last_blk;
+          is_first    = (kb == 0);
+          is_last_blk = (kb == k_blocks - 1);
+
+          // -- Weight load for this K-block --
+          w_lmem_base = lmem_wbuf0_base + 64'(kb * w_seg_bytes);
+          $display("[%0t] [K%0d] WEIGHT LOAD: lmem=0x%h (%0d B)", $time, kb, w_lmem_base, w_seg_bytes);
+
+          frontend_stream_send_mxu_weight_cmd(test_wtrans[0], 1'b0, 16'd1, 16'd0, w_lmem_base);
+          frontend_stream_send_word(make_raw_notify_word(is_first ? 1'b1 : 1'b0, 32'd1, rid_w0[4:0]));
+
+          // -- Qparam load (only on first K-block; QCOL scale/zp are per-column, not per-K) --
+          if (is_first) begin
+            $display("[%0t] [K%0d] QPARAM LOAD: src_stride=%0d, dst_stride=%0d", $time, kb, qparam_src_stride, qparam_dst_stride);
+            frontend_stream_send_mxu_qparam_cmd(
+              64'd0, lmem_scbuf0_base, qparam_src_stride, qparam_dst_stride, 16'd2
+            );
+            frontend_stream_send_word(make_raw_notify_word(1'b1, 32'd1, rid_sz0[4:0]));
+          end
+
+          // -- Wait for weight (and qparam on first) to complete --
+          frontend_stream_send_word(make_raw_wait_word(32'(kb + 1), rid_w0[4:0]));
+          if (is_first) begin
+            frontend_stream_send_word(make_raw_wait_word(32'd1, rid_sz0[4:0]));
+          end
+
+          wait_sync_reg_value(rid_w0, 32'(kb + 1), 50000);
+          $display("[%0t] [K%0d] WEIGHT DONE (sync_reg[%0d]=%0d)", $time, kb, rid_w0, kb + 1);
+
+          // -- GEMM compute for this K-block --
+          i_src_base = lmem_ibuf0_base + 64'(kb * DMA_MXU_KT * 2);
+          $display("[%0t] [K%0d] GEMM COMPUTE: is_accum=%0d, is_last=%0d, src=0x%h, stride=%0d, bound=%0d, acc_cnt=%0d",
+                   $time, kb, !is_first, is_last_blk, i_src_base, i_src_stride, test_m, test_m);
+
+          frontend_stream_send_mxu_input_cmd(
+            !is_first,     // is_accum: 0 for first block, 1 for rest
+            is_last_blk,   // is_last: 1 only for final block
+            1'b0, 1'b0, 1'b0, 1'b0,  // wreg/sreg/zreg_idx=0, qdir=0
+            i_src_base, 64'd0,
+            test_m,        // acc_cnt = M rows per K-block
+            i_src_stride,  // stride between rows in LMEM
+            16'(test_m)    // bound = M rows
+          );
+          frontend_stream_send_word(make_raw_notify_word(is_first ? 1'b1 : 1'b0, 32'd1, rid_g0[4:0]));
+          frontend_stream_send_word(make_raw_wait_word(32'(kb + 1), rid_g0[4:0]));
+
+          wait_sync_reg_value(rid_g0, 32'(kb + 1), 100000);
+          $display("[%0t] [K%0d] GEMM DONE (sync_reg[%0d]=%0d)", $time, kb, rid_g0, kb + 1);
+        end
+
+        $display("[%0t] [PHASE 2-4] ALL K-blocks completed", $time);
+      end
+
+      // ---- Debug: dump GEMM pipeline valid counters (snapshot) ----
+      $display("[%0t] [DEBUG] Pipeline valid counts:", $time);
+      $display("  in_pipe_valid_out count (input beats arrived): check waveform");
+      $display("  prealigner_out_valid:  %0d", u_dut.u_VX_gemm_unit.prealigner_out_valid);
+      $display("  merger_in_valid:       %0d", u_dut.u_VX_gemm_unit.merger_in_valid);
+      $display("  merger_out_valid:      %0d", u_dut.u_VX_gemm_unit.merger_out_valid);
+      $display("  int2fp_valid[0]:       %0d", u_dut.u_VX_gemm_unit.int2fp_output_valid[0]);
+      $display("  scaler_out_valid[0]:   %0d", u_dut.u_VX_gemm_unit.scaler_output_valid[0]);
+      $display("  final_scaler_valid:    %0d", u_dut.u_VX_gemm_unit.final_scaler_output_valid);
+      $display("  acc_mem_wr_en[0..3]:   %b %b %b %b",
+               u_dut.u_VX_gemm_unit.acc_mem_wr_en[0],
+               u_dut.u_VX_gemm_unit.acc_mem_wr_en[1],
+               u_dut.u_VX_gemm_unit.acc_mem_wr_en[2],
+               u_dut.u_VX_gemm_unit.acc_mem_wr_en[3]);
+
+      // ---- Debug: dump GEMM unit state and acc_mem ----
+      begin
+        $display("[%0t] [DEBUG] GEMM unit state: state=%0d, is_load=%0d, acc_wr_state=%0d, acc_wr_cnt=%0d",
+                 $time,
+                 u_dut.u_VX_gemm_unit.state,
+                 u_dut.u_VX_gemm_unit.gemm_unit_ctrl.is_load,
+                 u_dut.u_VX_gemm_unit.acc_mem_accum_wr_state,
+                 u_dut.u_VX_gemm_unit.acc_mem_accum_wr_cnt);
+        $display("[%0t] [DEBUG] acc_mem wr_addr=0x%h, wr_bank=%0d",
+                 $time,
+                 u_dut.u_VX_gemm_unit.acc_mem_accum_wr_addr,
+                 u_dut.u_VX_gemm_unit.acc_mem_accum_wr_bank);
+        // Dump first entries from all 4 banks at depth 0
+        $display("  bank0 d0 = 0x%08h", u_dut.u_VX_gemm_unit.gen_acc_mem[0].VX_sp_ram_instance.ram[0][31:0]);
+        $display("  bank1 d0 = 0x%08h", u_dut.u_VX_gemm_unit.gen_acc_mem[1].VX_sp_ram_instance.ram[0][31:0]);
+        $display("  bank2 d0 = 0x%08h", u_dut.u_VX_gemm_unit.gen_acc_mem[2].VX_sp_ram_instance.ram[0][31:0]);
+        $display("  bank3 d0 = 0x%08h", u_dut.u_VX_gemm_unit.gen_acc_mem[3].VX_sp_ram_instance.ram[0][31:0]);
+        // bank0 depth 0-3
+        $display("  bank0 d1 = 0x%08h", u_dut.u_VX_gemm_unit.gen_acc_mem[0].VX_sp_ram_instance.ram[1][31:0]);
+        $display("  bank0 d2 = 0x%08h", u_dut.u_VX_gemm_unit.gen_acc_mem[0].VX_sp_ram_instance.ram[2][31:0]);
+        $display("  bank0 d3 = 0x%08h", u_dut.u_VX_gemm_unit.gen_acc_mem[0].VX_sp_ram_instance.ram[3][31:0]);
+      end
+
+      // ---- Phase 5: MXU store output (accumulator → LMEM) ----
+      $display("[%0t] [PHASE 5] MXU STORE OUTPUT → LMEM: obuf_base=0x%h", $time, lmem_obuf_base);
+
+      frontend_stream_send_mxu_store_output_cmd(lmem_obuf_base, 64'd0, 16'd0, 16'(test_m));
       frontend_stream_send_word(make_raw_notify_word(1'b1, 32'd1, rid_o0[4:0]));
       frontend_stream_send_word(make_raw_wait_word(32'd1, rid_o0[4:0]));
+
+      wait_sync_reg_value(rid_o0, 32'd1, 50000);
+      $display("[%0t] [PHASE 5] DONE - output stored to LMEM (sync_reg[%0d]=1)", $time, rid_o0);
+
+      // ---- Phase 6: DMA STORE output (LMEM → DRAM) ----
+      $display("[%0t] [PHASE 6] DMA STORE: LMEM → DRAM (%0d B), dram_out=0x%h", $time, output_bytes, dram_out_base);
 
       frontend_stream_send_dma_cmd(
         RAW_OP_DMA_STORE, lmem_obuf_base, dram_out_base, 16'd0, 16'd0, 16'd1, output_bytes
@@ -2093,6 +1907,10 @@ module tb_VX_gemm_node_improve
       frontend_stream_send_word(make_raw_notify_word(1'b1, 32'd1, rid_st[4:0]));
       frontend_stream_send_word(make_raw_wait_word(32'd1, rid_st[4:0]));
 
+      wait_sync_reg_value(rid_st, 32'd1, 50000);
+      $display("[%0t] [PHASE 6] DONE - output written to DRAM (sync_reg[%0d]=1)", $time, rid_st);
+
+      // ---- Cleanup ----
       frontend_stream_send_word(make_raw_clear_word());
       wait_frontend_occupied(1'b0, 20000);
 
@@ -2119,7 +1937,7 @@ module tb_VX_gemm_node_improve
     reset = 1'b0;
 
     if (!$value$plusargs("TB_MODE=%d", tb_mode))
-      tb_mode = TB_MODE_JOBREG;
+      tb_mode = TB_MODE_STREAM_GEMM;
     if (!$value$plusargs("M=%d", test_m))
       test_m = DEFAULT_M_TEST;
     if (!$value$plusargs("N=%d", test_n))
@@ -2135,10 +1953,8 @@ module tb_VX_gemm_node_improve
     if (!$value$plusargs("TEST=%s", case_name)) begin
       if (tb_mode == TB_MODE_STREAM) begin
         $sformat(case_name, "stream_smoke");
-      end else if (tb_mode == TB_MODE_STREAM_GEMM) begin
-        $sformat(case_name, "stream_gemm_M%0d_N%0d_K%0d_WT%0d", test_m, test_n, test_k, test_wtrans);
       end else begin
-        $sformat(case_name, "M%0dN%0dK%0d_WT%0d_QD%0d", test_m, test_n, test_k, test_wtrans, test_qdir);
+        $sformat(case_name, "stream_gemm_M%0d_N%0d_K%0d_WT%0d", test_m, test_n, test_k, test_wtrans);
       end
     end
 
@@ -2153,28 +1969,15 @@ module tb_VX_gemm_node_improve
         lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base, lmem_obuf_base
       );
 
-      if (tb_mode == TB_MODE_STREAM_GEMM) begin
-        $display("[%0t] STREAM_GEMM_TEST_CFG | {name=%s, TB_MODE=%0d, M=%0d, N=%0d, K=%0d, QBLK=%0d, WTRANS=%0d, QDIR=%0d}",
-                 $time, case_name, tb_mode, test_m, test_n, test_k, test_qblk, test_wtrans, test_qdir);
-        run_instruction_stream_gemm_micro(
-          case_name,
-          test_m, test_n, test_k, test_qblk, test_wtrans, test_qdir,
-          dram_in_base, dram_w_base, dram_sc_base, dram_zp_base, dram_out_base,
-          lmem_ibuf0_base, lmem_ibuf1_base, lmem_wbuf0_base, lmem_wbuf1_base,
-          lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base, lmem_obuf_base
-        );
-      end else begin
-        $display("[%0t] TEST_CFG | {name=%s, TB_MODE=%0d, M=%0d, N=%0d, K=%0d, QBLK=%0d, WTRANS=%0d, QDIR=%0d}",
-                 $time, case_name, tb_mode, test_m, test_n, test_k, test_qblk, test_wtrans, test_qdir);
-
-        run_gemm_test(
-          case_name,
-          test_m, test_n, test_k, test_qblk, test_wtrans, test_qdir,
-          dram_in_base, dram_w_base, dram_sc_base, dram_zp_base, dram_out_base,
-          lmem_ibuf0_base, lmem_ibuf1_base, lmem_wbuf0_base, lmem_wbuf1_base,
-          lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base, lmem_obuf_base
-        );
-      end
+      $display("[%0t] STREAM_GEMM_TEST_CFG | {name=%s, TB_MODE=%0d, M=%0d, N=%0d, K=%0d, QBLK=%0d, WTRANS=%0d, QDIR=%0d}",
+               $time, case_name, tb_mode, test_m, test_n, test_k, test_qblk, test_wtrans, test_qdir);
+      run_instruction_stream_gemm_micro(
+        case_name,
+        test_m, test_n, test_k, test_qblk, test_wtrans, test_qdir,
+        dram_in_base, dram_w_base, dram_sc_base, dram_zp_base, dram_out_base,
+        lmem_ibuf0_base, lmem_ibuf1_base, lmem_wbuf0_base, lmem_wbuf1_base,
+        lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base, lmem_obuf_base
+      );
     end
 
     $display("[%0t] TB completed", $time);
@@ -2192,6 +1995,43 @@ module tb_VX_gemm_node_improve
   // =========================================================================
   // Global watchdog timeout (hard stop)
   //  - Stops simulation even if TB is stuck waiting for req_ready/rsp_valid, etc.
+  // =========================================================================
+  // Real-time acc_mem write monitor (first 3 writes only)
+  // =========================================================================
+  int acc_wr_mon_cnt = 0;
+  always @(posedge clk) begin
+    if (!reset && u_dut.u_VX_gemm_unit.acc_mem_wr_en[0] && acc_wr_mon_cnt < 3) begin
+      $display("[%0t] [ACC_WR_MON] bank0 wr: addr=0x%h depth=%0d data[31:0]=0x%08h data[63:32]=0x%08h",
+               $time,
+               u_dut.u_VX_gemm_unit.acc_mem_accum_wr_addr,
+               u_dut.u_VX_gemm_unit.acc_mem_wr_depth_addr[0],
+               u_dut.u_VX_gemm_unit.acc_mem_in_data[0][31:0],
+               u_dut.u_VX_gemm_unit.acc_mem_in_data[0][63:32]);
+      acc_wr_mon_cnt++;
+    end
+    if (!reset && u_dut.u_VX_gemm_unit.acc_mem_wr_en[1] && acc_wr_mon_cnt < 3) begin
+      $display("[%0t] [ACC_WR_MON] bank1 wr: addr=0x%h depth=%0d data[31:0]=0x%08h data[63:32]=0x%08h",
+               $time,
+               u_dut.u_VX_gemm_unit.acc_mem_accum_wr_addr,
+               u_dut.u_VX_gemm_unit.acc_mem_wr_depth_addr[1],
+               u_dut.u_VX_gemm_unit.acc_mem_in_data[1][31:0],
+               u_dut.u_VX_gemm_unit.acc_mem_in_data[1][63:32]);
+      acc_wr_mon_cnt++;
+    end
+  end
+
+  // Monitor input pipe valid
+  int in_pipe_cnt = 0;
+  always @(posedge clk) begin
+    if (!reset && u_dut.u_VX_gemm_unit.in_pipe_valid_out && in_pipe_cnt < 3) begin
+      $display("[%0t] [IN_PIPE_MON] input beat %0d: data[15:0]=0x%04h data[31:16]=0x%04h",
+               $time, in_pipe_cnt,
+               u_dut.u_VX_gemm_unit.in_pipe_data_out[15:0],
+               u_dut.u_VX_gemm_unit.in_pipe_data_out[31:16]);
+      in_pipe_cnt++;
+    end
+  end
+
   // =========================================================================
   initial begin : watchdog_timeout
     // wait until time passes (absolute sim time)

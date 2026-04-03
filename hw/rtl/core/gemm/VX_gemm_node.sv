@@ -162,7 +162,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     wire weight_is_notify   = (gemm_ctrl_if.weight_read_ctrl.start && gemm_ctrl_if.weight_read_ctrl.cmd.instr[3:0] == OP_NOTIFY);
     wire weight_notify_req  = gemm_ctrl_if.weight_read_ctrl.start && weight_dma_ctrl_if.idle && weight_is_notify;
     wire weight_notify_fire = weight_notify_pending_r && gemm_sync_if[1].ready;
-    wire weight_wtrans      = gemm_ctrl_if.weight_read_ctrl.cmd.flags[2];
+    wire weight_wtrans      = gemm_ctrl_if.weight_read_ctrl.cmd.flags[1];
 
     logic        sz_notify_pending_r;
     logic [31:0] sz_notify_reg_idx_r;
@@ -221,7 +221,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     assign input_dma_ctrl_if.bounds[1]       = 32'd1;
     assign input_dma_ctrl_if.bounds[2]       = 32'd1;
 
-    assign input_dma_ctrl_if.seg_size        = MXU_KT*MT*2;
+    assign input_dma_ctrl_if.seg_size        = MXU_KT*2;  // one MXU_ROW of FP16 per segment (64 bytes)
     assign gemm_ctrl_if.input_read_flag.idle = input_notify_pending_r ? 1'b0 : gemm_unit_if.idle;
     assign gemm_ctrl_if.input_read_flag.done = input_notify_pending_r ? input_notify_fire : gemm_unit_if.done;  //gemm 연산이 끝나야 ildma 가 끝
 
@@ -252,7 +252,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     assign weight_dma_ctrl_if.src_strides[1] = 0;
     assign weight_dma_ctrl_if.src_strides[2] = 0;
 
-    assign weight_dma_ctrl_if.dst_base_addr  = {gemm_ctrl_if.weight_read_ctrl.cmd.flags[1], gemm_ctrl_if.weight_read_ctrl.cmd.flags[0]} << `CLOG2(w_dma_gemm_bus_if.DATA_SIZE); //{wtrans, reg_idx}
+    assign weight_dma_ctrl_if.dst_base_addr  = 0;  //gemm_unit 으로 들어가는 weight의 주소는 안 중요함
     assign weight_dma_ctrl_if.dst_strides[0] = 0;
     assign weight_dma_ctrl_if.dst_strides[1] = 0;
     assign weight_dma_ctrl_if.dst_strides[2] = 0;
@@ -339,11 +339,11 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     assign output_dma_ctrl_if.dst_strides[1] = 0;
     assign output_dma_ctrl_if.dst_strides[2] = 0;
 
-    assign output_dma_ctrl_if.bounds[0] = gemm_ctrl_if.output_write_ctrl.cmd.bound;
+    assign output_dma_ctrl_if.bounds[0] = 32'd1;
     assign output_dma_ctrl_if.bounds[1] = 32'd1;
     assign output_dma_ctrl_if.bounds[2] = 32'd1;
 
-    assign output_dma_ctrl_if.seg_size         = MT * NT * 2;
+    assign output_dma_ctrl_if.seg_size         = MXU_NT * 2 * gemm_ctrl_if.output_write_ctrl.cmd.bound;  // all rows in one segment
     assign gemm_ctrl_if.output_write_flag.idle = output_notify_pending_r ? 1'b0 : output_dma_ctrl_if.idle;
     assign gemm_ctrl_if.output_write_flag.done = output_notify_pending_r ? output_notify_fire : output_dma_ctrl_if.done;
 
@@ -636,7 +636,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     assign w_gemm_bus_if.rsp_ready      = w_dma_gemm_bus_if.rsp_ready;
 
     assign w_gemm_bus_if.req_data.rw    = w_dma_gemm_bus_if.req_data.rw;
-    assign w_gemm_bus_if.req_data.addr  = w_dma_gemm_bus_if.req_data.addr;
+    assign w_gemm_bus_if.req_data.addr  = {gemm_ctrl_if.weight_read_ctrl.cmd.flags[1], gemm_ctrl_if.weight_read_ctrl.cmd.flags[0]};  //여기!
     assign w_gemm_bus_if.req_data.data   = w_dma_gemm_bus_if.req_data.data;
     assign w_gemm_bus_if.req_data.byteen = w_dma_gemm_bus_if.req_data.byteen;
     assign w_gemm_bus_if.req_data.flags  = w_dma_gemm_bus_if.req_data.flags;

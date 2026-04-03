@@ -349,7 +349,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     assign o_lmem_bus_if.rsp_valid = fp16_out_valid[0];
     assign o_lmem_bus_if.rsp_data.data  = fp16_out_data;
     assign o_lmem_bus_if.rsp_data.tag  = '0;
-    assign acc_mem_out_rd_addr = o_lmem_bus_if.req_data.addr << `CLOG2(o_lmem_bus_if.DATA_SIZE);
+    assign acc_mem_out_rd_addr = o_lmem_bus_if.req_data.addr << `CLOG2(`GEMM_PSUM_DATA_SIZE);  // acc_mem entry = FP32 × MXU_COL = 128 bytes
 
     // =========================================================================
     // Accumulator Memory Bank Address Calculation
