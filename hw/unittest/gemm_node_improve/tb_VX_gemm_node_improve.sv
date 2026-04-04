@@ -1310,7 +1310,7 @@ module tb_VX_gemm_node_improve
           // Write kb_per_kt contiguous micro-tiles
           for (int kb = 0; kb < kb_per_kt; kb++) begin
             if (test_wtrans == 0) begin
-              // wtrans=0: [MXU_KT rows][MXU_NT/2 cols]
+              // wtrans=0: [MXU_KT rows][MXU_NT/2 cols], k outer, n-pairs inner
               for (int k = 0; k < DMA_MXU_KT; k++) begin
                 for (int n = 0; n < DMA_MXU_NT; n += 2) begin
                   logic [3:0] w0, w1;
@@ -1326,7 +1326,7 @@ module tb_VX_gemm_node_improve
                 end
               end
             end else begin
-              // wtrans=1: [MXU_NT rows][MXU_KT/2 cols]
+              // wtrans=1: [MXU_NT rows][MXU_KT/2 cols], n outer, k-pairs inner
               for (int n = 0; n < DMA_MXU_NT; n++) begin
                 for (int k = 0; k < DMA_MXU_KT; k += 2) begin
                   logic [3:0] w0, w1;
@@ -1348,30 +1348,55 @@ module tb_VX_gemm_node_improve
     end
   endtask
 
-  // Scale tiled (QDIR_COL): (n,MXU_NT),(g,KT/qblk),(n,N/MXU_NT),(g,K/KT)
+  // Scale tiled:
+  //   QCOL: per (kt,nt) tile = [groups_per_kt, MXU_NT] fp16
+  //   QROW: per (kt,nt) tile = [KT, ng_per_nt] fp16
   task automatic write_dram_tiled_scale(
     input int test_n,
     input int test_k,
     input int test_qblk,
+    input int test_qdir,
     input logic [63:0] dram_sc_base
   );
-    int k_tiles, n_tiles, groups_per_kt, dram_idx;
+    int k_tiles, n_tiles, dram_idx;
+    int ng_total;
     begin
-      k_tiles = test_k / DMA_KT;
-      n_tiles = test_n / DMA_MXU_NT;
-      groups_per_kt = DMA_KT / test_qblk;
+      k_tiles  = test_k / DMA_KT;
+      n_tiles  = test_n / DMA_MXU_NT;
+      ng_total = (test_n + test_qblk - 1) / test_qblk;
       dram_idx = 0;
       for (int kt = 0; kt < k_tiles; kt++) begin
         for (int nt = 0; nt < n_tiles; nt++) begin
-          for (int g = 0; g < groups_per_kt; g++) begin
-            for (int n = 0; n < DMA_MXU_NT; n++) begin
-              logic [15:0] val;
-              int global_g;
-              global_g = kt * groups_per_kt + g;
-              val = ref_scale[global_g * test_n + nt * DMA_MXU_NT + n];
-              if ((dram_sc_base + dram_idx)   < DRAM_SIZE) dram[dram_sc_base + dram_idx]   = val[7:0];
-              if ((dram_sc_base + dram_idx+1) < DRAM_SIZE) dram[dram_sc_base + dram_idx+1] = val[15:8];
-              dram_idx += 2;
+          if (test_qdir == 0) begin
+            // QCOL: [groups_per_kt][MXU_NT]
+            int groups_per_kt;
+            groups_per_kt = DMA_KT / test_qblk;
+            for (int g = 0; g < groups_per_kt; g++) begin
+              for (int n = 0; n < DMA_MXU_NT; n++) begin
+                logic [15:0] val;
+                int global_g;
+                global_g = kt * groups_per_kt + g;
+                val = ref_scale[global_g * test_n + nt * DMA_MXU_NT + n];
+                if ((dram_sc_base + dram_idx)   < DRAM_SIZE) dram[dram_sc_base + dram_idx]   = val[7:0];
+                if ((dram_sc_base + dram_idx+1) < DRAM_SIZE) dram[dram_sc_base + dram_idx+1] = val[15:8];
+                dram_idx += 2;
+              end
+            end
+          end else begin
+            // QROW: [KT][ng_per_nt]
+            int ng_per_nt;
+            ng_per_nt = (DMA_MXU_NT + test_qblk - 1) / test_qblk;
+            for (int k = 0; k < DMA_KT; k++) begin
+              for (int ng = 0; ng < ng_per_nt; ng++) begin
+                logic [15:0] val;
+                int global_k, global_ng;
+                global_k  = kt * DMA_KT + k;
+                global_ng = (nt * DMA_MXU_NT) / test_qblk + ng;
+                val = ref_scale[global_k * ng_total + global_ng];
+                if ((dram_sc_base + dram_idx)   < DRAM_SIZE) dram[dram_sc_base + dram_idx]   = val[7:0];
+                if ((dram_sc_base + dram_idx+1) < DRAM_SIZE) dram[dram_sc_base + dram_idx+1] = val[15:8];
+                dram_idx += 2;
+              end
             end
           end
         end
@@ -1379,30 +1404,51 @@ module tb_VX_gemm_node_improve
     end
   endtask
 
-  // ZP tiled (QDIR_COL): same layout as scale
+  // ZP tiled: same layout as scale
   task automatic write_dram_tiled_zp(
     input int test_n,
     input int test_k,
     input int test_qblk,
+    input int test_qdir,
     input logic [63:0] dram_zp_base
   );
-    int k_tiles, n_tiles, groups_per_kt, dram_idx;
+    int k_tiles, n_tiles, dram_idx;
+    int ng_total;
     begin
-      k_tiles = test_k / DMA_KT;
-      n_tiles = test_n / DMA_MXU_NT;
-      groups_per_kt = DMA_KT / test_qblk;
+      k_tiles  = test_k / DMA_KT;
+      n_tiles  = test_n / DMA_MXU_NT;
+      ng_total = (test_n + test_qblk - 1) / test_qblk;
       dram_idx = 0;
       for (int kt = 0; kt < k_tiles; kt++) begin
         for (int nt = 0; nt < n_tiles; nt++) begin
-          for (int g = 0; g < groups_per_kt; g++) begin
-            for (int n = 0; n < DMA_MXU_NT; n++) begin
-              logic [15:0] val;
-              int global_g;
-              global_g = kt * groups_per_kt + g;
-              val = ref_zero[global_g * test_n + nt * DMA_MXU_NT + n];
-              if ((dram_zp_base + dram_idx)   < DRAM_SIZE) dram[dram_zp_base + dram_idx]   = val[7:0];
-              if ((dram_zp_base + dram_idx+1) < DRAM_SIZE) dram[dram_zp_base + dram_idx+1] = val[15:8];
-              dram_idx += 2;
+          if (test_qdir == 0) begin
+            int groups_per_kt;
+            groups_per_kt = DMA_KT / test_qblk;
+            for (int g = 0; g < groups_per_kt; g++) begin
+              for (int n = 0; n < DMA_MXU_NT; n++) begin
+                logic [15:0] val;
+                int global_g;
+                global_g = kt * groups_per_kt + g;
+                val = ref_zero[global_g * test_n + nt * DMA_MXU_NT + n];
+                if ((dram_zp_base + dram_idx)   < DRAM_SIZE) dram[dram_zp_base + dram_idx]   = val[7:0];
+                if ((dram_zp_base + dram_idx+1) < DRAM_SIZE) dram[dram_zp_base + dram_idx+1] = val[15:8];
+                dram_idx += 2;
+              end
+            end
+          end else begin
+            int ng_per_nt;
+            ng_per_nt = (DMA_MXU_NT + test_qblk - 1) / test_qblk;
+            for (int k = 0; k < DMA_KT; k++) begin
+              for (int ng = 0; ng < ng_per_nt; ng++) begin
+                logic [15:0] val;
+                int global_k, global_ng;
+                global_k  = kt * DMA_KT + k;
+                global_ng = (nt * DMA_MXU_NT) / test_qblk + ng;
+                val = ref_zero[global_k * ng_total + global_ng];
+                if ((dram_zp_base + dram_idx)   < DRAM_SIZE) dram[dram_zp_base + dram_idx]   = val[7:0];
+                if ((dram_zp_base + dram_idx+1) < DRAM_SIZE) dram[dram_zp_base + dram_idx+1] = val[15:8];
+                dram_idx += 2;
+              end
             end
           end
         end
@@ -2163,9 +2209,10 @@ module tb_VX_gemm_node_improve
   );
     logic alloc_ok;
     int unsigned rid_ld0, rid_w0, rid_sz0, rid_g0, rid_o0, rid_st;
-    int m_tiles, n_tiles, k_tiles, kb_per_kt, groups_per_kt;
+    int m_tiles, n_tiles, k_tiles, kb_per_kt, groups_per_kt, ng_per_nt;
     logic [31:0] weight_kt_bytes;
     logic [31:0] scale_kt_bytes, zp_kt_bytes;
+    logic [31:0] qparam_kb_offset;
     logic [15:0] qparam_src_stride, qparam_dst_stride;
     begin
       rid_ld0 = 0; rid_w0 = 2; rid_sz0 = 4; rid_g0 = 6; rid_o0 = 8; rid_st = 10;
@@ -2177,10 +2224,10 @@ module tb_VX_gemm_node_improve
         $fatal(1, "[%0t] N must be positive multiple of MXU_NT=%0d (got %0d)", $time, DMA_MXU_NT, test_n);
       if ((test_k <= 0) || (test_k % DMA_KT != 0))
         $fatal(1, "[%0t] K must be positive multiple of KT=%0d (got %0d)", $time, DMA_KT, test_k);
-      if (test_qblk != DMA_MXU_KT)
-        $fatal(1, "[%0t] QBLK must be %0d (got %0d)", $time, DMA_MXU_KT, test_qblk);
-      if (test_qdir != 0)
-        $fatal(1, "[%0t] only QDIR=0 supported (got %0d)", $time, test_qdir);
+      if (test_qblk <= 0)
+        $fatal(1, "[%0t] QBLK must be > 0 (got %0d)", $time, test_qblk);
+      if ((test_qdir != 0) && (test_qdir != 1))
+        $fatal(1, "[%0t] invalid QDIR=%0d for tiled test", $time, test_qdir);
       if ((test_wtrans != 0) && (test_wtrans != 1))
         $fatal(1, "[%0t] invalid WTRANS=%0d for tiled test", $time, test_wtrans);
 
@@ -2188,12 +2235,20 @@ module tb_VX_gemm_node_improve
       n_tiles      = test_n / DMA_MXU_NT;
       k_tiles      = test_k / DMA_KT;
       kb_per_kt    = DMA_KT / DMA_MXU_KT;        // K-blocks per k_tile
-      groups_per_kt = DMA_KT / test_qblk;         // quant groups per k_tile
+      groups_per_kt = DMA_KT / test_qblk;         // quant groups per k_tile (QCOL)
+      ng_per_nt    = (DMA_MXU_NT + test_qblk - 1) / test_qblk;  // N-groups per n_tile (QROW)
 
       // Bytes per (k_tile)-sized chunk loaded to TMEM (weight/scale/zp are M-independent)
       weight_kt_bytes = DMA_KT * (DMA_MXU_NT / 2);              // one (k_tile, n_tile), INT4
-      scale_kt_bytes  = groups_per_kt * DMA_MXU_NT * 2;         // one (k_tile, n_tile)
-      zp_kt_bytes     = groups_per_kt * DMA_MXU_NT * 2;         // one (k_tile, n_tile)
+      if (test_qdir == 0) begin
+        scale_kt_bytes  = groups_per_kt * DMA_MXU_NT * 2;       // QCOL: [groups_per_kt, MXU_NT]
+        zp_kt_bytes     = groups_per_kt * DMA_MXU_NT * 2;
+        qparam_kb_offset = 0;  // not used for QCOL
+      end else begin
+        scale_kt_bytes  = DMA_KT * ng_per_nt * 2;               // QROW: [KT, ng_per_nt]
+        zp_kt_bytes     = DMA_KT * ng_per_nt * 2;
+        qparam_kb_offset = DMA_MXU_KT * ng_per_nt * 2;          // offset per k-block
+      end
 
       qparam_src_stride = (lmem_zpbuf0_base - lmem_scbuf0_base);
       qparam_dst_stride = DMA_MXU_NT * 4;
@@ -2215,8 +2270,8 @@ module tb_VX_gemm_node_improve
       // Write tiled data to DRAM
       write_dram_tiled_input(test_m, test_k, dram_in_base);
       write_dram_tiled_weight(test_n, test_k, test_wtrans, dram_w_base);
-      write_dram_tiled_scale(test_n, test_k, test_qblk, dram_sc_base);
-      write_dram_tiled_zp(test_n, test_k, test_qblk, dram_zp_base);
+      write_dram_tiled_scale(test_n, test_k, test_qblk, test_qdir, dram_sc_base);
+      write_dram_tiled_zp(test_n, test_k, test_qblk, test_qdir, dram_zp_base);
 
       frontend_stream_alloc(alloc_ok);
       if (!alloc_ok) $fatal(1, "[%0t] stream alloc failed", $time);
@@ -2281,6 +2336,35 @@ module tb_VX_gemm_node_improve
             wait_sync_reg_value(rid_ld0, 32'd4, 200000);
             $display("[%0t] [TILE mt=%0d nt=%0d kt=%0d] DMA LOAD done", $time, mt, nt, kt);
 
+            // Debug: dump DRAM weight data (first 64B for wtrans=0, first 64B for wtrans=1)
+            $display("[%0t] [DEBUG] DRAM weight first 64B (dram_w_base=0x%h, wtrans=%0d):", $time, dram_w_base, test_wtrans);
+            for (int dbg_i = 0; dbg_i < 64; dbg_i += 16) begin
+              $display("  +%03d: %02h %02h %02h %02h %02h %02h %02h %02h %02h %02h %02h %02h %02h %02h %02h %02h",
+                dbg_i,
+                dram[dram_w_base + dbg_i + 0],  dram[dram_w_base + dbg_i + 1],
+                dram[dram_w_base + dbg_i + 2],  dram[dram_w_base + dbg_i + 3],
+                dram[dram_w_base + dbg_i + 4],  dram[dram_w_base + dbg_i + 5],
+                dram[dram_w_base + dbg_i + 6],  dram[dram_w_base + dbg_i + 7],
+                dram[dram_w_base + dbg_i + 8],  dram[dram_w_base + dbg_i + 9],
+                dram[dram_w_base + dbg_i + 10], dram[dram_w_base + dbg_i + 11],
+                dram[dram_w_base + dbg_i + 12], dram[dram_w_base + dbg_i + 13],
+                dram[dram_w_base + dbg_i + 14], dram[dram_w_base + dbg_i + 15]);
+            end
+            // Also dump DRAM weight at micro-tile 1 boundary (offset 512)
+            $display("[%0t] [DEBUG] DRAM weight at offset 512:", $time);
+            for (int dbg_i = 0; dbg_i < 64; dbg_i += 16) begin
+              $display("  +%03d: %02h %02h %02h %02h %02h %02h %02h %02h %02h %02h %02h %02h %02h %02h %02h %02h",
+                512 + dbg_i,
+                dram[dram_w_base + 512 + dbg_i + 0],  dram[dram_w_base + 512 + dbg_i + 1],
+                dram[dram_w_base + 512 + dbg_i + 2],  dram[dram_w_base + 512 + dbg_i + 3],
+                dram[dram_w_base + 512 + dbg_i + 4],  dram[dram_w_base + 512 + dbg_i + 5],
+                dram[dram_w_base + 512 + dbg_i + 6],  dram[dram_w_base + 512 + dbg_i + 7],
+                dram[dram_w_base + 512 + dbg_i + 8],  dram[dram_w_base + 512 + dbg_i + 9],
+                dram[dram_w_base + 512 + dbg_i + 10], dram[dram_w_base + 512 + dbg_i + 11],
+                dram[dram_w_base + 512 + dbg_i + 12], dram[dram_w_base + 512 + dbg_i + 13],
+                dram[dram_w_base + 512 + dbg_i + 14], dram[dram_w_base + 512 + dbg_i + 15]);
+            end
+
             // ---- K-block loop within this k_tile ----
             for (int kb = 0; kb < kb_per_kt; kb++) begin
               logic is_first_kb, is_last_kb;
@@ -2296,27 +2380,46 @@ module tb_VX_gemm_node_improve
               frontend_stream_send_mxu_weight_cmd(test_wtrans[0], 1'b0, 16'd1, 16'd0, w_lmem_base);
               frontend_stream_send_word(make_raw_notify_word((kb == 0) ? 1'b1 : 1'b0, 32'd1, rid_w0[4:0]));
 
-              // Qparam MXU load (first K-block of each k_tile)
-              if (kb == 0) begin
+              // Qparam MXU load
+              //   QCOL: once per k_tile (kb==0), same scale/zp for all k-blocks
+              //   QROW: every k-block, offset into LMEM by kb * qparam_kb_offset
+              if (test_qdir == 0) begin
+                if (kb == 0) begin
+                  frontend_stream_send_mxu_qparam_cmd(
+                    64'd0, lmem_scbuf0_base, qparam_src_stride, qparam_dst_stride, 16'd2
+                  );
+                  frontend_stream_send_word(make_raw_notify_word(1'b1, 32'd1, rid_sz0[4:0]));
+                end
+              end else begin
                 frontend_stream_send_mxu_qparam_cmd(
-                  64'd0, lmem_scbuf0_base, qparam_src_stride, qparam_dst_stride, 16'd2
+                  64'd0,
+                  lmem_scbuf0_base + 64'(kb * qparam_kb_offset),
+                  qparam_src_stride,
+                  qparam_dst_stride,
+                  16'd2
                 );
-                frontend_stream_send_word(make_raw_notify_word(1'b1, 32'd1, rid_sz0[4:0]));
+                frontend_stream_send_word(make_raw_notify_word((kb == 0) ? 1'b1 : 1'b0, 32'd1, rid_sz0[4:0]));
               end
 
-              // Wait weight (+ qparam on first kb of each kt)
+              // Wait weight (+ qparam)
               frontend_stream_send_word(make_raw_wait_word(32'(kb + 1), rid_w0[4:0]));
-              if (kb == 0)
-                frontend_stream_send_word(make_raw_wait_word(32'd1, rid_sz0[4:0]));
+              if (test_qdir == 0) begin
+                if (kb == 0)
+                  frontend_stream_send_word(make_raw_wait_word(32'd1, rid_sz0[4:0]));
+              end else begin
+                frontend_stream_send_word(make_raw_wait_word(32'(kb + 1), rid_sz0[4:0]));
+              end
 
               wait_sync_reg_value(rid_w0, 32'(kb + 1), 100000);
+              if (test_qdir != 0)
+                wait_sync_reg_value(rid_sz0, 32'(kb + 1), 100000);
 
               // Input MXU load + GEMM compute
               i_src_base = lmem_ibuf0_base + 64'(kb * cur_m * DMA_MXU_KT * 2);
               frontend_stream_send_mxu_input_cmd(
                 !is_first_kb,   // is_accum: accumulate unless very first block
                 is_last_kb,     // is_last: final output only on very last block
-                1'b0, 1'b0, 1'b0, 1'b0,
+                1'b0, 1'b0, 1'b0, test_qdir[0],
                 i_src_base, 64'd0,
                 cur_m,
                 16'(DMA_MXU_KT * 2),
@@ -2360,8 +2463,8 @@ module tb_VX_gemm_node_improve
       // ---- Verify ----
       check_output_tiled(test_m, test_n, dram_out_base);
 
-      $display("[%0t] TILED GEMM PASSED: M=%0d N=%0d K=%0d (m_tiles=%0d n_tiles=%0d)",
-               $time, test_m, test_n, test_k, m_tiles, n_tiles);
+      $display("[%0t] TILED GEMM PASSED: M=%0d N=%0d K=%0d WTRANS=%0d QDIR=%0d (m_tiles=%0d n_tiles=%0d)",
+               $time, test_m, test_n, test_k, test_wtrans, test_qdir, m_tiles, n_tiles);
     end
   endtask
 

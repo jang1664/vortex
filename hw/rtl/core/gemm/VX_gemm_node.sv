@@ -158,11 +158,13 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     logic        weight_notify_pending_r;
     logic [31:0] weight_notify_reg_idx_r;
     logic [31:0] weight_notify_value_r;
+    logic [7:0]  weight_cmd_flags_r;
 
     wire weight_is_notify   = (gemm_ctrl_if.weight_read_ctrl.start && gemm_ctrl_if.weight_read_ctrl.cmd.instr[3:0] == OP_NOTIFY);
+    wire weight_dma_start   = gemm_ctrl_if.weight_read_ctrl.start && !weight_is_notify;
     wire weight_notify_req  = gemm_ctrl_if.weight_read_ctrl.start && weight_dma_ctrl_if.idle && weight_is_notify;
     wire weight_notify_fire = weight_notify_pending_r && gemm_sync_if[1].ready;
-    wire weight_wtrans      = gemm_ctrl_if.weight_read_ctrl.cmd.flags[1];
+    wire weight_wtrans      = weight_cmd_flags_r[1];
 
     logic        sz_notify_pending_r;
     logic [31:0] sz_notify_reg_idx_r;
@@ -274,6 +276,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
         weight_notify_pending_r <= 1'b0;
         weight_notify_reg_idx_r <= '0;
         weight_notify_value_r   <= '0;
+        weight_cmd_flags_r      <= '0;
       end else begin
         if (weight_notify_req) begin
           weight_notify_pending_r <= 1'b1;
@@ -281,6 +284,10 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
           weight_notify_value_r   <= gemm_ctrl_if.weight_read_ctrl.cmd.rs2_data[31:0];
         end else if (weight_notify_fire) begin
           weight_notify_pending_r <= 1'b0;
+        end
+        // Capture flags when weight DMA starts (FIFO pops same cycle, so cmd changes next cycle)
+        if (weight_dma_start) begin
+          weight_cmd_flags_r <= gemm_ctrl_if.weight_read_ctrl.cmd.flags;
         end
       end
     end
@@ -636,7 +643,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     assign w_gemm_bus_if.rsp_ready      = w_dma_gemm_bus_if.rsp_ready;
 
     assign w_gemm_bus_if.req_data.rw    = w_dma_gemm_bus_if.req_data.rw;
-    assign w_gemm_bus_if.req_data.addr  = {gemm_ctrl_if.weight_read_ctrl.cmd.flags[1], gemm_ctrl_if.weight_read_ctrl.cmd.flags[0]};  //여기!
+    assign w_gemm_bus_if.req_data.addr  = {weight_cmd_flags_r[1], weight_cmd_flags_r[0]};  // captured at DMA start
     assign w_gemm_bus_if.req_data.data   = w_dma_gemm_bus_if.req_data.data;
     assign w_gemm_bus_if.req_data.byteen = w_dma_gemm_bus_if.req_data.byteen;
     assign w_gemm_bus_if.req_data.flags  = w_dma_gemm_bus_if.req_data.flags;
