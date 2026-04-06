@@ -92,10 +92,6 @@ module tb_VX_gemm_node_improve
   localparam int G_ARB_TAG_WIDTH  = DMA_TAG_WIDTH + G_ARB_SEL_BITS;
   localparam int L_ARB_TAG_WIDTH  = DMA_TAG_WIDTH + L_ARB_SEL_BITS;
 
-  // TB modes
-  localparam int TB_MODE_STREAM = 1;
-  localparam int TB_MODE_STREAM_GEMM = 2;
-  localparam int TB_MODE_STREAM_GEMM_TILED = 3;
 
   // Raw instruction opcodes (must match VX_cmd_constructor)
   localparam logic [3:0] RAW_OP_DMA_LOAD         = 4'd1;
@@ -1128,134 +1124,6 @@ module tb_VX_gemm_node_improve
     end
   endtask
 
-  task automatic write_dram_inputs_weights_sc_zp(
-    input int test_m,
-    input int test_n,
-    input int test_k,
-    input int test_qblk,
-    input int test_wtrans,
-    input int test_qdir,
-    input logic [63:0] dram_in_base,
-    input logic [63:0] dram_w_base,
-    input logic [63:0] dram_sc_base,
-    input logic [63:0] dram_zp_base
-  );
-    byte unsigned buf_in[];
-    byte unsigned buf_w[];
-    byte unsigned buf_sc[];
-    byte unsigned buf_zp[];
-    int idx = 0;
-    int groups_total;
-    logic [3:0] w0, w1;
-
-    if (test_qblk <= 0)
-      $fatal(1, "Invalid QBLK=%0d", test_qblk);
-    groups_total = (test_k + test_qblk - 1) / test_qblk;
-
-    buf_in = new[test_m*test_k*2];
-    for (int i = 0; i < test_m*test_k; i++) begin
-      buf_in[i*2 + 0] = input_mat[i][7:0];
-      buf_in[i*2 + 1] = input_mat[i][15:8];
-    end
-    for (int i = 0; i < buf_in.size(); i++)
-      if ((dram_in_base + i) < DRAM_SIZE) dram[dram_in_base + i] = buf_in[i];
-
-    if (test_wtrans == 0) begin
-      buf_w = new[test_k * ((test_n+1)/2)];
-      for (int k = 0; k < test_k; k++) begin
-        for (int n = 0; n < test_n; n += 2) begin
-          w0 = weight_mat[k*test_n + n];
-          w1 = (n+1 < test_n) ? weight_mat[k*test_n + (n+1)] : 4'h0;
-          buf_w[idx++] = pack_int4_pair(w0, w1);
-        end
-      end
-    end else begin
-      buf_w = new[test_n * ((test_k+1)/2)];
-      for (int n = 0; n < test_n; n++) begin
-        for (int k = 0; k < test_k; k += 2) begin
-          w0 = weight_mat[k*test_n + n];
-          w1 = (k+1 < test_k) ? weight_mat[(k+1)*test_n + n] : 4'h0;
-          buf_w[idx++] = pack_int4_pair(w0, w1);
-        end
-      end
-    end
-    for (int i = 0; i < buf_w.size(); i++)
-      if ((dram_w_base + i) < DRAM_SIZE) dram[dram_w_base + i] = buf_w[i];
-
-    if (test_qdir == 0) begin
-      // QCOL: scale/zp layout [KG, N]
-      buf_sc = new[groups_total*test_n*2];
-      for (int kg = 0; kg < groups_total; kg++) begin
-        for (int n = 0; n < test_n; n++) begin
-          int idx_kg_n;
-          idx_kg_n = kg * test_n + n;
-          buf_sc[idx_kg_n*2 + 0] = scale_vec[n][7:0];
-          buf_sc[idx_kg_n*2 + 1] = scale_vec[n][15:8];
-        end
-      end
-
-      buf_zp = new[groups_total*test_n*2];
-      for (int kg = 0; kg < groups_total; kg++) begin
-        for (int n = 0; n < test_n; n++) begin
-          int idx_kg_n;
-          idx_kg_n = kg * test_n + n;
-          buf_zp[idx_kg_n*2 + 0] = zp_vec[n][7:0];
-          buf_zp[idx_kg_n*2 + 1] = zp_vec[n][15:8];
-        end
-      end
-    end else begin
-      // QROW: scale/zp layout [K, NG]
-      int ng_total;
-      ng_total = (test_n + test_qblk - 1) / test_qblk;
-      buf_sc = new[test_k*ng_total*2];
-      for (int k = 0; k < test_k; k++) begin
-        for (int ng = 0; ng < ng_total; ng++) begin
-          int idx_k_ng;
-          idx_k_ng = k * ng_total + ng;
-          buf_sc[idx_k_ng*2 + 0] = scale_vec[ng][7:0];
-          buf_sc[idx_k_ng*2 + 1] = scale_vec[ng][15:8];
-        end
-      end
-
-      buf_zp = new[test_k*ng_total*2];
-      for (int k = 0; k < test_k; k++) begin
-        for (int ng = 0; ng < ng_total; ng++) begin
-          int idx_k_ng;
-          idx_k_ng = k * ng_total + ng;
-          buf_zp[idx_k_ng*2 + 0] = zp_vec[ng][7:0];
-          buf_zp[idx_k_ng*2 + 1] = zp_vec[ng][15:8];
-        end
-      end
-    end
-
-    for (int i = 0; i < buf_sc.size(); i++)
-      if ((dram_sc_base + i) < DRAM_SIZE) dram[dram_sc_base + i] = buf_sc[i];
-    for (int i = 0; i < buf_zp.size(); i++)
-      if ((dram_zp_base + i) < DRAM_SIZE) dram[dram_zp_base + i] = buf_zp[i];
-  endtask
-
-  task automatic write_dram_stream_qparam_packed_qcol(
-    input int test_n,
-    input logic [63:0] dram_qparam_base
-  );
-    byte unsigned buf_qparam[];
-    begin
-      buf_qparam = new[test_n * 4];
-      for (int n = 0; n < test_n; n++) begin
-        buf_qparam[n*2 + 0] = scale_vec[n][7:0];
-        buf_qparam[n*2 + 1] = scale_vec[n][15:8];
-      end
-      for (int n = 0; n < test_n; n++) begin
-        int base_idx;
-        base_idx = (test_n * 2) + (n * 2);
-        buf_qparam[base_idx + 0] = zp_vec[n][7:0];
-        buf_qparam[base_idx + 1] = zp_vec[n][15:8];
-      end
-      for (int i = 0; i < buf_qparam.size(); i++)
-        if ((dram_qparam_base + i) < DRAM_SIZE) dram[dram_qparam_base + i] = buf_qparam[i];
-    end
-  endtask
-
   // =========================================================================
   // Tiled DRAM write functions
   //   Convert row-major test vectors to tiled layout in DRAM.
@@ -1538,44 +1406,6 @@ module tb_VX_gemm_node_improve
       return (diff <= tolerance) ? 1 : 0;
   endfunction
 
-  task automatic check_output(
-    input int test_m,
-    input int test_n,
-    input logic [63:0] dram_out_base
-  );
-    int mismatch_count = 0;
-    int printed = 0;
-
-    $display("=========================================================");
-    $display("====                                                 ====");
-    $display("====                  OUTPUT CHECK                   ====");
-    $display("====                                                 ====");
-    $display("=========================================================");
-    for (int m = 0; m < test_m; m++) begin
-      for (int n = 0; n < test_n; n++) begin
-        int unsigned idx = m * test_n + n;
-        int unsigned addr = dram_out_base + (idx * 2);
-        logic [15:0] got = dram_read_u16(addr);
-        logic [15:0] exp = ref_output[idx];
-        if (!compare_fp16(got, exp, FP16_TOL)) begin
-          mismatch_count++;
-          $display("[%0t] OUTPUT_MISMATCH m=%0d n=%0d addr=0x%0h got=0x%04h exp=0x%04h got_f=%f exp_f=%f",
-                    $time, m, n, addr, got, exp,
-                    cf_math_util_pkg::fp16_bit_to_fp16_val(got),
-                    cf_math_util_pkg::fp16_bit_to_fp16_val(exp));
-          printed++;
-        end
-      end
-    end
-
-    if (mismatch_count != 0) begin
-      $fatal(1, "[%0t] OUTPUT CHECK FAILED: mismatches=%0d", $time, mismatch_count);
-    end else begin
-      $display("[%0t] OUTPUT CHECK PASSED: compared %0d elements", $time, test_m * test_n);
-    end
-    $display("=========================================================");
-  endtask
-
   function automatic logic ranges_overlap(
     input longint unsigned a_base,
     input longint unsigned a_size,
@@ -1615,148 +1445,6 @@ module tb_VX_gemm_node_improve
     if (ranges_overlap(a_base, a_size, b_base, b_size)) begin
       $fatal(1, "[%0t] range overlap: %s [0x%0h,0x%0h) vs %s [0x%0h,0x%0h)",
              $time, a_name, a_base, a_base + a_size, b_name, b_base, b_base + b_size);
-    end
-  endtask
-
-  task automatic check_tensor_layout(
-    input int test_m,
-    input int test_n,
-    input int test_k,
-    input int test_qblk,
-    input int test_wtrans,
-    input int test_qdir,
-    input logic [63:0] dram_in_base,
-    input logic [63:0] dram_w_base,
-    input logic [63:0] dram_sc_base,
-    input logic [63:0] dram_zp_base,
-    input logic [63:0] dram_out_base,
-    input logic [63:0] lmem_ibuf0_base,
-    input logic [63:0] lmem_ibuf1_base,
-    input logic [63:0] lmem_wbuf0_base,
-    input logic [63:0] lmem_wbuf1_base,
-    input logic [63:0] lmem_scbuf0_base,
-    input logic [63:0] lmem_scbuf1_base,
-    input logic [63:0] lmem_zpbuf0_base,
-    input logic [63:0] lmem_zpbuf1_base,
-    input logic [63:0] lmem_obuf_base
-  );
-    longint unsigned dram_in_bytes;
-    longint unsigned dram_w_bytes;
-    longint unsigned dram_sc_bytes;
-    longint unsigned dram_zp_bytes;
-    longint unsigned dram_out_bytes;
-    longint unsigned lmem_ibuf_bytes;
-    longint unsigned lmem_wbuf_bytes;
-    longint unsigned lmem_scbuf_bytes;
-    longint unsigned lmem_zpbuf_bytes;
-    longint unsigned lmem_obuf_bytes;
-    longint unsigned groups_total;
-    longint unsigned groups_tile;
-    longint unsigned ng_total, ng_tile;
-    begin
-      if (test_qblk <= 0) begin
-        $fatal(1, "[%0t] Invalid QBLK=%0d", $time, test_qblk);
-      end
-      if ((test_wtrans != 0) && (test_wtrans != 1)) begin
-        $fatal(1, "[%0t] Invalid WTRANS=%0d", $time, test_wtrans);
-      end
-      groups_total = (longint'(test_k) + longint'(test_qblk) - 1) / longint'(test_qblk);
-      ng_total     = (longint'(test_n) + longint'(test_qblk) - 1) / longint'(test_qblk);
-      ng_tile      = (longint'(DMA_NT)  + longint'(test_qblk) - 1) / longint'(test_qblk);
-
-      dram_in_bytes  = longint'(test_m) * longint'(test_k) * 2;
-      dram_w_bytes   = (test_wtrans == 0)
-                     ? (longint'(test_k) * longint'((test_n + 1) / 2))
-                     : (longint'(test_n) * longint'((test_k + 1) / 2));
-      if (test_qdir == 0) begin
-        dram_sc_bytes  = groups_total * longint'(test_n) * 2;
-        dram_zp_bytes  = groups_total * longint'(test_n) * 2;
-      end else begin
-        dram_sc_bytes  = longint'(test_k) * ng_total * 2;
-        dram_zp_bytes  = longint'(test_k) * ng_total * 2;
-      end
-      dram_out_bytes = longint'(test_m) * longint'(test_n) * 2;
-
-      // LMEM allocation must follow DMA tile footprint, not logical tensor bytes.
-      groups_tile      = (longint'(DMA_KT) + longint'(test_qblk) - 1) / longint'(test_qblk);
-      lmem_ibuf_bytes  = longint'(DMA_MT) * longint'(DMA_KT) * 2;               // fp16
-      lmem_wbuf_bytes  = longint'(DMA_KT) * longint'((DMA_NT + 1) / 2);         // int4 packed
-      if (test_qdir == 0) begin
-        lmem_scbuf_bytes = groups_tile * longint'(DMA_NT) * 2;                   // QCOL: [groups_tile, NT]
-        lmem_zpbuf_bytes = groups_tile * longint'(DMA_NT) * 2;
-      end else begin
-        lmem_scbuf_bytes = longint'(DMA_KT) * ng_tile * 2;                       // QROW: [KT, NG_tile]
-        lmem_zpbuf_bytes = longint'(DMA_KT) * ng_tile * 2;
-      end
-      lmem_obuf_bytes  = longint'(DMA_MT) * longint'(DMA_NT) * 2;                // fp16 output
-
-      // dram range checks
-      assert_range_fit("dram_IN",  dram_in_base,  dram_in_bytes,  DRAM_LIMIT);
-      assert_range_fit("dram_W",   dram_w_base,   dram_w_bytes,   DRAM_LIMIT);
-      assert_range_fit("dram_SC",  dram_sc_base,  dram_sc_bytes,  DRAM_LIMIT);
-      assert_range_fit("dram_ZP",  dram_zp_base,  dram_zp_bytes,  DRAM_LIMIT);
-      assert_range_fit("dram_OUT", dram_out_base, dram_out_bytes, DRAM_LIMIT);
-
-      assert_no_overlap("dram_IN",  dram_in_base,  dram_in_bytes,  "dram_W",   dram_w_base,   dram_w_bytes);
-      assert_no_overlap("dram_IN",  dram_in_base,  dram_in_bytes,  "dram_SC",  dram_sc_base,  dram_sc_bytes);
-      assert_no_overlap("dram_IN",  dram_in_base,  dram_in_bytes,  "dram_ZP",  dram_zp_base,  dram_zp_bytes);
-      assert_no_overlap("dram_IN",  dram_in_base,  dram_in_bytes,  "dram_OUT", dram_out_base, dram_out_bytes);
-      assert_no_overlap("dram_W",   dram_w_base,   dram_w_bytes,   "dram_SC",  dram_sc_base,  dram_sc_bytes);
-      assert_no_overlap("dram_W",   dram_w_base,   dram_w_bytes,   "dram_ZP",  dram_zp_base,  dram_zp_bytes);
-      assert_no_overlap("dram_W",   dram_w_base,   dram_w_bytes,   "dram_OUT", dram_out_base, dram_out_bytes);
-      assert_no_overlap("dram_SC",  dram_sc_base,  dram_sc_bytes,  "dram_ZP",  dram_zp_base,  dram_zp_bytes);
-      assert_no_overlap("dram_SC",  dram_sc_base,  dram_sc_bytes,  "dram_OUT", dram_out_base, dram_out_bytes);
-      assert_no_overlap("dram_ZP",  dram_zp_base,  dram_zp_bytes,  "dram_OUT", dram_out_base, dram_out_bytes);
-
-      // LMEM range checks
-      assert_range_fit("LMEM_IBUF0", lmem_ibuf0_base, lmem_ibuf_bytes,  LMEM_LIMIT);
-      assert_range_fit("LMEM_IBUF1", lmem_ibuf1_base, lmem_ibuf_bytes,  LMEM_LIMIT);
-      assert_range_fit("LMEM_WBUF0", lmem_wbuf0_base, lmem_wbuf_bytes,  LMEM_LIMIT);
-      assert_range_fit("LMEM_WBUF1", lmem_wbuf1_base, lmem_wbuf_bytes,  LMEM_LIMIT);
-      assert_range_fit("LMEM_SCBUF0", lmem_scbuf0_base, lmem_scbuf_bytes, LMEM_LIMIT);
-      assert_range_fit("LMEM_SCBUF1", lmem_scbuf1_base, lmem_scbuf_bytes, LMEM_LIMIT);
-      assert_range_fit("LMEM_ZPBUF0", lmem_zpbuf0_base, lmem_zpbuf_bytes, LMEM_LIMIT);
-      assert_range_fit("LMEM_ZPBUF1", lmem_zpbuf1_base, lmem_zpbuf_bytes, LMEM_LIMIT);
-      assert_range_fit("LMEM_OBUF",  lmem_obuf_base,  lmem_obuf_bytes,  LMEM_LIMIT);
-
-      assert_no_overlap("LMEM_IBUF0", lmem_ibuf0_base, lmem_ibuf_bytes,  "LMEM_IBUF1", lmem_ibuf1_base, lmem_ibuf_bytes);
-      assert_no_overlap("LMEM_IBUF0", lmem_ibuf0_base, lmem_ibuf_bytes,  "LMEM_WBUF0", lmem_wbuf0_base, lmem_wbuf_bytes);
-      assert_no_overlap("LMEM_IBUF0", lmem_ibuf0_base, lmem_ibuf_bytes,  "LMEM_WBUF1", lmem_wbuf1_base, lmem_wbuf_bytes);
-      assert_no_overlap("LMEM_IBUF0", lmem_ibuf0_base, lmem_ibuf_bytes,  "LMEM_SCBUF0", lmem_scbuf0_base, lmem_scbuf_bytes);
-      assert_no_overlap("LMEM_IBUF0", lmem_ibuf0_base, lmem_ibuf_bytes,  "LMEM_SCBUF1", lmem_scbuf1_base, lmem_scbuf_bytes);
-      assert_no_overlap("LMEM_IBUF0", lmem_ibuf0_base, lmem_ibuf_bytes,  "LMEM_ZPBUF0", lmem_zpbuf0_base, lmem_zpbuf_bytes);
-      assert_no_overlap("LMEM_IBUF0", lmem_ibuf0_base, lmem_ibuf_bytes,  "LMEM_ZPBUF1", lmem_zpbuf1_base, lmem_zpbuf_bytes);
-      assert_no_overlap("LMEM_IBUF0", lmem_ibuf0_base, lmem_ibuf_bytes,  "LMEM_OBUF",  lmem_obuf_base,  lmem_obuf_bytes);
-      assert_no_overlap("LMEM_IBUF1", lmem_ibuf1_base, lmem_ibuf_bytes,  "LMEM_WBUF0", lmem_wbuf0_base, lmem_wbuf_bytes);
-      assert_no_overlap("LMEM_IBUF1", lmem_ibuf1_base, lmem_ibuf_bytes,  "LMEM_WBUF1", lmem_wbuf1_base, lmem_wbuf_bytes);
-      assert_no_overlap("LMEM_IBUF1", lmem_ibuf1_base, lmem_ibuf_bytes,  "LMEM_SCBUF0", lmem_scbuf0_base, lmem_scbuf_bytes);
-      assert_no_overlap("LMEM_IBUF1", lmem_ibuf1_base, lmem_ibuf_bytes,  "LMEM_SCBUF1", lmem_scbuf1_base, lmem_scbuf_bytes);
-      assert_no_overlap("LMEM_IBUF1", lmem_ibuf1_base, lmem_ibuf_bytes,  "LMEM_ZPBUF0", lmem_zpbuf0_base, lmem_zpbuf_bytes);
-      assert_no_overlap("LMEM_IBUF1", lmem_ibuf1_base, lmem_ibuf_bytes,  "LMEM_ZPBUF1", lmem_zpbuf1_base, lmem_zpbuf_bytes);
-      assert_no_overlap("LMEM_IBUF1", lmem_ibuf1_base, lmem_ibuf_bytes,  "LMEM_OBUF",  lmem_obuf_base,  lmem_obuf_bytes);
-      assert_no_overlap("LMEM_WBUF0", lmem_wbuf0_base, lmem_wbuf_bytes,  "LMEM_WBUF1", lmem_wbuf1_base, lmem_wbuf_bytes);
-      assert_no_overlap("LMEM_WBUF0", lmem_wbuf0_base, lmem_wbuf_bytes,  "LMEM_SCBUF0", lmem_scbuf0_base, lmem_scbuf_bytes);
-      assert_no_overlap("LMEM_WBUF0", lmem_wbuf0_base, lmem_wbuf_bytes,  "LMEM_SCBUF1", lmem_scbuf1_base, lmem_scbuf_bytes);
-      assert_no_overlap("LMEM_WBUF0", lmem_wbuf0_base, lmem_wbuf_bytes,  "LMEM_ZPBUF0", lmem_zpbuf0_base, lmem_zpbuf_bytes);
-      assert_no_overlap("LMEM_WBUF0", lmem_wbuf0_base, lmem_wbuf_bytes,  "LMEM_ZPBUF1", lmem_zpbuf1_base, lmem_zpbuf_bytes);
-      assert_no_overlap("LMEM_WBUF0", lmem_wbuf0_base, lmem_wbuf_bytes,  "LMEM_OBUF",  lmem_obuf_base,  lmem_obuf_bytes);
-      assert_no_overlap("LMEM_WBUF1", lmem_wbuf1_base, lmem_wbuf_bytes,  "LMEM_SCBUF0", lmem_scbuf0_base, lmem_scbuf_bytes);
-      assert_no_overlap("LMEM_WBUF1", lmem_wbuf1_base, lmem_wbuf_bytes,  "LMEM_SCBUF1", lmem_scbuf1_base, lmem_scbuf_bytes);
-      assert_no_overlap("LMEM_WBUF1", lmem_wbuf1_base, lmem_wbuf_bytes,  "LMEM_ZPBUF0", lmem_zpbuf0_base, lmem_zpbuf_bytes);
-      assert_no_overlap("LMEM_WBUF1", lmem_wbuf1_base, lmem_wbuf_bytes,  "LMEM_ZPBUF1", lmem_zpbuf1_base, lmem_zpbuf_bytes);
-      assert_no_overlap("LMEM_WBUF1", lmem_wbuf1_base, lmem_wbuf_bytes,  "LMEM_OBUF",  lmem_obuf_base,  lmem_obuf_bytes);
-      assert_no_overlap("LMEM_SCBUF0", lmem_scbuf0_base, lmem_scbuf_bytes, "LMEM_SCBUF1", lmem_scbuf1_base, lmem_scbuf_bytes);
-      assert_no_overlap("LMEM_SCBUF0", lmem_scbuf0_base, lmem_scbuf_bytes, "LMEM_ZPBUF0", lmem_zpbuf0_base, lmem_zpbuf_bytes);
-      assert_no_overlap("LMEM_SCBUF0", lmem_scbuf0_base, lmem_scbuf_bytes, "LMEM_ZPBUF1", lmem_zpbuf1_base, lmem_zpbuf_bytes);
-      assert_no_overlap("LMEM_SCBUF0", lmem_scbuf0_base, lmem_scbuf_bytes, "LMEM_OBUF",  lmem_obuf_base,  lmem_obuf_bytes);
-      assert_no_overlap("LMEM_SCBUF1", lmem_scbuf1_base, lmem_scbuf_bytes, "LMEM_ZPBUF0", lmem_zpbuf0_base, lmem_zpbuf_bytes);
-      assert_no_overlap("LMEM_SCBUF1", lmem_scbuf1_base, lmem_scbuf_bytes, "LMEM_ZPBUF1", lmem_zpbuf1_base, lmem_zpbuf_bytes);
-      assert_no_overlap("LMEM_SCBUF1", lmem_scbuf1_base, lmem_scbuf_bytes, "LMEM_OBUF",  lmem_obuf_base,  lmem_obuf_bytes);
-      assert_no_overlap("LMEM_ZPBUF0", lmem_zpbuf0_base, lmem_zpbuf_bytes, "LMEM_ZPBUF1", lmem_zpbuf1_base, lmem_zpbuf_bytes);
-      assert_no_overlap("LMEM_ZPBUF0", lmem_zpbuf0_base, lmem_zpbuf_bytes, "LMEM_OBUF",  lmem_obuf_base,  lmem_obuf_bytes);
-      assert_no_overlap("LMEM_ZPBUF1", lmem_zpbuf1_base, lmem_zpbuf_bytes, "LMEM_OBUF",  lmem_obuf_base,  lmem_obuf_bytes);
-
-      $display("[%0t] Tensor layout check passed", $time);
     end
   endtask
 
@@ -1857,325 +1545,6 @@ module tb_VX_gemm_node_improve
       lmem_zpbuf1_base = cur_lmem[63:0];
       cur_lmem += align_up(lmem_zpbuf_bytes, ADDR_ALIGN_BYTES);
       lmem_obuf_base = cur_lmem[63:0];
-    end
-  endtask
-
-  task automatic run_instruction_stream_smoke(input string case_name);
-    logic alloc_ok;
-    int unsigned sync_reg_id;
-    begin
-      sync_reg_id = 3;
-
-      $display("\n[%0t] === RUN STREAM SMOKE: %s ===", $time, case_name);
-
-      apply_reset();
-      init_memories();
-
-      frontend_stream_alloc(alloc_ok);
-      if (!alloc_ok) begin
-        $fatal(1, "[%0t] stream alloc failed at start", $time);
-      end
-      wait_frontend_occupied(1'b1);
-
-      frontend_stream_send_word(make_raw_notify_word(1'b1, 32'd1, sync_reg_id[4:0]));
-      wait_sync_reg_value(sync_reg_id, 32'd1);
-
-      frontend_stream_send_word(make_raw_wait_word(32'd1, sync_reg_id[4:0]));
-      repeat (4) @(posedge clk);
-
-      frontend_stream_send_word(make_raw_notify_word(1'b0, 32'd2, sync_reg_id[4:0]));
-      wait_sync_reg_value(sync_reg_id, 32'd3);
-
-      frontend_stream_send_word(make_raw_wait_word(32'd3, sync_reg_id[4:0]));
-      repeat (4) @(posedge clk);
-
-      frontend_stream_send_word(make_raw_clear_word());
-      wait_frontend_occupied(1'b0);
-
-      frontend_stream_alloc(alloc_ok);
-      if (!alloc_ok) begin
-        $fatal(1, "[%0t] stream realloc failed after clear", $time);
-      end
-      wait_frontend_occupied(1'b1);
-
-      frontend_stream_send_word(make_raw_clear_word());
-      wait_frontend_occupied(1'b0);
-
-      $display("[%0t] STREAM SMOKE PASSED: sync_reg[%0d]=0x%08h",
-               $time, sync_reg_id, u_dut.u_VX_gemm_ctrl.u_VX_gemm_sync.sync_regs[sync_reg_id]);
-    end
-  endtask
-
-  task automatic run_instruction_stream_gemm_micro(
-    input string case_name,
-    input int test_m,
-    input int test_n,
-    input int test_k,
-    input int test_qblk,
-    input int test_wtrans,
-    input int test_qdir,
-    input logic [63:0] dram_in_base,
-    input logic [63:0] dram_w_base,
-    input logic [63:0] dram_sc_base,
-    input logic [63:0] dram_zp_base,
-    input logic [63:0] dram_out_base,
-    input logic [63:0] lmem_ibuf0_base,
-    input logic [63:0] lmem_ibuf1_base,
-    input logic [63:0] lmem_wbuf0_base,
-    input logic [63:0] lmem_wbuf1_base,
-    input logic [63:0] lmem_scbuf0_base,
-    input logic [63:0] lmem_scbuf1_base,
-    input logic [63:0] lmem_zpbuf0_base,
-    input logic [63:0] lmem_zpbuf1_base,
-    input logic [63:0] lmem_obuf_base
-  );
-    logic alloc_ok;
-    int unsigned rid_ld0;
-    int unsigned rid_w0;
-    int unsigned rid_sz0;
-    int unsigned rid_g0;
-    int unsigned rid_o0;
-    int unsigned rid_st;
-    logic [31:0] input_bytes;
-    logic [31:0] weight_bytes;
-    logic [31:0] qparam_bytes;
-    logic [31:0] output_bytes;
-    logic [15:0] qparam_src_stride;
-    logic [15:0] qparam_dst_stride;
-    begin
-      rid_ld0 = 0;
-      rid_w0  = 2;
-      rid_sz0 = 4;
-      rid_g0  = 6;
-      rid_o0  = 8;
-      rid_st  = 10;
-
-      if ((test_m <= 0) || (test_m > DMA_MT))
-        $fatal(1, "[%0t] stream GEMM only supports 1 <= M <= %0d (got %0d)", $time, DMA_MT, test_m);
-      if (test_n != DMA_MXU_NT)
-        $fatal(1, "[%0t] stream GEMM currently requires N=%0d (got %0d)", $time, DMA_MXU_NT, test_n);
-      if ((test_k % DMA_MXU_KT != 0) || (test_k <= 0) || (test_k > DMA_KT))
-        $fatal(1, "[%0t] stream GEMM requires K to be a multiple of MXU_KT=%0d and <= %0d (got %0d)", $time, DMA_MXU_KT, DMA_KT, test_k);
-      if (test_qblk != DMA_MXU_KT)
-        $fatal(1, "[%0t] stream GEMM currently requires QBLK=%0d (got %0d)", $time, DMA_MXU_KT, test_qblk);
-      if (test_qdir != 0)
-        $fatal(1, "[%0t] stream GEMM currently supports QDIR=0 only (got %0d)", $time, test_qdir);
-      if ((test_wtrans != 0) && (test_wtrans != 1))
-        $fatal(1, "[%0t] invalid WTRANS=%0d", $time, test_wtrans);
-
-      input_bytes  = test_m * test_k * 2;
-      weight_bytes = test_k * ((test_n + 1) / 2);
-      qparam_bytes = test_n * 2;
-      output_bytes = test_m * test_n * 2;
-      qparam_src_stride = (lmem_zpbuf0_base - lmem_scbuf0_base);
-      qparam_dst_stride = DMA_MXU_NT * 4;
-
-      $display("\n[%0t] === RUN STREAM GEMM: %s (M=%0d, N=%0d, K=%0d, WTRANS=%0d) ===",
-               $time, case_name, test_m, test_n, test_k, test_wtrans);
-
-      apply_reset();
-      init_memories();
-
-      build_test_vectors(
-        .test_m(test_m),
-        .test_n(test_n),
-        .test_k(test_k),
-        .test_qblk(test_qblk),
-        .test_wtrans(test_wtrans),
-        .test_qdir(test_qdir),
-        .input_random_type(1),
-        .weight_random_type(1),
-        .scale_random_type(1),
-        .zp_random_type(1)
-      );
-
-      check_tensor_layout(
-        test_m, test_n, test_k, test_qblk, test_wtrans, test_qdir,
-        dram_in_base, dram_w_base, dram_sc_base, dram_zp_base, dram_out_base,
-        lmem_ibuf0_base, lmem_ibuf1_base, lmem_wbuf0_base, lmem_wbuf1_base,
-        lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base, lmem_obuf_base
-      );
-
-      write_dram_inputs_weights_sc_zp(
-        test_m, test_n, test_k, test_qblk, test_wtrans, test_qdir,
-        dram_in_base, dram_w_base, dram_sc_base, dram_zp_base
-      );
-
-      frontend_stream_alloc(alloc_ok);
-      if (!alloc_ok)
-        $fatal(1, "[%0t] stream GEMM alloc failed", $time);
-      wait_frontend_occupied(1'b1);
-
-      // ---- Phase 1: DMA LOAD input, weight, scale, zp → LMEM ----
-      $display("[%0t] [PHASE 1] DMA LOAD: input(%0d B), weight(%0d B), scale(%0d B), zp(%0d B) → LMEM",
-               $time, input_bytes, weight_bytes, qparam_bytes, qparam_bytes);
-
-      frontend_stream_send_dma_cmd(
-        RAW_OP_DMA_LOAD, lmem_ibuf0_base, dram_in_base, 16'd0, 16'd0, 16'd1, input_bytes
-      );
-      frontend_stream_send_word(make_raw_notify_word(1'b0, 32'd1, rid_ld0[4:0]));
-
-      frontend_stream_send_dma_cmd(
-        RAW_OP_DMA_LOAD, lmem_wbuf0_base, dram_w_base, 16'd0, 16'd0, 16'd1, weight_bytes
-      );
-      frontend_stream_send_word(make_raw_notify_word(1'b0, 32'd1, rid_ld0[4:0]));
-
-      frontend_stream_send_dma_cmd(
-        RAW_OP_DMA_LOAD, lmem_scbuf0_base, dram_sc_base, 16'd0, 16'd0, 16'd1, qparam_bytes
-      );
-      frontend_stream_send_word(make_raw_notify_word(1'b0, 32'd1, rid_ld0[4:0]));
-
-      frontend_stream_send_dma_cmd(
-        RAW_OP_DMA_LOAD, lmem_zpbuf0_base, dram_zp_base, 16'd0, 16'd0, 16'd1, qparam_bytes
-      );
-      frontend_stream_send_word(make_raw_notify_word(1'b0, 32'd1, rid_ld0[4:0]));
-      frontend_stream_send_word(make_raw_wait_word(32'd4, rid_ld0[4:0]));
-
-      wait_sync_reg_value(rid_ld0, 32'd4, 50000);
-      $display("[%0t] [PHASE 1] DONE - all 4 DMA loads completed (sync_reg[%0d]=4)", $time, rid_ld0);
-
-      // ---- Phase 2-4: K-block iteration (weight load + qparam load + GEMM compute) ----
-      begin
-        int k_blocks;
-        logic [63:0] w_lmem_base;
-        logic [63:0] i_src_base;
-        logic [15:0] i_src_stride;
-        int          w_seg_bytes;
-
-        k_blocks   = test_k / DMA_MXU_KT;
-        w_seg_bytes = DMA_MXU_KT * ((test_n + 1) / 2);  // weight bytes per K-block
-        i_src_stride = 16'(test_k * 2);                  // row stride in LMEM (full K width)
-
-        $display("[%0t] [PHASE 2-4] K-block loop: k_blocks=%0d, w_seg=%0d B, i_stride=%0d",
-                 $time, k_blocks, w_seg_bytes, i_src_stride);
-
-        for (int kb = 0; kb < k_blocks; kb++) begin
-          logic is_first, is_last_blk;
-          is_first    = (kb == 0);
-          is_last_blk = (kb == k_blocks - 1);
-
-          // -- Weight load for this K-block --
-          w_lmem_base = lmem_wbuf0_base + 64'(kb * w_seg_bytes);
-          $display("[%0t] [K%0d] WEIGHT LOAD: lmem=0x%h (%0d B)", $time, kb, w_lmem_base, w_seg_bytes);
-
-          frontend_stream_send_mxu_weight_cmd(test_wtrans[0], 1'b0, 16'd1, 16'd0, w_lmem_base);
-          frontend_stream_send_word(make_raw_notify_word(is_first ? 1'b1 : 1'b0, 32'd1, rid_w0[4:0]));
-
-          // -- Qparam load (only on first K-block; QCOL scale/zp are per-column, not per-K) --
-          //    Single command: bound=2, src_stride = distance between scbuf0 and zpbuf0 in TMEM
-          //    seg0: reads scale from lmem_scbuf0_base → MXU offset 0
-          //    seg1: reads zp    from lmem_scbuf0_base + src_stride (= lmem_zpbuf0_base) → MXU offset dst_stride
-          if (is_first) begin
-            $display("[%0t] [K%0d] QPARAM LOAD: sc=0x%h, zp=0x%h, src_stride=%0d, dst_stride=%0d",
-                     $time, kb, lmem_scbuf0_base, lmem_zpbuf0_base, qparam_src_stride, qparam_dst_stride);
-            frontend_stream_send_mxu_qparam_cmd(
-              64'd0, lmem_scbuf0_base, qparam_src_stride, qparam_dst_stride, 16'd2
-            );
-            frontend_stream_send_word(make_raw_notify_word(1'b1, 32'd1, rid_sz0[4:0]));
-          end
-
-          // -- Wait for weight (and qparam on first) to complete --
-          frontend_stream_send_word(make_raw_wait_word(32'(kb + 1), rid_w0[4:0]));
-          if (is_first) begin
-            frontend_stream_send_word(make_raw_wait_word(32'd1, rid_sz0[4:0]));
-          end
-
-          wait_sync_reg_value(rid_w0, 32'(kb + 1), 50000);
-          $display("[%0t] [K%0d] WEIGHT DONE (sync_reg[%0d]=%0d)", $time, kb, rid_w0, kb + 1);
-
-          // -- GEMM compute for this K-block --
-          i_src_base = lmem_ibuf0_base + 64'(kb * DMA_MXU_KT * 2);
-          $display("[%0t] [K%0d] GEMM COMPUTE: is_accum=%0d, is_last=%0d, src=0x%h, stride=%0d, bound=%0d, acc_cnt=%0d",
-                   $time, kb, !is_first, is_last_blk, i_src_base, i_src_stride, test_m, test_m);
-
-          frontend_stream_send_mxu_input_cmd(
-            !is_first,     // is_accum: 0 for first block, 1 for rest
-            is_last_blk,   // is_last: 1 only for final block
-            1'b0, 1'b0, 1'b0, 1'b0,  // wreg/sreg/zreg_idx=0, qdir=0
-            i_src_base, 64'd0,
-            test_m,        // acc_cnt = M rows per K-block
-            i_src_stride,  // stride between rows in LMEM
-            16'(test_m)    // bound = M rows
-          );
-          frontend_stream_send_word(make_raw_notify_word(is_first ? 1'b1 : 1'b0, 32'd1, rid_g0[4:0]));
-          frontend_stream_send_word(make_raw_wait_word(32'(kb + 1), rid_g0[4:0]));
-
-          wait_sync_reg_value(rid_g0, 32'(kb + 1), 100000);
-          $display("[%0t] [K%0d] GEMM DONE (sync_reg[%0d]=%0d)", $time, kb, rid_g0, kb + 1);
-        end
-
-        $display("[%0t] [PHASE 2-4] ALL K-blocks completed", $time);
-      end
-
-      // ---- Debug: dump GEMM pipeline valid counters (snapshot) ----
-      $display("[%0t] [DEBUG] Pipeline valid counts:", $time);
-      $display("  in_pipe_valid_out count (input beats arrived): check waveform");
-      $display("  prealigner_out_valid:  %0d", u_dut.u_VX_gemm_unit.prealigner_out_valid);
-      $display("  merger_in_valid:       %0d", u_dut.u_VX_gemm_unit.merger_in_valid);
-      $display("  merger_out_valid:      %0d", u_dut.u_VX_gemm_unit.merger_out_valid);
-      $display("  int2fp_valid[0]:       %0d", u_dut.u_VX_gemm_unit.int2fp_output_valid[0]);
-      $display("  scaler_out_valid[0]:   %0d", u_dut.u_VX_gemm_unit.scaler_output_valid[0]);
-      $display("  final_scaler_valid:    %0d", u_dut.u_VX_gemm_unit.final_scaler_output_valid);
-      $display("  acc_mem_wr_en[0..3]:   %b %b %b %b",
-               u_dut.u_VX_gemm_unit.acc_mem_wr_en[0],
-               u_dut.u_VX_gemm_unit.acc_mem_wr_en[1],
-               u_dut.u_VX_gemm_unit.acc_mem_wr_en[2],
-               u_dut.u_VX_gemm_unit.acc_mem_wr_en[3]);
-
-      // ---- Debug: dump GEMM unit state and acc_mem ----
-      begin
-        $display("[%0t] [DEBUG] GEMM unit state: state=%0d, is_load=%0d, acc_wr_state=%0d, acc_wr_cnt=%0d",
-                 $time,
-                 u_dut.u_VX_gemm_unit.state,
-                 u_dut.u_VX_gemm_unit.gemm_unit_ctrl.is_load,
-                 u_dut.u_VX_gemm_unit.acc_mem_accum_wr_state,
-                 u_dut.u_VX_gemm_unit.acc_mem_accum_wr_cnt);
-        $display("[%0t] [DEBUG] acc_mem wr_addr=0x%h, wr_bank=%0d",
-                 $time,
-                 u_dut.u_VX_gemm_unit.acc_mem_accum_wr_addr,
-                 u_dut.u_VX_gemm_unit.acc_mem_accum_wr_bank);
-        // Dump first entries from all 4 banks at depth 0
-        $display("  bank0 d0 = 0x%08h", u_dut.u_VX_gemm_unit.gen_acc_mem[0].VX_sp_ram_instance.ram[0][31:0]);
-        $display("  bank1 d0 = 0x%08h", u_dut.u_VX_gemm_unit.gen_acc_mem[1].VX_sp_ram_instance.ram[0][31:0]);
-        $display("  bank2 d0 = 0x%08h", u_dut.u_VX_gemm_unit.gen_acc_mem[2].VX_sp_ram_instance.ram[0][31:0]);
-        $display("  bank3 d0 = 0x%08h", u_dut.u_VX_gemm_unit.gen_acc_mem[3].VX_sp_ram_instance.ram[0][31:0]);
-        // bank0 depth 0-3
-        $display("  bank0 d1 = 0x%08h", u_dut.u_VX_gemm_unit.gen_acc_mem[0].VX_sp_ram_instance.ram[1][31:0]);
-        $display("  bank0 d2 = 0x%08h", u_dut.u_VX_gemm_unit.gen_acc_mem[0].VX_sp_ram_instance.ram[2][31:0]);
-        $display("  bank0 d3 = 0x%08h", u_dut.u_VX_gemm_unit.gen_acc_mem[0].VX_sp_ram_instance.ram[3][31:0]);
-      end
-
-      // ---- Phase 5: MXU store output (accumulator → LMEM) ----
-      $display("[%0t] [PHASE 5] MXU STORE OUTPUT → LMEM: obuf_base=0x%h", $time, lmem_obuf_base);
-
-      frontend_stream_send_mxu_store_output_cmd(lmem_obuf_base, 64'd0, 16'd0, 16'(test_m));
-      frontend_stream_send_word(make_raw_notify_word(1'b1, 32'd1, rid_o0[4:0]));
-      frontend_stream_send_word(make_raw_wait_word(32'd1, rid_o0[4:0]));
-
-      wait_sync_reg_value(rid_o0, 32'd1, 50000);
-      $display("[%0t] [PHASE 5] DONE - output stored to LMEM (sync_reg[%0d]=1)", $time, rid_o0);
-
-      // ---- Phase 6: DMA STORE output (LMEM → DRAM) ----
-      $display("[%0t] [PHASE 6] DMA STORE: LMEM → DRAM (%0d B), dram_out=0x%h", $time, output_bytes, dram_out_base);
-
-      frontend_stream_send_dma_cmd(
-        RAW_OP_DMA_STORE, lmem_obuf_base, dram_out_base, 16'd0, 16'd0, 16'd1, output_bytes
-      );
-      frontend_stream_send_word(make_raw_notify_word(1'b1, 32'd1, rid_st[4:0]));
-      frontend_stream_send_word(make_raw_wait_word(32'd1, rid_st[4:0]));
-
-      wait_sync_reg_value(rid_st, 32'd1, 50000);
-      $display("[%0t] [PHASE 6] DONE - output written to DRAM (sync_reg[%0d]=1)", $time, rid_st);
-
-      // ---- Cleanup ----
-      frontend_stream_send_word(make_raw_clear_word());
-      wait_frontend_occupied(1'b0, 20000);
-
-      repeat (50) @(posedge clk);
-      check_output(test_m, test_n, dram_out_base);
-
-      $display("[%0t] STREAM GEMM PASSED: M=%0d N=%0d K=%0d WTRANS=%0d",
-               $time, test_m, test_n, test_k, test_wtrans);
     end
   endtask
 
@@ -2473,7 +1842,6 @@ module tb_VX_gemm_node_improve
   // =========================================================================
   initial begin
     string case_name;
-    int tb_mode;
     int test_m, test_n, test_k, test_qblk, test_wtrans, test_qdir;
     logic [63:0] dram_in_base, dram_w_base, dram_sc_base, dram_zp_base, dram_out_base;
     logic [63:0] lmem_ibuf0_base, lmem_ibuf1_base, lmem_wbuf0_base, lmem_wbuf1_base;
@@ -2482,8 +1850,6 @@ module tb_VX_gemm_node_improve
     $timeformat(-9, 0, "ns", 0);
     reset = 1'b0;
 
-    if (!$value$plusargs("TB_MODE=%d", tb_mode))
-      tb_mode = TB_MODE_STREAM_GEMM_TILED;
     if (!$value$plusargs("M=%d", test_m))
       test_m = DEFAULT_M_TEST;
     if (!$value$plusargs("N=%d", test_n))
@@ -2497,46 +1863,25 @@ module tb_VX_gemm_node_improve
     if (!$value$plusargs("QDIR=%d", test_qdir))
       test_qdir = 0;
     if (!$value$plusargs("TEST=%s", case_name)) begin
-      if (tb_mode == TB_MODE_STREAM) begin
-        $sformat(case_name, "stream_smoke");
-      end else begin
-        $sformat(case_name, "stream_gemm_M%0d_N%0d_K%0d_WT%0d", test_m, test_n, test_k, test_wtrans);
-      end
+      $sformat(case_name, "stream_gemm_M%0d_N%0d_K%0d_WT%0d", test_m, test_n, test_k, test_wtrans);
     end
 
-    if (tb_mode == TB_MODE_STREAM) begin
-      $display("[%0t] STREAM_TEST_CFG | {name=%s, TB_MODE=%0d}", $time, case_name, tb_mode);
-      run_instruction_stream_smoke(case_name);
-    end else begin
-      compute_auto_layout(
-        test_m, test_n, test_k, test_qblk, test_wtrans, test_qdir,
-        dram_in_base, dram_w_base, dram_sc_base, dram_zp_base, dram_out_base,
-        lmem_ibuf0_base, lmem_ibuf1_base, lmem_wbuf0_base, lmem_wbuf1_base,
-        lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base, lmem_obuf_base
-      );
+    compute_auto_layout(
+      test_m, test_n, test_k, test_qblk, test_wtrans, test_qdir,
+      dram_in_base, dram_w_base, dram_sc_base, dram_zp_base, dram_out_base,
+      lmem_ibuf0_base, lmem_ibuf1_base, lmem_wbuf0_base, lmem_wbuf1_base,
+      lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base, lmem_obuf_base
+    );
 
-      if (tb_mode == TB_MODE_STREAM_GEMM_TILED) begin
-        $display("[%0t] TILED_GEMM_TEST_CFG | {name=%s, TB_MODE=%0d, M=%0d, N=%0d, K=%0d, QBLK=%0d, WTRANS=%0d, QDIR=%0d}",
-                 $time, case_name, tb_mode, test_m, test_n, test_k, test_qblk, test_wtrans, test_qdir);
-        run_instruction_stream_gemm_tiled(
-          case_name,
-          test_m, test_n, test_k, test_qblk, test_wtrans, test_qdir,
-          dram_in_base, dram_w_base, dram_sc_base, dram_zp_base, dram_out_base,
-          lmem_ibuf0_base, lmem_ibuf1_base, lmem_wbuf0_base, lmem_wbuf1_base,
-          lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base, lmem_obuf_base
-        );
-      end else begin
-        $display("[%0t] STREAM_GEMM_TEST_CFG | {name=%s, TB_MODE=%0d, M=%0d, N=%0d, K=%0d, QBLK=%0d, WTRANS=%0d, QDIR=%0d}",
-                 $time, case_name, tb_mode, test_m, test_n, test_k, test_qblk, test_wtrans, test_qdir);
-        run_instruction_stream_gemm_micro(
-          case_name,
-          test_m, test_n, test_k, test_qblk, test_wtrans, test_qdir,
-          dram_in_base, dram_w_base, dram_sc_base, dram_zp_base, dram_out_base,
-          lmem_ibuf0_base, lmem_ibuf1_base, lmem_wbuf0_base, lmem_wbuf1_base,
-          lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base, lmem_obuf_base
-        );
-      end
-    end
+    $display("[%0t] TILED_GEMM_TEST_CFG | {name=%s, M=%0d, N=%0d, K=%0d, QBLK=%0d, WTRANS=%0d, QDIR=%0d}",
+             $time, case_name, test_m, test_n, test_k, test_qblk, test_wtrans, test_qdir);
+    run_instruction_stream_gemm_tiled(
+      case_name,
+      test_m, test_n, test_k, test_qblk, test_wtrans, test_qdir,
+      dram_in_base, dram_w_base, dram_sc_base, dram_zp_base, dram_out_base,
+      lmem_ibuf0_base, lmem_ibuf1_base, lmem_wbuf0_base, lmem_wbuf1_base,
+      lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base, lmem_obuf_base
+    );
 
     $display("[%0t] TB completed", $time);
 
