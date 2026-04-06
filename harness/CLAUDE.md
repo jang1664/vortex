@@ -1,33 +1,24 @@
 # Vortex GEMM Accelerator
 
-## Build & Test
-- GEMM node test: `cd hw/unittest/gemm_node_improve && make SIM_EXEC=vcs run M=32 N=32 K=128 QBLK=32`
-- Regression: `cd hw/unittest/gemm_node_improve && bash test.sh vcs qcol`
-- Success: look for `OUTPUT CHECK PASSED` in sim log
+## Source Tree
+- `hw/` — hardware
+  - `rtl/` — RTL source (core/, cache/, mem/, tcu/, fpu/, libs/, interfaces/)
+  - `unittest/` — unit tests (each dir has its own Makefile)
+  - `syn/` — synthesis scripts
+  - `dpi/` — DPI-C for simulation
+- `kernel/` — device-side kernels (GEMM, etc.)
+- `runtime/` — host-side runtime library
+- `sim/` — simulator backends (simx, rtlsim, etc.)
+- `tools/` — utilities (hw_draw, etc.)
+- `docs/` — project documentation
+- `harness/` — Claude harness (rules, docs, hooks, skills)
+- `hw_arch_draw/` — architecture design JSON files
+- `third_party/` — external dependencies
 
-## Architecture (branch-specific — read when working on GEMM)
-- @harness/docs/arch-gemm-pipeline.md — module hierarchy, data flow
-- @harness/docs/isa-opcodes.md — opcode encoding, word packing, field mapping
-- @harness/docs/tiling-strategy.md — SW/HW split, tile parameters, quantization modes
-
-## Existing Project Docs
-- @docs/coding_guidelines_verilog.md — RTL coding conventions
-- @docs/microarchitecture.md — Vortex pipeline overview
-- @docs/rtl/ — RTL module docs (mirrors hw/rtl/ structure)
-- @docs/rtl/features/ — cross-cutting feature docs (pipeline stages, GBAR, perf monitoring, etc.)
-
-## Required External Tools
-Before using an external binary (e.g., `fst2vcd`, `vcs`, `gtkwave`), run `which <tool>` to verify it exists.
-If missing, tell the user which tool is needed and stop — do not attempt workarounds or proceed without it.
-
-## Critical Invariants
-- Interface *_if.sv master/slave modports must always be symmetric
-- `gemm_unified_cmd_t` is the single command struct for all opcodes
-- SW computes all addresses, strides, and bounds; HW only routes and executes
-
-## Harness Structure
-- `harness/rules/*-common.md` — rules shared across all branches (merge-safe)
-- `harness/rules/*-arch.md` — rules specific to current branch architecture
-- `harness/docs/` — branch-specific architecture documentation
-- `harness/hooks/` — validation scripts (common + branch-specific)
-- `harness/skills/` — reusable procedures
+## Reference Map
+- RTL work → @docs/coding_guidelines_verilog.md, @docs/microarchitecture.md
+- RTL module docs → @docs/rtl/
+- HW design JSON → @.claude/rules/hw-design-json.md
+- GEMM architecture → @harness/docs/ (arch, ISA, tiling)
+- Common rules → @harness/rules/*-common.md
+- Branch-specific rules → @harness/rules/*-arch.md
