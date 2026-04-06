@@ -27,6 +27,7 @@ from urllib.parse import urlparse, parse_qs
 
 PORT = int(os.environ.get("HW_EDITOR_PORT", 8400))
 EDITOR_DIR = Path(__file__).parent
+sys.path.insert(0, str(EDITOR_DIR))
 POLL_INTERVAL = 0.5
 
 # ── Multi-file state ──
@@ -101,11 +102,25 @@ def _read_file(fid: str) -> str:
         return "{}"
 
 
+def _write_simple(filepath: Path, data_str: str):
+    """Write the simplified JSON alongside the main file."""
+    try:
+        from simplify_json import simplify
+        raw = json.loads(data_str)
+        result = simplify(raw)
+        stem = filepath.stem
+        simple_path = filepath.with_name(f"{stem}.simple.json")
+        simple_path.write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
+    except Exception as e:
+        sys.stderr.write(f"[hw-editor] simple.json write failed: {e}\n")
+
+
 def _write_file(fid: str, data_str: str):
     entry = _open_files.get(fid)
     if not entry or not entry["path"]:
         return
     entry["path"].write_text(data_str, encoding="utf-8")
+    _write_simple(entry["path"], data_str)
     with _lock:
         entry["mtime"] = _get_mtime(entry["path"])
 
@@ -113,6 +128,7 @@ def _write_file(fid: str, data_str: str):
 def _save_file_as(fid: str, new_path: Path, data_str: str):
     new_path = new_path.resolve()
     new_path.write_text(data_str, encoding="utf-8")
+    _write_simple(new_path, data_str)
     entry = _open_files.get(fid)
     if entry:
         entry["path"] = new_path

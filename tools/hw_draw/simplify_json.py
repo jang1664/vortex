@@ -92,6 +92,17 @@ def simplify(data: dict) -> dict:
             }
             if c.get("direction") and c["direction"] != "forward":
                 sc["direction"] = c["direction"]
+            if c.get("mapping") and c["mapping"] != "1:1":
+                sc["mapping"] = c["mapping"]
+            if c.get("dim_map"):
+                sc["dim_map"] = c["dim_map"]
+            # Compute port shapes (batch_dims + port_array_dims, bitwidth excluded)
+            from_shapes = _compute_ep_shapes(froms, sheet, modules)
+            to_shapes = _compute_ep_shapes(tos, sheet, modules)
+            if from_shapes:
+                sc["from_shape"] = from_shapes
+            if to_shapes:
+                sc["to_shape"] = to_shapes
             if c.get("description"):
                 sc["description"] = c["description"]
             if c.get("props"):
@@ -138,7 +149,9 @@ def simplify(data: dict) -> dict:
 
 
 def _resolve_ep(ep, sheet, modules, inst_map, port_map):
-    """Convert {inst: id, port: id} to 'instance_name.port_name' string."""
+    """Convert {inst: id, port: id} or {type: 'float', label} to string."""
+    if ep.get("type") == "float":
+        return ep.get("label") or "(open)"
     inst_id = ep.get("inst", "")
     port_id = ep.get("port", "")
 
@@ -153,6 +166,32 @@ def _resolve_ep(ep, sheet, modules, inst_map, port_map):
         port_name = port_id
 
     return f"{inst_name}.{port_name}"
+
+
+def _compute_ep_shapes(eps, sheet, modules):
+    """Compute [batch_dims...][port_array_dims...] for each endpoint. Bitwidth excluded."""
+    shapes = []
+    for ep in eps:
+        if ep.get("type") == "float":
+            shapes.append([1])
+            continue
+        inst_id = ep.get("inst", "")
+        port_id = ep.get("port", "")
+        inst_obj = next((i for i in sheet.get("instances", []) if i.get("id") == inst_id), None)
+        if not inst_obj:
+            continue
+        ref = modules.get(inst_obj.get("moduleRef", ""), {})
+        port_obj = next((p for p in ref.get("ports", []) if p.get("id") == port_id), None)
+        dims = []
+        if inst_obj.get("array"):
+            dims.extend(inst_obj["array"])
+        if port_obj and port_obj.get("array"):
+            dims.extend(port_obj["array"])
+        shapes.append(dims if dims else [1])
+    # If single endpoint, return flat list; if multiple, return list of lists
+    if len(shapes) == 1:
+        return shapes[0]
+    return shapes
 
 
 def _clean_props(props):

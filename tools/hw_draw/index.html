@@ -106,6 +106,8 @@ canvas { display: block; }
   <span class="sep"></span>
   <button class="btn" onclick="editSheet()">Edit sheet</button>
   <button class="btn" onclick="rotateSelection()">Rotate</button>
+  <button class="btn" onclick="fitToScreen()">Fit</button>
+  <button class="btn" onclick="resetView()">100%</button>
   <span class="spacer"></span>
   <button class="btn btn-green" onclick="copySimpleJson()">Copy for Claude</button>
   <span id="filePath" style="font-size:11px;color:var(--fg2);font-family:var(--mono);max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title=""></span>
@@ -226,6 +228,7 @@ const MIN_BLOCK_W = 80;
 const MIN_BLOCK_H = 60;
 const PCOL = { in: '#2d8cf0', out: '#e6522c', inout: '#8b5cf6' };
 let canvas, ctx, W = 800, H = 600;
+let viewX = 0, viewY = 0, viewZoom = 1; // pan & zoom state
 
 /* ═══════════════════════════════════════════════════════════
    ACCESSORS
@@ -371,6 +374,8 @@ function getBlocks() {
 }
 
 function portWorldPos(ep) {
+  // Floating endpoint: {type:'float', x, y}
+  if (ep.type === 'float') return { x: ep.x, y: ep.y };
   const s = sheet();
   if (!s) return null;
   const inst = s.instances.find(i => i.id === ep.inst);
@@ -654,17 +659,26 @@ function resizeCanvas() {
 function renderCanvas() {
   if (!ctx) return;
   const s = sheet();
+  const dpr = window.devicePixelRatio || 1;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, W, H);
 
-  // Grid
+  // Grid (always in screen space, before zoom transform)
+  const gridStep = GRID * viewZoom;
+  const gx0 = (viewX * viewZoom) % gridStep;
+  const gy0 = (viewY * viewZoom) % gridStep;
   ctx.strokeStyle = getCSS('--brd'); ctx.lineWidth = 0.3;
-  for (let x = 0; x < W; x += GRID) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); }
-  for (let y = 0; y < H; y += GRID) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
+  for (let x = gx0; x < W; x += gridStep) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); }
+  for (let y = gy0; y < H; y += gridStep) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
+
+  // Apply pan/zoom transform for all content
+  ctx.setTransform(dpr * viewZoom, 0, 0, dpr * viewZoom, dpr * viewX * viewZoom, dpr * viewY * viewZoom);
 
   if (!s) {
     ctx.fillStyle = getCSS('--fg3'); ctx.font = '14px ' + getCSS('--font');
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText('No sheet — create one with the + tab below', W / 2, H / 2);
+    ctx.fillText('No sheet — create one with the + tab below', W / 2 / viewZoom - viewX, H / 2 / viewZoom - viewY);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     return;
   }
 
@@ -679,7 +693,11 @@ function renderCanvas() {
     const isSel = (selection?.type === 'connection' && selection.id === c.id) || multiIds.includes(c.id);
     const froms = connFrom(c).map(ep => portWorldPos(ep)).filter(Boolean);
     const tos = connTo(c).map(ep => portWorldPos(ep)).filter(Boolean);
-    if (froms.length && tos.length) drawConnectionMN(froms, tos, isSel, c.props, connDir(c));
+    if (froms.length && tos.length) drawConnectionMN(froms, tos, isSel, c.props, connDir(c), c.mapping);
+    // Draw floating endpoints as diamonds with label
+    for (const ep of [...connFrom(c), ...connTo(c)]) {
+      if (ep.type === 'float') drawFloatingPoint(ep.x, ep.y, ep.label, isSel);
+    }
   }
 
   // Link preview
@@ -732,6 +750,15 @@ function renderCanvas() {
     ctx.fillRect(bx, by, bw, bh); ctx.strokeRect(bx, by, bw, bh);
     ctx.setLineDash([]);
   }
+
+  // Zoom indicator (in screen space)
+  if (viewZoom !== 1 || viewX !== 0 || viewY !== 0) {
+    const dpr2 = window.devicePixelRatio || 1;
+    ctx.setTransform(dpr2, 0, 0, dpr2, 0, 0);
+    ctx.fillStyle = getCSS('--fg3'); ctx.font = '10px ' + getCSS('--font');
+    ctx.textAlign = 'right'; ctx.textBaseline = 'bottom';
+    ctx.fillText(Math.round(viewZoom * 100) + '%', W - 8, H - 4);
+  }
 }
 
 function drawBlock(blk, multiSel) {
@@ -775,12 +802,12 @@ function drawPort(x, y, port, labelSide) {
   else { ctx.textAlign = 'center'; ctx.fillText(label, x, y - 12); }
 }
 
-function drawConnectionMN(froms, tos, isSel, props, dir) {
+function drawConnectionMN(froms, tos, isSel, props, dir, mapping) {
   const col = isSel ? getCSS('--blue') : getCSS('--fg3');
   const lw = isSel ? 2.5 : 1.5;
   const isBus = froms.length > 1 || tos.length > 1;
+  const mapLabel = mapping && mapping !== '1:1' ? mapping : '';
 
-  // For M:N, draw through a midpoint hub
   if (isBus) {
     const avgFx = froms.reduce((s, p) => s + p.x, 0) / froms.length;
     const avgFy = froms.reduce((s, p) => s + p.y, 0) / froms.length;
@@ -788,28 +815,28 @@ function drawConnectionMN(froms, tos, isSel, props, dir) {
     const avgTy = tos.reduce((s, p) => s + p.y, 0) / tos.length;
     const hubX = (avgFx + avgTx) / 2, hubY = (avgFy + avgTy) / 2;
 
-    // Draw lines from each source to hub
     for (const fp of froms) { drawBezierLine(fp.x, fp.y, hubX, hubY, col, lw); if (dir === 'reverse' || dir === 'both') drawArrowAtStart(fp.x, fp.y, hubX, hubY, col); }
-    // Draw lines from hub to each target
     for (const tp of tos) { drawBezierLine(hubX, hubY, tp.x, tp.y, col, lw); if (dir === 'forward' || dir === 'both') drawArrowAtEnd(hubX, hubY, tp.x, tp.y, col); }
-    // Hub dot
     ctx.beginPath(); ctx.arc(hubX, hubY, 4, 0, Math.PI * 2);
     ctx.fillStyle = col; ctx.fill();
-    // Label
     const pv = Object.values(props || {});
-    const label = (froms.length + ':' + tos.length) + (pv.length ? ' ' + pv.join(', ') : '');
+    const parts = [froms.length + ':' + tos.length];
+    if (mapLabel) parts.push(mapLabel);
+    if (pv.length) parts.push(pv.join(', '));
     ctx.fillStyle = getCSS('--fg3'); ctx.font = '9px ' + getCSS('--font');
     ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-    ctx.fillText(label, hubX, hubY - 8);
+    ctx.fillText(parts.join(' | '), hubX, hubY - 8);
   } else {
-    // Simple 1:1 connection
     const fp = froms[0], tp = tos[0];
     const mx = (fp.x + tp.x) / 2;
     drawBezierLine(fp.x, fp.y, tp.x, tp.y, col, lw);
     if (dir === 'forward' || dir === 'both') drawArrowAtEnd(fp.x, fp.y, tp.x, tp.y, col);
     if (dir === 'reverse' || dir === 'both') drawArrowAtStart(fp.x, fp.y, tp.x, tp.y, col);
     const pv = Object.values(props || {});
-    if (pv.length) { ctx.fillStyle = getCSS('--fg3'); ctx.font = '9px ' + getCSS('--font'); ctx.textAlign = 'center'; ctx.textBaseline = 'bottom'; ctx.fillText(pv.join(', '), mx, (fp.y + tp.y) / 2 - 4); }
+    const parts = [];
+    if (mapLabel) parts.push(mapLabel);
+    if (pv.length) parts.push(pv.join(', '));
+    if (parts.length) { ctx.fillStyle = getCSS('--fg3'); ctx.font = '9px ' + getCSS('--font'); ctx.textAlign = 'center'; ctx.textBaseline = 'bottom'; ctx.fillText(parts.join(' | '), mx, (fp.y + tp.y) / 2 - 4); }
   }
 }
 
@@ -854,6 +881,23 @@ function drawArrowHead(tipX, tipY, fromX, fromY, col) {
   ctx.fillStyle = col; ctx.fill();
 }
 
+function drawFloatingPoint(x, y, label, isSel) {
+  const sz = 8;
+  const col = isSel ? getCSS('--blue') : getCSS('--purple');
+  // Diamond shape
+  ctx.beginPath();
+  ctx.moveTo(x, y - sz); ctx.lineTo(x + sz, y); ctx.lineTo(x, y + sz); ctx.lineTo(x - sz, y);
+  ctx.closePath();
+  ctx.fillStyle = col; ctx.fill();
+  ctx.strokeStyle = getCSS('--bg'); ctx.lineWidth = 1.5; ctx.stroke();
+  // Label
+  if (label) {
+    ctx.fillStyle = col; ctx.font = '9px ' + getCSS('--mono');
+    ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    ctx.fillText(label, x + sz + 4, y);
+  }
+}
+
 function drawResizeHandles(blk) {
   const hs = HANDLE_SIZE; ctx.fillStyle = getCSS('--blue');
   for (const [cx, cy] of [[blk.x, blk.y], [blk.x + blk.w, blk.y], [blk.x, blk.y + blk.h], [blk.x + blk.w, blk.y + blk.h]])
@@ -890,6 +934,19 @@ function hitTest(mx, my) {
     for (const port of blk.ports) {
       const pos = getPortPosOnBlock(blk, port, blk.inst);
       if (Math.hypot(pos.x - mx, pos.y - my) < 10) return { type: 'port', instId: blk.id, portId: port.id };
+    }
+  }
+
+  // Check floating endpoints (draggable)
+  for (const c of s.connections) {
+    for (const side of ['from', 'to']) {
+      const eps = side === 'from' ? connFrom(c) : connTo(c);
+      for (let ei = 0; ei < eps.length; ei++) {
+        const ep = eps[ei];
+        if (ep.type === 'float' && Math.hypot(ep.x - mx, ep.y - my) < 12) {
+          return { type: 'floatPoint', connId: c.id, side, epIndex: ei };
+        }
+      }
     }
   }
 
@@ -930,21 +987,76 @@ function distToBezier(px, py, fp, tp) {
 /* ═══════════════════════════════════════════════════════════
    INTERACTION
    ═══════════════════════════════════════════════════════════ */
+function onWheel(e) {
+  e.preventDefault();
+  const r = canvas.getBoundingClientRect();
+  const screenX = e.clientX - r.left;
+  const screenY = e.clientY - r.top;
+  // World position under cursor before zoom
+  const wx = screenX / viewZoom - viewX;
+  const wy = screenY / viewZoom - viewY;
+
+  const delta = e.deltaY > 0 ? 0.9 : 1.1;
+  const newZoom = clamp(viewZoom * delta, 0.1, 5);
+  // Adjust viewX/viewY so the world point under cursor stays in place
+  viewX = screenX / newZoom - wx;
+  viewY = screenY / newZoom - wy;
+  viewZoom = newZoom;
+  renderCanvas();
+}
+
+function fitToScreen() {
+  const blocks = getBlocks();
+  if (!blocks.length) { viewX = 0; viewY = 0; viewZoom = 1; renderCanvas(); return; }
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const b of blocks) {
+    minX = Math.min(minX, b.x);
+    minY = Math.min(minY, b.y);
+    maxX = Math.max(maxX, b.x + b.w);
+    maxY = Math.max(maxY, b.y + b.h);
+  }
+  // Also check floating endpoints
+  const s = sheet();
+  if (s) for (const c of s.connections) {
+    for (const ep of [...connFrom(c), ...connTo(c)]) {
+      if (ep.type === 'float') { minX = Math.min(minX, ep.x); minY = Math.min(minY, ep.y); maxX = Math.max(maxX, ep.x); maxY = Math.max(maxY, ep.y); }
+    }
+  }
+  const pad = 40;
+  const contentW = maxX - minX + pad * 2;
+  const contentH = maxY - minY + pad * 2;
+  viewZoom = clamp(Math.min(W / contentW, H / contentH), 0.1, 5);
+  viewX = -minX + pad + (W / viewZoom - contentW) / 2;
+  viewY = -minY + pad + (H / viewZoom - contentH) / 2;
+  renderCanvas();
+}
+
+function resetView() { viewX = 0; viewY = 0; viewZoom = 1; renderCanvas(); }
+
 function setupInteraction() {
   canvas.addEventListener('mousedown', onMouseDown);
   canvas.addEventListener('mousemove', onMouseMove);
   canvas.addEventListener('mouseup', onMouseUp);
   canvas.addEventListener('dblclick', e => { const hit = hitTest(...Object.values(canvasXY(e))); if (hit?.type === 'instance') { selection = { type: 'instance', id: hit.id }; render(); } });
   canvas.addEventListener('contextmenu', e => { e.preventDefault(); showCtxMenu(e.clientX, e.clientY, hitTest(...Object.values(canvasXY(e)))); });
-  canvas.addEventListener('wheel', e => e.preventDefault());
+  canvas.addEventListener('wheel', onWheel);
   document.addEventListener('keydown', onKeyDown);
 }
 
-function canvasXY(e) { const r = canvas.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; }
+function canvasXY(e) {
+  const r = canvas.getBoundingClientRect();
+  return { x: (e.clientX - r.left) / viewZoom - viewX, y: (e.clientY - r.top) / viewZoom - viewY };
+}
 
 function onMouseDown(e) {
   hideCtxMenu(); const p = canvasXY(e); mouse = p;
-  if (e.button === 1) return;
+  // Middle button or Space+click = pan
+  if (e.button === 1) {
+    e.preventDefault();
+    drag = { type: 'pan', startX: e.clientX, startY: e.clientY, origVX: viewX, origVY: viewY };
+    canvas.style.cursor = 'grabbing';
+    return;
+  }
   const hit = hitTest(p.x, p.y);
   const s = sheet();
 
@@ -960,7 +1072,7 @@ function onMouseDown(e) {
         markDirty();
       }
     } else if (linking.inst !== ep.inst || linking.port !== ep.port) {
-      s.connections.push({ id: 'c_' + uid(), from: [linking], to: [ep], direction: 'forward', props: {} });
+      s.connections.push({ id: 'c_' + uid(), from: [linking], to: [ep], direction: 'forward', mapping: '1:1', props: {} });
       markDirty();
     }
     linking = null; updateLinkBtn(); render(); return;
@@ -968,7 +1080,22 @@ function onMouseDown(e) {
 
   // Click empty area
   if (!hit) {
-    if (linking) { linking = null; updateLinkBtn(); render(); return; }
+    if (linking) {
+      // Create floating endpoint at clicked position
+      const fp = { type: 'float', x: snap(p.x), y: snap(p.y), label: '' };
+      if (linking.addToConn) {
+        const conn = s.connections.find(c => c.id === linking.addToConn);
+        if (conn) {
+          if (linking.side === 'from') { if (!Array.isArray(conn.from)) conn.from = [conn.from]; conn.from.push(fp); }
+          else { if (!Array.isArray(conn.to)) conn.to = [conn.to]; conn.to.push(fp); }
+          markDirty();
+        }
+      } else {
+        s.connections.push({ id: 'c_' + uid(), from: [linking], to: [fp], direction: 'forward', mapping: '1:1', props: {}, description: '' });
+        markDirty();
+      }
+      linking = null; updateLinkBtn(); render(); return;
+    }
     // Start box selection
     boxSelect = { startX: p.x, startY: p.y };
     selection = null;
@@ -976,6 +1103,12 @@ function onMouseDown(e) {
     return;
   }
 
+  if (hit.type === 'floatPoint') {
+    // Drag to move the floating endpoint, or select its connection
+    selection = { type: 'connection', id: hit.connId };
+    drag = { type: 'floatMove', connId: hit.connId, side: hit.side, epIndex: hit.epIndex };
+    render(); return;
+  }
   if (hit.type === 'resize-handle') {
     const inst = s.instances.find(i => i.id === hit.blkId);
     drag = { type: 'resize', id: hit.blkId, handle: hit.handle, startX: p.x, startY: p.y, origX: inst.x, origY: inst.y, origW: inst.w || 170, origH: inst.h || MIN_BLOCK_H };
@@ -1010,6 +1143,11 @@ function onMouseMove(e) {
   if (boxSelect) { renderCanvas(); return; }
 
   if (drag) {
+    if (drag.type === 'pan') {
+      viewX = drag.origVX + (e.clientX - drag.startX) / viewZoom;
+      viewY = drag.origVY + (e.clientY - drag.startY) / viewZoom;
+      renderCanvas(); return;
+    }
     const s = sheet();
     if (drag.type === 'move') {
       const inst = s.instances.find(i => i.id === drag.id);
@@ -1034,12 +1172,20 @@ function onMouseMove(e) {
         inst.portPositions[drag.portId] = { edge: EDGE_ROTATE[invRot][ep.edge], t: ep.t };
         markDirty(); renderCanvas();
       }
+    } else if (drag.type === 'floatMove') {
+      const conn = s.connections.find(c => c.id === drag.connId);
+      if (conn) {
+        const eps = drag.side === 'from' ? connFrom(conn) : connTo(conn);
+        const ep = eps[drag.epIndex];
+        if (ep?.type === 'float') { ep.x = snap(p.x); ep.y = snap(p.y); markDirty(); renderCanvas(); }
+      }
     }
     return;
   }
   if (linking) renderCanvas();
   const hit = hitTest(p.x, p.y);
   if (hit?.type === 'resize-handle') { const cur = { nw: 'nwse-resize', se: 'nwse-resize', ne: 'nesw-resize', sw: 'nesw-resize', n: 'ns-resize', s: 'ns-resize', w: 'ew-resize', e: 'ew-resize' }; canvas.style.cursor = cur[hit.handle]; }
+  else if (hit?.type === 'floatPoint') canvas.style.cursor = 'grab';
   else if (hit?.type === 'port') canvas.style.cursor = 'crosshair';
   else if (hit?.type === 'instance') canvas.style.cursor = 'grab';
   else if (hit?.type === 'connection') canvas.style.cursor = 'pointer';
@@ -1074,6 +1220,7 @@ function onMouseUp(e) {
     render();
     return;
   }
+  if (drag?.type === 'pan') canvas.style.cursor = 'default';
   drag = null;
 }
 
@@ -1411,15 +1558,59 @@ function renderConnectionPanel(panel, cid) {
   for (const d of ['forward', 'reverse', 'both', 'none']) h += `<option ${dir === d ? 'selected' : ''}>${d}</option>`;
   h += `</select>`;
 
+  // Mapping
+  const mapping = conn.mapping || '1:1';
+  const MAPPING_PRESETS = ['1:1', 'broadcast', 'reduction', 'crossbar', 'interleave', 'custom'];
+  h += `<label>Mapping</label>`;
+  h += `<select onchange="setConnMapping('${cid}',this.value)">`;
+  for (const m of MAPPING_PRESETS) h += `<option ${mapping === m ? 'selected' : ''}>${m}</option>`;
+  h += `</select>`;
+
+  // Dim shapes (computed from endpoints)
+  const fromShape = computeEndpointShape(froms);
+  const toShape = computeEndpointShape(tos);
+  if (fromShape || toShape) {
+    h += `<div style="font-size:10px;color:var(--fg3);margin-top:2px">`;
+    h += `From shape: [${fromShape || '?'}] → To shape: [${toShape || '?'}]`;
+    h += `</div>`;
+  }
+
+  // Custom dim_map editor (only when mapping=custom)
+  if (mapping === 'custom') {
+    h += `<label>Dim map</label>`;
+    const dm = conn.dim_map || {};
+    h += `<div class="port-section">`;
+    h += `<div class="prop-row"><span style="font-size:10px;color:var(--fg3);flex:0 0 80px">from_shape</span><input value="${esc(JSON.stringify(dm.from_shape || []))}" placeholder="e.g. [4, 2]" onchange="updateDimMap('${cid}','from_shape',this.value)"/></div>`;
+    h += `<div class="prop-row"><span style="font-size:10px;color:var(--fg3);flex:0 0 80px">to_shape</span><input value="${esc(JSON.stringify(dm.to_shape || []))}" placeholder="e.g. [2, 4]" onchange="updateDimMap('${cid}','to_shape',this.value)"/></div>`;
+    h += `<div class="prop-row"><span style="font-size:10px;color:var(--fg3);flex:0 0 80px">map</span><input value="${esc(dm.map || '')}" placeholder="e.g. transpose, reshape, stride(2)" onchange="updateDimMap('${cid}','map',this.value)"/></div>`;
+    h += `</div>`;
+  }
+
   h += `<label>Description</label><textarea onchange="${cp}.description=this.value;markDirty();">${esc(conn.description || '')}</textarea>`;
   h += `<label>Properties</label>`; h += propsEditorHTML(conn.props, `${cp}.props`);
 
+  // Floating endpoint labels
+  const allEps = [
+    ...froms.map((ep, i) => ({ ep, side: 'from', idx: i })),
+    ...tos.map((ep, i) => ({ ep, side: 'to', idx: i })),
+  ].filter(e => e.ep.type === 'float');
+  if (allEps.length) {
+    h += `<label>Open endpoints</label>`;
+    for (const { ep, side, idx } of allEps) {
+      const arr = side === 'from' ? 'from' : 'to';
+      h += `<div class="prop-row">`;
+      h += `<input value="${esc(ep.label || '')}" placeholder="label (e.g. to upper level)" style="flex:1" onchange="updateFloatLabel('${cid}','${arr}',${idx},this.value)"/>`;
+      h += `<button class="btn btn-sm btn-danger" onclick="removeFloatEndpoint('${cid}','${arr}',${idx})">x</button>`;
+      h += `</div>`;
+    }
+  }
+
   // Add/remove endpoints
   h += `<label style="margin-top:10px">Endpoints</label>`;
-  h += `<div style="font-size:11px;color:var(--fg3);margin-bottom:6px">Click a port while this connection is selected to add it as a From or To endpoint.</div>`;
+  h += `<div style="font-size:11px;color:var(--fg3);margin-bottom:6px">Click a port or empty space to add an endpoint. Drag diamond to reposition.</div>`;
   h += `<div style="display:flex;gap:4px;margin-bottom:6px">`;
-  h += `<button class="btn btn-sm" onclick="startAddEndpoint('${cid}','from')">+ From port</button>`;
-  h += `<button class="btn btn-sm" onclick="startAddEndpoint('${cid}','to')">+ To port</button>`;
+  h += `<button class="btn btn-sm" onclick="startAddEndpoint('${cid}','from')">+ From</button>`;
+  h += `<button class="btn btn-sm" onclick="startAddEndpoint('${cid}','to')">+ To</button>`;
   h += `</div>`;
 
   h += `<button class="btn btn-sm btn-danger" style="margin-top:10px" onclick="removeConnection('${cid}')">Delete connection</button>`;
@@ -1427,9 +1618,75 @@ function renderConnectionPanel(panel, cid) {
 }
 
 function setConnDirection(cid, dir) {
+  const conn = sheet().connections.find(c => c.id === cid);
+  if (conn) { conn.direction = dir; markDirty(); renderCanvas(); }
+}
+
+function setConnMapping(cid, mapping) {
+  const conn = sheet().connections.find(c => c.id === cid);
+  if (!conn) return;
+  conn.mapping = mapping;
+  if (mapping === 'custom' && !conn.dim_map) conn.dim_map = { from_shape: [], to_shape: [], map: '' };
+  if (mapping !== 'custom') delete conn.dim_map;
+  markDirty(); render();
+}
+
+function updateDimMap(cid, field, value) {
+  const conn = sheet().connections.find(c => c.id === cid);
+  if (!conn) return;
+  if (!conn.dim_map) conn.dim_map = {};
+  if (field === 'map') {
+    conn.dim_map.map = value;
+  } else {
+    try { conn.dim_map[field] = JSON.parse(value); } catch { conn.dim_map[field] = value; }
+  }
+  markDirty(); render();
+}
+
+function computeEndpointShape(eps) {
+  // Compute the combined shape for a list of endpoints: [batch_dims...][port_array_dims...]
+  // Bitwidth excluded from shape
+  const shapes = [];
+  for (const ep of eps) {
+    if (ep.type === 'float') { shapes.push([1]); continue; }
+    const s = sheet();
+    const inst = s.instances.find(i => i.id === ep.inst);
+    if (!inst) { shapes.push([]); continue; }
+    const ref = data.modules[inst.moduleRef];
+    if (!ref) { shapes.push([]); continue; }
+    const port = ref.ports.find(p => p.id === ep.port);
+    if (!port) { shapes.push([]); continue; }
+    const dims = [];
+    if (inst.array?.length) dims.push(...inst.array);  // batch dims
+    if (port.array?.length) dims.push(...port.array);   // port array dims
+    shapes.push(dims.length ? dims : [1]);
+  }
+  if (shapes.length === 1) return shapes[0].join(', ');
+  // Multiple endpoints: show each
+  return shapes.map(s => s.join('x')).join(' + ');
+}
+
+function updateFloatLabel(cid, side, idx, label) {
   const s = sheet();
   const conn = s.connections.find(c => c.id === cid);
-  if (conn) { conn.direction = dir; markDirty(); renderCanvas(); }
+  if (!conn) return;
+  const eps = side === 'from' ? connFrom(conn) : connTo(conn);
+  if (eps[idx]?.type === 'float') { eps[idx].label = label; markDirty(); renderCanvas(); }
+}
+
+function removeFloatEndpoint(cid, side, idx) {
+  const s = sheet();
+  const conn = s.connections.find(c => c.id === cid);
+  if (!conn) return;
+  const eps = side === 'from' ? connFrom(conn) : connTo(conn);
+  eps.splice(idx, 1);
+  conn[side] = eps;
+  // If either side is empty, remove the whole connection
+  if (!connFrom(conn).length || !connTo(conn).length) {
+    s.connections = s.connections.filter(c => c.id !== cid);
+    selection = null;
+  }
+  markDirty(); render();
 }
 
 function startAddEndpoint(cid, side) {
@@ -1440,6 +1697,7 @@ function startAddEndpoint(cid, side) {
 }
 
 function resolveEP(ep) {
+  if (ep.type === 'float') return ep.label || '(open)';
   const s = sheet();
   const inst = s.instances.find(i => i.id === ep.inst);
   const ref = data.modules[inst?.moduleRef];
