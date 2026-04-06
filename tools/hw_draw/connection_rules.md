@@ -89,30 +89,83 @@ to_shape: [2, 2]    → indices [0][0], [0][1], [1][0], [1][1]
 stride=2: from[0]→to[0][0], from[1]→to[1][0], from[2]→to[0][1], from[3]→to[1][1]
 ```
 
-## Custom Dim Map
+## Custom Map Expression
 
-When `mapping` is `custom`, the `dim_map` field provides explicit dimension mapping:
+When `mapping` is `custom`, the `map_expr` field uses Verilog-style index expressions to describe exactly how indices are mapped between ports.
+
+### Syntax
+
+```
+<lhs>[<index_expr>] -> <rhs>[<index_expr>] for(<var>,<start>,<end>) [for(<var>,<start>,<end>)...]
+```
+
+- `<lhs>`, `<rhs>`: port names (or `in`/`out` as shorthand)
+- `<index_expr>`: integer arithmetic using loop variables, constants, parameters (`+`, `-`, `*`, `/`, `%`)
+- `for(i,0,N)`: loop variable `i` from 0 to N-1 (N exclusive)
+- Multiple `for` clauses = nested loops (left = outer)
+- Parameter variables (e.g., `NUM_CORES`) can be used in expressions and loop bounds
+
+### 1D Examples
+
+```
+// Simple 1:1
+in[i] -> out[i] for(i,0,8)
+
+// Stride-2 interleave
+in[i] -> out[2*i] for(i,0,4)
+
+// Broadcast: 1 source to N targets
+in[0] -> out[i] for(i,0,N)
+
+// Reduction: N sources to 1 target
+in[i] -> out[0] for(i,0,N)
+
+// Partial select (slice)
+in[i] -> out[i-2] for(i,2,6)
+
+// Two ranges to interleaved output
+in[i] -> out[2*i] for(i,0,4)
+in[i] -> out[2*i+1] for(i,4,8)
+```
+
+### 2D Examples
+
+```
+// 2D 1:1
+in[i][j] -> out[i][j] for(i,0,4) for(j,0,8)
+
+// Transpose
+in[i][j] -> out[j][i] for(i,0,4) for(j,0,2)
+
+// Flatten 2D to 1D: batch[4] x port[8] -> flat[32]
+in[i][j] -> out[i*8+j] for(i,0,4) for(j,0,8)
+
+// Unflatten 1D to 2D
+in[i*8+j] -> out[i][j] for(i,0,4) for(j,0,8)
+
+// Row broadcast
+in[0][j] -> out[i][j] for(i,0,4) for(j,0,8)
+
+// Parameterized
+in[i][j] -> out[i*M+j] for(i,0,N) for(j,0,M)
+```
+
+### JSON Format
 
 ```json
 {
   "mapping": "custom",
-  "dim_map": {
-    "from_shape": [4, 2],
-    "to_shape": [2, 4],
-    "map": "transpose"
-  }
+  "map_expr": "in[i][j] -> out[j][i] for(i,0,4) for(j,0,2)"
 }
 ```
 
-### Standard `map` values
-
-| Map | Description |
-|-----|-------------|
-| `reshape` | Flatten and reshape: `[4, 2]` → `[2, 4]`, same total, different grouping |
-| `transpose` | Swap dimension order: `[i][j]` → `[j][i]` |
-| `stride(N)` | Interleave with stride N |
-| `slice(start:end)` | Partial connection, only a range of indices |
-| Free-form text | Any description for complex patterns (e.g., `"even indices only"`) |
+Multi-line expressions are allowed for complex patterns:
+```json
+{
+  "mapping": "custom",
+  "map_expr": "in[i] -> out[2*i] for(i,0,4)\nin[i] -> out[2*i+1] for(i,4,8)"
+}
+```
 
 ## M:N Connections
 

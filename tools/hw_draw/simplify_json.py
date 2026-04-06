@@ -96,8 +96,8 @@ def simplify(data: dict) -> dict:
                 sc["direction"] = c["direction"]
             if c.get("mapping") and c["mapping"] != "1:1":
                 sc["mapping"] = c["mapping"]
-            if c.get("dim_map"):
-                sc["dim_map"] = c["dim_map"]
+            if c.get("map_expr"):
+                sc["map_expr"] = c["map_expr"]
             # Compute port shapes (batch_dims + port_array_dims, bitwidth excluded)
             from_shapes = _compute_ep_shapes(froms, sheet, modules)
             to_shapes = _compute_ep_shapes(tos, sheet, modules)

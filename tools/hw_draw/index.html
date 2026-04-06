@@ -18,7 +18,9 @@ body { font-family: var(--font); background: var(--bg); color: var(--fg); height
 .toolbar { display: flex; gap: 6px; padding: 6px 10px; border-bottom: 1px solid var(--brd); align-items: center; flex-wrap: wrap; background: var(--bg2); }
 .main { display: flex; flex: 1; min-height: 0; }
 .statusbar { font-size: 10px; color: var(--fg3); padding: 3px 10px; border-top: 1px solid var(--brd); display: flex; gap: 14px; background: var(--bg2); }
-.sidebar { width: 180px; border-right: 1px solid var(--brd); padding: 8px; overflow-y: auto; flex-shrink: 0; background: var(--bg); }
+.sidebar { width: 180px; min-width: 100px; border-right: 1px solid var(--brd); padding: 8px; overflow-y: auto; flex-shrink: 0; background: var(--bg); position: relative; }
+.resize-handle-r { position: absolute; top: 0; right: -3px; width: 6px; height: 100%; cursor: ew-resize; z-index: 5; }
+.resize-handle-l { position: absolute; top: 0; left: -3px; width: 6px; height: 100%; cursor: ew-resize; z-index: 5; }
 .sidebar h3 { font-size: 12px; font-weight: 600; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center; }
 .mod-item { padding: 5px 8px; border-radius: 6px; cursor: pointer; margin-bottom: 2px; font-size: 12px; border: 1px solid transparent; }
 .mod-item:hover { background: var(--bg2); }
@@ -27,7 +29,13 @@ body { font-family: var(--font); background: var(--bg); color: var(--fg); height
 .mod-item .sub { font-size: 10px; color: var(--fg3); }
 .canvas-wrap { flex: 1; position: relative; overflow: hidden; background: var(--bg); }
 canvas { display: block; }
-.panel { width: 300px; border-left: 1px solid var(--brd); padding: 10px; overflow-y: auto; flex-shrink: 0; background: var(--bg); font-size: 12px; }
+.panel { width: 300px; min-width: 150px; border-left: 1px solid var(--brd); padding: 10px; overflow-y: auto; flex-shrink: 0; background: var(--bg); font-size: 12px; position: relative; }
+.ann-item { padding: 6px 8px; border-radius: 6px; border: 1px solid var(--brd); margin-bottom: 4px; cursor: pointer; font-size: 11px; }
+.ann-item:hover { background: var(--bg2); }
+.ann-item.active { border-color: var(--blue); background: #e8f0fe; }
+@media (prefers-color-scheme: dark) { .ann-item.active { background: #1a2a40; } }
+.ann-item .ann-targets { font-size: 10px; color: var(--fg3); margin-top: 2px; }
+.ann-item .ann-text { color: var(--fg2); margin-top: 2px; white-space: pre-wrap; }
 .panel h3 { font-size: 13px; font-weight: 600; margin-bottom: 8px; display: flex; justify-content: space-between; }
 .panel label { font-size: 10px; font-weight: 600; color: var(--fg2); display: block; margin-top: 8px; margin-bottom: 2px; text-transform: uppercase; letter-spacing: 0.4px; }
 .panel input, .panel select, .panel textarea { width: 100%; padding: 4px 7px; font-size: 12px; font-family: var(--font); border: 1px solid var(--brd); border-radius: 5px; background: var(--bg2); color: var(--fg); outline: none; }
@@ -105,6 +113,7 @@ canvas { display: block; }
   <button class="btn" id="linkBtn" onclick="toggleLink()">Link</button>
   <span class="sep"></span>
   <button class="btn" onclick="editSheet()">Edit sheet</button>
+  <button class="btn" onclick="showAnnotations()">Annotations</button>
   <button class="btn" onclick="rotateSelection()">Rotate</button>
   <button class="btn" onclick="fitToScreen()">Fit</button>
   <button class="btn" onclick="resetView()">100%</button>
@@ -113,9 +122,9 @@ canvas { display: block; }
   <span id="filePath" style="font-size:11px;color:var(--fg2);font-family:var(--mono);max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title=""></span>
 </div>
 <div class="main">
-  <div class="sidebar" id="sidebar"></div>
+  <div class="sidebar" id="sidebarWrap"><div id="sidebar" style="height:100%;overflow-y:auto"></div><div class="resize-handle-r" onmousedown="startResize(event,'sidebarWrap','right')"></div></div>
   <div class="canvas-wrap" id="canvasWrap"><canvas id="canvas"></canvas></div>
-  <div class="panel" id="panel" style="display:none"></div>
+  <div class="panel" id="panelWrap" style="display:none"><div class="resize-handle-l" onmousedown="startResize(event,'panelWrap','left')"></div><div id="panel" style="height:100%;overflow-y:auto;padding:10px"></div></div>
 </div>
 <div class="sheet-bar" id="sheetBar"></div>
 <div class="statusbar">
@@ -692,7 +701,7 @@ function renderCanvas() {
   ctx.textAlign = 'left'; ctx.textBaseline = 'top';
   ctx.fillText(s.name + (s.description ? ' — ' + s.description : ''), 14, 10);
 
-  const multiIds = selection?.type === 'multi' ? selection.ids : [];
+  const multiIds = selection?.type === 'multi' ? selection.ids : (selection?.highlightIds || []);
   const blocks = getBlocks();
 
   // Layer 1: Block boxes (background — so connections draw on top)
@@ -1339,7 +1348,7 @@ document.addEventListener('click', hideCtxMenu);
    ═══════════════════════════════════════════════════════════ */
 function render() {
   renderFileBar(); renderSidebar(); renderCanvas(); renderSheetBar(); renderStatus();
-  if (selection) renderPanel(); else document.getElementById('panel').style.display = 'none';
+  if (selection) renderPanel(); else document.getElementById('panelWrap').style.display = 'none';
 }
 
 function renderFileBar() {
@@ -1406,14 +1415,16 @@ function renderStatus() {
    ═══════════════════════════════════════════════════════════ */
 function renderPanel() {
   const panel = document.getElementById('panel');
-  panel.style.display = 'block';
-  if (!selection) { panel.style.display = 'none'; return; }
+  const wrap = document.getElementById('panelWrap');
+  wrap.style.display = 'block';
+  if (!selection) { wrap.style.display = 'none'; return; }
   if (selection.type === 'module') renderModulePanel(panel, selection.id);
   else if (selection.type === 'instance') renderInstancePanel(panel, selection.id);
   else if (selection.type === 'connection') renderConnectionPanel(panel, selection.id);
   else if (selection.type === 'sheet') renderSheetPanel(panel);
   else if (selection.type === 'multi') renderMultiPanel(panel);
-  else panel.style.display = 'none';
+  else if (selection.type === 'annotations') renderAnnotationsPanel(panel);
+  else wrap.style.display = 'none';
 }
 
 function renderSheetPanel(panel) {
@@ -1515,6 +1526,105 @@ function deleteMultiSelection() {
   selection = null; render();
 }
 
+/* ═══════════════════════════════════════════════════════════
+   ANNOTATIONS PANEL
+   ═══════════════════════════════════════════════════════════ */
+let activeAnnotation = null; // id of currently viewed annotation
+
+function renderAnnotationsPanel(panel) {
+  const s = sheet();
+  if (!s) return;
+  if (!s.annotations) s.annotations = [];
+  const blocks = getBlocks();
+
+  let h = `<h3><span>Annotations</span><button class="btn btn-sm" onclick="closePanel()">x</button></h3>`;
+
+  if (!s.annotations.length) {
+    h += `<div style="font-size:11px;color:var(--fg3);padding:8px">No annotations yet. Select multiple items and add a group comment.</div>`;
+  }
+
+  for (let ai = 0; ai < s.annotations.length; ai++) {
+    const ann = s.annotations[ai];
+    const isActive = activeAnnotation === ann.id;
+    // Resolve target names
+    const targetNames = ann.targets.map(tid => {
+      const inst = s.instances.find(i => i.id === tid);
+      if (inst) return inst.name;
+      const conn = s.connections.find(c => c.id === tid);
+      if (conn) return resolveEP(connFrom(conn)[0]) + '→...';
+      return tid;
+    });
+
+    h += `<div class="ann-item ${isActive ? 'active' : ''}" onclick="selectAnnotation('${ann.id}')">`;
+    h += `<div class="ann-targets">${targetNames.join(', ')}</div>`;
+    h += `<div class="ann-text">${esc(ann.text || '(empty)')}</div>`;
+    h += `</div>`;
+
+    if (isActive) {
+      h += `<div class="port-section" style="margin-bottom:8px">`;
+      h += `<label>Comment</label>`;
+      h += `<textarea style="width:100%;min-height:80px" onchange="sheet().annotations[${ai}].text=this.value;markDirty();renderCanvas();">${esc(ann.text || '')}</textarea>`;
+      h += `<label>Properties</label>`;
+      h += propsEditorHTML(ann.props || {}, `sheet().annotations[${ai}].props`);
+      h += `<div style="margin-top:6px">`;
+      h += `<button class="btn btn-sm btn-danger" onclick="sheet().annotations.splice(${ai},1);activeAnnotation=null;markDirty();render()">Delete annotation</button>`;
+      h += `</div></div>`;
+    }
+  }
+
+  panel.innerHTML = h;
+}
+
+function selectAnnotation(annId) {
+  const s = sheet();
+  const ann = s.annotations?.find(a => a.id === annId);
+  if (!ann) return;
+
+  if (activeAnnotation === annId) {
+    // Toggle off
+    activeAnnotation = null;
+    selection = { type: 'annotations' };
+  } else {
+    activeAnnotation = annId;
+    // Highlight the annotation's targets on canvas
+    selection = { type: 'annotations', highlightIds: ann.targets };
+  }
+  render();
+}
+
+/* ═══════════════════════════════════════════════════════════
+   RESIZABLE SIDEBAR / PANEL
+   ═══════════════════════════════════════════════════════════ */
+let resizing = null;
+
+function startResize(e, elemId, side) {
+  e.preventDefault();
+  const el = document.getElementById(elemId);
+  const startX = e.clientX;
+  const startW = el.offsetWidth;
+  resizing = { el, side, startX, startW };
+
+  function onMove(e) {
+    if (!resizing) return;
+    const dx = e.clientX - resizing.startX;
+    let newW;
+    if (resizing.side === 'right') newW = resizing.startW + dx;
+    else newW = resizing.startW - dx;
+    newW = Math.max(100, Math.min(600, newW));
+    resizing.el.style.width = newW + 'px';
+    resizeCanvas();
+  }
+
+  function onUp() {
+    resizing = null;
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+  }
+
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onUp);
+}
+
 function renderModulePanel(panel, mid) {
   const m = data.modules[mid];
   if (!m) { panel.style.display = 'none'; return; }
@@ -1612,15 +1722,11 @@ function renderConnectionPanel(panel, cid) {
     h += `</div>`;
   }
 
-  // Custom dim_map editor (only when mapping=custom)
+  // Custom map expression (only when mapping=custom)
   if (mapping === 'custom') {
-    h += `<label>Dim map</label>`;
-    const dm = conn.dim_map || {};
-    h += `<div class="port-section">`;
-    h += `<div class="prop-row"><span style="font-size:10px;color:var(--fg3);flex:0 0 80px">from_shape</span><input value="${esc(JSON.stringify(dm.from_shape || []))}" placeholder="e.g. [4, 2]" onchange="updateDimMap('${cid}','from_shape',this.value)"/></div>`;
-    h += `<div class="prop-row"><span style="font-size:10px;color:var(--fg3);flex:0 0 80px">to_shape</span><input value="${esc(JSON.stringify(dm.to_shape || []))}" placeholder="e.g. [2, 4]" onchange="updateDimMap('${cid}','to_shape',this.value)"/></div>`;
-    h += `<div class="prop-row"><span style="font-size:10px;color:var(--fg3);flex:0 0 80px">map</span><input value="${esc(dm.map || '')}" placeholder="e.g. transpose, reshape, stride(2)" onchange="updateDimMap('${cid}','map',this.value)"/></div>`;
-    h += `</div>`;
+    h += `<label>Map expression</label>`;
+    h += `<textarea style="font-family:var(--mono);font-size:11px;min-height:50px" placeholder="e.g. in[i] -> out[2*i] for(i,0,4)" onchange="updateMapExpr('${cid}',this.value)">${esc(conn.map_expr || '')}</textarea>`;
+    h += `<div style="font-size:9px;color:var(--fg3);margin-top:2px">Syntax: lhs[expr] -> rhs[expr] for(var,start,end) [for(...)]</div>`;
   }
 
   h += `<label>Description</label><textarea onchange="${cp}.description=this.value;markDirty();">${esc(conn.description || '')}</textarea>`;
@@ -1663,21 +1769,18 @@ function setConnMapping(cid, mapping) {
   const conn = sheet().connections.find(c => c.id === cid);
   if (!conn) return;
   conn.mapping = mapping;
-  if (mapping === 'custom' && !conn.dim_map) conn.dim_map = { from_shape: [], to_shape: [], map: '' };
-  if (mapping !== 'custom') delete conn.dim_map;
+  if (mapping === 'custom' && !conn.map_expr) conn.map_expr = '';
+  if (mapping !== 'custom') delete conn.map_expr;
+  // Clean up legacy dim_map if present
+  delete conn.dim_map;
   markDirty(); render();
 }
 
-function updateDimMap(cid, field, value) {
+function updateMapExpr(cid, value) {
   const conn = sheet().connections.find(c => c.id === cid);
   if (!conn) return;
-  if (!conn.dim_map) conn.dim_map = {};
-  if (field === 'map') {
-    conn.dim_map.map = value;
-  } else {
-    try { conn.dim_map[field] = JSON.parse(value); } catch { conn.dim_map[field] = value; }
-  }
-  markDirty(); render();
+  conn.map_expr = value;
+  markDirty();
 }
 
 function computeEndpointShape(eps) {
@@ -1748,14 +1851,19 @@ function resolveEP(ep) {
 function arrayEditorHTML(arr, objPath) {
   const dims = arr || [];
   let h = '<div class="array-input">';
-  for (let i = 0; i < dims.length; i++) { if (i > 0) h += '<span>x</span>'; h += `<input type="number" min="1" value="${dims[i]}" onchange="updateArrayDim(${objPath},${i},parseInt(this.value))"/>`; }
+  for (let i = 0; i < dims.length; i++) { if (i > 0) h += '<span>x</span>'; h += `<input type="text" value="${esc(String(dims[i]))}" style="width:60px" onchange="updateArrayDim(${objPath},${i},this.value)" placeholder="N or VAR"/>`; }
   if (dims.length < 3) h += `<button class="btn btn-sm" onclick="addArrayDim(${objPath})">+dim</button>`;
   if (dims.length > 0) h += `<button class="btn btn-sm btn-danger" onclick="removeArrayDim(${objPath})">-dim</button>`;
   return h + '</div>';
 }
 function addArrayDim(obj) { if (!obj.array) obj.array = []; if (obj.array.length < 3) obj.array.push(2); markDirty(); render(); }
 function removeArrayDim(obj) { if (obj.array?.length > 0) obj.array.pop(); if (obj.array?.length === 0) delete obj.array; markDirty(); render(); }
-function updateArrayDim(obj, idx, val) { if (obj.array && idx < obj.array.length) { obj.array[idx] = Math.max(1, val || 1); markDirty(); render(); } }
+function updateArrayDim(obj, idx, val) {
+  if (!obj.array || idx >= obj.array.length) return;
+  const num = parseInt(val);
+  obj.array[idx] = (!isNaN(num) && String(num) === val.trim()) ? num : val.trim();
+  markDirty(); render();
+}
 
 function propsEditorHTML(props, path) {
   let h = '';
@@ -1778,6 +1886,7 @@ function selectModuleInSidebar(mid) {
 }
 
 function editSheet() { selection = { type: 'sheet' }; render(); }
+function showAnnotations() { selection = { type: 'annotations' }; render(); }
 function closePanel() { selection = null; render(); }
 
 function addModule() {
@@ -1917,10 +2026,14 @@ function addInstRow() {
 function addInstRowBatch() {
   const sel = instModalState.selectedModule;
   if (!sel) return alert('Select a module first');
-  const count = prompt('Array size (e.g. 128, or 4x8 for 2D):', '4');
+  const count = prompt('Array size (e.g. 128, NUM_CORES, 4x8, NxM):', '4');
   if (!count) return;
-  // Parse array dimensions: "128" -> [128], "4x8" -> [4,8], "4x8x2" -> [4,8,2]
-  const dims = count.split(/[x,]/).map(s => parseInt(s.trim())).filter(n => !isNaN(n) && n > 0);
+  // Parse: "128" -> [128], "NUM_CORES" -> ["NUM_CORES"], "4x8" -> [4,8], "NxM" -> ["N","M"]
+  const dims = count.split(/[x,]/).map(s => {
+    const trimmed = s.trim();
+    const num = parseInt(trimmed);
+    return (!isNaN(num) && String(num) === trimmed) ? num : trimmed;
+  }).filter(d => d !== '' && d !== 0);
   if (!dims.length) return alert('Invalid array size');
   const name = 'u_' + sel.name.toLowerCase();
   instModalState.rows.push({ name, moduleRef: sel.id, moduleName: sel.name, array: dims });
