@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """
-HW Architecture Editor Server
-==============================
+HW Architecture Editor Server (multi-file)
+============================================
 - Serves the diagram editor UI at http://localhost:8400
-- REST API to read/write hw_arch.json
-- SSE endpoint so browser auto-refreshes when Claude Code edits the file
+- Manages multiple open JSON files simultaneously
+- REST API for file operations
+- SSE endpoint for live-reload on external file changes
 
 Usage:
-    python hw_editor/server.py                    # default: ./hw_arch.json
-    python hw_editor/server.py path/to/arch.json  # custom path
+    python server.py                         # opens with no file
+    python server.py file1.json file2.json   # opens multiple files
 
 No external dependencies — stdlib only.
 """
@@ -16,74 +17,146 @@ No external dependencies — stdlib only.
 import http.server
 import json
 import os
+import signal
+import subprocess
 import sys
 import time
 import threading
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs
 
-# ── Config ──
-ARCH_FILE = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("hw_arch.json")
 PORT = int(os.environ.get("HW_EDITOR_PORT", 8400))
 EDITOR_DIR = Path(__file__).parent
-POLL_INTERVAL = 0.5  # seconds
+POLL_INTERVAL = 0.5
 
-# ── File watcher state ──
-_last_mtime = 0.0
+# ── Multi-file state ──
 _lock = threading.Lock()
 _sse_clients: list = []
 
+# Each open file: { id, path (Path|None), mtime, data_str }
+_open_files: dict = {}  # id -> file_entry
+_next_id = 1
 
-def get_mtime():
+
+def _new_file_id():
+    global _next_id
+    fid = f"f{_next_id}"
+    _next_id += 1
+    return fid
+
+
+def open_file(filepath: Path) -> dict:
+    """Open a file from disk and register it."""
+    filepath = filepath.resolve()
+    # Check if already open
+    for fid, entry in _open_files.items():
+        if entry["path"] and entry["path"] == filepath:
+            return entry
+    fid = _new_file_id()
     try:
-        return ARCH_FILE.stat().st_mtime
+        data_str = filepath.read_text(encoding="utf-8")
     except FileNotFoundError:
+        data_str = "{}"
+    entry = {
+        "id": fid,
+        "path": filepath,
+        "mtime": _get_mtime(filepath),
+        "name": filepath.name,
+    }
+    _open_files[fid] = entry
+    return entry
+
+
+def create_new_file() -> dict:
+    """Create an unsaved new file."""
+    fid = _new_file_id()
+    entry = {
+        "id": fid,
+        "path": None,
+        "mtime": 0,
+        "name": f"untitled-{fid}.json",
+    }
+    _open_files[fid] = entry
+    return entry
+
+
+def close_file(fid: str):
+    _open_files.pop(fid, None)
+
+
+def _get_mtime(filepath: Path) -> float:
+    try:
+        return filepath.stat().st_mtime
+    except (FileNotFoundError, TypeError):
         return 0.0
 
 
-def read_arch():
+def _read_file(fid: str) -> str:
+    entry = _open_files.get(fid)
+    if not entry or not entry["path"]:
+        return "{}"
     try:
-        return ARCH_FILE.read_text(encoding="utf-8")
+        return entry["path"].read_text(encoding="utf-8")
     except FileNotFoundError:
         return "{}"
 
 
-def write_arch(data: str):
-    global _last_mtime
-    ARCH_FILE.write_text(data, encoding="utf-8")
+def _write_file(fid: str, data_str: str):
+    entry = _open_files.get(fid)
+    if not entry or not entry["path"]:
+        return
+    entry["path"].write_text(data_str, encoding="utf-8")
     with _lock:
-        _last_mtime = get_mtime()
+        entry["mtime"] = _get_mtime(entry["path"])
+
+
+def _save_file_as(fid: str, new_path: Path, data_str: str):
+    new_path = new_path.resolve()
+    new_path.write_text(data_str, encoding="utf-8")
+    entry = _open_files.get(fid)
+    if entry:
+        entry["path"] = new_path
+        entry["name"] = new_path.name
+        with _lock:
+            entry["mtime"] = _get_mtime(new_path)
 
 
 def file_watcher():
-    """Poll for file changes and notify SSE clients."""
-    global _last_mtime
-    _last_mtime = get_mtime()
+    """Poll all open files for external changes."""
     while True:
         time.sleep(POLL_INTERVAL)
-        mt = get_mtime()
+        changed_ids = []
         with _lock:
-            if mt > _last_mtime:
-                _last_mtime = mt
-                dead = []
-                for wfile in _sse_clients:
-                    try:
-                        wfile.write(f"data: changed\n\n".encode())
-                        wfile.flush()
-                    except Exception:
-                        dead.append(wfile)
-                for d in dead:
+            for fid, entry in _open_files.items():
+                if not entry["path"]:
+                    continue
+                mt = _get_mtime(entry["path"])
+                if mt > entry["mtime"]:
+                    entry["mtime"] = mt
+                    changed_ids.append(fid)
+        if changed_ids:
+            msg = json.dumps({"changed": changed_ids})
+            dead = []
+            for wfile in _sse_clients[:]:
+                try:
+                    wfile.write(f"data: {msg}\n\n".encode())
+                    wfile.flush()
+                except Exception:
+                    dead.append(wfile)
+            for d in dead:
+                try:
                     _sse_clients.remove(d)
+                except ValueError:
+                    pass
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
-        # Quieter logging
         sys.stderr.write(f"[hw-editor] {args[0]}\n")
 
     def _cors(self):
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, PUT, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET, PUT, POST, DELETE, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
 
     def _json_response(self, code, obj):
@@ -95,6 +168,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _read_body(self):
+        length = int(self.headers.get("Content-Length", 0))
+        return self.rfile.read(length).decode()
+
     def do_OPTIONS(self):
         self.send_response(204)
         self._cors()
@@ -103,20 +180,88 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         path = urlparse(self.path).path
 
-        # ── API: file info (path) ──
-        if path == "/api/info":
-            self._json_response(200, {"path": str(ARCH_FILE.resolve())})
+        # ── API: browse directories/files for autocomplete ──
+        if path == "/api/browse":
+            qs = parse_qs(urlparse(self.path).query)
+            prefix = qs.get("q", [""])[0]
+            try:
+                p = Path(prefix).expanduser()
+                if prefix.endswith("/") and p.is_dir():
+                    parent = p
+                    partial = ""
+                else:
+                    parent = p.parent
+                    partial = p.name.lower()
+                if not parent.is_dir():
+                    self._json_response(200, {"items": [], "dir": ""})
+                    return
+                items = []
+                for child in sorted(parent.iterdir()):
+                    if child.name.startswith("."):
+                        continue
+                    if partial and not child.name.lower().startswith(partial):
+                        continue
+                    items.append({
+                        "name": child.name,
+                        "path": str(child),
+                        "isDir": child.is_dir(),
+                        "isJson": child.suffix == ".json",
+                    })
+                    if len(items) >= 30:
+                        break
+                # Sort: dirs first, then files
+                items.sort(key=lambda x: (not x["isDir"], x["name"]))
+                self._json_response(200, {"items": items, "dir": str(parent)})
+            except Exception as e:
+                self._json_response(200, {"items": [], "dir": "", "error": str(e)})
             return
 
-        # ── API: read architecture ──
-        if path == "/api/arch":
-            body = read_arch().encode()
+        # ── List open files ──
+        if path == "/api/files":
+            files = []
+            for fid, entry in _open_files.items():
+                files.append({
+                    "id": fid,
+                    "name": entry["name"],
+                    "path": str(entry["path"]) if entry["path"] else None,
+                })
+            self._json_response(200, {"files": files})
+            return
+
+        # ── Read a specific file ──
+        if path.startswith("/api/file/") and path.count("/") == 3:
+            fid = path.split("/")[3]
+            if fid not in _open_files:
+                self._json_response(404, {"error": "File not found"})
+                return
+            body = _read_file(fid).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self._cors()
             self.send_header("Content-Length", len(body))
             self.end_headers()
             self.wfile.write(body)
+            return
+
+        # ── Simplified JSON for a specific file ──
+        if path.startswith("/api/simple/"):
+            fid = path.split("/")[3]
+            if fid not in _open_files:
+                self._json_response(404, {"error": "File not found"})
+                return
+            try:
+                from simplify_json import simplify
+                raw = json.loads(_read_file(fid))
+                result = simplify(raw)
+                body = json.dumps(result, indent=2, ensure_ascii=False).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self._cors()
+                self.send_header("Content-Length", len(body))
+                self.end_headers()
+                self.wfile.write(body)
+            except Exception as e:
+                self._json_response(500, {"error": str(e)})
             return
 
         # ── SSE: file change notifications ──
@@ -127,7 +272,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._cors()
             self.end_headers()
             _sse_clients.append(self.wfile)
-            # Keep connection open
             try:
                 while True:
                     time.sleep(1)
@@ -139,9 +283,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/":
             path = "/index.html"
         fpath = EDITOR_DIR / path.lstrip("/")
-        if fpath.is_file() and EDITOR_DIR in fpath.resolve().parents or fpath.resolve() == (EDITOR_DIR / "index.html").resolve():
+        if fpath.is_file() and (EDITOR_DIR in fpath.resolve().parents or fpath.resolve() == EDITOR_DIR.resolve()):
             ext = fpath.suffix
-            ctypes = {".html": "text/html", ".js": "application/javascript", ".css": "text/css", ".json": "application/json", ".svg": "image/svg+xml"}
+            ctypes = {".html": "text/html", ".js": "application/javascript",
+                      ".css": "text/css", ".json": "application/json", ".svg": "image/svg+xml"}
             body = fpath.read_bytes()
             self.send_response(200)
             self.send_header("Content-Type", ctypes.get(ext, "application/octet-stream"))
@@ -152,138 +297,137 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_response(404)
             self.end_headers()
 
+    def do_POST(self):
+        path = urlparse(self.path).path
+
+        # ── Open a file by server path ──
+        if path == "/api/files/open":
+            body = self._read_body()
+            try:
+                req = json.loads(body)
+                filepath = Path(req["path"]).expanduser().resolve()
+                if not filepath.exists():
+                    self._json_response(404, {"error": f"File not found: {filepath}"})
+                    return
+                entry = open_file(filepath)
+                self._json_response(200, {
+                    "id": entry["id"], "name": entry["name"],
+                    "path": str(entry["path"]),
+                })
+            except Exception as e:
+                self._json_response(400, {"error": str(e)})
+            return
+
+        # ── Create new (unsaved) file ──
+        if path == "/api/files/new":
+            entry = create_new_file()
+            self._json_response(200, {
+                "id": entry["id"], "name": entry["name"], "path": None,
+            })
+            return
+
+        self.send_response(404)
+        self.end_headers()
+
     def do_PUT(self):
         path = urlparse(self.path).path
-        if path == "/api/arch":
-            length = int(self.headers.get("Content-Length", 0))
-            body = self.rfile.read(length).decode()
+
+        # ── Save a specific file ──
+        if path.startswith("/api/file/") and path.count("/") == 3:
+            fid = path.split("/")[3]
+            if fid not in _open_files:
+                self._json_response(404, {"error": "File not found"})
+                return
+            body = self._read_body()
             try:
-                json.loads(body)
-                write_arch(body)
-                self._json_response(200, {"ok": True, "path": str(ARCH_FILE.resolve())})
+                json.loads(body)  # validate JSON
+                _write_file(fid, body)
+                entry = _open_files[fid]
+                self._json_response(200, {
+                    "ok": True,
+                    "path": str(entry["path"]) if entry["path"] else None,
+                })
             except json.JSONDecodeError as e:
                 self._json_response(400, {"error": f"Invalid JSON: {e}"})
-        elif path == "/api/saveas":
-            length = int(self.headers.get("Content-Length", 0))
-            body = self.rfile.read(length).decode()
+            return
+
+        # ── Save As ──
+        if path.startswith("/api/saveas/"):
+            fid = path.split("/")[3]
+            if fid not in _open_files:
+                self._json_response(404, {"error": "File not found"})
+                return
+            body = self._read_body()
             try:
                 req = json.loads(body)
                 new_path = Path(req["path"]).expanduser().resolve()
                 content = json.dumps(req["data"], indent=2)
-                new_path.write_text(content, encoding="utf-8")
-                # Update the active file path
-                global ARCH_FILE, _last_mtime
-                ARCH_FILE = new_path
-                with _lock:
-                    _last_mtime = get_mtime()
-                self._json_response(200, {"ok": True, "path": str(new_path)})
+                _save_file_as(fid, new_path, content)
+                entry = _open_files[fid]
+                self._json_response(200, {
+                    "ok": True, "path": str(new_path), "name": entry["name"],
+                })
             except Exception as e:
                 self._json_response(400, {"error": str(e)})
-        else:
-            self.send_response(404)
-            self.end_headers()
+            return
 
+        self.send_response(404)
+        self.end_headers()
 
-def generate_markdown(data):
-    modules = data.get("modules", {})
-    top = data.get("topModule", "")
-    lines = ["# Hardware Architecture", "", f"Top module: **{modules.get(top, {}).get('name', top)}**", ""]
+    def do_DELETE(self):
+        path = urlparse(self.path).path
 
-    ordered = [top] + [k for k in modules if k != top]
-    for mid in ordered:
-        m = modules.get(mid)
-        if not m:
-            continue
-        lines.append(f"## Module: {m['name']}")
-        lines.append("")
+        # ── Close a file ──
+        if path.startswith("/api/file/") and path.count("/") == 3:
+            fid = path.split("/")[3]
+            close_file(fid)
+            self._json_response(200, {"ok": True})
+            return
 
-        props = m.get("props", {})
-        if props:
-            lines.append("Properties: " + ", ".join(f"`{k}`: {v}" for k, v in props.items()))
-            lines.append("")
-
-        ports = m.get("ports", [])
-        if ports:
-            lines.append("### Ports")
-            lines.append("")
-            lines.append("| Name | Dir | Properties |")
-            lines.append("|------|-----|------------|")
-            for p in ports:
-                pp = ", ".join(f"{k}={v}" for k, v in p.get("props", {}).items()) or "-"
-                lines.append(f"| {p['name']} | {p['dir']} | {pp} |")
-            lines.append("")
-
-        insts = m.get("instances", [])
-        if insts:
-            lines.append("### Instances")
-            lines.append("")
-            lines.append("| Instance | Module | Properties |")
-            lines.append("|----------|--------|------------|")
-            for inst in insts:
-                ref = modules.get(inst["moduleRef"], {}).get("name", inst["moduleRef"])
-                ip = ", ".join(f"{k}={v}" for k, v in inst.get("props", {}).items()) or "-"
-                lines.append(f"| {inst['name']} | {ref} | {ip} |")
-            lines.append("")
-
-        conns = m.get("connections", [])
-        if conns:
-            lines.append("### Connections")
-            lines.append("")
-            lines.append("| From | To | Properties |")
-            lines.append("|------|----|------------|")
-            for c in conns:
-                fl = _resolve_ep(m, c["from"], modules)
-                tl = _resolve_ep(m, c["to"], modules)
-                cp = ", ".join(f"{k}={v}" for k, v in c.get("props", {}).items()) or "-"
-                lines.append(f"| {fl} | {tl} | {cp} |")
-            lines.append("")
-
-    return "\n".join(lines)
-
-
-def _resolve_ep(parent_mod, ep, modules):
-    if ep["inst"] == "self":
-        port = next((p for p in parent_mod["ports"] if p["id"] == ep["port"]), None)
-        return f"self.{port['name'] if port else ep['port']}"
-    inst = next((i for i in parent_mod["instances"] if i["id"] == ep["inst"]), None)
-    if not inst:
-        return f"{ep['inst']}.{ep['port']}"
-    ref = modules.get(inst["moduleRef"], {})
-    port = next((p for p in ref.get("ports", []) if p["id"] == ep["port"]), None)
-    return f"{inst['name']}.{port['name'] if port else ep['port']}"
+        self.send_response(404)
+        self.end_headers()
 
 
 def main():
-    if not ARCH_FILE.exists():
-        print(f"[hw-editor] {ARCH_FILE} not found, creating with example data...")
-        example = {
-            "modules": {
-                "m_top": {
-                    "id": "m_top", "name": "SoC_Top",
-                    "props": {"description": "Top-level SoC", "process": "28nm"},
-                    "ports": [
-                        {"id": "tp1", "name": "uart_pad", "dir": "inout", "props": {"width": 1}},
-                        {"id": "tp2", "name": "ext_irq", "dir": "in", "props": {"width": 4}},
-                    ],
-                    "instances": [], "connections": [],
-                }
-            },
-            "topModule": "m_top",
-        }
-        write_arch(json.dumps(example, indent=2))
+    # Open files passed as CLI arguments
+    for arg in sys.argv[1:]:
+        p = Path(arg)
+        if not p.exists():
+            print(f"[hw-editor] Creating {p}...")
+            p.write_text("{}", encoding="utf-8")
+        entry = open_file(p)
+        print(f"[hw-editor] Opened: {entry['path']} (id={entry['id']})")
 
-    # Start file watcher thread
-    watcher = threading.Thread(target=file_watcher, daemon=True)
-    watcher.start()
+    if not _open_files:
+        # No args — create a default new file
+        entry = create_new_file()
+        print(f"[hw-editor] New untitled file (id={entry['id']})")
 
-    server = http.server.HTTPServer(("0.0.0.0", PORT), Handler)
+    # Start file watcher
+    threading.Thread(target=file_watcher, daemon=True).start()
+
+    # Kill leftover processes on this port
+    try:
+        result = subprocess.run(["lsof", "-ti", f":{PORT}"], capture_output=True, text=True)
+        for pid_str in result.stdout.strip().split("\n"):
+            if pid_str and int(pid_str) != os.getpid():
+                print(f"[hw-editor] Killing leftover process {pid_str} on port {PORT}")
+                os.kill(int(pid_str), signal.SIGTERM)
+        time.sleep(0.3)
+    except Exception:
+        pass
+
+    class Server(http.server.ThreadingHTTPServer):
+        allow_reuse_address = True
+        daemon_threads = True
+
+    server = Server(("0.0.0.0", PORT), Handler)
     print(f"[hw-editor] Serving on http://localhost:{PORT}")
-    print(f"[hw-editor] Architecture file: {ARCH_FILE.resolve()}")
-    print(f"[hw-editor] Claude Code can directly read/write {ARCH_FILE}")
     print(f"[hw-editor] Press Ctrl+C to stop")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
+        server.shutdown()
         print("\n[hw-editor] Stopped.")
 
 

@@ -1,1 +1,21 @@
-{"invalid": true}
+{
+  "sheets": [
+    {
+      "id": "s_sbbaiky",
+      "name": "Sheet 1",
+      "modules": {
+        "m_yma9hvs": {
+          "id": "m_yma9hvs",
+          "name": "NewModule",
+          "description": "",
+          "props": {},
+          "ports": [],
+          "instances": [],
+          "connections": []
+        }
+      },
+      "topModule": "m_yma9hvs"
+    }
+  ],
+  "activeSheet": "s_sbbaiky"
+}

@@ -15,34 +15,23 @@
 }
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { font-family: var(--font); background: var(--bg); color: var(--fg); height: 100vh; display: flex; flex-direction: column; overflow: hidden; font-size: 13px; }
-
-/* Layout */
 .toolbar { display: flex; gap: 6px; padding: 6px 10px; border-bottom: 1px solid var(--brd); align-items: center; flex-wrap: wrap; background: var(--bg2); }
 .main { display: flex; flex: 1; min-height: 0; }
 .statusbar { font-size: 10px; color: var(--fg3); padding: 3px 10px; border-top: 1px solid var(--brd); display: flex; gap: 14px; background: var(--bg2); }
-
-/* Sidebar */
-.sidebar { width: 172px; border-right: 1px solid var(--brd); padding: 8px; overflow-y: auto; flex-shrink: 0; background: var(--bg); }
+.sidebar { width: 180px; border-right: 1px solid var(--brd); padding: 8px; overflow-y: auto; flex-shrink: 0; background: var(--bg); }
 .sidebar h3 { font-size: 12px; font-weight: 600; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center; }
 .mod-item { padding: 5px 8px; border-radius: 6px; cursor: pointer; margin-bottom: 2px; font-size: 12px; border: 1px solid transparent; }
 .mod-item:hover { background: var(--bg2); }
 .mod-item.active { background: #e8f0fe; border-color: var(--blue); color: var(--blue); }
 @media (prefers-color-scheme: dark) { .mod-item.active { background: #1a2a40; } }
 .mod-item .sub { font-size: 10px; color: var(--fg3); }
-.mod-item.is-top { border-color: var(--brd); }
-
-/* Canvas */
 .canvas-wrap { flex: 1; position: relative; overflow: hidden; background: var(--bg); }
 canvas { display: block; }
-
-/* Panel */
 .panel { width: 300px; border-left: 1px solid var(--brd); padding: 10px; overflow-y: auto; flex-shrink: 0; background: var(--bg); font-size: 12px; }
 .panel h3 { font-size: 13px; font-weight: 600; margin-bottom: 8px; display: flex; justify-content: space-between; }
 .panel label { font-size: 10px; font-weight: 600; color: var(--fg2); display: block; margin-top: 8px; margin-bottom: 2px; text-transform: uppercase; letter-spacing: 0.4px; }
 .panel input, .panel select, .panel textarea { width: 100%; padding: 4px 7px; font-size: 12px; font-family: var(--font); border: 1px solid var(--brd); border-radius: 5px; background: var(--bg2); color: var(--fg); outline: none; }
 .panel textarea { resize: vertical; min-height: 40px; font-family: var(--mono); font-size: 11px; }
-
-/* Buttons */
 .btn { padding: 4px 11px; font-size: 12px; font-family: var(--font); border: 1px solid var(--brd); border-radius: 6px; background: var(--bg); color: var(--fg); cursor: pointer; white-space: nowrap; }
 .btn:hover { background: var(--bg2); }
 .btn-sm { padding: 2px 7px; font-size: 10px; border-radius: 4px; }
@@ -53,8 +42,6 @@ canvas { display: block; }
 @media (prefers-color-scheme: dark) { .btn-warn { background: #3a2e10; border-color: #5a4a20; } }
 .sep { width: 1px; height: 20px; background: var(--brd); }
 .spacer { flex: 1; }
-
-/* Props editor */
 .prop-row { display: flex; gap: 3px; margin-bottom: 2px; align-items: center; }
 .prop-row input { flex: 1; }
 .prop-row input:first-child { flex: 0 0 35%; }
@@ -64,8 +51,6 @@ canvas { display: block; }
 .array-input { display: flex; gap: 3px; align-items: center; margin-top: 2px; }
 .array-input input { width: 40px; text-align: center; }
 .array-input span { font-size: 10px; color: var(--fg3); }
-
-/* Sheet tabs */
 .sheet-bar { display: flex; align-items: center; gap: 0; border-top: 1px solid var(--brd); background: var(--bg2); height: 28px; padding: 0 4px; overflow-x: auto; flex-shrink: 0; }
 .sheet-tab { padding: 4px 14px; font-size: 11px; cursor: pointer; border: 1px solid transparent; border-bottom: none; border-radius: 6px 6px 0 0; margin-right: 2px; background: transparent; color: var(--fg2); white-space: nowrap; position: relative; user-select: none; }
 .sheet-tab:hover { background: var(--bg); }
@@ -75,20 +60,31 @@ canvas { display: block; }
 .sheet-tab .close-btn:hover { color: var(--red); }
 .sheet-add { padding: 4px 8px; font-size: 14px; cursor: pointer; color: var(--fg3); background: none; border: none; font-family: var(--font); border-radius: 4px; }
 .sheet-add:hover { background: var(--bg3); color: var(--fg); }
-
-/* Sync indicator */
 .sync-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 4px; }
 .sync-dot.ok { background: var(--green); }
 .sync-dot.changed { background: var(--amber); animation: pulse 1s ease-in-out 3; }
 @keyframes pulse { 50% { opacity: 0.3; } }
-
-/* Context menu */
+.file-bar { display: flex; align-items: center; gap: 0; border-bottom: 1px solid var(--brd); background: var(--bg3); height: 30px; padding: 0 4px; overflow-x: auto; flex-shrink: 0; }
+.file-tab { padding: 4px 12px; font-size: 11px; cursor: pointer; border: 1px solid transparent; border-top: 2px solid transparent; border-bottom: none; border-radius: 0; margin-right: 1px; background: transparent; color: var(--fg3); white-space: nowrap; user-select: none; display: flex; align-items: center; gap: 6px; }
+.file-tab:hover { background: var(--bg2); color: var(--fg2); }
+.file-tab.active { background: var(--bg); color: var(--fg); font-weight: 600; border-top-color: var(--blue); }
+.file-tab.dirty::after { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--amber); flex-shrink: 0; }
+.file-tab .close-btn { font-size: 9px; color: var(--fg3); cursor: pointer; padding: 0 2px; border-radius: 3px; }
+.file-tab .close-btn:hover { color: var(--red); background: var(--bg3); }
+.file-add { padding: 4px 8px; font-size: 14px; cursor: pointer; color: var(--fg3); background: none; border: none; font-family: var(--font); border-radius: 4px; }
+.file-add:hover { background: var(--bg2); color: var(--fg); }
+.autocomplete-wrap { position: relative; }
+.autocomplete-list { position: absolute; top: 100%; left: 0; right: 0; max-height: 180px; overflow-y: auto; background: var(--bg); border: 1px solid var(--brd); border-top: none; border-radius: 0 0 6px 6px; z-index: 10; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
+.autocomplete-item { padding: 6px 10px; font-size: 12px; cursor: pointer; display: flex; justify-content: space-between; }
+.autocomplete-item:hover, .autocomplete-item.active { background: var(--bg2); }
+.autocomplete-item .sub { font-size: 10px; color: var(--fg3); }
+.inst-row { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; padding: 6px 8px; background: var(--bg2); border-radius: 6px; border: 1px solid var(--brd); }
+.inst-row input { font-size: 12px; padding: 3px 6px; border: 1px solid var(--brd); border-radius: 4px; background: var(--bg); color: var(--fg); }
+.inst-row .module-name { font-size: 11px; color: var(--fg2); min-width: 80px; }
 .ctx-menu { position: fixed; background: var(--bg); border: 1px solid var(--brd); border-radius: 8px; padding: 4px 0; z-index: 200; min-width: 160px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
 .ctx-menu div { padding: 5px 14px; font-size: 12px; cursor: pointer; }
 .ctx-menu div:hover { background: var(--bg2); }
 .ctx-menu .ctx-sep { width: auto; height: 1px; margin: 3px 8px; background: var(--brd); cursor: default; }
-
-/* Modal */
 .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center; z-index: 100; }
 .modal { width: 500px; background: var(--bg); border-radius: 12px; padding: 20px; display: flex; flex-direction: column; border: 1px solid var(--brd); }
 .modal h3 { font-size: 15px; margin-bottom: 12px; display: flex; justify-content: space-between; }
@@ -97,11 +93,8 @@ canvas { display: block; }
 </style>
 </head>
 <body>
-
-<!-- Hidden file input for Open -->
 <input type="file" id="fileInput" accept=".json" style="display:none" onchange="handleFileOpen(event)"/>
-
-<!-- Toolbar -->
+<div class="file-bar" id="fileBar"></div>
 <div class="toolbar">
   <button class="btn" onclick="openFile()">Open</button>
   <button class="btn" onclick="saveToServer()">Save</button>
@@ -111,28 +104,21 @@ canvas { display: block; }
   <button class="btn" onclick="addInstance()">+ Instance</button>
   <button class="btn" id="linkBtn" onclick="toggleLink()">Link</button>
   <span class="sep"></span>
-  <button class="btn" onclick="editCurrentModule()">Edit module</button>
+  <button class="btn" onclick="editSheet()">Edit sheet</button>
   <button class="btn" onclick="rotateSelection()">Rotate</button>
   <span class="spacer"></span>
+  <button class="btn btn-green" onclick="copySimpleJson()">Copy for Claude</button>
   <span id="filePath" style="font-size:11px;color:var(--fg2);font-family:var(--mono);max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title=""></span>
 </div>
-
-<!-- Main -->
 <div class="main">
   <div class="sidebar" id="sidebar"></div>
-  <div class="canvas-wrap" id="canvasWrap">
-    <canvas id="canvas"></canvas>
-  </div>
+  <div class="canvas-wrap" id="canvasWrap"><canvas id="canvas"></canvas></div>
   <div class="panel" id="panel" style="display:none"></div>
 </div>
-
-<!-- Sheet tabs -->
 <div class="sheet-bar" id="sheetBar"></div>
-
-<!-- Status bar -->
 <div class="statusbar">
   <span><span class="sync-dot ok" id="syncDot"></span><span id="syncLabel">Synced</span></span>
-  <span id="statViewing">-</span>
+  <span id="statSheet">-</span>
   <span id="statModules">-</span>
   <span id="statInst">-</span>
   <span id="statConn">-</span>
@@ -144,7 +130,12 @@ canvas { display: block; }
   <div class="modal" onclick="event.stopPropagation()">
     <h3><span>Save As</span><button class="btn btn-sm" onclick="closeSaveAs()">x</button></h3>
     <label>File path (server-side)</label>
-    <input id="saveAsPath" placeholder="/path/to/file.json"/>
+    <div class="autocomplete-wrap">
+      <input id="saveAsPath" placeholder="/path/to/file.json" autocomplete="off"
+             oninput="browseFiles('saveAsPath','saveAsList')" onfocus="browseFiles('saveAsPath','saveAsList')"
+             onkeydown="fileInputKeydown(event,'saveAsPath','saveAsList',selectSaveAsItem)"/>
+      <div class="autocomplete-list" id="saveAsList" style="display:none"></div>
+    </div>
     <div style="display:flex;gap:8px;margin-top:14px">
       <button class="btn" style="flex:1" onclick="doSaveAs()">Save to server path</button>
       <button class="btn" style="flex:1" onclick="downloadJson()">Download .json</button>
@@ -152,37 +143,79 @@ canvas { display: block; }
   </div>
 </div>
 
-<!-- Context menu -->
+<!-- Open Server File Modal -->
+<div class="modal-overlay" id="openOverlay" style="display:none" onclick="closeOpenModal()">
+  <div class="modal" onclick="event.stopPropagation()">
+    <h3><span>Open Server File</span><button class="btn btn-sm" onclick="closeOpenModal()">x</button></h3>
+    <label>File path</label>
+    <div class="autocomplete-wrap">
+      <input id="openPath" placeholder="/path/to/file.json" autocomplete="off"
+             oninput="browseFiles('openPath','openList')" onfocus="browseFiles('openPath','openList')"
+             onkeydown="fileInputKeydown(event,'openPath','openList',selectOpenItem)"/>
+      <div class="autocomplete-list" id="openList" style="display:none"></div>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:14px">
+      <button class="btn btn-green" style="flex:1" onclick="doOpenServerFile()">Open</button>
+    </div>
+  </div>
+</div>
+
+<!-- Add Instance Modal -->
+<div class="modal-overlay" id="instOverlay" style="display:none" onclick="closeInstModal()">
+  <div class="modal" onclick="event.stopPropagation()" style="width:540px">
+    <h3><span>Add Instances</span><button class="btn btn-sm" onclick="closeInstModal()">x</button></h3>
+    <label>Module</label>
+    <div class="autocomplete-wrap">
+      <input id="instModuleInput" placeholder="Type to search modules..." autocomplete="off"
+             oninput="filterInstModules()" onfocus="filterInstModules()" onkeydown="instInputKeydown(event)"/>
+      <div class="autocomplete-list" id="instModuleList" style="display:none"></div>
+    </div>
+    <label style="margin-top:12px">Instances to create</label>
+    <div id="instRows" style="max-height:240px;overflow-y:auto"></div>
+    <div style="display:flex;gap:6px;margin-top:6px">
+      <button class="btn btn-sm" onclick="addInstRow()">+ Add one more</button>
+      <button class="btn btn-sm" onclick="addInstRowBatch()">+ Generate batch</button>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:14px">
+      <button class="btn btn-green" style="flex:1" onclick="commitInstances()">Create instances</button>
+    </div>
+  </div>
+</div>
+
 <div class="ctx-menu" id="ctxMenu" style="display:none"></div>
 
 <script>
 /* ═══════════════════════════════════════════════════════════
    DATA MODEL
 
-   Top-level structure:
    {
-     sheets: [
-       { id, name, modules: {}, topModule: "" },
-       ...
+     modules: {                        // Global module library
+       "m_xxx": { id, name, description, props, ports: [{id, name, dir, array, props}] }
+     },
+     sheets: [                         // Drawing pages (canvases)
+       { id, name, description,
+         instances: [{id, name, moduleRef, x, y, w, h, rotation, portPositions, array, props, description}],
+         connections: [{id, from:[{inst,port}], to:[{inst,port}], direction, props, description}],
+         annotations: [{id, targets:[id,...], text, props}]  // group comments on multiple items
+       }
      ],
      activeSheet: "s_xxx"
    }
-
-   Legacy format (no sheets) is auto-migrated on load.
    ═══════════════════════════════════════════════════════════ */
-let data = { sheets: [], activeSheet: "" };
-let serverPath = "";  // current file path on server
 
-// Per-sheet view state
-let viewMod = "";
-let selection = null;
+// Multi-file state
+let openFiles = {};
+let activeFileId = "";
 let clipboard = null;
-let linking = null;
-let dirty = false;
 
-// Interaction
+// Active file aliases
+let data = { modules: {}, sheets: [], activeSheet: "" };
+let dirty = false;
+let selection = null;   // {type:'instance'|'connection'|'module'|'sheet'|'multi', id, ids:[]}
+let linking = null;     // null | {inst, port} | {endpoints: [{inst,port},...]} (for M:N)
 let drag = null;
 let mouse = { x: 0, y: 0 };
+let boxSelect = null;   // {startX, startY} during box selection drag
 
 const uid = () => Math.random().toString(36).slice(2, 9);
 const GRID = 20;
@@ -192,104 +225,81 @@ const HANDLE_SIZE = 8;
 const MIN_BLOCK_W = 80;
 const MIN_BLOCK_H = 60;
 const PCOL = { in: '#2d8cf0', out: '#e6522c', inout: '#8b5cf6' };
-
-let canvas, ctx;
-let W = 800, H = 600;
+let canvas, ctx, W = 800, H = 600;
 
 /* ═══════════════════════════════════════════════════════════
-   SHEET HELPERS
+   ACCESSORS
    ═══════════════════════════════════════════════════════════ */
-function activeSheet() {
+function sheet() {
   return data.sheets.find(s => s.id === data.activeSheet) || data.sheets[0] || null;
 }
 
-function switchSheet(id) {
-  data.activeSheet = id;
-  const sheet = activeSheet();
-  if (sheet) {
-    viewMod = sheet._viewMod || sheet.topModule || Object.keys(sheet.modules)[0] || "";
-  } else {
-    viewMod = "";
-  }
-  selection = null;
-  linking = null;
-  updateLinkBtn();
-  render();
-}
-
-function addSheet() {
-  const id = 's_' + uid();
-  data.sheets.push({ id, name: 'Sheet ' + (data.sheets.length + 1), modules: {}, topModule: "" });
-  switchSheet(id);
-  markDirty();
-}
-
-function deleteSheet(id) {
-  if (data.sheets.length <= 1) return;
-  const idx = data.sheets.findIndex(s => s.id === id);
-  data.sheets.splice(idx, 1);
-  if (data.activeSheet === id) {
-    switchSheet(data.sheets[Math.min(idx, data.sheets.length - 1)].id);
-  }
-  markDirty();
-  render();
-}
-
-function renameSheet(id) {
-  const sheet = data.sheets.find(s => s.id === id);
-  if (!sheet) return;
-  const name = prompt('Sheet name:', sheet.name);
-  if (name !== null && name.trim()) {
-    sheet.name = name.trim();
-    markDirty();
-    render();
-  }
-}
-
-/* ═══════════════════════════════════════════════════════════
-   DATA MIGRATION (legacy -> sheets format)
-   ═══════════════════════════════════════════════════════════ */
-function migrateData(raw) {
-  if (raw.sheets && Array.isArray(raw.sheets)) {
-    // Already new format
-    if (!raw.activeSheet && raw.sheets.length) raw.activeSheet = raw.sheets[0].id;
-    return raw;
-  }
-  // Legacy: { modules: {}, topModule: "" }
-  const id = 's_' + uid();
-  return {
-    sheets: [{
-      id,
-      name: 'Sheet 1',
-      modules: raw.modules || {},
-      topModule: raw.topModule || ""
-    }],
-    activeSheet: id
-  };
-}
-
-/* ═══════════════════════════════════════════════════════════
-   CURRENT SHEET DATA ACCESSORS
-   ═══════════════════════════════════════════════════════════ */
-function curModules() {
-  const s = activeSheet();
-  return s ? s.modules : {};
-}
-
-function curMod() {
-  return curModules()[viewMod] || null;
-}
-
-/* ═══════════════════════════════════════════════════════════
-   ARRAY HELPERS
-   ═══════════════════════════════════════════════════════════ */
 function arrayLabel(arr) {
   if (!arr || arr.length === 0) return "";
   return arr.map(n => `[${n}]`).join("");
 }
 
+// Connection helpers — normalize old {inst,port} to [{inst,port},...] arrays
+function connFrom(c) { return Array.isArray(c.from) ? c.from : [c.from]; }
+function connTo(c) { return Array.isArray(c.to) ? c.to : [c.to]; }
+function connDir(c) { return c.direction || 'forward'; } // forward|reverse|both|none
+
 /* ═══════════════════════════════════════════════════════════
-   PORT POSITION COMPUTATION
+   DATA MIGRATION (old format → new)
+   ═══════════════════════════════════════════════════════════ */
+function migrateData(raw) {
+  // Already new format: top-level modules + sheets with instances
+  if (raw.modules && raw.sheets && Array.isArray(raw.sheets) && !raw.sheets[0]?.modules) {
+    if (!raw.activeSheet && raw.sheets.length) raw.activeSheet = raw.sheets[0].id;
+    return raw;
+  }
+
+  // Old format: sheets with modules inside
+  if (raw.sheets && Array.isArray(raw.sheets) && raw.sheets[0]?.modules) {
+    const allModules = {};
+    const newSheets = [];
+    for (const oldSheet of raw.sheets) {
+      // Collect modules into global library
+      for (const [mid, m] of Object.entries(oldSheet.modules || {})) {
+        allModules[mid] = { id: m.id, name: m.name, description: m.description || '', props: m.props || {}, ports: m.ports || [] };
+      }
+      // Find the "top" module — its instances/connections become the sheet content
+      const topId = oldSheet.topModule || Object.keys(oldSheet.modules || {})[0] || '';
+      const topMod = oldSheet.modules?.[topId];
+      newSheets.push({
+        id: oldSheet.id || 's_' + uid(),
+        name: oldSheet.name || 'Sheet',
+        description: oldSheet.description || '',
+        instances: topMod?.instances || [],
+        connections: topMod?.connections || [],
+      });
+    }
+    return { modules: allModules, sheets: newSheets, activeSheet: raw.activeSheet || newSheets[0]?.id || '' };
+  }
+
+  // Legacy: { modules: {}, topModule: "" } (no sheets at all)
+  if (raw.modules && !raw.sheets) {
+    const allModules = {};
+    for (const [mid, m] of Object.entries(raw.modules)) {
+      allModules[mid] = { id: m.id, name: m.name, description: m.description || '', props: m.props || {}, ports: m.ports || [] };
+    }
+    const topId = raw.topModule || Object.keys(raw.modules)[0] || '';
+    const topMod = raw.modules[topId];
+    const sid = 's_' + uid();
+    return {
+      modules: allModules,
+      sheets: [{ id: sid, name: 'Sheet 1', description: '', instances: topMod?.instances || [], connections: topMod?.connections || [] }],
+      activeSheet: sid
+    };
+  }
+
+  // Empty/invalid
+  const sid = 's_' + uid();
+  return { modules: {}, sheets: [{ id: sid, name: 'Sheet 1', description: '', instances: [], connections: [] }], activeSheet: sid };
+}
+
+/* ═══════════════════════════════════════════════════════════
+   PORT POSITION
    ═══════════════════════════════════════════════════════════ */
 const EDGE_ROTATE = {
   0:   { left: 'left', right: 'right', top: 'top', bottom: 'bottom' },
@@ -299,21 +309,17 @@ const EDGE_ROTATE = {
 };
 
 function defaultEdgeForDir(dir) {
-  if (dir === 'in') return 'left';
-  if (dir === 'out') return 'right';
-  return 'left';
+  return dir === 'out' ? 'right' : 'left';
 }
 
 function getPortPosOnBlock(blk, port, inst) {
   const rot = inst.rotation || 0;
   const pp = inst.portPositions || {};
   let edge, t;
-
   if (pp[port.id]) {
-    edge = pp[port.id].edge;
-    t = pp[port.id].t;
+    edge = pp[port.id].edge; t = pp[port.id].t;
   } else {
-    const ref = curModules()[inst.moduleRef];
+    const ref = data.modules[inst.moduleRef];
     if (!ref) return { x: blk.x, y: blk.y };
     const defEdge = defaultEdgeForDir(port.dir);
     const sameEdge = ref.ports.filter(p => defaultEdgeForDir(p.dir) === defEdge);
@@ -321,8 +327,7 @@ function getPortPosOnBlock(blk, port, inst) {
     t = (idx + 1) / (sameEdge.length + 1);
     edge = defEdge;
   }
-  const rEdge = EDGE_ROTATE[rot][edge];
-  return edgePoint(blk, rEdge, t);
+  return edgePoint(blk, EDGE_ROTATE[rot][edge], t);
 }
 
 function edgePoint(blk, edge, t) {
@@ -336,69 +341,41 @@ function edgePoint(blk, edge, t) {
 
 function nearestEdgePoint(blk, mx, my) {
   const edges = [
-    { edge: 'left',   x: blk.x,         y: clamp(my, blk.y, blk.y + blk.h) },
-    { edge: 'right',  x: blk.x + blk.w, y: clamp(my, blk.y, blk.y + blk.h) },
-    { edge: 'top',    x: clamp(mx, blk.x, blk.x + blk.w), y: blk.y },
+    { edge: 'left', x: blk.x, y: clamp(my, blk.y, blk.y + blk.h) },
+    { edge: 'right', x: blk.x + blk.w, y: clamp(my, blk.y, blk.y + blk.h) },
+    { edge: 'top', x: clamp(mx, blk.x, blk.x + blk.w), y: blk.y },
     { edge: 'bottom', x: clamp(mx, blk.x, blk.x + blk.w), y: blk.y + blk.h },
   ];
   let best = edges[0], bestD = Infinity;
-  for (const e of edges) {
-    const d = Math.hypot(e.x - mx, e.y - my);
-    if (d < bestD) { bestD = d; best = e; }
-  }
-  let t;
-  if (best.edge === 'left' || best.edge === 'right') t = (best.y - blk.y) / blk.h;
-  else t = (best.x - blk.x) / blk.w;
-  t = clamp(t, 0.05, 0.95);
-  return { edge: best.edge, t };
+  for (const e of edges) { const d = Math.hypot(e.x - mx, e.y - my); if (d < bestD) { bestD = d; best = e; } }
+  let t = (best.edge === 'left' || best.edge === 'right') ? (best.y - blk.y) / blk.h : (best.x - blk.x) / blk.w;
+  return { edge: best.edge, t: clamp(t, 0.05, 0.95) };
 }
 
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
-
-function getSelfPortPos(mod, port) {
-  const pp = mod.selfPortPositions || {};
-  if (pp[port.id]) {
-    const { edge, t } = pp[port.id];
-    return edgePoint({ x: 10, y: 10, w: W - 20, h: H - 20 }, edge, t);
-  }
-  const side = port.dir === 'in' ? 'left' : 'right';
-  const sameSide = mod.ports.filter(p => (p.dir === 'in' ? 'left' : 'right') === side);
-  const idx = sameSide.findIndex(p => p.id === port.id);
-  const t = (idx + 1) / (sameSide.length + 1);
-  return edgePoint({ x: 10, y: 10, w: W - 20, h: H - 20 }, side, t);
-}
 
 /* ═══════════════════════════════════════════════════════════
    BLOCK GEOMETRY
    ═══════════════════════════════════════════════════════════ */
 function getBlocks() {
-  const mod = curMod();
-  if (!mod) return [];
-  return mod.instances.map(inst => {
-    const ref = curModules()[inst.moduleRef];
+  const s = sheet();
+  if (!s) return [];
+  return s.instances.map(inst => {
+    const ref = data.modules[inst.moduleRef];
     const ports = ref ? ref.ports : [];
     const leftC = ports.filter(p => defaultEdgeForDir(p.dir) === 'left').length;
     const rightC = ports.filter(p => defaultEdgeForDir(p.dir) === 'right').length;
     const defaultH = Math.max(MIN_BLOCK_H, (Math.max(leftC, rightC) + 1) * 24 + 32);
-    return {
-      id: inst.id, inst, ref, ports,
-      x: inst.x || 80, y: inst.y || 80,
-      w: inst.w || 170, h: inst.h || defaultH,
-    };
+    return { id: inst.id, inst, ref, ports, x: inst.x || 80, y: inst.y || 80, w: inst.w || 170, h: inst.h || defaultH };
   });
 }
 
 function portWorldPos(ep) {
-  const mod = curMod();
-  if (!mod) return null;
-  if (ep.inst === 'self') {
-    const p = mod.ports.find(pp => pp.id === ep.port);
-    if (!p) return null;
-    return getSelfPortPos(mod, p);
-  }
-  const inst = mod.instances.find(i => i.id === ep.inst);
+  const s = sheet();
+  if (!s) return null;
+  const inst = s.instances.find(i => i.id === ep.inst);
   if (!inst) return null;
-  const ref = curModules()[inst.moduleRef];
+  const ref = data.modules[inst.moduleRef];
   if (!ref) return null;
   const port = ref.ports.find(p => p.id === ep.port);
   if (!port) return null;
@@ -407,56 +384,76 @@ function portWorldPos(ep) {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   FILE I/O: SERVER
+   MULTI-FILE MANAGEMENT
    ═══════════════════════════════════════════════════════════ */
-async function fetchServerInfo() {
-  try {
-    const r = await fetch('/api/info');
-    const info = await r.json();
-    serverPath = info.path || '';
-    updatePathDisplay();
-  } catch (e) { console.error("Info fetch failed:", e); }
+function saveViewState() {
+  if (!activeFileId || !openFiles[activeFileId]) return;
+  const f = openFiles[activeFileId];
+  f.data = data; f.dirty = dirty;
 }
 
-function updatePathDisplay() {
-  const el = document.getElementById('filePath');
-  el.textContent = serverPath;
-  el.title = serverPath;
-  document.title = 'HW Editor — ' + (serverPath.split('/').pop() || 'untitled');
+function loadViewState(fid) {
+  const f = openFiles[fid];
+  if (!f) return;
+  activeFileId = fid;
+  data = f.data; dirty = f.dirty;
+  selection = null; linking = null; updateLinkBtn();
 }
 
-async function loadFromServer() {
+function switchFile(fid) {
+  if (fid === activeFileId) return;
+  saveViewState(); loadViewState(fid); updatePathDisplay(); render();
+}
+
+async function loadServerFiles() {
   try {
-    const r = await fetch('/api/arch');
-    const raw = await r.json();
-    data = migrateData(raw);
-    const sheet = activeSheet();
-    if (sheet) {
-      viewMod = sheet.topModule || Object.keys(sheet.modules)[0] || "";
+    const r = await fetch('/api/files');
+    const res = await r.json();
+    for (const sf of res.files) {
+      if (openFiles[sf.id]) continue;
+      const cr = await fetch(`/api/file/${sf.id}`);
+      const raw = await cr.json();
+      const fileData = migrateData(raw);
+      openFiles[sf.id] = { id: sf.id, name: sf.name, path: sf.path, data: fileData, dirty: false };
+      if (!activeFileId) activeFileId = sf.id;
     }
-    dirty = false;
+    if (activeFileId) loadViewState(activeFileId);
     render();
   } catch (e) { console.error("Load failed:", e); }
 }
 
 async function saveToServer() {
+  if (!activeFileId) return;
+  saveViewState();
+  const f = openFiles[activeFileId];
+  if (!f) return;
+  if (!f.path) { showSaveAs(); return; }
   try {
-    const r = await fetch('/api/arch', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data, null, 2)
-    });
+    const r = await fetch(`/api/file/${activeFileId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data, null, 2) });
     const res = await r.json();
-    if (res.path) { serverPath = res.path; updatePathDisplay(); }
-    dirty = false;
-    showSync("ok", "Saved");
+    if (res.path) { f.path = res.path; f.name = res.path.split('/').pop(); }
+    dirty = false; f.dirty = false; showSync("ok", "Saved"); renderFileBar();
   } catch (e) { console.error("Save failed:", e); }
 }
 
 function connectSSE() {
   const es = new EventSource('/api/watch');
-  es.onmessage = () => { showSync("changed", "Reloading..."); loadFromServer(); };
-  es.onerror = () => { setTimeout(connectSSE, 3000); };
+  es.onmessage = (evt) => {
+    try { const msg = JSON.parse(evt.data); for (const fid of (msg.changed || [])) reloadFile(fid); }
+    catch { if (activeFileId) reloadFile(activeFileId); }
+  };
+  es.onerror = () => setTimeout(connectSSE, 3000);
+}
+
+async function reloadFile(fid) {
+  const f = openFiles[fid];
+  if (!f || !f.path) return;
+  try {
+    const r = await fetch(`/api/file/${fid}`);
+    const raw = await r.json();
+    f.data = migrateData(raw); f.dirty = false;
+    if (fid === activeFileId) { data = f.data; dirty = false; showSync("changed", "Reloaded"); render(); }
+  } catch (e) { console.error("Reload failed:", e); }
 }
 
 function showSync(cls, text) {
@@ -464,14 +461,23 @@ function showSync(cls, text) {
   document.getElementById('syncLabel').textContent = text;
 }
 
-function markDirty() { dirty = true; showSync("changed", "Unsaved"); }
+function markDirty() {
+  dirty = true;
+  if (openFiles[activeFileId]) openFiles[activeFileId].dirty = true;
+  showSync("changed", "Unsaved"); renderFileBar();
+}
+
+function updatePathDisplay() {
+  const el = document.getElementById('filePath');
+  const f = openFiles[activeFileId];
+  el.textContent = f?.path || ''; el.title = f?.path || '';
+  document.title = 'HW Editor — ' + (f?.name || 'untitled');
+}
 
 /* ═══════════════════════════════════════════════════════════
-   FILE I/O: OPEN / SAVE AS / DOWNLOAD
+   FILE I/O
    ═══════════════════════════════════════════════════════════ */
-function openFile() {
-  document.getElementById('fileInput').click();
-}
+function openFile() { openServerFile(); }
 
 function handleFileOpen(event) {
   const file = event.target.files[0];
@@ -480,61 +486,150 @@ function handleFileOpen(event) {
   reader.onload = (e) => {
     try {
       const raw = JSON.parse(e.target.result);
-      data = migrateData(raw);
-      const sheet = activeSheet();
-      if (sheet) viewMod = sheet.topModule || Object.keys(sheet.modules)[0] || "";
-      dirty = false;
-      // Show the local file name in path
-      serverPath = '(local) ' + file.name;
-      updatePathDisplay();
-      render();
+      const fileData = migrateData(raw);
+      const fid = 'local_' + uid();
+      openFiles[fid] = { id: fid, name: file.name, path: null, data: fileData, dirty: false };
+      saveViewState(); activeFileId = fid; loadViewState(fid); updatePathDisplay(); render();
       showSync("ok", "Opened: " + file.name);
-    } catch (err) {
-      alert('Invalid JSON: ' + err.message);
-    }
+    } catch (err) { alert('Invalid JSON: ' + err.message); }
   };
-  reader.readAsText(file);
-  event.target.value = '';  // allow re-opening same file
+  reader.readAsText(file); event.target.value = '';
+}
+
+function openServerFile() {
+  document.getElementById('openPath').value = '';
+  document.getElementById('openList').style.display = 'none';
+  document.getElementById('openOverlay').style.display = 'flex';
+  setTimeout(() => document.getElementById('openPath').focus(), 50);
+}
+function closeOpenModal() { document.getElementById('openOverlay').style.display = 'none'; }
+
+async function doOpenServerFile() {
+  const path = document.getElementById('openPath').value.trim();
+  if (!path) return alert('Enter a file path');
+  try {
+    const r = await fetch('/api/files/open', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path }) });
+    const res = await r.json();
+    if (res.error) return alert(res.error);
+    const cr = await fetch(`/api/file/${res.id}`);
+    const raw = await cr.json();
+    openFiles[res.id] = { id: res.id, name: res.name, path: res.path, data: migrateData(raw), dirty: false };
+    saveViewState(); closeOpenModal(); switchFile(res.id); showSync("ok", "Opened: " + res.name);
+  } catch (e) { alert('Open failed: ' + e.message); }
+}
+
+async function newFile() {
+  try {
+    const r = await fetch('/api/files/new', { method: 'POST' });
+    const res = await r.json();
+    const sid = 's_' + uid();
+    openFiles[res.id] = { id: res.id, name: res.name, path: null, data: { modules: {}, sheets: [{ id: sid, name: 'Sheet 1', description: '', instances: [], connections: [] }], activeSheet: sid }, dirty: false };
+    saveViewState(); switchFile(res.id);
+  } catch (e) { alert('New file failed: ' + e.message); }
+}
+
+async function closeFile(fid) {
+  const f = openFiles[fid];
+  if (!f) return;
+  if (f.dirty && !confirm(`"${f.name}" has unsaved changes. Close anyway?`)) return;
+  if (!fid.startsWith('local_')) { try { await fetch(`/api/file/${fid}`, { method: 'DELETE' }); } catch {} }
+  delete openFiles[fid];
+  if (activeFileId === fid) {
+    const rem = Object.keys(openFiles);
+    if (rem.length) switchFile(rem[0]);
+    else { activeFileId = ''; data = { modules: {}, sheets: [], activeSheet: '' }; dirty = false; render(); }
+  }
+  renderFileBar();
 }
 
 function showSaveAs() {
-  document.getElementById('saveAsPath').value = serverPath.startsWith('(local)') ? '' : serverPath;
+  const f = openFiles[activeFileId];
+  document.getElementById('saveAsPath').value = f?.path || '';
   document.getElementById('saveAsOverlay').style.display = 'flex';
 }
-
-function closeSaveAs() {
-  document.getElementById('saveAsOverlay').style.display = 'none';
-}
+function closeSaveAs() { document.getElementById('saveAsOverlay').style.display = 'none'; }
 
 async function doSaveAs() {
   const path = document.getElementById('saveAsPath').value.trim();
   if (!path) return alert('Enter a file path');
+  saveViewState();
   try {
-    const r = await fetch('/api/saveas', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ path, data })
-    });
+    const r = await fetch(`/api/saveas/${activeFileId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path, data }) });
     const res = await r.json();
     if (res.error) return alert('Error: ' + res.error);
-    serverPath = res.path;
-    updatePathDisplay();
-    dirty = false;
-    closeSaveAs();
-    showSync("ok", "Saved to " + res.path);
+    const f = openFiles[activeFileId];
+    if (f) { f.path = res.path; f.name = res.name; f.dirty = false; }
+    dirty = false; closeSaveAs(); updatePathDisplay(); showSync("ok", "Saved"); renderFileBar();
   } catch (e) { alert('Save failed: ' + e.message); }
 }
 
 function downloadJson() {
+  const f = openFiles[activeFileId];
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = (serverPath.split('/').pop() || 'hw_arch') + (serverPath.endsWith('.json') ? '' : '.json');
-  a.click();
-  URL.revokeObjectURL(url);
-  closeSaveAs();
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+  a.download = f?.name || 'hw_arch.json'; a.click(); URL.revokeObjectURL(a.href); closeSaveAs();
 }
+
+/* ═══════════════════════════════════════════════════════════
+   FILE PATH AUTOCOMPLETE
+   ═══════════════════════════════════════════════════════════ */
+let _browseTimer = null, _browseAcIndex = -1;
+
+function browseFiles(inputId, listId) {
+  clearTimeout(_browseTimer); _browseAcIndex = -1;
+  _browseTimer = setTimeout(async () => {
+    const input = document.getElementById(inputId), list = document.getElementById(listId);
+    const q = input.value;
+    if (!q) { list.style.display = 'none'; return; }
+    try {
+      const r = await fetch('/api/browse?q=' + encodeURIComponent(q));
+      const res = await r.json();
+      const items = res.items || [];
+      if (!items.length) { list.style.display = 'none'; return; }
+      let h = '';
+      items.forEach((item, i) => {
+        const cls = item.isDir ? 'color:var(--blue)' : (item.isJson ? 'color:var(--green)' : '');
+        h += `<div class="autocomplete-item" data-idx="${i}" data-path="${esc(item.path)}" data-isdir="${item.isDir}" style="${cls}"><span>${item.isDir ? '/' : ''}${esc(item.name)}</span><span class="sub">${item.isDir ? 'dir' : ''}</span></div>`;
+      });
+      list.innerHTML = h; list.style.display = 'block';
+      list.querySelectorAll('.autocomplete-item').forEach(el => {
+        el.addEventListener('click', () => {
+          const isDir = el.dataset.isdir === 'true';
+          input.value = isDir ? el.dataset.path + '/' : el.dataset.path;
+          list.style.display = 'none';
+          if (isDir) setTimeout(() => browseFiles(inputId, listId), 50);
+          input.focus();
+        });
+      });
+    } catch (e) { console.error('Browse failed:', e); }
+  }, 150);
+}
+
+function fileInputKeydown(e, inputId, listId, selectFn) {
+  const list = document.getElementById(listId), items = list.querySelectorAll('.autocomplete-item');
+  if (!items.length && e.key !== 'Enter') return;
+  if (e.key === 'ArrowDown') { e.preventDefault(); _browseAcIndex = Math.min(_browseAcIndex + 1, items.length - 1); items.forEach((el, i) => el.classList.toggle('active', i === _browseAcIndex)); }
+  else if (e.key === 'ArrowUp') { e.preventDefault(); _browseAcIndex = Math.max(_browseAcIndex - 1, 0); items.forEach((el, i) => el.classList.toggle('active', i === _browseAcIndex)); }
+  else if (e.key === 'Tab' && items.length) {
+    e.preventDefault(); const el = items[_browseAcIndex >= 0 ? _browseAcIndex : 0]; const isDir = el.dataset.isdir === 'true';
+    document.getElementById(inputId).value = isDir ? el.dataset.path + '/' : el.dataset.path;
+    list.style.display = 'none'; _browseAcIndex = -1;
+    if (isDir) setTimeout(() => browseFiles(inputId, listId), 50);
+  }
+  else if (e.key === 'Enter') {
+    e.preventDefault();
+    if (_browseAcIndex >= 0 && _browseAcIndex < items.length) {
+      const el = items[_browseAcIndex]; const isDir = el.dataset.isdir === 'true';
+      document.getElementById(inputId).value = isDir ? el.dataset.path + '/' : el.dataset.path;
+      list.style.display = 'none'; _browseAcIndex = -1;
+      if (isDir) setTimeout(() => browseFiles(inputId, listId), 50);
+    } else { list.style.display = 'none'; if (selectFn) selectFn(); }
+  }
+  else if (e.key === 'Escape') { list.style.display = 'none'; _browseAcIndex = -1; }
+}
+
+function selectSaveAsItem() { doSaveAs(); }
+function selectOpenItem() { doOpenServerFile(); }
 
 /* ═══════════════════════════════════════════════════════════
    CANVAS RENDERING
@@ -549,185 +644,231 @@ function initCanvas() {
 function resizeCanvas() {
   const wrap = document.getElementById('canvasWrap');
   const dpr = window.devicePixelRatio || 1;
-  W = wrap.clientWidth;
-  H = wrap.clientHeight;
-  canvas.width = W * dpr;
-  canvas.height = H * dpr;
-  canvas.style.width = W + 'px';
-  canvas.style.height = H + 'px';
+  W = wrap.clientWidth; H = wrap.clientHeight;
+  canvas.width = W * dpr; canvas.height = H * dpr;
+  canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   renderCanvas();
 }
 
 function renderCanvas() {
   if (!ctx) return;
-  const mod = curMod();
-
+  const s = sheet();
   ctx.clearRect(0, 0, W, H);
 
   // Grid
-  ctx.strokeStyle = getCSS('--brd');
-  ctx.lineWidth = 0.3;
+  ctx.strokeStyle = getCSS('--brd'); ctx.lineWidth = 0.3;
   for (let x = 0; x < W; x += GRID) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); }
   for (let y = 0; y < H; y += GRID) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
 
-  if (!mod) {
-    ctx.fillStyle = getCSS('--fg3');
-    ctx.font = '14px ' + getCSS('--font');
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('No module selected — create one with "+ Module"', W / 2, H / 2);
+  if (!s) {
+    ctx.fillStyle = getCSS('--fg3'); ctx.font = '14px ' + getCSS('--font');
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('No sheet — create one with the + tab below', W / 2, H / 2);
     return;
   }
 
-  // Module boundary
-  ctx.strokeStyle = getCSS('--brd');
-  ctx.lineWidth = 1;
-  ctx.setLineDash([6, 3]);
-  roundRect(ctx, 4, 4, W - 8, H - 8, 12);
-  ctx.stroke();
-  ctx.setLineDash([]);
+  // Sheet name
+  ctx.fillStyle = getCSS('--fg2'); ctx.font = '600 11px ' + getCSS('--font');
+  ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+  ctx.fillText(s.name + (s.description ? ' — ' + s.description : ''), 14, 10);
 
-  ctx.fillStyle = getCSS('--fg2');
-  ctx.font = '600 11px ' + getCSS('--font');
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'top';
-  ctx.fillText(mod.name, 14, 10);
-
-  // Self ports
-  for (const p of mod.ports) {
-    const pos = getSelfPortPos(mod, p);
-    drawPort(pos.x, pos.y, p, p.dir === 'in' ? 'right' : 'left', false);
-  }
-
-  // Connections
-  for (const c of mod.connections) {
-    const fp = portWorldPos(c.from);
-    const tp = portWorldPos(c.to);
-    if (!fp || !tp) continue;
-    const isSel = selection?.type === 'connection' && selection.id === c.id;
-    drawConnection(fp, tp, isSel, c.props);
+  // Connections (M:N)
+  const multiIds = selection?.type === 'multi' ? selection.ids : [];
+  for (const c of s.connections) {
+    const isSel = (selection?.type === 'connection' && selection.id === c.id) || multiIds.includes(c.id);
+    const froms = connFrom(c).map(ep => portWorldPos(ep)).filter(Boolean);
+    const tos = connTo(c).map(ep => portWorldPos(ep)).filter(Boolean);
+    if (froms.length && tos.length) drawConnectionMN(froms, tos, isSel, c.props, connDir(c));
   }
 
   // Link preview
   if (linking) {
     const fp = portWorldPos(linking);
-    if (fp) {
-      ctx.strokeStyle = getCSS('--amber');
-      ctx.lineWidth = 1.5;
-      ctx.setLineDash([4, 3]);
-      ctx.beginPath(); ctx.moveTo(fp.x, fp.y); ctx.lineTo(mouse.x, mouse.y); ctx.stroke();
+    if (fp) { ctx.strokeStyle = getCSS('--amber'); ctx.lineWidth = 1.5; ctx.setLineDash([4, 3]); ctx.beginPath(); ctx.moveTo(fp.x, fp.y); ctx.lineTo(mouse.x, mouse.y); ctx.stroke(); ctx.setLineDash([]); }
+  }
+
+  // Blocks
+  const blocks = getBlocks();
+  for (const blk of blocks) drawBlock(blk, multiIds.includes(blk.id));
+
+  // Annotations (group comments) — draw markers on annotated items
+  if (s.annotations) {
+    for (const ann of s.annotations) {
+      if (!ann.text) continue;
+      const positions = [];
+      for (const tid of ann.targets) {
+        const blk = blocks.find(b => b.id === tid);
+        if (blk) { positions.push({ x: blk.x + blk.w / 2, y: blk.y - 8 }); continue; }
+        // Check if target is a connection
+        const conn = s.connections.find(c => c.id === tid);
+        if (conn) {
+          const pts = [...connFrom(conn), ...connTo(conn)].map(ep => portWorldPos(ep)).filter(Boolean);
+          if (pts.length) { const ax = pts.reduce((s, p) => s + p.x, 0) / pts.length; const ay = pts.reduce((s, p) => s + p.y, 0) / pts.length; positions.push({ x: ax, y: ay - 8 }); }
+        }
+      }
+      if (!positions.length) continue;
+      // Draw a small note icon at the center of all targets
+      const cx = positions.reduce((s, p) => s + p.x, 0) / positions.length;
+      const cy = positions.reduce((s, p) => s + p.y, 0) / positions.length - 10;
+      ctx.fillStyle = getCSS('--amber'); ctx.globalAlpha = 0.9;
+      ctx.fillRect(cx - 6, cy - 6, 12, 12);
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = getCSS('--bg'); ctx.font = '700 9px ' + getCSS('--font'); ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('N', cx, cy);
+      // Draw lines from icon to each target
+      ctx.strokeStyle = getCSS('--amber'); ctx.lineWidth = 0.5; ctx.setLineDash([2, 2]);
+      for (const pos of positions) { ctx.beginPath(); ctx.moveTo(cx, cy + 6); ctx.lineTo(pos.x, pos.y); ctx.stroke(); }
       ctx.setLineDash([]);
     }
   }
 
-  // Instance blocks
-  for (const blk of getBlocks()) drawBlock(blk);
+  // Box selection rectangle
+  if (boxSelect) {
+    const bx = Math.min(boxSelect.startX, mouse.x), by = Math.min(boxSelect.startY, mouse.y);
+    const bw = Math.abs(mouse.x - boxSelect.startX), bh = Math.abs(mouse.y - boxSelect.startY);
+    ctx.strokeStyle = getCSS('--blue'); ctx.lineWidth = 1; ctx.setLineDash([4, 2]);
+    ctx.fillStyle = 'rgba(45,140,240,0.08)';
+    ctx.fillRect(bx, by, bw, bh); ctx.strokeRect(bx, by, bw, bh);
+    ctx.setLineDash([]);
+  }
 }
 
-function drawBlock(blk) {
-  const isSel = selection?.type === 'instance' && selection.id === blk.id;
+function drawBlock(blk, multiSel) {
+  const isSel = multiSel || (selection?.type === 'instance' && selection.id === blk.id);
   const rot = blk.inst.rotation || 0;
 
-  ctx.fillStyle = getCSS('--bg');
-  ctx.strokeStyle = isSel ? getCSS('--blue') : getCSS('--brd');
+  ctx.fillStyle = getCSS('--bg'); ctx.strokeStyle = isSel ? getCSS('--blue') : getCSS('--brd');
   ctx.lineWidth = isSel ? 2 : 1;
-  roundRect(ctx, blk.x, blk.y, blk.w, blk.h, 6);
-  ctx.fill(); ctx.stroke();
+  roundRect(ctx, blk.x, blk.y, blk.w, blk.h, 6); ctx.fill(); ctx.stroke();
 
-  ctx.fillStyle = getCSS('--fg');
-  ctx.font = '600 12px ' + getCSS('--font');
+  ctx.fillStyle = getCSS('--fg'); ctx.font = '600 12px ' + getCSS('--font');
   ctx.textAlign = 'center'; ctx.textBaseline = 'top';
   ctx.fillText(blk.inst.name + arrayLabel(blk.inst.array), blk.x + blk.w / 2, blk.y + 6);
 
-  ctx.fillStyle = getCSS('--fg3');
-  ctx.font = '9px ' + getCSS('--font');
+  ctx.fillStyle = getCSS('--fg3'); ctx.font = '9px ' + getCSS('--font');
   ctx.fillText('(' + (blk.ref?.name || '?') + ')', blk.x + blk.w / 2, blk.y + 21);
 
-  if (rot !== 0) {
-    ctx.fillStyle = getCSS('--fg3');
-    ctx.font = '8px ' + getCSS('--font');
-    ctx.textAlign = 'right';
-    ctx.fillText(rot + '\u00b0', blk.x + blk.w - 4, blk.y + 12);
-  }
+  if (rot) { ctx.fillStyle = getCSS('--fg3'); ctx.font = '8px ' + getCSS('--font'); ctx.textAlign = 'right'; ctx.fillText(rot + '\u00b0', blk.x + blk.w - 4, blk.y + 12); }
 
   for (const port of blk.ports) {
     const pos = getPortPosOnBlock(blk, port, blk.inst);
-    let labelSide;
-    if (Math.abs(pos.x - blk.x) < 1) labelSide = 'right';
-    else if (Math.abs(pos.x - (blk.x + blk.w)) < 1) labelSide = 'left';
-    else if (Math.abs(pos.y - blk.y) < 1) labelSide = 'below';
-    else labelSide = 'above';
-    drawPort(pos.x, pos.y, port, labelSide, false);
+    let ls;
+    if (Math.abs(pos.x - blk.x) < 1) ls = 'right';
+    else if (Math.abs(pos.x - (blk.x + blk.w)) < 1) ls = 'left';
+    else if (Math.abs(pos.y - blk.y) < 1) ls = 'below';
+    else ls = 'above';
+    drawPort(pos.x, pos.y, port, ls);
   }
-
   if (isSel) drawResizeHandles(blk);
 }
 
-function drawPort(x, y, port, labelSide, highlight) {
+function drawPort(x, y, port, labelSide) {
   const col = PCOL[port.dir] || '#888';
-  ctx.beginPath(); ctx.arc(x, y, highlight ? 7 : PORT_R, 0, Math.PI * 2);
-  ctx.fillStyle = col; ctx.fill();
+  ctx.beginPath(); ctx.arc(x, y, PORT_R, 0, Math.PI * 2); ctx.fillStyle = col; ctx.fill();
   ctx.strokeStyle = getCSS('--bg'); ctx.lineWidth = 1.5; ctx.stroke();
-
   const label = port.name + arrayLabel(port.array);
-  ctx.fillStyle = col;
-  ctx.font = '9px ' + getCSS('--mono');
-  ctx.textBaseline = 'middle';
+  ctx.fillStyle = col; ctx.font = '9px ' + getCSS('--mono'); ctx.textBaseline = 'middle';
   if (labelSide === 'right') { ctx.textAlign = 'left'; ctx.fillText(label, x + 8, y); }
   else if (labelSide === 'left') { ctx.textAlign = 'right'; ctx.fillText(label, x - 8, y); }
   else if (labelSide === 'below') { ctx.textAlign = 'center'; ctx.fillText(label, x, y + 12); }
   else { ctx.textAlign = 'center'; ctx.fillText(label, x, y - 12); }
 }
 
-function drawConnection(fp, tp, isSel, props) {
+function drawConnectionMN(froms, tos, isSel, props, dir) {
   const col = isSel ? getCSS('--blue') : getCSS('--fg3');
-  const mx = (fp.x + tp.x) / 2;
-  ctx.beginPath(); ctx.moveTo(fp.x, fp.y); ctx.bezierCurveTo(mx, fp.y, mx, tp.y, tp.x, tp.y);
-  ctx.strokeStyle = col; ctx.lineWidth = isSel ? 2.5 : 1.5; ctx.stroke();
+  const lw = isSel ? 2.5 : 1.5;
+  const isBus = froms.length > 1 || tos.length > 1;
 
-  // Arrowhead
-  const angle = Math.atan2(tp.y - tp.y, tp.x - mx);
-  const sz = 8;
-  ctx.beginPath();
-  ctx.moveTo(tp.x, tp.y);
-  ctx.lineTo(tp.x - sz * Math.cos(angle - 0.4), tp.y - sz * Math.sin(angle - 0.4));
-  ctx.moveTo(tp.x, tp.y);
-  ctx.lineTo(tp.x - sz * Math.cos(angle + 0.4), tp.y - sz * Math.sin(angle + 0.4));
-  ctx.strokeStyle = col; ctx.lineWidth = 1.5; ctx.stroke();
+  // For M:N, draw through a midpoint hub
+  if (isBus) {
+    const avgFx = froms.reduce((s, p) => s + p.x, 0) / froms.length;
+    const avgFy = froms.reduce((s, p) => s + p.y, 0) / froms.length;
+    const avgTx = tos.reduce((s, p) => s + p.x, 0) / tos.length;
+    const avgTy = tos.reduce((s, p) => s + p.y, 0) / tos.length;
+    const hubX = (avgFx + avgTx) / 2, hubY = (avgFy + avgTy) / 2;
 
-  const pv = Object.values(props || {});
-  if (pv.length) {
+    // Draw lines from each source to hub
+    for (const fp of froms) { drawBezierLine(fp.x, fp.y, hubX, hubY, col, lw); if (dir === 'reverse' || dir === 'both') drawArrowAtStart(fp.x, fp.y, hubX, hubY, col); }
+    // Draw lines from hub to each target
+    for (const tp of tos) { drawBezierLine(hubX, hubY, tp.x, tp.y, col, lw); if (dir === 'forward' || dir === 'both') drawArrowAtEnd(hubX, hubY, tp.x, tp.y, col); }
+    // Hub dot
+    ctx.beginPath(); ctx.arc(hubX, hubY, 4, 0, Math.PI * 2);
+    ctx.fillStyle = col; ctx.fill();
+    // Label
+    const pv = Object.values(props || {});
+    const label = (froms.length + ':' + tos.length) + (pv.length ? ' ' + pv.join(', ') : '');
     ctx.fillStyle = getCSS('--fg3'); ctx.font = '9px ' + getCSS('--font');
     ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-    ctx.fillText(pv.join(', '), mx, (fp.y + tp.y) / 2 - 4);
+    ctx.fillText(label, hubX, hubY - 8);
+  } else {
+    // Simple 1:1 connection
+    const fp = froms[0], tp = tos[0];
+    const mx = (fp.x + tp.x) / 2;
+    drawBezierLine(fp.x, fp.y, tp.x, tp.y, col, lw);
+    if (dir === 'forward' || dir === 'both') drawArrowAtEnd(fp.x, fp.y, tp.x, tp.y, col);
+    if (dir === 'reverse' || dir === 'both') drawArrowAtStart(fp.x, fp.y, tp.x, tp.y, col);
+    const pv = Object.values(props || {});
+    if (pv.length) { ctx.fillStyle = getCSS('--fg3'); ctx.font = '9px ' + getCSS('--font'); ctx.textAlign = 'center'; ctx.textBaseline = 'bottom'; ctx.fillText(pv.join(', '), mx, (fp.y + tp.y) / 2 - 4); }
   }
 }
 
+function drawBezierLine(x1, y1, x2, y2, col, lw) {
+  const mx = (x1 + x2) / 2;
+  ctx.beginPath(); ctx.moveTo(x1, y1); ctx.bezierCurveTo(mx, y1, mx, y2, x2, y2);
+  ctx.strokeStyle = col; ctx.lineWidth = lw; ctx.stroke();
+}
+
+// Sample a point on the cubic bezier at parameter t
+function bezierPoint(x1, y1, x2, y2, t) {
+  const mx = (x1 + x2) / 2;
+  const it = 1 - t;
+  return {
+    x: it*it*it*x1 + 3*it*it*t*mx + 3*it*t*t*mx + t*t*t*x2,
+    y: it*it*it*y1 + 3*it*it*t*y1 + 3*it*t*t*y2 + t*t*t*y2,
+  };
+}
+
+function drawArrowAtEnd(x1, y1, x2, y2, col) {
+  // Pull back from the endpoint so arrow doesn't overlap the port circle
+  const near = bezierPoint(x1, y1, x2, y2, 0.85);
+  const tip = bezierPoint(x1, y1, x2, y2, 0.92);
+  drawArrowHead(tip.x, tip.y, near.x, near.y, col);
+}
+
+function drawArrowAtStart(x1, y1, x2, y2, col) {
+  const near = bezierPoint(x1, y1, x2, y2, 0.15);
+  const tip = bezierPoint(x1, y1, x2, y2, 0.08);
+  drawArrowHead(tip.x, tip.y, near.x, near.y, col);
+}
+
+function drawArrowHead(tipX, tipY, fromX, fromY, col) {
+  const angle = Math.atan2(tipY - fromY, tipX - fromX);
+  const sz = 12; const half = 0.35;
+  ctx.beginPath();
+  ctx.moveTo(tipX, tipY);
+  ctx.lineTo(tipX - sz * Math.cos(angle - half), tipY - sz * Math.sin(angle - half));
+  ctx.lineTo(tipX - sz * 0.6 * Math.cos(angle), tipY - sz * 0.6 * Math.sin(angle));
+  ctx.lineTo(tipX - sz * Math.cos(angle + half), tipY - sz * Math.sin(angle + half));
+  ctx.closePath();
+  ctx.fillStyle = col; ctx.fill();
+}
+
 function drawResizeHandles(blk) {
-  const hs = HANDLE_SIZE;
-  ctx.fillStyle = getCSS('--blue');
-  const corners = [
-    [blk.x, blk.y], [blk.x + blk.w, blk.y],
-    [blk.x, blk.y + blk.h], [blk.x + blk.w, blk.y + blk.h],
-  ];
-  for (const [cx, cy] of corners) ctx.fillRect(cx - hs / 2, cy - hs / 2, hs, hs);
+  const hs = HANDLE_SIZE; ctx.fillStyle = getCSS('--blue');
+  for (const [cx, cy] of [[blk.x, blk.y], [blk.x + blk.w, blk.y], [blk.x, blk.y + blk.h], [blk.x + blk.w, blk.y + blk.h]])
+    ctx.fillRect(cx - hs / 2, cy - hs / 2, hs, hs);
   ctx.globalAlpha = 0.5;
-  const mids = [
-    [blk.x + blk.w / 2, blk.y], [blk.x + blk.w / 2, blk.y + blk.h],
-    [blk.x, blk.y + blk.h / 2], [blk.x + blk.w, blk.y + blk.h / 2],
-  ];
-  for (const [cx, cy] of mids) ctx.fillRect(cx - hs / 2, cy - hs / 2, hs, hs);
+  for (const [cx, cy] of [[blk.x + blk.w / 2, blk.y], [blk.x + blk.w / 2, blk.y + blk.h], [blk.x, blk.y + blk.h / 2], [blk.x + blk.w, blk.y + blk.h / 2]])
+    ctx.fillRect(cx - hs / 2, cy - hs / 2, hs, hs);
   ctx.globalAlpha = 1;
 }
 
 function roundRect(ctx, x, y, w, h, r) {
-  ctx.beginPath();
-  ctx.moveTo(x + r, y); ctx.lineTo(x + w - r, y); ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.beginPath(); ctx.moveTo(x + r, y); ctx.lineTo(x + w - r, y); ctx.quadraticCurveTo(x + w, y, x + w, y + r);
   ctx.lineTo(x + w, y + h - r); ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
   ctx.lineTo(x + r, y + h); ctx.quadraticCurveTo(x, y + h, x, y + h - r);
-  ctx.lineTo(x, y + r); ctx.quadraticCurveTo(x, y, x + r, y);
-  ctx.closePath();
+  ctx.lineTo(x, y + r); ctx.quadraticCurveTo(x, y, x + r, y); ctx.closePath();
 }
 
 function getCSS(v) { return getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
@@ -736,16 +877,13 @@ function getCSS(v) { return getComputedStyle(document.documentElement).getProper
    HIT TESTING
    ═══════════════════════════════════════════════════════════ */
 function hitTest(mx, my) {
-  const mod = curMod();
-  if (!mod) return null;
+  const s = sheet();
+  if (!s) return null;
   const blocks = getBlocks();
 
   if (selection?.type === 'instance') {
     const blk = blocks.find(b => b.id === selection.id);
-    if (blk) {
-      const handle = hitResizeHandle(blk, mx, my);
-      if (handle) return { type: 'resize-handle', blkId: blk.id, handle };
-    }
+    if (blk) { const h = hitResizeHandle(blk, mx, my); if (h) return { type: 'resize-handle', blkId: blk.id, handle: h }; }
   }
 
   for (const blk of blocks) {
@@ -755,176 +893,209 @@ function hitTest(mx, my) {
     }
   }
 
-  for (const p of mod.ports) {
-    const pos = getSelfPortPos(mod, p);
-    if (Math.hypot(pos.x - mx, pos.y - my) < 10) return { type: 'port', instId: 'self', portId: p.id };
-  }
-
-  for (const c of mod.connections) {
-    const fp = portWorldPos(c.from); const tp = portWorldPos(c.to);
-    if (!fp || !tp) continue;
-    if (distToBezier(mx, my, fp, tp) < 8) return { type: 'connection', id: c.id };
+  for (const c of s.connections) {
+    const froms = connFrom(c).map(ep => portWorldPos(ep)).filter(Boolean);
+    const tos = connTo(c).map(ep => portWorldPos(ep)).filter(Boolean);
+    for (const fp of froms) { for (const tp of tos) { if (distToBezier(mx, my, fp, tp) < 8) return { type: 'connection', id: c.id }; } }
   }
 
   for (const blk of [...blocks].reverse()) {
-    if (mx >= blk.x && mx <= blk.x + blk.w && my >= blk.y && my <= blk.y + blk.h)
-      return { type: 'instance', id: blk.id };
+    if (mx >= blk.x && mx <= blk.x + blk.w && my >= blk.y && my <= blk.y + blk.h) return { type: 'instance', id: blk.id };
   }
   return null;
 }
 
 function hitResizeHandle(blk, mx, my) {
   const hs = HANDLE_SIZE + 4;
-  const handles = [
+  for (const h of [
     { name: 'nw', x: blk.x, y: blk.y }, { name: 'ne', x: blk.x + blk.w, y: blk.y },
     { name: 'sw', x: blk.x, y: blk.y + blk.h }, { name: 'se', x: blk.x + blk.w, y: blk.y + blk.h },
     { name: 'n', x: blk.x + blk.w / 2, y: blk.y }, { name: 's', x: blk.x + blk.w / 2, y: blk.y + blk.h },
     { name: 'w', x: blk.x, y: blk.y + blk.h / 2 }, { name: 'e', x: blk.x + blk.w, y: blk.y + blk.h / 2 },
-  ];
-  for (const h of handles) {
-    if (Math.abs(mx - h.x) < hs / 2 && Math.abs(my - h.y) < hs / 2) return h.name;
-  }
+  ]) { if (Math.abs(mx - h.x) < hs / 2 && Math.abs(my - h.y) < hs / 2) return h.name; }
   return null;
 }
 
 function distToBezier(px, py, fp, tp) {
-  const mx = (fp.x + tp.x) / 2;
-  let minD = Infinity;
+  const mx = (fp.x + tp.x) / 2; let minD = Infinity;
   for (let t = 0; t <= 1; t += 0.05) {
     const it = 1 - t;
     const x = it * it * it * fp.x + 3 * it * it * t * mx + 3 * it * t * t * mx + t * t * t * tp.x;
     const y = it * it * it * fp.y + 3 * it * it * t * fp.y + 3 * it * t * t * tp.y + t * t * t * tp.y;
-    if (Math.hypot(x - px, y - py) < minD) minD = Math.hypot(x - px, y - py);
+    const d = Math.hypot(x - px, y - py); if (d < minD) minD = d;
   }
   return minD;
 }
 
 /* ═══════════════════════════════════════════════════════════
-   MOUSE / KEYBOARD INTERACTION
+   INTERACTION
    ═══════════════════════════════════════════════════════════ */
 function setupInteraction() {
   canvas.addEventListener('mousedown', onMouseDown);
   canvas.addEventListener('mousemove', onMouseMove);
   canvas.addEventListener('mouseup', onMouseUp);
-  canvas.addEventListener('dblclick', onDblClick);
-  canvas.addEventListener('contextmenu', onContextMenu);
+  canvas.addEventListener('dblclick', e => { const hit = hitTest(...Object.values(canvasXY(e))); if (hit?.type === 'instance') { selection = { type: 'instance', id: hit.id }; render(); } });
+  canvas.addEventListener('contextmenu', e => { e.preventDefault(); showCtxMenu(e.clientX, e.clientY, hitTest(...Object.values(canvasXY(e)))); });
   canvas.addEventListener('wheel', e => e.preventDefault());
   document.addEventListener('keydown', onKeyDown);
 }
 
-function canvasXY(e) {
-  const r = canvas.getBoundingClientRect();
-  return { x: e.clientX - r.left, y: e.clientY - r.top };
-}
+function canvasXY(e) { const r = canvas.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; }
 
 function onMouseDown(e) {
-  hideCtxMenu();
-  const p = canvasXY(e);
-  mouse = p;
+  hideCtxMenu(); const p = canvasXY(e); mouse = p;
   if (e.button === 1) return;
   const hit = hitTest(p.x, p.y);
+  const s = sheet();
 
+  // Linking mode: click port to complete connection or add endpoint
   if (linking && hit?.type === 'port') {
     const ep = { inst: hit.instId, port: hit.portId };
-    if (linking.inst !== ep.inst || linking.port !== ep.port) {
-      curMod().connections.push({ id: 'c_' + uid(), from: linking, to: ep, props: {} });
+    if (linking.addToConn) {
+      // Add endpoint to existing connection
+      const conn = s.connections.find(c => c.id === linking.addToConn);
+      if (conn) {
+        if (linking.side === 'from') { if (!Array.isArray(conn.from)) conn.from = [conn.from]; conn.from.push(ep); }
+        else { if (!Array.isArray(conn.to)) conn.to = [conn.to]; conn.to.push(ep); }
+        markDirty();
+      }
+    } else if (linking.inst !== ep.inst || linking.port !== ep.port) {
+      s.connections.push({ id: 'c_' + uid(), from: [linking], to: [ep], direction: 'forward', props: {} });
       markDirty();
     }
     linking = null; updateLinkBtn(); render(); return;
   }
 
-  if (!hit) { selection = null; if (linking) { linking = null; updateLinkBtn(); } render(); return; }
-
-  if (hit.type === 'resize-handle') {
-    const inst = curMod().instances.find(i => i.id === hit.blkId);
-    drag = { type: 'resize', id: hit.blkId, handle: hit.handle, startX: p.x, startY: p.y,
-      origX: inst.x, origY: inst.y, origW: inst.w || 170, origH: inst.h || MIN_BLOCK_H };
+  // Click empty area
+  if (!hit) {
+    if (linking) { linking = null; updateLinkBtn(); render(); return; }
+    // Start box selection
+    boxSelect = { startX: p.x, startY: p.y };
+    selection = null;
+    render();
     return;
   }
 
+  if (hit.type === 'resize-handle') {
+    const inst = s.instances.find(i => i.id === hit.blkId);
+    drag = { type: 'resize', id: hit.blkId, handle: hit.handle, startX: p.x, startY: p.y, origX: inst.x, origY: inst.y, origW: inst.w || 170, origH: inst.h || MIN_BLOCK_H };
+    return;
+  }
   if (hit.type === 'port') {
-    if (e.shiftKey && hit.instId !== 'self') {
-      drag = { type: 'portDrag', instId: hit.instId, portId: hit.portId }; return;
-    }
+    if (e.shiftKey) { drag = { type: 'portDrag', instId: hit.instId, portId: hit.portId }; return; }
     linking = { inst: hit.instId, port: hit.portId }; updateLinkBtn(); renderCanvas(); return;
   }
-
-  if (hit.type === 'connection') { selection = { type: 'connection', id: hit.id }; render(); return; }
-
+  if (hit.type === 'connection') {
+    if (e.ctrlKey || e.metaKey) { toggleMultiSelect(hit.id); render(); return; }
+    selection = { type: 'connection', id: hit.id }; render(); return;
+  }
   if (hit.type === 'instance') {
+    if (e.ctrlKey || e.metaKey) { toggleMultiSelect(hit.id); render(); return; }
+    // If already multi-selected and clicking one of the selected, start multi-move
+    if (selection?.type === 'multi' && selection.ids.includes(hit.id)) {
+      const blocks = getBlocks();
+      drag = { type: 'multiMove', startX: p.x, startY: p.y, origPositions: selection.ids.filter(id => blocks.some(b => b.id === id)).map(id => { const blk = blocks.find(b => b.id === id); return { id, x: blk.x, y: blk.y }; }) };
+      return;
+    }
     selection = { type: 'instance', id: hit.id };
     const blk = getBlocks().find(b => b.id === hit.id);
-    drag = { type: 'move', id: hit.id, ox: p.x - blk.x, oy: p.y - blk.y };
-    render(); return;
+    drag = { type: 'move', id: hit.id, ox: p.x - blk.x, oy: p.y - blk.y }; render(); return;
   }
 }
 
 function onMouseMove(e) {
-  const p = canvasXY(e);
-  mouse = p;
+  const p = canvasXY(e); mouse = p;
+
+  // Box selection drag
+  if (boxSelect) { renderCanvas(); return; }
+
   if (drag) {
-    const mod = curMod();
+    const s = sheet();
     if (drag.type === 'move') {
-      const inst = mod.instances.find(i => i.id === drag.id);
+      const inst = s.instances.find(i => i.id === drag.id);
       if (inst) { inst.x = snap(p.x - drag.ox); inst.y = snap(p.y - drag.oy); markDirty(); renderCanvas(); }
+    } else if (drag.type === 'multiMove') {
+      const dx = p.x - drag.startX, dy = p.y - drag.startY;
+      for (const orig of drag.origPositions) {
+        const inst = s.instances.find(i => i.id === orig.id);
+        if (inst) { inst.x = snap(orig.x + dx); inst.y = snap(orig.y + dy); }
+      }
+      markDirty(); renderCanvas();
     } else if (drag.type === 'resize') {
-      const inst = mod.instances.find(i => i.id === drag.id);
+      const inst = s.instances.find(i => i.id === drag.id);
       if (inst) { applyResize(inst, drag, p.x - drag.startX, p.y - drag.startY); markDirty(); renderCanvas(); }
     } else if (drag.type === 'portDrag') {
-      const inst = mod.instances.find(i => i.id === drag.instId);
+      const inst = s.instances.find(i => i.id === drag.instId);
       if (inst) {
         const blk = { x: inst.x, y: inst.y, w: inst.w || 170, h: inst.h || MIN_BLOCK_H };
         const ep = nearestEdgePoint(blk, p.x, p.y);
         const invRot = (360 - (inst.rotation || 0)) % 360;
-        const logicalEdge = EDGE_ROTATE[invRot][ep.edge];
         if (!inst.portPositions) inst.portPositions = {};
-        inst.portPositions[drag.portId] = { edge: logicalEdge, t: ep.t };
+        inst.portPositions[drag.portId] = { edge: EDGE_ROTATE[invRot][ep.edge], t: ep.t };
         markDirty(); renderCanvas();
       }
     }
     return;
   }
   if (linking) renderCanvas();
-  // Cursor
   const hit = hitTest(p.x, p.y);
-  if (hit?.type === 'resize-handle') {
-    const cur = { nw: 'nwse-resize', se: 'nwse-resize', ne: 'nesw-resize', sw: 'nesw-resize', n: 'ns-resize', s: 'ns-resize', w: 'ew-resize', e: 'ew-resize' };
-    canvas.style.cursor = cur[hit.handle] || 'default';
-  } else if (hit?.type === 'port') canvas.style.cursor = 'crosshair';
+  if (hit?.type === 'resize-handle') { const cur = { nw: 'nwse-resize', se: 'nwse-resize', ne: 'nesw-resize', sw: 'nesw-resize', n: 'ns-resize', s: 'ns-resize', w: 'ew-resize', e: 'ew-resize' }; canvas.style.cursor = cur[hit.handle]; }
+  else if (hit?.type === 'port') canvas.style.cursor = 'crosshair';
   else if (hit?.type === 'instance') canvas.style.cursor = 'grab';
   else if (hit?.type === 'connection') canvas.style.cursor = 'pointer';
   else canvas.style.cursor = 'default';
 }
 
-function onMouseUp() { drag = null; }
-
-function onDblClick(e) {
-  const hit = hitTest(canvasXY(e).x, canvasXY(e).y);
-  if (hit?.type === 'instance') { selection = { type: 'instance', id: hit.id }; render(); }
-}
-
-function onContextMenu(e) {
-  e.preventDefault();
-  showCtxMenu(e.clientX, e.clientY, hitTest(canvasXY(e).x, canvasXY(e).y));
+function onMouseUp(e) {
+  // Complete box selection
+  if (boxSelect) {
+    const p = canvasXY(e);
+    const x1 = Math.min(boxSelect.startX, p.x), y1 = Math.min(boxSelect.startY, p.y);
+    const x2 = Math.max(boxSelect.startX, p.x), y2 = Math.max(boxSelect.startY, p.y);
+    // Only select if dragged a meaningful distance
+    if (x2 - x1 > 5 || y2 - y1 > 5) {
+      const blocks = getBlocks();
+      const instIds = blocks.filter(b => b.x >= x1 && b.x + b.w <= x2 && b.y >= y1 && b.y + b.h <= y2).map(b => b.id);
+      // Also select connections whose endpoints are within the box
+      const s = sheet();
+      const connIds = s ? s.connections.filter(c => {
+        const pts = [...connFrom(c), ...connTo(c)].map(ep => portWorldPos(ep)).filter(Boolean);
+        return pts.length > 0 && pts.every(p => p.x >= x1 && p.x <= x2 && p.y >= y1 && p.y <= y2);
+      }).map(c => c.id) : [];
+      const allIds = [...instIds, ...connIds];
+      if (allIds.length > 1) selection = { type: 'multi', ids: allIds };
+      else if (instIds.length === 1) selection = { type: 'instance', id: instIds[0] };
+      else if (connIds.length === 1) selection = { type: 'connection', id: connIds[0] };
+      else selection = null;
+    } else {
+      selection = null;
+    }
+    boxSelect = null;
+    render();
+    return;
+  }
+  drag = null;
 }
 
 function onKeyDown(e) {
+  // Skip single-key shortcuts when typing in input/textarea
+  const tag = document.activeElement?.tagName;
+  const isTyping = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
   if (e.key === 's' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); saveToServer(); return; }
   if (e.key === 'o' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); openFile(); return; }
+  if (isTyping) return;
   if (e.key === 'c' && (e.ctrlKey || e.metaKey) && selection?.type === 'instance') { e.preventDefault(); copySelection(); return; }
   if (e.key === 'v' && (e.ctrlKey || e.metaKey) && clipboard) { e.preventDefault(); pasteClipboard(); return; }
   if (e.key === 'Delete' && selection) {
     if (selection.type === 'instance') removeInstance(selection.id);
     else if (selection.type === 'connection') removeConnection(selection.id);
+    else if (selection.type === 'multi') { for (const id of [...selection.ids]) removeInstance(id); selection = null; render(); }
     return;
   }
-  if (e.key === 'r' && !e.ctrlKey && !e.metaKey && selection?.type === 'instance') { rotateSelection(); return; }
+  if (e.key === 'r' && !e.ctrlKey && !e.metaKey && (selection?.type === 'instance' || selection?.type === 'multi')) { rotateSelection(); return; }
   if (e.key === 'Escape') { linking = null; updateLinkBtn(); selection = null; render(); }
 }
 
-/* ═══════════════════════════════════════════════════════════
-   RESIZE
-   ═══════════════════════════════════════════════════════════ */
 function applyResize(inst, d, dx, dy) {
   const h = d.handle;
   let x = d.origX, y = d.origY, w = d.origW, hh = d.origH;
@@ -935,28 +1106,29 @@ function applyResize(inst, d, dx, dy) {
   inst.x = x; inst.y = y; inst.w = w; inst.h = hh;
 }
 
-/* ═══════════════════════════════════════════════════════════
-   COPY / PASTE / ROTATE
-   ═══════════════════════════════════════════════════════════ */
 function copySelection() {
-  if (!selection || selection.type !== 'instance') return;
-  const inst = curMod().instances.find(i => i.id === selection.id);
+  if (selection?.type !== 'instance') return;
+  const inst = sheet().instances.find(i => i.id === selection.id);
   if (inst) { clipboard = JSON.parse(JSON.stringify(inst)); showSync("ok", "Copied"); }
 }
 
 function pasteClipboard() {
-  if (!clipboard || !curMod()) return;
+  if (!clipboard || !sheet()) return;
   const ni = JSON.parse(JSON.stringify(clipboard));
   ni.id = 'i_' + uid(); ni.name += '_copy'; ni.x = (ni.x || 80) + 40; ni.y = (ni.y || 80) + 40;
-  curMod().instances.push(ni);
-  selection = { type: 'instance', id: ni.id };
-  markDirty(); render();
+  sheet().instances.push(ni);
+  selection = { type: 'instance', id: ni.id }; markDirty(); render();
 }
 
 function rotateSelection() {
-  if (!selection || selection.type !== 'instance') return;
-  const inst = curMod().instances.find(i => i.id === selection.id);
-  if (inst) { inst.rotation = ((inst.rotation || 0) + 90) % 360; markDirty(); render(); }
+  const s = sheet();
+  if (selection?.type === 'instance') {
+    const inst = s.instances.find(i => i.id === selection.id);
+    if (inst) { inst.rotation = ((inst.rotation || 0) + 90) % 360; markDirty(); render(); }
+  } else if (selection?.type === 'multi') {
+    for (const id of selection.ids) { const inst = s.instances.find(i => i.id === id); if (inst) inst.rotation = ((inst.rotation || 0) + 90) % 360; }
+    markDirty(); render();
+  }
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -967,60 +1139,61 @@ function showCtxMenu(cx, cy, hit) {
   let items = [];
   if (hit?.type === 'instance') {
     selection = { type: 'instance', id: hit.id };
-    items.push({ label: 'Copy', fn: copySelection });
-    items.push({ label: 'Rotate 90\u00b0', fn: rotateSelection });
-    items.push({ sep: true });
-    items.push({ label: 'Delete', fn: () => removeInstance(hit.id), danger: true });
+    items.push({ label: 'Copy', fn: copySelection }, { label: 'Rotate 90\u00b0', fn: rotateSelection });
+    items.push({ sep: true }); items.push({ label: 'Delete', fn: () => removeInstance(hit.id), danger: true });
   } else if (hit?.type === 'connection') {
     selection = { type: 'connection', id: hit.id };
     items.push({ label: 'Delete connection', fn: () => removeConnection(hit.id), danger: true });
   } else {
     if (clipboard) items.push({ label: 'Paste', fn: pasteClipboard });
-    items.push({ label: '+ Module', fn: addModule });
     items.push({ label: '+ Instance', fn: addInstance });
   }
   let h = '';
-  for (const item of items) {
-    if (item.sep) { h += '<div class="ctx-sep"></div>'; continue; }
-    h += `<div style="${item.danger ? 'color:var(--red)' : ''}">${item.label}</div>`;
-  }
-  menu.innerHTML = h;
-  menu.style.left = cx + 'px'; menu.style.top = cy + 'px'; menu.style.display = 'block';
-  const divs = menu.querySelectorAll('div:not(.ctx-sep)');
-  let idx = 0;
-  for (const item of items) {
-    if (item.sep) continue;
-    const fn = item.fn;
-    divs[idx++].addEventListener('click', () => { hideCtxMenu(); fn(); render(); });
-  }
+  for (const item of items) { if (item.sep) { h += '<div class="ctx-sep"></div>'; continue; } h += `<div style="${item.danger ? 'color:var(--red)' : ''}">${item.label}</div>`; }
+  menu.innerHTML = h; menu.style.left = cx + 'px'; menu.style.top = cy + 'px'; menu.style.display = 'block';
+  const divs = menu.querySelectorAll('div:not(.ctx-sep)'); let idx = 0;
+  for (const item of items) { if (item.sep) continue; const fn = item.fn; divs[idx++].addEventListener('click', () => { hideCtxMenu(); fn(); render(); }); }
 }
 
 function hideCtxMenu() { document.getElementById('ctxMenu').style.display = 'none'; }
 document.addEventListener('click', hideCtxMenu);
 
 /* ═══════════════════════════════════════════════════════════
-   RENDER (full)
+   RENDER
    ═══════════════════════════════════════════════════════════ */
 function render() {
-  renderSidebar();
-  renderCanvas();
-  renderSheetBar();
-  renderStatus();
+  renderFileBar(); renderSidebar(); renderCanvas(); renderSheetBar(); renderStatus();
   if (selection) renderPanel(); else document.getElementById('panel').style.display = 'none';
+}
+
+function renderFileBar() {
+  const bar = document.getElementById('fileBar');
+  let h = '';
+  for (const [fid, f] of Object.entries(openFiles)) {
+    const active = fid === activeFileId; const dc = f.dirty ? ' dirty' : '';
+    h += `<div class="file-tab ${active ? 'active' : ''}${dc}" data-fid="${fid}" title="${esc(f.path || f.name)}"><span>${esc(f.name)}</span><span class="close-btn" data-action="close">x</span></div>`;
+  }
+  h += `<button class="file-add" title="New file" onclick="newFile()">+</button>`;
+  h += `<button class="file-add" title="Open server file" onclick="openServerFile()" style="font-size:11px">Open...</button>`;
+  bar.innerHTML = h;
+  bar.querySelectorAll('.file-tab').forEach(tab => {
+    tab.addEventListener('click', e => { if (e.target.dataset.action === 'close') { closeFile(tab.dataset.fid); return; } switchFile(tab.dataset.fid); });
+  });
 }
 
 function renderSidebar() {
   const sb = document.getElementById('sidebar');
-  const modules = curModules();
-  const sheet = activeSheet();
-  let h = '<h3>Modules <button class="btn btn-sm" onclick="addModule()">+</button></h3>';
-  for (const [id, m] of Object.entries(modules)) {
-    const isTop = sheet && id === sheet.topModule;
-    const active = id === viewMod;
-    h += `<div class="mod-item ${active ? 'active' : ''} ${isTop ? 'is-top' : ''}" onclick="selectModule('${id}')">
-      <div style="font-weight:500">${m.name}</div>
-      <div class="sub">${m.ports.length}p · ${m.instances.length}i${isTop ? ' · top' : ''}</div>
-    </div>`;
+  let h = '<h3>Module Library <button class="btn btn-sm" onclick="addModule()">+</button></h3>';
+  const selMod = selection?.type === 'module' ? selection.id : null;
+  for (const [mid, m] of Object.entries(data.modules)) {
+    const active = mid === selMod;
+    h += `<div class="mod-item ${active ? 'active' : ''}" onclick="selectModuleInSidebar('${mid}')">`;
+    h += `<div style="font-weight:500">${m.name}</div>`;
+    h += `<div class="sub">${m.ports.length} ports</div>`;
+    h += `</div>`;
+  }
+  if (!Object.keys(data.modules).length) {
+    h += '<div style="font-size:11px;color:var(--fg3);padding:8px">No modules yet. Click + to create one.</div>';
   }
   sb.innerHTML = h;
 }
@@ -1030,189 +1203,274 @@ function renderSheetBar() {
   let h = '';
   for (const s of data.sheets) {
     const active = s.id === data.activeSheet;
-    h += `<div class="sheet-tab ${active ? 'active' : ''}" data-id="${s.id}">`;
-    h += `<span class="sheet-name">${esc(s.name)}</span>`;
+    h += `<div class="sheet-tab ${active ? 'active' : ''}" data-id="${s.id}"><span>${esc(s.name)}</span>`;
     if (data.sheets.length > 1) h += `<span class="close-btn" data-action="delete">x</span>`;
     h += `</div>`;
   }
   h += `<button class="sheet-add" title="Add sheet">+</button>`;
   bar.innerHTML = h;
-
-  // Event handlers
   bar.querySelectorAll('.sheet-tab').forEach(tab => {
     const id = tab.dataset.id;
-    tab.addEventListener('click', (e) => {
-      if (e.target.dataset.action === 'delete') {
-        if (confirm('Delete this sheet?')) deleteSheet(id);
-        return;
-      }
-      switchSheet(id);
-    });
-    tab.addEventListener('dblclick', (e) => {
-      e.stopPropagation();
-      renameSheet(id);
-    });
+    tab.addEventListener('click', e => { if (e.target.dataset.action === 'delete') { if (confirm('Delete this sheet?')) deleteSheet(id); return; } switchSheet(id); });
+    tab.addEventListener('dblclick', e => { e.stopPropagation(); renameSheet(id); });
   });
   bar.querySelector('.sheet-add').addEventListener('click', addSheet);
 }
 
 function renderStatus() {
-  const mod = curMod();
-  document.getElementById('statViewing').textContent = 'Viewing: ' + (mod?.name || '-');
-  document.getElementById('statModules').textContent = 'Modules: ' + Object.keys(curModules()).length;
-  document.getElementById('statInst').textContent = 'Instances: ' + (mod?.instances.length || 0);
-  document.getElementById('statConn').textContent = 'Connections: ' + (mod?.connections.length || 0);
+  const s = sheet();
+  document.getElementById('statSheet').textContent = 'Sheet: ' + (s?.name || '-');
+  document.getElementById('statModules').textContent = 'Modules: ' + Object.keys(data.modules).length;
+  document.getElementById('statInst').textContent = 'Instances: ' + (s?.instances.length || 0);
+  document.getElementById('statConn').textContent = 'Connections: ' + (s?.connections.length || 0);
 }
 
 /* ═══════════════════════════════════════════════════════════
-   PANEL (property editor)
+   PANEL
    ═══════════════════════════════════════════════════════════ */
 function renderPanel() {
   const panel = document.getElementById('panel');
   panel.style.display = 'block';
-  const mod = curMod();
-  if (!mod || !selection) { panel.style.display = 'none'; return; }
+  if (!selection) { panel.style.display = 'none'; return; }
   if (selection.type === 'module') renderModulePanel(panel, selection.id);
   else if (selection.type === 'instance') renderInstancePanel(panel, selection.id);
   else if (selection.type === 'connection') renderConnectionPanel(panel, selection.id);
+  else if (selection.type === 'sheet') renderSheetPanel(panel);
+  else if (selection.type === 'multi') renderMultiPanel(panel);
   else panel.style.display = 'none';
 }
 
-function renderModulePanel(panel, mid) {
-  const modules = curModules();
-  const m = modules[mid];
-  if (!m) return;
-  const sheet = activeSheet();
-  let h = `<h3><span>Module: ${m.name}</span><button class="btn btn-sm" onclick="closePanel()">x</button></h3>`;
-  h += `<label>Name</label><input value="${esc(m.name)}" onchange="curModules()['${mid}'].name=this.value;markDirty();render()"/>`;
-  h += `<label>Description</label><textarea onchange="curModules()['${mid}'].description=this.value;markDirty();">${esc(m.description || '')}</textarea>`;
-  h += `<label>Properties</label>`;
-  h += propsEditorHTML(m.props, `curModules()['${mid}'].props`);
+function renderSheetPanel(panel) {
+  const s = sheet();
+  if (!s) return;
+  let h = `<h3><span>Sheet</span><button class="btn btn-sm" onclick="closePanel()">x</button></h3>`;
+  h += `<label>Name</label><input value="${esc(s.name)}" onchange="sheet().name=this.value;markDirty();render()"/>`;
+  h += `<label>Description</label><textarea onchange="sheet().description=this.value;markDirty();">${esc(s.description || '')}</textarea>`;
+  panel.innerHTML = h;
+}
 
+function renderMultiPanel(panel) {
+  const s = sheet();
+  if (!s || !selection || selection.type !== 'multi') return;
+  const ids = selection.ids;
+
+  // Classify selected items
+  const instIds = ids.filter(id => s.instances.some(i => i.id === id));
+  const connIds = ids.filter(id => s.connections.some(c => c.id === id));
+
+  let h = `<h3><span>Selection (${ids.length} items)</span><button class="btn btn-sm" onclick="closePanel()">x</button></h3>`;
+  h += `<div style="font-size:11px;color:var(--fg2);margin-bottom:8px">`;
+  if (instIds.length) h += `${instIds.length} instance(s): ${instIds.map(id => s.instances.find(i => i.id === id)?.name || id).join(', ')}<br>`;
+  if (connIds.length) h += `${connIds.length} connection(s)`;
+  h += `</div>`;
+
+  // Existing annotations for this exact set of targets
+  if (!s.annotations) s.annotations = [];
+  const existing = s.annotations.filter(a => {
+    const t = new Set(a.targets);
+    return ids.length === t.size && ids.every(id => t.has(id));
+  });
+
+  h += `<label>Group Comments</label>`;
+  for (let i = 0; i < s.annotations.length; i++) {
+    const ann = s.annotations[i];
+    const t = new Set(ann.targets);
+    // Show annotations that overlap with current selection
+    if (!ids.some(id => t.has(id))) continue;
+    const isExact = ids.length === t.size && ids.every(id => t.has(id));
+    h += `<div class="port-section">`;
+    h += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px">`;
+    h += `<span style="font-size:10px;color:var(--fg3)">${ann.targets.length} items${isExact ? '' : ' (partial overlap)'}</span>`;
+    h += `<button class="btn btn-sm btn-danger" onclick="sheet().annotations.splice(${i},1);markDirty();render()">x</button>`;
+    h += `</div>`;
+    h += `<textarea style="width:100%;min-height:50px" onchange="sheet().annotations[${i}].text=this.value;markDirty();renderCanvas();">${esc(ann.text || '')}</textarea>`;
+    h += propsEditorHTML(ann.props || {}, `sheet().annotations[${i}].props`);
+    h += `</div>`;
+  }
+
+  h += `<button class="btn btn-sm" style="margin-top:4px" onclick="addAnnotation()">+ Add group comment</button>`;
+
+  h += `<div style="margin-top:12px;display:flex;gap:4px">`;
+  h += `<button class="btn btn-sm btn-danger" onclick="deleteMultiSelection()">Delete all selected</button>`;
+  h += `</div>`;
+
+  panel.innerHTML = h;
+}
+
+function addAnnotation() {
+  if (!selection || selection.type !== 'multi') return;
+  const s = sheet();
+  if (!s.annotations) s.annotations = [];
+  s.annotations.push({ id: 'a_' + uid(), targets: [...selection.ids], text: '', props: {} });
+  markDirty(); render();
+}
+
+function toggleMultiSelect(id) {
+  if (selection?.type === 'multi') {
+    const ids = selection.ids;
+    if (ids.includes(id)) {
+      const newIds = ids.filter(i => i !== id);
+      if (newIds.length > 1) selection = { type: 'multi', ids: newIds };
+      else if (newIds.length === 1) {
+        const s = sheet();
+        selection = s.instances.some(i => i.id === newIds[0]) ? { type: 'instance', id: newIds[0] } : { type: 'connection', id: newIds[0] };
+      }
+      else selection = null;
+    } else {
+      selection = { type: 'multi', ids: [...ids, id] };
+    }
+  } else if (selection?.type === 'instance' || selection?.type === 'connection') {
+    const prevId = selection.id;
+    if (prevId === id) return;
+    selection = { type: 'multi', ids: [prevId, id] };
+  } else {
+    const s = sheet();
+    selection = s.instances.some(i => i.id === id) ? { type: 'instance', id } : { type: 'connection', id };
+  }
+}
+
+function deleteMultiSelection() {
+  if (!selection || selection.type !== 'multi') return;
+  for (const id of [...selection.ids]) {
+    const s = sheet();
+    if (s.instances.some(i => i.id === id)) removeInstance(id);
+    else if (s.connections.some(c => c.id === id)) removeConnection(id);
+  }
+  selection = null; render();
+}
+
+function renderModulePanel(panel, mid) {
+  const m = data.modules[mid];
+  if (!m) { panel.style.display = 'none'; return; }
+  let h = `<h3><span>Module: ${m.name}</span><button class="btn btn-sm" onclick="closePanel()">x</button></h3>`;
+  h += `<label>Name</label><input value="${esc(m.name)}" onchange="data.modules['${mid}'].name=this.value;markDirty();render()"/>`;
+  h += `<label>Description</label><textarea onchange="data.modules['${mid}'].description=this.value;markDirty();">${esc(m.description || '')}</textarea>`;
+  h += `<label>Properties</label>`;
+  h += propsEditorHTML(m.props, `data.modules['${mid}'].props`);
   h += `<label>Ports</label>`;
   for (let i = 0; i < m.ports.length; i++) {
     const p = m.ports[i];
     h += `<div class="port-section"><div class="port-header">`;
-    h += `<input style="flex:2" value="${esc(p.name)}" onchange="curModules()['${mid}'].ports[${i}].name=this.value;markDirty();render()"/>`;
-    h += `<select style="flex:1" onchange="curModules()['${mid}'].ports[${i}].dir=this.value;markDirty();render()">`;
+    h += `<input style="flex:2" value="${esc(p.name)}" onchange="data.modules['${mid}'].ports[${i}].name=this.value;markDirty();render()"/>`;
+    h += `<select style="flex:1" onchange="data.modules['${mid}'].ports[${i}].dir=this.value;markDirty();render()">`;
     for (const d of ['in', 'out', 'inout']) h += `<option ${p.dir === d ? 'selected' : ''}>${d}</option>`;
-    h += `</select>`;
-    h += `<button class="btn btn-sm btn-danger" onclick="curModules()['${mid}'].ports.splice(${i},1);markDirty();render()">x</button>`;
-    h += `</div>`;
-    h += arrayEditorHTML(p.array, `curModules()['${mid}'].ports[${i}]`);
-    h += propsEditorHTML(p.props, `curModules()['${mid}'].ports[${i}].props`);
+    h += `</select><button class="btn btn-sm btn-danger" onclick="data.modules['${mid}'].ports.splice(${i},1);markDirty();render()">x</button></div>`;
+    h += arrayEditorHTML(p.array, `data.modules['${mid}'].ports[${i}]`);
+    h += propsEditorHTML(p.props, `data.modules['${mid}'].ports[${i}].props`);
     h += `</div>`;
   }
-  h += `<button class="btn btn-sm" style="margin-top:4px" onclick="curModules()['${mid}'].ports.push({id:'p_'+uid(),name:'new_port',dir:'in',props:{width:1}});markDirty();render()">+ port</button>`;
-
-  if (sheet && mid !== sheet.topModule) {
-    h += `<div style="margin-top:12px;display:flex;gap:6px">`;
-    h += `<button class="btn btn-sm" onclick="activeSheet().topModule='${mid}';markDirty();render()">Set as top</button>`;
-    h += `<button class="btn btn-sm btn-danger" onclick="deleteModule('${mid}')">Delete module</button>`;
-    h += `</div>`;
-  }
+  h += `<button class="btn btn-sm" style="margin-top:4px" onclick="data.modules['${mid}'].ports.push({id:'p_'+uid(),name:'new_port',dir:'in',props:{width:1}});markDirty();render()">+ port</button>`;
+  h += `<button class="btn btn-sm btn-danger" style="margin-top:12px" onclick="deleteModule('${mid}')">Delete module</button>`;
   panel.innerHTML = h;
 }
 
 function renderInstancePanel(panel, iid) {
-  const mod = curMod();
-  const inst = mod.instances.find(i => i.id === iid);
+  const s = sheet();
+  const inst = s.instances.find(i => i.id === iid);
   if (!inst) return;
-  const ref = curModules()[inst.moduleRef];
-  const ii = mod.instances.indexOf(inst);
-  const modPath = `curModules()['${viewMod}'].instances[${ii}]`;
+  const ref = data.modules[inst.moduleRef];
+  const ii = s.instances.indexOf(inst);
+  const ip = `sheet().instances[${ii}]`;
 
   let h = `<h3><span>Instance: ${inst.name}</span><button class="btn btn-sm" onclick="closePanel()">x</button></h3>`;
   h += `<div style="font-size:11px;color:var(--fg2);margin-bottom:6px">Module: ${ref?.name || inst.moduleRef} | Rotation: ${inst.rotation || 0}\u00b0</div>`;
-
-  h += `<label>Instance name</label>`;
-  h += `<input value="${esc(inst.name)}" onchange="${modPath}.name=this.value;markDirty();render()"/>`;
-  h += `<label>Description</label>`;
-  h += `<textarea onchange="${modPath}.description=this.value;markDirty();">${esc(inst.description || '')}</textarea>`;
-  h += `<label>Array dimensions</label>`;
-  h += arrayEditorHTML(inst.array, modPath);
-  h += `<label>Instance properties</label>`;
-  h += propsEditorHTML(inst.props, `${modPath}.props`);
+  h += `<label>Instance name</label><input value="${esc(inst.name)}" onchange="${ip}.name=this.value;markDirty();render()"/>`;
+  h += `<label>Description</label><textarea onchange="${ip}.description=this.value;markDirty();">${esc(inst.description || '')}</textarea>`;
+  h += `<label>Array dimensions</label>`; h += arrayEditorHTML(inst.array, ip);
+  h += `<label>Instance properties</label>`; h += propsEditorHTML(inst.props, `${ip}.props`);
   h += `<label>Size</label><div style="display:flex;gap:4px;align-items:center">`;
-  h += `<input type="number" style="width:60px" value="${inst.w || 170}" onchange="${modPath}.w=parseInt(this.value);markDirty();render()"/> x `;
-  h += `<input type="number" style="width:60px" value="${inst.h || MIN_BLOCK_H}" onchange="${modPath}.h=parseInt(this.value);markDirty();render()"/>`;
-  h += `</div>`;
-
+  h += `<input type="number" style="width:60px" value="${inst.w || 170}" onchange="${ip}.w=parseInt(this.value);markDirty();render()"/> x `;
+  h += `<input type="number" style="width:60px" value="${inst.h || MIN_BLOCK_H}" onchange="${ip}.h=parseInt(this.value);markDirty();render()"/></div>`;
   if (ref) {
     h += `<label>Module ports</label><div style="font-size:11px;color:var(--fg3)">`;
-    for (const p of ref.ports) {
-      const pp = Object.entries(p.props || {}).map(([k, v]) => `${k}=${v}`).join(', ');
-      h += `<div>- ${p.name}${arrayLabel(p.array)} [${p.dir}] ${pp}</div>`;
-    }
+    for (const p of ref.ports) { const pp = Object.entries(p.props || {}).map(([k, v]) => `${k}=${v}`).join(', '); h += `<div>- ${p.name}${arrayLabel(p.array)} [${p.dir}] ${pp}</div>`; }
     h += `</div>`;
-    h += `<button class="btn btn-sm" style="margin-top:6px" onclick="selectModule('${inst.moduleRef}');selection={type:'module',id:'${inst.moduleRef}'};render()">Go to module def</button>`;
+    h += `<button class="btn btn-sm" style="margin-top:6px" onclick="selection={type:'module',id:'${inst.moduleRef}'};render()">Edit module definition</button>`;
   }
   h += `<button class="btn btn-sm btn-danger" style="margin-top:8px" onclick="removeInstance('${iid}')">Delete instance</button>`;
   panel.innerHTML = h;
 }
 
 function renderConnectionPanel(panel, cid) {
-  const mod = curMod();
-  const conn = mod.connections.find(c => c.id === cid);
+  const s = sheet();
+  const conn = s.connections.find(c => c.id === cid);
   if (!conn) return;
-  const ci = mod.connections.indexOf(conn);
-  const fl = resolveEP(mod, conn.from);
-  const tl = resolveEP(mod, conn.to);
-  const connPath = `curModules()['${viewMod}'].connections[${ci}]`;
-  let h = `<h3><span>Connection</span><button class="btn btn-sm" onclick="closePanel()">x</button></h3>`;
-  h += `<div style="font-size:11px;color:var(--fg2);margin-bottom:8px">${fl} -> ${tl}</div>`;
-  h += `<label>Description</label>`;
-  h += `<textarea onchange="${connPath}.description=this.value;markDirty();">${esc(conn.description || '')}</textarea>`;
-  h += `<label>Properties</label>`;
-  h += propsEditorHTML(conn.props, `${connPath}.props`);
+  const ci = s.connections.indexOf(conn);
+  const cp = `sheet().connections[${ci}]`;
+  const froms = connFrom(conn), tos = connTo(conn);
+  const fromLabels = froms.map(ep => resolveEP(ep)).join(', ');
+  const toLabels = tos.map(ep => resolveEP(ep)).join(', ');
+  const dir = connDir(conn);
+
+  let h = `<h3><span>Connection ${froms.length}:${tos.length}</span><button class="btn btn-sm" onclick="closePanel()">x</button></h3>`;
+  h += `<div style="font-size:11px;color:var(--fg2);margin-bottom:4px"><b>From:</b> ${fromLabels}</div>`;
+  h += `<div style="font-size:11px;color:var(--fg2);margin-bottom:8px"><b>To:</b> ${toLabels}</div>`;
+
+  h += `<label>Direction</label>`;
+  h += `<select onchange="setConnDirection('${cid}',this.value)">`;
+  for (const d of ['forward', 'reverse', 'both', 'none']) h += `<option ${dir === d ? 'selected' : ''}>${d}</option>`;
+  h += `</select>`;
+
+  h += `<label>Description</label><textarea onchange="${cp}.description=this.value;markDirty();">${esc(conn.description || '')}</textarea>`;
+  h += `<label>Properties</label>`; h += propsEditorHTML(conn.props, `${cp}.props`);
+
+  // Add/remove endpoints
+  h += `<label style="margin-top:10px">Endpoints</label>`;
+  h += `<div style="font-size:11px;color:var(--fg3);margin-bottom:6px">Click a port while this connection is selected to add it as a From or To endpoint.</div>`;
+  h += `<div style="display:flex;gap:4px;margin-bottom:6px">`;
+  h += `<button class="btn btn-sm" onclick="startAddEndpoint('${cid}','from')">+ From port</button>`;
+  h += `<button class="btn btn-sm" onclick="startAddEndpoint('${cid}','to')">+ To port</button>`;
+  h += `</div>`;
+
   h += `<button class="btn btn-sm btn-danger" style="margin-top:10px" onclick="removeConnection('${cid}')">Delete connection</button>`;
   panel.innerHTML = h;
 }
 
-function resolveEP(mod, ep) {
-  if (ep.inst === 'self') { const p = mod.ports.find(p => p.id === ep.port); return 'self.' + (p?.name || ep.port); }
-  const inst = mod.instances.find(i => i.id === ep.inst);
-  const ref = curModules()[inst?.moduleRef];
+function setConnDirection(cid, dir) {
+  const s = sheet();
+  const conn = s.connections.find(c => c.id === cid);
+  if (conn) { conn.direction = dir; markDirty(); renderCanvas(); }
+}
+
+function startAddEndpoint(cid, side) {
+  // Set linking mode that adds to existing connection
+  linking = { addToConn: cid, side };
+  updateLinkBtn();
+  renderCanvas();
+}
+
+function resolveEP(ep) {
+  const s = sheet();
+  const inst = s.instances.find(i => i.id === ep.inst);
+  const ref = data.modules[inst?.moduleRef];
   const p = ref?.ports.find(p => p.id === ep.port);
   return (inst?.name || ep.inst) + '.' + (p?.name || ep.port);
 }
 
 /* ═══════════════════════════════════════════════════════════
-   ARRAY / PROPS EDITORS
+   EDITORS (array, props)
    ═══════════════════════════════════════════════════════════ */
 function arrayEditorHTML(arr, objPath) {
   const dims = arr || [];
   let h = '<div class="array-input">';
-  for (let i = 0; i < dims.length; i++) {
-    if (i > 0) h += '<span>x</span>';
-    h += `<input type="number" min="1" value="${dims[i]}" onchange="updateArrayDim(${objPath},${i},parseInt(this.value))"/>`;
-  }
+  for (let i = 0; i < dims.length; i++) { if (i > 0) h += '<span>x</span>'; h += `<input type="number" min="1" value="${dims[i]}" onchange="updateArrayDim(${objPath},${i},parseInt(this.value))"/>`; }
   if (dims.length < 3) h += `<button class="btn btn-sm" onclick="addArrayDim(${objPath})">+dim</button>`;
   if (dims.length > 0) h += `<button class="btn btn-sm btn-danger" onclick="removeArrayDim(${objPath})">-dim</button>`;
-  h += '</div>';
-  return h;
+  return h + '</div>';
 }
-
 function addArrayDim(obj) { if (!obj.array) obj.array = []; if (obj.array.length < 3) obj.array.push(2); markDirty(); render(); }
 function removeArrayDim(obj) { if (obj.array?.length > 0) obj.array.pop(); if (obj.array?.length === 0) delete obj.array; markDirty(); render(); }
 function updateArrayDim(obj, idx, val) { if (obj.array && idx < obj.array.length) { obj.array[idx] = Math.max(1, val || 1); markDirty(); render(); } }
 
 function propsEditorHTML(props, path) {
-  const entries = Object.entries(props || {});
   let h = '';
-  entries.forEach(([k, v]) => {
+  for (const [k, v] of Object.entries(props || {})) {
     const vs = typeof v === 'object' ? JSON.stringify(v) : String(v);
-    h += `<div class="prop-row">`;
-    h += `<input value="${esc(k)}" placeholder="key" onchange="updatePropKey(${path},'${esc(k)}',this.value)"/>`;
-    h += `<span style="color:var(--fg3);font-size:10px">:</span>`;
-    h += `<input value="${esc(vs)}" placeholder="value" onchange="updatePropVal(${path},'${esc(k)}',this.value)"/>`;
-    h += `<button class="btn btn-sm btn-danger" onclick="delete ${path}['${esc(k)}'];markDirty();render()">x</button>`;
-    h += `</div>`;
-  });
+    h += `<div class="prop-row"><input value="${esc(k)}" placeholder="key" onchange="updatePropKey(${path},'${esc(k)}',this.value)"/><span style="color:var(--fg3);font-size:10px">:</span><input value="${esc(vs)}" placeholder="value" onchange="updatePropVal(${path},'${esc(k)}',this.value)"/><button class="btn btn-sm btn-danger" onclick="delete ${path}['${esc(k)}'];markDirty();render()">x</button></div>`;
+  }
   h += `<button class="btn btn-sm" style="margin-top:2px;font-size:10px" onclick="${path}['']='';;markDirty();render()">+ property</button>`;
   return h;
 }
-
 function updatePropKey(obj, oldKey, newKey) { const val = obj[oldKey]; delete obj[oldKey]; obj[newKey] = val; markDirty(); render(); }
 function updatePropVal(obj, key, rawVal) { let v = rawVal; try { v = JSON.parse(rawVal); } catch { } obj[key] = v; markDirty(); render(); }
 function esc(s) { return String(s).replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
@@ -1220,64 +1478,52 @@ function esc(s) { return String(s).replace(/"/g, '&quot;').replace(/'/g, '&#39;'
 /* ═══════════════════════════════════════════════════════════
    ACTIONS
    ═══════════════════════════════════════════════════════════ */
-function selectModule(id) {
-  viewMod = id;
-  const sheet = activeSheet();
-  if (sheet) sheet._viewMod = id;
-  selection = null; linking = null; updateLinkBtn(); render();
+function selectModuleInSidebar(mid) {
+  selection = { type: 'module', id: mid }; render();
 }
-function editCurrentModule() { selection = { type: 'module', id: viewMod }; render(); }
+
+function editSheet() { selection = { type: 'sheet' }; render(); }
 function closePanel() { selection = null; render(); }
 
 function addModule() {
-  const sheet = activeSheet();
-  if (!sheet) return;
   const id = 'm_' + uid();
-  sheet.modules[id] = { id, name: 'NewModule', description: '', props: {}, ports: [], instances: [], connections: [] };
-  if (!sheet.topModule) sheet.topModule = id;
-  viewMod = id;
+  data.modules[id] = { id, name: 'NewModule', description: '', props: {}, ports: [] };
   selection = { type: 'module', id };
   markDirty(); render();
 }
 
 function deleteModule(id) {
-  const sheet = activeSheet();
-  if (!sheet) return;
-  if (id === sheet.topModule) return alert("Can't delete top module");
-  delete sheet.modules[id];
-  for (const m of Object.values(sheet.modules)) {
-    m.instances = m.instances.filter(i => i.moduleRef !== id);
+  for (const s of data.sheets) {
+    const removed = new Set(s.instances.filter(i => i.moduleRef === id).map(i => i.id));
+    s.instances = s.instances.filter(i => i.moduleRef !== id);
+    s.connections = s.connections.filter(c => {
+      const froms = connFrom(c).filter(ep => !removed.has(ep.inst));
+      const tos = connTo(c).filter(ep => !removed.has(ep.inst));
+      if (!froms.length || !tos.length) return false;
+      c.from = froms; c.to = tos; return true;
+    });
   }
-  if (viewMod === id) viewMod = sheet.topModule;
+  delete data.modules[id];
   selection = null; markDirty(); render();
-}
-
-function addInstance() {
-  const mod = curMod();
-  if (!mod) return;
-  const others = Object.values(curModules()).filter(m => m.id !== viewMod);
-  if (!others.length) return alert('Create another module first');
-  const names = others.map(m => m.name).join(', ');
-  const pick = prompt(`Which module to instantiate?\nAvailable: ${names}`, others[0].name);
-  if (!pick) return;
-  const target = others.find(m => m.name === pick);
-  if (!target) return alert('Module not found: ' + pick);
-  const id = 'i_' + uid();
-  mod.instances.push({ id, name: 'u_' + target.name.toLowerCase(), moduleRef: target.id,
-    props: {}, x: 120, y: 120, w: 170, h: null, rotation: 0, portPositions: {} });
-  markDirty(); render();
 }
 
 function removeInstance(iid) {
-  const mod = curMod();
-  mod.instances = mod.instances.filter(i => i.id !== iid);
-  mod.connections = mod.connections.filter(c => c.from.inst !== iid && c.to.inst !== iid);
-  selection = null; markDirty(); render();
+  const s = sheet();
+  s.instances = s.instances.filter(i => i.id !== iid);
+  // Remove connections that reference this instance (M:N aware)
+  s.connections = s.connections.filter(c => {
+    const froms = connFrom(c), tos = connTo(c);
+    const newFroms = froms.filter(ep => ep.inst !== iid);
+    const newTos = tos.filter(ep => ep.inst !== iid);
+    if (!newFroms.length || !newTos.length) return false; // drop connection
+    c.from = newFroms; c.to = newTos; return true;
+  });
+  if (selection?.type === 'instance' && selection.id === iid) selection = null;
+  markDirty(); render();
 }
 
 function removeConnection(cid) {
-  const mod = curMod();
-  mod.connections = mod.connections.filter(c => c.id !== cid);
+  sheet().connections = sheet().connections.filter(c => c.id !== cid);
   selection = null; markDirty(); render();
 }
 
@@ -1289,14 +1535,159 @@ function updateLinkBtn() {
 }
 
 /* ═══════════════════════════════════════════════════════════
+   SHEET MANAGEMENT
+   ═══════════════════════════════════════════════════════════ */
+function switchSheet(id) { data.activeSheet = id; selection = null; linking = null; updateLinkBtn(); render(); }
+
+function addSheet() {
+  const id = 's_' + uid();
+  data.sheets.push({ id, name: 'Sheet ' + (data.sheets.length + 1), description: '', instances: [], connections: [] });
+  switchSheet(id); markDirty();
+}
+
+function deleteSheet(id) {
+  if (data.sheets.length <= 1) return;
+  const idx = data.sheets.findIndex(s => s.id === id);
+  data.sheets.splice(idx, 1);
+  if (data.activeSheet === id) switchSheet(data.sheets[Math.min(idx, data.sheets.length - 1)].id);
+  markDirty(); render();
+}
+
+function renameSheet(id) {
+  const s = data.sheets.find(s => s.id === id);
+  if (!s) return;
+  const name = prompt('Sheet name:', s.name);
+  if (name !== null && name.trim()) { s.name = name.trim(); markDirty(); render(); }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   ADD INSTANCE MODAL
+   ═══════════════════════════════════════════════════════════ */
+let instModalState = { selectedModule: null, rows: [], acIndex: -1 };
+
+function addInstance() {
+  if (!sheet()) return;
+  const mods = Object.values(data.modules);
+  if (!mods.length) return alert('Create a module first (+ Module button or sidebar)');
+  instModalState = { selectedModule: null, rows: [], acIndex: -1 };
+  document.getElementById('instModuleInput').value = '';
+  document.getElementById('instModuleList').style.display = 'none';
+  document.getElementById('instRows').innerHTML = '<div style="color:var(--fg3);font-size:11px;padding:8px">Select a module above first</div>';
+  document.getElementById('instOverlay').style.display = 'flex';
+  setTimeout(() => document.getElementById('instModuleInput').focus(), 50);
+}
+
+function closeInstModal() { document.getElementById('instOverlay').style.display = 'none'; document.getElementById('instModuleList').style.display = 'none'; }
+
+function filterInstModules() {
+  const input = document.getElementById('instModuleInput'), list = document.getElementById('instModuleList');
+  const query = input.value.toLowerCase().trim();
+  const mods = Object.values(data.modules);
+  const matches = query ? mods.filter(m => m.name.toLowerCase().includes(query)) : mods;
+  if (!matches.length) { list.innerHTML = '<div style="padding:8px;font-size:11px;color:var(--fg3)">No matching modules</div>'; list.style.display = 'block'; instModalState.acIndex = -1; return; }
+  instModalState.acIndex = -1;
+  let h = '';
+  matches.forEach((m, i) => { h += `<div class="autocomplete-item" data-idx="${i}" data-id="${m.id}"><span>${esc(m.name)}</span><span class="sub">${m.ports.length} ports</span></div>`; });
+  list.innerHTML = h; list.style.display = 'block';
+  list.querySelectorAll('.autocomplete-item').forEach(el => { el.addEventListener('click', () => selectInstModule(el.dataset.id)); });
+}
+
+function instInputKeydown(e) {
+  const items = document.getElementById('instModuleList').querySelectorAll('.autocomplete-item');
+  if (!items.length) return;
+  if (e.key === 'ArrowDown') { e.preventDefault(); instModalState.acIndex = Math.min(instModalState.acIndex + 1, items.length - 1); items.forEach((el, i) => el.classList.toggle('active', i === instModalState.acIndex)); }
+  else if (e.key === 'ArrowUp') { e.preventDefault(); instModalState.acIndex = Math.max(instModalState.acIndex - 1, 0); items.forEach((el, i) => el.classList.toggle('active', i === instModalState.acIndex)); }
+  else if (e.key === 'Enter') { e.preventDefault(); if (instModalState.acIndex >= 0) selectInstModule(items[instModalState.acIndex].dataset.id); else if (items.length === 1) selectInstModule(items[0].dataset.id); }
+  else if (e.key === 'Escape') document.getElementById('instModuleList').style.display = 'none';
+}
+
+function selectInstModule(mid) {
+  const m = data.modules[mid];
+  if (!m) return;
+  instModalState.selectedModule = { id: mid, name: m.name };
+  document.getElementById('instModuleInput').value = m.name;
+  document.getElementById('instModuleList').style.display = 'none';
+  if (!instModalState.rows.length) instModalState.rows.push({ name: 'u_' + m.name.toLowerCase(), moduleRef: mid, moduleName: m.name });
+  else instModalState.rows.forEach((r, i) => { r.moduleRef = mid; r.moduleName = m.name; r.name = 'u_' + m.name.toLowerCase() + (i > 0 ? '_' + i : ''); });
+  renderInstRows();
+}
+
+function addInstRow() {
+  const sel = instModalState.selectedModule;
+  if (!sel) return alert('Select a module first');
+  instModalState.rows.push({ name: 'u_' + sel.name.toLowerCase() + '_' + instModalState.rows.length, moduleRef: sel.id, moduleName: sel.name });
+  renderInstRows();
+}
+
+function addInstRowBatch() {
+  const sel = instModalState.selectedModule;
+  if (!sel) return alert('Select a module first');
+  const count = prompt('Array size (e.g. 128, or 4x8 for 2D):', '4');
+  if (!count) return;
+  // Parse array dimensions: "128" -> [128], "4x8" -> [4,8], "4x8x2" -> [4,8,2]
+  const dims = count.split(/[x,]/).map(s => parseInt(s.trim())).filter(n => !isNaN(n) && n > 0);
+  if (!dims.length) return alert('Invalid array size');
+  const name = 'u_' + sel.name.toLowerCase();
+  instModalState.rows.push({ name, moduleRef: sel.id, moduleName: sel.name, array: dims });
+  renderInstRows();
+}
+
+function renderInstRows() {
+  const c = document.getElementById('instRows');
+  if (!instModalState.rows.length) { c.innerHTML = '<div style="color:var(--fg3);font-size:11px;padding:8px">Select a module above first</div>'; return; }
+  let h = '';
+  instModalState.rows.forEach((row, i) => {
+    h += `<div class="inst-row"><span style="font-size:10px;color:var(--fg3);min-width:20px">${i + 1}.</span>`;
+    h += `<input style="flex:2" value="${esc(row.name)}" onchange="instModalState.rows[${i}].name=this.value"/>`;
+    h += `<span class="module-name">${esc(row.moduleName)}${row.array ? arrayLabel(row.array) : ''}</span>`;
+    h += `<button class="btn btn-sm btn-danger" onclick="instModalState.rows.splice(${i},1);renderInstRows()">x</button></div>`;
+  });
+  c.innerHTML = h;
+}
+
+function commitInstances() {
+  const s = sheet();
+  if (!s) return;
+  const rows = instModalState.rows;
+  if (!rows.length) return alert('No instances to create');
+  const colW = 200, rowH = 140, cols = Math.ceil(Math.sqrt(rows.length));
+  let lastId;
+  rows.forEach((row, i) => {
+    const id = 'i_' + uid();
+    const inst = { id, name: row.name, moduleRef: row.moduleRef, props: {}, x: 80 + (i % cols) * colW, y: 80 + Math.floor(i / cols) * rowH, w: 170, h: null, rotation: 0, portPositions: {} };
+    if (row.array) inst.array = row.array;
+    s.instances.push(inst);
+    lastId = id;
+  });
+  closeInstModal();
+  if (lastId) selection = { type: 'instance', id: lastId };
+  markDirty(); render();
+}
+
+document.addEventListener('click', e => { if (!e.target.closest('.autocomplete-wrap')) { const l = document.getElementById('instModuleList'); if (l) l.style.display = 'none'; } });
+
+/* ═══════════════════════════════════════════════════════════
+   COPY FOR CLAUDE
+   ═══════════════════════════════════════════════════════════ */
+async function copySimpleJson() {
+  try {
+    if (dirty) await saveToServer();
+    const f = openFiles[activeFileId];
+    if (f?.path) { const r = await fetch(`/api/simple/${activeFileId}`); await navigator.clipboard.writeText(await r.text()); }
+    else { await navigator.clipboard.writeText(JSON.stringify(data, null, 2)); }
+    showSync("ok", "Copied simplified JSON");
+  } catch (e) { console.error(e); alert('Failed: ' + e.message); }
+}
+
+/* ═══════════════════════════════════════════════════════════
    INIT
    ═══════════════════════════════════════════════════════════ */
 initCanvas();
 setupInteraction();
-fetchServerInfo();
-loadFromServer().then(() => connectSSE());
+loadServerFiles().then(() => connectSSE());
 window.addEventListener('beforeunload', e => {
-  if (dirty) { saveToServer(); e.returnValue = 'Unsaved changes'; }
+  saveViewState();
+  if (Object.values(openFiles).some(f => f.dirty)) e.returnValue = 'Unsaved changes';
 });
 </script>
 </body>
