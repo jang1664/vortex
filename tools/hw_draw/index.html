@@ -226,7 +226,7 @@ const PORT_R = 5;
 const HANDLE_SIZE = 8;
 const MIN_BLOCK_W = 80;
 const MIN_BLOCK_H = 60;
-const PCOL = { in: '#2d8cf0', out: '#e6522c', inout: '#8b5cf6' };
+const PCOL = { in: '#2d8cf0', out: '#e6522c', inout: '#8b5cf6', interface: '#2a9d5c' };
 let canvas, ctx, W = 800, H = 600;
 let viewX = 0, viewY = 0, viewZoom = 1; // pan & zoom state
 
@@ -366,15 +366,20 @@ function getBlocks() {
   return s.instances.map(inst => {
     const ref = data.modules[inst.moduleRef];
     const ports = ref ? ref.ports : [];
-    const leftC = ports.filter(p => defaultEdgeForDir(p.dir) === 'left').length;
-    const rightC = ports.filter(p => defaultEdgeForDir(p.dir) === 'right').length;
-    const defaultH = Math.max(MIN_BLOCK_H, (Math.max(leftC, rightC) + 1) * 24 + 32);
-    return { id: inst.id, inst, ref, ports, x: inst.x || 80, y: inst.y || 80, w: inst.w || 170, h: inst.h || defaultH };
+    return { id: inst.id, inst, ref, ports, x: inst.x || 80, y: inst.y || 80, w: inst.w || 170, h: computeBlockH(inst) };
   });
 }
 
+function computeBlockH(inst) {
+  const ref = data.modules[inst.moduleRef];
+  if (!ref) return MIN_BLOCK_H;
+  if (inst.h) return inst.h;
+  const leftC = ref.ports.filter(p => defaultEdgeForDir(p.dir) === 'left').length;
+  const rightC = ref.ports.filter(p => defaultEdgeForDir(p.dir) === 'right').length;
+  return Math.max(MIN_BLOCK_H, (Math.max(leftC, rightC) + 1) * 24 + 32);
+}
+
 function portWorldPos(ep) {
-  // Floating endpoint: {type:'float', x, y}
   if (ep.type === 'float') return { x: ep.x, y: ep.y };
   const s = sheet();
   if (!s) return null;
@@ -384,7 +389,7 @@ function portWorldPos(ep) {
   if (!ref) return null;
   const port = ref.ports.find(p => p.id === ep.port);
   if (!port) return null;
-  const blk = { x: inst.x || 80, y: inst.y || 80, w: inst.w || 170, h: inst.h || MIN_BLOCK_H };
+  const blk = { x: inst.x || 80, y: inst.y || 80, w: inst.w || 170, h: computeBlockH(inst) };
   return getPortPosOnBlock(blk, port, inst);
 }
 
@@ -687,28 +692,31 @@ function renderCanvas() {
   ctx.textAlign = 'left'; ctx.textBaseline = 'top';
   ctx.fillText(s.name + (s.description ? ' — ' + s.description : ''), 14, 10);
 
-  // Connections (M:N)
   const multiIds = selection?.type === 'multi' ? selection.ids : [];
+  const blocks = getBlocks();
+
+  // Layer 1: Block boxes (background — so connections draw on top)
+  for (const blk of blocks) drawBlockBox(blk, multiIds.includes(blk.id));
+
+  // Layer 2: Connections (on top of block boxes)
   for (const c of s.connections) {
     const isSel = (selection?.type === 'connection' && selection.id === c.id) || multiIds.includes(c.id);
     const froms = connFrom(c).map(ep => portWorldPos(ep)).filter(Boolean);
     const tos = connTo(c).map(ep => portWorldPos(ep)).filter(Boolean);
     if (froms.length && tos.length) drawConnectionMN(froms, tos, isSel, c.props, connDir(c), c.mapping);
-    // Draw floating endpoints as diamonds with label
     for (const ep of [...connFrom(c), ...connTo(c)]) {
       if (ep.type === 'float') drawFloatingPoint(ep.x, ep.y, ep.label, isSel);
     }
   }
+
+  // Layer 3: Ports (on top of connections, with labels facing outward)
+  for (const blk of blocks) drawBlockPorts(blk);
 
   // Link preview
   if (linking) {
     const fp = portWorldPos(linking);
     if (fp) { ctx.strokeStyle = getCSS('--amber'); ctx.lineWidth = 1.5; ctx.setLineDash([4, 3]); ctx.beginPath(); ctx.moveTo(fp.x, fp.y); ctx.lineTo(mouse.x, mouse.y); ctx.stroke(); ctx.setLineDash([]); }
   }
-
-  // Blocks
-  const blocks = getBlocks();
-  for (const blk of blocks) drawBlock(blk, multiIds.includes(blk.id));
 
   // Annotations (group comments) — draw markers on annotated items
   if (s.annotations) {
@@ -761,7 +769,8 @@ function renderCanvas() {
   }
 }
 
-function drawBlock(blk, multiSel) {
+// Draw just the block box and labels (no ports — those are drawn later on top of connections)
+function drawBlockBox(blk, multiSel) {
   const isSel = multiSel || (selection?.type === 'instance' && selection.id === blk.id);
   const rot = blk.inst.rotation || 0;
 
@@ -778,23 +787,43 @@ function drawBlock(blk, multiSel) {
 
   if (rot) { ctx.fillStyle = getCSS('--fg3'); ctx.font = '8px ' + getCSS('--font'); ctx.textAlign = 'right'; ctx.fillText(rot + '\u00b0', blk.x + blk.w - 4, blk.y + 12); }
 
+  if (isSel) drawResizeHandles(blk);
+}
+
+// Draw ports on a block — labels face OUTWARD from the block
+function drawBlockPorts(blk) {
   for (const port of blk.ports) {
     const pos = getPortPosOnBlock(blk, port, blk.inst);
     let ls;
-    if (Math.abs(pos.x - blk.x) < 1) ls = 'right';
-    else if (Math.abs(pos.x - (blk.x + blk.w)) < 1) ls = 'left';
-    else if (Math.abs(pos.y - blk.y) < 1) ls = 'below';
-    else ls = 'above';
+    // Label should face OUTSIDE the block
+    if (Math.abs(pos.x - blk.x) < 1) ls = 'left';         // port on left edge → label to the left (outside)
+    else if (Math.abs(pos.x - (blk.x + blk.w)) < 1) ls = 'right';  // port on right edge → label to the right (outside)
+    else if (Math.abs(pos.y - blk.y) < 1) ls = 'above';    // port on top edge → label above (outside)
+    else ls = 'below';                                       // port on bottom edge → label below (outside)
     drawPort(pos.x, pos.y, port, ls);
   }
-  if (isSel) drawResizeHandles(blk);
 }
 
 function drawPort(x, y, port, labelSide) {
   const col = PCOL[port.dir] || '#888';
-  ctx.beginPath(); ctx.arc(x, y, PORT_R, 0, Math.PI * 2); ctx.fillStyle = col; ctx.fill();
-  ctx.strokeStyle = getCSS('--bg'); ctx.lineWidth = 1.5; ctx.stroke();
-  const label = port.name + arrayLabel(port.array);
+  const isIf = port.dir === 'interface';
+
+  if (isIf) {
+    // Interface port: square shape
+    const sz = PORT_R + 1;
+    ctx.fillStyle = col;
+    ctx.fillRect(x - sz, y - sz, sz * 2, sz * 2);
+    ctx.strokeStyle = getCSS('--bg'); ctx.lineWidth = 1.5;
+    ctx.strokeRect(x - sz, y - sz, sz * 2, sz * 2);
+  } else {
+    // Regular port: circle
+    ctx.beginPath(); ctx.arc(x, y, PORT_R, 0, Math.PI * 2); ctx.fillStyle = col; ctx.fill();
+    ctx.strokeStyle = getCSS('--bg'); ctx.lineWidth = 1.5; ctx.stroke();
+  }
+
+  // Label
+  const role = isIf && port.role ? (port.role === 'master' ? ' M' : ' S') : '';
+  const label = port.name + arrayLabel(port.array) + role;
   ctx.fillStyle = col; ctx.font = '9px ' + getCSS('--mono'); ctx.textBaseline = 'middle';
   if (labelSide === 'right') { ctx.textAlign = 'left'; ctx.fillText(label, x + 8, y); }
   else if (labelSide === 'left') { ctx.textAlign = 'right'; ctx.fillText(label, x - 8, y); }
@@ -1498,12 +1527,20 @@ function renderModulePanel(panel, mid) {
   for (let i = 0; i < m.ports.length; i++) {
     const p = m.ports[i];
     h += `<div class="port-section"><div class="port-header">`;
-    h += `<input style="flex:2" value="${esc(p.name)}" onchange="data.modules['${mid}'].ports[${i}].name=this.value;markDirty();render()"/>`;
-    h += `<select style="flex:1" onchange="data.modules['${mid}'].ports[${i}].dir=this.value;markDirty();render()">`;
-    for (const d of ['in', 'out', 'inout']) h += `<option ${p.dir === d ? 'selected' : ''}>${d}</option>`;
-    h += `</select><button class="btn btn-sm btn-danger" onclick="data.modules['${mid}'].ports.splice(${i},1);markDirty();render()">x</button></div>`;
-    h += arrayEditorHTML(p.array, `data.modules['${mid}'].ports[${i}]`);
-    h += propsEditorHTML(p.props, `data.modules['${mid}'].ports[${i}].props`);
+    const pp = `data.modules['${mid}'].ports[${i}]`;
+    h += `<input style="flex:2" value="${esc(p.name)}" onchange="${pp}.name=this.value;markDirty();render()"/>`;
+    h += `<select style="flex:1" onchange="${pp}.dir=this.value;markDirty();render()">`;
+    for (const d of ['in', 'out', 'inout', 'interface']) h += `<option ${p.dir === d ? 'selected' : ''}>${d}</option>`;
+    h += `</select>`;
+    if (p.dir === 'interface') {
+      h += `<select style="flex:0 0 55px" onchange="${pp}.role=this.value;markDirty();render()">`;
+      h += `<option ${p.role === 'master' ? 'selected' : ''}>master</option>`;
+      h += `<option ${p.role === 'slave' ? 'selected' : ''}>slave</option>`;
+      h += `</select>`;
+    }
+    h += `<button class="btn btn-sm btn-danger" onclick="data.modules['${mid}'].ports.splice(${i},1);markDirty();render()">x</button></div>`;
+    h += arrayEditorHTML(p.array, pp);
+    h += propsEditorHTML(p.props, `${pp}.props`);
     h += `</div>`;
   }
   h += `<button class="btn btn-sm" style="margin-top:4px" onclick="data.modules['${mid}'].ports.push({id:'p_'+uid(),name:'new_port',dir:'in',props:{width:1}});markDirty();render()">+ port</button>`;
@@ -1530,7 +1567,7 @@ function renderInstancePanel(panel, iid) {
   h += `<input type="number" style="width:60px" value="${inst.h || MIN_BLOCK_H}" onchange="${ip}.h=parseInt(this.value);markDirty();render()"/></div>`;
   if (ref) {
     h += `<label>Module ports</label><div style="font-size:11px;color:var(--fg3)">`;
-    for (const p of ref.ports) { const pp = Object.entries(p.props || {}).map(([k, v]) => `${k}=${v}`).join(', '); h += `<div>- ${p.name}${arrayLabel(p.array)} [${p.dir}] ${pp}</div>`; }
+    for (const p of ref.ports) { const pp = Object.entries(p.props || {}).map(([k, v]) => `${k}=${v}`).join(', '); const rl = p.dir === 'interface' && p.role ? '/' + p.role : ''; h += `<div>- ${p.name}${arrayLabel(p.array)} [${p.dir}${rl}] ${pp}</div>`; }
     h += `</div>`;
     h += `<button class="btn btn-sm" style="margin-top:6px" onclick="selection={type:'module',id:'${inst.moduleRef}'};render()">Edit module definition</button>`;
   }

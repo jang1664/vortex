@@ -43,6 +43,8 @@ def simplify(data: dict) -> dict:
         ports = []
         for p in m.get("ports", []):
             sp = {"name": p["name"], "dir": p["dir"]}
+            if p.get("role"):
+                sp["role"] = p["role"]
             if p.get("array"):
                 sp["array"] = p["array"]
             if p.get("props"):
