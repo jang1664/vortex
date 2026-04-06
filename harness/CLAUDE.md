@@ -14,6 +14,10 @@
 - @docs/coding_guidelines_verilog.md — RTL coding conventions
 - @docs/microarchitecture.md — Vortex pipeline overview
 
+## Required External Tools
+Before using an external binary (e.g., `fst2vcd`, `vcs`, `gtkwave`), run `which <tool>` to verify it exists.
+If missing, tell the user which tool is needed and stop — do not attempt workarounds or proceed without it.
+
 ## Critical Invariants
 - Interface *_if.sv master/slave modports must always be symmetric
 - `gemm_unified_cmd_t` is the single command struct for all opcodes
