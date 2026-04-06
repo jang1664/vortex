@@ -13,6 +13,8 @@
 ## Existing Project Docs
 - @docs/coding_guidelines_verilog.md — RTL coding conventions
 - @docs/microarchitecture.md — Vortex pipeline overview
+- @docs/rtl/ — RTL module docs (mirrors hw/rtl/ structure)
+- @docs/rtl/features/ — cross-cutting feature docs (pipeline stages, GBAR, perf monitoring, etc.)
 
 ## Required External Tools
 Before using an external binary (e.g., `fst2vcd`, `vcs`, `gtkwave`), run `which <tool>` to verify it exists.
