@@ -15,6 +15,10 @@
 - `hw_arch_draw/` — architecture design JSON files
 - `third_party/` — external dependencies
 
+## Rules
+- Before using an external binary (e.g., `fst2vcd`, `vcs`, `gtkwave`), run `which <tool>` to verify it exists. If missing, tell the user and stop.
+- Always use `python tools/hw_draw/hw_tool.py` to read/modify hw_design_json files — do NOT edit JSON directly.
+
 ## Reference Map
 - RTL work → @docs/coding_guidelines_verilog.md, @docs/microarchitecture.md
 - RTL module docs → @docs/rtl/

@@ -9,4 +9,3 @@ paths: ["hw/rtl/**"]
 - Do not hardcode magic numbers — reference localparams from VX_config.vh or VX_gpu_pkg.sv
 - When modifying CHIPSCOPE debug probes, update the bit-width localparam (DBG_*_W) to match
 - New modules must follow the pattern: INSTANCE_ID parameter, `ifdef CHIPSCOPE / `ifdef DBG_TRACE_* blocks
-- Before using an external binary (e.g., `fst2vcd`, `vcs`, `gtkwave`), run `which <tool>` to verify it exists. If missing, tell the user which tool is needed and stop — do not attempt workarounds or proceed without it.
