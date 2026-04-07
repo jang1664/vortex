@@ -1,0 +1,1 @@
+- [TMEM/DMA status](project_tmem_dma_status.md) — Implementation complete (Phases 1-8), compile-verified. Blackbox blocked by pre-existing xrt_vcs bug.

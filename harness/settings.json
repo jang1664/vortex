@@ -6,7 +6,9 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash .claude/hooks/conda-inject.sh"
+            "command": "bash .claude/hooks/bash-guard.sh",
+            "timeout": 10,
+            "statusMessage": "Checking bash guard..."
           }
         ]
       },
@@ -17,6 +19,29 @@
             "type": "command",
             "command": "python3 \"$CLAUDE_PROJECT_DIR/harness/hooks/check_hw_json_read.py\"",
             "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.tool_input.file_path' | { read -r f; if echo \"$f\" | grep -qE '/hw/.*\\.(sv|vh|v)$'; then echo '{\"decision\":\"block\",\"reason\":\"BLOCKED: Main agent must not edit RTL files directly. Use RTL Implementation subagent instead.\"}'; exit 2; fi; }",
+            "timeout": 5,
+            "statusMessage": "Checking RTL edit guard..."
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/pre-compact.sh",
+            "timeout": 5,
+            "statusMessage": "Preparing context recovery..."
           }
         ]
       }

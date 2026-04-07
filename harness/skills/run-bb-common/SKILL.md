@@ -18,9 +18,29 @@ All commands run from the `build/` directory.
 ```bash
 cd build
 
-# Basic: run app with a driver
-./ci/blackbox.sh --driver=<driver> --app=<app> --args="<args>" --cores=<N> --threads=<N> --debug=<level>
+# Basic: run app with a driver. Use Same CONFIGS envvar if there is no special reason to change configs.
+CONFIGS=""
+CONFIGS+=" -DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MERGED_MEMORY_INTERFACE"
+CONFIGS+=" -DDCACHE_DISABLE -DL2_ENABLE -DNUM_THREADS=8"
+CONFIGS+=" -DLMEM_LOG_SIZE=22 -DSTACK_BASE_ADDR=8585740288"
+CONFIGS+=" -DDBG_TRACE_PIPELINE"
+CONFIGS+=" -DDBG_TRACE_MEM"
+CONFIGS+=" -DDBG_TRACE_CACHE"
+CONFIGS+=" -DDBG_TRACE_AFU"
+CONFIGS+=" -DDBG_TRACE_SCOPE"
+CONFIGS+=" -DDBG_TRACE_GBAR"
+CONFIGS+=" -DDBG_TRACE_TCU"
+CONFIGS+=" -DDBG_TRACE_GEMM"
+CONFIGS+=" -DAFU_DONE_WAIT_CACHE_DRAIN"
+NUM_CORES=1
+NUM_THREADS=8
+DEBUG_LEVEL=3
+CONFIGS="$CONFIGS" \
+./ci/blackbox.sh --driver=<driver> --app=<app> --args="<args>" --cores=$NUM_CORES --threads=$NUM_THREADS --debug=$DEBUG_LEVEL
 ```
+Use timeout to prevent hanging. First time, use 5 minutes to see if it completes. If it does not, check logs to see if it is stuck or just slow. For slow tests, increase timeout to 30 minutes.
+
+```bash
 
 ## Drivers
 
@@ -31,25 +51,6 @@ cd build
 | `xrt` | XRT runtime (for hw_emu or hw) |
 | `xrt_vcs` | XRT runtime + VCS RTL simulation |
 | `xrt_vcs_post` | XRT + VCS post-implementation gate sim |
-
-## Common Examples
-
-```bash
-# Verilator RTL sim
-./ci/blackbox.sh --driver=rtlsim --app=vecadd --args="-n 128" --cores=1 --threads=8 --debug=3
-
-# XRT + VCS (needs CONFIGS, env vars)
-CONFIGS="-DNUM_THREADS=8 -DLMEM_LOG_SIZE=22 -DDCACHE_DISABLE -DL2_ENABLE" \
-DRIVER=xrt_vcs \
-./ci/blackbox.sh --driver=xrt_vcs --app=vecadd --args="-n 128" --cores=1 --debug=3
-
-# hw_emu (requires v++ xclbin built first)
-CONFIGS="..." \
-FPGA_BIN_DIR=hw/syn/xilinx/xrt/hw_emu/bin \
-PLATFORM=xilinx_u55c_gen3x16_xdma_3_202210_1 \
-DRIVER=xrt TARGET=hw_emu \
-./ci/blackbox.sh --driver=xrt --app=vecadd --args="-n 128" --cores=1 --debug=3
-```
 
 ## Key Options
 

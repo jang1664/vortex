@@ -99,25 +99,31 @@ If status is NOT "pass", spawn the **RTL Implementation subagent** again with:
 
 ## Iteration Log
 
-Maintain `docs/rtl-improve/<feature-name>-log.md` throughout the loop. Update it after **every** verification iteration. Format:
+Append iteration results to `docs/rtl-improve/STATUS.md` throughout the loop. Update it after **every** verification iteration. Use the following format per iteration:
 
 ```markdown
-# <Feature Name> — Iteration Log
-
-## Iteration 1
+### <Feature Name> — Iteration N
 - **Status**: compile_error | sim_fail | pass
 - **Error summary**: (one-line description of what went wrong)
 - **Root cause**: (what was actually wrong)
 - **Fix applied**: (what the RTL subagent changed)
 - **Lesson**: (reusable insight, if any)
-
-## Iteration 2
-...
 ```
 
 This log serves two purposes:
 1. **During the loop** — prevents the RTL subagent from repeating the same fix. Always include the full log when spawning subagents.
 2. **After completion** — the user can review what happened and the lessons learned persist for future work.
+
+## Step 6: Blackbox Tests (after all unit tests pass)
+
+When the test plan includes blackbox tests (Level 2), **invoke the `/run-bb-common` skill** — do NOT run blackbox.sh directly.
+
+The run-bb-common skill knows:
+- Required `CONFIGS` environment variables per driver (xrt_vcs needs `-DNUM_THREADS`, `-DLMEM_LOG_SIZE`, etc.)
+- Correct `DRIVER` environment variable
+- How to interpret pass/fail results
+
+If no blackbox skill exists or it's insufficient, check `harness/rules/testing-*.md` for the exact commands and CONFIGS for each test. **Never run blackbox.sh with empty CONFIGS** — xrt_vcs will silently build with wrong RTL configuration.
 
 ## Rules
 
@@ -126,3 +132,4 @@ This log serves two purposes:
 - Verification subagent must use `tools/verify_rtl.py` for deterministic checking — no manual log interpretation.
 - RTL subagent must not modify test infrastructure unless `test_type: "new_tb"`.
 - On compile errors, RTL subagent fixes syntax/structural issues first before re-verifying.
+- **Blackbox tests MUST use `/run-bb-common` skill or follow the exact commands in `harness/rules/testing-*.md`.** Do not improvise blackbox.sh invocations.
