@@ -28,17 +28,23 @@
 #define RAW_OP_NOTIFY            3
 #define RAW_OP_WAIT              4
 #define RAW_OP_MXU_LOAD_WEIGHT   5
-#define RAW_OP_MXU_LOAD_QPARAM  6
+#define RAW_OP_MXU_LOAD_QPARAM   6
 #define RAW_OP_MXU_LOAD_INPUT    7
 #define RAW_OP_MXU_STORE_OUTPUT  8
 #define RAW_OP_CLEAR             9
 
 // Synchronization register IDs (must match HW VX_gemm_sync)
+// Double-buffered: even=buf0, odd=buf1
 #define RID_LD0   0
+#define RID_LD1   1
 #define RID_W0    2
+#define RID_W1    3
 #define RID_SZ0   4
+#define RID_SZ1   5
 #define RID_G0    6
+#define RID_G1    7
 #define RID_O0    8
+#define RID_O1    9
 #define RID_ST   10
 
 // Kernel status codes
@@ -54,12 +60,12 @@ typedef struct {
   uint64_t dram_zp_base;
   uint64_t dram_out_base;
 
-  // LMEM base addresses (set by host, local memory offsets from 0)
-  uint64_t lmem_ibuf0;
-  uint64_t lmem_wbuf0;
-  uint64_t lmem_scbuf0;
-  uint64_t lmem_zpbuf0;
-  uint64_t lmem_obuf;
+  // LMEM base addresses — double buffered (buf0, buf1)
+  uint64_t lmem_ibuf[2];
+  uint64_t lmem_wbuf[2];
+  uint64_t lmem_scbuf[2];
+  uint64_t lmem_zpbuf[2];
+  uint64_t lmem_obuf[2];
 
   // Problem dimensions
   uint32_t M;

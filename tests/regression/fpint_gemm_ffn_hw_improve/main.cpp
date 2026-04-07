@@ -438,8 +438,6 @@ static bool compute_lmem_layout(kernel_arg_t& kargs, uint64_t local_mem_size) {
   uint32_t groups_tile = DMA_KT / QBLK;
   uint32_t ng_tile     = (DMA_NT + QBLK - 1) / QBLK;
 
-  // Buffer sizes (bytes) - must use DMA_NT (not DMA_MXU_NT) to match HW expectations
-  // (MXU reads full DMA_NT-width from qparam buffers internally)
   uint64_t lmem_ibuf_bytes  = uint64_t(DMA_MT) * DMA_KT * 2;
   uint64_t lmem_wbuf_bytes  = uint64_t(DMA_KT) * ((DMA_NT + 1) / 2);
   uint64_t lmem_scbuf_bytes = (QDIR == 0)
@@ -458,11 +456,18 @@ static bool compute_lmem_layout(kernel_arg_t& kargs, uint64_t local_mem_size) {
     return true;
   };
 
-  if (!alloc(lmem_ibuf_bytes,  kargs.lmem_ibuf0))  return false;
-  if (!alloc(lmem_wbuf_bytes,  kargs.lmem_wbuf0))  return false;
-  if (!alloc(lmem_scbuf_bytes, kargs.lmem_scbuf0)) return false;
-  if (!alloc(lmem_zpbuf_bytes, kargs.lmem_zpbuf0)) return false;
-  if (!alloc(lmem_obuf_bytes,  kargs.lmem_obuf))   return false;
+  // Double-buffered: buf0, buf1 for each type
+  // Scale and zp are paired (scbuf0, zpbuf0, scbuf1, zpbuf1) so qparam_src_stride is consistent.
+  if (!alloc(lmem_ibuf_bytes,  kargs.lmem_ibuf[0]))  return false;
+  if (!alloc(lmem_ibuf_bytes,  kargs.lmem_ibuf[1]))  return false;
+  if (!alloc(lmem_wbuf_bytes,  kargs.lmem_wbuf[0]))  return false;
+  if (!alloc(lmem_wbuf_bytes,  kargs.lmem_wbuf[1]))  return false;
+  if (!alloc(lmem_scbuf_bytes, kargs.lmem_scbuf[0])) return false;
+  if (!alloc(lmem_zpbuf_bytes, kargs.lmem_zpbuf[0])) return false;
+  if (!alloc(lmem_scbuf_bytes, kargs.lmem_scbuf[1])) return false;
+  if (!alloc(lmem_zpbuf_bytes, kargs.lmem_zpbuf[1])) return false;
+  if (!alloc(lmem_obuf_bytes,  kargs.lmem_obuf[0]))  return false;
+  if (!alloc(lmem_obuf_bytes,  kargs.lmem_obuf[1]))  return false;
 
   return true;
 }
@@ -622,11 +627,12 @@ int main(int argc, char *argv[]) {
   kargs.QDIR   = QDIR;
   kargs.status = STATUS_INIT;
 
-  std::cout << "LMEM layout: ibuf0=0x" << std::hex << kargs.lmem_ibuf0
-            << " wbuf0=0x" << kargs.lmem_wbuf0
-            << " scbuf0=0x" << kargs.lmem_scbuf0
-            << " zpbuf0=0x" << kargs.lmem_zpbuf0
-            << " obuf=0x" << kargs.lmem_obuf
+  std::cout << "LMEM layout (double-buffered):" << std::hex
+            << " ibuf=[0x" << kargs.lmem_ibuf[0] << ",0x" << kargs.lmem_ibuf[1] << "]"
+            << " wbuf=[0x" << kargs.lmem_wbuf[0] << ",0x" << kargs.lmem_wbuf[1] << "]"
+            << " scbuf=[0x" << kargs.lmem_scbuf[0] << ",0x" << kargs.lmem_scbuf[1] << "]"
+            << " zpbuf=[0x" << kargs.lmem_zpbuf[0] << ",0x" << kargs.lmem_zpbuf[1] << "]"
+            << " obuf=[0x" << kargs.lmem_obuf[0] << ",0x" << kargs.lmem_obuf[1] << "]"
             << std::dec << std::endl;
 
   RT_CHECK(vx_upload_bytes(device, &kargs, sizeof(kargs), &args_buffer));
