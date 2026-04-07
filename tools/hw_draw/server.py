@@ -422,23 +422,24 @@ def main():
     # Start file watcher
     threading.Thread(target=file_watcher, daemon=True).start()
 
-    # Kill leftover processes on this port
-    try:
-        result = subprocess.run(["lsof", "-ti", f":{PORT}"], capture_output=True, text=True)
-        for pid_str in result.stdout.strip().split("\n"):
-            if pid_str and int(pid_str) != os.getpid():
-                print(f"[hw-editor] Killing leftover process {pid_str} on port {PORT}")
-                os.kill(int(pid_str), signal.SIGTERM)
-        time.sleep(0.3)
-    except Exception:
-        pass
-
     class Server(http.server.ThreadingHTTPServer):
         allow_reuse_address = True
         daemon_threads = True
 
-    server = Server(("0.0.0.0", PORT), Handler)
-    print(f"[hw-editor] Serving on http://localhost:{PORT}")
+    # Find an available port starting from PORT
+    port = PORT
+    server = None
+    for attempt in range(100):
+        try:
+            server = Server(("0.0.0.0", port), Handler)
+            break
+        except OSError:
+            print(f"[hw-editor] Port {port} in use, trying {port + 1}...")
+            port += 1
+    if not server:
+        print(f"[hw-editor] Could not find an available port in range {PORT}-{PORT+99}", file=sys.stderr)
+        sys.exit(1)
+    print(f"[hw-editor] Serving on http://localhost:{port}")
     print(f"[hw-editor] Press Ctrl+C to stop")
     try:
         server.serve_forever()

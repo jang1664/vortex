@@ -4,7 +4,9 @@
       "id": "m_cja2dvo",
       "name": "DMA",
       "description": "8개의 master axi port와 8개의 vx_mem_bus master port를 가지고 있다. 내부에서 연결은 1:1 connection을 사용한다. 즉 axi_port[0] <-> mem_bus_port[0], axi_port[1] <-> mem_bus_port[1] 로 연결된다.",
-      "props": {},
+      "props": {
+        "description": "8개의 AXI flat signal master port와 8개의 VX_mem_bus_if master port. 1:1 connection (axi[i] <-> membus[i]). SW-controlled stride/bound로 전송, HW가 tiling 결정하지 않음. AXI signals는 VX_axi_adapter.sv 패턴 (flat wire, no SV interface)."
+      },
       "ports": [
         {
           "id": "p_6h4dklx",
@@ -36,7 +38,11 @@
       "id": "m_w6pdhfi",
       "name": "tensor memory bank",
       "description": "gemm unit을 위한 memory다. DMA를 통해서 HBM과 communcation 된다. local DMA를 통해 gemm unit과 communication 한다.",
-      "props": {},
+      "props": {
+        "size": "4KB (parameterized)",
+        "internal": "VX_sp_ram (single-port), front-end VX_mem_arb for multi-requestor arbitration",
+        "description": "GEMM 전용 메모리. 내부에 VX_sp_ram (1-port) 사용. 앞단에 VX_mem_arb로 DMA, local DMA read, local DMA write 등 multi-requestor를 arbitration. Default 4KB/bank, parameterized SIZE."
+      },
       "ports": [
         {
           "id": "p_9lchlva",
@@ -76,9 +82,11 @@
     },
     "m_kejwc00": {
       "id": "m_kejwc00",
-      "name": "8:1 mux",
+      "name": "8:1 switch",
       "description": "여러개의 input이 들어올 때 muxing",
-      "props": {},
+      "props": {
+        "description": "8:1 bidirectional switch. 내부에 mux(8→1)와 demux(1→8)를 모두 포함. VX_mem_bus_if의 req/rsp 양방향 처리. VX_stream_arb 또는 VX_mem_arb 활용."
+      },
       "ports": [
         {
           "id": "p_zbzs9of",
@@ -106,7 +114,9 @@
       "id": "m_ysy7978",
       "name": "gemm_unit",
       "description": "MXU와 행렬곱셈을 위한 여러 module들이 포함되어 있다.",
-      "props": {},
+      "props": {
+        "description": "MXU와 행렬곱셈을 위한 여러 module 포함. 각 port는 64B VX_mem_bus_if. weight port는 한번에 4 rows 읽음."
+      },
       "ports": [
         {
           "id": "p_p88yza9",
@@ -148,9 +158,11 @@
     },
     "m_2rhi371": {
       "id": "m_2rhi371",
-      "name": "1:8 demux",
+      "name": "1:8 switch",
       "description": "1:8 demux이다.",
-      "props": {},
+      "props": {
+        "description": "1:8 bidirectional switch. 내부에 demux(1→8)와 mux(8→1)를 모두 포함. VX_mem_bus_if의 req/rsp 양방향 처리. address-based routing."
+      },
       "ports": [
         {
           "id": "p_3hybatr",

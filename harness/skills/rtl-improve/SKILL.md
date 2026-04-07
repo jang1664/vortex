@@ -25,7 +25,15 @@ Before any code changes, confirm the improvement idea with the user.
 - Use `hw_design_json` files (`*.simple.json`) to communicate hardware spec and structure when relevant.
 - Identify which modules/files will be affected.
 - Agree on the scope — do NOT expand beyond what the user asked.
-- Once the idea is confirmed, proceed to Step 2.
+
+**Spec document**: Create `docs/rtl-improve/<feature-name>-spec.md` at the start of this step. Update it as the spec is refined through discussion with the user. The spec doc should contain:
+- Goal: what is being improved and why
+- Scope: affected modules/files
+- Design decisions made during discussion
+- Constraints and assumptions
+- Final agreed spec (marked as "confirmed" before proceeding to Step 2)
+
+Once the idea is confirmed and the spec doc is finalized, proceed to Step 2.
 
 ## Step 2: RTL Implementation
 
@@ -88,6 +96,28 @@ If status is NOT "pass", spawn the **RTL Implementation subagent** again with:
   - Summary of all iterations and their failure modes
   - The current state of changes
   - Ask the user how to proceed
+
+## Iteration Log
+
+Maintain `docs/rtl-improve/<feature-name>-log.md` throughout the loop. Update it after **every** verification iteration. Format:
+
+```markdown
+# <Feature Name> — Iteration Log
+
+## Iteration 1
+- **Status**: compile_error | sim_fail | pass
+- **Error summary**: (one-line description of what went wrong)
+- **Root cause**: (what was actually wrong)
+- **Fix applied**: (what the RTL subagent changed)
+- **Lesson**: (reusable insight, if any)
+
+## Iteration 2
+...
+```
+
+This log serves two purposes:
+1. **During the loop** — prevents the RTL subagent from repeating the same fix. Always include the full log when spawning subagents.
+2. **After completion** — the user can review what happened and the lessons learned persist for future work.
 
 ## Rules
 

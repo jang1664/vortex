@@ -14,6 +14,7 @@
 - `harness/` — Claude harness (rules, docs, hooks, skills)
 - `hw_arch_draw/` — architecture design JSON files
 - `third_party/` — external dependencies
+  - `axi/` - AXI related library
 
 ## Rules
 - Before using an external binary (e.g., `fst2vcd`, `vcs`, `gtkwave`), run `which <tool>` to verify it exists. If missing, tell the user and stop.
