@@ -47,17 +47,17 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
     always_ff @(posedge clk) begin
       if (!reset) begin
         if (instruction_fire) begin
-          `TRACE(2, ("%m : [%0t] | GEMM_CTRL_INSTR_ACCEPT | {inst=0x%0h}\n",
+          `TRACE(2, ("%m : [%0t] | GEMM_CTRL_INSTR_ACCEPT | {inst=%s, data=0x%0h}\n",
                     $time, INSTANCE_ID, instruction_if.inst))
         end
 
         if (queues_idle) begin
-          `TRACE(3, ("%m : [%0t] | GEMM_CTRL_STATUS | {instr_ready=%0d, queues_idle=%0d, parent_q_empty=%0d, child_q_empty=0x%0h}\n",
+          `TRACE(3, ("%m : [%0t] | GEMM_CTRL_STATUS | {inst=%s, instr_ready=%0d, queues_idle=%0d, parent_q_empty=%0d, child_q_empty=0x%0h}\n",
                     $time, INSTANCE_ID, instruction_if.ready, queues_idle, parent_q_empty, child_q_empty_v))
         end
 
         if (done_fire) begin
-          `TRACE(2, ("%m : [%0t] | GEMM_CTRL_DONE_HANDSHAKE | {queues_idle=%0d}\n",
+          `TRACE(2, ("%m : [%0t] | GEMM_CTRL_DONE_HANDSHAKE | {inst=%s, queues_idle=%0d}\n",
                     $time, INSTANCE_ID, queues_idle))
         end
       end
@@ -157,8 +157,30 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
         // push when sync issues and we report ready (buffer-only)
         wire child_q_push = gemm_sync_out[i].ctrl.start && gemm_sync_out[i].flag.idle;
 
+        // Detect if the command at queue head is a NOTIFY (opcode 3)
+        localparam logic [3:0] OP_NOTIFY_LOCAL = 4'd3;
+        gemm_unified_cmd_t child_q_cmd;
+        assign child_q_cmd = child_q_dout;
+        wire child_q_head_is_notify = !child_q_empty && (child_q_cmd.instr[3:0] == OP_NOTIFY_LOCAL);
+
+        // For children 0-3 (lmem_dma paths), NOTIFY must wait until the FSM
+        // has been idle for at least 1 cycle. This prevents NOTIFY from being
+        // popped on the same cycle the previous DMA completes, which would
+        // cause sync_reg to update before the next command can start.
+        logic child_fsm_was_idle_r;
+        always_ff @(posedge clk) begin
+          if (reset) child_fsm_was_idle_r <= 1'b1;
+          else       child_fsm_was_idle_r <= gemm_cqueue_out[i].flag.idle;
+        end
+
+        // For DMA child (child 4), NOTIFY is handled inside its own FSM
+        // sequentially, so no guard needed.
+        wire child_notify_ok = (i == 4) ? 1'b1 : child_fsm_was_idle_r;
+
         // output to unit: valid if not empty, ready is unit idle
-        wire child_out_fire  = !child_q_empty && gemm_cqueue_out[i].flag.idle;
+        // For NOTIFY at queue head: additionally require FSM was idle last cycle
+        wire child_out_fire  = !child_q_empty && gemm_cqueue_out[i].flag.idle
+                             && (!child_q_head_is_notify || child_notify_ok);
 
         // backpressure to sync: only depends on queue capacity
         assign gemm_sync_out[i].flag.idle = ~child_q_full;

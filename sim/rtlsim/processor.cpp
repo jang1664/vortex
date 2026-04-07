@@ -193,6 +193,11 @@ public:
       this->tick();
     }
 
+    // drain pending memory transactions (cache writeback to RAM)
+    for (int i = 0; i < 10000; ++i) {
+      this->tick();
+    }
+
     // stop
     device_->reset = 1;
 
