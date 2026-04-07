@@ -347,4 +347,77 @@ module VX_cmd_constructor import VX_gpu_pkg::*; #(
     end
   end
 
+`ifdef DBG_TRACE_CMD_CONSTRUCTOR
+  function automatic string raw_op_to_str(input logic [3:0] op);
+    begin
+      unique case (op)
+        RAW_OP_DMA_LOAD:         raw_op_to_str = "DMA_LOAD";
+        RAW_OP_DMA_STORE:        raw_op_to_str = "DMA_STORE";
+        RAW_OP_NOTIFY:           raw_op_to_str = "NOTIFY";
+        RAW_OP_WAIT:             raw_op_to_str = "WAIT";
+        RAW_OP_MXU_LOAD_WEIGHT:  raw_op_to_str = "MXU_LOAD_WEIGHT";
+        RAW_OP_MXU_LOAD_QPARAM:  raw_op_to_str = "MXU_LOAD_QPARAM";
+        RAW_OP_MXU_LOAD_INPUT:   raw_op_to_str = "MXU_LOAD_INPUT";
+        RAW_OP_MXU_STORE_OUTPUT: raw_op_to_str = "MXU_STORE_OUTPUT";
+        RAW_OP_CLEAR:            raw_op_to_str = "CLEAR";
+        default:                 raw_op_to_str = "UNKNOWN";
+      endcase
+    end
+  endfunction
+
+  function automatic string state_to_str(input state_t s);
+    begin
+      unique case (s)
+        S_IDLE:       state_to_str = "IDLE";
+        S_COLLECT:    state_to_str = "COLLECT";
+        S_WAIT_ISSUE: state_to_str = "WAIT_ISSUE";
+        default:      state_to_str = "UNKNOWN";
+      endcase
+    end
+  endfunction
+
+  always_ff @(posedge clk) begin
+    if (!reset) begin
+      // Log instruction capture (first word)
+      if (capture_first_fire) begin
+        `TRACE(2, ("%m : [%0t] | CMD_CTOR_CAPTURE_FIRST | {inst=%s, op=%s, words_expected=%0d, inst0=0x%0h}\n",
+                   $time, INSTANCE_ID, raw_op_to_str(instruction_if.inst[3:0]),
+                   first_word_count, instruction_if.inst))
+      end
+
+      // Log subsequent word captures
+      if (capture_next_fire) begin
+        `TRACE(3, ("%m : [%0t] | CMD_CTOR_CAPTURE_NEXT | {inst=%s, word_idx=%0d, data=0x%0h}\n",
+                   $time, INSTANCE_ID, words_captured_q, instruction_if.inst))
+      end
+
+      // Log state transitions
+      if (state_q != state_d) begin
+        `TRACE(3, ("%m : [%0t] | CMD_CTOR_STATE | {inst=%s, from=%s, to=%s}\n",
+                   $time, INSTANCE_ID, state_to_str(state_q), state_to_str(state_d)))
+      end
+
+      // Log command issued to FSM
+      if (out_start_d) begin
+        `TRACE(2, ("%m : [%0t] | CMD_CTOR_ISSUE | {inst=%s, op=%s, instr=0x%0h, rs1=0x%0h, rs2=0x%0h, stride=0x%0h, bound=%0d, flags=0x%0h}\n",
+                   $time, INSTANCE_ID, raw_op_to_str(out_cmd_d.instr[3:0]),
+                   out_cmd_d.instr, out_cmd_d.rs1_data, out_cmd_d.rs2_data,
+                   out_cmd_d.stride, out_cmd_d.bound, out_cmd_d.flags))
+      end
+
+      // Log unsupported command skip
+      if ((state_q == S_WAIT_ISSUE) && !cmd_supported && !cmd_is_clear) begin
+        `TRACE(2, ("%m : [%0t] | CMD_CTOR_SKIP_UNSUPPORTED | {inst=%s, raw_op=0x%0h}\n",
+                   $time, INSTANCE_ID, inst0_q[3:0]))
+      end
+
+      // Log clear command
+      if ((state_q == S_WAIT_ISSUE) && cmd_is_clear && done_if.valid && done_if.ready) begin
+        `TRACE(2, ("%m : [%0t] | CMD_CTOR_CLEAR_DONE | {inst=%s}\n",
+                   $time, INSTANCE_ID))
+      end
+    end
+  end
+`endif
+
 endmodule
