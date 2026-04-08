@@ -29,8 +29,7 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
     VX_lsu_mem_if.master    dma_ctrl_if [`NUM_LSU_BLOCKS],
     VX_lsu_mem_if.master    gemm_ctrl_if [`NUM_LSU_BLOCKS],
     VX_mem_bus_if.slave     dma_local_data_if,
-    VX_mem_bus_if.slave     dma_global_data_if,
-    VX_mem_bus_if.slave     gemm_data_if
+    VX_mem_bus_if.slave     dma_global_data_if
 );
     VX_lsu_mem_if #(
         .NUM_LANES (`NUM_LSU_LANES),
@@ -119,106 +118,49 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
         .mem_bus_if (lmem_adapt_if)
     );
 
+    // LMEM arbitration: merge LSU adapter lanes with DMA local data.
+    // GEMM data no longer routes through mem_unit (handled by VX_tmem_subsystem).
     VX_mem_bus_if #(
         .DATA_SIZE (LSU_WORD_SIZE),
         .TAG_WIDTH (LMEM_LOCAL_TAG_WIDTH)
     ) lmem_membus_arb_out_if[`NUM_LSU_LANES]();
-    generate
-      if(`NUM_LSU_LANES == 1) begin : g_single_lane
-        VX_mem_bus_if #(
-          .DATA_SIZE(LSU_WORD_SIZE),
-          .TAG_WIDTH(GEMM_LMEM_TAG_WIDTH)
-        ) arb_in_if[3]();
-        VX_mem_bus_if #(
-          .DATA_SIZE(LSU_WORD_SIZE),
-          .TAG_WIDTH(LMEM_LOCAL_TAG_WIDTH)
-        ) arb_out_if[1]();
 
-        `ASSIGN_VX_MEM_BUS_IF_EX(arb_in_if[0], lmem_adapt_if[0], GEMM_LMEM_TAG_WIDTH, LMEM_TAG_WIDTH, UUID_WIDTH);
-        `ASSIGN_VX_MEM_BUS_IF_EX(arb_in_if[1], dma_local_data_if, GEMM_LMEM_TAG_WIDTH, LMEM_TAG_WIDTH, UUID_WIDTH);
-        `ASSIGN_VX_MEM_BUS_IF(arb_in_if[2], gemm_data_if);
+    // Lane 0: 2->1 arbiter (lsu_adapt[0] + dma_local_data)
+    VX_mem_bus_if #(
+        .DATA_SIZE (LSU_WORD_SIZE),
+        .TAG_WIDTH (GEMM_LMEM_TAG_WIDTH)
+    ) lmem_dma_arb_in_if[2]();
 
-        VX_mem_arb #(
-          .NUM_INPUTS(3),
-          .NUM_OUTPUTS(1),
-          .DATA_SIZE(LSU_WORD_SIZE),
-          .TAG_WIDTH(GEMM_LMEM_TAG_WIDTH),
-          .TAG_SEL_IDX(GEMM_LMEM_TAG_WIDTH - UUID_WIDTH),
-          .REQ_OUT_BUF(3),
-          .RSP_OUT_BUF(3),
-          .ARBITER("P")
-        ) lmem_membus_arbiter (
-          .clk(clk),
-          .reset(reset),
-          .bus_in_if(arb_in_if),
-          .bus_out_if(arb_out_if)
-        );
+    VX_mem_bus_if #(
+        .DATA_SIZE (LSU_WORD_SIZE),
+        .TAG_WIDTH (LMEM_LOCAL_TAG_WIDTH)
+    ) lmem_dma_arb_out_if[1]();
 
-        `ASSIGN_VX_MEM_BUS_IF(lmem_membus_arb_out_if[0], arb_out_if[0]);
-      end else begin : g_multi_lane
-        VX_mem_bus_if #(
-          .DATA_SIZE(LSU_WORD_SIZE),
-          .TAG_WIDTH(GEMM_LMEM_TAG_WIDTH)
-        ) lmem_dma_arb_in_if[2]();
-        VX_mem_bus_if #(
-          .DATA_SIZE(LSU_WORD_SIZE),
-          .TAG_WIDTH(LMEM_LOCAL_TAG_WIDTH)
-        ) lmem_membus_dma_arb_out_if[1]();
+    `ASSIGN_VX_MEM_BUS_IF_EX(lmem_dma_arb_in_if[0], lmem_adapt_if[0], GEMM_LMEM_TAG_WIDTH, LMEM_TAG_WIDTH, UUID_WIDTH);
+    `ASSIGN_VX_MEM_BUS_IF_EX(lmem_dma_arb_in_if[1], dma_local_data_if, GEMM_LMEM_TAG_WIDTH, LMEM_TAG_WIDTH, UUID_WIDTH);
 
-        VX_mem_bus_if #(
-          .DATA_SIZE(LSU_WORD_SIZE),
-          .TAG_WIDTH(GEMM_LMEM_TAG_WIDTH)
-        ) lmem_gemm_arb_in_if[2]();
-        VX_mem_bus_if #(
-          .DATA_SIZE(LSU_WORD_SIZE),
-          .TAG_WIDTH(LMEM_LOCAL_TAG_WIDTH)
-        ) lmem_membus_gemm_arb_out_if[1]();
+    VX_mem_arb #(
+        .NUM_INPUTS  (2),
+        .NUM_OUTPUTS (1),
+        .DATA_SIZE   (LSU_WORD_SIZE),
+        .TAG_WIDTH   (GEMM_LMEM_TAG_WIDTH),
+        .TAG_SEL_IDX (GEMM_LMEM_TAG_WIDTH - UUID_WIDTH),
+        .REQ_OUT_BUF (3),
+        .RSP_OUT_BUF (3),
+        .ARBITER     ("P")
+    ) lmem_membus_dma_arbiter (
+        .clk        (clk),
+        .reset      (reset),
+        .bus_in_if  (lmem_dma_arb_in_if),
+        .bus_out_if (lmem_dma_arb_out_if)
+    );
 
-        `ASSIGN_VX_MEM_BUS_IF_EX(lmem_dma_arb_in_if[0], lmem_adapt_if[0], GEMM_LMEM_TAG_WIDTH, LMEM_TAG_WIDTH, UUID_WIDTH);
-        `ASSIGN_VX_MEM_BUS_IF_EX(lmem_dma_arb_in_if[1], dma_local_data_if, GEMM_LMEM_TAG_WIDTH, LMEM_TAG_WIDTH, UUID_WIDTH);
+    `ASSIGN_VX_MEM_BUS_IF(lmem_membus_arb_out_if[0], lmem_dma_arb_out_if[0]);
 
-        `ASSIGN_VX_MEM_BUS_IF_EX(lmem_gemm_arb_in_if[0], lmem_adapt_if[1], GEMM_LMEM_TAG_WIDTH, LMEM_TAG_WIDTH, UUID_WIDTH);
-        `ASSIGN_VX_MEM_BUS_IF(lmem_gemm_arb_in_if[1], gemm_data_if);
-
-        VX_mem_arb #(
-          .NUM_INPUTS(2),
-          .NUM_OUTPUTS(1),
-          .DATA_SIZE(LSU_WORD_SIZE),
-          .TAG_WIDTH(GEMM_LMEM_TAG_WIDTH),
-          .TAG_SEL_IDX(GEMM_LMEM_TAG_WIDTH - UUID_WIDTH),
-          .REQ_OUT_BUF(3),
-          .RSP_OUT_BUF(3),
-          .ARBITER("P")
-        ) lmem_membus_dma_arbiter (
-          .clk(clk),
-          .reset(reset),
-          .bus_in_if(lmem_dma_arb_in_if),
-          .bus_out_if(lmem_membus_dma_arb_out_if)
-        );
-
-        VX_mem_arb #(
-          .NUM_INPUTS(2),
-          .NUM_OUTPUTS(1),
-          .DATA_SIZE(LSU_WORD_SIZE),
-          .TAG_WIDTH(GEMM_LMEM_TAG_WIDTH),
-          .TAG_SEL_IDX(GEMM_LMEM_TAG_WIDTH - UUID_WIDTH),
-          .REQ_OUT_BUF(3),
-          .RSP_OUT_BUF(3),
-          .ARBITER("P")
-        ) lmem_membus_gemm_arbiter (
-          .clk(clk),
-          .reset(reset),
-          .bus_in_if(lmem_gemm_arb_in_if),
-          .bus_out_if(lmem_membus_gemm_arb_out_if)
-        );
-
-        `ASSIGN_VX_MEM_BUS_IF(lmem_membus_arb_out_if[0], lmem_membus_dma_arb_out_if[0]);
-        `ASSIGN_VX_MEM_BUS_IF(lmem_membus_arb_out_if[1], lmem_membus_gemm_arb_out_if[0]);
-        for(genvar i = 2; i < `NUM_LSU_LANES; ++i) begin : g_pass_thru
-          `ASSIGN_VX_MEM_BUS_IF_EX(lmem_membus_arb_out_if[i], lmem_adapt_if[i], LMEM_LOCAL_TAG_WIDTH, LMEM_TAG_WIDTH, UUID_WIDTH);
-        end
-      end
-    endgenerate
+    // Lanes 1..N-1: pass through directly (tag-extended)
+    for (genvar i = 1; i < `NUM_LSU_LANES; ++i) begin : g_pass_thru
+        `ASSIGN_VX_MEM_BUS_IF_EX(lmem_membus_arb_out_if[i], lmem_adapt_if[i], LMEM_LOCAL_TAG_WIDTH, LMEM_TAG_WIDTH, UUID_WIDTH);
+    end
     
     VX_local_mem #(
         .INSTANCE_ID(`SFORMATF(("%s-lmem", INSTANCE_ID))),

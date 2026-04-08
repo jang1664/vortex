@@ -1108,6 +1108,8 @@ for block_size in range(1, full_bitwidth+1):
 // -------------------------------------------------------
 // Configuration Registers
 // -------------------------------------------------------
+`define NUM_DMA_CHANNELS 8        // Number of DMA AXI channels per core (TMEM banks)
+
 `define GEMM_CFG_REG_NUM 40       // Number of GEMM configuration registers
 `define DMA_CFG_REG_NUM 18        // Number of DMA configuration registers
 `ifdef XLEN_64

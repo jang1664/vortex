@@ -19,7 +19,8 @@
 
 module VX_core import VX_gpu_pkg::*; #(
     parameter CORE_ID = 0,
-    parameter `STRING INSTANCE_ID = ""
+    parameter `STRING INSTANCE_ID = "",
+    parameter NUM_TMEM_BANKS = 8
 ) (
     `SCOPE_IO_DECL
 
@@ -36,6 +37,9 @@ module VX_core import VX_gpu_pkg::*; #(
     VX_mem_bus_if.master    dcache_bus_if [DCACHE_NUM_REQS],
 
     VX_mem_bus_if.master    icache_bus_if,
+
+    // DMA AXI ports (from GEMM node's TMEM subsystem)
+    AXI_BUS.Master          dma_axi_m [NUM_TMEM_BANKS],
 
 `ifdef GBAR_ENABLE
     VX_gbar_bus_if.master   gbar_bus_if,
@@ -70,7 +74,7 @@ module VX_core import VX_gpu_pkg::*; #(
         .NUM_LANES (`NUM_LSU_LANES),
         .DATA_SIZE (LSU_WORD_SIZE),
         .TAG_WIDTH (LSU_TAG_WIDTH)
-    ) dma_ctrl_if[`NUM_LSU_BLOCKS+1]();
+    ) dma_ctrl_if[`NUM_LSU_BLOCKS]();
 
     // GEMM control interfaces from mem_unit
     VX_lsu_mem_if #(
@@ -89,12 +93,6 @@ module VX_core import VX_gpu_pkg::*; #(
         .DATA_SIZE (DCACHE_WORD_SIZE),
         .TAG_WIDTH (DCACHE_TAG_WIDTH)
     ) dma_global_data_if();
-
-    // GEMM data interface to mem_unit
-    VX_mem_bus_if #(
-        .DATA_SIZE (LSU_WORD_SIZE),
-        .TAG_WIDTH (GEMM_LMEM_TAG_WIDTH)
-    ) gemm_data_if();
 
 
 `ifdef PERF_ENABLE
@@ -241,16 +239,15 @@ module VX_core import VX_gpu_pkg::*; #(
     `endif
         .lsu_mem_if        (lsu_mem_if),
         .dcache_bus_if     (dcache_bus_if),
-        .dma_ctrl_if       (dma_ctrl_if[0:`NUM_LSU_BLOCKS-1]),
+        .dma_ctrl_if       (dma_ctrl_if),
         .gemm_ctrl_if      (gemm_ctrl_if),
         .dma_local_data_if (dma_local_data_if),
-        .dma_global_data_if(dma_global_data_if),
-        .gemm_data_if      (gemm_data_if)
+        .dma_global_data_if(dma_global_data_if)
     );
 
     VX_dma_node #(
       .INSTANCE_ID(INSTANCE_ID),
-      .N_MASTER(`NUM_LSU_BLOCKS+1),
+      .N_MASTER(`NUM_LSU_BLOCKS),
       .NUM_ENTRIES(`JOB_MMIO_NUM_ENTRIES)
     ) u_VX_dma_node (
       .clk(clk),
@@ -262,13 +259,13 @@ module VX_core import VX_gpu_pkg::*; #(
 
     VX_gemm_node #(
         .INSTANCE_ID (`SFORMATF(("%s-gemm", INSTANCE_ID))),
-        .N_MASTER (`NUM_LSU_BLOCKS)
+        .N_MASTER (`NUM_LSU_BLOCKS),
+        .NUM_TMEM_BANKS (NUM_TMEM_BANKS)
     ) gemm_node (
-        .clk        (clk),
-        .reset      (reset),
-        .mmio_if    (gemm_ctrl_if),
-        .dma_if     (dma_ctrl_if[`NUM_LSU_BLOCKS]),
-        .lmem_bus_if(gemm_data_if)
+        .clk         (clk),
+        .reset       (reset),
+        .mmio_if     (gemm_ctrl_if),
+        .dma_axi_m   (dma_axi_m)
     );
 
 `ifdef PERF_ENABLE

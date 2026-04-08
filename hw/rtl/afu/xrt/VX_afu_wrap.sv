@@ -24,7 +24,7 @@ module VX_afu_wrap import VX_gpu_pkg::*; #(
 `ifdef PLATFORM_MERGED_MEMORY_INTERFACE
 	parameter C_M_AXI_MEM_NUM_BANKS   = 1
 `else
-	parameter C_M_AXI_MEM_NUM_BANKS   = `PLATFORM_MEMORY_NUM_BANKS
+	parameter C_M_AXI_MEM_NUM_BANKS   = `NUM_DMA_CHANNELS
 `endif
 ) (
     // System signals
@@ -35,7 +35,7 @@ module VX_afu_wrap import VX_gpu_pkg::*; #(
 `ifdef PLATFORM_MERGED_MEMORY_INTERFACE
 	`REPEAT (1, GEN_AXI_MEM, REPEAT_COMMA),
 `else
-	`REPEAT (`PLATFORM_MEMORY_NUM_BANKS, GEN_AXI_MEM, REPEAT_COMMA),
+	`REPEAT (`NUM_DMA_CHANNELS, GEN_AXI_MEM, REPEAT_COMMA),
 `endif
     // AXI4-Lite slave interface
     input  wire                                 s_axi_ctrl_awvalid,
@@ -122,7 +122,7 @@ module VX_afu_wrap import VX_gpu_pkg::*; #(
 `ifdef PLATFORM_MERGED_MEMORY_INTERFACE
 	`REPEAT (1, AXI_MEM_TO_ARRAY, REPEAT_SEMICOLON);
 `else
-	`REPEAT (`PLATFORM_MEMORY_NUM_BANKS, AXI_MEM_TO_ARRAY, REPEAT_SEMICOLON);
+	`REPEAT (`NUM_DMA_CHANNELS, AXI_MEM_TO_ARRAY, REPEAT_SEMICOLON);
 `endif
 
 	reg [`CLOG2(`RESET_DELAY+1)-1:0] vx_reset_ctr;
@@ -323,7 +323,7 @@ module VX_afu_wrap import VX_gpu_pkg::*; #(
 		.AXI_DATA_WIDTH (C_M_AXI_MEM_DATA_WIDTH),
 		.AXI_ADDR_WIDTH (M_AXI_MEM_ADDR_WIDTH),
 		.AXI_TID_WIDTH  (C_M_AXI_MEM_ID_WIDTH),
-		.AXI_NUM_BANKS  (C_M_AXI_MEM_NUM_BANKS)
+		.NUM_HBM_PORTS  (C_M_AXI_MEM_NUM_BANKS)
 	) vortex_axi (
 		`SCOPE_IO_BIND  (1)
 

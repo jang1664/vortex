@@ -4,21 +4,21 @@
   Top-level GEMM node that integrates:
     - job frontend (MMIO register file + dispatch),
     - GEMM controller / GEMM unit,
-    - LMEM DMA engines,
-    - width adapters between LSU-sized bus and GEMM-sized bus.
+    - VX_tmem_subsystem (tensor memory with DMA engine, banks, local DMAs).
 
   Dataflow summary
     - Load paths (i/w/sz):
-        lmem_bus -> mem_data_adapter (split/gather) -> lmem_dma (GEMM width) -> gemm_unit
+        HBM -> DMA engine -> TMEM banks -> local DMAs -> GEMM unit
     - Output path:
-        gemm_unit -> lmem_dma (GEMM output width) -> mem_data_adapter (split) -> lmem_bus
+        GEMM unit -> local DMA -> TMEM banks -> DMA engine -> HBM
 */
 `include "VX_define.vh"
 
 module VX_gemm_node import VX_gpu_pkg::*; #(
     parameter `STRING INSTANCE_ID = "",
     parameter N_MASTER    = 1,
-    parameter N_CHILDREN  = 5
+    parameter N_CHILDREN  = 5,
+    parameter NUM_TMEM_BANKS = 8
 ) (
     // Clock
     input wire              clk,
@@ -26,8 +26,8 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
 
     VX_lsu_mem_if.slave     mmio_if[N_MASTER],
 
-    VX_lsu_mem_if.master    dma_if,     // to DMA engine
-    VX_mem_bus_if.master    lmem_bus_if // for inputs, weights, scale/zero, output
+    // DMA engine AXI ports (pass through to VX_tmem_subsystem -> HBM)
+    AXI_BUS.Master          dma_axi_m [NUM_TMEM_BANKS]
 );
 
     // -------------------------------------------------------------------------
@@ -57,6 +57,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     localparam int GEN_W      = `JOB_MMIO_GEN_W;
 
     localparam logic [3:0] OP_NOTIFY = 4'd3;
+
     // -------------------------------------------------------------------------
     // Data-path interfaces
     // -------------------------------------------------------------------------
@@ -78,61 +79,23 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
       .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
     ) o_gemm_bus_if ();
 
-    // LMEM-ARB-facing buses (LSU width)
-    VX_mem_bus_if # (
-      .DATA_SIZE(LSU_WORD_SIZE),
-      .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
-    ) i_dma_lmem_bus_if ();
-    VX_mem_bus_if # (
-      .DATA_SIZE(LSU_WORD_SIZE),
-      .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
-    ) w_dma_lmem_bus_if ();
-    VX_mem_bus_if # (
-      .DATA_SIZE(LSU_WORD_SIZE),
-      .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
-    ) sz_dma_lmem_bus_if ();
-    VX_mem_bus_if # (
-      .DATA_SIZE(LSU_WORD_SIZE),
-      .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
-    ) o_dma_lmem_bus_if (); // output path to lmem arb (narrow)
-
-    // Internal wide buses between load-path adapters and DMAs.
-    VX_mem_bus_if # (
-      .DATA_SIZE(`GEMM_INPUT_DATA_SIZE),  //64bytes
-      .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
-    ) i_dma_lmem_wide_bus_if ();
-    VX_mem_bus_if # (
-      .DATA_SIZE(`GEMM_WEIGHT_DATA_SIZE),  //64bytes
-      .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
-    ) w_dma_lmem_wide_bus_if ();
-    VX_mem_bus_if # (
-      .DATA_SIZE(`GEMM_SCALE_ZERO_DATA_SIZE),  //64bytes
-      .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
-    ) sz_dma_lmem_wide_bus_if ();
-
-    // Output internal bus (wide before split adapter)
-    VX_mem_bus_if # (
-      .DATA_SIZE(`GEMM_OUTPUT_DATA_SIZE),  //64bytes
-      .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
-    ) o_dma_lmem_wide_bus_if (); // output ldma -> adapter (wide)
-
-    // LDMA <-> GEMM buses
+    // Intermediate buses from TMEM subsystem to address manipulation logic
     VX_mem_bus_if # (
       .DATA_SIZE(`GEMM_INPUT_DATA_SIZE),
-      .TAG_WIDTH(I_GEMM_TAG_WIDTH)
-    ) i_dma_gemm_bus_if ();
+      .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
+    ) tmem_i_gemm_bus_if ();
     VX_mem_bus_if # (
       .DATA_SIZE(`GEMM_WEIGHT_DATA_SIZE),
-      .TAG_WIDTH(W_GEMM_TAG_WIDTH)
-    ) w_dma_gemm_bus_if ();
+      .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
+    ) tmem_w_gemm_bus_if ();
     VX_mem_bus_if # (
       .DATA_SIZE(`GEMM_SCALE_ZERO_DATA_SIZE),
-      .TAG_WIDTH(SZ_GEMM_TAG_WIDTH)
-    ) sz_dma_gemm_bus_if ();
+      .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
+    ) tmem_sz_gemm_bus_if ();
     VX_mem_bus_if # (
       .DATA_SIZE(`GEMM_OUTPUT_DATA_SIZE),
       .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
-    ) o_dma_gemm_bus_if (); // gemm unit -> output ldma (wide)
+    ) tmem_o_gemm_bus_if ();
 
     // -------------------------------------------------------------------------
     // Control interfaces
@@ -218,7 +181,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     assign input_dma_ctrl_if.dst_strides[0]  = 0;
     assign input_dma_ctrl_if.dst_strides[1]  = 0;
     assign input_dma_ctrl_if.dst_strides[2]  = 0;
-    
+
     assign input_dma_ctrl_if.bounds[0]       = gemm_ctrl_if.input_read_ctrl.cmd.bound;
     assign input_dma_ctrl_if.bounds[1]       = 32'd1;
     assign input_dma_ctrl_if.bounds[2]       = 32'd1;
@@ -262,7 +225,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     assign weight_dma_ctrl_if.bounds[0]      = gemm_ctrl_if.weight_read_ctrl.cmd.bound;
     assign weight_dma_ctrl_if.bounds[1]      = 32'd1;
     assign weight_dma_ctrl_if.bounds[2]      = 32'd1;
-    
+
     assign weight_dma_ctrl_if.seg_size       = MXU_KT * (MXU_NT >> 1);  //int4, bytes
     assign gemm_ctrl_if.weight_read_flag.idle = weight_notify_pending_r ? 1'b0 : weight_dma_ctrl_if.idle;
     assign gemm_ctrl_if.weight_read_flag.done = weight_notify_pending_r ? weight_notify_fire : weight_dma_ctrl_if.done;
@@ -374,24 +337,36 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
       end
     end
 
-    // External DMA control mapping (dcache <-> LMEM).
+    // External DMA control: VX_gemm_tmem_dma_ctrl translates GEMM DMA
+    // commands into VX_config_reg_if writes for the DMA engine.
     assign gemm_dma_ctrl_if.start      = gemm_ctrl_if.dma_ctrl.start;
     assign gemm_dma_ctrl_if.cmd        = gemm_ctrl_if.dma_ctrl.cmd;
 
     assign gemm_ctrl_if.dma_flag.idle = gemm_dma_ctrl_if.idle;
     assign gemm_ctrl_if.dma_flag.done = gemm_dma_ctrl_if.done;
 
-    VX_mem_bus_if #(
-      .DATA_SIZE(LSU_WORD_SIZE),
-      .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
-    ) lmem_arb_in_if[4]();
-    VX_mem_bus_if #(
-      .DATA_SIZE(LSU_WORD_SIZE),
-      .TAG_WIDTH(GEMM_LMEM_TAG_WIDTH)
-    ) lmem_arb_out_if[1]();
+    // Internal DMA config/done interfaces (driven by tmem_dma_ctrl)
+    VX_config_reg_if #(
+        .NUM (`DMA_CFG_REG_NUM),
+        .DW  (32)
+    ) dma_cfg_if [NUM_TMEM_BANKS] ();
+
+    VX_node_done_if dma_done_if [NUM_TMEM_BANKS] ();
+
+    VX_gemm_tmem_dma_ctrl #(
+        .INSTANCE_ID  ({INSTANCE_ID, "_tmem_dma_ctrl"}),
+        .NUM_CHANNELS (NUM_TMEM_BANKS)
+    ) u_tmem_dma_ctrl (
+        .clk              (clk),
+        .reset            (reset),
+        .gemm_dma_ctrl_if (gemm_dma_ctrl_if),
+        .gemm_sync_if     (gemm_sync_if[4]),
+        .cfg_reg_if       (dma_cfg_if),
+        .done_if          (dma_done_if)
+    );
 
     // -------------------------------------------------------------------------
-    // Frontend and arbitration
+    // Frontend
     // -------------------------------------------------------------------------
 
     // Job frontend: MMIO command intake and issue/done interface.
@@ -407,213 +382,74 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
       .done_if(done_if)
     );
 
-    // LMEM arbiter: merge i/w/sz/output LSU-width traffic into single lmem port.
-    `ASSIGN_VX_MEM_BUS_IF(lmem_arb_in_if[0], i_dma_lmem_bus_if); // from input adapter
-    `ASSIGN_VX_MEM_BUS_IF(lmem_arb_in_if[1], w_dma_lmem_bus_if); // from weight adapter
-    `ASSIGN_VX_MEM_BUS_IF(lmem_arb_in_if[2], sz_dma_lmem_bus_if); // from scale/zero adapter
-    `ASSIGN_VX_MEM_BUS_IF(lmem_arb_in_if[3], o_dma_lmem_bus_if); // from output adapter (narrow)
-    VX_mem_arb #(
-      .NUM_INPUTS(4),
-      .NUM_OUTPUTS(1),
-      .DATA_SIZE(LSU_WORD_SIZE),
-      .TAG_WIDTH(GEMM_BASE_TAG_WIDTH),
-      .TAG_SEL_IDX(GEMM_BASE_TAG_WIDTH - UUID_WIDTH),
-      .REQ_OUT_BUF(3),
-      .RSP_OUT_BUF(3),
-      .ARBITER("P")
-    ) lmem_membus_arbiter (
-      .clk(clk),
-      .reset(reset),
-      .bus_in_if(lmem_arb_in_if), // input, weight, scale/zero, output
-      .bus_out_if(lmem_arb_out_if)
+    // -------------------------------------------------------------------------
+    // TMEM Subsystem
+    // -------------------------------------------------------------------------
+    // Replaces: LMEM arbiter, width adapters, LMEM DMAs, VX_gemm_dma_ctrl.
+    // Contains: DMA engine (8ch AXI<->TMEM), TMEM banks, switches, local DMAs.
+
+    VX_lmem_dma_ctrl_if tmem_ldma_ctrl_if [4] ();
+
+    // Wire local DMA ctrl interfaces to the array expected by VX_tmem_subsystem
+    assign tmem_ldma_ctrl_if[0].start          = input_dma_ctrl_if.start;
+    assign tmem_ldma_ctrl_if[0].src_base_addr  = input_dma_ctrl_if.src_base_addr;
+    assign tmem_ldma_ctrl_if[0].src_strides    = input_dma_ctrl_if.src_strides;
+    assign tmem_ldma_ctrl_if[0].dst_base_addr  = input_dma_ctrl_if.dst_base_addr;
+    assign tmem_ldma_ctrl_if[0].dst_strides    = input_dma_ctrl_if.dst_strides;
+    assign tmem_ldma_ctrl_if[0].bounds         = input_dma_ctrl_if.bounds;
+    assign tmem_ldma_ctrl_if[0].seg_size       = input_dma_ctrl_if.seg_size;
+    assign input_dma_ctrl_if.idle              = tmem_ldma_ctrl_if[0].idle;
+    assign input_dma_ctrl_if.done              = tmem_ldma_ctrl_if[0].done;
+
+    assign tmem_ldma_ctrl_if[1].start          = weight_dma_ctrl_if.start;
+    assign tmem_ldma_ctrl_if[1].src_base_addr  = weight_dma_ctrl_if.src_base_addr;
+    assign tmem_ldma_ctrl_if[1].src_strides    = weight_dma_ctrl_if.src_strides;
+    assign tmem_ldma_ctrl_if[1].dst_base_addr  = weight_dma_ctrl_if.dst_base_addr;
+    assign tmem_ldma_ctrl_if[1].dst_strides    = weight_dma_ctrl_if.dst_strides;
+    assign tmem_ldma_ctrl_if[1].bounds         = weight_dma_ctrl_if.bounds;
+    assign tmem_ldma_ctrl_if[1].seg_size       = weight_dma_ctrl_if.seg_size;
+    assign weight_dma_ctrl_if.idle             = tmem_ldma_ctrl_if[1].idle;
+    assign weight_dma_ctrl_if.done             = tmem_ldma_ctrl_if[1].done;
+
+    assign tmem_ldma_ctrl_if[2].start          = quant_param_dma_ctrl_if.start;
+    assign tmem_ldma_ctrl_if[2].src_base_addr  = quant_param_dma_ctrl_if.src_base_addr;
+    assign tmem_ldma_ctrl_if[2].src_strides    = quant_param_dma_ctrl_if.src_strides;
+    assign tmem_ldma_ctrl_if[2].dst_base_addr  = quant_param_dma_ctrl_if.dst_base_addr;
+    assign tmem_ldma_ctrl_if[2].dst_strides    = quant_param_dma_ctrl_if.dst_strides;
+    assign tmem_ldma_ctrl_if[2].bounds         = quant_param_dma_ctrl_if.bounds;
+    assign tmem_ldma_ctrl_if[2].seg_size       = quant_param_dma_ctrl_if.seg_size;
+    assign quant_param_dma_ctrl_if.idle        = tmem_ldma_ctrl_if[2].idle;
+    assign quant_param_dma_ctrl_if.done        = tmem_ldma_ctrl_if[2].done;
+
+    assign tmem_ldma_ctrl_if[3].start          = output_dma_ctrl_if.start;
+    assign tmem_ldma_ctrl_if[3].src_base_addr  = output_dma_ctrl_if.src_base_addr;
+    assign tmem_ldma_ctrl_if[3].src_strides    = output_dma_ctrl_if.src_strides;
+    assign tmem_ldma_ctrl_if[3].dst_base_addr  = output_dma_ctrl_if.dst_base_addr;
+    assign tmem_ldma_ctrl_if[3].dst_strides    = output_dma_ctrl_if.dst_strides;
+    assign tmem_ldma_ctrl_if[3].bounds         = output_dma_ctrl_if.bounds;
+    assign tmem_ldma_ctrl_if[3].seg_size       = output_dma_ctrl_if.seg_size;
+    assign output_dma_ctrl_if.idle             = tmem_ldma_ctrl_if[3].idle;
+    assign output_dma_ctrl_if.done             = tmem_ldma_ctrl_if[3].done;
+
+    VX_tmem_subsystem #(
+      .INSTANCE_ID    ({INSTANCE_ID, ":tmem"}),
+      .NUM_BANKS      (NUM_TMEM_BANKS),
+      .BANK_SIZE      (4*1024),
+      .DATA_SIZE      (64),
+      .GEMM_DATA_SIZE (64),
+      .TAG_WIDTH      (GEMM_BASE_TAG_WIDTH)
+    ) u_tmem_subsystem (
+      .clk            (clk),
+      .reset          (reset),
+      .dma_cfg_if     (dma_cfg_if),
+      .dma_done_if    (dma_done_if),
+      .ldma_ctrl_if   (tmem_ldma_ctrl_if),
+      .axi_m          (dma_axi_m),
+      .gemm_input_if  (tmem_i_gemm_bus_if),
+      .gemm_weight_if (tmem_w_gemm_bus_if),
+      .gemm_sz_if     (tmem_sz_gemm_bus_if),
+      .gemm_output_if (tmem_o_gemm_bus_if)
     );
-    `ASSIGN_VX_MEM_BUS_IF(lmem_bus_if, lmem_arb_out_if[0]);
-
-    // -------------------------------------------------------------------------
-    // Width-adapter plumbing
-    // -------------------------------------------------------------------------
-    // Address widths are beat-based and depend on each bus data size.
-    localparam I_SRC_ADDR_WIDTH = `MEM_ADDR_WIDTH - `CLOG2(`GEMM_INPUT_DATA_SIZE);
-    localparam W_SRC_ADDR_WIDTH = `MEM_ADDR_WIDTH - `CLOG2(`GEMM_WEIGHT_DATA_SIZE);
-    localparam SZ_SRC_ADDR_WIDTH = `MEM_ADDR_WIDTH - `CLOG2(`GEMM_SCALE_ZERO_DATA_SIZE);
-    localparam O_SRC_ADDR_WIDTH = `MEM_ADDR_WIDTH - `CLOG2(`GEMM_OUTPUT_DATA_SIZE);
-    localparam DST_ADDR_WIDTH = `MEM_ADDR_WIDTH - `CLOG2(LSU_WORD_SIZE);
-
-    // Adapter-side wires
-    `DECLARE_MEM_BUS_WIRES(i_src, `GEMM_INPUT_DATA_SIZE, I_SRC_ADDR_WIDTH, GEMM_BASE_TAG_WIDTH);
-    `DECLARE_MEM_BUS_WIRES(i_dst, LSU_WORD_SIZE, DST_ADDR_WIDTH, GEMM_BASE_TAG_WIDTH);
-    `DECLARE_MEM_BUS_WIRES(w_src, `GEMM_WEIGHT_DATA_SIZE, W_SRC_ADDR_WIDTH, GEMM_BASE_TAG_WIDTH);
-    `DECLARE_MEM_BUS_WIRES(w_dst, LSU_WORD_SIZE, DST_ADDR_WIDTH, GEMM_BASE_TAG_WIDTH);
-    `DECLARE_MEM_BUS_WIRES(sz_src, `GEMM_SCALE_ZERO_DATA_SIZE, SZ_SRC_ADDR_WIDTH, GEMM_BASE_TAG_WIDTH);
-    `DECLARE_MEM_BUS_WIRES(sz_dst, LSU_WORD_SIZE, DST_ADDR_WIDTH, GEMM_BASE_TAG_WIDTH);
-    `DECLARE_MEM_BUS_WIRES(o_src, `GEMM_OUTPUT_DATA_SIZE, O_SRC_ADDR_WIDTH, GEMM_BASE_TAG_WIDTH);
-    `DECLARE_MEM_BUS_WIRES(o_dst, LSU_WORD_SIZE, DST_ADDR_WIDTH, GEMM_BASE_TAG_WIDTH);
-
-    // -------------------------------------------------------------------------
-    // Load-path adapters: LMEM arbiter (LSU width) <-> LDMA (GEMM width)
-    // -------------------------------------------------------------------------
-
-    // Input adapter (split requests / gather responses)
-    `MEM_BUS_IF_TO_WIRES(i_src, i_dma_lmem_wide_bus_if);
-      VX_mem_data_adapter2 #(
-      .SRC_DATA_WIDTH (`GEMM_INPUT_DATA_SIZE * 8),
-      .SRC_ADDR_WIDTH (I_SRC_ADDR_WIDTH),
-      .DST_DATA_WIDTH (LSU_WORD_SIZE * 8),
-      .DST_ADDR_WIDTH (DST_ADDR_WIDTH),
-      .SRC_TAG_WIDTH  (GEMM_BASE_TAG_WIDTH),
-      .DST_TAG_WIDTH  (GEMM_BASE_TAG_WIDTH),
-      .OOO_SLOTS      (GEMM_ADAPTER_OOO_SLOTS),
-      .REQ_OUT_BUF    (1),
-      .RSP_OUT_BUF    (1)
-    ) input_data_adapter (
-      .clk              (clk),
-      .reset            (reset),
-      .mem_req_valid_in (i_src_req_valid),
-      .mem_req_addr_in  (i_src_req_addr),
-      .mem_req_rw_in    (i_src_req_rw),
-      .mem_req_byteen_in(i_src_req_byteen),
-      .mem_req_data_in  (i_src_req_data),
-      .mem_req_tag_in   (i_src_req_tag),
-      .mem_req_ready_in (i_src_req_ready),
-      .mem_rsp_valid_in (i_src_rsp_valid),
-      .mem_rsp_data_in  (i_src_rsp_data),
-      .mem_rsp_tag_in   (i_src_rsp_tag),
-      .mem_rsp_ready_in (i_src_rsp_ready),
-      .mem_req_valid_out(i_dst_req_valid),
-      .mem_req_addr_out (i_dst_req_addr),
-      .mem_req_rw_out   (i_dst_req_rw),
-      .mem_req_byteen_out(i_dst_req_byteen),
-      .mem_req_data_out (i_dst_req_data),
-      .mem_req_tag_out  (i_dst_req_tag),
-      .mem_req_ready_out(i_dst_req_ready),
-      .mem_rsp_valid_out(i_dst_rsp_valid),
-      .mem_rsp_data_out (i_dst_rsp_data),
-      .mem_rsp_tag_out  (i_dst_rsp_tag),
-      .mem_rsp_ready_out(i_dst_rsp_ready)
-    );
-    `WIRES_TO_MEM_BUS_IF(i_dma_lmem_bus_if, i_dst);
-
-    // Weight adapter (split requests / gather responses)
-    `MEM_BUS_IF_TO_WIRES(w_src, w_dma_lmem_wide_bus_if);
-      VX_mem_data_adapter2 #(
-      .SRC_DATA_WIDTH (`GEMM_WEIGHT_DATA_SIZE * 8), //
-      .SRC_ADDR_WIDTH (W_SRC_ADDR_WIDTH),
-      .DST_DATA_WIDTH (LSU_WORD_SIZE * 8),
-      .DST_ADDR_WIDTH (DST_ADDR_WIDTH),
-      .SRC_TAG_WIDTH  (GEMM_BASE_TAG_WIDTH),
-      .DST_TAG_WIDTH  (GEMM_BASE_TAG_WIDTH),
-      .OOO_SLOTS      (GEMM_ADAPTER_OOO_SLOTS),
-      .REQ_OUT_BUF    (1),
-      .RSP_OUT_BUF    (1)
-    ) weight_data_adapter (
-      .clk              (clk),
-      .reset            (reset),
-      .mem_req_valid_in (w_src_req_valid),
-      .mem_req_addr_in  (w_src_req_addr),
-      .mem_req_rw_in    (w_src_req_rw),
-      .mem_req_byteen_in(w_src_req_byteen),
-      .mem_req_data_in  (w_src_req_data),
-      .mem_req_tag_in   (w_src_req_tag),
-      .mem_req_ready_in (w_src_req_ready),
-      .mem_rsp_valid_in (w_src_rsp_valid),
-      .mem_rsp_data_in  (w_src_rsp_data),
-      .mem_rsp_tag_in   (w_src_rsp_tag),
-      .mem_rsp_ready_in (w_src_rsp_ready),
-      .mem_req_valid_out(w_dst_req_valid),
-      .mem_req_addr_out (w_dst_req_addr),
-      .mem_req_rw_out   (w_dst_req_rw),
-      .mem_req_byteen_out(w_dst_req_byteen),
-      .mem_req_data_out (w_dst_req_data),
-      .mem_req_tag_out  (w_dst_req_tag),
-      .mem_req_ready_out(w_dst_req_ready),
-      .mem_rsp_valid_out(w_dst_rsp_valid),
-      .mem_rsp_data_out (w_dst_rsp_data),
-      .mem_rsp_tag_out  (w_dst_rsp_tag),
-      .mem_rsp_ready_out(w_dst_rsp_ready)
-    );
-    `WIRES_TO_MEM_BUS_IF(w_dma_lmem_bus_if, w_dst);
-
-    // Scale/Zero adapter (split requests / gather responses)
-    `MEM_BUS_IF_TO_WIRES(sz_src, sz_dma_lmem_wide_bus_if);
-      VX_mem_data_adapter2 #(
-      .SRC_DATA_WIDTH (`GEMM_SCALE_ZERO_DATA_SIZE * 8),
-      .SRC_ADDR_WIDTH (SZ_SRC_ADDR_WIDTH),
-      .DST_DATA_WIDTH (LSU_WORD_SIZE * 8),
-      .DST_ADDR_WIDTH (DST_ADDR_WIDTH),
-      .SRC_TAG_WIDTH  (GEMM_BASE_TAG_WIDTH),
-      .DST_TAG_WIDTH  (GEMM_BASE_TAG_WIDTH),
-      .OOO_SLOTS      (GEMM_ADAPTER_OOO_SLOTS),
-      .REQ_OUT_BUF    (1),
-      .RSP_OUT_BUF    (1)
-    ) quant_param_data_adapter (
-      .clk              (clk),
-      .reset            (reset),
-      .mem_req_valid_in (sz_src_req_valid),
-      .mem_req_addr_in  (sz_src_req_addr),
-      .mem_req_rw_in    (sz_src_req_rw),
-      .mem_req_byteen_in(sz_src_req_byteen),
-      .mem_req_data_in  (sz_src_req_data),
-      .mem_req_tag_in   (sz_src_req_tag),
-      .mem_req_ready_in (sz_src_req_ready),
-      .mem_rsp_valid_in (sz_src_rsp_valid),
-      .mem_rsp_data_in  (sz_src_rsp_data),
-      .mem_rsp_tag_in   (sz_src_rsp_tag),
-      .mem_rsp_ready_in (sz_src_rsp_ready),
-      .mem_req_valid_out(sz_dst_req_valid),
-      .mem_req_addr_out (sz_dst_req_addr),
-      .mem_req_rw_out   (sz_dst_req_rw),
-      .mem_req_byteen_out(sz_dst_req_byteen),
-      .mem_req_data_out (sz_dst_req_data),
-      .mem_req_tag_out  (sz_dst_req_tag),
-      .mem_req_ready_out(sz_dst_req_ready),
-      .mem_rsp_valid_out(sz_dst_rsp_valid),
-      .mem_rsp_data_out (sz_dst_rsp_data),
-      .mem_rsp_tag_out  (sz_dst_rsp_tag),
-      .mem_rsp_ready_out(sz_dst_rsp_ready)
-    );
-    `WIRES_TO_MEM_BUS_IF(sz_dma_lmem_bus_if, sz_dst);
-
-    // -------------------------------------------------------------------------
-    // Output-path adapter: LDMA (wide) -> LMEM arbiter (LSU width)
-    // -------------------------------------------------------------------------
-    `MEM_BUS_IF_TO_WIRES(o_src, o_dma_lmem_wide_bus_if);
-    VX_mem_data_adapter2 #(
-      .SRC_DATA_WIDTH (`GEMM_OUTPUT_DATA_SIZE * 8),
-      .SRC_ADDR_WIDTH (O_SRC_ADDR_WIDTH),
-      .DST_DATA_WIDTH (LSU_WORD_SIZE * 8),
-      .DST_ADDR_WIDTH (DST_ADDR_WIDTH),
-      .SRC_TAG_WIDTH  (GEMM_BASE_TAG_WIDTH),
-      .DST_TAG_WIDTH  (GEMM_BASE_TAG_WIDTH),
-      .OOO_SLOTS      (GEMM_ADAPTER_OOO_SLOTS),
-      .REQ_OUT_BUF    (1),
-      .RSP_OUT_BUF    (1)
-    ) output_data_adapter (
-      .clk              (clk),
-      .reset            (reset),
-      .mem_req_valid_in (o_src_req_valid),
-      .mem_req_addr_in  (o_src_req_addr),
-      .mem_req_rw_in    (o_src_req_rw),
-      .mem_req_byteen_in(o_src_req_byteen),
-      .mem_req_data_in  (o_src_req_data),
-      .mem_req_tag_in   (o_src_req_tag),
-      .mem_req_ready_in (o_src_req_ready),
-      .mem_rsp_valid_in (o_src_rsp_valid),
-      .mem_rsp_data_in  (o_src_rsp_data),
-      .mem_rsp_tag_in   (o_src_rsp_tag),
-      .mem_rsp_ready_in (o_src_rsp_ready),
-      .mem_req_valid_out(o_dst_req_valid),
-      .mem_req_addr_out (o_dst_req_addr),
-      .mem_req_rw_out   (o_dst_req_rw),
-      .mem_req_byteen_out(o_dst_req_byteen),
-      .mem_req_data_out (o_dst_req_data),
-      .mem_req_tag_out  (o_dst_req_tag),
-      .mem_req_ready_out(o_dst_req_ready),
-      .mem_rsp_valid_out(o_dst_rsp_valid),
-      .mem_rsp_data_out (o_dst_rsp_data),
-      .mem_rsp_tag_out  (o_dst_rsp_tag),
-      .mem_rsp_ready_out(o_dst_rsp_ready)
-    );
-    `WIRES_TO_MEM_BUS_IF(o_dma_lmem_bus_if, o_dst);
 
     // -------------------------------------------------------------------------
     // GEMM compute/control instances
@@ -632,41 +468,44 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
       .gemm_unit_if(gemm_unit_if)
     );
 
-    // load paths: gemm_unit (slave ports) <-> load ldmAs (master ports)
-    `ASSIGN_VX_MEM_BUS_IF(i_gemm_bus_if, i_dma_gemm_bus_if);
-    //`ASSIGN_VX_MEM_BUS_IF(w_gemm_bus_if, w_dma_gemm_bus_if);
-    assign w_gemm_bus_if.req_valid  = w_dma_gemm_bus_if.req_valid;
+    // -------------------------------------------------------------------------
+    // Address manipulation: TMEM subsystem outputs -> GEMM unit inputs
+    // -------------------------------------------------------------------------
 
-    assign w_dma_gemm_bus_if.req_ready  = w_gemm_bus_if.req_ready;
-    assign w_dma_gemm_bus_if.rsp_valid  = w_gemm_bus_if.rsp_valid;
-    assign w_dma_gemm_bus_if.rsp_data   = w_gemm_bus_if.rsp_data;
-    assign w_gemm_bus_if.rsp_ready      = w_dma_gemm_bus_if.rsp_ready;
+    // Input: direct connection (no addr manipulation)
+    `ASSIGN_VX_MEM_BUS_IF(i_gemm_bus_if, tmem_i_gemm_bus_if);
 
-    assign w_gemm_bus_if.req_data.rw    = w_dma_gemm_bus_if.req_data.rw;
-    assign w_gemm_bus_if.req_data.addr  = {weight_cmd_flags_r[1], weight_cmd_flags_r[0]};  // captured at DMA start
-    assign w_gemm_bus_if.req_data.data   = w_dma_gemm_bus_if.req_data.data;
-    assign w_gemm_bus_if.req_data.byteen = w_dma_gemm_bus_if.req_data.byteen;
-    assign w_gemm_bus_if.req_data.flags  = w_dma_gemm_bus_if.req_data.flags;
-    assign w_gemm_bus_if.req_data.tag    = w_dma_gemm_bus_if.req_data.tag;
-   
-    //`ASSIGN_VX_MEM_BUS_IF(sz_gemm_bus_if, sz_dma_gemm_bus_if);
+    // Weight: addr replaced with captured flags for double-buffering control
+    assign w_gemm_bus_if.req_valid  = tmem_w_gemm_bus_if.req_valid;
 
-    assign sz_gemm_bus_if.req_valid  = sz_dma_gemm_bus_if.req_valid;
-    //assign sz_gemm_bus_if.req_data   = sz_dma_gemm_bus_if.req_data;
-    assign sz_dma_gemm_bus_if.req_ready  = sz_gemm_bus_if.req_ready;
-    assign sz_dma_gemm_bus_if.rsp_valid  = sz_gemm_bus_if.rsp_valid;
-    assign sz_dma_gemm_bus_if.rsp_data   = sz_gemm_bus_if.rsp_data;
-    assign sz_gemm_bus_if.rsp_ready  = sz_dma_gemm_bus_if.rsp_ready;
-    
-    assign sz_gemm_bus_if.req_data.rw    = sz_dma_gemm_bus_if.req_data.rw;
-    assign sz_gemm_bus_if.req_data.addr  = (sz_dma_gemm_bus_if.req_data.addr) << (`CLOG2(`GEMM_SCALE_ZERO_DATA_SIZE)); // beat 단위 주소 -> byte 단위 주소
-    assign sz_gemm_bus_if.req_data.data   = sz_dma_gemm_bus_if.req_data.data;
-    assign sz_gemm_bus_if.req_data.byteen = sz_dma_gemm_bus_if.req_data.byteen;
-    assign sz_gemm_bus_if.req_data.flags  = sz_dma_gemm_bus_if.req_data.flags;
-    assign sz_gemm_bus_if.req_data.tag    = sz_dma_gemm_bus_if.req_data.tag;
+    assign tmem_w_gemm_bus_if.req_ready  = w_gemm_bus_if.req_ready;
+    assign tmem_w_gemm_bus_if.rsp_valid  = w_gemm_bus_if.rsp_valid;
+    assign tmem_w_gemm_bus_if.rsp_data   = w_gemm_bus_if.rsp_data;
+    assign w_gemm_bus_if.rsp_ready       = tmem_w_gemm_bus_if.rsp_ready;
 
-    // output path: gemm_unit (slave port) <-> output ldma (master port)
-    `ASSIGN_VX_MEM_BUS_IF(o_gemm_bus_if, o_dma_gemm_bus_if);
+    assign w_gemm_bus_if.req_data.rw     = tmem_w_gemm_bus_if.req_data.rw;
+    assign w_gemm_bus_if.req_data.addr   = {weight_cmd_flags_r[1], weight_cmd_flags_r[0]};  // captured at DMA start
+    assign w_gemm_bus_if.req_data.data   = tmem_w_gemm_bus_if.req_data.data;
+    assign w_gemm_bus_if.req_data.byteen = tmem_w_gemm_bus_if.req_data.byteen;
+    assign w_gemm_bus_if.req_data.flags  = tmem_w_gemm_bus_if.req_data.flags;
+    assign w_gemm_bus_if.req_data.tag    = tmem_w_gemm_bus_if.req_data.tag;
+
+    // Scale/zero: addr shifted left to convert beat address to byte address
+    assign sz_gemm_bus_if.req_valid  = tmem_sz_gemm_bus_if.req_valid;
+    assign tmem_sz_gemm_bus_if.req_ready  = sz_gemm_bus_if.req_ready;
+    assign tmem_sz_gemm_bus_if.rsp_valid  = sz_gemm_bus_if.rsp_valid;
+    assign tmem_sz_gemm_bus_if.rsp_data   = sz_gemm_bus_if.rsp_data;
+    assign sz_gemm_bus_if.rsp_ready  = tmem_sz_gemm_bus_if.rsp_ready;
+
+    assign sz_gemm_bus_if.req_data.rw     = tmem_sz_gemm_bus_if.req_data.rw;
+    assign sz_gemm_bus_if.req_data.addr   = (tmem_sz_gemm_bus_if.req_data.addr) << (`CLOG2(`GEMM_SCALE_ZERO_DATA_SIZE)); // beat 단위 주소 -> byte 단위 주소
+    assign sz_gemm_bus_if.req_data.data   = tmem_sz_gemm_bus_if.req_data.data;
+    assign sz_gemm_bus_if.req_data.byteen = tmem_sz_gemm_bus_if.req_data.byteen;
+    assign sz_gemm_bus_if.req_data.flags  = tmem_sz_gemm_bus_if.req_data.flags;
+    assign sz_gemm_bus_if.req_data.tag    = tmem_sz_gemm_bus_if.req_data.tag;
+
+    // Output: direct connection
+    `ASSIGN_VX_MEM_BUS_IF(o_gemm_bus_if, tmem_o_gemm_bus_if);
 
     // GEMM top controller
     VX_gemm_ctrl #(
@@ -682,72 +521,12 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
       .gemm_sync_slv_if(gemm_sync_if)
     );
 
-    // -------------------------------------------------------------------------
-    // LMEM DMA instances for LMEM <-> GEMM data transfer
-    // -------------------------------------------------------------------------
-
-    // Input DMA (LMEM -> GEMM, DIR=0)
-    VX_lmem_dma_misal #(
-      .INSTANCE_ID({INSTANCE_ID, "_input_dma"}),
-      .DIR(0)
-    ) u_input_lmem_dma (
-      .clk(clk),
-      .reset(reset),
-      .ctrl_if(input_dma_ctrl_if),
-      .lmem_bus_if(i_dma_lmem_wide_bus_if),
-      .gemm_bus_if(i_dma_gemm_bus_if)
-    );
-
-    // Weight DMA (LMEM -> GEMM, DIR=0)
-    VX_lmem_dma_misal #(
-      .INSTANCE_ID({INSTANCE_ID, "_weight_dma"}),
-      .DIR(0)
-    ) u_weight_lmem_dma (
-      .clk(clk),
-      .reset(reset),
-      .ctrl_if(weight_dma_ctrl_if),
-      .lmem_bus_if(w_dma_lmem_wide_bus_if),
-      .gemm_bus_if(w_dma_gemm_bus_if)
-    );
-
-    // Quant param DMA (LMEM -> GEMM, DIR=0)
-    VX_lmem_dma_misal #(
-      .INSTANCE_ID({INSTANCE_ID, "_quant_param_dma"}),
-      .DIR(0)
-    ) u_quant_param_lmem_dma (
-      .clk(clk),
-      .reset(reset),
-      .ctrl_if(quant_param_dma_ctrl_if),
-      .lmem_bus_if(sz_dma_lmem_wide_bus_if),
-      .gemm_bus_if(sz_dma_gemm_bus_if)
-    );
-
-    // Output DMA (GEMM -> LMEM, DIR=1)
-    VX_lmem_dma_misal #(
-      .INSTANCE_ID({INSTANCE_ID, "_output_dma"}),
-      .DIR(1)
-    ) u_output_lmem_dma (
-      .clk(clk),
-      .reset(reset),
-      .ctrl_if(output_dma_ctrl_if),
-      .lmem_bus_if(o_dma_lmem_wide_bus_if),
-      .gemm_bus_if(o_dma_gemm_bus_if)
-    );
-
-    // External DMA control (dcache <-> LMEM)
-    VX_gemm_dma_ctrl #(
-      .INSTANCE_ID(INSTANCE_ID),
-      .DMA_CFG_BASE_ADDR(`DMA_REG_BASE_ADDR),
-      .DMA_ENTRY_STRIDE_BYTES(`DMA_CFG_REG_NUM * 4),
-      .ENTRYID_W(ENTRYID_W),
-      .CTRL_OWNER_W(OWNER_W),
-      .CTRL_GEN_W(GEN_W)
-    ) u_VX_gemm_dma_ctrl (
-      .clk(clk),
-      .reset(reset),
-      .gemm_dma_ctrl_if(gemm_dma_ctrl_if),
-      .gemm_sync_if(gemm_sync_if[4]),
-      .dma_if(dma_if)
-    );
+    `UNUSED_VAR (weight_wtrans)
+    `UNUSED_PARAM (MT)
+    `UNUSED_PARAM (NT)
+    `UNUSED_PARAM (KT)
+    `UNUSED_PARAM (ENTRYID_W)
+    `UNUSED_PARAM (OWNER_W)
+    `UNUSED_PARAM (GEN_W)
 
 endmodule

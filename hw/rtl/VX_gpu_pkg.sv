@@ -857,12 +857,12 @@ package VX_gpu_pkg;
                                                    `MAX(GEMM_ADAPTER_SZ_SPLIT_BITS, GEMM_ADAPTER_O_SPLIT_BITS));
     localparam GEMM_BASE_TAG_WIDTH         = `MAX(LMEM_TAG_WIDTH, (GEMM_ADAPTER_MAX_SPLIT_BITS + GEMM_ADAPTER_OOO_SLOT_BITS));
 
-    // GEMM node merges 4 LMEM clients into one LMEM port.
+    // GEMM no longer accesses LMEM (uses TMEM subsystem).
+    // Keep GEMM_ARB_ROUTE_TAG_BITS for GEMM_LMEM_TAG_WIDTH consistency.
     localparam GEMM_ARB_ROUTE_TAG_BITS = `ARB_SEL_BITS(4, 1);
     localparam GEMM_LMEM_TAG_WIDTH = (GEMM_BASE_TAG_WIDTH + GEMM_ARB_ROUTE_TAG_BITS);
-    // Mem-unit local-memory path adds one more arbitration layer
-    // (3->1 in single-lane mode, otherwise 2->1).
-    localparam LMEM_ARB_ROUTE_TAG_BITS = (`NUM_LSU_LANES == 1) ? `ARB_SEL_BITS(3, 1) : MEM_ARB_ROUTE_TAG_BITS;
+    // Mem-unit LMEM path: 2->1 arb (LSU + DMA local). GEMM removed.
+    localparam LMEM_ARB_ROUTE_TAG_BITS = `ARB_SEL_BITS(2, 1);
     localparam LMEM_LOCAL_TAG_WIDTH = (GEMM_LMEM_TAG_WIDTH + LMEM_ARB_ROUTE_TAG_BITS);
 
     ///////////////////////// GEMM Unit Parameters ///////////////////////////

@@ -1,0 +1,424 @@
+// Copyright 2019-2023
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+`include "VX_define.vh"
+
+// VX_tmem_subsystem
+//  Top-level tensor memory subsystem integrating:
+//  - VX_dma_engine:        8-channel HBM(AXI) <-> TMEM(membus) DMA
+//  - VX_tensor_mem_bank:   8 TMEM banks with 5-port arbitration each
+//  - VX_tmem_switch:       Address-based 1:N bank routing (x4)
+//  - VX_lmem_dma_misal:    Local DMA for TMEM <-> GEMM data movement (x4)
+//
+//  Data flow:
+//    HBM <-> DMA engine <-> TMEM banks <-> switches <-> local DMAs <-> GEMM unit
+
+module VX_tmem_subsystem import VX_gpu_pkg::*; #(
+    parameter `STRING INSTANCE_ID = "",
+    parameter NUM_BANKS         = 8,
+    parameter BANK_SIZE         = 4*1024,       // 4KB per bank
+    parameter DATA_SIZE         = 64,           // 512-bit = 64 bytes
+    parameter GEMM_DATA_SIZE    = 64,           // GEMM unit port width (64B)
+    parameter TAG_WIDTH         = 8,
+    parameter AXI_ADDR_WIDTH    = `PLATFORM_MEMORY_ADDR_WIDTH,
+    parameter AXI_DATA_WIDTH    = `PLATFORM_MEMORY_DATA_SIZE * 8,
+    parameter AXI_ID_WIDTH      = 8,
+    parameter AXI_USER_WIDTH    = 1
+) (
+    input wire clk,
+    input wire reset,
+
+    // DMA config (from gemm_dma_ctrl, 8 channels for DMA engine)
+    VX_config_reg_if.slave  dma_cfg_if [NUM_BANKS],
+    VX_node_done_if.master  dma_done_if [NUM_BANKS],
+
+    // Local DMA control (from gemm_ctrl, 4 channels: input/weight/sz/output)
+    VX_lmem_dma_ctrl_if.slave ldma_ctrl_if [4],
+
+    // HBM side: AXI master ports (pass through to DMA engine)
+    AXI_BUS.Master axi_m [NUM_BANKS],
+
+    // GEMM unit side: 4 memory bus interfaces
+    VX_mem_bus_if.master gemm_input_if,
+    VX_mem_bus_if.master gemm_weight_if,
+    VX_mem_bus_if.master gemm_sz_if,
+    VX_mem_bus_if.master gemm_output_if
+);
+
+    localparam DATA_WIDTH       = DATA_SIZE * 8;
+    localparam NUM_TMEM_PORTS   = 5;    // DMA + input + weight + sz + output
+    localparam NUM_LDMA         = 4;    // input, weight, scale_zp, output
+    localparam BANK_SEL_BITS    = `CLOG2(NUM_BANKS);
+    // Switch appends BANK_SEL_BITS to tag, and TMEM bank arbiter appends
+    // its own selector bits. The TMEM bank sees:
+    //   TAG_WIDTH (original) + BANK_SEL_BITS (from switch)
+    localparam SWITCH_TAG_WIDTH = TAG_WIDTH + BANK_SEL_BITS;
+
+    `UNUSED_SPARAM (INSTANCE_ID)
+    `UNUSED_PARAM (AXI_USER_WIDTH)
+
+    // ================================================================
+    // 1. DMA Engine: 8-channel HBM(AXI) <-> TMEM(membus)
+    // ================================================================
+
+    VX_mem_bus_if #(
+        .DATA_SIZE  (DATA_SIZE),
+        .TAG_WIDTH  (TAG_WIDTH)
+    ) dma_to_tmem [NUM_BANKS] ();
+
+    VX_dma_engine #(
+        .INSTANCE_ID    ({INSTANCE_ID, ":dma"}),
+        .NUM_CHANNELS   (NUM_BANKS),
+        .DATA_WIDTH     (DATA_WIDTH),
+        .AXI_ADDR_WIDTH (AXI_ADDR_WIDTH),
+        .AXI_DATA_WIDTH (AXI_DATA_WIDTH),
+        .AXI_ID_WIDTH   (AXI_ID_WIDTH),
+        .TAG_WIDTH      (TAG_WIDTH)
+    ) u_dma_engine (
+        .clk            (clk),
+        .reset          (reset),
+        .cfg_reg_if     (dma_cfg_if),
+        .done_if        (dma_done_if),
+        .axi_m          (axi_m),
+        .tmem_bus_if    (dma_to_tmem)
+    );
+
+    // ================================================================
+    // 2. Local DMA -> Switch -> TMEM bank wiring
+    // ================================================================
+    // Each switch connects 1 local DMA to NUM_BANKS TMEM bank ports.
+    // We use separate 1D interface arrays per switch to avoid 2D arrays.
+
+    // Switch outputs: per-switch, per-bank connections
+    VX_mem_bus_if #(
+        .DATA_SIZE  (DATA_SIZE),
+        .TAG_WIDTH  (SWITCH_TAG_WIDTH)
+    ) in_switch_to_tmem [NUM_BANKS] ();
+
+    VX_mem_bus_if #(
+        .DATA_SIZE  (DATA_SIZE),
+        .TAG_WIDTH  (SWITCH_TAG_WIDTH)
+    ) wt_switch_to_tmem [NUM_BANKS] ();
+
+    VX_mem_bus_if #(
+        .DATA_SIZE  (DATA_SIZE),
+        .TAG_WIDTH  (SWITCH_TAG_WIDTH)
+    ) sz_switch_to_tmem [NUM_BANKS] ();
+
+    VX_mem_bus_if #(
+        .DATA_SIZE  (DATA_SIZE),
+        .TAG_WIDTH  (SWITCH_TAG_WIDTH)
+    ) out_switch_to_tmem [NUM_BANKS] ();
+
+    // Internal buses: local DMA tmem port -> switch input
+    VX_mem_bus_if #(
+        .DATA_SIZE  (DATA_SIZE),
+        .TAG_WIDTH  (TAG_WIDTH)
+    ) ldma_to_switch [NUM_LDMA] ();
+
+    // Internal buses: local DMA gemm port -> GEMM unit
+    VX_mem_bus_if #(
+        .DATA_SIZE  (GEMM_DATA_SIZE),
+        .TAG_WIDTH  (TAG_WIDTH)
+    ) ldma_gemm [NUM_LDMA] ();
+
+    // ================================================================
+    // 3. Switches: 1:N address-based bank routing (x4)
+    // ================================================================
+
+    VX_tmem_switch #(
+        .INSTANCE_ID    ({INSTANCE_ID, ":sw_in"}),
+        .NUM_BANKS      (NUM_BANKS),
+        .DATA_SIZE      (DATA_SIZE),
+        .TAG_WIDTH      (TAG_WIDTH)
+    ) u_switch_input (
+        .clk        (clk),
+        .reset      (reset),
+        .bus_in_if  (ldma_to_switch[0]),
+        .bus_out_if (in_switch_to_tmem)
+    );
+
+    VX_tmem_switch #(
+        .INSTANCE_ID    ({INSTANCE_ID, ":sw_wt"}),
+        .NUM_BANKS      (NUM_BANKS),
+        .DATA_SIZE      (DATA_SIZE),
+        .TAG_WIDTH      (TAG_WIDTH)
+    ) u_switch_weight (
+        .clk        (clk),
+        .reset      (reset),
+        .bus_in_if  (ldma_to_switch[1]),
+        .bus_out_if (wt_switch_to_tmem)
+    );
+
+    VX_tmem_switch #(
+        .INSTANCE_ID    ({INSTANCE_ID, ":sw_sz"}),
+        .NUM_BANKS      (NUM_BANKS),
+        .DATA_SIZE      (DATA_SIZE),
+        .TAG_WIDTH      (TAG_WIDTH)
+    ) u_switch_sz (
+        .clk        (clk),
+        .reset      (reset),
+        .bus_in_if  (ldma_to_switch[2]),
+        .bus_out_if (sz_switch_to_tmem)
+    );
+
+    VX_tmem_switch #(
+        .INSTANCE_ID    ({INSTANCE_ID, ":sw_out"}),
+        .NUM_BANKS      (NUM_BANKS),
+        .DATA_SIZE      (DATA_SIZE),
+        .TAG_WIDTH      (TAG_WIDTH)
+    ) u_switch_output (
+        .clk        (clk),
+        .reset      (reset),
+        .bus_in_if  (ldma_to_switch[3]),
+        .bus_out_if (out_switch_to_tmem)
+    );
+
+    // ================================================================
+    // 4. TMEM Banks x NUM_BANKS
+    // ================================================================
+    // Each bank has 5 ports:
+    //   port[0] = DMA engine          (TAG_WIDTH, zero-extended to SWITCH_TAG_WIDTH)
+    //   port[1] = input switch        (SWITCH_TAG_WIDTH)
+    //   port[2] = weight switch       (SWITCH_TAG_WIDTH)
+    //   port[3] = scale_zp switch     (SWITCH_TAG_WIDTH)
+    //   port[4] = output switch       (SWITCH_TAG_WIDTH)
+    //
+    // The arbiter inside VX_tensor_mem_bank needs a uniform tag width.
+    // We use SWITCH_TAG_WIDTH for the bank and zero-extend the DMA tag.
+
+    for (genvar b = 0; b < NUM_BANKS; ++b) begin : g_bank
+
+        // Create per-bank port array with uniform SWITCH_TAG_WIDTH
+        VX_mem_bus_if #(
+            .DATA_SIZE  (DATA_SIZE),
+            .TAG_WIDTH  (SWITCH_TAG_WIDTH)
+        ) bank_port_if [NUM_TMEM_PORTS] ();
+
+        // Port 0: DMA engine connection (widen tag from TAG_WIDTH to SWITCH_TAG_WIDTH)
+        assign bank_port_if[0].req_valid       = dma_to_tmem[b].req_valid;
+        assign bank_port_if[0].req_data.rw     = dma_to_tmem[b].req_data.rw;
+        assign bank_port_if[0].req_data.addr   = dma_to_tmem[b].req_data.addr;
+        assign bank_port_if[0].req_data.data   = dma_to_tmem[b].req_data.data;
+        assign bank_port_if[0].req_data.byteen = dma_to_tmem[b].req_data.byteen;
+        assign bank_port_if[0].req_data.flags  = dma_to_tmem[b].req_data.flags;
+        assign bank_port_if[0].req_data.tag    = SWITCH_TAG_WIDTH'(dma_to_tmem[b].req_data.tag);
+        assign dma_to_tmem[b].req_ready        = bank_port_if[0].req_ready;
+
+        assign dma_to_tmem[b].rsp_valid        = bank_port_if[0].rsp_valid;
+        assign dma_to_tmem[b].rsp_data.data    = bank_port_if[0].rsp_data.data;
+        assign dma_to_tmem[b].rsp_data.tag     = TAG_WIDTH'(bank_port_if[0].rsp_data.tag);
+        assign bank_port_if[0].rsp_ready       = dma_to_tmem[b].rsp_ready;
+
+        // Port 1: input switch
+        assign bank_port_if[1].req_valid       = in_switch_to_tmem[b].req_valid;
+        assign bank_port_if[1].req_data.rw     = in_switch_to_tmem[b].req_data.rw;
+        assign bank_port_if[1].req_data.addr   = in_switch_to_tmem[b].req_data.addr;
+        assign bank_port_if[1].req_data.data   = in_switch_to_tmem[b].req_data.data;
+        assign bank_port_if[1].req_data.byteen = in_switch_to_tmem[b].req_data.byteen;
+        assign bank_port_if[1].req_data.flags  = in_switch_to_tmem[b].req_data.flags;
+        assign bank_port_if[1].req_data.tag    = in_switch_to_tmem[b].req_data.tag;
+        assign in_switch_to_tmem[b].req_ready  = bank_port_if[1].req_ready;
+
+        assign in_switch_to_tmem[b].rsp_valid     = bank_port_if[1].rsp_valid;
+        assign in_switch_to_tmem[b].rsp_data.data = bank_port_if[1].rsp_data.data;
+        assign in_switch_to_tmem[b].rsp_data.tag  = bank_port_if[1].rsp_data.tag;
+        assign bank_port_if[1].rsp_ready          = in_switch_to_tmem[b].rsp_ready;
+
+        // Port 2: weight switch
+        assign bank_port_if[2].req_valid       = wt_switch_to_tmem[b].req_valid;
+        assign bank_port_if[2].req_data.rw     = wt_switch_to_tmem[b].req_data.rw;
+        assign bank_port_if[2].req_data.addr   = wt_switch_to_tmem[b].req_data.addr;
+        assign bank_port_if[2].req_data.data   = wt_switch_to_tmem[b].req_data.data;
+        assign bank_port_if[2].req_data.byteen = wt_switch_to_tmem[b].req_data.byteen;
+        assign bank_port_if[2].req_data.flags  = wt_switch_to_tmem[b].req_data.flags;
+        assign bank_port_if[2].req_data.tag    = wt_switch_to_tmem[b].req_data.tag;
+        assign wt_switch_to_tmem[b].req_ready  = bank_port_if[2].req_ready;
+
+        assign wt_switch_to_tmem[b].rsp_valid     = bank_port_if[2].rsp_valid;
+        assign wt_switch_to_tmem[b].rsp_data.data = bank_port_if[2].rsp_data.data;
+        assign wt_switch_to_tmem[b].rsp_data.tag  = bank_port_if[2].rsp_data.tag;
+        assign bank_port_if[2].rsp_ready          = wt_switch_to_tmem[b].rsp_ready;
+
+        // Port 3: scale_zp switch
+        assign bank_port_if[3].req_valid       = sz_switch_to_tmem[b].req_valid;
+        assign bank_port_if[3].req_data.rw     = sz_switch_to_tmem[b].req_data.rw;
+        assign bank_port_if[3].req_data.addr   = sz_switch_to_tmem[b].req_data.addr;
+        assign bank_port_if[3].req_data.data   = sz_switch_to_tmem[b].req_data.data;
+        assign bank_port_if[3].req_data.byteen = sz_switch_to_tmem[b].req_data.byteen;
+        assign bank_port_if[3].req_data.flags  = sz_switch_to_tmem[b].req_data.flags;
+        assign bank_port_if[3].req_data.tag    = sz_switch_to_tmem[b].req_data.tag;
+        assign sz_switch_to_tmem[b].req_ready  = bank_port_if[3].req_ready;
+
+        assign sz_switch_to_tmem[b].rsp_valid     = bank_port_if[3].rsp_valid;
+        assign sz_switch_to_tmem[b].rsp_data.data = bank_port_if[3].rsp_data.data;
+        assign sz_switch_to_tmem[b].rsp_data.tag  = bank_port_if[3].rsp_data.tag;
+        assign bank_port_if[3].rsp_ready          = sz_switch_to_tmem[b].rsp_ready;
+
+        // Port 4: output switch
+        assign bank_port_if[4].req_valid        = out_switch_to_tmem[b].req_valid;
+        assign bank_port_if[4].req_data.rw      = out_switch_to_tmem[b].req_data.rw;
+        assign bank_port_if[4].req_data.addr    = out_switch_to_tmem[b].req_data.addr;
+        assign bank_port_if[4].req_data.data    = out_switch_to_tmem[b].req_data.data;
+        assign bank_port_if[4].req_data.byteen  = out_switch_to_tmem[b].req_data.byteen;
+        assign bank_port_if[4].req_data.flags   = out_switch_to_tmem[b].req_data.flags;
+        assign bank_port_if[4].req_data.tag     = out_switch_to_tmem[b].req_data.tag;
+        assign out_switch_to_tmem[b].req_ready  = bank_port_if[4].req_ready;
+
+        assign out_switch_to_tmem[b].rsp_valid     = bank_port_if[4].rsp_valid;
+        assign out_switch_to_tmem[b].rsp_data.data = bank_port_if[4].rsp_data.data;
+        assign out_switch_to_tmem[b].rsp_data.tag  = bank_port_if[4].rsp_data.tag;
+        assign bank_port_if[4].rsp_ready           = out_switch_to_tmem[b].rsp_ready;
+
+        VX_tensor_mem_bank #(
+            .INSTANCE_ID ({INSTANCE_ID, ":bank"}),
+            .SIZE        (BANK_SIZE),
+            .DATA_SIZE   (DATA_SIZE),
+            .NUM_PORTS   (NUM_TMEM_PORTS),
+            .TAG_WIDTH   (SWITCH_TAG_WIDTH)
+        ) u_bank (
+            .clk        (clk),
+            .reset      (reset),
+            .mem_bus_if (bank_port_if)
+        );
+
+    end // g_bank
+
+    // ================================================================
+    // 5. Local DMAs x4
+    // ================================================================
+    // [0] input:   LMEM->GEMM (DIR=0)
+    // [1] weight:  LMEM->GEMM (DIR=0)
+    // [2] sz:      LMEM->GEMM (DIR=0)
+    // [3] output:  GEMM->LMEM (DIR=1)
+
+    // Input local DMA
+    VX_lmem_dma_misal #(
+        .INSTANCE_ID ({INSTANCE_ID, ":ldma_in"}),
+        .DIR         (0)
+    ) u_ldma_input (
+        .clk         (clk),
+        .reset       (reset),
+        .ctrl_if     (ldma_ctrl_if[0]),
+        .lmem_bus_if (ldma_to_switch[0]),
+        .gemm_bus_if (ldma_gemm[0])
+    );
+
+    // Weight local DMA
+    VX_lmem_dma_misal #(
+        .INSTANCE_ID ({INSTANCE_ID, ":ldma_wt"}),
+        .DIR         (0)
+    ) u_ldma_weight (
+        .clk         (clk),
+        .reset       (reset),
+        .ctrl_if     (ldma_ctrl_if[1]),
+        .lmem_bus_if (ldma_to_switch[1]),
+        .gemm_bus_if (ldma_gemm[1])
+    );
+
+    // Scale/zero-point local DMA
+    VX_lmem_dma_misal #(
+        .INSTANCE_ID ({INSTANCE_ID, ":ldma_sz"}),
+        .DIR         (0)
+    ) u_ldma_sz (
+        .clk         (clk),
+        .reset       (reset),
+        .ctrl_if     (ldma_ctrl_if[2]),
+        .lmem_bus_if (ldma_to_switch[2]),
+        .gemm_bus_if (ldma_gemm[2])
+    );
+
+    // Output local DMA (GEMM -> LMEM)
+    VX_lmem_dma_misal #(
+        .INSTANCE_ID ({INSTANCE_ID, ":ldma_out"}),
+        .DIR         (1)
+    ) u_ldma_output (
+        .clk         (clk),
+        .reset       (reset),
+        .ctrl_if     (ldma_ctrl_if[3]),
+        .lmem_bus_if (ldma_to_switch[3]),
+        .gemm_bus_if (ldma_gemm[3])
+    );
+
+    // ================================================================
+    // 6. Connect local DMA GEMM ports to top-level GEMM interfaces
+    // ================================================================
+
+    // Input: ldma_gemm[0] is master -> gemm_input_if is master
+    // The local DMA (DIR=0) reads from LMEM and writes to GEMM.
+    // ldma_gemm[0] acts as master on both ports.
+    // gemm_input_if is master (output from subsystem to GEMM unit).
+    // We need to forward ldma's gemm_bus_if requests/responses to the top-level port.
+
+    // For DIR=0 (LMEM->GEMM): the local DMA issues read requests on lmem_bus_if
+    // and write requests on gemm_bus_if (both as master).
+    // gemm_input_if is a master port of this subsystem, meaning the GEMM unit
+    // is on the slave side. The local DMA drives gemm_bus_if as master.
+    // We directly connect.
+
+    assign gemm_input_if.req_valid       = ldma_gemm[0].req_valid;
+    assign gemm_input_if.req_data        = ldma_gemm[0].req_data;
+    assign ldma_gemm[0].req_ready        = gemm_input_if.req_ready;
+    assign ldma_gemm[0].rsp_valid        = gemm_input_if.rsp_valid;
+    assign ldma_gemm[0].rsp_data         = gemm_input_if.rsp_data;
+    assign gemm_input_if.rsp_ready       = ldma_gemm[0].rsp_ready;
+
+    assign gemm_weight_if.req_valid      = ldma_gemm[1].req_valid;
+    assign gemm_weight_if.req_data       = ldma_gemm[1].req_data;
+    assign ldma_gemm[1].req_ready        = gemm_weight_if.req_ready;
+    assign ldma_gemm[1].rsp_valid        = gemm_weight_if.rsp_valid;
+    assign ldma_gemm[1].rsp_data         = gemm_weight_if.rsp_data;
+    assign gemm_weight_if.rsp_ready      = ldma_gemm[1].rsp_ready;
+
+    assign gemm_sz_if.req_valid          = ldma_gemm[2].req_valid;
+    assign gemm_sz_if.req_data           = ldma_gemm[2].req_data;
+    assign ldma_gemm[2].req_ready        = gemm_sz_if.req_ready;
+    assign ldma_gemm[2].rsp_valid        = gemm_sz_if.rsp_valid;
+    assign ldma_gemm[2].rsp_data         = gemm_sz_if.rsp_data;
+    assign gemm_sz_if.rsp_ready          = ldma_gemm[2].rsp_ready;
+
+    // Output: DIR=1 (GEMM->LMEM) - local DMA reads from GEMM unit output buffer
+    // gemm_output_if is master (subsystem issues read requests to GEMM unit)
+    assign gemm_output_if.req_valid      = ldma_gemm[3].req_valid;
+    assign gemm_output_if.req_data       = ldma_gemm[3].req_data;
+    assign ldma_gemm[3].req_ready        = gemm_output_if.req_ready;
+    assign ldma_gemm[3].rsp_valid        = gemm_output_if.rsp_valid;
+    assign ldma_gemm[3].rsp_data         = gemm_output_if.rsp_data;
+    assign gemm_output_if.rsp_ready      = ldma_gemm[3].rsp_ready;
+
+`ifdef DBG_TRACE_MEM
+    always @(posedge clk) begin
+        if (ldma_to_switch[0].req_valid && ldma_to_switch[0].req_ready) begin
+            `TRACE(1, ("%t: %s ldma_in req: addr=0x%0h, rw=%0b\n",
+                $time, INSTANCE_ID, ldma_to_switch[0].req_data.addr,
+                ldma_to_switch[0].req_data.rw))
+        end
+        if (ldma_to_switch[1].req_valid && ldma_to_switch[1].req_ready) begin
+            `TRACE(1, ("%t: %s ldma_wt req: addr=0x%0h, rw=%0b\n",
+                $time, INSTANCE_ID, ldma_to_switch[1].req_data.addr,
+                ldma_to_switch[1].req_data.rw))
+        end
+        if (ldma_to_switch[2].req_valid && ldma_to_switch[2].req_ready) begin
+            `TRACE(1, ("%t: %s ldma_sz req: addr=0x%0h, rw=%0b\n",
+                $time, INSTANCE_ID, ldma_to_switch[2].req_data.addr,
+                ldma_to_switch[2].req_data.rw))
+        end
+        if (ldma_to_switch[3].req_valid && ldma_to_switch[3].req_ready) begin
+            `TRACE(1, ("%t: %s ldma_out req: addr=0x%0h, rw=%0b\n",
+                $time, INSTANCE_ID, ldma_to_switch[3].req_data.addr,
+                ldma_to_switch[3].req_data.rw))
+        end
+    end
+`endif
+
+endmodule

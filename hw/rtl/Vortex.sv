@@ -35,6 +35,9 @@ module Vortex import VX_gpu_pkg::*; (
     input wire [VX_MEM_TAG_WIDTH-1:0]       mem_rsp_tag [VX_MEM_PORTS],
     output wire                             mem_rsp_ready [VX_MEM_PORTS],
 
+    // DMA AXI ports (cache bypass, from all cores)
+    AXI_BUS.Master                          dma_axi_m [`NUM_CORES * `NUM_DMA_CHANNELS],
+
     // DCR write request
     input  wire                             dcr_wr_valid,
     input  wire [VX_DCR_ADDR_WIDTH-1:0]     dcr_wr_addr,
@@ -139,6 +142,8 @@ module Vortex import VX_gpu_pkg::*; (
     wire [`NUM_CLUSTERS-1:0] per_cluster_busy;
     wire [`NUM_CLUSTERS-1:0] per_cluster_cache_drain;
 
+    localparam CLUSTER_DMA_PORTS = NUM_SOCKETS * `SOCKET_SIZE * `NUM_DMA_CHANNELS;
+
     // Generate all clusters
     for (genvar cluster_id = 0; cluster_id < `NUM_CLUSTERS; ++cluster_id) begin : g_clusters
 
@@ -163,6 +168,8 @@ module Vortex import VX_gpu_pkg::*; (
             .dcr_bus_if         (cluster_dcr_bus_if),
 
             .mem_bus_if         (per_cluster_mem_bus_if[cluster_id * `L2_MEM_PORTS +: `L2_MEM_PORTS]),
+
+            .dma_axi_m          (dma_axi_m[cluster_id * CLUSTER_DMA_PORTS +: CLUSTER_DMA_PORTS]),
 
             .busy               (per_cluster_busy[cluster_id]),
             .cache_drain        (per_cluster_cache_drain[cluster_id])

@@ -33,6 +33,9 @@ module VX_cluster import VX_gpu_pkg::*; #(
     // Memory
     VX_mem_bus_if.master        mem_bus_if [`L2_MEM_PORTS],
 
+    // DMA AXI ports (cache bypass, from all cores in cluster)
+    AXI_BUS.Master              dma_axi_m [NUM_SOCKETS * `SOCKET_SIZE * `NUM_DMA_CHANNELS],
+
     // Status
     output wire                 busy,
     output wire                 cache_drain
@@ -132,6 +135,8 @@ module VX_cluster import VX_gpu_pkg::*; #(
         wire is_base_dcr_addr = (dcr_bus_if.write_addr >= `VX_DCR_BASE_STATE_BEGIN && dcr_bus_if.write_addr < `VX_DCR_BASE_STATE_END);
         `BUFFER_DCR_BUS_IF (socket_dcr_bus_if, dcr_bus_if, is_base_dcr_addr, (NUM_SOCKETS > 1))
 
+        localparam SOCKET_DMA_PORTS = `SOCKET_SIZE * `NUM_DMA_CHANNELS;
+
         VX_socket #(
             .SOCKET_ID ((CLUSTER_ID * NUM_SOCKETS) + socket_id),
             .INSTANCE_ID (`SFORMATF(("%s-socket%0d", INSTANCE_ID, socket_id)))
@@ -148,6 +153,8 @@ module VX_cluster import VX_gpu_pkg::*; #(
             .dcr_bus_if     (socket_dcr_bus_if),
 
             .mem_bus_if     (per_socket_mem_bus_if[socket_id * `L1_MEM_PORTS +: `L1_MEM_PORTS]),
+
+            .dma_axi_m      (dma_axi_m[socket_id * SOCKET_DMA_PORTS +: SOCKET_DMA_PORTS]),
 
         `ifdef GBAR_ENABLE
             .gbar_bus_if    (per_socket_gbar_bus_if[socket_id]),

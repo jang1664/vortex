@@ -33,6 +33,9 @@ module VX_socket import VX_gpu_pkg::*; #(
     // Memory
     VX_mem_bus_if.master    mem_bus_if [`L1_MEM_PORTS],
 
+    // DMA AXI ports (cache bypass, from all cores)
+    AXI_BUS.Master          dma_axi_m [`SOCKET_SIZE * `NUM_DMA_CHANNELS],
+
 `ifdef GBAR_ENABLE
     // Barrier
     VX_gbar_bus_if.master   gbar_bus_if,
@@ -253,7 +256,8 @@ module VX_socket import VX_gpu_pkg::*; #(
 
         VX_core #(
             .CORE_ID  ((SOCKET_ID * `SOCKET_SIZE) + core_id),
-            .INSTANCE_ID (`SFORMATF(("%s-core%0d", INSTANCE_ID, core_id)))
+            .INSTANCE_ID (`SFORMATF(("%s-core%0d", INSTANCE_ID, core_id))),
+            .NUM_TMEM_BANKS (`NUM_DMA_CHANNELS)
         ) core (
             `SCOPE_IO_BIND  (scope_core + core_id)
 
@@ -269,6 +273,8 @@ module VX_socket import VX_gpu_pkg::*; #(
             .dcache_bus_if  (per_core_dcache_bus_if[core_id * DCACHE_NUM_REQS +: DCACHE_NUM_REQS]),
 
             .icache_bus_if  (per_core_icache_bus_if[core_id]),
+
+            .dma_axi_m      (dma_axi_m[core_id * `NUM_DMA_CHANNELS +: `NUM_DMA_CHANNELS]),
 
         `ifdef GBAR_ENABLE
             .gbar_bus_if    (per_core_gbar_bus_if[core_id]),
