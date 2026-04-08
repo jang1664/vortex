@@ -168,23 +168,23 @@ static void run_tiled_gemm(const kernel_arg_t* arg) {
 
   const uint32_t m_tiles    = (M + DMA_MT - 1u) / DMA_MT;
   const uint32_t n_tiles    = N / DMA_MXU_NT;
-  const uint32_t k_tiles    = K / DMA_KT;
-  const uint32_t kb_per_kt  = DMA_KT / DMA_MXU_KT;
+  const uint32_t k_tiles    = (K + DMA_KT - 1u) / DMA_KT;
   const uint32_t tile_total = m_tiles * n_tiles * k_tiles;
 
-  const uint32_t groups_per_kt = DMA_KT / qblk;
   const uint32_t ng_per_nt     = (DMA_MXU_NT + qblk - 1u) / qblk;
 
-  const uint32_t weight_kt_bytes = DMA_KT * (DMA_MXU_NT / 2u);
-  uint32_t scale_kt_bytes, zp_kt_bytes, qparam_kb_offset;
+  // Full-tile byte sizes (used for DRAM stride between K-tiles)
+  const uint32_t full_weight_kt_bytes = DMA_KT * (DMA_MXU_NT / 2u);
+  uint32_t full_scale_kt_bytes, full_zp_kt_bytes, qparam_kb_offset;
   if (qdir == 0) {
-    scale_kt_bytes   = groups_per_kt * DMA_MXU_NT * 2u;
-    zp_kt_bytes      = groups_per_kt * DMA_MXU_NT * 2u;
-    qparam_kb_offset = 0;
+    uint32_t full_groups_per_kt = DMA_KT / qblk;
+    full_scale_kt_bytes = full_groups_per_kt * DMA_MXU_NT * 2u;
+    full_zp_kt_bytes    = full_groups_per_kt * DMA_MXU_NT * 2u;
+    qparam_kb_offset    = 0;
   } else {
-    scale_kt_bytes   = DMA_KT * ng_per_nt * 2u;
-    zp_kt_bytes      = DMA_KT * ng_per_nt * 2u;
-    qparam_kb_offset = DMA_MXU_KT * ng_per_nt * 2u;
+    full_scale_kt_bytes = DMA_KT * ng_per_nt * 2u;
+    full_zp_kt_bytes    = DMA_KT * ng_per_nt * 2u;
+    qparam_kb_offset    = DMA_MXU_KT * ng_per_nt * 2u;
   }
 
   const uint32_t w_seg_bytes = DMA_MXU_KT * (DMA_MXU_NT / 2u);
@@ -218,28 +218,41 @@ static void run_tiled_gemm(const kernel_arg_t* arg) {
   // ---- Helper: issue 4 DMA loads for a tile into buffer b ----
   auto dma_preload_tile = [&](uint32_t b, uint32_t _mt, uint32_t _nt, uint32_t _kt) {
     const uint32_t cm = ((M - _mt * DMA_MT) < DMA_MT) ? (M - _mt * DMA_MT) : DMA_MT;
-    const uint32_t in_bytes = cm * DMA_KT * 2u;
+    const uint32_t ck = ((K - _kt * DMA_KT) < DMA_KT) ? (K - _kt * DMA_KT) : DMA_KT;
+    const uint32_t in_bytes = cm * ck * 2u;
 
+    // Current tile byte sizes (may be smaller for the last K-tile)
+    const uint32_t cur_weight_kt_bytes = ck * (DMA_MXU_NT / 2u);
+    uint32_t cur_scale_kt_bytes, cur_zp_kt_bytes;
+    if (qdir == 0) {
+      cur_scale_kt_bytes = (ck / qblk) * DMA_MXU_NT * 2u;
+      cur_zp_kt_bytes    = (ck / qblk) * DMA_MXU_NT * 2u;
+    } else {
+      cur_scale_kt_bytes = ck * ng_per_nt * 2u;
+      cur_zp_kt_bytes    = ck * ng_per_nt * 2u;
+    }
+
+    // DRAM offsets: kt stride uses full-tile sizes, nt stride uses current-tile sizes
     const uint64_t d_in = arg->dram_in_base
       + uint64_t(_mt) * uint64_t(DMA_MT * K * 2u)
-      + uint64_t(_kt) * uint64_t(in_bytes);
+      + uint64_t(_kt) * uint64_t(cm * DMA_KT * 2u);
     const uint64_t d_w = arg->dram_w_base
-      + uint64_t(_kt) * uint64_t(n_tiles * weight_kt_bytes)
-      + uint64_t(_nt) * uint64_t(weight_kt_bytes);
+      + uint64_t(_kt) * uint64_t(n_tiles * full_weight_kt_bytes)
+      + uint64_t(_nt) * uint64_t(cur_weight_kt_bytes);
     const uint64_t d_sc = arg->dram_sc_base
-      + uint64_t(_kt) * uint64_t(n_tiles * scale_kt_bytes)
-      + uint64_t(_nt) * uint64_t(scale_kt_bytes);
+      + uint64_t(_kt) * uint64_t(n_tiles * full_scale_kt_bytes)
+      + uint64_t(_nt) * uint64_t(cur_scale_kt_bytes);
     const uint64_t d_zp = arg->dram_zp_base
-      + uint64_t(_kt) * uint64_t(n_tiles * zp_kt_bytes)
-      + uint64_t(_nt) * uint64_t(zp_kt_bytes);
+      + uint64_t(_kt) * uint64_t(n_tiles * full_zp_kt_bytes)
+      + uint64_t(_nt) * uint64_t(cur_zp_kt_bytes);
 
     send_dma_cmd(RAW_OP_DMA_LOAD, ibuf[b],  d_in, 0, 0, 1, in_bytes);
     stream_send(make_notify(0, 1, rid_tile(b)));
-    send_dma_cmd(RAW_OP_DMA_LOAD, wbuf[b],  d_w,  0, 0, 1, weight_kt_bytes);
+    send_dma_cmd(RAW_OP_DMA_LOAD, wbuf[b],  d_w,  0, 0, 1, cur_weight_kt_bytes);
     stream_send(make_notify(0, 1, rid_tile(b)));
-    send_dma_cmd(RAW_OP_DMA_LOAD, scbuf[b], d_sc, 0, 0, 1, scale_kt_bytes);
+    send_dma_cmd(RAW_OP_DMA_LOAD, scbuf[b], d_sc, 0, 0, 1, cur_scale_kt_bytes);
     stream_send(make_notify(0, 1, rid_tile(b)));
-    send_dma_cmd(RAW_OP_DMA_LOAD, zpbuf[b], d_zp, 0, 0, 1, zp_kt_bytes);
+    send_dma_cmd(RAW_OP_DMA_LOAD, zpbuf[b], d_zp, 0, 0, 1, cur_zp_kt_bytes);
     stream_send(make_notify(0, 1, rid_tile(b)));
 
     tile_target[b] += 4;
@@ -275,6 +288,8 @@ static void run_tiled_gemm(const kernel_arg_t* arg) {
 
       for (uint32_t kt = 0; kt < k_tiles; kt++, tile_idx++) {
         const uint32_t tile_buf = tile_idx & 1;
+        const uint32_t cur_k = ((K - kt * DMA_KT) < DMA_KT) ? (K - kt * DMA_KT) : DMA_KT;
+        const uint32_t cur_kb_per_kt = cur_k / DMA_MXU_KT;
 
         // ---- Preload NEXT tile into opposite buffer (overlap with compute) ----
         uint32_t nmt, nnt, nkt;
@@ -311,13 +326,13 @@ static void run_tiled_gemm(const kernel_arg_t* arg) {
         }
         stream_send(make_notify(1, sz_target[0], rid_scale(0)));
 
-        for (uint32_t kb = 0; kb < kb_per_kt; kb++) {
+        for (uint32_t kb = 0; kb < cur_kb_per_kt; kb++) {
           const bool is_first_kb = (kt == 0 && kb == 0);
-          const bool is_last_kb  = (kt == k_tiles - 1u && kb == kb_per_kt - 1u);
+          const bool is_last_kb  = (kt == k_tiles - 1u && kb == cur_kb_per_kt - 1u);
 
           // ---- Preload NEXT microtile into opposite MXU buffer ----
           const uint32_t next_kb = kb + 1;
-          if (next_kb < kb_per_kt) {
+          if (next_kb < cur_kb_per_kt) {
             const uint32_t nmxu_buf = mxu_buf ^ 1;
             const uint32_t next_w_lmem = wbuf[tile_buf] + next_kb * w_seg_bytes;
 

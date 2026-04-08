@@ -3,11 +3,11 @@
 set -euo pipefail
 
 # Allow override from environment
-export CONFIGS="${CONFIGS:--DDBG_TRACE_GEMM_FSM -DNUM_CORES=1 -DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34}"
+export CONFIGS="${CONFIGS:--DNUM_CORES=1 -DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34}"
 export MAX_LOG_BYTES="${MAX_LOG_BYTES:-10485760}"  # 10 MB
 DRIVER="${DRIVER:-rtlsim}"
 APP="${APP:-fpint_gemm_ffn_hw_improve}"
-DEBUG_LEVEL="${DEBUG_LEVEL:-3}"
+DEBUG_LEVEL="${DEBUG_LEVEL:-0}"
 LOG_DIR="${LOG_DIR:-run_logs_fpint_gemm_ffn_hw_improve}"
 
 mkdir -p "${LOG_DIR}"
@@ -15,8 +15,8 @@ rm -rf "${LOG_DIR:?}"/*
 
 # Constraints:
 #   N must be a multiple of MXU_NT (32)
-#   K must be a multiple of DMA_KT (128)
-#   M can be any positive value
+#   K must be a multiple of MXU_KT (32)
+#   M must be a multiple of 32
 
 # If command-line arguments are provided, use them as test cases directly.
 # Example: bash test.sh "-m 2 -n 32 -k 128 -q 32 -t 0 -d 0"
@@ -25,6 +25,11 @@ if [[ $# -gt 0 ]]; then
 else
   # Default sweep: shape x qblk x wtrans x qdir
   declare -a SHAPES=(
+    # K=32 (minimum K-tile)
+    "-m 32 -n 32 -k 32"
+    "-m 128 -n 32 -k 32"
+    "-m 128 -n 128 -k 64"
+    "-m 128 -n 128 -k 96"
     # baseline (small)
     "-m 128 -n 128 -k 128"
     "-m 256 -n 128 -k 128"
