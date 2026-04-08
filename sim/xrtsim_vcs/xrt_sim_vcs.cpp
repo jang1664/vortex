@@ -53,7 +53,7 @@ class xrt_sim::Impl {
 public:
   Impl()
     : ram_(nullptr)
-    , dram_sim_(PLATFORM_MEMORY_NUM_BANKS, PLATFORM_MEMORY_DATA_SIZE, MEM_CLOCK_RATIO)
+    , dram_sim_(NUM_DMA_CHANNELS, PLATFORM_MEMORY_DATA_SIZE, MEM_CLOCK_RATIO)
     , stop_(false)
     , ctrl_fd_(-1)
     , mem_fd_(-1)
@@ -77,7 +77,7 @@ public:
       close(mem_fd_);
       mem_fd_ = -1;
     }
-    for (int b = 0; b < PLATFORM_MEMORY_NUM_BANKS; ++b) {
+    for (int b = 0; b < NUM_DMA_CHANNELS; ++b) {
       delete mem_alloc_[b];
     }
     if (ram_) {
@@ -111,15 +111,14 @@ public:
     printf("[vcs-sim] mem socket connected\n");
 
     // Calculate memory bank size
-    mem_bank_size_ = (1ull << PLATFORM_MEMORY_ADDR_WIDTH) / PLATFORM_MEMORY_NUM_BANKS;
+    mem_bank_size_ = (1ull << PLATFORM_MEMORY_ADDR_WIDTH) / NUM_DMA_CHANNELS;
 
     // Allocate RAM
     ram_ = new RAM(0, RAM_PAGE_SIZE);
 
     // Initialize memory allocators
-    for (int b = 0; b < PLATFORM_MEMORY_NUM_BANKS; ++b) {
-      uint64_t base = (b == 0) ? USER_BASE_ADDR : 0;
-      mem_alloc_[b] = new MemoryAllocator(base, mem_bank_size_ - base, 4096, 64);
+    for (int b = 0; b < NUM_DMA_CHANNELS; ++b) {
+      mem_alloc_[b] = new MemoryAllocator(0, mem_bank_size_, 4096, 64);
     }
 
     // Launch sim thread for AXI memory event processing
@@ -134,13 +133,13 @@ public:
   }
 
   int mem_alloc(uint64_t size, uint32_t bank_id, uint64_t* addr) {
-    if (bank_id >= PLATFORM_MEMORY_NUM_BANKS)
+    if (bank_id >= NUM_DMA_CHANNELS)
       return -1;
     return mem_alloc_[bank_id]->allocate(size, addr);
   }
 
   int mem_free(uint32_t bank_id, uint64_t addr) {
-    if (bank_id >= PLATFORM_MEMORY_NUM_BANKS)
+    if (bank_id >= NUM_DMA_CHANNELS)
       return -1;
     return mem_alloc_[bank_id]->release(addr);
   }
@@ -148,7 +147,7 @@ public:
   int mem_write(uint32_t bank_id, uint64_t addr, uint64_t size, const void* data) {
     std::lock_guard<std::mutex> guard(mutex_);
 
-    if (bank_id >= PLATFORM_MEMORY_NUM_BANKS)
+    if (bank_id >= NUM_DMA_CHANNELS)
       return -1;
     uint64_t base_addr = bank_id * mem_bank_size_ + addr;
     ram_->write(data, base_addr, size);
@@ -158,7 +157,7 @@ public:
   int mem_read(uint32_t bank_id, uint64_t addr, uint64_t size, void* data) {
     std::lock_guard<std::mutex> guard(mutex_);
 
-    if (bank_id >= PLATFORM_MEMORY_NUM_BANKS)
+    if (bank_id >= NUM_DMA_CHANNELS)
       return -1;
     uint64_t base_addr = bank_id * mem_bank_size_ + addr;
     ram_->read(data, base_addr, size);
@@ -373,7 +372,7 @@ private:
     // 2. DramSim tick + drain DRAM queues
     dram_sim_.tick();
 
-    for (int b = 0; b < PLATFORM_MEMORY_NUM_BANKS; ++b) {
+    for (int b = 0; b < NUM_DMA_CHANNELS; ++b) {
       if (!dram_queues_[b].empty()) {
         auto mem_req = dram_queues_[b].front();
         dram_sim_.send_request(mem_req->addr, mem_req->write, [](void* arg) {
@@ -389,7 +388,7 @@ private:
     }
 
     // 3. Send ready responses back to VCS via mem_sock
-    for (int b = 0; b < PLATFORM_MEMORY_NUM_BANKS; ++b) {
+    for (int b = 0; b < NUM_DMA_CHANNELS; ++b) {
       while (true) {
         auto it = find_ready_mem_rsp(b);
         if (it == pending_mem_reqs_[b].end()) {
@@ -447,10 +446,10 @@ private:
   int ctrl_fd_;
   int mem_fd_;
 
-  MemoryAllocator* mem_alloc_[PLATFORM_MEMORY_NUM_BANKS];
-  mem_req_list_t pending_mem_reqs_[PLATFORM_MEMORY_NUM_BANKS];
-  std::queue<mem_req_t*> dram_queues_[PLATFORM_MEMORY_NUM_BANKS];
-  aw_state_t aw_state_[PLATFORM_MEMORY_NUM_BANKS];
+  MemoryAllocator* mem_alloc_[NUM_DMA_CHANNELS];
+  mem_req_list_t pending_mem_reqs_[NUM_DMA_CHANNELS];
+  std::queue<mem_req_t*> dram_queues_[NUM_DMA_CHANNELS];
+  aw_state_t aw_state_[NUM_DMA_CHANNELS];
 };
 
 ///////////////////////////////////////////////////////////////////////////////

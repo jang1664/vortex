@@ -47,7 +47,7 @@ using namespace vortex;
 #define CPP_API
 #endif
 
-// #define BANK_INTERLEAVE
+#define BANK_INTERLEAVE
 
 // Debug print macro: enabled only when compiled with -DDEBUG_XRT
 // Usage: DEBUG_XRT=1 make -C runtime/xrt

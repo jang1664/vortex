@@ -21,7 +21,7 @@ static const char* kernel_file = "kernel.vxbin";
 
 static uint32_t M = 2;
 static uint32_t N = 32;
-static uint32_t K = 32;
+static uint32_t K = 128;  // Must be >= GEMM_FSM_KT for at least 1 K-tile
 static uint32_t QBLK = 32;
 static uint32_t WTRANS = 0;
 static uint32_t QDIR = 0;

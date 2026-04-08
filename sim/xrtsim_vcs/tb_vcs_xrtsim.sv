@@ -33,7 +33,7 @@ module tb_vcs_xrtsim #(
 `ifdef PLATFORM_MERGED_MEMORY_INTERFACE
   parameter C_M_AXI_MEM_NUM_BANKS   = 1
 `else
-  parameter C_M_AXI_MEM_NUM_BANKS   = `PLATFORM_MEMORY_NUM_BANKS
+  parameter C_M_AXI_MEM_NUM_BANKS   = `NUM_DMA_CHANNELS
 `endif
 );
 
@@ -42,7 +42,7 @@ module tb_vcs_xrtsim #(
 `ifdef PLATFORM_MERGED_MEMORY_INTERFACE
   localparam int NUM_BANKS = 1;
 `else
-  localparam int NUM_BANKS = `PLATFORM_MEMORY_NUM_BANKS;
+  localparam int NUM_BANKS = `NUM_DMA_CHANNELS;
 `endif
 
   // Response queue depth limit for backpressure
@@ -217,7 +217,7 @@ module tb_vcs_xrtsim #(
   `ifdef PLATFORM_MERGED_MEMORY_INTERFACE
     `REPEAT (1, TB_AXI_MEM_CONNECT, REPEAT_COMMA),
   `else
-    `REPEAT (`PLATFORM_MEMORY_NUM_BANKS, TB_AXI_MEM_CONNECT, REPEAT_COMMA),
+    `REPEAT (`NUM_DMA_CHANNELS, TB_AXI_MEM_CONNECT, REPEAT_COMMA),
   `endif
     .s_axi_ctrl_awvalid(s_axi_ctrl_awvalid), .s_axi_ctrl_awready(s_axi_ctrl_awready),
     .s_axi_ctrl_awaddr(s_axi_ctrl_awaddr),
@@ -250,7 +250,7 @@ module tb_vcs_xrtsim #(
   `ifdef PLATFORM_MERGED_MEMORY_INTERFACE
     `REPEAT (1, TB_AXI_MEM_CONNECT, REPEAT_COMMA),
   `else
-    `REPEAT (`PLATFORM_MEMORY_NUM_BANKS, TB_AXI_MEM_CONNECT, REPEAT_COMMA),
+    `REPEAT (`NUM_DMA_CHANNELS, TB_AXI_MEM_CONNECT, REPEAT_COMMA),
   `endif
     .s_axi_ctrl_awvalid(s_axi_ctrl_awvalid), .s_axi_ctrl_awready(s_axi_ctrl_awready),
     .s_axi_ctrl_awaddr(s_axi_ctrl_awaddr),

@@ -1,70 +1,215 @@
 #include "common.h"
 #include <vx_spawn.h>
 #include <vx_intrinsics.h>
-#ifdef GEMM_PARTITION_LOG
-#include <vx_print.h>
+
+// ---------------------------------------------------------------------------
+// HW tile dimensions (from VX_config.h)
+// ---------------------------------------------------------------------------
+static constexpr uint32_t DMA_MT     = GEMM_FSM_MT;      // 128
+static constexpr uint32_t DMA_KT     = GEMM_FSM_KT;      // 128
+static constexpr uint32_t DMA_MXU_KT = GEMM_FSM_MXU_KT;  // 32
+static constexpr uint32_t DMA_MXU_NT = GEMM_FSM_MXU_NT;   // 32
+
+// ---------------------------------------------------------------------------
+// MMIO / stream addresses
+// Note: GEMM_REG_BASE_ADDR macro uses Verilog underscore hex which is
+//       invalid in C++, so we define a C-compatible constant here.
+// ---------------------------------------------------------------------------
+#ifdef XLEN_64
+static constexpr uint64_t GEMM_BASE        = 0x0000000000001080ULL;
+#else
+static constexpr uint64_t GEMM_BASE        = 0x0000FFFF00000000ULL;
 #endif
+static constexpr uint64_t GEMM_STREAM_ADDR = GEMM_BASE + 8;
 
-const int LSU_WORD_SIZE = 8; // bytes per beat for global alloc and per-entry beats
+// ---------------------------------------------------------------------------
+// Raw opcodes (must match VX_cmd_constructor.sv)
+// ---------------------------------------------------------------------------
+static constexpr uint64_t OP_DMA_LOAD         = 1;
+static constexpr uint64_t OP_DMA_STORE        = 2;
+static constexpr uint64_t OP_NOTIFY           = 3;
+static constexpr uint64_t OP_WAIT             = 4;
+static constexpr uint64_t OP_MXU_LOAD_WEIGHT  = 5;
+static constexpr uint64_t OP_MXU_LOAD_QPARAM  = 6;
+static constexpr uint64_t OP_MXU_LOAD_INPUT   = 7;
+static constexpr uint64_t OP_MXU_STORE_OUTPUT = 8;
+static constexpr uint64_t OP_CLEAR            = 9;
 
-static constexpr uint64_t kGemmRegOffset = 0x0000000000001080ull;
-static uint64_t gGemmRegBaseAddr = kGemmRegOffset;
+// ---------------------------------------------------------------------------
+// Sync register IDs (must match testbench convention)
+// ---------------------------------------------------------------------------
+static constexpr uint32_t RID_LD  = 0;   // DMA LOAD
+static constexpr uint32_t RID_W   = 2;   // MXU LOAD_WEIGHT
+static constexpr uint32_t RID_SZ  = 4;   // MXU LOAD_QPARAM
+static constexpr uint32_t RID_G   = 6;   // MXU LOAD_INPUT (GEMM)
+static constexpr uint32_t RID_O   = 8;   // MXU STORE_OUTPUT
+static constexpr uint32_t RID_ST  = 10;  // DMA STORE
 
-static constexpr uint32_t kTileM = 128u;
-static constexpr uint32_t kTileN = 128u;
+// ---------------------------------------------------------------------------
+// MMIO helpers
+// ---------------------------------------------------------------------------
+static inline uint32_t mmio_read32(uint64_t addr) {
+  return *reinterpret_cast<volatile uint32_t*>(addr);
+}
 
-struct tb_partition_t {
-  bool has_work;
+static inline void stream_write64(uint64_t value) {
+  *reinterpret_cast<volatile uint64_t*>(GEMM_STREAM_ADDR) = value;
+}
+
+// ---------------------------------------------------------------------------
+// Command word builders
+// ---------------------------------------------------------------------------
+
+// DMA_LOAD / DMA_STORE: 3 words
+static inline void cmd_dma(uint64_t op, uint32_t tmem_base24, uint64_t dram_base36,
+                           uint16_t tmem_stride, uint16_t dram_stride,
+                           uint16_t bound, uint32_t seg_size) {
+  uint64_t w0 = (uint64_t(tmem_base24 & 0xFFFFFF) << 40)
+              | (uint64_t(dram_base36 & 0xFFFFFFFFFull) << 4)
+              | (op & 0xF);
+  uint64_t w1 = (uint64_t(tmem_stride) << 32)
+              | (uint64_t(dram_stride) << 16)
+              | uint64_t(bound);
+  uint64_t w2 = uint64_t(seg_size);
+  stream_write64(w0);
+  stream_write64(w1);
+  stream_write64(w2);
+}
+
+// NOTIFY: 1 word
+static inline void cmd_notify(bool set_mode, uint32_t value, uint32_t reg_id) {
+  uint64_t w = (uint64_t(set_mode ? 1 : 0) << 41)
+             | (uint64_t(value & 0xFFFFFFFF) << 9)
+             | (uint64_t(reg_id & 0x1F) << 4)
+             | OP_NOTIFY;
+  stream_write64(w);
+}
+
+// WAIT: 1 word
+static inline void cmd_wait(uint32_t value, uint32_t reg_id) {
+  uint64_t w = (uint64_t(value & 0xFFFFFFFF) << 9)
+             | (uint64_t(reg_id & 0x1F) << 4)
+             | OP_WAIT;
+  stream_write64(w);
+}
+
+// MXU_LOAD_WEIGHT: 1 word
+static inline void cmd_mxu_load_weight(bool wtrans, bool reg_idx,
+                                       uint16_t bound, uint16_t stride,
+                                       uint32_t tmem_base24) {
+  uint64_t w = (uint64_t(wtrans ? 1 : 0) << 61)
+             | (uint64_t(reg_idx ? 1 : 0) << 60)
+             | (uint64_t(bound) << 44)
+             | (uint64_t(stride) << 28)
+             | (uint64_t(tmem_base24 & 0xFFFFFF) << 4)
+             | OP_MXU_LOAD_WEIGHT;
+  stream_write64(w);
+}
+
+// MXU_LOAD_QPARAM: 2 words
+static inline void cmd_mxu_load_qparam(uint32_t mxu_base24, uint32_t tmem_base24,
+                                       uint16_t tmem_stride, uint16_t mxu_stride,
+                                       uint16_t bound) {
+  uint64_t w0 = (uint64_t(mxu_base24 & 0xFFFFFF) << 28)
+              | (uint64_t(tmem_base24 & 0xFFFFFF) << 4)
+              | OP_MXU_LOAD_QPARAM;
+  uint64_t w1 = (uint64_t(tmem_stride) << 32)
+              | (uint64_t(mxu_stride) << 16)
+              | uint64_t(bound);
+  stream_write64(w0);
+  stream_write64(w1);
+}
+
+// MXU_LOAD_INPUT: 2 words
+static inline void cmd_mxu_load_input(bool is_accum, bool is_last,
+                                      bool wreg_idx, bool sreg_idx, bool zreg_idx,
+                                      bool qdir, uint32_t tmem_base24,
+                                      uint32_t acc_mem_base24,
+                                      uint32_t acc_cnt,
+                                      uint16_t stride, uint16_t bound) {
+  uint64_t w0 = (uint64_t(is_accum ? 1 : 0) << 57)
+              | (uint64_t(is_last ? 1 : 0) << 56)
+              | (uint64_t(wreg_idx ? 1 : 0) << 55)
+              | (uint64_t(sreg_idx ? 1 : 0) << 54)
+              | (uint64_t(zreg_idx ? 1 : 0) << 53)
+              | (uint64_t(qdir ? 1 : 0) << 52)
+              | (uint64_t(tmem_base24 & 0xFFFFFF) << 28)
+              | (uint64_t(acc_mem_base24 & 0xFFFFFF) << 4)
+              | OP_MXU_LOAD_INPUT;
+  uint64_t w1 = (uint64_t(acc_cnt) << 32)
+              | (uint64_t(stride) << 16)
+              | uint64_t(bound);
+  stream_write64(w0);
+  stream_write64(w1);
+}
+
+// MXU_STORE_OUTPUT: 2 words
+static inline void cmd_mxu_store_output(uint32_t tmem_base24, uint32_t acc_mem_base24,
+                                        uint16_t stride, uint16_t bound) {
+  uint64_t w0 = (uint64_t(tmem_base24 & 0xFFFFFF) << 28)
+              | (uint64_t(acc_mem_base24 & 0xFFFFFF) << 4)
+              | OP_MXU_STORE_OUTPUT;
+  uint64_t w1 = (uint64_t(stride) << 16)
+              | uint64_t(bound);
+  stream_write64(w0);
+  stream_write64(w1);
+}
+
+// CLEAR: 1 word
+static inline void cmd_clear() {
+  stream_write64(OP_CLEAR);
+}
+
+// ---------------------------------------------------------------------------
+// Utility
+// ---------------------------------------------------------------------------
+static inline uint32_t min_u32(uint32_t a, uint32_t b) { return (a < b) ? a : b; }
+static inline uint32_t ceil_div_u32(uint32_t a, uint32_t b) { return (a + b - 1u) / b; }
+static inline uint32_t bitfield_mask(uint32_t bits) {
+  return (bits >= 32) ? 0xFFFFFFFFu : ((1u << bits) - 1u);
+}
+
+// ---------------------------------------------------------------------------
+// Job alloc (read doorbell at GEMM_BASE + 0)
+// ---------------------------------------------------------------------------
+static bool gemm_job_alloc(uint32_t& eid) {
+  uint32_t r = mmio_read32(GEMM_BASE);
+  if (r == 0xBAADF00Du)
+    return false;
+  if (((r >> JOB_MMIO_ALLOC_SUCC_BIT) & 1u) == 0)
+    return false;
+  eid = (r >> JOB_MMIO_ALLOC_ENTRY_LSB) & bitfield_mask(JOB_MMIO_ALLOC_ENTRY_BITS);
+  return (eid < GEMM_JOB_NUM_ENTRIES);
+}
+
+// ---------------------------------------------------------------------------
+// Tile partitioning (same as before)
+// ---------------------------------------------------------------------------
+struct partition_t {
+  bool     has_work;
   uint32_t m_start;
   uint32_t n_start;
   uint32_t target_M;
   uint32_t target_N;
 };
 
-static inline uint32_t mmio_read32(uint64_t addr) {
-  return *reinterpret_cast<volatile uint32_t*>(addr);
-}
+static partition_t compute_partition(uint32_t core_id, uint32_t num_tbs,
+                                    uint32_t M, uint32_t N) {
+  partition_t part = {false, 0, 0, 0, 0};
+  if (num_tbs == 0 || M == 0 || N == 0) return part;
 
-static inline void mmio_write32(uint64_t addr, uint32_t value) {
-  *reinterpret_cast<volatile uint32_t*>(addr) = value;
-}
-
-static inline uint32_t bitfield_mask(uint32_t bits) {
-  return (bits >= 32) ? 0xFFFFFFFFu : ((1u << bits) - 1u);
-}
-
-static inline uint32_t min_u32(uint32_t a, uint32_t b) {
-  return (a < b) ? a : b;
-}
-
-static inline uint32_t ceil_div_u32(uint32_t a, uint32_t b) {
-  return (a + b - 1u) / b;
-}
-
-static tb_partition_t compute_partition(uint32_t core_id, uint32_t num_tbs, uint32_t M, uint32_t N) {
-  tb_partition_t part = {false, 0u, 0u, 0u, 0u};
-
-  if (num_tbs == 0 || M == 0 || N == 0)
-    return part;
-
-  uint32_t mt_dim = ceil_div_u32(M, kTileM);
-  uint32_t nt_dim = ceil_div_u32(N, kTileN);
-  if (mt_dim == 0 || nt_dim == 0)
-    return part;
+  uint32_t mt_dim = ceil_div_u32(M, DMA_MT);
+  uint32_t nt_dim = ceil_div_u32(N, DMA_MXU_NT);
+  if (mt_dim == 0 || nt_dim == 0) return part;
 
   uint32_t bn = min_u32(num_tbs, nt_dim);
-  if (bn == 0)
-    return part;
-
+  if (bn == 0) return part;
   uint32_t bm = ceil_div_u32(num_tbs, bn);
-  uint32_t grid_tbs = bm * bn;
-  if (core_id >= grid_tbs)
-    return part;
+  if (core_id >= bm * bn) return part;
 
   uint32_t tb_n = core_id % bn;
   uint32_t tb_m = core_id / bn;
-  if (tb_m >= bm)
-    return part;
+  if (tb_m >= bm) return part;
 
   uint32_t nt_base = nt_dim / bn;
   uint32_t nt_rem  = nt_dim % bn;
@@ -76,240 +221,250 @@ static tb_partition_t compute_partition(uint32_t core_id, uint32_t num_tbs, uint
   uint32_t mt_cnt  = mt_base + ((tb_m < mt_rem) ? 1u : 0u);
   uint32_t mt0     = tb_m * mt_base + min_u32(tb_m, mt_rem);
 
-  if (mt_cnt == 0 || nt_cnt == 0)
-    return part;
+  if (mt_cnt == 0 || nt_cnt == 0) return part;
 
-  uint32_t m_start = mt0 * kTileM;
-  uint32_t n_start = nt0 * kTileN;
-  if (m_start >= M || n_start >= N)
-    return part;
-
-  uint32_t m_tiles_span = mt_cnt * kTileM;
-  uint32_t n_tiles_span = nt_cnt * kTileN;
+  uint32_t m_start = mt0 * DMA_MT;
+  uint32_t n_start = nt0 * DMA_MXU_NT;
+  if (m_start >= M || n_start >= N) return part;
 
   part.has_work = true;
-  part.m_start = m_start;
-  part.n_start = n_start;
-  part.target_M = min_u32(M - m_start, m_tiles_span);
-  part.target_N = min_u32(N - n_start, n_tiles_span);
+  part.m_start  = m_start;
+  part.n_start  = n_start;
+  part.target_M = min_u32(M - m_start, mt_cnt * DMA_MT);
+  part.target_N = min_u32(N - n_start, nt_cnt * DMA_MXU_NT);
   return part;
 }
 
-static constexpr uint32_t kMaxPollIters = 2000000u;
-static constexpr uint32_t kPoisonWord = 0xBAADF00Du;
+// ---------------------------------------------------------------------------
+// Main GEMM command-stream driver
+// ---------------------------------------------------------------------------
+static void run_gemm_stream(const kernel_arg_t* arg, const partition_t& part) {
+  const uint32_t M_part = part.target_M;
+  const uint32_t N_part = part.target_N;
+  const uint32_t K_full = arg->K;
+  const uint32_t QBLK   = arg->QBLK;
+  const bool     wtrans  = (arg->WTRANS != 0);
+  const bool     qdir    = (arg->QDIR != 0);
 
-static inline void split_u64(uint64_t value, uint32_t& lo, uint32_t& hi) {
-  lo = uint32_t(value & 0xFFFFFFFFull);
-  hi = uint32_t(value >> 32);
-}
+  const uint32_t m_tiles  = ceil_div_u32(M_part, DMA_MT);
+  const uint32_t n_tiles  = ceil_div_u32(N_part, DMA_MXU_NT);
+  const uint32_t k_tiles  = K_full / DMA_KT;
+  const uint32_t kb_per_kt = DMA_KT / DMA_MXU_KT;
 
-static inline uint32_t log2_pow2_u32(uint32_t x) {
-  uint32_t s = 0;
-  while ((1u << s) != x) ++s;
-  return s;
-}
+  // Quantization group counts
+  const uint32_t groups_per_kt = ceil_div_u32(DMA_KT, QBLK);
+  const uint32_t ng_per_nt     = ceil_div_u32(DMA_MXU_NT, QBLK);
 
-// ----------------------------------------------------------------------------
-// 32-bit MMIO layout helpers
-//
-// HW(VX_job_desc_mmio_regs) layout:
-//   [base + 0 .. base + DATA_SIZE-1] : global alloc "beat"
-//   [base + DATA_SIZE .. ]           : per-entry beats (each beat is DATA_SIZE bytes)
-//
-// Here we *still* compute beat boundaries using LSU_WORD_SIZE (DATA_SIZE),
-// but access within a beat using 32-bit addresses (byte offset).
-// ----------------------------------------------------------------------------
-static constexpr uint32_t kMmioBeatBytes = LSU_WORD_SIZE;      // usually 8
-static constexpr uint32_t kWordsPerBeat  = kMmioBeatBytes / 4; // usually 2
-static constexpr uint32_t kNumBeats      = (GEMM_JOB_NUM_REGS32 + kWordsPerBeat - 1u) / kWordsPerBeat;
-static constexpr uint32_t kEntryStrideBytes = kNumBeats * kMmioBeatBytes;
-static constexpr uint32_t kGlobalAllocBytes = kMmioBeatBytes;
+  // Segment sizes (bytes)
+  const uint32_t w_seg_bytes  = DMA_MXU_KT * (DMA_MXU_NT / 2);
 
-// Return byte address of regs32[eid][reg_idx32]
-static inline uint64_t job_entry_reg32_addr(uint32_t eid, uint32_t reg_idx32) {
-  uint32_t beat_idx      = reg_idx32 / kWordsPerBeat;
-  uint32_t word_in_beat  = reg_idx32 % kWordsPerBeat;
+  // LMEM buffer bases (from host)
+  const uint32_t ibuf_base  = uint32_t(arg->lmem_ibuf0_base);
+  const uint32_t wbuf_base  = uint32_t(arg->lmem_wbuf0_base);
+  const uint32_t scbuf_base = uint32_t(arg->lmem_scbuf0_base);
+  const uint32_t zpbuf_base = uint32_t(arg->lmem_zpbuf0_base);
+  const uint32_t obuf_base  = uint32_t(arg->lmem_obuf_base);
 
-  return gGemmRegBaseAddr
-       + uint64_t(kGlobalAllocBytes)                 // skip global alloc beat
-       + uint64_t(eid) * uint64_t(kEntryStrideBytes) // entry stride
-       + uint64_t(beat_idx) * uint64_t(kMmioBeatBytes)
-       + uint64_t(word_in_beat) * 4ull;              // 32-bit lane inside beat
-}
+  // DRAM bases
+  const uint64_t dram_in_base = arg->input_base;
+  const uint64_t dram_w_base  = arg->weight_base;
+  const uint64_t dram_sc_base = arg->scale_base;
+  const uint64_t dram_zp_base = arg->zp_base;
+  const uint64_t dram_out_base = arg->output_base;
 
-static inline void job_write_reg32(uint32_t eid, uint32_t reg_idx32, uint32_t value) {
-  mmio_write32(job_entry_reg32_addr(eid, reg_idx32), value);
-}
+  // QPARAM strides (for MXU_LOAD_QPARAM)
+  const uint16_t qparam_src_stride = uint16_t(zpbuf_base - scbuf_base);
+  const uint16_t qparam_dst_stride = uint16_t(DMA_MXU_NT * 4);  // scale+zp interleaved in MXU
 
-static inline uint32_t job_read_reg32(uint32_t eid, uint32_t reg_idx32) {
-  return mmio_read32(job_entry_reg32_addr(eid, reg_idx32));
-}
+  for (uint32_t mt = 0; mt < m_tiles; ++mt) {
+    uint32_t cur_m = min_u32(M_part - mt * DMA_MT, DMA_MT);
 
-static inline void job_write_reg64(uint32_t eid, uint32_t reg_lo_idx, uint64_t value) {
-  uint32_t lo, hi;
-  split_u64(value, lo, hi);
-  job_write_reg32(eid, reg_lo_idx,     lo);
-  job_write_reg32(eid, reg_lo_idx + 1, hi);
-}
+    for (uint32_t nt = 0; nt < n_tiles; ++nt) {
 
-static inline void decode_alloc_rsp(uint32_t r, uint32_t& eid, uint32_t& generation) {
-  eid = (r >> JOB_MMIO_ALLOC_ENTRY_LSB) & bitfield_mask(JOB_MMIO_ALLOC_ENTRY_BITS);
-  generation = (r >> JOB_MMIO_ALLOC_GEN_LSB) & bitfield_mask(JOB_MMIO_ALLOC_GEN_BITS);
-}
+      for (uint32_t kt = 0; kt < k_tiles; ++kt) {
+        bool is_first_kt = (kt == 0);
+        bool is_last_kt  = (kt == k_tiles - 1);
 
-// Read alloc response from lane0 word0 (base + 0) as 32-bit
-static bool gemm_job_alloc_fixed(uint32_t& eid, uint32_t& generation, uint32_t& raw_rsp) {
-  const uint64_t base = kGemmRegOffset; // fixed base
-  gGemmRegBaseAddr = base;
+        // Compute DRAM tile addresses
+        uint64_t dram_in_tile = dram_in_base
+                              + uint64_t(part.m_start + mt * DMA_MT) * uint64_t(K_full) * 2
+                              + uint64_t(kt) * uint64_t(cur_m) * uint64_t(DMA_KT) * 2;
+        // Note: DRAM layout for input is row-major [M, K] in fp16
+        // For tiled access: offset = m_start*K*2 + kt*DMA_KT*2 per row, but DMA reads cur_m*DMA_KT contiguous bytes
+        // Simplification: assume tiled DRAM layout (from host)
+        dram_in_tile = dram_in_base
+                     + uint64_t(part.m_start + mt * DMA_MT) * uint64_t(K_full) * 2
+                     + uint64_t(kt * DMA_KT) * 2;
 
-  uint32_t r = mmio_read32(base); // <<---- 32-bit read, not beat read
-  raw_rsp = r;
+        uint32_t weight_kt_bytes = DMA_KT * (DMA_MXU_NT / 2);
+        uint64_t dram_w_tile = dram_w_base
+                             + uint64_t(kt) * uint64_t(n_tiles) * uint64_t(weight_kt_bytes)
+                             + uint64_t(nt) * uint64_t(weight_kt_bytes);
 
-  if (r == kPoisonWord)
-    return false;
+        uint32_t scale_kt_bytes, zp_kt_bytes;
+        uint64_t dram_sc_tile, dram_zp_tile;
+        if (!qdir) {
+          // QCOL: scale/zp shape [groups_per_kt, N]
+          scale_kt_bytes = groups_per_kt * DMA_MXU_NT * 2;
+          zp_kt_bytes    = groups_per_kt * DMA_MXU_NT * 2;
+          dram_sc_tile = dram_sc_base
+                       + uint64_t(kt) * uint64_t(n_tiles) * uint64_t(scale_kt_bytes)
+                       + uint64_t(nt) * uint64_t(scale_kt_bytes);
+          dram_zp_tile = dram_zp_base
+                       + uint64_t(kt) * uint64_t(n_tiles) * uint64_t(zp_kt_bytes)
+                       + uint64_t(nt) * uint64_t(zp_kt_bytes);
+        } else {
+          // QROW: scale/zp shape [K, ng_per_nt]
+          scale_kt_bytes = DMA_KT * ng_per_nt * 2;
+          zp_kt_bytes    = DMA_KT * ng_per_nt * 2;
+          dram_sc_tile = dram_sc_base
+                       + uint64_t(kt) * uint64_t(n_tiles) * uint64_t(scale_kt_bytes)
+                       + uint64_t(nt) * uint64_t(scale_kt_bytes);
+          dram_zp_tile = dram_zp_base
+                       + uint64_t(kt) * uint64_t(n_tiles) * uint64_t(zp_kt_bytes)
+                       + uint64_t(nt) * uint64_t(zp_kt_bytes);
+        }
 
-  if (((r >> JOB_MMIO_ALLOC_SUCC_BIT) & 1u) == 0)
-    return false;
+        uint32_t cur_input_kt_bytes = cur_m * DMA_KT * 2;
 
-  decode_alloc_rsp(r, eid, generation);
+        // ---------------------------------------------------------------
+        // PHASE 1: DMA LOAD (input, weight, scale, zp)
+        // ---------------------------------------------------------------
+        cmd_dma(OP_DMA_LOAD, ibuf_base, uint64_t(dram_in_tile),
+                0, 0, 1, cur_input_kt_bytes);
+        cmd_notify(true, 1, RID_LD);  // SET rid_ld = 1
 
-  if (eid >= GEMM_JOB_NUM_ENTRIES)
-    return false;
+        cmd_dma(OP_DMA_LOAD, wbuf_base, uint64_t(dram_w_tile),
+                0, 0, 1, weight_kt_bytes);
+        cmd_notify(false, 1, RID_LD);  // ADD 1 → rid_ld = 2
 
-  return true;
-}
+        cmd_dma(OP_DMA_LOAD, scbuf_base, uint64_t(dram_sc_tile),
+                0, 0, 1, scale_kt_bytes);
+        cmd_notify(false, 1, RID_LD);  // ADD 1 → rid_ld = 3
 
-static void program_job_regs(uint32_t eid, const kernel_arg_t* arg, const tb_partition_t& part) {
-  // Global/DRAM bases
-  job_write_reg64(eid, REG_INPUT_BASE_LO,  arg->input_base);
-  job_write_reg64(eid, REG_WEIGHT_BASE_LO, arg->weight_base);
-  job_write_reg64(eid, REG_OUTPUT_BASE_LO, arg->output_base);
-  job_write_reg64(eid, REG_SCALE_BASE_LO,  arg->scale_base);
-  job_write_reg64(eid, REG_ZP_BASE_LO,     arg->zp_base);
+        cmd_dma(OP_DMA_LOAD, zpbuf_base, uint64_t(dram_zp_tile),
+                0, 0, 1, zp_kt_bytes);
+        cmd_notify(false, 1, RID_LD);  // ADD 1 → rid_ld = 4
 
-  // LMEM scratch bases
-  job_write_reg64(eid, REG_LMEM_IBUF0_LO,  arg->lmem_ibuf0_base);
-  job_write_reg64(eid, REG_LMEM_IBUF1_LO,  arg->lmem_ibuf1_base);
-  job_write_reg64(eid, REG_LMEM_WBUF0_LO,  arg->lmem_wbuf0_base);
-  job_write_reg64(eid, REG_LMEM_WBUF1_LO,  arg->lmem_wbuf1_base);
-  job_write_reg64(eid, REG_LMEM_SCBUF0_LO, arg->lmem_scbuf0_base);
-  job_write_reg64(eid, REG_LMEM_SCBUF1_LO, arg->lmem_scbuf1_base);
-  job_write_reg64(eid, REG_LMEM_ZPBUF0_LO, arg->lmem_zpbuf0_base);
-  job_write_reg64(eid, REG_LMEM_ZPBUF1_LO, arg->lmem_zpbuf1_base);
-  job_write_reg64(eid, REG_LMEM_OBUF_LO,   arg->lmem_obuf_base);
+        cmd_wait(4, RID_LD);  // Wait until all 4 DMAs complete
 
-  // Original problem sizes
-  job_write_reg32(eid, REG_M_ORIG, arg->M);
-  job_write_reg32(eid, REG_N_ORIG, arg->N);
-  job_write_reg32(eid, REG_K_ORIG, arg->K);
-  job_write_reg32(eid, REG_QBLK_ORIG, log2_pow2_u32(arg->QBLK));
+        // ---------------------------------------------------------------
+        // PHASE 2-5: K-block loop
+        // ---------------------------------------------------------------
+        for (uint32_t kb = 0; kb < kb_per_kt; ++kb) {
+          bool is_first_kb = (is_first_kt && kb == 0);
+          bool is_last_kb  = (is_last_kt && kb == kb_per_kt - 1);
 
-  // Partition sizes/offsets for this job
-  job_write_reg32(eid, REG_M_TARGET, part.target_M);
-  job_write_reg32(eid, REG_N_TARGET, part.target_N);
-  job_write_reg32(eid, REG_K_TARGET, arg->K);
-  job_write_reg32(eid, REG_M_START, part.m_start);
-  job_write_reg32(eid, REG_N_START, part.n_start);
+          // PHASE 2: MXU LOAD_WEIGHT
+          uint32_t w_lmem_base = wbuf_base + kb * w_seg_bytes;
+          cmd_mxu_load_weight(wtrans, false, 1, 0, w_lmem_base);
+          cmd_notify(kb == 0, 1, RID_W);
 
-  // WTRANS/QDIR flags
-  job_write_reg32(eid, REG_WTRANS, arg->WTRANS);
-  job_write_reg32(eid, REG_QDIR, arg->QDIR);
+          // PHASE 3: MXU LOAD_QPARAM
+          if (!qdir) {
+            // QCOL: load once per K-tile (at kb==0)
+            if (kb == 0) {
+              cmd_mxu_load_qparam(0, scbuf_base,
+                                  qparam_src_stride, qparam_dst_stride, 2);
+              cmd_notify(true, 1, RID_SZ);
+            }
+          } else {
+            // QROW: load every K-block
+            uint32_t qparam_kb_offset = DMA_MXU_KT * ng_per_nt * 2;
+            uint32_t sc_offset = scbuf_base + kb * qparam_kb_offset;
+            cmd_mxu_load_qparam(0, sc_offset,
+                                qparam_src_stride, qparam_dst_stride, 2);
+            cmd_notify(kb == 0, 1, RID_SZ);
+          }
 
-  // Start (valid=1)
-  job_write_reg32(eid, REG_CONTROL, 1u);
-}
+          // PHASE 4: WAIT for weight + qparam
+          cmd_wait(kb + 1, RID_W);
+          if (!qdir) {
+            if (kb == 0)
+              cmd_wait(1, RID_SZ);
+          } else {
+            cmd_wait(kb + 1, RID_SZ);
+          }
 
-static bool wait_job_done(uint32_t eid, uint32_t generation, uint32_t& last_ctrl) {
-  for (uint32_t iter = 0; iter < kMaxPollIters; ++iter) {
-    uint32_t ctrl = job_read_reg32(eid, REG_CONTROL);
-    uint32_t curr_gen = (ctrl >> JOB_MMIO_CTRL_GEN_LSB) & bitfield_mask(JOB_MMIO_GEN_W);
-    uint32_t valid = (ctrl >> JOB_MMIO_CTRL_VALID_BIT) & 1u;
-    last_ctrl = ctrl;
+          // PHASE 5: MXU LOAD_INPUT + GEMM compute
+          uint32_t i_src_base = ibuf_base + kb * cur_m * DMA_MXU_KT * 2;
+          cmd_mxu_load_input(!is_first_kb, is_last_kb,
+                             false, false, false,
+                             qdir, i_src_base, 0,
+                             cur_m,
+                             uint16_t(DMA_MXU_KT * 2),
+                             uint16_t(cur_m));
+          cmd_notify(kb == 0, 1, RID_G);
+          cmd_wait(kb + 1, RID_G);
+        }
 
-    if ((generation < curr_gen) || (valid == 0u))
-      return true;
+        // ---------------------------------------------------------------
+        // PHASE 6: MXU STORE_OUTPUT (after all K-blocks in this K-tile)
+        // ---------------------------------------------------------------
+        cmd_mxu_store_output(obuf_base, 0, 0, uint16_t(cur_m));
+        cmd_notify(true, 1, RID_O);
+        cmd_wait(1, RID_O);
+      }
+
+      // -----------------------------------------------------------------
+      // PHASE 7: DMA STORE output to DRAM (after all K-tiles)
+      // -----------------------------------------------------------------
+      uint32_t cur_output_tile_bytes = cur_m * DMA_MXU_NT * 2;
+      uint64_t dram_out_tile = dram_out_base
+                             + uint64_t(part.m_start + mt * DMA_MT) * uint64_t(N_part) * 2
+                             + uint64_t(part.n_start + nt * DMA_MXU_NT) * 2;
+      // TODO: verify DRAM output address calculation matches host layout
+
+      cmd_dma(OP_DMA_STORE, obuf_base, uint64_t(dram_out_tile),
+              0, 0, 1, cur_output_tile_bytes);
+      cmd_notify(true, 1, RID_ST);
+      cmd_wait(1, RID_ST);
+    }
   }
-  return false;
+
+  // CLEAR — signal job completion
+  cmd_clear();
 }
 
-void kernel_mmio_driver(kernel_arg_t *__UNIFORM__ arg) {
+// ---------------------------------------------------------------------------
+// Entry point
+// ---------------------------------------------------------------------------
+void kernel_body(kernel_arg_t *__UNIFORM__ arg) {
   uint32_t core_id = vx_core_id();
   uint32_t num_cores = vx_num_cores();
-  bool reporter = (core_id == 0);
-
-  if (reporter) {
-    arg->status = MMIO_STATUS_INIT;
-    arg->last_ctrl = 0;
-  }
 
   uint32_t num_tbs = arg->grid_dim[0] * arg->grid_dim[1];
-  if (num_tbs == 0)
-    num_tbs = num_cores;
+  if (num_tbs == 0) num_tbs = num_cores;
 
-  tb_partition_t part = compute_partition(core_id, num_tbs, arg->M, arg->N);
-#ifdef GEMM_PARTITION_LOG
-  vx_printf("[gemm-part] cid=%u/%u tbs=%u has_work=%u m_start=%u n_start=%u target_M=%u target_N=%u K=%u\n",
-            core_id, num_cores, num_tbs,
-            part.has_work ? 1u : 0u,
-            part.m_start, part.n_start,
-            part.target_M, part.target_N,
-            arg->K);
-#endif
+  partition_t part = compute_partition(core_id, num_tbs, arg->M, arg->N);
 
   if (!part.has_work) {
-    if (reporter)
-      arg->status = MMIO_STATUS_OK;
+    if (core_id == 0) arg->status = MMIO_STATUS_OK;
     return;
   }
 
-  uint32_t eid = 0, generation = 0;
-  uint32_t alloc_raw = 0;
-
-  if (!gemm_job_alloc_fixed(eid, generation, alloc_raw)) {
-    if (reporter) {
-      arg->last_ctrl = alloc_raw;
-      if (alloc_raw == kPoisonWord) {
-        arg->status = MMIO_STATUS_ALLOC_FAIL;
-      } else if (((alloc_raw >> JOB_MMIO_ALLOC_SUCC_BIT) & 1u) == 0) {
-        arg->status = MMIO_STATUS_ALLOC_FAIL;
-      } else {
-        arg->job_eid = eid;
-        arg->job_generation = generation;
-        arg->status = MMIO_STATUS_BAD_EID;
-      }
-    }
+  uint32_t eid = 0;
+  if (!gemm_job_alloc(eid)) {
+    if (core_id == 0) arg->status = MMIO_STATUS_ALLOC_FAIL;
     return;
   }
 
-  if (reporter) {
-    arg->last_ctrl = alloc_raw;
+  if (core_id == 0) {
     arg->job_eid = eid;
-    arg->job_generation = generation;
   }
 
-  program_job_regs(eid, arg, part);
+  run_gemm_stream(arg, part);
 
-  uint32_t last_ctrl = 0;
-  if (!wait_job_done(eid, generation, last_ctrl)) {
-    if (reporter) {
-      arg->last_ctrl = last_ctrl;
-      arg->status = MMIO_STATUS_WAIT_STUCK;
-    }
-    return;
-  }
-
-  if (reporter) {
-    arg->last_ctrl = last_ctrl;
+  if (core_id == 0) {
     arg->status = MMIO_STATUS_OK;
   }
 }
 
 int main() {
-  if (vx_warp_id() != 0 || vx_thread_id() != 0) {
+  if (vx_warp_id() != 0 || vx_thread_id() != 0)
     return 0;
-  }
 
   auto arg = reinterpret_cast<kernel_arg_t*>(csr_read(VX_CSR_MSCRATCH));
-  kernel_mmio_driver(arg);
+  kernel_body(arg);
   return 0;
 }

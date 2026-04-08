@@ -65,6 +65,12 @@ RTL_INCLUDE = -I$(SRC_DIR) -I$(RTL_DIR) -I$(DPI_DIR) -I$(RTL_DIR)/libs -I$(RTL_D
 RTL_INCLUDE += -I$(RTL_DIR)/verification
 RTL_INCLUDE += -I$(AFU_DIR)
 
+# AXI third-party library (for axi_mux, axi_demux in Vortex_axi)
+AXI_DIR := $(THIRD_PARTY_DIR)/axi
+AXI_COMMON_CELLS_DIR := $(AXI_DIR)/.bender/git/checkouts/common_cells-3e2fcccecd7aee7b
+RTL_INCLUDE += -I$(AXI_DIR)/src -I$(AXI_DIR)/include
+RTL_INCLUDE += -I$(AXI_COMMON_CELLS_DIR)/include -I$(AXI_COMMON_CELLS_DIR)/src
+
 # V extension
 ifneq (,$(findstring -DEXT_V_ENABLE, $(CONFIGS)))
 	RTL_PKGS += $(RTL_DIR)/vpu/VX_vpu_pkg.sv
@@ -90,6 +96,28 @@ endif
 
 RTL_PKGS += $(RTL_DIR)/VX_trace_pkg.sv
 
+# AXI packages and IP
+# cf_math_pkg, lzc, rr_arb_tree may already be compiled via cvfpu (if FPU_FPNEW)
+ifeq (,$(findstring -DFPU_FPNEW, $(CONFIGS)))
+RTL_PKGS += $(AXI_COMMON_CELLS_DIR)/src/cf_math_pkg.sv
+RTL_PKGS += $(AXI_COMMON_CELLS_DIR)/src/lzc.sv
+RTL_PKGS += $(AXI_COMMON_CELLS_DIR)/src/rr_arb_tree.sv
+endif
+RTL_PKGS += $(AXI_DIR)/src/axi_pkg.sv
+RTL_PKGS += $(AXI_DIR)/src/axi_intf.sv
+# common_cells needed by axi_demux/axi_mux (cf_math_pkg, lzc, rr_arb_tree already from cvfpu)
+RTL_PKGS += $(AXI_COMMON_CELLS_DIR)/src/fifo_v3.sv
+RTL_PKGS += $(AXI_COMMON_CELLS_DIR)/src/spill_register.sv
+RTL_PKGS += $(AXI_COMMON_CELLS_DIR)/src/spill_register_flushable.sv
+RTL_PKGS += $(AXI_COMMON_CELLS_DIR)/src/counter.sv
+RTL_PKGS += $(AXI_COMMON_CELLS_DIR)/src/delta_counter.sv
+RTL_PKGS += $(AXI_COMMON_CELLS_DIR)/src/onehot_to_bin.sv
+RTL_PKGS += $(AXI_COMMON_CELLS_DIR)/src/id_queue.sv
+RTL_PKGS += $(AXI_DIR)/src/axi_demux_simple.sv
+RTL_PKGS += $(AXI_DIR)/src/axi_demux.sv
+RTL_PKGS += $(AXI_DIR)/src/axi_id_prepend.sv
+RTL_PKGS += $(AXI_DIR)/src/axi_mux.sv
+
 # DPI sources for VCS side
 DPI_SRCS = $(SRC_DIR)/dpi_vcs_server.cpp
 DPI_SRCS += $(DPI_DIR)/util_dpi.cpp $(DPI_DIR)/float_dpi.cpp
@@ -111,12 +139,15 @@ ifneq (,$(findstring -DEXT_TCU_ENABLE, $(CONFIGS)))
 	RTL_DIRS += $(RTL_DIR)/tcu $(RTL_DIR)/tcu/bhf
 endif
 
+# Add AXI source directories for -y search
+RTL_DIRS += $(AXI_DIR)/src $(AXI_COMMON_CELLS_DIR)/src
+
 # VCS compile flags
 VCS_FLAGS += -full64 -sverilog +v2k -timescale=1ns/1ps -xprop=tmerge
 VCS_FLAGS += -CFLAGS "-std=c++17 -I$(SRC_DIR) -I$(ROOT_DIR)/hw -I$(SW_COMMON_DIR) -I/$(THIRD_PARTY_DIR)/softfloat/source/include -DXLEN_$(XLEN)"
 VCS_FLAGS += $(foreach d,$(RTL_DIRS),+incdir+$(d))
 VCS_FLAGS += $(foreach d,$(RTL_DIRS),-y $(d)) +libext+.v+.sv
-VCS_FLAGS += +define+SIMULATION +define+SV_DPI +define+VCS +define+NOXRT
+VCS_FLAGS += +define+SIMULATION +define+SV_DPI +define+VCS +define+NOXRT +define+ASSERTS_OFF
 VCS_FLAGS += +define+XLEN_$(XLEN)
 # Convert -DFOO=bar style CONFIGS to +define+FOO=bar for VCS
 VCS_CONFIGS := $(patsubst -D%,+define+%,$(CONFIGS))
