@@ -1,4 +1,4 @@
-<!-- FSM: {"file": "fsm.json", "state": "ANALYZE"} -->
+<!-- FSM: {"file": "fsm.json", "state": "DONE"} -->
 # Port Scale — STATUS
 
 ## TMEM + DMA Data Feeding
@@ -172,8 +172,46 @@
   3. `Vortex_axi.sv`: Reverted generate-if for NUM_HBM_PORTS==1, demux is unconditional.
   4. `xrt_sim_vcs.cpp`: Replaced `axi_to_ram_addr()` with `to_software_addr()` in `mem_write`/`mem_read`. `process_axi_events` reverted to use `pkt.addr` directly.
 
+### Phase 13: vecadd BANK_INTERLEAVE verify — Iteration 1 (2026-04-08 21:11)
+- **Status**: sim_fail (hang)
+- **Symptom**: PC reads `0xbaadf00d` — data never reaches RAM at correct address
+- **Root cause**: CONFIGS defines (`-DPLATFORM_MEMORY_NUM_BANKS=32`) are converted to `+define+` for VCS RTL but **NOT** passed to C++ `-CFLAGS` in `sim/xrtsim_vcs/Makefile`
+  - `VX_afu_ctrl.sv` (RTL): compiled with `PLATFORM_MEMORY_NUM_BANKS=32` → dev_caps reports 32 banks ✓
+  - `xrt_sim_vcs.cpp` (C++): includes `<VX_config.h>` which defaults to `PLATFORM_MEMORY_NUM_BANKS=2` → `to_software_addr()` uses 2, not 32
+  - Runtime reads 32 from dev_caps, decomposes addresses with 32-bank interleaving
+  - Sim reconstructs flat address with 2-bank interleaving → data written to wrong RAM offset
+  - RTL AXI read hits correct address (== original software addr), but data was never written there
+- **Makefile evidence**: Line 147 `-CFLAGS "..."` has no `$(CONFIGS)`. Line 153-154 converts CONFIGS to `+define+` for VCS only.
+- **Fix plan**: Add CONFIGS-derived C defines to the `-CFLAGS` line in the Makefile, so C++ code sees the same `PLATFORM_MEMORY_NUM_BANKS` as RTL.
+
+### Phase 13: vecadd BANK_INTERLEAVE verify — Iteration 2 (2026-04-08 21:11)
+- **Status**: sim_fail (simv abort, X-propagation)
+- **Iteration 1 root cause WRONG**: CFLAGS already had `$(CONFIGS)` on Makefile line 21. The VCS `-CFLAGS` fix was unnecessary (only affects DPI compilation, not app library). Reverted.
+- **True root cause**: **TB / DUT port count mismatch**
+  - `vortex_afu.v` and `VX_afu_wrap.sv` had `ifdef PLATFORM_MERGED_MEMORY_INTERFACE` removed in Phase 12b → always 8 AXI ports
+  - `tb_vcs_xrtsim.sv` still has the ifdef → with MERGED defined, TB creates only 1 AXI port (`NUM_BANKS=1`)
+  - Result: 7 of 8 DUT AXI ports are unconnected → ready signals float → X propagates through axi_mux → corrupts LSU path → AP_CTRL register reads X → simv aborts
+- **Fix**: Remove `PLATFORM_MERGED_MEMORY_INTERFACE` ifdefs from `tb_vcs_xrtsim.sv`, always use `NUM_DMA_CHANNELS` banks.
+
+### Phase 13: vecadd BANK_INTERLEAVE verify — Iteration 3 (2026-04-08 22:40)
+- **Status**: pass (without xprop), xprop debugging in progress
+- **TB fix**: Removed `PLATFORM_MERGED_MEMORY_INTERFACE` ifdefs from `tb_vcs_xrtsim.sv` — always `NUM_DMA_CHANNELS`
+- **RTL fixes**:
+  - `VX_afu_wrap.sv`: Removed MERGED ifdefs (always NUM_DMA_CHANNELS). Added `vx_reset` to VX_axi_write_ack reset + awvalid/wvalid/bvalid gating during vx_reset. vx_pending_writes resets on vx_reset.
+  - `VX_schedule.sv`: busy BUFFER_EX replaced with VX_pipe_register(INIT_VALUE=1'b1) to match post-reset value.
+  - `VX_afu_ctrl.sv`: dev_caps uses PLATFORM_MEMORY_NUM_BANKS (32) instead of NUM_HBM_PORTS (8).
+- **Makefile**: Added `-I$(ROOT_DIR)/build/hw` to VCS CFLAGS. xprop=tmerge remains enabled.
+- **Result (xprop OFF)**: vecadd **PASSED** — 10,118 instructions, 12,329 cycles, IPC=0.821
+- **xprop status**: Still failing. X in AP_CTRL register after ap_start. Fixed X sources: busy INIT_VALUE, vx_pending_writes during vx_reset. Remaining X source: deep in Vortex core hierarchy, propagates to status register under tmerge.
+- **FSDB for debugging**: `docs/port-scale/waveforms/vcs_cosim.fsdb` + `simv_xprop.log`
+
+## Pitfalls
+- VCS simv Makefile only depends on tb/dpi sources, NOT RTL. Must `make clean` to rebuild after RTL changes.
+- RTL Implementation subagents may revert uncommitted changes when editing files. Always verify with grep after subagent edits.
+- `PLATFORM_MERGED_MEMORY_INTERFACE` define has no effect on RTL/TB (all ifdefs removed). Keep in CONFIGS for documentation only.
+
 ## Next Steps (priority order)
 
-1. **vecadd with BANK_INTERLEAVE ON + 8 HBM ports**: Run blackbox test to verify Phase 12b.
+1. **xprop fix**: Analyze FSDB waveform to find remaining X source in Vortex core. Check `busy`, `state`, `cache_drain` signals at ap_start time.
 2. **fpint_gemm_ffn_hw_improve blackbox**: DMA AXI hang debug.
 3. **TMEM/DMA unittest Makefiles**: Create proper Makefiles for the 7 test folders.

@@ -44,6 +44,7 @@
 #endif
 
 #define RAM_PAGE_SIZE 4096
+#define CACHE_BLOCK_SIZE 64
 
 using namespace vortex;
 
@@ -77,7 +78,7 @@ public:
       close(mem_fd_);
       mem_fd_ = -1;
     }
-    for (int b = 0; b < NUM_DMA_CHANNELS; ++b) {
+    for (int b = 0; b < PLATFORM_MEMORY_NUM_BANKS; ++b) {
       delete mem_alloc_[b];
     }
     if (ram_) {
@@ -110,14 +111,14 @@ public:
     }
     printf("[vcs-sim] mem socket connected\n");
 
-    // Calculate memory bank size
-    mem_bank_size_ = (1ull << PLATFORM_MEMORY_ADDR_WIDTH) / NUM_DMA_CHANNELS;
+    // Calculate memory bank size (32 HBM banks, not 8 AXI ports)
+    mem_bank_size_ = (1ull << PLATFORM_MEMORY_ADDR_WIDTH) / PLATFORM_MEMORY_NUM_BANKS;
 
     // Allocate RAM
     ram_ = new RAM(0, RAM_PAGE_SIZE);
 
-    // Initialize memory allocators
-    for (int b = 0; b < NUM_DMA_CHANNELS; ++b) {
+    // Initialize memory allocators (one per HBM bank)
+    for (int b = 0; b < PLATFORM_MEMORY_NUM_BANKS; ++b) {
       mem_alloc_[b] = new MemoryAllocator(0, mem_bank_size_, 4096, 64);
     }
 
@@ -133,13 +134,13 @@ public:
   }
 
   int mem_alloc(uint64_t size, uint32_t bank_id, uint64_t* addr) {
-    if (bank_id >= NUM_DMA_CHANNELS)
+    if (bank_id >= PLATFORM_MEMORY_NUM_BANKS)
       return -1;
     return mem_alloc_[bank_id]->allocate(size, addr);
   }
 
   int mem_free(uint32_t bank_id, uint64_t addr) {
-    if (bank_id >= NUM_DMA_CHANNELS)
+    if (bank_id >= PLATFORM_MEMORY_NUM_BANKS)
       return -1;
     return mem_alloc_[bank_id]->release(addr);
   }
@@ -147,20 +148,22 @@ public:
   int mem_write(uint32_t bank_id, uint64_t addr, uint64_t size, const void* data) {
     std::lock_guard<std::mutex> guard(mutex_);
 
-    if (bank_id >= NUM_DMA_CHANNELS)
+    if (bank_id >= PLATFORM_MEMORY_NUM_BANKS)
       return -1;
-    uint64_t base_addr = bank_id * mem_bank_size_ + addr;
-    ram_->write(data, base_addr, size);
+    // Reconstruct flat software address from (bank_id, per-bank offset).
+    // This matches how the RTL's AXI addresses map to RAM.
+    uint64_t flat_addr = to_software_addr(bank_id, addr);
+    ram_->write(data, flat_addr, size);
     return 0;
   }
 
   int mem_read(uint32_t bank_id, uint64_t addr, uint64_t size, void* data) {
     std::lock_guard<std::mutex> guard(mutex_);
 
-    if (bank_id >= NUM_DMA_CHANNELS)
+    if (bank_id >= PLATFORM_MEMORY_NUM_BANKS)
       return -1;
-    uint64_t base_addr = bank_id * mem_bank_size_ + addr;
-    ram_->read(data, base_addr, size);
+    uint64_t flat_addr = to_software_addr(bank_id, addr);
+    ram_->read(data, flat_addr, size);
     return 0;
   }
 
@@ -239,6 +242,16 @@ private:
     bool     valid;
   } aw_state_t;
 
+  // Reconstruct flat software address from (bank_id, per-bank offset).
+  // Runtime's get_bank_info (BANK_INTERLEAVE ON) decomposes:
+  //   bank   = (addr / CACHE_BLOCK_SIZE) % num_banks
+  //   offset = (addr / CACHE_BLOCK_SIZE / num_banks) * CACHE_BLOCK_SIZE
+  // Reverse: addr = (offset / CBS * num_banks + bank) * CBS
+  uint64_t to_software_addr(uint32_t bank_id, uint64_t offset) {
+    uint64_t block_in_bank = offset / CACHE_BLOCK_SIZE;
+    return (block_in_bank * PLATFORM_MEMORY_NUM_BANKS + bank_id) * CACHE_BLOCK_SIZE;
+  }
+
   static int connect_with_retry(const char* host, int port, int timeout_sec) {
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) {
@@ -314,14 +327,15 @@ private:
           mem_req->bank  = pkt.bank_id;
           mem_req->write = false;
           mem_req->ready = false;
-          // Read data from local RAM
+          // Read data from local RAM using AXI address directly
+          // (AXI addr == software addr, see docs/port-scale/CAUTION.md #1)
           ram_->read(mem_req->data.data(), pkt.addr, PLATFORM_MEMORY_DATA_SIZE);
           pending_mem_reqs_[pkt.bank_id].emplace_back(mem_req);
           dram_queues_[pkt.bank_id].push(mem_req);
           break;
         }
         case EVT_AXI_AW: {
-          // Write address from DUT
+          // Write address from DUT (AXI addr == software addr)
           aw_state_[pkt.bank_id].addr  = pkt.addr;
           aw_state_[pkt.bank_id].tag   = pkt.id;
           aw_state_[pkt.bank_id].valid = true;
@@ -446,10 +460,10 @@ private:
   int ctrl_fd_;
   int mem_fd_;
 
-  MemoryAllocator* mem_alloc_[NUM_DMA_CHANNELS];
-  mem_req_list_t pending_mem_reqs_[NUM_DMA_CHANNELS];
-  std::queue<mem_req_t*> dram_queues_[NUM_DMA_CHANNELS];
-  aw_state_t aw_state_[NUM_DMA_CHANNELS];
+  MemoryAllocator* mem_alloc_[PLATFORM_MEMORY_NUM_BANKS];  // per HBM bank (32)
+  mem_req_list_t pending_mem_reqs_[NUM_DMA_CHANNELS];      // per AXI port (8)
+  std::queue<mem_req_t*> dram_queues_[NUM_DMA_CHANNELS];   // per AXI port (8)
+  aw_state_t aw_state_[NUM_DMA_CHANNELS];                  // per AXI port (8)
 };
 
 ///////////////////////////////////////////////////////////////////////////////

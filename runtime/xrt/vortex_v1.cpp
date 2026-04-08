@@ -47,7 +47,7 @@ using namespace vortex;
 #define CPP_API
 #endif
 
-// #define BANK_INTERLEAVE
+#define BANK_INTERLEAVE
 
 #define MMIO_CTL_ADDR 0x00
 #define MMIO_DEV_ADDR 0x10
@@ -452,14 +452,9 @@ public:
       return err;
     });
   #ifdef BANK_INTERLEAVE
-    if (0 == global_mem_.allocated()) {
-    #ifndef CPP_API
-      for (auto &entry : xrtBuffers_) {
-        xrtBOFree(entry);
-      }
-    #endif
-      xrtBuffers_.clear();
-    }
+    // Note: do NOT clear xrtBuffers_ here even when allocated()==0.
+    // The device destructor may still need them (e.g. vx_dump_perf -> mpm_query -> download).
+    // Cleanup is handled in ~vx_device().
   #else
     uint32_t bank_id;
     CHECK_ERR(this->get_bank_info(dev_addr, &bank_id, nullptr), {

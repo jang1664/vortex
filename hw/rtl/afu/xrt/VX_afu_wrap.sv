@@ -21,22 +21,14 @@ module VX_afu_wrap import VX_gpu_pkg::*; #(
 	parameter C_M_AXI_MEM_ID_WIDTH    = `PLATFORM_MEMORY_ID_WIDTH,
 	parameter C_M_AXI_MEM_DATA_WIDTH  = `PLATFORM_MEMORY_DATA_SIZE * 8,
 	parameter C_M_AXI_MEM_ADDR_WIDTH  = 64,
-`ifdef PLATFORM_MERGED_MEMORY_INTERFACE
-	parameter C_M_AXI_MEM_NUM_BANKS   = 1
-`else
 	parameter C_M_AXI_MEM_NUM_BANKS   = `NUM_DMA_CHANNELS
-`endif
 ) (
     // System signals
     input wire clk,
     input wire reset,
 
     // AXI4 master interface
-`ifdef PLATFORM_MERGED_MEMORY_INTERFACE
-	`REPEAT (1, GEN_AXI_MEM, REPEAT_COMMA),
-`else
 	`REPEAT (`NUM_DMA_CHANNELS, GEN_AXI_MEM, REPEAT_COMMA),
-`endif
     // AXI4-Lite slave interface
     input  wire                                 s_axi_ctrl_awvalid,
     output wire                                 s_axi_ctrl_awready,
@@ -119,15 +111,11 @@ module VX_afu_wrap import VX_gpu_pkg::*; #(
     wire [1:0]                           m_axi_mem_rresp_a [C_M_AXI_MEM_NUM_BANKS];
 
 	// convert memory interface to array
-`ifdef PLATFORM_MERGED_MEMORY_INTERFACE
-	`REPEAT (1, AXI_MEM_TO_ARRAY, REPEAT_SEMICOLON);
-`else
 	`REPEAT (`NUM_DMA_CHANNELS, AXI_MEM_TO_ARRAY, REPEAT_SEMICOLON);
-`endif
 
 	reg [`CLOG2(`RESET_DELAY+1)-1:0] vx_reset_ctr;
 	reg [PENDING_WR_SIZEW-1:0] vx_pending_writes;
-	reg vx_reset = 1; // asserted at initialization
+	reg vx_reset; 
 	wire vx_busy;
 	wire vx_cache_drain;
 
@@ -167,6 +155,7 @@ module VX_afu_wrap import VX_gpu_pkg::*; #(
 		if (reset || ap_reset) begin
 			state    <= STATE_IDLE;
 			vx_reset <= 1;
+			vx_reset_ctr <= (`RESET_DELAY-1);
 		end else begin
 			case (state)
 			STATE_IDLE: begin
