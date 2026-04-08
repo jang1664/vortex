@@ -29,10 +29,23 @@ The docs mirror the RTL source tree. Use them to build context before reading ra
 | GEMM pipeline, opcodes, tiling | `harness/docs/arch-gemm-pipeline.md`, `isa-opcodes.md`, `tiling-strategy.md` |
 | Top-level module (Vortex, cluster, socket) | `docs/rtl/Vortex.md`, `VX_cluster.md`, `VX_socket.md` |
 
+## FPINT GEMM Architecture Docs (`docs/fpint-gemm/`)
+
+Before modifying GEMM-related RTL, read the relevant doc(s) from this directory. Do NOT load all of them — pick based on what your task needs.
+
+| Doc | When to read |
+|-----|-------------|
+| `architecture.md` | Changing GEMM datapath, pipeline stages, or module hierarchy |
+| `address-space.md` | Changing memory mapping, MMIO registers, or DMA addressing |
+| `sw-stack.md` | Need to understand how software/kernel interacts with hardware |
+| `performance-analysis.md` | Optimizing throughput, latency, or utilization |
+| `dev-notes.md` | Debugging or understanding past design decisions and gotchas |
+| `hw_arch.simple.json` | Understanding block-level connectivity (use `hw_tool.py` to read) |
+
 ## Workflow
 
 1. **Locate** — Find the relevant RTL files. Check `docs/rtl/{dir}/` for an existing module doc first; if the task involves a cross-cutting feature, also check `docs/rtl/features/`.
-2. **Understand** — Read the doc, then read the actual `.sv` source to confirm the doc is up to date. For GEMM work, also read the relevant `harness/docs/` files.
+2. **Understand** — Read the doc, then read the actual `.sv` source to confirm the doc is up to date. For GEMM work, also read the relevant `docs/fpint-gemm/` and `harness/docs/` files.
 3. **Implement** — Write the RTL changes following the rules above.
 4. **Verify** — Delegate to the verification agent with clear test parameters.
 5. **Update docs** — If your change alters a module's interface, data flow, or behavior in a way not reflected in the existing doc, update the corresponding `docs/rtl/` file. Do NOT create new docs for trivial or internal-only changes.

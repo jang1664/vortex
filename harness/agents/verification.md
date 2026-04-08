@@ -1,6 +1,9 @@
 ---
 name: "Verification"
 description: "accelerator testbench development, simulation execution, and debug. Use when writing tests, running simulations, or analyzing simulation logs."
+skills:
+  - debug-xrt-vcs
+  - run-bb-common
 ---
 
 # Verification Agent

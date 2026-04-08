@@ -1,17 +1,21 @@
 #!/bin/bash --norc --noprofile
 # PreToolUse hook for Bash: test execution guard + conda inject
-# 1) Block test-execution commands (must use Verification subagent)
+# 1) Block test-execution commands unless called from Verification subagent
 # 2) Inject conda env activation
 
 TARGET_ENV="vortex"
 
 INPUT=$(cat)
 CMD=$(echo "$INPUT" | jq -r '.tool_input.command')
+AGENT_TYPE=$(echo "$INPUT" | jq -r '.agent_type // empty')
 
 # --- Test execution guard ---
+# Only block if NOT called from Verification subagent
 if echo "$CMD" | grep -qE '(blackbox\.sh|verify_rtl\.py|unittest.*make\s+(run|clean)|make\s+(run|clean).*unittest|/simv\b)'; then
-    echo '{"decision":"block","reason":"BLOCKED: Main agent must not run tests directly. Use Verification subagent instead."}'
-    exit 2
+    if [ "$AGENT_TYPE" != "Verification" ]; then
+        echo '{"decision":"block","reason":"BLOCKED: Main agent must not run tests directly. Use Verification subagent instead."}'
+        exit 2
+    fi
 fi
 
 # --- Conda inject ---

@@ -26,7 +26,7 @@ Before any code changes, confirm the improvement idea with the user.
 - Identify which modules/files will be affected.
 - Agree on the scope — do NOT expand beyond what the user asked.
 
-**Spec document**: Create `docs/rtl-improve/<feature-name>-spec.md` at the start of this step. Update it as the spec is refined through discussion with the user. The spec doc should contain:
+**Spec document**: Create `docs/port-scale/<feature-name>-spec.md` at the start of this step. Update it as the spec is refined through discussion with the user. The spec doc should contain:
 - Goal: what is being improved and why
 - Scope: affected modules/files
 - Design decisions made during discussion
@@ -99,7 +99,7 @@ If status is NOT "pass", spawn the **RTL Implementation subagent** again with:
 
 ## Iteration Log
 
-Append iteration results to `docs/rtl-improve/STATUS.md` throughout the loop. Update it after **every** verification iteration. Use the following format per iteration:
+Append iteration results to `docs/port-scale/STATUS.md` throughout the loop. Update it after **every** verification iteration. Use the following format per iteration:
 
 ```markdown
 ### <Feature Name> — Iteration N
@@ -124,6 +124,24 @@ The run-bb-common skill knows:
 - How to interpret pass/fail results
 
 If no blackbox skill exists or it's insufficient, check `harness/rules/testing-*.md` for the exact commands and CONFIGS for each test. **Never run blackbox.sh with empty CONFIGS** — xrt_vcs will silently build with wrong RTL configuration.
+
+## Autonomous Flow (Announce & Proceed)
+
+When a task completes and the next step is ambiguous or there are multiple remaining tasks, the agent should:
+
+1. **Announce** the next task it will proceed with and the reasoning (1-2 sentences).
+2. **Proceed immediately** without waiting for user confirmation.
+3. The user can interrupt at any time to redirect.
+
+Priority order for remaining tasks (highest first):
+1. Fix compile errors or test failures from the current iteration
+2. Continue the current verification loop (next iteration)
+3. Next item in the remaining work list from `STATUS.md`
+4. Items listed in the handoff document
+
+**Blocking rule**: Do NOT skip a failing task to move on to the next one. If a task is failing (even if the failure is pre-existing), it must be resolved or explicitly marked as "deferred by user" before proceeding. Downstream tasks may depend on the current one passing.
+
+Do NOT ask "what should I do next?" — decide and proceed. Only ask the user when there is genuine ambiguity that cannot be resolved from context (e.g., two equally valid approaches with different trade-offs).
 
 ## Rules
 

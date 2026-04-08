@@ -9,8 +9,8 @@ TMEM+DMA data feeding architecture is implemented and compile-verified through a
 **Why:** Increase GEMM data feeding bandwidth via dedicated tensor memory + 8-channel DMA.
 
 **How to apply:** When continuing this work, refer to:
-- Spec: `docs/rtl-improve/tmem-dma-spec.md`
-- Iteration log: `docs/rtl-improve/tmem-dma-log.md`
+- Spec: `docs/port-scale/tmem-dma-spec.md`
+- Iteration log: `docs/port-scale/STATUS.md`
 - Test plan: `harness/rules/testing-tmem-dma.md`
 
 **Key finding:** `vecadd` xrt_vcs blackbox test fails with X on status register even on the ORIGINAL codebase (pre-TMEM). This is a pre-existing bug unrelated to our changes. Needs separate investigation before Level 2 blackbox tests can run.
