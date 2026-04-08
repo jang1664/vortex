@@ -1,5 +1,5 @@
 ---
-paths: ["hw_arch_draw/**"]
+paths: ["docs/fpint-gemm/**/*.json"]
 ---
 
 # HW Design JSON Access Rule

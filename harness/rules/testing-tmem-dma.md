@@ -25,8 +25,9 @@ These run with VCS from `hw/unittest/`. Each has its own Makefile.
 **How to run a unittest:**
 ```bash
 cd build
-PATH=/usr/bin:$PATH make -C ../hw/unittest/<test_name> clean
-PATH=/usr/bin:$PATH make -C ../hw/unittest/<test_name> run
+../configure --xlen=64 --tooldir=/opt/vortex --prefix=$HOME/tools/vortex # if you changed makefiles or shell scripts 
+PATH=/usr/bin:$PATH make -C ./hw/unittest/<test_name> clean
+PATH=/usr/bin:$PATH make -C ./hw/unittest/<test_name> run
 ```
 
 **Pass criteria:** VCS compile 0 errors, simulation prints `TEST PASSED` or completes without `Fatal`/`Error` (VX_fetch PC=0 assertion in core_tmem is expected — testbench stimulus issue).
@@ -38,29 +39,15 @@ These run the actual software (kernel + runtime) on the RTL simulator using `bla
 | Test | App | Driver | Args | What it verifies |
 |------|-----|--------|------|-----------------|
 | vecadd | `vecadd` | `xrt_vcs` | `-n64` | Basic vector add — verifies core pipeline, cache, memory path work end-to-end |
-| fpint_gemm_ffn_hw | `fpint_gemm_ffn_hw` | `xrt_vcs` | (default) | FP-INT GEMM with TMEM/DMA — verifies full data feeding path: HBM → DMA → TMEM → local DMA → MXU → output |
+| fpint_gemm_ffn_hw_improve | `fpint_gemm_ffn_hw_improve` | `xrt_vcs` | (default) | FP-INT GEMM with TMEM/DMA — verifies full data feeding path: HBM → DMA → TMEM → local DMA → MXU → output |
 
 **How to run a blackbox test:**
 
 Use the `/run-bb-common` skill, or run manually with the **exact** commands below. NEVER run blackbox.sh without CONFIGS — xrt_vcs requires RTL build configuration.
-
-```bash
-cd build
-
-# vecadd
-CONFIGS="-DNUM_THREADS=8 -DLMEM_LOG_SIZE=22 -DDCACHE_DISABLE -DL2_ENABLE" \
-DRIVER=xrt_vcs \
-./ci/blackbox.sh --driver=xrt_vcs --app=vecadd --args="-n64" --cores=1 --debug=3
-
-# fpint_gemm_ffn_hw
-CONFIGS="-DNUM_THREADS=8 -DLMEM_LOG_SIZE=22 -DDCACHE_DISABLE -DL2_ENABLE" \
-DRIVER=xrt_vcs \
-./ci/blackbox.sh --driver=xrt_vcs --app=fpint_gemm_ffn_hw --cores=1 --debug=3
-```
+For vecadd, app=vecadd --args="-n64"
+For fpint_gemm_ffn_hw_improve, app=fpint_gemm_ffn_hw_improve
 
 **Required environment for xrt_vcs:**
-- `CONFIGS` must include at minimum: `-DNUM_THREADS=8 -DLMEM_LOG_SIZE=22`
-- `-DDCACHE_DISABLE` and `-DL2_ENABLE` are typical for this branch's config
 - `DRIVER=xrt_vcs` must be set as environment variable
 - If conda is active: prefix with `PATH=/usr/bin:/usr/local/bin:$PATH`
 
@@ -73,7 +60,7 @@ Run tests in this order (each level depends on the previous):
 1. **Level 1 unit tests** — fast, catches compile errors and basic wiring issues
    - Run all 7 unit tests (can be parallelized)
 2. **Level 2 blackbox: vecadd** — simpler test, verifies LSU/cache path still works
-3. **Level 2 blackbox: fpint_gemm_ffn_hw** — full GEMM test, verifies TMEM/DMA data feeding
+3. **Level 2 blackbox: fpint_gemm_ffn_hw_improve** — full GEMM test, verifies TMEM/DMA data feeding
 
 ## Prerequisites
 
@@ -86,7 +73,7 @@ Run tests in this order (each level depends on the previous):
 ## Known Issues
 
 - **VX_fetch PC=0 assertion** in `core_tmem` test: expected — testbench doesn't initialize the program counter via DCR. Not an RTL bug.
-- **fpint_gemm_ffn_hw kernel**: needs update for new command flow (store-based cmd → cmd_constructor, not MMIO). Reference: `hw/unittest/gemm_node_improve/tb_VX_gemm_node_improve.sv`
+- **fpint_gemm_ffn_hw_improve kernel**: needs update for new command flow (store-based cmd → cmd_constructor, not MMIO). Reference: `hw/unittest/gemm_node_improve/tb_VX_gemm_node_improve.sv`
 
 ## Reference Testbench
 
