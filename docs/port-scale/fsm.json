@@ -1,0 +1,54 @@
+{
+  "name": "BANK_INTERLEAVE vecadd debug",
+  "task_name": "port-scale",
+  "initial_state": "ANALYZE",
+  "states": {
+    "ANALYZE": {
+      "description": "Reproduce failure, read logs/traces, identify root cause. Read docs/hbm-bank-interleaving.md before making any hypothesis.",
+      "checklist": [
+        "vecadd failure reproduced with xrt_vcs (or confirmed from recent run)",
+        "Error type identified (compile error / sim hang / data mismatch / crash)",
+        "Root cause hypothesis written in STATUS.md with evidence"
+      ],
+      "allowed_subagents": ["Verification", "Explore"],
+      "transitions": {
+        "IMPLEMENT": "Root cause identified with fix plan",
+        "DONE": "No fix needed — test already passes"
+      },
+      "on_fail": "ANALYZE"
+    },
+    "IMPLEMENT": {
+      "description": "Apply the fix. RTL changes via RTL Implementation subagent, C++/sim changes directly. Log all modified files in STATUS.md.",
+      "checklist": [
+        "All modified files listed in STATUS.md",
+        "Change description explains what and why"
+      ],
+      "allowed_subagents": ["RTL Implementation"],
+      "transitions": {
+        "VERIFY": "Implementation complete"
+      },
+      "on_fail": "ANALYZE"
+    },
+    "VERIFY": {
+      "description": "Run vecadd blackbox test with xrt_vcs, BANK_INTERLEAVE ON, 8 HBM ports. Use configs from docs/port-scale/how-to-test.md.",
+      "checklist": [
+        "vecadd blackbox command and exit code logged in STATUS.md",
+        "If PASS: IPC and instruction count recorded",
+        "If FAIL: error output captured in STATUS.md"
+      ],
+      "allowed_subagents": ["Verification"],
+      "transitions": {
+        "DONE": "vecadd PASSED",
+        "ANALYZE": "vecadd FAILED — need re-analysis"
+      },
+      "on_fail": "ANALYZE"
+    },
+    "DONE": {
+      "description": "vecadd passes with BANK_INTERLEAVE ON. Update STATUS.md with final result.",
+      "checklist": [],
+      "allowed_subagents": [],
+      "transitions": {},
+      "on_fail": null
+    }
+  }
+}

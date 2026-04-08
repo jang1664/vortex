@@ -1,3 +1,4 @@
+<!-- FSM: {"file": "fsm.json", "state": "ANALYZE"} -->
 # Port Scale — STATUS
 
 ## TMEM + DMA Data Feeding
@@ -147,9 +148,32 @@
 - **Regression test renamed**: `fpint_gemm_ffn_hw` → `fpint_gemm_ffn_hw_improve` throughout harness.
 - **Commits**: 4 commits pushed — unittest Makefiles, TMEM+DMA RTL, xrt_vcs sim + kernel, hw_arch_draw cleanup.
 
+### Phase 12: BANK_INTERLEAVE runtime+sim fix (2026-04-08 18:14)
+- **Status**: pass (first attempt), then revised
+- **Goal**: Enable `BANK_INTERLEAVE` in runtime and fix xrt_sim_vcs to match
+- **First attempt (wrong approach)**: Added `axi_to_ram_addr()` in `process_axi_events` to convert AXI addr → bank-based RAM addr. This worked but was architecturally wrong — see CAUTION.md #1.
+- **Changes (first attempt)**:
+  1. `runtime/xrt/vortex.cpp`: Uncommented `#define BANK_INTERLEAVE` (line 50)
+  2. `runtime/xrt/vortex.cpp`: Fixed `mem_free()` — removed eager `xrtBuffers_.clear()` in BANK_INTERLEAVE path
+  3. `sim/xrtsim_vcs/xrt_sim_vcs.cpp`: Added `axi_to_ram_addr()` (wrong, later reverted)
+  4. `hw/rtl/Vortex_axi.sv`: generate-if for NUM_HBM_PORTS==1 (wrong, later reverted)
+- **Tests (first attempt)**: vecadd PASS with NUM_HBM_PORTS=1 (wrong config — CAUTION.md #2)
+
+### Phase 12b: Architecture correction (2026-04-08 20:18)
+- **Status**: pass
+- **Problem**: Phase 12 had wrong approach — see `docs/port-scale/CAUTION.md` for full analysis
+- **Architecture rules applied**:
+  1. `PLATFORM_MERGED_MEMORY_INTERFACE` only affects `VX_axi_adapter(NUM_BANKS_OUT=1)` — nothing else
+  2. `NUM_HBM_PORTS` is always `NUM_DMA_CHANNELS`(8) everywhere: Vortex_axi, VX_afu_wrap, vortex_afu, TB
+  3. Sim RAM uses flat software address: `process_axi_events` uses `pkt.addr` directly, `mem_write` reconstructs flat addr from `(bank, offset)`
+- **Changes**:
+  1. `VX_afu_wrap.sv`: Removed `ifdef PLATFORM_MERGED_MEMORY_INTERFACE` that set `C_M_AXI_MEM_NUM_BANKS=1`. Always `NUM_DMA_CHANNELS`.
+  2. `vortex_afu.v`: Same — removed ifdef, always 8 ports.
+  3. `Vortex_axi.sv`: Reverted generate-if for NUM_HBM_PORTS==1, demux is unconditional.
+  4. `xrt_sim_vcs.cpp`: Replaced `axi_to_ram_addr()` with `to_software_addr()` in `mem_write`/`mem_read`. `process_axi_events` reverted to use `pkt.addr` directly.
+
 ## Next Steps (priority order)
 
-1. **BANK_INTERLEAVE mismatch** (blocker): `runtime/xrt/vortex.cpp` line 50 has `BANK_INTERLEAVE` commented out. RTL uses interleaved addressing. Uncomment and test vecadd with xrt_vcs — this has failed in the past. Root cause: likely `xrt_sim_vcs.cpp` address mapping doesn't match interleaved mode. See `docs/hbm-bank-interleaving.md` for reference.
-2. **vecadd with BANK_INTERLEAVE** enabled: Must pass before DMA work can proceed. Fix `xrt_sim_vcs.cpp` `interleaved_addr()` or sim backend to match runtime's interleaved `get_bank_info`.
-3. **fpint_gemm_ffn_hw_improve blackbox**: DMA AXI hang in merged-interface mux. Depends on #1/#2 being resolved first.
-4. **TMEM/DMA unittest Makefiles**: Create proper Makefiles for the 7 test folders (dma_engine, core_tmem, etc.).
+1. **vecadd with BANK_INTERLEAVE ON + 8 HBM ports**: Run blackbox test to verify Phase 12b.
+2. **fpint_gemm_ffn_hw_improve blackbox**: DMA AXI hang debug.
+3. **TMEM/DMA unittest Makefiles**: Create proper Makefiles for the 7 test folders.

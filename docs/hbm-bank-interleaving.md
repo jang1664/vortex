@@ -187,8 +187,73 @@ Vortex core (LSU / DMA)
 | Parameter | Default | Location | Description |
 |-----------|---------|----------|-------------|
 | `PLATFORM_MEMORY_INTERLEAVE` | 1 | `VX_config.vh:187` | Enable interleaved address view in HW |
-| `PLATFORM_MEMORY_NUM_BANKS` | 2 | `VX_config.vh` (build override) | Number of HBM banks used |
+| `PLATFORM_MEMORY_NUM_BANKS` | 32 | `VX_config.vh` (build override) | Number of HBM banks (PCs) |
 | `PLATFORM_MEMORY_DATA_SIZE` | 64 | `VX_config.vh:183` | Bytes per AXI data beat |
-| `PLATFORM_MERGED_MEMORY_INTERFACE` | (build flag) | `VX_config.vh` | Use single AXI port |
-| `NUM_DMA_CHANNELS` | 8 | `VX_config.vh` | DMA AXI channels per core |
-| `BANK_INTERLEAVE` | commented out (OFF) | `runtime/xrt/vortex.cpp:50` | XRT runtime interleave mode |
+| `PLATFORM_MERGED_MEMORY_INTERFACE` | (build flag) | `VX_config.vh` | VX_axi_adapter outputs single port |
+| `NUM_DMA_CHANNELS` | 8 | `VX_config.vh` | AXI master ports from Vortex |
+| `BANK_INTERLEAVE` | ON | `runtime/xrt/vortex.cpp:50` | XRT runtime interleave mode |
+
+## HBM Banks vs AXI Ports
+
+These are two distinct concepts that must not be conflated:
+
+| Concept | Parameter | Typical Value | Meaning |
+|---------|-----------|---------------|---------|
+| HBM banks (PCs) | `PLATFORM_MEMORY_NUM_BANKS` | 32 | Physical memory banks. Interleaving granularity. |
+| AXI ports | `NUM_DMA_CHANNELS` | 8 | Number of AXI master ports from Vortex HW. |
+
+8 AXI ports are **physical channels** that access 32 HBM banks. One port can serve multiple banks via address routing. The mapping is:
+
+- **Runtime** sees 32 banks (from `dev_caps`): interleaves data across 32 banks in 64B chunks
+- **VX_axi_adapter** remaps addresses, outputs to AXI ports
+- **axi_demux** routes to 8 ports based on address bits
+- **HMSS** (or sim) further routes each port to the correct PC based on address
+
+Where each value is used:
+
+| Item | Use `PLATFORM_MEMORY_NUM_BANKS` | Use `NUM_DMA_CHANNELS` |
+|------|:---:|:---:|
+| `VX_afu_ctrl.sv` dev_caps num_banks | **yes** | |
+| `VX_afu_ctrl.sv` bank_addr_width | **yes** | |
+| `xrt_sim_vcs.cpp` mem_bank_size_, mem_alloc_[], to_software_addr() | **yes** | |
+| `Vortex_axi.sv` NUM_HBM_PORTS | | **yes** |
+| `VX_afu_wrap.sv` C_M_AXI_MEM_NUM_BANKS | | **yes** |
+| `vortex_afu.v` external port count | | **yes** |
+| `xrt_sim_vcs.cpp` pending_mem_reqs_[], dram_queues_[], aw_state_[] | | **yes** |
+
+## PLATFORM_MERGED_MEMORY_INTERFACE Scope
+
+`PLATFORM_MERGED_MEMORY_INTERFACE` affects **only** `VX_axi_adapter`'s `NUM_BANKS_OUT` parameter (set to 1). Everything downstream is unaffected:
+
+```
+VX_axi_adapter(NUM_BANKS_OUT=1)  ← MERGED effect stops here
+  → axi_demux(1→8, address-based) ← always 8 outputs
+  → per-port axi_mux(LSU+DMA)     ← always 8
+  → Vortex_axi: 8 ports            ← always NUM_DMA_CHANNELS
+  → VX_afu_wrap: 8 ports           ← always NUM_DMA_CHANNELS
+  → vortex_afu: 8 ports            ← always NUM_DMA_CHANNELS
+```
+
+Without merged interface, `VX_axi_adapter` can output multiple ports directly (NUM_BANKS_OUT=8), making the downstream demux a passthrough.
+
+## Sim Backend Address Invariant
+
+**AXI address from RTL == original software address.** This holds for both merged and non-merged modes.
+
+VX_axi_adapter (INTERLEAVE=1) output formula:
+```
+m_axi_addr[i] = (bank_addr << (lg2N + lg2_DATA_SIZE)) | (i << lg2_DATA_SIZE)
+```
+Since port `i` only receives requests where `bank_sel == i`, expanding gives:
+```
+m_axi_addr[bank_sel] = software_addr   (always identical)
+```
+
+Therefore in the sim backend (`xrt_sim_vcs.cpp`):
+- `process_axi_events`: use `pkt.addr` directly as flat RAM index — **no conversion needed**
+- `mem_write(bank, offset)`: reconstruct flat software addr, then write to RAM:
+  ```cpp
+  flat_addr = (offset / CACHE_BLOCK_SIZE * PLATFORM_MEMORY_NUM_BANKS + bank) * CACHE_BLOCK_SIZE
+  ```
+
+Note: with `BANK_INTERLEAVE OFF`, `bank * bank_size + offset == addr` holds as a mathematical identity, so the old code appeared to work. This is a coincidence, not correct design — it breaks immediately when `BANK_INTERLEAVE` is enabled.

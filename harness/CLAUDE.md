@@ -38,5 +38,6 @@
 - HW design JSON → @.claude/rules/hw-design-json.md
 - FPINT GEMM → @docs/fpint-gemm/ (arch, address space, SW stack, performance, dev notes)
 - HBM / memory interleaving → @docs/hbm-bank-interleaving.md
+- Task FSM schema → @docs/fsm-schema.md
 - Common rules → @harness/rules/*-common.md
 - Branch-specific rules → @harness/rules/*-arch.md
