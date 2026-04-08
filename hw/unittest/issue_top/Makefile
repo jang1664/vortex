@@ -1,4 +1,5 @@
-ROOT_DIR := $(realpath ../../..)
+UNITTEST_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
+ROOT_DIR := $(abspath $(UNITTEST_DIR)/../../..)
 include $(ROOT_DIR)/config.mk
 
 PROJECT := issue_top

@@ -1,5 +1,6 @@
 # Include Vortex configuration
-ROOT_DIR := $(realpath ../../..)
+UNITTEST_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
+ROOT_DIR := $(abspath $(UNITTEST_DIR)/../../..)
 include $(ROOT_DIR)/config.mk
 
 RTL_DIR := $(VORTEX_HOME)/hw/rtl
@@ -17,7 +18,7 @@ TOP_MODULE := tb_VX_dma_node
 #PIPE_ALIGN ?= 1
 #PIPE_INTERVAL ?= 2
 
-TB   := tb_VX_dma_node.sv
+TB   := $(UNITTEST_DIR)/tb_VX_dma_node.sv
 RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
 				$(RTL_DIR)/core/VX_dma_node.sv \
 				$(RTL_DIR)/mem/VX_mem_bus_if.sv \

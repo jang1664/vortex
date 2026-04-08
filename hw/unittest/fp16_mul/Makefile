@@ -1,5 +1,6 @@
 # Include Vortex configuration
-ROOT_DIR := $(realpath ../../..)
+UNITTEST_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
+ROOT_DIR := $(abspath $(UNITTEST_DIR)/../../..)
 include $(ROOT_DIR)/build/config.mk
 
 RTL_DIR := $(VORTEX_HOME)/hw/rtl
@@ -14,7 +15,7 @@ TIME_SCALE=1ns/1ps
 
 TOP_MODULE := tb_VX_fp16_mul
 
-TB   := tb_VX_fp16_mul.sv
+TB   := $(UNITTEST_DIR)/tb_VX_fp16_mul.sv
 RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
         $(RTL_DIR)/verification/cf_math_pkg.sv \
         $(RTL_DIR)/verification/VX_mem_pkg.sv \

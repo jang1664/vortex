@@ -1,5 +1,6 @@
 # Include Vortex configuration
-ROOT_DIR := $(realpath ../../..)
+UNITTEST_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
+ROOT_DIR := $(abspath $(UNITTEST_DIR)/../../..)
 include $(ROOT_DIR)/build/config.mk
 
 RTL_DIR := $(VORTEX_HOME)/hw/rtl
@@ -17,7 +18,7 @@ PIPE_MULT ?= 1
 PIPE_ALIGN ?= 1
 PIPE_INTERVAL ?= 2
 
-TB   := tb_VX_gemm_tree.sv
+TB   := $(UNITTEST_DIR)/tb_VX_gemm_tree.sv
 RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
         $(RTL_DIR)/verification/cf_math_pkg.sv \
         $(RTL_DIR)/verification/utils.sv \

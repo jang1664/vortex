@@ -1,5 +1,6 @@
 # Include Vortex configuration
-ROOT_DIR := $(realpath ../../..)
+UNITTEST_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
+ROOT_DIR := $(abspath $(UNITTEST_DIR)/../../..)
 include $(ROOT_DIR)/build/config.mk
 
 RTL_DIR := $(VORTEX_HOME)/hw/rtl
@@ -14,7 +15,7 @@ TIME_SCALE=1ns/1ps
 
 TOP_MODULE := tb_VX_reduce_tree_pipelined_v2
 
-TB   := tb_VX_reduce_tree_pipelined_v2.sv
+TB   := $(UNITTEST_DIR)/tb_VX_reduce_tree_pipelined_v2.sv
 RTLS := $(RTL_DIR)/libs/VX_reduce_tree_pipelined_v2.sv \
 				$(RTL_DIR)/libs/VX_reduce_tree.sv \
 				$(RTL_DIR)/libs/VX_elastic_buffer.sv \

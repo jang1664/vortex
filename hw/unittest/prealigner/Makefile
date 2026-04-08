@@ -1,5 +1,6 @@
 # Include Vortex configuration
-ROOT_DIR := $(realpath ../../..)
+UNITTEST_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
+ROOT_DIR := $(abspath $(UNITTEST_DIR)/../../..)
 include $(ROOT_DIR)/build/config.mk
 
 RTL_DIR := $(VORTEX_HOME)/hw/rtl
@@ -14,7 +15,7 @@ TIME_SCALE=1ns/1ps
 
 TOP_MODULE := tb_VX_prealigner
 
-TB   := tb_VX_prealigner.sv
+TB   := $(UNITTEST_DIR)/tb_VX_prealigner.sv
 RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
 				$(RTL_DIR)/core/gemm/VX_prealigner.sv \
 				$(RTL_DIR)/libs/VX_find_first.sv \

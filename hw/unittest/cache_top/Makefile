@@ -1,5 +1,6 @@
 # Include Vortex configuration
-ROOT_DIR := $(realpath ../../..)
+UNITTEST_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
+ROOT_DIR := $(abspath $(UNITTEST_DIR)/../../..)
 include $(ROOT_DIR)/config.mk
 
 RTL_DIR := $(VORTEX_HOME)/hw/rtl
@@ -18,7 +19,7 @@ MEM_LATENCY ?= 10
 TIME_SCALE=1ns/1ps
 TOP_MODULE := tb_VX_cache_top
 
-TB   := tb_VX_cache_top.sv
+TB   := $(UNITTEST_DIR)/tb_VX_cache_top.sv
 
 # --- RTL dependencies for VX_cache_wrap ---
 RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \

@@ -1,5 +1,6 @@
 # Include Vortex configuration
-ROOT_DIR := $(realpath ../../..)
+UNITTEST_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
+ROOT_DIR := $(abspath $(UNITTEST_DIR)/../../..)
 include $(ROOT_DIR)/build/config.mk
 
 RTL_DIR := $(VORTEX_HOME)/hw/rtl
@@ -13,7 +14,7 @@ SIM_EXEC ?= vcs
 TIME_SCALE=1ns/1ps
 TOP_MODULE := tb_fpint_emul
 
-TB   := tb_fpint_emul.sv
+TB   := $(UNITTEST_DIR)/tb_fpint_emul.sv
 RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
         $(RTL_DIR)/verification/cf_math_pkg.sv \
         $(RTL_DIR)/verification/fpint_emul.sv
