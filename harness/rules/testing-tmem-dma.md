@@ -10,21 +10,21 @@ When modifying any file in the TMEM/DMA data path, the following tests MUST pass
 
 ### Level 1: Unit Tests (compile + functional)
 
-These run with VCS from `hw/syn/unittest/`. Each has its own Makefile.
+These run with VCS from `hw/unittest/`. Each has its own Makefile.
 
 | Test | Path | What it verifies |
 |------|------|-----------------|
-| tensor_mem_bank | `hw/syn/unittest/tensor_mem_bank/` | Single TMEM bank: read/write, multi-port arbitration, byte-enable, backpressure |
-| dma_engine | `hw/syn/unittest/dma_engine/` | DMA engine: AXI↔membus conversion, idle smoke |
-| tmem_subsystem | `hw/syn/unittest/tmem_subsystem/` | Integration: TMEM banks + switches + DMA + local DMAs |
-| gemm_node_tmem | `hw/syn/unittest/gemm_node_tmem/` | Modified gemm_node with TMEM subsystem |
-| core_tmem | `hw/syn/unittest/core_tmem/` | VX_core with DMA AXI ports |
-| vortex_axi_tmem | `hw/syn/unittest/vortex_axi_tmem/` | Full Vortex_axi: AXI arbiter, 8 HBM ports |
-| **vortex_afu** | `hw/syn/unittest/vortex_afu/` | **Full AFU: vortex_afu.v + VX_afu_wrap + Vortex_axi** |
+| tensor_mem_bank | `hw/unittest/tensor_mem_bank/` | Single TMEM bank: read/write, multi-port arbitration, byte-enable, backpressure |
+| dma_engine | `hw/unittest/dma_engine/` | DMA engine: AXI↔membus conversion, idle smoke |
+| tmem_subsystem | `hw/unittest/tmem_subsystem/` | Integration: TMEM banks + switches + DMA + local DMAs |
+| gemm_node_tmem | `hw/unittest/gemm_node_tmem/` | Modified gemm_node with TMEM subsystem |
+| core_tmem | `hw/unittest/core_tmem/` | VX_core with DMA AXI ports |
+| vortex_axi_tmem | `hw/unittest/vortex_axi_tmem/` | Full Vortex_axi: AXI arbiter, 8 HBM ports |
+| **vortex_afu** | `hw/unittest/vortex_afu/` | **Full AFU: vortex_afu.v + VX_afu_wrap + Vortex_axi** |
 
 **How to run a unittest:**
 ```bash
-cd hw/syn/unittest/<test_name>
+cd hw/unittest/<test_name>
 make clean && make run
 ```
 
@@ -85,12 +85,12 @@ Run tests in this order (each level depends on the previous):
 ## Known Issues
 
 - **VX_fetch PC=0 assertion** in `core_tmem` test: expected — testbench doesn't initialize the program counter via DCR. Not an RTL bug.
-- **fpint_gemm_ffn_hw kernel**: needs update for new command flow (store-based cmd → cmd_constructor, not MMIO). Reference: `hw/syn/unittest/gemm_node_improve/tb_VX_gemm_node_improve.sv`
+- **fpint_gemm_ffn_hw kernel**: needs update for new command flow (store-based cmd → cmd_constructor, not MMIO). Reference: `hw/unittest/gemm_node_improve/tb_VX_gemm_node_improve.sv`
 
 ## Reference Testbench
 
 The most comprehensive GEMM functional testbench is:
-- `hw/syn/unittest/gemm_node_improve/tb_VX_gemm_node_improve.sv`
+- `hw/unittest/gemm_node_improve/tb_VX_gemm_node_improve.sv`
 - Uses MMIO writes via `mmio_if` → job frontend → cmd constructor flow
 - Tests full GEMM computation with FP16 activation, INT4 weight, dequantization
 - Compares output against golden reference with FP16 tolerance
