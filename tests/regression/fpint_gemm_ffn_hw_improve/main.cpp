@@ -232,19 +232,24 @@ static void convert_input_tiled(const std::vector<uint16_t>& h_A,
 // Weight tiled: per (kt, nt) tile, kb_per_kt contiguous micro-tiles of packed int4
 static void convert_weight_tiled(const std::vector<int8_t>& h_W_raw,
                                  std::vector<uint8_t>& tiled) {
-  uint32_t k_tiles   = K / DMA_KT;
+  uint32_t k_tiles   = (K + DMA_KT - 1) / DMA_KT;
   uint32_t n_tiles   = N / DMA_MXU_NT;
-  uint32_t kb_per_kt = DMA_KT / DMA_MXU_KT;
 
-  size_t total = k_tiles * n_tiles * kb_per_kt *
-                 (WTRANS == 0 ? DMA_MXU_KT * (DMA_MXU_NT / 2)
-                              : DMA_MXU_NT * (DMA_MXU_KT / 2));
+  size_t seg = (WTRANS == 0) ? DMA_MXU_KT * (DMA_MXU_NT / 2)
+                              : DMA_MXU_NT * (DMA_MXU_KT / 2);
+  size_t total = 0;
+  for (uint32_t kt = 0; kt < k_tiles; kt++) {
+    uint32_t ck = ((K - kt * DMA_KT) < DMA_KT) ? (K - kt * DMA_KT) : DMA_KT;
+    total += n_tiles * (ck / DMA_MXU_KT) * seg;
+  }
   tiled.resize(total);
   size_t idx = 0;
 
   for (uint32_t kt = 0; kt < k_tiles; kt++) {
+    uint32_t cur_k = ((K - kt * DMA_KT) < DMA_KT) ? (K - kt * DMA_KT) : DMA_KT;
+    uint32_t cur_kb_per_kt = cur_k / DMA_MXU_KT;
     for (uint32_t nt = 0; nt < n_tiles; nt++) {
-      for (uint32_t kb = 0; kb < kb_per_kt; kb++) {
+      for (uint32_t kb = 0; kb < cur_kb_per_kt; kb++) {
         if (WTRANS == 0) {
           // [MXU_KT rows][MXU_NT/2 cols], k outer, n-pairs inner
           for (uint32_t k = 0; k < DMA_MXU_KT; k++) {
@@ -280,37 +285,38 @@ static void convert_weight_tiled(const std::vector<int8_t>& h_W_raw,
 //   QROW: [KT][ng_per_nt] fp16
 static void convert_scale_tiled(const std::vector<uint16_t>& h_scales,
                                 std::vector<uint8_t>& tiled) {
-  uint32_t k_tiles = K / DMA_KT;
+  uint32_t k_tiles = (K + DMA_KT - 1) / DMA_KT;
   uint32_t n_tiles = N / DMA_MXU_NT;
   uint32_t ng_total = (N + QBLK - 1) / QBLK;
+  uint32_t full_groups_per_kt = DMA_KT / QBLK;
+  uint32_t ng_per_nt = (DMA_MXU_NT + QBLK - 1) / QBLK;
 
-  // Compute total size
-  size_t tile_bytes;
-  if (QDIR == 0) {
-    uint32_t groups_per_kt = DMA_KT / QBLK;
-    tile_bytes = groups_per_kt * DMA_MXU_NT * 2;
-  } else {
-    uint32_t ng_per_nt = (DMA_MXU_NT + QBLK - 1) / QBLK;
-    tile_bytes = DMA_KT * ng_per_nt * 2;
+  // Compute total size (last K-tile may be smaller)
+  size_t total = 0;
+  for (uint32_t kt = 0; kt < k_tiles; kt++) {
+    uint32_t ck = ((K - kt * DMA_KT) < DMA_KT) ? (K - kt * DMA_KT) : DMA_KT;
+    size_t tile_bytes = (QDIR == 0) ? ((ck / QBLK) * DMA_MXU_NT * 2)
+                                     : (ck * ng_per_nt * 2);
+    total += n_tiles * tile_bytes;
   }
-  tiled.resize(k_tiles * n_tiles * tile_bytes);
+  tiled.resize(total);
   size_t idx = 0;
 
   for (uint32_t kt = 0; kt < k_tiles; kt++) {
+    uint32_t cur_k = ((K - kt * DMA_KT) < DMA_KT) ? (K - kt * DMA_KT) : DMA_KT;
     for (uint32_t nt = 0; nt < n_tiles; nt++) {
       if (QDIR == 0) {
-        uint32_t groups_per_kt = DMA_KT / QBLK;
-        for (uint32_t g = 0; g < groups_per_kt; g++) {
+        uint32_t cur_groups = cur_k / QBLK;
+        for (uint32_t g = 0; g < cur_groups; g++) {
           for (uint32_t n = 0; n < DMA_MXU_NT; n++) {
-            uint32_t global_g = kt * groups_per_kt + g;
+            uint32_t global_g = kt * full_groups_per_kt + g;
             uint16_t val = h_scales[global_g * N + nt * DMA_MXU_NT + n];
             tiled[idx++] = val & 0xFF;
             tiled[idx++] = (val >> 8) & 0xFF;
           }
         }
       } else {
-        uint32_t ng_per_nt = (DMA_MXU_NT + QBLK - 1) / QBLK;
-        for (uint32_t k = 0; k < DMA_KT; k++) {
+        for (uint32_t k = 0; k < cur_k; k++) {
           for (uint32_t ng = 0; ng < ng_per_nt; ng++) {
             uint32_t global_k  = kt * DMA_KT + k;
             uint32_t global_ng = (nt * DMA_MXU_NT) / QBLK + ng;
@@ -327,36 +333,38 @@ static void convert_scale_tiled(const std::vector<uint16_t>& h_scales,
 // Zero-point tiled: same layout as scale
 static void convert_zp_tiled(const std::vector<int16_t>& h_zeros,
                              std::vector<uint8_t>& tiled) {
-  uint32_t k_tiles = K / DMA_KT;
+  uint32_t k_tiles = (K + DMA_KT - 1) / DMA_KT;
   uint32_t n_tiles = N / DMA_MXU_NT;
   uint32_t ng_total = (N + QBLK - 1) / QBLK;
+  uint32_t full_groups_per_kt = DMA_KT / QBLK;
+  uint32_t ng_per_nt = (DMA_MXU_NT + QBLK - 1) / QBLK;
 
-  size_t tile_bytes;
-  if (QDIR == 0) {
-    uint32_t groups_per_kt = DMA_KT / QBLK;
-    tile_bytes = groups_per_kt * DMA_MXU_NT * 2;
-  } else {
-    uint32_t ng_per_nt = (DMA_MXU_NT + QBLK - 1) / QBLK;
-    tile_bytes = DMA_KT * ng_per_nt * 2;
+  // Compute total size (last K-tile may be smaller)
+  size_t total = 0;
+  for (uint32_t kt = 0; kt < k_tiles; kt++) {
+    uint32_t ck = ((K - kt * DMA_KT) < DMA_KT) ? (K - kt * DMA_KT) : DMA_KT;
+    size_t tile_bytes = (QDIR == 0) ? ((ck / QBLK) * DMA_MXU_NT * 2)
+                                     : (ck * ng_per_nt * 2);
+    total += n_tiles * tile_bytes;
   }
-  tiled.resize(k_tiles * n_tiles * tile_bytes);
+  tiled.resize(total);
   size_t idx = 0;
 
   for (uint32_t kt = 0; kt < k_tiles; kt++) {
+    uint32_t cur_k = ((K - kt * DMA_KT) < DMA_KT) ? (K - kt * DMA_KT) : DMA_KT;
     for (uint32_t nt = 0; nt < n_tiles; nt++) {
       if (QDIR == 0) {
-        uint32_t groups_per_kt = DMA_KT / QBLK;
-        for (uint32_t g = 0; g < groups_per_kt; g++) {
+        uint32_t cur_groups = cur_k / QBLK;
+        for (uint32_t g = 0; g < cur_groups; g++) {
           for (uint32_t n = 0; n < DMA_MXU_NT; n++) {
-            uint32_t global_g = kt * groups_per_kt + g;
+            uint32_t global_g = kt * full_groups_per_kt + g;
             uint16_t val = uint16_t(h_zeros[global_g * N + nt * DMA_MXU_NT + n]);
             tiled[idx++] = val & 0xFF;
             tiled[idx++] = (val >> 8) & 0xFF;
           }
         }
       } else {
-        uint32_t ng_per_nt = (DMA_MXU_NT + QBLK - 1) / QBLK;
-        for (uint32_t k = 0; k < DMA_KT; k++) {
+        for (uint32_t k = 0; k < cur_k; k++) {
           for (uint32_t ng = 0; ng < ng_per_nt; ng++) {
             uint32_t global_k  = kt * DMA_KT + k;
             uint32_t global_ng = (nt * DMA_MXU_NT) / QBLK + ng;
@@ -489,8 +497,8 @@ int main(int argc, char *argv[]) {
     std::cerr << "N=" << N << " must be a multiple of DMA_MXU_NT=" << DMA_MXU_NT << std::endl;
     return -1;
   }
-  if (K % DMA_KT != 0) {
-    std::cerr << "K=" << K << " must be a multiple of DMA_KT=" << DMA_KT << std::endl;
+  if (K % DMA_MXU_KT != 0) {
+    std::cerr << "K=" << K << " must be a multiple of DMA_MXU_KT=" << DMA_MXU_KT << std::endl;
     return -1;
   }
   if (QDIR == 0 && (DMA_KT % QBLK != 0)) {
@@ -536,10 +544,11 @@ int main(int argc, char *argv[]) {
 
   // ---- Debug: verify tiled data per n-tile ----
   if (N > DMA_MXU_NT) {
-    uint32_t wkt = DMA_KT * (DMA_MXU_NT / 2);  // weight bytes per (kt,nt)
-    uint32_t groups_per_kt = DMA_KT / QBLK;
+    uint32_t first_ck = (K < DMA_KT) ? K : DMA_KT;
+    uint32_t wkt = first_ck * (DMA_MXU_NT / 2);  // weight bytes per (kt=0,nt)
+    uint32_t groups_per_kt = first_ck / QBLK;
     uint32_t skt = (QDIR == 0) ? (groups_per_kt * DMA_MXU_NT * 2)
-                                : (DMA_KT * ((DMA_MXU_NT + QBLK - 1) / QBLK) * 2);
+                                : (first_ck * ((DMA_MXU_NT + QBLK - 1) / QBLK) * 2);
     printf("DEBUG tiled sizes: weight_per_nt=%u, scale_per_nt=%u\n", wkt, skt);
     printf("DEBUG tiled_weight total=%zu, tiled_scale total=%zu\n",
            tiled_weight.size(), tiled_scale.size());
