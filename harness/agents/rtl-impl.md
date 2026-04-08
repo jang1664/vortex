@@ -1,6 +1,8 @@
 ---
 name: "RTL Implementation"
 description: "RTL design and implementation. Use when writing or modifying RTL"
+skills:
+  - project-context
 ---
 
 # RTL Implementation Agent

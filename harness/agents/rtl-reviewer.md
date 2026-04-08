@@ -1,6 +1,8 @@
 ---
 name: "RTL Reviewer"
 description: "RTL code review. Use when reviewing RTL changes for correctness, style, and design quality"
+skills:
+  - project-context
 ---
 
 # RTL Reviewer Agent

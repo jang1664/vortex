@@ -130,6 +130,67 @@ GUI=1 PATH=/usr/bin:$PATH CONFIGS="$CONFIGS" \
   ./ci/blackbox.sh --driver=xrt_vcs ...
 ```
 
+## XRT Runtime in xrt_vcs Simulation
+
+In `xrt_vcs` mode, the **XRT runtime** (`runtime/xrt/vortex.cpp`) runs on the host side and communicates with the VCS-simulated RTL. Understanding the runtime is critical because many failures originate from the host-device interface, not the RTL itself.
+
+### Runtime Role in Simulation
+
+```
+Host process (C++ test app)
+  → Vortex runtime API (vx_mem_alloc, vx_copy_to_dev, vx_start, ...)
+    → XRT runtime (vortex_v2.cpp) — manages BOs, address mapping, DMA
+      → XRT simulation bridge (xrtsim)
+        → VCS simulated RTL (vortex_afu.v → Vortex core)
+```
+
+The runtime handles:
+1. **Buffer allocation** — `vx_mem_alloc` → XRT buffer objects (BOs) on simulated HBM
+2. **Data transfer** — `vx_copy_to_dev/from_dev` → BO write/sync → AXI transactions to RTL
+3. **Kernel launch** — `vx_start` → MMIO register writes to AFU control
+4. **Completion wait** — `vx_ready_wait` → polls AFU status register
+
+### BANK_INTERLEAVE and Simulation
+
+The runtime is compiled with `#define BANK_INTERLEAVE` by default. This affects how data reaches the simulated HBM:
+
+- **ON:** Data is striped across BOs in 64B (cache-line) chunks. Address-to-bank mapping: `bank = (addr / 64) % num_banks`. This must match `PLATFORM_MEMORY_INTERLEAVE=1` in HW config.
+- **OFF (default):** Data is placed contiguously in per-bank BOs. Address-to-bank mapping: `bank = addr / bank_size`. This must match `PLATFORM_MEMORY_INTERLEAVE=0` in HW config.
+
+**Mismatch between runtime and HW config causes silent data corruption** — data ends up in the wrong bank/address, leading to wrong results or hangs that look like RTL bugs but are actually configuration bugs.
+
+For detailed address mapping mechanics, see `docs/hbm-bank-interleaving.md`.
+
+### Runtime Debug Logging
+
+Compile the runtime with `DEBUG_XRT=1` to enable diagnostic output:
+```bash
+DEBUG_XRT=1 make -C runtime/xrt
+```
+
+This enables `DBG_PRINT` statements showing:
+- Buffer allocation: bank, size, address
+- Upload/download: per-chunk bank, offset, transfer size
+- Kernel launch: kernel addr, args addr, bank mapping
+- Bank overflow warnings
+
+### Common Runtime-Related Failures
+
+| Symptom | Likely runtime cause |
+|---------|---------------------|
+| Wrong results, no RTL errors | `BANK_INTERLEAVE` mismatch with `PLATFORM_MEMORY_INTERLEAVE` |
+| Hang after `vx_start` | Kernel or args buffer landed in wrong bank → core reads garbage |
+| `vx_ready_wait` timeout | AFU never signals done — check if MMIO addresses are correct |
+| `ALLOC_FAIL` from kernel | LMEM layout doesn't fit — check `LMEM_LOG_SIZE` and `STACK_BASE_ADDR` |
+
+### Key Runtime Files
+
+| File | Role |
+|------|------|
+| `runtime/xrt/vortex.cpp` | Main XRT runtime (BO management, DMA, MMIO) |
+| `runtime/common/vx_utils.cpp` | Memory allocator, alignment utilities |
+| `sim/xrtsim/` | XRT simulation bridge (connects runtime to VCS) |
+
 ## Key Files
 
 | File | Role |

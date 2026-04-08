@@ -2,6 +2,7 @@
 name: "Verification"
 description: "accelerator testbench development, simulation execution, and debug. Use when writing tests, running simulations, or analyzing simulation logs."
 skills:
+  - project-context
   - debug-xrt-vcs
   - run-bb-common
 ---

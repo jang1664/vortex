@@ -103,3 +103,38 @@
 - **Sim failure**: Same pre-existing X propagation bug — PC shows `0xxxxxxxxxxx` from start, icache reads `0xbaadf00d`. Not caused by TMEM/DMA changes.
 - **Harness fix**: Updated bash-guard.sh and created rtl-edit-guard.sh to check `agent_type` field — Verification/RTL Implementation subagents now pass through guards correctly
 - **Conclusion**: Phase 9 (blackbox vecadd compile) is DONE. Sim failure is a pre-existing issue to be addressed separately.
+
+### Phase 9: Blackbox vecadd (xrt_vcs) — Iteration 11 (2026-04-08 11:41)
+- **Status**: pass
+- **Root cause of sim failure**: `xrt_sim_vcs.cpp` had two bugs:
+  1. Used `PLATFORM_MEMORY_NUM_BANKS` (32) instead of `NUM_DMA_CHANNELS` (8) — runtime reads 8 banks from dev_caps, so all arrays and bank_size calculation must use 8
+  2. Bank 0 allocator started at `USER_BASE_ADDR` instead of 0 — caused offset mismatch
+- **NOT a pre-existing bug** — previous iterations misdiagnosed because the VCS sim infrastructure was newly written and had these bank count/allocator bugs from the start
+- **Fix applied**: `PLATFORM_MEMORY_NUM_BANKS` → `NUM_DMA_CHANNELS` throughout, allocator base=0 for all banks
+- **Result**: vecadd PASSED — 10118 instructions, 12383 cycles, IPC=0.817
+- **Files modified**: `sim/xrtsim_vcs/xrt_sim_vcs.cpp`
+
+### Phase 10: Re-enable DMA AXI mux + LSU interleaved routing (2026-04-08 11:47)
+- **Status**: pass
+- **Changes**:
+  1. LSU interleaved routing: `lsu_aw_select = '0` → `lsu_axi_awaddr[BYTE_OFFSET_BITS +: HBM_SEL_BITS]` (address-based multi-bank routing)
+  2. DMA AXI mux: removed tie-off, connected via `AXI_ASSIGN_TO_REQ`/`AXI_ASSIGN_FROM_RESP` macros
+- **Tests passed**: vortex_afu unittest (138 modules, 0 errors), blackbox vecadd (10118 insn, 12462 cycles, IPC=0.812)
+- **Files modified**: `hw/rtl/Vortex_axi.sv`
+
+### Phase 11: Merged-interface DMA mux fix + fpint_gemm_ffn_hw kernel rewrite (2026-04-08 13:29)
+- **Status**: blocked — pre-existing BANK_INTERLEAVE issue
+- **Changes applied**:
+  1. `xrt_sim_vcs.cpp`: Fixed GEMM_REG_BASE_ADDR Verilog underscore hex → C-compatible literal
+  2. `Vortex_axi.sv`: Merged-interface mux now connects ALL 8 DMA channels (was only channel 0). Added `NUM_DMA_PER_MUX` localparam and generate-if for merged vs non-merged paths.
+  3. `Vortex_axi.sv`: Changed `SpillAr` from `1'b1` to `1'b0` (diagnostic — suspected AR starvation)
+  4. `kernel.cpp` (fpint_gemm_ffn_hw): Full rewrite from 40-reg MMIO to command-stream flow (DMA_LOAD/STORE, MXU ops, NOTIFY/WAIT sync)
+  5. `main.cpp` (fpint_gemm_ffn_hw): Default K changed from 32 to 128 (must be >= GEMM_FSM_KT)
+- **Tests**: vortex_afu unittest PASS, vecadd blackbox PASS, fpint_gemm_ffn_hw blackbox FAIL (DMA AXI read hangs — mux accepts request but never forwards to external port)
+- **Root cause investigation**:
+  - DMA AXI ID width is correct (8-bit throughout chain)
+  - Merged mux topology is correct (9 inputs: 1 LSU + 8 DMA channels)
+  - Suspected: fundamental issue with BANK_INTERLEAVE mode in runtime
+- **Blocking issue identified**: RTL always used BANK_INTERLEAVE address decomposition, but `runtime/xrt/vortex.cpp` has `BANK_INTERLEAVE` commented out (line 50). The runtime uses non-interleave `get_bank_info` which maps addresses to contiguous per-bank regions. This worked for vecadd (LSU only), but DMA requires consistent address mapping between RTL and runtime. **This mismatch has existed since before multi-port work and needs to be resolved first.**
+- **Decision**: Pause multi-port/DMA debugging. Fix BANK_INTERLEAVE mismatch first, then resume.
+- **Files modified**: `hw/rtl/Vortex_axi.sv`, `sim/xrtsim_vcs/xrt_sim_vcs.cpp`, `tests/regression/fpint_gemm_ffn_hw/kernel.cpp`, `tests/regression/fpint_gemm_ffn_hw/main.cpp`
