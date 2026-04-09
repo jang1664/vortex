@@ -29,7 +29,23 @@ Execute a task FSM. The user invokes this with `/run-fsm <task_name>`.
    - Log each item's status (done/not done) in STATUS.yaml
    - ALL items must be done before transitioning
 
-6. **Transition** — When checklist is complete:
+6. **Confidence check** — If the current state has `confidence_check: true` in the FSM JSON:
+   - Write a structured claim for the Confidence Check subagent:
+     ```
+     ## Claim
+     <What you believe to be true based on this state's work>
+
+     ## Evidence
+     <What you read/observed — specific files, line numbers, test results>
+
+     ## Planned Action
+     <What you intend to do in the next state>
+     ```
+   - Launch the Confidence Check subagent (`subagent_type: "Confidence Check"`)
+   - If **FAIL**: log the uncertainties in STATUS.yaml. Resolve each one (read code, run test, or ask user), then re-run the confidence check.
+   - If **PASS**: proceed to transition.
+
+7. **Transition** — When checklist is complete (and confidence check passed, if required):
    - Evaluate which transition condition is met
    - Update the `fsm.state` field in STATUS.yaml:
      ```yaml
@@ -39,9 +55,9 @@ Execute a task FSM. The user invokes this with `/run-fsm <task_name>`.
      ```
    - Log the transition: `[HH:MM] FSM: STATE_A → STATE_B (reason)`
 
-7. **Loop** — Go back to step 3 with the new state. Continue until reaching a terminal state (empty transitions).
+8. **Loop** — Go back to step 3 with the new state. Continue until reaching a terminal state (empty transitions).
 
-8. **Done** — When reaching terminal state, report final status to user.
+9. **Done** — When reaching terminal state, report final status to user.
 
 ## Subtask Support
 

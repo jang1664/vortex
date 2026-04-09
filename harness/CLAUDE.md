@@ -18,6 +18,7 @@
   - `axi/` - AXI related library
 
 ## Rules — Common
+- All files created by the agent must be written in English. Korean is only used in conversation with the user.
 - Before using an external binary (e.g., `fst2vcd`, `vcs`, `gtkwave`), run `which <tool>` to verify it exists. If missing, tell the user and stop.
 - Always use `python tools/hw_draw/hw_tool.py` to read/modify hw_design_json files — do NOT edit JSON directly.
 
@@ -38,7 +39,7 @@
 - RTL work → @docs/coding_guidelines_verilog.md, @docs/microarchitecture.md
 - RTL module docs → @docs/rtl/
 - HW design JSON → @.claude/rules/hw-design-json.md
-- FPINT GEMM → @docs/fpint-gemm/ (arch, address space, SW stack, performance, dev notes)
+- FPINT GEMM → @claude-tasks/port-scale/fpint-gemm-spec.md (arch, address space, SW stack, performance)
 - HBM / memory interleaving → @docs/hbm-bank-interleaving.md
 - Task FSM schema → @docs/fsm-schema.md
 - Common rules → @harness/rules/*-common.md

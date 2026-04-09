@@ -11,6 +11,11 @@ if [ -z "$SUBAGENT_TYPE" ]; then
     exit 0
 fi
 
+# Confidence Check is always allowed regardless of FSM state
+if [ "$SUBAGENT_TYPE" = "Confidence Check" ]; then
+    exit 0
+fi
+
 # Find active FSM: deepest non-DONE STATUS.yaml in the task tree
 PROJECT_DIR="${CLAUDE_PROJECT_DIR:-.}"
 source "$(dirname "$0")/_find-active-fsm.sh"

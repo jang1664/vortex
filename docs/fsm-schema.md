@@ -51,6 +51,16 @@ Task workflows are defined as finite state machines in JSON. Each FSM lives at `
 | `allowed_subagents` | string[] | yes | Subagent types allowed in this state (empty = none) |
 | `transitions` | object | yes | Map of target_state → condition string (empty = terminal) |
 | `on_fail` | string\|null | yes | State to go to on failure (null = terminal) |
+| `confidence_check` | boolean | no | If `true`, require adversarial confidence check before transitioning out of this state. Default: `false`. |
+
+## Confidence Check
+
+When `confidence_check: true` is set on a state, the main agent must invoke the **Confidence Check** subagent before transitioning. The agent submits its claim, evidence, and planned action. The checker returns PASS or FAIL:
+
+- **PASS**: No uncertainties found. Transition proceeds.
+- **FAIL**: Uncertainties listed. Main agent must resolve them (by reading code, running tests, or asking the user) before retrying.
+
+The Confidence Check subagent is always allowed regardless of `allowed_subagents`.
 
 ## Rules
 

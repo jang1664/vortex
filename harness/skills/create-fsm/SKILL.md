@@ -29,11 +29,34 @@ Interactively create a task FSM with the user.
 
 5. **Iterate** — Let the user refine states, transitions, checklist items.
 
-6. **Save** — Write the final FSM:
+6. **Confidence check on the FSM itself** — Before saving, launch the Confidence Check subagent to verify the FSM accurately captures the user's intent:
+   ```
+   ## Claim
+   This FSM accurately represents the user's intended workflow.
+
+   ## Evidence
+   User's stated goal: <summarize>
+   User's stated steps: <summarize>
+   Proposed FSM: <paste JSON>
+
+   ## Planned Action
+   Save this FSM and begin execution.
+   ```
+   The checker evaluates:
+   - Are there user requirements not reflected in any FSM state?
+   - Are state descriptions ambiguous (could agent interpret differently than user intended)?
+   - Are transition conditions objectively verifiable (not subjective like "analysis complete")?
+   - Are checklist items specific enough (file names, line numbers, concrete actions)?
+   - Are there missing failure paths or edge cases?
+
+   If **FAIL**: show the uncertainties to the user, resolve them together, update the FSM, and re-run the check.
+   If **PASS**: proceed to save.
+
+7. **Save** — Write the final FSM:
    - Root task: `claude-tasks/<task_name>/fsm.json`
    - Subtask: `claude-tasks/<parent_path>/<task_name>/fsm.json`
 
-7. **Initialize STATUS.yaml** — Create STATUS.yaml with parent/children fields:
+8. **Initialize STATUS.yaml** — Create STATUS.yaml with parent/children fields:
    ```yaml
    task: <task_name>
    parent: null                    # or {name: <parent>, path: <parent_status_path>} for subtasks
@@ -46,7 +69,7 @@ Interactively create a task FSM with the user.
    ```
    For subtasks, set `parent.path` relative to the root task directory.
 
-8. **Register in parent** (subtasks only) — Update parent's STATUS.yaml to add the new child:
+9. **Register in parent** (subtasks only) — Update parent's STATUS.yaml to add the new child:
    ```yaml
    children:
      - name: <task_name>
@@ -54,4 +77,4 @@ Interactively create a task FSM with the user.
        state: <initial_state>
    ```
 
-9. **Confirm** — Tell the user to run `/run-fsm <task_path>` to start execution.
+10. **Confirm** — Tell the user to run `/run-fsm <task_path>` to start execution.
