@@ -4,12 +4,13 @@ Interactively create a task FSM with the user.
 
 ## Steps
 
-1. **Read the schema** — Read `docs/fsm-schema.md` to understand the JSON format.
+1. **Read the schema** — Read `docs/fsm-schema.md` to understand the JSON format and STATUS.yaml schema.
 
 2. **Ask the user** for:
-   - Task name (becomes the directory under `docs/`)
+   - Task name (becomes the directory under `docs/` or under a parent task)
    - Goal of the workflow
    - Rough list of phases/steps
+   - If `--parent <parent_path>` is specified, this is a subtask. Verify parent's STATUS.yaml exists at `docs/<parent_path>/STATUS.yaml`.
 
 3. **Draft the FSM** — Based on the user's description, propose a JSON FSM:
    - Keep it flat and under 10 states
@@ -28,16 +29,29 @@ Interactively create a task FSM with the user.
 
 5. **Iterate** — Let the user refine states, transitions, checklist items.
 
-6. **Save** — Write the final FSM to `docs/<task_name>/fsm.json`.
+6. **Save** — Write the final FSM:
+   - Root task: `docs/<task_name>/fsm.json`
+   - Subtask: `docs/<parent_path>/<task_name>/fsm.json`
 
-7. **Initialize STATUS.yaml** — Create `docs/<task_name>/STATUS.yaml`:
+7. **Initialize STATUS.yaml** — Create STATUS.yaml with parent/children fields:
    ```yaml
    task: <task_name>
+   parent: null                    # or {name: <parent>, path: <parent_status_path>} for subtasks
+   children: []
    fsm:
      file: fsm.json
      state: <initial_state>
    completed_work: []
    pitfalls: []
    ```
+   For subtasks, set `parent.path` relative to the root task directory.
 
-8. **Confirm** — Tell the user to run `/run-fsm <task_name>` to start execution.
+8. **Register in parent** (subtasks only) — Update parent's STATUS.yaml to add the new child:
+   ```yaml
+   children:
+     - name: <task_name>
+       path: <path_to_child_status_yaml>   # relative to root task dir
+       state: <initial_state>
+   ```
+
+9. **Confirm** — Tell the user to run `/run-fsm <task_path>` to start execution.

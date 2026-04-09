@@ -11,22 +11,9 @@ if [ -z "$SUBAGENT_TYPE" ]; then
     exit 0
 fi
 
-# Find active FSM: look for STATUS.yaml files with FSM header
+# Find active FSM: deepest non-DONE STATUS.yaml in the task tree
 PROJECT_DIR="${CLAUDE_PROJECT_DIR:-.}"
-FSM_HEADER=""
-STATUS_FILE=""
-
-for f in "$PROJECT_DIR"/docs/*/STATUS.yaml; do
-    [ -f "$f" ] || continue
-    # Extract fsm.state and fsm.file from YAML using grep/sed
-    fsm_state=$(grep -m1 '^\s*state:' "$f" | sed 's/.*state:\s*//' | tr -d ' "'\''')
-    fsm_file=$(grep -m1 '^\s*file:' "$f" | sed 's/.*file:\s*//' | tr -d ' "'\''')
-    if [ -n "$fsm_state" ] && [ -n "$fsm_file" ]; then
-        FSM_HEADER="{\"state\":\"$fsm_state\",\"file\":\"$fsm_file\"}"
-        STATUS_FILE="$f"
-        break
-    fi
-done
+source "$(dirname "$0")/_find-active-fsm.sh"
 
 # No active FSM → allow everything
 if [ -z "$FSM_HEADER" ]; then

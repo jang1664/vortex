@@ -5,14 +5,15 @@ Generate a handoff document, then guide the user through `/clear` and resume.
 ## Usage
 
 ```
-/handoff              # auto-detect task from docs/*/STATUS.yaml
-/handoff rtl-improve  # specify task name explicitly
+/handoff              # auto-detect task from docs/**/STATUS.yaml
+/handoff port-scale   # specify root task
+/handoff port-scale/dma-debug  # specify subtask path
 ```
 
 ## Step 1: Determine Task Name
 
-- If an argument is provided, use it as `<task_name>`.
-- If no argument, scan `docs/*/STATUS.yaml` for existing task directories. If exactly one exists, use it. If multiple exist, ask the user which one. If none exist, ask the user to provide a task name.
+- If an argument is provided, use it as `<task_path>` (supports slash-separated subtask paths).
+- If no argument, scan `docs/` recursively for STATUS.yaml files. Display them as a tree. If exactly one root task exists, use it. If multiple exist, ask the user which one.
 
 ## Step 2: Gather Context
 

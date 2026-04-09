@@ -54,21 +54,86 @@ Task workflows are defined as finite state machines in JSON. Each FSM lives at `
 
 ## Rules
 
-1. **Flat structure** — no nested FSMs. Keep states under 10 per FSM.
+1. **Tasks can be nested** — each subtask has its own FSM. Keep individual FSMs under 10 states.
 2. **Terminal state** — at least one state must have empty `transitions` (typically `DONE`).
 3. **on_fail** — every non-terminal state must specify where to go on failure.
 4. **allowed_subagents** — enforced by hook. Main agent cannot launch a subagent type not listed for the current state.
 5. **checklist** — agent must confirm all items before transitioning. These are logged in STATUS.md.
 
-## STATUS.md Integration
+## STATUS.yaml Integration
 
-The current FSM state is tracked in STATUS.md with a machine-readable header:
+The current FSM state is tracked in `STATUS.yaml` under the `fsm` field:
 
-```markdown
-<!-- FSM: {"file": "fsm.json", "state": "IMPLEMENT"} -->
+```yaml
+fsm:
+  file: fsm.json
+  state: IMPLEMENT
 ```
 
-This line is placed at the top of STATUS.md. The run-fsm skill and hooks parse this to determine the current state.
+The run-fsm skill and hooks parse this to determine the current state.
+
+## STATUS.yaml Schema
+
+### Root Task
+
+```yaml
+task: port-scale
+parent: null
+children:
+  - name: dma-axi-debug
+    path: dma-axi-debug/STATUS.yaml
+    state: IN_PROGRESS
+fsm:
+  file: fsm.json
+  state: IN_PROGRESS
+completed_work: [...]
+pitfalls: [...]
+```
+
+### Subtask
+
+```yaml
+task: dma-axi-debug
+parent:
+  name: port-scale
+  path: STATUS.yaml              # relative to root task dir
+children: []
+fsm:
+  file: fsm.json
+  state: ANALYZE
+completed_work: [...]
+pitfalls: [...]
+```
+
+### Field Reference
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `task` | string | Task name |
+| `parent` | object\|null | `null` for root tasks |
+| `parent.name` | string | Parent task name |
+| `parent.path` | string | Path to parent STATUS.yaml, relative to root task dir |
+| `children` | array | List of child tasks (empty for leaf nodes) |
+| `children[].name` | string | Child task name |
+| `children[].path` | string | Path to child STATUS.yaml, relative to root task dir |
+| `children[].state` | string | Cached FSM state of child (kept in sync by run-fsm) |
+| `fsm.file` | string | Relative path to FSM JSON definition |
+| `fsm.state` | string | Current FSM state |
+| `completed_work` | array | Completed phases with details |
+| `pitfalls` | array | Persistent record of failures and gotchas |
+
+### Path Convention
+
+All paths in `parent.path` and `children[].path` are **relative to the root task directory** (e.g., `docs/port-scale/`). This ensures paths remain valid regardless of nesting depth.
+
+```
+docs/port-scale/                          # root task dir
+  STATUS.yaml                             # parent: null
+  dma-axi-debug/
+    STATUS.yaml                           # parent.path: STATUS.yaml
+    address-fix/
+      STATUS.yaml                         # parent.path: dma-axi-debug/STATUS.yaml
+```
 
 ## Example
 

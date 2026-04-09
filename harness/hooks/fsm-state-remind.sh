@@ -10,21 +10,9 @@ if [ "$TOOL_NAME" != "Agent" ]; then
     exit 0
 fi
 
-# Find active FSM
+# Find active FSM: deepest non-DONE STATUS.yaml in the task tree
 PROJECT_DIR="${CLAUDE_PROJECT_DIR:-.}"
-FSM_HEADER=""
-STATUS_FILE=""
-
-for f in "$PROJECT_DIR"/docs/*/STATUS.yaml; do
-    [ -f "$f" ] || continue
-    fsm_state=$(grep -m1 '^\s*state:' "$f" | sed 's/.*state:\s*//' | tr -d ' "'\''')
-    fsm_file=$(grep -m1 '^\s*file:' "$f" | sed 's/.*file:\s*//' | tr -d ' "'\''')
-    if [ -n "$fsm_state" ] && [ -n "$fsm_file" ]; then
-        FSM_HEADER="{\"state\":\"$fsm_state\",\"file\":\"$fsm_file\"}"
-        STATUS_FILE="$f"
-        break
-    fi
-done
+source "$(dirname "$0")/_find-active-fsm.sh"
 
 # No active FSM → no-op
 if [ -z "$FSM_HEADER" ]; then
@@ -44,16 +32,33 @@ fi
 CHECKLIST=$(jq -r --arg state "$FSM_STATE" '.states[$state].checklist // [] | .[]' "$FSM_PATH" 2>/dev/null)
 TRANSITIONS=$(jq -r --arg state "$FSM_STATE" '.states[$state].transitions // {} | to_entries[] | "  → \(.key): \(.value)"' "$FSM_PATH" 2>/dev/null)
 
+# Check for parent task context
+PARENT_INFO=""
+PARENT_NAME=$(grep -m1 '^\s*name:' "$STATUS_FILE" | head -1)
+# Look for parent under the 'parent:' block (line after 'parent:' that has 'name:')
+_in_parent=0
+while IFS= read -r line; do
+    if echo "$line" | grep -q '^parent:'; then _in_parent=1; continue; fi
+    if [ $_in_parent -eq 1 ]; then
+        if echo "$line" | grep -q '^\s\+name:'; then
+            PARENT_INFO=$(echo "$line" | sed 's/.*name:\s*//' | tr -d ' "'\''')
+            break
+        fi
+        if echo "$line" | grep -q '^[^ ]'; then break; fi
+    fi
+done < "$STATUS_FILE"
+
 cat <<EOF
-FSM REMINDER — Current state: $FSM_STATE
+FSM REMINDER — Current state: $FSM_STATE${PARENT_INFO:+ (subtask of: $PARENT_INFO)}
 Subagent completed. Now:
-1. Log the result in $STATUS_FILE (## Progress Log) with timestamp
-2. If the subagent failed, log in ## Pitfalls
+1. Log the result in $STATUS_FILE with timestamp
+2. If the subagent failed, log in pitfalls
 3. Evaluate checklist:
 $CHECKLIST
 4. If all checklist items are done, evaluate transitions:
 $TRANSITIONS
 5. Update the fsm.state field in STATUS.yaml if transitioning
+6. If transitioning to DONE and this is a subtask, update parent's children[].state
 EOF
 
 exit 0
