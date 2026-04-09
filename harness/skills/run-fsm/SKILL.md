@@ -4,7 +4,7 @@ Execute a task FSM. The user invokes this with `/run-fsm <task_name>`.
 
 ## Steps
 
-1. **Load FSM** — The task argument can be a slash-separated path (e.g., `port-scale/dma-debug`). Read `docs/<task_path>/fsm.json` and `docs/<task_path>/STATUS.yaml`.
+1. **Load FSM** — The task argument can be a slash-separated path (e.g., `port-scale/dma-debug`). Read `claude-tasks/<task_path>/fsm.json` and `claude-tasks/<task_path>/STATUS.yaml`.
 
 2. **Parse current state** — Extract the FSM state from the `fsm.state` field in STATUS.yaml:
    ```yaml
@@ -45,7 +45,7 @@ Execute a task FSM. The user invokes this with `/run-fsm <task_name>`.
 
 ## Subtask Support
 
-- If the task argument contains `/`, treat it as a nested path: `docs/<path>/STATUS.yaml`
+- If the task argument contains `/`, treat it as a nested path: `claude-tasks/<path>/STATUS.yaml`
 - After parsing current state, if STATUS.yaml has a `parent` field, also read the parent's STATUS.yaml and display parent context (name, state).
 - After reaching DONE, propagate state to parent:
   1. Read parent STATUS.yaml (resolve `parent.path` relative to root task dir)

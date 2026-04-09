@@ -1,0 +1,67 @@
+{
+  "name": "fpint_gemm_ffn_hw_improve functional verification",
+  "task_name": "fpint-func-verify",
+  "initial_state": "VERIFY",
+  "states": {
+    "VERIFY": {
+      "description": "fpint_gemm_ffn_hw_improve blackbox 실행 (xrt_vcs, xprop=tmerge, FSDB_DUMP=1). 기존 RTL로 바로 실행.",
+      "checklist": [
+        "blackbox test exit code 확인",
+        "PASS/FAIL 결과 STATUS.yaml에 기록",
+        "FAIL 시: mismatch 패턴 캡처"
+      ],
+      "allowed_subagents": ["Verification"],
+      "transitions": {
+        "BACKUP_LOGS": "Test completed (pass or fail)"
+      },
+      "on_fail": "VERIFY"
+    },
+    "BACKUP_LOGS": {
+      "description": "simv.log, run.log, FSDB를 docs/port-scale/fpint-func-verify/logs/ 에 timestamp 붙여 백업. 사용자가 병렬 review 가능하도록.",
+      "checklist": [
+        "build/sim/xrtsim_vcs/simv.log → logs/simv_<timestamp>.log 복사",
+        "build/run.log → logs/run_<timestamp>.log 복사",
+        "build/sim/xrtsim_vcs/vcs_cosim.fsdb → logs/ 복사 (존재 시)",
+        "백업 경로 STATUS.yaml에 기록"
+      ],
+      "allowed_subagents": ["Verification"],
+      "transitions": {
+        "ANALYZE": "Logs backed up, test FAILED — need analysis",
+        "DONE": "Logs backed up, test PASSED"
+      },
+      "on_fail": "BACKUP_LOGS"
+    },
+    "ANALYZE": {
+      "description": "백업된 로그에서 failure 원인 분석. simv.log에서 GEMM trace, mismatch 패턴 확인.",
+      "checklist": [
+        "Root cause 가설 STATUS.yaml에 기록",
+        "관련 RTL 모듈/signal 식별"
+      ],
+      "allowed_subagents": ["Explore", "Verification"],
+      "transitions": {
+        "IMPLEMENT": "Root cause identified",
+        "DONE": "False alarm — 재검토 결과 PASS 확인"
+      },
+      "on_fail": "ANALYZE"
+    },
+    "IMPLEMENT": {
+      "description": "Fix 적용. RTL 변경은 RTL Implementation subagent.",
+      "checklist": [
+        "수정 파일 목록 STATUS.yaml에 기록",
+        "변경 내용과 이유 설명"
+      ],
+      "allowed_subagents": ["RTL Implementation"],
+      "transitions": {
+        "VERIFY": "Implementation complete — re-run test"
+      },
+      "on_fail": "ANALYZE"
+    },
+    "DONE": {
+      "description": "Functional verification 완료. 로그 백업 보존됨.",
+      "checklist": [],
+      "allowed_subagents": [],
+      "transitions": {},
+      "on_fail": null
+    }
+  }
+}

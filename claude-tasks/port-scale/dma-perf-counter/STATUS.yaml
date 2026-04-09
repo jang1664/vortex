@@ -1,0 +1,11 @@
+task: dma-perf-counter
+parent:
+  name: port-scale
+  path: STATUS.yaml
+children: []
+fsm:
+  file: fsm.json
+  state: DESIGN
+
+completed_work: []
+pitfalls: []

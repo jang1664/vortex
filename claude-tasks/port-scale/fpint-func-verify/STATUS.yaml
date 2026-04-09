@@ -1,0 +1,33 @@
+task: fpint-func-verify
+parent:
+  name: port-scale
+  path: STATUS.yaml
+children: []
+fsm:
+  file: fsm.json
+  state: DONE
+
+completed_work:
+  - date: 2026-04-09 11:52
+    state: VERIFY
+    result: PASS
+    details: |
+      fpint_gemm_ffn_hw_improve blackbox test PASSED (exit 0).
+      Config: NUM_CORES=1, MEM_ADDR_WIDTH=34, PLATFORM_MEMORY_NUM_BANKS=2
+      Test params: M=32 N=32 K=32 QBLK=32 WTRANS=0 QDIR=0
+      IPC=0.257, 2394 instructions, 9298 cycles
+      Command: FSDB_DUMP=1 CONFIGS="-DNUM_CORES=1 -DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34" bash ci/blackbox.sh --driver=xrt_vcs --app=fpint_gemm_ffn_hw_improve --debug=3 --args="-m 32 -n 32 -k 32 -q 32 -t 0 -d 0"
+      Note: First attempt failed (xrtBOAlloc NULL) due to stale simv built with 32 HBM banks. Resolved with make clean + rebuild.
+
+pitfalls:
+  - date: 2026-04-09 11:52
+    issue: Stale simv binary from previous 32-bank HBM config caused xrtBOAlloc NULL failure
+    resolution: Run `make -C sim/xrtsim_vcs clean` before rebuilding with correct bank count
+
+progress_log:
+  - "[11:35] FSM: Starting at VERIFY"
+  - "[11:35] Launched Verification subagent to run fpint_gemm_ffn_hw_improve blackbox (xrt_vcs, FSDB_DUMP=1)"
+  - "[11:52] Test PASSED (exit 0, M=N=K=32 minimum tile)"
+  - "[11:52] FSM: VERIFY → BACKUP_LOGS (Test completed)"
+  - "[11:53] BACKUP_LOGS: All 3 files backed up to logs/: simv_20260409_1153.log, run_20260409_1153.log, vcs_cosim_20260409_1153.fsdb"
+  - "[11:53] FSM: BACKUP_LOGS → DONE (Logs backed up, test PASSED)"

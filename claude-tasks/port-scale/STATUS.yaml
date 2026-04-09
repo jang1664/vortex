@@ -1,6 +1,12 @@
 task: port-scale
 parent: null
-children: []
+children:
+  - name: dma-perf-counter
+    path: dma-perf-counter/STATUS.yaml
+    state: DESIGN
+  - name: fpint-func-verify
+    path: fpint-func-verify/STATUS.yaml
+    state: DONE
 fsm:
   file: fsm.json
   state: DONE

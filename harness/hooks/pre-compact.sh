@@ -5,7 +5,7 @@
 PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(pwd)}"
 
 # Find all STATUS.yaml files recursively (supports nested subtasks)
-STATUS_FILES=$(find "$PROJECT_DIR/docs" -name "STATUS.yaml" -o -name "STATUS.md" 2>/dev/null | sort)
+STATUS_FILES=$(find "$PROJECT_DIR/claude-tasks" -name "STATUS.yaml" -o -name "STATUS.md" 2>/dev/null | sort)
 
 if [ -z "$STATUS_FILES" ]; then
     exit 0

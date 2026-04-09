@@ -1,0 +1,69 @@
+{
+  "name": "DMA performance counter (utilization)",
+  "task_name": "dma-perf-counter",
+  "initial_state": "DESIGN",
+  "states": {
+    "DESIGN": {
+      "description": "Debug counter 설계: stall/active cycle counter를 어디에 넣을지, ifdef SIMULATION guard, logging format 결정",
+      "checklist": [
+        "Counter 목록 확정 (AXI port stall/active, TMEM bank stall/busy, DMA/ldma switch stall, total cycles)",
+        "Counter를 넣을 RTL 모듈 확정",
+        "Counter 출력 format 확정 ($display, grep 가능한 tag)",
+        "설계 내용 STATUS.yaml에 기록"
+      ],
+      "allowed_subagents": ["Explore"],
+      "transitions": {
+        "IMPLEMENT": "Counter 설계 확정"
+      },
+      "on_fail": "DESIGN"
+    },
+    "IMPLEMENT": {
+      "description": "RTL에 ifdef SIMULATION stall/active counter 추가. $finish 직전에 summary 출력.",
+      "checklist": [
+        "수정 파일 목록 STATUS.yaml에 기록",
+        "모든 counter가 ifdef SIMULATION으로 guard됨",
+        "Counter 출력이 PERF_COUNTER tag로 시작 (grep 파싱용)"
+      ],
+      "allowed_subagents": ["RTL Implementation"],
+      "transitions": {
+        "VERIFY": "Implementation complete"
+      },
+      "on_fail": "DESIGN"
+    },
+    "VERIFY": {
+      "description": "fpint_gemm_ffn_hw_improve blackbox 실행. simv.log에서 PERF_COUNTER 출력 확인.",
+      "checklist": [
+        "Blackbox test PASS (기능 regression 없음)",
+        "simv.log에 PERF_COUNTER 출력 존재",
+        "Counter 값이 유효 (0이 아닌 active/stall 값)"
+      ],
+      "allowed_subagents": ["Verification"],
+      "transitions": {
+        "ANALYZE_RESULTS": "Counter 로그 수집 완료",
+        "DESIGN": "Compile error 또는 counter 출력 없음"
+      },
+      "on_fail": "DESIGN"
+    },
+    "ANALYZE_RESULTS": {
+      "description": "Counter 로그에서 utilization 계산: stall rate, active rate per port/bank. Bottleneck 식별.",
+      "checklist": [
+        "AXI port별 util (active/total) 및 stall rate 표 작성",
+        "TMEM bank별 stall rate 표 작성",
+        "DMA/ldma switch stall rate 기록",
+        "Bottleneck 식별 및 개선 방향 기록"
+      ],
+      "allowed_subagents": ["Explore"],
+      "transitions": {
+        "DONE": "분석 완료, 결과 기록됨"
+      },
+      "on_fail": "VERIFY"
+    },
+    "DONE": {
+      "description": "Utilization 분석 완료.",
+      "checklist": [],
+      "allowed_subagents": [],
+      "transitions": {},
+      "on_fail": null
+    }
+  }
+}
