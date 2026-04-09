@@ -1,0 +1,78 @@
+{
+  "name": "FPINT DMA Implementation & Verification",
+  "task_name": "fpint-dma-impl-verify",
+  "initial_state": "ANALYZE",
+  "states": {
+    "ANALYZE": {
+      "description": "Read current RTL for VX_tmem_subsystem, VX_dma_engine, VX_gemm_dma_ctrl, VX_gemm_node. Identify gaps vs spec (8-ch 1:1 mapping, dma_ctrl decomposition, HBM remap in dma_engine). Check if SW (runtime/kernel) needs changes. Spec is source of truth — update any stale pitfalls that conflict.",
+      "checklist": [
+        "Current DMA wiring in VX_tmem_subsystem.sv documented (ch0 switch workaround identified)",
+        "Current gemm_dma_ctrl.sv decomposition logic reviewed (single-channel vs 8-channel)",
+        "HBM remap status in VX_dma_engine.sv identified (exists or needs implementation)",
+        "SW impact assessed: xrt_sim_vcs.cpp to_software_addr(), kernel.cpp address computations — changes needed or not",
+        "Any parent pitfalls conflicting with spec updated with [SUPERSEDED] tag",
+        "Gap list written in STATUS.yaml with specific file:line references"
+      ],
+      "allowed_subagents": [],
+      "transitions": {
+        "IMPLEMENT": "All gaps identified, SW impact assessed — confirmed by confidence check"
+      },
+      "on_fail": "ANALYZE",
+      "confidence_check": true
+    },
+    "IMPLEMENT": {
+      "description": "Implement changes: (1) VX_tmem_subsystem: DMA ch N -> bank N direct 1:1 wiring, remove switch workaround. (2) VX_gemm_dma_ctrl: 8-channel decomposition (interleaved CMD -> per-channel bank-local addr/stride). (3) VX_dma_engine: HBM address remap (interleaved -> contiguous per spec 4.7). (4) SW changes if needed.",
+      "checklist": [
+        "VX_tmem_subsystem.sv: DMA ch N membus connects directly to bank N arbiter port 0",
+        "VX_gemm_dma_ctrl.sv: decomposes SW CMD into 8 per-channel configs with bank-local addresses",
+        "VX_dma_engine.sv: HBM remap converts interleaved -> contiguous addresses per spec section 4.7",
+        "SW files updated if ANALYZE determined changes needed",
+        "All modified files compile without errors (verilator lint or VCS elaborate)"
+      ],
+      "allowed_subagents": ["RTL Implementation"],
+      "transitions": {
+        "UNIT_TEST": "All RTL changes compile cleanly"
+      },
+      "on_fail": "ANALYZE",
+      "confidence_check": true
+    },
+    "UNIT_TEST": {
+      "description": "Run unit tests for modified modules. If unit test folders or testbenches do not exist, create them first, then run.",
+      "checklist": [
+        "Unit test folder and testbench for TMEM subsystem exist (created if missing)",
+        "Unit test folder and testbench for gemm_dma_ctrl exist (created if missing)",
+        "Unit test for TMEM subsystem passes with 8-channel DMA writes",
+        "Unit test for gemm_dma_ctrl 8-channel decomposition passes",
+        "No X-propagation in simulation waveforms"
+      ],
+      "allowed_subagents": ["RTL Implementation", "Verification"],
+      "transitions": {
+        "BLACKBOX_TEST": "All unit tests pass",
+        "IMPLEMENT": "Test fails due to implementation bug with clear root cause"
+      },
+      "on_fail": "ANALYZE"
+    },
+    "BLACKBOX_TEST": {
+      "description": "Run fpint_gemm_ffn_hw_improve blackbox test (xrt_vcs) to verify end-to-end correctness with 8-channel DMA.",
+      "checklist": [
+        "fpint_gemm_ffn_hw_improve blackbox test PASSED",
+        "Output values match reference (no data corruption from DMA rework)",
+        "Result logged in STATUS.yaml"
+      ],
+      "allowed_subagents": ["Verification"],
+      "transitions": {
+        "DONE": "Blackbox test passes with correct output",
+        "IMPLEMENT": "Test fails due to implementation bug with clear root cause",
+        "ANALYZE": "Test fails with unclear root cause — need re-analysis"
+      },
+      "on_fail": "ANALYZE"
+    },
+    "DONE": {
+      "description": "All implementation complete and verified. 8-channel 1:1 DMA, gemm_dma_ctrl decomposition, and HBM remap working.",
+      "checklist": [],
+      "allowed_subagents": [],
+      "transitions": {},
+      "on_fail": null
+    }
+  }
+}

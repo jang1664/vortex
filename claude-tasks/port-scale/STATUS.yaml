@@ -7,6 +7,9 @@ children:
   - name: fpint-func-verify
     path: fpint-func-verify/STATUS.yaml
     state: DONE
+  - name: fpint-dma-impl-verify
+    path: fpint-dma-impl-verify/STATUS.yaml
+    state: ANALYZE
 fsm:
   file: fsm.json
   state: DONE
@@ -80,6 +83,6 @@ pitfalls:
   - "VCS simv Makefile은 TB/DPI만 dependency. RTL 변경 후 반드시 make clean."
   - "RTL Implementation subagent가 파일 수정 시 기존 uncommitted 변경을 revert할 수 있음. 항상 grep으로 검증."
   - "xprop 디버깅: $display probe 반복 대신 FSDB + pywellen으로 persistently-X 신호를 먼저 찾을 것."
-  - "DMA engine channel→bank 직접 연결은 switch의 bank-interleaved addressing과 불일치. DMA도 switch를 통해야 주소 공간이 일관됨."
+  - "[SUPERSEDED] DMA ch N → bank N 직접 연결이 spec 기준 정답. gemm_dma_ctrl가 bank-local 주소를 미리 계산하므로 switch 불필요. (이전: phase 14에서 switch 경유 workaround 사용했으나, spec 확정 후 1:1 direct로 변경)"
   - "TMEM BANK_SIZE=4KB는 double-buffered tile layout(~160KB)에 부족. 모든 버퍼가 alias됨. BANK_SIZE ≥ 20KB 필요."
   - "VX_gemm_node.sv에서 BANK_SIZE를 explicit override하므로 default만 바꾸면 안 됨."

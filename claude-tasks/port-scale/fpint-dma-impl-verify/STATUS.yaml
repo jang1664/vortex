@@ -1,0 +1,10 @@
+task: fpint-dma-impl-verify
+parent:
+  name: port-scale
+  path: STATUS.yaml
+children: []
+fsm:
+  file: fsm.json
+  state: ANALYZE
+completed_work: []
+pitfalls: []

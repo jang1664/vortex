@@ -58,6 +58,8 @@ Uncertainties:
 
 Each uncertainty must be concrete and actionable — the main agent or user should be able to resolve it by reading a specific file, running a specific test, or answering a specific question.
 
+If an uncertainty can only be resolved by the user (e.g., design intent, priority, ambiguous requirement), mark it with `[ASK USER]` so the main agent knows to ask rather than guess.
+
 ## What Counts as an Uncertainty
 
 - Agent claims module X does Y but hasn't read the actual source file

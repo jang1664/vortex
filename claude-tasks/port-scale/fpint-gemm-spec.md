@@ -14,7 +14,7 @@ Extension of Vortex RISC-V core EX stage with a GEMM node. Key components:
 - **TMEM**: 8-bank dedicated SRAM (64B/bank, interleaved addressing)
 - **DMA Engine**: 8-channel HBM-to-TMEM bulk transfer (1:1 channel-bank mapping)
 - **Local DMA**: TMEM-to-GEMM unit data movement (4 channels: input/weight/sz/output)
-- **GEMM Ctrl + DMA Ctrl**: HW FSM for tiling, sync, and DMA channel decomposition
+- **GEMM Ctrl + DMA Ctrl**: HW FSM for command execution, sync, and DMA channel decomposition
 
 LMEM is dedicated to LSU only; TMEM is dedicated to GEMM only.
 
@@ -123,7 +123,7 @@ SW kernel (MMIO writes) -> Job Frontend -> CMD Constructor
 ```
 
 - **CMD Constructor**: MMIO registers -> unified command struct (`gemm_unified_cmd_t`)
-- **GEMM Ctrl**: MXU tiling FSM, double buffering orchestration
+- **GEMM Ctrl**: Executes MXU commands (load weight/input/qparam, store output) from the instruction stream. Does not compute tiling — SW pre-computes all tile addresses and emits commands.
 - **GEMM DMA Ctrl**: Decomposes SW interleaved CMD into 8-channel configs -> DMA config registers
 - **GEMM Sync**: Barrier-style synchronization (wait/notify/clear)
 
@@ -131,7 +131,6 @@ SW kernel (MMIO writes) -> Job Frontend -> CMD Constructor
 
 - Xilinx U55C: 2 HBM stacks, 16 channels, 32 pseudo-channels (PC)
 - HMSS (Xilinx IP): 32 AXI3 slave ports
-  - **Non-global mode**: each AXI slave maps to one PC
   - **Default address map: contiguous** (PC0=0~512MB, PC1=512MB~1GB, ...)
   - Vortex uses 8 AXI master ports -> HMSS 8:32 interconnection
 - HW must remap interleaved -> contiguous addresses (see section 4.7)
@@ -210,7 +209,7 @@ DMA ch N <-> TMEM bank N <-> HBM port N are directly connected 1:1:
 hbm_addr % 512 == tmem_addr % 512
 ```
 
-Data at HBM byte addr `A` is always stored at TMEM byte addr `A`. Both belong to the same bank, so channel N handles them.
+As long as `hbm_addr % 512 == tmem_addr % 512`, the corresponding 64B block falls on the same channel N, so the 1:1 DMA path can handle the transfer. HBM and TMEM addresses do not need to be equal.
 
 ### 4.4 gemm_dma_ctrl 8-Channel Decomposition
 
@@ -255,17 +254,46 @@ scale/zp:   base_addr(scale[x, 32y+:32]) % 64 == 0  (qdir==0)
 
 ### 4.7 HBM Address Remap (Interleaved -> Contiguous)
 
-HMSS maps each PC to a contiguous address region (PC0=0~512MB, PC1=512MB~1GB, ...).
-SW thinks in interleaved addresses, so **Vortex HW (AXI adapter or DMA) must remap**:
+HMSS maps each pseudo-channel (PC) to a contiguous 512MB region:
 
 ```
-When sending SW interleaved byte addr A to AXI port N:
-  N = (A / 64) % 8
-  Actual address on AXI port N = (N * 512MB) + floor(A / 512) * 64 + (A % 64)
+PC0 = 0x0000_0000 ~ 0x1FFF_FFFF
+PC1 = 0x2000_0000 ~ 0x3FFF_FFFF
+...
+PC7 = 0xE000_0000 ~ 0xFFFF_FFFF
+```
 
-Example: SW accesses addr 0~2048
-  AXI port 0: addr 0, 64, 128, ... (contiguous within PC0 space)
-  AXI port 1: addr 512MB+0, 512MB+64, ... (contiguous within PC1 space)
+SW uses interleaved addressing (consecutive 64B blocks round-robin across 8 ports).
+**Vortex HW (AXI adapter or DMA) must convert interleaved -> contiguous** so each PC sees sequential blocks.
+
+```
+Formula — given SW interleaved byte address A:
+  port      N = (A / 64) % 8
+  block_seq   = floor(A / 512)       // how many full 8-port rounds before A
+  byte_off    = A % 64               // offset within the 64B block
+  AXI addr    = (N * 512MB) + block_seq * 64 + byte_off
+
+Worked example — SW addresses 0 ~ 1088:
+
+  SW addr | port N=(A/64)%8 | block_seq=A/512 | AXI addr on port N
+  --------+-----------------+-----------------+------------------------
+       0  | 0               | 0               | 0x0000_0000  (PC0 + 0)
+      64  | 1               | 0               | 0x2000_0000  (PC1 + 0)
+     128  | 2               | 0               | 0x4000_0000  (PC2 + 0)
+     192  | 3               | 0               | 0x6000_0000  (PC3 + 0)
+     256  | 4               | 0               | 0x8000_0000  (PC4 + 0)
+     320  | 5               | 0               | 0xA000_0000  (PC5 + 0)
+     384  | 6               | 0               | 0xC000_0000  (PC6 + 0)
+     448  | 7               | 0               | 0xE000_0000  (PC7 + 0)
+     512  | 0               | 1               | 0x0000_0040  (PC0 + 64)
+     576  | 1               | 1               | 0x2000_0040  (PC1 + 64)
+    1024  | 0               | 2               | 0x0000_0080  (PC0 + 128)
+    1088  | 1               | 2               | 0x2000_0080  (PC1 + 128)
+
+Key observations:
+  - SW addr 0, 512, 1024 all go to port 0 -> AXI addrs 0x00, 0x40, 0x80 (contiguous in PC0)
+  - SW addr 64, 576, 1088 all go to port 1 -> AXI addrs 0x2000_0000, _0040, _0080 (contiguous in PC1)
+  - Each port sees sequential 64B blocks — no gaps, no interleaving on the HMSS side
 ```
 
 ---
@@ -341,18 +369,7 @@ Buffer sizes (DMA_MT = DMA_NT = DMA_KT = 128):
 - scbuf/zpbuf: `groups_tile * DMA_NT * 2` or `DMA_KT * ng_tile * 2` bytes
 - obuf: `DMA_MT * DMA_NT * 2` bytes (fp16)
 
-### 6.4 MMIO Register Map (40 x 32-bit)
-
-| Index | Name | Description |
-|-------|------|-------------|
-| 0 | REG_CONTROL | Start (write 1) / completion status (read) |
-| 1-10 | REG_*_BASE | DRAM base addresses (5 x 64-bit) |
-| 11-28 | REG_TMEM_* | TMEM scratch buffer addresses (9 x 64-bit) |
-| 29-32 | REG_M/N/K/QBLK_ORIG | Original problem dimensions |
-| 33-37 | REG_M/N/K_TARGET, M/N_START | Per-core partition |
-| 38-39 | REG_WTRANS, REG_QDIR | Flags |
-
-### 6.5 Instruction Opcodes (HW FSM)
+### 6.4 Instruction Opcodes (GEMM Command)
 
 | Opcode | Instruction | Description |
 |--------|-------------|-------------|
@@ -366,7 +383,7 @@ Buffer sizes (DMA_MT = DMA_NT = DMA_KT = 128):
 | 8 | MXU_STORE_OUTPUT | Store accumulator to TMEM |
 | 9 | CLEAR | Clear and terminate |
 
-### 6.6 Tiling and Double Buffering
+### 6.5 Tiling and Double Buffering
 
 ```
 MT = 128, NT = 128, KT = 128      (DMA tile)
@@ -377,22 +394,16 @@ Two levels of double buffering:
 1. **DMA-tile level:** buf0/buf1 alternation for input, weight, scale/zp
 2. **MXU-tile level:** weight/scale_zp register alternation within one DMA tile
 
-### 6.7 Multi-Core Partitioning
-
-The M x N output space is partitioned into rectangular tiles per core:
-- K dimension is not partitioned (each core processes the full K)
-- See `compute_partition()` in kernel.cpp
-
-### 6.8 Constraints
+### 6.6 Constraints
 
 - M, N: multiples of 32 (MXU_NT)
-- K: multiple of 128 (KT)
+- K: multiple of 32 (MXU_KT)
 - QBLK: power of 2, divides K (QDIR_COL)
 - QDIR_ROW: QBLK == N
 - KT % QBLK == 0 (QDIR_COL)
 - N must be even (int4 packing)
 
-### 6.9 PyTorch Integration
+### 6.7 PyTorch Integration
 
 ```python
 # Registered as vortex::mm_w4a16
@@ -445,73 +456,13 @@ Implementation: `pytorch/csrc/aten/VortexExtra.cpp`
 
 ---
 
-## 9. Performance Analysis
-
-### 9.1 FPGA Equivalent Gate Area
-
-ENS (Equivalent Number of Slices) — COMET paper (arXiv 2510.03516):
-```
-ENS = LUTs/4 + DSP_used x 102.4 + BRAM18K_used x 116.2
-ASIC_gate_equiv ~ ENS x 24
-```
-
-### 9.2 Algorithmic Operation Intensity (AOI)
-
-Reference: Llama-2 7B (H=4096, I=11008), A16W4KV4
-
-**Prefill** (N_prefill = B x S):
-- Q/K/V/O proj: `OI = 2048*B*S / (B*S + 512)`
-- Gate/Up/Down proj: `OI ~ 2985.2*B*S / (B*S + 746.3)`
-- Fused self-attention: `OI = S/2`
-
-**Decode** (N_decode = B):
-- Q/K/V/O proj: `OI = 2048*B / (B + 512)`
-- Gate/Up/Down proj: `OI ~ 2985.2*B / (B + 746.3)`
-- Fused decode attention: `OI = 4*L / (L + 4)` (saturates at ~4 as L grows)
-
-**Key insight**: Prefill is compute-bound (OI proportional to B x S). Decode is memory-bound (attention OI <= 4).
-
-### 9.3 Bandwidth / Throughput (100MHz)
-
-| Memory | Configuration | Bandwidth |
-|--------|--------------|-----------|
-| HBM | N_PC x 64B port | 6.25 x N_PC GB/s (N_PC=32 -> 200 GB/s) |
-| TMEM | 8 banks x 64B, single port | 50 GB/s |
-| LMEM | 8 banks, 64-bit port | 6.25 GB/s |
-| Cache (L2) | 64B cache line, 1 port | 6.25 GB/s |
-
-| Unit | Operation | Throughput |
-|------|-----------|-----------|
-| MXU 32x32 | FP-INT GEMM | 200 GOps/s |
-| MXU input | 32 x 2B/cycle | 6.25 GB/s |
-| MXU weight | 512B/cycle | 50 GB/s |
-
-### 9.4 Data Path Diagram
-
-```
-                        1536 b/cyc read
-  Register File (4 banks) ------------>  TCU/MXU
-                          <------------
-                          512 b/cyc write
-
-  Register File <--------------------->  LSU (512 b/cyc)
-                                          |
-  LMEM (8 banks) <-------------------->  LSU (512 b/cyc)
-                                          |
-  L2 Cache <---------------------------->  L1 bypass (512 b/cyc)
-                                          |
-  HBM <-------------------------------->  AXI (512 b/cyc per port)
-```
-
----
-
-## 10. Key Files
+## 9. Key Files
 
 | File | Role |
 |------|------|
 | `hw/rtl/core/gemm/VX_gemm_node.sv` | GEMM node top (MXU + TMEM subsystem) |
 | `hw/rtl/core/gemm/VX_gemm_dma_ctrl.sv` | DMA command decode + 8-channel decomposition |
-| `hw/rtl/core/gemm/VX_gemm_ctrl.sv` | MXU tiling FSM |
+| `hw/rtl/core/gemm/VX_gemm_ctrl.sv` | MXU command execution FSM |
 | `hw/rtl/core/gemm/VX_cmd_constructor.sv` | MMIO -> unified command |
 | `hw/rtl/core/gemm/VX_gemm_sync.sv` | Wait/notify synchronization |
 | `hw/rtl/mem/VX_dma_engine.sv` | 8-channel DMA engine |
@@ -519,6 +470,6 @@ Reference: Llama-2 7B (H=4096, I=11008), A16W4KV4
 | `hw/rtl/mem/VX_tmem_switch.sv` | Interleaved address -> bank routing |
 | `hw/rtl/mem/VX_tensor_mem_bank.sv` | Single TMEM bank |
 | `hw/rtl/core/VX_dma_unit_misal.sv` | 3D strided DMA FSM |
-| `tests/regression/fpint_gemm_ffn_hw/` | HW FSM test (host + kernel) |
-| `kernel/src/fi_gemm.c` | ISA-level instruction stream reference |
+| `tests/regression/fpint_gemm_ffn_hw_improve/` | HW FSM test (host + kernel) |
+| `tests/regression/fpint_gemm_ffn_hw_improve/kernel.cpp` | ISA-level instruction stream reference |
 | `pytorch/csrc/aten/VortexExtra.cpp` | PyTorch custom op |
