@@ -99,7 +99,7 @@ If status is NOT "pass", spawn the **RTL Implementation subagent** again with:
 
 ## Iteration Log
 
-Append iteration results to `docs/port-scale/STATUS.md` throughout the loop. Update it after **every** verification iteration. Use the following format per iteration:
+Append iteration results to `docs/port-scale/STATUS.yaml` throughout the loop. Update it after **every** verification iteration. Use the following format per iteration:
 
 ```markdown
 ### <Feature Name> — Iteration N
@@ -136,7 +136,7 @@ When a task completes and the next step is ambiguous or there are multiple remai
 Priority order for remaining tasks (highest first):
 1. Fix compile errors or test failures from the current iteration
 2. Continue the current verification loop (next iteration)
-3. Next item in the remaining work list from `STATUS.md`
+3. Next item in the remaining work list from `STATUS.yaml`
 4. Items listed in the handoff document
 
 **Blocking rule**: Do NOT skip a failing task to move on to the next one. If a task is failing (even if the failure is pre-existing), it must be resolved or explicitly marked as "deferred by user" before proceeding. Downstream tasks may depend on the current one passing.

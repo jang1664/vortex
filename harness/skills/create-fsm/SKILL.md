@@ -30,14 +30,14 @@ Interactively create a task FSM with the user.
 
 6. **Save** — Write the final FSM to `docs/<task_name>/fsm.json`.
 
-7. **Initialize STATUS.md** — Create `docs/<task_name>/STATUS.md` with the FSM header:
-   ```markdown
-   <!-- FSM: {"file": "fsm.json", "state": "<initial_state>"} -->
-   # <Task Name>
-
-   ## Progress Log
-
-   ## Pitfalls
+7. **Initialize STATUS.yaml** — Create `docs/<task_name>/STATUS.yaml`:
+   ```yaml
+   task: <task_name>
+   fsm:
+     file: fsm.json
+     state: <initial_state>
+   completed_work: []
+   pitfalls: []
    ```
 
 8. **Confirm** — Tell the user to run `/run-fsm <task_name>` to start execution.

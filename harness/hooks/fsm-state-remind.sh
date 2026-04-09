@@ -1,6 +1,6 @@
 #!/bin/bash --norc --noprofile
 # PostToolUse hook for Agent: FSM state update reminder
-# After a subagent completes, reminds main agent to update STATUS.md and evaluate transitions.
+# After a subagent completes, reminds main agent to update STATUS.yaml and evaluate transitions.
 
 INPUT=$(cat)
 TOOL_NAME=$(echo "$INPUT" | jq -r '.tool_name // empty')
@@ -15,11 +15,12 @@ PROJECT_DIR="${CLAUDE_PROJECT_DIR:-.}"
 FSM_HEADER=""
 STATUS_FILE=""
 
-for f in "$PROJECT_DIR"/docs/*/STATUS.md; do
+for f in "$PROJECT_DIR"/docs/*/STATUS.yaml; do
     [ -f "$f" ] || continue
-    header=$(head -1 "$f" | grep -oP '<!-- FSM: \K.*(?= -->)')
-    if [ -n "$header" ]; then
-        FSM_HEADER="$header"
+    fsm_state=$(grep -m1 '^\s*state:' "$f" | sed 's/.*state:\s*//' | tr -d ' "'\''')
+    fsm_file=$(grep -m1 '^\s*file:' "$f" | sed 's/.*file:\s*//' | tr -d ' "'\''')
+    if [ -n "$fsm_state" ] && [ -n "$fsm_file" ]; then
+        FSM_HEADER="{\"state\":\"$fsm_state\",\"file\":\"$fsm_file\"}"
         STATUS_FILE="$f"
         break
     fi
@@ -52,7 +53,7 @@ Subagent completed. Now:
 $CHECKLIST
 4. If all checklist items are done, evaluate transitions:
 $TRANSITIONS
-5. Update the FSM header in STATUS.md if transitioning
+5. Update the fsm.state field in STATUS.yaml if transitioning
 EOF
 
 exit 0

@@ -11,16 +11,18 @@ if [ -z "$SUBAGENT_TYPE" ]; then
     exit 0
 fi
 
-# Find active FSM: look for STATUS.md files with FSM header
+# Find active FSM: look for STATUS.yaml files with FSM header
 PROJECT_DIR="${CLAUDE_PROJECT_DIR:-.}"
 FSM_HEADER=""
 STATUS_FILE=""
 
-for f in "$PROJECT_DIR"/docs/*/STATUS.md; do
+for f in "$PROJECT_DIR"/docs/*/STATUS.yaml; do
     [ -f "$f" ] || continue
-    header=$(head -1 "$f" | grep -oP '<!-- FSM: \K.*(?= -->)')
-    if [ -n "$header" ]; then
-        FSM_HEADER="$header"
+    # Extract fsm.state and fsm.file from YAML using grep/sed
+    fsm_state=$(grep -m1 '^\s*state:' "$f" | sed 's/.*state:\s*//' | tr -d ' "'\''')
+    fsm_file=$(grep -m1 '^\s*file:' "$f" | sed 's/.*file:\s*//' | tr -d ' "'\''')
+    if [ -n "$fsm_state" ] && [ -n "$fsm_file" ]; then
+        FSM_HEADER="{\"state\":\"$fsm_state\",\"file\":\"$fsm_file\"}"
         STATUS_FILE="$f"
         break
     fi

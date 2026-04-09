@@ -1,0 +1,77 @@
+task: port-scale
+fsm:
+  file: fsm.json
+  state: DONE
+
+completed_work:
+  - phase: "1-8"
+    title: "TMEM + DMA Data Feeding"
+    commit: "0b9741e8"
+    details: |
+      VX_tensor_mem_bank, VX_dma_engine, VX_tmem_subsystem, VX_tmem_switch 구현 및 unittest pass.
+      VX_gemm_node에 TMEM subsystem 통합.
+      VX_core → VX_socket → VX_cluster → Vortex → Vortex_axi 전체 DMA AXI 경로 연결.
+      VX_afu_wrap + vortex_afu 8 HBM 포트 지원.
+
+  - phase: "9-11"
+    title: "Blackbox vecadd (xrt_vcs) bring-up"
+    details: |
+      xrtsim_vcs Makefile: AXI include paths, cf_math_pkg, ASSERTS_OFF 수정.
+      xrt_sim_vcs.cpp: bank count/allocator 버그 수정.
+      LSU interleaved routing + DMA AXI mux 연결.
+      vecadd PASSED: 10118 insn, 12462 cycles, IPC=0.812.
+
+  - phase: "12"
+    title: "BANK_INTERLEAVE 활성화"
+    details: |
+      Runtime: #define BANK_INTERLEAVE 활성화, mem_free 수정.
+      VX_afu_ctrl: dev_caps에 PLATFORM_MEMORY_NUM_BANKS (32) 보고.
+      VX_afu_wrap + vortex_afu + tb_vcs_xrtsim: PLATFORM_MERGED_MEMORY_INTERFACE ifdef 제거.
+      xrt_sim_vcs.cpp: to_software_addr()로 BANK_INTERLEAVE 주소 변환.
+
+  - phase: "13"
+    title: "xprop=tmerge fix"
+    commit: "1ff42504"
+    root_cause: |
+      vx_reset_ctr가 reset 블록에서 초기화 안 됨 → 시뮬레이션 전체 동안 X → tmerge에서 X cascade.
+    fix: "vx_reset_ctr <= (RESET_DELAY-1) reset 블록에 추가"
+    result: "vecadd PASSED with xprop=tmerge"
+
+  - phase: "14"
+    title: "fpint_gemm_ffn_hw_improve blackbox debug"
+    commit: "4c2c5907"
+    result: "PASS (4377 insn, 15952 cycles, IPC=0.274)"
+    bugs:
+      - name: "DMA→TMEM address mismatch"
+        root_cause: |
+          DMA engine wrote directly to banks (no address deinterleaving),
+          while local DMAs read through VX_tmem_switch (interleaved addressing).
+          Example: scale data at global word addr 0x500 → DMA writes to sram[0],
+          ldma reads from sram[0x20] → X propagation through entire MXU pipeline.
+        fix: "Route DMA channel 0 through VX_tmem_switch"
+        files:
+          - hw/rtl/mem/VX_tmem_subsystem.sv
+
+      - name: "TMEM capacity insufficient"
+        root_cause: |
+          BANK_SIZE=4KB × 8 banks = 32KB total, but double-buffered tile layout
+          needs ~160KB. All buffers aliased in TMEM — weight data at byte 0x10000
+          maps to same SRAM location as activation at 0x0.
+        fix: "Increase BANK_SIZE from 4KB to 32KB (256KB total)"
+        files:
+          - hw/rtl/mem/VX_tmem_subsystem.sv
+          - hw/rtl/core/gemm/VX_gemm_node.sv
+
+      - name: "BANK_SIZE parameter override"
+        root_cause: "VX_gemm_node.sv explicitly set BANK_SIZE=4KB, overriding default"
+        fix: "Update instantiation to 32KB"
+        files:
+          - hw/rtl/core/gemm/VX_gemm_node.sv
+
+pitfalls:
+  - "VCS simv Makefile은 TB/DPI만 dependency. RTL 변경 후 반드시 make clean."
+  - "RTL Implementation subagent가 파일 수정 시 기존 uncommitted 변경을 revert할 수 있음. 항상 grep으로 검증."
+  - "xprop 디버깅: $display probe 반복 대신 FSDB + pywellen으로 persistently-X 신호를 먼저 찾을 것."
+  - "DMA engine channel→bank 직접 연결은 switch의 bank-interleaved addressing과 불일치. DMA도 switch를 통해야 주소 공간이 일관됨."
+  - "TMEM BANK_SIZE=4KB는 double-buffered tile layout(~160KB)에 부족. 모든 버퍼가 alias됨. BANK_SIZE ≥ 20KB 필요."
+  - "VX_gemm_node.sv에서 BANK_SIZE를 explicit override하므로 default만 바꾸면 안 됨."

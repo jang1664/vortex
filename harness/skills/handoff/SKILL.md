@@ -5,20 +5,20 @@ Generate a handoff document, then guide the user through `/clear` and resume.
 ## Usage
 
 ```
-/handoff              # auto-detect task from docs/*/STATUS.md
+/handoff              # auto-detect task from docs/*/STATUS.yaml
 /handoff rtl-improve  # specify task name explicitly
 ```
 
 ## Step 1: Determine Task Name
 
 - If an argument is provided, use it as `<task_name>`.
-- If no argument, scan `docs/*/STATUS.md` for existing task directories. If exactly one exists, use it. If multiple exist, ask the user which one. If none exist, ask the user to provide a task name.
+- If no argument, scan `docs/*/STATUS.yaml` for existing task directories. If exactly one exists, use it. If multiple exist, ask the user which one. If none exist, ask the user to provide a task name.
 
 ## Step 2: Gather Context
 
 Collect the following information to write the handoff:
 
-1. **Current progress** — Read `docs/<task_name>/STATUS.md` (includes iteration logs). Summarize what has been done.
+1. **Current progress** — Read `docs/<task_name>/STATUS.yaml` (includes iteration logs). Summarize what has been done.
 2. **Key decisions made** — Extract important design/implementation decisions from the conversation and logs.
 3. **Remaining work** — What still needs to be done. Be specific: file paths, commands, configs.
 4. **Gotchas** — Pitfalls, workarounds, environment issues encountered. These save the next session from repeating mistakes.
