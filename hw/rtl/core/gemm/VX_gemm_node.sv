@@ -434,7 +434,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     VX_tmem_subsystem #(
       .INSTANCE_ID    ({INSTANCE_ID, ":tmem"}),
       .NUM_BANKS      (NUM_TMEM_BANKS),
-      .BANK_SIZE      (4*1024),
+      .BANK_SIZE      (32*1024),
       .DATA_SIZE      (64),
       .GEMM_DATA_SIZE (64),
       .TAG_WIDTH      (GEMM_BASE_TAG_WIDTH)

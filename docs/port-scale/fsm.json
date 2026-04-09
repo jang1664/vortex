@@ -1,27 +1,27 @@
 {
-  "name": "BANK_INTERLEAVE vecadd debug",
+  "name": "DMA AXI blackbox debug",
   "task_name": "port-scale",
   "initial_state": "ANALYZE",
   "states": {
     "ANALYZE": {
-      "description": "Reproduce failure, read logs/traces, identify root cause. Read docs/hbm-bank-interleaving.md before making any hypothesis.",
+      "description": "fpint_gemm_ffn_hw_improve blackbox 실행, 실패 재현, root cause 분석. DBG_TRACE 전체 켜서 simv.log 분석. 필요시 FSDB + pywellen.",
       "checklist": [
-        "vecadd failure reproduced with xrt_vcs (or confirmed from recent run)",
-        "Error type identified (compile error / sim hang / data mismatch / crash)",
-        "Root cause hypothesis written in STATUS.md with evidence"
+        "fpint_gemm_ffn_hw_improve blackbox 실행 결과 확인 (pass/fail/hang/crash)",
+        "실패 시 simv.log에서 마지막 AXI transaction 확인",
+        "Root cause 가설 + 증거를 STATUS.md에 기록"
       ],
       "allowed_subagents": ["Verification", "Explore"],
       "transitions": {
         "IMPLEMENT": "Root cause identified with fix plan",
-        "DONE": "No fix needed — test already passes"
+        "DONE": "Test already passes"
       },
       "on_fail": "ANALYZE"
     },
     "IMPLEMENT": {
-      "description": "Apply the fix. RTL changes via RTL Implementation subagent, C++/sim changes directly. Log all modified files in STATUS.md.",
+      "description": "Fix 적용. RTL 변경은 RTL Implementation subagent, C++/sim은 직접. 수정 파일 STATUS.md에 기록.",
       "checklist": [
-        "All modified files listed in STATUS.md",
-        "Change description explains what and why"
+        "수정 파일 목록 STATUS.md에 기록",
+        "변경 내용과 이유 설명"
       ],
       "allowed_subagents": ["RTL Implementation"],
       "transitions": {
@@ -30,21 +30,21 @@
       "on_fail": "ANALYZE"
     },
     "VERIFY": {
-      "description": "Run vecadd blackbox test with xrt_vcs, BANK_INTERLEAVE ON, 8 HBM ports. Use configs from docs/port-scale/how-to-test.md.",
+      "description": "fpint_gemm_ffn_hw_improve blackbox test 실행. DBG_TRACE 전체 + xprop=tmerge.",
       "checklist": [
-        "vecadd blackbox command and exit code logged in STATUS.md",
-        "If PASS: IPC and instruction count recorded",
-        "If FAIL: error output captured in STATUS.md"
+        "blackbox command와 exit code STATUS.md에 기록",
+        "PASS 시: output 값 정확성 확인",
+        "FAIL 시: error output STATUS.md에 캡처"
       ],
       "allowed_subagents": ["Verification"],
       "transitions": {
-        "DONE": "vecadd PASSED",
-        "ANALYZE": "vecadd FAILED — need re-analysis"
+        "DONE": "fpint_gemm_ffn_hw_improve PASSED",
+        "ANALYZE": "FAILED — re-analysis needed"
       },
       "on_fail": "ANALYZE"
     },
     "DONE": {
-      "description": "vecadd passes with BANK_INTERLEAVE ON. Update STATUS.md with final result.",
+      "description": "fpint_gemm_ffn_hw_improve passes. STATUS.md에 최종 결과 기록.",
       "checklist": [],
       "allowed_subagents": [],
       "transitions": {},
