@@ -121,8 +121,26 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
     localparam int BUS_WORD_SHIFT = 6;  // log2(64)
     localparam int NUM_CH_SHIFT   = 3;  // log2(8)
 
+    function automatic [63:0] tmem_bank_local_addr(input [63:0] byte_addr);
+        begin
+            // Remove the interleaved TMEM bank index bits while preserving the
+            // byte offset within each 64B bank line.
+            tmem_bank_local_addr = (byte_addr & ((64'd1 << BUS_WORD_SHIFT) - 1))
+                                 | ((byte_addr >> NUM_CH_SHIFT) & ~((64'd1 << BUS_WORD_SHIFT) - 1));
+        end
+    endfunction
+
+    function automatic [31:0] tmem_bank_local_stride(input [31:0] byte_stride);
+        begin
+            tmem_bank_local_stride = (byte_stride & ((32'd1 << BUS_WORD_SHIFT) - 1))
+                                   | ((byte_stride >> NUM_CH_SHIFT) & ~((32'd1 << BUS_WORD_SHIFT) - 1));
+        end
+    endfunction
+
     // Per-channel base addresses are computed inside the genvar loop,
     // conditioned on direction (LD vs ST) to swap HBM/TMEM roles.
+    wire [NUM_CH_SHIFT-1:0] start_ch = dir_is_st ? src_base[BUS_WORD_SHIFT +: NUM_CH_SHIFT]
+                                                 : dst_base[BUS_WORD_SHIFT +: NUM_CH_SHIFT];
 
     // Seg size: decompose at 64-byte bus-word granularity
     wire [31:0] num_words  = seg_size >> BUS_WORD_SHIFT;        // total bus words
@@ -138,13 +156,18 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
     logic [NUM_CHANNELS-1:0] done_or_inactive;
 
     for (genvar ch = 0; ch < NUM_CHANNELS; ++ch) begin : g_channels
+        wire [NUM_CH_SHIFT-1:0] logical_ch = ch - start_ch;
+
         // Per-channel word count: quotient + 1 if ch < remainder, else quotient
-        wire [31:0] ch_words    = words_quot + ((ch[2:0] < words_rem) ? 32'd1 : 32'd0);
+        wire [31:0] ch_words    = words_quot + ((logical_ch < words_rem) ? 32'd1 : 32'd0);
         wire        ch_active   = (ch_words != 32'd0);
 
-        // Per-channel addresses: HBM side gets per-channel offset, TMEM side gets bank-local
-        wire [63:0] ch_src_base = dir_is_st ? (src_base >> 3)       : (src_base + ch * 64);
-        wire [63:0] ch_dst_base = dir_is_st ? (dst_base + ch * 64)  : (dst_base >> 3);
+        // Per-channel addresses: physical channel ch corresponds to the bank
+        // selected by the starting interleaved block plus logical stripe index.
+        wire [63:0] ch_src_base = dir_is_st ? tmem_bank_local_addr(src_base)
+                                            : (src_base + (logical_ch << BUS_WORD_SHIFT));
+        wire [63:0] ch_dst_base = dir_is_st ? (dst_base + (logical_ch << BUS_WORD_SHIFT))
+                                            : tmem_bank_local_addr(dst_base);
 
         // Build per-channel config registers
         logic [NUM_REGS-1:0][31:0] ch_prog_regs;
@@ -157,8 +180,8 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
             ch_prog_regs[DMA_R_SRC_BASE_HI] = ch_src_base[63:32];
             ch_prog_regs[DMA_R_SRC_ST0]     = dir_is_st ? 32'd64  : 32'd512;  // TMEM:64, HBM:512
             ch_prog_regs[DMA_R_DST_ST0]     = dir_is_st ? 32'd512 : 32'd64;   // HBM:512, TMEM:64
-            ch_prog_regs[DMA_R_SRC_ST1]     = dir_is_st ? (src_s0 >> 3) : src_s0;  // bank-local or full
-            ch_prog_regs[DMA_R_DST_ST1]     = dir_is_st ? dst_s0 : (dst_s0 >> 3);  // full or bank-local
+            ch_prog_regs[DMA_R_SRC_ST1]     = dir_is_st ? tmem_bank_local_stride(src_s0) : src_s0;  // bank-local or full
+            ch_prog_regs[DMA_R_DST_ST1]     = dir_is_st ? dst_s0 : tmem_bank_local_stride(dst_s0);  // full or bank-local
             ch_prog_regs[DMA_R_SRC_ST2]     = 32'd0;
             ch_prog_regs[DMA_R_DST_ST2]     = 32'd0;
             ch_prog_regs[DMA_R_BND0]        = ch_words;          // number of bus-word blocks for this channel
