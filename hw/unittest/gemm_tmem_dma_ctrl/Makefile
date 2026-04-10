@@ -12,9 +12,9 @@ export CXX := /usr/bin/g++
 SIM_EXEC ?= vcs
 
 TIME_SCALE=1ns/1ps
-TOP_MODULE := tb_VX_gemm_tmem_dma_ctrl
+TOP_MODULE := tb_VX_gemm_tmem_dma_ctrl_misalign
 
-TB   := $(SRC_DIR)/tb_VX_gemm_tmem_dma_ctrl.sv
+TB   := $(SRC_DIR)/tb_VX_gemm_tmem_dma_ctrl_misalign.sv
 RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
         $(RTL_DIR)/core/gemm/VX_gemm_tmem_dma_ctrl.sv \
         $(RTL_DIR)/core/gemm/VX_gemm_dma_ctrl_if.sv \
