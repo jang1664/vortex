@@ -89,29 +89,52 @@ Requestors per bank N (5:1 arbiter):
 - Address-based routing: `addr[2:0]` -> bank select, `addr >> 3` -> bank-local addr
 - Response path: round-robin arbiter merges bank responses back to local DMA
 
-### 2.4 Upper Hierarchy
+### 2.4 Upper Hierarchy (Vortex_axi.sv)
+
+**Terminology**:
+- `NUM_HBM_MAS_PORTS = 8` — number of AXI master ports exiting Vortex_axi to HMSS (or sim). Previously called `C_M_AXI_MEM_NUM_BANKS` in RTL / `NUM_BANKS` in TB — **rename these to `NUM_HBM_MAS_PORTS`** to avoid confusion with `PLATFORM_MEMORY_NUM_BANKS` (= 32, the number of HBM pseudo-channels).
 
 ```
-+------------+  cache_master   +--------------+  mem_master   +-------------+
-|VX_core x N |---------------->| cache system |-------------->| axi adapter |
-|            |                 +--------------+               +------+------+
-|            |  dma_master[8] (AXI_BUS)                              |
-|            |--------------------------------------+                v
-+------------+                                      |        +------------+
-                                                    +------->|1:8 switch  |
-                                                    |        +-----+------+
-                                                    v              v
++------------+  cache_master   +--------------+  mem_master   +------------------+
+|VX_core x N |---------------->| cache system |-------------->| VX_axi_adapter   |
+|            |                 +--------------+               | (NUM_BANKS_OUT=8 |
+|            |                                                |  INTERLEAVE=1)   |
+|            |                                                +--------+---------+
+|            |                                                         |
+|            |  dma_master[8] (AXI_BUS)                                v
+|            |--------------------------------------+          +------------+
++------------+                                      |          | axi_demux  |
+                                                    |          | addr[8:6]  |
+                                                    |          +-----+------+
+                                                    v                v
                                               +-----------------------------+
-                                              |      AXI Arbiter            |
-                                              |  (axi_mux from third_party) |
-                                              |  slave[8 + 8*NUM_CORES]     |
-                                              |  master[8] -> HBM           |
+                                              |      axi_mux (per port j)  |
+                                              |  slave[0] = LSU demux[j]   |
+                                              |  slave[1..] = DMA[j] x N   |
                                               +-----------------------------+
+                                                         |
+                                              m_axi[0..7] (NUM_HBM_MAS_PORTS)
+                                                         |
+                                                    +---------+
+                                                    |  HMSS   |
+                                                    | (32 PC) |
+                                                    +---------+
 ```
 
-AXI arbiter slave port mapping:
-- `slave[(1+NUM_CORES)*j + 0]` = LSU (axi adapter -> 1:8 switch -> port j)
-- `slave[(1+NUM_CORES)*j + i+1]` = core[i].dma_master[j]
+**LSU AXI path** (VX_axi_adapter → axi_demux → axi_mux → m_axi):
+1. VX_axi_adapter splits interleaved word addr: `bank_sel = word_addr[2:0]`, `bank_addr = word_addr >> 3`
+2. Routes request to port `bank_sel`
+3. Reconstructs AXI byte addr: `(bank_addr << 9) | (bank_sel << 6)` **= original SW byte addr**
+4. axi_demux uses `addr[8:6]` for routing (same as bank_sel) — identity
+
+**DMA AXI path** (each DMA ch has its own AXI port, enters axi_mux directly):
+- DMA ch j → `axi_mux[j].slave[1+core_id]` → `m_axi[j]`
+- The axi_mux routes by address: `addr[8:6]` selects master port
+- **DMA must produce AXI addresses where `addr[8:6] == j`** to stay on port j
+
+**AXI address constraint** (INTERLEAVE mode):
+All AXI requests on port j must satisfy: `axi_addr = 512*n + 64*j` for some integer n.
+This is the natural interleaved address pattern and is automatically satisfied by VX_axi_adapter.
 
 ### 2.5 GEMM Control Flow
 
@@ -132,8 +155,10 @@ SW kernel (MMIO writes) -> Job Frontend -> CMD Constructor
 - Xilinx U55C: 2 HBM stacks, 16 channels, 32 pseudo-channels (PC)
 - HMSS (Xilinx IP): 32 AXI3 slave ports
   - **Default address map: contiguous** (PC0=0~512MB, PC1=512MB~1GB, ...)
-  - Vortex uses 8 AXI master ports -> HMSS 8:32 interconnection
-- HW must remap interleaved -> contiguous addresses (see section 4.7)
+  - Vortex uses `NUM_HBM_MAS_PORTS=8` AXI master ports → HMSS 8:32 interconnection
+  - `PLATFORM_MEMORY_NUM_BANKS=32` — how many PCs the SW runtime uses for allocation
+- For real FPGA: HMSS switch routes each AXI port to its assigned PCs based on contiguous address map
+- For simulation: xrt_sim_vcs passes AXI address through to flat RAM directly (see section 4.8)
 
 ---
 
@@ -172,7 +197,7 @@ TMEM uses 8-bank x 64B interleaved addressing.
 **All components, including SW, always think in interleaved address space.**
 
 ```
-NUM_BANKS = 8, DATA_SIZE = 64B
+NUM_TMEM_BANKS = 8, DATA_SIZE = 64B
 
 Word address -> bank mapping:
   word_addr[2:0] = bank_id
@@ -216,25 +241,73 @@ As long as `hbm_addr % 512 == tmem_addr % 512`, the corresponding 64B block fall
 **SW sends DMA CMDs in interleaved TMEM address space.**
 **HW (`gemm_dma_ctrl`) decomposes these into 8 per-channel configs** and programs each DMA channel.
 
-```
-SW CMD: src_base(HBM), dst_base(TMEM), stride, bound, seg_size (all interleaved addresses)
+Each DMA channel has two address spaces:
+- **HBM side (AXI)**: original SW interleaved address (INTERLEAVE mode, identity — see section 4.7)
+- **TMEM side (membus)**: bank-local address (connects directly to bank N, no switch)
 
-gemm_dma_ctrl decomposition:
-  for ch = 0..7:
-    ch_src_base = HBM address of ch's 64B block from src_base (with remap applied)
-    ch_dst_base = bank-local address (strip bank_sel bits from interleaved addr)
-    ch_stride   = convert interleaved stride to bank-local stride
-    ch_bound    = same (number of segments each bank processes)
-    -> program DMA cfg_reg_if[ch]
+#### Decomposition rules
+
+```
+SW CMD (DMA_LOAD): src=HBM(interleaved), dst=TMEM(interleaved), stride, bound, seg_size
+NUM_PORTS = NUM_HBM_MAS_PORTS (= 8)
+
+num_words = seg_size / 64                    // total 64B bus words
+words_per_ch[ch] = num_words / NUM_PORTS     // +1 for ch < (num_words % NUM_PORTS)
+
+For each channel ch (0..7):
+  Block k at SW addr src_base + k*64 goes to port (src_base/64 + k) % 8.
+  ch gets blocks where port == ch.
+
+  HBM side (INTERLEAVE — use original SW interleaved addr):
+    ch_src_base = src_base + ch * 64         // first block for port ch
+    ch_src_stride = 512                      // next block for same port = 8 blocks away
+    ch_src_seg_size = 64                     // one 64B block per segment
+
+  TMEM side (bank-local):
+    ch_dst_base = (dst_base >> 9) << 6       // bank-local byte addr (same for all ch)
+    ch_dst_stride = 64                       // contiguous in bank-local space
+    ch_dst_seg_size = 64
+
+  ch_bound = words_per_ch[ch]                // number of blocks this channel handles
+  ch_dir = 0 (G2L)
+
+  If words_per_ch[ch] == 0: channel inactive (don't program)
 ```
 
-Example: SW requests filling TMEM addr 0~4095 (64 x 64B):
-- ch0: HBM byte 0,512,1024,...,3584 -> TMEM bank 0 local addr 0,1,2,...,7
-- ch1: HBM byte 64,576,1088,...,3648 -> TMEM bank 1 local addr 0,1,2,...,7
-- ...
-- ch7: HBM byte 448,960,1472,...,4032 -> TMEM bank 7 local addr 0,1,2,...,7
+#### Worked example: DMA_LOAD 4096 bytes (64 blocks)
+
+```
+SW CMD: src_base=0x10000(HBM), dst_base=0x4000(TMEM), seg_size=4096, stride=0, bound=1
+num_words = 64, words_per_ch = 64/8 = 8 (all channels active)
+
+Channel 0 (port 0): blocks where (0x10000/64 + k) % 8 == 0, i.e. k=0,8,16,...,56
+  HBM reads:  0x10000, 0x10200, 0x10400, ..., 0x10E00 (stride=512)
+              addr[8:6] = 0 for all → axi_demux routes to port 0 ✓
+  TMEM writes: bank 0, local addrs 0x800, 0x840, ..., 0x9C0 (stride=64)
+
+Channel 1 (port 1): blocks k=1,9,17,...,57
+  HBM reads:  0x10040, 0x10240, 0x10440, ..., 0x10E40 (stride=512)
+              addr[8:6] = 1 for all → axi_demux routes to port 1 ✓
+  TMEM writes: bank 1, local addrs 0x800, 0x840, ...
+
+...same pattern for ch 2-7...
+```
+
+#### Worked example: DMA_LOAD 256 bytes (4 blocks, scale data)
+
+```
+SW CMD: src_base=0x10000(HBM), dst_base=0x8000(TMEM), seg_size=256, stride=0, bound=1
+num_words = 4, words_per_ch: ch 0-3 get 1 block, ch 4-7 inactive
+
+Channel 0: HBM read at 0x10000 (port 0) → TMEM bank 0 local addr 0x1000
+Channel 1: HBM read at 0x10040 (port 1) → TMEM bank 1 local addr 0x1000
+Channel 2: HBM read at 0x10080 (port 2) → TMEM bank 2 local addr 0x1000
+Channel 3: HBM read at 0x100C0 (port 3) → TMEM bank 3 local addr 0x1000
+Channel 4-7: inactive (no blocks assigned)
+```
 
 **Each DMA channel writes to its TMEM bank using bank-local addresses. No switch involved.**
+**Each DMA channel reads from HBM using original SW interleaved addresses. axi_demux routes by addr[8:6].**
 
 ### 4.5 Local DMA -> TMEM (Via Switch)
 
@@ -252,48 +325,90 @@ scale/zp:   base_addr(scale[x, 32y+:32]) % 64 == 0  (qdir==0)
             base_addr(scale[32x+:32, y]) % 64 == 0  (qdir==1)
 ```
 
-### 4.7 HBM Address Remap (Interleaved -> Contiguous)
+### 4.7 AXI Address Format (INTERLEAVE Mode)
 
-HMSS maps each pseudo-channel (PC) to a contiguous 512MB region:
+DMA는 INTERLEAVE 모드만 사용한다 (INTERLEAVE=0 contiguous 모드는 DMA에 해당 없음).
+
+VX_axi_adapter (LSU path, INTERLEAVE=1)의 주소 변환:
+```
+input:  word_addr (interleaved, 64B word 단위)
+split:  bank_sel = word_addr[2:0], bank_addr = word_addr >> 3
+output: m_axi_addr[bank_sel] = (bank_addr << 9) | (bank_sel << 6)
+                              = word_addr * 64
+                              = original SW byte addr  (identity)
+```
+
+kernel에서는 HBM의 PC가 interleaving address를 사용한다고 생각하고 작성한다. 그렇기 때문에 address가 sequential한 부분을 접근하면 그 request가 여러 PC에
+병렬적으로 간다고 생각하고 작성할 것이다. INTERLEAVE 모드에서는 AXI output이 원본 SW interleaved 주소 그대로이며, `axi_demux`가 `addr[8:6]`로 port를 선택한다.
+
+#### HMSS Hard Constraint (Real FPGA)
+
+Xilinx HMSS는 각 PC가 contiguous address map을 가진다고 가정하고 switch routing이 구현되어 있다. 따라서 **실제 FPGA에서는 HW가 interleaved→contiguous 변환을 해야 한다.**
+
+예를 들어 kernel이 주소 64~128를 접근하고 싶어서 DMA CMD를 생성할 때 base address를 64로 넣고 segment size를 64로 했다면, kernel 입장에서는 PC1에 접근하고 싶었던 것이기 때문에 DMA engine에서는 이걸 port 1에 할당하고 주소를 contiguous address map 버전으로 바꿔야 한다: `0x2000_0000 ~ 0x2000_0000+64`.
 
 ```
-PC0 = 0x0000_0000 ~ 0x1FFF_FFFF
-PC1 = 0x2000_0000 ~ 0x3FFF_FFFF
-...
-PC7 = 0xE000_0000 ~ 0xFFFF_FFFF
+Contiguous conversion formula:
+  Given SW interleaved byte address A:
+    block_idx    = A / 64
+    pc_id        = block_idx % PLATFORM_MEMORY_NUM_BANKS   // e.g., % 32
+    block_in_pc  = block_idx / PLATFORM_MEMORY_NUM_BANKS
+    port_id      = pc_id / (PLATFORM_MEMORY_NUM_BANKS / NUM_HBM_MAS_PORTS)  // e.g., pc_id / 4
+    AXI addr     = pc_id * PC_SIZE + block_in_pc * 64      // PC_SIZE = 512MB
+
+  SW addr 0   → pc_id=0,  port=0, AXI = 0x0000_0000
+  SW addr 64  → pc_id=1,  port=0, AXI = 0x2000_0000
+  SW addr 2048→ pc_id=0,  port=0, AXI = 0x0000_0040 (PC0, 2nd block)
 ```
 
-SW uses interleaved addressing (consecutive 64B blocks round-robin across 8 ports).
-**Vortex HW (AXI adapter or DMA) must convert interleaved -> contiguous** so each PC sees sequential blocks.
+VX_axi_adapter는 `INTERLEAVE=1` 모드에서 identity로 동작한다. DMA engine의 HBM side도 동일하게 identity로 동작해야 한다.
+
+**AXI address constraint on port j (INTERLEAVE=1)**:
+```
+axi_addr = 512 * n + 64 * j     for integer n >= 0
+```
+Port j only sees addresses where `(addr / 64) % NUM_HBM_MAS_PORTS == j`.
 
 ```
-Formula — given SW interleaved byte address A:
-  port      N = (A / 64) % 8
-  block_seq   = floor(A / 512)       // how many full 8-port rounds before A
-  byte_off    = A % 64               // offset within the 64B block
-  AXI addr    = (N * 512MB) + block_seq * 64 + byte_off
+Worked example — SW addresses 0x10000 ~ 0x10200:
 
-Worked example — SW addresses 0 ~ 1088:
+  SW addr  | port j=(A/64)%8 | AXI addr on port j
+  ---------+-----------------+--------------------
+  0x10000  | 0               | 0x10000
+  0x10040  | 1               | 0x10040
+  0x10080  | 2               | 0x10080
+  ...
+  0x101C0  | 7               | 0x101C0
+  0x10200  | 0               | 0x10200 (다시 port 0)
+```
 
-  SW addr | port N=(A/64)%8 | block_seq=A/512 | AXI addr on port N
-  --------+-----------------+-----------------+------------------------
-       0  | 0               | 0               | 0x0000_0000  (PC0 + 0)
-      64  | 1               | 0               | 0x2000_0000  (PC1 + 0)
-     128  | 2               | 0               | 0x4000_0000  (PC2 + 0)
-     192  | 3               | 0               | 0x6000_0000  (PC3 + 0)
-     256  | 4               | 0               | 0x8000_0000  (PC4 + 0)
-     320  | 5               | 0               | 0xA000_0000  (PC5 + 0)
-     384  | 6               | 0               | 0xC000_0000  (PC6 + 0)
-     448  | 7               | 0               | 0xE000_0000  (PC7 + 0)
-     512  | 0               | 1               | 0x0000_0040  (PC0 + 64)
-     576  | 1               | 1               | 0x2000_0040  (PC1 + 64)
-    1024  | 0               | 2               | 0x0000_0080  (PC0 + 128)
-    1088  | 1               | 2               | 0x2000_0080  (PC1 + 128)
+**Both LSU and DMA must produce AXI addresses in this interleaved format.**
+LSU path: VX_axi_adapter (INTERLEAVE=1) handles this automatically.
+DMA path: gemm_dma_ctrl assigns each channel's HBM addresses as original SW interleaved addresses.
 
-Key observations:
-  - SW addr 0, 512, 1024 all go to port 0 -> AXI addrs 0x00, 0x40, 0x80 (contiguous in PC0)
-  - SW addr 64, 576, 1088 all go to port 1 -> AXI addrs 0x2000_0000, _0040, _0080 (contiguous in PC1)
-  - Each port sees sequential 64B blocks — no gaps, no interleaving on the HMSS side
+### 4.8 Simulation Memory Model (xrt_sim_vcs)
+
+**Architecture**: RTL AXI ports → TB DPI-C bridge → Host C++ (`xrt_sim_vcs.cpp`) → `ram_` (data) + `dram_sim_` (timing)
+
+- `ram_`: flat byte array, stores actual data (functional model)
+- `dram_sim_` (ramulator): HBM2 timing model only, no data storage
+
+**xrt_sim_vcs passes AXI addresses through to RAM without translation.**
+
+```
+RTL AXI port j sends addr A
+  → TB captures (port_idx=j, addr=A)
+  → DPI-C sends to host
+  → host: ram_->read(data, A, 64)  or  ram_->write(data, A, 64)
+     (A is used as-is — no to_software_addr conversion needed)
+  → dram_sim_.send_request(A, ...)  (timing only)
+```
+
+The `to_software_addr` function in xrt_sim_vcs.cpp should be removed. The simulator's role is to pass AXI addresses directly to RAM/ramulator.
+
+**Address constraint check on port j**:
+```
+assert( (addr / 64) % NUM_HBM_MAS_PORTS == j )  // addr = 512*n + 64*j
 ```
 
 ---
@@ -429,7 +544,7 @@ Implementation: `pytorch/csrc/aten/VortexExtra.cpp`
 
 | Module | File | Change |
 |--------|------|--------|
-| `VX_gemm_dma_ctrl` | `hw/rtl/core/gemm/VX_gemm_dma_ctrl.sv` | Add 8-channel decomposition. Convert SW interleaved CMD to per-channel bank-local addr/stride + HBM remap. |
+| `VX_gemm_tmem_dma_ctrl` | `hw/rtl/core/gemm/VX_gemm_tmem_dma_ctrl.sv` | 8-channel decomposition. TMEM side: bank-local addr. HBM side: original interleaved addr (per-channel offset, stride=512). Bus-word granularity (handles seg_size < 512B). |
 | `VX_gemm_node` | `hw/rtl/core/gemm/VX_gemm_node.sv` | Remove LMEM path. Instantiate VX_tmem_subsystem. Expose DMA AXI ports. |
 | `VX_tmem_subsystem` | `hw/rtl/mem/VX_tmem_subsystem.sv` | Change DMA ch N -> bank N direct (currently ch0-only via switch -> 8ch 1:1 direct). |
 | `VX_core` | `hw/rtl/core/VX_core.sv` | Add `AXI_BUS.Master dma_axi[8]` port. |
@@ -443,16 +558,19 @@ Implementation: `pytorch/csrc/aten/VortexExtra.cpp`
 
 ## 8. Constraints & Assumptions
 
-1. **DMA ch N -> TMEM bank N -> HBM port N: 1:1 direct** — DMA bypasses switches, uses bank-local addresses.
-2. **Local DMA accesses TMEM via switch using interleaved addresses** — switch handles bank selection and address conversion.
-3. **SW always thinks in interleaved address space** — gemm_dma_ctrl performs per-channel decomposition in HW.
-4. **HBM remap required** — HMSS uses contiguous addressing; HW must convert interleaved -> contiguous.
-5. **TMEM is GEMM-only**, LMEM is LSU-only.
-6. **512-bit data width** unified across DMA, TMEM, and switches.
-7. **GEMM unit ports are 64B `VX_mem_bus_if`**.
-8. **DMA AXI ports bypass cache** — connect directly to AXI arbiter.
-9. **TMEM bank is 1-port**: VX_sp_ram + 5:1 arbiter.
-10. **DMA is SW-controlled**: stride, bound come from CMD. HW does not compute tiling (only channel decomposition).
+1. **DMA ch N -> TMEM bank N: 1:1 direct** — TMEM side uses bank-local addresses, bypasses switches.
+2. **DMA ch N -> HBM via AXI mux: interleaved addresses (INTERLEAVE mode only)** — HBM side uses original SW interleaved addresses. `axi_demux` routes by `addr[8:6]` to correct HBM port.
+3. **AXI address constraint (INTERLEAVE mode)**: port j only sees `addr = 512*n + 64*j`. Both LSU (via VX_axi_adapter INTERLEAVE=1) and DMA (via gemm_dma_ctrl) must produce addresses satisfying this.
+4. **Local DMA accesses TMEM via switch using interleaved addresses** — switch handles bank selection and address conversion.
+5. **SW always thinks in interleaved address space** — gemm_dma_ctrl performs per-channel decomposition in HW.
+6. **TMEM is GEMM-only**, LMEM is LSU-only.
+7. **512-bit data width** unified across DMA, TMEM, and switches.
+8. **GEMM unit ports are 64B `VX_mem_bus_if`**.
+9. **DMA AXI ports bypass cache** — connect directly to AXI mux per port.
+10. **TMEM bank is 1-port**: VX_sp_ram + 5:1 arbiter.
+11. **DMA is SW-controlled**: stride, bound come from CMD. HW does not compute tiling (only channel decomposition).
+12. **Naming**: `NUM_HBM_MAS_PORTS` (=8) = number of AXI master ports to HMSS. Not `NUM_BANKS` (confusing with `PLATFORM_MEMORY_NUM_BANKS`=32 PCs).
+13. **xrt_sim_vcs**: no address translation on AXI path. Passes AXI addr directly to flat RAM. Checks port constraint `(addr/64) % 8 == port_idx`.
 
 ---
 

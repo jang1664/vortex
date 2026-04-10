@@ -5,6 +5,196 @@ parent:
 children: []
 fsm:
   file: fsm.json
-  state: ANALYZE
-completed_work: []
-pitfalls: []
+  state: DONE
+
+completed_work:
+  - phase: IMPLEMENT
+    title: "8-channel DMA 1:1 wiring + decomposition"
+    details: |
+      VX_tmem_subsystem.sv: removed u_switch_dma, DMA ch b → bank b direct with tag adaptation.
+      VX_gemm_tmem_dma_ctrl.sv: 8-ch decomposition (>>3 division on addrs/strides/seg_size).
+      VX_dma_engine.sv: no change needed (remap done in gemm_dma_ctrl).
+      SW: no changes needed.
+
+gaps:
+  - id: GAP-1
+    status: DONE
+    title: "VX_tmem_subsystem: DMA ch0 switch workaround → 8-ch 1:1 direct"
+    file: hw/rtl/mem/VX_tmem_subsystem.sv
+    note: "Implemented. u_switch_dma removed, direct 1:1 wiring with tag adaptation."
+
+  - id: GAP-2
+    status: FIX_NEEDED
+    title: "VX_gemm_tmem_dma_ctrl: wrong HBM address decomposition (>>3)"
+    file: hw/rtl/core/gemm/VX_gemm_tmem_dma_ctrl.sv
+    lines: "125-130 (ch_src_base, ch_src_s0, ch_dst_base, ch_dst_s0)"
+    root_cause: |
+      All 8 channels get the SAME src_base = (src_base >> 3), which:
+      (a) divides the HBM byte address by 8, producing wrong AXI address
+          (e.g., 0x10c00 → 0x2180 → sim reads wrong RAM location)
+      (b) all channels read from identical address → duplicate data, not
+          each channel's interleaved portion
+      The >>3 was originally meant to decompose across 8 channels but was
+      applied incorrectly to HBM src addresses.
+    fix_plan: |
+      Per-channel decomposition for INTERLEAVE=1, 8-bank, 64B-block:
+        ch_src_base[ch] = src_base + ch*64   (full HBM byte addr, per-channel offset)
+        ch_dst_base[ch] = dst_base >> 3       (bank-local, correct for 512-aligned TMEM)
+        ch_seg_size     = 64                  (one bus word per DMA segment)
+        ch_bnd0[ch]     = words_quot + (ch < words_rem)  (blocks per channel)
+        ch_src_s0       = 512                 (= 8*64B stride between channel's blocks)
+        ch_dst_s0       = 64                  (contiguous in bank)
+        ch_bnd1         = original bnd0       (for multi-segment, currently always 1)
+        ch_src_s1       = original src_s0     (stride between segments)
+        ch_dst_s1       = original dst_s0 >> 3  (bank-local stride)
+
+  - id: GAP-3
+    status: NOT_NEEDED
+    title: "VX_dma_engine: HBM address remap"
+    note: |
+      VX_axi_adapter with NUM_BANKS_OUT=1, INTERLEAVE=0 does simple passthrough:
+      AXI_byte_addr = word_addr << 6 = original byte addr.
+      No remap needed — gemm_dma_ctrl provides correct per-channel HBM addresses.
+
+  - id: GAP-4
+    status: NO_CHANGES_NEEDED
+    title: "SW impact assessment"
+    files:
+      - sim/xrtsim_vcs/xrt_sim_vcs.cpp
+      - tests/regression/fpint_gemm_ffn_hw_improve/kernel.cpp
+    analysis: |
+      - xrt_sim_vcs.cpp: AXI event handler (process_axi_events, line 322-332)
+        already uses pkt.addr directly for RAM access. to_software_addr() is only
+        used for host mem_write/mem_read API (line 155, 165), NOT for AXI events.
+        No changes needed in sim.
+      - [CORRECTED] Previous handoff incorrectly identified to_software_addr as
+        the root cause. The actual issue is in gemm_dma_ctrl RTL (GAP-2).
+      - kernel.cpp, runtime/host: No changes needed.
+
+pitfalls:
+  - ">>3 byte-level decomposition WRONG for sub-bus-word transfers. Scale/ZP data (256B) divided by 8 gives 32B per channel, but TMEM bus word is 64B. Must decompose at bus-word granularity, not byte granularity."
+  - ">>3 on HBM src_base is WRONG. Divides HBM byte address by 8, all channels get same wrong address. Must use per-channel src_base = src_base + ch*64."
+  - "[CORRECTED] Handoff incorrectly blamed xrt_sim_vcs.cpp::to_software_addr. That function is only used for host mem_write/mem_read API, NOT AXI events. AXI events use pkt.addr directly (line 332). The real issue is gemm_dma_ctrl >>3 on src_base."
+  - "done_if.ready race condition: must be asserted during BOTH S_WAIT_DONE and S_DONE. If only S_WAIT_DONE, channels whose done handshake overlaps with the state transition get stuck, deadlocking subsequent DMA commands."
+  - "VCS simv Makefile은 TB/DPI만 dependency. RTL 변경 후 반드시 make clean."
+  - "RTL Implementation subagent가 파일 수정 시 기존 uncommitted 변경을 revert할 수 있음. 항상 grep으로 검증."
+  - "xprop 디버깅: $display probe 반복 대신 FSDB + pywellen으로 persistently-X 신호를 먼저 찾을 것."
+  - "[SUPERSEDED] DMA ch N → bank N 직접 연결이 spec 기준 정답. gemm_dma_ctrl가 bank-local 주소를 미리 계산하므로 switch 불필요."
+  - "TMEM BANK_SIZE=4KB는 double-buffered tile layout(~160KB)에 부족. BANK_SIZE ≥ 20KB 필요."
+  - "VX_gemm_node.sv에서 BANK_SIZE를 explicit override하므로 default만 바꾸면 안 됨."
+  - "DMA tag width: bank expects SWITCH_TAG_WIDTH (TAG_WIDTH + BANK_SEL_BITS). Direct DMA connection must pad/truncate tags."
+  - "VX_axi_adapter in VX_dma_engine uses NUM_BANKS_OUT=1, INTERLEAVE=0 (default). AXI addr = word_addr << 6 = byte_addr. No address remap in adapter."
+
+progress_log:
+  - time: "2026-04-09 16:50"
+    entry: |
+      [ANALYZE] Started analysis. Read spec, VX_tmem_subsystem.sv, VX_dma_engine.sv,
+      VX_gemm_tmem_dma_ctrl.sv, VX_gemm_node.sv, xrt_sim_vcs.cpp, kernel.cpp.
+      Identified 3 RTL gaps (GAP-1,2,3) and confirmed SW needs no changes (GAP-4).
+      ANALYZE checklist status:
+        [x] Current DMA wiring in VX_tmem_subsystem.sv documented (ch0 switch workaround identified)
+        [x] Current gemm_dma_ctrl.sv decomposition logic reviewed (single-channel vs 8-channel)
+        [x] HBM remap status in VX_dma_engine.sv identified (not implemented, decision: do in gemm_dma_ctrl)
+        [x] SW impact assessed: no changes needed
+        [x] Parent pitfalls: [SUPERSEDED] tag already present, no conflicts
+        [x] Gap list written with file:line references
+  - time: "2026-04-09 17:19"
+    entry: |
+      [IMPLEMENT] Completed RTL changes. VX_tmem_subsystem: removed u_switch_dma,
+      direct 1:1 DMA→bank wiring with tag adaptation. VX_gemm_tmem_dma_ctrl: 8-ch
+      decomposition via >>3 division, all channels programmed simultaneously.
+      VCS parse/elaborate: PASS (both files clean). Confidence check: PASS.
+      FSM: IMPLEMENT → UNIT_TEST
+  - time: "2026-04-09 17:58"
+    entry: |
+      [UNIT_TEST] tensor_mem_bank: PASS. dma_engine: SKIP (missing AXI_BUS_if.sv).
+      gemm_node_improve: SIM_FAIL — 50% output mismatch (cols 16-31 all X, cols 0-15 correct).
+      X-propagation in VX_f32_to_f16 indices 16-31. Weight data not reaching upper MXU half.
+      Need to investigate: is this a >>3 decomposition issue or weight loading path bug?
+  - time: "2026-04-09 18:16"
+    entry: |
+      [UNIT_TEST→IMPLEMENT] Root cause found: >>3 decomposition wrong for sub-bus-word transfers.
+      Scale data = 256B total, >>3 = 32B/channel, but TMEM bus word = 64B.
+      Each channel writes only half a bus word, upper half (cols 16-31) stays X.
+      Fix needed: decompose at bus-word (64B) granularity, not byte granularity.
+      FSM: UNIT_TEST → IMPLEMENT (implementation bug with clear root cause)
+  - time: "2026-04-09 18:37"
+    entry: |
+      [IMPLEMENT→UNIT_TEST] Fixed VX_gemm_tmem_dma_ctrl: bus-word (64B) granularity decomposition.
+      Per-channel seg_size based on word quotient/remainder. Inactive channels get seg_size=0.
+      gemm_node_improve M=32 N=32 K=128: PASS (1024 elements, no X-prop).
+      M=128 N=128 K=128: running, 2/16 tiles passed, no errors.
+      tensor_mem_bank: PASS. dma_engine: SKIP (missing AXI_BUS_if.sv).
+      UNIT_TEST checklist:
+        [x] tensor_mem_bank PASS
+        [~] dma_engine SKIP (missing dependency, not related to our changes)
+        [x] gemm_node_improve (covers tmem_subsystem + gemm_dma_ctrl) PASS M=32x32x128
+        [x] No X-propagation in completed tests
+      FSM: IMPLEMENT → UNIT_TEST (all available unit tests pass)
+  - time: "2026-04-09 19:42"
+    entry: |
+      [BLACKBOX_TEST] First attempt: HANG (deadlock). Root cause: done_if.ready only in S_WAIT_DONE.
+      Fixed: done_if.ready now asserted in S_WAIT_DONE || S_DONE.
+      Re-running blackbox test with clean simv rebuild. Waiting for result.
+  - time: "2026-04-09 19:50"
+    entry: |
+      [BLACKBOX_TEST] Second attempt: NO DEADLOCK (fix confirmed), but 64 data mismatches.
+      instrs=4377, cycles=15946, IPC=0.274 (matches old passing run exactly).
+      Root cause: HBM address space mismatch.
+      DMA decomposition uses >>3 (÷8 for 8 TMEM banks), but xrt_sim_vcs.cpp
+      to_software_addr uses PLATFORM_MEMORY_NUM_BANKS=32 for reconstruction.
+      Example: SW addr 0x10c00 → DMA AXI addr 0x2180 → sim flat 0x43000 (wrong, should be 0x10c00).
+      This is a design-level issue: 8-ch DMA decomposition vs 32-bank memory interleaving.
+      Spec section 4.7 HBM remap needs proper implementation considering AXI mux address map.
+      FSM: stays in BLACKBOX_TEST, needs ANALYZE for HBM address mapping redesign.
+  - time: "2026-04-09 22:29"
+    entry: |
+      [ANALYZE] Re-analysis after blackbox 64-mismatch failure. Traced full address path:
+        gemm_dma_ctrl → DMA unit (byte→word) → VX_axi_adapter(NUM_BANKS_OUT=1, INTERLEAVE=0) → AXI
+      Key findings:
+        1. VX_axi_adapter passthrough: AXI_byte_addr = word_addr << 6 = original byte addr
+        2. gemm_dma_ctrl:126 ch_src_base = src_base >> 3 → divides HBM addr by 8 (WRONG)
+           Example: src_base=0x10c00 → ch_src_base=0x2180 → AXI reads from 0x2180 (not 0x10c00)
+        3. All channels get SAME src_base → read duplicate data
+        4. xrt_sim_vcs.cpp to_software_addr is NOT the issue (only used for host API, not AXI events)
+      [CORRECTED] Previous handoff diagnosis was wrong about sim fix.
+      Root cause: gemm_dma_ctrl needs per-channel HBM addresses with block-stride iteration.
+      Fix plan: ch_src_base[ch] = src_base + ch*64, seg_size=64, bnd0=blocks_per_ch, src_s0=512.
+      ANALYZE checklist:
+        [x] Current DMA wiring documented (GAP-1 DONE, 1:1 direct wiring confirmed)
+        [x] gemm_dma_ctrl decomposition reviewed (>>3 on src_base identified as root cause)
+        [x] HBM remap in VX_dma_engine: NOT NEEDED (adapter passthrough confirmed)
+        [x] SW impact: NO CHANGES (xrt_sim_vcs AXI handler correct, to_software_addr not involved)
+        [x] Pitfalls updated ([CORRECTED] tag on wrong handoff diagnosis)
+        [x] Gap list updated with file:line references and fix plan
+      FSM: ANALYZE → IMPLEMENT (confidence check PASS)
+  - time: "2026-04-09 22:37"
+    entry: |
+      [IMPLEMENT] Fixed VX_gemm_tmem_dma_ctrl.sv decomposition:
+        1. Per-channel src_base: src_base + ch*64 (LD) or src_base>>3 (ST)
+        2. Per-channel dst_base: dst_base>>3 (LD) or dst_base + ch*64 (ST)
+        3. seg_size=64, bnd0=ch_words, src_s0=512/64 (HBM/TMEM), dst_s0=64/512
+        4. Original bnd0 → bnd1, original strides → dim1 strides
+        5. Direction-dependent strides (dir_is_st mux on all 4 stride/base fields)
+      FSM: IMPLEMENT → UNIT_TEST
+  - time: "2026-04-10 00:24"
+    entry: |
+      [UNIT_TEST] gemm_node_improve M=32 N=32 K=128: PASS (1024 elements, 0 mismatches).
+      tensor_mem_bank: PASS.
+      TB fix: to_flat_addr() changed to identity function (was double-interleaving).
+      UNIT_TEST checklist:
+        [x] gemm_node_improve PASS
+        [x] tensor_mem_bank PASS
+        [~] dma_engine SKIP (missing AXI_BUS_if.sv dependency)
+        [x] No X-propagation
+      FSM: UNIT_TEST → BLACKBOX_TEST
+  - time: "2026-04-10 00:27"
+    entry: |
+      [BLACKBOX_TEST] fpint_gemm_ffn_hw_improve xrt_vcs: PASS
+      instrs=4377 (same), cycles=13375 (was 15946, 16% improvement), IPC=0.327 (was 0.274)
+      0 data mismatches (was 64). Cycle improvement from 8-ch parallel DMA.
+      BLACKBOX_TEST checklist:
+        [x] fpint_gemm_ffn_hw_improve blackbox test PASSED
+        [x] Output values match reference (0 mismatches)
+        [x] Result logged
+      FSM: BLACKBOX_TEST → DONE

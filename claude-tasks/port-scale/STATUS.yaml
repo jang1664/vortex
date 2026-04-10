@@ -9,7 +9,7 @@ children:
     state: DONE
   - name: fpint-dma-impl-verify
     path: fpint-dma-impl-verify/STATUS.yaml
-    state: ANALYZE
+    state: DONE
 fsm:
   file: fsm.json
   state: DONE
