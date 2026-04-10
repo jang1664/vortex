@@ -195,6 +195,7 @@ SW kernel (MMIO writes) -> Job Frontend -> CMD Constructor
 
 TMEM uses 8-bank x 64B interleaved addressing.
 **All components, including SW, always think in interleaved address space.**
+**DMA command addresses are byte addresses and may be sub-64B misaligned.**
 
 ```
 NUM_TMEM_BANKS = 8, DATA_SIZE = 64B
@@ -206,6 +207,13 @@ Word address -> bank mapping:
 Byte address -> bank mapping:
   bank_id = (byte_addr / 64) % 8
   bank_local_byte_offset = (byte_addr / 512) * 64 + (byte_addr % 64)
+
+Equivalent bit form:
+  byte_addr[5:0]   = byte offset within one 64B bank line
+  byte_addr[8:6]   = bank_id
+  byte_addr[63:9]  = bank-local line index
+
+  bank_local_byte_addr = ((byte_addr >> 9) << 6) | byte_addr[5:0]
 
 Example (byte addresses):
   Bank 0: 0, 512, 1024, 1536, 2048, ...
@@ -236,6 +244,9 @@ hbm_addr % 512 == tmem_addr % 512
 
 As long as `hbm_addr % 512 == tmem_addr % 512`, the corresponding 64B block falls on the same channel N, so the 1:1 DMA path can handle the transfer. HBM and TMEM addresses do not need to be equal.
 
+This equality is byte-granular. In particular, the low 6 bits are part of the
+constraint and must be preserved through TMEM bank-local address conversion.
+
 ### 4.4 gemm_dma_ctrl 8-Channel Decomposition
 
 **SW sends DMA CMDs in interleaved TMEM address space.**
@@ -252,27 +263,35 @@ SW CMD (DMA_LOAD): src=HBM(interleaved), dst=TMEM(interleaved), stride, bound, s
 NUM_PORTS = NUM_HBM_MAS_PORTS (= 8)
 
 num_words = seg_size / 64                    // total 64B bus words
-words_per_ch[ch] = num_words / NUM_PORTS     // +1 for ch < (num_words % NUM_PORTS)
+start_ch = (src_base / 64) % NUM_PORTS       // must equal (dst_base / 64) % NUM_PORTS
+words_per_logical_ch[i] = num_words / NUM_PORTS     // +1 for i < (num_words % NUM_PORTS)
 
-For each channel ch (0..7):
+For each physical channel ch (0..7):
   Block k at SW addr src_base + k*64 goes to port (src_base/64 + k) % 8.
   ch gets blocks where port == ch.
+  Equivalently, logical stripe i is assigned to physical channel:
+    ch = (start_ch + i) % NUM_PORTS
 
   HBM side (INTERLEAVE — use original SW interleaved addr):
-    ch_src_base = src_base + ch * 64         // first block for port ch
+    ch_src_base = src_base + i * 64          // first block for logical stripe i
     ch_src_stride = 512                      // next block for same port = 8 blocks away
     ch_src_seg_size = 64                     // one 64B block per segment
 
   TMEM side (bank-local):
-    ch_dst_base = (dst_base >> 9) << 6       // bank-local byte addr (same for all ch)
+    ch_dst_base = ((dst_base >> 9) << 6) | (dst_base & 6'h3f)
     ch_dst_stride = 64                       // contiguous in bank-local space
     ch_dst_seg_size = 64
 
-  ch_bound = words_per_ch[ch]                // number of blocks this channel handles
+  ch_bound = words_per_logical_ch[i]         // number of blocks this channel handles
   ch_dir = 0 (G2L)
 
-  If words_per_ch[ch] == 0: channel inactive (don't program)
+  If words_per_logical_ch[i] == 0: channel inactive (don't program)
 ```
+
+For `DMA_STORE`, the same rule applies with HBM/TMEM roles swapped:
+- HBM side remains original SW interleaved byte address
+- TMEM side uses bank-local byte address with low 6 bits preserved
+- starting physical channel is determined by `(src_base / 64) % NUM_PORTS`
 
 #### Worked example: DMA_LOAD 4096 bytes (64 blocks)
 
@@ -316,6 +335,11 @@ Local DMA uses interleaved addresses -> `VX_tmem_switch` selects bank via `addr[
 Since SW computes all addresses in interleaved space from the start, addresses passed to local DMA are already interleaved.
 
 ### 4.6 TMEM <-> MXU Address Alignment
+
+The following constraints apply to MXU-facing local DMA traffic and TMEM layouts
+used by GEMM compute. They are **not** a restriction on external DMA commands.
+External DMA must support byte-misaligned HBM/TMEM base and stride values as
+long as the 1:1 mapping constraint in section 4.3 is satisfied.
 
 ```
 input:      base_addr(input[x, 32y+:32]) % 64 == 0
