@@ -144,6 +144,7 @@ RTL_DIRS += $(AXI_DIR)/src $(AXI_COMMON_CELLS_DIR)/src
 
 # VCS compile flags
 VCS_FLAGS += -full64 -sverilog +v2k -timescale=1ns/1ps -xprop=tmerge
+VCS_FLAGS += +lint=TFIPC-L
 VCS_FLAGS += -CFLAGS "-std=c++17 -I$(SRC_DIR) -I$(ROOT_DIR)/hw -I$(ROOT_DIR)/build/hw -I$(SW_COMMON_DIR) -I/$(THIRD_PARTY_DIR)/softfloat/source/include -DXLEN_$(XLEN)"
 VCS_FLAGS += $(foreach d,$(RTL_DIRS),+incdir+$(d))
 VCS_FLAGS += $(foreach d,$(RTL_DIRS),-y $(d)) +libext+.v+.sv

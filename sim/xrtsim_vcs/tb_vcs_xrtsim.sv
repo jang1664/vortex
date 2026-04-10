@@ -80,6 +80,13 @@ module tb_vcs_xrtsim #(
   logic [C_M_AXI_MEM_ADDR_WIDTH-1:0]  m_axi_mem_awaddr [NUM_BANKS];
   logic [C_M_AXI_MEM_ID_WIDTH-1:0]    m_axi_mem_awid   [NUM_BANKS];
   logic [7:0]   m_axi_mem_awlen   [NUM_BANKS];
+  logic [2:0]   m_axi_mem_awsize   [NUM_BANKS];
+  logic [1:0]   m_axi_mem_awburst  [NUM_BANKS];
+  logic [1:0]   m_axi_mem_awlock   [NUM_BANKS];
+  logic [3:0]   m_axi_mem_awcache  [NUM_BANKS];
+  logic [2:0]   m_axi_mem_awprot   [NUM_BANKS];
+  logic [3:0]   m_axi_mem_awqos    [NUM_BANKS];
+  logic [3:0]   m_axi_mem_awregion [NUM_BANKS];
   logic         m_axi_mem_wvalid  [NUM_BANKS];
   logic         m_axi_mem_wready  [NUM_BANKS];
   logic [C_M_AXI_MEM_DATA_WIDTH-1:0]  m_axi_mem_wdata  [NUM_BANKS];
@@ -90,6 +97,13 @@ module tb_vcs_xrtsim #(
   logic [C_M_AXI_MEM_ADDR_WIDTH-1:0]  m_axi_mem_araddr [NUM_BANKS];
   logic [C_M_AXI_MEM_ID_WIDTH-1:0]    m_axi_mem_arid   [NUM_BANKS];
   logic [7:0]   m_axi_mem_arlen   [NUM_BANKS];
+  logic [2:0]   m_axi_mem_arsize   [NUM_BANKS];
+  logic [1:0]   m_axi_mem_arburst  [NUM_BANKS];
+  logic [1:0]   m_axi_mem_arlock   [NUM_BANKS];
+  logic [3:0]   m_axi_mem_arcache  [NUM_BANKS];
+  logic [2:0]   m_axi_mem_arprot   [NUM_BANKS];
+  logic [3:0]   m_axi_mem_arqos    [NUM_BANKS];
+  logic [3:0]   m_axi_mem_arregion [NUM_BANKS];
   logic         m_axi_mem_rvalid  [NUM_BANKS];
   logic         m_axi_mem_rready  [NUM_BANKS];
   logic [C_M_AXI_MEM_DATA_WIDTH-1:0]  m_axi_mem_rdata  [NUM_BANKS];
@@ -181,6 +195,13 @@ module tb_vcs_xrtsim #(
     .m_axi_mem_``i``_awaddr(m_axi_mem_awaddr[i]), \
     .m_axi_mem_``i``_awid(m_axi_mem_awid[i]), \
     .m_axi_mem_``i``_awlen(m_axi_mem_awlen[i]), \
+    .m_axi_mem_``i``_awsize(m_axi_mem_awsize[i]), \
+    .m_axi_mem_``i``_awburst(m_axi_mem_awburst[i]), \
+    .m_axi_mem_``i``_awlock(m_axi_mem_awlock[i]), \
+    .m_axi_mem_``i``_awcache(m_axi_mem_awcache[i]), \
+    .m_axi_mem_``i``_awprot(m_axi_mem_awprot[i]), \
+    .m_axi_mem_``i``_awqos(m_axi_mem_awqos[i]), \
+    .m_axi_mem_``i``_awregion(m_axi_mem_awregion[i]), \
     .m_axi_mem_``i``_wvalid(m_axi_mem_wvalid[i]), \
     .m_axi_mem_``i``_wready(m_axi_mem_wready[i]), \
     .m_axi_mem_``i``_wdata(m_axi_mem_wdata[i]), \
@@ -191,6 +212,13 @@ module tb_vcs_xrtsim #(
     .m_axi_mem_``i``_araddr(m_axi_mem_araddr[i]), \
     .m_axi_mem_``i``_arid(m_axi_mem_arid[i]), \
     .m_axi_mem_``i``_arlen(m_axi_mem_arlen[i]), \
+    .m_axi_mem_``i``_arsize(m_axi_mem_arsize[i]), \
+    .m_axi_mem_``i``_arburst(m_axi_mem_arburst[i]), \
+    .m_axi_mem_``i``_arlock(m_axi_mem_arlock[i]), \
+    .m_axi_mem_``i``_arcache(m_axi_mem_arcache[i]), \
+    .m_axi_mem_``i``_arprot(m_axi_mem_arprot[i]), \
+    .m_axi_mem_``i``_arqos(m_axi_mem_arqos[i]), \
+    .m_axi_mem_``i``_arregion(m_axi_mem_arregion[i]), \
     .m_axi_mem_``i``_rvalid(m_axi_mem_rvalid[i]), \
     .m_axi_mem_``i``_rready(m_axi_mem_rready[i]), \
     .m_axi_mem_``i``_rdata(m_axi_mem_rdata[i]), \
