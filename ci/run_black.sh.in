@@ -1,6 +1,19 @@
 #!/bin/bash
 
 set -euo pipefail
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"]"
+  echo "Modes:"
+  echo "  rtlsim   - Run only rtlsim tests"
+  echo "  xrtsim   - Run only xrtsim tests"
+  echo "  xrt-vcs-sim   - Run only xrt-vcs-sim tests"
+  echo "  xrt-vcs-pgsim   - Run only xrt-vcs-pgsim tests"
+  echo "  hw_emu    - Run only hw_emu tests"
+  echo "  hw        - Run only hw tests"
+  exit 0
+fi
+
 mode="${1:-}"
 shift || true
 
