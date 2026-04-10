@@ -32,3 +32,8 @@ __pycache__/
 /pytorch/ramulator.stats.log
 /pytorch/test/ramulator.stats.log
 ramulator.stats.log
+
+fsdbdebugLog/
+fsdbextractLog/
+fsdbqryLog/
+fsdbreportLog/
