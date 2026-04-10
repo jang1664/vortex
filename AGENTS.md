@@ -37,3 +37,5 @@ ci/run_black.sh
 ```bash
 ci/run_black.sh --help
 ```
+
+- Always use **xrt-vcs-sim** mode if not explicitly requested by user
