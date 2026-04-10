@@ -53,7 +53,7 @@ export CONFIGS
 # set +e
 # DRIVER=rtlsim \
 # DEBUG_LEVEL=${DEBUG_LEVEL} \
-# bash tests/regression/fpint_gemm_ffn_hw/test.sh "$@"
+# bash tests/regression/fpint_gemm_ffn_hw_improve/test.sh "$@"
 # rc=$?
 # set -e
 # if [ $rc -ne 0 ]; then
@@ -66,7 +66,7 @@ export CONFIGS
 # ------------------------------------------------------------------------
 # DRIVER=xrt \
 # DEBUG_LEVEL=${DEBUG_LEVEL} \
-# bash tests/regression/fpint_gemm_ffn_hw/test.sh "$@"
+# bash tests/regression/fpint_gemm_ffn_hw_improve/test.sh "$@"
 
 # ------------------------------------------------------------------------
 # - xrt + hw_emul
@@ -76,7 +76,7 @@ TARGET=hw_emu \
 PLATFORM=xilinx_u55c_gen3x16_xdma_3_202210_1 \
 DRIVER=xrt \
 DEBUG_LEVEL=${DEBUG_LEVEL} \
-bash tests/regression/fpint_gemm_ffn_hw/test.sh "$@"
+bash tests/regression/fpint_gemm_ffn_hw_improve/test.sh "$@"
 
 # ------------------------------------------------------------------------
 # - FPGA
@@ -87,4 +87,4 @@ bash tests/regression/fpint_gemm_ffn_hw/test.sh "$@"
 # DRIVER=xrt \
 # CHIPSCOPE=1 \
 # DEBUG_LEVEL=${DEBUG_LEVEL} \
-# bash tests/regression/fpint_gemm_ffn_hw/test.sh "$@"
+# bash tests/regression/fpint_gemm_ffn_hw_improve/test.sh "$@"
