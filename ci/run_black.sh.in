@@ -1,10 +1,11 @@
 #!/bin/bash
 
 set -euo pipefail
-mode=$1
+mode="${1:-}"
+shift || true
 
 if [[ "${mode}" == "" ]]; then
-  echo "Usage: $0 <mode>"
+  echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"]"
   echo "Modes:"
   echo "  rtlsim   - Run only rtlsim tests"
   echo "  xrtsim   - Run only xrtsim tests"
@@ -15,9 +16,38 @@ if [[ "${mode}" == "" ]]; then
   exit 1
 fi
 
+APP=fpint_gemm_ffn_hw_improve
+ARGS="-m 2 -n 32 -k 128"
+CONFIGS_EXTRA=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --app)
+      APP="$2"
+      shift 2
+      ;;
+    --args)
+      ARGS="$2"
+      shift 2
+      ;;
+    --configs-extra)
+      CONFIGS_EXTRA="$2"
+      shift 2
+      ;;
+    -h|--help)
+      echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"]"
+      exit 0
+      ;;
+    *)
+      echo "Unknown argument: $1"
+      echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"]"
+      exit 1
+      ;;
+  esac
+done
+
 CONFIGS=""
 CONFIGS+=" -DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MERGED_MEMORY_INTERFACE"
-# CONFIGS+=" -DFPU_FPNEW"
 CONFIGS+=" -DDCACHE_DISABLE -DL2_ENABLE -DNUM_THREADS=8"
 CONFIGS+=" -DLMEM_LOG_SIZE=22 -DSTACK_BASE_ADDR=8585740288"
 CONFIGS+=" -DDBG_TRACE_PIPELINE"
@@ -28,19 +58,15 @@ CONFIGS+=" -DDBG_TRACE_SCOPE"
 CONFIGS+=" -DDBG_TRACE_GBAR"
 CONFIGS+=" -DDBG_TRACE_TCU"
 CONFIGS+=" -DDBG_TRACE_GEMM"
-# CONFIGS+=" -DEXT_TCU_ENABLE" 
-# CONFIGS+=" -DVCD_OUTPUT"
 CONFIGS+=" -DAFU_DONE_WAIT_CACHE_DRAIN"
+
+if [[ -n "${CONFIGS_EXTRA}" ]]; then
+  CONFIGS+=" ${CONFIGS_EXTRA}"
+fi
 
 NUM_CORES=1
 NUM_THREADS=8
 DEBUG_LEVEL=3
-
-APP=fpint_gemm_ffn_hw_improve
-ARGS="-m 2 -n 32 -k 128"
-
-# APP=vecadd_multi_invoke
-# ARGS="-n 128 -r 1"
 
 # ----------------------------------------------------------------------------
 # - rtlsim
