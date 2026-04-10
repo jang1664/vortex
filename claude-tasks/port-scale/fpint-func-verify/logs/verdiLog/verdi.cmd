@@ -6018,3 +6018,4 @@ wvSetPosition -win $_nWave2 {("u_dma_engine" 24)}
 wvGetSignalClose -win $_nWave2
 wvSelectSignal -win $_nWave2 {( "u_dma_engine" 10 )} 
 wvSelectSignal -win $_nWave2 {( "u_dma_engine" 1 )} 
+debExit
