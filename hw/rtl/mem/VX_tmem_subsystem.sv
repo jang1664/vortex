@@ -120,14 +120,6 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         .TAG_WIDTH  (SWITCH_TAG_WIDTH)
     ) out_switch_to_tmem [NUM_BANKS] ();
 
-    // DMA channel 0 connection to switch (only channel 0 is used)
-    // Channels 1-7 are tied off below
-
-    VX_mem_bus_if #(
-        .DATA_SIZE  (DATA_SIZE),
-        .TAG_WIDTH  (SWITCH_TAG_WIDTH)
-    ) dma_switch_to_tmem [NUM_BANKS] ();
-
     // Internal buses: local DMA tmem port -> switch input
     VX_mem_bus_if #(
         .DATA_SIZE  (DATA_SIZE),
@@ -193,28 +185,10 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
     );
 
     // ================================================================
-    // 3b. DMA channel 0 -> switch for bank routing
-    // ================================================================
-    // Only DMA channel 0 is used. Channels 1-7 are idle (never programmed),
-    // their DMA units internally default rsp_ready=1 and req_valid=0.
-
-    VX_tmem_switch #(
-        .INSTANCE_ID ({INSTANCE_ID, ":sw_dma"}),
-        .NUM_BANKS   (NUM_BANKS),
-        .DATA_SIZE   (DATA_SIZE),
-        .TAG_WIDTH   (TAG_WIDTH)
-    ) u_switch_dma (
-        .clk        (clk),
-        .reset      (reset),
-        .bus_in_if  (dma_to_tmem[0]),
-        .bus_out_if (dma_switch_to_tmem)
-    );
-
-    // ================================================================
     // 4. TMEM Banks x NUM_BANKS
     // ================================================================
     // Each bank has 5 ports:
-    //   port[0] = DMA switch          (SWITCH_TAG_WIDTH)
+    //   port[0] = DMA direct (1:1)     (SWITCH_TAG_WIDTH)
     //   port[1] = input switch        (SWITCH_TAG_WIDTH)
     //   port[2] = weight switch       (SWITCH_TAG_WIDTH)
     //   port[3] = scale_zp switch     (SWITCH_TAG_WIDTH)
@@ -230,20 +204,20 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
             .TAG_WIDTH  (SWITCH_TAG_WIDTH)
         ) bank_port_if [NUM_TMEM_PORTS] ();
 
-        // Port 0: DMA via switch (address-based bank routing, same as local DMAs)
-        assign bank_port_if[0].req_valid       = dma_switch_to_tmem[b].req_valid;
-        assign bank_port_if[0].req_data.rw     = dma_switch_to_tmem[b].req_data.rw;
-        assign bank_port_if[0].req_data.addr   = dma_switch_to_tmem[b].req_data.addr;
-        assign bank_port_if[0].req_data.data   = dma_switch_to_tmem[b].req_data.data;
-        assign bank_port_if[0].req_data.byteen = dma_switch_to_tmem[b].req_data.byteen;
-        assign bank_port_if[0].req_data.flags  = dma_switch_to_tmem[b].req_data.flags;
-        assign bank_port_if[0].req_data.tag    = dma_switch_to_tmem[b].req_data.tag;
-        assign dma_switch_to_tmem[b].req_ready = bank_port_if[0].req_ready;
+        // Port 0: DMA direct (ch b -> bank b, 1:1 mapping)
+        assign bank_port_if[0].req_valid       = dma_to_tmem[b].req_valid;
+        assign bank_port_if[0].req_data.rw     = dma_to_tmem[b].req_data.rw;
+        assign bank_port_if[0].req_data.addr   = dma_to_tmem[b].req_data.addr;
+        assign bank_port_if[0].req_data.data   = dma_to_tmem[b].req_data.data;
+        assign bank_port_if[0].req_data.byteen = dma_to_tmem[b].req_data.byteen;
+        assign bank_port_if[0].req_data.flags  = dma_to_tmem[b].req_data.flags;
+        assign bank_port_if[0].req_data.tag    = {{BANK_SEL_BITS{1'b0}}, dma_to_tmem[b].req_data.tag};
+        assign dma_to_tmem[b].req_ready        = bank_port_if[0].req_ready;
 
-        assign dma_switch_to_tmem[b].rsp_valid     = bank_port_if[0].rsp_valid;
-        assign dma_switch_to_tmem[b].rsp_data.data = bank_port_if[0].rsp_data.data;
-        assign dma_switch_to_tmem[b].rsp_data.tag  = bank_port_if[0].rsp_data.tag;
-        assign bank_port_if[0].rsp_ready           = dma_switch_to_tmem[b].rsp_ready;
+        assign dma_to_tmem[b].rsp_valid     = bank_port_if[0].rsp_valid;
+        assign dma_to_tmem[b].rsp_data.data = bank_port_if[0].rsp_data.data;
+        assign dma_to_tmem[b].rsp_data.tag  = bank_port_if[0].rsp_data.tag[TAG_WIDTH-1:0];
+        assign bank_port_if[0].rsp_ready    = dma_to_tmem[b].rsp_ready;
 
         // Port 1: input switch
         assign bank_port_if[1].req_valid       = in_switch_to_tmem[b].req_valid;

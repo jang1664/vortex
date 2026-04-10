@@ -15,7 +15,11 @@ TIME_SCALE=1ns/1ps
 TOP_MODULE := tb_VX_gemm_node_improve
 
 TB   := $(UNITTEST_DIR)/tb_VX_gemm_node_improve.sv
-RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
+AXI_DIR := $(THIRD_PARTY_DIR)/axi
+
+RTLS := $(AXI_DIR)/src/axi_pkg.sv \
+        $(AXI_DIR)/src/axi_intf.sv \
+        $(RTL_DIR)/VX_gpu_pkg.sv \
 				$(RTL_DIR)/mem/VX_mem_bus_if.sv \
         $(RTL_DIR)/mem/VX_lsu_mem_if.sv \
         $(RTL_DIR)/verification/cf_math_util_pkg.sv \
@@ -108,7 +112,16 @@ RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
         $(RTL_DIR)/cache/VX_cache_bypass.sv \
         $(RTL_DIR)/cache/VX_cache_wrap.sv \
         $(RTL_DIR)/core/VX_dma_node.sv \
-        $(RTL_DIR)/core/VX_dma_unit_misal.sv
+        $(RTL_DIR)/core/VX_dma_unit_misal.sv \
+        $(RTL_DIR)/core/gemm/VX_gemm_tmem_dma_ctrl.sv \
+        $(RTL_DIR)/libs/VX_allocator.sv \
+        $(RTL_DIR)/libs/VX_index_buffer.sv \
+        $(RTL_DIR)/libs/VX_axi_adapter.sv \
+        $(RTL_DIR)/libs/VX_axi_write_ack.sv \
+        $(RTL_DIR)/mem/VX_tmem_subsystem.sv \
+        $(RTL_DIR)/mem/VX_dma_engine.sv \
+        $(RTL_DIR)/mem/VX_tensor_mem_bank.sv \
+        $(RTL_DIR)/mem/VX_tmem_switch.sv
 
 DPI_SRCS := $(VORTEX_HOME)/hw/dpi/float_dpi.cpp \
             $(VORTEX_HOME)/sim/common/util.cpp \
@@ -126,10 +139,14 @@ INCDIRS_ := $(VORTEX_HOME)/build/hw \
             $(RTL_DIR)/cache \
             $(RTL_DIR)/mem \
             $(RTL_DIR)/core \
+            $(RTL_DIR)/core/gemm \
             $(VORTEX_HOME)/hw/dpi \
-            $(THIRD_PARTY_DIR)/softfloat/source/include
+            $(THIRD_PARTY_DIR)/softfloat/source/include \
+            $(THIRD_PARTY_DIR)/axi/src \
+            $(THIRD_PARTY_DIR)/axi/include \
+            $(THIRD_PARTY_DIR)/axi/.bender/git/checkouts/common_cells-3e2fcccecd7aee7b/include
 
-DEFINES_ := SIMULATION DEBUG_LEVEL=3 DBG_TRACE_GEMM XLEN_64
+DEFINES_ := SIMULATION DEBUG_LEVEL=3 DBG_TRACE_GEMM XLEN_64 PLATFORM_MEMORY_ID_WIDTH=8
 FPU_NEW_EN ?= 1
 ifeq ($(FPU_NEW_EN),1)
 DEFINES_ += FPU_FPNEW

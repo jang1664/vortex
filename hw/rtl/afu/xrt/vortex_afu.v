@@ -19,7 +19,7 @@ module vortex_afu #(
 	parameter C_M_AXI_MEM_ID_WIDTH 	  = `PLATFORM_MEMORY_ID_WIDTH,
 	parameter C_M_AXI_MEM_DATA_WIDTH  = (`PLATFORM_MEMORY_DATA_SIZE * 8),
 	parameter C_M_AXI_MEM_ADDR_WIDTH  = 64,
-    parameter C_M_AXI_MEM_NUM_BANKS   = `NUM_DMA_CHANNELS
+  parameter C_M_AXI_MEM_NUM_BANKS   = `NUM_DMA_CHANNELS
 ) (
 	// System signals
 	input wire 									ap_clk,

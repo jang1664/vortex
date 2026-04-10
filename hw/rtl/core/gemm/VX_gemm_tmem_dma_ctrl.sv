@@ -1,11 +1,9 @@
 // VX_gemm_tmem_dma_ctrl
 //
 // DMA controller for TMEM subsystem. Translates GEMM DMA commands
-// (from VX_gemm_ctrl via VX_gemm_dma_ctrl_if) into VX_config_reg_if
-// writes for the 8-channel DMA engine inside VX_tmem_subsystem.
-//
-// Simplified approach: programs only channel 0; multi-channel
-// parallelism can be added later.
+// into VX_config_reg_if writes for the 8-channel DMA engine.
+// Decomposes at bus-word (64B) granularity: channels with fewer words
+// get smaller seg_size; channels with no words are inactive.
 
 `include "VX_define.vh"
 
@@ -23,7 +21,7 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
     // To gemm_sync (notify completion)
     VX_gemm_sync_if.master     gemm_sync_if,
 
-    // To DMA engine config registers (channel 0 used, rest idle)
+    // To DMA engine config registers (all channels active)
     VX_config_reg_if.master    cfg_reg_if [NUM_CHANNELS],
 
     // From DMA engine done signals
@@ -116,56 +114,77 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
     end
 
     // =========================================================
-    // Build config register array for channel 0
+    // Bus-word-level decomposition
+    // Distributes seg_size across channels at 64-byte bus-word
+    // granularity. Channels with no words are marked inactive.
     // =========================================================
-    logic [NUM_REGS-1:0][31:0] prog_regs;
+    localparam int BUS_WORD_SHIFT = 6;  // log2(64)
+    localparam int NUM_CH_SHIFT   = 3;  // log2(8)
 
-    always_comb begin
-        prog_regs = '0;
-        prog_regs[DMA_R_CONTROL]     = 32'd1;  // bit[0] = start/valid
-        prog_regs[DMA_R_DST_BASE_LO] = dst_base[31:0];
-        prog_regs[DMA_R_DST_BASE_HI] = dst_base[63:32];
-        prog_regs[DMA_R_SRC_BASE_LO] = src_base[31:0];
-        prog_regs[DMA_R_SRC_BASE_HI] = src_base[63:32];
-        prog_regs[DMA_R_SRC_ST0]     = src_s0;
-        prog_regs[DMA_R_DST_ST0]     = dst_s0;
-        prog_regs[DMA_R_SRC_ST1]     = 32'd0;
-        prog_regs[DMA_R_DST_ST1]     = 32'd0;
-        prog_regs[DMA_R_SRC_ST2]     = 32'd0;
-        prog_regs[DMA_R_DST_ST2]     = 32'd0;
-        prog_regs[DMA_R_BND0]        = bnd0;
-        prog_regs[DMA_R_BND1]        = 32'd1;
-        prog_regs[DMA_R_BND2]        = 32'd1;
-        prog_regs[DMA_R_SEG_SIZE]    = seg_size;
-        prog_regs[DMA_R_PAD]         = 32'd0;
-        prog_regs[DMA_R_DIR]         = {31'd0, dir_is_st};
-        prog_regs[DMA_R_RSVD]        = 32'd0;
-    end
+    // Per-channel base addresses are computed inside the genvar loop,
+    // conditioned on direction (LD vs ST) to swap HBM/TMEM roles.
+
+    // Seg size: decompose at 64-byte bus-word granularity
+    wire [31:0] num_words  = seg_size >> BUS_WORD_SHIFT;        // total bus words
+    wire [31:0] words_quot = num_words >> NUM_CH_SHIFT;          // words per channel (quotient)
+    wire [2:0]  words_rem  = num_words[NUM_CH_SHIFT-1:0];       // remainder
 
     // =========================================================
-    // Output: cfg_reg_if and done_if wiring
+    // Per-channel config registers and output wiring
     // =========================================================
+    logic cfg_all_valid;
 
-    // Channel 0: driven by FSM
-    logic cfg0_valid;
-    logic cfg0_ready;
-    logic done0_valid;
+    logic [NUM_CHANNELS-1:0] cfg_ready_or_inactive;
+    logic [NUM_CHANNELS-1:0] done_or_inactive;
 
-    assign cfg_reg_if[0].regs     = prog_regs;
-    assign cfg_reg_if[0].entry_id = 32'd0;
-    assign cfg_reg_if[0].valid    = cfg0_valid;
-    assign cfg0_ready             = cfg_reg_if[0].ready;
+    for (genvar ch = 0; ch < NUM_CHANNELS; ++ch) begin : g_channels
+        // Per-channel word count: quotient + 1 if ch < remainder, else quotient
+        wire [31:0] ch_words    = words_quot + ((ch[2:0] < words_rem) ? 32'd1 : 32'd0);
+        wire        ch_active   = (ch_words != 32'd0);
 
-    assign done0_valid            = done_if[0].valid;
-    assign done_if[0].ready       = (state_q == S_WAIT_DONE) ? 1'b1 : 1'b0;
+        // Per-channel addresses: HBM side gets per-channel offset, TMEM side gets bank-local
+        wire [63:0] ch_src_base = dir_is_st ? (src_base >> 3)       : (src_base + ch * 64);
+        wire [63:0] ch_dst_base = dir_is_st ? (dst_base + ch * 64)  : (dst_base >> 3);
 
-    // Channels 1..N-1: idle
-    for (genvar ch = 1; ch < NUM_CHANNELS; ++ch) begin : g_idle_channels
-        assign cfg_reg_if[ch].regs     = '0;
+        // Build per-channel config registers
+        logic [NUM_REGS-1:0][31:0] ch_prog_regs;
+        always_comb begin
+            ch_prog_regs = '0;
+            ch_prog_regs[DMA_R_CONTROL]     = ch_active ? 32'd1 : 32'd0;
+            ch_prog_regs[DMA_R_DST_BASE_LO] = ch_dst_base[31:0];
+            ch_prog_regs[DMA_R_DST_BASE_HI] = ch_dst_base[63:32];
+            ch_prog_regs[DMA_R_SRC_BASE_LO] = ch_src_base[31:0];
+            ch_prog_regs[DMA_R_SRC_BASE_HI] = ch_src_base[63:32];
+            ch_prog_regs[DMA_R_SRC_ST0]     = dir_is_st ? 32'd64  : 32'd512;  // TMEM:64, HBM:512
+            ch_prog_regs[DMA_R_DST_ST0]     = dir_is_st ? 32'd512 : 32'd64;   // HBM:512, TMEM:64
+            ch_prog_regs[DMA_R_SRC_ST1]     = dir_is_st ? (src_s0 >> 3) : src_s0;  // bank-local or full
+            ch_prog_regs[DMA_R_DST_ST1]     = dir_is_st ? dst_s0 : (dst_s0 >> 3);  // full or bank-local
+            ch_prog_regs[DMA_R_SRC_ST2]     = 32'd0;
+            ch_prog_regs[DMA_R_DST_ST2]     = 32'd0;
+            ch_prog_regs[DMA_R_BND0]        = ch_words;          // number of bus-word blocks for this channel
+            ch_prog_regs[DMA_R_BND1]        = bnd0;              // original bnd0 from command (multi-segment)
+            ch_prog_regs[DMA_R_BND2]        = 32'd1;
+            ch_prog_regs[DMA_R_SEG_SIZE]    = 32'd64;            // one 64B bus word per DMA segment
+            ch_prog_regs[DMA_R_PAD]         = 32'd0;
+            ch_prog_regs[DMA_R_DIR]         = {31'd0, dir_is_st};
+            ch_prog_regs[DMA_R_RSVD]        = 32'd0;
+        end
+
+        // Config interface: only program active channels
+        assign cfg_reg_if[ch].regs     = ch_prog_regs;
         assign cfg_reg_if[ch].entry_id = 32'd0;
-        assign cfg_reg_if[ch].valid    = 1'b0;
-        assign done_if[ch].ready       = 1'b1;
+        assign cfg_reg_if[ch].valid    = cfg_all_valid && ch_active;
+
+        // Ready: inactive channels count as ready
+        assign cfg_ready_or_inactive[ch] = ch_active ? cfg_reg_if[ch].ready : 1'b1;
+
+        // Done: inactive channels count as done
+        assign done_or_inactive[ch] = ch_active ? done_if[ch].valid : 1'b1;
+        assign done_if[ch].ready = (state_q == S_WAIT_DONE || state_q == S_DONE) ? 1'b1 : 1'b0;
     end
+
+    wire cfg_all_ready  = &cfg_ready_or_inactive;
+    wire done_all_valid = &done_or_inactive;
 
     // =========================================================
     // FSM outputs (active/idle/done to gemm_dma_ctrl_if)
@@ -177,8 +196,8 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
     // FSM combinational logic
     // =========================================================
     always_comb begin
-        state_d    = state_q;
-        cfg0_valid = 1'b0;
+        state_d       = state_q;
+        cfg_all_valid = 1'b0;
 
         // gemm_sync defaults
         gemm_sync_if.valid   = 1'b0;
@@ -197,14 +216,14 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
             end
 
             S_PROG: begin
-                cfg0_valid = 1'b1;
-                if (cfg0_ready) begin
+                cfg_all_valid = 1'b1;
+                if (cfg_all_ready) begin
                     state_d = S_WAIT_DONE;
                 end
             end
 
             S_WAIT_DONE: begin
-                if (done0_valid) begin
+                if (done_all_valid) begin
                     state_d = S_DONE;
                 end
             end
