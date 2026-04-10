@@ -1,22 +1,39 @@
 # Repository Execution Notes
 
-## Unittest
-
-- These notes apply when working on RTL unittests under `hw/unittest`.
-- Prefer `/usr/bin/gcc` and `/usr/bin/g++` for host compilation when a unittest build depends on the system compiler.
-- Do not force a conda environment in Makefiles or helper scripts. A user may choose to run inside a conda environment, but unittest infrastructure must not require one.
 
 ## Build Prerequisite
 
-- Before running RTL unittests, use a configured build directory.
+- Before running RTL unittests, blackbox test and synthesis, use a configured build directory.
 - From the build directory, run:
 
 ```bash
 ../configure --xlen=64 --tooldir=/opt/vortex --prefix=$HOME/tools/vortex
 ```
 
-- Run unittest-related `make` targets from that build directory after configuration completes.
+## Configure Behavior
 
-## Practical Rule
+- `../configure ...` populates the build directory from source-tree templates.
+- Files such as `*.in` are copied into the build tree with template variables resolved, and the generated outputs drop the `.in` suffix.
+- Related build helpers such as `Makefile`, `*.mk`, and other generated build files are also copied into the build tree during configure.
+- When checking or modifying build-side unittest files, remember that the build tree may contain configure-generated copies that differ from the source-tree templates.
 
-- When adding or updating unittest documentation, Makefiles, or helper scripts, document the build-directory flow instead of assuming in-place execution from the source tree root.
+## Unittest
+
+- These notes apply when working on RTL unittests under `hw/unittest`.
+- Use `/usr/bin/gcc` and `/usr/bin/g++` for host compilation when a unittest build depends on the system compiler.
+- Run unittest-related `make` targets from that **build** directory **after configuration completes**.
+
+## Blackbox Flow
+
+- Blackbox test have to be run at **build directory**
+- To run `blackbox.sh`, use the wrapper script:
+
+```bash
+ci/run_black.sh
+```
+
+- Check supported usage and arguments with:
+
+```bash
+ci/run_black.sh --help
+```
