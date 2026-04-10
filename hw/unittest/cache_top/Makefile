@@ -4,6 +4,7 @@ ROOT_DIR := $(abspath $(UNITTEST_DIR)/../../..)
 include $(ROOT_DIR)/config.mk
 
 RTL_DIR := $(VORTEX_HOME)/hw/rtl
+SRC_DIR := $(VORTEX_HOME)/hw/unittest/cache_top
 
 # Force use of gcc-11/g++-11 for C++20 features
 export CC := /usr/bin/gcc-11
@@ -19,7 +20,7 @@ MEM_LATENCY ?= 10
 TIME_SCALE=1ns/1ps
 TOP_MODULE := tb_VX_cache_top
 
-TB   := $(UNITTEST_DIR)/tb_VX_cache_top.sv
+TB   := $(SRC_DIR)/tb_VX_cache_top.sv
 
 # --- RTL dependencies for VX_cache_wrap ---
 RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \

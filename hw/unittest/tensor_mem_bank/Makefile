@@ -4,6 +4,7 @@ ROOT_DIR := $(abspath $(UNITTEST_DIR)/../../..)
 include $(ROOT_DIR)/config.mk
 
 RTL_DIR := $(VORTEX_HOME)/hw/rtl
+SRC_DIR := $(VORTEX_HOME)/hw/unittest/tensor_mem_bank
 
 # Use system-default GCC toolchain available in this environment.
 export CC := /usr/bin/gcc
@@ -14,7 +15,7 @@ SIM_EXEC ?= vlt
 TIME_SCALE=1ns/1ps
 TOP_MODULE := tb_VX_tensor_mem_bank
 
-TB := $(UNITTEST_DIR)/tb_VX_tensor_mem_bank.sv
+TB   := $(SRC_DIR)/tb_VX_tensor_mem_bank.sv
 
 LIB_RTLS := $(filter-out %_tb.sv,$(wildcard $(RTL_DIR)/libs/*.sv))
 

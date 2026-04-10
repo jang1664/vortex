@@ -4,6 +4,7 @@ ROOT_DIR := $(abspath $(UNITTEST_DIR)/../../..)
 include $(ROOT_DIR)/config.mk
 
 RTL_DIR := $(VORTEX_HOME)/hw/rtl
+SRC_DIR := $(VORTEX_HOME)/hw/unittest/gemm_fsm
 
 # Force use of gcc-11/g++-11 for C++20 features
 export CC := /usr/bin/gcc-11
@@ -19,7 +20,7 @@ TOP_MODULE := tb_VX_gemm_fsm
 #PIPE_INTERVAL ?= 2
 
 
-TB   := $(UNITTEST_DIR)/tb_VX_gemm_fsm.sv
+TB   := $(SRC_DIR)/tb_VX_gemm_fsm.sv
 RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
 				$(RTL_DIR)/core/gemm/VX_gemm_fsm.sv \
 				$(RTL_DIR)/core/VX_config_reg_if.sv \

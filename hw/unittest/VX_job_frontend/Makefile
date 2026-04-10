@@ -4,6 +4,7 @@ ROOT_DIR := $(abspath $(UNITTEST_DIR)/../../..)
 include $(ROOT_DIR)/config.mk
 
 RTL_DIR := $(VORTEX_HOME)/hw/rtl
+SRC_DIR := $(VORTEX_HOME)/hw/unittest/VX_job_frontend
 
 # Force use of gcc-11/g++-11 for C++20 features
 export CC := /usr/bin/gcc-11
@@ -19,7 +20,7 @@ TOP_MODULE := tb_VX_job_frontend
 #PIPE_INTERVAL ?= 2
 	
 
-TB   := $(UNITTEST_DIR)/tb_VX_job_frontend.sv
+TB   := $(SRC_DIR)/tb_VX_job_frontend.sv
 RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
 					$(RTL_DIR)/core/VX_job_desc_mmio_regs.sv \
 					$(RTL_DIR)/core/VX_job_dispatcher.sv \

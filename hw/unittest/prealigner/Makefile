@@ -4,6 +4,7 @@ ROOT_DIR := $(abspath $(UNITTEST_DIR)/../../..)
 include $(ROOT_DIR)/build/config.mk
 
 RTL_DIR := $(VORTEX_HOME)/hw/rtl
+SRC_DIR := $(VORTEX_HOME)/hw/unittest/prealigner
 
 # Force use of gcc-11/g++-11 for C++20 features
 export CC := /usr/bin/gcc-11
@@ -15,7 +16,7 @@ TIME_SCALE=1ns/1ps
 
 TOP_MODULE := tb_VX_prealigner
 
-TB   := $(UNITTEST_DIR)/tb_VX_prealigner.sv
+TB   := $(SRC_DIR)/tb_VX_prealigner.sv
 RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
 				$(RTL_DIR)/core/gemm/VX_prealigner.sv \
 				$(RTL_DIR)/libs/VX_find_first.sv \

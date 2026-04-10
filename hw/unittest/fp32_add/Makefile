@@ -4,6 +4,7 @@ ROOT_DIR := $(abspath $(UNITTEST_DIR)/../../..)
 include $(ROOT_DIR)/build/config.mk
 
 RTL_DIR := $(VORTEX_HOME)/hw/rtl
+SRC_DIR := $(VORTEX_HOME)/hw/unittest/fp32_add
 
 # Force use of gcc-11/g++-11 for C++20 features
 export CC := /usr/bin/gcc-11
@@ -15,7 +16,7 @@ TIME_SCALE=1ns/1ps
 
 TOP_MODULE := tb_VX_fp32_add
 
-TB   := $(UNITTEST_DIR)/tb_VX_fp32_add.sv
+TB   := $(SRC_DIR)/tb_VX_fp32_add.sv
 RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
         $(RTL_DIR)/core/gemm/VX_fp32_add.sv \
         $(RTL_DIR)/core/gemm/VX_stream_fence.sv \

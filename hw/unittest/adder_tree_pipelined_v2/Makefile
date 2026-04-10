@@ -4,6 +4,7 @@ ROOT_DIR := $(abspath $(UNITTEST_DIR)/../../..)
 include $(ROOT_DIR)/build/config.mk
 
 RTL_DIR := $(VORTEX_HOME)/hw/rtl
+SRC_DIR := $(VORTEX_HOME)/hw/unittest/adder_tree_pipelined_v2
 
 # Force use of gcc-11/g++-11 for C++20 features
 export CC := /usr/bin/gcc-11
@@ -15,7 +16,7 @@ TIME_SCALE=1ns/1ps
 
 TOP_MODULE := tb_VX_reduce_tree_pipelined_v2
 
-TB   := $(UNITTEST_DIR)/tb_VX_reduce_tree_pipelined_v2.sv
+TB   := $(SRC_DIR)/tb_VX_reduce_tree_pipelined_v2.sv
 RTLS := $(RTL_DIR)/libs/VX_reduce_tree_pipelined_v2.sv \
 				$(RTL_DIR)/libs/VX_reduce_tree.sv \
 				$(RTL_DIR)/libs/VX_elastic_buffer.sv \

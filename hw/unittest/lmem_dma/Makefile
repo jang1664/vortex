@@ -4,6 +4,7 @@ ROOT_DIR := $(abspath $(UNITTEST_DIR)/../../..)
 include $(ROOT_DIR)/config.mk
 
 RTL_DIR := $(VORTEX_HOME)/hw/rtl
+SRC_DIR := $(VORTEX_HOME)/hw/unittest/lmem_dma
 
 # Force use of gcc-11/g++-11 for C++20 features
 export CC := /usr/bin/gcc-11
@@ -18,7 +19,7 @@ TOP_MODULE := tb_VX_lmem_dma
 #PIPE_ALIGN ?= 1
 #PIPE_INTERVAL ?= 2
 
-TB   := $(UNITTEST_DIR)/tb_VX_lmem_dma.sv
+TB   := $(SRC_DIR)/tb_VX_lmem_dma.sv
 RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
 				$(RTL_DIR)/core/gemm/VX_lmem_dma.sv \
 				$(RTL_DIR)/mem/VX_mem_bus_if.sv \

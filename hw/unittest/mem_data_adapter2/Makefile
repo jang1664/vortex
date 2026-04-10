@@ -4,6 +4,7 @@ ROOT_DIR := $(abspath $(UNITTEST_DIR)/../../..)
 include $(ROOT_DIR)/build/config.mk
 
 RTL_DIR := $(VORTEX_HOME)/hw/rtl
+SRC_DIR := $(VORTEX_HOME)/hw/unittest/mem_data_adapter2
 
 # Force use of gcc-11/g++-11 for C++20 features
 export CC := /usr/bin/gcc-11
@@ -15,7 +16,7 @@ TIME_SCALE=1ns/1ps
 
 TOP_MODULE := tb_VX_mem_data_adapter2
 
-TB   := $(UNITTEST_DIR)/tb_VX_mem_data_adapter2.sv
+TB   := $(SRC_DIR)/tb_VX_mem_data_adapter2.sv
 RTLS := $(RTL_DIR)/libs/VX_mem_data_adapter2.sv \
         $(RTL_DIR)/libs/VX_demux.sv \
         $(RTL_DIR)/libs/VX_elastic_buffer.sv \

@@ -4,6 +4,7 @@ ROOT_DIR := $(abspath $(UNITTEST_DIR)/../../..)
 include $(ROOT_DIR)/build/config.mk
 
 RTL_DIR := $(VORTEX_HOME)/hw/rtl
+SRC_DIR := $(VORTEX_HOME)/hw/unittest/reformatter
 
 # Force use of gcc-11/g++-11 for C++20 features
 export CC := /usr/bin/gcc-11
@@ -18,7 +19,7 @@ SIM_EXEC ?= vcs
 TIME_SCALE=1ns/1ps
 TOP_MODULE := tb_VX_reformatter
 
-TB   := $(UNITTEST_DIR)/tb_VX_reformatter.sv
+TB   := $(SRC_DIR)/tb_VX_reformatter.sv
 RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
         $(RTL_DIR)/core/gemm/VX_reformatter.sv \
         $(RTL_DIR)/libs/VX_elastic_buffer.sv \

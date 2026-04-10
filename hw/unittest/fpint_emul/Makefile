@@ -4,6 +4,7 @@ ROOT_DIR := $(abspath $(UNITTEST_DIR)/../../..)
 include $(ROOT_DIR)/build/config.mk
 
 RTL_DIR := $(VORTEX_HOME)/hw/rtl
+SRC_DIR := $(VORTEX_HOME)/hw/unittest/fpint_emul
 
 # Force use of gcc-11/g++-11 for C++20 features
 export CC := /usr/bin/gcc-11
@@ -14,7 +15,7 @@ SIM_EXEC ?= vcs
 TIME_SCALE=1ns/1ps
 TOP_MODULE := tb_fpint_emul
 
-TB   := $(UNITTEST_DIR)/tb_fpint_emul.sv
+TB   := $(SRC_DIR)/tb_fpint_emul.sv
 RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
         $(RTL_DIR)/verification/cf_math_pkg.sv \
         $(RTL_DIR)/verification/fpint_emul.sv
