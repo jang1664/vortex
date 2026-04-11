@@ -1,21 +1,86 @@
 # Vortex GEMM Accelerator
 
 ## Source Tree (Common)
-- `hw/` — hardware
-  - `rtl/` — RTL source (core/, cache/, mem/, tcu/, fpu/, libs/, interfaces/)
-  - `unittest/` — unit tests (each dir has its own Makefile)
-  - `syn/` — synthesis scripts
-  - `dpi/` — DPI-C for simulation
-- `kernel/` — device-side kernels (GEMM, etc.)
-- `runtime/` — host-side runtime library
-- `sim/` — simulator backends (simx, rtlsim, etc.)
-- `tools/` — utilities (hw_draw, etc.)
-- `docs/` — project documentation
-- `claude-tasks/` — Claude task FSMs, status, logs
-- `harness/` — Claude harness (rules, docs, hooks, skills)
-- `hw_arch_draw/` — architecture design JSON files
-- `third_party/` — external dependencies
-  - `axi/` - AXI related library
+
+```
+hw/
+  rtl/                             # RTL source
+    core/                          #   core pipeline (fetch, issue, execute, commit)
+      gemm/                        #     GEMM accelerator (node, unit, DMA ctrl, sync, local DMA)
+    cache/                         #   cache hierarchy (bank, tags, data, MSHR, replacement)
+    mem/                           #   memory subsystem (tensor mem, local mem, DMA engine, bus IFs)
+    tcu/                           #   tensor compute unit (int/fp datapaths, BHF)
+      bhf/                         #     branch history filter
+    fpu/                           #   floating-point unit
+      patched_cvfpu/               #     patched CVFPU library
+    libs/                          #   reusable IP (arbiters, FIFOs, RAMs, multipliers, stream xbar)
+    interfaces/                    #   interface definitions (pipeline IFs, bus IFs, CSR IFs)
+    afu/                           #   accelerator function unit (OPAE, XRT shims)
+      opae/                        #     OPAE shim
+      xrt/                         #     XRT shim
+    verification/                  #   verification IPs (SRAM model, FP emulator)
+  unittest/                        # unit tests (each dir has its own Makefile + tb_*.sv)
+    common/                        #   shared test infrastructure
+    lmem_dma_misal/                #   local DMA (byte-misaligned) tests
+    gemm_node*/                    #   GEMM node / node_improve / node_tmem tests
+    gemm_unit/                     #   GEMM unit tests
+    tmem_subsystem/                #   tensor memory subsystem tests
+    tensor_mem_bank/               #   tensor memory bank tests
+    cache_top/                     #   cache tests
+    local_mem_top/                 #   local memory tests
+    core_top/ / core_tmem/         #   core-level tests
+    dma*/                          #   DMA / dma_engine / dma_node / dma_mem_unit* tests
+    gemm_ctrl*/                    #   GEMM controller tests
+    gemm_fsm/                      #   GEMM FSM tests
+    mem_streamer/ / mem_unit_top/  #   memory streamer / unit tests
+    issue_top/ / VX_job_frontend/  #   pipeline frontend tests
+    fp*/                           #   FP16/FP32 add/mul, fpint_emul tests
+    generic_queue/ / adder_tree*/  #   library component tests
+    reformatter/ / prealigner/     #   data format tests
+  syn/                             # synthesis scripts
+  dpi/                             # DPI-C modules for simulation
+
+kernel/                            # device-side kernels (run on Vortex RISC-V core)
+  include/                         #   public headers (intrinsics, tensor, spawn, math)
+  src/                             #   GEMM kernel, spawn, syscall, tinyprintf
+  scripts/                         #   linker scripts, vxbin.py
+
+runtime/                           # host-side runtime library (C++)
+  include/                         #   public API headers
+  common/                          #   shared code (scope, callbacks, JSON)
+  simx/                            #   functional simulator backend
+  rtlsim/                          #   Verilator RTL sim backend
+  xrt/                             #   XRT (Xilinx) backend
+  opae/                            #   OPAE (Intel FPGA) backend
+
+sim/                               # simulator implementations (C++)
+  common/                          #   shared (memory model, DRAM sim, softfloat, tensor config)
+  simx/                            #   cycle-approximate functional simulator
+  rtlsim/                          #   Verilator RTL sim wrapper
+  xrtsim/                          #   XRT + Verilator integration
+  xrtsim_vcs/                      #   XRT + VCS (Synopsys) RTL sim
+
+tools/                             # utilities
+  fsdb_cli/                        #   FSDB waveform analyzer (Python CLI)
+  hw_draw/                         #   HW architecture visualizer (JSON + web)
+  verify_rtl.py                    #   automated RTL verification
+
+docs/                              # project documentation
+  rtl/                             #   per-module RTL docs
+  simulation/                      #   simulation guides (VCS, Blackbox flow)
+  software/                        #   software docs (runtime, ISA, kernels)
+
+agent-tasks/                      # Claude task FSMs, STATUS.yaml, logs
+harness/                           # Claude harness
+  agents/                          #   subagent definitions
+  rules/                           #   *-common.md, *-arch.md
+  hooks/                           #   event hooks
+  skills/                          #   slash commands
+hw_arch_draw/                      # architecture design JSON files
+third_party/                       # external dependencies (axi/)
+ci/                                # CI scripts (run_black.sh, etc.)
+build/                             # build output (gitignored)
+```
 
 ## Rules — Common
 - All files created by the agent must be written in English. Korean is only used in conversation with the user.
@@ -26,9 +91,9 @@
 - The main agent must control the entire flow. When there is a specific task, first check if <subagent>.md exists, and if it does, use it. If a suitable subagent does not exist, specify which subagent is required in STATUS.yaml, and the main agent generates and uses <subagent>.md. Subsequently, the user will refine <subagent>.md.
 - **The main agent must NOT directly modify RTL files (*.sv, *.vh, *.v).** RTL modifications must be performed through the RTL Implementation subagent (`subagent_type: "RTL Implementation"`). The main agent only diagnoses issues and delegates modification instructions to the subagent.
 - **The main agent must NOT directly run tests.** Unit tests (`make run` in unittest dirs), blackbox tests (`blackbox.sh`), RTL simulations (`simv`), and verifications (`verify_rtl.py`) must be run through the Verification subagent (`subagent_type: "Verification"`). The main agent receives test results and decides the next action.
-- When starting a non-trivial task, create `claude-tasks/<task_name>/STATUS.yaml` and maintain it throughout the work. Log entries must include timestamps (`YYYY-MM-DD HH:MM` format, use `date` command) and cover: what was attempted, what failed and why, and what was learned. Maintain a `pitfalls` list in STATUS.yaml to record failures, confusing behaviors, and gotchas. This section serves as a persistent reference so the same mistakes are not repeated.
+- When starting a non-trivial task, create `agent-tasks/<task_name>/STATUS.yaml` and maintain it throughout the work. Log entries must include timestamps (`YYYY-MM-DD HH:MM` format, use `date` command) and cover: what was attempted, what failed and why, and what was learned. Maintain a `pitfalls` list in STATUS.yaml to record failures, confusing behaviors, and gotchas. This section serves as a persistent reference so the same mistakes are not repeated.
 - **Subtask management**: Tasks can be nested recursively. Use `/create-fsm --parent <parent_path> <child_name>` to create subtasks. Each subtask has its own FSM and STATUS.yaml. When a subtask reaches DONE, update the parent's `children[].state`. `/run-fsm` accepts slash-separated paths: `/run-fsm port-scale/dma-debug`. Hooks automatically find the deepest active (non-DONE) subtask.
-- Context recovery is handled automatically via PreCompact hook — when compaction occurs, the hook injects instructions to re-read `claude-tasks/<task_name>/STATUS.yaml` for context recovery. After compaction, always follow the injected instructions to restore working context. For manual handoff (e.g., ending a session), use the `/handoff` skill.
+- Context recovery is handled automatically via PreCompact hook — when compaction occurs, the hook injects instructions to re-read `agent-tasks/<task_name>/STATUS.yaml` for context recovery. After compaction, always follow the injected instructions to restore working context. For manual handoff (e.g., ending a session), use the `/handoff` skill.
 
 ## Rules — Subagent Only
 - Read the Reference Map below to find relevant docs before starting work.
@@ -39,7 +104,7 @@
 - RTL work → @docs/coding_guidelines_verilog.md, @docs/microarchitecture.md
 - RTL module docs → @docs/rtl/
 - HW design JSON → @.claude/rules/hw-design-json.md
-- FPINT GEMM → @claude-tasks/port-scale/fpint-gemm-spec.md (arch, address space, SW stack, performance)
+- FPINT GEMM → @agent-tasks/port-scale/fpint-gemm-spec.md (arch, address space, SW stack, performance)
 - HBM / memory interleaving → @docs/hbm-bank-interleaving.md
 - Task FSM schema → @docs/fsm-schema.md
 - Common rules → @harness/rules/*-common.md

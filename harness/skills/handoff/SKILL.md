@@ -5,7 +5,7 @@ Generate a handoff document, then guide the user through `/clear` and resume.
 ## Usage
 
 ```
-/handoff              # auto-detect task from claude-tasks/**/STATUS.yaml
+/handoff              # auto-detect task from agent-tasks/**/STATUS.yaml
 /handoff port-scale   # specify root task
 /handoff port-scale/dma-debug  # specify subtask path
 ```
@@ -13,13 +13,13 @@ Generate a handoff document, then guide the user through `/clear` and resume.
 ## Step 1: Determine Task Name
 
 - If an argument is provided, use it as `<task_path>` (supports slash-separated subtask paths).
-- If no argument, scan `claude-tasks/` recursively for STATUS.yaml files. Display them as a tree. If exactly one root task exists, use it. If multiple exist, ask the user which one.
+- If no argument, scan `agent-tasks/` recursively for STATUS.yaml files. Display them as a tree. If exactly one root task exists, use it. If multiple exist, ask the user which one.
 
 ## Step 2: Gather Context
 
 Collect the following information to write the handoff:
 
-1. **Current progress** — Read `claude-tasks/<task_name>/STATUS.yaml` (includes iteration logs). Summarize what has been done.
+1. **Current progress** — Read `agent-tasks/<task_name>/STATUS.yaml` (includes iteration logs). Summarize what has been done.
 2. **Key decisions made** — Extract important design/implementation decisions from the conversation and logs.
 3. **Remaining work** — What still needs to be done. Be specific: file paths, commands, configs.
 4. **Gotchas** — Pitfalls, workarounds, environment issues encountered. These save the next session from repeating mistakes.
@@ -30,7 +30,7 @@ Collect the following information to write the handoff:
 Generate the filename with current datetime:
 
 ```bash
-HANDOFF_FILE="claude-tasks/<task_name>/handoff.$(date +%Y%m%d-%H%M).md"
+HANDOFF_FILE="agent-tasks/<task_name>/handoff.$(date +%Y%m%d-%H%M).md"
 ```
 
 Write the handoff document with this structure:
@@ -59,11 +59,11 @@ Write the handoff document with this structure:
 After writing the handoff file, output the following message **exactly** (replacing the path):
 
 ```
-Handoff saved to: claude-tasks/<task_name>/handoff.<datetime>.md
+Handoff saved to: agent-tasks/<task_name>/handoff.<datetime>.md
 
 Please run `/clear`, then start the new session with:
 
-@claude-tasks/<task_name>/handoff.<datetime>.md 를 읽고 다시 시작해줘.
+@agent-tasks/<task_name>/handoff.<datetime>.md 를 읽고 다시 시작해줘.
 ```
 
 ## Rules

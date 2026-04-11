@@ -2,7 +2,7 @@
 # Shared helper: find the deepest active (non-DONE) FSM task.
 # Source this from hooks — it sets: STATUS_FILE, FSM_HEADER, TASK_DIR, FSM_STATE, FSM_FILE
 #
-# Algorithm: find all STATUS.yaml under claude-tasks/, skip DONE tasks, pick the deepest path.
+# Algorithm: find all STATUS.yaml under agent-tasks/, skip DONE tasks, pick the deepest path.
 
 PROJECT_DIR="${PROJECT_DIR:-${CLAUDE_PROJECT_DIR:-.}}"
 
@@ -23,8 +23,8 @@ while IFS= read -r f; do
     [ -z "$_state" ] || [ -z "$_file" ] && continue
     [ "$_state" = "DONE" ] && continue
 
-    # Count depth: number of path segments between claude-tasks/ and the file
-    _rel="${f#$PROJECT_DIR/claude-tasks/}"
+    # Count depth: number of path segments between agent-tasks/ and the file
+    _rel="${f#$PROJECT_DIR/agent-tasks/}"
     _depth=$(echo "$_rel" | tr '/' '\n' | wc -l)
 
     if [ "$_depth" -gt "$_BEST_DEPTH" ]; then
@@ -35,4 +35,4 @@ while IFS= read -r f; do
         TASK_DIR=$(dirname "$f")
         FSM_HEADER="{\"state\":\"$_state\",\"file\":\"$_file\"}"
     fi
-done < <(find "$PROJECT_DIR/claude-tasks" -name "STATUS.yaml" 2>/dev/null | sort)
+done < <(find "$PROJECT_DIR/agent-tasks" -name "STATUS.yaml" 2>/dev/null | sort)

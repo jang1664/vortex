@@ -26,7 +26,7 @@ Before any code changes, confirm the improvement idea with the user.
 - Identify which modules/files will be affected.
 - Agree on the scope — do NOT expand beyond what the user asked.
 
-**Spec document**: Create `claude-tasks/<task_path>/<feature-name>-spec.md` at the start of this step. Update it as the spec is refined through discussion with the user. The spec doc should contain:
+**Spec document**: Create `agent-tasks/<task_path>/<feature-name>-spec.md` at the start of this step. Update it as the spec is refined through discussion with the user. The spec doc should contain:
 - Goal: what is being improved and why
 - Scope: affected modules/files
 - Design decisions made during discussion
@@ -99,7 +99,7 @@ If status is NOT "pass", spawn the **RTL Implementation subagent** again with:
 
 ## Iteration Log
 
-Append iteration results to `claude-tasks/<task_path>/STATUS.yaml` throughout the loop. Update it after **every** verification iteration. Use the following format per iteration:
+Append iteration results to `agent-tasks/<task_path>/STATUS.yaml` throughout the loop. Update it after **every** verification iteration. Use the following format per iteration:
 
 ```markdown
 ### <Feature Name> — Iteration N

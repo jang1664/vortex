@@ -7,10 +7,10 @@ Interactively create a task FSM with the user.
 1. **Read the schema** — Read `docs/fsm-schema.md` to understand the JSON format and STATUS.yaml schema.
 
 2. **Ask the user** for:
-   - Task name (becomes the directory under `claude-tasks/` or under a parent task)
+   - Task name (becomes the directory under `agent-tasks/` or under a parent task)
    - Goal of the workflow
    - Rough list of phases/steps
-   - If `--parent <parent_path>` is specified, this is a subtask. Verify parent's STATUS.yaml exists at `claude-tasks/<parent_path>/STATUS.yaml`.
+   - If `--parent <parent_path>` is specified, this is a subtask. Verify parent's STATUS.yaml exists at `agent-tasks/<parent_path>/STATUS.yaml`.
 
 3. **Draft the FSM** — Based on the user's description, propose a JSON FSM:
    - Keep it flat and under 10 states
@@ -53,8 +53,8 @@ Interactively create a task FSM with the user.
    If **PASS**: proceed to save.
 
 7. **Save** — Write the final FSM:
-   - Root task: `claude-tasks/<task_name>/fsm.json`
-   - Subtask: `claude-tasks/<parent_path>/<task_name>/fsm.json`
+   - Root task: `agent-tasks/<task_name>/fsm.json`
+   - Subtask: `agent-tasks/<parent_path>/<task_name>/fsm.json`
 
 8. **Initialize STATUS.yaml** — Create STATUS.yaml with parent/children fields:
    ```yaml
