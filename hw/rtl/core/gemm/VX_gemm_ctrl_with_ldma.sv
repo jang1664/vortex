@@ -173,7 +173,8 @@ module VX_gemm_ctrl_with_ldma import VX_gpu_pkg::*; #(
   // Input read DMA (LMEM -> GEMM, DIR=0)
   VX_lmem_dma_misal #(
     .INSTANCE_ID({INSTANCE_ID, "_input_dma"}),
-    .DIR(0)
+    .DIR(0),
+    .TAG_WIDTH(GEMM_MEM_TAG_WIDTH)
   ) u_input_lmem_dma (
     .clk(clk),
     .reset(reset),
@@ -186,7 +187,8 @@ module VX_gemm_ctrl_with_ldma import VX_gpu_pkg::*; #(
   // Weight read DMA (LMEM -> GEMM, DIR=0)
   VX_lmem_dma_misal #(
     .INSTANCE_ID({INSTANCE_ID, "_weight_dma"}),
-    .DIR(0)
+    .DIR(0),
+    .TAG_WIDTH(GEMM_MEM_TAG_WIDTH)
   ) u_weight_lmem_dma (
     .clk(clk),
     .reset(reset),
@@ -199,7 +201,8 @@ module VX_gemm_ctrl_with_ldma import VX_gpu_pkg::*; #(
   // Quant param read DMA (LMEM -> GEMM, DIR=0)
   VX_lmem_dma_misal #(
     .INSTANCE_ID({INSTANCE_ID, "_quant_param_dma"}),
-    .DIR(0)
+    .DIR(0),
+    .TAG_WIDTH(GEMM_MEM_TAG_WIDTH)
   ) u_quant_param_lmem_dma (
     .clk(clk),
     .reset(reset),
@@ -212,7 +215,8 @@ module VX_gemm_ctrl_with_ldma import VX_gpu_pkg::*; #(
   // Output write DMA (GEMM -> LMEM, DIR=1)
   VX_lmem_dma_misal #(
     .INSTANCE_ID({INSTANCE_ID, "_output_dma"}),
-    .DIR(1)
+    .DIR(1),
+    .TAG_WIDTH(GEMM_MEM_TAG_WIDTH)
   ) u_output_lmem_dma (
     .clk(clk),
     .reset(reset),

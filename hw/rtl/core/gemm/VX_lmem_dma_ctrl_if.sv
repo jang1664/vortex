@@ -19,6 +19,8 @@ interface VX_lmem_dma_ctrl_if import VX_gpu_pkg::*; #(
   logic [31:0] dst_strides [NDIM];
   logic [31:0] bounds      [NDIM];
   logic [31:0] seg_size;
+  logic [31:0] reg_idx;
+  logic [31:0] reg_value;
 
   // Status signals (slave -> master)
   logic        idle;
@@ -32,6 +34,8 @@ interface VX_lmem_dma_ctrl_if import VX_gpu_pkg::*; #(
     output dst_strides,
     output bounds,
     output seg_size,
+    output reg_idx,
+    output reg_value,
     input  idle,
     input  done
   );
@@ -44,6 +48,8 @@ interface VX_lmem_dma_ctrl_if import VX_gpu_pkg::*; #(
     input  dst_strides,
     input  bounds,
     input  seg_size,
+    input  reg_idx,
+    input  reg_value,
     output idle,
     output done
   );

@@ -132,6 +132,12 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         .TAG_WIDTH  (TAG_WIDTH)
     ) ldma_gemm [NUM_LDMA] ();
 
+    VX_gemm_sync_if ldma_sync_if [NUM_LDMA] ();
+
+    for (genvar i = 0; i < NUM_LDMA; ++i) begin : g_ldma_sync
+        assign ldma_sync_if[i].ready = 1'b1;
+    end
+
     // ================================================================
     // 3. Switches: 1:N address-based bank routing (x4)
     // ================================================================
@@ -304,11 +310,13 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
     // Input local DMA
     VX_lmem_dma_misal #(
         .INSTANCE_ID ({INSTANCE_ID, ":ldma_in"}),
-        .DIR         (0)
+        .DIR         (0),
+        .TAG_WIDTH   (TAG_WIDTH)
     ) u_ldma_input (
         .clk         (clk),
         .reset       (reset),
         .ctrl_if     (ldma_ctrl_if[0]),
+        .gemm_sync_if(ldma_sync_if[0]),
         .lmem_bus_if (ldma_to_switch[0]),
         .gemm_bus_if (ldma_gemm[0])
     );
@@ -316,11 +324,13 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
     // Weight local DMA
     VX_lmem_dma_misal #(
         .INSTANCE_ID ({INSTANCE_ID, ":ldma_wt"}),
-        .DIR         (0)
+        .DIR         (0),
+        .TAG_WIDTH   (TAG_WIDTH)
     ) u_ldma_weight (
         .clk         (clk),
         .reset       (reset),
         .ctrl_if     (ldma_ctrl_if[1]),
+        .gemm_sync_if(ldma_sync_if[1]),
         .lmem_bus_if (ldma_to_switch[1]),
         .gemm_bus_if (ldma_gemm[1])
     );
@@ -328,11 +338,13 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
     // Scale/zero-point local DMA
     VX_lmem_dma_misal #(
         .INSTANCE_ID ({INSTANCE_ID, ":ldma_sz"}),
-        .DIR         (0)
+        .DIR         (0),
+        .TAG_WIDTH   (TAG_WIDTH)
     ) u_ldma_sz (
         .clk         (clk),
         .reset       (reset),
         .ctrl_if     (ldma_ctrl_if[2]),
+        .gemm_sync_if(ldma_sync_if[2]),
         .lmem_bus_if (ldma_to_switch[2]),
         .gemm_bus_if (ldma_gemm[2])
     );
@@ -340,11 +352,13 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
     // Output local DMA (GEMM -> LMEM)
     VX_lmem_dma_misal #(
         .INSTANCE_ID ({INSTANCE_ID, ":ldma_out"}),
-        .DIR         (1)
+        .DIR         (1),
+        .TAG_WIDTH   (TAG_WIDTH)
     ) u_ldma_output (
         .clk         (clk),
         .reset       (reset),
         .ctrl_if     (ldma_ctrl_if[3]),
+        .gemm_sync_if(ldma_sync_if[3]),
         .lmem_bus_if (ldma_to_switch[3]),
         .gemm_bus_if (ldma_gemm[3])
     );
