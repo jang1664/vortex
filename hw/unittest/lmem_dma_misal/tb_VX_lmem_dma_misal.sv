@@ -1,6 +1,9 @@
 // tb_VX_lmem_dma_misal.sv
 `timescale 1ns / 1ps
 `include "VX_define.vh"
+`ifndef TB_RD_PREFETCH_DEPTH
+`define TB_RD_PREFETCH_DEPTH 1
+`endif
 
 // -----------------------------------------------------------------------------
 // Testbench for VX_lmem_dma_misal with REAL VX_local_mem + byte-addressed GEMM node
@@ -16,6 +19,7 @@ module tb_VX_lmem_dma_misal import VX_gpu_pkg::*; ();
   parameter real   PERIOD       = 10.0;
   parameter string OBJ          = "func";  // "func" or "power"
   parameter string FILE_POSTFIX = "func";
+  parameter int    RD_PREFETCH_DEPTH = `TB_RD_PREFETCH_DEPTH;
 
   // -----------------------------
   // Params
@@ -89,7 +93,8 @@ module tb_VX_lmem_dma_misal import VX_gpu_pkg::*; ();
     .INSTANCE_ID("lmem_dma_dir0"),
     .DIR(0),
     .NDIM(NDIM),
-    .TAG_WIDTH(TAG_WIDTH)
+    .TAG_WIDTH(TAG_WIDTH),
+    .RD_PREFETCH_DEPTH(RD_PREFETCH_DEPTH)
   ) dut_dir0 (
     .clk         (clk),
     .reset       (reset),
@@ -103,7 +108,8 @@ module tb_VX_lmem_dma_misal import VX_gpu_pkg::*; ();
     .INSTANCE_ID("lmem_dma_dir1"),
     .DIR(1),
     .NDIM(NDIM),
-    .TAG_WIDTH(TAG_WIDTH)
+    .TAG_WIDTH(TAG_WIDTH),
+    .RD_PREFETCH_DEPTH(RD_PREFETCH_DEPTH)
   ) dut_dir1 (
     .clk         (clk),
     .reset       (reset),

@@ -11,6 +11,7 @@ export CC := /usr/bin/gcc
 export CXX := /usr/bin/g++
 
 SIM_EXEC ?= vlt
+RD_PREFETCH_DEPTH ?= 1
 
 TIME_SCALE=1ns/1ps
 TOP_MODULE := tb_VX_lmem_dma_misal
@@ -44,7 +45,7 @@ RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
 				$(RTL_DIR)/libs/VX_find_first.sv
 #PARAMS_  := PIPE_MULT=$(PIPE_MULT) PIPE_ALIGN=$(PIPE_ALIGN) PIPE_INTERVAL=$(PIPE_INTERVAL)
 INCDIRS_ := $(RTL_DIR)
-DEFINES_ := SIMULATION DEBUG_LEVEL=3 DBG_TRACE_GEMM
+DEFINES_ := SIMULATION DEBUG_LEVEL=3 DBG_TRACE_GEMM TB_RD_PREFETCH_DEPTH=$(RD_PREFETCH_DEPTH)
 
 COMPILE_LOG := logs/compile.log
 SIM_LOG     := logs/sim.log
@@ -85,3 +86,6 @@ clean:
 	rm -rf reports logs 
 	rm -rf simv novas* ucli* verdi* csrc* simv.daidir*
 	rm -rf vcd2fsdb*
+
+sim-depth-%:
+	$(MAKE) clean sim RD_PREFETCH_DEPTH=$*

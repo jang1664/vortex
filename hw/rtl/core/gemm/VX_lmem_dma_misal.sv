@@ -18,7 +18,8 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
   parameter `STRING INSTANCE_ID = "",
   parameter int DIR  = 0,
   parameter int NDIM = 3,
-  parameter int TAG_WIDTH = 1
+  parameter int TAG_WIDTH = 1,
+  parameter int RD_PREFETCH_DEPTH = 1
 ) (
   input  wire clk,
   input  wire reset,
@@ -43,6 +44,7 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
   localparam int TAG_UUID_W  = `UP(UUID_WIDTH);
   localparam int TAG_VALUE_W = TAG_WIDTH - TAG_UUID_W;
   localparam int OCC_W = `CLOG2(RD_OUTSTANDING + 1);
+  localparam int RDEPTH_W = `CLOG2(RD_PREFETCH_DEPTH + 1);
 
   initial begin
     if (lmem_bus_if.DATA_SIZE != gemm_bus_if.DATA_SIZE) begin
@@ -56,6 +58,10 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
     if (TAG_WIDTH < SLOT_BITS) begin
       $fatal(1, "%s: total tag width (%0d) is smaller than required slot bits (%0d)",
              INSTANCE_ID, TAG_WIDTH, SLOT_BITS);
+    end
+    if ((RD_PREFETCH_DEPTH + 2) > RD_OUTSTANDING) begin
+      $fatal(1, "%s: RD_PREFETCH_DEPTH(%0d) + 2 > RD_OUTSTANDING(%0d)",
+             INSTANCE_ID, RD_PREFETCH_DEPTH, RD_OUTSTANDING);
     end
   end
 
@@ -209,12 +215,7 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
   logic [SLOT_BITS-1:0] rd_issue_slot_r;
   logic [SLOT_BITS-1:0] wr_expect_slot_r;
   logic [OCC_W-1:0] slot_occupancy_r;
-
-  wire rd_on_wr_segment = (rd_base_src_seg_r == wr_base_src_seg_r)
-                       && (rd_base_dst_seg_r == wr_base_dst_seg_r)
-                       && (rd_i_dim[0] == wr_i_dim[0])
-                       && (rd_i_dim[1] == wr_i_dim[1])
-                       && (rd_i_dim[2] == wr_i_dim[2]);
+  logic [RDEPTH_W-1:0] rd_ahead_count_r;
   wire rd_prefetch_eligible = (seg_size_r[BUS_LG2-1:0] == '0)
                            && (rd_base_src_seg_r[BUS_LG2-1:0] == '0);
 
@@ -288,23 +289,42 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
   wire [31:0] wr_nbytes = umin32(wr_remaining, wr_beat_room);
   wire [63:0] wr_dst_aligned = wr_dst_byte_addr - 64'($unsigned(wr_lane));
 
-  logic [BUS_BITS-1:0]  wr_data;
-  logic [BUS_BYTES-1:0] wr_byteen;
-  always_comb begin
-    wr_data   = '0;
-    wr_byteen = mask_range(int'(wr_lane), int'(wr_nbytes));
-    for (int b = 0; b < BUS_BYTES; ++b) begin
-      if ((b >= int'(wr_lane)) && (b < int'(wr_lane + wr_nbytes))) begin
-        wr_data[b*8 +: 8] = wr_win_r[(b - int'(wr_lane))*8 +: 8];
-      end
-    end
-  end
-
-  wire wr_has_data = (wr_src_drop_r == 0) && (wr_win_valid_r >= wr_nbytes) && (wr_nbytes != 0);
   wire wr_pull_slot = (top_state == TOP_RUN)
                    && (wr_state == WR_RUN)
                    && (slot_state_r[wr_expect_slot_r] == SLOT_READY)
                    && (wr_win_valid_r <= (WIN_BYTES - BUS_BYTES));
+  logic [WIN_BITS-1:0] wr_win_pre;
+  logic [WIN_VALID_W-1:0] wr_win_valid_pre;
+  logic [31:0] wr_src_drop_pre;
+  logic [BUS_BITS-1:0]  wr_data;
+  logic [BUS_BYTES-1:0] wr_byteen;
+  wire wr_has_data = (wr_src_drop_pre == 0) && (wr_win_valid_pre >= wr_nbytes) && (wr_nbytes != 0);
+
+  always_comb begin
+    wr_win_pre       = wr_win_r;
+    wr_win_valid_pre = wr_win_valid_r;
+    wr_src_drop_pre  = wr_src_drop_r;
+
+    if (wr_pull_slot) begin
+      wr_win_pre[wr_win_valid_r*8 +: BUS_BITS] = slot_data_r[wr_expect_slot_r];
+      wr_win_valid_pre = wr_win_valid_r + WIN_VALID_W'(BUS_BYTES);
+    end
+
+    if ((wr_src_drop_pre != 0) && (wr_win_valid_pre >= wr_src_drop_pre[WIN_VALID_W-1:0])) begin
+      wr_win_pre       = wr_win_pre >> (wr_src_drop_pre * 8);
+      wr_win_valid_pre = wr_win_valid_pre - wr_src_drop_pre[WIN_VALID_W-1:0];
+      wr_src_drop_pre  = 32'd0;
+    end
+
+    wr_data   = '0;
+    wr_byteen = mask_range(int'(wr_lane), int'(wr_nbytes));
+    for (int b = 0; b < BUS_BYTES; ++b) begin
+      if ((b >= int'(wr_lane)) && (b < int'(wr_lane + wr_nbytes))) begin
+        wr_data[b*8 +: 8] = wr_win_pre[(b - int'(wr_lane))*8 +: 8];
+      end
+    end
+  end
+
   wire [OCC_W-1:0] slot_occupancy_next
                 = slot_occupancy_r
                 + OCC_W'(src_req_fire ? 1 : 0)
@@ -418,6 +438,7 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
       rd_issue_slot_r   <= '0;
       wr_expect_slot_r  <= '0;
       slot_occupancy_r  <= '0;
+      rd_ahead_count_r  <= '0;
       for (int i = 0; i < RD_OUTSTANDING; ++i) begin
         slot_state_r[i] <= SLOT_FREE;
         slot_data_r[i]  <= '0;
@@ -457,6 +478,7 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
         rd_issue_slot_r  <= '0;
         wr_expect_slot_r <= '0;
         slot_occupancy_r <= '0;
+        rd_ahead_count_r <= '0;
         for (int i = 0; i < RD_OUTSTANDING; ++i) begin
           slot_state_r[i] <= SLOT_FREE;
         end
@@ -507,10 +529,9 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
                   rd_state <= RD_DONE;
                   rd_all_done_r <= 1'b1;
                   rd_src_rd_ptr_r <= next_rd_ptr;
-                end else if (rd_on_wr_segment && rd_prefetch_eligible) begin
-                  // Allow RD to get one segment ahead of WR. This is what
-                  // lets single-beat segments overlap across the segment
-                  // boundary without reviving the earlier data-loss bug.
+                end else if (rd_prefetch_eligible
+                             && (rd_ahead_count_r < RDEPTH_W'(RD_PREFETCH_DEPTH))) begin
+                  rd_ahead_count_r <= rd_ahead_count_r + RDEPTH_W'(1);
                   rd_i_dim[0] <= rd_adv.i0;
                   rd_i_dim[1] <= rd_adv.i1;
                   rd_i_dim[2] <= rd_adv.i2;
@@ -522,7 +543,13 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
                 end else begin
                   rd_state <= RD_DONE;
                   rd_all_done_r <= 1'b0;
-                  rd_src_rd_ptr_r <= next_rd_ptr;
+                  rd_i_dim[0] <= rd_adv.i0;
+                  rd_i_dim[1] <= rd_adv.i1;
+                  rd_i_dim[2] <= rd_adv.i2;
+                  rd_base_src_seg_r <= rd_adv.src_base;
+                  rd_base_dst_seg_r <= rd_adv.dst_base;
+                  rd_src_rd_ptr_r <= align_down(rd_adv.src_base);
+                  rd_src_rd_end_r <= align_up(rd_adv.src_base + 64'(seg_size_r));
                 end
               end else begin
                 rd_src_rd_ptr_r <= next_rd_ptr;
@@ -590,22 +617,18 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
                     // segment ahead. Otherwise the buffered tail belongs to
                     // the current segment's aligned over-read and must be
                     // dropped at the segment boundary.
-                    if (rd_on_wr_segment || !rd_prefetch_eligible) begin
+                    if ((rd_ahead_count_r == 0) || !rd_prefetch_eligible) begin
                       tmp_win   = '0;
                       tmp_valid = '0;
                     end
                     tmp_drop     = wr_adv.src_base[BUS_LG2-1:0];
                     tmp_out_off  = 32'd0;
 
-                    if ((rd_state == RD_DONE) && !rd_all_done_r && rd_on_wr_segment) begin
+                    if (rd_ahead_count_r != 0)
+                      rd_ahead_count_r <= rd_ahead_count_r - RDEPTH_W'(1);
+
+                    if ((rd_state == RD_DONE) && !rd_all_done_r) begin
                       rd_state <= RD_RUN;
-                      rd_i_dim[0] <= wr_adv.i0;
-                      rd_i_dim[1] <= wr_adv.i1;
-                      rd_i_dim[2] <= wr_adv.i2;
-                      rd_base_src_seg_r <= wr_adv.src_base;
-                      rd_base_dst_seg_r <= wr_adv.dst_base;
-                      rd_src_rd_ptr_r <= align_down(wr_adv.src_base);
-                      rd_src_rd_end_r <= align_up(wr_adv.src_base + 64'(seg_size_r));
                     end
                   end
                 end
@@ -662,6 +685,7 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
       top_state,
       rd_state,
       wr_state,
+      8'(rd_ahead_count_r),
       ctrl_if.start,
       ctrl_if.idle,
       ctrl_if.done,
@@ -672,7 +696,8 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
       precalc_issue,
       precalc_done,
       8'(slot_occupancy_r),
-      8'(wr_win_valid_r)
+      8'(wr_win_valid_r),
+      5'd0
   };
 `endif
 `endif

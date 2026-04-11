@@ -249,6 +249,10 @@
 `define LMEM_BASE_ADDR  `STACK_BASE_ADDR
 `endif
 
+`ifndef LMEM_DMA_RD_PREFETCH_DEPTH
+`define LMEM_DMA_RD_PREFETCH_DEPTH 4
+`endif
+
 `ifndef IO_COUT_ADDR
 `define IO_COUT_ADDR    `IO_BASE_ADDR
 `endif

@@ -1,4 +1,4 @@
-# FSDB Follow-up: GEMM Input Bus After Local DMA RD/WR Decouple
+# FSDB Follow-up: GEMM Input Bus After LDMA Prefetch and WR Bypass
 
 ## Scope
 
@@ -13,75 +13,66 @@ Analyzed hierarchy:
 - `/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node/u_tmem_subsystem/u_ldma_input`
 - `/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node/u_VX_gemm_unit`
 
-## Commands Used
+## What Was Limiting Throughput
 
-```bash
-cd build
-../configure --xlen=64 --tooldir=/opt/vortex --prefix=$HOME/tools/vortex
+FSDB before the latest patch showed:
+- `ldma_in` source reads already issuing every cycle
+- GEMM consumer `in_flight` staying high
+- but `u_ldma_input.gemm_bus_if.req_valid` still dropping periodically
 
-CONFIGS=' -DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MERGED_MEMORY_INTERFACE -DDCACHE_DISABLE -DL2_ENABLE -DNUM_THREADS=8 -DLMEM_LOG_SIZE=22 -DSTACK_BASE_ADDR=8585740288 -DDBG_TRACE_PIPELINE -DDBG_TRACE_MEM -DDBG_TRACE_CACHE -DDBG_TRACE_AFU -DDBG_TRACE_SCOPE -DDBG_TRACE_GBAR -DDBG_TRACE_TCU -DDBG_TRACE_GEMM -DAFU_DONE_WAIT_CACHE_DRAIN -DNUM_CORES=1' \
-make -C sim/xrtsim_vcs clean simv FSDB_DUMP=1
+The remaining bubble was in the WR side of [`VX_lmem_dma_misal.sv`](/home/jaeyongjang/project.local/vortex/hw/rtl/core/gemm/VX_lmem_dma_misal.sv):
+- `wr_pull_slot` could fetch a ready response slot
+- but `wr_has_data` and `wr_data` were computed from the old `wr_win_r / wr_win_valid_r`
+- so a cycle that refilled the write window could not also issue a write
 
-./ci/run_black.sh xrt-vcs-sim --app fpint_gemm_ffn_hw_improve --args "-m 128 -n 128 -k 128"
+That created a periodic refill bubble even after `RD_PREFETCH_DEPTH=4` was enabled.
 
-PYTHONPATH=tools python3 -m fsdb_cli events sim/xrtsim_vcs/vcs_cosim.fsdb \
-  -s '/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node/u_tmem_subsystem/u_ldma_input/dst_req_fire' \
-  -bt 151600000ps -et 151900000ps --csv
-```
+## Fix
 
-## Key Findings
+Added a same-cycle WR bypass in [`VX_lmem_dma_misal.sv`](/home/jaeyongjang/project.local/vortex/hw/rtl/core/gemm/VX_lmem_dma_misal.sv):
+- build a combinational `wr_win_pre / wr_win_valid_pre / wr_src_drop_pre`
+- append `slot_data_r[wr_expect_slot_r]` when `wr_pull_slot` is true
+- compute `wr_has_data` and `wr_data` from the post-pull view instead of the old registered window
 
-### 1. `GEMM_INPUT_VALID` cadence improved for the larger workload
+This lets a newly available response slot feed the destination write in the same cycle.
 
-From `simv.log`, the `GEMM_INPUT_VALID` timestamps in the steady-state burst are:
-- `151625000`
-- `151635000`
-- `151675000`
-- `151685000`
-- `151725000`
-- `151735000`
+## Current Result
+
+With:
+- `RD_PREFETCH_DEPTH=4` on input LDMA
+- same-cycle WR bypass enabled
+
+the `GEMM_INPUT_VALID` timestamps in steady state are now continuous at `10ns` spacing.
+
+Example window from `simv.log`:
+- `143055000`
+- `143065000`
+- `143075000`
+- `143085000`
+- `143095000`
+- `143105000`
 - ...
 
-The gap histogram over `151.6us .. 162.1us` is:
-- `10ns`: 128 times
-- `40ns`: 126 times
-- `4.06us`: 1 time between bursts
+Diffs:
+- `10000ps` repeated for the whole sampled window
 
-This is materially different from the pre-refactor profile in `fsdb_gemm_input_profile.md`, where the same path showed a fixed `70ns` cadence.
+That means:
+- no remaining `20ns` or `40ns` cadence in steady state
+- input bus is now effectively one beat per cycle in this workload window
 
-### 2. `u_ldma_input/dst_req_fire` now advances every `50ns`
+## Key FSDB Evidence
 
-`fsdb_cli events` on `u_ldma_input/dst_req_fire` for `151.6us .. 151.9us` shows rising edges at:
-- `151605000`
-- `151655000`
-- `151705000`
-- `151755000`
-- `151805000`
-- `151855000`
+`GEMM_INPUT_VALID` from `simv.log` over `143.055us .. 143.245us`:
+- all adjacent diffs are `10000ps`
 
-So the local-DMA write side is issuing on a `50ns` step in this window.
+`in_pipe_valid_out` from FSDB over `143.050us .. 143.250us`:
+- stays asserted through the sampled window
 
-### 3. Interpretation
-
-The `10ns/40ns` alternating `GEMM_INPUT_VALID` pattern means the input path is no longer locked to the old serialized `70ns` loop.
-
-What changed:
-- the `RD/WR` split lets reads get ahead of writes
-- the aligned cross-segment prefetch lets `ldma_in` carry one segment across the boundary instead of stalling at every 64B segment break
-
-What did not change:
-- this is still not a full one-beat-per-cycle streamer
-- the burst still contains structure from segment-level control and downstream timing
-
-### 4. Practical conclusion
-
-For `fpint_gemm_ffn_hw_improve` at `m=n=k=128`, the refactor improves the observed input-bus cadence from:
-- old: fixed `70ns`
-- new: alternating `10ns/40ns`, with `u_ldma_input` write issue on `50ns`
-
-So the change is effective on the real blackbox workload once the shape is large enough to expose steady-state behavior.
+Interpretation:
+- the LDMA no longer inserts periodic refill bubbles
+- GEMM input pipeline remains fed continuously in steady state
 
 ## Notes
 
-- The blackbox run was analyzed while still in progress. The steady-state burst window was sufficient for cadence measurement.
-- To get a valid FSDB for this comparison, `simv` had to be rebuilt with the same `CONFIGS` used by `run_black.sh`; otherwise the wrapper and simulator build settings can diverge.
+- To get a valid comparison FSDB, `simv` must be rebuilt with the same `CONFIGS` used by `run_black.sh`.
+- `STACK_BASE_ADDR=8585740288` is still passed as an unsized decimal define in this flow; VCS warns and truncates it. That issue is independent of the LDMA throughput fix.
