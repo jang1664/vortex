@@ -7,13 +7,7 @@
 //
 // Updates in this version:
 //   - GEMM slave model: **NO write response** (rsp_valid asserted only for READ)
-//   - LMEM slave (VX_local_mem) output: **mask/drop write responses** so the DMA
-//     never sees a write rsp (but we still internally "consume" them so VX_local_mem
-//     doesn't stall).
-//
-// Assumptions for rsp masking:
-//   - Single outstanding request (in-order) on LMEM bus during a DMA run.
-//     (TB runs one DMA at a time, and VX_local_mem OUT_BUF=0).
+//   - LMEM slave (VX_local_mem) is connected directly for this TB.
 // -----------------------------------------------------------------------------
 
 module tb_VX_lmem_dma_misal import VX_gpu_pkg::*; ();
@@ -30,7 +24,7 @@ module tb_VX_lmem_dma_misal import VX_gpu_pkg::*; ();
   localparam int DATA_SIZE_BYTES = 16;      // bus beat bytes
   localparam int MEM_BYTES       = 64*1024;
 
-  localparam int TAG_WIDTH  = 45;  // >= `UP(UUID_WIDTH) is enough
+  localparam int TAG_WIDTH  = GEMM_MEM_TAG_WIDTH;
 
   localparam int LMEM_PORTS = 1;
   localparam int NUM_REQS   = LMEM_PORTS;
@@ -67,8 +61,7 @@ module tb_VX_lmem_dma_misal import VX_gpu_pkg::*; ();
   // -----------------------------
   // Shared slave buses
   // -----------------------------
-  // This is the LMEM bus "seen by DMAs" (after mux). We will connect this to
-  // VX_local_mem through a small "no-write-rsp" filter.
+  // This is the LMEM bus "seen by DMAs" (after mux).
   VX_mem_bus_if #(
     .DATA_SIZE(DATA_SIZE_BYTES),
     .TAG_WIDTH(TAG_WIDTH)
@@ -95,7 +88,8 @@ module tb_VX_lmem_dma_misal import VX_gpu_pkg::*; ();
   VX_lmem_dma_misal #(
     .INSTANCE_ID("lmem_dma_dir0"),
     .DIR(0),
-    .NDIM(NDIM)
+    .NDIM(NDIM),
+    .TAG_WIDTH(TAG_WIDTH)
   ) dut_dir0 (
     .clk         (clk),
     .reset       (reset),
@@ -108,7 +102,8 @@ module tb_VX_lmem_dma_misal import VX_gpu_pkg::*; ();
   VX_lmem_dma_misal #(
     .INSTANCE_ID("lmem_dma_dir1"),
     .DIR(1),
-    .NDIM(NDIM)
+    .NDIM(NDIM),
+    .TAG_WIDTH(TAG_WIDTH)
   ) dut_dir1 (
     .clk         (clk),
     .reset       (reset),
@@ -156,7 +151,6 @@ module tb_VX_lmem_dma_misal import VX_gpu_pkg::*; ();
 
   // -----------------------------
   // VX_local_mem instance (LMEM slave)
-  //   BUT: we insert a "no write rsp" filter between lmem_bus_s and VX_local_mem.
   // -----------------------------
   localparam int NUM_WORDS = MEM_BYTES / DATA_SIZE_BYTES;
 
@@ -184,40 +178,13 @@ module tb_VX_lmem_dma_misal import VX_gpu_pkg::*; ();
     .mem_bus_if(lmem_bus_raw_ifs)
   );
 
-  // ---- LMEM "no write rsp" filter wiring ----
-  // Master->slave (req)
+  // Direct LMEM wiring
   assign lmem_bus_raw_ifs[0].req_valid = lmem_bus_s.req_valid;
   assign lmem_bus_raw_ifs[0].req_data  = lmem_bus_s.req_data;
-
-  // Slave->master (ready)
   assign lmem_bus_s.req_ready = lmem_bus_raw_ifs[0].req_ready;
-
-  // IMPORTANT: we ALWAYS keep raw rsp_ready asserted so VX_local_mem never stalls,
-  // even if we mask the response to the DMA.
-  assign lmem_bus_raw_ifs[0].rsp_ready = 1'b1;
-
-  // Track the rw bit of the request that will generate the next response
-  logic lmem_pend_is_write;
-
-  wire lmem_raw_req_fire = lmem_bus_raw_ifs[0].req_valid && lmem_bus_raw_ifs[0].req_ready;
-  wire lmem_raw_rsp_fire = lmem_bus_raw_ifs[0].rsp_valid && lmem_bus_raw_ifs[0].rsp_ready;
-
-  always_ff @(posedge clk) begin
-    if (reset) begin
-      lmem_pend_is_write <= 1'b0;
-    end else begin
-      if (lmem_raw_req_fire) begin
-        lmem_pend_is_write <= lmem_bus_raw_ifs[0].req_data.rw;
-      end else if (lmem_raw_rsp_fire) begin
-        // response consumed internally
-        lmem_pend_is_write <= 1'b0;
-      end
-    end
-  end
-
-  // Pass rsp_data through (harmless). Mask rsp_valid for writes.
+  assign lmem_bus_raw_ifs[0].rsp_ready = lmem_bus_s.rsp_ready;
   assign lmem_bus_s.rsp_data  = lmem_bus_raw_ifs[0].rsp_data;
-  assign lmem_bus_s.rsp_valid = lmem_bus_raw_ifs[0].rsp_valid && ~lmem_pend_is_write;
+  assign lmem_bus_s.rsp_valid = lmem_bus_raw_ifs[0].rsp_valid;
 
   // -----------------------------
   // GEMM node memory model (byte-addressed) + bus slave (1-cycle latency)
@@ -231,68 +198,71 @@ module tb_VX_lmem_dma_misal import VX_gpu_pkg::*; ();
       logic [TAG_WIDTH-`UP(UUID_WIDTH)-1:0] value;
   } tag_t;
 
-  typedef struct packed {
-    logic                             valid;
-    logic                             rw;
-    logic [gemm_bus_s.ADDR_WIDTH-1:0]  addr_beats;
-    logic [DATA_SIZE_BYTES*8-1:0]      data;
-    logic [DATA_SIZE_BYTES-1:0]        byteen;
-    tag_t                             tag;
-  } pend_t;
+  localparam int GEMM_RD_Q_DEPTH = 64;
+  localparam int GEMM_RD_Q_BITS  = $clog2(GEMM_RD_Q_DEPTH);
 
-  pend_t g_pend;
+  logic [GEMM_RD_Q_BITS-1:0]         g_rd_head_r;
+  logic [GEMM_RD_Q_BITS-1:0]         g_rd_tail_r;
+  logic [GEMM_RD_Q_BITS:0]           g_rd_count_r;
+  logic [gemm_bus_s.ADDR_WIDTH-1:0]  g_rd_addr_q [0:GEMM_RD_Q_DEPTH-1];
+  tag_t                              g_rd_tag_q  [0:GEMM_RD_Q_DEPTH-1];
+  wire                               gemm_req_fire = gemm_bus_s.req_valid && gemm_bus_s.req_ready;
+  wire                               gemm_req_read_fire = gemm_req_fire && !gemm_bus_s.req_data.rw;
+  wire                               gemm_rsp_issue = (!gemm_bus_s.rsp_valid || gemm_bus_s.rsp_ready) && (g_rd_count_r != 0);
 
   always @(posedge clk) begin
     if (reset) begin
       gemm_bus_s.req_ready <= 1'b1;
       gemm_bus_s.rsp_valid <= 1'b0;
       gemm_bus_s.rsp_data  <= '0;
-      g_pend.valid         <= 1'b0;
+      g_rd_head_r          <= '0;
+      g_rd_tail_r          <= '0;
+      g_rd_count_r         <= '0;
     end else begin
-      // always ready
-      gemm_bus_s.req_ready <= 1'b1;
+      gemm_bus_s.req_ready <= (g_rd_count_r != GEMM_RD_Q_DEPTH);
 
-      // clear response when accepted
       if (gemm_bus_s.rsp_valid && gemm_bus_s.rsp_ready)
         gemm_bus_s.rsp_valid <= 1'b0;
 
-      // capture request into pending (1-cycle latency)
-      g_pend.valid <= 1'b0;
-      if (gemm_bus_s.req_valid && gemm_bus_s.req_ready) begin
-        g_pend.valid      <= 1'b1;
-        g_pend.rw         <= gemm_bus_s.req_data.rw;
-        g_pend.addr_beats <= gemm_bus_s.req_data.addr;
-        g_pend.data       <= gemm_bus_s.req_data.data;
-        g_pend.byteen     <= gemm_bus_s.req_data.byteen;
-        g_pend.tag        <= gemm_bus_s.req_data.tag;
-      end
-
-      // execute pending
-      if (g_pend.valid) begin
+      if (gemm_req_fire) begin
         int unsigned base_b;
-        base_b = (g_pend.addr_beats << $clog2(DATA_SIZE_BYTES));
+        base_b = int'(gemm_bus_s.req_data.addr) << $clog2(DATA_SIZE_BYTES);
 
-        if (!g_pend.rw) begin
-          // READ => produce response
-          gemm_bus_s.rsp_valid    <= 1'b1;
-          gemm_bus_s.rsp_data.tag <= g_pend.tag;
-
+        if (gemm_bus_s.req_data.rw) begin
           for (int i = 0; i < DATA_SIZE_BYTES; i++) begin
-            if (base_b + i < MEM_BYTES)
-              gemm_bus_s.rsp_data.data[i*8 +: 8] <= gemm_mem[base_b + i];
-            else
-              gemm_bus_s.rsp_data.data[i*8 +: 8] <= 8'h00;
+            if (gemm_bus_s.req_data.byteen[i] && (base_b + i < MEM_BYTES))
+              gemm_mem[base_b + i] <= gemm_bus_s.req_data.data[i*8 +: 8];
           end
         end else begin
-          // WRITE => update memory, NO response
-          for (int i = 0; i < DATA_SIZE_BYTES; i++) begin
-            if (g_pend.byteen[i] && (base_b + i < MEM_BYTES))
-              gemm_mem[base_b + i] <= g_pend.data[i*8 +: 8];
-          end
-          // Ensure no spurious rsp_valid is raised
-          // (keep previous rsp_valid handling intact)
+          if (g_rd_count_r == GEMM_RD_Q_DEPTH)
+            $fatal(1, "GEMM read queue overflow");
+          g_rd_addr_q[g_rd_tail_r] <= gemm_bus_s.req_data.addr;
+          g_rd_tag_q[g_rd_tail_r]  <= gemm_bus_s.req_data.tag;
+          g_rd_tail_r <= g_rd_tail_r + 1'b1;
         end
       end
+
+      if (gemm_rsp_issue) begin
+        int unsigned base_b;
+        base_b = int'(g_rd_addr_q[g_rd_head_r]) << $clog2(DATA_SIZE_BYTES);
+
+        gemm_bus_s.rsp_valid    <= 1'b1;
+        gemm_bus_s.rsp_data.tag <= g_rd_tag_q[g_rd_head_r];
+        for (int i = 0; i < DATA_SIZE_BYTES; i++) begin
+          if (base_b + i < MEM_BYTES)
+            gemm_bus_s.rsp_data.data[i*8 +: 8] <= gemm_mem[base_b + i];
+          else
+            gemm_bus_s.rsp_data.data[i*8 +: 8] <= 8'h00;
+        end
+
+        g_rd_head_r <= g_rd_head_r + 1'b1;
+      end
+
+      unique case ({gemm_req_read_fire, gemm_rsp_issue})
+        2'b10: g_rd_count_r <= g_rd_count_r + 1'b1;
+        2'b01: g_rd_count_r <= g_rd_count_r - 1'b1;
+        default:;
+      endcase
     end
   end
 
@@ -571,6 +541,7 @@ module tb_VX_lmem_dma_misal import VX_gpu_pkg::*; ();
   // -----------------------------
   task automatic sim_func();
     int unsigned b0 = 2, b1 = 2, b2 = 2;
+    int unsigned sb0 = 8, sb1 = 1, sb2 = 1;
 
     $display("=====================================================================");
     $display("=======================  START SIMULATION  ==========================");
@@ -588,6 +559,9 @@ module tb_VX_lmem_dma_misal import VX_gpu_pkg::*; ();
     run_case_roundtrip(DATA_SIZE_BYTES*1, b0,b1,b2, 0,0,0);
     run_case_roundtrip(DATA_SIZE_BYTES*2, b0,b1,b2, 0,0,0);
     run_case_roundtrip(DATA_SIZE_BYTES*4, b0,b1,b2, 0,0,0);
+
+    // single-beat segments repeated across segment boundaries
+    run_case_roundtrip(DATA_SIZE_BYTES*1, sb0,sb1,sb2, 0,0,0);
 
     // misaligned base offsets (src!=dst, and LMEM base offset too)
     run_case_roundtrip(DATA_SIZE_BYTES*2, b0,b1,b2, 1,7,3);
@@ -666,5 +640,14 @@ module tb_VX_lmem_dma_misal import VX_gpu_pkg::*; ();
       $finish;
     end
   endgenerate
+
+  initial begin
+    repeat (20000) @(posedge clk);
+    $fatal(1,
+      "TB timeout: dir0 idle=%0b top=%0d rd=%0d wr=%0d occ=%0d win_valid=%0d | dir1 idle=%0b top=%0d rd=%0d wr=%0d occ=%0d win_valid=%0d",
+      ctrl0_if.idle, dut_dir0.top_state, dut_dir0.rd_state, dut_dir0.wr_state, dut_dir0.slot_occupancy_r, dut_dir0.wr_win_valid_r,
+      ctrl1_if.idle, dut_dir1.top_state, dut_dir1.rd_state, dut_dir1.wr_state, dut_dir1.slot_occupancy_r, dut_dir1.wr_win_valid_r
+    );
+  end
 
 endmodule
