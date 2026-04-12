@@ -4,6 +4,7 @@
 // MMIO addresses for GEMM instruction stream frontend
 static constexpr uint64_t GEMM_BASE        = 0x0000000000001080ULL;
 static constexpr uint64_t GEMM_STREAM_ADDR = GEMM_BASE + 8ULL;
+static constexpr uint64_t GEMM_STATE_ADDR  = GEMM_BASE + 16ULL;
 
 static inline uint32_t mmio_read32(uint64_t addr) {
   return *reinterpret_cast<volatile uint32_t*>(addr);
@@ -420,11 +421,20 @@ int main() {
     arg->status = STATUS_ALLOC_FAIL;
     return 0;
   }
+  uint32_t alloc_gen = r >> 1;
 
   arg->status = STATUS_INIT;
 
   // Submit tiled GEMM instruction stream
   run_tiled_gemm(arg);
+
+  // Poll STATE register until GEMM node completes our work
+  while (true) {
+    uint32_t state = mmio_read32(GEMM_STATE_ADDR);
+    bool occupied = state & 1u;
+    uint32_t gen = state >> 1;
+    if (!occupied || gen != alloc_gen) break;
+  }
 
   arg->status = STATUS_OK;
   return 0;

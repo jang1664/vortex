@@ -20,9 +20,11 @@ module VX_gemm_job_frontend import VX_gpu_pkg::*; #(
 
   // MMIO layout
   //   [CFG_BASE_ADDR + 0] : ALLOC read doorbell
-  //   [CFG_BASE_ADDR + 8] : command stream start (fixed)
-  //   each 64-bit write from this address is a raw instruction word
+  //   [CFG_BASE_ADDR + 8] : command stream start (fixed, write-only)
+  //   [CFG_BASE_ADDR + 16]: STATE read register (read-only)
+  //   each 64-bit write to offset 8+ is a raw instruction word
   localparam logic [63:0] STREAM_START_OFF_B = 64'd8;
+  localparam logic [63:0] STATE_READ_OFF_B   = 64'd16;
 
   VX_lsu_mem_if #(
     .NUM_LANES(`NUM_LSU_LANES),
@@ -48,6 +50,7 @@ module VX_gemm_job_frontend import VX_gpu_pkg::*; #(
   );
 
   logic occupied_q, occupied_d;
+  logic [30:0] generation_q, generation_d;
 
   logic rsp_valid_q, rsp_valid_d;
   logic [`NUM_LSU_LANES-1:0] rsp_mask_q, rsp_mask_d;
@@ -58,6 +61,7 @@ module VX_gemm_job_frontend import VX_gpu_pkg::*; #(
   logic [63:0] off;
   logic        req_is_alloc;
   logic        req_is_stream;
+  logic        req_is_state;
   logic        req_is_read;
   logic        rsp_holding;
   logic        done_fire;
@@ -84,6 +88,7 @@ module VX_gemm_job_frontend import VX_gpu_pkg::*; #(
 
   always_comb begin
     occupied_d      = occupied_q;
+    generation_d    = generation_q;
     rsp_valid_d     = rsp_valid_q;
     rsp_mask_d      = rsp_mask_q;
     rsp_data_d      = rsp_data_q;
@@ -119,6 +124,7 @@ module VX_gemm_job_frontend import VX_gpu_pkg::*; #(
       off          = get_off(byte_addr);
       req_is_alloc = (off < 64'(LSU_WORD_SIZE));
       req_is_stream = (off >= STREAM_START_OFF_B);
+      req_is_state = (off >= STATE_READ_OFF_B) && (off < STATE_READ_OFF_B + 64'(LSU_WORD_SIZE));
       req_is_read  = ~mmio_arb_out[0].req_data.rw;
 
       if (req_is_stream && mmio_arb_out[0].req_data.rw) begin
@@ -141,8 +147,13 @@ module VX_gemm_job_frontend import VX_gpu_pkg::*; #(
         if (req_is_alloc) begin
           if (~occupied_q) begin
             occupied_d = 1'b1;
-            rsp_data_d[0][0] = 1'b1;
+            generation_d = generation_q + 30'd1;
+            rsp_data_d[0] = {32'b0, generation_d, 1'b1};
+          end else begin
+            rsp_data_d[0] = {32'b0, generation_q, 1'b0};
           end
+        end else if (req_is_state) begin
+          rsp_data_d[0] = {32'b0, generation_q, occupied_q};
         end
       end
     end
@@ -151,12 +162,14 @@ module VX_gemm_job_frontend import VX_gpu_pkg::*; #(
   always_ff @(posedge clk) begin
     if (reset) begin
       occupied_q  <= 1'b0;
+      generation_q <= '0;
       rsp_valid_q <= 1'b0;
       rsp_mask_q  <= '0;
       rsp_data_q  <= '0;
       rsp_tag_q   <= '0;
     end else begin
       occupied_q  <= occupied_d;
+      generation_q <= generation_d;
       rsp_valid_q <= rsp_valid_d;
       rsp_mask_q  <= rsp_mask_d;
       rsp_data_q  <= rsp_data_d;
