@@ -9,6 +9,56 @@ GUI 없이 계층 탐색, 신호 검색, value change 덤프, 성능 metric 계�
 PYTHONPATH=tools python -m fsdb_cli <command> [options]
 ```
 
+## Python 라이브러리 사용
+
+CLI 없이 notebook / 스크립트에서 바로 import해서 쓸 수 있다.
+
+```python
+import sys
+sys.path.insert(0, "tools")
+
+import fsdb_cli as fsdb
+
+info = fsdb.info("build/sim/xrtsim_vcs/vcs_cosim.fsdb")
+print(info.max_time)
+
+report = fsdb.report(
+    "build/sim/xrtsim_vcs/vcs_cosim.fsdb",
+    ["/tb/dut/u_core/in_flight"],
+    bt="100ns",
+    et="10us",
+)
+events = report.events()
+
+time_unit, residency = fsdb.metric_state(
+    "build/sim/xrtsim_vcs/vcs_cosim.fsdb",
+    "/tb/dut/u_core/in_flight",
+    bt="100ns",
+    et="10us",
+)
+
+ratio = fsdb.signal_ratio(
+    "build/sim/xrtsim_vcs/vcs_cosim.fsdb",
+    "/tb/dut/u_core/merger_in_valid",
+    "/tb/dut/u_core/in_flight",
+    bt="100ns",
+    et="10us",
+)
+```
+
+주요 API:
+- `fsdb.info`
+- `fsdb.hierarchy`
+- `fsdb.find_signals`
+- `fsdb.report`
+- `fsdb.events`
+- `fsdb.metric_state`
+- `fsdb.metric_stall`
+- `fsdb.metric_latency`
+- `fsdb.active_time`
+- `fsdb.signal_ratio`
+- `fsdb.first_high_window`
+
 ## 명령어
 
 ### `info` — FSDB 메타데이터
