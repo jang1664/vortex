@@ -30,6 +30,7 @@ module VX_gemm_sync import VX_gpu_pkg::*; #(
   localparam logic [3:0] OP_SZ_LDMA_MXU   = 4'd6;
   localparam logic [3:0] OP_I_LDMA_ARM    = 4'd7;
   localparam logic [3:0] OP_O_ACC2LMEM    = 4'd8;
+  localparam logic [3:0] OP_CLEAR         = 4'd9;
 
   // --------------------------------------------------------------------------
   // Sync registers
@@ -44,6 +45,7 @@ module VX_gemm_sync import VX_gpu_pkg::*; #(
 
   wire is_wait   = (opcode == OP_WAIT);
   wire is_notify = (opcode == OP_NOTIFY);
+  wire is_clear  = (opcode == OP_CLEAR);
 
   wire [7:0]  wait_reg_id = gemm_fsm_slv_if.ctrl.cmd.rs1_data[7:0];
   wire [31:0] wait_target = gemm_fsm_slv_if.ctrl.cmd.rs2_data[31:0];
@@ -63,7 +65,7 @@ module VX_gemm_sync import VX_gpu_pkg::*; #(
     cmd_route = '0;
     cmd_valid = 1'b0;
 
-    if (!is_wait && !is_notify) begin
+    if (!is_wait && !is_notify && !is_clear) begin
       cmd_valid = 1'b1;
       unique case (opcode)
         OP_I_LDMA_ARM:   cmd_route = 3'd0;
@@ -122,6 +124,8 @@ module VX_gemm_sync import VX_gpu_pkg::*; #(
     // Otherwise, if parent start depends on idle(=can_accept), a comb loop can form.
     if (is_wait) begin
       can_accept = wait_satisfied;       // only gating is the sync condition
+    end else if (is_clear) begin
+      can_accept = 1'b1;               // consumed internally, always ready
     end else if (is_notify) begin
       can_accept = child_idle_sel;       // must be able to enqueue notify
     end else if (cmd_valid) begin
@@ -138,7 +142,7 @@ module VX_gemm_sync import VX_gpu_pkg::*; #(
   // - When satisfied or no input: idle=1
   always_comb begin
     gemm_fsm_slv_if.flag.idle = can_accept;
-    gemm_fsm_slv_if.flag.done = 1'b0;
+    gemm_fsm_slv_if.flag.done = in_valid && is_clear && can_accept;
   end
 
   // --------------------------------------------------------------------------
@@ -248,7 +252,7 @@ module VX_gemm_sync import VX_gpu_pkg::*; #(
   localparam int DBG_OPCODE_W = $bits(opcode);
   localparam int DBG_ROUTE_W  = $bits(cmd_route);
 
-  localparam int DBG_GEMM_SYNC_P0_W = ((11 + (2 * N_CHILDREN) + N_NODE) * DBG_BIT_W) + DBG_OPCODE_W + (3 * DBG_ROUTE_W);
+  localparam int DBG_GEMM_SYNC_P0_W = ((12 + (2 * N_CHILDREN) + N_NODE) * DBG_BIT_W) + DBG_OPCODE_W + (3 * DBG_ROUTE_W);
   localparam int DBG_GEMM_SYNC_P1_W = ((3 + NUM_SYNC_REGS) * DBG_WORD_W);
   localparam int DBG_GEMM_SYNC_P2_W = ((2 * N_NODE) * DBG_WORD_W);
   localparam int DBG_GEMM_SYNC_P3_W = (NUM_SYNC_REGS * DBG_WORD_W);
@@ -260,6 +264,7 @@ module VX_gemm_sync import VX_gpu_pkg::*; #(
       cmd_valid,
       is_wait,
       is_notify,
+      is_clear,
       wait_reg_in_range,
       wait_satisfied,
       child_idle_sel,
@@ -365,7 +370,7 @@ module VX_gemm_sync import VX_gpu_pkg::*; #(
   always_ff @(posedge clk) begin
     if (reset===0 && in_valid===1) begin
       // 입력은 유효한데(Wait/Notify 아님), 디코딩 로직(case문)에서 cmd_valid를 1로 만들지 못한 경우
-      if (!is_wait && !is_notify && !cmd_valid) begin
+      if (!is_wait && !is_notify && !is_clear && !cmd_valid) begin
         $display("%t %s: [ERROR] Unknown Opcode detected! Opcode=0x%02h", $time, INSTANCE_ID, opcode);
         // $fatal(1, "%s: Simulation stopped due to unknown opcode 0x%02h", INSTANCE_ID, opcode);
       end
@@ -378,6 +383,9 @@ module VX_gemm_sync import VX_gpu_pkg::*; #(
       if (is_wait) begin
         `TRACE(3, ("%m : [%0t] | GEMM_SYNC_WAIT | {inst=%s, reg_id=%0d, reg_val=%0d, target=%0d, satisfied=%0d, can_accept=%0d}\n",
                  $time, INSTANCE_ID, wait_reg_id, wait_reg_val, wait_target, wait_satisfied, can_accept))
+      end else if (is_clear) begin
+        `TRACE(2, ("%m : [%0t] | GEMM_SYNC_CLEAR | {inst=%s, can_accept=%0d}\n",
+                 $time, INSTANCE_ID, can_accept))
       end else if (is_notify) begin
         `TRACE(3, ("%m : [%0t] | GEMM_SYNC_NOTIFY | {inst=%s, route_eff=%0d, child_idle_sel=%0d, can_accept=%0d}\n",
                  $time, INSTANCE_ID, route_eff, child_idle_sel, can_accept))

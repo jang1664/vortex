@@ -17,7 +17,7 @@
   - child queue는 5개 (input micro-tile read, weight micro-tile read, sz micro-tile read, output micro-tile write, global dma)
   - child queue는 node가 busy하면 대기 (idle 신호를 ready로 사용)
   - 각 node가 notify를 만났을 때 gemm_sync_slv_if로 직접 올린다는 가정
-  - done_if는 gemm_ctrl 내부 생성 신호가 아니라 VX_cmd_constructor가 raw CLEAR에서 직접 발생시킴
+  - done_if는 sync module에서 CLEAR command 처리 시 flag.done으로 발생
 */
 
 `include "VX_define.vh"
@@ -74,7 +74,7 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
 
     // -------------------------------------------------------------------------
     // Command constructor: groups raw 64-bit words and emits unified commands.
-    // CLEAR completion is signaled directly on done_if from this block.
+    // CLEAR completion is now signaled from sync module via flag.done.
     // -------------------------------------------------------------------------
     VX_cmd_constructor #(
       .INSTANCE_ID(INSTANCE_ID)
@@ -82,9 +82,13 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
       .clk            (clk),
       .reset          (reset),
       .instruction_if (instruction_if),
-      .gemm_fsm_if    (gemm_fsm_if),
-      .done_if        (done_if)
+      .gemm_fsm_if    (gemm_fsm_if)
     );
+
+    // -------------------------------------------------------------------------
+    // CLEAR completion: sync module signals done when CLEAR is consumed
+    // -------------------------------------------------------------------------
+    assign done_if.valid = gemm_pqueue_out.flag.done;
 
     // -------------------------------------------------------------------------
     // Parent cmd queue: store ONLY cmd payload (NOT start)

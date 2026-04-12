@@ -7,8 +7,7 @@ module VX_cmd_constructor import VX_gpu_pkg::*; #(
     input  wire                 reset,
 
     VX_instruction_if.slave     instruction_if,
-    VX_gemm_fsm_if.master       gemm_fsm_if,
-    VX_gemm_node_done_if.master done_if
+    VX_gemm_fsm_if.master       gemm_fsm_if
 );
 
   // ----------------------------
@@ -236,6 +235,10 @@ module VX_cmd_constructor import VX_gpu_pkg::*; #(
           c.bound      = bound16;
         end
 
+        RAW_OP_CLEAR: begin
+          c.instr = {28'd0, RAW_OP_CLEAR};
+        end
+
         default: begin
           c = '0;
         end
@@ -261,7 +264,6 @@ module VX_cmd_constructor import VX_gpu_pkg::*; #(
     capture_next_fire    = 1'b0;
     out_cmd_d            = '0;
     out_start_d          = 1'b0;
-    done_if.valid        = 1'b0;
     instruction_if.ready = (state_q != S_WAIT_ISSUE);
 
     unique case (state_q)
@@ -290,14 +292,7 @@ module VX_cmd_constructor import VX_gpu_pkg::*; #(
       end
 
       S_WAIT_ISSUE: begin
-        if (cmd_is_clear) begin
-          done_if.valid = 1'b1;
-          if (done_if.ready) begin
-            state_d          = S_IDLE;
-            words_expected_d = '0;
-            words_captured_d = '0;
-          end
-        end else if (!cmd_supported) begin
+        if (!cmd_supported) begin
           state_d          = S_IDLE;
           words_expected_d = '0;
           words_captured_d = '0;
@@ -411,11 +406,6 @@ module VX_cmd_constructor import VX_gpu_pkg::*; #(
                    $time, INSTANCE_ID, inst0_q[3:0]))
       end
 
-      // Log clear command
-      if ((state_q == S_WAIT_ISSUE) && cmd_is_clear && done_if.valid && done_if.ready) begin
-        `TRACE(2, ("%m : [%0t] | CMD_CTOR_CLEAR_DONE | {inst=%s}\n",
-                   $time, INSTANCE_ID))
-      end
     end
   end
 `endif
