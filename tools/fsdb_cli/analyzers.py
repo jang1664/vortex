@@ -36,7 +36,9 @@ def events_from_csv(
         timestamp = int(row[0])
         for i, name in enumerate(signal_names):
             if i + 1 < len(row):
-                current_values[name] = row[i + 1].strip()
+                value = row[i + 1].strip()
+                if value != "":
+                    current_values[name] = value
         events.append(Event(time=timestamp, values=dict(current_values)))
 
     return events

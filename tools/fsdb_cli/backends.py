@@ -7,7 +7,6 @@ Synopsys copyright banners and logDir warnings are stripped automatically.
 import os
 import subprocess
 import tempfile
-from pathlib import Path
 
 # fsdbreport needs system libstdc++ to avoid GLIBCXX_3.4.30 error
 _FSDBREPORT_ENV = {
@@ -193,6 +192,49 @@ def run_fsdbreport_file(
 
     Uses a temp file because fsdbreport writes to -o file, not stdout for CSV.
     """
+    if len(signals) > 1:
+        from fsdb_cli.parsers import parse_csv_report
+
+        time_unit = None
+        per_signal_rows = {}
+
+        for sig in signals:
+            raw = run_fsdbreport_file(fsdb, [sig], bt=bt, et=et)
+            this_time_unit, signal_names, data_rows = parse_csv_report(raw)
+            if time_unit is None:
+                time_unit = this_time_unit
+            elif time_unit != this_time_unit:
+                raise RuntimeError(
+                    f"Inconsistent time unit while merging fsdbreport output: "
+                    f"{time_unit} vs {this_time_unit}"
+                )
+            if len(signal_names) != 1:
+                raise RuntimeError(
+                    f"Expected single signal report while merging fsdbreport output, "
+                    f"got: {signal_names}"
+                )
+            row_map = {}
+            for row in data_rows:
+                if not row:
+                    continue
+                timestamp = row[0]
+                value = row[1] if len(row) > 1 else ""
+                row_map[timestamp] = value
+            per_signal_rows[sig] = row_map
+
+        all_times = sorted({
+            int(ts)
+            for row_map in per_signal_rows.values()
+            for ts in row_map.keys()
+        })
+        header = ",".join([f"Time({time_unit})", *signals])
+        lines = [header]
+        for ts in all_times:
+            ts_s = str(ts)
+            vals = [per_signal_rows.get(sig, {}).get(ts_s, "") for sig in signals]
+            lines.append(",".join([ts_s, *vals]))
+        return "\n".join(lines) + "\n"
+
     with tempfile.NamedTemporaryFile(
         mode="w", suffix=".csv", delete=False, prefix="fsdb_report_",
     ) as f:
