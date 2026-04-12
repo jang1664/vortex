@@ -154,6 +154,7 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
 
     logic [NUM_CHANNELS-1:0] cfg_ready_or_inactive;
     logic [NUM_CHANNELS-1:0] done_or_inactive;
+    logic [NUM_CHANNELS-1:0] done_sticky;
 
     for (genvar ch = 0; ch < NUM_CHANNELS; ++ch) begin : g_channels
         wire [NUM_CH_SHIFT-1:0] logical_ch = ch - start_ch;
@@ -207,7 +208,7 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
     end
 
     wire cfg_all_ready  = &cfg_ready_or_inactive;
-    wire done_all_valid = &done_or_inactive;
+    wire done_all_valid = &done_sticky;
 
     // =========================================================
     // FSM outputs (active/idle/done to gemm_dma_ctrl_if)
@@ -315,10 +316,16 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
     // =========================================================
     always_ff @(posedge clk) begin
         if (reset) begin
-            state_q <= S_IDLE;
-            cmd_q   <= '0;
+            state_q     <= S_IDLE;
+            cmd_q       <= '0;
+            done_sticky <= '0;
         end else begin
             state_q <= state_d;
+            if (state_q == S_IDLE) begin
+                done_sticky <= '0;
+            end else begin
+                done_sticky <= done_sticky | done_or_inactive;
+            end
             if (state_q == S_IDLE && gemm_dma_ctrl_if.start) begin
                 cmd_q <= gemm_dma_ctrl_if.cmd;
             end
