@@ -6,41 +6,9 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash .claude/hooks/bash-guard.sh",
+            "command": "bash .claude/hooks/conda-inject.sh",
             "timeout": 10,
-            "statusMessage": "Checking bash guard..."
-          }
-        ]
-      },
-      {
-        "matcher": "Read",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/harness/hooks/check_hw_json_read.py\"",
-            "timeout": 5
-          }
-        ]
-      },
-      {
-        "matcher": "Edit|Write",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash .claude/hooks/rtl-edit-guard.sh",
-            "timeout": 5,
-            "statusMessage": "Checking RTL edit guard..."
-          }
-        ]
-      },
-      {
-        "matcher": "Agent",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash .claude/hooks/fsm-subagent-guard.sh",
-            "timeout": 5,
-            "statusMessage": "Checking FSM subagent guard..."
+            "statusMessage": "Injecting conda env..."
           }
         ]
       }

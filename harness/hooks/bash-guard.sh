@@ -1,7 +1,7 @@
 #!/bin/bash --norc --noprofile
 # PreToolUse hook for Bash: test execution guard + conda inject
-# 1) Block test-execution commands unless called from Verification subagent
-# 2) Inject conda env activation
+# When FSM is active: block test execution unless from Verification subagent
+# When no FSM is active: allow all commands (main agent can run tests directly)
 
 TARGET_ENV="vortex"
 
@@ -9,12 +9,18 @@ INPUT=$(cat)
 CMD=$(echo "$INPUT" | jq -r '.tool_input.command')
 AGENT_TYPE=$(echo "$INPUT" | jq -r '.agent_type // empty')
 
-# --- Test execution guard ---
-# Only block if NOT called from Verification subagent
+# --- Test execution guard (only when FSM is active) ---
 if echo "$CMD" | grep -qE '(blackbox\.sh|verify_rtl\.py|unittest.*make\s+(run|clean)|make\s+(run|clean).*unittest|/simv\b)'; then
+    # Verification subagent is always allowed
     if [ "$AGENT_TYPE" != "Verification" ]; then
-        echo '{"decision":"block","reason":"BLOCKED: Main agent must not run tests directly. Use Verification subagent instead."}'
-        exit 2
+        # Check if FSM is active
+        PROJECT_DIR="${CLAUDE_PROJECT_DIR:-.}"
+        source "$(dirname "$0")/_find-active-fsm.sh"
+
+        if [ -n "$FSM_HEADER" ]; then
+            echo '{"decision":"block","reason":"BLOCKED: During FSM run, main agent must not run tests directly. Use Verification subagent instead."}'
+            exit 2
+        fi
     fi
 fi
 
@@ -26,7 +32,7 @@ fi
 
 # Check conda env exists
 if ! conda info --envs 2>/dev/null | grep -q "^$TARGET_ENV "; then
-    echo "BLOCK: conda env '$TARGET_ENV'가 존재하지 않습니다." >&2
+    echo "BLOCK: conda env '$TARGET_ENV' does not exist." >&2
     exit 2
 fi
 
