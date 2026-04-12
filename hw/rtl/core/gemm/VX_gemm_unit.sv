@@ -273,6 +273,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     logic [`GEMM_ACC_MEM_BANK_ADDR_WIDTH-1:0]      acc_mem_out_rd_bank_addr;
     logic [1:0]                                    acc_mem_out_rd_bank;
     logic [1:0]                                    acc_mem_out_rd_bank_q;
+    logic [$bits(o_lmem_bus_if.req_data.tag)-1:0]  acc_mem_out_rd_tag_q;
 
     logic [3:0][`MXU_COL-1:0][FP32_WIDTH-1:0]            acc_mem_out_data;
     logic [3:0][`GEMM_ACC_MEM_ADDR_WIDTH-1:0]            acc_mem_wr_addr;
@@ -348,7 +349,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     wire out_mem_rd_req_fire = o_lmem_bus_if.req_valid & o_lmem_bus_if.req_ready & ~o_lmem_bus_if.req_data.rw;
     assign o_lmem_bus_if.rsp_valid = fp16_out_valid[0];
     assign o_lmem_bus_if.rsp_data.data  = fp16_out_data;
-    assign o_lmem_bus_if.rsp_data.tag  = '0;
+    assign o_lmem_bus_if.rsp_data.tag  = acc_mem_out_rd_tag_q;
     assign acc_mem_out_rd_addr = o_lmem_bus_if.req_data.addr << `CLOG2(`GEMM_PSUM_DATA_SIZE);  // acc_mem entry = FP32 × MXU_COL = 128 bytes
 
     // =========================================================================
@@ -669,11 +670,13 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
             acc_mem_rd_out_valid <= 1'b0;
             acc_mem_out_rd_addr_q <= '0;
             acc_mem_out_rd_bank_q <= '0;
+            acc_mem_out_rd_tag_q <= '0;
         end else begin
             if (out_mem_rd_req_fire) begin
                 acc_mem_rd_out_valid <= 1'b1;
                 acc_mem_out_rd_addr_q <= acc_mem_out_rd_addr;
                 acc_mem_out_rd_bank_q <= acc_mem_out_rd_bank;
+                acc_mem_out_rd_tag_q <= o_lmem_bus_if.req_data.tag;
             end else if (fp16_out_valid[0] & o_lmem_bus_if.rsp_ready) begin
                 acc_mem_rd_out_valid <= 1'b0;
             end
