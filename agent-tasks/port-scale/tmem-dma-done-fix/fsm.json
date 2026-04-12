@@ -1,0 +1,40 @@
+{
+  "name": "Fix TMEM DMA done race condition",
+  "task_name": "tmem-dma-done-fix",
+  "initial_state": "IMPLEMENT",
+  "states": {
+    "IMPLEMENT": {
+      "description": "Fix done handshake race in VX_gemm_tmem_dma_ctrl.sv: add sticky done register so channels that finish early don't get consumed before all channels assert done",
+      "checklist": [
+        "Add done_sticky register declaration",
+        "Add sequential logic: clear on reset/IDLE, accumulate done_or_inactive otherwise",
+        "Change done_all_valid to use done_sticky",
+        "Keep done_if[ch].ready unchanged"
+      ],
+      "allowed_subagents": ["RTL Implementation"],
+      "transitions": {
+        "VERIFY": "Implementation complete"
+      },
+      "on_fail": "IMPLEMENT"
+    },
+    "VERIFY": {
+      "description": "Run blackbox test with m128k64n32 config to verify fix",
+      "checklist": [
+        "fpint_gemm blackbox test with k=64 passes (no hang)",
+        "m128k32n32 regression still passes"
+      ],
+      "allowed_subagents": ["Verification"],
+      "transitions": {
+        "DONE": "Both configs pass"
+      },
+      "on_fail": "IMPLEMENT"
+    },
+    "DONE": {
+      "description": "Fix verified",
+      "checklist": [],
+      "allowed_subagents": [],
+      "transitions": {},
+      "on_fail": null
+    }
+  }
+}

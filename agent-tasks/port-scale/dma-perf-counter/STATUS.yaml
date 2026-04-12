@@ -5,7 +5,7 @@ parent:
 children: []
 fsm:
   file: fsm.json
-  state: DESIGN
+  state: DONE
 
 completed_work: []
 pitfalls: []

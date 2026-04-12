@@ -1,0 +1,23 @@
+task: tmem-dma-done-fix
+parent:
+  name: port-scale
+  path: STATUS.yaml
+children: []
+fsm:
+  file: fsm.json
+  state: VERIFY
+
+completed_work:
+  - date: 2026-04-12 10:00
+    phase: ANALYSIS
+    title: "Root cause identified"
+    details: |
+      TMEM DMA ctrl done detection race condition.
+      done_all_valid = &done_or_inactive requires ALL channels done simultaneously,
+      but done_if[ch].ready=1 in S_WAIT_DONE causes early channels' valid to be
+      consumed before later channels assert. Channels 0-3 and 4-7 finish 1 cycle apart.
+      Fix: sticky done register that accumulates per-channel done bits.
+
+pitfalls:
+  - done_if handshake consumes valid immediately, so staggered channel completion
+    causes done_all_valid to never be true

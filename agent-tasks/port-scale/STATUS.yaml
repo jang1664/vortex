@@ -10,6 +10,9 @@ children:
   - name: fpint-dma-impl-verify
     path: fpint-dma-impl-verify/STATUS.yaml
     state: DONE
+  - name: tmem-dma-done-fix
+    path: tmem-dma-done-fix/STATUS.yaml
+    state: IMPLEMENT
 fsm:
   file: fsm.json
   state: DONE
