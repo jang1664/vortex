@@ -270,6 +270,46 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
         endcase
     end
 
+`ifdef DBG_TRACE_GEMM
+    function automatic string state_to_str(input state_t s);
+        case (s)
+            S_IDLE:      state_to_str = "S_IDLE";
+            S_PROG:      state_to_str = "S_PROG";
+            S_WAIT_DONE: state_to_str = "S_WAIT_DONE";
+            S_DONE:      state_to_str = "S_DONE";
+            S_NOTIFY:    state_to_str = "S_NOTIFY";
+            default:     state_to_str = "S_UNKNOWN";
+        endcase
+    endfunction
+
+    always_ff @(posedge clk) begin
+        if (!reset) begin
+            if (gemm_dma_ctrl_if.start) begin
+                `TRACE(2, ("%m : [%0t] | TMEM_DMA_CTRL_CMD | {inst=%s, op=0x%0h, instr=0x%0h, rs1=0x%0h, rs2=0x%0h, stride=0x%0h, bound=%0d}\n",
+                          $time, INSTANCE_ID, gemm_dma_ctrl_if.cmd.instr[3:0], gemm_dma_ctrl_if.cmd.instr,
+                          gemm_dma_ctrl_if.cmd.rs1_data, gemm_dma_ctrl_if.cmd.rs2_data,
+                          gemm_dma_ctrl_if.cmd.stride, gemm_dma_ctrl_if.cmd.bound))
+            end
+
+            if (state_q != state_d) begin
+                `TRACE(2, ("%m : [%0t] | TMEM_DMA_CTRL_STATE | {inst=%s, from=%s, to=%s, op=0x%0h, seg_size=%0d, bnd0=%0d, src_base=0x%0h, dst_base=0x%0h, dir_is_st=%0d, start_ch=%0d, num_words=%0d}\n",
+                          $time, INSTANCE_ID, state_to_str(state_q), state_to_str(state_d),
+                          cmd_op, seg_size, bnd0, src_base, dst_base, dir_is_st, start_ch, num_words))
+            end
+
+            if (state_q == S_PROG && cfg_all_ready) begin
+                `TRACE(2, ("%m : [%0t] | TMEM_DMA_CTRL_PROG | {inst=%s, op=0x%0h, dir_is_st=%0d, start_ch=%0d, num_words=%0d, words_quot=%0d, words_rem=%0d, cfg_ready=0x%0h}\n",
+                          $time, INSTANCE_ID, cmd_op, dir_is_st, start_ch, num_words, words_quot, words_rem, cfg_ready_or_inactive))
+            end
+
+            if (state_q == S_WAIT_DONE && done_all_valid) begin
+                `TRACE(2, ("%m : [%0t] | TMEM_DMA_CTRL_DONE | {inst=%s, done_mask=0x%0h}\n",
+                          $time, INSTANCE_ID, done_or_inactive))
+            end
+        end
+    end
+`endif
+
     // =========================================================
     // Sequential logic
     // =========================================================
