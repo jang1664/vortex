@@ -294,3 +294,4 @@ clean:
 	rm -rf $(DESTDIR)/simv $(DESTDIR)/simv.daidir $(DESTDIR)/csrc
 	rm -f $(DESTDIR)/$(APP_PROJECT)
 	rm -f $(DESTDIR)/ucli.key $(DESTDIR)/vc_hdrs.h
+	rm -f *fsdb* *.log
