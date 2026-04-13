@@ -145,6 +145,8 @@ static constexpr uint32_t DMA_MT     = GEMM_FSM_MT;      // 128
 static constexpr uint32_t DMA_KT     = GEMM_FSM_KT;      // 128
 static constexpr uint32_t DMA_MXU_KT = GEMM_FSM_MXU_KT;  // 32
 static constexpr uint32_t DMA_MXU_NT = GEMM_FSM_MXU_NT;   // 32
+static constexpr uint32_t ACC_DBUF_STRIDE =
+  GEMM_ACC_MEM_DEPTH * (4u * 2u * MXU_COL);
 
 // ============================================================================
 // RID helpers for double-buffered sync registers
@@ -213,6 +215,7 @@ static void run_tiled_gemm(const kernel_arg_t* arg) {
   uint32_t sz_target[2]          = {0, 0};
   uint32_t g_target[2]           = {0, 0};
   uint32_t o_target[2]           = {0, 0};
+  uint32_t acc_reuse_target[2]   = {0, 0};
   uint32_t store_reuse_target[2] = {0, 0};
   uint32_t store_done_target     = 0;
 
@@ -282,10 +285,17 @@ static void run_tiled_gemm(const kernel_arg_t* arg) {
     for (uint32_t nt = 0; nt < n_tiles; nt++) {
       const uint32_t output_tile_idx = nt + n_tiles * mt;
       const uint32_t output_buf = output_tile_idx & 1;
+      const uint32_t acc_group = output_tile_idx & 1;
+      const uint32_t acc_mem_base = acc_group ? ACC_DBUF_STRIDE : 0u;
+      const uint32_t acc_store_base = acc_mem_base >> 1;
 
       const uint64_t dram_out_tile = arg->dram_out_base
         + uint64_t(mt) * uint64_t(n_tiles) * uint64_t(DMA_MT * DMA_MXU_NT * 2u)
         + uint64_t(nt) * uint64_t(cur_output_tile_bytes);
+
+      // Reuse acc banks only after the previous MXU_STORE_OUTPUT on the same
+      // acc group has completed. This is independent from obuf reuse.
+      stream_send(make_wait(acc_reuse_target[acc_group], rid_output(acc_group)));
 
       for (uint32_t kt = 0; kt < k_tiles; kt++, tile_idx++) {
         const uint32_t tile_buf = tile_idx & 1;
@@ -365,7 +375,7 @@ static void run_tiled_gemm(const kernel_arg_t* arg) {
             is_first_kb ? 0u : 1u,   // is_accum
             is_last_kb  ? 1u : 0u,   // is_last
             mxu_buf, mxu_buf, mxu_buf, qdir,
-            i_src, 0,
+            i_src, acc_mem_base,
             cur_m,
             DMA_MXU_KT * 2u,
             cur_m
@@ -378,7 +388,7 @@ static void run_tiled_gemm(const kernel_arg_t* arg) {
           if (is_last_kb) {
             stream_send(make_wait(store_reuse_target[output_buf], RID_ST));
 
-            send_mxu_store_output(obuf[output_buf], 0, 0, cur_m);
+            send_mxu_store_output(obuf[output_buf], acc_store_base, 0, cur_m);
             o_target[output_buf] += 1;
             stream_send(make_notify(1, o_target[output_buf], rid_output(output_buf)));
           }
@@ -389,6 +399,7 @@ static void run_tiled_gemm(const kernel_arg_t* arg) {
 
       // ---- DMA store output LMEM → DRAM ----
       stream_send(make_wait(o_target[output_buf], rid_output(output_buf)));
+      acc_reuse_target[acc_group] = o_target[output_buf];
 
       store_done_target += 1;
       store_reuse_target[output_buf] = store_done_target;
