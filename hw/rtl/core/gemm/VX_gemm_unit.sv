@@ -290,7 +290,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     logic                                          acc_mem_accum_rd_req;
     logic [`GEMM_ACC_MAX_CNT-1:0]                  acc_mem_accum_rd_cnt, acc_mem_accum_rd_cnt_next;
     logic                                          acc_rd_fifo_push, acc_rd_fifo_pop;
-    logic                                          acc_rd_fifo_full, acc_rd_fifo_empty;
+    logic                                          acc_rd_fifo_full, acc_rd_fifo_empty, acc_rd_fifo_alm_full;
     logic                                          acc_mem_rd_data_valid;
     logic [`MXU_COL-1:0][FP32_WIDTH-1:0]           acc_rd_fifo_out_data;
 
@@ -472,8 +472,9 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
 
             ACCUM_RD_READ: begin
                 if (acc_mem_accum_rd_cnt > 0) begin
-                    acc_mem_accum_rd_req = ~acc_mem_rd_data_valid | acc_rd_fifo_push;
-                    acc_rd_fifo_push     = acc_mem_rd_data_valid & ~acc_rd_fifo_full;
+                    acc_rd_fifo_push     = acc_mem_rd_data_valid & (~acc_rd_fifo_full | acc_rd_fifo_pop);
+                    acc_mem_accum_rd_req = (~acc_rd_fifo_full | acc_rd_fifo_pop)
+                                         & ~(acc_rd_fifo_alm_full & acc_rd_fifo_push & ~acc_rd_fifo_pop);
                     if (acc_rd_fifo_push) begin
                         acc_mem_accum_rd_cnt_next = acc_mem_accum_rd_cnt - 1;
                     end
@@ -1134,7 +1135,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
         .testmode_i  (1'b0),
         .full_o      (acc_rd_fifo_full),
         .empty_o     (acc_rd_fifo_empty),
-        .alm_full_o  (),
+        .alm_full_o  (acc_rd_fifo_alm_full),
         .alm_empty_o (),
         .data_i      (acc_rd_fifo_in_data),
         .push_i      (acc_rd_fifo_push),
