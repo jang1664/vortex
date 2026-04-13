@@ -471,14 +471,14 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
             end
 
             ACCUM_RD_READ: begin
+                acc_rd_fifo_push = acc_mem_rd_data_valid & (~acc_rd_fifo_full | acc_rd_fifo_pop);
                 if (acc_mem_accum_rd_cnt > 0) begin
-                    acc_rd_fifo_push     = acc_mem_rd_data_valid & (~acc_rd_fifo_full | acc_rd_fifo_pop);
                     acc_mem_accum_rd_req = (~acc_rd_fifo_full | acc_rd_fifo_pop)
                                          & ~(acc_rd_fifo_alm_full & acc_rd_fifo_push & ~acc_rd_fifo_pop);
-                    if (acc_rd_fifo_push) begin
+                    if (acc_mem_accum_rd_req) begin
                         acc_mem_accum_rd_cnt_next = acc_mem_accum_rd_cnt - 1;
                     end
-                end else begin
+                end else if (~acc_mem_rd_data_valid) begin
                     acc_mem_accum_rd_state_next = ACCUM_RD_IDLE;
                 end
             end
