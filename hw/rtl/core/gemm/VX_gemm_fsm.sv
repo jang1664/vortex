@@ -1820,9 +1820,9 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
   localparam int DBG_GEMM_P1_PAD_W = DBG_GEMM_P1_W - DBG_GEMM_P1_PAYLOAD_W;
   localparam int DBG_GEMM_P2_PAD_W = DBG_GEMM_P2_W - DBG_GEMM_P2_PAYLOAD_W;
 
-  `STATIC_ASSERT(DBG_GEMM_P0_PAD_W >= 0, ("DBG_GEMM_P0 width underflow"));
-  `STATIC_ASSERT(DBG_GEMM_P1_PAD_W >= 0, ("DBG_GEMM_P1 width underflow"));
-  `STATIC_ASSERT(DBG_GEMM_P2_PAD_W >= 0, ("DBG_GEMM_P2 width underflow"));
+  `VX_STATIC_ASSERT(DBG_GEMM_P0_PAD_W >= 0, ("DBG_GEMM_P0 width underflow"));
+  `VX_STATIC_ASSERT(DBG_GEMM_P1_PAD_W >= 0, ("DBG_GEMM_P1 width underflow"));
+  `VX_STATIC_ASSERT(DBG_GEMM_P2_PAD_W >= 0, ("DBG_GEMM_P2 width underflow"));
 
   (* keep = "true", mark_debug = "true" *) wire [DBG_GEMM_P0_W-1:0] dbg_gemm_probe0 = {
       {DBG_GEMM_P0_PAD_W{1'b0}},

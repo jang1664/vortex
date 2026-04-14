@@ -61,7 +61,7 @@ module VX_mem_data_adapter #(
 
     localparam EXPECTED_TAG_WIDTH = SRC_TAG_WIDTH + ((DST_LDATAW > SRC_LDATAW) ? D : 0);
 
-    `STATIC_ASSERT(DST_TAG_WIDTH >= EXPECTED_TAG_WIDTH, ("invalid DST_TAG_WIDTH parameter, current=%0d, expected=%0d", DST_TAG_WIDTH, EXPECTED_TAG_WIDTH))
+    `VX_STATIC_ASSERT(DST_TAG_WIDTH >= EXPECTED_TAG_WIDTH, ("invalid DST_TAG_WIDTH parameter, current=%0d, expected=%0d", DST_TAG_WIDTH, EXPECTED_TAG_WIDTH))
 
     wire                         mem_req_valid_out_w;
     wire [DST_ADDR_WIDTH-1:0]    mem_req_addr_out_w;
@@ -194,8 +194,14 @@ module VX_mem_data_adapter #(
             end
         end
         assign mem_rsp_tag_in_x = (rsp_ctr != 0) ? mem_rsp_tag_in_r : mem_rsp_tag_out;
-        `RUNTIME_ASSERT(!mem_rsp_in_fire || (mem_rsp_tag_in_x == mem_rsp_tag_out),
-            ("%t: *** out-of-order memory reponse! cur=0x%0h, expected=0x%0h", $time, mem_rsp_tag_in_x, mem_rsp_tag_out))
+`ifdef SIMULATION
+        always @(posedge clk) begin
+            if (!reset && mem_rsp_in_fire && (mem_rsp_tag_in_x != mem_rsp_tag_out)) begin
+                $error("%t: *** out-of-order memory reponse! cur=0x%0h, expected=0x%0h",
+                       $time, mem_rsp_tag_in_x, mem_rsp_tag_out);
+            end
+        end
+`endif
 
         wire [SRC_ADDR_WIDTH+D-1:0] mem_req_addr_in_qual = {mem_req_addr_in, req_ctr};
 

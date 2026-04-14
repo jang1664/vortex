@@ -37,7 +37,7 @@ module VX_tcu_fedp_int #(
     localparam ADD_LATENCY = 1;
     localparam RED_LATENCY = LEVELS * ADD_LATENCY;
     localparam ACC_LATENCY = RED_LATENCY + ADD_LATENCY;
-    `STATIC_ASSERT (LATENCY == (MUL_LATENCY+ACC_LATENCY), ("invalid parameter!"));
+    `VX_STATIC_ASSERT (LATENCY == (MUL_LATENCY+ACC_LATENCY), ("invalid parameter!"));
 
     `UNUSED_VAR ({a_row, b_col, c_val});
     `UNUSED_VAR (fmt_d);

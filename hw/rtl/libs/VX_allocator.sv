@@ -63,10 +63,10 @@ module VX_allocator #(
             full_r         <= 1'b0;
         end else begin
             if (release_en) begin
-                `ASSERT(0 == free_slots[release_addr], ("%t: releasing invalid addr %d", $time, release_addr));
+                `VX_ASSERT(0 == free_slots[release_addr], ("%t: releasing invalid addr %d", $time, release_addr));
             end
             if (acquire_en) begin
-                `ASSERT(~full_r, ("%t: allocator is full", $time));
+                `VX_ASSERT(~full_r, ("%t: allocator is full", $time));
             end
 
             if (acquire_en || (release_en && full_r)) begin

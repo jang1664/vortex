@@ -95,8 +95,8 @@ module VX_dp_ram #(
     `UNUSED_PARAM (RADDR_REG)
     `UNUSED_PARAM (RADDR_RESET)
 
-    `STATIC_ASSERT(!(WRENW * WSELW != DATAW), ("invalid parameter"))
-    `STATIC_ASSERT((RDW_MODE == "R" || RDW_MODE == "W"), ("invalid parameter"))
+    `VX_STATIC_ASSERT(!(WRENW * WSELW != DATAW), ("invalid parameter"))
+    `VX_STATIC_ASSERT((RDW_MODE == "R" || RDW_MODE == "W"), ("invalid parameter"))
     `UNUSED_PARAM (RDW_ASSERT)
 
 `ifdef SYNTHESIS
@@ -370,7 +370,7 @@ module VX_dp_ram #(
 
             assign rdata = (prev_write && (prev_waddr == raddr)) ? prev_data : ram[raddr];
             if (RDW_ASSERT) begin : g_rw_asert
-                `RUNTIME_ASSERT(~read || (rdata == ram[raddr]), ("%t: read after write hazard", $time))
+                `VX_RUNTIME_ASSERT(~read || (rdata == ram[raddr]), ("%t: read after write hazard", $time))
             end
         end
     end

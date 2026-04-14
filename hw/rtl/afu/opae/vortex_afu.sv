@@ -972,7 +972,11 @@ module vortex_afu import ccip_if_pkg::*; import local_mem_cfg_pkg::*; import VX_
         cci_wr_req_data <= t_ccip_clData'(cci_mem_rsp_data);
 
         if (cci_wr_req_fire) begin
-            `ASSERT(cci_wr_req_ctr != 0, ("runtime error"));
+`ifdef SIMULATION
+            if (cci_wr_req_ctr == 0) begin
+                $error("runtime error");
+            end
+`endif
             cci_wr_req_ctr <= cci_wr_req_ctr - CCI_ADDR_WIDTH'(1);
             if (cci_wr_req_ctr == CCI_ADDR_WIDTH'(1)) begin
             cci_wr_req_done <= 1;
@@ -992,8 +996,8 @@ module vortex_afu import ccip_if_pkg::*; import local_mem_cfg_pkg::*; import VX_
     //--
 
     assign cci_mem_req_rw = state[0];
-    `STATIC_ASSERT(STATE_MEM_WRITE == 1, ("invalid value")); // 01
-    `STATIC_ASSERT(STATE_MEM_READ  == 2, ("invalid value")); // 10
+    `VX_STATIC_ASSERT(STATE_MEM_WRITE == 1, ("invalid value")); // 01
+    `VX_STATIC_ASSERT(STATE_MEM_READ  == 2, ("invalid value")); // 10
 
     assign cci_mem_req_valid = cci_mem_req_rw ? cci_mem_wr_req_valid : cci_mem_rd_req_valid;
     assign cci_mem_req_addr  = cci_mem_req_rw ? cci_mem_wr_req_addr : cci_mem_rd_req_addr;

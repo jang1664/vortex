@@ -147,7 +147,7 @@ import VX_fpu_pkg::*;
                     mscratch <= write_data;
                 end
                 default: begin
-                    `ASSERT(0, ("%t: *** %s invalid CSR write address: %0h (#%0d)", $time, INSTANCE_ID, write_addr, write_uuid));
+                    `VX_ASSERT(0, ("%t: *** %s invalid CSR write address: %0h (#%0d)", $time, INSTANCE_ID, write_addr, write_uuid));
                 end
             endcase
         end
@@ -290,7 +290,7 @@ import VX_fpu_pkg::*;
 
     `UNUSED_VAR (base_dcrs)
 
-    `RUNTIME_ASSERT(~read_enable || read_addr_valid_w, ("%t: *** invalid CSR read address: 0x%0h (#%0d)", $time, read_addr, read_uuid))
+    `VX_RUNTIME_ASSERT(~read_enable || read_addr_valid_w, ("%t: *** invalid CSR read address: 0x%0h (#%0d)", $time, read_addr, read_uuid))
 
 `ifdef PERF_ENABLE
     `UNUSED_VAR (sysmem_perf.icache);

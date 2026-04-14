@@ -24,7 +24,7 @@
 
 `ifdef SIMULATION
 
-`define STATIC_ASSERT(cond, msg) \
+`define VX_STATIC_ASSERT(cond, msg) \
     /* verilator lint_off GENUNNAMED */ \
     initial if (!(cond)) begin \
         $error msg; \
@@ -45,13 +45,13 @@
 `define ERROR(msg) \
     $error msg
 
-`define ASSERT(cond, msg) \
+`define VX_ASSERT(cond, msg) \
     assert(cond) else $error msg
 
-`define RUNTIME_ASSERT(cond, msg) \
+`define VX_RUNTIME_ASSERT(cond, msg) \
     always @(posedge clk) begin   \
         if (!reset) begin         \
-            `ASSERT(cond, msg);   \
+            `VX_ASSERT(cond, msg);   \
         end                       \
     end
 
@@ -150,11 +150,11 @@
 
 `else // SYNTHESIS
 
-`define STATIC_ASSERT(cond, msg)
+`define VX_STATIC_ASSERT(cond, msg)
 `define PACKAGE_ASSERT(cond)
 `define ERROR(msg)                  //
-`define ASSERT(cond, msg)           //
-`define RUNTIME_ASSERT(cond, msg)
+`define VX_ASSERT(cond, msg)           //
+`define VX_RUNTIME_ASSERT(cond, msg)
 
 `define DEBUG_BLOCK(x)
 `define TRACE(level, args) \

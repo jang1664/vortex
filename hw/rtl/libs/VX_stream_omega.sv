@@ -41,7 +41,7 @@ module VX_stream_omega #(
 
     output wire [PERF_CTR_BITS-1:0]         collisions
 );
-    `STATIC_ASSERT (`IS_POW2(RADIX), ("inavlid parameters"))
+    `VX_STATIC_ASSERT (`IS_POW2(RADIX), ("inavlid parameters"))
 
     // If network size smaller than radix, simply use a crossbar.
     if (NUM_INPUTS <= RADIX && NUM_OUTPUTS <= RADIX) begin : g_fallback

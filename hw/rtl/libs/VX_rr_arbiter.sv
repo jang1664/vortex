@@ -29,7 +29,7 @@ module VX_rr_arbiter #(
     output wire                     grant_valid,
     input  wire                     grant_ready
 );
-    `STATIC_ASSERT ((STICKY == 0) || (MODEL == 1 && LUT_OPT == 0), ("Sticky is only supported in model 1"))
+    `VX_STATIC_ASSERT ((STICKY == 0) || (MODEL == 1 && LUT_OPT == 0), ("Sticky is only supported in model 1"))
 
     if (NUM_REQS == 1)  begin : g_passthru
 

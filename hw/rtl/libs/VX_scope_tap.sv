@@ -70,8 +70,8 @@ module VX_scope_tap #(
     localparam SEND_TYPE_DATA   = 2'd3;
     localparam SEND_TYPE_BITS   = 2;
 
-    `STATIC_ASSERT ((IDLE_CTRW <= TX_DATAW), ("invalid parameter"))
-    `STATIC_ASSERT(`IS_POW2(DEPTH), ("depth must be a power of 2!"))
+    `VX_STATIC_ASSERT ((IDLE_CTRW <= TX_DATAW), ("invalid parameter"))
+    `VX_STATIC_ASSERT(`IS_POW2(DEPTH), ("depth must be a power of 2!"))
 
     reg [TAP_STATE_BITS-1:0] tap_state;
     reg [CTRL_STATE_BITS-1:0] ctrl_state;

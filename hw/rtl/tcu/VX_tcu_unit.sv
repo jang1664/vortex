@@ -31,8 +31,8 @@ module VX_tcu_unit import VX_gpu_pkg::*, VX_tcu_pkg::*; #(
     localparam NUM_LANES  = `NUM_TCU_LANES;
     localparam PE_COUNT   = 2;
 
-    `STATIC_ASSERT (BLOCK_SIZE == `ISSUE_WIDTH, ("must be full issue execution"));
-    `STATIC_ASSERT (NUM_LANES == `NUM_THREADS, ("must be full warp execution"));
+    `VX_STATIC_ASSERT (BLOCK_SIZE == `ISSUE_WIDTH, ("must be full issue execution"));
+    `VX_STATIC_ASSERT (NUM_LANES == `NUM_THREADS, ("must be full warp execution"));
     `SCOPE_IO_SWITCH (BLOCK_SIZE);
 
     VX_execute_if #(

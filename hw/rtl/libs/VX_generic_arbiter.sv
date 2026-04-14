@@ -28,7 +28,7 @@ module VX_generic_arbiter #(
     output wire                     grant_valid,
     input  wire                     grant_ready
 );
-    `STATIC_ASSERT((TYPE == "P" || TYPE == "R" || TYPE == "M" || TYPE == "C"), ("invalid parameter"))
+    `VX_STATIC_ASSERT((TYPE == "P" || TYPE == "R" || TYPE == "M" || TYPE == "C"), ("invalid parameter"))
 
     if (TYPE == "P") begin : g_priority
 
@@ -96,7 +96,7 @@ module VX_generic_arbiter #(
 
     end
 
-    `RUNTIME_ASSERT (((~(| requests) != 1) || (grant_valid && (requests[grant_index] != 0) && (grant_onehot == (NUM_REQS'(1) << grant_index)))), ("%t: invalid arbiter grant!", $time))
+    `VX_RUNTIME_ASSERT (((~(| requests) != 1) || (grant_valid && (requests[grant_index] != 0) && (grant_onehot == (NUM_REQS'(1) << grant_index)))), ("%t: invalid arbiter grant!", $time))
 
 endmodule
 `TRACING_ON

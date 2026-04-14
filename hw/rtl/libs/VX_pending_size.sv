@@ -32,8 +32,8 @@ module VX_pending_size #(
     output wire alm_full,
     output wire [SIZEW-1:0] size
 );
-    `STATIC_ASSERT(INCRW <= SIZEW, ("invalid parameter: %d vs %d", INCRW, SIZEW))
-    `STATIC_ASSERT(DECRW <= SIZEW, ("invalid parameter: %d vs %d", DECRW, SIZEW))
+    `VX_STATIC_ASSERT(INCRW <= SIZEW, ("invalid parameter: %d vs %d", INCRW, SIZEW))
+    `VX_STATIC_ASSERT(DECRW <= SIZEW, ("invalid parameter: %d vs %d", DECRW, SIZEW))
 
     if (SIZE == 1) begin : g_size_eq1
 
@@ -82,8 +82,8 @@ module VX_pending_size #(
                     alm_full_r  <= 0;
                     size_r      <= '0;
                 end else begin
-                    `ASSERT((DELTAW'(incr) <= DELTAW'(decr)) || (size_n >= size_r), ("runtime error: counter overflow"));
-                    `ASSERT((DELTAW'(incr) >= DELTAW'(decr)) || (size_n <= size_r), ("runtime error: counter underflow"));
+                    `VX_ASSERT((DELTAW'(incr) <= DELTAW'(decr)) || (size_n >= size_r), ("runtime error: counter overflow"));
+                    `VX_ASSERT((DELTAW'(incr) >= DELTAW'(decr)) || (size_n <= size_r), ("runtime error: counter underflow"));
                     empty_r     <= (size_n == SIZEW'(0));
                     full_r      <= (size_n == SIZEW'(SIZE));
                     alm_empty_r <= (size_n <= SIZEW'(ALM_EMPTY));

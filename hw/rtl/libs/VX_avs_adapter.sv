@@ -68,7 +68,7 @@ module VX_avs_adapter #(
     localparam REQ_XBAR_DATAW = 1 + BANK_ADDR_WIDTH + DATA_WIDTH + DATA_SIZE + TAG_WIDTH;
     localparam RSP_XBAR_DATAW = DATA_WIDTH + TAG_WIDTH;
 
-    `STATIC_ASSERT ((DST_ADDR_WDITH >= ADDR_WIDTH_IN), ("invalid address width: current=%0d, expected=%0d", DST_ADDR_WDITH, ADDR_WIDTH_IN))
+    `VX_STATIC_ASSERT ((DST_ADDR_WDITH >= ADDR_WIDTH_IN), ("invalid address width: current=%0d, expected=%0d", DST_ADDR_WDITH, ADDR_WIDTH_IN))
 
     // Bank selection
 

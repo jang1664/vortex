@@ -35,13 +35,13 @@ module VX_gemm_tree_v1 import VX_gpu_pkg::*; #(
 );
 
   // Static assertion: WEIGHT_LOAD_ROW_NUM must equal WEIGHT_LOAD_COL_NUM
-  `STATIC_ASSERT(WEIGHT_LOAD_ROW_NUM == WEIGHT_LOAD_COL_NUM, ("WEIGHT_LOAD_ROW_NUM (%0d) must equal WEIGHT_LOAD_COL_NUM (%0d)", 
+  `VX_STATIC_ASSERT(WEIGHT_LOAD_ROW_NUM == WEIGHT_LOAD_COL_NUM, ("WEIGHT_LOAD_ROW_NUM (%0d) must equal WEIGHT_LOAD_COL_NUM (%0d)", 
                                                                WEIGHT_LOAD_ROW_NUM, WEIGHT_LOAD_COL_NUM))
-  `STATIC_ASSERT(ROW_SIZE == COL_SIZE, ("ROW_SIZE (%0d) must equal COL_SIZE (%0d) for GEMM tree structure", 
+  `VX_STATIC_ASSERT(ROW_SIZE == COL_SIZE, ("ROW_SIZE (%0d) must equal COL_SIZE (%0d) for GEMM tree structure", 
                                         ROW_SIZE, COL_SIZE))
-  `STATIC_ASSERT(ROW_SIZE % WEIGHT_LOAD_ROW_NUM == 0, ("ROW_SIZE (%0d) must be multiple of WEIGHT_LOAD_ROW_NUM (%0d)", 
+  `VX_STATIC_ASSERT(ROW_SIZE % WEIGHT_LOAD_ROW_NUM == 0, ("ROW_SIZE (%0d) must be multiple of WEIGHT_LOAD_ROW_NUM (%0d)", 
                                                        ROW_SIZE, WEIGHT_LOAD_ROW_NUM))
-  `STATIC_ASSERT(COL_SIZE%TILE_COL_SIZE == 0, ("COL_SIZE (%0d) must be multiple of TILE_COL_SIZE (%0d)", 
+  `VX_STATIC_ASSERT(COL_SIZE%TILE_COL_SIZE == 0, ("COL_SIZE (%0d) must be multiple of TILE_COL_SIZE (%0d)", 
                                                COL_SIZE, TILE_COL_SIZE))
 
   //internal siganls

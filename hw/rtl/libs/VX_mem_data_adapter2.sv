@@ -66,8 +66,8 @@ module VX_mem_data_adapter2 #(
                                    : (DST_LDATAW < SRC_LDATAW) ? (D + OOO_SLOT_BITS)
                                    : SRC_TAG_WIDTH;
 
-    `STATIC_ASSERT(OOO_SLOTS > 0, ("invalid OOO_SLOTS parameter, current=%0d", OOO_SLOTS))
-    `STATIC_ASSERT(DST_TAG_WIDTH >= EXPECTED_TAG_WIDTH, ("invalid DST_TAG_WIDTH parameter, current=%0d, expected=%0d", DST_TAG_WIDTH, EXPECTED_TAG_WIDTH))
+    `VX_STATIC_ASSERT(OOO_SLOTS > 0, ("invalid OOO_SLOTS parameter, current=%0d", OOO_SLOTS))
+    `VX_STATIC_ASSERT(DST_TAG_WIDTH >= EXPECTED_TAG_WIDTH, ("invalid DST_TAG_WIDTH parameter, current=%0d, expected=%0d", DST_TAG_WIDTH, EXPECTED_TAG_WIDTH))
 
     wire                         mem_req_valid_out_w;
     wire [DST_ADDR_WIDTH-1:0]    mem_req_addr_out_w;
@@ -255,7 +255,7 @@ module VX_mem_data_adapter2 #(
             end
         end
 
-        `RUNTIME_ASSERT(!mem_rsp_in_fire || slot_active_r[rsp_slot_id],
+        `VX_RUNTIME_ASSERT(!mem_rsp_in_fire || slot_active_r[rsp_slot_id],
             ("%t: *** unexpected memory response slot_id=%0d, tag=0x%0h", $time, rsp_slot_id, mem_rsp_tag_out))
 
         wire [SRC_ADDR_WIDTH+D-1:0] mem_req_addr_in_qual = {mem_req_addr_in, req_ctr};

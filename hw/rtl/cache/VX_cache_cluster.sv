@@ -92,7 +92,7 @@ module VX_cache_cluster import VX_gpu_pkg::*; #(
     localparam NC_TAG_WIDTH = `MAX(CACHE_MEM_TAG_WIDTH, BYPASS_TAG_WIDTH) + 1;
     localparam MEM_TAG_WIDTH = PASSTHRU ? BYPASS_TAG_WIDTH : (NC_ENABLE ? NC_TAG_WIDTH : CACHE_MEM_TAG_WIDTH);
 
-    `STATIC_ASSERT(NUM_INPUTS >= NUM_CACHES, ("invalid parameter"))
+    `VX_STATIC_ASSERT(NUM_INPUTS >= NUM_CACHES, ("invalid parameter"))
 
 `ifdef PERF_ENABLE
     cache_perf_t perf_cache_unit[NUM_CACHES];

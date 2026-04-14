@@ -118,7 +118,7 @@ module VX_tcu_fedp_dsp #(
     localparam FADD_LATENCY = 11;
     localparam FRED_LATENCY = LEVELS * FADD_LATENCY;
     localparam TOTAL_LATENCY= FCVT_LATENCY + FMUL_LATENCY + FRED_LATENCY + FADD_LATENCY;
-    `STATIC_ASSERT (LATENCY == 0 || LATENCY == TOTAL_LATENCY, ("invalid latency! expected=%0d, actual=%0d", TOTAL_LATENCY, LATENCY));
+    `VX_STATIC_ASSERT (LATENCY == 0 || LATENCY == TOTAL_LATENCY, ("invalid latency! expected=%0d, actual=%0d", TOTAL_LATENCY, LATENCY));
 
     localparam C_DELAY = FCVT_LATENCY + FMUL_LATENCY + FRED_LATENCY;
 

@@ -96,10 +96,10 @@ module VX_mem_scheduler #(
     localparam CORE_BATCHES    = COALESCE_ENABLE ? 1 : MEM_BATCHES;
     localparam CORE_BATCH_BITS = `CLOG2(CORE_BATCHES);
 
-    `STATIC_ASSERT ((MEM_CHANNELS <= CORE_REQS), ("invalid parameter"))
-    `STATIC_ASSERT (`IS_DIVISBLE(CORE_REQS * WORD_SIZE, LINE_SIZE), ("invalid parameter"))
-    `STATIC_ASSERT ((TAG_WIDTH >= UUID_WIDTH), ("invalid parameter"))
-    `RUNTIME_ASSERT((~core_req_valid || core_req_mask != 0), ("%t: invalid request mask", $time))
+    `VX_STATIC_ASSERT ((MEM_CHANNELS <= CORE_REQS), ("invalid parameter"))
+    `VX_STATIC_ASSERT (`IS_DIVISBLE(CORE_REQS * WORD_SIZE, LINE_SIZE), ("invalid parameter"))
+    `VX_STATIC_ASSERT ((TAG_WIDTH >= UUID_WIDTH), ("invalid parameter"))
+    `VX_RUNTIME_ASSERT((~core_req_valid || core_req_mask != 0), ("%t: invalid request mask", $time))
 
     wire                            ibuf_push;
     wire                            ibuf_pop;
@@ -587,7 +587,7 @@ module VX_mem_scheduler #(
 
         for (integer i = 0; i < CORE_QUEUE_SIZE; ++i) begin
             if (pending_reqs_valid[i]) begin
-                `ASSERT(($time - pending_reqs_time[i][63:0]) < STALL_TIMEOUT,
+                `VX_ASSERT(($time - pending_reqs_time[i][63:0]) < STALL_TIMEOUT,
                     ("%t: *** %s response timeout: tag=0x%0h (#%0d)",
                         $time, INSTANCE_ID, pending_reqs_time[i][64 +: TAG_ID_WIDTH], pending_reqs_time[i][64+TAG_ID_WIDTH +: `UP(UUID_WIDTH)]));
             end

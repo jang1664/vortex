@@ -29,7 +29,7 @@ module VX_shift_register #(
     input wire [DATAW-1:0]             data_in,
     output wire [NUM_TAPS-1:0][DATAW-1:0] data_out
 );
-    `STATIC_ASSERT (RESETW <= DATAW, ("invalid parameter"));
+    `VX_STATIC_ASSERT (RESETW <= DATAW, ("invalid parameter"));
     if (DEPTH == 0) begin : g_passthru
         `UNUSED_VAR (clk)
         `UNUSED_VAR (reset)

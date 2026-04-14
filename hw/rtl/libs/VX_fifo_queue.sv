@@ -36,11 +36,11 @@ module VX_fifo_queue #(
     output wire [SIZEW-1:0] size
 );
 
-    `STATIC_ASSERT(ALM_FULL > 0, ("alm_full must be greater than 0!"))
-    `STATIC_ASSERT(ALM_FULL < DEPTH, ("alm_full must be smaller than size!"))
-    `STATIC_ASSERT(ALM_EMPTY > 0, ("alm_empty must be greater than 0!"))
-    `STATIC_ASSERT(ALM_EMPTY < DEPTH, ("alm_empty must be smaller than size!"))
-    `STATIC_ASSERT(`IS_POW2(DEPTH), ("depth must be a power of 2!"))
+    `VX_STATIC_ASSERT(ALM_FULL > 0, ("alm_full must be greater than 0!"))
+    `VX_STATIC_ASSERT(ALM_FULL < DEPTH, ("alm_full must be smaller than size!"))
+    `VX_STATIC_ASSERT(ALM_EMPTY > 0, ("alm_empty must be greater than 0!"))
+    `VX_STATIC_ASSERT(ALM_EMPTY < DEPTH, ("alm_empty must be smaller than size!"))
+    `VX_STATIC_ASSERT(`IS_POW2(DEPTH), ("depth must be a power of 2!"))
 
     VX_pending_size #(
         .SIZE      (DEPTH),
@@ -126,8 +126,8 @@ module VX_fifo_queue #(
         end
     end
 
-    `RUNTIME_ASSERT(~(push && ~pop) || ~full, ("%t: runtime error: incrementing full queue", $time))
-    `RUNTIME_ASSERT(~(pop && ~push) || ~empty, ("%t: runtime error: decrementing empty queue", $time))
+    `VX_RUNTIME_ASSERT(~(push && ~pop) || ~full, ("%t: runtime error: incrementing full queue", $time))
+    `VX_RUNTIME_ASSERT(~(pop && ~push) || ~empty, ("%t: runtime error: decrementing empty queue", $time))
 
 endmodule
 `TRACING_ON
