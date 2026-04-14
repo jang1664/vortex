@@ -65,6 +65,13 @@ extern int vx_dev_open(vx_device_h* hdevice) {
     std::string libName = "libvortex-" + driverName_s + ".so";
     auto handle = dlopen(libName.c_str(), RTLD_LAZY);
     if (handle == nullptr) {
+      const char* runtimeDir = getenv("VORTEX_RUNTIME_DIR");
+      if (runtimeDir != nullptr && runtimeDir[0] != '\0') {
+        std::string libPath = std::string(runtimeDir) + "/" + libName;
+        handle = dlopen(libPath.c_str(), RTLD_LAZY);
+      }
+    }
+    if (handle == nullptr) {
       std::cerr << "Cannot open library: " << dlerror() << std::endl;
       return 1;
     }
