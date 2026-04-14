@@ -35,9 +35,9 @@ module rtlsim_shim import VX_gpu_pkg::*; #(
     input  wire                             mem_req_ready [MEM_NUM_BANKS],
 
     // Memory response
-    input wire                              mem_rsp_valid [MEM_NUM_BANKS],
-    input wire [MEM_DATA_WIDTH-1:0]         mem_rsp_data [MEM_NUM_BANKS],
-    input wire [MEM_TAG_WIDTH-1:0]          mem_rsp_tag [MEM_NUM_BANKS],
+    input  wire                             mem_rsp_valid [MEM_NUM_BANKS],
+    input  wire [MEM_DATA_WIDTH-1:0]        mem_rsp_data [MEM_NUM_BANKS],
+    input  wire [MEM_TAG_WIDTH-1:0]         mem_rsp_tag [MEM_NUM_BANKS],
     output wire                             mem_rsp_ready [MEM_NUM_BANKS],
 
     // DCR write request
@@ -48,149 +48,280 @@ module rtlsim_shim import VX_gpu_pkg::*; #(
     // Status
     output wire                             busy
 );
-    localparam DST_LDATAW = `CLOG2(MEM_DATA_WIDTH);
-    localparam SRC_LDATAW = `CLOG2(VX_MEM_DATA_WIDTH);
-    localparam SUB_LDATAW = DST_LDATAW - SRC_LDATAW;
-    localparam VX_MEM_TAG_A_WIDTH  = VX_MEM_TAG_WIDTH + `MAX(SUB_LDATAW, 0);
-    localparam VX_MEM_ADDR_A_WIDTH = VX_MEM_ADDR_WIDTH - SUB_LDATAW;
+    localparam DATA_SIZE = MEM_DATA_WIDTH / 8;
+    localparam LOG2_DATA_SIZE = `CLOG2(DATA_SIZE);
+    localparam BANK_SEL_BITS  = `CLOG2(MEM_NUM_BANKS);
+    localparam AXI_ID_WIDTH   = MEM_TAG_WIDTH;
 
-    wire                            vx_mem_req_valid [VX_MEM_PORTS];
-    wire                            vx_mem_req_rw [VX_MEM_PORTS];
-    wire [VX_MEM_BYTEEN_WIDTH-1:0]  vx_mem_req_byteen [VX_MEM_PORTS];
-    wire [VX_MEM_ADDR_WIDTH-1:0]    vx_mem_req_addr [VX_MEM_PORTS];
-    wire [VX_MEM_DATA_WIDTH-1:0]    vx_mem_req_data [VX_MEM_PORTS];
-    wire [VX_MEM_TAG_WIDTH-1:0]     vx_mem_req_tag [VX_MEM_PORTS];
-    wire                            vx_mem_req_ready [VX_MEM_PORTS];
+    wire                            m_axi_awvalid [MEM_NUM_BANKS];
+    wire                            m_axi_awready [MEM_NUM_BANKS];
+    wire [`PLATFORM_MEMORY_ADDR_WIDTH-1:0] m_axi_awaddr [MEM_NUM_BANKS];
+    wire [AXI_ID_WIDTH-1:0]         m_axi_awid [MEM_NUM_BANKS];
+    wire [7:0]                      m_axi_awlen [MEM_NUM_BANKS];
+    wire [2:0]                      m_axi_awsize [MEM_NUM_BANKS];
+    wire [1:0]                      m_axi_awburst [MEM_NUM_BANKS];
+    wire [1:0]                      m_axi_awlock [MEM_NUM_BANKS];
+    wire [3:0]                      m_axi_awcache [MEM_NUM_BANKS];
+    wire [2:0]                      m_axi_awprot [MEM_NUM_BANKS];
+    wire [3:0]                      m_axi_awqos [MEM_NUM_BANKS];
+    wire [3:0]                      m_axi_awregion [MEM_NUM_BANKS];
 
-    wire                            vx_mem_rsp_valid [VX_MEM_PORTS];
-    wire [VX_MEM_DATA_WIDTH-1:0]    vx_mem_rsp_data [VX_MEM_PORTS];
-    wire [VX_MEM_TAG_WIDTH-1:0]     vx_mem_rsp_tag [VX_MEM_PORTS];
-    wire                            vx_mem_rsp_ready [VX_MEM_PORTS];
+    wire                            m_axi_wvalid [MEM_NUM_BANKS];
+    wire                            m_axi_wready [MEM_NUM_BANKS];
+    wire [MEM_DATA_WIDTH-1:0]       m_axi_wdata [MEM_NUM_BANKS];
+    wire [DATA_SIZE-1:0]            m_axi_wstrb [MEM_NUM_BANKS];
+    wire                            m_axi_wlast [MEM_NUM_BANKS];
+
+    wire                            m_axi_bvalid [MEM_NUM_BANKS];
+    wire                            m_axi_bready [MEM_NUM_BANKS];
+    wire [AXI_ID_WIDTH-1:0]         m_axi_bid [MEM_NUM_BANKS];
+    wire [1:0]                      m_axi_bresp [MEM_NUM_BANKS];
+
+    wire                            m_axi_arvalid [MEM_NUM_BANKS];
+    wire                            m_axi_arready [MEM_NUM_BANKS];
+    wire [`PLATFORM_MEMORY_ADDR_WIDTH-1:0] m_axi_araddr [MEM_NUM_BANKS];
+    wire [AXI_ID_WIDTH-1:0]         m_axi_arid [MEM_NUM_BANKS];
+    wire [7:0]                      m_axi_arlen [MEM_NUM_BANKS];
+    wire [2:0]                      m_axi_arsize [MEM_NUM_BANKS];
+    wire [1:0]                      m_axi_arburst [MEM_NUM_BANKS];
+    wire [1:0]                      m_axi_arlock [MEM_NUM_BANKS];
+    wire [3:0]                      m_axi_arcache [MEM_NUM_BANKS];
+    wire [2:0]                      m_axi_arprot [MEM_NUM_BANKS];
+    wire [3:0]                      m_axi_arqos [MEM_NUM_BANKS];
+    wire [3:0]                      m_axi_arregion [MEM_NUM_BANKS];
+
+    wire                            m_axi_rvalid [MEM_NUM_BANKS];
+    wire                            m_axi_rready [MEM_NUM_BANKS];
+    wire [MEM_DATA_WIDTH-1:0]       m_axi_rdata [MEM_NUM_BANKS];
+    wire                            m_axi_rlast [MEM_NUM_BANKS];
+    wire [AXI_ID_WIDTH-1:0]         m_axi_rid [MEM_NUM_BANKS];
+    wire [1:0]                      m_axi_rresp [MEM_NUM_BANKS];
+
+    wire                            cache_drain;
 
     `SCOPE_IO_SWITCH (1);
 
-    Vortex vortex (
+    Vortex_axi #(
+        .AXI_DATA_WIDTH  (MEM_DATA_WIDTH),
+        .AXI_ADDR_WIDTH  (`PLATFORM_MEMORY_ADDR_WIDTH),
+        .AXI_TID_WIDTH   (AXI_ID_WIDTH),
+        .NUM_HBM_PORTS   (MEM_NUM_BANKS),
+        .AXI_DMA_ID_WIDTH(`PLATFORM_MEMORY_ID_WIDTH)
+    ) vortex (
         `SCOPE_IO_BIND  (0)
 
         .clk            (clk),
         .reset          (reset),
 
-        .mem_req_valid  (vx_mem_req_valid),
-        .mem_req_rw     (vx_mem_req_rw),
-        .mem_req_byteen (vx_mem_req_byteen),
-        .mem_req_addr   (vx_mem_req_addr),
-        .mem_req_data   (vx_mem_req_data),
-        .mem_req_tag    (vx_mem_req_tag),
-        .mem_req_ready  (vx_mem_req_ready),
+        .m_axi_awvalid  (m_axi_awvalid),
+        .m_axi_awready  (m_axi_awready),
+        .m_axi_awaddr   (m_axi_awaddr),
+        .m_axi_awid     (m_axi_awid),
+        .m_axi_awlen    (m_axi_awlen),
+        .m_axi_awsize   (m_axi_awsize),
+        .m_axi_awburst  (m_axi_awburst),
+        .m_axi_awlock   (m_axi_awlock),
+        .m_axi_awcache  (m_axi_awcache),
+        .m_axi_awprot   (m_axi_awprot),
+        .m_axi_awqos    (m_axi_awqos),
+        .m_axi_awregion (m_axi_awregion),
 
-        .mem_rsp_valid  (vx_mem_rsp_valid),
-        .mem_rsp_data   (vx_mem_rsp_data),
-        .mem_rsp_tag    (vx_mem_rsp_tag),
-        .mem_rsp_ready  (vx_mem_rsp_ready),
+        .m_axi_wvalid   (m_axi_wvalid),
+        .m_axi_wready   (m_axi_wready),
+        .m_axi_wdata    (m_axi_wdata),
+        .m_axi_wstrb    (m_axi_wstrb),
+        .m_axi_wlast    (m_axi_wlast),
+
+        .m_axi_bvalid   (m_axi_bvalid),
+        .m_axi_bready   (m_axi_bready),
+        .m_axi_bid      (m_axi_bid),
+        .m_axi_bresp    (m_axi_bresp),
+
+        .m_axi_arvalid  (m_axi_arvalid),
+        .m_axi_arready  (m_axi_arready),
+        .m_axi_araddr   (m_axi_araddr),
+        .m_axi_arid     (m_axi_arid),
+        .m_axi_arlen    (m_axi_arlen),
+        .m_axi_arsize   (m_axi_arsize),
+        .m_axi_arburst  (m_axi_arburst),
+        .m_axi_arlock   (m_axi_arlock),
+        .m_axi_arcache  (m_axi_arcache),
+        .m_axi_arprot   (m_axi_arprot),
+        .m_axi_arqos    (m_axi_arqos),
+        .m_axi_arregion (m_axi_arregion),
+
+        .m_axi_rvalid   (m_axi_rvalid),
+        .m_axi_rready   (m_axi_rready),
+        .m_axi_rdata    (m_axi_rdata),
+        .m_axi_rlast    (m_axi_rlast),
+        .m_axi_rid      (m_axi_rid),
+        .m_axi_rresp    (m_axi_rresp),
 
         .dcr_wr_valid   (dcr_wr_valid),
         .dcr_wr_addr    (dcr_wr_addr),
         .dcr_wr_data    (dcr_wr_data),
 
-        .busy           (busy)
+        .busy           (busy),
+        .cache_drain    (cache_drain)
     );
 
-    wire                            mem_req_valid_a [VX_MEM_PORTS];
-    wire                            mem_req_rw_a [VX_MEM_PORTS];
-    wire [(MEM_DATA_WIDTH/8)-1:0]   mem_req_byteen_a [VX_MEM_PORTS];
-    wire [VX_MEM_ADDR_A_WIDTH-1:0]  mem_req_addr_a [VX_MEM_PORTS];
-    wire [MEM_DATA_WIDTH-1:0]       mem_req_data_a [VX_MEM_PORTS];
-    wire [VX_MEM_TAG_A_WIDTH-1:0]   mem_req_tag_a [VX_MEM_PORTS];
-    wire                            mem_req_ready_a [VX_MEM_PORTS];
+    `UNUSED_VAR (cache_drain)
+    `UNUSED_VAR (mem_rsp_tag)
 
-    wire                            mem_rsp_valid_a [VX_MEM_PORTS];
-    wire [MEM_DATA_WIDTH-1:0]       mem_rsp_data_a [VX_MEM_PORTS];
-    wire [VX_MEM_TAG_A_WIDTH-1:0]   mem_rsp_tag_a [VX_MEM_PORTS];
-    wire                            mem_rsp_ready_a [VX_MEM_PORTS];
-
-    // Adjust memory data width to match AXI interface
-    for (genvar i = 0; i < VX_MEM_PORTS; i++) begin : g_mem_adapter
-        VX_mem_data_adapter #(
-            .SRC_DATA_WIDTH (VX_MEM_DATA_WIDTH),
-            .DST_DATA_WIDTH (MEM_DATA_WIDTH),
-            .SRC_ADDR_WIDTH (VX_MEM_ADDR_WIDTH),
-            .DST_ADDR_WIDTH (VX_MEM_ADDR_A_WIDTH),
-            .SRC_TAG_WIDTH  (VX_MEM_TAG_WIDTH),
-            .DST_TAG_WIDTH  (VX_MEM_TAG_A_WIDTH),
-            .REQ_OUT_BUF    (0),
-            .RSP_OUT_BUF    (0)
-        ) mem_data_adapter (
-            .clk                (clk),
-            .reset              (reset),
-
-            .mem_req_valid_in   (vx_mem_req_valid[i]),
-            .mem_req_addr_in    (vx_mem_req_addr[i]),
-            .mem_req_rw_in      (vx_mem_req_rw[i]),
-            .mem_req_byteen_in  (vx_mem_req_byteen[i]),
-            .mem_req_data_in    (vx_mem_req_data[i]),
-            .mem_req_tag_in     (vx_mem_req_tag[i]),
-            .mem_req_ready_in   (vx_mem_req_ready[i]),
-
-            .mem_rsp_valid_in   (vx_mem_rsp_valid[i]),
-            .mem_rsp_data_in    (vx_mem_rsp_data[i]),
-            .mem_rsp_tag_in     (vx_mem_rsp_tag[i]),
-            .mem_rsp_ready_in   (vx_mem_rsp_ready[i]),
-
-            .mem_req_valid_out  (mem_req_valid_a[i]),
-            .mem_req_addr_out   (mem_req_addr_a[i]),
-            .mem_req_rw_out     (mem_req_rw_a[i]),
-            .mem_req_byteen_out (mem_req_byteen_a[i]),
-            .mem_req_data_out   (mem_req_data_a[i]),
-            .mem_req_tag_out    (mem_req_tag_a[i]),
-            .mem_req_ready_out  (mem_req_ready_a[i]),
-
-            .mem_rsp_valid_out  (mem_rsp_valid_a[i]),
-            .mem_rsp_data_out   (mem_rsp_data_a[i]),
-            .mem_rsp_tag_out    (mem_rsp_tag_a[i]),
-            .mem_rsp_ready_out  (mem_rsp_ready_a[i])
-        );
+    function automatic [MEM_ADDR_WIDTH-1:0] bank_addr_from_axi(input [`PLATFORM_MEMORY_ADDR_WIDTH-1:0] axi_addr);
+    begin
+        if (`PLATFORM_MEMORY_INTERLEAVE == 1) begin
+            bank_addr_from_axi = MEM_ADDR_WIDTH'(axi_addr >> (LOG2_DATA_SIZE + BANK_SEL_BITS));
+        end else begin
+            bank_addr_from_axi = MEM_ADDR_WIDTH'(axi_addr >> LOG2_DATA_SIZE);
+        end
     end
+    endfunction
 
-    VX_mem_bank_adapter #(
-        .DATA_WIDTH     (MEM_DATA_WIDTH),
-        .ADDR_WIDTH_IN  (VX_MEM_ADDR_A_WIDTH),
-        .ADDR_WIDTH_OUT (MEM_ADDR_WIDTH),
-        .TAG_WIDTH_IN   (VX_MEM_TAG_A_WIDTH),
-        .TAG_WIDTH_OUT  (MEM_TAG_WIDTH),
-        .NUM_PORTS_IN   (VX_MEM_PORTS),
-        .NUM_BANKS_OUT  (MEM_NUM_BANKS),
-        .INTERLEAVE     (`PLATFORM_MEMORY_INTERLEAVE),
-        .REQ_OUT_BUF    ((VX_MEM_PORTS > 1) ? 2 : 0),
-        .RSP_OUT_BUF    ((VX_MEM_PORTS > 1 || MEM_NUM_BANKS > 1) ? 2 : 0)
-    ) mem_bank_adapter (
-        .clk                (clk),
-        .reset              (reset),
+    for (genvar i = 0; i < MEM_NUM_BANKS; ++i) begin : g_axi_bridge
+        reg                            wr_active;
+        reg [MEM_ADDR_WIDTH-1:0]       wr_addr;
+        reg [8:0]                      wr_beats_left;
+        reg [AXI_ID_WIDTH-1:0]         wr_id;
 
-        .mem_req_valid_in   (mem_req_valid_a),
-        .mem_req_rw_in      (mem_req_rw_a),
-        .mem_req_byteen_in  (mem_req_byteen_a),
-        .mem_req_addr_in    (mem_req_addr_a),
-        .mem_req_data_in    (mem_req_data_a),
-        .mem_req_tag_in     (mem_req_tag_a),
-        .mem_req_ready_in   (mem_req_ready_a),
+        reg                            b_pending;
+        reg [AXI_ID_WIDTH-1:0]         b_pending_id;
+        reg                            b_valid_r;
+        reg [AXI_ID_WIDTH-1:0]         b_id_r;
 
-        .mem_rsp_valid_in   (mem_rsp_valid_a),
-        .mem_rsp_data_in    (mem_rsp_data_a),
-        .mem_rsp_tag_in     (mem_rsp_tag_a),
-        .mem_rsp_ready_in   (mem_rsp_ready_a),
+        reg                            rd_issue_active;
+        reg [MEM_ADDR_WIDTH-1:0]       rd_issue_addr;
+        reg [8:0]                      rd_issue_beats_left;
+        reg [8:0]                      rd_rsp_beats_left;
+        reg [AXI_ID_WIDTH-1:0]         rd_rsp_id;
 
-        .mem_req_valid_out  (mem_req_valid),
-        .mem_req_rw_out     (mem_req_rw),
-        .mem_req_byteen_out (mem_req_byteen),
-        .mem_req_addr_out   (mem_req_addr),
-        .mem_req_data_out   (mem_req_data),
-        .mem_req_tag_out    (mem_req_tag),
-        .mem_req_ready_out  (mem_req_ready),
+        reg                            r_valid_r;
+        reg [MEM_DATA_WIDTH-1:0]       r_data_r;
+        reg [AXI_ID_WIDTH-1:0]         r_id_r;
+        reg                            r_last_r;
 
-        .mem_rsp_valid_out  (mem_rsp_valid),
-        .mem_rsp_data_out   (mem_rsp_data),
-        .mem_rsp_tag_out    (mem_rsp_tag),
-        .mem_rsp_ready_out  (mem_rsp_ready)
-    );
+        wire issue_write = wr_active && m_axi_wvalid[i];
+        wire issue_read  = ~issue_write && rd_issue_active;
+        wire mem_req_fire = mem_req_valid[i] && mem_req_ready[i];
+        wire mem_rsp_fire = mem_rsp_valid[i] && mem_rsp_ready[i];
+
+        assign mem_req_valid[i]  = issue_write || issue_read;
+        assign mem_req_rw[i]     = issue_write;
+        assign mem_req_byteen[i] = issue_write ? m_axi_wstrb[i] : {DATA_SIZE{1'b1}};
+        assign mem_req_addr[i]   = issue_write ? wr_addr : rd_issue_addr;
+        assign mem_req_data[i]   = issue_write ? m_axi_wdata[i] : '0;
+        assign mem_req_tag[i]    = '0;
+
+        assign mem_rsp_ready[i] = ~r_valid_r || m_axi_rready[i];
+
+        assign m_axi_awready[i] = ~wr_active && ~b_pending && ~b_valid_r;
+        assign m_axi_wready[i]  = issue_write && mem_req_ready[i];
+        assign m_axi_bvalid[i]  = b_valid_r;
+        assign m_axi_bid[i]     = b_id_r;
+        assign m_axi_bresp[i]   = 2'b00;
+
+        assign m_axi_arready[i] = ~rd_issue_active && (rd_rsp_beats_left == 0) && ~r_valid_r;
+        assign m_axi_rvalid[i]  = r_valid_r;
+        assign m_axi_rdata[i]   = r_data_r;
+        assign m_axi_rid[i]     = r_id_r;
+        assign m_axi_rlast[i]   = r_last_r;
+        assign m_axi_rresp[i]   = 2'b00;
+
+        `UNUSED_VAR (m_axi_awburst[i])
+        `UNUSED_VAR (m_axi_awlock[i])
+        `UNUSED_VAR (m_axi_awcache[i])
+        `UNUSED_VAR (m_axi_awprot[i])
+        `UNUSED_VAR (m_axi_awqos[i])
+        `UNUSED_VAR (m_axi_awregion[i])
+        `UNUSED_VAR (m_axi_arburst[i])
+        `UNUSED_VAR (m_axi_arlock[i])
+        `UNUSED_VAR (m_axi_arcache[i])
+        `UNUSED_VAR (m_axi_arprot[i])
+        `UNUSED_VAR (m_axi_arqos[i])
+        `UNUSED_VAR (m_axi_arregion[i])
+        `UNUSED_VAR (m_axi_wlast[i])
+        `UNUSED_VAR (m_axi_arsize[i])
+        `UNUSED_VAR (m_axi_awsize[i])
+
+        always @(posedge clk) begin
+            if (reset) begin
+                wr_active          <= 0;
+                wr_addr            <= '0;
+                wr_beats_left      <= '0;
+                wr_id              <= '0;
+                b_pending          <= 0;
+                b_pending_id       <= '0;
+                b_valid_r          <= 0;
+                b_id_r             <= '0;
+                rd_issue_active    <= 0;
+                rd_issue_addr      <= '0;
+                rd_issue_beats_left<= '0;
+                rd_rsp_beats_left  <= '0;
+                rd_rsp_id          <= '0;
+                r_valid_r          <= 0;
+                r_data_r           <= '0;
+                r_id_r             <= '0;
+                r_last_r           <= 0;
+            end else begin
+                if (m_axi_awvalid[i] && m_axi_awready[i]) begin
+                    wr_active     <= 1;
+                    wr_addr       <= bank_addr_from_axi(m_axi_awaddr[i]);
+                    wr_beats_left <= {1'b0, m_axi_awlen[i]} + 9'd1;
+                    wr_id         <= m_axi_awid[i];
+                end
+
+                if (mem_req_fire && issue_write) begin
+                    wr_addr <= wr_addr + MEM_ADDR_WIDTH'(1);
+                    if (wr_beats_left == 9'd1) begin
+                        wr_active    <= 0;
+                        wr_beats_left<= '0;
+                        b_pending    <= 1;
+                        b_pending_id <= wr_id;
+                    end else begin
+                        wr_beats_left <= wr_beats_left - 9'd1;
+                    end
+                end
+
+                if (m_axi_bvalid[i] && m_axi_bready[i]) begin
+                    b_valid_r <= 0;
+                end
+                if (~b_valid_r && b_pending) begin
+                    b_valid_r <= 1;
+                    b_id_r    <= b_pending_id;
+                    b_pending <= 0;
+                end
+
+                if (m_axi_arvalid[i] && m_axi_arready[i]) begin
+                    rd_issue_active     <= 1;
+                    rd_issue_addr       <= bank_addr_from_axi(m_axi_araddr[i]);
+                    rd_issue_beats_left <= {1'b0, m_axi_arlen[i]} + 9'd1;
+                    rd_rsp_beats_left   <= '0;
+                    rd_rsp_id           <= m_axi_arid[i];
+                end
+
+                if (mem_req_fire && issue_read) begin
+                    rd_issue_addr <= rd_issue_addr + MEM_ADDR_WIDTH'(1);
+                    rd_rsp_beats_left <= rd_rsp_beats_left + 9'd1;
+                    if (rd_issue_beats_left == 9'd1) begin
+                        rd_issue_active     <= 0;
+                        rd_issue_beats_left <= '0;
+                    end else begin
+                        rd_issue_beats_left <= rd_issue_beats_left - 9'd1;
+                    end
+                end
+
+                if (m_axi_rvalid[i] && m_axi_rready[i]) begin
+                    r_valid_r <= 0;
+                end
+                if (mem_rsp_fire) begin
+                    r_valid_r <= 1;
+                    r_data_r  <= mem_rsp_data[i];
+                    r_id_r    <= rd_rsp_id;
+                    r_last_r  <= (rd_rsp_beats_left == 9'd1);
+                    rd_rsp_beats_left <= rd_rsp_beats_left - 9'd1;
+                end
+            end
+        end
+    end
 
 endmodule

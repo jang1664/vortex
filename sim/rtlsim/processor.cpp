@@ -216,6 +216,18 @@ public:
 
 private:
 
+  bool mem_idle() const {
+    for (int b = 0; b < PLATFORM_MEMORY_NUM_BANKS; ++b) {
+      if (device_->mem_rsp_valid[b])
+        return false;
+      if (!pending_mem_reqs_[b].empty())
+        return false;
+      if (!dram_queue_[b].empty())
+        return false;
+    }
+    return true;
+  }
+
   void reset() {
     this->mem_bus_reset();
     this->dcr_bus_reset();

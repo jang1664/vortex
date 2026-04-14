@@ -59,6 +59,12 @@ RTL_INCLUDE = -I$(SRC_DIR) -I$(RTL_DIR) -I$(DPI_DIR) -I$(RTL_DIR)/libs -I$(RTL_D
 RTL_INCLUDE += -I$(RTL_DIR)/verification
 RTL_INCLUDE += -I$(AFU_DIR)
 
+# AXI third-party library (for axi_mux, axi_demux in Vortex_axi)
+AXI_DIR := $(THIRD_PARTY_DIR)/axi
+AXI_COMMON_CELLS_DIR := $(AXI_DIR)/.bender/git/checkouts/common_cells-3e2fcccecd7aee7b
+RTL_INCLUDE += -I$(AXI_DIR)/src -I$(AXI_DIR)/include
+RTL_INCLUDE += -I$(AXI_COMMON_CELLS_DIR)/include -I$(AXI_COMMON_CELLS_DIR)/src
+
 # Add V extension sources
 ifneq (,$(findstring -DEXT_V_ENABLE, $(CONFIGS)))
 	RTL_PKGS += $(RTL_DIR)/vpu/VX_vpu_pkg.sv
@@ -84,6 +90,27 @@ endif
 
 RTL_PKGS += $(RTL_DIR)/VX_trace_pkg.sv
 
+# AXI packages and IP
+# cf_math_pkg, lzc, rr_arb_tree may already be compiled via cvfpu (if FPU_FPNEW)
+ifeq (,$(findstring -DFPU_FPNEW, $(CONFIGS)))
+RTL_PKGS += $(AXI_COMMON_CELLS_DIR)/src/cf_math_pkg.sv
+RTL_PKGS += $(AXI_COMMON_CELLS_DIR)/src/lzc.sv
+RTL_PKGS += $(AXI_COMMON_CELLS_DIR)/src/rr_arb_tree.sv
+endif
+RTL_PKGS += $(AXI_DIR)/src/axi_pkg.sv
+RTL_PKGS += $(AXI_DIR)/src/axi_intf.sv
+RTL_PKGS += $(AXI_COMMON_CELLS_DIR)/src/fifo_v3.sv
+RTL_PKGS += $(AXI_COMMON_CELLS_DIR)/src/spill_register.sv
+RTL_PKGS += $(AXI_COMMON_CELLS_DIR)/src/spill_register_flushable.sv
+RTL_PKGS += $(AXI_COMMON_CELLS_DIR)/src/counter.sv
+RTL_PKGS += $(AXI_COMMON_CELLS_DIR)/src/delta_counter.sv
+RTL_PKGS += $(AXI_COMMON_CELLS_DIR)/src/onehot_to_bin.sv
+RTL_PKGS += $(AXI_COMMON_CELLS_DIR)/src/id_queue.sv
+RTL_PKGS += $(AXI_DIR)/src/axi_demux_simple.sv
+RTL_PKGS += $(AXI_DIR)/src/axi_demux.sv
+RTL_PKGS += $(AXI_DIR)/src/axi_id_prepend.sv
+RTL_PKGS += $(AXI_DIR)/src/axi_mux.sv
+
 TOP = vortex_afu_shim
 
 VL_FLAGS += --language 1800-2009 --assert -Wall -Wpedantic
@@ -91,6 +118,7 @@ VL_FLAGS += -Wno-DECLFILENAME -Wno-REDEFMACRO -Wno-fatal
 VL_FLAGS += --x-initial unique --x-assign unique
 VL_FLAGS += -DSIMULATION -DSV_DPI
 VL_FLAGS += -DXLEN_$(XLEN)
+VL_FLAGS += -DPLATFORM_MEMORY_ID_WIDTH=32
 VL_FLAGS += $(CONFIGS)
 VL_FLAGS += $(VLT_FILE)
 VL_FLAGS += $(RTL_INCLUDE)
