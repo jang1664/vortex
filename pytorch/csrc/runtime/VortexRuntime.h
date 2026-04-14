@@ -61,6 +61,10 @@ class VORTEX_EXPORT VortexRuntime {
   /// tracked internally.
   void* malloc(size_t nbytes);
 
+  int setMemoryAlignment(uint64_t alignment);
+  uint64_t getMemoryAlignment() const;
+  uint64_t exchangeMemoryAlignment(uint64_t alignment);
+
   /// Free device memory previously allocated via malloc().
   int free(void* ptr);
 
@@ -85,6 +89,7 @@ class VORTEX_EXPORT VortexRuntime {
   // ---- Device info ----
   int deviceCount() const { return initialized_ ? 1 : 0; }
   uint64_t globalMemSize();
+  uint64_t cacheLineSize();
 
  private:
   VortexRuntime() = default;
@@ -95,6 +100,7 @@ class VORTEX_EXPORT VortexRuntime {
 
   vx_device_h device_ = nullptr;
   bool initialized_ = false;
+  uint64_t cache_line_size_ = 0;
 
   // Mapping: staging host pointer → (vx_buffer_h, size)
   struct BufferInfo {
@@ -111,6 +117,23 @@ class VORTEX_EXPORT VortexRuntime {
 inline VORTEX_EXPORT int vortexMalloc(void** ptr, size_t nbytes) {
   auto& rt = VortexRuntime::instance();
   void* p = rt.malloc(nbytes);
+  if (!p && nbytes > 0) {
+    *ptr = nullptr;
+    return kVortexError;
+  }
+  *ptr = p;
+  return kVortexSuccess;
+}
+
+inline VORTEX_EXPORT int vortexMallocAligned(void** ptr, size_t nbytes, uint64_t alignment) {
+  auto& rt = VortexRuntime::instance();
+  auto prev_alignment = rt.exchangeMemoryAlignment(alignment);
+  if (alignment != 0 && prev_alignment == std::numeric_limits<uint64_t>::max()) {
+    *ptr = nullptr;
+    return kVortexError;
+  }
+  void* p = rt.malloc(nbytes);
+  (void)rt.setMemoryAlignment(prev_alignment);
   if (!p && nbytes > 0) {
     *ptr = nullptr;
     return kVortexError;

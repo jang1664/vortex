@@ -10,6 +10,8 @@
 #include <runtime/VortexDeviceAllocator.h>
 #include <runtime/VortexRuntime.h>
 
+#include <limits>
+
 static PyObject* _initExtension(PyObject* self, PyObject* noargs) {
   HANDLE_TH_ERRORS
   torch::utils::register_fork_handler_for_device_init(at::kPrivateUse1);
@@ -84,6 +86,45 @@ static PyObject* _getGlobalMemSize(PyObject* self, PyObject* noargs) {
   END_HANDLE_TH_ERRORS
 }
 
+static PyObject* _getMemoryAlignment(PyObject* self, PyObject* noargs) {
+  HANDLE_TH_ERRORS
+  auto alignment = c10::vortex::VortexRuntime::instance().getMemoryAlignment();
+  return THPUtils_packUInt64(alignment);
+  END_HANDLE_TH_ERRORS
+}
+
+static PyObject* _setMemoryAlignment(PyObject* self, PyObject* arg) {
+  HANDLE_TH_ERRORS
+  TORCH_CHECK(THPUtils_checkLong(arg), "invalid argument to set_memory_alignment");
+  auto signed_alignment = THPUtils_unpackLong(arg);
+  TORCH_CHECK(signed_alignment >= 0, "memory alignment must be non-negative");
+  auto alignment = static_cast<uint64_t>(signed_alignment);
+  auto ret = c10::vortex::VortexRuntime::instance().setMemoryAlignment(alignment);
+  TORCH_CHECK(
+      ret == c10::vortex::kVortexSuccess,
+      "invalid Vortex memory alignment: ",
+      alignment,
+      " (expected power-of-two multiple of cache line size)");
+  Py_RETURN_NONE;
+  END_HANDLE_TH_ERRORS
+}
+
+static PyObject* _exchangeMemoryAlignment(PyObject* self, PyObject* arg) {
+  HANDLE_TH_ERRORS
+  TORCH_CHECK(THPUtils_checkLong(arg), "invalid argument to exchange_memory_alignment");
+  auto signed_alignment = THPUtils_unpackLong(arg);
+  TORCH_CHECK(signed_alignment >= 0, "memory alignment must be non-negative");
+  auto alignment = static_cast<uint64_t>(signed_alignment);
+  auto prev_alignment = c10::vortex::VortexRuntime::instance().exchangeMemoryAlignment(alignment);
+  TORCH_CHECK(
+      alignment == 0 || prev_alignment != std::numeric_limits<uint64_t>::max(),
+      "invalid Vortex memory alignment: ",
+      alignment,
+      " (expected power-of-two multiple of cache line size)");
+  return THPUtils_packUInt64(prev_alignment);
+  END_HANDLE_TH_ERRORS
+}
+
 static PyObject* _emptyCache(PyObject* self, PyObject* noargs) {
   HANDLE_TH_ERRORS
   c10::vortex::allocator_empty_cache();
@@ -147,6 +188,9 @@ static PyMethodDef methods[] = {
     {"_exchangeDevice", _exchangeDevice, METH_O, nullptr},
     {"_get_device_count", _getDeviceCount, METH_NOARGS, nullptr},
     {"_get_global_mem_size", _getGlobalMemSize, METH_NOARGS, nullptr},
+    {"_get_memory_alignment", _getMemoryAlignment, METH_NOARGS, nullptr},
+    {"_set_memory_alignment", _setMemoryAlignment, METH_O, nullptr},
+    {"_exchange_memory_alignment", _exchangeMemoryAlignment, METH_O, nullptr},
     {"_empty_cache", _emptyCache, METH_NOARGS, nullptr},
     {"_memory_allocated", _memoryAllocated, METH_O, nullptr},
     {"_memory_reserved", _memoryReserved, METH_O, nullptr},

@@ -114,7 +114,9 @@ size_t VortexDeviceAllocator::roundSmallBlock(size_t nbytes) const {
 }
 
 bool VortexDeviceAllocator::shouldBypassCache(size_t nbytes) const {
-  return !caching_enabled_ || nbytes >= large_alloc_threshold_;
+  return !caching_enabled_
+      || nbytes >= large_alloc_threshold_
+      || VortexRuntime::instance().getMemoryAlignment() != 0;
 }
 
 void VortexDeviceAllocator::updateGlobalMemLimitLocked() {
@@ -129,7 +131,11 @@ void VortexDeviceAllocator::updateGlobalMemLimitLocked() {
 
 bool VortexDeviceAllocator::tryAllocRuntime(size_t nbytes, void** out_ptr) {
   void* ptr = nullptr;
-  auto ret = vortexMalloc(&ptr, nbytes);
+  auto& rt = VortexRuntime::instance();
+  uint64_t requested_alignment = rt.getMemoryAlignment();
+  auto ret = (requested_alignment != 0)
+      ? vortexMallocAligned(&ptr, nbytes, requested_alignment)
+      : vortexMalloc(&ptr, nbytes);
   if (ret != kVortexSuccess || ptr == nullptr) {
     *out_ptr = nullptr;
     return false;

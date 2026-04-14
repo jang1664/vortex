@@ -37,6 +37,23 @@ class device:
         return False
 
 
+class memory_alignment:
+    """Context-manager that applies a base-address alignment to Vortex allocations."""
+
+    def __init__(self, alignment):
+        self.alignment = int(alignment)
+        self.prev_alignment = 0
+
+    def __enter__(self):
+        _lazy_init()
+        self.prev_alignment = torch_vortex._C._exchange_memory_alignment(self.alignment)
+        return self
+
+    def __exit__(self, type, value, traceback):
+        torch_vortex._C._set_memory_alignment(self.prev_alignment)
+        return False
+
+
 def is_available() -> bool:
     """Return True if at least one Vortex device is available."""
     return device_count() > 0
@@ -154,6 +171,7 @@ from .random import *  # noqa: F403
 
 __all__ = [
     "device",
+    "memory_alignment",
     "device_count",
     "current_device",
     "set_device",

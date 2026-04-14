@@ -150,6 +150,47 @@ def test_peak_stats():
     assert torch.vortex.max_memory_reserved() == torch.vortex.memory_reserved()
 
 
+def test_memory_alignment_context_restores():
+    baseline = torch_vortex._C._get_memory_alignment()
+    assert baseline == 0
+
+    with torch.vortex.memory_alignment(4096):
+        assert torch_vortex._C._get_memory_alignment() == 4096
+        with torch.vortex.memory_alignment(8192):
+            assert torch_vortex._C._get_memory_alignment() == 8192
+        assert torch_vortex._C._get_memory_alignment() == 4096
+
+    assert torch_vortex._C._get_memory_alignment() == baseline
+
+
+def test_aligned_alloc_bypasses_cache(mode):
+    torch.vortex.empty_cache()
+    _collect()
+    baseline = torch.vortex.memory_reserved()
+
+    with torch.vortex.memory_alignment(4096):
+        x = torch.empty(1_000_000, dtype=torch.float32, device=DEVICE)
+        reserved_after_alloc = torch.vortex.memory_reserved()
+        del x
+        _collect()
+        reserved_after_free = torch.vortex.memory_reserved()
+
+    assert reserved_after_alloc > baseline
+    assert reserved_after_free == baseline, (
+        f"aligned alloc should bypass cache: {reserved_after_free} != {baseline}"
+    )
+    assert torch.vortex.memory_allocated() == 0
+
+
+def test_aligned_to_uses_context():
+    src = torch.arange(1024, dtype=torch.float32)
+    with torch.vortex.memory_alignment(4096):
+        dst = src.to(DEVICE)
+        assert dst.device.type == DEVICE
+        roundtrip = dst.to("cpu")
+    assert torch.equal(src, roundtrip)
+
+
 def bench_alloc_free(numel=1_000_000, warmup=30, iters=300):
     samples = []
     for i in range(warmup + iters):
@@ -178,6 +219,9 @@ def run_functional_and_bench(bench=True):
         ("oom_flushes_cache", lambda: test_oom_flushes_cache(mode)),
         ("empty_cache", lambda: test_empty_cache(mode)),
         ("peak_stats", test_peak_stats),
+        ("memory_alignment_context_restores", test_memory_alignment_context_restores),
+        ("aligned_alloc_bypasses_cache", lambda: test_aligned_alloc_bypasses_cache(mode)),
+        ("aligned_to_uses_context", test_aligned_to_uses_context),
     ]
 
     passed = 0

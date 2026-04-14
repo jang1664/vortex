@@ -2,8 +2,19 @@
 
 #include <c10/util/Exception.h>
 #include <cstring>
+#include <limits>
 
 namespace c10::vortex {
+
+namespace {
+
+thread_local uint64_t g_requested_memory_alignment = 0;
+
+bool isPowerOfTwo(uint64_t value) {
+  return value != 0 && (value & (value - 1)) == 0;
+}
+
+} // namespace
 
 VortexRuntime& VortexRuntime::instance() {
   static VortexRuntime inst;
@@ -40,17 +51,26 @@ void VortexRuntime::shutdown() {
   vx_dev_close(device_);
   device_ = nullptr;
   initialized_ = false;
+  cache_line_size_ = 0;
 }
 
 void* VortexRuntime::malloc(size_t nbytes) {
   if (nbytes == 0) return nullptr;
 
   std::lock_guard<std::recursive_mutex> lock(mutex_);
-  init();
+  if (init() != kVortexSuccess) {
+    return nullptr;
+  }
 
   // Allocate device buffer
   vx_buffer_h hbuf = nullptr;
-  int ret = vx_mem_alloc(device_, nbytes, VX_MEM_READ_WRITE, &hbuf);
+  uint64_t requested_alignment = g_requested_memory_alignment;
+  int ret = 0;
+  if (requested_alignment != 0) {
+    ret = vx_mem_alloc_aligned(device_, nbytes, requested_alignment, VX_MEM_READ_WRITE, &hbuf);
+  } else {
+    ret = vx_mem_alloc(device_, nbytes, VX_MEM_READ_WRITE, &hbuf);
+  }
   if (ret != 0 || !hbuf) {
     return nullptr;
   }
@@ -69,6 +89,43 @@ void* VortexRuntime::malloc(size_t nbytes) {
   buffer_map_[staging] = info;
 
   return staging;
+}
+
+int VortexRuntime::setMemoryAlignment(uint64_t alignment) {
+  if (alignment == 0) {
+    g_requested_memory_alignment = 0;
+    return kVortexSuccess;
+  }
+  if (!isPowerOfTwo(alignment)) {
+    return kVortexError;
+  }
+
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
+  if (init() != kVortexSuccess) {
+    return kVortexError;
+  }
+
+  uint64_t cache_line_size = cacheLineSize();
+  if (cache_line_size == 0
+   || alignment < cache_line_size
+   || (alignment % cache_line_size) != 0) {
+    return kVortexError;
+  }
+
+  g_requested_memory_alignment = alignment;
+  return kVortexSuccess;
+}
+
+uint64_t VortexRuntime::getMemoryAlignment() const {
+  return g_requested_memory_alignment;
+}
+
+uint64_t VortexRuntime::exchangeMemoryAlignment(uint64_t alignment) {
+  uint64_t prev_alignment = g_requested_memory_alignment;
+  if (this->setMemoryAlignment(alignment) != kVortexSuccess) {
+    return std::numeric_limits<uint64_t>::max();
+  }
+  return prev_alignment;
 }
 
 int VortexRuntime::free(void* ptr) {
@@ -176,10 +233,23 @@ uint64_t VortexRuntime::deviceAddress(void* staging_ptr) const {
 
 uint64_t VortexRuntime::globalMemSize() {
   std::lock_guard<std::recursive_mutex> lock(mutex_);
-  init();
+  if (init() != kVortexSuccess) {
+    return 0;
+  }
   uint64_t mem_size = 0;
   vx_dev_caps(device_, VX_CAPS_GLOBAL_MEM_SIZE, &mem_size);
   return mem_size;
+}
+
+uint64_t VortexRuntime::cacheLineSize() {
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
+  if (init() != kVortexSuccess) {
+    return 0;
+  }
+  if (cache_line_size_ == 0) {
+    vx_dev_caps(device_, VX_CAPS_CACHE_LINE_SIZE, &cache_line_size_);
+  }
+  return cache_line_size_;
 }
 
 } // namespace c10::vortex
