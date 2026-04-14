@@ -15,6 +15,8 @@ struct vx_buffer {
   vx_device* device;
   uint64_t addr;
   uint64_t size;
+  uint64_t alloc_addr;
+  uint64_t alloc_size;
 };
 
 extern int vx_dev_init(callbacks_t* callbacks) {
@@ -64,16 +66,46 @@ extern int vx_dev_init(callbacks_t* callbacks) {
      || 0 == size)
       return -1;
     auto device = ((vx_device*)hdevice);
-    uint64_t dev_addr;
-    CHECK_ERR(device->mem_alloc(size, flags, &dev_addr), {
+    uint64_t alloc_addr;
+    CHECK_ERR(device->mem_alloc(size, flags, &alloc_addr), {
       return err;
     });
-    auto buffer = new vx_buffer{device, dev_addr, size};
+    auto buffer = new vx_buffer{device, alloc_addr, size, alloc_addr, size};
     if (nullptr == buffer) {
-      device->mem_free(dev_addr);
+      device->mem_free(alloc_addr);
       return -1;
     }
     DBGPRINT("MEM_ALLOC: hdevice=%p, size=%ld, flags=0x%d, hbuffer=%p\n", hdevice, size, flags, (void*)buffer);
+    *hbuffer = buffer;
+    return 0;
+  };
+
+  callbacks->mem_alloc_aligned = [](vx_device_h hdevice, uint64_t size, uint64_t alignment, int flags, vx_buffer_h* hbuffer)->int {
+    if (nullptr == hdevice
+     || nullptr == hbuffer
+     || 0 == size)
+      return -1;
+    if (alignment == 0
+     || (alignment & (alignment - 1)) != 0
+     || alignment < CACHE_BLOCK_SIZE
+     || (alignment % CACHE_BLOCK_SIZE) != 0)
+      return -1;
+    if (size > (UINT64_MAX - (alignment - CACHE_BLOCK_SIZE)))
+      return -1;
+    auto device = ((vx_device*)hdevice);
+    uint64_t raw_size = size + alignment - CACHE_BLOCK_SIZE;
+    uint64_t alloc_addr;
+    CHECK_ERR(device->mem_alloc(raw_size, flags, &alloc_addr), {
+      return err;
+    });
+    uint64_t visible_addr = aligned_size(alloc_addr, alignment);
+    auto buffer = new vx_buffer{device, visible_addr, size, alloc_addr, raw_size};
+    if (nullptr == buffer) {
+      device->mem_free(alloc_addr);
+      return -1;
+    }
+    DBGPRINT("MEM_ALLOC_ALIGNED: hdevice=%p, size=%ld, alignment=0x%lx, flags=0x%d, hbuffer=%p\n",
+             hdevice, size, alignment, flags, (void*)buffer);
     *hbuffer = buffer;
     return 0;
   };
@@ -87,7 +119,7 @@ extern int vx_dev_init(callbacks_t* callbacks) {
     CHECK_ERR(device->mem_reserve(address, size, flags), {
       return err;
     });
-    auto buffer = new vx_buffer{device, address, size};
+    auto buffer = new vx_buffer{device, address, size, address, size};
     if (nullptr == buffer) {
       device->mem_free(address);
       return -1;
@@ -103,8 +135,8 @@ extern int vx_dev_init(callbacks_t* callbacks) {
     DBGPRINT("MEM_FREE: hbuffer=%p\n", hbuffer);
     auto buffer = ((vx_buffer*)hbuffer);
     auto device = ((vx_device*)buffer->device);
-    device->mem_access(buffer->addr, buffer->size, 0);
-    int err = device->mem_free(buffer->addr);
+    device->mem_access(buffer->alloc_addr, buffer->alloc_size, 0);
+    int err = device->mem_free(buffer->alloc_addr);
     delete buffer;
     return err;
   };
