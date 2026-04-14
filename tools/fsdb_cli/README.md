@@ -52,12 +52,72 @@ ratio = fsdb.signal_ratio(
 - `fsdb.find_signals`
 - `fsdb.report`
 - `fsdb.events`
+- `fsdb.load_csv`
 - `fsdb.metric_state`
 - `fsdb.metric_stall`
 - `fsdb.metric_latency`
 - `fsdb.active_time`
+- `fsdb.active_time_where`
+- `fsdb.count_where`
+- `fsdb.derive_signal`
 - `fsdb.signal_ratio`
+- `fsdb.transition_count`
 - `fsdb.first_high_window`
+
+## Python 후처리 분석
+
+CLI는 그대로 두고, 복잡한 분석은 Python API에서 `CsvReport` / `Event`를 후처리하는 방식으로 확장할 수 있다.
+
+```python
+import sys
+sys.path.insert(0, "tools")
+
+import fsdb_cli as fsdb
+
+A = "/tb/dut/signal_a"
+B = "/tb/dut/signal_b"
+
+# 1) FSDB에서 직접 읽기
+rep = fsdb.report("dump.fsdb", [A, B], bt="100ns", et="10us")
+evs = rep.events()
+
+# 2) 이미 저장된 CSV를 다시 불러오기
+# rep = fsdb.load_csv("dump.csv")
+# evs = rep.events()
+
+# 3) derived signal 추가
+evs2 = fsdb.derive_signal(
+    evs,
+    "A_and_B",
+    lambda ev: ev.values.get(A, "0") in ("1", "1'b1")
+            and ev.values.get(B, "0") in ("1", "1'b1"),
+)
+
+# 4) 조건을 만족한 event 개수
+cnt = fsdb.count_where(
+    evs2,
+    lambda ev: ev.values["A_and_B"] == "1",
+)
+
+# 5) 조건이 true였던 총 시간
+busy_time = fsdb.active_time_where(
+    evs2,
+    lambda ev: ev.values["A_and_B"] == "1",
+)
+
+# 6) 전이 횟수
+rising_cnt = fsdb.transition_count(
+    evs2,
+    "A_and_B",
+    from_values=("0", "1'b0", ""),
+    to_values=("1", "1'b1"),
+)
+```
+
+권장 흐름:
+- FSDB -> `report(...)` 또는 `load_csv(...)`
+- `CsvReport.events()`로 carried-forward 상태 이벤트 생성
+- `derive_signal(...)`, `count_where(...)`, `active_time_where(...)` 같은 Python 함수로 분석
 
 ## 명령어
 

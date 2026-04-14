@@ -6,6 +6,7 @@ Computes performance metrics from parsed fsdbreport value-change data.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Callable
 
 
 @dataclass
@@ -13,6 +14,10 @@ class Event:
     """A single value-change event."""
     time: int
     values: dict[str, str]  # signal_name -> value
+
+
+Predicate = Callable[[Event], bool]
+Evaluator = Callable[[Event], str | int | bool]
 
 
 def events_from_csv(
@@ -42,6 +47,84 @@ def events_from_csv(
         events.append(Event(time=timestamp, values=dict(current_values)))
 
     return events
+
+
+def _normalize_derived_value(value: str | int | bool) -> str:
+    """Normalize a derived signal value into FSDB-style string form."""
+    if isinstance(value, bool):
+        return "1" if value else "0"
+    return str(value)
+
+
+def derive_signal(
+    events: list[Event],
+    signal_name: str,
+    evaluator: Evaluator,
+) -> list[Event]:
+    """Return a new event list with a derived signal added.
+
+    Args:
+        events: Source event list.
+        signal_name: Name/path to assign to the derived signal.
+        evaluator: Function mapping an event to the derived value.
+
+    Returns:
+        New event list with ``signal_name`` added to ``Event.values``.
+    """
+    derived_events = []
+    for ev in events:
+        derived_values = dict(ev.values)
+        derived_values[signal_name] = _normalize_derived_value(evaluator(ev))
+        derived_events.append(Event(time=ev.time, values=derived_values))
+    return derived_events
+
+
+def count_where(events: list[Event], predicate: Predicate) -> int:
+    """Count events that satisfy a predicate."""
+    return sum(1 for ev in events if predicate(ev))
+
+
+def active_time_where(
+    events: list[Event],
+    predicate: Predicate,
+) -> int:
+    """Return total time during which a predicate is true.
+
+    The predicate is evaluated on the carried-forward value state of each event
+    and charged until the next timestamp.
+    """
+    if len(events) < 2:
+        return 0
+
+    total = 0
+    for i in range(len(events) - 1):
+        ev = events[i]
+        if predicate(ev):
+            total += events[i + 1].time - ev.time
+    return total
+
+
+def transition_count(
+    events: list[Event],
+    signal: str,
+    from_values: tuple[str, ...] | None = None,
+    to_values: tuple[str, ...] | None = None,
+) -> int:
+    """Count transitions on a signal, optionally filtering source/target values."""
+    if len(events) < 2:
+        return 0
+
+    prev = events[0].values.get(signal, "")
+    count = 0
+    for ev in events[1:]:
+        cur = ev.values.get(signal, "")
+        if cur != prev:
+            from_ok = from_values is None or prev in from_values
+            to_ok = to_values is None or cur in to_values
+            if from_ok and to_ok:
+                count += 1
+        prev = cur
+    return count
 
 
 def handshake_latency(

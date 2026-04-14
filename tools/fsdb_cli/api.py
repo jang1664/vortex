@@ -11,10 +11,14 @@ from dataclasses import dataclass
 
 from fsdb_cli.analyzers import (
     Event,
+    active_time_where as _active_time_where,
+    count_where as _count_where,
+    derive_signal as _derive_signal,
     events_from_csv,
     handshake_latency,
     stall_ratio,
     state_residency,
+    transition_count as _transition_count,
 )
 from fsdb_cli.backends import (
     run_fsdbdebug,
@@ -45,11 +49,32 @@ class CsvReport:
         """Convert the CSV rows into value-carried-forward events."""
         return events_from_csv(self.signal_names, self.data_rows)
 
+    @classmethod
+    def from_csv_text(cls, raw: str) -> "CsvReport":
+        """Build a report from fsdbreport-compatible CSV text."""
+        time_unit, signal_names, data_rows = parse_csv_report(raw)
+        return cls(
+            time_unit=time_unit,
+            signal_names=signal_names,
+            data_rows=data_rows,
+        )
+
+    @classmethod
+    def from_csv_file(cls, path: str) -> "CsvReport":
+        """Build a report from a CSV file previously dumped by fsdbreport."""
+        with open(path, encoding="utf-8") as f:
+            return cls.from_csv_text(f.read())
+
 
 def info(fsdb: str) -> FsdbInfo:
     """Return FSDB metadata."""
     raw = run_fsdbdebug(["-info"], fsdb)
     return parse_fsdb_info(raw)
+
+
+def load_csv(path: str) -> CsvReport:
+    """Load an fsdbreport CSV file into a CsvReport."""
+    return CsvReport.from_csv_file(path)
 
 
 def hierarchy(fsdb: str, scopes_only: bool = True) -> ScopeNode:
@@ -114,6 +139,35 @@ def events(
 ) -> list[Event]:
     """Convenience wrapper returning value-carried-forward events."""
     return report(fsdb, signals, bt=bt, et=et).events()
+
+
+def derive_signal(
+    events: list[Event],
+    signal_name: str,
+    evaluator,
+) -> list[Event]:
+    """Add a derived signal to an event stream."""
+    return _derive_signal(events, signal_name, evaluator)
+
+
+def count_where(events: list[Event], predicate) -> int:
+    """Count events that satisfy a predicate."""
+    return _count_where(events, predicate)
+
+
+def active_time_where(events: list[Event], predicate) -> int:
+    """Return total time during which a predicate is true."""
+    return _active_time_where(events, predicate)
+
+
+def transition_count(
+    events: list[Event],
+    signal: str,
+    from_values: tuple[str, ...] | None = None,
+    to_values: tuple[str, ...] | None = None,
+) -> int:
+    """Count transitions on a signal, optionally filtered by value."""
+    return _transition_count(events, signal, from_values=from_values, to_values=to_values)
 
 
 def metric_latency(
