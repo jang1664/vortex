@@ -15,6 +15,10 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; ();
   localparam int TAG_WIDTH    = 8;
   localparam int MEM_BYTES    = 64 * 1024;
   localparam int DATA_LG2     = `CLOG2(DATA_SIZE);
+  localparam int AXI_RDQ_DEPTH  = 32;
+  localparam int AXI_RDQ_AW     = `CLOG2(AXI_RDQ_DEPTH);
+  localparam int TMEM_RDQ_DEPTH = 32;
+  localparam int TMEM_RDQ_AW    = `CLOG2(TMEM_RDQ_DEPTH);
 
   logic clk   = 1'b0;
   logic reset = 1'b1;
@@ -97,9 +101,11 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; ();
   // ---------------------------------------------------------------------------
 
   for (genvar ch = 0; ch < NUM_CHANNELS; ++ch) begin : g_axi_model
-    logic                    read_pending;
-    logic [AXI_ADDR_W-1:0]   read_addr_q;
-    logic [AXI_ID_W-1:0]     read_id_q;
+    logic [AXI_RDQ_AW-1:0]                    read_head_q;
+    logic [AXI_RDQ_AW-1:0]                    read_tail_q;
+    logic [AXI_RDQ_AW:0]                      read_count_q;
+    logic [AXI_RDQ_DEPTH-1:0][AXI_ADDR_W-1:0] read_addr_q;
+    logic [AXI_RDQ_DEPTH-1:0][AXI_ID_W-1:0]   read_id_q;
 
     wire aw_fire = axi_m[ch].aw_valid && axi_m[ch].aw_ready;
     wire w_fire  = axi_m[ch].w_valid  && axi_m[ch].w_ready;
@@ -115,7 +121,7 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; ();
     assign axi_m[ch].b_resp   = 2'b00;
     assign axi_m[ch].b_user   = '0;
 
-    always_ff @(posedge clk) begin
+    always @(posedge clk) begin
       if (reset) begin
         axi_m[ch].r_valid <= 1'b0;
         axi_m[ch].r_data  <= '0;
@@ -123,21 +129,29 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; ();
         axi_m[ch].r_id    <= '0;
         axi_m[ch].r_resp  <= 2'b00;
         axi_m[ch].r_user  <= '0;
-        read_pending      <= 1'b0;
-        read_addr_q       <= '0;
-        read_id_q         <= '0;
+        read_head_q       <= '0;
+        read_tail_q       <= '0;
+        read_count_q      <= '0;
       end else begin
+        logic [AXI_RDQ_AW-1:0] read_head_n;
+        logic [AXI_RDQ_AW-1:0] read_tail_n;
+        logic [AXI_RDQ_AW:0]   read_count_n;
+
+        read_head_n  = read_head_q;
+        read_tail_n  = read_tail_q;
+        read_count_n = read_count_q;
+
         if (r_fire) begin
           axi_m[ch].r_valid <= 1'b0;
         end
 
-        if (!axi_m[ch].r_valid && read_pending) begin
+        if (!axi_m[ch].r_valid && (read_count_q != 0)) begin
           int unsigned base;
-          base = int'(read_addr_q);
+          base = int'(read_addr_q[read_head_q]);
 
           axi_m[ch].r_valid <= 1'b1;
           axi_m[ch].r_last  <= 1'b1;
-          axi_m[ch].r_id    <= read_id_q;
+          axi_m[ch].r_id    <= read_id_q[read_head_q];
           axi_m[ch].r_resp  <= 2'b00;
           axi_m[ch].r_user  <= '0;
 
@@ -148,16 +162,22 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; ();
               axi_m[ch].r_data[i*8 +: 8] <= 8'h00;
           end
 
-          read_pending <= 1'b0;
+          read_head_n  = read_head_q + AXI_RDQ_AW'(1);
+          read_count_n = read_count_q - 1'b1;
         end
 
         if (ar_fire) begin
-          if (read_pending || axi_m[ch].r_valid)
+          if (read_count_n >= AXI_RDQ_DEPTH)
             $fatal(1, "AXI model ch%0d: read queue overflow", ch);
-          read_pending <= 1'b1;
-          read_addr_q  <= axi_m[ch].ar_addr;
-          read_id_q    <= axi_m[ch].ar_id;
+          read_addr_q[read_tail_n] <= axi_m[ch].ar_addr;
+          read_id_q[read_tail_n]   <= axi_m[ch].ar_id;
+          read_tail_n  = read_tail_n + AXI_RDQ_AW'(1);
+          read_count_n = read_count_n + 1'b1;
         end
+
+        read_head_q  <= read_head_n;
+        read_tail_q  <= read_tail_n;
+        read_count_q <= read_count_n;
 
         if (aw_fire || w_fire) begin
           int unsigned base;
@@ -186,33 +206,43 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; ();
   // ---------------------------------------------------------------------------
 
   for (genvar ch = 0; ch < NUM_CHANNELS; ++ch) begin : g_tmem_model
-    logic                                    rd_pending;
-    logic [tmem_bus_if[ch].ADDR_WIDTH-1:0]   rd_addr_q;
-    logic [TAG_WIDTH-1:0]                    rd_tag_q;
+    logic [TMEM_RDQ_AW-1:0]                               rd_head_q;
+    logic [TMEM_RDQ_AW-1:0]                               rd_tail_q;
+    logic [TMEM_RDQ_AW:0]                                 rd_count_q;
+    logic [TMEM_RDQ_DEPTH-1:0][tmem_bus_if[ch].ADDR_WIDTH-1:0] rd_addr_q;
+    logic [TMEM_RDQ_DEPTH-1:0][TAG_WIDTH-1:0]             rd_tag_q;
 
     wire req_fire = tmem_bus_if[ch].req_valid && tmem_bus_if[ch].req_ready;
     wire rsp_fire = tmem_bus_if[ch].rsp_valid && tmem_bus_if[ch].rsp_ready;
 
     assign tmem_bus_if[ch].req_ready = 1'b1;
 
-    always_ff @(posedge clk) begin
+    always @(posedge clk) begin
       if (reset) begin
         tmem_bus_if[ch].rsp_valid <= 1'b0;
         tmem_bus_if[ch].rsp_data  <= '0;
-        rd_pending                <= 1'b0;
-        rd_addr_q                 <= '0;
-        rd_tag_q                  <= '0;
+        rd_head_q                 <= '0;
+        rd_tail_q                 <= '0;
+        rd_count_q                <= '0;
       end else begin
+        logic [TMEM_RDQ_AW-1:0] rd_head_n;
+        logic [TMEM_RDQ_AW-1:0] rd_tail_n;
+        logic [TMEM_RDQ_AW:0]   rd_count_n;
+
+        rd_head_n  = rd_head_q;
+        rd_tail_n  = rd_tail_q;
+        rd_count_n = rd_count_q;
+
         if (rsp_fire) begin
           tmem_bus_if[ch].rsp_valid <= 1'b0;
         end
 
-        if (!tmem_bus_if[ch].rsp_valid && rd_pending) begin
+        if (!tmem_bus_if[ch].rsp_valid && (rd_count_q != 0)) begin
           int unsigned base;
-          base = int'(rd_addr_q) << DATA_LG2;
+          base = int'(rd_addr_q[rd_head_q]) << DATA_LG2;
 
           tmem_bus_if[ch].rsp_valid    <= 1'b1;
-          tmem_bus_if[ch].rsp_data.tag <= rd_tag_q;
+          tmem_bus_if[ch].rsp_data.tag <= rd_tag_q[rd_head_q];
           for (int i = 0; i < DATA_SIZE; ++i) begin
             if (base + i < MEM_BYTES)
               tmem_bus_if[ch].rsp_data.data[i*8 +: 8] <= tmem_mem[ch][base + i];
@@ -220,7 +250,8 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; ();
               tmem_bus_if[ch].rsp_data.data[i*8 +: 8] <= 8'h00;
           end
 
-          rd_pending <= 1'b0;
+          rd_head_n  = rd_head_q + TMEM_RDQ_AW'(1);
+          rd_count_n = rd_count_q - 1'b1;
         end
 
         if (req_fire) begin
@@ -233,13 +264,18 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; ();
                 tmem_mem[ch][base + i] <= tmem_bus_if[ch].req_data.data[i*8 +: 8];
             end
           end else begin
-            if (rd_pending || tmem_bus_if[ch].rsp_valid)
+            if (rd_count_n >= TMEM_RDQ_DEPTH)
               $fatal(1, "TMEM model ch%0d: read queue overflow", ch);
-            rd_pending <= 1'b1;
-            rd_addr_q  <= tmem_bus_if[ch].req_data.addr;
-            rd_tag_q   <= tmem_bus_if[ch].req_data.tag;
+            rd_addr_q[rd_tail_n] <= tmem_bus_if[ch].req_data.addr;
+            rd_tag_q[rd_tail_n]  <= tmem_bus_if[ch].req_data.tag;
+            rd_tail_n  = rd_tail_n + TMEM_RDQ_AW'(1);
+            rd_count_n = rd_count_n + 1'b1;
           end
         end
+
+        rd_head_q  <= rd_head_n;
+        rd_tail_q  <= rd_tail_n;
+        rd_count_q <= rd_count_n;
       end
     end
   end

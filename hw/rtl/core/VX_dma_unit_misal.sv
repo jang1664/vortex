@@ -64,9 +64,9 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
   localparam int DCACHE_LG2 = `CLOG2(DCACHE_BYTES);
   localparam int LMEM_LG2   = `CLOG2(LMEM_BYTES);
 
-  // NOTE: This window scheme assumes MAX_BYTES=DCACHE_BYTES is enough buffering.
-  // If LMEM_BYTES > DCACHE_BYTES, increase WIN_BYTES appropriately.
-  localparam int MAX_BYTES    = DCACHE_BYTES;
+  // Window holds at most two source beats at a time; additional in-flight reads
+  // are tracked in response slots.
+  localparam int MAX_BYTES    = (DCACHE_BYTES > LMEM_BYTES) ? DCACHE_BYTES : LMEM_BYTES;
   localparam int WIN_BYTES    = 2 * MAX_BYTES; // for safe
   localparam int WIN_VALID_W  = `CLOG2(WIN_BYTES + 1);
 
@@ -370,6 +370,59 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
   logic [31:0]             dcache_drop;
 
   // ------------------------------------------------------------
+  // Decoupled RD/WR control + response slots
+  // ------------------------------------------------------------
+  typedef enum logic [1:0] {
+    RD_IDLE,
+    RD_RUN,
+    RD_DONE
+  } rd_state_e;
+
+  typedef enum logic [1:0] {
+    WR_IDLE,
+    WR_RUN,
+    WR_DONE
+  } wr_state_e;
+
+  typedef enum logic [1:0] {
+    SLOT_FREE,
+    SLOT_WAIT_RSP,
+    SLOT_READY
+  } slot_state_e;
+
+  localparam int RD_OUTSTANDING_CAP = 8;
+  localparam int RD_SLOT_BITS_CAP   = `CLOG2(RD_OUTSTANDING_CAP);
+  localparam int DCACHE_TAG_VALUE_W = dcache_bus_if.TAG_WIDTH - `UP(UUID_WIDTH);
+  localparam int LMEM_TAG_VALUE_W   = lmem_bus_if.TAG_WIDTH - `UP(UUID_WIDTH);
+  localparam int MIN_TAG_VALUE_W    = (DCACHE_TAG_VALUE_W < LMEM_TAG_VALUE_W)
+                                    ? DCACHE_TAG_VALUE_W : LMEM_TAG_VALUE_W;
+  // Keep at least 1 bit in localparams so vector declarations remain legal,
+  // then enforce the real minimum at runtime with a fatal check below.
+  localparam int EFF_TAG_VALUE_W    = (MIN_TAG_VALUE_W < 1) ? 1 : MIN_TAG_VALUE_W;
+  localparam int RD_SLOT_BITS       = (EFF_TAG_VALUE_W < RD_SLOT_BITS_CAP)
+                                    ? EFF_TAG_VALUE_W : RD_SLOT_BITS_CAP;
+  localparam int RD_OUTSTANDING     = (1 << RD_SLOT_BITS);
+  localparam int SLOT_OCC_W         = `CLOG2(RD_OUTSTANDING + 1);
+
+  initial begin
+    if (MIN_TAG_VALUE_W < 1)
+      $fatal(1, "tag.value width must be >= 1 (dcache=%0d, lmem=%0d)", DCACHE_TAG_VALUE_W, LMEM_TAG_VALUE_W);
+    if (DCACHE_TAG_VALUE_W < RD_SLOT_BITS)
+      $fatal(1, "dcache tag.value width (%0d) < RD_SLOT_BITS (%0d)", DCACHE_TAG_VALUE_W, RD_SLOT_BITS);
+    if (LMEM_TAG_VALUE_W < RD_SLOT_BITS)
+      $fatal(1, "lmem tag.value width (%0d) < RD_SLOT_BITS (%0d)", LMEM_TAG_VALUE_W, RD_SLOT_BITS);
+  end
+
+  rd_state_e rd_state;
+  wr_state_e wr_state;
+
+  slot_state_e                slot_state_r [RD_OUTSTANDING];
+  logic [RD_OUTSTANDING-1:0][MAX_BYTES*8-1:0] slot_data_r;
+  logic [RD_SLOT_BITS-1:0]    rd_issue_slot_r;
+  logic [RD_SLOT_BITS-1:0]    wr_expect_slot_r;
+  logic [SLOT_OCC_W-1:0]      slot_occupancy_r;
+
+  // ------------------------------------------------------------
   // Handshake helpers
   // ------------------------------------------------------------
   wire dcache_req_fire = dcache_bus_if.req_valid && dcache_bus_if.req_ready;
@@ -377,6 +430,23 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
 
   wire dcache_rsp_fire = dcache_bus_if.rsp_valid && dcache_bus_if.rsp_ready;
   wire lmem_rsp_fire   = lmem_bus_if.rsp_valid   && lmem_bus_if.rsp_ready;
+
+  wire src_req_fire = direction_bit_r
+                    ? ((state == S_L2G_DECIDE) && lmem_req_fire && (lmem_bus_if.req_data.rw == 1'b0))
+                    : ((state == S_G2L_DECIDE) && dcache_req_fire && (dcache_bus_if.req_data.rw == 1'b0));
+
+  wire dst_req_fire = direction_bit_r
+                    ? ((state == S_L2G_DECIDE) && dcache_req_fire && (dcache_bus_if.req_data.rw == 1'b1))
+                    : ((state == S_G2L_DECIDE) && lmem_req_fire && (lmem_bus_if.req_data.rw == 1'b1));
+
+  wire src_rsp_fire = direction_bit_r ? lmem_rsp_fire : dcache_rsp_fire;
+
+  wire wr_pull_slot = ((state == S_L2G_DECIDE) || (state == S_G2L_DECIDE))
+                   && (wr_state == WR_RUN)
+                   && (slot_state_r[wr_expect_slot_r] == SLOT_READY)
+                   && (direction_bit_r
+                       ? (win_lmem_valid <= WIN_VALID_W'(WIN_BYTES - LMEM_BYTES))
+                       : (win_dcache_valid <= WIN_VALID_W'(WIN_BYTES - DCACHE_BYTES)));
 
   // ------------------------------------------------------------
   // Trace logging
@@ -517,7 +587,6 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
   // Combinational bus driving + next state
   // ------------------------------------------------------------
   always_comb begin
-    // defaults
     dcache_bus_if.req_valid = 1'b0;
     dcache_bus_if.req_data  = '0;
     dcache_bus_if.rsp_ready = 1'b1;
@@ -530,7 +599,8 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
 
     unique case (state)
       S_IDLE: begin
-        if (cmd_start) state_n = S_PRECALC;
+        if (cmd_start)
+          state_n = S_PRECALC;
       end
 
       S_PRECALC: begin
@@ -539,61 +609,22 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
       end
 
       S_PREP_SEG: begin
-        // finished is computed/latched in sequential block at the moment indices wrap
-        if (finished) state_n = S_DONE;
-        else begin
-          if (direction_bit_r) state_n = S_L2G_DECIDE;
-          else               state_n = S_G2L_DECIDE;
-        end        
+        if (finished)
+          state_n = S_DONE;
+        else
+          state_n = direction_bit_r ? S_L2G_DECIDE : S_G2L_DECIDE;
       end
 
       // ==========================================================
-      // L2G (LMEM -> DCACHE)
+      // L2G (LMEM -> DCACHE), decoupled RD/WR
       // ==========================================================
       S_L2G_DECIDE: begin
-        if ((lmem_drop != 0) && (win_lmem_valid >= lmem_drop[WIN_VALID_W-1:0])) begin
-          state_n = S_L2G_DECIDE; // stay; next cycle window aligned
-        end else begin
-          logic [63:0] dst_byte;
-          int          lane;
-          logic [31:0] remaining;
-          logic [31:0] beat_room;
-          logic [31:0] wr_nbytes;
-          logic [31:0] need_src;
+        logic rd_can_issue;
+        logic wr_can_issue;
+        logic [SLOT_OCC_W-1:0] occ_next;
 
-          dst_byte   = base_dst_seg + 64'(out_off);
-          lane       = int'(dst_byte[DCACHE_LG2-1:0]);
-          remaining  = (out_off < seg_size_r) ? (seg_size_r - out_off) : 32'd0;
-          beat_room  = DCACHE_BYTES - lane;
-          wr_nbytes  = umin32(remaining, beat_room);
+        logic [LMEM_TAG_VALUE_W-1:0] rd_tag_value;
 
-          if (out_off >= valid_total) need_src = 32'd0;
-          else                        need_src = umin32(valid_total - out_off, wr_nbytes);
-
-          if ((need_src > win_lmem_valid) && (lmem_rd_ptr < lmem_rd_end)) begin
-            state_n = S_L2G_SRC_RD_REQ;
-          end else begin
-            state_n = S_L2G_DST_WR_REQ;
-          end
-        end
-      end
-
-      S_L2G_SRC_RD_REQ: begin
-        lmem_bus_if.req_valid          = 1'b1;
-        lmem_bus_if.req_data.rw        = 1'b0;
-        lmem_bus_if.req_data.addr      = to_lmem_addr(lmem_rd_ptr);
-        lmem_bus_if.req_data.byteen    = '0;
-        lmem_bus_if.req_data.flags     = '0;
-        lmem_bus_if.req_data.tag.uuid  = dma_uuid;
-        lmem_bus_if.req_data.tag.value = '0;
-        if (lmem_bus_if.req_ready) state_n = S_L2G_SRC_RD_WAIT;
-      end
-
-      S_L2G_SRC_RD_WAIT: begin
-        if (lmem_rsp_fire) state_n = S_L2G_DECIDE;
-      end
-
-      S_L2G_DST_WR_REQ: begin
         logic [63:0] dst_byte;
         int          lane;
         logic [31:0] remaining;
@@ -603,87 +634,84 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
         logic [DCACHE_BYTES*8-1:0] wr_data;
         logic [DCACHE_BYTES-1:0]   wr_byteen;
 
+        rd_can_issue = (rd_state == RD_RUN)
+                    && (lmem_rd_ptr < lmem_rd_end)
+                    && (slot_occupancy_r < SLOT_OCC_W'(RD_OUTSTANDING))
+                    && (slot_state_r[rd_issue_slot_r] == SLOT_FREE);
+
+        if (rd_can_issue) begin
+          rd_tag_value = '0;
+          rd_tag_value[RD_SLOT_BITS-1:0] = rd_issue_slot_r;
+
+          lmem_bus_if.req_valid          = 1'b1;
+          lmem_bus_if.req_data.rw        = 1'b0;
+          lmem_bus_if.req_data.addr      = to_lmem_addr(lmem_rd_ptr);
+          lmem_bus_if.req_data.byteen    = '0;
+          lmem_bus_if.req_data.flags     = '0;
+          lmem_bus_if.req_data.tag.uuid  = dma_uuid;
+          lmem_bus_if.req_data.tag.value = rd_tag_value;
+        end
+
         dst_byte   = base_dst_seg + 64'(out_off);
         lane       = int'(dst_byte[DCACHE_LG2-1:0]);
         remaining  = (out_off < seg_size_r) ? (seg_size_r - out_off) : 32'd0;
         beat_room  = DCACHE_BYTES - lane;
         wr_nbytes  = umin32(remaining, beat_room);
 
-        if (out_off >= valid_total) src_bytes = 32'd0;
-        else                        src_bytes = umin32(valid_total - out_off, wr_nbytes);
+        if (out_off >= valid_total)
+          src_bytes = 32'd0;
+        else
+          src_bytes = umin32(valid_total - out_off, wr_nbytes);
 
-        wr_data = '0;
-        for (int b = 0; b < DCACHE_BYTES; b++) begin
-          if ((b >= lane) && (b < lane + int'(wr_nbytes))) begin
-            if ((b - lane) < int'(src_bytes)) wr_data[b*8 +: 8] = win_lmem[(b - lane)*8 +: 8];
-            else                              wr_data[b*8 +: 8] = 8'h00;
+        wr_can_issue = (wr_state == WR_RUN)
+                    && (wr_nbytes != 0)
+                    && ((src_bytes == 0)
+                     || ((lmem_drop == 0) && (win_lmem_valid >= src_bytes[WIN_VALID_W-1:0])));
+
+        if (wr_can_issue) begin
+          wr_data = '0;
+          for (int b = 0; b < DCACHE_BYTES; b++) begin
+            if ((b >= lane) && (b < lane + int'(wr_nbytes))) begin
+              if ((b - lane) < int'(src_bytes))
+                wr_data[b*8 +: 8] = win_lmem[(b - lane)*8 +: 8];
+              else
+                wr_data[b*8 +: 8] = 8'h00;
+            end
           end
+
+          wr_byteen = mask_dcache_range(lane, int'(wr_nbytes));
+
+          dcache_bus_if.req_valid          = 1'b1;
+          dcache_bus_if.req_data.rw        = 1'b1;
+          dcache_bus_if.req_data.addr      = to_dcache_addr(dst_byte - 64'(lane));
+          dcache_bus_if.req_data.data      = wr_data;
+          dcache_bus_if.req_data.byteen    = wr_byteen;
+          dcache_bus_if.req_data.flags     = '0;
+          dcache_bus_if.req_data.tag.uuid  = dma_uuid;
+          dcache_bus_if.req_data.tag.value = '0;
         end
 
-        wr_byteen = mask_dcache_range(lane, int'(wr_nbytes));
+        occ_next = slot_occupancy_r;
+        unique case ({src_req_fire, wr_pull_slot})
+          2'b10: occ_next = slot_occupancy_r + SLOT_OCC_W'(1);
+          2'b01: occ_next = slot_occupancy_r - SLOT_OCC_W'(1);
+          default:;
+        endcase
 
-        dcache_bus_if.req_valid          = 1'b1;
-        dcache_bus_if.req_data.rw        = 1'b1;
-        dcache_bus_if.req_data.addr      = to_dcache_addr(dst_byte - 64'(lane)); // beat-aligned
-        dcache_bus_if.req_data.data      = wr_data;
-        dcache_bus_if.req_data.byteen    = wr_byteen;
-        dcache_bus_if.req_data.flags     = '0;
-        dcache_bus_if.req_data.tag.uuid  = dma_uuid;
-        dcache_bus_if.req_data.tag.value = '0;
-
-        if (dcache_bus_if.req_ready) begin
-            if (out_off + wr_nbytes >= seg_size_r) state_n = S_ADV_SEG;
-            else                                 state_n = S_L2G_DECIDE;
-        end
+        if ((rd_state == RD_DONE) && (wr_state == WR_DONE) && (occ_next == 0))
+          state_n = S_ADV_SEG;
       end
-  
+
       // ==========================================================
-      // G2L (DCACHE -> LMEM)
+      // G2L (DCACHE -> LMEM), decoupled RD/WR
       // ==========================================================
       S_G2L_DECIDE: begin
-        if ((dcache_drop != 0) && (win_dcache_valid >= dcache_drop[WIN_VALID_W-1:0])) begin
-          state_n = S_G2L_DECIDE;
-        end else begin
-          logic [63:0] dst_byte;
-          int          lane;
-          logic [31:0] remaining;
-          logic [31:0] beat_room;
-          logic [31:0] wr_nbytes;
-          logic [31:0] need_src;
+        logic rd_can_issue;
+        logic wr_can_issue;
+        logic [SLOT_OCC_W-1:0] occ_next;
 
-          dst_byte   = base_dst_seg + 64'(out_off);
-          lane       = int'(dst_byte[LMEM_LG2-1:0]);
-          remaining  = (out_off < seg_size_r) ? (seg_size_r - out_off) : 32'd0;
-          beat_room  = LMEM_BYTES - lane;
-          wr_nbytes  = umin32(remaining, beat_room);
+        logic [DCACHE_TAG_VALUE_W-1:0] rd_tag_value;
 
-          if (out_off >= valid_total) need_src = 32'd0;
-          else                        need_src = umin32(valid_total - out_off, wr_nbytes);
-
-          if ((need_src > win_dcache_valid) && (dcache_rd_ptr < dcache_rd_end)) begin
-            state_n = S_G2L_SRC_RD_REQ;
-          end else begin
-            state_n = S_G2L_DST_WR_REQ;
-          end
-        end
-      end
-
-      S_G2L_SRC_RD_REQ: begin
-        dcache_bus_if.req_valid          = 1'b1;
-        dcache_bus_if.req_data.rw        = 1'b0;
-        dcache_bus_if.req_data.addr      = to_dcache_addr(dcache_rd_ptr);
-        dcache_bus_if.req_data.byteen    = '0;
-        dcache_bus_if.req_data.flags     = '0;
-        dcache_bus_if.req_data.tag.uuid  = dma_uuid;
-        dcache_bus_if.req_data.tag.value = '0;
-        if (dcache_bus_if.req_ready) state_n = S_G2L_SRC_RD_WAIT;
-      end
-
-      S_G2L_SRC_RD_WAIT: begin
-        if (dcache_rsp_fire) state_n = S_G2L_DECIDE;
-      end
-
-      S_G2L_DST_WR_REQ: begin
         logic [63:0] dst_byte;
         int          lane;
         logic [31:0] remaining;
@@ -693,55 +721,99 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
         logic [LMEM_BYTES*8-1:0] wr_data;
         logic [LMEM_BYTES-1:0]   wr_byteen;
 
+        rd_can_issue = (rd_state == RD_RUN)
+                    && (dcache_rd_ptr < dcache_rd_end)
+                    && (slot_occupancy_r < SLOT_OCC_W'(RD_OUTSTANDING))
+                    && (slot_state_r[rd_issue_slot_r] == SLOT_FREE);
+
+        if (rd_can_issue) begin
+          rd_tag_value = '0;
+          rd_tag_value[RD_SLOT_BITS-1:0] = rd_issue_slot_r;
+
+          dcache_bus_if.req_valid          = 1'b1;
+          dcache_bus_if.req_data.rw        = 1'b0;
+          dcache_bus_if.req_data.addr      = to_dcache_addr(dcache_rd_ptr);
+          dcache_bus_if.req_data.byteen    = '0;
+          dcache_bus_if.req_data.flags     = '0;
+          dcache_bus_if.req_data.tag.uuid  = dma_uuid;
+          dcache_bus_if.req_data.tag.value = rd_tag_value;
+        end
+
         dst_byte   = base_dst_seg + 64'(out_off);
         lane       = int'(dst_byte[LMEM_LG2-1:0]);
         remaining  = (out_off < seg_size_r) ? (seg_size_r - out_off) : 32'd0;
         beat_room  = LMEM_BYTES - lane;
         wr_nbytes  = umin32(remaining, beat_room);
 
-        if (out_off >= valid_total) src_bytes = 32'd0;
-        else                        src_bytes = umin32(valid_total - out_off, wr_nbytes);
+        if (out_off >= valid_total)
+          src_bytes = 32'd0;
+        else
+          src_bytes = umin32(valid_total - out_off, wr_nbytes);
 
-        wr_data = '0;
-        for (int b = 0; b < LMEM_BYTES; b++) begin
-          if ((b >= lane) && (b < lane + int'(wr_nbytes))) begin
-            if ((b - lane) < int'(src_bytes)) wr_data[b*8 +: 8] = win_dcache[(b - lane)*8 +: 8];
-            else                              wr_data[b*8 +: 8] = 8'h00;
+        wr_can_issue = (wr_state == WR_RUN)
+                    && (wr_nbytes != 0)
+                    && ((src_bytes == 0)
+                     || ((dcache_drop == 0) && (win_dcache_valid >= src_bytes[WIN_VALID_W-1:0])));
+
+        if (wr_can_issue) begin
+          wr_data = '0;
+          for (int b = 0; b < LMEM_BYTES; b++) begin
+            if ((b >= lane) && (b < lane + int'(wr_nbytes))) begin
+              if ((b - lane) < int'(src_bytes))
+                wr_data[b*8 +: 8] = win_dcache[(b - lane)*8 +: 8];
+              else
+                wr_data[b*8 +: 8] = 8'h00;
+            end
           end
+
+          wr_byteen = mask_lmem_range(lane, int'(wr_nbytes));
+
+          lmem_bus_if.req_valid          = 1'b1;
+          lmem_bus_if.req_data.rw        = 1'b1;
+          lmem_bus_if.req_data.addr      = to_lmem_addr(dst_byte - 64'(lane));
+          lmem_bus_if.req_data.data      = wr_data;
+          lmem_bus_if.req_data.byteen    = wr_byteen;
+          lmem_bus_if.req_data.flags     = '0;
+          lmem_bus_if.req_data.tag.uuid  = dma_uuid;
+          lmem_bus_if.req_data.tag.value = '0;
         end
 
-        wr_byteen = mask_lmem_range(lane, int'(wr_nbytes));
+        occ_next = slot_occupancy_r;
+        unique case ({src_req_fire, wr_pull_slot})
+          2'b10: occ_next = slot_occupancy_r + SLOT_OCC_W'(1);
+          2'b01: occ_next = slot_occupancy_r - SLOT_OCC_W'(1);
+          default:;
+        endcase
 
-        lmem_bus_if.req_valid          = 1'b1;
-        lmem_bus_if.req_data.rw        = 1'b1;
-        lmem_bus_if.req_data.addr      = to_lmem_addr(dst_byte - 64'(lane));
-        lmem_bus_if.req_data.data      = wr_data;
-        lmem_bus_if.req_data.byteen    = wr_byteen;
-        lmem_bus_if.req_data.flags     = '0;
-        lmem_bus_if.req_data.tag.uuid  = dma_uuid;
-        lmem_bus_if.req_data.tag.value = '0;
-
-        // local mem may not return write response
-        if (lmem_bus_if.req_ready) begin
-          if (out_off + wr_nbytes >= seg_size_r) state_n = S_ADV_SEG;
-          else                                 state_n = S_G2L_DECIDE;
-        end
+        if ((rd_state == RD_DONE) && (wr_state == WR_DONE) && (occ_next == 0))
+          state_n = S_ADV_SEG;
       end
 
-      // ==========================================================
-      // advance segment / 3D loop
-      // ==========================================================
+      // Legacy single-step states are no longer used; route back to decoupled run states.
+      S_L2G_SRC_RD_REQ,
+      S_L2G_SRC_RD_WAIT,
+      S_L2G_DST_WR_REQ: begin
+        state_n = S_L2G_DECIDE;
+      end
+
+      S_G2L_SRC_RD_REQ,
+      S_G2L_SRC_RD_WAIT,
+      S_G2L_DST_WR_REQ: begin
+        state_n = S_G2L_DECIDE;
+      end
+
       S_ADV_SEG: begin
         state_n = S_PREP_SEG;
       end
 
       S_DONE: begin
-        // Hold done_if.valid until handshake
-        if (done_if.ready) state_n = S_IDLE;
-        else               state_n = S_DONE;
+        if (done_if.ready)
+          state_n = S_IDLE;
       end
 
-      default: state_n = S_IDLE;
+      default: begin
+        state_n = S_IDLE;
+      end
     endcase
   end
 
@@ -751,7 +823,7 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
   always_ff @(posedge clk) begin
     if (reset) begin
       state <= S_IDLE;
-      
+
       base_src_seg_r <= '0;
       base_dst_seg_r <= '0;
 
@@ -773,6 +845,16 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
       base_src_seg_r   <= '0;
       base_dst_seg_r   <= '0;
 
+      rd_state <= RD_IDLE;
+      wr_state <= WR_IDLE;
+      rd_issue_slot_r  <= '0;
+      wr_expect_slot_r <= '0;
+      slot_occupancy_r <= '0;
+      for (int i = 0; i < RD_OUTSTANDING; i++) begin
+        slot_state_r[i] <= SLOT_FREE;
+        slot_data_r[i]  <= '0;
+      end
+
     end else begin
       state <= state_n;
 
@@ -787,6 +869,16 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
         finished  <= 1'b0;
         base_src_seg_r <= {cfg_reg_if.regs[4][31:0], cfg_reg_if.regs[3][31:0]};
         base_dst_seg_r <= {cfg_reg_if.regs[2][31:0], cfg_reg_if.regs[1][31:0]};
+
+        rd_state <= RD_IDLE;
+        wr_state <= WR_IDLE;
+        rd_issue_slot_r  <= '0;
+        wr_expect_slot_r <= '0;
+        slot_occupancy_r <= '0;
+        for (int i = 0; i < RD_OUTSTANDING; i++) begin
+          slot_state_r[i] <= SLOT_FREE;
+          slot_data_r[i]  <= '0;
+        end
       end
 
       // After DONE handshake, clear finished for safety
@@ -795,7 +887,7 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
       end
 
       // -------------------------
-      // Prepare segment: reset windows & init src read pointers based on direction
+      // Prepare segment: reset windows + init decoupled RD/WR context
       // -------------------------
       if (state == S_PREP_SEG) begin
         out_off <= 32'd0;
@@ -809,111 +901,208 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
         lmem_drop   <= 32'd0;
         dcache_drop <= 32'd0;
 
+        rd_issue_slot_r  <= '0;
+        wr_expect_slot_r <= '0;
+        slot_occupancy_r <= '0;
+        for (int i = 0; i < RD_OUTSTANDING; i++) begin
+          slot_state_r[i] <= SLOT_FREE;
+        end
+
+        if (seg_size_r == 0)
+          wr_state <= WR_DONE;
+        else
+          wr_state <= WR_RUN;
+
         if (direction_bit_r) begin
           // L2G: source=LMEM
           lmem_drop   <= (base_src_seg & 64'(LMEM_BYTES-1));
           lmem_rd_ptr <= align_down(base_src_seg, LMEM_BYTES);
-          lmem_rd_end <= align_up(base_src_seg + 64'(valid_total), LMEM_BYTES);
+          if (valid_total == 0) begin
+            lmem_rd_end <= align_down(base_src_seg, LMEM_BYTES);
+            rd_state    <= RD_DONE;
+          end else begin
+            lmem_rd_end <= align_up(base_src_seg + 64'(valid_total), LMEM_BYTES);
+            rd_state    <= RD_RUN;
+          end
+          dcache_rd_ptr <= '0;
+          dcache_rd_end <= '0;
         end else begin
           // G2L: source=DCACHE
           dcache_drop  <= (base_src_seg & 64'(DCACHE_BYTES-1));
           dcache_rd_ptr <= align_down(base_src_seg, DCACHE_BYTES);
-          dcache_rd_end <= align_up(base_src_seg + 64'(valid_total), DCACHE_BYTES);
+          if (valid_total == 0) begin
+            dcache_rd_end <= align_down(base_src_seg, DCACHE_BYTES);
+            rd_state      <= RD_DONE;
+          end else begin
+            dcache_rd_end <= align_up(base_src_seg + 64'(valid_total), DCACHE_BYTES);
+            rd_state      <= RD_RUN;
+          end
+          lmem_rd_ptr <= '0;
+          lmem_rd_end <= '0;
         end
-      end
+      end else if ((state == S_L2G_DECIDE) || (state == S_G2L_DECIDE)) begin
+        // -------------------------
+        // Source read issue bookkeeping
+        // -------------------------
+        if (src_req_fire) begin
+          logic [63:0] next_ptr;
 
-      // ==========================================================
-      // L2G: capture LMEM read responses into window (append)
-      // ==========================================================
-      if (state == S_L2G_SRC_RD_WAIT && lmem_rsp_fire) begin
-        if (win_lmem_valid + LMEM_BYTES <= WIN_BYTES) begin
-          win_lmem[win_lmem_valid*8 +: (LMEM_BYTES*8)] <= lmem_bus_if.rsp_data.data;
-          win_lmem_valid <= win_lmem_valid + LMEM_BYTES[WIN_VALID_W-1:0];
-        end
-        lmem_rd_ptr <= lmem_rd_ptr + LMEM_BYTES;
-      end
+          slot_state_r[rd_issue_slot_r] <= SLOT_WAIT_RSP;
+          rd_issue_slot_r <= rd_issue_slot_r + RD_SLOT_BITS'(1);
 
-      // drop initial misalignment bytes once we have enough
-      if ((state == S_L2G_DECIDE || state == S_L2G_SRC_RD_WAIT)
-          && (lmem_drop != 0) && (win_lmem_valid >= lmem_drop[WIN_VALID_W-1:0])) begin
-        win_lmem       <= win_lmem >> (int'(lmem_drop) * 8);
-        win_lmem_valid <= win_lmem_valid - lmem_drop[WIN_VALID_W-1:0];
-        lmem_drop      <= 32'd0;
-      end
-
-      // ==========================================================
-      // L2G: after DCACHE write response, consume src bytes + advance out_off
-      // ==========================================================
-      if (state == S_L2G_DST_WR_REQ && dcache_req_fire) begin
-        logic [63:0] dst_byte;
-        int          lane;
-        logic [31:0] remaining;
-        logic [31:0] beat_room;
-        logic [31:0] wr_nbytes;
-        logic [31:0] src_bytes;
-
-        dst_byte   = base_dst_seg + 64'(out_off);
-        lane       = int'(dst_byte[DCACHE_LG2-1:0]);
-        remaining  = (out_off < seg_size_r) ? (seg_size_r - out_off) : 32'd0;
-        beat_room  = DCACHE_BYTES - lane;
-        wr_nbytes  = umin32(remaining, beat_room);
-
-        if (out_off >= valid_total) src_bytes = 32'd0;
-        else                        src_bytes = umin32(valid_total - out_off, wr_nbytes);
-
-        if (src_bytes != 0) begin
-          win_lmem       <= win_lmem >> (int'(src_bytes) * 8);
-          win_lmem_valid <= win_lmem_valid - src_bytes[WIN_VALID_W-1:0];
+          if (direction_bit_r) begin
+            next_ptr = lmem_rd_ptr + LMEM_BYTES;
+            lmem_rd_ptr <= next_ptr;
+            if (next_ptr >= lmem_rd_end)
+              rd_state <= RD_DONE;
+          end else begin
+            next_ptr = dcache_rd_ptr + DCACHE_BYTES;
+            dcache_rd_ptr <= next_ptr;
+            if (next_ptr >= dcache_rd_end)
+              rd_state <= RD_DONE;
+          end
         end
 
-        out_off <= out_off + wr_nbytes;
-      end
+        // -------------------------
+        // Source response -> slot capture
+        // -------------------------
+        if (src_rsp_fire) begin
+          logic [RD_SLOT_BITS-1:0] rsp_slot_idx;
+          if (direction_bit_r)
+            rsp_slot_idx = lmem_bus_if.rsp_data.tag.value[RD_SLOT_BITS-1:0];
+          else
+            rsp_slot_idx = dcache_bus_if.rsp_data.tag.value[RD_SLOT_BITS-1:0];
 
-      // ==========================================================
-      // G2L: capture DCACHE read responses into window (append)
-      // ==========================================================
-      if (state == S_G2L_SRC_RD_WAIT && dcache_rsp_fire) begin
-        if (win_dcache_valid + DCACHE_BYTES <= WIN_BYTES) begin
-          win_dcache[win_dcache_valid*8 +: (DCACHE_BYTES*8)] <= dcache_bus_if.rsp_data.data;
-          win_dcache_valid <= win_dcache_valid + DCACHE_BYTES[WIN_VALID_W-1:0];
-        end
-        dcache_rd_ptr <= dcache_rd_ptr + DCACHE_BYTES;
-      end
-
-      // drop initial misalignment bytes once we have enough
-      if ((state == S_G2L_DECIDE || state == S_G2L_SRC_RD_WAIT)
-          && (dcache_drop != 0) && (win_dcache_valid >= dcache_drop[WIN_VALID_W-1:0])) begin
-        win_dcache       <= win_dcache >> (int'(dcache_drop) * 8);
-        win_dcache_valid <= win_dcache_valid - dcache_drop[WIN_VALID_W-1:0];
-        dcache_drop      <= 32'd0;
-      end
-
-      // ==========================================================
-      // G2L: after LMEM write request fire, consume src bytes + advance out_off
-      // ==========================================================
-      if (state == S_G2L_DST_WR_REQ && lmem_req_fire) begin
-        logic [63:0] dst_byte;
-        int          lane;
-        logic [31:0] remaining;
-        logic [31:0] beat_room;
-        logic [31:0] wr_nbytes;
-        logic [31:0] src_bytes;
-
-        dst_byte   = base_dst_seg + 64'(out_off);
-        lane       = int'(dst_byte[LMEM_LG2-1:0]);
-        remaining  = (out_off < seg_size_r) ? (seg_size_r - out_off) : 32'd0;
-        beat_room  = LMEM_BYTES - lane;
-        wr_nbytes  = umin32(remaining, beat_room);
-
-        if (out_off >= valid_total) src_bytes = 32'd0;
-        else                        src_bytes = umin32(valid_total - out_off, wr_nbytes);
-
-        if (src_bytes != 0) begin
-          win_dcache       <= win_dcache >> (int'(src_bytes) * 8);
-          win_dcache_valid <= win_dcache_valid - src_bytes[WIN_VALID_W-1:0];
+          slot_state_r[rsp_slot_idx] <= SLOT_READY;
+          slot_data_r[rsp_slot_idx]  <= '0;
+          if (direction_bit_r)
+            slot_data_r[rsp_slot_idx][0 +: LMEM_BYTES*8] <= lmem_bus_if.rsp_data.data;
+          else
+            slot_data_r[rsp_slot_idx][0 +: DCACHE_BYTES*8] <= dcache_bus_if.rsp_data.data;
         end
 
-        out_off <= out_off + wr_nbytes;
+        // -------------------------
+        // WR-side window/drop/consume update (per direction)
+        // -------------------------
+        if (state == S_L2G_DECIDE) begin : l2g_wr_update
+          logic [WIN_BYTES*8-1:0] tmp_win;
+          logic [WIN_VALID_W-1:0] tmp_valid;
+          logic [31:0]            tmp_drop;
+          logic [31:0]            tmp_out_off;
+          logic [63:0]            dst_byte;
+          int                     lane;
+          logic [31:0]            remaining;
+          logic [31:0]            beat_room;
+          logic [31:0]            wr_nbytes;
+          logic [31:0]            src_bytes;
+
+          tmp_win     = win_lmem;
+          tmp_valid   = win_lmem_valid;
+          tmp_drop    = lmem_drop;
+          tmp_out_off = out_off;
+
+          if (wr_pull_slot && direction_bit_r && (tmp_valid + LMEM_BYTES <= WIN_BYTES)) begin
+            tmp_win[tmp_valid*8 +: (LMEM_BYTES*8)] = slot_data_r[wr_expect_slot_r][0 +: (LMEM_BYTES*8)];
+            tmp_valid = tmp_valid + WIN_VALID_W'(LMEM_BYTES);
+            slot_state_r[wr_expect_slot_r] <= SLOT_FREE;
+            wr_expect_slot_r <= wr_expect_slot_r + RD_SLOT_BITS'(1);
+          end
+
+          if ((tmp_drop != 0) && (tmp_valid >= tmp_drop[WIN_VALID_W-1:0])) begin
+            tmp_win   = tmp_win >> (tmp_drop * 8);
+            tmp_valid = tmp_valid - tmp_drop[WIN_VALID_W-1:0];
+            tmp_drop  = 32'd0;
+          end
+
+          if (dst_req_fire && direction_bit_r) begin
+            dst_byte   = base_dst_seg + 64'(tmp_out_off);
+            lane       = int'(dst_byte[DCACHE_LG2-1:0]);
+            remaining  = (tmp_out_off < seg_size_r) ? (seg_size_r - tmp_out_off) : 32'd0;
+            beat_room  = DCACHE_BYTES - lane;
+            wr_nbytes  = umin32(remaining, beat_room);
+
+            if (tmp_out_off >= valid_total)
+              src_bytes = 32'd0;
+            else
+              src_bytes = umin32(valid_total - tmp_out_off, wr_nbytes);
+
+            if (src_bytes != 0) begin
+              tmp_win   = tmp_win >> (src_bytes * 8);
+              tmp_valid = tmp_valid - src_bytes[WIN_VALID_W-1:0];
+            end
+
+            tmp_out_off = tmp_out_off + wr_nbytes;
+            if (tmp_out_off >= seg_size_r)
+              wr_state <= WR_DONE;
+          end
+
+          win_lmem       <= tmp_win;
+          win_lmem_valid <= tmp_valid;
+          lmem_drop      <= tmp_drop;
+          out_off        <= tmp_out_off;
+        end else begin : g2l_wr_update
+          logic [WIN_BYTES*8-1:0] tmp_win;
+          logic [WIN_VALID_W-1:0] tmp_valid;
+          logic [31:0]            tmp_drop;
+          logic [31:0]            tmp_out_off;
+          logic [63:0]            dst_byte;
+          int                     lane;
+          logic [31:0]            remaining;
+          logic [31:0]            beat_room;
+          logic [31:0]            wr_nbytes;
+          logic [31:0]            src_bytes;
+
+          tmp_win     = win_dcache;
+          tmp_valid   = win_dcache_valid;
+          tmp_drop    = dcache_drop;
+          tmp_out_off = out_off;
+
+          if (wr_pull_slot && !direction_bit_r && (tmp_valid + DCACHE_BYTES <= WIN_BYTES)) begin
+            tmp_win[tmp_valid*8 +: (DCACHE_BYTES*8)] = slot_data_r[wr_expect_slot_r][0 +: (DCACHE_BYTES*8)];
+            tmp_valid = tmp_valid + WIN_VALID_W'(DCACHE_BYTES);
+            slot_state_r[wr_expect_slot_r] <= SLOT_FREE;
+            wr_expect_slot_r <= wr_expect_slot_r + RD_SLOT_BITS'(1);
+          end
+
+          if ((tmp_drop != 0) && (tmp_valid >= tmp_drop[WIN_VALID_W-1:0])) begin
+            tmp_win   = tmp_win >> (tmp_drop * 8);
+            tmp_valid = tmp_valid - tmp_drop[WIN_VALID_W-1:0];
+            tmp_drop  = 32'd0;
+          end
+
+          if (dst_req_fire && !direction_bit_r) begin
+            dst_byte   = base_dst_seg + 64'(tmp_out_off);
+            lane       = int'(dst_byte[LMEM_LG2-1:0]);
+            remaining  = (tmp_out_off < seg_size_r) ? (seg_size_r - tmp_out_off) : 32'd0;
+            beat_room  = LMEM_BYTES - lane;
+            wr_nbytes  = umin32(remaining, beat_room);
+
+            if (tmp_out_off >= valid_total)
+              src_bytes = 32'd0;
+            else
+              src_bytes = umin32(valid_total - tmp_out_off, wr_nbytes);
+
+            if (src_bytes != 0) begin
+              tmp_win   = tmp_win >> (src_bytes * 8);
+              tmp_valid = tmp_valid - src_bytes[WIN_VALID_W-1:0];
+            end
+
+            tmp_out_off = tmp_out_off + wr_nbytes;
+            if (tmp_out_off >= seg_size_r)
+              wr_state <= WR_DONE;
+          end
+
+          win_dcache       <= tmp_win;
+          win_dcache_valid <= tmp_valid;
+          dcache_drop      <= tmp_drop;
+          out_off          <= tmp_out_off;
+        end
+
+        unique case ({src_req_fire, wr_pull_slot})
+          2'b10: slot_occupancy_r <= slot_occupancy_r + SLOT_OCC_W'(1);
+          2'b01: slot_occupancy_r <= slot_occupancy_r - SLOT_OCC_W'(1);
+          default:;
+        endcase
       end
 
       // ==========================================================
