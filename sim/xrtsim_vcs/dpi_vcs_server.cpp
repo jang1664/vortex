@@ -159,11 +159,11 @@ int ctrl_send_reg_value(int value) {
 // ---- mem_sock functions ----
 
 // Send AXI AR event (read request from DUT) to App
-int mem_send_axi_ar(int bank, long long addr, int id, int len) {
+int mem_send_axi_ar(int port, long long addr, int id, int len) {
   VcsPacket pkt;
   memset(&pkt, 0, sizeof(pkt));
   pkt.type    = EVT_AXI_AR;
-  pkt.bank_id = (uint8_t)bank;
+  pkt.port_id = (uint8_t)port;
   pkt.id      = (uint32_t)id;
   pkt.addr    = (uint64_t)addr;
   pkt.value   = (uint32_t)len;  // arlen
@@ -171,11 +171,11 @@ int mem_send_axi_ar(int bank, long long addr, int id, int len) {
 }
 
 // Send AXI AW event (write address from DUT) to App
-int mem_send_axi_aw(int bank, long long addr, int id, int len) {
+int mem_send_axi_aw(int port, long long addr, int id, int len) {
   VcsPacket pkt;
   memset(&pkt, 0, sizeof(pkt));
   pkt.type    = EVT_AXI_AW;
-  pkt.bank_id = (uint8_t)bank;
+  pkt.port_id = (uint8_t)port;
   pkt.id      = (uint32_t)id;
   pkt.addr    = (uint64_t)addr;
   pkt.value   = (uint32_t)len;  // awlen
@@ -186,12 +186,12 @@ int mem_send_axi_aw(int bank, long long addr, int id, int len) {
 // data_bytes: pointer to write data (DATA_SIZE bytes)
 // strb: byte-enable mask
 // last: wlast flag
-int mem_send_axi_w(int bank, const svOpenArrayHandle data_bytes,
+int mem_send_axi_w(int port, const svOpenArrayHandle data_bytes,
                    long long strb, int last, int data_size) {
   VcsPacket pkt;
   memset(&pkt, 0, sizeof(pkt));
   pkt.type    = EVT_AXI_W;
-  pkt.bank_id = (uint8_t)bank;
+  pkt.port_id = (uint8_t)port;
   pkt.size    = (uint32_t)data_size;
   pkt.value   = (uint32_t)last;
   pkt.addr    = (uint64_t)strb;  // reuse addr field for strb
@@ -214,16 +214,16 @@ int mem_has_response() {
 
 // Receive AXI response (R or B) from App
 // out_type: RSP_AXI_R or RSP_AXI_B
-// out_bank, out_id, out_last: response fields
+// out_port, out_id, out_last: response fields
 // data_bytes: buffer to receive read data (only for RSP_AXI_R)
-int mem_recv_response(int* out_type, int* out_bank, int* out_id,
+int mem_recv_response(int* out_type, int* out_port, int* out_id,
                       svOpenArrayHandle data_bytes, int* out_last, int data_size) {
   VcsPacket pkt;
   if (recv_all(mem_client_fd, &pkt, sizeof(pkt)) < 0)
     return -1;
 
   *out_type = pkt.type;
-  *out_bank = pkt.bank_id;
+  *out_port = pkt.port_id;
   *out_id   = pkt.id;
   *out_last = (int)pkt.value;
 

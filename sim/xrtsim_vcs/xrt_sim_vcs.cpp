@@ -227,7 +227,7 @@ private:
     std::array<uint8_t, PLATFORM_MEMORY_DATA_SIZE> data;
     uint32_t tag;
     uint64_t addr;
-    uint8_t  bank;
+    uint8_t  port;
     bool write;
     bool ready;
   } mem_req_t;
@@ -284,8 +284,8 @@ private:
     return -1;
   }
 
-  mem_req_iter_t find_ready_mem_rsp(int bank) {
-    auto& pending_reqs = pending_mem_reqs_[bank];
+  mem_req_iter_t find_ready_mem_rsp(int port) {
+    auto& pending_reqs = pending_mem_reqs_[port];
     for (auto it = pending_reqs.begin(); it != pending_reqs.end(); ++it) {
       auto req = *it;
       if (!req->ready) {
@@ -324,21 +324,21 @@ private:
           auto mem_req = new mem_req_t();
           mem_req->tag   = pkt.id;
           mem_req->addr  = pkt.addr;
-          mem_req->bank  = pkt.bank_id;
+          mem_req->port  = pkt.port_id;
           mem_req->write = false;
           mem_req->ready = false;
           // Read data from local RAM using AXI address directly
           // (AXI addr == software addr, see docs/port-scale/CAUTION.md #1)
           ram_->read(mem_req->data.data(), pkt.addr, PLATFORM_MEMORY_DATA_SIZE);
-          pending_mem_reqs_[pkt.bank_id].emplace_back(mem_req);
-          dram_queues_[pkt.bank_id].push(mem_req);
+          pending_mem_reqs_[pkt.port_id].emplace_back(mem_req);
+          dram_queues_[pkt.port_id].push(mem_req);
           break;
         }
         case EVT_AXI_AW: {
           // Write address from DUT (AXI addr == software addr)
-          aw_state_[pkt.bank_id].addr  = pkt.addr;
-          aw_state_[pkt.bank_id].tag   = pkt.id;
-          aw_state_[pkt.bank_id].valid = true;
+          aw_state_[pkt.port_id].addr  = pkt.addr;
+          aw_state_[pkt.port_id].tag   = pkt.id;
+          aw_state_[pkt.port_id].valid = true;
           break;
         }
         case EVT_AXI_W: {
@@ -352,9 +352,9 @@ private:
             }
           }
 
-          uint8_t bank = pkt.bank_id;
-          if (aw_state_[bank].valid) {
-            uint64_t byte_addr = aw_state_[bank].addr;
+          uint8_t port = pkt.port_id;
+          if (aw_state_[port].valid) {
+            uint64_t byte_addr = aw_state_[port].addr;
             uint64_t strb = pkt.addr; // strb is stored in addr field
 
             // Write with byte enables
@@ -365,15 +365,15 @@ private:
             }
 
             auto mem_req = new mem_req_t();
-            mem_req->tag   = aw_state_[bank].tag;
+            mem_req->tag   = aw_state_[port].tag;
             mem_req->addr  = byte_addr;
-            mem_req->bank  = bank;
+            mem_req->port  = port;
             mem_req->write = true;
             mem_req->ready = false;
-            pending_mem_reqs_[bank].emplace_back(mem_req);
-            dram_queues_[bank].push(mem_req);
+            pending_mem_reqs_[port].emplace_back(mem_req);
+            dram_queues_[port].push(mem_req);
 
-            aw_state_[bank].valid = false;
+            aw_state_[port].valid = false;
           }
           break;
         }
@@ -413,7 +413,7 @@ private:
 
         VcsPacket rsp;
         memset(&rsp, 0, sizeof(rsp));
-        rsp.bank_id = (uint8_t)b;
+        rsp.port_id = (uint8_t)b;
         rsp.id      = mem_req->tag;
 
         if (mem_req->write) {
