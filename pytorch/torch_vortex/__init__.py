@@ -7,7 +7,7 @@ This package registers 'vortex' as a PrivateUse1 device backend, enabling:
 
 Environment variables (optional — auto-detected when possible):
     VORTEX_HOME       Root of the Vortex source tree.
-    VORTEX_DRIVER     Driver backend: simx (default), rtlsim, opae, xrt.
+    VORTEX_DRIVER     Driver backend: simx (default), rtlsim, opae, xrt, xrt_vcs.
     FPGA_BIN_DIR      Directory containing vortex_afu.xclbin (xrt only;
                       auto-detected from VORTEX_HOME if not set).
     XRT_XCLBIN_PATH   Full path to the FPGA bitstream (derived from
@@ -157,10 +157,21 @@ def _resolve_driver() -> str:
 
     if explicit_driver == "xrt":
         # Driver is xrt but no FPGA_BIN_DIR given → auto-detect
+        if os.environ.get("TORCH_VORTEX_XRT_VCS") == "1":
+            return "xrt_vcs"
         detected = _find_fpga_bin_dir()
         if detected:
             os.environ["FPGA_BIN_DIR"] = detected
         return "xrt"
+
+    if explicit_driver == "xrt_vcs":
+        # VCS RTL simulation — same libvortex-xrt.so, just linked with
+        # libxrtsim_vcs.so instead of libxrtsim.so at build time.
+        # Override to "xrt" so the stub finds libvortex-xrt.so.
+        # Keep TORCH_VORTEX_XRT_VCS=1 so preloading picks libxrtsim_vcs.so.
+        os.environ["VORTEX_DRIVER"] = "xrt"
+        os.environ["TORCH_VORTEX_XRT_VCS"] = "1"
+        return "xrt_vcs"
 
     # Default / explicit non-xrt driver
     driver = explicit_driver if explicit_driver else "simx"
@@ -174,6 +185,8 @@ def _preload_vortex_libs() -> None:
     rt_dir = _find_vortex_runtime_dir()
     if not rt_dir:
         return  # best-effort — fall through to normal linker search
+
+    os.environ.setdefault("VORTEX_RUNTIME_DIR", rt_dir)
 
     driver = _resolve_driver()
 
@@ -201,11 +214,18 @@ def _preload_vortex_libs() -> None:
         "xrt": "libxrtsim.so",
     }
 
+    # xrt_vcs uses the same libvortex-xrt.so but preloads libxrtsim_vcs.so
+    is_xrt_vcs = os.environ.get("TORCH_VORTEX_XRT_VCS") == "1"
+    # Note: libxrtsim_vcs.so must NOT be preloaded here — its static
+    # constructors open a TCP connection to simv immediately on dlopen.
+    # It is found via LD_LIBRARY_PATH / VORTEX_RUNTIME_DIR at runtime.
+    inner_name = "" if is_xrt_vcs else _inner_lib.get(driver, "")
+
     for name in [
-        # For XRT with system XRT loaded, skip bundled xrtsim to avoid
-        # symbol conflicts between libxrtsim.so and libxrt_coreutil.so.
-        _inner_lib.get(driver, "") if not xrt_system_loaded else "",
-        f"libvortex-{driver}.so",         # e.g. libvortex-simx.so
+        # Skip bundled libxrtsim.so when system XRT is loaded to avoid
+        # symbol conflicts, but always load libxrtsim_vcs.so (VCS sim).
+        "" if (xrt_system_loaded and not is_xrt_vcs) else inner_name,
+        f"libvortex-{driver}.so",         # e.g. libvortex-xrt.so
         "libvortex.so",                   # the main stub library
     ]:
         if not name:
