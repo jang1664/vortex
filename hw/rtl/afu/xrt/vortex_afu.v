@@ -16,10 +16,10 @@
 module vortex_afu #(
 	parameter C_S_AXI_CTRL_ADDR_WIDTH = 8,
 	parameter C_S_AXI_CTRL_DATA_WIDTH = 32,
-	parameter C_M_AXI_MEM_ID_WIDTH 	  = `,
+	parameter C_M_AXI_MEM_ID_WIDTH 	  = `PLATFORM_MEMORY_ID_WIDTH,
 	parameter C_M_AXI_MEM_DATA_WIDTH  = (`PLATFORM_MEMORY_DATA_SIZE * 8),
 	parameter C_M_AXI_MEM_ADDR_WIDTH  = 64,
-  parameter C_M_AXI_MEM_NUM_BANKS   = `NUM_DMA_CHANNELS
+  parameter C_M_AXI_MEM_NUM_PORTS   = `NUM_DMA_CHANNELS
 ) (
 	// System signals
 	input wire 									ap_clk,
@@ -60,7 +60,7 @@ module vortex_afu #(
 		.C_M_AXI_MEM_ID_WIDTH    (C_M_AXI_MEM_ID_WIDTH),
 		.C_M_AXI_MEM_ADDR_WIDTH  (C_M_AXI_MEM_ADDR_WIDTH),
 		.C_M_AXI_MEM_DATA_WIDTH  (C_M_AXI_MEM_DATA_WIDTH),
-		.C_M_AXI_MEM_NUM_BANKS   (C_M_AXI_MEM_NUM_BANKS)
+		.C_M_AXI_MEM_NUM_PORTS   (C_M_AXI_MEM_NUM_PORTS)
 	) afu_wrap (
 		.clk             	(ap_clk),
 		.reset           	(~ap_rst_n),
