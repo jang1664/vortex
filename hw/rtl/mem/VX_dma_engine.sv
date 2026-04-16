@@ -389,6 +389,7 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
         write_state_t write_state_r;
         logic [AXI_ADDR_WIDTH-1:0] burst_wr_dst_base_byte_r;
         logic [31:0]               burst_wr_words_captured_r;
+        logic [31:0]               burst_wr_window_base_r;
         logic                      burst_wr_prefetch_started_r;
         logic [1:0]                burst_wr_issue_group_r;
         logic [1:0]                burst_wr_issue_beat_r;
@@ -407,7 +408,7 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
         wire [3:0]                 burst_window_words;
         wire [31:0]                burst_words_remaining;
         wire [1:0]                 burst_group_words [READ_BURST_GROUPS];
-        wire [3:0]                 burst_service_word;
+        wire [2:0]                 burst_service_word;
         wire [AXI_ADDR_WIDTH-1:0]  burst_expected_byte_addr;
         wire                       burst_service_data_ready;
         wire                       rd_req_ready;
@@ -421,7 +422,7 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
         assign burst_window_words    = (burst_words_remaining > READ_WINDOW_WORDS)
                                      ? READ_WINDOW_WORDS[3:0]
                                      : burst_words_remaining[3:0];
-        assign burst_service_word   = burst_words_served_r[3:0];
+        assign burst_service_word   = burst_words_served_r[2:0];
         assign burst_expected_byte_addr = burst_src_base_byte_r + (AXI_ADDR_WIDTH'(burst_words_served_r) << 9);
         assign burst_service_data_ready = burst_window_valid_r[burst_service_word];
         assign burst_rsp_active     = (read_state_r == RD_DIRECT_R)
@@ -437,9 +438,11 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
         wire [AXI_ADDR_WIDTH-1:0]  burst_wr_expected_byte_addr;
         wire [3:0]                 burst_wr_word_idx;
 
-        assign burst_wr_window_words = (desc_words_r[31:4] != '0)
+        wire [31:0] burst_wr_words_remaining = (desc_words_r > burst_wr_window_base_r)
+                                         ? (desc_words_r - burst_wr_window_base_r) : 32'd0;
+        assign burst_wr_window_words = (burst_wr_words_remaining > READ_WINDOW_WORDS)
                                      ? READ_WINDOW_WORDS[3:0]
-                                     : desc_words_r[3:0];
+                                     : burst_wr_words_remaining[3:0];
 
         assign burst_wr_expected_byte_addr = burst_wr_dst_base_byte_r
                                            + (AXI_ADDR_WIDTH'(burst_wr_words_captured_r) << 9);
@@ -489,6 +492,7 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
                 write_state_r               <= WR_IDLE;
                 burst_wr_dst_base_byte_r    <= '0;
                 burst_wr_words_captured_r   <= '0;
+                burst_wr_window_base_r      <= '0;
                 burst_wr_prefetch_started_r <= 1'b0;
                 burst_wr_issue_group_r      <= '0;
                 burst_wr_issue_beat_r       <= '0;
@@ -504,7 +508,6 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
                         cfg_is_read
                      && (cfg_reg_if[ch].regs[DMA_R_SEG_SIZE] == 32'd64)
                      && (cfg_reg_if[ch].regs[DMA_R_PAD]      == 32'd0)
-                     && (cfg_reg_if[ch].regs[DMA_R_BND0]     <= 32'd8)
                      && (cfg_reg_if[ch].regs[DMA_R_BND2]     == 32'd1)
                      && (cfg_reg_if[ch].regs[DMA_R_SRC_ST0]  == 32'd512)
                      && (cfg_reg_if[ch].regs[DMA_R_SRC_ST2]  == 32'd0)
@@ -516,7 +519,6 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
                         ~cfg_is_read
                      && (cfg_reg_if[ch].regs[DMA_R_SEG_SIZE] == 32'd64)
                      && (cfg_reg_if[ch].regs[DMA_R_PAD]      == 32'd0)
-                     && (cfg_reg_if[ch].regs[DMA_R_BND0]     <= 32'd8)
                      && (cfg_reg_if[ch].regs[DMA_R_BND2]     == 32'd1)
                      && (cfg_reg_if[ch].regs[DMA_R_DST_ST0]  == 32'd512)
                      && (cfg_reg_if[ch].regs[DMA_R_SRC_ST2]  == 32'd0)
@@ -556,6 +558,7 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
                     write_state_r               <= cfg_burst_write_eligible_v ? WR_BURST_CAPTURE : WR_IDLE;
                     burst_wr_dst_base_byte_r    <= '0;
                     burst_wr_words_captured_r   <= '0;
+                    burst_wr_window_base_r      <= '0;
                     burst_wr_prefetch_started_r <= 1'b0;
                     burst_wr_issue_group_r      <= '0;
                     burst_wr_issue_beat_r       <= '0;
@@ -574,6 +577,14 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
                             burst_window_valid_r[burst_service_word] <= 1'b0;
                             burst_req_pending_r <= 1'b0;
                             burst_words_served_r <= burst_words_served_r + 32'd1;
+                            // Advance to next window if this was the last word of the current window
+                            if (burst_words_served_r + 32'd1 == burst_window_base_r + {28'd0, burst_window_words}
+                                && burst_words_served_r + 32'd1 < desc_words_r) begin
+                                burst_window_base_r      <= burst_window_base_r + {28'd0, burst_window_words};
+                                burst_prefetch_started_r <= 1'b0;
+                                for (int i = 0; i < READ_WINDOW_WORDS; ++i)
+                                    burst_window_valid_r[i] <= 1'b0;
+                            end
                         end
 
                         if (burst_req_pending_r && !burst_rsp_valid_r && burst_service_data_ready) begin
@@ -589,9 +600,9 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
                                     burst_req_tag_r     <= hbm_req_tag;
 
                                     if (!burst_prefetch_started_r) begin
-                                        burst_src_base_byte_r    <= hbm_req_byte_addr;
+                                        if (burst_words_served_r == 32'd0)
+                                            burst_src_base_byte_r <= hbm_req_byte_addr;
                                         burst_prefetch_started_r <= 1'b1;
-                                        burst_window_base_r      <= 32'd0;
                                         burst_accept_count_r     <= 4'd1;
                                         burst_issue_group_r <= '0;
                                         burst_issue_beat_r  <= '0;
@@ -674,16 +685,18 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
                     if (burst_write_enable_r) begin
                         case (write_state_r)
                             WR_BURST_CAPTURE: begin
-                                if (burst_wr_words_captured_r == desc_words_r
-                                    && burst_wr_prefetch_started_r) begin
+                                if (burst_wr_prefetch_started_r
+                                    && (burst_wr_words_captured_r >= burst_wr_window_base_r + {28'd0, burst_wr_window_words})) begin
+                                    // Window full (or all words captured) — start issuing
                                     burst_wr_issue_group_r <= '0;
                                     burst_wr_issue_beat_r  <= '0;
                                     write_state_r          <= WR_BURST_AW;
                                 end else if (wr_req_valid && wr_burst_req_ready) begin
                                     burst_wr_window_data_r[burst_wr_words_captured_r[2:0]]   <= hbm_req_data;
                                     burst_wr_window_byteen_r[burst_wr_words_captured_r[2:0]] <= hbm_req_byteen;
-                                    if (burst_wr_words_captured_r == 32'd0) begin
-                                        burst_wr_dst_base_byte_r    <= hbm_req_byte_addr;
+                                    if (!burst_wr_prefetch_started_r) begin
+                                        if (burst_wr_words_captured_r == 32'd0)
+                                            burst_wr_dst_base_byte_r <= hbm_req_byte_addr;
                                         burst_wr_prefetch_started_r <= 1'b1;
                                         for (int i = 0; i < READ_BURST_GROUPS; ++i) begin
                                             burst_wr_group_count_r[i]     <= burst_wr_group_words[i];
@@ -698,7 +711,14 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
                             WR_BURST_AW: begin
                                 if (burst_wr_group_count_r[burst_wr_issue_group_r] == 0) begin
                                     if (burst_wr_issue_group_r == READ_BURST_GROUPS-1) begin
-                                        write_state_r <= WR_BURST_CAPTURE;
+                                        // All groups done for this window
+                                        if (burst_wr_words_captured_r < desc_words_r) begin
+                                            burst_wr_window_base_r      <= burst_wr_window_base_r + {28'd0, burst_wr_window_words};
+                                            burst_wr_prefetch_started_r <= 1'b0;
+                                            write_state_r               <= WR_BURST_CAPTURE;
+                                        end else begin
+                                            write_state_r <= WR_IDLE;
+                                        end
                                     end else begin
                                         burst_wr_issue_group_r <= burst_wr_issue_group_r + 2'd1;
                                     end
@@ -720,7 +740,13 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
                                 if (axi_m[ch].b_valid) begin
                                     if (burst_wr_issue_group_r == READ_BURST_GROUPS-1) begin
                                         burst_wr_issue_group_r <= '0;
-                                        write_state_r          <= WR_IDLE;
+                                        if (burst_wr_words_captured_r < desc_words_r) begin
+                                            burst_wr_window_base_r      <= burst_wr_window_base_r + {28'd0, burst_wr_window_words};
+                                            burst_wr_prefetch_started_r <= 1'b0;
+                                            write_state_r               <= WR_BURST_CAPTURE;
+                                        end else begin
+                                            write_state_r <= WR_IDLE;
+                                        end
                                     end else begin
                                         burst_wr_issue_group_r <= burst_wr_issue_group_r + 2'd1;
                                         write_state_r          <= WR_BURST_AW;

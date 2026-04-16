@@ -896,6 +896,122 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; ();
     expect_axi_aw_log(0, 3, 64'h0000_0003_0000_0000, 8'd0, "case0b_remap_burst_write");
   endtask
 
+  // -----------------------------------------------------------------------
+  // Multi-window burst read: BND0=20 → 3 windows (8+8+4), 12 AR bursts
+  // -----------------------------------------------------------------------
+  task automatic run_case_multiwin_burst_read;
+    logic [31:0] d [0:CFG_NUM-1];
+    longint unsigned src_base;
+    longint unsigned dst_base;
+    int unsigned bnd0;
+
+    src_base = 64'h0000_0000_0000_0000;
+    dst_base = 64'h0000_0000_0000_2000;
+    bnd0     = 20;
+
+    clear_axi_ar_log(0);
+    seed_axi_mem (0, 8'h33, 8'h01);
+    seed_tmem_mem(0, 8'h00, 8'h00);
+
+    build_desc(
+      d, src_base, dst_base,
+      32'd512, 32'd64,
+      32'd0,   32'd0,
+      32'd0,   32'd0,
+      bnd0,    32'd1, 32'd1,
+      32'd64,  32'd0,
+      1'b0
+    );
+
+    $display("%0t [tb_VX_dma_engine] case_multiwin_burst_read start (bnd0=%0d)", $time, bnd0);
+    run_desc_and_check_done_hold(0, d, 32'h0000_0010, 2, "case_multiwin_burst_read");
+    check_g2l_layout(
+      0, src_base, dst_base,
+      32'd512, 32'd64, 32'd0, 32'd0, 32'd0, 32'd0,
+      bnd0, 32'd1, 32'd1, 32'd64, 32'd0,
+      "case_multiwin_burst_read_check");
+
+    // 3 windows × 4 groups = 12 AR bursts
+    if (axi_ar_log_count[0] !== 12) begin
+      dump_axi_ar_log(0, "case_multiwin_burst_read_debug");
+      $fatal(1, "case_multiwin_burst_read: expected 12 ar bursts, got %0d", axi_ar_log_count[0]);
+    end
+
+    // Window 0 (words 0-7): 4 groups × 2 words → len=1
+    expect_axi_ar_log(0,  0, 64'h0000_0000_0000_0000, 8'd1, "mw_rd_w0");
+    expect_axi_ar_log(0,  1, 64'h0000_0001_0000_0000, 8'd1, "mw_rd_w0");
+    expect_axi_ar_log(0,  2, 64'h0000_0002_0000_0000, 8'd1, "mw_rd_w0");
+    expect_axi_ar_log(0,  3, 64'h0000_0003_0000_0000, 8'd1, "mw_rd_w0");
+    // Window 1 (words 8-15): 4 groups × 2 words → len=1
+    expect_axi_ar_log(0,  4, 64'h0000_0000_0000_0080, 8'd1, "mw_rd_w1");
+    expect_axi_ar_log(0,  5, 64'h0000_0001_0000_0080, 8'd1, "mw_rd_w1");
+    expect_axi_ar_log(0,  6, 64'h0000_0002_0000_0080, 8'd1, "mw_rd_w1");
+    expect_axi_ar_log(0,  7, 64'h0000_0003_0000_0080, 8'd1, "mw_rd_w1");
+    // Window 2 (words 16-19): 4 groups × 1 word → len=0
+    expect_axi_ar_log(0,  8, 64'h0000_0000_0000_0100, 8'd0, "mw_rd_w2");
+    expect_axi_ar_log(0,  9, 64'h0000_0001_0000_0100, 8'd0, "mw_rd_w2");
+    expect_axi_ar_log(0, 10, 64'h0000_0002_0000_0100, 8'd0, "mw_rd_w2");
+    expect_axi_ar_log(0, 11, 64'h0000_0003_0000_0100, 8'd0, "mw_rd_w2");
+  endtask
+
+  // -----------------------------------------------------------------------
+  // Multi-window burst write: BND0=20 → 3 windows (8+8+4), 12 AW bursts
+  // -----------------------------------------------------------------------
+  task automatic run_case_multiwin_burst_write;
+    logic [31:0] d [0:CFG_NUM-1];
+    longint unsigned src_base;
+    longint unsigned dst_base;
+    int unsigned bnd0;
+
+    src_base = 64'h0000_0000_0000_2000;
+    dst_base = 64'h0000_0000_0000_0000;
+    bnd0     = 20;
+
+    clear_axi_aw_log(0);
+    seed_tmem_mem(0, 8'h44, 8'h01);
+    axi_mem[0].delete();
+
+    build_desc(
+      d, src_base, dst_base,
+      32'd64,  32'd512,
+      32'd0,   32'd0,
+      32'd0,   32'd0,
+      bnd0,    32'd1, 32'd1,
+      32'd64,  32'd0,
+      1'b1
+    );
+
+    $display("%0t [tb_VX_dma_engine] case_multiwin_burst_write start (bnd0=%0d)", $time, bnd0);
+    run_desc_and_check_done_hold(0, d, 32'h0000_0011, 2, "case_multiwin_burst_write");
+    check_l2g_layout(
+      0, src_base, dst_base,
+      32'd64, 32'd512, 32'd0, 32'd0, 32'd0, 32'd0,
+      bnd0, 32'd1, 32'd1, 32'd64, 32'd0,
+      "case_multiwin_burst_write_check");
+
+    // 3 windows × 4 groups = 12 AW bursts
+    if (axi_aw_log_count[0] !== 12) begin
+      dump_axi_aw_log(0, "case_multiwin_burst_write_debug");
+      $fatal(1, "case_multiwin_burst_write: expected 12 aw bursts, got %0d", axi_aw_log_count[0]);
+    end
+
+    // Window 0: len=1
+    expect_axi_aw_log(0,  0, 64'h0000_0000_0000_0000, 8'd1, "mw_wr_w0");
+    expect_axi_aw_log(0,  1, 64'h0000_0001_0000_0000, 8'd1, "mw_wr_w0");
+    expect_axi_aw_log(0,  2, 64'h0000_0002_0000_0000, 8'd1, "mw_wr_w0");
+    expect_axi_aw_log(0,  3, 64'h0000_0003_0000_0000, 8'd1, "mw_wr_w0");
+    // Window 1: len=1
+    expect_axi_aw_log(0,  4, 64'h0000_0000_0000_0080, 8'd1, "mw_wr_w1");
+    expect_axi_aw_log(0,  5, 64'h0000_0001_0000_0080, 8'd1, "mw_wr_w1");
+    expect_axi_aw_log(0,  6, 64'h0000_0002_0000_0080, 8'd1, "mw_wr_w1");
+    expect_axi_aw_log(0,  7, 64'h0000_0003_0000_0080, 8'd1, "mw_wr_w1");
+    // Window 2: len=0
+    expect_axi_aw_log(0,  8, 64'h0000_0000_0000_0100, 8'd0, "mw_wr_w2");
+    expect_axi_aw_log(0,  9, 64'h0000_0001_0000_0100, 8'd0, "mw_wr_w2");
+    expect_axi_aw_log(0, 10, 64'h0000_0002_0000_0100, 8'd0, "mw_wr_w2");
+    expect_axi_aw_log(0, 11, 64'h0000_0003_0000_0100, 8'd0, "mw_wr_w2");
+  endtask
+
   task automatic run_case_ch0_g2l;
     logic [31:0] d [0:CFG_NUM-1];
     longint unsigned src_base;
@@ -1179,6 +1295,8 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; ();
 
     run_case_remap_burst_read();
     run_case_remap_burst_write();
+    run_case_multiwin_burst_read();
+    run_case_multiwin_burst_write();
     run_case_ch0_g2l();
     run_case_ch0_l2g();
     run_case_dual_channel();
