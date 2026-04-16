@@ -24,6 +24,7 @@ RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
 				$(AXI_IF) \
 				$(RTL_DIR)/mem/VX_mem_bus_if.sv \
 				$(RTL_DIR)/core/VX_config_reg_if.sv \
+				$(RTL_DIR)/core/VX_mem_remap.sv \
 				$(RTL_DIR)/core/VX_node_done_if.sv \
 				$(RTL_DIR)/core/VX_dma_unit_misal.sv \
 				$(RTL_DIR)/mem/VX_dma_engine.sv \
@@ -33,7 +34,7 @@ INCDIRS_ := $(RTL_DIR) \
             $(RTL_DIR)/libs \
             $(RTL_DIR)/core \
             $(RTL_DIR)/mem
-DEFINES_ := SIMULATION NDEBUG PLATFORM_MEMORY_ID_WIDTH=32
+DEFINES_ := SIMULATION NDEBUG PLATFORM_MEMORY_ID_WIDTH=32 PLATFORM_MEMORY_ADDR_WIDTH=34 MEM_ADDR_WIDTH=34
 
 COMPILE_LOG := logs/compile.log
 SIM_LOG     := logs/sim.log
