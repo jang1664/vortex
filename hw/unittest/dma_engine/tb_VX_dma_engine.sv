@@ -19,6 +19,7 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; ();
   localparam int AXI_RDQ_AW     = `CLOG2(AXI_RDQ_DEPTH);
   localparam int TMEM_RDQ_DEPTH = 32;
   localparam int TMEM_RDQ_AW    = `CLOG2(TMEM_RDQ_DEPTH);
+  localparam int AXI_AR_LOG_DEPTH = 64;
 
   logic clk   = 1'b0;
   logic reset = 1'b1;
@@ -90,8 +91,51 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; ();
   // Channel memories
   // ---------------------------------------------------------------------------
 
-  byte axi_mem  [NUM_CHANNELS][MEM_BYTES];
+  byte axi_mem  [NUM_CHANNELS][longint unsigned];
   byte tmem_mem [NUM_CHANNELS][MEM_BYTES];
+
+  int unsigned                 axi_ar_log_count [NUM_CHANNELS];
+  logic [AXI_ADDR_W-1:0]       axi_ar_log_addr  [NUM_CHANNELS][AXI_AR_LOG_DEPTH];
+  logic [7:0]                  axi_ar_log_len   [NUM_CHANNELS][AXI_AR_LOG_DEPTH];
+
+  int unsigned                 axi_aw_log_count [NUM_CHANNELS];
+  logic [AXI_ADDR_W-1:0]       axi_aw_log_addr  [NUM_CHANNELS][AXI_AR_LOG_DEPTH];
+  logic [7:0]                  axi_aw_log_len   [NUM_CHANNELS][AXI_AR_LOG_DEPTH];
+
+  function automatic longint unsigned remap_hbm_addr(input longint unsigned m_address);
+    longint unsigned block_idx;
+    longint unsigned byte_offset;
+    longint unsigned bank_offset;
+    logic [4:0]      bank_idx;
+    begin
+      block_idx   = m_address >> 6;
+      byte_offset = m_address & 64'h3f;
+      bank_idx    = block_idx[4:0];
+      bank_offset = (block_idx >> 5) << 6;
+      remap_hbm_addr = (longint'(bank_idx) << 29) | bank_offset | byte_offset;
+    end
+  endfunction
+
+  function automatic byte axi_mem_read_phys(
+    input int              ch,
+    input longint unsigned phys_addr
+  );
+    begin
+      if (axi_mem[ch].exists(phys_addr))
+        axi_mem_read_phys = axi_mem[ch][phys_addr];
+      else
+        axi_mem_read_phys = 8'h00;
+    end
+  endfunction
+
+  function automatic byte axi_mem_read_logical(
+    input int              ch,
+    input longint unsigned logical_addr
+  );
+    begin
+      axi_mem_read_logical = axi_mem_read_phys(ch, remap_hbm_addr(logical_addr));
+    end
+  endfunction
 
   // ---------------------------------------------------------------------------
   // AXI slave model per channel
@@ -106,20 +150,24 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; ();
     logic [AXI_RDQ_AW:0]                      read_count_q;
     logic [AXI_RDQ_DEPTH-1:0][AXI_ADDR_W-1:0] read_addr_q;
     logic [AXI_RDQ_DEPTH-1:0][AXI_ID_W-1:0]   read_id_q;
+    logic [AXI_RDQ_DEPTH-1:0][7:0]            read_len_q;
+    logic                                     active_read_q;
+    logic [AXI_ADDR_W-1:0]                    active_addr_q;
+    logic [AXI_ID_W-1:0]                      active_id_q;
+    logic [7:0]                               active_len_q;
 
     wire aw_fire = axi_m[ch].aw_valid && axi_m[ch].aw_ready;
     wire w_fire  = axi_m[ch].w_valid  && axi_m[ch].w_ready;
     wire ar_fire = axi_m[ch].ar_valid && axi_m[ch].ar_ready;
     wire r_fire  = axi_m[ch].r_valid  && axi_m[ch].r_ready;
 
+    logic                   wr_active_q;
+    logic [AXI_ADDR_W-1:0] wr_addr_q;
+    logic [AXI_ID_W-1:0]   wr_id_q;
+
     assign axi_m[ch].aw_ready = 1'b1;
     assign axi_m[ch].w_ready  = 1'b1;
     assign axi_m[ch].ar_ready = 1'b1;
-
-    assign axi_m[ch].b_valid  = 1'b0;
-    assign axi_m[ch].b_id     = '0;
-    assign axi_m[ch].b_resp   = 2'b00;
-    assign axi_m[ch].b_user   = '0;
 
     always @(posedge clk) begin
       if (reset) begin
@@ -129,13 +177,27 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; ();
         axi_m[ch].r_id    <= '0;
         axi_m[ch].r_resp  <= 2'b00;
         axi_m[ch].r_user  <= '0;
+        axi_m[ch].b_valid <= 1'b0;
+        axi_m[ch].b_id    <= '0;
+        axi_m[ch].b_resp  <= 2'b00;
+        axi_m[ch].b_user  <= '0;
         read_head_q       <= '0;
         read_tail_q       <= '0;
         read_count_q      <= '0;
+        active_read_q     <= 1'b0;
+        active_addr_q     <= '0;
+        active_id_q       <= '0;
+        active_len_q      <= '0;
+        wr_active_q       <= 1'b0;
+        wr_addr_q         <= '0;
+        wr_id_q           <= '0;
+        axi_ar_log_count[ch]  <= '0;
+        axi_aw_log_count[ch]  <= '0;
       end else begin
         logic [AXI_RDQ_AW-1:0] read_head_n;
         logic [AXI_RDQ_AW-1:0] read_tail_n;
         logic [AXI_RDQ_AW:0]   read_count_n;
+        longint unsigned       base;
 
         read_head_n  = read_head_q;
         read_tail_n  = read_tail_q;
@@ -145,54 +207,117 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; ();
           axi_m[ch].r_valid <= 1'b0;
         end
 
-        if (!axi_m[ch].r_valid && (read_count_q != 0)) begin
-          int unsigned base;
-          base = int'(read_addr_q[read_head_q]);
+        if (!axi_m[ch].r_valid) begin
+          if (active_read_q) begin
+            base = active_addr_q;
 
-          axi_m[ch].r_valid <= 1'b1;
-          axi_m[ch].r_last  <= 1'b1;
-          axi_m[ch].r_id    <= read_id_q[read_head_q];
-          axi_m[ch].r_resp  <= 2'b00;
-          axi_m[ch].r_user  <= '0;
+            axi_m[ch].r_valid <= 1'b1;
+            axi_m[ch].r_last  <= (active_len_q == 8'd0);
+            axi_m[ch].r_id    <= active_id_q;
+            axi_m[ch].r_resp  <= 2'b00;
+            axi_m[ch].r_user  <= '0;
 
-          for (int i = 0; i < DATA_SIZE; ++i) begin
-            if (base + i < MEM_BYTES)
-              axi_m[ch].r_data[i*8 +: 8] <= axi_mem[ch][base + i];
-            else
-              axi_m[ch].r_data[i*8 +: 8] <= 8'h00;
+            for (int i = 0; i < DATA_SIZE; ++i) begin
+              axi_m[ch].r_data[i*8 +: 8] <= axi_mem_read_phys(ch, base + longint'(i));
+            end
+
+            if (active_len_q == 8'd0) begin
+              active_read_q <= 1'b0;
+            end else begin
+              active_addr_q <= active_addr_q + AXI_ADDR_W'(DATA_SIZE);
+              active_len_q  <= active_len_q - 8'd1;
+            end
+          end else if (read_count_q != 0) begin
+            base = read_addr_q[read_head_q];
+
+            axi_m[ch].r_valid <= 1'b1;
+            axi_m[ch].r_last  <= (read_len_q[read_head_q] == 8'd0);
+            axi_m[ch].r_id    <= read_id_q[read_head_q];
+            axi_m[ch].r_resp  <= 2'b00;
+            axi_m[ch].r_user  <= '0;
+
+            for (int i = 0; i < DATA_SIZE; ++i) begin
+              axi_m[ch].r_data[i*8 +: 8] <= axi_mem_read_phys(ch, base + longint'(i));
+            end
+
+            if (read_len_q[read_head_q] == 8'd0) begin
+              active_read_q <= 1'b0;
+              active_addr_q <= '0;
+              active_len_q  <= '0;
+            end else begin
+              active_read_q <= 1'b1;
+              active_addr_q <= read_addr_q[read_head_q] + AXI_ADDR_W'(DATA_SIZE);
+              active_id_q   <= read_id_q[read_head_q];
+              active_len_q  <= read_len_q[read_head_q] - 8'd1;
+            end
+
+            read_head_n  = read_head_q + AXI_RDQ_AW'(1);
+            read_count_n = read_count_q - 1'b1;
           end
-
-          read_head_n  = read_head_q + AXI_RDQ_AW'(1);
-          read_count_n = read_count_q - 1'b1;
         end
 
         if (ar_fire) begin
           if (read_count_n >= AXI_RDQ_DEPTH)
             $fatal(1, "AXI model ch%0d: read queue overflow", ch);
+          if (axi_ar_log_count[ch] >= AXI_AR_LOG_DEPTH)
+            $fatal(1, "AXI model ch%0d: ar log overflow", ch);
           read_addr_q[read_tail_n] <= axi_m[ch].ar_addr;
           read_id_q[read_tail_n]   <= axi_m[ch].ar_id;
+          read_len_q[read_tail_n]  <= axi_m[ch].ar_len;
           read_tail_n  = read_tail_n + AXI_RDQ_AW'(1);
           read_count_n = read_count_n + 1'b1;
+          axi_ar_log_addr[ch][axi_ar_log_count[ch]] <= axi_m[ch].ar_addr;
+          axi_ar_log_len[ch][axi_ar_log_count[ch]]  <= axi_m[ch].ar_len;
+          axi_ar_log_count[ch] <= axi_ar_log_count[ch] + 1;
         end
 
         read_head_q  <= read_head_n;
         read_tail_q  <= read_tail_n;
         read_count_q <= read_count_n;
 
-        if (aw_fire || w_fire) begin
-          int unsigned base;
-          if (!(aw_fire && w_fire))
-            $fatal(1, "AXI model ch%0d: AW/W handshake split", ch);
-          if (axi_m[ch].aw_len != 8'd0 || axi_m[ch].w_last != 1'b1) begin
-            $fatal(1, "AXI model ch%0d: unsupported burst format aw_len=%0d w_last=%0b",
-                   ch, axi_m[ch].aw_len, axi_m[ch].w_last);
+        // B channel handshake
+        if (axi_m[ch].b_valid && axi_m[ch].b_ready)
+          axi_m[ch].b_valid <= 1'b0;
+
+        // AW logging
+        if (aw_fire) begin
+          if (axi_aw_log_count[ch] >= AXI_AR_LOG_DEPTH)
+            $fatal(1, "AXI model ch%0d: aw log overflow", ch);
+          axi_aw_log_addr[ch][axi_aw_log_count[ch]] <= axi_m[ch].aw_addr;
+          axi_aw_log_len[ch][axi_aw_log_count[ch]]  <= axi_m[ch].aw_len;
+          axi_aw_log_count[ch] <= axi_aw_log_count[ch] + 1;
+          $display("%0t [tb_VX_dma_engine] aw_fire ch=%0d addr=0x%0h len=%0d",
+                   $time, ch, axi_m[ch].aw_addr, axi_m[ch].aw_len);
+        end
+
+        // Write data handling (supports both single-beat AW+W and burst AW then W)
+        if (w_fire) begin
+          longint unsigned wbase;
+          wbase = (aw_fire || !wr_active_q)
+                ? longint'(axi_m[ch].aw_addr)
+                : longint'(wr_addr_q);
+          $display("%0t [tb_VX_dma_engine] w_fire ch=%0d base=0x%0h last=%0b",
+                   $time, ch, wbase, axi_m[ch].w_last);
+
+          for (int i = 0; i < DATA_SIZE; ++i) begin
+            if (axi_m[ch].w_strb[i])
+              axi_mem[ch][wbase + longint'(i)] <= axi_m[ch].w_data[i*8 +: 8];
           end
 
-          base = int'(axi_m[ch].aw_addr);
-          for (int i = 0; i < DATA_SIZE; ++i) begin
-            if (axi_m[ch].w_strb[i] && (base + i < MEM_BYTES))
-              axi_mem[ch][base + i] <= axi_m[ch].w_data[i*8 +: 8];
+          if (axi_m[ch].w_last) begin
+            wr_active_q       <= 1'b0;
+            axi_m[ch].b_valid <= 1'b1;
+            axi_m[ch].b_id    <= aw_fire ? axi_m[ch].aw_id : wr_id_q;
+          end else begin
+            wr_active_q <= 1'b1;
+            wr_addr_q   <= wbase + AXI_ADDR_W'(DATA_SIZE);
+            wr_id_q     <= aw_fire ? axi_m[ch].aw_id : wr_id_q;
           end
+        end else if (aw_fire) begin
+          // AW without W: latch context for upcoming W beats
+          wr_active_q <= 1'b1;
+          wr_addr_q   <= axi_m[ch].aw_addr;
+          wr_id_q     <= axi_m[ch].aw_id;
         end
       end
     end
@@ -300,8 +425,9 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; ();
   );
     byte v;
     v = seed;
+    axi_mem[ch].delete();
     for (int i = 0; i < MEM_BYTES; ++i) begin
-      axi_mem[ch][i] = v;
+      axi_mem[ch][remap_hbm_addr(longint'(i))] = v;
       v = v + step;
     end
   endtask
@@ -316,6 +442,90 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; ();
     for (int i = 0; i < MEM_BYTES; ++i) begin
       tmem_mem[ch][i] = v;
       v = v + step;
+    end
+  endtask
+
+  task automatic clear_axi_ar_log(input int ch);
+    axi_ar_log_count[ch] = 0;
+    for (int i = 0; i < AXI_AR_LOG_DEPTH; ++i) begin
+      axi_ar_log_addr[ch][i] = '0;
+      axi_ar_log_len[ch][i]  = '0;
+    end
+  endtask
+
+  task automatic expect_axi_ar_log(
+    input int              ch,
+    input int              idx,
+    input longint unsigned exp_addr,
+    input logic [7:0]      exp_len,
+    input string           msg
+  );
+    begin
+      if (idx >= axi_ar_log_count[ch]) begin
+        $fatal(1, "%s: missing ar log entry ch=%0d idx=%0d count=%0d",
+               msg, ch, idx, axi_ar_log_count[ch]);
+      end
+      if (axi_ar_log_addr[ch][idx] !== AXI_ADDR_W'(exp_addr)) begin
+        $fatal(1, "%s: ar addr mismatch ch=%0d idx=%0d exp=0x%0h got=0x%0h",
+               msg, ch, idx, exp_addr, axi_ar_log_addr[ch][idx]);
+      end
+      if (axi_ar_log_len[ch][idx] !== exp_len) begin
+        $fatal(1, "%s: ar len mismatch ch=%0d idx=%0d exp=%0d got=%0d",
+               msg, ch, idx, exp_len, axi_ar_log_len[ch][idx]);
+      end
+    end
+  endtask
+
+  task automatic dump_axi_ar_log(input int ch, input string msg);
+    begin
+      $display("%0t [tb_VX_dma_engine] %s: ch%0d ar_count=%0d",
+               $time, msg, ch, axi_ar_log_count[ch]);
+      for (int i = 0; i < axi_ar_log_count[ch]; ++i) begin
+        $display("%0t [tb_VX_dma_engine] %s: ar[%0d] addr=0x%0h len=%0d",
+                 $time, msg, i, axi_ar_log_addr[ch][i], axi_ar_log_len[ch][i]);
+      end
+    end
+  endtask
+
+  task automatic clear_axi_aw_log(input int ch);
+    axi_aw_log_count[ch] = 0;
+    for (int i = 0; i < AXI_AR_LOG_DEPTH; ++i) begin
+      axi_aw_log_addr[ch][i] = '0;
+      axi_aw_log_len[ch][i]  = '0;
+    end
+  endtask
+
+  task automatic expect_axi_aw_log(
+    input int              ch,
+    input int              idx,
+    input longint unsigned exp_addr,
+    input logic [7:0]      exp_len,
+    input string           msg
+  );
+    begin
+      if (idx >= axi_aw_log_count[ch]) begin
+        $fatal(1, "%s: missing aw log entry ch=%0d idx=%0d count=%0d",
+               msg, ch, idx, axi_aw_log_count[ch]);
+      end
+      if (axi_aw_log_addr[ch][idx] !== AXI_ADDR_W'(exp_addr)) begin
+        $fatal(1, "%s: aw addr mismatch ch=%0d idx=%0d exp=0x%0h got=0x%0h",
+               msg, ch, idx, exp_addr, axi_aw_log_addr[ch][idx]);
+      end
+      if (axi_aw_log_len[ch][idx] !== exp_len) begin
+        $fatal(1, "%s: aw len mismatch ch=%0d idx=%0d exp=%0d got=%0d",
+               msg, ch, idx, exp_len, axi_aw_log_len[ch][idx]);
+      end
+    end
+  endtask
+
+  task automatic dump_axi_aw_log(input int ch, input string msg);
+    begin
+      $display("%0t [tb_VX_dma_engine] %s: ch%0d aw_count=%0d",
+               $time, msg, ch, axi_aw_log_count[ch]);
+      for (int i = 0; i < axi_aw_log_count[ch]; ++i) begin
+        $display("%0t [tb_VX_dma_engine] %s: aw[%0d] addr=0x%0h len=%0d",
+                 $time, msg, i, axi_aw_log_addr[ch][i], axi_aw_log_len[ch][i]);
+      end
     end
   endtask
 
@@ -389,6 +599,54 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; ();
       end
     end
     if (!seen) begin
+      if (ch == 0) begin
+        $display("%0t [tb_VX_dma_engine] %s timeout debug: ar_count=%0d read_state=%0d burst_enable=%0b accept=%0d window_base=%0d issue_group=%0d issue_beat=%0d group_counts=%0d,%0d,%0d,%0d",
+                 $time, msg,
+                 axi_ar_log_count[0],
+                 dut.g_channel[0].read_state_r,
+                 dut.g_channel[0].burst_read_enable_r,
+                 dut.g_channel[0].burst_accept_count_r,
+                 dut.g_channel[0].burst_window_base_r,
+                 dut.g_channel[0].burst_issue_group_r,
+                 dut.g_channel[0].burst_issue_beat_r,
+                 dut.g_channel[0].burst_group_count_r[0],
+                 dut.g_channel[0].burst_group_count_r[1],
+                 dut.g_channel[0].burst_group_count_r[2],
+                 dut.g_channel[0].burst_group_count_r[3]);
+        $display("%0t [tb_VX_dma_engine] %s timeout engine buffer: req_pending=%0b req_tag=0x%0h served=%0d prefetch_started=%0b buf_valid=%0b%b%b%b%b%b%b%b",
+                 $time, msg,
+                 dut.g_channel[0].burst_req_pending_r,
+                 dut.g_channel[0].burst_req_tag_r,
+                 dut.g_channel[0].burst_words_served_r,
+                 dut.g_channel[0].burst_prefetch_started_r,
+                 dut.g_channel[0].burst_window_valid_r[7],
+                 dut.g_channel[0].burst_window_valid_r[6],
+                 dut.g_channel[0].burst_window_valid_r[5],
+                 dut.g_channel[0].burst_window_valid_r[4],
+                 dut.g_channel[0].burst_window_valid_r[3],
+                 dut.g_channel[0].burst_window_valid_r[2],
+                 dut.g_channel[0].burst_window_valid_r[1],
+                 dut.g_channel[0].burst_window_valid_r[0]);
+        $display("%0t [tb_VX_dma_engine] %s timeout dma slots: rd_state=%0d wr_state=%0d issue_slot=%0d expect_slot=%0d occ=%0d slot_state=%0d,%0d,%0d,%0d,%0d,%0d,%0d,%0d win_valid=%0d dcache_drop=%0d out_off=%0d",
+                 $time, msg,
+                 dut.g_channel[0].u_dma_unit.rd_state,
+                 dut.g_channel[0].u_dma_unit.wr_state,
+                 dut.g_channel[0].u_dma_unit.rd_issue_slot_r,
+                 dut.g_channel[0].u_dma_unit.wr_expect_slot_r,
+                 dut.g_channel[0].u_dma_unit.slot_occupancy_r,
+                 dut.g_channel[0].u_dma_unit.slot_state_r[0],
+                 dut.g_channel[0].u_dma_unit.slot_state_r[1],
+                 dut.g_channel[0].u_dma_unit.slot_state_r[2],
+                 dut.g_channel[0].u_dma_unit.slot_state_r[3],
+                 dut.g_channel[0].u_dma_unit.slot_state_r[4],
+                 dut.g_channel[0].u_dma_unit.slot_state_r[5],
+                 dut.g_channel[0].u_dma_unit.slot_state_r[6],
+                 dut.g_channel[0].u_dma_unit.slot_state_r[7],
+                 dut.g_channel[0].u_dma_unit.win_dcache_valid,
+                 dut.g_channel[0].u_dma_unit.dcache_drop,
+                 dut.g_channel[0].u_dma_unit.out_off);
+        dump_axi_ar_log(0, {msg, "_timeout"});
+      end
       $fatal(1, "%s: done timeout (ch=%0d)", msg, ch);
     end
   endtask
@@ -465,7 +723,7 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; ();
             end
 
             if (off < valid_total)
-              expected = axi_mem[ch][int'(src_addr)];
+              expected = axi_mem_read_logical(ch, src_addr);
             else
               expected = 8'h00;
 
@@ -527,7 +785,7 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; ();
             else
               expected = 8'h00;
 
-            actual = axi_mem[ch][int'(dst_addr)];
+            actual = axi_mem_read_logical(ch, dst_addr);
             if (actual !== expected) begin
               $fatal(1, "%s: mismatch ch=%0d i=(%0d,%0d,%0d) off=%0d exp=%02x got=%02x",
                      msg, ch, i0, i1, i2, off, expected, actual);
@@ -536,6 +794,222 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; ();
         end
       end
     end
+  endtask
+
+  task automatic run_case_remap_burst_read;
+    logic [31:0] d [0:CFG_NUM-1];
+    longint unsigned src_base;
+    longint unsigned dst_base;
+
+    src_base = 64'h0000_0000_0000_0000;
+    dst_base = 64'h0000_0000_0000_0400;
+
+    clear_axi_ar_log(0);
+    seed_axi_mem (0, 8'h11, 8'h01);
+    seed_tmem_mem(0, 8'h00, 8'h00);
+
+    build_desc(
+      d, src_base, dst_base,
+      32'd512, 32'd64,   // src/dst stride0
+      32'd0,   32'd0,    // src/dst stride1
+      32'd0,   32'd0,    // src/dst stride2
+      32'd6,   32'd1, 32'd1,
+      32'd64,  32'd0,
+      1'b0 // G2L
+    );
+
+    $display("%0t [tb_VX_dma_engine] case0 remap burst read start", $time);
+    run_desc_and_check_done_hold(0, d, 32'h0000_0001, 2, "case0_remap_burst_read");
+    check_g2l_layout(
+      0, src_base, dst_base,
+      32'd512, 32'd64, 32'd0, 32'd0, 32'd0, 32'd0,
+      32'd6, 32'd1, 32'd1, 32'd64, 32'd0,
+      "case0_remap_burst_read_check");
+
+    if (axi_ar_log_count[0] !== 4) begin
+      $display("%0t [tb_VX_dma_engine] case0_remap_burst_read_debug: burst_enable=%0b desc_words=%0d state=%0d accept=%0d window_base=%0d group_counts=%0d,%0d,%0d,%0d issue_group=%0d beat=%0d",
+               $time,
+               dut.g_channel[0].burst_read_enable_r,
+               dut.g_channel[0].desc_words_r,
+               dut.g_channel[0].read_state_r,
+               dut.g_channel[0].burst_accept_count_r,
+               dut.g_channel[0].burst_window_base_r,
+               dut.g_channel[0].burst_group_count_r[0],
+               dut.g_channel[0].burst_group_count_r[1],
+               dut.g_channel[0].burst_group_count_r[2],
+               dut.g_channel[0].burst_group_count_r[3],
+               dut.g_channel[0].burst_issue_group_r,
+               dut.g_channel[0].burst_issue_beat_r);
+      dump_axi_ar_log(0, "case0_remap_burst_read_debug");
+      $fatal(1, "case0_remap_burst_read: expected 4 ar bursts, got %0d", axi_ar_log_count[0]);
+    end
+
+    expect_axi_ar_log(0, 0, 64'h0000_0000_0000_0000, 8'd1, "case0_remap_burst_read");
+    expect_axi_ar_log(0, 1, 64'h0000_0001_0000_0000, 8'd1, "case0_remap_burst_read");
+    expect_axi_ar_log(0, 2, 64'h0000_0002_0000_0000, 8'd0, "case0_remap_burst_read");
+    expect_axi_ar_log(0, 3, 64'h0000_0003_0000_0000, 8'd0, "case0_remap_burst_read");
+  endtask
+
+  task automatic run_case_remap_burst_write;
+    logic [31:0] d [0:CFG_NUM-1];
+    longint unsigned src_base;
+    longint unsigned dst_base;
+
+    // TMEM -> HBM (L2G): burst-eligible pattern
+    src_base = 64'h0000_0000_0000_0400; // TMEM address
+    dst_base = 64'h0000_0000_0000_0000; // HBM logical address (64B aligned)
+
+    clear_axi_aw_log(0);
+    seed_tmem_mem(0, 8'h22, 8'h01);
+    axi_mem[0].delete();
+
+    build_desc(
+      d, src_base, dst_base,
+      32'd64,  32'd512,   // SRC_ST0 (TMEM side), DST_ST0 (HBM side)
+      32'd0,   32'd0,     // strides 1
+      32'd0,   32'd0,     // strides 2
+      32'd6,   32'd1, 32'd1,
+      32'd64,  32'd0,
+      1'b1 // L2G
+    );
+
+    $display("%0t [tb_VX_dma_engine] case0b remap burst write start", $time);
+    run_desc_and_check_done_hold(0, d, 32'h0000_0002, 2, "case0b_remap_burst_write");
+    check_l2g_layout(
+      0, src_base, dst_base,
+      32'd64, 32'd512, 32'd0, 32'd0, 32'd0, 32'd0,
+      32'd6, 32'd1, 32'd1, 32'd64, 32'd0,
+      "case0b_remap_burst_write_check");
+
+    if (axi_aw_log_count[0] !== 4) begin
+      dump_axi_aw_log(0, "case0b_remap_burst_write_debug");
+      $fatal(1, "case0b_remap_burst_write: expected 4 aw bursts, got %0d", axi_aw_log_count[0]);
+    end
+
+    // Bank 0: words 0,4 -> len=1
+    expect_axi_aw_log(0, 0, 64'h0000_0000_0000_0000, 8'd1, "case0b_remap_burst_write");
+    // Bank 8: words 1,5 -> len=1
+    expect_axi_aw_log(0, 1, 64'h0000_0001_0000_0000, 8'd1, "case0b_remap_burst_write");
+    // Bank 16: word 2 -> len=0
+    expect_axi_aw_log(0, 2, 64'h0000_0002_0000_0000, 8'd0, "case0b_remap_burst_write");
+    // Bank 24: word 3 -> len=0
+    expect_axi_aw_log(0, 3, 64'h0000_0003_0000_0000, 8'd0, "case0b_remap_burst_write");
+  endtask
+
+  // -----------------------------------------------------------------------
+  // Multi-window burst read: BND0=20 → 3 windows (8+8+4), 12 AR bursts
+  // -----------------------------------------------------------------------
+  task automatic run_case_multiwin_burst_read;
+    logic [31:0] d [0:CFG_NUM-1];
+    longint unsigned src_base;
+    longint unsigned dst_base;
+    int unsigned bnd0;
+
+    src_base = 64'h0000_0000_0000_0000;
+    dst_base = 64'h0000_0000_0000_2000;
+    bnd0     = 20;
+
+    clear_axi_ar_log(0);
+    seed_axi_mem (0, 8'h33, 8'h01);
+    seed_tmem_mem(0, 8'h00, 8'h00);
+
+    build_desc(
+      d, src_base, dst_base,
+      32'd512, 32'd64,
+      32'd0,   32'd0,
+      32'd0,   32'd0,
+      bnd0,    32'd1, 32'd1,
+      32'd64,  32'd0,
+      1'b0
+    );
+
+    $display("%0t [tb_VX_dma_engine] case_multiwin_burst_read start (bnd0=%0d)", $time, bnd0);
+    run_desc_and_check_done_hold(0, d, 32'h0000_0010, 2, "case_multiwin_burst_read");
+    check_g2l_layout(
+      0, src_base, dst_base,
+      32'd512, 32'd64, 32'd0, 32'd0, 32'd0, 32'd0,
+      bnd0, 32'd1, 32'd1, 32'd64, 32'd0,
+      "case_multiwin_burst_read_check");
+
+    // 3 windows × 4 groups = 12 AR bursts
+    if (axi_ar_log_count[0] !== 12) begin
+      dump_axi_ar_log(0, "case_multiwin_burst_read_debug");
+      $fatal(1, "case_multiwin_burst_read: expected 12 ar bursts, got %0d", axi_ar_log_count[0]);
+    end
+
+    // Window 0 (words 0-7): 4 groups × 2 words → len=1
+    expect_axi_ar_log(0,  0, 64'h0000_0000_0000_0000, 8'd1, "mw_rd_w0");
+    expect_axi_ar_log(0,  1, 64'h0000_0001_0000_0000, 8'd1, "mw_rd_w0");
+    expect_axi_ar_log(0,  2, 64'h0000_0002_0000_0000, 8'd1, "mw_rd_w0");
+    expect_axi_ar_log(0,  3, 64'h0000_0003_0000_0000, 8'd1, "mw_rd_w0");
+    // Window 1 (words 8-15): 4 groups × 2 words → len=1
+    expect_axi_ar_log(0,  4, 64'h0000_0000_0000_0080, 8'd1, "mw_rd_w1");
+    expect_axi_ar_log(0,  5, 64'h0000_0001_0000_0080, 8'd1, "mw_rd_w1");
+    expect_axi_ar_log(0,  6, 64'h0000_0002_0000_0080, 8'd1, "mw_rd_w1");
+    expect_axi_ar_log(0,  7, 64'h0000_0003_0000_0080, 8'd1, "mw_rd_w1");
+    // Window 2 (words 16-19): 4 groups × 1 word → len=0
+    expect_axi_ar_log(0,  8, 64'h0000_0000_0000_0100, 8'd0, "mw_rd_w2");
+    expect_axi_ar_log(0,  9, 64'h0000_0001_0000_0100, 8'd0, "mw_rd_w2");
+    expect_axi_ar_log(0, 10, 64'h0000_0002_0000_0100, 8'd0, "mw_rd_w2");
+    expect_axi_ar_log(0, 11, 64'h0000_0003_0000_0100, 8'd0, "mw_rd_w2");
+  endtask
+
+  // -----------------------------------------------------------------------
+  // Multi-window burst write: BND0=20 → 3 windows (8+8+4), 12 AW bursts
+  // -----------------------------------------------------------------------
+  task automatic run_case_multiwin_burst_write;
+    logic [31:0] d [0:CFG_NUM-1];
+    longint unsigned src_base;
+    longint unsigned dst_base;
+    int unsigned bnd0;
+
+    src_base = 64'h0000_0000_0000_2000;
+    dst_base = 64'h0000_0000_0000_0000;
+    bnd0     = 20;
+
+    clear_axi_aw_log(0);
+    seed_tmem_mem(0, 8'h44, 8'h01);
+    axi_mem[0].delete();
+
+    build_desc(
+      d, src_base, dst_base,
+      32'd64,  32'd512,
+      32'd0,   32'd0,
+      32'd0,   32'd0,
+      bnd0,    32'd1, 32'd1,
+      32'd64,  32'd0,
+      1'b1
+    );
+
+    $display("%0t [tb_VX_dma_engine] case_multiwin_burst_write start (bnd0=%0d)", $time, bnd0);
+    run_desc_and_check_done_hold(0, d, 32'h0000_0011, 2, "case_multiwin_burst_write");
+    check_l2g_layout(
+      0, src_base, dst_base,
+      32'd64, 32'd512, 32'd0, 32'd0, 32'd0, 32'd0,
+      bnd0, 32'd1, 32'd1, 32'd64, 32'd0,
+      "case_multiwin_burst_write_check");
+
+    // 3 windows × 4 groups = 12 AW bursts
+    if (axi_aw_log_count[0] !== 12) begin
+      dump_axi_aw_log(0, "case_multiwin_burst_write_debug");
+      $fatal(1, "case_multiwin_burst_write: expected 12 aw bursts, got %0d", axi_aw_log_count[0]);
+    end
+
+    // Window 0: len=1
+    expect_axi_aw_log(0,  0, 64'h0000_0000_0000_0000, 8'd1, "mw_wr_w0");
+    expect_axi_aw_log(0,  1, 64'h0000_0001_0000_0000, 8'd1, "mw_wr_w0");
+    expect_axi_aw_log(0,  2, 64'h0000_0002_0000_0000, 8'd1, "mw_wr_w0");
+    expect_axi_aw_log(0,  3, 64'h0000_0003_0000_0000, 8'd1, "mw_wr_w0");
+    // Window 1: len=1
+    expect_axi_aw_log(0,  4, 64'h0000_0000_0000_0080, 8'd1, "mw_wr_w1");
+    expect_axi_aw_log(0,  5, 64'h0000_0001_0000_0080, 8'd1, "mw_wr_w1");
+    expect_axi_aw_log(0,  6, 64'h0000_0002_0000_0080, 8'd1, "mw_wr_w1");
+    expect_axi_aw_log(0,  7, 64'h0000_0003_0000_0080, 8'd1, "mw_wr_w1");
+    // Window 2: len=0
+    expect_axi_aw_log(0,  8, 64'h0000_0000_0000_0100, 8'd0, "mw_wr_w2");
+    expect_axi_aw_log(0,  9, 64'h0000_0001_0000_0100, 8'd0, "mw_wr_w2");
+    expect_axi_aw_log(0, 10, 64'h0000_0002_0000_0100, 8'd0, "mw_wr_w2");
+    expect_axi_aw_log(0, 11, 64'h0000_0003_0000_0100, 8'd0, "mw_wr_w2");
   endtask
 
   task automatic run_case_ch0_g2l;
@@ -801,8 +1275,16 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; ();
     init_ctrl_signals();
 
     for (int ch = 0; ch < NUM_CHANNELS; ++ch) begin
+      axi_mem[ch].delete();
+      axi_ar_log_count[ch] = 0;
+      axi_aw_log_count[ch] = 0;
+      for (int i = 0; i < AXI_AR_LOG_DEPTH; ++i) begin
+        axi_ar_log_addr[ch][i] = '0;
+        axi_ar_log_len[ch][i]  = '0;
+        axi_aw_log_addr[ch][i] = '0;
+        axi_aw_log_len[ch][i]  = '0;
+      end
       for (int i = 0; i < MEM_BYTES; ++i) begin
-        axi_mem[ch][i]  = 8'h00;
         tmem_mem[ch][i] = 8'h00;
       end
     end
@@ -811,6 +1293,10 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; ();
     reset = 1'b0;
     repeat (6) @(posedge clk);
 
+    run_case_remap_burst_read();
+    run_case_remap_burst_write();
+    run_case_multiwin_burst_read();
+    run_case_multiwin_burst_write();
     run_case_ch0_g2l();
     run_case_ch0_l2g();
     run_case_dual_channel();
