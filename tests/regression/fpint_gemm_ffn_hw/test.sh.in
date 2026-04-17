@@ -8,6 +8,7 @@ export MAX_LOG_BYTES="${MAX_LOG_BYTES:-10485760}"  # 10 MB
 DRIVER="${DRIVER:-rtlsim}"
 APP="${APP:-fpint_gemm_ffn_hw}"
 DEBUG_LEVEL="${DEBUG_LEVEL:-3}"
+DEBUG_ARG_MODE="always"
 LOG_DIR="${LOG_DIR:-run_logs_fpint_gemm_ffn_hw}"
 
 mkdir -p "${LOG_DIR}"
@@ -33,9 +34,63 @@ rm -rf "${LOG_DIR:?}"/*
 #)
 
 # If command-line arguments are provided, use them as test cases directly.
-# Example: bash test.sh "-m 2 -n 32 -k 32 -q 32 -t 1 -d 0" "-m 4 -n 64 -k 64 -q 32 -t 0 -d 1"
-if [[ $# -gt 0 ]]; then
-  declare -a CASE_ARGS=("$@")
+# Example: bash test.sh --debug-arg=omit -m 2 -n 32 -k 32 -q 32 -t 1 -d 0
+# Example: bash test.sh --debug-omit -m 2 -n 32 -k 32 -q 32 -t 1 -d 0
+# Example: bash test.sh --debug-arg=omit "-m 2 -n 32 -k 32 -q 32 -t 1 -d 0" "-m 4 -n 64 -k 64 -q 32 -t 0 -d 1"
+declare -a RAW_CASE_ARGS=()
+for arg in "$@"; do
+  case "${arg}" in
+    --debug-arg=always|--debug-arg=omit|--debug-arg=auto)
+      DEBUG_ARG_MODE="${arg#*=}"
+      ;;
+    --debug-always)
+      DEBUG_ARG_MODE="always"
+      ;;
+    --debug-omit)
+      DEBUG_ARG_MODE="omit"
+      ;;
+    --debug-auto)
+      DEBUG_ARG_MODE="auto"
+      ;;
+    --debug-arg=*)
+      echo "ERROR: invalid debug arg mode: ${arg#*=} (expected always, omit, or auto)" >&2
+      exit 1
+      ;;
+    --)
+      ;;
+    *)
+      RAW_CASE_ARGS+=("${arg}")
+      ;;
+  esac
+done
+
+declare -a DEBUG_ARGS=()
+case "${DEBUG_ARG_MODE}" in
+  always)
+    DEBUG_ARGS=(--debug="${DEBUG_LEVEL}")
+    ;;
+  omit)
+    ;;
+  auto)
+    if [[ ${DEBUG_LEVEL} -ge 1 ]]; then
+      DEBUG_ARGS=(--debug="${DEBUG_LEVEL}")
+    fi
+    ;;
+esac
+
+if [[ ${#RAW_CASE_ARGS[@]} -gt 0 ]]; then
+  declare -a CASE_ARGS=()
+  split_tokens=0
+  for arg in "${RAW_CASE_ARGS[@]}"; do
+    if [[ "${arg}" == *" "* ]]; then
+      CASE_ARGS+=("${arg}")
+    else
+      split_tokens=1
+    fi
+  done
+  if [[ ${#CASE_ARGS[@]} -eq 0 || ${split_tokens} -eq 1 ]]; then
+    CASE_ARGS=("${RAW_CASE_ARGS[*]}")
+  fi
 else
   # Default sweep: shape x qblk x wtrans x qdir
   declare -a SHAPES=(
@@ -98,29 +153,16 @@ for i in "${!CASE_ARGS[@]}"; do
   log_file="${LOG_DIR}/run_case_${idx}.log"
 
   echo "[${idx}/${total}] Running: ${args}" | tee -a "${log_file}"
-  if [[ ${DEBUG_LEVEL} -ge 1 ]]; then
-    if ./ci/blackbox.sh \
-        --driver="${DRIVER}" \
-        --app="${APP}" \
-        --debug="${DEBUG_LEVEL}" \
-        --log="${log_file}" \
-        --args="${args}"; then
-      echo "[${idx}/${total}] PASS (log: ${log_file})" | tee -a "${log_file}"
-    else
-      echo "[${idx}/${total}] FAIL (log: ${log_file})" | tee -a "${log_file}"
-      failed=$((failed + 1))
-    fi
+  if ./ci/blackbox.sh \
+      --driver="${DRIVER}" \
+      --app="${APP}" \
+      "${DEBUG_ARGS[@]}" \
+      --log="${log_file}" \
+      --args="${args}"; then
+    echo "[${idx}/${total}] PASS (log: ${log_file})" | tee -a "${log_file}"
   else
-    if ./ci/blackbox.sh \
-        --driver="${DRIVER}" \
-        --app="${APP}" \
-        --log="${log_file}" \
-        --args="${args}"; then
-      echo "[${idx}/${total}] PASS (log: ${log_file})" | tee -a "${log_file}"
-    else
-      echo "[${idx}/${total}] FAIL (log: ${log_file})" | tee -a "${log_file}"
-      failed=$((failed + 1))
-    fi
+    echo "[${idx}/${total}] FAIL (log: ${log_file})" | tee -a "${log_file}"
+    failed=$((failed + 1))
   fi
 done
 
