@@ -644,7 +644,9 @@ int main(int argc, char *argv[]) {
             << " obuf=[0x" << kargs.lmem_obuf[0] << ",0x" << kargs.lmem_obuf[1] << "]"
             << std::dec << std::endl;
 
-  RT_CHECK(vx_upload_bytes(device, &kargs, sizeof(kargs), &args_buffer));
+  // args_buffer must be read/write: the kernel writes status back to args.
+  RT_CHECK(vx_mem_alloc(device, sizeof(kargs), VX_MEM_READ_WRITE, &args_buffer));
+  RT_CHECK(vx_copy_to_dev(args_buffer, &kargs, 0, sizeof(kargs)));
 
   // ---- Run kernel ----
   RT_CHECK(vx_start(device, krnl_buffer, args_buffer));
