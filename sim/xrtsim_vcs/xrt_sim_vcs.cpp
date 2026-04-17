@@ -230,15 +230,20 @@ private:
     uint8_t  port;
     bool write;
     bool ready;
+    bool is_last;  // AXI r_last: true on the final beat of the burst
   } mem_req_t;
 
   using mem_req_list_t = std::list<mem_req_t*>;
   using mem_req_iter_t = mem_req_list_t::iterator;
 
-  // AW state for two-phase write handling (per bank)
+  // AW state for two-phase write handling (per bank). `base_addr` is the
+  // first beat's address (from AW); subsequent W beats write at
+  // base_addr + beat_idx*DATA_SIZE (INCR burst). A single B response is
+  // issued when w_last arrives, matching AXI semantics.
   typedef struct {
-    uint64_t addr;
+    uint64_t base_addr;
     uint32_t tag;
+    uint32_t beat_idx;
     bool     valid;
   } aw_state_t;
 
@@ -250,6 +255,23 @@ private:
   uint64_t to_software_addr(uint32_t bank_id, uint64_t offset) {
     uint64_t block_in_bank = offset / CACHE_BLOCK_SIZE;
     return (block_in_bank * PLATFORM_MEMORY_NUM_BANKS + bank_id) * CACHE_BLOCK_SIZE;
+  }
+
+  // Bit position where VX_mem_remap (hw/rtl/core/VX_mem_remap.sv) places the
+  // HBM bank index. Must match the BANK_SHIFT parameter used by the LSU/DMA
+  // remap instances in the RTL.
+  static constexpr int REMAP_BANK_SHIFT = 29;
+
+  // Inverse of VX_mem_remap:
+  //   x' = (bank_idx << BANK_SHIFT) | bank_offset | byte_offset
+  // Extract (bank, bank_offset) and reuse to_software_addr to recover the
+  // sw-interleaved flat address that ram_ is indexed by.
+  uint64_t remap_to_sw_addr(uint64_t axi_addr) {
+    uint64_t bank_mask = (1ULL << REMAP_BANK_SHIFT) - 1;
+    uint32_t bank     = (uint32_t)((axi_addr >> REMAP_BANK_SHIFT)
+                                   & (PLATFORM_MEMORY_NUM_BANKS - 1));
+    uint64_t bank_off = axi_addr & bank_mask;
+    return to_software_addr(bank, bank_off);
   }
 
   static int connect_with_retry(const char* host, int port, int timeout_sec) {
@@ -320,25 +342,39 @@ private:
 
       switch (pkt.type) {
         case EVT_AXI_AR: {
-          // Read request from DUT
-          auto mem_req = new mem_req_t();
-          mem_req->tag   = pkt.id;
-          mem_req->addr  = pkt.addr;
-          mem_req->port  = pkt.port_id;
-          mem_req->write = false;
-          mem_req->ready = false;
-          // Read data from local RAM using AXI address directly
-          // (AXI addr == software addr, see docs/port-scale/CAUTION.md #1)
-          ram_->read(mem_req->data.data(), pkt.addr, PLATFORM_MEMORY_DATA_SIZE);
-          pending_mem_reqs_[pkt.port_id].emplace_back(mem_req);
-          dram_queues_[pkt.port_id].push(mem_req);
+          // Read request from DUT. Expand into (arlen+1) beat requests so the
+          // R channel returns the full burst. AXI burst type for Vortex DMA
+          // is INCR with size=LOG2(DATA_SIZE), so each beat address
+          // increments by PLATFORM_MEMORY_DATA_SIZE bytes.
+          uint32_t beat_count = pkt.value + 1; // pkt.value carries arlen
+          for (uint32_t b = 0; b < beat_count; ++b) {
+            uint64_t beat_addr = pkt.addr
+                               + (uint64_t)b * PLATFORM_MEMORY_DATA_SIZE;
+            auto mem_req = new mem_req_t();
+            mem_req->tag     = pkt.id;
+            mem_req->addr    = beat_addr;
+            mem_req->port    = pkt.port_id;
+            mem_req->write   = false;
+            mem_req->ready   = false;
+            mem_req->is_last = (b + 1 == beat_count);
+            // AXI addr is in HBM-contiguous (post-remap) view produced by
+            // VX_mem_remap in LSU/DMA paths; invert to sw_addr before
+            // indexing ram_, which stores data in the sw-interleaved view
+            // the host upload path writes via mem_write -> to_software_addr.
+            uint64_t sw_addr = remap_to_sw_addr(beat_addr);
+            ram_->read(mem_req->data.data(), sw_addr, PLATFORM_MEMORY_DATA_SIZE);
+            pending_mem_reqs_[pkt.port_id].emplace_back(mem_req);
+            dram_queues_[pkt.port_id].push(mem_req);
+          }
           break;
         }
         case EVT_AXI_AW: {
-          // Write address from DUT (AXI addr == software addr)
-          aw_state_[pkt.port_id].addr  = pkt.addr;
-          aw_state_[pkt.port_id].tag   = pkt.id;
-          aw_state_[pkt.port_id].valid = true;
+          // Write address from DUT. pkt.value carries awlen; beats for the
+          // burst are accumulated in EVT_AXI_W using beat_idx.
+          aw_state_[pkt.port_id].base_addr = pkt.addr;
+          aw_state_[pkt.port_id].tag       = pkt.id;
+          aw_state_[pkt.port_id].beat_idx  = 0;
+          aw_state_[pkt.port_id].valid     = true;
           break;
         }
         case EVT_AXI_W: {
@@ -354,26 +390,40 @@ private:
 
           uint8_t port = pkt.port_id;
           if (aw_state_[port].valid) {
-            uint64_t byte_addr = aw_state_[port].addr;
+            // Beat address for this W within the burst (INCR).
+            uint64_t axi_addr = aw_state_[port].base_addr
+                              + (uint64_t)aw_state_[port].beat_idx
+                                * PLATFORM_MEMORY_DATA_SIZE;
+            // Invert VX_mem_remap for ram_ indexing (ram_ is sw-interleaved);
+            // keep axi_addr itself for DramSim so timing modeling sees the
+            // post-remap HBM-contiguous address that HW actually drives.
+            uint64_t sw_addr = remap_to_sw_addr(axi_addr);
             uint64_t strb = pkt.addr; // strb is stored in addr field
+            bool w_last = (pkt.value != 0);
 
             // Write with byte enables
             for (int i = 0; i < PLATFORM_MEMORY_DATA_SIZE; ++i) {
               if ((strb >> i) & 0x1) {
-                (*ram_)[byte_addr + i] = data_buf[i];
+                (*ram_)[sw_addr + i] = data_buf[i];
               }
             }
 
-            auto mem_req = new mem_req_t();
-            mem_req->tag   = aw_state_[port].tag;
-            mem_req->addr  = byte_addr;
-            mem_req->port  = port;
-            mem_req->write = true;
-            mem_req->ready = false;
-            pending_mem_reqs_[port].emplace_back(mem_req);
-            dram_queues_[port].push(mem_req);
+            // Issue exactly one B response per AW burst — on wlast.
+            if (w_last) {
+              auto mem_req = new mem_req_t();
+              mem_req->tag     = aw_state_[port].tag;
+              mem_req->addr    = aw_state_[port].base_addr;
+              mem_req->port    = port;
+              mem_req->write   = true;
+              mem_req->ready   = false;
+              mem_req->is_last = true;
+              pending_mem_reqs_[port].emplace_back(mem_req);
+              dram_queues_[port].push(mem_req);
 
-            aw_state_[port].valid = false;
+              aw_state_[port].valid = false;
+            } else {
+              aw_state_[port].beat_idx++;
+            }
           }
           break;
         }
@@ -417,7 +467,7 @@ private:
         rsp.id      = mem_req->tag;
 
         if (mem_req->write) {
-          // Write response (B channel)
+          // Write response (B channel) — one per AW burst, so always last.
           rsp.type  = RSP_AXI_B;
           rsp.size  = 0;
           rsp.value = 1; // last
@@ -427,10 +477,10 @@ private:
             return;
           }
         } else {
-          // Read response (R channel)
+          // Read response (R channel) — one per beat in the burst.
           rsp.type  = RSP_AXI_R;
           rsp.size  = PLATFORM_MEMORY_DATA_SIZE;
-          rsp.value = 1; // last
+          rsp.value = mem_req->is_last ? 1 : 0;
           if (send_all(mem_fd_, &rsp, sizeof(rsp)) < 0) {
             fprintf(stderr, "[vcs-sim] send R response header error\n");
             stop_ = true;

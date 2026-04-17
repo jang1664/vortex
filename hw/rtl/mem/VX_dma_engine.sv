@@ -672,6 +672,136 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
         assign axi_m[ch].r_ready    = (read_state_r == RD_BURST_ACTIVE)
                                     && (burst_recv_group_r < 3'(READ_BURST_GROUPS));
 
+`ifdef DBG_TRACE_GEMM
+        // --------------------------------------------------------
+        // Per-channel state / handshake trace for hang diagnosis.
+        // Logs each read/write FSM transition, burst group pointer
+        // movement, and done_if rising edge. Use to locate which
+        // channel or phase fails to drain when TMEM_DMA_CTRL is
+        // stuck in S_WAIT_DONE.
+        // --------------------------------------------------------
+        read_state_t  prev_read_state_r;
+        write_state_t prev_write_state_r;
+        logic [2:0]   prev_burst_issue_group_r;
+        logic [2:0]   prev_burst_recv_group_r;
+        logic [2:0]   prev_burst_wr_issue_group_r;
+        logic [2:0]   prev_burst_wr_recv_group_r;
+        logic         prev_done_valid;
+        logic         prev_internal_done_valid;
+
+        always @(posedge clk) begin
+            if (reset) begin
+                prev_read_state_r           <= RD_BURST_CAPTURE;
+                prev_write_state_r          <= WR_IDLE;
+                prev_burst_issue_group_r    <= '0;
+                prev_burst_recv_group_r     <= '0;
+                prev_burst_wr_issue_group_r <= '0;
+                prev_burst_wr_recv_group_r  <= '0;
+                prev_done_valid             <= 1'b0;
+                prev_internal_done_valid    <= 1'b0;
+            end else begin
+                prev_read_state_r           <= read_state_r;
+                prev_write_state_r          <= write_state_r;
+                prev_burst_issue_group_r    <= burst_issue_group_r;
+                prev_burst_recv_group_r     <= burst_recv_group_r;
+                prev_burst_wr_issue_group_r <= burst_wr_issue_group_r;
+                prev_burst_wr_recv_group_r  <= burst_wr_recv_group_r;
+                prev_done_valid             <= done_if[ch].valid;
+                prev_internal_done_valid    <= internal_done_if.valid;
+
+                if (read_state_r != prev_read_state_r) begin
+                    `TRACE(1, ("%t: %s ch=%0d read_state: %0d -> %0d (iss_grp=%0d recv_grp=%0d recv_beat=%0d served=%0d)\n",
+                        $time, INSTANCE_ID, ch,
+                        prev_read_state_r, read_state_r,
+                        burst_issue_group_r, burst_recv_group_r,
+                        burst_recv_beat_r, burst_words_served_r))
+                end
+
+                if (write_state_r != prev_write_state_r) begin
+                    `TRACE(1, ("%t: %s ch=%0d write_state: %0d -> %0d (iss_grp=%0d iss_beat=%0d recv_grp=%0d captured=%0d)\n",
+                        $time, INSTANCE_ID, ch,
+                        prev_write_state_r, write_state_r,
+                        burst_wr_issue_group_r, burst_wr_issue_beat_r,
+                        burst_wr_recv_group_r, burst_wr_words_captured_r))
+                end
+
+                if (burst_issue_group_r != prev_burst_issue_group_r) begin
+                    `TRACE(2, ("%t: %s ch=%0d rd.issue_group: %0d -> %0d (state=%0d ar_ready=%0b)\n",
+                        $time, INSTANCE_ID, ch,
+                        prev_burst_issue_group_r, burst_issue_group_r,
+                        read_state_r, axi_m[ch].ar_ready))
+                end
+
+                if (burst_recv_group_r != prev_burst_recv_group_r) begin
+                    `TRACE(2, ("%t: %s ch=%0d rd.recv_group: %0d -> %0d (state=%0d r_valid=%0b r_last=%0b)\n",
+                        $time, INSTANCE_ID, ch,
+                        prev_burst_recv_group_r, burst_recv_group_r,
+                        read_state_r, axi_m[ch].r_valid, axi_m[ch].r_last))
+                end
+
+                if (burst_wr_issue_group_r != prev_burst_wr_issue_group_r) begin
+                    `TRACE(2, ("%t: %s ch=%0d wr.issue_group: %0d -> %0d (state=%0d aw_ready=%0b)\n",
+                        $time, INSTANCE_ID, ch,
+                        prev_burst_wr_issue_group_r, burst_wr_issue_group_r,
+                        write_state_r, axi_m[ch].aw_ready))
+                end
+
+                if (burst_wr_recv_group_r != prev_burst_wr_recv_group_r) begin
+                    `TRACE(2, ("%t: %s ch=%0d wr.recv_group: %0d -> %0d (state=%0d b_valid=%0b b_ready=%0b)\n",
+                        $time, INSTANCE_ID, ch,
+                        prev_burst_wr_recv_group_r, burst_wr_recv_group_r,
+                        write_state_r, axi_m[ch].b_valid, axi_m[ch].b_ready))
+                end
+
+                if (internal_done_if.valid && !prev_internal_done_valid) begin
+                    `TRACE(1, ("%t: %s ch=%0d internal_done ASSERT (entry_id=%0d, ready=%0b, write_state=%0d)\n",
+                        $time, INSTANCE_ID, ch,
+                        internal_done_if.entry_id, internal_done_if.ready,
+                        write_state_r))
+                end
+
+                if (done_if[ch].valid && !prev_done_valid) begin
+                    `TRACE(1, ("%t: %s ch=%0d done_if ASSERT (entry_id=%0d, ready=%0b, internal_valid=%0b)\n",
+                        $time, INSTANCE_ID, ch,
+                        done_if[ch].entry_id, done_if[ch].ready,
+                        internal_done_if.valid))
+                end
+
+                // Burst window setup: counts/addresses decided when a new
+                // read burst kicks off. Verifies `calc_group_words` result
+                // and first base address.
+                if (rd_req_valid && rd_req_ready && !burst_prefetch_started_r) begin
+                    `TRACE(1, ("%t: %s ch=%0d BURST_START window_words=%0d counts=[%0d,%0d,%0d,%0d] base=0x%0h remaining=%0d\n",
+                        $time, INSTANCE_ID, ch, burst_window_words,
+                        burst_group_words[0], burst_group_words[1],
+                        burst_group_words[2], burst_group_words[3],
+                        hbm_req_byte_addr, burst_words_remaining))
+                end
+
+                // Every AR fired to HBM with its programmed ar_len.
+                // Use with BURST_START to confirm ar_len == group_count-1.
+                if (axi_m[ch].ar_valid && axi_m[ch].ar_ready) begin
+                    `TRACE(1, ("%t: %s ch=%0d AR_FIRE addr=0x%0h len=%0d group=%0d count=%0d\n",
+                        $time, INSTANCE_ID, ch, axi_m[ch].ar_addr, axi_m[ch].ar_len,
+                        burst_issue_group_r,
+                        burst_group_count_r[burst_issue_group_r[1:0]]))
+                end
+
+                // Every AXI R-channel handshake the channel actually
+                // accepts. If the number of R_FIRE events does not match
+                // (sum of counts for this burst), beats are being lost or
+                // gated by r_ready upstream.
+                if (axi_r_fire) begin
+                    `TRACE(1, ("%t: %s ch=%0d R_FIRE recv_grp=%0d recv_beat=%0d count[grp]=%0d r_last=%0b\n",
+                        $time, INSTANCE_ID, ch,
+                        burst_recv_group_r, burst_recv_beat_r,
+                        burst_group_count_r[burst_recv_group_r[1:0]],
+                        axi_m[ch].r_last))
+                end
+            end
+        end
+`endif
+
     end // g_channel
 
     `UNUSED_PARAM (AXI_USER_WIDTH)

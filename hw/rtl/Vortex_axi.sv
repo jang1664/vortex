@@ -119,11 +119,9 @@ module Vortex_axi import VX_gpu_pkg::*; #(
     // The VX_axi_adapter TID width may differ; we use SLV_ID_WIDTH for the mux slave side
     localparam LSU_AXI_TID_WIDTH = SLV_ID_WIDTH;
 
-    // Address select bits for demux: route based on address bits
+    // Address select bits for demux: route based on address bits.
+    // After VX_mem_remap below, the HBM bank index sits at REMAP_BANK_SHIFT.
     localparam HBM_SEL_BITS = `CLOG2(NUM_HBM_PORTS);
-
-    // Bit position where VX_mem_remap places the HBM bank index in the remapped
-    // address. Must match the BANK_SHIFT parameter passed to VX_mem_remap below.
     localparam REMAP_BANK_SHIFT = 29;
 
     ///////////////////////////////////////////////////////////////////////////
@@ -469,7 +467,10 @@ module Vortex_axi import VX_gpu_pkg::*; #(
     assign lsu_axi_rresp_arr[0] = lsu_axi_rresp;
 
     ///////////////////////////////////////////////////////////////////////////
-    // Remap LSU AXI addresses to HBM bank layout before demux
+    // Remap LSU AXI addresses to HBM contiguous layout before demux.
+    // Together with the DMA path's internal VX_mem_remap, this unifies the
+    // post-remap coordinate system on the AXI bus so the sim inverse
+    // transform (xrt_sim_vcs::remap_to_sw_addr) can recover sw_addr.
     ///////////////////////////////////////////////////////////////////////////
 
     wire [AXI_ADDR_WIDTH-1:0] lsu_axi_awaddr_remapped;
@@ -557,7 +558,9 @@ module Vortex_axi import VX_gpu_pkg::*; #(
     // LSU AXI demux: split LSU AXI into NUM_HBM_PORTS based on address
     ///////////////////////////////////////////////////////////////////////////
 
-    // Address-based select for demux: after remap, bank index sits at REMAP_BANK_SHIFT
+    // Address-based select for demux: after remap, the HBM bank index bits
+    // live at [REMAP_BANK_SHIFT +: HBM_SEL_BITS] (low bits of the bank_idx
+    // field produced by VX_mem_remap).
     wire [HBM_SEL_BITS-1:0] lsu_aw_select = lsu_axi_awaddr_remapped[REMAP_BANK_SHIFT +: HBM_SEL_BITS];
     wire [HBM_SEL_BITS-1:0] lsu_ar_select = lsu_axi_araddr_remapped[REMAP_BANK_SHIFT +: HBM_SEL_BITS];
 
