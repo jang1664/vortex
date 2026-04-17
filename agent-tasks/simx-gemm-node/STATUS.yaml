@@ -1,0 +1,109 @@
+task: simx-gemm-node
+goal: SimX에 fpint_improve의 instruction-stream 기반 FPINT GEMM 가속기 기능 모델 반영
+branch: fpint_improve
+plan_file: /home/jaeyongjang/.claude/plans/swift-herding-cocke.md
+created: 2026-04-17 12:01
+state: DONE
+
+scope:
+  - GEMM node functional model (instruction stream processor)
+  - MMIO routing at 0x1080 (ALLOC, STREAM, STATE)
+  - 9 opcodes: DMA_LOAD/STORE, NOTIFY/WAIT (no-op), MXU_LOAD_{WEIGHT,QPARAM,INPUT}, MXU_STORE_OUTPUT, CLEAR
+  - TMEM as flat byte array (256KB)
+  - MXU internal state (weight/scale/zp regs, acc_mem) — dual-buffered
+  - Standard FP32 accumulation (block-FP prealign NOT implemented, tolerance OK)
+
+out_of_scope:
+  - Standalone DMA node (VX_dma_node) — no kernel uses it
+  - Bit-exact RTL match (approx only)
+  - TMEM bank interleaving / MXU pipeline / sync register file
+
+build_flag: always enabled (NOT gated by EXT_TCU_ENABLE; that is legacy WMMA TCU only)
+
+stages:
+  - stage: 1
+    name: scaffolding
+    description: GemmNode class skeleton, MMIO routing, CLEAR handler, alloc/state registers
+    state: done
+  - stage: 2
+    name: dma
+    description: DMA_LOAD/STORE strided memcpy (DRAM ↔ TMEM)
+    state: done
+  - stage: 3
+    name: mxu_load
+    description: MXU_LOAD_WEIGHT and MXU_LOAD_QPARAM (TMEM → MXU regs)
+    state: done
+  - stage: 4
+    name: gemm_compute
+    description: MXU_LOAD_INPUT — dequantized FP16×INT4 GEMM with QCOL/QROW
+    state: done
+  - stage: 5
+    name: mxu_store
+    description: MXU_STORE_OUTPUT — FP32 acc → FP16 TMEM
+    state: done
+  - stage: 6
+    name: end_to_end
+    description: fpint_gemm_ffn_hw_improve regression pass on simx
+    state: done
+
+files_to_create:
+  - sim/simx/gemm_node.h
+  - sim/simx/gemm_node.cpp
+
+files_to_modify:
+  - sim/simx/emulator.h
+  - sim/simx/emulator.cpp
+  - sim/simx/core.h
+  - sim/simx/core.cpp
+  - sim/simx/Makefile
+
+verification_test: tests/regression/fpint_gemm_ffn_hw_improve
+
+pitfalls:
+  - ts: 2026-04-17 13:30
+    issue: |
+      `vx_upload_bytes` allocates with VX_MEM_READ only, but kernels that
+      write back to the args struct (e.g., `arg->status = STATUS_INIT`)
+      trigger an ACL violation in simx ("Memory access violation ...,
+      current flags=1, access flags=2"). Test main.cpp was using
+      vx_upload_bytes for args; fixed to allocate with VX_MEM_READ_WRITE.
+      RTL backend does not enforce ACL so the bug was latent.
+
+  - ts: 2026-04-17 13:30
+    issue: |
+      VX_config.h defines `GEMM_REG_BASE_ADDR` using Verilog underscore
+      syntax (0x0000_0000_0000_1080), which is NOT valid C/C++. Do not
+      include this constant; define the value directly in simx code.
+
+  - ts: 2026-04-17 13:30
+    issue: |
+      `build/sim/simx/Makefile` is a deployed copy of `sim/simx/Makefile`
+      (via `configure`). When adding new .cpp files, both must be updated
+      OR configure re-run. Same for `build/runtime/simx/Makefile`.
+
+log:
+  - ts: 2026-04-17 12:01
+    entry: |
+      Task created. Plan approved in plan mode.
+      Key decisions:
+      - Instruction-stream approach (NOT register-based FSM like fpint-gemm-spec.md describes)
+      - Precision: approximate (no block-FP prealign)
+      - Standalone DMA node excluded
+      - Always-on build (not EXT_TCU_ENABLE gated)
+
+  - ts: 2026-04-17 13:35
+    entry: |
+      All stages implemented and end-to-end test PASSED on simx backend.
+      Test: tests/regression/fpint_gemm_ffn_hw_improve (M=2, N=32, K=128, QBLK=32, WTRANS=0, QDIR=0)
+      Result: PERF: instrs=2845, cycles=14526, IPC=0.195856 — PASSED (FP16 output within tolerance).
+
+      Files created:
+      - sim/simx/gemm_node.h (93 lines)
+      - sim/simx/gemm_node.cpp (~350 lines)
+
+      Files modified:
+      - sim/simx/core.h, core.cpp (GemmNode member + tick)
+      - sim/simx/emulator.h, emulator.cpp (MMIO routing 4 places)
+      - sim/simx/Makefile (+gemm_node.cpp)
+      - build/sim/simx/Makefile (+gemm_node.cpp)
+      - tests/regression/fpint_gemm_ffn_hw_improve/main.cpp (args_buffer RW fix)
