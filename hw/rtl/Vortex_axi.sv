@@ -120,9 +120,11 @@ module Vortex_axi import VX_gpu_pkg::*; #(
     localparam LSU_AXI_TID_WIDTH = SLV_ID_WIDTH;
 
     // Address select bits for demux: route based on address bits
-    localparam DATA_BYTES = AXI_DATA_WIDTH / 8;
-    localparam BYTE_OFFSET_BITS = `CLOG2(DATA_BYTES);
     localparam HBM_SEL_BITS = `CLOG2(NUM_HBM_PORTS);
+
+    // Bit position where VX_mem_remap places the HBM bank index in the remapped
+    // address. Must match the BANK_SHIFT parameter passed to VX_mem_remap below.
+    localparam REMAP_BANK_SHIFT = 29;
 
     ///////////////////////////////////////////////////////////////////////////
     // AXI struct typedefs for axi_mux and axi_demux
@@ -467,6 +469,29 @@ module Vortex_axi import VX_gpu_pkg::*; #(
     assign lsu_axi_rresp_arr[0] = lsu_axi_rresp;
 
     ///////////////////////////////////////////////////////////////////////////
+    // Remap LSU AXI addresses to HBM bank layout before demux
+    ///////////////////////////////////////////////////////////////////////////
+
+    wire [AXI_ADDR_WIDTH-1:0] lsu_axi_awaddr_remapped;
+    wire [AXI_ADDR_WIDTH-1:0] lsu_axi_araddr_remapped;
+
+    VX_mem_remap #(
+        .ADDR_W     (AXI_ADDR_WIDTH),
+        .BANK_SHIFT (REMAP_BANK_SHIFT)
+    ) u_lsu_aw_remap (
+        .m_address   (lsu_axi_awaddr),
+        .hbm_address (lsu_axi_awaddr_remapped)
+    );
+
+    VX_mem_remap #(
+        .ADDR_W     (AXI_ADDR_WIDTH),
+        .BANK_SHIFT (REMAP_BANK_SHIFT)
+    ) u_lsu_ar_remap (
+        .m_address   (lsu_axi_araddr),
+        .hbm_address (lsu_axi_araddr_remapped)
+    );
+
+    ///////////////////////////////////////////////////////////////////////////
     // Convert LSU flat AXI signals to struct for demux
     ///////////////////////////////////////////////////////////////////////////
 
@@ -478,7 +503,7 @@ module Vortex_axi import VX_gpu_pkg::*; #(
         lsu_axi_req = '0;
         // AW channel
         lsu_axi_req.aw.id     = lsu_axi_awid;
-        lsu_axi_req.aw.addr   = lsu_axi_awaddr;
+        lsu_axi_req.aw.addr   = lsu_axi_awaddr_remapped;
         lsu_axi_req.aw.len    = lsu_axi_awlen;
         lsu_axi_req.aw.size   = lsu_axi_awsize;
         lsu_axi_req.aw.burst  = lsu_axi_awburst;
@@ -500,7 +525,7 @@ module Vortex_axi import VX_gpu_pkg::*; #(
         lsu_axi_req.b_ready   = lsu_axi_bready;
         // AR channel
         lsu_axi_req.ar.id     = lsu_axi_arid;
-        lsu_axi_req.ar.addr   = lsu_axi_araddr;
+        lsu_axi_req.ar.addr   = lsu_axi_araddr_remapped;
         lsu_axi_req.ar.len    = lsu_axi_arlen;
         lsu_axi_req.ar.size   = lsu_axi_arsize;
         lsu_axi_req.ar.burst  = lsu_axi_arburst;
@@ -532,9 +557,9 @@ module Vortex_axi import VX_gpu_pkg::*; #(
     // LSU AXI demux: split LSU AXI into NUM_HBM_PORTS based on address
     ///////////////////////////////////////////////////////////////////////////
 
-    // Address-based select for demux: route based on address bits
-    wire [HBM_SEL_BITS-1:0] lsu_aw_select = lsu_axi_awaddr[BYTE_OFFSET_BITS +: HBM_SEL_BITS];
-    wire [HBM_SEL_BITS-1:0] lsu_ar_select = lsu_axi_araddr[BYTE_OFFSET_BITS +: HBM_SEL_BITS];
+    // Address-based select for demux: after remap, bank index sits at REMAP_BANK_SHIFT
+    wire [HBM_SEL_BITS-1:0] lsu_aw_select = lsu_axi_awaddr_remapped[REMAP_BANK_SHIFT +: HBM_SEL_BITS];
+    wire [HBM_SEL_BITS-1:0] lsu_ar_select = lsu_axi_araddr_remapped[REMAP_BANK_SHIFT +: HBM_SEL_BITS];
 
     slv_axi_req_t  [NUM_HBM_PORTS-1:0] lsu_demux_req;
     slv_axi_resp_t [NUM_HBM_PORTS-1:0] lsu_demux_resp;
