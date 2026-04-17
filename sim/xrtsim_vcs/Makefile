@@ -143,22 +143,31 @@ endif
 RTL_DIRS += $(AXI_DIR)/src $(AXI_COMMON_CELLS_DIR)/src
 
 # VCS compile flags
+VCS_CPPFLAGS += -std=c++17 -I$(SRC_DIR) -I$(ROOT_DIR)/hw -I$(ROOT_DIR)/build/hw
+VCS_CPPFLAGS += -I$(SW_COMMON_DIR) -I/$(THIRD_PARTY_DIR)/softfloat/source/include
+VCS_CPPFLAGS += -DXLEN_$(XLEN)
+
+VCS_DEFINES += +define+SIMULATION +define+SV_DPI +define+VCS +define+NOXRT +define+ASSERTS_OFF
+VCS_DEFINES += +define+XLEN_$(XLEN)
+
 VCS_FLAGS += -full64 -sverilog +v2k -timescale=1ns/1ps -xprop=tmerge
 VCS_FLAGS += +lint=TFIPC-L
-VCS_FLAGS += -CFLAGS "-std=c++17 -I$(SRC_DIR) -I$(ROOT_DIR)/hw -I$(ROOT_DIR)/build/hw -I$(SW_COMMON_DIR) -I/$(THIRD_PARTY_DIR)/softfloat/source/include -DXLEN_$(XLEN)"
+VCS_FLAGS += -CFLAGS "$(VCS_CPPFLAGS)"
 VCS_FLAGS += $(foreach d,$(RTL_DIRS),+incdir+$(d))
 VCS_FLAGS += $(foreach d,$(RTL_DIRS),-y $(d)) +libext+.v+.sv
-VCS_FLAGS += +define+SIMULATION +define+SV_DPI +define+VCS +define+NOXRT +define+ASSERTS_OFF
-VCS_FLAGS += +define+XLEN_$(XLEN)
 # Convert -DFOO=bar style CONFIGS to +define+FOO=bar for VCS
 VCS_CONFIGS := $(patsubst -D%,+define+%,$(CONFIGS))
 VCS_FLAGS += $(VCS_CONFIGS)
+VCS_FLAGS += $(VCS_DEFINES)
 
 # VCS top module
 VCS_TOP = tb_vcs_xrtsim
 
 ifdef DEBUG
 	VCS_FLAGS += -debug_access+all +define+DEBUG_LEVEL=$(DEBUG)
+else
+	VCS_CPPFLAGS += -DNDEBUG
+	VCS_DEFINES += +define+NDEBUG
 endif
 
 ifdef DEBUG_AXI
@@ -243,23 +252,23 @@ $(DESTDIR)/simv: $(SRC_DIR)/tb_vcs_xrtsim.sv $(SRC_DIR)/dpi_vcs_server.cpp
 	fi
 	@test -f "$(SIMLIB_SETUP)" || { echo "ERROR: $(SIMLIB_SETUP) not found after compile_simlib."; exit 1; }
 	@test -f "$(NETLIST)" || { echo "ERROR: NETLIST not found: $(NETLIST)"; exit 1; }
-	$(VCS_SETUP_CMD)
-	cd $(DESTDIR) && vlogan -full64 -sverilog -timescale=1ns/1ps \
-		$(VCS_CONFIGS) +define+SIMULATION +define+SV_DPI +define+VCS +define+NOXRT +define+VCS_POST_IMPL \
-		$(if $(SDF_FILE),+define+PGSIM_RUNTIME_SDF_ANNOTATE +define+XIL_TIMING,) \
-		$(if $(FSDB_DUMP),+define+FSDB_DUMP,) \
-		$(foreach d,$(RTL_DIRS),+incdir+$(d)) \
+		$(VCS_SETUP_CMD)
+		cd $(DESTDIR) && vlogan -full64 -sverilog -timescale=1ns/1ps \
+			$(VCS_CONFIGS) $(VCS_DEFINES) +define+VCS_POST_IMPL \
+			$(if $(SDF_FILE),+define+PGSIM_RUNTIME_SDF_ANNOTATE +define+XIL_TIMING,) \
+			$(if $(FSDB_DUMP),+define+FSDB_DUMP,) \
+			$(foreach d,$(RTL_DIRS),+incdir+$(d)) \
 		-work work \
 		$(SRC_DIR)/tb_vcs_xrtsim.sv \
 		$(VCS_SRCS_POST) \
 		-l $(DESTDIR)/vlogan.log
-	cd $(DESTDIR) && vcs -full64 -debug_access+all -timescale=1ns/1ps \
-		$(VCS_SDF_PARAM) \
-		$(VCS_FSDB_OPTS) \
-		-CFLAGS "-std=c++17 -I$(SRC_DIR) -I$(ROOT_DIR)/hw -I$(ROOT_DIR)/build/hw -I$(SW_COMMON_DIR) -I/$(THIRD_PARTY_DIR)/softfloat/source/include -DXLEN_$(XLEN)" \
-		-LDFLAGS "-Wl,--whole-archive $(SOFTFLOAT_LIB) -Wl,--no-whole-archive" \
-		$(DPI_SRCS) \
-		$(VCS_TOP) glbl \
+		cd $(DESTDIR) && vcs -full64 -debug_access+all -timescale=1ns/1ps \
+			$(VCS_SDF_PARAM) \
+			$(VCS_FSDB_OPTS) \
+			-CFLAGS "$(VCS_CPPFLAGS)" \
+			-LDFLAGS "-Wl,--whole-archive $(SOFTFLOAT_LIB) -Wl,--no-whole-archive" \
+			$(DPI_SRCS) \
+			$(VCS_TOP) glbl \
 		-l $(DESTDIR)/vcs_elab.log \
 		-o $(DESTDIR)/simv
 else
