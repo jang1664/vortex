@@ -16,6 +16,7 @@
 #include <unistd.h>
 #include <math.h>
 #include <assert.h>
+#include <cstring>
 #include <util.h>
 
 #include "emulator.h"
@@ -27,6 +28,7 @@
 #include "cluster.h"
 #include "processor_impl.h"
 #include "local_mem.h"
+#include "gemm_node.h"
 
 using namespace vortex;
 
@@ -307,9 +309,35 @@ void Emulator::set_satp(uint64_t satp) {
 #endif
 
 
+// Route accesses in the GEMM MMIO window [BASE, BASE + WINDOW) to the GemmNode
+// functional model. Returns true if the access was handled.
+static inline bool try_gemm_mmio_read(Core* core, void* data, uint64_t addr, uint32_t size) {
+  if (addr >= GemmNode::BASE_ADDR && addr < GemmNode::BASE_ADDR + GemmNode::WINDOW_SIZE) {
+    auto* g = core->gemm_node();
+    if (g) {
+      uint64_t v = g->mmio_read(addr, size);
+      std::memcpy(data, &v, size);
+      return true;
+    }
+  }
+  return false;
+}
+
+static inline bool try_gemm_mmio_write(Core* core, const void* data, uint64_t addr, uint32_t size) {
+  if (addr >= GemmNode::BASE_ADDR && addr < GemmNode::BASE_ADDR + GemmNode::WINDOW_SIZE) {
+    auto* g = core->gemm_node();
+    if (g) {
+      g->mmio_write(addr, data, size);
+      return true;
+    }
+  }
+  return false;
+}
+
 #ifdef VM_ENABLE
 void Emulator::dcache_read(void *data, uint64_t addr, uint32_t size) {
   DP(1, "*** dcache_read 0x" << std::hex << addr << ", size = 0x "  << size);
+  if (try_gemm_mmio_read(core_, data, addr, size)) return;
   auto type = get_addr_type(addr);
   if (type == AddrType::Shared) {
     core_->local_mem()->read(data, addr, size);
@@ -328,6 +356,7 @@ void Emulator::dcache_read(void *data, uint64_t addr, uint32_t size) {
 }
 #else
 void Emulator::dcache_read(void *data, uint64_t addr, uint32_t size) {
+  if (try_gemm_mmio_read(core_, data, addr, size)) return;
   auto type = get_addr_type(addr);
   if (type == AddrType::Shared) {
     core_->local_mem()->read(data, addr, size);
@@ -341,6 +370,7 @@ void Emulator::dcache_read(void *data, uint64_t addr, uint32_t size) {
 #ifdef VM_ENABLE
 void Emulator::dcache_write(const void* data, uint64_t addr, uint32_t size) {
   DP(1, "*** dcache_write 0x" << std::hex << addr << ", size = 0x "  << size);
+  if (try_gemm_mmio_write(core_, data, addr, size)) return;
   auto type = get_addr_type(addr);
   if (addr >= uint64_t(IO_COUT_ADDR)
    && addr < (uint64_t(IO_COUT_ADDR) + IO_COUT_SIZE)) {
@@ -365,6 +395,7 @@ void Emulator::dcache_write(const void* data, uint64_t addr, uint32_t size) {
 }
 #else
 void Emulator::dcache_write(const void* data, uint64_t addr, uint32_t size) {
+  if (try_gemm_mmio_write(core_, data, addr, size)) return;
   auto type = get_addr_type(addr);
   if (addr >= uint64_t(IO_COUT_ADDR)
    && addr < (uint64_t(IO_COUT_ADDR) + IO_COUT_SIZE)) {

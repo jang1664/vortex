@@ -168,6 +168,9 @@ Core::Core(const SimContext& ctx,
     commit_arbs_.at(iw) = arbiter;
   }
 
+  // Functional model of fpint_improve GEMM accelerator (always enabled).
+  gemm_node_ = std::make_unique<GemmNode>(this);
+
   this->reset();
 }
 
@@ -199,6 +202,10 @@ void Core::reset() {
   pending_instrs_.clear();
   pending_ifetches_ = 0;
 
+  if (gemm_node_) {
+    gemm_node_->reset();
+  }
+
   perf_stats_ = PerfStats();
 }
 
@@ -209,6 +216,10 @@ void Core::tick() {
   this->decode();
   this->fetch();
   this->schedule();
+
+  if (gemm_node_) {
+    gemm_node_->tick();
+  }
 
   ++perf_stats_.cycles;
   DPN(2, std::flush);

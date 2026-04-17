@@ -33,6 +33,7 @@
 #include "dispatcher.h"
 #include "func_unit.h"
 #include "mem_coalescer.h"
+#include "gemm_node.h"
 #include "VX_config.h"
 
 namespace vortex {
@@ -165,6 +166,10 @@ public:
   }
 #endif
 
+  GemmNode* gemm_node() {
+    return gemm_node_.get();
+  }
+
 #ifdef EXT_V_ENABLE
   VecUnit::Ptr& vec_unit() {
     return vec_unit_;
@@ -225,6 +230,8 @@ private:
 
   uint32_t commit_exe_;
   std::vector<Arbiter> ibuffer_arbs_;
+
+  std::unique_ptr<GemmNode> gemm_node_;
 
   PoolAllocator<instr_trace_t, 64> trace_pool_;
 
