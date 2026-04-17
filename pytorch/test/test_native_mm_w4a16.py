@@ -286,16 +286,10 @@ def test_output_shape_and_dtype():
 
 
 def test_qdir1():
-    """W4A16 GEMM with qdir=1 (quantization along N-dimension).
-    NOTE: qdir=1 may not be fully implemented in the hardware FSM yet.
-    This test is skipped until kernel support is confirmed.
-    """
+    """W4A16 GEMM with qdir=1 (quantization along N-dimension)."""
     print("=" * 60)
-    print("Test 5: W4A16 GEMM qdir=1 (M=2, N=32, K=32, qblk=32) [SKIPPED]")
-    print("  SKIPPED: qdir=1 not yet supported by fpint_gemm_ffn_hw kernel")
+    print("Test 5: W4A16 GEMM qdir=1 (M=2, N=32, K=32, qblk=32)")
     print("=" * 60)
-    print()
-    return
     M, N, K, QBLK = 2, 32, 32, 32
 
     A, W_packed, scales, zeros, W_unpacked = build_test_data(
