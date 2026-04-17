@@ -150,8 +150,8 @@ public:
 
     if (bank_id >= PLATFORM_MEMORY_NUM_BANKS)
       return -1;
-    // Reconstruct flat software address from (bank_id, per-bank offset).
-    // This matches how the RTL's AXI addresses map to RAM.
+    // Flat RAM address from (bank_id, per-bank offset), using the HBM
+    // bank-contiguous layout that RTL AXI addrs also index directly.
     uint64_t flat_addr = to_software_addr(bank_id, addr);
     ram_->write(data, flat_addr, size);
     return 0;
@@ -247,31 +247,15 @@ private:
     bool     valid;
   } aw_state_t;
 
-  // Reconstruct flat software address from (bank_id, per-bank offset).
-  // Runtime's get_bank_info (BANK_INTERLEAVE ON) decomposes:
-  //   bank   = (addr / CACHE_BLOCK_SIZE) % num_banks
-  //   offset = (addr / CACHE_BLOCK_SIZE / num_banks) * CACHE_BLOCK_SIZE
-  // Reverse: addr = (offset / CBS * num_banks + bank) * CBS
+  // Flat RAM address from (bank_id, per-bank offset). HBM layout is fixed
+  // bank-contiguous from the PC's view: bank i occupies a slice of size
+  // mem_bank_size_ starting at i*mem_bank_size_. Whatever decomposition
+  // the runtime uses (INTERLEAVE on/off) only affects how it splits a
+  // device address into (bank_id, offset) — the backend always stores
+  // data in this bank-contiguous layout, and RTL AXI addrs index ram_
+  // directly with the same view.
   uint64_t to_software_addr(uint32_t bank_id, uint64_t offset) {
-    uint64_t block_in_bank = offset / CACHE_BLOCK_SIZE;
-    return (block_in_bank * PLATFORM_MEMORY_NUM_BANKS + bank_id) * CACHE_BLOCK_SIZE;
-  }
-
-  // Bit position where VX_mem_remap (hw/rtl/core/VX_mem_remap.sv) places the
-  // HBM bank index. Must match the BANK_SHIFT parameter used by the LSU/DMA
-  // remap instances in the RTL.
-  static constexpr int REMAP_BANK_SHIFT = 29;
-
-  // Inverse of VX_mem_remap:
-  //   x' = (bank_idx << BANK_SHIFT) | bank_offset | byte_offset
-  // Extract (bank, bank_offset) and reuse to_software_addr to recover the
-  // sw-interleaved flat address that ram_ is indexed by.
-  uint64_t remap_to_sw_addr(uint64_t axi_addr) {
-    uint64_t bank_mask = (1ULL << REMAP_BANK_SHIFT) - 1;
-    uint32_t bank     = (uint32_t)((axi_addr >> REMAP_BANK_SHIFT)
-                                   & (PLATFORM_MEMORY_NUM_BANKS - 1));
-    uint64_t bank_off = axi_addr & bank_mask;
-    return to_software_addr(bank, bank_off);
+    return (uint64_t)bank_id * mem_bank_size_ + offset;
   }
 
   static int connect_with_retry(const char* host, int port, int timeout_sec) {
@@ -357,12 +341,10 @@ private:
             mem_req->write   = false;
             mem_req->ready   = false;
             mem_req->is_last = (b + 1 == beat_count);
-            // AXI addr is in HBM-contiguous (post-remap) view produced by
-            // VX_mem_remap in LSU/DMA paths; invert to sw_addr before
-            // indexing ram_, which stores data in the sw-interleaved view
-            // the host upload path writes via mem_write -> to_software_addr.
-            uint64_t sw_addr = remap_to_sw_addr(beat_addr);
-            ram_->read(mem_req->data.data(), sw_addr, PLATFORM_MEMORY_DATA_SIZE);
+            // AXI addr is already in the HBM bank-contiguous view that ram_
+            // uses; no conversion needed. The host upload path writes via
+            // mem_write -> to_software_addr into the same layout.
+            ram_->read(mem_req->data.data(), beat_addr, PLATFORM_MEMORY_DATA_SIZE);
             pending_mem_reqs_[pkt.port_id].emplace_back(mem_req);
             dram_queues_[pkt.port_id].push(mem_req);
           }
@@ -390,21 +372,18 @@ private:
 
           uint8_t port = pkt.port_id;
           if (aw_state_[port].valid) {
-            // Beat address for this W within the burst (INCR).
+            // Beat address for this W within the burst (INCR). AXI addr is
+            // already in the HBM bank-contiguous view that ram_ uses.
             uint64_t axi_addr = aw_state_[port].base_addr
                               + (uint64_t)aw_state_[port].beat_idx
                                 * PLATFORM_MEMORY_DATA_SIZE;
-            // Invert VX_mem_remap for ram_ indexing (ram_ is sw-interleaved);
-            // keep axi_addr itself for DramSim so timing modeling sees the
-            // post-remap HBM-contiguous address that HW actually drives.
-            uint64_t sw_addr = remap_to_sw_addr(axi_addr);
             uint64_t strb = pkt.addr; // strb is stored in addr field
             bool w_last = (pkt.value != 0);
 
             // Write with byte enables
             for (int i = 0; i < PLATFORM_MEMORY_DATA_SIZE; ++i) {
               if ((strb >> i) & 0x1) {
-                (*ram_)[sw_addr + i] = data_buf[i];
+                (*ram_)[axi_addr + i] = data_buf[i];
               }
             }
 
