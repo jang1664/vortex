@@ -600,14 +600,15 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; ();
     end
     if (!seen) begin
       if (ch == 0) begin
-        $display("%0t [tb_VX_dma_engine] %s timeout debug: ar_count=%0d read_state=%0d accept=%0d window_base=%0d issue_group=%0d issue_beat=%0d group_counts=%0d,%0d,%0d,%0d",
+        $display("%0t [tb_VX_dma_engine] %s timeout debug: ar_count=%0d read_state=%0d accept=%0d window_base=%0d issue_group=%0d recv_group=%0d recv_beat=%0d group_counts=%0d,%0d,%0d,%0d",
                  $time, msg,
                  axi_ar_log_count[0],
                  dut.g_channel[0].read_state_r,
                  dut.g_channel[0].burst_accept_count_r,
                  dut.g_channel[0].burst_window_base_r,
                  dut.g_channel[0].burst_issue_group_r,
-                 dut.g_channel[0].burst_issue_beat_r,
+                 dut.g_channel[0].burst_recv_group_r,
+                 dut.g_channel[0].burst_recv_beat_r,
                  dut.g_channel[0].burst_group_count_r[0],
                  dut.g_channel[0].burst_group_count_r[1],
                  dut.g_channel[0].burst_group_count_r[2],
@@ -834,7 +835,7 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; ();
       "case0_remap_burst_read_check");
 
     if (axi_ar_log_count[0] !== 4) begin
-      $display("%0t [tb_VX_dma_engine] case0_remap_burst_read_debug: desc_words=%0d state=%0d accept=%0d window_base=%0d group_counts=%0d,%0d,%0d,%0d issue_group=%0d beat=%0d",
+      $display("%0t [tb_VX_dma_engine] case0_remap_burst_read_debug: desc_words=%0d state=%0d accept=%0d window_base=%0d group_counts=%0d,%0d,%0d,%0d issue_group=%0d recv_group=%0d recv_beat=%0d",
                $time,
                dut.g_channel[0].desc_words_r,
                dut.g_channel[0].read_state_r,
@@ -845,7 +846,8 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; ();
                dut.g_channel[0].burst_group_count_r[2],
                dut.g_channel[0].burst_group_count_r[3],
                dut.g_channel[0].burst_issue_group_r,
-               dut.g_channel[0].burst_issue_beat_r);
+               dut.g_channel[0].burst_recv_group_r,
+               dut.g_channel[0].burst_recv_beat_r);
       dump_axi_ar_log(0, "case0_remap_burst_read_debug");
       $fatal(1, "case0_remap_burst_read: expected 4 ar bursts, got %0d", axi_ar_log_count[0]);
     end

@@ -109,10 +109,9 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
 
     for (genvar ch = 0; ch < NUM_CHANNELS; ++ch) begin : g_channel
 
-        typedef enum logic [1:0] {
+        typedef enum logic [0:0] {
             RD_BURST_CAPTURE,
-            RD_BURST_AR,
-            RD_BURST_R
+            RD_BURST_ACTIVE
         } read_state_t;
 
         typedef enum logic [2:0] {
@@ -120,7 +119,7 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
             WR_BURST_CAPTURE,
             WR_BURST_AW,
             WR_BURST_W,
-            WR_BURST_B
+            WR_BURST_DRAIN_B
         } write_state_t;
 
         // --------------------------------------------------------
@@ -220,8 +219,11 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
         logic [TAG_WIDTH-1:0]      burst_rsp_tag_r;
         logic [31:0]               burst_window_base_r;
         logic [4:0]                burst_accept_count_r;
-        logic [1:0]                burst_issue_group_r;
-        logic [2:0]                burst_issue_beat_r;
+        // AR issue pointer (0..READ_BURST_GROUPS, == READ_BURST_GROUPS means all AR issued)
+        logic [2:0]                burst_issue_group_r;
+        // R recv pointers (independent of AR issue to allow pipelined AR/R)
+        logic [2:0]                burst_recv_group_r;
+        logic [2:0]                burst_recv_beat_r;
         logic [READ_BURST_GROUPS-1:0][2:0]                          burst_group_count_r;
         logic [READ_BURST_GROUPS-1:0][AXI_ADDR_WIDTH-1:0]           burst_group_base_addr_r;
         logic [READ_BURST_GROUPS-1:0][READ_GROUP_CAP-1:0][TAG_WIDTH-1:0] burst_group_tag_r;
@@ -238,8 +240,12 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
         logic [31:0]               burst_wr_words_captured_r;
         logic [31:0]               burst_wr_window_base_r;
         logic                      burst_wr_prefetch_started_r;
-        logic [1:0]                burst_wr_issue_group_r;
+        // AW issue pointer (0..READ_BURST_GROUPS)
+        logic [2:0]                burst_wr_issue_group_r;
+        // W beat within current issue group
         logic [2:0]                burst_wr_issue_beat_r;
+        // B recv pointer (pipelines independently of AW/W issue)
+        logic [2:0]                burst_wr_recv_group_r;
         logic [READ_BURST_GROUPS-1:0][2:0]                burst_wr_group_count_r;
         logic [READ_BURST_GROUPS-1:0][AXI_ADDR_WIDTH-1:0] burst_wr_group_base_addr_r;
         logic [READ_WINDOW_WORDS-1:0][DATA_WIDTH-1:0]     burst_wr_window_data_r;
@@ -295,7 +301,7 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
                            && ((burst_wr_words_captured_r == 32'd0)
                             || (hbm_req_byte_addr == burst_wr_expected_byte_addr));
 
-        assign burst_wr_word_idx = {2'd0, burst_wr_issue_group_r}
+        assign burst_wr_word_idx = {2'd0, burst_wr_issue_group_r[1:0]}
                                  + ({1'd0, burst_wr_issue_beat_r} << 2);
 
         for (genvar g = 0; g < READ_BURST_GROUPS; ++g) begin : g_wr_burst_group_words
@@ -303,11 +309,12 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
         end
 
         assign rd_req_ready =
-            (read_state_r == RD_BURST_CAPTURE)
-            && ~burst_req_pending_r
+            ~burst_req_pending_r
             && (burst_words_served_r < desc_words_r)
-            && ((~burst_prefetch_started_r)
-             || (burst_service_data_ready && (hbm_req_byte_addr == burst_expected_byte_addr)));
+            && ((~burst_prefetch_started_r && (read_state_r == RD_BURST_CAPTURE))
+             || (burst_prefetch_started_r
+                 && burst_service_data_ready
+                 && (hbm_req_byte_addr == burst_expected_byte_addr)));
 
         assign axi_r_fire = axi_m[ch].r_valid && axi_m[ch].r_ready;
 
@@ -351,7 +358,8 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
                 burst_window_base_r  <= '0;
                 burst_accept_count_r <= '0;
                 burst_issue_group_r  <= '0;
-                burst_issue_beat_r   <= '0;
+                burst_recv_group_r   <= '0;
+                burst_recv_beat_r    <= '0;
                 read_state_r         <= RD_BURST_CAPTURE;
                 for (int i = 0; i < READ_BURST_GROUPS; ++i) begin
                     burst_group_count_r[i]     <= '0;
@@ -367,6 +375,7 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
                 burst_wr_prefetch_started_r <= 1'b0;
                 burst_wr_issue_group_r      <= '0;
                 burst_wr_issue_beat_r       <= '0;
+                burst_wr_recv_group_r       <= '0;
                 for (int i = 0; i < READ_BURST_GROUPS; ++i) begin
                     burst_wr_group_count_r[i]     <= '0;
                     burst_wr_group_base_addr_r[i] <= '0;
@@ -385,8 +394,9 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
                     burst_window_base_r  <= '0;
                     burst_accept_count_r <= '0;
                     burst_issue_group_r  <= '0;
-                    burst_issue_beat_r   <= '0;
-                    read_state_r         <= cfg_is_read ? RD_BURST_CAPTURE : RD_BURST_CAPTURE;
+                    burst_recv_group_r   <= '0;
+                    burst_recv_beat_r    <= '0;
+                    read_state_r         <= RD_BURST_CAPTURE;
                     for (int i = 0; i < READ_BURST_GROUPS; ++i) begin
                         burst_group_count_r[i]     <= '0;
                         burst_group_base_addr_r[i] <= '0;
@@ -405,6 +415,7 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
                     burst_wr_prefetch_started_r <= 1'b0;
                     burst_wr_issue_group_r      <= '0;
                     burst_wr_issue_beat_r       <= '0;
+                    burst_wr_recv_group_r       <= '0;
                     for (int i = 0; i < READ_BURST_GROUPS; ++i) begin
                         burst_wr_group_count_r[i]     <= '0;
                         burst_wr_group_base_addr_r[i] <= '0;
@@ -415,7 +426,7 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
                     end
                 end else begin
                     // ------------------------------------------------
-                    // Read burst state machine
+                    // Read burst state machine (AR issue and R recv pipelined)
                     // ------------------------------------------------
                     if (burst_rsp_valid_r && hbm_rsp_ready) begin
                         burst_rsp_valid_r <= 1'b0;
@@ -437,78 +448,95 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
                         burst_rsp_tag_r   <= burst_req_tag_r;
                     end
 
-                    case (read_state_r)
-                        RD_BURST_CAPTURE: begin
-                            if (rd_req_valid && rd_req_ready) begin
-                                burst_req_pending_r <= 1'b1;
-                                burst_req_tag_r     <= hbm_req_tag;
+                    // Consumer request capture (both in CAPTURE and ACTIVE states)
+                    if (rd_req_valid && rd_req_ready) begin
+                        burst_req_pending_r <= 1'b1;
+                        burst_req_tag_r     <= hbm_req_tag;
 
-                                if (!burst_prefetch_started_r) begin
-                                    if (burst_words_served_r == 32'd0)
-                                        burst_src_base_byte_r <= hbm_req_byte_addr;
-                                    burst_prefetch_started_r <= 1'b1;
-                                    burst_accept_count_r     <= 5'd1;
-                                    burst_issue_group_r <= '0;
-                                    burst_issue_beat_r  <= '0;
-                                    read_state_r        <= RD_BURST_AR;
-                                    for (int i = 0; i < READ_BURST_GROUPS; ++i) begin
-                                        burst_group_count_r[i]     <= burst_group_words[i];
-                                        burst_group_base_addr_r[i] <= calc_remap_byte_addr(
-                                            hbm_req_byte_addr + (AXI_ADDR_WIDTH'(i) << 9)
-                                        );
-                                    end
-                                end
+                        if (!burst_prefetch_started_r) begin
+                            // First request of a new window: kick off AR pipeline
+                            if (burst_words_served_r == 32'd0)
+                                burst_src_base_byte_r <= hbm_req_byte_addr;
+                            burst_prefetch_started_r <= 1'b1;
+                            burst_accept_count_r     <= 5'd1;
+                            burst_issue_group_r      <= '0;
+                            burst_recv_group_r       <= '0;
+                            burst_recv_beat_r        <= '0;
+                            read_state_r             <= RD_BURST_ACTIVE;
+                            for (int i = 0; i < READ_BURST_GROUPS; ++i) begin
+                                burst_group_count_r[i]     <= burst_group_words[i];
+                                burst_group_base_addr_r[i] <= calc_remap_byte_addr(
+                                    hbm_req_byte_addr + (AXI_ADDR_WIDTH'(i) << 9)
+                                );
                             end
                         end
-                        RD_BURST_AR: begin
-                            if (burst_group_count_r[burst_issue_group_r] == 0) begin
-                                if (burst_issue_group_r == READ_BURST_GROUPS-1) begin
-                                    burst_issue_group_r  <= '0;
-                                    burst_issue_beat_r   <= '0;
-                                    read_state_r         <= RD_BURST_CAPTURE;
-                                end else begin
-                                    burst_issue_group_r <= burst_issue_group_r + 2'd1;
-                                end
+                    end
+
+                    if (read_state_r == RD_BURST_ACTIVE) begin
+                        // AR side: issue AR for each non-empty group back-to-back
+                        if (burst_issue_group_r < 3'(READ_BURST_GROUPS)) begin
+                            if (burst_group_count_r[burst_issue_group_r[1:0]] == 0) begin
+                                // Skip empty group (no AR fired)
+                                burst_issue_group_r <= burst_issue_group_r + 3'd1;
                             end else if (axi_m[ch].ar_ready) begin
-                                burst_issue_beat_r <= '0;
-                                read_state_r       <= RD_BURST_R;
+                                burst_issue_group_r <= burst_issue_group_r + 3'd1;
                             end
                         end
-                        RD_BURST_R: begin
-                            if (axi_r_fire) begin
+
+                        // R side: accept beats in AR-issue order (same ar_id => in-order)
+                        if (burst_recv_group_r < 3'(READ_BURST_GROUPS)) begin
+                            if (burst_group_count_r[burst_recv_group_r[1:0]] == 0) begin
+                                // Skip empty group (no R expected)
+                                burst_recv_group_r <= burst_recv_group_r + 3'd1;
+                                burst_recv_beat_r  <= '0;
+                                if (burst_recv_group_r + 3'd1 == 3'(READ_BURST_GROUPS))
+                                    read_state_r <= RD_BURST_CAPTURE;
+                            end else if (axi_r_fire) begin
                                 logic [3:0] rsp_word_idx;
-                                rsp_word_idx = {2'd0, burst_issue_group_r} + ({1'd0, burst_issue_beat_r} << 2);
+                                rsp_word_idx = {2'd0, burst_recv_group_r[1:0]}
+                                             + ({1'd0, burst_recv_beat_r} << 2);
                                 burst_window_data_r[rsp_word_idx]  <= axi_m[ch].r_data;
                                 burst_window_valid_r[rsp_word_idx] <= 1'b1;
 
-                                if (burst_issue_beat_r + 3'd1 < burst_group_count_r[burst_issue_group_r]) begin
-                                    burst_issue_beat_r <= burst_issue_beat_r + 3'd1;
+                                if (burst_recv_beat_r + 3'd1 < burst_group_count_r[burst_recv_group_r[1:0]]) begin
+                                    burst_recv_beat_r <= burst_recv_beat_r + 3'd1;
                                 end else begin
-                                    burst_issue_beat_r <= '0;
-                                    if (burst_issue_group_r == READ_BURST_GROUPS-1) begin
-                                        burst_issue_group_r  <= '0;
-                                        read_state_r         <= RD_BURST_CAPTURE;
-                                    end else begin
-                                        burst_issue_group_r <= burst_issue_group_r + 2'd1;
-                                        read_state_r        <= RD_BURST_AR;
-                                    end
+                                    burst_recv_beat_r  <= '0;
+                                    burst_recv_group_r <= burst_recv_group_r + 3'd1;
+                                    if (burst_recv_group_r + 3'd1 == 3'(READ_BURST_GROUPS))
+                                        read_state_r <= RD_BURST_CAPTURE;
                                 end
                             end
                         end
-                        default: begin
-                            read_state_r <= RD_BURST_CAPTURE;
-                        end
-                    endcase
+                    end
 
                     // ------------------------------------------------
                     // Write burst state machine
+                    //   AW+W is sequential per group (tb write model supports
+                    //   one outstanding AW), but B is collected independently
+                    //   so next group's AW is not blocked by B wait.
                     // ------------------------------------------------
+
+                    // B response pipeline (runs once AW/W phase has begun)
+                    if ((write_state_r == WR_BURST_AW
+                         || write_state_r == WR_BURST_W
+                         || write_state_r == WR_BURST_DRAIN_B)
+                        && burst_wr_recv_group_r < 3'(READ_BURST_GROUPS)) begin
+                        if (burst_wr_group_count_r[burst_wr_recv_group_r[1:0]] == 0) begin
+                            // Skip zero-count group (no AW fired for it)
+                            burst_wr_recv_group_r <= burst_wr_recv_group_r + 3'd1;
+                        end else if (axi_m[ch].b_valid) begin
+                            burst_wr_recv_group_r <= burst_wr_recv_group_r + 3'd1;
+                        end
+                    end
+
                     case (write_state_r)
                         WR_BURST_CAPTURE: begin
                             if (burst_wr_prefetch_started_r
                                 && (burst_wr_words_captured_r >= burst_wr_window_base_r + {27'd0, burst_wr_window_words})) begin
                                 burst_wr_issue_group_r <= '0;
                                 burst_wr_issue_beat_r  <= '0;
+                                burst_wr_recv_group_r  <= '0;
                                 write_state_r          <= WR_BURST_AW;
                             end else if (wr_req_valid && wr_req_ready) begin
                                 burst_wr_window_data_r[burst_wr_words_captured_r[3:0]]   <= hbm_req_data;
@@ -528,17 +556,13 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
                             end
                         end
                         WR_BURST_AW: begin
-                            if (burst_wr_group_count_r[burst_wr_issue_group_r] == 0) begin
-                                if (burst_wr_issue_group_r == READ_BURST_GROUPS-1) begin
-                                    if (burst_wr_words_captured_r < desc_words_r) begin
-                                        burst_wr_window_base_r      <= burst_wr_window_base_r + {27'd0, burst_wr_window_words};
-                                        burst_wr_prefetch_started_r <= 1'b0;
-                                        write_state_r               <= WR_BURST_CAPTURE;
-                                    end else begin
-                                        write_state_r <= WR_IDLE;
-                                    end
+                            if (burst_wr_group_count_r[burst_wr_issue_group_r[1:0]] == 0) begin
+                                if (burst_wr_issue_group_r == 3'(READ_BURST_GROUPS-1)) begin
+                                    // All AW done — move to B drain (or skip if already drained)
+                                    burst_wr_issue_group_r <= burst_wr_issue_group_r + 3'd1;
+                                    write_state_r          <= WR_BURST_DRAIN_B;
                                 end else begin
-                                    burst_wr_issue_group_r <= burst_wr_issue_group_r + 2'd1;
+                                    burst_wr_issue_group_r <= burst_wr_issue_group_r + 3'd1;
                                 end
                             end else if (axi_m[ch].aw_ready) begin
                                 burst_wr_issue_beat_r <= '0;
@@ -547,27 +571,31 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
                         end
                         WR_BURST_W: begin
                             if (axi_m[ch].w_ready) begin
-                                if (burst_wr_issue_beat_r + 3'd1 >= burst_wr_group_count_r[burst_wr_issue_group_r]) begin
-                                    write_state_r <= WR_BURST_B;
+                                if (burst_wr_issue_beat_r + 3'd1 >= burst_wr_group_count_r[burst_wr_issue_group_r[1:0]]) begin
+                                    // W burst for this group done — do NOT wait for B
+                                    if (burst_wr_issue_group_r == 3'(READ_BURST_GROUPS-1)) begin
+                                        burst_wr_issue_group_r <= burst_wr_issue_group_r + 3'd1;
+                                        write_state_r          <= WR_BURST_DRAIN_B;
+                                    end else begin
+                                        burst_wr_issue_group_r <= burst_wr_issue_group_r + 3'd1;
+                                        write_state_r          <= WR_BURST_AW;
+                                    end
                                 end else begin
                                     burst_wr_issue_beat_r <= burst_wr_issue_beat_r + 3'd1;
                                 end
                             end
                         end
-                        WR_BURST_B: begin
-                            if (axi_m[ch].b_valid) begin
-                                if (burst_wr_issue_group_r == READ_BURST_GROUPS-1) begin
-                                    burst_wr_issue_group_r <= '0;
-                                    if (burst_wr_words_captured_r < desc_words_r) begin
-                                        burst_wr_window_base_r      <= burst_wr_window_base_r + {27'd0, burst_wr_window_words};
-                                        burst_wr_prefetch_started_r <= 1'b0;
-                                        write_state_r               <= WR_BURST_CAPTURE;
-                                    end else begin
-                                        write_state_r <= WR_IDLE;
-                                    end
+                        WR_BURST_DRAIN_B: begin
+                            // Wait until parallel B pipeline has consumed all responses
+                            if (burst_wr_recv_group_r >= 3'(READ_BURST_GROUPS)) begin
+                                if (burst_wr_words_captured_r < desc_words_r) begin
+                                    burst_wr_window_base_r      <= burst_wr_window_base_r + {27'd0, burst_wr_window_words};
+                                    burst_wr_prefetch_started_r <= 1'b0;
+                                    burst_wr_issue_group_r      <= '0;
+                                    burst_wr_recv_group_r       <= '0;
+                                    write_state_r               <= WR_BURST_CAPTURE;
                                 end else begin
-                                    burst_wr_issue_group_r <= burst_wr_issue_group_r + 2'd1;
-                                    write_state_r          <= WR_BURST_AW;
+                                    write_state_r <= WR_IDLE;
                                 end
                             end
                         end
@@ -595,12 +623,13 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
         // AXI write channel: burst logic only
         // --------------------------------------------------------
         wire burst_aw_valid_w = (write_state_r == WR_BURST_AW)
-                             && (burst_wr_group_count_r[burst_wr_issue_group_r] != 0);
+                             && (burst_wr_issue_group_r < 3'(READ_BURST_GROUPS))
+                             && (burst_wr_group_count_r[burst_wr_issue_group_r[1:0]] != 0);
 
         assign axi_m[ch].aw_valid   = burst_aw_valid_w;
-        assign axi_m[ch].aw_addr    = burst_wr_group_base_addr_r[burst_wr_issue_group_r];
+        assign axi_m[ch].aw_addr    = burst_wr_group_base_addr_r[burst_wr_issue_group_r[1:0]];
         assign axi_m[ch].aw_id      = '0;
-        assign axi_m[ch].aw_len     = 8'(burst_wr_group_count_r[burst_wr_issue_group_r]) - 8'd1;
+        assign axi_m[ch].aw_len     = 8'(burst_wr_group_count_r[burst_wr_issue_group_r[1:0]]) - 8'd1;
         assign axi_m[ch].aw_size    = 3'(LOG2_DATA_SIZE);
         assign axi_m[ch].aw_burst   = 2'b01;
         assign axi_m[ch].aw_lock    = 1'b0;
@@ -614,18 +643,23 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
         assign axi_m[ch].w_valid    = (write_state_r == WR_BURST_W);
         assign axi_m[ch].w_data     = burst_wr_window_data_r[burst_wr_word_idx];
         assign axi_m[ch].w_strb     = burst_wr_window_byteen_r[burst_wr_word_idx];
-        assign axi_m[ch].w_last     = (burst_wr_issue_beat_r + 3'd1 >= burst_wr_group_count_r[burst_wr_issue_group_r]);
+        assign axi_m[ch].w_last     = (burst_wr_issue_beat_r + 3'd1 >= burst_wr_group_count_r[burst_wr_issue_group_r[1:0]]);
         assign axi_m[ch].w_user     = '0;
 
-        assign axi_m[ch].b_ready    = (write_state_r == WR_BURST_B);
+        // B can be accepted while AW/W are still issuing (pipeline B drain)
+        assign axi_m[ch].b_ready    = (write_state_r != WR_IDLE)
+                                    && (write_state_r != WR_BURST_CAPTURE)
+                                    && (burst_wr_recv_group_r < 3'(READ_BURST_GROUPS));
 
         // --------------------------------------------------------
         // AXI read channel: burst logic only
         // --------------------------------------------------------
-        assign axi_m[ch].ar_valid   = (read_state_r == RD_BURST_AR) && (burst_group_count_r[burst_issue_group_r] != 0);
-        assign axi_m[ch].ar_addr    = burst_group_base_addr_r[burst_issue_group_r];
+        assign axi_m[ch].ar_valid   = (read_state_r == RD_BURST_ACTIVE)
+                                    && (burst_issue_group_r < 3'(READ_BURST_GROUPS))
+                                    && (burst_group_count_r[burst_issue_group_r[1:0]] != 0);
+        assign axi_m[ch].ar_addr    = burst_group_base_addr_r[burst_issue_group_r[1:0]];
         assign axi_m[ch].ar_id      = '0;
-        assign axi_m[ch].ar_len     = 8'(burst_group_count_r[burst_issue_group_r]) - 8'd1;
+        assign axi_m[ch].ar_len     = 8'(burst_group_count_r[burst_issue_group_r[1:0]]) - 8'd1;
         assign axi_m[ch].ar_size    = 3'(LOG2_DATA_SIZE);
         assign axi_m[ch].ar_burst   = 2'b01;
         assign axi_m[ch].ar_lock    = 1'b0;
@@ -635,7 +669,8 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
         assign axi_m[ch].ar_region  = 4'b0000;
         assign axi_m[ch].ar_user    = '0;
 
-        assign axi_m[ch].r_ready    = (read_state_r == RD_BURST_R);
+        assign axi_m[ch].r_ready    = (read_state_r == RD_BURST_ACTIVE)
+                                    && (burst_recv_group_r < 3'(READ_BURST_GROUPS));
 
     end // g_channel
 
