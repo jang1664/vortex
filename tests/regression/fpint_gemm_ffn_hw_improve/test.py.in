@@ -1,0 +1,239 @@
+#!/usr/bin/env python3
+"""Regression sweep for fpint_gemm_ffn_hw_improve.
+
+Reimplementation of test.sh.in. Runs ci/blackbox.sh across a cross-product
+of (shape x QBLK x WTRANS x QDIR). Combinations that violate kernel shape
+constraints are skipped (counted as PASS / SKIP) instead of being run.
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+
+# ---------------------------------------------------------------------------
+# Kernel shape constraints (mirrors main.cpp validate block + test.sh comment).
+# DMA_MT = 128, DMA_KT = 128, MXU_KT = 32, MXU_NT = 32.
+# ---------------------------------------------------------------------------
+MXU_NT = 32
+MXU_KT = 32
+DMA_KT = 128
+
+
+def check_constraints(M: int, N: int, K: int,
+                      QBLK: int, WTRANS: int, QDIR: int) -> str | None:
+    """Return None if valid, else a human-readable reason string."""
+    if M <= 0 or M % 32 != 0:
+        return f"M={M} must be positive multiple of 32"
+    if N <= 0 or N % MXU_NT != 0:
+        return f"N={N} must be positive multiple of MXU_NT={MXU_NT}"
+    if K <= 0 or K % MXU_KT != 0:
+        return f"K={K} must be positive multiple of MXU_KT={MXU_KT}"
+    if QBLK <= 0:
+        return f"QBLK={QBLK} must be positive"
+    if WTRANS not in (0, 1):
+        return f"WTRANS={WTRANS} must be 0 or 1"
+    if QDIR not in (0, 1):
+        return f"QDIR={QDIR} must be 0 or 1"
+
+    if QDIR == 0:  # QCOL
+        if DMA_KT % QBLK != 0:
+            return f"QCOL: DMA_KT={DMA_KT} not divisible by QBLK={QBLK}"
+        if K % QBLK != 0:
+            return f"QCOL: K={K} not divisible by QBLK={QBLK}"
+    else:          # QROW
+        if N % QBLK != 0:
+            return f"QROW: N={N} not divisible by QBLK={QBLK}"
+    return None
+
+
+# ---------------------------------------------------------------------------
+# CLI parsing: mimics test.sh.in semantics.
+# ---------------------------------------------------------------------------
+def parse_cli(argv: list[str]) -> tuple[str, list[str]]:
+    """Return (debug_arg_mode, raw_case_args).
+
+    Supported flags:
+      --debug-arg=always|omit|auto
+      --debug-always / --debug-omit / --debug-auto
+      --            (separator, ignored)
+    All other args are treated as positional test cases.
+    """
+    debug_mode = "always"
+    raw: list[str] = []
+    for arg in argv:
+        if arg in ("--debug-always",):
+            debug_mode = "always"
+        elif arg in ("--debug-omit",):
+            debug_mode = "omit"
+        elif arg in ("--debug-auto",):
+            debug_mode = "auto"
+        elif arg.startswith("--debug-arg="):
+            val = arg.split("=", 1)[1]
+            if val not in ("always", "omit", "auto"):
+                print(f"ERROR: invalid debug arg mode: {val} "
+                      "(expected always, omit, or auto)", file=sys.stderr)
+                sys.exit(1)
+            debug_mode = val
+        elif arg == "--":
+            continue
+        else:
+            raw.append(arg)
+    return debug_mode, raw
+
+
+def parse_shape_args(arg_str: str) -> dict[str, int]:
+    """Parse '-m M -n N -k K -q QBLK -t WTRANS -d QDIR' into a dict.
+    Unspecified fields fall back to main.cpp defaults.
+    """
+    defaults = dict(m=2, n=32, k=128, q=32, t=0, d=0)
+    tokens = arg_str.split()
+    i = 0
+    while i < len(tokens):
+        tok = tokens[i]
+        if tok.startswith("-") and len(tok) == 2 and tok[1] in "mnkqtd":
+            if i + 1 >= len(tokens):
+                raise ValueError(f"missing value for {tok} in: {arg_str!r}")
+            defaults[tok[1]] = int(tokens[i + 1])
+            i += 2
+        else:
+            i += 1  # ignore unknown tokens
+    return defaults
+
+
+# ---------------------------------------------------------------------------
+# Default sweep definition.
+# ---------------------------------------------------------------------------
+DEFAULT_SHAPES = [
+    # K=32 (minimum K-tile)
+    "-m 32 -n 32 -k 32",
+    "-m 128 -n 32 -k 32",
+    "-m 128 -n 128 -k 64",
+    "-m 128 -n 128 -k 96",
+    # baseline
+    "-m 128 -n 128 -k 128",
+    "-m 256 -n 128 -k 128",
+    "-m 256 -n 256 -k 256",
+]
+DEFAULT_QBLKS = [32, 64, 128]
+DEFAULT_WTRANS = [0, 1]
+DEFAULT_QDIR = [0, 1]
+
+
+def build_default_cases() -> list[str]:
+    cases: list[str] = []
+    for shape in DEFAULT_SHAPES:
+        for qblk in DEFAULT_QBLKS:
+            for wt in DEFAULT_WTRANS:
+                for qd in DEFAULT_QDIR:
+                    cases.append(f"{shape} -q {qblk} -t {wt} -d {qd}")
+    return cases
+
+
+# ---------------------------------------------------------------------------
+# Main driver.
+# ---------------------------------------------------------------------------
+def main() -> int:
+    env = os.environ
+    configs = env.get("CONFIGS",
+                      "-DNUM_CORES=1 -DMEM_ADDR_WIDTH=34 "
+                      "-DPLATFORM_MEMORY_ADDR_WIDTH=34")
+    max_log_bytes = env.get("MAX_LOG_BYTES", str(10 * 1024 * 1024))  # 10 MB
+    driver = env.get("DRIVER", "rtlsim")
+    app = env.get("APP", "fpint_gemm_ffn_hw_improve")
+    debug_level = env.get("DEBUG_LEVEL", "0")
+    log_dir = Path(env.get("LOG_DIR", "run_logs_fpint_gemm_ffn_hw_improve"))
+
+    os.environ["CONFIGS"] = configs
+    os.environ["MAX_LOG_BYTES"] = max_log_bytes
+
+    # Re-initialise log dir.
+    if log_dir.exists():
+        shutil.rmtree(log_dir)
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    debug_mode, raw_cases = parse_cli(sys.argv[1:])
+
+    # Resolve debug args.
+    if debug_mode == "always":
+        debug_args = [f"--debug={debug_level}"]
+    elif debug_mode == "omit":
+        debug_args = []
+    else:  # auto
+        try:
+            debug_args = [f"--debug={debug_level}"] if int(debug_level) >= 1 else []
+        except ValueError:
+            debug_args = []
+
+    # Assemble case list. If positional args were given, use them; match
+    # test.sh.in behaviour that joins split tokens into one case string.
+    if raw_cases:
+        has_tokens = any(" " not in a for a in raw_cases)
+        if has_tokens or not raw_cases:
+            case_args = [" ".join(raw_cases)]
+        else:
+            case_args = list(raw_cases)
+    else:
+        case_args = build_default_cases()
+
+    total = len(case_args)
+    failed = 0
+    skipped = 0
+    passed = 0
+
+    for i, args in enumerate(case_args, start=1):
+        log_file = log_dir / f"run_case_{i}.log"
+
+        # Constraint check (only for shape-style args).
+        try:
+            shape = parse_shape_args(args)
+            reason = check_constraints(shape["m"], shape["n"], shape["k"],
+                                       shape["q"], shape["t"], shape["d"])
+        except ValueError as e:
+            reason = f"parse error: {e}"
+
+        header = f"[{i}/{total}] Running: {args}"
+        print(header)
+        with log_file.open("w") as lf:
+            lf.write(header + "\n")
+
+            if reason is not None:
+                msg = f"[{i}/{total}] SKIP (constraint: {reason})"
+                print(msg)
+                lf.write(msg + "\n")
+                skipped += 1
+                continue
+
+            cmd = [
+                "./ci/blackbox.sh",
+                f"--driver={driver}",
+                f"--app={app}",
+                *debug_args,
+                f"--log={log_file}",
+                f"--args={args}",
+            ]
+            ret = subprocess.run(cmd).returncode
+
+            if ret == 0:
+                msg = f"[{i}/{total}] PASS (log: {log_file})"
+                passed += 1
+            else:
+                msg = f"[{i}/{total}] FAIL (log: {log_file})"
+                failed += 1
+            print(msg)
+            lf.write(msg + "\n")
+
+    summary = (f"Summary: total={total}, failed={failed}, "
+               f"passed={passed}, skipped={skipped}")
+    print(summary)
+    (log_dir / "summary.log").write_text(summary + "\n")
+    return failed
+
+
+if __name__ == "__main__":
+    sys.exit(main())

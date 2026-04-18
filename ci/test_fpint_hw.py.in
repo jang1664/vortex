@@ -1,0 +1,183 @@
+#!/usr/bin/env python3
+"""Driver for the fpint_gemm_ffn_hw_improve regression across backends.
+
+Python reimplementation of ci/test_fpint_hw.sh.in. Invokes the Python
+version of the per-app sweep (tests/regression/fpint_gemm_ffn_hw_improve/test.py)
+under the appropriate driver / environment for each mode.
+"""
+
+from __future__ import annotations
+
+import os
+import random
+import subprocess
+import sys
+from pathlib import Path
+
+
+MODES = ("rtlsim", "xrt-vcs-sim", "hw_emu", "hw", "all")
+
+TEST_PY = "tests/regression/fpint_gemm_ffn_hw_improve/test.py"
+
+
+def usage() -> None:
+    print(f"Usage: {sys.argv[0]} <mode> [extra args forwarded to test.py]")
+    print("Modes:")
+    print("  rtlsim       - Run rtlsim test")
+    print("  xrt-vcs-sim  - Run xrt + VCS RTL sim test")
+    print("  hw_emu       - Run xrt + hw_emu test")
+    print("  hw           - Run FPGA test")
+    print("  all          - Run all of the above in order")
+    print("Options:")
+    print("  --debug-arg=always|omit|auto")
+    print("  --debug-always | --debug-omit | --debug-auto")
+
+
+def parse_args(argv: list[str]) -> tuple[str, str, list[str]]:
+    if not argv or argv[0] in ("-h", "--help"):
+        usage()
+        sys.exit(0)
+
+    mode = argv[0]
+    if mode not in MODES:
+        print(f"ERROR: unknown mode: {mode}", file=sys.stderr)
+        usage()
+        sys.exit(1)
+
+    debug_mode = "always"
+    forward: list[str] = []
+    for arg in argv[1:]:
+        if arg in ("--debug-always",):
+            debug_mode = "always"
+        elif arg in ("--debug-omit",):
+            debug_mode = "omit"
+        elif arg in ("--debug-auto",):
+            debug_mode = "auto"
+        elif arg.startswith("--debug-arg="):
+            val = arg.split("=", 1)[1]
+            if val not in ("always", "omit", "auto"):
+                print(f"ERROR: invalid debug arg mode: {val} "
+                      "(expected always, omit, or auto)", file=sys.stderr)
+                sys.exit(1)
+            debug_mode = val
+        else:
+            forward.append(arg)
+    return mode, debug_mode, forward
+
+
+def build_configs() -> str:
+    parts = [
+        "-DMEM_ADDR_WIDTH=34",
+        "-DPLATFORM_MEMORY_ADDR_WIDTH=34",
+        "-DPLATFORM_MEMORY_NUM_BANKS=32",
+        "-DPLATFORM_MERGED_MEMORY_INTERFACE",
+        "-DDCACHE_DISABLE",
+        "-DL2_ENABLE",
+        "-DNUM_THREADS=8",
+        "-DLMEM_LOG_SIZE=22",
+        "-DSTACK_BASE_ADDR=8585740288",
+        "-DDBG_TRACE_PIPELINE",
+        "-DDBG_TRACE_MEM",
+        "-DDBG_TRACE_CACHE",
+        "-DDBG_TRACE_AFU",
+        "-DDBG_TRACE_SCOPE",
+        "-DDBG_TRACE_GBAR",
+        "-DDBG_TRACE_TCU",
+        "-DDBG_TRACE_GEMM",
+        "-DAFU_DONE_WAIT_CACHE_DRAIN",
+        "-DNUM_CORES=1",
+    ]
+    # Optional DBG / VCD_OUTPUT flags (disabled by default).
+    # Add "-DVCD_OUTPUT" here if you want VCD dumps (only useful with DEBUG_LEVEL>=1).
+    return " ".join(parts)
+
+
+def run_test(extra_env: dict[str, str],
+             debug_mode: str,
+             forward_args: list[str]) -> int:
+    env = os.environ.copy()
+    env.update(extra_env)
+    cmd = [
+        sys.executable,
+        TEST_PY,
+        f"--debug-arg={debug_mode}",
+        *forward_args,
+    ]
+    print(f"+ env: {', '.join(f'{k}={v}' for k, v in extra_env.items())}")
+    print(f"+ {' '.join(cmd)}")
+    return subprocess.run(cmd, env=env).returncode
+
+
+def main() -> int:
+    mode, debug_mode, forward_args = parse_args(sys.argv[1:])
+
+    configs = build_configs()
+    debug_level = "0"
+
+    # Drop VCD_OUTPUT when debug is off (huge VCDs with no useful traces).
+    if debug_level == "0" and "-DVCD_OUTPUT" in configs:
+        configs = configs.replace("-DVCD_OUTPUT", "").strip()
+
+    base_env = {
+        "CONFIGS": configs,
+        "VERILATOR_SEED": str(random.randint(1, 32767)),
+    }
+
+    if not Path(TEST_PY).exists():
+        print(f"ERROR: {TEST_PY} not found — run from the build directory "
+              "(where configure emits the generated script).", file=sys.stderr)
+        return 1
+
+    # ----- rtlsim -----
+    if mode in ("rtlsim", "all"):
+        env = {**base_env, "DRIVER": "rtlsim", "DEBUG_LEVEL": debug_level}
+        rc = run_test(env, debug_mode, forward_args)
+        if rc != 0:
+            sig = rc - 128 if rc > 128 else 0
+            print(f"ERROR: rtlsim test exited with code {rc} (signal={sig})",
+                  file=sys.stderr)
+            return rc
+
+    # ----- xrt-vcs-sim -----
+    if mode in ("xrt-vcs-sim", "all"):
+        env = {
+            **base_env,
+            "DRIVER": "xrt_vcs",
+            "DEBUG_LEVEL": debug_level,
+            "FSDB_DUMP": "1",
+            "DEBUG_AXI": "1",
+        }
+        run_test(env, debug_mode, forward_args)
+
+    # ----- xrt + hw_emu -----
+    if mode in ("hw_emu", "all"):
+        env = {
+            **base_env,
+            "FPGA_BIN_DIR": "/home/jaeyongjang/project.local/vortex/build/"
+                            "hw/syn/xilinx/xrt/hw_emu/bin",
+            "TARGET": "hw_emu",
+            "PLATFORM": "xilinx_u55c_gen3x16_xdma_3_202210_1",
+            "DRIVER": "xrt",
+            "DEBUG_LEVEL": debug_level,
+        }
+        run_test(env, debug_mode, forward_args)
+
+    # ----- FPGA -----
+    if mode in ("hw", "all"):
+        env = {
+            **base_env,
+            "FPGA_BIN_DIR": "/home/jaeyongjang/project.local/vortex/build/"
+                            "hw/syn/xilinx/xrt/hw/bin",
+            "TARGET": "hw",
+            "PLATFORM": "xilinx_u55c_gen3x16_xdma_3_202210_1",
+            "DRIVER": "xrt",
+            "CHIPSCOPE": "1",
+            "DEBUG_LEVEL": debug_level,
+        }
+        run_test(env, debug_mode, forward_args)
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
