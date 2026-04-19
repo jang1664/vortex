@@ -119,6 +119,40 @@ RTL_INCLUDE = -I$(RTL_DIR) -I$(RTL_DIR)/libs -I$(RTL_DIR)/interfaces -I$(RTL_DIR
 RTL_INCLUDE += -I$(RTL_DIR)/verification
 RTL_INCLUDE += $(FPU_INCLUDE)
 
+# AXI third-party library (for axi_mux, axi_demux in Vortex_axi)
+# Use -J so gen_sources.sh emits +incdir+ without pulling .v/.sv files.
+# These include dirs only hold .svh files / subdirectories (axi/, common_cells/),
+# so no sources are auto-discovered and cvfpu common_cells names are not duplicated.
+AXI_DIR := $(THIRD_PARTY_DIR)/axi
+AXI_COMMON_CELLS_DIR := $(AXI_DIR)/.bender/git/checkouts/common_cells-3e2fcccecd7aee7b
+RTL_INCLUDE += -J$(AXI_DIR)/include
+RTL_INCLUDE += -J$(AXI_COMMON_CELLS_DIR)/include
+
+# Specific AXI sources needed by Vortex_axi (axi_mux, axi_demux, AXI_BUS interface).
+# Must be listed explicitly: -J on $(AXI_DIR)/src or $(AXI_COMMON_CELLS_DIR)/src
+# would pull ~100 files and collide with cvfpu's common_cells (lzc/counter/...).
+AXI_SOURCES := $(AXI_DIR)/src/axi_pkg.sv
+AXI_SOURCES += $(AXI_DIR)/src/axi_intf.sv
+AXI_SOURCES += $(AXI_COMMON_CELLS_DIR)/src/fifo_v3.sv
+AXI_SOURCES += $(AXI_COMMON_CELLS_DIR)/src/spill_register.sv
+AXI_SOURCES += $(AXI_COMMON_CELLS_DIR)/src/spill_register_flushable.sv
+AXI_SOURCES += $(AXI_COMMON_CELLS_DIR)/src/counter.sv
+AXI_SOURCES += $(AXI_COMMON_CELLS_DIR)/src/delta_counter.sv
+AXI_SOURCES += $(AXI_COMMON_CELLS_DIR)/src/onehot_to_bin.sv
+AXI_SOURCES += $(AXI_COMMON_CELLS_DIR)/src/id_queue.sv
+AXI_SOURCES += $(AXI_DIR)/src/axi_demux_simple.sv
+AXI_SOURCES += $(AXI_DIR)/src/axi_demux.sv
+AXI_SOURCES += $(AXI_DIR)/src/axi_id_prepend.sv
+AXI_SOURCES += $(AXI_DIR)/src/axi_mux.sv
+
+# cf_math_pkg, lzc, rr_arb_tree come from cvfpu when FPU_FPNEW; otherwise pull from axi common_cells.
+ifeq (,$(findstring -DFPU_FPNEW, $(CONFIGS)))
+AXI_SOURCES := $(AXI_COMMON_CELLS_DIR)/src/cf_math_pkg.sv \
+               $(AXI_COMMON_CELLS_DIR)/src/lzc.sv \
+               $(AXI_COMMON_CELLS_DIR)/src/rr_arb_tree.sv \
+               $(AXI_SOURCES)
+endif
+
 # Add V extension sources
 ifneq (,$(findstring -DEXT_V_ENABLE, $(CONFIGS)))
 	RTL_PKGS += $(RTL_DIR)/vpu/VX_vpu_pkg.sv
@@ -222,6 +256,7 @@ $(XRT_BACKUP_STAMP): $(XRT_BACKUP_FILES) $(CONFIG_STAMP)
 gen-sources: $(BUILD_DIR)/sources.txt
 $(BUILD_DIR)/sources.txt: $(SRC_DIR)/Makefile $(SRC_DIR)/platforms.mk $(CONFIG_STAMP)
 	mkdir -p $(BUILD_DIR); cd $(BUILD_DIR); $(SCRIPT_DIR)/gen_sources.sh -P $(CFLAGS) -Csrc -Osources.txt
+	@for src in $(AXI_SOURCES); do echo "$$src" >> $(BUILD_DIR)/sources.txt; done
 
 $(CONFIG_STAMP):
 	mkdir -p $(BUILD_DIR); \

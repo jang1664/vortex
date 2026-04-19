@@ -47,12 +47,22 @@ set vsources_list  [lindex $vlist 0]
 set vincludes_list [lindex $vlist 1]
 set vdefines_list  [lindex $vlist 2]
 
-# Vivado IP packaging can flatten imported HDL/include file names into src/.
-# Rewrite include paths that rely on subdirectories into basename form and
-# copy the matching include file into a temporary patched source dir.
+# Vivado IP packaging flattens imported HDL into ipshared/<hash>/src/, so any
+# `include "subdir/foo.svh"` fails at link time. Rewrite qualified includes to
+# their basename and copy the matching .svh into a sibling patched_src dir that
+# is added to the include search path.
+set patch_includes {
+    "common_cells/registers.svh"  "registers.svh"
+    "common_cells/assertions.svh" "assertions.svh"
+    "axi/assign.svh"              "assign.svh"
+    "axi/typedef.svh"             "typedef.svh"
+    "axi/port.svh"                "port.svh"
+}
+
 set patched_src_dir [file normalize "${path_to_tmp_project}/patched_src"]
 set patched_sources_list [list]
 set patched_any 0
+set used_qualified_includes [dict create]
 
 foreach src $vsources_list {
     set ext [file extension $src]
@@ -65,8 +75,15 @@ foreach src $vsources_list {
     set src_text [read $f]
     close $f
 
-    set patched_text [string map {"common_cells/registers.svh" "registers.svh"} $src_text]
+    set patched_text [string map $patch_includes $src_text]
     if { $patched_text ne $src_text } {
+        # Track which qualified includes this source needed so we know which
+        # headers to copy into patched_src_dir.
+        foreach {qualified flat} $patch_includes {
+            if {[string first $qualified $src_text] >= 0} {
+                dict set used_qualified_includes $qualified $flat
+            }
+        }
         if { $patched_any == 0 } {
             file mkdir $patched_src_dir
         }
@@ -82,19 +99,21 @@ foreach src $vsources_list {
 }
 
 if { $patched_any == 1 } {
-    set registers_file ""
-    foreach idir $vincludes_list {
-        set candidate [file normalize "${idir}/common_cells/registers.svh"]
-        if {[file exists $candidate]} {
-            set registers_file $candidate
-            break
+    dict for {qualified flat} $used_qualified_includes {
+        set found ""
+        foreach idir $vincludes_list {
+            set candidate [file normalize "${idir}/${qualified}"]
+            if {[file exists $candidate]} {
+                set found $candidate
+                break
+            }
         }
+        if { $found eq "" } {
+            puts "ERROR: failed to locate ${qualified} in include dirs"
+            exit 1
+        }
+        file copy -force $found "${patched_src_dir}/${flat}"
     }
-    if { $registers_file eq "" } {
-        puts "ERROR: failed to locate common_cells/registers.svh in include dirs"
-        exit 1
-    }
-    file copy -force $registers_file "${patched_src_dir}/registers.svh"
     set vsources_list $patched_sources_list
     lappend vincludes_list $patched_src_dir
 }
@@ -106,6 +125,11 @@ if { $patched_any == 1 } {
 set chipscope 0
 set num_banks 1
 set merged_mem_if 0
+# Top-level AXI master port count at vortex_afu.v — matches NUM_DMA_CHANNELS in VX_config.vh.
+# This is independent of PLATFORM_MEMORY_NUM_BANKS (HBM bank count) and of
+# PLATFORM_MERGED_MEMORY_INTERFACE (which only affects VX_axi_adapter internals).
+# Default mirrors the VX_config.vh value; can be overridden via +define+NUM_DMA_CHANNELS=N.
+set num_ports 8
 set platform_mem_id_width 32
 set dcr_addr_width 12
 set dcr_data_width 32
@@ -133,6 +157,9 @@ foreach def $vdefines_list {
     }
     if { $name == "PLATFORM_MERGED_MEMORY_INTERFACE" } {
         set merged_mem_if 1
+    }
+    if { $name == "NUM_DMA_CHANNELS" && $value ne "" } {
+        set num_ports $value
     }
     if { $name == "PLATFORM_MEMORY_ID_WIDTH" && $value ne "" } {
         set platform_mem_id_width $value
@@ -354,10 +381,74 @@ if { $chipscope == 1 } {
 update_compile_order -fileset sources_1
 update_compile_order -fileset sim_1
 ipx::package_project -root_dir $path_to_packaged -vendor xilinx.com -library RTLKernel -taxonomy /KernelIP -import_files -set_current false
+
 ipx::unload_core $path_to_packaged/component.xml
 ipx::edit_ip_in_project -upgrade true -name tmp_edit_project -directory $path_to_packaged $path_to_packaged/component.xml
 
 set core [ipx::current_core]
+
+# ipx::package_project's dependency analyzer emits "Unreferenced file ... is not
+# packaged" (IP_Flow 19-3833) for files reached only through SV interface-array
+# passthroughs — e.g. VX_tmem_subsystem instantiates VX_dma_engine via
+# `AXI_BUS.Master axi_m [NUM_BANKS]`, and the analyzer fails to follow that.
+# Force-re-add the known victims to both the synthesis and behavioral-sim file
+# groups. Add new entries here when similar drops occur.
+# (Broad re-add would drag in legitimately unreferenced test tops / sim helpers.)
+set force_packaged_sources {
+    VX_dma_engine.sv
+}
+
+set packaged_src_dir [file normalize "${path_to_packaged}/src"]
+file mkdir $packaged_src_dir
+
+# Enumerate all file groups on the core so we can pick the synthesis/sim ones.
+# In Vivado 2025.1 XO packaging, ipx::get_file_groups with a specific name
+# sometimes returns empty for "*_view_fileset" identifiers, but listing all
+# groups and matching by name substring is reliable.
+set all_file_groups [ipx::get_file_groups -of $core]
+puts "INFO: all IP file groups:"
+foreach fg $all_file_groups {
+    puts "INFO:   [get_property NAME $fg]"
+}
+set target_file_groups {}
+foreach fg $all_file_groups {
+    set fname [get_property NAME $fg]
+    if {[string match "*synthesis*" $fname] || [string match "*simulation*" $fname]} {
+        lappend target_file_groups $fg
+    }
+}
+if {[llength $target_file_groups] == 0} {
+    puts "WARNING: no synthesis/simulation file group found on IP core; skipping force-package"
+}
+foreach base $force_packaged_sources {
+    set src_file ""
+    foreach src $vsources_list {
+        if {[file tail $src] eq $base} {
+            set src_file $src
+            break
+        }
+    }
+    if { $src_file eq "" } {
+        puts "WARNING: force-packaged source $base not found in vsources_list"
+        continue
+    }
+    set dst [file normalize "${packaged_src_dir}/${base}"]
+    if {![file exists $dst]} {
+        file copy -force $src_file $dst
+    }
+    foreach fg $target_file_groups {
+        set already_present 0
+        foreach fobj [ipx::get_files -of $fg] {
+            if {[file tail [get_property NAME $fobj]] eq $base} {
+                set already_present 1
+                break
+            }
+        }
+        if { $already_present } { continue }
+        ipx::add_file "src/${base}" $fg
+        puts "INFO: re-added src/${base} to [get_property NAME $fg]"
+    }
+}
 
 set_property core_revision 2 $core
 foreach up [ipx::get_user_parameters] {
@@ -366,7 +457,8 @@ foreach up [ipx::get_user_parameters] {
 
 ipx::associate_bus_interfaces -busif s_axi_ctrl -clock ap_clk $core
 
-for {set i 0} {$i < $num_banks} {incr i} {
+# vortex_afu.v exposes NUM_DMA_CHANNELS top-level AXI masters regardless of merged/bank config.
+for {set i 0} {$i < $num_ports} {incr i} {
     ipx::associate_bus_interfaces -busif m_axi_mem_$i -clock ap_clk $core
 }
 
@@ -458,8 +550,8 @@ set reg [::ipx::add_register -quiet "SCP" $addr_block]
 set_property address_offset 0x028 $reg
 set_property size           [expr {8*8}]   $reg
 
-for {set i 0} {$i < $num_banks} {incr i} {
-# Add register for each memory bank
+for {set i 0} {$i < $num_ports} {incr i} {
+# One buffer-pointer register per top-level AXI master (MEM_i ↔ m_axi_mem_i).
 set reg [::ipx::add_register -quiet "MEM_$i" $addr_block]
 set_property address_offset [expr {0x30 + $i * 8}] $reg
 set_property size           [expr {8*8}]   $reg

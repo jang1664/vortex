@@ -2,6 +2,10 @@
 # Add your platform specific configurations here
 
 CONFIGS += -DPLATFORM_MEMORY_DATA_SIZE=64
+# Mirror the vortex_afu.vh default so modules that reference the macro (e.g.
+# VX_dma_engine's AXI_ID_WIDTH default) get the macro expanded by Verilator
+# preprocessing. vortex_afu.vh wraps the define in `ifndef`, so this is safe.
+CONFIGS += -DPLATFORM_MEMORY_ID_WIDTH=32
 
 # SP_FLAGS collects memory connectivity specs for gen_vitis_ini.sh
 SP_FLAGS :=
