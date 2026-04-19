@@ -73,6 +73,14 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
     localparam int READ_BURST_GROUPS = 4;
     localparam int READ_GROUP_CAP    = READ_WINDOW_WORDS / READ_BURST_GROUPS;
 
+    // Bus-word / HBM-bank geometry (all derived from VX_config.vh macros)
+    localparam int BLOCK_SIZE_B         = `MEM_BLOCK_SIZE;
+    localparam int BLOCK_SHIFT          = `CLOG2(BLOCK_SIZE_B);
+    localparam int HBM_BANK_BITS        = `CLOG2(`PLATFORM_MEMORY_NUM_BANKS);
+    localparam int HBM_BANK_SHIFT       = `PLATFORM_MEMORY_ADDR_WIDTH - HBM_BANK_BITS;
+    localparam int HBM_BUS_STRIDE_B     = `HBM_BUS_STRIDE;
+    localparam int HBM_BUS_STRIDE_SHIFT = `CLOG2(HBM_BUS_STRIDE_B);
+
     function automatic [2:0] calc_group_words(
         input logic [4:0] window_words,
         input logic [1:0] group_idx
@@ -93,15 +101,15 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
     );
         logic [AXI_ADDR_WIDTH-1:0] block_idx;
         logic [AXI_ADDR_WIDTH-1:0] byte_offset;
-        logic [4:0]                bank_idx;
+        logic [HBM_BANK_BITS-1:0]  bank_idx;
         logic [AXI_ADDR_WIDTH-1:0] bank_offset;
         begin
-            block_idx   = byte_addr >> 6;
-            byte_offset = byte_addr & AXI_ADDR_WIDTH'(64'h3f);
-            bank_idx    = block_idx[4:0];
-            bank_offset = (block_idx >> 5) << 6;
+            block_idx   = byte_addr >> BLOCK_SHIFT;
+            byte_offset = byte_addr & ((AXI_ADDR_WIDTH'(1) << BLOCK_SHIFT) - 1);
+            bank_idx    = block_idx[HBM_BANK_BITS-1:0];
+            bank_offset = (block_idx >> HBM_BANK_BITS) << BLOCK_SHIFT;
             calc_remap_byte_addr =
-                ({ {(AXI_ADDR_WIDTH-5){1'b0}}, bank_idx } << 29)
+                ({ {(AXI_ADDR_WIDTH-HBM_BANK_BITS){1'b0}}, bank_idx } << HBM_BANK_SHIFT)
               | bank_offset
               | byte_offset;
         end
@@ -274,7 +282,7 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
                                      ? READ_WINDOW_WORDS[4:0]
                                      : burst_words_remaining[4:0];
         assign burst_service_word   = burst_words_served_r[3:0];
-        assign burst_expected_byte_addr = burst_src_base_byte_r + (AXI_ADDR_WIDTH'(burst_words_served_r) << 9);
+        assign burst_expected_byte_addr = burst_src_base_byte_r + (AXI_ADDR_WIDTH'(burst_words_served_r) << HBM_BUS_STRIDE_SHIFT);
         assign burst_service_data_ready = burst_window_valid_r[burst_service_word];
 
         for (genvar g = 0; g < READ_BURST_GROUPS; ++g) begin : g_burst_group_words
@@ -294,7 +302,7 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
                                      : burst_wr_words_remaining[4:0];
 
         assign burst_wr_expected_byte_addr = burst_wr_dst_base_byte_r
-                                           + (AXI_ADDR_WIDTH'(burst_wr_words_captured_r) << 9);
+                                           + (AXI_ADDR_WIDTH'(burst_wr_words_captured_r) << HBM_BUS_STRIDE_SHIFT);
 
         assign wr_req_ready = (write_state_r == WR_BURST_CAPTURE)
                            && (burst_wr_words_captured_r < desc_words_r)
@@ -325,23 +333,23 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
         always_ff @(posedge clk) begin
             if (!reset && cfg_fire) begin
                 if (cfg_is_read) begin
-                    assert (cfg_reg_if[ch].regs[DMA_R_SEG_SIZE] == 32'd64
+                    assert (cfg_reg_if[ch].regs[DMA_R_SEG_SIZE] == 32'(`MEM_BLOCK_SIZE)
                          && cfg_reg_if[ch].regs[DMA_R_PAD]      == 32'd0
                          && cfg_reg_if[ch].regs[DMA_R_BND2]     == 32'd1
-                         && cfg_reg_if[ch].regs[DMA_R_SRC_ST0]  == 32'd512
+                         && cfg_reg_if[ch].regs[DMA_R_SRC_ST0]  == 32'(`HBM_BUS_STRIDE)
                          && cfg_reg_if[ch].regs[DMA_R_SRC_ST2]  == 32'd0
                          && cfg_reg_if[ch].regs[DMA_R_DST_ST2]  == 32'd0
-                         && cfg_reg_if[ch].regs[DMA_R_SRC_BASE_LO][5:0] == 6'd0
+                         && cfg_reg_if[ch].regs[DMA_R_SRC_BASE_LO][BLOCK_SHIFT-1:0] == '0
                          && cfg_reg_if[ch].regs[DMA_R_BND0] != 32'd0)
                     else $fatal(1, "%m: non-burst read DMA descriptor detected (ch=%0d)", ch);
                 end else begin
-                    assert (cfg_reg_if[ch].regs[DMA_R_SEG_SIZE] == 32'd64
+                    assert (cfg_reg_if[ch].regs[DMA_R_SEG_SIZE] == 32'(`MEM_BLOCK_SIZE)
                          && cfg_reg_if[ch].regs[DMA_R_PAD]      == 32'd0
                          && cfg_reg_if[ch].regs[DMA_R_BND2]     == 32'd1
-                         && cfg_reg_if[ch].regs[DMA_R_DST_ST0]  == 32'd512
+                         && cfg_reg_if[ch].regs[DMA_R_DST_ST0]  == 32'(`HBM_BUS_STRIDE)
                          && cfg_reg_if[ch].regs[DMA_R_SRC_ST2]  == 32'd0
                          && cfg_reg_if[ch].regs[DMA_R_DST_ST2]  == 32'd0
-                         && cfg_reg_if[ch].regs[DMA_R_DST_BASE_LO][5:0] == 6'd0
+                         && cfg_reg_if[ch].regs[DMA_R_DST_BASE_LO][BLOCK_SHIFT-1:0] == '0
                          && cfg_reg_if[ch].regs[DMA_R_BND0] != 32'd0)
                     else $fatal(1, "%m: non-burst write DMA descriptor detected (ch=%0d)", ch);
                 end
@@ -466,7 +474,7 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
                             for (int i = 0; i < READ_BURST_GROUPS; ++i) begin
                                 burst_group_count_r[i]     <= burst_group_words[i];
                                 burst_group_base_addr_r[i] <= calc_remap_byte_addr(
-                                    hbm_req_byte_addr + (AXI_ADDR_WIDTH'(i) << 9)
+                                    hbm_req_byte_addr + (AXI_ADDR_WIDTH'(i) << HBM_BUS_STRIDE_SHIFT)
                                 );
                             end
                         end
@@ -548,7 +556,7 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
                                     for (int i = 0; i < READ_BURST_GROUPS; ++i) begin
                                         burst_wr_group_count_r[i]     <= burst_wr_group_words[i];
                                         burst_wr_group_base_addr_r[i] <= calc_remap_byte_addr(
-                                            hbm_req_byte_addr + (AXI_ADDR_WIDTH'(i) << 9)
+                                            hbm_req_byte_addr + (AXI_ADDR_WIDTH'(i) << HBM_BUS_STRIDE_SHIFT)
                                         );
                                     end
                                 end

@@ -118,8 +118,8 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
     // Distributes seg_size across channels at 64-byte bus-word
     // granularity. Channels with no words are marked inactive.
     // =========================================================
-    localparam int BUS_WORD_SHIFT = 6;  // log2(64)
-    localparam int NUM_CH_SHIFT   = 3;  // log2(8)
+    localparam int BUS_WORD_SHIFT = `CLOG2(`MEM_BLOCK_SIZE);
+    localparam int NUM_CH_SHIFT   = `CLOG2(NUM_CHANNELS);
 
     function automatic [63:0] tmem_bank_local_addr(input [63:0] byte_addr);
         begin
@@ -179,8 +179,8 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
             ch_prog_regs[DMA_R_DST_BASE_HI] = ch_dst_base[63:32];
             ch_prog_regs[DMA_R_SRC_BASE_LO] = ch_src_base[31:0];
             ch_prog_regs[DMA_R_SRC_BASE_HI] = ch_src_base[63:32];
-            ch_prog_regs[DMA_R_SRC_ST0]     = dir_is_st ? 32'd64  : 32'd512;  // TMEM:64, HBM:512
-            ch_prog_regs[DMA_R_DST_ST0]     = dir_is_st ? 32'd512 : 32'd64;   // HBM:512, TMEM:64
+            ch_prog_regs[DMA_R_SRC_ST0]     = dir_is_st ? 32'(`MEM_BLOCK_SIZE) : 32'(`HBM_BUS_STRIDE);  // TMEM stride : HBM stride
+            ch_prog_regs[DMA_R_DST_ST0]     = dir_is_st ? 32'(`HBM_BUS_STRIDE) : 32'(`MEM_BLOCK_SIZE); // HBM stride : TMEM stride
             ch_prog_regs[DMA_R_SRC_ST1]     = dir_is_st ? tmem_bank_local_stride(src_s0) : src_s0;  // bank-local or full
             ch_prog_regs[DMA_R_DST_ST1]     = dir_is_st ? dst_s0 : tmem_bank_local_stride(dst_s0);  // full or bank-local
             ch_prog_regs[DMA_R_SRC_ST2]     = 32'd0;
@@ -188,7 +188,7 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
             ch_prog_regs[DMA_R_BND0]        = ch_words;          // number of bus-word blocks for this channel
             ch_prog_regs[DMA_R_BND1]        = bnd0;              // original bnd0 from command (multi-segment)
             ch_prog_regs[DMA_R_BND2]        = 32'd1;
-            ch_prog_regs[DMA_R_SEG_SIZE]    = 32'd64;            // one 64B bus word per DMA segment
+            ch_prog_regs[DMA_R_SEG_SIZE]    = 32'(`MEM_BLOCK_SIZE); // one bus word per DMA segment
             ch_prog_regs[DMA_R_PAD]         = 32'd0;
             ch_prog_regs[DMA_R_DIR]         = {31'd0, dir_is_st};
             ch_prog_regs[DMA_R_RSVD]        = 32'd0;

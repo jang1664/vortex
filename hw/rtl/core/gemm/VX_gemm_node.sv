@@ -18,7 +18,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     parameter `STRING INSTANCE_ID = "",
     parameter N_MASTER    = 1,
     parameter N_CHILDREN  = 5,
-    parameter NUM_TMEM_BANKS = 8
+    parameter NUM_TMEM_BANKS = `NUM_DMA_CHANNELS
 ) (
     // Clock
     input wire              clk,
@@ -434,9 +434,9 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     VX_tmem_subsystem #(
       .INSTANCE_ID    ({INSTANCE_ID, ":tmem"}),
       .NUM_BANKS      (NUM_TMEM_BANKS),
-      .BANK_SIZE      (32*1024),
-      .DATA_SIZE      (64),
-      .GEMM_DATA_SIZE (64),
+      .BANK_SIZE      (`TMEM_BANK_SIZE),
+      .DATA_SIZE      (`MEM_BLOCK_SIZE),
+      .GEMM_DATA_SIZE (`MEM_BLOCK_SIZE),
       .TAG_WIDTH      (GEMM_BASE_TAG_WIDTH)
     ) u_tmem_subsystem (
       .clk            (clk),

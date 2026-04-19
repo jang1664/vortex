@@ -143,7 +143,7 @@ module VX_core_top import VX_gpu_pkg::*; #(
     `UNUSED_VAR (scope_bus_out_w)
 `endif
 
-    localparam NUM_TMEM_BANKS = 8;
+    localparam NUM_TMEM_BANKS = `NUM_DMA_CHANNELS;
 
     AXI_BUS #(
         .AXI_ADDR_WIDTH (`PLATFORM_MEMORY_ADDR_WIDTH),

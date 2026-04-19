@@ -1113,6 +1113,11 @@ for block_size in range(1, full_bitwidth+1):
 // Configuration Registers
 // -------------------------------------------------------
 `define NUM_DMA_CHANNELS 8        // Number of DMA AXI channels per core (TMEM banks)
+`define TMEM_BANK_SIZE (256 * 1024) // 256KB
+
+// HBM interleave stride (bytes): consecutive MEM_BLOCK_SIZE blocks round-robin
+// across all DMA channels before advancing to the next stripe within one HBM bank.
+`define HBM_BUS_STRIDE (`MEM_BLOCK_SIZE * `NUM_DMA_CHANNELS)
 
 `define GEMM_CFG_REG_NUM 40       // Number of GEMM configuration registers
 `define DMA_CFG_REG_NUM 18        // Number of DMA configuration registers

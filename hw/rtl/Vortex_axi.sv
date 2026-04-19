@@ -122,7 +122,7 @@ module Vortex_axi import VX_gpu_pkg::*; #(
     // Address select bits for demux: route based on address bits.
     // After VX_mem_remap below, the HBM bank index sits at REMAP_BANK_SHIFT.
     localparam HBM_SEL_BITS = `CLOG2(NUM_HBM_PORTS);
-    localparam REMAP_BANK_SHIFT = 29;
+    localparam REMAP_BANK_SHIFT = `PLATFORM_MEMORY_ADDR_WIDTH - `CLOG2(`PLATFORM_MEMORY_NUM_BANKS);
 
     ///////////////////////////////////////////////////////////////////////////
     // AXI struct typedefs for axi_mux and axi_demux

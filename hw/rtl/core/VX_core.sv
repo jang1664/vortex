@@ -20,7 +20,7 @@
 module VX_core import VX_gpu_pkg::*; #(
     parameter CORE_ID = 0,
     parameter `STRING INSTANCE_ID = "",
-    parameter NUM_TMEM_BANKS = 8
+    parameter NUM_TMEM_BANKS = `NUM_DMA_CHANNELS
 ) (
     `SCOPE_IO_DECL
 
