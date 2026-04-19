@@ -18,11 +18,7 @@ All commands run from the `build/` directory.
 ```bash
 cd build
 
-# Basic: run app with a driver. Use Same CONFIGS envvar if there is no special reason to change configs.
-CONFIGS=""
-CONFIGS+=" -DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MERGED_MEMORY_INTERFACE"
-CONFIGS+=" -DDCACHE_DISABLE -DL2_ENABLE -DNUM_THREADS=8"
-CONFIGS+=" -DLMEM_LOG_SIZE=22 -DSTACK_BASE_ADDR=8585740288"
+# Base CONFIGS comes from hw_config.sh (auto-loaded via .envrc). Append only extras.
 CONFIGS+=" -DDBG_TRACE_PIPELINE"
 CONFIGS+=" -DDBG_TRACE_MEM"
 CONFIGS+=" -DDBG_TRACE_CACHE"
@@ -31,7 +27,6 @@ CONFIGS+=" -DDBG_TRACE_SCOPE"
 CONFIGS+=" -DDBG_TRACE_GBAR"
 CONFIGS+=" -DDBG_TRACE_TCU"
 CONFIGS+=" -DDBG_TRACE_GEMM"
-CONFIGS+=" -DAFU_DONE_WAIT_CACHE_DRAIN"
 NUM_CORES=1
 NUM_THREADS=8
 DEBUG_LEVEL=3
@@ -70,7 +65,7 @@ Use timeout to prevent hanging. First time, use 5 minutes to see if it completes
 
 | Variable | Description |
 |---|---|
-| `CONFIGS` | Additional RTL build defines (e.g., `-DNUM_THREADS=8 -DLMEM_LOG_SIZE=22`) |
+| `CONFIGS` | RTL build defines. Base set exported by `hw_config.sh` via `.envrc`; scripts append debug/test-specific extras. |
 | `DRIVER` | Override driver (needed for xrt_vcs) |
 | `TARGET` | `hw_emu` or `hw` (for XRT driver) |
 | `FPGA_BIN_DIR` | Path to xclbin directory (hw_emu/hw) |

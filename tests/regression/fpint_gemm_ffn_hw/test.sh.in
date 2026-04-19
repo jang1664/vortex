@@ -3,7 +3,7 @@
 set -euo pipefail
 
 # Allow override from environment
-export CONFIGS="${CONFIGS:--DDBG_TRACE_GEMM_FSM -DNUM_CORES=1 -DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34}"
+export CONFIGS="${CONFIGS:--DDBG_TRACE_GEMM_FSM -DNUM_CORES=1}"
 export MAX_LOG_BYTES="${MAX_LOG_BYTES:-10485760}"  # 10 MB
 DRIVER="${DRIVER:-rtlsim}"
 APP="${APP:-fpint_gemm_ffn_hw}"

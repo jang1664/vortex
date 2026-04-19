@@ -140,9 +140,7 @@ def build_default_cases() -> list[str]:
 # ---------------------------------------------------------------------------
 def main() -> int:
     env = os.environ
-    configs = env.get("CONFIGS",
-                      "-DNUM_CORES=1 -DMEM_ADDR_WIDTH=34 "
-                      "-DPLATFORM_MEMORY_ADDR_WIDTH=34")
+    configs = env.get("CONFIGS", "-DNUM_CORES=1")
     max_log_bytes = env.get("MAX_LOG_BYTES", str(10 * 1024 * 1024))  # 10 MB
     driver = env.get("DRIVER", "rtlsim")
     app = env.get("APP", "fpint_gemm_ffn_hw_improve")

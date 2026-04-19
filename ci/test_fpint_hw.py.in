@@ -66,16 +66,9 @@ def parse_args(argv: list[str]) -> tuple[str, str, list[str]]:
 
 
 def build_configs() -> str:
-    parts = [
-        "-DMEM_ADDR_WIDTH=34",
-        "-DPLATFORM_MEMORY_ADDR_WIDTH=34",
-        "-DPLATFORM_MEMORY_NUM_BANKS=32",
-        "-DPLATFORM_MERGED_MEMORY_INTERFACE",
-        "-DDCACHE_DISABLE",
-        "-DL2_ENABLE",
-        "-DNUM_THREADS=8",
-        "-DLMEM_LOG_SIZE=22",
-        "-DSTACK_BASE_ADDR=8585740288",
+    # Base CONFIGS exported by hw_config.sh (via .envrc). Append script-specific flags.
+    base = os.environ.get("CONFIGS", "")
+    extras = [
         "-DDBG_TRACE_PIPELINE",
         "-DDBG_TRACE_MEM",
         "-DDBG_TRACE_CACHE",
@@ -84,12 +77,11 @@ def build_configs() -> str:
         "-DDBG_TRACE_GBAR",
         "-DDBG_TRACE_TCU",
         "-DDBG_TRACE_GEMM",
-        "-DAFU_DONE_WAIT_CACHE_DRAIN",
         "-DNUM_CORES=1",
     ]
     # Optional DBG / VCD_OUTPUT flags (disabled by default).
     # Add "-DVCD_OUTPUT" here if you want VCD dumps (only useful with DEBUG_LEVEL>=1).
-    return " ".join(parts)
+    return f"{base} {' '.join(extras)}".strip()
 
 
 def run_test(extra_env: dict[str, str],
