@@ -292,7 +292,7 @@ gen-xo: $(XO_CONTAINER)
 $(XO_CONTAINER): $(BUILD_DIR)/sources.txt $(XRT_BACKUP_STAMP)
 	mkdir -p $(BUILD_DIR); cd $(BUILD_DIR);	TOOL_DIR=$(SCRIPT_DIR) $(VIVADO) -mode batch -source $(XRT_RUN_DIR)/gen_xo.tcl -tclargs ../$(XO_CONTAINER) vortex_afu sources.txt ../$(BUILD_DIR) $(DEVICE_PART)
 
-$(VITIS_INI): $(SRC_DIR)/gen_vitis_ini.py $(XRT_BACKUP_STAMP)
+$(VITIS_INI): $(SRC_DIR)/gen_vitis_ini.py $(SRC_DIR)/platforms.mk $(XRT_BACKUP_STAMP)
 	python3 $(SRC_DIR)/gen_vitis_ini.py $(VITIS_INI_ARGS)
 
 gen-bin: $(XCLBIN_CONTAINER)
