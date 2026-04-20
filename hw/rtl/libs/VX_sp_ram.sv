@@ -104,34 +104,64 @@ module VX_sp_ram #(
     localparam FORCE_BRAM = !LUTRAM && `FORCE_BRAM(SIZE, DATAW);
     // USE_URAM: 0=auto (use URAM if size >= 256Kb), 1=force URAM, 2=force BRAM
     localparam SELECT_URAM = (USE_URAM == 1) || (USE_URAM == 0 && `FORCE_URAM(SIZE, DATAW));
-    // URAM constraints: no write-first mode, no byte-enable
-    localparam URAM_COMPATIBLE = (RDW_MODE != "W") && (WRENW == 1);
+    // URAM constraints: BRAM-style write_first is not a URAM semantic.
+    // Byte-enable is supported (URAM has 8-bit BWE granularity).
+    localparam URAM_COMPATIBLE = (RDW_MODE != "W");
     localparam USE_URAM_FINAL = FORCE_BRAM && SELECT_URAM && (USE_URAM != 2) && URAM_COMPATIBLE;
     if (OUT_REG) begin : g_sync
         if (USE_URAM_FINAL) begin : g_uram
-            // URAM path: read-first or no-change mode only, no byte-enable
+            // URAM path: read-first or no-change mode only.
+            // Byte-enable (WRENW != 1) maps to URAM's 9-bit BWE bus at 8-bit
+            // granularity; Vivado infers this from the standard byte-enable
+            // idiom (UG901: UltraRAM Coding Templates).
             if (RDW_MODE == "R") begin : g_read_first
-                `USE_ULTRA_BRAM reg [DATAW-1:0] ram [0:SIZE-1];
-                `RAM_INITIALIZATION
-                reg [DATAW-1:0] rdata_r;
-                always @(posedge clk) begin
-                    `RAM_WRITE_ALL
-                    if (read) begin
-                        rdata_r <= ram[addr];
+                if (WRENW != 1) begin : g_wren
+                    `USE_ULTRA_BRAM `RAM_ARRAY_WREN
+                    `RAM_INITIALIZATION
+                    reg [DATAW-1:0] rdata_r;
+                    always @(posedge clk) begin
+                        `RAM_WRITE_WREN
+                        if (read) begin
+                            rdata_r <= ram[addr];
+                        end
                     end
+                    assign rdata = rdata_r;
+                end else begin : g_no_wren
+                    `USE_ULTRA_BRAM reg [DATAW-1:0] ram [0:SIZE-1];
+                    `RAM_INITIALIZATION
+                    reg [DATAW-1:0] rdata_r;
+                    always @(posedge clk) begin
+                        `RAM_WRITE_ALL
+                        if (read) begin
+                            rdata_r <= ram[addr];
+                        end
+                    end
+                    assign rdata = rdata_r;
                 end
-                assign rdata = rdata_r;
             end else begin : g_no_change
-                `USE_ULTRA_BRAM reg [DATAW-1:0] ram [0:SIZE-1];
-                `RAM_INITIALIZATION
-                reg [DATAW-1:0] rdata_r;
-                always @(posedge clk) begin
-                    `RAM_WRITE_ALL
-                    else if (read) begin
-                        rdata_r <= ram[addr];
+                if (WRENW != 1) begin : g_wren
+                    `USE_ULTRA_BRAM `RAM_ARRAY_WREN
+                    `RAM_INITIALIZATION
+                    reg [DATAW-1:0] rdata_r;
+                    always @(posedge clk) begin
+                        `RAM_WRITE_WREN
+                        else if (read) begin
+                            rdata_r <= ram[addr];
+                        end
                     end
+                    assign rdata = rdata_r;
+                end else begin : g_no_wren
+                    `USE_ULTRA_BRAM reg [DATAW-1:0] ram [0:SIZE-1];
+                    `RAM_INITIALIZATION
+                    reg [DATAW-1:0] rdata_r;
+                    always @(posedge clk) begin
+                        `RAM_WRITE_ALL
+                        else if (read) begin
+                            rdata_r <= ram[addr];
+                        end
+                    end
+                    assign rdata = rdata_r;
                 end
-                assign rdata = rdata_r;
             end
         end else if (FORCE_BRAM) begin : g_bram
             if (RDW_MODE == "W") begin : g_write_first

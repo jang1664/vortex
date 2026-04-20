@@ -99,6 +99,11 @@ module VX_tensor_mem_bank import VX_gpu_pkg::*; #(
 
     wire [DATA_WIDTH-1:0] sram_rdata;
 
+    // Single-port bank: sram_read and sram_write are mutually exclusive
+    // (gated by req_rw), so RDW_MODE has no observable effect. We set it
+    // to "R" because URAM primitives don't support BRAM-style write_first.
+    // USE_URAM=1 forces URAM mapping even though per-bank size (32 Kbit) is
+    // below the auto-select threshold; on U55C ~900 URAM blocks are idle.
     VX_sp_ram #(
         .DATAW    (DATA_WIDTH),
         .SIZE     (NUM_WORDS),
