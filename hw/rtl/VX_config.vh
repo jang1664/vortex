@@ -242,7 +242,7 @@
 `define IO_END_ADDR     `USER_BASE_ADDR
 
 `ifndef LMEM_LOG_SIZE
-`define LMEM_LOG_SIZE   22
+`define LMEM_LOG_SIZE   21
 `endif
 
 `ifndef LMEM_BASE_ADDR
