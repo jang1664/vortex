@@ -45,24 +45,6 @@ CONFIGS+=" -DDBG_TRACE_GEMM"
 
 `$display`/`$isunknown` probe를 임시로 추가하는 것보다 `TRACE` 매크로가 낫다: `DBG_TRACE_*` define이 없으면 컴파일에서 빠지므로 성능 영향 없음.
 
-### 3. Waveform 분석은 FSDB → pywellen으로
-
-중요한 signal을 확인해야 할 때:
-1. `FSDB_DUMP=1`으로 FSDB 생성
-2. FSDB를 FST로 변환: `fst2vcd` 또는 `fsdb2vcd` + `vcd2fst` 사용
-3. **pywellen으로 trace 분석** — GUI(Verdi/GTKWave) 없이도 signal 값 추출 가능
-
-```python
-import pywellen
-db = pywellen.open("dump.fst")  # or .fsdb
-# 특정 signal 값 확인
-sig = db.signal("tb.dut.vortex_axi.busy")
-for t, v in db.signal_changes(sig):
-    print(f"t={t}: {v}")
-```
-
-probe를 추가하고 다시 컴파일+실행하는 반복보다 **한 번의 waveform dump + pywellen 분석**이 훨씬 빠르다.
-
 ## xprop Debugging (VCS -xprop=tmerge)
 
 When `xprop=tmerge` simulation fails with X-propagation:
