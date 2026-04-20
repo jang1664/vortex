@@ -19,7 +19,10 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
   parameter int DIR  = 0,
   parameter int NDIM = 3,
   parameter int TAG_WIDTH = 1,
-  parameter int RD_PREFETCH_DEPTH = 1
+  parameter int RD_PREFETCH_DEPTH = 1,
+  // When 0, synthesize aligned-only datapath. See VX_dma_unit_misal for
+  // semantics. Simulation-only $fatal guards the SW contract.
+  parameter bit ENABLE_MISALIGN = 1'b0
 ) (
   input  wire clk,
   input  wire reset,
@@ -35,7 +38,8 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
   localparam int BUS_BITS  = BUS_BYTES * 8;
   localparam int BUS_LG2   = `CLOG2(BUS_BYTES);
 
-  localparam int WIN_BYTES = 2 * BUS_BYTES;
+  // Misalign holds 2 beats for window shift; aligned only needs 1.
+  localparam int WIN_BYTES = ENABLE_MISALIGN ? (2 * BUS_BYTES) : BUS_BYTES;
   localparam int WIN_BITS  = WIN_BYTES * 8;
   localparam int WIN_VALID_W = `CLOG2(WIN_BYTES + 1);
 
@@ -150,6 +154,27 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
   logic        precalc_pending_r;
 
   wire cmd_start = ctrl_if.start && (top_state == TOP_IDLE);
+
+`ifndef SYNTHESIS
+  always_ff @(posedge clk) begin
+    if (!reset && !ENABLE_MISALIGN && cmd_start) begin
+      if (|ctrl_if.src_base_addr[BUS_LG2-1:0])
+        $fatal(1, "%s: ENABLE_MISALIGN=0 but src_base=0x%016h is not %0d-byte aligned",
+               INSTANCE_ID, ctrl_if.src_base_addr, BUS_BYTES);
+      if (|ctrl_if.dst_base_addr[BUS_LG2-1:0])
+        $fatal(1, "%s: ENABLE_MISALIGN=0 but dst_base=0x%016h is not %0d-byte aligned",
+               INSTANCE_ID, ctrl_if.dst_base_addr, BUS_BYTES);
+      for (int d = 0; d < NDIM; d++) begin
+        if (|ctrl_if.src_strides[d][BUS_LG2-1:0])
+          $fatal(1, "%s: ENABLE_MISALIGN=0 but src_stride[%0d]=0x%08h is not %0d-byte aligned",
+                 INSTANCE_ID, d, ctrl_if.src_strides[d], BUS_BYTES);
+        if (|ctrl_if.dst_strides[d][BUS_LG2-1:0])
+          $fatal(1, "%s: ENABLE_MISALIGN=0 but dst_stride[%0d]=0x%08h is not %0d-byte aligned",
+                 INSTANCE_ID, d, ctrl_if.dst_strides[d], BUS_BYTES);
+      end
+    end
+  end
+`endif
   wire precalc_issue = (top_state == TOP_PRECALC) && precalc_pending_r;
 
   logic [5:0]       precalc_valid;
@@ -284,7 +309,10 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
   wire [63:0] wr_src_byte_addr = wr_base_src_seg_r + 64'(wr_out_off_r);
   wire [63:0] wr_dst_byte_addr = wr_base_dst_seg_r + 64'(wr_out_off_r);
   wire [31:0] wr_remaining = (wr_out_off_r < seg_size_r) ? (seg_size_r - wr_out_off_r) : 32'd0;
-  wire [31:0] wr_lane = 32'(wr_dst_byte_addr[BUS_LG2-1:0]);
+  // Aligned mode guarantees the low bits are 0, so we short-circuit the lane
+  // computation to a constant — makes the lane-shift barrel in wr_data fold
+  // away at elaboration time.
+  wire [31:0] wr_lane = ENABLE_MISALIGN ? 32'(wr_dst_byte_addr[BUS_LG2-1:0]) : 32'd0;
   wire [31:0] wr_beat_room = BUS_BYTES - wr_lane;
   wire [31:0] wr_nbytes = umin32(wr_remaining, wr_beat_room);
   wire [63:0] wr_dst_aligned = wr_dst_byte_addr - 64'($unsigned(wr_lane));
@@ -306,21 +334,37 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
     wr_src_drop_pre  = wr_src_drop_r;
 
     if (wr_pull_slot) begin
-      wr_win_pre[wr_win_valid_r*8 +: BUS_BITS] = slot_data_r[wr_expect_slot_r];
+      if (ENABLE_MISALIGN)
+        wr_win_pre[wr_win_valid_r*8 +: BUS_BITS] = slot_data_r[wr_expect_slot_r];
+      else
+        // Aligned: staging is a single BUS_BYTES-wide reg. wr_win_valid_r is
+        // always 0 when wr_pull_slot fires (see wr_pull_slot condition).
+        wr_win_pre[0 +: BUS_BITS] = slot_data_r[wr_expect_slot_r];
       wr_win_valid_pre = wr_win_valid_r + WIN_VALID_W'(BUS_BYTES);
     end
 
-    if ((wr_src_drop_pre != 0) && (wr_win_valid_pre >= wr_src_drop_pre[WIN_VALID_W-1:0])) begin
-      wr_win_pre       = wr_win_pre >> (wr_src_drop_pre * 8);
-      wr_win_valid_pre = wr_win_valid_pre - wr_src_drop_pre[WIN_VALID_W-1:0];
-      wr_src_drop_pre  = 32'd0;
+    if (ENABLE_MISALIGN) begin
+      if ((wr_src_drop_pre != 0) && (wr_win_valid_pre >= wr_src_drop_pre[WIN_VALID_W-1:0])) begin
+        wr_win_pre       = wr_win_pre >> (wr_src_drop_pre * 8);
+        wr_win_valid_pre = wr_win_valid_pre - wr_src_drop_pre[WIN_VALID_W-1:0];
+        wr_src_drop_pre  = 32'd0;
+      end
     end
 
     wr_data   = '0;
     wr_byteen = mask_range(int'(wr_lane), int'(wr_nbytes));
-    for (int b = 0; b < BUS_BYTES; ++b) begin
-      if ((b >= int'(wr_lane)) && (b < int'(wr_lane + wr_nbytes))) begin
-        wr_data[b*8 +: 8] = wr_win_pre[(b - int'(wr_lane))*8 +: 8];
+    if (ENABLE_MISALIGN) begin
+      for (int b = 0; b < BUS_BYTES; ++b) begin
+        if ((b >= int'(wr_lane)) && (b < int'(wr_lane + wr_nbytes))) begin
+          wr_data[b*8 +: 8] = wr_win_pre[(b - int'(wr_lane))*8 +: 8];
+        end
+      end
+    end else begin
+      // lane = 0: window -> wr_data[0 +: wr_nbytes*8], zero-pad beyond
+      for (int b = 0; b < BUS_BYTES; ++b) begin
+        if (b < int'(wr_nbytes)) begin
+          wr_data[b*8 +: 8] = wr_win_pre[b*8 +: 8];
+        end
       end
     end
   end
@@ -471,7 +515,9 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
         wr_base_src_seg_r <= ctrl_if.src_base_addr;
         wr_base_dst_seg_r <= ctrl_if.dst_base_addr;
         wr_out_off_r      <= 32'd0;
-        wr_src_drop_r     <= ctrl_if.src_base_addr[BUS_LG2-1:0];
+        // Aligned mode keeps drop permanently 0 so synthesis can prune the
+        // drop register entirely.
+        wr_src_drop_r     <= ENABLE_MISALIGN ? ctrl_if.src_base_addr[BUS_LG2-1:0] : 32'd0;
         wr_win_r          <= '0;
         wr_win_valid_r    <= '0;
 
@@ -579,23 +625,35 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
               tmp_out_off = wr_out_off_r;
 
               if (wr_pull_slot) begin
-                tmp_win[tmp_valid*8 +: BUS_BITS] = slot_data_r[wr_expect_slot_r];
+                if (ENABLE_MISALIGN)
+                  tmp_win[tmp_valid*8 +: BUS_BITS] = slot_data_r[wr_expect_slot_r];
+                else
+                  tmp_win[0 +: BUS_BITS] = slot_data_r[wr_expect_slot_r];
                 tmp_valid = tmp_valid + BUS_BYTES[WIN_VALID_W-1:0];
                 slot_state_r[wr_expect_slot_r] <= SLOT_FREE;
                 wr_expect_slot_r <= wr_expect_slot_r + 1'b1;
               end
 
-              if ((tmp_drop != 0) && (tmp_valid >= tmp_drop[WIN_VALID_W-1:0])) begin
-                tmp_win   = tmp_win >> (tmp_drop * 8);
-                tmp_valid = tmp_valid - tmp_drop[WIN_VALID_W-1:0];
-                tmp_drop  = 32'd0;
+              if (ENABLE_MISALIGN) begin
+                if ((tmp_drop != 0) && (tmp_valid >= tmp_drop[WIN_VALID_W-1:0])) begin
+                  tmp_win   = tmp_win >> (tmp_drop * 8);
+                  tmp_valid = tmp_valid - tmp_drop[WIN_VALID_W-1:0];
+                  tmp_drop  = 32'd0;
+                end
               end
 
               if (dst_req_fire) begin
                 seg_adv_t wr_adv;
                 if (wr_nbytes != 0) begin
-                  tmp_win   = tmp_win >> (wr_nbytes * 8);
-                  tmp_valid = tmp_valid - wr_nbytes[WIN_VALID_W-1:0];
+                  if (ENABLE_MISALIGN) begin
+                    tmp_win   = tmp_win >> (wr_nbytes * 8);
+                    tmp_valid = tmp_valid - wr_nbytes[WIN_VALID_W-1:0];
+                  end else begin
+                    // Aligned: one beat consume empties staging. Next pull
+                    // refills with a full beat.
+                    tmp_win   = '0;
+                    tmp_valid = '0;
+                  end
                 end
                 tmp_out_off = wr_out_off_r + wr_nbytes;
 
@@ -621,7 +679,8 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
                       tmp_win   = '0;
                       tmp_valid = '0;
                     end
-                    tmp_drop     = wr_adv.src_base[BUS_LG2-1:0];
+                    // Aligned mode: drop is always 0 (assertion-enforced).
+                    tmp_drop     = ENABLE_MISALIGN ? wr_adv.src_base[BUS_LG2-1:0] : 32'd0;
                     tmp_out_off  = 32'd0;
 
                     if (rd_ahead_count_r != 0)

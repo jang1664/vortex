@@ -84,7 +84,13 @@ module tb_VX_dma_mem_unit import VX_gpu_pkg::*; ();
   // -----------------------------
   // DUT
   // -----------------------------
-  VX_dma_node #(.INSTANCE_ID("dma0")) dut (
+  // Aligned-path coverage: the bases (0x1000 / 0x3000) and strides in this
+  // testbench are all LMEM_BYTES-aligned, so keep ENABLE_MISALIGN=0 (default)
+  // to exercise the simplified datapath.
+  VX_dma_node #(
+    .INSTANCE_ID     ("dma0"),
+    .ENABLE_MISALIGN (1'b0)
+  ) dut (
     .clk          (clk),
     .reset        (reset),
     .cfg_reg_if   (cfg_reg_if),

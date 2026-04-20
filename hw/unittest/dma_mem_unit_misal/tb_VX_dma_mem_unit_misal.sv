@@ -22,7 +22,7 @@ module tb_VX_dma_mem_unit_misal import VX_gpu_pkg::*; ();
   // -----------------------------
   // Params
   // -----------------------------
-  localparam int CFG_NUM    = 16;
+  localparam int CFG_NUM    = `DMA_CFG_REG_NUM;
   localparam int CFG_DW     = 32;
 
   localparam int MEM_BYTES  = 64*1024;
@@ -91,7 +91,13 @@ module tb_VX_dma_mem_unit_misal import VX_gpu_pkg::*; ();
   // -----------------------------
   // DUT
   // -----------------------------
-  VX_dma_unit_misal #(.INSTANCE_ID("dma0")) dut (
+  // This testbench exercises byte-misaligned scenarios, so ENABLE_MISALIGN=1
+  // is forced. An aligned-only smoke run is run from the aligned companion
+  // testbench and covered at the VX_dma_engine level.
+  VX_dma_unit_misal #(
+    .INSTANCE_ID     ("dma0"),
+    .ENABLE_MISALIGN (1'b1)
+  ) dut (
     .clk          (clk),
     .reset        (reset),
     .cfg_reg_if   (cfg_reg_if),

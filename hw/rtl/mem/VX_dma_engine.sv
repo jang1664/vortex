@@ -28,7 +28,11 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
     parameter AXI_ID_WIDTH          = `PLATFORM_MEMORY_ID_WIDTH,
     parameter AXI_USER_WIDTH        = 1,
     parameter MEM_ADDR_WIDTH        = `MEM_ADDR_WIDTH,
-    parameter TAG_WIDTH             = 8
+    parameter TAG_WIDTH             = 8,
+    // Forwarded to each VX_dma_unit_misal channel — see that module for
+    // semantics. Default 0 (aligned-only) to match the chip-level SW
+    // convention; parents that still need byte-misalign must override.
+    parameter bit ENABLE_MISALIGN   = 1'b0
 ) (
     input wire clk,
     input wire reset,
@@ -148,7 +152,8 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
         VX_node_done_if internal_done_if();
 
         VX_dma_unit_misal #(
-            .INSTANCE_ID (INSTANCE_ID)
+            .INSTANCE_ID     (INSTANCE_ID),
+            .ENABLE_MISALIGN (ENABLE_MISALIGN)
         ) u_dma_unit (
             .clk            (clk),
             .reset          (reset),

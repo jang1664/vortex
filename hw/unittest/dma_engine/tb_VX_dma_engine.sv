@@ -45,15 +45,19 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; ();
       .TAG_WIDTH (TAG_WIDTH)
   ) tmem_bus_if [NUM_CHANNELS] ();
 
+  // Current dma_engine tb uses misaligned bases (e.g. 0x0103 / 0x0209), so
+  // force ENABLE_MISALIGN=1 to match. A separate aligned-only run can be
+  // exercised by flipping this override.
   VX_dma_engine #(
-      .INSTANCE_ID   ("tb_dma_engine"),
-      .NUM_CHANNELS  (NUM_CHANNELS),
-      .DATA_WIDTH    (DATA_WIDTH),
-      .AXI_ADDR_WIDTH(AXI_ADDR_W),
-      .AXI_DATA_WIDTH(DATA_WIDTH),
-      .AXI_ID_WIDTH  (AXI_ID_W),
-      .AXI_USER_WIDTH(AXI_USER_W),
-      .TAG_WIDTH     (TAG_WIDTH)
+      .INSTANCE_ID     ("tb_dma_engine"),
+      .NUM_CHANNELS    (NUM_CHANNELS),
+      .DATA_WIDTH      (DATA_WIDTH),
+      .AXI_ADDR_WIDTH  (AXI_ADDR_W),
+      .AXI_DATA_WIDTH  (DATA_WIDTH),
+      .AXI_ID_WIDTH    (AXI_ID_W),
+      .AXI_USER_WIDTH  (AXI_USER_W),
+      .TAG_WIDTH       (TAG_WIDTH),
+      .ENABLE_MISALIGN (1'b1)
   ) dut (
       .clk        (clk),
       .reset      (reset),

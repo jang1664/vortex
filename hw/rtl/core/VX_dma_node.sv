@@ -3,7 +3,10 @@
 module VX_dma_node import VX_gpu_pkg::*; #(
   parameter `STRING INSTANCE_ID = "",
   parameter int N_MASTER     = 1,
-  parameter int NUM_ENTRIES  = 16
+  parameter int NUM_ENTRIES  = 16,
+  // See VX_dma_unit_misal. Default 0 (aligned-only) to track the engine-level
+  // convention; override to 1 on paths where SW still emits misaligned bases.
+  parameter bit ENABLE_MISALIGN = 1'b0
 ) (
   input wire clk,
   input wire reset,
@@ -47,7 +50,8 @@ module VX_dma_node import VX_gpu_pkg::*; #(
   //  - performs misalignment-safe 3D copy
   //  - reports completion via done_if(entry_id)
   VX_dma_unit_misal #(
-    .INSTANCE_ID(INSTANCE_ID)
+    .INSTANCE_ID     (INSTANCE_ID),
+    .ENABLE_MISALIGN (ENABLE_MISALIGN)
   ) u_dma_unit_misal (
     .clk          (clk),
     .reset        (reset),
