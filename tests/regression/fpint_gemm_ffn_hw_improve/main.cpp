@@ -493,8 +493,14 @@ int main(int argc, char *argv[]) {
               << " WTRANS=" << WTRANS << " QDIR=" << QDIR << std::endl;
     return -1;
   }
+  if (M % 8 != 0) {
+    std::cerr << "M=" << M << " must be a multiple of 8"
+              << std::endl;
+    return -1;
+  }
   if (N % DMA_MXU_NT != 0) {
-    std::cerr << "N=" << N << " must be a multiple of DMA_MXU_NT=" << DMA_MXU_NT << std::endl;
+    std::cerr << "N=" << N << " must be a multiple of DMA_MXU_NT=" << DMA_MXU_NT
+              << std::endl;
     return -1;
   }
   if (K % DMA_MXU_KT != 0) {

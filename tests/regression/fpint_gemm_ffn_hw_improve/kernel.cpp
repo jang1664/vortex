@@ -142,11 +142,15 @@ static void send_mxu_store_output(uint32_t tmem_base, uint32_t acc_mem_base,
 // Tile constants
 // ============================================================================
 static constexpr uint32_t DMA_MT     = GEMM_FSM_MT;      // 128
+static constexpr uint32_t DMA_NT     = GEMM_FSM_NT;      // 128 (DMA N-tile: 128 wide)
 static constexpr uint32_t DMA_KT     = GEMM_FSM_KT;      // 128
 static constexpr uint32_t DMA_MXU_KT = GEMM_FSM_MXU_KT;  // 32
-static constexpr uint32_t DMA_MXU_NT = GEMM_FSM_MXU_NT;   // 32
+static constexpr uint32_t DMA_MXU_NT = GEMM_FSM_MXU_NT;  // 32 (MXU micro N-tile)
+static constexpr uint32_t NB_PER_NT  = DMA_NT / DMA_MXU_NT;  // 4 N-microtiles per DMA tile
 static constexpr uint32_t ACC_DBUF_STRIDE =
   GEMM_ACC_MEM_DEPTH * (4u * 2u * MXU_COL);
+// Within one acc DBuf group, 4 disjoint regions hold per-nb partial sums.
+static constexpr uint32_t ACC_NB_STRIDE = ACC_DBUF_STRIDE / NB_PER_NT;
 
 // ============================================================================
 // RID helpers for double-buffered sync registers
@@ -170,24 +174,27 @@ static void run_tiled_gemm(const kernel_arg_t* arg) {
   const uint32_t qdir   = arg->QDIR;
 
   const uint32_t m_tiles    = (M + DMA_MT - 1u) / DMA_MT;
-  const uint32_t n_tiles    = N / DMA_MXU_NT;
+  const uint32_t n_tiles    = (N + DMA_NT - 1u) / DMA_NT;   // ceil: last tile may be partial
   const uint32_t k_tiles    = (K + DMA_KT - 1u) / DMA_KT;
+  const uint32_t n_tiles_32 = N / DMA_MXU_NT;               // host DRAM tiling count
   const uint32_t tile_total = m_tiles * n_tiles * k_tiles;
 
-  const uint32_t ng_per_nt     = (DMA_MXU_NT + qblk - 1u) / qblk;
+  // N-groups per MXU micro-tile (32-wide); used for QROW qparam addressing.
+  const uint32_t ng_per_nt  = (DMA_MXU_NT + qblk - 1u) / qblk;
 
-  // Full-tile byte sizes (used for DRAM stride between K-tiles)
-  const uint32_t full_weight_kt_bytes = DMA_KT * (DMA_MXU_NT / 2u);
-  uint32_t full_scale_kt_bytes, full_zp_kt_bytes, qparam_kb_offset;
+  // Per-kt DRAM strides. Expressed directly in terms of N (not n_tiles*DMA_NT)
+  // so that a partial last nt_dma does not overshoot.
+  const uint64_t kt_w_stride = uint64_t(DMA_KT) * uint64_t(N) / 2u;
+  uint64_t kt_sc_stride, kt_zp_stride;
+  uint32_t qparam_kb_offset;
   if (qdir == 0) {
-    uint32_t full_groups_per_kt = DMA_KT / qblk;
-    full_scale_kt_bytes = full_groups_per_kt * DMA_MXU_NT * 2u;
-    full_zp_kt_bytes    = full_groups_per_kt * DMA_MXU_NT * 2u;
-    qparam_kb_offset    = 0;
+    kt_sc_stride = uint64_t(DMA_KT / qblk) * uint64_t(N) * 2u;
+    kt_zp_stride = kt_sc_stride;
+    qparam_kb_offset = 0;
   } else {
-    full_scale_kt_bytes = DMA_KT * ng_per_nt * 2u;
-    full_zp_kt_bytes    = DMA_KT * ng_per_nt * 2u;
-    qparam_kb_offset    = DMA_MXU_KT * ng_per_nt * 2u;
+    kt_sc_stride = uint64_t(DMA_KT) * uint64_t(n_tiles_32) * uint64_t(ng_per_nt) * 2u;
+    kt_zp_stride = kt_sc_stride;
+    qparam_kb_offset = DMA_MXU_KT * ng_per_nt * 2u;         // per-nb kb stride
   }
 
   const uint32_t w_seg_bytes = DMA_MXU_KT * (DMA_MXU_NT / 2u);
@@ -219,36 +226,49 @@ static void run_tiled_gemm(const kernel_arg_t* arg) {
   uint32_t store_reuse_target[2] = {0, 0};
   uint32_t store_done_target     = 0;
 
-  // ---- Helper: issue 4 DMA loads for a tile into buffer b ----
-  auto dma_preload_tile = [&](uint32_t b, uint32_t _mt, uint32_t _nt, uint32_t _kt) {
+  // ---- Helper: issue 4 DMA loads for one DMA tile into buffer b ----
+  // Host DRAM layout is tiled by 32-wide N micro-tiles (nt_32). Up to NB_PER_NT
+  // consecutive nt_32 slices for a given (mt, kt) are contiguous in DRAM, so a
+  // single DMA LOAD per category fetches the current (possibly partial) 128-wide
+  // tile for (mt, nt_dma, kt).
+  auto dma_preload_tile = [&](uint32_t b, uint32_t _mt, uint32_t _nt_dma, uint32_t _kt) {
     const uint32_t cm = ((M - _mt * DMA_MT) < DMA_MT) ? (M - _mt * DMA_MT) : DMA_MT;
     const uint32_t ck = ((K - _kt * DMA_KT) < DMA_KT) ? (K - _kt * DMA_KT) : DMA_KT;
+    const uint32_t cn = ((N - _nt_dma * DMA_NT) < DMA_NT) ? (N - _nt_dma * DMA_NT) : DMA_NT;
+    const uint32_t cur_nb_per_nt = cn / DMA_MXU_NT;
     const uint32_t in_bytes = cm * ck * 2u;
 
-    // Current tile byte sizes (may be smaller for the last K-tile)
-    const uint32_t cur_weight_kt_bytes = ck * (DMA_MXU_NT / 2u);
+    // Current tile byte sizes (may be smaller for the last K- or N-tile)
+    const uint32_t cur_weight_kt_bytes = ck * (cn / 2u);
     uint32_t cur_scale_kt_bytes, cur_zp_kt_bytes;
     if (qdir == 0) {
-      cur_scale_kt_bytes = (ck / qblk) * DMA_MXU_NT * 2u;
-      cur_zp_kt_bytes    = (ck / qblk) * DMA_MXU_NT * 2u;
+      cur_scale_kt_bytes = (ck / qblk) * cn * 2u;
+      cur_zp_kt_bytes    = (ck / qblk) * cn * 2u;
     } else {
-      cur_scale_kt_bytes = ck * ng_per_nt * 2u;
-      cur_zp_kt_bytes    = ck * ng_per_nt * 2u;
+      cur_scale_kt_bytes = ck * ng_per_nt * 2u * cur_nb_per_nt;
+      cur_zp_kt_bytes    = ck * ng_per_nt * 2u * cur_nb_per_nt;
     }
 
-    // DRAM offsets: kt stride uses full-tile sizes, nt stride uses current-tile sizes
+    // DRAM offsets: kt stride uses full-K-tile sizes; nt_dma stride uses the
+    // full 128-wide step (prior nt_dma's are always full-width).
     const uint64_t d_in = arg->dram_in_base
       + uint64_t(_mt) * uint64_t(DMA_MT * K * 2u)
       + uint64_t(_kt) * uint64_t(cm * DMA_KT * 2u);
-    const uint64_t d_w = arg->dram_w_base
-      + uint64_t(_kt) * uint64_t(n_tiles * full_weight_kt_bytes)
-      + uint64_t(_nt) * uint64_t(cur_weight_kt_bytes);
-    const uint64_t d_sc = arg->dram_sc_base
-      + uint64_t(_kt) * uint64_t(n_tiles * full_scale_kt_bytes)
-      + uint64_t(_nt) * uint64_t(cur_scale_kt_bytes);
-    const uint64_t d_zp = arg->dram_zp_base
-      + uint64_t(_kt) * uint64_t(n_tiles * full_zp_kt_bytes)
-      + uint64_t(_nt) * uint64_t(cur_zp_kt_bytes);
+
+    const uint64_t nt_dma_w_off = uint64_t(_nt_dma) * uint64_t(ck) * uint64_t(DMA_NT) / 2u;
+    uint64_t nt_dma_sc_off, nt_dma_zp_off;
+    if (qdir == 0) {
+      nt_dma_sc_off = uint64_t(_nt_dma) * uint64_t(ck / qblk) * uint64_t(DMA_NT) * 2u;
+      nt_dma_zp_off = nt_dma_sc_off;
+    } else {
+      nt_dma_sc_off = uint64_t(_nt_dma) * uint64_t(ck) * uint64_t(NB_PER_NT)
+                      * uint64_t(ng_per_nt) * 2u;
+      nt_dma_zp_off = nt_dma_sc_off;
+    }
+
+    const uint64_t d_w  = arg->dram_w_base  + uint64_t(_kt) * kt_w_stride  + nt_dma_w_off;
+    const uint64_t d_sc = arg->dram_sc_base + uint64_t(_kt) * kt_sc_stride + nt_dma_sc_off;
+    const uint64_t d_zp = arg->dram_zp_base + uint64_t(_kt) * kt_zp_stride + nt_dma_zp_off;
 
     send_dma_cmd(RAW_OP_DMA_LOAD, ibuf[b],  d_in, 0, 0, 1, in_bytes);
     stream_send(make_notify(0, 1, rid_tile(b)));
@@ -277,24 +297,28 @@ static void run_tiled_gemm(const kernel_arg_t* arg) {
   }
 
   // ======== Main tile loop ========
+  // Tile DMA unit : 128 x 128 (mt, nt_dma, kt)
+  // MXU unit     : 128 x 32  (nb within tile, kb within kt)
   uint32_t tile_idx = 0;
   for (uint32_t mt = 0; mt < m_tiles; mt++) {
     const uint32_t cur_m = ((M - mt * DMA_MT) < DMA_MT) ? (M - mt * DMA_MT) : DMA_MT;
-    const uint32_t cur_output_tile_bytes = cur_m * DMA_MXU_NT * 2u;
+    const uint32_t per_nb_output_bytes = cur_m * DMA_MXU_NT * 2u;   // one 32-wide sub-output
 
-    for (uint32_t nt = 0; nt < n_tiles; nt++) {
-      const uint32_t output_tile_idx = nt + n_tiles * mt;
+    for (uint32_t nt_dma = 0; nt_dma < n_tiles; nt_dma++) {
+      const uint32_t cur_n = ((N - nt_dma * DMA_NT) < DMA_NT) ? (N - nt_dma * DMA_NT) : DMA_NT;
+      const uint32_t cur_nb_per_nt = cur_n / DMA_MXU_NT;
+
+      const uint32_t output_tile_idx = nt_dma + n_tiles * mt;
       const uint32_t output_buf = output_tile_idx & 1;
       const uint32_t acc_group = output_tile_idx & 1;
-      const uint32_t acc_mem_base = acc_group ? ACC_DBUF_STRIDE : 0u;
-      const uint32_t acc_store_base = acc_mem_base >> 1;
+      const uint32_t acc_group_base = acc_group ? ACC_DBUF_STRIDE : 0u;
 
-      const uint64_t dram_out_tile = arg->dram_out_base
-        + uint64_t(mt) * uint64_t(n_tiles) * uint64_t(DMA_MT * DMA_MXU_NT * 2u)
-        + uint64_t(nt) * uint64_t(cur_output_tile_bytes);
+      // Per-mt DRAM base for output (mt stride uses full DMA_MT × N).
+      const uint64_t dram_out_mt_base = arg->dram_out_base
+        + uint64_t(mt) * uint64_t(DMA_MT) * uint64_t(N) * 2u;
 
-      // Reuse acc banks only after the previous MXU_STORE_OUTPUT on the same
-      // acc group has completed. This is independent from obuf reuse.
+      // Reuse acc banks (all NB_PER_NT regions within the group) only after the
+      // previous MXU_STORE_OUTPUTs on this acc group have completed.
       stream_send(make_wait(acc_reuse_target[acc_group], rid_output(acc_group)));
 
       for (uint32_t kt = 0; kt < k_tiles; kt++, tile_idx++) {
@@ -302,12 +326,18 @@ static void run_tiled_gemm(const kernel_arg_t* arg) {
         const uint32_t cur_k = ((K - kt * DMA_KT) < DMA_KT) ? (K - kt * DMA_KT) : DMA_KT;
         const uint32_t cur_kb_per_kt = cur_k / DMA_MXU_KT;
 
+        // Per-tile TMEM strides between 32-wide nb slices within the 128-wide tile.
+        const uint32_t weight_nb_stride = cur_k * (DMA_MXU_NT / 2u);
+        const uint32_t scale_nb_stride  = (qdir == 0)
+                                          ? ((cur_k / qblk) * DMA_MXU_NT * 2u)
+                                          : (cur_k * ng_per_nt * 2u);
+
         // ---- Preload NEXT tile into opposite buffer (overlap with compute) ----
-        uint32_t nmt, nnt, nkt;
-        next_tile_coords(mt, nt, kt, nmt, nnt, nkt);
+        uint32_t nmt, nnt_dma, nkt;
+        next_tile_coords(mt, nt_dma, kt, nmt, nnt_dma, nkt);
         const uint32_t next_tile_idx = tile_idx + 1;
         if (next_tile_idx < tile_total) {
-          dma_preload_tile(tile_buf ^ 1, nmt, nnt, nkt);
+          dma_preload_tile(tile_buf ^ 1, nmt, nnt_dma, nkt);
         }
 
         // ---- Wait for current tile DMA to complete ----
@@ -322,91 +352,118 @@ static void run_tiled_gemm(const kernel_arg_t* arg) {
 
         uint32_t mxu_buf = 0;
 
-        // Initial preload into mxu_buf=0: weight + qparam
+        // Initial preload into mxu_buf=0: microtile (nb=0, kb=0)
         w_target[0] += 1;
         stream_send(make_mxu_load_weight(wtrans, 0, 1, 0, wbuf[tile_buf]));
         stream_send(make_notify(1, w_target[0], rid_weight(0)));
 
         sz_target[0] += 1;
-        if (qdir == 0) {
-          send_mxu_qparam(QPARAM_MXU_BASE[0], scbuf[tile_buf],
-                          qparam_src_stride, qparam_dst_stride, 2);
-        } else {
-          send_mxu_qparam(QPARAM_MXU_BASE[0], scbuf[tile_buf],
-                          qparam_src_stride, qparam_dst_stride, 2);
-        }
+        send_mxu_qparam(QPARAM_MXU_BASE[0], scbuf[tile_buf],
+                        qparam_src_stride, qparam_dst_stride, 2);
         stream_send(make_notify(1, sz_target[0], rid_scale(0)));
 
-        for (uint32_t kb = 0; kb < cur_kb_per_kt; kb++) {
-          const bool is_first_kb = (kt == 0 && kb == 0);
-          const bool is_last_kb  = (kt == k_tiles - 1u && kb == cur_kb_per_kt - 1u);
+        // Flatten (nb, kb) into one stream of microtiles so MXU DBuf alternates
+        // cleanly across the nb boundary. Loop bounded by current tile's cur_nb.
+        for (uint32_t nb = 0; nb < cur_nb_per_nt; nb++) {
+          for (uint32_t kb = 0; kb < cur_kb_per_kt; kb++) {
+            const bool is_first_k = (kt == 0 && kb == 0);
+            const bool is_last_k  = (kt == k_tiles - 1u && kb == cur_kb_per_kt - 1u);
 
-          // ---- Preload NEXT microtile into opposite MXU buffer ----
-          const uint32_t next_kb = kb + 1;
-          if (next_kb < cur_kb_per_kt) {
-            const uint32_t nmxu_buf = mxu_buf ^ 1;
-            const uint32_t next_w_lmem = wbuf[tile_buf] + next_kb * w_seg_bytes;
-
-            w_target[nmxu_buf] += 1;
-            stream_send(make_mxu_load_weight(wtrans, nmxu_buf, 1, 0, next_w_lmem));
-            stream_send(make_notify(1, w_target[nmxu_buf], rid_weight(nmxu_buf)));
-
-            sz_target[nmxu_buf] += 1;
-            if (qdir == 0) {
-              // QCOL: same qparam for all kb, load into opposite reg set
-              send_mxu_qparam(QPARAM_MXU_BASE[nmxu_buf], scbuf[tile_buf],
-                              qparam_src_stride, qparam_dst_stride, 2);
-            } else {
-              // QROW: different qparam per kb
-              const uint32_t sc_off = scbuf[tile_buf] + next_kb * qparam_kb_offset;
-              send_mxu_qparam(QPARAM_MXU_BASE[nmxu_buf], sc_off,
-                              qparam_src_stride, qparam_dst_stride, 2);
+            // ---- Preload NEXT microtile (within this kt) into opposite MXU buf ----
+            uint32_t next_nb = 0, next_kb = 0;
+            bool has_next_within_kt = false;
+            if (kb + 1 < cur_kb_per_kt) {
+              next_nb = nb; next_kb = kb + 1; has_next_within_kt = true;
+            } else if (nb + 1 < cur_nb_per_nt) {
+              next_nb = nb + 1; next_kb = 0; has_next_within_kt = true;
             }
-            stream_send(make_notify(1, sz_target[nmxu_buf], rid_scale(nmxu_buf)));
+
+            if (has_next_within_kt) {
+              const uint32_t nmxu_buf = mxu_buf ^ 1;
+              const uint32_t next_w_lmem = wbuf[tile_buf]
+                                         + next_nb * weight_nb_stride
+                                         + next_kb * w_seg_bytes;
+
+              w_target[nmxu_buf] += 1;
+              stream_send(make_mxu_load_weight(wtrans, nmxu_buf, 1, 0, next_w_lmem));
+              stream_send(make_notify(1, w_target[nmxu_buf], rid_weight(nmxu_buf)));
+
+              sz_target[nmxu_buf] += 1;
+              uint32_t next_sc_lmem;
+              if (qdir == 0) {
+                // QCOL: qparam shared across kb, differs per nb
+                next_sc_lmem = scbuf[tile_buf] + next_nb * scale_nb_stride;
+              } else {
+                // QROW: qparam differs per (nb, kb)
+                next_sc_lmem = scbuf[tile_buf]
+                             + next_nb * scale_nb_stride
+                             + next_kb * qparam_kb_offset;
+              }
+              send_mxu_qparam(QPARAM_MXU_BASE[nmxu_buf], next_sc_lmem,
+                              qparam_src_stride, qparam_dst_stride, 2);
+              stream_send(make_notify(1, sz_target[nmxu_buf], rid_scale(nmxu_buf)));
+            }
+
+            // ---- Wait for current microtile weight & qparam ----
+            stream_send(make_wait(w_target[mxu_buf], rid_weight(mxu_buf)));
+            stream_send(make_wait(sz_target[mxu_buf], rid_scale(mxu_buf)));
+
+            // ---- GEMM compute (each nb accumulates into its own acc region) ----
+            const uint32_t acc_mem_base_nb = acc_group_base + nb * ACC_NB_STRIDE;
+            const uint32_t i_src = ibuf[tile_buf] + kb * cur_m * DMA_MXU_KT * 2u;
+            send_mxu_input(
+              is_first_k ? 0u : 1u,   // is_accum (false only for first k-block)
+              is_last_k  ? 1u : 0u,   // is_last  (true  only for last  k-block)
+              mxu_buf, mxu_buf, mxu_buf, qdir,
+              i_src, acc_mem_base_nb,
+              cur_m,
+              DMA_MXU_KT * 2u,
+              cur_m
+            );
+            g_target[mxu_buf] += 1;
+            stream_send(make_notify(1, g_target[mxu_buf], rid_gemm(mxu_buf)));
+            stream_send(make_wait(g_target[mxu_buf], rid_gemm(mxu_buf)));
+
+            // ---- Output store (only on last k-block) ----
+            // Per-nb pattern: each nb does its own MXU_STORE → DMA_STORE pair
+            // (32-wide × cur_m). Cumulative across nb's = cur_n × cur_m.
+            if (is_last_k) {
+              // obuf reuse wait: once per (mt, nt_dma), before the first nb store
+              if (nb == 0) {
+                stream_send(make_wait(store_reuse_target[output_buf], RID_ST));
+              }
+
+              // MXU_STORE: acc[nb] → obuf at nb-specific offset
+              const uint32_t obuf_nb = obuf[output_buf] + nb * per_nb_output_bytes;
+              const uint32_t acc_store_base_nb = acc_mem_base_nb >> 1;
+              send_mxu_store_output(obuf_nb, acc_store_base_nb, 0, cur_m);
+              o_target[output_buf] += 1;
+              stream_send(make_notify(1, o_target[output_buf], rid_output(output_buf)));
+
+              // Wait MXU_STORE done before DMA_STORE reads obuf
+              stream_send(make_wait(o_target[output_buf], rid_output(output_buf)));
+
+              // DMA_STORE: obuf[nb slice] → DRAM[absolute nt_32 = nt_dma*4+nb]
+              const uint64_t dram_out_nb = dram_out_mt_base
+                + uint64_t(nt_dma * NB_PER_NT + nb) * uint64_t(cur_m)
+                                                   * uint64_t(DMA_MXU_NT) * 2u;
+              store_done_target += 1;
+              send_dma_cmd(RAW_OP_DMA_STORE, obuf_nb, dram_out_nb,
+                           0, 0, 1, per_nb_output_bytes);
+              stream_send(make_notify(1, store_done_target, RID_ST));
+            }
+
+            mxu_buf ^= 1;
           }
-
-          // ---- Wait for current microtile weight & qparam ----
-          stream_send(make_wait(w_target[mxu_buf], rid_weight(mxu_buf)));
-          stream_send(make_wait(sz_target[mxu_buf], rid_scale(mxu_buf)));
-
-          // ---- GEMM compute (wreg, sreg, zreg all use mxu_buf) ----
-          const uint32_t i_src = ibuf[tile_buf] + kb * cur_m * DMA_MXU_KT * 2u;
-          send_mxu_input(
-            is_first_kb ? 0u : 1u,   // is_accum
-            is_last_kb  ? 1u : 0u,   // is_last
-            mxu_buf, mxu_buf, mxu_buf, qdir,
-            i_src, acc_mem_base,
-            cur_m,
-            DMA_MXU_KT * 2u,
-            cur_m
-          );
-          g_target[mxu_buf] += 1;
-          stream_send(make_notify(1, g_target[mxu_buf], rid_gemm(mxu_buf)));
-          stream_send(make_wait(g_target[mxu_buf], rid_gemm(mxu_buf)));
-
-          // ---- Output store (only on last k-block) ----
-          if (is_last_kb) {
-            stream_send(make_wait(store_reuse_target[output_buf], RID_ST));
-
-            send_mxu_store_output(obuf[output_buf], acc_store_base, 0, cur_m);
-            o_target[output_buf] += 1;
-            stream_send(make_notify(1, o_target[output_buf], rid_output(output_buf)));
-          }
-
-          mxu_buf ^= 1;
         }
       }
 
-      // ---- DMA store output LMEM → DRAM ----
-      stream_send(make_wait(o_target[output_buf], rid_output(output_buf)));
-      acc_reuse_target[acc_group] = o_target[output_buf];
-
-      store_done_target += 1;
+      // ---- End of (mt, nt_dma) ----
+      // Per-nb MXU_STORE+DMA_STORE pairs were already issued inside the inner
+      // loop. Just snapshot the latest sync targets so the next iteration on
+      // the same acc_group / output_buf can reuse them safely.
+      acc_reuse_target[acc_group]    = o_target[output_buf];
       store_reuse_target[output_buf] = store_done_target;
-
-      send_dma_cmd(RAW_OP_DMA_STORE, obuf[output_buf], dram_out_tile,
-                   0, 0, 1, cur_output_tile_bytes);
-      stream_send(make_notify(1, store_done_target, RID_ST));
     }
   }
 
