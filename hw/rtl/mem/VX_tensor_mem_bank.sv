@@ -69,7 +69,6 @@ module VX_tensor_mem_bank import VX_gpu_pkg::*; #(
 
     reg                       rsp_valid_r;
     reg [ARB_TAG_WIDTH-1:0]   rsp_tag_r;
-    reg [DATA_WIDTH-1:0]      rsp_data_r;
     reg                       rsp_rw_r;
 
     wire rsp_stall = rsp_valid_r && ~arb_bus_if[0].rsp_ready;
@@ -104,7 +103,7 @@ module VX_tensor_mem_bank import VX_gpu_pkg::*; #(
         .DATAW    (DATA_WIDTH),
         .SIZE     (NUM_WORDS),
         .WRENW    (DATA_SIZE),
-        .OUT_REG  (0),
+        .OUT_REG  (1),
         .RDW_MODE ("W")
     ) sp_ram (
         .clk    (clk),
@@ -118,10 +117,13 @@ module VX_tensor_mem_bank import VX_gpu_pkg::*; #(
     );
 
     // ---------------------------------------------------------------
-    // Response path: 1-cycle pipeline register
+    // Response path: 1-cycle pipeline (data register is inside VX_sp_ram)
     // ---------------------------------------------------------------
     // We accept a request in cycle N and produce the response in cycle N+1.
-    // The pipeline register holds the valid, tag, rw, and read data.
+    // With OUT_REG=1, VX_sp_ram provides the read-data register internally,
+    // so only valid/tag/rw are latched externally. When rsp_stall holds,
+    // req_fire=0 keeps both the internal addr/data reg and the ram array
+    // unchanged, so sram_rdata remains stable across the stall.
 
     always @(posedge clk) begin
         if (reset) begin
@@ -135,16 +137,15 @@ module VX_tensor_mem_bank import VX_gpu_pkg::*; #(
 
     always @(posedge clk) begin
         if (~rsp_stall && req_fire) begin
-            rsp_tag_r  <= arb_bus_if[0].req_data.tag;
-            rsp_data_r <= sram_rdata;
-            rsp_rw_r   <= req_rw;
+            rsp_tag_r <= arb_bus_if[0].req_data.tag;
+            rsp_rw_r  <= req_rw;
         end
     end
 
     // Response output
     assign arb_bus_if[0].rsp_valid     = rsp_valid_r;
     assign arb_bus_if[0].rsp_data.tag  = rsp_tag_r;
-    assign arb_bus_if[0].rsp_data.data = rsp_rw_r ? '0 : rsp_data_r;
+    assign arb_bus_if[0].rsp_data.data = rsp_rw_r ? '0 : sram_rdata;
 
 `ifdef DBG_TRACE_MEM
     always @(posedge clk) begin
