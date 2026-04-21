@@ -5,6 +5,10 @@
 set tool_dir $::env(TOOL_DIR)
 source ${tool_dir}/xilinx_async_bram_patch.tcl
 
+# Floorplan constraints (pblocks for SLR co-location)
+# Sourced from the same hook directory (XRT_RUN_DIR) where this script runs.
+source [file join [file dirname [info script]] floorplan.tcl]
+
 # Reports
 puts "INFO: VORTEX emitting init-design methodology reports in [pwd]"
 report_methodology -file post_init_methodology.rpt
