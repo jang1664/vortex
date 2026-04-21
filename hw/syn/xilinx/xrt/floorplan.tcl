@@ -37,20 +37,17 @@ proc vortex_pblock_slrs {pblock_name cell slr_list cr_range} {
 }
 
 # ---------------------------------------------------------------
-# u_VX_gemm_unit / gen_acc_mem SLR floorplan (SLR1 + SLR2)
-# URAM-heavy accumulator + its consumer logic get the full upper
-# half of the device. Spanning two SLRs gives the placer room to
-# spread the MXU fabric and its acc-mem URAMs without re-entering
-# the SLR0 boundary that already carries the HBM/TMEM traffic.
+# u_VX_gemm_unit / gen_acc_mem SLR floorplan — NOT CONSTRAINED
+#
+# Intentionally left unconstrained. The placer naturally biases
+# u_VX_gemm_unit toward the SLR that holds its gen_acc_mem URAMs
+# (SLR1 in the v3 baseline). A multi-SLR pblock hits the
+# Reconfigurable Partition clock-column rule ([Place 30-887]),
+# and single-SLR lock to SLR1 risks CLB overflow (v3 baseline was
+# 91%). Leaving this block unconstrained lets the placer find a
+# workable spread while pblock_tmem_subsystem alone handles the
+# tmem-side SLR0 anchor.
 # ---------------------------------------------------------------
-set gemm_unit_cell [get_cells -hierarchical -filter \
-    "NAME =~ */gemm_node/u_VX_gemm_unit"]
-if {[llength $gemm_unit_cell] > 0} {
-    vortex_pblock_slrs pblock_gemm_unit $gemm_unit_cell {1 2} \
-        "CLOCKREGION_X0Y4:CLOCKREGION_X7Y11"
-} else {
-    puts "WARNING: u_VX_gemm_unit not found; SLR pblock skipped"
-}
 
 # ---------------------------------------------------------------
 # u_tmem_subsystem SLR floorplan (SLR0)

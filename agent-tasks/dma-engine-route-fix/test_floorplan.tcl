@@ -57,7 +57,6 @@ foreach pb [get_pblocks] {
 puts "\n================ expected sanity checks ================"
 set ok 1
 foreach {pb_expected cell_glob} {
-    pblock_gemm_unit      "*gemm_node/u_VX_gemm_unit"
     pblock_tmem_subsystem "*gemm_node/u_tmem_subsystem"
 } {
     set pb [get_pblocks -quiet $pb_expected]

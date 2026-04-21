@@ -231,21 +231,23 @@ revisit only if BRAM pressure shows headroom to move them back to URAM.
 
 ### 4.6 SLR floorplan constraints
 
-Two pblocks are installed in `hw/syn/xilinx/xrt/floorplan.tcl`, which is
+One pblock is installed in `hw/syn/xilinx/xrt/floorplan.tcl`, which is
 `source`d from `post_init_hook.tcl` (both files are copied into
-`XRT_RUN_DIR` at build time). The shared helper `vortex_pblock_slr`
+`XRT_RUN_DIR` at build time). The shared helper `vortex_pblock_slrs`
 attempts the `SLRn` keyword first and falls back to a clock-region range
 if that syntax is rejected by this Vitis release. Clock-region ranges for U55C/VU47P:
 SLR0 = `CLOCKREGION_X0Y0:CLOCKREGION_X7Y3`,
 SLR1 = `CLOCKREGION_X0Y4:CLOCKREGION_X7Y7`,
 SLR2 = `CLOCKREGION_X0Y8:CLOCKREGION_X7Y11`.
 
-**pblock_gemm_unit → SLR1 + SLR2** (`u_VX_gemm_unit`):
-GEMM accumulator URAM + its consumer logic get the full upper half of
-the device (SLR1 + SLR2). Spanning two SLRs gives the placer room to
-spread the MXU fabric and its accumulator URAMs without re-entering the
-SLR0 boundary that already carries the HBM/TMEM traffic. Clock-region
-fallback: `CLOCKREGION_X0Y4:CLOCKREGION_X7Y11`.
+**`u_VX_gemm_unit` — unconstrained** (no pblock):
+Multi-SLR (SLR1+SLR2) was rejected at place_design with `[Place 30-887]`
+(RP clock-column rule), and single-SLR locks create their own risks:
+SLR1 lock would worsen the already-91 % CLB, SLR2 lock adds an extra
+SLR hop to tmem (SLR0). The placer is instead left free — it naturally
+follows the URAM column for `gen_acc_mem` and tends to settle in SLR1,
+which is the same SLR where URAM placed in the v3 baseline. Only the
+tmem-side anchor is enforced explicitly.
 
 **pblock_tmem_subsystem → SLR0** (`u_tmem_subsystem`):
 Tensor memory is BRAM-heavy (~512 RAMB36) and its DMA engine talks to HBM
@@ -281,8 +283,8 @@ proc vortex_pblock_slr {pblock_name cell slr_idx cr_range} {
     set_property EXCLUDE_PLACEMENT  false [get_pblocks $pblock_name]
 }
 
-vortex_pblock_slrs pblock_gemm_unit      [get_cells .../u_VX_gemm_unit]   {1 2} "CLOCKREGION_X0Y4:CLOCKREGION_X7Y11"
-vortex_pblock_slrs pblock_tmem_subsystem [get_cells .../u_tmem_subsystem] {0}   "CLOCKREGION_X0Y0:CLOCKREGION_X7Y3"
+vortex_pblock_slrs pblock_tmem_subsystem [get_cells .../u_tmem_subsystem] {0} "CLOCKREGION_X0Y0:CLOCKREGION_X7Y3"
+# u_VX_gemm_unit intentionally unconstrained — see rationale above.
 ```
 
 `post_init_hook.tcl` runs at `STEPS.INIT_DESIGN.TCL.POST`, before
@@ -384,8 +386,11 @@ incremented by 1 per window boundary.
 - [x] Stage 1: add `ram_style = "block"` to `burst_window_data_r`, remove
       its cfg_fire data-reset. (`VX_dma_engine.sv:243, :420`).
 - [x] `USE_URAM(1)` on `gen_acc_mem` VX_sp_ram (`VX_gemm_unit.sv:1170`).
-- [x] `pblock_gemm_unit` (SLR1+SLR2) + `pblock_tmem_subsystem` (SLR0) in
-      `hw/syn/xilinx/xrt/floorplan.tcl`, sourced from `post_init_hook.tcl`.
+- [x] `pblock_tmem_subsystem` (SLR0) in `hw/syn/xilinx/xrt/floorplan.tcl`,
+      sourced from `post_init_hook.tcl`.
+      `u_VX_gemm_unit` left unconstrained — multi-SLR (SLR1+SLR2) rejected
+      by `[Place 30-887]` (RP clock-column rule); single-SLR locks brought
+      other risks (SLR1 CLB overflow, SLR2 extra hop), so the placer picks.
 - [ ] Inspect `init_report_utilization_0.rpt` for RAMB count under
       `u_dma_engine` and URAM count under `u_VX_gemm_unit`.
 - [ ] If BRAM not inferred for `burst_window_data_r` → Stage 2: refactor
