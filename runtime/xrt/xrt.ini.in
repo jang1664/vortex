@@ -7,8 +7,8 @@ debug_mode=batch
 user_pre_sim_script=@VORTEX_HOME@/runtime/xrt/xsim.tcl
 
 [Debug]
-# profile=true
-# timeline_trace=true
-# data_transfer_trace=fine
+profile=true
+timeline_trace=true
+data_transfer_trace=fine
+device_trace = fine
 # native_xrt_trace = true
-# device_trace = fine
