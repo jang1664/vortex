@@ -240,6 +240,7 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
         logic [READ_BURST_GROUPS-1:0][2:0]                          burst_group_count_r;
         logic [READ_BURST_GROUPS-1:0][AXI_ADDR_WIDTH-1:0]           burst_group_base_addr_r;
         logic [READ_BURST_GROUPS-1:0][READ_GROUP_CAP-1:0][TAG_WIDTH-1:0] burst_group_tag_r;
+        (* ram_style = "block" *)
         logic [READ_WINDOW_WORDS-1:0][DATA_WIDTH-1:0]               burst_window_data_r;
         logic [READ_WINDOW_WORDS-1:0]                               burst_window_valid_r;
 
@@ -417,8 +418,10 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
                             burst_group_tag_r[i][j] <= '0;
                         end
                     end
+                    // burst_window_data_r intentionally left unreset: the
+                    // valid scoreboard gates reads, and array-wide reset
+                    // prevents Vivado BRAM inference.
                     for (int i = 0; i < READ_WINDOW_WORDS; ++i) begin
-                        burst_window_data_r[i]  <= '0;
                         burst_window_valid_r[i] <= 1'b0;
                     end
                     write_state_r               <= ~cfg_is_read ? WR_BURST_CAPTURE : WR_IDLE;
