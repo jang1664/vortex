@@ -70,7 +70,7 @@ module VX_sp_ram #(
     parameter WRENW       = 1,
     parameter OUT_REG     = 0,
     parameter LUTRAM      = 0,
-    parameter USE_URAM    = 0, // 0: auto (BRAM/URAM based on size), 1: force URAM, 2: force BRAM
+    parameter USE_URAM    = 0, // 0: BRAM (no auto URAM), 1: force URAM
     parameter `STRING RDW_MODE = "W", // W: write-first, R: read-first, N: no-change
     parameter RADDR_REG   = 0, // read address registered hint
     parameter RADDR_RESET = 0, // read address has reset
@@ -102,12 +102,13 @@ module VX_sp_ram #(
 
 `ifdef SYNTHESIS
     localparam FORCE_BRAM = !LUTRAM && `FORCE_BRAM(SIZE, DATAW);
-    // USE_URAM: 0=auto (use URAM if size >= 256Kb), 1=force URAM, 2=force BRAM
-    localparam SELECT_URAM = (USE_URAM == 1) || (USE_URAM == 0 && `FORCE_URAM(SIZE, DATAW));
+    // URAM is opt-in only: set USE_URAM=1 explicitly to enable URAM mapping.
+    // Default (USE_URAM=0) always maps to BRAM even if size would qualify for
+    // URAM under the platform `FORCE_URAM` threshold.
     // URAM constraints: BRAM-style write_first is not a URAM semantic.
     // Byte-enable is supported (URAM has 8-bit BWE granularity).
     localparam URAM_COMPATIBLE = (RDW_MODE != "W");
-    localparam USE_URAM_FINAL = FORCE_BRAM && SELECT_URAM && (USE_URAM != 2) && URAM_COMPATIBLE;
+    localparam USE_URAM_FINAL = FORCE_BRAM && (USE_URAM == 1) && URAM_COMPATIBLE;
     if (OUT_REG) begin : g_sync
         if (USE_URAM_FINAL) begin : g_uram
             // URAM path: read-first or no-change mode only.

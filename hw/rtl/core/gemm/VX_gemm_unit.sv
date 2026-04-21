@@ -1168,10 +1168,11 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
             assign acc_mem_rd_depth_addr[i] = get_acc_mem_bank_depth_addr(acc_mem_rd_addr[i]);
 
             VX_sp_ram #(
-                .DATAW   (`MXU_COL * FP32_WIDTH),
-                .SIZE    (`GEMM_ACC_MEM_DEPTH),
-                .OUT_REG (1),
-                .RDW_MODE("R")  // Read-first mode for accumulator, enables URAM
+                .DATAW    (`MXU_COL * FP32_WIDTH),
+                .SIZE     (`GEMM_ACC_MEM_DEPTH),
+                .OUT_REG  (1),
+                .USE_URAM (1),   // Force URAM after VX_sp_ram auto-infer removal
+                .RDW_MODE ("R")  // Read-first required for URAM mapping
             ) VX_sp_ram_instance (
                 .clk   (clk),
                 .reset (reset),
