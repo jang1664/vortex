@@ -72,9 +72,14 @@ def build_ini(args):
             # any extra language-version flag.
             vivado.append("prop=fileset.sim_1.vcs.compile.vlogan.more_options={-timescale=1ns/1ps +define+XSIM}")
             if args.debug:
-                # -kdb + -debug_access+all + -lca enable Verdi PLI so fsdbDumpvars in the
-                # pre-sim UCLI Tcl actually emits an FSDB.
-                vivado.append("prop=fileset.sim_1.vcs.elaborate.vcs.more_options={-debug_access+all -kdb -lca}")
+                # -debug_access+all enables Verdi PLI (fsdbDumpvars) at runtime.
+                # We deliberately do NOT add -kdb / -lca here: they require every prior
+                # compile step (vlogan, vhdlan, compile_simlib) to also use -kdb, which
+                # Vivado's generated compile.sh does not do. Mixing them causes
+                # Error-[ANA-KDB-ICS] "Incompatible VHDL database". -kdb only
+                # accelerates Verdi's interactive database load and is not required
+                # for post-sim FSDB analysis.
+                vivado.append("prop=fileset.sim_1.vcs.elaborate.vcs.more_options={-debug_access+all}")
     sections["vivado"] = vivado
 
     # --- [debug] ---
