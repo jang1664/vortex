@@ -1100,9 +1100,11 @@ for block_size in range(1, full_bitwidth+1):
 // -------------------------------------------------------
 // Accumulator Memory Configuration
 // -------------------------------------------------------
-`define GEMM_ACC_MEM_DEPTH 1024
+`ifndef GEMM_ACC_MEM_DEPTH
+`define GEMM_ACC_MEM_DEPTH 1024 // == SIZE/512
+`endif
 `define GEMM_ACC_MEM_BANK_NUM 4
-`define GEMM_ACC_MEM_TOT_SIZE ((`GEMM_ACC_MEM_DEPTH) * (`GEMM_PSUM_DATA_SIZE) * `GEMM_ACC_MEM_BANK_NUM)
+`define GEMM_ACC_MEM_TOT_SIZE ((`GEMM_ACC_MEM_DEPTH) * (`GEMM_PSUM_DATA_SIZE) * `GEMM_ACC_MEM_BANK_NUM) // 512KB
 `define GEMM_ACC_MEM_ADDR_WIDTH `CLOG2(`GEMM_ACC_MEM_TOT_SIZE)
 `define GEMM_ACC_MEM_BANK_WIDTH (`MXU_COL * `GEMM_ACC_MEM_BANK_NUM) // 64 bytes per bank
 `define GEMM_ACC_MEM_BANK_ADDR_WIDTH (`GEMM_ACC_MEM_ADDR_WIDTH - `CLOG2(`GEMM_ACC_MEM_BANK_NUM))
@@ -1112,8 +1114,12 @@ for block_size in range(1, full_bitwidth+1):
 // -------------------------------------------------------
 // Configuration Registers
 // -------------------------------------------------------
+`ifndef NUM_DMA_CHANNELS
 `define NUM_DMA_CHANNELS 8        // Number of DMA AXI channels per core (TMEM banks)
-`define TMEM_BANK_SIZE (256 * 1024) // 256KB
+`endif
+`ifndef TMEM_BANK_SIZE
+`define TMEM_BANK_SIZE (64 * 1024) // 64KB
+`endif
 
 // HBM interleave stride (bytes): consecutive MEM_BLOCK_SIZE blocks round-robin
 // across all DMA channels before advancing to the next stripe within one HBM bank.
