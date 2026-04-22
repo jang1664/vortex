@@ -151,9 +151,9 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
     for (genvar ch = 0; ch < NUM_CHANNELS; ++ch) begin : g_channel
 
         typedef enum logic [0:0] {
-            RD_BURST_CAPTURE,
-            RD_BURST_ACTIVE
-        } read_state_t;
+            AR_IDLE,
+            AR_ACTIVE
+        } ar_state_t;
 
         typedef enum logic [2:0] {
             WR_IDLE,
@@ -249,31 +249,51 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
         wire wr_req_ready;
 
         // --------------------------------------------------------
-        // Read path: burst only
+        // Read path: double-buffered ping-pong
+        //   AR side fills buf[ar_buf_ptr_r] while consumer drains
+        //   buf[rd_buf_ptr_r]. When AR for the current buf completes,
+        //   ar_buf_ptr_r toggles so the next window is prefetched
+        //   without waiting for the consumer to finish draining the
+        //   previous one. Hides HBM read latency between burst groups.
         // --------------------------------------------------------
+        localparam int NUM_RD_BUFS = 2;
+
+        // Source base (byte address) latched from first consumer req.
+        // Once latched, all subsequent AR addresses are derived from
+        // burst_src_base_byte_r + ar_window_base_r * HBM_BUS_STRIDE
+        // without further consumer input.
         logic [AXI_ADDR_WIDTH-1:0] burst_src_base_byte_r;
-        logic [31:0]               burst_words_served_r;
-        logic                      burst_prefetch_started_r;
+        logic                      burst_src_base_latched_r;
+
+        // Consumer-side state
+        logic [31:0]               burst_words_served_r;   // global drain counter
         logic                      burst_req_pending_r;
         logic [TAG_WIDTH-1:0]      burst_req_tag_r;
         logic                      burst_rsp_valid_r;
         logic [DATA_WIDTH-1:0]     burst_rsp_data_r;
         logic [TAG_WIDTH-1:0]      burst_rsp_tag_r;
-        logic [31:0]               burst_window_base_r;
-        logic [WINDOW_CNT_W-1:0]   burst_accept_count_r;
-        // AR issue pointer (0..READ_BURST_GROUPS, == READ_BURST_GROUPS means all AR issued)
-        logic [GROUP_IDX_W-1:0]    burst_issue_group_r;
-        // R recv pointers (independent of AR issue to allow pipelined AR/R)
-        logic [GROUP_IDX_W-1:0]    burst_recv_group_r;
-        logic [BEAT_IDX_W-1:0]     burst_recv_beat_r;
-        logic [READ_BURST_GROUPS-1:0][BEAT_IDX_W-1:0]                   burst_group_count_r;
-        logic [READ_BURST_GROUPS-1:0][AXI_ADDR_WIDTH-1:0]               burst_group_base_addr_r;
-        logic [READ_BURST_GROUPS-1:0][READ_GROUP_CAP-1:0][TAG_WIDTH-1:0] burst_group_tag_r;
-        (* ram_style = "block" *)
-        logic [READ_WINDOW_WORDS-1:0][DATA_WIDTH-1:0]               burst_window_data_r;
-        logic [READ_WINDOW_WORDS-1:0]                               burst_window_valid_r;
+        logic                      rd_buf_ptr_r;            // buffer consumer drains from
+        logic [WIDX_W-1:0]         rd_word_in_buf_r;        // word index within drain buf
 
-        read_state_t read_state_r;
+        // AR-side (producer) state
+        ar_state_t                 ar_state_r;
+        logic                      ar_buf_ptr_r;            // buffer AR is currently filling
+        logic [GROUP_IDX_W-1:0]    ar_issue_group_r;        // group within ar_buf_ptr_r
+        logic [31:0]               ar_window_base_r;        // absolute word offset for next window
+
+        // R-side state (in-order with AR since ar_id=0)
+        logic                      r_buf_ptr_r;             // buffer R is currently filling
+        logic [GROUP_IDX_W-1:0]    r_recv_group_r;
+        logic [BEAT_IDX_W-1:0]     r_recv_beat_r;
+
+        // Per-buffer state
+        logic [NUM_RD_BUFS-1:0]                                             buf_busy_r;
+        logic [NUM_RD_BUFS-1:0][WINDOW_CNT_W-1:0]                           buf_window_words_r;
+        logic [NUM_RD_BUFS-1:0][READ_BURST_GROUPS-1:0][BEAT_IDX_W-1:0]      buf_group_count_r;
+        logic [NUM_RD_BUFS-1:0][READ_BURST_GROUPS-1:0][AXI_ADDR_WIDTH-1:0]  buf_group_base_addr_r;
+        (* ram_style = "block" *)
+        logic [NUM_RD_BUFS-1:0][READ_WINDOW_WORDS-1:0][DATA_WIDTH-1:0]      buf_data_r;
+        logic [NUM_RD_BUFS-1:0][READ_WINDOW_WORDS-1:0]                      buf_valid_r;
 
         // --------------------------------------------------------
         // Write burst registers
@@ -300,28 +320,42 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
         assign internal_done_if.ready = done_if[ch].ready & (write_state_r == WR_IDLE);
 
         wire                       rd_req_valid;
-        wire [WINDOW_CNT_W-1:0]    burst_window_words;
-        wire [31:0]                burst_words_remaining;
-        wire [BEAT_IDX_W-1:0]      burst_group_words [READ_BURST_GROUPS];
-        wire [WIDX_W-1:0]          burst_service_word;
         wire [AXI_ADDR_WIDTH-1:0]  burst_expected_byte_addr;
-        wire                       burst_service_data_ready;
         wire                       rd_req_ready;
         wire                       axi_r_fire;
+        wire                       ar_kick_off;
 
-        assign rd_req_valid         = hbm_req_valid && ~hbm_req_rw;
-        assign burst_words_remaining = (desc_words_r > burst_window_base_r)
-                                     ? (desc_words_r - burst_window_base_r)
-                                     : 32'd0;
-        assign burst_window_words    = (burst_words_remaining > READ_WINDOW_WORDS)
-                                     ? WINDOW_CNT_W'(READ_WINDOW_WORDS)
-                                     : burst_words_remaining[WINDOW_CNT_W-1:0];
-        assign burst_service_word   = burst_words_served_r[WIDX_W-1:0];
-        assign burst_expected_byte_addr = burst_src_base_byte_r + (AXI_ADDR_WIDTH'(burst_words_served_r) << HBM_BUS_STRIDE_SHIFT);
-        assign burst_service_data_ready = burst_window_valid_r[burst_service_word];
+        // AR-side next-window params (combinational, latched on kick-off).
+        wire [31:0]                ar_words_remaining_next;
+        wire [WINDOW_CNT_W-1:0]    ar_window_words_next;
+        wire [BEAT_IDX_W-1:0]      ar_group_words_next     [READ_BURST_GROUPS];
+        wire [AXI_ADDR_WIDTH-1:0]  ar_group_base_addr_next [READ_BURST_GROUPS];
 
-        for (genvar g = 0; g < READ_BURST_GROUPS; ++g) begin : g_burst_group_words
-            assign burst_group_words[g] = calc_group_words(burst_window_words, GSEL_W'(g));
+        assign rd_req_valid             = hbm_req_valid && ~hbm_req_rw;
+        assign burst_expected_byte_addr = burst_src_base_byte_r
+                                        + (AXI_ADDR_WIDTH'(burst_words_served_r) << HBM_BUS_STRIDE_SHIFT);
+
+        assign ar_words_remaining_next = (desc_words_r > ar_window_base_r)
+                                       ? (desc_words_r - ar_window_base_r)
+                                       : 32'd0;
+        assign ar_window_words_next    = (ar_words_remaining_next > READ_WINDOW_WORDS)
+                                       ? WINDOW_CNT_W'(READ_WINDOW_WORDS)
+                                       : ar_words_remaining_next[WINDOW_CNT_W-1:0];
+
+        // AR can start a new window when: base is latched, target buf is
+        // free (consumer finished draining or never filled), and there is
+        // still work left in the descriptor.
+        assign ar_kick_off = (ar_state_r == AR_IDLE)
+                          && burst_src_base_latched_r
+                          && !buf_busy_r[ar_buf_ptr_r]
+                          && (ar_window_base_r < desc_words_r);
+
+        for (genvar g = 0; g < READ_BURST_GROUPS; ++g) begin : g_ar_group_params
+            assign ar_group_words_next[g] = calc_group_words(ar_window_words_next, GSEL_W'(g));
+            assign ar_group_base_addr_next[g] = calc_remap_byte_addr(
+                burst_src_base_byte_r
+              + (AXI_ADDR_WIDTH'(ar_window_base_r + 32'(g)) << HBM_BUS_STRIDE_SHIFT)
+            );
         end
 
         // Write burst combinational logic
@@ -353,12 +387,17 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
             assign burst_wr_group_words[g] = calc_group_words(burst_wr_window_words, GSEL_W'(g));
         end
 
+        // Consumer can fire a read request when:
+        //   - no rsp outstanding
+        //   - still words to serve from this descriptor
+        //   - EITHER this is the first req (base not yet latched), which
+        //     lets us capture the descriptor's base address, OR the drain
+        //     buffer already has the word at the expected address ready.
         assign rd_req_ready =
             ~burst_req_pending_r
             && (burst_words_served_r < desc_words_r)
-            && ((~burst_prefetch_started_r && (read_state_r == RD_BURST_CAPTURE))
-             || (burst_prefetch_started_r
-                 && burst_service_data_ready
+            && (!burst_src_base_latched_r
+             || (buf_valid_r[rd_buf_ptr_r][rd_word_in_buf_r]
                  && (hbm_req_byte_addr == burst_expected_byte_addr)));
 
         assign axi_r_fire = axi_m[ch].r_valid && axi_m[ch].r_ready;
@@ -399,18 +438,33 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
         // --------------------------------------------------------
         always_ff @(posedge clk) begin
             if (reset) begin
-                desc_words_r         <= '0;
-                burst_window_base_r  <= '0;
-                burst_accept_count_r <= '0;
-                burst_issue_group_r  <= '0;
-                burst_recv_group_r   <= '0;
-                burst_recv_beat_r    <= '0;
-                read_state_r         <= RD_BURST_CAPTURE;
-                for (int i = 0; i < READ_BURST_GROUPS; ++i) begin
-                    burst_group_count_r[i]     <= '0;
-                    burst_group_base_addr_r[i] <= '0;
-                    for (int j = 0; j < READ_GROUP_CAP; ++j) begin
-                        burst_group_tag_r[i][j] <= '0;
+                desc_words_r               <= '0;
+                burst_src_base_byte_r      <= '0;
+                burst_src_base_latched_r   <= 1'b0;
+                burst_words_served_r       <= '0;
+                burst_req_pending_r        <= 1'b0;
+                burst_req_tag_r            <= '0;
+                burst_rsp_valid_r          <= 1'b0;
+                burst_rsp_data_r           <= '0;
+                burst_rsp_tag_r            <= '0;
+                rd_buf_ptr_r               <= 1'b0;
+                rd_word_in_buf_r           <= '0;
+                ar_state_r                 <= AR_IDLE;
+                ar_buf_ptr_r               <= 1'b0;
+                ar_issue_group_r           <= '0;
+                ar_window_base_r           <= '0;
+                r_buf_ptr_r                <= 1'b0;
+                r_recv_group_r             <= '0;
+                r_recv_beat_r              <= '0;
+                for (int b = 0; b < NUM_RD_BUFS; ++b) begin
+                    buf_busy_r[b]         <= 1'b0;
+                    buf_window_words_r[b] <= '0;
+                    for (int i = 0; i < READ_BURST_GROUPS; ++i) begin
+                        buf_group_count_r[b][i]     <= '0;
+                        buf_group_base_addr_r[b][i] <= '0;
+                    end
+                    for (int w = 0; w < READ_WINDOW_WORDS; ++w) begin
+                        buf_valid_r[b][w] <= 1'b0;
                     end
                 end
                 write_state_r               <= WR_IDLE;
@@ -427,33 +481,37 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
                 end
             end else begin
                 if (cfg_fire) begin
-                    desc_words_r         <= cfg_reg_if[ch].regs[DMA_R_BND0];
-                    burst_src_base_byte_r <= '0;
-                    burst_words_served_r  <= '0;
-                    burst_prefetch_started_r <= 1'b0;
-                    burst_req_pending_r   <= 1'b0;
-                    burst_req_tag_r       <= '0;
-                    burst_rsp_valid_r     <= 1'b0;
-                    burst_rsp_data_r      <= '0;
-                    burst_rsp_tag_r       <= '0;
-                    burst_window_base_r  <= '0;
-                    burst_accept_count_r <= '0;
-                    burst_issue_group_r  <= '0;
-                    burst_recv_group_r   <= '0;
-                    burst_recv_beat_r    <= '0;
-                    read_state_r         <= RD_BURST_CAPTURE;
-                    for (int i = 0; i < READ_BURST_GROUPS; ++i) begin
-                        burst_group_count_r[i]     <= '0;
-                        burst_group_base_addr_r[i] <= '0;
-                        for (int j = 0; j < READ_GROUP_CAP; ++j) begin
-                            burst_group_tag_r[i][j] <= '0;
+                    desc_words_r               <= cfg_reg_if[ch].regs[DMA_R_BND0];
+                    burst_src_base_byte_r      <= '0;
+                    burst_src_base_latched_r   <= 1'b0;
+                    burst_words_served_r       <= '0;
+                    burst_req_pending_r        <= 1'b0;
+                    burst_req_tag_r            <= '0;
+                    burst_rsp_valid_r          <= 1'b0;
+                    burst_rsp_data_r           <= '0;
+                    burst_rsp_tag_r            <= '0;
+                    rd_buf_ptr_r               <= 1'b0;
+                    rd_word_in_buf_r           <= '0;
+                    ar_state_r                 <= AR_IDLE;
+                    ar_buf_ptr_r               <= 1'b0;
+                    ar_issue_group_r           <= '0;
+                    ar_window_base_r           <= '0;
+                    r_buf_ptr_r                <= 1'b0;
+                    r_recv_group_r             <= '0;
+                    r_recv_beat_r              <= '0;
+                    for (int b = 0; b < NUM_RD_BUFS; ++b) begin
+                        buf_busy_r[b]         <= 1'b0;
+                        buf_window_words_r[b] <= '0;
+                        for (int i = 0; i < READ_BURST_GROUPS; ++i) begin
+                            buf_group_count_r[b][i]     <= '0;
+                            buf_group_base_addr_r[b][i] <= '0;
                         end
-                    end
-                    // burst_window_data_r intentionally left unreset: the
-                    // valid scoreboard gates reads, and array-wide reset
-                    // prevents Vivado BRAM inference.
-                    for (int i = 0; i < READ_WINDOW_WORDS; ++i) begin
-                        burst_window_valid_r[i] <= 1'b0;
+                        // buf_data_r intentionally left unreset: per-word
+                        // valid gates reads, and array-wide reset prevents
+                        // Vivado BRAM inference.
+                        for (int w = 0; w < READ_WINDOW_WORDS; ++w) begin
+                            buf_valid_r[b][w] <= 1'b0;
+                        end
                     end
                     write_state_r               <= ~cfg_is_read ? WR_BURST_CAPTURE : WR_IDLE;
                     burst_wr_dst_base_byte_r    <= '0;
@@ -473,85 +531,121 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
                     end
                 end else begin
                     // ------------------------------------------------
-                    // Read burst state machine (AR issue and R recv pipelined)
+                    // Read path (double-buffered ping-pong)
+                    //   Consumer drain / rsp issue / req capture, AR side,
+                    //   and R side all update independently. AR may start
+                    //   prefetching the next window into the idle buffer
+                    //   while the consumer is still draining the other.
                     // ------------------------------------------------
+
+                    // ----- Consumer: drain (rsp handshake) -----
                     if (burst_rsp_valid_r && hbm_rsp_ready) begin
-                        burst_rsp_valid_r <= 1'b0;
-                        burst_window_valid_r[burst_service_word] <= 1'b0;
-                        burst_req_pending_r <= 1'b0;
-                        burst_words_served_r <= burst_words_served_r + 32'd1;
-                        if (burst_words_served_r + 32'd1 == burst_window_base_r + 32'(burst_window_words)
-                            && burst_words_served_r + 32'd1 < desc_words_r) begin
-                            burst_window_base_r      <= burst_window_base_r + 32'(burst_window_words);
-                            burst_prefetch_started_r <= 1'b0;
-                            for (int i = 0; i < READ_WINDOW_WORDS; ++i)
-                                burst_window_valid_r[i] <= 1'b0;
+                        burst_rsp_valid_r                           <= 1'b0;
+                        buf_valid_r[rd_buf_ptr_r][rd_word_in_buf_r] <= 1'b0;
+                        burst_req_pending_r                         <= 1'b0;
+                        burst_words_served_r                        <= burst_words_served_r + 32'd1;
+                        if (WINDOW_CNT_W'(rd_word_in_buf_r) + WINDOW_CNT_W'(1)
+                            == buf_window_words_r[rd_buf_ptr_r]) begin
+                            // Last word of this buffer drained: release it
+                            // so AR side can refill, and flip to the other.
+                            buf_busy_r[rd_buf_ptr_r] <= 1'b0;
+                            rd_buf_ptr_r             <= ~rd_buf_ptr_r;
+                            rd_word_in_buf_r         <= '0;
+                        end else begin
+                            rd_word_in_buf_r <= rd_word_in_buf_r + WIDX_W'(1);
                         end
                     end
 
-                    if (burst_req_pending_r && !burst_rsp_valid_r && burst_service_data_ready) begin
+                    // ----- Consumer: present rsp when word is available -----
+                    if (burst_req_pending_r && !burst_rsp_valid_r
+                        && buf_valid_r[rd_buf_ptr_r][rd_word_in_buf_r]) begin
                         burst_rsp_valid_r <= 1'b1;
-                        burst_rsp_data_r  <= burst_window_data_r[burst_service_word];
+                        burst_rsp_data_r  <= buf_data_r[rd_buf_ptr_r][rd_word_in_buf_r];
                         burst_rsp_tag_r   <= burst_req_tag_r;
                     end
 
-                    // Consumer request capture (both in CAPTURE and ACTIVE states)
+                    // ----- Consumer: request capture (latches src base once) -----
                     if (rd_req_valid && rd_req_ready) begin
                         burst_req_pending_r <= 1'b1;
                         burst_req_tag_r     <= hbm_req_tag;
-
-                        if (!burst_prefetch_started_r) begin
-                            // First request of a new window: kick off AR pipeline
-                            if (burst_words_served_r == 32'd0)
-                                burst_src_base_byte_r <= hbm_req_byte_addr;
-                            burst_prefetch_started_r <= 1'b1;
-                            burst_accept_count_r     <= WINDOW_CNT_W'(1);
-                            burst_issue_group_r      <= '0;
-                            burst_recv_group_r       <= '0;
-                            burst_recv_beat_r        <= '0;
-                            read_state_r             <= RD_BURST_ACTIVE;
-                            for (int i = 0; i < READ_BURST_GROUPS; ++i) begin
-                                burst_group_count_r[i]     <= burst_group_words[i];
-                                burst_group_base_addr_r[i] <= calc_remap_byte_addr(
-                                    hbm_req_byte_addr + (AXI_ADDR_WIDTH'(i) << HBM_BUS_STRIDE_SHIFT)
-                                );
-                            end
+                        if (!burst_src_base_latched_r) begin
+                            burst_src_base_byte_r    <= hbm_req_byte_addr;
+                            burst_src_base_latched_r <= 1'b1;
                         end
                     end
 
-                    if (read_state_r == RD_BURST_ACTIVE) begin
-                        // AR side: issue AR for each non-empty group back-to-back
-                        if (burst_issue_group_r < GROUP_IDX_W'(READ_BURST_GROUPS)) begin
-                            if (burst_group_count_r[burst_issue_group_r[GSEL_W-1:0]] == 0) begin
-                                // Skip empty group (no AR fired)
-                                burst_issue_group_r <= burst_issue_group_r + GROUP_IDX_W'(1);
-                            end else if (axi_m[ch].ar_ready) begin
-                                burst_issue_group_r <= burst_issue_group_r + GROUP_IDX_W'(1);
+                    // ----- AR side: kick off and issue per non-empty group -----
+                    case (ar_state_r)
+                        AR_IDLE: begin
+                            if (ar_kick_off) begin
+                                buf_busy_r[ar_buf_ptr_r]         <= 1'b1;
+                                buf_window_words_r[ar_buf_ptr_r] <= ar_window_words_next;
+                                for (int i = 0; i < READ_BURST_GROUPS; ++i) begin
+                                    buf_group_count_r[ar_buf_ptr_r][i]     <= ar_group_words_next[i];
+                                    buf_group_base_addr_r[ar_buf_ptr_r][i] <= ar_group_base_addr_next[i];
+                                end
+                                for (int w = 0; w < READ_WINDOW_WORDS; ++w) begin
+                                    buf_valid_r[ar_buf_ptr_r][w] <= 1'b0;
+                                end
+                                ar_issue_group_r <= '0;
+                                ar_state_r       <= AR_ACTIVE;
                             end
                         end
+                        AR_ACTIVE: begin
+                            if (ar_issue_group_r < GROUP_IDX_W'(READ_BURST_GROUPS)) begin
+                                logic ar_advance;
+                                ar_advance =
+                                      (buf_group_count_r[ar_buf_ptr_r][ar_issue_group_r[GSEL_W-1:0]] == 0)
+                                   || axi_m[ch].ar_ready;
+                                if (ar_advance) begin
+                                    if (ar_issue_group_r == GROUP_IDX_W'(READ_BURST_GROUPS - 1)) begin
+                                        // All AR for this window issued (or skipped).
+                                        // Advance window base, flip buffer, return to IDLE.
+                                        ar_window_base_r <= ar_window_base_r
+                                                         + 32'(buf_window_words_r[ar_buf_ptr_r]);
+                                        ar_buf_ptr_r     <= ~ar_buf_ptr_r;
+                                        ar_issue_group_r <= '0;
+                                        ar_state_r       <= AR_IDLE;
+                                    end else begin
+                                        ar_issue_group_r <= ar_issue_group_r + GROUP_IDX_W'(1);
+                                    end
+                                end
+                            end
+                        end
+                        default: begin
+                            ar_state_r <= AR_IDLE;
+                        end
+                    endcase
 
-                        // R side: accept beats in AR-issue order (same ar_id => in-order)
-                        if (burst_recv_group_r < GROUP_IDX_W'(READ_BURST_GROUPS)) begin
-                            if (burst_group_count_r[burst_recv_group_r[GSEL_W-1:0]] == 0) begin
-                                // Skip empty group (no R expected)
-                                burst_recv_group_r <= burst_recv_group_r + GROUP_IDX_W'(1);
-                                burst_recv_beat_r  <= '0;
-                                if (burst_recv_group_r + GROUP_IDX_W'(1) == GROUP_IDX_W'(READ_BURST_GROUPS))
-                                    read_state_r <= RD_BURST_CAPTURE;
-                            end else if (axi_r_fire) begin
-                                logic [WIDX_W-1:0] rsp_word_idx;
-                                rsp_word_idx = WIDX_W'(burst_recv_group_r)
-                                             + (WIDX_W'(burst_recv_beat_r) << LOG2_GROUPS);
-                                burst_window_data_r[rsp_word_idx]  <= axi_m[ch].r_data;
-                                burst_window_valid_r[rsp_word_idx] <= 1'b1;
-
-                                if (burst_recv_beat_r + BEAT_IDX_W'(1) < burst_group_count_r[burst_recv_group_r[GSEL_W-1:0]]) begin
-                                    burst_recv_beat_r <= burst_recv_beat_r + BEAT_IDX_W'(1);
+                    // ----- R side: accept beats in-order (ar_id=0) -----
+                    if (buf_busy_r[r_buf_ptr_r]
+                        && r_recv_group_r < GROUP_IDX_W'(READ_BURST_GROUPS)) begin
+                        if (buf_group_count_r[r_buf_ptr_r][r_recv_group_r[GSEL_W-1:0]] == 0) begin
+                            // Skip empty group (no AR fired, no R expected)
+                            r_recv_beat_r <= '0;
+                            if (r_recv_group_r + GROUP_IDX_W'(1) == GROUP_IDX_W'(READ_BURST_GROUPS)) begin
+                                r_recv_group_r <= '0;
+                                r_buf_ptr_r    <= ~r_buf_ptr_r;
+                            end else begin
+                                r_recv_group_r <= r_recv_group_r + GROUP_IDX_W'(1);
+                            end
+                        end else if (axi_r_fire) begin
+                            logic [WIDX_W-1:0] rsp_word_idx;
+                            rsp_word_idx = WIDX_W'(r_recv_group_r)
+                                         + (WIDX_W'(r_recv_beat_r) << LOG2_GROUPS);
+                            buf_data_r[r_buf_ptr_r][rsp_word_idx]  <= axi_m[ch].r_data;
+                            buf_valid_r[r_buf_ptr_r][rsp_word_idx] <= 1'b1;
+                            if (r_recv_beat_r + BEAT_IDX_W'(1)
+                                < buf_group_count_r[r_buf_ptr_r][r_recv_group_r[GSEL_W-1:0]]) begin
+                                r_recv_beat_r <= r_recv_beat_r + BEAT_IDX_W'(1);
+                            end else begin
+                                r_recv_beat_r <= '0;
+                                if (r_recv_group_r + GROUP_IDX_W'(1)
+                                    == GROUP_IDX_W'(READ_BURST_GROUPS)) begin
+                                    r_recv_group_r <= '0;
+                                    r_buf_ptr_r    <= ~r_buf_ptr_r;
                                 end else begin
-                                    burst_recv_beat_r  <= '0;
-                                    burst_recv_group_r <= burst_recv_group_r + GROUP_IDX_W'(1);
-                                    if (burst_recv_group_r + GROUP_IDX_W'(1) == GROUP_IDX_W'(READ_BURST_GROUPS))
-                                        read_state_r <= RD_BURST_CAPTURE;
+                                    r_recv_group_r <= r_recv_group_r + GROUP_IDX_W'(1);
                                 end
                             end
                         end
@@ -701,12 +795,12 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
         // --------------------------------------------------------
         // AXI read channel: burst logic only
         // --------------------------------------------------------
-        assign axi_m[ch].ar_valid   = (read_state_r == RD_BURST_ACTIVE)
-                                    && (burst_issue_group_r < GROUP_IDX_W'(READ_BURST_GROUPS))
-                                    && (burst_group_count_r[burst_issue_group_r[GSEL_W-1:0]] != 0);
-        assign axi_m[ch].ar_addr    = burst_group_base_addr_r[burst_issue_group_r[GSEL_W-1:0]];
+        assign axi_m[ch].ar_valid   = (ar_state_r == AR_ACTIVE)
+                                    && (ar_issue_group_r < GROUP_IDX_W'(READ_BURST_GROUPS))
+                                    && (buf_group_count_r[ar_buf_ptr_r][ar_issue_group_r[GSEL_W-1:0]] != 0);
+        assign axi_m[ch].ar_addr    = buf_group_base_addr_r[ar_buf_ptr_r][ar_issue_group_r[GSEL_W-1:0]];
         assign axi_m[ch].ar_id      = '0;
-        assign axi_m[ch].ar_len     = 8'(burst_group_count_r[burst_issue_group_r[GSEL_W-1:0]]) - 8'd1;
+        assign axi_m[ch].ar_len     = 8'(buf_group_count_r[ar_buf_ptr_r][ar_issue_group_r[GSEL_W-1:0]]) - 8'd1;
         assign axi_m[ch].ar_size    = 3'(LOG2_DATA_SIZE);
         assign axi_m[ch].ar_burst   = 2'b01;
         assign axi_m[ch].ar_lock    = 1'b0;
@@ -716,8 +810,8 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
         assign axi_m[ch].ar_region  = 4'b0000;
         assign axi_m[ch].ar_user    = '0;
 
-        assign axi_m[ch].r_ready    = (read_state_r == RD_BURST_ACTIVE)
-                                    && (burst_recv_group_r < GROUP_IDX_W'(READ_BURST_GROUPS));
+        assign axi_m[ch].r_ready    = buf_busy_r[r_buf_ptr_r]
+                                    && (r_recv_group_r < GROUP_IDX_W'(READ_BURST_GROUPS));
 
 `ifdef DBG_TRACE_GEMM
         // --------------------------------------------------------
@@ -727,41 +821,51 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
         // channel or phase fails to drain when TMEM_DMA_CTRL is
         // stuck in S_WAIT_DONE.
         // --------------------------------------------------------
-        read_state_t         prev_read_state_r;
-        write_state_t        prev_write_state_r;
-        logic [GROUP_IDX_W-1:0] prev_burst_issue_group_r;
-        logic [GROUP_IDX_W-1:0] prev_burst_recv_group_r;
+        ar_state_t              prev_ar_state_r;
+        write_state_t           prev_write_state_r;
+        logic [GROUP_IDX_W-1:0] prev_ar_issue_group_r;
+        logic [GROUP_IDX_W-1:0] prev_r_recv_group_r;
+        logic                   prev_ar_buf_ptr_r;
+        logic                   prev_r_buf_ptr_r;
+        logic                   prev_rd_buf_ptr_r;
         logic [GROUP_IDX_W-1:0] prev_burst_wr_issue_group_r;
         logic [GROUP_IDX_W-1:0] prev_burst_wr_recv_group_r;
-        logic                prev_done_valid;
-        logic                prev_internal_done_valid;
+        logic                   prev_done_valid;
+        logic                   prev_internal_done_valid;
 
         always @(posedge clk) begin
             if (reset) begin
-                prev_read_state_r           <= RD_BURST_CAPTURE;
+                prev_ar_state_r             <= AR_IDLE;
                 prev_write_state_r          <= WR_IDLE;
-                prev_burst_issue_group_r    <= '0;
-                prev_burst_recv_group_r     <= '0;
+                prev_ar_issue_group_r       <= '0;
+                prev_r_recv_group_r         <= '0;
+                prev_ar_buf_ptr_r           <= 1'b0;
+                prev_r_buf_ptr_r            <= 1'b0;
+                prev_rd_buf_ptr_r           <= 1'b0;
                 prev_burst_wr_issue_group_r <= '0;
                 prev_burst_wr_recv_group_r  <= '0;
                 prev_done_valid             <= 1'b0;
                 prev_internal_done_valid    <= 1'b0;
             end else begin
-                prev_read_state_r           <= read_state_r;
+                prev_ar_state_r             <= ar_state_r;
                 prev_write_state_r          <= write_state_r;
-                prev_burst_issue_group_r    <= burst_issue_group_r;
-                prev_burst_recv_group_r     <= burst_recv_group_r;
+                prev_ar_issue_group_r       <= ar_issue_group_r;
+                prev_r_recv_group_r         <= r_recv_group_r;
+                prev_ar_buf_ptr_r           <= ar_buf_ptr_r;
+                prev_r_buf_ptr_r            <= r_buf_ptr_r;
+                prev_rd_buf_ptr_r           <= rd_buf_ptr_r;
                 prev_burst_wr_issue_group_r <= burst_wr_issue_group_r;
                 prev_burst_wr_recv_group_r  <= burst_wr_recv_group_r;
                 prev_done_valid             <= done_if[ch].valid;
                 prev_internal_done_valid    <= internal_done_if.valid;
 
-                if (read_state_r != prev_read_state_r) begin
-                    `TRACE(1, ("%t: %s ch=%0d read_state: %0d -> %0d (iss_grp=%0d recv_grp=%0d recv_beat=%0d served=%0d)\n",
+                if (ar_state_r != prev_ar_state_r) begin
+                    `TRACE(1, ("%t: %s ch=%0d ar_state: %0d -> %0d (ar_buf=%0d iss_grp=%0d r_buf=%0d recv_grp=%0d rd_buf=%0d rd_word=%0d served=%0d)\n",
                         $time, INSTANCE_ID, ch,
-                        prev_read_state_r, read_state_r,
-                        burst_issue_group_r, burst_recv_group_r,
-                        burst_recv_beat_r, burst_words_served_r))
+                        prev_ar_state_r, ar_state_r,
+                        ar_buf_ptr_r, ar_issue_group_r,
+                        r_buf_ptr_r, r_recv_group_r,
+                        rd_buf_ptr_r, rd_word_in_buf_r, burst_words_served_r))
                 end
 
                 if (write_state_r != prev_write_state_r) begin
@@ -772,18 +876,29 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
                         burst_wr_recv_group_r, burst_wr_words_captured_r))
                 end
 
-                if (burst_issue_group_r != prev_burst_issue_group_r) begin
-                    `TRACE(2, ("%t: %s ch=%0d rd.issue_group: %0d -> %0d (state=%0d ar_ready=%0b)\n",
+                if (ar_issue_group_r != prev_ar_issue_group_r
+                 || ar_buf_ptr_r   != prev_ar_buf_ptr_r) begin
+                    `TRACE(2, ("%t: %s ch=%0d ar.issue: buf %0d->%0d group %0d->%0d (state=%0d ar_ready=%0b)\n",
                         $time, INSTANCE_ID, ch,
-                        prev_burst_issue_group_r, burst_issue_group_r,
-                        read_state_r, axi_m[ch].ar_ready))
+                        prev_ar_buf_ptr_r, ar_buf_ptr_r,
+                        prev_ar_issue_group_r, ar_issue_group_r,
+                        ar_state_r, axi_m[ch].ar_ready))
                 end
 
-                if (burst_recv_group_r != prev_burst_recv_group_r) begin
-                    `TRACE(2, ("%t: %s ch=%0d rd.recv_group: %0d -> %0d (state=%0d r_valid=%0b r_last=%0b)\n",
+                if (r_recv_group_r != prev_r_recv_group_r
+                 || r_buf_ptr_r   != prev_r_buf_ptr_r) begin
+                    `TRACE(2, ("%t: %s ch=%0d r.recv: buf %0d->%0d group %0d->%0d (r_valid=%0b r_last=%0b)\n",
                         $time, INSTANCE_ID, ch,
-                        prev_burst_recv_group_r, burst_recv_group_r,
-                        read_state_r, axi_m[ch].r_valid, axi_m[ch].r_last))
+                        prev_r_buf_ptr_r, r_buf_ptr_r,
+                        prev_r_recv_group_r, r_recv_group_r,
+                        axi_m[ch].r_valid, axi_m[ch].r_last))
+                end
+
+                if (rd_buf_ptr_r != prev_rd_buf_ptr_r) begin
+                    `TRACE(2, ("%t: %s ch=%0d rd.buf_flip: %0d -> %0d (served=%0d buf_busy=%02b)\n",
+                        $time, INSTANCE_ID, ch,
+                        prev_rd_buf_ptr_r, rd_buf_ptr_r,
+                        burst_words_served_r, buf_busy_r))
                 end
 
                 if (burst_wr_issue_group_r != prev_burst_wr_issue_group_r) begin
@@ -814,27 +929,29 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
                         internal_done_if.valid))
                 end
 
-                // Burst window setup: counts/addresses decided when a new
-                // read burst kicks off. Verifies `calc_group_words` result
-                // and first base address.
-                if (rd_req_valid && rd_req_ready && !burst_prefetch_started_r) begin
-                    `TRACE(1, ("%t: %s ch=%0d BURST_START window_words=%0d GROUPS=%0d base=0x%0h remaining=%0d\n",
-                        $time, INSTANCE_ID, ch, burst_window_words,
+                // Window setup: counts/addresses are latched on AR kick-off
+                // (one cycle before AR actually fires). Verifies calc_group_words
+                // result and the derived base addresses.
+                if (ar_kick_off) begin
+                    `TRACE(1, ("%t: %s ch=%0d BURST_START buf=%0d window_base=%0d window_words=%0d GROUPS=%0d src_base=0x%0h remaining=%0d\n",
+                        $time, INSTANCE_ID, ch, ar_buf_ptr_r,
+                        ar_window_base_r, ar_window_words_next,
                         READ_BURST_GROUPS,
-                        hbm_req_byte_addr, burst_words_remaining))
+                        burst_src_base_byte_r, ar_words_remaining_next))
                     for (int gi = 0; gi < READ_BURST_GROUPS; ++gi) begin
-                        `TRACE(2, ("%t: %s ch=%0d   group[%0d] words=%0d\n",
-                            $time, INSTANCE_ID, ch, gi, burst_group_words[gi]))
+                        `TRACE(2, ("%t: %s ch=%0d   group[%0d] words=%0d base=0x%0h\n",
+                            $time, INSTANCE_ID, ch, gi,
+                            ar_group_words_next[gi], ar_group_base_addr_next[gi]))
                     end
                 end
 
                 // Every AR fired to HBM with its programmed ar_len.
                 // Use with BURST_START to confirm ar_len == group_count-1.
                 if (axi_m[ch].ar_valid && axi_m[ch].ar_ready) begin
-                    `TRACE(1, ("%t: %s ch=%0d AR_FIRE addr=0x%0h len=%0d group=%0d count=%0d\n",
+                    `TRACE(1, ("%t: %s ch=%0d AR_FIRE addr=0x%0h len=%0d buf=%0d group=%0d count=%0d\n",
                         $time, INSTANCE_ID, ch, axi_m[ch].ar_addr, axi_m[ch].ar_len,
-                        burst_issue_group_r,
-                        burst_group_count_r[burst_issue_group_r[GSEL_W-1:0]]))
+                        ar_buf_ptr_r, ar_issue_group_r,
+                        buf_group_count_r[ar_buf_ptr_r][ar_issue_group_r[GSEL_W-1:0]]))
                 end
 
                 // Every AXI R-channel handshake the channel actually
@@ -842,10 +959,10 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
                 // (sum of counts for this burst), beats are being lost or
                 // gated by r_ready upstream.
                 if (axi_r_fire) begin
-                    `TRACE(1, ("%t: %s ch=%0d R_FIRE recv_grp=%0d recv_beat=%0d count[grp]=%0d r_last=%0b\n",
+                    `TRACE(1, ("%t: %s ch=%0d R_FIRE buf=%0d recv_grp=%0d recv_beat=%0d count[grp]=%0d r_last=%0b\n",
                         $time, INSTANCE_ID, ch,
-                        burst_recv_group_r, burst_recv_beat_r,
-                        burst_group_count_r[burst_recv_group_r[GSEL_W-1:0]],
+                        r_buf_ptr_r, r_recv_group_r, r_recv_beat_r,
+                        buf_group_count_r[r_buf_ptr_r][r_recv_group_r[GSEL_W-1:0]],
                         axi_m[ch].r_last))
                 end
             end

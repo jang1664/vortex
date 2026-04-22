@@ -154,7 +154,6 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
     S_G2L_SRC_RD_WAIT,
     S_G2L_DST_WR_REQ,
 
-    S_ADV_SEG,
     S_DONE
   } state_e;
 
@@ -173,7 +172,6 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
       S_G2L_SRC_RD_REQ: return "S_G2L_SRC_RD_REQ";
       S_G2L_SRC_RD_WAIT:return "S_G2L_SRC_RD_WAIT";
       S_G2L_DST_WR_REQ: return "S_G2L_DST_WR_REQ";
-      S_ADV_SEG:        return "S_ADV_SEG";
       S_DONE:           return "S_DONE";
       default:          return "S_UNKNOWN";
     endcase
@@ -241,7 +239,7 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
   logic [31:0] seg_size_r;
   logic [31:0] padding_r;
   logic        direction_bit_r;    // 0: GLOBAL->LMEM (load), 1: LMEM->GLOBAL (store)
-  logic [63:0] base_src_seg_r, base_dst_seg_r;
+  logic [63:0] rd_base_src_seg_r, wr_base_dst_seg_r;
   logic        precalc_pending_r;
 
   wire precalc_issue = (state == S_PRECALC) && precalc_pending_r;
@@ -366,21 +364,32 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
 
   // ------------------------------------------------------------
   // 3D indices + segment byte offset
+  //   - rd_i_dim / rd_base_src_seg_r advance when the RD side finishes
+  //     issuing reads for the current segment (src_req_fire crosses end)
+  //   - wr_i_dim / wr_base_dst_seg_r advance when the WR side finishes
+  //     writing the current segment (dst_req_fire causes out_off == seg_size)
+  //   - This decouples the two sides so the slot array (depth 8) can hold
+  //     reads from future segments while writes of the current segment
+  //     are still draining. Without the split, each segment would serialize
+  //     through S_PREP_SEG -> DECIDE -> S_ADV_SEG (~7–8 cycles / seg).
   // ------------------------------------------------------------
-  logic [31:0] i_dim[NDIM];
-  logic [31:0] out_off; // bytes within current segment [0 .. seg_size)
-
-  // segment completion latch (for S_ADV_SEG -> S_DONE)
-  logic finished;
+  logic [31:0] rd_i_dim[NDIM];
+  logic [31:0] wr_i_dim[NDIM];
+  logic [31:0] out_off; // bytes within current WR segment [0 .. seg_size)
 
   // ------------------------------------------------------------
   // Base address per segment (byte)
   // ------------------------------------------------------------
-  logic [63:0] base_src_seg, base_dst_seg;
+  logic [63:0] rd_base_src_seg, wr_base_dst_seg;
+  logic [63:0] wr_base_src_seg_r; // used only in ENABLE_MISALIGN=1 to recompute wr-side drop per seg
 
-  // Segment bases are maintained incrementally in S_ADV_SEG to avoid per-cycle 64-bit mul/add.
-  assign base_src_seg = base_src_seg_r;
-  assign base_dst_seg = base_dst_seg_r;
+  // Segment bases are maintained incrementally in src_req_fire / dst_req_fire
+  // handlers to avoid per-cycle 64-bit mul/add.
+  assign rd_base_src_seg = rd_base_src_seg_r;
+  assign wr_base_dst_seg = wr_base_dst_seg_r;
+
+  // Finished wires are declared later, after rd_state_e / wr_state_e
+  // are in scope (VCS does not accept forward references to them here).
 
   // ------------------------------------------------------------
   // valid/padding boundary
@@ -451,6 +460,15 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
   rd_state_e rd_state;
   wr_state_e wr_state;
 
+  // Finished: wr side has issued writes for the last segment. Equivalent to
+  // wr_state == WR_DONE; kept as a wire for trace/chipscope readability.
+  // Declared here (not near the segment-base wires above) because VCS
+  // requires rd_state_e / wr_state_e to be in scope.
+  logic finished;
+  assign finished = (wr_state == WR_DONE);
+  logic rd_finished;
+  assign rd_finished = (rd_state == RD_DONE);
+
   slot_state_e                slot_state_r [RD_OUTSTANDING];
   logic [RD_OUTSTANDING-1:0][MAX_BYTES*8-1:0] slot_data_r;
   logic [RD_SLOT_BITS-1:0]    rd_issue_slot_r;
@@ -492,7 +510,7 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
       if (state != state_n) begin
         `TRACE(3, ("%m : [%0t] | DMA_STATE_TRANSITION | {inst=%s, from=%s, to=%s, out_off=%0d, finished=%0d, i0=%0d, i1=%0d, i2=%0d}\n",
                   $time, INSTANCE_ID, state_to_str(state), state_to_str(state_n),
-                  out_off, finished, i_dim[0], i_dim[1], i_dim[2]))
+                  out_off, finished, wr_i_dim[0], wr_i_dim[1], wr_i_dim[2]))
       end
 
       if (cmd_start) begin
@@ -531,18 +549,18 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
                   precalc_result[1], precalc_result[3], precalc_result[5]))
       end
 
-      if (state == S_PREP_SEG && !finished) begin
+      if (state == S_PREP_SEG) begin
         logic [63:0] src_rd_ptr_aligned;
         logic [63:0] src_rd_end_aligned;
         logic [31:0] src_drop_bytes;
-        src_rd_ptr_aligned = direction_bit_r ? align_down(base_src_seg, LMEM_BYTES) : align_down(base_src_seg, DCACHE_BYTES);
-        src_rd_end_aligned = direction_bit_r ? align_up(base_src_seg + 64'(valid_total), LMEM_BYTES)
-                                             : align_up(base_src_seg + 64'(valid_total), DCACHE_BYTES);
-        src_drop_bytes = direction_bit_r ? 32'(base_src_seg & 64'(LMEM_BYTES-1))
-                                         : 32'(base_src_seg & 64'(DCACHE_BYTES-1));
+        src_rd_ptr_aligned = direction_bit_r ? align_down(rd_base_src_seg, LMEM_BYTES) : align_down(rd_base_src_seg, DCACHE_BYTES);
+        src_rd_end_aligned = direction_bit_r ? align_up(rd_base_src_seg + 64'(valid_total), LMEM_BYTES)
+                                             : align_up(rd_base_src_seg + 64'(valid_total), DCACHE_BYTES);
+        src_drop_bytes = direction_bit_r ? 32'(rd_base_src_seg & 64'(LMEM_BYTES-1))
+                                         : 32'(rd_base_src_seg & 64'(DCACHE_BYTES-1));
         `TRACE(2, ("%m : [%0t] | DMA_SEG_PREP | {inst=%s, mode=%s, i0=%0d, i1=%0d, i2=%0d, src_base=0x%0h, dst_base=0x%0h, seg_size=%0d, valid_total=%0d, padding=%0d, src_drop=%0d, src_rd_ptr=0x%0h, src_rd_end=0x%0h}\n",
                   $time, INSTANCE_ID, direction_bit_r ? "L2G" : "G2L",
-                  i_dim[0], i_dim[1], i_dim[2], base_src_seg, base_dst_seg,
+                  wr_i_dim[0], wr_i_dim[1], wr_i_dim[2], rd_base_src_seg, wr_base_dst_seg,
                   seg_size_r, valid_total, padding_r, src_drop_bytes, src_rd_ptr_aligned, src_rd_end_aligned))
       end
 
@@ -582,21 +600,13 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
                   lmem_bus_if.req_data.byteen, lmem_bus_if.req_data.data, lmem_bus_if.req_data.tag, out_off))
       end
 
-      if (state == S_ADV_SEG && out_off >= seg_size_r) begin
-        logic will_finish;
-        will_finish = (bound_r[0] == 0 || bound_r[1] == 0 || bound_r[2] == 0)
-                   || ((i_dim[0] + 32'd1 >= bound_r[0])
-                    && (i_dim[1] + 32'd1 >= bound_r[1])
-                    && (i_dim[2] + 32'd1 >= bound_r[2]));
-        `TRACE(2, ("%m : [%0t] | DMA_SEG_ADVANCE | {inst=%s, i0=%0d, i1=%0d, i2=%0d, bound0=%0d, bound1=%0d, bound2=%0d, src_base=0x%0h, dst_base=0x%0h, seg_size=%0d, out_off=%0d, will_finish=%0d}\n",
-                  $time, INSTANCE_ID, i_dim[0], i_dim[1], i_dim[2],
-                  bound_r[0], bound_r[1], bound_r[2], base_src_seg, base_dst_seg,
-                  seg_size_r, out_off, will_finish))
-      end
+      // Note: legacy DMA_SEG_ADVANCE trace (fired in S_ADV_SEG) removed.
+      // Per-seg advance now happens inline in src_req_fire / dst_req_fire;
+      // add a finer trace there if needed for debugging.
 
       if (state != S_DONE && state_n == S_DONE) begin
         `TRACE(2, ("%m : [%0t] | DMA_DONE_ASSERT | {inst=%s, entry_id=%0d, i0=%0d, i1=%0d, i2=%0d}\n",
-                  $time, INSTANCE_ID, entry_id_latched, i_dim[0], i_dim[1], i_dim[2]))
+                  $time, INSTANCE_ID, entry_id_latched, wr_i_dim[0], wr_i_dim[1], wr_i_dim[2]))
       end
 
       if (state == S_DONE && done_if.ready) begin
@@ -644,10 +654,10 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
       end
 
       S_PREP_SEG: begin
-        if (finished)
-          state_n = S_DONE;
-        else
-          state_n = direction_bit_r ? S_L2G_DECIDE : S_G2L_DECIDE;
+        // Entered exactly once per descriptor (from S_PRECALC) to perform
+        // the initial segment init. Descriptor completion is detected by
+        // the DECIDE states' exit condition, not here.
+        state_n = direction_bit_r ? S_L2G_DECIDE : S_G2L_DECIDE;
       end
 
       // ==========================================================
@@ -687,7 +697,7 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
           lmem_bus_if.req_data.tag.value = rd_tag_value;
         end
 
-        dst_byte   = base_dst_seg + 64'(out_off);
+        dst_byte   = wr_base_dst_seg + 64'(out_off);
         // In aligned mode the destination base is guaranteed 0-mod-BUS, so
         // lane folds to 0 at every beat and the assembler below degenerates
         // to a direct window read. Elaboration-time constant.
@@ -755,8 +765,11 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
           default:;
         endcase
 
+        // Both rd and wr have issued/drained the descriptor's last seg.
+        // With seg advances handled inline by the req_fire handlers, this
+        // condition now signals descriptor-level completion.
         if ((rd_state == RD_DONE) && (wr_state == WR_DONE) && (occ_next == 0))
-          state_n = S_ADV_SEG;
+          state_n = S_DONE;
       end
 
       // ==========================================================
@@ -796,7 +809,7 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
           dcache_bus_if.req_data.tag.value = rd_tag_value;
         end
 
-        dst_byte   = base_dst_seg + 64'(out_off);
+        dst_byte   = wr_base_dst_seg + 64'(out_off);
         lane       = ENABLE_MISALIGN ? int'(dst_byte[LMEM_LG2-1:0]) : 0;
         remaining  = (out_off < seg_size_r) ? (seg_size_r - out_off) : 32'd0;
         beat_room  = LMEM_BYTES - lane;
@@ -855,8 +868,11 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
           default:;
         endcase
 
+        // Both rd and wr have issued/drained the descriptor's last seg.
+        // With seg advances handled inline by the req_fire handlers, this
+        // condition now signals descriptor-level completion.
         if ((rd_state == RD_DONE) && (wr_state == WR_DONE) && (occ_next == 0))
-          state_n = S_ADV_SEG;
+          state_n = S_DONE;
       end
 
       // Legacy single-step states are no longer used; route back to decoupled run states.
@@ -870,10 +886,6 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
       S_G2L_SRC_RD_WAIT,
       S_G2L_DST_WR_REQ: begin
         state_n = S_G2L_DECIDE;
-      end
-
-      S_ADV_SEG: begin
-        state_n = S_PREP_SEG;
       end
 
       S_DONE: begin
@@ -894,12 +906,15 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
     if (reset) begin
       state <= S_IDLE;
 
-      base_src_seg_r <= '0;
-      base_dst_seg_r <= '0;
+      rd_base_src_seg_r <= '0;
+      wr_base_src_seg_r <= '0;
+      wr_base_dst_seg_r <= '0;
 
-      for (int d = 0; d < NDIM; d++) i_dim[d] <= '0;
+      for (int d = 0; d < NDIM; d++) begin
+        rd_i_dim[d] <= '0;
+        wr_i_dim[d] <= '0;
+      end
       out_off   <= '0;
-      finished  <= 1'b0;
 
       win_lmem       <= '0;
       win_lmem_valid <= '0;
@@ -912,8 +927,6 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
       dcache_rd_ptr    <= '0;
       dcache_rd_end    <= '0;
       dcache_drop      <= '0;
-      base_src_seg_r   <= '0;
-      base_dst_seg_r   <= '0;
 
       rd_state <= RD_IDLE;
       wr_state <= WR_IDLE;
@@ -930,15 +943,19 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
 
       // -------------------------
       // Start: init 3D + seg offset
+      //   Both rd-side and wr-side start at segment 0 with the same base
+      //   addresses from the descriptor. They advance independently as
+      //   reads and writes drain (see src_req_fire / dst_req_fire handlers).
       // -------------------------
       if (cmd_start) begin
-        i_dim[0]  <= 32'd0;
-        i_dim[1]  <= 32'd0;
-        i_dim[2]  <= 32'd0;
+        for (int d = 0; d < NDIM; d++) begin
+          rd_i_dim[d] <= 32'd0;
+          wr_i_dim[d] <= 32'd0;
+        end
         out_off   <= 32'd0;
-        finished  <= 1'b0;
-        base_src_seg_r <= {cfg_reg_if.regs[4][31:0], cfg_reg_if.regs[3][31:0]};
-        base_dst_seg_r <= {cfg_reg_if.regs[2][31:0], cfg_reg_if.regs[1][31:0]};
+        rd_base_src_seg_r <= {cfg_reg_if.regs[4][31:0], cfg_reg_if.regs[3][31:0]};
+        wr_base_src_seg_r <= {cfg_reg_if.regs[4][31:0], cfg_reg_if.regs[3][31:0]};
+        wr_base_dst_seg_r <= {cfg_reg_if.regs[2][31:0], cfg_reg_if.regs[1][31:0]};
 
         rd_state <= RD_IDLE;
         wr_state <= WR_IDLE;
@@ -951,13 +968,12 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
         end
       end
 
-      // After DONE handshake, clear finished for safety
-      if (state == S_DONE && done_if.valid && done_if.ready) begin
-        finished <= 1'b0;
-      end
-
       // -------------------------
-      // Prepare segment: reset windows + init decoupled RD/WR context
+      // Prepare segment: reset windows + init decoupled RD/WR context.
+      // In the pipelined design this block runs only ONCE per descriptor
+      // (seg 0 setup). Subsequent segment boundaries are handled inline
+      // by the src_req_fire (rd-side) and dst_req_fire (wr-side) handlers
+      // below, so the FSM stays in DECIDE until both sides finish.
       // -------------------------
       if (state == S_PREP_SEG) begin
         out_off <= 32'd0;
@@ -978,63 +994,123 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
           slot_state_r[i] <= SLOT_FREE;
         end
 
-        if (seg_size_r == 0)
+        if (bound_r[0] == 0 || bound_r[1] == 0 || bound_r[2] == 0
+            || seg_size_r == 0) begin
+          // Degenerate descriptor (no work) — short-circuit to DONE.
+          rd_state <= RD_DONE;
           wr_state <= WR_DONE;
-        else
+        end else begin
           wr_state <= WR_RUN;
 
-        if (direction_bit_r) begin
-          // L2G: source=LMEM
-          // In aligned mode the assertion guarantees drop=0; skipping the
-          // write also avoids making `lmem_drop` an observable register
-          // driver so synthesis can prune it entirely.
-          if (ENABLE_MISALIGN)
-            lmem_drop <= (base_src_seg & 64'(LMEM_BYTES-1));
-          lmem_rd_ptr <= align_down(base_src_seg, LMEM_BYTES);
-          if (valid_total == 0) begin
-            lmem_rd_end <= align_down(base_src_seg, LMEM_BYTES);
-            rd_state    <= RD_DONE;
+          if (direction_bit_r) begin
+            // L2G: source=LMEM
+            // In aligned mode the assertion guarantees drop=0; skipping the
+            // write also avoids making `lmem_drop` an observable register
+            // driver so synthesis can prune it entirely.
+            if (ENABLE_MISALIGN)
+              lmem_drop <= (rd_base_src_seg & 64'(LMEM_BYTES-1));
+            lmem_rd_ptr <= align_down(rd_base_src_seg, LMEM_BYTES);
+            if (valid_total == 0) begin
+              lmem_rd_end <= align_down(rd_base_src_seg, LMEM_BYTES);
+              rd_state    <= RD_DONE;
+            end else begin
+              lmem_rd_end <= align_up(rd_base_src_seg + 64'(valid_total), LMEM_BYTES);
+              rd_state    <= RD_RUN;
+            end
+            dcache_rd_ptr <= '0;
+            dcache_rd_end <= '0;
           end else begin
-            lmem_rd_end <= align_up(base_src_seg + 64'(valid_total), LMEM_BYTES);
-            rd_state    <= RD_RUN;
+            // G2L: source=DCACHE
+            if (ENABLE_MISALIGN)
+              dcache_drop <= (rd_base_src_seg & 64'(DCACHE_BYTES-1));
+            dcache_rd_ptr <= align_down(rd_base_src_seg, DCACHE_BYTES);
+            if (valid_total == 0) begin
+              dcache_rd_end <= align_down(rd_base_src_seg, DCACHE_BYTES);
+              rd_state      <= RD_DONE;
+            end else begin
+              dcache_rd_end <= align_up(rd_base_src_seg + 64'(valid_total), DCACHE_BYTES);
+              rd_state      <= RD_RUN;
+            end
+            lmem_rd_ptr <= '0;
+            lmem_rd_end <= '0;
           end
-          dcache_rd_ptr <= '0;
-          dcache_rd_end <= '0;
-        end else begin
-          // G2L: source=DCACHE
-          if (ENABLE_MISALIGN)
-            dcache_drop <= (base_src_seg & 64'(DCACHE_BYTES-1));
-          dcache_rd_ptr <= align_down(base_src_seg, DCACHE_BYTES);
-          if (valid_total == 0) begin
-            dcache_rd_end <= align_down(base_src_seg, DCACHE_BYTES);
-            rd_state      <= RD_DONE;
-          end else begin
-            dcache_rd_end <= align_up(base_src_seg + 64'(valid_total), DCACHE_BYTES);
-            rd_state      <= RD_RUN;
-          end
-          lmem_rd_ptr <= '0;
-          lmem_rd_end <= '0;
         end
       end else if ((state == S_L2G_DECIDE) || (state == S_G2L_DECIDE)) begin
         // -------------------------
         // Source read issue bookkeeping
+        //   When a read completes the current rd segment (next_ptr hits
+        //   rd_end), advance rd_i_dim and rd_base_src_seg_r to the NEXT
+        //   segment immediately. Only set rd_state=RD_DONE when the last
+        //   segment's last read is issued. This keeps reads streaming
+        //   across segment boundaries (pipeline-hiding HBM latency).
+        //   Pre-condition: valid_total > 0 (else rd_state=RD_DONE from init).
         // -------------------------
         if (src_req_fire) begin
           logic [63:0] next_ptr;
+          logic [63:0] next_rd_base;
+          logic        rd_is_last;
+          logic        rd_crosses_seg;
 
           slot_state_r[rd_issue_slot_r] <= SLOT_WAIT_RSP;
           rd_issue_slot_r <= rd_issue_slot_r + RD_SLOT_BITS'(1);
 
-          if (direction_bit_r) begin
-            next_ptr = lmem_rd_ptr + LMEM_BYTES;
-            lmem_rd_ptr <= next_ptr;
-            if (next_ptr >= lmem_rd_end)
-              rd_state <= RD_DONE;
+          if (direction_bit_r) next_ptr = lmem_rd_ptr + 64'(LMEM_BYTES);
+          else                 next_ptr = dcache_rd_ptr + 64'(DCACHE_BYTES);
+
+          rd_crosses_seg = direction_bit_r ? (next_ptr >= lmem_rd_end)
+                                           : (next_ptr >= dcache_rd_end);
+
+          rd_is_last = (rd_i_dim[0] + 32'd1 >= bound_r[0])
+                    && (rd_i_dim[1] + 32'd1 >= bound_r[1])
+                    && (rd_i_dim[2] + 32'd1 >= bound_r[2]);
+
+          // Compute next_rd_base combinationally (mirrors S_ADV_SEG
+          // legacy logic but uses rd_i_dim). Only meaningful when
+          // rd_crosses_seg && !rd_is_last.
+          if (rd_i_dim[0] + 32'd1 < bound_r[0]) begin
+            next_rd_base = rd_base_src_seg_r + 64'(stride_r[0][0]);
+          end else if (rd_i_dim[1] + 32'd1 < bound_r[1]) begin
+            next_rd_base = rd_base_src_seg_r
+                         + 64'(stride_r[0][1]) - stride_bound_r[0][0];
+          end else if (rd_i_dim[2] + 32'd1 < bound_r[2]) begin
+            next_rd_base = rd_base_src_seg_r
+                         + 64'(stride_r[0][2]) - stride_bound_r[0][1] - stride_bound_r[0][0];
           end else begin
-            next_ptr = dcache_rd_ptr + DCACHE_BYTES;
-            dcache_rd_ptr <= next_ptr;
-            if (next_ptr >= dcache_rd_end)
+            next_rd_base = '0; // rd_is_last case, unused
+          end
+
+          if (rd_crosses_seg) begin
+            if (rd_is_last) begin
+              // All rd segments issued
               rd_state <= RD_DONE;
+              if (direction_bit_r) lmem_rd_ptr <= next_ptr;
+              else                 dcache_rd_ptr <= next_ptr;
+            end else begin
+              // Advance rd_i_dim, rd_base_src_seg_r, recompute rd_ptr/rd_end
+              if (rd_i_dim[0] + 32'd1 < bound_r[0]) begin
+                rd_i_dim[0] <= rd_i_dim[0] + 32'd1;
+              end else begin
+                rd_i_dim[0] <= 32'd0;
+                if (rd_i_dim[1] + 32'd1 < bound_r[1]) begin
+                  rd_i_dim[1] <= rd_i_dim[1] + 32'd1;
+                end else begin
+                  rd_i_dim[1] <= 32'd0;
+                  rd_i_dim[2] <= rd_i_dim[2] + 32'd1;
+                end
+              end
+              rd_base_src_seg_r <= next_rd_base;
+              if (direction_bit_r) begin
+                lmem_rd_ptr <= align_down(next_rd_base, LMEM_BYTES);
+                lmem_rd_end <= align_up(next_rd_base + 64'(valid_total), LMEM_BYTES);
+              end else begin
+                dcache_rd_ptr <= align_down(next_rd_base, DCACHE_BYTES);
+                dcache_rd_end <= align_up(next_rd_base + 64'(valid_total), DCACHE_BYTES);
+              end
+            end
+          end else begin
+            // Stay in current rd segment
+            if (direction_bit_r) lmem_rd_ptr <= next_ptr;
+            else                 dcache_rd_ptr <= next_ptr;
           end
         end
 
@@ -1098,7 +1174,7 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
           end
 
           if (dst_req_fire && direction_bit_r) begin
-            dst_byte   = base_dst_seg + 64'(tmp_out_off);
+            dst_byte   = wr_base_dst_seg + 64'(tmp_out_off);
             lane       = ENABLE_MISALIGN ? int'(dst_byte[DCACHE_LG2-1:0]) : 0;
             remaining  = (tmp_out_off < seg_size_r) ? (seg_size_r - tmp_out_off) : 32'd0;
             beat_room  = DCACHE_BYTES - lane;
@@ -1123,8 +1199,67 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
             end
 
             tmp_out_off = tmp_out_off + wr_nbytes;
-            if (tmp_out_off >= seg_size_r)
-              wr_state <= WR_DONE;
+            if (tmp_out_off >= seg_size_r) begin
+              // WR side finished the current seg. Either mark WR_DONE
+              // (last seg of descriptor) or advance wr_i_dim / bases and
+              // reset tmp_out_off so the NEXT seg can continue to drain
+              // into the already-prefetched slots.
+              logic        wr_is_last;
+              logic [63:0] next_wr_base_src;
+              logic [63:0] next_wr_base_dst;
+
+              wr_is_last = (wr_i_dim[0] + 32'd1 >= bound_r[0])
+                        && (wr_i_dim[1] + 32'd1 >= bound_r[1])
+                        && (wr_i_dim[2] + 32'd1 >= bound_r[2]);
+
+              if (wr_i_dim[0] + 32'd1 < bound_r[0]) begin
+                next_wr_base_src = wr_base_src_seg_r + 64'(stride_r[0][0]);
+                next_wr_base_dst = wr_base_dst_seg_r + 64'(stride_r[1][0]);
+              end else if (wr_i_dim[1] + 32'd1 < bound_r[1]) begin
+                next_wr_base_src = wr_base_src_seg_r
+                                 + 64'(stride_r[0][1]) - stride_bound_r[0][0];
+                next_wr_base_dst = wr_base_dst_seg_r
+                                 + 64'(stride_r[1][1]) - stride_bound_r[1][0];
+              end else if (wr_i_dim[2] + 32'd1 < bound_r[2]) begin
+                next_wr_base_src = wr_base_src_seg_r
+                                 + 64'(stride_r[0][2]) - stride_bound_r[0][1] - stride_bound_r[0][0];
+                next_wr_base_dst = wr_base_dst_seg_r
+                                 + 64'(stride_r[1][2]) - stride_bound_r[1][1] - stride_bound_r[1][0];
+              end else begin
+                next_wr_base_src = '0; // wr_is_last case, unused
+                next_wr_base_dst = '0;
+              end
+
+              if (wr_is_last) begin
+                wr_state <= WR_DONE;
+              end else begin
+                if (wr_i_dim[0] + 32'd1 < bound_r[0]) begin
+                  wr_i_dim[0] <= wr_i_dim[0] + 32'd1;
+                end else begin
+                  wr_i_dim[0] <= 32'd0;
+                  if (wr_i_dim[1] + 32'd1 < bound_r[1]) begin
+                    wr_i_dim[1] <= wr_i_dim[1] + 32'd1;
+                  end else begin
+                    wr_i_dim[1] <= 32'd0;
+                    wr_i_dim[2] <= wr_i_dim[2] + 32'd1;
+                  end
+                end
+                wr_base_src_seg_r <= next_wr_base_src;
+                wr_base_dst_seg_r <= next_wr_base_dst;
+                tmp_out_off = 32'd0;
+                if (ENABLE_MISALIGN) begin
+                  // Discard any residual window bytes (they belong to
+                  // extra source beats of the CURRENT seg and cannot be
+                  // reused at the NEXT seg's alignment). Re-issue reads
+                  // are worst-case slot-limited, not bandwidth-limited.
+                  tmp_win   = '0;
+                  tmp_valid = '0;
+                  // L2G: wr writes to DCACHE; src-side is LMEM, drop
+                  // tracks LMEM-beat alignment of the src base.
+                  tmp_drop  = 32'(next_wr_base_src & 64'(LMEM_BYTES-1));
+                end
+              end
+            end
           end
 
           win_lmem       <= tmp_win;
@@ -1167,7 +1302,7 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
           end
 
           if (dst_req_fire && !direction_bit_r) begin
-            dst_byte   = base_dst_seg + 64'(tmp_out_off);
+            dst_byte   = wr_base_dst_seg + 64'(tmp_out_off);
             lane       = ENABLE_MISALIGN ? int'(dst_byte[LMEM_LG2-1:0]) : 0;
             remaining  = (tmp_out_off < seg_size_r) ? (seg_size_r - tmp_out_off) : 32'd0;
             beat_room  = LMEM_BYTES - lane;
@@ -1189,8 +1324,63 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
             end
 
             tmp_out_off = tmp_out_off + wr_nbytes;
-            if (tmp_out_off >= seg_size_r)
-              wr_state <= WR_DONE;
+            if (tmp_out_off >= seg_size_r) begin
+              // WR side finished the current seg. Either mark WR_DONE
+              // (last seg of descriptor) or advance wr_i_dim / bases and
+              // reset tmp_out_off so the NEXT seg can continue to drain
+              // into the already-prefetched slots.
+              logic        wr_is_last;
+              logic [63:0] next_wr_base_src;
+              logic [63:0] next_wr_base_dst;
+
+              wr_is_last = (wr_i_dim[0] + 32'd1 >= bound_r[0])
+                        && (wr_i_dim[1] + 32'd1 >= bound_r[1])
+                        && (wr_i_dim[2] + 32'd1 >= bound_r[2]);
+
+              if (wr_i_dim[0] + 32'd1 < bound_r[0]) begin
+                next_wr_base_src = wr_base_src_seg_r + 64'(stride_r[0][0]);
+                next_wr_base_dst = wr_base_dst_seg_r + 64'(stride_r[1][0]);
+              end else if (wr_i_dim[1] + 32'd1 < bound_r[1]) begin
+                next_wr_base_src = wr_base_src_seg_r
+                                 + 64'(stride_r[0][1]) - stride_bound_r[0][0];
+                next_wr_base_dst = wr_base_dst_seg_r
+                                 + 64'(stride_r[1][1]) - stride_bound_r[1][0];
+              end else if (wr_i_dim[2] + 32'd1 < bound_r[2]) begin
+                next_wr_base_src = wr_base_src_seg_r
+                                 + 64'(stride_r[0][2]) - stride_bound_r[0][1] - stride_bound_r[0][0];
+                next_wr_base_dst = wr_base_dst_seg_r
+                                 + 64'(stride_r[1][2]) - stride_bound_r[1][1] - stride_bound_r[1][0];
+              end else begin
+                next_wr_base_src = '0;
+                next_wr_base_dst = '0;
+              end
+
+              if (wr_is_last) begin
+                wr_state <= WR_DONE;
+              end else begin
+                if (wr_i_dim[0] + 32'd1 < bound_r[0]) begin
+                  wr_i_dim[0] <= wr_i_dim[0] + 32'd1;
+                end else begin
+                  wr_i_dim[0] <= 32'd0;
+                  if (wr_i_dim[1] + 32'd1 < bound_r[1]) begin
+                    wr_i_dim[1] <= wr_i_dim[1] + 32'd1;
+                  end else begin
+                    wr_i_dim[1] <= 32'd0;
+                    wr_i_dim[2] <= wr_i_dim[2] + 32'd1;
+                  end
+                end
+                wr_base_src_seg_r <= next_wr_base_src;
+                wr_base_dst_seg_r <= next_wr_base_dst;
+                tmp_out_off = 32'd0;
+                if (ENABLE_MISALIGN) begin
+                  tmp_win   = '0;
+                  tmp_valid = '0;
+                  // G2L: wr writes to LMEM; src-side is DCACHE, drop
+                  // tracks DCACHE-beat alignment of the src base.
+                  tmp_drop  = 32'(next_wr_base_src & 64'(DCACHE_BYTES-1));
+                end
+              end
+            end
           end
 
           win_dcache       <= tmp_win;
@@ -1206,46 +1396,9 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
         endcase
       end
 
-      // ==========================================================
-      // Segment done -> advance 3D indices (in S_ADV_SEG)
-      //   - DO NOT write state here (single-driver discipline)
-      //   - Set finished when the last segment completes
-      // ==========================================================
-      if (state == S_ADV_SEG) begin
-        if (out_off >= seg_size_r) begin
-          out_off  <= 32'd0;
-          finished <= 1'b0;
-
-          if (bound_r[0] == 0 || bound_r[1] == 0 || bound_r[2] == 0) begin
-            // degenerate: no work, treat as finished
-            finished <= 1'b1;
-            i_dim[0] <= 32'd0;
-            i_dim[1] <= 32'd0;
-            i_dim[2] <= 32'd0;
-          end else if (i_dim[0] + 1 < bound_r[0]) begin
-            i_dim[0] <= i_dim[0] + 1;
-            base_src_seg_r <= base_src_seg_r + 64'(stride_r[0][0]);
-            base_dst_seg_r <= base_dst_seg_r + 64'(stride_r[1][0]);
-          end else begin
-            i_dim[0] <= 32'd0;
-            if (i_dim[1] + 1 < bound_r[1]) begin
-              i_dim[1] <= i_dim[1] + 1;
-              base_src_seg_r <= base_src_seg_r + 64'(stride_r[0][1]) - stride_bound_r[0][0];
-              base_dst_seg_r <= base_dst_seg_r + 64'(stride_r[1][1]) - stride_bound_r[1][0];
-            end else begin
-              i_dim[1] <= 32'd0;
-              if (i_dim[2] + 1 < bound_r[2]) begin
-                i_dim[2] <= i_dim[2] + 1;
-                base_src_seg_r <= base_src_seg_r + 64'(stride_r[0][2]) - stride_bound_r[0][1] - stride_bound_r[0][0];
-                base_dst_seg_r <= base_dst_seg_r + 64'(stride_r[1][2]) - stride_bound_r[1][1] - stride_bound_r[1][0];
-              end else begin
-                i_dim[2] <= 32'd0;
-                finished <= 1'b1;
-              end
-            end
-          end
-        end
-      end
+      // Note: the legacy S_ADV_SEG block that advanced i_dim and bases
+      // in lockstep has been removed. Per-seg advance is now inlined in
+      // src_req_fire (rd side) and dst_req_fire (wr side) above.
 
     end
   end
@@ -1255,7 +1408,7 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
   localparam int DBG_BIT_W    = $bits(logic);
   localparam int DBG_STATE_W  = $bits(state);
   localparam int DBG_WORD_W   = $bits(logic [31:0]);
-  localparam int DBG_ADDR64_W = $bits(base_src_seg);
+  localparam int DBG_ADDR64_W = $bits(rd_base_src_seg);
 
   localparam int DBG_DMA_UNIT_P0_W = (23 * DBG_BIT_W) + (2 * DBG_STATE_W);
   localparam int DBG_DMA_UNIT_P1_W = ((4 + NDIM) * DBG_WORD_W);
@@ -1294,13 +1447,13 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
       out_off,
       seg_size_r,
       valid_total,
-      i_dim[0],
-      i_dim[1],
-      i_dim[2]
+      wr_i_dim[0],
+      wr_i_dim[1],
+      wr_i_dim[2]
   };
   (* keep = "true", mark_debug = "true" *) wire [DBG_DMA_UNIT_P2_W-1:0] dbg_dma_unit_probe2 = {
-      base_src_seg,
-      base_dst_seg,
+      rd_base_src_seg,
+      wr_base_dst_seg,
       lmem_rd_ptr,
       lmem_rd_end,
       dcache_rd_ptr,
