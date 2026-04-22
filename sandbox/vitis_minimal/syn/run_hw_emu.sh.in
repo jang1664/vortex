@@ -1,0 +1,16 @@
+#!/bin/bash
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+
+CONFIGS="${CONFIGS:-""}"
+echo "Using CONFIGS: ${CONFIGS}"
+
+PREFIX="${PREFIX:-core1_fpint_improve_v4}" \
+PLATFORM="${PLATFORM:-xilinx_u55c_gen3x16_xdma_3_202210_1}" \
+NUM_CORES="${NUM_CORES:-1}" \
+CONFIGS="${CONFIGS}" \
+TARGET=hw_emu \
+DEBUG=3 \
+make -C "${SCRIPT_DIR}" 2>&1 | tee "${LOG_FILE:-core1_fpint_improve_v4.log}"

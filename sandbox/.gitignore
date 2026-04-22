@@ -1,0 +1,58 @@
+# sandbox/.gitignore
+#
+# Keep source scaffolding (RTL stubs, TCL scripts, Makefiles, host sources,
+# run scripts, READMEs). Ignore everything produced by Vivado/Vitis/VCS/Verdi
+# runs — those regenerate from the scaffolding in minutes to tens of minutes.
+
+# ---- top-level generated directories ---------------------------------------
+build/
+_x/
+.Xil/
+.ipcache/
+xsim.dir/
+
+# ---- Vitis / Vivado artifacts ----------------------------------------------
+*.xclbin
+*.xclbin.info
+*.xclbin.link_summary
+*.xclbin.run_summary
+*.xo
+*.wdb
+*.wcfg
+*.jou
+*.pb
+xrt.log
+emconfig.json
+vivado_*.log
+webtalk*.log
+webtalk*.jou
+
+# ---- VCS compile / elaborate / simv artifacts -----------------------------
+csrc/
+c.obj/
+simv
+simv.daidir/
+AN.DB/
+ucli.key
+.vlogan.log
+vcs_tls.log
+synopsys_sim.setup
+64/
+
+# ---- FSDB / Verdi artifacts -----------------------------------------------
+*.fsdb
+*.fsdb.trn
+*.fsdb.dir/
+novas_dump.log
+novas.conf
+novas.rc
+verdiLog/
+fsdbpnLog/
+fsdbreportLog/
+fsdbdebugLog/
+
+# ---- common log / temp / backup -------------------------------------------
+*.log
+*.bak
+*.tmp
+*.swp
