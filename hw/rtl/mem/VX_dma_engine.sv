@@ -269,14 +269,9 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
         logic [READ_BURST_GROUPS-1:0][BEAT_IDX_W-1:0]                   burst_group_count_r;
         logic [READ_BURST_GROUPS-1:0][AXI_ADDR_WIDTH-1:0]               burst_group_base_addr_r;
         logic [READ_BURST_GROUPS-1:0][READ_GROUP_CAP-1:0][TAG_WIDTH-1:0] burst_group_tag_r;
-<<<<<<< HEAD
         (* ram_style = "block" *)
         logic [READ_WINDOW_WORDS-1:0][DATA_WIDTH-1:0]               burst_window_data_r;
         logic [READ_WINDOW_WORDS-1:0]                               burst_window_valid_r;
-=======
-        logic [READ_WINDOW_WORDS-1:0][DATA_WIDTH-1:0]                   burst_window_data_r;
-        logic [READ_WINDOW_WORDS-1:0]                                   burst_window_valid_r;
->>>>>>> origin/fpint_improve
 
         read_state_t read_state_r;
 
