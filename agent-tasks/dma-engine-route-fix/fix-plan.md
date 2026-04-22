@@ -207,88 +207,70 @@ Write channel: unchanged — no latency shift, no FSM modification.
 
 Throughput unchanged once the read pipeline is primed.
 
-### 4.5 `gen_acc_mem` URAM retention
+### 4.5 Selective URAM retention
 
 Background: `hw/rtl/libs/VX_sp_ram.sv:105-111` was edited earlier to disable
 URAM auto-inference (`USE_URAM=0` → BRAM, `USE_URAM=1` → URAM). By default
-this would drop 188 URAM and spill the storage into BRAM, exceeding the
-budget. Only `gen_acc_mem` (GEMM accumulator) is opted back in to URAM:
+this drops 188 URAM and spills storage into BRAM. Run2 showed the spillover
+pushed device BRAM to 1602 RAMB36 (79 %), triggered SLR0 placement
+pressure, and caused a 2-pin unroutable failure on `g_bank[5]/sp_ram`
+(BRAM at `RAMB36_X12Y11` could not reach its slice load at `SLICE_X192Y52`
+inside `pblock_tmem_subsystem` with `CONTAIN_ROUTING=true`).
 
-```systemverilog
-// hw/rtl/core/gemm/VX_gemm_unit.sv:1170
-VX_sp_ram #(
-    .DATAW    (`MXU_COL * FP32_WIDTH),
-    .SIZE     (`GEMM_ACC_MEM_DEPTH),
-    .OUT_REG  (1),
-    .USE_URAM (1),   // Force URAM after VX_sp_ram auto-infer removal
-    .RDW_MODE ("R")  // Read-first required for URAM mapping
-) VX_sp_ram_instance (...);
-```
+Recovery: opt three specific memories back in to URAM via `USE_URAM(1)`:
 
-Expected URAM count: 60 total (4 banks × 15 URAM each inside
-`u_VX_gemm_unit`). `local_mem` / `l2cache/cache_data` stay on BRAM at default;
-revisit only if BRAM pressure shows headroom to move them back to URAM.
+| Memory (caller)                                   | Banks × URAM/bank | Total URAM | BRAM saved |
+|---------------------------------------------------|-------------------|------------|------------|
+| `u_VX_gemm_unit/gen_acc_mem` (GEMM acc)           | 4 × 15            | 60         | —          |
+| `VX_tensor_mem_bank/sp_ram` (TMEM 8 banks)        | 8 × 8             | 64         | 512        |
+| `VX_local_mem/lmem_store` (LMEM 8 banks)          | 8 × 8             | 64         | 512        |
+| **Device total**                                  |                   | **188**    | **1024**   |
 
-### 4.6 SLR floorplan constraints
+Expected outcome:
 
-One pblock is installed in `hw/syn/xilinx/xrt/floorplan.tcl`, which is
-`source`d from `post_init_hook.tcl` (both files are copied into
-`XRT_RUN_DIR` at build time). The shared helper `vortex_pblock_slrs`
-attempts the `SLRn` keyword first and falls back to a clock-region range
-if that syntax is rejected by this Vitis release. Clock-region ranges for U55C/VU47P:
-SLR0 = `CLOCKREGION_X0Y0:CLOCKREGION_X7Y3`,
-SLR1 = `CLOCKREGION_X0Y4:CLOCKREGION_X7Y7`,
-SLR2 = `CLOCKREGION_X0Y8:CLOCKREGION_X7Y11`.
+- Device URAM: 60 → **188** (19.6 %, well below the 30 % safety band)
+- Device RAMB36: 1602 → **~578** (29 %)
+- SLR0 dynamic region has exactly 64 URAM sites
+  (`URAM288_X2Y16:X2Y31` + `URAM288_X4Y16:X4Y63`) which matches the tmem
+  bank demand exactly — clean fit inside `pblock_tmem_subsystem`.
 
-**`u_VX_gemm_unit` — unconstrained** (no pblock):
-Multi-SLR (SLR1+SLR2) was rejected at place_design with `[Place 30-887]`
-(RP clock-column rule), and single-SLR locks create their own risks:
-SLR1 lock would worsen the already-91 % CLB, SLR2 lock adds an extra
-SLR hop to tmem (SLR0). The placer is instead left free — it naturally
-follows the URAM column for `gen_acc_mem` and tends to settle in SLR1,
-which is the same SLR where URAM placed in the v3 baseline. Only the
-tmem-side anchor is enforced explicitly.
+RTL touch points:
 
-**pblock_tmem_subsystem → SLR0** (`u_tmem_subsystem`):
-Tensor memory is BRAM-heavy (~512 RAMB36) and its DMA engine talks to HBM
-via the AXI shim that resides in SLR0 (see `slr_util_placed.rpt`: SLR0
-hosts all 12 IOBs and the GTs). Locking the TMEM banks + DMA engine + TMEM
-switches to SLR0 keeps the HBM-side 512-bit burst traffic off the
-SLR0 ↔ SLR1 SLL columns that overflowed in v3 (columns 4-8 were at
-100-180% demand).
+- `hw/rtl/core/gemm/VX_gemm_unit.sv:1170` — `.USE_URAM (1)` already applied.
+- `hw/rtl/mem/VX_tensor_mem_bank.sv:107` — `.USE_URAM (1)` added and
+  `.RDW_MODE` changed from `"W"` to `"R"`. The bank is single-port with
+  read/write mutually exclusive (`req_rw` gate), so RDW_MODE has no
+  functional impact; the change only enables the URAM path in
+  `VX_sp_ram` (URAM does not support `"W"` semantics).
+- `hw/rtl/mem/VX_local_mem.sv:161` — `.USE_URAM (1)` added.
 
-Trade-off: `u_VX_gemm_unit` (SLR1+SLR2) and `u_tmem_subsystem` (SLR0) are
-both children of `gemm_node` and communicate via `u_switch_*` + `u_ldma_*`
-inside the TMEM subsystem. After this split, the data path between them
-crosses the SLR0 ↔ SLR1 boundary once per direction. This is acceptable
-because (a) that interface is narrower than the HBM 512-bit × 8-channel
-bus that currently overflows, and (b) the interface is already pipelined
-via elastic buffers inside the switches. Expect reduced SLL demand
-overall; revisit if the new SLR crossing becomes the bottleneck.
+`l2cache` is intentionally left on BRAM for now; revisit if BRAM pressure
+returns after this change.
 
-TCL hook (simplified):
+### 4.6 SLR floorplan — currently no pblocks active
 
-```tcl
-proc vortex_pblock_slr {pblock_name cell slr_idx cr_range} {
-    if {[catch {
-        create_pblock $pblock_name
-        resize_pblock $pblock_name -add "SLR${slr_idx}"
-    } err]} {
-        catch {delete_pblocks $pblock_name}
-        create_pblock $pblock_name
-        resize_pblock $pblock_name -add $cr_range
-    }
-    add_cells_to_pblock $pblock_name $cell
-    set_property CONTAIN_ROUTING   true  [get_pblocks $pblock_name]
-    set_property EXCLUDE_PLACEMENT  false [get_pblocks $pblock_name]
-}
+`hw/syn/xilinx/xrt/floorplan.tcl` is sourced from `post_init_hook.tcl`
+(both files are copied into `XRT_RUN_DIR` at build time). The file
+defines helper `vortex_pblock_slrs` but **does not create any pblock in
+the current iteration**. History of attempts:
 
-vortex_pblock_slrs pblock_tmem_subsystem [get_cells .../u_tmem_subsystem] {0} "CLOCKREGION_X0Y0:CLOCKREGION_X7Y3"
-# u_VX_gemm_unit intentionally unconstrained — see rationale above.
-```
+| Iteration   | pblock configuration                                        | Outcome                                                                 |
+|-------------|--------------------------------------------------------------|--------------------------------------------------------------------------|
+| run2        | `pblock_gemm_unit` {SLR1,SLR2}, `pblock_tmem_subsystem` {SLR0}, CONTAIN_ROUTING=true | `[Place 30-887]` — RP clock-column rule forbids multi-SLR pblock        |
+| run2-retry  | `pblock_gemm_unit` {SLR2}, `pblock_tmem_subsystem` {SLR0}, CONTAIN_ROUTING=true       | Route failed: 2 unroutable BRAM→SLICE pins (X12→X192 inside SLR0)        |
+| run3        | (no `pblock_gemm_unit`), `pblock_tmem_subsystem` {SLR0}, CONTAIN_ROUTING=false, + tmem/lmem URAM | SLR0 CLB 99.3 %, 43944 node overlaps — u_tmem_subsystem's DMA engine (110K LUT/197K FF) saturated SLR0 |
 
-`post_init_hook.tcl` runs at `STEPS.INIT_DESIGN.TCL.POST`, before
-`place_design`, so the pblocks are honoured during placement.
+Lesson: `u_tmem_subsystem` is too large to anchor to a single SLR
+(the DMA engine dominates), and `u_VX_gemm_unit` cannot cleanly be
+locked either (RP clock-column constraint). A coarse "entire-module"
+pblock is the wrong granularity. The placer produces better balance
+when unconstrained now that URAM conversion has removed the BRAM
+hotspot that originally motivated SLR0 anchoring.
+
+For the current iteration no pblocks are applied. `floorplan.tcl`
+keeps the helper `proc` so a future attempt (e.g. pblock the URAM-
+backed banks only, not the whole subsystem) can be added without
+touching other hook files.
 
 ### 4.7 Expected resource delta
 
@@ -386,11 +368,10 @@ incremented by 1 per window boundary.
 - [x] Stage 1: add `ram_style = "block"` to `burst_window_data_r`, remove
       its cfg_fire data-reset. (`VX_dma_engine.sv:243, :420`).
 - [x] `USE_URAM(1)` on `gen_acc_mem` VX_sp_ram (`VX_gemm_unit.sv:1170`).
-- [x] `pblock_tmem_subsystem` (SLR0) in `hw/syn/xilinx/xrt/floorplan.tcl`,
-      sourced from `post_init_hook.tcl`.
-      `u_VX_gemm_unit` left unconstrained — multi-SLR (SLR1+SLR2) rejected
-      by `[Place 30-887]` (RP clock-column rule); single-SLR locks brought
-      other risks (SLR1 CLB overflow, SLR2 extra hop), so the placer picks.
+- [x] No active pblocks in `hw/syn/xilinx/xrt/floorplan.tcl` — helper
+      proc remains for future narrow pblocks. Coarse whole-module locks
+      failed for both `u_VX_gemm_unit` (RP clock-column) and
+      `u_tmem_subsystem` (SLR0 CLB overflow from DMA engine size).
 - [ ] Inspect `init_report_utilization_0.rpt` for RAMB count under
       `u_dma_engine` and URAM count under `u_VX_gemm_unit`.
 - [ ] If BRAM not inferred for `burst_window_data_r` → Stage 2: refactor

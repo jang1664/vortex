@@ -43,7 +43,7 @@ build/hw/syn/xilinx/xrt/<build>/_x/link/vivado/vpl/prj/prj.runs/impl_1/init_repo
 | 1 | `u_dma_engine` RAMB36                  | > 0 (~60–128)                     | Stage 2: `VX_dp_ram` wrap (fix-plan §4.1)  |
 | 2 | `u_dma_engine` URAM                    | 0                                 | Check `VX_sp_ram` USE_URAM branch leak      |
 | 3 | `u_VX_gemm_unit` URAM                  | 60                                | Re-confirm `USE_URAM(1)` in `VX_gemm_unit.sv:1170` |
-| 4 | Device URAM total                      | ~60                               | —                                          |
+| 4 | Device URAM total                      | ~188 (60 acc + 64 tmem + 64 lmem) | If only ~60 → tmem/lmem `USE_URAM(1)` not applied |
 | 5 | `u_dma_engine` FF                      | ~135 K (from 197 K)               | Paired with #1: BRAM infer failed          |
 | 6 | `u_dma_engine` LUT                     | ~90 K (from 110 K)                | Paired with #1                             |
 
@@ -63,9 +63,7 @@ build/hw/syn/xilinx/xrt/<build>/_x/link/vivado/vpl/prj/prj.runs/impl_1/runme.log
 
 | # | Check                                 | Expected log line                                             | If fail                                  |
 |---|---------------------------------------|----------------------------------------------------------------|-------------------------------------------|
-| 7 | `pblock_tmem_subsystem` created       | `INFO: pblock pblock_tmem_subsystem on SLR0 for .../u_tmem_subsystem` | Check `XRT_BACKUP_DIR` copy, `floorplan.tcl` present |
-| 8 | No `pblock_gemm_unit` log              | absent (u_VX_gemm_unit is intentionally unconstrained) | If present, floorplan.tcl regression — revert. |
-| 9 | No cell-missing warnings              | `WARNING: ... not found` absent                                | Hierarchy name changed → update `floorplan.tcl` filter |
+| 7 | No `INFO: pblock pblock_*` log          | absent (no active pblocks in current iteration) | If present, `floorplan.tcl` regression — someone re-enabled a pblock. |
 | 9.1 | No `[Place 30-887]` RP clock-column violation | grep returns nothing                              | Pblock spans multiple SLRs in an XRT RP. Shrink to one SLR. |
 
 ---

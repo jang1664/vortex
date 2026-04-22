@@ -56,28 +56,16 @@ foreach pb [get_pblocks] {
 
 puts "\n================ expected sanity checks ================"
 set ok 1
-foreach {pb_expected cell_glob} {
-    pblock_tmem_subsystem "*gemm_node/u_tmem_subsystem"
-} {
-    set pb [get_pblocks -quiet $pb_expected]
-    if {[llength $pb] == 0} {
-        puts "FAIL: expected pblock '$pb_expected' missing"
+
+# No user pblocks are currently expected. Assert that floorplan.tcl did not
+# (re-)create pblock_gemm_unit / pblock_tmem_subsystem by mistake.
+foreach pb_forbidden {pblock_gemm_unit pblock_tmem_subsystem} {
+    set pb [get_pblocks -quiet $pb_forbidden]
+    if {[llength $pb] > 0} {
+        puts "FAIL: pblock '$pb_forbidden' exists but should NOT be created"
         set ok 0
-        continue
-    }
-    set members [get_cells -quiet -of_objects $pb]
-    set matched 0
-    foreach m $members {
-        if {[string match $cell_glob [get_property NAME $m]]} {
-            set matched 1
-            break
-        }
-    }
-    if {$matched} {
-        puts "PASS: $pb_expected contains a cell matching '$cell_glob'"
     } else {
-        puts "FAIL: $pb_expected does NOT contain any cell matching '$cell_glob'"
-        set ok 0
+        puts "PASS: pblock '$pb_forbidden' absent (as expected)"
     }
 }
 
