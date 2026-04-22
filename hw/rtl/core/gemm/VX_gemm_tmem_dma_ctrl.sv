@@ -53,6 +53,39 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
     localparam int NUM_REGS = `DMA_CFG_REG_NUM;
 
     // =========================================================
+    // Burst geometry (interleave mode only)
+    // See agent-tasks/dma-burst-reorder/plan.md §Design for derivation.
+    // 2D descriptor: inner dim = BND0 consecutive beats on one HBM bank
+    // (one AXI INCR burst), outer dim = BND1 banks on this channel.
+    //
+    // NUM_BURST_GROUPS uses a `MAX(1, ...)` guard so that degenerate
+    // configs (PLATFORM_MEMORY_NUM_BANKS < NUM_CHANNELS) do not trigger
+    // a div-by-zero at elaboration. Such configs are explicitly guarded
+    // by the initial block below and are invalid for this form.
+    // =========================================================
+    localparam int RAW_BURST_GROUPS    = `PLATFORM_MEMORY_NUM_BANKS / NUM_CHANNELS;
+    localparam int NUM_BURST_GROUPS    = (RAW_BURST_GROUPS > 0) ? RAW_BURST_GROUPS : 1;
+    localparam int BEAT_STRIDE_HBM_B   = `PLATFORM_MEMORY_INTERLEAVE
+                                         ? (`PLATFORM_MEMORY_NUM_BANKS * `MEM_BLOCK_SIZE)
+                                         : `MEM_BLOCK_SIZE;
+    localparam int BANK_STRIDE_HBM_B   = `HBM_BUS_STRIDE;
+    localparam int BEAT_STRIDE_TMEM_B  = NUM_BURST_GROUPS * `MEM_BLOCK_SIZE;
+    localparam int BANK_STRIDE_TMEM_B  = `MEM_BLOCK_SIZE;
+    localparam int MAX_BEATS_PER_BURST = 4096 / `MEM_BLOCK_SIZE;
+
+`ifndef SYNTHESIS
+    initial begin
+        if (`PLATFORM_MEMORY_INTERLEAVE == 0) begin
+            $fatal(1, "VX_gemm_tmem_dma_ctrl: PLATFORM_MEMORY_INTERLEAVE=0 not supported (burst-reorder form requires interleave)");
+        end
+        if (RAW_BURST_GROUPS == 0) begin
+            $fatal(1, "VX_gemm_tmem_dma_ctrl: PLATFORM_MEMORY_NUM_BANKS (%0d) must be >= NUM_CHANNELS (%0d) for burst-reorder form",
+                   `PLATFORM_MEMORY_NUM_BANKS, NUM_CHANNELS);
+        end
+    end
+`endif
+
+    // =========================================================
     // Opcodes
     // =========================================================
     localparam logic [3:0] OP_DMA_LD = 4'd1;
@@ -80,11 +113,13 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
 
     // =========================================================
     // Command decoding (combinational, from captured cmd_q)
+    // Note: cmd_q.bound is asserted to be 1 in the new 2D burst-reorder
+    // form. The legacy multi-segment path that routed it to DMA_R_BND1
+    // has been removed (BND1 is now the bank dim).
     // =========================================================
     logic [63:0] src_base, dst_base;
     logic        dir_is_st;
     logic [31:0] src_s0, dst_s0;
-    logic [31:0] bnd0;
     logic [31:0] seg_size;
 
     always_comb begin
@@ -93,14 +128,12 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
         dst_base  = 64'd0;
         src_s0    = 32'd0;
         dst_s0    = 32'd0;
-        bnd0      = 32'd1;
         seg_size  = 32'd0;
 
         if (cmd_op == OP_DMA_LD || cmd_op == OP_DMA_ST) begin
             dir_is_st = (cmd_op == OP_DMA_ST);
             src_base  = cmd_q.rs2_data;
             dst_base  = cmd_q.rs1_data;
-            bnd0      = {16'd0, cmd_q.bound};
             seg_size  = {4'd0, cmd_q.instr[31:4]};
 
             if (cmd_op == OP_DMA_LD) begin
@@ -156,6 +189,9 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
     logic [NUM_CHANNELS-1:0] done_or_inactive;
     logic [NUM_CHANNELS-1:0] done_sticky;
 
+    wire cfg_all_ready  = &cfg_ready_or_inactive;
+    wire done_all_valid = &done_sticky;
+
     for (genvar ch = 0; ch < NUM_CHANNELS; ++ch) begin : g_channels
         wire [NUM_CH_SHIFT-1:0] logical_ch = ch - start_ch;
 
@@ -170,6 +206,25 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
         wire [63:0] ch_dst_base = dir_is_st ? (dst_base + (logical_ch << BUS_WORD_SHIFT))
                                             : tmem_bank_local_addr(dst_base);
 
+        // Burst-mode decision per channel. In burst mode the 2D loop
+        // emits BND0 consecutive beats on one HBM bank (one AXI INCR burst),
+        // then advances to the next bank. Fallback emits single-beat bursts
+        // across BND1 banks (BND0=1).
+        wire burst_mode = (ch_words >= 32'(NUM_BURST_GROUPS))
+                       && ((ch_words % 32'(NUM_BURST_GROUPS)) == 32'd0)
+                       && ((ch_words / 32'(NUM_BURST_GROUPS)) <= 32'(MAX_BEATS_PER_BURST));
+
+        // HBM-side strides (bank = outer, beat = inner)
+        wire [31:0] hbm_beat_stride = 32'(BEAT_STRIDE_HBM_B);
+        wire [31:0] hbm_bank_stride = 32'(BANK_STRIDE_HBM_B);
+        // TMEM-side strides (bank = outer, beat = inner) — bank-local addressing
+        wire [31:0] tmem_beat_stride = 32'(BEAT_STRIDE_TMEM_B);
+        wire [31:0] tmem_bank_stride = 32'(BANK_STRIDE_TMEM_B);
+
+        // Beats-per-burst and banks-per-channel for BND0/BND1
+        wire [31:0] burst_bnd0 = burst_mode ? (ch_words / 32'(NUM_BURST_GROUPS)) : 32'd1;
+        wire [31:0] burst_bnd1 = burst_mode ? 32'(NUM_BURST_GROUPS)              : ch_words;
+
         // Build per-channel config registers
         logic [NUM_REGS-1:0][31:0] ch_prog_regs;
         always_comb begin
@@ -179,19 +234,33 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
             ch_prog_regs[DMA_R_DST_BASE_HI] = ch_dst_base[63:32];
             ch_prog_regs[DMA_R_SRC_BASE_LO] = ch_src_base[31:0];
             ch_prog_regs[DMA_R_SRC_BASE_HI] = ch_src_base[63:32];
-            ch_prog_regs[DMA_R_SRC_ST0]     = dir_is_st ? 32'(`MEM_BLOCK_SIZE) : 32'(`HBM_BUS_STRIDE);  // TMEM stride : HBM stride
-            ch_prog_regs[DMA_R_DST_ST0]     = dir_is_st ? 32'(`HBM_BUS_STRIDE) : 32'(`MEM_BLOCK_SIZE); // HBM stride : TMEM stride
-            ch_prog_regs[DMA_R_SRC_ST1]     = dir_is_st ? tmem_bank_local_stride(src_s0) : src_s0;  // bank-local or full
-            ch_prog_regs[DMA_R_DST_ST1]     = dir_is_st ? dst_s0 : tmem_bank_local_stride(dst_s0);  // full or bank-local
+
+            // ST0 = inner (beat) stride, ST1 = outer (bank) stride.
+            // LD: SRC=HBM, DST=TMEM. ST: SRC=TMEM, DST=HBM.
+            if (burst_mode) begin
+                ch_prog_regs[DMA_R_SRC_ST0] = dir_is_st ? tmem_beat_stride : hbm_beat_stride;
+                ch_prog_regs[DMA_R_DST_ST0] = dir_is_st ? hbm_beat_stride  : tmem_beat_stride;
+                ch_prog_regs[DMA_R_SRC_ST1] = dir_is_st ? tmem_bank_stride : hbm_bank_stride;
+                ch_prog_regs[DMA_R_DST_ST1] = dir_is_st ? hbm_bank_stride  : tmem_bank_stride;
+            end else begin
+                // Fallback: BND0 == 1, so ST0 is unused — zero it.
+                // ST1 walks banks, one beat per bank.
+                ch_prog_regs[DMA_R_SRC_ST0] = 32'd0;
+                ch_prog_regs[DMA_R_DST_ST0] = 32'd0;
+                ch_prog_regs[DMA_R_SRC_ST1] = dir_is_st ? 32'(`MEM_BLOCK_SIZE) : 32'(`HBM_BUS_STRIDE);
+                ch_prog_regs[DMA_R_DST_ST1] = dir_is_st ? 32'(`HBM_BUS_STRIDE) : 32'(`MEM_BLOCK_SIZE);
+            end
+
             ch_prog_regs[DMA_R_SRC_ST2]     = 32'd0;
             ch_prog_regs[DMA_R_DST_ST2]     = 32'd0;
-            ch_prog_regs[DMA_R_BND0]        = ch_words;          // number of bus-word blocks for this channel
-            ch_prog_regs[DMA_R_BND1]        = bnd0;              // original bnd0 from command (multi-segment)
-            ch_prog_regs[DMA_R_BND2]        = 32'd1;
-            ch_prog_regs[DMA_R_SEG_SIZE]    = 32'(`MEM_BLOCK_SIZE); // one bus word per DMA segment
+            ch_prog_regs[DMA_R_BND0]        = burst_bnd0;        // beats per burst (inner)
+            ch_prog_regs[DMA_R_BND1]        = burst_bnd1;        // banks per channel (outer)
+            ch_prog_regs[DMA_R_BND2]        = 32'd1;             // reserved (Q2 future)
+            ch_prog_regs[DMA_R_SEG_SIZE]    = 32'(`MEM_BLOCK_SIZE); // one bus word per beat
             ch_prog_regs[DMA_R_PAD]         = 32'd0;
             ch_prog_regs[DMA_R_DIR]         = {31'd0, dir_is_st};
             ch_prog_regs[DMA_R_RSVD]        = 32'd0;
+
         end
 
         // Config interface: only program active channels
@@ -205,10 +274,20 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
         // Done: inactive channels count as done
         assign done_or_inactive[ch] = ch_active ? done_if[ch].valid : 1'b1;
         assign done_if[ch].ready = (state_q == S_WAIT_DONE || state_q == S_DONE) ? 1'b1 : 1'b0;
-    end
 
-    wire cfg_all_ready  = &cfg_ready_or_inactive;
-    wire done_all_valid = &done_sticky;
+`ifdef DBG_TRACE_GEMM
+        always_ff @(posedge clk) begin
+            if (!reset && (state_q == S_PROG) && cfg_all_ready && ch_active) begin
+                `TRACE(2, ("%m : [%0t] | TMEM_DMA_CTRL_PROG_CH | {inst=%s, ch=%0d, burst_mode=%0d, bnd0=%0d, bnd1=%0d, src_st0=%0d, src_st1=%0d, dst_st0=%0d, dst_st1=%0d, ch_src_base=0x%0h, ch_dst_base=0x%0h}\n",
+                          $time, INSTANCE_ID, ch, burst_mode,
+                          ch_prog_regs[DMA_R_BND0], ch_prog_regs[DMA_R_BND1],
+                          ch_prog_regs[DMA_R_SRC_ST0], ch_prog_regs[DMA_R_SRC_ST1],
+                          ch_prog_regs[DMA_R_DST_ST0], ch_prog_regs[DMA_R_DST_ST1],
+                          ch_src_base, ch_dst_base))
+            end
+        end
+`endif
+    end
 
     // =========================================================
     // FSM outputs (active/idle/done to gemm_dma_ctrl_if)
@@ -293,9 +372,9 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
             end
 
             if (state_q != state_d) begin
-                `TRACE(2, ("%m : [%0t] | TMEM_DMA_CTRL_STATE | {inst=%s, from=%s, to=%s, op=0x%0h, seg_size=%0d, bnd0=%0d, src_base=0x%0h, dst_base=0x%0h, dir_is_st=%0d, start_ch=%0d, num_words=%0d}\n",
+                `TRACE(2, ("%m : [%0t] | TMEM_DMA_CTRL_STATE | {inst=%s, from=%s, to=%s, op=0x%0h, seg_size=%0d, cmd_bound=%0d, src_base=0x%0h, dst_base=0x%0h, dir_is_st=%0d, start_ch=%0d, num_words=%0d}\n",
                           $time, INSTANCE_ID, state_to_str(state_q), state_to_str(state_d),
-                          cmd_op, seg_size, bnd0, src_base, dst_base, dir_is_st, start_ch, num_words))
+                          cmd_op, seg_size, cmd_q.bound, src_base, dst_base, dir_is_st, start_ch, num_words))
             end
 
             if (state_q == S_PROG && cfg_all_ready) begin
@@ -331,6 +410,28 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
             end
         end
     end
+
+    // =========================================================
+    // SIMULATION-only assertions
+    // =========================================================
+`ifndef SYNTHESIS
+    always_ff @(posedge clk) begin
+        if (!reset) begin
+            if (gemm_dma_ctrl_if.start
+                && ((gemm_dma_ctrl_if.cmd.instr[3:0] == OP_DMA_LD)
+                 || (gemm_dma_ctrl_if.cmd.instr[3:0] == OP_DMA_ST))) begin
+                assert (gemm_dma_ctrl_if.cmd.bound == 16'd1)
+                    else $fatal(1, "%m: kernel cmd.bound=%0d > 1 is unsupported in 2D burst-reorder form",
+                                gemm_dma_ctrl_if.cmd.bound);
+            end
+        end
+    end
+`endif
+
+    // Legacy signals retained per plan (helpers stay, but s0 fields are no
+    // longer routed to ST1 in the 2D burst-reorder form).
+    `UNUSED_VAR (src_s0)
+    `UNUSED_VAR (dst_s0)
 
     `UNUSED_PARAM (ENTRYID_W)
     `UNUSED_SPARAM (INSTANCE_ID)

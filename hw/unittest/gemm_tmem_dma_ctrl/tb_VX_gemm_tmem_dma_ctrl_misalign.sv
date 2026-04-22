@@ -1,4 +1,14 @@
 `timescale 1ns/1ps
+
+// The 2D burst-reorder form in VX_gemm_tmem_dma_ctrl requires
+// PLATFORM_MEMORY_NUM_BANKS >= NUM_CHANNELS. Default VX_config.vh value
+// is 2, which would trigger the `$fatal` elaboration guard. Pin it to 32
+// here (the production value from hw_config.sh) so that
+// NUM_BURST_GROUPS == PLATFORM_MEMORY_NUM_BANKS / NUM_CHANNELS == 4.
+`ifndef PLATFORM_MEMORY_NUM_BANKS
+  `define PLATFORM_MEMORY_NUM_BANKS 32
+`endif
+
 `include "VX_define.vh"
 
 module tb_VX_gemm_tmem_dma_ctrl_misalign;
@@ -10,9 +20,12 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign;
 
   localparam int DMA_R_DST_BASE_LO = 1;
   localparam int DMA_R_SRC_BASE_LO = 3;
+  localparam int DMA_R_SRC_ST0     = 5;
+  localparam int DMA_R_DST_ST0     = 6;
   localparam int DMA_R_SRC_ST1     = 7;
   localparam int DMA_R_DST_ST1     = 8;
   localparam int DMA_R_BND0        = 11;
+  localparam int DMA_R_BND1        = 12;
   localparam int DMA_R_SEG_SIZE    = 14;
   localparam int DMA_R_DIR         = 16;
 
@@ -221,7 +234,13 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign;
       expect_channel_active(0, 1'b1, "ld_single_word");
       expect_cfg_reg(0, DMA_R_SRC_BASE_LO, 32'h0001_0000, "ld_single_word");
       expect_cfg_reg(0, DMA_R_DST_BASE_LO, 32'h0000_0000, "ld_single_word");
-      expect_cfg_reg(0, DMA_R_BND0, 32'd1, "ld_single_word");
+      // ch_words=1 -> fallback (BND0=1, BND1=1, ST0=0, ST1 = HBM_BUS_STRIDE / MEM_BLOCK_SIZE).
+      expect_cfg_reg(0, DMA_R_BND0,    32'd1, "ld_single_word");
+      expect_cfg_reg(0, DMA_R_BND1,    32'd1, "ld_single_word");
+      expect_cfg_reg(0, DMA_R_SRC_ST0, 32'd0, "ld_single_word");
+      expect_cfg_reg(0, DMA_R_DST_ST0, 32'd0, "ld_single_word");
+      expect_cfg_reg(0, DMA_R_SRC_ST1, 32'(`HBM_BUS_STRIDE), "ld_single_word");
+      expect_cfg_reg(0, DMA_R_DST_ST1, 32'(`MEM_BLOCK_SIZE), "ld_single_word");
       drive_done_for_active_channels();
       wait_done_or_timeout(100, "ld_single_word");
     end
@@ -234,7 +253,8 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign;
       c.rs1_data = 64'h0000_0000_0000_0200;
       c.rs2_data = 64'h0000_0000_0002_0200;
       c.stride   = {16'd512, 16'd64};
-      c.bound    = 16'd2;
+      // 2D burst-reorder SVA requires cmd.bound == 1.
+      c.bound    = 16'd1;
       gemm_dma_ctrl_if.cmd = c;
       pulse_start();
       repeat (3) @(posedge clk);
@@ -243,6 +263,9 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign;
         expect_channel_active(ch, 1'b1, "ld_full_8ch");
         expect_cfg_reg(ch, DMA_R_SRC_BASE_LO, 32'h0002_0200 + ch * 32'd64, "ld_full_8ch");
         expect_cfg_reg(ch, DMA_R_DST_BASE_LO, 32'h0000_0040, "ld_full_8ch");
+        // ch_words=1 per channel -> fallback.
+        expect_cfg_reg(ch, DMA_R_BND0, 32'd1, "ld_full_8ch");
+        expect_cfg_reg(ch, DMA_R_BND1, 32'd1, "ld_full_8ch");
       end
       drive_done_for_active_channels();
       wait_done_or_timeout(100, "ld_full_8ch");
@@ -256,7 +279,8 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign;
       c.rs1_data = 64'h0000_0000_0004_0000;
       c.rs2_data = 64'h0000_0000_0000_0800;
       c.stride   = {16'd512, 16'd64};
-      c.bound    = 16'd4;
+      // 2D burst-reorder SVA requires cmd.bound == 1.
+      c.bound    = 16'd1;
       gemm_dma_ctrl_if.cmd = c;
       pulse_start();
       repeat (3) @(posedge clk);
@@ -266,6 +290,11 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign;
         expect_cfg_reg(ch, DMA_R_DIR, 32'd1, "st_full_8ch");
         expect_cfg_reg(ch, DMA_R_SRC_BASE_LO, 32'h0000_0100, "st_full_8ch");
         expect_cfg_reg(ch, DMA_R_DST_BASE_LO, 32'h0004_0000 + ch * 32'd64, "st_full_8ch");
+        // ch_words=1 per channel -> fallback. ST dir: SRC=TMEM, DST=HBM.
+        expect_cfg_reg(ch, DMA_R_BND0, 32'd1, "st_full_8ch");
+        expect_cfg_reg(ch, DMA_R_BND1, 32'd1, "st_full_8ch");
+        expect_cfg_reg(ch, DMA_R_SRC_ST1, 32'(`MEM_BLOCK_SIZE), "st_full_8ch");
+        expect_cfg_reg(ch, DMA_R_DST_ST1, 32'(`HBM_BUS_STRIDE), "st_full_8ch");
       end
       drive_done_for_active_channels();
       wait_done_or_timeout(100, "st_full_8ch");
@@ -293,16 +322,16 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign;
       logic [63:0] hbm_byte_addr;
       logic [63:0] spec_bank_local_byte;
       logic [31:0] tmem_byte_stride;
-      logic [31:0] spec_bank_local_stride;
-      logic [63:0] spec_bank_local_stride64;
       int          exp_ch;
       clear_cfg_scoreboard();
+      // Verifies that a misaligned TMEM base address is still remapped to
+      // its bank-local offset and that only the single bank indexed by
+      // byte_addr[8:6] is active. In the 2D burst-reorder form, user s0 is
+      // no longer routed to DMA_R_DST_ST1 -- DST_ST1 is MEM_BLOCK_SIZE.
       tmem_byte_addr         = 64'h0000_0000_0000_0043;
       hbm_byte_addr          = 64'h0000_0000_0005_0043;
       tmem_byte_stride       = 32'h0000_0043;
       spec_bank_local_byte   = exp_tmem_bank_local_byte_addr(tmem_byte_addr);
-      spec_bank_local_stride64 = exp_tmem_bank_local_byte_addr({32'd0, tmem_byte_stride});
-      spec_bank_local_stride = spec_bank_local_stride64[31:0];
       exp_ch = exp_tmem_bank_idx(tmem_byte_addr);
       c = '0;
       c.instr    = make_instr(OP_DMA_LD, 28'd64);
@@ -318,7 +347,9 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign;
         expect_channel_active(ch, (ch == exp_ch), "tmem_misaligned_ld_cfg");
       expect_cfg_reg(exp_ch, DMA_R_SRC_BASE_LO, hbm_byte_addr[31:0], "tmem_misaligned_ld_cfg");
       expect_cfg_reg(exp_ch, DMA_R_DST_BASE_LO, spec_bank_local_byte[31:0], "tmem_misaligned_ld_cfg");
-      expect_cfg_reg(exp_ch, DMA_R_DST_ST1, spec_bank_local_stride, "tmem_misaligned_ld_cfg");
+      // 2D form: fallback DST_ST1 is MEM_BLOCK_SIZE (TMEM bank stride),
+      // independent of user s0.
+      expect_cfg_reg(exp_ch, DMA_R_DST_ST1, 32'(`MEM_BLOCK_SIZE), "tmem_misaligned_ld_cfg");
       drive_done_for_active_channels();
       wait_done_or_timeout(100, "tmem_misaligned_ld_cfg");
     end
@@ -329,16 +360,15 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign;
       logic [63:0] hbm_byte_addr;
       logic [63:0] spec_bank_local_byte;
       logic [31:0] tmem_byte_stride;
-      logic [31:0] spec_bank_local_stride;
-      logic [63:0] spec_bank_local_stride64;
       int          exp_ch;
       clear_cfg_scoreboard();
+      // ST-direction counterpart. In the 2D burst-reorder form, user s0 is
+      // no longer routed to DMA_R_SRC_ST1 -- SRC_ST1 is MEM_BLOCK_SIZE
+      // (bank stride in TMEM space).
       tmem_byte_addr         = 64'h0000_0000_0000_0243;
       hbm_byte_addr          = 64'h0000_0000_0006_0243;
       tmem_byte_stride       = 32'h0000_0243;
       spec_bank_local_byte   = exp_tmem_bank_local_byte_addr(tmem_byte_addr);
-      spec_bank_local_stride64 = exp_tmem_bank_local_byte_addr({32'd0, tmem_byte_stride});
-      spec_bank_local_stride = spec_bank_local_stride64[31:0];
       exp_ch = exp_tmem_bank_idx(tmem_byte_addr);
       c = '0;
       c.instr    = make_instr(OP_DMA_ST, 28'd64);
@@ -354,7 +384,8 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign;
         expect_channel_active(ch, (ch == exp_ch), "tmem_misaligned_st_cfg");
       expect_cfg_reg(exp_ch, DMA_R_SRC_BASE_LO, spec_bank_local_byte[31:0], "tmem_misaligned_st_cfg");
       expect_cfg_reg(exp_ch, DMA_R_DST_BASE_LO, hbm_byte_addr[31:0], "tmem_misaligned_st_cfg");
-      expect_cfg_reg(exp_ch, DMA_R_SRC_ST1, spec_bank_local_stride, "tmem_misaligned_st_cfg");
+      // 2D form: fallback SRC_ST1 is MEM_BLOCK_SIZE, independent of user s0.
+      expect_cfg_reg(exp_ch, DMA_R_SRC_ST1, 32'(`MEM_BLOCK_SIZE), "tmem_misaligned_st_cfg");
       drive_done_for_active_channels();
       wait_done_or_timeout(100, "tmem_misaligned_st_cfg");
     end

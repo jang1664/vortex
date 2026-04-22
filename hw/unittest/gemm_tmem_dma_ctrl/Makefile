@@ -23,7 +23,7 @@ RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
         $(RTL_DIR)/core/VX_node_done_if.sv
 
 INCDIRS_ := $(RTL_DIR)
-DEFINES_ := SIMULATION DEBUG_LEVEL=3 DBG_TRACE_GEMM
+DEFINES_ := SIMULATION DEBUG_LEVEL=3 DBG_TRACE_GEMM PLATFORM_MEMORY_NUM_BANKS=32
 
 COMPILE_LOG := logs/compile.log
 SIM_LOG     := logs/sim.log
