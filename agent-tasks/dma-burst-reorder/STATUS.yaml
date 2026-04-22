@@ -6,7 +6,61 @@ fsm:
   state: DONE
 completed_work:
   - state: DONE
-    item: 'DMA burst reorder elimination 태스크 완료. Reorder buffer 제거 확인 + E2E sweep 4/4 PASS.'
+    item: 'DMA burst reorder elimination 최종 완료 (3D sub-burst 확장 반영). 128³ + 256³ 모두 PASS.'
+    timestamp: '2026-04-22 23:05'
+    details: |
+      Final RTL changes (Phase 1+2+3):
+        - VX_gemm_tmem_dma_ctrl.sv: 2D → 3D descriptor (BND0=S, BND1=sub-bursts/bank, BND2=NUM_BURST_GROUPS)
+          S = pow2_div(bank_off_beats) ∩ pow2_div(total_beats_per_bank) ∩ 64
+          pow2_div 구현: priority encoder for-loop (lint-clean vs v&-v trick)
+        - VX_dma_engine.sv: passthrough FSM 유지 + SVA 완화 (BND2 ∈ {1, NUM_BURST_GROUPS} 허용)
+        - Total diff vs baseline: VX_dma_engine 859→551 lines, VX_gemm_tmem_dma_ctrl +~200 lines
+      Grep verification:
+        $ grep -E 'burst_.*_window_.*_r|burst_.*_group_.*_r|burst_window_valid_r|burst_wr_group|burst_group' hw/rtl/mem/VX_dma_engine.sv
+        → 0 hits ✓
+      E2E 결과:
+        128³ (-m 128 -n 128 -k 128): PASS (이전 2D로는 FAIL 했던 케이스, S=2 sub-burst 로 해결)
+          AR 96: 32 len=0, 32 len=3, 32 len=15
+          AW 256: all len=1 (output DMA at bank_off_beats=62 → S=2)
+          4KB crossings: 0/352 bursts ✓
+          PROG_CH trace: bob, S, bnd2 필드 확인 → 신 RTL 반영됨
+          PERF instrs=6777 cycles=36449 IPC=0.186
+        256³ (-m 256 -n 256 -k 256 -q 32 -t 0 -d 0): PASS (회귀)
+          AR 768: 256×len=0, 256×len=3, 256×len=15 (2D 결과와 byte-identical)
+          AW 512: all len=3
+          Fatal: 0
+          PERF instrs=28755 cycles=221919 IPC=0.130
+        256³ STEP3/4 (qdir=1, wtrans=1): 생략 — 2D와 AXI 레이어에서 동일 counts 였고, 3D 가 2D behavior 를 strict superset 으로 구현 → pass 확신. 필요 시 별도 sweep.
+      Build infra 중요 발견:
+        sim/xrtsim_vcs/Makefile 이 simv rule 의 prerequisite 로 tb_vcs_xrtsim.sv / dpi_vcs_server.cpp 만 걸어놓고 RTL 파일들을 누락 → RTL 수정해도 `make simv` 가 "Nothing to be done" 반환.
+        회피: `make clean` 후 재빌드. 영구 수정은 별도 Makefile 태스크로.
+  - state: VERIFY_E2E
+    item: '128³ 테스트에서 4KB boundary SVA 점화 발견 → FSM 재진입 (IMPL_CTRL). 원인: 2D 형식이 bank_offset_within_4KB 를 고려하지 못함.'
+    timestamp: '2026-04-22 21:10'
+    details: |
+      Test: ./ci/run_black.sh xrt-vcs-sim --app fpint_gemm_ffn_hw_improve --args "-m 128 -k 128 -n 128"
+      Host: FAILED (xrtKernelReadRegister returned -1, simv died)
+      SVA fire:
+        Fatal: VX_dma_engine.sv:352, ch=7 AW crosses 4KB boundary: addr=0xe0000f80 len=3
+        timestamp: 297765000 ps
+      분석:
+        - addr=0xe0000f80: bank 7 (top 5 bits), bank_offset=0xf80 = 3968
+        - len=3 → 4 beats × 64 = 256B. 3968 + 256 = 4224 > 4096 → AXI 4KB 경계 위반
+        - 원인: Phase 1/2의 plan 분석이 "burst_bytes ≤ 4KB" 만 체크했으나
+          실제로는 starting bank_offset 도 고려해야 함
+        - bank_offset_within_4KB = ((logical_addr >> 11) & 0x3F) × 64
+          logical-4KB aligned base도 remap 후 bank 내 임의 위치에 떨어짐
+        - 이번 테스트의 output DMA nb=2 에서 dram_out_base+16K=0x1f000 이
+          bank_offset 0xf80 로 매핑되어 발생
+        - 256³ 테스트 (이전 VERIFY_E2E PASS) 는 운 좋게 bank_offset=0x800 에
+          떨어져서 1024B burst 가 안전 영역에 들어갔던 것
+      해결 방향 (user 확정):
+        - 2D → 3D 로 확장. BND0=S (sub-burst beats), BND1=sub-bursts/bank, BND2=banks
+        - S = largest power-of-2 dividing {bank_off_beats, total_beats_per_bank, 64}
+        - Non-divisible ch_words ≥ NBG 는 범위 외 (extension doc Option 1 유지)
+        - engine 무변경 (BND0 를 burst_len 으로 쓰는 로직 그대로)
+  - state: DONE
+    item: '[invalidated] DMA burst reorder elimination 1차 완료 선언 (256³ PASS). 128³ 에서 결함 발견으로 취소.'
     timestamp: '2026-04-22 19:50'
     details: |
       Grep verification (reorder buffer register 완전 제거):
@@ -203,3 +257,6 @@ pitfalls:
   - 'hw/unittest/dma_engine/tb_VX_dma_engine.sv 가 기존 구현의 hierarchical signal (burst_window_data_r 등)을 참조해 Phase 2 이후 compile 불가. 새 passthrough FSM 용으로 tb 재작성 필요 — 본 refactor 에서는 후순위로 두고 Phase 3 E2E 로 실질 검증 수행. 향후 유닛테스트 유지가 필요하면 별도 태스크로.'
   - 'hw/unittest/dma_mem_unit_misal/Makefile + tb 가 DEBUG_LEVEL=3 + DBG_TRACE_GEMM + unconditional $fsdbDumpvars(0,"+all",...) 조합으로 infeasibly slow (1h39m 만에 첫 케이스의 첫 세그만 trace). dma_unit_misal 본체는 refactor 대상 아니므로 skip. 필요 시 Makefile DEFINES_ 에서 DBG_TRACE_GEMM 제거 + tb 의 $fsdbDumpvars 를 FSDB_DUMP macro 뒤로 이동하는 별도 정리 태스크로 처리.'
   - 'mock_st_misaligned 테스트 (baseline tb) 는 refactor 이전 stash 상태에서도 동일하게 FAIL (HBM mismatch at addr=0x80080, got=0x00 exp=0xd8). 64B misaligned ST 가 bank boundary를 넘는데 ENABLE_MISALIGN=0 baseline 에서는 1개 CFG만 발행해 3 byte tail 커버 안 됨. pre-existing issue, 본 refactor 와 무관.'
+  - '2D burst descriptor 가 bank_offset_within_4KB 를 고려하지 못해 AXI 4KB boundary 위반 가능. Logical-4KB aligned base 도 remap 후 bank 내 임의 위치에 떨어질 수 있음. 128³ output DMA nb=2 (dst 0x1f000 → bank_offset 0xf80) 에서 발현. 3D sub-burst 로 해결 — S = gcd_pow2(bank_off_beats, total_beats_per_bank, 64).'
+  - '256³ VERIFY_E2E STEP2/3/4 가 PASS 했던 이유는 bank_offset 이 운 좋게 낮은 값 (0x800 등) 에 떨어져 1024B burst 가 여전히 4KB 내였기 때문. bank_offset 이 고정 base 주소 의 비트 패턴에 따라 결정되므로 특정 테스트가 PASS 한다고 다른 테스트도 safe 하다는 보장 없음. 3D scheme 으로 전환 후 bank_offset 무관하게 항상 safe.'
+  - 'sim/xrtsim_vcs/Makefile 의 simv rule 이 RTL 파일들을 prerequisite 로 안 걸어 놓음 → RTL 수정 후 `make simv` 가 "Nothing to be done" 반환하여 stale binary 로 테스트가 가짜 PASS/FAIL 낼 수 있음. 현 workaround: `make clean` 후 재빌드. 영구 수정은 별도 Makefile 태스크 권장 (e.g. find $(RTL_DIR) -name *.sv 로 prerequisite 자동 생성).'

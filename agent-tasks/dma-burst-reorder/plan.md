@@ -42,7 +42,11 @@
 
 ## Design
 
-### 2D descriptor (ctrl 출력, LD 방향 기준)
+### 3D descriptor (ctrl 출력, LD 방향 기준)
+
+> **주의 (Phase 3 보정)**: 초안은 2D 였으나 `bank_offset` 가 4KB 페이지 중간에 떨어지면 AXI INCR burst가 4KB 경계를 넘어 SVA가 점화함. 이를 해결하기 위해 bank 내 sub-burst 차원을 추가한 **3D** 형태로 확정.
+>
+> `bank_offset_within_4KB = ((logical_addr >> 11) & 0x3F) × 64` — logical-4KB aligned base 도 remap 후 bank 내에서 임의 위치에 떨어질 수 있음.
 
 ```
 localparam int NUM_BURST_GROUPS   = `PLATFORM_MEMORY_NUM_BANKS / NUM_CHANNELS;     // 4
@@ -54,34 +58,55 @@ localparam int BEAT_STRIDE_TMEM_B = NUM_BURST_GROUPS * `MEM_BLOCK_SIZE;         
 localparam int BANK_STRIDE_TMEM_B = `MEM_BLOCK_SIZE;                                 // 64
 localparam int MAX_BEATS_PER_BURST = 4096 / `MEM_BLOCK_SIZE;                         // 64
 
-// 분기
+// Sub-burst size S = largest power-of-2 dividing:
+//   (1) bank_off_beats = (hbm_side_base >> 11) & 0x3F   (0 이면 unconstrained, 64로 간주)
+//   (2) total_beats_per_bank = ch_words / NUM_BURST_GROUPS
+//   (3) MAX_BEATS_PER_BURST = 64
+// power-of-2 divisor trick: v & -v (v != 0)
+bank_off_beats       = (ch_hbm_base >> 11) & 0x3F;
+total_beats_per_bank = ch_words / NUM_BURST_GROUPS;
+s_bob  = (bank_off_beats == 0) ? 64 : (bank_off_beats & -bank_off_beats);
+s_tbpb = total_beats_per_bank & -total_beats_per_bank;
+S      = min(s_bob, s_tbpb);                     // 64 cap implicit (s_bob ≤ 64, s_tbpb ≤ tbpb)
+
+// 분기 (burst_mode 조건에서 "≤ MAX_BEATS_PER_BURST" 제약은 S 계산에 흡수됨)
 burst_mode = (ch_words >= NUM_BURST_GROUPS)
-          && ((ch_words % NUM_BURST_GROUPS) == 0)
-          && ((ch_words / NUM_BURST_GROUPS) <= MAX_BEATS_PER_BURST);
+          && ((ch_words % NUM_BURST_GROUPS) == 0);
 
 if (burst_mode) {
-    BND0    = ch_words / NUM_BURST_GROUPS;   // beats per bank
-    BND1    = NUM_BURST_GROUPS;              // banks per channel
-    SRC_ST0 = BEAT_STRIDE_HBM_B; SRC_ST1 = BANK_STRIDE_HBM_B;
-    DST_ST0 = BEAT_STRIDE_TMEM_B; DST_ST1 = BANK_STRIDE_TMEM_B;
+    // 3D: i0=beat within sub-burst, i1=sub-burst within bank, i2=bank within channel
+    BND0    = S;                                 // beats per AXI burst (≤ 64)
+    BND1    = total_beats_per_bank / S;          // sub-bursts per bank
+    BND2    = NUM_BURST_GROUPS;                  // banks per channel
+    SRC_ST0 = BEAT_STRIDE_HBM_B;                 // beat within sub-burst: 2048 (interleave)
+    SRC_ST1 = S * BEAT_STRIDE_HBM_B;             // next sub-burst, same bank
+    SRC_ST2 = BANK_STRIDE_HBM_B;                 // next bank
+    DST_ST0 = BEAT_STRIDE_TMEM_B;                // 256 = NUM_BURST_GROUPS * MEM_BLOCK_SIZE
+    DST_ST1 = S * BEAT_STRIDE_TMEM_B;
+    DST_ST2 = BANK_STRIDE_TMEM_B;                // 64
 } else {
-    // Fallback (Q1=B): ch_words < 4 or non-divisible. Single-beat bursts, linear.
+    // Fallback (Q1=B): ch_words < NUM_BURST_GROUPS 또는 non-divisible.
+    // Non-divisible ≥ NUM_BURST_GROUPS 케이스는 본 refactor 범위 외 (extension doc Option B).
     BND0    = 1;
     BND1    = ch_words;
-    SRC_ST0 = 0;                             // unused (BND0=1)
+    BND2    = 1;
+    SRC_ST0 = 0;                                 // unused (BND0=1)
     SRC_ST1 = `HBM_BUS_STRIDE;
+    SRC_ST2 = 0;
     DST_ST0 = 0;
     DST_ST1 = `MEM_BLOCK_SIZE;
+    DST_ST2 = 0;
 }
-BND2 = 1; SRC_ST2 = 0; DST_ST2 = 0;         // reserved (Q2 future)
 SEG_SIZE = `MEM_BLOCK_SIZE; PAD = 0;
 ```
 
-ST 방향은 SRC/DST 스왑만 적용하여 그대로 (기존 ctrl의 `dir_is_st` 분기 유지).
+ST 방향은 SRC/DST 스왑만 적용하여 그대로 (기존 ctrl의 `dir_is_st` 분기 유지). `ch_hbm_base` 는 LD 시 `ch_src_base`, ST 시 `ch_dst_base`.
 
-Kernel 호출별 burst_mode 여부:
-- input (ch_words=64), weight (16), output (16) → `burst_mode=1`
-- scale / zp (QCOL qblk=32, K=128, N=128) ch_words=2 → fallback (single-beat × 2 banks)
+**채널별 S**: `ch_hbm_base = dst/src_base + logical_ch × 64` → 채널마다 `bank_off_beats` 가 다를 수 있으므로 S는 per-channel 계산.
+
+Kernel 호출별 예상 (dst_base/src_base 별로 다름):
+- input, weight, output (ch_words=64/16/16, divisible): **3D burst_mode**, S 는 bank_off_beats 에 따라 [1, min(total_bpb, 64)] 값
+- scale / zp (ch_words=2, < NBG): **fallback** (single-beat × 2 banks)
 
 ### `VX_dma_engine` passthrough FSM (채널당)
 
@@ -118,10 +143,15 @@ Write path:
 ### SVA (SIMULATION-only)
 
 ```systemverilog
-// 기존 373~394 line의 descriptor 형상 assertion을 새 형상으로 교체:
-//   - burst_mode: BND0*MEM_BLOCK_SIZE <= 4096, BND1 == NUM_BURST_GROUPS,
-//                 SRC_ST0 == BEAT_STRIDE_HBM_B, SRC_ST1 == BANK_STRIDE_HBM_B, ...
-//   - fallback: BND0 == 1, SRC_ST1 == HBM_BUS_STRIDE, ...
+// Descriptor 형상 체크 (BND2 ∈ {1, NUM_BURST_GROUPS} 허용, stride 세부 체크는 완화 —
+// runtime 4KB boundary SVA 가 실제 위반을 잡는다)
+assert (SEG_SIZE == MEM_BLOCK_SIZE
+     && PAD      == 0
+     && BND0 != 0 && BND0 <= MAX_BEATS_PER_BURST
+     && BND1 != 0
+     && (BND2 == 1 || BND2 == NUM_BURST_GROUPS)
+     && SRC_BASE_LO[BLOCK_SHIFT-1:0] == 0
+     && DST_BASE_LO[BLOCK_SHIFT-1:0] == 0)
 
 // 추가: AXI 4KB boundary (AR/AW 양쪽)
 always_ff @(posedge clk) begin
