@@ -159,10 +159,11 @@ module VX_local_mem import VX_gpu_pkg::*; #(
         wire bank_rsp_valid, bank_rsp_ready;
 
         VX_sp_ram #(
-            .DATAW (WORD_WIDTH),
-            .SIZE  (WORDS_PER_BANK),
-            .WRENW (WORD_SIZE),
-            .OUT_REG (1),
+            .DATAW    (WORD_WIDTH),
+            .SIZE     (WORDS_PER_BANK),
+            .WRENW    (WORD_SIZE),
+            .OUT_REG  (1),
+            .USE_URAM (1),
             .RDW_MODE ("R")
         ) lmem_store (
             .clk   (clk),
