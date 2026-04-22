@@ -63,6 +63,14 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
     // VX_mem_bus_if uses word-addressable addresses
     localparam HBM_ADDR_WIDTH = MEM_ADDR_WIDTH - LOG2_DATA_SIZE;
 
+    // Banks-per-channel grouping. Upstream ctrl's 3D descriptor form emits
+    // BND2 == NUM_BURST_GROUPS for burst_mode and BND2 == 1 for the single-
+    // beat-per-bank fallback. The descriptor-shape SVA below accepts both.
+    // Guarded with `MAX(1, ...)` for the same reason as the ctrl module —
+    // degenerate configs are caught separately by the runtime 4KB SVA.
+    localparam int RAW_BURST_GROUPS   = `PLATFORM_MEMORY_NUM_BANKS / NUM_CHANNELS;
+    localparam int NUM_BURST_GROUPS   = (RAW_BURST_GROUPS > 0) ? RAW_BURST_GROUPS : 1;
+
     localparam int DMA_R_CONTROL     = 0;
     localparam int DMA_R_DST_BASE_LO = 1;
     localparam int DMA_R_DST_BASE_HI = 2;
@@ -301,28 +309,30 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
                 if (cfg_is_read) begin
                     assert (cfg_reg_if[ch].regs[DMA_R_SEG_SIZE] == 32'(`MEM_BLOCK_SIZE)
                          && cfg_reg_if[ch].regs[DMA_R_PAD]      == 32'd0
-                         && cfg_reg_if[ch].regs[DMA_R_BND2]     == 32'd1
-                         && cfg_reg_if[ch].regs[DMA_R_SRC_ST2]  == 32'd0
-                         && cfg_reg_if[ch].regs[DMA_R_DST_ST2]  == 32'd0
+                         && (cfg_reg_if[ch].regs[DMA_R_BND2] == 32'd1
+                          || cfg_reg_if[ch].regs[DMA_R_BND2] == 32'(NUM_BURST_GROUPS))
+                         && cfg_reg_if[ch].regs[DMA_R_BND1] != 32'd0
                          && cfg_reg_if[ch].regs[DMA_R_SRC_BASE_LO][BLOCK_SHIFT-1:0] == '0
                          && cfg_reg_if[ch].regs[DMA_R_BND0] != 32'd0
                          && cfg_reg_if[ch].regs[DMA_R_BND0] <= 32'(MAX_BEATS_PER_BURST))
-                    else $fatal(1, "%m: bad read DMA descriptor (ch=%0d): BND0=%0d BND2=%0d SEG=%0d PAD=%0d",
+                    else $fatal(1, "%m: bad read DMA descriptor (ch=%0d): BND0=%0d BND1=%0d BND2=%0d SEG=%0d PAD=%0d",
                                 ch, cfg_reg_if[ch].regs[DMA_R_BND0],
+                                cfg_reg_if[ch].regs[DMA_R_BND1],
                                 cfg_reg_if[ch].regs[DMA_R_BND2],
                                 cfg_reg_if[ch].regs[DMA_R_SEG_SIZE],
                                 cfg_reg_if[ch].regs[DMA_R_PAD]);
                 end else begin
                     assert (cfg_reg_if[ch].regs[DMA_R_SEG_SIZE] == 32'(`MEM_BLOCK_SIZE)
                          && cfg_reg_if[ch].regs[DMA_R_PAD]      == 32'd0
-                         && cfg_reg_if[ch].regs[DMA_R_BND2]     == 32'd1
-                         && cfg_reg_if[ch].regs[DMA_R_SRC_ST2]  == 32'd0
-                         && cfg_reg_if[ch].regs[DMA_R_DST_ST2]  == 32'd0
+                         && (cfg_reg_if[ch].regs[DMA_R_BND2] == 32'd1
+                          || cfg_reg_if[ch].regs[DMA_R_BND2] == 32'(NUM_BURST_GROUPS))
+                         && cfg_reg_if[ch].regs[DMA_R_BND1] != 32'd0
                          && cfg_reg_if[ch].regs[DMA_R_DST_BASE_LO][BLOCK_SHIFT-1:0] == '0
                          && cfg_reg_if[ch].regs[DMA_R_BND0] != 32'd0
                          && cfg_reg_if[ch].regs[DMA_R_BND0] <= 32'(MAX_BEATS_PER_BURST))
-                    else $fatal(1, "%m: bad write DMA descriptor (ch=%0d): BND0=%0d BND2=%0d SEG=%0d PAD=%0d",
+                    else $fatal(1, "%m: bad write DMA descriptor (ch=%0d): BND0=%0d BND1=%0d BND2=%0d SEG=%0d PAD=%0d",
                                 ch, cfg_reg_if[ch].regs[DMA_R_BND0],
+                                cfg_reg_if[ch].regs[DMA_R_BND1],
                                 cfg_reg_if[ch].regs[DMA_R_BND2],
                                 cfg_reg_if[ch].regs[DMA_R_SEG_SIZE],
                                 cfg_reg_if[ch].regs[DMA_R_PAD]);

@@ -55,8 +55,14 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
     // =========================================================
     // Burst geometry (interleave mode only)
     // See agent-tasks/dma-burst-reorder/plan.md §Design for derivation.
-    // 2D descriptor: inner dim = BND0 consecutive beats on one HBM bank
-    // (one AXI INCR burst), outer dim = BND1 banks on this channel.
+    // 3D descriptor: i0=beat within sub-burst (inner, one AXI INCR burst),
+    //                i1=sub-burst within bank (mid),
+    //                i2=bank within channel (outer).
+    // Sub-burst size S is computed per-channel as the largest power-of-2
+    // that divides both bank_off_beats and total_beats_per_bank, capped at
+    // MAX_BEATS_PER_BURST (= 64). This guarantees every AXI burst stays
+    // within a 4KB boundary even when the HBM base offset is non-aligned
+    // modulo 4KB.
     //
     // NUM_BURST_GROUPS uses a `MAX(1, ...)` guard so that degenerate
     // configs (PLATFORM_MEMORY_NUM_BANKS < NUM_CHANNELS) do not trigger
@@ -72,6 +78,26 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
     localparam int BEAT_STRIDE_TMEM_B  = NUM_BURST_GROUPS * `MEM_BLOCK_SIZE;
     localparam int BANK_STRIDE_TMEM_B  = `MEM_BLOCK_SIZE;
     localparam int MAX_BEATS_PER_BURST = 4096 / `MEM_BLOCK_SIZE;
+
+    // Largest power-of-2 divisor of `v`, returning `cap` if `v` is zero or
+    // has no set bits within [0,6]. Range is 7 bits because the cap is 64
+    // (MAX_BEATS_PER_BURST), which fits in a power-of-two ≤ 64.
+    function automatic logic [6:0] pow2_div(input logic [6:0] v,
+                                            input logic [6:0] cap);
+        logic [6:0] result;
+        logic       found;
+        begin
+            result = cap;
+            found  = 1'b0;
+            for (int b = 0; b <= 6; b++) begin
+                if (!found && v[b]) begin
+                    result = 7'd1 << b;
+                    found  = 1'b1;
+                end
+            end
+            return result;
+        end
+    endfunction
 
 `ifndef SYNTHESIS
     initial begin
@@ -206,24 +232,32 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
         wire [63:0] ch_dst_base = dir_is_st ? (dst_base + (logical_ch << BUS_WORD_SHIFT))
                                             : tmem_bank_local_addr(dst_base);
 
-        // Burst-mode decision per channel. In burst mode the 2D loop
-        // emits BND0 consecutive beats on one HBM bank (one AXI INCR burst),
-        // then advances to the next bank. Fallback emits single-beat bursts
-        // across BND1 banks (BND0=1).
+        // HBM-side base for this channel (LD=src, ST=dst). Used for the
+        // sub-burst size computation below (bank_off_beats = (hbm_base >> 11)
+        // & 0x3F, i.e. bank_offset_within_4KB measured in MEM_BLOCK_SIZE beats).
+        wire [63:0] ch_hbm_base = dir_is_st ? ch_dst_base : ch_src_base;
+        wire [5:0]  bank_off_beats = ch_hbm_base[16:11];
+
+        // Total beats per bank (only meaningful when burst_mode holds — i.e.,
+        // ch_words is a multiple of NUM_BURST_GROUPS).
+        wire [31:0] total_bpb = ch_words / 32'(NUM_BURST_GROUPS);
+
+        // Largest power-of-2 divisor of bank_off_beats and total_bpb. cap=64
+        // for bank_off_beats (when it's zero the bank is 4KB-aligned so any
+        // burst size up to 64 is safe). For total_bpb the cap is 1 because
+        // total_bpb can legitimately be 1 (single beat per bank) — the final
+        // min() below clamps sub_burst_size to total_bpb.
+        wire [6:0] s_bob  = pow2_div({1'b0, bank_off_beats}, 7'd64);
+        wire [6:0] s_tbpb = pow2_div(total_bpb[6:0], 7'd1);
+
+        // S = min(s_bob, s_tbpb); both are pow-of-2, S ≤ 64 = MAX_BEATS_PER_BURST.
+        wire [6:0] sub_burst_size = (s_bob <= s_tbpb) ? s_bob : s_tbpb;
+
+        // Burst-mode decision per channel. The 4KB safety / beat-count cap is
+        // absorbed into the sub-burst size computation above, so burst_mode
+        // only requires ch_words to be a multiple of NUM_BURST_GROUPS.
         wire burst_mode = (ch_words >= 32'(NUM_BURST_GROUPS))
-                       && ((ch_words % 32'(NUM_BURST_GROUPS)) == 32'd0)
-                       && ((ch_words / 32'(NUM_BURST_GROUPS)) <= 32'(MAX_BEATS_PER_BURST));
-
-        // HBM-side strides (bank = outer, beat = inner)
-        wire [31:0] hbm_beat_stride = 32'(BEAT_STRIDE_HBM_B);
-        wire [31:0] hbm_bank_stride = 32'(BANK_STRIDE_HBM_B);
-        // TMEM-side strides (bank = outer, beat = inner) — bank-local addressing
-        wire [31:0] tmem_beat_stride = 32'(BEAT_STRIDE_TMEM_B);
-        wire [31:0] tmem_bank_stride = 32'(BANK_STRIDE_TMEM_B);
-
-        // Beats-per-burst and banks-per-channel for BND0/BND1
-        wire [31:0] burst_bnd0 = burst_mode ? (ch_words / 32'(NUM_BURST_GROUPS)) : 32'd1;
-        wire [31:0] burst_bnd1 = burst_mode ? 32'(NUM_BURST_GROUPS)              : ch_words;
+                       && ((ch_words % 32'(NUM_BURST_GROUPS)) == 32'd0);
 
         // Build per-channel config registers
         logic [NUM_REGS-1:0][31:0] ch_prog_regs;
@@ -235,27 +269,41 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
             ch_prog_regs[DMA_R_SRC_BASE_LO] = ch_src_base[31:0];
             ch_prog_regs[DMA_R_SRC_BASE_HI] = ch_src_base[63:32];
 
-            // ST0 = inner (beat) stride, ST1 = outer (bank) stride.
-            // LD: SRC=HBM, DST=TMEM. ST: SRC=TMEM, DST=HBM.
+            // 3D: i0=beat within sub-burst (inner), i1=sub-burst within bank
+            // (mid), i2=bank within channel (outer). LD: SRC=HBM, DST=TMEM.
+            // ST: SRC=TMEM, DST=HBM.
             if (burst_mode) begin
-                ch_prog_regs[DMA_R_SRC_ST0] = dir_is_st ? tmem_beat_stride : hbm_beat_stride;
-                ch_prog_regs[DMA_R_DST_ST0] = dir_is_st ? hbm_beat_stride  : tmem_beat_stride;
-                ch_prog_regs[DMA_R_SRC_ST1] = dir_is_st ? tmem_bank_stride : hbm_bank_stride;
-                ch_prog_regs[DMA_R_DST_ST1] = dir_is_st ? hbm_bank_stride  : tmem_bank_stride;
+                ch_prog_regs[DMA_R_BND0]    = 32'(sub_burst_size);                   // beats per AXI burst
+                ch_prog_regs[DMA_R_BND1]    = total_bpb / 32'(sub_burst_size);       // sub-bursts per bank
+                ch_prog_regs[DMA_R_BND2]    = 32'(NUM_BURST_GROUPS);                 // banks per channel
+
+                // ST0: beat stride within sub-burst (same bank)
+                ch_prog_regs[DMA_R_SRC_ST0] = dir_is_st ? 32'(BEAT_STRIDE_TMEM_B) : 32'(BEAT_STRIDE_HBM_B);
+                ch_prog_regs[DMA_R_DST_ST0] = dir_is_st ? 32'(BEAT_STRIDE_HBM_B)  : 32'(BEAT_STRIDE_TMEM_B);
+
+                // ST1: sub-burst stride within bank = S × beat stride
+                ch_prog_regs[DMA_R_SRC_ST1] = 32'(sub_burst_size)
+                                            * (dir_is_st ? 32'(BEAT_STRIDE_TMEM_B) : 32'(BEAT_STRIDE_HBM_B));
+                ch_prog_regs[DMA_R_DST_ST1] = 32'(sub_burst_size)
+                                            * (dir_is_st ? 32'(BEAT_STRIDE_HBM_B)  : 32'(BEAT_STRIDE_TMEM_B));
+
+                // ST2: bank stride
+                ch_prog_regs[DMA_R_SRC_ST2] = dir_is_st ? 32'(BANK_STRIDE_TMEM_B) : 32'(BANK_STRIDE_HBM_B);
+                ch_prog_regs[DMA_R_DST_ST2] = dir_is_st ? 32'(BANK_STRIDE_HBM_B)  : 32'(BANK_STRIDE_TMEM_B);
             end else begin
                 // Fallback: BND0 == 1, so ST0 is unused — zero it.
-                // ST1 walks banks, one beat per bank.
+                // ST1 walks banks, one beat per bank. ST2 unused.
+                ch_prog_regs[DMA_R_BND0]    = 32'd1;
+                ch_prog_regs[DMA_R_BND1]    = ch_words;
+                ch_prog_regs[DMA_R_BND2]    = 32'd1;
                 ch_prog_regs[DMA_R_SRC_ST0] = 32'd0;
                 ch_prog_regs[DMA_R_DST_ST0] = 32'd0;
                 ch_prog_regs[DMA_R_SRC_ST1] = dir_is_st ? 32'(`MEM_BLOCK_SIZE) : 32'(`HBM_BUS_STRIDE);
                 ch_prog_regs[DMA_R_DST_ST1] = dir_is_st ? 32'(`HBM_BUS_STRIDE) : 32'(`MEM_BLOCK_SIZE);
+                ch_prog_regs[DMA_R_SRC_ST2] = 32'd0;
+                ch_prog_regs[DMA_R_DST_ST2] = 32'd0;
             end
 
-            ch_prog_regs[DMA_R_SRC_ST2]     = 32'd0;
-            ch_prog_regs[DMA_R_DST_ST2]     = 32'd0;
-            ch_prog_regs[DMA_R_BND0]        = burst_bnd0;        // beats per burst (inner)
-            ch_prog_regs[DMA_R_BND1]        = burst_bnd1;        // banks per channel (outer)
-            ch_prog_regs[DMA_R_BND2]        = 32'd1;             // reserved (Q2 future)
             ch_prog_regs[DMA_R_SEG_SIZE]    = 32'(`MEM_BLOCK_SIZE); // one bus word per beat
             ch_prog_regs[DMA_R_PAD]         = 32'd0;
             ch_prog_regs[DMA_R_DIR]         = {31'd0, dir_is_st};
@@ -278,11 +326,12 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
 `ifdef DBG_TRACE_GEMM
         always_ff @(posedge clk) begin
             if (!reset && (state_q == S_PROG) && cfg_all_ready && ch_active) begin
-                `TRACE(2, ("%m : [%0t] | TMEM_DMA_CTRL_PROG_CH | {inst=%s, ch=%0d, burst_mode=%0d, bnd0=%0d, bnd1=%0d, src_st0=%0d, src_st1=%0d, dst_st0=%0d, dst_st1=%0d, ch_src_base=0x%0h, ch_dst_base=0x%0h}\n",
+                `TRACE(2, ("%m : [%0t] | TMEM_DMA_CTRL_PROG_CH | {inst=%s, ch=%0d, burst_mode=%0d, bob=%0d, S=%0d, bnd0=%0d, bnd1=%0d, bnd2=%0d, src_st0=%0d, src_st1=%0d, src_st2=%0d, dst_st0=%0d, dst_st1=%0d, dst_st2=%0d, ch_src_base=0x%0h, ch_dst_base=0x%0h}\n",
                           $time, INSTANCE_ID, ch, burst_mode,
-                          ch_prog_regs[DMA_R_BND0], ch_prog_regs[DMA_R_BND1],
-                          ch_prog_regs[DMA_R_SRC_ST0], ch_prog_regs[DMA_R_SRC_ST1],
-                          ch_prog_regs[DMA_R_DST_ST0], ch_prog_regs[DMA_R_DST_ST1],
+                          bank_off_beats, sub_burst_size,
+                          ch_prog_regs[DMA_R_BND0], ch_prog_regs[DMA_R_BND1], ch_prog_regs[DMA_R_BND2],
+                          ch_prog_regs[DMA_R_SRC_ST0], ch_prog_regs[DMA_R_SRC_ST1], ch_prog_regs[DMA_R_SRC_ST2],
+                          ch_prog_regs[DMA_R_DST_ST0], ch_prog_regs[DMA_R_DST_ST1], ch_prog_regs[DMA_R_DST_ST2],
                           ch_src_base, ch_dst_base))
             end
         end
