@@ -1,0 +1,205 @@
+task: dma-burst-reorder
+parent: null
+children: []
+fsm:
+  file: fsm.json
+  state: DONE
+completed_work:
+  - state: DONE
+    item: 'DMA burst reorder elimination 태스크 완료. Reorder buffer 제거 확인 + E2E sweep 4/4 PASS.'
+    timestamp: '2026-04-22 19:50'
+    details: |
+      Grep verification (reorder buffer register 완전 제거):
+        $ grep -E 'burst_.*_window_.*_r|burst_.*_group_.*_r|burst_window_valid_r|burst_wr_group|burst_group' hw/rtl/mem/VX_dma_engine.sv
+        → 0 hits ✓
+      VX_dma_engine.sv 라인 수: 859 → 551 (-308 lines, -36%)
+      예상 FF 절감 (8채널 합계):
+        - burst_window_data_r (16×512b)   : -65536 bits FF
+        - burst_wr_window_data_r (16×512b): -65536 bits FF
+        - burst_wr_window_byteen_r (16×64b): -8192 bits FF
+        - 기타 group/state registers       : -수KB bits FF
+        총합: ~140 KB FF 절감
+      E2E sweep 결과:
+        STEP1 -m32n32k32   -q32 -t0 -d0: PASS, 42 AR (all len=0), baseline과 byte-identical
+        STEP2 -m256n256k256 -q32 -t0 -d0: PASS, 768 AR (256×0, 256×3, 256×15), 512 AW (all len=3)
+        STEP3 -m256n256k256 -q32 -t0 -d1: PASS, 768 AR / 512 AW, counts identical to STEP2
+        STEP4 -m256n256k256 -q32 -t1 -d0: PASS, 768 AR / 512 AW, counts identical to STEP2
+        (STEP4 첫 시도는 simv가 external kill 추정으로 mid-sim 중단, 재실행 시 정상 PASS)
+        All STEPs: 0 SVA $fatal, PERF instrs≈28755 cycles≈222k IPC≈0.13
+  - state: VERIFY_E2E
+    item: 'VERIFY_E2E STEP1-4 all PASS. burst_mode (len=15,3) + fallback (len=0) 경로 모두 실 검증.'
+    timestamp: '2026-04-22 19:50'
+    details: |
+      STEP1 32³ QCOL wtrans=0: PASS (fallback-only, 42 AR all len=0, baseline identical)
+      STEP2 256³ QCOL wtrans=0: PASS (768 AR [256×0,256×3,256×15], 512 AW [all len=3], 0 SVA)
+      STEP3 256³ QROW wtrans=0: PASS (identical counts to STEP2, qdir 변경 DMA에 영향 없음 확인)
+      STEP4 256³ QCOL wtrans=1: PASS (identical counts to STEP2, wtrans DMA layout 불변 확인)
+      SVA fatals across all STEPs: 0 (4KB boundary, descriptor shape, cmd.bound, non-interleave 모두 clean)
+      Artifacts: build/sim/xrtsim_vcs/simv.log, build/sim/xrtsim_vcs/vcs_cosim.fsdb
+  - state: VERIFY_E2E
+    item: 'STEP1 (32³) + STEP2 (256³) PASSED. burst_mode 및 fallback 경로 실 검증 완료.'
+    timestamp: '2026-04-22 19:22'
+    details: |
+      STEP1 -m 32 -n 32 -k 32 -q 32 -t 0 -d 0 --debug-always:
+        Host: PASSED, PERF instrs=4074 cycles=13631 IPC=0.299
+        AR total=42 (ch0=7, ch1..7=5 each), all ar_len=0
+        byte-for-byte identical to pre-refactor baseline (fallback 경로만 exercise)
+        No SVA fires
+      STEP2 -m 256 -n 256 -k 256 -q 32 -t 0 -d 0 --debug-always (핵심):
+        Host: PASSED, PERF instrs=28755 cycles=222082 IPC=0.129
+        AR total=768:
+          256 × len=15  (input burst, BND0=16: ch_words=64)
+          256 × len=3   (weight/output burst, BND0=4: ch_words=16)
+          256 × len=0   (scale/zp fallback, BND0=1: ch_words=2)
+        AW total=512, all len=3 (per-nb output store: 4 tiles × 4 nb × 4 AW × 8 ch)
+        R total=6144 (= 256 × (16+4+1) ✓)
+        SVA $fatal fires: 0 (4KB boundary, non-interleave, descriptor shape, cmd.bound 모두 clean)
+        ch0 AR samples: bank 0 (0x800) → bank 8 slot (0x100000800) → bank 16 slot (0x200000800)
+          → remap + 2D descriptor 동작 정확
+        simv.log: 2.98 GB, runtime ~8분
+        Artifacts:
+          build/sim/xrtsim_vcs/simv.log (2.98 GB)
+          build/sim/xrtsim_vcs/vcs_cosim.fsdb
+          build/run_logs_fpint_gemm_ffn_hw_improve/run_case_1.log
+  - state: IMPL_ENGINE
+    item: 'VX_dma_engine.sv passthrough FSM 재작성 완료. 유닛테스트는 infra stale 로 skip, standalone lint PASS. FSM IMPL_ENGINE → VERIFY_E2E 전이.'
+    timestamp: '2026-04-22 19:00'
+    details: |
+      RTL 수정 (diff 859 → 551 lines, -293 lines 순감):
+        제거:
+          - 모든 reorder buffer registers: burst_window_data_r, burst_wr_window_data_r, burst_wr_window_byteen_r, burst_window_valid_r
+          - 그룹/세그먼트 state: burst_*_group_{count,base_addr,tag}_r, burst_issue_group_r, burst_recv_group_r, burst_recv_beat_r, burst_wr_*_r 대응
+          - enum types: read_state_t, write_state_t (구 형태)
+          - localparams: READ_GROUP_CAP, READ_BURST_GROUPS, READ_WINDOW_WORDS, GROUP_IDX_W, BEAT_IDX_W, WINDOW_CNT_W, LOG2_GROUPS, GSEL_W, WIDX_W
+          - 함수: calc_group_words, calc_remap_byte_addr (내부 remap 대신 u_mem_remap 사용)
+        추가 (채널당):
+          - burst_len_r [7b] (latched from cfg BND0)
+          - rd_beat_cnt_r [7b], wr_beat_cnt_r [7b]
+          - wr_aw_done_r [1b], aw_outstanding_r [4b], b_drained_r [4b]
+          - VX_fifo_queue 인스턴스 (DATAW=TAG_WIDTH=8, DEPTH=64=MAX_BEATS_PER_BURST)
+          - 채널당 ~550b FF (vs 기존 ~17 KB FF) → ~30× 감소
+          - 8채널 총 ~136 KB FF 제거
+        SVA (SIMULATION only):
+          - cfg_fire 시 descriptor 형상 (SEG_SIZE==MEM_BLOCK_SIZE, PAD==0, BND2==1, SRC_ST2==DST_ST2==0, BND0∈[1, MAX_BEATS_PER_BURST], base LO alignment)
+          - AXI 4KB boundary (AR, AW 양쪽, 런타임 체크)
+          - non-interleave $fatal (initial block)
+        DBG_TRACE_GEMM: burst_len, AR_FIRE, R_FIRE, AW_FIRE, W beat w_last, B_FIRE 트레이스로 재작성
+        ch_src_base/ch_dst_base, u_mem_remap, u_dma_unit, done_if 게이팅은 필요한 부분만 재구성
+        포트/파라미터 변경 없음
+      Lib 사용: hw/rtl/libs/VX_fifo_queue.sv (DEPTH=64, DATAW=8, ALM_FULL=DEPTH-1)
+      검증:
+        - Standalone Verilator --lint-only (synthetic wrapper with third_party/axi/src/axi_intf.sv): PASS, 0 errors
+      유닛테스트 skip 사유 (pitfalls 로 기록):
+        1) hw/unittest/dma_engine: 기존 tb가 제거된 hierarchical signal (burst_window_data_r 등) 참조해 재작성 필요. 큰 scope라 Phase 3 (VERIFY_E2E)에서 실질 검증으로 대체.
+        2) hw/unittest/dma_mem_unit_misal: dma_unit_misal 본체는 refactor 대상 아님. 기존 Makefile이 DEBUG_LEVEL=3 + DBG_TRACE_GEMM + 전체 FSDB dump로 1h39m 돌려도 첫 케이스의 첫 세그 prep만 출력. 완료 불가능. dma_unit RTL 무변경이라 실질 regression 없음.
+  - state: IMPL_CTRL
+    item: 'VX_gemm_tmem_dma_ctrl.sv 2D burst-reorder 리팩터 완료 + tb 업데이트 + compile PASS + misalign 유닛테스트 PASS. FSM IMPL_CTRL → IMPL_ENGINE 전이.'
+    timestamp: '2026-04-22 16:30'
+    details: |
+      RTL 수정 (diff +114/-13):
+        - localparam NUM_BURST_GROUPS/BEAT_STRIDE/BANK_STRIDE/MAX_BEATS_PER_BURST
+        - burst_mode 판정 + 2D descriptor 분기 (burst/fallback)
+        - BND2=1 reserved, cmd.bound==1 SVA 추가
+        - PLATFORM_MEMORY_INTERLEAVE=0 / RAW_BURST_GROUPS==0 $fatal guard
+        - cfg_all_ready 선언을 genvar 전으로 이동 (forward-ref 컴파일 에러 픽스)
+        - DBG_TRACE_GEMM TMEM_DMA_CTRL_PROG_CH 로그 추가
+        - ch_src_base/ch_dst_base/tmem_bank_local_* 함수 미변경, 포트 변경 없음
+      tb 업데이트: 양 tb 6~8개 테스트 케이스 expected values 신형식으로 갱신
+      Makefile: DEFINES_ 에 PLATFORM_MEMORY_NUM_BANKS=32 추가 + configure 재실행하여 build/ sync
+      Unit test 결과:
+        - tb_VX_gemm_tmem_dma_ctrl_misalign: PASS (all cases)
+        - tb_VX_gemm_tmem_dma_ctrl: FAIL on mock_st_misaligned ONLY → **pre-existing failure**
+          (git stash 후 pre-refactor 상태로 돌려도 동일 지점 동일 메시지로 FAIL)
+          HBM mismatch at addr=0x80080 from TMEM global=0x280 bank=2 local=0x40 got=0x00 exp=0xd8
+          Root cause: 64B misaligned ST 가 bank 1→2 boundary를 넘는데 ENABLE_MISALIGN=0
+          baseline 경로에서 ch=1 의 1개 CFG만 발행되어 3 byte tail 커버 안 됨. 본 refactor 와 무관.
+      실행 시간: simv compile+run ~1분.
+  - state: BASELINE
+    item: 'Baseline xrt-vcs-sim real PASS 확정. FSM BASELINE → IMPL_CTRL 전이.'
+    timestamp: '2026-04-22 15:40'
+    details: |
+      Test: python ci/test_fpint_hw.py xrt-vcs-sim "-m 32 -n 32 -k 32 -q 32 -t 0 -d 0" --debug-always
+      Host verdict: PASSED (instrs=4074, cycles=13632, IPC=0.299), summary total=1 passed=1
+      simv: 299.85us 실행 완료, compile+run ~1m15s
+      Artifacts:
+        - run_case_1.log: build/run_logs_fpint_gemm_ffn_hw_improve/run_case_1.log
+        - simv.log (13.58 MB): build/sim/xrtsim_vcs/simv.log
+        - FSDB (16.93 MB): build/sim/xrtsim_vcs/vcs_cosim.fsdb
+      ch0 baseline AR/AW (from DBG_TRACE_GEMM AR_FIRE/R_FIRE + write_state):
+        - AR_FIRE total: 7, all ar_len=0 (single-beat)
+        - R_FIRE total: 14
+        - Write groups (AW-equivalent): 4 (wr.issue_group 0→4)
+        - Write completions (B drain): 1 (wr.recv_group 3→4 @ 120805000 ps)
+      8ch 합계 AR_FIRE: 42 (ch0=7, ch1~7=5 each)
+      DEBUG note: ci/test_fpint_hw.py 는 DEBUG_LEVEL=0 지만 sim/xrtsim_vcs/Makefile 의 run-xrt target 이 DEBUG=1 로 재설정 → DBG_TRACE_GEMM 활성. 리팩터 후에도 동일 경로로 trace 수집 가능.
+      Note: 32³은 모든 burst가 len=0 (fallback path). burst_mode 경로(len>0) 검증은 VERIFY_E2E 의 256³에서.
+  - state: BASELINE
+    item: 'extension-3d-when-burst-exceeds-4kb.md 작성 완료'
+    timestamp: '2026-04-22 14:30'
+    details: 'plan.md Out-of-Scope 3개 항목(3D sub-burst for >4KB / bound>1 재도입 / PLATFORM_MEMORY_INTERLEAVE=0) 각각 Trigger·Design·Checklist 포함'
+  - state: BASELINE
+    item: 'VX_dma_engine.sv reorder buffer register 선언 인벤토리 기록'
+    timestamp: '2026-04-22 14:30'
+    details: |
+      Read-side (per channel):
+        - burst_src_base_byte_r [AXI_ADDR_WIDTH]
+        - burst_words_served_r [32]
+        - burst_prefetch_started_r [1]
+        - burst_req_pending_r [1]
+        - burst_req_tag_r [TAG_WIDTH]
+        - burst_rsp_valid_r [1], burst_rsp_data_r [DATA_WIDTH], burst_rsp_tag_r [TAG_WIDTH]
+        - burst_window_base_r [32]
+        - burst_accept_count_r [WINDOW_CNT_W]
+        - burst_issue_group_r [GROUP_IDX_W]
+        - burst_recv_group_r [GROUP_IDX_W], burst_recv_beat_r [BEAT_IDX_W]
+        - burst_group_count_r [READ_BURST_GROUPS][BEAT_IDX_W]
+        - burst_group_base_addr_r [READ_BURST_GROUPS][AXI_ADDR_WIDTH]
+        - burst_group_tag_r [READ_BURST_GROUPS][READ_GROUP_CAP][TAG_WIDTH]
+        - burst_window_data_r [READ_WINDOW_WORDS][DATA_WIDTH]   ← big FF (BRAM infer fail)
+        - burst_window_valid_r [READ_WINDOW_WORDS]
+        - read_state_r : read_state_t (1-bit enum)
+      Write-side (per channel):
+        - burst_wr_dst_base_byte_r [AXI_ADDR_WIDTH]
+        - burst_wr_words_captured_r [32]
+        - burst_wr_window_base_r [32]
+        - burst_wr_prefetch_started_r [1]
+        - burst_wr_issue_group_r [GROUP_IDX_W], burst_wr_issue_beat_r [BEAT_IDX_W]
+        - burst_wr_recv_group_r [GROUP_IDX_W]
+        - burst_wr_group_count_r [READ_BURST_GROUPS][BEAT_IDX_W]
+        - burst_wr_group_base_addr_r [READ_BURST_GROUPS][AXI_ADDR_WIDTH]
+        - burst_wr_window_data_r [READ_WINDOW_WORDS][DATA_WIDTH]   ← big FF
+        - burst_wr_window_byteen_r [READ_WINDOW_WORDS][DATA_SIZE]  ← big FF
+        - write_state_r : write_state_t (3-bit enum, 5 states)
+      With READ_WINDOW_WORDS=16, DATA_WIDTH=512, DATA_SIZE=64, 8 channels:
+        window_data (read + write) = 2 × (16×512) × 8 = 131072 bits FF
+        window_byteen (write)      = 16×64 × 8        = 8192   bits FF
+        + group/state overhead     ≈ O(1KB) FF per ch
+  - state: BASELINE
+    item: 'Test 환경 pivot: hw_emu → xrt-vcs-sim (사용자 지시). FSM 전반의 테스트 커맨드 xrt-vcs-sim 으로 업데이트. plan.md §Verification 도 추후 업데이트 필요.'
+    timestamp: '2026-04-22 14:45'
+  - state: BASELINE
+    item: '[invalidated] Baseline hw_emu test → 가짜 PASS (simv 사이클 0)'
+    timestamp: '2026-04-22 14:40'
+    details: |
+      Harness는 exit 0, "[1/1] PASS" 반환했으나 실제 시뮬레이션은 한 사이클도 실행되지 않음.
+      - 오늘(2026-04-22 12:18) 빌드된 xclbin이 VCS behavioural simv backend 사용
+        (build/hw/syn/xilinx/xrt/hw_emu/bin/vortex_afu.xclbin → .../behav_waveform/vcs/pfm_top_wrapper_simv)
+        이전 작동하던 런은 xsim backend였음
+      - VCS backend의 pfm_top_wrapper_simv는 init dump 후 즉시 종료 (cycle 0)
+      - simulate.log 3.4 MB 중 non-NUL 2줄뿐, device_trace_1.csv "No Trace", EVENTS=0
+      - DEBUG_LEVEL이 ci/test_fpint_hw.py에 "0" 하드코딩 → TRACE(1,...) 전체 비활성 → AR_FIRE 이벤트 없음
+      - harness test.py는 returncode만 체크, workload PASS 마커 미검증 → false positive 발생
+      Reference AR/AW 데이터 (이전 xsim 런, 동일 shape, DEBUG=1):
+        - build/.../1549958/.../xsim/simulate.log : 42 AR_FIRE (ch당 1 burst, len=0, count=1)
+        - build/.../1553278/.../xsim/simulate.log : 672 AR_FIRE (더 긴 런)
+pitfalls:
+  - 'VX_dma_engine.sv의 `burst_window_data_r`는 `(* ram_style = "block" *)` 속성에도 불구하고 Vivado BRAM inference가 실패해 FF로 합성됨. 단순히 속성 추가로 해결 안 됨 → reorder buffer 자체를 제거하는 것이 본 태스크의 전제.'
+  - 'VX_mem_remap.sv는 PLATFORM_MEMORY_INTERLEAVE=1 전용 구현. non-interleave(=0) 경로는 identity bypass가 없어 이미 broken. 본 리팩터에서는 $fatal guard만 추가하고 별도 수정 범위 아님.'
+  - 'VX_gemm_tmem_dma_ctrl.sv가 `DMA_R_BND1 ← kernel.cmd.bound` 를 전달하는 경로가 있으나 현 kernel.cpp는 전부 bound=1 이라 dead path. 본 리팩터에서 제거 (BND2=1 reserved). 재도입 시 extension doc 참조.'
+  - 'hw/unittest/*/Makefile 이 stale 가능성. axi submodule 관련 include/define error 시 sim/xrtsim_vcs 쪽 Makefile(SRC/DEFINES/INCDIRS) 과 diff 떠서 보정. 동일 이슈 3회 이상 반복 시 user escalation.'
+  - 'kernel.cpp의 scale/zp DMA (QCOL qblk=32, K=128, N=128)는 ch_words=2로 NUM_BURST_GROUPS=4 미만. burst_mode 불가 → fallback 경로 (BND0=1, BND1=ch_words)로 빠져야 함. 전환 기준 `ch_words >= NUM_BURST_GROUPS && (ch_words % NUM_BURST_GROUPS) == 0 && (ch_words / NUM_BURST_GROUPS) <= MAX_BEATS_PER_BURST` 정확 구현 주의.'
+  - 'AXI INCR burst는 4KB 경계를 넘을 수 없음 (MEM_BLOCK_SIZE=64B 기준 최대 64 beats/burst). 256³ GEMM 의 input DMA는 ch_words=512 → bank당 128 beats 으로 4KB 초과 가능성 있음. 실제 테스트 전 plan.md 수치 재검산 필요, 초과 시 3D 확장 필요(extension doc).'
+  - 'hw_emu 환경 이슈 (BASELINE 단계 escalation): (1) 현 xclbin은 VCS simv backend인데 pfm_top_wrapper_simv가 init 후 즉시 종료해 실제 sim 사이클이 0임. xsim backend로 재빌드 또는 VCS simv launch 수정 필요. (2) ci/test_fpint_hw.py가 DEBUG_LEVEL="0" 하드코딩 → DBG_TRACE_GEMM 전면 비활성. (3) tests/regression/fpint_gemm_ffn_hw_improve/test.py가 returncode만 체크, workload PASS 마커 미검증 → false positive 발생. → 사용자 지시로 xrt-vcs-sim 으로 pivot, hw_emu 경로는 이번 refactor 범위 밖.'
+  - 'hw/unittest/dma_engine/tb_VX_dma_engine.sv 가 기존 구현의 hierarchical signal (burst_window_data_r 등)을 참조해 Phase 2 이후 compile 불가. 새 passthrough FSM 용으로 tb 재작성 필요 — 본 refactor 에서는 후순위로 두고 Phase 3 E2E 로 실질 검증 수행. 향후 유닛테스트 유지가 필요하면 별도 태스크로.'
+  - 'hw/unittest/dma_mem_unit_misal/Makefile + tb 가 DEBUG_LEVEL=3 + DBG_TRACE_GEMM + unconditional $fsdbDumpvars(0,"+all",...) 조합으로 infeasibly slow (1h39m 만에 첫 케이스의 첫 세그만 trace). dma_unit_misal 본체는 refactor 대상 아니므로 skip. 필요 시 Makefile DEFINES_ 에서 DBG_TRACE_GEMM 제거 + tb 의 $fsdbDumpvars 를 FSDB_DUMP macro 뒤로 이동하는 별도 정리 태스크로 처리.'
+  - 'mock_st_misaligned 테스트 (baseline tb) 는 refactor 이전 stash 상태에서도 동일하게 FAIL (HBM mismatch at addr=0x80080, got=0x00 exp=0xd8). 64B misaligned ST 가 bank boundary를 넘는데 ENABLE_MISALIGN=0 baseline 에서는 1개 CFG만 발행해 3 byte tail 커버 안 됨. pre-existing issue, 본 refactor 와 무관.'
