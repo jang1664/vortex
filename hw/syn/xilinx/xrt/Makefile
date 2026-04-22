@@ -22,7 +22,7 @@ MAX_JOBS ?= 8
 CLOCK_FREQ_HZ ?= 300
 
 # RTL simulator for hw_emu. Default: VCS (Synopsys); set SIMULATOR=xsim for Vivado xsim.
-SIMULATOR ?= vcs
+SIMULATOR ?= xsim
 # Local VCS installation. Override with env if a different version is preferred.
 VCS_INSTALL_DIR ?= /tool/Program/synopsys/vcs/W-2024.09-SP1/bin
 # Shared simlib cache — survives across configs, rebuilt only if missing or Vivado version changes.
