@@ -30,10 +30,31 @@
 
 `ifdef VCS_FSDB_DUMP
 module vcs_fsdb_dump_init;
+    // Scope the dump to `vortex_afu` (kernel) and everything below it.
+    // $fsdbDumpvars(0) without scope dumps from $root — on this design
+    // that is ~600K signals including pfm_top_wrapper, sim_qdma, HMSS,
+    // smartconnects. The FSDB consumer thread cannot keep up; the
+    // default 64 MB ring buffer rolls over every ~few us of sim time,
+    // overwriting earlier transitions. Net effect: the final .fsdb
+    // contains only the last handful of microseconds, which is usually
+    // just platform teardown — all actual kernel activity is lost.
+    //
+    // Scoping to vortex_afu reduces the signal count by >30x and keeps
+    // the whole kernel execution inside the buffer window. Platform
+    // scaffolding (sim_qdma / HMSS / AXI VIP) is excluded on purpose —
+    // it is mostly SystemC anyway and not useful for kernel debug.
+    //
+    // Periodic $fsdbDumpflush ensures disk contents stay current even
+    // under bursty activity; without it, a killed simv can still lose
+    // the last buffered window.
     initial begin
         $fsdbDumpfile("vortex.fsdb");
-        $fsdbDumpvars(0);
+        $fsdbDumpvars(0, vortex_afu);
         $fsdbDumpMDA();
+        forever begin
+            #1us;
+            $fsdbDumpflush;
+        end
     end
 endmodule
 
