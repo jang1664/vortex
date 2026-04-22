@@ -1,8 +1,11 @@
 # Floorplan constraints for U55C/VU47P
 #
 # Sourced from post_init_hook.tcl after init_design and before place_design.
-# Creates pblocks that lock specific hierarchical blocks to a target SLR,
-# reducing SLL-crossing congestion between HBM (SLR0) and user logic.
+# At present NO pblocks are active — the placer is left to distribute the
+# user logic freely after earlier attempts to pblock u_VX_gemm_unit and
+# u_tmem_subsystem to specific SLRs caused either RP clock-column
+# violations or SLR0 CLB overflow. The helper proc below is kept in place
+# so a future iteration can re-enable single-module pblocks if needed.
 #
 # Clock-region ranges for U55C/VU47P:
 #   SLR0 = CLOCKREGION_X0Y0:CLOCKREGION_X7Y3
@@ -31,8 +34,12 @@ proc vortex_pblock_slrs {pblock_name cell slr_list cr_range} {
         resize_pblock $pblock_name -add $cr_range
     }
     add_cells_to_pblock $pblock_name $cell
-    set_property CONTAIN_ROUTING   true  [get_pblocks $pblock_name]
-    set_property EXCLUDE_PLACEMENT  false [get_pblocks $pblock_name]
+    # CONTAIN_ROUTING=false: pblock is a placement hint only; the router can
+    # cross the pblock boundary when that yields a better path. Required here
+    # because the SLR0 dynamic region has non-contiguous CLB columns — a
+    # strict contain-routing previously caused unroutable BRAM->SLICE paths.
+    set_property CONTAIN_ROUTING   false [get_pblocks $pblock_name]
+    set_property EXCLUDE_PLACEMENT false [get_pblocks $pblock_name]
     puts "INFO: pblock $pblock_name on ${slr_label} for [get_property NAME $cell]"
 }
 
@@ -50,18 +57,19 @@ proc vortex_pblock_slrs {pblock_name cell slr_list cr_range} {
 # ---------------------------------------------------------------
 
 # ---------------------------------------------------------------
-# u_tmem_subsystem SLR floorplan (SLR0)
-# Tensor memory is BRAM-heavy (~512 RAMB36) and its DMA engine
-# talks to HBM via the AXI shim that resides in SLR0 (IOBs +
-# GTs). Locking TMEM banks + DMA engine + TMEM switches to SLR0
-# keeps the HBM-side 512-bit burst traffic off the SLR0 <-> SLR1
-# SLL columns that overflowed in v3.
+# u_tmem_subsystem SLR floorplan — NOT CONSTRAINED
+#
+# A prior run (v3_run3) locked u_tmem_subsystem to SLR0 to keep
+# HBM-side burst traffic off the SLR0 <-> SLR1 boundary. That
+# blocked placement because u_tmem_subsystem contains the
+# 110K-LUT / 197K-FF u_dma_engine plus 8 banks + 4 switches, and
+# piling all of that on top of the Xilinx HMSS/AXI shell in SLR0
+# drove SLR0 CLB to 99.3% and produced 43944 node overlaps.
+#
+# Now that tmem banks are URAM-backed (64 URAM instead of 512
+# RAMB36) there is no BRAM hotspot forcing SLR0 anchoring, so we
+# let the placer distribute u_tmem_subsystem naturally. It will
+# still bias toward SLR0 for the HBM interface because that is
+# where the AXI shim sits.
 # ---------------------------------------------------------------
-set tmem_cell [get_cells -hierarchical -filter \
-    "NAME =~ */gemm_node/u_tmem_subsystem"]
-if {[llength $tmem_cell] > 0} {
-    vortex_pblock_slrs pblock_tmem_subsystem $tmem_cell {0} \
-        "CLOCKREGION_X0Y0:CLOCKREGION_X7Y3"
-} else {
-    puts "WARNING: u_tmem_subsystem not found; SLR pblock skipped"
-}
+# (No pblock for u_tmem_subsystem — intentional.)
