@@ -69,16 +69,39 @@ GUI                ?=
 
 ### 3. `runtime/xrt/vcs_fsdb.tcl` (new)
 
-UCLI Tcl that runs before `run`. Dumps full-hierarchy FSDB when DEBUG set:
+FSDB dump uses Vitis's own pre-sim-script mechanism. When
+`SIMULATOR=vcs` + `DEBUG` is set, the build writes into
+`$(BIN_DIR)/xrt.ini`:
+
+```
+[Emulation]
+user_pre_sim_script=<VORTEX_HOME>/runtime/xrt/vcs_fsdb.tcl
+```
+
+XRT's `libxrt_hwemu.so` reads that key and exports it to simv as the
+`USER_PRE_SIM_SCRIPT` environment variable. Vivado-generated
+`pfm_top_wrapper_simulate.do` then does:
 
 ```tcl
+if { [info exists ::env(USER_PRE_SIM_SCRIPT)] } {
+    source $::env(USER_PRE_SIM_SCRIPT)
+}
+```
+
+`vcs_fsdb.tcl` body:
+```tcl
+puts "[vcs_fsdb.tcl] starting FSDB dump -> vortex.fsdb"
 fsdbDumpfile "vortex.fsdb"
 fsdbDumpvars 0 /
 fsdbDumpMDA
 ```
 
-Requires `-kdb -debug_access+all -lca` at VCS elaboration (already injected by
-`gen_vitis_ini.py` when DEBUG is set).
+Required companion: `fileset.sim_1.vcs.elaborate.vcs.more_options` must
+contain `-debug_access+all` so Verdi PLI is linked into simv. Without the
+flag `$fsdbDump*` are silent no-ops even when the Tcl is sourced — this
+was the root cause of the earlier "FSDB never appears" symptom that was
+initially misattributed to env-propagation failure. `gen_vitis_ini.py`
+emits `-debug_access+all` automatically in the VCS+DEBUG branch.
 
 ### 4. `tests/regression/common.mk` & `tests/opencl/common.mk`
 
@@ -369,7 +392,7 @@ clearly diagnosable event. Re-apply P7 after each Vivado upgrade.
 | `libtinfo.so.5: version 'NCURSES_TINFO_5.6.20061217' not found` at elaborate (after P6) | Vivado's `Ubuntu/24/libtinfo.so.5` is a renamed libtinfo6 (NCURSES6_TINFO_* symbols only), shadowing the real libtinfo5 | P7 |
 | `./pfm_top_wrapper_simv: error while loading shared libraries: librdizlib.so / libsim_qdma_cpp_v1_0.so / libcommon_cpp_v1_0.so: No such file` at test runtime | LD_LIBRARY_PATH missing Vivado + VCS simlib dirs | (project) `tests/*/common.mk` `HW_EMU_LD_PATHS` prepends `/usr/lib/x86_64-linux-gnu`, Vivado lib, and every `$(VCS_SIMLIB_DIR)/*/` |
 | `libstdc++.so.6: version 'GLIBCXX_3.4.32' not found (required by libprotobuf.so.32)` at test runtime | simv's DT_RUNPATH pins vg_gnu's gcc-9.2.0 libstdc++; system libprotobuf (built against gcc-13) needs newer GLIBCXX | (project) `HW_EMU_LD_PATHS` prepends `/usr/lib/x86_64-linux-gnu` so system libstdc++ wins |
-| Test PASSED but no `vortex.fsdb` produced and `[HW-EMU 08-2] None of the Kernels compiled in waveform enabled mode` warning | Vitis propagates `user_pre_sim_script` via `USER_PRE_SIM_SCRIPT` env var for xsim but NOT for VCS | (project) `HW_EMU_ENV` in `tests/*/common.mk` extracts `user_pre_sim_script` from the colocated `xrt.ini` and exports `USER_PRE_SIM_SCRIPT` + `VITIS_LAUNCH_WAVEFORM_BATCH=1` |
+| Test PASSED but no `vortex.fsdb` produced and `[HW-EMU 08-2] None of the Kernels compiled in waveform enabled mode` warning | Vitis propagates `user_pre_sim_script` via `USER_PRE_SIM_SCRIPT` env var for xsim (xsim is Vivado-native, dispatched through an xsim-specific code path); Vivado VCS integration exposes only `compile.tcl.pre` and `simulate.tcl.post` hooks, with no pre-simulate TCL entry | (project) RTL-level injection: `runtime/xrt/vcs_fsdb_init.sv` carries a `bind pfm_top_wrapper` statement + `$fsdbDump*` initial block, guarded by `+define+VCS_FSDB_DUMP`. `hw/scripts/vcs_fsdb_setup.tcl` is registered as `fileset.sim_1.vcs.compile.tcl.pre` to `add_files` the SV into sim_1. Both are emitted by `gen_vitis_ini.py` only when `SIMULATOR=vcs` + `DEBUG`. No env propagation, watcher, or runtime tricks — FSDB dump happens in elaborated RTL. |
 
 ## Notes
 

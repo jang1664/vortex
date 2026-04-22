@@ -64,21 +64,30 @@ def build_ini(args):
                 vivado.append(f"prop=project.__CURRENT__.compxlib.vcs_compiled_library_dir={args.vcs_simlib_dir}")
             if args.vcs_gcc_dir:
                 vivado.append(f"prop=project.__CURRENT__.simulator.vcs_gcc_install_dir={args.vcs_gcc_dir}")
-            # Keep the XSIM define for the Vivado-simulation code path inside the RTL
-            # (selects native Xilinx FP IP instead of DPI emulation).
-            # -timescale=1ns/1ps forces a default timescale on every module; without it VCS
-            # rejects mixed-timescale designs under Verilog LRM 1364-2001 §19.8 (error ITSFM).
-            # +v2k is added automatically by Vivado's generated compile.sh, so no need for
-            # any extra language-version flag.
-            vivado.append("prop=fileset.sim_1.vcs.compile.vlogan.more_options={-timescale=1ns/1ps +define+XSIM}")
+            # vlogan options:
+            # - Keep XSIM define for the RTL path that expects Vivado simulation context
+            #   (selects native Xilinx FP IP instead of DPI emulation).
+            # - -timescale=1ns/1ps prevents LRM 1364-2001 §19.8 (error ITSFM) from
+            #   VCS's strict mixed-timescale check.
+            # - +v2k is added automatically by Vivado's generated compile.sh.
+            # - +define+VCS_FSDB_DUMP (DEBUG only) arms the FSDB dump initializer
+            #   in runtime/xrt/vcs_fsdb_init.sv. That SV file is pulled into the
+            #   kernel source list by Makefile's SIM_FSDB_SOURCES and packaged
+            #   into the kernel .xo; because it binds to vortex_afu (kernel top)
+            #   rather than pfm_top_wrapper (platform top), the IP packager
+            #   keeps it and vlogan compiles it during sim.
+            vlogan_defs = "+define+XSIM"
             if args.debug:
-                # -debug_access+all enables Verdi PLI (fsdbDumpvars) at runtime.
-                # We deliberately do NOT add -kdb / -lca here: they require every prior
-                # compile step (vlogan, vhdlan, compile_simlib) to also use -kdb, which
-                # Vivado's generated compile.sh does not do. Mixing them causes
-                # Error-[ANA-KDB-ICS] "Incompatible VHDL database". -kdb only
-                # accelerates Verdi's interactive database load and is not required
-                # for post-sim FSDB analysis.
+                vlogan_defs += " +define+VCS_FSDB_DUMP"
+            vivado.append(f"prop=fileset.sim_1.vcs.compile.vlogan.more_options={{-timescale=1ns/1ps {vlogan_defs}}}")
+            if args.debug:
+                # -debug_access+all links Verdi PLI into simv so $fsdbDump* system
+                # tasks resolve at runtime. -kdb / -lca are intentionally omitted:
+                # they require every prior compile stage (vlogan, vhdlan,
+                # compile_simlib) to also use -kdb, which Vivado's generated
+                # compile.sh does not do. Mixing triggers Error-[ANA-KDB-ICS]
+                # "Incompatible VHDL database". -kdb only speeds up Verdi
+                # interactive loading; post-sim FSDB analysis works without it.
                 vivado.append("prop=fileset.sim_1.vcs.elaborate.vcs.more_options={-debug_access+all}")
     sections["vivado"] = vivado
 

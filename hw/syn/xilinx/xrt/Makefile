@@ -188,6 +188,18 @@ ifneq (,$(findstring -DEXT_TCU_ENABLE, $(CONFIGS)))
 	RTL_INCLUDE += -I$(THIRD_PARTY_DIR)/hardfloat/source
 endif
 
+# VCS hw_emu FSDB dump initializer. The SV file is added to sources.txt so it
+# is packaged into the kernel .xo alongside the rest of the RTL. Its
+# `bind vortex_afu` statement (guarded by `ifdef VCS_FSDB_DUMP`) activates at
+# sim elaboration when gen_vitis_ini.py emits +define+VCS_FSDB_DUMP into vlogan
+# (VCS+DEBUG branch). Under synth or non-DEBUG sim the file compiles to an
+# empty translation unit.
+SIM_FSDB_SOURCES :=
+ifeq ($(SIMULATOR)-$(TARGET), vcs-hw_emu)
+ifdef DEBUG
+SIM_FSDB_SOURCES += $(VORTEX_HOME)/runtime/xrt/vcs_fsdb_init.sv
+endif
+endif
 
 # Kernel compiler global settings
 VPP_FLAGS += --link --target $(TARGET) --platform $(PLATFORM) --save-temps --no_ip_cache --user_ip_repo_paths /home/data/xilinx_ip/clk_metadata_adapter
@@ -283,6 +295,7 @@ gen-sources: $(BUILD_DIR)/sources.txt
 $(BUILD_DIR)/sources.txt: $(SRC_DIR)/Makefile $(SRC_DIR)/platforms.mk $(CONFIG_STAMP)
 	mkdir -p $(BUILD_DIR); cd $(BUILD_DIR); $(SCRIPT_DIR)/gen_sources.sh -P $(CFLAGS) -Csrc -Osources.txt
 	@for src in $(AXI_SOURCES); do echo "$$src" >> $(BUILD_DIR)/sources.txt; done
+	@for src in $(SIM_FSDB_SOURCES); do echo "$$src" >> $(BUILD_DIR)/sources.txt; done
 
 $(CONFIG_STAMP):
 	mkdir -p $(BUILD_DIR); \
@@ -361,8 +374,6 @@ $(BIN_DIR)/xrt.ini: $(CONFIG_STAMP)
 	  if [ -n "$(GUI)" ]; then echo "debug_mode=gui"; else echo "debug_mode=batch"; fi; \
 	  if [ "$(SIMULATOR)" = "xsim" ]; then \
 	    echo "user_pre_sim_script=$(VORTEX_HOME)/runtime/xrt/xsim.tcl"; \
-	  elif [ "$(SIMULATOR)" = "vcs" ] && [ -n "$(DEBUG)" ]; then \
-	    echo "user_pre_sim_script=$(VORTEX_HOME)/runtime/xrt/vcs_fsdb.tcl"; \
 	  fi; \
 	  echo ""; \
 	  echo "[Debug]"; \

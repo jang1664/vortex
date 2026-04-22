@@ -133,18 +133,12 @@ VCS_SIMLIB_LD_PATH := $(shell ls -d $(VCS_SIMLIB_DIR)/*/ 2>/dev/null | sed 's|/$
 # (gcc-13) which has newer GLIBCXX symbols needed by system libprotobuf.so.32;
 # the vg_gnu-bundled libstdc++ on simv's DT_RUNPATH is too old otherwise.
 HW_EMU_LD_PATHS := /usr/lib/x86_64-linux-gnu:$(XILINX_XRT)/lib:$(XILINX_VIVADO)/lib/lnx64.o:$(VCS_SIMLIB_LD_PATH):$(VORTEX_RT_PATH):$(LD_LIBRARY_PATH)
-# Vitis propagates xrt.ini's [Emulation] user_pre_sim_script to simv via the
-# USER_PRE_SIM_SCRIPT env var for xsim, but NOT for VCS. Extract the path from
-# the colocated xrt.ini and pass it through ourselves. VITIS_LAUNCH_WAVEFORM_BATCH
-# enables the user_post_sim_script hook inside simulate.do too.
-HW_EMU_PRE_SIM_SCRIPT := $(shell awk -F= '/^user_pre_sim_script/ {print $$2}' $(FPGA_BIN_DIR)/xrt.ini 2>/dev/null)
-HW_EMU_ENV := $(if $(HW_EMU_PRE_SIM_SCRIPT),USER_PRE_SIM_SCRIPT=$(HW_EMU_PRE_SIM_SCRIPT)) VITIS_LAUNCH_WAVEFORM_BATCH=1
 
 run-xrt: $(PROJECT) kernel.vxbin
 ifeq ($(TARGET), hw)
 	SCOPE_JSON_PATH=$(FPGA_BIN_DIR)/scope.json XRT_INI_PATH=$(VORTEX_RT_PATH)/xrt/xrt.ini EMCONFIG_PATH=$(FPGA_BIN_DIR) XRT_DEVICE_INDEX=$(XRT_DEVICE_INDEX) XRT_XCLBIN_PATH=$(FPGA_BIN_DIR)/vortex_afu.xclbin LD_LIBRARY_PATH=$(XILINX_XRT)/lib:$(VORTEX_RT_PATH):$(LD_LIBRARY_PATH) VORTEX_DRIVER=xrt ./$(PROJECT) $(OPTS)
 else ifeq ($(TARGET), hw_emu)
-	SCOPE_JSON_PATH=$(FPGA_BIN_DIR)/scope.json XCL_EMULATION_MODE=$(TARGET) XRT_INI_PATH=$(if $(wildcard $(FPGA_BIN_DIR)/xrt.ini),$(FPGA_BIN_DIR)/xrt.ini,$(VORTEX_RT_PATH)/xrt/xrt.ini) EMCONFIG_PATH=$(FPGA_BIN_DIR) XRT_DEVICE_INDEX=$(XRT_DEVICE_INDEX) XRT_XCLBIN_PATH=$(FPGA_BIN_DIR)/vortex_afu.xclbin LD_LIBRARY_PATH=$(HW_EMU_LD_PATHS) $(HW_EMU_ENV) VORTEX_DRIVER=xrt ./$(PROJECT) $(OPTS)
+	SCOPE_JSON_PATH=$(FPGA_BIN_DIR)/scope.json XCL_EMULATION_MODE=$(TARGET) XRT_INI_PATH=$(if $(wildcard $(FPGA_BIN_DIR)/xrt.ini),$(FPGA_BIN_DIR)/xrt.ini,$(VORTEX_RT_PATH)/xrt/xrt.ini) EMCONFIG_PATH=$(FPGA_BIN_DIR) XRT_DEVICE_INDEX=$(XRT_DEVICE_INDEX) XRT_XCLBIN_PATH=$(FPGA_BIN_DIR)/vortex_afu.xclbin LD_LIBRARY_PATH=$(HW_EMU_LD_PATHS) VORTEX_DRIVER=xrt ./$(PROJECT) $(OPTS)
 else
 	SCOPE_JSON_PATH=$(VORTEX_RT_PATH)/scope.json LD_LIBRARY_PATH=$(XILINX_XRT)/lib:$(VORTEX_RT_PATH):$(LD_LIBRARY_PATH) VORTEX_DRIVER=xrt ./$(PROJECT) $(OPTS)
 endif

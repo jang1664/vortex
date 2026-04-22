@@ -396,6 +396,7 @@ set core [ipx::current_core]
 # (Broad re-add would drag in legitimately unreferenced test tops / sim helpers.)
 set force_packaged_sources {
     VX_dma_engine.sv
+    vcs_fsdb_init.sv
 }
 
 set packaged_src_dir [file normalize "${path_to_packaged}/src"]
