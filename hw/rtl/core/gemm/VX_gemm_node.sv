@@ -44,17 +44,17 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     localparam int SZ_GEMM_TAG_WIDTH = GEMM_BASE_TAG_WIDTH;
 
     // DMA tile sizes
-    localparam int MT = `GEMM_FSM_MT;
-    localparam int NT = `GEMM_FSM_NT;
-    localparam int KT = `GEMM_FSM_KT;
+    // localparam int MT = `GEMM_FSM_MT;
+    // localparam int NT = `GEMM_FSM_NT;
+    // localparam int KT = `GEMM_FSM_KT;
 
     // MXU micro tile sizes
-    localparam int MXU_KT = `GEMM_FSM_MXU_KT;
-    localparam int MXU_NT = `GEMM_FSM_MXU_NT;
+    localparam int MXU_KT = `MXU_ROW;
+    localparam int MXU_NT = `MXU_COL;
 
-    localparam int ENTRYID_W  = `JOB_MMIO_ENTRYID_W;
-    localparam int OWNER_W    = `JOB_MMIO_OWNER_W;
-    localparam int GEN_W      = `JOB_MMIO_GEN_W;
+    // localparam int ENTRYID_W  = `JOB_MMIO_ENTRYID_W;
+    // localparam int OWNER_W    = `JOB_MMIO_OWNER_W;
+    // localparam int GEN_W      = `JOB_MMIO_GEN_W;
 
     localparam logic [3:0] OP_NOTIFY = 4'd3;
 
@@ -127,7 +127,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     wire weight_dma_start   = gemm_ctrl_if.weight_read_ctrl.start && !weight_is_notify;
     wire weight_notify_req  = gemm_ctrl_if.weight_read_ctrl.start && weight_dma_ctrl_if.idle && weight_is_notify;
     wire weight_notify_fire = weight_notify_pending_r && gemm_sync_if[1].ready;
-    wire weight_wtrans      = weight_cmd_flags_r[1];
+    // wire weight_wtrans      = weight_cmd_flags_r[1];
 
     logic        sz_notify_pending_r;
     logic [31:0] sz_notify_reg_idx_r;
@@ -521,12 +521,12 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
       .gemm_sync_slv_if(gemm_sync_if)
     );
 
-    `UNUSED_VAR (weight_wtrans)
-    `UNUSED_PARAM (MT)
-    `UNUSED_PARAM (NT)
-    `UNUSED_PARAM (KT)
-    `UNUSED_PARAM (ENTRYID_W)
-    `UNUSED_PARAM (OWNER_W)
-    `UNUSED_PARAM (GEN_W)
+    // `UNUSED_VAR (weight_wtrans)
+    // `UNUSED_PARAM (MT)
+    // `UNUSED_PARAM (NT)
+    // `UNUSED_PARAM (KT)
+    // `UNUSED_PARAM (ENTRYID_W)
+    // `UNUSED_PARAM (OWNER_W)
+    // `UNUSED_PARAM (GEN_W)
 
 endmodule

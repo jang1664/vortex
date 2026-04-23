@@ -5,22 +5,14 @@
 #include <stdint.h>
 #include <VX_config.h>
 
-// Tile size constants (fallback if not yet in generated VX_config.h)
-#ifndef GEMM_FSM_MT
-#define GEMM_FSM_MT 128
-#endif
-#ifndef GEMM_FSM_NT
-#define GEMM_FSM_NT 128
-#endif
-#ifndef GEMM_FSM_KT
-#define GEMM_FSM_KT 128
-#endif
-#ifndef GEMM_FSM_MXU_KT
-#define GEMM_FSM_MXU_KT 32
-#endif
-#ifndef GEMM_FSM_MXU_NT
-#define GEMM_FSM_MXU_NT 32
-#endif
+// This is tunnable parameter for other tile size
+#define GEMM_MT 128
+#define GEMM_NT 128
+#define GEMM_KT 128
+
+// This is hardware specific parameter.
+#define GEMM_MXU_KT MXU_ROW
+#define GEMM_MXU_NT MXU_COL
 
 // Raw instruction stream opcodes (bits [3:0] of 64-bit instruction word)
 #define RAW_OP_DMA_LOAD          1

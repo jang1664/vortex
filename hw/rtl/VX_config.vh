@@ -1054,7 +1054,7 @@ for block_size in range(1, full_bitwidth+1):
 `define MXU_MAX_DIM `MAX(`MXU_ROW, `MXU_COL)
 
 // Tiling parameters for parallel processing
-`define MXU_ROW_TILE 1            // Row tile size for pipelined processing
+// `define MXU_ROW_TILE 1            // Row tile size for pipelined processing
 `define MXU_COL_TILE 1            // Column tile size for pipelined processing
 `define MXU_WLOAD_NUM 4           // Number of weight loads per cycle
 
@@ -1163,13 +1163,6 @@ for block_size in range(1, full_bitwidth+1):
 `define JOB_MMIO_ALLOC_OWNER_BITS `JOB_MMIO_OWNER_W
 `define JOB_MMIO_ALLOC_GEN_LSB (`JOB_MMIO_ALLOC_OWNER_LSB + `JOB_MMIO_ALLOC_OWNER_BITS)
 `define JOB_MMIO_ALLOC_GEN_BITS `JOB_MMIO_GEN_W
-
-// gemm fsm dataflow
-`define GEMM_FSM_MT 128
-`define GEMM_FSM_NT 128
-`define GEMM_FSM_KT 128
-`define GEMM_FSM_MXU_KT 32
-`define GEMM_FSM_MXU_NT 32
 
 // Output scaling mode (uncomment to enable FP16 output scaling)
 // `define GEMM_UNIT_FP16_OUT_SCALE

@@ -39,11 +39,11 @@ static vx_buffer_h C_buffer = nullptr;
 static constexpr float FP16_TOL = 0.01f;
 
 // Tile constants
-static constexpr uint32_t DMA_MT     = GEMM_FSM_MT;      // 128
-static constexpr uint32_t DMA_NT     = GEMM_FSM_NT;      // 128 (full N-tile for LMEM sizing)
-static constexpr uint32_t DMA_KT     = GEMM_FSM_KT;      // 128
-static constexpr uint32_t DMA_MXU_KT = GEMM_FSM_MXU_KT;  // 32
-static constexpr uint32_t DMA_MXU_NT = GEMM_FSM_MXU_NT;   // 32
+static constexpr uint32_t DMA_MT     = GEMM_MT;      // 128
+static constexpr uint32_t DMA_NT     = GEMM_NT;      // 128 (full N-tile for LMEM sizing)
+static constexpr uint32_t DMA_KT     = GEMM_KT;      // 128
+static constexpr uint32_t DMA_MXU_KT = GEMM_MXU_KT;  // 32
+static constexpr uint32_t DMA_MXU_NT = GEMM_MXU_NT;  // 32
 
 static constexpr uint64_t LMEM_LAYOUT_ALIGN_BYTES = 4096;
 

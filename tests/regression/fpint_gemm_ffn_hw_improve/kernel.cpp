@@ -141,11 +141,11 @@ static void send_mxu_store_output(uint32_t tmem_base, uint32_t acc_mem_base,
 // ============================================================================
 // Tile constants
 // ============================================================================
-static constexpr uint32_t DMA_MT     = GEMM_FSM_MT;      // 128
-static constexpr uint32_t DMA_NT     = GEMM_FSM_NT;      // 128 (DMA N-tile: 128 wide)
-static constexpr uint32_t DMA_KT     = GEMM_FSM_KT;      // 128
-static constexpr uint32_t DMA_MXU_KT = GEMM_FSM_MXU_KT;  // 32
-static constexpr uint32_t DMA_MXU_NT = GEMM_FSM_MXU_NT;  // 32 (MXU micro N-tile)
+static constexpr uint32_t DMA_MT     = GEMM_MT;      // 128
+static constexpr uint32_t DMA_NT     = GEMM_NT;      // 128 (DMA N-tile: 128 wide)
+static constexpr uint32_t DMA_KT     = GEMM_KT;      // 128
+static constexpr uint32_t DMA_MXU_KT = GEMM_MXU_KT;  // 32
+static constexpr uint32_t DMA_MXU_NT = GEMM_MXU_NT;  // 32 (MXU micro N-tile)
 static constexpr uint32_t NB_PER_NT  = DMA_NT / DMA_MXU_NT;  // 4 N-microtiles per DMA tile
 static constexpr uint32_t ACC_DBUF_STRIDE =
   GEMM_ACC_MEM_DEPTH * (4u * 2u * MXU_COL);
