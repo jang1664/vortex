@@ -472,6 +472,25 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
                 assert (gemm_dma_ctrl_if.cmd.bound == 16'd1)
                     else $fatal(1, "%m: kernel cmd.bound=%0d > 1 is unsupported in 2D burst-reorder form",
                                 gemm_dma_ctrl_if.cmd.bound);
+
+                // Channel-slot alignment constraint:
+                //   axi_m[ch] is hardwired to HBM port ch in Vortex_axi.sv,
+                //   while start_ch here is derived from the TMEM-side base.
+                //   Per-channel descriptors therefore assume HBM and TMEM
+                //   bases land on the same channel slot (identical bits
+                //   [BUS_WORD_SHIFT +: NUM_CH_SHIFT]) — equivalently,
+                //   HBM_addr % (NUM_CHANNELS * MEM_BLOCK_SIZE) ==
+                //   TMEM_addr % (NUM_CHANNELS * MEM_BLOCK_SIZE).
+                //   Violating this routes a channel's transaction to the
+                //   wrong HBM port; with the new HBM[4i:4i+3] sp mapping
+                //   (platforms.mk) this produces out-of-window AXI addrs.
+                assert (gemm_dma_ctrl_if.cmd.rs1_data[BUS_WORD_SHIFT +: NUM_CH_SHIFT]
+                     == gemm_dma_ctrl_if.cmd.rs2_data[BUS_WORD_SHIFT +: NUM_CH_SHIFT])
+                    else $fatal(1,
+                        "%m: DMA channel-slot misalignment: rs1_data=0x%0h rs2_data=0x%0h; HBM and TMEM bases must match on bits [%0d:%0d] (i.e. addr %% (NUM_CHANNELS*MEM_BLOCK_SIZE) must be equal)",
+                        gemm_dma_ctrl_if.cmd.rs1_data,
+                        gemm_dma_ctrl_if.cmd.rs2_data,
+                        BUS_WORD_SHIFT + NUM_CH_SHIFT - 1, BUS_WORD_SHIFT);
             end
         end
     end
