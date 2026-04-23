@@ -281,100 +281,110 @@ static void convert_weight_tiled(const std::vector<int8_t>& h_W_raw,
   }
 }
 
-// Scale tiled: per (kt, nt) tile
-//   QCOL: [groups_per_kt][MXU_NT] fp16
-//   QROW: [KT][ng_per_nt] fp16
-static void convert_scale_tiled(const std::vector<uint16_t>& h_scales,
-                                std::vector<uint8_t>& tiled) {
-  uint32_t k_tiles = (K + DMA_KT - 1) / DMA_KT;
-  uint32_t n_tiles = N / DMA_MXU_NT;
-  uint32_t ng_total = (N + QBLK - 1) / QBLK;
-  uint32_t full_groups_per_kt = DMA_KT / QBLK;
-  uint32_t ng_per_nt = (DMA_MXU_NT + QBLK - 1) / QBLK;
+// Scale/zero-point tiled: (kt, nt_dma) slot-based layout.
+//
+// Each (kt, nt_dma) reserves a 512B-aligned slot in DRAM sized to
+// align_up(actual_data_bytes, 512). This guarantees the channel-slot invariant
+// in VX_gemm_tmem_dma_ctrl (src[8:6] == dst[8:6]) while avoiding the full-tile
+// padding overhead. Actual data occupies the slot start; remainder is zero.
+//
+// QCOL slot body: [nb=0..cur_nb-1][groups_per_kt][MXU_NT] fp16
+// QROW slot body: [nb=0..cur_nb-1][KT][ng_per_nt] fp16
+static size_t scale_slot_bytes(uint32_t ck, uint32_t cn) {
+  uint32_t ng_per_mxu_nt = (DMA_MXU_NT + QBLK - 1) / QBLK;
+  size_t actual = (QDIR == 0)
+                    ? (size_t(ck / QBLK) * cn * 2)
+                    : (size_t(cn / DMA_MXU_NT) * ck * ng_per_mxu_nt * 2);
+  return (actual + 511u) & ~size_t(511u);
+}
 
-  // Compute total size (last K-tile may be smaller)
-  size_t total = 0;
-  for (uint32_t kt = 0; kt < k_tiles; kt++) {
-    uint32_t ck = ((K - kt * DMA_KT) < DMA_KT) ? (K - kt * DMA_KT) : DMA_KT;
-    size_t tile_bytes = (QDIR == 0) ? ((ck / QBLK) * DMA_MXU_NT * 2)
-                                     : (ck * ng_per_nt * 2);
-    total += n_tiles * tile_bytes;
-  }
-  tiled.resize(total);
-  size_t idx = 0;
+template <typename T>
+static void fill_scale_zp_slot(const std::vector<T>& h_src,
+                               std::vector<uint8_t>& tiled,
+                               size_t slot_off, uint32_t kt,
+                               uint32_t nt_dma, uint32_t cur_k,
+                               uint32_t cur_nb_per_nt) {
+  uint32_t ng_total            = (N + QBLK - 1) / QBLK;
+  uint32_t full_groups_per_kt  = DMA_KT / QBLK;
+  uint32_t ng_per_mxu_nt       = (DMA_MXU_NT + QBLK - 1) / QBLK;
+  uint32_t mxu_per_dma_nt      = DMA_NT / DMA_MXU_NT;  // NB_PER_NT
 
-  for (uint32_t kt = 0; kt < k_tiles; kt++) {
-    uint32_t cur_k = ((K - kt * DMA_KT) < DMA_KT) ? (K - kt * DMA_KT) : DMA_KT;
-    for (uint32_t nt = 0; nt < n_tiles; nt++) {
-      if (QDIR == 0) {
-        uint32_t cur_groups = cur_k / QBLK;
-        for (uint32_t g = 0; g < cur_groups; g++) {
-          for (uint32_t n = 0; n < DMA_MXU_NT; n++) {
-            uint32_t global_g = kt * full_groups_per_kt + g;
-            uint16_t val = h_scales[global_g * N + nt * DMA_MXU_NT + n];
-            tiled[idx++] = val & 0xFF;
-            tiled[idx++] = (val >> 8) & 0xFF;
-          }
+  size_t idx = slot_off;
+  for (uint32_t nb = 0; nb < cur_nb_per_nt; nb++) {
+    uint32_t global_nt_mxu = nt_dma * mxu_per_dma_nt + nb;
+    if (QDIR == 0) {
+      uint32_t cur_groups = cur_k / QBLK;
+      for (uint32_t g = 0; g < cur_groups; g++) {
+        for (uint32_t n = 0; n < DMA_MXU_NT; n++) {
+          uint32_t global_g = kt * full_groups_per_kt + g;
+          uint16_t val = uint16_t(h_src[global_g * N + global_nt_mxu * DMA_MXU_NT + n]);
+          tiled[idx++] = val & 0xFF;
+          tiled[idx++] = (val >> 8) & 0xFF;
         }
-      } else {
-        for (uint32_t k = 0; k < cur_k; k++) {
-          for (uint32_t ng = 0; ng < ng_per_nt; ng++) {
-            uint32_t global_k  = kt * DMA_KT + k;
-            uint32_t global_ng = (nt * DMA_MXU_NT) / QBLK + ng;
-            uint16_t val = h_scales[global_k * ng_total + global_ng];
-            tiled[idx++] = val & 0xFF;
-            tiled[idx++] = (val >> 8) & 0xFF;
-          }
+      }
+    } else {
+      for (uint32_t k = 0; k < cur_k; k++) {
+        for (uint32_t ng = 0; ng < ng_per_mxu_nt; ng++) {
+          uint32_t global_k  = kt * DMA_KT + k;
+          uint32_t global_ng = (global_nt_mxu * DMA_MXU_NT) / QBLK + ng;
+          uint16_t val = uint16_t(h_src[global_k * ng_total + global_ng]);
+          tiled[idx++] = val & 0xFF;
+          tiled[idx++] = (val >> 8) & 0xFF;
         }
       }
     }
   }
 }
 
-// Zero-point tiled: same layout as scale
-static void convert_zp_tiled(const std::vector<int16_t>& h_zeros,
-                             std::vector<uint8_t>& tiled) {
-  uint32_t k_tiles = (K + DMA_KT - 1) / DMA_KT;
-  uint32_t n_tiles = N / DMA_MXU_NT;
-  uint32_t ng_total = (N + QBLK - 1) / QBLK;
-  uint32_t full_groups_per_kt = DMA_KT / QBLK;
-  uint32_t ng_per_nt = (DMA_MXU_NT + QBLK - 1) / QBLK;
-
-  // Compute total size (last K-tile may be smaller)
+// Compute total scale/zp DRAM bytes across all (kt, nt_dma) slots.
+static size_t scale_total_bytes() {
+  uint32_t k_tiles     = (K + DMA_KT - 1) / DMA_KT;
+  uint32_t n_tiles_dma = (N + DMA_NT - 1) / DMA_NT;
   size_t total = 0;
   for (uint32_t kt = 0; kt < k_tiles; kt++) {
-    uint32_t ck = ((K - kt * DMA_KT) < DMA_KT) ? (K - kt * DMA_KT) : DMA_KT;
-    size_t tile_bytes = (QDIR == 0) ? ((ck / QBLK) * DMA_MXU_NT * 2)
-                                     : (ck * ng_per_nt * 2);
-    total += n_tiles * tile_bytes;
+    uint32_t cur_k = ((K - kt * DMA_KT) < DMA_KT) ? (K - kt * DMA_KT) : DMA_KT;
+    for (uint32_t nt_dma = 0; nt_dma < n_tiles_dma; nt_dma++) {
+      uint32_t cur_n = ((N - nt_dma * DMA_NT) < DMA_NT) ? (N - nt_dma * DMA_NT) : DMA_NT;
+      total += scale_slot_bytes(cur_k, cur_n);
+    }
   }
-  tiled.resize(total);
-  size_t idx = 0;
+  return total;
+}
 
+static void convert_scale_tiled(const std::vector<uint16_t>& h_scales,
+                                std::vector<uint8_t>& tiled) {
+  uint32_t k_tiles     = (K + DMA_KT - 1) / DMA_KT;
+  uint32_t n_tiles_dma = (N + DMA_NT - 1) / DMA_NT;
+
+  tiled.assign(scale_total_bytes(), 0);
+
+  size_t slot_off = 0;
   for (uint32_t kt = 0; kt < k_tiles; kt++) {
     uint32_t cur_k = ((K - kt * DMA_KT) < DMA_KT) ? (K - kt * DMA_KT) : DMA_KT;
-    for (uint32_t nt = 0; nt < n_tiles; nt++) {
-      if (QDIR == 0) {
-        uint32_t cur_groups = cur_k / QBLK;
-        for (uint32_t g = 0; g < cur_groups; g++) {
-          for (uint32_t n = 0; n < DMA_MXU_NT; n++) {
-            uint32_t global_g = kt * full_groups_per_kt + g;
-            uint16_t val = uint16_t(h_zeros[global_g * N + nt * DMA_MXU_NT + n]);
-            tiled[idx++] = val & 0xFF;
-            tiled[idx++] = (val >> 8) & 0xFF;
-          }
-        }
-      } else {
-        for (uint32_t k = 0; k < cur_k; k++) {
-          for (uint32_t ng = 0; ng < ng_per_nt; ng++) {
-            uint32_t global_k  = kt * DMA_KT + k;
-            uint32_t global_ng = (nt * DMA_MXU_NT) / QBLK + ng;
-            uint16_t val = uint16_t(h_zeros[global_k * ng_total + global_ng]);
-            tiled[idx++] = val & 0xFF;
-            tiled[idx++] = (val >> 8) & 0xFF;
-          }
-        }
-      }
+    for (uint32_t nt_dma = 0; nt_dma < n_tiles_dma; nt_dma++) {
+      uint32_t cur_n = ((N - nt_dma * DMA_NT) < DMA_NT) ? (N - nt_dma * DMA_NT) : DMA_NT;
+      uint32_t cur_nb_per_nt = cur_n / DMA_MXU_NT;
+      fill_scale_zp_slot(h_scales, tiled, slot_off, kt, nt_dma, cur_k, cur_nb_per_nt);
+      slot_off += scale_slot_bytes(cur_k, cur_n);
+    }
+  }
+}
+
+static void convert_zp_tiled(const std::vector<int16_t>& h_zeros,
+                             std::vector<uint8_t>& tiled) {
+  uint32_t k_tiles     = (K + DMA_KT - 1) / DMA_KT;
+  uint32_t n_tiles_dma = (N + DMA_NT - 1) / DMA_NT;
+
+  tiled.assign(scale_total_bytes(), 0);
+
+  size_t slot_off = 0;
+  for (uint32_t kt = 0; kt < k_tiles; kt++) {
+    uint32_t cur_k = ((K - kt * DMA_KT) < DMA_KT) ? (K - kt * DMA_KT) : DMA_KT;
+    for (uint32_t nt_dma = 0; nt_dma < n_tiles_dma; nt_dma++) {
+      uint32_t cur_n = ((N - nt_dma * DMA_NT) < DMA_NT) ? (N - nt_dma * DMA_NT) : DMA_NT;
+      uint32_t cur_nb_per_nt = cur_n / DMA_MXU_NT;
+      fill_scale_zp_slot(h_zeros, tiled, slot_off, kt, nt_dma, cur_k, cur_nb_per_nt);
+      slot_off += scale_slot_bytes(cur_k, cur_n);
     }
   }
 }
@@ -465,15 +475,15 @@ static bool compute_tmem_layout(kernel_arg_t& kargs, uint64_t tensor_mem_size) {
     return true;
   };
 
-  // Double-buffered: buf0, buf1 for each type
-  // Scale and zp are paired (scbuf0, zpbuf0, scbuf1, zpbuf1) so qparam_src_stride is consistent.
+  // Double-buffered: buf0, buf1 consecutive for each category.
+  // scbuf_bytes == zpbuf_bytes, so zpbuf[i] - scbuf[i] is constant = 2 * scbuf_slot.
   if (!alloc(tmem_ibuf_bytes,  kargs.lmem_ibuf[0]))  return false;
   if (!alloc(tmem_ibuf_bytes,  kargs.lmem_ibuf[1]))  return false;
   if (!alloc(tmem_wbuf_bytes,  kargs.lmem_wbuf[0]))  return false;
   if (!alloc(tmem_wbuf_bytes,  kargs.lmem_wbuf[1]))  return false;
   if (!alloc(tmem_scbuf_bytes, kargs.lmem_scbuf[0])) return false;
-  if (!alloc(tmem_zpbuf_bytes, kargs.lmem_zpbuf[0])) return false;
   if (!alloc(tmem_scbuf_bytes, kargs.lmem_scbuf[1])) return false;
+  if (!alloc(tmem_zpbuf_bytes, kargs.lmem_zpbuf[0])) return false;
   if (!alloc(tmem_zpbuf_bytes, kargs.lmem_zpbuf[1])) return false;
   if (!alloc(tmem_obuf_bytes,  kargs.lmem_obuf[0]))  return false;
   if (!alloc(tmem_obuf_bytes,  kargs.lmem_obuf[1]))  return false;

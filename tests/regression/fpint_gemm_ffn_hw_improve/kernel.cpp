@@ -176,26 +176,50 @@ static void run_tiled_gemm(const kernel_arg_t* arg) {
   const uint32_t m_tiles    = (M + DMA_MT - 1u) / DMA_MT;
   const uint32_t n_tiles    = (N + DMA_NT - 1u) / DMA_NT;   // ceil: last tile may be partial
   const uint32_t k_tiles    = (K + DMA_KT - 1u) / DMA_KT;
-  const uint32_t n_tiles_32 = N / DMA_MXU_NT;               // host DRAM tiling count
   const uint32_t tile_total = m_tiles * n_tiles * k_tiles;
 
   // N-groups per MXU micro-tile (32-wide); used for QROW qparam addressing.
   const uint32_t ng_per_nt  = (DMA_MXU_NT + qblk - 1u) / qblk;
 
-  // Per-kt DRAM strides. Expressed directly in terms of N (not n_tiles*DMA_NT)
-  // so that a partial last nt_dma does not overshoot.
+  // Weight stride: N directly (weight tile bytes are naturally 512-aligned for
+  // supported configs).
   const uint64_t kt_w_stride = uint64_t(DMA_KT) * uint64_t(N) / 2u;
-  uint64_t kt_sc_stride, kt_zp_stride;
-  uint32_t qparam_kb_offset;
-  if (qdir == 0) {
-    kt_sc_stride = uint64_t(DMA_KT / qblk) * uint64_t(N) * 2u;
-    kt_zp_stride = kt_sc_stride;
-    qparam_kb_offset = 0;
-  } else {
-    kt_sc_stride = uint64_t(DMA_KT) * uint64_t(n_tiles_32) * uint64_t(ng_per_nt) * 2u;
-    kt_zp_stride = kt_sc_stride;
-    qparam_kb_offset = DMA_MXU_KT * ng_per_nt * 2u;         // per-nb kb stride
-  }
+  const uint32_t qparam_kb_offset = (qdir == 0) ? 0u
+                                                 : (DMA_MXU_KT * ng_per_nt * 2u);
+
+  // Scale/zp slot-based DRAM layout. Each (kt, nt_dma) reserves
+  // align_up(actual_bytes, 512) bytes; this keeps the DMA src/dst channel-slot
+  // invariant (bits [8:6] match) while minimising padding. Slot size varies
+  // with (ck, cn), but since partial-K only exists at kt == k_tiles-1 and
+  // partial-N only at nt == n_tiles-1, the offset reduces to O(1):
+  //   kt_off = kt_idx * per_kt_full_K     (all prior kt rows are full-K)
+  //   nt_off = nt_dma_idx * slot_full_N   (all prior nt within kt are full-N)
+  const uint32_t ck_last = ((K - (k_tiles - 1u) * DMA_KT) < DMA_KT)
+                             ? (K - (k_tiles - 1u) * DMA_KT) : DMA_KT;
+  const uint32_t cn_last = ((N - (n_tiles - 1u) * DMA_NT) < DMA_NT)
+                             ? (N - (n_tiles - 1u) * DMA_NT) : DMA_NT;
+
+  auto sc_slot_bytes = [&](uint32_t _ck, uint32_t _cn) -> uint64_t {
+    uint64_t actual = (qdir == 0)
+                        ? (uint64_t(_ck / qblk) * _cn * 2u)
+                        : (uint64_t(_cn / DMA_MXU_NT) * _ck * ng_per_nt * 2u);
+    return (actual + 511u) & ~uint64_t(511u);
+  };
+
+  const uint64_t slot_fk_fn = sc_slot_bytes(DMA_KT, DMA_NT);
+  const uint64_t slot_fk_pn = sc_slot_bytes(DMA_KT, cn_last);
+  const uint64_t slot_pk_fn = sc_slot_bytes(ck_last, DMA_NT);
+
+  // Per full-K-tile row total (n_tiles slots: n_tiles-1 full-N + possibly one
+  // partial-N at the end).
+  const uint64_t per_kt_full_K = uint64_t(n_tiles - 1u) * slot_fk_fn + slot_fk_pn;
+
+  auto sc_dram_offset = [&](uint32_t kt_idx, uint32_t nt_dma_idx) -> uint64_t {
+    const bool is_last_kt = (kt_idx == k_tiles - 1u);
+    const uint64_t kt_off = uint64_t(kt_idx) * per_kt_full_K;
+    const uint64_t slot_full_N = is_last_kt ? slot_pk_fn : slot_fk_fn;
+    return kt_off + uint64_t(nt_dma_idx) * slot_full_N;
+  };
 
   const uint32_t w_seg_bytes = DMA_MXU_KT * (DMA_MXU_NT / 2u);
 
@@ -211,7 +235,9 @@ static void run_tiled_gemm(const kernel_arg_t* arg) {
   const uint32_t obuf[2]  = { uint32_t(arg->lmem_obuf[0]  & 0xFFFFFFu),
                                uint32_t(arg->lmem_obuf[1]  & 0xFFFFFFu) };
 
-  // qparam_src_stride must be same for both buffers (ensured by paired LMEM layout)
+  // qparam_src_stride must be same for both buffers. Current TMEM layout places
+  // scbuf[0], scbuf[1], zpbuf[0], zpbuf[1] consecutively (with equal scbuf/zpbuf
+  // sizes), so zpbuf[i] - scbuf[i] is the same for i=0,1.
   const uint32_t qparam_src_stride = uint32_t(arg->lmem_zpbuf[0] - arg->lmem_scbuf[0]);
   const uint32_t qparam_dst_stride = DMA_MXU_NT * 4u;
 
@@ -256,19 +282,11 @@ static void run_tiled_gemm(const kernel_arg_t* arg) {
       + uint64_t(_kt) * uint64_t(cm * DMA_KT * 2u);
 
     const uint64_t nt_dma_w_off = uint64_t(_nt_dma) * uint64_t(ck) * uint64_t(DMA_NT) / 2u;
-    uint64_t nt_dma_sc_off, nt_dma_zp_off;
-    if (qdir == 0) {
-      nt_dma_sc_off = uint64_t(_nt_dma) * uint64_t(ck / qblk) * uint64_t(DMA_NT) * 2u;
-      nt_dma_zp_off = nt_dma_sc_off;
-    } else {
-      nt_dma_sc_off = uint64_t(_nt_dma) * uint64_t(ck) * uint64_t(NB_PER_NT)
-                      * uint64_t(ng_per_nt) * 2u;
-      nt_dma_zp_off = nt_dma_sc_off;
-    }
 
     const uint64_t d_w  = arg->dram_w_base  + uint64_t(_kt) * kt_w_stride  + nt_dma_w_off;
-    const uint64_t d_sc = arg->dram_sc_base + uint64_t(_kt) * kt_sc_stride + nt_dma_sc_off;
-    const uint64_t d_zp = arg->dram_zp_base + uint64_t(_kt) * kt_zp_stride + nt_dma_zp_off;
+    const uint64_t sc_off = sc_dram_offset(_kt, _nt_dma);
+    const uint64_t d_sc = arg->dram_sc_base + sc_off;
+    const uint64_t d_zp = arg->dram_zp_base + sc_off;
 
     send_dma_cmd(RAW_OP_DMA_LOAD, ibuf[b],  d_in, 0, 0, 1, in_bytes);
     stream_send(make_notify(0, 1, rid_tile(b)));
