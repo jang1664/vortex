@@ -466,7 +466,8 @@ uint8_t *RAM::get(uint64_t address) const {
       uint8_t *ptr = new uint8_t[page_size];
       // set uninitialized data to "baadf00d"
       for (uint32_t i = 0; i < page_size; ++i) {
-        ptr[i] = (0xbaadf00d >> ((i & 0x3) * 8)) & 0xff;
+        // ptr[i] = (0xbaadf00d >> ((i & 0x3) * 8)) & 0xff;
+        ptr[i] = (0x00000000 >> ((i & 0x3) * 8)) & 0xff;
       }
       pages_.emplace(page_index, ptr);
       page = ptr;

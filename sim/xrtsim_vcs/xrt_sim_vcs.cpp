@@ -258,6 +258,35 @@ private:
     return (uint64_t)bank_id * mem_bank_size_ + offset;
   }
 
+  // Per-port HBM address-range assertion.
+  //   platforms.mk sp maps m_axi_mem_i -> HBM[4i:4i+3], so any AXI address
+  //   emitted on port i must lie inside the 4-PC window
+  //     [ (4*i)   * mem_bank_size_,
+  //       (4*i+4) * mem_bank_size_ )
+  //   which is the port's 4-PC contiguous slice after the new VX_mem_remap
+  //   packing (bank_idx top PORT_BITS == port index).
+  //   A violation means DMA ctrl routed a channel's transaction to the wrong
+  //   HBM port (or a stray LSU access with misaligned base). Aborts so the
+  //   failure is obvious.
+  void assert_port_range(uint8_t port_id, uint64_t addr) {
+    constexpr uint32_t BANKS_PER_PORT =
+        PLATFORM_MEMORY_NUM_BANKS / NUM_DMA_CHANNELS;
+    const uint64_t port_base =
+        (uint64_t)port_id * BANKS_PER_PORT * mem_bank_size_;
+    const uint64_t port_top =
+        port_base + (uint64_t)BANKS_PER_PORT * mem_bank_size_;
+    if (addr < port_base || addr >= port_top) {
+      fprintf(stderr,
+              "[vcs-sim] FATAL: AXI addr 0x%lx on port %u is outside its "
+              "HBM window [0x%lx, 0x%lx)  (bank_size=0x%lx, banks_per_port=%u)\n",
+              (unsigned long)addr, (unsigned)port_id,
+              (unsigned long)port_base, (unsigned long)port_top,
+              (unsigned long)mem_bank_size_, (unsigned)BANKS_PER_PORT);
+      fflush(stderr);
+      abort();
+    }
+  }
+
   static int connect_with_retry(const char* host, int port, int timeout_sec) {
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) {
@@ -334,6 +363,9 @@ private:
           for (uint32_t b = 0; b < beat_count; ++b) {
             uint64_t beat_addr = pkt.addr
                                + (uint64_t)b * PLATFORM_MEMORY_DATA_SIZE;
+            // Catch mis-routed read bursts — any AR from port i must stay
+            // inside that port's 4-PC HBM window (see assert_port_range).
+            assert_port_range(pkt.port_id, beat_addr);
             auto mem_req = new mem_req_t();
             mem_req->tag     = pkt.id;
             mem_req->addr    = beat_addr;
@@ -353,6 +385,9 @@ private:
         case EVT_AXI_AW: {
           // Write address from DUT. pkt.value carries awlen; beats for the
           // burst are accumulated in EVT_AXI_W using beat_idx.
+          // Catch mis-routed write bursts at AW (burst ≤ 4KB < 512MB bank,
+          // so if the base is inside the port's window, all beats are too).
+          assert_port_range(pkt.port_id, pkt.addr);
           aw_state_[pkt.port_id].base_addr = pkt.addr;
           aw_state_[pkt.port_id].tag       = pkt.id;
           aw_state_[pkt.port_id].beat_idx  = 0;
