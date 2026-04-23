@@ -45,7 +45,8 @@ static constexpr uint32_t DMA_KT     = GEMM_KT;      // 128
 static constexpr uint32_t DMA_MXU_KT = GEMM_MXU_KT;  // 32
 static constexpr uint32_t DMA_MXU_NT = GEMM_MXU_NT;  // 32
 
-static constexpr uint64_t TMEM_LAYOUT_ALIGN_BYTES = 4096;
+static constexpr uint64_t TMEM_LAYOUT_ALIGN_BYTES = 512;
+static constexpr uint64_t DRAM_ALIGN_BYTES = 512;
 
 static constexpr uint64_t align_up_u64(uint64_t x, uint64_t a) {
   return (a == 0) ? x : ((x + a - 1) / a) * a;
@@ -600,11 +601,11 @@ int main(int argc, char *argv[]) {
   }
 
   // ---- Allocate device buffers ----
-  RT_CHECK(vx_mem_alloc(device, tiled_input.size(),  VX_MEM_READ, &A_buffer));
-  RT_CHECK(vx_mem_alloc(device, tiled_weight.size(), VX_MEM_READ, &W_int4_buffer));
-  RT_CHECK(vx_mem_alloc(device, tiled_scale.size(),  VX_MEM_READ, &scales_buffer));
-  RT_CHECK(vx_mem_alloc(device, tiled_zp.size(),     VX_MEM_READ, &zeros_buffer));
-  RT_CHECK(vx_mem_alloc(device, out_total_bytes,     VX_MEM_WRITE, &C_buffer));
+  RT_CHECK(vx_mem_alloc_aligned(device, tiled_input.size(),  DRAM_ALIGN_BYTES, VX_MEM_READ, &A_buffer));
+  RT_CHECK(vx_mem_alloc_aligned(device, tiled_weight.size(), DRAM_ALIGN_BYTES, VX_MEM_READ, &W_int4_buffer));
+  RT_CHECK(vx_mem_alloc_aligned(device, tiled_scale.size(),  DRAM_ALIGN_BYTES, VX_MEM_READ, &scales_buffer));
+  RT_CHECK(vx_mem_alloc_aligned(device, tiled_zp.size(),     DRAM_ALIGN_BYTES, VX_MEM_READ, &zeros_buffer));
+  RT_CHECK(vx_mem_alloc_aligned(device, out_total_bytes,     DRAM_ALIGN_BYTES, VX_MEM_WRITE, &C_buffer));
 
   // ---- Upload tiled data ----
   RT_CHECK(vx_copy_to_dev(A_buffer,       tiled_input.data(),  0, tiled_input.size()));
