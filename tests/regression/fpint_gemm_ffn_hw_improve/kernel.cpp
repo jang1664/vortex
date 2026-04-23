@@ -358,8 +358,11 @@ static void run_tiled_gemm(const kernel_arg_t* arg) {
         stream_send(make_notify(1, w_target[0], rid_weight(0)));
 
         sz_target[0] += 1;
+        // Split qparam load into two bound=1 commands: scale first, zp second.
         send_mxu_qparam(QPARAM_MXU_BASE[0], scbuf[tile_buf],
-                        qparam_src_stride, qparam_dst_stride, 2);
+                        0, 0, 1);
+        send_mxu_qparam(QPARAM_MXU_BASE[0] + qparam_dst_stride, zpbuf[tile_buf],
+                        0, 0, 1);
         stream_send(make_notify(1, sz_target[0], rid_scale(0)));
 
         // Flatten (nb, kb) into one stream of microtiles so MXU DBuf alternates
@@ -399,8 +402,12 @@ static void run_tiled_gemm(const kernel_arg_t* arg) {
                              + next_nb * scale_nb_stride
                              + next_kb * qparam_kb_offset;
               }
+              const uint32_t next_zp_lmem = next_sc_lmem + qparam_src_stride;
+              // Split qparam load into two bound=1 commands: scale first, zp second.
               send_mxu_qparam(QPARAM_MXU_BASE[nmxu_buf], next_sc_lmem,
-                              qparam_src_stride, qparam_dst_stride, 2);
+                              0, 0, 1);
+              send_mxu_qparam(QPARAM_MXU_BASE[nmxu_buf] + qparam_dst_stride,
+                              next_zp_lmem, 0, 0, 1);
               stream_send(make_notify(1, sz_target[nmxu_buf], rid_scale(nmxu_buf)));
             }
 
