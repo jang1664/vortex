@@ -81,12 +81,21 @@ void AluUnit::tick() {
 			case MdvType::MULHU:
 			case MdvType::MULH:
 			case MdvType::MULHSU:
+#ifdef SIMX_FIX_ALU_LATENCY
+				// FIDELITY-FIX: match RTL LATENCY_IMUL=3 (VX_platform.vh:198,
+				// used at VX_alu_muldiv.sv:83). Original simx default was 2.
+				delay = 3;
+#else
 				delay = 2;
+#endif
 				break;
 			case MdvType::DIV:
 			case MdvType::DIVU:
 			case MdvType::REM:
 			case MdvType::REMU:
+				// NOTE: RTL DIV is a multi-cycle serial divider (no single
+				// LATENCY_IDIV constant); simx's XLEN+2 is a coarse upper
+				// bound that's already in the right ballpark. Not patched.
 				delay = XLEN+2;
 				break;
 			default:
