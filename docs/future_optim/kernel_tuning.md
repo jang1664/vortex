@@ -1,0 +1,1 @@
+현재 tile size가 TMEM을 제대로 안 쓰고 있다. tile size를 더 키우면 더 성능이 좋아질 것이다.
