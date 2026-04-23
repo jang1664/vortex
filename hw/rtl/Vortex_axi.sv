@@ -559,10 +559,14 @@ module Vortex_axi import VX_gpu_pkg::*; #(
     ///////////////////////////////////////////////////////////////////////////
 
     // Address-based select for demux: after remap, the HBM bank index bits
-    // live at [REMAP_BANK_SHIFT +: HBM_SEL_BITS] (low bits of the bank_idx
-    // field produced by VX_mem_remap).
-    wire [HBM_SEL_BITS-1:0] lsu_aw_select = lsu_axi_awaddr_remapped[REMAP_BANK_SHIFT +: HBM_SEL_BITS];
-    wire [HBM_SEL_BITS-1:0] lsu_ar_select = lsu_axi_araddr_remapped[REMAP_BANK_SHIFT +: HBM_SEL_BITS];
+    // live at [REMAP_BANK_SHIFT +: CLOG2(PLATFORM_MEMORY_NUM_BANKS)]. The new
+    // VX_mem_remap packs bank_idx = {r[2:0], q[1:0]}, so the per-port "r"
+    // field sits at the HIGH HBM_SEL_BITS of bank_idx (i.e. the top
+    // HBM_SEL_BITS of the full address). Using the top bits keeps DMA
+    // channel c routed to HBM port c (HBM_BUS_STRIDE stride invariant).
+    localparam PORT_SEL_SHIFT = `PLATFORM_MEMORY_ADDR_WIDTH - HBM_SEL_BITS;
+    wire [HBM_SEL_BITS-1:0] lsu_aw_select = lsu_axi_awaddr_remapped[PORT_SEL_SHIFT +: HBM_SEL_BITS];
+    wire [HBM_SEL_BITS-1:0] lsu_ar_select = lsu_axi_araddr_remapped[PORT_SEL_SHIFT +: HBM_SEL_BITS];
 
     slv_axi_req_t  [NUM_HBM_PORTS-1:0] lsu_demux_req;
     slv_axi_resp_t [NUM_HBM_PORTS-1:0] lsu_demux_resp;

@@ -794,11 +794,30 @@ private:
   std::vector<xrt_buffer_t> xrtBuffers_;
 
   int get_bank_info(uint64_t addr, uint32_t *pIdx, uint64_t *pOff) {
-    uint32_t num_banks = 1 << lg2_num_banks_;
+    // Mirror of hw/rtl/core/VX_mem_remap.sv. Parameter names kept in sync:
+    //   NUM_BANKS      = total HBM banks
+    //   NUM_PORTS      = AXI / HBM ports (= NUM_DMA_CHANNELS)
+    //   BANKS_PER_PORT = NUM_BANKS / NUM_PORTS
+    // Decompose block_idx = q*NUM_PORTS + r, then
+    //   bank   = BANKS_PER_PORT*r + (q % BANKS_PER_PORT)
+    //   offset = (q / BANKS_PER_PORT) * BLOCK + byte_off
+    constexpr uint32_t NUM_BANKS      = PLATFORM_MEMORY_NUM_BANKS;
+    constexpr uint32_t NUM_PORTS      = NUM_DMA_CHANNELS;
+    constexpr uint32_t BANKS_PER_PORT = NUM_BANKS / NUM_PORTS;
+    static_assert(NUM_BANKS % NUM_PORTS == 0,
+                  "NUM_BANKS must be a multiple of NUM_PORTS");
+    static_assert(ispow2(NUM_PORTS),      "NUM_PORTS must be a power of 2");
+    static_assert(ispow2(BANKS_PER_PORT), "BANKS_PER_PORT must be a power of 2");
+    constexpr uint32_t PORT_BITS  = log2ceil(NUM_PORTS);
+    constexpr uint32_t LOCAL_BITS = log2ceil(BANKS_PER_PORT);
+
     uint64_t block_addr = addr / CACHE_BLOCK_SIZE;
-    // Interleave by cache line: addr 0 -> bank0, addr 64 -> bank1.
-    uint32_t index = block_addr & (num_banks - 1);
-    uint64_t offset = (block_addr >> lg2_num_banks_) * CACHE_BLOCK_SIZE;
+    uint64_t byte_off   = addr & (CACHE_BLOCK_SIZE - 1);
+    uint64_t q          = block_addr >> PORT_BITS;
+    uint32_t r          = (uint32_t)(block_addr & (NUM_PORTS - 1));
+    uint32_t index      = (r << LOCAL_BITS)
+                        | (uint32_t)(q & (BANKS_PER_PORT - 1));
+    uint64_t offset     = (q >> LOCAL_BITS) * CACHE_BLOCK_SIZE + byte_off;
     if (pIdx) {
       *pIdx = index;
     }
