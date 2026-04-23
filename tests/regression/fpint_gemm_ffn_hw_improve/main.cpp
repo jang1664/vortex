@@ -40,12 +40,12 @@ static constexpr float FP16_TOL = 0.01f;
 
 // Tile constants
 static constexpr uint32_t DMA_MT     = GEMM_MT;      // 128
-static constexpr uint32_t DMA_NT     = GEMM_NT;      // 128 (full N-tile for LMEM sizing)
+static constexpr uint32_t DMA_NT     = GEMM_NT;      // 128 (full N-tile for TMEM sizing)
 static constexpr uint32_t DMA_KT     = GEMM_KT;      // 128
 static constexpr uint32_t DMA_MXU_KT = GEMM_MXU_KT;  // 32
 static constexpr uint32_t DMA_MXU_NT = GEMM_MXU_NT;  // 32
 
-static constexpr uint64_t LMEM_LAYOUT_ALIGN_BYTES = 4096;
+static constexpr uint64_t TMEM_LAYOUT_ALIGN_BYTES = 4096;
 
 static constexpr uint64_t align_up_u64(uint64_t x, uint64_t a) {
   return (a == 0) ? x : ((x + a - 1) / a) * a;
@@ -439,43 +439,43 @@ static int verify_results_tiled(vx_buffer_h out_buffer,
 }
 
 // ============================================================================
-// LMEM layout computation (local memory offsets starting from 0)
+// TMEM layout computation (tensor memory offsets starting from 0)
 // ============================================================================
 
-static bool compute_lmem_layout(kernel_arg_t& kargs, uint64_t local_mem_size) {
+static bool compute_tmem_layout(kernel_arg_t& kargs, uint64_t tensor_mem_size) {
   uint32_t groups_tile = DMA_KT / QBLK;
   uint32_t ng_tile     = (DMA_NT + QBLK - 1) / QBLK;
 
-  uint64_t lmem_ibuf_bytes  = uint64_t(DMA_MT) * DMA_KT * 2;
-  uint64_t lmem_wbuf_bytes  = uint64_t(DMA_KT) * ((DMA_NT + 1) / 2);
-  uint64_t lmem_scbuf_bytes = (QDIR == 0)
+  uint64_t tmem_ibuf_bytes  = uint64_t(DMA_MT) * DMA_KT * 2;
+  uint64_t tmem_wbuf_bytes  = uint64_t(DMA_KT) * ((DMA_NT + 1) / 2);
+  uint64_t tmem_scbuf_bytes = (QDIR == 0)
                                 ? (uint64_t(groups_tile) * DMA_NT * 2)
                                 : (uint64_t(DMA_KT) * ng_tile * 2);
-  uint64_t lmem_zpbuf_bytes = lmem_scbuf_bytes;
-  uint64_t lmem_obuf_bytes  = uint64_t(DMA_MT) * DMA_NT * 2;
+  uint64_t tmem_zpbuf_bytes = tmem_scbuf_bytes;
+  uint64_t tmem_obuf_bytes  = uint64_t(DMA_MT) * DMA_NT * 2;
 
   uint64_t cur = 0;
 
   auto alloc = [&](uint64_t bytes, uint64_t& out_base) -> bool {
-    cur = align_up_u64(cur, LMEM_LAYOUT_ALIGN_BYTES);
-    if (bytes > (local_mem_size - cur)) return false;
+    cur = align_up_u64(cur, TMEM_LAYOUT_ALIGN_BYTES);
+    if (bytes > (tensor_mem_size - cur)) return false;
     out_base = cur;
-    cur += align_up_u64(bytes, LMEM_LAYOUT_ALIGN_BYTES);
+    cur += align_up_u64(bytes, TMEM_LAYOUT_ALIGN_BYTES);
     return true;
   };
 
   // Double-buffered: buf0, buf1 for each type
   // Scale and zp are paired (scbuf0, zpbuf0, scbuf1, zpbuf1) so qparam_src_stride is consistent.
-  if (!alloc(lmem_ibuf_bytes,  kargs.lmem_ibuf[0]))  return false;
-  if (!alloc(lmem_ibuf_bytes,  kargs.lmem_ibuf[1]))  return false;
-  if (!alloc(lmem_wbuf_bytes,  kargs.lmem_wbuf[0]))  return false;
-  if (!alloc(lmem_wbuf_bytes,  kargs.lmem_wbuf[1]))  return false;
-  if (!alloc(lmem_scbuf_bytes, kargs.lmem_scbuf[0])) return false;
-  if (!alloc(lmem_zpbuf_bytes, kargs.lmem_zpbuf[0])) return false;
-  if (!alloc(lmem_scbuf_bytes, kargs.lmem_scbuf[1])) return false;
-  if (!alloc(lmem_zpbuf_bytes, kargs.lmem_zpbuf[1])) return false;
-  if (!alloc(lmem_obuf_bytes,  kargs.lmem_obuf[0]))  return false;
-  if (!alloc(lmem_obuf_bytes,  kargs.lmem_obuf[1]))  return false;
+  if (!alloc(tmem_ibuf_bytes,  kargs.lmem_ibuf[0]))  return false;
+  if (!alloc(tmem_ibuf_bytes,  kargs.lmem_ibuf[1]))  return false;
+  if (!alloc(tmem_wbuf_bytes,  kargs.lmem_wbuf[0]))  return false;
+  if (!alloc(tmem_wbuf_bytes,  kargs.lmem_wbuf[1]))  return false;
+  if (!alloc(tmem_scbuf_bytes, kargs.lmem_scbuf[0])) return false;
+  if (!alloc(tmem_zpbuf_bytes, kargs.lmem_zpbuf[0])) return false;
+  if (!alloc(tmem_scbuf_bytes, kargs.lmem_scbuf[1])) return false;
+  if (!alloc(tmem_zpbuf_bytes, kargs.lmem_zpbuf[1])) return false;
+  if (!alloc(tmem_obuf_bytes,  kargs.lmem_obuf[0]))  return false;
+  if (!alloc(tmem_obuf_bytes,  kargs.lmem_obuf[1]))  return false;
 
   return true;
 }
@@ -522,15 +522,16 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_dev_open(&device));
 
   uint64_t num_cores = 0, num_warps = 0, num_threads = 0;
-  uint64_t local_mem_size = 0;
+  uint64_t tensor_mem_size = 0;
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_CORES, &num_cores));
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_WARPS, &num_warps));
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_THREADS, &num_threads));
-  RT_CHECK(vx_dev_caps(device, VX_CAPS_LOCAL_MEM_SIZE, &local_mem_size));
+  // RT_CHECK(vx_dev_caps(device, VX_CAPS_LOCAL_MEM_SIZE, &tensor_mem_size));
   std::cout << "Device: cores=" << num_cores
             << ", warps=" << num_warps
-            << ", threads=" << num_threads
-            << ", lmem=" << local_mem_size << " bytes" << std::endl;
+            << ", threads=" << num_threads << std::endl;
+  
+  tensor_mem_size = TMEM_BANK_SIZE * NUM_DMA_CHANNELS;
 
   // ---- Generate test vectors (row-major) ----
   std::vector<uint16_t> h_A;
@@ -627,9 +628,9 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_mem_address(zeros_buffer,   &kargs.dram_zp_base));
   RT_CHECK(vx_mem_address(C_buffer,       &kargs.dram_out_base));
 
-  if (!compute_lmem_layout(kargs, local_mem_size)) {
-    std::cerr << "LMEM layout does not fit device local memory (size="
-              << local_mem_size << ")" << std::endl;
+  if (!compute_tmem_layout(kargs, tensor_mem_size)) {
+    std::cerr << "TMEM layout does not fit device tensor memory (size="
+              << tensor_mem_size << ")" << std::endl;
     cleanup();
     return -1;
   }
@@ -642,7 +643,7 @@ int main(int argc, char *argv[]) {
   kargs.QDIR   = QDIR;
   kargs.status = STATUS_INIT;
 
-  std::cout << "LMEM layout (double-buffered):" << std::hex
+  std::cout << "TMEM layout (double-buffered):" << std::hex
             << " ibuf=[0x" << kargs.lmem_ibuf[0] << ",0x" << kargs.lmem_ibuf[1] << "]"
             << " wbuf=[0x" << kargs.lmem_wbuf[0] << ",0x" << kargs.lmem_wbuf[1] << "]"
             << " scbuf=[0x" << kargs.lmem_scbuf[0] << ",0x" << kargs.lmem_scbuf[1] << "]"
