@@ -113,7 +113,13 @@ module VX_reduce_tree_pipelined_v2 #(
             // Perform pairwise operations
             for (genvar i = 0; i < CURR_N / 2; i++) begin : g_pair
                 if (OP == "+") begin : g_op
-                    assign reduce_result[i] = signed'(stage_data_in[s][2*i]) + signed'(stage_data_in[s][2*i + 1]);
+                    // Hint Vivado to map the pairwise adder into DSP48E2 adder-only mode.
+                    // Effective mainly on pipelined stages (elastic buffer register behind)
+                    // where MREG/PREG absorption is possible; for purely combinational
+                    // stages Vivado typically keeps CARRY8 anyway (attribute is advisory).
+                    (* use_dsp = "yes" *) logic signed [OUT_W-1:0] pair_sum;
+                    assign pair_sum = signed'(stage_data_in[s][2*i]) + signed'(stage_data_in[s][2*i + 1]);
+                    assign reduce_result[i] = pair_sum;
                 end else if (OP == "^") begin : g_op
                     assign reduce_result[i] = stage_data_in[s][2*i] ^ stage_data_in[s][2*i + 1];
                 end else if (OP == "&") begin : g_op

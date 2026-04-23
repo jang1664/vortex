@@ -42,7 +42,10 @@ module VX_pe_tree_new import VX_gpu_pkg::*, VX_utils_pkg::*; #(
   logic signed [IN_DW-1:0] ifmap_val[TILE_COL_SIZE][ROW_SIZE];
   logic signed [WEIGHT_DW-1:0] weight_val[TILE_COL_SIZE][ROW_SIZE];
   logic [BLK_BITW-1:0] blk_idx[TILE_COL_SIZE][ROW_SIZE];
-  logic signed [IN_DW+WEIGHT_DW-1:0] product[TILE_COL_SIZE][ROW_SIZE];
+  // Direct the multiplier into DSP48E2 blocks. Vivado infers A*B in DSP when
+  // this attribute is on the product signal declaration. Combined with AREG/BREG
+  // from upstream pipelining, MREG may be absorbed into the DSP automatically.
+  (* use_dsp = "yes" *) logic signed [IN_DW+WEIGHT_DW-1:0] product[TILE_COL_SIZE][ROW_SIZE];
   logic signed [IN_DW+WEIGHT_DW-1:0] product_out[TILE_COL_SIZE][ROW_SIZE];
   logic [BLK_BITW-1:0] blk_idx_out[TILE_COL_SIZE][ROW_SIZE];
   logic signed [MAC_DW-1:0] aligned[TILE_COL_SIZE][ROW_SIZE];
