@@ -8,6 +8,7 @@ under the appropriate driver / environment for each mode.
 
 from __future__ import annotations
 
+import argparse
 import os
 import random
 import subprocess
@@ -16,53 +17,48 @@ from pathlib import Path
 
 
 MODES = ("rtlsim", "xrt-vcs-sim", "hw_emu", "hw", "all")
+DEBUG_ARG_CHOICES = ("always", "omit", "auto")
 
 TEST_PY = "tests/regression/fpint_gemm_ffn_hw_improve/test.py"
 
 
-def usage() -> None:
-    print(f"Usage: {sys.argv[0]} <mode> [extra args forwarded to test.py]")
-    print("Modes:")
-    print("  rtlsim       - Run rtlsim test")
-    print("  xrt-vcs-sim  - Run xrt + VCS RTL sim test")
-    print("  hw_emu       - Run xrt + hw_emu test")
-    print("  hw           - Run FPGA test")
-    print("  all          - Run all of the above in order")
-    print("Options:")
-    print("  --debug-arg=always|omit|auto")
-    print("  --debug-always | --debug-omit | --debug-auto")
-
-
-def parse_args(argv: list[str]) -> tuple[str, str, list[str]]:
-    if not argv or argv[0] in ("-h", "--help"):
-        usage()
-        sys.exit(0)
-
-    mode = argv[0]
-    if mode not in MODES:
-        print(f"ERROR: unknown mode: {mode}", file=sys.stderr)
-        usage()
-        sys.exit(1)
-
-    debug_mode = "always"
-    forward: list[str] = []
-    for arg in argv[1:]:
-        if arg in ("--debug-always",):
-            debug_mode = "always"
-        elif arg in ("--debug-omit",):
-            debug_mode = "omit"
-        elif arg in ("--debug-auto",):
-            debug_mode = "auto"
-        elif arg.startswith("--debug-arg="):
-            val = arg.split("=", 1)[1]
-            if val not in ("always", "omit", "auto"):
-                print(f"ERROR: invalid debug arg mode: {val} "
-                      "(expected always, omit, or auto)", file=sys.stderr)
-                sys.exit(1)
-            debug_mode = val
-        else:
-            forward.append(arg)
-    return mode, debug_mode, forward
+def parse_args(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Driver for the fpint_gemm_ffn_hw_improve regression "
+                    "across backends.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Modes:\n"
+            "  rtlsim       - Run rtlsim test\n"
+            "  xrt-vcs-sim  - Run xrt + VCS RTL sim test\n"
+            "  hw_emu       - Run xrt + hw_emu test\n"
+            "  hw           - Run FPGA test\n"
+            "  all          - Run all of the above in order\n"
+        ),
+    )
+    parser.add_argument(
+        "--mode",
+        choices=MODES,
+        required=True,
+        help="Backend mode to run.",
+    )
+    parser.add_argument(
+        "--debug-arg",
+        choices=DEBUG_ARG_CHOICES,
+        default="always",
+        help="Debug-arg mode forwarded to test.py (default: always).",
+    )
+    parser.add_argument(
+        "--debug-level",
+        default="0",
+        help="DEBUG_LEVEL env value passed to each backend (default: 0).",
+    )
+    parser.add_argument(
+        "forward_args",
+        nargs=argparse.REMAINDER,
+        help="Extra arguments forwarded to test.py (use -- to separate).",
+    )
+    return parser.parse_args(argv)
 
 
 def build_configs() -> str:
@@ -101,10 +97,13 @@ def run_test(extra_env: dict[str, str],
 
 
 def main() -> int:
-    mode, debug_mode, forward_args = parse_args(sys.argv[1:])
+    args = parse_args(sys.argv[1:])
+    mode = args.mode
+    debug_mode = args.debug_arg
+    debug_level = args.debug_level
+    forward_args = [a for a in args.forward_args if a != "--"]
 
     configs = build_configs()
-    debug_level = "0"
 
     # Drop VCD_OUTPUT when debug is off (huge VCDs with no useful traces).
     if debug_level == "0" and "-DVCD_OUTPUT" in configs:
@@ -163,7 +162,7 @@ def main() -> int:
             "TARGET": "hw",
             "PLATFORM": "xilinx_u55c_gen3x16_xdma_3_202210_1",
             "DRIVER": "xrt",
-            "CHIPSCOPE": "1",
+            # "CHIPSCOPE": "1",
             "DEBUG_LEVEL": debug_level,
         }
         run_test(env, debug_mode, forward_args)
