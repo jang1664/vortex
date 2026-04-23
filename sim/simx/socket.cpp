@@ -45,7 +45,18 @@ Socket::Socket(const SimContext& ctx,
     false,                  // write-back
     false,                  // write response
     ICACHE_MSHR_SIZE,       // mshr size
+#ifdef SIMX_FIX_IFETCH_BACKPRESSURE
+    // FIDELITY-FIX #3A: deepen icache pipeline to match RTL
+    // VX_cache_bank.sv PIPELINE_STAGES=3 + VX_fetch.sv req_buf
+    // elastic_buffer (SIZE=2, OUT_REG=1). `pipe_req_` depth is
+    // (latency - 1), so latency=4 → 3-stage pipe, closing the
+    // baseline RTT gap of ~5 cyc (measured: RTL ~9-10 vs simx ~5).
+    // Icache-only — do not change L2/L3/dcache here (see
+    // notes/ifetch_fix_plan.md §"Fix #3A").
+    4,                      // pipeline latency
+#else
     2,                      // pipeline latency
+#endif
   });
 
   snprintf(sname, 100, "%s-dcaches", this->name().c_str());
