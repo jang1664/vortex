@@ -149,28 +149,39 @@ static void build_test_vectors(std::vector<uint16_t>& h_A,
   h_zeros.resize(sc_zp_size);
   h_ref_out_fp16.resize(M * N);
 
-  // Input matrix A [M x K] fp16
+  // Input matrix A [M x K] fp16.
+  // Period 7 in (m+k), zero-mean, range [-0.75, 0.75].
+  // Values: {-3,-2,-1,0,1,2,3}/4, exactly representable in fp16.
+  // Zero-mean a keeps partial sums bounded as K grows.
   for (uint32_t m = 0; m < M; ++m)
-    for (uint32_t k = 0; k < K; ++k)
-      h_A[m * K + k] = float_to_fp16(1.0f + float((m + k) % 7));
+    for (uint32_t k = 0; k < K; ++k) {
+      int p = int((m + k) % 7) - 3;
+      h_A[m * K + k] = float_to_fp16(float(p) * 0.25f);
+    }
 
-  // Weight matrix W [K x N] raw int4 values (unpacked for reference)
+  // Weight W [K x N] raw int4. Period 7 in (k*N+n), zero-mean, range [-3, 3].
   for (uint32_t k = 0; k < K; ++k)
     for (uint32_t n = 0; n < N; ++n)
       h_W_raw[k * N + n] = int8_t(int((k * N + n) % 7) - 3);
 
-  // Scale and zero-point
+  // Scale (fp16): period 6, sign-balanced, nonzero, range [-0.75, 0.75].
+  //   mapping: idx%6 -> {0,1,2,4,5,6} -> (s-3)/4 -> {-.75,-.5,-.25,.25,.5,.75}
+  // ZP (int):  period 5 (decoupled from w's period 7), range [-2, 2].
   if (QDIR == 0) {
     for (uint32_t kg = 0; kg < groups_total; ++kg)
       for (uint32_t n = 0; n < N; ++n) {
-        h_scales[kg * N + n] = float_to_fp16(1.0f + float(n % 7));
-        h_zeros[kg * N + n] = int16_t(int(n % 7) - 3);
+        int s = int(n % 6);
+        if (s >= 3) s += 1;
+        h_scales[kg * N + n] = float_to_fp16(float(s - 3) * 0.25f);
+        h_zeros[kg * N + n]  = int16_t(int(n % 5) - 2);
       }
   } else {
     for (uint32_t k = 0; k < K; ++k)
       for (uint32_t ng = 0; ng < ng_total; ++ng) {
-        h_scales[k * ng_total + ng] = float_to_fp16(1.0f + float(ng % 7));
-        h_zeros[k * ng_total + ng] = int16_t(int(ng % 7) - 3);
+        int s = int(ng % 6);
+        if (s >= 3) s += 1;
+        h_scales[k * ng_total + ng] = float_to_fp16(float(s - 3) * 0.25f);
+        h_zeros[k * ng_total + ng]  = int16_t(int(ng % 5) - 2);
       }
   }
 
