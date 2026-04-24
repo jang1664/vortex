@@ -193,15 +193,12 @@ def build_model_cases(model_name: str, seq_lens: list[int]) -> list[str]:
     config = MODELS[model_name]
     cases: list[str] = []
 
-    # FFN + QKVO projections: sweep QBLK x WTRANS x QDIR.
+    # FFN + QKVO projections: WTRANS=0, QDIR=0 are fixed by the HW contract;
+    # only QBLK is swept.
     for S in seq_lens:
         for _label, N, K in model_linear_gemms(config):
             for qblk in DEFAULT_QBLKS:
-                for wt in DEFAULT_WTRANS:
-                    for qd in DEFAULT_QDIR:
-                        cases.append(
-                            f"-m {S} -n {N} -k {K} -q {qblk} -t {wt} -d {qd}"
-                        )
+                cases.append(f"-m {S} -n {N} -k {K} -q {qblk} -t 0 -d 0")
 
     # Attention QK^T and PV: fixed QBLK/WTRANS/QDIR, only M/N/K change per seq.
     for _label, M, N, K, qblk, wt, qd in model_attention_gemms(config, seq_lens):
@@ -239,7 +236,7 @@ def print_model_registry() -> None:
         print(f"    num_kv_heads      = {c['num_key_value_heads']}")
         print(f"    head_dim          = {D}")
         print(f"    FFN / QKVO proj GEMM (sweep QBLK={DEFAULT_QBLKS}, "
-              f"WTRANS={DEFAULT_WTRANS}, QDIR={DEFAULT_QDIR}):")
+              f"WTRANS=0, QDIR=0):")
         for lbl, N, K in model_linear_gemms(c):
             print(f"      [{lbl}] N={N}, K={K}")
         print(f"    Attention GEMM (QBLK=head_dim={D}, per-head):")
