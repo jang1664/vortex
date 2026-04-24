@@ -96,16 +96,60 @@ static void parse_args(int argc, char **argv) {
 // FP16 conversion utilities
 // ============================================================================
 
+// IEEE 754 FP32 -> FP16 with round-to-nearest-even, matching HW converter.
 static uint16_t float_to_fp16(float f) {
   union { float f; uint32_t i; } u = {f};
-  uint32_t sign = (u.i >> 16) & 0x8000;
-  int32_t exp = ((u.i >> 23) & 0xFF) - 127 + 15;
-  uint32_t mantissa = (u.i >> 13) & 0x3FF;
+  uint32_t x       = u.i;
+  uint16_t sign    = uint16_t((x >> 16) & 0x8000u);
+  int32_t  exp32   = int32_t((x >> 23) & 0xFFu);
+  uint32_t mant32  = x & 0x7FFFFFu;
 
-  if (exp <= 0) return sign;
-  if (exp >= 31) return sign | 0x7C00;
+  // NaN / Inf
+  if (exp32 == 0xFF) {
+    return sign | (mant32 ? 0x7E00u : 0x7C00u);
+  }
+  // FP32 zero / subnormal -> FP16 zero
+  if (exp32 == 0) return sign;
 
-  return sign | (exp << 10) | mantissa;
+  int32_t exp_f16 = exp32 - 127 + 15;
+
+  // Overflow -> inf
+  if (exp_f16 >= 31) return sign | 0x7C00u;
+
+  // Normal FP16 (exp_f16 in [1, 30])
+  if (exp_f16 >= 1) {
+    uint32_t mant_top   = mant32 >> 13;        // top 10 bits
+    uint32_t round_bits = mant32 & 0x1FFFu;    // low 13 bits (guard+round+sticky)
+    // RNE: round up if > 0.5 ulp, or exactly 0.5 ulp with odd LSB.
+    if (round_bits > 0x1000u ||
+        (round_bits == 0x1000u && (mant_top & 1u))) {
+      mant_top += 1;
+      if (mant_top == 0x400u) {        // mantissa overflow -> bump exponent
+        mant_top = 0;
+        exp_f16 += 1;
+        if (exp_f16 >= 31) return sign | 0x7C00u;
+      }
+    }
+    return sign | uint16_t(exp_f16 << 10) | uint16_t(mant_top);
+  }
+
+  // Subnormal FP16 (exp_f16 in [-10, 0]). Outside this range -> underflow to 0.
+  if (exp_f16 < -10) return sign;
+
+  uint32_t m24         = mant32 | 0x800000u;             // prepend implicit 1
+  int32_t  shift       = 14 - exp_f16;                    // >= 14, <= 24
+  uint32_t round_mask  = (1u << shift) - 1u;
+  uint32_t half        = 1u << (shift - 1);
+  uint32_t round_bits  = m24 & round_mask;
+  uint32_t mant10      = m24 >> shift;
+  if (round_bits > half ||
+      (round_bits == half && (mant10 & 1u))) {
+    mant10 += 1;
+    if (mant10 == 0x400u) {            // rounds up to smallest normal
+      return sign | (1u << 10);
+    }
+  }
+  return sign | uint16_t(mant10);
 }
 
 static float fp16_to_float(uint16_t h) {
@@ -149,39 +193,28 @@ static void build_test_vectors(std::vector<uint16_t>& h_A,
   h_zeros.resize(sc_zp_size);
   h_ref_out_fp16.resize(M * N);
 
-  // Input matrix A [M x K] fp16.
-  // Period 7 in (m+k), zero-mean, range [-0.75, 0.75].
-  // Values: {-3,-2,-1,0,1,2,3}/4, exactly representable in fp16.
-  // Zero-mean a keeps partial sums bounded as K grows.
+  // Input matrix A [M x K] fp16
   for (uint32_t m = 0; m < M; ++m)
-    for (uint32_t k = 0; k < K; ++k) {
-      int p = int((m + k) % 7) - 3;
-      h_A[m * K + k] = float_to_fp16(float(p) * 0.25f);
-    }
+    for (uint32_t k = 0; k < K; ++k)
+      h_A[m * K + k] = float_to_fp16(1.0f + float((m + k) % 7));
 
-  // Weight W [K x N] raw int4. Period 7 in (k*N+n), zero-mean, range [-3, 3].
+  // Weight matrix W [K x N] raw int4 values (unpacked for reference)
   for (uint32_t k = 0; k < K; ++k)
     for (uint32_t n = 0; n < N; ++n)
       h_W_raw[k * N + n] = int8_t(int((k * N + n) % 7) - 3);
 
-  // Scale (fp16): period 6, sign-balanced, nonzero, range [-0.75, 0.75].
-  //   mapping: idx%6 -> {0,1,2,4,5,6} -> (s-3)/4 -> {-.75,-.5,-.25,.25,.5,.75}
-  // ZP (int):  period 5 (decoupled from w's period 7), range [-2, 2].
+  // Scale and zero-point
   if (QDIR == 0) {
     for (uint32_t kg = 0; kg < groups_total; ++kg)
       for (uint32_t n = 0; n < N; ++n) {
-        int s = int(n % 6);
-        if (s >= 3) s += 1;
-        h_scales[kg * N + n] = float_to_fp16(float(s - 3) * 0.25f);
-        h_zeros[kg * N + n]  = int16_t(int(n % 5) - 2);
+        h_scales[kg * N + n] = float_to_fp16(1.0f + float(n % 7));
+        h_zeros[kg * N + n] = int16_t(int(n % 7) - 3);
       }
   } else {
     for (uint32_t k = 0; k < K; ++k)
       for (uint32_t ng = 0; ng < ng_total; ++ng) {
-        int s = int(ng % 6);
-        if (s >= 3) s += 1;
-        h_scales[k * ng_total + ng] = float_to_fp16(float(s - 3) * 0.25f);
-        h_zeros[k * ng_total + ng]  = int16_t(int(ng % 5) - 2);
+        h_scales[k * ng_total + ng] = float_to_fp16(1.0f + float(ng % 7));
+        h_zeros[k * ng_total + ng] = int16_t(int(ng % 7) - 3);
       }
   }
 
