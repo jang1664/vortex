@@ -72,6 +72,12 @@ CXXFLAGS += -I$(VORTEX_HOME)/runtime/include -I$(ROOT_DIR)/hw -I$(SW_COMMON_DIR)
 CXXFLAGS += -DXLEN_$(XLEN)
 CXXFLAGS += $(CONFIGS)
 
+# Latency bench harness (shared by all regression tests)
+BENCH_HARNESS_DIR  := $(VORTEX_HOME)/tests/common
+BENCH_HARNESS_SRCS := $(BENCH_HARNESS_DIR)/bench_harness.cpp
+CXXFLAGS += -I$(BENCH_HARNESS_DIR)
+SRCS += $(BENCH_HARNESS_SRCS)
+
 LDFLAGS += -L$(VORTEX_RT_PATH) -lvortex
 
 # Debugging
@@ -117,14 +123,19 @@ kernel.elf: $(VX_SRCS) $(KERNEL_CONFIG_FILE)
 $(PROJECT): $(SRCS)
 	$(CXX) $(CXXFLAGS) $^ $(LDFLAGS) -o $@
 
-run-simx: $(PROJECT) kernel.vxbin
-	LD_LIBRARY_PATH=$(VORTEX_RT_PATH):$(LD_LIBRARY_PATH) VORTEX_DRIVER=simx ./$(PROJECT) $(OPTS)
+# Which host binary the run-* targets launch. Defaults to the validation
+# binary; override with `make run-xrt BIN=<other>` (e.g. `BIN=softmax_bench`)
+# to run a per-op variant defined in the test's own Makefile.
+BIN ?= $(PROJECT)
 
-run-rtlsim: $(PROJECT) kernel.vxbin
-	LD_LIBRARY_PATH=$(VORTEX_RT_PATH):$(LD_LIBRARY_PATH) VORTEX_DRIVER=rtlsim ./$(PROJECT) $(OPTS)
+run-simx: $(BIN) kernel.vxbin
+	LD_LIBRARY_PATH=$(VORTEX_RT_PATH):$(LD_LIBRARY_PATH) VORTEX_DRIVER=simx ./$(BIN) $(OPTS)
 
-run-opae: $(PROJECT) kernel.vxbin
-	SCOPE_JSON_PATH=$(VORTEX_RT_PATH)/scope.json OPAE_DRV_PATHS=$(OPAE_DRV_PATHS) LD_LIBRARY_PATH=$(VORTEX_RT_PATH):$(LD_LIBRARY_PATH) VORTEX_DRIVER=opae ./$(PROJECT) $(OPTS)
+run-rtlsim: $(BIN) kernel.vxbin
+	LD_LIBRARY_PATH=$(VORTEX_RT_PATH):$(LD_LIBRARY_PATH) VORTEX_DRIVER=rtlsim ./$(BIN) $(OPTS)
+
+run-opae: $(BIN) kernel.vxbin
+	SCOPE_JSON_PATH=$(VORTEX_RT_PATH)/scope.json OPAE_DRV_PATHS=$(OPAE_DRV_PATHS) LD_LIBRARY_PATH=$(VORTEX_RT_PATH):$(LD_LIBRARY_PATH) VORTEX_DRIVER=opae ./$(BIN) $(OPTS)
 
 VCS_SIMLIB_DIR ?= $(VORTEX_HOME)/build/vcs_simlib
 # Collect every per-library subdir under VCS_SIMLIB_DIR (each holds one lib*.so).
@@ -134,13 +145,13 @@ VCS_SIMLIB_LD_PATH := $(shell ls -d $(VCS_SIMLIB_DIR)/*/ 2>/dev/null | sed 's|/$
 # the vg_gnu-bundled libstdc++ on simv's DT_RUNPATH is too old otherwise.
 HW_EMU_LD_PATHS := /usr/lib/x86_64-linux-gnu:$(XILINX_XRT)/lib:$(XILINX_VIVADO)/lib/lnx64.o:$(VCS_SIMLIB_LD_PATH):$(VORTEX_RT_PATH):$(LD_LIBRARY_PATH)
 
-run-xrt: $(PROJECT) kernel.vxbin
+run-xrt: $(BIN) kernel.vxbin
 ifeq ($(TARGET), hw)
-	SCOPE_JSON_PATH=$(FPGA_BIN_DIR)/scope.json XRT_INI_PATH=$(VORTEX_RT_PATH)/xrt/xrt.ini EMCONFIG_PATH=$(FPGA_BIN_DIR) XRT_DEVICE_INDEX=$(XRT_DEVICE_INDEX) XRT_XCLBIN_PATH=$(FPGA_BIN_DIR)/vortex_afu.xclbin LD_LIBRARY_PATH=$(XILINX_XRT)/lib:$(VORTEX_RT_PATH):$(LD_LIBRARY_PATH) VORTEX_DRIVER=xrt ./$(PROJECT) $(OPTS)
+	SCOPE_JSON_PATH=$(FPGA_BIN_DIR)/scope.json XRT_INI_PATH=$(VORTEX_RT_PATH)/xrt/xrt.ini EMCONFIG_PATH=$(FPGA_BIN_DIR) XRT_DEVICE_INDEX=$(XRT_DEVICE_INDEX) XRT_XCLBIN_PATH=$(FPGA_BIN_DIR)/vortex_afu.xclbin LD_LIBRARY_PATH=$(XILINX_XRT)/lib:$(VORTEX_RT_PATH):$(LD_LIBRARY_PATH) VORTEX_DRIVER=xrt ./$(BIN) $(OPTS)
 else ifeq ($(TARGET), hw_emu)
-	SCOPE_JSON_PATH=$(FPGA_BIN_DIR)/scope.json XCL_EMULATION_MODE=$(TARGET) XRT_INI_PATH=$(if $(wildcard $(FPGA_BIN_DIR)/xrt.ini),$(FPGA_BIN_DIR)/xrt.ini,$(VORTEX_RT_PATH)/xrt/xrt.ini) EMCONFIG_PATH=$(FPGA_BIN_DIR) XRT_DEVICE_INDEX=$(XRT_DEVICE_INDEX) XRT_XCLBIN_PATH=$(FPGA_BIN_DIR)/vortex_afu.xclbin LD_LIBRARY_PATH=$(HW_EMU_LD_PATHS) VORTEX_DRIVER=xrt ./$(PROJECT) $(OPTS)
+	SCOPE_JSON_PATH=$(FPGA_BIN_DIR)/scope.json XCL_EMULATION_MODE=$(TARGET) XRT_INI_PATH=$(if $(wildcard $(FPGA_BIN_DIR)/xrt.ini),$(FPGA_BIN_DIR)/xrt.ini,$(VORTEX_RT_PATH)/xrt/xrt.ini) EMCONFIG_PATH=$(FPGA_BIN_DIR) XRT_DEVICE_INDEX=$(XRT_DEVICE_INDEX) XRT_XCLBIN_PATH=$(FPGA_BIN_DIR)/vortex_afu.xclbin LD_LIBRARY_PATH=$(HW_EMU_LD_PATHS) VORTEX_DRIVER=xrt ./$(BIN) $(OPTS)
 else
-	SCOPE_JSON_PATH=$(VORTEX_RT_PATH)/scope.json LD_LIBRARY_PATH=$(XILINX_XRT)/lib:$(VORTEX_RT_PATH):$(LD_LIBRARY_PATH) VORTEX_DRIVER=xrt ./$(PROJECT) $(OPTS)
+	SCOPE_JSON_PATH=$(VORTEX_RT_PATH)/scope.json LD_LIBRARY_PATH=$(XILINX_XRT)/lib:$(VORTEX_RT_PATH):$(LD_LIBRARY_PATH) VORTEX_DRIVER=xrt ./$(BIN) $(OPTS)
 endif
 
 .depend: $(SRCS)
