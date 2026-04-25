@@ -1,4 +1,4 @@
-#include "softmax_args.h"
+#include "common.h"
 #include <vx_spawn.h>
 #include <vx_intrinsics.h>
 #include <vx_math.h>

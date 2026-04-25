@@ -6,7 +6,6 @@
 #include <algorithm>
 #include <vortex.h>
 #include "common.h"
-#include "bench_harness.h"
 
 #define RT_CHECK(_expr)                                         \
    do {                                                         \
@@ -541,7 +540,6 @@ static bool compute_tmem_layout(kernel_arg_t& kargs, uint64_t tensor_mem_size) {
 // ============================================================================
 
 int main(int argc, char *argv[]) {
-  vx_bench::BenchOpts bench_opts = vx_bench::parse_bench_opts(argc, argv);
   parse_args(argc, argv);
 
   // Validate constraints
@@ -713,22 +711,6 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_copy_to_dev(args_buffer, &kargs, 0, sizeof(kargs)));
 
   // ---- Run kernel ----
-  if (bench_opts.enabled) {
-    std::cout << "Running in bench mode (warmup=" << bench_opts.warmup
-              << ", iters=" << bench_opts.iters << ")" << std::endl;
-    vx_bench::BenchRunner runner(bench_opts);
-    runner.run([&]{
-      // Reset status so the kernel always starts from a clean state.
-      kargs.status = STATUS_INIT;
-      RT_CHECK(vx_copy_to_dev(args_buffer, &kargs, 0, sizeof(kargs)));
-      RT_CHECK(vx_start(device, krnl_buffer, args_buffer));
-      RT_CHECK(vx_ready_wait(device, VX_MAX_TIMEOUT));
-    });
-    runner.report();
-    cleanup();
-    return 0;
-  }
-
   RT_CHECK(vx_start(device, krnl_buffer, args_buffer));
 
   int wait_ret = vx_ready_wait(device, VX_MAX_TIMEOUT);

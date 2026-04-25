@@ -19,7 +19,7 @@ ROOT_DIR=$SCRIPT_DIR/..
 show_usage()
 {
     echo "Vortex BlackBox Test Driver v1.0"
-    echo "Usage: $0 [[--clusters=#n] [--cores=#n] [--warps=#n] [--threads=#n] [--l2cache] [--l3cache] [[--driver=#name] [--app=#app] [--pytest=#file] [--args=#args] [--bench] [--bin=#name] [--debug=#level] [--scope] [--perf=#class] [--log=logfile] [--nohup] [--help]]"
+    echo "Usage: $0 [[--clusters=#n] [--cores=#n] [--warps=#n] [--threads=#n] [--l2cache] [--l3cache] [[--driver=#name] [--app=#app] [--pytest=#file] [--args=#args] [--debug=#level] [--scope] [--perf=#class] [--log=logfile] [--nohup] [--help]]"
 }
 
 show_help()
@@ -29,10 +29,6 @@ show_help()
     echo "--driver: gpu, simx, rtlsim, opae, xrt, xrt_vcs"
     echo "--app: any subfolder test under regression or opencl"
     echo "--pytest: Python test script (e.g., pytorch/test/test_native_eladd.py)"
-    echo "--bench: run the per-op latency bench binary instead of the validation"
-    echo "         binary (BIN=<app>_bench). Requires the test's Makefile to define"
-    echo "         the corresponding bench target."
-    echo "--bin=NAME: launch a specific host binary (overrides --bench's auto-naming)"
     echo "--class: 0=disable, 1=pipeline, 2=memsys"
     echo "--nohup: build and run in temp directory"
     echo "env LOG_MAX_BYTES: keep only last N bytes in debug log (rolling buffer)"
@@ -59,8 +55,6 @@ DEFAULTS() {
     CONFIGS="$CONFIGS"
     TEMPBUILD=0
     LOGFILE=run.log
-    BENCH=0
-    BIN_OVERRIDE=""
 }
 
 parse_args() {
@@ -83,8 +77,6 @@ parse_args() {
             --args=*)   HAS_ARGS=1; ARGS=${i#*=} ;;
             --log=*)    LOGFILE=${i#*=} ;;
             --nohup)    TEMPBUILD=1 ;;
-            --bench)    BENCH=1 ;;
-            --bin=*)    BIN_OVERRIDE=${i#*=} ;;
             --help)     show_help; exit 0 ;;
             *)          show_usage; exit 1 ;;
         esac
@@ -179,25 +171,11 @@ build_driver() {
 }
 
 run_app() {
-    if [ "$BENCH" = "1" ] && [ -n "$PYTEST" ]; then
-        echo "Error: --bench is incompatible with --pytest (bench targets a C++ binary)"
-        exit 1
-    fi
     local cmd_opts=""
     [ $DEBUG -eq 1 ] && cmd_opts=$(add_option "$cmd_opts" "DEBUG=1")
     [ $TEMPBUILD -eq 1 ] && cmd_opts=$(add_option "$cmd_opts" "VORTEX_RT_PATH=\"$TEMPDIR\"")
     [ $HAS_ARGS -eq 1 ] && cmd_opts=$(add_option "$cmd_opts" "OPTS=\"$ARGS\"")
     [ -n "$CONFIGS" ] && cmd_opts=$(add_option "$cmd_opts" "CONFIGS=\"$CONFIGS\"")
-
-    # Resolve which host binary to launch (passes through to common.mk's BIN var).
-    # Priority: explicit --bin=NAME > --bench (auto: <app>_bench) > default ($(PROJECT)).
-    local BIN_NAME=""
-    if [ -n "$BIN_OVERRIDE" ]; then
-        BIN_NAME="$BIN_OVERRIDE"
-    elif [ "$BENCH" = "1" ]; then
-        BIN_NAME="$(basename "$APP")_bench"
-    fi
-    [ -n "$BIN_NAME" ] && cmd_opts=$(add_option "$cmd_opts" "BIN=$BIN_NAME")
 
     if [ "$DRIVER" = "xrt_vcs" ] || [ "$DRIVER" = "xrt_vcs_post" ]; then
         # --- Launch VCS simv (shared by both --app and --pytest) ---
