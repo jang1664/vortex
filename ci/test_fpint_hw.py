@@ -25,7 +25,7 @@ from gen_kernel_cfgs import (  # noqa: E402
     DEFAULT_QBLKS,
     DEFAULT_SEQ_LENS as DEFAULT_MODEL_SEQ_LENS,
     MODELS,
-    build_model_args,
+    build_fpint_gemm_args_for_model,
     parse_seq_lens_csv,
     print_model_registry,
 )
@@ -319,7 +319,14 @@ def main() -> int:
             return 2
         try:
             seq_lens = parse_seq_lens_csv(args.seq_lens)
-            case_args = build_model_args(args.model, seq_lens)
+            # Pull every fpint_gemm CLI invocation that LLaMA-style models
+            # exercise at the requested seq_lens, sweep across DEFAULT_QBLKS,
+            # and dedupe. Generation stage is excluded by default because
+            # S_q=1 violates the M%32 HW constraint.
+            case_args = build_fpint_gemm_args_for_model(
+                args.model, seq_lens, qblks=DEFAULT_QBLKS,
+                batch=1, stages=("prefill",),
+            )
         except ValueError as e:
             print(f"ERROR: {e}", file=sys.stderr)
             return 2
