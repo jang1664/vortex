@@ -19,7 +19,7 @@ ROOT_DIR=$SCRIPT_DIR/..
 show_usage()
 {
     echo "Vortex BlackBox Test Driver v1.0"
-    echo "Usage: $0 [[--clusters=#n] [--cores=#n] [--warps=#n] [--threads=#n] [--l2cache] [--l3cache] [[--driver=#name] [--app=#app] [--pytest=#file] [--args=#args] [--debug=#level] [--scope] [--perf=#class] [--log=logfile] [--nohup] [--help]]"
+    echo "Usage: $0 [[--clusters=#n] [--cores=#n] [--warps=#n] [--threads=#n] [--l2cache] [--l3cache] [[--driver=#name] [--app=#app] [--pytest=#file] [--args=#args] [--debug=#level] [--scope] [--perf=#class] [--bench] [--warmup=#n] [--iterations=#n] [--log=logfile] [--nohup] [--help]]"
 }
 
 show_help()
@@ -31,6 +31,10 @@ show_help()
     echo "--pytest: Python test script (e.g., pytorch/test/test_native_eladd.py)"
     echo "--class: 0=disable, 1=pipeline, 2=memsys"
     echo "--nohup: build and run in temp directory"
+    echo "  --- Benchmark mode ---"
+    echo "--bench:      run the per-app <app>_bench binary instead of <app> (requires bench_main.cpp)"
+    echo "--warmup=N:   warmup iterations for bench mode (binary default: 3)"
+    echo "--iterations=N: timed iterations for bench mode (binary default: 10)"
     echo "env LOG_MAX_BYTES: keep only last N bytes in debug log (rolling buffer)"
     echo "env LOG_FLUSH_LINES: flush interval for rolling buffer (default: 200)"
 }
@@ -55,6 +59,9 @@ DEFAULTS() {
     CONFIGS="$CONFIGS"
     TEMPBUILD=0
     LOGFILE=run.log
+    BENCH=0
+    BENCH_WARMUP=""
+    BENCH_ITERATIONS=""
 }
 
 parse_args() {
@@ -77,10 +84,31 @@ parse_args() {
             --args=*)   HAS_ARGS=1; ARGS=${i#*=} ;;
             --log=*)    LOGFILE=${i#*=} ;;
             --nohup)    TEMPBUILD=1 ;;
+            --bench)    BENCH=1 ;;
+            --warmup=*) BENCH_WARMUP=${i#*=} ;;
+            --iterations=*) BENCH_ITERATIONS=${i#*=} ;;
             --help)     show_help; exit 0 ;;
             *)          show_usage; exit 1 ;;
         esac
     done
+
+    # In bench mode, prepend --warmup=/--iterations= (when given) to the binary's
+    # ARGS so the bench harness picks them up alongside the app's own shape args.
+    if [ $BENCH -eq 1 ]; then
+        local prefix=""
+        [ -n "$BENCH_WARMUP" ]     && prefix="$prefix --warmup=$BENCH_WARMUP"
+        [ -n "$BENCH_ITERATIONS" ] && prefix="$prefix --iterations=$BENCH_ITERATIONS"
+        # Trim leading space
+        prefix=${prefix# }
+        if [ -n "$prefix" ]; then
+            if [ $HAS_ARGS -eq 1 ]; then
+                ARGS="$prefix $ARGS"
+            else
+                ARGS="$prefix"
+                HAS_ARGS=1
+            fi
+        fi
+    fi
 }
 
 set_driver_path() {
@@ -245,13 +273,17 @@ run_app() {
             cmd_opts=$(add_option "$cmd_opts" "LD_LIBRARY_PATH=$SIMV_DIR:$RT_DIR:\$LD_LIBRARY_PATH")
             cmd_opts=$(add_option "$cmd_opts" "python3 $ROOT_DIR/$PYTEST $ARGS")
         else
-            cmd_opts=$(add_option "$cmd_opts" "VCS_SOCKET_PORT=$VCS_PORT LD_LIBRARY_PATH=$SIMV_DIR:\$LD_LIBRARY_PATH make -C \"$APP_PATH\" run-xrt")
+            local vcs_target="run-xrt"
+            [ $BENCH -eq 1 ] && vcs_target="run-xrt-bench"
+            cmd_opts=$(add_option "$cmd_opts" "VCS_SOCKET_PORT=$VCS_PORT LD_LIBRARY_PATH=$SIMV_DIR:\$LD_LIBRARY_PATH make -C \"$APP_PATH\" $vcs_target")
         fi
     elif [ -n "$PYTEST" ]; then
         echo "Error: --pytest requires --driver=xrt_vcs"
         exit 1
     else
-        cmd_opts=$(add_option "$cmd_opts" "make -C \"$APP_PATH\" run-$DRIVER")
+        local make_target="run-$DRIVER"
+        [ $BENCH -eq 1 ] && make_target="run-$DRIVER-bench"
+        cmd_opts=$(add_option "$cmd_opts" "make -C \"$APP_PATH\" $make_target")
     fi
 
     if [ $DEBUG -ne 0 ] && [ -n "${LOG_MAX_BYTES:-}" ] && [ "${LOG_MAX_BYTES}" -gt 0 ] 2>/dev/null; then

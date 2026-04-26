@@ -143,6 +143,40 @@ else
 	SCOPE_JSON_PATH=$(VORTEX_RT_PATH)/scope.json LD_LIBRARY_PATH=$(XILINX_XRT)/lib:$(VORTEX_RT_PATH):$(LD_LIBRARY_PATH) VORTEX_DRIVER=xrt ./$(PROJECT) $(OPTS)
 endif
 
+# ---- Optional benchmark binary (opt-in per app) -----------------------------
+# Activated when $(SRC_DIR)/bench_main.cpp exists. Reuses the app's kernel.vxbin
+# and link line; just swaps main.cpp for bench_main.cpp and adds the shared
+# tests/common include path for bench_util.h.
+ifneq ($(wildcard $(SRC_DIR)/bench_main.cpp),)
+BENCH_PROJECT := $(PROJECT)_bench
+BENCH_SRCS    := $(filter-out $(SRC_DIR)/main.cpp,$(SRCS)) $(SRC_DIR)/bench_main.cpp
+BENCH_CXXFLAGS := $(CXXFLAGS) -I$(VORTEX_HOME)/tests/common
+
+$(BENCH_PROJECT): $(BENCH_SRCS)
+	$(CXX) $(BENCH_CXXFLAGS) $^ $(LDFLAGS) -o $@
+
+bench: $(BENCH_PROJECT) kernel.vxbin
+
+run-simx-bench: $(BENCH_PROJECT) kernel.vxbin
+	LD_LIBRARY_PATH=$(VORTEX_RT_PATH):$(LD_LIBRARY_PATH) VORTEX_DRIVER=simx ./$(BENCH_PROJECT) $(OPTS)
+
+run-rtlsim-bench: $(BENCH_PROJECT) kernel.vxbin
+	LD_LIBRARY_PATH=$(VORTEX_RT_PATH):$(LD_LIBRARY_PATH) VORTEX_DRIVER=rtlsim ./$(BENCH_PROJECT) $(OPTS)
+
+run-opae-bench: $(BENCH_PROJECT) kernel.vxbin
+	SCOPE_JSON_PATH=$(VORTEX_RT_PATH)/scope.json OPAE_DRV_PATHS=$(OPAE_DRV_PATHS) LD_LIBRARY_PATH=$(VORTEX_RT_PATH):$(LD_LIBRARY_PATH) VORTEX_DRIVER=opae ./$(BENCH_PROJECT) $(OPTS)
+
+run-xrt-bench: $(BENCH_PROJECT) kernel.vxbin
+ifeq ($(TARGET), hw)
+	SCOPE_JSON_PATH=$(FPGA_BIN_DIR)/scope.json XRT_INI_PATH=$(VORTEX_RT_PATH)/xrt/xrt.ini EMCONFIG_PATH=$(FPGA_BIN_DIR) XRT_DEVICE_INDEX=$(XRT_DEVICE_INDEX) XRT_XCLBIN_PATH=$(FPGA_BIN_DIR)/vortex_afu.xclbin LD_LIBRARY_PATH=$(XILINX_XRT)/lib:$(VORTEX_RT_PATH):$(LD_LIBRARY_PATH) VORTEX_DRIVER=xrt ./$(BENCH_PROJECT) $(OPTS)
+else ifeq ($(TARGET), hw_emu)
+	SCOPE_JSON_PATH=$(FPGA_BIN_DIR)/scope.json XCL_EMULATION_MODE=$(TARGET) XRT_INI_PATH=$(if $(wildcard $(FPGA_BIN_DIR)/xrt.ini),$(FPGA_BIN_DIR)/xrt.ini,$(VORTEX_RT_PATH)/xrt/xrt.ini) EMCONFIG_PATH=$(FPGA_BIN_DIR) XRT_DEVICE_INDEX=$(XRT_DEVICE_INDEX) XRT_XCLBIN_PATH=$(FPGA_BIN_DIR)/vortex_afu.xclbin LD_LIBRARY_PATH=$(HW_EMU_LD_PATHS) VORTEX_DRIVER=xrt ./$(BENCH_PROJECT) $(OPTS)
+else
+	SCOPE_JSON_PATH=$(VORTEX_RT_PATH)/scope.json LD_LIBRARY_PATH=$(XILINX_XRT)/lib:$(VORTEX_RT_PATH):$(LD_LIBRARY_PATH) VORTEX_DRIVER=xrt ./$(BENCH_PROJECT) $(OPTS)
+endif
+endif
+# -----------------------------------------------------------------------------
+
 .depend: $(SRCS)
 	$(CXX) $(CXXFLAGS) -MM $^ > .depend;
 
@@ -150,7 +184,7 @@ clean-kernel:
 	rm -rf *.elf *.vxbin *.dump
 
 clean-host:
-	rm -rf $(PROJECT) *.o *.log .depend
+	rm -rf $(PROJECT) $(PROJECT)_bench *.o *.log .depend
 
 clean: clean-kernel clean-host
 
