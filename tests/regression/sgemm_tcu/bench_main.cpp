@@ -90,10 +90,12 @@ int main(int argc, char *argv[]) {
       case 'k': xk = atoi(optarg); break;
       case 'h':
         printf("Usage: %s [--warmup=N] [--iterations=N] [--csv] "
+               "[--output=PATH] [--output-append] "
                "[-m M] [-n N] [-k K]\n", argv[0]);
         return 0;
       default:
         printf("Usage: %s [--warmup=N] [--iterations=N] [--csv] "
+               "[--output=PATH] [--output-append] "
                "[-m M] [-n N] [-k K]\n", argv[0]);
         return -1;
     }
@@ -187,7 +189,7 @@ int main(int argc, char *argv[]) {
     stats.record(sw.stop_us());
   }
 
-  stats.report("sgemm_tcu", stdout, bench.csv);
+  stats.report("sgemm_tcu", bench);
 
   if (!bench.csv) {
     printf("\n[Performance]\n");

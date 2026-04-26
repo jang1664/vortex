@@ -54,6 +54,28 @@ Defaults injected before user args (overridable via last-wins parsing):
 
 DEFAULT_ARGS = ("--cores=1", "--threads=8")
 
+# blackbox.sh recognises only "--flag=value" form for value-taking flags.
+# Normalize the more conventional "--flag value" form into "--flag=value"
+# so users don't get tripped up by the strict parser.
+VALUE_FLAGS = frozenset({
+    "--driver", "--app", "--pytest", "--clusters", "--cores", "--warps",
+    "--threads", "--perf", "--debug", "--args", "--log",
+})
+
+
+def normalize_args(args: list[str]) -> list[str]:
+    out: list[str] = []
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a in VALUE_FLAGS and i + 1 < len(args) and not args[i + 1].startswith("--"):
+            out.append(f"{a}={args[i + 1]}")
+            i += 2
+        else:
+            out.append(a)
+            i += 1
+    return out
+
 DBG_TRACE_DEFINES = (
     "-DDBG_TRACE_PIPELINE",
     "-DDBG_TRACE_MEM",
@@ -180,7 +202,7 @@ def run_hw(configs: str, fwd: list[str]) -> int:
         f"TARGET=hw "
         f"{' '.join(inner_cmd_parts)} | tee bb.log"
     )
-    srun_cmd = [
+    srun_prefix = [
         "srun",
         "--gres=fpga:u55c:1",
         "--cpus-per-task=4",
@@ -189,10 +211,16 @@ def run_hw(configs: str, fwd: list[str]) -> int:
         "--pty",
         "bash",
         "-c",
-        bash_cmd,
     ]
-    _echo({}, srun_cmd)
-    return subprocess.call(srun_cmd)
+    # Print the srun wrapper and the inner bash command on separate lines so
+    # CONFIGS (with embedded single quotes from Verilog literals like
+    # 64'h1ffc00000) is readable instead of a wall of escapes.
+    print(
+        "+ " + " ".join(shlex.quote(c) for c in srun_prefix) + " <<bash>>",
+        file=sys.stderr,
+    )
+    print("    " + bash_cmd, file=sys.stderr, flush=True)
+    return subprocess.call([*srun_prefix, bash_cmd])
 
 
 MODE_DISPATCH = {
@@ -225,6 +253,7 @@ def main() -> int:
         return 1
 
     configs = build_configs(os.environ.get("CONFIGS", ""))
+    fwd = normalize_args(fwd)
 
     targets = [m for m in MODE_DISPATCH if mode in (m, "all")]
 

@@ -105,6 +105,7 @@ int main(int argc, char *argv[]) {
     else if (strcmp(argv[i], "-offset") == 0) pos_offset  = atoi(argv[++i]);
     else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
       printf("Usage: %s [--warmup=N] [--iterations=N] [--csv] "
+             "[--output=PATH] [--output-append] "
              "[-batch N] [-seq S] [-heads H] [-headdim D] [-maxseq M] [-offset O]\n", argv[0]);
       return 0;
     }
@@ -201,7 +202,7 @@ int main(int argc, char *argv[]) {
     stats.record(sw.stop_us());
   }
 
-  stats.report("rope", stdout, bench.csv);
+  stats.report("rope", bench);
 
   if (!bench.csv) {
     printf("\n[Performance]\n");

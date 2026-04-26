@@ -18,6 +18,18 @@ import subprocess
 import sys
 from pathlib import Path
 
+# Reuse the model -> GEMM-shape derivation from tools/workload.
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_REPO_ROOT / "tools" / "workload"))
+from gen_kernel_cfgs import (  # noqa: E402
+    DEFAULT_QBLKS,
+    DEFAULT_SEQ_LENS as DEFAULT_MODEL_SEQ_LENS,
+    MODELS,
+    build_model_args,
+    parse_seq_lens_csv,
+    print_model_registry,
+)
+
 
 MODES = ("rtlsim", "xrt-vcs-sim", "hw_emu", "hw", "all")
 DEBUG_ARG_CHOICES = ("always", "omit", "auto")
@@ -92,7 +104,6 @@ DEFAULT_SHAPES = [
     "-m 256 -n 128 -k 128",
     "-m 256 -n 256 -k 256",
 ]
-DEFAULT_QBLKS = [32, 64, 128]
 DEFAULT_WTRANS = [0, 1]
 DEFAULT_QDIR = [0, 1]
 
@@ -105,143 +116,6 @@ def build_default_cases() -> list[str]:
                 for qd in DEFAULT_QDIR:
                     cases.append(f"{shape} -q {qblk} -t {wt} -d {qd}")
     return cases
-
-
-# ---------------------------------------------------------------------------
-# Model-driven sweep — derive GEMM shapes from known model configs.
-# Add entries to MODELS to extend coverage; model_linear_gemms handles any
-# LLaMA-style decoder layer (plain MHA or GQA) via num_kv_heads.
-# ---------------------------------------------------------------------------
-MODELS: dict[str, dict[str, int]] = {
-    "llama2-7b": {
-        "hidden_size": 4096,
-        "intermediate_size": 11008,
-        "num_attention_heads": 32,
-        "num_key_value_heads": 32,   # MHA (no GQA)
-        "head_dim": 128,
-    },
-    # Future models can be added here, e.g.:
-    # "llama2-13b":  {"hidden_size": 5120, "intermediate_size": 13824,
-    #                 "num_attention_heads": 40, "num_key_value_heads": 40,
-    #                 "head_dim": 128},
-    # "llama3-8b":   {"hidden_size": 4096, "intermediate_size": 14336,
-    #                 "num_attention_heads": 32, "num_key_value_heads": 8,
-    #                 "head_dim": 128},
-    # "mistral-7b":  {"hidden_size": 4096, "intermediate_size": 14336,
-    #                 "num_attention_heads": 32, "num_key_value_heads": 8,
-    #                 "head_dim": 128},
-}
-
-DEFAULT_MODEL_SEQ_LENS = [32, 128, 512, 1024]
-
-
-def model_linear_gemms(config: dict) -> list[tuple[str, int, int]]:
-    """Return unique (label, N, K) tuples for nn.Linear layers (FFN +
-    attention QKVO projections) in one LLaMA-style decoder layer.
-    N = out_features, K = in_features.
-    Shapes with the same (N, K) are merged and labels concatenated.
-    """
-    H = config["hidden_size"]
-    I = config["intermediate_size"]
-    head_dim = config["head_dim"]
-    num_heads = config["num_attention_heads"]
-    num_kv = config["num_key_value_heads"]
-    q_dim = num_heads * head_dim
-    kv_dim = num_kv * head_dim
-
-    raw: list[tuple[str, int, int]] = [
-        ("q_proj",    q_dim, H),
-        ("k_proj",    kv_dim, H),
-        ("v_proj",    kv_dim, H),
-        ("o_proj",    H,     q_dim),
-        ("gate_proj", I,     H),
-        ("up_proj",   I,     H),
-        ("down_proj", H,     I),
-    ]
-
-    merged: dict[tuple[int, int], str] = {}
-    for label, N, K in raw:
-        key = (N, K)
-        merged[key] = f"{merged[key]}+{label}" if key in merged else label
-    return [(lbl, N, K) for (N, K), lbl in merged.items()]
-
-
-def model_attention_gemms(config: dict, seq_lens: list[int]) -> list[tuple[str, int, int, int, int, int, int]]:
-    """Return attention per-head GEMM cases for each seq_len.
-
-    HW supports two fpint attention matmuls. Shapes follow per-head MHA and
-    QBLK is pinned to head_dim because the quantization block spans a full
-    head. WTRANS/QDIR are fixed by the HW contract.
-
-    Returns tuples: (label, M, N, K, QBLK, WTRANS, QDIR)
-      - QK^T (per head):  M=S, N=S, K=head_dim, QBLK=head_dim, -t 1 -d 0
-      - PV   (per head):  M=S, N=head_dim, K=S, QBLK=head_dim, -t 0 -d 1
-    """
-    D = config["head_dim"]
-    out: list[tuple[str, int, int, int, int, int, int]] = []
-    for S in seq_lens:
-        out.append((f"qkT_s{S}", S, S, D, D, 1, 0))
-        out.append((f"pv_s{S}",  S, D, S, D, 0, 1))
-    return out
-
-
-def build_model_cases(model_name: str, seq_lens: list[int]) -> list[str]:
-    if model_name not in MODELS:
-        raise ValueError(
-            f"unknown model: {model_name!r}. Available: {sorted(MODELS.keys())}"
-        )
-    config = MODELS[model_name]
-    cases: list[str] = []
-
-    # FFN + QKVO projections: WTRANS=0, QDIR=0 are fixed by the HW contract;
-    # only QBLK is swept.
-    for S in seq_lens:
-        for _label, N, K in model_linear_gemms(config):
-            for qblk in DEFAULT_QBLKS:
-                cases.append(f"-m {S} -n {N} -k {K} -q {qblk} -t 0 -d 0")
-
-    # Attention QK^T and PV: fixed QBLK/WTRANS/QDIR, only M/N/K change per seq.
-    for _label, M, N, K, qblk, wt, qd in model_attention_gemms(config, seq_lens):
-        cases.append(f"-m {M} -n {N} -k {K} -q {qblk} -t {wt} -d {qd}")
-
-    return cases
-
-
-def parse_seq_lens_csv(raw: str | None) -> list[int]:
-    if not raw:
-        return list(DEFAULT_MODEL_SEQ_LENS)
-    out: list[int] = []
-    for tok in raw.split(","):
-        tok = tok.strip()
-        if not tok:
-            continue
-        val = int(tok)
-        if val <= 0:
-            raise ValueError(f"seq len must be positive: {val}")
-        out.append(val)
-    if not out:
-        raise ValueError("empty --seq-lens list")
-    return out
-
-
-def print_model_registry() -> None:
-    print("Available models:")
-    for name in sorted(MODELS.keys()):
-        c = MODELS[name]
-        D = c["head_dim"]
-        print(f"  {name}:")
-        print(f"    hidden_size       = {c['hidden_size']}")
-        print(f"    intermediate_size = {c['intermediate_size']}")
-        print(f"    num_heads         = {c['num_attention_heads']}")
-        print(f"    num_kv_heads      = {c['num_key_value_heads']}")
-        print(f"    head_dim          = {D}")
-        print(f"    FFN / QKVO proj GEMM (sweep QBLK={DEFAULT_QBLKS}, "
-              f"WTRANS=0, QDIR=0):")
-        for lbl, N, K in model_linear_gemms(c):
-            print(f"      [{lbl}] N={N}, K={K}")
-        print(f"    Attention GEMM (QBLK=head_dim={D}, per-head):")
-        print(f"      [qk^T]  M=S,       N=S,       K={D},      -t 1 -d 0")
-        print(f"      [p@v]   M=S,       N={D},      K=S,       -t 0 -d 1")
 
 
 def normalise_case_args(raw: list[str]) -> list[str]:
@@ -445,7 +319,7 @@ def main() -> int:
             return 2
         try:
             seq_lens = parse_seq_lens_csv(args.seq_lens)
-            case_args = build_model_cases(args.model, seq_lens)
+            case_args = build_model_args(args.model, seq_lens)
         except ValueError as e:
             print(f"ERROR: {e}", file=sys.stderr)
             return 2

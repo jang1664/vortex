@@ -5,7 +5,7 @@
 // Usage sketch:
 //   #include "bench_util.h"
 //   int main(int argc, char** argv) {
-//     auto bench = vx_bench::parse(argc, argv);   // strips --warmup/--iterations/--csv from argv
+//     auto bench = vx_bench::parse(argc, argv);   // strips --warmup/--iterations/--csv/--output(-append) from argv
 //     // ... existing setup, allocations, kernel arg upload ...
 //     for (int i = 0; i < bench.warmup; ++i) {
 //       vx_start(...); vx_ready_wait(...);
@@ -16,7 +16,9 @@
 //       vx_start(...); vx_ready_wait(...);
 //       stats.record(sw.stop_us());
 //     }
-//     stats.report("softmax", stdout, bench.csv);
+//     // Honors bench.output (--output=PATH) / bench.output_append (--output-append).
+//     // Falls back to stdout when --output is not given.
+//     stats.report("softmax", bench);
 //   }
 
 #include <algorithm>
@@ -24,19 +26,26 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 #include <vector>
 
 namespace vx_bench {
 
 struct Args {
-    int  warmup     = 3;
-    int  iterations = 10;
-    bool csv        = false;
+    int         warmup        = 3;
+    int         iterations    = 10;
+    bool        csv           = false;
+    // Optional report file. Empty => write report to stdout.
+    std::string output;
+    // Append instead of truncate when writing to `output`. Useful for sweep
+    // drivers that aggregate one CSV row per shape into a shared file.
+    bool        output_append = false;
 };
 
-// Parses --warmup=N / --iterations=N / --csv (and -warmup/-iterations forms)
-// in place: matched flags are removed from argv and argc is decremented so the
-// caller's existing argument parser sees only its own flags.
+// Parses --warmup=N / --iterations=N / --csv / --output=PATH / --output-append
+// (and the space-separated -warmup/-iterations/-output forms) in place:
+// matched flags are removed from argv and argc is decremented so the caller's
+// existing argument parser sees only its own flags.
 inline Args parse(int& argc, char** argv) {
     Args a;
     int  w = 1;
@@ -48,10 +57,16 @@ inline Args parse(int& argc, char** argv) {
             a.iterations = std::atoi(s + 13);
         } else if (std::strcmp(s, "--csv") == 0) {
             a.csv = true;
+        } else if (std::strncmp(s, "--output=", 9) == 0) {
+            a.output = s + 9;
+        } else if (std::strcmp(s, "--output-append") == 0) {
+            a.output_append = true;
         } else if (std::strcmp(s, "--warmup") == 0 && r + 1 < argc) {
             a.warmup = std::atoi(argv[++r]);
         } else if (std::strcmp(s, "--iterations") == 0 && r + 1 < argc) {
             a.iterations = std::atoi(argv[++r]);
+        } else if (std::strcmp(s, "--output") == 0 && r + 1 < argc) {
+            a.output = argv[++r];
         } else {
             argv[w++] = argv[r];
         }
@@ -105,6 +120,28 @@ public:
                 "p50=%.3f  p95=%.3f  (us)\n",
                 label, n, mn, avg, mx, p50, p95);
         }
+    }
+
+    // Honors args.output / args.output_append. Writes to stdout when no
+    // --output was given. On file-open failure, falls back to stdout and
+    // prints a warning so the run still surfaces its numbers.
+    void report(const char* label, const Args& args) const {
+        if (args.output.empty()) {
+            report(label, stdout, args.csv);
+            return;
+        }
+        const char* mode = args.output_append ? "a" : "w";
+        FILE* f = std::fopen(args.output.c_str(), mode);
+        if (!f) {
+            std::fprintf(stderr,
+                "[bench] WARNING: cannot open --output=%s (mode=%s); "
+                "falling back to stdout\n",
+                args.output.c_str(), mode);
+            report(label, stdout, args.csv);
+            return;
+        }
+        report(label, f, args.csv);
+        std::fclose(f);
     }
 
 private:

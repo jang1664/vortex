@@ -72,11 +72,13 @@ int main(int argc, char *argv[]) {
       case 'n': size = atoi(optarg); break;
       case 'k': kernel_file = optarg; break;
       case 'h':
-        printf("Usage: %s [--warmup=N] [--iterations=N] [--csv] [-n SIZE] [-k FILE]\n",
+        printf("Usage: %s [--warmup=N] [--iterations=N] [--csv] "
+               "[--output=PATH] [--output-append] [-n SIZE] [-k FILE]\n",
                argv[0]);
         return 0;
       default:
-        printf("Usage: %s [--warmup=N] [--iterations=N] [--csv] [-n SIZE] [-k FILE]\n",
+        printf("Usage: %s [--warmup=N] [--iterations=N] [--csv] "
+               "[--output=PATH] [--output-append] [-n SIZE] [-k FILE]\n",
                argv[0]);
         return -1;
     }
@@ -139,7 +141,7 @@ int main(int argc, char *argv[]) {
     stats.record(sw.stop_us());
   }
 
-  stats.report("dropout", stdout, bench.csv);
+  stats.report("dropout", bench);
 
   if (!bench.csv) {
     printf("\n[Performance]\n");

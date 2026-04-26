@@ -4,7 +4,8 @@
 // output once before the timed loop, (3) prints latency stats at the end.
 //
 // CLI: same shape args as main.cpp (-batch / -heads / -seqq / -seqk / -mask /
-// -scale) plus --warmup=N / --iterations=N / --csv parsed by bench_util.
+// -scale) plus --warmup=N / --iterations=N / --csv / --output=PATH /
+// --output-append parsed by bench_util.
 
 #include <iostream>
 #include <cstdio>
@@ -85,7 +86,7 @@ static void initialize_random(std::vector<data_t>& vec) {
 }
 
 int main(int argc, char *argv[]) {
-  // Bench flags (--warmup / --iterations / --csv) — stripped from argv.
+  // Bench flags (--warmup / --iterations / --csv / --output / --output-append) — stripped from argv.
   auto bench = vx_bench::parse(argc, argv);
 
   // Shape defaults match main.cpp.
@@ -105,6 +106,7 @@ int main(int argc, char *argv[]) {
     else if (strcmp(argv[i], "-scale") == 0)  scale      = atof(argv[++i]);
     else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
       printf("Usage: %s [--warmup=N] [--iterations=N] [--csv] "
+             "[--output=PATH] [--output-append] "
              "[-batch N] [-heads H] [-seqq Q] [-seqk K] [-mask 0|1] [-scale S]\n",
              argv[0]);
       return 0;
@@ -201,7 +203,7 @@ int main(int argc, char *argv[]) {
     stats.record(sw.stop_us());
   }
 
-  stats.report("softmax", stdout, bench.csv);
+  stats.report("softmax", bench);
 
   if (!bench.csv) {
     printf("\n[Performance]\n");
