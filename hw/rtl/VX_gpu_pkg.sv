@@ -894,20 +894,18 @@ package VX_gpu_pkg;
     // (UUID_WIDTH reduction) does not under-size adapter tags.
     localparam GEMM_ADAPTER_OOO_SLOTS      = 8;
     localparam GEMM_ADAPTER_OOO_SLOT_BITS  = `CLOG2(GEMM_ADAPTER_OOO_SLOTS);
-    localparam GEMM_ADAPTER_I_SPLIT_BITS   = (`GEMM_INPUT_DATA_SIZE      > LSU_WORD_SIZE) ? (`CLOG2(`GEMM_INPUT_DATA_SIZE)      - `CLOG2(LSU_WORD_SIZE)) : 0;
+    // Only the weight path keeps a width-conversion adapter; input/sz/output
+    // are width-matched after gemm_data_if was widened to NUM_LSU_LANES.
     localparam GEMM_ADAPTER_W_SPLIT_BITS   = (`GEMM_WEIGHT_DATA_SIZE     > LSU_WORD_SIZE) ? (`CLOG2(`GEMM_WEIGHT_DATA_SIZE)     - `CLOG2(LSU_WORD_SIZE)) : 0;
-    localparam GEMM_ADAPTER_SZ_SPLIT_BITS  = (`GEMM_SCALE_ZERO_DATA_SIZE > LSU_WORD_SIZE) ? (`CLOG2(`GEMM_SCALE_ZERO_DATA_SIZE) - `CLOG2(LSU_WORD_SIZE)) : 0;
-    localparam GEMM_ADAPTER_O_SPLIT_BITS   = (`GEMM_OUTPUT_DATA_SIZE     > LSU_WORD_SIZE) ? (`CLOG2(`GEMM_OUTPUT_DATA_SIZE)     - `CLOG2(LSU_WORD_SIZE)) : 0;
-    localparam GEMM_ADAPTER_MAX_SPLIT_BITS = `MAX(`MAX(GEMM_ADAPTER_I_SPLIT_BITS, GEMM_ADAPTER_W_SPLIT_BITS),
-                                                   `MAX(GEMM_ADAPTER_SZ_SPLIT_BITS, GEMM_ADAPTER_O_SPLIT_BITS));
+    localparam GEMM_ADAPTER_MAX_SPLIT_BITS = GEMM_ADAPTER_W_SPLIT_BITS;
     localparam GEMM_BASE_TAG_WIDTH         = `MAX(LMEM_TAG_WIDTH, (GEMM_ADAPTER_MAX_SPLIT_BITS + GEMM_ADAPTER_OOO_SLOT_BITS));
 
     // GEMM node merges 4 LMEM clients into one LMEM port.
     localparam GEMM_ARB_ROUTE_TAG_BITS = `ARB_SEL_BITS(4, 1);
     localparam GEMM_LMEM_TAG_WIDTH = (GEMM_BASE_TAG_WIDTH + GEMM_ARB_ROUTE_TAG_BITS);
-    // Mem-unit local-memory path adds one more arbitration layer
-    // (3->1 in single-lane mode, otherwise 2->1).
-    localparam LMEM_ARB_ROUTE_TAG_BITS = (`NUM_LSU_LANES == 1) ? `ARB_SEL_BITS(3, 1) : MEM_ARB_ROUTE_TAG_BITS;
+    // Mem-unit local-memory path adds one 3->1 arbitration layer per lane:
+    //   {lmem_adapt[i], dma_local[i], gemm_data[i]}.
+    localparam LMEM_ARB_ROUTE_TAG_BITS = `ARB_SEL_BITS(3, 1);
     localparam LMEM_LOCAL_TAG_WIDTH = (GEMM_LMEM_TAG_WIDTH + LMEM_ARB_ROUTE_TAG_BITS);
 
     ///////////////////////// GEMM Unit Parameters ///////////////////////////

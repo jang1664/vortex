@@ -79,22 +79,24 @@ module VX_core import VX_gpu_pkg::*; #(
         .TAG_WIDTH (LSU_TAG_WIDTH)
     ) gemm_ctrl_if[`NUM_LSU_BLOCKS]();
 
-    // DMA data interfaces to mem_unit
+    // DMA data interfaces to mem_unit.
+    // dma_local_data_if and gemm_data_if are NUM_LSU_LANES wide so they can
+    // feed the per-lane 3:1 mux in mem_unit alongside lmem_adapt_if[i].
     VX_mem_bus_if #(
         .DATA_SIZE (LSU_WORD_SIZE),
         .TAG_WIDTH (LMEM_TAG_WIDTH)
-    ) dma_local_data_if();
+    ) dma_local_data_if[`NUM_LSU_LANES]();
 
     VX_mem_bus_if #(
         .DATA_SIZE (DCACHE_WORD_SIZE),
         .TAG_WIDTH (DCACHE_TAG_WIDTH)
     ) dma_global_data_if();
 
-    // GEMM data interface to mem_unit
+    // GEMM data interface to mem_unit (per-lane).
     VX_mem_bus_if #(
         .DATA_SIZE (LSU_WORD_SIZE),
         .TAG_WIDTH (GEMM_LMEM_TAG_WIDTH)
-    ) gemm_data_if();
+    ) gemm_data_if[`NUM_LSU_LANES]();
 
 
 `ifdef PERF_ENABLE
