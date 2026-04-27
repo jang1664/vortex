@@ -43,6 +43,7 @@ import VX_fpu_pkg::*;
 `ifdef PERF_ENABLE
     input sysmem_perf_t                 sysmem_perf,
     input pipeline_perf_t               pipeline_perf,
+    input accel_perf_t                  accel_perf,
 `endif
 
     VX_commit_csr_if.slave              commit_csr_if,
@@ -274,6 +275,63 @@ import VX_fpu_pkg::*;
                         `CSR_READ_64(`VX_CSR_MPM_MEM_LT, read_data_ro_w, sysmem_perf.mem.latency);
                         // PERF: coalescer
                         `CSR_READ_64(`VX_CSR_MPM_COALESCER_MISS, read_data_ro_w, sysmem_perf.coalescer.misses);
+                        default:;
+                        endcase
+                    end
+                    `VX_DCR_MPM_CLASS_ACCEL_GEMM: begin
+                        case (read_addr)
+                        `CSR_READ_64(`VX_CSR_MPM_GEMM_COMPUTE_CYC,    read_data_ro_w, accel_perf.gemm_unit.compute_cycles);
+                        `CSR_READ_64(`VX_CSR_MPM_GEMM_STALL_CYC,      read_data_ro_w, accel_perf.gemm_unit.stall_cycles);
+                        `CSR_READ_64(`VX_CSR_MPM_GEMM_JOB_CNT,        read_data_ro_w, accel_perf.gemm_unit.job_count);
+                        `CSR_READ_64(`VX_CSR_MPM_MXU_INPUT_FIRE,      read_data_ro_w, accel_perf.gemm_unit.input_fire);
+                        `CSR_READ_64(`VX_CSR_MPM_MXU_INPUT_STALL,     read_data_ro_w, accel_perf.gemm_unit.input_stall);
+                        `CSR_READ_64(`VX_CSR_MPM_MXU_WEIGHT_FIRE,     read_data_ro_w, accel_perf.gemm_unit.weight_fire);
+                        `CSR_READ_64(`VX_CSR_MPM_MXU_WEIGHT_STALL,    read_data_ro_w, accel_perf.gemm_unit.weight_stall);
+                        `CSR_READ_64(`VX_CSR_MPM_MXU_PSUM_FIRE,       read_data_ro_w, accel_perf.gemm_unit.psum_fire);
+                        `CSR_READ_64(`VX_CSR_MPM_MXU_PSUM_STALL,      read_data_ro_w, accel_perf.gemm_unit.psum_stall);
+                        `CSR_READ_64(`VX_CSR_MPM_MXU_OUTPUT_FIRE,     read_data_ro_w, accel_perf.gemm_unit.output_fire);
+                        `CSR_READ_64(`VX_CSR_MPM_MXU_OUTPUT_STALL,    read_data_ro_w, accel_perf.gemm_unit.output_stall);
+                        `CSR_READ_64(`VX_CSR_MPM_MXU_MAC_COUNT,       read_data_ro_w, accel_perf.gemm_unit.mac_count);
+                        `CSR_READ_64(`VX_CSR_MPM_GEMM_TOTAL_CYC,      read_data_ro_w, accel_perf.gemm_node.total_cycles);
+                        `CSR_READ_64(`VX_CSR_MPM_LMEM_RD_BYTES,       read_data_ro_w, accel_perf.gemm_node.lmem_rd_bytes);
+                        `CSR_READ_64(`VX_CSR_MPM_LMEM_WR_BYTES,       read_data_ro_w, accel_perf.gemm_node.lmem_wr_bytes);
+                        `CSR_READ_64(`VX_CSR_MPM_OVERLAP_DMA_MXU,     read_data_ro_w, accel_perf.overlap_dma_mxu);
+                        default:;
+                        endcase
+                    end
+                    `VX_DCR_MPM_CLASS_ACCEL_DMA: begin
+                        case (read_addr)
+                        // CPU-DMA
+                        `CSR_READ_64(`VX_CSR_MPM_CPU_DMA_RD_BYTES,          read_data_ro_w, accel_perf.cpu_dma.rd_bytes);
+                        `CSR_READ_64(`VX_CSR_MPM_CPU_DMA_WR_BYTES,          read_data_ro_w, accel_perf.cpu_dma.wr_bytes);
+                        `CSR_READ_64(`VX_CSR_MPM_CPU_DMA_XFER_CNT,          read_data_ro_w, accel_perf.cpu_dma.xfer_count);
+                        `CSR_READ_64(`VX_CSR_MPM_CPU_DMA_ACTIVE_CYC,        read_data_ro_w, accel_perf.cpu_dma.active_cycles);
+                        `CSR_READ_64(`VX_CSR_MPM_CPU_DMA_SRC_RD_REQ_FIRE,   read_data_ro_w, accel_perf.cpu_dma.src_rd_req_fire);
+                        `CSR_READ_64(`VX_CSR_MPM_CPU_DMA_SRC_RD_REQ_STALL,  read_data_ro_w, accel_perf.cpu_dma.src_rd_req_stall);
+                        `CSR_READ_64(`VX_CSR_MPM_CPU_DMA_SRC_RD_DATA_FIRE,  read_data_ro_w, accel_perf.cpu_dma.src_rd_data_fire);
+                        `CSR_READ_64(`VX_CSR_MPM_CPU_DMA_SRC_RD_DATA_STALL, read_data_ro_w, accel_perf.cpu_dma.src_rd_data_stall);
+                        `CSR_READ_64(`VX_CSR_MPM_CPU_DMA_DST_WR_FIRE,       read_data_ro_w, accel_perf.cpu_dma.dst_wr_fire);
+                        `CSR_READ_64(`VX_CSR_MPM_CPU_DMA_DST_WR_STALL,      read_data_ro_w, accel_perf.cpu_dma.dst_wr_stall);
+                        // HBM-DMA aggregate + max/min
+                        `CSR_READ_64(`VX_CSR_MPM_HBM_DMA_RD_BYTES,          read_data_ro_w, accel_perf.hbm_dma.aggregate.rd_bytes);
+                        `CSR_READ_64(`VX_CSR_MPM_HBM_DMA_WR_BYTES,          read_data_ro_w, accel_perf.hbm_dma.aggregate.wr_bytes);
+                        `CSR_READ_64(`VX_CSR_MPM_HBM_DMA_XFER_CNT,          read_data_ro_w, accel_perf.hbm_dma.aggregate.xfer_count);
+                        `CSR_READ_64(`VX_CSR_MPM_HBM_DMA_ACTIVE_CYC,        read_data_ro_w, accel_perf.hbm_dma.aggregate.active_cycles);
+                        `CSR_READ_64(`VX_CSR_MPM_HBM_DMA_SRC_RD_REQ_FIRE,   read_data_ro_w, accel_perf.hbm_dma.aggregate.src_rd_req_fire);
+                        `CSR_READ_64(`VX_CSR_MPM_HBM_DMA_SRC_RD_REQ_STALL,  read_data_ro_w, accel_perf.hbm_dma.aggregate.src_rd_req_stall);
+                        `CSR_READ_64(`VX_CSR_MPM_HBM_DMA_SRC_RD_DATA_FIRE,  read_data_ro_w, accel_perf.hbm_dma.aggregate.src_rd_data_fire);
+                        `CSR_READ_64(`VX_CSR_MPM_HBM_DMA_SRC_RD_DATA_STALL, read_data_ro_w, accel_perf.hbm_dma.aggregate.src_rd_data_stall);
+                        `CSR_READ_64(`VX_CSR_MPM_HBM_DMA_DST_WR_FIRE,       read_data_ro_w, accel_perf.hbm_dma.aggregate.dst_wr_fire);
+                        `CSR_READ_64(`VX_CSR_MPM_HBM_DMA_DST_WR_STALL,      read_data_ro_w, accel_perf.hbm_dma.aggregate.dst_wr_stall);
+                        `CSR_READ_64(`VX_CSR_MPM_HBM_DMA_ACTIVE_MAX,        read_data_ro_w, accel_perf.hbm_dma.active_cycles_max);
+                        `CSR_READ_64(`VX_CSR_MPM_HBM_DMA_ACTIVE_MIN,        read_data_ro_w, accel_perf.hbm_dma.active_cycles_min);
+                        // LDMA aggregate
+                        `CSR_READ_64(`VX_CSR_MPM_LDMA_AGG_RD_BYTES,         read_data_ro_w, accel_perf.lmem_dma_agg.rd_bytes);
+                        `CSR_READ_64(`VX_CSR_MPM_LDMA_AGG_WR_BYTES,         read_data_ro_w, accel_perf.lmem_dma_agg.wr_bytes);
+                        `CSR_READ_64(`VX_CSR_MPM_LDMA_AGG_XFER_CNT,         read_data_ro_w, accel_perf.lmem_dma_agg.xfer_count);
+                        `CSR_READ_64(`VX_CSR_MPM_LDMA_AGG_ACTIVE_CYC,       read_data_ro_w, accel_perf.lmem_dma_agg.active_cycles);
+                        `CSR_READ_64(`VX_CSR_MPM_LDMA_AGG_SRC_RD_REQ_FIRE,  read_data_ro_w, accel_perf.lmem_dma_agg.src_rd_req_fire);
+                        `CSR_READ_64(`VX_CSR_MPM_LDMA_AGG_SRC_RD_REQ_STALL, read_data_ro_w, accel_perf.lmem_dma_agg.src_rd_req_stall);
                         default:;
                         endcase
                     end

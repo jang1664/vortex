@@ -56,6 +56,9 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
 
     // TMEM side: VX_mem_bus_if master per channel
     VX_mem_bus_if.master    tmem_bus_if [NUM_CHANNELS]
+`ifdef PERF_ENABLE
+    ,output hbm_dma_perf_t  perf
+`endif
 );
 
     localparam DATA_SIZE      = DATA_WIDTH / 8;
@@ -116,6 +119,12 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
     end
 `endif
 
+`ifdef PERF_ENABLE
+    // Per-channel perf collected from each VX_dma_unit_misal instance below.
+    // Aggregated combinationally after the g_channel block.
+    dma_perf_t ch_perf [NUM_CHANNELS];
+`endif
+
     for (genvar ch = 0; ch < NUM_CHANNELS; ++ch) begin : g_channel
 
         // --------------------------------------------------------
@@ -145,6 +154,9 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
             .dcache_bus_if  (hbm_bus_if),
             .lmem_bus_if    (tmem_bus_if[ch]),
             .done_if        (internal_done_if)
+        `ifdef PERF_ENABLE
+            ,.perf          (ch_perf[ch])
+        `endif
         );
 
         // --------------------------------------------------------
@@ -555,6 +567,67 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
 `endif
 
     end // g_channel
+
+`ifdef PERF_ENABLE
+    // --------------------------------------------------------
+    // Per-channel sum (combinational) of every dma_perf_t field.
+    //   busy is OR-reduced: aggregate is busy if any channel is busy.
+    // --------------------------------------------------------
+    always_comb begin
+        perf.aggregate = '0;
+        for (int c = 0; c < NUM_CHANNELS; c++) begin
+            perf.aggregate.rd_bytes          += ch_perf[c].rd_bytes;
+            perf.aggregate.wr_bytes          += ch_perf[c].wr_bytes;
+            perf.aggregate.xfer_count        += ch_perf[c].xfer_count;
+            perf.aggregate.active_cycles     += ch_perf[c].active_cycles;
+            perf.aggregate.src_rd_req_fire   += ch_perf[c].src_rd_req_fire;
+            perf.aggregate.src_rd_req_stall  += ch_perf[c].src_rd_req_stall;
+            perf.aggregate.src_rd_data_fire  += ch_perf[c].src_rd_data_fire;
+            perf.aggregate.src_rd_data_stall += ch_perf[c].src_rd_data_stall;
+            perf.aggregate.dst_wr_fire       += ch_perf[c].dst_wr_fire;
+            perf.aggregate.dst_wr_stall      += ch_perf[c].dst_wr_stall;
+            perf.aggregate.wait_dcache       += ch_perf[c].wait_dcache;
+            perf.aggregate.wait_lmem         += ch_perf[c].wait_lmem;
+            perf.aggregate.busy              |= ch_perf[c].busy;
+        end
+    end
+
+    // --------------------------------------------------------
+    // active_cycles max/min binary-tree reduction.
+    //   Stage 0 loads leaves, each subsequent stage halves the width.
+    //   $clog2(NUM_CHANNELS) stages collapse the tree to a single value.
+    //   Correct for any power-of-2 NUM_CHANNELS (NUM_CHANNELS=8 -> 3 stages).
+    // --------------------------------------------------------
+    localparam int MAX_STAGES = $clog2(NUM_CHANNELS);
+    logic [PERF_CTR_BITS-1:0] tree_max [MAX_STAGES+1][NUM_CHANNELS];
+    logic [PERF_CTR_BITS-1:0] tree_min [MAX_STAGES+1][NUM_CHANNELS];
+
+    always_comb begin
+        // Default: all tree cells '0 to suppress latch inference on unused upper indices.
+        for (int s = 0; s <= MAX_STAGES; s++) begin
+            for (int i = 0; i < NUM_CHANNELS; i++) begin
+                tree_max[s][i] = '0;
+                tree_min[s][i] = '0;
+            end
+        end
+        // Stage 0: load leaves with each channel's active_cycles.
+        for (int i = 0; i < NUM_CHANNELS; i++) begin
+            tree_max[0][i] = ch_perf[i].active_cycles;
+            tree_min[0][i] = ch_perf[i].active_cycles;
+        end
+        // Reduction stages.
+        for (int s = 1; s <= MAX_STAGES; s++) begin
+            for (int i = 0; i < (NUM_CHANNELS >> s); i++) begin
+                tree_max[s][i] = (tree_max[s-1][2*i] > tree_max[s-1][2*i+1])
+                               ? tree_max[s-1][2*i] : tree_max[s-1][2*i+1];
+                tree_min[s][i] = (tree_min[s-1][2*i] < tree_min[s-1][2*i+1])
+                               ? tree_min[s-1][2*i] : tree_min[s-1][2*i+1];
+            end
+        end
+        perf.active_cycles_max = tree_max[MAX_STAGES][0];
+        perf.active_cycles_min = tree_min[MAX_STAGES][0];
+    end
+`endif
 
     `UNUSED_PARAM (AXI_USER_WIDTH)
 

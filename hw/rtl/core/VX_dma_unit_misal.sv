@@ -45,6 +45,9 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
   VX_mem_bus_if.master   lmem_bus_if,    // to local memory
 
   VX_node_done_if.master done_if
+`ifdef PERF_ENABLE
+  ,output dma_perf_t perf
+`endif
 );
 
   // ------------------------------------------------------------
@@ -1402,6 +1405,136 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
 
     end
   end
+
+`ifdef PERF_ENABLE
+    reg [PERF_CTR_BITS-1:0] perf_rd_bytes_r;
+    reg [PERF_CTR_BITS-1:0] perf_wr_bytes_r;
+    reg [PERF_CTR_BITS-1:0] perf_xfers_r;
+    reg [PERF_CTR_BITS-1:0] perf_active_r;
+    reg [PERF_CTR_BITS-1:0] perf_wait_dcache_r;
+    reg [PERF_CTR_BITS-1:0] perf_wait_lmem_r;
+    reg [PERF_CTR_BITS-1:0] perf_src_rd_req_fire_r,  perf_src_rd_req_stall_r;
+    reg [PERF_CTR_BITS-1:0] perf_src_rd_data_fire_r, perf_src_rd_data_stall_r;
+    reg [PERF_CTR_BITS-1:0] perf_dst_wr_fire_r,      perf_dst_wr_stall_r;
+
+    // ----------------------------------------------------------------
+    // Decoupled-FSM perf predicates
+    //
+    // The FSM was refactored to a decoupled architecture: the top FSM
+    // remains in S_G2L_DECIDE / S_L2G_DECIDE while sub-FSMs (rd_state_e,
+    // wr_state_e) drive the actual bus handshakes. The legacy
+    // S_*_SRC_RD_REQ / S_*_SRC_RD_WAIT / S_*_DST_WR_REQ states are
+    // unreachable on the live path (they fall through to the DECIDE
+    // states — see the legacy fall-through block in the next_state
+    // always_comb). Predicates that gate on those states are therefore
+    // dead and produce all-zero counters.
+    //
+    // The perf gates below use the actual active DECIDE states combined
+    // with the bus handshake helpers declared near the top of the file
+    // (dcache_req_fire / dcache_rsp_fire / lmem_req_fire / lmem_rsp_fire).
+    // Direction model (matches src_req_fire / dst_req_fire above):
+    //   - direction_bit_r=0 (G2L, HBM->local): state==S_G2L_DECIDE,
+    //       src=dcache (rw=0 reads), dst=lmem (rw=1 writes).
+    //   - direction_bit_r=1 (L2G, local->HBM): state==S_L2G_DECIDE,
+    //       src=lmem (rw=0 reads), dst=dcache (rw=1 writes).
+    // ----------------------------------------------------------------
+
+    // Active state shorthand for the per-direction perf gates
+    wire in_g2l_active = (state == S_G2L_DECIDE);
+    wire in_l2g_active = (state == S_L2G_DECIDE);
+
+    // G2L read beat: HBM read response landed
+    wire g2l_rd_beat = in_g2l_active && dcache_rsp_fire;
+    // L2G write beat: HBM write request accepted
+    wire l2g_wr_beat = in_l2g_active && dcache_req_fire && (dcache_bus_if.req_data.rw == 1'b1);
+
+    // Active: DMA is busy (not idle/done)
+    wire dma_is_active = (state != S_IDLE) && (state != S_DONE);
+    // Transfer complete edge
+    wire dma_xfer_done = (state != S_DONE) && (state_n == S_DONE);
+
+    // Stall breakdown: dcache side (HBM) — valid && !ready, gated on direction
+    wire dma_stall_dcache = (in_g2l_active && dcache_bus_if.req_valid && !dcache_bus_if.req_ready && (dcache_bus_if.req_data.rw == 1'b0))
+                          | (in_g2l_active && dcache_bus_if.rsp_valid && !dcache_bus_if.rsp_ready)
+                          | (in_l2g_active && dcache_bus_if.req_valid && !dcache_bus_if.req_ready && (dcache_bus_if.req_data.rw == 1'b1));
+    // Stall breakdown: lmem side — valid && !ready, gated on direction
+    wire dma_stall_lmem = (in_g2l_active && lmem_bus_if.req_valid && !lmem_bus_if.req_ready && (lmem_bus_if.req_data.rw == 1'b1))
+                        | (in_l2g_active && lmem_bus_if.req_valid && !lmem_bus_if.req_ready && (lmem_bus_if.req_data.rw == 1'b0))
+                        | (in_l2g_active && lmem_bus_if.rsp_valid && !lmem_bus_if.rsp_ready);
+
+    // Fire/stall per port (direction-independent: G2L src=dcache, L2G src=lmem)
+    // src_rd_req: sending read request to source
+    wire perf_src_rd_req_fire  = (in_g2l_active && dcache_req_fire && (dcache_bus_if.req_data.rw == 1'b0))
+                               | (in_l2g_active && lmem_req_fire   && (lmem_bus_if.req_data.rw   == 1'b0));
+    wire perf_src_rd_req_stall = (in_g2l_active && dcache_bus_if.req_valid && !dcache_bus_if.req_ready && (dcache_bus_if.req_data.rw == 1'b0))
+                               | (in_l2g_active && lmem_bus_if.req_valid   && !lmem_bus_if.req_ready   && (lmem_bus_if.req_data.rw   == 1'b0));
+    // src_rd_data: receiving read data from source
+    wire perf_src_rd_data_fire  = (in_g2l_active && dcache_rsp_fire)
+                                | (in_l2g_active && lmem_rsp_fire);
+    wire perf_src_rd_data_stall = (in_g2l_active && dcache_bus_if.rsp_valid && !dcache_bus_if.rsp_ready)
+                                | (in_l2g_active && lmem_bus_if.rsp_valid   && !lmem_bus_if.rsp_ready);
+    // dst_wr: writing to destination
+    wire perf_dst_wr_fire  = (in_g2l_active && lmem_req_fire   && (lmem_bus_if.req_data.rw   == 1'b1))
+                           | (in_l2g_active && dcache_req_fire && (dcache_bus_if.req_data.rw == 1'b1));
+    wire perf_dst_wr_stall = (in_g2l_active && lmem_bus_if.req_valid   && !lmem_bus_if.req_ready   && (lmem_bus_if.req_data.rw   == 1'b1))
+                           | (in_l2g_active && dcache_bus_if.req_valid && !dcache_bus_if.req_ready && (dcache_bus_if.req_data.rw == 1'b1));
+
+    always @(posedge clk) begin
+        if (reset) begin
+            perf_rd_bytes_r          <= '0;
+            perf_wr_bytes_r          <= '0;
+            perf_xfers_r             <= '0;
+            perf_active_r            <= '0;
+            perf_wait_dcache_r       <= '0;
+            perf_wait_lmem_r         <= '0;
+            perf_src_rd_req_fire_r   <= '0;
+            perf_src_rd_req_stall_r  <= '0;
+            perf_src_rd_data_fire_r  <= '0;
+            perf_src_rd_data_stall_r <= '0;
+            perf_dst_wr_fire_r       <= '0;
+            perf_dst_wr_stall_r      <= '0;
+        end else begin
+            if (g2l_rd_beat)
+                perf_rd_bytes_r <= perf_rd_bytes_r + PERF_CTR_BITS'(DCACHE_BYTES);
+            if (l2g_wr_beat)
+                perf_wr_bytes_r <= perf_wr_bytes_r + PERF_CTR_BITS'(DCACHE_BYTES);
+            if (dma_xfer_done)
+                perf_xfers_r <= perf_xfers_r + PERF_CTR_BITS'(1);
+            if (dma_is_active)
+                perf_active_r <= perf_active_r + PERF_CTR_BITS'(1);
+            if (dma_stall_dcache)
+                perf_wait_dcache_r <= perf_wait_dcache_r + PERF_CTR_BITS'(1);
+            if (dma_stall_lmem)
+                perf_wait_lmem_r <= perf_wait_lmem_r + PERF_CTR_BITS'(1);
+            if (perf_src_rd_req_fire)
+                perf_src_rd_req_fire_r <= perf_src_rd_req_fire_r + PERF_CTR_BITS'(1);
+            if (perf_src_rd_req_stall)
+                perf_src_rd_req_stall_r <= perf_src_rd_req_stall_r + PERF_CTR_BITS'(1);
+            if (perf_src_rd_data_fire)
+                perf_src_rd_data_fire_r <= perf_src_rd_data_fire_r + PERF_CTR_BITS'(1);
+            if (perf_src_rd_data_stall)
+                perf_src_rd_data_stall_r <= perf_src_rd_data_stall_r + PERF_CTR_BITS'(1);
+            if (perf_dst_wr_fire)
+                perf_dst_wr_fire_r <= perf_dst_wr_fire_r + PERF_CTR_BITS'(1);
+            if (perf_dst_wr_stall)
+                perf_dst_wr_stall_r <= perf_dst_wr_stall_r + PERF_CTR_BITS'(1);
+        end
+    end
+
+    assign perf.rd_bytes          = perf_rd_bytes_r;
+    assign perf.wr_bytes          = perf_wr_bytes_r;
+    assign perf.xfer_count        = perf_xfers_r;
+    assign perf.active_cycles     = perf_active_r;
+    assign perf.src_rd_req_fire   = perf_src_rd_req_fire_r;
+    assign perf.src_rd_req_stall  = perf_src_rd_req_stall_r;
+    assign perf.src_rd_data_fire  = perf_src_rd_data_fire_r;
+    assign perf.src_rd_data_stall = perf_src_rd_data_stall_r;
+    assign perf.dst_wr_fire       = perf_dst_wr_fire_r;
+    assign perf.dst_wr_stall      = perf_dst_wr_stall_r;
+    assign perf.wait_dcache       = perf_wait_dcache_r;
+    assign perf.wait_lmem         = perf_wait_lmem_r;
+    assign perf.busy              = dma_is_active;
+`endif
 
 `ifdef CHIPSCOPE
 `ifdef DBG_SCOPE_GEMM

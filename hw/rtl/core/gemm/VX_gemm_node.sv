@@ -28,6 +28,12 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
 
     // DMA engine AXI ports (pass through to VX_tmem_subsystem -> HBM)
     AXI_BUS.Master          dma_axi_m [NUM_TMEM_BANKS]
+`ifdef PERF_ENABLE
+    ,output gemm_unit_perf_t  gemm_unit_perf
+    ,output gemm_node_perf_t  gemm_node_perf
+    ,output hbm_dma_perf_t    hbm_dma_perf
+    ,output dma_perf_t        lmem_dma_agg_perf
+`endif
 );
 
     // -------------------------------------------------------------------------
@@ -449,6 +455,10 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
       .gemm_weight_if (tmem_w_gemm_bus_if),
       .gemm_sz_if     (tmem_sz_gemm_bus_if),
       .gemm_output_if (tmem_o_gemm_bus_if)
+`ifdef PERF_ENABLE
+      ,.hbm_dma_perf      (hbm_dma_perf)
+      ,.lmem_dma_agg_perf (lmem_dma_agg_perf)
+`endif
     );
 
     // -------------------------------------------------------------------------
@@ -466,6 +476,9 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
       .sz_lmem_bus_if(sz_gemm_bus_if),
       .o_lmem_bus_if(o_gemm_bus_if),
       .gemm_unit_if(gemm_unit_if)
+`ifdef PERF_ENABLE
+      ,.perf(gemm_unit_perf)
+`endif
     );
 
     // -------------------------------------------------------------------------
@@ -507,6 +520,10 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     // Output: direct connection
     `ASSIGN_VX_MEM_BUS_IF(o_gemm_bus_if, tmem_o_gemm_bus_if);
 
+`ifdef PERF_ENABLE
+    gemm_node_perf_t gemm_ctrl_perf;
+`endif
+
     // GEMM top controller
     VX_gemm_ctrl #(
       .INSTANCE_ID(INSTANCE_ID),
@@ -519,7 +536,30 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
       .gemm_ctrl_if(gemm_ctrl_if),
       .done_if(done_if),
       .gemm_sync_slv_if(gemm_sync_if)
+`ifdef PERF_ENABLE
+      ,.gemm_unit_computing(gemm_unit_perf.computing)
+      ,.perf(gemm_ctrl_perf)
+`endif
     );
+
+`ifdef PERF_ENABLE
+    // Assemble gemm_node_perf:
+    //   total_cycles  : forwarded from gemm_ctrl
+    //   lmem_rd_bytes : deferred (tied to '0). The original 78ca77 design tapped
+    //                   a single shared lmem_bus_if at the gemm_node boundary.
+    //                   On fpint_improve that bus has been split into four
+    //                   separate GEMM-unit-facing buses (i/w/sz/o_gemm_bus_if)
+    //                   that flow through the TMEM subsystem's local DMAs. The
+    //                   per-LDMA byte counts are already aggregated in
+    //                   lmem_dma_agg_perf (rd_bytes/wr_bytes), and the per-port
+    //                   fire counters in gemm_unit_perf cover the same traffic
+    //                   from the MXU side. Adding a separate counter here would
+    //                   double-count the same bytes. Defer to a follow-up patch
+    //                   if a gemm_node-local LMEM byte counter is needed.
+    assign gemm_node_perf.total_cycles  = gemm_ctrl_perf.total_cycles;
+    assign gemm_node_perf.lmem_rd_bytes = '0;
+    assign gemm_node_perf.lmem_wr_bytes = '0;
+`endif
 
     // `UNUSED_VAR (weight_wtrans)
     // `UNUSED_PARAM (MT)

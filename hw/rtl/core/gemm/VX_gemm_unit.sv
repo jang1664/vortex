@@ -22,6 +22,9 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
 
     // Control Interface
     VX_gemm_unit_if.slave   gemm_unit_if      // for ctrl gemm
+`ifdef PERF_ENABLE
+    ,output gemm_unit_perf_t perf
+`endif
 );
 
     // =========================================================================
@@ -1597,6 +1600,89 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
         end
       end
     end
+`endif
+
+`ifdef PERF_ENABLE
+    // -------------------------------------------------------------------------
+    // Performance counters
+    // -------------------------------------------------------------------------
+    reg [PERF_CTR_BITS-1:0] perf_compute_r;
+    reg [PERF_CTR_BITS-1:0] perf_stall_r;
+    reg [PERF_CTR_BITS-1:0] perf_jobs_r;
+    reg [PERF_CTR_BITS-1:0] perf_mac_count_r;
+    reg [PERF_CTR_BITS-1:0] perf_input_fire_r,  perf_input_stall_r;
+    reg [PERF_CTR_BITS-1:0] perf_weight_fire_r, perf_weight_stall_r;
+    reg [PERF_CTR_BITS-1:0] perf_psum_fire_r,   perf_psum_stall_r;
+    reg [PERF_CTR_BITS-1:0] perf_output_fire_r, perf_output_stall_r;
+
+    // Input: pipe buffer output valid-ready (ready = in_flight = COMPUTE)
+    wire perf_input_fire  = in_pipe_valid_out && in_flight;
+    wire perf_input_stall = in_pipe_valid_out && !in_flight;
+    // Weight: LMEM bus request valid-ready
+    wire perf_weight_fire  = w_lmem_bus_if.req_valid && w_lmem_bus_if.req_ready;
+    wire perf_weight_stall = w_lmem_bus_if.req_valid && !w_lmem_bus_if.req_ready;
+    // Psum: accumulator read FIFO push valid-ready
+    wire perf_psum_fire  = acc_mem_rd_data_valid && !acc_rd_fifo_full;
+    wire perf_psum_stall = acc_mem_rd_data_valid && acc_rd_fifo_full;
+    // Output: LMEM output bus fire / stall (actual data written out)
+    wire perf_output_fire  = o_lmem_bus_if.req_valid && o_lmem_bus_if.req_ready;
+    wire perf_output_stall = o_lmem_bus_if.req_valid && !o_lmem_bus_if.req_ready;
+
+    always @(posedge clk) begin
+        if (reset) begin
+            perf_compute_r      <= '0;
+            perf_stall_r        <= '0;
+            perf_jobs_r         <= '0;
+            perf_mac_count_r    <= '0;
+            perf_input_fire_r   <= '0;
+            perf_input_stall_r  <= '0;
+            perf_weight_fire_r  <= '0;
+            perf_weight_stall_r <= '0;
+            perf_psum_fire_r    <= '0;
+            perf_psum_stall_r   <= '0;
+            perf_output_fire_r  <= '0;
+            perf_output_stall_r <= '0;
+        end else begin
+            if (state == COMPUTE)
+                perf_compute_r <= perf_compute_r + PERF_CTR_BITS'(1);
+            if ((state == IDLE) && !gemm_idle)
+                perf_stall_r <= perf_stall_r + PERF_CTR_BITS'(1);
+            if (gemm_done)
+                perf_jobs_r <= perf_jobs_r + PERF_CTR_BITS'(1);
+            if (perf_output_fire)
+                perf_mac_count_r <= perf_mac_count_r + PERF_CTR_BITS'(`MXU_ROW * `MXU_COL);
+            if (perf_input_fire)
+                perf_input_fire_r <= perf_input_fire_r + PERF_CTR_BITS'(1);
+            if (perf_input_stall)
+                perf_input_stall_r <= perf_input_stall_r + PERF_CTR_BITS'(1);
+            if (perf_weight_fire)
+                perf_weight_fire_r <= perf_weight_fire_r + PERF_CTR_BITS'(1);
+            if (perf_weight_stall)
+                perf_weight_stall_r <= perf_weight_stall_r + PERF_CTR_BITS'(1);
+            if (perf_psum_fire)
+                perf_psum_fire_r <= perf_psum_fire_r + PERF_CTR_BITS'(1);
+            if (perf_psum_stall)
+                perf_psum_stall_r <= perf_psum_stall_r + PERF_CTR_BITS'(1);
+            if (perf_output_fire)
+                perf_output_fire_r <= perf_output_fire_r + PERF_CTR_BITS'(1);
+            if (perf_output_stall)
+                perf_output_stall_r <= perf_output_stall_r + PERF_CTR_BITS'(1);
+        end
+    end
+
+    assign perf.compute_cycles = perf_compute_r;
+    assign perf.stall_cycles   = perf_stall_r;
+    assign perf.job_count      = perf_jobs_r;
+    assign perf.mac_count      = perf_mac_count_r;
+    assign perf.input_fire     = perf_input_fire_r;
+    assign perf.input_stall    = perf_input_stall_r;
+    assign perf.weight_fire    = perf_weight_fire_r;
+    assign perf.weight_stall   = perf_weight_stall_r;
+    assign perf.psum_fire      = perf_psum_fire_r;
+    assign perf.psum_stall     = perf_psum_stall_r;
+    assign perf.output_fire    = perf_output_fire_r;
+    assign perf.output_stall   = perf_output_stall_r;
+    assign perf.computing      = (state == COMPUTE);
 `endif
 
 endmodule

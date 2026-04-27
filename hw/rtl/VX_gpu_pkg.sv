@@ -751,6 +751,63 @@ package VX_gpu_pkg;
         logic [PERF_CTR_BITS-1:0] load_latency;
    } pipeline_perf_t;
 
+    // Per-MXU port struct
+    typedef struct packed {
+        logic [PERF_CTR_BITS-1:0] compute_cycles;
+        logic [PERF_CTR_BITS-1:0] stall_cycles;
+        logic [PERF_CTR_BITS-1:0] job_count;
+        logic [PERF_CTR_BITS-1:0] input_fire;
+        logic [PERF_CTR_BITS-1:0] input_stall;
+        logic [PERF_CTR_BITS-1:0] weight_fire;
+        logic [PERF_CTR_BITS-1:0] weight_stall;
+        logic [PERF_CTR_BITS-1:0] psum_fire;
+        logic [PERF_CTR_BITS-1:0] psum_stall;
+        logic [PERF_CTR_BITS-1:0] output_fire;
+        logic [PERF_CTR_BITS-1:0] output_stall;
+        logic [PERF_CTR_BITS-1:0] mac_count;
+        logic                     computing;
+    } gemm_unit_perf_t;
+
+    typedef struct packed {
+        logic [PERF_CTR_BITS-1:0] total_cycles;
+        logic [PERF_CTR_BITS-1:0] lmem_rd_bytes;
+        logic [PERF_CTR_BITS-1:0] lmem_wr_bytes;
+    } gemm_node_perf_t;
+
+    // Generic single-instance DMA perf (used for cpu_dma, lmem_dma_agg, and inside hbm_dma)
+    typedef struct packed {
+        logic [PERF_CTR_BITS-1:0] rd_bytes;
+        logic [PERF_CTR_BITS-1:0] wr_bytes;
+        logic [PERF_CTR_BITS-1:0] xfer_count;
+        logic [PERF_CTR_BITS-1:0] active_cycles;
+        logic [PERF_CTR_BITS-1:0] src_rd_req_fire;
+        logic [PERF_CTR_BITS-1:0] src_rd_req_stall;
+        logic [PERF_CTR_BITS-1:0] src_rd_data_fire;
+        logic [PERF_CTR_BITS-1:0] src_rd_data_stall;
+        logic [PERF_CTR_BITS-1:0] dst_wr_fire;
+        logic [PERF_CTR_BITS-1:0] dst_wr_stall;
+        logic [PERF_CTR_BITS-1:0] wait_dcache;
+        logic [PERF_CTR_BITS-1:0] wait_lmem;
+        logic                     busy;
+    } dma_perf_t;
+
+    // HBM-DMA: 8-channel aggregate plus per-channel imbalance metric
+    typedef struct packed {
+        dma_perf_t                aggregate;
+        logic [PERF_CTR_BITS-1:0] active_cycles_max;
+        logic [PERF_CTR_BITS-1:0] active_cycles_min;
+    } hbm_dma_perf_t;
+
+    // Top-level accel perf (assembled in VX_core)
+    typedef struct packed {
+        gemm_unit_perf_t          gemm_unit;
+        gemm_node_perf_t          gemm_node;
+        dma_perf_t                cpu_dma;
+        hbm_dma_perf_t            hbm_dma;
+        dma_perf_t                lmem_dma_agg;
+        logic [PERF_CTR_BITS-1:0] overlap_dma_mxu;
+    } accel_perf_t;
+
    ////////////////////////// gemm related types    ///////////////////////////
    typedef struct packed {
        logic [UUID_WIDTH-1:0]    uuid;

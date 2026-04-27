@@ -14,6 +14,9 @@ module VX_dma_node import VX_gpu_pkg::*; #(
   VX_lsu_mem_if.slave     mmio_if[N_MASTER], // from LSU
   VX_mem_bus_if.master    dcache_bus_if, // to dcache
   VX_mem_bus_if.master    lmem_bus_if // to local memory
+`ifdef PERF_ENABLE
+  ,output dma_perf_t perf
+`endif
 );
 
   localparam int NUM_REGS32 = `DMA_CFG_REG_NUM;
@@ -59,6 +62,9 @@ module VX_dma_node import VX_gpu_pkg::*; #(
     .dcache_bus_if(dcache_bus_if),
     .lmem_bus_if  (lmem_bus_if),
     .done_if      (done_if.master)
+`ifdef PERF_ENABLE
+    ,.perf        (perf)
+`endif
   );
 
 endmodule

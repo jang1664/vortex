@@ -53,6 +53,10 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
     VX_mem_bus_if.master gemm_weight_if,
     VX_mem_bus_if.master gemm_sz_if,
     VX_mem_bus_if.master gemm_output_if
+`ifdef PERF_ENABLE
+    ,output hbm_dma_perf_t hbm_dma_perf
+    ,output dma_perf_t     lmem_dma_agg_perf
+`endif
 );
 
     localparam DATA_WIDTH       = DATA_SIZE * 8;
@@ -91,6 +95,9 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         .done_if        (dma_done_if),
         .axi_m          (axi_m),
         .tmem_bus_if    (dma_to_tmem)
+    `ifdef PERF_ENABLE
+        ,.perf          (hbm_dma_perf)
+    `endif
     );
 
     // ================================================================
@@ -307,6 +314,10 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
     // [2] sz:      LMEM->GEMM (DIR=0)
     // [3] output:  GEMM->LMEM (DIR=1)
 
+`ifdef PERF_ENABLE
+    dma_perf_t ldma_perf [4];
+`endif
+
     // Input local DMA
     VX_lmem_dma_misal #(
         .INSTANCE_ID ({INSTANCE_ID, ":ldma_in"}),
@@ -320,6 +331,9 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         .gemm_sync_if(ldma_sync_if[0]),
         .lmem_bus_if (ldma_to_switch[0]),
         .gemm_bus_if (ldma_gemm[0])
+    `ifdef PERF_ENABLE
+        ,.perf       (ldma_perf[0])
+    `endif
     );
 
     // Weight local DMA
@@ -335,6 +349,9 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         .gemm_sync_if(ldma_sync_if[1]),
         .lmem_bus_if (ldma_to_switch[1]),
         .gemm_bus_if (ldma_gemm[1])
+    `ifdef PERF_ENABLE
+        ,.perf       (ldma_perf[1])
+    `endif
     );
 
     // Scale/zero-point local DMA
@@ -350,6 +367,9 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         .gemm_sync_if(ldma_sync_if[2]),
         .lmem_bus_if (ldma_to_switch[2]),
         .gemm_bus_if (ldma_gemm[2])
+    `ifdef PERF_ENABLE
+        ,.perf       (ldma_perf[2])
+    `endif
     );
 
     // Output local DMA (GEMM -> LMEM)
@@ -365,6 +385,9 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         .gemm_sync_if(ldma_sync_if[3]),
         .lmem_bus_if (ldma_to_switch[3]),
         .gemm_bus_if (ldma_gemm[3])
+    `ifdef PERF_ENABLE
+        ,.perf       (ldma_perf[3])
+    `endif
     );
 
     // ================================================================
@@ -412,6 +435,30 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
     assign ldma_gemm[3].rsp_valid        = gemm_output_if.rsp_valid;
     assign ldma_gemm[3].rsp_data         = gemm_output_if.rsp_data;
     assign gemm_output_if.rsp_ready      = ldma_gemm[3].rsp_ready;
+
+    // ================================================================
+    // 7. Local DMA performance aggregation (4 instances -> single struct)
+    // ================================================================
+`ifdef PERF_ENABLE
+    always_comb begin
+        lmem_dma_agg_perf = '0;
+        for (int i = 0; i < 4; i++) begin
+            lmem_dma_agg_perf.rd_bytes          += ldma_perf[i].rd_bytes;
+            lmem_dma_agg_perf.wr_bytes          += ldma_perf[i].wr_bytes;
+            lmem_dma_agg_perf.xfer_count        += ldma_perf[i].xfer_count;
+            lmem_dma_agg_perf.active_cycles     += ldma_perf[i].active_cycles;
+            lmem_dma_agg_perf.src_rd_req_fire   += ldma_perf[i].src_rd_req_fire;
+            lmem_dma_agg_perf.src_rd_req_stall  += ldma_perf[i].src_rd_req_stall;
+            lmem_dma_agg_perf.src_rd_data_fire  += ldma_perf[i].src_rd_data_fire;
+            lmem_dma_agg_perf.src_rd_data_stall += ldma_perf[i].src_rd_data_stall;
+            lmem_dma_agg_perf.dst_wr_fire       += ldma_perf[i].dst_wr_fire;
+            lmem_dma_agg_perf.dst_wr_stall      += ldma_perf[i].dst_wr_stall;
+            lmem_dma_agg_perf.wait_dcache       += ldma_perf[i].wait_dcache;
+            lmem_dma_agg_perf.wait_lmem         += ldma_perf[i].wait_lmem;
+            lmem_dma_agg_perf.busy              |= ldma_perf[i].busy;
+        end
+    end
+`endif
 
 `ifdef DBG_TRACE_MEM
     always @(posedge clk) begin

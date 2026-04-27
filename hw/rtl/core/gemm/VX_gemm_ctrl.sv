@@ -34,6 +34,10 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
     VX_gemm_ctrl_if.master        gemm_ctrl_if,       // to gemm unit + cmd ctrls
     VX_gemm_node_done_if.master   done_if,            // to job frontend (clear)
     VX_gemm_sync_if.slave         gemm_sync_slv_if[N_NODE] // from cmd ctrls (notify events)
+`ifdef PERF_ENABLE
+    ,input  logic            gemm_unit_computing
+    ,output gemm_node_perf_t perf
+`endif
 );
 
     logic [N_CHILDREN-1:0]       child_q_empty_v;
@@ -329,5 +333,32 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
       .probe3 (dbg_gemm_ctrl_probe3)
     );
 `endif
+`endif
+
+`ifdef PERF_ENABLE
+    // -------------------------------------------------------------------------
+    // Performance counters
+    //   total_cycles increments while the controller has any in-flight work
+    //   (parent or any child queue is non-empty). This branch's instruction-
+    //   stream architecture has no explicit job_active_q (see commit 78ca77's
+    //   reference); !queues_idle is the closest semantic analog.
+    //   The MXU pipeline inside VX_gemm_unit can keep computing AFTER the
+    //   controller's queues have drained (the last command flows out of the
+    //   ctrl into the MXU, which then runs through its own latency). To keep
+    //   total_cycles a valid upper bound for compute_cycles (i.e. preserve
+    //   the natural invariant compute_cycles <= total_cycles), we OR in
+    //   gemm_unit_computing so any cycle the MXU is still active is also
+    //   counted as a "total" cycle.
+    // -------------------------------------------------------------------------
+    reg [PERF_CTR_BITS-1:0] perf_total_cycles_r;
+    always @(posedge clk) begin
+        if (reset)
+            perf_total_cycles_r <= '0;
+        else if (!queues_idle || gemm_unit_computing)
+            perf_total_cycles_r <= perf_total_cycles_r + PERF_CTR_BITS'(1);
+    end
+    assign perf.total_cycles  = perf_total_cycles_r;
+    assign perf.lmem_rd_bytes = '0;  // filled by gemm_node
+    assign perf.lmem_wr_bytes = '0;  // filled by gemm_node
 `endif
 endmodule

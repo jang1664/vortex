@@ -17,6 +17,7 @@
 #include <fstream>
 #include <list>
 #include <cstring>
+#include <cstdint>
 #include <vector>
 #include <unordered_map>
 #include <vortex.h>
@@ -214,6 +215,36 @@ extern int vx_dump_perf(vx_device_h hdevice, FILE* stream) {
   uint64_t mem_writes = 0;
   uint64_t mem_lat = 0;
   uint64_t mem_bank_stalls = 0;
+
+  // PERF: accelerator — GEMM unit (class ACCEL_GEMM)
+  uint64_t gemm_compute_cycles = 0;
+  uint64_t gemm_stall_cycles = 0;
+  uint64_t gemm_job_count = 0;
+  uint64_t mxu_input_fire = 0,  mxu_input_stall = 0;
+  uint64_t mxu_weight_fire = 0, mxu_weight_stall = 0;
+  uint64_t mxu_psum_fire = 0,   mxu_psum_stall = 0;
+  uint64_t mxu_output_fire = 0, mxu_output_stall = 0;
+  uint64_t mxu_mac_count = 0;
+  uint64_t gemm_total_cycles = 0;
+  uint64_t accel_lmem_rd_bytes = 0;
+  uint64_t accel_lmem_wr_bytes = 0;
+  uint64_t overlap_dma_mxu = 0;
+
+  // PERF: accelerator — DMA (class ACCEL_DMA)
+  uint64_t cpu_dma_rd_bytes = 0, cpu_dma_wr_bytes = 0;
+  uint64_t cpu_dma_xfer_count = 0, cpu_dma_active_cycles = 0;
+  uint64_t cpu_dma_src_rd_req_fire = 0,  cpu_dma_src_rd_req_stall = 0;
+  uint64_t cpu_dma_src_rd_data_fire = 0, cpu_dma_src_rd_data_stall = 0;
+  uint64_t cpu_dma_dst_wr_fire = 0,      cpu_dma_dst_wr_stall = 0;
+  uint64_t hbm_dma_rd_bytes = 0, hbm_dma_wr_bytes = 0;
+  uint64_t hbm_dma_xfer_count = 0, hbm_dma_active_cycles = 0;
+  uint64_t hbm_dma_src_rd_req_fire = 0,  hbm_dma_src_rd_req_stall = 0;
+  uint64_t hbm_dma_src_rd_data_fire = 0, hbm_dma_src_rd_data_stall = 0;
+  uint64_t hbm_dma_dst_wr_fire = 0,      hbm_dma_dst_wr_stall = 0;
+  uint64_t hbm_dma_active_max = 0, hbm_dma_active_min = UINT64_MAX;
+  uint64_t ldma_agg_rd_bytes = 0, ldma_agg_wr_bytes = 0;
+  uint64_t ldma_agg_xfer_count = 0, ldma_agg_active_cycles = 0;
+  uint64_t ldma_agg_src_rd_req_fire = 0, ldma_agg_src_rd_req_stall = 0;
 
   uint64_t num_cores;
   CHECK_ERR(vx_dev_caps(hdevice, VX_CAPS_NUM_CORES, &num_cores), {
@@ -588,6 +619,75 @@ extern int vx_dump_perf(vx_device_h hdevice, FILE* stream) {
         });
       }
     } break;
+    case VX_DCR_MPM_CLASS_ACCEL_GEMM: {
+      #define READ_PERF(csr, accum) do { \
+          uint64_t _v = 0; \
+          CHECK_ERR(vx_mpm_query(hdevice, csr, core_id, &_v), { return err; }); \
+          accum += _v; \
+        } while (0)
+      READ_PERF(VX_CSR_MPM_GEMM_COMPUTE_CYC,  gemm_compute_cycles);
+      READ_PERF(VX_CSR_MPM_GEMM_STALL_CYC,    gemm_stall_cycles);
+      READ_PERF(VX_CSR_MPM_GEMM_JOB_CNT,      gemm_job_count);
+      READ_PERF(VX_CSR_MPM_MXU_INPUT_FIRE,    mxu_input_fire);
+      READ_PERF(VX_CSR_MPM_MXU_INPUT_STALL,   mxu_input_stall);
+      READ_PERF(VX_CSR_MPM_MXU_WEIGHT_FIRE,   mxu_weight_fire);
+      READ_PERF(VX_CSR_MPM_MXU_WEIGHT_STALL,  mxu_weight_stall);
+      READ_PERF(VX_CSR_MPM_MXU_PSUM_FIRE,     mxu_psum_fire);
+      READ_PERF(VX_CSR_MPM_MXU_PSUM_STALL,    mxu_psum_stall);
+      READ_PERF(VX_CSR_MPM_MXU_OUTPUT_FIRE,   mxu_output_fire);
+      READ_PERF(VX_CSR_MPM_MXU_OUTPUT_STALL,  mxu_output_stall);
+      READ_PERF(VX_CSR_MPM_MXU_MAC_COUNT,     mxu_mac_count);
+      READ_PERF(VX_CSR_MPM_GEMM_TOTAL_CYC,    gemm_total_cycles);
+      READ_PERF(VX_CSR_MPM_LMEM_RD_BYTES,     accel_lmem_rd_bytes);
+      READ_PERF(VX_CSR_MPM_LMEM_WR_BYTES,     accel_lmem_wr_bytes);
+      READ_PERF(VX_CSR_MPM_OVERLAP_DMA_MXU,   overlap_dma_mxu);
+      #undef READ_PERF
+    } break;
+    case VX_DCR_MPM_CLASS_ACCEL_DMA: {
+      #define READ_PERF(csr, accum) do { \
+          uint64_t _v = 0; \
+          CHECK_ERR(vx_mpm_query(hdevice, csr, core_id, &_v), { return err; }); \
+          accum += _v; \
+        } while (0)
+      // CPU-DMA
+      READ_PERF(VX_CSR_MPM_CPU_DMA_RD_BYTES,          cpu_dma_rd_bytes);
+      READ_PERF(VX_CSR_MPM_CPU_DMA_WR_BYTES,          cpu_dma_wr_bytes);
+      READ_PERF(VX_CSR_MPM_CPU_DMA_XFER_CNT,          cpu_dma_xfer_count);
+      READ_PERF(VX_CSR_MPM_CPU_DMA_ACTIVE_CYC,        cpu_dma_active_cycles);
+      READ_PERF(VX_CSR_MPM_CPU_DMA_SRC_RD_REQ_FIRE,   cpu_dma_src_rd_req_fire);
+      READ_PERF(VX_CSR_MPM_CPU_DMA_SRC_RD_REQ_STALL,  cpu_dma_src_rd_req_stall);
+      READ_PERF(VX_CSR_MPM_CPU_DMA_SRC_RD_DATA_FIRE,  cpu_dma_src_rd_data_fire);
+      READ_PERF(VX_CSR_MPM_CPU_DMA_SRC_RD_DATA_STALL, cpu_dma_src_rd_data_stall);
+      READ_PERF(VX_CSR_MPM_CPU_DMA_DST_WR_FIRE,       cpu_dma_dst_wr_fire);
+      READ_PERF(VX_CSR_MPM_CPU_DMA_DST_WR_STALL,      cpu_dma_dst_wr_stall);
+      // HBM-DMA aggregate
+      READ_PERF(VX_CSR_MPM_HBM_DMA_RD_BYTES,          hbm_dma_rd_bytes);
+      READ_PERF(VX_CSR_MPM_HBM_DMA_WR_BYTES,          hbm_dma_wr_bytes);
+      READ_PERF(VX_CSR_MPM_HBM_DMA_XFER_CNT,          hbm_dma_xfer_count);
+      READ_PERF(VX_CSR_MPM_HBM_DMA_ACTIVE_CYC,        hbm_dma_active_cycles);
+      READ_PERF(VX_CSR_MPM_HBM_DMA_SRC_RD_REQ_FIRE,   hbm_dma_src_rd_req_fire);
+      READ_PERF(VX_CSR_MPM_HBM_DMA_SRC_RD_REQ_STALL,  hbm_dma_src_rd_req_stall);
+      READ_PERF(VX_CSR_MPM_HBM_DMA_SRC_RD_DATA_FIRE,  hbm_dma_src_rd_data_fire);
+      READ_PERF(VX_CSR_MPM_HBM_DMA_SRC_RD_DATA_STALL, hbm_dma_src_rd_data_stall);
+      READ_PERF(VX_CSR_MPM_HBM_DMA_DST_WR_FIRE,       hbm_dma_dst_wr_fire);
+      READ_PERF(VX_CSR_MPM_HBM_DMA_DST_WR_STALL,      hbm_dma_dst_wr_stall);
+      // HBM-DMA per-channel imbalance — use max-of-max / min-of-min across cores
+      {
+        uint64_t v_max = 0, v_min = 0;
+        CHECK_ERR(vx_mpm_query(hdevice, VX_CSR_MPM_HBM_DMA_ACTIVE_MAX, core_id, &v_max), { return err; });
+        CHECK_ERR(vx_mpm_query(hdevice, VX_CSR_MPM_HBM_DMA_ACTIVE_MIN, core_id, &v_min), { return err; });
+        if (v_max > hbm_dma_active_max) hbm_dma_active_max = v_max;
+        if (v_min < hbm_dma_active_min) hbm_dma_active_min = v_min;
+      }
+      // LDMA aggregate
+      READ_PERF(VX_CSR_MPM_LDMA_AGG_RD_BYTES,         ldma_agg_rd_bytes);
+      READ_PERF(VX_CSR_MPM_LDMA_AGG_WR_BYTES,         ldma_agg_wr_bytes);
+      READ_PERF(VX_CSR_MPM_LDMA_AGG_XFER_CNT,         ldma_agg_xfer_count);
+      READ_PERF(VX_CSR_MPM_LDMA_AGG_ACTIVE_CYC,       ldma_agg_active_cycles);
+      READ_PERF(VX_CSR_MPM_LDMA_AGG_SRC_RD_REQ_FIRE,  ldma_agg_src_rd_req_fire);
+      READ_PERF(VX_CSR_MPM_LDMA_AGG_SRC_RD_REQ_STALL, ldma_agg_src_rd_req_stall);
+      #undef READ_PERF
+    } break;
     default:
       break;
     }
@@ -678,6 +778,76 @@ extern int vx_dump_perf(vx_device_h hdevice, FILE* stream) {
       fprintf(stream, "PERF: memory latency=%d cycles\n", mem_avg_lat);
       fprintf(stream, "PERF: memory bank stalls=%ld (utilization=%d%%)\n", mem_bank_stalls, mem_bank_utilization);
     }
+  } break;
+  case VX_DCR_MPM_CLASS_ACCEL_GEMM: {
+    fprintf(stream, "PERF: === GEMM Performance Analysis ===\n");
+    fprintf(stream, "PERF: jobs=%ld total_cycles=%ld\n", gemm_job_count, gemm_total_cycles);
+    fprintf(stream, "PERF: compute_cycles=%ld stall_cycles=%ld mac_count=%ld\n",
+            gemm_compute_cycles, gemm_stall_cycles, mxu_mac_count);
+    fprintf(stream, "PERF: DMA+MXU overlap=%.3f%% (%ld / %ld)\n",
+            (gemm_total_cycles > 0) ? 100.0 * overlap_dma_mxu / gemm_total_cycles : 0.0,
+            overlap_dma_mxu, gemm_total_cycles);
+    // MXU raw fire/stall
+    fprintf(stream, "PERF: --- MXU Raw Counters ---\n");
+    fprintf(stream, "PERF: input:  fire=%ld stall=%ld\n", mxu_input_fire,  mxu_input_stall);
+    fprintf(stream, "PERF: weight: fire=%ld stall=%ld\n", mxu_weight_fire, mxu_weight_stall);
+    fprintf(stream, "PERF: psum:   fire=%ld stall=%ld\n", mxu_psum_fire,   mxu_psum_stall);
+    fprintf(stream, "PERF: output: fire=%ld stall=%ld\n", mxu_output_fire, mxu_output_stall);
+    // MXU utilization table
+    fprintf(stream, "PERF: --- MXU Utilization (fire / denominator) ---\n");
+    fprintf(stream, "PERF: %-12s /total_cycles   /compute_cycles\n", "");
+    const char* mxu_names[]  = {"input",          "weight",          "psum",          "output"};
+    uint64_t    mxu_fires[]  = { mxu_input_fire,   mxu_weight_fire,   mxu_psum_fire,   mxu_output_fire };
+    for (int i = 0; i < 4; ++i) {
+      double pct_total   = (gemm_total_cycles > 0)   ? 100.0 * mxu_fires[i] / gemm_total_cycles   : 0.0;
+      double pct_compute = (gemm_compute_cycles > 0) ? 100.0 * mxu_fires[i] / gemm_compute_cycles : 0.0;
+      fprintf(stream, "PERF: %-12s %7.3f%%        %7.3f%%\n", mxu_names[i], pct_total, pct_compute);
+    }
+    // Roofline
+    fprintf(stream, "PERF: --- Roofline ---\n");
+    uint64_t flops = mxu_mac_count * 2;  // MAC = 1 mul + 1 add
+    double achieved_fpc = (gemm_total_cycles > 0) ? (double)flops / (double)gemm_total_cycles : 0.0;
+    fprintf(stream, "PERF: MACs=%ld FLOPs=%ld\n", mxu_mac_count, flops);
+    fprintf(stream, "PERF: Achieved throughput=%.3f FLOPs/cycle\n", achieved_fpc);
+    // Note: lmem_rd_bytes / lmem_wr_bytes are deferred ('0 in RTL); see
+    // ACCEL_DMA dump for actual LMEM byte traffic via lmem_dma_agg.
+    if (accel_lmem_rd_bytes != 0 || accel_lmem_wr_bytes != 0) {
+      fprintf(stream, "PERF: LMEM bytes: rd=%ld wr=%ld\n",
+              accel_lmem_rd_bytes, accel_lmem_wr_bytes);
+    }
+  } break;
+  case VX_DCR_MPM_CLASS_ACCEL_DMA: {
+    fprintf(stream, "PERF: === DMA Subsystem ===\n");
+    // CPU-DMA
+    fprintf(stream, "PERF: --- CPU-DMA (1 instance) ---\n");
+    fprintf(stream, "PERF: rd_bytes=%ld wr_bytes=%ld xfer_count=%ld active_cycles=%ld\n",
+            cpu_dma_rd_bytes, cpu_dma_wr_bytes, cpu_dma_xfer_count, cpu_dma_active_cycles);
+    fprintf(stream, "PERF: src_rd_req:  fire=%ld stall=%ld\n", cpu_dma_src_rd_req_fire,  cpu_dma_src_rd_req_stall);
+    fprintf(stream, "PERF: src_rd_data: fire=%ld stall=%ld\n", cpu_dma_src_rd_data_fire, cpu_dma_src_rd_data_stall);
+    fprintf(stream, "PERF: dst_wr:      fire=%ld stall=%ld\n", cpu_dma_dst_wr_fire,      cpu_dma_dst_wr_stall);
+    // HBM-DMA aggregate
+    fprintf(stream, "PERF: --- HBM-DMA (8-channel aggregated) ---\n");
+    fprintf(stream, "PERF: rd_bytes=%ld wr_bytes=%ld xfer_count=%ld active_sum=%ld\n",
+            hbm_dma_rd_bytes, hbm_dma_wr_bytes, hbm_dma_xfer_count, hbm_dma_active_cycles);
+    fprintf(stream, "PERF: src_rd_req:  fire=%ld stall=%ld\n", hbm_dma_src_rd_req_fire,  hbm_dma_src_rd_req_stall);
+    fprintf(stream, "PERF: src_rd_data: fire=%ld stall=%ld\n", hbm_dma_src_rd_data_fire, hbm_dma_src_rd_data_stall);
+    fprintf(stream, "PERF: dst_wr:      fire=%ld stall=%ld\n", hbm_dma_dst_wr_fire,      hbm_dma_dst_wr_stall);
+    if (hbm_dma_active_min == UINT64_MAX) hbm_dma_active_min = 0;
+    double imbalance = (hbm_dma_active_max > 0)
+                     ? 100.0 * (double)(hbm_dma_active_max - hbm_dma_active_min) / (double)hbm_dma_active_max
+                     : 0.0;
+    fprintf(stream, "PERF: per-ch active: max=%ld min=%ld imbalance=%.3f%%\n",
+            hbm_dma_active_max, hbm_dma_active_min, imbalance);
+    // LDMA aggregate
+    fprintf(stream, "PERF: --- Local-DMA (4-instance aggregated) ---\n");
+    fprintf(stream, "PERF: rd_bytes=%ld wr_bytes=%ld xfer_count=%ld active_cycles=%ld\n",
+            ldma_agg_rd_bytes, ldma_agg_wr_bytes, ldma_agg_xfer_count, ldma_agg_active_cycles);
+    fprintf(stream, "PERF: src_rd_req:  fire=%ld stall=%ld\n", ldma_agg_src_rd_req_fire, ldma_agg_src_rd_req_stall);
+    // Bandwidth
+    fprintf(stream, "PERF: --- HBM Bandwidth ---\n");
+    uint64_t hbm_bytes = hbm_dma_rd_bytes + hbm_dma_wr_bytes;
+    double hbm_bw = (hbm_dma_active_cycles > 0) ? (double)hbm_bytes / (double)hbm_dma_active_cycles : 0.0;
+    fprintf(stream, "PERF: HBM total bytes=%ld bandwidth=%.3f bytes/active-cycle\n", hbm_bytes, hbm_bw);
   } break;
   default:
     break;

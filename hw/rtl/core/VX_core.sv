@@ -100,6 +100,7 @@ module VX_core import VX_gpu_pkg::*; #(
     coalescer_perf_t coalescer_perf;
     pipeline_perf_t pipeline_perf;
     sysmem_perf_t sysmem_perf_tmp;
+    accel_perf_t accel_perf;
     always @(*) begin
         sysmem_perf_tmp = sysmem_perf;
         sysmem_perf_tmp.lmem = lmem_perf;
@@ -198,6 +199,7 @@ module VX_core import VX_gpu_pkg::*; #(
     `ifdef PERF_ENABLE
         .sysmem_perf    (sysmem_perf_tmp),
         .pipeline_perf  (pipeline_perf),
+        .accel_perf     (accel_perf),
     `endif
 
         .base_dcrs      (base_dcrs),
@@ -252,6 +254,9 @@ module VX_core import VX_gpu_pkg::*; #(
     ) u_VX_dma_node (
       .clk(clk),
       .reset(reset),
+    `ifdef PERF_ENABLE
+      .perf(accel_perf.cpu_dma),
+    `endif
       .mmio_if(dma_ctrl_if),
       .dcache_bus_if(dma_global_data_if),
       .lmem_bus_if(dma_local_data_if)
@@ -264,6 +269,12 @@ module VX_core import VX_gpu_pkg::*; #(
     ) gemm_node (
         .clk         (clk),
         .reset       (reset),
+    `ifdef PERF_ENABLE
+        .gemm_unit_perf    (accel_perf.gemm_unit),
+        .gemm_node_perf    (accel_perf.gemm_node),
+        .hbm_dma_perf      (accel_perf.hbm_dma),
+        .lmem_dma_agg_perf (accel_perf.lmem_dma_agg),
+    `endif
         .mmio_if     (gemm_ctrl_if),
         .dma_axi_m   (dma_axi_m)
     );
@@ -343,6 +354,19 @@ module VX_core import VX_gpu_pkg::*; #(
     assign pipeline_perf.stores = perf_stores;
     assign pipeline_perf.ifetch_latency = perf_icache_lat;
     assign pipeline_perf.load_latency = perf_dcache_lat;
+
+    // Overlap counter: cycles where any DMA is busy AND the GEMM unit is computing
+    wire any_dma_busy = accel_perf.cpu_dma.busy
+                      | accel_perf.hbm_dma.aggregate.busy
+                      | accel_perf.lmem_dma_agg.busy;
+    reg [PERF_CTR_BITS-1:0] perf_overlap_r;
+    always @(posedge clk) begin
+        if (reset)
+            perf_overlap_r <= '0;
+        else if (any_dma_busy && accel_perf.gemm_unit.computing)
+            perf_overlap_r <= perf_overlap_r + PERF_CTR_BITS'(1);
+    end
+    assign accel_perf.overlap_dma_mxu = perf_overlap_r;
 
 `endif
 

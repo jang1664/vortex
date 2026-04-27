@@ -32,6 +32,9 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
 
   VX_mem_bus_if.master      lmem_bus_if,
   VX_mem_bus_if.master      gemm_bus_if
+`ifdef PERF_ENABLE
+  ,output dma_perf_t perf
+`endif
 );
 
   localparam int BUS_BYTES = lmem_bus_if.DATA_SIZE;
@@ -734,6 +737,118 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
       end
     end
   end
+
+`ifdef PERF_ENABLE
+    // Direction-based source/destination selection. The synthesizer prunes
+    // the unused branch since DIR is a parameter.
+    logic perf_src_req_valid;
+    logic perf_src_req_ready;
+    logic perf_src_rsp_valid;
+    logic perf_src_rsp_ready;
+    logic perf_dst_req_valid;
+    logic perf_dst_req_ready;
+
+    generate
+        if (DIR == 0) begin : g_dir_l2g
+            // DIR=0 (LMEM -> GEMM): src=lmem, dst=gemm
+            assign perf_src_req_valid = lmem_bus_if.req_valid;
+            assign perf_src_req_ready = lmem_bus_if.req_ready;
+            assign perf_src_rsp_valid = lmem_bus_if.rsp_valid;
+            assign perf_src_rsp_ready = lmem_bus_if.rsp_ready;
+            assign perf_dst_req_valid = gemm_bus_if.req_valid;
+            assign perf_dst_req_ready = gemm_bus_if.req_ready;
+        end else begin : g_dir_g2l
+            // DIR=1 (GEMM -> LMEM): src=gemm, dst=lmem
+            assign perf_src_req_valid = gemm_bus_if.req_valid;
+            assign perf_src_req_ready = gemm_bus_if.req_ready;
+            assign perf_src_rsp_valid = gemm_bus_if.rsp_valid;
+            assign perf_src_rsp_ready = gemm_bus_if.rsp_ready;
+            assign perf_dst_req_valid = lmem_bus_if.req_valid;
+            assign perf_dst_req_ready = lmem_bus_if.req_ready;
+        end
+    endgenerate
+
+    // Counters
+    reg [PERF_CTR_BITS-1:0] perf_rd_bytes_r;
+    reg [PERF_CTR_BITS-1:0] perf_wr_bytes_r;
+    reg [PERF_CTR_BITS-1:0] perf_xfers_r;
+    reg [PERF_CTR_BITS-1:0] perf_active_r;
+    reg [PERF_CTR_BITS-1:0] perf_src_rd_req_fire_r,  perf_src_rd_req_stall_r;
+    reg [PERF_CTR_BITS-1:0] perf_src_rd_data_fire_r, perf_src_rd_data_stall_r;
+    reg [PERF_CTR_BITS-1:0] perf_dst_wr_fire_r,      perf_dst_wr_stall_r;
+
+    // Edge detection for xfer_count: rising edge into TOP_DONE.
+    top_state_e top_state_q1;
+    always @(posedge clk) begin
+        if (reset)
+            top_state_q1 <= TOP_IDLE;
+        else
+            top_state_q1 <= top_state;
+    end
+
+    wire dma_is_active = (top_state != TOP_IDLE) && (top_state != TOP_DONE);
+    wire dma_xfer_done = (top_state == TOP_DONE) && (top_state_q1 != TOP_DONE);
+
+    // Fire/stall events on src and dst ports (valid && ready / valid && !ready).
+    wire perf_src_rd_req_fire   = perf_src_req_valid &&  perf_src_req_ready;
+    wire perf_src_rd_req_stall  = perf_src_req_valid && !perf_src_req_ready;
+    wire perf_src_rd_data_fire  = perf_src_rsp_valid &&  perf_src_rsp_ready;
+    wire perf_src_rd_data_stall = perf_src_rsp_valid && !perf_src_rsp_ready;
+    wire perf_dst_wr_fire       = perf_dst_req_valid &&  perf_dst_req_ready;
+    wire perf_dst_wr_stall      = perf_dst_req_valid && !perf_dst_req_ready;
+
+    always @(posedge clk) begin
+        if (reset) begin
+            perf_rd_bytes_r          <= '0;
+            perf_wr_bytes_r          <= '0;
+            perf_xfers_r             <= '0;
+            perf_active_r            <= '0;
+            perf_src_rd_req_fire_r   <= '0;
+            perf_src_rd_req_stall_r  <= '0;
+            perf_src_rd_data_fire_r  <= '0;
+            perf_src_rd_data_stall_r <= '0;
+            perf_dst_wr_fire_r       <= '0;
+            perf_dst_wr_stall_r      <= '0;
+        end else begin
+            if (perf_src_rd_data_fire)
+                perf_rd_bytes_r <= perf_rd_bytes_r + PERF_CTR_BITS'(BUS_BYTES);
+            if (perf_dst_wr_fire)
+                perf_wr_bytes_r <= perf_wr_bytes_r + PERF_CTR_BITS'(BUS_BYTES);
+            if (dma_xfer_done)
+                perf_xfers_r <= perf_xfers_r + PERF_CTR_BITS'(1);
+            if (dma_is_active)
+                perf_active_r <= perf_active_r + PERF_CTR_BITS'(1);
+            if (perf_src_rd_req_fire)
+                perf_src_rd_req_fire_r <= perf_src_rd_req_fire_r + PERF_CTR_BITS'(1);
+            if (perf_src_rd_req_stall)
+                perf_src_rd_req_stall_r <= perf_src_rd_req_stall_r + PERF_CTR_BITS'(1);
+            if (perf_src_rd_data_fire)
+                perf_src_rd_data_fire_r <= perf_src_rd_data_fire_r + PERF_CTR_BITS'(1);
+            if (perf_src_rd_data_stall)
+                perf_src_rd_data_stall_r <= perf_src_rd_data_stall_r + PERF_CTR_BITS'(1);
+            if (perf_dst_wr_fire)
+                perf_dst_wr_fire_r <= perf_dst_wr_fire_r + PERF_CTR_BITS'(1);
+            if (perf_dst_wr_stall)
+                perf_dst_wr_stall_r <= perf_dst_wr_stall_r + PERF_CTR_BITS'(1);
+        end
+    end
+
+    assign perf.rd_bytes          = perf_rd_bytes_r;
+    assign perf.wr_bytes          = perf_wr_bytes_r;
+    assign perf.xfer_count        = perf_xfers_r;
+    assign perf.active_cycles     = perf_active_r;
+    assign perf.src_rd_req_fire   = perf_src_rd_req_fire_r;
+    assign perf.src_rd_req_stall  = perf_src_rd_req_stall_r;
+    assign perf.src_rd_data_fire  = perf_src_rd_data_fire_r;
+    assign perf.src_rd_data_stall = perf_src_rd_data_stall_r;
+    assign perf.dst_wr_fire       = perf_dst_wr_fire_r;
+    assign perf.dst_wr_stall      = perf_dst_wr_stall_r;
+    // This module never touches dcache and never needs to disambiguate the
+    // two local buses, so both wait counters are constant zero here.
+    assign perf.wait_dcache       = '0;
+    assign perf.wait_lmem         = '0;
+    assign perf.busy              = dma_is_active;
+`endif
 
 `ifdef CHIPSCOPE
 `ifdef DBG_SCOPE_GEMM
