@@ -104,16 +104,60 @@ static void parse_args(int argc, char **argv) {
   }
 }
 
+// IEEE 754 FP32 -> FP16 with round-to-nearest-even, matching HW converter (NRE).
 static uint16_t float_to_fp16(float f) {
   union { float f; uint32_t i; } u = {f};
-  uint32_t sign = (u.i >> 16) & 0x8000;
-  int32_t exp = ((u.i >> 23) & 0xFF) - 127 + 15;
-  uint32_t mantissa = (u.i >> 13) & 0x3FF;
+  uint32_t x       = u.i;
+  uint16_t sign    = uint16_t((x >> 16) & 0x8000u);
+  int32_t  exp32   = int32_t((x >> 23) & 0xFFu);
+  uint32_t mant32  = x & 0x7FFFFFu;
 
-  if (exp <= 0) return sign;
-  if (exp >= 31) return sign | 0x7C00;
+  // NaN / Inf
+  if (exp32 == 0xFF) {
+    return sign | (mant32 ? 0x7E00u : 0x7C00u);
+  }
+  // FP32 zero / subnormal -> FP16 zero
+  if (exp32 == 0) return sign;
 
-  return sign | (exp << 10) | mantissa;
+  int32_t exp_f16 = exp32 - 127 + 15;
+
+  // Overflow -> inf
+  if (exp_f16 >= 31) return sign | 0x7C00u;
+
+  // Normal FP16 (exp_f16 in [1, 30])
+  if (exp_f16 >= 1) {
+    uint32_t mant_top   = mant32 >> 13;        // top 10 bits
+    uint32_t round_bits = mant32 & 0x1FFFu;    // low 13 bits (guard+round+sticky)
+    // RNE: round up if > 0.5 ulp, or exactly 0.5 ulp with odd LSB.
+    if (round_bits > 0x1000u ||
+        (round_bits == 0x1000u && (mant_top & 1u))) {
+      mant_top += 1;
+      if (mant_top == 0x400u) {        // mantissa overflow -> bump exponent
+        mant_top = 0;
+        exp_f16 += 1;
+        if (exp_f16 >= 31) return sign | 0x7C00u;
+      }
+    }
+    return sign | uint16_t(exp_f16 << 10) | uint16_t(mant_top);
+  }
+
+  // Subnormal FP16 (exp_f16 in [-10, 0]). Outside this range -> underflow to 0.
+  if (exp_f16 < -10) return sign;
+
+  uint32_t m24         = mant32 | 0x800000u;             // prepend implicit 1
+  int32_t  shift       = 14 - exp_f16;                    // >= 14, <= 24
+  uint32_t round_mask  = (1u << shift) - 1u;
+  uint32_t half        = 1u << (shift - 1);
+  uint32_t round_bits  = m24 & round_mask;
+  uint32_t mant10      = m24 >> shift;
+  if (round_bits > half ||
+      (round_bits == half && (mant10 & 1u))) {
+    mant10 += 1;
+    if (mant10 == 0x400u) {            // rounds up to smallest normal
+      return sign | (1u << 10);
+    }
+  }
+  return sign | uint16_t(mant10);
 }
 
 static float fp16_to_float(uint16_t h) {
