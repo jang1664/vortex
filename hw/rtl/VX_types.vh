@@ -223,6 +223,9 @@
 // PERF: overlap
 `define VX_CSR_MPM_OVERLAP_DMA_MXU       12'hB12
 `define VX_CSR_MPM_OVERLAP_DMA_MXU_H     12'hB92
+// PERF: core busy (active kernel duration)
+`define VX_CSR_MPM_GEMM_BUSY_CYC         12'hB13
+`define VX_CSR_MPM_GEMM_BUSY_CYC_H       12'hB93
 
 // Machine Performance-monitoring accelerator counters (class 4: ACCEL_DMA) //
 

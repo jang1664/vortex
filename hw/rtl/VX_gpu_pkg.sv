@@ -806,6 +806,9 @@ package VX_gpu_pkg;
         hbm_dma_perf_t            hbm_dma;
         dma_perf_t                lmem_dma_agg;
         logic [PERF_CTR_BITS-1:0] overlap_dma_mxu;
+        // Cycles where the Vortex core is busy (active kernel duration).
+        // Used as an additional denominator for GEMM utilization metrics.
+        logic [PERF_CTR_BITS-1:0] busy_cycles;
     } accel_perf_t;
 
    ////////////////////////// gemm related types    ///////////////////////////

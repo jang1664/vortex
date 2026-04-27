@@ -368,6 +368,19 @@ module VX_core import VX_gpu_pkg::*; #(
     end
     assign accel_perf.overlap_dma_mxu = perf_overlap_r;
 
+    // Busy counter: cycles where this core has an active kernel
+    // (active warps or pending instructions — VX_core.busy = VX_schedule.busy).
+    // Per-core counter; sums across cores in the runtime represent total
+    // core-busy work across the device.
+    reg [PERF_CTR_BITS-1:0] perf_busy_r;
+    always @(posedge clk) begin
+        if (reset)
+            perf_busy_r <= '0;
+        else if (busy)
+            perf_busy_r <= perf_busy_r + PERF_CTR_BITS'(1);
+    end
+    assign accel_perf.busy_cycles = perf_busy_r;
+
 `endif
 
 endmodule

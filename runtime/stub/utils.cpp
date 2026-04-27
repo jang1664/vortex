@@ -226,6 +226,7 @@ extern int vx_dump_perf(vx_device_h hdevice, FILE* stream) {
   uint64_t mxu_output_fire = 0, mxu_output_stall = 0;
   uint64_t mxu_mac_count = 0;
   uint64_t gemm_total_cycles = 0;
+  uint64_t gemm_busy_cycles = 0;
   uint64_t accel_lmem_rd_bytes = 0;
   uint64_t accel_lmem_wr_bytes = 0;
   uint64_t overlap_dma_mxu = 0;
@@ -641,6 +642,7 @@ extern int vx_dump_perf(vx_device_h hdevice, FILE* stream) {
       READ_PERF(VX_CSR_MPM_LMEM_RD_BYTES,     accel_lmem_rd_bytes);
       READ_PERF(VX_CSR_MPM_LMEM_WR_BYTES,     accel_lmem_wr_bytes);
       READ_PERF(VX_CSR_MPM_OVERLAP_DMA_MXU,   overlap_dma_mxu);
+      READ_PERF(VX_CSR_MPM_GEMM_BUSY_CYC,     gemm_busy_cycles);
       #undef READ_PERF
     } break;
     case VX_DCR_MPM_CLASS_ACCEL_DMA: {
@@ -781,7 +783,8 @@ extern int vx_dump_perf(vx_device_h hdevice, FILE* stream) {
   } break;
   case VX_DCR_MPM_CLASS_ACCEL_GEMM: {
     fprintf(stream, "PERF: === GEMM Performance Analysis ===\n");
-    fprintf(stream, "PERF: jobs=%ld total_cycles=%ld\n", gemm_job_count, gemm_total_cycles);
+    fprintf(stream, "PERF: jobs=%ld total_cycles=%ld busy_cycles=%ld\n",
+            gemm_job_count, gemm_total_cycles, gemm_busy_cycles);
     fprintf(stream, "PERF: compute_cycles=%ld stall_cycles=%ld mac_count=%ld\n",
             gemm_compute_cycles, gemm_stall_cycles, mxu_mac_count);
     fprintf(stream, "PERF: DMA+MXU overlap=%.3f%% (%ld / %ld)\n",
@@ -795,13 +798,15 @@ extern int vx_dump_perf(vx_device_h hdevice, FILE* stream) {
     fprintf(stream, "PERF: output: fire=%ld stall=%ld\n", mxu_output_fire, mxu_output_stall);
     // MXU utilization table
     fprintf(stream, "PERF: --- MXU Utilization (fire / denominator) ---\n");
-    fprintf(stream, "PERF: %-12s /total_cycles   /compute_cycles\n", "");
+    fprintf(stream, "PERF: %-12s /total_cycles   /compute_cycles   /busy_cycles\n", "");
     const char* mxu_names[]  = {"input",          "weight",          "psum",          "output"};
     uint64_t    mxu_fires[]  = { mxu_input_fire,   mxu_weight_fire,   mxu_psum_fire,   mxu_output_fire };
     for (int i = 0; i < 4; ++i) {
       double pct_total   = (gemm_total_cycles > 0)   ? 100.0 * mxu_fires[i] / gemm_total_cycles   : 0.0;
       double pct_compute = (gemm_compute_cycles > 0) ? 100.0 * mxu_fires[i] / gemm_compute_cycles : 0.0;
-      fprintf(stream, "PERF: %-12s %7.3f%%        %7.3f%%\n", mxu_names[i], pct_total, pct_compute);
+      double pct_busy    = (gemm_busy_cycles > 0)    ? 100.0 * mxu_fires[i] / gemm_busy_cycles    : 0.0;
+      fprintf(stream, "PERF: %-12s %7.3f%%        %7.3f%%          %7.3f%%\n",
+              mxu_names[i], pct_total, pct_compute, pct_busy);
     }
     // Roofline
     fprintf(stream, "PERF: --- Roofline ---\n");
