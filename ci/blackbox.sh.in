@@ -19,7 +19,7 @@ ROOT_DIR=$SCRIPT_DIR/..
 show_usage()
 {
     echo "Vortex BlackBox Test Driver v1.0"
-    echo "Usage: $0 [[--clusters=#n] [--cores=#n] [--warps=#n] [--threads=#n] [--l2cache] [--l3cache] [[--driver=#name] [--app=#app] [--args=#args] [--debug=#level] [--scope] [--perf=#class] [--log=logfile] [--nohup] [--help]]"
+    echo "Usage: $0 [[--clusters=#n] [--cores=#n] [--warps=#n] [--threads=#n] [--l2cache] [--l3cache] [[--driver=#name] [--app=#app] [--pytest=#file] [--args=#args] [--debug=#level] [--scope] [--perf=#class] [--bench] [--log=logfile] [--nohup] [--help]]"
 }
 
 show_help()
@@ -28,8 +28,12 @@ show_help()
     echo "  where"
     echo "--driver: gpu, simx, rtlsim, opae, xrt, xrt_vcs"
     echo "--app: any subfolder test under regression or opencl"
+    echo "--pytest: Python test script (e.g., pytorch/test/test_native_eladd.py)"
     echo "--class: 0=disable, 1=pipeline, 2=memsys"
     echo "--nohup: build and run in temp directory"
+    echo "  --- Benchmark mode ---"
+    echo "--bench:      run the per-app <app>_bench binary instead of <app> (requires bench_main.cpp)"
+    echo "              all bench-binary flags (--warmup=N, --iterations=N, --csv) go through --args"
     echo "env LOG_MAX_BYTES: keep only last N bytes in debug log (rolling buffer)"
     echo "env LOG_FLUSH_LINES: flush interval for rolling buffer (default: 200)"
 }
@@ -45,6 +49,7 @@ add_option() {
 DEFAULTS() {
     DRIVER=simx
     APP=sgemm
+    PYTEST=""
     DEBUG=0
     DEBUG_LEVEL=0
     SCOPE=0
@@ -52,7 +57,8 @@ DEFAULTS() {
     PERF_CLASS=0
     CONFIGS="$CONFIGS"
     TEMPBUILD=0
-    LOGFILE="run_$(date +%Y%m%d_%H%M%S).log"
+    LOGFILE=run.log
+    BENCH=0
 }
 
 parse_args() {
@@ -61,6 +67,7 @@ parse_args() {
         case $i in
             --driver=*) DRIVER=${i#*=} ;;
             --app=*)    APP=${i#*=} ;;
+            --pytest=*) PYTEST=${i#*=} ;;
             --clusters=*) CONFIGS=$(add_option "$CONFIGS" "-DNUM_CLUSTERS=${i#*=}") ;;
             --cores=*)  CONFIGS=$(add_option "$CONFIGS" "-DNUM_CORES=${i#*=}") ;;
             --warps=*)  CONFIGS=$(add_option "$CONFIGS" "-DNUM_WARPS=${i#*=}") ;;
@@ -74,6 +81,7 @@ parse_args() {
             --args=*)   HAS_ARGS=1; ARGS=${i#*=} ;;
             --log=*)    LOGFILE=${i#*=} ;;
             --nohup)    TEMPBUILD=1 ;;
+            --bench)    BENCH=1 ;;
             --help)     show_help; exit 0 ;;
             *)          show_usage; exit 1 ;;
         esac
@@ -90,6 +98,10 @@ set_driver_path() {
 }
 
 set_app_path() {
+    if [ -n "$PYTEST" ]; then
+        APP_PATH=""
+        return
+    fi
     if [ -d "$APP" ]; then
         APP_PATH="$APP"
     elif [ -d "$ROOT_DIR/tests/$APP" ]; then
@@ -171,6 +183,7 @@ run_app() {
     [ -n "$CONFIGS" ] && cmd_opts=$(add_option "$cmd_opts" "CONFIGS=\"$CONFIGS\"")
 
     if [ "$DRIVER" = "xrt_vcs" ] || [ "$DRIVER" = "xrt_vcs_post" ]; then
+        # --- Launch VCS simv (shared by both --app and --pytest) ---
         local VCS_PORT
         if [ -n "${VCS_SOCKET_PORT:-}" ]; then
             VCS_PORT=$VCS_SOCKET_PORT
@@ -222,9 +235,32 @@ run_app() {
             fi
         fi
 
-        cmd_opts=$(add_option "$cmd_opts" "VCS_SOCKET_PORT=$VCS_PORT LD_LIBRARY_PATH=$SIMV_DIR:\$LD_LIBRARY_PATH make -C \"$APP_PATH\" run-xrt")
+        # --- Choose execution path: --pytest or --app ---
+        if [ -n "$PYTEST" ]; then
+            local RT_DIR
+            if [ $TEMPBUILD -eq 1 ]; then
+                RT_DIR="$(realpath "$TEMPDIR")"
+            else
+                RT_DIR="$(realpath "$ROOT_DIR/build/runtime")"
+            fi
+            cmd_opts="VORTEX_HOME=$ROOT_DIR"
+            cmd_opts=$(add_option "$cmd_opts" "VORTEX_DRIVER=xrt")
+            cmd_opts=$(add_option "$cmd_opts" "TORCH_VORTEX_XRT_VCS=1")
+            cmd_opts=$(add_option "$cmd_opts" "VCS_SOCKET_PORT=$VCS_PORT")
+            cmd_opts=$(add_option "$cmd_opts" "LD_LIBRARY_PATH=$SIMV_DIR:$RT_DIR:\$LD_LIBRARY_PATH")
+            cmd_opts=$(add_option "$cmd_opts" "python3 $ROOT_DIR/$PYTEST $ARGS")
+        else
+            local vcs_target="run-xrt"
+            [ $BENCH -eq 1 ] && vcs_target="run-xrt-bench"
+            cmd_opts=$(add_option "$cmd_opts" "VCS_SOCKET_PORT=$VCS_PORT LD_LIBRARY_PATH=$SIMV_DIR:\$LD_LIBRARY_PATH make -C \"$APP_PATH\" $vcs_target")
+        fi
+    elif [ -n "$PYTEST" ]; then
+        echo "Error: --pytest requires --driver=xrt_vcs"
+        exit 1
     else
-        cmd_opts=$(add_option "$cmd_opts" "make -C \"$APP_PATH\" run-$DRIVER")
+        local make_target="run-$DRIVER"
+        [ $BENCH -eq 1 ] && make_target="run-$DRIVER-bench"
+        cmd_opts=$(add_option "$cmd_opts" "make -C \"$APP_PATH\" $make_target")
     fi
 
     if [ $DEBUG -ne 0 ] && [ -n "${LOG_MAX_BYTES:-}" ] && [ "${LOG_MAX_BYTES}" -gt 0 ] 2>/dev/null; then

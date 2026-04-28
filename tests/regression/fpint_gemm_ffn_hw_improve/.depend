@@ -1,0 +1,28 @@
+main.o: \
+ /home/gaeunchae/vortex_tc_extend/tests/regression/fpint_gemm_ffn_hw/main.cpp \
+ /home/gaeunchae/vortex_tc_extend/runtime/include/vortex.h \
+ /home/gaeunchae/vortex_tc_extend/tests/regression/fpint_gemm_ffn_hw/common.h
+rvfloats.o: /home/gaeunchae/vortex_tc_extend/sim/common/rvfloats.cpp \
+ /home/gaeunchae/vortex_tc_extend/sim/common/rvfloats.h \
+ /home/gaeunchae/vortex_tc_extend/third_party/softfloat/source/include/softfloat.h \
+ /home/gaeunchae/vortex_tc_extend/third_party/softfloat/source/include/softfloat_types.h \
+ /home/gaeunchae/vortex_tc_extend/sim/common/softfloat_ext.h \
+ /home/gaeunchae/vortex_tc_extend/third_party/softfloat/source/include/softfloat_types.h \
+ /home/gaeunchae/vortex_tc_extend/third_party/softfloat/source/include/internals.h \
+ /home/gaeunchae/vortex_tc_extend/third_party/softfloat/source/include/primitives.h \
+ /home/gaeunchae/vortex_tc_extend/third_party/softfloat/source/include/primitiveTypes.h \
+ /home/gaeunchae/vortex_tc_extend/third_party/softfloat/source/include/../RISCV/specialize.h \
+ /home/gaeunchae/vortex_tc_extend/third_party/softfloat/source/include/primitiveTypes.h
+softfloat_ext.o: \
+ /home/gaeunchae/vortex_tc_extend/sim/common/softfloat_ext.cpp \
+ /home/gaeunchae/vortex_tc_extend/sim/common/softfloat_ext.h \
+ /home/gaeunchae/vortex_tc_extend/third_party/softfloat/source/include/softfloat_types.h \
+ /home/gaeunchae/vortex_tc_extend/third_party/softfloat/source/include/../RISCV/specialize.h \
+ /home/gaeunchae/vortex_tc_extend/third_party/softfloat/source/include/primitiveTypes.h \
+ /home/gaeunchae/vortex_tc_extend/third_party/softfloat/source/include/softfloat.h \
+ /home/gaeunchae/vortex_tc_extend/third_party/softfloat/source/include/softfloat_types.h \
+ /home/gaeunchae/vortex_tc_extend/third_party/softfloat/source/include/internals.h \
+ /home/gaeunchae/vortex_tc_extend/third_party/softfloat/source/include/primitives.h \
+ /home/gaeunchae/vortex_tc_extend/third_party/softfloat/source/include/primitiveTypes.h \
+ /home/gaeunchae/vortex_tc_extend/sim/common/util.h \
+ /home/gaeunchae/vortex_tc_extend/sim/common/bitmanip.h

@@ -1,0 +1,14 @@
+# llama2 ops
+- eldiv
+- eladd
+- softmax
+- elreduce
+- silu
+- rmsnorm
+- elsub
+- elscalar
+- sgemm_tcu
+- elmul
+- rope
+- dropout
+- elunary

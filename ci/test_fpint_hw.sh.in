@@ -1,27 +1,59 @@
 #!/bin/bash
 set -euo pipefail
 
-mode=$1
-shift
-
-if [[ "${mode}" == "" ]]; then
-  echo "Usage: $0 <mode>"
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" || "${1:-}" == "" ]]; then
+  echo "Usage: $0 <mode> [extra args forwarded to test.sh]"
   echo "Modes:"
-  echo "  rtlsim   - Run only rtlsim tests"
-  echo "  xrtsim   - Run only xrtsim tests"
-  echo "  xrt-vcs-sim   - Run only xrt-vcs-sim tests"
-  echo "  xrt-vcs-pgsim   - Run only xrt-vcs-pgsim tests"
-  echo "  hw_emu    - Run only hw_emu tests"
-  echo "  hw        - Run only hw tests"
-  exit 1
+  echo "  rtlsim       - Run rtlsim test"
+  echo "  xrt-vcs-sim  - Run xrt + VCS RTL sim test"
+  echo "  hw_emu       - Run xrt + hw_emu test"
+  echo "  hw           - Run FPGA test"
+  echo "  all          - Run all of the above in order"
+  echo "Options:"
+  echo "  --debug-arg=always|omit|auto"
+  echo "  --debug-always | --debug-omit | --debug-auto"
+  exit 0
 fi
 
-CONFIGS=""
-CONFIGS+=" -DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34 -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MERGED_MEMORY_INTERFACE"
-# CONFIGS+=" -DFPU_FPNEW"
-CONFIGS+=" -DDCACHE_DISABLE -DL2_ENABLE -DNUM_THREADS=8"
-# CONFIGS+=" -DLMEM_LOG_SIZE=22 -DSTACK_BASE_ADDR=8585740288"
-CONFIGS+=" -DAFU_DONE_WAIT_CACHE_DRAIN"
+mode="${1}"
+shift
+
+DEBUG_ARG_MODE="always"
+declare -a FORWARD_ARGS=()
+
+for arg in "$@"; do
+  case "${arg}" in
+    --debug-arg=always|--debug-arg=omit|--debug-arg=auto)
+      DEBUG_ARG_MODE="${arg#*=}"
+      ;;
+    --debug-always)
+      DEBUG_ARG_MODE="always"
+      ;;
+    --debug-omit)
+      DEBUG_ARG_MODE="omit"
+      ;;
+    --debug-auto)
+      DEBUG_ARG_MODE="auto"
+      ;;
+    --debug-arg=*)
+      echo "ERROR: invalid debug arg mode: ${arg#*=} (expected always, omit, or auto)" >&2
+      exit 1
+      ;;
+    *)
+      FORWARD_ARGS+=("${arg}")
+      ;;
+  esac
+done
+
+# Base CONFIGS exported by hw_config.sh (via .envrc). Append script-specific flags.
+CONFIGS+=" -DDBG_TRACE_PIPELINE"
+CONFIGS+=" -DDBG_TRACE_MEM"
+CONFIGS+=" -DDBG_TRACE_CACHE"
+CONFIGS+=" -DDBG_TRACE_AFU"
+CONFIGS+=" -DDBG_TRACE_SCOPE"
+CONFIGS+=" -DDBG_TRACE_GBAR"
+CONFIGS+=" -DDBG_TRACE_TCU"
+CONFIGS+=" -DDBG_TRACE_GEMM"
 CONFIGS+=" -DNUM_CORES=1"
 
 # ------------------------------------------------------------------------
@@ -35,14 +67,11 @@ CONFIGS+=" -DNUM_CORES=1"
 # CONFIGS+=" -DDBG_TRACE_GBAR"
 # CONFIGS+=" -DDBG_TRACE_TCU"
 # CONFIGS+=" -DDBG_TRACE_GEMM"
-CONFIGS+=" -DDBG_TRACE_GEMM_FSM"
-CONFIGS+=" -DDBG_TRACE_GEMM_CTRL"
 # CONFIGS+=" -DVCD_OUTPUT"
 
 export VERILATOR_SEED=$((RANDOM + 1))
 
 DEBUG_LEVEL=0
-PERF_LEVEL=3
 
 if [[ "${DEBUG_LEVEL}" -eq 0 ]]; then
   if [[ "${CONFIGS}" == *"-DVCD_OUTPUT"* ]]; then
@@ -52,65 +81,59 @@ if [[ "${DEBUG_LEVEL}" -eq 0 ]]; then
 fi
 
 export CONFIGS
+# ------------------------------------------------------------------------
+# - clean if you want
+# ------------------------------------------------------------------------
+# make -C runtime/rtlsim clean
 
-case "${mode}" in
-  rtlsim)
-    DRIVER=rtlsim \
-    DEBUG_LEVEL=${DEBUG_LEVEL} \
-    bash tests/regression/fpint_gemm_ffn_hw/test.sh "$@"
-    ;;
-  xrtsim)
-    DRIVER=xrt \
-    DEBUG_LEVEL=${DEBUG_LEVEL} \
-    PERF_LEVEL=${PERF_LEVEL} \
-    bash tests/regression/fpint_gemm_ffn_hw/test.sh "$@"
-    ;;
-  xrt-vcs-sim)
-    DRAM_REQ_STALL_P_ENTER_PCT=0 \
-    DRAM_REQ_STALL_P_EXIT_PCT=50 \
-    DRAM_RSP_STALL_P_ENTER_PCT=0 \
-    DRAM_RSP_STALL_P_EXIT_PCT=50 \
-    DRAM_STALL_SEED=1234 \
-    DRIVER=xrt_vcs \
-    FSDB_DUMP=1 \
-    DEBUG_AXI=1 \
-    DEBUG_LEVEL=${DEBUG_LEVEL} \
-    PERF_LEVEL=${PERF_LEVEL} \
-    bash tests/regression/fpint_gemm_ffn_hw/test.sh "$@"
-    ;;
-  xrt-vcs-pgsim)
-    DRAM_REQ_STALL_P_ENTER_PCT=0 \
-    DRAM_REQ_STALL_P_EXIT_PCT=50 \
-    DRAM_RSP_STALL_P_ENTER_PCT=0 \
-    DRAM_RSP_STALL_P_EXIT_PCT=50 \
-    DRAM_STALL_SEED=1234 \
-    DRIVER=xrt_vcs \
-    FSDB_DUMP=1 \
-    DEBUG_AXI=1 \
-    DEBUG_LEVEL=${DEBUG_LEVEL} \
-    PERF_LEVEL=${PERF_LEVEL} \
-    bash tests/regression/fpint_gemm_ffn_hw/test.sh "$@"
-    ;;
-  hw_emu)
-    FPGA_BIN_DIR=/home/jaeyongjang/project.local/vortex/build/hw/syn/xilinx/xrt/hw_emu/bin \
-    TARGET=hw_emu \
-    PLATFORM=xilinx_u55c_gen3x16_xdma_3_202210_1 \
-    DRIVER=xrt \
-    DEBUG_LEVEL=${DEBUG_LEVEL} \
-    PERF_LEVEL=${PERF_LEVEL} \
-    bash tests/regression/fpint_gemm_ffn_hw/test.sh "$@"
-    ;;
-  hw)
-    FPGA_BIN_DIR=/home/jaeyongjang/project.local/vortex/build/hw/syn/xilinx/xrt/c1_f100_fpint_perf_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/bin \
-    TARGET=hw \
-    PLATFORM=xilinx_u55c_gen3x16_xdma_3_202210_1 \
-    DRIVER=xrt \
-    CHIPSCOPE=1 \
-    DEBUG_LEVEL=${DEBUG_LEVEL} \
-    bash tests/regression/fpint_gemm_ffn_hw/test.sh "$@"
-    ;;
-  *)
-    echo "Unknown mode: ${mode}"
-    exit 1
-    ;;
-esac
+# ------------------------------------------------------------------------
+# - rtlsim
+# ------------------------------------------------------------------------
+if [[ "${mode}" == "rtlsim" || "${mode}" == "all" ]]; then
+  set +e
+  DRIVER=rtlsim \
+  DEBUG_LEVEL=${DEBUG_LEVEL} \
+  bash tests/regression/fpint_gemm_ffn_hw_improve/test.sh --debug-arg="${DEBUG_ARG_MODE}" "${FORWARD_ARGS[@]}"
+  rc=$?
+  set -e
+  if [ $rc -ne 0 ]; then
+    echo "ERROR: rtlsim test exited with code $rc (signal=$(( rc > 128 ? rc - 128 : 0 )))"
+    exit $rc
+  fi
+fi
+
+# ------------------------------------------------------------------------
+# - xrt-vcs-sim (xrt runtime + VCS RTL simv)
+# ------------------------------------------------------------------------
+if [[ "${mode}" == "xrt-vcs-sim" || "${mode}" == "all" ]]; then
+  DRIVER=xrt_vcs \
+  DEBUG_LEVEL=${DEBUG_LEVEL} \
+  FSDB_DUMP=1 \
+  DEBUG_AXI=1 \
+  bash tests/regression/fpint_gemm_ffn_hw_improve/test.sh --debug-arg="${DEBUG_ARG_MODE}" "${FORWARD_ARGS[@]}"
+fi
+
+# ------------------------------------------------------------------------
+# - xrt + hw_emu
+# ------------------------------------------------------------------------
+if [[ "${mode}" == "hw_emu" || "${mode}" == "all" ]]; then
+  FPGA_BIN_DIR=/home/jaeyongjang/project.local/vortex/build/hw/syn/xilinx/xrt/hw_emu/bin \
+  TARGET=hw_emu \
+  PLATFORM=xilinx_u55c_gen3x16_xdma_3_202210_1 \
+  DRIVER=xrt \
+  DEBUG_LEVEL=${DEBUG_LEVEL} \
+  bash tests/regression/fpint_gemm_ffn_hw_improve/test.sh --debug-arg="${DEBUG_ARG_MODE}" "${FORWARD_ARGS[@]}"
+fi
+
+# ------------------------------------------------------------------------
+# - FPGA
+# ------------------------------------------------------------------------
+if [[ "${mode}" == "hw" || "${mode}" == "all" ]]; then
+  FPGA_BIN_DIR=/home/jaeyongjang/project.local/vortex/build/hw/syn/xilinx/xrt/hw/bin \
+  TARGET=hw \
+  PLATFORM=xilinx_u55c_gen3x16_xdma_3_202210_1 \
+  DRIVER=xrt \
+  CHIPSCOPE=1 \
+  DEBUG_LEVEL=${DEBUG_LEVEL} \
+  bash tests/regression/fpint_gemm_ffn_hw_improve/test.sh --debug-arg="${DEBUG_ARG_MODE}" "${FORWARD_ARGS[@]}"
+fi
