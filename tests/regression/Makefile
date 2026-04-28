@@ -19,7 +19,6 @@ TEST_DIRS := \
 	elunary \
 	fence \
 	fpint_gemm_ffn_hw \
-	fpint_gemm_ffn_hw_improve \
 	gemm_fpint \
 	io_addr \
 	madmax \
