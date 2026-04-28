@@ -503,8 +503,11 @@ static void run_tiled_gemm(const kernel_arg_t* arg) {
 // Entry point: only core 0, warp 0, thread 0
 // ============================================================================
 int main() {
-  if (vx_warp_id() != 0 || vx_thread_id() != 0)
-    return 0;
+  if (vx_warp_id() != 0) {                                                                                                                                                                              
+    vx_tmc_zero();                                                                                                                                                                                      
+  }                                                                                                                                                                                                     
+                                                                                                                                                                                                          
+  vx_tmc_one();
 
   auto arg = reinterpret_cast<kernel_arg_t*>(csr_read(VX_CSR_MSCRATCH));
 
