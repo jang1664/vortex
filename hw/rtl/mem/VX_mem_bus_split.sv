@@ -40,25 +40,65 @@ module VX_mem_bus_split import VX_gpu_pkg::*; #(
 );
     localparam LANE_INDEX_BITS = (NUM_LANES > 1) ? `CLOG2(NUM_LANES) : 1;
     localparam LANE_DATA_W     = LANE_DATA_SIZE * 8;
+    localparam LANE_ADDR_W     = MEM_ADDR_WIDTH_P - `CLOG2(LANE_DATA_SIZE);
+    localparam LANE_REQ_DATAW  = 1 + LANE_ADDR_W + LANE_DATA_W + LANE_DATA_SIZE
+                                 + MEM_FLAGS_WIDTH + TAG_WIDTH;
 
     // ----------------------------------------------------------------------
     // Request scatter with per-lane sent-mask tracker.
+    //
+    // Each lane carries a 2-deep skid buffer between the wide combinational
+    // scatter and the downstream lane interface. The buffer:
+    //   - registers the wide -> lane crossing (placer can spread lanes
+    //     across SLRs without long combinational fanout),
+    //   - decouples wide-side handshake from per-lane downstream backpressure
+    //     (wide req can retire as soon as every lane buffer absorbed it).
     // ----------------------------------------------------------------------
     reg  [NUM_LANES-1:0] req_sent_r;
     wire [NUM_LANES-1:0] req_lane_fire;
     wire                 req_all_done;
 
     for (genvar i = 0; i < NUM_LANES; ++i) begin : g_lane_req
-        assign lane_bus_if[i].req_valid       = wide_bus_if.req_valid && ~req_sent_r[i];
-        assign lane_bus_if[i].req_data.rw     = wide_bus_if.req_data.rw;
-        assign lane_bus_if[i].req_data.addr   = (NUM_LANES > 1)
+        wire [LANE_ADDR_W-1:0] lane_addr_in = (NUM_LANES > 1)
             ? {wide_bus_if.req_data.addr, LANE_INDEX_BITS'(i)}
             : wide_bus_if.req_data.addr;
-        assign lane_bus_if[i].req_data.data   = wide_bus_if.req_data.data[i*LANE_DATA_W +: LANE_DATA_W];
-        assign lane_bus_if[i].req_data.byteen = wide_bus_if.req_data.byteen[i*LANE_DATA_SIZE +: LANE_DATA_SIZE];
-        assign lane_bus_if[i].req_data.flags  = wide_bus_if.req_data.flags;
-        assign lane_bus_if[i].req_data.tag    = wide_bus_if.req_data.tag;
-        assign req_lane_fire[i] = lane_bus_if[i].req_valid && lane_bus_if[i].req_ready;
+
+        wire [LANE_REQ_DATAW-1:0] lane_req_in = {
+            wide_bus_if.req_data.rw,
+            lane_addr_in,
+            wide_bus_if.req_data.data[i*LANE_DATA_W +: LANE_DATA_W],
+            wide_bus_if.req_data.byteen[i*LANE_DATA_SIZE +: LANE_DATA_SIZE],
+            wide_bus_if.req_data.flags,
+            wide_bus_if.req_data.tag
+        };
+
+        wire skid_in_valid = wide_bus_if.req_valid && ~req_sent_r[i];
+        wire skid_in_ready;
+
+        VX_elastic_buffer #(
+            .DATAW   (LANE_REQ_DATAW),
+            .SIZE    (2),
+            .OUT_REG (1)
+        ) req_skid (
+            .clk       (clk),
+            .reset     (reset),
+            .valid_in  (skid_in_valid),
+            .data_in   (lane_req_in),
+            .ready_in  (skid_in_ready),
+            .valid_out (lane_bus_if[i].req_valid),
+            .data_out  ({
+                lane_bus_if[i].req_data.rw,
+                lane_bus_if[i].req_data.addr,
+                lane_bus_if[i].req_data.data,
+                lane_bus_if[i].req_data.byteen,
+                lane_bus_if[i].req_data.flags,
+                lane_bus_if[i].req_data.tag
+            }),
+            .ready_out (lane_bus_if[i].req_ready)
+        );
+
+        // Wide side considers lane i complete when its buffer absorbed the beat.
+        assign req_lane_fire[i] = skid_in_valid && skid_in_ready;
     end
 
     assign req_all_done    = wide_bus_if.req_valid && (&(req_sent_r | req_lane_fire));
@@ -90,7 +130,7 @@ module VX_mem_bus_split import VX_gpu_pkg::*; #(
         VX_elastic_buffer #(
             .DATAW   (LANE_DATA_W + TAG_WIDTH),
             .SIZE    (8),
-            .OUT_REG (0)
+            .OUT_REG (1)
         ) skid (
             .clk       (clk),
             .reset     (reset),
