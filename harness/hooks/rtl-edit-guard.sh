@@ -12,8 +12,8 @@ if ! echo "$FILE_PATH" | grep -qE '/hw/.*\.(sv|vh|v)$'; then
     exit 0
 fi
 
-# RTL Implementation subagent is always allowed
-if [ "$AGENT_TYPE" = "RTL Implementation" ]; then
+# RTL Implementation and Implementer subagents are always allowed
+if [ "$AGENT_TYPE" = "RTL Implementation" ] || [ "$AGENT_TYPE" = "Implementer" ]; then
     exit 0
 fi
 
@@ -27,5 +27,5 @@ if [ -z "$FSM_HEADER" ]; then
 fi
 
 # FSM is active → block unless RTL Implementation subagent
-echo '{"decision":"block","reason":"BLOCKED: During FSM run, main agent must not edit RTL files directly. Use RTL Implementation subagent instead."}'
+echo '{"decision":"block","reason":"BLOCKED: During FSM run, main agent must not edit RTL files directly. Use RTL Implementation or Implementer subagent instead."}'
 exit 2
