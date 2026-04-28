@@ -1,0 +1,388 @@
+Magic 271485
+Revision Verdi_W-2024.09-SP1
+
+; Window Layout <x> <y> <width> <height> <signalwidth> <valuewidth>
+viewPort 0 25 1920 935 440 124
+
+; File list:
+; openDirFile [-d delimiter] [-s time_offset] [-rf auto_bus_rule_file] path_name file_name
+openDirFile -d / "" "/home/jaeyongjang/project.local/vortex/build/sim/xrtsim_vcs/vcs_cosim.fsdb"
+
+; file time scale:
+; fileTimeScale ### s|ms|us|ns|ps
+
+; signal spacing:
+signalSpacing 5
+
+; windowTimeUnit is used for zoom, cursor & marker
+; waveform viewport range
+zoom 55237354.125977 55412645.874023
+cursor 55325000.000000
+marker 0.000000
+
+; user define markers
+; userMarker time_pos marker_name color linestyle
+; visible top row signal index
+top 0
+; marker line index
+markerPos 263
+
+; event list
+; addEvent event_name event_expression
+; curEvent event_name
+
+
+
+COMPLEX_EVENT_BEGIN
+
+
+COMPLEX_EVENT_END
+
+
+
+; toolbar current search type
+; curSTATUS search_type
+curSTATUS ByChange
+
+
+addGroup "vortex_afu" -e FALSE
+activeDirFile "" "/home/jaeyongjang/project.local/vortex/build/sim/xrtsim_vcs/vcs_cosim.fsdb"
+addSignal -h 15 -UNSIGNED -HEX /tb_vcs_xrtsim/dut/vortex_axi/axi_ar_stall[7:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope axi_aw_stall[7:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope axi_b_stall[7:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope axi_r_stall[7:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope axi_w_stall[7:0]
+addSignal -h 15 -holdScope busy
+addSignal -h 15 -holdScope cache_drain
+addSignal -h 15 -holdScope clk
+addSignal -h 15 -UNSIGNED -HEX -holdScope dcr_wr_addr[11:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope dcr_wr_data[31:0]
+addSignal -h 15 -holdScope dcr_wr_valid
+addSignal -h 15 -UNSIGNED -HEX -holdScope lsu_ar_select[2:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope lsu_aw_select[2:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope lsu_axi_araddr[33:0]
+addSignal -h 15 -holdScope lsu_axi_araddr_arr[0:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope lsu_axi_araddr_remapped[33:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope lsu_axi_arburst[1:0]
+addSignal -h 15 -holdScope lsu_axi_arburst_arr[0:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope lsu_axi_arcache[3:0]
+addSignal -h 15 -holdScope lsu_axi_arcache_arr[0:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope lsu_axi_arid[7:0]
+addSignal -h 15 -holdScope lsu_axi_arid_arr[0:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope lsu_axi_arlen[7:0]
+addSignal -h 15 -holdScope lsu_axi_arlen_arr[0:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope lsu_axi_arlock[1:0]
+addSignal -h 15 -holdScope lsu_axi_arlock_arr[0:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope lsu_axi_arprot[2:0]
+addSignal -h 15 -holdScope lsu_axi_arprot_arr[0:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope lsu_axi_arqos[3:0]
+addSignal -h 15 -holdScope lsu_axi_arqos_arr[0:0]
+addSignal -h 15 -holdScope lsu_axi_arready
+addSignal -h 15 -UNSIGNED -HEX -holdScope lsu_axi_arready_arr[0:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope lsu_axi_arregion[3:0]
+addSignal -h 15 -holdScope lsu_axi_arregion_arr[0:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope lsu_axi_arsize[2:0]
+addSignal -h 15 -holdScope lsu_axi_arsize_arr[0:0]
+addSignal -h 15 -holdScope lsu_axi_arvalid
+addSignal -h 15 -UNSIGNED -HEX -holdScope lsu_axi_arvalid_arr[0:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope lsu_axi_awaddr[33:0]
+addSignal -h 15 -holdScope lsu_axi_awaddr_arr[0:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope lsu_axi_awaddr_remapped[33:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope lsu_axi_awburst[1:0]
+addSignal -h 15 -holdScope lsu_axi_awburst_arr[0:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope lsu_axi_awcache[3:0]
+addSignal -h 15 -holdScope lsu_axi_awcache_arr[0:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope lsu_axi_awid[7:0]
+addSignal -h 15 -holdScope lsu_axi_awid_arr[0:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope lsu_axi_awlen[7:0]
+addSignal -h 15 -holdScope lsu_axi_awlen_arr[0:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope lsu_axi_awlock[1:0]
+addSignal -h 15 -holdScope lsu_axi_awlock_arr[0:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope lsu_axi_awprot[2:0]
+addSignal -h 15 -holdScope lsu_axi_awprot_arr[0:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope lsu_axi_awqos[3:0]
+addSignal -h 15 -holdScope lsu_axi_awqos_arr[0:0]
+addSignal -h 15 -holdScope lsu_axi_awready
+addSignal -h 15 -UNSIGNED -HEX -holdScope lsu_axi_awready_arr[0:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope lsu_axi_awregion[3:0]
+addSignal -h 15 -holdScope lsu_axi_awregion_arr[0:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope lsu_axi_awsize[2:0]
+addSignal -h 15 -holdScope lsu_axi_awsize_arr[0:0]
+addSignal -h 15 -holdScope lsu_axi_awvalid
+addSignal -h 15 -UNSIGNED -HEX -holdScope lsu_axi_awvalid_arr[0:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope lsu_axi_bid[7:0]
+addSignal -h 15 -holdScope lsu_axi_bid_arr[0:0]
+addSignal -h 15 -holdScope lsu_axi_bready
+addSignal -h 15 -UNSIGNED -HEX -holdScope lsu_axi_bready_arr[0:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope lsu_axi_bresp[1:0]
+addSignal -h 15 -holdScope lsu_axi_bresp_arr[0:0]
+addSignal -h 15 -holdScope lsu_axi_bvalid
+addSignal -h 15 -UNSIGNED -HEX -holdScope lsu_axi_bvalid_arr[0:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope lsu_axi_rdata[511:0]
+addSignal -h 15 -holdScope lsu_axi_rdata_arr[0:0]
+addSignal -h 15 -holdScope lsu_axi_req
+addSignal -h 15 -holdScope lsu_axi_resp
+addSignal -h 15 -UNSIGNED -HEX -holdScope lsu_axi_rid[7:0]
+addSignal -h 15 -holdScope lsu_axi_rid_arr[0:0]
+addSignal -h 15 -holdScope lsu_axi_rlast
+addSignal -h 15 -UNSIGNED -HEX -holdScope lsu_axi_rlast_arr[0:0]
+addSignal -h 15 -holdScope lsu_axi_rready
+addSignal -h 15 -UNSIGNED -HEX -holdScope lsu_axi_rready_arr[0:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope lsu_axi_rresp[1:0]
+addSignal -h 15 -holdScope lsu_axi_rresp_arr[0:0]
+addSignal -h 15 -holdScope lsu_axi_rvalid
+addSignal -h 15 -UNSIGNED -HEX -holdScope lsu_axi_rvalid_arr[0:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope lsu_axi_wdata[511:0]
+addSignal -h 15 -holdScope lsu_axi_wdata_arr[0:0]
+addSignal -h 15 -holdScope lsu_axi_wlast
+addSignal -h 15 -UNSIGNED -HEX -holdScope lsu_axi_wlast_arr[0:0]
+addSignal -h 15 -holdScope lsu_axi_wready
+addSignal -h 15 -UNSIGNED -HEX -holdScope lsu_axi_wready_arr[0:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope lsu_axi_wstrb[63:0]
+addSignal -h 15 -holdScope lsu_axi_wstrb_arr[0:0]
+addSignal -h 15 -holdScope lsu_axi_wvalid
+addSignal -h 15 -UNSIGNED -HEX -holdScope lsu_axi_wvalid_arr[0:0]
+addSignal -h 15 -holdScope lsu_demux_req[7:0]
+addSignal -h 15 -holdScope lsu_demux_resp[7:0]
+addSignal -h 15 -holdScope m_axi_araddr[0:7]
+addSignal -h 15 -holdScope m_axi_arburst[0:7]
+addSignal -h 15 -holdScope m_axi_arcache[0:7]
+addSignal -h 15 -holdScope m_axi_arid[0:7]
+addSignal -h 15 -holdScope m_axi_arlen[0:7]
+addSignal -h 15 -holdScope m_axi_arlock[0:7]
+addSignal -h 15 -holdScope m_axi_arprot[0:7]
+addSignal -h 15 -holdScope m_axi_arqos[0:7]
+addSignal -h 15 -UNSIGNED -HEX -holdScope m_axi_arready[0:7]
+addSignal -h 15 -holdScope m_axi_arregion[0:7]
+addSignal -h 15 -holdScope m_axi_arsize[0:7]
+addSignal -h 15 -UNSIGNED -HEX -holdScope m_axi_arvalid[0:7]
+addSignal -h 15 -holdScope m_axi_awaddr[0:7]
+addSignal -h 15 -holdScope m_axi_awburst[0:7]
+addSignal -h 15 -holdScope m_axi_awcache[0:7]
+addSignal -h 15 -holdScope m_axi_awid[0:7]
+addSignal -h 15 -holdScope m_axi_awlen[0:7]
+addSignal -h 15 -holdScope m_axi_awlock[0:7]
+addSignal -h 15 -holdScope m_axi_awprot[0:7]
+addSignal -h 15 -holdScope m_axi_awqos[0:7]
+addSignal -h 15 -UNSIGNED -HEX -holdScope m_axi_awready[0:7]
+addSignal -h 15 -holdScope m_axi_awregion[0:7]
+addSignal -h 15 -holdScope m_axi_awsize[0:7]
+addSignal -h 15 -UNSIGNED -HEX -holdScope m_axi_awvalid[0:7]
+addSignal -h 15 -holdScope m_axi_bid[0:7]
+addSignal -h 15 -UNSIGNED -HEX -holdScope m_axi_bready[0:7]
+addSignal -h 15 -holdScope m_axi_bresp[0:7]
+addSignal -h 15 -UNSIGNED -HEX -holdScope m_axi_bvalid[0:7]
+addSignal -h 15 -holdScope m_axi_rdata[0:7]
+addSignal -h 15 -holdScope m_axi_rid[0:7]
+addSignal -h 15 -UNSIGNED -HEX -holdScope m_axi_rlast[0:7]
+addSignal -h 15 -UNSIGNED -HEX -holdScope m_axi_rready[0:7]
+addSignal -h 15 -holdScope m_axi_rresp[0:7]
+addSignal -h 15 -UNSIGNED -HEX -holdScope m_axi_rvalid[0:7]
+addSignal -h 15 -holdScope m_axi_wdata[0:7]
+addSignal -h 15 -UNSIGNED -HEX -holdScope m_axi_wlast[0:7]
+addSignal -h 15 -UNSIGNED -HEX -holdScope m_axi_wready[0:7]
+addSignal -h 15 -holdScope m_axi_wstrb[0:7]
+addSignal -h 15 -UNSIGNED -HEX -holdScope m_axi_wvalid[0:7]
+addSignal -h 15 -holdScope mem_req_a_stall[0:0]
+addSignal -h 15 -holdScope mem_req_addr[0:0]
+addSignal -h 15 -holdScope mem_req_addr_a[0:0]
+addSignal -h 15 -holdScope mem_req_byteen[0:0]
+addSignal -h 15 -holdScope mem_req_byteen_a[0:0]
+addSignal -h 15 -holdScope mem_req_data[0:0]
+addSignal -h 15 -holdScope mem_req_data_a[0:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope mem_req_ready[0:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope mem_req_ready_a[0:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope mem_req_rw[0:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope mem_req_rw_a[0:0]
+addSignal -h 15 -holdScope mem_req_stall[0:0]
+addSignal -h 15 -holdScope mem_req_tag[0:0]
+addSignal -h 15 -holdScope mem_req_tag_a[0:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope mem_req_valid[0:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope mem_req_valid_a[0:0]
+addSignal -h 15 -holdScope mem_rsp_a_stall[0:0]
+addSignal -h 15 -holdScope mem_rsp_data[0:0]
+addSignal -h 15 -holdScope mem_rsp_data_a[0:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope mem_rsp_ready[0:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope mem_rsp_ready_a[0:0]
+addSignal -h 15 -holdScope mem_rsp_stall[0:0]
+addSignal -h 15 -holdScope mem_rsp_tag[0:0]
+addSignal -h 15 -holdScope mem_rsp_tag_a[0:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope mem_rsp_valid[0:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope mem_rsp_valid_a[0:0]
+addSignal -h 15 -holdScope reset
+addSignal -h 15 -holdScope vortex_cache_drain
+addGroup "gemm_unit" -e FALSE
+addSignal -h 15 /tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node/u_tmem_dma_ctrl/clk
+addSignal -h 15 /tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node/u_VX_gemm_unit/in_flight
+addSignal -h 15 -holdScope gemm_done
+addSignal -h 15 -holdScope gemm_idle
+addSignal -h 15 -holdScope prealigner_in_valid
+addSubGroup "w_lmem_bus_if"
+addSignal -h 15 /tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node/u_VX_gemm_unit/w_lmem_bus_if/req_valid
+addSignal -h 15 -holdScope req_data
+addSignal -h 15 -holdScope req_ready
+addSignal -h 15 -holdScope rsp_valid
+addSignal -h 15 -holdScope rsp_data
+addSignal -h 15 -holdScope rsp_ready
+endSubGroup "w_lmem_bus_if"
+addSubGroup "sz_lmem_bus_if"
+addSignal -h 15 /tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node/u_VX_gemm_unit/sz_lmem_bus_if/req_valid
+addSignal -h 15 -holdScope req_data
+addSignal -h 15 -holdScope req_ready
+addSignal -h 15 -holdScope rsp_valid
+addSignal -h 15 -holdScope rsp_data
+addSignal -h 15 -holdScope rsp_ready
+endSubGroup "sz_lmem_bus_if"
+addSubGroup "o_lmem_bus_if" -e FALSE
+addSignal -h 15 /tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node/u_VX_gemm_unit/o_lmem_bus_if/req_valid
+addSignal -h 15 -holdScope req_data
+addSignal -h 15 -holdScope req_ready
+addSignal -h 15 -holdScope rsp_valid
+addSignal -h 15 -holdScope rsp_data
+addSignal -h 15 -holdScope rsp_ready
+endSubGroup "o_lmem_bus_if"
+addSubGroup "i_lmem_bus_if" -e FALSE
+addSignal -h 15 /tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node/u_VX_gemm_unit/i_lmem_bus_if/req_valid
+addSignal -h 15 -holdScope req_data
+addSignal -h 15 -holdScope req_ready
+addSignal -h 15 -holdScope rsp_valid
+addSignal -h 15 -holdScope rsp_data
+addSignal -h 15 -holdScope rsp_ready
+endSubGroup "i_lmem_bus_if"
+addGroup "dma_ctrl" -e FALSE
+addSignal -h 15 /tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node/u_tmem_dma_ctrl/done_all_valid
+addSignal -h 15 -UNSIGNED -holdScope state_d[2:0]
+addSignal -h 15 -UNSIGNED -holdScope state_q[2:0]
+addSignal -h 15 /tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node/u_VX_gemm_ctrl/gen_child_cmd_queues[0]/child_out_fire
+addSignal -h 15 -holdScope child_q_empty
+addSignal -h 15 -holdScope child_q_full
+addSignal -h 15 -holdScope child_q_push
+addSignal -h 15 /tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node/u_VX_gemm_ctrl/gen_child_cmd_queues[1]/child_out_fire
+addSignal -h 15 -holdScope child_q_empty
+addSignal -h 15 -holdScope child_q_full
+addSignal -h 15 -holdScope child_q_push
+addSignal -h 15 /tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node/u_VX_gemm_ctrl/gen_child_cmd_queues[2]/child_out_fire
+addSignal -h 15 -holdScope child_q_empty
+addSignal -h 15 -holdScope child_q_full
+addSignal -h 15 -holdScope child_q_push
+addSignal -h 15 /tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node/u_VX_gemm_ctrl/gen_child_cmd_queues[3]/child_out_fire
+addSignal -h 15 -holdScope child_q_empty
+addSignal -h 15 -holdScope child_q_full
+addSignal -h 15 -holdScope child_q_push
+addSignal -h 15 /tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node/u_VX_gemm_ctrl/gen_child_cmd_queues[4]/child_out_fire
+addSignal -h 15 -holdScope child_q_empty
+addSignal -h 15 -holdScope child_q_full
+addSignal -h 15 -holdScope child_q_push
+addGroup "u_parent_cmd_queue" -e FALSE
+addSignal -h 15 /tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node/u_VX_gemm_ctrl/u_parent_cmd_queue/clk
+addSignal -h 15 -holdScope reset
+addSignal -h 15 -holdScope push
+addSignal -h 15 -holdScope pop
+addSignal -h 15 -UNSIGNED -HEX -holdScope data_in[343:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope data_out[343:0]
+addSignal -h 15 -holdScope empty
+addSignal -h 15 -holdScope full
+addGroup "u_VX_cmd_constructor" -e FALSE
+addSignal -h 15 /tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node/u_VX_gemm_ctrl/u_VX_cmd_constructor/clk
+addSignal -h 15 -holdScope reset
+addSubGroup "instruction_if(slave)"
+addSignal -h 15 -UNSIGNED -HEX /tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node/u_VX_gemm_ctrl/u_VX_cmd_constructor/instruction_if/inst[63:0]
+addSignal -h 15 -holdScope valid
+addSignal -h 15 -holdScope ready
+endSubGroup "instruction_if(slave)"
+addSubGroup "gemm_fsm_if(master)"
+addSignal -h 15 /tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node/u_VX_gemm_ctrl/u_VX_cmd_constructor/gemm_fsm_if/ctrl
+addSignal -h 15 -holdScope flag
+endSubGroup "gemm_fsm_if(master)"
+addGroup "schedule"
+addSignal -h 15 -UNSIGNED -HEX /tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/schedule/active_warps[3:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope active_warps_cnt[2:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope active_warps_n[3:0]
+addSignal -h 15 -holdScope barrier_ctrs[1:0]
+addSignal -h 15 -holdScope barrier_ctrs_n[1:0]
+addSignal -h 15 -holdScope barrier_masks[1:0]
+addSignal -h 15 -holdScope barrier_masks_n[1:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope barrier_stalls[3:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope barrier_stalls_n[3:0]
+addSignal -h 15 -holdScope busy
+addSignal -h 15 -holdScope clk
+addSignal -h 15 -UNSIGNED -HEX -holdScope ready_warps[3:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope stalled_warps_n[3:0]
+addSignal -expanded -h 15 -holdScope thread_masks[3:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope thread_masks[3][7:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope thread_masks[2][7:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope thread_masks[1][7:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope thread_masks[0][7:0]
+addSignal -h 15 -holdScope thread_masks_n[3:0]
+addSignal -h 15 -holdScope warp_pcs[3:0]
+addSignal -h 15 -holdScope warp_pcs_n[3:0]
+addGroup "G7"
+
+; getSignalForm Scope Hierarchy Status
+; active file of getSignalForm
+activeDirFile "" "/home/jaeyongjang/project.local/vortex/build/sim/xrtsim_vcs/vcs_cosim.fsdb"
+
+GETSIGNALFORM_SCOPE_HIERARCHY_BEGIN
+getSignalForm close
+
+"/tb_vcs_xrtsim"
+"/tb_vcs_xrtsim/dut"
+"/tb_vcs_xrtsim/dut/vortex_axi"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/schedule"
+
+SCOPE_LIST_BEGIN
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node/VX_gemm_ctrl"
+"/tb_vcs_xrtsim"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex"
+"/tb_vcs_xrtsim/dut/vortex_axi"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node/gemm_unit_if"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node/gemm_unit_if/master"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node/gemm_unit_if/slave"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node/i_gemm_bus_if"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node/u_VX_gemm_unit"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node/u_VX_gemm_unit/i_lmem_bus_if"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node/u_VX_gemm_unit/o_lmem_bus_if"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node/u_VX_gemm_unit/sz_lmem_bus_if"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node/u_VX_gemm_unit/w_lmem_bus_if"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node/u_tmem_dma_ctrl"
+"/tb_vcs_xrtsim/dut"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node/input_dma_ctrl_if"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node/issue_if"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node/gemm_dma_ctrl_if"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node/gemm_ctrl_if"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node/u_VX_gemm_ctrl"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node/u_VX_gemm_ctrl/u_parent_cmd_queue"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node/u_VX_gemm_ctrl/gen_child_cmd_queues[0]"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node/u_VX_gemm_ctrl/u_VX_cmd_constructor"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node/u_VX_gemm_ctrl/gemm_cqueue_out[0]"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node/u_VX_gemm_ctrl/gemm_cqueue_out[1]"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node/u_VX_gemm_ctrl/gemm_cqueue_out[2]"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node/u_VX_gemm_ctrl/gemm_cqueue_out[3]"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node/u_VX_gemm_ctrl/gemm_cqueue_out[4]"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node/u_VX_gemm_ctrl/gen_child_cmd_queues[1]"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node/u_VX_gemm_ctrl/gen_child_cmd_queues[0]/u_child_cmd_queue"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node/u_VX_gemm_ctrl/gen_child_cmd_queues[3]"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node/u_VX_gemm_ctrl/gen_child_cmd_queues[2]"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node/u_VX_gemm_ctrl/gen_child_cmd_queues[4]"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node/tmem_ldma_ctrl_if[0]"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/gemm_node/tmem_w_gemm_bus_if"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/schedule"
+SCOPE_LIST_END
+
+GETSIGNALFORM_SCOPE_HIERARCHY_END
+
+
