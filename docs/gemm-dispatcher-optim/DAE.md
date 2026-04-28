@@ -70,32 +70,65 @@ arise. Two ready warps let the scheduler hide those bubbles by alternating.
 > `kernel_entry`, the producer fills the ring, and the kernel
 > deadlocks.
 
+Shared producer/consumer state lives in **local memory** addressed via the
+`__local_mem()` macro from `<vx_spawn.h>` (`VX_CSR_LOCAL_MEM_BASE + group_id * size`).
+Reserve a fixed byte layout at the start of the per-group LMEM window — no
+linker-script change is needed. See `tests/regression/conv3/kernel.cpp` for the
+canonical pattern.
+
 ```c
-// LMEM-resident ring (sized so a producer burst doesn't stall the consumer).
-// All shared state must live in LMEM, NOT BSS — see "Notes" below.
+#include <vx_spawn.h>
+
 constexpr uint32_t RING_LOG2  = 5;            // 32 entries
 constexpr uint32_t RING_MASK  = (1u << RING_LOG2) - 1u;
-__attribute__((section(".lmem"))) volatile uint64_t ring[1u << RING_LOG2];
-__attribute__((section(".lmem"))) volatile uint32_t ring_head;     // producer-owned
-__attribute__((section(".lmem"))) volatile uint32_t ring_tail;     // consumer-owned
-__attribute__((section(".lmem"))) volatile uint32_t producer_done; // 0 → 1 at end
+
+// Fixed offsets inside the per-group LMEM window.
+//   [0x000 .. 0x100)  ring[32] of uint64_t  (32 * 8 = 256 bytes)
+//   [0x100 .. 0x104)  ring_head    (producer-owned)
+//   [0x104 .. 0x108)  ring_tail    (consumer-owned)
+//   [0x108 .. 0x10C)  producer_done
+constexpr uint32_t LMEM_RING_OFFSET    = 0x000;
+constexpr uint32_t LMEM_HEAD_OFFSET    = 0x100;
+constexpr uint32_t LMEM_TAIL_OFFSET    = 0x104;
+constexpr uint32_t LMEM_DONE_OFFSET    = 0x108;
+constexpr uint32_t LMEM_RESERVED_SIZE  = 0x110;
+
+static inline volatile uint64_t* lmem_ring()       {
+    return (volatile uint64_t*)((uint8_t*)__local_mem(LMEM_RESERVED_SIZE) + LMEM_RING_OFFSET);
+}
+static inline volatile uint32_t* lmem_head()       {
+    return (volatile uint32_t*)((uint8_t*)__local_mem(LMEM_RESERVED_SIZE) + LMEM_HEAD_OFFSET);
+}
+static inline volatile uint32_t* lmem_tail()       {
+    return (volatile uint32_t*)((uint8_t*)__local_mem(LMEM_RESERVED_SIZE) + LMEM_TAIL_OFFSET);
+}
+static inline volatile uint32_t* lmem_done()       {
+    return (volatile uint32_t*)((uint8_t*)__local_mem(LMEM_RESERVED_SIZE) + LMEM_DONE_OFFSET);
+}
 
 static inline void ring_push(uint64_t w) {
-    uint32_t h = ring_head;
-    while ((h - ring_tail) >= (1u << RING_LOG2)) { /* spin: full */ }
+    auto* head = lmem_head();
+    auto* tail = lmem_tail();
+    auto* ring = lmem_ring();
+    uint32_t h = *head;
+    while ((h - *tail) >= (1u << RING_LOG2)) { /* spin: full */ }
     ring[h & RING_MASK] = w;
     asm volatile ("fence w,w" ::: "memory");      // publish data before head
-    ring_head = h + 1;
+    *head = h + 1;
 }
 
 static inline bool ring_pop(uint64_t* out) {
-    uint32_t t = ring_tail;
-    while (t == ring_head) {
-        if (producer_done) return false;          // drain & exit
+    auto* head = lmem_head();
+    auto* tail = lmem_tail();
+    auto* ring = lmem_ring();
+    auto* done = lmem_done();
+    uint32_t t = *tail;
+    while (t == *head) {
+        if (*done) return false;                  // drain & exit
     }
     *out = ring[t & RING_MASK];
     asm volatile ("fence r,r" ::: "memory");
-    ring_tail = t + 1;
+    *tail = t + 1;
     return true;
 }
 
@@ -104,7 +137,7 @@ static void run_producer(const kernel_arg_t* arg) {
     // with ring_push(w); compute descriptors & ring_push only.
     run_tiled_gemm_via_ring(arg);
     asm volatile ("fence w,w" ::: "memory");
-    producer_done = 1;
+    *lmem_done() = 1;
 }
 
 static void run_consumer() {
@@ -124,6 +157,11 @@ static void kernel_entry() {
 int main() {
     if (vx_warp_id() != 0) { vx_tmc_zero(); return 0; } // post-boot, only wid==0
     vx_tmc_one();
+    // Initialize the LMEM control words before spawning the consumer.
+    *lmem_head() = 0;
+    *lmem_tail() = 0;
+    *lmem_done() = 0;
+    asm volatile ("fence w,w" ::: "memory");
     vx_wspawn(2, &kernel_entry);                  // re-activate warp 1
     kernel_entry();                               // also runs on warp 0
     return 0;
@@ -140,14 +178,13 @@ int main() {
   letting both warps spend most cycles doing real work.
 - LMEM round-trip per word adds 1 store (push) + 1 load (pop), but the LSU
   accepts both at 1/cycle (verified) so this does not bottleneck.
-- **LMEM placement is mandatory** for `ring`, `ring_head`, `ring_tail`,
-  `producer_done`. Default linkage puts globals in BSS (DRAM), which would
-  defeat the whole point — every push/pop would go through the cache
-  hierarchy instead of LMEM. Either declare them with the
-  `__attribute__((section(".lmem")))` shown above and add a `.lmem`
-  output section to `kernel/scripts/link64.ld` mapped to the local-memory
-  window, or allocate the ring via `vx_local_mem` API equivalents and
-  pass the base pointer to producer/consumer.
+- **LMEM placement is mandatory** for the ring and its control words.
+  Default linkage would put globals in BSS (DRAM), defeating the purpose —
+  every push/pop would traverse the cache hierarchy. The kernel addresses
+  LMEM via the `__local_mem(size)` macro (`<vx_spawn.h>`), which resolves to
+  `VX_CSR_LOCAL_MEM_BASE + __local_group_id * size`. We pick a fixed byte
+  layout inside that window (see code above). No `link64.ld` change is needed.
+  The canonical reference for this pattern is `tests/regression/conv3/kernel.cpp`.
 - **Risk:** if the producer is too fast the consumer becomes the bottleneck
   and the gain is bounded by the consumer's `stream_send` rate. Measure
   first; if so, the *combined* optimization below addresses that side.
@@ -163,9 +200,7 @@ fetch+decode lock raises steady-state issue throughput to roughly
 - consumer's own 7-cyc cadence on the bare `stream_send` path,
 - residual long-tail gaps (`make_wait` polling, sync points).
 
-Realistic target: **1.3–1.7×** end-to-end. Treat the measurement as a
-feasibility data point for whether a scalar coissue port is worth the
-RTL effort.
+Realistic target: **1.3–1.7×** end-to-end.
 
 ---
 
@@ -196,14 +231,20 @@ contained change in the frontend + downstream queue widening.
 
 ### SW interface change
 
-Reserve an 8-slot stream port window:
+Reserve an 8-slot stream port window (8-byte stride, lane-indexed). The
+single-slot legacy address aliases lane 0 of the burst window so unchanged
+single-thread `mmio_stream_send` calls remain bit-identical:
 
 ```c
-// Current single-slot port
-static constexpr uint64_t GEMM_STREAM_ADDR    = 0x1088;
-// Proposed 8-slot fan-out (8-byte stride, lane-indexed)
-static constexpr uint64_t GEMM_STREAM_ADDR_0  = 0x1088;
-// ... GEMM_STREAM_ADDR_i = 0x1088 + 8*i, i in 0..7
+//   0x1080            : ALLOC read doorbell
+//   0x1088 .. 0x10C7  : 8-slot burst window (lane i at 0x1088 + 8*i)
+//                       Lane 0 is the legacy single-slot port.
+//   0x1100            : STATE read register (moved up from 0x1090 to make
+//                       room for the 8-slot window).
+static constexpr uint64_t GEMM_STREAM_ADDR       = 0x1088;     // = burst lane 0
+static constexpr uint64_t GEMM_STATE_ADDR        = 0x1100;
+static constexpr uint64_t GEMM_STREAM_BURST_ADDR = GEMM_STREAM_ADDR;  // i in 0..7
+// per-lane address: GEMM_STREAM_BURST_ADDR + 8*i
 ```
 
 Variable-width burst send. The dispatcher does **not** wait for 8 pending
@@ -345,9 +386,9 @@ Compiler-emit verification of the burst pattern lives at
 
 ## Suggested Implementation Order
 
-1. **Build & measure helper-warp DAE (SW only).** No RTL risk. If the
-   measured gain is small (< 1.2×), the producer is not stalling on
-   hazards much and you can deprioritise scalar coissue work.
+1. **Build & measure helper-warp DAE (SW only).** No RTL risk. Any
+   non-negative end-to-end gain is acceptable as a stepping stone — a
+   small DAE-only gain still feeds the combined optimization in step 3.
 2. **Build & measure 8-thread burst MMIO (Opt 2, RTL Option A).** The
    serialiser-FIFO path is the lowest-risk RTL change. Verify with the
    existing `tools/mmio_analysis/analyze_mmio_stall.py` that the gap

@@ -1,17 +1,180 @@
 #include "common.h"
 #include <vx_intrinsics.h>
+#include <vx_spawn.h>
 
 // MMIO addresses for GEMM instruction stream frontend
-static constexpr uint64_t GEMM_BASE        = 0x0000000000001080ULL;
-static constexpr uint64_t GEMM_STREAM_ADDR = GEMM_BASE + 8ULL;
-static constexpr uint64_t GEMM_STATE_ADDR  = GEMM_BASE + 16ULL;
+//
+// Layout (8-lane burst window):
+//   GEMM_BASE + 0x000        : ALLOC read doorbell
+//   GEMM_BASE + 0x008..0x047 : 8-slot stream burst window (lane i at base+8+8*i)
+//                              Lane 0 is the legacy single-slot stream
+//                              port — bit-identical to pre-burst behaviour
+//                              for mask=0x01 single-thread stores.
+//   GEMM_BASE + 0x080        : STATE read register (moved from 0x010 to make
+//                              room for the 8-slot burst window).
+static constexpr uint64_t GEMM_BASE              = 0x0000000000001080ULL;
+static constexpr uint64_t GEMM_STREAM_ADDR       = GEMM_BASE + 8ULL;
+static constexpr uint64_t GEMM_STATE_ADDR        = GEMM_BASE + 0x80ULL;
+// 8-slot stream port window (8-byte stride). The single-slot
+// GEMM_STREAM_ADDR aliases lane 0 of this window. A per-lane store with an
+// active mask dispatches popcount(mask) words in lane-id order through the
+// serializer FIFO in VX_gemm_job_frontend.
+static constexpr uint64_t GEMM_STREAM_BURST_ADDR = GEMM_STREAM_ADDR;
+
+// ============================================================================
+// Helper-Warp DAE: LMEM ring SPSC FIFO between producer (warp 0) and
+// consumer (warp 1). Layout inside the per-group LMEM window:
+//   [0x000 .. 0x100)  ring[32] of uint64_t  (32 * 8 = 256 bytes)
+//   [0x100 .. 0x104)  ring_head    (producer-owned)
+//   [0x104 .. 0x108)  ring_tail    (consumer-owned)
+//   [0x108 .. 0x10C)  producer_done
+//   [0x10C .. 0x110)  (padding for 8B alignment of burst staging)
+//   [0x110 .. 0x150)  burst_staging[8] of uint64_t (8 * 8 = 64 bytes)
+//
+// burst_staging is the per-warp source buffer for stream_send_burst. It
+// MUST live in LMEM (not on stack) because the consumer's burst path
+// activates lanes 1..k-1 of warp 1 via vx_tmc(mask), and those lanes have
+// uninitialized stack pointers (warp boot stub only initializes lane 0
+// of each spawned warp). Reading from a CSR-derived LMEM address keeps
+// the per-lane source pointer X-clean.
+//
+// LMEM placement is mandatory; default linkage would put the ring in
+// BSS/DRAM and every push/pop would traverse the cache hierarchy.
+// ============================================================================
+constexpr uint32_t RING_LOG2          = 5;            // 32 entries
+constexpr uint32_t RING_MASK          = (1u << RING_LOG2) - 1u;
+
+constexpr uint32_t LMEM_RING_OFFSET   = 0x000;
+constexpr uint32_t LMEM_HEAD_OFFSET   = 0x100;
+constexpr uint32_t LMEM_TAIL_OFFSET   = 0x104;
+constexpr uint32_t LMEM_DONE_OFFSET   = 0x108;
+constexpr uint32_t LMEM_BURST_OFFSET  = 0x110;  // 8 x 8B burst staging buffer
+constexpr uint32_t LMEM_RESERVED_SIZE = 0x150;
+
+static inline volatile uint64_t* lmem_ring() {
+  return reinterpret_cast<volatile uint64_t*>(
+      reinterpret_cast<uint8_t*>(__local_mem(LMEM_RESERVED_SIZE)) + LMEM_RING_OFFSET);
+}
+static inline volatile uint32_t* lmem_head() {
+  return reinterpret_cast<volatile uint32_t*>(
+      reinterpret_cast<uint8_t*>(__local_mem(LMEM_RESERVED_SIZE)) + LMEM_HEAD_OFFSET);
+}
+static inline volatile uint32_t* lmem_tail() {
+  return reinterpret_cast<volatile uint32_t*>(
+      reinterpret_cast<uint8_t*>(__local_mem(LMEM_RESERVED_SIZE)) + LMEM_TAIL_OFFSET);
+}
+static inline volatile uint32_t* lmem_done() {
+  return reinterpret_cast<volatile uint32_t*>(
+      reinterpret_cast<uint8_t*>(__local_mem(LMEM_RESERVED_SIZE)) + LMEM_DONE_OFFSET);
+}
+// Per-lane burst staging buffer. Caller (lane 0, single-thread) writes the
+// ring snapshot here; stream_send_burst's per-lane path then reads from
+// burst[lane]. Address is computed from VX_CSR_LOCAL_MEM_BASE directly
+// (group_id is hard-coded to 0 for this kernel — see stream_send_burst),
+// so the result is X-clean for every active lane regardless of TLS state.
+static inline volatile uint64_t* lmem_burst_buf() {
+  return reinterpret_cast<volatile uint64_t*>(
+      reinterpret_cast<uint8_t*>(__local_mem(LMEM_RESERVED_SIZE)) + LMEM_BURST_OFFSET);
+}
+
+static inline void ring_push(uint64_t w) {
+  auto* head = lmem_head();
+  auto* tail = lmem_tail();
+  auto* ring = lmem_ring();
+  uint32_t h = *head;
+  while ((h - *tail) >= (1u << RING_LOG2)) { /* spin: full */ }
+  ring[h & RING_MASK] = w;
+  asm volatile ("" ::: "memory");      // compiler-only barrier (LMEM is in-order on Vortex)
+  *head = h + 1;
+}
+
+static inline bool ring_pop(uint64_t* out) {
+  auto* head = lmem_head();
+  auto* tail = lmem_tail();
+  auto* ring = lmem_ring();
+  auto* done = lmem_done();
+  uint32_t t = *tail;
+  while (t == *head) {
+    if (*done) return false;                     // drain & exit
+  }
+  *out = ring[t & RING_MASK];
+  asm volatile ("" ::: "memory");      // compiler-only barrier (LMEM is in-order on Vortex)
+  *tail = t + 1;
+  return true;
+}
 
 static inline uint32_t mmio_read32(uint64_t addr) {
   return *reinterpret_cast<volatile uint32_t*>(addr);
 }
 
+// Producer's "emit" path: queue a command word for the consumer warp.
 static inline void stream_send(uint64_t word) {
+  ring_push(word);
+}
+
+// Consumer's MMIO path: actually issue the queued word to the GEMM frontend.
+static inline void mmio_stream_send(uint64_t word) {
   *reinterpret_cast<volatile uint64_t*>(GEMM_STREAM_ADDR) = word;
+}
+
+// Burst MMIO path: issue up to 8 words in one warp instruction by
+// activating k threads and having each thread store its lane's word into
+// its own slot of the GEMM burst window. Words are consumed by the GEMM
+// frontend in lane-id order (lane 0 first), so the caller must stage the
+// j-th word to issue at lmem_burst_buf()[j] for j in 0..k-1.
+//
+// k must be in 1..8.  After the burst the warp returns to single-thread
+// mode (mask=0x01) so subsequent scalar work runs on lane 0.
+//
+// X-prop avoidance: the per-lane source address is derived directly from
+// VX_CSR_LOCAL_MEM_BASE (a uniform CSR broadcast, X-clean for every lane)
+// plus a per-lane offset (lane * 8). We deliberately do NOT use the
+// __local_mem() macro because it expands to
+//   csr_read(VX_CSR_LOCAL_MEM_BASE) + __local_group_id * size
+// and __local_group_id is __thread-qualified; lanes 1..k-1 of warp 1 have
+// uninitialized TLS for it (only lane 0 ran the boot stub), so the multiply
+// would propagate X. This kernel never calls vx_spawn_threads, so the
+// effective group_id is always 0 — we hard-code that here and bypass TLS.
+//
+// Compiler-emit reference: tests/regression/mmio_burst_proto/kernel.cpp
+// (case_burst8 / case_burst_partial — single `sd` per call).
+//
+// Wired into run_consumer (COMBINE state) to amortize the MMIO doorbell over
+// up to 8 ring words per warp instruction.
+static inline void stream_send_burst(int k) {
+  uint32_t mask = (1u << k) - 1u;
+  vx_tmc(mask);
+
+  int lane = vx_thread_id();
+
+  // Source: LMEM-resident burst buffer. lmem_base via csrr (uniform CSR,
+  // X-clean for all lanes). Group_id is hard-coded to 0 (kernel never calls
+  // vx_spawn_threads), bypassing __local_mem() macro which would re-introduce
+  // X via __local_group_id TLS for inactive lanes.
+  uintptr_t lmem_base;
+  __asm__ volatile ("csrr %0, %1"
+                    : "=r"(lmem_base)
+                    : "i"(VX_CSR_LOCAL_MEM_BASE));
+  volatile uint64_t* src = reinterpret_cast<volatile uint64_t*>(
+      lmem_base + LMEM_BURST_OFFSET);
+  uint64_t w = src[lane];
+
+  // Destination: MMIO. The constant GEMM_STREAM_BURST_ADDR MUST be
+  // materialized AFTER vx_tmc(mask) so newly-activated lanes 1..k-1 each
+  // execute the li and write their own destination register fresh. A normal
+  // C-level `GEMM_STREAM_BURST_ADDR + 8*lane` lets the compiler hoist the
+  // `li` of the constant into the surrounding single-thread region —
+  // empirically observed at PC 0x80000334 with `t2` X-poisoned for lanes >0.
+  // `asm volatile` with an output constraint defeats hoisting/CSE: the
+  // compiler must emit a fresh sequence at this point, and the volatile
+  // ordering pins it after the vx_tmc(mask) above (also volatile).
+  uintptr_t mmio_base;
+  __asm__ volatile ("li %0, %1"
+                    : "=r"(mmio_base)
+                    : "i"(GEMM_STREAM_BURST_ADDR));
+  *reinterpret_cast<volatile uint64_t*>(mmio_base + 8 * lane) = w;
+
+  vx_tmc_one();
 }
 
 // ============================================================================
@@ -500,31 +663,38 @@ static void run_tiled_gemm(const kernel_arg_t* arg) {
 }
 
 // ============================================================================
-// Entry point: only core 0, warp 0, thread 0
+// Producer warp (warp 0): allocate the GEMM stream, push the entire command
+// sequence into the LMEM ring, signal the consumer to drain, then poll the
+// GEMM STATE register until the controller finishes the work.
 // ============================================================================
-int main() {
-  if (vx_warp_id() != 0) {                                                                                                                                                                              
-    vx_tmc_zero();                                                                                                                                                                                      
-  }                                                                                                                                                                                                     
-                                                                                                                                                                                                          
-  vx_tmc_one();
-
-  auto arg = reinterpret_cast<kernel_arg_t*>(csr_read(VX_CSR_MSCRATCH));
-
-  // Allocate instruction stream (MMIO read at base+0)
+static void run_producer(kernel_arg_t* arg) {
+  // Allocate instruction stream (MMIO read at base+0). Done on warp 0 so the
+  // consumer never sees alloc-fail words in the ring.
   uint32_t r = mmio_read32(GEMM_BASE);
   if (!(r & 1u)) {
     arg->status = STATUS_ALLOC_FAIL;
-    return 0;
+    // Release the consumer so it does not spin forever waiting on an empty
+    // ring with no producer_done signal.
+    asm volatile ("" ::: "memory");      // compiler-only barrier (LMEM is in-order on Vortex)
+    *lmem_done() = 1;
+    return;
   }
   uint32_t alloc_gen = r >> 1;
 
   arg->status = STATUS_INIT;
 
-  // Submit tiled GEMM instruction stream
+  // Push the full command stream into the ring. Producer never touches MMIO
+  // for stream_send words — the consumer warp drains the ring and issues them.
   run_tiled_gemm(arg);
 
-  // Poll STATE register until GEMM node completes our work
+  // Signal the consumer that no more words are coming. The consumer drains
+  // any remaining ring entries, then exits ring_pop with `false`.
+  asm volatile ("" ::: "memory");      // compiler-only barrier (LMEM is in-order on Vortex)
+  *lmem_done() = 1;
+
+  // Poll STATE register until GEMM node completes our work. The consumer
+  // is responsible for actually emitting `make_clear` to MMIO; once that
+  // happens the GEMM state will eventually clear.
   while (true) {
     uint32_t state = mmio_read32(GEMM_STATE_ADDR);
     bool occupied = state & 1u;
@@ -533,5 +703,91 @@ int main() {
   }
 
   arg->status = STATUS_OK;
+}
+
+// ============================================================================
+// Consumer warp (warp 1): drain the LMEM ring and issue each word to the
+// GEMM stream MMIO port. Returns when ring_pop reports the producer is done.
+//
+// Burst-pop loop: snapshot (head - tail) and clamp to 8, then dispatch a
+// single warp instruction with `k` active threads via `stream_send_burst`.
+// The 8-slot serializer FIFO inside VX_gemm_job_frontend dequeues in lane
+// order, so `local_words[0..k-1]` must be packed in oldest→newest order.
+//
+// Drain-on-done: exit only when (a) `*lmem_done()` was observed set AND
+// (b) the ring is observed empty *after* the done flag was sampled. The
+// re-check `*lmem_head() == t` defeats the lost-wakeup race where the
+// producer pushes a word and sets done in between our head and done reads.
+// ============================================================================
+static void run_consumer() {
+  while (true) {
+    uint32_t t = *lmem_tail();
+    uint32_t h = *lmem_head();
+    uint32_t avail = h - t;  // unsigned wrap-safe count
+
+    if (avail == 0) {
+      // Ring empty. If producer is done AND ring is still empty after
+      // re-reading head, drain is confirmed → exit.
+      if (*lmem_done()) {
+        if (*lmem_head() == t) return;
+      }
+      continue;  // spin / retry
+    }
+
+    uint32_t k = (avail < 8u) ? avail : 8u;
+    auto* ring  = lmem_ring();
+    auto* burst = lmem_burst_buf();   // LMEM-resident staging buffer
+    for (uint32_t i = 0; i < k; ++i) {
+      burst[i] = ring[(t + i) & RING_MASK];
+    }
+    asm volatile ("" ::: "memory");      // compiler-only barrier (LMEM is in-order on Vortex)
+    *lmem_tail() = t + k;
+    stream_send_burst(int(k));
+    // stream_send_burst restores warp to single-thread mode (vx_tmc_one).
+  }
+}
+
+// ============================================================================
+// Per-warp dispatch entry. Called by both warp 0 (after main re-spawns warp 1)
+// and warp 1 (initial entry via vx_wspawn).
+// ============================================================================
+static void kernel_entry() {
+  int wid = vx_warp_id();
+  vx_tmc_one();
+  auto arg = reinterpret_cast<kernel_arg_t*>(csr_read(VX_CSR_MSCRATCH));
+  if (wid == 0) {
+    run_producer(arg);
+  } else if (wid == 1) {
+    run_consumer();
+  } else {
+    vx_tmc_zero();    // warps 2+ stay disabled
+  }
+}
+
+// ============================================================================
+// Entry point. Vortex post-boot, only warp 0 thread 0 is active. Initialize
+// the LMEM ring control words, re-spawn warp 1, then dispatch via
+// kernel_entry().
+// ============================================================================
+int main() {
+  if (vx_warp_id() != 0) {
+    vx_tmc_zero();
+    return 0;
+  }
+
+  vx_tmc_one();
+
+  // Initialize the LMEM control words before spawning the consumer.
+  *lmem_head() = 0;
+  *lmem_tail() = 0;
+  *lmem_done() = 0;
+  asm volatile ("" ::: "memory");      // compiler-only barrier (LMEM is in-order on Vortex)
+
+  // Re-activate warp 1; it will start at kernel_entry and become the consumer.
+  vx_wspawn(2, &kernel_entry);
+
+  // Warp 0 also runs the dispatch and becomes the producer.
+  kernel_entry();
+
   return 0;
 }

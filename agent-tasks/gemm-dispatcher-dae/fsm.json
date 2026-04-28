@@ -1,0 +1,137 @@
+{
+  "name": "GEMM Dispatcher DAE + Burst MMIO",
+  "task_name": "gemm-dispatcher-dae",
+  "initial_state": "ANALYZE",
+  "states": {
+    "ANALYZE": {
+      "description": "Read DAE.md plan, locate target files, enumerate hw/unittest/ to identify the unit test directory that exercises VX_gemm_job_frontend, identify the kernel header file where GEMM_STREAM_ADDR_i and stream_send_burst will live, and establish baseline cycle count + MMIO gap distribution. Baseline run from build dir: 'make -C sim clean && make -C runtime clean && python ../ci/run_black.py xrt-vcs-sim --app=fpint_gemm_ffn_hw_improve --args=\"-m 512 -k 128 -n 128\" --perf=3'. CONFIGS env var is set by .envrc/direnv — if missing, run 'direnv allow' once. Baseline gap analysis: tools/mmio_analysis/analyze_mmio_stall.py on the resulting FSDB.",
+      "checklist": [
+        "Baseline cycle count from --perf=3 output recorded in STATUS.yaml",
+        "Baseline MMIO gap distribution captured from analyze_mmio_stall.py",
+        "Concrete unit test directory under hw/unittest/ that covers VX_gemm_job_frontend identified (or noted as missing — to be added in IMPL_BURST)",
+        "Kernel header file(s) where GEMM_STREAM_ADDR_i and stream_send_burst will be added identified (e.g. kernel/include/vx_intrinsics.h or a GEMM-specific header)",
+        "Files confirmed: tests/regression/fpint_gemm_ffn_hw_improve/kernel.cpp, hw/rtl/core/gemm/VX_gemm_job_frontend.sv, hw/rtl/core/gemm/VX_cmd_constructor.sv, hw/rtl/mem/VX_lmem_switch.sv"
+      ],
+      "allowed_subagents": ["Verification", "Explore"],
+      "transitions": {
+        "IMPL_DAE_SW": "Baseline measured and target files identified"
+      },
+      "on_fail": "ANALYZE"
+    },
+    "IMPL_DAE_SW": {
+      "description": "Implement Optimization 1 (helper-warp DAE, SW only) via the Implementer subagent. Place the SPSC ring + control words in local memory using the __local_mem(size) macro pattern (see tests/regression/conv3/kernel.cpp). Do NOT modify kernel/scripts/link64.ld — no new linker section is needed. Refactor kernel into run_producer / run_consumer / kernel_entry, initialize ring_head/ring_tail/producer_done in main() before vx_wspawn(2, &kernel_entry).",
+      "checklist": [
+        "Ring + ring_head/ring_tail/producer_done addressed via __local_mem(LMEM_RESERVED_SIZE) at fixed byte offsets (canonical pattern: tests/regression/conv3/kernel.cpp)",
+        "kernel/scripts/link64.ld is NOT modified",
+        "kernel.cpp split into run_producer (uses ring_push) + run_consumer (uses stream_send) + kernel_entry dispatch",
+        "make_wait / make_notify words flow through ring_push (NOT direct stream_send) so order is preserved",
+        "main() initializes lmem_head/lmem_tail/lmem_done to 0 (with fence w,w) BEFORE vx_wspawn(2, &kernel_entry)",
+        "main() calls kernel_entry() on warp 0 after spawning warp 1",
+        "Clean build succeeds: 'make -C sim clean && make -C runtime clean' followed by full build"
+      ],
+      "allowed_subagents": ["Implementer"],
+      "transitions": {
+        "VERIFY_DAE_SW": "Build clean and ring/wspawn wiring verified"
+      },
+      "on_fail": "IMPL_DAE_SW"
+    },
+    "VERIFY_DAE_SW": {
+      "description": "Run regression with helper-warp DAE. From build dir: 'make -C sim clean && make -C runtime clean && python ../ci/run_black.py xrt-vcs-sim --app=fpint_gemm_ffn_hw_improve --args=\"-m 512 -k 128 -n 128\" --perf=3'. If CONFIGS missing, run 'direnv allow' once. **Pass criterion (RELAXED 2026-04-28 after iter2 analysis):** bit-identical output AND DAE engaged (active_warps == 0011) AND no fence-induced L2 flush regression (in-kernel fence executions < 100). DAE-alone cycle gate REMOVED — empirical analysis showed DAE-alone cannot beat baseline for this kernel because volatile-guarded ring_push/ring_pop add ~7-11 instrs/command vs only 1.5x IPC improvement. The cycle gain materializes only after IMPL_BURST (consumer amortizes MMIO over multiple words). This matches DAE.md §'Combined Approach' design intent.",
+      "checklist": [
+        "Regression passes with bit-identical output vs. baseline",
+        "FSDB confirms active_warps == 0011 in dispatcher window (vs baseline 0001)",
+        "In-kernel fence count < 100 (no L2 flush flood); cycles recorded for later combined comparison"
+      ],
+      "allowed_subagents": ["Verification"],
+      "transitions": {
+        "IMPL_BURST": "Functional pass AND DAE engaged AND no fence flood (cycle gate deferred to VERIFY_COMBINED)",
+        "IMPL_DAE_SW": "Functional fail OR DAE not engaged OR fence-induced regression"
+      },
+      "on_fail": "IMPL_DAE_SW"
+    },
+    "IMPL_BURST": {
+      "description": "Implement Optimization 2 RTL Option A AND its SW interface in parallel through the Implementer subagent. RTL: per-lane addr/data decode in VX_gemm_job_frontend.sv, mask-aware push of popcount(mask & is_stream_lane) words into a new 8-wide serializer FIFO (depth >= 16), serializer drains 1/cycle into existing constructor, req_ready reflects FIFO free slots. SW: GEMM_STREAM_ADDR_i (i=0..7, 8-byte stride at 0x1088) and stream_send_burst(words, k) using vx_tmc((1<<k)-1) + per-lane store. If the unit test for VX_gemm_job_frontend is missing or does not cover masked bursts, extend / create the testbench in this state too (Implementer is allowed). Re-verify compiler emit on both the prototype AND the production kernel.",
+      "checklist": [
+        "VX_gemm_job_frontend.sv: addr decode replaced with per-lane (8 lanes)",
+        "Serializer FIFO instantiated (8-wide push, 1-wide pop, depth >= 16)",
+        "Mask-aware push pushes popcount(mask & is_stream_lane) words in lane-id order",
+        "req_ready holds until FIFO has room for popcount(mask) words",
+        "VX_cmd_constructor.sv unchanged (still 1 word/cycle)",
+        "GEMM_STREAM_ADDR_i constants defined for i=0..7 in the kernel header chosen in ANALYZE",
+        "stream_send_burst(const uint64_t words[8], int k) implemented",
+        "Prototype emit: 'make kernel.dump' in tests/regression/mmio_burst_proto/ produces single-sd bodies for case_burst8 and case_burst_partial",
+        "Production emit: stream_send_burst body in the production kernel disassembly is a single sd plus tmask setup (no strip-mined serial sd sequence)",
+        "Unit test for VX_gemm_job_frontend extended/created to cover mask=0xFF/0x0F/0x01 and FIFO near-full backpressure",
+        "Clean build succeeds"
+      ],
+      "allowed_subagents": ["Implementer"],
+      "transitions": {
+        "UNITTEST_BURST": "Both RTL and SW build clean and compiler emit verified on prototype and production"
+      },
+      "on_fail": "IMPL_BURST"
+    },
+    "UNITTEST_BURST": {
+      "description": "Run module-level unit tests for the modified RTL (the unit test directory identified/extended in IMPL_BURST). Per project policy, RTL changes must pass module unit tests before regression. If the testbench needs additional fixes, transition back to IMPL_BURST.",
+      "checklist": [
+        "Module unit test passes with mask values 0xFF, 0x0F, and 0x01",
+        "FIFO near-full backpressure case (back-to-back 0xFF bursts to almost-full FIFO) passes without overflow",
+        "Serializer FIFO pushes popcount(mask) words per accepted handshake (waveform-checked)"
+      ],
+      "allowed_subagents": ["Verification", "Implementer"],
+      "transitions": {
+        "VERIFY_BURST": "Module unit tests pass",
+        "IMPL_BURST": "Module unit tests fail (RTL or testbench fix needed)"
+      },
+      "on_fail": "IMPL_BURST"
+    },
+    "VERIFY_BURST": {
+      "description": "Run regression on the burst path (without DAE consumer integration yet). Same command as VERIFY_DAE_SW with --app=fpint_gemm_ffn_hw_improve. Confirm functional correctness end-to-end.",
+      "checklist": [
+        "fpint_gemm_ffn_hw_improve regression produces bit-identical output vs. baseline",
+        "FSDB confirms gemm_ctrl_if[0]/req_data.mask matches SW vx_tmc(mask) (e.g., 0xFF / 0x0F)"
+      ],
+      "allowed_subagents": ["Verification"],
+      "transitions": {
+        "COMBINE": "Burst path regression-passes",
+        "IMPL_BURST": "Regression fail"
+      },
+      "on_fail": "IMPL_BURST"
+    },
+    "COMBINE": {
+      "description": "SW-only step (via Implementer): modify the consumer warp from IMPL_DAE_SW to use stream_send_burst with k = min(8, ring_count). Consumer reads ring_count from LMEM head/tail, raises tmask, drains up to 8 ring words per warp instruction, then drops to vx_tmc_one to re-poll.",
+      "checklist": [
+        "Consumer reads ring_count = (*lmem_head() - *lmem_tail()) and clamps k to min(8, ring_count)",
+        "Consumer calls stream_send_burst(local_words, k) then vx_tmc_one()",
+        "Producer warp unchanged (still single-thread)",
+        "Clean build succeeds"
+      ],
+      "allowed_subagents": ["Implementer"],
+      "transitions": {
+        "VERIFY_COMBINED": "Combined kernel builds"
+      },
+      "on_fail": "COMBINE"
+    },
+    "VERIFY_COMBINED": {
+      "description": "Run full regression with combined DAE + burst (same xrt-vcs-sim command, --app=fpint_gemm_ffn_hw_improve). Pass criterion: functional correctness AND end-to-end cycle count strictly less than baseline (positive speedup). This is the consolidated cycle gate for the whole task — DAE-only and burst-only intermediate states do NOT gate on cycles individually (per 2026-04-28 FSM relaxation; see VERIFY_DAE_SW description).",
+      "checklist": [
+        "Regression passes with bit-identical output",
+        "End-to-end cycle count from --perf=3 recorded vs. baseline, DAE-only, and burst-only",
+        "Combined cycle count < baseline (positive end-to-end speedup)",
+        "STATUS.yaml completed_work updated with all four measurements (baseline / DAE-only / burst-only / combined)"
+      ],
+      "allowed_subagents": ["Verification"],
+      "transitions": {
+        "DONE": "Functional correct AND positive end-to-end speedup vs. baseline",
+        "COMBINE": "Functional fail or cycles >= baseline"
+      },
+      "on_fail": "COMBINE"
+    },
+    "DONE": {
+      "description": "Both optimizations implemented, verified, combined. Functional correctness confirmed and positive end-to-end speedup measured. Further performance tuning deferred to a follow-up task.",
+      "checklist": [],
+      "allowed_subagents": [],
+      "transitions": {},
+      "on_fail": null
+    }
+  }
+}
