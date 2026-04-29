@@ -33,7 +33,7 @@ clean-build:
 	$(MAKE) -C tests clean
 
 clean-app:
-  	$(MAKE) -C sim clean
+	$(MAKE) -C sim clean
 	$(MAKE) -C runtime clean
 	$(MAKE) -C tests clean
 
