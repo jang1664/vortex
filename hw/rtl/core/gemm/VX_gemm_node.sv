@@ -721,19 +721,41 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     );
 
 `ifdef PERF_ENABLE
-    // LMEM byte counters: tap the single lmem_bus_if port (all GEMM LMEM traffic)
-    wire lmem_req_fire_perf = lmem_bus_if.req_valid && lmem_bus_if.req_ready;
+    // LMEM byte counters: tally per-lane fires across NUM_LSU_LANES.
+    wire [`NUM_LSU_LANES-1:0] lmem_lane_wr_fire;
+    wire [`NUM_LSU_LANES-1:0] lmem_lane_rd_fire;
+    for (genvar i = 0; i < `NUM_LSU_LANES; ++i) begin : g_lmem_perf_fire
+        wire fire = lmem_bus_if[i].req_valid && lmem_bus_if[i].req_ready;
+        assign lmem_lane_wr_fire[i] = fire &&  lmem_bus_if[i].req_data.rw;
+        assign lmem_lane_rd_fire[i] = fire && !lmem_bus_if[i].req_data.rw;
+    end
+
+    localparam LANE_CNT_W = `CLOG2(`NUM_LSU_LANES + 1);
+    wire [LANE_CNT_W-1:0] lmem_wr_fire_count;
+    wire [LANE_CNT_W-1:0] lmem_rd_fire_count;
+    VX_popcount #(.N(`NUM_LSU_LANES)) u_lmem_wr_pc (
+        .data_in (lmem_lane_wr_fire),
+        .data_out(lmem_wr_fire_count)
+    );
+    VX_popcount #(.N(`NUM_LSU_LANES)) u_lmem_rd_pc (
+        .data_in (lmem_lane_rd_fire),
+        .data_out(lmem_rd_fire_count)
+    );
+
+    wire [PERF_CTR_BITS-1:0] lmem_wr_bytes_cyc =
+        PERF_CTR_BITS'(lmem_wr_fire_count) * PERF_CTR_BITS'(LSU_WORD_SIZE);
+    wire [PERF_CTR_BITS-1:0] lmem_rd_bytes_cyc =
+        PERF_CTR_BITS'(lmem_rd_fire_count) * PERF_CTR_BITS'(LSU_WORD_SIZE);
+
     reg [PERF_CTR_BITS-1:0] perf_lmem_rd_r;
     reg [PERF_CTR_BITS-1:0] perf_lmem_wr_r;
     always @(posedge clk) begin
         if (reset) begin
             perf_lmem_rd_r <= '0;
             perf_lmem_wr_r <= '0;
-        end else if (lmem_req_fire_perf) begin
-            if (lmem_bus_if.req_data.rw)
-                perf_lmem_wr_r <= perf_lmem_wr_r + PERF_CTR_BITS'(LSU_WORD_SIZE);
-            else
-                perf_lmem_rd_r <= perf_lmem_rd_r + PERF_CTR_BITS'(LSU_WORD_SIZE);
+        end else begin
+            perf_lmem_wr_r <= perf_lmem_wr_r + lmem_wr_bytes_cyc;
+            perf_lmem_rd_r <= perf_lmem_rd_r + lmem_rd_bytes_cyc;
         end
     end
 
