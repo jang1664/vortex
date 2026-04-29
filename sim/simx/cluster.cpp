@@ -56,7 +56,17 @@ Cluster::Cluster(const SimContext& ctx,
     L2_WRITEBACK,           // write-back
     false,                  // write response
     L2_MSHR_SIZE,           // mshr size
+#ifdef SIMX_FIX_LSU_PIPELINE
+    // FIDELITY-FIX #5A: deepen L2 pipeline to match RTL
+    // VX_cache_bank.sv PIPELINE_STAGES=3 (ST0/ST1/ST2). `pipe_req_`
+    // depth is (latency-1), so latency=4 → 3-stage pipe. Loads go
+    // through this L2 in our config (DCACHE_DISABLE). Icache-miss
+    // path also passes through this L2 but icache hit rate is 99%,
+    // so effect on iflat is negligible. See notes/lsu_pipe_fix_plan.md.
+    4,                      // pipeline latency
+#else
     2,                      // pipeline latency
+#endif
   });
 
   // connect l2cache core interfaces

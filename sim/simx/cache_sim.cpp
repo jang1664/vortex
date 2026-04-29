@@ -116,6 +116,13 @@ struct line_t {
 
 struct set_t {
 	std::vector<line_t> lines;
+#ifdef SIMX_FIX_CACHE_FIFO
+	// FIDELITY-FIX: per-set FIFO replacement pointer. Matches RTL
+	// VX_cache_repl.sv:154-180 behavior under L*_REPL_POLICY=1=CS_REPL_FIFO.
+	// All RTL caches default to FIFO (icache/dcache/L2/L3 all =1 in
+	// VX_config.vh), so this flag flips ALL simx caches in this build.
+	uint32_t fifo_idx = 0;
+#endif
 
 	set_t(uint32_t num_ways)
 		: lines(num_ways)
@@ -125,9 +132,35 @@ struct set_t {
 		for (auto& line : lines) {
 			line.reset();
 		}
+#ifdef SIMX_FIX_CACHE_FIFO
+		fifo_idx = 0;
+#endif
 	}
 
 	int tag_lookup(uint64_t tag, int* free_line_id, int* repl_line_id) {
+#ifdef SIMX_FIX_CACHE_FIFO
+		// FIDELITY-FIX: FIFO replacement (matches RTL CS_REPL_FIFO).
+		// No lru_ctr aging. Eviction target = current fifo_idx; pointer
+		// advances at MSHR-enqueue site (only when we actually commit
+		// to evicting), to mirror VX_cache_repl.sv's `repl_valid`-gated
+		// counter increment.
+		int hit_line_id = -1;
+		*free_line_id = -1;
+		*repl_line_id = static_cast<int>(fifo_idx);
+		for (uint32_t i = 0, n = lines.size(); i < n; ++i) {
+			auto& line = lines.at(i);
+			if (line.valid) {
+				if (line.tag == tag) {
+					hit_line_id = i;
+				}
+			} else {
+				if (*free_line_id == -1)
+					*free_line_id = i;
+			}
+		}
+		return hit_line_id;
+#else
+		// ORIGINAL: pure LRU with aging on every lookup.
 		uint32_t max_cnt = 0;
 		int hit_line_id = -1;
 		*free_line_id = -1;
@@ -150,6 +183,7 @@ struct set_t {
 			}
 		}
 		return hit_line_id;
+#endif
 	}
 };
 
@@ -505,6 +539,15 @@ private:
 					// allocate MSHR
 					auto mshr_id = mshr_.enqueue(bank_req, (free_line_id != -1) ? free_line_id : repl_line_id);
 					DT(3, this->name() << "-mshr-enqueue: " << bank_req);
+#ifdef SIMX_FIX_CACHE_FIFO
+					// FIDELITY-FIX: advance FIFO pointer only when committing
+					// to evict an occupied line (i.e., no free slot was used).
+					// Mirrors VX_cache_repl.sv:162: `fifo_wdata = fifo_rdata + 1`
+					// gated by `.write(init || repl_valid)`.
+					if (free_line_id == -1) {
+						set.fifo_idx = (set.fifo_idx + 1) % set.lines.size();
+					}
+#endif
 
 					// send fill request
 					if (!mshr_pending) {

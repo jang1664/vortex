@@ -225,7 +225,18 @@ public:
       int delay = 0;
       switch (tcu_type) {
       case TcuType::WMMA:
+#ifdef SIMX_FIX_TCU_MODEL
+        // FIDELITY-FIX #4: match RTL TCU_DSP FEDP PIPE_LATENCY per uop.
+        // decode.cpp already expands each WMMA into m_steps*n_steps*k_steps
+        // uops (32 for NT=8), so throughput at 1 uop/cyc matches RTL by
+        // default; we only need to deepen the per-uop pipeline.
+        // PIPE_LATENCY (VX_tcu_fp.sv TCU_DSP branch, TCU_TC_K=2):
+        //   FCVT(1) + FMUL(8) + FACC(ceil(log2(2*TC_K+1))*FADD=3*11=33) + 1 = 43
+        // Outputs.push uses (2 + delay) cyc total, so delay=41 → 43 cyc.
+        delay = 41;
+#else
         delay = 4;
+#endif
         break;
       default:
         std::abort();

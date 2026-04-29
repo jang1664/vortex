@@ -239,11 +239,28 @@ void Core::fetch() {
   if (!icache_rsp_port.empty()){
     auto& mem_rsp = icache_rsp_port.front();
     auto trace = pending_icache_.at(mem_rsp.tag);
-    decode_latch_.push(trace);
-    DT(3, "icache-rsp: addr=0x" << std::hex << trace->PC << ", tag=0x" << mem_rsp.tag << std::dec << ", " << *trace);
-    pending_icache_.release(mem_rsp.tag);
-    icache_rsp_port.pop();
-    --pending_ifetches_;
+#ifdef SIMX_FIX_IFETCH_BACKPRESSURE
+    // FIDELITY-FIX #3B: throttle rsp consumption when the downstream
+    // ibuffer is full. Mirrors RTL: when VX_ibuffer fills,
+    // fetch_if.ready deasserts, so icache_bus_if.rsp_ready=0
+    // (VX_fetch.sv:127-133), responses are held at the icache output,
+    // and perf_icache_pending_reads grows. This is the
+    // pressure-sensitive component of FPGA's iflat (9→18 for vecadd's
+    // tight fetch loop). See notes/ifetch_fix_plan.md §"Fix #3B".
+    //
+    // Safe wrt warp scheduling: only gates the pop; warp suspend/resume,
+    // barrier, and wspawn paths are untouched.
+    auto& rsp_ibuffer = ibuffers_.at(trace->wid);
+    if (!rsp_ibuffer.full()) {
+#endif
+      decode_latch_.push(trace);
+      DT(3, "icache-rsp: addr=0x" << std::hex << trace->PC << ", tag=0x" << mem_rsp.tag << std::dec << ", " << *trace);
+      pending_icache_.release(mem_rsp.tag);
+      icache_rsp_port.pop();
+      --pending_ifetches_;
+#ifdef SIMX_FIX_IFETCH_BACKPRESSURE
+    }
+#endif
   }
 
   // send icache request
