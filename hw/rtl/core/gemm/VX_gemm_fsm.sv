@@ -463,6 +463,12 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     end
   endfunction
 
+  function automatic u32_t align8_u32(input u32_t value);
+    begin
+      align8_u32 = (value + 32'd7) & ~32'd7;
+    end
+  endfunction
+
   function automatic logic [63:0] scale_slot_bytes(input job_t j, input u32_t ck, input u32_t cn);
     logic [63:0] actual;
     u32_t nb_per_nt;
@@ -507,14 +513,16 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     u32_t mt_idx;
     u32_t kt_idx;
     u32_t cm;
+    u32_t cm_slot;
     begin
       mt_idx = (j.m_start >> j.log2_dma_mt) + u32_t'(mt);
       kt_idx = u32_t'(kt);
       cm     = (mt == mt_dim_q - 1) ? u32_t'(m_last_q) : u32_t'(MT_q);
+      cm_slot = align8_u32(cm);
 
       input_tile_addr = j.input_base
                       + 64'(mt_idx) * 64'(MT_q) * 64'(j.orig_K) * FP16_BYTES
-                      + 64'(kt_idx) * 64'(cm) * 64'(KT_q) * FP16_BYTES;
+                      + 64'(kt_idx) * 64'(cm_slot) * 64'(KT_q) * FP16_BYTES;
     end
   endfunction
 
@@ -827,6 +835,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     u32_t acc_group_base;
     u32_t acc_base_nb;
     u32_t output_nb_bytes;
+    u32_t output_nb_stride_bytes;
     logic [63:0] lmem_obuf_nb;
     logic [63:0] dram_out_nb;
 
@@ -1006,11 +1015,12 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     out_bytes_fp16 = mm_bytecnt_t'(mt_eff_cur * nt_eff_cur * FP16_BYTES);
     output_nt_mxu_dim = nt_mxu_dim;
     output_nb_bytes = u32_t'(mt_eff_cur) * u32_t'(MXU_NT * FP16_BYTES);
-    lmem_obuf_nb = job_q.lmem_obuf_base + 64'(o_nt_mxu_q) * 64'(output_nb_bytes);
+    output_nb_stride_bytes = align8_u32(u32_t'(mt_eff_cur)) * u32_t'(MXU_NT * FP16_BYTES);
+    lmem_obuf_nb = job_q.lmem_obuf_base + 64'(o_nt_mxu_q) * 64'(output_nb_stride_bytes);
     dram_out_nb = job_q.output_base
                 + 64'(mt_cur) * 64'(MT_q) * 64'(job_q.orig_N) * FP16_BYTES
                 + 64'((u32_t'(nt_cur) * dma_nt_mxu_dim) + u32_t'(o_nt_mxu_q))
-                  * 64'(output_nb_bytes);
+                  * 64'(output_nb_stride_bytes);
 
     gemm_start_o = 1'b0;
 
