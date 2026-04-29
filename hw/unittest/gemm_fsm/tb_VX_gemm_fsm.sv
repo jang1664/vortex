@@ -8,7 +8,7 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; ();
   parameter real   PERIOD   = 10.0;
 
   // DUT uses cfg_reg_if.regs[0..28]
-  parameter int CFG_NUM = 33;
+  parameter int CFG_NUM = `GEMM_CFG_REG_NUM;
   parameter int CFG_DW  = 32;
 
   // -----------------------------
@@ -36,6 +36,7 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; ();
   ) cfg_reg_if();
 
   VX_gemm_fsm_if gemm_fsm_if();
+  logic gemm_start;
 
   // -----------------------------
   // DUT
@@ -46,7 +47,8 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; ();
     .clk        (clk),
     .reset      (reset),
     .cfg_reg_if (cfg_reg_if),
-    .gemm_fsm_if(gemm_fsm_if)
+    .gemm_fsm_if(gemm_fsm_if),
+    .gemm_start_o(gemm_start)
   );
 
   // -----------------------------
@@ -75,27 +77,26 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; ();
 
   // -----------------------------
   // Helpers to decode cmd
-  // instr[ 7:0] = opcode
-  // instr[15:8] = flags
-  // instr[31:16]= size_bytes
+  // instr[ 3:0] = opcode
+  // instr[31:4] = size_bytes
   // -----------------------------
-  function automatic logic [7:0]  get_op   (input gemm_unified_cmd_t c); return c.instr[7:0];   endfunction
-  function automatic logic [7:0]  get_flags(input gemm_unified_cmd_t c); return c.instr[15:8];  endfunction
-  function automatic int unsigned get_size (input gemm_unified_cmd_t c); return c.instr[31:16]; endfunction
+  function automatic logic [3:0]  get_op   (input gemm_unified_cmd_t c); return c.instr[3:0];   endfunction
+  function automatic logic [7:0]  get_flags(input gemm_unified_cmd_t c); return c.flags;  endfunction
+  function automatic int unsigned get_size (input gemm_unified_cmd_t c); return c.instr[31:4]; endfunction
 
   // Opcode map (keep consistent with your FSM)
-  localparam logic [7:0] OP_WAIT        = 8'hF0;
-  localparam logic [7:0] OP_NOTIFY      = 8'hF1;
-  localparam logic [7:0] OP_DMA_LD      = 8'h10;
-  localparam logic [7:0] OP_DMA_ST      = 8'h11;
-  localparam logic [7:0] OP_W_LDMA_MXU  = 8'h20;
-  localparam logic [7:0] OP_SC_LDMA_MXU = 8'h21;
-  localparam logic [7:0] OP_I_LDMA_ARM  = 8'h22;
-  localparam logic [7:0] OP_O_ACC2LMEM  = 8'h23;
-  localparam logic [7:0] OP_ZP_LDMA_MXU = 8'h24;
+  localparam logic [3:0] OP_DMA_LD      = 4'd1;
+  localparam logic [3:0] OP_DMA_ST      = 4'd2;
+  localparam logic [3:0] OP_NOTIFY      = 4'd3;
+  localparam logic [3:0] OP_WAIT        = 4'd4;
+  localparam logic [3:0] OP_W_LDMA_MXU  = 4'd5;
+  localparam logic [3:0] OP_SZ_LDMA_MXU = 4'd6;
+  localparam logic [3:0] OP_I_LDMA_ARM  = 4'd7;
+  localparam logic [3:0] OP_O_ACC2LMEM  = 4'd8;
+  localparam logic [3:0] OP_CLEAR       = 4'd9;
 
   typedef struct packed {
-    logic [7:0]  op;
+    logic [3:0]  op;
     logic [7:0]  flags;
     int unsigned size;
     logic [63:0] rs1;
@@ -221,6 +222,16 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; ();
       cfg_reg_if.regs[30] = N[31:0];
       cfg_reg_if.regs[31] = K[31:0];
       cfg_reg_if.regs[32] = qblk[31:0];
+      cfg_reg_if.regs[33] = M[31:0];
+      cfg_reg_if.regs[34] = N[31:0];
+      cfg_reg_if.regs[35] = K[31:0];
+      cfg_reg_if.regs[36] = 32'd0;
+      cfg_reg_if.regs[37] = 32'd0;
+      cfg_reg_if.regs[38] = 32'd0;
+      cfg_reg_if.regs[39] = 32'd0;
+      cfg_reg_if.regs[40] = 32'd7;
+      cfg_reg_if.regs[41] = 32'd7;
+      cfg_reg_if.regs[42] = 32'd7;
 
       // 2) assert valid BEFORE the sampling edge (use blocking)
       //    -> now at next posedge, DUT definitely sees valid=1
@@ -313,7 +324,7 @@ module tb_VX_gemm_fsm import VX_gpu_pkg::*; ();
       128,           // M
       128,           // N
       256,           // K
-      32             // qblk
+      5              // log2(qblk=32)
     );
 
     // Wait until no commands for a while

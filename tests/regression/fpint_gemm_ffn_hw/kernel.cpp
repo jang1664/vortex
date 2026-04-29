@@ -181,22 +181,22 @@ static bool gemm_job_alloc_fixed(uint32_t& eid, uint32_t& generation, uint32_t& 
 
 static void program_job_regs(uint32_t eid, const kernel_arg_t* arg, const tb_partition_t& part) {
   // Global/DRAM bases
-  job_write_reg64(eid, REG_INPUT_BASE_LO,  arg->input_base);
-  job_write_reg64(eid, REG_WEIGHT_BASE_LO, arg->weight_base);
-  job_write_reg64(eid, REG_OUTPUT_BASE_LO, arg->output_base);
-  job_write_reg64(eid, REG_SCALE_BASE_LO,  arg->scale_base);
-  job_write_reg64(eid, REG_ZP_BASE_LO,     arg->zp_base);
+  job_write_reg64(eid, REG_INPUT_BASE_LO,  arg->dram_in_base);
+  job_write_reg64(eid, REG_WEIGHT_BASE_LO, arg->dram_w_base);
+  job_write_reg64(eid, REG_OUTPUT_BASE_LO, arg->dram_out_base);
+  job_write_reg64(eid, REG_SCALE_BASE_LO,  arg->dram_sc_base);
+  job_write_reg64(eid, REG_ZP_BASE_LO,     arg->dram_zp_base);
 
   // LMEM scratch bases
-  job_write_reg64(eid, REG_LMEM_IBUF0_LO,  arg->lmem_ibuf0_base);
-  job_write_reg64(eid, REG_LMEM_IBUF1_LO,  arg->lmem_ibuf1_base);
-  job_write_reg64(eid, REG_LMEM_WBUF0_LO,  arg->lmem_wbuf0_base);
-  job_write_reg64(eid, REG_LMEM_WBUF1_LO,  arg->lmem_wbuf1_base);
-  job_write_reg64(eid, REG_LMEM_SCBUF0_LO, arg->lmem_scbuf0_base);
-  job_write_reg64(eid, REG_LMEM_SCBUF1_LO, arg->lmem_scbuf1_base);
-  job_write_reg64(eid, REG_LMEM_ZPBUF0_LO, arg->lmem_zpbuf0_base);
-  job_write_reg64(eid, REG_LMEM_ZPBUF1_LO, arg->lmem_zpbuf1_base);
-  job_write_reg64(eid, REG_LMEM_OBUF_LO,   arg->lmem_obuf_base);
+  job_write_reg64(eid, REG_LMEM_IBUF0_LO,  arg->lmem_ibuf[0]);
+  job_write_reg64(eid, REG_LMEM_IBUF1_LO,  arg->lmem_ibuf[1]);
+  job_write_reg64(eid, REG_LMEM_WBUF0_LO,  arg->lmem_wbuf[0]);
+  job_write_reg64(eid, REG_LMEM_WBUF1_LO,  arg->lmem_wbuf[1]);
+  job_write_reg64(eid, REG_LMEM_SCBUF0_LO, arg->lmem_scbuf[0]);
+  job_write_reg64(eid, REG_LMEM_SCBUF1_LO, arg->lmem_scbuf[1]);
+  job_write_reg64(eid, REG_LMEM_ZPBUF0_LO, arg->lmem_zpbuf[0]);
+  job_write_reg64(eid, REG_LMEM_ZPBUF1_LO, arg->lmem_zpbuf[1]);
+  job_write_reg64(eid, REG_LMEM_OBUF_LO,   arg->lmem_obuf[0]);
 
   // Original problem sizes
   job_write_reg32(eid, REG_M_ORIG, arg->M);
@@ -216,9 +216,9 @@ static void program_job_regs(uint32_t eid, const kernel_arg_t* arg, const tb_par
   job_write_reg32(eid, REG_QDIR, arg->QDIR);
 
   // Runtime DMA tile sizes (log2)
-  job_write_reg32(eid, REG_LOG2_DMA_MT, arg->LOG2_DMA_MT);
-  job_write_reg32(eid, REG_LOG2_DMA_KT, arg->LOG2_DMA_KT);
-  job_write_reg32(eid, REG_LOG2_DMA_NT, arg->LOG2_DMA_NT);
+  job_write_reg32(eid, REG_LOG2_DMA_MT, log2_pow2_u32(GEMM_MT));
+  job_write_reg32(eid, REG_LOG2_DMA_KT, log2_pow2_u32(GEMM_KT));
+  job_write_reg32(eid, REG_LOG2_DMA_NT, log2_pow2_u32(GEMM_NT));
 
   // Start (valid=1)
   job_write_reg32(eid, REG_CONTROL, 1u);
@@ -239,22 +239,18 @@ static bool wait_job_done(uint32_t eid, uint32_t generation, uint32_t& last_ctrl
 
 void kernel_mmio_driver(kernel_arg_t *__UNIFORM__ arg) {
   uint32_t core_id = vx_core_id();
-  uint32_t num_cores = vx_num_cores();
   bool reporter = (core_id == 0);
 
   if (reporter) {
-    arg->status = MMIO_STATUS_INIT;
-    arg->last_ctrl = 0;
+    arg->status = STATUS_INIT;
   }
 
-  uint32_t num_tbs = arg->grid_dim[0] * arg->grid_dim[1];
-  if (num_tbs == 0)
-    num_tbs = num_cores;
-
-  tb_partition_t part = compute_partition(core_id, num_tbs, arg->M, arg->N);
+  // The FSM descriptor path accepts one full rectangular GEMM job. Keep this
+  // regression deterministic by letting core 0 own the MMIO transaction.
+  tb_partition_t part = {core_id == 0, 0u, 0u, arg->M, arg->N};
 #ifdef GEMM_PARTITION_LOG
-  vx_printf("[gemm-part] cid=%u/%u tbs=%u has_work=%u m_start=%u n_start=%u target_M=%u target_N=%u K=%u\n",
-            core_id, num_cores, num_tbs,
+  vx_printf("[gemm-part] cid=%u has_work=%u m_start=%u n_start=%u target_M=%u target_N=%u K=%u\n",
+            core_id,
             part.has_work ? 1u : 0u,
             part.m_start, part.n_start,
             part.target_M, part.target_N,
@@ -263,7 +259,7 @@ void kernel_mmio_driver(kernel_arg_t *__UNIFORM__ arg) {
 
   if (!part.has_work) {
     if (reporter)
-      arg->status = MMIO_STATUS_OK;
+      arg->status = STATUS_OK;
     return;
   }
 
@@ -272,24 +268,15 @@ void kernel_mmio_driver(kernel_arg_t *__UNIFORM__ arg) {
 
   if (!gemm_job_alloc_fixed(eid, generation, alloc_raw)) {
     if (reporter) {
-      arg->last_ctrl = alloc_raw;
       if (alloc_raw == kPoisonWord) {
-        arg->status = MMIO_STATUS_ALLOC_FAIL;
+        arg->status = STATUS_ALLOC_FAIL;
       } else if (((alloc_raw >> JOB_MMIO_ALLOC_SUCC_BIT) & 1u) == 0) {
-        arg->status = MMIO_STATUS_ALLOC_FAIL;
+        arg->status = STATUS_ALLOC_FAIL;
       } else {
-        arg->job_eid = eid;
-        arg->job_generation = generation;
-        arg->status = MMIO_STATUS_BAD_EID;
+        arg->status = STATUS_BAD_EID;
       }
     }
     return;
-  }
-
-  if (reporter) {
-    arg->last_ctrl = alloc_raw;
-    arg->job_eid = eid;
-    arg->job_generation = generation;
   }
 
   program_job_regs(eid, arg, part);
@@ -297,15 +284,13 @@ void kernel_mmio_driver(kernel_arg_t *__UNIFORM__ arg) {
   uint32_t last_ctrl = 0;
   if (!wait_job_done(eid, generation, last_ctrl)) {
     if (reporter) {
-      arg->last_ctrl = last_ctrl;
-      arg->status = MMIO_STATUS_WAIT_STUCK;
+      arg->status = STATUS_WAIT_STUCK;
     }
     return;
   }
 
   if (reporter) {
-    arg->last_ctrl = last_ctrl;
-    arg->status = MMIO_STATUS_OK;
+    arg->status = STATUS_OK;
   }
 }
 

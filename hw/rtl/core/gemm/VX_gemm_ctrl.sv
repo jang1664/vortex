@@ -30,9 +30,9 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
     input  wire                   clk,
     input  wire                   reset,
 
-    VX_instruction_if.slave       instruction_if,         // from gemm node
+    VX_config_reg_if.slave        cfg_reg_if,         // from job frontend
     VX_gemm_ctrl_if.master        gemm_ctrl_if,       // to gemm unit + cmd ctrls
-    VX_gemm_node_done_if.master   done_if,            // to job frontend (clear)
+    VX_node_done_if.master        done_if,            // to job frontend (clear)
     VX_gemm_sync_if.slave         gemm_sync_slv_if[N_NODE] // from cmd ctrls (notify events)
 `ifdef PERF_ENABLE
     ,input  logic            gemm_unit_computing
@@ -43,21 +43,30 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
     logic [N_CHILDREN-1:0]       child_q_empty_v;
     logic                        parent_q_empty;
 
-    wire instruction_fire = instruction_if.valid && instruction_if.ready;
+    wire cfg_fire = cfg_reg_if.valid && cfg_reg_if.ready;
     wire queues_idle    = parent_q_empty && (&child_q_empty_v);
     wire done_fire      = done_if.valid && done_if.ready;
+    logic [31:0] active_entry_id_q;
+
+    always_ff @(posedge clk) begin
+      if (reset) begin
+        active_entry_id_q <= '0;
+      end else if (cfg_fire) begin
+        active_entry_id_q <= cfg_reg_if.entry_id;
+      end
+    end
 
 `ifdef DBG_TRACE_GEMM_CTRL
     always_ff @(posedge clk) begin
       if (!reset) begin
-        if (instruction_fire) begin
-          `TRACE(2, ("%m : [%0t] | GEMM_CTRL_INSTR_ACCEPT | {inst=%s, data=0x%0h}\n",
-                    $time, INSTANCE_ID, instruction_if.inst))
+        if (cfg_fire) begin
+          `TRACE(2, ("%m : [%0t] | GEMM_CTRL_CFG_ACCEPT | {inst=%s, entry_id=%0d}\n",
+                    $time, INSTANCE_ID, cfg_reg_if.entry_id))
         end
 
         if (queues_idle) begin
-          `TRACE(3, ("%m : [%0t] | GEMM_CTRL_STATUS | {inst=%s, instr_ready=%0d, queues_idle=%0d, parent_q_empty=%0d, child_q_empty=0x%0h}\n",
-                    $time, INSTANCE_ID, instruction_if.ready, queues_idle, parent_q_empty, child_q_empty_v))
+          `TRACE(3, ("%m : [%0t] | GEMM_CTRL_STATUS | {inst=%s, cfg_ready=%0d, queues_idle=%0d, parent_q_empty=%0d, child_q_empty=0x%0h}\n",
+                    $time, INSTANCE_ID, cfg_reg_if.ready, queues_idle, parent_q_empty, child_q_empty_v))
         end
 
         if (done_fire) begin
@@ -77,22 +86,24 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
     VX_gemm_fsm_if gemm_cqueue_out[N_CHILDREN] ();
 
     // -------------------------------------------------------------------------
-    // Command constructor: groups raw 64-bit words and emits unified commands.
-    // CLEAR completion is now signaled from sync module via flag.done.
+    // FSM command generator: consumes one config-register snapshot and emits
+    // the full GEMM command stream.
     // -------------------------------------------------------------------------
-    VX_cmd_constructor #(
+    VX_gemm_fsm #(
       .INSTANCE_ID(INSTANCE_ID)
-    ) u_VX_cmd_constructor (
-      .clk            (clk),
-      .reset          (reset),
-      .instruction_if (instruction_if),
-      .gemm_fsm_if    (gemm_fsm_if)
+    ) u_VX_gemm_fsm (
+      .clk          (clk),
+      .reset        (reset),
+      .cfg_reg_if   (cfg_reg_if),
+      .gemm_fsm_if  (gemm_fsm_if),
+      .gemm_start_o ()
     );
 
     // -------------------------------------------------------------------------
     // CLEAR completion: sync module signals done when CLEAR is consumed
     // -------------------------------------------------------------------------
     assign done_if.valid = gemm_pqueue_out.flag.done;
+    assign done_if.entry_id = active_entry_id_q;
 
     // -------------------------------------------------------------------------
     // Parent cmd queue: store ONLY cmd payload (NOT start)
@@ -267,9 +278,9 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
 
     (* keep = "true", mark_debug = "true" *) wire [DBG_GEMM_CTRL_P0_W-1:0] dbg_gemm_ctrl_probe0 = {
         reset,
-        instruction_if.valid,
-        instruction_if.ready,
-        instruction_fire,
+        cfg_reg_if.valid,
+        cfg_reg_if.ready,
+        cfg_fire,
         1'b0,
         1'b0,
         done_fire,
@@ -305,8 +316,8 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
         gemm_sync_out[4].flag.idle
     };
     (* keep = "true", mark_debug = "true" *) wire [DBG_GEMM_CTRL_P2_W-1:0] dbg_gemm_ctrl_probe2 = {
-        instruction_if.inst[63:32],
-        instruction_if.inst[31:0],
+        cfg_reg_if.entry_id,
+        cfg_reg_if.regs[0],
         32'(gemm_fsm_if.ctrl.cmd.instr),
         32'(gemm_pqueue_out.ctrl.cmd.instr),
         32'(gemm_sync_out[0].ctrl.cmd.instr),

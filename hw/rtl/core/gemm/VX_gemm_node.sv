@@ -155,11 +155,12 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     VX_gemm_sync_if gemm_sync_if[N_NODE] ();
 
     // Job frontend dispatch/done handshake.
-    VX_instruction_if #(
-      .DW(64)
+    VX_config_reg_if #(
+      .NUM(`GEMM_CFG_REG_NUM),
+      .DW (32)
     ) issue_if();
 
-    VX_gemm_node_done_if done_if();
+    VX_node_done_if done_if();
 
     // -------------------------------------------------------------------------
     // Control-plane wiring
@@ -375,12 +376,14 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     // Frontend
     // -------------------------------------------------------------------------
 
-    // Job frontend: MMIO command intake and issue/done interface.
-    VX_gemm_job_frontend #(
+    // Job frontend: MMIO descriptor registers and issue/done interface.
+    VX_job_frontend #(
       .INSTANCE_ID(INSTANCE_ID),
       .NUM_MASTERS(N_MASTER),
+      .NUM_ENTRIES(`JOB_MMIO_NUM_ENTRIES),
+      .NUM_REGS32(`GEMM_CFG_REG_NUM),
       .CFG_BASE_ADDR(`GEMM_REG_BASE_ADDR)
-    ) u_gemm_job_frontend (
+    ) u_job_frontend (
       .clk(clk),
       .reset(reset),
       .mmio_if(mmio_if),
@@ -532,7 +535,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     ) u_VX_gemm_ctrl (
       .clk(clk),
       .reset(reset),
-      .instruction_if(issue_if),
+      .cfg_reg_if(issue_if),
       .gemm_ctrl_if(gemm_ctrl_if),
       .done_if(done_if),
       .gemm_sync_slv_if(gemm_sync_if)

@@ -43,7 +43,7 @@ module tb_VX_gemm_ctrl;
   logic clk;
   logic reset;
 
-  VX_config_reg_if #(.NUM(33), .DW(32)) cfg_reg_if();
+  VX_config_reg_if #(.NUM(`GEMM_CFG_REG_NUM), .DW(32)) cfg_reg_if();
   VX_gemm_ctrl_if                      gemm_ctrl_if();
   VX_node_done_if                      done_if();
   VX_gemm_sync_if                      gemm_sync_slv_if[N_NODE]();
@@ -151,7 +151,7 @@ module tb_VX_gemm_ctrl;
       cfg_reg_if.entry_id = entry_id_val;
 
       // (optional) clear all regs
-      for (int i = 0; i < 33; i++) cfg_reg_if.regs[i] = '0;
+      for (int i = 0; i < `GEMM_CFG_REG_NUM; i++) cfg_reg_if.regs[i] = '0;
 
       cfg_reg_if.regs[0]  = 32'h1;
 
@@ -201,6 +201,16 @@ module tb_VX_gemm_ctrl;
       cfg_reg_if.regs[30] = N;
       cfg_reg_if.regs[31] = K;
       cfg_reg_if.regs[32] = qblk;
+      cfg_reg_if.regs[33] = M;
+      cfg_reg_if.regs[34] = N;
+      cfg_reg_if.regs[35] = K;
+      cfg_reg_if.regs[36] = 32'd0;
+      cfg_reg_if.regs[37] = 32'd0;
+      cfg_reg_if.regs[38] = 32'd0;
+      cfg_reg_if.regs[39] = 32'd0;
+      cfg_reg_if.regs[40] = 32'd7;
+      cfg_reg_if.regs[41] = 32'd7;
+      cfg_reg_if.regs[42] = 32'd7;
 
       // 2) assert valid BEFORE the sampling posedge
       cfg_reg_if.valid = 1'b1;
@@ -659,7 +669,7 @@ module tb_VX_gemm_ctrl;
       32'd256,           // M
       32'd256,           // N
       32'd256,           // K
-      32'd32,            // qblk
+      32'd5,             // log2(qblk=32)
       32'd0              // entry_id
     );
 

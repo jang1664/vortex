@@ -5,23 +5,16 @@
 #include <stdint.h>
 #include <VX_config.h>
 
-#ifndef NUM_THREADS
-#define NUM_THREADS 4
-#endif
+// Runtime-programmed DMA tile dimensions. These remain pow2-only; the kernel
+// writes their log2 values into descriptor registers 40..42.
+#define GEMM_MT 128
+#define GEMM_NT 128
+#define GEMM_KT 128
 
-#ifndef ITYPE
-#define ITYPE fp16
-#endif
+#define GEMM_MXU_KT MXU_ROW
+#define GEMM_MXU_NT MXU_COL
 
-#ifndef WTYPE
-#define WTYPE int4
-#endif
-
-#ifndef OTYPE
-#define OTYPE fp32
-#endif
-
-// TB_VX_gemm_node register indices (0..39)
+// Job descriptor register indices.
 #define REG_CONTROL             0
 #define REG_INPUT_BASE_LO       1
 #define REG_INPUT_BASE_HI       2
@@ -33,7 +26,6 @@
 #define REG_SCALE_BASE_HI       8
 #define REG_ZP_BASE_LO          9
 #define REG_ZP_BASE_HI          10
-
 #define REG_LMEM_IBUF0_LO       11
 #define REG_LMEM_IBUF0_HI       12
 #define REG_LMEM_IBUF1_LO       13
@@ -52,7 +44,6 @@
 #define REG_LMEM_ZPBUF1_HI      26
 #define REG_LMEM_OBUF_LO        27
 #define REG_LMEM_OBUF_HI        28
-
 #define REG_M_ORIG              29
 #define REG_N_ORIG              30
 #define REG_K_ORIG              31
@@ -69,18 +60,26 @@
 #define REG_LOG2_DMA_NT         42
 
 #define GEMM_JOB_NUM_REGS32     43
-#define GEMM_JOB_NUM_ENTRIES     4
+#define GEMM_JOB_NUM_ENTRIES    4
 
-// kernel status codes
-#define MMIO_STATUS_INIT        0
-#define MMIO_STATUS_OK          1
-#define MMIO_STATUS_ALLOC_FAIL  2
-#define MMIO_STATUS_WAIT_STUCK  3
-#define MMIO_STATUS_BAD_EID     4
+#define STATUS_INIT        0
+#define STATUS_OK          1
+#define STATUS_ALLOC_FAIL  2
+#define STATUS_WAIT_STUCK  3
+#define STATUS_BAD_EID     4
 
 typedef struct {
-  uint32_t grid_dim[2];
-  uint32_t block_dim[2];
+  uint64_t dram_in_base;
+  uint64_t dram_w_base;
+  uint64_t dram_sc_base;
+  uint64_t dram_zp_base;
+  uint64_t dram_out_base;
+
+  uint64_t lmem_ibuf[2];
+  uint64_t lmem_wbuf[2];
+  uint64_t lmem_scbuf[2];
+  uint64_t lmem_zpbuf[2];
+  uint64_t lmem_obuf[2];
 
   uint32_t M;
   uint32_t N;
@@ -89,30 +88,7 @@ typedef struct {
   uint32_t WTRANS;
   uint32_t QDIR;
 
-  uint32_t LOG2_DMA_MT;
-  uint32_t LOG2_DMA_KT;
-  uint32_t LOG2_DMA_NT;
-
-  uint64_t input_base;
-  uint64_t weight_base;
-  uint64_t output_base;
-  uint64_t scale_base;
-  uint64_t zp_base;
-
-  uint64_t lmem_ibuf0_base;
-  uint64_t lmem_ibuf1_base;
-  uint64_t lmem_wbuf0_base;
-  uint64_t lmem_wbuf1_base;
-  uint64_t lmem_scbuf0_base;
-  uint64_t lmem_scbuf1_base;
-  uint64_t lmem_zpbuf0_base;
-  uint64_t lmem_zpbuf1_base;
-  uint64_t lmem_obuf_base;
-
   uint32_t status;
-  uint32_t job_eid;
-  uint32_t job_generation;
-  uint32_t last_ctrl;
 } kernel_arg_t;
 
 #endif // _COMMON_H_

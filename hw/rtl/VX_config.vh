@@ -1125,7 +1125,7 @@ for block_size in range(1, full_bitwidth+1):
 // across all DMA channels before advancing to the next stripe within one HBM bank.
 `define HBM_BUS_STRIDE (`MEM_BLOCK_SIZE * `NUM_DMA_CHANNELS)
 
-`define GEMM_CFG_REG_NUM 40       // Number of GEMM configuration registers
+`define GEMM_CFG_REG_NUM 43       // Number of GEMM configuration registers
 `define DMA_CFG_REG_NUM 18        // Number of DMA configuration registers
 `ifdef XLEN_64
 `define GEMM_REG_BASE_ADDR 64'h0000_0000_0000_1080 // Base byte address for GEMM config registers
