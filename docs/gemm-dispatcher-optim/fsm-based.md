@@ -302,7 +302,7 @@ the cmd struct (`stride` field exists) but is **not implemented** for
 kernel-issued DMAs on this branch — `VX_gemm_tmem_dma_ctrl.sv:472`
 asserts `cmd.bound == 16'd1` for `OP_DMA_LD` / `OP_DMA_ST`.
 
-This drives the FSM emit contract used in §5.6:
+This drives the FSM emit contract:
 
 | Field          | Kernel DMA_LD/ST               |
 |----------------|--------------------------------|
@@ -317,8 +317,7 @@ The fpint FSM was designed for a 2D form (`eff_mt = row count`,
 implicit per-row stride). When porting, the row count must NOT be
 remapped to `bound` — instead it is folded into `seg_size` (already
 done in fpint's tile-byte computations like
-`mt_eff*kt_eff*FP16_BYTES`), and `bound` is hard-set to `1`. See
-§5.6 for the per-opcode remap table.
+`mt_eff*kt_eff*FP16_BYTES`), and `bound` is hard-set to `1`.
 
 ### 2.4 Test apps (canonical for this task)
 
@@ -333,7 +332,7 @@ The current `fpint_gemm_ffn_hw/main.cpp` (pre-task) uses 64B alignment
 and naive row-major scale/zp DRAM, which violates §2.3's per-tile
 address constraints. Adopting `_improve`'s layout is the source-fix
 required by Decisions #7 and #8 (no consumer-RTL relaxation, no
-infra hacks). See §4.4 for the directive and §5.2 for the reuse / adapt breakdown.
+infra hacks). See §4.4 for the directive.
 
 `fpint_gemm_ffn_hw_improve/*` is **never modified** by this task.
 
@@ -369,6 +368,7 @@ user explicitly relaxes them in the conversation.
   - `hw/rtl/VX_gpu_pkg.sv` (`gemm_unified_cmd_t` typedef)
   - `hw/rtl/VX_config.vh` (defines)
 - **Kernel / test apps**: `tests/regression/fpint_gemm_ffn_hw/**`, `kernel/**`
+- **Unit tests**: `hw/unittest/**` — modify existing unittests when changing the corresponding RTL, or create a new `hw/unittest/<new>/` folder per the Verification Constraints below.
 - **Documentation**: `docs/**`, `agent-tasks/**`, `harness/rules/**`
 
 #### Off-limits — infra files
@@ -418,7 +418,7 @@ modules are off-limits.
 
 - **Do NOT** modify a CMD-consumer module to "accept" a cmd field shape that the FSM emits. Fix the FSM emit (or the gemm_node glue that maps cmd fields onto the consumer's interface) instead.
 - **Do NOT** add new opcodes that require `VX_gemm_sync.sv` / `VX_cmd_constructor.sv` decode changes. Reuse the existing 4-bit opcode set listed in `VX_gemm_sync.sv:25-33` and the `RAW_OP_*` set in `VX_cmd_constructor.sv:16-24`.
-- **Do NOT** widen / narrow `gemm_unified_cmd_t` field bit-widths in a way that breaks consumer decode logic. Field shape is fixed by `VX_cmd_constructor.sv`'s decode (`{tmem_stride16, mxu_stride16}` for QPARAM, `{16'd0, stride16}` for others, etc., see §5.6).
+- **Do NOT** widen / narrow `gemm_unified_cmd_t` field bit-widths in a way that breaks consumer decode logic. Field shape is fixed by `VX_cmd_constructor.sv`'s decode (`{tmem_stride16, mxu_stride16}` for QPARAM, `{16'd0, stride16}` for others).
 - **Do NOT** modify `VX_lmem_dma_misal.sv`'s 64-byte alignment assertion or the `VX_gemm_tmem_dma_ctrl.sv:472` / `:487-493` assertions. Any failure is a real bug to fix in FSM stride/base emit (per §4.3) or kernel TMEM layout (per §4.4).
 
 If the failure is genuinely on the CMD-consumer side and CANNOT be fixed by changing what the FSM emits or how gemm_node glue routes the fields, **STOP and report**. Don't silently expand RTL scope into the consumer modules.
@@ -450,7 +450,6 @@ The current `fpint_gemm_ffn_hw/main.cpp` uses 64B alignment + naive row-major sc
 
 The `_improve` test app itself is **read-only** (per §4.1). We copy/adapt its layout patterns into `fpint_gemm_ffn_hw/`, but we never modify files under `tests/regression/fpint_gemm_ffn_hw_improve/`.
 
-See §5.2 for the technical reuse-vs-adapt breakdown.
 
 ### 4.5 No-deletion policy
 
