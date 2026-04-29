@@ -1096,7 +1096,9 @@ for block_size in range(1, full_bitwidth+1):
 // -------------------------------------------------------
 // Accumulator Memory Configuration
 // -------------------------------------------------------
+`ifndef GEMM_ACC_MEM_DEPTH
 `define GEMM_ACC_MEM_DEPTH 1024
+`endif
 `define GEMM_ACC_MEM_BANK_NUM 4
 `define GEMM_ACC_MEM_TOT_SIZE ((`GEMM_ACC_MEM_DEPTH) * (`GEMM_PSUM_DATA_SIZE) * `GEMM_ACC_MEM_BANK_NUM)
 `define GEMM_ACC_MEM_ADDR_WIDTH `CLOG2(`GEMM_ACC_MEM_TOT_SIZE)
