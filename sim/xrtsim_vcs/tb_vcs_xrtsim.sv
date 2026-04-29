@@ -540,17 +540,9 @@ module tb_vcs_xrtsim #(
     ap_clk   = 0;
     ap_rst_n = 0;
 
-    // Initialize all TB-driven DUT inputs to avoid X propagation with xprop
-    for (int i = 0; i < NUM_BANKS; i++) begin
-      m_axi_mem_rvalid[i] = 0;
-      m_axi_mem_rdata[i]  = '0;
-      m_axi_mem_rid[i]    = '0;
-      m_axi_mem_rlast[i]  = 0;
-      m_axi_mem_rresp[i]  = 2'b00;
-      m_axi_mem_bvalid[i] = 0;
-      m_axi_mem_bid[i]    = '0;
-      m_axi_mem_bresp[i]  = 2'b00;
-    end
+    // R/B response signals are reset by the per-bank always_ff blocks above
+    // (lines 416/445). Adding initial-block writes here would be an illegal
+    // multi-driver combination under VCS (matches fpint_improve approach).
     s_axi_ctrl_awvalid = 0;
     s_axi_ctrl_awaddr  = '0;
     s_axi_ctrl_wvalid  = 0;
