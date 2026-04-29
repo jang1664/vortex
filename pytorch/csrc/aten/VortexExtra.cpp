@@ -1449,9 +1449,9 @@ at::Tensor vortex_apply_rotary_pos_emb(
 // ===========================================================================
 
 // LMEM layout constants (from VX_config.h / hardware build)
-static constexpr uint64_t FPINT_DMA_MT = GEMM_FSM_MT;  // 128
-static constexpr uint64_t FPINT_DMA_NT = GEMM_FSM_NT;  // 128
-static constexpr uint64_t FPINT_DMA_KT = GEMM_FSM_KT;  // 128
+static constexpr uint64_t FPINT_DMA_MT = 128;
+static constexpr uint64_t FPINT_DMA_NT = 128;  // 128
+static constexpr uint64_t FPINT_DMA_KT = 128;  // 128
 static constexpr uint64_t FPINT_LMEM_ALIGN = 64;
 static constexpr uint64_t FPINT_LMEM_BASE = static_cast<uint64_t>(LMEM_BASE_ADDR);
 
