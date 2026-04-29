@@ -54,9 +54,11 @@ copy_files() {
     fi
 
     # Function to copy and update file
+    # $3: link_mode (0=copy, 1=symlink) — only affects non-.in files
     copy_and_update() {
         local src_pattern="$1"
         local dest_dir="$2"
+        local link_mode="${3:-0}"
         for file in $src_pattern; do
             #echo "*** $file > $dest_dir"
             if [ -f "$file" ]; then
@@ -74,7 +76,11 @@ copy_files() {
                 else
                     if [ $same_dir -eq 0 ]; then
                         mkdir -p "$dest_dir"
-                        cp -p "$file" "$dest_dir"
+                        if [ $link_mode -eq 1 ]; then
+                            ln -sfn "$(realpath "$file")" "$dest_dir/$(basename "$file")"
+                        else
+                            cp -p "$file" "$dest_dir"
+                        fi
                     fi
                 fi
             fi
@@ -83,7 +89,12 @@ copy_files() {
 
     for pattern in "${SUBDIRS[@]}"; do
         local full_copy=0
-        if [[ "$pattern" == !* ]]; then
+        local link_mode=0
+        if [[ "$pattern" == @* ]]; then
+            full_copy=1
+            link_mode=1
+            pattern=${pattern:1}
+        elif [[ "$pattern" == !* ]]; then
             full_copy=1
             pattern=${pattern:1}
         fi
@@ -99,7 +110,7 @@ copy_files() {
 
             # Copy and update Makefile and common.mk if they exist
             if [ $full_copy -eq 1 ]; then
-                copy_and_update "$dir/*" "$full_target_dir"
+                copy_and_update "$dir/*" "$full_target_dir" "$link_mode"
             else
                 copy_and_update "$dir/Makefile" "$full_target_dir"
                 copy_and_update "$dir/common.mk" "$full_target_dir"
@@ -168,7 +179,7 @@ if [ "$OSVERSION" == "unsupported" ]; then
 fi
 
 # project subdirectories to build
-SUBDIRS=("." "!ci" "!perf" "hw*" "kernel*" "runtime*" "sim*" "tests*")
+SUBDIRS=("." "@ci" "!perf" "hw*" "kernel*" "runtime*" "sim*" "tests*")
 
 # Get the directory of the script
 SOURCE_DIR="$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
