@@ -182,13 +182,14 @@ static void build_test_vectors(std::vector<uint16_t>& h_A,
 
 static bool compute_lmem_layout(kernel_arg_t& kargs, uint64_t local_mem_size) {
   uint64_t groups_tile = (DMA_KT + uint64_t(QBLK) - 1ull) / uint64_t(QBLK);
-  uint64_t ng_tile     = (DMA_NT + uint64_t(QBLK) - 1ull) / uint64_t(QBLK);
+  uint64_t nb_per_nt = DMA_NT / DMA_MXU_NT;
+  uint64_t ng_per_mxu_nt = (DMA_MXU_NT + uint64_t(QBLK) - 1ull) / uint64_t(QBLK);
 
   uint64_t lmem_ibuf_bytes  = DMA_MT * DMA_KT * 2ull;
   uint64_t lmem_wbuf_bytes  = DMA_KT * ((DMA_NT + 1ull) / 2ull);
   uint64_t lmem_scbuf_bytes = (QDIR == 0)
                                 ? (groups_tile * DMA_NT * 2ull)
-                                : (DMA_KT * ng_tile     * 2ull);
+                                : (DMA_KT * nb_per_nt * ng_per_mxu_nt * 2ull);
   uint64_t lmem_zpbuf_bytes = lmem_scbuf_bytes;
   uint64_t lmem_obuf_bytes  = DMA_MT * DMA_NT * 2ull;
 

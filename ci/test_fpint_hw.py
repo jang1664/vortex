@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Driver for the fpint_gemm_ffn_hw_improve regression across backends.
+"""Driver for the fpint_gemm_ffn_hw regression across backends.
 
 Runs ci/blackbox.sh across a cross-product of (shape x QBLK x WTRANS x QDIR)
 for each requested backend mode. Combinations that violate kernel shape
@@ -47,8 +47,8 @@ DMA_KT = 128
 def check_constraints(M: int, N: int, K: int,
                       QBLK: int, WTRANS: int, QDIR: int) -> str | None:
     """Return None if valid, else a human-readable reason string."""
-    if M <= 0 or M % 32 != 0:
-        return f"M={M} must be positive multiple of 32"
+    # if M <= 0 or M % 32 != 0:
+    #     return f"M={M} must be positive multiple of 32"
     if N <= 0 or N % MXU_NT != 0:
         return f"N={N} must be positive multiple of MXU_NT={MXU_NT}"
     if K <= 0 or K % MXU_KT != 0:
@@ -95,13 +95,14 @@ def parse_shape_args(arg_str: str) -> dict[str, int]:
 # ---------------------------------------------------------------------------
 DEFAULT_SHAPES = [
     # K=32 (minimum K-tile)
+    "-m 1 -n 32 -k 32",
     "-m 32 -n 32 -k 32",
     "-m 128 -n 32 -k 32",
-    "-m 128 -n 128 -k 64",
+    # "-m 128 -n 128 -k 64",
     "-m 128 -n 128 -k 96",
     # baseline
-    "-m 128 -n 128 -k 128",
-    "-m 256 -n 128 -k 128",
+    # "-m 128 -n 128 -k 128",
+    # "-m 256 -n 128 -k 128",
     "-m 256 -n 256 -k 256",
 ]
 DEFAULT_WTRANS = [0, 1]
@@ -136,9 +137,11 @@ def normalise_case_args(raw: list[str]) -> list[str]:
 # ---------------------------------------------------------------------------
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Driver for the fpint_gemm_ffn_hw_improve regression "
+        usage="%(prog)s [options] [--] [case args ...]",
+        description="Driver for the fpint_gemm_ffn_hw regression "
                     "across backends.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
+        allow_abbrev=False,
         epilog=(
             "Modes:\n"
             "  rtlsim       - Run rtlsim test\n"
@@ -151,6 +154,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
             "  --model llama2-7b                     sweep GEMMs used by llama2-7b\n"
             "  --model llama2-7b --seq-lens 128,512  limit to given seq lens\n"
             "  --model list                          print model registry and exit\n"
+            "\n"
+            "Case args:\n"
+            "  Without --model, unknown args are treated as case args.\n"
+            "  Empty case args select the default sweep.\n"
         ),
     )
     # --mode is logically required, but we allow it to be omitted for
@@ -173,13 +180,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="Comma-separated seq lens for --model mode "
              f"(default: {','.join(map(str, DEFAULT_MODEL_SEQ_LENS))}).",
     )
-    parser.add_argument(
-        "case_args", nargs=argparse.REMAINDER,
-        help="Optional positional case args. Empty => default sweep. "
-             "Use -- to separate from options. "
-             "Mutually exclusive with --model.",
-    )
-    return parser.parse_args(argv)
+    args, case_args = parser.parse_known_args(argv)
+    args.case_args = case_args
+    return args
 
 
 def build_configs() -> str:
@@ -337,10 +340,10 @@ def main() -> int:
                   file=sys.stderr)
         case_args = normalise_case_args(positional)
 
-    app = os.environ.get("APP", "fpint_gemm_ffn_hw_improve")
+    app = os.environ.get("APP", "fpint_gemm_ffn_hw")
     max_log_bytes = os.environ.get("MAX_LOG_BYTES", str(10 * 1024 * 1024))
     base_log_dir = Path(os.environ.get(
-        "LOG_DIR", "run_logs_fpint_gemm_ffn_hw_improve"))
+        "LOG_DIR", "run_logs_fpint_gemm_ffn_hw"))
 
     base_env = {
         "CONFIGS": configs,

@@ -522,13 +522,14 @@ static int verify_results_tiled(vx_buffer_h out_buffer,
 
 static bool compute_tmem_layout(kernel_arg_t& kargs, uint64_t tensor_mem_size) {
   uint32_t groups_tile = DMA_KT / QBLK;
-  uint32_t ng_tile     = (DMA_NT + QBLK - 1) / QBLK;
+  uint32_t nb_per_nt = DMA_NT / DMA_MXU_NT;
+  uint32_t ng_per_mxu_nt = (DMA_MXU_NT + QBLK - 1) / QBLK;
 
   uint64_t tmem_ibuf_bytes  = uint64_t(DMA_MT) * DMA_KT * 2;
   uint64_t tmem_wbuf_bytes  = uint64_t(DMA_KT) * ((DMA_NT + 1) / 2);
   uint64_t tmem_scbuf_bytes = (QDIR == 0)
                                 ? (uint64_t(groups_tile) * DMA_NT * 2)
-                                : (uint64_t(DMA_KT) * ng_tile * 2);
+                                : (uint64_t(DMA_KT) * nb_per_nt * ng_per_mxu_nt * 2);
   uint64_t tmem_zpbuf_bytes = tmem_scbuf_bytes;
   uint64_t tmem_obuf_bytes  = uint64_t(DMA_MT) * DMA_NT * 2;
 
