@@ -464,10 +464,10 @@ def load_params(dir_path: Path, original_name: str | None) -> tuple[dict, dict, 
     }
 
 
-def plan_entries(root: Path, hash_len: int) -> list[dict]:
+def plan_entries(dirs: list[Path], hash_len: int) -> list[dict]:
     entries: list[dict] = []
     now_iso = dt.datetime.now().isoformat()
-    for d in collect_dirs(root):
+    for d in dirs:
         original_name = None
         manifest_path = d / "manifest.json"
         if manifest_path.exists():
@@ -581,39 +581,61 @@ def plan_entries(root: Path, hash_len: int) -> list[dict]:
     return entries
 
 
-def plan_actions(root: Path, entries: list[dict]) -> dict:
+def plan_actions(entries: list[dict], keep_original: bool) -> dict:
     renames = []
+    symlinks = []
     manifests = []
     for e in entries:
         src = e["dir_path"]
-        dst = root / e["name_final"]
-        if src.name != e["name_final"]:
-            renames.append((src, dst))
-        manifest_path = dst / "manifest.json"
+        canonical = src.parent / e["name_final"]
+
+        if src.name == e["name_final"]:
+            # Already canonically named — no rename/symlink needed.
+            manifest_path = src / "manifest.json"
+        elif keep_original:
+            # Keep original folder name; expose canonical name via sibling symlink.
+            symlinks.append((canonical, src.name))
+            manifest_path = src / "manifest.json"
+        else:
+            # Rename original folder to canonical name.
+            renames.append((src, canonical))
+            manifest_path = canonical / "manifest.json"
+
         manifests.append((manifest_path, e))
 
     return {
         "renames": renames,
+        "symlinks": symlinks,
         "manifests": manifests,
     }
 
 
-def print_plan(root: Path, entries: list[dict], actions: dict) -> None:
+def print_plan(root: Path, entries: list[dict], actions: dict, update_index: bool) -> None:
     print(f"root: {root}")
     print(f"builds: {len(entries)}")
     if actions["renames"]:
         print("renames:")
         for src, dst in actions["renames"]:
-            print(f"  {src.name} -> {dst.name}")
+            if src.parent == dst.parent:
+                print(f"  {src.parent}/{src.name} -> {dst.name}")
+            else:
+                print(f"  {src} -> {dst}")
     else:
         print("renames: none")
+    if actions.get("symlinks"):
+        print("symlinks (canonical -> original, keep-original mode):")
+        for link_path, target_name in actions["symlinks"]:
+            print(f"  {link_path} -> {target_name}")
     print("manifests:")
     for manifest_path, e in actions["manifests"]:
         print(f"  {manifest_path}")
-    print("links:")
-    print(f"  {root/'by-hash'}/<hash> -> <build dir>")
-    print(f"  {root/'latest'} -> <build dir>")
-    print(f"hash index: {root/'hashes.json'}")
+    if update_index:
+        print("links:")
+        print(f"  {root/'by-hash'}/<hash> -> <build dir>")
+        print(f"  {root/'latest'} -> <build dir>")
+        print(f"hash index: {root/'hashes.json'}")
+    else:
+        print("links: skipped (--dir mode, root index untouched)")
     warn = [e for e in entries if e["params_incomplete"]]
     if warn:
         print("warnings:")
@@ -624,7 +646,7 @@ def print_plan(root: Path, entries: list[dict], actions: dict) -> None:
                 print(f"  {e['dir_name']}: fallback params (no .config.stamp)")
 
 
-def apply_actions(root: Path, entries: list[dict], actions: dict, force: bool) -> None:
+def apply_actions(root: Path, entries: list[dict], actions: dict, force: bool, update_index: bool) -> None:
     # Preflight manifest write permissions before mutating any directory names.
     rename_src_by_dst = {dst: src for src, dst in actions["renames"]}
     manifest_blocked: list[Path] = []
@@ -663,15 +685,20 @@ def apply_actions(root: Path, entries: list[dict], actions: dict, force: bool) -
 
     # Execute renames in two phases to avoid destination conflicts.
     # Example: old_name -> xrt_name and xrt_name -> xrt_name_2.
+    # tmp file is staged in the source's own parent so that in-place renames
+    # (--dir mode, source outside --root) do not depend on root being writable.
+    renamed_sources = {src for src, _ in actions["renames"]}
+
     staged_renames: list[tuple[Path, Path, Path]] = []
     for idx, (src, dst) in enumerate(actions["renames"], start=1):
         if not src.exists():
             raise RuntimeError(f"source missing: {src}")
 
-        tmp = root / f".vortex_binmgr_tmp_{idx}_{src.name}"
+        stage_dir = src.parent
+        tmp = stage_dir / f".vortex_binmgr_tmp_{idx}_{src.name}"
         salt = 1
         while tmp.exists() or tmp.is_symlink() or tmp == src or tmp == dst:
-            tmp = root / f".vortex_binmgr_tmp_{idx}_{salt}_{src.name}"
+            tmp = stage_dir / f".vortex_binmgr_tmp_{idx}_{salt}_{src.name}"
             salt += 1
 
         src.rename(tmp)
@@ -682,9 +709,28 @@ def apply_actions(root: Path, entries: list[dict], actions: dict, force: bool) -
             raise RuntimeError(f"destination exists: {dst}")
         tmp.rename(dst)
 
-    # Update entry paths after rename
+    # Create keep-original symlinks (canonical -> original sibling).
+    for link_path, target_name in actions.get("symlinks", []):
+        if link_path.is_symlink():
+            current = os.readlink(link_path)
+            if current == target_name:
+                continue  # already correct
+            if not force:
+                raise RuntimeError(
+                    f"symlink exists and points elsewhere: {link_path} -> {current} "
+                    f"(want {target_name}); use --force to replace"
+                )
+            link_path.unlink()
+        elif link_path.exists():
+            raise RuntimeError(
+                f"cannot create canonical symlink, a real entry exists at: {link_path}"
+            )
+        link_path.symlink_to(target_name)
+
+    # Update entry paths after rename. Keep-original entries retain their src path.
     for e in entries:
-        e["dir_path"] = root / e["name_final"]
+        if e["dir_path"] in renamed_sources:
+            e["dir_path"] = e["dir_path"].parent / e["name_final"]
 
     now_iso = dt.datetime.now().isoformat()
 
@@ -701,6 +747,9 @@ def apply_actions(root: Path, entries: list[dict], actions: dict, force: bool) -
                 f"manifest write permission denied: {manifest_path} "
                 "(fix ACL/ownership and retry)"
             ) from exc
+
+    if not update_index:
+        return
 
     # Build hash index
     index = {
@@ -756,19 +805,63 @@ def apply_actions(root: Path, entries: list[dict], actions: dict, force: bool) -
 def main() -> int:
     ap = argparse.ArgumentParser(description="Manage vortex FPGA build bins")
     ap.add_argument("--root", type=Path, default=Path("/opt/vortex_fpga_bins"))
+    ap.add_argument(
+        "--dir",
+        type=Path,
+        action="append",
+        default=[],
+        metavar="DIR",
+        help="specific build dir to process (repeatable). "
+             "If omitted, scan --root. "
+             "When used, rename is in-place in DIR's parent and root index/symlinks are NOT updated.",
+    )
+    ap.add_argument(
+        "--rename-original",
+        action="store_true",
+        help="With --dir: rename the original folder to the canonical name. "
+             "Default is to keep the original folder untouched and expose the "
+             "canonical name as a sibling symlink. "
+             "Ignored without --dir (root scan always renames).",
+    )
     ap.add_argument("--hash-len", type=int, default=DEFAULT_HASH_LEN)
     ap.add_argument("--apply", action="store_true")
-    ap.add_argument("--force", action="store_true", help="overwrite manifest.json if exists")
+    ap.add_argument("--force", action="store_true", help="overwrite manifest.json or mismatched symlinks if exist")
     args = ap.parse_args()
 
-    entries = plan_entries(args.root, args.hash_len)
-    actions = plan_actions(args.root, entries)
+    if args.dir:
+        seen: set[Path] = set()
+        dirs: list[Path] = []
+        for p in args.dir:
+            resolved = p.resolve()
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            if not resolved.exists():
+                raise SystemExit(f"not a directory: {p}")
+            if not resolved.is_dir():
+                raise SystemExit(f"not a directory: {p}")
+            if not detect_build_dir(resolved):
+                raise SystemExit(
+                    f"not a build dir (needs .config.stamp, bin/vortex_afu.xclbin, "
+                    f"or v++_vortex_afu.log): {p}"
+                )
+            dirs.append(resolved)
+        update_index = False
+        keep_original = not args.rename_original
+    else:
+        dirs = collect_dirs(args.root)
+        update_index = True
+        # Root-scan mode preserves existing behavior: always rename to canonical.
+        keep_original = False
+
+    entries = plan_entries(dirs, args.hash_len)
+    actions = plan_actions(entries, keep_original)
 
     if not args.apply:
-        print_plan(args.root, entries, actions)
+        print_plan(args.root, entries, actions, update_index)
         return 0
 
-    apply_actions(args.root, entries, actions, args.force)
+    apply_actions(args.root, entries, actions, args.force, update_index)
     return 0
 
 
