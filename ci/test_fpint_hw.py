@@ -93,11 +93,11 @@ def parse_shape_args(arg_str: str) -> dict[str, int]:
 # ---------------------------------------------------------------------------
 DEFAULT_SHAPES = [
     # K=32 (minimum K-tile)
-    # "-m 1 -n 32 -k 32",
-    # "-m 32 -n 32 -k 32",
-    # "-m 128 -n 32 -k 32",
-    # "-m 128 -n 128 -k 64",
-    # "-m 128 -n 128 -k 96",
+    "-m 1 -n 32 -k 32",
+    "-m 32 -n 32 -k 32",
+    "-m 128 -n 32 -k 32",
+    "-m 128 -n 128 -k 64",
+    "-m 128 -n 128 -k 96",
     # baseline
     # "-m 128 -n 128 -k 128",
     # "-m 256 -n 128 -k 128",
@@ -184,6 +184,8 @@ def build_configs() -> str:
     # Base CONFIGS exported by hw_config.sh (via .envrc). Append script-specific flags.
     base = os.environ.get("CONFIGS", "")
     extras = [
+        # "-DWLOAD_AT_ONCE",
+        "-DNDEBUG",
         "-DDBG_TRACE_PIPELINE",
         "-DDBG_TRACE_MEM",
         "-DDBG_TRACE_CACHE",
@@ -192,7 +194,6 @@ def build_configs() -> str:
         "-DDBG_TRACE_GBAR",
         "-DDBG_TRACE_TCU",
         "-DDBG_TRACE_GEMM",
-        "-DNUM_CORES=1",
     ]
     # Add "-DVCD_OUTPUT" here if you want VCD dumps (only useful with DEBUG_LEVEL>=1).
     return f"{base} {' '.join(extras)}".strip()
@@ -337,6 +338,7 @@ def main() -> int:
 
     base_env = {
         "CONFIGS": configs,
+        "LOG_MAX_BYTES": max_log_bytes,
         "MAX_LOG_BYTES": max_log_bytes,
         "VERILATOR_SEED": str(random.randint(1, 32767)),
         "DEBUG_LEVEL": debug_level,

@@ -263,9 +263,9 @@ run_app() {
         cmd_opts=$(add_option "$cmd_opts" "make -C \"$APP_PATH\" $make_target")
     fi
 
+    local status
     if [ $DEBUG -ne 0 ] && [ -n "${LOG_MAX_BYTES:-}" ] && [ "${LOG_MAX_BYTES}" -gt 0 ] 2>/dev/null; then
         local status_file
-        local status
         local flush_lines
         status_file=$(mktemp)
         flush_lines="${LOG_FLUSH_LINES:-200}"
@@ -315,13 +315,12 @@ run_app() {
 
         status=$(cat "$status_file" 2>/dev/null || echo 1)
         rm -f "$status_file"
-        return "$status"
+    else
+        [ $DEBUG -ne 0 ] && cmd_opts=$(add_option "$cmd_opts" "> $LOGFILE 2>&1")
+        echo "Running: $cmd_opts"
+        eval "$cmd_opts"
+        status=$?
     fi
-
-    [ $DEBUG -ne 0 ] && cmd_opts=$(add_option "$cmd_opts" "> $LOGFILE 2>&1")
-    echo "Running: $cmd_opts"
-    eval "$cmd_opts"
-    status=$?
 
     # Clean up VCS and Verdi processes
     if ([ "$DRIVER" = "xrt_vcs" ] || [ "$DRIVER" = "xrt_vcs_post" ]) && [ -n "${VCS_PID:-}" ]; then
