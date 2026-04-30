@@ -736,7 +736,41 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
         endcase
       end
     end
-  end
+    end
+
+`ifdef DBG_TRACE_GEMM
+    always @(posedge clk) begin
+      if (~reset) begin
+	      if (ctrl_if.start && ctrl_if.idle) begin
+	        `TRACE(1, ("%m : [%0t] | LMEM_DMA_START | {inst=%s, dir=%0d, bus_bytes=%0d, src=0x%0h, dst=0x%0h, seg_size=%0d, bound0=%0d, stride0=%0d}\n",
+	            $time, INSTANCE_ID, DIR, BUS_BYTES,
+	            ctrl_if.src_base_addr, ctrl_if.dst_base_addr,
+	            ctrl_if.seg_size, ctrl_if.bounds[0], ctrl_if.src_strides[0]))
+	      end
+	      if (src_req_fire) begin
+	        `TRACE(1, ("%m : [%0t] | LMEM_DMA_SRC_REQ | {inst=%s, dir=%0d, bus_bytes=%0d, addr=0x%0h, tag=0x%0h}\n",
+	            $time, INSTANCE_ID, DIR, BUS_BYTES,
+	            src_is_gemm ? gemm_bus_if.req_data.addr : lmem_bus_if.req_data.addr,
+	            src_is_gemm ? gemm_bus_if.req_data.tag : lmem_bus_if.req_data.tag))
+	      end
+	      if (src_rsp_fire) begin
+	        `TRACE(1, ("%m : [%0t] | LMEM_DMA_SRC_RSP | {inst=%s, dir=%0d, bus_bytes=%0d, tag=0x%0h}\n",
+	            $time, INSTANCE_ID, DIR, BUS_BYTES,
+	            src_is_gemm ? gemm_bus_if.rsp_data.tag : lmem_bus_if.rsp_data.tag))
+	      end
+	      if (dst_req_fire) begin
+	        `TRACE(1, ("%m : [%0t] | LMEM_DMA_DST_REQ | {inst=%s, dir=%0d, bus_bytes=%0d, addr=0x%0h, byteen=0x%0h}\n",
+	            $time, INSTANCE_ID, DIR, BUS_BYTES,
+	            dst_is_gemm ? gemm_bus_if.req_data.addr : lmem_bus_if.req_data.addr,
+	            dst_is_gemm ? gemm_bus_if.req_data.byteen : lmem_bus_if.req_data.byteen))
+	      end
+	      if (ctrl_if.done) begin
+	        `TRACE(1, ("%m : [%0t] | LMEM_DMA_DONE | {inst=%s, dir=%0d, bus_bytes=%0d}\n",
+	            $time, INSTANCE_ID, DIR, BUS_BYTES))
+	      end
+	    end
+	  end
+`endif
 
 `ifdef PERF_ENABLE
     // Direction-based source/destination selection. The synthesizer prunes

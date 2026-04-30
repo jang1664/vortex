@@ -241,10 +241,10 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     assign gemm_sync_if[1].reg_idx = weight_notify_pending_r ? weight_notify_reg_idx_r : 32'd0;
     assign gemm_sync_if[1].value   = weight_notify_pending_r ? weight_notify_value_r : 32'd0;
 
-    always_ff @(posedge clk) begin
-      if (reset) begin
-        weight_notify_pending_r <= 1'b0;
-        weight_notify_reg_idx_r <= '0;
+	    always_ff @(posedge clk) begin
+	      if (reset) begin
+	        weight_notify_pending_r <= 1'b0;
+	        weight_notify_reg_idx_r <= '0;
         weight_notify_value_r   <= '0;
         weight_cmd_flags_r      <= '0;
       end else begin
@@ -255,14 +255,36 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
         end else if (weight_notify_fire) begin
           weight_notify_pending_r <= 1'b0;
         end
-        // Capture flags when weight DMA starts (FIFO pops same cycle, so cmd changes next cycle)
-        if (weight_dma_start) begin
-          weight_cmd_flags_r <= gemm_ctrl_if.weight_read_ctrl.cmd.flags;
-        end
-      end
-    end
+	        // Capture flags when weight DMA starts (FIFO pops same cycle, so cmd changes next cycle)
+	        if (weight_dma_start) begin
+	          weight_cmd_flags_r <= gemm_ctrl_if.weight_read_ctrl.cmd.flags;
+	        end
+	      end
+	    end
 
-    // Quant parameter load DMA command mapping.
+`ifdef DBG_TRACE_GEMM
+	    always @(posedge clk) begin
+	      if (~reset) begin
+	        if (weight_dma_start) begin
+	          `TRACE(1, ("%m : [%0t] | GEMM_WEIGHT_DMA_START | {inst=%s, src=0x%0h, stride=%0d, bound=%0d, flags=0x%0h, seg_size=%0d}\n",
+	              $time, INSTANCE_ID,
+	              gemm_ctrl_if.weight_read_ctrl.cmd.rs2_data,
+	              gemm_ctrl_if.weight_read_ctrl.cmd.stride,
+	              gemm_ctrl_if.weight_read_ctrl.cmd.bound,
+	              gemm_ctrl_if.weight_read_ctrl.cmd.flags,
+	              MXU_KT * (MXU_NT >> 1)))
+	        end
+	        if (weight_notify_req) begin
+	          `TRACE(1, ("%m : [%0t] | GEMM_WEIGHT_NOTIFY_REQ | {inst=%s, reg=%0d, value=0x%0h}\n",
+	              $time, INSTANCE_ID,
+	              gemm_ctrl_if.weight_read_ctrl.cmd.rs1_data[31:0],
+	              gemm_ctrl_if.weight_read_ctrl.cmd.rs2_data[31:0]))
+	        end
+	      end
+	    end
+`endif
+
+	    // Quant parameter load DMA command mapping.
     assign quant_param_dma_ctrl_if.start         = gemm_ctrl_if.quant_param_read_ctrl.start && !sz_is_notify;
     assign quant_param_dma_ctrl_if.src_base_addr = gemm_ctrl_if.quant_param_read_ctrl.cmd.rs2_data;
 
@@ -446,6 +468,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
       .BANK_SIZE      (`TMEM_BANK_SIZE),
       .DATA_SIZE      (`MEM_BLOCK_SIZE),
       .GEMM_DATA_SIZE (`MEM_BLOCK_SIZE),
+      .GEMM_WEIGHT_DATA_SIZE (`GEMM_WEIGHT_DATA_SIZE),
       .TAG_WIDTH      (GEMM_BASE_TAG_WIDTH)
     ) u_tmem_subsystem (
       .clk            (clk),

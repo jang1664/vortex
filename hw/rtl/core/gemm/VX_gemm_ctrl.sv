@@ -182,24 +182,40 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
         assign child_q_cmd = child_q_dout;
         wire child_q_head_is_notify = !child_q_empty && (child_q_cmd.instr[3:0] == OP_NOTIFY_LOCAL);
 
-        // For children 0-3 (lmem_dma paths), NOTIFY must wait until the FSM
-        // has been idle for at least 1 cycle. This prevents NOTIFY from being
-        // popped on the same cycle the previous DMA completes, which would
-        // cause sync_reg to update before the next command can start.
-        logic child_fsm_was_idle_r;
-        always_ff @(posedge clk) begin
-          if (reset) child_fsm_was_idle_r <= 1'b1;
-          else       child_fsm_was_idle_r <= gemm_cqueue_out[i].flag.idle;
-        end
+        // For children 0-3 (local DMA/GEMM-side paths), NOTIFY must wait for
+        // the preceding non-NOTIFY command to actually run and complete. A
+        // single "was idle" delay is not enough because the child command can be
+        // queued and the unit may still report idle in the start cycle.
+        localparam bit IS_DMA_CHILD = (i == 4);
+        logic child_cmd_inflight_r;
+        logic child_busy_seen_r;
 
         // For DMA child (child 4), NOTIFY is handled inside its own FSM
         // sequentially, so no guard needed.
-        wire child_notify_ok = (i == 4) ? 1'b1 : child_fsm_was_idle_r;
+        wire child_notify_ok = IS_DMA_CHILD ? 1'b1 : !child_cmd_inflight_r;
 
         // output to unit: valid if not empty, ready is unit idle
-        // For NOTIFY at queue head: additionally require FSM was idle last cycle
         wire child_out_fire  = !child_q_empty && gemm_cqueue_out[i].flag.idle
                              && (!child_q_head_is_notify || child_notify_ok);
+        wire child_q_head_is_normal = !child_q_empty && !child_q_head_is_notify;
+        wire child_normal_fire = child_out_fire && child_q_head_is_normal;
+
+        always_ff @(posedge clk) begin
+          if (reset) begin
+            child_cmd_inflight_r <= 1'b0;
+            child_busy_seen_r    <= 1'b0;
+          end else if (!IS_DMA_CHILD) begin
+            if (child_normal_fire) begin
+              child_cmd_inflight_r <= 1'b1;
+              child_busy_seen_r    <= 1'b0;
+            end else if (child_cmd_inflight_r && !gemm_cqueue_out[i].flag.idle) begin
+              child_busy_seen_r <= 1'b1;
+            end else if (child_cmd_inflight_r && child_busy_seen_r && gemm_cqueue_out[i].flag.idle) begin
+              child_cmd_inflight_r <= 1'b0;
+              child_busy_seen_r    <= 1'b0;
+            end
+          end
+        end
 
         // backpressure to sync: only depends on queue capacity
         assign gemm_sync_out[i].flag.idle = ~child_q_full;

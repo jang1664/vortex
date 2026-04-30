@@ -32,8 +32,6 @@ from gen_kernel_cfgs import (  # noqa: E402
 
 
 MODES = ("rtlsim", "xrt-vcs-sim", "hw_emu", "hw", "all")
-DEBUG_ARG_CHOICES = ("always", "omit", "auto")
-
 
 # ---------------------------------------------------------------------------
 # Kernel shape constraints (mirrors main.cpp validate block).
@@ -95,11 +93,11 @@ def parse_shape_args(arg_str: str) -> dict[str, int]:
 # ---------------------------------------------------------------------------
 DEFAULT_SHAPES = [
     # K=32 (minimum K-tile)
-    "-m 1 -n 32 -k 32",
-    "-m 32 -n 32 -k 32",
-    "-m 128 -n 32 -k 32",
+    # "-m 1 -n 32 -k 32",
+    # "-m 32 -n 32 -k 32",
+    # "-m 128 -n 32 -k 32",
     # "-m 128 -n 128 -k 64",
-    "-m 128 -n 128 -k 96",
+    # "-m 128 -n 128 -k 96",
     # baseline
     # "-m 128 -n 128 -k 128",
     # "-m 256 -n 128 -k 128",
@@ -164,11 +162,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     # '--model list' (pure registry query).
     parser.add_argument("--mode", choices=MODES, default=None,
                         help="Backend mode to run. Required unless --model=list.")
-    parser.add_argument("--debug-arg", choices=DEBUG_ARG_CHOICES,
-                        default="always",
-                        help="Debug-arg mode (default: always).")
-    parser.add_argument("--debug-level", default="0",
-                        help="DEBUG_LEVEL env value (default: 0).")
+    parser.add_argument("--debug-level", default="-1",
+                        help="DEBUG_LEVEL env value (default: -1).")
     parser.add_argument(
         "--model", default=None, metavar="NAME",
         help="Test only GEMM shapes from a known model config "
@@ -203,15 +198,10 @@ def build_configs() -> str:
     return f"{base} {' '.join(extras)}".strip()
 
 
-def resolve_debug_args(mode: str, debug_level: str) -> list[str]:
-    if mode == "always":
+def resolve_debug_args(debug_level: str) -> list[str]:
+    if debug_level != "-1":
         return [f"--debug={debug_level}"]
-    if mode == "omit":
-        return []
-    # auto
-    try:
-        return [f"--debug={debug_level}"] if int(debug_level) >= 1 else []
-    except ValueError:
+    else:
         return []
 
 
@@ -306,7 +296,7 @@ def main() -> int:
 
     mode = args.mode
     debug_level = args.debug_level
-    debug_args = resolve_debug_args(args.debug_arg, debug_level)
+    debug_args = resolve_debug_args(debug_level)
 
     configs = build_configs()
     # Drop VCD_OUTPUT when debug is off (huge VCDs with no useful traces).
