@@ -497,12 +497,20 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
 
   wire src_rsp_fire = direction_bit_r ? lmem_rsp_fire : dcache_rsp_fire;
 
+  // Aligned-mode pull/drain overlap. Without the dst_req_fire bypass the
+  // single-beat staging forces pull and drain to alternate, capping the
+  // engine at 0.5 beat/cycle. Allowing pull when drain fires this cycle
+  // restores 1 beat/cycle without growing WIN_BYTES (no extra flops).
+  // Misalign keeps the original gate because a partial drain frees a
+  // variable byte count that may not match a full beat.
   wire wr_pull_slot = ((state == S_L2G_DECIDE) || (state == S_G2L_DECIDE))
                    && (wr_state == WR_RUN)
                    && (slot_state_r[wr_expect_slot_r] == SLOT_READY)
                    && (direction_bit_r
-                       ? (win_lmem_valid <= WIN_VALID_W'(WIN_BYTES - LMEM_BYTES))
-                       : (win_dcache_valid <= WIN_VALID_W'(WIN_BYTES - DCACHE_BYTES)));
+                       ? ((win_lmem_valid   <= WIN_VALID_W'(WIN_BYTES - LMEM_BYTES))
+                          || (!ENABLE_MISALIGN && dst_req_fire))
+                       : ((win_dcache_valid <= WIN_VALID_W'(WIN_BYTES - DCACHE_BYTES))
+                          || (!ENABLE_MISALIGN && dst_req_fire)));
 
   // ------------------------------------------------------------
   // Trace logging
@@ -1155,27 +1163,12 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
           tmp_drop    = lmem_drop;
           tmp_out_off = out_off;
 
-          if (wr_pull_slot && direction_bit_r && (tmp_valid + LMEM_BYTES <= WIN_BYTES)) begin
-            if (ENABLE_MISALIGN)
-              tmp_win[tmp_valid*8 +: (LMEM_BYTES*8)] = slot_data_r[wr_expect_slot_r][0 +: (LMEM_BYTES*8)];
-            else
-              // Aligned: staging is a single beat, tmp_valid is always 0 when
-              // pulling. Drop the shift so the assembler reduces to a plain
-              // wire mux.
-              tmp_win[0 +: (LMEM_BYTES*8)] = slot_data_r[wr_expect_slot_r][0 +: (LMEM_BYTES*8)];
-            tmp_valid = tmp_valid + WIN_VALID_W'(LMEM_BYTES);
-            slot_state_r[wr_expect_slot_r] <= SLOT_FREE;
-            wr_expect_slot_r <= wr_expect_slot_r + RD_SLOT_BITS'(1);
-          end
-
-          if (ENABLE_MISALIGN) begin
-            if ((tmp_drop != 0) && (tmp_valid >= tmp_drop[WIN_VALID_W-1:0])) begin
-              tmp_win   = tmp_win >> (tmp_drop * 8);
-              tmp_valid = tmp_valid - tmp_drop[WIN_VALID_W-1:0];
-              tmp_drop  = 32'd0;
-            end
-          end
-
+          // Order is drain -> pull -> drop. Drain runs first so that an
+          // aligned-mode same-cycle pull (enabled by the dst_req_fire bypass
+          // in wr_pull_slot) lands into the just-cleared staging instead of
+          // hitting the (tmp_valid + LMEM_BYTES <= WIN_BYTES) overflow guard.
+          // Misalign behavior is preserved: shift/append/shift on the same
+          // byte queue is order-independent for these three operations.
           if (dst_req_fire && direction_bit_r) begin
             dst_byte   = wr_base_dst_seg + 64'(tmp_out_off);
             lane       = ENABLE_MISALIGN ? int'(dst_byte[DCACHE_LG2-1:0]) : 0;
@@ -1193,9 +1186,9 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
                 tmp_win   = tmp_win >> (src_bytes * 8);
                 tmp_valid = tmp_valid - src_bytes[WIN_VALID_W-1:0];
               end else begin
-                // Aligned: consuming a beat (full or partial last) empties
-                // staging — the next pull refills it unconditionally. No
-                // variable shift needed; just zero the valid flag.
+                // Aligned: a beat write consumes the entire single-beat
+                // staging in one go. Empty it here so the (potentially
+                // same-cycle) pull below has room to refill.
                 tmp_win   = '0;
                 tmp_valid = '0;
               end
@@ -1265,6 +1258,30 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
             end
           end
 
+          // Pull (after drain) — staging now has up to one beat of room
+          // (aligned: cleared by drain; misalign: shifted out by src_bytes).
+          if (wr_pull_slot && direction_bit_r && (tmp_valid + LMEM_BYTES <= WIN_BYTES)) begin
+            if (ENABLE_MISALIGN)
+              tmp_win[tmp_valid*8 +: (LMEM_BYTES*8)] = slot_data_r[wr_expect_slot_r][0 +: (LMEM_BYTES*8)];
+            else
+              // Aligned: tmp_valid is 0 here (drain cleared it, or no prior pull).
+              // Drop the variable shift so the assembler reduces to a wire mux.
+              tmp_win[0 +: (LMEM_BYTES*8)] = slot_data_r[wr_expect_slot_r][0 +: (LMEM_BYTES*8)];
+            tmp_valid = tmp_valid + WIN_VALID_W'(LMEM_BYTES);
+            slot_state_r[wr_expect_slot_r] <= SLOT_FREE;
+            wr_expect_slot_r <= wr_expect_slot_r + RD_SLOT_BITS'(1);
+          end
+
+          // Misalign-only: shift off the leading drop bytes once they have
+          // arrived. Order-equivalent whether placed before or after pull.
+          if (ENABLE_MISALIGN) begin
+            if ((tmp_drop != 0) && (tmp_valid >= tmp_drop[WIN_VALID_W-1:0])) begin
+              tmp_win   = tmp_win >> (tmp_drop * 8);
+              tmp_valid = tmp_valid - tmp_drop[WIN_VALID_W-1:0];
+              tmp_drop  = 32'd0;
+            end
+          end
+
           win_lmem       <= tmp_win;
           win_lmem_valid <= tmp_valid;
           lmem_drop      <= tmp_drop;
@@ -1286,24 +1303,9 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
           tmp_drop    = dcache_drop;
           tmp_out_off = out_off;
 
-          if (wr_pull_slot && !direction_bit_r && (tmp_valid + DCACHE_BYTES <= WIN_BYTES)) begin
-            if (ENABLE_MISALIGN)
-              tmp_win[tmp_valid*8 +: (DCACHE_BYTES*8)] = slot_data_r[wr_expect_slot_r][0 +: (DCACHE_BYTES*8)];
-            else
-              tmp_win[0 +: (DCACHE_BYTES*8)] = slot_data_r[wr_expect_slot_r][0 +: (DCACHE_BYTES*8)];
-            tmp_valid = tmp_valid + WIN_VALID_W'(DCACHE_BYTES);
-            slot_state_r[wr_expect_slot_r] <= SLOT_FREE;
-            wr_expect_slot_r <= wr_expect_slot_r + RD_SLOT_BITS'(1);
-          end
-
-          if (ENABLE_MISALIGN) begin
-            if ((tmp_drop != 0) && (tmp_valid >= tmp_drop[WIN_VALID_W-1:0])) begin
-              tmp_win   = tmp_win >> (tmp_drop * 8);
-              tmp_valid = tmp_valid - tmp_drop[WIN_VALID_W-1:0];
-              tmp_drop  = 32'd0;
-            end
-          end
-
+          // Order is drain -> pull -> drop. See l2g_wr_update for the
+          // rationale (allows aligned-mode same-cycle pull+drain so the R
+          // path runs at 1 beat/cycle without growing WIN_BYTES).
           if (dst_req_fire && !direction_bit_r) begin
             dst_byte   = wr_base_dst_seg + 64'(tmp_out_off);
             lane       = ENABLE_MISALIGN ? int'(dst_byte[LMEM_LG2-1:0]) : 0;
@@ -1321,6 +1323,9 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
                 tmp_win   = tmp_win >> (src_bytes * 8);
                 tmp_valid = tmp_valid - src_bytes[WIN_VALID_W-1:0];
               end else begin
+                // Aligned: a beat write consumes the entire single-beat
+                // staging in one go. Empty it here so the (potentially
+                // same-cycle) pull below has room to refill.
                 tmp_win   = '0;
                 tmp_valid = '0;
               end
@@ -1383,6 +1388,28 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
                   tmp_drop  = 32'(next_wr_base_src & 64'(DCACHE_BYTES-1));
                 end
               end
+            end
+          end
+
+          // Pull (after drain) — staging now has up to one beat of room
+          // (aligned: cleared by drain; misalign: shifted out by src_bytes).
+          if (wr_pull_slot && !direction_bit_r && (tmp_valid + DCACHE_BYTES <= WIN_BYTES)) begin
+            if (ENABLE_MISALIGN)
+              tmp_win[tmp_valid*8 +: (DCACHE_BYTES*8)] = slot_data_r[wr_expect_slot_r][0 +: (DCACHE_BYTES*8)];
+            else
+              tmp_win[0 +: (DCACHE_BYTES*8)] = slot_data_r[wr_expect_slot_r][0 +: (DCACHE_BYTES*8)];
+            tmp_valid = tmp_valid + WIN_VALID_W'(DCACHE_BYTES);
+            slot_state_r[wr_expect_slot_r] <= SLOT_FREE;
+            wr_expect_slot_r <= wr_expect_slot_r + RD_SLOT_BITS'(1);
+          end
+
+          // Misalign-only: shift off the leading drop bytes once they have
+          // arrived. Order-equivalent whether placed before or after pull.
+          if (ENABLE_MISALIGN) begin
+            if ((tmp_drop != 0) && (tmp_valid >= tmp_drop[WIN_VALID_W-1:0])) begin
+              tmp_win   = tmp_win >> (tmp_drop * 8);
+              tmp_valid = tmp_valid - tmp_drop[WIN_VALID_W-1:0];
+              tmp_drop  = 32'd0;
             end
           end
 
