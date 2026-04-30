@@ -68,6 +68,7 @@ CONFIGS+=" -DDBG_TRACE_SCOPE"
 CONFIGS+=" -DDBG_TRACE_GBAR"
 CONFIGS+=" -DDBG_TRACE_TCU"
 CONFIGS+=" -DDBG_TRACE_GEMM"
+CONFIGS+=" -DWLOAD_AT_ONCE"
 
 if [[ -n "${CONFIGS_EXTRA}" ]]; then
   CONFIGS+=" ${CONFIGS_EXTRA}"
@@ -114,7 +115,7 @@ fi
 # CACHE_RSP_STALL_P_EXIT_PCT=100 \
 # CACHE_STALL_SEED=1234 \
 if [[ "${mode}" == "xrt-vcs-sim" || "${mode}" == "all" ]]; then
-  CONFIGS=${CONFIGS} \
+  CONFIGS="${CONFIGS} -DNDEBUG" \
   DRIVER=xrt_vcs \
   FSDB_DUMP=1 \
   DEBUG_AXI=1 \
