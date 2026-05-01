@@ -277,6 +277,26 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
   logic [31:0] wtrans_tot, qdir_tot;
   logic [31:0] entry_id;
 
+  // ------------------------------------------------------------------------
+  // Job-scope pre-computed strides (latched once per job in S_INIT_STRIDE_*
+  // states). Eliminates 64-bit multiplier cascades from the cmd payload
+  // combinational path into u_parent_cmd_queue.
+  // ------------------------------------------------------------------------
+  logic [31:0] mt_base_q;            // (m_start >> log2_dma_mt)
+  logic [31:0] nt_base_q;            // (n_start >> log2_dma_nt)
+  logic [63:0] I_MT_STRIDE_q;        // MT * orig_K * FP16
+  logic [63:0] I_KT_STRIDE_FULL_q;   // MT * KT * FP16   (cm = MT)
+  logic [63:0] I_KT_STRIDE_LAST_q;   // align8(m_last)*KT*FP16 (cm = m_last)
+  logic [63:0] W_KT_STRIDE_q;        // (KT * orig_N) / 2
+  logic [63:0] W_NT_STRIDE_FULL_q;   // (KT * NT) / 2  (ck = KT)
+  logic [63:0] W_NT_STRIDE_LAST_q;   // (k_last * NT) / 2 (ck = k_last)
+  logic [63:0] O_MT_STRIDE_q;        // MT * orig_N * FP16 (per dma mt-tile)
+  logic [63:0] O_BASE_OFF_q;         // (m_start*orig_N + n_start) * FP16
+  logic [63:0] SCALE_FK_FN_q;        // scale_slot_bytes(KT,    NT)
+  logic [63:0] SCALE_FK_PN_q;        // scale_slot_bytes(KT,    n_last)
+  logic [63:0] SCALE_PK_FN_q;        // scale_slot_bytes(k_last,NT)
+  logic [63:0] SCALE_PER_KT_FULL_K_q;// (nt_dim-1)*FK_FN + FK_PN
+
   // --------------------------------------------------------------------------
   // LMEM base helpers (DMA tile level ping-pong)
   // --------------------------------------------------------------------------
@@ -502,56 +522,52 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
   endfunction
 
   function automatic logic [63:0] scale_slot_offset(input job_t j, input mm_dim_t nt, input mm_dim_t kt);
-    logic [63:0] slot_fk_fn, slot_fk_pn, slot_pk_fn;
-    logic [63:0] per_kt_full_K;
     logic [63:0] slot_full_N;
     u32_t nt_idx;
     u32_t kt_idx;
     begin
+      // SCALE_FK_FN_q / SCALE_PK_FN_q / SCALE_PER_KT_FULL_K_q are
+      // pre-computed in S_INIT_STRIDE_0/1; argument j is unused but kept
+      // for backward-compatible callers.
       nt_idx = u32_t'(nt);
       kt_idx = u32_t'(kt);
 
-      slot_fk_fn    = scale_slot_bytes(j, u32_t'(KT_q),     u32_t'(NT_q));
-      slot_fk_pn    = scale_slot_bytes(j, u32_t'(KT_q),     u32_t'(n_last_q));
-      slot_pk_fn    = scale_slot_bytes(j, u32_t'(k_last_q), u32_t'(NT_q));
-      per_kt_full_K = 64'(u32_t'(nt_dim_q - 1)) * slot_fk_fn + slot_fk_pn;
-      slot_full_N   = (kt == kt_dim_q - 1) ? slot_pk_fn : slot_fk_fn;
+      slot_full_N = (kt == kt_dim_q - 1) ? SCALE_PK_FN_q : SCALE_FK_FN_q;
 
-      scale_slot_offset = 64'(kt_idx) * per_kt_full_K + 64'(nt_idx) * slot_full_N;
+      scale_slot_offset = 64'(kt_idx) * SCALE_PER_KT_FULL_K_q
+                        + 64'(nt_idx) * slot_full_N;
     end
   endfunction
 
   function automatic logic [63:0] input_tile_addr(input job_t j, input mm_dim_t mt, input mm_dim_t kt);
     u32_t mt_idx;
     u32_t kt_idx;
-    u32_t cm;
-    u32_t cm_slot;
+    logic [63:0] kt_stride;
     begin
-      mt_idx = (j.m_start >> j.log2_dma_mt) + u32_t'(mt);
-      kt_idx = u32_t'(kt);
-      cm     = (mt == mt_dim_q - 1) ? u32_t'(m_last_q) : u32_t'(MT_q);
-      cm_slot = align8_u32(cm);
+      // mt_base_q = (j.m_start >> j.log2_dma_mt), pre-computed.
+      mt_idx    = mt_base_q + u32_t'(mt);
+      kt_idx    = u32_t'(kt);
+      kt_stride = (mt == mt_dim_q - 1) ? I_KT_STRIDE_LAST_q : I_KT_STRIDE_FULL_q;
 
       input_tile_addr = j.input_base
-                      + 64'(mt_idx) * 64'(MT_q) * 64'(j.orig_K) * FP16_BYTES
-                      + 64'(kt_idx) * 64'(cm_slot) * 64'(KT_q) * FP16_BYTES;
+                      + 64'(mt_idx) * I_MT_STRIDE_q
+                      + 64'(kt_idx) * kt_stride;
     end
   endfunction
 
   function automatic logic [63:0] weight_tile_addr(input job_t j, input mm_dim_t nt, input mm_dim_t kt);
     u32_t nt_idx;
     u32_t kt_idx;
-    u32_t ck;
-    logic [63:0] kt_w_stride;
-    logic [63:0] nt_w_offset;
+    logic [63:0] nt_stride;
     begin
-      nt_idx      = (j.n_start >> j.log2_dma_nt) + u32_t'(nt);
-      kt_idx      = u32_t'(kt);
-      ck          = (kt == kt_dim_q - 1) ? u32_t'(k_last_q) : u32_t'(KT_q);
-      kt_w_stride = 64'(KT_q) * 64'(j.orig_N) / 2;
-      nt_w_offset = 64'(nt_idx) * 64'(ck) * 64'(NT_q) / 2;
+      // nt_base_q = (j.n_start >> j.log2_dma_nt), pre-computed.
+      nt_idx    = nt_base_q + u32_t'(nt);
+      kt_idx    = u32_t'(kt);
+      nt_stride = (kt == kt_dim_q - 1) ? W_NT_STRIDE_LAST_q : W_NT_STRIDE_FULL_q;
 
-      weight_tile_addr = j.weight_base + 64'(kt_idx) * kt_w_stride + nt_w_offset;
+      weight_tile_addr = j.weight_base
+                       + 64'(kt_idx) * W_KT_STRIDE_q
+                       + 64'(nt_idx) * nt_stride;
     end
   endfunction
 
@@ -569,11 +585,15 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
   function automatic logic [63:0] out_tile_addr(input job_t j, input mm_dim_t mt, input mm_dim_t nt);
     // output: [M, N] fp16
-    u32_t row0, col0;
+    //   addr = output_base
+    //        + (m_start*orig_N + n_start) * FP16   ← O_BASE_OFF_q
+    //        + mt * (MT * orig_N) * FP16           ← mt * O_MT_STRIDE_q
+    //        + nt * (NT * FP16)                    ← nt * (NT_q << 1)
     begin
-      row0 = j.m_start + (u32_t'(mt) << j.log2_dma_mt);
-      col0 = j.n_start + (u32_t'(nt) << j.log2_dma_nt);
-      out_tile_addr = j.output_base + ((64'(row0) * 64'(j.orig_N) + 64'(col0)) * FP16_BYTES);
+      out_tile_addr = j.output_base
+                    + O_BASE_OFF_q
+                    + 64'(u32_t'(mt)) * O_MT_STRIDE_q
+                    + ((64'(u32_t'(nt)) * 64'(u32_t'(NT_q))) << 1);
     end
   endfunction
 
@@ -601,6 +621,9 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
   // --------------------------------------------------------------------------
   typedef enum logic [7:0] {
     S_IDLE, // 0
+
+    // job-scope stride pre-compute (1+1 = 2 cycles after cfg latch)
+    S_INIT_STRIDE_0, S_INIT_STRIDE_1,
 
     // kickoff: preload tile0 and optionally tile1 (single notify per tile)
     S_PRE0_LD_I, S_PRE0_LD_W, S_PRE0_LD_SC, S_PRE0_LD_ZP, S_PRE0_LD_DONE_NTF, // 5
@@ -689,6 +712,21 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
       mxu_buf_q <= 1'b0;
       o_nt_mxu_q <= 0;
       o_store_issue_q <= '0;
+
+      mt_base_q <= '0;
+      nt_base_q <= '0;
+      I_MT_STRIDE_q        <= '0;
+      I_KT_STRIDE_FULL_q   <= '0;
+      I_KT_STRIDE_LAST_q   <= '0;
+      W_KT_STRIDE_q        <= '0;
+      W_NT_STRIDE_FULL_q   <= '0;
+      W_NT_STRIDE_LAST_q   <= '0;
+      O_MT_STRIDE_q        <= '0;
+      O_BASE_OFF_q         <= '0;
+      SCALE_FK_FN_q        <= '0;
+      SCALE_FK_PN_q        <= '0;
+      SCALE_PK_FN_q        <= '0;
+      SCALE_PER_KT_FULL_K_q<= '0;
     end else begin
       state_q <= state_d;
       job_q   <= job_d;
@@ -751,6 +789,36 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
         m_last_q <= (mt_rem == 0) ? mt_n : mt_rem;
         n_last_q <= (nt_rem == 0) ? nt_n : nt_rem;
         k_last_q <= (kt_rem == 0) ? kt_n : kt_rem;
+      end
+
+      // Stride pre-compute stage 0: latch from job_q / *_q registers.
+      // All inputs are register-sourced; single-cycle multiplier per stride.
+      if (state_q == S_INIT_STRIDE_0) begin
+        mt_base_q <= job_q.m_start >> job_q.log2_dma_mt;
+        nt_base_q <= job_q.n_start >> job_q.log2_dma_nt;
+
+        I_MT_STRIDE_q       <= 64'(u32_t'(MT_q)) * 64'(job_q.orig_K) * FP16_BYTES;
+        I_KT_STRIDE_FULL_q  <= 64'(align8_u32(u32_t'(MT_q)))     * 64'(u32_t'(KT_q)) * FP16_BYTES;
+        I_KT_STRIDE_LAST_q  <= 64'(align8_u32(u32_t'(m_last_q))) * 64'(u32_t'(KT_q)) * FP16_BYTES;
+
+        W_KT_STRIDE_q       <= (64'(u32_t'(KT_q))     * 64'(job_q.orig_N)) >> 1;
+        W_NT_STRIDE_FULL_q  <= (64'(u32_t'(KT_q))     * 64'(u32_t'(NT_q))) >> 1;
+        W_NT_STRIDE_LAST_q  <= (64'(u32_t'(k_last_q)) * 64'(u32_t'(NT_q))) >> 1;
+
+        O_MT_STRIDE_q <= (64'(u32_t'(MT_q)) * 64'(job_q.orig_N)) << 1;
+        O_BASE_OFF_q  <= (64'(job_q.m_start) * 64'(job_q.orig_N)
+                         + 64'(job_q.n_start)) << 1;
+
+        SCALE_FK_FN_q <= scale_slot_bytes(job_q, u32_t'(KT_q),     u32_t'(NT_q));
+        SCALE_FK_PN_q <= scale_slot_bytes(job_q, u32_t'(KT_q),     u32_t'(n_last_q));
+        SCALE_PK_FN_q <= scale_slot_bytes(job_q, u32_t'(k_last_q), u32_t'(NT_q));
+      end
+
+      // Stride pre-compute stage 1: combine stage-0 registers (no fresh
+      // 64-bit multiplier chain on this cycle).
+      if (state_q == S_INIT_STRIDE_1) begin
+        SCALE_PER_KT_FULL_K_q <= 64'(u32_t'(nt_dim_q - 1)) * SCALE_FK_FN_q
+                              +  SCALE_FK_PN_q;
       end
     end
   end
@@ -1091,8 +1159,20 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
           gemm_start_o = 1'b1;
 
-          state_d = S_PRE0_LD_I;
+          state_d = S_INIT_STRIDE_0;
         end
+      end
+
+      // ----------------------------------------------------------------------
+      // Job-scope stride pre-compute (latched in always_ff). 2 cycles total.
+      // No cmd emit; just hold while stride_q registers settle.
+      // ----------------------------------------------------------------------
+      S_INIT_STRIDE_0: begin
+        state_d = S_INIT_STRIDE_1;
+      end
+
+      S_INIT_STRIDE_1: begin
+        state_d = S_PRE0_LD_I;
       end
 
       // ----------------------------------------------------------------------
