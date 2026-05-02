@@ -14,6 +14,18 @@ from pathlib import Path
 EXCLUDE_DIRS = {"by-hash", "by-tag", "latest"}
 DEFAULT_HASH_LEN = 10
 RTL_SOURCE_EXTS = {".sv", ".svh", ".v", ".vh", ".vhd", ".vhdl"}
+ROUTE_SUBDIRS = {"baseline", "fpint"}
+
+
+def routing_target_root(root: Path, flag_fpint: bool) -> Path:
+    """Resolve the leaf root for a build given the configured root and fpint flag.
+
+    Builds are split into <root>/baseline/ and <root>/fpint/ leaves. If --root
+    already names one of those leaves, it is used as-is (no further routing).
+    """
+    if root.name in ROUTE_SUBDIRS:
+        return root
+    return root / ("fpint" if flag_fpint else "baseline")
 
 
 def read_text(path: Path) -> str | None:
@@ -588,17 +600,21 @@ def plan_actions(root: Path, entries: list[dict]) -> dict:
     manifests = []
     for e in entries:
         src = e["dir_path"]
-        canonical = root / e["name_final"]
+        target_root = routing_target_root(root, e["flag_fpint"])
+        canonical = target_root / e["name_final"]
+        e["target_root"] = target_root
+        e["canonical_path"] = canonical
         manifest_path = canonical / "manifest.json"
 
         if src == canonical:
             # Already at canonical location with canonical name.
             pass
-        elif src.parent == root:
-            # Already inside root, just rename to canonical name.
+        elif src.parent == target_root:
+            # Already inside the target leaf, just rename to canonical name.
             renames.append((src, canonical))
         else:
-            # External --dir source: move into root, leave a symlink behind.
+            # Source is elsewhere (external --dir, or under a different leaf):
+            # move into the target leaf and leave a symlink at the original.
             renames.append((src, canonical))
             symlinks.append((src, canonical))
 
@@ -615,7 +631,7 @@ def print_plan(root: Path, entries: list[dict], actions: dict) -> None:
     print(f"root: {root}")
     print(f"builds: {len(entries)}")
     if actions["renames"]:
-        print("renames (move into root):")
+        print("renames (move into target leaf):")
         for src, dst in actions["renames"]:
             if src.parent == dst.parent:
                 print(f"  {src.parent}/{src.name} -> {dst.name}")
@@ -630,10 +646,15 @@ def print_plan(root: Path, entries: list[dict], actions: dict) -> None:
     print("manifests:")
     for manifest_path, _ in actions["manifests"]:
         print(f"  {manifest_path}")
-    print("links:")
-    print(f"  {root/'by-hash'}/<hash> -> <build dir>")
-    print(f"  {root/'latest'} -> <build dir>")
-    print(f"hash index: {root/'hashes.json'}")
+    target_roots = sorted({e["target_root"] for e in entries}, key=str)
+    if root.name in ROUTE_SUBDIRS and root not in target_roots:
+        target_roots.append(root)
+    if target_roots:
+        print("indices (per leaf):")
+        for tr in target_roots:
+            print(f"  {tr}/hashes.json + by-hash/ + latest")
+    else:
+        print("indices: (no targets)")
     warn = [e for e in entries if e["params_incomplete"]]
     if warn:
         print("warnings:")
@@ -733,7 +754,7 @@ def apply_actions(root: Path, entries: list[dict], actions: dict, force: bool) -
     # Update entry paths after rename so manifest writes target the new location.
     for e in entries:
         if e["dir_path"] in renamed_sources:
-            e["dir_path"] = root / e["name_final"]
+            e["dir_path"] = e["canonical_path"]
 
     now_iso = dt.datetime.now().isoformat()
 
@@ -753,7 +774,12 @@ def apply_actions(root: Path, entries: list[dict], actions: dict, force: bool) -
 
 
 def update_root_index(root: Path, hash_len: int) -> None:
-    """Rebuild hashes.json, by-hash/, and latest by re-scanning root."""
+    """Rebuild hashes.json, by-hash/, and latest by re-scanning root.
+
+    `root` is expected to be a leaf (e.g. .../baseline or .../fpint).
+    """
+    if not root.exists():
+        return
     all_dirs = collect_dirs(root)
     if not all_dirs:
         return
@@ -857,7 +883,14 @@ def main() -> int:
         return 0
 
     apply_actions(args.root, entries, actions, args.force)
-    update_root_index(args.root, args.hash_len)
+
+    # Update index per leaf that received entries. If --root itself is a leaf,
+    # also refresh it so a scan-mode run keeps a stale index in sync.
+    target_roots = {e["target_root"] for e in entries}
+    if args.root.name in ROUTE_SUBDIRS:
+        target_roots.add(args.root)
+    for tr in target_roots:
+        update_root_index(tr, args.hash_len)
     return 0
 
 
