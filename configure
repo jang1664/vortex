@@ -37,6 +37,13 @@ detect_osversion() {
                     # Add new versions as needed
                 esac
                 ;;
+            rocky)
+                case "${VERSION_ID%%.*}" in
+                    8) osversion="centos/7";;
+                    9) osversion="centos/7";;
+                    # Add new versions as needed
+                esac
+                ;;
         esac
     fi
     echo "$osversion"
