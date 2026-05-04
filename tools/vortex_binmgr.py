@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import socket
 from pathlib import Path
 
@@ -13,6 +14,18 @@ from pathlib import Path
 EXCLUDE_DIRS = {"by-hash", "by-tag", "latest"}
 DEFAULT_HASH_LEN = 10
 RTL_SOURCE_EXTS = {".sv", ".svh", ".v", ".vh", ".vhd", ".vhdl"}
+ROUTE_SUBDIRS = {"baseline", "fpint"}
+
+
+def routing_target_root(root: Path, flag_fpint: bool) -> Path:
+    """Resolve the leaf root for a build given the configured root and fpint flag.
+
+    Builds are split into <root>/baseline/ and <root>/fpint/ leaves. If --root
+    already names one of those leaves, it is used as-is (no further routing).
+    """
+    if root.name in ROUTE_SUBDIRS:
+        return root
+    return root / ("fpint" if flag_fpint else "baseline")
 
 
 def read_text(path: Path) -> str | None:
@@ -581,25 +594,29 @@ def plan_entries(dirs: list[Path], hash_len: int) -> list[dict]:
     return entries
 
 
-def plan_actions(entries: list[dict], keep_original: bool) -> dict:
+def plan_actions(root: Path, entries: list[dict]) -> dict:
     renames = []
     symlinks = []
     manifests = []
     for e in entries:
         src = e["dir_path"]
-        canonical = src.parent / e["name_final"]
+        target_root = routing_target_root(root, e["flag_fpint"])
+        canonical = target_root / e["name_final"]
+        e["target_root"] = target_root
+        e["canonical_path"] = canonical
+        manifest_path = canonical / "manifest.json"
 
-        if src.name == e["name_final"]:
-            # Already canonically named — no rename/symlink needed.
-            manifest_path = src / "manifest.json"
-        elif keep_original:
-            # Keep original folder name; expose canonical name via sibling symlink.
-            symlinks.append((canonical, src.name))
-            manifest_path = src / "manifest.json"
-        else:
-            # Rename original folder to canonical name.
+        if src == canonical:
+            # Already at canonical location with canonical name.
+            pass
+        elif src.parent == target_root:
+            # Already inside the target leaf, just rename to canonical name.
             renames.append((src, canonical))
-            manifest_path = canonical / "manifest.json"
+        else:
+            # Source is elsewhere (external --dir, or under a different leaf):
+            # move into the target leaf and leave a symlink at the original.
+            renames.append((src, canonical))
+            symlinks.append((src, canonical))
 
         manifests.append((manifest_path, e))
 
@@ -610,11 +627,11 @@ def plan_actions(entries: list[dict], keep_original: bool) -> dict:
     }
 
 
-def print_plan(root: Path, entries: list[dict], actions: dict, update_index: bool) -> None:
+def print_plan(root: Path, entries: list[dict], actions: dict) -> None:
     print(f"root: {root}")
     print(f"builds: {len(entries)}")
     if actions["renames"]:
-        print("renames:")
+        print("renames (move into target leaf):")
         for src, dst in actions["renames"]:
             if src.parent == dst.parent:
                 print(f"  {src.parent}/{src.name} -> {dst.name}")
@@ -623,19 +640,21 @@ def print_plan(root: Path, entries: list[dict], actions: dict, update_index: boo
     else:
         print("renames: none")
     if actions.get("symlinks"):
-        print("symlinks (canonical -> original, keep-original mode):")
-        for link_path, target_name in actions["symlinks"]:
-            print(f"  {link_path} -> {target_name}")
+        print("symlinks (original -> canonical):")
+        for link_path, target in actions["symlinks"]:
+            print(f"  {link_path} -> {target}")
     print("manifests:")
-    for manifest_path, e in actions["manifests"]:
+    for manifest_path, _ in actions["manifests"]:
         print(f"  {manifest_path}")
-    if update_index:
-        print("links:")
-        print(f"  {root/'by-hash'}/<hash> -> <build dir>")
-        print(f"  {root/'latest'} -> <build dir>")
-        print(f"hash index: {root/'hashes.json'}")
+    target_roots = sorted({e["target_root"] for e in entries}, key=str)
+    if root.name in ROUTE_SUBDIRS and root not in target_roots:
+        target_roots.append(root)
+    if target_roots:
+        print("indices (per leaf):")
+        for tr in target_roots:
+            print(f"  {tr}/hashes.json + by-hash/ + latest")
     else:
-        print("links: skipped (--dir mode, root index untouched)")
+        print("indices: (no targets)")
     warn = [e for e in entries if e["params_incomplete"]]
     if warn:
         print("warnings:")
@@ -646,7 +665,7 @@ def print_plan(root: Path, entries: list[dict], actions: dict, update_index: boo
                 print(f"  {e['dir_name']}: fallback params (no .config.stamp)")
 
 
-def apply_actions(root: Path, entries: list[dict], actions: dict, force: bool, update_index: bool) -> None:
+def apply_actions(root: Path, entries: list[dict], actions: dict, force: bool) -> None:
     # Preflight manifest write permissions before mutating any directory names.
     rename_src_by_dst = {dst: src for src, dst in actions["renames"]}
     manifest_blocked: list[Path] = []
@@ -685,8 +704,10 @@ def apply_actions(root: Path, entries: list[dict], actions: dict, force: bool, u
 
     # Execute renames in two phases to avoid destination conflicts.
     # Example: old_name -> xrt_name and xrt_name -> xrt_name_2.
-    # tmp file is staged in the source's own parent so that in-place renames
-    # (--dir mode, source outside --root) do not depend on root being writable.
+    # tmp file is staged in the source's own parent so the source-side rename
+    # never depends on root being writable. The second phase uses shutil.move
+    # so external --dir sources on a different filesystem still work
+    # (falls back to copy + remove on EXDEV).
     renamed_sources = {src for src, _ in actions["renames"]}
 
     staged_renames: list[tuple[Path, Path, Path]] = []
@@ -707,30 +728,33 @@ def apply_actions(root: Path, entries: list[dict], actions: dict, force: bool, u
     for _, tmp, dst in staged_renames:
         if dst.exists() or dst.is_symlink():
             raise RuntimeError(f"destination exists: {dst}")
-        tmp.rename(dst)
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(tmp), str(dst))
 
-    # Create keep-original symlinks (canonical -> original sibling).
-    for link_path, target_name in actions.get("symlinks", []):
+    # Leave a symlink at each external --dir source pointing to the canonical
+    # location now living under root.
+    for link_path, target in actions.get("symlinks", []):
+        rel_target = os.path.relpath(target, link_path.parent)
         if link_path.is_symlink():
             current = os.readlink(link_path)
-            if current == target_name:
-                continue  # already correct
+            if current == rel_target or current == str(target):
+                continue
             if not force:
                 raise RuntimeError(
                     f"symlink exists and points elsewhere: {link_path} -> {current} "
-                    f"(want {target_name}); use --force to replace"
+                    f"(want {rel_target}); use --force to replace"
                 )
             link_path.unlink()
         elif link_path.exists():
             raise RuntimeError(
-                f"cannot create canonical symlink, a real entry exists at: {link_path}"
+                f"cannot create symlink, a real entry exists at: {link_path}"
             )
-        link_path.symlink_to(target_name)
+        link_path.symlink_to(rel_target)
 
-    # Update entry paths after rename. Keep-original entries retain their src path.
+    # Update entry paths after rename so manifest writes target the new location.
     for e in entries:
         if e["dir_path"] in renamed_sources:
-            e["dir_path"] = e["dir_path"].parent / e["name_final"]
+            e["dir_path"] = e["canonical_path"]
 
     now_iso = dt.datetime.now().isoformat()
 
@@ -748,16 +772,26 @@ def apply_actions(root: Path, entries: list[dict], actions: dict, force: bool, u
                 "(fix ACL/ownership and retry)"
             ) from exc
 
-    if not update_index:
-        return
 
-    # Build hash index
+def update_root_index(root: Path, hash_len: int) -> None:
+    """Rebuild hashes.json, by-hash/, and latest by re-scanning root.
+
+    `root` is expected to be a leaf (e.g. .../baseline or .../fpint).
+    """
+    if not root.exists():
+        return
+    all_dirs = collect_dirs(root)
+    if not all_dirs:
+        return
+    all_entries = plan_entries(all_dirs, hash_len)
+
+    now_iso = dt.datetime.now().isoformat()
     index = {
         "generated_at": now_iso,
-        "hash_len": entries[0]["hash_len"] if entries else DEFAULT_HASH_LEN,
+        "hash_len": hash_len,
         "entries": [],
     }
-    for e in sorted(entries, key=lambda x: x["name_final"]):
+    for e in sorted(all_entries, key=lambda x: x["name_final"]):
         index["entries"].append(
             {
                 "build_id": e["build_id"],
@@ -770,11 +804,10 @@ def apply_actions(root: Path, entries: list[dict], actions: dict, force: bool, u
         )
     (root / "hashes.json").write_text(json.dumps(index, indent=2, sort_keys=True) + "\n")
 
-    # by-hash links
     by_hash = root / "by-hash"
     by_hash.mkdir(exist_ok=True)
     hash_seen = {}
-    for e in entries:
+    for e in all_entries:
         h = e["build_id"]
         n = hash_seen.get(h, 0) + 1
         hash_seen[h] = n
@@ -785,7 +818,6 @@ def apply_actions(root: Path, entries: list[dict], actions: dict, force: bool, u
         rel_target = os.path.relpath(e["dir_path"], by_hash)
         link_path.symlink_to(rel_target)
 
-    # latest link (by build_time if available, else by dir mtime)
     def build_sort_key(e):
         if e["build_time"]:
             try:
@@ -794,12 +826,11 @@ def apply_actions(root: Path, entries: list[dict], actions: dict, force: bool, u
                 pass
         return dt.datetime.fromtimestamp(e["dir_path"].stat().st_mtime)
 
-    if entries:
-        latest = max(entries, key=build_sort_key)
-        latest_link = root / "latest"
-        if latest_link.exists() or latest_link.is_symlink():
-            latest_link.unlink()
-        latest_link.symlink_to(os.path.relpath(latest["dir_path"], root))
+    latest = max(all_entries, key=build_sort_key)
+    latest_link = root / "latest"
+    if latest_link.exists() or latest_link.is_symlink():
+        latest_link.unlink()
+    latest_link.symlink_to(os.path.relpath(latest["dir_path"], root))
 
 
 def main() -> int:
@@ -813,20 +844,15 @@ def main() -> int:
         metavar="DIR",
         help="specific build dir to process (repeatable). "
              "If omitted, scan --root. "
-             "When used, rename is in-place in DIR's parent and root index/symlinks are NOT updated.",
-    )
-    ap.add_argument(
-        "--rename-original",
-        action="store_true",
-        help="With --dir: rename the original folder to the canonical name. "
-             "Default is to keep the original folder untouched and expose the "
-             "canonical name as a sibling symlink. "
-             "Ignored without --dir (root scan always renames).",
+             "When used, the directory is moved into --root with the canonical "
+             "name and a symlink is left at the original location.",
     )
     ap.add_argument("--hash-len", type=int, default=DEFAULT_HASH_LEN)
     ap.add_argument("--apply", action="store_true")
     ap.add_argument("--force", action="store_true", help="overwrite manifest.json or mismatched symlinks if exist")
     args = ap.parse_args()
+
+    args.root = args.root.resolve()
 
     if args.dir:
         seen: set[Path] = set()
@@ -846,22 +872,25 @@ def main() -> int:
                     f"or v++_vortex_afu.log): {p}"
                 )
             dirs.append(resolved)
-        update_index = False
-        keep_original = not args.rename_original
     else:
         dirs = collect_dirs(args.root)
-        update_index = True
-        # Root-scan mode preserves existing behavior: always rename to canonical.
-        keep_original = False
 
     entries = plan_entries(dirs, args.hash_len)
-    actions = plan_actions(entries, keep_original)
+    actions = plan_actions(args.root, entries)
 
     if not args.apply:
-        print_plan(args.root, entries, actions, update_index)
+        print_plan(args.root, entries, actions)
         return 0
 
-    apply_actions(args.root, entries, actions, args.force, update_index)
+    apply_actions(args.root, entries, actions, args.force)
+
+    # Update index per leaf that received entries. If --root itself is a leaf,
+    # also refresh it so a scan-mode run keeps a stale index in sync.
+    target_roots = {e["target_root"] for e in entries}
+    if args.root.name in ROUTE_SUBDIRS:
+        target_roots.add(args.root)
+    for tr in target_roots:
+        update_root_index(tr, args.hash_len)
     return 0
 
 

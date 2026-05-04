@@ -140,10 +140,34 @@ module VX_afu_wrap import VX_gpu_pkg::*; #(
 
 	wire ap_done_base = (state == STATE_DONE) && (vx_pending_writes == '0);
 	wire ap_done_wait_cache = ap_done_base && USE_APDONE_CACHE_DRAIN && !vx_cache_drain;
-	wire ap_done = ap_done_base && (!USE_APDONE_CACHE_DRAIN || vx_cache_drain);
+	wire ap_done_raw = ap_done_base && (!USE_APDONE_CACHE_DRAIN || vx_cache_drain);
+
+	// Sticky pending bit with Clear-On-Read semantics (HLS AP_CTRL convention).
+	// rdata is registered (sampled in RSTATE_DATA) but ap_ctrl_read pulses live
+	// in RSTATE_RESP — without a sticky bit, the two can disagree across the
+	// RUN→DONE edge: rdata captures ap_done=0 while ap_ctrl_read fires with live
+	// ap_done=1, silently consuming DONE and leaving the host polling forever.
+	reg ap_done_pending;
+	wire ap_done_consumed = ap_ctrl_read && s_axi_ctrl_rdata[1];
+	always @(posedge clk) begin
+		if (reset || ap_reset) begin
+			ap_done_pending <= 1'b0;
+		end else if (ap_done_consumed) begin
+			ap_done_pending <= 1'b0;
+		`ifdef DBG_TRACE_AFU
+			`TRACE(2, ("%t: AFU: ap_done consumed by host\n", $time))
+		`endif
+		end else if (ap_done_raw && !ap_done_pending) begin
+			ap_done_pending <= 1'b1;
+		`ifdef DBG_TRACE_AFU
+			`TRACE(2, ("%t: AFU: ap_done pending latched\n", $time))
+		`endif
+		end
+	end
+	wire ap_done = ap_done_pending;
 	wire ap_ready = ap_done;
 
-	wire ap_done_ack = ap_done && ap_ctrl_read;
+	wire ap_done_ack = ap_done_consumed;
 
 `ifdef SCOPE
 	wire scope_bus_in;

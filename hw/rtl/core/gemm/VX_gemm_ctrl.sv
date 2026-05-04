@@ -108,18 +108,40 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
     // -------------------------------------------------------------------------
     // Parent cmd queue: store ONLY cmd payload (NOT start)
     //   - start is regenerated as (valid && sync_ready) pulse.
-    //   - FSM sees idle=~full (buffer-only).
+    //   - FSM sees idle when staging slot is empty or draining.
+    //
+    // A 1-stage skid register sits between gemm_fsm_if.ctrl.cmd and the
+    // BRAM-based parent fifo. This breaks the long combinational chain from
+    // FSM job_q registers (address arithmetic) into the BRAM data input port,
+    // so the long path now terminates at a flop (cmd_stage_q) instead.
     // -------------------------------------------------------------------------
     localparam int PARENT_QUEUE_DATAW = $bits(gemm_unified_cmd_t);
 
     wire                          parent_q_full;
     wire [PARENT_QUEUE_DATAW-1:0] parent_q_dout;
 
-    wire parent_q_push   = gemm_fsm_if.ctrl.start && gemm_fsm_if.flag.idle;
+    logic [PARENT_QUEUE_DATAW-1:0] cmd_stage_q;
+    logic                          stage_valid_q;
+
+    wire stage_load    = gemm_fsm_if.ctrl.start && gemm_fsm_if.flag.idle;
+    wire stage_advance = stage_valid_q && !parent_q_full;
+
+    always_ff @(posedge clk) begin
+      if (reset) begin
+        stage_valid_q <= 1'b0;
+      end else begin
+        if (stage_load)              stage_valid_q <= 1'b1;
+        else if (stage_advance)      stage_valid_q <= 1'b0;
+        if (stage_load) cmd_stage_q <= gemm_fsm_if.ctrl.cmd;
+      end
+    end
+
+    wire parent_q_push   = stage_advance;
     wire parent_out_fire = !parent_q_empty && gemm_pqueue_out.flag.idle;
 
-    // Backpressure to FSM: do not emit start if queue full
-    assign gemm_fsm_if.flag.idle = ~parent_q_full;  // sync stall시 parent queue에 버퍼링
+    // Backpressure to FSM: accept a new cmd when the staging slot is empty
+    // or will drain into the fifo this cycle.
+    assign gemm_fsm_if.flag.idle = !stage_valid_q || !parent_q_full;
     assign gemm_fsm_if.flag.done = '0; // unused
 
     // Drive payload to sync; generate start pulse from queue valid
@@ -134,7 +156,7 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
       .reset    (reset),
       .push     (parent_q_push),
       .pop      (parent_out_fire),
-      .data_in  (gemm_fsm_if.ctrl.cmd),
+      .data_in  (cmd_stage_q),
       .data_out (parent_q_dout),
       .empty    (parent_q_empty),
       .full     (parent_q_full),

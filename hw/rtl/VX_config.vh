@@ -1144,7 +1144,7 @@ for block_size in range(1, full_bitwidth+1):
 `define MM_MAX_LOG_TILEDIM 10 // Maximum log2 tile dimension size (1K)
 
 // job frontend number of entries
-`define JOB_MMIO_NUM_ENTRIES 4
+`define JOB_MMIO_NUM_ENTRIES 1
 
 // job frontend reg idx
 `define JOB_MMIO_CONTROL_REG_IDX 0
