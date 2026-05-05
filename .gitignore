@@ -37,3 +37,22 @@ fsdbdebugLog/
 fsdbextractLog/
 fsdbqryLog/
 fsdbreportLog/
+.claude/scheduled_tasks.lock
+
+# ---- VCS / vlogan build artifacts ----
+AN.DB/
+csrc/
+simv
+simv.daidir/
+simv.vdb/
+ucli.key
+work.lib++/
+.vcs/
+vc_hdrs.h
+*.vcs.log
+vlogan.log
+vcs.log
+novas.conf
+novas.rc
+verdiLog/
+.fsdb_dump.tcl
