@@ -101,6 +101,25 @@ module VX_dp_ram #(
 
 `ifdef SYNTHESIS
     localparam FORCE_BRAM = !LUTRAM && `FORCE_BRAM(SIZE, DATAW);
+`ifdef COMPILED_SRAM_28LPP
+    if (OUT_REG && FORCE_BRAM) begin : g_compiled
+        VX_dp_ram_compiled #(
+            .DATAW (DATAW),
+            .SIZE  (SIZE),
+            .WRENW (WRENW)
+        ) u_compiled (
+            .clk   (clk),
+            .reset (reset),
+            .read  (read),
+            .write (write),
+            .wren  (wren),
+            .waddr (waddr),
+            .wdata (wdata),
+            .raddr (raddr),
+            .rdata (rdata)
+        );
+    end else
+`endif
     if (OUT_REG) begin : g_sync
         if (FORCE_BRAM) begin : g_bram
             if (RDW_MODE == "W") begin : g_write_first

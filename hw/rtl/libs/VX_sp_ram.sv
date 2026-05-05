@@ -109,6 +109,24 @@ module VX_sp_ram #(
     // Byte-enable is supported (URAM has 8-bit BWE granularity).
     localparam URAM_COMPATIBLE = (RDW_MODE != "W");
     localparam USE_URAM_FINAL = FORCE_BRAM && (USE_URAM == 1) && URAM_COMPATIBLE;
+`ifdef COMPILED_SRAM_28LPP
+    if (OUT_REG && FORCE_BRAM) begin : g_compiled
+        VX_sp_ram_compiled #(
+            .DATAW (DATAW),
+            .SIZE  (SIZE),
+            .WRENW (WRENW)
+        ) u_compiled (
+            .clk   (clk),
+            .reset (reset),
+            .read  (read),
+            .write (write),
+            .wren  (wren),
+            .addr  (addr),
+            .wdata (wdata),
+            .rdata (rdata)
+        );
+    end else
+`endif
     if (OUT_REG) begin : g_sync
         if (USE_URAM_FINAL) begin : g_uram
             // URAM path: read-first or no-change mode only.

@@ -49,6 +49,13 @@
 `ifndef FPU_FPNEW
 `ifndef FPU_DSP
 `ifndef FPU_DPI
+`ifdef SYNOPSYS
+// Synopsys DC synth: cvfpu (FPU_FPNEW) is pure synthesizable RTL and avoids
+// the vendor-IP fall-through (xil_fma / acl_fmadd / dpi_fmadd) baked into
+// FPU_DSP. The leaf modules under `ifdef FPU_DSP` would otherwise hit the
+// DPI default branch and fail elaboration on DC.
+`define FPU_FPNEW
+`else
 `ifndef SYNTHESIS
 `ifndef DPI_DISABLE
 `define FPU_DPI
@@ -57,6 +64,7 @@
 `endif
 `else
 `define FPU_DSP
+`endif
 `endif
 `endif
 `endif

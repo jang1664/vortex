@@ -1,0 +1,201 @@
+task: synopsys-dc-port
+state: IN_PROGRESS
+created: 2026-05-05 01:15
+description: |
+  Port the vortex_afu Vivado/Xilinx synthesis flow to Synopsys DC for
+  Samsung 28LPP. Subtasks: (1) compile SRAM macros, (2) port
+  VX_async_ram_patch, (3) author DC binding scripts, (4) sign-off.
+
+children:
+  - name: sram-macro-compile
+    state: DONE
+    description: |
+      Compile the 9 unique SRAM macros enumerated in sram_inventory.md
+      using hwexplorer/memory_compiler. Async-read shapes (#3, #7, #13)
+      fall back to flops in this round.
+    artifacts:
+      input_file: /home/jaeyong.jang/project.local/research/hwexplorer/memory_compiler/input/lpp_28_vortex
+      fe_output_dir: /home/data/memory_compiler/genSEC/lpp_28/
+      be_output_dir: /home/data/memory_compiler/genNDM/lpp_28/
+    plan:
+      unique_specs:
+        - cmos28lpp_ra1w_hs_2048x128m8   # L2 data         (4 width tiles per bank, ×8 banks = 32 macros)
+        - cmos28lpp_ra2_hd_1024x18m16    # L2 tag          (2 depth banks per L2 bank, ×8 banks = 16 macros)
+        - cmos28lpp_rf2_hd_16x146m1      # L2 MSHR         (4 width tiles, 1 bank = 4 macros)
+        - cmos28lpp_rf1_hd_64x128m2      # ICACHE data     (4 width tiles per bank, ×4 banks = 16 macros)
+        - cmos28lpp_ra2_hd_64x23m4       # ICACHE tag      (1 per bank, ×4 banks = 4 macros)
+        - cmos28lpp_rf2_hd_16x44m1       # ICACHE MSHR     (1 macro)
+        - cmos28lpp_ra1w_hd_8192x64m16   # LMEM            (1 per bank, ×8 banks = 8 macros)
+        - cmos28lpp_ra1w_hs_1024x128m8   # TMEM + GEMM acc (TMEM 4×8=32, GEMM 8×4=32 → 64 macros, shared spec)
+        - cmos28lpp_rf2w_hd_64x128m1     # GPR/FPR opc     (4 width tiles per bank, ×4 banks = 16 macros)
+      flop_fallback:
+        - shape: 2048x3 1P-RW async   # L2 FIFO repl
+        - shape: 64x2 1P-RW async     # ICACHE FIFO repl
+        - shape: 28x141 1R1W async    # IPDOM stack
+
+  - name: async-ram-patch-port
+    state: PENDING
+    description: Port VX_async_ram_patch to Synopsys DC (separate task).
+
+  - name: dc-binding-scripts
+    state: PENDING
+    description: link_library / read_db / set_dont_touch for compiled macros.
+
+log:
+  - time: 2026-05-05 01:15
+    note: |
+      sram_inventory.md authored. Per-shape decomposition planned against
+      28LPP compiler envelopes from PDK user guides (§1.4 ConfigRange,
+      §1.5 NamingConvention). HD-first selection rule applied.
+      Created input/lpp_28_vortex with 9 unique specs.
+  - time: 2026-05-05 01:18
+    note: |
+      Launched FE compile in background (pid 3730934, log /tmp/lpp_28_vortex_fe.log).
+      Initial test of cmos28lpp_rf2_hd_16x44m1 was killed at 600s timeout
+      during Liberty Model generation — left an empty output dir at
+      /home/data/memory_compiler/28LPP/genSEC/cmos28lpp_rf2_hd_16x44m1/
+      which the framework's check_mem_exist now interprets as "already
+      generated", so this spec will be SKIPPED in the current 9-spec run.
+      Need user to manually delete that dir for re-compile (rm/rmdir
+      not in this agent's permission scope).
+  - time: 2026-05-05 01:20
+    note: |
+      Confirmed compiled-macro port convention from existing
+      /home/data/memory_compiler/28LPP/genSEC/cmos28lpp_ra2w_hd_512x64m8/.v:
+      both A and B ports are full RW (CLK/CEN/WEN/A/D + Q output);
+      common pins RET1N (retention, tie 1), COLLDISN (collision-detect on,
+      tie 1 for 2-port), DFTRAMBYP/SI/SE (scan, tie 0), EMAA/EMAWA
+      (margin, tie default per Liberty), GWEN (active-low global write
+      enable, tie 0 to enable write else 1).
+  - time: 2026-05-05 03:05
+    note: |
+      Major bug discovered: hwexplorer framework's tcl/make_db.tcl runs
+      via `dc_shell -f` (frontend.py:96) but `read_lib` in dc_shell
+      v2023.12 silently fails (returns 0, no error) for these ARM .lib
+      files, so no `.db` is ever generated. The same `read_lib` succeeds
+      cleanly in `lc_shell` (Library Compiler).
+      Effect: every spec passes FE Liberty generation but fails the
+      framework's validate_fe_output (which requires `*.db`), so
+      `cp -r * genSEC/<spec>/` is skipped — `/home/data/memory_compiler/
+      28LPP/genSEC/<spec>/` stays empty for ALL 7 completed specs.
+      Workaround plan: when FE finishes, run lc_shell-based make_db on
+      each work dir (work/<spec>/FE/) and then `cp` artifacts into
+      genSEC manually. STATUS.yaml will be updated when this is done.
+      Confirmed all 10 sync-shape .v port lists, including:
+      - rf2w_hd_64x128m1: port A read-only (CLKA/CENA/AA → QA), port B
+        write-only with per-bit WENB[127:0] mask. No GWEN. EMAA/EMAB
+        only (no EMAW). Same family pattern as rf2_hd plus WENB.
+      All 10 sync wrappers + dispatchers now present in
+      hw/rtl/libs/VX_sram_macros_28lpp.sv.
+  - time: 2026-05-05 01:50
+    note: |
+      Inspected partial work-dir .v files for specs 1-3:
+      - ra1w_hs_2048x128m8 (1P-RW BWE) port list: CLK/CEN/WEN[127:0]/A[10:0]/
+        D[127:0]/Q[127:0]/GWEN/EMA[2:0]/EMAW[1:0]/EMAS/TEN/TCEN/TWEN/TA/TD/
+        TGWEN/RET1N/SI[1:0]/SE/DFTRAMBYP + DFT outputs (CENY/WENY/AY/GWENY/SO).
+        Note: HS family adds EMAS bit (extra margin select) absent in HD.
+      - ra2_hd_1024x18m16 (2-port RW, no BWE) port list: ports A&B both
+        full RW with single-bit WENA/WENB (no per-bit), no GWEN.
+        For 1R1W usage: tie WENA=0 (write-enable on A), WENB=1 (no write on B).
+      - rf2_hd_16x146m1 (1R1W RF, no BWE) port list: port A has only
+        CENA/AA/QA (read-only, no DA/WENA), port B has only CENB/AB/DB
+        (write-only, no QB/WENB). Cleanest 1R1W layout — no asymmetry tweaks.
+      Wrote wrappers for shapes #1, #2, #4, #6, #8, #10, #11 (7 of 10 sync
+      shapes) at hw/rtl/libs/VX_sram_macros_28lpp.sv. Added dispatchers
+      VX_sp_ram_compiled / VX_dp_ram_compiled. Patched VX_sp_ram.sv and
+      VX_dp_ram.sv to dispatch via COMPILED_SRAM_28LPP define.
+      Pending shapes (need .v port verification when FE completes):
+      #5 ICACHE data (rf1_hd), #9 LMEM (ra1w_hd), #12 GPR opc (rf2w_hd).
+
+pitfalls:
+  - id: P1
+    note: |
+      Samsung 28LPP compiler module names use the format
+      `cmos28lpp_<module>[r][w][p][a]_<arch>_<D>x<W>m<MUX>`. The `[opt]`
+      flags must come immediately after the module name (no underscore
+      separator) and BEFORE the `_hd|_hs` arch tag. The hwexplorer regex
+      `(ra1|ra2|rf1|rf2|vrom)r?w?p?_(hd|hs)` enforces this ordering. Don't
+      put `_w` after `_hd` (that would not match).
+  - id: P2
+    note: |
+      `rf*_hd` mux1 has width STEP 2, not 1. So 16x583 is invalid; use
+      16x584 or pad to even (we picked 16x146 ×4 = 584 for L2 MSHR).
+      Same applies to ICACHE MSHR 16x44 (already even).
+  - id: P3
+    note: |
+      `ra1_hd` width caps tighter than expected: m8→36, m16→72, m32→144
+      with min depth 4096 for m32. So 2048×128 cannot use ra1_hd at all;
+      ra1_hs is required (width up to 144 at m8, depth 256-4096).
+  - id: P4
+    note: |
+      `ra2_hd` (1R1W) max depth is 1024. Anything deeper (e.g. L2 tag
+      2048×18) must depth-bank by 2× — wrapper picks the right macro
+      using the high-order address bit.
+  - id: P5
+    note: |
+      Async-read shapes (#3, #7, #13 in sram_inventory.md) cannot be
+      compiled via memory_compiler. They use OUT_REG=0 + RADDR_REG=1 to
+      fake a 0-cycle read. Falling back to flops in this round; defer
+      VX_async_ram_patch Synopsys port to async-ram-patch-port subtask.
+  - id: P6
+    note: |
+      BWE (byte-write-enable) is encoded by the `w` flag in the [Option]
+      field of the family name (e.g., `ra1w_hs_2048x128m8`). The `w`
+      flag declares write-mask capability; the WEN bus width is derived
+      from the data width — for byte (8-bit) granularity, the wrapper
+      ties every 8 WEN bits together (or the compiler's WEN-group size
+      is set to 8 at instantiation time).
+  - id: P7
+    note: |
+      hwexplorer/memory_compiler's tcl/make_db.tcl is invoked via
+      dc_shell, but dc_shell v2023.12-SP5-3's `read_lib` silently fails
+      (returns 0, no error message) on ARM-generated 28LPP `.lib` files.
+      The same files load cleanly in `lc_shell`. The framework's
+      validate_fe_output requires `*.db`, so this bug causes ALL specs
+      to fail validation and not get cp'd to /home/data/.../genSEC.
+      FIXED in hwexplorer (3 patches):
+      - frontend.py: dc_shell → lc_shell
+      - tcl/make_db.tcl: drop enable_write_lib_mode; parse `library(NAME)`
+        from .lib file (not from filename) since lc_shell read_lib
+        returns 1/0 not the lib name; remove brace-comment that broke
+        Tcl parser
+      - preprocess.py: check_mem_exist requires *.db in genSEC dir, so
+        empty dirs from prior failed runs trigger re-compile
+  - id: P8
+    note: |
+      Framework's main.py runs `rm -rf $work_dir` at the very end of all
+      specs (regardless of success/failure). When validation fails for
+      every spec, this wipes ALL accumulated artifacts (.lib, .v, .lef)
+      AND the empty genSEC dirs (created by mkdir -p) remain — a worst
+      of both worlds. Watch for this when iterating: a single bad spec
+      will not kill the run, but a bad make_db.tcl that fails them all
+      will erase everything.
+
+log_completion:
+  - time: 2026-05-05 06:00
+    note: |
+      sram-macro-compile child task COMPLETE.
+      All 9 unique 28LPP SRAM macros compiled with patched hwexplorer
+      framework. Per-spec artifacts in /home/data/memory_compiler/28LPP/
+      genSEC/<spec>/:
+        cmos28lpp_ra1w_hs_2048x128m8   56 db, 1 v, 1 lef  (L2 data)
+        cmos28lpp_ra2_hd_1024x18m16    56 db, 1 v, 1 lef  (L2 tag)
+        cmos28lpp_rf2_hd_16x146m1      56 db, 1 v, 1 lef  (L2 MSHR)
+        cmos28lpp_rf1_hd_64x128m2      56 db, 1 v, 1 lef  (ICACHE data)
+        cmos28lpp_ra2_hd_64x23m4       56 db, 1 v, 1 lef  (ICACHE tag)
+        cmos28lpp_rf2_hd_16x44m1       56 db, 1 v, 1 lef  (ICACHE MSHR)
+        cmos28lpp_ra1w_hd_8192x64m16   56 db, 1 v, 1 lef  (LMEM)
+        cmos28lpp_ra1w_hs_1024x128m8   56 db, 1 v, 1 lef  (TMEM + GEMM acc)
+        cmos28lpp_rf2w_hd_64x128m1     56 db, 1 v, 1 lef  (GPR opc)
+      Total compile time: ~127 min (started 2026-05-05 03:53).
+  - time: 2026-05-05 06:05
+    note: |
+      RTL elaboration verified with VCS V-2023.12-SP2-4 (-elab_only):
+      (a) hw/rtl/libs/VX_sram_macros_28lpp.sv standalone with all 9
+          macro stubs from genSEC → 0 errors, 0 warnings.
+      (b) Full dispatcher chain (VX_sp_ram + VX_dp_ram with
+          +define+COMPILED_SRAM_28LPP+SYNTHESIS+NDEBUG) instantiating
+          shapes #1, #9, #2, #12 → 0 errors, 0 warnings.
+      All 10 wrapper port lists match macro port lists (no port-mismatch
+      errors). The wrapper file is ready for unit-test integration and
+      DC synthesis.

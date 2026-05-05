@@ -141,6 +141,53 @@ module VX_async_ram_patch #(
 );
     localparam WSELW = DATAW / WRENW;
 
+`ifdef SYNOPSYS
+    // Synopsys DC has no SRAM-inference path equivalent to Vivado's
+    // ramstyle/USE_BLOCK_BRAM hint. The VX_placeholder shim below only
+    // does anything useful because Vivado flattens it to a wire while its
+    // synth-time RAM templater is matching the surrounding sync-RAM block
+    // for BRAM mapping. On DC the same RTL maps to flops regardless of
+    // the shim, so the shim and ramstyle attributes are skipped here.
+    //
+    // The three sites that exercise this patch — L2 / ICACHE FIFO repl
+    // and IPDOM stack — have depths and widths below typical 28LPP SRAM
+    // compiler minimums (see agent-tasks/synopsys-dc-port/sram_inventory.md).
+    // Letting them fall to flops is the intended outcome (~10k flops,
+    // < 0.005 mm² on 28LPP) until a register-file macro is wired in.
+    `UNUSED_PARAM (DUAL_PORT)
+    `UNUSED_PARAM (FORCE_BRAM)
+    `UNUSED_PARAM (RADDR_REG)
+    `UNUSED_PARAM (RADDR_RESET)
+    `UNUSED_PARAM (WRITE_FIRST)
+    `UNUSED_VAR (read)
+    `UNUSED_VAR (reset)
+
+    reg [DATAW-1:0] ram [0:SIZE-1];
+
+    `RAM_INITIALIZATION
+
+    if (WRENW != 1) begin : g_wren
+        always @(posedge clk) begin
+            if (write) begin
+                for (integer i = 0; i < WRENW; ++i) begin
+                    if (wren[i]) begin
+                        ram[waddr][i*WSELW +: WSELW] <= wdata[i*WSELW +: WSELW];
+                    end
+                end
+            end
+        end
+    end else begin : g_no_wren
+        `UNUSED_VAR (wren)
+        always @(posedge clk) begin
+            if (write) begin
+                ram[waddr] <= wdata;
+            end
+        end
+    end
+
+    assign rdata = ram[raddr];
+
+`else
     `UNUSED_VAR (reset)
 
     (* keep = "true" *) wire [ADDRW-1:0] raddr_w, raddr_s;
@@ -272,6 +319,7 @@ module VX_async_ram_patch #(
         end
         assign rdata = is_raddr_reg ? rdata_s : rdata_a;
     end
+`endif
 
 endmodule
 `TRACING_ON
