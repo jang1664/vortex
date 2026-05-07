@@ -95,7 +95,7 @@ static tb_partition_t compute_partition(uint32_t core_id, uint32_t num_tbs, uint
   return part;
 }
 
-static constexpr uint32_t kMaxPollIters = 2000000u;
+static constexpr uint32_t kMaxPollIters = 100000000u;
 static constexpr uint32_t kPoisonWord = 0xBAADF00Du;
 
 static inline void split_u64(uint64_t value, uint32_t& lo, uint32_t& hi) {
