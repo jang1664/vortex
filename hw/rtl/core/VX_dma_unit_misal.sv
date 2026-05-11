@@ -34,7 +34,13 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
   // shifters). `$fatal` runtime-checks trap any misaligned descriptor at
   // cmd_start so a config bug surfaces in simulation rather than silently
   // corrupting data. Misalign=1 retains the original behaviour.
-  parameter bit ENABLE_MISALIGN = 1'b0
+  parameter bit ENABLE_MISALIGN = 1'b0,
+  // Parent forwards interface TAG_WIDTH values explicitly. Synopsys DC
+  // rejects `interface_inst.PARAM` access inside localparam initializers,
+  // so we cannot read dcache_bus_if.TAG_WIDTH / lmem_bus_if.TAG_WIDTH
+  // directly here.
+  parameter int DCACHE_TAG_WIDTH = 1,
+  parameter int LMEM_TAG_WIDTH   = 1
 ) (
   input wire clk,
   input wire reset,
@@ -162,6 +168,7 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
 
   state_e state, state_n;
 
+`ifndef SYNTHESIS
   function automatic string state_to_str(input state_e s);
     case (s)
       S_IDLE:           return "S_IDLE";
@@ -179,6 +186,7 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
       default:          return "S_UNKNOWN";
     endcase
   endfunction
+`endif
 
   // ------------------------------------------------------------
   // cfg handshake / latch
@@ -439,8 +447,8 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
 
   localparam int RD_OUTSTANDING_CAP = 8;
   localparam int RD_SLOT_BITS_CAP   = `CLOG2(RD_OUTSTANDING_CAP);
-  localparam int DCACHE_TAG_VALUE_W = dcache_bus_if.TAG_WIDTH - `UP(UUID_WIDTH);
-  localparam int LMEM_TAG_VALUE_W   = lmem_bus_if.TAG_WIDTH - `UP(UUID_WIDTH);
+  localparam int DCACHE_TAG_VALUE_W = DCACHE_TAG_WIDTH - `UP(UUID_WIDTH);
+  localparam int LMEM_TAG_VALUE_W   = LMEM_TAG_WIDTH - `UP(UUID_WIDTH);
   localparam int MIN_TAG_VALUE_W    = (DCACHE_TAG_VALUE_W < LMEM_TAG_VALUE_W)
                                     ? DCACHE_TAG_VALUE_W : LMEM_TAG_VALUE_W;
   // Keep at least 1 bit in localparams so vector declarations remain legal,

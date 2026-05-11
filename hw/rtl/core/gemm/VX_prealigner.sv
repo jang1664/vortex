@@ -143,7 +143,15 @@ module VX_prealigner import VX_gpu_pkg::*; #(
 
       logic [sh_width-1:0] shift_amount;
       logic [BLK_IDX_NUM-1:0] is_right_of_first_valid_block;
+`ifdef SYNOPSYS
+      // DW_lzd's enc port is `[addr_width:0]` (= SHIFT_WIDTH+1 bits). The
+      // extra MSB doubles as the all-zero-input flag (full-1s on no leading
+      // 1). Vortex's original SHIFT_WIDTH-only declaration was the cause of
+      // DC's "Width mismatch on enc" + unresolved DW_lzd reference.
+      logic [SHIFT_WIDTH:0]   enc;
+`else
       logic [SHIFT_WIDTH-1:0] enc; // position of first one from MSB side
+`endif
       logic no_exist_one;
       logic valid_out_lzc;
       logic [EXP_WIDTH-1:0] exp_stage2_;

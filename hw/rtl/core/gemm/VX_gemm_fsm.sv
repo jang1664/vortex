@@ -2148,6 +2148,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     end
   endtask
 
+`ifndef SYNTHESIS
   function automatic string op_to_str(input logic [3:0] op);
     case (op)
       OP_WAIT:          return "WAIT";
@@ -2162,6 +2163,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
       default:          return "UNKNOWN";
     endcase
   endfunction
+`endif
 
   task automatic log_gemm_cmd_handshake(
     input state_t state_i,
