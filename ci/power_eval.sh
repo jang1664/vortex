@@ -99,6 +99,12 @@ shape_args () {
     decode_qkv)     echo "-m 1    -n 4096  -k 4096  -q 32 -t 0 -d 0 -r 5000${pflag}" ;;
     decode_gate_up) echo "-m 1    -n 11008 -k 4096  -q 32 -t 0 -d 0 -r 2000${pflag}" ;;
     decode_down)    echo "-m 1    -n 4096  -k 11008 -q 32 -t 0 -d 0 -r 2000${pflag}" ;;
+    # ----------------------------------------------------------------------
+    # Polling baseline: kernel spins on MMIO reads instead of running GEMM.
+    # Use to subtract Vortex-core polling overhead from a normal-run ΔP and
+    # recover the true HW-GEMM ΔP. POLL_ITERS ~20M ≈ a couple seconds of
+    # kernel time at 100 MHz; tune to taste. --pol implies -p (no verify).
+    poll_only)      echo "-m 32   -n 32    -k 32    -q 32 -t 0 -d 0 -r 5 --pol 20000000${pflag}" ;;
     *)         echo "" ;;
   esac
 }
