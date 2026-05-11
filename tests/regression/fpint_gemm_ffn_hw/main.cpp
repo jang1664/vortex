@@ -1,5 +1,6 @@
 #include <iostream>
 #include <unistd.h>
+#include <getopt.h>
 #include <string.h>
 #include <vector>
 #include <cmath>
@@ -27,6 +28,10 @@ static uint32_t WTRANS = 0;
 static uint32_t QDIR = 0;
 static uint32_t REPS = 1;
 static bool POWER_MODE = false;
+// Poll-only baseline mode: when > 0, kernel does N MMIO reads instead of GEMM.
+// Used to isolate Vortex-core polling power from HW-GEMM power.
+static uint32_t POLL_ONLY_ITERS = 0;
+static constexpr uint32_t POLL_ONLY_QDIR_SENTINEL = 0xDEADu;
 
 static vx_device_h device = nullptr;
 static vx_buffer_h krnl_buffer = nullptr;
@@ -88,12 +93,23 @@ static void cleanup() {
 
 static void show_usage() {
   std::cout << "Usage: [-m M] [-n N] [-k K] [-q QBLK] [-t WTRANS] [-d QDIR]" << std::endl;
-  std::cout << "       [-r REPS] [-p (power-mode: skip reference & verify)] [-h]" << std::endl;
+  std::cout << "       [-r REPS] [-p (power-mode: skip reference & verify)]" << std::endl;
+  std::cout << "       [--pol POLL_ITERS] (poll-only baseline mode; implies -p)" << std::endl;
+  std::cout << "       [-h]" << std::endl;
 }
+
+// Long-option-only flag value (out of ASCII range so it doesn't collide with short opts).
+static constexpr int OPT_POL = 0x100;
+
+static struct option long_options[] = {
+  {"pol", required_argument, nullptr, OPT_POL},
+  {nullptr, 0, nullptr, 0},
+};
 
 static void parse_args(int argc, char **argv) {
   int c;
-  while ((c = getopt(argc, argv, "m:n:k:q:t:d:r:ph")) != -1) {
+  int option_index = 0;
+  while ((c = getopt_long(argc, argv, "m:n:k:q:t:d:r:ph", long_options, &option_index)) != -1) {
     switch (c) {
     case 'm': M = atoi(optarg); break;
     case 'n': N = atoi(optarg); break;
@@ -103,6 +119,10 @@ static void parse_args(int argc, char **argv) {
     case 'd': QDIR = atoi(optarg); break;
     case 'r': REPS = atoi(optarg); break;
     case 'p': POWER_MODE = true; break;
+    case OPT_POL:
+      POLL_ONLY_ITERS = static_cast<uint32_t>(strtoul(optarg, nullptr, 0));
+      POWER_MODE = true;  // poll-only is meaningless with verify; skip ref/verify
+      break;
     case 'h': show_usage(); exit(0); break;
     default: show_usage(); exit(-1);
     }
@@ -485,7 +505,9 @@ int main(int argc, char *argv[]) {
   std::cout << "Uploading kernel arguments and kernel" << std::endl;
   RT_CHECK(vx_upload_bytes(device, &kargs, sizeof(kargs), &args_buffer));
 
-  std::cout << "Starting kernel execution (reps=" << REPS << ")" << std::endl;
+  std::cout << "Starting kernel execution (reps=" << REPS
+            << (POLL_ONLY_ITERS ? " [POLL-ONLY MODE]" : "")
+            << ", poll_iters=" << POLL_ONLY_ITERS << ")" << std::endl;
   for (uint32_t rep = 0; rep < REPS; ++rep) {
     // Reset status before each launch and bump generation/eid so the AFU
     // does not treat consecutive launches as duplicates.
@@ -493,6 +515,13 @@ int main(int argc, char *argv[]) {
     kargs.job_eid = rep;
     kargs.job_generation = rep + 1;
     kargs.last_ctrl = 0;
+    if (POLL_ONLY_ITERS) {
+      // Hijack kargs.QDIR (sentinel) + kargs.K (iteration count) so the
+      // device kernel takes the polling-only path. Real M/N/K stay valid
+      // for the LMEM layout already computed; the kernel ignores them.
+      kargs.QDIR = POLL_ONLY_QDIR_SENTINEL;
+      kargs.K    = POLL_ONLY_ITERS;
+    }
     RT_CHECK(vx_copy_to_dev(args_buffer, &kargs, 0, sizeof(kargs)));
 
     RT_CHECK(vx_start(device, krnl_buffer, args_buffer));

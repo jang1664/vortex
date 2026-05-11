@@ -88,15 +88,21 @@ shape_args () {
     medium)    echo "-m 1024 -n 1024 -k 1024 -q 32 -t 0 -d 0 -r 100${pflag}" ;;   # ~174ms × 100 ≈ 17s
     llama_ffn) echo "-m 512  -n 4096 -k 4096 -q 32 -t 0 -d 0 -r 12${pflag}" ;;    # ~1.39s × 12 ≈ 17s
     # Llama2-7B mappings (prefill seq=512 / 2K, decode seq=1)
-    qkv_512)        echo "-m 512  -n 4096  -k 4096  -q 32 -t 0 -d 0 -r 12${pflag}" ;;
+    qkv_512)        echo "-m 512  -n 4096  -k 4096  -q 32 -t 0 -d 0 -r 20${pflag}" ;;
     qkv_2k)         echo "-m 2048 -n 4096  -k 4096  -q 32 -t 0 -d 0 -r 4${pflag}" ;;
     gate_up_512)    echo "-m 512  -n 11008 -k 4096  -q 32 -t 0 -d 0 -r 5${pflag}" ;;
     gate_up_2k)     echo "-m 2048 -n 11008 -k 4096  -q 32 -t 0 -d 0 -r 2${pflag}" ;;
     down_512)       echo "-m 512  -n 4096  -k 11008 -q 32 -t 0 -d 0 -r 5${pflag}" ;;
     down_2k)        echo "-m 2048 -n 4096  -k 11008 -q 32 -t 0 -d 0 -r 2${pflag}" ;;
-    decode_qkv)     echo "-m 1    -n 4096  -k 4096  -q 32 -t 0 -d 0 -r 200${pflag}" ;;
+    decode_qkv)     echo "-m 1    -n 4096  -k 4096  -q 32 -t 0 -d 0 -r 300${pflag}" ;;
     decode_gate_up) echo "-m 1    -n 11008 -k 4096  -q 32 -t 0 -d 0 -r 100${pflag}" ;;
     decode_down)    echo "-m 1    -n 4096  -k 11008 -q 32 -t 0 -d 0 -r 100${pflag}" ;;
+    # ----------------------------------------------------------------------
+    # Polling baseline: kernel spins on MMIO reads instead of running GEMM.
+    # Use to subtract Vortex-core polling overhead from a normal-run ΔP and
+    # recover the true HW-GEMM ΔP. POLL_ITERS ~20M ≈ matches naive qkv_512
+    # kernel time at 100 MHz; tune to taste. --pol implies -p (no verify).
+    poll_only)      echo "-m 1    -n 1     -k 1     -q 32 -t 0 -d 0 -r 5 --pol 20000000${pflag}" ;;
     *)         echo "" ;;
   esac
 }
