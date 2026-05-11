@@ -245,6 +245,23 @@ void kernel_mmio_driver(kernel_arg_t *__UNIFORM__ arg) {
     arg->status = STATUS_INIT;
   }
 
+  // Poll-only baseline mode: spin on a GEMM MMIO read for arg->K iterations
+  // without launching any GEMM job. Triggered by QDIR == 0xDEAD. Lets the
+  // host measure pure Vortex-core polling overhead so HW-GEMM ΔP can be
+  // separated from polling baseline.
+  if (arg->QDIR == 0xDEAD) {
+    volatile uint32_t sink = 0;
+    const uint64_t addr = kGemmRegOffset;
+    for (uint32_t i = 0; i < arg->K; ++i) {
+      sink ^= *reinterpret_cast<volatile uint32_t*>(addr);
+    }
+    if (reporter) {
+      arg->status = STATUS_OK;
+    }
+    (void)sink;
+    return;
+  }
+
   // The FSM descriptor path accepts one full rectangular GEMM job. Keep this
   // regression deterministic by letting core 0 own the MMIO transaction.
   tb_partition_t part = {core_id == 0, 0u, 0u, arg->M, arg->N};

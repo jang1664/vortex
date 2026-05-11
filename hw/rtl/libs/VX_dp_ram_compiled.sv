@@ -71,6 +71,81 @@ module VX_dp_ram_compiled #(
         reg ra_top_r;
         always @(posedge clk) if (read) ra_top_r <= ra_top;
         assign rdata = ra_top_r ? q_hi : q_lo;
+    end else if (SIZE == 2048 && DATAW == 16 && WRENW == 1) begin : g_2048x16
+        // DCACHE tag (8-bank sweep point) — 2 × cmos28lpp_ra2_hd_1024x16m16, depth-stacked.
+        // Same pattern as the existing L2 tag (2048×18): macro Q is 1-cycle delayed,
+        // so the read-side slice select must be registered.
+        `UNUSED_VAR (wren)
+        wire ra_top = raddr[10];
+        wire wa_top = waddr[10];
+        wire [9:0] ra_low = raddr[9:0];
+        wire [9:0] wa_low = waddr[9:0];
+
+        wire [15:0] q_lo, q_hi;
+
+        cmos28lpp_ra2_hd_1024x16m16 u_lo (
+            .CLKA(clk), .CENA(~(read & ~ra_top)), .WENA(1'b1), .AA(ra_low), .DA(16'h0), .QA(q_lo),
+            .CLKB(clk), .CENB(~(write & ~wa_top)), .WENB(1'b0), .AB(wa_low), .DB(wdata), .QB(),
+            .EMAA(3'b010), .EMAWA(2'b01), .EMAB(3'b010), .EMAWB(2'b01),
+            .TENA(1'b1), .TCENA(1'b1), .TWENA(1'b1), .TAA(10'h0), .TDA(16'h0),
+            .TENB(1'b1), .TCENB(1'b1), .TWENB(1'b1), .TAB(10'h0), .TDB(16'h0),
+            .RET1N(1'b1), .SIA(2'h0), .SEA(1'b0), .SIB(2'h0), .SEB(1'b0),
+            .DFTRAMBYP(1'b0), .COLLDISN(1'b1),
+            .CENYA(), .WENYA(), .AYA(), .CENYB(), .WENYB(), .AYB(), .SOA(), .SOB()
+        );
+        cmos28lpp_ra2_hd_1024x16m16 u_hi (
+            .CLKA(clk), .CENA(~(read & ra_top)), .WENA(1'b1), .AA(ra_low), .DA(16'h0), .QA(q_hi),
+            .CLKB(clk), .CENB(~(write & wa_top)), .WENB(1'b0), .AB(wa_low), .DB(wdata), .QB(),
+            .EMAA(3'b010), .EMAWA(2'b01), .EMAB(3'b010), .EMAWB(2'b01),
+            .TENA(1'b1), .TCENA(1'b1), .TWENA(1'b1), .TAA(10'h0), .TDA(16'h0),
+            .TENB(1'b1), .TCENB(1'b1), .TWENB(1'b1), .TAB(10'h0), .TDB(16'h0),
+            .RET1N(1'b1), .SIA(2'h0), .SEA(1'b0), .SIB(2'h0), .SEB(1'b0),
+            .DFTRAMBYP(1'b0), .COLLDISN(1'b1),
+            .CENYA(), .WENYA(), .AYA(), .CENYB(), .WENYB(), .AYB(), .SOA(), .SOB()
+        );
+
+        reg ra_top_r;
+        always @(posedge clk) if (read) ra_top_r <= ra_top;
+        assign rdata = ra_top_r ? q_hi : q_lo;
+    end else if (SIZE == 1024 && DATAW == 16 && WRENW == 1) begin : g_1024x16
+        // DCACHE tag (16-bank sweep point) — 1 × cmos28lpp_ra2_hd_1024x16m16
+        `UNUSED_VAR (wren)
+        cmos28lpp_ra2_hd_1024x16m16 u_macro (
+            .CLKA(clk), .CENA(~read), .WENA(1'b1), .AA(raddr), .DA(16'h0), .QA(rdata),
+            .CLKB(clk), .CENB(~write), .WENB(1'b0), .AB(waddr), .DB(wdata), .QB(),
+            .EMAA(3'b010), .EMAWA(2'b01), .EMAB(3'b010), .EMAWB(2'b01),
+            .TENA(1'b1), .TCENA(1'b1), .TWENA(1'b1), .TAA(10'h0), .TDA(16'h0),
+            .TENB(1'b1), .TCENB(1'b1), .TWENB(1'b1), .TAB(10'h0), .TDB(16'h0),
+            .RET1N(1'b1), .SIA(2'h0), .SEA(1'b0), .SIB(2'h0), .SEB(1'b0),
+            .DFTRAMBYP(1'b0), .COLLDISN(1'b1),
+            .CENYA(), .WENYA(), .AYA(), .CENYB(), .WENYB(), .AYB(), .SOA(), .SOB()
+        );
+    end else if (SIZE == 512 && DATAW == 16 && WRENW == 1) begin : g_512x16
+        // DCACHE tag (32-bank sweep point) — 1 × cmos28lpp_ra2_hd_512x16m16
+        `UNUSED_VAR (wren)
+        cmos28lpp_ra2_hd_512x16m16 u_macro (
+            .CLKA(clk), .CENA(~read), .WENA(1'b1), .AA(raddr), .DA(16'h0), .QA(rdata),
+            .CLKB(clk), .CENB(~write), .WENB(1'b0), .AB(waddr), .DB(wdata), .QB(),
+            .EMAA(3'b010), .EMAWA(2'b01), .EMAB(3'b010), .EMAWB(2'b01),
+            .TENA(1'b1), .TCENA(1'b1), .TWENA(1'b1), .TAA(9'h0), .TDA(16'h0),
+            .TENB(1'b1), .TCENB(1'b1), .TWENB(1'b1), .TAB(9'h0), .TDB(16'h0),
+            .RET1N(1'b1), .SIA(2'h0), .SEA(1'b0), .SIB(2'h0), .SEB(1'b0),
+            .DFTRAMBYP(1'b0), .COLLDISN(1'b1),
+            .CENYA(), .WENYA(), .AYA(), .CENYB(), .WENYB(), .AYB(), .SOA(), .SOB()
+        );
+    end else if (SIZE == 256 && DATAW == 16 && WRENW == 1) begin : g_256x16
+        // DCACHE tag (64-bank sweep point) — 1 × cmos28lpp_ra2_hd_256x16m8 (m8 for low row count)
+        `UNUSED_VAR (wren)
+        cmos28lpp_ra2_hd_256x16m8 u_macro (
+            .CLKA(clk), .CENA(~read), .WENA(1'b1), .AA(raddr), .DA(16'h0), .QA(rdata),
+            .CLKB(clk), .CENB(~write), .WENB(1'b0), .AB(waddr), .DB(wdata), .QB(),
+            .EMAA(3'b010), .EMAWA(2'b01), .EMAB(3'b010), .EMAWB(2'b01),
+            .TENA(1'b1), .TCENA(1'b1), .TWENA(1'b1), .TAA(8'h0), .TDA(16'h0),
+            .TENB(1'b1), .TCENB(1'b1), .TWENB(1'b1), .TAB(8'h0), .TDB(16'h0),
+            .RET1N(1'b1), .SIA(2'h0), .SEA(1'b0), .SIB(2'h0), .SEB(1'b0),
+            .DFTRAMBYP(1'b0), .COLLDISN(1'b1),
+            .CENYA(), .WENYA(), .AYA(), .CENYB(), .WENYB(), .AYB(), .SOA(), .SOB()
+        );
     end else if (SIZE == 64 && DATAW == 23 && WRENW == 1) begin : g_64x23
         // ICACHE tag — 1 × cmos28lpp_ra2_hd_64x23m4
         `UNUSED_VAR (wren)
