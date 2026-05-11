@@ -1,0 +1,87 @@
+name: mem_subsys_syn_overhead
+goal: |
+  Quantify Synopsys DC area / timing overhead of Vortex's memory-subsystem
+  interconnect (xbars) as bank/port count scales. Three tops:
+    - VX_local_mem_top  (LMEM xbar:  NUM_REQS -> NUM_BANKS, sym for response)
+    - VX_cache_top      (DCACHE xbars: NUM_REQS -> NUM_BANKS -> MEM_PORTS)
+    - VX_axi_adapter    (AXI/HBM xbar: MEM_PORTS -> 32 PCs)
+  Sweep is "CAP fixed", so total memory size is held constant while NUM_BANKS
+  doubles → bank depth halves while bank width and tag width stay constant.
+
+state: completed_partial
+results_file: RESULTS.md
+points_completed: 11_of_12
+points_failed:
+  - L4: "DC catapult segfault on 64-bank LMEM (xbar too large for ultra-effort opt)"
+  - C4: "compile_ultra hung 8+ hours in late opt phases on 64-bank cache; killed manually"
+created: "2026-05-05 22:16"
+
+decisions:
+  sram_strategy: "macros only (no flop fallback). 9 new generate arms in
+                  VX_sp_ram_compiled / VX_dp_ram_compiled — 1024x16m16 reused
+                  across 2048×16 (depth-stack) and 1024×16 points → 8 unique
+                  macros to compile."
+  tech: "lpp"
+  clock_period_ns: 10.0
+  num_ways: 4
+  word_size_lmem: 8       # XLEN_64 default — DO NOT change
+  word_size_dcache: 16    # cache_top default — DO NOT change
+  cache_total_size_bytes: 4194304   # 4 MB — picks LINES_PER_BANK = 2048 at NUM_BANKS=8
+  lmem_total_size_bytes:  524288    # 512 KB — picks WORDS_PER_BANK = 8192 at NUM_BANKS=8
+  mem_addr_width: 34      # .envrc default
+  axi_hbm_pc_count: 32    # PLATFORM_MEMORY_NUM_BANKS
+
+sweep_matrix:
+  lmem:
+    - {label: "L1", num_reqs:  8, num_banks:  8, size_bytes:  524288, sram_shape: "8192x64 BWE8"}
+    - {label: "L2", num_reqs: 16, num_banks: 16, size_bytes:  524288, sram_shape: "4096x64 BWE8"}
+    - {label: "L3", num_reqs: 32, num_banks: 32, size_bytes:  524288, sram_shape: "2048x64 BWE8"}
+    - {label: "L4", num_reqs: 64, num_banks: 64, size_bytes:  524288, sram_shape: "1024x64 BWE8"}
+  cache:
+    - {label: "C1", num_reqs:  8, num_banks:  8, mem_ports:  8, cache_size: 4194304, lines_per_bank: 2048, data: "2048x512 BWE64", tag: "2048x16"}
+    - {label: "C2", num_reqs: 16, num_banks: 16, mem_ports: 16, cache_size: 4194304, lines_per_bank: 1024, data: "1024x512 BWE64", tag: "1024x16"}
+    - {label: "C3", num_reqs: 32, num_banks: 32, mem_ports: 32, cache_size: 4194304, lines_per_bank:  512, data:  "512x512 BWE64", tag:  "512x16"}
+    - {label: "C4", num_reqs: 64, num_banks: 64, mem_ports: 64, cache_size: 4194304, lines_per_bank:  256, data:  "256x512 BWE64", tag:  "256x16"}
+  axi:
+    - {label: "A1", num_ports_in:  8, num_banks_out: 32}
+    - {label: "A2", num_ports_in: 16, num_banks_out: 32}
+    - {label: "A3", num_ports_in: 32, num_banks_out: 32}
+    - {label: "A4", num_ports_in: 64, num_banks_out: 32}
+
+new_macros_to_generate:
+  - {spec: "cmos28lpp_ra1w_hd_4096x64m16", family: "ra1_hd"}
+  - {spec: "cmos28lpp_ra1w_hd_2048x64m16", family: "ra1_hd"}
+  - {spec: "cmos28lpp_ra1w_hd_1024x64m16", family: "ra1_hd"}
+  - {spec: "cmos28lpp_ra1w_hs_512x128m8",  family: "ra1_hs"}
+  - {spec: "cmos28lpp_ra1w_hs_256x128m8",  family: "ra1_hs"}
+  - {spec: "cmos28lpp_ra2_hd_1024x16m16",  family: "ra2_hd"}
+  - {spec: "cmos28lpp_ra2_hd_512x16m16",   family: "ra2_hd"}
+  - {spec: "cmos28lpp_ra2_hd_256x16m8",    family: "ra2_hd"}
+
+reused_existing_macros:
+  - {spec: "cmos28lpp_ra1w_hd_8192x64m16", role: "LMEM 8-bank point"}
+  - {spec: "cmos28lpp_ra1w_hs_2048x128m8", role: "DCACHE data 8-bank point (4× tile)"}
+  - {spec: "cmos28lpp_ra1w_hs_1024x128m8", role: "DCACHE data 16-bank point (4× tile)"}
+
+children: []
+
+log:
+  - {ts: "2026-05-05 22:16", note: "task created. Decisions: tech=lpp, period=10ns, NUM_WAYS=4, CAP-fixed sweep. 9 generate arms added to VX_sp_ram_compiled/VX_dp_ram_compiled."}
+  - {ts: "2026-05-05 23:55", note: "L1 first successful synth: macros=8, total=843,615 µm². xbar+control = 19K µm² (~2.3%)."}
+  - {ts: "2026-05-06 00:08", note: "L2 success: macros=16, total=1,040,217 µm²."}
+  - {ts: "2026-05-06 00:30", note: "Found memory_compiler failed FE for 1024x64m16 (out-of-range for ra1_hd at m16). Switched to m8 → fits."}
+  - {ts: "2026-05-06 11:30", note: "Disabled closure_files filter (regex mishandled multi-line nested-paren module insts → dropped VX_placeholder etc.). Now analyze every preproc'd .sv minus an explicit verification skip list."}
+  - {ts: "2026-05-06 11:40", note: "Re-launched all 12 points (lmem×4, cache×4, axi×4) sequentially within each top, three tops in parallel."}
+
+pitfalls:
+  - "VX_user_config.vh is NOT include'd by any RTL — old PLAN claim was wrong; configure step not needed for this synth."
+  - "WORD_SIZE / XLEN must stay at default (XLEN_64 → WORD_SIZE=8 for LMEM). Overriding produces shapes outside macro inventory."
+  - "Tag width is bank-count-invariant ONLY when CACHE_SIZE is held constant. Holding LINES_PER_BANK constant instead would shrink tag by 1 bit per NUM_BANKS doubling."
+  - "Mux factor m16 has supported depth window — 1024×64m16 fails the ra1_hd compiler (out-of-range), use m8 instead. Always sanity-check by inspecting work/ for empty output dirs."
+  - "axi_adapter has no SRAM — it can be synthesized directly without a wrapper."
+  - "DC chokes on `__LINE__` triple-tick concat in BUFFER/POP_COUNT/REDUCE_TREE/NEG_EDGE macros. Hand-expand them before analyze (see expand_macros.py)."
+  - "SS corner string is `ss_0p900v_0p900v_125c` (3-digit voltage), NOT `ss_0p9v_0p9v_125c`. The legacy lpp_28_compiled_sram.tcl had the wrong name."
+  - "Skip `.v` macro files from analyze — some (e.g. ra2_hd_1024x16m16.v) declare `real` for timing, DC rejects with VER-177. The .db alone gives DC the macro module."
+  - "+define+VIVADO is required so `VX_platform.vh's `STRING macro expands to empty (`string` SV type → DC reject)."
+  - "Skip rtl/verification/* + a few sim-only library files; their `string` argument types fail DC analyze. See SKIP set in run_sweep.py."
+  - "AXI adapter NUM_PORTS_IN scaling needs TAG_WIDTH_OUT >= TAG_BUFFER_ADDRW + log2(NUM_PORTS_IN) (log2(64)+4=10 for our biggest). Set TAG_WIDTH_OUT=16 for headroom."

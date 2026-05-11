@@ -59,48 +59,64 @@ Both top modules flatten `VX_mem_bus_if` to plain wires at the boundary, so DC `
 
 ---
 
-## 2. Sweep matrix
+## 2. Sweep matrix (FINALIZED — CAP-fixed View A)
+
+All sweeps hold total memory capacity constant while NUM_BANKS doubles. With
+CAP fixed:
+  - `LINES_PER_BANK = CAP / (NUM_BANKS × LINE_SIZE × NUM_WAYS)` → halves per step
+  - tag width is independent of NUM_BANKS (proof: `log2(NUM_BANKS) + log2(LINES_PER_BANK)`
+    collapses to a constant under fixed CAP and NUM_WAYS)
+  - data RAM width stays fixed (= LINE_SIZE × 8)
+
+Other axes are intentionally held at their cache_top / local_mem_top defaults
+to keep the parameter delta as narrow as possible:
+  - WORD_SIZE = 8 (LMEM) and 16 (DCACHE) — XLEN_64 default
+  - LINE_SIZE = 64, NUM_WAYS = 4, MEM_ADDR_WIDTH = 34 — `.envrc` default
 
 ### 2.1 Lmem sweep (`VX_local_mem_top`)
 
-Run two views to disentangle "more lanes" from "bigger memory":
+`SIZE = 512 KB` fixed. WORD_SIZE = 8 → WORDS_PER_BANK = 65536/NUM_BANKS.
 
-**View A — total capacity fixed (`SIZE = 64 KB`):**
-
-| point | NUM_REQS | NUM_BANKS | WORD_SIZE | SIZE     |
-|-------|----------|-----------|-----------|----------|
-| L1    | 8        | 8         | 4         | 65536    |
-| L2    | 16       | 16        | 4         | 65536    |
-| L3    | 32       | 32        | 4         | 65536    |
-| L4    | 64       | 64        | 4         | 65536    |
-
-**View B — per-bank size fixed (8 KB/bank):**
-
-| point | NUM_REQS | NUM_BANKS | WORD_SIZE | SIZE   |
-|-------|----------|-----------|-----------|--------|
-| LB1   | 8        | 8         | 4         | 65536  |
-| LB2   | 16       | 16        | 4         | 131072 |
-| LB3   | 32       | 32        | 4         | 262144 |
-| LB4   | 64       | 64        | 4         | 524288 |
-
-(Optional V_C — independent NUM_REQS sweep with NUM_BANKS held at 8 — for asymmetry studies.)
+| point | NUM_REQS | NUM_BANKS | SIZE   | bank shape       | macro                                  |
+|-------|----------|-----------|--------|------------------|----------------------------------------|
+| L1    | 8        | 8         | 524288 | 8192 × 64 BWE8   | `cmos28lpp_ra1w_hd_8192x64m16` ✓existing|
+| L2    | 16       | 16        | 524288 | 4096 × 64 BWE8   | `cmos28lpp_ra1w_hd_4096x64m16` NEW      |
+| L3    | 32       | 32        | 524288 | 2048 × 64 BWE8   | `cmos28lpp_ra1w_hd_2048x64m16` NEW      |
+| L4    | 64       | 64        | 524288 | 1024 × 64 BWE8   | `cmos28lpp_ra1w_hd_1024x64m16` NEW      |
 
 ### 2.2 Dcache sweep (`VX_cache_top`)
 
-Goal: separate "more channels (lanes feeding cache)" from "more banks (more parallel hits)".
+`CACHE_SIZE = 4 MB` fixed (chosen so LINES_PER_BANK at NUM_BANKS=8 lands on the
+existing `2048×512` data macro). MEM_PORTS scales with NUM_BANKS — adapter
+chooses its own NUM_BANKS_OUT=32 separately (§2.3).
 
-| point | NUM_REQS | NUM_BANKS | MEM_PORTS | WORD_SIZE | LINE_SIZE | NUM_WAYS | CACHE_SIZE |
-|-------|----------|-----------|-----------|-----------|-----------|----------|------------|
-| C1 (baseline) | 8  | 8  | 2 | 16 | 64 | 4 | 65536  |
-| C2 (ch×2)     | 16 | 8  | 2 | 16 | 64 | 4 | 65536  |
-| C3 (ch×4)     | 32 | 8  | 2 | 16 | 64 | 4 | 65536  |
-| C4 (ch+bank×2)| 16 | 16 | 4 | 16 | 64 | 4 | 65536  |
-| C5 (ch+bank×4)| 32 | 32 | 4 | 16 | 64 | 4 | 131072 |
-| C6 (ch+bank×8)| 64 | 64 | 8 | 16 | 64 | 4 | 262144 |
+| point | NUM_REQS | NUM_BANKS | MEM_PORTS | LINES/bank | data shape          | tag shape   | data macro                              | tag macro                              |
+|-------|----------|-----------|-----------|-----------:|---------------------|-------------|-----------------------------------------|----------------------------------------|
+| C1    | 8        | 8         | 8         | 2048       | 2048 × 512 BWE64    | 2048 × 16   | `cmos28lpp_ra1w_hs_2048x128m8` ✓existing | `cmos28lpp_ra2_hd_1024x16m16` NEW (×2 depth) |
+| C2    | 16       | 16        | 16        | 1024       | 1024 × 512 BWE64    | 1024 × 16   | `cmos28lpp_ra1w_hs_1024x128m8` ✓existing | `cmos28lpp_ra2_hd_1024x16m16` NEW (×1) |
+| C3    | 32       | 32        | 32        | 512        |  512 × 512 BWE64    |  512 × 16   | `cmos28lpp_ra1w_hs_512x128m8` NEW         | `cmos28lpp_ra2_hd_512x16m16`  NEW       |
+| C4    | 64       | 64        | 64        | 256        |  256 × 512 BWE64    |  256 × 16   | `cmos28lpp_ra1w_hs_256x128m8` NEW         | `cmos28lpp_ra2_hd_256x16m8`   NEW       |
 
-C1→C3 isolates **core-side xbar** scaling (request channels). C1→C5/C6 shows **bank-side** scaling on top.
+Tag width = 16 across all points (CAP-fixed). MSHR macro shape (DEPTH=16, width
+varies with NUM_REQS) is determined at first elaborate; if not in inventory we
+will add another arm (currently expected to fall back to flops since DEPTH=16
+sits below the FORCE_BRAM threshold for narrow widths).
 
-`CACHE_SIZE` is increased on C5/C6 so per-bank size stays sane (lines/bank ≥ 16).
+`DIRTY_BYTES = 0` is set in run_sweep.py to skip the per-byte byteen store
+(would otherwise add a `LINES_PER_BANK × LINE_SIZE` macro per way per bank).
+
+### 2.3 AXI adapter sweep (`VX_axi_adapter`)
+
+No SRAM. Pure xbar logic + AXI handshake. NUM_BANKS_OUT fixed at 32 (HBM PC count).
+
+| point | NUM_PORTS_IN | NUM_BANKS_OUT | meaning                       |
+|-------|--------------|---------------|-------------------------------|
+| A1    | 8            | 32            | 8 → 32 (4× fan-out)           |
+| A2    | 16           | 32            | 16 → 32 (2× fan-out)          |
+| A3    | 32           | 32            | 32 → 32 (one-to-one)          |
+| A4    | 64           | 32            | 64 → 32 (2× fan-in)           |
+
+DATA_WIDTH = 512 (= LINE_SIZE × 8), ADDR_WIDTH_IN/OUT = 26/32, TAG_WIDTH_IN/OUT = 8.
 
 ---
 
