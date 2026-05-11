@@ -51,6 +51,50 @@ module VX_sp_ram_compiled #(
             .RET1N(1'b1), .SI(2'h0), .SE(1'b0), .DFTRAMBYP(1'b0),
             .CENY(), .WENY(), .AY(), .GWENY(), .SO()
         );
+    end else if (SIZE == 4096 && DATAW == 64 && WRENW == 8) begin : g_4096x64_bwe8
+        // LMEM bank (16-bank sweep point) — 1 × cmos28lpp_ra1w_hd_4096x64m16
+        wire [63:0] wen_n;
+        for (genvar i = 0; i < 8; i++) begin : g_byte_wen
+            assign wen_n[i*8 +: 8] = {8{~(write & wren[i])}};
+        end
+        cmos28lpp_ra1w_hd_4096x64m16 u_macro (
+            .CLK(clk), .CEN(ce_n), .WEN(wen_n), .GWEN(gwen_n),
+            .A(addr), .D(wdata), .Q(rdata),
+            .EMA(3'b010), .EMAW(2'b01),
+            .TEN(1'b1), .TCEN(1'b1), .TWEN(64'h0), .TA(12'h0), .TD(64'h0), .TGWEN(1'b1),
+            .RET1N(1'b1), .SI(2'h0), .SE(1'b0), .DFTRAMBYP(1'b0),
+            .CENY(), .WENY(), .AY(), .GWENY(), .SO()
+        );
+    end else if (SIZE == 2048 && DATAW == 64 && WRENW == 8) begin : g_2048x64_bwe8
+        // LMEM bank (32-bank sweep point) — 1 × cmos28lpp_ra1w_hd_2048x64m16
+        wire [63:0] wen_n;
+        for (genvar i = 0; i < 8; i++) begin : g_byte_wen
+            assign wen_n[i*8 +: 8] = {8{~(write & wren[i])}};
+        end
+        cmos28lpp_ra1w_hd_2048x64m16 u_macro (
+            .CLK(clk), .CEN(ce_n), .WEN(wen_n), .GWEN(gwen_n),
+            .A(addr), .D(wdata), .Q(rdata),
+            .EMA(3'b010), .EMAW(2'b01),
+            .TEN(1'b1), .TCEN(1'b1), .TWEN(64'h0), .TA(11'h0), .TD(64'h0), .TGWEN(1'b1),
+            .RET1N(1'b1), .SI(2'h0), .SE(1'b0), .DFTRAMBYP(1'b0),
+            .CENY(), .WENY(), .AY(), .GWENY(), .SO()
+        );
+    end else if (SIZE == 1024 && DATAW == 64 && WRENW == 8) begin : g_1024x64_bwe8
+        // LMEM bank (64-bank sweep point) — 1 × cmos28lpp_ra1w_hd_1024x64m8
+        // (m16 variant fails the ra1_hd compiler — depth+mux combo out of range;
+        //  m8 yields 128 rows which is well inside the supported envelope.)
+        wire [63:0] wen_n;
+        for (genvar i = 0; i < 8; i++) begin : g_byte_wen
+            assign wen_n[i*8 +: 8] = {8{~(write & wren[i])}};
+        end
+        cmos28lpp_ra1w_hd_1024x64m8 u_macro (
+            .CLK(clk), .CEN(ce_n), .WEN(wen_n), .GWEN(gwen_n),
+            .A(addr), .D(wdata), .Q(rdata),
+            .EMA(3'b010), .EMAW(2'b01),
+            .TEN(1'b1), .TCEN(1'b1), .TWEN(64'h0), .TA(10'h0), .TD(64'h0), .TGWEN(1'b1),
+            .RET1N(1'b1), .SI(2'h0), .SE(1'b0), .DFTRAMBYP(1'b0),
+            .CENY(), .WENY(), .AY(), .GWENY(), .SO()
+        );
     end else if (SIZE == 2048 && DATAW == 512 && WRENW == 64) begin : g_2048x512_bwe8
         // L2 data — 4 × cmos28lpp_ra1w_hs_2048x128m8 (width tile)
         for (genvar t = 0; t < 4; t++) begin : g_tile
@@ -63,6 +107,38 @@ module VX_sp_ram_compiled #(
                 .A(addr), .D(wdata[t*128 +: 128]), .Q(rdata[t*128 +: 128]),
                 .EMA(3'b010), .EMAW(2'b01), .EMAS(1'b0),
                 .TEN(1'b1), .TCEN(1'b1), .TWEN(128'h0), .TA(11'h0), .TD(128'h0), .TGWEN(1'b1),
+                .RET1N(1'b1), .SI(2'h0), .SE(1'b0), .DFTRAMBYP(1'b0),
+                .CENY(), .WENY(), .AY(), .GWENY(), .SO()
+            );
+        end
+    end else if (SIZE == 512 && DATAW == 512 && WRENW == 64) begin : g_512x512_bwe8
+        // DCACHE data (32-bank sweep point) — 4 × cmos28lpp_ra1w_hs_512x128m8 (width tile)
+        for (genvar t = 0; t < 4; t++) begin : g_tile
+            wire [127:0] wen_n;
+            for (genvar i = 0; i < 16; i++) begin : g_byte_wen
+                assign wen_n[i*8 +: 8] = {8{~(write & wren[t*16 + i])}};
+            end
+            cmos28lpp_ra1w_hs_512x128m8 u_macro (
+                .CLK(clk), .CEN(ce_n), .WEN(wen_n), .GWEN(gwen_n),
+                .A(addr), .D(wdata[t*128 +: 128]), .Q(rdata[t*128 +: 128]),
+                .EMA(3'b010), .EMAW(2'b01), .EMAS(1'b0),
+                .TEN(1'b1), .TCEN(1'b1), .TWEN(128'h0), .TA(9'h0), .TD(128'h0), .TGWEN(1'b1),
+                .RET1N(1'b1), .SI(2'h0), .SE(1'b0), .DFTRAMBYP(1'b0),
+                .CENY(), .WENY(), .AY(), .GWENY(), .SO()
+            );
+        end
+    end else if (SIZE == 256 && DATAW == 512 && WRENW == 64) begin : g_256x512_bwe8
+        // DCACHE data (64-bank sweep point) — 4 × cmos28lpp_ra1w_hs_256x128m8 (width tile)
+        for (genvar t = 0; t < 4; t++) begin : g_tile
+            wire [127:0] wen_n;
+            for (genvar i = 0; i < 16; i++) begin : g_byte_wen
+                assign wen_n[i*8 +: 8] = {8{~(write & wren[t*16 + i])}};
+            end
+            cmos28lpp_ra1w_hs_256x128m8 u_macro (
+                .CLK(clk), .CEN(ce_n), .WEN(wen_n), .GWEN(gwen_n),
+                .A(addr), .D(wdata[t*128 +: 128]), .Q(rdata[t*128 +: 128]),
+                .EMA(3'b010), .EMAW(2'b01), .EMAS(1'b0),
+                .TEN(1'b1), .TCEN(1'b1), .TWEN(128'h0), .TA(8'h0), .TD(128'h0), .TGWEN(1'b1),
                 .RET1N(1'b1), .SI(2'h0), .SE(1'b0), .DFTRAMBYP(1'b0),
                 .CENY(), .WENY(), .AY(), .GWENY(), .SO()
             );
