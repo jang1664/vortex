@@ -26,6 +26,8 @@ static uint32_t K = 128;
 static uint32_t QBLK = 32;
 static uint32_t WTRANS = 0;
 static uint32_t QDIR = 0;
+static uint32_t REPS = 1;
+static bool POWER_MODE = false;
 
 static vx_device_h device = nullptr;
 static vx_buffer_h krnl_buffer = nullptr;
@@ -78,12 +80,13 @@ static void cleanup() {
 }
 
 static void show_usage() {
-  std::cout << "Usage: [-m M] [-n N] [-k K] [-q QBLK] [-t WTRANS] [-d QDIR] [-h]" << std::endl;
+  std::cout << "Usage: [-m M] [-n N] [-k K] [-q QBLK] [-t WTRANS] [-d QDIR]" << std::endl;
+  std::cout << "       [-r REPS] [-p (power-mode: skip reference & verify)] [-h]" << std::endl;
 }
 
 static void parse_args(int argc, char **argv) {
   int c;
-  while ((c = getopt(argc, argv, "m:n:k:q:t:d:h")) != -1) {
+  while ((c = getopt(argc, argv, "m:n:k:q:t:d:r:ph")) != -1) {
     switch (c) {
     case 'm': M = atoi(optarg); break;
     case 'n': N = atoi(optarg); break;
@@ -91,6 +94,8 @@ static void parse_args(int argc, char **argv) {
     case 'q': QBLK = atoi(optarg); break;
     case 't': WTRANS = atoi(optarg); break;
     case 'd': QDIR = atoi(optarg); break;
+    case 'r': REPS = atoi(optarg); break;
+    case 'p': POWER_MODE = true; break;
     case 'h': show_usage(); exit(0); break;
     default: show_usage(); exit(-1);
     }
@@ -187,7 +192,8 @@ static void build_test_vectors(std::vector<uint16_t>& h_A,
                                std::vector<int8_t>& h_W_raw,
                                std::vector<uint16_t>& h_scales,
                                std::vector<int16_t>& h_zeros,
-                               std::vector<uint16_t>& h_ref_out_fp16) {
+                               std::vector<uint16_t>& h_ref_out_fp16,
+                               bool compute_reference = true) {
   uint32_t groups_total = (K + QBLK - 1) / QBLK;
   uint32_t ng_total = (N + QBLK - 1) / QBLK;
   uint32_t sc_zp_size = (QDIR == 0) ? (groups_total * N) : (K * ng_total);
@@ -224,26 +230,28 @@ static void build_test_vectors(std::vector<uint16_t>& h_A,
   }
 
   // Reference output C = A * dequant(W) [M x N]
-  for (uint32_t m = 0; m < M; ++m)
-    for (uint32_t n = 0; n < N; ++n) {
-      float sum = 0.0f;
-      for (uint32_t k = 0; k < K; ++k) {
-        float a = fp16_to_float(h_A[m * K + k]);
-        float scale, zp;
-        if (QDIR == 0) {
-          uint32_t gid = k / QBLK;
-          scale = fp16_to_float(h_scales[gid * N + n]);
-          zp = float(h_zeros[gid * N + n]);
-        } else {
-          uint32_t ng = n / QBLK;
-          scale = fp16_to_float(h_scales[k * ng_total + ng]);
-          zp = float(h_zeros[k * ng_total + ng]);
+  if (compute_reference) {
+    for (uint32_t m = 0; m < M; ++m)
+      for (uint32_t n = 0; n < N; ++n) {
+        float sum = 0.0f;
+        for (uint32_t k = 0; k < K; ++k) {
+          float a = fp16_to_float(h_A[m * K + k]);
+          float scale, zp;
+          if (QDIR == 0) {
+            uint32_t gid = k / QBLK;
+            scale = fp16_to_float(h_scales[gid * N + n]);
+            zp = float(h_zeros[gid * N + n]);
+          } else {
+            uint32_t ng = n / QBLK;
+            scale = fp16_to_float(h_scales[k * ng_total + ng]);
+            zp = float(h_zeros[k * ng_total + ng]);
+          }
+          float w = float(h_W_raw[k * N + n]);
+          sum += a * (w - zp) * scale;
         }
-        float w = float(h_W_raw[k * N + n]);
-        sum += a * (w - zp) * scale;
+        h_ref_out_fp16[m * N + n] = float_to_fp16(sum);
       }
-      h_ref_out_fp16[m * N + n] = float_to_fp16(sum);
-    }
+  }
 }
 
 // ============================================================================
@@ -593,11 +601,13 @@ int main(int argc, char *argv[]) {
     return -1;
   }
 
-  std::cout << "Core-level GEMM instruction stream test" << std::endl;
+  std::cout << "Core-level GEMM instruction stream test"
+            << (POWER_MODE ? " [POWER MODE: no reference, no verify]" : "")
+            << std::endl;
   std::cout << "M=" << M << " (padded to " << M_pad << ")"
             << ", N=" << N << ", K=" << K
             << ", QBLK=" << QBLK << ", WTRANS=" << WTRANS
-            << ", QDIR=" << QDIR << std::endl;
+            << ", QDIR=" << QDIR << ", REPS=" << REPS << std::endl;
   std::cout << "Tile: MT=" << DMA_MT << " KT=" << DMA_KT
             << " MXU_KT=" << DMA_MXU_KT << " MXU_NT=" << DMA_MXU_NT << std::endl;
 
@@ -622,7 +632,8 @@ int main(int argc, char *argv[]) {
   std::vector<int16_t> h_zeros;
   std::vector<uint16_t> h_ref_out_fp16;
 
-  build_test_vectors(h_A, h_W_raw, h_scales, h_zeros, h_ref_out_fp16);
+  build_test_vectors(h_A, h_W_raw, h_scales, h_zeros, h_ref_out_fp16,
+                     /*compute_reference=*/!POWER_MODE);
 
   // ---- Convert to tiled DRAM layout ----
   std::vector<uint8_t> tiled_input, tiled_weight, tiled_scale, tiled_zp;
@@ -664,12 +675,14 @@ int main(int argc, char *argv[]) {
       printf("DEBUG scale nt0==nt1: %s\n", s_same ? "YES (BUG!)" : "NO (ok)");
     }
 
-    // Also verify: host-side reference at n=0 vs n=32
-    printf("DEBUG ref_out[0,0]=0x%04x (%f)\n",
-           h_ref_out_fp16[0], fp16_to_float(h_ref_out_fp16[0]));
-    printf("DEBUG ref_out[0,%u]=0x%04x (%f)\n",
-           DMA_MXU_NT, h_ref_out_fp16[DMA_MXU_NT],
-           fp16_to_float(h_ref_out_fp16[DMA_MXU_NT]));
+    // Also verify: host-side reference at n=0 vs n=32 (only when reference exists)
+    if (!POWER_MODE) {
+      printf("DEBUG ref_out[0,0]=0x%04x (%f)\n",
+             h_ref_out_fp16[0], fp16_to_float(h_ref_out_fp16[0]));
+      printf("DEBUG ref_out[0,%u]=0x%04x (%f)\n",
+             DMA_MXU_NT, h_ref_out_fp16[DMA_MXU_NT],
+             fp16_to_float(h_ref_out_fp16[DMA_MXU_NT]));
+    }
   }
 
   // Reserve padded output slots; the kernel writes only real M rows in each slot.
@@ -738,27 +751,43 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_copy_to_dev(args_buffer, &kargs, 0, sizeof(kargs)));
 
   // ---- Run kernel ----
-  RT_CHECK(vx_start(device, krnl_buffer, args_buffer));
+  std::cout << "Starting kernel execution (reps=" << REPS
+            << (POWER_MODE ? ", POWER MODE: no reference, no verify" : "")
+            << ")" << std::endl;
+  for (uint32_t rep = 0; rep < REPS; ++rep) {
+    // Reset status before each launch so the kernel sees a fresh INIT.
+    kargs.status = STATUS_INIT;
+    RT_CHECK(vx_copy_to_dev(args_buffer, &kargs, 0, sizeof(kargs)));
 
-  int wait_ret = vx_ready_wait(device, VX_MAX_TIMEOUT);
-  if (wait_ret != 0) {
-    std::cerr << "vx_ready_wait failed: ret=" << wait_ret << std::endl;
-    vx_copy_from_dev(&kargs, args_buffer, 0, sizeof(kargs));
-    std::cerr << "Kernel status: " << kargs.status << std::endl;
-    cleanup();
-    return -1;
-  }
+    RT_CHECK(vx_start(device, krnl_buffer, args_buffer));
 
-  RT_CHECK(vx_copy_from_dev(&kargs, args_buffer, 0, sizeof(kargs)));
+    int wait_ret = vx_ready_wait(device, VX_MAX_TIMEOUT);
+    if (wait_ret != 0) {
+      std::cerr << "vx_ready_wait failed at rep=" << rep
+                << ": ret=" << wait_ret << std::endl;
+      vx_copy_from_dev(&kargs, args_buffer, 0, sizeof(kargs));
+      std::cerr << "Kernel status: " << kargs.status << std::endl;
+      cleanup();
+      return -1;
+    }
 
-  if (kargs.status != STATUS_OK) {
-    std::cout << "Kernel failed: status=" << kargs.status << std::endl;
-    cleanup();
-    return -1;
+    RT_CHECK(vx_copy_from_dev(&kargs, args_buffer, 0, sizeof(kargs)));
+
+    if (kargs.status != STATUS_OK) {
+      std::cout << "Kernel failed at rep=" << rep
+                << ": status=" << kargs.status << std::endl;
+      cleanup();
+      return -1;
+    }
   }
 
   // ---- Verify output ----
-  int errors = verify_results_tiled(C_buffer, h_ref_out_fp16);
+  int errors = 0;
+  if (POWER_MODE) {
+    std::cout << "Power mode: skipping verification" << std::endl;
+  } else {
+    errors = verify_results_tiled(C_buffer, h_ref_out_fp16);
+  }
 
   cleanup();
 
