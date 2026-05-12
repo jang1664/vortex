@@ -71,6 +71,61 @@ module VX_dp_ram_compiled #(
         reg ra_top_r;
         always @(posedge clk) if (read) ra_top_r <= ra_top;
         assign rdata = ra_top_r ? q_hi : q_lo;
+    end else if (SIZE == 8192 && DATAW == 16 && WRENW == 1) begin : g_8192x16
+        // DCACHE tag (2-bank sweep point) — 8 × cmos28lpp_ra2_hd_1024x16m16, depth-stacked.
+        // PDK FE compiler refuses 4096x16m16/8192x16m16, so we stack 8 of the
+        // 1024-deep existing macro. Same Q-delayed mux as g_4096x16, 3 selector bits.
+        `UNUSED_VAR (wren)
+        wire [2:0] ra_top = raddr[12:10];
+        wire [2:0] wa_top = waddr[12:10];
+        wire [9:0] ra_low = raddr[9:0];
+        wire [9:0] wa_low = waddr[9:0];
+
+        wire [15:0] q [0:7];
+
+        for (genvar s = 0; s < 8; s++) begin : g_slice
+            cmos28lpp_ra2_hd_1024x16m16 u_macro (
+                .CLKA(clk), .CENA(~(read & (ra_top == s[2:0]))), .WENA(1'b1), .AA(ra_low), .DA(16'h0), .QA(q[s]),
+                .CLKB(clk), .CENB(~(write & (wa_top == s[2:0]))), .WENB(1'b0), .AB(wa_low), .DB(wdata), .QB(),
+                .EMAA(3'b100), .EMAWA(2'b00), .EMAB(3'b100), .EMAWB(2'b00),
+                .TENA(1'b1), .TCENA(1'b1), .TWENA(1'b1), .TAA(10'h0), .TDA(16'h0),
+                .TENB(1'b1), .TCENB(1'b1), .TWENB(1'b1), .TAB(10'h0), .TDB(16'h0),
+                .RET1N(1'b1), .SIA(2'h0), .SEA(1'b0), .SIB(2'h0), .SEB(1'b0),
+                .DFTRAMBYP(1'b0), .COLLDISN(1'b1),
+                .CENYA(), .WENYA(), .AYA(), .CENYB(), .WENYB(), .AYB(), .SOA(), .SOB()
+            );
+        end
+
+        reg [2:0] ra_top_r;
+        always @(posedge clk) if (read) ra_top_r <= ra_top;
+        assign rdata = q[ra_top_r];
+    end else if (SIZE == 4096 && DATAW == 16 && WRENW == 1) begin : g_4096x16
+        // DCACHE tag (4-bank sweep point) — 4 × cmos28lpp_ra2_hd_1024x16m16, depth-stacked.
+        // Same Q-delayed mux pattern as g_2048x16, extended to 2 selector bits.
+        `UNUSED_VAR (wren)
+        wire [1:0] ra_top = raddr[11:10];
+        wire [1:0] wa_top = waddr[11:10];
+        wire [9:0] ra_low = raddr[9:0];
+        wire [9:0] wa_low = waddr[9:0];
+
+        wire [15:0] q [0:3];
+
+        for (genvar s = 0; s < 4; s++) begin : g_slice
+            cmos28lpp_ra2_hd_1024x16m16 u_macro (
+                .CLKA(clk), .CENA(~(read & (ra_top == s[1:0]))), .WENA(1'b1), .AA(ra_low), .DA(16'h0), .QA(q[s]),
+                .CLKB(clk), .CENB(~(write & (wa_top == s[1:0]))), .WENB(1'b0), .AB(wa_low), .DB(wdata), .QB(),
+                .EMAA(3'b100), .EMAWA(2'b00), .EMAB(3'b100), .EMAWB(2'b00),
+                .TENA(1'b1), .TCENA(1'b1), .TWENA(1'b1), .TAA(10'h0), .TDA(16'h0),
+                .TENB(1'b1), .TCENB(1'b1), .TWENB(1'b1), .TAB(10'h0), .TDB(16'h0),
+                .RET1N(1'b1), .SIA(2'h0), .SEA(1'b0), .SIB(2'h0), .SEB(1'b0),
+                .DFTRAMBYP(1'b0), .COLLDISN(1'b1),
+                .CENYA(), .WENYA(), .AYA(), .CENYB(), .WENYB(), .AYB(), .SOA(), .SOB()
+            );
+        end
+
+        reg [1:0] ra_top_r;
+        always @(posedge clk) if (read) ra_top_r <= ra_top;
+        assign rdata = q[ra_top_r];
     end else if (SIZE == 2048 && DATAW == 16 && WRENW == 1) begin : g_2048x16
         // DCACHE tag (8-bank sweep point) — 2 × cmos28lpp_ra2_hd_1024x16m16, depth-stacked.
         // Same pattern as the existing L2 tag (2048×18): macro Q is 1-cycle delayed,
@@ -86,7 +141,7 @@ module VX_dp_ram_compiled #(
         cmos28lpp_ra2_hd_1024x16m16 u_lo (
             .CLKA(clk), .CENA(~(read & ~ra_top)), .WENA(1'b1), .AA(ra_low), .DA(16'h0), .QA(q_lo),
             .CLKB(clk), .CENB(~(write & ~wa_top)), .WENB(1'b0), .AB(wa_low), .DB(wdata), .QB(),
-            .EMAA(3'b010), .EMAWA(2'b01), .EMAB(3'b010), .EMAWB(2'b01),
+            .EMAA(3'b100), .EMAWA(2'b00), .EMAB(3'b100), .EMAWB(2'b00),
             .TENA(1'b1), .TCENA(1'b1), .TWENA(1'b1), .TAA(10'h0), .TDA(16'h0),
             .TENB(1'b1), .TCENB(1'b1), .TWENB(1'b1), .TAB(10'h0), .TDB(16'h0),
             .RET1N(1'b1), .SIA(2'h0), .SEA(1'b0), .SIB(2'h0), .SEB(1'b0),
@@ -96,7 +151,7 @@ module VX_dp_ram_compiled #(
         cmos28lpp_ra2_hd_1024x16m16 u_hi (
             .CLKA(clk), .CENA(~(read & ra_top)), .WENA(1'b1), .AA(ra_low), .DA(16'h0), .QA(q_hi),
             .CLKB(clk), .CENB(~(write & wa_top)), .WENB(1'b0), .AB(wa_low), .DB(wdata), .QB(),
-            .EMAA(3'b010), .EMAWA(2'b01), .EMAB(3'b010), .EMAWB(2'b01),
+            .EMAA(3'b100), .EMAWA(2'b00), .EMAB(3'b100), .EMAWB(2'b00),
             .TENA(1'b1), .TCENA(1'b1), .TWENA(1'b1), .TAA(10'h0), .TDA(16'h0),
             .TENB(1'b1), .TCENB(1'b1), .TWENB(1'b1), .TAB(10'h0), .TDB(16'h0),
             .RET1N(1'b1), .SIA(2'h0), .SEA(1'b0), .SIB(2'h0), .SEB(1'b0),
@@ -113,7 +168,7 @@ module VX_dp_ram_compiled #(
         cmos28lpp_ra2_hd_1024x16m16 u_macro (
             .CLKA(clk), .CENA(~read), .WENA(1'b1), .AA(raddr), .DA(16'h0), .QA(rdata),
             .CLKB(clk), .CENB(~write), .WENB(1'b0), .AB(waddr), .DB(wdata), .QB(),
-            .EMAA(3'b010), .EMAWA(2'b01), .EMAB(3'b010), .EMAWB(2'b01),
+            .EMAA(3'b100), .EMAWA(2'b00), .EMAB(3'b100), .EMAWB(2'b00),
             .TENA(1'b1), .TCENA(1'b1), .TWENA(1'b1), .TAA(10'h0), .TDA(16'h0),
             .TENB(1'b1), .TCENB(1'b1), .TWENB(1'b1), .TAB(10'h0), .TDB(16'h0),
             .RET1N(1'b1), .SIA(2'h0), .SEA(1'b0), .SIB(2'h0), .SEB(1'b0),
@@ -126,7 +181,7 @@ module VX_dp_ram_compiled #(
         cmos28lpp_ra2_hd_512x16m16 u_macro (
             .CLKA(clk), .CENA(~read), .WENA(1'b1), .AA(raddr), .DA(16'h0), .QA(rdata),
             .CLKB(clk), .CENB(~write), .WENB(1'b0), .AB(waddr), .DB(wdata), .QB(),
-            .EMAA(3'b010), .EMAWA(2'b01), .EMAB(3'b010), .EMAWB(2'b01),
+            .EMAA(3'b100), .EMAWA(2'b00), .EMAB(3'b100), .EMAWB(2'b00),
             .TENA(1'b1), .TCENA(1'b1), .TWENA(1'b1), .TAA(9'h0), .TDA(16'h0),
             .TENB(1'b1), .TCENB(1'b1), .TWENB(1'b1), .TAB(9'h0), .TDB(16'h0),
             .RET1N(1'b1), .SIA(2'h0), .SEA(1'b0), .SIB(2'h0), .SEB(1'b0),
@@ -139,7 +194,7 @@ module VX_dp_ram_compiled #(
         cmos28lpp_ra2_hd_256x16m8 u_macro (
             .CLKA(clk), .CENA(~read), .WENA(1'b1), .AA(raddr), .DA(16'h0), .QA(rdata),
             .CLKB(clk), .CENB(~write), .WENB(1'b0), .AB(waddr), .DB(wdata), .QB(),
-            .EMAA(3'b010), .EMAWA(2'b01), .EMAB(3'b010), .EMAWB(2'b01),
+            .EMAA(3'b100), .EMAWA(2'b00), .EMAB(3'b100), .EMAWB(2'b00),
             .TENA(1'b1), .TCENA(1'b1), .TWENA(1'b1), .TAA(8'h0), .TDA(16'h0),
             .TENB(1'b1), .TCENB(1'b1), .TWENB(1'b1), .TAB(8'h0), .TDB(16'h0),
             .RET1N(1'b1), .SIA(2'h0), .SEA(1'b0), .SIB(2'h0), .SEB(1'b0),
