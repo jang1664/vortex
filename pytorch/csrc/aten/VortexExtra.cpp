@@ -1794,13 +1794,16 @@ static at::Tensor vortex_detile_output(const at::Tensor& Y_tiled,
   auto caps = query_caps(device);
 
   auto output = at::empty({M, N}, Y_tiled.options());
-  const uint64_t total_bytes = uint64_t(M) * uint64_t(N) * 2ull;
+
+  // 3D grid: x = MXU_NT cols / block, y = M, z = n_tiles
+  const int64_t n_tiles_h = N / FPINT_DMA_MXU_NT;
+  const int64_t blocks_x  = (FPINT_DMA_MXU_NT + caps.threads_per_block - 1) /
+                             caps.threads_per_block;
 
   detile_output_kernel_arg_t karg{};
-  karg.grid_dim[0]  = static_cast<uint32_t>(
-      (total_bytes + caps.threads_per_block - 1) / caps.threads_per_block);
-  karg.grid_dim[1]  = 1;
-  karg.grid_dim[2]  = 1;
+  karg.grid_dim[0]  = static_cast<uint32_t>(blocks_x);
+  karg.grid_dim[1]  = static_cast<uint32_t>(M);
+  karg.grid_dim[2]  = static_cast<uint32_t>(n_tiles_h);
   karg.block_dim[0] = caps.threads_per_block;
   karg.block_dim[1] = 1;
   karg.block_dim[2] = 1;
@@ -1849,13 +1852,18 @@ static at::Tensor vortex_tile_input_a(const at::Tensor& input,
   auto caps = query_caps(device);
 
   auto output = at::empty({M_pad, K}, input.options());
-  const uint64_t total_bytes = uint64_t(M_pad) * uint64_t(K) * 2ull;
+
+  // 3D grid: x = (m,k_in_sub) blocks, y = kb, z = kt.
+  const int64_t k_tiles_h = (K + (int64_t)FPINT_DMA_KT - 1) / (int64_t)FPINT_DMA_KT;
+  const int64_t cur_k_h   = (k_tiles_h == 1) ? K : (int64_t)FPINT_DMA_KT;
+  const int64_t k_mic_h   = cur_k_h / FPINT_DMA_MXU_KT;
+  const int64_t elems_per_kb = M_pad * (int64_t)FPINT_DMA_MXU_KT;
 
   tile_input_a_kernel_arg_t karg{};
   karg.grid_dim[0]  = static_cast<uint32_t>(
-      (total_bytes + caps.threads_per_block - 1) / caps.threads_per_block);
-  karg.grid_dim[1]  = 1;
-  karg.grid_dim[2]  = 1;
+      (elems_per_kb + caps.threads_per_block - 1) / caps.threads_per_block);
+  karg.grid_dim[1]  = static_cast<uint32_t>(k_mic_h);
+  karg.grid_dim[2]  = static_cast<uint32_t>(k_tiles_h);
   karg.block_dim[0] = caps.threads_per_block;
   karg.block_dim[1] = 1;
   karg.block_dim[2] = 1;
@@ -1881,10 +1889,12 @@ struct tile_scale_zp_w4a16_kernel_arg_t {
   uint32_t N;
   uint32_t QBLK;
   uint32_t QDIR;
-  uint32_t total_bytes;
   uint32_t slot_bytes;
   uint32_t body_bytes;
-  uint32_t nt_dma_count;
+  uint32_t log2_cur_groups;
+  uint32_t log2_cur_k;
+  uint32_t log2_ng_per_mxu_nt;
+  uint32_t log2_qblk;
 };
 
 // Device-resident tile_weight_w4a16. Mirrors the host helper above but does
@@ -1908,13 +1918,20 @@ static at::Tensor vortex_tile_weight_w4a16(const at::Tensor& W_packed,
   auto caps = query_caps(device);
 
   auto output = at::empty({K, N / 2}, W_packed.options());
-  const uint64_t total_bytes = uint64_t(K) * uint64_t(N / 2);
+
+  // 3D grid:  (chunks-in-(kt,nt) blocks, n_tiles, k_tiles).
+  // Each thread copies one 16-byte chunk; no runtime divisions inside kernel.
+  const int64_t k_tiles_h = (K + (int64_t)FPINT_DMA_KT - 1) / (int64_t)FPINT_DMA_KT;
+  const int64_t cur_k_h   = (k_tiles_h == 1) ? K : (int64_t)FPINT_DMA_KT;
+  const int64_t cur_kb_h  = cur_k_h / FPINT_DMA_MXU_KT;
+  const int64_t n_tiles_h = N / FPINT_DMA_MXU_NT;
+  const int64_t chunks_per_nt_kt = cur_kb_h * FPINT_DMA_MXU_KT;
 
   tile_weight_w4a16_kernel_arg_t karg{};
   karg.grid_dim[0]  = static_cast<uint32_t>(
-      (total_bytes + caps.threads_per_block - 1) / caps.threads_per_block);
-  karg.grid_dim[1]  = 1;
-  karg.grid_dim[2]  = 1;
+      (chunks_per_nt_kt + caps.threads_per_block - 1) / caps.threads_per_block);
+  karg.grid_dim[1]  = static_cast<uint32_t>(n_tiles_h);
+  karg.grid_dim[2]  = static_cast<uint32_t>(k_tiles_h);
   karg.block_dim[0] = caps.threads_per_block;
   karg.block_dim[1] = 1;
   karg.block_dim[2] = 1;
@@ -1983,11 +2000,23 @@ static at::Tensor vortex_tile_scale_zp_w4a16(const at::Tensor& s_raw,
 
   auto output = at::empty({total_bytes / 2}, s_raw.options());
 
+  // log2 helper (asserts power-of-two)
+  auto log2_pow2 = [](int64_t v) -> uint32_t {
+    TORCH_CHECK(v > 0 && (v & (v - 1)) == 0,
+                "tile_scale_zp_w4a16: expected power-of-two, got ", v);
+    uint32_t r = 0;
+    while ((int64_t(1) << r) < v) r++;
+    return r;
+  };
+
+  const uint32_t slot_elems_per_block = caps.threads_per_block;
+  const int64_t slot_elems   = slot_bytes / 2;
+  const int64_t blocks_x     = (slot_elems + slot_elems_per_block - 1) / slot_elems_per_block;
+
   tile_scale_zp_w4a16_kernel_arg_t karg{};
-  karg.grid_dim[0]    = static_cast<uint32_t>(
-      (total_bytes + caps.threads_per_block - 1) / caps.threads_per_block);
-  karg.grid_dim[1]    = 1;
-  karg.grid_dim[2]    = 1;
+  karg.grid_dim[0]    = static_cast<uint32_t>(blocks_x);
+  karg.grid_dim[1]    = static_cast<uint32_t>(nt_dma_count);
+  karg.grid_dim[2]    = static_cast<uint32_t>(k_tiles);
   karg.block_dim[0]   = caps.threads_per_block;
   karg.block_dim[1]   = 1;
   karg.block_dim[2]   = 1;
@@ -1997,10 +2026,12 @@ static at::Tensor vortex_tile_scale_zp_w4a16(const at::Tensor& s_raw,
   karg.N              = static_cast<uint32_t>(N);
   karg.QBLK           = static_cast<uint32_t>(qblk);
   karg.QDIR           = static_cast<uint32_t>(qdir);
-  karg.total_bytes    = static_cast<uint32_t>(total_bytes);
   karg.slot_bytes     = static_cast<uint32_t>(slot_bytes);
   karg.body_bytes     = static_cast<uint32_t>(body_bytes);
-  karg.nt_dma_count   = static_cast<uint32_t>(nt_dma_count);
+  karg.log2_cur_groups    = (qdir == 0) ? log2_pow2(std::max<int64_t>(cur_groups, 1)) : 0;
+  karg.log2_cur_k         = (qdir == 1) ? log2_pow2(cur_k) : 0;
+  karg.log2_ng_per_mxu_nt = (qdir == 1) ? log2_pow2(std::max<int64_t>(ng_per_mxu_nt, 1)) : 0;
+  karg.log2_qblk          = log2_pow2(qblk);
 
   static std::string path = find_kernel("tile_scale_zp_w4a16", "tile_scale_zp_w4a16");
   launch_kernel(device, &karg, sizeof(karg), path);
