@@ -1386,6 +1386,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     // =========================================================================
 `ifdef DBG_TRACE_GEMM_CTRL
     // FSM state names for debug
+`ifndef SYNTHESIS
     function automatic string state_to_str(input gemm_state_t s);
         case (s)
             IDLE:    return "IDLE";
@@ -1393,6 +1394,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
             default: return "UNKNOWN";
         endcase
     endfunction
+`endif
 
     always @(posedge clk) begin
         if (~reset) begin

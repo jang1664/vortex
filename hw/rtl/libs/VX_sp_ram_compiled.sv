@@ -12,9 +12,11 @@
 // inventory shape per generate arm. ARM-style ports are active-low CEN/WEN;
 // per-byte WRENW maps to bit-WE replicated across each byte.
 //
-// Test/scan/EMA pins are tied to functional defaults (EMA=3'b010, EMAW=2'b01,
+// Test/scan/EMA pins are tied to functional defaults (EMA=3'b100, EMAW=2'b00,
 // EMAS=1'b0, TEN=TCEN=TGWEN=1, TWEN/TA/TD=0, SI=SE=0, RET1N=1, DFTRAMBYP=0).
-// The SoC top is expected to override EMA/EMAW for the production corner.
+// EMA=3'b100 is the lowest value with non-placeholder CLK->Q timing at the
+// SS 0p900v 125c MAX corner; lower values are 999.0 placeholders in the
+// ARM .lib (uncharacterized at low voltage). Matches FICIM sram_bank.sv.
 //
 // See agent-tasks/synopsys-dc-port/sram_inventory.md for the full shape list.
 `TRACING_OFF
@@ -46,7 +48,7 @@ module VX_sp_ram_compiled #(
         cmos28lpp_ra1w_hd_8192x64m16 u_macro (
             .CLK(clk), .CEN(ce_n), .WEN(wen_n), .GWEN(gwen_n),
             .A(addr), .D(wdata), .Q(rdata),
-            .EMA(3'b010), .EMAW(2'b01),
+            .EMA(3'b100), .EMAW(2'b00),
             .TEN(1'b1), .TCEN(1'b1), .TWEN(64'h0), .TA(13'h0), .TD(64'h0), .TGWEN(1'b1),
             .RET1N(1'b1), .SI(2'h0), .SE(1'b0), .DFTRAMBYP(1'b0),
             .CENY(), .WENY(), .AY(), .GWENY(), .SO()
@@ -105,7 +107,7 @@ module VX_sp_ram_compiled #(
             cmos28lpp_ra1w_hs_2048x128m8 u_macro (
                 .CLK(clk), .CEN(ce_n), .WEN(wen_n), .GWEN(gwen_n),
                 .A(addr), .D(wdata[t*128 +: 128]), .Q(rdata[t*128 +: 128]),
-                .EMA(3'b010), .EMAW(2'b01), .EMAS(1'b0),
+                .EMA(3'b100), .EMAW(2'b00), .EMAS(1'b0),
                 .TEN(1'b1), .TCEN(1'b1), .TWEN(128'h0), .TA(11'h0), .TD(128'h0), .TGWEN(1'b1),
                 .RET1N(1'b1), .SI(2'h0), .SE(1'b0), .DFTRAMBYP(1'b0),
                 .CENY(), .WENY(), .AY(), .GWENY(), .SO()
@@ -153,7 +155,7 @@ module VX_sp_ram_compiled #(
             cmos28lpp_ra1w_hs_1024x128m8 u_macro (
                 .CLK(clk), .CEN(ce_n), .WEN(wen_n), .GWEN(gwen_n),
                 .A(addr), .D(wdata[t*128 +: 128]), .Q(rdata[t*128 +: 128]),
-                .EMA(3'b010), .EMAW(2'b01), .EMAS(1'b0),
+                .EMA(3'b100), .EMAW(2'b00), .EMAS(1'b0),
                 .TEN(1'b1), .TCEN(1'b1), .TWEN(128'h0), .TA(10'h0), .TD(128'h0), .TGWEN(1'b1),
                 .RET1N(1'b1), .SI(2'h0), .SE(1'b0), .DFTRAMBYP(1'b0),
                 .CENY(), .WENY(), .AY(), .GWENY(), .SO()
@@ -166,7 +168,7 @@ module VX_sp_ram_compiled #(
             cmos28lpp_rf1_hd_64x128m2 u_macro (
                 .CLK(clk), .CEN(ce_n), .WEN(gwen_n),
                 .A(addr), .D(wdata[t*128 +: 128]), .Q(rdata[t*128 +: 128]),
-                .EMA(3'b010), .EMAW(2'b01),
+                .EMA(3'b100), .EMAW(2'b00),
                 .TEN(1'b1), .TCEN(1'b1), .TWEN(1'b1), .TA(6'h0), .TD(128'h0),
                 .RET1N(1'b1), .SI(2'h0), .SE(1'b0), .DFTRAMBYP(1'b0),
                 .CENY(), .WENY(), .AY(), .SO()
@@ -179,7 +181,7 @@ module VX_sp_ram_compiled #(
             cmos28lpp_ra1w_hs_1024x128m8 u_macro (
                 .CLK(clk), .CEN(ce_n), .WEN({128{gwen_n}}), .GWEN(gwen_n),
                 .A(addr), .D(wdata[t*128 +: 128]), .Q(rdata[t*128 +: 128]),
-                .EMA(3'b010), .EMAW(2'b01), .EMAS(1'b0),
+                .EMA(3'b100), .EMAW(2'b00), .EMAS(1'b0),
                 .TEN(1'b1), .TCEN(1'b1), .TWEN(128'h0), .TA(10'h0), .TD(128'h0), .TGWEN(1'b1),
                 .RET1N(1'b1), .SI(2'h0), .SE(1'b0), .DFTRAMBYP(1'b0),
                 .CENY(), .WENY(), .AY(), .GWENY(), .SO()

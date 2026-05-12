@@ -437,6 +437,45 @@ struct fpint_gemm_kernel_arg_t {
 static constexpr uint32_t FPINT_MMIO_STATUS_INIT = 0;
 static constexpr uint32_t FPINT_MMIO_STATUS_OK   = 1;
 
+
+// --- fpint_gemm v2 (corrected layout used by mm_w4a16_opt) ---
+// Matches tests/regression/fpint_gemm_ffn_hw/common.h :: kernel_arg_t and
+// tests/regression/fpint_gemm_ffn_hw_improve/common.h :: kernel_arg_t (both
+// kernels share an identical struct layout — only comments differ).
+// IMPORTANT: layout differs from fpint_gemm_kernel_arg_t used by mm_w4a16:
+//   - DRAM bases first (no grid_dim / block_dim prefix),
+//   - double-buffered LMEM ARRAYS lmem_*[2] (vs. separate ..._base fields),
+//   - M/N/K/QBLK/WTRANS/QDIR after the LMEM bases,
+//   - single trailing status word (no job_eid / job_generation / last_ctrl).
+struct fpint_gemm_kernel_arg_v2_t {
+  uint64_t dram_in_base;
+  uint64_t dram_w_base;
+  uint64_t dram_sc_base;
+  uint64_t dram_zp_base;
+  uint64_t dram_out_base;
+
+  uint64_t lmem_ibuf[2];
+  uint64_t lmem_wbuf[2];
+  uint64_t lmem_scbuf[2];
+  uint64_t lmem_zpbuf[2];
+  uint64_t lmem_obuf[2];
+
+  uint32_t M;
+  uint32_t N;
+  uint32_t K;
+  uint32_t QBLK;
+  uint32_t WTRANS;
+  uint32_t QDIR;
+
+  uint32_t status;
+};
+
+// Forward decl — definition is placed after the FPINT_DMA_* / FPINT_LMEM_*
+// constants below (next to compute_fpint_lmem_layout for the baseline).
+static bool compute_fpint_lmem_layout_v2(fpint_gemm_kernel_arg_v2_t& kargs,
+                                          uint64_t local_mem_size,
+                                          uint32_t qblk, uint32_t qdir);
+
 // ===========================================================================
 //  Kernel ID constants (must match each kernel's common.h)
 // ===========================================================================
@@ -1494,6 +1533,512 @@ static bool compute_fpint_lmem_layout(fpint_gemm_kernel_arg_t& kargs,
   return true;
 }
 
+// LMEM layout for the v2 struct. Matches the layout that BOTH
+// fpint_gemm_ffn_hw and fpint_gemm_ffn_hw_improve expect: TWO obuf scratchpads
+// (full double-buffered) and LMEM bases stored in lmem_*[2] arrays.
+static bool compute_fpint_lmem_layout_v2(fpint_gemm_kernel_arg_v2_t& kargs,
+                                          uint64_t local_mem_size,
+                                          uint32_t qblk, uint32_t qdir) {
+  uint64_t groups_tile = (FPINT_DMA_KT + uint64_t(qblk) - 1ull) / uint64_t(qblk);
+  uint64_t ng_tile     = (FPINT_DMA_NT + uint64_t(qblk) - 1ull) / uint64_t(qblk);
+
+  uint64_t ibuf_bytes  = FPINT_DMA_MT * FPINT_DMA_KT * 2ull;
+  uint64_t wbuf_bytes  = FPINT_DMA_KT * ((FPINT_DMA_NT + 1ull) / 2ull);
+  uint64_t scbuf_bytes = (qdir == 0)
+                           ? (groups_tile * FPINT_DMA_NT * 2ull)
+                           : (FPINT_DMA_KT * ng_tile * 2ull);
+  uint64_t zpbuf_bytes = scbuf_bytes;
+  uint64_t obuf_bytes  = FPINT_DMA_MT * FPINT_DMA_NT * 2ull;
+
+  const uint64_t lmem_end = FPINT_LMEM_BASE + local_mem_size;
+  uint64_t cur = FPINT_LMEM_BASE;
+
+  auto alloc = [&](uint64_t bytes, uint64_t& out) -> bool {
+    cur = ((cur + FPINT_LMEM_ALIGN - 1) / FPINT_LMEM_ALIGN) * FPINT_LMEM_ALIGN;
+    if (cur > lmem_end || bytes > (lmem_end - cur)) return false;
+    out = cur;
+    cur += ((bytes + FPINT_LMEM_ALIGN - 1) / FPINT_LMEM_ALIGN) * FPINT_LMEM_ALIGN;
+    return true;
+  };
+
+  // improve uses double-buffered LMEM for ALL scratchpads (including obuf).
+  if (!alloc(ibuf_bytes,  kargs.lmem_ibuf[0]))  return false;
+  if (!alloc(ibuf_bytes,  kargs.lmem_ibuf[1]))  return false;
+  if (!alloc(wbuf_bytes,  kargs.lmem_wbuf[0]))  return false;
+  if (!alloc(wbuf_bytes,  kargs.lmem_wbuf[1]))  return false;
+  if (!alloc(scbuf_bytes, kargs.lmem_scbuf[0])) return false;
+  if (!alloc(scbuf_bytes, kargs.lmem_scbuf[1])) return false;
+  if (!alloc(zpbuf_bytes, kargs.lmem_zpbuf[0])) return false;
+  if (!alloc(zpbuf_bytes, kargs.lmem_zpbuf[1])) return false;
+  if (!alloc(obuf_bytes,  kargs.lmem_obuf[0]))  return false;
+  if (!alloc(obuf_bytes,  kargs.lmem_obuf[1]))  return false;
+
+  return true;
+}
+
+
+// ===========================================================================
+//  Tile-layout helpers used by mm_w4a16_opt.
+//  These mirror tests/regression/fpint_gemm_ffn_hw/main.cpp's
+//      convert_weight_tiled, convert_scale_tiled (+ qdir=1),
+//      convert_input_tiled, verify_results_tiled (detile).
+//  They use ATen ops (view/permute/contiguous/narrow/cat/zeros), so they work
+//  with vortex device tensors as long as the backend supports clone/copy_.
+// ===========================================================================
+
+static constexpr int64_t FPINT_DMA_MXU_KT = 32;
+static constexpr int64_t FPINT_DMA_MXU_NT = 32;
+static constexpr int64_t FPINT_SCALE_SLOT_ALIGN = 512;
+
+// Reorder packed-int4 weight from row-major [K, N/2] to the tile-major
+// layout (kt, nt, kb, k_in_subtile, n_pair) that the kernel expects.
+static at::Tensor tile_weight_w4a16(const at::Tensor& W_packed,
+                                     int64_t K, int64_t N, int64_t wtrans) {
+  TORCH_CHECK(wtrans == 0, "tile_weight_w4a16: wtrans=1 not implemented");
+  TORCH_CHECK(W_packed.dim() == 2 &&
+              W_packed.size(0) == K && W_packed.size(1) == N / 2,
+              "weight shape mismatch");
+  TORCH_CHECK(K % FPINT_DMA_MXU_KT == 0, "K must be multiple of MXU_KT");
+  TORCH_CHECK(N % FPINT_DMA_MXU_NT == 0, "N must be multiple of MXU_NT");
+
+  const int64_t pair_per_sub = FPINT_DMA_MXU_NT / 2;
+  const int64_t n_tiles      = N / FPINT_DMA_MXU_NT;
+  const int64_t k_tiles      = (K + (int64_t)FPINT_DMA_KT - 1) / (int64_t)FPINT_DMA_KT;
+
+  std::vector<at::Tensor> chunks;
+  chunks.reserve(k_tiles);
+  for (int64_t kt = 0; kt < k_tiles; kt++) {
+    int64_t k_start = kt * (int64_t)FPINT_DMA_KT;
+    int64_t cur_k   = std::min(K - k_start, (int64_t)FPINT_DMA_KT);
+    int64_t cur_kb  = cur_k / FPINT_DMA_MXU_KT;
+    auto W_slice = W_packed.narrow(0, k_start, cur_k);
+    auto W_view  = W_slice.view({cur_kb, FPINT_DMA_MXU_KT, n_tiles, pair_per_sub});
+    auto W_kt    = W_view.permute({2, 0, 1, 3}).contiguous().view({-1});
+    chunks.push_back(W_kt);
+  }
+  auto flat = (chunks.size() == 1) ? chunks[0] : at::cat(chunks);
+  return flat.view({K, N / 2}).contiguous();
+}
+
+// Reorder scales/zeros to per-(kt, nt_dma) slot layout. Returns a 1-D tensor.
+static at::Tensor tile_scale_zp_w4a16(const at::Tensor& s_raw,
+                                       int64_t K, int64_t N,
+                                       int64_t qblk, int64_t qdir) {
+  TORCH_CHECK(qdir == 0 || qdir == 1, "qdir must be 0 or 1");
+  TORCH_CHECK(s_raw.dim() == 2, "scales/zeros must be 2-D");
+  TORCH_CHECK(N % FPINT_DMA_MXU_NT == 0, "N must be multiple of MXU_NT");
+  TORCH_CHECK(qblk > 0 && (qblk & (qblk - 1)) == 0, "qblk must be power of 2");
+
+  const int64_t k_tiles      = (K + (int64_t)FPINT_DMA_KT - 1) / (int64_t)FPINT_DMA_KT;
+  const int64_t nt_dma_count = (N + (int64_t)FPINT_DMA_NT - 1) / (int64_t)FPINT_DMA_NT;
+  const int64_t elem_bytes   = s_raw.element_size();
+
+  auto pad_slot = [&](int64_t body_elems) -> c10::optional<at::Tensor> {
+    int64_t body_bytes = body_elems * elem_bytes;
+    int64_t slot_bytes = ((body_bytes + FPINT_SCALE_SLOT_ALIGN - 1) /
+                          FPINT_SCALE_SLOT_ALIGN) * FPINT_SCALE_SLOT_ALIGN;
+    int64_t pad_bytes  = slot_bytes - body_bytes;
+    if (pad_bytes <= 0) return c10::nullopt;
+    return at::zeros({pad_bytes / elem_bytes}, s_raw.options());
+  };
+
+  std::vector<at::Tensor> chunks;
+
+  if (qdir == 0) {
+    int64_t num_groups_total   = K / qblk;
+    TORCH_CHECK(s_raw.size(0) == num_groups_total && s_raw.size(1) == N,
+                "qdir=0: scales/zeros must be [K/QBLK, N]");
+    int64_t groups_per_kt_full = (int64_t)FPINT_DMA_KT / qblk;
+
+    for (int64_t kt = 0; kt < k_tiles; kt++) {
+      int64_t cur_k_kt   = std::min(K - kt * (int64_t)FPINT_DMA_KT,
+                                    (int64_t)FPINT_DMA_KT);
+      int64_t cur_groups = cur_k_kt / qblk;
+      int64_t g_start    = kt * groups_per_kt_full;
+      auto s_kt = s_raw.narrow(0, g_start, cur_groups);
+
+      for (int64_t nt_dma = 0; nt_dma < nt_dma_count; nt_dma++) {
+        int64_t n_start   = nt_dma * (int64_t)FPINT_DMA_NT;
+        int64_t cur_n_dma = std::min(N - n_start, (int64_t)FPINT_DMA_NT);
+        int64_t cur_nb    = cur_n_dma / FPINT_DMA_MXU_NT;
+        auto s_slot = s_kt.narrow(1, n_start, cur_n_dma);
+        auto s_perm = s_slot.view({cur_groups, cur_nb, FPINT_DMA_MXU_NT})
+                            .permute({1, 0, 2}).contiguous().view({-1});
+        chunks.push_back(s_perm);
+        auto pad = pad_slot(s_perm.numel());
+        if (pad.has_value()) chunks.push_back(pad.value());
+      }
+    }
+  } else {  // qdir == 1
+    int64_t ng_total = (N + qblk - 1) / qblk;
+    TORCH_CHECK(s_raw.size(0) == K && s_raw.size(1) == ng_total,
+                "qdir=1: scales/zeros must be [K, ng_total]");
+    int64_t ng_per_mxu_nt  = (FPINT_DMA_MXU_NT + qblk - 1) / qblk;
+    int64_t mxu_per_dma_nt = (int64_t)FPINT_DMA_NT / FPINT_DMA_MXU_NT;
+
+    for (int64_t kt = 0; kt < k_tiles; kt++) {
+      int64_t cur_k_kt = std::min(K - kt * (int64_t)FPINT_DMA_KT,
+                                  (int64_t)FPINT_DMA_KT);
+      int64_t k_start  = kt * (int64_t)FPINT_DMA_KT;
+      auto s_kt = s_raw.narrow(0, k_start, cur_k_kt);
+
+      for (int64_t nt_dma = 0; nt_dma < nt_dma_count; nt_dma++) {
+        int64_t n_start_dma = nt_dma * (int64_t)FPINT_DMA_NT;
+        int64_t cur_n_dma   = std::min(N - n_start_dma, (int64_t)FPINT_DMA_NT);
+        int64_t cur_nb      = cur_n_dma / FPINT_DMA_MXU_NT;
+        int64_t body_elems  = 0;
+        for (int64_t nb = 0; nb < cur_nb; nb++) {
+          int64_t global_nt_mxu   = nt_dma * mxu_per_dma_nt + nb;
+          int64_t global_ng_start = (global_nt_mxu * FPINT_DMA_MXU_NT) / qblk;
+          auto sub = s_kt.narrow(1, global_ng_start, ng_per_mxu_nt);
+          chunks.push_back(sub.contiguous().view({-1}));
+          body_elems += cur_k_kt * ng_per_mxu_nt;
+        }
+        auto pad = pad_slot(body_elems);
+        if (pad.has_value()) chunks.push_back(pad.value());
+      }
+    }
+  }
+
+  return (chunks.size() == 1) ? chunks[0] : at::cat(chunks);
+}
+
+// Tile input A from [M_pad, K] row-major to (mt, kt, kb, m, k_in_subtile)
+// layout. Supports multi-K-tile; assumes single M-tile (M_pad <= DMA_MT).
+static at::Tensor tile_input_a(const at::Tensor& A_padded,
+                                int64_t M_pad, int64_t K) {
+  TORCH_CHECK(A_padded.dim() == 2 &&
+              A_padded.size(0) == M_pad && A_padded.size(1) == K,
+              "A_padded shape mismatch");
+  TORCH_CHECK(M_pad <= (int64_t)FPINT_DMA_MT,
+              "tile_input_a: multi-M-tile (M_pad > DMA_MT) not yet supported");
+  TORCH_CHECK(K % FPINT_DMA_MXU_KT == 0, "K must be multiple of MXU_KT");
+
+  const int64_t k_tiles = (K + (int64_t)FPINT_DMA_KT - 1) / (int64_t)FPINT_DMA_KT;
+  if (k_tiles == 1) {
+    int64_t k_micros = K / FPINT_DMA_MXU_KT;
+    return A_padded.view({M_pad, k_micros, FPINT_DMA_MXU_KT})
+                   .permute({1, 0, 2}).contiguous().view({M_pad, K});
+  }
+  std::vector<at::Tensor> chunks;
+  chunks.reserve(k_tiles);
+  for (int64_t kt = 0; kt < k_tiles; kt++) {
+    int64_t k_start = kt * (int64_t)FPINT_DMA_KT;
+    int64_t cur_k   = std::min(K - k_start, (int64_t)FPINT_DMA_KT);
+    int64_t k_mic   = cur_k / FPINT_DMA_MXU_KT;
+    auto slice = A_padded.narrow(1, k_start, cur_k)
+                         .view({M_pad, k_mic, FPINT_DMA_MXU_KT})
+                         .permute({1, 0, 2}).contiguous().view({-1});
+    chunks.push_back(slice);
+  }
+  return at::cat(chunks).view({M_pad, K}).contiguous();
+}
+
+// Detile kernel output (nt-major) back to [M_pad, N] row-major.
+static at::Tensor detile_output(const at::Tensor& Y_tiled,
+                                 int64_t M_pad, int64_t N) {
+  TORCH_CHECK(N % FPINT_DMA_MXU_NT == 0, "N must be multiple of MXU_NT");
+  const int64_t n_tiles = N / FPINT_DMA_MXU_NT;
+  return Y_tiled.contiguous()
+                .view({n_tiles, M_pad, FPINT_DMA_MXU_NT})
+                .permute({1, 0, 2}).contiguous()
+                .view({M_pad, N});
+}
+
+
+// ===========================================================================
+//  Device-resident tile kernels (replace ATen op chain to avoid CPU fallback).
+//
+//  Each of these launches a small Vortex kernel that does a byte-level reorder
+//  with NO compute, using a thread-per-byte grid-stride loop. The wrapper
+//  preserves the exact same byte stream that the host-side functions above
+//  produce — they're kept as a fallback for environments where the kernel
+//  binary is unavailable.
+// ===========================================================================
+
+// Kernel-arg struct must match tests/regression/tile_weight_w4a16/common.h
+struct tile_weight_w4a16_kernel_arg_t {
+  uint32_t grid_dim[3];
+  uint32_t block_dim[3];
+  uint64_t src_addr;
+  uint64_t dst_addr;
+  uint32_t K;
+  uint32_t N;
+};
+
+// Kernel-arg struct must match tests/regression/detile_output/common.h
+struct detile_output_kernel_arg_t {
+  uint32_t grid_dim[3];
+  uint32_t block_dim[3];
+  uint64_t src_addr;
+  uint64_t dst_addr;
+  uint32_t M;
+  uint32_t M_pad;
+  uint32_t N;
+};
+
+// Device-resident detile_output: undo the kernel's nt-major output layout AND
+// drop the trailing padded rows in one kernel launch. Replaces the existing
+// detile_output() + .narrow() chain.
+static at::Tensor vortex_detile_output(const at::Tensor& Y_tiled,
+                                        int64_t M, int64_t M_pad, int64_t N) {
+  TORCH_CHECK(Y_tiled.is_privateuseone(), "Y_tiled must be a vortex tensor");
+  TORCH_CHECK(Y_tiled.dtype() == at::kHalf, "Y_tiled must be float16");
+  TORCH_CHECK(Y_tiled.is_contiguous(),      "Y_tiled must be contiguous");
+  TORCH_CHECK(Y_tiled.numel() == M_pad * N, "Y_tiled numel must equal M_pad*N");
+  TORCH_CHECK(N % FPINT_DMA_MXU_NT == 0,    "N must be multiple of MXU_NT");
+  TORCH_CHECK(M <= M_pad,                   "M must be <= M_pad");
+
+  auto& rt = c10::vortex::VortexRuntime::instance();
+  vx_device_h device = rt.deviceHandle();
+  auto caps = query_caps(device);
+
+  auto output = at::empty({M, N}, Y_tiled.options());
+
+  // 3D grid: x = MXU_NT cols / block, y = M, z = n_tiles
+  const int64_t n_tiles_h = N / FPINT_DMA_MXU_NT;
+  const int64_t blocks_x  = (FPINT_DMA_MXU_NT + caps.threads_per_block - 1) /
+                             caps.threads_per_block;
+
+  detile_output_kernel_arg_t karg{};
+  karg.grid_dim[0]  = static_cast<uint32_t>(blocks_x);
+  karg.grid_dim[1]  = static_cast<uint32_t>(M);
+  karg.grid_dim[2]  = static_cast<uint32_t>(n_tiles_h);
+  karg.block_dim[0] = caps.threads_per_block;
+  karg.block_dim[1] = 1;
+  karg.block_dim[2] = 1;
+  karg.src_addr     = rt.deviceAddress(Y_tiled.data_ptr());
+  karg.dst_addr     = rt.deviceAddress(output.data_ptr());
+  karg.M            = static_cast<uint32_t>(M);
+  karg.M_pad        = static_cast<uint32_t>(M_pad);
+  karg.N            = static_cast<uint32_t>(N);
+
+  static std::string path = find_kernel("detile_output", "detile_output");
+  launch_kernel(device, &karg, sizeof(karg), path);
+  return output;
+}
+
+
+// Kernel-arg struct must match tests/regression/tile_input_a/common.h
+struct tile_input_a_kernel_arg_t {
+  uint32_t grid_dim[3];
+  uint32_t block_dim[3];
+  uint64_t src_addr;
+  uint64_t dst_addr;
+  uint32_t M_real;
+  uint32_t M_pad;
+  uint32_t K;
+};
+
+// Device-resident tile_input_a — pads M to multiple of 8 (zero-fill) AND
+// reorders the byte stream to the kb-major slot layout in one kernel launch.
+// Replaces (a) at::zeros, (b) narrow().copy_(), and (c) the host tile_input_a
+// helper above (all of which fall back to CPU on PrivateUse1).
+static at::Tensor vortex_tile_input_a(const at::Tensor& input,
+                                       int64_t M_pad, int64_t K) {
+  TORCH_CHECK(input.is_privateuseone(), "input must be a vortex tensor");
+  TORCH_CHECK(input.dtype() == at::kHalf, "input must be float16");
+  TORCH_CHECK(input.is_contiguous(),       "input must be contiguous");
+  TORCH_CHECK(input.dim() == 2,            "input must be 2-D [M, K]");
+  TORCH_CHECK(input.size(1) == K,          "input shape K mismatch");
+  TORCH_CHECK(K % FPINT_DMA_MXU_KT == 0,   "K must be multiple of MXU_KT");
+  TORCH_CHECK(M_pad % 8 == 0,              "M_pad must be multiple of 8");
+  TORCH_CHECK(M_pad >= input.size(0),      "M_pad must be >= input.size(0)");
+  TORCH_CHECK(K <= (int64_t)FPINT_DMA_KT || K % (int64_t)FPINT_DMA_KT == 0,
+              "K must be <= DMA_KT or a multiple of DMA_KT");
+
+  auto& rt = c10::vortex::VortexRuntime::instance();
+  vx_device_h device = rt.deviceHandle();
+  auto caps = query_caps(device);
+
+  auto output = at::empty({M_pad, K}, input.options());
+
+  // 3D grid: x = (m,k_in_sub) blocks, y = kb, z = kt.
+  const int64_t k_tiles_h = (K + (int64_t)FPINT_DMA_KT - 1) / (int64_t)FPINT_DMA_KT;
+  const int64_t cur_k_h   = (k_tiles_h == 1) ? K : (int64_t)FPINT_DMA_KT;
+  const int64_t k_mic_h   = cur_k_h / FPINT_DMA_MXU_KT;
+  const int64_t elems_per_kb = M_pad * (int64_t)FPINT_DMA_MXU_KT;
+
+  tile_input_a_kernel_arg_t karg{};
+  karg.grid_dim[0]  = static_cast<uint32_t>(
+      (elems_per_kb + caps.threads_per_block - 1) / caps.threads_per_block);
+  karg.grid_dim[1]  = static_cast<uint32_t>(k_mic_h);
+  karg.grid_dim[2]  = static_cast<uint32_t>(k_tiles_h);
+  karg.block_dim[0] = caps.threads_per_block;
+  karg.block_dim[1] = 1;
+  karg.block_dim[2] = 1;
+  karg.src_addr     = rt.deviceAddress(input.data_ptr());
+  karg.dst_addr     = rt.deviceAddress(output.data_ptr());
+  karg.M_real       = static_cast<uint32_t>(input.size(0));
+  karg.M_pad        = static_cast<uint32_t>(M_pad);
+  karg.K            = static_cast<uint32_t>(K);
+
+  static std::string path = find_kernel("tile_input_a", "tile_input_a");
+  launch_kernel(device, &karg, sizeof(karg), path);
+  return output;
+}
+
+
+// Kernel-arg struct must match tests/regression/tile_scale_zp_w4a16/common.h
+struct tile_scale_zp_w4a16_kernel_arg_t {
+  uint32_t grid_dim[3];
+  uint32_t block_dim[3];
+  uint64_t src_addr;
+  uint64_t dst_addr;
+  uint32_t K;
+  uint32_t N;
+  uint32_t QBLK;
+  uint32_t QDIR;
+  uint32_t slot_bytes;
+  uint32_t body_bytes;
+  uint32_t log2_cur_groups;
+  uint32_t log2_cur_k;
+  uint32_t log2_ng_per_mxu_nt;
+  uint32_t log2_qblk;
+};
+
+// Device-resident tile_weight_w4a16. Mirrors the host helper above but does
+// the reorder on-device instead of via a chain of ATen ops.
+static at::Tensor vortex_tile_weight_w4a16(const at::Tensor& W_packed,
+                                            int64_t K, int64_t N, int64_t wtrans) {
+  TORCH_CHECK(W_packed.is_privateuseone(), "weight must be a vortex tensor");
+  TORCH_CHECK(W_packed.dtype() == at::kByte, "weight must be uint8");
+  TORCH_CHECK(W_packed.is_contiguous(),  "weight must be contiguous");
+  TORCH_CHECK(W_packed.dim() == 2 &&
+              W_packed.size(0) == K && W_packed.size(1) == N / 2,
+              "weight shape must be [K, N/2]");
+  TORCH_CHECK(wtrans == 0, "tile_weight_w4a16: wtrans=1 not implemented");
+  TORCH_CHECK(K % FPINT_DMA_MXU_KT == 0,  "K must be multiple of MXU_KT");
+  TORCH_CHECK(N % FPINT_DMA_MXU_NT == 0,  "N must be multiple of MXU_NT");
+  TORCH_CHECK(K <= (int64_t)FPINT_DMA_KT || K % (int64_t)FPINT_DMA_KT == 0,
+              "K must be <= DMA_KT or a multiple of DMA_KT");
+
+  auto& rt = c10::vortex::VortexRuntime::instance();
+  vx_device_h device = rt.deviceHandle();
+  auto caps = query_caps(device);
+
+  auto output = at::empty({K, N / 2}, W_packed.options());
+
+  // 3D grid:  (chunks-in-(kt,nt) blocks, n_tiles, k_tiles).
+  // Each thread copies one 16-byte chunk; no runtime divisions inside kernel.
+  const int64_t k_tiles_h = (K + (int64_t)FPINT_DMA_KT - 1) / (int64_t)FPINT_DMA_KT;
+  const int64_t cur_k_h   = (k_tiles_h == 1) ? K : (int64_t)FPINT_DMA_KT;
+  const int64_t cur_kb_h  = cur_k_h / FPINT_DMA_MXU_KT;
+  const int64_t n_tiles_h = N / FPINT_DMA_MXU_NT;
+  const int64_t chunks_per_nt_kt = cur_kb_h * FPINT_DMA_MXU_KT;
+
+  tile_weight_w4a16_kernel_arg_t karg{};
+  karg.grid_dim[0]  = static_cast<uint32_t>(
+      (chunks_per_nt_kt + caps.threads_per_block - 1) / caps.threads_per_block);
+  karg.grid_dim[1]  = static_cast<uint32_t>(n_tiles_h);
+  karg.grid_dim[2]  = static_cast<uint32_t>(k_tiles_h);
+  karg.block_dim[0] = caps.threads_per_block;
+  karg.block_dim[1] = 1;
+  karg.block_dim[2] = 1;
+  karg.src_addr     = rt.deviceAddress(W_packed.data_ptr());
+  karg.dst_addr     = rt.deviceAddress(output.data_ptr());
+  karg.K            = static_cast<uint32_t>(K);
+  karg.N            = static_cast<uint32_t>(N);
+
+  static std::string path = find_kernel("tile_weight_w4a16", "tile_weight_w4a16");
+  launch_kernel(device, &karg, sizeof(karg), path);
+  return output;
+}
+
+
+// Device-resident tile_scale_zp_w4a16. Mirrors the host helper but does the
+// per-(kt, nt_dma) slot reorder + 512-B slot padding on-device via one kernel
+// launch.
+static at::Tensor vortex_tile_scale_zp_w4a16(const at::Tensor& s_raw,
+                                              int64_t K, int64_t N,
+                                              int64_t qblk, int64_t qdir) {
+  TORCH_CHECK(s_raw.is_privateuseone(), "s_raw must be a vortex tensor");
+  TORCH_CHECK(s_raw.is_contiguous(),    "s_raw must be contiguous");
+  TORCH_CHECK(s_raw.dim() == 2,         "s_raw must be 2-D");
+  TORCH_CHECK(s_raw.element_size() == 2,
+              "s_raw must be 2-byte dtype (fp16 or int16)");
+  TORCH_CHECK(qdir == 0 || qdir == 1,   "qdir must be 0 or 1");
+  TORCH_CHECK(N % FPINT_DMA_MXU_NT == 0, "N must be multiple of MXU_NT");
+  TORCH_CHECK(qblk > 0 && (qblk & (qblk - 1)) == 0, "qblk must be power of 2");
+  TORCH_CHECK(K <= (int64_t)FPINT_DMA_KT || K % (int64_t)FPINT_DMA_KT == 0,
+              "K must be <= DMA_KT or a multiple of DMA_KT");
+
+  // Verify source shape matches qdir convention.
+  if (qdir == 0) {
+    int64_t num_groups = K / qblk;
+    TORCH_CHECK(s_raw.size(0) == num_groups && s_raw.size(1) == N,
+                "qdir=0: shape must be [K/QBLK, N]");
+  } else {
+    int64_t ng_total = (N + qblk - 1) / qblk;
+    TORCH_CHECK(s_raw.size(0) == K && s_raw.size(1) == ng_total,
+                "qdir=1: shape must be [K, ng_total]");
+  }
+
+  // Compute slot layout (matches the kernel's view).
+  const int64_t k_tiles      = (K + (int64_t)FPINT_DMA_KT - 1) / (int64_t)FPINT_DMA_KT;
+  const int64_t cur_k        = (k_tiles == 1) ? K : (int64_t)FPINT_DMA_KT;
+  const int64_t cur_groups   = cur_k / qblk;
+  const int64_t ng_per_mxu_nt = ((int64_t)FPINT_DMA_MXU_NT + qblk - 1) / qblk;
+  const int64_t nt_dma_count = (N + (int64_t)FPINT_DMA_NT - 1) / (int64_t)FPINT_DMA_NT;
+  const int64_t cur_n_dma    = (nt_dma_count == 1) ? N : (int64_t)FPINT_DMA_NT;
+  const int64_t cur_nb       = cur_n_dma / (int64_t)FPINT_DMA_MXU_NT;
+
+  int64_t body_bytes;
+  if (qdir == 0) {
+    body_bytes = cur_nb * cur_groups * (int64_t)FPINT_DMA_MXU_NT * 2;
+  } else {
+    body_bytes = cur_nb * cur_k * ng_per_mxu_nt * 2;
+  }
+  const int64_t slot_bytes =
+      ((body_bytes + FPINT_SCALE_SLOT_ALIGN - 1) / FPINT_SCALE_SLOT_ALIGN)
+      * FPINT_SCALE_SLOT_ALIGN;
+  const int64_t total_bytes = k_tiles * nt_dma_count * slot_bytes;
+
+  auto& rt = c10::vortex::VortexRuntime::instance();
+  vx_device_h device = rt.deviceHandle();
+  auto caps = query_caps(device);
+
+  auto output = at::empty({total_bytes / 2}, s_raw.options());
+
+  // log2 helper (asserts power-of-two)
+  auto log2_pow2 = [](int64_t v) -> uint32_t {
+    TORCH_CHECK(v > 0 && (v & (v - 1)) == 0,
+                "tile_scale_zp_w4a16: expected power-of-two, got ", v);
+    uint32_t r = 0;
+    while ((int64_t(1) << r) < v) r++;
+    return r;
+  };
+
+  const uint32_t slot_elems_per_block = caps.threads_per_block;
+  const int64_t slot_elems   = slot_bytes / 2;
+  const int64_t blocks_x     = (slot_elems + slot_elems_per_block - 1) / slot_elems_per_block;
+
+  tile_scale_zp_w4a16_kernel_arg_t karg{};
+  karg.grid_dim[0]    = static_cast<uint32_t>(blocks_x);
+  karg.grid_dim[1]    = static_cast<uint32_t>(nt_dma_count);
+  karg.grid_dim[2]    = static_cast<uint32_t>(k_tiles);
+  karg.block_dim[0]   = caps.threads_per_block;
+  karg.block_dim[1]   = 1;
+  karg.block_dim[2]   = 1;
+  karg.src_addr       = rt.deviceAddress(s_raw.data_ptr());
+  karg.dst_addr       = rt.deviceAddress(output.data_ptr());
+  karg.K              = static_cast<uint32_t>(K);
+  karg.N              = static_cast<uint32_t>(N);
+  karg.QBLK           = static_cast<uint32_t>(qblk);
+  karg.QDIR           = static_cast<uint32_t>(qdir);
+  karg.slot_bytes     = static_cast<uint32_t>(slot_bytes);
+  karg.body_bytes     = static_cast<uint32_t>(body_bytes);
+  karg.log2_cur_groups    = (qdir == 0) ? log2_pow2(std::max<int64_t>(cur_groups, 1)) : 0;
+  karg.log2_cur_k         = (qdir == 1) ? log2_pow2(cur_k) : 0;
+  karg.log2_ng_per_mxu_nt = (qdir == 1) ? log2_pow2(std::max<int64_t>(ng_per_mxu_nt, 1)) : 0;
+  karg.log2_qblk          = log2_pow2(qblk);
+
+  static std::string path = find_kernel("tile_scale_zp_w4a16", "tile_scale_zp_w4a16");
+  launch_kernel(device, &karg, sizeof(karg), path);
+  return output;
+}
+
+
 at::Tensor vortex_mm_w4a16(
     const at::Tensor& input,       // fp16 [M, K]
     const at::Tensor& weight_int4, // uint8 packed [K, N/2]  (two int4 per byte)
@@ -1586,6 +2131,120 @@ at::Tensor vortex_mm_w4a16(
   return output;
 }
 
+
+// ===========================================================================
+//  vortex::mm_w4a16_opt  ->  fpint_gemm_ffn_hw kernel
+//
+//  Accepts RAW row-major tensors (same shape as mm_w4a16) and internally:
+//    1) Pads M to multiple of 8 (zero-fills extra rows)
+//    2) Re-tiles input A from row-major [M_pad, K] to (mt, kt, kb, m, k_sub)
+//    3) Re-tiles weight from [K, N/2] to (kt, nt, kb, k_sub, n_pair)
+//    4) Re-tiles scales / zeros into per-(kt, nt_dma) slots (qdir 0 or 1),
+//       each slot padded to 512 B
+//    5) Launches the baseline fpint_gemm_ffn_hw kernel via v2 kernel-arg layout
+//    6) De-tiles the (n_tiles, M_pad, MXU_NT) output back to [M_pad, N]
+//    7) Narrows to [M, N] and returns
+//
+//  All transforms use ATen ops (view / permute / contiguous / narrow / cat /
+//  zeros / copy_), so they run on the same device as the inputs (vortex).
+// ===========================================================================
+at::Tensor vortex_mm_w4a16_opt(
+    const at::Tensor& input,       // fp16 [M, K]                  RAW
+    const at::Tensor& weight_int4, // uint8 packed [K, N/2]        RAW
+    const at::Tensor& scales,      // fp16 [num_groups, N]   (or [K, ng] if qdir=1)
+    const at::Tensor& zeros,       // int16 [num_groups, N]  (or [K, ng] if qdir=1)
+    int64_t group_size,
+    int64_t N,
+    int64_t wtrans,
+    int64_t qdir) {
+  // --- input validation ---
+  TORCH_CHECK(input.is_privateuseone(),       "input must be a vortex tensor");
+  TORCH_CHECK(weight_int4.is_privateuseone(), "weight must be a vortex tensor");
+  TORCH_CHECK(scales.is_privateuseone(),      "scales must be a vortex tensor");
+  TORCH_CHECK(zeros.is_privateuseone(),       "zeros must be a vortex tensor");
+
+  TORCH_CHECK(input.dtype()       == at::kHalf,
+    "input must be float16, got ", input.dtype());
+  TORCH_CHECK(weight_int4.dtype() == at::kByte,
+    "weight_int4 must be uint8, got ", weight_int4.dtype());
+  TORCH_CHECK(scales.dtype()      == at::kHalf,
+    "scales must be float16, got ", scales.dtype());
+  TORCH_CHECK(zeros.dtype()       == at::kShort,
+    "zeros must be int16, got ", zeros.dtype());
+
+  TORCH_CHECK(input.is_contiguous(),       "input must be contiguous");
+  TORCH_CHECK(weight_int4.is_contiguous(), "weight must be contiguous");
+  TORCH_CHECK(scales.is_contiguous(),      "scales must be contiguous");
+  TORCH_CHECK(zeros.is_contiguous(),       "zeros must be contiguous");
+
+  TORCH_CHECK(input.dim() == 2,       "input must be 2D [M, K], got ", input.dim(), "D");
+  TORCH_CHECK(weight_int4.dim() == 2, "weight must be 2D, got ", weight_int4.dim(), "D");
+
+  TORCH_CHECK(group_size > 0,                  "group_size must be > 0");
+  TORCH_CHECK(N > 0,                           "N must be > 0");
+  TORCH_CHECK(wtrans == 0 || wtrans == 1,      "wtrans must be 0 or 1");
+  TORCH_CHECK(qdir == 0 || qdir == 1,          "qdir must be 0 or 1");
+
+  const uint32_t M_val = static_cast<uint32_t>(input.size(0));
+  const uint32_t K_val = static_cast<uint32_t>(input.size(1));
+  const uint32_t N_val = static_cast<uint32_t>(N);
+  const uint32_t QBLK  = static_cast<uint32_t>(group_size);
+
+  // M padded up to multiple of 8 (DMA stripe alignment).
+  const uint32_t M_pad = (M_val + 7u) & ~7u;
+
+  auto& rt = c10::vortex::VortexRuntime::instance();
+  vx_device_h device = rt.deviceHandle();
+
+  // ---- 1+2. Pad M and tile input A in one device kernel ----
+  auto A_tiled  = vortex_tile_input_a(input, (int64_t)M_pad, (int64_t)K_val);
+
+  // ---- 3-4. Tile weight and scales/zeros ----
+  auto W_tiled  = vortex_tile_weight_w4a16(weight_int4,
+                                            (int64_t)K_val, (int64_t)N_val, wtrans);
+  auto sc_tiled = vortex_tile_scale_zp_w4a16(scales, (int64_t)K_val,
+                                              (int64_t)N_val,
+                                              (int64_t)QBLK, qdir);
+  auto zp_tiled = vortex_tile_scale_zp_w4a16(zeros,  (int64_t)K_val,
+                                              (int64_t)N_val,
+                                              (int64_t)QBLK, qdir);
+
+  // Allocate output buffer in tile-major layout: [M_pad, N] (numel matches).
+  auto Y_tiled = at::empty({(int64_t)M_pad, (int64_t)N_val}, input.options());
+
+  // ---- 5. Build kernel args and launch ----
+  uint64_t local_mem_size = 0;
+  vx_dev_caps(device, VX_CAPS_LOCAL_MEM_SIZE, &local_mem_size);
+
+  fpint_gemm_kernel_arg_v2_t karg{};
+  karg.dram_in_base  = rt.deviceAddress(A_tiled.data_ptr());
+  karg.dram_w_base   = rt.deviceAddress(W_tiled.data_ptr());
+  karg.dram_sc_base  = rt.deviceAddress(sc_tiled.data_ptr());
+  karg.dram_zp_base  = rt.deviceAddress(zp_tiled.data_ptr());
+  karg.dram_out_base = rt.deviceAddress(Y_tiled.data_ptr());
+
+  TORCH_CHECK(compute_fpint_lmem_layout_v2(karg, local_mem_size, QBLK,
+                                            static_cast<uint32_t>(qdir)),
+    "fpint_gemm_opt: LMEM layout does not fit device local memory (size=",
+    local_mem_size, ")");
+
+  karg.M      = M_pad;
+  karg.N      = N_val;
+  karg.K      = K_val;
+  karg.QBLK   = QBLK;
+  karg.WTRANS = static_cast<uint32_t>(wtrans);
+  karg.QDIR   = static_cast<uint32_t>(qdir);
+  karg.status = FPINT_MMIO_STATUS_INIT;
+
+  static std::string path =
+      find_kernel("fpint_gemm_ffn", "fpint_gemm_ffn_hw");
+  launch_kernel(device, &karg, sizeof(karg), path);
+
+  // ---- 6. Detile output AND narrow to [M, N] (single device kernel) ----
+  return vortex_detile_output(Y_tiled,
+                              (int64_t)M_val, (int64_t)M_pad, (int64_t)N_val);
+}
+
 } // anonymous namespace
 
 // ===========================================================================
@@ -1630,12 +2289,22 @@ TORCH_LIBRARY(vortex, m) {
   m.def("rms_norm(Tensor input, Tensor weight, float eps) -> Tensor");
   m.def("apply_rotary_pos_emb(Tensor input, Tensor cos, Tensor sin, int pos_offset=0) -> Tensor");
   m.def("mm_w4a16(Tensor input, Tensor weight_int4, Tensor scales, Tensor zeros, int group_size, int N, int wtrans=0, int qdir=0) -> Tensor");
+  m.def("mm_w4a16_opt(Tensor input, Tensor weight_int4, Tensor scales, Tensor zeros, int group_size, int N, int wtrans=0, int qdir=0) -> Tensor");
+  m.def("tile_weight_w4a16(Tensor weight, int K, int N, int wtrans=0) -> Tensor");
+  m.def("tile_scale_zp_w4a16(Tensor s_raw, int K, int N, int qblk, int qdir) -> Tensor");
+  m.def("tile_input_a(Tensor input, int M_pad, int K) -> Tensor");
+  m.def("detile_output(Tensor Y_tiled, int M, int M_pad, int N) -> Tensor");
 }
 
 TORCH_LIBRARY_IMPL(vortex, PrivateUse1, m) {
   m.impl("rms_norm", &vortex_rms_norm);
   m.impl("apply_rotary_pos_emb", &vortex_apply_rotary_pos_emb);
-  m.impl("mm_w4a16", &vortex_mm_w4a16);
+  m.impl("mm_w4a16",          &vortex_mm_w4a16);
+  m.impl("mm_w4a16_opt",      &vortex_mm_w4a16_opt);
+  m.impl("tile_weight_w4a16",     &vortex_tile_weight_w4a16);
+  m.impl("tile_scale_zp_w4a16",   &vortex_tile_scale_zp_w4a16);
+  m.impl("tile_input_a",          &vortex_tile_input_a);
+  m.impl("detile_output",         &vortex_detile_output);
 }
 
 } // namespace at::vortex
