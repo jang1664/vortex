@@ -184,6 +184,64 @@
     end \
     /* verilator lint_off GENUNNAMED */
 
+`ifdef SYNOPSYS
+// DC's macro preprocessor mishandles the `` `__LINE__ token-paste used in
+// the non-SYNOPSYS variants below to give each macro instantiation a unique
+// instance name. Wrap each in an anonymous generate block instead — SV
+// assigns each occurrence a fresh `genblk*` name automatically, so a fixed
+// instance name inside is fine.
+`define REDUCE_TREE(__op, __out, __in, __n, __outw, __inw) \
+    if (1) begin \
+        VX_reduce_tree #( \
+            .IN_W  (__inw), \
+            .OUT_W (__outw), \
+            .N     (__n), \
+            .OP    ("__op") \
+        ) u_reduce ( \
+            .data_in(__in), \
+            .data_out(__out) \
+        ); \
+    end
+
+`define POP_COUNT_EX(out, in, model) \
+    if (1) begin \
+        VX_popcount #( \
+            .N ($bits(in)), \
+            .MODEL (model) \
+        ) u_pop_count_ex ( \
+            .data_in  (in), \
+            .data_out (out) \
+        ); \
+    end
+
+`define BUFFER_EX(dst, src, ena, resetw, latency) \
+    if (1) begin \
+        VX_pipe_register #( \
+            .DATAW  ($bits(dst)), \
+            .RESETW (resetw), \
+            .DEPTH  (latency) \
+        ) u_buffer_ex ( \
+            .clk      (clk), \
+            .reset    (reset), \
+            .enable   (ena), \
+            .data_in  (src), \
+            .data_out (dst) \
+        ); \
+    end
+
+`define NEG_EDGE(dst, src) \
+    if (1) begin \
+        VX_edge_trigger #( \
+            .POS  (0), \
+            .INIT (0) \
+        ) u_neg_edge ( \
+            .clk      (clk), \
+            .reset    (1'b0), \
+            .data_in  (src), \
+            .data_out (dst) \
+        ); \
+    end
+`else
 `define REDUCE_TREE(__op, __out, __in, __n, __outw, __inw) \
     VX_reduce_tree #( \
         .IN_W  (__inw), \
@@ -204,19 +262,6 @@
         .data_out (out) \
     )
 
-`define POP_COUNT(out, in) `POP_COUNT_EX(out, in, 1)
-
-`define CONCAT(out, left_in, right_in, L, R) \
-    /* verilator lint_off GENUNNAMED */ \
-    if ((L) != 0 && (R) == 0) begin \
-        assign out = left_in; \
-    end else if ((L) == 0 && (R) != 0) begin \
-        assign out = right_in; \
-    end else if ((L) != 0 && (R) != 0) begin \
-        assign out = {left_in, right_in}; \
-    end \
-    /* verilator lint_off GENUNNAMED */
-
 `define BUFFER_EX(dst, src, ena, resetw, latency) \
     VX_pipe_register #( \
         .DATAW  ($bits(dst)), \
@@ -230,8 +275,6 @@
         .data_out (dst) \
     )
 
-`define BUFFER(dst, src) `BUFFER_EX(dst, src, 1'b1, $bits(dst), 1)
-
 `define NEG_EDGE(dst, src) \
     VX_edge_trigger #( \
         .POS  (0), \
@@ -242,6 +285,22 @@
         .data_in  (src), \
         .data_out (dst) \
     )
+`endif
+
+`define POP_COUNT(out, in) `POP_COUNT_EX(out, in, 1)
+
+`define BUFFER(dst, src) `BUFFER_EX(dst, src, 1'b1, $bits(dst), 1)
+
+`define CONCAT(out, left_in, right_in, L, R) \
+    /* verilator lint_off GENUNNAMED */ \
+    if ((L) != 0 && (R) == 0) begin \
+        assign out = left_in; \
+    end else if ((L) == 0 && (R) != 0) begin \
+        assign out = right_in; \
+    end else if ((L) != 0 && (R) != 0) begin \
+        assign out = {left_in, right_in}; \
+    end \
+    /* verilator lint_off GENUNNAMED */
 
 ///////////////////////////////////////////////////////////////////////////////
 

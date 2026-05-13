@@ -144,9 +144,14 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
         // --------------------------------------------------------
         VX_node_done_if internal_done_if();
 
+        // hbm_bus_if and tmem_bus_if[*] are both parameterized with this
+        // module's TAG_WIDTH, so we forward it directly. (DC v2023 rejects
+        // `interface_inst.PARAM` in parameter binding contexts.)
         VX_dma_unit_misal #(
-            .INSTANCE_ID     (INSTANCE_ID),
-            .ENABLE_MISALIGN (ENABLE_MISALIGN)
+            .INSTANCE_ID      (INSTANCE_ID),
+            .ENABLE_MISALIGN  (ENABLE_MISALIGN),
+            .DCACHE_TAG_WIDTH (TAG_WIDTH),
+            .LMEM_TAG_WIDTH   (TAG_WIDTH)
         ) u_dma_unit (
             .clk            (clk),
             .reset          (reset),

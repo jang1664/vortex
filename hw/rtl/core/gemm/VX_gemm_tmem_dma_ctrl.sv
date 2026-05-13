@@ -400,6 +400,7 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
     end
 
 `ifdef DBG_TRACE_GEMM
+`ifndef SYNTHESIS
     function automatic string state_to_str(input state_t s);
         case (s)
             S_IDLE:      state_to_str = "S_IDLE";
@@ -410,6 +411,7 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
             default:     state_to_str = "S_UNKNOWN";
         endcase
     endfunction
+`endif
 
     always_ff @(posedge clk) begin
         if (!reset) begin

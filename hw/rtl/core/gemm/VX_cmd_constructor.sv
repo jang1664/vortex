@@ -343,6 +343,7 @@ module VX_cmd_constructor import VX_gpu_pkg::*; #(
   end
 
 `ifdef DBG_TRACE_CMD_CONSTRUCTOR
+`ifndef SYNTHESIS
   function automatic string raw_op_to_str(input logic [3:0] op);
     begin
       unique case (op)
@@ -359,7 +360,9 @@ module VX_cmd_constructor import VX_gpu_pkg::*; #(
       endcase
     end
   endfunction
+`endif
 
+`ifndef SYNTHESIS
   function automatic string state_to_str(input state_t s);
     begin
       unique case (s)
@@ -370,6 +373,7 @@ module VX_cmd_constructor import VX_gpu_pkg::*; #(
       endcase
     end
   endfunction
+`endif
 
   always_ff @(posedge clk) begin
     if (!reset) begin

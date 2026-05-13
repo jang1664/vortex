@@ -211,6 +211,24 @@
 `ifndef SIMULATION
     `define ASYNC_BRAM_PATCH
 `endif
+`elsif SYNOPSYS
+// Synopsys DC: SystemVerilog `string` type isn't synthesizable, so the
+// `STRING macro (used for parameter INSTANCE_ID across many modules) must
+// expand to empty in this flow — same as the Vivado path. Vendor-specific
+// ramstyle / RDW attributes are not honored either.
+`define MAX_FANOUT      8
+`define LATENCY_IMUL    3
+`define FORCE_BRAM(d,w) (((d) >= 64 || (w) >= 16 || ((d) * (w)) >= 512) && ((d) * (w)) >= 64)
+`define FORCE_URAM(d,w) (((d) * (w)) >= 262144)
+`define USE_BLOCK_BRAM
+`define USE_ULTRA_BRAM
+`define USE_FAST_BRAM
+`define NO_RW_RAM_CHECK
+`define RW_RAM_CHECK
+`define DISABLE_BRAM
+`define PRESERVE_NET
+`define BLACKBOX_CELL
+`define STRING
 `else
 `define MAX_FANOUT      8
 `define LATENCY_IMUL    3

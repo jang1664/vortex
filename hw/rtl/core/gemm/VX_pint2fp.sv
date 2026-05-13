@@ -46,7 +46,14 @@ module VX_pint2fp #(
   localparam EXP_LIMIT = {OUT_EXP_WIDTH{1'b1}};  // max exp of output fp format
 
   logic [IN_DW-1:0] abs_int;
+`ifdef SYNOPSYS
+  // DW_lzd's enc port is `[addr_width:0]` (= SHIFT_WIDTH+1 bits). The
+  // consumer at line 107 slices `[$clog2(IN_DW)-1:0]` so the wider top
+  // bit is harmless. See VX_prealigner.sv for the same rationale.
+  logic [SHIFT_WIDTH:0]   enc;
+`else
   logic [SHIFT_WIDTH-1:0] enc;  // position of first one from MSB side
+`endif
   logic signed [SHIFT_WIDTH-1:0] left_shift;
   // logic [IN_DW-1:0] dec;
   logic [OUT_EXP_WIDTH-1:0] exp_valid;

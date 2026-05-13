@@ -1,0 +1,2 @@
+cmos28lpp_ra1w_hs_8192x128m8
+cmos28lpp_ra2_hd_4096x16m16
