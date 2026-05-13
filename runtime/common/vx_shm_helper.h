@@ -30,6 +30,7 @@
 #include <chrono>
 #include <string>
 #include <cstdlib>
+#include <algorithm>
 
 class ShmStatus {
 public:
@@ -145,9 +146,24 @@ public:
     touch();
   }
   void set_kernel_name(const char *name) {
-    if (!shm_) return;
-    strncpy(shm_->last_kernel_name, name, sizeof(shm_->last_kernel_name) - 1);
-    shm_->last_kernel_name[sizeof(shm_->last_kernel_name) - 1] = '\0';
+    if (!shm_ || !name) return;
+    // Keep only the last two path components (parent_dir/file) so the 64-byte
+    // buffer carries enough context to identify the kernel without wasting
+    // space on a long workspace prefix.
+    const char *end = name + strlen(name);
+    while (end > name && end[-1] == '/') --end;  // trim trailing slashes
+    const char *base = end;
+    while (base > name && base[-1] != '/') --base;
+    const char *start = base;
+    if (start > name) {
+      const char *p = start - 1;  // the '/' before base
+      while (p > name && p[-1] != '/') --p;
+      start = p;
+    }
+    size_t n = std::min(sizeof(shm_->last_kernel_name) - 1,
+                        static_cast<size_t>(end - start));
+    memcpy(shm_->last_kernel_name, start, n);
+    shm_->last_kernel_name[n] = '\0';
   }
   void set_bank(uint32_t id, bool alloc, uint32_t refcnt, uint64_t size) {
     if (!shm_ || id >= VX_SHM_MAX_BANKS) return;

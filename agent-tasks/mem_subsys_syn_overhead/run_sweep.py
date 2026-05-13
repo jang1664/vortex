@@ -45,11 +45,14 @@ COMPILED_SPECS = [
     "cmos28lpp_ra1w_hd_4096x64m16",      # LMEM 16-bank
     "cmos28lpp_ra1w_hd_2048x64m16",      # LMEM 32-bank
     "cmos28lpp_ra1w_hd_1024x64m8",       # LMEM 64-bank (m8: m16 out-of-range)
+    "cmos28lpp_ra1w_hs_4096x128m8",      # DCACHE data 4-bank (×4 tile)
     "cmos28lpp_ra1w_hs_512x128m8",       # DCACHE data 32-bank (×4 tile)
-    "cmos28lpp_ra1w_hs_256x128m8",       # DCACHE data 64-bank (×4 tile)
-    "cmos28lpp_ra2_hd_1024x16m16",       # DCACHE tag 8-bank (×2 depth-stack) + 16-bank
+    "cmos28lpp_ra1w_hs_256x128m8",       # legacy 64-bank (unused in new 4/8/16/32 sweep)
+    "cmos28lpp_ra2_hd_1024x16m16",       # DCACHE tag base macro: ×4 stack for 4-bank,
+                                         #                        ×2 stack for 8-bank,
+                                         #                        ×1   for 16-bank
     "cmos28lpp_ra2_hd_512x16m16",        # DCACHE tag 32-bank
-    "cmos28lpp_ra2_hd_256x16m8",         # DCACHE tag 64-bank
+    "cmos28lpp_ra2_hd_256x16m8",         # legacy 64-bank (unused in new sweep)
 ]
 
 
@@ -237,18 +240,24 @@ LMEM_POINTS = [
 
 CACHE_POINTS = [
     # (label, NUM_REQS, NUM_BANKS, MEM_PORTS, CACHE_SIZE)
-    ("C1",  8,  8,  8, 4194304),
-    ("C2", 16, 16, 16, 4194304),
-    ("C3", 32, 32, 32, 4194304),
-    ("C4", 64, 64, 64, 4194304),
+    # C0 = 2-bank @ 4MB added for the 16x16 FPxFP baseline comparison.
+    # Data: 4 × 2 × cmos28lpp_ra1w_hs_4096x128m8 (×2 depth-stack of existing macro).
+    # Tag : 8 × cmos28lpp_ra2_hd_1024x16m16 (8-deep stack — PDK FE refused 4096x16m16).
+    ("C0",  2,  2,  2, 4194304),
+    ("C1",  4,  4,  4, 4194304),
+    ("C2",  8,  8,  8, 4194304),
+    ("C3", 16, 16, 16, 4194304),
+    ("C4", 32, 32, 32, 4194304),
 ]
 
 AXI_POINTS = [
     # (label, NUM_PORTS_IN, NUM_BANKS_OUT)
-    ("A1",  8, 32),
-    ("A2", 16, 32),
-    ("A3", 32, 32),
-    ("A4", 64, 32),
+    # A0 = 2-port for the 16x16 baseline; NUM_BANKS_OUT=32 fixed (HBM PCs).
+    ("A0",  2, 32),
+    ("A1",  4, 32),
+    ("A2",  8, 32),
+    ("A3", 16, 32),
+    ("A4", 32, 32),
 ]
 
 
