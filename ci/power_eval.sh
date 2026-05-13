@@ -23,7 +23,7 @@ PLATFORM=${PLATFORM:-xilinx_u55c_gen3x16_xdma_3_202210_1}
 CONFIGS=${CONFIGS:--DNUM_THREADS=8}
 ITERS=${ITERS:-3}                  # outer loop (blackbox.sh invocations)
 INTERVAL=${INTERVAL:-0.1}          # power sampling period (seconds)
-IDLE_SAMPLES=${IDLE_SAMPLES:-25}
+IDLE_SAMPLES=${IDLE_SAMPLES:-200}
 SHAPES=${SHAPES:-small medium llama_ffn}
 # POWER_MODE=1 → app skips host-side reference + verification (fast).
 # Set to 0 if you want correctness-checked runs (much slower).
@@ -162,6 +162,14 @@ run_one () {
 
   kill "$SAMPLER" 2>/dev/null
   wait "$SAMPLER" 2>/dev/null
+
+  # post-run idle baseline (averaged with pre-run to absorb thermal drift)
+  sleep 3
+  for _ in $(seq 1 $IDLE_SAMPLES); do
+    P=$(sample_power)
+    echo "$(date +%s.%N),${P:-nan},idle" >> "$OUT"
+    sleep "$INTERVAL"
+  done
 
   python3 - "$OUT" "$T0" "$T1" "$ITERS" "$TAG" "$FAIL" "$LOGD" <<'PY' | tee -a "$OUTDIR/summary.log"
 import csv, glob, os, re, sys
