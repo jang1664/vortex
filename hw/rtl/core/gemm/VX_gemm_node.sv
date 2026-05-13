@@ -32,7 +32,10 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     ,output gemm_unit_perf_t  gemm_unit_perf
     ,output gemm_node_perf_t  gemm_node_perf
     ,output hbm_dma_perf_t    hbm_dma_perf
-    ,output dma_perf_t        lmem_dma_agg_perf
+    ,output dma_perf_t        lmem_dma_input_perf
+    ,output dma_perf_t        lmem_dma_weight_perf
+    ,output dma_perf_t        lmem_dma_sz_perf
+    ,output dma_perf_t        lmem_dma_output_perf
 `endif
 );
 
@@ -482,8 +485,11 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
       .gemm_sz_if     (tmem_sz_gemm_bus_if),
       .gemm_output_if (tmem_o_gemm_bus_if)
 `ifdef PERF_ENABLE
-      ,.hbm_dma_perf      (hbm_dma_perf)
-      ,.lmem_dma_agg_perf (lmem_dma_agg_perf)
+      ,.hbm_dma_perf         (hbm_dma_perf)
+      ,.lmem_dma_input_perf  (lmem_dma_input_perf)
+      ,.lmem_dma_weight_perf (lmem_dma_weight_perf)
+      ,.lmem_dma_sz_perf     (lmem_dma_sz_perf)
+      ,.lmem_dma_output_perf (lmem_dma_output_perf)
 `endif
     );
 

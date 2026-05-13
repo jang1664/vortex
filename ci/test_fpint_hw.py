@@ -175,6 +175,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="Comma-separated seq lens for --model mode "
              f"(default: {','.join(map(str, DEFAULT_MODEL_SEQ_LENS))}).",
     )
+    parser.add_argument(
+        "--perf", default=None, type=int, metavar="CLASS",
+        help="VORTEX_PROFILING perf class to dump at end-of-run "
+             "Forwarded to blackbox.sh as --perf=N; omitted when unset.",
+    )
     args, case_args = parser.parse_known_args(argv)
     args.case_args = case_args
     return args
@@ -206,6 +211,10 @@ def resolve_debug_args(debug_level: str) -> list[str]:
         return []
 
 
+def resolve_perf_args(perf: int | None) -> list[str]:
+    return [f"--perf={perf}"] if perf is not None else []
+
+
 # ---------------------------------------------------------------------------
 # Sweep runner.
 # ---------------------------------------------------------------------------
@@ -213,6 +222,7 @@ def run_sweep(driver: str,
               app: str,
               case_args: list[str],
               debug_args: list[str],
+              perf_args: list[str],
               extra_env: dict[str, str],
               log_dir: Path) -> int:
     """Run blackbox.sh for each case under `driver`/`extra_env`.
@@ -259,6 +269,7 @@ def run_sweep(driver: str,
                 f"--driver={driver}",
                 f"--app={app}",
                 *debug_args,
+                *perf_args,
                 f"--log={log_file}",
                 f"--args={args}",
             ]
@@ -298,6 +309,7 @@ def main() -> int:
     mode = args.mode
     debug_level = args.debug_level
     debug_args = resolve_debug_args(debug_level)
+    perf_args = resolve_perf_args(args.perf)
 
     configs = build_configs()
     # Drop VCD_OUTPUT when debug is off (huge VCDs with no useful traces).
@@ -356,6 +368,7 @@ def main() -> int:
             app=app,
             case_args=case_args,
             debug_args=debug_args,
+            perf_args=perf_args,
             extra_env={**base_env, **mode_env},
             log_dir=log_dir,
         )

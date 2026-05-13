@@ -270,10 +270,13 @@ module VX_core import VX_gpu_pkg::*; #(
         .clk         (clk),
         .reset       (reset),
     `ifdef PERF_ENABLE
-        .gemm_unit_perf    (accel_perf.gemm_unit),
-        .gemm_node_perf    (accel_perf.gemm_node),
-        .hbm_dma_perf      (accel_perf.hbm_dma),
-        .lmem_dma_agg_perf (accel_perf.lmem_dma_agg),
+        .gemm_unit_perf       (accel_perf.gemm_unit),
+        .gemm_node_perf       (accel_perf.gemm_node),
+        .hbm_dma_perf         (accel_perf.hbm_dma),
+        .lmem_dma_input_perf  (accel_perf.lmem_dma_input),
+        .lmem_dma_weight_perf (accel_perf.lmem_dma_weight),
+        .lmem_dma_sz_perf     (accel_perf.lmem_dma_sz),
+        .lmem_dma_output_perf (accel_perf.lmem_dma_output),
     `endif
         .mmio_if     (gemm_ctrl_if),
         .dma_axi_m   (dma_axi_m)
@@ -355,10 +358,14 @@ module VX_core import VX_gpu_pkg::*; #(
     assign pipeline_perf.ifetch_latency = perf_icache_lat;
     assign pipeline_perf.load_latency = perf_dcache_lat;
 
-    // Overlap counter: cycles where any DMA is busy AND the GEMM unit is computing
+    // Overlap counter: cycles where any DMA is busy AND the GEMM unit is computing.
+    // OR across cpu_dma + hbm_dma aggregate + all 4 per-LDMA busy bits.
     wire any_dma_busy = accel_perf.cpu_dma.busy
                       | accel_perf.hbm_dma.aggregate.busy
-                      | accel_perf.lmem_dma_agg.busy;
+                      | accel_perf.lmem_dma_input.busy
+                      | accel_perf.lmem_dma_weight.busy
+                      | accel_perf.lmem_dma_sz.busy
+                      | accel_perf.lmem_dma_output.busy;
     reg [PERF_CTR_BITS-1:0] perf_overlap_r;
     always @(posedge clk) begin
         if (reset)

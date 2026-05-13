@@ -774,7 +774,7 @@ package VX_gpu_pkg;
         logic [PERF_CTR_BITS-1:0] lmem_wr_bytes;
     } gemm_node_perf_t;
 
-    // Generic single-instance DMA perf (used for cpu_dma, lmem_dma_agg, and inside hbm_dma)
+    // Generic single-instance DMA perf (used for cpu_dma, per-LDMA, and inside hbm_dma)
     typedef struct packed {
         logic [PERF_CTR_BITS-1:0] rd_bytes;
         logic [PERF_CTR_BITS-1:0] wr_bytes;
@@ -798,16 +798,24 @@ package VX_gpu_pkg;
         logic [PERF_CTR_BITS-1:0] active_cycles_min;
     } hbm_dma_perf_t;
 
-    // Top-level accel perf (assembled in VX_core)
+    // Top-level accel perf (assembled in VX_core).
+    // Per-LDMA fields replace the previous lmem_dma_agg single struct: each
+    // VX_lmem_dma_misal instance's raw counters are exposed separately so the
+    // runtime can compute per-LDMA bandwidth / utilization. Aggregate values,
+    // if needed, are computed post-hoc in runtime/stub/utils.cpp.
     typedef struct packed {
         gemm_unit_perf_t          gemm_unit;
         gemm_node_perf_t          gemm_node;
         dma_perf_t                cpu_dma;
         hbm_dma_perf_t            hbm_dma;
-        dma_perf_t                lmem_dma_agg;
+        dma_perf_t                lmem_dma_input;
+        dma_perf_t                lmem_dma_weight;
+        dma_perf_t                lmem_dma_sz;
+        dma_perf_t                lmem_dma_output;
         logic [PERF_CTR_BITS-1:0] overlap_dma_mxu;
         // Cycles where the Vortex core is busy (active kernel duration).
-        // Used as an additional denominator for GEMM utilization metrics.
+        // Common denominator for utilization metrics; exposed in every
+        // ACCEL_* MPM class at CSR slot B03.
         logic [PERF_CTR_BITS-1:0] busy_cycles;
     } accel_perf_t;
 

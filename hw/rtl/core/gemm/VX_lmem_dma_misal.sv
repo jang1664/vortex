@@ -831,6 +831,43 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
     wire perf_dst_wr_fire       = perf_dst_req_valid &&  perf_dst_req_ready;
     wire perf_dst_wr_stall      = perf_dst_req_valid && !perf_dst_req_ready;
 
+    // ----------------------------------------------------------------
+    // Perf-trigger register stage (timing fix).
+    //
+    // Mirrors the fix in VX_dma_unit_misal.sv. Decouples perf counter
+    // CEs from bus_if handshake combinational fanout and FSM next-state
+    // logic. Telemetry-only path: every predicate slides by exactly 1
+    // cycle, so counter totals stay exact (events observed one cycle
+    // later, all together). Cost: ~10 flops per VX_lmem_dma_misal
+    // instance (×4 LDMAs per gemm_node), inside PERF_ENABLE only.
+    // ----------------------------------------------------------------
+    reg dma_is_active_q, dma_xfer_done_q;
+    reg perf_src_rd_req_fire_q,   perf_src_rd_req_stall_q;
+    reg perf_src_rd_data_fire_q,  perf_src_rd_data_stall_q;
+    reg perf_dst_wr_fire_q,       perf_dst_wr_stall_q;
+
+    always @(posedge clk) begin
+        if (reset) begin
+            dma_is_active_q          <= 1'b0;
+            dma_xfer_done_q          <= 1'b0;
+            perf_src_rd_req_fire_q   <= 1'b0;
+            perf_src_rd_req_stall_q  <= 1'b0;
+            perf_src_rd_data_fire_q  <= 1'b0;
+            perf_src_rd_data_stall_q <= 1'b0;
+            perf_dst_wr_fire_q       <= 1'b0;
+            perf_dst_wr_stall_q      <= 1'b0;
+        end else begin
+            dma_is_active_q          <= dma_is_active;
+            dma_xfer_done_q          <= dma_xfer_done;
+            perf_src_rd_req_fire_q   <= perf_src_rd_req_fire;
+            perf_src_rd_req_stall_q  <= perf_src_rd_req_stall;
+            perf_src_rd_data_fire_q  <= perf_src_rd_data_fire;
+            perf_src_rd_data_stall_q <= perf_src_rd_data_stall;
+            perf_dst_wr_fire_q       <= perf_dst_wr_fire;
+            perf_dst_wr_stall_q      <= perf_dst_wr_stall;
+        end
+    end
+
     always @(posedge clk) begin
         if (reset) begin
             perf_rd_bytes_r          <= '0;
@@ -844,25 +881,25 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
             perf_dst_wr_fire_r       <= '0;
             perf_dst_wr_stall_r      <= '0;
         end else begin
-            if (perf_src_rd_data_fire)
+            if (perf_src_rd_data_fire_q)
                 perf_rd_bytes_r <= perf_rd_bytes_r + PERF_CTR_BITS'(BUS_BYTES);
-            if (perf_dst_wr_fire)
+            if (perf_dst_wr_fire_q)
                 perf_wr_bytes_r <= perf_wr_bytes_r + PERF_CTR_BITS'(BUS_BYTES);
-            if (dma_xfer_done)
+            if (dma_xfer_done_q)
                 perf_xfers_r <= perf_xfers_r + PERF_CTR_BITS'(1);
-            if (dma_is_active)
+            if (dma_is_active_q)
                 perf_active_r <= perf_active_r + PERF_CTR_BITS'(1);
-            if (perf_src_rd_req_fire)
+            if (perf_src_rd_req_fire_q)
                 perf_src_rd_req_fire_r <= perf_src_rd_req_fire_r + PERF_CTR_BITS'(1);
-            if (perf_src_rd_req_stall)
+            if (perf_src_rd_req_stall_q)
                 perf_src_rd_req_stall_r <= perf_src_rd_req_stall_r + PERF_CTR_BITS'(1);
-            if (perf_src_rd_data_fire)
+            if (perf_src_rd_data_fire_q)
                 perf_src_rd_data_fire_r <= perf_src_rd_data_fire_r + PERF_CTR_BITS'(1);
-            if (perf_src_rd_data_stall)
+            if (perf_src_rd_data_stall_q)
                 perf_src_rd_data_stall_r <= perf_src_rd_data_stall_r + PERF_CTR_BITS'(1);
-            if (perf_dst_wr_fire)
+            if (perf_dst_wr_fire_q)
                 perf_dst_wr_fire_r <= perf_dst_wr_fire_r + PERF_CTR_BITS'(1);
-            if (perf_dst_wr_stall)
+            if (perf_dst_wr_stall_q)
                 perf_dst_wr_stall_r <= perf_dst_wr_stall_r + PERF_CTR_BITS'(1);
         end
     end
