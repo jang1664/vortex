@@ -104,7 +104,7 @@ shape_args () {
     # Use to subtract Vortex-core polling overhead from a normal-run ΔP and
     # recover the true HW-GEMM ΔP. POLL_ITERS ~20M ≈ a couple seconds of
     # kernel time at 100 MHz; tune to taste. --pol implies -p (no verify).
-    poll_only)      echo "-m 32   -n 32    -k 32    -q 32 -t 0 -d 0 -r 2 --pol 200000000${pflag}" ;;
+    poll_only)      echo "-m 32   -n 32    -k 32    -q 32 -t 0 -d 0 -r 2 --pol 20000000${pflag}" ;;
     *)         echo "" ;;
   esac
 }
