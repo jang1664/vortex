@@ -2165,6 +2165,30 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
   endfunction
 `endif
 
+`ifndef SYNTHESIS
+  logic [31:0] dbg_cyc_q;
+  always_ff @(posedge clk) begin
+    if (reset) dbg_cyc_q <= 32'd0;
+    else       dbg_cyc_q <= dbg_cyc_q + 32'd1;
+  end
+
+  logic        dbg_issue_pulse;
+  logic [31:0] dbg_issue_id_q;
+  logic [31:0] dbg_issue_cyc;
+  logic [3:0]  dbg_issue_op;
+  logic [7:0]  dbg_issue_state;
+
+  assign dbg_issue_pulse = out_start_d && gemm_fsm_if.flag.idle;
+  assign dbg_issue_cyc   = dbg_cyc_q;
+  assign dbg_issue_op    = out_cmd_d.instr[3:0];
+  assign dbg_issue_state = state_q;
+
+  always_ff @(posedge clk) begin
+    if (reset)                dbg_issue_id_q <= 32'd0;
+    else if (dbg_issue_pulse) dbg_issue_id_q <= dbg_issue_id_q + 32'd1;
+  end
+`endif
+
   task automatic log_gemm_cmd_handshake(
     input state_t state_i,
     input gemm_unified_cmd_t cmd_i

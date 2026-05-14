@@ -154,6 +154,50 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     wire output_notify_req  = gemm_ctrl_if.output_write_ctrl.start && output_dma_ctrl_if.idle && output_is_notify;
     wire output_notify_fire = output_notify_pending_r && gemm_sync_if[3].ready;
 
+`ifndef SYNTHESIS
+    logic [31:0] dbg_cyc_q;
+    always_ff @(posedge clk) begin
+        if (reset) dbg_cyc_q <= 32'd0;
+        else       dbg_cyc_q <= dbg_cyc_q + 32'd1;
+    end
+
+    logic        dbg_input_notify_fire;
+    logic        dbg_weight_notify_fire;
+    logic        dbg_sz_notify_fire;
+    logic        dbg_output_notify_fire;
+    logic [31:0] dbg_input_notify_cyc_q;
+    logic [31:0] dbg_weight_notify_cyc_q;
+    logic [31:0] dbg_sz_notify_cyc_q;
+    logic [31:0] dbg_output_notify_cyc_q;
+
+    assign dbg_input_notify_fire  = input_notify_fire;
+    assign dbg_weight_notify_fire = weight_notify_fire;
+    assign dbg_sz_notify_fire     = sz_notify_fire;
+    assign dbg_output_notify_fire = output_notify_fire;
+
+    always_ff @(posedge clk) begin
+        if (reset) begin
+            dbg_input_notify_cyc_q  <= 32'd0;
+            dbg_weight_notify_cyc_q <= 32'd0;
+            dbg_sz_notify_cyc_q     <= 32'd0;
+            dbg_output_notify_cyc_q <= 32'd0;
+        end else begin
+            if (input_notify_fire)  dbg_input_notify_cyc_q  <= dbg_cyc_q;
+            if (weight_notify_fire) dbg_weight_notify_cyc_q <= dbg_cyc_q;
+            if (sz_notify_fire)     dbg_sz_notify_cyc_q     <= dbg_cyc_q;
+            if (output_notify_fire) dbg_output_notify_cyc_q <= dbg_cyc_q;
+        end
+    end
+
+    logic        dbg_weight_dma_start;
+    logic [31:0] dbg_weight_dma_start_cyc_q;
+    assign dbg_weight_dma_start = weight_dma_start;
+    always_ff @(posedge clk) begin
+        if (reset)                  dbg_weight_dma_start_cyc_q <= 32'd0;
+        else if (weight_dma_start)  dbg_weight_dma_start_cyc_q <= dbg_cyc_q;
+    end
+`endif
+
     // Completion/synchronization path from child nodes to gemm_ctrl.
     VX_gemm_sync_if gemm_sync_if[N_NODE] ();
 
