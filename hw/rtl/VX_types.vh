@@ -32,11 +32,18 @@
 
 // Machine Performance-monitoring counters classes ////////////////////////////
 
-`define VX_DCR_MPM_CLASS_NONE           0
-`define VX_DCR_MPM_CLASS_CORE           1
-`define VX_DCR_MPM_CLASS_MEM            2
-`define VX_DCR_MPM_CLASS_ACCEL_GEMM     3
-`define VX_DCR_MPM_CLASS_ACCEL_DMA      4
+`define VX_DCR_MPM_CLASS_NONE             0
+`define VX_DCR_MPM_CLASS_CORE             1
+`define VX_DCR_MPM_CLASS_MEM              2
+`define VX_DCR_MPM_CLASS_ACCEL_MXU        3
+`define VX_DCR_MPM_CLASS_ACCEL_DMA        4
+// Per-LDMA classes — each exposes one VX_lmem_dma_misal instance's
+// raw counters. All four share the same in-class CSR layout
+// (B05..B10 = dma_perf_t fields). Selection is by mpm_class.
+`define VX_DCR_MPM_CLASS_ACCEL_LDMA_IN    5
+`define VX_DCR_MPM_CLASS_ACCEL_LDMA_WT    6
+`define VX_DCR_MPM_CLASS_ACCEL_LDMA_SZ    7
+`define VX_DCR_MPM_CLASS_ACCEL_LDMA_OUT   8
 
 // User Floating-Point CSRs ///////////////////////////////////////////////////
 
@@ -185,111 +192,126 @@
 `define VX_CSR_MPM_COALESCER_MISS       12'hB1F     // coalescer misses
 `define VX_CSR_MPM_COALESCER_MISS_H     12'hB9F
 
-// Machine Performance-monitoring accelerator counters (class 3: ACCEL_GEMM) /
+// ===========================================================================
+// Common-to-all-ACCEL-classes counters (classes 3..8).
+// B03 / B04 hold these in every accelerator class so the runtime can
+// always derive normalized utilization / bandwidth without switching class.
+// ===========================================================================
+`define VX_CSR_MPM_BUSY_CYC              12'hB03  // accel_perf.busy_cycles
+`define VX_CSR_MPM_BUSY_CYC_H            12'hB83
+`define VX_CSR_MPM_GEMM_TOTAL_CYC        12'hB04  // accel_perf.gemm_node.total_cycles
+`define VX_CSR_MPM_GEMM_TOTAL_CYC_H      12'hB84
 
-// PERF: GEMM unit
-`define VX_CSR_MPM_GEMM_COMPUTE_CYC      12'hB03
-`define VX_CSR_MPM_GEMM_COMPUTE_CYC_H    12'hB83
-`define VX_CSR_MPM_GEMM_STALL_CYC        12'hB04
-`define VX_CSR_MPM_GEMM_STALL_CYC_H      12'hB84
-`define VX_CSR_MPM_GEMM_JOB_CNT          12'hB05
-`define VX_CSR_MPM_GEMM_JOB_CNT_H        12'hB85
-// PERF: MXU fire/stall
-`define VX_CSR_MPM_MXU_INPUT_FIRE        12'hB06
-`define VX_CSR_MPM_MXU_INPUT_FIRE_H      12'hB86
-`define VX_CSR_MPM_MXU_INPUT_STALL       12'hB07
-`define VX_CSR_MPM_MXU_INPUT_STALL_H     12'hB87
-`define VX_CSR_MPM_MXU_WEIGHT_FIRE       12'hB08
-`define VX_CSR_MPM_MXU_WEIGHT_FIRE_H     12'hB88
-`define VX_CSR_MPM_MXU_WEIGHT_STALL      12'hB09
-`define VX_CSR_MPM_MXU_WEIGHT_STALL_H    12'hB89
-`define VX_CSR_MPM_MXU_PSUM_FIRE         12'hB0A
-`define VX_CSR_MPM_MXU_PSUM_FIRE_H       12'hB8A
-`define VX_CSR_MPM_MXU_PSUM_STALL        12'hB0B
-`define VX_CSR_MPM_MXU_PSUM_STALL_H      12'hB8B
-`define VX_CSR_MPM_MXU_OUTPUT_FIRE       12'hB0C
-`define VX_CSR_MPM_MXU_OUTPUT_FIRE_H     12'hB8C
-`define VX_CSR_MPM_MXU_OUTPUT_STALL      12'hB0D
-`define VX_CSR_MPM_MXU_OUTPUT_STALL_H    12'hB8D
-`define VX_CSR_MPM_MXU_MAC_COUNT         12'hB0E
-`define VX_CSR_MPM_MXU_MAC_COUNT_H       12'hB8E
-// PERF: GEMM node
-`define VX_CSR_MPM_GEMM_TOTAL_CYC        12'hB0F
-`define VX_CSR_MPM_GEMM_TOTAL_CYC_H      12'hB8F
-`define VX_CSR_MPM_LMEM_RD_BYTES         12'hB10
-`define VX_CSR_MPM_LMEM_RD_BYTES_H       12'hB90
-`define VX_CSR_MPM_LMEM_WR_BYTES         12'hB11
-`define VX_CSR_MPM_LMEM_WR_BYTES_H       12'hB91
-// PERF: overlap
-`define VX_CSR_MPM_OVERLAP_DMA_MXU       12'hB12
-`define VX_CSR_MPM_OVERLAP_DMA_MXU_H     12'hB92
-// PERF: core busy (active kernel duration)
-`define VX_CSR_MPM_GEMM_BUSY_CYC         12'hB13
-`define VX_CSR_MPM_GEMM_BUSY_CYC_H       12'hB93
+// ===========================================================================
+// Machine Performance-monitoring accelerator counters (class 3: ACCEL_MXU)
+// Holds GEMM/MXU-specific counters. gemm_compute_cycles is mandatory.
+// ===========================================================================
+`define VX_CSR_MPM_GEMM_COMPUTE_CYC      12'hB05
+`define VX_CSR_MPM_GEMM_COMPUTE_CYC_H    12'hB85
+`define VX_CSR_MPM_GEMM_STALL_CYC        12'hB06
+`define VX_CSR_MPM_GEMM_STALL_CYC_H      12'hB86
+`define VX_CSR_MPM_GEMM_JOB_CNT          12'hB07
+`define VX_CSR_MPM_GEMM_JOB_CNT_H        12'hB87
+`define VX_CSR_MPM_MXU_MAC_COUNT         12'hB08
+`define VX_CSR_MPM_MXU_MAC_COUNT_H       12'hB88
+`define VX_CSR_MPM_MXU_INPUT_FIRE        12'hB09
+`define VX_CSR_MPM_MXU_INPUT_FIRE_H      12'hB89
+`define VX_CSR_MPM_MXU_INPUT_STALL       12'hB0A
+`define VX_CSR_MPM_MXU_INPUT_STALL_H     12'hB8A
+`define VX_CSR_MPM_MXU_WEIGHT_FIRE       12'hB0B
+`define VX_CSR_MPM_MXU_WEIGHT_FIRE_H     12'hB8B
+`define VX_CSR_MPM_MXU_WEIGHT_STALL      12'hB0C
+`define VX_CSR_MPM_MXU_WEIGHT_STALL_H    12'hB8C
+`define VX_CSR_MPM_MXU_PSUM_FIRE         12'hB0D
+`define VX_CSR_MPM_MXU_PSUM_FIRE_H       12'hB8D
+`define VX_CSR_MPM_MXU_PSUM_STALL        12'hB0E
+`define VX_CSR_MPM_MXU_PSUM_STALL_H      12'hB8E
+`define VX_CSR_MPM_MXU_OUTPUT_FIRE       12'hB0F
+`define VX_CSR_MPM_MXU_OUTPUT_FIRE_H     12'hB8F
+`define VX_CSR_MPM_MXU_OUTPUT_STALL      12'hB10
+`define VX_CSR_MPM_MXU_OUTPUT_STALL_H    12'hB90
+`define VX_CSR_MPM_OVERLAP_DMA_MXU       12'hB11
+`define VX_CSR_MPM_OVERLAP_DMA_MXU_H     12'hB91
 
-// Machine Performance-monitoring accelerator counters (class 4: ACCEL_DMA) //
+// ===========================================================================
+// Machine Performance-monitoring accelerator counters (class 4: ACCEL_DMA)
+// CPU_DMA + HBM_DMA. LDMA was split out into classes 5-8 (per-instance).
+// ===========================================================================
+`define VX_CSR_MPM_CPU_DMA_RD_BYTES            12'hB05
+`define VX_CSR_MPM_CPU_DMA_RD_BYTES_H          12'hB85
+`define VX_CSR_MPM_CPU_DMA_WR_BYTES            12'hB06
+`define VX_CSR_MPM_CPU_DMA_WR_BYTES_H          12'hB86
+`define VX_CSR_MPM_CPU_DMA_XFER_CNT            12'hB07
+`define VX_CSR_MPM_CPU_DMA_XFER_CNT_H          12'hB87
+`define VX_CSR_MPM_CPU_DMA_ACTIVE_CYC          12'hB08
+`define VX_CSR_MPM_CPU_DMA_ACTIVE_CYC_H        12'hB88
+`define VX_CSR_MPM_CPU_DMA_SRC_RD_REQ_FIRE     12'hB09
+`define VX_CSR_MPM_CPU_DMA_SRC_RD_REQ_FIRE_H   12'hB89
+`define VX_CSR_MPM_CPU_DMA_SRC_RD_REQ_STALL    12'hB0A
+`define VX_CSR_MPM_CPU_DMA_SRC_RD_REQ_STALL_H  12'hB8A
+`define VX_CSR_MPM_CPU_DMA_SRC_RD_DATA_FIRE    12'hB0B
+`define VX_CSR_MPM_CPU_DMA_SRC_RD_DATA_FIRE_H  12'hB8B
+`define VX_CSR_MPM_CPU_DMA_SRC_RD_DATA_STALL   12'hB0C
+`define VX_CSR_MPM_CPU_DMA_SRC_RD_DATA_STALL_H 12'hB8C
+`define VX_CSR_MPM_CPU_DMA_DST_WR_FIRE         12'hB0D
+`define VX_CSR_MPM_CPU_DMA_DST_WR_FIRE_H       12'hB8D
+`define VX_CSR_MPM_CPU_DMA_DST_WR_STALL        12'hB0E
+`define VX_CSR_MPM_CPU_DMA_DST_WR_STALL_H      12'hB8E
+// HBM-DMA aggregate + max/min
+`define VX_CSR_MPM_HBM_DMA_RD_BYTES            12'hB0F
+`define VX_CSR_MPM_HBM_DMA_RD_BYTES_H          12'hB8F
+`define VX_CSR_MPM_HBM_DMA_WR_BYTES            12'hB10
+`define VX_CSR_MPM_HBM_DMA_WR_BYTES_H          12'hB90
+`define VX_CSR_MPM_HBM_DMA_XFER_CNT            12'hB11
+`define VX_CSR_MPM_HBM_DMA_XFER_CNT_H          12'hB91
+`define VX_CSR_MPM_HBM_DMA_ACTIVE_CYC          12'hB12
+`define VX_CSR_MPM_HBM_DMA_ACTIVE_CYC_H        12'hB92
+`define VX_CSR_MPM_HBM_DMA_SRC_RD_REQ_FIRE     12'hB13
+`define VX_CSR_MPM_HBM_DMA_SRC_RD_REQ_FIRE_H   12'hB93
+`define VX_CSR_MPM_HBM_DMA_SRC_RD_REQ_STALL    12'hB14
+`define VX_CSR_MPM_HBM_DMA_SRC_RD_REQ_STALL_H  12'hB94
+`define VX_CSR_MPM_HBM_DMA_SRC_RD_DATA_FIRE    12'hB15
+`define VX_CSR_MPM_HBM_DMA_SRC_RD_DATA_FIRE_H  12'hB95
+`define VX_CSR_MPM_HBM_DMA_SRC_RD_DATA_STALL   12'hB16
+`define VX_CSR_MPM_HBM_DMA_SRC_RD_DATA_STALL_H 12'hB96
+`define VX_CSR_MPM_HBM_DMA_DST_WR_FIRE         12'hB17
+`define VX_CSR_MPM_HBM_DMA_DST_WR_FIRE_H       12'hB97
+`define VX_CSR_MPM_HBM_DMA_DST_WR_STALL        12'hB18
+`define VX_CSR_MPM_HBM_DMA_DST_WR_STALL_H      12'hB98
+`define VX_CSR_MPM_HBM_DMA_ACTIVE_MAX          12'hB19
+`define VX_CSR_MPM_HBM_DMA_ACTIVE_MAX_H        12'hB99
+`define VX_CSR_MPM_HBM_DMA_ACTIVE_MIN          12'hB1A
+`define VX_CSR_MPM_HBM_DMA_ACTIVE_MIN_H        12'hB9A
 
-// PERF: CPU-DMA
-`define VX_CSR_MPM_CPU_DMA_RD_BYTES            12'hB03
-`define VX_CSR_MPM_CPU_DMA_RD_BYTES_H          12'hB83
-`define VX_CSR_MPM_CPU_DMA_WR_BYTES            12'hB04
-`define VX_CSR_MPM_CPU_DMA_WR_BYTES_H          12'hB84
-`define VX_CSR_MPM_CPU_DMA_XFER_CNT            12'hB05
-`define VX_CSR_MPM_CPU_DMA_XFER_CNT_H          12'hB85
-`define VX_CSR_MPM_CPU_DMA_ACTIVE_CYC          12'hB06
-`define VX_CSR_MPM_CPU_DMA_ACTIVE_CYC_H        12'hB86
-`define VX_CSR_MPM_CPU_DMA_SRC_RD_REQ_FIRE     12'hB07
-`define VX_CSR_MPM_CPU_DMA_SRC_RD_REQ_FIRE_H   12'hB87
-`define VX_CSR_MPM_CPU_DMA_SRC_RD_REQ_STALL    12'hB08
-`define VX_CSR_MPM_CPU_DMA_SRC_RD_REQ_STALL_H  12'hB88
-`define VX_CSR_MPM_CPU_DMA_SRC_RD_DATA_FIRE    12'hB09
-`define VX_CSR_MPM_CPU_DMA_SRC_RD_DATA_FIRE_H  12'hB89
-`define VX_CSR_MPM_CPU_DMA_SRC_RD_DATA_STALL   12'hB0A
-`define VX_CSR_MPM_CPU_DMA_SRC_RD_DATA_STALL_H 12'hB8A
-`define VX_CSR_MPM_CPU_DMA_DST_WR_FIRE         12'hB0B
-`define VX_CSR_MPM_CPU_DMA_DST_WR_FIRE_H       12'hB8B
-`define VX_CSR_MPM_CPU_DMA_DST_WR_STALL        12'hB0C
-`define VX_CSR_MPM_CPU_DMA_DST_WR_STALL_H      12'hB8C
-// PERF: HBM-DMA aggregate + max/min
-`define VX_CSR_MPM_HBM_DMA_RD_BYTES            12'hB0D
-`define VX_CSR_MPM_HBM_DMA_RD_BYTES_H          12'hB8D
-`define VX_CSR_MPM_HBM_DMA_WR_BYTES            12'hB0E
-`define VX_CSR_MPM_HBM_DMA_WR_BYTES_H          12'hB8E
-`define VX_CSR_MPM_HBM_DMA_XFER_CNT            12'hB0F
-`define VX_CSR_MPM_HBM_DMA_XFER_CNT_H          12'hB8F
-`define VX_CSR_MPM_HBM_DMA_ACTIVE_CYC          12'hB10
-`define VX_CSR_MPM_HBM_DMA_ACTIVE_CYC_H        12'hB90
-`define VX_CSR_MPM_HBM_DMA_SRC_RD_REQ_FIRE     12'hB11
-`define VX_CSR_MPM_HBM_DMA_SRC_RD_REQ_FIRE_H   12'hB91
-`define VX_CSR_MPM_HBM_DMA_SRC_RD_REQ_STALL    12'hB12
-`define VX_CSR_MPM_HBM_DMA_SRC_RD_REQ_STALL_H  12'hB92
-`define VX_CSR_MPM_HBM_DMA_SRC_RD_DATA_FIRE    12'hB13
-`define VX_CSR_MPM_HBM_DMA_SRC_RD_DATA_FIRE_H  12'hB93
-`define VX_CSR_MPM_HBM_DMA_SRC_RD_DATA_STALL   12'hB14
-`define VX_CSR_MPM_HBM_DMA_SRC_RD_DATA_STALL_H 12'hB94
-`define VX_CSR_MPM_HBM_DMA_DST_WR_FIRE         12'hB15
-`define VX_CSR_MPM_HBM_DMA_DST_WR_FIRE_H       12'hB95
-`define VX_CSR_MPM_HBM_DMA_DST_WR_STALL        12'hB16
-`define VX_CSR_MPM_HBM_DMA_DST_WR_STALL_H      12'hB96
-`define VX_CSR_MPM_HBM_DMA_ACTIVE_MAX          12'hB17
-`define VX_CSR_MPM_HBM_DMA_ACTIVE_MAX_H        12'hB97
-`define VX_CSR_MPM_HBM_DMA_ACTIVE_MIN          12'hB18
-`define VX_CSR_MPM_HBM_DMA_ACTIVE_MIN_H        12'hB98
-// PERF: LDMA aggregate
-`define VX_CSR_MPM_LDMA_AGG_RD_BYTES           12'hB19
-`define VX_CSR_MPM_LDMA_AGG_RD_BYTES_H         12'hB99
-`define VX_CSR_MPM_LDMA_AGG_WR_BYTES           12'hB1A
-`define VX_CSR_MPM_LDMA_AGG_WR_BYTES_H         12'hB9A
-`define VX_CSR_MPM_LDMA_AGG_XFER_CNT           12'hB1B
-`define VX_CSR_MPM_LDMA_AGG_XFER_CNT_H         12'hB9B
-`define VX_CSR_MPM_LDMA_AGG_ACTIVE_CYC         12'hB1C
-`define VX_CSR_MPM_LDMA_AGG_ACTIVE_CYC_H       12'hB9C
-`define VX_CSR_MPM_LDMA_AGG_SRC_RD_REQ_FIRE    12'hB1D
-`define VX_CSR_MPM_LDMA_AGG_SRC_RD_REQ_FIRE_H  12'hB9D
-`define VX_CSR_MPM_LDMA_AGG_SRC_RD_REQ_STALL   12'hB1E
-`define VX_CSR_MPM_LDMA_AGG_SRC_RD_REQ_STALL_H 12'hB9E
-
-// Remaining free slots: class 3 hB13..B1F, class 4 hB1F
+// ===========================================================================
+// Per-LDMA counters (classes 5..8: ACCEL_LDMA_IN/WT/SZ/OUT)
+// All four classes share the same slot layout; only the source LDMA
+// instance differs. Selection happens via mpm_class in VX_csr_data.sv.
+// ===========================================================================
+`define VX_CSR_MPM_LDMA_RD_BYTES               12'hB05
+`define VX_CSR_MPM_LDMA_RD_BYTES_H             12'hB85
+`define VX_CSR_MPM_LDMA_WR_BYTES               12'hB06
+`define VX_CSR_MPM_LDMA_WR_BYTES_H             12'hB86
+`define VX_CSR_MPM_LDMA_XFER_CNT               12'hB07
+`define VX_CSR_MPM_LDMA_XFER_CNT_H             12'hB87
+`define VX_CSR_MPM_LDMA_ACTIVE_CYC             12'hB08
+`define VX_CSR_MPM_LDMA_ACTIVE_CYC_H           12'hB88
+`define VX_CSR_MPM_LDMA_SRC_RD_REQ_FIRE        12'hB09
+`define VX_CSR_MPM_LDMA_SRC_RD_REQ_FIRE_H      12'hB89
+`define VX_CSR_MPM_LDMA_SRC_RD_REQ_STALL       12'hB0A
+`define VX_CSR_MPM_LDMA_SRC_RD_REQ_STALL_H     12'hB8A
+`define VX_CSR_MPM_LDMA_SRC_RD_DATA_FIRE       12'hB0B
+`define VX_CSR_MPM_LDMA_SRC_RD_DATA_FIRE_H     12'hB8B
+`define VX_CSR_MPM_LDMA_SRC_RD_DATA_STALL      12'hB0C
+`define VX_CSR_MPM_LDMA_SRC_RD_DATA_STALL_H    12'hB8C
+`define VX_CSR_MPM_LDMA_DST_WR_FIRE            12'hB0D
+`define VX_CSR_MPM_LDMA_DST_WR_FIRE_H          12'hB8D
+`define VX_CSR_MPM_LDMA_DST_WR_STALL           12'hB0E
+`define VX_CSR_MPM_LDMA_DST_WR_STALL_H         12'hB8E
+`define VX_CSR_MPM_LDMA_WAIT_DCACHE            12'hB0F
+`define VX_CSR_MPM_LDMA_WAIT_DCACHE_H          12'hB8F
+`define VX_CSR_MPM_LDMA_WAIT_LMEM              12'hB10
+`define VX_CSR_MPM_LDMA_WAIT_LMEM_H            12'hB90
 
 // Machine Information Registers //////////////////////////////////////////////
 

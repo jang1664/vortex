@@ -32,7 +32,10 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     ,output gemm_unit_perf_t  gemm_unit_perf
     ,output gemm_node_perf_t  gemm_node_perf
     ,output hbm_dma_perf_t    hbm_dma_perf
-    ,output dma_perf_t        lmem_dma_agg_perf
+    ,output dma_perf_t        lmem_dma_input_perf
+    ,output dma_perf_t        lmem_dma_weight_perf
+    ,output dma_perf_t        lmem_dma_sz_perf
+    ,output dma_perf_t        lmem_dma_output_perf
 `endif
 );
 
@@ -150,6 +153,50 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     wire output_is_notify   = (gemm_ctrl_if.output_write_ctrl.start && gemm_ctrl_if.output_write_ctrl.cmd.instr[3:0] == OP_NOTIFY);
     wire output_notify_req  = gemm_ctrl_if.output_write_ctrl.start && output_dma_ctrl_if.idle && output_is_notify;
     wire output_notify_fire = output_notify_pending_r && gemm_sync_if[3].ready;
+
+`ifndef SYNTHESIS
+    logic [31:0] dbg_cyc_q;
+    always_ff @(posedge clk) begin
+        if (reset) dbg_cyc_q <= 32'd0;
+        else       dbg_cyc_q <= dbg_cyc_q + 32'd1;
+    end
+
+    logic        dbg_input_notify_fire;
+    logic        dbg_weight_notify_fire;
+    logic        dbg_sz_notify_fire;
+    logic        dbg_output_notify_fire;
+    logic [31:0] dbg_input_notify_cyc_q;
+    logic [31:0] dbg_weight_notify_cyc_q;
+    logic [31:0] dbg_sz_notify_cyc_q;
+    logic [31:0] dbg_output_notify_cyc_q;
+
+    assign dbg_input_notify_fire  = input_notify_fire;
+    assign dbg_weight_notify_fire = weight_notify_fire;
+    assign dbg_sz_notify_fire     = sz_notify_fire;
+    assign dbg_output_notify_fire = output_notify_fire;
+
+    always_ff @(posedge clk) begin
+        if (reset) begin
+            dbg_input_notify_cyc_q  <= 32'd0;
+            dbg_weight_notify_cyc_q <= 32'd0;
+            dbg_sz_notify_cyc_q     <= 32'd0;
+            dbg_output_notify_cyc_q <= 32'd0;
+        end else begin
+            if (input_notify_fire)  dbg_input_notify_cyc_q  <= dbg_cyc_q;
+            if (weight_notify_fire) dbg_weight_notify_cyc_q <= dbg_cyc_q;
+            if (sz_notify_fire)     dbg_sz_notify_cyc_q     <= dbg_cyc_q;
+            if (output_notify_fire) dbg_output_notify_cyc_q <= dbg_cyc_q;
+        end
+    end
+
+    logic        dbg_weight_dma_start;
+    logic [31:0] dbg_weight_dma_start_cyc_q;
+    assign dbg_weight_dma_start = weight_dma_start;
+    always_ff @(posedge clk) begin
+        if (reset)                  dbg_weight_dma_start_cyc_q <= 32'd0;
+        else if (weight_dma_start)  dbg_weight_dma_start_cyc_q <= dbg_cyc_q;
+    end
+`endif
 
     // Completion/synchronization path from child nodes to gemm_ctrl.
     VX_gemm_sync_if gemm_sync_if[N_NODE] ();
@@ -482,8 +529,11 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
       .gemm_sz_if     (tmem_sz_gemm_bus_if),
       .gemm_output_if (tmem_o_gemm_bus_if)
 `ifdef PERF_ENABLE
-      ,.hbm_dma_perf      (hbm_dma_perf)
-      ,.lmem_dma_agg_perf (lmem_dma_agg_perf)
+      ,.hbm_dma_perf         (hbm_dma_perf)
+      ,.lmem_dma_input_perf  (lmem_dma_input_perf)
+      ,.lmem_dma_weight_perf (lmem_dma_weight_perf)
+      ,.lmem_dma_sz_perf     (lmem_dma_sz_perf)
+      ,.lmem_dma_output_perf (lmem_dma_output_perf)
 `endif
     );
 

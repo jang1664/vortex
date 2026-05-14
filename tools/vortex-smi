@@ -319,6 +319,11 @@ def print_status(status, color=True, shm_path=None, checked_paths=None):
 
     # Kernel stats
     kname = status.last_kernel_name.decode("utf-8", errors="replace").rstrip("\x00")
+    # Keep only the last two path components (parent_dir/file) for path-like
+    # names so the kernel can be identified without a long workspace prefix.
+    if "/" in kname:
+        parts = kname.rstrip("/").split("/")
+        kname = "/".join(parts[-2:]) if len(parts) >= 2 else parts[-1]
     print(f"  {BOLD}Kernel Stats:{RESET}")
     print(f"    Launches: {status.kernel_launches}")
     if kname:

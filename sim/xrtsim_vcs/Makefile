@@ -174,6 +174,16 @@ ifdef DEBUG_AXI
 	VCS_FLAGS += +define+DEBUG_AXI
 endif
 
+# Enable perf counters
+# Mirrors the PERF=1 shortcut from sim/{rtlsim,xrtsim,opaesim}/Makefile.
+# Propagates to: shared lib (CXXFLAGS), simv DPI C++ (VCS_CPPFLAGS), and
+# the SystemVerilog preprocessor (VCS_FLAGS).
+ifdef PERF
+	CXXFLAGS     += -DPERF_ENABLE
+	VCS_CPPFLAGS += -DPERF_ENABLE
+	VCS_FLAGS    += +define+PERF_ENABLE
+endif
+
 # Post-impl gate-level simulation support
 # Usage: make simv POST_IMPL=1 NETLIST=<netlist.v> [SDF_FILE=<timing.sdf>]
 #                  [SIMLIB_DIR=<compiled_simlib/vcs>]

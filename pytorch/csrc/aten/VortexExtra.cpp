@@ -1853,15 +1853,18 @@ static at::Tensor vortex_tile_input_a(const at::Tensor& input,
 
   auto output = at::empty({M_pad, K}, input.options());
 
-  // 3D grid: x = (m,k_in_sub) blocks, y = kb, z = kt.
+  // 3D grid: x = (m, chunk_in_row) blocks, y = kb, z = kt.
+  // Each thread handles 2 fp16 (= 1 uint32) — chunk size & store width that
+  // mirrors silu_layout_fused's stable pattern.
   const int64_t k_tiles_h = (K + (int64_t)FPINT_DMA_KT - 1) / (int64_t)FPINT_DMA_KT;
   const int64_t cur_k_h   = (k_tiles_h == 1) ? K : (int64_t)FPINT_DMA_KT;
   const int64_t k_mic_h   = cur_k_h / FPINT_DMA_MXU_KT;
-  const int64_t elems_per_kb = M_pad * (int64_t)FPINT_DMA_MXU_KT;
+  const int64_t CHUNKS_PER_ROW = FPINT_DMA_MXU_KT / 2;   // 16
+  const int64_t chunks_per_kb  = M_pad * CHUNKS_PER_ROW;
 
   tile_input_a_kernel_arg_t karg{};
   karg.grid_dim[0]  = static_cast<uint32_t>(
-      (elems_per_kb + caps.threads_per_block - 1) / caps.threads_per_block);
+      (chunks_per_kb + caps.threads_per_block - 1) / caps.threads_per_block);
   karg.grid_dim[1]  = static_cast<uint32_t>(k_mic_h);
   karg.grid_dim[2]  = static_cast<uint32_t>(k_tiles_h);
   karg.block_dim[0] = caps.threads_per_block;
@@ -2133,20 +2136,86 @@ at::Tensor vortex_mm_w4a16(
 
 
 // ===========================================================================
-//  vortex::mm_w4a16_opt  ->  fpint_gemm_ffn_hw kernel
+//  vortex::mm_w4a16_gemm_core
 //
-//  Accepts RAW row-major tensors (same shape as mm_w4a16) and internally:
-//    1) Pads M to multiple of 8 (zero-fills extra rows)
-//    2) Re-tiles input A from row-major [M_pad, K] to (mt, kt, kb, m, k_sub)
-//    3) Re-tiles weight from [K, N/2] to (kt, nt, kb, k_sub, n_pair)
-//    4) Re-tiles scales / zeros into per-(kt, nt_dma) slots (qdir 0 or 1),
-//       each slot padded to 512 B
-//    5) Launches the baseline fpint_gemm_ffn_hw kernel via v2 kernel-arg layout
-//    6) De-tiles the (n_tiles, M_pad, MXU_NT) output back to [M_pad, N]
-//    7) Narrows to [M, N] and returns
+//  Pure-GEMM op: takes ALREADY-TILED input / weight / scales / zeros and
+//  returns a TILE-MAJOR output [M_pad, N]. Does NO tile or detile work
+//  internally — only allocates the output buffer, builds the kernel arg
+//  struct, and launches fpint_gemm_ffn_hw.
 //
-//  All transforms use ATen ops (view / permute / contiguous / narrow / cat /
-//  zeros / copy_), so they run on the same device as the inputs (vortex).
+//  Useful for fine-grained Python-side timing (caller wraps each of
+//  tile_input_a / tile_weight_w4a16 / tile_scale_zp_w4a16 / this op /
+//  detile_output in its own torch.profiler record_function block).
+// ===========================================================================
+at::Tensor vortex_mm_w4a16_gemm_core(
+    const at::Tensor& input_tiled,    // fp16  [M_pad, K]   tile-major
+    const at::Tensor& weight_tiled,   // uint8 [K, N/2]      tile-major
+    const at::Tensor& scales_tiled,   // fp16  1-D           tile-major slots
+    const at::Tensor& zeros_tiled,    // int16 1-D           tile-major slots
+    int64_t K,
+    int64_t N,
+    int64_t group_size,
+    int64_t wtrans,
+    int64_t qdir) {
+  TORCH_CHECK(input_tiled.is_privateuseone(), "input_tiled must be vortex");
+  TORCH_CHECK(weight_tiled.is_privateuseone(), "weight_tiled must be vortex");
+  TORCH_CHECK(scales_tiled.is_privateuseone(), "scales_tiled must be vortex");
+  TORCH_CHECK(zeros_tiled.is_privateuseone(),  "zeros_tiled must be vortex");
+
+  TORCH_CHECK(input_tiled.dtype()  == at::kHalf,  "input_tiled must be fp16");
+  TORCH_CHECK(weight_tiled.dtype() == at::kByte,  "weight_tiled must be uint8");
+  TORCH_CHECK(scales_tiled.dtype() == at::kHalf,  "scales_tiled must be fp16");
+  TORCH_CHECK(zeros_tiled.dtype()  == at::kShort, "zeros_tiled must be int16");
+
+  TORCH_CHECK(input_tiled.is_contiguous(),  "input_tiled must be contiguous");
+  TORCH_CHECK(weight_tiled.is_contiguous(), "weight_tiled must be contiguous");
+  TORCH_CHECK(scales_tiled.is_contiguous(), "scales_tiled must be contiguous");
+  TORCH_CHECK(zeros_tiled.is_contiguous(),  "zeros_tiled must be contiguous");
+
+  TORCH_CHECK(input_tiled.dim() == 2, "input_tiled must be 2-D");
+  const int64_t M_pad = input_tiled.size(0);
+  TORCH_CHECK(M_pad % 8 == 0, "M_pad must be multiple of 8, got ", M_pad);
+  TORCH_CHECK(input_tiled.size(1) == K, "input_tiled K mismatch");
+
+  const uint32_t QBLK = static_cast<uint32_t>(group_size);
+
+  auto& rt = c10::vortex::VortexRuntime::instance();
+  vx_device_h device = rt.deviceHandle();
+
+  uint64_t local_mem_size = 0;
+  vx_dev_caps(device, VX_CAPS_LOCAL_MEM_SIZE, &local_mem_size);
+
+  // Allocate tile-major output.
+  auto Y_tiled = at::empty({M_pad, N}, input_tiled.options());
+
+  fpint_gemm_kernel_arg_v2_t karg{};
+  karg.dram_in_base  = rt.deviceAddress(input_tiled.data_ptr());
+  karg.dram_w_base   = rt.deviceAddress(weight_tiled.data_ptr());
+  karg.dram_sc_base  = rt.deviceAddress(scales_tiled.data_ptr());
+  karg.dram_zp_base  = rt.deviceAddress(zeros_tiled.data_ptr());
+  karg.dram_out_base = rt.deviceAddress(Y_tiled.data_ptr());
+
+  TORCH_CHECK(compute_fpint_lmem_layout_v2(karg, local_mem_size, QBLK,
+                                            static_cast<uint32_t>(qdir)),
+    "mm_w4a16_gemm_core: LMEM layout does not fit (size=", local_mem_size, ")");
+
+  karg.M      = static_cast<uint32_t>(M_pad);
+  karg.N      = static_cast<uint32_t>(N);
+  karg.K      = static_cast<uint32_t>(K);
+  karg.QBLK   = QBLK;
+  karg.WTRANS = static_cast<uint32_t>(wtrans);
+  karg.QDIR   = static_cast<uint32_t>(qdir);
+  karg.status = FPINT_MMIO_STATUS_INIT;
+
+  static std::string path = find_kernel("fpint_gemm_ffn", "fpint_gemm_ffn_hw");
+  launch_kernel(device, &karg, sizeof(karg), path);
+  return Y_tiled;
+}
+
+
+// ===========================================================================
+//  vortex::mm_w4a16_opt  ->  convenience wrapper that chains the four tile ops
+//  + gemm_core + detile internally. Same Python-facing API as before.
 // ===========================================================================
 at::Tensor vortex_mm_w4a16_opt(
     const at::Tensor& input,       // fp16 [M, K]                  RAW
@@ -2294,6 +2363,7 @@ TORCH_LIBRARY(vortex, m) {
   m.def("tile_scale_zp_w4a16(Tensor s_raw, int K, int N, int qblk, int qdir) -> Tensor");
   m.def("tile_input_a(Tensor input, int M_pad, int K) -> Tensor");
   m.def("detile_output(Tensor Y_tiled, int M, int M_pad, int N) -> Tensor");
+  m.def("mm_w4a16_gemm_core(Tensor input_tiled, Tensor weight_tiled, Tensor scales_tiled, Tensor zeros_tiled, int K, int N, int group_size, int wtrans, int qdir) -> Tensor");
 }
 
 TORCH_LIBRARY_IMPL(vortex, PrivateUse1, m) {
@@ -2305,6 +2375,7 @@ TORCH_LIBRARY_IMPL(vortex, PrivateUse1, m) {
   m.impl("tile_scale_zp_w4a16",   &vortex_tile_scale_zp_w4a16);
   m.impl("tile_input_a",          &vortex_tile_input_a);
   m.impl("detile_output",         &vortex_detile_output);
+  m.impl("mm_w4a16_gemm_core",    &vortex_mm_w4a16_gemm_core);
 }
 
 } // namespace at::vortex

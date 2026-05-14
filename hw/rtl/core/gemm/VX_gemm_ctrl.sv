@@ -43,6 +43,14 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
     logic [N_CHILDREN-1:0]       child_q_empty_v;
     logic                        parent_q_empty;
 
+`ifndef SYNTHESIS
+    logic [31:0] dbg_cyc_q;
+    always_ff @(posedge clk) begin
+      if (reset) dbg_cyc_q <= 32'd0;
+      else       dbg_cyc_q <= dbg_cyc_q + 32'd1;
+    end
+`endif
+
     wire cfg_fire = cfg_reg_if.valid && cfg_reg_if.ready;
     wire queues_idle    = parent_q_empty && (&child_q_empty_v);
     wire done_fire      = done_if.valid && done_if.ready;
@@ -238,6 +246,53 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
             end
           end
         end
+
+`ifndef SYNTHESIS
+        logic [3:0]  dbg_child_op;
+        logic        dbg_child_start;
+        logic        dbg_child_done;
+        logic [31:0] dbg_child_start_cyc_q;
+        logic [31:0] dbg_child_done_cyc_q;
+        logic [31:0] dbg_child_lat_q;
+        logic [31:0] dbg_child_fire_count_q;
+
+        assign dbg_child_op = child_q_cmd.instr[3:0];
+
+        assign dbg_child_start = child_normal_fire;
+
+        logic prev_inflight_r;
+        logic prev_unit_idle;
+        always_ff @(posedge clk) begin
+          if (reset) begin
+            prev_inflight_r <= 1'b0;
+            prev_unit_idle  <= 1'b1;
+          end else begin
+            prev_inflight_r <= child_cmd_inflight_r;
+            prev_unit_idle  <= gemm_cqueue_out[i].flag.idle;
+          end
+        end
+        assign dbg_child_done = IS_DMA_CHILD
+            ? (~prev_unit_idle &&  gemm_cqueue_out[i].flag.idle)
+            : ( prev_inflight_r && ~child_cmd_inflight_r);
+
+        always_ff @(posedge clk) begin
+          if (reset) begin
+            dbg_child_start_cyc_q  <= 32'd0;
+            dbg_child_done_cyc_q   <= 32'd0;
+            dbg_child_lat_q        <= 32'd0;
+            dbg_child_fire_count_q <= 32'd0;
+          end else begin
+            if (dbg_child_start) begin
+              dbg_child_start_cyc_q  <= dbg_cyc_q;
+              dbg_child_fire_count_q <= dbg_child_fire_count_q + 32'd1;
+            end
+            if (dbg_child_done) begin
+              dbg_child_done_cyc_q <= dbg_cyc_q;
+              dbg_child_lat_q      <= dbg_cyc_q - dbg_child_start_cyc_q;
+            end
+          end
+        end
+`endif
 
         // backpressure to sync: only depends on queue capacity
         assign gemm_sync_out[i].flag.idle = ~child_q_full;

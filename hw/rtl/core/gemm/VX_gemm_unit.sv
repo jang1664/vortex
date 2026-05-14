@@ -195,13 +195,28 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     // MXU (GEMM Tree) Signals
     // -------------------------------------------------------------------------
     logic [`MXU_WLOAD_NUM-1:0][`MXU_COL-1:0][`W_BIT_WIDTH-1:0]  mxu_weight;
+`ifdef WLOAD_AT_ONCE
+    // WLOAD_AT_ONCE: MXU_WLOAD_NUM = MXU_ROW (=32), so weight bus is 4096
+    // bits wide and the 1-bit broadcasts below each fan out to ~4096
+    // u_weight_regs cells. max_fanout = 32 forces Vivado to replicate the
+    // u_mxu_weight_pipe source FFs (~128 copies) so the placer can co-locate
+    // them with destination cell tiles. (mxu_weight itself is NOT decorated:
+    // each data bit has fanout ~2, so replication would just bloat.)
+    (* max_fanout = 32 *) logic                                 mxu_ready_weight;
+`else
     logic                                                       mxu_ready_weight;
+`endif
     logic [`MXU_COL-1:0][`O_BIT_WIDTH-1:0]                      mxu_output;
     logic [`MXU_COL/`MXU_COL_TILE-1:0]                          mxu_output_valid;
     logic [`MXU_COL-1:0][`O_BIT_WIDTH-1:0]                      mxu_output_dly;
     logic [`MXU_COL/`MXU_COL_TILE-1:0]                          mxu_output_valid_dly;
+`ifdef WLOAD_AT_ONCE
+    (* max_fanout = 32 *) logic wreg_wr_idx;
+    (* max_fanout = 32 *) logic wreg_load_dir;
+`else
     logic wreg_wr_idx;
     logic wreg_load_dir;
+`endif
 
     // -------------------------------------------------------------------------
     // Merger Signals
@@ -323,11 +338,54 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     // ------------------------------------------------------------------------
     assign i_lmem_bus_if.rsp_valid = 1'b0;
 
+`ifdef WLOAD_AT_ONCE
+    // ====================================================================
+    // MXU weight write register slice (timing fix, WLOAD_AT_ONCE only).
+    //
+    // With WLOAD_AT_ONCE the weight broadcast is 4096 bits wide
+    // (u_ldma_weight slot mux -> req_data.data -> u_weight_regs.mem[row][col])
+    // driving a 32x32x2x4 FF array spread across SLR1; post-route showed
+    // 97% route delay on this path (logic 0.27ns / route 10.55ns ->
+    // -1.13ns WNS at 100 MHz). One pipeline stage on the consumer side
+    // lets the placer co-locate the registered driver with the destination
+    // FFs.
+    //
+    // {data, addr[1], addr[0]} are bundled and delayed together so that
+    // weight_i, weight_load_dir_i, in_weight_sel_i, and the implied write
+    // enable stay aligned at the u_weight_regs clock edge. out_weight_sel_i
+    // (read-side) is NOT delayed. The hazard interlock that prevents
+    // writing the buffer currently being read now compares against the
+    // BUFFERED wreg_wr_idx, so the actual write cycle still cannot collide.
+    //
+    // Without WLOAD_AT_ONCE the bus is only 512 bits (MXU_WLOAD_NUM=4) and
+    // this extra stage is unnecessary, so we keep the original direct path.
+    // ====================================================================
+    wire mxu_w_pipe_valid_out;
+    wire mxu_w_pipe_ready_out =
+        ~in_flight | (gemm_unit_ctrl.wreg_use_idx != wreg_wr_idx);
+
+    VX_pipe_buffer #(
+        .DATAW (`MXU_WLOAD_NUM * `MXU_COL * `W_BIT_WIDTH + 2),
+        .DEPTH (1)
+    ) u_mxu_weight_pipe (
+        .clk       (clk),
+        .reset     (reset),
+        .valid_in  (w_lmem_bus_if.req_valid),
+        .ready_in  (w_lmem_bus_if.req_ready),
+        .data_in   ({w_lmem_bus_if.req_data.data, w_lmem_bus_if.req_data.addr[1:0]}),
+        .ready_out (mxu_w_pipe_ready_out),
+        .data_out  ({mxu_weight, wreg_load_dir, wreg_wr_idx}),
+        .valid_out (mxu_w_pipe_valid_out)
+    );
+
+    assign mxu_ready_weight = mxu_w_pipe_valid_out & mxu_w_pipe_ready_out;
+`else
     assign mxu_weight              = w_lmem_bus_if.req_data.data;
     assign w_lmem_bus_if.req_ready = ~in_flight | (gemm_unit_ctrl.wreg_use_idx != w_lmem_bus_if.req_data.addr[0]);
     assign mxu_ready_weight        = w_lmem_bus_if.req_valid & w_lmem_bus_if.req_ready;
     assign wreg_wr_idx             = w_lmem_bus_if.req_data.addr[0];
     assign wreg_load_dir           = w_lmem_bus_if.req_data.addr[1];
+`endif
     assign w_lmem_bus_if.rsp_valid = 1'b0;
 
     assign sz_req_hs    = sz_lmem_bus_if.req_valid & sz_lmem_bus_if.req_ready;
@@ -1630,6 +1688,52 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     wire perf_output_fire  = o_lmem_bus_if.req_valid && o_lmem_bus_if.req_ready;
     wire perf_output_stall = o_lmem_bus_if.req_valid && !o_lmem_bus_if.req_ready;
 
+    // ------------------------------------------------------------
+    // Perf-trigger register stage (timing fix).
+    //
+    // Decouples perf counter CEs from the FSM state and bus_if
+    // handshake combinational fanout (w/o/i/sz LMEM buses plus
+    // acc_mem read path). Telemetry-only path: every predicate is
+    // delayed by exactly 1 cycle, so counter totals stay exact
+    // (events slide together).
+    // Cost: 11 flops per VX_gemm_unit instance, inside PERF_ENABLE.
+    // ------------------------------------------------------------
+    reg state_compute_q;
+    reg state_stall_q;
+    reg gemm_done_q;
+    reg perf_input_fire_q,   perf_input_stall_q;
+    reg perf_weight_fire_q,  perf_weight_stall_q;
+    reg perf_psum_fire_q,    perf_psum_stall_q;
+    reg perf_output_fire_q,  perf_output_stall_q;
+
+    always @(posedge clk) begin
+        if (reset) begin
+            state_compute_q     <= 1'b0;
+            state_stall_q       <= 1'b0;
+            gemm_done_q         <= 1'b0;
+            perf_input_fire_q   <= 1'b0;
+            perf_input_stall_q  <= 1'b0;
+            perf_weight_fire_q  <= 1'b0;
+            perf_weight_stall_q <= 1'b0;
+            perf_psum_fire_q    <= 1'b0;
+            perf_psum_stall_q   <= 1'b0;
+            perf_output_fire_q  <= 1'b0;
+            perf_output_stall_q <= 1'b0;
+        end else begin
+            state_compute_q     <= (state == COMPUTE);
+            state_stall_q       <= (state == IDLE) && !gemm_idle;
+            gemm_done_q         <= gemm_done;
+            perf_input_fire_q   <= perf_input_fire;
+            perf_input_stall_q  <= perf_input_stall;
+            perf_weight_fire_q  <= perf_weight_fire;
+            perf_weight_stall_q <= perf_weight_stall;
+            perf_psum_fire_q    <= perf_psum_fire;
+            perf_psum_stall_q   <= perf_psum_stall;
+            perf_output_fire_q  <= perf_output_fire;
+            perf_output_stall_q <= perf_output_stall;
+        end
+    end
+
     always @(posedge clk) begin
         if (reset) begin
             perf_compute_r      <= '0;
@@ -1645,29 +1749,29 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
             perf_output_fire_r  <= '0;
             perf_output_stall_r <= '0;
         end else begin
-            if (state == COMPUTE)
+            if (state_compute_q)
                 perf_compute_r <= perf_compute_r + PERF_CTR_BITS'(1);
-            if ((state == IDLE) && !gemm_idle)
+            if (state_stall_q)
                 perf_stall_r <= perf_stall_r + PERF_CTR_BITS'(1);
-            if (gemm_done)
+            if (gemm_done_q)
                 perf_jobs_r <= perf_jobs_r + PERF_CTR_BITS'(1);
-            if (perf_output_fire)
+            if (perf_output_fire_q)
                 perf_mac_count_r <= perf_mac_count_r + PERF_CTR_BITS'(`MXU_ROW * `MXU_COL);
-            if (perf_input_fire)
+            if (perf_input_fire_q)
                 perf_input_fire_r <= perf_input_fire_r + PERF_CTR_BITS'(1);
-            if (perf_input_stall)
+            if (perf_input_stall_q)
                 perf_input_stall_r <= perf_input_stall_r + PERF_CTR_BITS'(1);
-            if (perf_weight_fire)
+            if (perf_weight_fire_q)
                 perf_weight_fire_r <= perf_weight_fire_r + PERF_CTR_BITS'(1);
-            if (perf_weight_stall)
+            if (perf_weight_stall_q)
                 perf_weight_stall_r <= perf_weight_stall_r + PERF_CTR_BITS'(1);
-            if (perf_psum_fire)
+            if (perf_psum_fire_q)
                 perf_psum_fire_r <= perf_psum_fire_r + PERF_CTR_BITS'(1);
-            if (perf_psum_stall)
+            if (perf_psum_stall_q)
                 perf_psum_stall_r <= perf_psum_stall_r + PERF_CTR_BITS'(1);
-            if (perf_output_fire)
+            if (perf_output_fire_q)
                 perf_output_fire_r <= perf_output_fire_r + PERF_CTR_BITS'(1);
-            if (perf_output_stall)
+            if (perf_output_stall_q)
                 perf_output_stall_r <= perf_output_stall_r + PERF_CTR_BITS'(1);
         end
     end
