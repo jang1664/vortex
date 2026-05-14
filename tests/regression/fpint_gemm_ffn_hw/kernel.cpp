@@ -246,11 +246,25 @@ void kernel_mmio_driver(kernel_arg_t *__UNIFORM__ arg) {
   // without launching any GEMM job. Triggered by QDIR == 0xDEAD. Lets the
   // host measure pure Vortex-core polling overhead so HW-GEMM ΔP can be
   // separated from polling baseline.
+  //
+  // The MMIO address and per-iter ALU pattern mirror wait_job_done() so that
+  // the polling rate (loads/sec) and the activated MMIO decode path match a
+  // real GEMM run as closely as possible. eid=0 is used unconditionally; no
+  // alloc handshake is performed, so the entry's CONTROL register is read in
+  // its idle (unallocated) state -- this still exercises the same per-entry
+  // MMIO decode logic that real polling hits.
   if (arg->QDIR == 0xDEAD) {
     volatile uint32_t sink = 0;
-    const uint64_t addr = kGemmRegOffset;
+    const uint32_t eid_fake = 0;
+    // Pick a generation value that the comparison can never satisfy, so the
+    // expression has the same shape as wait_job_done() but never short-circuits.
+    const uint32_t generation_fake = 0xFFFFFFFFu;
     for (uint32_t i = 0; i < arg->K; ++i) {
-      sink ^= *reinterpret_cast<volatile uint32_t*>(addr);
+      uint32_t ctrl     = job_read_reg32(eid_fake, REG_CONTROL);
+      uint32_t curr_gen = (ctrl >> JOB_MMIO_CTRL_GEN_LSB) & bitfield_mask(JOB_MMIO_GEN_W);
+      uint32_t valid    = (ctrl >> JOB_MMIO_CTRL_VALID_BIT) & 1u;
+      uint32_t done     = ((generation_fake < curr_gen) ? 1u : 0u) | (valid ^ 1u);
+      sink ^= ctrl ^ curr_gen ^ valid ^ done;
     }
     if (reporter) {
       arg->last_ctrl = sink;
