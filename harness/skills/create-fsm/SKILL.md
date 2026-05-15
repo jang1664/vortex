@@ -1,3 +1,8 @@
+---
+name: create-fsm
+description: Use when creating a Vortex task FSM under agent-tasks with fsm.json and STATUS.yaml, including nested subtasks.
+---
+
 # Create FSM
 
 Interactively create a task FSM with the user.

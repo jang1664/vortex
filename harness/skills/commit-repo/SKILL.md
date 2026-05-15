@@ -1,3 +1,8 @@
+---
+name: commit-repo
+description: Use when creating one or more intentional Git commits from the current Vortex worktree, grouping related changes and writing detailed commit messages.
+---
+
 # Commit Repo
 
 Smart multi-commit tool. Groups related changes into separate meaningful commits with detailed messages.

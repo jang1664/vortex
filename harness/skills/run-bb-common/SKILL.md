@@ -1,3 +1,8 @@
+---
+name: run-bb-common
+description: Use when running Vortex blackbox tests from a configured build directory, especially xrt_vcs mode with correct CONFIGS and logging.
+---
+
 # Run Blackbox Test
 
 Run a regression test via `ci/blackbox.sh` from the build directory.
