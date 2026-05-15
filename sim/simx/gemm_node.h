@@ -13,6 +13,7 @@
 
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -21,9 +22,9 @@ namespace vortex {
 
 class Core;
 
-// Functional model of the fpint_improve VX_gemm_node instruction-stream accelerator.
-// Intercepts MMIO writes to the GEMM stream FIFO and executes opcodes sequentially.
-// See docs/simx/ and agent-tasks/simx-gemm-node/STATUS.yaml for the design.
+// Functional model of the GEMM accelerator. It supports the current
+// descriptor-MMIO ABI used by fpint_gemm_ffn_hw, and keeps the older raw stream
+// opcode path for compatibility with earlier experiments.
 class GemmNode {
 public:
   // MMIO layout (XLEN=64 ; see hw/rtl/VX_config.vh GEMM_REG_BASE_ADDR)
@@ -62,7 +63,7 @@ public:
 
   void reset();
 
-  bool busy() const { return occupied_; }
+  bool busy() const;
 
   // MMIO access. addr is the byte address; size is the access size in bytes.
   // Returns the read data zero-extended in a 64-bit value (only low `size*8` bits valid).
@@ -90,6 +91,70 @@ private:
   // INT4 weight unpack: returns signed 4-bit as int32.
   static int32_t unpack_int4(const uint8_t* bytes, uint32_t byte_idx, uint32_t nibble_hi);
 
+  // Descriptor-MMIO functional path.
+  static constexpr uint32_t DESC_NUM_ENTRIES     = 1;
+  static constexpr uint32_t DESC_NUM_REGS32      = 43;
+  static constexpr uint32_t DESC_BEAT_BYTES      = 8;
+  static constexpr uint32_t DESC_WORDS_PER_BEAT  = DESC_BEAT_BYTES / 4;
+  static constexpr uint32_t DESC_NUM_BEATS       = (DESC_NUM_REGS32 + DESC_WORDS_PER_BEAT - 1) / DESC_WORDS_PER_BEAT;
+  static constexpr uint32_t DESC_ENTRY_STRIDE    = DESC_NUM_BEATS * DESC_BEAT_BYTES;
+  static constexpr uint32_t DESC_WINDOW_BASE     = DESC_BEAT_BYTES;
+
+  enum class MmioMode {
+    Unknown,
+    Descriptor,
+    RawStream
+  };
+
+  enum DescReg : uint32_t {
+    REG_CONTROL        = 0,
+    REG_INPUT_BASE_LO  = 1,
+    REG_WEIGHT_BASE_LO = 3,
+    REG_OUTPUT_BASE_LO = 5,
+    REG_SCALE_BASE_LO  = 7,
+    REG_ZP_BASE_LO     = 9,
+    REG_M_ORIG         = 29,
+    REG_N_ORIG         = 30,
+    REG_K_ORIG         = 31,
+    REG_QBLK_ORIG      = 32,
+    REG_M_TARGET       = 33,
+    REG_N_TARGET       = 34,
+    REG_K_TARGET       = 35,
+    REG_M_START        = 36,
+    REG_N_START        = 37,
+    REG_WTRANS         = 38,
+    REG_QDIR           = 39,
+    REG_LOG2_DMA_MT    = 40,
+    REG_LOG2_DMA_KT    = 41,
+    REG_LOG2_DMA_NT    = 42
+  };
+
+  struct JobEntry {
+    std::array<uint32_t, DESC_NUM_REGS32> regs = {};
+    bool occupied = false;
+    bool working = false;
+    uint32_t generation = 0;
+  };
+
+  uint32_t pack_alloc_response(bool success, uint32_t eid, uint32_t generation) const;
+  uint32_t descriptor_control_value(uint32_t eid) const;
+  bool decode_descriptor_offset(uint64_t off, uint32_t* eid, uint32_t* reg_idx, uint32_t* byte_lane) const;
+  bool descriptor_read(uint64_t off, uint32_t size, uint64_t* value) const;
+  bool descriptor_write(uint64_t off, const void* data, uint32_t size);
+  void execute_descriptor_job(uint32_t eid);
+
+  uint64_t reg_u64(const JobEntry& entry, uint32_t lo_reg) const;
+  uint16_t read_u16(uint64_t addr) const;
+  int16_t read_i16(uint64_t addr) const;
+  void write_u16(uint64_t addr, uint16_t value) const;
+  float fp16_to_float(uint16_t value) const;
+  uint16_t float_to_fp16(float value) const;
+
+  uint64_t input_offset(uint32_t M, uint32_t K, uint32_t dma_mt, uint32_t dma_kt, uint32_t gm, uint32_t gk) const;
+  uint64_t weight_offset(uint32_t N, uint32_t K, uint32_t dma_kt, uint32_t gn, uint32_t gk, bool wtrans, uint32_t* nibble_hi) const;
+  uint64_t scale_offset(uint32_t N, uint32_t K, uint32_t dma_kt, uint32_t dma_nt, uint32_t qblk, uint32_t qdir, uint32_t gn, uint32_t gk) const;
+  uint64_t output_offset(uint32_t M, uint32_t N, uint32_t dma_mt, uint32_t gm, uint32_t gn) const;
+
   Core* core_;
 
   // Entry state (single entry — current kernel uses 1)
@@ -101,6 +166,9 @@ private:
   // Instruction stream assembly buffer
   std::vector<uint64_t> cmd_buf_;
   int expected_words_;
+
+  MmioMode mmio_mode_;
+  std::array<JobEntry, DESC_NUM_ENTRIES> desc_entries_;
 
   // TMEM flat byte array
   std::vector<uint8_t> tmem_;
