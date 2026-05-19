@@ -1,0 +1,16 @@
+task: simx-fpint-gemm-ffn-hw
+status: done
+created: "2026-05-15 19:07"
+updated: "2026-05-15 19:13"
+summary: "Implement simx functional support for tests/regression/fpint_gemm_ffn_hw descriptor-mode GEMM."
+log:
+  - time: "2026-05-15 19:07"
+    note: "Confirmed simx GemmNode still uses the older raw-stream MMIO path while fpint_gemm_ffn_hw programs VX_job_frontend descriptor registers at base 0x1080."
+  - time: "2026-05-15 19:10"
+    note: "Added descriptor MMIO functional path in sim/simx/gemm_node.* and verified simx build. First fpint_gemm_ffn_hw simx smoke passed for -m 2 -n 32 -k 128 -q 32 -t 0 -d 0."
+  - time: "2026-05-15 19:13"
+    note: "Completed simx validation: 4-case matrix smoke passed plus combined WTRANS/QROW/padding/N=128 case passed."
+pitfalls:
+  - "Do not use GEMM_REG_BASE_ADDR from generated VX_config.h in C++; its literal contains Verilog-style underscores."
+  - "The actual workload is fpint_gemm_ffn_hw. fpint_improve is the branch context, not the workload name."
+  - "Generated VX_config.h defines JOB_MMIO_* macros, so GemmNode local bitfield constants need a unique prefix."

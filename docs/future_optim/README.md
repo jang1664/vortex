@@ -41,3 +41,9 @@ Effort key: **S** = single-file / few-hundred-line change.
   lengthens a critical path should pre-stage timing checks.
 - All RTL changes must keep bit-exact compatibility with simx / rtlsim
   unless accompanied by a corresponding behavioral model change.
+
+## Performance architecture notes
+
+- [GEMM sync output HOL blocking](gemm_sync_output_hol_blocking.md): output
+  `WAIT RID_O` can block the single parent command stream and prevent
+  independent compute/preload commands from reaching child queues.
