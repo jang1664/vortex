@@ -126,10 +126,10 @@ def run_rtlsim(configs: str, fwd: list[str]) -> int:
 def run_xrtsim(configs: str, fwd: list[str]) -> int:
     return run_with_env(
         {
-            "DRAM_REQ_STALL_P_ENTER_PCT": "70",
-            "DRAM_REQ_STALL_P_EXIT_PCT": "30",
-            "DRAM_RSP_STALL_P_ENTER_PCT": "70",
-            "DRAM_RSP_STALL_P_EXIT_PCT": "30",
+            "DRAM_REQ_STALL_P_ENTER_PCT": "0",
+            "DRAM_REQ_STALL_P_EXIT_PCT": "100",
+            "DRAM_RSP_STALL_P_ENTER_PCT": "0",
+            "DRAM_RSP_STALL_P_EXIT_PCT": "100",
             "DRAM_STALL_SEED": "1234",
             "CONFIGS": configs,
             "TARGET": "xrtsim",
@@ -154,10 +154,10 @@ def run_xrt_vcs_pgsim(configs: str, fwd: list[str]) -> int:
     netlist = _build_path("hw/syn/xilinx/xrt/hw/gate_sim/vortex_afu_funcsim.v")
     return run_with_env(
         {
-            "DRAM_REQ_STALL_P_ENTER_PCT": "70",
-            "DRAM_REQ_STALL_P_EXIT_PCT": "30",
-            "DRAM_RSP_STALL_P_ENTER_PCT": "70",
-            "DRAM_RSP_STALL_P_EXIT_PCT": "30",
+            "DRAM_REQ_STALL_P_ENTER_PCT": "0",
+            "DRAM_REQ_STALL_P_EXIT_PCT": "100",
+            "DRAM_RSP_STALL_P_ENTER_PCT": "0",
+            "DRAM_RSP_STALL_P_EXIT_PCT": "100",
             "DRAM_STALL_SEED": "1234",
             "CONFIGS": configs,
             "DRIVER": "xrt_vcs_post",
