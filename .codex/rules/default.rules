@@ -1,0 +1,14 @@
+prefix_rule(
+    pattern = ["rm"],
+    decision = "forbidden",
+    justification = "Do not use rm. Move files elsewhere or delete them manually.",
+    match = [
+        "rm foo.txt",
+        "rm -rf build",
+        "rm -f output.log",
+    ],
+    not_match = [
+        "git rm foo.txt",
+        "rmdir build",
+    ],
+)

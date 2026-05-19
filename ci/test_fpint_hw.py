@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Driver for the fpint_gemm_ffn_hw_improve regression across backends.
+"""Driver for the fpint_gemm_ffn_hw regression across backends.
 
 Runs ci/blackbox.sh across a cross-product of (shape x QBLK x WTRANS x QDIR)
 for each requested backend mode. Combinations that violate kernel shape
@@ -32,8 +32,6 @@ from gen_kernel_cfgs import (  # noqa: E402
 
 
 MODES = ("rtlsim", "xrt-vcs-sim", "hw_emu", "hw", "all")
-DEBUG_ARG_CHOICES = ("always", "omit", "auto")
-
 
 # ---------------------------------------------------------------------------
 # Kernel shape constraints (mirrors main.cpp validate block).
@@ -47,8 +45,8 @@ DMA_KT = 128
 def check_constraints(M: int, N: int, K: int,
                       QBLK: int, WTRANS: int, QDIR: int) -> str | None:
     """Return None if valid, else a human-readable reason string."""
-    if M <= 0 or M % 32 != 0:
-        return f"M={M} must be positive multiple of 32"
+    # if M <= 0 or M % 32 != 0:
+    #     return f"M={M} must be positive multiple of 32"
     if N <= 0 or N % MXU_NT != 0:
         return f"N={N} must be positive multiple of MXU_NT={MXU_NT}"
     if K <= 0 or K % MXU_KT != 0:
@@ -95,13 +93,14 @@ def parse_shape_args(arg_str: str) -> dict[str, int]:
 # ---------------------------------------------------------------------------
 DEFAULT_SHAPES = [
     # K=32 (minimum K-tile)
+    "-m 1 -n 32 -k 32",
     "-m 32 -n 32 -k 32",
     "-m 128 -n 32 -k 32",
     "-m 128 -n 128 -k 64",
     "-m 128 -n 128 -k 96",
     # baseline
-    "-m 128 -n 128 -k 128",
-    "-m 256 -n 128 -k 128",
+    # "-m 128 -n 128 -k 128",
+    # "-m 256 -n 128 -k 128",
     "-m 256 -n 256 -k 256",
 ]
 DEFAULT_WTRANS = [0, 1]
@@ -136,9 +135,11 @@ def normalise_case_args(raw: list[str]) -> list[str]:
 # ---------------------------------------------------------------------------
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Driver for the fpint_gemm_ffn_hw_improve regression "
+        usage="%(prog)s [options] [--] [case args ...]",
+        description="Driver for the fpint_gemm_ffn_hw regression "
                     "across backends.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
+        allow_abbrev=False,
         epilog=(
             "Modes:\n"
             "  rtlsim       - Run rtlsim test\n"
@@ -151,17 +152,18 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
             "  --model llama2-7b                     sweep GEMMs used by llama2-7b\n"
             "  --model llama2-7b --seq-lens 128,512  limit to given seq lens\n"
             "  --model list                          print model registry and exit\n"
+            "\n"
+            "Case args:\n"
+            "  Without --model, unknown args are treated as case args.\n"
+            "  Empty case args select the default sweep.\n"
         ),
     )
     # --mode is logically required, but we allow it to be omitted for
     # '--model list' (pure registry query).
     parser.add_argument("--mode", choices=MODES, default=None,
                         help="Backend mode to run. Required unless --model=list.")
-    parser.add_argument("--debug-arg", choices=DEBUG_ARG_CHOICES,
-                        default="always",
-                        help="Debug-arg mode (default: always).")
-    parser.add_argument("--debug-level", default="0",
-                        help="DEBUG_LEVEL env value (default: 0).")
+    parser.add_argument("--debug-level", default="-1",
+                        help="DEBUG_LEVEL env value (default: -1).")
     parser.add_argument(
         "--model", default=None, metavar="NAME",
         help="Test only GEMM shapes from a known model config "
@@ -174,18 +176,21 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
              f"(default: {','.join(map(str, DEFAULT_MODEL_SEQ_LENS))}).",
     )
     parser.add_argument(
-        "case_args", nargs=argparse.REMAINDER,
-        help="Optional positional case args. Empty => default sweep. "
-             "Use -- to separate from options. "
-             "Mutually exclusive with --model.",
+        "--perf", default=None, type=int, metavar="CLASS",
+        help="VORTEX_PROFILING perf class to dump at end-of-run "
+             "Forwarded to blackbox.sh as --perf=N; omitted when unset.",
     )
-    return parser.parse_args(argv)
+    args, case_args = parser.parse_known_args(argv)
+    args.case_args = case_args
+    return args
 
 
 def build_configs() -> str:
     # Base CONFIGS exported by hw_config.sh (via .envrc). Append script-specific flags.
     base = os.environ.get("CONFIGS", "")
     extras = [
+        # "-DWLOAD_AT_ONCE",
+        "-DNDEBUG",
         "-DDBG_TRACE_PIPELINE",
         "-DDBG_TRACE_MEM",
         "-DDBG_TRACE_CACHE",
@@ -194,22 +199,20 @@ def build_configs() -> str:
         "-DDBG_TRACE_GBAR",
         "-DDBG_TRACE_TCU",
         "-DDBG_TRACE_GEMM",
-        "-DNUM_CORES=1",
     ]
     # Add "-DVCD_OUTPUT" here if you want VCD dumps (only useful with DEBUG_LEVEL>=1).
     return f"{base} {' '.join(extras)}".strip()
 
 
-def resolve_debug_args(mode: str, debug_level: str) -> list[str]:
-    if mode == "always":
+def resolve_debug_args(debug_level: str) -> list[str]:
+    if debug_level != "-1":
         return [f"--debug={debug_level}"]
-    if mode == "omit":
+    else:
         return []
-    # auto
-    try:
-        return [f"--debug={debug_level}"] if int(debug_level) >= 1 else []
-    except ValueError:
-        return []
+
+
+def resolve_perf_args(perf: int | None) -> list[str]:
+    return [f"--perf={perf}"] if perf is not None else []
 
 
 # ---------------------------------------------------------------------------
@@ -219,6 +222,7 @@ def run_sweep(driver: str,
               app: str,
               case_args: list[str],
               debug_args: list[str],
+              perf_args: list[str],
               extra_env: dict[str, str],
               log_dir: Path) -> int:
     """Run blackbox.sh for each case under `driver`/`extra_env`.
@@ -265,6 +269,7 @@ def run_sweep(driver: str,
                 f"--driver={driver}",
                 f"--app={app}",
                 *debug_args,
+                *perf_args,
                 f"--log={log_file}",
                 f"--args={args}",
             ]
@@ -303,7 +308,8 @@ def main() -> int:
 
     mode = args.mode
     debug_level = args.debug_level
-    debug_args = resolve_debug_args(args.debug_arg, debug_level)
+    debug_args = resolve_debug_args(debug_level)
+    perf_args = resolve_perf_args(args.perf)
 
     configs = build_configs()
     # Drop VCD_OUTPUT when debug is off (huge VCDs with no useful traces).
@@ -337,13 +343,14 @@ def main() -> int:
                   file=sys.stderr)
         case_args = normalise_case_args(positional)
 
-    app = os.environ.get("APP", "fpint_gemm_ffn_hw_improve")
+    app = os.environ.get("APP", "fpint_gemm_ffn_hw")
     max_log_bytes = os.environ.get("MAX_LOG_BYTES", str(10 * 1024 * 1024))
     base_log_dir = Path(os.environ.get(
-        "LOG_DIR", "run_logs_fpint_gemm_ffn_hw_improve"))
+        "LOG_DIR", "run_logs_fpint_gemm_ffn_hw"))
 
     base_env = {
         "CONFIGS": configs,
+        "LOG_MAX_BYTES": max_log_bytes,
         "MAX_LOG_BYTES": max_log_bytes,
         "VERILATOR_SEED": str(random.randint(1, 32767)),
         "DEBUG_LEVEL": debug_level,
@@ -361,6 +368,7 @@ def main() -> int:
             app=app,
             case_args=case_args,
             debug_args=debug_args,
+            perf_args=perf_args,
             extra_env={**base_env, **mode_env},
             log_dir=log_dir,
         )
