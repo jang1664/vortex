@@ -245,6 +245,220 @@ module VX_gemm_sync import VX_gpu_pkg::*; #(
     end
   end
 
+`ifndef SYNTHESIS
+  // Simulation-only provenance tracker for WAIT/NOTIFY debugging.
+  // NOTIFY is routed to the child selected by the last accepted normal command;
+  // keep that command's payload so waveforms can show what the NOTIFY belongs to.
+  logic [31:0] dbg_cyc_q;
+  logic        dbg_accept_pulse;
+  logic        dbg_wait_active;
+  logic        dbg_wait_accept_pulse;
+  logic        dbg_wait_blocked;
+  logic        dbg_notify_accept_pulse;
+  logic        dbg_normal_accept_pulse;
+
+  logic [31:0] dbg_normal_cmd_id_q;
+  logic [31:0] dbg_wait_id_q;
+  logic [31:0] dbg_notify_id_q;
+  logic [31:0] dbg_update_id_q;
+
+  logic        dbg_last_cmd_valid_q;
+  logic [2:0]  dbg_last_cmd_route_q;
+  logic [3:0]  dbg_last_cmd_opcode_q;
+  logic [31:0] dbg_last_cmd_instr_q;
+  logic [63:0] dbg_last_cmd_rs1_q;
+  logic [63:0] dbg_last_cmd_rs2_q;
+  logic [31:0] dbg_last_cmd_cyc_q;
+  logic [31:0] dbg_last_cmd_id_q;
+
+  logic [7:0]  dbg_wait_reg_id_q;
+  logic [31:0] dbg_wait_target_q;
+  logic [31:0] dbg_wait_reg_val_q;
+  logic        dbg_wait_satisfied_q;
+  logic [31:0] dbg_wait_cyc_q;
+
+  logic [2:0]  dbg_notify_route_q;
+  logic [7:0]  dbg_notify_reg_id_q;
+  logic [31:0] dbg_notify_value_q;
+  logic [31:0] dbg_notify_cyc_q;
+  logic [31:0] dbg_notify_src_cmd_id_q;
+  logic [3:0]  dbg_notify_src_opcode_q;
+  logic [31:0] dbg_notify_src_instr_q;
+  logic [63:0] dbg_notify_src_rs1_q;
+  logic [63:0] dbg_notify_src_rs2_q;
+
+  logic [31:0] dbg_route_last_notify_id_q [N_CHILDREN];
+  logic [7:0]  dbg_route_last_notify_reg_id_q [N_CHILDREN];
+  logic [31:0] dbg_route_last_notify_value_q [N_CHILDREN];
+  logic [31:0] dbg_route_last_notify_src_cmd_id_q [N_CHILDREN];
+  logic [3:0]  dbg_route_last_notify_src_opcode_q [N_CHILDREN];
+  logic [31:0] dbg_route_last_notify_src_instr_q [N_CHILDREN];
+
+  logic [2:0]  dbg_update_route_q;
+  logic [7:0]  dbg_update_reg_id_q;
+  logic [31:0] dbg_update_value_q;
+  logic [31:0] dbg_update_next_value_q;
+  logic [31:0] dbg_update_notify_id_q;
+  logic [31:0] dbg_update_src_cmd_id_q;
+  logic [3:0]  dbg_update_src_opcode_q;
+
+  assign dbg_accept_pulse        = in_valid && can_accept;
+  assign dbg_wait_active         = in_valid && is_wait;
+  assign dbg_wait_accept_pulse   = in_valid && is_wait && can_accept;
+  assign dbg_wait_blocked        = in_valid && is_wait && !can_accept;
+  assign dbg_notify_accept_pulse = in_valid && is_notify && can_accept;
+  assign dbg_normal_accept_pulse = in_valid && can_accept && !is_wait && !is_notify && !is_clear && cmd_valid;
+
+  always_ff @(posedge clk) begin
+    if (reset) begin
+      dbg_cyc_q                 <= 32'd0;
+      dbg_normal_cmd_id_q       <= 32'd0;
+      dbg_wait_id_q             <= 32'd0;
+      dbg_notify_id_q           <= 32'd0;
+      dbg_update_id_q           <= 32'd0;
+
+      dbg_last_cmd_valid_q      <= 1'b0;
+      dbg_last_cmd_route_q      <= '0;
+      dbg_last_cmd_opcode_q     <= '0;
+      dbg_last_cmd_instr_q      <= 32'd0;
+      dbg_last_cmd_rs1_q        <= 64'd0;
+      dbg_last_cmd_rs2_q        <= 64'd0;
+      dbg_last_cmd_cyc_q        <= 32'd0;
+      dbg_last_cmd_id_q         <= 32'd0;
+
+      dbg_wait_reg_id_q         <= 8'd0;
+      dbg_wait_target_q         <= 32'd0;
+      dbg_wait_reg_val_q        <= 32'd0;
+      dbg_wait_satisfied_q      <= 1'b0;
+      dbg_wait_cyc_q            <= 32'd0;
+
+      dbg_notify_route_q        <= '0;
+      dbg_notify_reg_id_q       <= 8'd0;
+      dbg_notify_value_q        <= 32'd0;
+      dbg_notify_cyc_q          <= 32'd0;
+      dbg_notify_src_cmd_id_q   <= 32'd0;
+      dbg_notify_src_opcode_q   <= '0;
+      dbg_notify_src_instr_q    <= 32'd0;
+      dbg_notify_src_rs1_q      <= 64'd0;
+      dbg_notify_src_rs2_q      <= 64'd0;
+
+      dbg_update_route_q        <= '0;
+      dbg_update_reg_id_q       <= 8'd0;
+      dbg_update_value_q        <= 32'd0;
+      dbg_update_next_value_q   <= 32'd0;
+      dbg_update_notify_id_q    <= 32'd0;
+      dbg_update_src_cmd_id_q   <= 32'd0;
+      dbg_update_src_opcode_q   <= '0;
+
+      for (int i = 0; i < N_CHILDREN; i++) begin
+        dbg_route_last_notify_id_q[i]         <= 32'd0;
+        dbg_route_last_notify_reg_id_q[i]     <= 8'd0;
+        dbg_route_last_notify_value_q[i]      <= 32'd0;
+        dbg_route_last_notify_src_cmd_id_q[i] <= 32'd0;
+        dbg_route_last_notify_src_opcode_q[i] <= '0;
+        dbg_route_last_notify_src_instr_q[i]  <= 32'd0;
+      end
+    end else begin
+      dbg_cyc_q <= dbg_cyc_q + 32'd1;
+
+      if (dbg_normal_accept_pulse) begin
+        dbg_normal_cmd_id_q   <= dbg_normal_cmd_id_q + 32'd1;
+        dbg_last_cmd_valid_q  <= 1'b1;
+        dbg_last_cmd_route_q  <= cmd_route;
+        dbg_last_cmd_opcode_q <= opcode;
+        dbg_last_cmd_instr_q  <= gemm_fsm_slv_if.ctrl.cmd.instr;
+        dbg_last_cmd_rs1_q    <= gemm_fsm_slv_if.ctrl.cmd.rs1_data;
+        dbg_last_cmd_rs2_q    <= gemm_fsm_slv_if.ctrl.cmd.rs2_data;
+        dbg_last_cmd_cyc_q    <= dbg_cyc_q;
+        dbg_last_cmd_id_q     <= dbg_normal_cmd_id_q + 32'd1;
+      end
+
+      if (dbg_wait_active) begin
+        if (can_accept)
+          dbg_wait_id_q <= dbg_wait_id_q + 32'd1;
+        dbg_wait_reg_id_q    <= wait_reg_id;
+        dbg_wait_target_q    <= wait_target;
+        dbg_wait_reg_val_q   <= wait_reg_val;
+        dbg_wait_satisfied_q <= wait_satisfied;
+        dbg_wait_cyc_q       <= dbg_cyc_q;
+      end
+
+      if (dbg_notify_accept_pulse) begin
+        dbg_notify_id_q         <= dbg_notify_id_q + 32'd1;
+        dbg_notify_route_q      <= route_eff;
+        dbg_notify_reg_id_q     <= gemm_fsm_slv_if.ctrl.cmd.rs1_data[7:0];
+        dbg_notify_value_q      <= gemm_fsm_slv_if.ctrl.cmd.rs2_data[31:0];
+        dbg_notify_cyc_q        <= dbg_cyc_q;
+        dbg_notify_src_cmd_id_q <= dbg_last_cmd_id_q;
+        dbg_notify_src_opcode_q <= dbg_last_cmd_opcode_q;
+        dbg_notify_src_instr_q  <= dbg_last_cmd_instr_q;
+        dbg_notify_src_rs1_q    <= dbg_last_cmd_rs1_q;
+        dbg_notify_src_rs2_q    <= dbg_last_cmd_rs2_q;
+
+        if (route_eff < ROUTE_W'(N_CHILDREN)) begin
+          dbg_route_last_notify_id_q[route_eff]         <= dbg_notify_id_q + 32'd1;
+          dbg_route_last_notify_reg_id_q[route_eff]     <= gemm_fsm_slv_if.ctrl.cmd.rs1_data[7:0];
+          dbg_route_last_notify_value_q[route_eff]      <= gemm_fsm_slv_if.ctrl.cmd.rs2_data[31:0];
+          dbg_route_last_notify_src_cmd_id_q[route_eff] <= dbg_last_cmd_id_q;
+          dbg_route_last_notify_src_opcode_q[route_eff] <= dbg_last_cmd_opcode_q;
+          dbg_route_last_notify_src_instr_q[route_eff]  <= dbg_last_cmd_instr_q;
+        end
+      end
+
+      if (upd0_valid) begin
+        dbg_update_id_q         <= dbg_update_id_q + 32'd1;
+        dbg_update_route_q      <= 3'd0;
+        dbg_update_reg_id_q     <= rid0;
+        dbg_update_value_q      <= gemm_sync_slv_if[0].value;
+        dbg_update_next_value_q <= sync_regs_n[rid0];
+        dbg_update_notify_id_q  <= dbg_route_last_notify_id_q[0];
+        dbg_update_src_cmd_id_q <= dbg_route_last_notify_src_cmd_id_q[0];
+        dbg_update_src_opcode_q <= dbg_route_last_notify_src_opcode_q[0];
+      end
+      if (upd1_valid) begin
+        dbg_update_id_q         <= dbg_update_id_q + 32'd1;
+        dbg_update_route_q      <= 3'd1;
+        dbg_update_reg_id_q     <= rid1;
+        dbg_update_value_q      <= gemm_sync_slv_if[1].value;
+        dbg_update_next_value_q <= sync_regs_n[rid1];
+        dbg_update_notify_id_q  <= dbg_route_last_notify_id_q[1];
+        dbg_update_src_cmd_id_q <= dbg_route_last_notify_src_cmd_id_q[1];
+        dbg_update_src_opcode_q <= dbg_route_last_notify_src_opcode_q[1];
+      end
+      if (upd2_valid) begin
+        dbg_update_id_q         <= dbg_update_id_q + 32'd1;
+        dbg_update_route_q      <= 3'd2;
+        dbg_update_reg_id_q     <= rid2;
+        dbg_update_value_q      <= gemm_sync_slv_if[2].value;
+        dbg_update_next_value_q <= sync_regs_n[rid2];
+        dbg_update_notify_id_q  <= dbg_route_last_notify_id_q[2];
+        dbg_update_src_cmd_id_q <= dbg_route_last_notify_src_cmd_id_q[2];
+        dbg_update_src_opcode_q <= dbg_route_last_notify_src_opcode_q[2];
+      end
+      if (upd3_valid) begin
+        dbg_update_id_q         <= dbg_update_id_q + 32'd1;
+        dbg_update_route_q      <= 3'd3;
+        dbg_update_reg_id_q     <= rid3;
+        dbg_update_value_q      <= gemm_sync_slv_if[3].value;
+        dbg_update_next_value_q <= sync_regs_n[rid3];
+        dbg_update_notify_id_q  <= dbg_route_last_notify_id_q[3];
+        dbg_update_src_cmd_id_q <= dbg_route_last_notify_src_cmd_id_q[3];
+        dbg_update_src_opcode_q <= dbg_route_last_notify_src_opcode_q[3];
+      end
+      if (upd4_valid) begin
+        dbg_update_id_q         <= dbg_update_id_q + 32'd1;
+        dbg_update_route_q      <= 3'd4;
+        dbg_update_reg_id_q     <= rid4;
+        dbg_update_value_q      <= gemm_sync_slv_if[4].value;
+        dbg_update_next_value_q <= sync_regs_n[rid4];
+        dbg_update_notify_id_q  <= dbg_route_last_notify_id_q[4];
+        dbg_update_src_cmd_id_q <= dbg_route_last_notify_src_cmd_id_q[4];
+        dbg_update_src_opcode_q <= dbg_route_last_notify_src_opcode_q[4];
+      end
+    end
+  end
+`endif
+
 `ifdef CHIPSCOPE
 `ifdef DBG_SCOPE_GEMM
   localparam int DBG_BIT_W    = $bits(logic);
