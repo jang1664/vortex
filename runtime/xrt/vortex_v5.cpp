@@ -692,8 +692,14 @@ public:
   int ready_wait(uint64_t timeout) {
     struct timespec sleep_time;
   #ifndef NDEBUG
+    // If you want slow polling for easier debugging, set VORTEX_READY_WAIT_SLOW=1 MACRO
+  #ifdef VORTEX_READY_WAIT_SLOW
     sleep_time.tv_sec = 1;
     sleep_time.tv_nsec = 0;
+  #else
+    sleep_time.tv_sec = 0;
+    sleep_time.tv_nsec = 1000000;
+  #endif
   #else
     sleep_time.tv_sec = 0;
     sleep_time.tv_nsec = 1000000;
