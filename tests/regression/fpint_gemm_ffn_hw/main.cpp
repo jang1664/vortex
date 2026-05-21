@@ -1,5 +1,6 @@
 #include <iostream>
 #include <unistd.h>
+#include <getopt.h>
 #include <string.h>
 #include <vector>
 #include <cmath>
@@ -25,6 +26,12 @@ static uint32_t K = 32;
 static uint32_t QBLK = 32;
 static uint32_t WTRANS = 0;
 static uint32_t QDIR = 0;
+static uint32_t REPS = 1;
+static bool POWER_MODE = false;
+// Poll-only baseline mode: when > 0, kernel does N MMIO reads instead of GEMM.
+// Used to isolate Vortex-core polling power from HW-GEMM power.
+static uint32_t POLL_ONLY_ITERS = 0;
+static constexpr uint32_t POLL_ONLY_QDIR_SENTINEL = 0xDEADu;
 
 static vx_device_h device = nullptr;
 static vx_buffer_h krnl_buffer = nullptr;
@@ -85,12 +92,24 @@ static void cleanup() {
 }
 
 static void show_usage() {
-  std::cout << "Usage: [-m M] [-n N] [-k K] [-q QBLK] [-t WTRANS] [-d QDIR] [-h]" << std::endl;
+  std::cout << "Usage: [-m M] [-n N] [-k K] [-q QBLK] [-t WTRANS] [-d QDIR]" << std::endl;
+  std::cout << "       [-r REPS] [-p (power-mode: skip reference & verify)]" << std::endl;
+  std::cout << "       [--pol POLL_ITERS] (poll-only baseline mode; implies -p)" << std::endl;
+  std::cout << "       [-h]" << std::endl;
 }
+
+// Long-option-only flag value (out of ASCII range so it doesn't collide with short opts).
+static constexpr int OPT_POL = 0x100;
+
+static struct option long_options[] = {
+  {"pol", required_argument, nullptr, OPT_POL},
+  {nullptr, 0, nullptr, 0},
+};
 
 static void parse_args(int argc, char **argv) {
   int c;
-  while ((c = getopt(argc, argv, "m:n:k:q:t:d:h")) != -1) {
+  int option_index = 0;
+  while ((c = getopt_long(argc, argv, "m:n:k:q:t:d:r:ph", long_options, &option_index)) != -1) {
     switch (c) {
     case 'm': M = atoi(optarg); break;
     case 'n': N = atoi(optarg); break;
@@ -98,6 +117,12 @@ static void parse_args(int argc, char **argv) {
     case 'q': QBLK = atoi(optarg); break;
     case 't': WTRANS = atoi(optarg); break;
     case 'd': QDIR = atoi(optarg); break;
+    case 'r': REPS = atoi(optarg); break;
+    case 'p': POWER_MODE = true; break;
+    case OPT_POL:
+      POLL_ONLY_ITERS = static_cast<uint32_t>(strtoul(optarg, nullptr, 0));
+      POWER_MODE = true;  // poll-only is meaningless with verify; skip ref/verify
+      break;
     case 'h': show_usage(); exit(0); break;
     default: show_usage(); exit(-1);
     }
@@ -186,7 +211,8 @@ static void build_test_vectors(std::vector<uint16_t>& h_A,
                                std::vector<uint8_t>& h_W_int4,
                                std::vector<uint16_t>& h_scales,
                                std::vector<int16_t>& h_zeros,
-                               std::vector<uint16_t>& h_ref_out_fp16) {
+                               std::vector<uint16_t>& h_ref_out_fp16,
+                               bool compute_reference) {
   uint32_t groups_total = (K + QBLK - 1) / QBLK;
   uint32_t ng_total = (N + QBLK - 1) / QBLK;
 
@@ -251,6 +277,10 @@ static void build_test_vectors(std::vector<uint16_t>& h_A,
         h_zeros[k * ng_total + ng] = zp;
       }
     }
+  }
+
+  if (!compute_reference) {
+    return;
   }
 
   for (uint32_t m = 0; m < M; ++m) {
@@ -386,10 +416,12 @@ int main(int argc, char *argv[]) {
     return -1;
   }
 
-  std::cout << "TB-style GEMM MMIO test" << std::endl;
+  std::cout << "TB-style GEMM MMIO test"
+            << (POWER_MODE ? " [POWER MODE: no reference, no verify]" : "")
+            << std::endl;
   std::cout << "M=" << M << ", N=" << N << ", K=" << K
             << ", QBLK=" << QBLK << ", WTRANS=" << WTRANS
-            << ", QDIR=" << QDIR << std::endl;
+            << ", QDIR=" << QDIR << ", REPS=" << REPS << std::endl;
 
   RT_CHECK(vx_dev_open(&device));
 
@@ -413,7 +445,8 @@ int main(int argc, char *argv[]) {
   std::vector<int16_t> h_zeros;
   std::vector<uint16_t> h_ref_out_fp16;
 
-  build_test_vectors(h_A, h_W_int4, h_scales, h_zeros, h_ref_out_fp16);
+  build_test_vectors(h_A, h_W_int4, h_scales, h_zeros, h_ref_out_fp16,
+                     /*compute_reference=*/!POWER_MODE);
 
   RT_CHECK(vx_mem_alloc(device, h_A.size() * sizeof(uint16_t), VX_MEM_READ, &A_buffer));
   RT_CHECK(vx_mem_alloc(device, h_W_int4.size() * sizeof(uint8_t), VX_MEM_READ, &W_int4_buffer));
@@ -472,13 +505,30 @@ int main(int argc, char *argv[]) {
   std::cout << "Uploading kernel arguments and kernel" << std::endl;
   RT_CHECK(vx_upload_bytes(device, &kargs, sizeof(kargs), &args_buffer));
 
-  std::cout << "Starting kernel execution" << std::endl;
-  RT_CHECK(vx_start(device, krnl_buffer, args_buffer));
-  {
-    std::cout << "Waiting for kernel completion..." << std::endl;
+  std::cout << "Starting kernel execution (reps=" << REPS
+            << (POLL_ONLY_ITERS ? " [POLL-ONLY MODE]" : "")
+            << ", poll_iters=" << POLL_ONLY_ITERS << ")" << std::endl;
+  for (uint32_t rep = 0; rep < REPS; ++rep) {
+    // Reset status before each launch and bump generation/eid so the AFU
+    // does not treat consecutive launches as duplicates.
+    kargs.status = MMIO_STATUS_INIT;
+    kargs.job_eid = rep;
+    kargs.job_generation = rep + 1;
+    kargs.last_ctrl = 0;
+    if (POLL_ONLY_ITERS) {
+      // Hijack kargs.QDIR (sentinel) + kargs.K (iteration count) so the
+      // device kernel takes the polling-only path. Real M/N/K stay valid
+      // for the LMEM layout already computed; the kernel ignores them.
+      kargs.QDIR = POLL_ONLY_QDIR_SENTINEL;
+      kargs.K    = POLL_ONLY_ITERS;
+    }
+    RT_CHECK(vx_copy_to_dev(args_buffer, &kargs, 0, sizeof(kargs)));
+
+    RT_CHECK(vx_start(device, krnl_buffer, args_buffer));
     int wait_ret = vx_ready_wait(device, VX_MAX_TIMEOUT);
     if (wait_ret != 0) {
-      std::cerr << "vx_ready_wait failed: ret=" << wait_ret << std::endl;
+      std::cerr << "vx_ready_wait failed at rep=" << rep
+                << ": ret=" << wait_ret << std::endl;
 
       int arg_ret = vx_copy_from_dev(&kargs, args_buffer, 0, sizeof(kargs));
       if (arg_ret == 0) {
@@ -511,7 +561,12 @@ int main(int argc, char *argv[]) {
     return -1;
   }
 
-  int errors = verify_results(C_buffer, h_ref_out_fp16);
+  int errors = 0;
+  if (POWER_MODE) {
+    std::cout << "Power mode: skipping verification" << std::endl;
+  } else {
+    errors = verify_results(C_buffer, h_ref_out_fp16);
+  }
 
   cleanup();
 

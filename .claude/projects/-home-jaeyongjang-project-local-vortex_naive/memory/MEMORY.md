@@ -1,0 +1,1 @@
+- [fpint_naive branch context](project_fpint_naive_status.md) - Current branch uses the MMIO job descriptor frontend with an internal GEMM FSM command generator.

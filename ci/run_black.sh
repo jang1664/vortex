@@ -156,13 +156,13 @@ fi
 # - hw
 # ----------------------------------------------------------------------------
 if [[ "${mode}" == "hw" || "${mode}" == "all" ]]; then
-  srun --gres=fpga:u55c:1 --cpus-per-task=4 --mem=16G --time=01:00:00 --pty bash -c '\
-  CONFIGS=${CONFIGS} \
-  FPGA_BIN_DIR=/home/jaeyongjang/project.local/vortex/build/hw/syn/xilinx/xrt/hw/bin \
+  srun --gres=fpga:u55c:1 --cpus-per-task=4 --mem=16G --time=01:00:00 --pty bash -c "\
+  CONFIGS=\"${CONFIGS}\" \
+  FPGA_BIN_DIR=/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_noDcache_L2cache_a917286dbe/bin \
   PLATFORM=xilinx_u55c_gen3x16_xdma_3_202210_1 \
   DRIVER=xrt \
   TARGET=hw \
   CHIPSCOPE=1 \
-  ./ci/blackbox.sh --threads=${NUM_THREADS} --cores=${NUM_CORES} --driver=xrt --app=${APP} --args="${ARGS}" | tee bb.log
-  '
+  ./ci/blackbox.sh --threads=${NUM_THREADS} --cores=${NUM_CORES} --driver=xrt --app=${APP} --args=\"${ARGS}\" | tee bb.log
+  "
 fi

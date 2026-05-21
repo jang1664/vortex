@@ -95,7 +95,7 @@ static tb_partition_t compute_partition(uint32_t core_id, uint32_t num_tbs, uint
   return part;
 }
 
-static constexpr uint32_t kMaxPollIters = 2000000u;
+static constexpr uint32_t kMaxPollIters = 100000000u;
 static constexpr uint32_t kPoisonWord = 0xBAADF00Du;
 
 static inline void split_u64(uint64_t value, uint32_t& lo, uint32_t& hi) {
@@ -240,6 +240,37 @@ void kernel_mmio_driver(kernel_arg_t *__UNIFORM__ arg) {
   if (reporter) {
     arg->status = MMIO_STATUS_INIT;
     arg->last_ctrl = 0;
+  }
+
+  // Poll-only baseline mode: spin on a GEMM MMIO read for arg->K iterations
+  // without launching any GEMM job. Triggered by QDIR == 0xDEAD. Lets the
+  // host measure pure Vortex-core polling overhead so HW-GEMM ΔP can be
+  // separated from polling baseline.
+  //
+  // The MMIO address and per-iter ALU pattern mirror wait_job_done() so that
+  // the polling rate (loads/sec) and the activated MMIO decode path match a
+  // real GEMM run as closely as possible. eid=0 is used unconditionally; no
+  // alloc handshake is performed, so the entry's CONTROL register is read in
+  // its idle (unallocated) state -- this still exercises the same per-entry
+  // MMIO decode logic that real polling hits.
+  if (arg->QDIR == 0xDEAD) {
+    volatile uint32_t sink = 0;
+    const uint32_t eid_fake = 0;
+    // Pick a generation value that the comparison can never satisfy, so the
+    // expression has the same shape as wait_job_done() but never short-circuits.
+    const uint32_t generation_fake = 0xFFFFFFFFu;
+    for (uint32_t i = 0; i < arg->K; ++i) {
+      uint32_t ctrl     = job_read_reg32(eid_fake, REG_CONTROL);
+      uint32_t curr_gen = (ctrl >> JOB_MMIO_CTRL_GEN_LSB) & bitfield_mask(JOB_MMIO_GEN_W);
+      uint32_t valid    = (ctrl >> JOB_MMIO_CTRL_VALID_BIT) & 1u;
+      uint32_t done     = ((generation_fake < curr_gen) ? 1u : 0u) | (valid ^ 1u);
+      sink ^= ctrl ^ curr_gen ^ valid ^ done;
+    }
+    if (reporter) {
+      arg->last_ctrl = sink;
+      arg->status = MMIO_STATUS_OK;
+    }
+    return;
   }
 
   uint32_t num_tbs = arg->grid_dim[0] * arg->grid_dim[1];
