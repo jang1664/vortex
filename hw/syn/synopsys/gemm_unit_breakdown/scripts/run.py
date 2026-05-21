@@ -259,10 +259,15 @@ def _vortex_home():
 
 
 def synthesis(period_ns: float = 10.0, design_name: str = "VX_gemm_unit_top",
-              syn_dir: str = "syn_topo.run1"):
+              syn_dir: str = "syn_topo.run1",
+              extra_defines: list[str] | None = None):
     """design_name selects WKV (`VX_gemm_unit_top`) or WoQ
     (`VX_woq_gemm_unit_top`) variant. syn_dir lets the caller place the
-    output in a sibling directory so both variants can co-exist."""
+    output in a sibling directory so both variants can co-exist.
+
+    extra_defines is forwarded to DC `analyze -define` so callers can
+    sweep config macros (e.g. ["WLOAD_AT_ONCE", "MXU_COL_TILE=4"]).
+    """
     pre = preprocess()
     vortex = _vortex_home()
     patched_fpnew_pkg = vortex / "hw" / "rtl" / "fpu" / "patched_cvfpu" / "fpnew_pkg.sv"
@@ -330,6 +335,11 @@ def synthesis(period_ns: float = 10.0, design_name: str = "VX_gemm_unit_top",
     seen = set()
     search_paths = [p for p in search_paths if not (p in seen or seen.add(p))]
 
+    defines = ["SYNTHESIS", "NDEBUG", "FPU_FPNEW", "VIVADO"]
+    if extra_defines:
+        defines = defines + list(extra_defines)
+        print(f"[run] extra defines: {list(extra_defines)}")
+
     config = SynthConfig(
         design_dir=str(BUILD_DIR / "syn" / "run" / "v0"),
         syn_dir=syn_dir,
@@ -337,7 +347,7 @@ def synthesis(period_ns: float = 10.0, design_name: str = "VX_gemm_unit_top",
         search_path=search_paths,
         # SYNTHESIS guards the sim-only acc_mem tasks; FPU_FPNEW selects the
         # cvfpu-based VX_fp{16,32}_{mul,add}; NDEBUG matches Vortex defaults.
-        define_list=["SYNTHESIS", "NDEBUG", "FPU_FPNEW", "VIVADO"],
+        define_list=defines,
         an_source_list=sources,
         param_list=[],                       # VX_gemm_unit has only INSTANCE_ID
         period=period_ns,
@@ -365,10 +375,15 @@ if __name__ == "__main__":
                     help="syn_dir override; default = syn_topo.run1 for WKV, "
                     "syn_topo_woq.run1 for WoQ")
     ap.add_argument("--period-ns", type=float, default=10.0)
+    ap.add_argument("--extra-define", action="append", default=[],
+                    metavar="NAME[=VALUE]",
+                    help="Extra `-define` value(s) forwarded to DC analyze. "
+                    "Repeatable. Example: --extra-define WLOAD_AT_ONCE "
+                    "--extra-define MXU_COL_TILE=4")
     args = ap.parse_args()
     syn_dir = args.syn_dir or (
         "syn_topo.run1" if args.design_name == "VX_gemm_unit_top"
         else "syn_topo_woq.run1"
     )
     synthesis(period_ns=args.period_ns, design_name=args.design_name,
-              syn_dir=syn_dir)
+              syn_dir=syn_dir, extra_defines=args.extra_define)

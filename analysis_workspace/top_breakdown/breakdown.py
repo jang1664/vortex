@@ -10,7 +10,10 @@ Run from a Python with hwexplorer installed (e.g. `conda activate stable`):
 
     python analysis_workspace/top_breakdown/breakdown.py
 
-Outputs (alongside this script):
+Defaults to the NT32 synthesis run. Use `--run nt8` to regenerate the NT8
+breakdown.
+
+Outputs (under analysis_workspace/top_breakdown/<run>/):
     vortex_axi_breakdown.csv  - per-bucket area table
     vortex_axi_breakdown.png  - stacked bar figure
     vortex_axi_breakdown.pdf  - same, vector
@@ -18,6 +21,7 @@ Outputs (alongside this script):
 
 from __future__ import annotations
 
+import argparse
 import re
 from pathlib import Path
 
@@ -31,11 +35,17 @@ from hwexplorer.report_parser import SynopsysDesignCompilerAreaParser
 
 HERE = Path(__file__).resolve().parent
 VORTEX = HERE.parents[1]
-RPT = (
-    VORTEX
-    / "build/hw/syn/synopsys/Vortex_axi/syn_topo.lpp"
-    / "reports/14_Vortex_axi.mapped.area.rpt"
-)
+
+RUNS = {
+    "nt8": {
+        "syn_dir": "Vortex_axi",
+        "title": "NT8",
+    },
+    "nt32": {
+        "syn_dir": "Vortex_axi_nt32",
+        "title": "NT32",
+    },
+}
 
 # Bucket = (label, list of full_path regexes).
 # Patterns are matched against `full_path` in the hierarchy DataFrame; each
@@ -143,11 +153,35 @@ def aggregate(hdf: pd.DataFrame) -> tuple[dict[str, float], dict[str, int], list
     return sums, counts, sorted(matched_rows)
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Generate Vortex_axi top-level area breakdown."
+    )
+    parser.add_argument(
+        "--run",
+        choices=RUNS.keys(),
+        default="nt32",
+        help="Synthesis run to analyze. Default: nt32.",
+    )
+    return parser.parse_args()
+
+
 def main():
+    args = parse_args()
+    run = RUNS[args.run]
+    rpt = (
+        VORTEX
+        / "build/hw/syn/synopsys"
+        / run["syn_dir"]
+        / "syn_topo.lpp/reports/14_Vortex_axi.mapped.area.rpt"
+    )
+    out_dir = HERE / args.run
+    out_dir.mkdir(parents=True, exist_ok=True)
+
     parser = SynopsysDesignCompilerAreaParser()
-    db = parser.load(str(RPT))
+    db = parser.load(str(rpt))
     if db.HIERARCHY_KEY not in db.tables:
-        raise SystemExit(f"hierarchy table missing in {RPT}")
+        raise SystemExit(f"hierarchy table missing in {rpt}")
     hdf = db.tables[db.HIERARCHY_KEY]
     total_area = float(db.metadata["total_cell_area"])
 
@@ -203,10 +237,11 @@ def main():
         "area_mm2":    areas_mm2,
         "percent":     pcts,
     })
-    csv_path = HERE / "vortex_axi_breakdown.csv"
+    csv_path = out_dir / "vortex_axi_breakdown.csv"
     df_out.to_csv(csv_path, index=False)
     print(df_out.to_string(index=False, float_format=lambda v: f"{v:10.4f}"))
     print(f"\nTotal cell area: {total_area/1e6:.3f} mm² (sum of buckets = {sum(areas_mm2):.3f} mm²)")
+    print(f"source report: {rpt}")
     print(f"wrote {csv_path}")
 
     # ---- stacked bar ----
@@ -233,7 +268,7 @@ def main():
     ax.set_xlim(-0.8, 0.8)
     ax.set_ylabel("Cell area (mm²)")
     ax.set_title(
-        f"Vortex_axi area breakdown\n"
+        f"Vortex_axi {run['title']} area breakdown\n"
         f"DC topo, Samsung 28LPP — total cell area = {total_mm2:.2f} mm²",
         fontsize=11,
     )
@@ -244,7 +279,7 @@ def main():
 
     fig.tight_layout()
     for ext in ("png", "pdf"):
-        p = HERE / f"vortex_axi_breakdown.{ext}"
+        p = out_dir / f"vortex_axi_breakdown.{ext}"
         fig.savefig(p, dpi=150, bbox_inches="tight")
         print(f"wrote {p}")
     plt.close(fig)

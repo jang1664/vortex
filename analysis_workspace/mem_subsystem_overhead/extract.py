@@ -11,6 +11,10 @@ Outputs:
   routing.csv  rows {design, label, n, core_area, util, overflow,
                      overflow_pct, wirelength_um, macro_area, cell_area}
 
+This extractor deliberately emits raw SRAM macro area only. Accounting choices
+such as "SRAM peri applies to FPxINT but not to the FPFP baseline" are handled
+in plot.py, where the scenario semantics are known.
+
 DC topographical auto-sizes the core to satisfy the optimizer's routability
 estimate. Low utilization at high N is therefore a routing-difficulty signal:
 DC had to give the design more whitespace to make global route feasible.

@@ -23,6 +23,8 @@ Outputs (PNG + PDF):
                                relative TOPS/mm² with per-set Baseline = 1.0.
                                Rule: L = N²/16, D = A = max(1, N²/128). The
                                64×64 FPxINT memory (L=256) is log-log extrapolated.
+                               SRAM-peripheral banking overhead is charged only
+                               to FPxINT, not to the FPFP baseline.
 """
 
 from __future__ import annotations
@@ -434,11 +436,22 @@ def _gemm_area_any(n, kind):
     return GEMM32_MXU_UM2 * s * s + rest * s
 
 
+def _charges_sram_peri(scn) -> bool:
+    """SRAM peri is bank-scaling overhead; charge it only to FPxINT cases."""
+    return scn["kind"] != "fpfp"
+
+
+def _sram_peri_for(scn, *mems) -> float:
+    if not _charges_sram_peri(scn):
+        return 0.0
+    return sum(m["sram_peri"] for m in mems)
+
+
 def _fig7_components(scn, s_split):
     L = s_split[scn["L"]]; C = s_split[scn["C"]]; A = s_split[scn["A"]]
     g = _gemm_area_any(scn["N"], scn["kind"])
     xc = (L["xbar"] + L["ctrl"]) + (C["xbar"] + C["ctrl"]) + (A["xbar"] + A["ctrl"])
-    peri = L["sram_peri"] + C["sram_peri"]   # AXI has no SRAM
+    peri = _sram_peri_for(scn, L, C)   # AXI has no SRAM
     return g, xc, peri
 
 
@@ -451,9 +464,10 @@ def _pnr_full_die(scn, s_split, routing, exclude_sram_base=False):
     L = s_split[scn["L"]]; C = s_split[scn["C"]]; A = s_split[scn["A"]]
     g_cell = _gemm_area_any(scn["N"], scn["kind"])
     sb = 0.0 if exclude_sram_base else 1.0
-    L_cell = L["xbar"] + L["ctrl"] + sb * L["sram_base"] + L["sram_peri"]
-    C_cell = C["xbar"] + C["ctrl"] + sb * C["sram_base"] + C["sram_peri"]
-    A_cell = A["xbar"] + A["ctrl"] + sb * A["sram_base"] + A["sram_peri"]
+    sp = 1.0 if _charges_sram_peri(scn) else 0.0
+    L_cell = L["xbar"] + L["ctrl"] + sb * L["sram_base"] + sp * L["sram_peri"]
+    C_cell = C["xbar"] + C["ctrl"] + sb * C["sram_base"] + sp * C["sram_peri"]
+    A_cell = A["xbar"] + A["ctrl"] + sb * A["sram_base"] + sp * A["sram_peri"]
     uL = routing[("VX_local_mem_top", scn["L"])]["util"]
     uC = routing[("VX_cache_top",     scn["C"])]["util"]
     uA = routing[("VX_axi_adapter",   scn["A"])]["util"]
@@ -485,7 +499,7 @@ def fig7_tops_per_mm2_3set(table):
 
     set_names = ["Set 1\ngemm only\n(w/ PnR)",
                  "Set 2\n+ xbar + ctrl",
-                 "Set 3\n+ SRAM peri\n(cell overhead)",
+                 "Set 3\n+ SRAM peri\n(FPxINT only)",
                  "Set 4\n+ memory PnR\n(full die)"]
     x = np.arange(4)
     width = 0.36
@@ -524,7 +538,7 @@ def fig7_tops_per_mm2_3set(table):
     ax.set_ylabel("TOPS / mm²   (log scale; 100 MHz, 28LPP)")
     ax.set_title("TOPS/mm² across four cumulative area sets: gemm → overhead → full die\n"
                  "GEMM area always includes PnR overhead; Set 4 adds memory PnR "
-                 "(CAP-intrinsic SRAM excluded)",
+                 "(CAP-intrinsic SRAM excluded; SRAM peri charged to FPxINT only)",
                  fontsize=11)
     ax.legend(loc="lower left", fontsize=10, framealpha=0.95)
     ax.yaxis.grid(True, which="both", alpha=0.3)
@@ -606,11 +620,12 @@ def _variant_components(scn, s_split, routing):
     C = _mem_data("VX_cache_top",     scn["C_n"], s_split, routing)
     A = _mem_data("VX_axi_adapter",   scn["A_n"], s_split, routing)
     xc   = (L["xbar"] + L["ctrl"]) + (C["xbar"] + C["ctrl"]) + (A["xbar"] + A["ctrl"])
-    peri = L["sram_peri"] + C["sram_peri"]   # AXI has no SRAM
+    peri = _sram_peri_for(scn, L, C)   # AXI has no SRAM
     # Set 4 (memory full die, CAP-intrinsic SRAM excluded):
-    L_cell = L["xbar"] + L["ctrl"] + L["sram_peri"]
-    C_cell = C["xbar"] + C["ctrl"] + C["sram_peri"]
-    A_cell = A["xbar"] + A["ctrl"] + A["sram_peri"]
+    sp = 1.0 if _charges_sram_peri(scn) else 0.0
+    L_cell = L["xbar"] + L["ctrl"] + sp * L["sram_peri"]
+    C_cell = C["xbar"] + C["ctrl"] + sp * C["sram_peri"]
+    A_cell = A["xbar"] + A["ctrl"] + sp * A["sram_peri"]
     full_die = g_die + L_cell / L["util"] + C_cell / C["util"] + A_cell / A["util"]
     return g_die, xc, peri, full_die, (L, C, A)
 
@@ -650,7 +665,7 @@ def _draw_variant_on_axis(ax, d, ymax):
     width = 0.36
     set_names = ["Set 1\ngemm only\n(w/ PnR)",
                  "Set 2\n+ xbar + ctrl",
-                 "Set 3\n+ SRAM peri\n(cell overhead)",
+                 "Set 3\n+ SRAM peri\n(FPxINT only)",
                  "Set 4\n+ memory PnR\n(full die)"]
 
     bars_b = ax.bar(x - width/2, d["rel_b"], width, color="#888888",
@@ -723,7 +738,8 @@ def fig8_tops_recovery_all(table):
 
     fig.suptitle("Relative TOPS/mm² across four cumulative area sets — array-size sweep\n"
                  "GEMM area always includes PnR overhead; Set 4 adds memory PnR "
-                 "(CAP-intrinsic SRAM excluded). '(extrap)' = log-log extrapolated.",
+                 "(CAP-intrinsic SRAM excluded; SRAM peri charged to FPxINT only). "
+                 "'(extrap)' = log-log extrapolated.",
                  fontsize=11)
     fig.tight_layout(rect=[0, 0, 1, 0.95])
     for ext in ("png", "pdf"):

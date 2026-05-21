@@ -8,6 +8,12 @@ Run from the vortex repo root:
     PYTHONPATH=/home/jaeyong.jang/project.local/research/hwexplorer \
         python3 hw/syn/synopsys/run_syn_vortex_axi.py
 
+Override thread count / run directory without editing this file:
+
+    NUM_THREADS=32 SYN_RUN_NAME=Vortex_axi_nt32 \
+    PYTHONPATH=/home/jaeyong.jang/project.local/research/hwexplorer \
+        python3 hw/syn/synopsys/run_syn_vortex_axi.py
+
 Build artifacts land in build/syn/synopsys/Vortex_axi/syn_topo.lpp/.
 """
 
@@ -26,13 +32,31 @@ VORTEX_HOME  = os.path.abspath(os.path.join(THIS_DIR, "..", "..", ".."))
 RTL          = f"{VORTEX_HOME}/hw/rtl"
 THIRD_PARTY  = f"{VORTEX_HOME}/third_party"
 SCRIPTS      = f"{VORTEX_HOME}/hw/scripts"
-RESULT_ROOT  = f"{VORTEX_HOME}/build/syn/synopsys"
+RESULT_ROOT  = os.environ.get("SYN_RESULT_ROOT", f"{VORTEX_HOME}/build/syn/synopsys")
+RUN_NAME     = os.environ.get("SYN_RUN_NAME", "Vortex_axi")
+
+
+def _env_int(name, default):
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    try:
+        parsed = int(value, 0)
+    except ValueError:
+        sys.exit(f"{name} must be an integer, got {value!r}")
+    if parsed <= 0:
+        sys.exit(f"{name} must be positive, got {parsed}")
+    return parsed
+
+
+NUM_THREADS  = _env_int("NUM_THREADS", 8)
 
 # Samsung 28LPP compiled SRAMs (see agent-tasks/synopsys-dc-port/sram_inventory.md)
 MEM_GEN_DIR  = "/home/data/memory_compiler/28LPP/genSEC"
 MAX_CORNER   = "ss_0p900v_0p900v_125c"
 SRAM_SPECS   = [
     "cmos28lpp_ra1w_hd_8192x64m16",
+    "cmos28lpp_ra1w_hd_2048x64m16",
     "cmos28lpp_ra1w_hs_2048x128m8",
     "cmos28lpp_ra1w_hs_1024x128m8",
     "cmos28lpp_rf1_hd_64x128m2",
@@ -69,7 +93,7 @@ DEFINES = [
     "L2_ENABLE",
     "NUM_CLUSTERS=1",
     "NUM_CORES=1",
-    "NUM_THREADS=8",
+    f"NUM_THREADS={NUM_THREADS}",
     # local + tensor mem
     "LMEM_LOG_SIZE=19",
     "TMEM_BANK_SIZE=65536",
@@ -183,7 +207,7 @@ AXI_SOURCES = [
 
 def _enumerate_sources():
     """Run gen_sources.sh, parse +incdir+ / file lines, return (incdirs, sources)."""
-    out_dir = f"{RESULT_ROOT}/Vortex_axi"
+    out_dir = f"{RESULT_ROOT}/{RUN_NAME}"
     os.makedirs(out_dir, exist_ok=True)
     out_file = f"{out_dir}/gen_sources.txt"
 
@@ -266,7 +290,7 @@ def main():
 
     cfg = SynthConfig(
         design_dir   = RESULT_ROOT,
-        syn_dir      = "Vortex_axi/syn_topo.lpp",
+        syn_dir      = f"{RUN_NAME}/syn_topo.lpp",
         design_name  = "Vortex_axi",
         search_path  = incdirs,
         define_list  = DEFINES,
