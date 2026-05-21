@@ -845,7 +845,6 @@ private:
       if (pBuf) {
         *pBuf = it->second.xrtBuffer;
       } else {
-        printf("reusing bank%d...\n", bank_id);
         ++it->second.count;
       }
     } else {
