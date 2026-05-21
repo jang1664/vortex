@@ -31,7 +31,7 @@
 ///   - aten::native_dropout via dropout kernel
 ///   - vortex::rms_norm   via rmsnorm kernel (custom op)
 ///   - vortex::apply_rotary_pos_emb via rope kernel (custom op)
-///   - vortex::mm_w4a16 via fpint_gemm_ffn_hw kernel (W4A16 mixed-precision GEMM)
+///   - vortex::mm_w4a16 via fpint_gemm_ffn_hw_naive kernel (W4A16 mixed-precision GEMM)
 
 namespace at::vortex {
 
@@ -398,8 +398,8 @@ struct dropout_kernel_arg_t {
   uint64_t dst_addr;
 };
 
-// --- fpint_gemm_ffn (W4A16 mixed-precision GEMM via MMIO) ---
-// Must match tests/regression/fpint_gemm_ffn_hw/common.h :: kernel_arg_t
+// --- fpint_gemm_ffn naive (W4A16 mixed-precision GEMM via MMIO) ---
+// Must match tests/regression/fpint_gemm_ffn_hw_naive/common.h :: kernel_arg_t
 struct fpint_gemm_kernel_arg_t {
   uint32_t grid_dim[2];
   uint32_t block_dim[2];
@@ -2128,7 +2128,8 @@ at::Tensor vortex_mm_w4a16(
   karg.last_ctrl      = 0;
 
   // --- launch ---
-  static std::string path = find_kernel("fpint_gemm_ffn", "fpint_gemm_ffn_hw");
+  static std::string path =
+      find_kernel("fpint_gemm_ffn_hw_naive", "fpint_gemm_ffn_hw_naive");
   launch_kernel(device, &karg, sizeof(karg), path);
 
   return output;
@@ -2207,7 +2208,7 @@ at::Tensor vortex_mm_w4a16_gemm_core(
   karg.QDIR   = static_cast<uint32_t>(qdir);
   karg.status = FPINT_MMIO_STATUS_INIT;
 
-  static std::string path = find_kernel("fpint_gemm_ffn", "fpint_gemm_ffn_hw");
+  static std::string path = find_kernel("fpint_gemm_ffn_hw", "fpint_gemm_ffn_hw");
   launch_kernel(device, &karg, sizeof(karg), path);
   return Y_tiled;
 }
@@ -2306,7 +2307,7 @@ at::Tensor vortex_mm_w4a16_opt(
   karg.status = FPINT_MMIO_STATUS_INIT;
 
   static std::string path =
-      find_kernel("fpint_gemm_ffn", "fpint_gemm_ffn_hw");
+      find_kernel("fpint_gemm_ffn_hw", "fpint_gemm_ffn_hw");
   launch_kernel(device, &karg, sizeof(karg), path);
 
   // ---- 6. Detile output AND narrow to [M, N] (single device kernel) ----

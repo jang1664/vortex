@@ -144,6 +144,7 @@ def main():
         "torch_vortex": [
             "lib/*.so*",
             "lib/*.dylib*",
+            "kernels/*.vxbin",
         ]
     }
 
