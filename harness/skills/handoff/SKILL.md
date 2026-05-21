@@ -1,3 +1,8 @@
+---
+name: handoff
+description: Use when generating a self-contained Vortex task handoff from agent-tasks STATUS.yaml files and current worktree context.
+---
+
 # Handoff
 
 Generate a handoff document, then guide the user through `/clear` and resume.

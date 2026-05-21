@@ -39,3 +39,10 @@ ci/run_black.sh --help
 ```
 
 - Always use **xrt-vcs-sim** mode if not explicitly requested by user
+
+## Codex Skills
+
+- Codex project skills are exposed through `.agents/skills`, with each skill symlinked to the shared source under `harness/skills`.
+- Use `run-fsm` for `agent-tasks/**/fsm.json` workflows, `rtl-improve` for iterative RTL implementation/verification loops, `run-bb-common` for blackbox runs, and `debug-xrt-vcs` for xrt_vcs failure analysis.
+- Claude hooks under `harness/hooks` are not automatic in Codex. Follow the corresponding skill procedure and run referenced validation scripts manually when needed.
+- When a skill mentions a Claude slash command such as `/run-fsm`, `/run-bb-common`, or `/handoff`, treat it as invoking the matching Codex skill.

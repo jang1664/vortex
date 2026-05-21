@@ -1,3 +1,8 @@
+---
+name: run-fsm
+description: Use when executing or continuing a Vortex task FSM under agent-tasks using fsm.json, STATUS.yaml, checklists, transitions, and confidence checks.
+---
+
 # Run FSM
 
 Execute a task FSM. The user invokes this with `/run-fsm <task_name>`.

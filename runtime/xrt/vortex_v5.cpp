@@ -146,6 +146,7 @@ public:
   #ifdef BANK_INTERLEAVE
     , bo_size_(0)
   #endif
+    , pending_ap_done_(false)
   #ifndef CPP_API
     , xrtDevice_(nullptr)
     , xrtKernel_(nullptr)
@@ -678,9 +679,12 @@ public:
     });
 
     // Barrier after AP_START to avoid posted-write timing surprises.
+    // AP_DONE is read-clear on ap_ctrl_hs.  Tiny kernels can complete before
+    // this barrier read, so latch that completion for ready_wait().
     CHECK_ERR(this->read_register(MMIO_CTL_ADDR, &status), {
       return err;
     });
+    pending_ap_done_ = (status & CTL_AP_DONE) != 0;
 
     mpm_cache_.clear();
     shm_.record_kernel(krnl_addr);
@@ -692,8 +696,14 @@ public:
   int ready_wait(uint64_t timeout) {
     struct timespec sleep_time;
   #ifndef NDEBUG
+    // If you want slow polling for easier debugging, set VORTEX_READY_WAIT_SLOW=1 MACRO
+  #ifdef VORTEX_READY_WAIT_SLOW
     sleep_time.tv_sec = 1;
     sleep_time.tv_nsec = 0;
+  #else
+    sleep_time.tv_sec = 0;
+    sleep_time.tv_nsec = 1000000;
+  #endif
   #else
     sleep_time.tv_sec = 0;
     sleep_time.tv_nsec = 1000000;
@@ -702,6 +712,11 @@ public:
     uint64_t sleep_time_ms = (sleep_time.tv_sec * 1000) + (sleep_time.tv_nsec / 1000000);
 
     for (;;) {
+      if (pending_ap_done_) {
+        pending_ap_done_ = false;
+        break;
+      }
+
       uint32_t status = 0;
       CHECK_ERR(this->read_register(MMIO_CTL_ADDR, &status), {
         return err;
@@ -788,6 +803,7 @@ private:
   uint32_t lg2_num_banks_;
   uint32_t lg2_bank_size_;
   ShmStatus shm_;
+  bool pending_ap_done_;
 
 #ifdef BANK_INTERLEAVE
 

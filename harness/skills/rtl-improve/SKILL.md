@@ -1,3 +1,8 @@
+---
+name: rtl-improve
+description: Use when running an iterative Vortex RTL improvement loop with implementation, verification, STATUS.yaml logging, and blackbox follow-up.
+---
+
 # RTL Improve Loop
 
 Iterative RTL implementation and verification loop. The user provides an improvement idea, then RTL and verification subagents iterate until all tests pass (max 10 iterations).

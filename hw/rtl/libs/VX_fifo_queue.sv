@@ -58,6 +58,11 @@ module VX_fifo_queue #(
         .size  (size)
     );
 
+`ifndef SYNTHESIS
+    wire [SIZEW-1:0] dbg_size;
+    assign dbg_size = size;
+`endif
+
     if (DEPTH == 1) begin : g_depth_1
         `UNUSED_PARAM (OUT_REG)
         `UNUSED_PARAM (LUTRAM)

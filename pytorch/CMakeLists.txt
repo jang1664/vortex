@@ -176,6 +176,28 @@ else()
                   "native aten::mm will not work.  Build the sgemm_tcu test first.")
 endif()
 
+set(_FPINT_GEMM_FFN_HW_VXBIN "${VORTEX_BUILD_DIR}/tests/regression/fpint_gemm_ffn_hw/kernel.vxbin")
+if(EXISTS ${_FPINT_GEMM_FFN_HW_VXBIN})
+  install(FILES ${_FPINT_GEMM_FFN_HW_VXBIN}
+          DESTINATION ${CMAKE_INSTALL_PREFIX}/kernels
+          RENAME fpint_gemm_ffn_hw.vxbin)
+  message(STATUS "Will install fpint_gemm_ffn_hw kernel: ${_FPINT_GEMM_FFN_HW_VXBIN}")
+else()
+  message(WARNING "fpint_gemm_ffn_hw kernel binary not found at ${_FPINT_GEMM_FFN_HW_VXBIN} -- "
+                  "vortex::mm_w4a16_opt will not work.  Build the fpint_gemm_ffn_hw test first.")
+endif()
+
+set(_FPINT_GEMM_FFN_HW_NAIVE_VXBIN "${VORTEX_BUILD_DIR}/tests/regression/fpint_gemm_ffn_hw_naive/kernel.vxbin")
+if(EXISTS ${_FPINT_GEMM_FFN_HW_NAIVE_VXBIN})
+  install(FILES ${_FPINT_GEMM_FFN_HW_NAIVE_VXBIN}
+          DESTINATION ${CMAKE_INSTALL_PREFIX}/kernels
+          RENAME fpint_gemm_ffn_hw_naive.vxbin)
+  message(STATUS "Will install fpint_gemm_ffn_hw_naive kernel: ${_FPINT_GEMM_FFN_HW_NAIVE_VXBIN}")
+else()
+  message(WARNING "fpint_gemm_ffn_hw_naive kernel binary not found at ${_FPINT_GEMM_FFN_HW_NAIVE_VXBIN} -- "
+                  "vortex::mm_w4a16 will not work.  Build the fpint_gemm_ffn_hw_naive test first.")
+endif()
+
 set(_SILU_VXBIN "${VORTEX_BUILD_DIR}/tests/regression/silu/kernel.vxbin")
 if(EXISTS ${_SILU_VXBIN})
   install(FILES ${_SILU_VXBIN}

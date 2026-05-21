@@ -1,3 +1,8 @@
+---
+name: debug-xrt-vcs
+description: Use when diagnosing Vortex blackbox failures in xrt_vcs mode, including compile logs, simv logs, X propagation, hangs, and waveform workflows.
+---
+
 # Debugging xrt_vcs Blackbox Tests
 
 Guide for diagnosing failures in `blackbox.sh --driver=xrt_vcs` runs.

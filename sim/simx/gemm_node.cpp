@@ -13,6 +13,7 @@
 
 #include "gemm_node.h"
 
+#include <algorithm>
 #include <cassert>
 #include <cstring>
 
@@ -42,6 +43,49 @@ uint32_t pack_state(bool bit0, uint32_t gen) {
   return (uint32_t(bit0) & 1u) | ((gen & 0x7fffffffu) << 1);
 }
 
+constexpr uint32_t GN_JOB_ENTRY_BITS      = 4;
+constexpr uint32_t GN_JOB_GEN_BITS        = 16;
+constexpr uint32_t GN_ALLOC_SUCC_BIT      = 0;
+constexpr uint32_t GN_ALLOC_ENTRY_LSB     = 1;
+constexpr uint32_t GN_ALLOC_OWNER_LSB     = GN_ALLOC_ENTRY_LSB + GN_JOB_ENTRY_BITS;
+constexpr uint32_t GN_ALLOC_GEN_LSB       = GN_ALLOC_OWNER_LSB + 4;
+constexpr uint32_t GN_CTRL_VALID_BIT      = 0;
+constexpr uint32_t GN_CTRL_OCCUPY_BIT     = 1;
+constexpr uint32_t GN_CTRL_WORKING_BIT    = 2;
+constexpr uint32_t GN_CTRL_OWNER_LSB      = 3;
+constexpr uint32_t GN_CTRL_GEN_LSB        = GN_CTRL_OWNER_LSB + 4;
+
+uint32_t bit_mask(uint32_t bits) {
+  return (bits >= 32) ? 0xffffffffu : ((1u << bits) - 1u);
+}
+
+uint64_t byte_mask(uint32_t size) {
+  return (size >= 8) ? 0xffffffffffffffffULL : ((1ULL << (size * 8)) - 1ULL);
+}
+
+uint32_t ceil_div(uint32_t a, uint32_t b) {
+  return (a + b - 1) / b;
+}
+
+uint32_t align_up(uint32_t value, uint32_t alignment) {
+  return (value + alignment - 1) & ~(alignment - 1);
+}
+
+uint64_t align_up_u64(uint64_t value, uint64_t alignment) {
+  return (value + alignment - 1) & ~(alignment - 1);
+}
+
+uint32_t min_left(uint32_t total, uint32_t base, uint32_t limit) {
+  return (total > base) ? std::min(total - base, limit) : 0;
+}
+
+uint32_t log2_to_size(uint32_t log2_value, uint32_t fallback) {
+  if (log2_value >= 31)
+    return fallback;
+  uint32_t value = 1u << log2_value;
+  return value ? value : fallback;
+}
+
 } // anonymous namespace
 
 GemmNode::GemmNode(Core* core)
@@ -51,6 +95,7 @@ GemmNode::GemmNode(Core* core)
   , completion_cycle_(0)
   , cycle_counter_(0)
   , expected_words_(0)
+  , mmio_mode_(MmioMode::Unknown)
   , tmem_(TMEM_SIZE, 0)
   , acc_mem_(ACC_MEM_FP32_COUNT, 0.0f)
 {
@@ -70,6 +115,13 @@ void GemmNode::reset() {
   cycle_counter_ = 0;
   cmd_buf_.clear();
   expected_words_ = 0;
+  mmio_mode_ = MmioMode::Unknown;
+  for (auto& entry : desc_entries_) {
+    entry.regs.fill(0);
+    entry.occupied = false;
+    entry.working = false;
+    entry.generation = 0;
+  }
   std::fill(tmem_.begin(), tmem_.end(), uint8_t(0));
   std::fill(acc_mem_.begin(), acc_mem_.end(), 0.0f);
   for (int b = 0; b < 2; ++b) {
@@ -80,27 +132,49 @@ void GemmNode::reset() {
   }
 }
 
+bool GemmNode::busy() const {
+  if (occupied_)
+    return true;
+  for (const auto& entry : desc_entries_) {
+    if (entry.occupied)
+      return true;
+  }
+  return false;
+}
+
 uint64_t GemmNode::mmio_read(uint64_t addr, uint32_t size) {
   const uint64_t off = addr - BASE_ADDR;
 
   if (off == OFF_ALLOC) {
-    // Allocate on read: if not occupied, take it; advance generation.
+    // Allocate on read: the descriptor ABI packs entry/owner/generation fields
+    // at different positions from the older stream-only STATE register.
     uint32_t ret;
-    if (!occupied_) {
+    auto& entry = desc_entries_[0];
+    if (!occupied_ && !entry.occupied) {
       generation_ = (generation_ + 1) & 0x7fffffffu;
+      entry.generation = (entry.generation + 1) & bit_mask(GN_JOB_GEN_BITS);
+      entry.regs.fill(0);
+      entry.occupied = true;
+      entry.working = false;
       occupied_ = true;
-      ret = pack_state(true, generation_);
+      mmio_mode_ = MmioMode::Unknown;
+      ret = pack_alloc_response(true, 0, entry.generation);
     } else {
-      ret = pack_state(false, generation_);
+      ret = pack_alloc_response(false, 0, entry.generation);
     }
     DP(3, "GemmNode: ALLOC read -> 0x" << std::hex << ret << " (occupied=" << occupied_ << ", gen=" << std::dec << generation_ << ")");
-    return uint64_t(ret) & ((size >= 4) ? 0xffffffffULL : ((1ULL << (size * 8)) - 1ULL));
+    return uint64_t(ret) & byte_mask(size);
   }
 
-  if (off == OFF_STATE) {
+  uint64_t desc_value = 0;
+  if (mmio_mode_ != MmioMode::RawStream && descriptor_read(off, size, &desc_value)) {
+    return desc_value & byte_mask(size);
+  }
+
+  if (off == OFF_STATE && mmio_mode_ == MmioMode::RawStream) {
     uint32_t ret = pack_state(occupied_, generation_);
     DP(3, "GemmNode: STATE read -> 0x" << std::hex << ret);
-    return uint64_t(ret) & ((size >= 4) ? 0xffffffffULL : ((1ULL << (size * 8)) - 1ULL));
+    return uint64_t(ret) & byte_mask(size);
   }
 
   // STREAM is write-only; other offsets are reserved. Return 0.
@@ -111,17 +185,358 @@ uint64_t GemmNode::mmio_read(uint64_t addr, uint32_t size) {
 void GemmNode::mmio_write(uint64_t addr, const void* data, uint32_t size) {
   const uint64_t off = addr - BASE_ADDR;
 
+  if (mmio_mode_ != MmioMode::RawStream && descriptor_write(off, data, size)) {
+    mmio_mode_ = MmioMode::Descriptor;
+    return;
+  }
+
   if (off == OFF_STREAM) {
     // STREAM accepts 64-bit words. Extract lower `size*8` bits as the word.
     uint64_t w = 0;
     assert(size <= 8);
     std::memcpy(&w, data, size);
+    mmio_mode_ = MmioMode::RawStream;
+    desc_entries_[0].occupied = false;
+    desc_entries_[0].working = false;
     push_stream_word(w);
     return;
   }
 
   // Writes to ALLOC/STATE are ignored (as per RTL: these are RO from SW side).
   DP(3, "GemmNode: ignored write at offset 0x" << std::hex << off);
+}
+
+uint32_t GemmNode::pack_alloc_response(bool success, uint32_t eid, uint32_t generation) const {
+  uint32_t value = 0;
+  value |= (uint32_t(success) & 1u) << GN_ALLOC_SUCC_BIT;
+  value |= (eid & bit_mask(GN_JOB_ENTRY_BITS)) << GN_ALLOC_ENTRY_LSB;
+  value |= (generation & bit_mask(GN_JOB_GEN_BITS)) << GN_ALLOC_GEN_LSB;
+  return value;
+}
+
+uint32_t GemmNode::descriptor_control_value(uint32_t eid) const {
+  const auto& entry = desc_entries_[eid];
+  uint32_t value = entry.regs[REG_CONTROL] & (1u << GN_CTRL_VALID_BIT);
+  value |= (uint32_t(entry.occupied) & 1u) << GN_CTRL_OCCUPY_BIT;
+  value |= (uint32_t(entry.working) & 1u) << GN_CTRL_WORKING_BIT;
+  value |= (entry.generation & bit_mask(GN_JOB_GEN_BITS)) << GN_CTRL_GEN_LSB;
+  return value;
+}
+
+bool GemmNode::decode_descriptor_offset(uint64_t off, uint32_t* eid, uint32_t* reg_idx, uint32_t* byte_lane) const {
+  if (off < DESC_WINDOW_BASE)
+    return false;
+  const uint64_t desc_off = off - DESC_WINDOW_BASE;
+  const uint32_t entry_id = uint32_t(desc_off / DESC_ENTRY_STRIDE);
+  if (entry_id >= DESC_NUM_ENTRIES)
+    return false;
+  const uint32_t entry_off = uint32_t(desc_off % DESC_ENTRY_STRIDE);
+  const uint32_t beat = entry_off / DESC_BEAT_BYTES;
+  const uint32_t word_in_beat = (entry_off % DESC_BEAT_BYTES) / 4;
+  const uint32_t reg = beat * DESC_WORDS_PER_BEAT + word_in_beat;
+  if (reg >= DESC_NUM_REGS32)
+    return false;
+
+  *eid = entry_id;
+  *reg_idx = reg;
+  *byte_lane = entry_off % 4;
+  return true;
+}
+
+bool GemmNode::descriptor_read(uint64_t off, uint32_t size, uint64_t* value) const {
+  if (size == 0 || size > 8)
+    return false;
+
+  uint64_t result = 0;
+  for (uint32_t i = 0; i < size; ++i) {
+    uint32_t eid, reg_idx, byte_lane;
+    if (!decode_descriptor_offset(off + i, &eid, &reg_idx, &byte_lane))
+      return false;
+    uint32_t reg_value = (reg_idx == REG_CONTROL)
+                         ? descriptor_control_value(eid)
+                         : desc_entries_[eid].regs[reg_idx];
+    result |= uint64_t((reg_value >> (byte_lane * 8)) & 0xffu) << (i * 8);
+  }
+
+  *value = result;
+  return true;
+}
+
+bool GemmNode::descriptor_write(uint64_t off, const void* data, uint32_t size) {
+  if (size == 0 || size > 8)
+    return false;
+
+  // The legacy stream path writes 64-bit command words at off=8. The current
+  // descriptor kernel uses 32-bit writes, so keep that single case for raw mode.
+  if (off == OFF_STREAM && size == 8 && mmio_mode_ == MmioMode::Unknown)
+    return false;
+
+  const auto* bytes = reinterpret_cast<const uint8_t*>(data);
+  bool control_touched[DESC_NUM_ENTRIES] = {};
+
+  for (uint32_t i = 0; i < size; ++i) {
+    uint32_t eid, reg_idx, byte_lane;
+    if (!decode_descriptor_offset(off + i, &eid, &reg_idx, &byte_lane))
+      return false;
+    auto& entry = desc_entries_[eid];
+    uint32_t reg_value = entry.regs[reg_idx];
+    reg_value &= ~(0xffu << (byte_lane * 8));
+    reg_value |= uint32_t(bytes[i]) << (byte_lane * 8);
+    if (reg_idx == REG_CONTROL) {
+      entry.regs[REG_CONTROL] = reg_value & (1u << GN_CTRL_VALID_BIT);
+      control_touched[eid] = true;
+    } else {
+      entry.regs[reg_idx] = reg_value;
+    }
+  }
+
+  for (uint32_t eid = 0; eid < DESC_NUM_ENTRIES; ++eid) {
+    auto& entry = desc_entries_[eid];
+    if (control_touched[eid]
+        && entry.occupied
+        && !entry.working
+        && ((entry.regs[REG_CONTROL] >> GN_CTRL_VALID_BIT) & 1u)) {
+      entry.working = true;
+      execute_descriptor_job(eid);
+      entry.regs[REG_CONTROL] &= ~(1u << GN_CTRL_VALID_BIT);
+      entry.working = false;
+      entry.occupied = false;
+      occupied_ = false;
+    }
+  }
+
+  return true;
+}
+
+uint64_t GemmNode::reg_u64(const JobEntry& entry, uint32_t lo_reg) const {
+  return uint64_t(entry.regs[lo_reg]) | (uint64_t(entry.regs[lo_reg + 1]) << 32);
+}
+
+uint16_t GemmNode::read_u16(uint64_t addr) const {
+  uint16_t value = 0;
+  core_->dcache_read(&value, addr, sizeof(value));
+  return value;
+}
+
+int16_t GemmNode::read_i16(uint64_t addr) const {
+  int16_t value = 0;
+  core_->dcache_read(&value, addr, sizeof(value));
+  return value;
+}
+
+void GemmNode::write_u16(uint64_t addr, uint16_t value) const {
+  core_->dcache_write(&value, addr, sizeof(value));
+}
+
+float GemmNode::fp16_to_float(uint16_t value) const {
+  uint32_t bits = rv_htof_s(value, 0, nullptr);
+  float out;
+  std::memcpy(&out, &bits, sizeof(out));
+  return out;
+}
+
+uint16_t GemmNode::float_to_fp16(float value) const {
+  uint32_t bits;
+  std::memcpy(&bits, &value, sizeof(bits));
+  return rv_ftoh_s(bits, 0, nullptr);
+}
+
+uint64_t GemmNode::input_offset(uint32_t M, uint32_t K, uint32_t dma_mt, uint32_t dma_kt, uint32_t gm, uint32_t gk) const {
+  const uint32_t mt = gm / dma_mt;
+  const uint32_t kt = gk / dma_kt;
+  const uint32_t k_tiles = ceil_div(K, dma_kt);
+
+  uint64_t offset = 0;
+  for (uint32_t mt_i = 0; mt_i < mt; ++mt_i) {
+    uint32_t cur_m = min_left(M, mt_i * dma_mt, dma_mt);
+    uint32_t cur_m_slot = align_up(cur_m, 8);
+    for (uint32_t kt_i = 0; kt_i < k_tiles; ++kt_i) {
+      uint32_t cur_k = min_left(K, kt_i * dma_kt, dma_kt);
+      offset += uint64_t(cur_m_slot) * cur_k * 2;
+    }
+  }
+  uint32_t cur_m = min_left(M, mt * dma_mt, dma_mt);
+  uint32_t cur_m_slot = align_up(cur_m, 8);
+  for (uint32_t kt_i = 0; kt_i < kt; ++kt_i) {
+    uint32_t cur_k = min_left(K, kt_i * dma_kt, dma_kt);
+    offset += uint64_t(cur_m_slot) * cur_k * 2;
+  }
+
+  const uint32_t local_m = gm - mt * dma_mt;
+  const uint32_t local_k = gk - kt * dma_kt;
+  const uint32_t kb = local_k / MXU_KT;
+  const uint32_t k_in_mxu = local_k % MXU_KT;
+  offset += uint64_t(kb) * cur_m * MXU_KT * 2;
+  offset += uint64_t(local_m) * MXU_KT * 2;
+  offset += uint64_t(k_in_mxu) * 2;
+  return offset;
+}
+
+uint64_t GemmNode::weight_offset(uint32_t N, uint32_t K, uint32_t dma_kt, uint32_t gn, uint32_t gk, bool wtrans, uint32_t* nibble_hi) const {
+  const uint32_t kt = gk / dma_kt;
+  const uint32_t nt = gn / MXU_NT;
+  const uint32_t local_k = gk - kt * dma_kt;
+  const uint32_t kb = local_k / MXU_KT;
+  const uint32_t k_in_mxu = local_k % MXU_KT;
+  const uint32_t n_in_mxu = gn % MXU_NT;
+  const uint32_t n_tiles = N / MXU_NT;
+  const uint32_t seg_size = MXU_KT * (MXU_NT / 2);
+
+  uint64_t offset = 0;
+  for (uint32_t kt_i = 0; kt_i < kt; ++kt_i) {
+    uint32_t cur_k = min_left(K, kt_i * dma_kt, dma_kt);
+    offset += uint64_t(n_tiles) * (cur_k / MXU_KT) * seg_size;
+  }
+
+  const uint32_t cur_k = min_left(K, kt * dma_kt, dma_kt);
+  const uint32_t kb_per_kt = cur_k / MXU_KT;
+  offset += uint64_t(nt) * kb_per_kt * seg_size;
+  offset += uint64_t(kb) * seg_size;
+
+  if (!wtrans) {
+    offset += uint64_t(k_in_mxu) * (MXU_NT / 2) + (n_in_mxu / 2);
+    *nibble_hi = n_in_mxu & 1u;
+  } else {
+    offset += uint64_t(n_in_mxu) * (MXU_KT / 2) + (k_in_mxu / 2);
+    *nibble_hi = k_in_mxu & 1u;
+  }
+  return offset;
+}
+
+uint64_t GemmNode::scale_offset(uint32_t N, uint32_t K, uint32_t dma_kt, uint32_t dma_nt, uint32_t qblk, uint32_t qdir, uint32_t gn, uint32_t gk) const {
+  const uint32_t kt = gk / dma_kt;
+  const uint32_t nt_dma = gn / dma_nt;
+  const uint32_t n_tiles_dma = ceil_div(N, dma_nt);
+  const uint32_t ng_per_mxu_nt = ceil_div(MXU_NT, qblk);
+
+  auto slot_bytes = [&](uint32_t ck, uint32_t cn) -> uint64_t {
+    uint64_t actual = (qdir == 0)
+                    ? uint64_t(ck / qblk) * cn * 2
+                    : uint64_t(cn / MXU_NT) * ck * ng_per_mxu_nt * 2;
+    return align_up_u64(actual, 512);
+  };
+
+  uint64_t offset = 0;
+  for (uint32_t kt_i = 0; kt_i < kt; ++kt_i) {
+    uint32_t cur_k = min_left(K, kt_i * dma_kt, dma_kt);
+    for (uint32_t nt_i = 0; nt_i < n_tiles_dma; ++nt_i) {
+      uint32_t cur_n = min_left(N, nt_i * dma_nt, dma_nt);
+      offset += slot_bytes(cur_k, cur_n);
+    }
+  }
+  const uint32_t cur_k = min_left(K, kt * dma_kt, dma_kt);
+  for (uint32_t nt_i = 0; nt_i < nt_dma; ++nt_i) {
+    uint32_t cur_n = min_left(N, nt_i * dma_nt, dma_nt);
+    offset += slot_bytes(cur_k, cur_n);
+  }
+
+  const uint32_t nb = (gn - nt_dma * dma_nt) / MXU_NT;
+  const uint32_t n_in_mxu = gn % MXU_NT;
+  const uint32_t k_in_tile = gk - kt * dma_kt;
+  if (qdir == 0) {
+    const uint32_t groups_per_kt = cur_k / qblk;
+    const uint32_t group = k_in_tile / qblk;
+    offset += uint64_t(nb) * groups_per_kt * MXU_NT * 2;
+    offset += uint64_t(group) * MXU_NT * 2;
+    offset += uint64_t(n_in_mxu) * 2;
+  } else {
+    const uint32_t ng = n_in_mxu / qblk;
+    offset += uint64_t(nb) * cur_k * ng_per_mxu_nt * 2;
+    offset += uint64_t(k_in_tile) * ng_per_mxu_nt * 2;
+    offset += uint64_t(ng) * 2;
+  }
+  return offset;
+}
+
+uint64_t GemmNode::output_offset(uint32_t M, uint32_t N, uint32_t dma_mt, uint32_t gm, uint32_t gn) const {
+  const uint32_t m_pad = align_up(M, 8);
+  const uint32_t mt = gm / dma_mt;
+  const uint32_t nt = gn / MXU_NT;
+  const uint32_t n_tiles = N / MXU_NT;
+
+  uint64_t offset = 0;
+  for (uint32_t mt_i = 0; mt_i < mt; ++mt_i) {
+    uint32_t cur_m_pad = min_left(m_pad, mt_i * dma_mt, dma_mt);
+    offset += uint64_t(n_tiles) * cur_m_pad * MXU_NT * 2;
+  }
+
+  const uint32_t cur_m_pad = min_left(m_pad, mt * dma_mt, dma_mt);
+  const uint32_t local_m = gm - mt * dma_mt;
+  const uint32_t n_in_mxu = gn % MXU_NT;
+  offset += uint64_t(nt) * cur_m_pad * MXU_NT * 2;
+  offset += uint64_t(local_m) * MXU_NT * 2;
+  offset += uint64_t(n_in_mxu) * 2;
+  return offset;
+}
+
+void GemmNode::execute_descriptor_job(uint32_t eid) {
+  const auto& entry = desc_entries_[eid];
+
+  const uint64_t input_base  = reg_u64(entry, REG_INPUT_BASE_LO);
+  const uint64_t weight_base = reg_u64(entry, REG_WEIGHT_BASE_LO);
+  const uint64_t output_base = reg_u64(entry, REG_OUTPUT_BASE_LO);
+  const uint64_t scale_base  = reg_u64(entry, REG_SCALE_BASE_LO);
+  const uint64_t zp_base     = reg_u64(entry, REG_ZP_BASE_LO);
+
+  const uint32_t M      = entry.regs[REG_M_ORIG];
+  const uint32_t N      = entry.regs[REG_N_ORIG];
+  const uint32_t K      = entry.regs[REG_K_ORIG];
+  const uint32_t qblk   = log2_to_size(entry.regs[REG_QBLK_ORIG], 32);
+  const uint32_t target_M = entry.regs[REG_M_TARGET];
+  const uint32_t target_N = entry.regs[REG_N_TARGET];
+  const uint32_t target_K = entry.regs[REG_K_TARGET];
+  const uint32_t m_start  = entry.regs[REG_M_START];
+  const uint32_t n_start  = entry.regs[REG_N_START];
+  const bool wtrans = (entry.regs[REG_WTRANS] & 1u) != 0;
+  const uint32_t qdir = entry.regs[REG_QDIR] & 1u;
+  const uint32_t dma_mt = log2_to_size(entry.regs[REG_LOG2_DMA_MT], 128);
+  const uint32_t dma_kt = log2_to_size(entry.regs[REG_LOG2_DMA_KT], 128);
+  const uint32_t dma_nt = log2_to_size(entry.regs[REG_LOG2_DMA_NT], 128);
+
+  DP(2, "GemmNode: descriptor job eid=" << eid
+        << " M=" << M << " N=" << N << " K=" << K
+        << " target=(" << target_M << "," << target_N << "," << target_K << ")"
+        << " start=(" << m_start << "," << n_start << ")"
+        << " qblk=" << qblk << " qdir=" << qdir << " wtrans=" << wtrans);
+
+  if (M == 0 || N == 0 || K == 0 || qblk == 0 || dma_mt == 0 || dma_kt == 0 || dma_nt == 0) {
+    DP(1, "GemmNode: descriptor job has invalid dimensions");
+    return;
+  }
+
+  for (uint32_t m = 0; m < target_M; ++m) {
+    const uint32_t gm = m_start + m;
+    if (gm >= M)
+      continue;
+    for (uint32_t n = 0; n < target_N; ++n) {
+      const uint32_t gn = n_start + n;
+      if (gn >= N)
+        continue;
+
+      float sum = 0.0f;
+      for (uint32_t k = 0; k < target_K && k < K; ++k) {
+        const uint64_t in_addr = input_base + input_offset(M, K, dma_mt, dma_kt, gm, k);
+
+        uint32_t nibble_hi = 0;
+        const uint64_t w_addr = weight_base + weight_offset(N, K, dma_kt, gn, k, wtrans, &nibble_hi);
+
+        const uint64_t qparam_off = scale_offset(N, K, dma_kt, dma_nt, qblk, qdir, gn, k);
+        const uint64_t sc_addr = scale_base + qparam_off;
+        const uint64_t zp_addr = zp_base + qparam_off;
+
+        uint8_t w_byte = 0;
+        core_->dcache_read(&w_byte, w_addr, 1);
+
+        const float a = fp16_to_float(read_u16(in_addr));
+        const int32_t wv = unpack_int4(&w_byte, 0, nibble_hi);
+        const float scale = fp16_to_float(read_u16(sc_addr));
+        const float zp = float(read_i16(zp_addr));
+        sum += a * (float(wv) - zp) * scale;
+      }
+
+      write_u16(output_base + output_offset(M, N, dma_mt, gm, gn), float_to_fp16(sum));
+    }
+  }
 }
 
 void GemmNode::push_stream_word(uint64_t w) {

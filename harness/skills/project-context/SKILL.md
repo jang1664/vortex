@@ -1,3 +1,8 @@
+---
+name: project-context
+description: Use when loading shared Vortex repository context, common rules, subagent expectations, and reference maps for delegated work.
+---
+
 # Project Context
 
 Load project context for subagents. Read `CLAUDE.md` and follow the **Common** and **Subagent Only** sections. Ignore the **Main Agent Only** section.
