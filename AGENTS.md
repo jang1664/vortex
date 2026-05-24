@@ -46,3 +46,26 @@ ci/run_black.sh --help
 - Use `run-fsm` for `agent-tasks/**/fsm.json` workflows, `rtl-improve` for iterative RTL implementation/verification loops, `run-bb-common` for blackbox runs, and `debug-xrt-vcs` for xrt_vcs failure analysis.
 - Claude hooks under `harness/hooks` are not automatic in Codex. Follow the corresponding skill procedure and run referenced validation scripts manually when needed.
 - When a skill mentions a Claude slash command such as `/run-fsm`, `/run-bb-common`, or `/handoff`, treat it as invoking the matching Codex skill.
+
+## Superpowers usage policy
+
+Default mode is Simple Mode.
+
+Use Superpowers only when:
+- I explicitly say "use superpowers"
+- the task touches multiple files
+- the task requires debugging an unknown failure
+- the task requires architectural design or planning
+- the task is risky enough to need review/checkpoints
+
+Do NOT use Superpowers for:
+- simple Q&A
+- one-line or small edits
+- formatting changes
+- renaming variables
+- adding comments
+- quick shell commands
+- explaining code without modifying it
+
+When I say "simple mode", do not use brainstorming, writing-plans, executing-plans, or subagent-driven-development.
+When I say "full mode", use Superpowers normally.
