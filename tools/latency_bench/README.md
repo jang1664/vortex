@@ -229,6 +229,38 @@ python -m tools.latency_bench visualize \
   --out results/latency/llama2_7b_prefill/runs/<run_id>/figures
 ```
 
+## Compose Latency From Raw DB
+
+Use `compose` to estimate a suite or workload latency from existing
+`raw_db.csv` measurements without launching FPGA jobs:
+
+```bash
+python -m tools.latency_bench compose \
+  --suite tools/latency_bench/suites/llama2_7b_prefill_s1024_b8.yaml \
+  --raw-db /home/jaeyongjang/project.local/latency_db/fpint_gemm_hw/raw_db.csv \
+  --fpga-bin-label improve_tcol1 \
+  --metric p50_us \
+  --out results/latency/composed/llama2_7b_prefill_s1024_b8
+```
+
+`compose` expands the suite with the same loader used by `run`, including
+`cases`, `case_matrices`, and `workloads`. Each expanded case is matched against
+passing raw DB rows by `app` and normalized `args`; `case_id` and `name` are not
+used as lookup keys.
+
+If multiple rows match one case, `--select median` is the default. Other
+policies are `latest`, `mean`, `min`, and `strict`. Missing measurements fail by
+default with `--missing error`; use `--missing nan` or `--missing skip` only
+when intentionally producing a partial composition.
+
+When `--out` is a directory, `compose` writes:
+
+- `composed.csv`: one row per expanded case with selected latency,
+  `weighted_latency_us`, `match_count`, and source run metadata.
+- `summary.csv`: total composed latency for the selected metric.
+
+When `--out` ends in `.csv`, only that composed case CSV is written.
+
 ## Compare Candidates
 
 Use `compare` after running the same suite on multiple FPGA binaries or

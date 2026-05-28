@@ -6,6 +6,8 @@ import json
 import re
 import shlex
 import sys
+import ast
+import operator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -153,6 +155,58 @@ def _matrix_values(spec: Any) -> list[Any]:
     return [spec]
 
 
+_DERIVED_BIN_OPS = {
+    ast.Add: operator.add,
+    ast.Sub: operator.sub,
+    ast.Mult: operator.mul,
+    ast.Div: operator.truediv,
+    ast.FloorDiv: operator.floordiv,
+    ast.Mod: operator.mod,
+    ast.Pow: operator.pow,
+}
+_DERIVED_UNARY_OPS = {
+    ast.UAdd: operator.pos,
+    ast.USub: operator.neg,
+}
+
+
+def _eval_derived_expr(expr: str, params: dict[str, Any]) -> Any:
+    def eval_node(node: ast.AST) -> Any:
+        if isinstance(node, ast.Expression):
+            return eval_node(node.body)
+        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+            return node.value
+        if isinstance(node, ast.Name):
+            if node.id not in params:
+                raise ValueError(f"unknown derived variable: {node.id}")
+            value = params[node.id]
+            if not isinstance(value, (int, float)):
+                raise ValueError(f"derived variable must be numeric: {node.id}={value!r}")
+            return value
+        if isinstance(node, ast.BinOp) and type(node.op) in _DERIVED_BIN_OPS:
+            return _DERIVED_BIN_OPS[type(node.op)](eval_node(node.left), eval_node(node.right))
+        if isinstance(node, ast.UnaryOp) and type(node.op) in _DERIVED_UNARY_OPS:
+            return _DERIVED_UNARY_OPS[type(node.op)](eval_node(node.operand))
+        raise ValueError(f"unsupported derived expression: {expr!r}")
+
+    parsed = ast.parse(expr, mode="eval")
+    value = eval_node(parsed)
+    return int(value) if isinstance(value, float) and value.is_integer() else value
+
+
+def _apply_derived_params(params: dict[str, Any], raw: dict[str, Any], index: int) -> dict[str, Any]:
+    derived = raw.get("derived") or {}
+    if not isinstance(derived, dict):
+        raise ValueError(f"case_matrix #{index} derived must be a mapping")
+    out = dict(params)
+    for key, expr in derived.items():
+        key = str(key)
+        if key in out:
+            raise ValueError(f"case_matrix #{index} derived key shadows matrix key: {key}")
+        out[key] = _eval_derived_expr(str(expr), out)
+    return out
+
+
 def _format_value(value: Any, params: dict[str, Any]) -> Any:
     if isinstance(value, str):
         formatted = value.format(**params)
@@ -180,7 +234,7 @@ def _expand_case_matrix(raw: dict[str, Any], defaults: BenchDefaults, index: int
 
     cases = []
     for combo in itertools.product(*value_lists):
-        params = dict(zip(keys, combo))
+        params = _apply_derived_params(dict(zip(keys, combo)), raw, index)
         case_id_template = str(raw.get("case_id", raw.get("name", prefix)))
         name_template = str(raw.get("name", case_id_template))
         args_template = str(raw.get("args", "")).strip()

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from .compose import ComposeOptions, compose_to_csv
 from .compare import compare_candidates, parse_candidate_spec
 from .plot import visualize
 from .runner import DEFAULT_SRUN_ARGS, RunOptions, default_run_id, resolve_fpga_bin, run_suite
@@ -66,6 +67,31 @@ def build_parser() -> argparse.ArgumentParser:
         help="Keep top N stacked components and collapse the rest into __other__; <=0 keeps all.",
     )
     cmp.add_argument("--no-plots", action="store_true", help="Only write merged/comparison CSVs.")
+
+    comp = sub.add_parser("compose", help="Compose workload latency from one or more raw_db.csv files.")
+    comp.add_argument("--suite", required=True, help="Suite YAML path to expand into target kernel cases.")
+    comp.add_argument("--raw-db", action="append", required=True, help="raw_db.csv path; repeat to search multiple DBs.")
+    comp.add_argument("--out", required=True, help="Output CSV path, or directory for composed.csv and summary.csv.")
+    comp.add_argument(
+        "--metric",
+        choices=["avg_us", "p50_us", "p95_us", "min_us", "max_us"],
+        default="p50_us",
+        help="Latency metric to compose.",
+    )
+    comp.add_argument(
+        "--select",
+        choices=["median", "latest", "mean", "min", "strict"],
+        default="median",
+        help="Policy when multiple raw DB rows match the same case.",
+    )
+    comp.add_argument(
+        "--missing",
+        choices=["error", "nan", "skip"],
+        default="error",
+        help="Policy when a suite case has no matching raw DB row.",
+    )
+    comp.add_argument("--fpga-bin-label", default=None, help="Only use rows with this fpga_bin_label.")
+    comp.add_argument("--xclbin-sha256", default=None, help="Only use rows with this xclbin_sha256.")
     return parser
 
 
@@ -126,6 +152,25 @@ def main(argv: list[str] | None = None) -> int:
             top_components=args.top_components,
             make_plots=not args.no_plots,
         )
+        return 0
+    if args.cmd == "compose":
+        repo_root = find_repo_root()
+        suite = load_suite(Path(args.suite), repo_root=repo_root)
+        composed_csv, summary_csv = compose_to_csv(
+            suite,
+            ComposeOptions(
+                raw_dbs=tuple(Path(path).resolve() for path in args.raw_db),
+                out=Path(args.out).resolve(),
+                metric=args.metric,
+                select=args.select,
+                missing=args.missing,
+                fpga_bin_label=args.fpga_bin_label,
+                xclbin_sha256=args.xclbin_sha256,
+            ),
+        )
+        print(f"wrote {composed_csv}")
+        if summary_csv:
+            print(f"wrote {summary_csv}")
         return 0
     parser.error(f"unknown command: {args.cmd}")
     return 2
