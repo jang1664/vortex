@@ -181,8 +181,17 @@ ifdef FSDB_DUMP
 	VCS_FLAGS += -kdb -debug_access+all
 	VERDI_HOME ?= $(shell dirname $(shell dirname $(shell which verdi 2>/dev/null)))
 	ifneq ($(VERDI_HOME),)
-		VCS_FLAGS += -P $(VERDI_HOME)/share/PLI/VCS/LINUX64/novas.tab $(VERDI_HOME)/share/PLI/VCS/LINUX64/pli.a
-		VCS_FSDB_OPTS = -kdb -P $(VERDI_HOME)/share/PLI/VCS/LINUX64/novas.tab $(VERDI_HOME)/share/PLI/VCS/LINUX64/pli.a
+		# Verdi W-2024.09 and newer deprecate explicit novas.tab/pli.a PLI
+		# loading for FSDB. With those releases, -debug_access and VERDI_HOME
+		# are enough; older releases still need the explicit PLI link.
+		VERDI_LETTER := $(shell basename $(VERDI_HOME) | cut -c1)
+		VERDI_IS_NEW := $(shell [ "$(VERDI_LETTER)" \> "V" ] && echo 1)
+		ifneq ($(VERDI_IS_NEW),1)
+			VCS_FLAGS += -P $(VERDI_HOME)/share/PLI/VCS/LINUX64/novas.tab $(VERDI_HOME)/share/PLI/VCS/LINUX64/pli.a
+			VCS_FSDB_OPTS = -kdb -P $(VERDI_HOME)/share/PLI/VCS/LINUX64/novas.tab $(VERDI_HOME)/share/PLI/VCS/LINUX64/pli.a
+		else
+			VCS_FSDB_OPTS = -kdb
+		endif
 	endif
 endif
 
