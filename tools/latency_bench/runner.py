@@ -55,6 +55,7 @@ class RunOptions:
     fpga_bin_label: str = ""
     configs_extra: str = ""
     blackbox_args: tuple[str, ...] = DEFAULT_BLACKBOX_ARGS
+    blackbox_timeout: str = ""
     srun: bool = True
     srun_args: tuple[str, ...] = DEFAULT_SRUN_ARGS
     dry_run: bool = False
@@ -189,14 +190,17 @@ def write_run_script(suite: BenchSuite, options: RunOptions, units: list[Executi
         bench_args = f"--warmup={unit.warmup} --iterations={unit.iterations} --csv --output={unit.raw_csv} {unit.args}"
         blackbox_args = " ".join(_q(arg) for arg in options.blackbox_args)
         blackbox_args = f"{blackbox_args} " if blackbox_args else ""
+        blackbox_cmd = (
+            f"./ci/blackbox.sh {blackbox_args}--driver=xrt --bench --app={_q(unit.app)} "
+            f"--args={_q(bench_args)} --log={_q(unit.log_file)}"
+        )
+        if options.blackbox_timeout:
+            blackbox_cmd = f"timeout --foreground --kill-after=30s {_q(options.blackbox_timeout)} {blackbox_cmd}"
         lines.extend([
             "",
             f"echo '[{idx}/{len(units)}] {unit.exec_key} app={unit.app} args={bench_args}'",
             "set +e",
-            (
-                f"./ci/blackbox.sh {blackbox_args}--driver=xrt --bench --app={_q(unit.app)} "
-                f"--args={_q(bench_args)} --log={_q(unit.log_file)}"
-            ),
+            blackbox_cmd,
             "rc=$?",
             "set -u",
             (
@@ -315,6 +319,7 @@ def run_suite(suite: BenchSuite, options: RunOptions) -> int:
         "platform": options.platform,
         "xrt_device_index": options.xrt_device_index,
         "blackbox_args": list(options.blackbox_args),
+        "blackbox_timeout": options.blackbox_timeout,
         "configs_extra": options.configs_extra,
         "execution_count": len(units),
         "script": str(script),

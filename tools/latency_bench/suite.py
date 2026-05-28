@@ -50,6 +50,7 @@ class BenchDefaults:
     iterations: int = 10
     xrt_device_index: int = 0
     blackbox_args: tuple[str, ...] = DEFAULT_BLACKBOX_ARGS
+    blackbox_timeout: str = ""
 
 
 @dataclass(frozen=True)
@@ -100,6 +101,7 @@ def _merge_defaults(raw: dict[str, Any]) -> BenchDefaults:
         iterations=int(defaults.get("iterations", BenchDefaults.iterations)),
         xrt_device_index=int(defaults.get("xrt_device_index", BenchDefaults.xrt_device_index)),
         blackbox_args=blackbox_args,
+        blackbox_timeout=str(defaults.get("blackbox_timeout", "")),
     )
 
 

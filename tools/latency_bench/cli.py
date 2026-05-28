@@ -25,7 +25,17 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--platform", default=None, help="Override suite/default Xilinx platform.")
     run.add_argument("--xrt-device-index", type=int, default=None, help="Override XRT device index.")
     run.add_argument("--configs-extra", default="", help="Extra CONFIGS defines appended inside the run script.")
-    run.add_argument("--blackbox-arg", action="append", default=[], help="Replace default blackbox args; repeat for each arg.")
+    run.add_argument(
+        "--blackbox-timeout",
+        default=None,
+        help="GNU timeout duration per blackbox.sh execution, e.g. 30m or 2h; 0 disables.",
+    )
+    run.add_argument(
+        "--blackbox-arg",
+        action="append",
+        default=[],
+        help="Add or override a blackbox arg from suite defaults; repeat for each arg.",
+    )
     run.add_argument("--no-srun", action="store_true", help="Run directly without srun.")
     run.add_argument("--srun-arg", action="append", default=[], help="Replace default srun args; repeat for each arg.")
     run.add_argument(
@@ -95,6 +105,31 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _arg_key(value: str) -> str:
+    head = str(value).split("=", 1)[0]
+    return head if head.startswith("-") else str(value)
+
+
+def merge_override_args(defaults: tuple[str, ...], overrides: list[str]) -> tuple[str, ...]:
+    merged = list(defaults)
+    positions = {_arg_key(arg): idx for idx, arg in enumerate(merged)}
+    for arg in overrides:
+        key = _arg_key(arg)
+        if key in positions:
+            merged[positions[key]] = arg
+        else:
+            positions[key] = len(merged)
+            merged.append(arg)
+    return tuple(merged)
+
+
+def normalize_timeout(value: str | None) -> str:
+    if value is None:
+        return ""
+    value = str(value).strip()
+    return "" if value in ("", "0") else value
+
+
 def run_cmd(args: argparse.Namespace) -> int:
     repo_root = find_repo_root()
     suite = load_suite(
@@ -108,7 +143,10 @@ def run_cmd(args: argparse.Namespace) -> int:
     xrt_device_index = args.xrt_device_index
     if xrt_device_index is None:
         xrt_device_index = suite.defaults.xrt_device_index
-    blackbox_args = tuple(args.blackbox_arg) if args.blackbox_arg else suite.defaults.blackbox_args
+    blackbox_args = merge_override_args(suite.defaults.blackbox_args, args.blackbox_arg)
+    blackbox_timeout = normalize_timeout(args.blackbox_timeout)
+    if args.blackbox_timeout is None:
+        blackbox_timeout = normalize_timeout(suite.defaults.blackbox_timeout)
     srun_args = tuple(args.srun_arg) if args.srun_arg else DEFAULT_SRUN_ARGS
     run_id = args.run_id or default_run_id()
     options = RunOptions(
@@ -120,6 +158,7 @@ def run_cmd(args: argparse.Namespace) -> int:
         xrt_device_index=xrt_device_index,
         configs_extra=args.configs_extra,
         blackbox_args=blackbox_args,
+        blackbox_timeout=blackbox_timeout,
         srun=not args.no_srun,
         srun_args=srun_args,
         dry_run=args.dry_run,
