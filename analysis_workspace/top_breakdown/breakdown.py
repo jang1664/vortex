@@ -17,6 +17,9 @@ Outputs (under analysis_workspace/top_breakdown/<run>/):
     vortex_axi_breakdown.csv  - per-bucket area table
     vortex_axi_breakdown.png  - stacked bar figure
     vortex_axi_breakdown.pdf  - same, vector
+    vortex_axi_breakdown_pie.png  - pie/donut chart figure
+    vortex_axi_breakdown_pie.pdf  - same, vector
+    vortex_axi_breakdown_pie.svg  - same, vector
 """
 
 from __future__ import annotations
@@ -70,34 +73,35 @@ PREFIX_CLUSTER = r"^Vortex_axi/vortex/g_clusters_\d+__cluster"
 # from the DMA engines and the small local DMAs / switches around them.
 BREAKDOWN: list[tuple[str, list[str]]] = [
     # --- gemm_node internals ---
-    ("gemm_unit (MXU compute)",      [PREFIX_GEMM_NODE + r"/u_VX_gemm_unit$"]),
-    ("tmem banks (tensor mem SRAM)", [PREFIX_TMEM + r"/g_bank_\d+__u_bank$"]),
-    ("tmem dma_engine",              [PREFIX_TMEM + r"/u_dma_engine$"]),
-    ("tmem local DMAs (ldma_*)",     [PREFIX_TMEM + r"/u_ldma_(input|output|sz|weight)$"]),
-    ("tmem switches",                [PREFIX_TMEM + r"/u_switch_(input|output)$"]),
-    ("gemm_ctrl + tmem_dma_ctrl + job_frontend",
+    ("GEMM unit (MXU compute)",      [PREFIX_GEMM_NODE + r"/u_VX_gemm_unit$"]),
+    ("TMEM banks (tensor memory SRAM)",
+                                     [PREFIX_TMEM + r"/g_bank_\d+__u_bank$"]),
+    ("TMEM DMA engine",              [PREFIX_TMEM + r"/u_dma_engine$"]),
+    ("TMEM local DMAs",              [PREFIX_TMEM + r"/u_ldma_(input|output|sz|weight)$"]),
+    ("TMEM switches",                [PREFIX_TMEM + r"/u_switch_(input|output)$"]),
+    ("GEMM control + TMEM DMA control + job frontend",
                                      [PREFIX_GEMM_NODE + r"/u_VX_gemm_ctrl$",
                                       PREFIX_GEMM_NODE + r"/u_tmem_dma_ctrl$",
                                       PREFIX_GEMM_NODE + r"/u_job_frontend$"]),
     # --- rest of core ---
-    ("mem_unit",                     [PREFIX_CORE + r"/mem_unit$"]),
+    ("memory unit",                  [PREFIX_CORE + r"/mem_unit$"]),
     ("execute",                      [PREFIX_CORE + r"/execute$"]),
     ("issue",                        [PREFIX_CORE + r"/issue$"]),
     ("schedule",                     [PREFIX_CORE + r"/schedule$"]),
-    ("dma_node",                     [PREFIX_CORE + r"/u_VX_dma_node$"]),
-    ("fetch / commit / decode / dcr",
+    ("DMA node",                     [PREFIX_CORE + r"/u_VX_dma_node$"]),
+    ("fetch / commit / decode / DCR",
                                      [PREFIX_CORE + r"/(fetch|commit|decode|dcr_data)$"]),
     # --- socket / cluster / chip caches ---
-    ("L1 dcache",                    [PREFIX_SOCKET + r"/dcache$"]),
-    ("L1 icache",                    [PREFIX_SOCKET + r"/icache$"]),
-    ("socket mem_arb",
+    ("L1 data cache",                [PREFIX_SOCKET + r"/dcache$"]),
+    ("L1 instruction cache",         [PREFIX_SOCKET + r"/icache$"]),
+    ("socket memory arbiter",
                                      [PREFIX_SOCKET + r"/g_mem_bus_if_\d+__g_i\d+_mem_arb$"]),
     ("L2 cache",                     [PREFIX_CLUSTER + r"/l2cache$"]),
     ("L3 cache",                     [r"^Vortex_axi/vortex/l3cache$"]),
     # --- AXI memory plumbing outside vortex ---
     ("HBM AXI mux x8",               [r"^Vortex_axi/g_hbm_mux_\d+__u_axi_mux$"]),
-    ("lsu_demux",                    [r"^Vortex_axi/u_lsu_demux$"]),
-    ("axi_adapter / mem_adapter / remaps",
+    ("LSU demux",                    [r"^Vortex_axi/u_lsu_demux$"]),
+    ("AXI adapter / memory adapter / remaps",
                                      [r"^Vortex_axi/axi_adapter$",
                                       r"^Vortex_axi/g_mem_adapter_\d+__mem_data_adapter$",
                                       r"^Vortex_axi/u_lsu_(ar|aw)_remap$"]),
@@ -107,33 +111,45 @@ BREAKDOWN: list[tuple[str, list[str]]] = [
 # teals → caches, purples → AXI plumbing. Sibling shades stay close.
 COLORS = {
     # gemm_node compute
-    "gemm_unit (MXU compute)":               "#c4452a",  # deep red-orange
+    "GEMM unit (MXU compute)":               "#c4452a",  # deep red-orange
     # gemm_node memory side
-    "tmem banks (tensor mem SRAM)":          "#d9774a",  # burnt orange
-    "tmem dma_engine":                       "#e8a838",  # gold
-    "tmem local DMAs (ldma_*)":              "#f3c969",  # wheat
-    "tmem switches":                         "#e6d9a0",  # pale wheat
-    "gemm_ctrl + tmem_dma_ctrl + job_frontend":
+    "TMEM banks (tensor memory SRAM)":        "#d9774a",  # burnt orange
+    "TMEM DMA engine":                        "#e8a838",  # gold
+    "TMEM local DMAs":                        "#f3c969",  # wheat
+    "TMEM switches":                          "#e6d9a0",  # pale wheat
+    "GEMM control + TMEM DMA control + job frontend":
                                              "#b89860",  # tan
     # rest of core
-    "mem_unit":                              "#9aa05a",  # olive
+    "memory unit":                           "#9aa05a",  # olive
     "execute":                               "#7a8543",  # darker olive
     "issue":                                 "#5a6a3a",  # forest
     "schedule":                              "#465230",  # dark olive
-    "dma_node":                              "#8b7b5a",  # taupe
-    "fetch / commit / decode / dcr":         "#a4937a",  # warm grey
+    "DMA node":                              "#8b7b5a",  # taupe
+    "fetch / commit / decode / DCR":         "#a4937a",  # warm grey
     # caches
-    "L1 dcache":                             "#a4c8c9",  # pale teal
-    "L1 icache":                             "#7da8a9",  # teal
-    "socket mem_arb":                        "#5a8a8b",  # blue-teal
+    "L1 data cache":                         "#a4c8c9",  # pale teal
+    "L1 instruction cache":                  "#7da8a9",  # teal
+    "socket memory arbiter":                 "#5a8a8b",  # blue-teal
     "L2 cache":                              "#5a7891",  # dark blue-grey
     "L3 cache":                              "#3a5c75",  # navy
     # AXI plumbing
     "HBM AXI mux x8":                        "#7d6b8c",  # dusty purple
-    "lsu_demux":                             "#6a5b7a",  # darker purple
-    "axi_adapter / mem_adapter / remaps":    "#5a4d6a",  # deepest purple
+    "LSU demux":                             "#6a5b7a",  # darker purple
+    "AXI adapter / memory adapter / remaps": "#5a4d6a",  # deepest purple
     "Other":                                 "#bbbbbb",
 }
+
+MISC_LABEL = "misc (interconnection + mux/demux)"
+FORCE_MISC_LABELS = {
+    "HBM AXI mux x8",
+    "LSU demux",
+}
+PIN_TO_TOP_LABELS = [
+    "TMEM DMA engine",
+    "TMEM local DMAs",
+    "GEMM control + TMEM DMA control + job frontend",
+    MISC_LABEL,
+]
 
 
 def aggregate(hdf: pd.DataFrame) -> tuple[dict[str, float], dict[str, int], list[str]]:
@@ -164,6 +180,29 @@ def parse_args() -> argparse.Namespace:
         help="Synthesis run to analyze. Default: nt32.",
     )
     return parser.parse_args()
+
+
+def bucket_color(label: str) -> str:
+    if label.startswith("misc"):
+        return "#bbbbbb"
+    return COLORS.get(label, "#999999")
+
+
+def pin_selected_labels_to_top(
+    sums: dict[str, float],
+    counts: dict[str, int],
+) -> tuple[dict[str, float], dict[str, int]]:
+    ordered_labels = [
+        label for label in PIN_TO_TOP_LABELS
+        if label in sums
+    ] + [
+        label for label in sums
+        if label not in PIN_TO_TOP_LABELS
+    ]
+    return (
+        {label: sums[label] for label in ordered_labels},
+        {label: counts[label] for label in ordered_labels},
+    )
 
 
 def main():
@@ -203,7 +242,7 @@ def main():
     new_sums: dict[str, float] = {}
     new_counts: dict[str, int] = {}
     for i, (label, area) in enumerate(sums.items()):
-        if area < MISC_THRESHOLD_UM2:
+        if area < MISC_THRESHOLD_UM2 or label in FORCE_MISC_LABELS:
             if misc_position is None:
                 misc_position = len(new_sums)
             misc_sum += area
@@ -213,17 +252,17 @@ def main():
             new_sums[label] = area
             new_counts[label] = counts[label]
     if misc_members:
-        misc_label = f"misc (<0.01 mm²): {len(misc_members)} blocks"
         items = list(new_sums.items())
         count_items = list(new_counts.items())
-        items.insert(misc_position, (misc_label, misc_sum))
-        count_items.insert(misc_position, (misc_label, misc_count))
+        items.insert(misc_position, (MISC_LABEL, misc_sum))
+        count_items.insert(misc_position, (MISC_LABEL, misc_count))
         sums = dict(items)
         counts = dict(count_items)
         print(f"\nmisc bucket absorbs: {', '.join(misc_members)}")
     else:
         sums = new_sums
         counts = new_counts
+    sums, counts = pin_selected_labels_to_top(sums, counts)
 
     labels = list(sums.keys())
     areas_um2 = [sums[l] for l in labels]
@@ -250,7 +289,7 @@ def main():
     total_mm2 = sum(areas_mm2)
     handles = []
     for label, val_mm2, pct in zip(labels, areas_mm2, pcts):
-        color = "#bbbbbb" if label.startswith("misc (<") else COLORS.get(label, "#999999")
+        color = bucket_color(label)
         ax.bar(0, val_mm2, bottom=bottom, color=color,
                edgecolor="black", linewidth=0.4, width=1.0)
         if pct >= 3.0:
@@ -268,7 +307,8 @@ def main():
     ax.set_xlim(-0.8, 0.8)
     ax.set_ylabel("Cell area (mm²)")
     ax.set_title(
-        f"Vortex_axi {run['title']} area breakdown\n"
+        # f"Vortex_axi {run['title']} area breakdown\n"
+        # f"Area breakdown\n"
         f"DC topo, Samsung 28LPP — total cell area = {total_mm2:.2f} mm²",
         fontsize=11,
     )
@@ -280,6 +320,60 @@ def main():
     fig.tight_layout()
     for ext in ("png", "pdf"):
         p = out_dir / f"vortex_axi_breakdown.{ext}"
+        fig.savefig(p, dpi=150, bbox_inches="tight")
+        print(f"wrote {p}")
+    plt.close(fig)
+
+    # ---- pie / donut chart ----
+    pie_colors = [bucket_color(label) for label in labels]
+
+    def pct_label(pct: float) -> str:
+        return f"{pct:.1f}%" if pct >= 2.0 else ""
+
+    fig, ax = plt.subplots(figsize=(10.5, 8.0))
+    wedges, _, autotexts = ax.pie(
+        areas_mm2,
+        colors=pie_colors,
+        startangle=90,
+        counterclock=False,
+        autopct=pct_label,
+        pctdistance=0.78,
+        wedgeprops={
+            "width": 0.52,
+            "edgecolor": "white",
+            "linewidth": 0.8,
+        },
+    )
+    for text in autotexts:
+        text.set_fontsize(9)
+        text.set_fontweight("bold")
+
+    ax.text(
+        0,
+        0,
+        f"{total_mm2:.2f} mm²",
+        ha="center",
+        va="center",
+        fontsize=14,
+        fontweight="bold",
+    )
+    legend_labels = [
+        f"{label}: {val_mm2:.2f} mm² ({pct:.1f}%)"
+        for label, val_mm2, pct in zip(labels, areas_mm2, pcts)
+    ]
+    ax.legend(
+        wedges,
+        legend_labels,
+        loc="center left",
+        bbox_to_anchor=(1.02, 0.5),
+        fontsize=10.2,
+        framealpha=0.95,
+    )
+    ax.set_aspect("equal")
+
+    fig.tight_layout()
+    for ext in ("png", "pdf", "svg"):
+        p = out_dir / f"vortex_axi_breakdown_pie.{ext}"
         fig.savefig(p, dpi=150, bbox_inches="tight")
         print(f"wrote {p}")
     plt.close(fig)
