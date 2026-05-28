@@ -16,7 +16,7 @@ Outputs (PNG + PDF):
   fig4_routing_proxies     DC-Topo proxies for routing difficulty: utilization
                            drops + congestion overflow rises as xbar grows.
   fig7_tops_baseline_vs_fpint   TOPS/mm² across 4 cumulative area sets (gemm-w/PnR
-                                → +xc → +sram_peri → +memory PnR full die).
+                                → +xc → +sram_peri → +memory system PnR full die).
   fig8_tops_recovery           Side-by-side subplots comparing BASE FPFP vs
                                FPxINT real across two MXU-size sweeps:
                                16×16 → 32×32 and 32×32 → 64×64. Y-axis is
@@ -500,7 +500,7 @@ def fig7_tops_per_mm2_3set(table):
     set_names = ["Set 1\ngemm only\n(w/ PnR)",
                  "Set 2\n+ xbar + ctrl",
                  "Set 3\n+ SRAM peri\n(FPxINT only)",
-                 "Set 4\n+ memory PnR\n(full die)"]
+                 "Set 4\n+ memory system PnR\n(full die)"]
     x = np.arange(4)
     width = 0.36
 
@@ -536,9 +536,7 @@ def fig7_tops_per_mm2_3set(table):
     ax.set_xticks(x)
     ax.set_xticklabels(set_names, fontsize=9)
     ax.set_ylabel("TOPS / mm²   (log scale; 100 MHz, 28LPP)")
-    ax.set_title("TOPS/mm² across four cumulative area sets: gemm → overhead → full die\n"
-                 "GEMM area always includes PnR overhead; Set 4 adds memory PnR "
-                 "(CAP-intrinsic SRAM excluded; SRAM peri charged to FPxINT only)",
+    ax.set_title("TOPS/mm² across four cumulative area sets: gemm → overhead → full die",
                  fontsize=11)
     ax.legend(loc="lower left", fontsize=10, framealpha=0.95)
     ax.yaxis.grid(True, which="both", alpha=0.3)
@@ -645,9 +643,7 @@ def _variant_bars_data(variant, table, routing):
     eff_f = [tops_f / a for a in sets_f]
 
     def _mem_label(L, C, A, ln, cn, an):
-        def tag(d, n):
-            return f"{n} (extrap)" if d["extrap"] else f"{n}"
-        return f"L={tag(L, ln)} / D={tag(C, cn)} / A={tag(A, an)}"
+        return f"L={ln} / D={cn} / A={an}"
 
     return {
         "base_n": base["N"], "fpint_n": fpint["N"],
@@ -660,20 +656,20 @@ def _variant_bars_data(variant, table, routing):
 
 
 def _draw_variant_on_axis(ax, d, ymax):
-    """Draw a 2-bar group (Base vs FPxINT real) for one variant on a given axis."""
+    """Draw a 2-bar group (Base vs FPxINT) for one variant on a given axis."""
     x = np.arange(4)
     width = 0.36
     set_names = ["Set 1\ngemm only\n(w/ PnR)",
                  "Set 2\n+ xbar + ctrl",
                  "Set 3\n+ SRAM peri\n(FPxINT only)",
-                 "Set 4\n+ memory PnR\n(full die)"]
+                 "Set 4\n+ memory system PnR\n(full die)"]
 
     bars_b = ax.bar(x - width/2, d["rel_b"], width, color="#888888",
                     edgecolor="black", linewidth=0.5,
                     label=f"Baseline ({d['base_n']}×{d['base_n']} FP16×FP16; {d['base_mem']})")
-    bars_f = ax.bar(x + width/2, d["rel_f"], width, color="#d9774a",
+    bars_f = ax.bar(x + width/2, d["rel_f"], width, color="#3a7ca5",
                     edgecolor="black", linewidth=0.5,
-                    label=f"FPxINT real ({d['fpint_n']}×{d['fpint_n']} FP16×INT4; {d['fpint_mem']})")
+                    label=f"FPxINT ({d['fpint_n']}×{d['fpint_n']} FP16×INT4; {d['fpint_mem']})")
 
     ax.set_ylim(0, ymax)
     ax.axhline(1.0, color="#444", linestyle="--", linewidth=0.8, alpha=0.7)
@@ -688,7 +684,8 @@ def _draw_variant_on_axis(ax, d, ymax):
 
     # MXU-size badge in the top-left of the subplot.
     ax.text(0.012, 0.97,
-            f"MXU: {d['base_n']}×{d['base_n']} → {d['fpint_n']}×{d['fpint_n']}",
+            f"{d['base_n']}×{d['base_n']} FPxFP VS "
+            f"{d['fpint_n']}×{d['fpint_n']} FPxINT",
             transform=ax.transAxes, ha="left", va="top",
             fontsize=11, fontweight="bold", color="#222",
             bbox=dict(boxstyle="round,pad=0.35", fc="#fff8e0", ec="#aaa", alpha=0.95))
@@ -736,12 +733,9 @@ def fig8_tops_recovery_all(table):
     axes[0].set_ylabel("TOPS/mm² (relative to Baseline; per-Set Base = 1.0)\n"
                        "in-bar = absolute area in mm²")
 
-    fig.suptitle("Relative TOPS/mm² across four cumulative area sets — array-size sweep\n"
-                 "GEMM area always includes PnR overhead; Set 4 adds memory PnR "
-                 "(CAP-intrinsic SRAM excluded; SRAM peri charged to FPxINT only). "
-                 "'(extrap)' = log-log extrapolated.",
+    fig.suptitle("Relative TOPS/mm² across four cumulative area sets",
                  fontsize=11)
-    fig.tight_layout(rect=[0, 0, 1, 0.95])
+    fig.tight_layout(rect=[0, 0, 1, 0.97])
     for ext in ("png", "pdf"):
         fig.savefig(HERE / f"fig8_tops_recovery.{ext}", dpi=150, bbox_inches="tight")
     plt.close(fig)
