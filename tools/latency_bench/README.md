@@ -109,6 +109,17 @@ If the FPGA bin path is too long to type repeatedly, fill in the
 `FPGA_BIN_ALIASES` skeleton in `tools/latency_bench/runner.py` and pass the
 alias name to `--fpga-bin`.
 
+`--blackbox-arg` starts from suite `defaults.blackbox_args`; repeated CLI values
+add new options or overwrite existing options with the same flag key. For
+example, `--blackbox-arg=--threads=16` replaces a default `--threads=8` while
+keeping other defaults such as `--cores=1`.
+
+Use `--blackbox-timeout 30m` to wrap each `blackbox.sh` execution with GNU
+`timeout --foreground --kill-after=30s`. A timed-out execution records its
+return code in `run_status.csv`, then the run script continues to the next case.
+Set `defaults.blackbox_timeout` in the suite to make this reproducible, or pass
+`--blackbox-timeout 0` to disable a suite default.
+
 `run` does not generate figures by default. Add `--visualize` to create
 `runs/<run_id>/figures/` after a successful run, or use the `visualize`
 subcommand later.
@@ -123,6 +134,7 @@ defaults:
   app: fpint_gemm_ffn_hw
   target: hw
   platform: xilinx_u55c_gen3x16_xdma_3_202210_1
+  blackbox_timeout: 30m
   blackbox_args:
     - --cores=1
     - --threads=8
