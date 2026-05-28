@@ -1,0 +1,2 @@
+trace,mxu_active_user_pct,mxu_compute_pct,mxu_stall_pct,flops_per_cycle,mxu_input_util_compute,mxu_weight_util_compute,mxu_psum_util_compute,mxu_output_util_compute,dcache_dma_active_user_pct,dcache_dma_bw_active_Bpc
+fpint_naive_m1_k128_n64,69.61958436069038,6.4507968631419175,0.10118897040222616,0.5180875284593979,1.5686274509803921,50.19607843137255,1.1764705882352942,0.39215686274509803,28.812962310672773,2.93398533007335

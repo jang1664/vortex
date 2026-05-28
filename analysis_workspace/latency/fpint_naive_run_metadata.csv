@@ -1,0 +1,2 @@
+trace,kind,m,k,n,run_log,simv_log,elapsed_time_ms,b_device_layout,passed,b_col_major_config,dram_req_enter_pct,dram_req_exit_pct,dram_rsp_enter_pct,dram_rsp_exit_pct,dram_no_markov_stall
+fpint_naive_m1_k128_n64,fpxint_mxu,1,128,64,/home/jaeyongjang/project.local/vortex_naive/build/logs/fpint_naive_m1_k128_n64/run.log,/home/jaeyongjang/project.local/vortex_naive/build/logs/fpint_naive_m1_k128_n64/xrtsim_vcs/simv.log,-,-,True,False,0,50,0,50,True

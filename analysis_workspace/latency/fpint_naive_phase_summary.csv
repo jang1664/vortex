@@ -1,0 +1,14 @@
+trace,kind,m,k,n,phase,start_time_ps,end_time_ps,start_cycle,end_cycle,cycles,count,dispatch_count,commit_count,symbols,source,note
+fpint_naive_m1_k128_n64,fpxint_mxu,1,128,64,kernel_busy,2175000,192885000,217,19288,19071,0.0,0.0,0.0,-,fsdb:core/busy,envelope; overlaps all device-side phases
+fpint_naive_m1_k128_n64,fpxint_mxu,1,128,64,runtime_bootstrap_to_user,2175000,47425000,217,4742,4525,0.0,208.0,264.0,"_start, init_regs_all, init_regs, init_tls_all, __init_tls, memcpy, memset, __libc_init_array",fsdb:core/busy -> simv.log first non-runtime ELF symbol,"includes reset-visible startup, tag init, WSPAWN, TLS/BSS/libc init"
+fpint_naive_m1_k128_n64,fpxint_mxu,1,128,64,tag_init,2175000,22655000,217,2265,2048,2112.0,0.0,0.0,-,simv.log:tags-init,inclusive log stream converted to exclusive end
+fpint_naive_m1_k128_n64,fpxint_mxu,1,128,64,warp_spawn,23315000,25955000,2331,2595,264,2.0,0.0,0.0,-,fsdb:wctl_is_wspawn&&execute_fire -> active_warps,2 initial WSPAWN fire events
+fpint_naive_m1_k128_n64,fpxint_mxu,1,128,64,user_kernel_body,47425000,160985000,4742,16098,11356,0.0,959.0,959.0,"main, kernel_mmio_driver(kernel_arg_t*)",simv.log user/non-runtime ELF symbols,kernel-specific code; no accelerator-specific counter required
+fpint_naive_m1_k128_n64,fpxint_mxu,1,128,64,runtime_exit,161075000,165955000,16107,16595,488,0.0,45.0,45.0,"_start, exit, __funcs_on_exit, libc_exit_fini, dummy",simv.log runtime ELF symbols after user kernel,"exit wrapper, fini hooks, stdio exit before perf dump"
+fpint_naive_m1_k128_n64,fpxint_mxu,1,128,64,exit_final_to_fence,165955000,172005000,16595,17200,605,0.0,5.0,5.0,_Exit,simv.log:_Exit + fsdb:fence request,exitcode store and fence dispatch/setup
+fpint_naive_m1_k128_n64,fpxint_mxu,1,128,64,perf_dump,166115000,171735000,16611,17173,562,0.0,67.0,67.0,vx_perf_dump,simv.log:vx_perf_dump + ELF symbols,MPM/perf CSR reads and stores
+fpint_naive_m1_k128_n64,fpxint_mxu,1,128,64,fence_wait,172005000,192815000,17200,19281,2081,0.0,0.0,0.0,-,fsdb:req_is_fence/mem_req_fire -> rsp_is_fence/mem_rsp_fire,-
+fpint_naive_m1_k128_n64,fpxint_mxu,1,128,64,cache_flush_data,172115000,192595000,17211,19259,2048,2048.0,0.0,0.0,-,simv.log:data-flush,overlaps fence_wait in this trace
+fpint_naive_m1_k128_n64,fpxint_mxu,1,128,64,cache_flush_tags,172115000,192595000,17211,19259,2048,2048.0,0.0,0.0,-,simv.log:tags-flush,overlaps fence_wait in this trace
+fpint_naive_m1_k128_n64,fpxint_mxu,1,128,64,after_fence_to_ap_done,192815000,192905000,19281,19290,9,0.0,0.0,0.0,-,fsdb:fence_rsp -> simv.log:ap_done pending,-
+fpint_naive_m1_k128_n64,fpxint_mxu,1,128,64,host_done_polling,192905000,192955000,19290,19295,5,0.0,0.0,0.0,-,simv.log:ap_done pending -> consumed by host,-

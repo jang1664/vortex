@@ -1,0 +1,2 @@
+trace,runtime_bootstrap_to_user,tag_init,warp_spawn,user_kernel_body,runtime_exit,perf_dump,exit_final_to_fence,fence_wait,cache_flush_tags,host_done_polling
+fpint_naive_m1_k128_n64,4525,2048,264,11356,488,562,605,2081,2048,5

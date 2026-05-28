@@ -1,0 +1,27 @@
+trace,kind,m,k,n,phase,start_time_ps,end_time_ps,start_cycle,end_cycle,cycles,count,dispatch_count,commit_count,symbols,source,note
+sgemm_tcu_bcol_m64_k64_n64,fpxfp_tcu,64,64,64,kernel_busy,2345000,957165000,234,95716,95482,0.0,0.0,0.0,-,fsdb:core/busy,envelope; overlaps all device-side phases
+sgemm_tcu_bcol_m64_k64_n64,fpxfp_tcu,64,64,64,runtime_bootstrap_to_user,2345000,67185000,234,6718,6484,0.0,208.0,264.0,"_start, init_regs_all, init_regs, init_tls_all, __init_tls, memcpy, memset, __libc_init_array",fsdb:core/busy -> simv.log first non-runtime ELF symbol,"includes reset-visible startup, tag init, WSPAWN, TLS/BSS/libc init"
+sgemm_tcu_bcol_m64_k64_n64,fpxfp_tcu,64,64,64,tag_init,2345000,22825000,234,2282,2048,2112.0,0.0,0.0,-,simv.log:tags-init,inclusive log stream converted to exclusive end
+sgemm_tcu_bcol_m64_k64_n64,fpxfp_tcu,64,64,64,warp_spawn,23435000,26075000,2343,2607,264,2.0,0.0,0.0,-,fsdb:wctl_is_wspawn&&execute_fire -> active_warps,2 initial WSPAWN fire events
+sgemm_tcu_bcol_m64_k64_n64,fpxfp_tcu,64,64,64,user_kernel_body,67185000,924465000,6718,92446,85728,0.0,24017.0,38945.0,"main, vx_spawn_threads, process_thread_groups_stub, process_thread_groups, kernel_body(kernel_arg_t*)",simv.log user/non-runtime ELF symbols,kernel-specific code; no accelerator-specific counter required
+sgemm_tcu_bcol_m64_k64_n64,fpxfp_tcu,64,64,64,runtime_exit,924585000,929965000,92458,92996,538,0.0,45.0,45.0,"_start, exit, __funcs_on_exit, libc_exit_fini, dummy",simv.log runtime ELF symbols after user kernel,"exit wrapper, fini hooks, stdio exit before perf dump"
+sgemm_tcu_bcol_m64_k64_n64,fpxfp_tcu,64,64,64,exit_final_to_fence,929965000,936275000,92996,93627,631,0.0,5.0,5.0,_Exit,simv.log:_Exit + fsdb:fence request,exitcode store and fence dispatch/setup
+sgemm_tcu_bcol_m64_k64_n64,fpxfp_tcu,64,64,64,perf_dump,930385000,936005000,93038,93600,562,0.0,67.0,67.0,vx_perf_dump,simv.log:vx_perf_dump + ELF symbols,MPM/perf CSR reads and stores
+sgemm_tcu_bcol_m64_k64_n64,fpxfp_tcu,64,64,64,fence_wait,936275000,957095000,93627,95709,2082,0.0,0.0,0.0,-,fsdb:req_is_fence/mem_req_fire -> rsp_is_fence/mem_rsp_fire,-
+sgemm_tcu_bcol_m64_k64_n64,fpxfp_tcu,64,64,64,cache_flush_data,936385000,956865000,93638,95686,2048,2048.0,0.0,0.0,-,simv.log:data-flush,overlaps fence_wait in this trace
+sgemm_tcu_bcol_m64_k64_n64,fpxfp_tcu,64,64,64,cache_flush_tags,936385000,956865000,93638,95686,2048,2048.0,0.0,0.0,-,simv.log:tags-flush,overlaps fence_wait in this trace
+sgemm_tcu_bcol_m64_k64_n64,fpxfp_tcu,64,64,64,after_fence_to_ap_done,957095000,957185000,95709,95718,9,0.0,0.0,0.0,-,fsdb:fence_rsp -> simv.log:ap_done pending,-
+sgemm_tcu_bcol_m64_k64_n64,fpxfp_tcu,64,64,64,host_done_polling,957185000,957235000,95718,95723,5,0.0,0.0,0.0,-,simv.log:ap_done pending -> consumed by host,-
+sgemm_tcu_m64_k64_n64,fpxfp_tcu,64,64,64,kernel_busy,2225000,1137255000,222,113725,113503,0.0,0.0,0.0,-,fsdb:core/busy,envelope; overlaps all device-side phases
+sgemm_tcu_m64_k64_n64,fpxfp_tcu,64,64,64,runtime_bootstrap_to_user,2225000,67175000,222,6717,6495,0.0,208.0,264.0,"_start, init_regs_all, init_regs, init_tls_all, __init_tls, memcpy, memset, __libc_init_array",fsdb:core/busy -> simv.log first non-runtime ELF symbol,"includes reset-visible startup, tag init, WSPAWN, TLS/BSS/libc init"
+sgemm_tcu_m64_k64_n64,fpxfp_tcu,64,64,64,tag_init,2225000,22705000,222,2270,2048,2112.0,0.0,0.0,-,simv.log:tags-init,inclusive log stream converted to exclusive end
+sgemm_tcu_m64_k64_n64,fpxfp_tcu,64,64,64,warp_spawn,23435000,26115000,2343,2611,268,2.0,0.0,0.0,-,fsdb:wctl_is_wspawn&&execute_fire -> active_warps,2 initial WSPAWN fire events
+sgemm_tcu_m64_k64_n64,fpxfp_tcu,64,64,64,user_kernel_body,67175000,1104885000,6717,110488,103771,0.0,38353.0,54497.0,"main, vx_spawn_threads, process_thread_groups_stub, process_thread_groups, kernel_body(kernel_arg_t*)",simv.log user/non-runtime ELF symbols,kernel-specific code; no accelerator-specific counter required
+sgemm_tcu_m64_k64_n64,fpxfp_tcu,64,64,64,runtime_exit,1104965000,1110075000,110496,111007,511,0.0,45.0,45.0,"_start, exit, __funcs_on_exit, libc_exit_fini, dummy",simv.log runtime ELF symbols after user kernel,"exit wrapper, fini hooks, stdio exit before perf dump"
+sgemm_tcu_m64_k64_n64,fpxfp_tcu,64,64,64,exit_final_to_fence,1110075000,1116385000,111007,111638,631,0.0,5.0,5.0,_Exit,simv.log:_Exit + fsdb:fence request,exitcode store and fence dispatch/setup
+sgemm_tcu_m64_k64_n64,fpxfp_tcu,64,64,64,perf_dump,1110495000,1116115000,111049,111611,562,0.0,67.0,67.0,vx_perf_dump,simv.log:vx_perf_dump + ELF symbols,MPM/perf CSR reads and stores
+sgemm_tcu_m64_k64_n64,fpxfp_tcu,64,64,64,fence_wait,1116385000,1137185000,111638,113718,2080,0.0,0.0,0.0,-,fsdb:req_is_fence/mem_req_fire -> rsp_is_fence/mem_rsp_fire,-
+sgemm_tcu_m64_k64_n64,fpxfp_tcu,64,64,64,cache_flush_data,1116495000,1136975000,111649,113697,2048,2048.0,0.0,0.0,-,simv.log:data-flush,overlaps fence_wait in this trace
+sgemm_tcu_m64_k64_n64,fpxfp_tcu,64,64,64,cache_flush_tags,1116495000,1136975000,111649,113697,2048,2048.0,0.0,0.0,-,simv.log:tags-flush,overlaps fence_wait in this trace
+sgemm_tcu_m64_k64_n64,fpxfp_tcu,64,64,64,after_fence_to_ap_done,1137185000,1137275000,113718,113727,9,0.0,0.0,0.0,-,fsdb:fence_rsp -> simv.log:ap_done pending,-
+sgemm_tcu_m64_k64_n64,fpxfp_tcu,64,64,64,host_done_polling,1137275000,1137355000,113727,113735,8,0.0,0.0,0.0,-,simv.log:ap_done pending -> consumed by host,-

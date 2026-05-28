@@ -1,0 +1,3 @@
+trace,runtime_bootstrap_to_user,tag_init,warp_spawn,user_kernel_body,runtime_exit,perf_dump,exit_final_to_fence,fence_wait,cache_flush_tags,host_done_polling
+sgemm_tcu_bcol_m64_k64_n64,6484,2048,264,85728,538,562,631,2082,2048,5
+sgemm_tcu_m64_k64_n64,6495,2048,268,103771,511,562,631,2080,2048,8

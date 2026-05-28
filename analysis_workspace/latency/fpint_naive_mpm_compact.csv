@@ -1,0 +1,2 @@
+trace,gemm_total,compute,stall,jobs,macs,lmem_rd_bytes,lmem_wr_bytes,flops_per_cycle,global_rd_bytes,global_wr_bytes,global_dma_bytes,dcache_dma_active,dcache_dma_wait_dcache,dcache_dma_wait_lmem,dcache_dma_bw_active_Bpc,oi_global_dma
+fpint_naive_m1_k128_n64,7906.0,510.0,8.0,8.0,2048.0,5632.0,128.0,0.5180875284593979,9472.0,128.0,9600.0,3272.0,0.0,0.0,2.93398533007335,0.4266666666666667
