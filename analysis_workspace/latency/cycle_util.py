@@ -4,7 +4,7 @@ import re
 import shutil
 import subprocess
 import sys
-from collections import defaultdict, deque
+from collections import Counter, defaultdict, deque
 from dataclasses import dataclass
 from pathlib import Path
 from enum import IntEnum
@@ -237,6 +237,14 @@ LDMA_CLASSES = {
     'output': MpmAccelClass.ACCEL_LDMA_OUT,
 }
 
+GEMM_CHILD_NAMES = {
+    0: 'input',
+    1: 'weight',
+    2: 'sz',
+    3: 'output',
+    4: 'hbm_dma',
+}
+
 def _is_one(value):
     return str(value).strip().lower() in {'1', "1'b1", '1h1', "1'h1", 'h1'}
 
@@ -453,6 +461,154 @@ def _sample_predicate_high_window_cycles(fsdb_path, signals, predicate, bt=None,
         cycles.append(high_start_cycle)
 
     return cycles, time_unit
+
+
+def _sample_value_window_cycles(fsdb_path, signal, predicate, bt=None, et=None,
+                                clock_period_ps=DEFAULT_CLOCK_PERIOD_PS, strict=False):
+    """Return every cycle covered by windows where a single-signal predicate is true."""
+    try:
+        report = fsdb.report(str(fsdb_path), [signal], bt=bt, et=et)
+        events = report.events()
+    except Exception:
+        if strict:
+            raise
+        return [], None
+
+    cycles = []
+    prev_active = False
+    active_start_cycle = None
+    time_unit = getattr(report, 'time_unit', None)
+
+    for ev in events:
+        active = bool(predicate(ev.values.get(signal, '0')))
+        if active and not prev_active:
+            active_start_cycle = _cycle_from_time_ps(ev.time, clock_period_ps)
+        elif prev_active and not active and active_start_cycle is not None:
+            active_end_cycle = _cycle_from_time_ps(ev.time, clock_period_ps)
+            if active_end_cycle <= active_start_cycle:
+                cycles.append(active_start_cycle)
+            else:
+                cycles.extend(range(active_start_cycle, active_end_cycle))
+            active_start_cycle = None
+        prev_active = active
+
+    if prev_active and active_start_cycle is not None:
+        cycles.append(active_start_cycle)
+
+    return cycles, time_unit
+
+
+def _sample_cycle_set(fsdb_path, signal, predicate=None, bt=None, et=None,
+                      clock_period_ps=DEFAULT_CLOCK_PERIOD_PS, strict=False):
+    if predicate is None:
+        cycles, _ = _sample_high_window_cycles(
+            fsdb_path,
+            signal,
+            bt=bt,
+            et=et,
+            clock_period_ps=clock_period_ps,
+            strict=strict,
+        )
+    else:
+        cycles, _ = _sample_value_window_cycles(
+            fsdb_path,
+            signal,
+            predicate,
+            bt=bt,
+            et=et,
+            clock_period_ps=clock_period_ps,
+            strict=strict,
+        )
+    return set(cycle for cycle in cycles if cycle is not None)
+
+
+def _is_zero_value(value):
+    try:
+        parsed = _parse_sv_int(value)
+    except Exception:
+        return False
+    return parsed == 0
+
+
+def _format_cycle_tuple(labels, separator='+', other_label='OTHER'):
+    labels = tuple(labels)
+    return separator.join(labels) if labels else other_label
+
+
+def _count_cycle_tuples(denominator_cycles, cycle_sets, other_label='OTHER', separator='+'):
+    """Partition denominator cycles by the active-label tuple for each cycle."""
+    denominator_cycles = set(denominator_cycles)
+    ordered_sets = [
+        (name, set(cycles) & denominator_cycles)
+        for name, cycles in cycle_sets.items()
+    ]
+
+    counts = Counter()
+    for cycle in sorted(denominator_cycles):
+        labels = tuple(name for name, cycles in ordered_sets if cycle in cycles)
+        counts[_format_cycle_tuple(labels, separator=separator, other_label=other_label)] += 1
+
+    total = len(denominator_cycles)
+    rows = []
+    for cycle_tuple, cycles in counts.most_common():
+        rows.append({
+            'cycle_tuple': cycle_tuple,
+            'cycles': cycles,
+            'pct_total': _pct(cycles, total),
+            'num_active_labels': 0 if cycle_tuple == other_label else len(cycle_tuple.split(separator)),
+            'is_other': cycle_tuple == other_label,
+        })
+    return pd.DataFrame(rows)
+
+
+def _priority_partition_cycles(cycles, classes, unclassified_label='UNCLASSIFIED'):
+    """Exclusive priority partition of cycles by ordered class sets."""
+    remaining = set(cycles)
+    total = len(remaining)
+    rows = []
+
+    for category, category_cycles in classes:
+        matched = remaining & set(category_cycles)
+        if not matched:
+            continue
+        rows.append({
+            'category': category,
+            'cycles': len(matched),
+            'pct_total': _pct(len(matched), total),
+        })
+        remaining -= matched
+
+    if remaining:
+        rows.append({
+            'category': unclassified_label,
+            'cycles': len(remaining),
+            'pct_total': _pct(len(remaining), total),
+        })
+
+    return pd.DataFrame(rows)
+
+
+def _run_summary_from_cycles(cycles):
+    cycles = sorted(set(c for c in cycles if c is not None))
+    if not cycles:
+        return {'run_count': 0, 'max_run_cycles': 0, 'mean_run_cycles': 0.0}
+
+    runs = []
+    start = cycles[0]
+    prev = cycles[0]
+    for cycle in cycles[1:]:
+        if cycle == prev + 1:
+            prev = cycle
+            continue
+        runs.append(prev - start + 1)
+        start = prev = cycle
+    runs.append(prev - start + 1)
+
+    return {
+        'run_count': len(runs),
+        'max_run_cycles': max(runs),
+        'mean_run_cycles': _mean(runs),
+    }
 
 
 def _interval_summary_from_cycles(cycles, burst_gap_cycles=1):
@@ -884,6 +1040,491 @@ def analyze_hbm_read_latency(fsdb_path=DEFAULT_FSDB, paths=DEFAULT_GEMM_PATHS,
     print(f'Window: bt={bt}, et={et}, clock_period_ps={clock_period_ps}')
     print('HBM read latency: in_g2l_active && src_req_fire -> g2l_rd_beat')
     return df
+
+
+def _sample_gemm_operation_sets(fsdb_path, paths, total_cycles, bt=None, et=None,
+                                clock_period_ps=DEFAULT_CLOCK_PERIOD_PS,
+                                hbm_mode='aggregate', strict=False):
+    total_cycles = set(total_cycles)
+    operation_sets = {
+        'MXU_COMPUTE': _sample_cycle_set(
+            fsdb_path,
+            f'{paths.gemm_unit}/state_compute_q',
+            bt=bt,
+            et=et,
+            clock_period_ps=clock_period_ps,
+            strict=strict,
+        ) & total_cycles,
+        'MXU_STALL': _sample_cycle_set(
+            fsdb_path,
+            f'{paths.gemm_unit}/state_stall_q',
+            bt=bt,
+            et=et,
+            clock_period_ps=clock_period_ps,
+            strict=strict,
+        ) & total_cycles,
+        'LDMA_INPUT': _sample_cycle_set(
+            fsdb_path,
+            f'{paths.input_lmem_dma}/dma_is_active_q',
+            bt=bt,
+            et=et,
+            clock_period_ps=clock_period_ps,
+            strict=strict,
+        ) & total_cycles,
+        'LDMA_WEIGHT': _sample_cycle_set(
+            fsdb_path,
+            f'{paths.weight_lmem_dma}/dma_is_active_q',
+            bt=bt,
+            et=et,
+            clock_period_ps=clock_period_ps,
+            strict=strict,
+        ) & total_cycles,
+        'LDMA_SZ': _sample_cycle_set(
+            fsdb_path,
+            f'{paths.quant_param_lmem_dma}/dma_is_active_q',
+            bt=bt,
+            et=et,
+            clock_period_ps=clock_period_ps,
+            strict=strict,
+        ) & total_cycles,
+        'LDMA_OUTPUT': _sample_cycle_set(
+            fsdb_path,
+            f'{paths.output_lmem_dma}/dma_is_active_q',
+            bt=bt,
+            et=et,
+            clock_period_ps=clock_period_ps,
+            strict=strict,
+        ) & total_cycles,
+    }
+
+    if hbm_mode not in {'aggregate', 'per_channel', 'none'}:
+        raise ValueError(f'Unsupported hbm_mode: {hbm_mode}')
+
+    if hbm_mode != 'none':
+        hbm_channel_sets = {}
+        for channel_id in range(paths.hbm_channel_count):
+            channel_cycles = _sample_cycle_set(
+                fsdb_path,
+                f'{paths.hbm_dma_channel(channel_id)}/dma_is_active_q',
+                bt=bt,
+                et=et,
+                clock_period_ps=clock_period_ps,
+                strict=strict,
+            ) & total_cycles
+            hbm_channel_sets[f'HBM_CH{channel_id}'] = channel_cycles
+
+        if hbm_mode == 'aggregate':
+            operation_sets['HBM_DMA'] = set().union(*hbm_channel_sets.values())
+        else:
+            operation_sets.update(hbm_channel_sets)
+
+    return operation_sets
+
+
+def _sample_gemm_control_sets(fsdb_path, paths, total_cycles, bt=None, et=None,
+                              clock_period_ps=DEFAULT_CLOCK_PERIOD_PS,
+                              strict=False):
+    total_cycles = set(total_cycles)
+    ctrl = paths.gemm_ctrl
+    sync = paths.gemm_sync
+    return {
+        'SYNC_WAIT_BLOCKED': _sample_cycle_set(
+            fsdb_path,
+            f'{sync}/dbg_wait_blocked',
+            bt=bt,
+            et=et,
+            clock_period_ps=clock_period_ps,
+            strict=strict,
+        ) & total_cycles,
+        'SYNC_WAIT_ACCEPT': _sample_cycle_set(
+            fsdb_path,
+            f'{sync}/dbg_wait_accept_pulse',
+            bt=bt,
+            et=et,
+            clock_period_ps=clock_period_ps,
+            strict=strict,
+        ) & total_cycles,
+        'SYNC_NOTIFY_ACCEPT': _sample_cycle_set(
+            fsdb_path,
+            f'{sync}/dbg_notify_accept_pulse',
+            bt=bt,
+            et=et,
+            clock_period_ps=clock_period_ps,
+            strict=strict,
+        ) & total_cycles,
+        'SYNC_NORMAL_ACCEPT': _sample_cycle_set(
+            fsdb_path,
+            f'{sync}/dbg_normal_accept_pulse',
+            bt=bt,
+            et=et,
+            clock_period_ps=clock_period_ps,
+            strict=strict,
+        ) & total_cycles,
+        'SYNC_WAIT_ACTIVE': _sample_cycle_set(
+            fsdb_path,
+            f'{sync}/dbg_wait_active',
+            bt=bt,
+            et=et,
+            clock_period_ps=clock_period_ps,
+            strict=strict,
+        ) & total_cycles,
+        'PARENT_STAGE': (
+            _sample_cycle_set(
+                fsdb_path,
+                f'{ctrl}/parent_q_empty',
+                predicate=_is_zero_value,
+                bt=bt,
+                et=et,
+                clock_period_ps=clock_period_ps,
+                strict=strict,
+            )
+            | _sample_cycle_set(
+                fsdb_path,
+                f'{ctrl}/stage_valid_q',
+                bt=bt,
+                et=et,
+                clock_period_ps=clock_period_ps,
+                strict=strict,
+            )
+            | _sample_cycle_set(
+                fsdb_path,
+                f'{ctrl}/stage_load',
+                bt=bt,
+                et=et,
+                clock_period_ps=clock_period_ps,
+                strict=strict,
+            )
+            | _sample_cycle_set(
+                fsdb_path,
+                f'{ctrl}/stage_advance',
+                bt=bt,
+                et=et,
+                clock_period_ps=clock_period_ps,
+                strict=strict,
+            )
+            | _sample_cycle_set(
+                fsdb_path,
+                f'{ctrl}/parent_out_fire',
+                bt=bt,
+                et=et,
+                clock_period_ps=clock_period_ps,
+                strict=strict,
+            )
+            | _sample_cycle_set(
+                fsdb_path,
+                f'{ctrl}/parent_q_push',
+                bt=bt,
+                et=et,
+                clock_period_ps=clock_period_ps,
+                strict=strict,
+            )
+        ) & total_cycles,
+    }
+
+
+def _sample_child_fifo_summary(fsdb_path, paths, total_cycles, bt=None, et=None,
+                               clock_period_ps=DEFAULT_CLOCK_PERIOD_PS,
+                               strict=False):
+    total_cycles = set(total_cycles)
+    rows = []
+    child_not_empty_sets = []
+
+    for child_id in range(paths.child_count):
+        child_name = GEMM_CHILD_NAMES.get(child_id, f'child{child_id}')
+        base = f'{paths.gemm_ctrl}/gen_child_cmd_queues[{child_id}]'
+        not_empty = _sample_cycle_set(
+            fsdb_path,
+            f'{base}/child_q_empty',
+            predicate=_is_zero_value,
+            bt=bt,
+            et=et,
+            clock_period_ps=clock_period_ps,
+            strict=strict,
+        ) & total_cycles
+        head_normal = _sample_cycle_set(
+            fsdb_path,
+            f'{base}/child_q_head_is_normal',
+            bt=bt,
+            et=et,
+            clock_period_ps=clock_period_ps,
+            strict=strict,
+        ) & total_cycles
+        head_notify = _sample_cycle_set(
+            fsdb_path,
+            f'{base}/child_q_head_is_notify',
+            bt=bt,
+            et=et,
+            clock_period_ps=clock_period_ps,
+            strict=strict,
+        ) & total_cycles
+        out_fire = _sample_cycle_set(
+            fsdb_path,
+            f'{base}/child_out_fire',
+            bt=bt,
+            et=et,
+            clock_period_ps=clock_period_ps,
+            strict=strict,
+        ) & total_cycles
+        normal_fire = _sample_cycle_set(
+            fsdb_path,
+            f'{base}/child_normal_fire',
+            bt=bt,
+            et=et,
+            clock_period_ps=clock_period_ps,
+            strict=strict,
+        ) & total_cycles
+        inflight = _sample_cycle_set(
+            fsdb_path,
+            f'{base}/child_cmd_inflight_r',
+            bt=bt,
+            et=et,
+            clock_period_ps=clock_period_ps,
+            strict=strict,
+        ) & total_cycles
+        busy_seen = _sample_cycle_set(
+            fsdb_path,
+            f'{base}/child_busy_seen_r',
+            bt=bt,
+            et=et,
+            clock_period_ps=clock_period_ps,
+            strict=strict,
+        ) & total_cycles
+
+        child_not_empty_sets.append(not_empty)
+        rows.append({
+            'child_id': child_id,
+            'child': child_name,
+            'not_empty_cycles': len(not_empty),
+            'empty_cycles': len(total_cycles - not_empty),
+            'head_normal_cycles': len(head_normal),
+            'head_notify_cycles': len(head_notify),
+            'out_fire_cycles': len(out_fire),
+            'normal_fire_cycles': len(normal_fire),
+            'inflight_cycles': len(inflight),
+            'busy_seen_cycles': len(busy_seen),
+            'not_empty_pct_total': _pct(len(not_empty), len(total_cycles)),
+            'head_normal_pct_not_empty': _pct(len(head_normal), len(not_empty)),
+            'head_notify_pct_not_empty': _pct(len(head_notify), len(not_empty)),
+        })
+
+    any_child_not_empty = set().union(*child_not_empty_sets) if child_not_empty_sets else set()
+    all_child_empty = total_cycles - any_child_not_empty
+    empty_runs = _run_summary_from_cycles(all_child_empty)
+    rows.append({
+        'child_id': 'all',
+        'child': 'all_children',
+        'not_empty_cycles': len(any_child_not_empty),
+        'empty_cycles': len(all_child_empty),
+        'head_normal_cycles': None,
+        'head_notify_cycles': None,
+        'out_fire_cycles': None,
+        'normal_fire_cycles': None,
+        'inflight_cycles': None,
+        'busy_seen_cycles': None,
+        'not_empty_pct_total': _pct(len(any_child_not_empty), len(total_cycles)),
+        'head_normal_pct_not_empty': None,
+        'head_notify_pct_not_empty': None,
+        'all_empty_run_count': empty_runs['run_count'],
+        'all_empty_max_run_cycles': empty_runs['max_run_cycles'],
+        'all_empty_mean_run_cycles': empty_runs['mean_run_cycles'],
+    })
+
+    return pd.DataFrame(rows), any_child_not_empty, all_child_empty
+
+
+def _add_pct_of_column(df, numerator_col, denominator, out_col):
+    if df.empty:
+        df[out_col] = []
+        return df
+    df = df.copy()
+    df[out_col] = df[numerator_col].apply(lambda value: _pct(value, denominator))
+    return df
+
+
+def analyze_gemm_cycle_breakdown(fsdb_path=DEFAULT_FSDB, paths=DEFAULT_GEMM_PATHS,
+                                 bt=None, et=None,
+                                 clock_period_ps=DEFAULT_CLOCK_PERIOD_PS,
+                                 hbm_mode='aggregate', strict=False):
+    """Build a cycle-exclusive GEMM latency breakdown.
+
+    The denominator is the RTL GEMM total-cycle predicate:
+    ``!queues_idle || gemm_unit_computing``. Each denominator cycle is assigned
+    exactly one operation tuple, so ``operation_tuples.cycles.sum()`` should
+    match ``perf_total_cycles_r``. Operation tuple ``OTHER`` is then split into
+    ordered sync/control categories to expose cycles that are not datapath
+    activity but still count in GEMM total.
+    """
+    fsdb_path = str(fsdb_path)
+    ctrl = paths.gemm_ctrl
+
+    queue_non_idle = _sample_cycle_set(
+        fsdb_path,
+        f'{ctrl}/queues_idle',
+        predicate=_is_zero_value,
+        bt=bt,
+        et=et,
+        clock_period_ps=clock_period_ps,
+        strict=strict,
+    )
+    gemm_unit_computing = _sample_cycle_set(
+        fsdb_path,
+        f'{ctrl}/gemm_unit_computing',
+        bt=bt,
+        et=et,
+        clock_period_ps=clock_period_ps,
+        strict=strict,
+    )
+    total_cycles = queue_non_idle | gemm_unit_computing
+
+    operation_sets = _sample_gemm_operation_sets(
+        fsdb_path,
+        paths,
+        total_cycles,
+        bt=bt,
+        et=et,
+        clock_period_ps=clock_period_ps,
+        hbm_mode=hbm_mode,
+        strict=strict,
+    )
+    operation_tuples = _count_cycle_tuples(total_cycles, operation_sets)
+
+    operation_active_cycles = set().union(*operation_sets.values()) if operation_sets else set()
+    other_cycles = total_cycles - operation_active_cycles
+    control_sets = _sample_gemm_control_sets(
+        fsdb_path,
+        paths,
+        total_cycles,
+        bt=bt,
+        et=et,
+        clock_period_ps=clock_period_ps,
+        strict=strict,
+    )
+    other_control_breakdown = _priority_partition_cycles(
+        other_cycles,
+        [
+            ('SYNC_WAIT_BLOCKED', control_sets['SYNC_WAIT_BLOCKED']),
+            ('SYNC_WAIT_ACCEPT', control_sets['SYNC_WAIT_ACCEPT']),
+            ('SYNC_NOTIFY_ACCEPT', control_sets['SYNC_NOTIFY_ACCEPT']),
+            ('SYNC_NORMAL_ACCEPT', control_sets['SYNC_NORMAL_ACCEPT']),
+            ('PARENT_STAGE_ONLY', control_sets['PARENT_STAGE']),
+        ],
+        unclassified_label='UNCLASSIFIED_CTRL_GAP',
+    )
+    if not other_control_breakdown.empty:
+        other_control_breakdown = other_control_breakdown.rename(columns={'pct_total': 'pct_other'})
+        other_control_breakdown['pct_total'] = other_control_breakdown['cycles'].apply(
+            lambda cycles: _pct(cycles, len(total_cycles))
+        )
+
+    child_fifo_summary, any_child_not_empty, all_child_empty = _sample_child_fifo_summary(
+        fsdb_path,
+        paths,
+        total_cycles,
+        bt=bt,
+        et=et,
+        clock_period_ps=clock_period_ps,
+        strict=strict,
+    )
+    child_empty_breakdown = _priority_partition_cycles(
+        all_child_empty,
+        [
+            ('DATAPATH_ACTIVE_AFTER_POP', operation_active_cycles),
+            ('SYNC_WAIT_BLOCKED', control_sets['SYNC_WAIT_BLOCKED']),
+            ('SYNC_WAIT_ACCEPT', control_sets['SYNC_WAIT_ACCEPT']),
+            ('SYNC_NOTIFY_ACCEPT', control_sets['SYNC_NOTIFY_ACCEPT']),
+            ('SYNC_NORMAL_ACCEPT', control_sets['SYNC_NORMAL_ACCEPT']),
+            ('PARENT_STAGE_ONLY', control_sets['PARENT_STAGE']),
+        ],
+        unclassified_label='UNCLASSIFIED_CHILD_EMPTY',
+    )
+    if not child_empty_breakdown.empty:
+        child_empty_breakdown = child_empty_breakdown.rename(columns={'pct_total': 'pct_child_empty'})
+        child_empty_breakdown['pct_total'] = child_empty_breakdown['cycles'].apply(
+            lambda cycles: _pct(cycles, len(total_cycles))
+        )
+
+    signal_summary_rows = []
+    for name, cycles in operation_sets.items():
+        signal_summary_rows.append({
+            'class': 'operation',
+            'name': name,
+            'cycles': len(cycles),
+            'pct_total': _pct(len(cycles), len(total_cycles)),
+        })
+    for name, cycles in control_sets.items():
+        signal_summary_rows.append({
+            'class': 'control',
+            'name': name,
+            'cycles': len(cycles),
+            'pct_total': _pct(len(cycles), len(total_cycles)),
+        })
+    signal_summary = pd.DataFrame(signal_summary_rows)
+
+    perf_total = _last_int(
+        fsdb_path,
+        _perf_vec(paths.gemm_ctrl, 'perf_total_cycles_r'),
+        bt=bt,
+        et=et,
+        strict=strict,
+    )
+    perf_compute = _last_int(
+        fsdb_path,
+        _perf_vec(paths.gemm_unit, 'perf_compute_r'),
+        bt=bt,
+        et=et,
+        strict=strict,
+    )
+    perf_stall = _last_int(
+        fsdb_path,
+        _perf_vec(paths.gemm_unit, 'perf_stall_r'),
+        bt=bt,
+        et=et,
+        strict=strict,
+    )
+    metadata = pd.DataFrame([
+        {'metric': 'derived_total_cycles', 'value': len(total_cycles)},
+        {'metric': 'perf_total_cycles', 'value': perf_total},
+        {'metric': 'operation_tuple_sum_cycles', 'value': int(operation_tuples['cycles'].sum()) if not operation_tuples.empty else 0},
+        {'metric': 'operation_other_cycles', 'value': len(other_cycles)},
+        {'metric': 'operation_active_cycles', 'value': len(operation_active_cycles)},
+        {'metric': 'perf_compute_cycles', 'value': perf_compute},
+        {'metric': 'perf_stall_cycles', 'value': perf_stall},
+        {'metric': 'queue_non_idle_cycles', 'value': len(queue_non_idle)},
+        {'metric': 'gemm_unit_computing_cycles', 'value': len(gemm_unit_computing)},
+        {'metric': 'any_child_not_empty_cycles', 'value': len(any_child_not_empty)},
+        {'metric': 'all_child_empty_cycles', 'value': len(all_child_empty)},
+        {'metric': 'matches_perf_total', 'value': int(len(total_cycles) == perf_total)},
+    ])
+
+    print(f'FSDB: {fsdb_path}')
+    print(f'Window: bt={bt}, et={et}, clock_period_ps={clock_period_ps}, hbm_mode={hbm_mode}')
+    print(f'derived_total_cycles={len(total_cycles)}, perf_total_cycles={perf_total}')
+    print(f'operation_tuple_sum={int(operation_tuples["cycles"].sum()) if not operation_tuples.empty else 0}')
+    print(f'operation_other_cycles={len(other_cycles)}, all_child_empty_cycles={len(all_child_empty)}')
+
+    return {
+        'operation_tuples': operation_tuples,
+        'other_control_breakdown': other_control_breakdown,
+        'child_fifo_summary': child_fifo_summary,
+        'child_empty_breakdown': child_empty_breakdown,
+        'signal_summary': signal_summary,
+        'metadata': metadata,
+    }
+
+
+def export_gemm_cycle_breakdown(breakdown, output_dir, prefix='gemm_cycle_breakdown'):
+    """Export analyze_gemm_cycle_breakdown() output DataFrames to CSV files."""
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    written = {}
+    for name, df in breakdown.items():
+        if not isinstance(df, pd.DataFrame):
+            continue
+        path = output_dir / f'{prefix}_{name}.csv'
+        df.to_csv(path, index=False)
+        written[name] = path
+    return written
 
 
 def build_mpm_accel_counters(paths=DEFAULT_GEMM_PATHS):
@@ -2005,6 +2646,151 @@ def analyze_sync_wait(fsdb_path=DEFAULT_FSDB, paths=DEFAULT_GEMM_PATHS, bt=None,
     print(f'Window: bt={bt}, et={et}, time_unit={report.time_unit}')
     print(f'total_wait_active_cycles={total_cycles}')
     return df
+
+
+def _trace_index(df):
+    if df is None or df.empty:
+        return pd.DataFrame()
+    if 'trace' in df.columns:
+        return df.set_index('trace')
+    return df
+
+
+def _df_get(df, trace, column, default=0.0):
+    if df is None or df.empty or trace not in df.index or column not in df.columns:
+        return default
+    value = df.loc[trace, column]
+    try:
+        if pd.isna(value):
+            return default
+    except TypeError:
+        pass
+    return float(value)
+
+
+def _safe_ratio(num, den):
+    return 0.0 if den == 0 else num / den
+
+
+def _safe_pct_value(num, den):
+    return 0.0 if den == 0 else 100.0 * num / den
+
+
+def classify_bottlenecks(phase_compact, mpm_compact, util_compact=None, sync_compact=None):
+    """Classify the dominant bottleneck from compact cycle-analysis tables.
+
+    This is intentionally heuristic because many counters overlap in time.
+    The output keeps the raw decomposition next to the label so the decision is
+    auditable instead of being a single opaque "memory-bound" verdict.
+    """
+    phase = _trace_index(phase_compact)
+    mpm = _trace_index(mpm_compact)
+    util = _trace_index(util_compact)
+    sync = _trace_index(sync_compact)
+
+    traces = sorted(set(phase.index) | set(mpm.index) | set(util.index) | set(sync.index))
+    rows = []
+    for trace in traces:
+        user = _df_get(phase, trace, 'user_kernel_body')
+        kernel_busy = _df_get(phase, trace, 'kernel_busy')
+        gemm_total = _df_get(mpm, trace, 'gemm_total')
+        compute = _df_get(mpm, trace, 'compute')
+        stall = _df_get(mpm, trace, 'stall')
+        hbm_active = _df_get(mpm, trace, 'hbm_active')
+        ldma_values = {
+            'ldma_input_active': _df_get(mpm, trace, 'ldma_input_active'),
+            'ldma_weight_active': _df_get(mpm, trace, 'ldma_weight_active'),
+            'ldma_sz_active': _df_get(mpm, trace, 'ldma_sz_active'),
+            'ldma_output_active': _df_get(mpm, trace, 'ldma_output_active'),
+        }
+        memory_active_floor = max([hbm_active, *ldma_values.values()])
+        memory_active_source = (
+            'hbm_active'
+            if hbm_active >= max(ldma_values.values(), default=0.0)
+            else max(ldma_values, key=ldma_values.get)
+        )
+        gemm_fixed_noncompute = max(0.0, gemm_total - compute - stall)
+        outside_gemm_user = max(0.0, user - gemm_total)
+        non_compute_floor = max(0.0, user - compute)
+        fixed_control_cycles = gemm_fixed_noncompute + outside_gemm_user
+        g0_g1_wait = _df_get(sync, trace, 'G0') + _df_get(sync, trace, 'G1')
+
+        compute_user_pct = _safe_pct_value(compute, user)
+        fixed_control_user_pct = _safe_pct_value(fixed_control_cycles, user)
+        memory_active_user_pct = _safe_pct_value(memory_active_floor, user)
+        stall_gemm_pct = _safe_pct_value(stall, gemm_total)
+        mxu_compute_pct = _df_get(util, trace, 'mxu_compute_pct')
+        hbm_active_user_pct = _df_get(util, trace, 'hbm_active_user_pct')
+
+        reasons = []
+        is_memory_pressure = (
+            memory_active_user_pct >= 40.0
+            and memory_active_floor >= 0.60 * max(compute, 1.0)
+        )
+        is_pure_memory_bound = (
+            memory_active_floor >= compute
+            and memory_active_floor >= fixed_control_cycles
+            and memory_active_user_pct >= 50.0
+        )
+
+        if stall_gemm_pct >= 20.0:
+            bottleneck = 'mxu_stall_bound'
+            reasons.append(f'mxu stall is {stall_gemm_pct:.1f}% of gemm_total')
+        elif abs(compute - fixed_control_cycles) <= 0.10 * max(compute, fixed_control_cycles, 1.0) and compute >= memory_active_floor:
+            bottleneck = 'compute_fixed_mixed_bound'
+            reasons.append('compute and fixed/control costs are within 10%')
+        elif fixed_control_cycles >= compute and memory_active_floor >= 0.70 * fixed_control_cycles:
+            bottleneck = 'fixed_control_memory_overlap_bound'
+            reasons.append('fixed/control dominates and memory activity is close behind')
+        elif fixed_control_cycles >= compute and fixed_control_cycles >= memory_active_floor:
+            bottleneck = 'fixed_control_bound'
+            reasons.append('fixed/control cycles are the largest component')
+        elif is_pure_memory_bound:
+            bottleneck = 'memory_activity_bound'
+            reasons.append('memory active floor is the largest component')
+        elif compute >= fixed_control_cycles and compute >= memory_active_floor:
+            bottleneck = 'compute_sync_bound'
+            reasons.append('compute cycles are the largest component')
+        else:
+            bottleneck = 'mixed_bound'
+            reasons.append('no single component clearly dominates')
+
+        if is_memory_pressure and not is_pure_memory_bound:
+            reasons.append('memory activity is high but not the sole dominant component')
+        if g0_g1_wait > 0 and abs(g0_g1_wait - compute) <= 0.25 * max(compute, 1.0):
+            reasons.append('G0/G1 wait tracks compute-side spacing')
+        if outside_gemm_user > 0.30 * max(user, 1.0):
+            reasons.append('large user-body region is outside gemm_total')
+
+        rows.append({
+            'trace': trace,
+            'bottleneck': bottleneck,
+            'is_memory_pressure': is_memory_pressure,
+            'is_pure_memory_bound': is_pure_memory_bound,
+            'kernel_busy': kernel_busy,
+            'user_kernel_body': user,
+            'gemm_total': gemm_total,
+            'gemm_compute': compute,
+            'gemm_stall': stall,
+            'gemm_fixed_noncompute': gemm_fixed_noncompute,
+            'outside_gemm_user': outside_gemm_user,
+            'non_compute_floor': non_compute_floor,
+            'fixed_control_cycles': fixed_control_cycles,
+            'memory_active_floor': memory_active_floor,
+            'memory_active_source': memory_active_source,
+            'hbm_active': hbm_active,
+            'g0_g1_wait': g0_g1_wait,
+            'compute_user_pct': compute_user_pct,
+            'fixed_control_user_pct': fixed_control_user_pct,
+            'memory_active_user_pct': memory_active_user_pct,
+            'stall_gemm_pct': stall_gemm_pct,
+            'mxu_compute_pct': mxu_compute_pct,
+            'hbm_active_user_pct': hbm_active_user_pct,
+            'reason': '; '.join(reasons),
+        })
+
+    return pd.DataFrame(rows)
+
 
 def analyze_mxu_input(fsdb_path):
     pass

@@ -46,6 +46,63 @@ add_option() {
     fi
 }
 
+pick_vcs_socket_port() {
+    python3 - <<'PY'
+import socket
+import sys
+
+for _ in range(1000):
+    sockets = []
+    try:
+        ctrl = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        ctrl.bind(("", 0))
+        port = ctrl.getsockname()[1]
+        sockets.append(ctrl)
+        if port >= 65535:
+            continue
+        mem = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        mem.bind(("", port + 1))
+        sockets.append(mem)
+        print(port)
+        sys.exit(0)
+    except OSError:
+        pass
+    finally:
+        for sock in sockets:
+            sock.close()
+
+print("failed to find consecutive free VCS socket ports", file=sys.stderr)
+sys.exit(1)
+PY
+}
+
+check_vcs_socket_port() {
+    python3 - "$1" <<'PY'
+import socket
+import sys
+
+try:
+    port = int(sys.argv[1])
+except (IndexError, ValueError):
+    sys.exit(2)
+
+if port <= 0 or port >= 65535:
+    sys.exit(2)
+
+sockets = []
+try:
+    for candidate in (port, port + 1):
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.bind(("", candidate))
+        sockets.append(sock)
+except OSError:
+    sys.exit(1)
+finally:
+    for sock in sockets:
+        sock.close()
+PY
+}
+
 DEFAULTS() {
     DRIVER=simx
     APP=sgemm
@@ -187,8 +244,12 @@ run_app() {
         local VCS_PORT
         if [ -n "${VCS_SOCKET_PORT:-}" ]; then
             VCS_PORT=$VCS_SOCKET_PORT
+            if ! check_vcs_socket_port "$VCS_PORT"; then
+                echo "Error: VCS_SOCKET_PORT=$VCS_PORT does not name two available consecutive ports"
+                exit 1
+            fi
         else
-            VCS_PORT=$(python3 -c "import socket; s=socket.socket(); s.bind(('',0)); print(s.getsockname()[1]); s.close()")
+            VCS_PORT=$(pick_vcs_socket_port) || exit 1
         fi
         local SIMV_DIR
         if [ $TEMPBUILD -eq 1 ]; then
