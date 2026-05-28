@@ -65,7 +65,7 @@ LLM_STAGES = ("prefill", "generation")
 # corresponding kernel is not yet implemented as a regression test, so the
 # generated entry will have ``"implemented": false`` and an empty ``args``.
 KERNEL_APP_REGISTRY: dict[str, str | None] = {
-    "fpint_gemm": "fpint_gemm_ffn_hw_improve",
+    "fpint_gemm": "fpint_gemm_ffn_hw",
     "rmsnorm":    "rmsnorm",
     "rope":       "rope",
     "softmax":    "softmax",
