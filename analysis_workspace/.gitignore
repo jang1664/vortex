@@ -1,0 +1,11 @@
+*.csv
+*.txt
+*.log
+*.pdf
+*.png
+*.svg
+__pycache__/
+*.pyc
+fsdbdebugLog/
+fsdbextractLog/
+fsdbreportLog/
