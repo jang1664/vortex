@@ -1,7 +1,7 @@
-name: llama2_7b_prefill_s128_q32
+name: llama2_7b_prefill_s1024_b1
 defaults:
-  warmup: 3
-  iterations: 10
+  warmup: 1
+  iterations: 3
   app: fpint_gemm_ffn_hw
   target: hw
   platform: xilinx_u55c_gen3x16_xdma_3_202210_1
@@ -9,10 +9,10 @@ defaults:
     - --cores=1
     - --threads=8
 workloads:
-  - id: llama2_7b_prefill_s128_q32
+  - id: llama2_7b_prefill_s1024_b1
     model: llama2-7b
     stage: prefill
     batch: 1
-    prefill_seq_len: 128
+    prefill_seq_len: 1024
     qblk: 32
     implemented_only: true

@@ -227,7 +227,7 @@ static void build_test_vectors(std::vector<uint16_t>& h_A,
   // Input matrix A [M x K] fp16
   for (uint32_t m = 0; m < M; ++m)
     for (uint32_t k = 0; k < K; ++k)
-      h_A[m * K + k] = float_to_fp16(1.0f + float((m + k) % 7));
+      h_A[m * K + k] = float_to_fp16(1.0f + float((m + k) % 7)/10.0);
 
   // Weight matrix W [K x N] raw int4 values (unpacked for reference)
   for (uint32_t k = 0; k < K; ++k)
@@ -238,13 +238,13 @@ static void build_test_vectors(std::vector<uint16_t>& h_A,
   if (QDIR == 0) {
     for (uint32_t kg = 0; kg < groups_total; ++kg)
       for (uint32_t n = 0; n < N; ++n) {
-        h_scales[kg * N + n] = float_to_fp16(1.0f + float(n % 7));
+        h_scales[kg * N + n] = float_to_fp16(1.0f + float(n % 7)/10.0);
         h_zeros[kg * N + n] = int16_t(int(n % 7) - 3);
       }
   } else {
     for (uint32_t k = 0; k < K; ++k)
       for (uint32_t ng = 0; ng < ng_total; ++ng) {
-        h_scales[k * ng_total + ng] = float_to_fp16(1.0f + float(ng % 7));
+        h_scales[k * ng_total + ng] = float_to_fp16(1.0f + float(ng % 7)/10.0);
         h_zeros[k * ng_total + ng] = int16_t(int(ng % 7) - 3);
       }
   }

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import itertools
 import json
 import re
 import shlex
@@ -121,6 +122,94 @@ def _case_from_raw(raw: dict[str, Any], defaults: BenchDefaults, index: int) -> 
     )
 
 
+def _pow2_values(start: int, end: int) -> list[int]:
+    if start <= 0 or end < start:
+        raise ValueError(f"invalid pow2 range: [{start}, {end}]")
+    if start & (start - 1) or end & (end - 1):
+        raise ValueError(f"pow2 range endpoints must be powers of two: [{start}, {end}]")
+    values = []
+    value = start
+    while value <= end:
+        values.append(value)
+        value *= 2
+    return values
+
+
+def _matrix_values(spec: Any) -> list[Any]:
+    if isinstance(spec, dict):
+        if "values" in spec:
+            values = spec["values"]
+            if not isinstance(values, list):
+                raise ValueError(f"matrix values must be a list: {spec}")
+            return values
+        if "pow2" in spec:
+            bounds = spec["pow2"]
+            if not isinstance(bounds, list) or len(bounds) != 2:
+                raise ValueError(f"pow2 matrix spec must be [start, end]: {spec}")
+            return _pow2_values(int(bounds[0]), int(bounds[1]))
+        raise ValueError(f"unknown matrix spec: {spec}")
+    if isinstance(spec, list):
+        return spec
+    return [spec]
+
+
+def _format_value(value: Any, params: dict[str, Any]) -> Any:
+    if isinstance(value, str):
+        formatted = value.format(**params)
+        if re.fullmatch(r"-?\d+", formatted):
+            return int(formatted)
+        try:
+            return float(formatted) if re.fullmatch(r"-?\d+\.\d+", formatted) else formatted
+        except ValueError:
+            return formatted
+    if isinstance(value, dict):
+        return {key: _format_value(inner, params) for key, inner in value.items()}
+    if isinstance(value, list):
+        return [_format_value(inner, params) for inner in value]
+    return value
+
+
+def _expand_case_matrix(raw: dict[str, Any], defaults: BenchDefaults, index: int) -> list[BenchCase]:
+    matrix = raw.get("matrix")
+    if not isinstance(matrix, dict) or not matrix:
+        raise ValueError(f"case_matrix #{index} is missing non-empty matrix")
+
+    keys = list(matrix.keys())
+    value_lists = [_matrix_values(matrix[key]) for key in keys]
+    prefix = sanitize_id(str(raw.get("id", f"matrix_{index}")))
+
+    cases = []
+    for combo in itertools.product(*value_lists):
+        params = dict(zip(keys, combo))
+        case_id_template = str(raw.get("case_id", raw.get("name", prefix)))
+        name_template = str(raw.get("name", case_id_template))
+        args_template = str(raw.get("args", "")).strip()
+        if not args_template:
+            raise ValueError(f"case_matrix #{index} is missing non-empty args template")
+
+        case_id = sanitize_id(str(_format_value(case_id_template, params)))
+        name = str(_format_value(name_template, params))
+        shape = _format_value(raw.get("shape", {}), params)
+        if not isinstance(shape, dict):
+            raise ValueError(f"case_matrix #{index} shape must expand to a mapping")
+
+        cases.append(BenchCase(
+            case_id=case_id,
+            app=str(raw.get("app", defaults.app)),
+            args=str(_format_value(args_template, params)),
+            kind=str(raw.get("kind", "")),
+            stage=str(raw.get("stage", "")),
+            name=name,
+            calls_per_forward=float(raw.get("calls_per_forward", 1)),
+            shape=shape,
+            warmup=int(raw.get("warmup", defaults.warmup)),
+            iterations=int(raw.get("iterations", defaults.iterations)),
+            source=f"case_matrix:{prefix}",
+        ))
+
+    return cases
+
+
 def _expand_workload(raw: dict[str, Any], defaults: BenchDefaults, repo_root: Path) -> list[BenchCase]:
     _ensure_repo_on_path(repo_root)
     from tools.workload.gen_kernel_cfgs import build_llm_kernels
@@ -193,6 +282,8 @@ def load_suite(path: Path, repo_root: Path | None = None,
     cases: list[BenchCase] = []
     for i, item in enumerate(raw.get("cases") or [], start=1):
         cases.append(_case_from_raw(item, defaults, i))
+    for i, item in enumerate(raw.get("case_matrices") or [], start=1):
+        cases.extend(_expand_case_matrix(item, defaults, i))
     for item in raw.get("workloads") or []:
         cases.extend(_expand_workload(item, defaults, repo_root))
 
@@ -226,3 +317,31 @@ def suite_to_rows(suite: BenchSuite) -> list[dict[str, Any]]:
             "source": case.source,
         })
     return rows
+
+
+def suite_to_expanded_yaml(suite: BenchSuite) -> dict[str, Any]:
+    defaults = dict(suite.defaults.__dict__)
+    defaults["blackbox_args"] = list(suite.defaults.blackbox_args)
+
+    cases = []
+    for case in suite.cases:
+        row: dict[str, Any] = {
+            "id": case.case_id,
+            "app": case.app,
+            "kind": case.kind,
+            "stage": case.stage,
+            "name": case.name,
+            "args": case.args,
+            "calls_per_forward": case.calls_per_forward,
+            "warmup": case.warmup,
+            "iterations": case.iterations,
+        }
+        if case.shape:
+            row["shape"] = case.shape
+        cases.append(row)
+
+    return {
+        "name": suite.name,
+        "defaults": defaults,
+        "cases": cases,
+    }
