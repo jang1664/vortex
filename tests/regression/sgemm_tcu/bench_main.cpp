@@ -78,6 +78,15 @@ static void random_bytes(void* p, size_t n) {
   for (size_t i = 0; i < n; ++i) b[i] = static_cast<uint8_t>(rand());
 }
 
+template <typename T>
+static void convert_row_to_col_major(T *dst, uint32_t width, uint32_t height, const T *src) {
+  for (uint32_t r = 0; r < height; ++r) {
+    for (uint32_t c = 0; c < width; ++c) {
+      dst[c * height + r] = src[r * width + c];
+    }
+  }
+}
+
 int main(int argc, char *argv[]) {
   auto bench = vx_bench::parse(argc, argv);
 
@@ -153,13 +162,19 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_mem_alloc(device, sizeC * sizeof(otype_t), VX_MEM_WRITE, &C_buffer));
   RT_CHECK(vx_mem_address(C_buffer, &kernel_arg.C_addr));
 
-  std::vector<uint8_t> h_A(sizeA * sizeof(itype_t));
-  std::vector<uint8_t> h_B(sizeB * sizeof(itype_t));
-  random_bytes(h_A.data(), h_A.size());
-  random_bytes(h_B.data(), h_B.size());
+  std::vector<itype_t> h_A(sizeA);
+  std::vector<itype_t> h_B(sizeB);
+  random_bytes(h_A.data(), sizeA * sizeof(itype_t));
+  random_bytes(h_B.data(), sizeB * sizeof(itype_t));
 
-  RT_CHECK(vx_copy_to_dev(A_buffer, h_A.data(), 0, h_A.size()));
-  RT_CHECK(vx_copy_to_dev(B_buffer, h_B.data(), 0, h_B.size()));
+  RT_CHECK(vx_copy_to_dev(A_buffer, h_A.data(), 0, sizeA * sizeof(itype_t)));
+  if constexpr (B_COL_MAJOR && vt::ITYPE::bits >= 8) {
+    std::vector<itype_t> h_B_col(sizeB);
+    convert_row_to_col_major(h_B_col.data(), N, K, h_B.data());
+    RT_CHECK(vx_copy_to_dev(B_buffer, h_B_col.data(), 0, sizeB * sizeof(itype_t)));
+  } else {
+    RT_CHECK(vx_copy_to_dev(B_buffer, h_B.data(), 0, sizeB * sizeof(itype_t)));
+  }
   RT_CHECK(vx_upload_kernel_file(device, kernel_file, &krnl_buffer));
   RT_CHECK(vx_upload_bytes(device, &kernel_arg, sizeof(kernel_arg_t), &args_buffer));
 

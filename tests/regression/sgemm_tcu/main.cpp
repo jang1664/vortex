@@ -32,6 +32,15 @@ namespace vt = tensor;
 static bool g_enable_sparse = false;
 ///////////////////////////////////////////////////////////////////////////////
 
+template <typename T>
+static void convert_row_to_col_major(T *dst, uint32_t width, uint32_t height, const T *src) {
+  for (uint32_t r = 0; r < height; ++r) {
+    for (uint32_t c = 0; c < width; ++c) {
+      dst[c * height + r] = src[r * width + c];
+    }
+  }
+}
+
 static void convert_row_to_col_major_4bit(uint8_t *dst, uint32_t width, uint32_t height, const uint8_t *src) {
   // Calculate output size and stride
   uint32_t out_bytes = (width * height + 1) / 2;
@@ -577,6 +586,9 @@ int main(int argc, char *argv[]) {
 
   std::cout << "input data type: " << vt::ITYPE::name << " (id=" << vt::ITYPE::id << ")" << std::endl;
   std::cout << "output data type: " << vt::OTYPE::name << " (id=" << vt::OTYPE::id << ")" << std::endl;
+  std::cout << "matrix B device layout: "
+            << ((vt::ITYPE::bits < 8 || B_COL_MAJOR) ? "col-major" : "row-major")
+            << std::endl;
   std::cout << "WMMA Core Dimension: M=" << cfg::tcM << ", N=" << cfg::tcN << ", K=" << cfg::tcK << std::endl;
   std::cout << "WMMA Tile Dimension: M=" << cfg::tileM << ", N=" << cfg::tileN << ", K=" << cfg::tileK << std::endl;
   std::cout << "matrix A: " << M << "x" << K << std::endl;
@@ -632,6 +644,10 @@ int main(int argc, char *argv[]) {
       std::vector<uint8_t> h_B_col(sizeB);
       convert_row_to_col_major_4bit(h_B_col.data(), N, 2 * K, (uint8_t*)h_B.data());
       RT_CHECK(vx_copy_to_dev(B_buffer, h_B_col.data(), 0, sizeB));
+    } else if constexpr (B_COL_MAJOR) {
+      std::vector<itype_t> h_B_col(sizeB);
+      convert_row_to_col_major(h_B_col.data(), N, K, h_B.data());
+      RT_CHECK(vx_copy_to_dev(B_buffer, h_B_col.data(), 0, sizeB * sizeof(itype_t)));
     } else {
       RT_CHECK(vx_copy_to_dev(B_buffer, h_B.data(), 0, sizeB * sizeof(itype_t)));
     }

@@ -32,8 +32,8 @@ void kernel_body(kernel_arg_t *__UNIFORM__ arg) {
     ctx::load_matrix_sync(fragA, pTileA, K);
 
     // Load B tile
-    if constexpr (vt::ITYPE::bits < 8) {
-      // For sub-byte matrix B must be in col-major format
+    if constexpr (vt::ITYPE::bits < 8 || B_COL_MAJOR) {
+      // For sub-byte matrix B, and optionally fp16/bf16 B, use col-major layout.
       auto pTileB = pB + tile_col * K + i;
       ctx::load_matrix_sync<vt::col_major>(fragB, pTileB, K);
     } else {

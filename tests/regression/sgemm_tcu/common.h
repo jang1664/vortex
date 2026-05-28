@@ -15,6 +15,10 @@
 #define OTYPE fp32
 #endif
 
+#ifndef B_COL_MAJOR
+#define B_COL_MAJOR 0
+#endif
+
 typedef struct {
   uint32_t grid_dim[2];
   uint32_t block_dim[2];
