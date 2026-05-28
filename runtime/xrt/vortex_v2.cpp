@@ -1238,7 +1238,6 @@ private:
         if (it->second.count == 0) {
           DBG_PRINT("reactivating cached bank%d...\n", bank_id);
         } else {
-          DBG_PRINT("reusing bank%d...\n", bank_id);
         }
         ++it->second.count;
       }
