@@ -62,6 +62,13 @@ class RunOptions:
     run_id: str | None = None
 
 
+@dataclass(frozen=True)
+class GitMetadata:
+    commit: str = ""
+    branch: str = ""
+    dirty: str = ""
+
+
 def normalize_fpga_bin(path: Path) -> Path:
     path = path.resolve()
     return path.parent if path.name == "vortex_afu.xclbin" else path
@@ -112,6 +119,30 @@ def repo_root() -> Path:
 
 def default_run_id() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+
+
+def _git_output(args: list[str], cwd: Path) -> str:
+    try:
+        return subprocess.check_output(
+            ["git", "-C", str(cwd), *args],
+            stderr=subprocess.DEVNULL,
+            text=True,
+        ).strip()
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return ""
+
+
+def collect_git_metadata(cwd: Path | None = None) -> GitMetadata:
+    root = cwd or repo_root()
+    commit = _git_output(["rev-parse", "--short=12", "HEAD"], root)
+    branch = _git_output(["rev-parse", "--abbrev-ref", "HEAD"], root)
+    if branch == "HEAD":
+        branch = "DETACHED"
+    status = _git_output(["status", "--porcelain"], root)
+    dirty = "1" if status else "0"
+    if not commit:
+        dirty = ""
+    return GitMetadata(commit=commit, branch=branch, dirty=dirty)
 
 
 def write_cases_csv(suite: BenchSuite, out_dir: Path) -> None:
@@ -198,6 +229,9 @@ RAW_DB_COLUMNS = [
     "run_id",
     "timestamp_utc",
     "fpga_bin_label",
+    "git_commit",
+    "git_branch",
+    "git_dirty",
     "suite",
     "case_id",
     "exec_key",
@@ -226,6 +260,14 @@ RAW_DB_COLUMNS = [
 ]
 
 
+def add_git_metadata(results: pd.DataFrame, git: GitMetadata) -> pd.DataFrame:
+    rows = results.copy()
+    rows.insert(0, "git_dirty", git.dirty)
+    rows.insert(0, "git_branch", git.branch)
+    rows.insert(0, "git_commit", git.commit)
+    return rows
+
+
 def append_raw_db(results: pd.DataFrame, out_root: Path, *, run_id: str, fpga_bin_label: str) -> None:
     if results.empty:
         return
@@ -243,6 +285,7 @@ def append_raw_db(results: pd.DataFrame, out_root: Path, *, run_id: str, fpga_bi
 
 
 def run_suite(suite: BenchSuite, options: RunOptions) -> int:
+    git = collect_git_metadata()
     out_root = options.out_dir
     run_id = options.run_id or os.environ.get("LATENCY_BENCH_RUN_ID") or default_run_id()
     run_dir = out_root / "runs" / run_id
@@ -266,6 +309,9 @@ def run_suite(suite: BenchSuite, options: RunOptions) -> int:
         "build_dir": str(run_options.build_dir),
         "fpga_bin_label": run_options.fpga_bin_label,
         "fpga_bin_dir": str(run_options.fpga_bin_dir),
+        "git_commit": git.commit,
+        "git_branch": git.branch,
+        "git_dirty": git.dirty,
         "platform": options.platform,
         "xrt_device_index": options.xrt_device_index,
         "blackbox_args": list(options.blackbox_args),
@@ -288,6 +334,7 @@ def run_suite(suite: BenchSuite, options: RunOptions) -> int:
     rc = subprocess.call(cmd, env=os.environ.copy())
 
     results = build_results(suite, run_dir, options.fpga_bin_dir)
+    results = add_git_metadata(results, git)
     summary = build_summary(results)
     results.to_csv(run_dir / "results.csv", index=False)
     summary.to_csv(run_dir / "summary.csv", index=False)

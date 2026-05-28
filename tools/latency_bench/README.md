@@ -215,11 +215,11 @@ python -m tools.latency_bench run \
   --out results/latency/improve_tcol1-fpint_gemm_hw
 ```
 
-`raw_db.csv` includes run metadata (`run_id`, `fpga_bin_label`,
-`fpga_bin_dir`, `xclbin_sha256`, `suite`, `case_id`, `exec_key`, `app`, `args`,
-`shape_json`) plus benchmark status and latency columns. Set `--run-id` or
-`LATENCY_BENCH_RUN_ID` to control the run directory name; otherwise the CLI uses
-a UTC timestamp.
+`raw_db.csv` includes run metadata (`run_id`, `fpga_bin_label`, `git_commit`,
+`git_branch`, `git_dirty`, `fpga_bin_dir`, `xclbin_sha256`, `suite`,
+`case_id`, `exec_key`, `app`, `args`, `shape_json`) plus benchmark status and
+latency columns. Set `--run-id` or `LATENCY_BENCH_RUN_ID` to control the run
+directory name; otherwise the CLI uses a UTC timestamp.
 
 ## Visualize Existing Results
 

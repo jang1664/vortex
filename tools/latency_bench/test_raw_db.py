@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -86,6 +87,20 @@ printf 'ok\n' > "$log_file"
             self.assertEqual("gemm_m1_n128_k128", rows[0]["case_id"])
             self.assertEqual("pass", rows[0]["status"])
             self.assertEqual("2.0", rows[0]["p50_us"])
+            self.assertTrue(rows[0]["git_commit"])
+            self.assertTrue(rows[0]["git_branch"])
+            self.assertIn(rows[0]["git_dirty"], ("0", "1"))
+
+            with (out_root / "runs" / "run_a" / "results.csv").open(newline="") as fp:
+                result_rows = list(csv.DictReader(fp))
+            self.assertEqual(rows[0]["git_commit"], result_rows[0]["git_commit"])
+            self.assertEqual(rows[0]["git_branch"], result_rows[0]["git_branch"])
+            self.assertEqual(rows[0]["git_dirty"], result_rows[0]["git_dirty"])
+
+            manifest = json.loads((out_root / "runs" / "run_a" / "manifest.json").read_text())
+            self.assertEqual(rows[0]["git_commit"], manifest["git_commit"])
+            self.assertEqual(rows[0]["git_branch"], manifest["git_branch"])
+            self.assertEqual(rows[0]["git_dirty"], manifest["git_dirty"])
 
 
 if __name__ == "__main__":
