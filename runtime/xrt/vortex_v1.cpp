@@ -201,9 +201,9 @@ public:
   #ifdef CPP_API
 
     auto xrtDevice = xrt::device(device_index);
-    auto uuid = xrtDevice.load_xclbin(xlbin_path_s);
+    auto uuid = xrtDevice.load_xclbin(std::string(xlbin_path_s));
     auto xrtKernel = xrt::ip(xrtDevice, uuid, KERNEL_NAME);
-    auto xclbin = xrt::xclbin(xlbin_path_s);
+    auto xclbin = xrt::xclbin(std::string(xlbin_path_s));
     auto device_name = xrtDevice.get_info<xrt::info::device::name>();
     device_bdf = xrtDevice.get_info<xrt::info::device::bdf>();
 
