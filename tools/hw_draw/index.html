@@ -1,0 +1,2102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HW Block Design Editor</title>
+<style>
+:root {
+  --bg: #ffffff; --bg2: #f5f5f0; --bg3: #eceae3; --fg: #1a1a1a; --fg2: #666; --fg3: #999;
+  --brd: #ddd; --blue: #2d8cf0; --red: #e6522c; --purple: #8b5cf6; --green: #2a9d5c; --amber: #d4850b;
+  --font: system-ui, -apple-system, sans-serif; --mono: 'SF Mono', 'Fira Code', monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #1a1a1a; --bg2: #252525; --bg3: #333; --fg: #e5e5e5; --fg2: #aaa; --fg3: #777; --brd: #444; }
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: var(--font); background: var(--bg); color: var(--fg); height: 100vh; display: flex; flex-direction: column; overflow: hidden; font-size: 13px; }
+.toolbar { display: flex; gap: 6px; padding: 6px 10px; border-bottom: 1px solid var(--brd); align-items: center; flex-wrap: wrap; background: var(--bg2); }
+.main { display: flex; flex: 1; min-height: 0; }
+.statusbar { font-size: 10px; color: var(--fg3); padding: 3px 10px; border-top: 1px solid var(--brd); display: flex; gap: 14px; background: var(--bg2); }
+.sidebar { width: 180px; min-width: 100px; border-right: 1px solid var(--brd); padding: 8px; overflow-y: auto; flex-shrink: 0; background: var(--bg); position: relative; }
+.resize-handle-r { position: absolute; top: 0; right: -3px; width: 6px; height: 100%; cursor: ew-resize; z-index: 5; }
+.resize-handle-l { position: absolute; top: 0; left: -3px; width: 6px; height: 100%; cursor: ew-resize; z-index: 5; }
+.sidebar h3 { font-size: 12px; font-weight: 600; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center; }
+.mod-item { padding: 5px 8px; border-radius: 6px; cursor: pointer; margin-bottom: 2px; font-size: 12px; border: 1px solid transparent; }
+.mod-item:hover { background: var(--bg2); }
+.mod-item.active { background: #e8f0fe; border-color: var(--blue); color: var(--blue); }
+@media (prefers-color-scheme: dark) { .mod-item.active { background: #1a2a40; } }
+.mod-item .sub { font-size: 10px; color: var(--fg3); }
+.canvas-wrap { flex: 1; position: relative; overflow: hidden; background: var(--bg); }
+canvas { display: block; }
+.panel { width: 300px; min-width: 150px; border-left: 1px solid var(--brd); padding: 10px; overflow-y: auto; flex-shrink: 0; background: var(--bg); font-size: 12px; position: relative; }
+.ann-item { padding: 6px 8px; border-radius: 6px; border: 1px solid var(--brd); margin-bottom: 4px; cursor: pointer; font-size: 11px; }
+.ann-item:hover { background: var(--bg2); }
+.ann-item.active { border-color: var(--blue); background: #e8f0fe; }
+@media (prefers-color-scheme: dark) { .ann-item.active { background: #1a2a40; } }
+.ann-item .ann-targets { font-size: 10px; color: var(--fg3); margin-top: 2px; }
+.ann-item .ann-text { color: var(--fg2); margin-top: 2px; white-space: pre-wrap; }
+.panel h3 { font-size: 13px; font-weight: 600; margin-bottom: 8px; display: flex; justify-content: space-between; }
+.panel label { font-size: 10px; font-weight: 600; color: var(--fg2); display: block; margin-top: 8px; margin-bottom: 2px; text-transform: uppercase; letter-spacing: 0.4px; }
+.panel input, .panel select, .panel textarea { width: 100%; padding: 4px 7px; font-size: 12px; font-family: var(--font); border: 1px solid var(--brd); border-radius: 5px; background: var(--bg2); color: var(--fg); outline: none; }
+.panel textarea { resize: vertical; min-height: 40px; font-family: var(--mono); font-size: 11px; }
+.btn { padding: 4px 11px; font-size: 12px; font-family: var(--font); border: 1px solid var(--brd); border-radius: 6px; background: var(--bg); color: var(--fg); cursor: pointer; white-space: nowrap; }
+.btn:hover { background: var(--bg2); }
+.btn-sm { padding: 2px 7px; font-size: 10px; border-radius: 4px; }
+.btn-green { background: #e6f4ea; color: var(--green); border-color: #b7dfc3; }
+@media (prefers-color-scheme: dark) { .btn-green { background: #1a3328; border-color: #2a5a3c; } }
+.btn-danger { color: var(--red); }
+.btn-warn { background: #fef3cd; color: var(--amber); border-color: #eed699; }
+@media (prefers-color-scheme: dark) { .btn-warn { background: #3a2e10; border-color: #5a4a20; } }
+.sep { width: 1px; height: 20px; background: var(--brd); }
+.spacer { flex: 1; }
+.prop-row { display: flex; gap: 3px; margin-bottom: 2px; align-items: center; }
+.prop-row input { flex: 1; }
+.prop-row input:first-child { flex: 0 0 35%; }
+.port-section { padding: 5px 7px; background: var(--bg2); border-radius: 6px; border: 1px solid var(--brd); margin-bottom: 4px; }
+.port-header { display: flex; gap: 3px; margin-bottom: 3px; }
+.port-header input, .port-header select { font-size: 11px; }
+.array-input { display: flex; gap: 3px; align-items: center; margin-top: 2px; }
+.array-input input { width: 40px; text-align: center; }
+.array-input span { font-size: 10px; color: var(--fg3); }
+.sheet-bar { display: flex; align-items: center; gap: 0; border-top: 1px solid var(--brd); background: var(--bg2); height: 28px; padding: 0 4px; overflow-x: auto; flex-shrink: 0; }
+.sheet-tab { padding: 4px 14px; font-size: 11px; cursor: pointer; border: 1px solid transparent; border-bottom: none; border-radius: 6px 6px 0 0; margin-right: 2px; background: transparent; color: var(--fg2); white-space: nowrap; position: relative; user-select: none; }
+.sheet-tab:hover { background: var(--bg); }
+.sheet-tab.active { background: var(--bg); color: var(--fg); font-weight: 600; border-color: var(--brd); }
+.sheet-tab .close-btn { display: none; margin-left: 6px; font-size: 9px; color: var(--fg3); cursor: pointer; }
+.sheet-tab:hover .close-btn { display: inline; }
+.sheet-tab .close-btn:hover { color: var(--red); }
+.sheet-add { padding: 4px 8px; font-size: 14px; cursor: pointer; color: var(--fg3); background: none; border: none; font-family: var(--font); border-radius: 4px; }
+.sheet-add:hover { background: var(--bg3); color: var(--fg); }
+.sync-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 4px; }
+.sync-dot.ok { background: var(--green); }
+.sync-dot.changed { background: var(--amber); animation: pulse 1s ease-in-out 3; }
+@keyframes pulse { 50% { opacity: 0.3; } }
+.file-bar { display: flex; align-items: center; gap: 0; border-bottom: 1px solid var(--brd); background: var(--bg3); height: 30px; padding: 0 4px; overflow-x: auto; flex-shrink: 0; }
+.file-tab { padding: 4px 12px; font-size: 11px; cursor: pointer; border: 1px solid transparent; border-top: 2px solid transparent; border-bottom: none; border-radius: 0; margin-right: 1px; background: transparent; color: var(--fg3); white-space: nowrap; user-select: none; display: flex; align-items: center; gap: 6px; }
+.file-tab:hover { background: var(--bg2); color: var(--fg2); }
+.file-tab.active { background: var(--bg); color: var(--fg); font-weight: 600; border-top-color: var(--blue); }
+.file-tab.dirty::after { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--amber); flex-shrink: 0; }
+.file-tab .close-btn { font-size: 9px; color: var(--fg3); cursor: pointer; padding: 0 2px; border-radius: 3px; }
+.file-tab .close-btn:hover { color: var(--red); background: var(--bg3); }
+.file-add { padding: 4px 8px; font-size: 14px; cursor: pointer; color: var(--fg3); background: none; border: none; font-family: var(--font); border-radius: 4px; }
+.file-add:hover { background: var(--bg2); color: var(--fg); }
+.autocomplete-wrap { position: relative; }
+.autocomplete-list { position: absolute; top: 100%; left: 0; right: 0; max-height: 180px; overflow-y: auto; background: var(--bg); border: 1px solid var(--brd); border-top: none; border-radius: 0 0 6px 6px; z-index: 10; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
+.autocomplete-item { padding: 6px 10px; font-size: 12px; cursor: pointer; display: flex; justify-content: space-between; }
+.autocomplete-item:hover, .autocomplete-item.active { background: var(--bg2); }
+.autocomplete-item .sub { font-size: 10px; color: var(--fg3); }
+.inst-row { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; padding: 6px 8px; background: var(--bg2); border-radius: 6px; border: 1px solid var(--brd); }
+.inst-row input { font-size: 12px; padding: 3px 6px; border: 1px solid var(--brd); border-radius: 4px; background: var(--bg); color: var(--fg); }
+.inst-row .module-name { font-size: 11px; color: var(--fg2); min-width: 80px; }
+.ctx-menu { position: fixed; background: var(--bg); border: 1px solid var(--brd); border-radius: 8px; padding: 4px 0; z-index: 200; min-width: 160px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
+.ctx-menu div { padding: 5px 14px; font-size: 12px; cursor: pointer; }
+.ctx-menu div:hover { background: var(--bg2); }
+.ctx-menu .ctx-sep { width: auto; height: 1px; margin: 3px 8px; background: var(--brd); cursor: default; }
+.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center; z-index: 100; }
+.modal { width: 500px; background: var(--bg); border-radius: 12px; padding: 20px; display: flex; flex-direction: column; border: 1px solid var(--brd); }
+.modal h3 { font-size: 15px; margin-bottom: 12px; display: flex; justify-content: space-between; }
+.modal label { font-size: 11px; font-weight: 600; color: var(--fg2); display: block; margin-top: 10px; margin-bottom: 4px; }
+.modal input { width: 100%; padding: 6px 10px; font-size: 13px; border: 1px solid var(--brd); border-radius: 6px; background: var(--bg2); color: var(--fg); outline: none; font-family: var(--mono); }
+</style>
+</head>
+<body>
+<input type="file" id="fileInput" accept=".json" style="display:none" onchange="handleFileOpen(event)"/>
+<div class="file-bar" id="fileBar"></div>
+<div class="toolbar">
+  <button class="btn" onclick="openFile()">Open</button>
+  <button class="btn" onclick="saveToServer()">Save</button>
+  <button class="btn" onclick="showSaveAs()">Save As</button>
+  <span class="sep"></span>
+  <button class="btn" onclick="addModule()">+ Module</button>
+  <button class="btn" onclick="addInstance()">+ Instance</button>
+  <button class="btn" id="linkBtn" onclick="toggleLink()">Link</button>
+  <span class="sep"></span>
+  <button class="btn" onclick="editSheet()">Edit sheet</button>
+  <button class="btn" onclick="showAnnotations()">Annotations</button>
+  <button class="btn" onclick="rotateSelection()">Rotate</button>
+  <button class="btn" onclick="fitToScreen()">Fit</button>
+  <button class="btn" onclick="resetView()">100%</button>
+  <span class="spacer"></span>
+  <button class="btn btn-green" onclick="copySimpleJson()">Copy for Claude</button>
+  <span id="filePath" style="font-size:11px;color:var(--fg2);font-family:var(--mono);max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title=""></span>
+</div>
+<div class="main">
+  <div class="sidebar" id="sidebarWrap"><div id="sidebar" style="height:100%;overflow-y:auto"></div><div class="resize-handle-r" onmousedown="startResize(event,'sidebarWrap','right')"></div></div>
+  <div class="canvas-wrap" id="canvasWrap"><canvas id="canvas"></canvas></div>
+  <div class="panel" id="panelWrap" style="display:none"><div class="resize-handle-l" onmousedown="startResize(event,'panelWrap','left')"></div><div id="panel" style="height:100%;overflow-y:auto;padding:10px"></div></div>
+</div>
+<div class="sheet-bar" id="sheetBar"></div>
+<div class="statusbar">
+  <span><span class="sync-dot ok" id="syncDot"></span><span id="syncLabel">Synced</span></span>
+  <span id="statSheet">-</span>
+  <span id="statModules">-</span>
+  <span id="statInst">-</span>
+  <span id="statConn">-</span>
+  <span style="margin-left:auto">Drag=move | Edge=resize | Shift+drag port=reposition | R=rotate | Ctrl+C/V=copy/paste | Del=delete</span>
+</div>
+
+<!-- Save As Modal -->
+<div class="modal-overlay" id="saveAsOverlay" style="display:none" onclick="closeSaveAs()">
+  <div class="modal" onclick="event.stopPropagation()">
+    <h3><span>Save As</span><button class="btn btn-sm" onclick="closeSaveAs()">x</button></h3>
+    <label>File path (server-side)</label>
+    <div class="autocomplete-wrap">
+      <input id="saveAsPath" placeholder="/path/to/file.json" autocomplete="off"
+             oninput="browseFiles('saveAsPath','saveAsList')" onfocus="browseFiles('saveAsPath','saveAsList')"
+             onkeydown="fileInputKeydown(event,'saveAsPath','saveAsList',selectSaveAsItem)"/>
+      <div class="autocomplete-list" id="saveAsList" style="display:none"></div>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:14px">
+      <button class="btn" style="flex:1" onclick="doSaveAs()">Save to server path</button>
+      <button class="btn" style="flex:1" onclick="downloadJson()">Download .json</button>
+    </div>
+  </div>
+</div>
+
+<!-- Open Server File Modal -->
+<div class="modal-overlay" id="openOverlay" style="display:none" onclick="closeOpenModal()">
+  <div class="modal" onclick="event.stopPropagation()">
+    <h3><span>Open Server File</span><button class="btn btn-sm" onclick="closeOpenModal()">x</button></h3>
+    <label>File path</label>
+    <div class="autocomplete-wrap">
+      <input id="openPath" placeholder="/path/to/file.json" autocomplete="off"
+             oninput="browseFiles('openPath','openList')" onfocus="browseFiles('openPath','openList')"
+             onkeydown="fileInputKeydown(event,'openPath','openList',selectOpenItem)"/>
+      <div class="autocomplete-list" id="openList" style="display:none"></div>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:14px">
+      <button class="btn btn-green" style="flex:1" onclick="doOpenServerFile()">Open</button>
+    </div>
+  </div>
+</div>
+
+<!-- Add Instance Modal -->
+<div class="modal-overlay" id="instOverlay" style="display:none" onclick="closeInstModal()">
+  <div class="modal" onclick="event.stopPropagation()" style="width:540px">
+    <h3><span>Add Instances</span><button class="btn btn-sm" onclick="closeInstModal()">x</button></h3>
+    <label>Module</label>
+    <div class="autocomplete-wrap">
+      <input id="instModuleInput" placeholder="Type to search modules..." autocomplete="off"
+             oninput="filterInstModules()" onfocus="filterInstModules()" onkeydown="instInputKeydown(event)"/>
+      <div class="autocomplete-list" id="instModuleList" style="display:none"></div>
+    </div>
+    <label style="margin-top:12px">Instances to create</label>
+    <div id="instRows" style="max-height:240px;overflow-y:auto"></div>
+    <div style="display:flex;gap:6px;margin-top:6px">
+      <button class="btn btn-sm" onclick="addInstRow()">+ Add one more</button>
+      <button class="btn btn-sm" onclick="addInstRowBatch()">+ Generate batch</button>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:14px">
+      <button class="btn btn-green" style="flex:1" onclick="commitInstances()">Create instances</button>
+    </div>
+  </div>
+</div>
+
+<div class="ctx-menu" id="ctxMenu" style="display:none"></div>
+
+<script>
+/* ═══════════════════════════════════════════════════════════
+   DATA MODEL
+
+   {
+     modules: {                        // Global module library
+       "m_xxx": { id, name, description, props, ports: [{id, name, dir, array, props}] }
+     },
+     sheets: [                         // Drawing pages (canvases)
+       { id, name, description,
+         instances: [{id, name, moduleRef, x, y, w, h, rotation, portPositions, array, props, description}],
+         connections: [{id, from:[{inst,port}], to:[{inst,port}], direction, props, description}],
+         annotations: [{id, targets:[id,...], text, props}]  // group comments on multiple items
+       }
+     ],
+     activeSheet: "s_xxx"
+   }
+   ═══════════════════════════════════════════════════════════ */
+
+// Multi-file state
+let openFiles = {};
+let activeFileId = "";
+let clipboard = null;
+
+// Active file aliases
+let data = { modules: {}, sheets: [], activeSheet: "" };
+let dirty = false;
+let selection = null;   // {type:'instance'|'connection'|'module'|'sheet'|'multi', id, ids:[]}
+let linking = null;     // null | {inst, port} | {endpoints: [{inst,port},...]} (for M:N)
+let drag = null;
+let mouse = { x: 0, y: 0 };
+let boxSelect = null;   // {startX, startY} during box selection drag
+
+const uid = () => Math.random().toString(36).slice(2, 9);
+const GRID = 20;
+const snap = v => Math.round(v / GRID) * GRID;
+const PORT_R = 5;
+const HANDLE_SIZE = 8;
+const MIN_BLOCK_W = 80;
+const MIN_BLOCK_H = 60;
+const PCOL = { in: '#2d8cf0', out: '#e6522c', inout: '#8b5cf6', interface: '#2a9d5c' };
+let canvas, ctx, W = 800, H = 600;
+let viewX = 0, viewY = 0, viewZoom = 1; // pan & zoom state
+
+/* ═══════════════════════════════════════════════════════════
+   ACCESSORS
+   ═══════════════════════════════════════════════════════════ */
+function sheet() {
+  return data.sheets.find(s => s.id === data.activeSheet) || data.sheets[0] || null;
+}
+
+function arrayLabel(arr) {
+  if (!arr || arr.length === 0) return "";
+  return arr.map(n => `[${n}]`).join("");
+}
+
+// Connection helpers — normalize old {inst,port} to [{inst,port},...] arrays
+function connFrom(c) { return Array.isArray(c.from) ? c.from : [c.from]; }
+function connTo(c) { return Array.isArray(c.to) ? c.to : [c.to]; }
+function connDir(c) { return c.direction || 'forward'; } // forward|reverse|both|none
+
+/* ═══════════════════════════════════════════════════════════
+   DATA MIGRATION (old format → new)
+   ═══════════════════════════════════════════════════════════ */
+function migrateData(raw) {
+  // Already new format: top-level modules + sheets with instances
+  if (raw.modules && raw.sheets && Array.isArray(raw.sheets) && !raw.sheets[0]?.modules) {
+    if (!raw.activeSheet && raw.sheets.length) raw.activeSheet = raw.sheets[0].id;
+    return raw;
+  }
+
+  // Old format: sheets with modules inside
+  if (raw.sheets && Array.isArray(raw.sheets) && raw.sheets[0]?.modules) {
+    const allModules = {};
+    const newSheets = [];
+    for (const oldSheet of raw.sheets) {
+      // Collect modules into global library
+      for (const [mid, m] of Object.entries(oldSheet.modules || {})) {
+        allModules[mid] = { id: m.id, name: m.name, description: m.description || '', props: m.props || {}, ports: m.ports || [] };
+      }
+      // Find the "top" module — its instances/connections become the sheet content
+      const topId = oldSheet.topModule || Object.keys(oldSheet.modules || {})[0] || '';
+      const topMod = oldSheet.modules?.[topId];
+      newSheets.push({
+        id: oldSheet.id || 's_' + uid(),
+        name: oldSheet.name || 'Sheet',
+        description: oldSheet.description || '',
+        instances: topMod?.instances || [],
+        connections: topMod?.connections || [],
+      });
+    }
+    return { modules: allModules, sheets: newSheets, activeSheet: raw.activeSheet || newSheets[0]?.id || '' };
+  }
+
+  // Legacy: { modules: {}, topModule: "" } (no sheets at all)
+  if (raw.modules && !raw.sheets) {
+    const allModules = {};
+    for (const [mid, m] of Object.entries(raw.modules)) {
+      allModules[mid] = { id: m.id, name: m.name, description: m.description || '', props: m.props || {}, ports: m.ports || [] };
+    }
+    const topId = raw.topModule || Object.keys(raw.modules)[0] || '';
+    const topMod = raw.modules[topId];
+    const sid = 's_' + uid();
+    return {
+      modules: allModules,
+      sheets: [{ id: sid, name: 'Sheet 1', description: '', instances: topMod?.instances || [], connections: topMod?.connections || [] }],
+      activeSheet: sid
+    };
+  }
+
+  // Empty/invalid
+  const sid = 's_' + uid();
+  return { modules: {}, sheets: [{ id: sid, name: 'Sheet 1', description: '', instances: [], connections: [] }], activeSheet: sid };
+}
+
+/* ═══════════════════════════════════════════════════════════
+   PORT POSITION
+   ═══════════════════════════════════════════════════════════ */
+const EDGE_ROTATE = {
+  0:   { left: 'left', right: 'right', top: 'top', bottom: 'bottom' },
+  90:  { left: 'bottom', right: 'top', top: 'left', bottom: 'right' },
+  180: { left: 'right', right: 'left', top: 'bottom', bottom: 'top' },
+  270: { left: 'top', right: 'bottom', top: 'right', bottom: 'left' },
+};
+
+function defaultEdgeForDir(dir) {
+  return dir === 'out' ? 'right' : 'left';
+}
+
+function getPortPosOnBlock(blk, port, inst) {
+  const rot = inst.rotation || 0;
+  const pp = inst.portPositions || {};
+  let edge, t;
+  if (pp[port.id]) {
+    edge = pp[port.id].edge; t = pp[port.id].t;
+  } else {
+    const ref = data.modules[inst.moduleRef];
+    if (!ref) return { x: blk.x, y: blk.y };
+    const defEdge = defaultEdgeForDir(port.dir);
+    const sameEdge = ref.ports.filter(p => defaultEdgeForDir(p.dir) === defEdge);
+    const idx = sameEdge.findIndex(p => p.id === port.id);
+    t = (idx + 1) / (sameEdge.length + 1);
+    edge = defEdge;
+  }
+  return edgePoint(blk, EDGE_ROTATE[rot][edge], t);
+}
+
+function edgePoint(blk, edge, t) {
+  switch (edge) {
+    case 'left':   return { x: blk.x, y: blk.y + blk.h * t };
+    case 'right':  return { x: blk.x + blk.w, y: blk.y + blk.h * t };
+    case 'top':    return { x: blk.x + blk.w * t, y: blk.y };
+    case 'bottom': return { x: blk.x + blk.w * t, y: blk.y + blk.h };
+  }
+}
+
+function nearestEdgePoint(blk, mx, my) {
+  const edges = [
+    { edge: 'left', x: blk.x, y: clamp(my, blk.y, blk.y + blk.h) },
+    { edge: 'right', x: blk.x + blk.w, y: clamp(my, blk.y, blk.y + blk.h) },
+    { edge: 'top', x: clamp(mx, blk.x, blk.x + blk.w), y: blk.y },
+    { edge: 'bottom', x: clamp(mx, blk.x, blk.x + blk.w), y: blk.y + blk.h },
+  ];
+  let best = edges[0], bestD = Infinity;
+  for (const e of edges) { const d = Math.hypot(e.x - mx, e.y - my); if (d < bestD) { bestD = d; best = e; } }
+  let t = (best.edge === 'left' || best.edge === 'right') ? (best.y - blk.y) / blk.h : (best.x - blk.x) / blk.w;
+  return { edge: best.edge, t: clamp(t, 0.05, 0.95) };
+}
+
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+/* ═══════════════════════════════════════════════════════════
+   BLOCK GEOMETRY
+   ═══════════════════════════════════════════════════════════ */
+function getBlocks() {
+  const s = sheet();
+  if (!s) return [];
+  return s.instances.map(inst => {
+    const ref = data.modules[inst.moduleRef];
+    const ports = ref ? ref.ports : [];
+    return { id: inst.id, inst, ref, ports, x: inst.x || 80, y: inst.y || 80, w: inst.w || 170, h: computeBlockH(inst) };
+  });
+}
+
+function computeBlockH(inst) {
+  const ref = data.modules[inst.moduleRef];
+  if (!ref) return MIN_BLOCK_H;
+  if (inst.h) return inst.h;
+  const leftC = ref.ports.filter(p => defaultEdgeForDir(p.dir) === 'left').length;
+  const rightC = ref.ports.filter(p => defaultEdgeForDir(p.dir) === 'right').length;
+  return Math.max(MIN_BLOCK_H, (Math.max(leftC, rightC) + 1) * 24 + 32);
+}
+
+function portWorldPos(ep) {
+  if (ep.type === 'float') return { x: ep.x, y: ep.y };
+  const s = sheet();
+  if (!s) return null;
+  const inst = s.instances.find(i => i.id === ep.inst);
+  if (!inst) return null;
+  const ref = data.modules[inst.moduleRef];
+  if (!ref) return null;
+  const port = ref.ports.find(p => p.id === ep.port);
+  if (!port) return null;
+  const blk = { x: inst.x || 80, y: inst.y || 80, w: inst.w || 170, h: computeBlockH(inst) };
+  return getPortPosOnBlock(blk, port, inst);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   MULTI-FILE MANAGEMENT
+   ═══════════════════════════════════════════════════════════ */
+function saveViewState() {
+  if (!activeFileId || !openFiles[activeFileId]) return;
+  const f = openFiles[activeFileId];
+  f.data = data; f.dirty = dirty;
+}
+
+function loadViewState(fid) {
+  const f = openFiles[fid];
+  if (!f) return;
+  activeFileId = fid;
+  data = f.data; dirty = f.dirty;
+  selection = null; linking = null; updateLinkBtn();
+}
+
+function switchFile(fid) {
+  if (fid === activeFileId) return;
+  saveViewState(); loadViewState(fid); updatePathDisplay(); render();
+}
+
+async function loadServerFiles() {
+  try {
+    const r = await fetch('/api/files');
+    const res = await r.json();
+    for (const sf of res.files) {
+      if (openFiles[sf.id]) continue;
+      const cr = await fetch(`/api/file/${sf.id}`);
+      const raw = await cr.json();
+      const fileData = migrateData(raw);
+      openFiles[sf.id] = { id: sf.id, name: sf.name, path: sf.path, data: fileData, dirty: false };
+      if (!activeFileId) activeFileId = sf.id;
+    }
+    if (activeFileId) loadViewState(activeFileId);
+    render();
+  } catch (e) { console.error("Load failed:", e); }
+}
+
+async function saveToServer() {
+  if (!activeFileId) return;
+  saveViewState();
+  const f = openFiles[activeFileId];
+  if (!f) return;
+  if (!f.path) { showSaveAs(); return; }
+  try {
+    const r = await fetch(`/api/file/${activeFileId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data, null, 2) });
+    const res = await r.json();
+    if (res.path) { f.path = res.path; f.name = res.path.split('/').pop(); }
+    dirty = false; f.dirty = false; showSync("ok", "Saved"); renderFileBar();
+  } catch (e) { console.error("Save failed:", e); }
+}
+
+function connectSSE() {
+  const es = new EventSource('/api/watch');
+  es.onmessage = (evt) => {
+    try { const msg = JSON.parse(evt.data); for (const fid of (msg.changed || [])) reloadFile(fid); }
+    catch { if (activeFileId) reloadFile(activeFileId); }
+  };
+  es.onerror = () => setTimeout(connectSSE, 3000);
+}
+
+async function reloadFile(fid) {
+  const f = openFiles[fid];
+  if (!f || !f.path) return;
+  try {
+    const r = await fetch(`/api/file/${fid}`);
+    const raw = await r.json();
+    f.data = migrateData(raw); f.dirty = false;
+    if (fid === activeFileId) { data = f.data; dirty = false; showSync("changed", "Reloaded"); render(); }
+  } catch (e) { console.error("Reload failed:", e); }
+}
+
+function showSync(cls, text) {
+  document.getElementById('syncDot').className = 'sync-dot ' + cls;
+  document.getElementById('syncLabel').textContent = text;
+}
+
+function markDirty() {
+  dirty = true;
+  if (openFiles[activeFileId]) openFiles[activeFileId].dirty = true;
+  showSync("changed", "Unsaved"); renderFileBar();
+}
+
+function updatePathDisplay() {
+  const el = document.getElementById('filePath');
+  const f = openFiles[activeFileId];
+  el.textContent = f?.path || ''; el.title = f?.path || '';
+  document.title = 'HW Editor — ' + (f?.name || 'untitled');
+}
+
+/* ═══════════════════════════════════════════════════════════
+   FILE I/O
+   ═══════════════════════════════════════════════════════════ */
+function openFile() { openServerFile(); }
+
+function handleFileOpen(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      const raw = JSON.parse(e.target.result);
+      const fileData = migrateData(raw);
+      const fid = 'local_' + uid();
+      openFiles[fid] = { id: fid, name: file.name, path: null, data: fileData, dirty: false };
+      saveViewState(); activeFileId = fid; loadViewState(fid); updatePathDisplay(); render();
+      showSync("ok", "Opened: " + file.name);
+    } catch (err) { alert('Invalid JSON: ' + err.message); }
+  };
+  reader.readAsText(file); event.target.value = '';
+}
+
+function openServerFile() {
+  document.getElementById('openPath').value = '';
+  document.getElementById('openList').style.display = 'none';
+  document.getElementById('openOverlay').style.display = 'flex';
+  setTimeout(() => document.getElementById('openPath').focus(), 50);
+}
+function closeOpenModal() { document.getElementById('openOverlay').style.display = 'none'; }
+
+async function doOpenServerFile() {
+  const path = document.getElementById('openPath').value.trim();
+  if (!path) return alert('Enter a file path');
+  try {
+    const r = await fetch('/api/files/open', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path }) });
+    const res = await r.json();
+    if (res.error) return alert(res.error);
+    const cr = await fetch(`/api/file/${res.id}`);
+    const raw = await cr.json();
+    openFiles[res.id] = { id: res.id, name: res.name, path: res.path, data: migrateData(raw), dirty: false };
+    saveViewState(); closeOpenModal(); switchFile(res.id); showSync("ok", "Opened: " + res.name);
+  } catch (e) { alert('Open failed: ' + e.message); }
+}
+
+async function newFile() {
+  try {
+    const r = await fetch('/api/files/new', { method: 'POST' });
+    const res = await r.json();
+    const sid = 's_' + uid();
+    openFiles[res.id] = { id: res.id, name: res.name, path: null, data: { modules: {}, sheets: [{ id: sid, name: 'Sheet 1', description: '', instances: [], connections: [] }], activeSheet: sid }, dirty: false };
+    saveViewState(); switchFile(res.id);
+  } catch (e) { alert('New file failed: ' + e.message); }
+}
+
+async function closeFile(fid) {
+  const f = openFiles[fid];
+  if (!f) return;
+  if (f.dirty && !confirm(`"${f.name}" has unsaved changes. Close anyway?`)) return;
+  if (!fid.startsWith('local_')) { try { await fetch(`/api/file/${fid}`, { method: 'DELETE' }); } catch {} }
+  delete openFiles[fid];
+  if (activeFileId === fid) {
+    const rem = Object.keys(openFiles);
+    if (rem.length) switchFile(rem[0]);
+    else { activeFileId = ''; data = { modules: {}, sheets: [], activeSheet: '' }; dirty = false; render(); }
+  }
+  renderFileBar();
+}
+
+function showSaveAs() {
+  const f = openFiles[activeFileId];
+  document.getElementById('saveAsPath').value = f?.path || '';
+  document.getElementById('saveAsOverlay').style.display = 'flex';
+}
+function closeSaveAs() { document.getElementById('saveAsOverlay').style.display = 'none'; }
+
+async function doSaveAs() {
+  const path = document.getElementById('saveAsPath').value.trim();
+  if (!path) return alert('Enter a file path');
+  saveViewState();
+  try {
+    const r = await fetch(`/api/saveas/${activeFileId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path, data }) });
+    const res = await r.json();
+    if (res.error) return alert('Error: ' + res.error);
+    const f = openFiles[activeFileId];
+    if (f) { f.path = res.path; f.name = res.name; f.dirty = false; }
+    dirty = false; closeSaveAs(); updatePathDisplay(); showSync("ok", "Saved"); renderFileBar();
+  } catch (e) { alert('Save failed: ' + e.message); }
+}
+
+function downloadJson() {
+  const f = openFiles[activeFileId];
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+  a.download = f?.name || 'hw_arch.json'; a.click(); URL.revokeObjectURL(a.href); closeSaveAs();
+}
+
+/* ═══════════════════════════════════════════════════════════
+   FILE PATH AUTOCOMPLETE
+   ═══════════════════════════════════════════════════════════ */
+let _browseTimer = null, _browseAcIndex = -1;
+
+function browseFiles(inputId, listId) {
+  clearTimeout(_browseTimer); _browseAcIndex = -1;
+  _browseTimer = setTimeout(async () => {
+    const input = document.getElementById(inputId), list = document.getElementById(listId);
+    const q = input.value;
+    if (!q) { list.style.display = 'none'; return; }
+    try {
+      const r = await fetch('/api/browse?q=' + encodeURIComponent(q));
+      const res = await r.json();
+      const items = res.items || [];
+      if (!items.length) { list.style.display = 'none'; return; }
+      let h = '';
+      items.forEach((item, i) => {
+        const cls = item.isDir ? 'color:var(--blue)' : (item.isJson ? 'color:var(--green)' : '');
+        h += `<div class="autocomplete-item" data-idx="${i}" data-path="${esc(item.path)}" data-isdir="${item.isDir}" style="${cls}"><span>${item.isDir ? '/' : ''}${esc(item.name)}</span><span class="sub">${item.isDir ? 'dir' : ''}</span></div>`;
+      });
+      list.innerHTML = h; list.style.display = 'block';
+      list.querySelectorAll('.autocomplete-item').forEach(el => {
+        el.addEventListener('click', () => {
+          const isDir = el.dataset.isdir === 'true';
+          input.value = isDir ? el.dataset.path + '/' : el.dataset.path;
+          list.style.display = 'none';
+          if (isDir) setTimeout(() => browseFiles(inputId, listId), 50);
+          input.focus();
+        });
+      });
+    } catch (e) { console.error('Browse failed:', e); }
+  }, 150);
+}
+
+function fileInputKeydown(e, inputId, listId, selectFn) {
+  const list = document.getElementById(listId), items = list.querySelectorAll('.autocomplete-item');
+  if (!items.length && e.key !== 'Enter') return;
+  if (e.key === 'ArrowDown') { e.preventDefault(); _browseAcIndex = Math.min(_browseAcIndex + 1, items.length - 1); items.forEach((el, i) => el.classList.toggle('active', i === _browseAcIndex)); }
+  else if (e.key === 'ArrowUp') { e.preventDefault(); _browseAcIndex = Math.max(_browseAcIndex - 1, 0); items.forEach((el, i) => el.classList.toggle('active', i === _browseAcIndex)); }
+  else if (e.key === 'Tab' && items.length) {
+    e.preventDefault(); const el = items[_browseAcIndex >= 0 ? _browseAcIndex : 0]; const isDir = el.dataset.isdir === 'true';
+    document.getElementById(inputId).value = isDir ? el.dataset.path + '/' : el.dataset.path;
+    list.style.display = 'none'; _browseAcIndex = -1;
+    if (isDir) setTimeout(() => browseFiles(inputId, listId), 50);
+  }
+  else if (e.key === 'Enter') {
+    e.preventDefault();
+    if (_browseAcIndex >= 0 && _browseAcIndex < items.length) {
+      const el = items[_browseAcIndex]; const isDir = el.dataset.isdir === 'true';
+      document.getElementById(inputId).value = isDir ? el.dataset.path + '/' : el.dataset.path;
+      list.style.display = 'none'; _browseAcIndex = -1;
+      if (isDir) setTimeout(() => browseFiles(inputId, listId), 50);
+    } else { list.style.display = 'none'; if (selectFn) selectFn(); }
+  }
+  else if (e.key === 'Escape') { list.style.display = 'none'; _browseAcIndex = -1; }
+}
+
+function selectSaveAsItem() { doSaveAs(); }
+function selectOpenItem() { doOpenServerFile(); }
+
+/* ═══════════════════════════════════════════════════════════
+   CANVAS RENDERING
+   ═══════════════════════════════════════════════════════════ */
+function initCanvas() {
+  canvas = document.getElementById('canvas');
+  ctx = canvas.getContext('2d');
+  resizeCanvas();
+  window.addEventListener('resize', resizeCanvas);
+}
+
+function resizeCanvas() {
+  const wrap = document.getElementById('canvasWrap');
+  const dpr = window.devicePixelRatio || 1;
+  W = wrap.clientWidth; H = wrap.clientHeight;
+  canvas.width = W * dpr; canvas.height = H * dpr;
+  canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  renderCanvas();
+}
+
+function renderCanvas() {
+  if (!ctx) return;
+  const s = sheet();
+  const dpr = window.devicePixelRatio || 1;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+
+  // Grid (always in screen space, before zoom transform)
+  const gridStep = GRID * viewZoom;
+  const gx0 = (viewX * viewZoom) % gridStep;
+  const gy0 = (viewY * viewZoom) % gridStep;
+  ctx.strokeStyle = getCSS('--brd'); ctx.lineWidth = 0.3;
+  for (let x = gx0; x < W; x += gridStep) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); }
+  for (let y = gy0; y < H; y += gridStep) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
+
+  // Apply pan/zoom transform for all content
+  ctx.setTransform(dpr * viewZoom, 0, 0, dpr * viewZoom, dpr * viewX * viewZoom, dpr * viewY * viewZoom);
+
+  if (!s) {
+    ctx.fillStyle = getCSS('--fg3'); ctx.font = '14px ' + getCSS('--font');
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('No sheet — create one with the + tab below', W / 2 / viewZoom - viewX, H / 2 / viewZoom - viewY);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    return;
+  }
+
+  // Sheet name
+  ctx.fillStyle = getCSS('--fg2'); ctx.font = '600 11px ' + getCSS('--font');
+  ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+  ctx.fillText(s.name + (s.description ? ' — ' + s.description : ''), 14, 10);
+
+  const multiIds = selection?.type === 'multi' ? selection.ids : (selection?.highlightIds || []);
+  const blocks = getBlocks();
+
+  // Layer 1: Block boxes (background — so connections draw on top)
+  for (const blk of blocks) drawBlockBox(blk, multiIds.includes(blk.id));
+
+  // Layer 2: Connections (on top of block boxes)
+  for (const c of s.connections) {
+    const isSel = (selection?.type === 'connection' && selection.id === c.id) || multiIds.includes(c.id);
+    const froms = connFrom(c).map(ep => portWorldPos(ep)).filter(Boolean);
+    const tos = connTo(c).map(ep => portWorldPos(ep)).filter(Boolean);
+    if (froms.length && tos.length) drawConnectionMN(froms, tos, isSel, c.props, connDir(c), c.mapping);
+    for (const ep of [...connFrom(c), ...connTo(c)]) {
+      if (ep.type === 'float') drawFloatingPoint(ep.x, ep.y, ep.label, isSel);
+    }
+  }
+
+  // Layer 3: Ports (on top of connections, with labels facing outward)
+  for (const blk of blocks) drawBlockPorts(blk);
+
+  // Link preview
+  if (linking) {
+    const fp = portWorldPos(linking);
+    if (fp) { ctx.strokeStyle = getCSS('--amber'); ctx.lineWidth = 1.5; ctx.setLineDash([4, 3]); ctx.beginPath(); ctx.moveTo(fp.x, fp.y); ctx.lineTo(mouse.x, mouse.y); ctx.stroke(); ctx.setLineDash([]); }
+  }
+
+  // Annotations (group comments) — draw markers on annotated items
+  if (s.annotations) {
+    for (const ann of s.annotations) {
+      if (!ann.text) continue;
+      const positions = [];
+      for (const tid of ann.targets) {
+        const blk = blocks.find(b => b.id === tid);
+        if (blk) { positions.push({ x: blk.x + blk.w / 2, y: blk.y - 8 }); continue; }
+        // Check if target is a connection
+        const conn = s.connections.find(c => c.id === tid);
+        if (conn) {
+          const pts = [...connFrom(conn), ...connTo(conn)].map(ep => portWorldPos(ep)).filter(Boolean);
+          if (pts.length) { const ax = pts.reduce((s, p) => s + p.x, 0) / pts.length; const ay = pts.reduce((s, p) => s + p.y, 0) / pts.length; positions.push({ x: ax, y: ay - 8 }); }
+        }
+      }
+      if (!positions.length) continue;
+      // Draw a small note icon at the center of all targets
+      const cx = positions.reduce((s, p) => s + p.x, 0) / positions.length;
+      const cy = positions.reduce((s, p) => s + p.y, 0) / positions.length - 10;
+      ctx.fillStyle = getCSS('--amber'); ctx.globalAlpha = 0.9;
+      ctx.fillRect(cx - 6, cy - 6, 12, 12);
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = getCSS('--bg'); ctx.font = '700 9px ' + getCSS('--font'); ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('N', cx, cy);
+      // Draw lines from icon to each target
+      ctx.strokeStyle = getCSS('--amber'); ctx.lineWidth = 0.5; ctx.setLineDash([2, 2]);
+      for (const pos of positions) { ctx.beginPath(); ctx.moveTo(cx, cy + 6); ctx.lineTo(pos.x, pos.y); ctx.stroke(); }
+      ctx.setLineDash([]);
+    }
+  }
+
+  // Box selection rectangle
+  if (boxSelect) {
+    const bx = Math.min(boxSelect.startX, mouse.x), by = Math.min(boxSelect.startY, mouse.y);
+    const bw = Math.abs(mouse.x - boxSelect.startX), bh = Math.abs(mouse.y - boxSelect.startY);
+    ctx.strokeStyle = getCSS('--blue'); ctx.lineWidth = 1; ctx.setLineDash([4, 2]);
+    ctx.fillStyle = 'rgba(45,140,240,0.08)';
+    ctx.fillRect(bx, by, bw, bh); ctx.strokeRect(bx, by, bw, bh);
+    ctx.setLineDash([]);
+  }
+
+  // Zoom indicator (in screen space)
+  if (viewZoom !== 1 || viewX !== 0 || viewY !== 0) {
+    const dpr2 = window.devicePixelRatio || 1;
+    ctx.setTransform(dpr2, 0, 0, dpr2, 0, 0);
+    ctx.fillStyle = getCSS('--fg3'); ctx.font = '10px ' + getCSS('--font');
+    ctx.textAlign = 'right'; ctx.textBaseline = 'bottom';
+    ctx.fillText(Math.round(viewZoom * 100) + '%', W - 8, H - 4);
+  }
+}
+
+// Draw just the block box and labels (no ports — those are drawn later on top of connections)
+function drawBlockBox(blk, multiSel) {
+  const isSel = multiSel || (selection?.type === 'instance' && selection.id === blk.id);
+  const rot = blk.inst.rotation || 0;
+
+  ctx.fillStyle = getCSS('--bg'); ctx.strokeStyle = isSel ? getCSS('--blue') : getCSS('--brd');
+  ctx.lineWidth = isSel ? 2 : 1;
+  roundRect(ctx, blk.x, blk.y, blk.w, blk.h, 6); ctx.fill(); ctx.stroke();
+
+  ctx.fillStyle = getCSS('--fg'); ctx.font = '600 12px ' + getCSS('--font');
+  ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+  ctx.fillText(blk.inst.name + arrayLabel(blk.inst.array), blk.x + blk.w / 2, blk.y + 6);
+
+  ctx.fillStyle = getCSS('--fg3'); ctx.font = '9px ' + getCSS('--font');
+  ctx.fillText('(' + (blk.ref?.name || '?') + ')', blk.x + blk.w / 2, blk.y + 21);
+
+  if (rot) { ctx.fillStyle = getCSS('--fg3'); ctx.font = '8px ' + getCSS('--font'); ctx.textAlign = 'right'; ctx.fillText(rot + '\u00b0', blk.x + blk.w - 4, blk.y + 12); }
+
+  if (isSel) drawResizeHandles(blk);
+}
+
+// Draw ports on a block — labels face OUTWARD from the block
+function drawBlockPorts(blk) {
+  for (const port of blk.ports) {
+    const pos = getPortPosOnBlock(blk, port, blk.inst);
+    let ls;
+    // Label should face OUTSIDE the block
+    if (Math.abs(pos.x - blk.x) < 1) ls = 'left';         // port on left edge → label to the left (outside)
+    else if (Math.abs(pos.x - (blk.x + blk.w)) < 1) ls = 'right';  // port on right edge → label to the right (outside)
+    else if (Math.abs(pos.y - blk.y) < 1) ls = 'above';    // port on top edge → label above (outside)
+    else ls = 'below';                                       // port on bottom edge → label below (outside)
+    drawPort(pos.x, pos.y, port, ls);
+  }
+}
+
+function drawPort(x, y, port, labelSide) {
+  const col = PCOL[port.dir] || '#888';
+  const isIf = port.dir === 'interface';
+
+  if (isIf) {
+    // Interface port: square shape
+    const sz = PORT_R + 1;
+    ctx.fillStyle = col;
+    ctx.fillRect(x - sz, y - sz, sz * 2, sz * 2);
+    ctx.strokeStyle = getCSS('--bg'); ctx.lineWidth = 1.5;
+    ctx.strokeRect(x - sz, y - sz, sz * 2, sz * 2);
+  } else {
+    // Regular port: circle
+    ctx.beginPath(); ctx.arc(x, y, PORT_R, 0, Math.PI * 2); ctx.fillStyle = col; ctx.fill();
+    ctx.strokeStyle = getCSS('--bg'); ctx.lineWidth = 1.5; ctx.stroke();
+  }
+
+  // Label
+  const role = isIf && port.role ? (port.role === 'master' ? ' M' : ' S') : '';
+  const label = port.name + arrayLabel(port.array) + role;
+  ctx.fillStyle = col; ctx.font = '9px ' + getCSS('--mono'); ctx.textBaseline = 'middle';
+  if (labelSide === 'right') { ctx.textAlign = 'left'; ctx.fillText(label, x + 8, y); }
+  else if (labelSide === 'left') { ctx.textAlign = 'right'; ctx.fillText(label, x - 8, y); }
+  else if (labelSide === 'below') { ctx.textAlign = 'center'; ctx.fillText(label, x, y + 12); }
+  else { ctx.textAlign = 'center'; ctx.fillText(label, x, y - 12); }
+}
+
+function drawConnectionMN(froms, tos, isSel, props, dir, mapping) {
+  const col = isSel ? getCSS('--blue') : getCSS('--fg3');
+  const lw = isSel ? 2.5 : 1.5;
+  const isBus = froms.length > 1 || tos.length > 1;
+  const mapLabel = mapping && mapping !== '1:1' ? mapping : '';
+
+  if (isBus) {
+    const avgFx = froms.reduce((s, p) => s + p.x, 0) / froms.length;
+    const avgFy = froms.reduce((s, p) => s + p.y, 0) / froms.length;
+    const avgTx = tos.reduce((s, p) => s + p.x, 0) / tos.length;
+    const avgTy = tos.reduce((s, p) => s + p.y, 0) / tos.length;
+    const hubX = (avgFx + avgTx) / 2, hubY = (avgFy + avgTy) / 2;
+
+    for (const fp of froms) { drawBezierLine(fp.x, fp.y, hubX, hubY, col, lw); if (dir === 'reverse' || dir === 'both') drawArrowAtStart(fp.x, fp.y, hubX, hubY, col); }
+    for (const tp of tos) { drawBezierLine(hubX, hubY, tp.x, tp.y, col, lw); if (dir === 'forward' || dir === 'both') drawArrowAtEnd(hubX, hubY, tp.x, tp.y, col); }
+    ctx.beginPath(); ctx.arc(hubX, hubY, 4, 0, Math.PI * 2);
+    ctx.fillStyle = col; ctx.fill();
+    const pv = Object.values(props || {});
+    const parts = [froms.length + ':' + tos.length];
+    if (mapLabel) parts.push(mapLabel);
+    if (pv.length) parts.push(pv.join(', '));
+    ctx.fillStyle = getCSS('--fg3'); ctx.font = '9px ' + getCSS('--font');
+    ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+    ctx.fillText(parts.join(' | '), hubX, hubY - 8);
+  } else {
+    const fp = froms[0], tp = tos[0];
+    const mx = (fp.x + tp.x) / 2;
+    drawBezierLine(fp.x, fp.y, tp.x, tp.y, col, lw);
+    if (dir === 'forward' || dir === 'both') drawArrowAtEnd(fp.x, fp.y, tp.x, tp.y, col);
+    if (dir === 'reverse' || dir === 'both') drawArrowAtStart(fp.x, fp.y, tp.x, tp.y, col);
+    const pv = Object.values(props || {});
+    const parts = [];
+    if (mapLabel) parts.push(mapLabel);
+    if (pv.length) parts.push(pv.join(', '));
+    if (parts.length) { ctx.fillStyle = getCSS('--fg3'); ctx.font = '9px ' + getCSS('--font'); ctx.textAlign = 'center'; ctx.textBaseline = 'bottom'; ctx.fillText(parts.join(' | '), mx, (fp.y + tp.y) / 2 - 4); }
+  }
+}
+
+function drawBezierLine(x1, y1, x2, y2, col, lw) {
+  const mx = (x1 + x2) / 2;
+  ctx.beginPath(); ctx.moveTo(x1, y1); ctx.bezierCurveTo(mx, y1, mx, y2, x2, y2);
+  ctx.strokeStyle = col; ctx.lineWidth = lw; ctx.stroke();
+}
+
+// Sample a point on the cubic bezier at parameter t
+function bezierPoint(x1, y1, x2, y2, t) {
+  const mx = (x1 + x2) / 2;
+  const it = 1 - t;
+  return {
+    x: it*it*it*x1 + 3*it*it*t*mx + 3*it*t*t*mx + t*t*t*x2,
+    y: it*it*it*y1 + 3*it*it*t*y1 + 3*it*t*t*y2 + t*t*t*y2,
+  };
+}
+
+function drawArrowAtEnd(x1, y1, x2, y2, col) {
+  // Pull back from the endpoint so arrow doesn't overlap the port circle
+  const near = bezierPoint(x1, y1, x2, y2, 0.85);
+  const tip = bezierPoint(x1, y1, x2, y2, 0.92);
+  drawArrowHead(tip.x, tip.y, near.x, near.y, col);
+}
+
+function drawArrowAtStart(x1, y1, x2, y2, col) {
+  const near = bezierPoint(x1, y1, x2, y2, 0.15);
+  const tip = bezierPoint(x1, y1, x2, y2, 0.08);
+  drawArrowHead(tip.x, tip.y, near.x, near.y, col);
+}
+
+function drawArrowHead(tipX, tipY, fromX, fromY, col) {
+  const angle = Math.atan2(tipY - fromY, tipX - fromX);
+  const sz = 12; const half = 0.35;
+  ctx.beginPath();
+  ctx.moveTo(tipX, tipY);
+  ctx.lineTo(tipX - sz * Math.cos(angle - half), tipY - sz * Math.sin(angle - half));
+  ctx.lineTo(tipX - sz * 0.6 * Math.cos(angle), tipY - sz * 0.6 * Math.sin(angle));
+  ctx.lineTo(tipX - sz * Math.cos(angle + half), tipY - sz * Math.sin(angle + half));
+  ctx.closePath();
+  ctx.fillStyle = col; ctx.fill();
+}
+
+function drawFloatingPoint(x, y, label, isSel) {
+  const sz = 8;
+  const col = isSel ? getCSS('--blue') : getCSS('--purple');
+  // Diamond shape
+  ctx.beginPath();
+  ctx.moveTo(x, y - sz); ctx.lineTo(x + sz, y); ctx.lineTo(x, y + sz); ctx.lineTo(x - sz, y);
+  ctx.closePath();
+  ctx.fillStyle = col; ctx.fill();
+  ctx.strokeStyle = getCSS('--bg'); ctx.lineWidth = 1.5; ctx.stroke();
+  // Label
+  if (label) {
+    ctx.fillStyle = col; ctx.font = '9px ' + getCSS('--mono');
+    ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    ctx.fillText(label, x + sz + 4, y);
+  }
+}
+
+function drawResizeHandles(blk) {
+  const hs = HANDLE_SIZE; ctx.fillStyle = getCSS('--blue');
+  for (const [cx, cy] of [[blk.x, blk.y], [blk.x + blk.w, blk.y], [blk.x, blk.y + blk.h], [blk.x + blk.w, blk.y + blk.h]])
+    ctx.fillRect(cx - hs / 2, cy - hs / 2, hs, hs);
+  ctx.globalAlpha = 0.5;
+  for (const [cx, cy] of [[blk.x + blk.w / 2, blk.y], [blk.x + blk.w / 2, blk.y + blk.h], [blk.x, blk.y + blk.h / 2], [blk.x + blk.w, blk.y + blk.h / 2]])
+    ctx.fillRect(cx - hs / 2, cy - hs / 2, hs, hs);
+  ctx.globalAlpha = 1;
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath(); ctx.moveTo(x + r, y); ctx.lineTo(x + w - r, y); ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r); ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h); ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r); ctx.quadraticCurveTo(x, y, x + r, y); ctx.closePath();
+}
+
+function getCSS(v) { return getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
+
+/* ═══════════════════════════════════════════════════════════
+   HIT TESTING
+   ═══════════════════════════════════════════════════════════ */
+function hitTest(mx, my) {
+  const s = sheet();
+  if (!s) return null;
+  const blocks = getBlocks();
+
+  if (selection?.type === 'instance') {
+    const blk = blocks.find(b => b.id === selection.id);
+    if (blk) { const h = hitResizeHandle(blk, mx, my); if (h) return { type: 'resize-handle', blkId: blk.id, handle: h }; }
+  }
+
+  for (const blk of blocks) {
+    for (const port of blk.ports) {
+      const pos = getPortPosOnBlock(blk, port, blk.inst);
+      if (Math.hypot(pos.x - mx, pos.y - my) < 10) return { type: 'port', instId: blk.id, portId: port.id };
+    }
+  }
+
+  // Check floating endpoints (draggable)
+  for (const c of s.connections) {
+    for (const side of ['from', 'to']) {
+      const eps = side === 'from' ? connFrom(c) : connTo(c);
+      for (let ei = 0; ei < eps.length; ei++) {
+        const ep = eps[ei];
+        if (ep.type === 'float' && Math.hypot(ep.x - mx, ep.y - my) < 12) {
+          return { type: 'floatPoint', connId: c.id, side, epIndex: ei };
+        }
+      }
+    }
+  }
+
+  for (const c of s.connections) {
+    const froms = connFrom(c).map(ep => portWorldPos(ep)).filter(Boolean);
+    const tos = connTo(c).map(ep => portWorldPos(ep)).filter(Boolean);
+    for (const fp of froms) { for (const tp of tos) { if (distToBezier(mx, my, fp, tp) < 8) return { type: 'connection', id: c.id }; } }
+  }
+
+  for (const blk of [...blocks].reverse()) {
+    if (mx >= blk.x && mx <= blk.x + blk.w && my >= blk.y && my <= blk.y + blk.h) return { type: 'instance', id: blk.id };
+  }
+  return null;
+}
+
+function hitResizeHandle(blk, mx, my) {
+  const hs = HANDLE_SIZE + 4;
+  for (const h of [
+    { name: 'nw', x: blk.x, y: blk.y }, { name: 'ne', x: blk.x + blk.w, y: blk.y },
+    { name: 'sw', x: blk.x, y: blk.y + blk.h }, { name: 'se', x: blk.x + blk.w, y: blk.y + blk.h },
+    { name: 'n', x: blk.x + blk.w / 2, y: blk.y }, { name: 's', x: blk.x + blk.w / 2, y: blk.y + blk.h },
+    { name: 'w', x: blk.x, y: blk.y + blk.h / 2 }, { name: 'e', x: blk.x + blk.w, y: blk.y + blk.h / 2 },
+  ]) { if (Math.abs(mx - h.x) < hs / 2 && Math.abs(my - h.y) < hs / 2) return h.name; }
+  return null;
+}
+
+function distToBezier(px, py, fp, tp) {
+  const mx = (fp.x + tp.x) / 2; let minD = Infinity;
+  for (let t = 0; t <= 1; t += 0.05) {
+    const it = 1 - t;
+    const x = it * it * it * fp.x + 3 * it * it * t * mx + 3 * it * t * t * mx + t * t * t * tp.x;
+    const y = it * it * it * fp.y + 3 * it * it * t * fp.y + 3 * it * t * t * tp.y + t * t * t * tp.y;
+    const d = Math.hypot(x - px, y - py); if (d < minD) minD = d;
+  }
+  return minD;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   INTERACTION
+   ═══════════════════════════════════════════════════════════ */
+function onWheel(e) {
+  e.preventDefault();
+  const r = canvas.getBoundingClientRect();
+  const screenX = e.clientX - r.left;
+  const screenY = e.clientY - r.top;
+  // World position under cursor before zoom
+  const wx = screenX / viewZoom - viewX;
+  const wy = screenY / viewZoom - viewY;
+
+  const delta = e.deltaY > 0 ? 0.9 : 1.1;
+  const newZoom = clamp(viewZoom * delta, 0.1, 5);
+  // Adjust viewX/viewY so the world point under cursor stays in place
+  viewX = screenX / newZoom - wx;
+  viewY = screenY / newZoom - wy;
+  viewZoom = newZoom;
+  renderCanvas();
+}
+
+function fitToScreen() {
+  const blocks = getBlocks();
+  if (!blocks.length) { viewX = 0; viewY = 0; viewZoom = 1; renderCanvas(); return; }
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const b of blocks) {
+    minX = Math.min(minX, b.x);
+    minY = Math.min(minY, b.y);
+    maxX = Math.max(maxX, b.x + b.w);
+    maxY = Math.max(maxY, b.y + b.h);
+  }
+  // Also check floating endpoints
+  const s = sheet();
+  if (s) for (const c of s.connections) {
+    for (const ep of [...connFrom(c), ...connTo(c)]) {
+      if (ep.type === 'float') { minX = Math.min(minX, ep.x); minY = Math.min(minY, ep.y); maxX = Math.max(maxX, ep.x); maxY = Math.max(maxY, ep.y); }
+    }
+  }
+  const pad = 40;
+  const contentW = maxX - minX + pad * 2;
+  const contentH = maxY - minY + pad * 2;
+  viewZoom = clamp(Math.min(W / contentW, H / contentH), 0.1, 5);
+  viewX = -minX + pad + (W / viewZoom - contentW) / 2;
+  viewY = -minY + pad + (H / viewZoom - contentH) / 2;
+  renderCanvas();
+}
+
+function resetView() { viewX = 0; viewY = 0; viewZoom = 1; renderCanvas(); }
+
+function setupInteraction() {
+  canvas.addEventListener('mousedown', onMouseDown);
+  canvas.addEventListener('mousemove', onMouseMove);
+  canvas.addEventListener('mouseup', onMouseUp);
+  canvas.addEventListener('dblclick', e => { const hit = hitTest(...Object.values(canvasXY(e))); if (hit?.type === 'instance') { selection = { type: 'instance', id: hit.id }; render(); } });
+  canvas.addEventListener('contextmenu', e => { e.preventDefault(); showCtxMenu(e.clientX, e.clientY, hitTest(...Object.values(canvasXY(e)))); });
+  canvas.addEventListener('wheel', onWheel);
+  document.addEventListener('keydown', onKeyDown);
+}
+
+function canvasXY(e) {
+  const r = canvas.getBoundingClientRect();
+  return { x: (e.clientX - r.left) / viewZoom - viewX, y: (e.clientY - r.top) / viewZoom - viewY };
+}
+
+function onMouseDown(e) {
+  hideCtxMenu(); const p = canvasXY(e); mouse = p;
+  // Middle button or Space+click = pan
+  if (e.button === 1) {
+    e.preventDefault();
+    drag = { type: 'pan', startX: e.clientX, startY: e.clientY, origVX: viewX, origVY: viewY };
+    canvas.style.cursor = 'grabbing';
+    return;
+  }
+  const hit = hitTest(p.x, p.y);
+  const s = sheet();
+
+  // Linking mode: click port to complete connection or add endpoint
+  if (linking && hit?.type === 'port') {
+    const ep = { inst: hit.instId, port: hit.portId };
+    if (linking.addToConn) {
+      // Add endpoint to existing connection
+      const conn = s.connections.find(c => c.id === linking.addToConn);
+      if (conn) {
+        if (linking.side === 'from') { if (!Array.isArray(conn.from)) conn.from = [conn.from]; conn.from.push(ep); }
+        else { if (!Array.isArray(conn.to)) conn.to = [conn.to]; conn.to.push(ep); }
+        markDirty();
+      }
+    } else if (linking.inst !== ep.inst || linking.port !== ep.port) {
+      s.connections.push({ id: 'c_' + uid(), from: [linking], to: [ep], direction: 'forward', mapping: '1:1', props: {} });
+      markDirty();
+    }
+    linking = null; updateLinkBtn(); render(); return;
+  }
+
+  // Click empty area
+  if (!hit) {
+    if (linking) {
+      // Create floating endpoint at clicked position
+      const fp = { type: 'float', x: snap(p.x), y: snap(p.y), label: '' };
+      if (linking.addToConn) {
+        const conn = s.connections.find(c => c.id === linking.addToConn);
+        if (conn) {
+          if (linking.side === 'from') { if (!Array.isArray(conn.from)) conn.from = [conn.from]; conn.from.push(fp); }
+          else { if (!Array.isArray(conn.to)) conn.to = [conn.to]; conn.to.push(fp); }
+          markDirty();
+        }
+      } else {
+        s.connections.push({ id: 'c_' + uid(), from: [linking], to: [fp], direction: 'forward', mapping: '1:1', props: {}, description: '' });
+        markDirty();
+      }
+      linking = null; updateLinkBtn(); render(); return;
+    }
+    // Start box selection
+    boxSelect = { startX: p.x, startY: p.y };
+    selection = null;
+    render();
+    return;
+  }
+
+  if (hit.type === 'floatPoint') {
+    // Drag to move the floating endpoint, or select its connection
+    selection = { type: 'connection', id: hit.connId };
+    drag = { type: 'floatMove', connId: hit.connId, side: hit.side, epIndex: hit.epIndex };
+    render(); return;
+  }
+  if (hit.type === 'resize-handle') {
+    const inst = s.instances.find(i => i.id === hit.blkId);
+    drag = { type: 'resize', id: hit.blkId, handle: hit.handle, startX: p.x, startY: p.y, origX: inst.x, origY: inst.y, origW: inst.w || 170, origH: inst.h || MIN_BLOCK_H };
+    return;
+  }
+  if (hit.type === 'port') {
+    if (e.shiftKey) { drag = { type: 'portDrag', instId: hit.instId, portId: hit.portId }; return; }
+    linking = { inst: hit.instId, port: hit.portId }; updateLinkBtn(); renderCanvas(); return;
+  }
+  if (hit.type === 'connection') {
+    if (e.ctrlKey || e.metaKey) { toggleMultiSelect(hit.id); render(); return; }
+    selection = { type: 'connection', id: hit.id }; render(); return;
+  }
+  if (hit.type === 'instance') {
+    if (e.ctrlKey || e.metaKey) { toggleMultiSelect(hit.id); render(); return; }
+    // If already multi-selected and clicking one of the selected, start multi-move
+    if (selection?.type === 'multi' && selection.ids.includes(hit.id)) {
+      const blocks = getBlocks();
+      drag = { type: 'multiMove', startX: p.x, startY: p.y, origPositions: selection.ids.filter(id => blocks.some(b => b.id === id)).map(id => { const blk = blocks.find(b => b.id === id); return { id, x: blk.x, y: blk.y }; }) };
+      return;
+    }
+    selection = { type: 'instance', id: hit.id };
+    const blk = getBlocks().find(b => b.id === hit.id);
+    drag = { type: 'move', id: hit.id, ox: p.x - blk.x, oy: p.y - blk.y }; render(); return;
+  }
+}
+
+function onMouseMove(e) {
+  const p = canvasXY(e); mouse = p;
+
+  // Box selection drag
+  if (boxSelect) { renderCanvas(); return; }
+
+  if (drag) {
+    if (drag.type === 'pan') {
+      viewX = drag.origVX + (e.clientX - drag.startX) / viewZoom;
+      viewY = drag.origVY + (e.clientY - drag.startY) / viewZoom;
+      renderCanvas(); return;
+    }
+    const s = sheet();
+    if (drag.type === 'move') {
+      const inst = s.instances.find(i => i.id === drag.id);
+      if (inst) { inst.x = snap(p.x - drag.ox); inst.y = snap(p.y - drag.oy); markDirty(); renderCanvas(); }
+    } else if (drag.type === 'multiMove') {
+      const dx = p.x - drag.startX, dy = p.y - drag.startY;
+      for (const orig of drag.origPositions) {
+        const inst = s.instances.find(i => i.id === orig.id);
+        if (inst) { inst.x = snap(orig.x + dx); inst.y = snap(orig.y + dy); }
+      }
+      markDirty(); renderCanvas();
+    } else if (drag.type === 'resize') {
+      const inst = s.instances.find(i => i.id === drag.id);
+      if (inst) { applyResize(inst, drag, p.x - drag.startX, p.y - drag.startY); markDirty(); renderCanvas(); }
+    } else if (drag.type === 'portDrag') {
+      const inst = s.instances.find(i => i.id === drag.instId);
+      if (inst) {
+        const blk = { x: inst.x, y: inst.y, w: inst.w || 170, h: inst.h || MIN_BLOCK_H };
+        const ep = nearestEdgePoint(blk, p.x, p.y);
+        const invRot = (360 - (inst.rotation || 0)) % 360;
+        if (!inst.portPositions) inst.portPositions = {};
+        inst.portPositions[drag.portId] = { edge: EDGE_ROTATE[invRot][ep.edge], t: ep.t };
+        markDirty(); renderCanvas();
+      }
+    } else if (drag.type === 'floatMove') {
+      const conn = s.connections.find(c => c.id === drag.connId);
+      if (conn) {
+        const eps = drag.side === 'from' ? connFrom(conn) : connTo(conn);
+        const ep = eps[drag.epIndex];
+        if (ep?.type === 'float') { ep.x = snap(p.x); ep.y = snap(p.y); markDirty(); renderCanvas(); }
+      }
+    }
+    return;
+  }
+  if (linking) renderCanvas();
+  const hit = hitTest(p.x, p.y);
+  if (hit?.type === 'resize-handle') { const cur = { nw: 'nwse-resize', se: 'nwse-resize', ne: 'nesw-resize', sw: 'nesw-resize', n: 'ns-resize', s: 'ns-resize', w: 'ew-resize', e: 'ew-resize' }; canvas.style.cursor = cur[hit.handle]; }
+  else if (hit?.type === 'floatPoint') canvas.style.cursor = 'grab';
+  else if (hit?.type === 'port') canvas.style.cursor = 'crosshair';
+  else if (hit?.type === 'instance') canvas.style.cursor = 'grab';
+  else if (hit?.type === 'connection') canvas.style.cursor = 'pointer';
+  else canvas.style.cursor = 'default';
+}
+
+function onMouseUp(e) {
+  // Complete box selection
+  if (boxSelect) {
+    const p = canvasXY(e);
+    const x1 = Math.min(boxSelect.startX, p.x), y1 = Math.min(boxSelect.startY, p.y);
+    const x2 = Math.max(boxSelect.startX, p.x), y2 = Math.max(boxSelect.startY, p.y);
+    // Only select if dragged a meaningful distance
+    if (x2 - x1 > 5 || y2 - y1 > 5) {
+      const blocks = getBlocks();
+      const instIds = blocks.filter(b => b.x >= x1 && b.x + b.w <= x2 && b.y >= y1 && b.y + b.h <= y2).map(b => b.id);
+      // Also select connections whose endpoints are within the box
+      const s = sheet();
+      const connIds = s ? s.connections.filter(c => {
+        const pts = [...connFrom(c), ...connTo(c)].map(ep => portWorldPos(ep)).filter(Boolean);
+        return pts.length > 0 && pts.every(p => p.x >= x1 && p.x <= x2 && p.y >= y1 && p.y <= y2);
+      }).map(c => c.id) : [];
+      const allIds = [...instIds, ...connIds];
+      if (allIds.length > 1) selection = { type: 'multi', ids: allIds };
+      else if (instIds.length === 1) selection = { type: 'instance', id: instIds[0] };
+      else if (connIds.length === 1) selection = { type: 'connection', id: connIds[0] };
+      else selection = null;
+    } else {
+      selection = null;
+    }
+    boxSelect = null;
+    render();
+    return;
+  }
+  if (drag?.type === 'pan') canvas.style.cursor = 'default';
+  drag = null;
+}
+
+function onKeyDown(e) {
+  // Skip single-key shortcuts when typing in input/textarea
+  const tag = document.activeElement?.tagName;
+  const isTyping = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+  if (e.key === 's' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); saveToServer(); return; }
+  if (e.key === 'o' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); openFile(); return; }
+  if (isTyping) return;
+  if (e.key === 'c' && (e.ctrlKey || e.metaKey) && selection?.type === 'instance') { e.preventDefault(); copySelection(); return; }
+  if (e.key === 'v' && (e.ctrlKey || e.metaKey) && clipboard) { e.preventDefault(); pasteClipboard(); return; }
+  if (e.key === 'Delete' && selection) {
+    if (selection.type === 'instance') removeInstance(selection.id);
+    else if (selection.type === 'connection') removeConnection(selection.id);
+    else if (selection.type === 'multi') { for (const id of [...selection.ids]) removeInstance(id); selection = null; render(); }
+    return;
+  }
+  if (e.key === 'r' && !e.ctrlKey && !e.metaKey && (selection?.type === 'instance' || selection?.type === 'multi')) { rotateSelection(); return; }
+  if (e.key === 'Escape') { linking = null; updateLinkBtn(); selection = null; render(); }
+}
+
+function applyResize(inst, d, dx, dy) {
+  const h = d.handle;
+  let x = d.origX, y = d.origY, w = d.origW, hh = d.origH;
+  if (h.includes('e')) w = Math.max(MIN_BLOCK_W, snap(d.origW + dx));
+  if (h.includes('w')) { w = Math.max(MIN_BLOCK_W, snap(d.origW - dx)); x = snap(d.origX + dx); if (w === MIN_BLOCK_W) x = d.origX + d.origW - MIN_BLOCK_W; }
+  if (h.includes('s')) hh = Math.max(MIN_BLOCK_H, snap(d.origH + dy));
+  if (h.includes('n')) { hh = Math.max(MIN_BLOCK_H, snap(d.origH - dy)); y = snap(d.origY + dy); if (hh === MIN_BLOCK_H) y = d.origY + d.origH - MIN_BLOCK_H; }
+  inst.x = x; inst.y = y; inst.w = w; inst.h = hh;
+}
+
+function copySelection() {
+  if (selection?.type !== 'instance') return;
+  const inst = sheet().instances.find(i => i.id === selection.id);
+  if (inst) { clipboard = JSON.parse(JSON.stringify(inst)); showSync("ok", "Copied"); }
+}
+
+function pasteClipboard() {
+  if (!clipboard || !sheet()) return;
+  const ni = JSON.parse(JSON.stringify(clipboard));
+  ni.id = 'i_' + uid(); ni.name += '_copy'; ni.x = (ni.x || 80) + 40; ni.y = (ni.y || 80) + 40;
+  sheet().instances.push(ni);
+  selection = { type: 'instance', id: ni.id }; markDirty(); render();
+}
+
+function rotateSelection() {
+  const s = sheet();
+  if (selection?.type === 'instance') {
+    const inst = s.instances.find(i => i.id === selection.id);
+    if (inst) { inst.rotation = ((inst.rotation || 0) + 90) % 360; markDirty(); render(); }
+  } else if (selection?.type === 'multi') {
+    for (const id of selection.ids) { const inst = s.instances.find(i => i.id === id); if (inst) inst.rotation = ((inst.rotation || 0) + 90) % 360; }
+    markDirty(); render();
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   CONTEXT MENU
+   ═══════════════════════════════════════════════════════════ */
+function showCtxMenu(cx, cy, hit) {
+  const menu = document.getElementById('ctxMenu');
+  let items = [];
+  if (hit?.type === 'instance') {
+    selection = { type: 'instance', id: hit.id };
+    items.push({ label: 'Copy', fn: copySelection }, { label: 'Rotate 90\u00b0', fn: rotateSelection });
+    items.push({ sep: true }); items.push({ label: 'Delete', fn: () => removeInstance(hit.id), danger: true });
+  } else if (hit?.type === 'connection') {
+    selection = { type: 'connection', id: hit.id };
+    items.push({ label: 'Delete connection', fn: () => removeConnection(hit.id), danger: true });
+  } else {
+    if (clipboard) items.push({ label: 'Paste', fn: pasteClipboard });
+    items.push({ label: '+ Instance', fn: addInstance });
+  }
+  let h = '';
+  for (const item of items) { if (item.sep) { h += '<div class="ctx-sep"></div>'; continue; } h += `<div style="${item.danger ? 'color:var(--red)' : ''}">${item.label}</div>`; }
+  menu.innerHTML = h; menu.style.left = cx + 'px'; menu.style.top = cy + 'px'; menu.style.display = 'block';
+  const divs = menu.querySelectorAll('div:not(.ctx-sep)'); let idx = 0;
+  for (const item of items) { if (item.sep) continue; const fn = item.fn; divs[idx++].addEventListener('click', () => { hideCtxMenu(); fn(); render(); }); }
+}
+
+function hideCtxMenu() { document.getElementById('ctxMenu').style.display = 'none'; }
+document.addEventListener('click', hideCtxMenu);
+
+/* ═══════════════════════════════════════════════════════════
+   RENDER
+   ═══════════════════════════════════════════════════════════ */
+function render() {
+  renderFileBar(); renderSidebar(); renderCanvas(); renderSheetBar(); renderStatus();
+  if (selection) renderPanel(); else document.getElementById('panelWrap').style.display = 'none';
+}
+
+function renderFileBar() {
+  const bar = document.getElementById('fileBar');
+  let h = '';
+  for (const [fid, f] of Object.entries(openFiles)) {
+    const active = fid === activeFileId; const dc = f.dirty ? ' dirty' : '';
+    h += `<div class="file-tab ${active ? 'active' : ''}${dc}" data-fid="${fid}" title="${esc(f.path || f.name)}"><span>${esc(f.name)}</span><span class="close-btn" data-action="close">x</span></div>`;
+  }
+  h += `<button class="file-add" title="New file" onclick="newFile()">+</button>`;
+  h += `<button class="file-add" title="Open server file" onclick="openServerFile()" style="font-size:11px">Open...</button>`;
+  bar.innerHTML = h;
+  bar.querySelectorAll('.file-tab').forEach(tab => {
+    tab.addEventListener('click', e => { if (e.target.dataset.action === 'close') { closeFile(tab.dataset.fid); return; } switchFile(tab.dataset.fid); });
+  });
+}
+
+function renderSidebar() {
+  const sb = document.getElementById('sidebar');
+  let h = '<h3>Module Library <button class="btn btn-sm" onclick="addModule()">+</button></h3>';
+  const selMod = selection?.type === 'module' ? selection.id : null;
+  for (const [mid, m] of Object.entries(data.modules)) {
+    const active = mid === selMod;
+    h += `<div class="mod-item ${active ? 'active' : ''}" onclick="selectModuleInSidebar('${mid}')">`;
+    h += `<div style="font-weight:500">${m.name}</div>`;
+    h += `<div class="sub">${m.ports.length} ports</div>`;
+    h += `</div>`;
+  }
+  if (!Object.keys(data.modules).length) {
+    h += '<div style="font-size:11px;color:var(--fg3);padding:8px">No modules yet. Click + to create one.</div>';
+  }
+  sb.innerHTML = h;
+}
+
+function renderSheetBar() {
+  const bar = document.getElementById('sheetBar');
+  let h = '';
+  for (const s of data.sheets) {
+    const active = s.id === data.activeSheet;
+    h += `<div class="sheet-tab ${active ? 'active' : ''}" data-id="${s.id}"><span>${esc(s.name)}</span>`;
+    if (data.sheets.length > 1) h += `<span class="close-btn" data-action="delete">x</span>`;
+    h += `</div>`;
+  }
+  h += `<button class="sheet-add" title="Add sheet">+</button>`;
+  bar.innerHTML = h;
+  bar.querySelectorAll('.sheet-tab').forEach(tab => {
+    const id = tab.dataset.id;
+    tab.addEventListener('click', e => { if (e.target.dataset.action === 'delete') { if (confirm('Delete this sheet?')) deleteSheet(id); return; } switchSheet(id); });
+    tab.addEventListener('dblclick', e => { e.stopPropagation(); renameSheet(id); });
+  });
+  bar.querySelector('.sheet-add').addEventListener('click', addSheet);
+}
+
+function renderStatus() {
+  const s = sheet();
+  document.getElementById('statSheet').textContent = 'Sheet: ' + (s?.name || '-');
+  document.getElementById('statModules').textContent = 'Modules: ' + Object.keys(data.modules).length;
+  document.getElementById('statInst').textContent = 'Instances: ' + (s?.instances.length || 0);
+  document.getElementById('statConn').textContent = 'Connections: ' + (s?.connections.length || 0);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   PANEL
+   ═══════════════════════════════════════════════════════════ */
+function renderPanel() {
+  const panel = document.getElementById('panel');
+  const wrap = document.getElementById('panelWrap');
+  wrap.style.display = 'block';
+  if (!selection) { wrap.style.display = 'none'; return; }
+  if (selection.type === 'module') renderModulePanel(panel, selection.id);
+  else if (selection.type === 'instance') renderInstancePanel(panel, selection.id);
+  else if (selection.type === 'connection') renderConnectionPanel(panel, selection.id);
+  else if (selection.type === 'sheet') renderSheetPanel(panel);
+  else if (selection.type === 'multi') renderMultiPanel(panel);
+  else if (selection.type === 'annotations') renderAnnotationsPanel(panel);
+  else wrap.style.display = 'none';
+}
+
+function renderSheetPanel(panel) {
+  const s = sheet();
+  if (!s) return;
+  let h = `<h3><span>Sheet</span><button class="btn btn-sm" onclick="closePanel()">x</button></h3>`;
+  h += `<label>Name</label><input value="${esc(s.name)}" onchange="sheet().name=this.value;markDirty();render()"/>`;
+  h += `<label>Description</label><textarea onchange="sheet().description=this.value;markDirty();">${esc(s.description || '')}</textarea>`;
+  panel.innerHTML = h;
+}
+
+function renderMultiPanel(panel) {
+  const s = sheet();
+  if (!s || !selection || selection.type !== 'multi') return;
+  const ids = selection.ids;
+
+  // Classify selected items
+  const instIds = ids.filter(id => s.instances.some(i => i.id === id));
+  const connIds = ids.filter(id => s.connections.some(c => c.id === id));
+
+  let h = `<h3><span>Selection (${ids.length} items)</span><button class="btn btn-sm" onclick="closePanel()">x</button></h3>`;
+  h += `<div style="font-size:11px;color:var(--fg2);margin-bottom:8px">`;
+  if (instIds.length) h += `${instIds.length} instance(s): ${instIds.map(id => s.instances.find(i => i.id === id)?.name || id).join(', ')}<br>`;
+  if (connIds.length) h += `${connIds.length} connection(s)`;
+  h += `</div>`;
+
+  // Existing annotations for this exact set of targets
+  if (!s.annotations) s.annotations = [];
+  const existing = s.annotations.filter(a => {
+    const t = new Set(a.targets);
+    return ids.length === t.size && ids.every(id => t.has(id));
+  });
+
+  h += `<label>Group Comments</label>`;
+  for (let i = 0; i < s.annotations.length; i++) {
+    const ann = s.annotations[i];
+    const t = new Set(ann.targets);
+    // Show annotations that overlap with current selection
+    if (!ids.some(id => t.has(id))) continue;
+    const isExact = ids.length === t.size && ids.every(id => t.has(id));
+    h += `<div class="port-section">`;
+    h += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px">`;
+    h += `<span style="font-size:10px;color:var(--fg3)">${ann.targets.length} items${isExact ? '' : ' (partial overlap)'}</span>`;
+    h += `<button class="btn btn-sm btn-danger" onclick="sheet().annotations.splice(${i},1);markDirty();render()">x</button>`;
+    h += `</div>`;
+    h += `<textarea style="width:100%;min-height:50px" onchange="sheet().annotations[${i}].text=this.value;markDirty();renderCanvas();">${esc(ann.text || '')}</textarea>`;
+    h += propsEditorHTML(ann.props || {}, `sheet().annotations[${i}].props`);
+    h += `</div>`;
+  }
+
+  h += `<button class="btn btn-sm" style="margin-top:4px" onclick="addAnnotation()">+ Add group comment</button>`;
+
+  h += `<div style="margin-top:12px;display:flex;gap:4px">`;
+  h += `<button class="btn btn-sm btn-danger" onclick="deleteMultiSelection()">Delete all selected</button>`;
+  h += `</div>`;
+
+  panel.innerHTML = h;
+}
+
+function addAnnotation() {
+  if (!selection || selection.type !== 'multi') return;
+  const s = sheet();
+  if (!s.annotations) s.annotations = [];
+  s.annotations.push({ id: 'a_' + uid(), targets: [...selection.ids], text: '', props: {} });
+  markDirty(); render();
+}
+
+function toggleMultiSelect(id) {
+  if (selection?.type === 'multi') {
+    const ids = selection.ids;
+    if (ids.includes(id)) {
+      const newIds = ids.filter(i => i !== id);
+      if (newIds.length > 1) selection = { type: 'multi', ids: newIds };
+      else if (newIds.length === 1) {
+        const s = sheet();
+        selection = s.instances.some(i => i.id === newIds[0]) ? { type: 'instance', id: newIds[0] } : { type: 'connection', id: newIds[0] };
+      }
+      else selection = null;
+    } else {
+      selection = { type: 'multi', ids: [...ids, id] };
+    }
+  } else if (selection?.type === 'instance' || selection?.type === 'connection') {
+    const prevId = selection.id;
+    if (prevId === id) return;
+    selection = { type: 'multi', ids: [prevId, id] };
+  } else {
+    const s = sheet();
+    selection = s.instances.some(i => i.id === id) ? { type: 'instance', id } : { type: 'connection', id };
+  }
+}
+
+function deleteMultiSelection() {
+  if (!selection || selection.type !== 'multi') return;
+  for (const id of [...selection.ids]) {
+    const s = sheet();
+    if (s.instances.some(i => i.id === id)) removeInstance(id);
+    else if (s.connections.some(c => c.id === id)) removeConnection(id);
+  }
+  selection = null; render();
+}
+
+/* ═══════════════════════════════════════════════════════════
+   ANNOTATIONS PANEL
+   ═══════════════════════════════════════════════════════════ */
+let activeAnnotation = null; // id of currently viewed annotation
+
+function renderAnnotationsPanel(panel) {
+  const s = sheet();
+  if (!s) return;
+  if (!s.annotations) s.annotations = [];
+  const blocks = getBlocks();
+
+  let h = `<h3><span>Annotations</span><button class="btn btn-sm" onclick="closePanel()">x</button></h3>`;
+
+  if (!s.annotations.length) {
+    h += `<div style="font-size:11px;color:var(--fg3);padding:8px">No annotations yet. Select multiple items and add a group comment.</div>`;
+  }
+
+  for (let ai = 0; ai < s.annotations.length; ai++) {
+    const ann = s.annotations[ai];
+    const isActive = activeAnnotation === ann.id;
+    // Resolve target names
+    const targetNames = ann.targets.map(tid => {
+      const inst = s.instances.find(i => i.id === tid);
+      if (inst) return inst.name;
+      const conn = s.connections.find(c => c.id === tid);
+      if (conn) return resolveEP(connFrom(conn)[0]) + '→...';
+      return tid;
+    });
+
+    h += `<div class="ann-item ${isActive ? 'active' : ''}" onclick="selectAnnotation('${ann.id}')">`;
+    h += `<div class="ann-targets">${targetNames.join(', ')}</div>`;
+    h += `<div class="ann-text">${esc(ann.text || '(empty)')}</div>`;
+    h += `</div>`;
+
+    if (isActive) {
+      h += `<div class="port-section" style="margin-bottom:8px">`;
+      h += `<label>Comment</label>`;
+      h += `<textarea style="width:100%;min-height:80px" onchange="sheet().annotations[${ai}].text=this.value;markDirty();renderCanvas();">${esc(ann.text || '')}</textarea>`;
+      h += `<label>Properties</label>`;
+      h += propsEditorHTML(ann.props || {}, `sheet().annotations[${ai}].props`);
+      h += `<div style="margin-top:6px">`;
+      h += `<button class="btn btn-sm btn-danger" onclick="sheet().annotations.splice(${ai},1);activeAnnotation=null;markDirty();render()">Delete annotation</button>`;
+      h += `</div></div>`;
+    }
+  }
+
+  panel.innerHTML = h;
+}
+
+function selectAnnotation(annId) {
+  const s = sheet();
+  const ann = s.annotations?.find(a => a.id === annId);
+  if (!ann) return;
+
+  if (activeAnnotation === annId) {
+    // Toggle off
+    activeAnnotation = null;
+    selection = { type: 'annotations' };
+  } else {
+    activeAnnotation = annId;
+    // Highlight the annotation's targets on canvas
+    selection = { type: 'annotations', highlightIds: ann.targets };
+  }
+  render();
+}
+
+/* ═══════════════════════════════════════════════════════════
+   RESIZABLE SIDEBAR / PANEL
+   ═══════════════════════════════════════════════════════════ */
+let resizing = null;
+
+function startResize(e, elemId, side) {
+  e.preventDefault();
+  const el = document.getElementById(elemId);
+  const startX = e.clientX;
+  const startW = el.offsetWidth;
+  resizing = { el, side, startX, startW };
+
+  function onMove(e) {
+    if (!resizing) return;
+    const dx = e.clientX - resizing.startX;
+    let newW;
+    if (resizing.side === 'right') newW = resizing.startW + dx;
+    else newW = resizing.startW - dx;
+    newW = Math.max(100, Math.min(600, newW));
+    resizing.el.style.width = newW + 'px';
+    resizeCanvas();
+  }
+
+  function onUp() {
+    resizing = null;
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+  }
+
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onUp);
+}
+
+function renderModulePanel(panel, mid) {
+  const m = data.modules[mid];
+  if (!m) { panel.style.display = 'none'; return; }
+  let h = `<h3><span>Module: ${m.name}</span><button class="btn btn-sm" onclick="closePanel()">x</button></h3>`;
+  h += `<label>Name</label><input value="${esc(m.name)}" onchange="data.modules['${mid}'].name=this.value;markDirty();render()"/>`;
+  h += `<label>Description</label><textarea onchange="data.modules['${mid}'].description=this.value;markDirty();">${esc(m.description || '')}</textarea>`;
+  h += `<label>Properties</label>`;
+  h += propsEditorHTML(m.props, `data.modules['${mid}'].props`);
+  h += `<label>Ports</label>`;
+  for (let i = 0; i < m.ports.length; i++) {
+    const p = m.ports[i];
+    h += `<div class="port-section"><div class="port-header">`;
+    const pp = `data.modules['${mid}'].ports[${i}]`;
+    h += `<input style="flex:2" value="${esc(p.name)}" onchange="${pp}.name=this.value;markDirty();render()"/>`;
+    h += `<select style="flex:1" onchange="${pp}.dir=this.value;markDirty();render()">`;
+    for (const d of ['in', 'out', 'inout', 'interface']) h += `<option ${p.dir === d ? 'selected' : ''}>${d}</option>`;
+    h += `</select>`;
+    if (p.dir === 'interface') {
+      h += `<select style="flex:0 0 55px" onchange="${pp}.role=this.value;markDirty();render()">`;
+      h += `<option ${p.role === 'master' ? 'selected' : ''}>master</option>`;
+      h += `<option ${p.role === 'slave' ? 'selected' : ''}>slave</option>`;
+      h += `</select>`;
+    }
+    h += `<button class="btn btn-sm btn-danger" onclick="data.modules['${mid}'].ports.splice(${i},1);markDirty();render()">x</button></div>`;
+    h += arrayEditorHTML(p.array, pp);
+    h += propsEditorHTML(p.props, `${pp}.props`);
+    h += `</div>`;
+  }
+  h += `<button class="btn btn-sm" style="margin-top:4px" onclick="data.modules['${mid}'].ports.push({id:'p_'+uid(),name:'new_port',dir:'in',props:{width:1}});markDirty();render()">+ port</button>`;
+  h += `<button class="btn btn-sm btn-danger" style="margin-top:12px" onclick="deleteModule('${mid}')">Delete module</button>`;
+  panel.innerHTML = h;
+}
+
+function renderInstancePanel(panel, iid) {
+  const s = sheet();
+  const inst = s.instances.find(i => i.id === iid);
+  if (!inst) return;
+  const ref = data.modules[inst.moduleRef];
+  const ii = s.instances.indexOf(inst);
+  const ip = `sheet().instances[${ii}]`;
+
+  let h = `<h3><span>Instance: ${inst.name}</span><button class="btn btn-sm" onclick="closePanel()">x</button></h3>`;
+  h += `<div style="font-size:11px;color:var(--fg2);margin-bottom:6px">Module: ${ref?.name || inst.moduleRef} | Rotation: ${inst.rotation || 0}\u00b0</div>`;
+  h += `<label>Instance name</label><input value="${esc(inst.name)}" onchange="${ip}.name=this.value;markDirty();render()"/>`;
+  h += `<label>Description</label><textarea onchange="${ip}.description=this.value;markDirty();">${esc(inst.description || '')}</textarea>`;
+  h += `<label>Array dimensions</label>`; h += arrayEditorHTML(inst.array, ip);
+  h += `<label>Instance properties</label>`; h += propsEditorHTML(inst.props, `${ip}.props`);
+  h += `<label>Size</label><div style="display:flex;gap:4px;align-items:center">`;
+  h += `<input type="number" style="width:60px" value="${inst.w || 170}" onchange="${ip}.w=parseInt(this.value);markDirty();render()"/> x `;
+  h += `<input type="number" style="width:60px" value="${inst.h || MIN_BLOCK_H}" onchange="${ip}.h=parseInt(this.value);markDirty();render()"/></div>`;
+  if (ref) {
+    h += `<label>Module ports</label><div style="font-size:11px;color:var(--fg3)">`;
+    for (const p of ref.ports) { const pp = Object.entries(p.props || {}).map(([k, v]) => `${k}=${v}`).join(', '); const rl = p.dir === 'interface' && p.role ? '/' + p.role : ''; h += `<div>- ${p.name}${arrayLabel(p.array)} [${p.dir}${rl}] ${pp}</div>`; }
+    h += `</div>`;
+    h += `<button class="btn btn-sm" style="margin-top:6px" onclick="selection={type:'module',id:'${inst.moduleRef}'};render()">Edit module definition</button>`;
+  }
+  h += `<button class="btn btn-sm btn-danger" style="margin-top:8px" onclick="removeInstance('${iid}')">Delete instance</button>`;
+  panel.innerHTML = h;
+}
+
+function renderConnectionPanel(panel, cid) {
+  const s = sheet();
+  const conn = s.connections.find(c => c.id === cid);
+  if (!conn) return;
+  const ci = s.connections.indexOf(conn);
+  const cp = `sheet().connections[${ci}]`;
+  const froms = connFrom(conn), tos = connTo(conn);
+  const fromLabels = froms.map(ep => resolveEP(ep)).join(', ');
+  const toLabels = tos.map(ep => resolveEP(ep)).join(', ');
+  const dir = connDir(conn);
+
+  let h = `<h3><span>Connection ${froms.length}:${tos.length}</span><button class="btn btn-sm" onclick="closePanel()">x</button></h3>`;
+  h += `<div style="font-size:11px;color:var(--fg2);margin-bottom:4px"><b>From:</b> ${fromLabels}</div>`;
+  h += `<div style="font-size:11px;color:var(--fg2);margin-bottom:8px"><b>To:</b> ${toLabels}</div>`;
+
+  h += `<label>Direction</label>`;
+  h += `<select onchange="setConnDirection('${cid}',this.value)">`;
+  for (const d of ['forward', 'reverse', 'both', 'none']) h += `<option ${dir === d ? 'selected' : ''}>${d}</option>`;
+  h += `</select>`;
+
+  // Mapping
+  const mapping = conn.mapping || '1:1';
+  const MAPPING_PRESETS = ['1:1', 'broadcast', 'reduction', 'crossbar', 'interleave', 'custom'];
+  h += `<label>Mapping</label>`;
+  h += `<select onchange="setConnMapping('${cid}',this.value)">`;
+  for (const m of MAPPING_PRESETS) h += `<option ${mapping === m ? 'selected' : ''}>${m}</option>`;
+  h += `</select>`;
+
+  // Dim shapes (computed from endpoints)
+  const fromShape = computeEndpointShape(froms);
+  const toShape = computeEndpointShape(tos);
+  if (fromShape || toShape) {
+    h += `<div style="font-size:10px;color:var(--fg3);margin-top:2px">`;
+    h += `From shape: [${fromShape || '?'}] → To shape: [${toShape || '?'}]`;
+    h += `</div>`;
+  }
+
+  // Custom map expression (only when mapping=custom)
+  if (mapping === 'custom') {
+    h += `<label>Map expression</label>`;
+    h += `<textarea style="font-family:var(--mono);font-size:11px;min-height:50px" placeholder="e.g. in[i] -> out[2*i] for(i,0,4)" onchange="updateMapExpr('${cid}',this.value)">${esc(conn.map_expr || '')}</textarea>`;
+    h += `<div style="font-size:9px;color:var(--fg3);margin-top:2px">Syntax: lhs[expr] -> rhs[expr] for(var,start,end) [for(...)]</div>`;
+  }
+
+  h += `<label>Description</label><textarea onchange="${cp}.description=this.value;markDirty();">${esc(conn.description || '')}</textarea>`;
+  h += `<label>Properties</label>`; h += propsEditorHTML(conn.props, `${cp}.props`);
+
+  // Floating endpoint labels
+  const allEps = [
+    ...froms.map((ep, i) => ({ ep, side: 'from', idx: i })),
+    ...tos.map((ep, i) => ({ ep, side: 'to', idx: i })),
+  ].filter(e => e.ep.type === 'float');
+  if (allEps.length) {
+    h += `<label>Open endpoints</label>`;
+    for (const { ep, side, idx } of allEps) {
+      const arr = side === 'from' ? 'from' : 'to';
+      h += `<div class="prop-row">`;
+      h += `<input value="${esc(ep.label || '')}" placeholder="label (e.g. to upper level)" style="flex:1" onchange="updateFloatLabel('${cid}','${arr}',${idx},this.value)"/>`;
+      h += `<button class="btn btn-sm btn-danger" onclick="removeFloatEndpoint('${cid}','${arr}',${idx})">x</button>`;
+      h += `</div>`;
+    }
+  }
+
+  // Add/remove endpoints
+  h += `<label style="margin-top:10px">Endpoints</label>`;
+  h += `<div style="font-size:11px;color:var(--fg3);margin-bottom:6px">Click a port or empty space to add an endpoint. Drag diamond to reposition.</div>`;
+  h += `<div style="display:flex;gap:4px;margin-bottom:6px">`;
+  h += `<button class="btn btn-sm" onclick="startAddEndpoint('${cid}','from')">+ From</button>`;
+  h += `<button class="btn btn-sm" onclick="startAddEndpoint('${cid}','to')">+ To</button>`;
+  h += `</div>`;
+
+  h += `<button class="btn btn-sm btn-danger" style="margin-top:10px" onclick="removeConnection('${cid}')">Delete connection</button>`;
+  panel.innerHTML = h;
+}
+
+function setConnDirection(cid, dir) {
+  const conn = sheet().connections.find(c => c.id === cid);
+  if (conn) { conn.direction = dir; markDirty(); renderCanvas(); }
+}
+
+function setConnMapping(cid, mapping) {
+  const conn = sheet().connections.find(c => c.id === cid);
+  if (!conn) return;
+  conn.mapping = mapping;
+  if (mapping === 'custom' && !conn.map_expr) conn.map_expr = '';
+  if (mapping !== 'custom') delete conn.map_expr;
+  // Clean up legacy dim_map if present
+  delete conn.dim_map;
+  markDirty(); render();
+}
+
+function updateMapExpr(cid, value) {
+  const conn = sheet().connections.find(c => c.id === cid);
+  if (!conn) return;
+  conn.map_expr = value;
+  markDirty();
+}
+
+function computeEndpointShape(eps) {
+  // Compute the combined shape for a list of endpoints: [batch_dims...][port_array_dims...]
+  // Bitwidth excluded from shape
+  const shapes = [];
+  for (const ep of eps) {
+    if (ep.type === 'float') { shapes.push([1]); continue; }
+    const s = sheet();
+    const inst = s.instances.find(i => i.id === ep.inst);
+    if (!inst) { shapes.push([]); continue; }
+    const ref = data.modules[inst.moduleRef];
+    if (!ref) { shapes.push([]); continue; }
+    const port = ref.ports.find(p => p.id === ep.port);
+    if (!port) { shapes.push([]); continue; }
+    const dims = [];
+    if (inst.array?.length) dims.push(...inst.array);  // batch dims
+    if (port.array?.length) dims.push(...port.array);   // port array dims
+    shapes.push(dims.length ? dims : [1]);
+  }
+  if (shapes.length === 1) return shapes[0].join(', ');
+  // Multiple endpoints: show each
+  return shapes.map(s => s.join('x')).join(' + ');
+}
+
+function updateFloatLabel(cid, side, idx, label) {
+  const s = sheet();
+  const conn = s.connections.find(c => c.id === cid);
+  if (!conn) return;
+  const eps = side === 'from' ? connFrom(conn) : connTo(conn);
+  if (eps[idx]?.type === 'float') { eps[idx].label = label; markDirty(); renderCanvas(); }
+}
+
+function removeFloatEndpoint(cid, side, idx) {
+  const s = sheet();
+  const conn = s.connections.find(c => c.id === cid);
+  if (!conn) return;
+  const eps = side === 'from' ? connFrom(conn) : connTo(conn);
+  eps.splice(idx, 1);
+  conn[side] = eps;
+  // If either side is empty, remove the whole connection
+  if (!connFrom(conn).length || !connTo(conn).length) {
+    s.connections = s.connections.filter(c => c.id !== cid);
+    selection = null;
+  }
+  markDirty(); render();
+}
+
+function startAddEndpoint(cid, side) {
+  // Set linking mode that adds to existing connection
+  linking = { addToConn: cid, side };
+  updateLinkBtn();
+  renderCanvas();
+}
+
+function resolveEP(ep) {
+  if (ep.type === 'float') return ep.label || '(open)';
+  const s = sheet();
+  const inst = s.instances.find(i => i.id === ep.inst);
+  const ref = data.modules[inst?.moduleRef];
+  const p = ref?.ports.find(p => p.id === ep.port);
+  return (inst?.name || ep.inst) + '.' + (p?.name || ep.port);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   EDITORS (array, props)
+   ═══════════════════════════════════════════════════════════ */
+function arrayEditorHTML(arr, objPath) {
+  const dims = arr || [];
+  let h = '<div class="array-input">';
+  for (let i = 0; i < dims.length; i++) { if (i > 0) h += '<span>x</span>'; h += `<input type="text" value="${esc(String(dims[i]))}" style="width:60px" onchange="updateArrayDim(${objPath},${i},this.value)" placeholder="N or VAR"/>`; }
+  if (dims.length < 3) h += `<button class="btn btn-sm" onclick="addArrayDim(${objPath})">+dim</button>`;
+  if (dims.length > 0) h += `<button class="btn btn-sm btn-danger" onclick="removeArrayDim(${objPath})">-dim</button>`;
+  return h + '</div>';
+}
+function addArrayDim(obj) { if (!obj.array) obj.array = []; if (obj.array.length < 3) obj.array.push(2); markDirty(); render(); }
+function removeArrayDim(obj) { if (obj.array?.length > 0) obj.array.pop(); if (obj.array?.length === 0) delete obj.array; markDirty(); render(); }
+function updateArrayDim(obj, idx, val) {
+  if (!obj.array || idx >= obj.array.length) return;
+  const num = parseInt(val);
+  obj.array[idx] = (!isNaN(num) && String(num) === val.trim()) ? num : val.trim();
+  markDirty(); render();
+}
+
+function propsEditorHTML(props, path) {
+  let h = '';
+  for (const [k, v] of Object.entries(props || {})) {
+    const vs = typeof v === 'object' ? JSON.stringify(v) : String(v);
+    h += `<div class="prop-row"><input value="${esc(k)}" placeholder="key" onchange="updatePropKey(${path},'${esc(k)}',this.value)"/><span style="color:var(--fg3);font-size:10px">:</span><input value="${esc(vs)}" placeholder="value" onchange="updatePropVal(${path},'${esc(k)}',this.value)"/><button class="btn btn-sm btn-danger" onclick="delete ${path}['${esc(k)}'];markDirty();render()">x</button></div>`;
+  }
+  h += `<button class="btn btn-sm" style="margin-top:2px;font-size:10px" onclick="${path}['']='';;markDirty();render()">+ property</button>`;
+  return h;
+}
+function updatePropKey(obj, oldKey, newKey) { const val = obj[oldKey]; delete obj[oldKey]; obj[newKey] = val; markDirty(); render(); }
+function updatePropVal(obj, key, rawVal) { let v = rawVal; try { v = JSON.parse(rawVal); } catch { } obj[key] = v; markDirty(); render(); }
+function esc(s) { return String(s).replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
+
+/* ═══════════════════════════════════════════════════════════
+   ACTIONS
+   ═══════════════════════════════════════════════════════════ */
+function selectModuleInSidebar(mid) {
+  selection = { type: 'module', id: mid }; render();
+}
+
+function editSheet() { selection = { type: 'sheet' }; render(); }
+function showAnnotations() { selection = { type: 'annotations' }; render(); }
+function closePanel() { selection = null; render(); }
+
+function addModule() {
+  const id = 'm_' + uid();
+  data.modules[id] = { id, name: 'NewModule', description: '', props: {}, ports: [] };
+  selection = { type: 'module', id };
+  markDirty(); render();
+}
+
+function deleteModule(id) {
+  for (const s of data.sheets) {
+    const removed = new Set(s.instances.filter(i => i.moduleRef === id).map(i => i.id));
+    s.instances = s.instances.filter(i => i.moduleRef !== id);
+    s.connections = s.connections.filter(c => {
+      const froms = connFrom(c).filter(ep => !removed.has(ep.inst));
+      const tos = connTo(c).filter(ep => !removed.has(ep.inst));
+      if (!froms.length || !tos.length) return false;
+      c.from = froms; c.to = tos; return true;
+    });
+  }
+  delete data.modules[id];
+  selection = null; markDirty(); render();
+}
+
+function removeInstance(iid) {
+  const s = sheet();
+  s.instances = s.instances.filter(i => i.id !== iid);
+  // Remove connections that reference this instance (M:N aware)
+  s.connections = s.connections.filter(c => {
+    const froms = connFrom(c), tos = connTo(c);
+    const newFroms = froms.filter(ep => ep.inst !== iid);
+    const newTos = tos.filter(ep => ep.inst !== iid);
+    if (!newFroms.length || !newTos.length) return false; // drop connection
+    c.from = newFroms; c.to = newTos; return true;
+  });
+  if (selection?.type === 'instance' && selection.id === iid) selection = null;
+  markDirty(); render();
+}
+
+function removeConnection(cid) {
+  sheet().connections = sheet().connections.filter(c => c.id !== cid);
+  selection = null; markDirty(); render();
+}
+
+function toggleLink() { linking = linking ? null : true; updateLinkBtn(); if (!linking) renderCanvas(); }
+function updateLinkBtn() {
+  const btn = document.getElementById('linkBtn');
+  if (linking) { btn.classList.add('btn-warn'); btn.textContent = 'Cancel link'; }
+  else { btn.classList.remove('btn-warn'); btn.textContent = 'Link'; }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   SHEET MANAGEMENT
+   ═══════════════════════════════════════════════════════════ */
+function switchSheet(id) { data.activeSheet = id; selection = null; linking = null; updateLinkBtn(); render(); }
+
+function addSheet() {
+  const id = 's_' + uid();
+  data.sheets.push({ id, name: 'Sheet ' + (data.sheets.length + 1), description: '', instances: [], connections: [] });
+  switchSheet(id); markDirty();
+}
+
+function deleteSheet(id) {
+  if (data.sheets.length <= 1) return;
+  const idx = data.sheets.findIndex(s => s.id === id);
+  data.sheets.splice(idx, 1);
+  if (data.activeSheet === id) switchSheet(data.sheets[Math.min(idx, data.sheets.length - 1)].id);
+  markDirty(); render();
+}
+
+function renameSheet(id) {
+  const s = data.sheets.find(s => s.id === id);
+  if (!s) return;
+  const name = prompt('Sheet name:', s.name);
+  if (name !== null && name.trim()) { s.name = name.trim(); markDirty(); render(); }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   ADD INSTANCE MODAL
+   ═══════════════════════════════════════════════════════════ */
+let instModalState = { selectedModule: null, rows: [], acIndex: -1 };
+
+function addInstance() {
+  if (!sheet()) return;
+  const mods = Object.values(data.modules);
+  if (!mods.length) return alert('Create a module first (+ Module button or sidebar)');
+  instModalState = { selectedModule: null, rows: [], acIndex: -1 };
+  document.getElementById('instModuleInput').value = '';
+  document.getElementById('instModuleList').style.display = 'none';
+  document.getElementById('instRows').innerHTML = '<div style="color:var(--fg3);font-size:11px;padding:8px">Select a module above first</div>';
+  document.getElementById('instOverlay').style.display = 'flex';
+  setTimeout(() => document.getElementById('instModuleInput').focus(), 50);
+}
+
+function closeInstModal() { document.getElementById('instOverlay').style.display = 'none'; document.getElementById('instModuleList').style.display = 'none'; }
+
+function filterInstModules() {
+  const input = document.getElementById('instModuleInput'), list = document.getElementById('instModuleList');
+  const query = input.value.toLowerCase().trim();
+  const mods = Object.values(data.modules);
+  const matches = query ? mods.filter(m => m.name.toLowerCase().includes(query)) : mods;
+  if (!matches.length) { list.innerHTML = '<div style="padding:8px;font-size:11px;color:var(--fg3)">No matching modules</div>'; list.style.display = 'block'; instModalState.acIndex = -1; return; }
+  instModalState.acIndex = -1;
+  let h = '';
+  matches.forEach((m, i) => { h += `<div class="autocomplete-item" data-idx="${i}" data-id="${m.id}"><span>${esc(m.name)}</span><span class="sub">${m.ports.length} ports</span></div>`; });
+  list.innerHTML = h; list.style.display = 'block';
+  list.querySelectorAll('.autocomplete-item').forEach(el => { el.addEventListener('click', () => selectInstModule(el.dataset.id)); });
+}
+
+function instInputKeydown(e) {
+  const items = document.getElementById('instModuleList').querySelectorAll('.autocomplete-item');
+  if (!items.length) return;
+  if (e.key === 'ArrowDown') { e.preventDefault(); instModalState.acIndex = Math.min(instModalState.acIndex + 1, items.length - 1); items.forEach((el, i) => el.classList.toggle('active', i === instModalState.acIndex)); }
+  else if (e.key === 'ArrowUp') { e.preventDefault(); instModalState.acIndex = Math.max(instModalState.acIndex - 1, 0); items.forEach((el, i) => el.classList.toggle('active', i === instModalState.acIndex)); }
+  else if (e.key === 'Enter') { e.preventDefault(); if (instModalState.acIndex >= 0) selectInstModule(items[instModalState.acIndex].dataset.id); else if (items.length === 1) selectInstModule(items[0].dataset.id); }
+  else if (e.key === 'Escape') document.getElementById('instModuleList').style.display = 'none';
+}
+
+function selectInstModule(mid) {
+  const m = data.modules[mid];
+  if (!m) return;
+  instModalState.selectedModule = { id: mid, name: m.name };
+  document.getElementById('instModuleInput').value = m.name;
+  document.getElementById('instModuleList').style.display = 'none';
+  if (!instModalState.rows.length) instModalState.rows.push({ name: 'u_' + m.name.toLowerCase(), moduleRef: mid, moduleName: m.name });
+  else instModalState.rows.forEach((r, i) => { r.moduleRef = mid; r.moduleName = m.name; r.name = 'u_' + m.name.toLowerCase() + (i > 0 ? '_' + i : ''); });
+  renderInstRows();
+}
+
+function addInstRow() {
+  const sel = instModalState.selectedModule;
+  if (!sel) return alert('Select a module first');
+  instModalState.rows.push({ name: 'u_' + sel.name.toLowerCase() + '_' + instModalState.rows.length, moduleRef: sel.id, moduleName: sel.name });
+  renderInstRows();
+}
+
+function addInstRowBatch() {
+  const sel = instModalState.selectedModule;
+  if (!sel) return alert('Select a module first');
+  const count = prompt('Array size (e.g. 128, NUM_CORES, 4x8, NxM):', '4');
+  if (!count) return;
+  // Parse: "128" -> [128], "NUM_CORES" -> ["NUM_CORES"], "4x8" -> [4,8], "NxM" -> ["N","M"]
+  const dims = count.split(/[x,]/).map(s => {
+    const trimmed = s.trim();
+    const num = parseInt(trimmed);
+    return (!isNaN(num) && String(num) === trimmed) ? num : trimmed;
+  }).filter(d => d !== '' && d !== 0);
+  if (!dims.length) return alert('Invalid array size');
+  const name = 'u_' + sel.name.toLowerCase();
+  instModalState.rows.push({ name, moduleRef: sel.id, moduleName: sel.name, array: dims });
+  renderInstRows();
+}
+
+function renderInstRows() {
+  const c = document.getElementById('instRows');
+  if (!instModalState.rows.length) { c.innerHTML = '<div style="color:var(--fg3);font-size:11px;padding:8px">Select a module above first</div>'; return; }
+  let h = '';
+  instModalState.rows.forEach((row, i) => {
+    h += `<div class="inst-row"><span style="font-size:10px;color:var(--fg3);min-width:20px">${i + 1}.</span>`;
+    h += `<input style="flex:2" value="${esc(row.name)}" onchange="instModalState.rows[${i}].name=this.value"/>`;
+    h += `<span class="module-name">${esc(row.moduleName)}${row.array ? arrayLabel(row.array) : ''}</span>`;
+    h += `<button class="btn btn-sm btn-danger" onclick="instModalState.rows.splice(${i},1);renderInstRows()">x</button></div>`;
+  });
+  c.innerHTML = h;
+}
+
+function commitInstances() {
+  const s = sheet();
+  if (!s) return;
+  const rows = instModalState.rows;
+  if (!rows.length) return alert('No instances to create');
+  const colW = 200, rowH = 140, cols = Math.ceil(Math.sqrt(rows.length));
+  let lastId;
+  rows.forEach((row, i) => {
+    const id = 'i_' + uid();
+    const inst = { id, name: row.name, moduleRef: row.moduleRef, props: {}, x: 80 + (i % cols) * colW, y: 80 + Math.floor(i / cols) * rowH, w: 170, h: null, rotation: 0, portPositions: {} };
+    if (row.array) inst.array = row.array;
+    s.instances.push(inst);
+    lastId = id;
+  });
+  closeInstModal();
+  if (lastId) selection = { type: 'instance', id: lastId };
+  markDirty(); render();
+}
+
+document.addEventListener('click', e => { if (!e.target.closest('.autocomplete-wrap')) { const l = document.getElementById('instModuleList'); if (l) l.style.display = 'none'; } });
+
+/* ═══════════════════════════════════════════════════════════
+   COPY FOR CLAUDE
+   ═══════════════════════════════════════════════════════════ */
+async function copySimpleJson() {
+  try {
+    if (dirty) await saveToServer();
+    const f = openFiles[activeFileId];
+    if (f?.path) { const r = await fetch(`/api/simple/${activeFileId}`); await navigator.clipboard.writeText(await r.text()); }
+    else { await navigator.clipboard.writeText(JSON.stringify(data, null, 2)); }
+    showSync("ok", "Copied simplified JSON");
+  } catch (e) { console.error(e); alert('Failed: ' + e.message); }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   INIT
+   ═══════════════════════════════════════════════════════════ */
+initCanvas();
+setupInteraction();
+loadServerFiles().then(() => connectSSE());
+window.addEventListener('beforeunload', e => {
+  saveViewState();
+  if (Object.values(openFiles).some(f => f.dirty)) e.returnValue = 'Unsaved changes';
+});
+</script>
+</body>
+</html>

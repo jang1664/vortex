@@ -6,11 +6,13 @@ A monitoring tool for Vortex GPGPU on Xilinx FPGAs, similar to nvidia-smi.
 Reads live status from shared memory exported by the Vortex XRT runtime.
 
 Usage:
-  vortex-smi              # one-shot status display
+  vortex-smi              # one-shot status display (includes board power on HW)
   vortex-smi -l [SEC]     # loop mode (default: 1s interval)
   vortex-smi -j           # JSON output
   vortex-smi --backend hw # choose backend: simx/hw_emu/hw/all
   vortex-smi --xbutil     # also query xbutil for FPGA-level info
+  vortex-smi --no-power   # skip board power sampling (faster refresh in -l)
+  vortex-smi --csv pwr.csv --summary -l 0.1   # power_eval-style log + summary
 """
 
 import argparse
@@ -243,7 +245,7 @@ HEADER = f"""\
 ╚══════════════════════════════════════════════════════════════╝{RESET}"""
 
 
-def print_status(status, color=True, shm_path=None, checked_paths=None):
+def print_status(status, color=True, shm_path=None, checked_paths=None, power_data=None):
     """Print nvidia-smi style status display."""
     if not color:
         # strip ANSI
@@ -263,12 +265,18 @@ def print_status(status, color=True, shm_path=None, checked_paths=None):
         return
 
     name = status.device_name.decode("utf-8", errors="replace").rstrip("\x00")
-    state = status.state
-    state_name = STATE_NAMES.get(state, f"UNKNOWN({state})")
-    sc = STATE_COLORS.get(state, "") if color else ""
-
     alive = pid_alive(status.pid)
     pid_str = f"{status.pid}" + (" (running)" if alive else " (dead)")
+
+    # If the owning PID is gone, the state field is stale — show as OFFLINE
+    # instead of whatever the dead process last wrote.
+    if status.pid and not alive:
+        state = 0  # OFFLINE
+        state_name = "OFFLINE (stale)"
+    else:
+        state = status.state
+        state_name = STATE_NAMES.get(state, f"UNKNOWN({state})")
+    sc = STATE_COLORS.get(state, "") if color else ""
 
     mem_total = status.mem_used + status.mem_free
     mem_pct = (status.mem_used / mem_total * 100) if mem_total > 0 else 0
@@ -309,8 +317,17 @@ def print_status(status, color=True, shm_path=None, checked_paths=None):
           f"({human_count(status.download_count)} calls)")
     print()
 
+    # Board power (peer section with Memory / Transfer / Kernel)
+    if power_data is not None:
+        print_power_section(power_data, color=color)
+
     # Kernel stats
     kname = status.last_kernel_name.decode("utf-8", errors="replace").rstrip("\x00")
+    # Keep only the last two path components (parent_dir/file) for path-like
+    # names so the kernel can be identified without a long workspace prefix.
+    if "/" in kname:
+        parts = kname.rstrip("/").split("/")
+        kname = "/".join(parts[-2:]) if len(parts) >= 2 else parts[-1]
     print(f"  {BOLD}Kernel Stats:{RESET}")
     print(f"    Launches: {status.kernel_launches}")
     if kname:
@@ -333,20 +350,45 @@ def print_status(status, color=True, shm_path=None, checked_paths=None):
     print(f"  {DIM}─────────────────────────────────────────────────────────{RESET}")
 
 
-def print_json(status, shm_path=None, checked_paths=None):
+def _power_json(power_data):
+    """Serialize power_data for JSON output. Returns None if disabled."""
+    if power_data is None:
+        return None
+    if power_data.get("current") is None:
+        return {"available": False, "state": power_data.get("state")}
+    return {
+        "available": True,
+        "current_w": power_data["current"],
+        "min_w": power_data["min"],
+        "max_w": power_data["max"],
+        "avg_w": power_data["avg"],
+        "samples": power_data["count"],
+        "duration_s": power_data["duration_s"],
+        "state": power_data["state"],
+    }
+
+
+def print_json(status, shm_path=None, checked_paths=None, power_data=None):
     """Output status as JSON."""
     if status is None:
-        print(json.dumps({"error": "no device found", "checked_paths": checked_paths or candidate_shm_paths("all")}, indent=2))
+        payload = {"error": "no device found",
+                   "checked_paths": checked_paths or candidate_shm_paths("all")}
+        if power_data is not None:
+            payload["power"] = _power_json(power_data)
+        print(json.dumps(payload, indent=2))
         return
 
     name = status.device_name.decode("utf-8", errors="replace").rstrip("\x00")
+    alive = pid_alive(status.pid)
+    state_str = "OFFLINE" if (status.pid and not alive) else STATE_NAMES.get(status.state, "UNKNOWN")
     d = {
         "timestamp": datetime.now().isoformat(),
         "shm_path": shm_path,
         "device_name": name,
-        "state": STATE_NAMES.get(status.state, "UNKNOWN"),
+        "state": state_str,
+        "state_stale": bool(status.pid and not alive and status.state != 0),
         "pid": status.pid,
-        "pid_alive": pid_alive(status.pid),
+        "pid_alive": alive,
         "num_cores": status.num_cores,
         "num_warps": status.num_warps,
         "num_threads": status.num_threads,
@@ -379,13 +421,19 @@ def print_json(status, shm_path=None, checked_paths=None):
             if status.banks[i].allocated
         ],
     }
+    if power_data is not None:
+        d["power"] = _power_json(power_data)
     print(json.dumps(d, indent=2))
 
 
-def print_status_multi(entries, color=True, checked_paths=None):
+def print_status_multi(entries, color=True, checked_paths=None, power_data=None):
     """Print all entries (used for --backend all)."""
     if not entries:
         print_status(None, color=color, checked_paths=checked_paths)
+        # Even with no SHM entry, render board power if we have it — power
+        # is a board-level metric independent of the runtime SHM.
+        if power_data is not None:
+            print_power_section(power_data, color=color)
         return
 
     # Sort by preference for stable display order.
@@ -398,27 +446,35 @@ def print_status_multi(entries, color=True, checked_paths=None):
         ),
         reverse=True,
     )
+    # Power belongs to the FPGA, not the SHM entry — attach it to the
+    # primary (highest-ranked) entry so it appears once, inline with that
+    # entry's Memory / Transfer / Kernel sections.
     for idx, (status, shm_path) in enumerate(ranked, 1):
         print(f"{BOLD}Entry {idx}/{len(ranked)}{RESET}")
-        print_status(status, color=color, shm_path=shm_path)
+        attached_power = power_data if idx == 1 else None
+        print_status(status, color=color, shm_path=shm_path,
+                     power_data=attached_power)
 
 
-def print_json_multi(entries, checked_paths=None):
+def print_json_multi(entries, checked_paths=None, power_data=None):
     """Output all entries as JSON (used for --backend all)."""
     if not entries:
-        print_json(None, checked_paths=checked_paths)
+        print_json(None, checked_paths=checked_paths, power_data=power_data)
         return
 
     payload = []
     for status, shm_path in entries:
         name = status.device_name.decode("utf-8", errors="replace").rstrip("\x00")
+        alive = pid_alive(status.pid)
+        state_str = "OFFLINE" if (status.pid and not alive) else STATE_NAMES.get(status.state, "UNKNOWN")
         payload.append({
             "timestamp": datetime.now().isoformat(),
             "shm_path": shm_path,
             "device_name": name,
-            "state": STATE_NAMES.get(status.state, "UNKNOWN"),
+            "state": state_str,
+            "state_stale": bool(status.pid and not alive and status.state != 0),
             "pid": status.pid,
-            "pid_alive": pid_alive(status.pid),
+            "pid_alive": alive,
             "num_cores": status.num_cores,
             "num_warps": status.num_warps,
             "num_threads": status.num_threads,
@@ -452,7 +508,11 @@ def print_json_multi(entries, checked_paths=None):
             ],
         })
 
-    print(json.dumps({"devices": payload, "checked_paths": checked_paths or candidate_shm_paths("all")}, indent=2))
+    out = {"devices": payload,
+           "checked_paths": checked_paths or candidate_shm_paths("all")}
+    if power_data is not None:
+        out["power"] = _power_json(power_data)
+    print(json.dumps(out, indent=2))
 
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
@@ -484,52 +544,320 @@ def main():
         "--xbutil", action="store_true",
         help="Also show xbutil examine summary (requires xbutil in PATH)",
     )
+    parser.add_argument(
+        "--no-power", action="store_true",
+        help="Skip board power sampling. Power is sampled by default for HW "
+             "backends (hw/all) and shown as a peer section in the status "
+             "display; use this to skip the xrt-smi call for faster refresh.",
+    )
+    parser.add_argument(
+        "--csv", metavar="PATH", default=None,
+        help="Append each power sample as 'timestamp_s,power_w,state' "
+             "(same format as power_eval.sh). Requires power sampling to be "
+             "enabled (default on HW backends; see --no-power).",
+    )
+    parser.add_argument(
+        "--summary", action="store_true",
+        help="On exit print P_run_avg / P_run_max and per-state sample counts, "
+             "classified by SHM runtime state. Requires power sampling.",
+    )
 
     args = parser.parse_args()
 
-    # Handle Ctrl-C gracefully
-    signal.signal(signal.SIGINT, lambda *_: (print(), sys.exit(0)))
+    # Power sampling is on by default for HW-capable backends. Skip on simx /
+    # hw_emu (no real board) and when --no-power is given (fast refresh).
+    power_enabled = (not args.no_power) and (args.backend in ("hw", "all"))
 
-    if args.loop is not None:
-        # loop mode
+    # Open CSV up front so a SIGINT mid-run still flushes everything.
+    if args.csv:
+        if not power_enabled:
+            print("vortex-smi: --csv needs power sampling enabled "
+                  "(not compatible with --no-power, and only HW backends sample power)",
+                  file=sys.stderr); sys.exit(2)
         try:
-            while True:
-                os.system("clear")
-                checked = candidate_shm_paths(args.backend)
-                if args.backend == "all":
-                    entries = read_shm_candidates("all")
-                    if args.json:
-                        print_json_multi(entries, checked_paths=checked)
-                    else:
-                        print_status_multi(entries, color=not args.no_color, checked_paths=checked)
-                else:
-                    status, shm_path = read_shm(args.backend)
-                    if args.json:
-                        print_json(status, shm_path, checked_paths=checked)
-                    else:
-                        print_status(status, color=not args.no_color, shm_path=shm_path, checked_paths=checked)
-                if args.xbutil and args.backend in ("hw", "all"):
-                    print_xbutil_info()
-                time.sleep(args.loop)
-        except KeyboardInterrupt:
-            pass
-    else:
-        # one-shot
+            new_file = not os.path.exists(args.csv) or os.path.getsize(args.csv) == 0
+            fh = open(args.csv, "a", buffering=1)
+            if new_file:
+                fh.write("timestamp_s,power_w,state\n")
+            _power_stats["csv_fh"]   = fh
+            _power_stats["csv_path"] = args.csv
+        except OSError as e:
+            print(f"vortex-smi: cannot open CSV '{args.csv}': {e}", file=sys.stderr); sys.exit(2)
+    if args.summary and not power_enabled:
+        print("vortex-smi: --summary needs power sampling enabled "
+              "(not compatible with --no-power, and only HW backends sample power)",
+              file=sys.stderr); sys.exit(2)
+    _power_stats["interval_s"] = float(args.loop) if args.loop is not None else 0.0
+
+    def _on_exit(*_):
+        if power_enabled and args.summary:
+            try: print_power_summary()
+            except Exception as e:
+                print(f"\n(summary failed: {e})", file=sys.stderr)
+        fh = _power_stats.get("csv_fh")
+        if fh is not None:
+            try: fh.close()
+            except Exception: pass
+        print()
+        sys.exit(0)
+    signal.signal(signal.SIGINT, _on_exit)
+
+    def _hw_state_from_status(status):
+        try:
+            # Stale SHM: owning process gone but state never reset → treat as OFFLINE.
+            # Otherwise the IDLE/RUNNING bucket would be polluted with junk samples.
+            if getattr(status, "pid", 0) and not pid_alive(status.pid):
+                return "OFFLINE"
+            return STATE_NAMES.get(status.state, "UNKNOWN")
+        except Exception:
+            return "UNKNOWN"
+
+    def _hw_state_from_entries(entries):
+        for st, path in entries or []:
+            if st is not None and "xrt" in (path or "").lower() or "vortex_status" == (path or ""):
+                return _hw_state_from_status(st)
+        # fallback: any first valid status
+        for st, _ in entries or []:
+            if st is not None:
+                return _hw_state_from_status(st)
+        return "UNKNOWN"
+
+    def _one_refresh(loop_mode):
+        """One refresh cycle: gather everything (slow ops first), then print.
+
+        The order matters: we sample power BEFORE clearing the screen so the
+        ~1s xrt-smi subprocess call doesn't leave the user staring at a
+        partially-rendered display. After this function returns, all output
+        for the cycle has been emitted in a single contiguous block.
+        """
         checked = candidate_shm_paths(args.backend)
+
+        # 1. Read SHM (fast) — needed for power-sample state label.
         if args.backend == "all":
             entries = read_shm_candidates("all")
-            if args.json:
-                print_json_multi(entries, checked_paths=checked)
-            else:
-                print_status_multi(entries, color=not args.no_color, checked_paths=checked)
+            hw_state = _hw_state_from_entries(entries)
         else:
             status, shm_path = read_shm(args.backend)
+            hw_state = _hw_state_from_status(status) if status is not None else "UNKNOWN"
+
+        # 2. Sample power (slow, ~1s on xrt-smi). Doing this before the clear
+        #    keeps the redraw atomic.
+        power_data = sample_power_for_state(hw_state) if power_enabled else None
+
+        # 3. Clear and print everything in one shot.
+        if loop_mode:
+            os.system("clear")
+        if args.backend == "all":
             if args.json:
-                print_json(status, shm_path, checked_paths=checked)
+                print_json_multi(entries, checked_paths=checked, power_data=power_data)
             else:
-                print_status(status, color=not args.no_color, shm_path=shm_path, checked_paths=checked)
+                print_status_multi(entries, color=not args.no_color,
+                                   checked_paths=checked, power_data=power_data)
+        else:
+            if args.json:
+                print_json(status, shm_path, checked_paths=checked, power_data=power_data)
+            else:
+                print_status(status, color=not args.no_color, shm_path=shm_path,
+                             checked_paths=checked, power_data=power_data)
         if args.xbutil and args.backend in ("hw", "all"):
             print_xbutil_info()
+
+    if args.loop is not None:
+        try:
+            while True:
+                _one_refresh(loop_mode=True)
+                time.sleep(args.loop)
+        except KeyboardInterrupt:
+            _on_exit()
+    else:
+        _one_refresh(loop_mode=False)
+        if power_enabled and args.summary:
+            print_power_summary()
+        fh = _power_stats.get("csv_fh")
+        if fh is not None:
+            try: fh.close()
+            except Exception: pass
+
+
+# Module-level state so loop mode can accumulate session min/avg/max.
+# samples: list of (timestamp_s, power_w, state_name) tuples — state_name is the
+# SHM runtime state at sampling time (IDLE/RUNNING/UPLOADING/DOWNLOADING/ERROR/OFFLINE/UNKNOWN).
+_power_stats = {
+    "samples": [],
+    "start_t": None,
+    "dev_bdf": None,
+    "missing_logged": False,
+    "csv_fh": None,
+    "csv_path": None,
+    "interval_s": None,
+}
+
+
+def _detect_dev_bdf():
+    """Detect the FPGA device BDF once per process; cache in _power_stats."""
+    if _power_stats["dev_bdf"] is not None:
+        return _power_stats["dev_bdf"] or None
+    import subprocess, tempfile
+    tmp = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tf:
+            tmp = tf.name
+        subprocess.run(
+            ["/opt/xilinx/xrt/bin/xrt-smi", "--batch", "--force",
+             "examine", "-r", "electrical", "-f", "JSON", "-o", tmp],
+            capture_output=True, timeout=5,
+        )
+        with open(tmp) as f:
+            d = json.load(f)
+        bdf = d["devices"][0].get("device_id", "")
+    except Exception:
+        bdf = ""
+    finally:
+        if tmp:
+            try: os.unlink(tmp)
+            except OSError: pass
+    _power_stats["dev_bdf"] = bdf
+    return bdf or None
+
+
+def _sample_power_w():
+    """Return current board power in W, or None if unavailable."""
+    import subprocess, tempfile
+    bdf = _detect_dev_bdf()
+    tmp = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tf:
+            tmp = tf.name
+        cmd = ["/opt/xilinx/xrt/bin/xrt-smi", "--batch", "--force", "examine"]
+        if bdf:
+            cmd += ["-d", bdf]
+        cmd += ["-r", "electrical", "-f", "JSON", "-o", tmp]
+        r = subprocess.run(cmd, capture_output=True, timeout=5)
+        if r.returncode != 0:
+            return None
+        with open(tmp) as f:
+            d = json.load(f)
+        el = d["devices"][0].get("electrical", {})
+        p = el.get("power_consumption_watts")
+        return float(p) if p is not None else None
+    except (FileNotFoundError, subprocess.TimeoutExpired, ValueError, KeyError, IndexError):
+        return None
+    finally:
+        if tmp:
+            try: os.unlink(tmp)
+            except OSError: pass
+
+
+def sample_power_for_state(state_name=None):
+    """Sample current board power and record it; return a dict for rendering.
+
+    state_name labels the sample with the runtime state from SHM so that
+    print_power_summary() can split idle vs run later (power_eval.sh style).
+
+    Returns:
+        None  — power sampling disabled (only the gate in main() should pass
+                None to renderers; this helper always returns a dict when called).
+        dict  — {"current": float|None, "min", "max", "avg", "count",
+                 "duration_s", "state"}; "current" is None if xrt-smi
+                 returned no reading.
+    """
+    label = (state_name or "UNKNOWN").lower()
+    p = _sample_power_w()
+    if p is None:
+        # Sampling attempted but xrt-smi unavailable. Don't record a sample,
+        # but still surface the failure mode in the rendered section.
+        return {"current": None, "state": label}
+
+    t = time.time()
+    _power_stats["samples"].append((t, p, label))
+    if _power_stats["start_t"] is None:
+        _power_stats["start_t"] = t
+    fh = _power_stats["csv_fh"]
+    if fh is not None:
+        fh.write(f"{t:.6f},{p:.6f},{label}\n")
+        fh.flush()
+
+    ps = [s[1] for s in _power_stats["samples"]]
+    return {
+        "current": p,
+        "min": min(ps),
+        "max": max(ps),
+        "avg": sum(ps) / len(ps),
+        "count": len(ps),
+        "duration_s": t - _power_stats["start_t"],
+        "state": label,
+    }
+
+
+def print_power_section(power_data, color=True):
+    """Render the Board Power section. Matches Memory Usage / Transfer Stats style."""
+    if power_data is None:
+        return
+    state = power_data.get("state", "unknown")
+    print(f"  {BOLD}Board Power:{RESET}")
+    if power_data.get("current") is None:
+        print(f"    {DIM}(xrt-smi unavailable or returned no reading){RESET}")
+        print()
+        return
+    print(f"    Current: {power_data['current']:6.2f} W   "
+          f"(xrt-smi electrical, state={state})")
+    if power_data.get("count", 0) > 1:
+        print(f"    Session: avg {power_data['avg']:6.2f} W   "
+              f"min {power_data['min']:6.2f} W   "
+              f"max {power_data['max']:6.2f} W   "
+              f"({power_data['count']} samples, {power_data['duration_s']:.1f}s)")
+    print()
+
+
+def print_power_summary():
+    """End-of-run summary, classified by SHM state (idle / RUNNING / transfer / other)."""
+    samples = _power_stats["samples"]
+    if not samples:
+        print(f"\n{DIM}(no power samples collected){RESET}")
+        return
+
+    idle, run, xfer, other = [], [], [], []
+    for _, p, st in samples:
+        if st in ("idle", "offline"):
+            idle.append(p)
+        elif st == "running":
+            run.append(p)
+        elif st in ("uploading", "downloading"):
+            xfer.append(p)
+        else:
+            other.append(p)
+
+    interval = _power_stats["interval_s"] or 0.0
+    t_idle = len(idle) * interval
+    t_run  = len(run)  * interval
+    t_xfer = len(xfer) * interval
+
+    print()
+    print(f"  {BOLD}Power Summary{RESET}  (state-classified)")
+    print(f"    interval={interval:.3f}s   total_samples={len(samples)}")
+    print(f"    by state: idle={len(idle)}  run={len(run)}  transfer={len(xfer)}  other={len(other)}")
+    P_idle_avg = sum(idle) / len(idle) if idle else float("nan")
+    P_idle_max = max(idle) if idle else float("nan")
+    P_run_avg  = sum(run) / len(run) if run else float("nan")
+    P_run_max  = max(run) if run else float("nan")
+
+    if idle:
+        print(f"    P_idle_avg = {P_idle_avg:6.3f} W   P_idle_max = {P_idle_max:6.3f} W   t_idle = {t_idle:.2f}s")
+    else:
+        print(f"    P_idle_*   =   (no IDLE/OFFLINE samples)")
+    if run:
+        print(f"    P_run_avg  = {P_run_avg:6.3f} W   P_run_max  = {P_run_max:6.3f} W   t_run  = {t_run:.2f}s")
+        if xfer:
+            print(f"    t_transfer = {t_xfer:.2f}s")
+        if idle:
+            dP_avg  = P_run_avg - P_idle_avg
+            dP_peak = P_run_max - P_idle_avg
+            print(f"    ΔP_avg     = {dP_avg:+.3f} W   ΔP_peak    = {dP_peak:+.3f} W   (vs P_idle_avg)")
+    else:
+        print(f"    P_run_*    =   (no RUNNING samples — sampling interval may be too coarse)")
+    if _power_stats["csv_path"]:
+        print(f"    CSV        = {_power_stats['csv_path']}")
+    print()
 
 
 def print_xbutil_info():

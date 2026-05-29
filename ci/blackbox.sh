@@ -19,7 +19,7 @@ ROOT_DIR=$SCRIPT_DIR/..
 show_usage()
 {
     echo "Vortex BlackBox Test Driver v1.0"
-    echo "Usage: $0 [[--clusters=#n] [--cores=#n] [--warps=#n] [--threads=#n] [--l2cache] [--l3cache] [[--driver=#name] [--app=#app] [--args=#args] [--debug=#level] [--scope] [--perf=#class] [--log=logfile] [--nohup] [--help]]"
+    echo "Usage: $0 [[--clusters=#n] [--cores=#n] [--warps=#n] [--threads=#n] [--l2cache] [--l3cache] [[--driver=#name] [--app=#app] [--args=#args] [--debug=#level] [--scope] [--perf=#class] [--bench] [--log=logfile] [--nohup] [--help]]"
 }
 
 show_help()
@@ -30,6 +30,7 @@ show_help()
     echo "--app: any subfolder test under regression or opencl"
     echo "--class: 0=disable, 1=pipeline, 2=memsys"
     echo "--nohup: build and run in temp directory"
+    echo "--bench: run the per-app <app>_bench binary instead of <app>"
     echo "env LOG_MAX_BYTES: keep only last N bytes in debug log (rolling buffer)"
     echo "env LOG_FLUSH_LINES: flush interval for rolling buffer (default: 200)"
 }
@@ -53,6 +54,7 @@ DEFAULTS() {
     CONFIGS="$CONFIGS"
     TEMPBUILD=0
     LOGFILE=run.log
+    BENCH=0
 }
 
 parse_args() {
@@ -74,6 +76,7 @@ parse_args() {
             --args=*)   HAS_ARGS=1; ARGS=${i#*=} ;;
             --log=*)    LOGFILE=${i#*=} ;;
             --nohup)    TEMPBUILD=1 ;;
+            --bench)    BENCH=1 ;;
             --help)     show_help; exit 0 ;;
             *)          show_usage; exit 1 ;;
         esac
@@ -126,7 +129,10 @@ run_app() {
     [ $DEBUG -eq 1 ] && cmd_opts=$(add_option "$cmd_opts" "DEBUG=1")
     [ $TEMPBUILD -eq 1 ] && cmd_opts=$(add_option "$cmd_opts" "VORTEX_RT_PATH=\"$TEMPDIR\"")
     [ $HAS_ARGS -eq 1 ] && cmd_opts=$(add_option "$cmd_opts" "OPTS=\"$ARGS\"")
-    cmd_opts=$(add_option "$cmd_opts" "make -C \"$APP_PATH\" run-$DRIVER")
+    [ -n "$CONFIGS" ] && cmd_opts=$(add_option "$cmd_opts" "CONFIGS=\"$CONFIGS\"")
+    local make_target="run-$DRIVER"
+    [ $BENCH -eq 1 ] && make_target="run-$DRIVER-bench"
+    cmd_opts=$(add_option "$cmd_opts" "make -C \"$APP_PATH\" $make_target")
 
     if [ $DEBUG -ne 0 ] && [ -n "${LOG_MAX_BYTES:-}" ] && [ "${LOG_MAX_BYTES}" -gt 0 ] 2>/dev/null; then
         local status_file
