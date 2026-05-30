@@ -1,0 +1,36 @@
+task: unified-xrt-mem-map
+state: DONE
+created: "2026-05-30 00:23"
+updated: "2026-05-30 00:31"
+summary: >
+  Add compile-time selectable XRT memory mapping so fpint_improve host runtime can
+  run legacy base/naive FPGA binaries and remap improve FPGA binaries.
+log:
+  - time: "2026-05-30 00:23"
+    entry: >
+      Started from agreed plan. Confirmed current branch is fpint_improve and
+      runtime/xrt/vortex.cpp points to vortex_v5.cpp. Existing worktree already
+      has unrelated latency_bench/regression changes; avoid reverting them.
+  - time: "2026-05-30 00:25"
+    entry: >
+      Added failing Python tests for alias compile configs and CLI xrt memory map
+      override. Initial run failed on missing FpgaBinAlias API as expected.
+  - time: "2026-05-30 00:25"
+    entry: >
+      Implemented latency_bench alias metadata, --xrt-mem-map override,
+      generated script CONFIGS exports, and manifest configs recording. Targeted
+      Python tests passed.
+  - time: "2026-05-30 00:30"
+    entry: >
+      Implemented XRT_MEM_MAP compile-time selection in vortex_v5 runtime, split
+      legacy/remap bank mapping, documented CLI/CONFIGS behavior, and verified
+      latency_bench tests plus build/runtime/xrt compile. Dry-run confirmed
+      built-in alias CONFIGS export and CLI override.
+  - time: "2026-05-30 00:31"
+    entry: >
+      Final verification passed: latency_bench unittest discover, XRT runtime
+      default xrtsim build, XRT runtime TARGET=hw build, and git diff --check.
+pitfalls:
+  - >
+    base/naive bitstreams use the old v1 bank mapping; using v5 remap
+    unconditionally can misplace host uploads/downloads.
