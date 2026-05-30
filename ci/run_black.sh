@@ -3,7 +3,7 @@
 set -euo pipefail
 
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
-  echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"]"
+  echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"] [--fpga-bin ALIAS_OR_PATH] [--xrt-mem-map legacy|remap]"
   echo "Modes:"
   echo "  rtlsim   - Run only rtlsim tests"
   echo "  xrtsim   - Run only xrtsim tests"
@@ -11,6 +11,7 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   echo "  xrt-vcs-pgsim   - Run only xrt-vcs-pgsim tests"
   echo "  hw_emu    - Run only hw_emu tests"
   echo "  hw        - Run only hw tests"
+  echo "FPGA bin aliases: base_t32, base_t8, naive, improve_tcol1, improve_tcol32"
   exit 0
 fi
 
@@ -18,7 +19,7 @@ mode="${1:-}"
 shift || true
 
 if [[ "${mode}" == "" ]]; then
-  echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"]"
+  echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"] [--fpga-bin ALIAS_OR_PATH] [--xrt-mem-map legacy|remap]"
   echo "Modes:"
   echo "  rtlsim   - Run only rtlsim tests"
   echo "  xrtsim   - Run only xrtsim tests"
@@ -32,6 +33,44 @@ fi
 APP=fpint_gemm_ffn_hw_improve
 ARGS="-m 2 -n 32 -k 128"
 CONFIGS_EXTRA=""
+FPGA_BIN=improve_tcol1
+FPGA_BIN_DIR=""
+FPGA_BIN_CONFIGS_EXTRA=""
+XRT_MEM_MAP_OVERRIDE=""
+
+resolve_fpga_bin() {
+  local fpga_bin="$1"
+
+  if [[ "${fpga_bin}" == "base_t32" ]]; then
+    FPGA_BIN_DIR=/opt/vortex_fpga_bins/baseline/xrt_hw_u55c_c1_f100_tcu_noDcache_L2cache_75849ebace/bin
+    FPGA_BIN_CONFIGS_EXTRA="-DXRT_MEM_MAP=legacy"
+  elif [[ "${fpga_bin}" == "base_t8" ]]; then
+    FPGA_BIN_DIR=/opt/vortex_fpga_bins/baseline/xrt_hw_u55c_c1_f100_tcu_noDcache_L2cache_747805ed8e/bin
+    FPGA_BIN_CONFIGS_EXTRA="-DXRT_MEM_MAP=legacy"
+  elif [[ "${fpga_bin}" == "naive" ]]; then
+    FPGA_BIN_DIR=/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_noDcache_L2cache_a917286dbe/bin
+    FPGA_BIN_CONFIGS_EXTRA="-DXRT_MEM_MAP=legacy"
+  elif [[ "${fpga_bin}" == "improve_tcol1" ]]; then
+    FPGA_BIN_DIR=/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_noDcache_L2cache_c8c5d0d4f3/bin
+    FPGA_BIN_CONFIGS_EXTRA="-DXRT_MEM_MAP=remap -DBANK_INTERLEAVE"
+  elif [[ "${fpga_bin}" == "improve_tcol32" ]]; then
+    FPGA_BIN_DIR=/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_noDcache_L2cache_8a0e684a24/bin
+    FPGA_BIN_CONFIGS_EXTRA="-DXRT_MEM_MAP=remap -DBANK_INTERLEAVE"
+  else
+    FPGA_BIN_DIR="${fpga_bin}"
+    FPGA_BIN_CONFIGS_EXTRA=""
+  fi
+
+  if [[ "${FPGA_BIN_DIR}" == */vortex_afu.xclbin ]]; then
+    FPGA_BIN_DIR="$(dirname "${FPGA_BIN_DIR}")"
+  fi
+
+  if [[ -n "${XRT_MEM_MAP_OVERRIDE}" ]]; then
+    FPGA_BIN_CONFIGS_EXTRA="${FPGA_BIN_CONFIGS_EXTRA//-DXRT_MEM_MAP=legacy/}"
+    FPGA_BIN_CONFIGS_EXTRA="${FPGA_BIN_CONFIGS_EXTRA//-DXRT_MEM_MAP=remap/}"
+    FPGA_BIN_CONFIGS_EXTRA="-DXRT_MEM_MAP=${XRT_MEM_MAP_OVERRIDE} ${FPGA_BIN_CONFIGS_EXTRA}"
+  fi
+}
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -47,19 +86,35 @@ while [[ $# -gt 0 ]]; do
       CONFIGS_EXTRA="$2"
       shift 2
       ;;
+    --fpga-bin)
+      FPGA_BIN="$2"
+      shift 2
+      ;;
+    --xrt-mem-map)
+      XRT_MEM_MAP_OVERRIDE="$2"
+      shift 2
+      ;;
     -h|--help)
-      echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"]"
+      echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"] [--fpga-bin ALIAS_OR_PATH] [--xrt-mem-map legacy|remap]"
       exit 0
       ;;
     *)
       echo "Unknown argument: $1"
-      echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"]"
+      echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"] [--fpga-bin ALIAS_OR_PATH] [--xrt-mem-map legacy|remap]"
       exit 1
       ;;
   esac
 done
 
+if [[ -n "${XRT_MEM_MAP_OVERRIDE}" && "${XRT_MEM_MAP_OVERRIDE}" != "legacy" && "${XRT_MEM_MAP_OVERRIDE}" != "remap" ]]; then
+  echo "Invalid --xrt-mem-map: ${XRT_MEM_MAP_OVERRIDE}"
+  exit 1
+fi
+
+resolve_fpga_bin "${FPGA_BIN}"
+
 # Base CONFIGS exported by hw_config.sh (via .envrc). Append script-specific flags.
+CONFIGS="${CONFIGS:-}"
 CONFIGS+=" -DDBG_TRACE_PIPELINE"
 CONFIGS+=" -DDBG_TRACE_MEM"
 CONFIGS+=" -DDBG_TRACE_CACHE"
@@ -69,6 +124,10 @@ CONFIGS+=" -DDBG_TRACE_GBAR"
 CONFIGS+=" -DDBG_TRACE_TCU"
 CONFIGS+=" -DDBG_TRACE_GEMM"
 CONFIGS+=" -DWLOAD_AT_ONCE"
+
+if [[ -n "${FPGA_BIN_CONFIGS_EXTRA}" ]]; then
+  CONFIGS+=" ${FPGA_BIN_CONFIGS_EXTRA}"
+fi
 
 if [[ -n "${CONFIGS_EXTRA}" ]]; then
   CONFIGS+=" ${CONFIGS_EXTRA}"
@@ -157,13 +216,14 @@ fi
 # - hw
 # ----------------------------------------------------------------------------
 if [[ "${mode}" == "hw" || "${mode}" == "all" ]]; then
+  echo "HW FPGA_BIN=${FPGA_BIN} FPGA_BIN_DIR=${FPGA_BIN_DIR} FPGA_BIN_CONFIGS_EXTRA=${FPGA_BIN_CONFIGS_EXTRA}"
   srun --gres=fpga:u55c:1 --cpus-per-task=4 --mem=16G --time=01:00:00 --pty bash -c "\
   CONFIGS=\"${CONFIGS}\" \
-  FPGA_BIN_DIR=/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_noDcache_L2cache_a917286dbe/bin \
+  FPGA_BIN_DIR=\"${FPGA_BIN_DIR}\" \
   PLATFORM=xilinx_u55c_gen3x16_xdma_3_202210_1 \
   DRIVER=xrt \
   TARGET=hw \
-  CHIPSCOPE=1 \
   ./ci/blackbox.sh --threads=${NUM_THREADS} --cores=${NUM_CORES} --driver=xrt --app=${APP} --args=\"${ARGS}\" | tee bb.log
   "
+  # CHIPSCOPE=1 \
 fi

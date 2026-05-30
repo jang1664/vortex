@@ -29,7 +29,6 @@
 #include "experimental/xrt_xclbin.h"
 #endif
 
-#include <cctype>
 #include <limits>
 #include <stdarg.h>
 #include <string>
@@ -46,8 +45,6 @@ using namespace vortex;
 #ifndef XRTSIM
 #define CPP_API
 #endif
-
-#define BANK_INTERLEAVE
 
 #define MMIO_CTL_ADDR 0x00
 #define MMIO_DEV_ADDR 0x10
@@ -134,6 +131,39 @@ static void get_xrt_shm_path_policy(
   *unlink_on_close = false;
 }
 
+enum class XrtMemMapMode {
+  Legacy,
+  Remap,
+};
+
+#ifndef XRT_MEM_MAP
+#define XRT_MEM_MAP remap
+#endif
+
+#define XRT_MEM_MAP_legacy 1
+#define XRT_MEM_MAP_remap 2
+#define XRT_MEM_MAP_TOKEN_(mode) XRT_MEM_MAP_##mode
+#define XRT_MEM_MAP_TOKEN(mode) XRT_MEM_MAP_TOKEN_(mode)
+#define XRT_MEM_MAP_SELECTED XRT_MEM_MAP_TOKEN(XRT_MEM_MAP)
+
+#if XRT_MEM_MAP_SELECTED == XRT_MEM_MAP_legacy
+static constexpr XrtMemMapMode kXrtMemMapMode = XrtMemMapMode::Legacy;
+#elif XRT_MEM_MAP_SELECTED == XRT_MEM_MAP_remap
+static constexpr XrtMemMapMode kXrtMemMapMode = XrtMemMapMode::Remap;
+#else
+#error "XRT_MEM_MAP must be legacy or remap"
+#endif
+
+static const char* xrt_mem_map_mode_name(XrtMemMapMode mode) {
+  switch (mode) {
+  case XrtMemMapMode::Legacy:
+    return "legacy";
+  case XrtMemMapMode::Remap:
+    return "remap";
+  }
+  return "unknown";
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 
 class vx_device {
@@ -146,11 +176,11 @@ public:
   #ifdef BANK_INTERLEAVE
     , bo_size_(0)
   #endif
-    , pending_ap_done_(false)
   #ifndef CPP_API
     , xrtDevice_(nullptr)
     , xrtKernel_(nullptr)
   #endif
+    , pending_ap_done_(false)
   {}
 
   ~vx_device() {
@@ -269,7 +299,9 @@ public:
 
     global_mem_size_ = num_banks * bank_size;
 
-    printf("info: device name=%s, memory_capacity=0x%lx bytes, memory_banks=%ld.\n", device_name.c_str(), global_mem_size_, num_banks);
+    printf("info: device name=%s, memory_capacity=0x%lx bytes, memory_banks=%ld, xrt_mem_map=%s.\n",
+           device_name.c_str(), global_mem_size_, num_banks,
+           xrt_mem_map_mode_name(kXrtMemMapMode));
 
   #ifdef BANK_INTERLEAVE
     // hw_emu sim_qdma has an off-by-one in its PC-region bookkeeping when
@@ -543,7 +575,6 @@ public:
         return err;
       });
 
-      uint64_t bank_size = 1ull << lg2_bank_size_;
       uint64_t xfer_size;
 #ifdef BANK_INTERLEAVE
       xfer_size = (remaining > CACHE_BLOCK_SIZE) ? CACHE_BLOCK_SIZE : remaining;
@@ -557,6 +588,7 @@ public:
         return -1;
       }
 #else
+      uint64_t bank_size = 1ull << lg2_bank_size_;
       uint64_t bank_headroom = bank_size - bo_offset;
       xfer_size = (remaining > bank_headroom) ? bank_headroom : remaining;
 #endif
@@ -609,7 +641,6 @@ public:
         return err;
       });
 
-      uint64_t bank_size = 1ull << lg2_bank_size_;
       uint64_t xfer_size;
 #ifdef BANK_INTERLEAVE
       xfer_size = (remaining > CACHE_BLOCK_SIZE) ? CACHE_BLOCK_SIZE : remaining;
@@ -620,6 +651,7 @@ public:
         return -1;
       }
 #else
+      uint64_t bank_size = 1ull << lg2_bank_size_;
       uint64_t bank_headroom = bank_size - bo_offset;
       xfer_size = (remaining > bank_headroom) ? bank_headroom : remaining;
 #endif
@@ -809,7 +841,22 @@ private:
 
   std::vector<xrt_buffer_t> xrtBuffers_;
 
-  int get_bank_info(uint64_t addr, uint32_t *pIdx, uint64_t *pOff) {
+  int get_bank_info_legacy(uint64_t addr, uint32_t *pIdx, uint64_t *pOff) const {
+    uint32_t num_banks = 1 << lg2_num_banks_;
+    uint64_t block_addr = addr / CACHE_BLOCK_SIZE;
+    uint64_t byte_off = addr & (CACHE_BLOCK_SIZE - 1);
+    uint32_t index = (uint32_t)(block_addr & (num_banks - 1));
+    uint64_t offset = (block_addr >> lg2_num_banks_) * CACHE_BLOCK_SIZE + byte_off;
+    if (pIdx) {
+      *pIdx = index;
+    }
+    if (pOff) {
+      *pOff = offset;
+    }
+    return 0;
+  }
+
+  int get_bank_info_remap(uint64_t addr, uint32_t *pIdx, uint64_t *pOff) const {
     // Mirror of hw/rtl/core/VX_mem_remap.sv. Parameter names kept in sync:
     //   NUM_BANKS      = total HBM banks
     //   NUM_PORTS      = AXI / HBM ports (= NUM_DMA_CHANNELS)
@@ -841,6 +888,13 @@ private:
       *pOff = offset;
     }
     return 0;
+  }
+
+  int get_bank_info(uint64_t addr, uint32_t *pIdx, uint64_t *pOff) const {
+    if constexpr (kXrtMemMapMode == XrtMemMapMode::Legacy) {
+      return get_bank_info_legacy(addr, pIdx, pOff);
+    }
+    return get_bank_info_remap(addr, pIdx, pOff);
   }
 
   int get_buffer(uint32_t bank_id, xrt_buffer_t *pBuf) {
