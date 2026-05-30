@@ -18,6 +18,8 @@ RESULT_COLUMNS = [
     "log_file", "samples", "min_us", "avg_us", "max_us", "p50_us", "p95_us",
 ]
 
+TIMEOUT_RETURNCODES = {124, 137}
+
 
 def sha256_file(path: Path) -> str:
     h = hashlib.sha256()
@@ -62,6 +64,18 @@ def read_bench_csv(path: Path) -> dict[str, Any]:
         return {"parse_error": str(exc)}
 
 
+def classify_status(returncode: int, *, has_status: bool, bench: dict[str, Any]) -> str:
+    if not has_status:
+        return "not_run"
+    if returncode in TIMEOUT_RETURNCODES:
+        return "timeout"
+    if "parse_error" in bench:
+        return "parse_error"
+    if returncode == 0 and bench:
+        return "pass"
+    return "fail"
+
+
 def build_results(suite: BenchSuite, out_dir: Path, fpga_bin_dir: Path) -> pd.DataFrame:
     status_rows = read_status_csv(out_dir / "run_status.csv")
     xclbin = fpga_bin_dir / "vortex_afu.xclbin"
@@ -75,11 +89,7 @@ def build_results(suite: BenchSuite, out_dir: Path, fpga_bin_dir: Path) -> pd.Da
         log_file = Path(status.get("log_file", out_dir / "logs" / f"{exec_key}.log"))
         bench = read_bench_csv(raw_csv)
         returncode = int(status.get("returncode", 999)) if status else 999
-        run_status = "pass" if returncode == 0 and bench and "parse_error" not in bench else "fail"
-        if not status:
-            run_status = "not_run"
-        if "parse_error" in bench:
-            run_status = "parse_error"
+        run_status = classify_status(returncode, has_status=bool(status), bench=bench)
 
         out = {
             **row,

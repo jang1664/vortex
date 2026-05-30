@@ -102,6 +102,54 @@ printf 'ok\n' > "$log_file"
             self.assertEqual(rows[0]["git_branch"], manifest["git_branch"])
             self.assertEqual(rows[0]["git_dirty"], manifest["git_dirty"])
 
+    def test_timeout_returncode_is_appended_as_timeout_status(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            build_dir = tmp_path / "build"
+            (build_dir / "ci").mkdir(parents=True)
+            blackbox = build_dir / "ci" / "blackbox.sh"
+            blackbox.write_text("#!/usr/bin/env bash\nexit 124\n")
+            blackbox.chmod(0o755)
+            fpga_bin_dir = tmp_path / "fpga_bin"
+            fpga_bin_dir.mkdir()
+            (fpga_bin_dir / "vortex_afu.xclbin").write_text("fake bitstream")
+
+            suite = BenchSuite(
+                name="timeout_suite",
+                defaults=BenchDefaults(warmup=1, iterations=1),
+                cases=[
+                    BenchCase(
+                        case_id="gemm_timeout",
+                        app="fpint_gemm_ffn_hw",
+                        args="-m 1 -n 128 -k 128 -q 32 -t 0 -d 0",
+                        warmup=1,
+                        iterations=1,
+                    )
+                ],
+            )
+            out_root = tmp_path / "latency_db"
+
+            rc = run_suite(
+                suite,
+                RunOptions(
+                    build_dir=build_dir,
+                    fpga_bin_dir=fpga_bin_dir,
+                    fpga_bin_label="timeout_bin",
+                    out_dir=out_root,
+                    platform=suite.defaults.platform,
+                    xrt_device_index=suite.defaults.xrt_device_index,
+                    blackbox_args=(),
+                    srun=False,
+                    run_id="timeout_run",
+                ),
+            )
+
+            self.assertEqual(0, rc)
+            with (out_root / "raw_db.csv").open(newline="") as fp:
+                rows = list(csv.DictReader(fp))
+            self.assertEqual("timeout", rows[0]["status"])
+            self.assertEqual("124", rows[0]["returncode"])
+
 
 if __name__ == "__main__":
     unittest.main()
