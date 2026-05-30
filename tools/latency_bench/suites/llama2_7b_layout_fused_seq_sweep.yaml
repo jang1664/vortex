@@ -1,0 +1,52 @@
+name: llama2_7b_layout_fused_seq_sweep
+defaults:
+  target: hw
+  platform: xilinx_u55c_gen3x16_xdma_3_202210_1
+  warmup: 1
+  iterations: 3
+  xrt_device_index: 0
+  blackbox_timeout: 30m
+  blackbox_args:
+    - --cores=1
+    - --threads=32
+
+# Sequence-length sweep for layout-fused vector kernels used around Llama2-7B
+# projection inputs.
+#   rms_norm_layout_fused: M=batch*seq, K=hidden_size=4096
+#   silu_layout_fused:     M=batch*seq, K=intermediate_size=11008
+case_matrices:
+  - id: rms_norm_layout_fused
+    app: rms_norm_layout_fused
+    kind: rms_norm_layout_fused
+    stage: seq_sweep
+    name: rms_norm_layout_fused_b{batch}_s{seq}
+    args: "-m {m} -k 4096"
+    matrix:
+      batch: {values: [1, 8]}
+      seq: {values: [1, 128, 512, 1024]}
+    derived:
+      m: "batch * seq"
+    shape:
+      batch: "{batch}"
+      seq: "{seq}"
+      M: "{m}"
+      K: 4096
+
+  - id: silu_layout_fused
+    app: silu_layout_fused
+    kind: silu_layout_fused
+    stage: seq_sweep
+    name: silu_layout_fused_b{batch}_s{seq}
+    args: "-m {m} -k 11008"
+    matrix:
+      batch: {values: [1, 8]}
+      seq: {values: [1, 128, 512, 1024]}
+      # batch: {values: [8]}
+      # seq: {values: [1024]}
+    derived:
+      m: "batch * seq"
+    shape:
+      batch: "{batch}"
+      seq: "{seq}"
+      M: "{m}"
+      K: 11008
