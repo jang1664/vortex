@@ -24,13 +24,67 @@ DEFAULT_SRUN_ARGS = (
 )
 
 
-FPGA_BIN_ALIASES: dict[str, str] = {
+CompileConfigs = tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class FpgaBinAlias:
+    path: str
+    configs_extra: CompileConfigs = ()
+
+
+@dataclass(frozen=True)
+class FpgaBinConfig:
+    path: Path
+    configs_extra: CompileConfigs = ()
+
+
+def _xrt_mem_map_config(mode: str) -> CompileConfigs:
+    return (f"-DXRT_MEM_MAP={mode}",)
+
+
+def _bank_interleave_config() -> CompileConfigs:
+    return ("-DBANK_INTERLEAVE",)
+
+
+def _replace_xrt_mem_map_config(configs: list[str], mode: str) -> list[str]:
+    replacement = f"-DXRT_MEM_MAP={mode}"
+    out: list[str] = []
+    replaced = False
+    for config in configs:
+        if config.startswith("-DXRT_MEM_MAP="):
+            if not replaced:
+                out.append(replacement)
+                replaced = True
+        else:
+            out.append(config)
+    if not replaced:
+        out.insert(0, replacement)
+    return out
+
+
+FPGA_BIN_ALIASES: dict[str, str | FpgaBinAlias] = {
     # Fill these with local FPGA bitstream directories or vortex_afu.xclbin paths.
-    "base_t32"        : "/opt/vortex_fpga_bins/baseline/xrt_hw_u55c_c1_f100_tcu_noDcache_L2cache_75849ebace/bin",
-    "base_t8"         : "/opt/vortex_fpga_bins/baseline/xrt_hw_u55c_c1_f100_tcu_noDcache_L2cache_747805ed8e/bin",
-    "naive"           : "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_noDcache_L2cache_a917286dbe/bin",
-    "improve_tcol1"   : "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_noDcache_L2cache_c8c5d0d4f3/bin",
-    "improve_tcol32"  : "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_noDcache_L2cache_8a0e684a24/bin",
+    "base_t32"        : FpgaBinAlias(
+        "/opt/vortex_fpga_bins/baseline/xrt_hw_u55c_c1_f100_tcu_noDcache_L2cache_75849ebace/bin",
+        _xrt_mem_map_config("legacy"),
+    ),
+    "base_t8"         : FpgaBinAlias(
+        "/opt/vortex_fpga_bins/baseline/xrt_hw_u55c_c1_f100_tcu_noDcache_L2cache_747805ed8e/bin",
+        _xrt_mem_map_config("legacy"),
+    ),
+    "naive"           : FpgaBinAlias(
+        "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_noDcache_L2cache_a917286dbe/bin",
+        _xrt_mem_map_config("legacy"),
+    ),
+    "improve_tcol1"   : FpgaBinAlias(
+        "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_noDcache_L2cache_c8c5d0d4f3/bin",
+        _xrt_mem_map_config("remap") + _bank_interleave_config(),
+    ),
+    "improve_tcol32"  : FpgaBinAlias(
+        "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_noDcache_L2cache_8a0e684a24/bin",
+        _xrt_mem_map_config("remap") + _bank_interleave_config(),
+    ),
 }
 
 
@@ -75,10 +129,29 @@ def normalize_fpga_bin(path: Path) -> Path:
     return path.parent if path.name == "vortex_afu.xclbin" else path
 
 
-def resolve_fpga_bin(value: str | Path) -> Path:
+def resolve_fpga_bin_config(value: str | Path, *, xrt_mem_map: str | None = None) -> FpgaBinConfig:
     raw_value = str(value)
-    resolved = FPGA_BIN_ALIASES.get(raw_value, raw_value)
-    return normalize_fpga_bin(Path(resolved).expanduser())
+    alias = FPGA_BIN_ALIASES.get(raw_value)
+    configs_extra: list[str] = []
+    if alias is None:
+        resolved = raw_value
+    elif isinstance(alias, FpgaBinAlias):
+        resolved = alias.path
+        configs_extra.extend(alias.configs_extra)
+    else:
+        resolved = alias
+
+    if xrt_mem_map:
+        configs_extra = _replace_xrt_mem_map_config(configs_extra, xrt_mem_map)
+
+    return FpgaBinConfig(
+        path=normalize_fpga_bin(Path(resolved).expanduser()),
+        configs_extra=tuple(configs_extra),
+    )
+
+
+def resolve_fpga_bin(value: str | Path) -> Path:
+    return resolve_fpga_bin_config(value).path
 
 
 def validate_inputs(options: RunOptions) -> None:

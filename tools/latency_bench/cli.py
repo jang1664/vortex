@@ -6,7 +6,7 @@ from pathlib import Path
 from .compose import ComposeOptions, compose_to_csv
 from .compare import compare_candidates, parse_candidate_spec
 from .plot import visualize
-from .runner import DEFAULT_SRUN_ARGS, RunOptions, default_run_id, resolve_fpga_bin, run_suite
+from .runner import DEFAULT_SRUN_ARGS, RunOptions, default_run_id, resolve_fpga_bin_config, run_suite
 from .suite import find_repo_root, load_suite
 
 
@@ -24,6 +24,12 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--iterations", type=int, default=None, help="Override suite iterations.")
     run.add_argument("--platform", default=None, help="Override suite/default Xilinx platform.")
     run.add_argument("--xrt-device-index", type=int, default=None, help="Override XRT device index.")
+    run.add_argument(
+        "--xrt-mem-map",
+        choices=["legacy", "remap"],
+        default=None,
+        help="Override XRT memory mapping compile config exported through CONFIGS.",
+    )
     run.add_argument("--configs-extra", default="", help="Extra CONFIGS defines appended inside the run script.")
     run.add_argument(
         "--blackbox-timeout",
@@ -130,6 +136,14 @@ def normalize_timeout(value: str | None) -> str:
     return "" if value in ("", "0") else value
 
 
+def merge_configs_extra(alias_configs: tuple[str, ...], cli_configs: str) -> str:
+    parts = list(alias_configs)
+    cli_configs = cli_configs.strip()
+    if cli_configs:
+        parts.append(cli_configs)
+    return " ".join(parts)
+
+
 def run_cmd(args: argparse.Namespace) -> int:
     repo_root = find_repo_root()
     suite = load_suite(
@@ -138,7 +152,7 @@ def run_cmd(args: argparse.Namespace) -> int:
         warmup_override=args.warmup,
         iterations_override=args.iterations,
     )
-    fpga_bin_dir = resolve_fpga_bin(args.fpga_bin)
+    fpga_bin = resolve_fpga_bin_config(args.fpga_bin, xrt_mem_map=args.xrt_mem_map)
     platform = args.platform or suite.defaults.platform
     xrt_device_index = args.xrt_device_index
     if xrt_device_index is None:
@@ -149,14 +163,15 @@ def run_cmd(args: argparse.Namespace) -> int:
         blackbox_timeout = normalize_timeout(suite.defaults.blackbox_timeout)
     srun_args = tuple(args.srun_arg) if args.srun_arg else DEFAULT_SRUN_ARGS
     run_id = args.run_id or default_run_id()
+    configs_extra = merge_configs_extra(fpga_bin.configs_extra, args.configs_extra)
     options = RunOptions(
         build_dir=Path(args.build_dir).resolve(),
-        fpga_bin_dir=fpga_bin_dir,
+        fpga_bin_dir=fpga_bin.path,
         fpga_bin_label=args.fpga_bin,
         out_dir=Path(args.out).resolve(),
         platform=platform,
         xrt_device_index=xrt_device_index,
-        configs_extra=args.configs_extra,
+        configs_extra=configs_extra,
         blackbox_args=blackbox_args,
         blackbox_timeout=blackbox_timeout,
         srun=not args.no_srun,

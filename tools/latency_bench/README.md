@@ -109,6 +109,12 @@ If the FPGA bin path is too long to type repeatedly, fill in the
 `FPGA_BIN_ALIASES` skeleton in `tools/latency_bench/runner.py` and pass the
 alias name to `--fpga-bin`.
 
+FPGA bin aliases may also export runtime compile defaults through `CONFIGS`.
+The built-in base/naive aliases append `-DXRT_MEM_MAP=legacy`, while improve
+aliases append `-DXRT_MEM_MAP=remap -DBANK_INTERLEAVE`. Use
+`--xrt-mem-map legacy|remap` to override only the memory mapping compile
+constant, especially when passing a raw FPGA bin path instead of an alias.
+
 `--blackbox-arg` starts from suite `defaults.blackbox_args`; repeated CLI values
 add new options or overwrite existing options with the same flag key. For
 example, `--blackbox-arg=--threads=16` replaces a default `--threads=8` while

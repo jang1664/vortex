@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
 
+from tools.latency_bench import runner
 from tools.latency_bench.cli import main, merge_override_args, normalize_timeout
 
 
@@ -126,6 +128,79 @@ cases:
             self.assertEqual(0, rc)
             script = (out_root / "runs" / "cli_run" / "run_fpga_bench.sh").read_text()
             self.assertIn("timeout --foreground --kill-after=30s 30m ./ci/blackbox.sh", script)
+
+    def test_run_exports_alias_compile_configs_and_records_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            build_dir, fpga_bin, suite = self._write_fake_inputs(tmp_path)
+            out_root = tmp_path / "out"
+            old_aliases = dict(runner.FPGA_BIN_ALIASES)
+            try:
+                runner.FPGA_BIN_ALIASES.clear()
+                runner.FPGA_BIN_ALIASES["legacy_alias"] = runner.FpgaBinAlias(
+                    path=str(fpga_bin),
+                    configs_extra=("-DXRT_MEM_MAP=legacy", "-DBANK_INTERLEAVE"),
+                )
+
+                rc = main([
+                    "run",
+                    "--build-dir", str(build_dir),
+                    "--fpga-bin", "legacy_alias",
+                    "--suite", str(suite),
+                    "--out", str(out_root),
+                    "--run-id", "cli_run",
+                    "--no-srun",
+                    "--dry-run",
+                ])
+
+                self.assertEqual(0, rc)
+                run_dir = out_root / "runs" / "cli_run"
+                script = (run_dir / "run_fpga_bench.sh").read_text()
+                self.assertNotIn("VORTEX_XRT_MEM_MAP", script)
+                self.assertIn(
+                    'export CONFIGS="${CONFIGS:-} -DXRT_MEM_MAP=legacy -DBANK_INTERLEAVE"',
+                    script,
+                )
+                manifest = json.loads((run_dir / "manifest.json").read_text())
+                self.assertEqual("-DXRT_MEM_MAP=legacy -DBANK_INTERLEAVE", manifest["configs_extra"])
+            finally:
+                runner.FPGA_BIN_ALIASES.clear()
+                runner.FPGA_BIN_ALIASES.update(old_aliases)
+
+    def test_run_xrt_mem_map_overrides_alias_compile_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            build_dir, fpga_bin, suite = self._write_fake_inputs(tmp_path)
+            out_root = tmp_path / "out"
+            old_aliases = dict(runner.FPGA_BIN_ALIASES)
+            try:
+                runner.FPGA_BIN_ALIASES.clear()
+                runner.FPGA_BIN_ALIASES["remap_alias"] = runner.FpgaBinAlias(
+                    path=str(fpga_bin),
+                    configs_extra=("-DXRT_MEM_MAP=remap", "-DBANK_INTERLEAVE"),
+                )
+
+                rc = main([
+                    "run",
+                    "--build-dir", str(build_dir),
+                    "--fpga-bin", "remap_alias",
+                    "--suite", str(suite),
+                    "--out", str(out_root),
+                    "--run-id", "cli_run",
+                    "--no-srun",
+                    "--dry-run",
+                    "--xrt-mem-map", "legacy",
+                ])
+
+                self.assertEqual(0, rc)
+                script = (out_root / "runs" / "cli_run" / "run_fpga_bench.sh").read_text()
+                self.assertIn("-DXRT_MEM_MAP=legacy", script)
+                self.assertIn("-DBANK_INTERLEAVE", script)
+                self.assertNotIn("-DXRT_MEM_MAP=remap", script)
+                self.assertNotIn("VORTEX_XRT_MEM_MAP", script)
+            finally:
+                runner.FPGA_BIN_ALIASES.clear()
+                runner.FPGA_BIN_ALIASES.update(old_aliases)
 
     def test_run_uses_suite_default_blackbox_timeout(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
