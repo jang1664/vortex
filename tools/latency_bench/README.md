@@ -105,9 +105,11 @@ srun --gres=fpga:u55c:1 --cpus-per-task=4 --mem=16G --time=01:00:00
 
 Use `--no-srun` only when already running on an FPGA host with XRT access.
 
-If the FPGA bin path is too long to type repeatedly, fill in the
-`FPGA_BIN_ALIASES` skeleton in `tools/latency_bench/runner.py` and pass the
-alias name to `--fpga-bin`.
+If the FPGA bin path is too long to type repeatedly, add or update an entry in
+`ci/fpga_bin_alias_map.yaml` and pass the alias name to `--fpga-bin`. The same
+alias map is used by `python -m tools.latency_bench run` and
+`ci/run_black.sh`. Set `VORTEX_FPGA_BIN_ALIAS_MAP=/path/to/map.yaml` to test a
+local alias map without editing the repository copy.
 
 FPGA bin aliases may also export runtime compile defaults through `CONFIGS`.
 The built-in base/naive aliases append `-DXRT_MEM_MAP=legacy`, while improve

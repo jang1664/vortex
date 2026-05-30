@@ -2,6 +2,22 @@
 
 set -euo pipefail
 
+SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
+SCRIPT_DIR="$(cd "$(dirname "${SCRIPT_PATH}")" && pwd)"
+PYTHON_BIN="${PYTHON:-python3}"
+FPGA_BIN_ALIAS_RESOLVER="${SCRIPT_DIR}/resolve_fpga_bin_alias.py"
+FPGA_BIN_ALIAS_MAP="${VORTEX_FPGA_BIN_ALIAS_MAP:-${SCRIPT_DIR}/fpga_bin_alias_map.yaml}"
+if [[ ! -f "${FPGA_BIN_ALIAS_RESOLVER}" && -f "../ci/resolve_fpga_bin_alias.py" ]]; then
+  FPGA_BIN_ALIAS_RESOLVER="$(realpath ../ci/resolve_fpga_bin_alias.py)"
+fi
+if [[ ! -f "${FPGA_BIN_ALIAS_MAP}" && -f "../ci/fpga_bin_alias_map.yaml" ]]; then
+  FPGA_BIN_ALIAS_MAP="$(realpath ../ci/fpga_bin_alias_map.yaml)"
+fi
+
+list_fpga_bin_aliases() {
+  "${PYTHON_BIN}" "${FPGA_BIN_ALIAS_RESOLVER}" --alias-map "${FPGA_BIN_ALIAS_MAP}" --list 2>/dev/null || true
+}
+
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"] [--fpga-bin ALIAS_OR_PATH] [--xrt-mem-map legacy|remap]"
   echo "Modes:"
@@ -11,7 +27,10 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   echo "  xrt-vcs-pgsim   - Run only xrt-vcs-pgsim tests"
   echo "  hw_emu    - Run only hw_emu tests"
   echo "  hw        - Run only hw tests"
-  echo "FPGA bin aliases: base_t32, base_t8, naive, improve_tcol1, improve_tcol32"
+  aliases="$(list_fpga_bin_aliases)"
+  if [[ -n "${aliases}" ]]; then
+    echo "FPGA bin aliases: ${aliases}"
+  fi
   exit 0
 fi
 
@@ -40,36 +59,14 @@ XRT_MEM_MAP_OVERRIDE=""
 
 resolve_fpga_bin() {
   local fpga_bin="$1"
-
-  if [[ "${fpga_bin}" == "base_t32" ]]; then
-    FPGA_BIN_DIR=/opt/vortex_fpga_bins/baseline/xrt_hw_u55c_c1_f100_tcu_noDcache_L2cache_75849ebace/bin
-    FPGA_BIN_CONFIGS_EXTRA="-DXRT_MEM_MAP=legacy"
-  elif [[ "${fpga_bin}" == "base_t8" ]]; then
-    FPGA_BIN_DIR=/opt/vortex_fpga_bins/baseline/xrt_hw_u55c_c1_f100_tcu_noDcache_L2cache_747805ed8e/bin
-    FPGA_BIN_CONFIGS_EXTRA="-DXRT_MEM_MAP=legacy"
-  elif [[ "${fpga_bin}" == "naive" ]]; then
-    FPGA_BIN_DIR=/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_noDcache_L2cache_a917286dbe/bin
-    FPGA_BIN_CONFIGS_EXTRA="-DXRT_MEM_MAP=legacy"
-  elif [[ "${fpga_bin}" == "improve_tcol1" ]]; then
-    FPGA_BIN_DIR=/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_noDcache_L2cache_c8c5d0d4f3/bin
-    FPGA_BIN_CONFIGS_EXTRA="-DXRT_MEM_MAP=remap -DBANK_INTERLEAVE"
-  elif [[ "${fpga_bin}" == "improve_tcol32" ]]; then
-    FPGA_BIN_DIR=/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_noDcache_L2cache_8a0e684a24/bin
-    FPGA_BIN_CONFIGS_EXTRA="-DXRT_MEM_MAP=remap -DBANK_INTERLEAVE"
-  else
-    FPGA_BIN_DIR="${fpga_bin}"
-    FPGA_BIN_CONFIGS_EXTRA=""
-  fi
-
-  if [[ "${FPGA_BIN_DIR}" == */vortex_afu.xclbin ]]; then
-    FPGA_BIN_DIR="$(dirname "${FPGA_BIN_DIR}")"
-  fi
-
+  local resolved
+  local resolver_args=(--alias-map "${FPGA_BIN_ALIAS_MAP}")
   if [[ -n "${XRT_MEM_MAP_OVERRIDE}" ]]; then
-    FPGA_BIN_CONFIGS_EXTRA="${FPGA_BIN_CONFIGS_EXTRA//-DXRT_MEM_MAP=legacy/}"
-    FPGA_BIN_CONFIGS_EXTRA="${FPGA_BIN_CONFIGS_EXTRA//-DXRT_MEM_MAP=remap/}"
-    FPGA_BIN_CONFIGS_EXTRA="-DXRT_MEM_MAP=${XRT_MEM_MAP_OVERRIDE} ${FPGA_BIN_CONFIGS_EXTRA}"
+    resolver_args+=(--xrt-mem-map "${XRT_MEM_MAP_OVERRIDE}")
   fi
+  resolved="$("${PYTHON_BIN}" "${FPGA_BIN_ALIAS_RESOLVER}" "${resolver_args[@]}" "${fpga_bin}")"
+  FPGA_BIN_DIR="$(printf '%s\n' "${resolved}" | sed -n '1p')"
+  FPGA_BIN_CONFIGS_EXTRA="$(printf '%s\n' "${resolved}" | sed -n '2p')"
 }
 
 while [[ $# -gt 0 ]]; do

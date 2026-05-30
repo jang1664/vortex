@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
-from tools.latency_bench import runner
 from tools.latency_bench.cli import main, merge_override_args, normalize_timeout
+from tools.latency_bench.fpga_bins import FPGA_BIN_ALIAS_MAP_ENV
 
 
 class CliRunTest(unittest.TestCase):
@@ -65,6 +68,30 @@ cases:
 """.lstrip()
         )
         return build_dir, fpga_bin, suite
+
+    def _write_alias_map(self, path: Path, alias: str, fpga_bin: Path, configs: tuple[str, ...]) -> None:
+        configs_yaml = "\n".join(f"      - {item}" for item in configs)
+        path.write_text(
+            f"""
+aliases:
+  {alias}:
+    path: {fpga_bin}
+    configs_extra:
+{configs_yaml}
+""".lstrip()
+        )
+
+    @contextmanager
+    def _alias_map_env(self, alias_map: Path) -> Iterator[None]:
+        old_value = os.environ.get(FPGA_BIN_ALIAS_MAP_ENV)
+        os.environ[FPGA_BIN_ALIAS_MAP_ENV] = str(alias_map)
+        try:
+            yield
+        finally:
+            if old_value is None:
+                os.environ.pop(FPGA_BIN_ALIAS_MAP_ENV, None)
+            else:
+                os.environ[FPGA_BIN_ALIAS_MAP_ENV] = old_value
 
     def test_run_does_not_visualize_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -134,14 +161,9 @@ cases:
             tmp_path = Path(tmp)
             build_dir, fpga_bin, suite = self._write_fake_inputs(tmp_path)
             out_root = tmp_path / "out"
-            old_aliases = dict(runner.FPGA_BIN_ALIASES)
-            try:
-                runner.FPGA_BIN_ALIASES.clear()
-                runner.FPGA_BIN_ALIASES["legacy_alias"] = runner.FpgaBinAlias(
-                    path=str(fpga_bin),
-                    configs_extra=("-DXRT_MEM_MAP=legacy", "-DBANK_INTERLEAVE"),
-                )
-
+            alias_map = tmp_path / "fpga_bin_alias_map.yaml"
+            self._write_alias_map(alias_map, "legacy_alias", fpga_bin, ("-DXRT_MEM_MAP=legacy", "-DBANK_INTERLEAVE"))
+            with self._alias_map_env(alias_map):
                 rc = main([
                     "run",
                     "--build-dir", str(build_dir),
@@ -153,33 +175,25 @@ cases:
                     "--dry-run",
                 ])
 
-                self.assertEqual(0, rc)
-                run_dir = out_root / "runs" / "cli_run"
-                script = (run_dir / "run_fpga_bench.sh").read_text()
-                self.assertNotIn("VORTEX_XRT_MEM_MAP", script)
-                self.assertIn(
-                    'export CONFIGS="${CONFIGS:-} -DXRT_MEM_MAP=legacy -DBANK_INTERLEAVE"',
-                    script,
-                )
-                manifest = json.loads((run_dir / "manifest.json").read_text())
-                self.assertEqual("-DXRT_MEM_MAP=legacy -DBANK_INTERLEAVE", manifest["configs_extra"])
-            finally:
-                runner.FPGA_BIN_ALIASES.clear()
-                runner.FPGA_BIN_ALIASES.update(old_aliases)
+            self.assertEqual(0, rc)
+            run_dir = out_root / "runs" / "cli_run"
+            script = (run_dir / "run_fpga_bench.sh").read_text()
+            self.assertNotIn("VORTEX_XRT_MEM_MAP", script)
+            self.assertIn(
+                'export CONFIGS="${CONFIGS:-} -DXRT_MEM_MAP=legacy -DBANK_INTERLEAVE"',
+                script,
+            )
+            manifest = json.loads((run_dir / "manifest.json").read_text())
+            self.assertEqual("-DXRT_MEM_MAP=legacy -DBANK_INTERLEAVE", manifest["configs_extra"])
 
     def test_run_xrt_mem_map_overrides_alias_compile_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             build_dir, fpga_bin, suite = self._write_fake_inputs(tmp_path)
             out_root = tmp_path / "out"
-            old_aliases = dict(runner.FPGA_BIN_ALIASES)
-            try:
-                runner.FPGA_BIN_ALIASES.clear()
-                runner.FPGA_BIN_ALIASES["remap_alias"] = runner.FpgaBinAlias(
-                    path=str(fpga_bin),
-                    configs_extra=("-DXRT_MEM_MAP=remap", "-DBANK_INTERLEAVE"),
-                )
-
+            alias_map = tmp_path / "fpga_bin_alias_map.yaml"
+            self._write_alias_map(alias_map, "remap_alias", fpga_bin, ("-DXRT_MEM_MAP=remap", "-DBANK_INTERLEAVE"))
+            with self._alias_map_env(alias_map):
                 rc = main([
                     "run",
                     "--build-dir", str(build_dir),
@@ -192,15 +206,12 @@ cases:
                     "--xrt-mem-map", "legacy",
                 ])
 
-                self.assertEqual(0, rc)
-                script = (out_root / "runs" / "cli_run" / "run_fpga_bench.sh").read_text()
-                self.assertIn("-DXRT_MEM_MAP=legacy", script)
-                self.assertIn("-DBANK_INTERLEAVE", script)
-                self.assertNotIn("-DXRT_MEM_MAP=remap", script)
-                self.assertNotIn("VORTEX_XRT_MEM_MAP", script)
-            finally:
-                runner.FPGA_BIN_ALIASES.clear()
-                runner.FPGA_BIN_ALIASES.update(old_aliases)
+            self.assertEqual(0, rc)
+            script = (out_root / "runs" / "cli_run" / "run_fpga_bench.sh").read_text()
+            self.assertIn("-DXRT_MEM_MAP=legacy", script)
+            self.assertIn("-DBANK_INTERLEAVE", script)
+            self.assertNotIn("-DXRT_MEM_MAP=remap", script)
+            self.assertNotIn("VORTEX_XRT_MEM_MAP", script)
 
     def test_run_uses_suite_default_blackbox_timeout(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
