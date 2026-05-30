@@ -11,10 +11,30 @@ defaults:
     - --threads=32
 
 # Sequence-length sweep for layout-fused vector kernels used around Llama2-7B
-# projection inputs.
-#   rms_norm_layout_fused: M=batch*seq, K=hidden_size=4096
-#   silu_layout_fused:     M=batch*seq, K=intermediate_size=11008
+# projection inputs, plus plain baseline kernels for comparison.
+#   rmsnorm:               batch, seq, hidden_size=4096 row-major baseline
+#   rms_norm_layout_fused: M=batch*seq, K=hidden_size=4096 tiled-output fused
+#   silu:                  n=batch*seq*intermediate_size row-major baseline
+#   silu_layout_fused:     M=batch*seq, K=intermediate_size=11008 tiled-output fused
 case_matrices:
+  - id: rmsnorm_baseline
+    app: rmsnorm
+    kind: rmsnorm
+    stage: seq_sweep
+    name: rmsnorm_b{batch}_s{seq}
+    args: "-batch {batch} -seq {seq} -hidden 4096"
+    matrix:
+      batch: {values: [1, 8]}
+      seq: {values: [1, 128, 512, 1024]}
+    derived:
+      m: "batch * seq"
+    shape:
+      variant: baseline
+      batch: "{batch}"
+      seq: "{seq}"
+      M: "{m}"
+      K: 4096
+
   - id: rms_norm_layout_fused
     app: rms_norm_layout_fused
     kind: rms_norm_layout_fused
@@ -31,6 +51,26 @@ case_matrices:
       seq: "{seq}"
       M: "{m}"
       K: 4096
+
+  - id: silu_baseline
+    app: silu
+    kind: silu
+    stage: seq_sweep
+    name: silu_b{batch}_s{seq}
+    args: "-n {n}"
+    matrix:
+      batch: {values: [1, 8]}
+      seq: {values: [1, 128, 512, 1024]}
+    derived:
+      m: "batch * seq"
+      n: "batch * seq * 11008"
+    shape:
+      variant: baseline
+      batch: "{batch}"
+      seq: "{seq}"
+      M: "{m}"
+      K: 11008
+      size: "{n}"
 
   - id: silu_layout_fused
     app: silu_layout_fused
