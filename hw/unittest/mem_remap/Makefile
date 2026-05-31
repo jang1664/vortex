@@ -1,0 +1,29 @@
+ROOT_DIR := $(realpath ../../..)
+include $(ROOT_DIR)/config.mk
+
+PROJECT := mem_remap
+
+RTL_DIR := $(VORTEX_HOME)/hw/rtl
+DPI_DIR := $(VORTEX_HOME)/hw/dpi
+
+SRC_DIR := $(VORTEX_HOME)/hw/unittest/$(PROJECT)
+
+CXXFLAGS := -I$(SRC_DIR) -I$(VORTEX_HOME)/hw/unittest/common -I$(SW_COMMON_DIR)
+
+SRCS := $(DPI_DIR)/util_dpi.cpp
+SRCS += $(SRC_DIR)/main.cpp
+
+DBG_TRACE_FLAGS :=
+
+RTL_PKGS :=
+
+RTL_INCLUDE := -I$(RTL_DIR) -I$(DPI_DIR) -I$(RTL_DIR)/libs -I$(RTL_DIR)/core
+
+TOP := VX_mem_remap
+
+PARAMS := -GADDR_W=64 -GBLOCK_SIZE=64 -GNUM_BANKS=32 -GNUM_PORTS=8 -GBANK_SHIFT=29
+
+CONFIGS += -DXLEN_64 -DMEM_ADDR_WIDTH=34 -DPLATFORM_MEMORY_ADDR_WIDTH=34
+CONFIGS += -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_NUM_PORTS=8
+
+include ../common.mk

@@ -17,7 +17,7 @@ module Vortex_axi import VX_gpu_pkg::*; #(
     parameter AXI_DATA_WIDTH = VX_MEM_DATA_WIDTH,
     parameter AXI_ADDR_WIDTH = `MEM_ADDR_WIDTH,
     parameter AXI_TID_WIDTH  = VX_MEM_TAG_WIDTH,
-    parameter AXI_NUM_BANKS  = 1
+    parameter AXI_NUM_PORTS  = 1
 )(
     `SCOPE_IO_DECL
 
@@ -26,53 +26,53 @@ module Vortex_axi import VX_gpu_pkg::*; #(
     input  wire                         reset,
 
     // AXI write request address channel
-    output wire                         m_axi_awvalid [AXI_NUM_BANKS],
-    input wire                          m_axi_awready [AXI_NUM_BANKS],
-    output wire [AXI_ADDR_WIDTH-1:0]    m_axi_awaddr [AXI_NUM_BANKS],
-    output wire [AXI_TID_WIDTH-1:0]     m_axi_awid [AXI_NUM_BANKS],
-    output wire [7:0]                   m_axi_awlen [AXI_NUM_BANKS],
-    output wire [2:0]                   m_axi_awsize [AXI_NUM_BANKS],
-    output wire [1:0]                   m_axi_awburst [AXI_NUM_BANKS],
-    output wire [1:0]                   m_axi_awlock [AXI_NUM_BANKS],
-    output wire [3:0]                   m_axi_awcache [AXI_NUM_BANKS],
-    output wire [2:0]                   m_axi_awprot [AXI_NUM_BANKS],
-    output wire [3:0]                   m_axi_awqos [AXI_NUM_BANKS],
-    output wire [3:0]                   m_axi_awregion [AXI_NUM_BANKS],
+    output wire                         m_axi_awvalid [AXI_NUM_PORTS],
+    input wire                          m_axi_awready [AXI_NUM_PORTS],
+    output wire [AXI_ADDR_WIDTH-1:0]    m_axi_awaddr [AXI_NUM_PORTS],
+    output wire [AXI_TID_WIDTH-1:0]     m_axi_awid [AXI_NUM_PORTS],
+    output wire [7:0]                   m_axi_awlen [AXI_NUM_PORTS],
+    output wire [2:0]                   m_axi_awsize [AXI_NUM_PORTS],
+    output wire [1:0]                   m_axi_awburst [AXI_NUM_PORTS],
+    output wire [1:0]                   m_axi_awlock [AXI_NUM_PORTS],
+    output wire [3:0]                   m_axi_awcache [AXI_NUM_PORTS],
+    output wire [2:0]                   m_axi_awprot [AXI_NUM_PORTS],
+    output wire [3:0]                   m_axi_awqos [AXI_NUM_PORTS],
+    output wire [3:0]                   m_axi_awregion [AXI_NUM_PORTS],
 
     // AXI write request data channel
-    output wire                         m_axi_wvalid [AXI_NUM_BANKS],
-    input wire                          m_axi_wready [AXI_NUM_BANKS],
-    output wire [AXI_DATA_WIDTH-1:0]    m_axi_wdata [AXI_NUM_BANKS],
-    output wire [AXI_DATA_WIDTH/8-1:0]  m_axi_wstrb [AXI_NUM_BANKS],
-    output wire                         m_axi_wlast [AXI_NUM_BANKS],
+    output wire                         m_axi_wvalid [AXI_NUM_PORTS],
+    input wire                          m_axi_wready [AXI_NUM_PORTS],
+    output wire [AXI_DATA_WIDTH-1:0]    m_axi_wdata [AXI_NUM_PORTS],
+    output wire [AXI_DATA_WIDTH/8-1:0]  m_axi_wstrb [AXI_NUM_PORTS],
+    output wire                         m_axi_wlast [AXI_NUM_PORTS],
 
     // AXI write response channel
-    input wire                          m_axi_bvalid [AXI_NUM_BANKS],
-    output wire                         m_axi_bready [AXI_NUM_BANKS],
-    input wire [AXI_TID_WIDTH-1:0]      m_axi_bid [AXI_NUM_BANKS],
-    input wire [1:0]                    m_axi_bresp [AXI_NUM_BANKS],
+    input wire                          m_axi_bvalid [AXI_NUM_PORTS],
+    output wire                         m_axi_bready [AXI_NUM_PORTS],
+    input wire [AXI_TID_WIDTH-1:0]      m_axi_bid [AXI_NUM_PORTS],
+    input wire [1:0]                    m_axi_bresp [AXI_NUM_PORTS],
 
     // AXI read request channel
-    output wire                         m_axi_arvalid [AXI_NUM_BANKS],
-    input wire                          m_axi_arready [AXI_NUM_BANKS],
-    output wire [AXI_ADDR_WIDTH-1:0]    m_axi_araddr [AXI_NUM_BANKS],
-    output wire [AXI_TID_WIDTH-1:0]     m_axi_arid [AXI_NUM_BANKS],
-    output wire [7:0]                   m_axi_arlen [AXI_NUM_BANKS],
-    output wire [2:0]                   m_axi_arsize [AXI_NUM_BANKS],
-    output wire [1:0]                   m_axi_arburst [AXI_NUM_BANKS],
-    output wire [1:0]                   m_axi_arlock [AXI_NUM_BANKS],
-    output wire [3:0]                   m_axi_arcache [AXI_NUM_BANKS],
-    output wire [2:0]                   m_axi_arprot [AXI_NUM_BANKS],
-    output wire [3:0]                   m_axi_arqos [AXI_NUM_BANKS],
-    output wire [3:0]                   m_axi_arregion [AXI_NUM_BANKS],
+    output wire                         m_axi_arvalid [AXI_NUM_PORTS],
+    input wire                          m_axi_arready [AXI_NUM_PORTS],
+    output wire [AXI_ADDR_WIDTH-1:0]    m_axi_araddr [AXI_NUM_PORTS],
+    output wire [AXI_TID_WIDTH-1:0]     m_axi_arid [AXI_NUM_PORTS],
+    output wire [7:0]                   m_axi_arlen [AXI_NUM_PORTS],
+    output wire [2:0]                   m_axi_arsize [AXI_NUM_PORTS],
+    output wire [1:0]                   m_axi_arburst [AXI_NUM_PORTS],
+    output wire [1:0]                   m_axi_arlock [AXI_NUM_PORTS],
+    output wire [3:0]                   m_axi_arcache [AXI_NUM_PORTS],
+    output wire [2:0]                   m_axi_arprot [AXI_NUM_PORTS],
+    output wire [3:0]                   m_axi_arqos [AXI_NUM_PORTS],
+    output wire [3:0]                   m_axi_arregion [AXI_NUM_PORTS],
 
     // AXI read response channel
-    input wire                          m_axi_rvalid [AXI_NUM_BANKS],
-    output wire                         m_axi_rready [AXI_NUM_BANKS],
-    input wire [AXI_DATA_WIDTH-1:0]     m_axi_rdata [AXI_NUM_BANKS],
-    input wire                          m_axi_rlast [AXI_NUM_BANKS],
-    input wire [AXI_TID_WIDTH-1:0]      m_axi_rid [AXI_NUM_BANKS],
-    input wire [1:0]                    m_axi_rresp [AXI_NUM_BANKS],
+    input wire                          m_axi_rvalid [AXI_NUM_PORTS],
+    output wire                         m_axi_rready [AXI_NUM_PORTS],
+    input wire [AXI_DATA_WIDTH-1:0]     m_axi_rdata [AXI_NUM_PORTS],
+    input wire                          m_axi_rlast [AXI_NUM_PORTS],
+    input wire [AXI_TID_WIDTH-1:0]      m_axi_rid [AXI_NUM_PORTS],
+    input wire [1:0]                    m_axi_rresp [AXI_NUM_PORTS],
 
     // DCR write request
     input  wire                         dcr_wr_valid,
@@ -145,6 +145,11 @@ module Vortex_axi import VX_gpu_pkg::*; #(
     wire [VX_MEM_TAG_A_WIDTH-1:0]   mem_rsp_tag_a [VX_MEM_PORTS];
     wire                            mem_rsp_ready_a [VX_MEM_PORTS];
 
+`ifdef PLATFORM_MEMORY_REMAP
+    `STATIC_ASSERT (`PLATFORM_MEMORY_INTERLEAVE, ("PLATFORM_MEMORY_REMAP requires PLATFORM_MEMORY_INTERLEAVE"))
+    `STATIC_ASSERT (AXI_NUM_PORTS == `PLATFORM_MEMORY_NUM_PORTS, ("AXI_NUM_PORTS must match PLATFORM_MEMORY_NUM_PORTS"))
+`endif
+
     // Adjust memory data width to match AXI interface
     for (genvar i = 0; i < VX_MEM_PORTS; i++) begin : g_mem_adapter
         VX_mem_data_adapter #(
@@ -188,6 +193,9 @@ module Vortex_axi import VX_gpu_pkg::*; #(
         );
     end
 
+    wire [AXI_ADDR_WIDTH-1:0] m_axi_awaddr_raw [AXI_NUM_PORTS];
+    wire [AXI_ADDR_WIDTH-1:0] m_axi_araddr_raw [AXI_NUM_PORTS];
+
     VX_axi_adapter #(
         .DATA_WIDTH     (AXI_DATA_WIDTH),
         .ADDR_WIDTH_IN  (VX_MEM_ADDR_A_WIDTH),
@@ -195,10 +203,10 @@ module Vortex_axi import VX_gpu_pkg::*; #(
         .TAG_WIDTH_IN   (VX_MEM_TAG_A_WIDTH),
         .TAG_WIDTH_OUT  (AXI_TID_WIDTH),
         .NUM_PORTS_IN   (VX_MEM_PORTS),
-        .NUM_BANKS_OUT  (AXI_NUM_BANKS),
+        .NUM_BANKS_OUT  (AXI_NUM_PORTS),
         .INTERLEAVE     (`PLATFORM_MEMORY_INTERLEAVE),
         .REQ_OUT_BUF    ((VX_MEM_PORTS > 1) ? 2 : 0),
-        .RSP_OUT_BUF    ((VX_MEM_PORTS > 1 || AXI_NUM_BANKS > 1) ? 2 : 0)
+        .RSP_OUT_BUF    ((VX_MEM_PORTS > 1 || AXI_NUM_PORTS > 1) ? 2 : 0)
     ) axi_adapter (
         .clk            (clk),
         .reset          (reset),
@@ -218,7 +226,7 @@ module Vortex_axi import VX_gpu_pkg::*; #(
 
         .m_axi_awvalid  (m_axi_awvalid),
         .m_axi_awready  (m_axi_awready),
-        .m_axi_awaddr   (m_axi_awaddr),
+        .m_axi_awaddr   (m_axi_awaddr_raw),
         .m_axi_awid     (m_axi_awid),
         .m_axi_awlen    (m_axi_awlen),
         .m_axi_awsize   (m_axi_awsize),
@@ -242,7 +250,7 @@ module Vortex_axi import VX_gpu_pkg::*; #(
 
         .m_axi_arvalid  (m_axi_arvalid),
         .m_axi_arready  (m_axi_arready),
-        .m_axi_araddr   (m_axi_araddr),
+        .m_axi_araddr   (m_axi_araddr_raw),
         .m_axi_arid     (m_axi_arid),
         .m_axi_arlen    (m_axi_arlen),
         .m_axi_arsize   (m_axi_arsize),
@@ -261,6 +269,30 @@ module Vortex_axi import VX_gpu_pkg::*; #(
         .m_axi_rresp    (m_axi_rresp)
     );
 
+    for (genvar i = 0; i < AXI_NUM_PORTS; ++i) begin : g_mem_remap
+        VX_mem_remap #(
+            .ADDR_W     (AXI_ADDR_WIDTH),
+            .BLOCK_SIZE (`MEM_BLOCK_SIZE),
+            .NUM_BANKS  (`PLATFORM_MEMORY_NUM_BANKS),
+            .NUM_PORTS  (AXI_NUM_PORTS),
+            .BANK_SHIFT (AXI_ADDR_WIDTH - `CLOG2(`PLATFORM_MEMORY_NUM_BANKS))
+        ) aw_remap (
+            .m_address   (m_axi_awaddr_raw[i]),
+            .hbm_address (m_axi_awaddr[i])
+        );
+
+        VX_mem_remap #(
+            .ADDR_W     (AXI_ADDR_WIDTH),
+            .BLOCK_SIZE (`MEM_BLOCK_SIZE),
+            .NUM_BANKS  (`PLATFORM_MEMORY_NUM_BANKS),
+            .NUM_PORTS  (AXI_NUM_PORTS),
+            .BANK_SHIFT (AXI_ADDR_WIDTH - `CLOG2(`PLATFORM_MEMORY_NUM_BANKS))
+        ) ar_remap (
+            .m_address   (m_axi_araddr_raw[i]),
+            .hbm_address (m_axi_araddr[i])
+        );
+    end
+
     wire [VX_MEM_PORTS-1:0] mem_req_stall;
     wire [VX_MEM_PORTS-1:0] mem_rsp_stall;
     wire [VX_MEM_PORTS-1:0] mem_req_a_stall;
@@ -273,13 +305,13 @@ module Vortex_axi import VX_gpu_pkg::*; #(
         assign mem_rsp_a_stall[i] = mem_rsp_valid_a[i] && ~mem_rsp_ready_a[i];
     end
 
-    wire [AXI_NUM_BANKS-1:0] axi_aw_stall;
-    wire [AXI_NUM_BANKS-1:0] axi_w_stall;
-    wire [AXI_NUM_BANKS-1:0] axi_ar_stall;
-    wire [AXI_NUM_BANKS-1:0] axi_b_stall;
-    wire [AXI_NUM_BANKS-1:0] axi_r_stall;
+    wire [AXI_NUM_PORTS-1:0] axi_aw_stall;
+    wire [AXI_NUM_PORTS-1:0] axi_w_stall;
+    wire [AXI_NUM_PORTS-1:0] axi_ar_stall;
+    wire [AXI_NUM_PORTS-1:0] axi_b_stall;
+    wire [AXI_NUM_PORTS-1:0] axi_r_stall;
 
-    for (genvar i = 0; i < AXI_NUM_BANKS; ++i) begin : g_drain_axi_stall
+    for (genvar i = 0; i < AXI_NUM_PORTS; ++i) begin : g_drain_axi_stall
         assign axi_aw_stall[i] = m_axi_awvalid[i] && ~m_axi_awready[i];
         assign axi_w_stall[i] = m_axi_wvalid[i] && ~m_axi_wready[i];
         assign axi_ar_stall[i] = m_axi_arvalid[i] && ~m_axi_arready[i];

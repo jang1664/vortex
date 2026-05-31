@@ -39,7 +39,7 @@ enum VcsMemType : uint8_t {
 // Common packet header (24 bytes)
 struct VcsPacket {
   uint8_t  type;        // VcsCtrlType or VcsMemType
-  uint8_t  bank_id;     // memory bank index
+  uint8_t  port_id;     // AXI memory port index
   uint8_t  reserved[2];
   uint32_t id;          // AXI transaction ID or register offset
   uint64_t addr;        // memory address

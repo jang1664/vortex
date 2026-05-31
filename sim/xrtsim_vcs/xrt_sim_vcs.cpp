@@ -53,7 +53,7 @@ class xrt_sim::Impl {
 public:
   Impl()
     : ram_(nullptr)
-    , dram_sim_(PLATFORM_MEMORY_NUM_BANKS, PLATFORM_MEMORY_DATA_SIZE, MEM_CLOCK_RATIO)
+    , dram_sim_(PLATFORM_MEMORY_NUM_PORTS, PLATFORM_MEMORY_DATA_SIZE, MEM_CLOCK_RATIO)
     , stop_(false)
     , ctrl_fd_(-1)
     , mem_fd_(-1)
@@ -224,7 +224,7 @@ private:
     std::array<uint8_t, PLATFORM_MEMORY_DATA_SIZE> data;
     uint32_t tag;
     uint64_t addr;
-    uint8_t  bank;
+    uint8_t  port;
     bool write;
     bool ready;
   } mem_req_t;
@@ -232,12 +232,36 @@ private:
   using mem_req_list_t = std::list<mem_req_t*>;
   using mem_req_iter_t = mem_req_list_t::iterator;
 
-  // AW state for two-phase write handling (per bank)
+  // AW state for two-phase write handling (per AXI port)
   typedef struct {
     uint64_t addr;
     uint32_t tag;
     bool     valid;
   } aw_state_t;
+
+  void assert_port_range(uint8_t port_id, uint64_t addr) {
+  #ifdef PLATFORM_MEMORY_REMAP
+    static_assert(PLATFORM_MEMORY_NUM_BANKS % PLATFORM_MEMORY_NUM_PORTS == 0,
+                  "PLATFORM_MEMORY_NUM_BANKS must be a multiple of PLATFORM_MEMORY_NUM_PORTS");
+    constexpr uint32_t banks_per_port =
+        PLATFORM_MEMORY_NUM_BANKS / PLATFORM_MEMORY_NUM_PORTS;
+    const uint64_t port_base =
+        (uint64_t)port_id * banks_per_port * mem_bank_size_;
+    const uint64_t port_top =
+        port_base + (uint64_t)banks_per_port * mem_bank_size_;
+    if (addr < port_base || addr >= port_top) {
+      fprintf(stderr,
+              "[vcs-sim] FATAL: AXI addr 0x%lx on port %u is outside HBM window [0x%lx, 0x%lx)\n",
+              (unsigned long)addr, (unsigned)port_id,
+              (unsigned long)port_base, (unsigned long)port_top);
+      fflush(stderr);
+      abort();
+    }
+  #else
+    (void)port_id;
+    (void)addr;
+  #endif
+  }
 
   static int connect_with_retry(const char* host, int port, int timeout_sec) {
     int fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -271,8 +295,8 @@ private:
     return -1;
   }
 
-  mem_req_iter_t find_ready_mem_rsp(int bank) {
-    auto& pending_reqs = pending_mem_reqs_[bank];
+  mem_req_iter_t find_ready_mem_rsp(int port) {
+    auto& pending_reqs = pending_mem_reqs_[port];
     for (auto it = pending_reqs.begin(); it != pending_reqs.end(); ++it) {
       auto req = *it;
       if (!req->ready) {
@@ -311,20 +335,22 @@ private:
           auto mem_req = new mem_req_t();
           mem_req->tag   = pkt.id;
           mem_req->addr  = pkt.addr;
-          mem_req->bank  = pkt.bank_id;
+          mem_req->port  = pkt.port_id;
           mem_req->write = false;
           mem_req->ready = false;
+          assert_port_range(pkt.port_id, pkt.addr);
           // Read data from local RAM
           ram_->read(mem_req->data.data(), pkt.addr, PLATFORM_MEMORY_DATA_SIZE);
-          pending_mem_reqs_[pkt.bank_id].emplace_back(mem_req);
-          dram_queues_[pkt.bank_id].push(mem_req);
+          pending_mem_reqs_[pkt.port_id].emplace_back(mem_req);
+          dram_queues_[pkt.port_id].push(mem_req);
           break;
         }
         case EVT_AXI_AW: {
           // Write address from DUT
-          aw_state_[pkt.bank_id].addr  = pkt.addr;
-          aw_state_[pkt.bank_id].tag   = pkt.id;
-          aw_state_[pkt.bank_id].valid = true;
+          assert_port_range(pkt.port_id, pkt.addr);
+          aw_state_[pkt.port_id].addr  = pkt.addr;
+          aw_state_[pkt.port_id].tag   = pkt.id;
+          aw_state_[pkt.port_id].valid = true;
           break;
         }
         case EVT_AXI_W: {
@@ -338,9 +364,9 @@ private:
             }
           }
 
-          uint8_t bank = pkt.bank_id;
-          if (aw_state_[bank].valid) {
-            uint64_t byte_addr = aw_state_[bank].addr;
+          uint8_t port = pkt.port_id;
+          if (aw_state_[port].valid) {
+            uint64_t byte_addr = aw_state_[port].addr;
             uint64_t strb = pkt.addr; // strb is stored in addr field
 
             // Write with byte enables
@@ -351,15 +377,15 @@ private:
             }
 
             auto mem_req = new mem_req_t();
-            mem_req->tag   = aw_state_[bank].tag;
+            mem_req->tag   = aw_state_[port].tag;
             mem_req->addr  = byte_addr;
-            mem_req->bank  = bank;
+            mem_req->port  = port;
             mem_req->write = true;
             mem_req->ready = false;
-            pending_mem_reqs_[bank].emplace_back(mem_req);
-            dram_queues_[bank].push(mem_req);
+            pending_mem_reqs_[port].emplace_back(mem_req);
+            dram_queues_[port].push(mem_req);
 
-            aw_state_[bank].valid = false;
+            aw_state_[port].valid = false;
           }
           break;
         }
@@ -372,7 +398,7 @@ private:
     // 2. DramSim tick + drain DRAM queues
     dram_sim_.tick();
 
-    for (int b = 0; b < PLATFORM_MEMORY_NUM_BANKS; ++b) {
+    for (int b = 0; b < PLATFORM_MEMORY_NUM_PORTS; ++b) {
       if (!dram_queues_[b].empty()) {
         auto mem_req = dram_queues_[b].front();
         dram_sim_.send_request(mem_req->addr, mem_req->write, [](void* arg) {
@@ -388,7 +414,7 @@ private:
     }
 
     // 3. Send ready responses back to VCS via mem_sock
-    for (int b = 0; b < PLATFORM_MEMORY_NUM_BANKS; ++b) {
+    for (int b = 0; b < PLATFORM_MEMORY_NUM_PORTS; ++b) {
       while (true) {
         auto it = find_ready_mem_rsp(b);
         if (it == pending_mem_reqs_[b].end()) {
@@ -399,7 +425,7 @@ private:
 
         VcsPacket rsp;
         memset(&rsp, 0, sizeof(rsp));
-        rsp.bank_id = (uint8_t)b;
+        rsp.port_id = (uint8_t)b;
         rsp.id      = mem_req->tag;
 
         if (mem_req->write) {
@@ -447,9 +473,9 @@ private:
   int mem_fd_;
 
   MemoryAllocator* mem_alloc_[PLATFORM_MEMORY_NUM_BANKS];
-  mem_req_list_t pending_mem_reqs_[PLATFORM_MEMORY_NUM_BANKS];
-  std::queue<mem_req_t*> dram_queues_[PLATFORM_MEMORY_NUM_BANKS];
-  aw_state_t aw_state_[PLATFORM_MEMORY_NUM_BANKS];
+  mem_req_list_t pending_mem_reqs_[PLATFORM_MEMORY_NUM_PORTS];
+  std::queue<mem_req_t*> dram_queues_[PLATFORM_MEMORY_NUM_PORTS];
+  aw_state_t aw_state_[PLATFORM_MEMORY_NUM_PORTS];
 };
 
 ///////////////////////////////////////////////////////////////////////////////

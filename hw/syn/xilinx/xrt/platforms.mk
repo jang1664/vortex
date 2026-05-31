@@ -18,12 +18,29 @@ endif
 else
 # alveo
 ifneq ($(findstring xilinx_u55c,$(XSA)),)
-  # 16 GB of HBM2 with 32 channels (512 MB per channel)
-  # Keep core/global address width aligned with physical HBM aperture.
-  CONFIGS += -DMEM_ADDR_WIDTH=34
-  CONFIGS += -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_ADDR_WIDTH=34
-  CONFIGS += -DPLATFORM_MERGED_MEMORY_INTERFACE
-  SP_FLAGS += vortex_afu_1.m_axi_mem_0:HBM[0:31]
+	  # 16 GB of HBM2 with 32 channels (512 MB per channel)
+	  # Keep core/global address width aligned with physical HBM aperture.
+	  CONFIGS += -DMEM_ADDR_WIDTH=34
+	  CONFIGS += -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_NUM_PORTS=8 -DPLATFORM_MEMORY_ADDR_WIDTH=34
+ifneq (,$(findstring -DPLATFORM_MEMORY_REMAP,$(CONFIGS)))
+	  SP_FLAGS += vortex_afu_1.m_axi_mem_0:HBM[0:3]
+	  SP_FLAGS += vortex_afu_1.m_axi_mem_1:HBM[4:7]
+	  SP_FLAGS += vortex_afu_1.m_axi_mem_2:HBM[8:11]
+	  SP_FLAGS += vortex_afu_1.m_axi_mem_3:HBM[12:15]
+	  SP_FLAGS += vortex_afu_1.m_axi_mem_4:HBM[16:19]
+	  SP_FLAGS += vortex_afu_1.m_axi_mem_5:HBM[20:23]
+	  SP_FLAGS += vortex_afu_1.m_axi_mem_6:HBM[24:27]
+	  SP_FLAGS += vortex_afu_1.m_axi_mem_7:HBM[28:31]
+else
+	  SP_FLAGS += vortex_afu_1.m_axi_mem_0:HBM[0:31]
+	  SP_FLAGS += vortex_afu_1.m_axi_mem_1:HBM[0:31]
+	  SP_FLAGS += vortex_afu_1.m_axi_mem_2:HBM[0:31]
+	  SP_FLAGS += vortex_afu_1.m_axi_mem_3:HBM[0:31]
+	  SP_FLAGS += vortex_afu_1.m_axi_mem_4:HBM[0:31]
+	  SP_FLAGS += vortex_afu_1.m_axi_mem_5:HBM[0:31]
+	  SP_FLAGS += vortex_afu_1.m_axi_mem_6:HBM[0:31]
+	  SP_FLAGS += vortex_afu_1.m_axi_mem_7:HBM[0:31]
+endif
 else ifneq ($(findstring xilinx_u50,$(XSA)),)
   # 8 GB of HBM2 with 32 channels (256 MB per channel)
   CONFIGS += -DPLATFORM_MEMORY_NUM_BANKS=32 -DPLATFORM_MEMORY_ADDR_WIDTH=33

@@ -186,6 +186,13 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
 
     for (genvar i = 0; i < `NUM_LSU_BLOCKS; ++i) begin : g_lsu_dcache_if
         `ASSIGN_VX_MEM_BUS_IF (lsu_dcache_if[i], lsu_mem_if[i]);
+        `INIT_VX_LSU_MEM_IF (dma_ctrl_if[i])
+        `INIT_VX_LSU_MEM_IF (gemm_ctrl_if[i])
+    end
+
+    for (genvar i = 0; i < `NUM_LSU_LANES; ++i) begin : g_lmem_accel_unused
+        `UNUSED_VX_MEM_BUS_IF (dma_local_data_if[i])
+        `UNUSED_VX_MEM_BUS_IF (gemm_data_if[i])
     end
 
 `endif

@@ -44,11 +44,7 @@
 #define MEM_CLOCK_RATIO 1
 #endif
 
-#ifdef PLATFORM_MERGED_MEMORY_INTERFACE
-#define XRTSIM_AXI_MEM_NUM_BANKS 1
-#else
-#define XRTSIM_AXI_MEM_NUM_BANKS PLATFORM_MEMORY_NUM_BANKS
-#endif
+#define XRTSIM_AXI_MEM_NUM_PORTS PLATFORM_MEMORY_NUM_PORTS
 
 #define CACHE_BLOCK_SIZE  64
 
@@ -191,7 +187,7 @@ public:
   Impl()
   : device_(nullptr)
   , ram_(nullptr)
-  , dram_sim_(PLATFORM_MEMORY_NUM_BANKS, PLATFORM_MEMORY_DATA_SIZE, MEM_CLOCK_RATIO)
+  , dram_sim_(PLATFORM_MEMORY_NUM_PORTS, PLATFORM_MEMORY_DATA_SIZE, MEM_CLOCK_RATIO)
   , stop_(false)
   , dram_req_stall_p_enter_pct_(0)
   , dram_req_stall_p_exit_pct_(50)
@@ -250,7 +246,7 @@ public:
     ram_ = new RAM(0, RAM_PAGE_SIZE);
 
     // initialize AXI memory interfaces
-    MP_M_AXI_MEM(XRTSIM_AXI_MEM_NUM_BANKS);
+    MP_M_AXI_MEM(XRTSIM_AXI_MEM_NUM_PORTS);
 
     // initialize memory allocator
     for (int b = 0; b < PLATFORM_MEMORY_NUM_BANKS; ++b) {
@@ -294,7 +290,7 @@ public:
       rsp_legacy_used = true;
     }
 
-    for (int b = 0; b < XRTSIM_AXI_MEM_NUM_BANKS; ++b) {
+    for (int b = 0; b < XRTSIM_AXI_MEM_NUM_PORTS; ++b) {
       auto req_seed = dram_stall_seed_ + 0x9e3779b97f4a7c15ull * (2ull * b + 1ull);
       auto rsp_seed = dram_stall_seed_ + 0x9e3779b97f4a7c15ull * (2ull * b + 2ull);
       req_stall_rng_[b].seed(req_seed);
@@ -433,6 +429,30 @@ public:
 
 private:
 
+  void assert_port_range(uint32_t port_id, uint64_t addr) const {
+  #ifdef PLATFORM_MEMORY_REMAP
+    static_assert(PLATFORM_MEMORY_NUM_BANKS % PLATFORM_MEMORY_NUM_PORTS == 0,
+                  "PLATFORM_MEMORY_NUM_BANKS must be a multiple of PLATFORM_MEMORY_NUM_PORTS");
+    constexpr uint32_t banks_per_port =
+        PLATFORM_MEMORY_NUM_BANKS / PLATFORM_MEMORY_NUM_PORTS;
+    const uint64_t port_base =
+        (uint64_t)port_id * banks_per_port * mem_bank_size_;
+    const uint64_t port_top =
+        port_base + (uint64_t)banks_per_port * mem_bank_size_;
+    if (addr < port_base || addr >= port_top) {
+      fprintf(stderr,
+              "[sim] FATAL: AXI addr 0x%lx on port %u is outside HBM window [0x%lx, 0x%lx)\n",
+              (unsigned long)addr, port_id,
+              (unsigned long)port_base, (unsigned long)port_top);
+      fflush(stderr);
+      std::abort();
+    }
+  #else
+    (void)port_id;
+    (void)addr;
+  #endif
+  }
+
   void reset() {
     this->axi_ctrl_bus_reset();
     this->axi_mem_bus_reset();
@@ -441,7 +461,7 @@ private:
       reqs.clear();
     }
 
-    for (int b = 0; b < XRTSIM_AXI_MEM_NUM_BANKS; ++b) {
+    for (int b = 0; b < XRTSIM_AXI_MEM_NUM_PORTS; ++b) {
       std::queue<mem_req_t*> empty;
       std::swap(dram_queues_[b], empty);
     }
@@ -458,7 +478,7 @@ private:
     device_->ap_rst_n = 1;
 
     // initialize request/response stall state
-    for (int b = 0; b < XRTSIM_AXI_MEM_NUM_BANKS; ++b) {
+    for (int b = 0; b < XRTSIM_AXI_MEM_NUM_PORTS; ++b) {
       req_stall_state_[b] = {false};
       rsp_stall_state_[b] = {false};
       *m_axi_mem_[b].arready = 1;
@@ -480,7 +500,7 @@ private:
 
     dram_sim_.tick();
 
-    for (int b = 0; b < XRTSIM_AXI_MEM_NUM_BANKS; ++b) {
+    for (int b = 0; b < XRTSIM_AXI_MEM_NUM_PORTS; ++b) {
       if (!dram_queues_[b].empty()) {
         auto mem_req = dram_queues_[b].front();
         dram_sim_.send_request(mem_req->addr, mem_req->write, [](void* arg) {
@@ -532,7 +552,7 @@ private:
   }
 
   void axi_mem_bus_reset() {
-    for (int b = 0; b < XRTSIM_AXI_MEM_NUM_BANKS; ++b) {
+    for (int b = 0; b < XRTSIM_AXI_MEM_NUM_PORTS; ++b) {
       // read request address
       *m_axi_mem_[b].arready = 0;
 
@@ -556,14 +576,14 @@ private:
 
   void axi_mem_bus_eval(bool clk) {
     if (!clk) {
-      for (int b = 0; b < XRTSIM_AXI_MEM_NUM_BANKS; ++b) {
+      for (int b = 0; b < XRTSIM_AXI_MEM_NUM_PORTS; ++b) {
         m_axi_states_[b].read_rsp_ready = *m_axi_mem_[b].rready;
         m_axi_states_[b].write_rsp_ready = *m_axi_mem_[b].bready;
       }
       return;
     }
 
-    for (int b = 0; b < XRTSIM_AXI_MEM_NUM_BANKS; ++b) {
+    for (int b = 0; b < XRTSIM_AXI_MEM_NUM_PORTS; ++b) {
       // update request-side Markov backpressure (arready/awready/wready)
       auto& req_st = req_stall_state_[b];
       if (req_st.stalling) {
@@ -632,6 +652,7 @@ private:
         auto mem_req = new mem_req_t();
         mem_req->tag   = *m_axi_mem_[b].arid;
         mem_req->addr  = uint64_t(*m_axi_mem_[b].araddr);
+        assert_port_range(b, mem_req->addr);
         ram_->read(mem_req->data.data(), mem_req->addr, PLATFORM_MEMORY_DATA_SIZE);
         mem_req->write = false;
         mem_req->ready = false;
@@ -651,6 +672,7 @@ private:
       if (*m_axi_mem_[b].awvalid && *m_axi_mem_[b].awready && !m_axi_states_[b].write_req_addr_ack) {
         m_axi_states_[b].write_req_addr = *m_axi_mem_[b].awaddr;
         m_axi_states_[b].write_req_tag = *m_axi_mem_[b].awid;
+        assert_port_range(b, m_axi_states_[b].write_req_addr);
         m_axi_states_[b].write_req_addr_ack = true;
       }
 
@@ -718,8 +740,8 @@ private:
   using mem_req_list_t = std::list<mem_req_t*>;
   using mem_req_iter_t = mem_req_list_t::iterator;
 
-  mem_req_iter_t find_ready_mem_rsp(int bank, bool is_write) {
-    auto& pending_reqs = pending_mem_reqs_[bank];
+  mem_req_iter_t find_ready_mem_rsp(int port, bool is_write) {
+    auto& pending_reqs = pending_mem_reqs_[port];
     for (auto it = pending_reqs.begin(); it != pending_reqs.end(); ++it) {
       auto req = *it;
       if (!req->ready || req->write != is_write) {
@@ -781,15 +803,15 @@ private:
 
   std::mutex mutex_;
 
-  mem_req_list_t pending_mem_reqs_[XRTSIM_AXI_MEM_NUM_BANKS];
+  mem_req_list_t pending_mem_reqs_[XRTSIM_AXI_MEM_NUM_PORTS];
 
-  m_axi_mem_t m_axi_mem_[XRTSIM_AXI_MEM_NUM_BANKS];
+  m_axi_mem_t m_axi_mem_[XRTSIM_AXI_MEM_NUM_PORTS];
 
   MemoryAllocator* mem_alloc_[PLATFORM_MEMORY_NUM_BANKS];
 
-  m_axi_state_t m_axi_states_[XRTSIM_AXI_MEM_NUM_BANKS];
+  m_axi_state_t m_axi_states_[XRTSIM_AXI_MEM_NUM_PORTS];
 
-  std::queue<mem_req_t*> dram_queues_[XRTSIM_AXI_MEM_NUM_BANKS];
+  std::queue<mem_req_t*> dram_queues_[XRTSIM_AXI_MEM_NUM_PORTS];
 
   // DRAM stall configuration
   uint32_t dram_req_stall_p_enter_pct_;
@@ -801,10 +823,10 @@ private:
   struct markov_state_t {
     bool stalling;
   };
-  markov_state_t req_stall_state_[XRTSIM_AXI_MEM_NUM_BANKS];
-  markov_state_t rsp_stall_state_[XRTSIM_AXI_MEM_NUM_BANKS];
-  std::mt19937_64 req_stall_rng_[XRTSIM_AXI_MEM_NUM_BANKS];
-  std::mt19937_64 rsp_stall_rng_[XRTSIM_AXI_MEM_NUM_BANKS];
+  markov_state_t req_stall_state_[XRTSIM_AXI_MEM_NUM_PORTS];
+  markov_state_t rsp_stall_state_[XRTSIM_AXI_MEM_NUM_PORTS];
+  std::mt19937_64 req_stall_rng_[XRTSIM_AXI_MEM_NUM_PORTS];
+  std::mt19937_64 rsp_stall_rng_[XRTSIM_AXI_MEM_NUM_PORTS];
 
 #ifdef VCD_OUTPUT
   VerilatedVcdC* tfp_;

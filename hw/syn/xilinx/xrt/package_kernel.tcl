@@ -101,6 +101,7 @@ if { $patched_any == 1 } {
 
 set chipscope 0
 set num_banks 1
+set num_ports ""
 set merged_mem_if 0
 
 # ILA comparator count per probe for advanced trigger.
@@ -130,13 +131,20 @@ foreach def $vdefines_list {
     if { $name == "PLATFORM_MEMORY_NUM_BANKS" && $value ne "" } {
         set num_banks $value
     }
+    if { $name == "PLATFORM_MEMORY_NUM_PORTS" && $value ne "" } {
+        set num_ports $value
+    }
     if { $name == "PLATFORM_MERGED_MEMORY_INTERFACE" } {
         set merged_mem_if 1
     }
 }
 
-if { $merged_mem_if == 1 } {
-    set num_banks 1
+if { $num_ports eq "" } {
+    if { $merged_mem_if == 1 } {
+        set num_ports 1
+    } else {
+        set num_ports $num_banks
+    }
 }
 
 if {[string length $device_part] != 0} {
@@ -225,7 +233,7 @@ foreach up [ipx::get_user_parameters] {
 
 ipx::associate_bus_interfaces -busif s_axi_ctrl -clock ap_clk $core
 
-for {set i 0} {$i < $num_banks} {incr i} {
+for {set i 0} {$i < $num_ports} {incr i} {
     ipx::associate_bus_interfaces -busif m_axi_mem_$i -clock ap_clk $core
 }
 
@@ -317,8 +325,8 @@ set reg [::ipx::add_register -quiet "SCP" $addr_block]
 set_property address_offset 0x028 $reg
 set_property size           [expr {8*8}]   $reg
 
-for {set i 0} {$i < $num_banks} {incr i} {
-# Add register for each memory bank
+for {set i 0} {$i < $num_ports} {incr i} {
+# Add register for each RTL memory port
 set reg [::ipx::add_register -quiet "MEM_$i" $addr_block]
 set_property address_offset [expr {0x30 + $i * 8}] $reg
 set_property size           [expr {8*8}]   $reg

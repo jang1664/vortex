@@ -47,7 +47,9 @@ using namespace vortex;
 #define CPP_API
 #endif
 
-// #define BANK_INTERLEAVE
+#ifdef PLATFORM_MEMORY_REMAP
+#define VX_USE_HBM_REMAP
+#endif
 
 #define MMIO_CTL_ADDR 0x00
 #define MMIO_DEV_ADDR 0x10
@@ -156,6 +158,9 @@ public:
                   GLOBAL_MEM_SIZE - ALLOC_BASE_ADDR,
                   RAM_PAGE_SIZE,
                   CACHE_BLOCK_SIZE)
+  #ifdef VX_USE_HBM_REMAP
+    , bo_size_(0)
+  #endif
   #ifndef CPP_API
     , xrtDevice_(nullptr)
     , xrtKernel_(nullptr)
@@ -169,7 +174,7 @@ public:
   #endif
   #ifndef CPP_API
     for (auto &entry : xrtBuffers_) {
-    #ifdef BANK_INTERLEAVE
+    #ifdef VX_USE_HBM_REMAP
       xrtBOFree(entry);
     #else
       xrtBOFree(entry.second.xrtBuffer);
@@ -280,19 +285,37 @@ public:
 
     printf("info: device name=%s, memory_capacity=0x%lx bytes, memory_banks=%ld.\n", device_name.c_str(), global_mem_size_, num_banks);
 
-  #ifdef BANK_INTERLEAVE
+  #ifdef VX_USE_HBM_REMAP
+    constexpr uint32_t num_ports = PLATFORM_MEMORY_NUM_PORTS;
+    if (num_ports == 0 || num_banks < num_ports || (num_banks % num_ports) != 0) {
+      fprintf(stderr, "[VXDRV] Error: invalid remap geometry: banks=%lu, ports=%u\n",
+              num_banks, num_ports);
+      return -1;
+    }
+    if (!ispow2(num_ports) || !ispow2(num_banks / num_ports)) {
+      fprintf(stderr, "[VXDRV] Error: remap requires power-of-two ports and banks-per-port: banks=%lu, ports=%u\n",
+              num_banks, num_ports);
+      return -1;
+    }
+
+    bo_size_ = bank_size;
+    if (is_xrt_emulation() && bo_size_ > RAM_PAGE_SIZE) {
+      bo_size_ -= RAM_PAGE_SIZE;
+      printf("info: hw_emu detected, BO size reduced to 0x%lx (bank_size-1page).\n", bo_size_);
+    }
+
     xrtBuffers_.reserve(num_banks);
     for (uint32_t i = 0; i < num_banks; ++i) {
     #ifdef CPP_API
-      xrtBuffers_.emplace_back(xrtDevice_, bank_size, xrt::bo::flags::normal, i);
+      xrtBuffers_.emplace_back(xrtDevice_, bo_size_, xrt::bo::flags::normal, i);
     #else
-      CHECK_HANDLE(xrtBuffer, xrtBOAlloc(xrtDevice_, bank_size, XRT_BO_FLAGS_NONE, i), {
+      CHECK_HANDLE(xrtBuffer, xrtBOAlloc(xrtDevice_, bo_size_, XRT_BO_FLAGS_NONE, i), {
          return -1;
       });
       xrtBuffers_.push_back(xrtBuffer);
     #endif
-      printf("*** allocated bank%u/%u, size=%lu\n", i, num_banks, bank_size);
     }
+    printf("info: allocated %lu remap banks, size=0x%lx each.\n", num_banks, bo_size_);
   #endif
 
   #ifdef SCOPE
@@ -404,7 +427,7 @@ public:
     CHECK_ERR(global_mem_.allocate(asize, &addr), {
       return err;
     });
-  #ifndef BANK_INTERLEAVE
+  #ifndef VX_USE_HBM_REMAP
     uint32_t bank_id;
     CHECK_ERR(this->get_bank_info(addr, &bank_id, nullptr), {
       global_mem_.release(addr);
@@ -428,7 +451,7 @@ public:
     CHECK_ERR(global_mem_.reserve(dev_addr, size), {
       return err;
     });
-  #ifndef BANK_INTERLEAVE
+  #ifndef VX_USE_HBM_REMAP
     uint32_t bank_id;
     CHECK_ERR(this->get_bank_info(dev_addr, &bank_id, nullptr), {
       global_mem_.release(dev_addr);
@@ -451,15 +474,8 @@ public:
     CHECK_ERR(global_mem_.release(dev_addr), {
       return err;
     });
-  #ifdef BANK_INTERLEAVE
-    if (0 == global_mem_.allocated()) {
-    #ifndef CPP_API
-      for (auto &entry : xrtBuffers_) {
-        xrtBOFree(entry);
-      }
-    #endif
-      xrtBuffers_.clear();
-    }
+  #ifdef VX_USE_HBM_REMAP
+    // Remap mode pre-allocates per-bank BOs in init and releases them in the destructor.
   #else
     uint32_t bank_id;
     CHECK_ERR(this->get_bank_info(dev_addr, &bank_id, nullptr), {
@@ -547,11 +563,16 @@ public:
         return err;
       });
 
-      uint64_t bank_size = 1ull << lg2_bank_size_;
       uint64_t xfer_size;
-#ifdef BANK_INTERLEAVE
+#ifdef VX_USE_HBM_REMAP
       xfer_size = (remaining > CACHE_BLOCK_SIZE) ? CACHE_BLOCK_SIZE : remaining;
+      if (bo_offset + xfer_size > bo_size_) {
+        fprintf(stderr, "[VXDRV] upload oob: dev_addr=0x%lx bank=%u off=0x%lx xfer=0x%lx bo_size=0x%lx\n",
+                dev_addr, bo_index, bo_offset, xfer_size, bo_size_);
+        return -1;
+      }
 #else
+      uint64_t bank_size = 1ull << lg2_bank_size_;
       uint64_t bank_headroom = bank_size - bo_offset;
       xfer_size = (remaining > bank_headroom) ? bank_headroom : remaining;
 #endif
@@ -607,11 +628,16 @@ public:
         return err;
       });
 
-      uint64_t bank_size = 1ull << lg2_bank_size_;
       uint64_t xfer_size;
-#ifdef BANK_INTERLEAVE
+#ifdef VX_USE_HBM_REMAP
       xfer_size = (remaining > CACHE_BLOCK_SIZE) ? CACHE_BLOCK_SIZE : remaining;
+      if (bo_offset + xfer_size > bo_size_) {
+        fprintf(stderr, "[VXDRV] download oob: dev_addr=0x%lx bank=%u off=0x%lx xfer=0x%lx bo_size=0x%lx\n",
+                dev_addr, bo_index, bo_offset, xfer_size, bo_size_);
+        return -1;
+      }
 #else
+      uint64_t bank_size = 1ull << lg2_bank_size_;
       uint64_t bank_headroom = bank_size - bo_offset;
       xfer_size = (remaining > bank_headroom) ? bank_headroom : remaining;
 #endif
@@ -780,6 +806,9 @@ public:
 private:
 
   MemoryAllocator global_mem_;
+  #ifdef VX_USE_HBM_REMAP
+  uint64_t bo_size_;
+  #endif
   xrt_device_t xrtDevice_;
   xrt_kernel_t xrtKernel_;
   uint64_t dev_caps_;
@@ -791,26 +820,54 @@ private:
   uint32_t lg2_bank_size_;
   ShmStatus shm_;
 
-#ifdef BANK_INTERLEAVE
+#ifdef VX_USE_HBM_REMAP
 
   std::vector<xrt_buffer_t> xrtBuffers_;
 
   int get_bank_info(uint64_t addr, uint32_t *pIdx, uint64_t *pOff) {
-    uint32_t num_banks = 1 << lg2_num_banks_;
+    uint32_t num_banks = 1u << lg2_num_banks_;
+    constexpr uint32_t num_ports = PLATFORM_MEMORY_NUM_PORTS;
+    if (num_ports == 0 || num_banks < num_ports || (num_banks % num_ports) != 0) {
+      fprintf(stderr, "[VXDRV] Error: invalid remap geometry: banks=%u, ports=%u\n",
+              num_banks, num_ports);
+      return -1;
+    }
+
+    uint32_t banks_per_port = num_banks / num_ports;
+    if (!ispow2(num_ports) || !ispow2(banks_per_port)) {
+      fprintf(stderr, "[VXDRV] Error: remap requires power-of-two ports and banks-per-port: banks=%u, ports=%u\n",
+              num_banks, num_ports);
+      return -1;
+    }
+
+    uint32_t port_bits = log2ceil(num_ports);
+    uint32_t local_bits = log2ceil(banks_per_port);
     uint64_t block_addr = addr / CACHE_BLOCK_SIZE;
-    uint32_t index = block_addr & (num_banks - 1);
-    uint64_t offset = (block_addr >> lg2_num_banks_) * CACHE_BLOCK_SIZE;
+    uint64_t byte_off = addr & (CACHE_BLOCK_SIZE - 1);
+    uint64_t q = block_addr >> port_bits;
+    uint32_t r = block_addr & (num_ports - 1);
+    uint32_t index = (r << local_bits) | (uint32_t)(q & (banks_per_port - 1));
+    uint64_t offset = (q >> local_bits) * CACHE_BLOCK_SIZE + byte_off;
+    if (index >= num_banks || offset >= (1ull << lg2_bank_size_)) {
+      fprintf(stderr, "[VXDRV] Error: remapped address out of range: addr=0x%lx bank=%u offset=0x%lx\n",
+              addr, index, offset);
+      return -1;
+    }
     if (pIdx) {
       *pIdx = index;
     }
     if (pOff) {
       *pOff = offset;
     }
-    //printf("get_bank_info(addr=0x%lx, bank=%d, offset=0x%lx\n", addr, index, offset);
     return 0;
   }
 
   int get_buffer(uint32_t bank_id, xrt_buffer_t *pBuf) {
+    if (bank_id >= xrtBuffers_.size()) {
+      fprintf(stderr, "[VXDRV] Error: invalid bank id: %u (num_banks=%zu)\n",
+              bank_id, xrtBuffers_.size());
+      return -1;
+    }
     if (pBuf) {
       *pBuf = xrtBuffers_.at(bank_id);
     }

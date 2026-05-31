@@ -1,5 +1,6 @@
 all:
 	$(MAKE) -C generic_queue
+	$(MAKE) -C mem_remap
 	$(MAKE) -C mem_streamer
 	$(MAKE) -C cache_top
 	$(MAKE) -C core_top
@@ -9,6 +10,7 @@ all:
 
 run:
 	$(MAKE) -C generic_queue run
+	$(MAKE) -C mem_remap run
 	$(MAKE) -C mem_streamer run
 	$(MAKE) -C cache_top run
 	$(MAKE) -C core_top run
@@ -18,6 +20,7 @@ run:
 
 clean:
 	$(MAKE) -C generic_queue clean
+	$(MAKE) -C mem_remap clean
 	$(MAKE) -C mem_streamer clean
 	$(MAKE) -C cache_top clean
 	$(MAKE) -C core_top clean

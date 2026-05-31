@@ -30,20 +30,12 @@ module tb_vcs_xrtsim #(
   parameter C_M_AXI_MEM_ID_WIDTH    = `PLATFORM_MEMORY_ID_WIDTH,
   parameter C_M_AXI_MEM_DATA_WIDTH  = (`PLATFORM_MEMORY_DATA_SIZE * 8),
   parameter C_M_AXI_MEM_ADDR_WIDTH  = 64,
-`ifdef PLATFORM_MERGED_MEMORY_INTERFACE
-  parameter C_M_AXI_MEM_NUM_BANKS   = 1
-`else
-  parameter C_M_AXI_MEM_NUM_BANKS   = `PLATFORM_MEMORY_NUM_BANKS
-`endif
+  parameter C_M_AXI_MEM_NUM_PORTS   = `PLATFORM_MEMORY_NUM_PORTS
 );
 
   localparam int CLK_HALF_PERIOD_NS = 5;
   localparam int DATA_SIZE = `PLATFORM_MEMORY_DATA_SIZE;
-`ifdef PLATFORM_MERGED_MEMORY_INTERFACE
-  localparam int NUM_BANKS = 1;
-`else
-  localparam int NUM_BANKS = `PLATFORM_MEMORY_NUM_BANKS;
-`endif
+  localparam int NUM_PORTS = `PLATFORM_MEMORY_NUM_PORTS;
 
   // Response queue depth limit for backpressure
   localparam int RSP_QUEUE_LIMIT = 16;
@@ -70,11 +62,11 @@ module tb_vcs_xrtsim #(
   import "DPI-C" function int ctrl_recv_command(output int cmd_type, output int offset, output int value);
   import "DPI-C" function int ctrl_send_ack();
   import "DPI-C" function int ctrl_send_reg_value(int value);
-  import "DPI-C" function int mem_send_axi_ar(int bank, longint addr, int id, int len);
-  import "DPI-C" function int mem_send_axi_aw(int bank, longint addr, int id, int len);
-  import "DPI-C" function int mem_send_axi_w(input int bank, input byte unsigned data_bytes[], input longint strb, input int last, input int data_size);
+  import "DPI-C" function int mem_send_axi_ar(int port, longint addr, int id, int len);
+  import "DPI-C" function int mem_send_axi_aw(int port, longint addr, int id, int len);
+  import "DPI-C" function int mem_send_axi_w(input int port, input byte unsigned data_bytes[], input longint strb, input int last, input int data_size);
   import "DPI-C" function int mem_has_response();
-  import "DPI-C" function int mem_recv_response(output int rsp_type, output int bank, output int id, output byte unsigned data_bytes[], output int last, input int data_size);
+  import "DPI-C" function int mem_recv_response(output int rsp_type, output int port, output int id, output byte unsigned data_bytes[], output int last, input int data_size);
   import "DPI-C" function void socket_server_close();
 
   // ---- Clock & Reset ----
@@ -82,32 +74,32 @@ module tb_vcs_xrtsim #(
   logic ap_rst_n;
   always #(CLK_HALF_PERIOD_NS) ap_clk = ~ap_clk;
 
-  // ---- AXI Memory signals (per-bank) ----
-  logic         m_axi_mem_awvalid [NUM_BANKS];
-  logic         m_axi_mem_awready [NUM_BANKS];
-  logic [C_M_AXI_MEM_ADDR_WIDTH-1:0]  m_axi_mem_awaddr [NUM_BANKS];
-  logic [C_M_AXI_MEM_ID_WIDTH-1:0]    m_axi_mem_awid   [NUM_BANKS];
-  logic [7:0]   m_axi_mem_awlen   [NUM_BANKS];
-  logic         m_axi_mem_wvalid  [NUM_BANKS];
-  logic         m_axi_mem_wready  [NUM_BANKS];
-  logic [C_M_AXI_MEM_DATA_WIDTH-1:0]  m_axi_mem_wdata  [NUM_BANKS];
-  logic [C_M_AXI_MEM_DATA_WIDTH/8-1:0] m_axi_mem_wstrb [NUM_BANKS];
-  logic         m_axi_mem_wlast   [NUM_BANKS];
-  logic         m_axi_mem_arvalid [NUM_BANKS];
-  logic         m_axi_mem_arready [NUM_BANKS];
-  logic [C_M_AXI_MEM_ADDR_WIDTH-1:0]  m_axi_mem_araddr [NUM_BANKS];
-  logic [C_M_AXI_MEM_ID_WIDTH-1:0]    m_axi_mem_arid   [NUM_BANKS];
-  logic [7:0]   m_axi_mem_arlen   [NUM_BANKS];
-  logic         m_axi_mem_rvalid  [NUM_BANKS];
-  logic         m_axi_mem_rready  [NUM_BANKS];
-  logic [C_M_AXI_MEM_DATA_WIDTH-1:0]  m_axi_mem_rdata  [NUM_BANKS];
-  logic         m_axi_mem_rlast   [NUM_BANKS];
-  logic [C_M_AXI_MEM_ID_WIDTH-1:0]    m_axi_mem_rid    [NUM_BANKS];
-  logic [1:0]   m_axi_mem_rresp   [NUM_BANKS];
-  logic         m_axi_mem_bvalid  [NUM_BANKS];
-  logic         m_axi_mem_bready  [NUM_BANKS];
-  logic [1:0]   m_axi_mem_bresp   [NUM_BANKS];
-  logic [C_M_AXI_MEM_ID_WIDTH-1:0]    m_axi_mem_bid    [NUM_BANKS];
+  // ---- AXI Memory signals (per-port) ----
+  logic         m_axi_mem_awvalid [NUM_PORTS];
+  logic         m_axi_mem_awready [NUM_PORTS];
+  logic [C_M_AXI_MEM_ADDR_WIDTH-1:0]  m_axi_mem_awaddr [NUM_PORTS];
+  logic [C_M_AXI_MEM_ID_WIDTH-1:0]    m_axi_mem_awid   [NUM_PORTS];
+  logic [7:0]   m_axi_mem_awlen   [NUM_PORTS];
+  logic         m_axi_mem_wvalid  [NUM_PORTS];
+  logic         m_axi_mem_wready  [NUM_PORTS];
+  logic [C_M_AXI_MEM_DATA_WIDTH-1:0]  m_axi_mem_wdata  [NUM_PORTS];
+  logic [C_M_AXI_MEM_DATA_WIDTH/8-1:0] m_axi_mem_wstrb [NUM_PORTS];
+  logic         m_axi_mem_wlast   [NUM_PORTS];
+  logic         m_axi_mem_arvalid [NUM_PORTS];
+  logic         m_axi_mem_arready [NUM_PORTS];
+  logic [C_M_AXI_MEM_ADDR_WIDTH-1:0]  m_axi_mem_araddr [NUM_PORTS];
+  logic [C_M_AXI_MEM_ID_WIDTH-1:0]    m_axi_mem_arid   [NUM_PORTS];
+  logic [7:0]   m_axi_mem_arlen   [NUM_PORTS];
+  logic         m_axi_mem_rvalid  [NUM_PORTS];
+  logic         m_axi_mem_rready  [NUM_PORTS];
+  logic [C_M_AXI_MEM_DATA_WIDTH-1:0]  m_axi_mem_rdata  [NUM_PORTS];
+  logic         m_axi_mem_rlast   [NUM_PORTS];
+  logic [C_M_AXI_MEM_ID_WIDTH-1:0]    m_axi_mem_rid    [NUM_PORTS];
+  logic [1:0]   m_axi_mem_rresp   [NUM_PORTS];
+  logic         m_axi_mem_bvalid  [NUM_PORTS];
+  logic         m_axi_mem_bready  [NUM_PORTS];
+  logic [1:0]   m_axi_mem_bresp   [NUM_PORTS];
+  logic [C_M_AXI_MEM_ID_WIDTH-1:0]    m_axi_mem_bid    [NUM_PORTS];
 
   // ---- AXI-Lite Ctrl signals ----
   logic         s_axi_ctrl_awvalid;
@@ -140,9 +132,9 @@ module tb_vcs_xrtsim #(
     logic [C_M_AXI_MEM_ID_WIDTH-1:0] id;
   } b_rsp_t;
 
-  // Per-bank response queues (initial pushes, always_ff pops)
-  r_rsp_t r_queue[NUM_BANKS][$];
-  b_rsp_t b_queue[NUM_BANKS][$];
+  // Per-port response queues (initial pushes, always_ff pops)
+  r_rsp_t r_queue[NUM_PORTS][$];
+  b_rsp_t b_queue[NUM_PORTS][$];
 
   // ---- Ctrl command queue entry ----
   typedef struct {
@@ -158,24 +150,24 @@ module tb_vcs_xrtsim #(
   int dram_req_stall_p_exit;
   int dram_rsp_stall_p_enter;
   int dram_rsp_stall_p_exit;
-  bit req_stalling [NUM_BANKS];
-  bit rsp_stalling [NUM_BANKS];
+  bit req_stalling [NUM_PORTS];
+  bit rsp_stalling [NUM_PORTS];
 
   // ---- Fire flags: set by always_ff (<=), cleared by initial (=) ----
-  bit ar_fire_flag [NUM_BANKS];
-  logic [C_M_AXI_MEM_ADDR_WIDTH-1:0] ar_fire_addr [NUM_BANKS];
-  logic [C_M_AXI_MEM_ID_WIDTH-1:0]   ar_fire_id   [NUM_BANKS];
-  logic [7:0]                         ar_fire_len  [NUM_BANKS];
+  bit ar_fire_flag [NUM_PORTS];
+  logic [C_M_AXI_MEM_ADDR_WIDTH-1:0] ar_fire_addr [NUM_PORTS];
+  logic [C_M_AXI_MEM_ID_WIDTH-1:0]   ar_fire_id   [NUM_PORTS];
+  logic [7:0]                         ar_fire_len  [NUM_PORTS];
 
-  bit aw_fire_flag [NUM_BANKS];
-  logic [C_M_AXI_MEM_ADDR_WIDTH-1:0] aw_fire_addr [NUM_BANKS];
-  logic [C_M_AXI_MEM_ID_WIDTH-1:0]   aw_fire_id   [NUM_BANKS];
-  logic [7:0]                         aw_fire_len  [NUM_BANKS];
+  bit aw_fire_flag [NUM_PORTS];
+  logic [C_M_AXI_MEM_ADDR_WIDTH-1:0] aw_fire_addr [NUM_PORTS];
+  logic [C_M_AXI_MEM_ID_WIDTH-1:0]   aw_fire_id   [NUM_PORTS];
+  logic [7:0]                         aw_fire_len  [NUM_PORTS];
 
-  bit w_fire_flag [NUM_BANKS];
-  logic [C_M_AXI_MEM_DATA_WIDTH-1:0]   w_fire_data [NUM_BANKS];
-  logic [C_M_AXI_MEM_DATA_WIDTH/8-1:0] w_fire_strb [NUM_BANKS];
-  logic                                 w_fire_last [NUM_BANKS];
+  bit w_fire_flag [NUM_PORTS];
+  logic [C_M_AXI_MEM_DATA_WIDTH-1:0]   w_fire_data [NUM_PORTS];
+  logic [C_M_AXI_MEM_DATA_WIDTH/8-1:0] w_fire_strb [NUM_PORTS];
+  logic                                 w_fire_last [NUM_PORTS];
 
   // ---- Ctrl ack/read_rsp flags: set by always_ff (<=), cleared by initial (=) ----
   bit ctrl_ack_pending;
@@ -214,11 +206,7 @@ module tb_vcs_xrtsim #(
 `ifdef VCS_POST_IMPL
   ulp_vortex_afu_1_0 dut (
     .ap_clk(ap_clk), .ap_rst_n(ap_rst_n),
-  `ifdef PLATFORM_MERGED_MEMORY_INTERFACE
-    `REPEAT (1, TB_AXI_MEM_CONNECT, REPEAT_COMMA),
-  `else
-    `REPEAT (`PLATFORM_MEMORY_NUM_BANKS, TB_AXI_MEM_CONNECT, REPEAT_COMMA),
-  `endif
+    `REPEAT (`PLATFORM_MEMORY_NUM_PORTS, TB_AXI_MEM_CONNECT, REPEAT_COMMA),
     .s_axi_ctrl_awvalid(s_axi_ctrl_awvalid), .s_axi_ctrl_awready(s_axi_ctrl_awready),
     .s_axi_ctrl_awaddr(s_axi_ctrl_awaddr),
     .s_axi_ctrl_wvalid(s_axi_ctrl_wvalid), .s_axi_ctrl_wready(s_axi_ctrl_wready),
@@ -247,11 +235,7 @@ module tb_vcs_xrtsim #(
     .C_M_AXI_MEM_ADDR_WIDTH(C_M_AXI_MEM_ADDR_WIDTH)
   ) dut (
     .clk(ap_clk), .reset(~ap_rst_n),
-  `ifdef PLATFORM_MERGED_MEMORY_INTERFACE
-    `REPEAT (1, TB_AXI_MEM_CONNECT, REPEAT_COMMA),
-  `else
-    `REPEAT (`PLATFORM_MEMORY_NUM_BANKS, TB_AXI_MEM_CONNECT, REPEAT_COMMA),
-  `endif
+    `REPEAT (`PLATFORM_MEMORY_NUM_PORTS, TB_AXI_MEM_CONNECT, REPEAT_COMMA),
     .s_axi_ctrl_awvalid(s_axi_ctrl_awvalid), .s_axi_ctrl_awready(s_axi_ctrl_awready),
     .s_axi_ctrl_awaddr(s_axi_ctrl_awaddr),
     .s_axi_ctrl_wvalid(s_axi_ctrl_wvalid), .s_axi_ctrl_wready(s_axi_ctrl_wready),
@@ -397,10 +381,10 @@ module tb_vcs_xrtsim #(
   end
 
   // ================================================================
-  // AXI Memory Slave — generate for (per-bank)
+  // AXI Memory Slave — generate for (per-port)
   // ================================================================
   generate
-    for (genvar gi = 0; gi < NUM_BANKS; gi++) begin : mem_bank
+    for (genvar gi = 0; gi < NUM_PORTS; gi++) begin : mem_port
 
       // ---- Ready signals (always_comb — queue.size() requires procedural context) ----
       always_comb begin
@@ -434,7 +418,7 @@ module tb_vcs_xrtsim #(
             m_axi_mem_rlast[gi]  <= entry.last;
             m_axi_mem_rresp[gi]  <= 2'b00;
           `ifdef DEBUG_AXI
-            $display("[TB] R-DRV: bank=%0d id=%0d last=%0d t=%0t",
+            $display("[TB] R-DRV: port=%0d id=%0d last=%0d t=%0t",
                      gi, entry.id, entry.last, $time);
           `endif
           end
@@ -457,7 +441,7 @@ module tb_vcs_xrtsim #(
             m_axi_mem_bid[gi]    <= entry.id;
             m_axi_mem_bresp[gi]  <= 2'b00;
           `ifdef DEBUG_AXI
-            $display("[TB] B-DRV: bank=%0d id=%0d t=%0t", gi, entry.id, $time);
+            $display("[TB] B-DRV: port=%0d id=%0d t=%0t", gi, entry.id, $time);
           `endif
           end
         end
@@ -492,7 +476,7 @@ module tb_vcs_xrtsim #(
         end
       end
 
-      // ---- Markov stall (per-bank) ----
+      // ---- Markov stall (per-port) ----
       // (uses `always` — stall state also initialized by initial block)
       always @(posedge ap_clk) begin
         if (!ap_rst_n) begin
@@ -516,7 +500,7 @@ module tb_vcs_xrtsim #(
   initial begin : dpi_block
     int socket_port;
     int ret;
-    int rsp_type, rsp_bank, rsp_id, rsp_last;
+    int rsp_type, rsp_port, rsp_id, rsp_last;
     int cmd_type, cmd_offset, cmd_value;
 
     if (!$value$plusargs("SOCKET_PORT=%d", socket_port)) socket_port = 9999;
@@ -540,7 +524,7 @@ module tb_vcs_xrtsim #(
     ap_clk   = 0;
     ap_rst_n = 0;
 
-    // R/B response signals are reset by the per-bank always_ff blocks above
+    // R/B response signals are reset by the per-port always_ff blocks above
     // (lines 416/445). Adding initial-block writes here would be an illegal
     // multi-driver combination under VCS (matches fpint_improve approach).
     s_axi_ctrl_awvalid = 0;
@@ -554,7 +538,7 @@ module tb_vcs_xrtsim #(
     s_axi_ctrl_rready  = 0;
 
     // Initialize fire flags
-    for (int i = 0; i < NUM_BANKS; i++) begin
+    for (int i = 0; i < NUM_PORTS; i++) begin
       ar_fire_flag[i] = 0;
       aw_fire_flag[i] = 0;
       w_fire_flag[i]  = 0;
@@ -599,7 +583,7 @@ module tb_vcs_xrtsim #(
 
       // ---- 2. Poll mem responses → push to r_queue / b_queue ----
       while (mem_has_response()) begin
-        ret = mem_recv_response(rsp_type, rsp_bank, rsp_id, r_data_buf, rsp_last, DATA_SIZE);
+        ret = mem_recv_response(rsp_type, rsp_port, rsp_id, r_data_buf, rsp_last, DATA_SIZE);
         if (ret != 0) break;
         if (rsp_type == RSP_AXI_R) begin
           r_rsp_t enq;
@@ -607,27 +591,27 @@ module tb_vcs_xrtsim #(
           enq.last = rsp_last;
           for (int i = 0; i < DATA_SIZE; i++)
             enq.data[i*8 +: 8] = r_data_buf[i];
-          r_queue[rsp_bank].push_back(enq);
+          r_queue[rsp_port].push_back(enq);
         `ifdef DEBUG_AXI
-          $display("[TB] R-ENQ: bank=%0d id=%0d last=%0d qlen=%0d t=%0t",
-                   rsp_bank, rsp_id, rsp_last, r_queue[rsp_bank].size(), $time);
+          $display("[TB] R-ENQ: port=%0d id=%0d last=%0d qlen=%0d t=%0t",
+                   rsp_port, rsp_id, rsp_last, r_queue[rsp_port].size(), $time);
         `endif
         end else if (rsp_type == RSP_AXI_B) begin
           b_rsp_t enq;
           enq.id = rsp_id;
-          b_queue[rsp_bank].push_back(enq);
+          b_queue[rsp_port].push_back(enq);
         `ifdef DEBUG_AXI
-          $display("[TB] B-ENQ: bank=%0d id=%0d qlen=%0d t=%0t",
-                   rsp_bank, rsp_id, b_queue[rsp_bank].size(), $time);
+          $display("[TB] B-ENQ: port=%0d id=%0d qlen=%0d t=%0t",
+                   rsp_port, rsp_id, b_queue[rsp_port].size(), $time);
         `endif
         end
       end
 
       // ---- 3. Consume fire flags → DPI send ----
-      for (int i = 0; i < NUM_BANKS; i++) begin
+      for (int i = 0; i < NUM_PORTS; i++) begin
         if (ar_fire_flag[i]) begin
         `ifdef DEBUG_AXI
-          $display("[TB] AR: bank=%0d addr=0x%016x id=%0d len=%0d t=%0t",
+          $display("[TB] AR: port=%0d addr=0x%016x id=%0d len=%0d t=%0t",
                    i, ar_fire_addr[i], ar_fire_id[i], ar_fire_len[i], $time);
         `endif
           ret = mem_send_axi_ar(i, ar_fire_addr[i], ar_fire_id[i], ar_fire_len[i]);
@@ -635,7 +619,7 @@ module tb_vcs_xrtsim #(
         end
         if (aw_fire_flag[i]) begin
         `ifdef DEBUG_AXI
-          $display("[TB] AW: bank=%0d addr=0x%016x id=%0d len=%0d t=%0t",
+          $display("[TB] AW: port=%0d addr=0x%016x id=%0d len=%0d t=%0t",
                    i, aw_fire_addr[i], aw_fire_id[i], aw_fire_len[i], $time);
         `endif
           ret = mem_send_axi_aw(i, aw_fire_addr[i], aw_fire_id[i], aw_fire_len[i]);

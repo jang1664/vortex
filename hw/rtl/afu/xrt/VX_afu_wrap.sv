@@ -21,22 +21,14 @@ module VX_afu_wrap import VX_gpu_pkg::*; #(
 	parameter C_M_AXI_MEM_ID_WIDTH    = `PLATFORM_MEMORY_ID_WIDTH,
 	parameter C_M_AXI_MEM_DATA_WIDTH  = `PLATFORM_MEMORY_DATA_SIZE * 8,
 	parameter C_M_AXI_MEM_ADDR_WIDTH  = 64,
-`ifdef PLATFORM_MERGED_MEMORY_INTERFACE
-	parameter C_M_AXI_MEM_NUM_BANKS   = 1
-`else
-	parameter C_M_AXI_MEM_NUM_BANKS   = `PLATFORM_MEMORY_NUM_BANKS
-`endif
+	parameter C_M_AXI_MEM_NUM_PORTS   = `PLATFORM_MEMORY_NUM_PORTS
 ) (
     // System signals
     input wire clk,
     input wire reset,
 
     // AXI4 master interface
-`ifdef PLATFORM_MERGED_MEMORY_INTERFACE
-	`REPEAT (1, GEN_AXI_MEM, REPEAT_COMMA),
-`else
-	`REPEAT (`PLATFORM_MEMORY_NUM_BANKS, GEN_AXI_MEM, REPEAT_COMMA),
-`endif
+	`REPEAT (`PLATFORM_MEMORY_NUM_PORTS, GEN_AXI_MEM, REPEAT_COMMA),
     // AXI4-Lite slave interface
     input  wire                                 s_axi_ctrl_awvalid,
     output wire                                 s_axi_ctrl_awready,
@@ -72,58 +64,54 @@ module VX_afu_wrap import VX_gpu_pkg::*; #(
 	} state_e;
 
 	localparam PENDING_WR_SIZEW    = 12; // max outstanding requests size
-	localparam NUM_MEM_BANKS_SIZEW = `CLOG2(C_M_AXI_MEM_NUM_BANKS+1);
+	localparam NUM_MEM_PORTS_SIZEW = `CLOG2(C_M_AXI_MEM_NUM_PORTS+1);
 
-	wire                                 m_axi_mem_awvalid_a [C_M_AXI_MEM_NUM_BANKS];
-    wire                                 m_axi_mem_awready_a [C_M_AXI_MEM_NUM_BANKS];
-    wire [C_M_AXI_MEM_ADDR_WIDTH-1:0]    m_axi_mem_awaddr_a [C_M_AXI_MEM_NUM_BANKS];
-    wire [C_M_AXI_MEM_ID_WIDTH-1:0]      m_axi_mem_awid_a [C_M_AXI_MEM_NUM_BANKS];
-    wire [7:0]                           m_axi_mem_awlen_a [C_M_AXI_MEM_NUM_BANKS];
-    wire [2:0]                           m_axi_mem_awsize_a [C_M_AXI_MEM_NUM_BANKS];
-    wire [1:0]                           m_axi_mem_awburst_a [C_M_AXI_MEM_NUM_BANKS];
-    wire [1:0]                           m_axi_mem_awlock_a [C_M_AXI_MEM_NUM_BANKS];
-    wire [3:0]                           m_axi_mem_awcache_a [C_M_AXI_MEM_NUM_BANKS];
-    wire [2:0]                           m_axi_mem_awprot_a [C_M_AXI_MEM_NUM_BANKS];
-    wire [3:0]                           m_axi_mem_awqos_a [C_M_AXI_MEM_NUM_BANKS];
-    wire [3:0]                           m_axi_mem_awregion_a [C_M_AXI_MEM_NUM_BANKS];
+	wire                                 m_axi_mem_awvalid_a [C_M_AXI_MEM_NUM_PORTS];
+    wire                                 m_axi_mem_awready_a [C_M_AXI_MEM_NUM_PORTS];
+    wire [C_M_AXI_MEM_ADDR_WIDTH-1:0]    m_axi_mem_awaddr_a [C_M_AXI_MEM_NUM_PORTS];
+    wire [C_M_AXI_MEM_ID_WIDTH-1:0]      m_axi_mem_awid_a [C_M_AXI_MEM_NUM_PORTS];
+    wire [7:0]                           m_axi_mem_awlen_a [C_M_AXI_MEM_NUM_PORTS];
+    wire [2:0]                           m_axi_mem_awsize_a [C_M_AXI_MEM_NUM_PORTS];
+    wire [1:0]                           m_axi_mem_awburst_a [C_M_AXI_MEM_NUM_PORTS];
+    wire [1:0]                           m_axi_mem_awlock_a [C_M_AXI_MEM_NUM_PORTS];
+    wire [3:0]                           m_axi_mem_awcache_a [C_M_AXI_MEM_NUM_PORTS];
+    wire [2:0]                           m_axi_mem_awprot_a [C_M_AXI_MEM_NUM_PORTS];
+    wire [3:0]                           m_axi_mem_awqos_a [C_M_AXI_MEM_NUM_PORTS];
+    wire [3:0]                           m_axi_mem_awregion_a [C_M_AXI_MEM_NUM_PORTS];
 
-    wire                                 m_axi_mem_wvalid_a [C_M_AXI_MEM_NUM_BANKS];
-    wire                                 m_axi_mem_wready_a [C_M_AXI_MEM_NUM_BANKS];
-    wire [C_M_AXI_MEM_DATA_WIDTH-1:0]    m_axi_mem_wdata_a [C_M_AXI_MEM_NUM_BANKS];
-    wire [C_M_AXI_MEM_DATA_WIDTH/8-1:0]  m_axi_mem_wstrb_a [C_M_AXI_MEM_NUM_BANKS];
-    wire                                 m_axi_mem_wlast_a [C_M_AXI_MEM_NUM_BANKS];
+    wire                                 m_axi_mem_wvalid_a [C_M_AXI_MEM_NUM_PORTS];
+    wire                                 m_axi_mem_wready_a [C_M_AXI_MEM_NUM_PORTS];
+    wire [C_M_AXI_MEM_DATA_WIDTH-1:0]    m_axi_mem_wdata_a [C_M_AXI_MEM_NUM_PORTS];
+    wire [C_M_AXI_MEM_DATA_WIDTH/8-1:0]  m_axi_mem_wstrb_a [C_M_AXI_MEM_NUM_PORTS];
+    wire                                 m_axi_mem_wlast_a [C_M_AXI_MEM_NUM_PORTS];
 
-    wire                                 m_axi_mem_bvalid_a [C_M_AXI_MEM_NUM_BANKS];
-    wire                                 m_axi_mem_bready_a [C_M_AXI_MEM_NUM_BANKS];
-    wire [C_M_AXI_MEM_ID_WIDTH-1:0]      m_axi_mem_bid_a [C_M_AXI_MEM_NUM_BANKS];
-    wire [1:0]                           m_axi_mem_bresp_a [C_M_AXI_MEM_NUM_BANKS];
+    wire                                 m_axi_mem_bvalid_a [C_M_AXI_MEM_NUM_PORTS];
+    wire                                 m_axi_mem_bready_a [C_M_AXI_MEM_NUM_PORTS];
+    wire [C_M_AXI_MEM_ID_WIDTH-1:0]      m_axi_mem_bid_a [C_M_AXI_MEM_NUM_PORTS];
+    wire [1:0]                           m_axi_mem_bresp_a [C_M_AXI_MEM_NUM_PORTS];
 
-    wire                                 m_axi_mem_arvalid_a [C_M_AXI_MEM_NUM_BANKS];
-    wire                                 m_axi_mem_arready_a [C_M_AXI_MEM_NUM_BANKS];
-    wire [C_M_AXI_MEM_ADDR_WIDTH-1:0]    m_axi_mem_araddr_a [C_M_AXI_MEM_NUM_BANKS];
-    wire [C_M_AXI_MEM_ID_WIDTH-1:0]      m_axi_mem_arid_a [C_M_AXI_MEM_NUM_BANKS];
-    wire [7:0]                           m_axi_mem_arlen_a [C_M_AXI_MEM_NUM_BANKS];
-    wire [2:0]                           m_axi_mem_arsize_a [C_M_AXI_MEM_NUM_BANKS];
-    wire [1:0]                           m_axi_mem_arburst_a [C_M_AXI_MEM_NUM_BANKS];
-    wire [1:0]                           m_axi_mem_arlock_a [C_M_AXI_MEM_NUM_BANKS];
-    wire [3:0]                           m_axi_mem_arcache_a [C_M_AXI_MEM_NUM_BANKS];
-    wire [2:0]                           m_axi_mem_arprot_a [C_M_AXI_MEM_NUM_BANKS];
-    wire [3:0]                           m_axi_mem_arqos_a [C_M_AXI_MEM_NUM_BANKS];
-    wire [3:0]                           m_axi_mem_arregion_a [C_M_AXI_MEM_NUM_BANKS];
+    wire                                 m_axi_mem_arvalid_a [C_M_AXI_MEM_NUM_PORTS];
+    wire                                 m_axi_mem_arready_a [C_M_AXI_MEM_NUM_PORTS];
+    wire [C_M_AXI_MEM_ADDR_WIDTH-1:0]    m_axi_mem_araddr_a [C_M_AXI_MEM_NUM_PORTS];
+    wire [C_M_AXI_MEM_ID_WIDTH-1:0]      m_axi_mem_arid_a [C_M_AXI_MEM_NUM_PORTS];
+    wire [7:0]                           m_axi_mem_arlen_a [C_M_AXI_MEM_NUM_PORTS];
+    wire [2:0]                           m_axi_mem_arsize_a [C_M_AXI_MEM_NUM_PORTS];
+    wire [1:0]                           m_axi_mem_arburst_a [C_M_AXI_MEM_NUM_PORTS];
+    wire [1:0]                           m_axi_mem_arlock_a [C_M_AXI_MEM_NUM_PORTS];
+    wire [3:0]                           m_axi_mem_arcache_a [C_M_AXI_MEM_NUM_PORTS];
+    wire [2:0]                           m_axi_mem_arprot_a [C_M_AXI_MEM_NUM_PORTS];
+    wire [3:0]                           m_axi_mem_arqos_a [C_M_AXI_MEM_NUM_PORTS];
+    wire [3:0]                           m_axi_mem_arregion_a [C_M_AXI_MEM_NUM_PORTS];
 
-    wire                                 m_axi_mem_rvalid_a [C_M_AXI_MEM_NUM_BANKS];
-    wire                                 m_axi_mem_rready_a [C_M_AXI_MEM_NUM_BANKS];
-    wire [C_M_AXI_MEM_DATA_WIDTH-1:0]    m_axi_mem_rdata_a [C_M_AXI_MEM_NUM_BANKS];
-    wire                                 m_axi_mem_rlast_a [C_M_AXI_MEM_NUM_BANKS];
-    wire [C_M_AXI_MEM_ID_WIDTH-1:0]      m_axi_mem_rid_a [C_M_AXI_MEM_NUM_BANKS];
-    wire [1:0]                           m_axi_mem_rresp_a [C_M_AXI_MEM_NUM_BANKS];
+    wire                                 m_axi_mem_rvalid_a [C_M_AXI_MEM_NUM_PORTS];
+    wire                                 m_axi_mem_rready_a [C_M_AXI_MEM_NUM_PORTS];
+    wire [C_M_AXI_MEM_DATA_WIDTH-1:0]    m_axi_mem_rdata_a [C_M_AXI_MEM_NUM_PORTS];
+    wire                                 m_axi_mem_rlast_a [C_M_AXI_MEM_NUM_PORTS];
+    wire [C_M_AXI_MEM_ID_WIDTH-1:0]      m_axi_mem_rid_a [C_M_AXI_MEM_NUM_PORTS];
+    wire [1:0]                           m_axi_mem_rresp_a [C_M_AXI_MEM_NUM_PORTS];
 
 	// convert memory interface to array
-`ifdef PLATFORM_MERGED_MEMORY_INTERFACE
-	`REPEAT (1, AXI_MEM_TO_ARRAY, REPEAT_SEMICOLON);
-`else
-	`REPEAT (`PLATFORM_MEMORY_NUM_BANKS, AXI_MEM_TO_ARRAY, REPEAT_SEMICOLON);
-`endif
+	`REPEAT (`PLATFORM_MEMORY_NUM_PORTS, AXI_MEM_TO_ARRAY, REPEAT_SEMICOLON);
 
 	reg [`CLOG2(`RESET_DELAY+1)-1:0] vx_reset_ctr;
 	reg [PENDING_WR_SIZEW-1:0] vx_pending_writes;
@@ -250,10 +238,10 @@ module VX_afu_wrap import VX_gpu_pkg::*; #(
 		end
 	end
 
-	wire [C_M_AXI_MEM_NUM_BANKS-1:0] m_axi_wr_req_fire, m_axi_wr_rsp_fire;
-	wire [NUM_MEM_BANKS_SIZEW-1:0] cur_wr_reqs, cur_wr_rsps;
+	wire [C_M_AXI_MEM_NUM_PORTS-1:0] m_axi_wr_req_fire, m_axi_wr_rsp_fire;
+	wire [NUM_MEM_PORTS_SIZEW-1:0] cur_wr_reqs, cur_wr_rsps;
 
-	for (genvar i = 0; i < C_M_AXI_MEM_NUM_BANKS; ++i) begin : g_m_axi_wr_req_fire
+	for (genvar i = 0; i < C_M_AXI_MEM_NUM_PORTS; ++i) begin : g_m_axi_wr_req_fire
 		VX_axi_write_ack axi_write_ack (
             .clk    (clk),
             .reset  (reset),
@@ -268,15 +256,15 @@ module VX_afu_wrap import VX_gpu_pkg::*; #(
         );
 	end
 
-	for (genvar i = 0; i < C_M_AXI_MEM_NUM_BANKS; ++i) begin : g_m_axi_wr_rsp_fire
+	for (genvar i = 0; i < C_M_AXI_MEM_NUM_PORTS; ++i) begin : g_m_axi_wr_rsp_fire
 		assign m_axi_wr_rsp_fire[i] = m_axi_mem_bvalid_a[i] && m_axi_mem_bready_a[i];
 	end
 
 	`POP_COUNT(cur_wr_reqs, m_axi_wr_req_fire);
 	`POP_COUNT(cur_wr_rsps, m_axi_wr_rsp_fire);
 
-	wire signed [NUM_MEM_BANKS_SIZEW:0] reqs_sub = (NUM_MEM_BANKS_SIZEW+1)'(cur_wr_reqs) -
-	                                                     (NUM_MEM_BANKS_SIZEW+1)'(cur_wr_rsps);
+	wire signed [NUM_MEM_PORTS_SIZEW:0] reqs_sub = (NUM_MEM_PORTS_SIZEW+1)'(cur_wr_reqs) -
+	                                                     (NUM_MEM_PORTS_SIZEW+1)'(cur_wr_rsps);
 
 	always @(posedge clk) begin
 		if (reset || ap_reset) begin
@@ -334,10 +322,10 @@ module VX_afu_wrap import VX_gpu_pkg::*; #(
 		.dcr_wr_data	(dcr_wr_data)
 	);
 
-	wire [M_AXI_MEM_ADDR_WIDTH-1:0] m_axi_mem_awaddr_u [C_M_AXI_MEM_NUM_BANKS];
-	wire [M_AXI_MEM_ADDR_WIDTH-1:0] m_axi_mem_araddr_u [C_M_AXI_MEM_NUM_BANKS];
+	wire [M_AXI_MEM_ADDR_WIDTH-1:0] m_axi_mem_awaddr_u [C_M_AXI_MEM_NUM_PORTS];
+	wire [M_AXI_MEM_ADDR_WIDTH-1:0] m_axi_mem_araddr_u [C_M_AXI_MEM_NUM_PORTS];
 
-	for (genvar i = 0; i < C_M_AXI_MEM_NUM_BANKS; ++i) begin : g_addressing
+	for (genvar i = 0; i < C_M_AXI_MEM_NUM_PORTS; ++i) begin : g_addressing
 		assign m_axi_mem_awaddr_a[i] = C_M_AXI_MEM_ADDR_WIDTH'(m_axi_mem_awaddr_u[i]) + C_M_AXI_MEM_ADDR_WIDTH'(`PLATFORM_MEMORY_OFFSET);
 		assign m_axi_mem_araddr_a[i] = C_M_AXI_MEM_ADDR_WIDTH'(m_axi_mem_araddr_u[i]) + C_M_AXI_MEM_ADDR_WIDTH'(`PLATFORM_MEMORY_OFFSET);
 	end
@@ -348,7 +336,7 @@ module VX_afu_wrap import VX_gpu_pkg::*; #(
 		.AXI_DATA_WIDTH (C_M_AXI_MEM_DATA_WIDTH),
 		.AXI_ADDR_WIDTH (M_AXI_MEM_ADDR_WIDTH),
 		.AXI_TID_WIDTH  (C_M_AXI_MEM_ID_WIDTH),
-		.AXI_NUM_BANKS  (C_M_AXI_MEM_NUM_BANKS)
+		.AXI_NUM_PORTS  (C_M_AXI_MEM_NUM_PORTS)
 	) vortex_axi (
 		`SCOPE_IO_BIND  (1)
 
@@ -559,7 +547,7 @@ module VX_afu_wrap import VX_gpu_pkg::*; #(
 
 `ifdef DBG_TRACE_AFU
     always @(posedge clk) begin
-		for (integer i = 0; i < C_M_AXI_MEM_NUM_BANKS; ++i) begin
+		for (integer i = 0; i < C_M_AXI_MEM_NUM_PORTS; ++i) begin
 			if (m_axi_mem_awvalid_a[i] && m_axi_mem_awready_a[i]) begin
 				`TRACE(2, ("%t: AXI Wr Req [%0d]: addr=0x%0h, id=0x%0h\n", $time, i, m_axi_mem_awaddr_a[i], m_axi_mem_awid_a[i]))
 			end

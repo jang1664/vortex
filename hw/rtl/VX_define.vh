@@ -370,6 +370,22 @@
     assign itf.rsp_data  = '0; \
     `UNUSED_VAR (itf.rsp_ready)
 
+`define INIT_VX_LSU_MEM_IF(itf) \
+    assign itf.req_valid = 0; \
+    assign itf.req_data = '0; \
+    `UNUSED_VAR (itf.req_ready) \
+    `UNUSED_VAR (itf.rsp_valid) \
+    `UNUSED_VAR (itf.rsp_data) \
+    assign itf.rsp_ready = 0;
+
+`define UNUSED_VX_LSU_MEM_IF(itf) \
+    `UNUSED_VAR (itf.req_valid) \
+    `UNUSED_VAR (itf.req_data) \
+    assign itf.req_ready = 0; \
+    assign itf.rsp_valid = 0; \
+    assign itf.rsp_data  = '0; \
+    `UNUSED_VAR (itf.rsp_ready)
+
 `define DECLARE_MEM_BUS_WIRES(prefix, DATA_SIZE, ADDR_WIDTH, TAG_WIDTH) \
     logic                       prefix``_req_valid; \
     logic [ADDR_WIDTH-1:0]      prefix``_req_addr; \

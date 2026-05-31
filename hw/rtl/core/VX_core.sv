@@ -261,6 +261,8 @@ module VX_core import VX_gpu_pkg::*; #(
         .gemm_data_if      (gemm_data_if)
     );
 
+`ifdef ENABLE_GEMM_ACCEL
+
     VX_dma_node #(
       .INSTANCE_ID(INSTANCE_ID),
       .N_MASTER(`NUM_LSU_BLOCKS+1),
@@ -291,6 +293,49 @@ module VX_core import VX_gpu_pkg::*; #(
         ,.gemm_node_perf(accel_perf.gemm_node)
     `endif
     );
+
+`else
+
+    for (genvar i = 0; i < `NUM_LSU_BLOCKS; ++i) begin : g_disabled_dma_ctrl
+        VX_lsu_mem_zero_rsp #(
+            .NUM_LANES (`NUM_LSU_LANES),
+            .DATA_SIZE (LSU_WORD_SIZE),
+            .TAG_WIDTH (LSU_TAG_WIDTH)
+        ) dma_ctrl_rsp (
+            .clk    (clk),
+            .reset  (reset),
+            .mem_if (dma_ctrl_if[i])
+        );
+    end
+
+    for (genvar i = 0; i < `NUM_LSU_BLOCKS; ++i) begin : g_disabled_gemm_ctrl
+        VX_lsu_mem_zero_rsp #(
+            .NUM_LANES (`NUM_LSU_LANES),
+            .DATA_SIZE (LSU_WORD_SIZE),
+            .TAG_WIDTH (LSU_TAG_WIDTH)
+        ) gemm_ctrl_rsp (
+            .clk    (clk),
+            .reset  (reset),
+            .mem_if (gemm_ctrl_if[i])
+        );
+    end
+
+    `INIT_VX_LSU_MEM_IF   (dma_ctrl_if[`NUM_LSU_BLOCKS])
+    `UNUSED_VX_LSU_MEM_IF (dma_ctrl_if[`NUM_LSU_BLOCKS])
+
+    for (genvar i = 0; i < `NUM_LSU_LANES; ++i) begin : g_disabled_accel_data
+        `INIT_VX_MEM_BUS_IF (dma_local_data_if[i])
+        `INIT_VX_MEM_BUS_IF (gemm_data_if[i])
+    end
+    `INIT_VX_MEM_BUS_IF (dma_global_data_if)
+
+`ifdef PERF_ENABLE
+    assign accel_perf.dma       = '0;
+    assign accel_perf.gemm_unit = '0;
+    assign accel_perf.gemm_node = '0;
+`endif
+
+`endif
 
 `ifdef PERF_ENABLE
 
