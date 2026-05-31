@@ -8,6 +8,14 @@ from tools.latency_bench.suite import load_suite
 
 
 class CaseMatrixTest(unittest.TestCase):
+    def test_vector_kernel_suite_leaves_threads_to_configs(self) -> None:
+        suite = load_suite(
+            Path.cwd() / "tools" / "latency_bench" / "suites" / "llama2_7b_vector_kernels.yaml",
+            repo_root=Path.cwd(),
+        )
+
+        self.assertEqual(("--cores=1",), suite.defaults.blackbox_args)
+
     def test_expands_pow2_matrix_into_cases(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             suite_path = Path(tmp) / "suite.yaml"

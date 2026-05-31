@@ -2,6 +2,9 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+BUILD_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"]"
   echo "Modes:"
@@ -29,7 +32,7 @@ if [[ "${mode}" == "" ]]; then
   exit 1
 fi
 
-APP=fpint_gemm_ffn_hw_improve
+APP=fpint_gemm_ffn_hw
 ARGS="-m 2 -n 32 -k 128"
 CONFIGS_EXTRA=""
 
@@ -144,7 +147,7 @@ fi
 # ----------------------------------------------------------------------------
 if [[ "${mode}" == "hw_emu" || "${mode}" == "all" ]]; then
   CONFIGS=${CONFIGS} \
-  FPGA_BIN_DIR=/home/jaeyongjang/project.local/vortex/build/hw/syn/xilinx/xrt/hw_emu/bin \
+  FPGA_BIN_DIR=${FPGA_BIN_DIR:-${BUILD_DIR}/hw/syn/xilinx/xrt/hw_emu/bin} \
   PLATFORM=xilinx_u55c_gen3x16_xdma_3_202210_1 \
   DRIVER=xrt \
   TARGET=hw_emu \
@@ -162,7 +165,7 @@ if [[ "${mode}" == "hw" || "${mode}" == "all" ]]; then
   PLATFORM=xilinx_u55c_gen3x16_xdma_3_202210_1 \
   DRIVER=xrt \
   TARGET=hw \
-  CHIPSCOPE=1 \
   ./ci/blackbox.sh --threads=${NUM_THREADS} --cores=${NUM_CORES} --driver=xrt --app=${APP} --args=\"${ARGS}\" | tee bb.log
   "
+  # CHIPSCOPE=1 \
 fi

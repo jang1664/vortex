@@ -7,7 +7,7 @@ defaults:
   xrt_device_index: 0
   blackbox_args:
     - --cores=1
-    - --threads=8
+    # Keep thread count under CONFIGS/.envrc control instead of forcing 8 here.
 
 # Raw-DB sweep for Llama2-7B non-GEMM kernels.
 # Covered dimensions:
