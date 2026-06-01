@@ -136,22 +136,18 @@ enum class XrtMemMapMode {
   Remap,
 };
 
-#ifndef XRT_MEM_MAP
-#define XRT_MEM_MAP remap
+#ifdef PLATFORM_MEMORY_REMAP
+#define VX_USE_PLATFORM_MEMORY_REMAP
 #endif
 
-#define XRT_MEM_MAP_legacy 1
-#define XRT_MEM_MAP_remap 2
-#define XRT_MEM_MAP_TOKEN_(mode) XRT_MEM_MAP_##mode
-#define XRT_MEM_MAP_TOKEN(mode) XRT_MEM_MAP_TOKEN_(mode)
-#define XRT_MEM_MAP_SELECTED XRT_MEM_MAP_TOKEN(XRT_MEM_MAP)
+#if defined(PLATFORM_MEMORY_REMAP) || defined(BANK_INTERLEAVE)
+#define VX_USE_BANKED_XRT_BO
+#endif
 
-#if XRT_MEM_MAP_SELECTED == XRT_MEM_MAP_legacy
-static constexpr XrtMemMapMode kXrtMemMapMode = XrtMemMapMode::Legacy;
-#elif XRT_MEM_MAP_SELECTED == XRT_MEM_MAP_remap
+#ifdef VX_USE_PLATFORM_MEMORY_REMAP
 static constexpr XrtMemMapMode kXrtMemMapMode = XrtMemMapMode::Remap;
 #else
-#error "XRT_MEM_MAP must be legacy or remap"
+static constexpr XrtMemMapMode kXrtMemMapMode = XrtMemMapMode::Legacy;
 #endif
 
 static const char* xrt_mem_map_mode_name(XrtMemMapMode mode) {
@@ -173,7 +169,7 @@ public:
                   GLOBAL_MEM_SIZE - ALLOC_BASE_ADDR,
                   RAM_PAGE_SIZE,
                   CACHE_BLOCK_SIZE)
-  #ifdef BANK_INTERLEAVE
+  #ifdef VX_USE_BANKED_XRT_BO
     , bo_size_(0)
   #endif
   #ifndef CPP_API
@@ -190,7 +186,7 @@ public:
   #endif
   #ifndef CPP_API
     for (auto &entry : xrtBuffers_) {
-    #ifdef BANK_INTERLEAVE
+    #ifdef VX_USE_BANKED_XRT_BO
       xrtBOFree(entry);
     #else
       xrtBOFree(entry.second.xrtBuffer);
@@ -303,7 +299,7 @@ public:
            device_name.c_str(), global_mem_size_, num_banks,
            xrt_mem_map_mode_name(kXrtMemMapMode));
 
-  #ifdef BANK_INTERLEAVE
+  #ifdef VX_USE_BANKED_XRT_BO
     // hw_emu sim_qdma has an off-by-one in its PC-region bookkeeping when
     // BO size exactly equals bank_size: allocating BO[0]=bank_size also
     // registers a stale region for the next PC, and BO[1]'s later alloc
@@ -440,7 +436,7 @@ public:
     CHECK_ERR(global_mem_.allocate(asize, &addr), {
       return err;
     });
-  #ifndef BANK_INTERLEAVE
+  #ifndef VX_USE_BANKED_XRT_BO
     uint32_t bank_id;
     CHECK_ERR(this->get_bank_info(addr, &bank_id, nullptr), {
       global_mem_.release(addr);
@@ -464,7 +460,7 @@ public:
     CHECK_ERR(global_mem_.reserve(dev_addr, size), {
       return err;
     });
-  #ifndef BANK_INTERLEAVE
+  #ifndef VX_USE_BANKED_XRT_BO
     uint32_t bank_id;
     CHECK_ERR(this->get_bank_info(dev_addr, &bank_id, nullptr), {
       global_mem_.release(dev_addr);
@@ -487,8 +483,8 @@ public:
     CHECK_ERR(global_mem_.release(dev_addr), {
       return err;
     });
-  #ifdef BANK_INTERLEAVE
-    // BANK_INTERLEAVE: BOs are pre-allocated in init and released in dtor.
+  #ifdef VX_USE_BANKED_XRT_BO
+    // Banked XRT BOs are pre-allocated in init and released in dtor.
     // Individual mem_free calls do not touch xrtBuffers_ (the device may
     // still need them, e.g. vx_dump_perf -> mpm_query -> download).
   #else
@@ -576,7 +572,7 @@ public:
       });
 
       uint64_t xfer_size;
-#ifdef BANK_INTERLEAVE
+#ifdef VX_USE_BANKED_XRT_BO
       xfer_size = (remaining > CACHE_BLOCK_SIZE) ? CACHE_BLOCK_SIZE : remaining;
       // In hw_emu the last page of each bank is not backed (bo_size_ =
       // bank_size - 1 page). Flag accesses that would fall outside before
@@ -642,7 +638,7 @@ public:
       });
 
       uint64_t xfer_size;
-#ifdef BANK_INTERLEAVE
+#ifdef VX_USE_BANKED_XRT_BO
       xfer_size = (remaining > CACHE_BLOCK_SIZE) ? CACHE_BLOCK_SIZE : remaining;
       if (bo_offset + xfer_size > bo_size_) {
         fprintf(stderr, "[VXDRV] download oob: dev_addr=0x%lx bank=%u off=0x%lx "
@@ -822,7 +818,7 @@ public:
 private:
 
   MemoryAllocator global_mem_;
-#ifdef BANK_INTERLEAVE
+#ifdef VX_USE_BANKED_XRT_BO
   uint64_t bo_size_;  // per-bank BO size (bank_size, or bank_size-1page in hw_emu)
 #endif
   xrt_device_t xrtDevice_;
@@ -837,7 +833,7 @@ private:
   ShmStatus shm_;
   bool pending_ap_done_;
 
-#ifdef BANK_INTERLEAVE
+#ifdef VX_USE_BANKED_XRT_BO
 
   std::vector<xrt_buffer_t> xrtBuffers_;
 
