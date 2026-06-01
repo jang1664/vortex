@@ -127,6 +127,8 @@ printf 'ok\n' > "$log_file"
             self.assertEqual("improve_tcol1", rows[0]["fpga_bin_label"])
             self.assertEqual("gemm_m1_n128_k128", rows[0]["case_id"])
             self.assertEqual("pass", rows[0]["status"])
+            self.assertIn("elapsed_wall_s", rows[0])
+            self.assertGreaterEqual(float(rows[0]["elapsed_wall_s"]), 0.0)
             self.assertEqual("2.0", rows[0]["p50_us"])
             self.assertTrue(rows[0]["git_commit"])
             self.assertTrue(rows[0]["git_branch"])
@@ -137,6 +139,14 @@ printf 'ok\n' > "$log_file"
             self.assertEqual(rows[0]["git_commit"], result_rows[0]["git_commit"])
             self.assertEqual(rows[0]["git_branch"], result_rows[0]["git_branch"])
             self.assertEqual(rows[0]["git_dirty"], result_rows[0]["git_dirty"])
+            self.assertEqual(rows[0]["elapsed_wall_s"], result_rows[0]["elapsed_wall_s"])
+
+            with (out_root / "runs" / "run_a" / "progress.csv").open(newline="") as fp:
+                progress_rows = list(csv.DictReader(fp))
+            self.assertEqual(1, len(progress_rows))
+            self.assertEqual("pass", progress_rows[0]["status"])
+            self.assertEqual("2.0", progress_rows[0]["p50_us"])
+            self.assertEqual(rows[0]["elapsed_wall_s"], progress_rows[0]["elapsed_wall_s"])
 
             manifest = json.loads((out_root / "runs" / "run_a" / "manifest.json").read_text())
             self.assertEqual(rows[0]["git_commit"], manifest["git_commit"])
@@ -338,6 +348,60 @@ printf 'ok\n' > "$log_file"
                 rows = list(csv.DictReader(fp))
             self.assertEqual(2, len(rows))
             self.assertEqual(["different_sha", current_sha], [row["xclbin_sha256"] for row in rows])
+
+    def test_append_migrates_raw_db_header_when_elapsed_column_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            build_dir = tmp_path / "build"
+            self._write_fake_blackbox(build_dir)
+            fpga_bin_dir = tmp_path / "fpga_bin"
+            self._write_fake_fpga_bin(fpga_bin_dir)
+
+            suite = BenchSuite(
+                name="mini_suite",
+                defaults=BenchDefaults(warmup=1, iterations=1),
+                cases=[
+                    BenchCase(
+                        case_id="gemm",
+                        app="fpint_gemm_ffn_hw",
+                        args="-m 1 -n 128 -k 128 -q 32 -t 0 -d 0",
+                        warmup=1,
+                        iterations=1,
+                    )
+                ],
+            )
+            out_root = tmp_path / "latency_db"
+            raw_db = out_root / "raw_db.csv"
+            raw_db.parent.mkdir(parents=True)
+            old_columns = [column for column in RAW_DB_COLUMNS if column != "elapsed_wall_s"]
+            with raw_db.open("w", newline="") as fp:
+                writer = csv.DictWriter(fp, fieldnames=old_columns)
+                writer.writeheader()
+                writer.writerow({column: "" for column in old_columns})
+
+            rc = run_suite(
+                suite,
+                RunOptions(
+                    build_dir=build_dir,
+                    fpga_bin_dir=fpga_bin_dir,
+                    fpga_bin_label="improve_tcol1",
+                    out_dir=out_root,
+                    platform=suite.defaults.platform,
+                    xrt_device_index=suite.defaults.xrt_device_index,
+                    blackbox_args=(),
+                    srun=False,
+                    run_id="schema_run",
+                ),
+            )
+
+            self.assertEqual(0, rc)
+            with raw_db.open(newline="") as fp:
+                reader = csv.DictReader(fp)
+                rows = list(reader)
+            self.assertEqual(RAW_DB_COLUMNS, reader.fieldnames)
+            self.assertEqual(2, len(rows))
+            self.assertEqual("", rows[0]["elapsed_wall_s"])
+            self.assertGreaterEqual(float(rows[1]["elapsed_wall_s"]), 0.0)
 
 
 if __name__ == "__main__":

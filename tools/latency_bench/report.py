@@ -15,8 +15,8 @@ RESULT_COLUMNS = [
     "suite", "case_id", "exec_key", "app", "kind", "op", "backend",
     "variant", "stage", "name", "args", "shape_json", "calls_per_forward",
     "fpga_bin_dir", "xclbin_sha256", "warmup", "iterations", "source",
-    "status", "returncode", "raw_csv", "log_file", "samples", "min_us",
-    "avg_us", "max_us", "p50_us", "p95_us",
+    "status", "returncode", "raw_csv", "log_file", "elapsed_wall_s",
+    "samples", "min_us", "avg_us", "max_us", "p50_us", "p95_us",
 ]
 
 TIMEOUT_RETURNCODES = {124, 137}
@@ -100,6 +100,7 @@ def build_results(suite: BenchSuite, out_dir: Path, fpga_bin_dir: Path) -> pd.Da
             "returncode": returncode,
             "raw_csv": str(raw_csv),
             "log_file": str(log_file),
+            "elapsed_wall_s": status.get("elapsed_wall_s"),
             "samples": bench.get("samples"),
             "min_us": bench.get("min_us"),
             "avg_us": bench.get("avg_us"),

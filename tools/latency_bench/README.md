@@ -33,11 +33,12 @@ The main `run` flow is:
    `suite.expanded.yaml`.
 9. Generate `run_fpga_bench.sh` in the per-run directory.
 10. Run that script directly or through `srun`.
-11. Read `run_status.csv` and `raw/*.csv` to build `results.csv`.
-12. Build `summary.csv` by applying `calls_per_forward` weights to successful
+11. Append one row to `progress.csv` after each unique execution finishes.
+12. Read `run_status.csv` and `raw/*.csv` to build `results.csv`.
+13. Build `summary.csv` by applying `calls_per_forward` weights to successful
     rows in `results.csv`.
-13. Append all `results.csv` rows to the top-level `<out>/raw_db.csv`.
-14. Optionally call `visualize` to create figures under the per-run `figures/`.
+14. Append all `results.csv` rows to the top-level `<out>/raw_db.csv`.
+15. Optionally call `visualize` to create figures under the per-run `figures/`.
 
 The generated `run_fpga_bench.sh` is the source of truth for what actually ran.
 For each unique execution it:
@@ -50,7 +51,9 @@ For each unique execution it:
 - Passes benchmark-specific args including `--warmup`, `--iterations`, `--csv`,
   and `--output=<out>/runs/<run_id>/raw/<exec_key>.csv`.
 - Records one status row in `run_status.csv` with `exec_key`, `app`,
-  `returncode`, `raw_csv`, and `log_file`.
+  `returncode`, `raw_csv`, `log_file`, and `elapsed_wall_s`.
+- Appends one live progress row to `progress.csv` with status, elapsed time,
+  raw latency columns, and parse errors.
 
 `results.csv` is case-oriented, not execution-oriented. If two logical cases
 share the same `exec_key`, they reuse the same raw benchmark measurement but
@@ -158,8 +161,8 @@ cases:
     app: fpint_gemm_ffn_hw
     kind: gemm
     op: q_proj
-    backend: fpint_gemm
-    variant: all_fpint_gemm
+    backend: fpint_gemm_improve
+    variant: all_fpint_gemm_improve
     stage: prefill
     name: q_proj
     args: "-m 128 -n 4096 -k 4096 -q 32 -t 0 -d 0"
@@ -168,14 +171,14 @@ workloads:
   - id: llama2_7b_prefill_s128
     model: llama2-7b
     stage: prefill
-    variant: attn_sgemm_tcu
+    variant: attn_sgemm_tcu_fpint_gemm_naive
     prefill_seq_len: 128
     qblk: 32
     implemented_only: true
 fpga_bins:
   default: naive
   by_backend:
-    fpint_gemm: improve_tcol32
+    fpint_gemm_improve: improve_tcol32
     sgemm_tcu: base_t8
   by_app:
     silu_layout_fused: improve_tcol1
@@ -183,8 +186,11 @@ fpga_bins:
 
 `workloads` are expanded through `tools/workload/gen_kernel_cfgs.py`. Each
 implemented kernel with an app and argument string becomes a benchmark case.
-The supported workload variants are `all_fpint_gemm`, `attn_sgemm_tcu`, and
-`all_sgemm_tcu`.
+The supported workload variants are `all_fpint_gemm_naive`,
+`attn_sgemm_tcu_fpint_gemm_naive`, `all_fpint_gemm_improve`,
+`attn_sgemm_tcu_fpint_gemm_improve`, `all_sgemm_tcu`,
+`all_fpint_gemm_improve_alone_layout`, and
+`all_fpint_gemm_improve_fused_layout`.
 Workload entries can also define a `matrix`; its keys are overlaid onto the
 workload before expansion, so the same workload template can sweep batch,
 sequence length, QBLK, or filters:
@@ -202,8 +208,8 @@ workloads:
 ```
 
 Use `filter_kind: gemm` for logical GEMM operations regardless of backend, or
-`filter_backend: fpint_gemm` / `filter_backend: sgemm_tcu` for implementation
-specific filtering.
+`filter_backend: fpint_gemm_naive`, `filter_backend: fpint_gemm_improve`, or
+`filter_backend: sgemm_tcu` for implementation-specific filtering.
 
 For regular parameter sweeps, use `case_matrices` instead of writing every case
 by hand. Each matrix key can be a scalar, a `values` list, or an inclusive
@@ -213,7 +219,7 @@ power-of-two range. Use either `pow` or `pow2` for the range key:
 case_matrices:
   - id: fpint_gemm
     kind: gemm
-    backend: fpint_gemm
+    backend: fpint_gemm_improve
     stage: sweep
     name: fpint_gemm_m{m}_n{n}_k{k}
     args: "-m {m} -n {n} -k {k} -q {qblk} -t {wtrans} -d {qdir}"
@@ -303,6 +309,7 @@ Each `runs/<run_id>/` directory contains:
 - `suite.expanded.yaml`: equivalent suite with all `workloads` materialized as explicit `cases`.
 - `run_fpga_bench.sh`: generated shell script used for the run.
 - `run_status.csv`: one row per unique execution.
+- `progress.csv`: live per-execution results appended as each benchmark finishes.
 - `raw/*.csv`: raw benchmark rows from `bench_util.h`.
 - `logs/*.log`: per-execution blackbox logs.
 - `results.csv`: one row per logical case with latency and metadata.

@@ -21,7 +21,7 @@ defaults:
 case_matrices:
   - id: gemm
     kind: gemm
-    backend: fpint_gemm
+    backend: fpint_gemm_improve
     stage: sweep
     name: gemm_m{m}_n{n}_k{k}
     args: "-m {m} -n {n} -k {k} -q {qblk} -t {wtrans} -d {qdir}"

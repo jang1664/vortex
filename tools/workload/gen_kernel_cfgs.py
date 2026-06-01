@@ -8,7 +8,7 @@ is tagged with how many times it is invoked per forward pass and whether
 the corresponding regression test app exists ("implemented").
 
 Importable: ci/test_fpint_hw.py reuses build_fpint_gemm_args_for_model to
-drive its HW regression sweep — extracting only the fpint_gemm calls out
+drive its HW regression sweep — extracting only the fpint GEMM calls out
 of the full LLM kernel list.
 """
 
@@ -60,22 +60,59 @@ DEFAULT_QBLKS = [32, 64, 128]
 DEFAULT_SEQ_LENS = [32, 128, 512, 1024]
 
 LLM_STAGES = ("prefill", "generation")
-WORKLOAD_VARIANTS = ("all_fpint_gemm", "attn_sgemm_tcu", "all_sgemm_tcu")
-DEFAULT_WORKLOAD_VARIANT = "all_fpint_gemm"
+FPINT_GEMM_NAIVE_BACKEND = "fpint_gemm_naive"
+FPINT_GEMM_IMPROVE_BACKEND = "fpint_gemm_improve"
+FPINT_GEMM_BACKENDS = frozenset((
+    FPINT_GEMM_NAIVE_BACKEND,
+    FPINT_GEMM_IMPROVE_BACKEND,
+))
+ALL_FPINT_GEMM_NAIVE_VARIANT = "all_fpint_gemm_naive"
+ATTN_SGEMM_TCU_FPINT_GEMM_NAIVE_VARIANT = "attn_sgemm_tcu_fpint_gemm_naive"
+ALL_FPINT_GEMM_IMPROVE_VARIANT = "all_fpint_gemm_improve"
+ATTN_SGEMM_TCU_FPINT_GEMM_IMPROVE_VARIANT = "attn_sgemm_tcu_fpint_gemm_improve"
+ALL_SGEMM_TCU_VARIANT = "all_sgemm_tcu"
+LAYOUT_ALONE_VARIANT = "all_fpint_gemm_improve_alone_layout"
+LAYOUT_FUSED_VARIANT = "all_fpint_gemm_improve_fused_layout"
+WORKLOAD_VARIANTS = (
+    ALL_FPINT_GEMM_NAIVE_VARIANT,
+    ATTN_SGEMM_TCU_FPINT_GEMM_NAIVE_VARIANT,
+    ALL_FPINT_GEMM_IMPROVE_VARIANT,
+    ATTN_SGEMM_TCU_FPINT_GEMM_IMPROVE_VARIANT,
+    ALL_SGEMM_TCU_VARIANT,
+    LAYOUT_ALONE_VARIANT,
+    LAYOUT_FUSED_VARIANT,
+)
+DEFAULT_WORKLOAD_VARIANT = ALL_FPINT_GEMM_IMPROVE_VARIANT
 ATTENTION_GEMM_OPS = frozenset(("attn_qkT", "attn_pv"))
+LAYOUT_MXU_KT = 32
+LAYOUT_MXU_NT = 32
 
 # Map backend -> regression test/app name. None means the
 # corresponding kernel is not yet implemented as a regression test, so the
 # generated entry will have ``"implemented": false`` and an empty ``args``.
 KERNEL_APP_REGISTRY: dict[str, str | None] = {
-    "fpint_gemm": "fpint_gemm_ffn_hw",
+    FPINT_GEMM_NAIVE_BACKEND: "fpint_gemm_ffn_hw_naive",
+    FPINT_GEMM_IMPROVE_BACKEND: "fpint_gemm_ffn_hw",
     "sgemm_tcu":  "sgemm_tcu",
+    "tile_input_a": "tile_input_a",
+    "detile_output": "detile_output",
+    "tile_weight_w4a16": "tile_weight_w4a16",
+    "rms_norm_layout_fused": "rms_norm_layout_fused",
+    "silu_layout_fused": "silu_layout_fused",
+    "rope_layout_fused": "rope_layout_fused",
+    "softmax_layout_fused": "softmax_layout_fused",
+    "eladd_layout_fused": "eladd_layout_fused",
+    "elmul_layout_fused": "elmul_layout_fused",
+    "head_concat": "head_concat",
+    "head_concat_layout_fused": "head_concat_layout_fused",
     "rmsnorm":    "rmsnorm",
     "rope":       "rope",
     "softmax":    "softmax",
     "silu":       "silu",
     "eladd":      "eladd",
     "elmul":      "elmul",
+    "kv_cache_quant_w4a16": "kv_cache_quant_w4a16",
+    "kv_cache_dequant_w4a16": "kv_cache_dequant_w4a16",
     # No regression test yet:
     "embedding":  None,
 }
@@ -112,19 +149,27 @@ def _llm_kernel(name: str,
 
 
 def _gemm_backend(op: str, variant: str) -> str:
-    if variant == "all_fpint_gemm":
-        return "fpint_gemm"
-    if variant == "all_sgemm_tcu":
+    if variant == ALL_FPINT_GEMM_NAIVE_VARIANT:
+        return FPINT_GEMM_NAIVE_BACKEND
+    if variant in (
+        ALL_FPINT_GEMM_IMPROVE_VARIANT,
+        LAYOUT_ALONE_VARIANT,
+        LAYOUT_FUSED_VARIANT,
+    ):
+        return FPINT_GEMM_IMPROVE_BACKEND
+    if variant == ALL_SGEMM_TCU_VARIANT:
         return "sgemm_tcu"
-    if variant == "attn_sgemm_tcu":
-        return "sgemm_tcu" if op in ATTENTION_GEMM_OPS else "fpint_gemm"
+    if variant == ATTN_SGEMM_TCU_FPINT_GEMM_NAIVE_VARIANT:
+        return "sgemm_tcu" if op in ATTENTION_GEMM_OPS else FPINT_GEMM_NAIVE_BACKEND
+    if variant == ATTN_SGEMM_TCU_FPINT_GEMM_IMPROVE_VARIANT:
+        return "sgemm_tcu" if op in ATTENTION_GEMM_OPS else FPINT_GEMM_IMPROVE_BACKEND
     raise ValueError(
         f"unknown variant: {variant!r}. Expected one of {WORKLOAD_VARIANTS}"
     )
 
 
 def _gemm_args(backend: str, *, M: int, N: int, K: int, qblk: int, wtrans: int, qdir: int) -> str:
-    if backend == "fpint_gemm":
+    if backend in FPINT_GEMM_BACKENDS:
         return f"-m {M} -n {N} -k {K} -q {qblk} -t {wtrans} -d {qdir}"
     if backend == "sgemm_tcu":
         return f"-m {M} -n {N} -k {K}"
@@ -133,7 +178,7 @@ def _gemm_args(backend: str, *, M: int, N: int, K: int, qblk: int, wtrans: int, 
 
 def _gemm_shape(backend: str, *, M: int, N: int, K: int, qblk: int, wtrans: int, qdir: int, per_head: bool = False) -> dict:
     shape = {"M": M, "N": N, "K": K}
-    if backend == "fpint_gemm":
+    if backend in FPINT_GEMM_BACKENDS:
         shape.update({"QBLK": qblk, "WTRANS": wtrans, "QDIR": qdir})
     if per_head:
         shape["per_head"] = True
@@ -165,6 +210,502 @@ def _llm_gemm_kernel(name: str,
     )
 
 
+def _align_up(value: int, alignment: int) -> int:
+    return ((value + alignment - 1) // alignment) * alignment
+
+
+def _layout_kernel(name: str,
+                   stage: str,
+                   backend: str,
+                   args: str,
+                   calls_per_forward: int,
+                   shape: dict,
+                   *,
+                   variant: str) -> dict:
+    return _llm_kernel(
+        name=name,
+        kind="layout",
+        backend=backend,
+        stage=stage,
+        args=args,
+        calls_per_forward=calls_per_forward,
+        shape=shape,
+        variant=variant,
+    )
+
+
+def _tile_input_kernel(name: str,
+                       stage: str,
+                       *,
+                       M: int,
+                       K: int,
+                       calls_per_forward: int,
+                       producer: str,
+                       consumer: str,
+                       layout_group: str,
+                       layout_from: str = "row_major",
+                       variant: str) -> dict:
+    return _layout_kernel(
+        name=name,
+        stage=stage,
+        backend="tile_input_a",
+        args=f"-m {M} -k {K}",
+        calls_per_forward=calls_per_forward,
+        shape={
+            "M": M,
+            "K": K,
+            "layout_from": layout_from,
+            "layout_to": "gemm_a_tiled",
+            "producer": producer,
+            "consumer": consumer,
+            "layout_group": layout_group,
+        },
+        variant=variant,
+    )
+
+
+def _detile_output_kernel(name: str,
+                          stage: str,
+                          *,
+                          M: int,
+                          N: int,
+                          calls_per_forward: int,
+                          producer: str,
+                          consumer: str,
+                          layout_group: str,
+                          variant: str) -> dict:
+    return _layout_kernel(
+        name=name,
+        stage=stage,
+        backend="detile_output",
+        args=f"-m {M} -n {N}",
+        calls_per_forward=calls_per_forward,
+        shape={
+            "M": M,
+            "N": N,
+            "layout_from": "gemm_c_tiled",
+            "layout_to": "row_major",
+            "producer": producer,
+            "consumer": consumer,
+            "layout_group": layout_group,
+        },
+        variant=variant,
+    )
+
+
+def _tile_weight_kernel(name: str,
+                        stage: str,
+                        *,
+                        K: int,
+                        N: int,
+                        WTRANS: int,
+                        calls_per_forward: int,
+                        producer: str,
+                        consumer: str,
+                        layout_group: str,
+                        variant: str,
+                        effective_K: int | None = None,
+                        effective_N: int | None = None,
+                        cache_len: int | None = None,
+                        cache_update: str = "full") -> dict:
+    shape = {
+        "K": K,
+        "N": N,
+        "WTRANS": WTRANS,
+        "layout_from": "row_major",
+        "layout_to": "gemm_w_tiled",
+        "producer": producer,
+        "consumer": consumer,
+        "layout_group": layout_group,
+        "cache_update": cache_update,
+    }
+    if effective_K is not None:
+        shape["effective_K"] = effective_K
+    if effective_N is not None:
+        shape["effective_N"] = effective_N
+    if cache_len is not None:
+        shape["cache_len"] = cache_len
+    return _layout_kernel(
+        name=name,
+        stage=stage,
+        backend="tile_weight_w4a16",
+        args=f"-k {K} -n {N} -t {WTRANS}",
+        calls_per_forward=calls_per_forward,
+        shape=shape,
+        variant=variant,
+    )
+
+
+def _head_concat_kernel(stage: str,
+                        *,
+                        batch: int,
+                        seq: int,
+                        heads: int,
+                        head_dim: int,
+                        calls_per_forward: int,
+                        variant: str,
+                        backend: str = "head_concat",
+                        layout_from: str = "row_major",
+                        layout_to: str = "row_major") -> dict:
+    args = f"-batch {batch} -seq {seq} -heads {heads} -headdim {head_dim}"
+    if backend == "head_concat_layout_fused":
+        args = f"{args} --layout-to {layout_to}"
+    return _llm_kernel(
+        name="attn_head_concat",
+        kind="concat",
+        backend=backend,
+        stage=stage,
+        args=args,
+        calls_per_forward=calls_per_forward,
+        shape={
+            "batch": batch,
+            "seq": seq,
+            "heads": heads,
+            "headdim": head_dim,
+            "hidden": heads * head_dim,
+            "layout_from": layout_from,
+            "layout_to": layout_to,
+            "producer": "attn_pv",
+            "consumer": "o_proj",
+            "layout_group": "attn_pv_to_head_concat_to_o_proj",
+        },
+        variant=variant,
+    )
+
+
+def _with_fused_backend(kernel: dict,
+                        backend: str,
+                        *,
+                        args: str | None = None,
+                        shape_update: dict | None = None) -> dict:
+    shape = dict(kernel.get("shape") or {})
+    if shape_update:
+        shape.update(shape_update)
+    return _llm_kernel(
+        name=str(kernel["name"]),
+        kind=str(kernel["kind"]),
+        backend=backend,
+        stage=str(kernel["stage"]),
+        args=str(kernel["args"] if args is None else args),
+        calls_per_forward=int(kernel["calls_per_forward"]),
+        shape=shape,
+        variant=str(kernel["variant"]),
+    )
+
+
+def _kv_tile_weight_k_shape(stage: str, seq_kv: int, head_dim: int) -> tuple[int, int, int, int, str]:
+    if stage == "generation":
+        effective_n = 1
+        return head_dim, _align_up(effective_n, LAYOUT_MXU_NT), head_dim, effective_n, "append"
+    return head_dim, _align_up(seq_kv, LAYOUT_MXU_NT), head_dim, seq_kv, "full"
+
+
+def _kv_tile_weight_v_shape(stage: str, seq_kv: int, head_dim: int) -> tuple[int, int, int, int, str]:
+    if stage == "generation":
+        effective_k = 1
+        return _align_up(effective_k, LAYOUT_MXU_KT), head_dim, effective_k, head_dim, "append"
+    return _align_up(seq_kv, LAYOUT_MXU_KT), head_dim, seq_kv, head_dim, "full"
+
+
+def _apply_standalone_layout_variant(kernels: list[dict],
+                                     *,
+                                     stage: str,
+                                     batch: int,
+                                     seq_q: int,
+                                     seq_kv: int,
+                                     hidden: int,
+                                     intermediate: int,
+                                     layers: int,
+                                     heads_q: int,
+                                     heads_kv: int,
+                                     head_dim: int,
+                                     q_dim: int,
+                                     M_proj: int,
+                                     variant: str) -> list[dict]:
+    by_name = {kernel["name"]: kernel for kernel in kernels}
+    per_head_q = layers * batch * heads_q
+    per_head_kv = layers * batch * heads_kv
+    k_K, k_N, k_eff_K, k_eff_N, k_update = _kv_tile_weight_k_shape(stage, seq_kv, head_dim)
+    v_K, v_N, v_eff_K, v_eff_N, v_update = _kv_tile_weight_v_shape(stage, seq_kv, head_dim)
+
+    return [
+        by_name["embedding_lookup"],
+        by_name["input_layernorm"],
+        _tile_input_kernel(
+            "layout_input_layernorm_to_qkv", stage,
+            M=M_proj, K=hidden, calls_per_forward=layers,
+            producer="input_layernorm", consumer="q_proj,k_proj,v_proj",
+            layout_group="input_layernorm_to_qkv", variant=variant,
+        ),
+        by_name["q_proj"],
+        by_name["k_proj"],
+        by_name["v_proj"],
+        _detile_output_kernel(
+            "layout_q_proj_to_rope_q_detile", stage,
+            M=M_proj, N=q_dim, calls_per_forward=layers,
+            producer="q_proj", consumer="rope_q",
+            layout_group="q_proj_to_rope_q", variant=variant,
+        ),
+        by_name["rope_q"],
+        _detile_output_kernel(
+            "layout_k_proj_to_rope_k_detile", stage,
+            M=M_proj, N=q_dim, calls_per_forward=layers,
+            producer="k_proj", consumer="rope_k",
+            layout_group="k_proj_to_rope_k", variant=variant,
+        ),
+        by_name["rope_k"],
+        _tile_input_kernel(
+            "layout_rope_q_to_attn_qkT", stage,
+            M=seq_q, K=head_dim, calls_per_forward=per_head_q,
+            producer="rope_q", consumer="attn_qkT",
+            layout_group="rope_q_to_attn_qkT", variant=variant,
+        ),
+        _tile_weight_kernel(
+            "layout_rope_k_to_attn_qkT", stage,
+            K=k_K, N=k_N, WTRANS=1, calls_per_forward=per_head_kv,
+            producer="rope_k", consumer="attn_qkT",
+            layout_group="rope_k_to_attn_qkT", variant=variant,
+            effective_K=k_eff_K, effective_N=k_eff_N,
+            cache_len=seq_kv, cache_update=k_update,
+        ),
+        by_name["attn_qkT"],
+        _detile_output_kernel(
+            "layout_attn_qkT_to_softmax_detile", stage,
+            M=seq_q, N=seq_kv, calls_per_forward=per_head_q,
+            producer="attn_qkT", consumer="attn_softmax",
+            layout_group="attn_qkT_to_softmax", variant=variant,
+        ),
+        by_name["attn_softmax"],
+        _tile_input_kernel(
+            "layout_attn_softmax_to_attn_pv", stage,
+            M=seq_q, K=seq_kv, calls_per_forward=per_head_q,
+            producer="attn_softmax", consumer="attn_pv",
+            layout_group="attn_softmax_to_attn_pv", variant=variant,
+        ),
+        _detile_output_kernel(
+            "layout_v_proj_to_v_cache_detile", stage,
+            M=M_proj, N=q_dim, calls_per_forward=layers,
+            producer="v_proj", consumer="v_cache",
+            layout_group="v_proj_to_attn_pv", variant=variant,
+        ),
+        _tile_weight_kernel(
+            "layout_v_cache_to_attn_pv", stage,
+            K=v_K, N=v_N, WTRANS=0, calls_per_forward=per_head_kv,
+            producer="v_cache", consumer="attn_pv",
+            layout_group="v_cache_to_attn_pv", variant=variant,
+            effective_K=v_eff_K, effective_N=v_eff_N,
+            cache_len=seq_kv, cache_update=v_update,
+        ),
+        by_name["attn_pv"],
+        _detile_output_kernel(
+            "layout_attn_pv_to_head_concat_detile", stage,
+            M=seq_q, N=head_dim, calls_per_forward=per_head_q,
+            producer="attn_pv", consumer="attn_head_concat",
+            layout_group="attn_pv_to_head_concat", variant=variant,
+        ),
+        _head_concat_kernel(
+            stage,
+            batch=batch, seq=seq_q, heads=heads_q, head_dim=head_dim,
+            calls_per_forward=layers, variant=variant,
+            layout_from="row_major", layout_to="row_major",
+        ),
+        _tile_input_kernel(
+            "layout_attn_head_concat_to_o_proj", stage,
+            M=M_proj, K=q_dim, calls_per_forward=layers,
+            producer="attn_head_concat", consumer="o_proj",
+            layout_group="attn_head_concat_to_o_proj", variant=variant,
+        ),
+        by_name["o_proj"],
+        _detile_output_kernel(
+            "layout_o_proj_to_residual_attn_detile", stage,
+            M=M_proj, N=hidden, calls_per_forward=layers,
+            producer="o_proj", consumer="residual_attn",
+            layout_group="o_proj_to_residual_attn", variant=variant,
+        ),
+        by_name["residual_attn"],
+        by_name["post_attention_layernorm"],
+        _tile_input_kernel(
+            "layout_post_attention_layernorm_to_gate_up", stage,
+            M=M_proj, K=hidden, calls_per_forward=layers,
+            producer="post_attention_layernorm", consumer="gate_proj,up_proj",
+            layout_group="post_attention_layernorm_to_gate_up", variant=variant,
+        ),
+        by_name["gate_proj"],
+        by_name["up_proj"],
+        _detile_output_kernel(
+            "layout_gate_proj_to_mlp_silu_detile", stage,
+            M=M_proj, N=intermediate, calls_per_forward=layers,
+            producer="gate_proj", consumer="mlp_silu",
+            layout_group="gate_proj_to_mlp_silu", variant=variant,
+        ),
+        by_name["mlp_silu"],
+        _detile_output_kernel(
+            "layout_up_proj_to_mlp_elmul_detile", stage,
+            M=M_proj, N=intermediate, calls_per_forward=layers,
+            producer="up_proj", consumer="mlp_elmul",
+            layout_group="up_proj_to_mlp_elmul", variant=variant,
+        ),
+        by_name["mlp_elmul"],
+        _tile_input_kernel(
+            "layout_mlp_elmul_to_down_proj", stage,
+            M=M_proj, K=intermediate, calls_per_forward=layers,
+            producer="mlp_elmul", consumer="down_proj",
+            layout_group="mlp_elmul_to_down_proj", variant=variant,
+        ),
+        by_name["down_proj"],
+        _detile_output_kernel(
+            "layout_down_proj_to_residual_ffn_detile", stage,
+            M=M_proj, N=hidden, calls_per_forward=layers,
+            producer="down_proj", consumer="residual_ffn",
+            layout_group="down_proj_to_residual_ffn", variant=variant,
+        ),
+        by_name["residual_ffn"],
+        by_name["final_layernorm"],
+    ]
+
+
+def _apply_fused_layout_variant(kernels: list[dict],
+                                *,
+                                stage: str,
+                                batch: int,
+                                seq_q: int,
+                                seq_kv: int,
+                                hidden: int,
+                                intermediate: int,
+                                layers: int,
+                                heads_q: int,
+                                heads_kv: int,
+                                head_dim: int,
+                                q_dim: int,
+                                M_proj: int,
+                                variant: str) -> list[dict]:
+    by_name = {kernel["name"]: kernel for kernel in kernels}
+    per_head_q = layers * batch * heads_q
+    per_head_kv = layers * batch * heads_kv
+    v_K, v_N, v_eff_K, v_eff_N, v_update = _kv_tile_weight_v_shape(stage, seq_kv, head_dim)
+
+    return [
+        by_name["embedding_lookup"],
+        _with_fused_backend(
+            by_name["input_layernorm"], "rms_norm_layout_fused",
+            args=f"-m {M_proj} -k {hidden}",
+            shape_update={
+                "M": M_proj, "K": hidden,
+                "layout_from": "row_major", "layout_to": "gemm_a_tiled",
+                "layout_group": "input_layernorm_to_qkv",
+            },
+        ),
+        by_name["q_proj"],
+        by_name["k_proj"],
+        by_name["v_proj"],
+        _with_fused_backend(
+            by_name["rope_q"], "rope_layout_fused",
+            args=f"{by_name['rope_q']['args']} --layout-to gemm_a_tiled",
+            shape_update={
+                "layout_from": "gemm_c_tiled", "layout_to": "gemm_a_tiled",
+                "producer": "q_proj", "consumer": "attn_qkT",
+                "layout_group": "q_proj_to_rope_q_to_attn_qkT",
+            },
+        ),
+        _with_fused_backend(
+            by_name["rope_k"], "rope_layout_fused",
+            args=f"{by_name['rope_k']['args']} --layout-to gemm_w_tiled",
+            shape_update={
+                "layout_from": "gemm_c_tiled", "layout_to": "gemm_w_tiled",
+                "producer": "k_proj", "consumer": "attn_qkT",
+                "layout_group": "k_proj_to_rope_k_to_attn_qkT",
+                "cache_update": "append" if stage == "generation" else "full",
+                "cache_len": seq_kv,
+            },
+        ),
+        by_name["attn_qkT"],
+        _with_fused_backend(
+            by_name["attn_softmax"], "softmax_layout_fused",
+            shape_update={
+                "layout_from": "gemm_c_tiled", "layout_to": "gemm_a_tiled",
+                "producer": "attn_qkT", "consumer": "attn_pv",
+                "layout_group": "attn_qkT_to_softmax_to_attn_pv",
+            },
+        ),
+        _detile_output_kernel(
+            "layout_v_proj_to_v_cache_detile", stage,
+            M=M_proj, N=q_dim, calls_per_forward=layers,
+            producer="v_proj", consumer="v_cache",
+            layout_group="v_proj_to_attn_pv", variant=variant,
+        ),
+        _tile_weight_kernel(
+            "layout_v_cache_to_attn_pv", stage,
+            K=v_K, N=v_N, WTRANS=0, calls_per_forward=per_head_kv,
+            producer="v_cache", consumer="attn_pv",
+            layout_group="v_cache_to_attn_pv", variant=variant,
+            effective_K=v_eff_K, effective_N=v_eff_N,
+            cache_len=seq_kv, cache_update=v_update,
+        ),
+        by_name["attn_pv"],
+        _head_concat_kernel(
+            stage,
+            batch=batch, seq=seq_q, heads=heads_q, head_dim=head_dim,
+            calls_per_forward=layers, variant=variant,
+            backend="head_concat_layout_fused",
+            layout_from="gemm_c_tiled_per_head", layout_to="gemm_a_tiled",
+        ),
+        by_name["o_proj"],
+        _with_fused_backend(
+            by_name["residual_attn"], "eladd_layout_fused",
+            args=f"-m {M_proj} -k {hidden}",
+            shape_update={
+                "M": M_proj, "K": hidden,
+                "layout_from": "gemm_c_tiled", "layout_to": "row_major",
+                "producer": "o_proj", "consumer": "residual_attn",
+                "layout_group": "o_proj_to_residual_attn",
+            },
+        ),
+        _with_fused_backend(
+            by_name["post_attention_layernorm"], "rms_norm_layout_fused",
+            args=f"-m {M_proj} -k {hidden}",
+            shape_update={
+                "M": M_proj, "K": hidden,
+                "layout_from": "row_major", "layout_to": "gemm_a_tiled",
+                "layout_group": "post_attention_layernorm_to_gate_up",
+            },
+        ),
+        by_name["gate_proj"],
+        by_name["up_proj"],
+        _with_fused_backend(
+            by_name["mlp_silu"], "silu_layout_fused",
+            args=f"-m {M_proj} -k {intermediate}",
+            shape_update={
+                "M": M_proj, "K": intermediate,
+                "layout_from": "gemm_c_tiled", "layout_to": "layout_fused_intermediate",
+                "producer": "gate_proj", "consumer": "mlp_elmul",
+                "layout_group": "gate_proj_to_mlp_silu_to_mlp_elmul",
+            },
+        ),
+        _with_fused_backend(
+            by_name["mlp_elmul"], "elmul_layout_fused",
+            args=f"-m {M_proj} -k {intermediate}",
+            shape_update={
+                "M": M_proj, "K": intermediate,
+                "layout_from": "layout_fused_intermediate", "layout_to": "gemm_a_tiled",
+                "producer": "mlp_silu,up_proj", "consumer": "down_proj",
+                "layout_group": "mlp_elmul_to_down_proj",
+            },
+        ),
+        by_name["down_proj"],
+        _with_fused_backend(
+            by_name["residual_ffn"], "eladd_layout_fused",
+            args=f"-m {M_proj} -k {hidden}",
+            shape_update={
+                "M": M_proj, "K": hidden,
+                "layout_from": "gemm_c_tiled", "layout_to": "row_major",
+                "producer": "down_proj", "consumer": "residual_ffn",
+                "layout_group": "down_proj_to_residual_ffn",
+            },
+        ),
+        by_name["final_layernorm"],
+    ]
+
+
 def build_decoder_pass_kernels(config: dict,
                                stage: str,
                                batch: int,
@@ -185,13 +726,13 @@ def build_decoder_pass_kernels(config: dict,
       seq_kv: key/value sequence length used in attention.
         - prefill:    S
         - generation: past_len + 1 (KV cache size including the new token)
-      qblk: QBLK for fpint GEMMs (FFN + QKVO projections + lm_head).
+      qblk: QBLK for fpint GEMMs (FFN + QKVO projections).
 
     Counts (calls_per_forward):
       Per-decoder-layer kernels are multiplied by num_layers (L).
       Attention QK^T / PV are per-head per-batch, so multiplied further by
       batch * num_attention_heads. Model-level kernels (embedding,
-      final_layernorm, lm_head) fire exactly once per forward pass.
+      final_layernorm) fire exactly once per forward pass.
     """
     if stage not in LLM_STAGES:
         raise ValueError(f"unknown stage: {stage!r}. Expected one of {LLM_STAGES}")
@@ -311,14 +852,21 @@ def build_decoder_pass_kernels(config: dict,
         variant=variant, per_head=True,
     ))
 
-    # 10. Output projection (GEMM: M=B*S_q, N=H, K=q_dim)
+    # 10. Concatenate per-head attention outputs into [B*S_q, H].
+    out.append(_head_concat_kernel(
+        stage,
+        batch=batch, seq=seq_q, heads=H_q, head_dim=D,
+        calls_per_forward=L, variant=variant,
+    ))
+
+    # 11. Output projection (GEMM: M=B*S_q, N=H, K=q_dim)
     out.append(_llm_gemm_kernel(
         name="o_proj", stage=stage, calls_per_forward=L,
         M=M_proj, N=H, K=q_dim, qblk=qblk, wtrans=0, qdir=0,
         variant=variant,
     ))
 
-    # 11. Residual add (attn): [B, S_q, H]
+    # 12. Residual add (attn): [B, S_q, H]
     out.append(_llm_kernel(
         name="residual_attn", kind="eladd", stage=stage,
         args=f"-n {BS_H}",
@@ -327,7 +875,7 @@ def build_decoder_pass_kernels(config: dict,
         variant=variant,
     ))
 
-    # 12. post_attention_layernorm
+    # 13. post_attention_layernorm
     out.append(_llm_kernel(
         name="post_attention_layernorm", kind="rmsnorm", stage=stage,
         args=f"-batch {batch} -seq {seq_q} -hidden {H}",
@@ -336,7 +884,7 @@ def build_decoder_pass_kernels(config: dict,
         variant=variant,
     ))
 
-    # 13-14. gate / up projections (GEMM: M=B*S_q, N=I, K=H)
+    # 14-15. gate / up projections (GEMM: M=B*S_q, N=I, K=H)
     out.append(_llm_gemm_kernel(
         name="gate_proj", stage=stage, calls_per_forward=L,
         M=M_proj, N=I, K=H, qblk=qblk, wtrans=0, qdir=0,
@@ -348,7 +896,7 @@ def build_decoder_pass_kernels(config: dict,
         variant=variant,
     ))
 
-    # 15. SiLU on gate output [B, S_q, I]
+    # 16. SiLU on gate output [B, S_q, I]
     out.append(_llm_kernel(
         name="mlp_silu", kind="silu", stage=stage,
         args=f"-n {BS_I}",
@@ -357,7 +905,7 @@ def build_decoder_pass_kernels(config: dict,
         variant=variant,
     ))
 
-    # 16. Elementwise multiply (SwiGLU: SiLU(gate) * up) over [B, S_q, I]
+    # 17. Elementwise multiply (SwiGLU: SiLU(gate) * up) over [B, S_q, I]
     out.append(_llm_kernel(
         name="mlp_elmul", kind="elmul", stage=stage,
         args=f"-n {BS_I}",
@@ -366,14 +914,14 @@ def build_decoder_pass_kernels(config: dict,
         variant=variant,
     ))
 
-    # 17. down projection (GEMM: M=B*S_q, N=H, K=I)
+    # 18. down projection (GEMM: M=B*S_q, N=H, K=I)
     out.append(_llm_gemm_kernel(
         name="down_proj", stage=stage, calls_per_forward=L,
         M=M_proj, N=H, K=I, qblk=qblk, wtrans=0, qdir=0,
         variant=variant,
     ))
 
-    # 18. Residual add (ffn): [B, S_q, H]
+    # 19. Residual add (ffn): [B, S_q, H]
     out.append(_llm_kernel(
         name="residual_ffn", kind="eladd", stage=stage,
         args=f"-n {BS_H}",
@@ -384,7 +932,7 @@ def build_decoder_pass_kernels(config: dict,
 
     # ---------------- Model-level kernels (× 1) ---------------------------
 
-    # 19. final_layernorm (model-level RMSNorm)
+    # 20. final_layernorm (model-level RMSNorm)
     out.append(_llm_kernel(
         name="final_layernorm", kind="rmsnorm", stage=stage,
         args=f"-batch {batch} -seq {seq_q} -hidden {H}",
@@ -393,14 +941,44 @@ def build_decoder_pass_kernels(config: dict,
         variant=variant,
     ))
 
-    # 20. lm_head: project the last position's hidden state to logits.
-    #     For both stages we project only the final token per batch element,
-    #     so M = batch (this matches greedy/sampling decoding).
-    out.append(_llm_gemm_kernel(
-        name="lm_head", stage=stage, calls_per_forward=1,
-        M=batch, N=V, K=H, qblk=qblk, wtrans=0, qdir=0,
-        variant=variant,
-    ))
+    # 21. lm_head intentionally excluded from the LLaMA latency workload.
+    #     The logits projection is outside the current accelerator evaluation
+    #     target, so do not emit an lm_head GEMM case here.
+
+    if variant == LAYOUT_ALONE_VARIANT:
+        return _apply_standalone_layout_variant(
+            out,
+            stage=stage,
+            batch=batch,
+            seq_q=seq_q,
+            seq_kv=seq_kv,
+            hidden=H,
+            intermediate=I,
+            layers=L,
+            heads_q=H_q,
+            heads_kv=H_kv,
+            head_dim=D,
+            q_dim=q_dim,
+            M_proj=M_proj,
+            variant=variant,
+        )
+    if variant == LAYOUT_FUSED_VARIANT:
+        return _apply_fused_layout_variant(
+            out,
+            stage=stage,
+            batch=batch,
+            seq_q=seq_q,
+            seq_kv=seq_kv,
+            hidden=H,
+            intermediate=I,
+            layers=L,
+            heads_q=H_q,
+            heads_kv=H_kv,
+            head_dim=D,
+            q_dim=q_dim,
+            M_proj=M_proj,
+            variant=variant,
+        )
 
     return out
 
@@ -517,7 +1095,7 @@ def build_fpint_gemm_args_for_model(
     batch: int = DEFAULT_LLM_BATCH,
     stages: tuple[str, ...] = ("prefill",),
 ) -> list[str]:
-    """Cross-product (seq_lens × qblks × stages), filter to fpint_gemm,
+    """Cross-product (seq_lens × qblks × stages), filter to fpint GEMM,
     dedupe, and return the unique CLI arg strings.
 
     Used by ci/test_fpint_hw.py to drive HW regression on the GEMM
@@ -538,7 +1116,12 @@ def build_fpint_gemm_args_for_model(
                 gen_kv_len=S,
                 qblk=q,
             )
-            for a in filter_backend_args(payload, "fpint_gemm"):
+            for kernel in payload["kernels"]:
+                if kernel.get("backend") not in FPINT_GEMM_BACKENDS:
+                    continue
+                if not kernel.get("implemented", False):
+                    continue
+                a = kernel["args"]
                 if a in seen:
                     continue
                 seen.add(a)
@@ -629,7 +1212,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
             "  --model llama2-7b --stage prefill --prefill-seq-len 128\n"
             "  --model llama2-7b --stage all --batch 1 \\\n"
             "      --prefill-seq-len 128 --gen-kv-len 512 -o cfgs.json\n"
-            "  --model llama2-7b --variant attn_sgemm_tcu --filter-kind gemm\n"
+            "  --model llama2-7b --variant attn_sgemm_tcu_fpint_gemm_naive --filter-kind gemm\n"
         ),
     )
     parser.add_argument(
@@ -675,7 +1258,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "--filter-backend", default=None, metavar="BACKEND",
         help="If set, drop every kernel whose 'backend' != BACKEND from the "
-             "output (e.g. fpint_gemm or sgemm_tcu).",
+             "output (e.g. fpint_gemm_naive, fpint_gemm_improve, or sgemm_tcu).",
     )
     parser.add_argument(
         "--outfile", "-o", default=None, metavar="PATH",

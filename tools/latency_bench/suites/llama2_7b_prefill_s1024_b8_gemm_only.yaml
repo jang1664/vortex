@@ -14,8 +14,8 @@ cases:
   app: fpint_gemm_ffn_hw
   kind: gemm
   op: q_proj
-  backend: fpint_gemm
-  variant: all_fpint_gemm
+  backend: fpint_gemm_improve
+  variant: all_fpint_gemm_improve
   stage: prefill
   name: q_proj
   args: -m 8192 -n 4096 -k 4096 -q 32 -t 0 -d 0
@@ -33,8 +33,8 @@ cases:
   app: fpint_gemm_ffn_hw
   kind: gemm
   op: k_proj
-  backend: fpint_gemm
-  variant: all_fpint_gemm
+  backend: fpint_gemm_improve
+  variant: all_fpint_gemm_improve
   stage: prefill
   name: k_proj
   args: -m 8192 -n 4096 -k 4096 -q 32 -t 0 -d 0
@@ -52,8 +52,8 @@ cases:
   app: fpint_gemm_ffn_hw
   kind: gemm
   op: v_proj
-  backend: fpint_gemm
-  variant: all_fpint_gemm
+  backend: fpint_gemm_improve
+  variant: all_fpint_gemm_improve
   stage: prefill
   name: v_proj
   args: -m 8192 -n 4096 -k 4096 -q 32 -t 0 -d 0
@@ -71,8 +71,8 @@ cases:
   app: fpint_gemm_ffn_hw
   kind: gemm
   op: attn_qkT
-  backend: fpint_gemm
-  variant: all_fpint_gemm
+  backend: fpint_gemm_improve
+  variant: all_fpint_gemm_improve
   stage: prefill
   name: attn_qkT
   args: -m 1024 -n 1024 -k 128 -q 128 -t 1 -d 0
@@ -91,8 +91,8 @@ cases:
   app: fpint_gemm_ffn_hw
   kind: gemm
   op: attn_pv
-  backend: fpint_gemm
-  variant: all_fpint_gemm
+  backend: fpint_gemm_improve
+  variant: all_fpint_gemm_improve
   stage: prefill
   name: attn_pv
   args: -m 1024 -n 128 -k 1024 -q 128 -t 0 -d 1
@@ -111,8 +111,8 @@ cases:
   app: fpint_gemm_ffn_hw
   kind: gemm
   op: o_proj
-  backend: fpint_gemm
-  variant: all_fpint_gemm
+  backend: fpint_gemm_improve
+  variant: all_fpint_gemm_improve
   stage: prefill
   name: o_proj
   args: -m 8192 -n 4096 -k 4096 -q 32 -t 0 -d 0
@@ -130,8 +130,8 @@ cases:
   app: fpint_gemm_ffn_hw
   kind: gemm
   op: gate_proj
-  backend: fpint_gemm
-  variant: all_fpint_gemm
+  backend: fpint_gemm_improve
+  variant: all_fpint_gemm_improve
   stage: prefill
   name: gate_proj
   args: -m 8192 -n 11008 -k 4096 -q 32 -t 0 -d 0
@@ -149,8 +149,8 @@ cases:
   app: fpint_gemm_ffn_hw
   kind: gemm
   op: up_proj
-  backend: fpint_gemm
-  variant: all_fpint_gemm
+  backend: fpint_gemm_improve
+  variant: all_fpint_gemm_improve
   stage: prefill
   name: up_proj
   args: -m 8192 -n 11008 -k 4096 -q 32 -t 0 -d 0
@@ -168,8 +168,8 @@ cases:
   app: fpint_gemm_ffn_hw
   kind: gemm
   op: down_proj
-  backend: fpint_gemm
-  variant: all_fpint_gemm
+  backend: fpint_gemm_improve
+  variant: all_fpint_gemm_improve
   stage: prefill
   name: down_proj
   args: -m 8192 -n 4096 -k 11008 -q 32 -t 0 -d 0

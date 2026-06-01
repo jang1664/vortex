@@ -11,6 +11,36 @@ from tools.latency_bench.suite import find_repo_root, load_suite
 
 
 class SuiteSnapshotTest(unittest.TestCase):
+    def test_cli_overrides_replace_explicit_case_warmup_and_iterations(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            suite_path = Path(tmp) / "suite.yaml"
+            suite_path.write_text(
+                """
+name: explicit_case_counts
+defaults:
+  warmup: 1
+  iterations: 3
+cases:
+  - id: explicit_counts
+    app: eladd
+    args: "-n 128"
+    warmup: 11
+    iterations: 13
+""".lstrip()
+            )
+
+            suite = load_suite(
+                suite_path,
+                repo_root=find_repo_root(),
+                warmup_override=0,
+                iterations_override=1,
+            )
+
+            self.assertEqual(0, suite.defaults.warmup)
+            self.assertEqual(1, suite.defaults.iterations)
+            self.assertEqual(0, suite.cases[0].warmup)
+            self.assertEqual(1, suite.cases[0].iterations)
+
     def test_dry_run_writes_original_and_expanded_suite_yaml(self) -> None:
         repo_root = find_repo_root()
         suite_path = repo_root / "tools" / "latency_bench" / "suites" / "llama2_7b_prefill_s1024_b8.yaml"

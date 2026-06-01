@@ -13,6 +13,7 @@ import pandas as pd
 import yaml
 
 from .fpga_bins import FpgaBinConfig, resolve_fpga_bin, resolve_fpga_bin_config
+from .progress import PROGRESS_COLUMNS
 from .report import build_results, build_summary, sha256_file, write_manifest
 from .suite import DEFAULT_BLACKBOX_ARGS, BenchCase, BenchSuite, suite_to_expanded_yaml, suite_to_rows
 
@@ -199,18 +200,22 @@ def write_suite_snapshots(suite: BenchSuite, out_dir: Path) -> None:
 def write_run_script(suite: BenchSuite, options: RunOptions, units: list[ExecutionUnit]) -> Path:
     script = options.out_dir / "run_fpga_bench.sh"
     status_csv = options.out_dir / "run_status.csv"
+    progress_csv = options.out_dir / "progress.csv"
     append_raw_csv = options.append_raw_csv.resolve() if options.append_raw_csv else None
     lines = [
         "#!/usr/bin/env bash",
         "set -uo pipefail",
         f"cd {_q(options.build_dir)}",
         f"mkdir -p {_q(options.out_dir / 'raw')} {_q(options.out_dir / 'logs')}",
-        f"printf 'exec_key,app,returncode,raw_csv,log_file\\n' > {_q(status_csv)}",
+        f"printf 'exec_key,app,returncode,raw_csv,log_file,elapsed_wall_s\\n' > {_q(status_csv)}",
+        f"printf '%s\\n' {_q(','.join(PROGRESS_COLUMNS))} > {_q(progress_csv)}",
         f"export FPGA_BIN_DIR={_q(options.fpga_bin_dir)}",
         f"export TARGET={_q('hw')}",
         f"export PLATFORM={_q(options.platform)}",
         f"export DRIVER={_q('xrt')}",
         f"export XRT_DEVICE_INDEX={_q(str(options.xrt_device_index))}",
+        f"export PYTHONPATH={_q(repo_root())}:\"${{PYTHONPATH:-}}\"",
+        f"export LATENCY_BENCH_RUN_ID={_q(options.run_id or default_run_id())}",
     ]
     if options.configs:
         lines.extend([
@@ -219,11 +224,6 @@ def write_run_script(suite: BenchSuite, options: RunOptions, units: list[Executi
             "  exit 1",
             "fi",
             f"source {_q(options.configs)}",
-        ])
-    if append_raw_csv:
-        lines.extend([
-            f"export PYTHONPATH={_q(repo_root())}:\"${{PYTHONPATH:-}}\"",
-            f"export LATENCY_BENCH_RUN_ID={_q(options.run_id or default_run_id())}",
         ])
     if options.configs_extra:
         lines.append(f"export CONFIGS=\"${{CONFIGS:-}} {options.configs_extra}\"")
@@ -242,13 +242,34 @@ def write_run_script(suite: BenchSuite, options: RunOptions, units: list[Executi
             "",
             f"echo '[{idx}/{len(units)}] {unit.exec_key} app={unit.app} args={bench_args}'",
             "set +e",
+            "start_ns=$(date +%s%N)",
             blackbox_cmd,
             "rc=$?",
+            "end_ns=$(date +%s%N)",
+            "elapsed_ms=$(( (end_ns - start_ns + 500000) / 1000000 ))",
+            "printf -v elapsed_wall_s '%d.%03d' $((elapsed_ms / 1000)) $((elapsed_ms % 1000))",
             "set -u",
             (
-                f"printf '%s,%s,%s,%s,%s\\n' "
-                f"{_q(unit.exec_key)} {_q(unit.app)} \"$rc\" {_q(unit.raw_csv)} {_q(unit.log_file)} "
+                f"printf '%s,%s,%s,%s,%s,%s\\n' "
+                f"{_q(unit.exec_key)} {_q(unit.app)} \"$rc\" {_q(unit.raw_csv)} {_q(unit.log_file)} \"$elapsed_wall_s\" "
                 f">> {_q(status_csv)}"
+            ),
+            (
+                f"\"${{PYTHON:-python3}}\" -m tools.latency_bench.progress "
+                f"--output {_q(progress_csv)} "
+                f"--idx {idx} "
+                f"--total {len(units)} "
+                f"--run-id \"$LATENCY_BENCH_RUN_ID\" "
+                f"--suite {_q(suite.name)} "
+                f"--exec-key {_q(unit.exec_key)} "
+                f"--app {_q(unit.app)} "
+                f"--args {_q(unit.args)} "
+                f"--warmup {unit.warmup} "
+                f"--iterations {unit.iterations} "
+                f"--returncode \"$rc\" "
+                f"--elapsed-wall-s \"$elapsed_wall_s\" "
+                f"--raw-csv {_q(unit.raw_csv)} "
+                f"--log-file {_q(unit.log_file)}"
             ),
         ])
         if append_raw_csv:
@@ -300,6 +321,7 @@ RAW_DB_COLUMNS = [
     "returncode",
     "raw_csv",
     "log_file",
+    "elapsed_wall_s",
     "samples",
     "min_us",
     "avg_us",
@@ -325,6 +347,28 @@ def _raw_db_rows(results: pd.DataFrame, *, run_id: str, fpga_bin_label: str) -> 
     return rows.reindex(columns=RAW_DB_COLUMNS)
 
 
+def _ensure_raw_db_schema(raw_db: Path) -> None:
+    if not raw_db.exists() or raw_db.stat().st_size == 0:
+        return
+
+    with raw_db.open(newline="") as fp:
+        reader = csv.reader(fp)
+        header = next(reader, [])
+    if header == RAW_DB_COLUMNS:
+        return
+
+    with raw_db.open(newline="") as fp:
+        existing_rows = list(csv.DictReader(fp))
+
+    tmp = raw_db.with_suffix(raw_db.suffix + ".tmp")
+    with tmp.open("w", newline="") as fp:
+        writer = csv.DictWriter(fp, fieldnames=RAW_DB_COLUMNS)
+        writer.writeheader()
+        for row in existing_rows:
+            writer.writerow({column: _clean_raw_value(row.get(column, "")) for column in RAW_DB_COLUMNS})
+    tmp.replace(raw_db)
+
+
 def append_raw_db(results: pd.DataFrame, out_root: Path, *, run_id: str, fpga_bin_label: str) -> None:
     if results.empty:
         return
@@ -333,6 +377,7 @@ def append_raw_db(results: pd.DataFrame, out_root: Path, *, run_id: str, fpga_bi
 
     raw_db = out_root / "raw_db.csv"
     raw_db.parent.mkdir(parents=True, exist_ok=True)
+    _ensure_raw_db_schema(raw_db)
     write_header = not raw_db.exists() or raw_db.stat().st_size == 0
     rows.to_csv(raw_db, mode="a", header=write_header, index=False)
 
@@ -445,6 +490,7 @@ def run_suite(suite: BenchSuite, options: RunOptions) -> int:
         "out_root": str(out_root),
         "run_dir": str(run_dir),
         "raw_db": str(out_root / "raw_db.csv"),
+        "progress_csv": str(run_dir / "progress.csv"),
         "build_dir": str(run_options.build_dir),
         "fpga_bin_label": run_options.fpga_bin_label,
         "fpga_bin_dir": str(run_options.fpga_bin_dir),

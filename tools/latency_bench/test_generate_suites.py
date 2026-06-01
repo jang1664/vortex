@@ -54,7 +54,7 @@ defaults:
 fpga_bins:
   default: default_alias
   by_backend:
-    fpint_gemm: backend_alias
+    fpint_gemm_improve: backend_alias
   by_kind:
     gemm: kind_alias
   by_app:
@@ -63,7 +63,7 @@ case_matrices:
   - id: gemm
     app: fpint_gemm_ffn_hw
     kind: gemm
-    backend: fpint_gemm
+    backend: fpint_gemm_improve
     stage: sweep
     name: gemm_m{m}
     args: "-m {m} -n 128 -k 128 -q 32 -t 0 -d 0"
@@ -102,7 +102,7 @@ cases:
             )
             self.assertEqual(2, entries[("fpint_gemm_ffn_hw", "backend_alias")]["case_count"])
             self.assertEqual(["gemm"], entries[("fpint_gemm_ffn_hw", "backend_alias")]["kinds"])
-            self.assertEqual(["fpint_gemm"], entries[("fpint_gemm_ffn_hw", "backend_alias")]["backends"])
+            self.assertEqual(["fpint_gemm_improve"], entries[("fpint_gemm_ffn_hw", "backend_alias")]["backends"])
 
             gemm_suite = yaml.safe_load(Path(entries[("fpint_gemm_ffn_hw", "backend_alias")]["suite"]).read_text())
             self.assertEqual("backend_alias", gemm_suite["defaults"]["fpga_bin"])

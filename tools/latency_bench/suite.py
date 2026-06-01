@@ -8,7 +8,7 @@ import shlex
 import sys
 import ast
 import operator
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -327,7 +327,7 @@ def _expand_workload_one(raw: dict[str, Any], defaults: BenchDefaults, repo_root
         prefill_seq_len=int(raw.get("prefill_seq_len", raw.get("prefill-seq-len", 128))),
         gen_kv_len=int(raw.get("gen_kv_len", raw.get("gen-kv-len", 128))),
         qblk=int(raw.get("qblk", 32)),
-        variant=str(raw.get("variant", "all_fpint_gemm")),
+        variant=str(raw.get("variant", "all_fpint_gemm_improve")),
     )
 
     implemented_only = bool(raw.get("implemented_only", True))
@@ -415,6 +415,16 @@ def load_suite(path: Path, repo_root: Path | None = None,
         cases.extend(_expand_case_matrix(item, defaults, i))
     for i, item in enumerate(raw.get("workloads") or [], start=1):
         cases.extend(_expand_workload(item, defaults, repo_root, i))
+
+    if warmup_override is not None or iterations_override is not None:
+        cases = [
+            replace(
+                case,
+                warmup=defaults.warmup if warmup_override is not None else case.warmup,
+                iterations=defaults.iterations if iterations_override is not None else case.iterations,
+            )
+            for case in cases
+        ]
 
     if not cases:
         raise ValueError(f"suite has no runnable cases: {path}")
