@@ -15,7 +15,7 @@ fpga_bins:
 
   by_backend:
     sgemm_tcu: naive_simd
-    fpint_gemm: naive_gemm
+    fpint_gemm_naive: naive_gemm
 
   by_app:
     rmsnorm: naive_simd
@@ -29,9 +29,9 @@ workloads:
   - id: llama2_7b_generation_C2
     model: llama2-7b
     stage: generation
-    variant: attn_sgemm_tcu
+    variant: attn_sgemm_tcu_fpint_gemm_naive
     implemented_only: false
     matrix:
-      batch: {values: [1, 8, 64]}
-      gen_kv_len: {values: [512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072]}
+      batch: {values: [1]}
+      gen_kv_len: {values: [8]}
       qblk: 32

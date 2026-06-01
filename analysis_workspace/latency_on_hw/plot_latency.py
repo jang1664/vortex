@@ -23,7 +23,7 @@ DEFAULT_BREAKDOWN_OUTPUT = Path(__file__).resolve().parent / "figures" / "breakd
 RESULT_SHEETS = ("Prefill", "Decode_BS1", "Decode_BS8", "Decode_BS64")
 BREAKDOWN_SHEETS = ("ISO-AREA", "ISO-POWER")
 COMPONENTS = ("qk", "pv", "qkv", "out", "ffn")
-CONFIGS = ("C1", "C2", "C3", "C4")
+CONFIGS = ("C1", "C2", "C3", "C4_alone", "C4_fused")
 
 
 @dataclass(frozen=True)
@@ -196,7 +196,8 @@ def make_plot(
         "C1": "#1f77b4",
         "C2": "#ff7f0e",
         "C3": "#2ca02c",
-        "C4": "#d62728",
+        "C4_alone": "#d62728",
+        "C4_fused": "#9467bd",
     }
 
     for ax, sheet in zip(axes_flat, sheet_list):

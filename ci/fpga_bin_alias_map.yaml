@@ -7,9 +7,9 @@ aliases:
     path: /opt/vortex_fpga_bins/baseline/xrt_hw_u55c_c1_f100_tcu_noDcache_L2cache_747805ed8e/bin
     configs: configs/base_t8.sh
 
-  naive:
-    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_noDcache_L2cache_a917286dbe/bin
-    configs: configs/naive.sh
+  naive_gemm:
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_noDcache_L2cache_37a280addd/bin
+    configs: configs/naive_gemm.sh
 
   naive_simd:
     path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_noDcache_L2cache_90f22d2615/bin

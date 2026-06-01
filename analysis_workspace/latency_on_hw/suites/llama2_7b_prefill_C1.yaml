@@ -33,6 +33,6 @@ workloads:
     matrix:
       # batch: {values: [1, 8]}
       # prefill_seq_len: {values: [512, 2048, 8192, 32768, 131072]}
-      batch: {values: [1, 8]}
-      prefill_seq_len: {values: [512, 2048]}
+      batch: {values: [1]}
+      prefill_seq_len: {values: [8]}
       qblk: 32
