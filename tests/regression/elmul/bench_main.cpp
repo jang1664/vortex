@@ -9,6 +9,7 @@
 #include <assert.h>
 #include <vortex.h>
 #include "common.h"
+#include "../vector_common/fp16.h"
 #include "bench_util.h"
 
 #define RT_CHECK(_expr)                                         \
@@ -21,7 +22,7 @@
      exit(-1);                                                  \
    } while (false)
 
-using data_t = float;
+using data_t = fp16_t;
 
 vx_device_h device = nullptr;
 vx_buffer_h krnl_buffer = nullptr;
@@ -41,11 +42,16 @@ static void cleanup() {
 
 static void elmul_cpu(const std::vector<data_t>& a, const std::vector<data_t>& b,
                       std::vector<data_t>& out) {
-  for (size_t i = 0; i < a.size(); ++i) out[i] = a[i] * b[i];
+  for (size_t i = 0; i < a.size(); ++i) {
+    out[i] = float_to_fp16(fp16_to_float(a[i]) * fp16_to_float(b[i]));
+  }
 }
 
 static void initialize_random(std::vector<data_t>& vec) {
-  for (auto& v : vec) v = static_cast<float>(rand()) / RAND_MAX * 4.0f - 2.0f;
+  for (auto& v : vec) {
+    float x = static_cast<float>(rand()) / RAND_MAX * 4.0f - 2.0f;
+    v = float_to_fp16(x);
+  }
 }
 
 int main(int argc, char *argv[]) {
@@ -111,9 +117,11 @@ int main(int argc, char *argv[]) {
   int errors = 0;
   float max_diff = 0.0f;
   for (uint32_t i = 0; i < size; ++i) {
-    float diff = std::abs(h_out[i] - h_ref[i]);
+    float got = fp16_to_float(h_out[i]);
+    float expected = fp16_to_float(h_ref[i]);
+    float diff = std::abs(got - expected);
     max_diff = std::max(max_diff, diff);
-    float thr = std::max(1e-6f, std::abs(h_ref[i]) * 0.01f);
+    float thr = std::max(1e-6f, std::abs(expected) * 0.01f);
     if (diff > thr) ++errors;
   }
   if (errors != 0) {

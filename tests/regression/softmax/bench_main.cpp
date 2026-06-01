@@ -16,6 +16,7 @@
 #include <assert.h>
 #include <vortex.h>
 #include "common.h"
+#include "../vector_common/fp16.h"
 #include "bench_util.h"
 
 #define RT_CHECK(_expr)                                         \
@@ -28,7 +29,7 @@
      exit(-1);                                                  \
    } while (false)
 
-using data_t = float;
+using data_t = fp16_t;
 
 vx_device_h device = nullptr;
 vx_buffer_h krnl_buffer = nullptr;
@@ -59,20 +60,22 @@ static void softmax_cpu(
         uint32_t row_offset = ((b * num_heads + h) * seq_len_q + q) * seq_len_k;
         float max_val = -INFINITY;
         for (uint32_t k = 0; k < seq_len_k; ++k) {
-          float val = input[row_offset + k] * scale;
+          float val = fp16_to_float(input[row_offset + k]) * scale;
           if (use_mask && k > q) val = -INFINITY;
           max_val = std::max(max_val, val);
         }
         float sum = 0.0f;
         for (uint32_t k = 0; k < seq_len_k; ++k) {
-          float val = input[row_offset + k] * scale;
+          float val = fp16_to_float(input[row_offset + k]) * scale;
           if (use_mask && k > q) val = -INFINITY;
           float exp_val = std::exp(val - max_val);
-          output[row_offset + k] = exp_val;
           sum += exp_val;
         }
         for (uint32_t k = 0; k < seq_len_k; ++k) {
-          output[row_offset + k] /= sum;
+          float val = fp16_to_float(input[row_offset + k]) * scale;
+          if (use_mask && k > q) val = -INFINITY;
+          float exp_val = std::exp(val - max_val);
+          output[row_offset + k] = float_to_fp16(exp_val / sum);
         }
       }
     }
@@ -81,7 +84,8 @@ static void softmax_cpu(
 
 static void initialize_random(std::vector<data_t>& vec) {
   for (auto& val : vec) {
-    val = static_cast<float>(rand()) / RAND_MAX * 4.0f - 2.0f;
+    float x = static_cast<float>(rand()) / RAND_MAX * 4.0f - 2.0f;
+    val = float_to_fp16(x);
   }
 }
 
@@ -175,9 +179,11 @@ int main(int argc, char *argv[]) {
   int errors = 0;
   float max_diff = 0.0f;
   for (uint32_t i = 0; i < input_size; ++i) {
-    float diff = std::abs(h_output_gpu[i] - h_output_cpu[i]);
+    float got = fp16_to_float(h_output_gpu[i]);
+    float expected = fp16_to_float(h_output_cpu[i]);
+    float diff = std::abs(got - expected);
     max_diff = std::max(max_diff, diff);
-    float threshold = std::max(1e-5f, std::abs(h_output_cpu[i]) * 0.01f);
+    float threshold = std::max(1e-5f, std::abs(expected) * 0.01f);
     if (diff > threshold) ++errors;
   }
   if (errors != 0) {

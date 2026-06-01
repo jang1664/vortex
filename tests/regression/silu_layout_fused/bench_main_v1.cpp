@@ -1,6 +1,7 @@
 // Benchmark harness for silu_layout_fused.
 
 #include "common.h"
+#include "../vector_common/fp16.h"
 #include "bench_util.h"
 #include <vortex.h>
 #include <algorithm>
@@ -10,7 +11,7 @@
 #include <cstring>
 #include <vector>
 
-using data_t = float;
+using data_t = fp16_t;
 
 vx_device_h device = nullptr;
 vx_buffer_h krnl_buffer = nullptr;
@@ -42,7 +43,8 @@ static float silu_cpu(float x) {
 
 static void initialize_input(std::vector<data_t>& vec) {
   for (size_t i = 0; i < vec.size(); ++i) {
-    vec[i] = -2.0f + 4.0f * (float((i * 2654435761u) % 1000) / 1000.0f);
+    float x = -2.0f + 4.0f * (float((i * 2654435761u) % 1000) / 1000.0f);
+    vec[i] = float_to_fp16(x);
   }
 }
 
@@ -50,7 +52,7 @@ static std::vector<data_t> build_reference(const std::vector<data_t>& input,
                                            uint32_t M,
                                            uint32_t M_pad,
                                            uint32_t K) {
-  std::vector<data_t> ref(size_t(M_pad) * K, 0.0f);
+  std::vector<data_t> ref(size_t(M_pad) * K, 0);
   const uint32_t k_tiles = (K + TILE_DMA_KT - 1) / TILE_DMA_KT;
   size_t idx = 0;
   for (uint32_t kt = 0; kt < k_tiles; ++kt) {
@@ -63,7 +65,7 @@ static std::vector<data_t> build_reference(const std::vector<data_t>& input,
         for (uint32_t k = 0; k < TILE_DMA_MXU_KT; ++k) {
           if (m < M) {
             uint32_t gk = kt * TILE_DMA_KT + kb * TILE_DMA_MXU_KT + k;
-            ref[idx] = silu_cpu(input[(uint64_t)m * K + gk]);
+            ref[idx] = float_to_fp16(silu_cpu(fp16_to_float(input[(uint64_t)m * K + gk])));
           }
           ++idx;
         }
@@ -160,7 +162,9 @@ int main(int argc, char *argv[]) {
         for (uint32_t k = 0; k < TILE_DMA_MXU_KT; ++k) {
           (void)k;
           if (m < M) {
-            float diff = std::fabs(h_out[flat_idx] - h_ref[flat_idx]);
+            float got = fp16_to_float(h_out[flat_idx]);
+            float expected = fp16_to_float(h_ref[flat_idx]);
+            float diff = std::fabs(got - expected);
             max_diff = std::max(max_diff, diff);
             if (diff > 1e-3f) ++errors;
           }

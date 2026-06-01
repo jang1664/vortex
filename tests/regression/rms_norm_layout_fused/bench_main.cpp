@@ -1,6 +1,7 @@
 // Benchmark harness for rms_norm_layout_fused.
 
 #include "common.h"
+#include "../vector_common/fp16.h"
 #include "bench_util.h"
 #include <vortex.h>
 #include <algorithm>
@@ -10,7 +11,7 @@
 #include <cstring>
 #include <vector>
 
-using data_t = float;
+using data_t = fp16_t;
 
 vx_device_h device = nullptr;
 vx_buffer_h krnl_buffer = nullptr;
@@ -40,14 +41,26 @@ static void cleanup() {
 
 static void initialize_input(std::vector<data_t>& vec) {
   for (size_t i = 0; i < vec.size(); ++i) {
-    vec[i] = -1.0f + 2.0f * (float((i * 2654435761u) % 1000) / 1000.0f);
+    float x = -1.0f + 2.0f * (float((i * 2654435761u) % 1000) / 1000.0f);
+    vec[i] = float_to_fp16(x);
   }
 }
 
 static void initialize_gamma(std::vector<data_t>& vec) {
   for (size_t i = 0; i < vec.size(); ++i) {
-    vec[i] = 0.5f + (float((i * 1597334677u) % 1000) / 2000.0f);
+    float x = 0.5f + (float((i * 1597334677u) % 1000) / 2000.0f);
+    vec[i] = float_to_fp16(x);
   }
+}
+
+static bool is_pow2(uint32_t v) {
+  return v && ((v & (v - 1)) == 0);
+}
+
+static uint32_t log2_u32(uint32_t v) {
+  uint32_t r = 0;
+  while ((1u << r) < v) ++r;
+  return r;
 }
 
 static std::vector<data_t> build_reference(const std::vector<data_t>& input,
@@ -56,37 +69,52 @@ static std::vector<data_t> build_reference(const std::vector<data_t>& input,
                                            uint32_t M_pad,
                                            uint32_t K,
                                            float eps) {
-  std::vector<data_t> plain(size_t(M) * K, 0.0f);
+  std::vector<data_t> plain(size_t(M) * K, 0);
   for (uint32_t m = 0; m < M; ++m) {
     double sum_sq = 0.0;
     for (uint32_t k = 0; k < K; ++k) {
-      double v = input[(uint64_t)m * K + k];
+      double v = fp16_to_float(input[(uint64_t)m * K + k]);
       sum_sq += v * v;
     }
     float rms = 1.0f / std::sqrt(float(sum_sq / K) + eps);
     for (uint32_t k = 0; k < K; ++k) {
-      plain[(uint64_t)m * K + k] = input[(uint64_t)m * K + k] * rms * gamma[k];
+      float x = fp16_to_float(input[(uint64_t)m * K + k]);
+      float g = fp16_to_float(gamma[k]);
+      plain[(uint64_t)m * K + k] = float_to_fp16(x * rms * g);
     }
   }
 
-  std::vector<data_t> ref(size_t(M_pad) * K, 0.0f);
-  const uint32_t k_tiles = K / TILE_DMA_KT;
-  size_t idx = 0;
-  for (uint32_t kt = 0; kt < k_tiles; ++kt) {
-    uint32_t k_mic = TILE_DMA_KT / TILE_DMA_MXU_KT;
-    for (uint32_t kb = 0; kb < k_mic; ++kb) {
-      for (uint32_t m = 0; m < M_pad; ++m) {
-        for (uint32_t k = 0; k < TILE_DMA_MXU_KT; ++k) {
-          if (m < M) {
-            uint32_t gk = kt * TILE_DMA_KT + kb * TILE_DMA_MXU_KT + k;
-            ref[idx] = plain[(uint64_t)m * K + gk];
-          }
-          ++idx;
-        }
-      }
+  std::vector<data_t> ref(size_t(M_pad) * K, 0);
+  for (uint32_t m = 0; m < M; ++m) {
+    uint32_t mt = m / TILE_DMA_MT;
+    uint32_t m0 = m % TILE_DMA_MT;
+    uint32_t cm = ((M_pad - mt * TILE_DMA_MT) < TILE_DMA_MT)
+                    ? (M_pad - mt * TILE_DMA_MT) : TILE_DMA_MT;
+    for (uint32_t k = 0; k < K; ++k) {
+      uint32_t km = k / TILE_DMA_MXU_KT;
+      uint32_t k0 = k % TILE_DMA_MXU_KT;
+      uint64_t idx = uint64_t(mt) * TILE_DMA_MT * K
+                   + uint64_t(km) * cm * TILE_DMA_MXU_KT
+                   + uint64_t(m0) * TILE_DMA_MXU_KT
+                   + k0;
+      ref[idx] = plain[(uint64_t)m * K + k];
     }
   }
   return ref;
+}
+
+static uint64_t tiled_input_index(uint32_t m, uint32_t k,
+                                  uint32_t M_pad, uint32_t K) {
+  uint32_t mt = m / TILE_DMA_MT;
+  uint32_t m0 = m % TILE_DMA_MT;
+  uint32_t cm = ((M_pad - mt * TILE_DMA_MT) < TILE_DMA_MT)
+                  ? (M_pad - mt * TILE_DMA_MT) : TILE_DMA_MT;
+  uint32_t km = k / TILE_DMA_MXU_KT;
+  uint32_t k0 = k % TILE_DMA_MXU_KT;
+  return uint64_t(mt) * TILE_DMA_MT * K
+       + uint64_t(km) * cm * TILE_DMA_MXU_KT
+       + uint64_t(m0) * TILE_DMA_MXU_KT
+       + k0;
 }
 
 int main(int argc, char *argv[]) {
@@ -108,6 +136,10 @@ int main(int argc, char *argv[]) {
 
   if (K % TILE_DMA_KT != 0) {
     printf("ERROR: K must be multiple of %u (got %u)\n", TILE_DMA_KT, K);
+    return 1;
+  }
+  if (!is_pow2(TILE_DMA_MT) || !is_pow2(TILE_DMA_KT) || !is_pow2(TILE_DMA_MXU_KT)) {
+    printf("ERROR: tile constants must be powers of two\n");
     return 1;
   }
 
@@ -154,6 +186,9 @@ int main(int argc, char *argv[]) {
   kernel_arg.M_pad = M_pad;
   kernel_arg.K = K;
   kernel_arg.eps = eps;
+  kernel_arg.log2_mt = log2_u32(TILE_DMA_MT);
+  kernel_arg.log2_kt = log2_u32(TILE_DMA_KT);
+  kernel_arg.log2_mxu_kt = log2_u32(TILE_DMA_MXU_KT);
   kernel_arg.grid_dim[0] = M;
   kernel_arg.grid_dim[1] = 1;
   kernel_arg.grid_dim[2] = 1;
@@ -169,25 +204,15 @@ int main(int argc, char *argv[]) {
 
   size_t errors = 0;
   float max_diff = 0.0f;
-  size_t flat_idx = 0;
-  const uint32_t k_tiles = K / TILE_DMA_KT;
-  const uint32_t k_mic = TILE_DMA_KT / TILE_DMA_MXU_KT;
-  for (uint32_t kt = 0; kt < k_tiles; ++kt) {
-    (void)kt;
-    for (uint32_t kb = 0; kb < k_mic; ++kb) {
-      (void)kb;
-      for (uint32_t m = 0; m < M_pad; ++m) {
-        for (uint32_t k = 0; k < TILE_DMA_MXU_KT; ++k) {
-          (void)k;
-          if (m < M) {
-            float diff = std::fabs(h_out[flat_idx] - h_ref[flat_idx]);
-            max_diff = std::max(max_diff, diff);
-            float thr = std::max(1e-4f, std::fabs(h_ref[flat_idx]) * 0.01f);
-            if (diff > thr) ++errors;
-          }
-          ++flat_idx;
-        }
-      }
+  for (uint32_t m = 0; m < M; ++m) {
+    for (uint32_t k = 0; k < K; ++k) {
+      uint64_t idx = tiled_input_index(m, k, M_pad, K);
+      float got = fp16_to_float(h_out[idx]);
+      float expected = fp16_to_float(h_ref[idx]);
+      float diff = std::fabs(got - expected);
+      max_diff = std::max(max_diff, diff);
+      float thr = std::max(1e-4f, std::fabs(expected) * 0.01f);
+      if (diff > thr) ++errors;
     }
   }
   if (errors != 0) {

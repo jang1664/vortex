@@ -17,6 +17,7 @@
 
 // Tile-layout constants — match
 // tests/regression/fpint_gemm_ffn_hw/common.h
+#define TILE_DMA_MT       128
 #define TILE_DMA_KT       128
 #define TILE_DMA_MXU_KT    32
 
@@ -25,15 +26,19 @@ typedef struct {
   uint32_t grid_dim[3];
   uint32_t block_dim[3];
 
-  uint64_t input_addr;     // fp32 [M_real, K]              (both kernels)
-  uint64_t output_addr;    // fp32 [M_real, K] flat         (plain)
+  uint64_t input_addr;     // fp16 [M_real, K]              (both kernels)
+  uint64_t output_addr;    // fp16 [M_real, K] flat         (plain)
                            // OR    [M_pad, K] tile-laid    (fused)
-  uint64_t gamma_addr;     // fp32 [K]
+  uint64_t gamma_addr;     // fp16 [K]
 
   uint32_t M_real;         // real rows
   uint32_t M_pad;          // padded M (multiple of 8) — fused output slot height
   uint32_t K;              // hidden_dim — must be multiple of TILE_DMA_KT
   float    eps;
+
+  uint32_t log2_mt;
+  uint32_t log2_kt;
+  uint32_t log2_mxu_kt;
 } kernel_arg_t;
 
 #endif // _COMMON_H_

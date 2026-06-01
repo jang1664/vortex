@@ -9,6 +9,7 @@
 //   ./silu_layout_fused [-m M] [-k K] [-i iters]
 
 #include "common.h"
+#include "../vector_common/fp16.h"
 #include <vortex.h>
 #include <unistd.h>
 #include <cstdio>
@@ -76,6 +77,8 @@ static double launch_one(const kernel_arg_t& karg) {
   return std::chrono::duration<double>(t1 - t0).count();
 }
 
+using data_t = fp16_t;
+
 int main(int argc, char** argv) {
   parse_args(argc, argv);
 
@@ -89,17 +92,18 @@ int main(int argc, char** argv) {
 
   size_t in_elems  = size_t(M)     * K;
   size_t out_elems = size_t(M_pad) * K;
-  size_t in_bytes  = in_elems  * sizeof(float);
-  size_t out_bytes = out_elems * sizeof(float);
+  size_t in_bytes  = in_elems  * sizeof(data_t);
+  size_t out_bytes = out_elems * sizeof(data_t);
 
   // Synthetic input — random-ish fp32 in [-2, 2].
-  std::vector<float> h_in(in_elems);
+  std::vector<data_t> h_in(in_elems);
   for (size_t i = 0; i < in_elems; i++) {
-    h_in[i] = -2.0f + 4.0f * (float((i * 2654435761u) % 1000) / 1000.0f);
+    float x = -2.0f + 4.0f * (float((i * 2654435761u) % 1000) / 1000.0f);
+    h_in[i] = float_to_fp16(x);
   }
 
   // CPU reference for FUSED output (silu values written in tile-major positions).
-  std::vector<float> h_ref(out_elems, 0.0f);
+  std::vector<data_t> h_ref(out_elems, 0);
   {
     const uint32_t k_tiles = (K + TILE_DMA_KT - 1) / TILE_DMA_KT;
     size_t idx = 0;
@@ -113,10 +117,10 @@ int main(int argc, char** argv) {
             float v = 0.0f;
             if (m < M) {
               uint32_t gk = kt * TILE_DMA_KT + kb * TILE_DMA_MXU_KT + k;
-              float x = h_in[m * K + gk];
+              float x = fp16_to_float(h_in[m * K + gk]);
               v = x / (1.0f + std::exp(-x));
             }
-            h_ref[idx++] = v;
+            h_ref[idx++] = float_to_fp16(v);
           }
         }
       }
@@ -194,7 +198,7 @@ int main(int argc, char** argv) {
   // Verify fused output correctness — REAL ROWS ONLY.
   // The kernel intentionally leaves pad-row positions uninitialized
   // (downstream GEMM doesn't care; its output for pad rows is discarded).
-  std::vector<float> h_out(out_elems);
+  std::vector<data_t> h_out(out_elems);
   RT_CHECK(vx_copy_from_dev(h_out.data(), dst_buf, 0, out_bytes));
 
   const float TOL = 1e-3f;
@@ -210,11 +214,13 @@ int main(int argc, char** argv) {
       for (uint32_t m_iter = 0; m_iter < M_pad; m_iter++) {
         for (uint32_t kk = 0; kk < TILE_DMA_MXU_KT; kk++) {
           if (m_iter < M) {  // real row -> check
-            float d = std::fabs(h_out[flat_idx] - h_ref[flat_idx]);
+            float got = fp16_to_float(h_out[flat_idx]);
+            float expected = fp16_to_float(h_ref[flat_idx]);
+            float d = std::fabs(got - expected);
             if (d > TOL) {
               if (errors < 4) {
                 printf("  Mismatch[%zu]: got=%.6f ref=%.6f\n",
-                       flat_idx, h_out[flat_idx], h_ref[flat_idx]);
+                       flat_idx, got, expected);
               }
               errors++;
             }

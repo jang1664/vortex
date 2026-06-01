@@ -1,10 +1,11 @@
 #include "common.h"
+#include "../vector_common/fp16.h"
 #include <vx_spawn.h>
 #include <vx_intrinsics.h>
 #include <vx_math.h>
 
 // Type aliases
-using data_t = float;
+using data_t = fp16_t;
 
 ///////////////////////////////////////////////////////////////////////////////
 // SiLU (Swish) Activation Kernel
@@ -26,10 +27,10 @@ void kernel_silu(kernel_arg_t *__UNIFORM__ arg) {
   uint32_t thread_id = blockIdx.x * blockDim.x + threadIdx.x;
   
   for (uint32_t i = thread_id; i < size; i += total_threads) {
-    float x = pInput[i];
+    float x = fp16_to_float(pInput[i]);
     // SiLU: x * sigmoid(x) = x / (1 + exp(-x))
     float sigmoid_x = 1.0f / (1.0f + vx_expf(-x));
-    pOutput[i] = x * sigmoid_x;
+    pOutput[i] = float_to_fp16(x * sigmoid_x);
   }
 }
 

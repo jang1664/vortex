@@ -9,6 +9,7 @@
 //   ./rms_norm_layout_fused [-m M] [-k K] [-i iters]
 
 #include "common.h"
+#include "../vector_common/fp16.h"
 #include <vortex.h>
 #include <unistd.h>
 #include <cstdio>
@@ -55,6 +56,16 @@ static void show_usage() {
   printf("Usage: ./rms_norm_layout_fused [-m M] [-k K] [-i iters]\n");
 }
 
+static bool is_pow2(uint32_t v) {
+  return v && ((v & (v - 1)) == 0);
+}
+
+static uint32_t log2_u32(uint32_t v) {
+  uint32_t r = 0;
+  while ((1u << r) < v) ++r;
+  return r;
+}
+
 static void parse_args(int argc, char** argv) {
   int c;
   while ((c = getopt(argc, argv, "m:k:i:h")) != -1) {
@@ -79,6 +90,8 @@ static double launch_one(const kernel_arg_t& karg) {
   return std::chrono::duration<double>(t1 - t0).count();
 }
 
+using data_t = fp16_t;
+
 int main(int argc, char** argv) {
   parse_args(argc, argv);
 
@@ -90,60 +103,66 @@ int main(int argc, char** argv) {
     printf("ERROR: K must be multiple of %u (got %u)\n", TILE_DMA_KT, K);
     return 1;
   }
+  if (!is_pow2(TILE_DMA_MT) || !is_pow2(TILE_DMA_KT) || !is_pow2(TILE_DMA_MXU_KT)) {
+    printf("ERROR: tile constants must be powers of two\n");
+    return 1;
+  }
 
   const float eps = 1e-6f;
 
   size_t in_elems     = size_t(M)     * K;
   size_t plain_out_e  = size_t(M)     * K;
   size_t tile_out_e   = size_t(M_pad) * K;
-  size_t in_bytes     = in_elems    * sizeof(float);
-  size_t plain_bytes  = plain_out_e * sizeof(float);
-  size_t tile_bytes   = tile_out_e  * sizeof(float);
-  size_t gamma_bytes  = size_t(K)   * sizeof(float);
+  size_t in_bytes     = in_elems    * sizeof(data_t);
+  size_t plain_bytes  = plain_out_e * sizeof(data_t);
+  size_t tile_bytes   = tile_out_e  * sizeof(data_t);
+  size_t gamma_bytes  = size_t(K)   * sizeof(data_t);
   size_t dst_bytes    = (plain_bytes > tile_bytes) ? plain_bytes : tile_bytes;
 
-  // Synthetic input — fp32 in [-1, 1].
-  std::vector<float> h_in(in_elems);
+  // Synthetic input — fp16 storage in [-1, 1].
+  std::vector<data_t> h_in(in_elems);
   for (size_t i = 0; i < in_elems; i++) {
-    h_in[i] = -1.0f + 2.0f * (float((i * 2654435761u) % 1000) / 1000.0f);
+    float x = -1.0f + 2.0f * (float((i * 2654435761u) % 1000) / 1000.0f);
+    h_in[i] = float_to_fp16(x);
   }
-  std::vector<float> h_gamma(K);
+  std::vector<data_t> h_gamma(K);
   for (size_t i = 0; i < K; i++) {
-    h_gamma[i] = 0.5f + (float((i * 1597334677u) % 1000) / 2000.0f);  // [0.5, 1.0]
+    float x = 0.5f + (float((i * 1597334677u) % 1000) / 2000.0f);  // [0.5, 1.0]
+    h_gamma[i] = float_to_fp16(x);
   }
 
   // CPU reference: rmsnorm row-major output.
-  std::vector<float> h_ref_plain(plain_out_e, 0.0f);
+  std::vector<data_t> h_ref_plain(plain_out_e, 0);
   for (uint32_t m = 0; m < M; m++) {
     double sum_sq = 0.0;
     for (uint32_t k = 0; k < K; k++) {
-      double v = h_in[m * K + k];
+      double v = fp16_to_float(h_in[m * K + k]);
       sum_sq += v * v;
     }
     float rms = 1.0f / std::sqrt(float(sum_sq / K) + eps);
     for (uint32_t k = 0; k < K; k++) {
-      h_ref_plain[m * K + k] = h_in[m * K + k] * rms * h_gamma[k];
+      float x = fp16_to_float(h_in[m * K + k]);
+      float g = fp16_to_float(h_gamma[k]);
+      h_ref_plain[m * K + k] = float_to_fp16(x * rms * g);
     }
   }
 
   // CPU reference: fused output (rmsnorm value in tile-major position, pad rows = 0).
-  std::vector<float> h_ref_fused(tile_out_e, 0.0f);
+  std::vector<data_t> h_ref_fused(tile_out_e, 0);
   {
-    const uint32_t k_tiles = K / TILE_DMA_KT;
-    size_t idx = 0;
-    for (uint32_t kt = 0; kt < k_tiles; kt++) {
-      uint32_t k_mic = TILE_DMA_KT / TILE_DMA_MXU_KT;
-      for (uint32_t kb = 0; kb < k_mic; kb++) {
-        for (uint32_t m = 0; m < M_pad; m++) {
-          for (uint32_t k = 0; k < TILE_DMA_MXU_KT; k++) {
-            float v = 0.0f;
-            if (m < M) {
-              uint32_t gk = kt * TILE_DMA_KT + kb * TILE_DMA_MXU_KT + k;
-              v = h_ref_plain[m * K + gk];
-            }
-            h_ref_fused[idx++] = v;
-          }
-        }
+    for (uint32_t m = 0; m < M; m++) {
+      uint32_t mt = m / TILE_DMA_MT;
+      uint32_t m0 = m % TILE_DMA_MT;
+      uint32_t cm = ((M_pad - mt * TILE_DMA_MT) < TILE_DMA_MT)
+                      ? (M_pad - mt * TILE_DMA_MT) : TILE_DMA_MT;
+      for (uint32_t k = 0; k < K; k++) {
+        uint32_t km = k / TILE_DMA_MXU_KT;
+        uint32_t k0 = k % TILE_DMA_MXU_KT;
+        uint64_t idx = uint64_t(mt) * TILE_DMA_MT * K
+                     + uint64_t(km) * cm * TILE_DMA_MXU_KT
+                     + uint64_t(m0) * TILE_DMA_MXU_KT
+                     + k0;
+        h_ref_fused[idx] = h_ref_plain[uint64_t(m) * K + k];
       }
     }
   }
@@ -179,6 +198,9 @@ int main(int argc, char** argv) {
   karg.M_pad  = M_pad;
   karg.K      = K;
   karg.eps    = eps;
+  karg.log2_mt     = log2_u32(TILE_DMA_MT);
+  karg.log2_kt     = log2_u32(TILE_DMA_KT);
+  karg.log2_mxu_kt = log2_u32(TILE_DMA_MXU_KT);
 
   // ============== Plain rmsnorm (src -> mid, row-major) ==============
   karg.kernel_id    = KERNEL_RMSNORM;
@@ -202,18 +224,20 @@ int main(int argc, char** argv) {
          mean_plain_us);
 
   // Verify plain output (mid_buf).
-  std::vector<float> h_out_plain(plain_out_e);
+  std::vector<data_t> h_out_plain(plain_out_e);
   RT_CHECK(vx_copy_from_dev(h_out_plain.data(), mid_buf, 0, plain_bytes));
 
   size_t errors_p = 0;
   double max_diff_p = 0.0;
   for (size_t i = 0; i < plain_out_e; i++) {
-    float d = std::fabs(h_out_plain[i] - h_ref_plain[i]);
-    float thr = std::max(1e-4f, std::fabs(h_ref_plain[i]) * 0.01f);
+    float got = fp16_to_float(h_out_plain[i]);
+    float expected = fp16_to_float(h_ref_plain[i]);
+    float d = std::fabs(got - expected);
+    float thr = std::max(1e-4f, std::fabs(expected) * 0.01f);
     if (d > thr) {
       if (errors_p < 4) {
         printf("    Mismatch[%zu]: got=%.6f ref=%.6f diff=%.6f\n",
-               i, h_out_plain[i], h_ref_plain[i], d);
+               i, got, expected, d);
       }
       errors_p++;
     }
@@ -250,26 +274,30 @@ int main(int argc, char** argv) {
 
   // Verify [2] output (tile-major in dst_buf) before fused overwrites.
   {
-    std::vector<float> h_out_p2(tile_out_e);
+    std::vector<data_t> h_out_p2(tile_out_e);
     RT_CHECK(vx_copy_from_dev(h_out_p2.data(), dst_buf, 0, tile_bytes));
     size_t errors_2 = 0;
     double max_diff_2 = 0.0;
-    const uint32_t k_tiles2 = K / TILE_DMA_KT;
-    const uint32_t k_mic2   = TILE_DMA_KT / TILE_DMA_MXU_KT;
-    size_t fidx = 0;
-    for (uint32_t kt = 0; kt < k_tiles2; kt++)
-      for (uint32_t kb = 0; kb < k_mic2; kb++)
-        for (uint32_t mi = 0; mi < M_pad; mi++)
-          for (uint32_t kk = 0; kk < TILE_DMA_MXU_KT; kk++) {
-            if (mi < M) {
-              float d = std::fabs(h_out_p2[fidx] - h_ref_fused[fidx]);
-              float thr = std::max(1e-4f,
-                                   std::fabs(h_ref_fused[fidx]) * 0.01f);
-              if (d > thr) errors_2++;
-              if (d > max_diff_2) max_diff_2 = d;
-            }
-            fidx++;
-          }
+    for (uint32_t mi = 0; mi < M; mi++) {
+      uint32_t mt = mi / TILE_DMA_MT;
+      uint32_t m0 = mi % TILE_DMA_MT;
+      uint32_t cm = ((M_pad - mt * TILE_DMA_MT) < TILE_DMA_MT)
+                      ? (M_pad - mt * TILE_DMA_MT) : TILE_DMA_MT;
+      for (uint32_t kk = 0; kk < K; kk++) {
+        uint32_t km = kk / TILE_DMA_MXU_KT;
+        uint32_t k0 = kk % TILE_DMA_MXU_KT;
+        uint64_t idx = uint64_t(mt) * TILE_DMA_MT * K
+                     + uint64_t(km) * cm * TILE_DMA_MXU_KT
+                     + uint64_t(m0) * TILE_DMA_MXU_KT
+                     + k0;
+        float got = fp16_to_float(h_out_p2[idx]);
+        float expected = fp16_to_float(h_ref_fused[idx]);
+        float d = std::fabs(got - expected);
+        float thr = std::max(1e-4f, std::fabs(expected) * 0.01f);
+        if (d > thr) errors_2++;
+        if (d > max_diff_2) max_diff_2 = d;
+      }
+    }
     printf("      verify [2]      : max_diff=%.6e errors=%zu\n",
            max_diff_2, errors_2);
   }
@@ -302,35 +330,35 @@ int main(int argc, char** argv) {
          100.0 * (mean_fused_us - mean_plain_us) / mean_plain_us);
 
   // Verify fused output (real rows only — pad rows are intentionally garbage).
-  std::vector<float> h_out_fused(tile_out_e);
+  std::vector<data_t> h_out_fused(tile_out_e);
   RT_CHECK(vx_copy_from_dev(h_out_fused.data(), dst_buf, 0, tile_bytes));
 
   size_t errors_f = 0;
   double max_diff_f = 0.0;
-  const uint32_t k_tiles = K / TILE_DMA_KT;
-  const uint32_t k_mic   = TILE_DMA_KT / TILE_DMA_MXU_KT;
-  size_t flat_idx = 0;
-  for (uint32_t kt = 0; kt < k_tiles; kt++) {
-    for (uint32_t kb = 0; kb < k_mic; kb++) {
-      for (uint32_t m_iter = 0; m_iter < M_pad; m_iter++) {
-        for (uint32_t kk = 0; kk < TILE_DMA_MXU_KT; kk++) {
-          if (m_iter < M) {
-            float d = std::fabs(h_out_fused[flat_idx] - h_ref_fused[flat_idx]);
-            float thr = std::max(1e-4f,
-                                 std::fabs(h_ref_fused[flat_idx]) * 0.01f);
-            if (d > thr) {
-              if (errors_f < 4) {
-                printf("    Mismatch[%zu]: got=%.6f ref=%.6f diff=%.6f\n",
-                       flat_idx, h_out_fused[flat_idx],
-                       h_ref_fused[flat_idx], d);
-              }
-              errors_f++;
-            }
-            if (d > max_diff_f) max_diff_f = d;
-          }
-          flat_idx++;
+  for (uint32_t m_iter = 0; m_iter < M; m_iter++) {
+    uint32_t mt = m_iter / TILE_DMA_MT;
+    uint32_t m0 = m_iter % TILE_DMA_MT;
+    uint32_t cm = ((M_pad - mt * TILE_DMA_MT) < TILE_DMA_MT)
+                    ? (M_pad - mt * TILE_DMA_MT) : TILE_DMA_MT;
+    for (uint32_t kk = 0; kk < K; kk++) {
+      uint32_t km = kk / TILE_DMA_MXU_KT;
+      uint32_t k0 = kk % TILE_DMA_MXU_KT;
+      uint64_t idx = uint64_t(mt) * TILE_DMA_MT * K
+                   + uint64_t(km) * cm * TILE_DMA_MXU_KT
+                   + uint64_t(m0) * TILE_DMA_MXU_KT
+                   + k0;
+      float got = fp16_to_float(h_out_fused[idx]);
+      float expected = fp16_to_float(h_ref_fused[idx]);
+      float d = std::fabs(got - expected);
+      float thr = std::max(1e-4f, std::fabs(expected) * 0.01f);
+      if (d > thr) {
+        if (errors_f < 4) {
+          printf("    Mismatch[%zu]: got=%.6f ref=%.6f diff=%.6f\n",
+                 size_t(idx), got, expected, d);
         }
+        errors_f++;
       }
+      if (d > max_diff_f) max_diff_f = d;
     }
   }
   printf("      verify [3] fused: max_diff=%.6e errors=%zu\n",

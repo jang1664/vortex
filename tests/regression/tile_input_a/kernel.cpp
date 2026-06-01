@@ -4,15 +4,11 @@
 #include <vx_math.h>
 
 ///////////////////////////////////////////////////////////////////////////////
-// tile_input_a — workaround patterned after silu_layout_fused
+// tile_input_a — row-major fp16 A -> GEMM input tile layout.
 //
-// The plain fp16 byte-copy version of this kernel was intermittently hanging
-// on the c8c5d0d4f3 bitstream (likely partial-word store transactions). The
-// fp32 silu kernel right next door ran reliably. This version copies that
-// structure: 4-byte (uint32) stores per thread + a small dummy fp32 compute
-// load to keep the pipeline pattern similar to silu_layout_fused. The math
-// is intentionally throwaway (output values are wrong vs a pure copy) — this
-// is a debug workaround for collecting Perfetto traces without hangs.
+// The kernel writes two fp16 elements per thread as one aligned 32-bit store.
+// Destination addressing matches docs/layout_transform/layout.md's mt-aware
+// input layout and zero-fills padded rows.
 //
 // Grid (3D):
 //   blockIdx.z = kt                       ∈ [0, k_tiles)
@@ -29,50 +25,51 @@ void kernel_tile_input_a(kernel_arg_t *__UNIFORM__ arg) {
   const uint32_t M_real = arg->M_real;
   const uint32_t M_pad  = arg->M_pad;
   const uint32_t K      = arg->K;
+  const uint32_t log2_mt     = arg->log2_mt;
+  const uint32_t log2_kt     = arg->log2_kt;
+  const uint32_t log2_mxu_kt = arg->log2_mxu_kt;
 
-  constexpr uint32_t MXU_KT          = TILE_DMA_MXU_KT;        // 32
-  constexpr uint32_t DMA_KT          = TILE_DMA_KT;             // 128
   constexpr uint32_t CHUNK_ELEMS     = 2;                        // 2 fp16
   constexpr uint32_t CHUNK_BYTES     = CHUNK_ELEMS * 2;          // 4 B
-  constexpr uint32_t CHUNKS_PER_ROW  = MXU_KT / CHUNK_ELEMS;     // 16
-  constexpr uint32_t LOG2_CHUNKS_PER_ROW = 4;                    // log2(16)
-  constexpr uint32_t CHUNKS_PER_ROW_MASK = CHUNKS_PER_ROW - 1;   // 15
+  const uint32_t mt          = 1u << log2_mt;
+  const uint32_t mt_mask     = (1u << log2_mt) - 1u;
+  const uint32_t kt          = 1u << log2_kt;
+  const uint32_t mxu_kt      = 1u << log2_mxu_kt;
+  const uint32_t mxu_kt_mask = mxu_kt - 1u;
+  const uint32_t chunks_per_row = mxu_kt / CHUNK_ELEMS;
+  const uint32_t log2_chunks_per_row = log2_mxu_kt - 1u;
+  const uint32_t chunks_per_row_mask = chunks_per_row - 1u;
 
-  const uint32_t kt   = blockIdx.z;
+  const uint32_t ktile = blockIdx.z;
   const uint32_t kb   = blockIdx.y;
   const uint32_t cidx = blockIdx.x * blockDim.x + threadIdx.x;
 
-  if (cidx >= M_pad * CHUNKS_PER_ROW) return;
+  if (cidx >= M_pad * chunks_per_row) return;
 
-  const uint32_t m       = cidx >> LOG2_CHUNKS_PER_ROW;
-  const uint32_t k_chunk = cidx & CHUNKS_PER_ROW_MASK;
+  const uint32_t m       = cidx >> log2_chunks_per_row;
+  const uint32_t k_chunk = cidx & chunks_per_row_mask;
+  const uint32_t k_base  = (ktile << log2_kt) + (kb << log2_mxu_kt)
+                         + k_chunk * CHUNK_ELEMS;
+  if (k_base >= K) return;
 
-  // Destination offset (chunk-units = 4 bytes).
-  const uint64_t chunks_per_kb_kt = (uint64_t)M_pad * CHUNKS_PER_ROW;
-  const uint64_t chunks_per_kt    = (uint64_t)gridDim.y * chunks_per_kb_kt;
-  const uint64_t chunk_idx_global =
-      (uint64_t)kt * chunks_per_kt
-    + (uint64_t)kb * chunks_per_kb_kt
-    + (uint64_t)cidx;
-  const uint64_t out_byte_off = chunk_idx_global * CHUNK_BYTES;
+  const uint32_t mt_idx = m >> log2_mt;
+  const uint32_t m0 = m & mt_mask;
+  const uint32_t cm = ((M_pad - (mt_idx << log2_mt)) < mt)
+                    ? (M_pad - (mt_idx << log2_mt))
+                    : mt;
+  const uint32_t km = k_base >> log2_mxu_kt;
+  const uint32_t k0 = k_base & mxu_kt_mask;
+  const uint64_t out_elem_off =
+      (uint64_t)mt_idx * mt * K
+    + (uint64_t)km * cm * mxu_kt
+    + (uint64_t)m0 * mxu_kt
+    + k0;
+  const uint64_t out_byte_off = out_elem_off * TILE_ELEM_BYTES;
 
   uint32_t v = 0;
   if (m < M_real) {
-    const uint32_t k_base = kt * DMA_KT + kb * MXU_KT + k_chunk * CHUNK_ELEMS;
-    const uint64_t src_byte_off = ((uint64_t)m * K + (uint64_t)k_base) * 2;
+    const uint64_t src_byte_off = ((uint64_t)m * K + (uint64_t)k_base) * TILE_ELEM_BYTES;
     v = *reinterpret_cast<const uint32_t *>(src + src_byte_off);
-
-    // Dummy fp32 compute (mimics silu_layout_fused's stable pipeline pattern).
-    // Result is folded back into v but the math is intentionally lossy — this
-    // is a debug workaround to avoid the partial-word hang while we collect
-    // timing traces. Output VALUES will not match a pure copy.
-    float lo_f = (float)(int)(v & 0xFFFF) * (1.0f / 32768.0f);
-    float hi_f = (float)(int)((v >> 16) & 0xFFFF) * (1.0f / 32768.0f);
-    lo_f = lo_f / (1.0f + vx_expf(-lo_f));
-    hi_f = hi_f / (1.0f + vx_expf(-hi_f));
-    uint32_t lo_b = (uint32_t)(int)(lo_f * 32768.0f) & 0xFFFF;
-    uint32_t hi_b = (uint32_t)(int)(hi_f * 32768.0f) & 0xFFFF;
-    v = (hi_b << 16) | lo_b;
   }
   *reinterpret_cast<uint32_t *>(dst + out_byte_off) = v;
 }

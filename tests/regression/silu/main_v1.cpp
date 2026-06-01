@@ -7,6 +7,7 @@
 #include <assert.h>
 #include <vortex.h>
 #include "common.h"
+#include "../vector_common/fp16.h"
 
 #define RT_CHECK(_expr)                                         \
    do {                                                         \
@@ -18,7 +19,7 @@
      exit(-1);                                                  \
    } while (false)
 
-using data_t = float;
+using data_t = fp16_t;
 
 vx_device_h device = nullptr;
 vx_buffer_h krnl_buffer = nullptr;
@@ -39,9 +40,9 @@ static void cleanup() {
 ///////////////////////////////////////////////////////////////////////////////
 void silu_cpu(const std::vector<data_t>& input, std::vector<data_t>& output) {
   for (size_t i = 0; i < input.size(); ++i) {
-    float x = input[i];
+    float x = fp16_to_float(input[i]);
     float sigmoid_x = 1.0f / (1.0f + std::exp(-x));
-    output[i] = x * sigmoid_x;
+    output[i] = float_to_fp16(x * sigmoid_x);
   }
 }
 
@@ -50,7 +51,8 @@ void silu_cpu(const std::vector<data_t>& input, std::vector<data_t>& output) {
 ///////////////////////////////////////////////////////////////////////////////
 void initialize_random(std::vector<data_t>& vec) {
   for (auto& val : vec) {
-    val = static_cast<float>(rand()) / RAND_MAX * 8.0f - 4.0f;  // [-4, 4]
+    float x = static_cast<float>(rand()) / RAND_MAX * 8.0f - 4.0f;  // [-4, 4]
+    val = float_to_fp16(x);
   }
 }
 
@@ -164,20 +166,22 @@ int main(int argc, char *argv[]) {
   float max_rel_error = 0.0f;
   
   for (uint32_t i = 0; i < size; ++i) {
-    float diff = std::abs(h_output_gpu[i] - h_output_cpu[i]);
+    float got = fp16_to_float(h_output_gpu[i]);
+    float expected = fp16_to_float(h_output_cpu[i]);
+    float diff = std::abs(got - expected);
     max_diff = std::max(max_diff, diff);
     
     // Check relative error
     float abs_threshold = 1e-5f;
-    float rel_threshold = std::abs(h_output_cpu[i]) * 0.01f;  // 1%
+    float rel_threshold = std::abs(expected) * 0.01f;  // 1%
     float threshold = std::max(abs_threshold, rel_threshold);
     
     if (diff > threshold) {
       if (errors < 10) {
-        float rel_error = (h_output_cpu[i] != 0.0f) ? diff / std::abs(h_output_cpu[i]) : 0.0f;
+        float rel_error = (expected != 0.0f) ? diff / std::abs(expected) : 0.0f;
         max_rel_error = std::max(max_rel_error, rel_error);
         printf("Error at %d: GPU=%.6f, CPU=%.6f, diff=%.6f, rel_err=%.2f%%\n", 
-               i, h_output_gpu[i], h_output_cpu[i], diff, rel_error * 100.0f);
+               i, got, expected, diff, rel_error * 100.0f);
       }
       ++errors;
     }

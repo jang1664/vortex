@@ -9,6 +9,7 @@
 //   ./silu_layout_fused [-m M] [-k K] [-i iters]
 
 #include "common.h"
+#include "../vector_common/fp16.h"
 #include <vortex.h>
 #include <unistd.h>
 #include <cstdio>
@@ -52,6 +53,16 @@ static void show_usage() {
   printf("Usage: ./silu_layout_fused [-m M] [-k K] [-i iters]\n");
 }
 
+static bool is_pow2(uint32_t v) {
+  return v && ((v & (v - 1)) == 0);
+}
+
+static uint32_t log2_u32(uint32_t v) {
+  uint32_t r = 0;
+  while ((1u << r) < v) ++r;
+  return r;
+}
+
 static void parse_args(int argc, char** argv) {
   int c;
   while ((c = getopt(argc, argv, "m:k:i:h")) != -1) {
@@ -77,6 +88,8 @@ static double launch_one(const kernel_arg_t& karg) {
   return std::chrono::duration<double>(t1 - t0).count();
 }
 
+using data_t = fp16_t;
+
 int main(int argc, char** argv) {
   parse_args(argc, argv);
 
@@ -87,39 +100,40 @@ int main(int argc, char** argv) {
     printf("ERROR: K must be multiple of %u\n", TILE_DMA_MXU_KT);
     return 1;
   }
+  if (!is_pow2(TILE_DMA_MT) || !is_pow2(TILE_DMA_KT) || !is_pow2(TILE_DMA_MXU_KT)) {
+    printf("ERROR: tile constants must be powers of two\n");
+    return 1;
+  }
 
   size_t in_elems  = size_t(M)     * K;
   size_t out_elems = size_t(M_pad) * K;
-  size_t in_bytes  = in_elems  * sizeof(float);
-  size_t out_bytes = out_elems * sizeof(float);
+  size_t in_bytes  = in_elems  * sizeof(data_t);
+  size_t out_bytes = out_elems * sizeof(data_t);
 
-  // Synthetic input — random-ish fp32 in [-2, 2].
-  std::vector<float> h_in(in_elems);
+  // Synthetic input — random-ish fp16 in [-2, 2].
+  std::vector<data_t> h_in(in_elems);
   for (size_t i = 0; i < in_elems; i++) {
-    h_in[i] = -2.0f + 4.0f * (float((i * 2654435761u) % 1000) / 1000.0f);
+    float x = -2.0f + 4.0f * (float((i * 2654435761u) % 1000) / 1000.0f);
+    h_in[i] = float_to_fp16(x);
   }
 
   // CPU reference for FUSED output (silu values written in tile-major positions).
-  std::vector<float> h_ref(out_elems, 0.0f);
+  std::vector<data_t> h_ref(out_elems, 0);
   {
-    const uint32_t k_tiles = (K + TILE_DMA_KT - 1) / TILE_DMA_KT;
-    size_t idx = 0;
-    for (uint32_t kt = 0; kt < k_tiles; kt++) {
-      uint32_t cur_k = (K - kt * TILE_DMA_KT < TILE_DMA_KT)
-                       ? (K - kt * TILE_DMA_KT) : TILE_DMA_KT;
-      uint32_t k_mic = cur_k / TILE_DMA_MXU_KT;
-      for (uint32_t kb = 0; kb < k_mic; kb++) {
-        for (uint32_t m = 0; m < M_pad; m++) {
-          for (uint32_t k = 0; k < TILE_DMA_MXU_KT; k++) {
-            float v = 0.0f;
-            if (m < M) {
-              uint32_t gk = kt * TILE_DMA_KT + kb * TILE_DMA_MXU_KT + k;
-              float x = h_in[m * K + gk];
-              v = x / (1.0f + std::exp(-x));
-            }
-            h_ref[idx++] = v;
-          }
-        }
+    for (uint32_t m = 0; m < M; m++) {
+      uint32_t mt = m / TILE_DMA_MT;
+      uint32_t m0 = m % TILE_DMA_MT;
+      uint32_t cm = ((M_pad - mt * TILE_DMA_MT) < TILE_DMA_MT)
+                      ? (M_pad - mt * TILE_DMA_MT) : TILE_DMA_MT;
+      for (uint32_t k = 0; k < K; k++) {
+        uint32_t km = k / TILE_DMA_MXU_KT;
+        uint32_t k0 = k % TILE_DMA_MXU_KT;
+        uint64_t out_idx = uint64_t(mt) * TILE_DMA_MT * K
+                         + uint64_t(km) * cm * TILE_DMA_MXU_KT
+                         + uint64_t(m0) * TILE_DMA_MXU_KT
+                         + k0;
+        float x = fp16_to_float(h_in[uint64_t(m) * K + k]);
+        h_ref[out_idx] = float_to_fp16(x / (1.0f + std::exp(-x)));
       }
     }
   }
@@ -147,6 +161,9 @@ int main(int argc, char** argv) {
   karg.M_pad  = M_pad;
   karg.K      = K;
   karg.size   = in_elems;       // plain silu: M*K elements only
+  karg.log2_mt     = log2_u32(TILE_DMA_MT);
+  karg.log2_kt     = log2_u32(TILE_DMA_KT);
+  karg.log2_mxu_kt = log2_u32(TILE_DMA_MXU_KT);
 
   // -------------- Plain silu --------------
   karg.kernel_id    = KERNEL_SILU;
@@ -198,35 +215,35 @@ int main(int argc, char** argv) {
   // Verify fused output correctness — REAL ROWS ONLY.
   // The kernel intentionally leaves pad-row positions uninitialized
   // (downstream GEMM doesn't care; its output for pad rows is discarded).
-  std::vector<float> h_out(out_elems);
+  std::vector<data_t> h_out(out_elems);
   RT_CHECK(vx_copy_from_dev(h_out.data(), dst_buf, 0, out_bytes));
 
   const float TOL = 1e-3f;
   size_t errors = 0;
   double max_diff = 0.0;
-  const uint32_t k_tiles_v = (K + TILE_DMA_KT - 1) / TILE_DMA_KT;
-  size_t flat_idx = 0;
-  for (uint32_t kt = 0; kt < k_tiles_v; kt++) {
-    const uint32_t cur_k_v = (K - kt * TILE_DMA_KT < TILE_DMA_KT)
-                             ? (K - kt * TILE_DMA_KT) : TILE_DMA_KT;
-    const uint32_t k_mic_v = cur_k_v / TILE_DMA_MXU_KT;
-    for (uint32_t kb = 0; kb < k_mic_v; kb++) {
-      for (uint32_t m_iter = 0; m_iter < M_pad; m_iter++) {
-        for (uint32_t kk = 0; kk < TILE_DMA_MXU_KT; kk++) {
-          if (m_iter < M) {  // real row -> check
-            float d = std::fabs(h_out[flat_idx] - h_ref[flat_idx]);
-            if (d > TOL) {
-              if (errors < 4) {
-                printf("  Mismatch[%zu]: got=%.6f ref=%.6f\n",
-                       flat_idx, h_out[flat_idx], h_ref[flat_idx]);
-              }
-              errors++;
-            }
-            if (d > max_diff) max_diff = d;
-          }
-          flat_idx++;
+  for (uint32_t m_iter = 0; m_iter < M; m_iter++) {
+    uint32_t mt = m_iter / TILE_DMA_MT;
+    uint32_t m0 = m_iter % TILE_DMA_MT;
+    uint32_t cm = ((M_pad - mt * TILE_DMA_MT) < TILE_DMA_MT)
+                    ? (M_pad - mt * TILE_DMA_MT) : TILE_DMA_MT;
+    for (uint32_t kk = 0; kk < K; kk++) {
+      uint32_t km = kk / TILE_DMA_MXU_KT;
+      uint32_t k0 = kk % TILE_DMA_MXU_KT;
+      uint64_t idx = uint64_t(mt) * TILE_DMA_MT * K
+                   + uint64_t(km) * cm * TILE_DMA_MXU_KT
+                   + uint64_t(m0) * TILE_DMA_MXU_KT
+                   + k0;
+      float got = fp16_to_float(h_out[idx]);
+      float expected = fp16_to_float(h_ref[idx]);
+      float d = std::fabs(got - expected);
+      if (d > TOL) {
+        if (errors < 4) {
+          printf("  Mismatch[%zu]: got=%.6f ref=%.6f\n",
+                 size_t(idx), got, expected);
         }
+        errors++;
       }
+      if (d > max_diff) max_diff = d;
     }
   }
   cleanup();

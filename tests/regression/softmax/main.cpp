@@ -7,6 +7,7 @@
 #include <assert.h>
 #include <vortex.h>
 #include "common.h"
+#include "../vector_common/fp16.h"
 
 #define RT_CHECK(_expr)                                         \
    do {                                                         \
@@ -18,7 +19,7 @@
      exit(-1);                                                  \
    } while (false)
 
-using data_t = float;
+using data_t = fp16_t;
 
 vx_device_h device = nullptr;
 vx_buffer_h krnl_buffer = nullptr;
@@ -57,7 +58,7 @@ void softmax_cpu(
         // Find max for numerical stability
         float max_val = -INFINITY;
         for (uint32_t k = 0; k < seq_len_k; ++k) {
-          float val = input[row_offset + k] * scale;
+          float val = fp16_to_float(input[row_offset + k]) * scale;
           if (use_mask && k > q) {
             val = -INFINITY;
           }
@@ -67,18 +68,22 @@ void softmax_cpu(
         // Compute exp and sum
         float sum = 0.0f;
         for (uint32_t k = 0; k < seq_len_k; ++k) {
-          float val = input[row_offset + k] * scale;
+          float val = fp16_to_float(input[row_offset + k]) * scale;
           if (use_mask && k > q) {
             val = -INFINITY;
           }
           float exp_val = std::exp(val - max_val);
-          output[row_offset + k] = exp_val;
           sum += exp_val;
         }
         
         // Normalize
         for (uint32_t k = 0; k < seq_len_k; ++k) {
-          output[row_offset + k] /= sum;
+          float val = fp16_to_float(input[row_offset + k]) * scale;
+          if (use_mask && k > q) {
+            val = -INFINITY;
+          }
+          float exp_val = std::exp(val - max_val);
+          output[row_offset + k] = float_to_fp16(exp_val / sum);
         }
       }
     }
@@ -90,7 +95,8 @@ void softmax_cpu(
 ///////////////////////////////////////////////////////////////////////////////
 void initialize_random(std::vector<data_t>& vec) {
   for (auto& val : vec) {
-    val = static_cast<float>(rand()) / RAND_MAX * 4.0f - 2.0f;  // [-2, 2]
+    float x = static_cast<float>(rand()) / RAND_MAX * 4.0f - 2.0f;  // [-2, 2]
+    val = float_to_fp16(x);
   }
 }
 
@@ -244,30 +250,32 @@ int main(int argc, char *argv[]) {
         
         for (uint32_t k = 0; k < seq_len_k; ++k) {
           uint32_t idx = row_offset + k;
-          float diff = std::abs(h_output_gpu[idx] - h_output_cpu[idx]);
+          float got = fp16_to_float(h_output_gpu[idx]);
+          float expected = fp16_to_float(h_output_cpu[idx]);
+          float diff = std::abs(got - expected);
           max_diff = std::max(max_diff, diff);
           
-          sum_gpu += h_output_gpu[idx];
-          sum_cpu += h_output_cpu[idx];
+          sum_gpu += got;
+          sum_cpu += expected;
           
           // Check relative error
           float abs_threshold = 1e-5f;
-          float rel_threshold = std::abs(h_output_cpu[idx]) * 0.01f;  // 1%
+          float rel_threshold = std::abs(expected) * 0.01f;  // 1%
           float threshold = std::max(abs_threshold, rel_threshold);
           
           if (diff > threshold) {
             if (errors < 10) {
-              float rel_error = (h_output_cpu[idx] != 0.0f) ? diff / std::abs(h_output_cpu[idx]) : 0.0f;
+              float rel_error = (expected != 0.0f) ? diff / std::abs(expected) : 0.0f;
               max_rel_error = std::max(max_rel_error, rel_error);
               printf("Error at [%d,%d,%d,%d]: GPU=%.6f, CPU=%.6f, diff=%.6f, rel_err=%.2f%%\n", 
-                     b, h, q, k, h_output_gpu[idx], h_output_cpu[idx], diff, rel_error * 100.0f);
+                     b, h, q, k, got, expected, diff, rel_error * 100.0f);
             }
             ++errors;
           }
         }
         
         // Check if sums are close to 1.0
-        if (std::abs(sum_gpu - 1.0f) > 1e-4f) {
+        if (std::abs(sum_gpu - 1.0f) > 2e-3f) {
           if (errors < 10) {
             printf("Row sum error at [%d,%d,%d]: GPU sum=%.6f (expected ~1.0)\n", 
                    b, h, q, sum_gpu);

@@ -18,6 +18,7 @@
 
 static uint32_t K = 64;
 static uint32_t N = 64;
+static uint32_t WTRANS = 0;
 
 static const char* kernel_file = "kernel.vxbin";
 
@@ -45,19 +46,35 @@ static void cleanup() {
 }
 
 static void show_usage() {
-  printf("Usage: ./tile_weight_w4a16 [-k K] [-n N]\n");
+  printf("Usage: ./tile_weight_w4a16 [-k K] [-n N] [-t WTRANS]\n");
+}
+
+static bool is_pow2(uint32_t v) {
+  return v && ((v & (v - 1)) == 0);
+}
+
+static uint32_t log2_u32(uint32_t v) {
+  uint32_t r = 0;
+  while ((1u << r) < v) ++r;
+  return r;
 }
 
 static void parse_args(int argc, char** argv) {
   int c;
-  while ((c = getopt(argc, argv, "k:n:h")) != -1) {
+  while ((c = getopt(argc, argv, "k:n:t:h")) != -1) {
     switch (c) {
       case 'k': K = atoi(optarg); break;
       case 'n': N = atoi(optarg); break;
+      case 't': WTRANS = atoi(optarg); break;
       case 'h': show_usage(); exit(0);
       default:  show_usage(); exit(1);
     }
   }
+}
+
+static uint8_t get_nibble(const std::vector<uint8_t>& src, uint32_t k, uint32_t n) {
+  uint8_t byte = src[(uint64_t)k * (N / 2) + (n / 2)];
+  return (n & 1u) ? (byte >> 4) : (byte & 0x0f);
 }
 
 // CPU reference reorder, matches convert_weight_tiled in
@@ -79,11 +96,24 @@ static void cpu_tile_weight(const std::vector<uint8_t>& src,
     uint32_t cur_kb = cur_k / DMA_MXU_KT;
     for (uint32_t nt = 0; nt < n_tiles; nt++) {
       for (uint32_t kb = 0; kb < cur_kb; kb++) {
-        for (uint32_t k = 0; k < DMA_MXU_KT; k++) {
-          uint32_t gk = kt * DMA_KT + kb * DMA_MXU_KT + k;
-          for (uint32_t pair = 0; pair < PAIR_PER_SUB; pair++) {
-            uint32_t gn_byte = nt * PAIR_PER_SUB + pair;
-            dst[idx++] = src[gk * row_bytes + gn_byte];
+        if (WTRANS == 0) {
+          for (uint32_t k = 0; k < DMA_MXU_KT; k++) {
+            uint32_t gk = kt * DMA_KT + kb * DMA_MXU_KT + k;
+            for (uint32_t pair = 0; pair < PAIR_PER_SUB; pair++) {
+              uint32_t gn_byte = nt * PAIR_PER_SUB + pair;
+              dst[idx++] = src[(uint64_t)gk * row_bytes + gn_byte];
+            }
+          }
+        } else {
+          for (uint32_t n = 0; n < DMA_MXU_NT; n++) {
+            uint32_t gn = nt * DMA_MXU_NT + n;
+            for (uint32_t k = 0; k < DMA_MXU_KT; k += 2) {
+              uint32_t gk0 = kt * DMA_KT + kb * DMA_MXU_KT + k;
+              uint32_t gk1 = gk0 + 1;
+              uint8_t w0 = get_nibble(src, gk0, gn);
+              uint8_t w1 = get_nibble(src, gk1, gn);
+              dst[idx++] = (w0 & 0x0f) | uint8_t((w1 & 0x0f) << 4);
+            }
           }
         }
       }
@@ -93,11 +123,19 @@ static void cpu_tile_weight(const std::vector<uint8_t>& src,
 
 int main(int argc, char** argv) {
   parse_args(argc, argv);
-  printf("tile_weight_w4a16 standalone test  K=%u  N=%u\n", K, N);
+  printf("tile_weight_w4a16 standalone test  K=%u  N=%u WTRANS=%u\n", K, N, WTRANS);
 
   if (K % TILE_DMA_MXU_KT != 0 || N % TILE_DMA_MXU_NT != 0 || (N & 1)) {
     printf("ERROR: K must be multiple of %u, N must be multiple of %u (and even).\n",
            TILE_DMA_MXU_KT, TILE_DMA_MXU_NT);
+    return 1;
+  }
+  if (WTRANS > 1) {
+    printf("ERROR: WTRANS must be 0 or 1\n");
+    return 1;
+  }
+  if (!is_pow2(TILE_DMA_KT) || !is_pow2(TILE_DMA_MXU_KT) || !is_pow2(TILE_DMA_MXU_NT)) {
+    printf("ERROR: tile constants must be powers of two\n");
     return 1;
   }
 
@@ -129,10 +167,12 @@ int main(int argc, char** argv) {
 
   // 3D grid: chunks_per_(kt,nt) blocks × n_tiles × k_tiles
   uint32_t k_tiles = (K + TILE_DMA_KT - 1) / TILE_DMA_KT;
-  uint32_t cur_k   = (k_tiles == 1) ? K : TILE_DMA_KT;
-  uint32_t cur_kb  = cur_k / TILE_DMA_MXU_KT;
+  uint32_t max_cur_k = (K < TILE_DMA_KT) ? K : TILE_DMA_KT;
+  uint32_t cur_kb  = max_cur_k / TILE_DMA_MXU_KT;
   uint32_t n_tiles = N / TILE_DMA_MXU_NT;
-  uint32_t chunks_per_nt_kt = cur_kb * TILE_DMA_MXU_KT;
+  uint32_t chunks_per_nt_kt = (WTRANS == 0)
+                                ? (cur_kb * TILE_DMA_MXU_KT)
+                                : (cur_kb * TILE_DMA_MXU_NT * (TILE_DMA_MXU_KT / 2));
 
   karg.grid_dim[0]  = (chunks_per_nt_kt + threads_per_block - 1) / threads_per_block;
   karg.grid_dim[1]  = n_tiles;
@@ -144,6 +184,10 @@ int main(int argc, char** argv) {
   RT_CHECK(vx_mem_address(dst_buf, &karg.dst_addr));
   karg.K = K;
   karg.N = N;
+  karg.WTRANS = WTRANS;
+  karg.log2_kt = log2_u32(TILE_DMA_KT);
+  karg.log2_mxu_kt = log2_u32(TILE_DMA_MXU_KT);
+  karg.log2_mxu_nt = log2_u32(TILE_DMA_MXU_NT);
 
   RT_CHECK(vx_upload_bytes(device, &karg, sizeof(karg), &args_buf));
   RT_CHECK(vx_start(device, kernel_bin, args_buf));

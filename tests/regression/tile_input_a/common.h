@@ -5,6 +5,7 @@
 
 // Tile-layout constants — must match
 // tests/regression/fpint_gemm_ffn_hw/common.h
+#define TILE_DMA_MT      128
 #define TILE_DMA_KT      128
 #define TILE_DMA_MXU_KT   32
 
@@ -21,6 +22,10 @@ typedef struct {
   uint32_t M_real;     // real M (caller's M)
   uint32_t M_pad;      // padded M (multiple of 8)
   uint32_t K;
+
+  uint32_t log2_mt;
+  uint32_t log2_kt;
+  uint32_t log2_mxu_kt;
 } kernel_arg_t;
 
 #endif // _COMMON_H_

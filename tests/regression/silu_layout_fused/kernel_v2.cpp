@@ -1,9 +1,10 @@
 #include "common.h"
+#include "../vector_common/fp16.h"
 #include <vx_spawn.h>
 #include <vx_intrinsics.h>
 #include <vx_math.h>
 
-using data_t = float;
+using data_t = fp16_t;
 
 ///////////////////////////////////////////////////////////////////////////////
 // Two kernels, same binary:
@@ -38,7 +39,7 @@ void kernel_silu(kernel_arg_t *__UNIFORM__ arg) {
   const uint32_t thread_id     = blockIdx.x * blockDim.x + threadIdx.x;
 
   for (uint32_t i = thread_id; i < size; i += total_threads) {
-    pOutput[i] = silu(pInput[i]);
+    pOutput[i] = float_to_fp16(silu(fp16_to_float(pInput[i])));
   }
 }
 
@@ -55,42 +56,47 @@ void kernel_silu_store_matched(kernel_arg_t *__UNIFORM__ arg) {
   const uint32_t M_real = arg->M_real;
   const uint32_t M_pad  = arg->M_pad;
   const uint32_t K      = arg->K;
+  const uint32_t log2_mt     = arg->log2_mt;
+  const uint32_t log2_kt     = arg->log2_kt;
+  const uint32_t log2_mxu_kt = arg->log2_mxu_kt;
   const uint64_t layout_mask =
       (arg->kernel_id == KERNEL_SILU_LAYOUT_FUSED) ? ~uint64_t(0) : uint64_t(0);
   const uint64_t row_mask = ~layout_mask;
 
-  constexpr uint32_t MXU_KT      = TILE_DMA_MXU_KT;     // 32
-  constexpr uint32_t LOG2_MXU_KT = 5;
-  constexpr uint32_t DMA_KT      = TILE_DMA_KT;          // 128
-  constexpr uint32_t LOG2_DMA_K_CHUNKS = 2;              // 128 / 32 = 4
-  constexpr uint32_t DMA_K_CHUNKS_MASK = (DMA_KT / MXU_KT) - 1;
+  const uint32_t mt          = 1u << log2_mt;
+  const uint32_t mt_mask     = mt - 1u;
+  const uint32_t mxu_kt      = 1u << log2_mxu_kt;
+  const uint32_t mxu_kt_mask = mxu_kt - 1u;
 
-  const uint32_t k_chunks = K >> LOG2_MXU_KT;
+  const uint32_t k_chunks = K >> log2_mxu_kt;
   const uint32_t total_threads = gridDim.x * blockDim.x;
   const uint32_t thread_id = blockIdx.x * blockDim.x + threadIdx.x;
 
-  const uint64_t per_kb_elems = (uint64_t)M_pad * MXU_KT;
-  const uint64_t per_kt_elems = (uint64_t)(DMA_KT / MXU_KT) * per_kb_elems;
-
   for (uint32_t m = 0; m < M_real; ++m) {
     const uint64_t in_row_base = (uint64_t)m * K;
-    const uint64_t out_row_base = (uint64_t)m * MXU_KT;
+    const uint32_t mt_idx = m >> log2_mt;
+    const uint32_t m0 = m & mt_mask;
+    const uint32_t cm = ((M_pad - (mt_idx << log2_mt)) < mt)
+                      ? (M_pad - (mt_idx << log2_mt))
+                      : mt;
 
     for (uint32_t k_chunk = thread_id; k_chunk < k_chunks; k_chunk += total_threads) {
-      const uint32_t kt = k_chunk >> LOG2_DMA_K_CHUNKS;
-      const uint32_t kb = k_chunk & DMA_K_CHUNKS_MASK;
-      const uint32_t gk_base = k_chunk << LOG2_MXU_KT;
+      const uint32_t gk_base = k_chunk << log2_mxu_kt;
+      const uint32_t k0 = gk_base & mxu_kt_mask;
 
       const uint64_t in_base = in_row_base + gk_base;
-      const uint64_t tile_out_base = (uint64_t)kt * per_kt_elems
-                                   + (uint64_t)kb * per_kb_elems
-                                   + out_row_base;
+      const uint64_t tile_out_base =
+          (uint64_t)mt_idx * mt * K
+        + (uint64_t)k_chunk * cm * mxu_kt
+        + (uint64_t)m0 * mxu_kt
+        + k0;
       const uint64_t row_out_base = in_base;
       const uint64_t out_base = (tile_out_base & layout_mask)
                               | (row_out_base & row_mask);
 
-      for (uint32_t k_in_sub = 0; k_in_sub < MXU_KT; ++k_in_sub) {
-        pOutput[out_base + k_in_sub] = silu(pInput[in_base + k_in_sub]);
+      for (uint32_t k_in_sub = 0; k_in_sub < mxu_kt; ++k_in_sub) {
+        pOutput[out_base + k_in_sub] =
+            float_to_fp16(silu(fp16_to_float(pInput[in_base + k_in_sub])));
       }
     }
   }

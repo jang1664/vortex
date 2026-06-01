@@ -1,10 +1,11 @@
 #include "common.h"
+#include "../vector_common/fp16.h"
 #include <vx_spawn.h>
 #include <vx_intrinsics.h>
 #include <vx_math.h>
 
 // Type aliases
-using data_t = float;
+using data_t = fp16_t;
 
 ///////////////////////////////////////////////////////////////////////////////
 // Softmax Kernel for Attention
@@ -65,7 +66,7 @@ void kernel_softmax(kernel_arg_t *__UNIFORM__ arg) {
   // Each thread finds local max (only if block is active)
   if (active) {
     for (uint32_t k = tid; k < seq_len_k; k += block_size) {
-      float val = input_row[k] * scale;
+      float val = fp16_to_float(input_row[k]) * scale;
       
       // Apply causal mask if enabled
       if (use_mask && k > q) {
@@ -111,7 +112,7 @@ void kernel_softmax(kernel_arg_t *__UNIFORM__ arg) {
   // but zero global RAW hazard.
   if (active) {
     for (uint32_t k = tid; k < seq_len_k; k += block_size) {
-      float val = input_row[k] * scale;
+      float val = fp16_to_float(input_row[k]) * scale;
       
       // Apply causal mask if enabled
       if (use_mask && k > q) {
@@ -146,14 +147,14 @@ void kernel_softmax(kernel_arg_t *__UNIFORM__ arg) {
   
   if (active) {
     for (uint32_t k = tid; k < seq_len_k; k += block_size) {
-      float val = input_row[k] * scale;
+      float val = fp16_to_float(input_row[k]) * scale;
       
       // Apply causal mask if enabled
       if (use_mask && k > q) {
         val = VX_NEG_INF;
       }
       
-      output_row[k] = vx_expf(val - global_max) * inv_sum;
+      output_row[k] = float_to_fp16(vx_expf(val - global_max) * inv_sum);
     }
   }
 }

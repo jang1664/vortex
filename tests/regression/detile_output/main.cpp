@@ -38,6 +38,16 @@ static void cleanup() {
 
 static void show_usage() { printf("Usage: ./detile_output [-m M] [-n N]\n"); }
 
+static bool is_pow2(uint32_t v) {
+  return v && ((v & (v - 1)) == 0);
+}
+
+static uint32_t log2_u32(uint32_t v) {
+  uint32_t r = 0;
+  while ((1u << r) < v) ++r;
+  return r;
+}
+
 static void parse_args(int argc, char** argv) {
   int c;
   while ((c = getopt(argc, argv, "m:n:h")) != -1) {
@@ -50,18 +60,24 @@ static void parse_args(int argc, char** argv) {
   }
 }
 
-// CPU reference: given nt-major src [M_pad, N], produce row-major dst [M, N].
+// CPU reference: given tiled src [M_pad, N], produce row-major dst [M, N].
 static void cpu_detile_output(const std::vector<uint16_t>& h_src,
                               std::vector<uint8_t>& h_dst,
                               uint32_t M, uint32_t M_pad, uint32_t N) {
   size_t out_bytes = size_t(M) * N * TILE_ELEM_BYTES;
   h_dst.assign(out_bytes, 0);
-  const uint32_t MXU_NT = TILE_DMA_MXU_NT;
   for (uint32_t m = 0; m < M; m++) {
+    uint32_t mt = m / TILE_DMA_MT;
+    uint32_t m0 = m % TILE_DMA_MT;
+    uint32_t cm = ((M_pad - mt * TILE_DMA_MT) < TILE_DMA_MT)
+                    ? (M_pad - mt * TILE_DMA_MT) : TILE_DMA_MT;
     for (uint32_t n = 0; n < N; n++) {
-      uint32_t nt = n / MXU_NT;
-      uint32_t n_in_sub = n - nt * MXU_NT;
-      uint32_t src_elem = nt * (M_pad * MXU_NT) + m * MXU_NT + n_in_sub;
+      uint32_t nt32 = n / TILE_DMA_MXU_NT;
+      uint32_t n_in_sub = n % TILE_DMA_MXU_NT;
+      uint64_t src_elem = uint64_t(mt) * TILE_DMA_MT * N
+                        + uint64_t(nt32) * cm * TILE_DMA_MXU_NT
+                        + uint64_t(m0) * TILE_DMA_MXU_NT
+                        + n_in_sub;
       uint16_t v = h_src[src_elem];
       uint32_t off = (m * N + n) * 2;
       h_dst[off + 0] = uint8_t(v & 0xFF);
@@ -77,6 +93,10 @@ int main(int argc, char** argv) {
 
   if (N % TILE_DMA_MXU_NT != 0) {
     printf("ERROR: N must be multiple of %u\n", TILE_DMA_MXU_NT);
+    return 1;
+  }
+  if (!is_pow2(TILE_DMA_MT) || !is_pow2(TILE_DMA_MXU_NT)) {
+    printf("ERROR: tile constants must be powers of two\n");
     return 1;
   }
 
@@ -115,6 +135,8 @@ int main(int argc, char** argv) {
   karg.M     = M;
   karg.M_pad = M_pad;
   karg.N     = N;
+  karg.log2_mt     = log2_u32(TILE_DMA_MT);
+  karg.log2_mxu_nt = log2_u32(TILE_DMA_MXU_NT);
 
   RT_CHECK(vx_upload_bytes(device, &karg, sizeof(karg), &args_buf));
   RT_CHECK(vx_start(device, kernel_bin, args_buf));

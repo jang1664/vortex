@@ -22,14 +22,21 @@ typedef struct {
   uint32_t QBLK;
   uint32_t QDIR;
 
-  uint32_t slot_bytes;          // bytes per (kt, nt_dma) slot incl. 512-B pad
-  uint32_t body_bytes;          // bytes of real data per slot
+  uint32_t k_tiles;
+  uint32_t n_dma_tiles;
+
+  uint32_t slot_fk_fn;          // full-K, full-N slot bytes
+  uint32_t slot_fk_pn;          // full-K, partial/last-N slot bytes
+  uint32_t slot_pk_fn;          // partial/last-K, full-N slot bytes
+  uint32_t per_kt_full_K;       // bytes in a full-K kt row of N slots
+  uint32_t max_slot_bytes;      // launch bound for the largest slot
 
   // Precomputed shifts (host fills; all divisors are powers of two for our shapes)
-  uint32_t log2_cur_groups;     // qdir=0: log2(cur_k/QBLK)
-  uint32_t log2_cur_k;          // qdir=1: log2(cur_k)
-  uint32_t log2_ng_per_mxu_nt;  // qdir=1: log2(ceil(MXU_NT/QBLK))
+  uint32_t log2_kt;
+  uint32_t log2_nt;
+  uint32_t log2_mxu_nt;
   uint32_t log2_qblk;           // log2(QBLK)
+  uint32_t log2_ng_per_mxu_nt;  // qdir=1: log2(ceil(MXU_NT/QBLK))
 } kernel_arg_t;
 
 #endif // _COMMON_H_

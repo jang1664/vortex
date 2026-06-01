@@ -1,9 +1,10 @@
 #include "common.h"
+#include "../vector_common/fp16.h"
 #include <vx_spawn.h>
 #include <vx_intrinsics.h>
 #include <vx_math.h>
 
-using data_t = float;
+using data_t = fp16_t;
 
 ///////////////////////////////////////////////////////////////////////////////
 // Two kernels, same binary:
@@ -38,7 +39,7 @@ void kernel_silu(kernel_arg_t *__UNIFORM__ arg) {
   const uint32_t thread_id     = blockIdx.x * blockDim.x + threadIdx.x;
 
   for (uint32_t i = thread_id; i < size; i += total_threads) {
-    pOutput[i] = silu(pInput[i]);
+    pOutput[i] = float_to_fp16(silu(fp16_to_float(pInput[i])));
   }
 }
 
@@ -92,7 +93,7 @@ void kernel_silu_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
                          + (uint64_t)mk;
 
   const uint64_t in_off = (uint64_t)m * K + (uint64_t)gk;
-  pOutput[out_off] = silu(pInput[in_off]);
+  pOutput[out_off] = float_to_fp16(silu(fp16_to_float(pInput[in_off])));
 }
 
 void kernel_dispatcher(kernel_arg_t *__UNIFORM__ arg) {
