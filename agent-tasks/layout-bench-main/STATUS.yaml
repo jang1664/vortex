@@ -1,0 +1,14 @@
+task: layout-bench-main
+status: completed
+created: "2026-06-01 20:17"
+updated: "2026-06-01 20:23"
+summary: "Add bench_main.cpp harnesses for detile_output, tile_input_a, and tile_weight_w4a16 so latency_bench --bench can run merged layout suites."
+log:
+  - time: "2026-06-01 20:17"
+    entry: "Started from user-approved plan. Existing functional main.cpp files already contain the required CLI parsing, validation, deterministic input setup, grid setup, and kernel_arg_t population; bench harnesses should reuse that setup but omit CPU reference and output verification."
+  - time: "2026-06-01 20:23"
+    entry: "Added bench_main.cpp for detile_output, tile_input_a, and tile_weight_w4a16. Bench harnesses support bench_util args and preserve app-specific CLI/validation while measuring only vx_start/vx_ready_wait iterations."
+  - time: "2026-06-01 20:23"
+    entry: "Verified bench builds, existing functional builds, xrt-vcs-sim bench smoke for detile_output/tile_input_a/tile_weight_w4a16 WTRANS 0 and 1, naive_simd merged suite dry-runs, missing bench static check, and git diff whitespace check."
+pitfalls:
+  - "bench_util accepts --warmup=N/--iterations=N or --warmup N/--iterations N; single-dash -warmup/-iterations are app args and should not be used for latency bench smoke."

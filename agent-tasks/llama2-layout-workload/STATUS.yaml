@@ -1,0 +1,31 @@
+task: llama2-layout-workload
+status: completed
+created: "2026-06-01 17:07"
+updated: "2026-06-01 18:19"
+summary: >
+  Add Llama2 workload variants that model fpint GEMM layout transform costs,
+  including runtime activation and KV-cache layout bridges.
+logs:
+  - time: "2026-06-01 17:07"
+    entry: >
+      Started implementation. Current worktree already has unrelated modified
+      layout/regression files; this task will touch workload generator tests
+      and implementation only unless documentation updates are needed.
+  - time: "2026-06-01 17:14"
+    entry: >
+      Implemented standalone and fused layout workload variants, documented the
+      generator behavior, and verified tools/workload plus tools/latency_bench
+      tests.
+  - time: "2026-06-01 18:19"
+    entry: >
+      Corrected the attention path to include attn_head_concat between attn_pv
+      and o_proj. Removed the direct GEMM-to-GEMM bridge model for that path,
+      and verified workload plus latency_bench tests.
+pitfalls:
+  - >
+    Do not assume GEMM outputs can feed later GEMM operands directly. GEMM
+    kernels are not layout-fused, so incompatible GEMM-to-GEMM boundaries need
+    explicit standalone layout bridge cases.
+  - >
+    attn_pv does not feed o_proj directly. It first goes through head-wise
+    concat; layout modeling must attach the o_proj input bridge after concat.

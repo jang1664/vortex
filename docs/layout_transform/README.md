@@ -5,16 +5,32 @@ the Llama2 workload emitted by `tools/workload/gen_kernel_cfgs.py`.
 
 ## Llama2 GEMM Boundaries
 
-The current workload graph has ten logical GEMM ops:
+The current workload graph has nine logical GEMM ops:
 
 ```text
-q_proj, k_proj, v_proj, attn_qkT, attn_pv, o_proj,
-gate_proj, up_proj, down_proj, lm_head
+q_proj, k_proj, v_proj, attn_qkT, attn_pv, attn_head_concat, o_proj,
+gate_proj, up_proj, down_proj
 ```
 
+`lm_head` is intentionally excluded from the emitted Llama2 latency workload;
+the logits projection is outside the current accelerator evaluation target.
+
 `kind` is the logical compute family (`gemm`), while `backend` is the
-implementation convention (`fpint_gemm` or `sgemm_tcu`). The producer/consumer
-relationships below are independent of backend.
+implementation convention (`fpint_gemm_naive`, `fpint_gemm_improve`,
+`sgemm_tcu`, or a layout backend).
+The producer/consumer relationships below are independent of backend.
+
+## Vector Kernel ABI
+
+Vector regression kernels use fp16 external buffers. Kernels that perform
+non-trivial math, such as RMSNorm, softmax, RoPE, and SiLU, load fp16 values,
+upcast to fp32 for the computation, and downcast to fp16 before storing.
+Elementwise kernels that only move or multiply values follow the same fp16
+buffer ABI.
+
+The default vector layout is row-major. Layout-fused vector apps are only used
+at fpint GEMM boundaries, where they consume or produce the GEMM-specific tiled
+layout directly.
 
 ## GEMM Input Producers
 
@@ -25,11 +41,10 @@ relationships below are independent of backend.
 | `v_proj` | `input_layernorm` | RMSNorm output feeds V projection. |
 | `attn_qkT` | `rope_q`, `rope_k` | RoPE-transformed Q and K feed score GEMM. |
 | `attn_pv` | `attn_softmax`, `v_proj` | Softmax scores and V projection feed PV GEMM. |
-| `o_proj` | `attn_pv` | Attention context feeds output projection. |
+| `o_proj` | `attn_head_concat` | Head-wise concatenated attention context feeds output projection. |
 | `gate_proj` | `post_attention_layernorm` | RMSNorm output feeds FFN gate projection. |
 | `up_proj` | `post_attention_layernorm` | Same RMSNorm output feeds FFN up projection. |
 | `down_proj` | `mlp_elmul` | SwiGLU product feeds down projection. |
-| `lm_head` | `final_layernorm` | Final RMSNorm output feeds logits projection. |
 
 ## GEMM Output Consumers
 
@@ -39,12 +54,12 @@ relationships below are independent of backend.
 | `k_proj` | `rope_k` | K projection layout is consumed by RoPE. |
 | `v_proj` | `attn_pv` | V projection is the value input to PV GEMM. |
 | `attn_qkT` | `attn_softmax` | Score matrix is consumed by softmax. |
-| `attn_pv` | `o_proj` | Context vector feeds output projection. |
+| `attn_pv` | `attn_head_concat` | Per-head context vectors are concatenated before output projection. |
+| `attn_head_concat` | `o_proj` | Concatenated context feeds output projection. |
 | `o_proj` | `residual_attn` | Attention output feeds residual add. |
 | `gate_proj` | `mlp_silu` | Gate projection feeds SiLU. |
 | `up_proj` | `mlp_elmul` | Up projection feeds SwiGLU multiply. |
 | `down_proj` | `residual_ffn` | FFN output feeds residual add. |
-| `lm_head` | none in workload generator | Logits consumer is outside the current kernel list. |
 
 ## Layout-Fused Kernel Candidates
 
@@ -61,16 +76,59 @@ immediately consumed by a non-GEMM kernel with no intervening logical op:
 | `o_proj -> residual_attn` | GEMM output layout matches residual add input | Residual add is elementwise and layout-sensitive. |
 | `down_proj -> residual_ffn` | GEMM output layout matches residual add input | Same pattern as attention residual. |
 
-GEMM-to-GEMM boundaries also matter, but usually require coordinating two
-matrix conventions instead of only matching an elementwise consumer:
+There are no direct GEMM-to-GEMM boundaries in the current generator graph.
+Boundaries that initially look like GEMM-to-GEMM still pass through another
+logical op:
 
 | Boundary | Notes |
 | --- | --- |
-| `attn_pv -> o_proj` | Attention context is immediately projected. |
+| `attn_pv -> attn_head_concat -> o_proj` | PV is per-head; standalone concat detiles to row-major and then retile for `o_proj`; fused concat bridges PV GEMM-C tiled output directly to `o_proj` GEMM-A tiled input. |
 | `mlp_elmul -> down_proj` | SwiGLU product feeds down projection. |
 | `v_proj -> attn_pv` | V projection layout affects the value matrix consumed by PV. |
 
-The current workload generator does not model explicit layout-transform kernels.
-Any fused implementation should keep the logical `op` names stable and choose
-the implementation through `backend` or `app` metadata so latency suites can
-compare fused and non-fused variants without changing the model graph.
+## Generator Variants
+
+`tools/workload/gen_kernel_cfgs.py` models two improve fpint layout variants:
+
+- `all_fpint_gemm_improve_alone_layout` keeps every GEMM on
+  `fpint_gemm_improve` and emits standalone layout kernels such as
+  `tile_input_a`, `detile_output`, and runtime K/V `tile_weight_w4a16`.
+- `all_fpint_gemm_improve_fused_layout` keeps every GEMM on
+  `fpint_gemm_improve` and models vector-side fused layout kernels such as
+  `rms_norm_layout_fused` and `silu_layout_fused`.
+
+GEMM kernels are not layout-fused. If a future direct GEMM-to-GEMM boundary is
+added, it needs a standalone layout bridge unless an explicit compatibility
+rule exists. In the current Llama2 graph, `attn_pv` feeds `attn_head_concat`,
+and the concat kernel is responsible for producing the layout expected by
+`o_proj` or by a following standalone `tile_input_a`.
+
+K/V cache tensors are dynamic runtime operands. When K or V is used as the W
+operand of QK^T or PV, the generator models weight-layout preparation. Prefill
+uses the full cache length; generation uses an append-only update and records
+the effective appended shape in kernel metadata.
+
+## Implemented Layout-Fused Apps
+
+The fused workload variant references regression apps whose names match their
+backend names:
+
+| App | Consumes | Produces | Notes |
+| --- | --- | --- | --- |
+| `rms_norm_layout_fused` | row-major hidden state | GEMM-A tiled | Fuses RMSNorm with `tile_input_a`. |
+| `silu_layout_fused` | GEMM-C tiled gate projection | `layout_fused_intermediate` | `layout_fused_intermediate` uses the GEMM-A tiled address formula and stores fp16 values. |
+| `elmul_layout_fused` | `layout_fused_intermediate` and GEMM-C tiled up projection | GEMM-A tiled | Feeds `down_proj` directly. |
+| `eladd_layout_fused` | GEMM-C tiled projection and row-major residual | row-major | Covers attention and FFN residual adds. |
+| `softmax_layout_fused` | per-head GEMM-C tiled score matrix | per-head GEMM-A tiled probabilities | One independent tiled matrix per `(batch, head)`. |
+| `rope_layout_fused` | combined-head GEMM-C tiled Q/K projection | per-head GEMM-A tiled Q or W-like tiled K | `--layout-to` selects `gemm_a_tiled` or `gemm_w_tiled`. |
+| `head_concat` | row-major `[batch, heads, seq, headdim]` | row-major `[batch, seq, heads * headdim]` | Regular head concat has no GEMM-specific layout. |
+| `head_concat_layout_fused` | per-head GEMM-C tiled PV output | GEMM-A tiled `o_proj` input | Fuses PV detile, head concat, and `o_proj` tile-input preparation. |
+| `kv_cache_quant_w4a16` | fp16 row-major `[K, N]` | uint4 packed row-major `[K, N/2]` plus fp16 scale and int16 zero-point | Dynamic K/V cache quantization for fpint-compatible W4A16 operands. |
+| `kv_cache_dequant_w4a16` | uint4 packed row-major plus qparams | fp16 row-major `[K, N]` | Debug/reference dequant path. |
+
+`rope_layout_fused --layout-to gemm_w_tiled` is a latency-model fp16 layout
+for K-cache data. It follows the WTRANS=1 tile ordering at element granularity,
+but it is not the packed int4 `tile_weight_w4a16` byte format and has no
+scale/zero-point side buffers. Correct fpint attention using this path still
+needs `kv_cache_quant_w4a16` before the packed int4 GEMM-W path, or a separate
+activation-B layout contract.
