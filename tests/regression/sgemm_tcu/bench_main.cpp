@@ -128,23 +128,25 @@ int main(int argc, char *argv[]) {
   }
 
   uint32_t M = xm, N = xn, K = xk;
-  if ((M % cfg::tileM) || (N % cfg::tileN) || (K % cfg::tileK)) {
-    printf("Error: M/N/K must be multiples of tileM/tileN/tileK\n");
-    cleanup();
-    return -1;
+  uint32_t M_exec = align_up_u32(M, cfg::tileM);
+  uint32_t N_exec = align_up_u32(N, cfg::tileN);
+  uint32_t K_exec = align_up_u32(K, cfg::tileK);
+  if (!bench.csv && ((M_exec != M) || (N_exec != N) || (K_exec != K))) {
+    printf("Sgemm-TCU Bench padded shape: M=%u N=%u K=%u\n",
+           M_exec, N_exec, K_exec);
   }
 
-  size_t sizeA = M * K;
-  size_t sizeB = K * N;
-  size_t sizeC = M * N;
+  size_t sizeA = M_exec * K_exec;
+  size_t sizeB = K_exec * N_exec;
+  size_t sizeC = M_exec * N_exec;
 
-  kernel_arg.grid_dim[0] = N / cfg::tileN;
-  kernel_arg.grid_dim[1] = M / cfg::tileM;
+  kernel_arg.grid_dim[0] = N_exec / cfg::tileN;
+  kernel_arg.grid_dim[1] = M_exec / cfg::tileM;
   kernel_arg.block_dim[0] = NT;
   kernel_arg.block_dim[1] = 1;
-  kernel_arg.M = M;
-  kernel_arg.N = N;
-  kernel_arg.K = K;
+  kernel_arg.M = M_exec;
+  kernel_arg.N = N_exec;
+  kernel_arg.K = K_exec;
 
   RT_CHECK(vx_mem_alloc(device, sizeA * sizeof(itype_t), VX_MEM_READ,  &A_buffer));
   RT_CHECK(vx_mem_address(A_buffer, &kernel_arg.A_addr));
@@ -153,13 +155,17 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_mem_alloc(device, sizeC * sizeof(otype_t), VX_MEM_WRITE, &C_buffer));
   RT_CHECK(vx_mem_address(C_buffer, &kernel_arg.C_addr));
 
-  std::vector<uint8_t> h_A(sizeA * sizeof(itype_t));
-  std::vector<uint8_t> h_B(sizeB * sizeof(itype_t));
-  random_bytes(h_A.data(), h_A.size());
-  random_bytes(h_B.data(), h_B.size());
+  std::vector<itype_t> h_A(sizeA, 0);
+  std::vector<itype_t> h_B(sizeB, 0);
+  for (uint32_t m = 0; m < M; ++m) {
+    random_bytes(&h_A[m * K_exec], K * sizeof(itype_t));
+  }
+  for (uint32_t k = 0; k < K; ++k) {
+    random_bytes(&h_B[k * N_exec], N * sizeof(itype_t));
+  }
 
-  RT_CHECK(vx_copy_to_dev(A_buffer, h_A.data(), 0, h_A.size()));
-  RT_CHECK(vx_copy_to_dev(B_buffer, h_B.data(), 0, h_B.size()));
+  RT_CHECK(vx_copy_to_dev(A_buffer, h_A.data(), 0, sizeA * sizeof(itype_t)));
+  RT_CHECK(vx_copy_to_dev(B_buffer, h_B.data(), 0, sizeB * sizeof(itype_t)));
   RT_CHECK(vx_upload_kernel_file(device, kernel_file, &krnl_buffer));
   RT_CHECK(vx_upload_bytes(device, &kernel_arg, sizeof(kernel_arg_t), &args_buffer));
 

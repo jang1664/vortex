@@ -15,6 +15,10 @@
 #define OTYPE fp32
 #endif
 
+static inline uint32_t align_up_u32(uint32_t value, uint32_t alignment) {
+  return ((value + alignment - 1) / alignment) * alignment;
+}
+
 typedef struct {
   uint32_t grid_dim[2];
   uint32_t block_dim[2];
