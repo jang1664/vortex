@@ -17,7 +17,8 @@ defaults:
 #   vocab_size=32000.
 case_matrices:
   - id: qkvo_proj
-    kind: fpint_gemm
+    kind: gemm
+    backend: fpint_gemm
     stage: projection
     name: qkvo_proj_b{batch}_s{seq}_q{qblk}
     args: "-m {m} -n 4096 -k 4096 -q {qblk} -t 0 -d 0"
@@ -39,7 +40,8 @@ case_matrices:
       QDIR: 0
 
   - id: gate_up_proj
-    kind: fpint_gemm
+    kind: gemm
+    backend: fpint_gemm
     stage: ffn
     name: gate_up_proj_b{batch}_s{seq}_q{qblk}
     args: "-m {m} -n 11008 -k 4096 -q {qblk} -t 0 -d 0"
@@ -61,7 +63,8 @@ case_matrices:
       QDIR: 0
 
   - id: down_proj
-    kind: fpint_gemm
+    kind: gemm
+    backend: fpint_gemm
     stage: ffn
     name: down_proj_b{batch}_s{seq}_q{qblk}
     args: "-m {m} -n 4096 -k 11008 -q {qblk} -t 0 -d 0"
@@ -83,7 +86,8 @@ case_matrices:
       QDIR: 0
 
   - id: attn_qkT_prefill
-    kind: fpint_gemm
+    kind: gemm
+    backend: fpint_gemm
     stage: attention_prefill
     name: attn_qkT_prefill_s{seq}
     args: "-m {seq} -n {seq} -k 128 -q 128 -t 1 -d 0"
@@ -100,7 +104,8 @@ case_matrices:
       per_head: true
 
   - id: attn_qkT_generation
-    kind: fpint_gemm
+    kind: gemm
+    backend: fpint_gemm
     stage: attention_generation
     name: attn_qkT_generation_kv{kv_len}
     args: "-m 1 -n {kv_len} -k 128 -q 128 -t 1 -d 0"
@@ -117,7 +122,8 @@ case_matrices:
       per_head: true
 
   - id: attn_pv_prefill
-    kind: fpint_gemm
+    kind: gemm
+    backend: fpint_gemm
     stage: attention_prefill
     name: attn_pv_prefill_s{seq}
     args: "-m {seq} -n 128 -k {seq} -q 128 -t 0 -d 1"
@@ -134,7 +140,8 @@ case_matrices:
       per_head: true
 
   - id: attn_pv_generation
-    kind: fpint_gemm
+    kind: gemm
+    backend: fpint_gemm
     stage: attention_generation
     name: attn_pv_generation_kv{kv_len}
     args: "-m 1 -n 128 -k {kv_len} -q 128 -t 0 -d 1"
@@ -151,7 +158,8 @@ case_matrices:
       per_head: true
 
   - id: lm_head
-    kind: fpint_gemm
+    kind: gemm
+    backend: fpint_gemm
     stage: output
     name: lm_head_b{batch}_q{qblk}
     args: "-m {batch} -n 32000 -k 4096 -q {qblk} -t 0 -d 0"

@@ -20,7 +20,8 @@ defaults:
   app: fpint_gemm_ffn_hw
 case_matrices:
   - id: gemm
-    kind: fpint_gemm
+    kind: gemm
+    backend: fpint_gemm
     stage: sweep
     name: gemm_m{m}_n{n}_k{k}
     args: "-m {m} -n {n} -k {k} -q {qblk} -t {wtrans} -d {qdir}"

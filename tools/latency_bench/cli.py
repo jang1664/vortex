@@ -5,6 +5,8 @@ from pathlib import Path
 
 from .compose import ComposeOptions, compose_to_csv
 from .compare import compare_candidates, parse_candidate_spec
+from .generate_suites import GenerateSuitesOptions, generate_suites
+from .merge_suites import MergeSuitesOptions, merge_suites
 from .plot import visualize
 from .runner import DEFAULT_SRUN_ARGS, RunOptions, default_run_id, resolve_fpga_bin_config, run_suite
 from .suite import find_repo_root, load_suite
@@ -16,7 +18,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     run = sub.add_parser("run", help="Expand a suite, run FPGA bench cases, and write CSV reports.")
     run.add_argument("--build-dir", default="build", help="Configured build directory.")
-    run.add_argument("--fpga-bin", required=True, help="FPGA bin alias, bin directory, or vortex_afu.xclbin path.")
+    run.add_argument(
+        "--fpga-bin",
+        default=None,
+        help="FPGA bin alias, bin directory, or vortex_afu.xclbin path; overrides suite defaults.fpga_bin.",
+    )
     run.add_argument("--suite", required=True, help="Suite YAML path.")
     run.add_argument("--out", required=True, help="Output directory.")
     run.add_argument("--run-id", default=None, help="Optional run id under OUT/runs; default is UTC timestamp.")
@@ -107,6 +113,29 @@ def build_parser() -> argparse.ArgumentParser:
     )
     comp.add_argument("--fpga-bin-label", default=None, help="Only use rows with this fpga_bin_label.")
     comp.add_argument("--xclbin-sha256", default=None, help="Only use rows with this xclbin_sha256.")
+
+    gen = sub.add_parser(
+        "generate-suites",
+        help="Expand a base suite and export one runnable suite per (app, FPGA bin) group.",
+    )
+    gen.add_argument("--suite", required=True, help="Base suite YAML path.")
+    gen.add_argument("--out", required=True, help="Output directory for generated suites and index.yaml.")
+    gen.add_argument("--overwrite", action="store_true", help="Replace existing generated suite files.")
+
+    merge = sub.add_parser(
+        "merge-suites",
+        help="Merge expanded suite YAML files and dedupe identical executions.",
+    )
+    merge.add_argument(
+        "--suite-glob",
+        action="append",
+        required=True,
+        help="Suite YAML glob pattern; repeat to merge multiple pattern sets. Quote patterns to let Python expand them.",
+    )
+    merge.add_argument("--out", required=True, help="Output YAML path, or output directory with --group-by-fpga-bin.")
+    merge.add_argument("--name", default="", help="Merged suite base name; default is derived from --out.")
+    merge.add_argument("--group-by-fpga-bin", action="store_true", help="Write one merged suite per FPGA bin under --out.")
+    merge.add_argument("--overwrite", action="store_true", help="Replace existing merged suite files.")
     return parser
 
 
@@ -151,7 +180,10 @@ def run_cmd(args: argparse.Namespace) -> int:
         warmup_override=args.warmup,
         iterations_override=args.iterations,
     )
-    fpga_bin = resolve_fpga_bin_config(args.fpga_bin)
+    fpga_bin_label = args.fpga_bin or suite.defaults.fpga_bin
+    if not fpga_bin_label:
+        raise ValueError("run requires --fpga-bin unless the suite sets defaults.fpga_bin")
+    fpga_bin = resolve_fpga_bin_config(fpga_bin_label)
     platform = args.platform or suite.defaults.platform
     xrt_device_index = args.xrt_device_index
     if xrt_device_index is None:
@@ -166,7 +198,7 @@ def run_cmd(args: argparse.Namespace) -> int:
     options = RunOptions(
         build_dir=Path(args.build_dir).resolve(),
         fpga_bin_dir=fpga_bin.path,
-        fpga_bin_label=args.fpga_bin,
+        fpga_bin_label=fpga_bin_label,
         out_dir=Path(args.out).resolve(),
         platform=platform,
         xrt_device_index=xrt_device_index,
@@ -226,6 +258,32 @@ def main(argv: list[str] | None = None) -> int:
         print(f"wrote {composed_csv}")
         if summary_csv:
             print(f"wrote {summary_csv}")
+        return 0
+    if args.cmd == "generate-suites":
+        index = generate_suites(GenerateSuitesOptions(
+            suite=Path(args.suite),
+            out_dir=Path(args.out),
+            overwrite=args.overwrite,
+        ))
+        print(f"wrote {Path(args.out).resolve() / 'index.yaml'}")
+        print(f"generated {len(index['generated'])} suites")
+        return 0
+    if args.cmd == "merge-suites":
+        result = merge_suites(MergeSuitesOptions(
+            suite_globs=tuple(args.suite_glob),
+            out=Path(args.out),
+            name=args.name,
+            group_by_fpga_bin=args.group_by_fpga_bin,
+            overwrite=args.overwrite,
+        ))
+        if args.group_by_fpga_bin:
+            print(f"wrote {result['index']}")
+            print(f"generated {len(result['generated'])} suites")
+        else:
+            print(f"wrote {result['suite']}")
+            print(f"merged {result['case_count']} cases")
+        if result["dropped_duplicate_count"]:
+            print(f"dropped {result['dropped_duplicate_count']} duplicate executions")
         return 0
     parser.error(f"unknown command: {args.cmd}")
     return 2

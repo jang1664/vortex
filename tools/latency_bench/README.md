@@ -55,8 +55,12 @@ For each unique execution it:
 `results.csv` is case-oriented, not execution-oriented. If two logical cases
 share the same `exec_key`, they reuse the same raw benchmark measurement but
 keep their own `case_id`, `kind`, `stage`, `name`, `shape_json`, and
-`calls_per_forward` metadata. `summary.csv` is derived from `results.csv`; it
-groups successful rows by stage, kind, kernel name, and total suite latency.
+`calls_per_forward` metadata. Workload-generated cases also record `op`,
+`backend`, and `variant`: `op` is the model operation, `kind` is the logical
+compute family, `backend` is the implementation/argument convention, and `app`
+is the benchmark executable passed to blackbox. `summary.csv` is derived from
+`results.csv`; it groups successful rows by stage, kind, backend, op, kernel
+name, and total suite latency.
 
 The top-level `raw_db.csv` is append-only. Reusing the same `--out` across
 multiple days preserves every measurement row, including repeated measurements
@@ -111,6 +115,9 @@ alias map is used by `python -m tools.latency_bench run` and
 `ci/run_black.sh`. Set `VORTEX_FPGA_BIN_ALIAS_MAP=/path/to/map.yaml` to test a
 local alias map without editing the repository copy.
 
+`--fpga-bin` can be omitted when the suite sets `defaults.fpga_bin`. Passing
+`--fpga-bin` on the CLI still wins over the suite default.
+
 FPGA bin aliases may also name a config script through the alias map `configs`
 field. `latency_bench` sources that script before appending `--configs-extra`.
 The built-in aliases source files under `configs/`, including per-alias improve
@@ -139,6 +146,7 @@ defaults:
   warmup: 3
   iterations: 10
   app: fpint_gemm_ffn_hw
+  fpga_bin: improve_tcol1
   target: hw
   platform: xilinx_u55c_gen3x16_xdma_3_202210_1
   blackbox_timeout: 30m
@@ -148,7 +156,10 @@ defaults:
 cases:
   - id: q_proj_s128
     app: fpint_gemm_ffn_hw
-    kind: fpint_gemm
+    kind: gemm
+    op: q_proj
+    backend: fpint_gemm
+    variant: all_fpint_gemm
     stage: prefill
     name: q_proj
     args: "-m 128 -n 4096 -k 4096 -q 32 -t 0 -d 0"
@@ -157,22 +168,52 @@ workloads:
   - id: llama2_7b_prefill_s128
     model: llama2-7b
     stage: prefill
+    variant: attn_sgemm_tcu
     prefill_seq_len: 128
     qblk: 32
     implemented_only: true
+fpga_bins:
+  default: naive
+  by_backend:
+    fpint_gemm: improve_tcol32
+    sgemm_tcu: base_t8
+  by_app:
+    silu_layout_fused: improve_tcol1
 ```
 
 `workloads` are expanded through `tools/workload/gen_kernel_cfgs.py`. Each
 implemented kernel with an app and argument string becomes a benchmark case.
+The supported workload variants are `all_fpint_gemm`, `attn_sgemm_tcu`, and
+`all_sgemm_tcu`.
+Workload entries can also define a `matrix`; its keys are overlaid onto the
+workload before expansion, so the same workload template can sweep batch,
+sequence length, QBLK, or filters:
+
+```yaml
+workloads:
+  - id: llama2_7b_prefill
+    model: llama2-7b
+    stage: prefill
+    filter_kind: rmsnorm
+    matrix:
+      batch: {values: [1, 8]}
+      prefill_seq_len: {pow: [128, 1024]}
+      qblk: 32
+```
+
+Use `filter_kind: gemm` for logical GEMM operations regardless of backend, or
+`filter_backend: fpint_gemm` / `filter_backend: sgemm_tcu` for implementation
+specific filtering.
 
 For regular parameter sweeps, use `case_matrices` instead of writing every case
 by hand. Each matrix key can be a scalar, a `values` list, or an inclusive
-power-of-two range:
+power-of-two range. Use either `pow` or `pow2` for the range key:
 
 ```yaml
 case_matrices:
   - id: fpint_gemm
-    kind: fpint_gemm
+    kind: gemm
+    backend: fpint_gemm
     stage: sweep
     name: fpint_gemm_m{m}_n{n}_k{k}
     args: "-m {m} -n {n} -k {k} -q {qblk} -t {wtrans} -d {qdir}"
@@ -195,6 +236,58 @@ case_matrices:
 This expands to the Cartesian product of all matrix values. The example above
 creates `8 * 6 * 6 = 288` cases. Use `--dry-run` and inspect
 `suite.expanded.yaml` to see the explicit cases before running on FPGA.
+
+## Generate Suites
+
+Use `generate-suites` to start from one mixed workload suite and export one
+runnable suite per `(app, FPGA bin)` group:
+
+```bash
+python -m tools.latency_bench generate-suites \
+  --suite tools/latency_bench/suites/llama2_7b_prefill.yaml \
+  --out results/latency/generated_suites
+```
+
+The generator expands `cases`, `case_matrices`, and `workloads`, resolves the
+FPGA bin for each expanded case, then writes explicit generated suites plus an
+`index.yaml`. The FPGA bin precedence is:
+
+- Case-level `fpga_bin`.
+- `fpga_bins.by_app[case.app]`.
+- `fpga_bins.by_backend[case.backend]`.
+- `fpga_bins.by_kind[case.kind]` or the compatible `by_kernel`/`kernels` keys.
+- `fpga_bins.default`.
+- `defaults.fpga_bin`.
+
+Each generated suite sets `defaults.fpga_bin`, so it can be launched without
+repeating `--fpga-bin`:
+
+```bash
+python -m tools.latency_bench run \
+  --build-dir build \
+  --suite results/latency/generated_suites/<suite>.yaml \
+  --out results/latency/<suite>
+```
+
+Existing generated files are not overwritten unless `--overwrite` is passed.
+
+## Merge Suites
+
+Use `merge-suites` to combine generated suite YAMLs and avoid rerunning
+identical executions. A duplicate is the same FPGA alias plus the same app,
+arguments, warmup, and iteration count.
+
+```bash
+python -m tools.latency_bench merge-suites \
+  --suite-glob "analysis_workspace/latency_on_hw/generated_suites/C*_prefill/*.yaml" \
+  --out analysis_workspace/latency_on_hw/generated_suites/merged \
+  --group-by-fpga-bin \
+  --overwrite
+```
+
+With `--group-by-fpga-bin`, `--out` is a directory and the command writes one
+runnable suite per FPGA bin plus an `index.yaml`. Without it, all inputs must
+resolve to one FPGA bin and `--out` is the output YAML file.
 
 ## Outputs
 

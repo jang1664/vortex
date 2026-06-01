@@ -60,12 +60,16 @@ DEFAULT_QBLKS = [32, 64, 128]
 DEFAULT_SEQ_LENS = [32, 128, 512, 1024]
 
 LLM_STAGES = ("prefill", "generation")
+WORKLOAD_VARIANTS = ("all_fpint_gemm", "attn_sgemm_tcu", "all_sgemm_tcu")
+DEFAULT_WORKLOAD_VARIANT = "all_fpint_gemm"
+ATTENTION_GEMM_OPS = frozenset(("attn_qkT", "attn_pv"))
 
-# Map logical kernel kind -> regression test/app name. None means the
+# Map backend -> regression test/app name. None means the
 # corresponding kernel is not yet implemented as a regression test, so the
 # generated entry will have ``"implemented": false`` and an empty ``args``.
 KERNEL_APP_REGISTRY: dict[str, str | None] = {
     "fpint_gemm": "fpint_gemm_ffn_hw",
+    "sgemm_tcu":  "sgemm_tcu",
     "rmsnorm":    "rmsnorm",
     "rope":       "rope",
     "softmax":    "softmax",
@@ -85,13 +89,20 @@ def _llm_kernel(name: str,
                 stage: str,
                 args: str,
                 calls_per_forward: int,
-                shape: dict) -> dict:
+                shape: dict,
+                *,
+                backend: str | None = None,
+                variant: str = DEFAULT_WORKLOAD_VARIANT) -> dict:
     """Wrap a single kernel invocation in the standard JSON shape."""
-    app = KERNEL_APP_REGISTRY.get(kind)
+    backend = backend or kind
+    app = KERNEL_APP_REGISTRY.get(backend)
     return {
         "stage": stage,
         "name": name,
+        "op": name,
         "kind": kind,
+        "backend": backend,
+        "variant": variant,
         "app": app,
         "implemented": app is not None,
         "calls_per_forward": calls_per_forward,
@@ -100,12 +111,67 @@ def _llm_kernel(name: str,
     }
 
 
+def _gemm_backend(op: str, variant: str) -> str:
+    if variant == "all_fpint_gemm":
+        return "fpint_gemm"
+    if variant == "all_sgemm_tcu":
+        return "sgemm_tcu"
+    if variant == "attn_sgemm_tcu":
+        return "sgemm_tcu" if op in ATTENTION_GEMM_OPS else "fpint_gemm"
+    raise ValueError(
+        f"unknown variant: {variant!r}. Expected one of {WORKLOAD_VARIANTS}"
+    )
+
+
+def _gemm_args(backend: str, *, M: int, N: int, K: int, qblk: int, wtrans: int, qdir: int) -> str:
+    if backend == "fpint_gemm":
+        return f"-m {M} -n {N} -k {K} -q {qblk} -t {wtrans} -d {qdir}"
+    if backend == "sgemm_tcu":
+        return f"-m {M} -n {N} -k {K}"
+    raise ValueError(f"unknown GEMM backend: {backend!r}")
+
+
+def _gemm_shape(backend: str, *, M: int, N: int, K: int, qblk: int, wtrans: int, qdir: int, per_head: bool = False) -> dict:
+    shape = {"M": M, "N": N, "K": K}
+    if backend == "fpint_gemm":
+        shape.update({"QBLK": qblk, "WTRANS": wtrans, "QDIR": qdir})
+    if per_head:
+        shape["per_head"] = True
+    return shape
+
+
+def _llm_gemm_kernel(name: str,
+                     stage: str,
+                     calls_per_forward: int,
+                     *,
+                     M: int,
+                     N: int,
+                     K: int,
+                     qblk: int,
+                     wtrans: int,
+                     qdir: int,
+                     variant: str,
+                     per_head: bool = False) -> dict:
+    backend = _gemm_backend(name, variant)
+    return _llm_kernel(
+        name=name,
+        kind="gemm",
+        backend=backend,
+        stage=stage,
+        args=_gemm_args(backend, M=M, N=N, K=K, qblk=qblk, wtrans=wtrans, qdir=qdir),
+        calls_per_forward=calls_per_forward,
+        shape=_gemm_shape(backend, M=M, N=N, K=K, qblk=qblk, wtrans=wtrans, qdir=qdir, per_head=per_head),
+        variant=variant,
+    )
+
+
 def build_decoder_pass_kernels(config: dict,
                                stage: str,
                                batch: int,
                                seq_q: int,
                                seq_kv: int,
-                               qblk: int) -> list[dict]:
+                               qblk: int,
+                               variant: str = DEFAULT_WORKLOAD_VARIANT) -> list[dict]:
     """Emit every kernel that fires during one forward pass of the model
     in the given stage.
 
@@ -129,6 +195,10 @@ def build_decoder_pass_kernels(config: dict,
     """
     if stage not in LLM_STAGES:
         raise ValueError(f"unknown stage: {stage!r}. Expected one of {LLM_STAGES}")
+    if variant not in WORKLOAD_VARIANTS:
+        raise ValueError(
+            f"unknown variant: {variant!r}. Expected one of {WORKLOAD_VARIANTS}"
+        )
 
     H      = config["hidden_size"]
     I      = config["intermediate_size"]
@@ -163,6 +233,7 @@ def build_decoder_pass_kernels(config: dict,
         args="",
         calls_per_forward=1,
         shape={"batch": batch, "seq": seq_q, "hidden": H, "vocab": V},
+        variant=variant,
     ))
 
     # ---------------- Per-decoder-layer kernels (× L) ---------------------
@@ -175,29 +246,24 @@ def build_decoder_pass_kernels(config: dict,
         args=f"-batch {batch} -seq {seq_q} -hidden {H}",
         calls_per_forward=L,
         shape={"batch": batch, "seq": seq_q, "hidden": H},
+        variant=variant,
     ))
 
-    # 2-4. Q / K / V projections (fpint_gemm: M=B*S_q, N=q_dim/kv_dim, K=H)
-    out.append(_llm_kernel(
-        name="q_proj", kind="fpint_gemm", stage=stage,
-        args=f"-m {M_proj} -n {q_dim} -k {H} -q {qblk} -t 0 -d 0",
-        calls_per_forward=L,
-        shape={"M": M_proj, "N": q_dim, "K": H,
-               "QBLK": qblk, "WTRANS": 0, "QDIR": 0},
+    # 2-4. Q / K / V projections (GEMM: M=B*S_q, N=q_dim/kv_dim, K=H)
+    out.append(_llm_gemm_kernel(
+        name="q_proj", stage=stage, calls_per_forward=L,
+        M=M_proj, N=q_dim, K=H, qblk=qblk, wtrans=0, qdir=0,
+        variant=variant,
     ))
-    out.append(_llm_kernel(
-        name="k_proj", kind="fpint_gemm", stage=stage,
-        args=f"-m {M_proj} -n {kv_dim} -k {H} -q {qblk} -t 0 -d 0",
-        calls_per_forward=L,
-        shape={"M": M_proj, "N": kv_dim, "K": H,
-               "QBLK": qblk, "WTRANS": 0, "QDIR": 0},
+    out.append(_llm_gemm_kernel(
+        name="k_proj", stage=stage, calls_per_forward=L,
+        M=M_proj, N=kv_dim, K=H, qblk=qblk, wtrans=0, qdir=0,
+        variant=variant,
     ))
-    out.append(_llm_kernel(
-        name="v_proj", kind="fpint_gemm", stage=stage,
-        args=f"-m {M_proj} -n {kv_dim} -k {H} -q {qblk} -t 0 -d 0",
-        calls_per_forward=L,
-        shape={"M": M_proj, "N": kv_dim, "K": H,
-               "QBLK": qblk, "WTRANS": 0, "QDIR": 0},
+    out.append(_llm_gemm_kernel(
+        name="v_proj", stage=stage, calls_per_forward=L,
+        M=M_proj, N=kv_dim, K=H, qblk=qblk, wtrans=0, qdir=0,
+        variant=variant,
     ))
 
     # 5-6. RoPE on Q and K
@@ -208,6 +274,7 @@ def build_decoder_pass_kernels(config: dict,
         calls_per_forward=L,
         shape={"batch": batch, "seq": seq_q, "heads": H_q, "headdim": D,
                "maxseq": max_seq, "offset": pos_offset},
+        variant=variant,
     ))
     out.append(_llm_kernel(
         name="rope_k", kind="rope", stage=stage,
@@ -216,16 +283,14 @@ def build_decoder_pass_kernels(config: dict,
         calls_per_forward=L,
         shape={"batch": batch, "seq": seq_q, "heads": H_kv, "headdim": D,
                "maxseq": max_seq, "offset": pos_offset},
+        variant=variant,
     ))
 
-    # 7. Attention QK^T (per-head per-batch fpint GEMM)
-    out.append(_llm_kernel(
-        name="attn_qkT", kind="fpint_gemm", stage=stage,
-        args=f"-m {seq_q} -n {seq_kv} -k {D} -q {D} -t 1 -d 0",
-        calls_per_forward=L * batch * H_q,
-        shape={"M": seq_q, "N": seq_kv, "K": D,
-               "QBLK": D, "WTRANS": 1, "QDIR": 0,
-               "per_head": True},
+    # 7. Attention QK^T (per-head per-batch GEMM)
+    out.append(_llm_gemm_kernel(
+        name="attn_qkT", stage=stage, calls_per_forward=L * batch * H_q,
+        M=seq_q, N=seq_kv, K=D, qblk=D, wtrans=1, qdir=0,
+        variant=variant, per_head=True,
     ))
 
     # 8. Attention softmax over scores [B, H_q, S_q, S_kv]
@@ -236,25 +301,21 @@ def build_decoder_pass_kernels(config: dict,
         calls_per_forward=L,
         shape={"batch": batch, "heads": H_q,
                "seqq": seq_q, "seqk": seq_kv, "mask": use_mask},
+        variant=variant,
     ))
 
-    # 9. Attention PV (per-head per-batch fpint GEMM)
-    out.append(_llm_kernel(
-        name="attn_pv", kind="fpint_gemm", stage=stage,
-        args=f"-m {seq_q} -n {D} -k {seq_kv} -q {D} -t 0 -d 1",
-        calls_per_forward=L * batch * H_q,
-        shape={"M": seq_q, "N": D, "K": seq_kv,
-               "QBLK": D, "WTRANS": 0, "QDIR": 1,
-               "per_head": True},
+    # 9. Attention PV (per-head per-batch GEMM)
+    out.append(_llm_gemm_kernel(
+        name="attn_pv", stage=stage, calls_per_forward=L * batch * H_q,
+        M=seq_q, N=D, K=seq_kv, qblk=D, wtrans=0, qdir=1,
+        variant=variant, per_head=True,
     ))
 
-    # 10. Output projection (fpint_gemm: M=B*S_q, N=H, K=q_dim)
-    out.append(_llm_kernel(
-        name="o_proj", kind="fpint_gemm", stage=stage,
-        args=f"-m {M_proj} -n {H} -k {q_dim} -q {qblk} -t 0 -d 0",
-        calls_per_forward=L,
-        shape={"M": M_proj, "N": H, "K": q_dim,
-               "QBLK": qblk, "WTRANS": 0, "QDIR": 0},
+    # 10. Output projection (GEMM: M=B*S_q, N=H, K=q_dim)
+    out.append(_llm_gemm_kernel(
+        name="o_proj", stage=stage, calls_per_forward=L,
+        M=M_proj, N=H, K=q_dim, qblk=qblk, wtrans=0, qdir=0,
+        variant=variant,
     ))
 
     # 11. Residual add (attn): [B, S_q, H]
@@ -263,6 +324,7 @@ def build_decoder_pass_kernels(config: dict,
         args=f"-n {BS_H}",
         calls_per_forward=L,
         shape={"size": BS_H},
+        variant=variant,
     ))
 
     # 12. post_attention_layernorm
@@ -271,22 +333,19 @@ def build_decoder_pass_kernels(config: dict,
         args=f"-batch {batch} -seq {seq_q} -hidden {H}",
         calls_per_forward=L,
         shape={"batch": batch, "seq": seq_q, "hidden": H},
+        variant=variant,
     ))
 
-    # 13-14. gate / up projections (fpint_gemm: M=B*S_q, N=I, K=H)
-    out.append(_llm_kernel(
-        name="gate_proj", kind="fpint_gemm", stage=stage,
-        args=f"-m {M_proj} -n {I} -k {H} -q {qblk} -t 0 -d 0",
-        calls_per_forward=L,
-        shape={"M": M_proj, "N": I, "K": H,
-               "QBLK": qblk, "WTRANS": 0, "QDIR": 0},
+    # 13-14. gate / up projections (GEMM: M=B*S_q, N=I, K=H)
+    out.append(_llm_gemm_kernel(
+        name="gate_proj", stage=stage, calls_per_forward=L,
+        M=M_proj, N=I, K=H, qblk=qblk, wtrans=0, qdir=0,
+        variant=variant,
     ))
-    out.append(_llm_kernel(
-        name="up_proj", kind="fpint_gemm", stage=stage,
-        args=f"-m {M_proj} -n {I} -k {H} -q {qblk} -t 0 -d 0",
-        calls_per_forward=L,
-        shape={"M": M_proj, "N": I, "K": H,
-               "QBLK": qblk, "WTRANS": 0, "QDIR": 0},
+    out.append(_llm_gemm_kernel(
+        name="up_proj", stage=stage, calls_per_forward=L,
+        M=M_proj, N=I, K=H, qblk=qblk, wtrans=0, qdir=0,
+        variant=variant,
     ))
 
     # 15. SiLU on gate output [B, S_q, I]
@@ -295,6 +354,7 @@ def build_decoder_pass_kernels(config: dict,
         args=f"-n {BS_I}",
         calls_per_forward=L,
         shape={"size": BS_I},
+        variant=variant,
     ))
 
     # 16. Elementwise multiply (SwiGLU: SiLU(gate) * up) over [B, S_q, I]
@@ -303,15 +363,14 @@ def build_decoder_pass_kernels(config: dict,
         args=f"-n {BS_I}",
         calls_per_forward=L,
         shape={"size": BS_I},
+        variant=variant,
     ))
 
-    # 17. down projection (fpint_gemm: M=B*S_q, N=H, K=I)
-    out.append(_llm_kernel(
-        name="down_proj", kind="fpint_gemm", stage=stage,
-        args=f"-m {M_proj} -n {H} -k {I} -q {qblk} -t 0 -d 0",
-        calls_per_forward=L,
-        shape={"M": M_proj, "N": H, "K": I,
-               "QBLK": qblk, "WTRANS": 0, "QDIR": 0},
+    # 17. down projection (GEMM: M=B*S_q, N=H, K=I)
+    out.append(_llm_gemm_kernel(
+        name="down_proj", stage=stage, calls_per_forward=L,
+        M=M_proj, N=H, K=I, qblk=qblk, wtrans=0, qdir=0,
+        variant=variant,
     ))
 
     # 18. Residual add (ffn): [B, S_q, H]
@@ -320,6 +379,7 @@ def build_decoder_pass_kernels(config: dict,
         args=f"-n {BS_H}",
         calls_per_forward=L,
         shape={"size": BS_H},
+        variant=variant,
     ))
 
     # ---------------- Model-level kernels (× 1) ---------------------------
@@ -330,17 +390,16 @@ def build_decoder_pass_kernels(config: dict,
         args=f"-batch {batch} -seq {seq_q} -hidden {H}",
         calls_per_forward=1,
         shape={"batch": batch, "seq": seq_q, "hidden": H},
+        variant=variant,
     ))
 
     # 20. lm_head: project the last position's hidden state to logits.
     #     For both stages we project only the final token per batch element,
     #     so M = batch (this matches greedy/sampling decoding).
-    out.append(_llm_kernel(
-        name="lm_head", kind="fpint_gemm", stage=stage,
-        args=f"-m {batch} -n {V} -k {H} -q {qblk} -t 0 -d 0",
-        calls_per_forward=1,
-        shape={"M": batch, "N": V, "K": H,
-               "QBLK": qblk, "WTRANS": 0, "QDIR": 0},
+    out.append(_llm_gemm_kernel(
+        name="lm_head", stage=stage, calls_per_forward=1,
+        M=batch, N=V, K=H, qblk=qblk, wtrans=0, qdir=0,
+        variant=variant,
     ))
 
     return out
@@ -351,7 +410,8 @@ def build_llm_kernels(model_name: str,
                       batch: int,
                       prefill_seq_len: int,
                       gen_kv_len: int,
-                      qblk: int) -> dict:
+                      qblk: int,
+                      variant: str = DEFAULT_WORKLOAD_VARIANT) -> dict:
     """Build the JSON payload covering one or more stages."""
     if model_name not in MODELS:
         raise ValueError(
@@ -359,6 +419,10 @@ def build_llm_kernels(model_name: str,
             f"{sorted(MODELS.keys())}"
         )
     config = MODELS[model_name]
+    if variant not in WORKLOAD_VARIANTS:
+        raise ValueError(
+            f"unknown variant: {variant!r}. Expected one of {WORKLOAD_VARIANTS}"
+        )
 
     kernels: list[dict] = []
     for stage in stages:
@@ -369,6 +433,7 @@ def build_llm_kernels(model_name: str,
                 seq_q=prefill_seq_len,
                 seq_kv=prefill_seq_len,
                 qblk=qblk,
+                variant=variant,
             ))
         elif stage == "generation":
             if gen_kv_len < 1:
@@ -381,6 +446,7 @@ def build_llm_kernels(model_name: str,
                 seq_q=1,
                 seq_kv=gen_kv_len,
                 qblk=qblk,
+                variant=variant,
             ))
         else:
             raise ValueError(
@@ -396,6 +462,7 @@ def build_llm_kernels(model_name: str,
             "prefill_seq_len": prefill_seq_len,
             "gen_kv_len": gen_kv_len,
             "qblk": qblk,
+            "variant": variant,
         },
         "kernels": kernels,
     }
@@ -404,12 +471,29 @@ def build_llm_kernels(model_name: str,
 # ===========================================================================
 # Filtering helpers (used by ci/test_fpint_hw.py).
 # ===========================================================================
-def filter_kind_args(payload: dict, kind: str, *, dedupe: bool = True) -> list[str]:
-    """Extract CLI arg strings for a single kernel kind from a payload.
+def filter_backend_args(payload: dict, backend: str, *, dedupe: bool = True) -> list[str]:
+    """Extract CLI arg strings for a single kernel backend from a payload.
 
     Skips entries with no app (``implemented == false``) since their
     ``args`` is intentionally empty.
     """
+    seen: set[str] = set()
+    out: list[str] = []
+    for k in payload["kernels"]:
+        if k.get("backend") != backend:
+            continue
+        if not k["implemented"]:
+            continue
+        a = k["args"]
+        if dedupe and a in seen:
+            continue
+        seen.add(a)
+        out.append(a)
+    return out
+
+
+def filter_kind_args(payload: dict, kind: str, *, dedupe: bool = True) -> list[str]:
+    """Extract CLI arg strings for a logical kernel kind from a payload."""
     seen: set[str] = set()
     out: list[str] = []
     for k in payload["kernels"]:
@@ -454,7 +538,7 @@ def build_fpint_gemm_args_for_model(
                 gen_kv_len=S,
                 qblk=q,
             )
-            for a in filter_kind_args(payload, "fpint_gemm"):
+            for a in filter_backend_args(payload, "fpint_gemm"):
                 if a in seen:
                     continue
                 seen.add(a)
@@ -522,11 +606,15 @@ def print_model_registry() -> None:
         print(f"    num_layers        = {c.get('num_layers', '?')}")
         print(f"    vocab_size        = {c.get('vocab_size', '?')}")
     print()
-    print("Kernel-app registry:")
-    for kind in sorted(KERNEL_APP_REGISTRY):
-        app = KERNEL_APP_REGISTRY[kind]
+    print("Kernel backend/app registry:")
+    for backend in sorted(KERNEL_APP_REGISTRY):
+        app = KERNEL_APP_REGISTRY[backend]
         flag = "implemented" if app else "NOT IMPLEMENTED"
-        print(f"  {kind:12s} -> {app or '(none)':30s} [{flag}]")
+        print(f"  {backend:12s} -> {app or '(none)':30s} [{flag}]")
+    print()
+    print("Workload variants:")
+    for variant in WORKLOAD_VARIANTS:
+        print(f"  {variant}")
 
 
 # ===========================================================================
@@ -541,8 +629,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
             "  --model llama2-7b --stage prefill --prefill-seq-len 128\n"
             "  --model llama2-7b --stage all --batch 1 \\\n"
             "      --prefill-seq-len 128 --gen-kv-len 512 -o cfgs.json\n"
-            "  --model llama2-7b --filter-kind fpint_gemm   "
-            "# only emit GEMM cfgs\n"
+            "  --model llama2-7b --variant attn_sgemm_tcu --filter-kind gemm\n"
         ),
     )
     parser.add_argument(
@@ -576,9 +663,19 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help=f"QBLK for fpint GEMMs (default: {DEFAULT_LLM_QBLK}).",
     )
     parser.add_argument(
+        "--variant", default=DEFAULT_WORKLOAD_VARIANT, metavar="VARIANT",
+        help=f"Workload variant (available: {', '.join(WORKLOAD_VARIANTS)}). "
+             f"Default: {DEFAULT_WORKLOAD_VARIANT}.",
+    )
+    parser.add_argument(
         "--filter-kind", default=None, metavar="KIND",
         help="If set, drop every kernel whose 'kind' != KIND from the "
-             "output (e.g. fpint_gemm).",
+             "output (e.g. gemm).",
+    )
+    parser.add_argument(
+        "--filter-backend", default=None, metavar="BACKEND",
+        help="If set, drop every kernel whose 'backend' != BACKEND from the "
+             "output (e.g. fpint_gemm or sgemm_tcu).",
     )
     parser.add_argument(
         "--outfile", "-o", default=None, metavar="PATH",
@@ -611,6 +708,7 @@ def main(argv: list[str] | None = None) -> int:
             prefill_seq_len=args.prefill_seq_len,
             gen_kv_len=args.gen_kv_len,
             qblk=args.qblk,
+            variant=args.variant,
         )
     except ValueError as e:
         print(f"ERROR: {e}", file=sys.stderr)
@@ -620,11 +718,16 @@ def main(argv: list[str] | None = None) -> int:
         payload["kernels"] = [
             k for k in payload["kernels"] if k["kind"] == args.filter_kind
         ]
+    if args.filter_backend:
+        payload["kernels"] = [
+            k for k in payload["kernels"] if k["backend"] == args.filter_backend
+        ]
 
     text = json.dumps(payload, indent=2) + "\n"
     n = len(payload["kernels"])
     summary = (f"{n} cfgs (stages={','.join(stages)}"
                + (f", filter={args.filter_kind}" if args.filter_kind else "")
+               + (f", backend={args.filter_backend}" if args.filter_backend else "")
                + ")")
     if args.outfile:
         path = Path(args.outfile)

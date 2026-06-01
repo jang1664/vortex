@@ -12,10 +12,11 @@ from .suite import BenchSuite, suite_to_rows
 
 
 RESULT_COLUMNS = [
-    "suite", "case_id", "exec_key", "app", "kind", "stage", "name", "args",
-    "shape_json", "calls_per_forward", "fpga_bin_dir", "xclbin_sha256",
-    "warmup", "iterations", "source", "status", "returncode", "raw_csv",
-    "log_file", "samples", "min_us", "avg_us", "max_us", "p50_us", "p95_us",
+    "suite", "case_id", "exec_key", "app", "kind", "op", "backend",
+    "variant", "stage", "name", "args", "shape_json", "calls_per_forward",
+    "fpga_bin_dir", "xclbin_sha256", "warmup", "iterations", "source",
+    "status", "returncode", "raw_csv", "log_file", "samples", "min_us",
+    "avg_us", "max_us", "p50_us", "p95_us",
 ]
 
 TIMEOUT_RETURNCODES = {124, 137}
@@ -125,6 +126,8 @@ def build_summary(results: pd.DataFrame) -> pd.DataFrame:
     group_specs = [
         ("stage", ["suite", "stage"]),
         ("kind", ["suite", "stage", "kind"]),
+        ("backend", ["suite", "stage", "backend"]),
+        ("op", ["suite", "stage", "op"]),
         ("kernel", ["suite", "stage", "name"]),
         ("total", ["suite"]),
     ]
@@ -132,6 +135,8 @@ def build_summary(results: pd.DataFrame) -> pd.DataFrame:
         for keys, sub in ok.groupby(cols, dropna=False, sort=True):
             if not isinstance(keys, tuple):
                 keys = (keys,)
+            if group_name in ("kind", "backend", "op", "kernel") and not str(keys[2]):
+                continue
             row = {"suite": keys[0], "stage": "", "group": group_name}
             if group_name == "stage":
                 row["stage"] = keys[1]
@@ -139,6 +144,12 @@ def build_summary(results: pd.DataFrame) -> pd.DataFrame:
             elif group_name == "kind":
                 row["stage"] = keys[1]
                 row["group"] = f"kind:{keys[2]}"
+            elif group_name == "backend":
+                row["stage"] = keys[1]
+                row["group"] = f"backend:{keys[2]}"
+            elif group_name == "op":
+                row["stage"] = keys[1]
+                row["group"] = f"op:{keys[2]}"
             elif group_name == "kernel":
                 row["stage"] = keys[1]
                 row["group"] = f"kernel:{keys[2]}"

@@ -10,7 +10,8 @@ defaults:
     - --threads=8
 case_matrices:
   - id: fpint_gemm
-    kind: fpint_gemm
+    kind: gemm
+    backend: fpint_gemm
     stage: sweep
     name: fpint_gemm_m{m}_n{n}_k{k}
     args: "-m {m} -n {n} -k {k} -q {qblk} -t {wtrans} -d {qdir}"
