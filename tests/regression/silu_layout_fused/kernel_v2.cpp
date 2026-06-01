@@ -43,29 +43,21 @@ void kernel_silu(kernel_arg_t *__UNIFORM__ arg) {
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-// Fused SiLU + tile_input_a — optimized 1D real-rows-only variant
+// Store-address A/B kernel.
 //
-// Key insight: pad rows in the input buffer can stay UNINITIALIZED because
-// the downstream GEMM only produces correct output for m < M_real anyway
-// (output for pad rows m >= M_real is garbage that the wrapper narrows away).
-// Skipping the zero-fill means we launch only M_real worth of threads —
-// for decode (M_real=1, M_pad=8) that's 8x fewer threads.
-//
-// Grid (1D):
-//   blockIdx.x*blockDim.x + threadIdx.x = worker id
-//
-// Each worker strides over 32-element K chunks for every real row. This avoids
-// the high block scheduling overhead of the v1 3D launch.
-//
-// Output buffer is still sized [M_pad, K] (tile layout), but only the
-// M_real real rows get written. Pad rows are left as whatever at::empty gave.
+// KERNEL_SILU_ROW_MATCHED and KERNEL_SILU_LAYOUT_FUSED both execute this same
+// function body. The loop traversal, input load, SiLU compute, and address
+// arithmetic are shared; only the selected store address differs.
 ///////////////////////////////////////////////////////////////////////////////
-void kernel_silu_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
+void kernel_silu_store_matched(kernel_arg_t *__UNIFORM__ arg) {
   auto pInput  = reinterpret_cast<data_t *>(arg->input_addr);
   auto pOutput = reinterpret_cast<data_t *>(arg->output_addr);
   const uint32_t M_real = arg->M_real;
   const uint32_t M_pad  = arg->M_pad;
   const uint32_t K      = arg->K;
+  const uint64_t layout_mask =
+      (arg->kernel_id == KERNEL_SILU_LAYOUT_FUSED) ? ~uint64_t(0) : uint64_t(0);
+  const uint64_t row_mask = ~layout_mask;
 
   constexpr uint32_t MXU_KT      = TILE_DMA_MXU_KT;     // 32
   constexpr uint32_t LOG2_MXU_KT = 5;
@@ -90,9 +82,12 @@ void kernel_silu_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
       const uint32_t gk_base = k_chunk << LOG2_MXU_KT;
 
       const uint64_t in_base = in_row_base + gk_base;
-      const uint64_t out_base = (uint64_t)kt * per_kt_elems
-                              + (uint64_t)kb * per_kb_elems
-                              + out_row_base;
+      const uint64_t tile_out_base = (uint64_t)kt * per_kt_elems
+                                   + (uint64_t)kb * per_kb_elems
+                                   + out_row_base;
+      const uint64_t row_out_base = in_base;
+      const uint64_t out_base = (tile_out_base & layout_mask)
+                              | (row_out_base & row_mask);
 
       for (uint32_t k_in_sub = 0; k_in_sub < MXU_KT; ++k_in_sub) {
         pOutput[out_base + k_in_sub] = silu(pInput[in_base + k_in_sub]);
@@ -104,7 +99,8 @@ void kernel_silu_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
 void kernel_dispatcher(kernel_arg_t *__UNIFORM__ arg) {
   switch (arg->kernel_id) {
     case KERNEL_SILU:               kernel_silu(arg);              break;
-    case KERNEL_SILU_LAYOUT_FUSED:  kernel_silu_layout_fused(arg); break;
+    case KERNEL_SILU_LAYOUT_FUSED:  kernel_silu_store_matched(arg); break;
+    case KERNEL_SILU_ROW_MATCHED:   kernel_silu_store_matched(arg); break;
     default: break;
   }
 }

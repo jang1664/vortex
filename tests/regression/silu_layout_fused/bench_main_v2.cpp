@@ -12,6 +12,11 @@
 
 using data_t = float;
 
+enum class Variant {
+  RowMatched,
+  LayoutFused,
+};
+
 vx_device_h device = nullptr;
 vx_buffer_h krnl_buffer = nullptr;
 vx_buffer_h args_buffer = nullptr;
@@ -46,11 +51,33 @@ static void initialize_input(std::vector<data_t>& vec) {
   }
 }
 
+static const char* variant_label(Variant variant) {
+  return (variant == Variant::RowMatched)
+      ? "silu_row_matched"
+      : "silu_layout_fused";
+}
+
+static uint32_t variant_kernel_id(Variant variant) {
+  return (variant == Variant::RowMatched)
+      ? KERNEL_SILU_ROW_MATCHED
+      : KERNEL_SILU_LAYOUT_FUSED;
+}
+
 static std::vector<data_t> build_reference(const std::vector<data_t>& input,
                                            uint32_t M,
                                            uint32_t M_pad,
-                                           uint32_t K) {
+                                           uint32_t K,
+                                           Variant variant) {
   std::vector<data_t> ref(size_t(M_pad) * K, 0.0f);
+  if (variant == Variant::RowMatched) {
+    for (uint32_t m = 0; m < M; ++m) {
+      for (uint32_t k = 0; k < K; ++k) {
+        ref[(uint64_t)m * K + k] = silu_cpu(input[(uint64_t)m * K + k]);
+      }
+    }
+    return ref;
+  }
+
   const uint32_t k_tiles = (K + TILE_DMA_KT - 1) / TILE_DMA_KT;
   size_t idx = 0;
   for (uint32_t kt = 0; kt < k_tiles; ++kt) {
@@ -78,12 +105,35 @@ int main(int argc, char *argv[]) {
 
   uint32_t M = 4;
   uint32_t K = 4096;
+  Variant variant = Variant::LayoutFused;
   for (int i = 1; i < argc; ++i) {
     if (strcmp(argv[i], "-m") == 0) M = atoi(argv[++i]);
     else if (strcmp(argv[i], "-k") == 0) K = atoi(argv[++i]);
+    else if (strcmp(argv[i], "--variant") == 0 && i + 1 < argc) {
+      const char* value = argv[++i];
+      if (strcmp(value, "row") == 0 || strcmp(value, "row-matched") == 0) {
+        variant = Variant::RowMatched;
+      } else if (strcmp(value, "layout") == 0 || strcmp(value, "layout-fused") == 0) {
+        variant = Variant::LayoutFused;
+      } else {
+        printf("ERROR: --variant must be row or layout\n");
+        return 1;
+      }
+    } else if (strncmp(argv[i], "--variant=", 10) == 0) {
+      const char* value = argv[i] + 10;
+      if (strcmp(value, "row") == 0 || strcmp(value, "row-matched") == 0) {
+        variant = Variant::RowMatched;
+      } else if (strcmp(value, "layout") == 0 || strcmp(value, "layout-fused") == 0) {
+        variant = Variant::LayoutFused;
+      } else {
+        printf("ERROR: --variant must be row or layout\n");
+        return 1;
+      }
+    }
     else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
       printf("Usage: %s [--warmup=N] [--iterations=N] [--csv] "
-             "[--output=PATH] [--output-append] [-m M] [-k K]\n", argv[0]);
+             "[--output=PATH] [--output-append] [--variant=row|layout] "
+             "[-m M] [-k K]\n", argv[0]);
       return 0;
     }
   }
@@ -95,8 +145,8 @@ int main(int argc, char *argv[]) {
 
   uint32_t M_pad = (M + 7u) & ~7u;
   if (!bench.csv) {
-    printf("SiLU layout fused bench: M=%u M_pad=%u K=%u warmup=%d iterations=%d\n",
-           M, M_pad, K, bench.warmup, bench.iterations);
+    printf("SiLU layout fused bench: variant=%s M=%u M_pad=%u K=%u warmup=%d iterations=%d\n",
+           variant_label(variant), M, M_pad, K, bench.warmup, bench.iterations);
   }
 
   size_t input_elems = size_t(M) * K;
@@ -106,7 +156,7 @@ int main(int argc, char *argv[]) {
 
   std::vector<data_t> h_in(input_elems);
   initialize_input(h_in);
-  std::vector<data_t> h_ref = build_reference(h_in, M, M_pad, K);
+  std::vector<data_t> h_ref = build_reference(h_in, M, M_pad, K, variant);
   std::vector<data_t> h_out(output_elems);
 
   RT_CHECK(vx_dev_open(&device));
@@ -125,7 +175,7 @@ int main(int argc, char *argv[]) {
   uint32_t max_blocks = std::max(1u, uint32_t(num_cores) * 4u);
 
   kernel_arg_t kernel_arg = {};
-  kernel_arg.kernel_id = KERNEL_SILU_LAYOUT_FUSED;
+  kernel_arg.kernel_id = variant_kernel_id(variant);
   RT_CHECK(vx_mem_address(input_buffer, &kernel_arg.input_addr));
   RT_CHECK(vx_mem_address(output_buffer, &kernel_arg.output_addr));
   kernel_arg.M_real = M;
@@ -151,24 +201,32 @@ int main(int argc, char *argv[]) {
 
   size_t errors = 0;
   float max_diff = 0.0f;
-  size_t flat_idx = 0;
-  for (uint32_t kt = 0; kt < k_tiles; ++kt) {
-    (void)kt;
-    uint32_t cur_k_v = (K - kt * TILE_DMA_KT < TILE_DMA_KT)
-                           ? (K - kt * TILE_DMA_KT)
-                           : TILE_DMA_KT;
-    uint32_t k_mic_v = cur_k_v / TILE_DMA_MXU_KT;
-    for (uint32_t kb = 0; kb < k_mic_v; ++kb) {
-      (void)kb;
-      for (uint32_t m = 0; m < M_pad; ++m) {
-        for (uint32_t k = 0; k < TILE_DMA_MXU_KT; ++k) {
-          (void)k;
-          if (m < M) {
-            float diff = std::fabs(h_out[flat_idx] - h_ref[flat_idx]);
-            max_diff = std::max(max_diff, diff);
-            if (diff > 1e-3f) ++errors;
+  if (variant == Variant::RowMatched) {
+    for (size_t i = 0; i < input_elems; ++i) {
+      float diff = std::fabs(h_out[i] - h_ref[i]);
+      max_diff = std::max(max_diff, diff);
+      if (diff > 1e-3f) ++errors;
+    }
+  } else {
+    size_t flat_idx = 0;
+    for (uint32_t kt = 0; kt < k_tiles; ++kt) {
+      (void)kt;
+      uint32_t cur_k_v = (K - kt * TILE_DMA_KT < TILE_DMA_KT)
+                             ? (K - kt * TILE_DMA_KT)
+                             : TILE_DMA_KT;
+      uint32_t k_mic_v = cur_k_v / TILE_DMA_MXU_KT;
+      for (uint32_t kb = 0; kb < k_mic_v; ++kb) {
+        (void)kb;
+        for (uint32_t m = 0; m < M_pad; ++m) {
+          for (uint32_t k = 0; k < TILE_DMA_MXU_KT; ++k) {
+            (void)k;
+            if (m < M) {
+              float diff = std::fabs(h_out[flat_idx] - h_ref[flat_idx]);
+              max_diff = std::max(max_diff, diff);
+              if (diff > 1e-3f) ++errors;
+            }
+            ++flat_idx;
           }
-          ++flat_idx;
         }
       }
     }
@@ -192,7 +250,7 @@ int main(int argc, char *argv[]) {
     stats.record(sw.stop_us());
   }
 
-  stats.report("silu_layout_fused", bench);
+  stats.report(variant_label(variant), bench);
 
   if (!bench.csv) {
     printf("\n[Performance]\n");

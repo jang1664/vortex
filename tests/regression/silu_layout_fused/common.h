@@ -7,6 +7,7 @@
 // perf comparison (no compile-time differences).
 #define KERNEL_SILU                0
 #define KERNEL_SILU_LAYOUT_FUSED   1
+#define KERNEL_SILU_ROW_MATCHED    2
 
 // Tile-layout constants — match
 // tests/regression/fpint_gemm_ffn_hw/common.h
