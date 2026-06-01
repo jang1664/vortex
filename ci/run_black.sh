@@ -126,15 +126,18 @@ fi
 
 # Base CONFIGS exported by the alias config or environment. Append script-specific flags.
 CONFIGS="${CONFIGS:-}"
-CONFIGS+=" -DDBG_TRACE_PIPELINE"
-CONFIGS+=" -DDBG_TRACE_MEM"
-CONFIGS+=" -DDBG_TRACE_CACHE"
-CONFIGS+=" -DDBG_TRACE_AFU"
-CONFIGS+=" -DDBG_TRACE_SCOPE"
-CONFIGS+=" -DDBG_TRACE_GBAR"
-CONFIGS+=" -DDBG_TRACE_TCU"
-CONFIGS+=" -DDBG_TRACE_GEMM"
 CONFIGS+=" -DWLOAD_AT_ONCE"
+
+if [[ -n "${DEBUG_FLAG}" ]]; then
+  CONFIGS+=" -DDBG_TRACE_PIPELINE"
+  CONFIGS+=" -DDBG_TRACE_MEM"
+  CONFIGS+=" -DDBG_TRACE_CACHE"
+  CONFIGS+=" -DDBG_TRACE_AFU"
+  CONFIGS+=" -DDBG_TRACE_SCOPE"
+  CONFIGS+=" -DDBG_TRACE_GBAR"
+  CONFIGS+=" -DDBG_TRACE_TCU"
+  CONFIGS+=" -DDBG_TRACE_GEMM"
+fi
 
 if [[ -n "${CONFIGS_EXTRA}" ]]; then
   CONFIGS+=" ${CONFIGS_EXTRA}"
@@ -177,29 +180,40 @@ fi
 # CACHE_RSP_STALL_P_EXIT_PCT=100 \
 # CACHE_STALL_SEED=1234 \
 if [[ "${mode}" == "xrt-vcs-sim" || "${mode}" == "all" ]]; then
-  CONFIGS="${CONFIGS} -DNDEBUG" \
-  DRIVER=xrt_vcs \
-  FSDB_DUMP=1 \
-  DEBUG_AXI=1 \
-  ./ci/blackbox.sh ${BENCH_FLAG} ${PERF_FLAG} ${DEBUG_FLAG} --driver=xrt_vcs --app=${APP} --args="${ARGS}"
+  xrt_vcs_env=(
+    "CONFIGS=${CONFIGS} -DNDEBUG"
+    "DRIVER=xrt_vcs"
+  )
+  if [[ -n "${FPGA_BIN_DIR}" ]]; then
+    xrt_vcs_env+=("XRT_XCLBIN_PATH=${FPGA_BIN_DIR}/vortex_afu.xclbin")
+  fi
+  if [[ -n "${DEBUG_FLAG}" ]]; then
+    xrt_vcs_env+=("FSDB_DUMP=1" "DEBUG_AXI=1")
+  fi
+  env "${xrt_vcs_env[@]}" ./ci/blackbox.sh ${BENCH_FLAG} ${PERF_FLAG} ${DEBUG_FLAG} --driver=xrt_vcs --app=${APP} --args="${ARGS}"
 fi
 
 # ----------------------------------------------------------------------------
 # - xrt-vcs-pgsim
 # ----------------------------------------------------------------------------
 if [[ "${mode}" == "xrt-vcs-pgsim" || "${mode}" == "all" ]]; then
-  DRAM_REQ_STALL_P_ENTER_PCT=70 \
-  DRAM_REQ_STALL_P_EXIT_PCT=30 \
-  DRAM_RSP_STALL_P_ENTER_PCT=70 \
-  DRAM_RSP_STALL_P_EXIT_PCT=30 \
-  DRAM_STALL_SEED=1234 \
-  CONFIGS=${CONFIGS} \
-  DRIVER=xrt_vcs_post \
-  FSDB_DUMP=1 \
-  DEBUG_AXI=1 \
-  GUI=1 \
-  NETLIST=/home/jaeyongjang/project.local/vortex/build/hw/syn/xilinx/xrt/hw/gate_sim/vortex_afu_funcsim.v \
-  ./ci/blackbox.sh ${BENCH_FLAG} ${PERF_FLAG} ${DEBUG_FLAG} --driver=xrt_vcs_post --app=${APP} --args="${ARGS}"
+  xrt_vcs_post_env=(
+    "DRAM_REQ_STALL_P_ENTER_PCT=70"
+    "DRAM_REQ_STALL_P_EXIT_PCT=30"
+    "DRAM_RSP_STALL_P_ENTER_PCT=70"
+    "DRAM_RSP_STALL_P_EXIT_PCT=30"
+    "DRAM_STALL_SEED=1234"
+    "CONFIGS=${CONFIGS}"
+    "DRIVER=xrt_vcs_post"
+    "NETLIST=/home/jaeyongjang/project.local/vortex/build/hw/syn/xilinx/xrt/hw/gate_sim/vortex_afu_funcsim.v"
+  )
+  if [[ -n "${FPGA_BIN_DIR}" ]]; then
+    xrt_vcs_post_env+=("XRT_XCLBIN_PATH=${FPGA_BIN_DIR}/vortex_afu.xclbin")
+  fi
+  if [[ -n "${DEBUG_FLAG}" ]]; then
+    xrt_vcs_post_env+=("FSDB_DUMP=1" "DEBUG_AXI=1" "GUI=1")
+  fi
+  env "${xrt_vcs_post_env[@]}" ./ci/blackbox.sh ${BENCH_FLAG} ${PERF_FLAG} ${DEBUG_FLAG} --driver=xrt_vcs_post --app=${APP} --args="${ARGS}"
 fi
 
 # ----------------------------------------------------------------------------
