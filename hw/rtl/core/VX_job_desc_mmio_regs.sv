@@ -175,6 +175,16 @@ module VX_job_desc_mmio_regs import VX_gpu_pkg::*; #(
   logic [NUM_LANES-1:0][DATA_SIZE*8-1:0] rsp_data_q, rsp_data_d;
   logic [TAG_WIDTH-1:0] rsp_tag_q, rsp_tag_d;
 
+  // One-entry request stage breaks the long path from the LSU/MMIO request bus
+  // into the descriptor register file update logic.
+  logic req_valid_q, req_valid_d;
+  logic req_rw_q, req_rw_d;
+  logic [NUM_LANES-1:0] req_mask_q, req_mask_d;
+  logic [NUM_LANES-1:0][ADDR_WIDTH-1:0] req_addr_q, req_addr_d;
+  logic [NUM_LANES-1:0][DATA_SIZE*8-1:0] req_data_q, req_data_d;
+  logic [NUM_LANES-1:0][DATA_SIZE-1:0] req_byteen_q, req_byteen_d;
+  logic [TAG_WIDTH-1:0] req_tag_q, req_tag_d;
+
   logic [63:0]          byte_addr;
   logic [63:0]          off;
   logic [ENTRYID_W-1:0] eid;
@@ -192,6 +202,8 @@ module VX_job_desc_mmio_regs import VX_gpu_pkg::*; #(
   logic                 alloc_success;
   logic                 alloc_taken;
   logic                 rsp_holding;
+  logic                 req_process;
+  logic                 req_capture;
 
   // ------------------------------------------------------------
   // next-state + outputs
@@ -205,9 +217,11 @@ module VX_job_desc_mmio_regs import VX_gpu_pkg::*; #(
     rr_alloc_d   = rr_alloc_q;
 
     // If previous read response is still pending and requester is not ready,
-    // stall new requests until response handshake completes.
+    // stall both the staged request and new request intake.
     rsp_holding       = rsp_valid_q && ~mmio_if.rsp_ready;
+    req_process       = req_valid_q && ~rsp_holding;
     mmio_if.req_ready = ~rsp_holding;
+    req_capture       = mmio_if.req_valid && mmio_if.req_ready;
 
     // Hold response payload by default until handshake.
     rsp_valid_d = rsp_valid_q;
@@ -215,12 +229,34 @@ module VX_job_desc_mmio_regs import VX_gpu_pkg::*; #(
     rsp_data_d  = rsp_data_q;
     rsp_tag_d   = rsp_tag_q;
 
+    req_valid_d  = req_valid_q;
+    req_rw_d     = req_rw_q;
+    req_mask_d   = req_mask_q;
+    req_addr_d   = req_addr_q;
+    req_data_d   = req_data_q;
+    req_byteen_d = req_byteen_q;
+    req_tag_d    = req_tag_q;
+
     // Drop response after successful handshake.
     if (rsp_valid_q && mmio_if.rsp_ready) begin
       rsp_valid_d = 1'b0;
       rsp_mask_d  = '0;
       rsp_data_d  = '0;
       rsp_tag_d   = '0;
+    end
+
+    if (req_process) begin
+      req_valid_d = 1'b0;
+    end
+
+    if (req_capture) begin
+      req_valid_d  = 1'b1;
+      req_rw_d     = mmio_if.req_data.rw;
+      req_mask_d   = mmio_if.req_data.mask;
+      req_addr_d   = mmio_if.req_data.addr;
+      req_data_d   = mmio_if.req_data.data;
+      req_byteen_d = mmio_if.req_data.byteen;
+      req_tag_d    = mmio_if.req_data.tag;
     end
 
     byte_addr   = '0;
@@ -260,19 +296,19 @@ module VX_job_desc_mmio_regs import VX_gpu_pkg::*; #(
     end
 
     // MMIO request handling
-    if (mmio_if.req_valid && mmio_if.req_ready) begin
+    if (req_process) begin
       req_owner  = '0;
-      rsp_valid_d = ~mmio_if.req_data.rw;
-      rsp_mask_d  = mmio_if.req_data.mask;
-      rsp_tag_d   = mmio_if.req_data.tag;
+      rsp_valid_d = ~req_rw_q;
+      rsp_mask_d  = req_mask_q;
+      rsp_tag_d   = req_tag_q;
       rsp_data_d  = '0;
 
       for (int l = 0; l < NUM_LANES; l++) begin
-        if (mmio_if.req_data.mask[l]) begin
-          byte_addr = addr_to_byte(mmio_if.req_data.addr[l]);
+        if (req_mask_q[l]) begin
+          byte_addr = addr_to_byte(req_addr_q[l]);
           off       = get_off(byte_addr);
 
-          if (~mmio_if.req_data.rw && is_alloc_reg(off)) begin
+          if (~req_rw_q && is_alloc_reg(off)) begin
             // Global alloc read: lane0 only to avoid ambiguous multi-lane side effects.
             if (!alloc_taken && (l == 0)) begin
               alloc_success = 1'b0;
@@ -312,7 +348,7 @@ module VX_job_desc_mmio_regs import VX_gpu_pkg::*; #(
             beat_idx = off_to_beatidx(off);
             base32   = beat_idx * WORDS_PER_BEAT;
 
-            if (mmio_if.req_data.rw) begin
+            if (req_rw_q) begin
               // write: beat -> regs32 merge write
               for (int i = 0; i < WORDS_PER_BEAT; i++) begin
                 r32 = base32 + i;
@@ -321,8 +357,8 @@ module VX_job_desc_mmio_regs import VX_gpu_pkg::*; #(
                   new_w = old_w;
 
                   for (int b = 0; b < 4; b++) begin
-                    if (mmio_if.req_data.byteen[l][i*4 + b]) begin
-                      new_w[b*8 +: 8] = mmio_if.req_data.data[l][i*32 + b*8 +: 8];
+                    if (req_byteen_q[l][i*4 + b]) begin
+                      new_w[b*8 +: 8] = req_data_q[l][i*32 + b*8 +: 8];
                     end
                   end
 
@@ -348,7 +384,7 @@ module VX_job_desc_mmio_regs import VX_gpu_pkg::*; #(
               end
             end
           end else begin
-            if (!mmio_if.req_data.rw) begin
+            if (!req_rw_q) begin
               rsp_data_d[l] = '0;
             end
           end
@@ -381,6 +417,14 @@ module VX_job_desc_mmio_regs import VX_gpu_pkg::*; #(
       rsp_mask_q   <= '0;
       rsp_data_q   <= '0;
       rsp_tag_q    <= '0;
+
+      req_valid_q  <= 1'b0;
+      req_rw_q     <= 1'b0;
+      req_mask_q   <= '0;
+      req_addr_q   <= '0;
+      req_data_q   <= '0;
+      req_byteen_q <= '0;
+      req_tag_q    <= '0;
     end else begin
       regs32_q     <= regs32_d;
       occupy_q     <= occupy_d;
@@ -393,6 +437,14 @@ module VX_job_desc_mmio_regs import VX_gpu_pkg::*; #(
       rsp_mask_q   <= rsp_mask_d;
       rsp_data_q   <= rsp_data_d;
       rsp_tag_q    <= rsp_tag_d;
+
+      req_valid_q  <= req_valid_d;
+      req_rw_q     <= req_rw_d;
+      req_mask_q   <= req_mask_d;
+      req_addr_q   <= req_addr_d;
+      req_data_q   <= req_data_d;
+      req_byteen_q <= req_byteen_d;
+      req_tag_q    <= req_tag_d;
     end
   end
 
