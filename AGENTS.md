@@ -1,5 +1,7 @@
 # Repository Execution Notes
 
+## hardware/software configuration files
+- Source proper config file in configs/
 
 ## Build Prerequisite
 

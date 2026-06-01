@@ -13,7 +13,7 @@ import pandas as pd
 import yaml
 
 from .fpga_bins import FpgaBinConfig, resolve_fpga_bin, resolve_fpga_bin_config
-from .report import build_results, build_summary, write_manifest
+from .report import build_results, build_summary, sha256_file, write_manifest
 from .suite import DEFAULT_BLACKBOX_ARGS, BenchCase, BenchSuite, suite_to_expanded_yaml, suite_to_rows
 
 
@@ -44,6 +44,7 @@ class RunOptions:
     platform: str
     xrt_device_index: int
     fpga_bin_label: str = ""
+    configs: Path | None = None
     configs_extra: str = ""
     blackbox_args: tuple[str, ...] = DEFAULT_BLACKBOX_ARGS
     blackbox_timeout: str = ""
@@ -52,6 +53,7 @@ class RunOptions:
     dry_run: bool = False
     append_raw_csv: Path | None = None
     run_id: str | None = None
+    skip_existing: bool = False
 
 
 @dataclass(frozen=True)
@@ -88,6 +90,58 @@ def build_execution_units(suite: BenchSuite, out_dir: Path) -> list[ExecutionUni
             log_file=out_dir / "logs" / f"{case.exec_key}.log",
         )
     return list(units.values())
+
+
+def _normalize_args(value: str) -> str:
+    return " ".join(str(value).split())
+
+
+def _parse_int(value: object) -> int | None:
+    try:
+        return int(str(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _current_xclbin_sha(fpga_bin_dir: Path) -> str:
+    xclbin = fpga_bin_dir / "vortex_afu.xclbin"
+    return sha256_file(xclbin) if xclbin.exists() else ""
+
+
+def find_existing_pass_exec_keys(
+    raw_db: Path,
+    units: list[ExecutionUnit],
+    *,
+    fpga_bin_label: str,
+    xclbin_sha256: str,
+) -> tuple[str, ...]:
+    if not raw_db.exists() or not xclbin_sha256:
+        return ()
+
+    units_by_key = {unit.exec_key: unit for unit in units}
+    matched: set[str] = set()
+    with raw_db.open(newline="") as fp:
+        for row in csv.DictReader(fp):
+            if row.get("status") != "pass":
+                continue
+            if row.get("fpga_bin_label") != fpga_bin_label:
+                continue
+            if row.get("xclbin_sha256") != xclbin_sha256:
+                continue
+            unit = units_by_key.get(row.get("exec_key", ""))
+            if unit is None:
+                continue
+            if row.get("app") != unit.app:
+                continue
+            if _normalize_args(row.get("args", "")) != _normalize_args(unit.args):
+                continue
+            if _parse_int(row.get("warmup")) != unit.warmup:
+                continue
+            if _parse_int(row.get("iterations")) != unit.iterations:
+                continue
+            matched.add(unit.exec_key)
+
+    return tuple(unit.exec_key for unit in units if unit.exec_key in matched)
 
 
 def _q(value: str | Path) -> str:
@@ -158,6 +212,14 @@ def write_run_script(suite: BenchSuite, options: RunOptions, units: list[Executi
         f"export DRIVER={_q('xrt')}",
         f"export XRT_DEVICE_INDEX={_q(str(options.xrt_device_index))}",
     ]
+    if options.configs:
+        lines.extend([
+            f"if [[ ! -f {_q(options.configs)} ]]; then",
+            f"  echo 'config file not found: {_q(options.configs)}' >&2",
+            "  exit 1",
+            "fi",
+            f"source {_q(options.configs)}",
+        ])
     if append_raw_csv:
         lines.extend([
             f"export PYTHONPATH={_q(repo_root())}:\"${{PYTHONPATH:-}}\"",
@@ -252,20 +314,99 @@ def add_git_metadata(results: pd.DataFrame, git: GitMetadata) -> pd.DataFrame:
     return rows
 
 
-def append_raw_db(results: pd.DataFrame, out_root: Path, *, run_id: str, fpga_bin_label: str) -> None:
-    if results.empty:
-        return
-
+def _raw_db_rows(results: pd.DataFrame, *, run_id: str, fpga_bin_label: str) -> pd.DataFrame:
     rows = results.copy()
     rows.insert(0, "timestamp_utc", datetime.now(timezone.utc).isoformat(timespec="seconds"))
     rows.insert(0, "run_id", run_id)
     rows.insert(2, "fpga_bin_label", fpga_bin_label)
-    rows = rows.reindex(columns=RAW_DB_COLUMNS)
+    return rows.reindex(columns=RAW_DB_COLUMNS)
+
+
+def append_raw_db(results: pd.DataFrame, out_root: Path, *, run_id: str, fpga_bin_label: str) -> None:
+    if results.empty:
+        return
+
+    rows = _raw_db_rows(results, run_id=run_id, fpga_bin_label=fpga_bin_label)
 
     raw_db = out_root / "raw_db.csv"
     raw_db.parent.mkdir(parents=True, exist_ok=True)
     write_header = not raw_db.exists() or raw_db.stat().st_size == 0
     rows.to_csv(raw_db, mode="a", header=write_header, index=False)
+
+
+def _clean_raw_value(value: object) -> str:
+    if pd.isna(value):
+        return ""
+    return str(value)
+
+
+def _measurement_key(
+    *,
+    fpga_bin_label: object,
+    xclbin_sha256: object,
+    exec_key: object,
+    app: object,
+    args: object,
+    warmup: object,
+    iterations: object,
+) -> tuple[str, str, str, str, str, int | None, int | None]:
+    return (
+        _clean_raw_value(fpga_bin_label),
+        _clean_raw_value(xclbin_sha256),
+        _clean_raw_value(exec_key),
+        _clean_raw_value(app),
+        _normalize_args(_clean_raw_value(args)),
+        _parse_int(warmup),
+        _parse_int(iterations),
+    )
+
+
+def _measurement_key_from_row(row: dict[str, object]) -> tuple[str, str, str, str, str, int | None, int | None]:
+    return _measurement_key(
+        fpga_bin_label=row.get("fpga_bin_label", ""),
+        xclbin_sha256=row.get("xclbin_sha256", ""),
+        exec_key=row.get("exec_key", ""),
+        app=row.get("app", ""),
+        args=row.get("args", ""),
+        warmup=row.get("warmup", ""),
+        iterations=row.get("iterations", ""),
+    )
+
+
+def replace_raw_db_rows(results: pd.DataFrame, out_root: Path, *, run_id: str, fpga_bin_label: str) -> int:
+    if results.empty:
+        return 0
+
+    raw_db = out_root / "raw_db.csv"
+    new_rows = _raw_db_rows(results, run_id=run_id, fpga_bin_label=fpga_bin_label)
+    replacement_keys = {
+        _measurement_key_from_row(row)
+        for row in new_rows.to_dict("records")
+    }
+
+    existing_rows: list[dict[str, str]] = []
+    if raw_db.exists() and raw_db.stat().st_size > 0:
+        with raw_db.open(newline="") as fp:
+            existing_rows = list(csv.DictReader(fp))
+
+    replaced_count = 0
+    kept_rows: list[dict[str, object]] = []
+    for row in existing_rows:
+        if _measurement_key_from_row(row) in replacement_keys:
+            replaced_count += 1
+        else:
+            kept_rows.append(row)
+
+    output_rows = kept_rows + new_rows.to_dict("records")
+    raw_db.parent.mkdir(parents=True, exist_ok=True)
+    tmp = raw_db.with_suffix(raw_db.suffix + ".tmp")
+    with tmp.open("w", newline="") as fp:
+        writer = csv.DictWriter(fp, fieldnames=RAW_DB_COLUMNS)
+        writer.writeheader()
+        for row in output_rows:
+            writer.writerow({column: _clean_raw_value(row.get(column, "")) for column in RAW_DB_COLUMNS})
+    tmp.replace(raw_db)
+    return replaced_count
 
 
 def run_suite(suite: BenchSuite, options: RunOptions) -> int:
@@ -282,9 +423,20 @@ def run_suite(suite: BenchSuite, options: RunOptions) -> int:
 
     validate_inputs(run_options)
     units = build_execution_units(suite, run_dir)
+    skipped_existing_exec_keys: tuple[str, ...] = ()
+    units_to_run = units
+    if options.skip_existing:
+        skipped_existing_exec_keys = find_existing_pass_exec_keys(
+            out_root / "raw_db.csv",
+            units,
+            fpga_bin_label=run_options.fpga_bin_label,
+            xclbin_sha256=_current_xclbin_sha(run_options.fpga_bin_dir),
+        )
+        skipped = set(skipped_existing_exec_keys)
+        units_to_run = [unit for unit in units if unit.exec_key not in skipped]
     write_cases_csv(suite, run_dir)
     write_suite_snapshots(suite, run_dir)
-    script = write_run_script(suite, run_options, units)
+    script = write_run_script(suite, run_options, units_to_run)
     write_manifest(suite, run_dir, {
         "run_id": run_id,
         "out_root": str(out_root),
@@ -300,8 +452,13 @@ def run_suite(suite: BenchSuite, options: RunOptions) -> int:
         "xrt_device_index": options.xrt_device_index,
         "blackbox_args": list(options.blackbox_args),
         "blackbox_timeout": options.blackbox_timeout,
+        "configs": str(options.configs) if options.configs else "",
         "configs_extra": options.configs_extra,
         "execution_count": len(units),
+        "run_execution_count": len(units_to_run),
+        "skip_existing": options.skip_existing,
+        "skipped_existing_count": len(skipped_existing_exec_keys),
+        "skipped_existing_exec_keys": list(skipped_existing_exec_keys),
         "script": str(script),
         "dry_run": options.dry_run,
         "append_raw_csv": str(options.append_raw_csv) if options.append_raw_csv else "",
@@ -310,6 +467,8 @@ def run_suite(suite: BenchSuite, options: RunOptions) -> int:
     if options.dry_run:
         print(f"dry-run: wrote {script}")
         print(f"dry-run: expanded {len(suite.cases)} cases into {len(units)} unique executions")
+        if options.skip_existing:
+            print(f"dry-run: skipped {len(skipped_existing_exec_keys)} existing pass executions")
         return 0
 
     cmd = ["bash", str(script)]
@@ -323,8 +482,20 @@ def run_suite(suite: BenchSuite, options: RunOptions) -> int:
     summary = build_summary(results)
     results.to_csv(run_dir / "results.csv", index=False)
     summary.to_csv(run_dir / "summary.csv", index=False)
-    append_raw_db(results, out_root, run_id=run_id, fpga_bin_label=options.fpga_bin_label)
+    append_results = results
+    if options.skip_existing:
+        executed_keys = {unit.exec_key for unit in units_to_run}
+        append_results = results[results["exec_key"].isin(executed_keys)]
+        replaced_count = replace_raw_db_rows(append_results, out_root, run_id=run_id, fpga_bin_label=options.fpga_bin_label)
+    else:
+        replaced_count = 0
+        append_raw_db(append_results, out_root, run_id=run_id, fpga_bin_label=options.fpga_bin_label)
     print(f"wrote {run_dir / 'results.csv'}")
     print(f"wrote {run_dir / 'summary.csv'}")
-    print(f"appended {out_root / 'raw_db.csv'}")
+    if append_results.empty:
+        print(f"no new rows appended to {out_root / 'raw_db.csv'}")
+    elif options.skip_existing:
+        print(f"replaced {replaced_count} existing rows and wrote {len(append_results)} rows to {out_root / 'raw_db.csv'}")
+    else:
+        print(f"appended {out_root / 'raw_db.csv'}")
     return rc

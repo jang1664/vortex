@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import shlex
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -17,13 +16,13 @@ DEFAULT_FPGA_BIN_ALIAS_MAP = Path(__file__).resolve().parents[2] / "ci" / "fpga_
 @dataclass(frozen=True)
 class FpgaBinAlias:
     path: str
-    configs_extra: CompileConfigs = ()
+    configs: str = ""
 
 
 @dataclass(frozen=True)
 class FpgaBinConfig:
     path: Path
-    configs_extra: CompileConfigs = ()
+    configs: Path | None = None
 
 
 def normalize_fpga_bin(path: Path) -> Path:
@@ -40,19 +39,24 @@ def alias_map_path(path: str | Path | None = None) -> Path:
     return DEFAULT_FPGA_BIN_ALIAS_MAP
 
 
-def _configs_from_yaml(value: Any, *, alias: str) -> CompileConfigs:
+def _config_path_from_yaml(value: Any, *, alias: str, alias_map: Path) -> str:
     if value is None:
-        return ()
-    if isinstance(value, str):
-        return tuple(shlex.split(value))
-    if isinstance(value, list):
-        configs: list[str] = []
-        for item in value:
-            if not isinstance(item, str):
-                raise ValueError(f"configs_extra for FPGA bin alias {alias!r} must contain only strings")
-            configs.append(item)
-        return tuple(configs)
-    raise ValueError(f"configs_extra for FPGA bin alias {alias!r} must be a string or list")
+        return ""
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"configs for FPGA bin alias {alias!r} must be a non-empty path string")
+
+    config_path = Path(value).expanduser()
+    if config_path.is_absolute():
+        return str(config_path.resolve())
+
+    candidates = (
+        alias_map.parent / config_path,
+        alias_map.parent.parent / config_path,
+    )
+    for candidate in candidates:
+        if candidate.exists():
+            return str(candidate.resolve())
+    return str(candidates[0].resolve())
 
 
 def load_fpga_bin_aliases(path: str | Path | None = None) -> dict[str, FpgaBinAlias]:
@@ -78,50 +82,30 @@ def load_fpga_bin_aliases(path: str | Path | None = None) -> dict[str, FpgaBinAl
             raise ValueError(f"FPGA bin alias {name!r} must define a non-empty path")
         out[name] = FpgaBinAlias(
             path=raw_path,
-            configs_extra=_configs_from_yaml(spec.get("configs_extra"), alias=name),
+            configs=_config_path_from_yaml(spec.get("configs"), alias=name, alias_map=path),
         )
-    return out
-
-
-def _replace_xrt_mem_map_config(configs: list[str], mode: str) -> list[str]:
-    replacement = f"-DXRT_MEM_MAP={mode}"
-    out: list[str] = []
-    replaced = False
-    for config in configs:
-        if config.startswith("-DXRT_MEM_MAP="):
-            if not replaced:
-                out.append(replacement)
-                replaced = True
-        else:
-            out.append(config)
-    if not replaced:
-        out.insert(0, replacement)
     return out
 
 
 def resolve_fpga_bin_config(
     value: str | Path,
     *,
-    xrt_mem_map: str | None = None,
     alias_map_path: str | Path | None = None,
     aliases: dict[str, FpgaBinAlias] | None = None,
 ) -> FpgaBinConfig:
     raw_value = str(value)
     alias_table = aliases if aliases is not None else load_fpga_bin_aliases(alias_map_path)
     alias = alias_table.get(raw_value)
-    configs_extra: list[str] = []
     if alias is None:
         resolved = raw_value
+        configs: Path | None = None
     else:
         resolved = alias.path
-        configs_extra.extend(alias.configs_extra)
-
-    if xrt_mem_map:
-        configs_extra = _replace_xrt_mem_map_config(configs_extra, xrt_mem_map)
+        configs = Path(alias.configs) if alias.configs else None
 
     return FpgaBinConfig(
         path=normalize_fpga_bin(Path(resolved)),
-        configs_extra=tuple(configs_extra),
+        configs=configs,
     )
 
 

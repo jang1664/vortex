@@ -1,27 +1,24 @@
 aliases:
   base_t32:
     path: /opt/vortex_fpga_bins/baseline/xrt_hw_u55c_c1_f100_tcu_noDcache_L2cache_75849ebace/bin
-    configs_extra:
-      - -DXRT_MEM_MAP=legacy
+    configs: configs/base_t32.sh
 
   base_t8:
     path: /opt/vortex_fpga_bins/baseline/xrt_hw_u55c_c1_f100_tcu_noDcache_L2cache_747805ed8e/bin
-    configs_extra:
-      - -DXRT_MEM_MAP=legacy
+    configs: configs/base_t8.sh
 
   naive:
     path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_noDcache_L2cache_a917286dbe/bin
-    configs_extra:
-      - -DXRT_MEM_MAP=legacy
+    configs: configs/naive.sh
+
+  naive_simd:
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_noDcache_L2cache_90f22d2615/bin
+    configs: configs/naive_simd.sh
 
   improve_tcol1:
     path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_noDcache_L2cache_c8c5d0d4f3/bin
-    configs_extra:
-      - -DXRT_MEM_MAP=remap
-      - -DBANK_INTERLEAVE
+    configs: configs/improve_tcol1.sh
 
   improve_tcol32:
     path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_noDcache_L2cache_8a0e684a24/bin
-    configs_extra:
-      - -DXRT_MEM_MAP=remap
-      - -DBANK_INTERLEAVE
+    configs: configs/improve_tcol32.sh

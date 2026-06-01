@@ -1,31 +1,30 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 import tempfile
 import unittest
 from pathlib import Path
 
-from tools.latency_bench.runner import RunOptions, run_suite
+from tools.latency_bench.runner import RAW_DB_COLUMNS, RunOptions, run_suite
 from tools.latency_bench.suite import BenchCase, BenchDefaults, BenchSuite
 
 
 class RawDbTest(unittest.TestCase):
-    def test_run_appends_results_to_top_level_raw_db(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            build_dir = tmp_path / "build"
-            (build_dir / "ci").mkdir(parents=True)
-            blackbox = build_dir / "ci" / "blackbox.sh"
-            blackbox.write_text(
-                """#!/usr/bin/env bash
+    def _write_fake_blackbox(self, build_dir: Path, invocation_log: Path | None = None) -> None:
+        (build_dir / "ci").mkdir(parents=True)
+        blackbox = build_dir / "ci" / "blackbox.sh"
+        log_line = f"printf '%s\\n' \"$*\" >> {invocation_log}\n" if invocation_log else ""
+        blackbox.write_text(
+            f"""#!/usr/bin/env bash
 set -euo pipefail
-bench_args=""
+{log_line}bench_args=""
 log_file=""
 for arg in "$@"; do
   case "$arg" in
-    --args=*) bench_args="${arg#--args=}" ;;
-    --log=*) log_file="${arg#--log=}" ;;
+    --args=*) bench_args="${{arg#--args=}}" ;;
+    --log=*) log_file="${{arg#--log=}}" ;;
   esac
 done
 raw_csv=$(printf '%s\n' "$bench_args" | sed -n 's/.*--output=\\([^ ]*\\).*/\\1/p')
@@ -33,11 +32,53 @@ mkdir -p "$(dirname "$raw_csv")" "$(dirname "$log_file")"
 printf 'fpint_gemm,3,1.0,2.0,4.0,2.0,3.0\n' > "$raw_csv"
 printf 'ok\n' > "$log_file"
 """
-            )
-            blackbox.chmod(0o755)
+        )
+        blackbox.chmod(0o755)
+
+    def _write_fake_fpga_bin(self, fpga_bin_dir: Path, content: str = "fake bitstream") -> str:
+        fpga_bin_dir.mkdir()
+        xclbin = fpga_bin_dir / "vortex_afu.xclbin"
+        xclbin.write_text(content)
+        return hashlib.sha256(content.encode()).hexdigest()
+
+    def _write_raw_db_row(self, raw_db: Path, **overrides: object) -> None:
+        row = {column: "" for column in RAW_DB_COLUMNS}
+        row.update({
+            "run_id": "existing_run",
+            "timestamp_utc": "2026-05-30T00:00:00+00:00",
+            "fpga_bin_label": "improve_tcol1",
+            "suite": "mini_suite",
+            "case_id": "existing_case",
+            "exec_key": "existing_exec",
+            "app": "fpint_gemm_ffn_hw",
+            "args": "-m 1 -n 128 -k 128 -q 32 -t 0 -d 0",
+            "warmup": "1",
+            "iterations": "1",
+            "status": "pass",
+            "returncode": "0",
+            "samples": "3",
+            "min_us": "1.0",
+            "avg_us": "2.0",
+            "max_us": "4.0",
+            "p50_us": "2.0",
+            "p95_us": "3.0",
+            **overrides,
+        })
+        raw_db.parent.mkdir(parents=True, exist_ok=True)
+        write_header = not raw_db.exists()
+        with raw_db.open("a", newline="") as fp:
+            writer = csv.DictWriter(fp, fieldnames=RAW_DB_COLUMNS)
+            if write_header:
+                writer.writeheader()
+            writer.writerow(row)
+
+    def test_run_appends_results_to_top_level_raw_db(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            build_dir = tmp_path / "build"
+            self._write_fake_blackbox(build_dir)
             fpga_bin_dir = tmp_path / "fpga_bin"
-            fpga_bin_dir.mkdir()
-            (fpga_bin_dir / "vortex_afu.xclbin").write_text("fake bitstream")
+            self._write_fake_fpga_bin(fpga_bin_dir)
 
             suite = BenchSuite(
                 name="mini_suite",
@@ -149,6 +190,154 @@ printf 'ok\n' > "$log_file"
                 rows = list(csv.DictReader(fp))
             self.assertEqual("timeout", rows[0]["status"])
             self.assertEqual("124", rows[0]["returncode"])
+
+    def test_skip_existing_runs_only_missing_or_failed_measurements(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            build_dir = tmp_path / "build"
+            invocation_log = tmp_path / "invocations.log"
+            self._write_fake_blackbox(build_dir, invocation_log=invocation_log)
+            fpga_bin_dir = tmp_path / "fpga_bin"
+            xclbin_sha = self._write_fake_fpga_bin(fpga_bin_dir)
+
+            passed_case = BenchCase(
+                case_id="passed",
+                app="fpint_gemm_ffn_hw",
+                args="-m 1 -n 128 -k 128 -q 32 -t 0 -d 0",
+                warmup=1,
+                iterations=1,
+            )
+            failed_case = BenchCase(
+                case_id="failed",
+                app="fpint_gemm_ffn_hw",
+                args="-m 2 -n 128 -k 128 -q 32 -t 0 -d 0",
+                warmup=1,
+                iterations=1,
+            )
+            suite = BenchSuite(
+                name="mini_suite",
+                defaults=BenchDefaults(warmup=1, iterations=1),
+                cases=[passed_case, failed_case],
+            )
+            out_root = tmp_path / "latency_db"
+            raw_db = out_root / "raw_db.csv"
+            self._write_raw_db_row(
+                raw_db,
+                case_id=passed_case.case_id,
+                exec_key=passed_case.exec_key,
+                app=passed_case.app,
+                args=passed_case.args,
+                fpga_bin_label="improve_tcol1",
+                xclbin_sha256=xclbin_sha,
+                warmup=passed_case.warmup,
+                iterations=passed_case.iterations,
+                status="pass",
+            )
+            self._write_raw_db_row(
+                raw_db,
+                case_id=failed_case.case_id,
+                exec_key=failed_case.exec_key,
+                app=failed_case.app,
+                args=failed_case.args,
+                fpga_bin_label="improve_tcol1",
+                xclbin_sha256=xclbin_sha,
+                warmup=failed_case.warmup,
+                iterations=failed_case.iterations,
+                status="fail",
+                returncode="2",
+            )
+
+            rc = run_suite(
+                suite,
+                RunOptions(
+                    build_dir=build_dir,
+                    fpga_bin_dir=fpga_bin_dir,
+                    fpga_bin_label="improve_tcol1",
+                    out_dir=out_root,
+                    platform=suite.defaults.platform,
+                    xrt_device_index=suite.defaults.xrt_device_index,
+                    blackbox_args=(),
+                    srun=False,
+                    run_id="resume_run",
+                    skip_existing=True,
+                ),
+            )
+
+            self.assertEqual(0, rc)
+            invocations = invocation_log.read_text().splitlines()
+            self.assertEqual(1, len(invocations))
+            self.assertIn("-m 2 -n 128 -k 128", invocations[0])
+            self.assertNotIn("-m 1 -n 128 -k 128", invocations[0])
+
+            with raw_db.open(newline="") as fp:
+                rows = list(csv.DictReader(fp))
+            self.assertEqual(2, len(rows))
+            self.assertEqual(["pass", "pass"], [row["status"] for row in rows])
+            self.assertEqual(failed_case.exec_key, rows[-1]["exec_key"])
+
+            manifest = json.loads((out_root / "runs" / "resume_run" / "manifest.json").read_text())
+            self.assertEqual(2, manifest["execution_count"])
+            self.assertEqual(1, manifest["skipped_existing_count"])
+            self.assertEqual([passed_case.exec_key], manifest["skipped_existing_exec_keys"])
+
+    def test_skip_existing_does_not_skip_when_xclbin_sha_mismatches(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            build_dir = tmp_path / "build"
+            invocation_log = tmp_path / "invocations.log"
+            self._write_fake_blackbox(build_dir, invocation_log=invocation_log)
+            fpga_bin_dir = tmp_path / "fpga_bin"
+            current_sha = self._write_fake_fpga_bin(fpga_bin_dir, content="current bitstream")
+
+            case = BenchCase(
+                case_id="same_exec_key",
+                app="fpint_gemm_ffn_hw",
+                args="-m 1 -n 128 -k 128 -q 32 -t 0 -d 0",
+                warmup=1,
+                iterations=1,
+            )
+            suite = BenchSuite(
+                name="mini_suite",
+                defaults=BenchDefaults(warmup=1, iterations=1),
+                cases=[case],
+            )
+            out_root = tmp_path / "latency_db"
+            raw_db = out_root / "raw_db.csv"
+            self._write_raw_db_row(
+                raw_db,
+                case_id=case.case_id,
+                exec_key=case.exec_key,
+                app=case.app,
+                args=case.args,
+                fpga_bin_label="improve_tcol1",
+                xclbin_sha256="different_sha",
+                warmup=case.warmup,
+                iterations=case.iterations,
+                status="pass",
+            )
+
+            rc = run_suite(
+                suite,
+                RunOptions(
+                    build_dir=build_dir,
+                    fpga_bin_dir=fpga_bin_dir,
+                    fpga_bin_label="improve_tcol1",
+                    out_dir=out_root,
+                    platform=suite.defaults.platform,
+                    xrt_device_index=suite.defaults.xrt_device_index,
+                    blackbox_args=(),
+                    srun=False,
+                    run_id="strict_run",
+                    skip_existing=True,
+                ),
+            )
+
+            self.assertEqual(0, rc)
+            self.assertEqual(1, len(invocation_log.read_text().splitlines()))
+            with raw_db.open(newline="") as fp:
+                rows = list(csv.DictReader(fp))
+            self.assertEqual(2, len(rows))
+            self.assertEqual(["different_sha", current_sha], [row["xclbin_sha256"] for row in rows])
 
 
 if __name__ == "__main__":

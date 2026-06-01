@@ -28,7 +28,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Resolve a Vortex FPGA bin alias.")
     parser.add_argument("fpga_bin", nargs="?", help="Alias, bin directory, or vortex_afu.xclbin path.")
     parser.add_argument("--alias-map", default=None, help="Path to ci/fpga_bin_alias_map.yaml.")
-    parser.add_argument("--xrt-mem-map", choices=["legacy", "remap"], default=None)
     parser.add_argument("--list", action="store_true", help="Print available aliases and exit.")
     return parser
 
@@ -43,11 +42,10 @@ def main(argv: list[str] | None = None) -> int:
 
     config = resolve_fpga_bin_config(
         args.fpga_bin,
-        xrt_mem_map=args.xrt_mem_map,
         alias_map_path=args.alias_map,
     )
     print(config.path)
-    print(" ".join(config.configs_extra))
+    print(config.configs or "")
     return 0
 
 

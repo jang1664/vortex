@@ -19,7 +19,7 @@ list_fpga_bin_aliases() {
 }
 
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
-  echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"] [--fpga-bin ALIAS_OR_PATH] [--xrt-mem-map legacy|remap]"
+  echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"] [--fpga-bin ALIAS_OR_PATH] [--bench] [--perf CLASS] [--debug LEVEL]"
   echo "Modes:"
   echo "  rtlsim   - Run only rtlsim tests"
   echo "  xrtsim   - Run only xrtsim tests"
@@ -38,7 +38,7 @@ mode="${1:-}"
 shift || true
 
 if [[ "${mode}" == "" ]]; then
-  echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"] [--fpga-bin ALIAS_OR_PATH] [--xrt-mem-map legacy|remap]"
+  echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"] [--fpga-bin ALIAS_OR_PATH] [--bench] [--perf CLASS] [--debug LEVEL]"
   echo "Modes:"
   echo "  rtlsim   - Run only rtlsim tests"
   echo "  xrtsim   - Run only xrtsim tests"
@@ -54,19 +54,18 @@ ARGS="-m 2 -n 32 -k 128"
 CONFIGS_EXTRA=""
 FPGA_BIN=improve_tcol1
 FPGA_BIN_DIR=""
-FPGA_BIN_CONFIGS_EXTRA=""
-XRT_MEM_MAP_OVERRIDE=""
+FPGA_BIN_CONFIGS=""
+BENCH_FLAG=""
+PERF_FLAG=""
+DEBUG_FLAG=""
 
 resolve_fpga_bin() {
   local fpga_bin="$1"
   local resolved
   local resolver_args=(--alias-map "${FPGA_BIN_ALIAS_MAP}")
-  if [[ -n "${XRT_MEM_MAP_OVERRIDE}" ]]; then
-    resolver_args+=(--xrt-mem-map "${XRT_MEM_MAP_OVERRIDE}")
-  fi
   resolved="$("${PYTHON_BIN}" "${FPGA_BIN_ALIAS_RESOLVER}" "${resolver_args[@]}" "${fpga_bin}")"
   FPGA_BIN_DIR="$(printf '%s\n' "${resolved}" | sed -n '1p')"
-  FPGA_BIN_CONFIGS_EXTRA="$(printf '%s\n' "${resolved}" | sed -n '2p')"
+  FPGA_BIN_CONFIGS="$(printf '%s\n' "${resolved}" | sed -n '2p')"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -87,30 +86,45 @@ while [[ $# -gt 0 ]]; do
       FPGA_BIN="$2"
       shift 2
       ;;
-    --xrt-mem-map)
-      XRT_MEM_MAP_OVERRIDE="$2"
+    --bench)
+      BENCH_FLAG="--bench"
+      shift
+      ;;
+    --perf)
+      PERF_FLAG="--perf=$2"
       shift 2
       ;;
+    --debug)
+      DEBUG_FLAG="--debug=$2"
+      shift 2
+      ;;
+    --debug=*)
+      DEBUG_FLAG="$1"
+      shift
+      ;;
     -h|--help)
-      echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"] [--fpga-bin ALIAS_OR_PATH] [--xrt-mem-map legacy|remap]"
+      echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"] [--fpga-bin ALIAS_OR_PATH] [--bench] [--perf CLASS] [--debug LEVEL]"
       exit 0
       ;;
     *)
       echo "Unknown argument: $1"
-      echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"] [--fpga-bin ALIAS_OR_PATH] [--xrt-mem-map legacy|remap]"
+      echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"] [--fpga-bin ALIAS_OR_PATH] [--bench] [--perf CLASS] [--debug LEVEL]"
       exit 1
       ;;
   esac
 done
 
-if [[ -n "${XRT_MEM_MAP_OVERRIDE}" && "${XRT_MEM_MAP_OVERRIDE}" != "legacy" && "${XRT_MEM_MAP_OVERRIDE}" != "remap" ]]; then
-  echo "Invalid --xrt-mem-map: ${XRT_MEM_MAP_OVERRIDE}"
-  exit 1
-fi
-
 resolve_fpga_bin "${FPGA_BIN}"
 
-# Base CONFIGS exported by hw_config.sh (via .envrc). Append script-specific flags.
+if [[ -n "${FPGA_BIN_CONFIGS}" ]]; then
+  if [[ ! -f "${FPGA_BIN_CONFIGS}" ]]; then
+    echo "config file not found: ${FPGA_BIN_CONFIGS}" >&2
+    exit 1
+  fi
+  source "${FPGA_BIN_CONFIGS}"
+fi
+
+# Base CONFIGS exported by the alias config or environment. Append script-specific flags.
 CONFIGS="${CONFIGS:-}"
 CONFIGS+=" -DDBG_TRACE_PIPELINE"
 CONFIGS+=" -DDBG_TRACE_MEM"
@@ -122,17 +136,9 @@ CONFIGS+=" -DDBG_TRACE_TCU"
 CONFIGS+=" -DDBG_TRACE_GEMM"
 CONFIGS+=" -DWLOAD_AT_ONCE"
 
-if [[ -n "${FPGA_BIN_CONFIGS_EXTRA}" ]]; then
-  CONFIGS+=" ${FPGA_BIN_CONFIGS_EXTRA}"
-fi
-
 if [[ -n "${CONFIGS_EXTRA}" ]]; then
   CONFIGS+=" ${CONFIGS_EXTRA}"
 fi
-
-NUM_CORES=1
-NUM_THREADS=8
-DEBUG_LEVEL=3
 
 # ----------------------------------------------------------------------------
 # - rtlsim
@@ -140,7 +146,7 @@ DEBUG_LEVEL=3
 if [[ "${mode}" == "rtlsim" || "${mode}" == "all" ]]; then
   CONFIGS="${CONFIGS}" \
   DRIVER=rtlsim \
-  ./ci/blackbox.sh --cores=${NUM_CORES} --threads=${NUM_THREADS} --driver=rtlsim --app=${APP} --args="${ARGS}" --debug=${DEBUG_LEVEL}
+  ./ci/blackbox.sh ${BENCH_FLAG} ${PERF_FLAG} ${DEBUG_FLAG} --driver=rtlsim --app=${APP} --args="${ARGS}"
 fi
 
 # ----------------------------------------------------------------------------
@@ -154,7 +160,7 @@ if [[ "${mode}" == "xrtsim" || "${mode}" == "all" ]]; then
   DRAM_STALL_SEED=1234 \
   CONFIGS=${CONFIGS} \
   TARGET=xrtsim \
-  ./ci/blackbox.sh --debug=${DEBUG_LEVEL} --cores=${NUM_CORES} --driver=xrt --app=${APP} --args="${ARGS}"
+  ./ci/blackbox.sh ${BENCH_FLAG} ${PERF_FLAG} ${DEBUG_FLAG} --driver=xrt --app=${APP} --args="${ARGS}"
 fi
 
 # ----------------------------------------------------------------------------
@@ -175,7 +181,7 @@ if [[ "${mode}" == "xrt-vcs-sim" || "${mode}" == "all" ]]; then
   DRIVER=xrt_vcs \
   FSDB_DUMP=1 \
   DEBUG_AXI=1 \
-  ./ci/blackbox.sh --debug=${DEBUG_LEVEL} --cores=${NUM_CORES} --driver=xrt_vcs --app=${APP} --args="${ARGS}"
+  ./ci/blackbox.sh ${BENCH_FLAG} ${PERF_FLAG} ${DEBUG_FLAG} --driver=xrt_vcs --app=${APP} --args="${ARGS}"
 fi
 
 # ----------------------------------------------------------------------------
@@ -193,7 +199,7 @@ if [[ "${mode}" == "xrt-vcs-pgsim" || "${mode}" == "all" ]]; then
   DEBUG_AXI=1 \
   GUI=1 \
   NETLIST=/home/jaeyongjang/project.local/vortex/build/hw/syn/xilinx/xrt/hw/gate_sim/vortex_afu_funcsim.v \
-  ./ci/blackbox.sh --cores=${NUM_CORES} --threads=${NUM_THREADS} --driver=xrt_vcs_post --app=${APP} --args="${ARGS}" --debug=${DEBUG_LEVEL}
+  ./ci/blackbox.sh ${BENCH_FLAG} ${PERF_FLAG} ${DEBUG_FLAG} --driver=xrt_vcs_post --app=${APP} --args="${ARGS}"
 fi
 
 # ----------------------------------------------------------------------------
@@ -205,22 +211,21 @@ if [[ "${mode}" == "hw_emu" || "${mode}" == "all" ]]; then
   PLATFORM=xilinx_u55c_gen3x16_xdma_3_202210_1 \
   DRIVER=xrt \
   TARGET=hw_emu \
-  DEBUG_LEVEL=${DEBUG_LEVEL} \
-  ./ci/blackbox.sh --cores=${NUM_CORES} --threads=${NUM_THREADS} --driver=xrt --app=${APP} --args="${ARGS}" --debug=${DEBUG_LEVEL}
+  ./ci/blackbox.sh ${BENCH_FLAG} ${PERF_FLAG} ${DEBUG_FLAG} --driver=xrt --app=${APP} --args="${ARGS}"
 fi
 
 # ----------------------------------------------------------------------------
 # - hw
 # ----------------------------------------------------------------------------
 if [[ "${mode}" == "hw" || "${mode}" == "all" ]]; then
-  echo "HW FPGA_BIN=${FPGA_BIN} FPGA_BIN_DIR=${FPGA_BIN_DIR} FPGA_BIN_CONFIGS_EXTRA=${FPGA_BIN_CONFIGS_EXTRA}"
+  echo "HW FPGA_BIN=${FPGA_BIN} FPGA_BIN_DIR=${FPGA_BIN_DIR} FPGA_BIN_CONFIGS=${FPGA_BIN_CONFIGS}"
   srun --gres=fpga:u55c:1 --cpus-per-task=4 --mem=16G --time=01:00:00 --pty bash -c "\
   CONFIGS=\"${CONFIGS}\" \
   FPGA_BIN_DIR=\"${FPGA_BIN_DIR}\" \
   PLATFORM=xilinx_u55c_gen3x16_xdma_3_202210_1 \
   DRIVER=xrt \
   TARGET=hw \
-  ./ci/blackbox.sh --threads=${NUM_THREADS} --cores=${NUM_CORES} --driver=xrt --app=${APP} --args=\"${ARGS}\" | tee bb.log
+  ./ci/blackbox.sh ${BENCH_FLAG} ${PERF_FLAG} ${DEBUG_FLAG} --driver=xrt --app=${APP} --args=\"${ARGS}\" | tee bb.log
   "
   # CHIPSCOPE=1 \
 fi

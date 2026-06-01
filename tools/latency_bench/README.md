@@ -111,11 +111,10 @@ alias map is used by `python -m tools.latency_bench run` and
 `ci/run_black.sh`. Set `VORTEX_FPGA_BIN_ALIAS_MAP=/path/to/map.yaml` to test a
 local alias map without editing the repository copy.
 
-FPGA bin aliases may also export runtime compile defaults through `CONFIGS`.
-The built-in base/naive aliases append `-DXRT_MEM_MAP=legacy`, while improve
-aliases append `-DXRT_MEM_MAP=remap -DBANK_INTERLEAVE`. Use
-`--xrt-mem-map legacy|remap` to override only the memory mapping compile
-constant, especially when passing a raw FPGA bin path instead of an alias.
+FPGA bin aliases may also name a config script through the alias map `configs`
+field. `latency_bench` sources that script before appending `--configs-extra`.
+The built-in aliases source files under `configs/`, including per-alias improve
+configs.
 
 `--blackbox-arg` starts from suite `defaults.blackbox_args`; repeated CLI values
 add new options or overwrite existing options with the same flag key. For
@@ -234,6 +233,26 @@ python -m tools.latency_bench run \
   --suite tools/latency_bench/suites/llama2_7b_prefill.yaml \
   --out results/latency/improve_tcol1-fpint_gemm_hw
 ```
+
+Use `--skip-existing` when resuming a long-running sweep and you only want to
+retry missing or failed executions:
+
+```bash
+python -m tools.latency_bench run \
+  --build-dir build \
+  --fpga-bin improve_tcol1 \
+  --suite tools/latency_bench/suites/llama2_7b_layout_fused_seq_sweep.yaml \
+  --out results/latency/improve_tcol1-llama2_7b_layout_fused_seq_sweep \
+  --skip-existing
+```
+
+An execution is skipped only when `<out>/raw_db.csv` already has a `status=pass`
+row whose `fpga_bin_label`, `xclbin_sha256`, `exec_key`, `app`, normalized
+`args`, `warmup`, and `iterations` all match the current run. `fail`, `timeout`,
+`parse_error`, and `not_run` rows are not skipped, so they are retried.
+When a retried execution writes a new row, any older `raw_db.csv` rows with the
+same strict match key are replaced by the new result. Skipped `pass` executions
+are not appended back into `raw_db.csv`.
 
 `raw_db.csv` includes run metadata (`run_id`, `fpga_bin_label`, `git_commit`,
 `git_branch`, `git_dirty`, `fpga_bin_dir`, `xclbin_sha256`, `suite`,

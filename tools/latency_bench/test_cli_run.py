@@ -69,17 +69,21 @@ cases:
         )
         return build_dir, fpga_bin, suite
 
-    def _write_alias_map(self, path: Path, alias: str, fpga_bin: Path, configs: tuple[str, ...]) -> None:
-        configs_yaml = "\n".join(f"      - {item}" for item in configs)
+    def _write_alias_map(self, path: Path, alias: str, fpga_bin: Path, configs: tuple[str, ...]) -> Path:
+        config_path = path.parent / "configs" / f"{alias}.sh"
+        config_path.parent.mkdir()
+        config_path.write_text(
+            "CONFIGS='{}'\nexport CONFIGS\n".format(" ".join(configs))
+        )
         path.write_text(
             f"""
 aliases:
   {alias}:
     path: {fpga_bin}
-    configs_extra:
-{configs_yaml}
+    configs: configs/{alias}.sh
 """.lstrip()
         )
+        return config_path
 
     @contextmanager
     def _alias_map_env(self, alias_map: Path) -> Iterator[None]:
@@ -156,43 +160,34 @@ aliases:
             script = (out_root / "runs" / "cli_run" / "run_fpga_bench.sh").read_text()
             self.assertIn("timeout --foreground --kill-after=30s 30m ./ci/blackbox.sh", script)
 
+    def test_run_accepts_skip_existing_option(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            build_dir, fpga_bin, suite = self._write_fake_inputs(tmp_path)
+            out_root = tmp_path / "out"
+            rc = main([
+                "run",
+                "--build-dir", str(build_dir),
+                "--fpga-bin", str(fpga_bin),
+                "--suite", str(suite),
+                "--out", str(out_root),
+                "--run-id", "cli_run",
+                "--no-srun",
+                "--dry-run",
+                "--skip-existing",
+            ])
+
+            self.assertEqual(0, rc)
+            manifest = json.loads((out_root / "runs" / "cli_run" / "manifest.json").read_text())
+            self.assertTrue(manifest["skip_existing"])
+
     def test_run_exports_alias_compile_configs_and_records_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             build_dir, fpga_bin, suite = self._write_fake_inputs(tmp_path)
             out_root = tmp_path / "out"
             alias_map = tmp_path / "fpga_bin_alias_map.yaml"
-            self._write_alias_map(alias_map, "legacy_alias", fpga_bin, ("-DXRT_MEM_MAP=legacy", "-DBANK_INTERLEAVE"))
-            with self._alias_map_env(alias_map):
-                rc = main([
-                    "run",
-                    "--build-dir", str(build_dir),
-                    "--fpga-bin", "legacy_alias",
-                    "--suite", str(suite),
-                    "--out", str(out_root),
-                    "--run-id", "cli_run",
-                    "--no-srun",
-                    "--dry-run",
-                ])
-
-            self.assertEqual(0, rc)
-            run_dir = out_root / "runs" / "cli_run"
-            script = (run_dir / "run_fpga_bench.sh").read_text()
-            self.assertNotIn("VORTEX_XRT_MEM_MAP", script)
-            self.assertIn(
-                'export CONFIGS="${CONFIGS:-} -DXRT_MEM_MAP=legacy -DBANK_INTERLEAVE"',
-                script,
-            )
-            manifest = json.loads((run_dir / "manifest.json").read_text())
-            self.assertEqual("-DXRT_MEM_MAP=legacy -DBANK_INTERLEAVE", manifest["configs_extra"])
-
-    def test_run_xrt_mem_map_overrides_alias_compile_config(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            build_dir, fpga_bin, suite = self._write_fake_inputs(tmp_path)
-            out_root = tmp_path / "out"
-            alias_map = tmp_path / "fpga_bin_alias_map.yaml"
-            self._write_alias_map(alias_map, "remap_alias", fpga_bin, ("-DXRT_MEM_MAP=remap", "-DBANK_INTERLEAVE"))
+            config_path = self._write_alias_map(alias_map, "remap_alias", fpga_bin, ("-DPLATFORM_MEMORY_REMAP", "-DBANK_INTERLEAVE"))
             with self._alias_map_env(alias_map):
                 rc = main([
                     "run",
@@ -203,15 +198,18 @@ aliases:
                     "--run-id", "cli_run",
                     "--no-srun",
                     "--dry-run",
-                    "--xrt-mem-map", "legacy",
                 ])
 
             self.assertEqual(0, rc)
-            script = (out_root / "runs" / "cli_run" / "run_fpga_bench.sh").read_text()
-            self.assertIn("-DXRT_MEM_MAP=legacy", script)
-            self.assertIn("-DBANK_INTERLEAVE", script)
-            self.assertNotIn("-DXRT_MEM_MAP=remap", script)
-            self.assertNotIn("VORTEX_XRT_MEM_MAP", script)
+            run_dir = out_root / "runs" / "cli_run"
+            script = (run_dir / "run_fpga_bench.sh").read_text()
+            self.assertIn(
+                f"source {config_path}",
+                script,
+            )
+            manifest = json.loads((run_dir / "manifest.json").read_text())
+            self.assertEqual(str(config_path.resolve()), manifest["configs"])
+            self.assertEqual("", manifest["configs_extra"])
 
     def test_run_uses_suite_default_blackbox_timeout(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

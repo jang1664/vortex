@@ -24,12 +24,6 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--iterations", type=int, default=None, help="Override suite iterations.")
     run.add_argument("--platform", default=None, help="Override suite/default Xilinx platform.")
     run.add_argument("--xrt-device-index", type=int, default=None, help="Override XRT device index.")
-    run.add_argument(
-        "--xrt-mem-map",
-        choices=["legacy", "remap"],
-        default=None,
-        help="Override XRT memory mapping compile config exported through CONFIGS.",
-    )
     run.add_argument("--configs-extra", default="", help="Extra CONFIGS defines appended inside the run script.")
     run.add_argument(
         "--blackbox-timeout",
@@ -54,6 +48,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--append-raw",
         default=None,
         help="Append each execution's raw benchmark row to this aggregate CSV while the run script executes.",
+    )
+    run.add_argument(
+        "--skip-existing",
+        action="store_true",
+        help="Skip executions that already have a matching status=pass row in OUT/raw_db.csv.",
     )
 
     vis = sub.add_parser("visualize", help="Generate PNG/PDF figures from results.csv.")
@@ -136,8 +135,8 @@ def normalize_timeout(value: str | None) -> str:
     return "" if value in ("", "0") else value
 
 
-def merge_configs_extra(alias_configs: tuple[str, ...], cli_configs: str) -> str:
-    parts = list(alias_configs)
+def merge_configs_extra(cli_configs: str) -> str:
+    parts: list[str] = []
     cli_configs = cli_configs.strip()
     if cli_configs:
         parts.append(cli_configs)
@@ -152,7 +151,7 @@ def run_cmd(args: argparse.Namespace) -> int:
         warmup_override=args.warmup,
         iterations_override=args.iterations,
     )
-    fpga_bin = resolve_fpga_bin_config(args.fpga_bin, xrt_mem_map=args.xrt_mem_map)
+    fpga_bin = resolve_fpga_bin_config(args.fpga_bin)
     platform = args.platform or suite.defaults.platform
     xrt_device_index = args.xrt_device_index
     if xrt_device_index is None:
@@ -163,7 +162,7 @@ def run_cmd(args: argparse.Namespace) -> int:
         blackbox_timeout = normalize_timeout(suite.defaults.blackbox_timeout)
     srun_args = tuple(args.srun_arg) if args.srun_arg else DEFAULT_SRUN_ARGS
     run_id = args.run_id or default_run_id()
-    configs_extra = merge_configs_extra(fpga_bin.configs_extra, args.configs_extra)
+    configs_extra = merge_configs_extra(args.configs_extra)
     options = RunOptions(
         build_dir=Path(args.build_dir).resolve(),
         fpga_bin_dir=fpga_bin.path,
@@ -171,6 +170,7 @@ def run_cmd(args: argparse.Namespace) -> int:
         out_dir=Path(args.out).resolve(),
         platform=platform,
         xrt_device_index=xrt_device_index,
+        configs=fpga_bin.configs,
         configs_extra=configs_extra,
         blackbox_args=blackbox_args,
         blackbox_timeout=blackbox_timeout,
@@ -179,6 +179,7 @@ def run_cmd(args: argparse.Namespace) -> int:
         dry_run=args.dry_run,
         append_raw_csv=Path(args.append_raw).resolve() if args.append_raw else None,
         run_id=run_id,
+        skip_existing=args.skip_existing,
     )
     rc = run_suite(suite, options)
     results_csv = options.out_dir / "runs" / run_id / "results.csv"
