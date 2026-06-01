@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 BUILD_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
-  echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"]"
+  echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"] [--debug LEVEL]"
   echo "Modes:"
   echo "  rtlsim   - Run only rtlsim tests"
   echo "  xrtsim   - Run only xrtsim tests"
@@ -21,7 +21,7 @@ mode="${1:-}"
 shift || true
 
 if [[ "${mode}" == "" ]]; then
-  echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"]"
+  echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"] [--debug LEVEL]"
   echo "Modes:"
   echo "  rtlsim   - Run only rtlsim tests"
   echo "  xrtsim   - Run only xrtsim tests"
@@ -35,6 +35,7 @@ fi
 APP=fpint_gemm_ffn_hw
 ARGS="-m 2 -n 32 -k 128"
 CONFIGS_EXTRA=""
+DEBUG_FLAG=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -50,13 +51,21 @@ while [[ $# -gt 0 ]]; do
       CONFIGS_EXTRA="$2"
       shift 2
       ;;
+    --debug)
+      DEBUG_FLAG="--debug=$2"
+      shift 2
+      ;;
+    --debug=*)
+      DEBUG_FLAG="$1"
+      shift
+      ;;
     -h|--help)
-      echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"]"
+      echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"] [--debug LEVEL]"
       exit 0
       ;;
     *)
       echo "Unknown argument: $1"
-      echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"]"
+      echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"] [--debug LEVEL]"
       exit 1
       ;;
   esac
@@ -76,17 +85,13 @@ if [[ -n "${CONFIGS_EXTRA}" ]]; then
   CONFIGS+=" ${CONFIGS_EXTRA}"
 fi
 
-NUM_CORES=1
-NUM_THREADS=8
-DEBUG_LEVEL=3
-
 # ----------------------------------------------------------------------------
 # - rtlsim
 # ----------------------------------------------------------------------------
 if [[ "${mode}" == "rtlsim" || "${mode}" == "all" ]]; then
   CONFIGS="${CONFIGS}" \
   DRIVER=rtlsim \
-  ./ci/blackbox.sh --cores=${NUM_CORES} --threads=${NUM_THREADS} --driver=rtlsim --app=${APP} --args="${ARGS}" --debug=${DEBUG_LEVEL}
+  ./ci/blackbox.sh ${DEBUG_FLAG} --driver=rtlsim --app=${APP} --args="${ARGS}"
 fi
 
 # ----------------------------------------------------------------------------
@@ -100,7 +105,7 @@ if [[ "${mode}" == "xrtsim" || "${mode}" == "all" ]]; then
   DRAM_STALL_SEED=1234 \
   CONFIGS=${CONFIGS} \
   TARGET=xrtsim \
-  ./ci/blackbox.sh --debug=${DEBUG_LEVEL} --cores=${NUM_CORES} --driver=xrt --app=${APP} --args="${ARGS}"
+  ./ci/blackbox.sh ${DEBUG_FLAG} --cores=${NUM_CORES} --driver=xrt --app=${APP} --args="${ARGS}"
 fi
 
 # ----------------------------------------------------------------------------
@@ -119,10 +124,11 @@ fi
 if [[ "${mode}" == "xrt-vcs-sim" || "${mode}" == "all" ]]; then
   CONFIGS=${CONFIGS} \
   DRIVER=xrt_vcs \
-  FSDB_DUMP=1 \
-  DEBUG_AXI=1 \
-  ./ci/blackbox.sh --debug=${DEBUG_LEVEL} --cores=${NUM_CORES} --driver=xrt_vcs --app=${APP} --args="${ARGS}"
+  ./ci/blackbox.sh ${DEBUG_FLAG} --cores=${NUM_CORES} --driver=xrt_vcs --app=${APP} --args="${ARGS}"
 fi
+  # FSDB_DUMP=1 \
+  # DEBUG_AXI=1 \
+  # ./ci/blackbox.sh ${DEBUG_FLAG} --cores=${NUM_CORES} --driver=xrt_vcs --app=${APP} --args="${ARGS}"
 
 # ----------------------------------------------------------------------------
 # - xrt-vcs-pgsim
@@ -139,7 +145,7 @@ if [[ "${mode}" == "xrt-vcs-pgsim" || "${mode}" == "all" ]]; then
   DEBUG_AXI=1 \
   GUI=1 \
   NETLIST=/home/jaeyongjang/project.local/vortex/build/hw/syn/xilinx/xrt/hw/gate_sim/vortex_afu_funcsim.v \
-  ./ci/blackbox.sh --cores=${NUM_CORES} --threads=${NUM_THREADS} --driver=xrt_vcs_post --app=${APP} --args="${ARGS}" --debug=${DEBUG_LEVEL}
+  ./ci/blackbox.sh ${DEBUG_FLAG} --driver=xrt_vcs_post --app=${APP} --args="${ARGS}"
 fi
 
 # ----------------------------------------------------------------------------
@@ -151,8 +157,7 @@ if [[ "${mode}" == "hw_emu" || "${mode}" == "all" ]]; then
   PLATFORM=xilinx_u55c_gen3x16_xdma_3_202210_1 \
   DRIVER=xrt \
   TARGET=hw_emu \
-  DEBUG_LEVEL=${DEBUG_LEVEL} \
-  ./ci/blackbox.sh --cores=${NUM_CORES} --threads=${NUM_THREADS} --driver=xrt --app=${APP} --args="${ARGS}" --debug=${DEBUG_LEVEL}
+  ./ci/blackbox.sh ${DEBUG_FLAG} --driver=xrt --app=${APP} --args="${ARGS}"
 fi
 
 # ----------------------------------------------------------------------------
@@ -161,11 +166,11 @@ fi
 if [[ "${mode}" == "hw" || "${mode}" == "all" ]]; then
   srun --gres=fpga:u55c:1 --cpus-per-task=4 --mem=16G --time=01:00:00 --pty bash -c "\
   CONFIGS=\"${CONFIGS}\" \
-  FPGA_BIN_DIR=/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_noDcache_L2cache_a917286dbe/bin \
+  FPGA_BIN_DIR=/home/jaeyongjang/project.local/vortex_naive/build/hw/syn/xilinx/xrt/core1_th32_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/bin \
   PLATFORM=xilinx_u55c_gen3x16_xdma_3_202210_1 \
   DRIVER=xrt \
   TARGET=hw \
-  ./ci/blackbox.sh --threads=${NUM_THREADS} --cores=${NUM_CORES} --driver=xrt --app=${APP} --args=\"${ARGS}\" | tee bb.log
+  ./ci/blackbox.sh ${DEBUG_FLAG} --driver=xrt --app=${APP} --args=\"${ARGS}\" | tee bb.log
   "
   # CHIPSCOPE=1 \
 fi
