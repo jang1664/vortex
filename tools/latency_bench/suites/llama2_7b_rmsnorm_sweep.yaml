@@ -1,0 +1,26 @@
+name: llama2_7b_rmsnorm_sweep
+defaults:
+  app: rmsnorm
+  target: hw
+  platform: xilinx_u55c_gen3x16_xdma_3_202210_1
+  warmup: 1
+  iterations: 3
+  xrt_device_index: 0
+  blackbox_timeout: 30m
+  blackbox_args:
+    - --cores=1
+    - --threads=8
+
+case_matrices:
+  - id: rmsnorm
+    kind: rmsnorm
+    stage: norm
+    name: rmsnorm_b{batch}_s{seq}
+    args: "-batch {batch} -seq {seq} -hidden 4096"
+    matrix:
+      batch: {values: [1, 8]}
+      seq: {values: [1, 128, 512, 1024]}
+    shape:
+      batch: "{batch}"
+      seq: "{seq}"
+      hidden: 4096

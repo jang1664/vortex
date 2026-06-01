@@ -1,0 +1,43 @@
+name: llama2_7b_softmax_sweep
+defaults:
+  app: softmax
+  target: hw
+  platform: xilinx_u55c_gen3x16_xdma_3_202210_1
+  warmup: 1
+  iterations: 3
+  xrt_device_index: 0
+  blackbox_timeout: 30m
+  blackbox_args:
+    - --cores=1
+    - --threads=8
+
+case_matrices:
+  - id: softmax_prefill
+    kind: softmax
+    stage: prefill
+    name: softmax_prefill_b{batch}_s{seq}
+    args: "-batch {batch} -heads 32 -seqq {seq} -seqk {seq} -mask 1"
+    matrix:
+      batch: {values: [1, 8]}
+      seq: {values: [128, 512, 1024]}
+    shape:
+      batch: "{batch}"
+      heads: 32
+      seqq: "{seq}"
+      seqk: "{seq}"
+      mask: 1
+
+  - id: softmax_generation
+    kind: softmax
+    stage: generation
+    name: softmax_generation_b{batch}_kv{kv_len}
+    args: "-batch {batch} -heads 32 -seqq 1 -seqk {kv_len} -mask 0"
+    matrix:
+      batch: {values: [1, 8]}
+      kv_len: {values: [128, 512, 1024, 2048, 4096]}
+    shape:
+      batch: "{batch}"
+      heads: 32
+      seqq: 1
+      seqk: "{kv_len}"
+      mask: 0

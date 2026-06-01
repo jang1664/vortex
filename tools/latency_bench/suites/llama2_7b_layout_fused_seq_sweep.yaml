@@ -8,7 +8,7 @@ defaults:
   blackbox_timeout: 30m
   blackbox_args:
     - --cores=1
-    - --threads=32
+    - --threads=8
 
 # Sequence-length sweep for layout-fused vector kernels used around Llama2-7B
 # projection inputs, plus plain baseline kernels for comparison.
@@ -17,40 +17,40 @@ defaults:
 #   silu:                  n=batch*seq*intermediate_size row-major baseline
 #   silu_layout_fused:     M=batch*seq, K=intermediate_size=11008 tiled-output fused
 case_matrices:
-  - id: rmsnorm_baseline
-    app: rmsnorm
-    kind: rmsnorm
-    stage: seq_sweep
-    name: rmsnorm_b{batch}_s{seq}
-    args: "-batch {batch} -seq {seq} -hidden 4096"
-    matrix:
-      batch: {values: [1, 8]}
-      seq: {values: [1, 128, 512, 1024]}
-    derived:
-      m: "batch * seq"
-    shape:
-      variant: baseline
-      batch: "{batch}"
-      seq: "{seq}"
-      M: "{m}"
-      K: 4096
+  # - id: rmsnorm_baseline
+  #   app: rmsnorm
+  #   kind: rmsnorm
+  #   stage: seq_sweep
+  #   name: rmsnorm_b{batch}_s{seq}
+  #   args: "-batch {batch} -seq {seq} -hidden 4096"
+  #   matrix:
+  #     batch: {values: [1]}
+  #     seq: {values: [512, 8192, 16384]}
+  #   derived:
+  #     m: "batch * seq"
+  #   shape:
+  #     variant: baseline
+  #     batch: "{batch}"
+  #     seq: "{seq}"
+  #     M: "{m}"
+  #     K: 4096
 
-  - id: rms_norm_layout_fused
-    app: rms_norm_layout_fused
-    kind: rms_norm_layout_fused
-    stage: seq_sweep
-    name: rms_norm_layout_fused_b{batch}_s{seq}
-    args: "-m {m} -k 4096"
-    matrix:
-      batch: {values: [1, 8]}
-      seq: {values: [1, 128, 512, 1024]}
-    derived:
-      m: "batch * seq"
-    shape:
-      batch: "{batch}"
-      seq: "{seq}"
-      M: "{m}"
-      K: 4096
+  # - id: rms_norm_layout_fused
+  #   app: rms_norm_layout_fused
+  #   kind: rms_norm_layout_fused
+  #   stage: seq_sweep
+  #   name: rms_norm_layout_fused_b{batch}_s{seq}
+  #   args: "-m {m} -k 4096"
+  #   matrix:
+  #     batch: {values: [1]}
+  #     seq: {values: [512, 8192, 16384]}
+  #   derived:
+  #     m: "batch * seq"
+  #   shape:
+  #     batch: "{batch}"
+  #     seq: "{seq}"
+  #     M: "{m}"
+  #     K: 4096
 
   - id: silu_baseline
     app: silu
@@ -59,8 +59,11 @@ case_matrices:
     name: silu_b{batch}_s{seq}
     args: "-n {n}"
     matrix:
-      batch: {values: [1, 8]}
-      seq: {values: [1, 128, 512, 1024]}
+      batch: {values: [1]}
+      # seq: {values: [512, 8192, 16384]}
+      seq: {values: [512]}
+      # batch: {values: [1]}
+      # seq: {values: [1]}
     derived:
       m: "batch * seq"
       n: "batch * seq * 11008"
@@ -79,10 +82,11 @@ case_matrices:
     name: silu_layout_fused_b{batch}_s{seq}
     args: "-m {m} -k 11008"
     matrix:
-      batch: {values: [1, 8]}
-      seq: {values: [1, 128, 512, 1024]}
-      # batch: {values: [8]}
-      # seq: {values: [1024]}
+      batch: {values: [1]}
+      # seq: {values: [512, 8192, 16384]}
+      seq: {values: [512]}
+      # batch: {values: [1]}
+      # seq: {values: [1]}
     derived:
       m: "batch * seq"
     shape:
