@@ -48,6 +48,19 @@ ci/run_black.sh --help
 ci/run_black.sh xrt-vcs-sim --app APP --args "..."
 ```
 
+- For real FPGA hardware runs, use `hw` mode from the configured build
+  directory and pass an FPGA binary alias with `--fpga-bin`. The wrapper
+  resolves the alias through `ci/fpga_bin_alias_map.yaml`, sources the mapped
+  config file, and launches `blackbox.sh` through Slurm:
+
+```bash
+ci/run_black.sh hw --fpga-bin naive_simd --app APP --args "..."
+```
+
+- Do not add `--configs-extra` for hardware runs unless the user explicitly
+  requests extra compile-time defines; prefer the alias config as the source of
+  truth.
+
 ## Codex Skills
 
 - Codex project skills are exposed through `.agents/skills`, with each skill symlinked to the shared source under `harness/skills`.
