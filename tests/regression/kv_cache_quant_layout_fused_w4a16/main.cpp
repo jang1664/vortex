@@ -43,6 +43,11 @@ static void compute_params_cpu(const std::vector<fp16_t>& src,
                                uint32_t n,
                                fp16_t& scale_bits,
                                int16_t& zp) {
+  if (k >= K || n >= N) {
+    scale_bits = 0;
+    zp = 0;
+    return;
+  }
   float min_v = fp16_to_float(src[(uint64_t)k * N + n]);
   float max_v = min_v;
   if (QDIR == 0) {
@@ -80,6 +85,9 @@ static uint8_t quant_cpu(const std::vector<fp16_t>& src,
                          uint32_t QDIR,
                          uint32_t k,
                          uint32_t n) {
+  if (k >= K || n >= N) {
+    return 0;
+  }
   fp16_t scale_bits = 0;
   int16_t zp = 0;
   compute_params_cpu(src, K, N, QBLK, QDIR, k, n, scale_bits, zp);
@@ -97,6 +105,9 @@ static uint8_t quant_source_cpu(const std::vector<fp16_t>& src,
                                 uint32_t source_transposed) {
   const uint32_t source_row = source_transposed ? out_n : out_k;
   const uint32_t source_col = source_transposed ? out_k : out_n;
+  if (source_row >= K || source_col >= N) {
+    return 0;
+  }
   return quant_cpu(src, K, N, QBLK, QDIR, source_row, source_col);
 }
 
@@ -149,8 +160,8 @@ static uint64_t scale_slot_base_ref(uint32_t K,
                                     uint32_t kt,
                                     uint32_t nt_dma) {
   uint64_t base = 0;
-  const uint32_t out_K = source_transposed ? N : K;
-  const uint32_t out_N = source_transposed ? K : N;
+  const uint32_t out_K = padded_qparam_K_host(K, N, QBLK, QDIR, source_transposed);
+  const uint32_t out_N = padded_qparam_N_host(K, N, QBLK, QDIR, source_transposed);
   const uint32_t k_tiles = (out_K + TILE_DMA_KT - 1u) / TILE_DMA_KT;
   const uint32_t n_dma_tiles = (out_N + TILE_DMA_NT - 1u) / TILE_DMA_NT;
   for (uint32_t prev_kt = 0; prev_kt < kt; ++prev_kt) {
@@ -193,8 +204,8 @@ static void quantize_layout_fused_cpu(const std::vector<fp16_t>& src,
   std::fill(zeros.begin(), zeros.end(), 0);
 
   if (SOURCE_TRANSPOSED) {
-    const uint32_t logical_K = N;
-    const uint32_t logical_N = K;
+    const uint32_t logical_K = padded_weight_K_host(K, N, SOURCE_TRANSPOSED);
+    const uint32_t logical_N = padded_weight_N_host(K, N, SOURCE_TRANSPOSED);
     for (uint32_t k = 0; k < logical_K; k += 2) {
       for (uint32_t n = 0; n < logical_N; ++n) {
         const uint8_t q0 = quant_source_cpu(src, K, N, QBLK, QDIR, k, n, SOURCE_TRANSPOSED);
@@ -204,27 +215,31 @@ static void quantize_layout_fused_cpu(const std::vector<fp16_t>& src,
       }
     }
   } else if (WTRANS == 0) {
-    for (uint32_t k = 0; k < K; ++k) {
-      for (uint32_t n = 0; n < N; n += 2) {
+    const uint32_t logical_K = padded_weight_K_host(K, N, SOURCE_TRANSPOSED);
+    const uint32_t logical_N = padded_weight_N_host(K, N, SOURCE_TRANSPOSED);
+    for (uint32_t k = 0; k < logical_K; ++k) {
+      for (uint32_t n = 0; n < logical_N; n += 2) {
         const uint8_t q0 = quant_cpu(src, K, N, QBLK, QDIR, k, n);
         const uint8_t q1 = quant_cpu(src, K, N, QBLK, QDIR, k, n + 1);
-        weight[weight_offset_wtrans0(K, N, k, n >> 1)] =
+        weight[weight_offset_wtrans0(logical_K, logical_N, k, n >> 1)] =
             (uint8_t)((q0 & 0x0f) | ((q1 & 0x0f) << 4));
       }
     }
   } else {
-    for (uint32_t k = 0; k < K; k += 2) {
-      for (uint32_t n = 0; n < N; ++n) {
+    const uint32_t logical_K = padded_weight_K_host(K, N, SOURCE_TRANSPOSED);
+    const uint32_t logical_N = padded_weight_N_host(K, N, SOURCE_TRANSPOSED);
+    for (uint32_t k = 0; k < logical_K; k += 2) {
+      for (uint32_t n = 0; n < logical_N; ++n) {
         const uint8_t q0 = quant_cpu(src, K, N, QBLK, QDIR, k, n);
         const uint8_t q1 = quant_cpu(src, K, N, QBLK, QDIR, k + 1, n);
-        weight[weight_offset_wtrans1(K, N, k, n)] =
+        weight[weight_offset_wtrans1(logical_K, logical_N, k, n)] =
             (uint8_t)((q0 & 0x0f) | ((q1 & 0x0f) << 4));
       }
     }
   }
 
-  const uint32_t out_K = SOURCE_TRANSPOSED ? N : K;
-  const uint32_t out_N = SOURCE_TRANSPOSED ? K : N;
+  const uint32_t out_K = padded_qparam_K_host(K, N, QBLK, GEMM_QDIR, SOURCE_TRANSPOSED);
+  const uint32_t out_N = padded_qparam_N_host(K, N, QBLK, GEMM_QDIR, SOURCE_TRANSPOSED);
   const uint32_t k_tiles = (out_K + TILE_DMA_KT - 1u) / TILE_DMA_KT;
   const uint32_t n_dma_tiles = (out_N + TILE_DMA_NT - 1u) / TILE_DMA_NT;
   const uint32_t mxu_per_dma_nt = TILE_DMA_NT / TILE_DMA_MXU_NT;
@@ -248,8 +263,10 @@ static void quantize_layout_fused_cpu(const std::vector<fp16_t>& src,
               const uint32_t param_n = nt_start + nb * TILE_DMA_MXU_NT + col;
               const uint32_t source_row = SOURCE_TRANSPOSED ? param_n : param_k;
               const uint32_t source_col = SOURCE_TRANSPOSED ? param_k : param_n;
-              compute_params_cpu(src, K, N, QBLK, QDIR,
-                                 source_row, source_col, scale_bits, zp);
+              if (source_row < K && source_col < N) {
+                compute_params_cpu(src, K, N, QBLK, QDIR,
+                                   source_row, source_col, scale_bits, zp);
+              }
               store_u16_ref(scales, out, scale_bits);
               store_u16_ref(zeros, out, (uint16_t)zp);
               out += TILE_ELEM_BYTES;
@@ -268,8 +285,10 @@ static void quantize_layout_fused_cpu(const std::vector<fp16_t>& src,
               const uint32_t param_n = (ng_start + ng) * QBLK;
               const uint32_t source_row = SOURCE_TRANSPOSED ? param_n : param_k;
               const uint32_t source_col = SOURCE_TRANSPOSED ? param_k : param_n;
-              compute_params_cpu(src, K, N, QBLK, QDIR,
-                                 source_row, source_col, scale_bits, zp);
+              if (source_row < K && source_col < N) {
+                compute_params_cpu(src, K, N, QBLK, QDIR,
+                                   source_row, source_col, scale_bits, zp);
+              }
               store_u16_ref(scales, out, scale_bits);
               store_u16_ref(zeros, out, (uint16_t)zp);
               out += TILE_ELEM_BYTES;
@@ -317,13 +336,14 @@ int main(int argc, char *argv[]) {
   }
   if (!gemm_qdir_set) GEMM_QDIR = QDIR;
   if (!valid_fused_quant_shape(K, N, QBLK, QDIR, WTRANS, GEMM_QDIR, SOURCE_TRANSPOSED)) {
-    printf("ERROR: require K,N multiples of 32, even N, pow2 QBLK, "
-           "source_QDIR/GEMM_QDIR/WTRANS in {0,1}, and quant axes divisible by QBLK\n");
+    printf("ERROR: require non-zero K/N, even N, pow2 QBLK, "
+           "source_QDIR/GEMM_QDIR/WTRANS in {0,1}, and source-transposed requires WTRANS=1\n");
     return 1;
   }
 
   const size_t src_elems = (size_t)K * N;
-  const size_t weight_bytes = src_elems / 2;
+  const size_t src_alloc_elems = (size_t)align_up_u32_host(K, TILE_DMA_MXU_KT) * N;
+  const size_t weight_bytes = weight_total_bytes_host(K, N, SOURCE_TRANSPOSED);
   const size_t scale_bytes = scale_total_bytes_host(K, N, QBLK, GEMM_QDIR, SOURCE_TRANSPOSED);
   std::vector<fp16_t> h_src(src_elems);
   std::vector<uint8_t> h_weight(weight_bytes);
@@ -333,7 +353,7 @@ int main(int argc, char *argv[]) {
   std::vector<uint8_t> h_zeros(scale_bytes);
   std::vector<uint8_t> h_ref_zeros(scale_bytes);
   init_src(h_src);
-  std::vector<fp16_t> h_src_device(src_elems);
+  std::vector<fp16_t> h_src_device(src_alloc_elems);
   pack_src_for_layout(h_src, h_src_device, K, N, src_layout);
   quantize_layout_fused_cpu(h_src, h_ref_weight, h_ref_scales, h_ref_zeros,
                             K, N, QBLK, QDIR, WTRANS, GEMM_QDIR, SOURCE_TRANSPOSED);
@@ -343,11 +363,11 @@ int main(int argc, char *argv[]) {
 
   RT_CHECK(vx_dev_open(&device));
   RT_CHECK(vx_upload_kernel_file(device, "kernel.vxbin", &krnl_buffer));
-  RT_CHECK(vx_mem_alloc(device, src_elems * sizeof(fp16_t), VX_MEM_READ, &src_buffer));
+  RT_CHECK(vx_mem_alloc(device, src_alloc_elems * sizeof(fp16_t), VX_MEM_READ, &src_buffer));
   RT_CHECK(vx_mem_alloc(device, weight_bytes, VX_MEM_WRITE, &weight_buffer));
   RT_CHECK(vx_mem_alloc(device, scale_bytes, VX_MEM_WRITE, &scale_buffer));
   RT_CHECK(vx_mem_alloc(device, scale_bytes, VX_MEM_WRITE, &zero_buffer));
-  RT_CHECK(vx_copy_to_dev(src_buffer, h_src_device.data(), 0, src_elems * sizeof(fp16_t)));
+  RT_CHECK(vx_copy_to_dev(src_buffer, h_src_device.data(), 0, src_alloc_elems * sizeof(fp16_t)));
 
   uint64_t num_cores = 0;
   uint64_t num_warps = 0;
@@ -359,8 +379,8 @@ int main(int argc, char *argv[]) {
 
   kernel_arg_t arg = {};
   const uint32_t max_slot_elems = max_scale_slot_bytes_host(K, N, QBLK, GEMM_QDIR, SOURCE_TRANSPOSED) / TILE_ELEM_BYTES;
-  const uint32_t out_K = SOURCE_TRANSPOSED ? N : K;
-  const uint32_t out_N = SOURCE_TRANSPOSED ? K : N;
+  const uint32_t out_K = padded_qparam_K_host(K, N, QBLK, GEMM_QDIR, SOURCE_TRANSPOSED);
+  const uint32_t out_N = padded_qparam_N_host(K, N, QBLK, GEMM_QDIR, SOURCE_TRANSPOSED);
   const uint32_t n_dma_tiles = (out_N + TILE_DMA_NT - 1u) / TILE_DMA_NT;
   const uint32_t k_tiles = (out_K + TILE_DMA_KT - 1u) / TILE_DMA_KT;
   const uint32_t qparam_work = k_tiles * n_dma_tiles * max_slot_elems;

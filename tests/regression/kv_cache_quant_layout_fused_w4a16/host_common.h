@@ -30,23 +30,6 @@ static inline bool valid_fused_quant_shape(uint32_t K,
   if (!is_pow2_u32(QBLK) || (N & 1u) != 0) {
     return false;
   }
-  if ((K % TILE_DMA_MXU_KT) != 0 || (N % TILE_DMA_MXU_NT) != 0) {
-    return false;
-  }
-  if (QDIR == 0 && (K % QBLK) != 0) {
-    return false;
-  }
-  if (QDIR == 1 && (N % QBLK) != 0) {
-    return false;
-  }
-  const uint32_t out_K = SOURCE_TRANSPOSED ? N : K;
-  const uint32_t out_N = SOURCE_TRANSPOSED ? K : N;
-  if (GEMM_QDIR == 0 && (out_K % QBLK) != 0) {
-    return false;
-  }
-  if (GEMM_QDIR == 1 && (out_N % QBLK) != 0) {
-    return false;
-  }
   return true;
 }
 
@@ -69,6 +52,46 @@ static inline uint32_t log2_u32(uint32_t v) {
 
 static inline uint32_t align_up_u32_host(uint32_t value, uint32_t align) {
   return (value + align - 1u) & ~(align - 1u);
+}
+
+static inline uint32_t padded_weight_K_host(uint32_t K, uint32_t N, uint32_t source_transposed) {
+  const uint32_t logical = source_transposed ? N : K;
+  return align_up_u32_host(logical, TILE_DMA_MXU_KT);
+}
+
+static inline uint32_t padded_weight_N_host(uint32_t K, uint32_t N, uint32_t source_transposed) {
+  const uint32_t logical = source_transposed ? K : N;
+  return align_up_u32_host(logical, TILE_DMA_MXU_NT);
+}
+
+static inline uint32_t padded_qparam_K_host(uint32_t K,
+                                            uint32_t N,
+                                            uint32_t QBLK,
+                                            uint32_t GEMM_QDIR,
+                                            uint32_t source_transposed) {
+  const uint32_t logical = source_transposed ? N : K;
+  uint32_t align = TILE_DMA_MXU_KT;
+  if (GEMM_QDIR == 0 && QBLK > align) align = QBLK;
+  return align_up_u32_host(logical, align);
+}
+
+static inline uint32_t padded_qparam_N_host(uint32_t K,
+                                            uint32_t N,
+                                            uint32_t QBLK,
+                                            uint32_t GEMM_QDIR,
+                                            uint32_t source_transposed) {
+  const uint32_t logical = source_transposed ? K : N;
+  uint32_t align = TILE_DMA_MXU_NT;
+  if (GEMM_QDIR == 1 && QBLK > align) align = QBLK;
+  return align_up_u32_host(logical, align);
+}
+
+static inline size_t weight_total_bytes_host(uint32_t K,
+                                             uint32_t N,
+                                             uint32_t source_transposed) {
+  const uint32_t out_K = padded_weight_K_host(K, N, source_transposed);
+  const uint32_t out_N = padded_weight_N_host(K, N, source_transposed);
+  return size_t(out_K) * (out_N >> 1);
 }
 
 static inline uint64_t gemm_c_tiled_offset_host(uint32_t K,
@@ -120,8 +143,8 @@ static inline size_t scale_total_bytes_host(uint32_t K,
                                             uint32_t QBLK,
                                             uint32_t QDIR,
                                             uint32_t source_transposed = 0) {
-  const uint32_t out_K = source_transposed ? N : K;
-  const uint32_t out_N = source_transposed ? K : N;
+  const uint32_t out_K = padded_qparam_K_host(K, N, QBLK, QDIR, source_transposed);
+  const uint32_t out_N = padded_qparam_N_host(K, N, QBLK, QDIR, source_transposed);
   const uint32_t k_tiles = (out_K + TILE_DMA_KT - 1u) / TILE_DMA_KT;
   const uint32_t n_dma_tiles = (out_N + TILE_DMA_NT - 1u) / TILE_DMA_NT;
   size_t total = 0;
@@ -140,8 +163,8 @@ static inline uint32_t max_scale_slot_bytes_host(uint32_t K,
                                                  uint32_t QBLK,
                                                  uint32_t QDIR,
                                                  uint32_t source_transposed = 0) {
-  const uint32_t out_K = source_transposed ? N : K;
-  const uint32_t out_N = source_transposed ? K : N;
+  const uint32_t out_K = padded_qparam_K_host(K, N, QBLK, QDIR, source_transposed);
+  const uint32_t out_N = padded_qparam_N_host(K, N, QBLK, QDIR, source_transposed);
   const uint32_t k_tiles = (out_K + TILE_DMA_KT - 1u) / TILE_DMA_KT;
   const uint32_t n_dma_tiles = (out_N + TILE_DMA_NT - 1u) / TILE_DMA_NT;
   uint32_t max_slot = 0;
@@ -187,8 +210,8 @@ static inline bool init_kernel_arg(kernel_arg_t& arg,
   arg.WTRANS = WTRANS;
   arg.src_layout = src_layout;
   arg.SOURCE_TRANSPOSED = SOURCE_TRANSPOSED;
-  const uint32_t out_K = SOURCE_TRANSPOSED ? N : K;
-  const uint32_t out_N = SOURCE_TRANSPOSED ? K : N;
+  const uint32_t out_K = padded_qparam_K_host(K, N, QBLK, GEMM_QDIR, SOURCE_TRANSPOSED);
+  const uint32_t out_N = padded_qparam_N_host(K, N, QBLK, GEMM_QDIR, SOURCE_TRANSPOSED);
   arg.k_tiles = (out_K + TILE_DMA_KT - 1u) / TILE_DMA_KT;
   arg.n_dma_tiles = (out_N + TILE_DMA_NT - 1u) / TILE_DMA_NT;
   const uint32_t ck_last =

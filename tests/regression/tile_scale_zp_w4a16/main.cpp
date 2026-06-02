@@ -92,11 +92,17 @@ static uint32_t log2_u32(uint32_t v) {
 }
 
 static uint32_t output_K() {
-  return SOURCE_TRANSPOSED ? N : K;
+  const uint32_t logical = SOURCE_TRANSPOSED ? N : K;
+  uint32_t align = TILE_DMA_MXU_KT;
+  if (GEMM_QDIR == 0 && QBLK > align) align = QBLK;
+  return align_up(logical, align);
 }
 
 static uint32_t output_N() {
-  return SOURCE_TRANSPOSED ? K : N;
+  const uint32_t logical = SOURCE_TRANSPOSED ? K : N;
+  uint32_t align = TILE_DMA_MXU_NT;
+  if (GEMM_QDIR == 1 && QBLK > align) align = QBLK;
+  return align_up(logical, align);
 }
 
 static uint32_t slot_body_bytes(uint32_t ck, uint32_t cn) {
@@ -151,6 +157,9 @@ static uint16_t source_qparam_value(const std::vector<uint16_t>& src,
                                     uint32_t out_n) {
   const uint32_t source_row = SOURCE_TRANSPOSED ? out_n : out_k;
   const uint32_t source_col = SOURCE_TRANSPOSED ? out_k : out_n;
+  if (source_row >= K || source_col >= N) {
+    return 0;
+  }
   if (QDIR == 0) {
     return src[(source_row / QBLK) * N + source_col];
   }
@@ -242,28 +251,11 @@ int main(int argc, char** argv) {
     printf("ERROR: source_QDIR and gemm_QDIR must be 0 or 1\n");
     return 1;
   }
-  if (QDIR == 0 && (K % QBLK) != 0) {
-    printf("ERROR: K must be multiple of QBLK for source QDIR_COL\n");
-    return 1;
-  }
-  if (QDIR == 1 && (N % QBLK) != 0) {
-    printf("ERROR: N must be multiple of QBLK for source QDIR_ROW\n");
+  if (K == 0 || N == 0) {
+    printf("ERROR: K and N must be non-zero\n");
     return 1;
   }
   const uint32_t out_k = output_K();
-  const uint32_t out_n = output_N();
-  if (GEMM_QDIR == 0 && (out_k % QBLK) != 0) {
-    printf("ERROR: output K must be multiple of QBLK for GEMM QDIR_COL\n");
-    return 1;
-  }
-  if (GEMM_QDIR == 1 && (out_n % QBLK) != 0) {
-    printf("ERROR: output N must be multiple of QBLK for GEMM QDIR_ROW\n");
-    return 1;
-  }
-  if (out_n % TILE_DMA_MXU_NT != 0) {
-    printf("ERROR: output N must be multiple of MXU_NT\n");
-    return 1;
-  }
 
   uint32_t total_bytes, nt_dma_count, slot_fk_fn, slot_fk_pn, slot_pk_fn;
   uint32_t per_kt_full_K, max_slot_bytes;
@@ -274,7 +266,7 @@ int main(int argc, char** argv) {
 
   // Build synthetic 2-D source [rows, cols] of uint16 values.
   uint32_t src_rows, src_cols;
-  if (QDIR == 0) { src_rows = K / QBLK; src_cols = N; }
+  if (QDIR == 0) { src_rows = (K + QBLK - 1) / QBLK; src_cols = N; }
   else           { src_rows = K;        src_cols = (N + QBLK - 1) / QBLK; }
   size_t src_elems = size_t(src_rows) * src_cols;
   std::vector<uint16_t> h_src(src_elems);

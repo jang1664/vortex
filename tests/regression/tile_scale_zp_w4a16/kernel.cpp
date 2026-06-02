@@ -42,14 +42,21 @@ void kernel_tile_scale_zp_w4a16(kernel_arg_t *__UNIFORM__ arg) {
   const uint32_t mxu_nt = 1u << log2_mxu_nt;
   const uint32_t mxu_nt_mask = mxu_nt - 1u;
   const uint32_t mxu_per_dma_nt = nt_size >> log2_mxu_nt;
+  const uint32_t mxu_kt = TILE_DMA_MXU_KT;
 
   const uint32_t kt           = blockIdx.z;
   const uint32_t nt_dma       = blockIdx.y;
   const uint32_t elem_in_slot = blockIdx.x * blockDim.x + threadIdx.x;
   const uint32_t byte_in_slot = elem_in_slot * TILE_ELEM_BYTES;
 
-  const uint32_t out_K = SOURCE_TRANSPOSED ? N : K;
-  const uint32_t out_N = SOURCE_TRANSPOSED ? K : N;
+  const uint32_t out_K_logical = SOURCE_TRANSPOSED ? N : K;
+  const uint32_t out_N_logical = SOURCE_TRANSPOSED ? K : N;
+  uint32_t out_K_align = mxu_kt;
+  uint32_t out_N_align = mxu_nt;
+  if (GEMM_QDIR == 0 && QBLK > out_K_align) out_K_align = QBLK;
+  if (GEMM_QDIR == 1 && QBLK > out_N_align) out_N_align = QBLK;
+  const uint32_t out_K = (out_K_logical + out_K_align - 1u) & ~(out_K_align - 1u);
+  const uint32_t out_N = (out_N_logical + out_N_align - 1u) & ~(out_N_align - 1u);
   const uint32_t kt_start = kt << log2_kt;
   const uint32_t nt_start = nt_dma << log2_nt;
   const uint32_t cur_k = ((out_K - kt_start) < kt_size) ? (out_K - kt_start) : kt_size;
@@ -112,11 +119,15 @@ void kernel_tile_scale_zp_w4a16(kernel_arg_t *__UNIFORM__ arg) {
 
   const uint32_t source_row = SOURCE_TRANSPOSED ? out_n : out_k;
   const uint32_t source_col = SOURCE_TRANSPOSED ? out_k : out_n;
+  if (source_row >= K || source_col >= N) {
+    *reinterpret_cast<uint16_t *>(dst_p) = 0;
+    return;
+  }
   if (SOURCE_QDIR == 0) {
     const uint32_t source_g = source_row >> log2_qblk;
     src_byte_off = ((uint64_t)source_g * N + source_col) * TILE_ELEM_BYTES;
   } else {
-    const uint32_t source_ng_total = N >> log2_qblk;
+    const uint32_t source_ng_total = (N + QBLK - 1u) >> log2_qblk;
     const uint32_t source_ng = source_col >> log2_qblk;
     src_byte_off = ((uint64_t)source_row * source_ng_total + source_ng) * TILE_ELEM_BYTES;
   }

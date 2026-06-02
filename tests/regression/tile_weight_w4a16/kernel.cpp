@@ -46,12 +46,15 @@ void kernel_tile_weight_w4a16(kernel_arg_t *__UNIFORM__ arg) {
   const uint32_t pair_per_k_sub = mxu_kt >> 1;              // WTRANS=1
 
   const uint32_t src_row_bytes = N / 2;
+  const uint32_t out_K = (K + mxu_kt - 1u) & ~(mxu_kt - 1u);
+  const uint32_t out_N = (N + mxu_nt - 1u) & ~(mxu_nt - 1u);
+  const uint32_t out_row_bytes = out_N >> 1;
 
   if (SOURCE_TRANSPOSED != 0) {
     if (WTRANS == 0) return;
 
-    const uint32_t logical_K = N;
-    const uint32_t logical_N = K;
+    const uint32_t logical_K = (N + mxu_kt - 1u) & ~(mxu_kt - 1u);
+    const uint32_t logical_N = (K + mxu_nt - 1u) & ~(mxu_nt - 1u);
     const uint32_t logical_row_bytes = logical_N >> 1;
     const uint32_t kt  = blockIdx.z;
     const uint32_t nt  = blockIdx.y;
@@ -74,10 +77,16 @@ void kernel_tile_weight_w4a16(kernel_arg_t *__UNIFORM__ arg) {
     const uint32_t logical_k1 = logical_k0 + 1;
     const uint32_t logical_n = (nt << log2_mxu_nt) + n_in_sub;
 
-    const uint8_t b0 = src[(uint64_t)logical_n * src_row_bytes + (logical_k0 >> 1)];
-    const uint8_t b1 = src[(uint64_t)logical_n * src_row_bytes + (logical_k1 >> 1)];
-    const uint8_t w0 = (logical_k0 & 1u) ? (b0 >> 4) : (b0 & 0x0f);
-    const uint8_t w1 = (logical_k1 & 1u) ? (b1 >> 4) : (b1 & 0x0f);
+    uint8_t w0 = 0;
+    uint8_t w1 = 0;
+    if (logical_n < K && logical_k0 < N) {
+      const uint8_t b0 = src[(uint64_t)logical_n * src_row_bytes + (logical_k0 >> 1)];
+      w0 = (logical_k0 & 1u) ? (b0 >> 4) : (b0 & 0x0f);
+    }
+    if (logical_n < K && logical_k1 < N) {
+      const uint8_t b1 = src[(uint64_t)logical_n * src_row_bytes + (logical_k1 >> 1)];
+      w1 = (logical_k1 & 1u) ? (b1 >> 4) : (b1 & 0x0f);
+    }
 
     const uint64_t kt_base = (uint64_t)kt * kt_size * logical_row_bytes;
     const uint64_t nt_base = (uint64_t)nt * ck * pair_per_n_sub;
@@ -86,14 +95,14 @@ void kernel_tile_weight_w4a16(kernel_arg_t *__UNIFORM__ arg) {
     return;
   }
 
-  const uint32_t row_bytes = src_row_bytes;
+  const uint32_t row_bytes = out_row_bytes;
 
   const uint32_t kt  = blockIdx.z;
   const uint32_t nt  = blockIdx.y;
   const uint32_t tid = blockIdx.x * blockDim.x + threadIdx.x;
 
   const uint32_t kt_start = kt << log2_kt;
-  const uint32_t ck = ((K - kt_start) < kt_size) ? (K - kt_start) : kt_size;
+  const uint32_t ck = ((out_K - kt_start) < kt_size) ? (out_K - kt_start) : kt_size;
   const uint32_t cur_kb = ck >> log2_mxu_kt;
   const uint64_t kt_base = (uint64_t)kt * kt_size * row_bytes;
   const uint64_t nt_base = (uint64_t)nt * ck * pair_per_n_sub;
@@ -105,15 +114,25 @@ void kernel_tile_weight_w4a16(kernel_arg_t *__UNIFORM__ arg) {
     const uint32_t kb       = tid >> log2_mxu_kt;
     const uint32_t k_in_sub = tid & mxu_kt_mask;
     const uint32_t gk = kt_start + (kb << log2_mxu_kt) + k_in_sub;
-    const uint64_t src_off = (uint64_t)gk * row_bytes + (uint64_t)nt * pair_per_n_sub;
-
     const uint64_t dst_off = kt_base + nt_base + (uint64_t)tid * pair_per_n_sub;
 
-    // 16-byte copy: two 64-bit loads/stores (src/dst are both 16-B aligned).
-    uint64_t* sp = reinterpret_cast<uint64_t*>(src + src_off);
     uint64_t* dp = reinterpret_cast<uint64_t*>(dst + dst_off);
-    dp[0] = sp[0];
-    dp[1] = sp[1];
+    const uint32_t src_pair = nt * pair_per_n_sub;
+    if (gk < K && src_pair + pair_per_n_sub <= src_row_bytes) {
+      // 16-byte copy: two 64-bit loads/stores (src/dst are both 16-B aligned).
+      const uint64_t src_off = (uint64_t)gk * src_row_bytes + src_pair;
+      uint64_t* sp = reinterpret_cast<uint64_t*>(src + src_off);
+      dp[0] = sp[0];
+      dp[1] = sp[1];
+    } else {
+      for (uint32_t pair = 0; pair < pair_per_n_sub; ++pair) {
+        const uint32_t source_byte = src_pair + pair;
+        dst[dst_off + pair] =
+            (gk < K && source_byte < src_row_bytes)
+                ? src[(uint64_t)gk * src_row_bytes + source_byte]
+                : 0;
+      }
+    }
     return;
   }
 
@@ -131,10 +150,16 @@ void kernel_tile_weight_w4a16(kernel_arg_t *__UNIFORM__ arg) {
   const uint32_t gk1 = gk0 + 1;
   const uint32_t gn = (nt << log2_mxu_nt) + n_in_sub;
 
-  const uint8_t b0 = src[(uint64_t)gk0 * row_bytes + (gn >> 1)];
-  const uint8_t b1 = src[(uint64_t)gk1 * row_bytes + (gn >> 1)];
-  const uint8_t w0 = (gn & 1u) ? (b0 >> 4) : (b0 & 0x0f);
-  const uint8_t w1 = (gn & 1u) ? (b1 >> 4) : (b1 & 0x0f);
+  uint8_t w0 = 0;
+  uint8_t w1 = 0;
+  if (gk0 < K && gn < N) {
+    const uint8_t b0 = src[(uint64_t)gk0 * src_row_bytes + (gn >> 1)];
+    w0 = (gn & 1u) ? (b0 >> 4) : (b0 & 0x0f);
+  }
+  if (gk1 < K && gn < N) {
+    const uint8_t b1 = src[(uint64_t)gk1 * src_row_bytes + (gn >> 1)];
+    w1 = (gn & 1u) ? (b1 >> 4) : (b1 & 0x0f);
+  }
 
   const uint64_t dst_off = kt_base + nt_base + (uint64_t)tid;
   dst[dst_off] = (w0 & 0x0f) | (uint8_t)((w1 & 0x0f) << 4);
