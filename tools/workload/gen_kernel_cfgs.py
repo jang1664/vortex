@@ -315,18 +315,22 @@ def _tile_weight_kernel(name: str,
                         effective_K: int | None = None,
                         effective_N: int | None = None,
                         cache_len: int | None = None,
-                        cache_update: str = "full") -> dict:
+                        cache_update: str = "full",
+                        source_transposed: bool = False) -> dict:
+    layout_to = "gemm_w_tiled_transposed" if WTRANS else "gemm_w_tiled"
     shape = {
         "K": K,
         "N": N,
         "WTRANS": WTRANS,
         "layout_from": "packed_w4a16_row_major",
-        "layout_to": "gemm_w_tiled",
+        "layout_to": layout_to,
         "producer": producer,
         "consumer": consumer,
         "layout_group": layout_group,
         "cache_update": cache_update,
     }
+    if source_transposed:
+        shape["source_transposed"] = True
     if effective_K is not None:
         shape["effective_K"] = effective_K
     if effective_N is not None:
@@ -337,7 +341,10 @@ def _tile_weight_kernel(name: str,
         name=name,
         stage=stage,
         backend="tile_weight_w4a16",
-        args=f"-k {K} -n {N} -t {WTRANS}",
+        args=(
+            f"-k {K} -n {N} -t {WTRANS}"
+            + (" --source-transposed" if source_transposed else "")
+        ),
         calls_per_forward=calls_per_forward,
         shape=shape,
         variant=variant,
@@ -359,19 +366,27 @@ def _tile_scale_zp_kernel(name: str,
                           effective_K: int | None = None,
                           effective_N: int | None = None,
                           cache_len: int | None = None,
-                          cache_update: str = "full") -> dict:
+                          cache_update: str = "full",
+                          gemm_QDIR: int | None = None,
+                          source_transposed: bool = False) -> dict:
+    gemm_qdir = QDIR if gemm_QDIR is None else gemm_QDIR
+    layout_to = "sz_gemm_tiled_transposed" if source_transposed else "sz_gemm_tiled"
     shape = {
         "K": K,
         "N": N,
         "QBLK": QBLK,
         "QDIR": QDIR,
+        "source_QDIR": QDIR,
+        "gemm_QDIR": gemm_qdir,
         "layout_from": "qparams_row_major",
-        "layout_to": "gemm_scale_zp_tiled",
+        "layout_to": layout_to,
         "producer": producer,
         "consumer": consumer,
         "layout_group": layout_group,
         "cache_update": cache_update,
     }
+    if source_transposed:
+        shape["source_transposed"] = True
     if effective_K is not None:
         shape["effective_K"] = effective_K
     if effective_N is not None:
@@ -382,7 +397,10 @@ def _tile_scale_zp_kernel(name: str,
         name=name,
         stage=stage,
         backend="tile_scale_zp_w4a16",
-        args=f"-k {K} -n {N} -q {QBLK} -d {QDIR}",
+        args=(
+            f"-k {K} -n {N} -q {QBLK} -d {QDIR} --gemm-qdir {gemm_qdir}"
+            + (" --source-transposed" if source_transposed else "")
+        ),
         calls_per_forward=calls_per_forward,
         shape=shape,
         variant=variant,
@@ -405,20 +423,28 @@ def _kv_cache_quant_kernel(name: str,
                            effective_K: int | None = None,
                            effective_N: int | None = None,
                            cache_len: int | None = None,
-                           cache_update: str = "full") -> dict:
+                           cache_update: str = "full",
+                           gemm_QDIR: int | None = None,
+                           source_transposed: bool = False) -> dict:
+    gemm_qdir = QDIR if gemm_QDIR is None else gemm_QDIR
     shape = {
         "K": K,
         "N": N,
         "QBLK": QBLK,
         "QDIR": QDIR,
+        "source_QDIR": QDIR,
+        "gemm_QDIR": gemm_qdir,
         "WTRANS": WTRANS,
         "layout_from": "row_major_fp16",
         "layout_to": "packed_w4a16_row_major",
+        "qparam_layout_to": "qparams_row_major",
         "producer": producer,
         "consumer": consumer,
         "layout_group": layout_group,
         "cache_update": cache_update,
     }
+    if source_transposed:
+        shape["source_transposed"] = True
     if effective_K is not None:
         shape["effective_K"] = effective_K
     if effective_N is not None:
@@ -454,21 +480,30 @@ def _kv_cache_quant_layout_fused_kernel(name: str,
                                         effective_K: int | None = None,
                                         effective_N: int | None = None,
                                         cache_len: int | None = None,
-                                        cache_update: str = "full") -> dict:
+                                        cache_update: str = "full",
+                                        gemm_QDIR: int | None = None,
+                                        source_transposed: bool = False) -> dict:
+    gemm_qdir = QDIR if gemm_QDIR is None else gemm_QDIR
+    weight_layout_to = "gemm_w_tiled_transposed" if WTRANS else "gemm_w_tiled"
+    scale_zp_layout_to = "sz_gemm_tiled_transposed" if source_transposed else "sz_gemm_tiled"
     shape = {
         "K": K,
         "N": N,
         "QBLK": QBLK,
         "QDIR": QDIR,
+        "source_QDIR": QDIR,
+        "gemm_QDIR": gemm_qdir,
         "WTRANS": WTRANS,
         "layout_from": layout_from,
-        "weight_layout_to": "gemm_w_tiled",
-        "scale_zp_layout_to": "gemm_scale_zp_tiled",
+        "weight_layout_to": weight_layout_to,
+        "scale_zp_layout_to": scale_zp_layout_to,
         "producer": producer,
         "consumer": consumer,
         "layout_group": layout_group,
         "cache_update": cache_update,
     }
+    if source_transposed:
+        shape["source_transposed"] = True
     if effective_K is not None:
         shape["effective_K"] = effective_K
     if effective_N is not None:
@@ -482,7 +517,9 @@ def _kv_cache_quant_layout_fused_kernel(name: str,
         stage=stage,
         args=(
             f"-k {K} -n {N} -q {QBLK} -d {QDIR} -t {WTRANS}"
+            f" --gemm-qdir {gemm_qdir}"
             + (f" --layout-from {layout_from}" if layout_from != "row_major_fp16" else "")
+            + (" --source-transposed" if source_transposed else "")
         ),
         calls_per_forward=calls_per_forward,
         shape=shape,
@@ -547,17 +584,10 @@ def _with_fused_backend(kernel: dict,
     )
 
 
-def _kv_tile_weight_k_shape(stage: str, seq_kv: int, head_dim: int) -> tuple[int, int, int, int, str]:
+def _kv_cache_source_shape(stage: str, seq_kv: int, head_dim: int) -> tuple[int, int, int, int, str]:
     if stage == "generation":
-        effective_n = 1
-        return head_dim, _align_up(effective_n, LAYOUT_MXU_NT), head_dim, effective_n, "append"
-    return head_dim, _align_up(seq_kv, LAYOUT_MXU_NT), head_dim, seq_kv, "full"
-
-
-def _kv_tile_weight_v_shape(stage: str, seq_kv: int, head_dim: int) -> tuple[int, int, int, int, str]:
-    if stage == "generation":
-        effective_k = 1
-        return _align_up(effective_k, LAYOUT_MXU_KT), head_dim, effective_k, head_dim, "append"
+        effective_rows = 1
+        return _align_up(effective_rows, LAYOUT_MXU_KT), head_dim, effective_rows, head_dim, "append"
     return _align_up(seq_kv, LAYOUT_MXU_KT), head_dim, seq_kv, head_dim, "full"
 
 
@@ -572,8 +602,8 @@ def _apply_standard_kv_cache_quant_variant(kernels: list[dict],
                                            variant: str) -> list[dict]:
     by_name = {kernel["name"]: kernel for kernel in kernels}
     per_head_kv = layers * batch * heads_kv
-    k_K, k_N, k_eff_K, k_eff_N, k_update = _kv_tile_weight_k_shape(stage, seq_kv, head_dim)
-    v_K, v_N, v_eff_K, v_eff_N, v_update = _kv_tile_weight_v_shape(stage, seq_kv, head_dim)
+    k_K, k_N, k_eff_K, k_eff_N, k_update = _kv_cache_source_shape(stage, seq_kv, head_dim)
+    v_K, v_N, v_eff_K, v_eff_N, v_update = _kv_cache_source_shape(stage, seq_kv, head_dim)
     attn_qk_backend = str(by_name["attn_qkT"]["backend"])
     attn_pv_backend = str(by_name["attn_pv"]["backend"])
     k_consumer = "attn_qkT" if attn_qk_backend in FPINT_GEMM_BACKENDS else "kv_cache:k"
@@ -588,12 +618,13 @@ def _apply_standard_kv_cache_quant_variant(kernels: list[dict],
         by_name["rope_k"],
         _kv_cache_quant_kernel(
             "kv_cache_quant_rope_k_to_attn_qkT", stage,
-            K=k_K, N=k_N, QBLK=head_dim, QDIR=0, WTRANS=1,
+            K=k_K, N=k_N, QBLK=head_dim, QDIR=1, WTRANS=1,
             calls_per_forward=per_head_kv,
             producer="rope_k", consumer=k_consumer,
             layout_group="rope_k_to_kv_cache", variant=variant,
             effective_K=k_eff_K, effective_N=k_eff_N,
             cache_len=seq_kv, cache_update=k_update,
+            gemm_QDIR=0, source_transposed=True,
         ),
         by_name["attn_qkT"],
         by_name["attn_softmax"],
@@ -605,6 +636,7 @@ def _apply_standard_kv_cache_quant_variant(kernels: list[dict],
             layout_group="v_cache_to_kv_cache", variant=variant,
             effective_K=v_eff_K, effective_N=v_eff_N,
             cache_len=seq_kv, cache_update=v_update,
+            gemm_QDIR=1,
         ),
         by_name["attn_pv"],
         by_name["attn_head_concat"],
@@ -638,8 +670,8 @@ def _apply_standalone_layout_variant(kernels: list[dict],
     by_name = {kernel["name"]: kernel for kernel in kernels}
     per_head_q = layers * batch * heads_q
     per_head_kv = layers * batch * heads_kv
-    k_K, k_N, k_eff_K, k_eff_N, k_update = _kv_tile_weight_k_shape(stage, seq_kv, head_dim)
-    v_K, v_N, v_eff_K, v_eff_N, v_update = _kv_tile_weight_v_shape(stage, seq_kv, head_dim)
+    k_K, k_N, k_eff_K, k_eff_N, k_update = _kv_cache_source_shape(stage, seq_kv, head_dim)
+    v_K, v_N, v_eff_K, v_eff_N, v_update = _kv_cache_source_shape(stage, seq_kv, head_dim)
 
     return [
         # embedding_lookup is intentionally disabled in build_decoder_pass_kernels.
@@ -675,21 +707,23 @@ def _apply_standalone_layout_variant(kernels: list[dict],
         ),
         _kv_cache_quant_kernel(
             "kv_cache_quant_rope_k_to_attn_qkT", stage,
-            K=k_K, N=k_N, QBLK=head_dim, QDIR=0, WTRANS=1,
+            K=k_K, N=k_N, QBLK=head_dim, QDIR=1, WTRANS=1,
             calls_per_forward=per_head_kv,
             producer="rope_k", consumer="layout_rope_k_to_attn_qkT",
             layout_group="rope_k_to_attn_qkT", variant=variant,
             effective_K=k_eff_K, effective_N=k_eff_N,
             cache_len=seq_kv, cache_update=k_update,
+            gemm_QDIR=0, source_transposed=True,
         ),
         _tile_scale_zp_kernel(
             "layout_rope_k_qparams_to_attn_qkT", stage,
-            K=k_K, N=k_N, QBLK=head_dim, QDIR=0,
+            K=k_K, N=k_N, QBLK=head_dim, QDIR=1,
             calls_per_forward=per_head_kv,
             producer="kv_cache_quant_rope_k_to_attn_qkT", consumer="attn_qkT",
             layout_group="rope_k_to_attn_qkT", variant=variant,
             effective_K=k_eff_K, effective_N=k_eff_N,
             cache_len=seq_kv, cache_update=k_update,
+            gemm_QDIR=0, source_transposed=True,
         ),
         _tile_weight_kernel(
             "layout_rope_k_to_attn_qkT", stage,
@@ -698,6 +732,7 @@ def _apply_standalone_layout_variant(kernels: list[dict],
             layout_group="rope_k_to_attn_qkT", variant=variant,
             effective_K=k_eff_K, effective_N=k_eff_N,
             cache_len=seq_kv, cache_update=k_update,
+            source_transposed=True,
         ),
         by_name["attn_qkT"],
         _detile_output_kernel(
@@ -727,6 +762,7 @@ def _apply_standalone_layout_variant(kernels: list[dict],
             layout_group="v_cache_to_attn_pv", variant=variant,
             effective_K=v_eff_K, effective_N=v_eff_N,
             cache_len=seq_kv, cache_update=v_update,
+            gemm_QDIR=1,
         ),
         _tile_scale_zp_kernel(
             "layout_v_cache_qparams_to_attn_pv", stage,
@@ -736,6 +772,7 @@ def _apply_standalone_layout_variant(kernels: list[dict],
             layout_group="v_cache_to_attn_pv", variant=variant,
             effective_K=v_eff_K, effective_N=v_eff_N,
             cache_len=seq_kv, cache_update=v_update,
+            gemm_QDIR=1,
         ),
         _tile_weight_kernel(
             "layout_v_cache_to_attn_pv", stage,
@@ -831,8 +868,8 @@ def _apply_fused_layout_variant(kernels: list[dict],
     by_name = {kernel["name"]: kernel for kernel in kernels}
     per_head_q = layers * batch * heads_q
     per_head_kv = layers * batch * heads_kv
-    k_K, k_N, k_eff_K, k_eff_N, k_update = _kv_tile_weight_k_shape(stage, seq_kv, head_dim)
-    v_K, v_N, v_eff_K, v_eff_N, v_update = _kv_tile_weight_v_shape(stage, seq_kv, head_dim)
+    k_K, k_N, k_eff_K, k_eff_N, k_update = _kv_cache_source_shape(stage, seq_kv, head_dim)
+    v_K, v_N, v_eff_K, v_eff_N, v_update = _kv_cache_source_shape(stage, seq_kv, head_dim)
 
     return [
         # embedding_lookup is intentionally disabled in build_decoder_pass_kernels.
@@ -870,12 +907,13 @@ def _apply_fused_layout_variant(kernels: list[dict],
         ),
         _kv_cache_quant_layout_fused_kernel(
             "kv_cache_quant_rope_k_to_attn_qkT", stage,
-            K=k_K, N=k_N, QBLK=head_dim, QDIR=0, WTRANS=1,
+            K=k_K, N=k_N, QBLK=head_dim, QDIR=1, WTRANS=1,
             calls_per_forward=per_head_kv,
             producer="rope_k", consumer="attn_qkT",
             layout_group="rope_k_to_attn_qkT", variant=variant,
             effective_K=k_eff_K, effective_N=k_eff_N,
             cache_len=seq_kv, cache_update=k_update,
+            gemm_QDIR=0, source_transposed=True,
         ),
         by_name["attn_qkT"],
         _with_fused_backend(
@@ -895,6 +933,7 @@ def _apply_fused_layout_variant(kernels: list[dict],
             layout_from="gemm_c_tiled",
             effective_K=v_eff_K, effective_N=v_eff_N,
             cache_len=seq_kv, cache_update=v_update,
+            gemm_QDIR=1,
         ),
         by_name["attn_pv"],
         _head_concat_kernel(
@@ -1507,9 +1546,9 @@ def _gemm_a_layout(backend: str) -> str:
     return "row_major"
 
 
-def _gemm_w_layout(backend: str) -> str:
+def _gemm_w_layout(backend: str, wtrans: int = 0) -> str:
     if backend == FPINT_GEMM_IMPROVE_BACKEND:
-        return "gemm_w_tiled"
+        return "gemm_w_tiled_transposed" if wtrans else "gemm_w_tiled"
     if backend == "sgemm_tcu":
         return "row_major_fp16"
     return "row_major"
@@ -1544,6 +1583,16 @@ def _kernel_layout_to(kernels_by_name: dict[str, dict], name: str, default: str)
 def _kernel_layout_from(kernels_by_name: dict[str, dict], name: str, default: str) -> str:
     shape = dict(kernels_by_name.get(name, {}).get("shape") or {})
     return str(shape.get("layout_from", default))
+
+
+def _kernel_weight_layout_to(kernels_by_name: dict[str, dict], name: str, default: str) -> str:
+    shape = dict(kernels_by_name.get(name, {}).get("shape") or {})
+    return str(shape.get("weight_layout_to", shape.get("layout_to", default)))
+
+
+def _kernel_qparam_layout_to(kernels_by_name: dict[str, dict], name: str, default: str) -> str:
+    shape = dict(kernels_by_name.get(name, {}).get("shape") or {})
+    return str(shape.get("scale_zp_layout_to", shape.get("layout_to", default)))
 
 
 def _standard_quant_feeds_attention(kernels_by_name: dict[str, dict],
@@ -1785,8 +1834,10 @@ def annotate_kernel_flow(kernels: list[dict]) -> None:
                 tiled_layout_name="layout_rope_k_to_attn_qkT",
             ):
                 attn_backend = _kernel_backend(kernels_by_name, "attn_qkT")
+                attn_shape = dict(kernels_by_name.get("attn_qkT", {}).get("shape") or {})
+                wtrans = int(attn_shape.get("WTRANS", 0))
                 outputs.extend([
-                    _output_flow("W", "attn_qkT", _gemm_w_layout(attn_backend)),
+                    _output_flow("W", "attn_qkT", _gemm_w_layout(attn_backend, wtrans)),
                     _output_flow("scale/zp", "attn_qkT", _gemm_qparam_layout(attn_backend) or "row_major"),
                 ])
             elif not outputs:
@@ -1805,13 +1856,20 @@ def annotate_kernel_flow(kernels: list[dict]) -> None:
     attn_qk = kernels_by_name.get("attn_qkT")
     if attn_qk:
         backend = _kernel_backend(kernels_by_name, "attn_qkT")
+        attn_shape = dict(attn_qk.get("shape") or {})
+        default_w_layout = _gemm_w_layout(backend, int(attn_shape.get("WTRANS", 0)))
+        default_qparam_layout = _gemm_qparam_layout(backend)
         a_source = _first_existing(["layout_rope_q_to_attn_qkT", "rope_q"], names) or "rope_q"
         if "layout_rope_k_to_attn_qkT" in names:
             w_source = "layout_rope_k_to_attn_qkT"
             scale_source = "layout_rope_k_qparams_to_attn_qkT"
+            w_layout = _kernel_weight_layout_to(kernels_by_name, w_source, default_w_layout)
+            scale_layout = _kernel_qparam_layout_to(kernels_by_name, scale_source, default_qparam_layout or "row_major")
         elif kernels_by_name.get("kv_cache_quant_rope_k_to_attn_qkT", {}).get("backend") == "kv_cache_quant_layout_fused_w4a16":
             w_source = "kv_cache_quant_rope_k_to_attn_qkT"
             scale_source = "kv_cache_quant_rope_k_to_attn_qkT"
+            w_layout = _kernel_weight_layout_to(kernels_by_name, w_source, default_w_layout)
+            scale_layout = _kernel_qparam_layout_to(kernels_by_name, scale_source, default_qparam_layout or "row_major")
         elif _standard_quant_feeds_attention(
             kernels_by_name,
             names,
@@ -1821,16 +1879,19 @@ def annotate_kernel_flow(kernels: list[dict]) -> None:
         ):
             w_source = "kv_cache_quant_rope_k_to_attn_qkT"
             scale_source = "kv_cache_quant_rope_k_to_attn_qkT"
+            w_layout = default_w_layout
+            scale_layout = default_qparam_layout or "row_major"
         else:
             w_source = "rope_k"
             scale_source = f"param:{attn_qk['name']}.qparams"
+            w_layout = default_w_layout
+            scale_layout = default_qparam_layout or "row_major"
         inputs = [
             _input_flow("A", a_source, _gemm_a_layout(backend)),
-            _input_flow("W" if backend in FPINT_GEMM_BACKENDS else "B", w_source, _gemm_w_layout(backend)),
+            _input_flow("W" if backend in FPINT_GEMM_BACKENDS else "B", w_source, w_layout),
         ]
-        qparam_layout = _gemm_qparam_layout(backend)
-        if qparam_layout:
-            inputs.append(_input_flow("scale/zp", scale_source, qparam_layout))
+        if default_qparam_layout:
+            inputs.append(_input_flow("scale/zp", scale_source, scale_layout))
         target = _first_existing(["layout_attn_qkT_to_softmax_detile", "attn_softmax"], names)
         _set_flow(
             attn_qk,
@@ -1871,8 +1932,10 @@ def annotate_kernel_flow(kernels: list[dict]) -> None:
                 tiled_layout_name="layout_v_cache_to_attn_pv",
             ):
                 attn_backend = _kernel_backend(kernels_by_name, "attn_pv")
+                attn_shape = dict(kernels_by_name.get("attn_pv", {}).get("shape") or {})
+                wtrans = int(attn_shape.get("WTRANS", 0))
                 outputs.extend([
-                    _output_flow("W", "attn_pv", _gemm_w_layout(attn_backend)),
+                    _output_flow("W", "attn_pv", _gemm_w_layout(attn_backend, wtrans)),
                     _output_flow("scale/zp", "attn_pv", _gemm_qparam_layout(attn_backend) or "row_major"),
                 ])
             elif not outputs:
@@ -1891,13 +1954,20 @@ def annotate_kernel_flow(kernels: list[dict]) -> None:
     attn_pv = kernels_by_name.get("attn_pv")
     if attn_pv:
         backend = _kernel_backend(kernels_by_name, "attn_pv")
+        attn_shape = dict(attn_pv.get("shape") or {})
+        default_w_layout = _gemm_w_layout(backend, int(attn_shape.get("WTRANS", 0)))
+        default_qparam_layout = _gemm_qparam_layout(backend)
         a_source = _first_existing(["layout_attn_softmax_to_attn_pv", "attn_softmax"], names) or "attn_softmax"
         if "layout_v_cache_to_attn_pv" in names:
             w_source = "layout_v_cache_to_attn_pv"
             scale_source = "layout_v_cache_qparams_to_attn_pv"
+            w_layout = _kernel_weight_layout_to(kernels_by_name, w_source, default_w_layout)
+            scale_layout = _kernel_qparam_layout_to(kernels_by_name, scale_source, default_qparam_layout or "row_major")
         elif kernels_by_name.get("kv_cache_quant_v_cache_to_attn_pv", {}).get("backend") == "kv_cache_quant_layout_fused_w4a16":
             w_source = "kv_cache_quant_v_cache_to_attn_pv"
             scale_source = "kv_cache_quant_v_cache_to_attn_pv"
+            w_layout = _kernel_weight_layout_to(kernels_by_name, w_source, default_w_layout)
+            scale_layout = _kernel_qparam_layout_to(kernels_by_name, scale_source, default_qparam_layout or "row_major")
         elif _standard_quant_feeds_attention(
             kernels_by_name,
             names,
@@ -1907,16 +1977,19 @@ def annotate_kernel_flow(kernels: list[dict]) -> None:
         ):
             w_source = "kv_cache_quant_v_cache_to_attn_pv"
             scale_source = "kv_cache_quant_v_cache_to_attn_pv"
+            w_layout = default_w_layout
+            scale_layout = default_qparam_layout or "row_major"
         else:
             w_source = "v_proj"
             scale_source = f"param:{attn_pv['name']}.qparams"
+            w_layout = default_w_layout
+            scale_layout = default_qparam_layout or "row_major"
         inputs = [
             _input_flow("A", a_source, _gemm_a_layout(backend)),
-            _input_flow("W" if backend in FPINT_GEMM_BACKENDS else "B", w_source, _gemm_w_layout(backend)),
+            _input_flow("W" if backend in FPINT_GEMM_BACKENDS else "B", w_source, w_layout),
         ]
-        qparam_layout = _gemm_qparam_layout(backend)
-        if qparam_layout:
-            inputs.append(_input_flow("scale/zp", scale_source, qparam_layout))
+        if default_qparam_layout:
+            inputs.append(_input_flow("scale/zp", scale_source, scale_layout))
         target = _first_existing(["layout_attn_pv_to_head_concat_detile", "attn_head_concat"], names)
         output_layout = _gemm_c_layout(backend)
         concat = kernels_by_name.get("attn_head_concat")
@@ -2057,14 +2130,15 @@ def annotate_kernel_flow(kernels: list[dict]) -> None:
 # ===========================================================================
 def _shape_summary(shape: dict) -> str:
     if "M" in shape:
-        keys = ("M", "N", "K", "QBLK", "QDIR", "WTRANS")
+        keys = ("M", "N", "K", "QBLK", "QDIR", "source_QDIR", "gemm_QDIR", "WTRANS")
     elif "K" in shape or "N" in shape:
-        keys = ("K", "N", "QBLK", "QDIR", "WTRANS")
+        keys = ("K", "N", "QBLK", "QDIR", "source_QDIR", "gemm_QDIR", "WTRANS")
     else:
         keys = ()
     keys += (
         "batch", "seq", "hidden", "heads", "headdim", "seqq", "seqk",
         "effective_K", "effective_N", "cache_len", "cache_update",
+        "source_transposed",
     )
     return ", ".join(
         f"{key}={shape[key]}" for key in keys if key in shape
@@ -2085,7 +2159,8 @@ def _kernel_input_layout(kernel: dict) -> str:
 
     if kind == "gemm":
         if backend == FPINT_GEMM_IMPROVE_BACKEND:
-            return "A:gemm_a_tiled + W:gemm_w_tiled + scale/zp:gemm_scale_zp_tiled"
+            w_layout = "gemm_w_tiled_transposed" if int(shape.get("WTRANS", 0)) else "gemm_w_tiled"
+            return f"A:gemm_a_tiled + W:{w_layout} + scale/zp:gemm_scale_zp_tiled"
         if backend == FPINT_GEMM_NAIVE_BACKEND:
             return "A:row_major + W:row_major + scale/zp:row_major"
         if backend == "sgemm_tcu":

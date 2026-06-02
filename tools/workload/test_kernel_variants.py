@@ -123,8 +123,12 @@ class KernelVariantTest(unittest.TestCase):
         attn_pv = _kernel_by_name(payload, "attn_pv")
 
         self.assertEqual("kv_cache_quant_w4a16", k_quant["backend"])
-        self.assertEqual("-k 128 -n 32 -q 128 -d 0 -t 1", k_quant["args"])
-        self.assertEqual(8, k_quant["shape"]["effective_N"])
+        self.assertEqual("-k 32 -n 128 -q 128 -d 1 -t 1", k_quant["args"])
+        self.assertEqual(8, k_quant["shape"]["effective_K"])
+        self.assertEqual(128, k_quant["shape"]["effective_N"])
+        self.assertEqual(1, k_quant["shape"]["source_QDIR"])
+        self.assertEqual(0, k_quant["shape"]["gemm_QDIR"])
+        self.assertTrue(k_quant["shape"]["source_transposed"])
         self.assertEqual("full", k_quant["shape"]["cache_update"])
         self.assertIn(
             {"role": "W", "target": "attn_qkT", "layout": "row_major"},
@@ -166,8 +170,9 @@ class KernelVariantTest(unittest.TestCase):
         attn_qk = _kernel_by_name(payload, "attn_qkT")
         attn_pv = _kernel_by_name(payload, "attn_pv")
 
-        self.assertEqual("-k 128 -n 32 -q 128 -d 0 -t 1", k_quant["args"])
-        self.assertEqual(1, k_quant["shape"]["effective_N"])
+        self.assertEqual("-k 32 -n 128 -q 128 -d 1 -t 1", k_quant["args"])
+        self.assertEqual(1, k_quant["shape"]["effective_K"])
+        self.assertEqual(128, k_quant["shape"]["effective_N"])
         self.assertEqual(512, k_quant["shape"]["cache_len"])
         self.assertEqual("append", k_quant["shape"]["cache_update"])
         self.assertIn(
@@ -306,21 +311,25 @@ class KernelVariantTest(unittest.TestCase):
 
         self.assertEqual("kv_cache_quant_w4a16", k_quant["backend"])
         self.assertEqual("kv_cache_quant_w4a16", k_quant["app"])
-        self.assertEqual("-k 128 -n 128 -q 128 -d 0 -t 1", k_quant["args"])
+        self.assertEqual("-k 128 -n 128 -q 128 -d 1 -t 1", k_quant["args"])
         self.assertEqual(1024, k_quant["calls_per_forward"])
         self.assertEqual("row_major_fp16", k_quant["shape"]["layout_from"])
         self.assertEqual("packed_w4a16_row_major", k_quant["shape"]["layout_to"])
+        self.assertEqual(1, k_quant["shape"]["source_QDIR"])
+        self.assertEqual(0, k_quant["shape"]["gemm_QDIR"])
+        self.assertTrue(k_quant["shape"]["source_transposed"])
 
         self.assertEqual("tile_scale_zp_w4a16", k_qparams["backend"])
-        self.assertEqual("-k 128 -n 128 -q 128 -d 0", k_qparams["args"])
+        self.assertEqual("-k 128 -n 128 -q 128 -d 1 --gemm-qdir 0 --source-transposed", k_qparams["args"])
         self.assertEqual("qparams_row_major", k_qparams["shape"]["layout_from"])
-        self.assertEqual("gemm_scale_zp_tiled", k_qparams["shape"]["layout_to"])
+        self.assertEqual("sz_gemm_tiled_transposed", k_qparams["shape"]["layout_to"])
 
         self.assertEqual("tile_weight_w4a16", k_cache["backend"])
-        self.assertEqual("-k 128 -n 128 -t 1", k_cache["args"])
+        self.assertEqual("-k 128 -n 128 -t 1 --source-transposed", k_cache["args"])
         self.assertEqual(1024, k_cache["calls_per_forward"])
         self.assertEqual("kv_cache_quant_rope_k_to_attn_qkT", k_cache["shape"]["producer"])
         self.assertEqual("packed_w4a16_row_major", k_cache["shape"]["layout_from"])
+        self.assertEqual("gemm_w_tiled_transposed", k_cache["shape"]["layout_to"])
         self.assertEqual({"K": 128, "N": 128, "WTRANS": 1}, {
             "K": k_cache["shape"]["K"],
             "N": k_cache["shape"]["N"],
@@ -331,7 +340,8 @@ class KernelVariantTest(unittest.TestCase):
         self.assertEqual("-k 128 -n 128 -q 128 -d 1 -t 0", v_quant["args"])
         self.assertEqual(1024, v_quant["calls_per_forward"])
         self.assertEqual("tile_scale_zp_w4a16", v_qparams["backend"])
-        self.assertEqual("-k 128 -n 128 -q 128 -d 1", v_qparams["args"])
+        self.assertEqual("-k 128 -n 128 -q 128 -d 1 --gemm-qdir 1", v_qparams["args"])
+        self.assertEqual("sz_gemm_tiled", v_qparams["shape"]["layout_to"])
         self.assertEqual("tile_weight_w4a16", v_cache["backend"])
         self.assertEqual("-k 128 -n 128 -t 0", v_cache["args"])
         self.assertEqual(1024, v_cache["calls_per_forward"])
@@ -372,16 +382,19 @@ class KernelVariantTest(unittest.TestCase):
         k_qparams = _kernel_by_name(payload, "layout_rope_k_qparams_to_attn_qkT")
         v_qparams = _kernel_by_name(payload, "layout_v_cache_qparams_to_attn_pv")
 
-        self.assertEqual("-k 128 -n 32 -t 1", k_cache["args"])
-        self.assertEqual(1, k_cache["shape"]["effective_N"])
+        self.assertEqual("-k 32 -n 128 -t 1 --source-transposed", k_cache["args"])
+        self.assertEqual(1, k_cache["shape"]["effective_K"])
+        self.assertEqual(128, k_cache["shape"]["effective_N"])
         self.assertEqual(512, k_cache["shape"]["cache_len"])
         self.assertEqual("append", k_cache["shape"]["cache_update"])
-        self.assertEqual("-k 128 -n 32 -q 128 -d 0 -t 1", k_quant["args"])
-        self.assertEqual(1, k_quant["shape"]["effective_N"])
+        self.assertEqual("-k 32 -n 128 -q 128 -d 1 -t 1", k_quant["args"])
+        self.assertEqual(1, k_quant["shape"]["effective_K"])
+        self.assertEqual(128, k_quant["shape"]["effective_N"])
         self.assertEqual(512, k_quant["shape"]["cache_len"])
         self.assertEqual("append", k_quant["shape"]["cache_update"])
-        self.assertEqual("-k 128 -n 32 -q 128 -d 0", k_qparams["args"])
-        self.assertEqual(1, k_qparams["shape"]["effective_N"])
+        self.assertEqual("-k 32 -n 128 -q 128 -d 1 --gemm-qdir 0 --source-transposed", k_qparams["args"])
+        self.assertEqual(1, k_qparams["shape"]["effective_K"])
+        self.assertEqual(128, k_qparams["shape"]["effective_N"])
         self.assertEqual("append", k_qparams["shape"]["cache_update"])
         self.assertEqual("-k 32 -n 128 -t 0", v_cache["args"])
         self.assertEqual(1, v_cache["shape"]["effective_K"])
@@ -391,7 +404,7 @@ class KernelVariantTest(unittest.TestCase):
         self.assertEqual(1, v_quant["shape"]["effective_K"])
         self.assertEqual(512, v_quant["shape"]["cache_len"])
         self.assertEqual("append", v_quant["shape"]["cache_update"])
-        self.assertEqual("-k 32 -n 128 -q 128 -d 1", v_qparams["args"])
+        self.assertEqual("-k 32 -n 128 -q 128 -d 1 --gemm-qdir 1", v_qparams["args"])
         self.assertEqual(1, v_qparams["shape"]["effective_K"])
         self.assertEqual("append", v_qparams["shape"]["cache_update"])
 
@@ -447,11 +460,18 @@ class KernelVariantTest(unittest.TestCase):
             attn_pv["outputs"],
         )
         self.assertEqual("kv_cache_quant_layout_fused_w4a16", k_quant["backend"])
-        self.assertEqual("-k 128 -n 128 -q 128 -d 0 -t 1", k_quant["args"])
-        self.assertEqual("gemm_w_tiled", k_quant["shape"]["weight_layout_to"])
-        self.assertEqual("gemm_scale_zp_tiled", k_quant["shape"]["scale_zp_layout_to"])
+        self.assertEqual(
+            "-k 128 -n 128 -q 128 -d 1 -t 1 --gemm-qdir 0 --source-transposed",
+            k_quant["args"],
+        )
+        self.assertEqual("gemm_w_tiled_transposed", k_quant["shape"]["weight_layout_to"])
+        self.assertEqual("sz_gemm_tiled_transposed", k_quant["shape"]["scale_zp_layout_to"])
+        self.assertEqual(1, k_quant["shape"]["source_QDIR"])
+        self.assertEqual(0, k_quant["shape"]["gemm_QDIR"])
+        self.assertTrue(k_quant["shape"]["source_transposed"])
         self.assertEqual("attn_qkT", k_quant["shape"]["consumer"])
         self.assertEqual("kv_cache_quant_layout_fused_w4a16", v_quant["backend"])
+        self.assertIn("--gemm-qdir 1", v_quant["args"])
         self.assertIn("--layout-from gemm_c_tiled", v_quant["args"])
         self.assertEqual("gemm_c_tiled", v_quant["shape"]["layout_from"])
         self.assertEqual("v_proj", v_quant["shape"]["producer"])
@@ -460,7 +480,7 @@ class KernelVariantTest(unittest.TestCase):
             v_quant["inputs"],
         )
         self.assertEqual("gemm_w_tiled", v_quant["shape"]["weight_layout_to"])
-        self.assertEqual("gemm_scale_zp_tiled", v_quant["shape"]["scale_zp_layout_to"])
+        self.assertEqual("sz_gemm_tiled", v_quant["shape"]["scale_zp_layout_to"])
         self.assertEqual("attn_pv", v_quant["shape"]["consumer"])
         self.assertEqual("silu_layout_fused", mlp_silu["backend"])
         self.assertEqual("gemm_c_tiled", mlp_silu["shape"]["layout_from"])
@@ -522,7 +542,7 @@ class KernelVariantTest(unittest.TestCase):
         self.assertIn("in : W         <- param:q_proj.weight", text)
         self.assertIn("kv_cache_quant_rope_k_to_attn_qkT", text)
         self.assertIn(
-            "out: W         -> attn_qkT                                   : gemm_w_tiled",
+            "out: W         -> attn_qkT                                   : gemm_w_tiled_transposed",
             text,
         )
         self.assertIn(
@@ -541,7 +561,7 @@ class KernelVariantTest(unittest.TestCase):
         )
         self.assertIn(
             "args='-k 32 -n 128 -q 128 -d 1 -t 0 "
-            "--layout-from gemm_c_tiled'",
+            "--gemm-qdir 1 --layout-from gemm_c_tiled'",
             text,
         )
         self.assertIn(": gemm_c_tiled", text)
@@ -557,7 +577,7 @@ class KernelVariantTest(unittest.TestCase):
             {
                 "role": "W",
                 "source": "kv_cache_quant_rope_k_to_attn_qkT",
-                "layout": "gemm_w_tiled",
+                "layout": "gemm_w_tiled_transposed",
             },
             attn_qk["inputs"],
         )
@@ -584,11 +604,11 @@ class KernelVariantTest(unittest.TestCase):
             text,
         )
         self.assertIn(
-            "in : W         <- layout_rope_k_to_attn_qkT                  : gemm_w_tiled",
+            "in : W         <- layout_rope_k_to_attn_qkT                  : gemm_w_tiled_transposed",
             text,
         )
         self.assertIn(
-            "in : scale/zp  <- layout_v_cache_qparams_to_attn_pv          : gemm_scale_zp_tiled",
+            "in : scale/zp  <- layout_v_cache_qparams_to_attn_pv          : sz_gemm_tiled",
             text,
         )
 

@@ -1,36 +1,80 @@
-mkdir -p outputs
+#!/usr/bin/env bash
+set -euo pipefail
 
-python ../../tools/workload/gen_kernel_cfgs.py \
-    --model llama2-7b \
-    --stage prefill \
-    --prefill-seq-len 8 \
-    --variant all_sgemm_tcu \
-    --format layout > outputs/prefill_all_sgemm_tcu_cfgs.txt
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+OUT_DIR="${SCRIPT_DIR}/outputs"
+GEN_KERNEL_CFGS="${REPO_ROOT}/tools/workload/gen_kernel_cfgs.py"
 
-python ../../tools/workload/gen_kernel_cfgs.py \
-    --model llama2-7b \
-    --stage prefill \
-    --prefill-seq-len 8 \
-    --variant attn_sgemm_tcu_fpint_gemm_naive \
-    --format layout > outputs/prefill_attn_sgemm_tcu_fpint_gemm_naive_cfgs.txt
+PYTHON_BIN="${PYTHON:-python}"
+MODEL="${MODEL:-llama2-7b}"
+PREFILL_SEQ_LEN="${PREFILL_SEQ_LEN:-8}"
+GEN_KV_LEN="${GEN_KV_LEN:-8}"
+QBLK="${QBLK:-32}"
 
-python ../../tools/workload/gen_kernel_cfgs.py \
-    --model llama2-7b \
-    --stage prefill \
-    --prefill-seq-len 8 \
-    --variant all_fpint_gemm_naive \
-    --format layout > outputs/prefill_all_fpint_gemm_naive_cfgs.txt
+mkdir -p "${OUT_DIR}"
 
-python ../../tools/workload/gen_kernel_cfgs.py \
-    --model llama2-7b \
-    --stage prefill \
-    --prefill-seq-len 8 \
-    --variant all_fpint_gemm_improve_alone_layout \
-    --format layout > outputs/prefill_all_fpint_improve_alone_cfgs.txt
+variant_label() {
+  case "$1" in
+    all_sgemm_tcu)
+      echo "all_sgemm_tcu"
+      ;;
+    attn_sgemm_tcu_fpint_gemm_naive)
+      echo "attn_sgemm_tcu_fpint_gemm_naive"
+      ;;
+    all_fpint_gemm_naive)
+      echo "all_fpint_gemm_naive"
+      ;;
+    all_fpint_gemm_improve_alone_layout)
+      echo "all_fpint_improve_alone"
+      ;;
+    all_fpint_gemm_improve_fused_layout)
+      echo "all_fpint_improve_fused"
+      ;;
+    *)
+      echo "$1"
+      ;;
+  esac
+}
 
-python ../../tools/workload/gen_kernel_cfgs.py \
-    --model llama2-7b \
-    --stage prefill \
-    --prefill-seq-len 8 \
-    --variant all_fpint_gemm_improve_fused_layout \
-    --format layout > outputs/prefill_all_fpint_improve_fused_cfgs.txt
+emit_layout() {
+  local stage="$1"
+  local variant="$2"
+  local label
+  label="$(variant_label "${variant}")"
+
+  local -a stage_args
+  case "${stage}" in
+    prefill)
+      stage_args=(--prefill-seq-len "${PREFILL_SEQ_LEN}")
+      ;;
+    generation)
+      stage_args=(--prefill-seq-len "${PREFILL_SEQ_LEN}" --gen-kv-len "${GEN_KV_LEN}")
+      ;;
+    *)
+      echo "ERROR: unsupported stage: ${stage}" >&2
+      return 1
+      ;;
+  esac
+
+  "${PYTHON_BIN}" "${GEN_KERNEL_CFGS}" \
+    --model "${MODEL}" \
+    --stage "${stage}" \
+    "${stage_args[@]}" \
+    --qblk "${QBLK}" \
+    --variant "${variant}" \
+    --format layout \
+    > "${OUT_DIR}/${stage}_${label}_cfgs.txt"
+}
+
+emit_stage() {
+  local stage="$1"
+  emit_layout "${stage}" all_sgemm_tcu
+  emit_layout "${stage}" attn_sgemm_tcu_fpint_gemm_naive
+  emit_layout "${stage}" all_fpint_gemm_naive
+  emit_layout "${stage}" all_fpint_gemm_improve_alone_layout
+  emit_layout "${stage}" all_fpint_gemm_improve_fused_layout
+}
+
+emit_stage prefill
+emit_stage generation
