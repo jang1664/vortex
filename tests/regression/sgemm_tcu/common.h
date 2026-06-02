@@ -12,7 +12,11 @@
 #endif
 
 #ifndef OTYPE
-#define OTYPE fp32
+#define OTYPE fp16
+#endif
+
+#ifndef ACC_TYPE
+#define ACC_TYPE fp32
 #endif
 
 static inline uint32_t align_up_u32(uint32_t value, uint32_t alignment) {

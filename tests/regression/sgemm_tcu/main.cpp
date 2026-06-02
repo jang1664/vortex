@@ -367,12 +367,29 @@ struct muladd_t<vt::uint4, vt::int32> {
   }
 };
 
+template <typename A, typename O>
+struct accum_to_output_t {
+  using atype = typename A::dtype;
+  using otype = typename O::dtype;
+  static otype eval(atype value) {
+    return static_cast<otype>(value);
+  }
+};
+
+template <>
+struct accum_to_output_t<vt::fp32, vt::fp16> {
+  static uint16_t eval(float value) {
+    return rv_ftoh_s(bit_cast<uint32_t>(value), 0, nullptr);
+  }
+};
+
 ///////////////////////////////////////////////////////////////////////////////
 
 using cfg = vt::wmma_config_t<NUM_THREADS, vt::ITYPE, vt::OTYPE>;
 
 using itype_t = typename vt::ITYPE::dtype;
 using otype_t = typename vt::OTYPE::dtype;
+using atype_t = typename vt::ACC_TYPE::dtype;
 
 struct SparseMat {
   std::vector<itype_t> values;   // non-zeros
@@ -396,12 +413,13 @@ static void matmul_cpu(otype_t *C,
   uint32_t LDAS = subbytes ? (lda * subbytes) : lda;
   for (uint32_t m = 0; m < M; ++m) {
     for (uint32_t n = 0; n < N; ++n) {
-      otype_t sum(0);
+      atype_t acc(0);
       for (uint32_t k = 0; k < KS; ++k) {
         auto a = data_accessor_t<vt::ITYPE>::read(A, m * LDAS + k);
         auto b = data_accessor_t<vt::ITYPE>::read(B, k * ldb + n);
-        sum = muladd_t<vt::ITYPE, vt::OTYPE>::eval(a, b, sum);
+        acc = muladd_t<vt::ITYPE, vt::ACC_TYPE>::eval(a, b, acc);
       }
+      otype_t sum = accum_to_output_t<vt::ACC_TYPE, vt::OTYPE>::eval(acc);
       data_accessor_t<vt::OTYPE>::write(C, m * N + n, sum);
     }
   }
@@ -574,6 +592,7 @@ int main(int argc, char *argv[]) {
 
   std::cout << "input data type: " << vt::ITYPE::name << " (id=" << vt::ITYPE::id << ")" << std::endl;
   std::cout << "output data type: " << vt::OTYPE::name << " (id=" << vt::OTYPE::id << ")" << std::endl;
+  std::cout << "accumulator data type: " << vt::ACC_TYPE::name << " (id=" << vt::ACC_TYPE::id << ")" << std::endl;
   std::cout << "WMMA Core Dimension: M=" << cfg::tcM << ", N=" << cfg::tcN << ", K=" << cfg::tcK << std::endl;
   std::cout << "WMMA Tile Dimension: M=" << cfg::tileM << ", N=" << cfg::tileN << ", K=" << cfg::tileK << std::endl;
   std::cout << "matrix A: " << M << "x" << K;
