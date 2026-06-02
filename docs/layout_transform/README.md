@@ -8,8 +8,8 @@ the Llama2 workload emitted by `tools/workload/gen_kernel_cfgs.py`.
 The current workload graph has nine logical GEMM ops:
 
 ```text
-q_proj, k_proj, v_proj, attn_qkT, attn_pv, attn_head_concat, o_proj,
-gate_proj, up_proj, down_proj
+q_proj, k_proj, v_proj, attn_qkT, attn_pv, o_proj, gate_proj, up_proj,
+down_proj
 ```
 
 `lm_head` is intentionally excluded from the emitted Llama2 latency workload;
@@ -32,6 +32,17 @@ The default vector layout is row-major. Layout-fused vector apps are only used
 at fpint GEMM boundaries, where they consume or produce the GEMM-specific tiled
 layout directly.
 
+## GEMM WTRANS and QDIR Conventions
+
+Every GEMM is modeled as `C = A * W`. `WTRANS` and `QDIR` are defined over the
+logical GEMM operand `W`, not over the tensor name that produced it.
+
+For `attn_qkT`, the GEMM operands are `A = Q` and `W = K^T`. Therefore
+transpose and quantization direction are interpreted over `K^T`. If source
+K-cache is stored as row-major `K_cache[pos, d]`, then the final fpint GEMM-W
+layout for QK^T is the transposed physical layout of logical `W[d, pos]`, named
+`gemm_w_tiled_transposed`.
+
 ## GEMM Input Producers
 
 | GEMM op | Input producer | Notes |
@@ -39,7 +50,7 @@ layout directly.
 | `q_proj` | `input_layernorm` | RMSNorm output feeds Q projection. |
 | `k_proj` | `input_layernorm` | RMSNorm output feeds K projection. |
 | `v_proj` | `input_layernorm` | RMSNorm output feeds V projection. |
-| `attn_qkT` | `rope_q`, `rope_k` | RoPE-transformed Q and K feed score GEMM. |
+| `attn_qkT` | `rope_q`, `rope_k` | GEMM uses `A=Q`, `W=K^T`; W layout and qparams are interpreted over logical `K^T`. |
 | `attn_pv` | `attn_softmax`, `v_proj` | Softmax scores and V projection feed PV GEMM. |
 | `o_proj` | `attn_head_concat` | Head-wise concatenated attention context feeds output projection. |
 | `gate_proj` | `post_attention_layernorm` | RMSNorm output feeds FFN gate projection. |
@@ -55,7 +66,6 @@ layout directly.
 | `v_proj` | `attn_pv` | V projection is the value input to PV GEMM. |
 | `attn_qkT` | `attn_softmax` | Score matrix is consumed by softmax. |
 | `attn_pv` | `attn_head_concat` | Per-head context vectors are concatenated before output projection. |
-| `attn_head_concat` | `o_proj` | Concatenated context feeds output projection. |
 | `o_proj` | `residual_attn` | Attention output feeds residual add. |
 | `gate_proj` | `mlp_silu` | Gate projection feeds SiLU. |
 | `up_proj` | `mlp_elmul` | Up projection feeds SwiGLU multiply. |
@@ -103,10 +113,12 @@ rule exists. In the current Llama2 graph, `attn_pv` feeds `attn_head_concat`,
 and the concat kernel is responsible for producing the layout expected by
 `o_proj` or by a following standalone `tile_input_a`.
 
-K/V cache tensors are dynamic runtime operands. When K or V is used as the W
-operand of QK^T or PV, the generator models weight-layout preparation. Prefill
-uses the full cache length; generation uses an append-only update and records
-the effective appended shape in kernel metadata.
+K/V cache tensors are dynamic runtime operands. The V path uses logical
+`W=V` for PV, so its final fpint weight layout is `gemm_w_tiled`. The K path
+uses logical `W=K^T` for QK^T, so source K-cache in `[seq_kv, head_dim]` order
+must be transformed into `gemm_w_tiled_transposed`. Prefill uses the full cache
+length; generation uses an append-only update and records the effective
+appended shape in kernel metadata.
 
 ## Implemented Layout-Fused Apps
 
@@ -124,15 +136,17 @@ backend names:
 | `head_concat` | row-major `[batch, heads, seq, headdim]` | row-major `[batch, seq, heads * headdim]` | Regular head concat has no GEMM-specific layout. |
 | `head_concat_layout_fused` | per-head GEMM-C tiled PV output | GEMM-A tiled `o_proj` input | Fuses PV detile, head concat, and `o_proj` tile-input preparation. |
 | `kv_cache_quant_w4a16` | fp16 row-major `[K, N]` | uint4 packed row-major `[K, N/2]` plus row-major fp16 scale and int16 zero-point | Standalone dynamic K/V cache quantization. |
-| `kv_cache_quant_layout_fused_w4a16` | fp16 row-major or GEMM-C tiled `[K, N]` | uint4 GEMM-W tiled payload plus GEMM tiled scale/zp buffers | Fused K/V cache quantization for direct fpint GEMM-W consumption; V-cache in fused Llama consumes `v_proj` GEMM-C tiled output directly. |
+| `kv_cache_quant_layout_fused_w4a16` | fp16 row-major or GEMM-C tiled cache tensor | uint4 GEMM-W tiled payload plus GEMM tiled scale/zp buffers | Fused K/V cache quantization for direct fpint GEMM-W consumption; K path outputs `gemm_w_tiled_transposed` for logical `K^T`, while V path outputs `gemm_w_tiled`. |
 | `kv_cache_dequant_w4a16` | uint4 packed row-major plus qparams | fp16 row-major `[K, N]` | Debug/reference dequant path. |
 
 `rope_layout_fused --layout-to row_major` is used for K-cache data before
 K-cache quantization. The standalone layout variant uses `kv_cache_quant_w4a16`
 followed by `tile_weight_w4a16` and `tile_scale_zp_w4a16`. The fused layout
 variant uses `kv_cache_quant_layout_fused_w4a16`, which writes the packed int4
-payload and scale/zp directly in the layouts consumed by `fpint_gemm`.
+payload and scale/zp directly in the layouts consumed by `fpint_gemm`. For
+K-cache this direct output is the transposed GEMM-W layout because the
+consumer's logical operand is `K^T`.
 
-The older `gemm_w_tiled` mode remains a latency-model fp16 layout, but it is
-not the packed int4 `tile_weight_w4a16` byte format and is not the current
-Llama fpint path.
+The older fp16 `gemm_w_tiled` and `gemm_w_tiled_transposed` modes remain
+latency-model layouts, but they are not the packed int4 `tile_weight_w4a16`
+byte format and are not the current Llama fpint path.
