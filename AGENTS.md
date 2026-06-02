@@ -28,6 +28,8 @@
 ## Blackbox Flow
 
 - Blackbox test have to be run at **build directory**
+- For RTL simulation blackbox runs, use **xrt-vcs-sim**. Do **not** use `simx`
+  or Verilator `rtlsim` unless the user explicitly requests those modes.
 - To run `blackbox.sh`, use the wrapper script:
 
 ```bash
@@ -40,7 +42,11 @@ ci/run_black.sh
 ci/run_black.sh --help
 ```
 
-- Always use **xrt-vcs-sim** mode if not explicitly requested by user
+- Default command shape for RTL functionality checks:
+
+```bash
+ci/run_black.sh xrt-vcs-sim --app APP --args "..."
+```
 
 ## Codex Skills
 
