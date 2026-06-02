@@ -28,9 +28,11 @@ typedef struct {
   uint32_t K;
   uint32_t N;
   uint32_t QBLK;
-  uint32_t QDIR;
+  uint32_t QDIR;          // source quantization direction
+  uint32_t GEMM_QDIR;     // output scale/zp GEMM-facing layout direction
   uint32_t WTRANS;
   uint32_t src_layout;
+  uint32_t SOURCE_TRANSPOSED;
 
   uint32_t k_tiles;
   uint32_t n_dma_tiles;

@@ -99,6 +99,20 @@ static uint8_t quant_at(const fp16_t* src,
       zp);
 }
 
+static uint8_t quant_with_params(const fp16_t* src,
+                                 uint32_t K,
+                                 uint32_t N,
+                                 uint32_t k,
+                                 uint32_t n,
+                                 uint32_t src_layout,
+                                 float stored_scale,
+                                 int16_t zp) {
+  return kv_quantize_value(
+      fp16_to_float(load_src_value(src, K, N, k, n, src_layout)),
+      stored_scale,
+      zp);
+}
+
 static uint64_t weight_offset_wtrans0(uint32_t K,
                                       uint32_t N,
                                       uint32_t k,
@@ -140,6 +154,20 @@ static uint64_t weight_offset_wtrans1(uint32_t K,
        + k_pair;
 }
 
+static uint8_t quant_source_at(const fp16_t* src,
+                               uint32_t K,
+                               uint32_t N,
+                               uint32_t QBLK,
+                               uint32_t QDIR,
+                               uint32_t out_k,
+                               uint32_t out_n,
+                               uint32_t src_layout,
+                               uint32_t source_transposed) {
+  const uint32_t source_row = source_transposed ? out_n : out_k;
+  const uint32_t source_col = source_transposed ? out_k : out_n;
+  return quant_at(src, K, N, QBLK, QDIR, source_row, source_col, src_layout);
+}
+
 static uint32_t scale_slot_body_bytes(uint32_t cur_k,
                                       uint32_t cur_n,
                                       uint32_t QBLK,
@@ -170,32 +198,94 @@ void kernel_kv_cache_quant_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
   const uint32_t K = arg->K;
   const uint32_t N = arg->N;
   const uint32_t QBLK = arg->QBLK;
-  const uint32_t QDIR = arg->QDIR;
+  const uint32_t SOURCE_QDIR = arg->QDIR;
+  const uint32_t GEMM_QDIR = arg->GEMM_QDIR;
   const uint32_t WTRANS = arg->WTRANS;
   const uint32_t src_layout = arg->src_layout;
+  const uint32_t SOURCE_TRANSPOSED = arg->SOURCE_TRANSPOSED;
   const uint32_t total_threads = gridDim.x * blockDim.x;
   const uint32_t thread_id = blockIdx.x * blockDim.x + threadIdx.x;
 
   const uint32_t weight_bytes = K * (N >> 1);
-  for (uint32_t i = thread_id; i < weight_bytes; i += total_threads) {
-    if (WTRANS == 0) {
-      const uint32_t k = i / (N >> 1);
-      const uint32_t n_pair = i - k * (N >> 1);
-      const uint32_t n0 = n_pair << 1;
-      const uint8_t q0 = quant_at(src, K, N, QBLK, QDIR, k, n0, src_layout);
-      const uint8_t q1 = quant_at(src, K, N, QBLK, QDIR, k, n0 + 1, src_layout);
-      weight[weight_offset_wtrans0(K, N, k, n_pair)] =
-          (uint8_t)((q0 & 0x0f) | ((q1 & 0x0f) << 4));
-    } else {
-      const uint32_t k0 = (i / N) << 1;
-      const uint32_t n = i - (k0 >> 1) * N;
-      const uint8_t q0 = quant_at(src, K, N, QBLK, QDIR, k0, n, src_layout);
-      const uint8_t q1 = quant_at(src, K, N, QBLK, QDIR, k0 + 1, n, src_layout);
-      weight[weight_offset_wtrans1(K, N, k0, n)] =
-          (uint8_t)((q0 & 0x0f) | ((q1 & 0x0f) << 4));
+  if (SOURCE_TRANSPOSED != 0 && WTRANS != 0 && SOURCE_QDIR == 1 && QBLK >= 2) {
+    const uint32_t logical_K = N;
+    const uint32_t logical_N = K;
+    const uint32_t source_groups = N >> arg->log2_qblk;
+    const uint32_t source_group_work = K * source_groups;
+    for (uint32_t work = thread_id; work < source_group_work; work += total_threads) {
+      const uint32_t source_row = work / source_groups;
+      const uint32_t group = work - source_row * source_groups;
+      const uint32_t source_col_start = group << arg->log2_qblk;
+      const uint32_t source_col_end = source_col_start + QBLK;
+      float scale = 1.0f;
+      int16_t zp = 0;
+      compute_params(src, K, N, QBLK, SOURCE_QDIR,
+                     source_row, source_col_start, src_layout, &scale, &zp);
+      const float stored_scale = fp16_to_float(float_to_fp16(scale));
+      for (uint32_t source_col = source_col_start; source_col < source_col_end; source_col += 2) {
+        const uint8_t q0 = quant_with_params(src, K, N, source_row, source_col,
+                                             src_layout, stored_scale, zp);
+        const uint8_t q1 = quant_with_params(src, K, N, source_row, source_col + 1,
+                                             src_layout, stored_scale, zp);
+        weight[weight_offset_wtrans1(logical_K, logical_N, source_col, source_row)] =
+            (uint8_t)((q0 & 0x0f) | ((q1 & 0x0f) << 4));
+      }
+    }
+  } else if (SOURCE_TRANSPOSED == 0 && WTRANS == 0 && SOURCE_QDIR == 1 && QBLK >= 2) {
+    const uint32_t source_groups = N >> arg->log2_qblk;
+    const uint32_t source_group_work = K * source_groups;
+    for (uint32_t work = thread_id; work < source_group_work; work += total_threads) {
+      const uint32_t source_row = work / source_groups;
+      const uint32_t group = work - source_row * source_groups;
+      const uint32_t source_col_start = group << arg->log2_qblk;
+      const uint32_t source_col_end = source_col_start + QBLK;
+      float scale = 1.0f;
+      int16_t zp = 0;
+      compute_params(src, K, N, QBLK, SOURCE_QDIR,
+                     source_row, source_col_start, src_layout, &scale, &zp);
+      const float stored_scale = fp16_to_float(float_to_fp16(scale));
+      for (uint32_t source_col = source_col_start; source_col < source_col_end; source_col += 2) {
+        const uint8_t q0 = quant_with_params(src, K, N, source_row, source_col,
+                                             src_layout, stored_scale, zp);
+        const uint8_t q1 = quant_with_params(src, K, N, source_row, source_col + 1,
+                                             src_layout, stored_scale, zp);
+        weight[weight_offset_wtrans0(K, N, source_row, source_col >> 1)] =
+            (uint8_t)((q0 & 0x0f) | ((q1 & 0x0f) << 4));
+      }
+    }
+  } else {
+    for (uint32_t i = thread_id; i < weight_bytes; i += total_threads) {
+      if (SOURCE_TRANSPOSED != 0) {
+        if (WTRANS == 0) continue;
+        const uint32_t logical_K = N;
+        const uint32_t logical_N = K;
+        const uint32_t k0 = (i / logical_N) << 1;
+        const uint32_t n = i - (k0 >> 1) * logical_N;
+        const uint8_t q0 = quant_source_at(src, K, N, QBLK, SOURCE_QDIR, k0, n, src_layout, 1);
+        const uint8_t q1 = quant_source_at(src, K, N, QBLK, SOURCE_QDIR, k0 + 1, n, src_layout, 1);
+        weight[weight_offset_wtrans1(logical_K, logical_N, k0, n)] =
+            (uint8_t)((q0 & 0x0f) | ((q1 & 0x0f) << 4));
+      } else if (WTRANS == 0) {
+        const uint32_t k = i / (N >> 1);
+        const uint32_t n_pair = i - k * (N >> 1);
+        const uint32_t n0 = n_pair << 1;
+        const uint8_t q0 = quant_at(src, K, N, QBLK, SOURCE_QDIR, k, n0, src_layout);
+        const uint8_t q1 = quant_at(src, K, N, QBLK, SOURCE_QDIR, k, n0 + 1, src_layout);
+        weight[weight_offset_wtrans0(K, N, k, n_pair)] =
+            (uint8_t)((q0 & 0x0f) | ((q1 & 0x0f) << 4));
+      } else {
+        const uint32_t k0 = (i / N) << 1;
+        const uint32_t n = i - (k0 >> 1) * N;
+        const uint8_t q0 = quant_at(src, K, N, QBLK, SOURCE_QDIR, k0, n, src_layout);
+        const uint8_t q1 = quant_at(src, K, N, QBLK, SOURCE_QDIR, k0 + 1, n, src_layout);
+        weight[weight_offset_wtrans1(K, N, k0, n)] =
+            (uint8_t)((q0 & 0x0f) | ((q1 & 0x0f) << 4));
+      }
     }
   }
 
+  const uint32_t out_K = SOURCE_TRANSPOSED ? N : K;
+  const uint32_t out_N = SOURCE_TRANSPOSED ? K : N;
   const uint32_t max_slot_elems = arg->max_slot_bytes / TILE_ELEM_BYTES;
   const uint32_t qparam_work = arg->k_tiles * arg->n_dma_tiles * max_slot_elems;
   for (uint32_t work = thread_id; work < qparam_work; work += total_threads) {
@@ -205,9 +295,9 @@ void kernel_kv_cache_quant_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
     const uint32_t nt_dma = slot - kt * arg->n_dma_tiles;
     const uint32_t kt_start = kt << arg->log2_kt;
     const uint32_t nt_start = nt_dma << arg->log2_nt;
-    const uint32_t cur_k = min_u32(K - kt_start, TILE_DMA_KT);
-    const uint32_t cur_n = min_u32(N - nt_start, TILE_DMA_NT);
-    const uint32_t body_bytes = scale_slot_body_bytes(cur_k, cur_n, QBLK, QDIR);
+    const uint32_t cur_k = min_u32(out_K - kt_start, TILE_DMA_KT);
+    const uint32_t cur_n = min_u32(out_N - nt_start, TILE_DMA_NT);
+    const uint32_t body_bytes = scale_slot_body_bytes(cur_k, cur_n, QBLK, GEMM_QDIR);
     const uint32_t body_elems = body_bytes / TILE_ELEM_BYTES;
     const uint32_t slot_bytes = align_up_u32(body_bytes, TILE_SCALE_SLOT_ALIGN);
     const uint32_t byte_in_slot = elem_in_slot * TILE_ELEM_BYTES;
@@ -224,14 +314,13 @@ void kernel_kv_cache_quant_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
 
     uint32_t param_k = kt_start;
     uint32_t param_n = nt_start;
-    if (QDIR == 0) {
+    if (GEMM_QDIR == 0) {
       const uint32_t col = elem_in_slot & (TILE_DMA_MXU_NT - 1u);
       const uint32_t nb_g = elem_in_slot >> arg->log2_mxu_nt;
       const uint32_t cur_groups = cur_k >> arg->log2_qblk;
       const uint32_t g = nb_g % cur_groups;
       const uint32_t nb = nb_g / cur_groups;
-      const uint32_t global_g = (kt << (arg->log2_kt - arg->log2_qblk)) + g;
-      param_k = global_g << arg->log2_qblk;
+      param_k = kt_start + (g << arg->log2_qblk);
       param_n = nt_start + (nb << arg->log2_mxu_nt) + col;
     } else {
       const uint32_t ng_per_mxu_nt = 1u << arg->log2_ng_per_mxu_nt;
@@ -246,9 +335,11 @@ void kernel_kv_cache_quant_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
       param_n = global_ng << arg->log2_qblk;
     }
 
+    const uint32_t source_row = SOURCE_TRANSPOSED ? param_n : param_k;
+    const uint32_t source_col = SOURCE_TRANSPOSED ? param_k : param_n;
     float scale = 1.0f;
     int16_t zp = 0;
-    compute_params(src, K, N, QBLK, QDIR, param_k, param_n, src_layout, &scale, &zp);
+    compute_params(src, K, N, QBLK, SOURCE_QDIR, source_row, source_col, src_layout, &scale, &zp);
     store_u16(scales, dst_off, float_to_fp16(scale));
     store_u16(zeros, dst_off, (uint16_t)zp);
   }

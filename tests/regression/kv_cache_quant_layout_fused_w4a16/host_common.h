@@ -17,8 +17,14 @@ static inline bool valid_fused_quant_shape(uint32_t K,
                                            uint32_t N,
                                            uint32_t QBLK,
                                            uint32_t QDIR,
-                                           uint32_t WTRANS) {
-  if (K == 0 || N == 0 || QBLK == 0 || QDIR > 1 || WTRANS > 1) {
+                                           uint32_t WTRANS,
+                                           uint32_t GEMM_QDIR,
+                                           uint32_t SOURCE_TRANSPOSED) {
+  if (K == 0 || N == 0 || QBLK == 0 || QDIR > 1 || WTRANS > 1 ||
+      GEMM_QDIR > 1 || SOURCE_TRANSPOSED > 1) {
+    return false;
+  }
+  if (SOURCE_TRANSPOSED != 0 && WTRANS == 0) {
     return false;
   }
   if (!is_pow2_u32(QBLK) || (N & 1u) != 0) {
@@ -31,6 +37,14 @@ static inline bool valid_fused_quant_shape(uint32_t K,
     return false;
   }
   if (QDIR == 1 && (N % QBLK) != 0) {
+    return false;
+  }
+  const uint32_t out_K = SOURCE_TRANSPOSED ? N : K;
+  const uint32_t out_N = SOURCE_TRANSPOSED ? K : N;
+  if (GEMM_QDIR == 0 && (out_K % QBLK) != 0) {
+    return false;
+  }
+  if (GEMM_QDIR == 1 && (out_N % QBLK) != 0) {
     return false;
   }
   return true;
@@ -104,14 +118,17 @@ static inline size_t scale_slot_bytes_host(uint32_t cur_k,
 static inline size_t scale_total_bytes_host(uint32_t K,
                                             uint32_t N,
                                             uint32_t QBLK,
-                                            uint32_t QDIR) {
-  const uint32_t k_tiles = (K + TILE_DMA_KT - 1u) / TILE_DMA_KT;
-  const uint32_t n_dma_tiles = (N + TILE_DMA_NT - 1u) / TILE_DMA_NT;
+                                            uint32_t QDIR,
+                                            uint32_t source_transposed = 0) {
+  const uint32_t out_K = source_transposed ? N : K;
+  const uint32_t out_N = source_transposed ? K : N;
+  const uint32_t k_tiles = (out_K + TILE_DMA_KT - 1u) / TILE_DMA_KT;
+  const uint32_t n_dma_tiles = (out_N + TILE_DMA_NT - 1u) / TILE_DMA_NT;
   size_t total = 0;
   for (uint32_t kt = 0; kt < k_tiles; ++kt) {
-    const uint32_t cur_k = std::min(K - kt * TILE_DMA_KT, (uint32_t)TILE_DMA_KT);
+    const uint32_t cur_k = std::min(out_K - kt * TILE_DMA_KT, (uint32_t)TILE_DMA_KT);
     for (uint32_t nt = 0; nt < n_dma_tiles; ++nt) {
-      const uint32_t cur_n = std::min(N - nt * TILE_DMA_NT, (uint32_t)TILE_DMA_NT);
+      const uint32_t cur_n = std::min(out_N - nt * TILE_DMA_NT, (uint32_t)TILE_DMA_NT);
       total += scale_slot_bytes_host(cur_k, cur_n, QBLK, QDIR);
     }
   }
@@ -121,14 +138,17 @@ static inline size_t scale_total_bytes_host(uint32_t K,
 static inline uint32_t max_scale_slot_bytes_host(uint32_t K,
                                                  uint32_t N,
                                                  uint32_t QBLK,
-                                                 uint32_t QDIR) {
-  const uint32_t k_tiles = (K + TILE_DMA_KT - 1u) / TILE_DMA_KT;
-  const uint32_t n_dma_tiles = (N + TILE_DMA_NT - 1u) / TILE_DMA_NT;
+                                                 uint32_t QDIR,
+                                                 uint32_t source_transposed = 0) {
+  const uint32_t out_K = source_transposed ? N : K;
+  const uint32_t out_N = source_transposed ? K : N;
+  const uint32_t k_tiles = (out_K + TILE_DMA_KT - 1u) / TILE_DMA_KT;
+  const uint32_t n_dma_tiles = (out_N + TILE_DMA_NT - 1u) / TILE_DMA_NT;
   uint32_t max_slot = 0;
   for (uint32_t kt = 0; kt < k_tiles; ++kt) {
-    const uint32_t cur_k = std::min(K - kt * TILE_DMA_KT, (uint32_t)TILE_DMA_KT);
+    const uint32_t cur_k = std::min(out_K - kt * TILE_DMA_KT, (uint32_t)TILE_DMA_KT);
     for (uint32_t nt = 0; nt < n_dma_tiles; ++nt) {
-      const uint32_t cur_n = std::min(N - nt * TILE_DMA_NT, (uint32_t)TILE_DMA_NT);
+      const uint32_t cur_n = std::min(out_N - nt * TILE_DMA_NT, (uint32_t)TILE_DMA_NT);
       max_slot = std::max(max_slot, (uint32_t)scale_slot_bytes_host(cur_k, cur_n, QBLK, QDIR));
     }
   }
@@ -141,6 +161,8 @@ static inline bool init_kernel_arg(kernel_arg_t& arg,
                                    uint32_t QBLK,
                                    uint32_t QDIR,
                                    uint32_t WTRANS,
+                                   uint32_t GEMM_QDIR,
+                                   uint32_t SOURCE_TRANSPOSED,
                                    uint32_t src_layout,
                                    uint32_t blocks,
                                    uint32_t threads_per_block) {
@@ -161,19 +183,23 @@ static inline bool init_kernel_arg(kernel_arg_t& arg,
   arg.N = N;
   arg.QBLK = QBLK;
   arg.QDIR = QDIR;
+  arg.GEMM_QDIR = GEMM_QDIR;
   arg.WTRANS = WTRANS;
   arg.src_layout = src_layout;
-  arg.k_tiles = (K + TILE_DMA_KT - 1u) / TILE_DMA_KT;
-  arg.n_dma_tiles = (N + TILE_DMA_NT - 1u) / TILE_DMA_NT;
+  arg.SOURCE_TRANSPOSED = SOURCE_TRANSPOSED;
+  const uint32_t out_K = SOURCE_TRANSPOSED ? N : K;
+  const uint32_t out_N = SOURCE_TRANSPOSED ? K : N;
+  arg.k_tiles = (out_K + TILE_DMA_KT - 1u) / TILE_DMA_KT;
+  arg.n_dma_tiles = (out_N + TILE_DMA_NT - 1u) / TILE_DMA_NT;
   const uint32_t ck_last =
-      std::min(K - (arg.k_tiles - 1u) * TILE_DMA_KT, (uint32_t)TILE_DMA_KT);
+      std::min(out_K - (arg.k_tiles - 1u) * TILE_DMA_KT, (uint32_t)TILE_DMA_KT);
   const uint32_t cn_last =
-      std::min(N - (arg.n_dma_tiles - 1u) * TILE_DMA_NT, (uint32_t)TILE_DMA_NT);
-  arg.slot_fk_fn = (uint32_t)scale_slot_bytes_host(TILE_DMA_KT, TILE_DMA_NT, QBLK, QDIR);
-  arg.slot_fk_pn = (uint32_t)scale_slot_bytes_host(TILE_DMA_KT, cn_last, QBLK, QDIR);
-  arg.slot_pk_fn = (uint32_t)scale_slot_bytes_host(ck_last, TILE_DMA_NT, QBLK, QDIR);
+      std::min(out_N - (arg.n_dma_tiles - 1u) * TILE_DMA_NT, (uint32_t)TILE_DMA_NT);
+  arg.slot_fk_fn = (uint32_t)scale_slot_bytes_host(TILE_DMA_KT, TILE_DMA_NT, QBLK, GEMM_QDIR);
+  arg.slot_fk_pn = (uint32_t)scale_slot_bytes_host(TILE_DMA_KT, cn_last, QBLK, GEMM_QDIR);
+  arg.slot_pk_fn = (uint32_t)scale_slot_bytes_host(ck_last, TILE_DMA_NT, QBLK, GEMM_QDIR);
   arg.per_kt_full_K = (arg.n_dma_tiles - 1u) * arg.slot_fk_fn + arg.slot_fk_pn;
-  arg.max_slot_bytes = max_scale_slot_bytes_host(K, N, QBLK, QDIR);
+  arg.max_slot_bytes = max_scale_slot_bytes_host(K, N, QBLK, GEMM_QDIR, SOURCE_TRANSPOSED);
   arg.log2_kt = log2_u32(TILE_DMA_KT);
   arg.log2_nt = log2_u32(TILE_DMA_NT);
   arg.log2_mxu_kt = log2_u32(TILE_DMA_MXU_KT);

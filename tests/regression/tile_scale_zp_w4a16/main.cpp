@@ -6,9 +6,11 @@
 //   tests/regression/fpint_gemm_ffn_hw/main.cpp::convert_scale_tiled
 //
 // Usage: ./tile_scale_zp_w4a16 [-k K] [-n N] [-q QBLK] [-d QDIR]
+//                              [--gemm-qdir QDIR] [--source-transposed]
 
 #include "common.h"
 #include <vortex.h>
+#include <getopt.h>
 #include <unistd.h>
 #include <cstdio>
 #include <cstdint>
@@ -20,6 +22,8 @@ static uint32_t K    = 64;
 static uint32_t N    = 64;
 static uint32_t QBLK = 32;
 static uint32_t QDIR = 0;
+static uint32_t GEMM_QDIR = 0;
+static uint32_t SOURCE_TRANSPOSED = 0;
 
 static const char* kernel_file = "kernel.vxbin";
 static vx_device_h device     = nullptr;
@@ -46,21 +50,31 @@ static void cleanup() {
 }
 
 static void show_usage() {
-  printf("Usage: ./tile_scale_zp_w4a16 [-k K] [-n N] [-q QBLK] [-d QDIR]\n");
+  printf("Usage: ./tile_scale_zp_w4a16 [-k K] [-n N] [-q QBLK] [-d QDIR] "
+         "[--gemm-qdir QDIR] [--source-transposed]\n");
 }
 
 static void parse_args(int argc, char** argv) {
+  bool gemm_qdir_set = false;
+  static struct option long_opts[] = {
+    {"gemm-qdir", required_argument, nullptr, 1000},
+    {"source-transposed", no_argument, nullptr, 1001},
+    {nullptr, 0, nullptr, 0},
+  };
   int c;
-  while ((c = getopt(argc, argv, "k:n:q:d:h")) != -1) {
+  while ((c = getopt_long(argc, argv, "k:n:q:d:h", long_opts, nullptr)) != -1) {
     switch (c) {
       case 'k': K    = atoi(optarg); break;
       case 'n': N    = atoi(optarg); break;
       case 'q': QBLK = atoi(optarg); break;
       case 'd': QDIR = atoi(optarg); break;
+      case 1000: GEMM_QDIR = atoi(optarg); gemm_qdir_set = true; break;
+      case 1001: SOURCE_TRANSPOSED = 1; break;
       case 'h': show_usage(); exit(0);
       default:  show_usage(); exit(1);
     }
   }
+  if (!gemm_qdir_set) GEMM_QDIR = QDIR;
 }
 
 static uint32_t align_up(uint32_t a, uint32_t b) {
@@ -77,11 +91,19 @@ static uint32_t log2_u32(uint32_t v) {
   return r;
 }
 
+static uint32_t output_K() {
+  return SOURCE_TRANSPOSED ? N : K;
+}
+
+static uint32_t output_N() {
+  return SOURCE_TRANSPOSED ? K : N;
+}
+
 static uint32_t slot_body_bytes(uint32_t ck, uint32_t cn) {
   const uint32_t MXU_NT = TILE_DMA_MXU_NT;
   const uint32_t ng_per_mxu_nt = (MXU_NT + QBLK - 1) / QBLK;
 
-  if (QDIR == 0) {
+  if (GEMM_QDIR == 0) {
     return (ck / QBLK) * cn * TILE_ELEM_BYTES;
   }
   return (cn / MXU_NT) * ck * ng_per_mxu_nt * TILE_ELEM_BYTES;
@@ -95,12 +117,14 @@ static void compute_slot_layout(uint32_t& total_bytes, uint32_t& nt_dma_count,
                                 uint32_t& slot_fk_fn, uint32_t& slot_fk_pn,
                                 uint32_t& slot_pk_fn, uint32_t& per_kt_full_K,
                                 uint32_t& max_slot_bytes) {
-  const uint32_t k_tiles = (K + TILE_DMA_KT - 1) / TILE_DMA_KT;
-  nt_dma_count = (N + TILE_DMA_NT - 1) / TILE_DMA_NT;
-  const uint32_t ck_last = (K - (k_tiles - 1) * TILE_DMA_KT < TILE_DMA_KT)
-                             ? (K - (k_tiles - 1) * TILE_DMA_KT) : TILE_DMA_KT;
-  const uint32_t cn_last = (N - (nt_dma_count - 1) * TILE_DMA_NT < TILE_DMA_NT)
-                             ? (N - (nt_dma_count - 1) * TILE_DMA_NT) : TILE_DMA_NT;
+  const uint32_t out_k = output_K();
+  const uint32_t out_n = output_N();
+  const uint32_t k_tiles = (out_k + TILE_DMA_KT - 1) / TILE_DMA_KT;
+  nt_dma_count = (out_n + TILE_DMA_NT - 1) / TILE_DMA_NT;
+  const uint32_t ck_last = (out_k - (k_tiles - 1) * TILE_DMA_KT < TILE_DMA_KT)
+                             ? (out_k - (k_tiles - 1) * TILE_DMA_KT) : TILE_DMA_KT;
+  const uint32_t cn_last = (out_n - (nt_dma_count - 1) * TILE_DMA_NT < TILE_DMA_NT)
+                             ? (out_n - (nt_dma_count - 1) * TILE_DMA_NT) : TILE_DMA_NT;
 
   slot_fk_fn = slot_bytes_for(TILE_DMA_KT, TILE_DMA_NT);
   slot_fk_pn = slot_bytes_for(TILE_DMA_KT, cn_last);
@@ -110,11 +134,11 @@ static void compute_slot_layout(uint32_t& total_bytes, uint32_t& nt_dma_count,
   total_bytes = 0;
   max_slot_bytes = 0;
   for (uint32_t kt = 0; kt < k_tiles; kt++) {
-    uint32_t ck = (K - kt * TILE_DMA_KT < TILE_DMA_KT) ? (K - kt * TILE_DMA_KT)
-                                                       : TILE_DMA_KT;
+    uint32_t ck = (out_k - kt * TILE_DMA_KT < TILE_DMA_KT) ? (out_k - kt * TILE_DMA_KT)
+                                                           : TILE_DMA_KT;
     for (uint32_t nt_dma = 0; nt_dma < nt_dma_count; nt_dma++) {
-      uint32_t cn = (N - nt_dma * TILE_DMA_NT < TILE_DMA_NT) ? (N - nt_dma * TILE_DMA_NT)
-                                                             : TILE_DMA_NT;
+      uint32_t cn = (out_n - nt_dma * TILE_DMA_NT < TILE_DMA_NT) ? (out_n - nt_dma * TILE_DMA_NT)
+                                                                 : TILE_DMA_NT;
       uint32_t slot = slot_bytes_for(ck, cn);
       total_bytes += slot;
       if (slot > max_slot_bytes) max_slot_bytes = slot;
@@ -122,48 +146,62 @@ static void compute_slot_layout(uint32_t& total_bytes, uint32_t& nt_dma_count,
   }
 }
 
-// CPU reference reorder (mirrors convert_scale_tiled).
+static uint16_t source_qparam_value(const std::vector<uint16_t>& src,
+                                    uint32_t out_k,
+                                    uint32_t out_n) {
+  const uint32_t source_row = SOURCE_TRANSPOSED ? out_n : out_k;
+  const uint32_t source_col = SOURCE_TRANSPOSED ? out_k : out_n;
+  if (QDIR == 0) {
+    return src[(source_row / QBLK) * N + source_col];
+  }
+  const uint32_t ng_total = (N + QBLK - 1) / QBLK;
+  return src[source_row * ng_total + (source_col / QBLK)];
+}
+
+// CPU reference reorder (mirrors GEMM-facing qparam slot layout).
 static void cpu_tile_scale_zp(const std::vector<uint16_t>& src,
                               std::vector<uint8_t>& dst,
                               uint32_t total_bytes, uint32_t nt_dma_count) {
   const uint32_t MXU_NT = TILE_DMA_MXU_NT;
   const uint32_t mxu_per_dma_nt = TILE_DMA_NT / MXU_NT;
-  const uint32_t k_tiles      = (K + TILE_DMA_KT - 1) / TILE_DMA_KT;
+  const uint32_t out_k_total = output_K();
+  const uint32_t out_n_total = output_N();
+  const uint32_t k_tiles      = (out_k_total + TILE_DMA_KT - 1) / TILE_DMA_KT;
   const uint32_t ng_per_mxu_nt = (MXU_NT + QBLK - 1) / QBLK;
-  const uint32_t ng_total      = (N + QBLK - 1) / QBLK;
 
   dst.assign(total_bytes, 0);
   for (uint32_t kt = 0; kt < k_tiles; kt++) {
-    uint32_t cur_k = (K - kt * TILE_DMA_KT < TILE_DMA_KT) ? (K - kt * TILE_DMA_KT)
-                                                          : TILE_DMA_KT;
+    uint32_t cur_k = (out_k_total - kt * TILE_DMA_KT < TILE_DMA_KT)
+                       ? (out_k_total - kt * TILE_DMA_KT) : TILE_DMA_KT;
     uint32_t cur_groups = cur_k / QBLK;
     for (uint32_t nt_dma = 0; nt_dma < nt_dma_count; nt_dma++) {
       uint32_t n_start = nt_dma * TILE_DMA_NT;
-      uint32_t cur_n_dma = (N - n_start < TILE_DMA_NT) ? (N - n_start) : TILE_DMA_NT;
+      uint32_t cur_n_dma = (out_n_total - n_start < TILE_DMA_NT)
+                             ? (out_n_total - n_start) : TILE_DMA_NT;
       uint32_t cur_nb = cur_n_dma / MXU_NT;
       uint32_t body_off = 0;
       for (uint32_t i = 0; i < kt; i++) {
-        uint32_t ck_prev = (K - i * TILE_DMA_KT < TILE_DMA_KT) ? (K - i * TILE_DMA_KT)
-                                                               : TILE_DMA_KT;
+        uint32_t ck_prev = (out_k_total - i * TILE_DMA_KT < TILE_DMA_KT)
+                             ? (out_k_total - i * TILE_DMA_KT) : TILE_DMA_KT;
         for (uint32_t j = 0; j < nt_dma_count; j++) {
-          uint32_t cn_prev = (N - j * TILE_DMA_NT < TILE_DMA_NT) ? (N - j * TILE_DMA_NT)
-                                                                 : TILE_DMA_NT;
+          uint32_t cn_prev = (out_n_total - j * TILE_DMA_NT < TILE_DMA_NT)
+                               ? (out_n_total - j * TILE_DMA_NT) : TILE_DMA_NT;
           body_off += slot_bytes_for(ck_prev, cn_prev);
         }
       }
       for (uint32_t j = 0; j < nt_dma; j++) {
-        uint32_t cn_prev = (N - j * TILE_DMA_NT < TILE_DMA_NT) ? (N - j * TILE_DMA_NT)
-                                                               : TILE_DMA_NT;
+        uint32_t cn_prev = (out_n_total - j * TILE_DMA_NT < TILE_DMA_NT)
+                             ? (out_n_total - j * TILE_DMA_NT) : TILE_DMA_NT;
         body_off += slot_bytes_for(cur_k, cn_prev);
       }
 
-      if (QDIR == 0) {
+      if (GEMM_QDIR == 0) {
         for (uint32_t nb = 0; nb < cur_nb; nb++) {
           for (uint32_t g = 0; g < cur_groups; g++) {
             for (uint32_t col = 0; col < MXU_NT; col++) {
-              uint32_t src_g = kt * (TILE_DMA_KT / QBLK) + g;
-              uint32_t src_c = n_start + nb * MXU_NT + col;
-              uint16_t v = src[src_g * N + src_c];
+              uint32_t out_k = kt * TILE_DMA_KT + g * QBLK;
+              uint32_t out_n = n_start + nb * MXU_NT + col;
+              uint16_t v = source_qparam_value(src, out_k, out_n);
               dst[body_off + 0] = uint8_t(v & 0xFF);
               dst[body_off + 1] = uint8_t((v >> 8) & 0xFF);
               body_off += 2;
@@ -176,8 +214,9 @@ static void cpu_tile_scale_zp(const std::vector<uint16_t>& src,
           uint32_t ng_start = (global_nt_mxu * MXU_NT) / QBLK;
           for (uint32_t k = 0; k < cur_k; k++) {
             for (uint32_t ng = 0; ng < ng_per_mxu_nt; ng++) {
-              uint32_t src_k = kt * TILE_DMA_KT + k;
-              uint16_t v = src[src_k * ng_total + ng_start + ng];
+              uint32_t out_k = kt * TILE_DMA_KT + k;
+              uint32_t out_n = (ng_start + ng) * QBLK;
+              uint16_t v = source_qparam_value(src, out_k, out_n);
               dst[body_off + 0] = uint8_t(v & 0xFF);
               dst[body_off + 1] = uint8_t((v >> 8) & 0xFF);
               body_off += 2;
@@ -191,23 +230,38 @@ static void cpu_tile_scale_zp(const std::vector<uint16_t>& src,
 
 int main(int argc, char** argv) {
   parse_args(argc, argv);
-  printf("tile_scale_zp_w4a16  K=%u N=%u QBLK=%u QDIR=%u\n", K, N, QBLK, QDIR);
+  printf("tile_scale_zp_w4a16  K=%u N=%u QBLK=%u source_QDIR=%u gemm_QDIR=%u source_transposed=%u\n",
+         K, N, QBLK, QDIR, GEMM_QDIR, SOURCE_TRANSPOSED);
 
   if (!is_pow2(TILE_DMA_KT) || !is_pow2(TILE_DMA_NT) ||
       !is_pow2(TILE_DMA_MXU_NT) || !is_pow2(QBLK)) {
     printf("ERROR: tile constants and QBLK must be powers of two\n");
     return 1;
   }
+  if (QDIR > 1 || GEMM_QDIR > 1) {
+    printf("ERROR: source_QDIR and gemm_QDIR must be 0 or 1\n");
+    return 1;
+  }
   if (QDIR == 0 && (K % QBLK) != 0) {
-    printf("ERROR: K must be multiple of QBLK for QDIR_COL\n");
+    printf("ERROR: K must be multiple of QBLK for source QDIR_COL\n");
     return 1;
   }
   if (QDIR == 1 && (N % QBLK) != 0) {
-    printf("ERROR: N must be multiple of QBLK for QDIR_ROW\n");
+    printf("ERROR: N must be multiple of QBLK for source QDIR_ROW\n");
     return 1;
   }
-  if (N % TILE_DMA_MXU_NT != 0) {
-    printf("ERROR: N must be multiple of MXU_NT\n");
+  const uint32_t out_k = output_K();
+  const uint32_t out_n = output_N();
+  if (GEMM_QDIR == 0 && (out_k % QBLK) != 0) {
+    printf("ERROR: output K must be multiple of QBLK for GEMM QDIR_COL\n");
+    return 1;
+  }
+  if (GEMM_QDIR == 1 && (out_n % QBLK) != 0) {
+    printf("ERROR: output N must be multiple of QBLK for GEMM QDIR_ROW\n");
+    return 1;
+  }
+  if (out_n % TILE_DMA_MXU_NT != 0) {
+    printf("ERROR: output N must be multiple of MXU_NT\n");
     return 1;
   }
 
@@ -241,7 +295,7 @@ int main(int argc, char** argv) {
   vx_dev_caps(device, VX_CAPS_NUM_THREADS, &num_threads);
   uint32_t tpb = uint32_t(num_threads);
 
-  uint32_t k_tiles = (K + TILE_DMA_KT - 1) / TILE_DMA_KT;
+  uint32_t k_tiles = (out_k + TILE_DMA_KT - 1) / TILE_DMA_KT;
   uint32_t ng_per_mxu_nt = (TILE_DMA_MXU_NT + QBLK - 1) / QBLK;
   uint32_t slot_elems = max_slot_bytes / 2;
   uint32_t blocks_x = (slot_elems + tpb - 1) / tpb;
@@ -259,6 +313,8 @@ int main(int argc, char** argv) {
   karg.N            = N;
   karg.QBLK         = QBLK;
   karg.QDIR         = QDIR;
+  karg.GEMM_QDIR    = GEMM_QDIR;
+  karg.SOURCE_TRANSPOSED = SOURCE_TRANSPOSED;
   karg.k_tiles      = k_tiles;
   karg.n_dma_tiles  = nt_dma_count;
   karg.slot_fk_fn   = slot_fk_fn;
@@ -269,7 +325,7 @@ int main(int argc, char** argv) {
   karg.log2_kt       = log2_u32(TILE_DMA_KT);
   karg.log2_nt       = log2_u32(TILE_DMA_NT);
   karg.log2_mxu_nt   = log2_u32(TILE_DMA_MXU_NT);
-  karg.log2_ng_per_mxu_nt = (QDIR == 1) ? log2_u32(ng_per_mxu_nt) : 0;
+  karg.log2_ng_per_mxu_nt = (GEMM_QDIR == 1) ? log2_u32(ng_per_mxu_nt) : 0;
   karg.log2_qblk          = log2_u32(QBLK);
 
   RT_CHECK(vx_upload_bytes(device, &karg, sizeof(karg), &args_buf));

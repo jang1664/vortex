@@ -9,6 +9,7 @@
 
 #include "common.h"
 #include <vortex.h>
+#include <getopt.h>
 #include <unistd.h>
 #include <cstdio>
 #include <cstdint>
@@ -19,6 +20,7 @@
 static uint32_t K = 64;
 static uint32_t N = 64;
 static uint32_t WTRANS = 0;
+static uint32_t SOURCE_TRANSPOSED = 0;
 
 static const char* kernel_file = "kernel.vxbin";
 
@@ -46,7 +48,7 @@ static void cleanup() {
 }
 
 static void show_usage() {
-  printf("Usage: ./tile_weight_w4a16 [-k K] [-n N] [-t WTRANS]\n");
+  printf("Usage: ./tile_weight_w4a16 [-k K] [-n N] [-t WTRANS] [--source-transposed]\n");
 }
 
 static bool is_pow2(uint32_t v) {
@@ -60,12 +62,17 @@ static uint32_t log2_u32(uint32_t v) {
 }
 
 static void parse_args(int argc, char** argv) {
+  static struct option long_opts[] = {
+    {"source-transposed", no_argument, nullptr, 1000},
+    {nullptr, 0, nullptr, 0},
+  };
   int c;
-  while ((c = getopt(argc, argv, "k:n:t:h")) != -1) {
+  while ((c = getopt_long(argc, argv, "k:n:t:h", long_opts, nullptr)) != -1) {
     switch (c) {
       case 'k': K = atoi(optarg); break;
       case 'n': N = atoi(optarg); break;
       case 't': WTRANS = atoi(optarg); break;
+      case 1000: SOURCE_TRANSPOSED = 1; break;
       case 'h': show_usage(); exit(0);
       default:  show_usage(); exit(1);
     }
@@ -75,6 +82,14 @@ static void parse_args(int argc, char** argv) {
 static uint8_t get_nibble(const std::vector<uint8_t>& src, uint32_t k, uint32_t n) {
   uint8_t byte = src[(uint64_t)k * (N / 2) + (n / 2)];
   return (n & 1u) ? (byte >> 4) : (byte & 0x0f);
+}
+
+static uint8_t get_nibble_at(const std::vector<uint8_t>& src,
+                             uint32_t row,
+                             uint32_t col,
+                             uint32_t cols) {
+  uint8_t byte = src[(uint64_t)row * (cols / 2) + (col / 2)];
+  return (col & 1u) ? (byte >> 4) : (byte & 0x0f);
 }
 
 // CPU reference reorder, matches convert_weight_tiled in
@@ -90,6 +105,34 @@ static void cpu_tile_weight(const std::vector<uint8_t>& src,
   const uint32_t row_bytes   = N / 2;
 
   dst.assign(K * row_bytes, 0);
+  if (SOURCE_TRANSPOSED) {
+    const uint32_t logical_K = N;
+    const uint32_t logical_N = K;
+    const uint32_t logical_n_tiles = logical_N / DMA_MXU_NT;
+    const uint32_t logical_k_tiles = (logical_K + DMA_KT - 1) / DMA_KT;
+
+    size_t idx = 0;
+    for (uint32_t kt = 0; kt < logical_k_tiles; kt++) {
+      uint32_t cur_k = (logical_K - kt * DMA_KT < DMA_KT) ? (logical_K - kt * DMA_KT) : DMA_KT;
+      uint32_t cur_kb = cur_k / DMA_MXU_KT;
+      for (uint32_t nt = 0; nt < logical_n_tiles; nt++) {
+        for (uint32_t kb = 0; kb < cur_kb; kb++) {
+          for (uint32_t n = 0; n < DMA_MXU_NT; n++) {
+            uint32_t source_row = nt * DMA_MXU_NT + n;
+            for (uint32_t k = 0; k < DMA_MXU_KT; k += 2) {
+              uint32_t source_col0 = kt * DMA_KT + kb * DMA_MXU_KT + k;
+              uint32_t source_col1 = source_col0 + 1;
+              uint8_t w0 = get_nibble_at(src, source_row, source_col0, N);
+              uint8_t w1 = get_nibble_at(src, source_row, source_col1, N);
+              dst[idx++] = (w0 & 0x0f) | uint8_t((w1 & 0x0f) << 4);
+            }
+          }
+        }
+      }
+    }
+    return;
+  }
+
   size_t idx = 0;
   for (uint32_t kt = 0; kt < k_tiles; kt++) {
     uint32_t cur_k = (K - kt * DMA_KT < DMA_KT) ? (K - kt * DMA_KT) : DMA_KT;
@@ -123,7 +166,8 @@ static void cpu_tile_weight(const std::vector<uint8_t>& src,
 
 int main(int argc, char** argv) {
   parse_args(argc, argv);
-  printf("tile_weight_w4a16 standalone test  K=%u  N=%u WTRANS=%u\n", K, N, WTRANS);
+  printf("tile_weight_w4a16 standalone test  K=%u  N=%u WTRANS=%u source_transposed=%u\n",
+         K, N, WTRANS, SOURCE_TRANSPOSED);
 
   if (K % TILE_DMA_MXU_KT != 0 || N % TILE_DMA_MXU_NT != 0 || (N & 1)) {
     printf("ERROR: K must be multiple of %u, N must be multiple of %u (and even).\n",
@@ -132,6 +176,10 @@ int main(int argc, char** argv) {
   }
   if (WTRANS > 1) {
     printf("ERROR: WTRANS must be 0 or 1\n");
+    return 1;
+  }
+  if (SOURCE_TRANSPOSED && WTRANS == 0) {
+    printf("ERROR: --source-transposed requires WTRANS=1\n");
     return 1;
   }
   if (!is_pow2(TILE_DMA_KT) || !is_pow2(TILE_DMA_MXU_KT) || !is_pow2(TILE_DMA_MXU_NT)) {
@@ -166,10 +214,12 @@ int main(int argc, char** argv) {
   uint32_t threads_per_block = uint32_t(num_threads);
 
   // 3D grid: chunks_per_(kt,nt) blocks × n_tiles × k_tiles
-  uint32_t k_tiles = (K + TILE_DMA_KT - 1) / TILE_DMA_KT;
-  uint32_t max_cur_k = (K < TILE_DMA_KT) ? K : TILE_DMA_KT;
+  const uint32_t logical_K = SOURCE_TRANSPOSED ? N : K;
+  const uint32_t logical_N = SOURCE_TRANSPOSED ? K : N;
+  uint32_t k_tiles = (logical_K + TILE_DMA_KT - 1) / TILE_DMA_KT;
+  uint32_t max_cur_k = (logical_K < TILE_DMA_KT) ? logical_K : TILE_DMA_KT;
   uint32_t cur_kb  = max_cur_k / TILE_DMA_MXU_KT;
-  uint32_t n_tiles = N / TILE_DMA_MXU_NT;
+  uint32_t n_tiles = logical_N / TILE_DMA_MXU_NT;
   uint32_t chunks_per_nt_kt = (WTRANS == 0)
                                 ? (cur_kb * TILE_DMA_MXU_KT)
                                 : (cur_kb * TILE_DMA_MXU_NT * (TILE_DMA_MXU_KT / 2));
@@ -185,6 +235,7 @@ int main(int argc, char** argv) {
   karg.K = K;
   karg.N = N;
   karg.WTRANS = WTRANS;
+  karg.SOURCE_TRANSPOSED = SOURCE_TRANSPOSED;
   karg.log2_kt = log2_u32(TILE_DMA_KT);
   karg.log2_mxu_kt = log2_u32(TILE_DMA_MXU_KT);
   karg.log2_mxu_nt = log2_u32(TILE_DMA_MXU_NT);

@@ -1,6 +1,7 @@
 #include "common.h"
 #include "bench_util.h"
 #include <vortex.h>
+#include <getopt.h>
 #include <unistd.h>
 #include <cstdio>
 #include <cstdint>
@@ -11,6 +12,7 @@
 static uint32_t K = 64;
 static uint32_t N = 64;
 static uint32_t WTRANS = 0;
+static uint32_t SOURCE_TRANSPOSED = 0;
 
 static vx_device_h device = nullptr;
 static vx_buffer_h kernel_bin = nullptr;
@@ -37,7 +39,8 @@ static void cleanup() {
 
 static void show_usage(const char* prog) {
   printf("Usage: %s [--warmup=N] [--iterations=N] [--csv] "
-         "[--output=PATH] [--output-append] [-k K] [-n N] [-t WTRANS]\n", prog);
+         "[--output=PATH] [--output-append] [-k K] [-n N] [-t WTRANS] "
+         "[--source-transposed]\n", prog);
 }
 
 static bool is_pow2(uint32_t v) {
@@ -58,12 +61,17 @@ static void parse_args(int argc, char** argv) {
     }
   }
 
+  static struct option long_opts[] = {
+    {"source-transposed", no_argument, nullptr, 1000},
+    {nullptr, 0, nullptr, 0},
+  };
   int c;
-  while ((c = getopt(argc, argv, "k:n:t:h")) != -1) {
+  while ((c = getopt_long(argc, argv, "k:n:t:h", long_opts, nullptr)) != -1) {
     switch (c) {
       case 'k': K = atoi(optarg); break;
       case 'n': N = atoi(optarg); break;
       case 't': WTRANS = atoi(optarg); break;
+      case 1000: SOURCE_TRANSPOSED = 1; break;
       case 'h': show_usage(argv[0]); exit(0);
       default: show_usage(argv[0]); exit(1);
     }
@@ -81,6 +89,10 @@ int main(int argc, char** argv) {
   }
   if (WTRANS > 1) {
     printf("ERROR: WTRANS must be 0 or 1\n");
+    return 1;
+  }
+  if (SOURCE_TRANSPOSED && WTRANS == 0) {
+    printf("ERROR: --source-transposed requires WTRANS=1\n");
     return 1;
   }
   if (!is_pow2(TILE_DMA_KT) || !is_pow2(TILE_DMA_MXU_KT) || !is_pow2(TILE_DMA_MXU_NT)) {
@@ -108,10 +120,12 @@ int main(int argc, char** argv) {
     return 1;
   }
   const uint32_t threads_per_block = uint32_t(num_threads);
-  const uint32_t k_tiles = (K + TILE_DMA_KT - 1) / TILE_DMA_KT;
-  const uint32_t max_cur_k = (K < TILE_DMA_KT) ? K : TILE_DMA_KT;
+  const uint32_t logical_K = SOURCE_TRANSPOSED ? N : K;
+  const uint32_t logical_N = SOURCE_TRANSPOSED ? K : N;
+  const uint32_t k_tiles = (logical_K + TILE_DMA_KT - 1) / TILE_DMA_KT;
+  const uint32_t max_cur_k = (logical_K < TILE_DMA_KT) ? logical_K : TILE_DMA_KT;
   const uint32_t cur_kb = max_cur_k / TILE_DMA_MXU_KT;
-  const uint32_t n_tiles = N / TILE_DMA_MXU_NT;
+  const uint32_t n_tiles = logical_N / TILE_DMA_MXU_NT;
   const uint32_t chunks_per_nt_kt = (WTRANS == 0)
                                       ? (cur_kb * TILE_DMA_MXU_KT)
                                       : (cur_kb * TILE_DMA_MXU_NT * (TILE_DMA_MXU_KT / 2));
@@ -128,6 +142,7 @@ int main(int argc, char** argv) {
   karg.K = K;
   karg.N = N;
   karg.WTRANS = WTRANS;
+  karg.SOURCE_TRANSPOSED = SOURCE_TRANSPOSED;
   karg.log2_kt = log2_u32(TILE_DMA_KT);
   karg.log2_mxu_kt = log2_u32(TILE_DMA_MXU_KT);
   karg.log2_mxu_nt = log2_u32(TILE_DMA_MXU_NT);

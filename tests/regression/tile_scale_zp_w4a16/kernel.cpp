@@ -21,7 +21,9 @@ void kernel_tile_scale_zp_w4a16(kernel_arg_t *__UNIFORM__ arg) {
   const uint32_t K          = arg->K;
   const uint32_t N          = arg->N;
   const uint32_t QBLK       = arg->QBLK;
-  const uint32_t QDIR       = arg->QDIR;
+  const uint32_t SOURCE_QDIR = arg->QDIR;
+  const uint32_t GEMM_QDIR   = arg->GEMM_QDIR;
+  const uint32_t SOURCE_TRANSPOSED = arg->SOURCE_TRANSPOSED;
   const uint32_t k_tiles    = arg->k_tiles;
   const uint32_t n_dma_tiles = arg->n_dma_tiles;
   const uint32_t slot_fk_fn = arg->slot_fk_fn;
@@ -46,16 +48,18 @@ void kernel_tile_scale_zp_w4a16(kernel_arg_t *__UNIFORM__ arg) {
   const uint32_t elem_in_slot = blockIdx.x * blockDim.x + threadIdx.x;
   const uint32_t byte_in_slot = elem_in_slot * TILE_ELEM_BYTES;
 
+  const uint32_t out_K = SOURCE_TRANSPOSED ? N : K;
+  const uint32_t out_N = SOURCE_TRANSPOSED ? K : N;
   const uint32_t kt_start = kt << log2_kt;
   const uint32_t nt_start = nt_dma << log2_nt;
-  const uint32_t cur_k = ((K - kt_start) < kt_size) ? (K - kt_start) : kt_size;
-  const uint32_t cur_n = ((N - nt_start) < nt_size) ? (N - nt_start) : nt_size;
+  const uint32_t cur_k = ((out_K - kt_start) < kt_size) ? (out_K - kt_start) : kt_size;
+  const uint32_t cur_n = ((out_N - nt_start) < nt_size) ? (out_N - nt_start) : nt_size;
   const uint32_t cur_nb = cur_n >> log2_mxu_nt;
   const uint32_t cur_groups = cur_k >> log2_qblk;
   const uint32_t ng_per_mxu_nt = 1u << log2_ng_per_mxu_nt;
 
   uint32_t body_bytes;
-  if (QDIR == 0) {
+  if (GEMM_QDIR == 0) {
     body_bytes = cur_groups * cur_n * TILE_ELEM_BYTES;
   } else {
     body_bytes = cur_nb * cur_k * ng_per_mxu_nt * TILE_ELEM_BYTES;
@@ -81,18 +85,19 @@ void kernel_tile_scale_zp_w4a16(kernel_arg_t *__UNIFORM__ arg) {
 
   // Body element. Decode (nb, ..., col-or-ng) from elem_in_slot.
   uint64_t src_byte_off;
-  if (QDIR == 0) {
+  uint32_t out_k = kt_start;
+  uint32_t out_n = nt_start;
+  if (GEMM_QDIR == 0) {
     // body element layout: (nb, g, col)
     const uint32_t col   = elem_in_slot & mxu_nt_mask;
     const uint32_t nb_g  = elem_in_slot >> log2_mxu_nt;
     const uint32_t g     = nb_g % cur_groups;
     const uint32_t nb    = nb_g / cur_groups;
 
-    const uint32_t src_g = (kt << (log2_kt - log2_qblk)) + g;
-    const uint32_t src_c = nt_start + (nb << log2_mxu_nt) + col;
-    src_byte_off = ((uint64_t)src_g * N + src_c) * TILE_ELEM_BYTES;
+    out_k = kt_start + (g << log2_qblk);
+    out_n = nt_start + (nb << log2_mxu_nt) + col;
   } else {
-    // QDIR == 1: body element layout: (nb, k_loc, ng_loc)
+    // GEMM_QDIR == 1: body element layout: (nb, k_loc, ng_loc)
     const uint32_t ng_m  = ng_per_mxu_nt - 1u;
     const uint32_t ng_loc = elem_in_slot & ng_m;
     const uint32_t nb_k  = elem_in_slot >> log2_ng_per_mxu_nt;
@@ -101,9 +106,19 @@ void kernel_tile_scale_zp_w4a16(kernel_arg_t *__UNIFORM__ arg) {
 
     const uint32_t global_nt_mxu = nt_dma * mxu_per_dma_nt + nb;
     const uint32_t global_ng_off = ((global_nt_mxu << log2_mxu_nt) >> log2_qblk) + ng_loc;
-    const uint32_t src_k         = kt_start + k_loc;
-    const uint32_t ng_total      = N >> log2_qblk;   // QBLK pow2, N multiple
-    src_byte_off = ((uint64_t)src_k * ng_total + global_ng_off) * TILE_ELEM_BYTES;
+    out_k = kt_start + k_loc;
+    out_n = global_ng_off << log2_qblk;
+  }
+
+  const uint32_t source_row = SOURCE_TRANSPOSED ? out_n : out_k;
+  const uint32_t source_col = SOURCE_TRANSPOSED ? out_k : out_n;
+  if (SOURCE_QDIR == 0) {
+    const uint32_t source_g = source_row >> log2_qblk;
+    src_byte_off = ((uint64_t)source_g * N + source_col) * TILE_ELEM_BYTES;
+  } else {
+    const uint32_t source_ng_total = N >> log2_qblk;
+    const uint32_t source_ng = source_col >> log2_qblk;
+    src_byte_off = ((uint64_t)source_row * source_ng_total + source_ng) * TILE_ELEM_BYTES;
   }
 
   *reinterpret_cast<uint16_t *>(dst_p) =

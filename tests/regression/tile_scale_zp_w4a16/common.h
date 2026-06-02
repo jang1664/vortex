@@ -20,7 +20,9 @@ typedef struct {
   uint32_t K;
   uint32_t N;
   uint32_t QBLK;
-  uint32_t QDIR;
+  uint32_t QDIR;          // source qparam direction
+  uint32_t GEMM_QDIR;     // output GEMM-facing qparam layout direction
+  uint32_t SOURCE_TRANSPOSED;
 
   uint32_t k_tiles;
   uint32_t n_dma_tiles;

@@ -42,6 +42,9 @@ int main(int argc, char *argv[]) {
   uint32_t QBLK = 128;
   uint32_t QDIR = 0;
   uint32_t WTRANS = 1;
+  uint32_t GEMM_QDIR = 0;
+  uint32_t SOURCE_TRANSPOSED = 0;
+  bool gemm_qdir_set = false;
   uint32_t src_layout = SRC_LAYOUT_ROW_MAJOR;
   for (int i = 1; i < argc; ++i) {
     if (strcmp(argv[i], "-k") == 0) K = atoi(argv[++i]);
@@ -49,25 +52,36 @@ int main(int argc, char *argv[]) {
     else if (strcmp(argv[i], "-q") == 0) QBLK = atoi(argv[++i]);
     else if (strcmp(argv[i], "-d") == 0) QDIR = atoi(argv[++i]);
     else if (strcmp(argv[i], "-t") == 0) WTRANS = atoi(argv[++i]);
+    else if (strcmp(argv[i], "--gemm-qdir") == 0) {
+      GEMM_QDIR = atoi(argv[++i]);
+      gemm_qdir_set = true;
+    }
+    else if (strncmp(argv[i], "--gemm-qdir=", 13) == 0) {
+      GEMM_QDIR = atoi(argv[i] + 13);
+      gemm_qdir_set = true;
+    }
+    else if (strcmp(argv[i], "--source-transposed") == 0) SOURCE_TRANSPOSED = 1;
     else if (strcmp(argv[i], "--layout-from") == 0) src_layout = parse_src_layout(argv[++i]);
     else if (strncmp(argv[i], "--layout-from=", 14) == 0) src_layout = parse_src_layout(argv[i] + 14);
     else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
       printf("Usage: %s [--warmup=N] [--iterations=N] [--csv] "
              "[--output=PATH] [--output-append] "
              "[-k K] [-n N] [-q QBLK] [-d QDIR] [-t WTRANS] "
+             "[--gemm-qdir QDIR] [--source-transposed] "
              "[--layout-from row_major_fp16|gemm_c_tiled]\n", argv[0]);
       return 0;
     }
   }
-  if (!valid_fused_quant_shape(K, N, QBLK, QDIR, WTRANS)) {
+  if (!gemm_qdir_set) GEMM_QDIR = QDIR;
+  if (!valid_fused_quant_shape(K, N, QBLK, QDIR, WTRANS, GEMM_QDIR, SOURCE_TRANSPOSED)) {
     printf("ERROR: require K,N multiples of 32, even N, pow2 QBLK, "
-           "QDIR/WTRANS in {0,1}, and quant axis divisible by QBLK\n");
+           "source_QDIR/GEMM_QDIR/WTRANS in {0,1}, and quant axes divisible by QBLK\n");
     return 1;
   }
 
   const size_t src_elems = (size_t)K * N;
   const size_t weight_bytes = src_elems / 2;
-  const size_t scale_bytes = scale_total_bytes_host(K, N, QBLK, QDIR);
+  const size_t scale_bytes = scale_total_bytes_host(K, N, QBLK, GEMM_QDIR, SOURCE_TRANSPOSED);
   std::vector<fp16_t> h_src(src_elems);
   init_src(h_src);
   std::vector<fp16_t> h_src_device(src_elems);
@@ -90,15 +104,17 @@ int main(int argc, char *argv[]) {
   const uint32_t tpb = std::min(256u, (uint32_t)(num_warps * num_threads));
 
   kernel_arg_t arg = {};
-  const uint32_t max_slot_elems = max_scale_slot_bytes_host(K, N, QBLK, QDIR) / TILE_ELEM_BYTES;
-  const uint32_t n_dma_tiles = (N + TILE_DMA_NT - 1u) / TILE_DMA_NT;
-  const uint32_t k_tiles = (K + TILE_DMA_KT - 1u) / TILE_DMA_KT;
+  const uint32_t max_slot_elems = max_scale_slot_bytes_host(K, N, QBLK, GEMM_QDIR, SOURCE_TRANSPOSED) / TILE_ELEM_BYTES;
+  const uint32_t out_K = SOURCE_TRANSPOSED ? N : K;
+  const uint32_t out_N = SOURCE_TRANSPOSED ? K : N;
+  const uint32_t n_dma_tiles = (out_N + TILE_DMA_NT - 1u) / TILE_DMA_NT;
+  const uint32_t k_tiles = (out_K + TILE_DMA_KT - 1u) / TILE_DMA_KT;
   const uint32_t qparam_work = k_tiles * n_dma_tiles * max_slot_elems;
   const uint32_t work_items = std::max((uint32_t)weight_bytes, qparam_work);
   const uint32_t blocks = std::min(
       (work_items + tpb - 1u) / tpb,
       std::max(1u, (uint32_t)num_cores * 4u));
-  if (!init_kernel_arg(arg, K, N, QBLK, QDIR, WTRANS, src_layout, blocks, tpb)) {
+  if (!init_kernel_arg(arg, K, N, QBLK, QDIR, WTRANS, GEMM_QDIR, SOURCE_TRANSPOSED, src_layout, blocks, tpb)) {
     printf("ERROR: failed to initialize kernel args\n");
     cleanup();
     return 1;

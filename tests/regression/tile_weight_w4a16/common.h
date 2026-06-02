@@ -19,6 +19,7 @@ typedef struct {
   uint32_t K;            // weight rows (K)
   uint32_t N;            // weight output channels (N) — packed dim is N/2
   uint32_t WTRANS;       // 0: pack n-pairs, 1: pack k-pairs
+  uint32_t SOURCE_TRANSPOSED; // 1: src is physical W^T [N, K] row-major
 
   uint32_t log2_kt;
   uint32_t log2_mxu_kt;

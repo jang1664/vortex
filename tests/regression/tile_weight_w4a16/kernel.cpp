@@ -33,6 +33,7 @@ void kernel_tile_weight_w4a16(kernel_arg_t *__UNIFORM__ arg) {
   const uint32_t K = arg->K;
   const uint32_t N = arg->N;
   const uint32_t WTRANS = arg->WTRANS;
+  const uint32_t SOURCE_TRANSPOSED = arg->SOURCE_TRANSPOSED;
   const uint32_t log2_kt = arg->log2_kt;
   const uint32_t log2_mxu_kt = arg->log2_mxu_kt;
   const uint32_t log2_mxu_nt = arg->log2_mxu_nt;
@@ -44,7 +45,48 @@ void kernel_tile_weight_w4a16(kernel_arg_t *__UNIFORM__ arg) {
   const uint32_t pair_per_n_sub = mxu_nt >> 1;              // WTRANS=0
   const uint32_t pair_per_k_sub = mxu_kt >> 1;              // WTRANS=1
 
-  const uint32_t row_bytes = N / 2;
+  const uint32_t src_row_bytes = N / 2;
+
+  if (SOURCE_TRANSPOSED != 0) {
+    if (WTRANS == 0) return;
+
+    const uint32_t logical_K = N;
+    const uint32_t logical_N = K;
+    const uint32_t logical_row_bytes = logical_N >> 1;
+    const uint32_t kt  = blockIdx.z;
+    const uint32_t nt  = blockIdx.y;
+    const uint32_t tid = blockIdx.x * blockDim.x + threadIdx.x;
+
+    const uint32_t kt_start = kt << log2_kt;
+    const uint32_t ck = ((logical_K - kt_start) < kt_size) ? (logical_K - kt_start) : kt_size;
+    const uint32_t cur_kb = ck >> log2_mxu_kt;
+    const uint32_t bytes_per_nt_kt = cur_kb * mxu_nt * pair_per_k_sub;
+    if (tid >= bytes_per_nt_kt) return;
+
+    const uint32_t log2_micro_bytes = log2_mxu_nt + log2_mxu_kt - 1u;
+    const uint32_t micro_bytes = 1u << log2_micro_bytes;
+    const uint32_t kb = tid >> log2_micro_bytes;
+    const uint32_t in_micro = tid & (micro_bytes - 1u);
+    const uint32_t n_in_sub = in_micro >> (log2_mxu_kt - 1u);
+    const uint32_t k_pair = in_micro & (pair_per_k_sub - 1u);
+
+    const uint32_t logical_k0 = kt_start + (kb << log2_mxu_kt) + (k_pair << 1);
+    const uint32_t logical_k1 = logical_k0 + 1;
+    const uint32_t logical_n = (nt << log2_mxu_nt) + n_in_sub;
+
+    const uint8_t b0 = src[(uint64_t)logical_n * src_row_bytes + (logical_k0 >> 1)];
+    const uint8_t b1 = src[(uint64_t)logical_n * src_row_bytes + (logical_k1 >> 1)];
+    const uint8_t w0 = (logical_k0 & 1u) ? (b0 >> 4) : (b0 & 0x0f);
+    const uint8_t w1 = (logical_k1 & 1u) ? (b1 >> 4) : (b1 & 0x0f);
+
+    const uint64_t kt_base = (uint64_t)kt * kt_size * logical_row_bytes;
+    const uint64_t nt_base = (uint64_t)nt * ck * pair_per_n_sub;
+    const uint64_t dst_off = kt_base + nt_base + (uint64_t)tid;
+    dst[dst_off] = (w0 & 0x0f) | (uint8_t)((w1 & 0x0f) << 4);
+    return;
+  }
+
+  const uint32_t row_bytes = src_row_bytes;
 
   const uint32_t kt  = blockIdx.z;
   const uint32_t nt  = blockIdx.y;
