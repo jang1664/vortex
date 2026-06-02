@@ -19,7 +19,7 @@ ROOT_DIR=$SCRIPT_DIR/..
 show_usage()
 {
     echo "Vortex BlackBox Test Driver v1.0"
-    echo "Usage: $0 [[--clusters=#n] [--cores=#n] [--warps=#n] [--threads=#n] [--l2cache] [--l3cache] [[--driver=#name] [--app=#app] [--pytest=#file] [--args=#args] [--debug=#level] [--scope] [--perf=#class] [--bench] [--log=logfile] [--nohup] [--help]]"
+    echo "Usage: $0 [[--clusters=#n] [--cores=#n] [--warps=#n] [--threads=#n] [--l2cache] [--l3cache] [[--driver=#name] [--app=#app] [--pytest=#file] [--args=#args] [--debug=#level] [--scope] [--perf=#class] [--bench] [--build-only] [--run-only] [--log=logfile] [--nohup] [--help]]"
 }
 
 show_help()
@@ -34,6 +34,8 @@ show_help()
     echo "  --- Benchmark mode ---"
     echo "--bench:      run the per-app <app>_bench binary instead of <app> (requires bench_main.cpp)"
     echo "              all bench-binary flags (--warmup=N, --iterations=N, --csv) go through --args"
+    echo "--build-only: build driver/runtime and app artifacts, then exit without running"
+    echo "--run-only:   run previously built app artifacts without rebuilding"
     echo "env LOG_MAX_BYTES: keep only last N bytes in debug log (rolling buffer)"
     echo "env LOG_FLUSH_LINES: flush interval for rolling buffer (default: 200)"
 }
@@ -116,6 +118,8 @@ DEFAULTS() {
     TEMPBUILD=0
     LOGFILE=run.log
     BENCH=0
+    BUILD_ONLY=0
+    RUN_ONLY=0
 }
 
 parse_args() {
@@ -139,10 +143,20 @@ parse_args() {
             --log=*)    LOGFILE=${i#*=} ;;
             --nohup)    TEMPBUILD=1 ;;
             --bench)    BENCH=1 ;;
+            --build-only) BUILD_ONLY=1 ;;
+            --run-only) RUN_ONLY=1 ;;
             --help)     show_help; exit 0 ;;
             *)          show_usage; exit 1 ;;
         esac
     done
+    if [ $BUILD_ONLY -eq 1 ] && [ $RUN_ONLY -eq 1 ]; then
+        echo "Error: --build-only and --run-only are mutually exclusive"
+        exit 1
+    fi
+    if [ $RUN_ONLY -eq 1 ] && [ $TEMPBUILD -eq 1 ]; then
+        echo "Error: --run-only does not support --nohup"
+        exit 1
+    fi
 }
 
 set_driver_path() {
@@ -232,6 +246,30 @@ build_driver() {
     fi
 }
 
+build_app() {
+    if [ -n "$PYTEST" ]; then
+        echo "Error: --build-only does not support --pytest"
+        exit 1
+    fi
+
+    local cmd_opts=""
+    [ $DEBUG -eq 1 ] && cmd_opts=$(add_option "$cmd_opts" "DEBUG=1")
+    [ $TEMPBUILD -eq 1 ] && cmd_opts=$(add_option "$cmd_opts" "VORTEX_RT_PATH=\"$TEMPDIR\"")
+    [ -n "$CONFIGS" ] && cmd_opts=$(add_option "$cmd_opts" "CONFIGS=\"$CONFIGS\"")
+
+    local make_target="all"
+    [ $BENCH -eq 1 ] && make_target="bench"
+    cmd_opts=$(add_option "$cmd_opts" "make -C \"$APP_PATH\" $make_target")
+
+    echo "Running: $cmd_opts"
+    eval "$cmd_opts"
+    status=$?
+    if [ $status -ne 0 ]; then
+        echo "Error building app: $APP_PATH"
+        exit $status
+    fi
+}
+
 run_app() {
     local cmd_opts=""
     [ $DEBUG -eq 1 ] && cmd_opts=$(add_option "$cmd_opts" "DEBUG=1")
@@ -313,6 +351,10 @@ run_app() {
         else
             local vcs_target="run-xrt"
             [ $BENCH -eq 1 ] && vcs_target="run-xrt-bench"
+            if [ $RUN_ONLY -eq 1 ]; then
+                vcs_target="exec-xrt"
+                [ $BENCH -eq 1 ] && vcs_target="exec-xrt-bench"
+            fi
             cmd_opts=$(add_option "$cmd_opts" "VCS_SOCKET_PORT=$VCS_PORT LD_LIBRARY_PATH=$SIMV_DIR:\$LD_LIBRARY_PATH make -C \"$APP_PATH\" $vcs_target")
         fi
     elif [ -n "$PYTEST" ]; then
@@ -321,6 +363,10 @@ run_app() {
     else
         local make_target="run-$DRIVER"
         [ $BENCH -eq 1 ] && make_target="run-$DRIVER-bench"
+        if [ $RUN_ONLY -eq 1 ]; then
+            make_target="exec-$DRIVER"
+            [ $BENCH -eq 1 ] && make_target="exec-$DRIVER-bench"
+        fi
         cmd_opts=$(add_option "$cmd_opts" "make -C \"$APP_PATH\" $make_target")
     fi
 
@@ -413,10 +459,12 @@ main() {
 
     export VORTEX_PROFILING=$PERF_CLASS
 
-    make -C "$ROOT_DIR/hw" config > /dev/null
-    make -C "$ROOT_DIR/runtime/stub" > /dev/null
+    if [ $RUN_ONLY -ne 1 ]; then
+        make -C "$ROOT_DIR/hw" config > /dev/null
+        make -C "$ROOT_DIR/runtime/stub" > /dev/null
+    fi
 
-    if [ $TEMPBUILD -eq 1 ]; then
+    if [ $TEMPBUILD -eq 1 ] && [ $RUN_ONLY -ne 1 ]; then
         # setup temp directory
         TEMPDIR=$(mktemp -d)
         mkdir -p "$TEMPDIR"
@@ -427,7 +475,15 @@ main() {
         trap "rm -rf $TEMPDIR" EXIT
     fi
 
-    build_driver
+    if [ $RUN_ONLY -ne 1 ]; then
+        build_driver
+    fi
+
+    if [ $BUILD_ONLY -eq 1 ]; then
+        build_app
+        exit 0
+    fi
+
     run_app
     status=$?
 
