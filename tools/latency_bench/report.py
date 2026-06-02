@@ -8,6 +8,7 @@ from typing import Any
 
 import pandas as pd
 
+from .status import classify_status
 from .suite import BenchSuite, suite_to_rows
 
 
@@ -15,11 +16,9 @@ RESULT_COLUMNS = [
     "suite", "case_id", "exec_key", "app", "kind", "op", "backend",
     "variant", "stage", "name", "args", "shape_json", "calls_per_forward",
     "fpga_bin_dir", "xclbin_sha256", "warmup", "iterations", "source",
-    "status", "returncode", "raw_csv", "log_file", "elapsed_wall_s",
+    "status", "returncode", "failure_phase", "raw_csv", "log_file", "elapsed_wall_s",
     "samples", "min_us", "avg_us", "max_us", "p50_us", "p95_us",
 ]
-
-TIMEOUT_RETURNCODES = {124, 137}
 
 
 def sha256_file(path: Path) -> str:
@@ -39,7 +38,7 @@ def read_status_csv(path: Path) -> dict[str, dict[str, str]]:
 
 def read_bench_csv(path: Path) -> dict[str, Any]:
     if not path.exists():
-        return {}
+        return {"parse_error": "missing_raw_csv"}
     rows = []
     with path.open(newline="") as fp:
         for row in csv.reader(fp):
@@ -47,7 +46,7 @@ def read_bench_csv(path: Path) -> dict[str, Any]:
                 continue
             rows.append(row)
     if not rows:
-        return {}
+        return {"parse_error": "empty_raw_csv"}
     row = rows[-1]
     if len(row) < 7:
         return {"parse_error": f"expected 7 columns, got {len(row)}"}
@@ -65,18 +64,6 @@ def read_bench_csv(path: Path) -> dict[str, Any]:
         return {"parse_error": str(exc)}
 
 
-def classify_status(returncode: int, *, has_status: bool, bench: dict[str, Any]) -> str:
-    if not has_status:
-        return "not_run"
-    if returncode in TIMEOUT_RETURNCODES:
-        return "timeout"
-    if "parse_error" in bench:
-        return "parse_error"
-    if returncode == 0 and bench:
-        return "pass"
-    return "fail"
-
-
 def build_results(suite: BenchSuite, out_dir: Path, fpga_bin_dir: Path) -> pd.DataFrame:
     status_rows = read_status_csv(out_dir / "run_status.csv")
     xclbin = fpga_bin_dir / "vortex_afu.xclbin"
@@ -90,7 +77,13 @@ def build_results(suite: BenchSuite, out_dir: Path, fpga_bin_dir: Path) -> pd.Da
         log_file = Path(status.get("log_file", out_dir / "logs" / f"{exec_key}.log"))
         bench = read_bench_csv(raw_csv)
         returncode = int(status.get("returncode", 999)) if status else 999
-        run_status = classify_status(returncode, has_status=bool(status), bench=bench)
+        failure_phase = status.get("failure_phase", "")
+        run_status = classify_status(
+            returncode,
+            has_status=bool(status),
+            bench=bench,
+            failure_phase=failure_phase,
+        )
 
         out = {
             **row,
@@ -98,6 +91,7 @@ def build_results(suite: BenchSuite, out_dir: Path, fpga_bin_dir: Path) -> pd.Da
             "xclbin_sha256": xclbin_sha,
             "status": run_status,
             "returncode": returncode,
+            "failure_phase": failure_phase,
             "raw_csv": str(raw_csv),
             "log_file": str(log_file),
             "elapsed_wall_s": status.get("elapsed_wall_s"),

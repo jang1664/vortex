@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .status import classify_status
+
 
 PROGRESS_COLUMNS = [
     "timestamp_utc",
@@ -20,6 +22,7 @@ PROGRESS_COLUMNS = [
     "iterations",
     "status",
     "returncode",
+    "failure_phase",
     "elapsed_wall_s",
     "raw_csv",
     "log_file",
@@ -32,8 +35,6 @@ PROGRESS_COLUMNS = [
     "p95_us",
     "parse_error",
 ]
-
-TIMEOUT_RETURNCODES = {124, 137}
 
 
 def _read_bench_csv(path: Path) -> dict[str, Any]:
@@ -63,16 +64,6 @@ def _read_bench_csv(path: Path) -> dict[str, Any]:
         "p50_us": row[5],
         "p95_us": row[6],
     }
-
-
-def _classify_status(returncode: int, bench: dict[str, Any]) -> str:
-    if returncode in TIMEOUT_RETURNCODES:
-        return "timeout"
-    if returncode == 0 and bench and "parse_error" not in bench:
-        return "pass"
-    if returncode == 0 and "parse_error" in bench:
-        return "parse_error"
-    return "fail"
 
 
 def write_progress_header(output: Path) -> None:
@@ -111,6 +102,7 @@ def append_progress_execution(
     elapsed_wall_s: str,
     raw_csv: Path,
     log_file: Path,
+    failure_phase: str = "",
 ) -> None:
     bench = _read_bench_csv(raw_csv)
     row = {
@@ -124,8 +116,9 @@ def append_progress_execution(
         "args": args,
         "warmup": warmup,
         "iterations": iterations,
-        "status": _classify_status(returncode, bench),
+        "status": classify_status(returncode, bench=bench, failure_phase=failure_phase),
         "returncode": returncode,
+        "failure_phase": failure_phase,
         "elapsed_wall_s": elapsed_wall_s,
         "raw_csv": str(raw_csv),
         "log_file": str(log_file),
@@ -158,6 +151,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--warmup", required=True, type=int, help="Warmup count.")
     parser.add_argument("--iterations", required=True, type=int, help="Iteration count.")
     parser.add_argument("--returncode", required=True, type=int, help="Benchmark process return code.")
+    parser.add_argument("--failure-phase", default="", choices=["", "build", "run"], help="Failed phase, if known.")
     parser.add_argument("--elapsed-wall-s", required=True, help="Wall-clock seconds for the blackbox invocation.")
     parser.add_argument("--raw-csv", required=True, type=Path, help="Raw per-execution benchmark CSV.")
     parser.add_argument("--log-file", required=True, type=Path, help="Per-execution log file.")
@@ -178,6 +172,7 @@ def main(argv: list[str] | None = None) -> int:
         warmup=args.warmup,
         iterations=args.iterations,
         returncode=args.returncode,
+        failure_phase=args.failure_phase,
         elapsed_wall_s=args.elapsed_wall_s,
         raw_csv=args.raw_csv,
         log_file=args.log_file,

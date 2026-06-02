@@ -55,6 +55,7 @@ class RunOptions:
     append_raw_csv: Path | None = None
     run_id: str | None = None
     skip_existing: bool = False
+    prebuild: bool = True
 
 
 @dataclass(frozen=True)
@@ -149,6 +150,10 @@ def _q(value: str | Path) -> str:
     return shlex.quote(str(value))
 
 
+def _safe_filename(value: str) -> str:
+    return "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in value)
+
+
 def repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
@@ -202,12 +207,13 @@ def write_run_script(suite: BenchSuite, options: RunOptions, units: list[Executi
     status_csv = options.out_dir / "run_status.csv"
     progress_csv = options.out_dir / "progress.csv"
     append_raw_csv = options.append_raw_csv.resolve() if options.append_raw_csv else None
+    status_columns = ("exec_key", "app", "returncode", "failure_phase", "raw_csv", "log_file", "elapsed_wall_s")
     lines = [
         "#!/usr/bin/env bash",
         "set -uo pipefail",
         f"cd {_q(options.build_dir)}",
         f"mkdir -p {_q(options.out_dir / 'raw')} {_q(options.out_dir / 'logs')}",
-        f"printf 'exec_key,app,returncode,raw_csv,log_file,elapsed_wall_s\\n' > {_q(status_csv)}",
+        f"printf '%s\\n' {_q(','.join(status_columns))} > {_q(status_csv)}",
         f"printf '%s\\n' {_q(','.join(PROGRESS_COLUMNS))} > {_q(progress_csv)}",
         f"export FPGA_BIN_DIR={_q(options.fpga_bin_dir)}",
         f"export TARGET={_q('hw')}",
@@ -228,30 +234,66 @@ def write_run_script(suite: BenchSuite, options: RunOptions, units: list[Executi
     if options.configs_extra:
         lines.append(f"export CONFIGS=\"${{CONFIGS:-}} {options.configs_extra}\"")
 
+    blackbox_args = " ".join(_q(arg) for arg in options.blackbox_args)
+    blackbox_args = f"{blackbox_args} " if blackbox_args else ""
+    lines.extend([
+        "declare -A LATENCY_BENCH_BUILD_RC",
+        "declare -A LATENCY_BENCH_BUILD_LOG",
+    ])
+    if options.prebuild:
+        apps = list(dict.fromkeys(unit.app for unit in units))
+        for idx, app in enumerate(apps, start=1):
+            build_log = options.out_dir / "logs" / f"build_{_safe_filename(app)}.log"
+            build_cmd = (
+                f"./ci/blackbox.sh {blackbox_args}--driver=xrt --bench --build-only "
+                f"--app={_q(app)}"
+            )
+            lines.extend([
+                "",
+                f"echo '[build {idx}/{len(apps)}] app={app}'",
+                f"LATENCY_BENCH_BUILD_LOG[{_q(app)}]={_q(build_log)}",
+                "set +e",
+                f"{build_cmd} > {_q(build_log)} 2>&1",
+                "rc=$?",
+                "set -u",
+                f"LATENCY_BENCH_BUILD_RC[{_q(app)}]=\"$rc\"",
+            ])
+
     for idx, unit in enumerate(units, start=1):
         bench_args = f"--warmup={unit.warmup} --iterations={unit.iterations} --csv --output={unit.raw_csv} {unit.args}"
-        blackbox_args = " ".join(_q(arg) for arg in options.blackbox_args)
-        blackbox_args = f"{blackbox_args} " if blackbox_args else ""
+        run_only_arg = "--run-only " if options.prebuild else ""
         blackbox_cmd = (
-            f"./ci/blackbox.sh {blackbox_args}--driver=xrt --bench --app={_q(unit.app)} "
-            f"--args={_q(bench_args)} --log={_q(unit.log_file)}"
+            f"./ci/blackbox.sh {blackbox_args}--driver=xrt --bench {run_only_arg}"
+            f"--app={_q(unit.app)} --args={_q(bench_args)} --log={_q(unit.log_file.with_suffix(unit.log_file.suffix + '.blackbox'))}"
         )
         if options.blackbox_timeout:
             blackbox_cmd = f"timeout --foreground --kill-after=30s {_q(options.blackbox_timeout)} {blackbox_cmd}"
         lines.extend([
             "",
             f"echo '[{idx}/{len(units)}] {unit.exec_key} app={unit.app} args={bench_args}'",
-            "set +e",
-            "start_ns=$(date +%s%N)",
-            blackbox_cmd,
-            "rc=$?",
-            "end_ns=$(date +%s%N)",
-            "elapsed_ms=$(( (end_ns - start_ns + 500000) / 1000000 ))",
-            "printf -v elapsed_wall_s '%d.%03d' $((elapsed_ms / 1000)) $((elapsed_ms % 1000))",
-            "set -u",
+            f"build_rc=\"${{LATENCY_BENCH_BUILD_RC[{_q(unit.app)}]:-0}}\"",
+            f"build_log=\"${{LATENCY_BENCH_BUILD_LOG[{_q(unit.app)}]:-}}\"",
+            "failure_phase=\"\"",
+            "if [[ \"$build_rc\" != \"0\" ]]; then",
+            "  rc=\"$build_rc\"",
+            "  failure_phase=\"build\"",
+            "  elapsed_wall_s=\"0.000\"",
+            f"  if [[ -n \"$build_log\" && -f \"$build_log\" ]]; then cp \"$build_log\" {_q(unit.log_file)}; fi",
+            f"  if [[ ! -f {_q(unit.log_file)} ]]; then printf 'build failed before log was written\\n' > {_q(unit.log_file)}; fi",
+            "else",
+            "  set +e",
+            "  start_ns=$(date +%s%N)",
+            f"  {blackbox_cmd} > {_q(unit.log_file)} 2>&1",
+            "  rc=$?",
+            "  end_ns=$(date +%s%N)",
+            "  elapsed_ms=$(( (end_ns - start_ns + 500000) / 1000000 ))",
+            "  printf -v elapsed_wall_s '%d.%03d' $((elapsed_ms / 1000)) $((elapsed_ms % 1000))",
+            "  set -u",
+            "  if [[ \"$rc\" != \"0\" ]]; then failure_phase=\"run\"; fi",
+            "fi",
             (
-                f"printf '%s,%s,%s,%s,%s,%s\\n' "
-                f"{_q(unit.exec_key)} {_q(unit.app)} \"$rc\" {_q(unit.raw_csv)} {_q(unit.log_file)} \"$elapsed_wall_s\" "
+                f"printf '%s,%s,%s,%s,%s,%s,%s\\n' "
+                f"{_q(unit.exec_key)} {_q(unit.app)} \"$rc\" \"$failure_phase\" {_q(unit.raw_csv)} {_q(unit.log_file)} \"$elapsed_wall_s\" "
                 f">> {_q(status_csv)}"
             ),
             (
@@ -267,6 +309,7 @@ def write_run_script(suite: BenchSuite, options: RunOptions, units: list[Executi
                 f"--warmup {unit.warmup} "
                 f"--iterations {unit.iterations} "
                 f"--returncode \"$rc\" "
+                f"--failure-phase \"$failure_phase\" "
                 f"--elapsed-wall-s \"$elapsed_wall_s\" "
                 f"--raw-csv {_q(unit.raw_csv)} "
                 f"--log-file {_q(unit.log_file)}"
@@ -282,6 +325,7 @@ def write_run_script(suite: BenchSuite, options: RunOptions, units: list[Executi
                     f"--exec-key {_q(unit.exec_key)} "
                     f"--app {_q(unit.app)} "
                     f"--returncode \"$rc\" "
+                    f"--failure-phase \"$failure_phase\" "
                     f"--raw-csv {_q(unit.raw_csv)} "
                     f"--log-file {_q(unit.log_file)}"
                 ),
@@ -319,6 +363,7 @@ RAW_DB_COLUMNS = [
     "source",
     "status",
     "returncode",
+    "failure_phase",
     "raw_csv",
     "log_file",
     "elapsed_wall_s",
@@ -506,6 +551,7 @@ def run_suite(suite: BenchSuite, options: RunOptions) -> int:
         "execution_count": len(units),
         "run_execution_count": len(units_to_run),
         "skip_existing": options.skip_existing,
+        "prebuild": options.prebuild,
         "skipped_existing_count": len(skipped_existing_exec_keys),
         "skipped_existing_exec_keys": list(skipped_existing_exec_keys),
         "script": str(script),

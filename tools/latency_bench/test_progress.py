@@ -70,6 +70,37 @@ class ProgressTest(unittest.TestCase):
                 rows = list(csv.DictReader(fp))
 
             self.assertEqual("fail", rows[0]["status"])
+            self.assertEqual("", rows[0]["failure_phase"])
+            self.assertEqual("missing_raw_csv", rows[0]["parse_error"])
+
+    def test_build_failure_records_build_fail_status(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            progress_csv = tmp_path / "progress.csv"
+
+            append_progress_execution(
+                output=progress_csv,
+                idx=1,
+                total=1,
+                run_id="run_1",
+                suite="suite_a",
+                exec_key="exec_a",
+                app="app_a",
+                args="",
+                warmup=0,
+                iterations=1,
+                returncode=2,
+                elapsed_wall_s="0.000",
+                raw_csv=tmp_path / "missing.csv",
+                log_file=tmp_path / "build.log",
+                failure_phase="build",
+            )
+
+            with progress_csv.open(newline="") as fp:
+                rows = list(csv.DictReader(fp))
+
+            self.assertEqual("build_fail", rows[0]["status"])
+            self.assertEqual("build", rows[0]["failure_phase"])
             self.assertEqual("missing_raw_csv", rows[0]["parse_error"])
 
 

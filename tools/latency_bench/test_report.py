@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from tools.latency_bench.report import classify_status
+from tools.latency_bench.status import classify_status
 
 
 class ReportTest(unittest.TestCase):
@@ -16,6 +16,13 @@ class ReportTest(unittest.TestCase):
         self.assertEqual("parse_error", classify_status(0, has_status=True, bench={"parse_error": "bad"}))
         self.assertEqual("pass", classify_status(0, has_status=True, bench={"samples": 3}))
         self.assertEqual("fail", classify_status(1, has_status=True, bench={}))
+        self.assertEqual("fail", classify_status(1, has_status=True, bench={"parse_error": "missing"}))
+
+    def test_classifies_build_fail_phase(self) -> None:
+        self.assertEqual(
+            "build_fail",
+            classify_status(2, has_status=True, bench={"parse_error": "missing"}, failure_phase="build"),
+        )
 
 
 if __name__ == "__main__":

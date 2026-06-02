@@ -14,6 +14,7 @@ APPENDED_RAW_COLUMNS = [
     "exec_key",
     "app",
     "returncode",
+    "failure_phase",
     "raw_csv",
     "log_file",
     "bench_label",
@@ -34,6 +35,7 @@ def _base_row(
     exec_key: str,
     app: str,
     returncode: int,
+    failure_phase: str,
     raw_csv: Path,
     log_file: Path,
 ) -> dict[str, Any]:
@@ -44,6 +46,7 @@ def _base_row(
         "exec_key": exec_key,
         "app": app,
         "returncode": returncode,
+        "failure_phase": failure_phase,
         "raw_csv": str(raw_csv),
         "log_file": str(log_file),
         "bench_label": "",
@@ -109,6 +112,7 @@ def append_raw_execution(
     exec_key: str,
     app: str,
     returncode: int,
+    failure_phase: str = "",
     raw_csv: Path,
     log_file: Path,
 ) -> None:
@@ -118,6 +122,7 @@ def append_raw_execution(
         exec_key=exec_key,
         app=app,
         returncode=returncode,
+        failure_phase=failure_phase,
         raw_csv=raw_csv,
         log_file=log_file,
     )
@@ -136,6 +141,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--exec-key", required=True, help="Execution key.")
     parser.add_argument("--app", required=True, help="Benchmark app name.")
     parser.add_argument("--returncode", required=True, type=int, help="Benchmark process return code.")
+    parser.add_argument("--failure-phase", default="", choices=["", "build", "run"], help="Failed phase, if known.")
     parser.add_argument("--raw-csv", required=True, type=Path, help="Raw per-execution benchmark CSV.")
     parser.add_argument("--log-file", required=True, type=Path, help="Per-execution log file.")
     return parser
@@ -150,6 +156,7 @@ def main(argv: list[str] | None = None) -> int:
         exec_key=args.exec_key,
         app=args.app,
         returncode=args.returncode,
+        failure_phase=args.failure_phase,
         raw_csv=args.raw_csv,
         log_file=args.log_file,
     )

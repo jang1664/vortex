@@ -19,14 +19,21 @@ class RawDbTest(unittest.TestCase):
         blackbox.write_text(
             f"""#!/usr/bin/env bash
 set -euo pipefail
-{log_line}bench_args=""
+bench_args=""
 log_file=""
+build_only=0
 for arg in "$@"; do
   case "$arg" in
     --args=*) bench_args="${{arg#--args=}}" ;;
     --log=*) log_file="${{arg#--log=}}" ;;
+    --build-only) build_only=1 ;;
   esac
 done
+if [[ "$build_only" == "1" ]]; then
+  printf 'build ok\n'
+  exit 0
+fi
+{log_line}
 raw_csv=$(printf '%s\n' "$bench_args" | sed -n 's/.*--output=\\([^ ]*\\).*/\\1/p')
 mkdir -p "$(dirname "$raw_csv")" "$(dirname "$log_file")"
 printf 'fpint_gemm,3,1.0,2.0,4.0,2.0,3.0\n' > "$raw_csv"
@@ -192,6 +199,7 @@ printf 'ok\n' > "$log_file"
                     blackbox_args=(),
                     srun=False,
                     run_id="timeout_run",
+                    prebuild=False,
                 ),
             )
 
@@ -200,6 +208,67 @@ printf 'ok\n' > "$log_file"
                 rows = list(csv.DictReader(fp))
             self.assertEqual("timeout", rows[0]["status"])
             self.assertEqual("124", rows[0]["returncode"])
+
+    def test_build_fail_is_appended_as_build_fail_status(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            build_dir = tmp_path / "build"
+            (build_dir / "ci").mkdir(parents=True)
+            blackbox = build_dir / "ci" / "blackbox.sh"
+            blackbox.write_text(
+                """#!/usr/bin/env bash
+set -euo pipefail
+for arg in "$@"; do
+  if [[ "$arg" == "--build-only" ]]; then
+    echo "compile failed"
+    exit 2
+  fi
+done
+exit 0
+"""
+            )
+            blackbox.chmod(0o755)
+            fpga_bin_dir = tmp_path / "fpga_bin"
+            fpga_bin_dir.mkdir()
+            (fpga_bin_dir / "vortex_afu.xclbin").write_text("fake bitstream")
+
+            suite = BenchSuite(
+                name="build_fail_suite",
+                defaults=BenchDefaults(warmup=1, iterations=1),
+                cases=[
+                    BenchCase(
+                        case_id="gemm_build_fail",
+                        app="fpint_gemm_ffn_hw",
+                        args="-m 1 -n 128 -k 128 -q 32 -t 0 -d 0",
+                        warmup=1,
+                        iterations=1,
+                    )
+                ],
+            )
+            out_root = tmp_path / "latency_db"
+
+            rc = run_suite(
+                suite,
+                RunOptions(
+                    build_dir=build_dir,
+                    fpga_bin_dir=fpga_bin_dir,
+                    fpga_bin_label="build_fail_bin",
+                    out_dir=out_root,
+                    platform=suite.defaults.platform,
+                    xrt_device_index=suite.defaults.xrt_device_index,
+                    blackbox_args=(),
+                    srun=False,
+                    run_id="build_fail_run",
+                ),
+            )
+
+            self.assertEqual(0, rc)
+            with (out_root / "raw_db.csv").open(newline="") as fp:
+                rows = list(csv.DictReader(fp))
+            self.assertEqual("build_fail", rows[0]["status"])
+            self.assertEqual("2", rows[0]["returncode"])
+            self.assertEqual("build", rows[0]["failure_phase"])
+            self.assertIn("compile failed", Path(rows[0]["log_file"]).read_text())
 
     def test_skip_existing_runs_only_missing_or_failed_measurements(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

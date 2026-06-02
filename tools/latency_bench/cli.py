@@ -60,6 +60,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Skip executions that already have a matching status=pass row in OUT/raw_db.csv.",
     )
+    run.add_argument(
+        "--no-prebuild",
+        action="store_true",
+        help="Disable the default build-only preflight and let each blackbox invocation build and run.",
+    )
 
     vis = sub.add_parser("visualize", help="Generate PNG/PDF figures from results.csv.")
     vis.add_argument("--results", required=True, help="Path to results.csv.")
@@ -212,6 +217,7 @@ def run_cmd(args: argparse.Namespace) -> int:
         append_raw_csv=Path(args.append_raw).resolve() if args.append_raw else None,
         run_id=run_id,
         skip_existing=args.skip_existing,
+        prebuild=not args.no_prebuild,
     )
     rc = run_suite(suite, options)
     results_csv = options.out_dir / "runs" / run_id / "results.csv"

@@ -33,12 +33,14 @@ The main `run` flow is:
    `suite.expanded.yaml`.
 9. Generate `run_fpga_bench.sh` in the per-run directory.
 10. Run that script directly or through `srun`.
-11. Append one row to `progress.csv` after each unique execution finishes.
-12. Read `run_status.csv` and `raw/*.csv` to build `results.csv`.
-13. Build `summary.csv` by applying `calls_per_forward` weights to successful
+11. Build each unique benchmark app once with `blackbox.sh --build-only --bench`.
+12. Run each unique execution with `blackbox.sh --run-only --bench`.
+13. Append one row to `progress.csv` after each unique execution finishes.
+14. Read `run_status.csv` and `raw/*.csv` to build `results.csv`.
+15. Build `summary.csv` by applying `calls_per_forward` weights to successful
     rows in `results.csv`.
-14. Append all `results.csv` rows to the top-level `<out>/raw_db.csv`.
-15. Optionally call `visualize` to create figures under the per-run `figures/`.
+16. Append all `results.csv` rows to the top-level `<out>/raw_db.csv`.
+17. Optionally call `visualize` to create figures under the per-run `figures/`.
 
 The generated `run_fpga_bench.sh` is the source of truth for what actually ran.
 For each unique execution it:
@@ -47,11 +49,13 @@ For each unique execution it:
   `ci/blackbox.sh`, generated Makefiles, and app build trees live there.
 - Exports FPGA runtime environment variables: `FPGA_BIN_DIR`, `TARGET=hw`,
   `PLATFORM`, `DRIVER=xrt`, and `XRT_DEVICE_INDEX`.
-- Calls `./ci/blackbox.sh --driver=xrt --bench --app=<app> --args=<bench args>`.
+- Calls `./ci/blackbox.sh --driver=xrt --bench --build-only --app=<app>`
+  once per app, then `./ci/blackbox.sh --driver=xrt --bench --run-only`
+  for each concrete execution.
 - Passes benchmark-specific args including `--warmup`, `--iterations`, `--csv`,
   and `--output=<out>/runs/<run_id>/raw/<exec_key>.csv`.
 - Records one status row in `run_status.csv` with `exec_key`, `app`,
-  `returncode`, `raw_csv`, `log_file`, and `elapsed_wall_s`.
+  `returncode`, `failure_phase`, `raw_csv`, `log_file`, and `elapsed_wall_s`.
 - Appends one live progress row to `progress.csv` with status, elapsed time,
   raw latency columns, and parse errors.
 
@@ -132,10 +136,18 @@ example, `--blackbox-arg=--threads=16` replaces a default `--threads=8` while
 keeping other defaults such as `--cores=1`.
 
 Use `--blackbox-timeout 30m` to wrap each `blackbox.sh` execution with GNU
-`timeout --foreground --kill-after=30s`. A timed-out execution records its
-return code in `run_status.csv`, then the run script continues to the next case.
-Set `defaults.blackbox_timeout` in the suite to make this reproducible, or pass
-`--blackbox-timeout 0` to disable a suite default.
+`timeout --foreground --kill-after=30s`. With the default prebuild flow, this
+timeout wraps only the run-only benchmark execution, not the build-only
+preflight. A timed-out execution records its return code in `run_status.csv`,
+then the run script continues to the next case. Set `defaults.blackbox_timeout`
+in the suite to make this reproducible, or pass `--blackbox-timeout 0` to
+disable a suite default.
+
+The default prebuild flow separates build failures from benchmark failures.
+If a benchmark app fails to build, all executions for that app are recorded as
+`status=build_fail` with `failure_phase=build` and the per-case log points at
+the captured build output. Use `--no-prebuild` only when you intentionally want
+the legacy build-and-run behavior inside each benchmark invocation.
 
 `run` does not generate figures by default. Add `--visualize` to create
 `runs/<run_id>/figures/` after a successful run, or use the `visualize`
@@ -308,7 +320,7 @@ Each `runs/<run_id>/` directory contains:
 - `suite.yaml`: copy of the original suite YAML used for the run.
 - `suite.expanded.yaml`: equivalent suite with all `workloads` materialized as explicit `cases`.
 - `run_fpga_bench.sh`: generated shell script used for the run.
-- `run_status.csv`: one row per unique execution.
+- `run_status.csv`: one row per unique execution, including `failure_phase`.
 - `progress.csv`: live per-execution results appended as each benchmark finishes.
 - `raw/*.csv`: raw benchmark rows from `bench_util.h`.
 - `logs/*.log`: per-execution blackbox logs.
@@ -348,8 +360,9 @@ python -m tools.latency_bench run \
 
 An execution is skipped only when `<out>/raw_db.csv` already has a `status=pass`
 row whose `fpga_bin_label`, `xclbin_sha256`, `exec_key`, `app`, normalized
-`args`, `warmup`, and `iterations` all match the current run. `fail`, `timeout`,
-`parse_error`, and `not_run` rows are not skipped, so they are retried.
+`args`, `warmup`, and `iterations` all match the current run. `build_fail`,
+`fail`, `timeout`, `parse_error`, and `not_run` rows are not skipped, so they
+are retried.
 When a retried execution writes a new row, any older `raw_db.csv` rows with the
 same strict match key are replaced by the new result. Skipped `pass` executions
 are not appended back into `raw_db.csv`.

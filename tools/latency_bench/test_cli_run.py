@@ -36,12 +36,18 @@ class CliRunTest(unittest.TestCase):
 set -euo pipefail
 bench_args=""
 log_file=""
+build_only=0
 for arg in "$@"; do
   case "$arg" in
     --args=*) bench_args="${arg#--args=}" ;;
     --log=*) log_file="${arg#--log=}" ;;
+    --build-only) build_only=1 ;;
   esac
 done
+if [[ "$build_only" == "1" ]]; then
+  printf 'build ok\n'
+  exit 0
+fi
 raw_csv=$(printf '%s\n' "$bench_args" | sed -n 's/.*--output=\\([^ ]*\\).*/\\1/p')
 mkdir -p "$(dirname "$raw_csv")" "$(dirname "$log_file")"
 printf 'fpint_gemm,3,1.0,2.0,4.0,2.0,3.0\n' > "$raw_csv"
@@ -159,6 +165,8 @@ aliases:
             self.assertEqual(0, rc)
             script = (out_root / "runs" / "cli_run" / "run_fpga_bench.sh").read_text()
             self.assertIn("timeout --foreground --kill-after=30s 30m ./ci/blackbox.sh", script)
+            self.assertIn("--build-only", script)
+            self.assertIn("--run-only", script)
 
     def test_run_accepts_skip_existing_option(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -292,6 +300,30 @@ cases:
             self.assertEqual(0, rc)
             script = (out_root / "runs" / "cli_run_no_timeout" / "run_fpga_bench.sh").read_text()
             self.assertNotIn("timeout --foreground", script)
+
+    def test_run_accepts_no_prebuild_option(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            build_dir, fpga_bin, suite = self._write_fake_inputs(tmp_path)
+            out_root = tmp_path / "out"
+            rc = main([
+                "run",
+                "--build-dir", str(build_dir),
+                "--fpga-bin", str(fpga_bin),
+                "--suite", str(suite),
+                "--out", str(out_root),
+                "--run-id", "cli_run",
+                "--no-srun",
+                "--dry-run",
+                "--no-prebuild",
+            ])
+
+            self.assertEqual(0, rc)
+            script = (out_root / "runs" / "cli_run" / "run_fpga_bench.sh").read_text()
+            self.assertNotIn("--build-only", script)
+            self.assertNotIn("--run-only", script)
+            manifest = json.loads((out_root / "runs" / "cli_run" / "manifest.json").read_text())
+            self.assertFalse(manifest["prebuild"])
 
     def test_run_visualizes_when_requested(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
