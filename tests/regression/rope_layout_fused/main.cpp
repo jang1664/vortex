@@ -56,8 +56,17 @@ static uint32_t parse_layout_to(const char* value) {
   if (strcmp(value, "gemm_w_tiled") == 0 || strcmp(value, "w") == 0) {
     return ROPE_LAYOUT_TO_GEMM_W;
   }
-  printf("ERROR: --layout-to must be gemm_a_tiled or gemm_w_tiled\n");
+  if (strcmp(value, "row_major") == 0 || strcmp(value, "row") == 0) {
+    return ROPE_LAYOUT_TO_ROW_MAJOR;
+  }
+  printf("ERROR: --layout-to must be gemm_a_tiled, gemm_w_tiled, or row_major\n");
   exit(1);
+}
+
+static const char* layout_to_name(uint32_t layout_to) {
+  if (layout_to == ROPE_LAYOUT_TO_GEMM_A) return "gemm_a_tiled";
+  if (layout_to == ROPE_LAYOUT_TO_GEMM_W) return "gemm_w_tiled";
+  return "row_major";
 }
 
 static size_t row_index(uint32_t b, uint32_t s, uint32_t h, uint32_t d,
@@ -150,10 +159,13 @@ static void build_reference(const std::vector<data_t>& input,
             const uint64_t base = batched_matrix_base(matrix, (uint64_t)output_m_pad * head_dim);
             ref[base + gemm_a_tiled_elem_offset(s, p, output_m_pad, head_dim, log2_mt, log2_mxu_kt)] = float_to_fp16(y0);
             ref[base + gemm_a_tiled_elem_offset(s, p + half_dim, output_m_pad, head_dim, log2_mt, log2_mxu_kt)] = float_to_fp16(y1);
-          } else {
+          } else if (layout_to == ROPE_LAYOUT_TO_GEMM_W) {
             const uint64_t base = batched_matrix_base(matrix, (uint64_t)head_dim * max_seq);
             ref[base + gemm_w_tiled_wtrans1_elem_offset(p, pos, head_dim, max_seq, log2_kt, log2_mxu_kt, log2_mxu_nt)] = float_to_fp16(y0);
             ref[base + gemm_w_tiled_wtrans1_elem_offset(p + half_dim, pos, head_dim, max_seq, log2_kt, log2_mxu_kt, log2_mxu_nt)] = float_to_fp16(y1);
+          } else {
+            ref[row_index(b, s, h, p, seq, heads, head_dim)] = float_to_fp16(y0);
+            ref[row_index(b, s, h, p + half_dim, seq, heads, head_dim)] = float_to_fp16(y1);
           }
         }
       }
@@ -181,7 +193,7 @@ int main(int argc, char *argv[]) {
     else if (strncmp(argv[i], "--layout-to=", 12) == 0) layout_to = parse_layout_to(argv[i] + 12);
     else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
       printf("Usage: %s [-batch B] [-seq S] [-heads H] [-headdim D] "
-             "[-maxseq N] [-offset O] [--layout-to gemm_a_tiled|gemm_w_tiled]\n", argv[0]);
+             "[-maxseq N] [-offset O] [--layout-to gemm_a_tiled|gemm_w_tiled|row_major]\n", argv[0]);
       return 0;
     }
   }
@@ -216,13 +228,15 @@ int main(int argc, char *argv[]) {
   const size_t input_tiled_elems = (size_t)input_m_pad * input_n;
   const size_t output_elems = (layout_to == ROPE_LAYOUT_TO_GEMM_A)
       ? (size_t)batch * heads * output_m_pad * head_dim
-      : (size_t)batch * heads * head_dim * max_seq;
+      : (layout_to == ROPE_LAYOUT_TO_GEMM_W)
+          ? (size_t)batch * heads * head_dim * max_seq
+          : input_row_elems;
   const size_t input_tiled_bytes = input_tiled_elems * sizeof(data_t);
   const size_t output_bytes = output_elems * sizeof(data_t);
 
   printf("rope_layout_fused batch=%u seq=%u heads=%u headdim=%u maxseq=%u offset=%u layout_to=%s\n",
          batch, seq, heads, head_dim, max_seq, pos_offset,
-         layout_to == ROPE_LAYOUT_TO_GEMM_A ? "gemm_a_tiled" : "gemm_w_tiled");
+         layout_to_name(layout_to));
 
   std::vector<data_t> h_input_row(input_row_elems);
   std::vector<data_t> h_input_tiled(input_tiled_elems);

@@ -1,6 +1,7 @@
 // Benchmark harness for silu_layout_fused.
 
 #include "common.h"
+#include "../layout_fused_common/layout_fused_layouts.h"
 #include "../vector_common/fp16.h"
 #include "bench_util.h"
 #include <vortex.h>
@@ -63,6 +64,12 @@ static uint32_t log2_u32(uint32_t v) {
   return r;
 }
 
+static uint64_t gemm_c_tiled_index(uint32_t m, uint32_t k,
+                                   uint32_t M_pad, uint32_t K) {
+  return gemm_c_tiled_elem_offset(
+      m, k, M_pad, K, log2_u32(TILE_DMA_MT), log2_u32(TILE_DMA_MXU_NT));
+}
+
 static const char* variant_label(Variant variant) {
   return (variant == Variant::RowMatched)
       ? "silu_row_matched"
@@ -91,35 +98,12 @@ static std::vector<data_t> build_reference(const std::vector<data_t>& input,
   }
 
   for (uint32_t m = 0; m < M; ++m) {
-    uint32_t mt = m / TILE_DMA_MT;
-    uint32_t m0 = m % TILE_DMA_MT;
-    uint32_t cm = ((M_pad - mt * TILE_DMA_MT) < TILE_DMA_MT)
-                    ? (M_pad - mt * TILE_DMA_MT) : TILE_DMA_MT;
     for (uint32_t k = 0; k < K; ++k) {
-      uint32_t km = k / TILE_DMA_MXU_KT;
-      uint32_t k0 = k % TILE_DMA_MXU_KT;
-      uint64_t idx = uint64_t(mt) * TILE_DMA_MT * K
-                   + uint64_t(km) * cm * TILE_DMA_MXU_KT
-                   + uint64_t(m0) * TILE_DMA_MXU_KT
-                   + k0;
+      uint64_t idx = gemm_c_tiled_index(m, k, M_pad, K);
       ref[idx] = float_to_fp16(silu_cpu(fp16_to_float(input[(uint64_t)m * K + k])));
     }
   }
   return ref;
-}
-
-static uint64_t tiled_input_index(uint32_t m, uint32_t k,
-                                  uint32_t M_pad, uint32_t K) {
-  uint32_t mt = m / TILE_DMA_MT;
-  uint32_t m0 = m % TILE_DMA_MT;
-  uint32_t cm = ((M_pad - mt * TILE_DMA_MT) < TILE_DMA_MT)
-                  ? (M_pad - mt * TILE_DMA_MT) : TILE_DMA_MT;
-  uint32_t km = k / TILE_DMA_MXU_KT;
-  uint32_t k0 = k % TILE_DMA_MXU_KT;
-  return uint64_t(mt) * TILE_DMA_MT * K
-       + uint64_t(km) * cm * TILE_DMA_MXU_KT
-       + uint64_t(m0) * TILE_DMA_MXU_KT
-       + k0;
 }
 
 int main(int argc, char *argv[]) {
@@ -160,11 +144,12 @@ int main(int argc, char *argv[]) {
     }
   }
 
-  if (K % TILE_DMA_MXU_KT != 0) {
-    printf("ERROR: K must be multiple of %u\n", TILE_DMA_MXU_KT);
+  if (K % TILE_DMA_MXU_NT != 0) {
+    printf("ERROR: K must be multiple of %u\n", TILE_DMA_MXU_NT);
     return 1;
   }
-  if (!is_pow2(TILE_DMA_MT) || !is_pow2(TILE_DMA_KT) || !is_pow2(TILE_DMA_MXU_KT)) {
+  if (!is_pow2(TILE_DMA_MT) || !is_pow2(TILE_DMA_KT) ||
+      !is_pow2(TILE_DMA_MXU_KT) || !is_pow2(TILE_DMA_MXU_NT)) {
     printf("ERROR: tile constants must be powers of two\n");
     return 1;
   }
@@ -177,19 +162,28 @@ int main(int argc, char *argv[]) {
 
   size_t input_elems = size_t(M) * K;
   size_t output_elems = size_t(M_pad) * K;
-  uint32_t input_bytes = input_elems * sizeof(data_t);
   uint32_t output_bytes = output_elems * sizeof(data_t);
 
   std::vector<data_t> h_in(input_elems);
   initialize_input(h_in);
+  std::vector<data_t> h_in_device(output_elems, 0);
+  if (variant == Variant::RowMatched) {
+    std::copy(h_in.begin(), h_in.end(), h_in_device.begin());
+  } else {
+    for (uint32_t m = 0; m < M; ++m) {
+      for (uint32_t k = 0; k < K; ++k) {
+        h_in_device[gemm_c_tiled_index(m, k, M_pad, K)] = h_in[(uint64_t)m * K + k];
+      }
+    }
+  }
   std::vector<data_t> h_ref = build_reference(h_in, M, M_pad, K, variant);
   std::vector<data_t> h_out(output_elems);
 
   RT_CHECK(vx_dev_open(&device));
   RT_CHECK(vx_upload_kernel_file(device, "kernel.vxbin", &krnl_buffer));
-  RT_CHECK(vx_mem_alloc(device, input_bytes, VX_MEM_READ, &input_buffer));
+  RT_CHECK(vx_mem_alloc(device, output_bytes, VX_MEM_READ, &input_buffer));
   RT_CHECK(vx_mem_alloc(device, output_bytes, VX_MEM_WRITE, &output_buffer));
-  RT_CHECK(vx_copy_to_dev(input_buffer, h_in.data(), 0, input_bytes));
+  RT_CHECK(vx_copy_to_dev(input_buffer, h_in_device.data(), 0, output_bytes));
 
   uint64_t num_cores = 0;
   uint64_t num_warps = 0;
@@ -212,7 +206,7 @@ int main(int argc, char *argv[]) {
   kernel_arg.log2_kt = log2_u32(TILE_DMA_KT);
   kernel_arg.log2_mxu_kt = log2_u32(TILE_DMA_MXU_KT);
 
-  uint32_t total_chunks = M * (K / TILE_DMA_MXU_KT);
+  uint32_t total_chunks = M * (K / TILE_DMA_MXU_NT);
   uint32_t blocks = (total_chunks + tpb - 1) / tpb;
   kernel_arg.grid_dim[0] = std::min(blocks, max_blocks);
   kernel_arg.grid_dim[1] = 1;
@@ -240,7 +234,7 @@ int main(int argc, char *argv[]) {
   } else {
     for (uint32_t m = 0; m < M; ++m) {
       for (uint32_t k = 0; k < K; ++k) {
-        uint64_t idx = tiled_input_index(m, k, M_pad, K);
+        uint64_t idx = gemm_c_tiled_index(m, k, M_pad, K);
         float got = fp16_to_float(h_out[idx]);
         float expected = fp16_to_float(h_ref[idx]);
         float diff = std::fabs(got - expected);

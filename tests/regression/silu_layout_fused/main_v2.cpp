@@ -2,13 +2,14 @@
 //
 // Runs both kernels on the same input data and reports:
 //   - Correctness of the fused-layout output against a CPU reference
-//     (which mirrors tile_input_a's reorder on top of SiLU(x))
+//     (which keeps SiLU(x) in GEMM-C tiled layout)
 //   - Wall-clock latency of each kernel
 //
 // Usage:
 //   ./silu_layout_fused [-m M] [-k K] [-i iters]
 
 #include "common.h"
+#include "../layout_fused_common/layout_fused_layouts.h"
 #include "../vector_common/fp16.h"
 #include <vortex.h>
 #include <unistd.h>
@@ -63,6 +64,12 @@ static uint32_t log2_u32(uint32_t v) {
   return r;
 }
 
+static uint64_t gemm_c_tiled_index(uint32_t m, uint32_t k,
+                                   uint32_t M_pad, uint32_t K) {
+  return gemm_c_tiled_elem_offset(
+      m, k, M_pad, K, log2_u32(TILE_DMA_MT), log2_u32(TILE_DMA_MXU_NT));
+}
+
 static void parse_args(int argc, char** argv) {
   int c;
   while ((c = getopt(argc, argv, "m:k:i:h")) != -1) {
@@ -96,11 +103,12 @@ int main(int argc, char** argv) {
   uint32_t M_pad = (M + 7u) & ~7u;
   printf("silu_layout_fused  M=%u (pad=%u) K=%u iters=%u\n", M, M_pad, K, ITERS);
 
-  if (K % TILE_DMA_MXU_KT != 0) {
-    printf("ERROR: K must be multiple of %u\n", TILE_DMA_MXU_KT);
+  if (K % TILE_DMA_MXU_NT != 0) {
+    printf("ERROR: K must be multiple of %u\n", TILE_DMA_MXU_NT);
     return 1;
   }
-  if (!is_pow2(TILE_DMA_MT) || !is_pow2(TILE_DMA_KT) || !is_pow2(TILE_DMA_MXU_KT)) {
+  if (!is_pow2(TILE_DMA_MT) || !is_pow2(TILE_DMA_KT) ||
+      !is_pow2(TILE_DMA_MXU_KT) || !is_pow2(TILE_DMA_MXU_NT)) {
     printf("ERROR: tile constants must be powers of two\n");
     return 1;
   }
@@ -117,21 +125,19 @@ int main(int argc, char** argv) {
     h_in[i] = float_to_fp16(x);
   }
 
-  // CPU reference for FUSED output (silu values written in tile-major positions).
+  std::vector<data_t> h_in_tiled(out_elems, 0);
+  for (uint32_t m = 0; m < M; ++m) {
+    for (uint32_t k = 0; k < K; ++k) {
+      h_in_tiled[gemm_c_tiled_index(m, k, M_pad, K)] = h_in[(uint64_t)m * K + k];
+    }
+  }
+
+  // CPU reference for FUSED output (SiLU values written in GEMM-C tiled positions).
   std::vector<data_t> h_ref(out_elems, 0);
   {
     for (uint32_t m = 0; m < M; m++) {
-      uint32_t mt = m / TILE_DMA_MT;
-      uint32_t m0 = m % TILE_DMA_MT;
-      uint32_t cm = ((M_pad - mt * TILE_DMA_MT) < TILE_DMA_MT)
-                      ? (M_pad - mt * TILE_DMA_MT) : TILE_DMA_MT;
       for (uint32_t k = 0; k < K; k++) {
-        uint32_t km = k / TILE_DMA_MXU_KT;
-        uint32_t k0 = k % TILE_DMA_MXU_KT;
-        uint64_t out_idx = uint64_t(mt) * TILE_DMA_MT * K
-                         + uint64_t(km) * cm * TILE_DMA_MXU_KT
-                         + uint64_t(m0) * TILE_DMA_MXU_KT
-                         + k0;
+        uint64_t out_idx = gemm_c_tiled_index(m, k, M_pad, K);
         float x = fp16_to_float(h_in[uint64_t(m) * K + k]);
         h_ref[out_idx] = float_to_fp16(x / (1.0f + std::exp(-x)));
       }
@@ -140,7 +146,7 @@ int main(int argc, char** argv) {
 
   RT_CHECK(vx_dev_open(&device));
   RT_CHECK(vx_upload_kernel_file(device, kernel_file, &kernel_bin));
-  RT_CHECK(vx_mem_alloc(device, in_bytes,  VX_MEM_READ,  &src_buf));
+  RT_CHECK(vx_mem_alloc(device, out_bytes, VX_MEM_READ,  &src_buf));
   RT_CHECK(vx_mem_alloc(device, out_bytes, VX_MEM_WRITE, &dst_buf));
   RT_CHECK(vx_copy_to_dev(src_buf, h_in.data(), 0, in_bytes));
 
@@ -185,10 +191,11 @@ int main(int argc, char** argv) {
   printf("  plain silu     mean = %10.2f us  (size=%zu elems)\n",
          mean_silu_us, in_elems);
 
-  // -------------- Fused silu + tile_input_a (real rows only) --------------
-  // Launch a capped 1D grid over real 32-element K chunks. Pad rows are left
+  // -------------- Fused silu on GEMM-C tiled input/output (real rows only) --------------
+  // Launch a capped 1D grid over real 32-element N chunks. Pad rows are left
   // uninitialized because downstream GEMM output for those rows is discarded.
-  uint32_t total_chunks = M * (K / TILE_DMA_MXU_KT);
+  RT_CHECK(vx_copy_to_dev(src_buf, h_in_tiled.data(), 0, out_bytes));
+  uint32_t total_chunks = M * (K / TILE_DMA_MXU_NT);
 
   karg.kernel_id    = KERNEL_SILU_LAYOUT_FUSED;
   karg.grid_dim[0]  = std::min((total_chunks + tpb - 1) / tpb, max_blocks);
@@ -222,17 +229,8 @@ int main(int argc, char** argv) {
   size_t errors = 0;
   double max_diff = 0.0;
   for (uint32_t m_iter = 0; m_iter < M; m_iter++) {
-    uint32_t mt = m_iter / TILE_DMA_MT;
-    uint32_t m0 = m_iter % TILE_DMA_MT;
-    uint32_t cm = ((M_pad - mt * TILE_DMA_MT) < TILE_DMA_MT)
-                    ? (M_pad - mt * TILE_DMA_MT) : TILE_DMA_MT;
     for (uint32_t kk = 0; kk < K; kk++) {
-      uint32_t km = kk / TILE_DMA_MXU_KT;
-      uint32_t k0 = kk % TILE_DMA_MXU_KT;
-      uint64_t idx = uint64_t(mt) * TILE_DMA_MT * K
-                   + uint64_t(km) * cm * TILE_DMA_MXU_KT
-                   + uint64_t(m0) * TILE_DMA_MXU_KT
-                   + k0;
+      uint64_t idx = gemm_c_tiled_index(m_iter, kk, M_pad, K);
       float got = fp16_to_float(h_out[idx]);
       float expected = fp16_to_float(h_ref[idx]);
       float d = std::fabs(got - expected);

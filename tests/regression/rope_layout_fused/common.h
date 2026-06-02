@@ -7,6 +7,7 @@
 
 #define ROPE_LAYOUT_TO_GEMM_A 0
 #define ROPE_LAYOUT_TO_GEMM_W 1
+#define ROPE_LAYOUT_TO_ROW_MAJOR 2
 
 #define TILE_DMA_MT       128
 #define TILE_DMA_KT       128
@@ -20,7 +21,7 @@ typedef struct {
   uint32_t block_dim[3];
 
   uint64_t input_addr;   // fp16 GEMM-C tiled q/k projection, one combined-head matrix
-  uint64_t output_addr;  // fp16 GEMM-A tiled Q or W-like tiled K cache
+  uint64_t output_addr;  // fp16 GEMM-A tiled Q, W-like tiled K, or row-major K cache
   uint64_t cos_addr;
   uint64_t sin_addr;
 

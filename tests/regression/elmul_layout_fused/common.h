@@ -16,7 +16,7 @@ typedef struct {
   uint32_t grid_dim[3];
   uint32_t block_dim[3];
 
-  uint64_t input_a_addr;  // fp16 GEMM-A tiled/layout_fused_intermediate
+  uint64_t input_a_addr;  // fp16 GEMM-C tiled SiLU output
   uint64_t input_b_addr;  // fp16 GEMM-C tiled up projection
   uint64_t output_addr;   // fp16 GEMM-A tiled down-proj input
 

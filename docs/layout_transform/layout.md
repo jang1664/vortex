@@ -80,14 +80,11 @@ k0 = k % MXU_KT
 km = kt * (KT / MXU_KT) + kb
 ```
 
-This is the layout used by `tile_input_a`, `silu_layout_fused`, and
-`rms_norm_layout_fused` when they write directly into a GEMM input buffer.
+This is the layout used by `tile_input_a` and `rms_norm_layout_fused` when
+they write directly into a GEMM input buffer. `elmul_layout_fused` also writes
+this layout for the `down_proj` input after multiplying the two FFN branches.
 Older experiments used a global-M formula without the outer `mt` split; that
 form only matches this layout when `M_pad <= MT`.
-
-`layout_fused_intermediate` currently uses the same address formula as this
-GEMM-A tiled layout and stores fp16 values. It is used between
-`silu_layout_fused` and `elmul_layout_fused`.
 
 ## Weight W Layout
 
@@ -291,7 +288,10 @@ offset_bytes(C[m, n]) = offset_elems(C[m, n]) * sizeof(fp16)
 ```
 
 This is the layout consumed by `detile_output` before writing row-major
-`C_rowmajor[m, n]`.
+`C_rowmajor[m, n]`. The fused FFN path keeps this layout across
+`gate_proj -> silu_layout_fused -> elmul_layout_fused` for the gate branch;
+`elmul_layout_fused` reads both its SiLU and up-projection inputs with this
+formula before writing the product in GEMM-A tiled layout for `down_proj`.
 
 ## Batched Per-Head Fused Layouts
 
@@ -323,8 +323,18 @@ input offset  = matrix_base_elems + gemm_c_tiled_elem_offset(q, k)
 output offset = matrix_base_elems + gemm_a_tiled_elem_offset(q, k)
 ```
 
-`rope_layout_fused --layout-to gemm_w_tiled` writes K-cache data into a
-WTRANS=1-style fp16 tiled layout for latency modeling:
+`rope_layout_fused --layout-to row_major` writes K-cache data as fp16 row-major
+so it can feed `kv_cache_quant_w4a16`:
+
+```text
+K_cache[b, s, h, d], shape [B, S, H, D]
+
+offset_bytes(K_cache[b, s, h, d]) =
+    (((b * S + s) * H + h) * D + d) * sizeof(fp16)
+```
+
+The `gemm_w_tiled` mode writes K-cache data into a WTRANS=1-style fp16 tiled
+layout for latency modeling:
 
 ```text
 K_cache[d, pos], shape [head_dim, max_seq_len]
@@ -348,8 +358,8 @@ offset_elems =
   + d0
 ```
 
-This K-cache layout is not the packed int4 `Weight W Layout`: it stores one
-fp16 value per element and does not include scale/zero-point buffers.
+The `gemm_w_tiled` K-cache layout is not the packed int4 `Weight W Layout`: it
+stores one fp16 value per element and does not include scale/zero-point buffers.
 
 ## Head Concat Layouts
 
@@ -398,10 +408,11 @@ standalone `detile_output -> head_concat -> tile_input_a` bridge around
 
 ## KV Cache Quantization Layouts
 
-The dynamic K/V cache quantization kernels use row-major fp16 cache tensors and
-row-major packed int4 output. They do not use the tiled `Weight W Layout`
-directly; a separate tile step is still needed before a packed GEMM-W operand
-is consumed by `fpint_gemm`.
+The standalone dynamic K/V cache quantization kernel uses row-major fp16 cache
+tensors and row-major packed int4 output. It does not use the tiled `Weight W
+Layout` directly; `tile_weight_w4a16` is still needed for the packed payload
+and `tile_scale_zp_w4a16` is still needed for scale/zp before `fpint_gemm` can
+consume the cache as a complete GEMM-W operand.
 
 ```text
 X[k, n], shape [K, N], fp16
@@ -442,6 +453,23 @@ offset_bytes(S[k, ng])  = (k * ceil_div(N, QBLK) + ng) * sizeof(fp16)
 offset_bytes(ZP[k, ng]) = (k * ceil_div(N, QBLK) + ng) * sizeof(int16)
 ```
 
+The fused K/V quantization kernel can consume either row-major fp16 input or a
+GEMM-C tiled fp16 matrix and writes the final GEMM-W operand layouts directly.
+The fused Llama V-cache path uses GEMM-C tiled input from `v_proj` so it can
+avoid an intermediate `detile_output`:
+
+```text
+kv_cache_quant_layout_fused_w4a16:
+  input        = X[k, n] row-major fp16 or GEMM-C tiled fp16
+  weight_out   = Weight W Layout, packed uint4
+  scale_out    = Scale/ZP Layout, fp16 scale
+  zero_out     = Scale/ZP Layout, int16 zero-point
+```
+
+This fused output is equivalent to running `kv_cache_quant_w4a16` and then
+applying `tile_weight_w4a16` to the packed payload and `tile_scale_zp_w4a16` to
+both scale/zp buffers.
+
 Quantization uses asymmetric uint4 parameters per group:
 
 ```text
@@ -452,8 +480,10 @@ x_dequant = (q - zp) * scale
 ```
 
 If `scale` would be zero, the kernels store `scale = 1.0` and `zp = 0`.
-`WTRANS` is accepted by the CLI for parity with GEMM-W cases, but these dynamic
-cache kernels keep the packed source in row-major n-pair order.
+For `kv_cache_quant_w4a16`, `WTRANS` is accepted by the CLI for parity with
+GEMM-W cases, but the packed source stays in row-major n-pair order. For
+`kv_cache_quant_layout_fused_w4a16`, `WTRANS` selects the final GEMM-W tiled
+packing order.
 
 ## Layout Kernel Assumptions
 
@@ -484,4 +514,5 @@ but `K` remains a multiple of `MXU_KT` and `N` remains a multiple of `MXU_NT`.
 - `tests/regression/head_concat_layout_fused/kernel.cpp`
 - `tests/regression/kv_cache_common/kv_cache_w4a16.h`
 - `tests/regression/kv_cache_quant_w4a16/kernel.cpp`
+- `tests/regression/kv_cache_quant_layout_fused_w4a16/kernel.cpp`
 - `tests/regression/kv_cache_dequant_w4a16/kernel.cpp`

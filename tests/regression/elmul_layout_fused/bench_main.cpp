@@ -50,22 +50,6 @@ static void init_values(std::vector<data_t>& values, float scale) {
   }
 }
 
-static void pack_gemm_a_tiled(const std::vector<data_t>& row,
-                              std::vector<data_t>& tiled,
-                              uint32_t M,
-                              uint32_t M_pad,
-                              uint32_t K) {
-  const uint32_t log2_mt = log2_u32(TILE_DMA_MT);
-  const uint32_t log2_mxu_kt = log2_u32(TILE_DMA_MXU_KT);
-  std::fill(tiled.begin(), tiled.end(), 0.0f);
-  for (uint32_t m = 0; m < M; ++m) {
-    for (uint32_t k = 0; k < K; ++k) {
-      tiled[gemm_a_tiled_elem_offset(m, k, M_pad, K, log2_mt, log2_mxu_kt)] =
-          row[(uint64_t)m * K + k];
-    }
-  }
-}
-
 static void pack_gemm_c_tiled(const std::vector<data_t>& row,
                               std::vector<data_t>& tiled,
                               uint32_t M,
@@ -107,7 +91,7 @@ int main(int argc, char *argv[]) {
   std::vector<data_t> h_b_tiled(tiled_elems);
   init_values(h_a_row, 1.0f);
   init_values(h_b_row, 0.75f);
-  pack_gemm_a_tiled(h_a_row, h_a_tiled, M, M_pad, K);
+  pack_gemm_c_tiled(h_a_row, h_a_tiled, M, M_pad, K);
   pack_gemm_c_tiled(h_b_row, h_b_tiled, M, M_pad, K);
 
   RT_CHECK(vx_dev_open(&device));

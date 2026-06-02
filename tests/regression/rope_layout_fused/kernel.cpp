@@ -59,7 +59,7 @@ void kernel_rope_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
           s, p + half_dim, arg->output_m_pad, head_dim, arg->log2_mt, arg->log2_mxu_kt);
       output[y0_off] = float_to_fp16(y0);
       output[y1_off] = float_to_fp16(y1);
-    } else {
+    } else if (arg->layout_to == ROPE_LAYOUT_TO_GEMM_W) {
       const uint64_t base = batched_matrix_base(matrix_idx, k_matrix_elems);
       const uint64_t y0_off = base + gemm_w_tiled_wtrans1_elem_offset(
           p, pos, head_dim, arg->max_seq_len, arg->log2_kt, arg->log2_mxu_kt, arg->log2_mxu_nt);
@@ -67,6 +67,10 @@ void kernel_rope_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
           p + half_dim, pos, head_dim, arg->max_seq_len, arg->log2_kt, arg->log2_mxu_kt, arg->log2_mxu_nt);
       output[y0_off] = float_to_fp16(y0);
       output[y1_off] = float_to_fp16(y1);
+    } else {
+      const uint64_t row_base = (((uint64_t)b * seq_len + s) * heads + h) * head_dim;
+      output[row_base + p] = float_to_fp16(y0);
+      output[row_base + p + half_dim] = float_to_fp16(y1);
     }
   }
 }

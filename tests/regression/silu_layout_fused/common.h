@@ -14,6 +14,7 @@
 #define TILE_DMA_MT       128
 #define TILE_DMA_KT       128
 #define TILE_DMA_MXU_KT    32
+#define TILE_DMA_MXU_NT    32
 
 typedef struct {
   uint32_t kernel_id;

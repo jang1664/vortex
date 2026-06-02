@@ -116,19 +116,23 @@ backend names:
 | App | Consumes | Produces | Notes |
 | --- | --- | --- | --- |
 | `rms_norm_layout_fused` | row-major hidden state | GEMM-A tiled | Fuses RMSNorm with `tile_input_a`. |
-| `silu_layout_fused` | GEMM-C tiled gate projection | `layout_fused_intermediate` | `layout_fused_intermediate` uses the GEMM-A tiled address formula and stores fp16 values. |
-| `elmul_layout_fused` | `layout_fused_intermediate` and GEMM-C tiled up projection | GEMM-A tiled | Feeds `down_proj` directly. |
+| `silu_layout_fused` | GEMM-C tiled gate projection | GEMM-C tiled SiLU output | Keeps the gate path in GEMM-C layout for the following SwiGLU multiply. |
+| `elmul_layout_fused` | GEMM-C tiled SiLU output and GEMM-C tiled up projection | GEMM-A tiled | Feeds `down_proj` directly. |
 | `eladd_layout_fused` | GEMM-C tiled projection and row-major residual | row-major | Covers attention and FFN residual adds. |
 | `softmax_layout_fused` | per-head GEMM-C tiled score matrix | per-head GEMM-A tiled probabilities | One independent tiled matrix per `(batch, head)`. |
-| `rope_layout_fused` | combined-head GEMM-C tiled Q/K projection | per-head GEMM-A tiled Q or W-like tiled K | `--layout-to` selects `gemm_a_tiled` or `gemm_w_tiled`. |
+| `rope_layout_fused` | combined-head GEMM-C tiled Q/K projection | per-head GEMM-A tiled Q or row-major K cache | `--layout-to` selects `gemm_a_tiled` for Q or `row_major` for K in the Llama workload. |
 | `head_concat` | row-major `[batch, heads, seq, headdim]` | row-major `[batch, seq, heads * headdim]` | Regular head concat has no GEMM-specific layout. |
 | `head_concat_layout_fused` | per-head GEMM-C tiled PV output | GEMM-A tiled `o_proj` input | Fuses PV detile, head concat, and `o_proj` tile-input preparation. |
-| `kv_cache_quant_w4a16` | fp16 row-major `[K, N]` | uint4 packed row-major `[K, N/2]` plus fp16 scale and int16 zero-point | Dynamic K/V cache quantization for fpint-compatible W4A16 operands. |
+| `kv_cache_quant_w4a16` | fp16 row-major `[K, N]` | uint4 packed row-major `[K, N/2]` plus row-major fp16 scale and int16 zero-point | Standalone dynamic K/V cache quantization. |
+| `kv_cache_quant_layout_fused_w4a16` | fp16 row-major or GEMM-C tiled `[K, N]` | uint4 GEMM-W tiled payload plus GEMM tiled scale/zp buffers | Fused K/V cache quantization for direct fpint GEMM-W consumption; V-cache in fused Llama consumes `v_proj` GEMM-C tiled output directly. |
 | `kv_cache_dequant_w4a16` | uint4 packed row-major plus qparams | fp16 row-major `[K, N]` | Debug/reference dequant path. |
 
-`rope_layout_fused --layout-to gemm_w_tiled` is a latency-model fp16 layout
-for K-cache data. It follows the WTRANS=1 tile ordering at element granularity,
-but it is not the packed int4 `tile_weight_w4a16` byte format and has no
-scale/zero-point side buffers. Correct fpint attention using this path still
-needs `kv_cache_quant_w4a16` before the packed int4 GEMM-W path, or a separate
-activation-B layout contract.
+`rope_layout_fused --layout-to row_major` is used for K-cache data before
+K-cache quantization. The standalone layout variant uses `kv_cache_quant_w4a16`
+followed by `tile_weight_w4a16` and `tile_scale_zp_w4a16`. The fused layout
+variant uses `kv_cache_quant_layout_fused_w4a16`, which writes the packed int4
+payload and scale/zp directly in the layouts consumed by `fpint_gemm`.
+
+The older `gemm_w_tiled` mode remains a latency-model fp16 layout, but it is
+not the packed int4 `tile_weight_w4a16` byte format and is not the current
+Llama fpint path.

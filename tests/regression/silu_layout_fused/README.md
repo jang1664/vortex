@@ -27,13 +27,13 @@ bench_main.cpp -> bench_main_v2.cpp
 | Variant | Kernel ID | Store layout |
 | --- | --- | --- |
 | `--variant=row` | `KERNEL_SILU_ROW_MATCHED` | Row-major `[m, k]` |
-| `--variant=layout` | `KERNEL_SILU_LAYOUT_FUSED` | Tile-major `[kt, kb, m, k_in_sub]` |
+| `--variant=layout` | `KERNEL_SILU_LAYOUT_FUSED` | GEMM-C tiled `[mt, nt32, m0, n0]` |
 
 Both variants execute the same device function body in `kernel_v2.cpp`.
-The kernel computes both row-major and tile-major output base addresses, then
-selects one with a mask. This keeps traversal, input loads, SiLU compute, and
-dynamic instruction count matched so the comparison isolates the store address
-pattern as much as possible.
+The kernel computes both row-major and GEMM-C tiled input/output base
+addresses, then selects one with a mask. This keeps traversal, SiLU compute,
+and dynamic instruction count matched so the comparison isolates the layout
+address pattern as much as possible.
 
 ## Switching
 

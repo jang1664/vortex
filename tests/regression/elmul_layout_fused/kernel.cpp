@@ -22,12 +22,14 @@ void kernel_elmul_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
     const uint32_t m = idx / K;
     const uint32_t k = idx - m * K;
     const uint64_t a_off =
-        gemm_a_tiled_elem_offset(m, k, M_pad, K, arg->log2_mt, arg->log2_mxu_kt);
+        gemm_c_tiled_elem_offset(m, k, M_pad, K, arg->log2_mt, arg->log2_mxu_nt);
     const uint64_t b_off =
         gemm_c_tiled_elem_offset(m, k, M_pad, K, arg->log2_mt, arg->log2_mxu_nt);
+    const uint64_t out_off =
+        gemm_a_tiled_elem_offset(m, k, M_pad, K, arg->log2_mt, arg->log2_mxu_kt);
     float a = fp16_to_float(input_a[a_off]);
     float b = fp16_to_float(input_b[b_off]);
-    output[a_off] = float_to_fp16(a * b);
+    output[out_off] = float_to_fp16(a * b);
   }
 }
 

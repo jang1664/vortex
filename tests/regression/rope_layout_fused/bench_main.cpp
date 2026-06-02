@@ -53,7 +53,10 @@ static uint32_t parse_layout_to(const char* value) {
   if (strcmp(value, "gemm_w_tiled") == 0 || strcmp(value, "w") == 0) {
     return ROPE_LAYOUT_TO_GEMM_W;
   }
-  printf("ERROR: --layout-to must be gemm_a_tiled or gemm_w_tiled\n");
+  if (strcmp(value, "row_major") == 0 || strcmp(value, "row") == 0) {
+    return ROPE_LAYOUT_TO_ROW_MAJOR;
+  }
+  printf("ERROR: --layout-to must be gemm_a_tiled, gemm_w_tiled, or row_major\n");
   exit(1);
 }
 
@@ -133,7 +136,7 @@ int main(int argc, char *argv[]) {
     else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
       printf("Usage: %s [--warmup=N] [--iterations=N] [--csv] [--output=PATH] "
              "[--output-append] [-batch B] [-seq S] [-heads H] [-headdim D] "
-             "[-maxseq N] [-offset O] [--layout-to gemm_a_tiled|gemm_w_tiled]\n", argv[0]);
+             "[-maxseq N] [-offset O] [--layout-to gemm_a_tiled|gemm_w_tiled|row_major]\n", argv[0]);
       return 0;
     }
   }
@@ -146,7 +149,9 @@ int main(int argc, char *argv[]) {
   const size_t input_tiled_elems = (size_t)input_m_pad * input_n;
   const size_t output_elems = (layout_to == ROPE_LAYOUT_TO_GEMM_A)
       ? (size_t)batch * heads * output_m_pad * head_dim
-      : (size_t)batch * heads * head_dim * max_seq;
+      : (layout_to == ROPE_LAYOUT_TO_GEMM_W)
+          ? (size_t)batch * heads * head_dim * max_seq
+          : input_row_elems;
   const size_t input_tiled_bytes = input_tiled_elems * sizeof(data_t);
   const size_t output_bytes = output_elems * sizeof(data_t);
 
@@ -221,7 +226,9 @@ int main(int argc, char *argv[]) {
     stats.record(sw.stop_us());
   }
 
-  stats.report(layout_to == ROPE_LAYOUT_TO_GEMM_A ? "rope_layout_fused_a" : "rope_layout_fused_w", bench);
+  stats.report(layout_to == ROPE_LAYOUT_TO_GEMM_A ? "rope_layout_fused_a" :
+               layout_to == ROPE_LAYOUT_TO_GEMM_W ? "rope_layout_fused_w" :
+               "rope_layout_fused_row", bench);
   cleanup();
   return 0;
 }

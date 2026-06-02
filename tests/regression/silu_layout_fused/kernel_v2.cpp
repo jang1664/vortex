@@ -14,12 +14,10 @@ using data_t = fp16_t;
 //       Read+compute+Write i-th element (flat row-major output).
 //
 //   silu_layout_fused:
-//       Same SiLU math, but writes are reordered so the output buffer is
-//       already in the tile-major (kb, m, k_in_sub) layout that
-//       fpint_gemm_ffn_hw expects. Also zero-fills padded rows m >= M_real.
+//       Same SiLU math, but reads and writes GEMM-C tiled buffers. This keeps
+//       the gate projection output in GEMM-C layout until elmul consumes it.
 //
-//       i.e., fuses (silu) + (M-pad zero fill) + (tile_input_a) into one
-//       kernel — no extra reads or writes beyond what silu already does.
+//       i.e., fuses (GEMM-C detile) + (silu) + (GEMM-C retile) away.
 //
 // The two kernels do IDENTICAL work per element (1 fp32 expf + 1 div + 1 mul
 // + 1 fp32 load + 1 fp32 store), so any timing delta isolates the
@@ -57,18 +55,19 @@ void kernel_silu_store_matched(kernel_arg_t *__UNIFORM__ arg) {
   const uint32_t M_pad  = arg->M_pad;
   const uint32_t K      = arg->K;
   const uint32_t log2_mt     = arg->log2_mt;
-  const uint32_t log2_kt     = arg->log2_kt;
   const uint32_t log2_mxu_kt = arg->log2_mxu_kt;
+  // Current fpint tiles use MXU_KT == MXU_NT == 32; reuse the existing ABI field.
+  const uint32_t log2_mxu_nt = arg->log2_mxu_kt;
   const uint64_t layout_mask =
       (arg->kernel_id == KERNEL_SILU_LAYOUT_FUSED) ? ~uint64_t(0) : uint64_t(0);
   const uint64_t row_mask = ~layout_mask;
 
   const uint32_t mt          = 1u << log2_mt;
   const uint32_t mt_mask     = mt - 1u;
-  const uint32_t mxu_kt      = 1u << log2_mxu_kt;
-  const uint32_t mxu_kt_mask = mxu_kt - 1u;
+  const uint32_t mxu_nt      = 1u << log2_mxu_nt;
+  const uint32_t mxu_nt_mask = mxu_nt - 1u;
 
-  const uint32_t k_chunks = K >> log2_mxu_kt;
+  const uint32_t k_chunks = K >> log2_mxu_nt;
   const uint32_t total_threads = gridDim.x * blockDim.x;
   const uint32_t thread_id = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -81,20 +80,22 @@ void kernel_silu_store_matched(kernel_arg_t *__UNIFORM__ arg) {
                       : mt;
 
     for (uint32_t k_chunk = thread_id; k_chunk < k_chunks; k_chunk += total_threads) {
-      const uint32_t gk_base = k_chunk << log2_mxu_kt;
-      const uint32_t k0 = gk_base & mxu_kt_mask;
+      const uint32_t gk_base = k_chunk << log2_mxu_nt;
+      const uint32_t n0 = gk_base & mxu_nt_mask;
 
-      const uint64_t in_base = in_row_base + gk_base;
+      const uint64_t row_base = in_row_base + gk_base;
       const uint64_t tile_out_base =
           (uint64_t)mt_idx * mt * K
-        + (uint64_t)k_chunk * cm * mxu_kt
-        + (uint64_t)m0 * mxu_kt
-        + k0;
-      const uint64_t row_out_base = in_base;
+        + (uint64_t)k_chunk * cm * mxu_nt
+        + (uint64_t)m0 * mxu_nt
+        + n0;
+      const uint64_t in_base = (tile_out_base & layout_mask)
+                             | (row_base & row_mask);
+      const uint64_t row_out_base = row_base;
       const uint64_t out_base = (tile_out_base & layout_mask)
                               | (row_out_base & row_mask);
 
-      for (uint32_t k_in_sub = 0; k_in_sub < mxu_kt; ++k_in_sub) {
+      for (uint32_t k_in_sub = 0; k_in_sub < mxu_nt; ++k_in_sub) {
         pOutput[out_base + k_in_sub] =
             float_to_fp16(silu(fp16_to_float(pInput[in_base + k_in_sub])));
       }
