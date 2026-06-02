@@ -104,7 +104,38 @@ workloads:
 
             self.assertEqual({"rope_q", "rope_k"}, set(by_op))
             self.assertIn("--layout-to gemm_a_tiled", by_op["rope_q"].args)
-            self.assertIn("--layout-to gemm_w_tiled", by_op["rope_k"].args)
+            self.assertIn("--layout-to row_major", by_op["rope_k"].args)
+
+    def test_standard_variant_expands_kv_cache_quant_cases(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            suite_path = Path(tmp) / "suite.yaml"
+            suite_path.write_text(
+                """
+name: kv_cache_quant_suite
+defaults:
+  warmup: 1
+  iterations: 2
+workloads:
+  - id: llama2_kv_quant
+    model: llama2-7b
+    stage: generation
+    batch: 1
+    gen_kv_len: 512
+    qblk: 32
+    variant: attn_sgemm_tcu_fpint_gemm_naive
+    filter_backend: kv_cache_quant_w4a16
+""".lstrip()
+            )
+
+            suite = load_suite(suite_path, repo_root=Path.cwd())
+            by_op = {case.op: case for case in suite.cases}
+
+            self.assertEqual(
+                {"kv_cache_quant_rope_k_to_attn_qkT", "kv_cache_quant_v_cache_to_attn_pv"},
+                set(by_op),
+            )
+            self.assertEqual("-k 128 -n 32 -q 128 -d 0 -t 1", by_op["kv_cache_quant_rope_k_to_attn_qkT"].args)
+            self.assertEqual("-k 32 -n 128 -q 128 -d 1 -t 0", by_op["kv_cache_quant_v_cache_to_attn_pv"].args)
 
 
 if __name__ == "__main__":

@@ -25,7 +25,9 @@ fpga_bins:
     elmul: naive_simd
     tile_input_a: naive_simd
     detile_output: naive_simd
+    kv_cache_quant_w4a16: naive_simd
     tile_weight_w4a16: naive_simd
+    tile_scale_zp_w4a16: naive_simd
     head_concat: naive_simd
 
 workloads:

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shlex
 import sys
 from pathlib import Path
 
@@ -84,6 +85,11 @@ WORKLOAD_VARIANTS = (
 )
 DEFAULT_WORKLOAD_VARIANT = ALL_FPINT_GEMM_IMPROVE_VARIANT
 ATTENTION_GEMM_OPS = frozenset(("attn_qkT", "attn_pv"))
+STANDARD_KV_CACHE_QUANT_VARIANTS = frozenset((
+    ALL_FPINT_GEMM_NAIVE_VARIANT,
+    ATTN_SGEMM_TCU_FPINT_GEMM_NAIVE_VARIANT,
+    ALL_SGEMM_TCU_VARIANT,
+))
 LAYOUT_MXU_KT = 32
 LAYOUT_MXU_NT = 32
 
@@ -97,6 +103,7 @@ KERNEL_APP_REGISTRY: dict[str, str | None] = {
     "tile_input_a": "tile_input_a",
     "detile_output": "detile_output",
     "tile_weight_w4a16": "tile_weight_w4a16",
+    "tile_scale_zp_w4a16": "tile_scale_zp_w4a16",
     "rms_norm_layout_fused": "rms_norm_layout_fused",
     "silu_layout_fused": "silu_layout_fused",
     "rope_layout_fused": "rope_layout_fused",
@@ -112,6 +119,7 @@ KERNEL_APP_REGISTRY: dict[str, str | None] = {
     "eladd":      "eladd",
     "elmul":      "elmul",
     "kv_cache_quant_w4a16": "kv_cache_quant_w4a16",
+    "kv_cache_quant_layout_fused_w4a16": "kv_cache_quant_layout_fused_w4a16",
     "kv_cache_dequant_w4a16": "kv_cache_dequant_w4a16",
     # No regression test yet:
     "embedding":  None,
@@ -312,7 +320,7 @@ def _tile_weight_kernel(name: str,
         "K": K,
         "N": N,
         "WTRANS": WTRANS,
-        "layout_from": "row_major",
+        "layout_from": "packed_w4a16_row_major",
         "layout_to": "gemm_w_tiled",
         "producer": producer,
         "consumer": consumer,
@@ -330,6 +338,152 @@ def _tile_weight_kernel(name: str,
         stage=stage,
         backend="tile_weight_w4a16",
         args=f"-k {K} -n {N} -t {WTRANS}",
+        calls_per_forward=calls_per_forward,
+        shape=shape,
+        variant=variant,
+    )
+
+
+def _tile_scale_zp_kernel(name: str,
+                          stage: str,
+                          *,
+                          K: int,
+                          N: int,
+                          QBLK: int,
+                          QDIR: int,
+                          calls_per_forward: int,
+                          producer: str,
+                          consumer: str,
+                          layout_group: str,
+                          variant: str,
+                          effective_K: int | None = None,
+                          effective_N: int | None = None,
+                          cache_len: int | None = None,
+                          cache_update: str = "full") -> dict:
+    shape = {
+        "K": K,
+        "N": N,
+        "QBLK": QBLK,
+        "QDIR": QDIR,
+        "layout_from": "qparams_row_major",
+        "layout_to": "gemm_scale_zp_tiled",
+        "producer": producer,
+        "consumer": consumer,
+        "layout_group": layout_group,
+        "cache_update": cache_update,
+    }
+    if effective_K is not None:
+        shape["effective_K"] = effective_K
+    if effective_N is not None:
+        shape["effective_N"] = effective_N
+    if cache_len is not None:
+        shape["cache_len"] = cache_len
+    return _layout_kernel(
+        name=name,
+        stage=stage,
+        backend="tile_scale_zp_w4a16",
+        args=f"-k {K} -n {N} -q {QBLK} -d {QDIR}",
+        calls_per_forward=calls_per_forward,
+        shape=shape,
+        variant=variant,
+    )
+
+
+def _kv_cache_quant_kernel(name: str,
+                           stage: str,
+                           *,
+                           K: int,
+                           N: int,
+                           QBLK: int,
+                           QDIR: int,
+                           WTRANS: int,
+                           calls_per_forward: int,
+                           producer: str,
+                           consumer: str,
+                           layout_group: str,
+                           variant: str,
+                           effective_K: int | None = None,
+                           effective_N: int | None = None,
+                           cache_len: int | None = None,
+                           cache_update: str = "full") -> dict:
+    shape = {
+        "K": K,
+        "N": N,
+        "QBLK": QBLK,
+        "QDIR": QDIR,
+        "WTRANS": WTRANS,
+        "layout_from": "row_major_fp16",
+        "layout_to": "packed_w4a16_row_major",
+        "producer": producer,
+        "consumer": consumer,
+        "layout_group": layout_group,
+        "cache_update": cache_update,
+    }
+    if effective_K is not None:
+        shape["effective_K"] = effective_K
+    if effective_N is not None:
+        shape["effective_N"] = effective_N
+    if cache_len is not None:
+        shape["cache_len"] = cache_len
+    return _llm_kernel(
+        name=name,
+        kind="quantization",
+        backend="kv_cache_quant_w4a16",
+        stage=stage,
+        args=f"-k {K} -n {N} -q {QBLK} -d {QDIR} -t {WTRANS}",
+        calls_per_forward=calls_per_forward,
+        shape=shape,
+        variant=variant,
+    )
+
+
+def _kv_cache_quant_layout_fused_kernel(name: str,
+                                        stage: str,
+                                        *,
+                                        K: int,
+                                        N: int,
+                                        QBLK: int,
+                                        QDIR: int,
+                                        WTRANS: int,
+                                        calls_per_forward: int,
+                                        producer: str,
+                                        consumer: str,
+                                        layout_group: str,
+                                        variant: str,
+                                        layout_from: str = "row_major_fp16",
+                                        effective_K: int | None = None,
+                                        effective_N: int | None = None,
+                                        cache_len: int | None = None,
+                                        cache_update: str = "full") -> dict:
+    shape = {
+        "K": K,
+        "N": N,
+        "QBLK": QBLK,
+        "QDIR": QDIR,
+        "WTRANS": WTRANS,
+        "layout_from": layout_from,
+        "weight_layout_to": "gemm_w_tiled",
+        "scale_zp_layout_to": "gemm_scale_zp_tiled",
+        "producer": producer,
+        "consumer": consumer,
+        "layout_group": layout_group,
+        "cache_update": cache_update,
+    }
+    if effective_K is not None:
+        shape["effective_K"] = effective_K
+    if effective_N is not None:
+        shape["effective_N"] = effective_N
+    if cache_len is not None:
+        shape["cache_len"] = cache_len
+    return _llm_kernel(
+        name=name,
+        kind="quantization",
+        backend="kv_cache_quant_layout_fused_w4a16",
+        stage=stage,
+        args=(
+            f"-k {K} -n {N} -q {QBLK} -d {QDIR} -t {WTRANS}"
+            + (f" --layout-from {layout_from}" if layout_from != "row_major_fp16" else "")
+        ),
         calls_per_forward=calls_per_forward,
         shape=shape,
         variant=variant,
@@ -407,6 +561,65 @@ def _kv_tile_weight_v_shape(stage: str, seq_kv: int, head_dim: int) -> tuple[int
     return _align_up(seq_kv, LAYOUT_MXU_KT), head_dim, seq_kv, head_dim, "full"
 
 
+def _apply_standard_kv_cache_quant_variant(kernels: list[dict],
+                                           *,
+                                           stage: str,
+                                           seq_kv: int,
+                                           layers: int,
+                                           batch: int,
+                                           heads_kv: int,
+                                           head_dim: int,
+                                           variant: str) -> list[dict]:
+    by_name = {kernel["name"]: kernel for kernel in kernels}
+    per_head_kv = layers * batch * heads_kv
+    k_K, k_N, k_eff_K, k_eff_N, k_update = _kv_tile_weight_k_shape(stage, seq_kv, head_dim)
+    v_K, v_N, v_eff_K, v_eff_N, v_update = _kv_tile_weight_v_shape(stage, seq_kv, head_dim)
+    attn_qk_backend = str(by_name["attn_qkT"]["backend"])
+    attn_pv_backend = str(by_name["attn_pv"]["backend"])
+    k_consumer = "attn_qkT" if attn_qk_backend in FPINT_GEMM_BACKENDS else "kv_cache:k"
+    v_consumer = "attn_pv" if attn_pv_backend in FPINT_GEMM_BACKENDS else "kv_cache:v"
+
+    return [
+        by_name["input_layernorm"],
+        by_name["q_proj"],
+        by_name["k_proj"],
+        by_name["v_proj"],
+        by_name["rope_q"],
+        by_name["rope_k"],
+        _kv_cache_quant_kernel(
+            "kv_cache_quant_rope_k_to_attn_qkT", stage,
+            K=k_K, N=k_N, QBLK=head_dim, QDIR=0, WTRANS=1,
+            calls_per_forward=per_head_kv,
+            producer="rope_k", consumer=k_consumer,
+            layout_group="rope_k_to_kv_cache", variant=variant,
+            effective_K=k_eff_K, effective_N=k_eff_N,
+            cache_len=seq_kv, cache_update=k_update,
+        ),
+        by_name["attn_qkT"],
+        by_name["attn_softmax"],
+        _kv_cache_quant_kernel(
+            "kv_cache_quant_v_cache_to_attn_pv", stage,
+            K=v_K, N=v_N, QBLK=head_dim, QDIR=1, WTRANS=0,
+            calls_per_forward=per_head_kv,
+            producer="v_proj", consumer=v_consumer,
+            layout_group="v_cache_to_kv_cache", variant=variant,
+            effective_K=v_eff_K, effective_N=v_eff_N,
+            cache_len=seq_kv, cache_update=v_update,
+        ),
+        by_name["attn_pv"],
+        by_name["attn_head_concat"],
+        by_name["o_proj"],
+        by_name["residual_attn"],
+        by_name["post_attention_layernorm"],
+        by_name["gate_proj"],
+        by_name["up_proj"],
+        by_name["mlp_silu"],
+        by_name["mlp_elmul"],
+        by_name["down_proj"],
+        by_name["residual_ffn"],
+    ]
+
+
 def _apply_standalone_layout_variant(kernels: list[dict],
                                      *,
                                      stage: str,
@@ -429,7 +642,7 @@ def _apply_standalone_layout_variant(kernels: list[dict],
     v_K, v_N, v_eff_K, v_eff_N, v_update = _kv_tile_weight_v_shape(stage, seq_kv, head_dim)
 
     return [
-        by_name["embedding_lookup"],
+        # embedding_lookup is intentionally disabled in build_decoder_pass_kernels.
         by_name["input_layernorm"],
         _tile_input_kernel(
             "layout_input_layernorm_to_qkv", stage,
@@ -460,10 +673,28 @@ def _apply_standalone_layout_variant(kernels: list[dict],
             producer="rope_q", consumer="attn_qkT",
             layout_group="rope_q_to_attn_qkT", variant=variant,
         ),
+        _kv_cache_quant_kernel(
+            "kv_cache_quant_rope_k_to_attn_qkT", stage,
+            K=k_K, N=k_N, QBLK=head_dim, QDIR=0, WTRANS=1,
+            calls_per_forward=per_head_kv,
+            producer="rope_k", consumer="layout_rope_k_to_attn_qkT",
+            layout_group="rope_k_to_attn_qkT", variant=variant,
+            effective_K=k_eff_K, effective_N=k_eff_N,
+            cache_len=seq_kv, cache_update=k_update,
+        ),
+        _tile_scale_zp_kernel(
+            "layout_rope_k_qparams_to_attn_qkT", stage,
+            K=k_K, N=k_N, QBLK=head_dim, QDIR=0,
+            calls_per_forward=per_head_kv,
+            producer="kv_cache_quant_rope_k_to_attn_qkT", consumer="attn_qkT",
+            layout_group="rope_k_to_attn_qkT", variant=variant,
+            effective_K=k_eff_K, effective_N=k_eff_N,
+            cache_len=seq_kv, cache_update=k_update,
+        ),
         _tile_weight_kernel(
             "layout_rope_k_to_attn_qkT", stage,
             K=k_K, N=k_N, WTRANS=1, calls_per_forward=per_head_kv,
-            producer="rope_k", consumer="attn_qkT",
+            producer="kv_cache_quant_rope_k_to_attn_qkT", consumer="attn_qkT",
             layout_group="rope_k_to_attn_qkT", variant=variant,
             effective_K=k_eff_K, effective_N=k_eff_N,
             cache_len=seq_kv, cache_update=k_update,
@@ -488,10 +719,28 @@ def _apply_standalone_layout_variant(kernels: list[dict],
             producer="v_proj", consumer="v_cache",
             layout_group="v_proj_to_attn_pv", variant=variant,
         ),
+        _kv_cache_quant_kernel(
+            "kv_cache_quant_v_cache_to_attn_pv", stage,
+            K=v_K, N=v_N, QBLK=head_dim, QDIR=1, WTRANS=0,
+            calls_per_forward=per_head_kv,
+            producer="v_cache", consumer="layout_v_cache_to_attn_pv",
+            layout_group="v_cache_to_attn_pv", variant=variant,
+            effective_K=v_eff_K, effective_N=v_eff_N,
+            cache_len=seq_kv, cache_update=v_update,
+        ),
+        _tile_scale_zp_kernel(
+            "layout_v_cache_qparams_to_attn_pv", stage,
+            K=v_K, N=v_N, QBLK=head_dim, QDIR=1,
+            calls_per_forward=per_head_kv,
+            producer="kv_cache_quant_v_cache_to_attn_pv", consumer="attn_pv",
+            layout_group="v_cache_to_attn_pv", variant=variant,
+            effective_K=v_eff_K, effective_N=v_eff_N,
+            cache_len=seq_kv, cache_update=v_update,
+        ),
         _tile_weight_kernel(
             "layout_v_cache_to_attn_pv", stage,
             K=v_K, N=v_N, WTRANS=0, calls_per_forward=per_head_kv,
-            producer="v_cache", consumer="attn_pv",
+            producer="kv_cache_quant_v_cache_to_attn_pv", consumer="attn_pv",
             layout_group="v_cache_to_attn_pv", variant=variant,
             effective_K=v_eff_K, effective_N=v_eff_N,
             cache_len=seq_kv, cache_update=v_update,
@@ -560,7 +809,7 @@ def _apply_standalone_layout_variant(kernels: list[dict],
             layout_group="down_proj_to_residual_ffn", variant=variant,
         ),
         by_name["residual_ffn"],
-        by_name["final_layernorm"],
+        # final_layernorm is intentionally disabled in build_decoder_pass_kernels.
     ]
 
 
@@ -582,10 +831,11 @@ def _apply_fused_layout_variant(kernels: list[dict],
     by_name = {kernel["name"]: kernel for kernel in kernels}
     per_head_q = layers * batch * heads_q
     per_head_kv = layers * batch * heads_kv
+    k_K, k_N, k_eff_K, k_eff_N, k_update = _kv_tile_weight_k_shape(stage, seq_kv, head_dim)
     v_K, v_N, v_eff_K, v_eff_N, v_update = _kv_tile_weight_v_shape(stage, seq_kv, head_dim)
 
     return [
-        by_name["embedding_lookup"],
+        # embedding_lookup is intentionally disabled in build_decoder_pass_kernels.
         _with_fused_backend(
             by_name["input_layernorm"], "rms_norm_layout_fused",
             args=f"-m {M_proj} -k {hidden}",
@@ -609,14 +859,23 @@ def _apply_fused_layout_variant(kernels: list[dict],
         ),
         _with_fused_backend(
             by_name["rope_k"], "rope_layout_fused",
-            args=f"{by_name['rope_k']['args']} --layout-to gemm_w_tiled",
+            args=f"{by_name['rope_k']['args']} --layout-to row_major",
             shape_update={
-                "layout_from": "gemm_c_tiled", "layout_to": "gemm_w_tiled",
-                "producer": "k_proj", "consumer": "attn_qkT",
-                "layout_group": "k_proj_to_rope_k_to_attn_qkT",
+                "layout_from": "gemm_c_tiled", "layout_to": "row_major_fp16",
+                "producer": "k_proj", "consumer": "kv_cache_quant_rope_k_to_attn_qkT",
+                "layout_group": "k_proj_to_rope_k_to_kv_cache_quant",
                 "cache_update": "append" if stage == "generation" else "full",
                 "cache_len": seq_kv,
             },
+        ),
+        _kv_cache_quant_layout_fused_kernel(
+            "kv_cache_quant_rope_k_to_attn_qkT", stage,
+            K=k_K, N=k_N, QBLK=head_dim, QDIR=0, WTRANS=1,
+            calls_per_forward=per_head_kv,
+            producer="rope_k", consumer="attn_qkT",
+            layout_group="rope_k_to_attn_qkT", variant=variant,
+            effective_K=k_eff_K, effective_N=k_eff_N,
+            cache_len=seq_kv, cache_update=k_update,
         ),
         by_name["attn_qkT"],
         _with_fused_backend(
@@ -627,17 +886,13 @@ def _apply_fused_layout_variant(kernels: list[dict],
                 "layout_group": "attn_qkT_to_softmax_to_attn_pv",
             },
         ),
-        _detile_output_kernel(
-            "layout_v_proj_to_v_cache_detile", stage,
-            M=M_proj, N=q_dim, calls_per_forward=layers,
-            producer="v_proj", consumer="v_cache",
-            layout_group="v_proj_to_attn_pv", variant=variant,
-        ),
-        _tile_weight_kernel(
-            "layout_v_cache_to_attn_pv", stage,
-            K=v_K, N=v_N, WTRANS=0, calls_per_forward=per_head_kv,
-            producer="v_cache", consumer="attn_pv",
+        _kv_cache_quant_layout_fused_kernel(
+            "kv_cache_quant_v_cache_to_attn_pv", stage,
+            K=v_K, N=v_N, QBLK=head_dim, QDIR=1, WTRANS=0,
+            calls_per_forward=per_head_kv,
+            producer="v_proj", consumer="attn_pv",
             layout_group="v_cache_to_attn_pv", variant=variant,
+            layout_from="gemm_c_tiled",
             effective_K=v_eff_K, effective_N=v_eff_N,
             cache_len=seq_kv, cache_update=v_update,
         ),
@@ -676,7 +931,7 @@ def _apply_fused_layout_variant(kernels: list[dict],
             args=f"-m {M_proj} -k {intermediate}",
             shape_update={
                 "M": M_proj, "K": intermediate,
-                "layout_from": "gemm_c_tiled", "layout_to": "layout_fused_intermediate",
+                "layout_from": "gemm_c_tiled", "layout_to": "gemm_c_tiled",
                 "producer": "gate_proj", "consumer": "mlp_elmul",
                 "layout_group": "gate_proj_to_mlp_silu_to_mlp_elmul",
             },
@@ -686,7 +941,7 @@ def _apply_fused_layout_variant(kernels: list[dict],
             args=f"-m {M_proj} -k {intermediate}",
             shape_update={
                 "M": M_proj, "K": intermediate,
-                "layout_from": "layout_fused_intermediate", "layout_to": "gemm_a_tiled",
+                "layout_from": "gemm_c_tiled", "layout_to": "gemm_a_tiled",
                 "producer": "mlp_silu,up_proj", "consumer": "down_proj",
                 "layout_group": "mlp_elmul_to_down_proj",
             },
@@ -702,7 +957,7 @@ def _apply_fused_layout_variant(kernels: list[dict],
                 "layout_group": "down_proj_to_residual_ffn",
             },
         ),
-        by_name["final_layernorm"],
+        # final_layernorm is intentionally disabled in build_decoder_pass_kernels.
     ]
 
 
@@ -747,7 +1002,9 @@ def build_decoder_pass_kernels(config: dict,
     H_q    = config["num_attention_heads"]
     H_kv   = config["num_key_value_heads"]
     D      = config["head_dim"]
-    V      = config["vocab_size"]
+    # V is only needed when embedding_lookup is part of the latency workload.
+    # embedding_lookup is intentionally disabled below.
+    # V      = config["vocab_size"]
     max_pe = config.get("max_position_embeddings", max(seq_kv, 4096))
     q_dim  = H_q * D
     kv_dim = H_kv * D
@@ -766,16 +1023,18 @@ def build_decoder_pass_kernels(config: dict,
 
     out: list[dict] = []
 
-    # ---------------- Token embedding (model-level, NOT yet implemented) --
-    out.append(_llm_kernel(
-        name="embedding_lookup",
-        kind="embedding",
-        stage=stage,
-        args="",
-        calls_per_forward=1,
-        shape={"batch": batch, "seq": seq_q, "hidden": H, "vocab": V},
-        variant=variant,
-    ))
+    # ---------------- Token embedding (model-level) -----------------------
+    # Disabled for latency workloads: token embedding is outside the current
+    # accelerator evaluation target and has no implemented regression app.
+    # out.append(_llm_kernel(
+    #     name="embedding_lookup",
+    #     kind="embedding",
+    #     stage=stage,
+    #     args="",
+    #     calls_per_forward=1,
+    #     shape={"batch": batch, "seq": seq_q, "hidden": H, "vocab": V},
+    #     variant=variant,
+    # ))
 
     # ---------------- Per-decoder-layer kernels (× L) ---------------------
 
@@ -933,13 +1192,15 @@ def build_decoder_pass_kernels(config: dict,
     # ---------------- Model-level kernels (× 1) ---------------------------
 
     # 20. final_layernorm (model-level RMSNorm)
-    out.append(_llm_kernel(
-        name="final_layernorm", kind="rmsnorm", stage=stage,
-        args=f"-batch {batch} -seq {seq_q} -hidden {H}",
-        calls_per_forward=1,
-        shape={"batch": batch, "seq": seq_q, "hidden": H},
-        variant=variant,
-    ))
+    # Disabled for latency workloads: this model-level norm is outside the
+    # current per-layer accelerator evaluation target.
+    # out.append(_llm_kernel(
+    #     name="final_layernorm", kind="rmsnorm", stage=stage,
+    #     args=f"-batch {batch} -seq {seq_q} -hidden {H}",
+    #     calls_per_forward=1,
+    #     shape={"batch": batch, "seq": seq_q, "hidden": H},
+    #     variant=variant,
+    # ))
 
     # 21. lm_head intentionally excluded from the LLaMA latency workload.
     #     The logits projection is outside the current accelerator evaluation
@@ -977,6 +1238,17 @@ def build_decoder_pass_kernels(config: dict,
             head_dim=D,
             q_dim=q_dim,
             M_proj=M_proj,
+            variant=variant,
+        )
+    if variant in STANDARD_KV_CACHE_QUANT_VARIANTS:
+        return _apply_standard_kv_cache_quant_variant(
+            out,
+            stage=stage,
+            seq_kv=seq_kv,
+            layers=L,
+            batch=batch,
+            heads_kv=H_kv,
+            head_dim=D,
             variant=variant,
         )
 
@@ -1031,7 +1303,7 @@ def build_llm_kernels(model_name: str,
                 f"unknown stage: {stage!r}. Expected one of {LLM_STAGES}"
             )
 
-    return {
+    payload = {
         "model": model_name,
         "model_config": dict(config),
         "config": {
@@ -1044,6 +1316,8 @@ def build_llm_kernels(model_name: str,
         },
         "kernels": kernels,
     }
+    annotate_kernel_flow(payload["kernels"])
+    return payload
 
 
 # ===========================================================================
@@ -1201,6 +1475,734 @@ def print_model_registry() -> None:
 
 
 # ===========================================================================
+# Kernel dataflow metadata.
+# ===========================================================================
+def _split_flow_nodes(raw: object) -> list[str]:
+    if raw is None:
+        return []
+    return [node.strip() for node in str(raw).split(",") if node.strip()]
+
+
+def _input_flow(role: str, source: str, layout: str) -> dict:
+    return {"role": role, "source": source, "layout": layout}
+
+
+def _output_flow(role: str, target: str, layout: str) -> dict:
+    return {"role": role, "target": target, "layout": layout}
+
+
+def _input_flows(role: str, sources: list[str], layout: str) -> list[dict]:
+    return [_input_flow(role, source, layout) for source in sources]
+
+
+def _output_flows(role: str, targets: list[str], layout: str) -> list[dict]:
+    return [_output_flow(role, target, layout) for target in targets]
+
+
+def _gemm_a_layout(backend: str) -> str:
+    if backend == FPINT_GEMM_IMPROVE_BACKEND:
+        return "gemm_a_tiled"
+    if backend == "sgemm_tcu":
+        return "row_major_fp16"
+    return "row_major"
+
+
+def _gemm_w_layout(backend: str) -> str:
+    if backend == FPINT_GEMM_IMPROVE_BACKEND:
+        return "gemm_w_tiled"
+    if backend == "sgemm_tcu":
+        return "row_major_fp16"
+    return "row_major"
+
+
+def _gemm_qparam_layout(backend: str) -> str | None:
+    if backend == FPINT_GEMM_IMPROVE_BACKEND:
+        return "gemm_scale_zp_tiled"
+    if backend == FPINT_GEMM_NAIVE_BACKEND:
+        return "row_major"
+    return None
+
+
+def _gemm_c_layout(backend: str) -> str:
+    if backend == FPINT_GEMM_IMPROVE_BACKEND:
+        return "gemm_c_tiled"
+    if backend == "sgemm_tcu":
+        return "row_major_fp16"
+    return "row_major"
+
+
+def _kernel_backend(kernels_by_name: dict[str, dict], name: str) -> str:
+    kernel = kernels_by_name.get(name)
+    return str(kernel.get("backend", "")) if kernel else ""
+
+
+def _kernel_layout_to(kernels_by_name: dict[str, dict], name: str, default: str) -> str:
+    shape = dict(kernels_by_name.get(name, {}).get("shape") or {})
+    return str(shape.get("layout_to", default))
+
+
+def _kernel_layout_from(kernels_by_name: dict[str, dict], name: str, default: str) -> str:
+    shape = dict(kernels_by_name.get(name, {}).get("shape") or {})
+    return str(shape.get("layout_from", default))
+
+
+def _standard_quant_feeds_attention(kernels_by_name: dict[str, dict],
+                                    names: set[str],
+                                    *,
+                                    attn_name: str,
+                                    quant_name: str,
+                                    tiled_layout_name: str) -> bool:
+    quant = kernels_by_name.get(quant_name)
+    return (
+        quant is not None
+        and quant.get("backend") == "kv_cache_quant_w4a16"
+        and tiled_layout_name not in names
+        and _kernel_backend(kernels_by_name, attn_name) in FPINT_GEMM_BACKENDS
+    )
+
+
+def _standard_quant_is_cache_store_only(kernels_by_name: dict[str, dict],
+                                        names: set[str],
+                                        *,
+                                        attn_name: str,
+                                        quant_name: str,
+                                        tiled_layout_name: str) -> bool:
+    quant = kernels_by_name.get(quant_name)
+    return (
+        quant is not None
+        and quant.get("backend") == "kv_cache_quant_w4a16"
+        and tiled_layout_name not in names
+        and not _standard_quant_feeds_attention(
+            kernels_by_name,
+            names,
+            attn_name=attn_name,
+            quant_name=quant_name,
+            tiled_layout_name=tiled_layout_name,
+        )
+    )
+
+
+def _first_existing(candidates: list[str], names: set[str]) -> str | None:
+    for candidate in candidates:
+        if candidate in names:
+            return candidate
+    return None
+
+
+def _targets_existing(candidates: list[str], names: set[str]) -> list[str]:
+    return [candidate for candidate in candidates if candidate in names]
+
+
+def _set_flow(kernel: dict,
+              inputs: list[dict] | None = None,
+              outputs: list[dict] | None = None) -> None:
+    kernel["inputs"] = inputs or []
+    kernel["outputs"] = outputs or []
+
+
+def _set_flow_by_name(kernels_by_name: dict[str, dict],
+                      name: str,
+                      *,
+                      inputs: list[dict] | None = None,
+                      outputs: list[dict] | None = None) -> None:
+    kernel = kernels_by_name.get(name)
+    if kernel is not None:
+        _set_flow(kernel, inputs, outputs)
+
+
+def _static_weight_inputs(op: str, backend: str) -> list[dict]:
+    if backend == FPINT_GEMM_IMPROVE_BACKEND:
+        return [
+            _input_flow("W", f"param:{op}.weight", "gemm_w_tiled"),
+            _input_flow("scale/zp", f"param:{op}.qparams", "gemm_scale_zp_tiled"),
+        ]
+    if backend == FPINT_GEMM_NAIVE_BACKEND:
+        return [
+            _input_flow("W", f"param:{op}.weight", "row_major"),
+            _input_flow("scale/zp", f"param:{op}.qparams", "row_major"),
+        ]
+    if backend == "sgemm_tcu":
+        return [_input_flow("B", f"param:{op}.weight", "row_major_fp16")]
+    return [_input_flow("B", f"param:{op}.weight", "row_major")]
+
+
+def _annotate_generic_layout_flows(kernels: list[dict]) -> None:
+    for kernel in kernels:
+        shape = dict(kernel.get("shape") or {})
+        layout_from = shape.get("layout_from")
+        layout_to = shape.get("layout_to")
+        producers = _split_flow_nodes(shape.get("producer"))
+        consumers = _split_flow_nodes(shape.get("consumer"))
+        if layout_from and producers:
+            kernel["inputs"] = _input_flows("x", producers, str(layout_from))
+        if layout_to and consumers:
+            kernel["outputs"] = _output_flows("y", consumers, str(layout_to))
+
+
+def annotate_kernel_flow(kernels: list[dict]) -> None:
+    """Add explicit role-level dataflow metadata for layout visualization.
+
+    The generator keeps the older shape.producer/consumer fields for suite
+    compatibility. This pass adds structured inputs/outputs so the text layout
+    view can show every operand edge without guessing inside the renderer.
+    """
+    kernels_by_name = {str(kernel["name"]): kernel for kernel in kernels}
+    names = set(kernels_by_name)
+    for kernel in kernels:
+        kernel["inputs"] = []
+        kernel["outputs"] = []
+
+    _annotate_generic_layout_flows(kernels)
+
+    has_qkv_tile = "layout_input_layernorm_to_qkv" in names
+    input_norm_out_layout = (
+        "row_major"
+        if has_qkv_tile
+        else (
+            "gemm_a_tiled"
+            if _kernel_backend(kernels_by_name, "input_layernorm") == "rms_norm_layout_fused"
+            else "row_major"
+        )
+    )
+    input_norm_target = (
+        ["layout_input_layernorm_to_qkv"]
+        if has_qkv_tile else _targets_existing(["q_proj", "k_proj", "v_proj"], names)
+    )
+    _set_flow_by_name(
+        kernels_by_name,
+        "embedding_lookup",
+        inputs=[_input_flow("tokens", "input_ids", "token_ids")],
+        outputs=_output_flows("hidden", ["input_layernorm"], "row_major"),
+    )
+    input_norm_source = "embedding_lookup" if "embedding_lookup" in names else "model_input"
+    _set_flow_by_name(
+        kernels_by_name,
+        "input_layernorm",
+        inputs=[_input_flow("x", input_norm_source, "row_major")],
+        outputs=_output_flows("hidden", input_norm_target, input_norm_out_layout),
+    )
+
+    for proj, target_candidates in (
+        ("q_proj", ["layout_q_proj_to_rope_q_detile", "rope_q"]),
+        ("k_proj", ["layout_k_proj_to_rope_k_detile", "rope_k"]),
+        ("v_proj", ["layout_v_proj_to_v_cache_detile", "kv_cache_quant_v_cache_to_attn_pv", "attn_pv"]),
+    ):
+        if proj not in names:
+            continue
+        backend = _kernel_backend(kernels_by_name, proj)
+        a_source = "layout_input_layernorm_to_qkv" if has_qkv_tile else "input_layernorm"
+        target = _first_existing(target_candidates, names)
+        outputs = [_output_flow("C", target, _gemm_c_layout(backend))] if target else []
+        if proj == "v_proj" and "kv_cache_quant_v_cache_to_attn_pv" in names:
+            outputs = [
+                _output_flow(
+                    "C",
+                    "kv_cache_quant_v_cache_to_attn_pv",
+                    _kernel_layout_from(kernels_by_name, "kv_cache_quant_v_cache_to_attn_pv", "row_major_fp16"),
+                )
+            ]
+            if _standard_quant_is_cache_store_only(
+                kernels_by_name,
+                names,
+                attn_name="attn_pv",
+                quant_name="kv_cache_quant_v_cache_to_attn_pv",
+                tiled_layout_name="layout_v_cache_to_attn_pv",
+            ):
+                outputs.append(_output_flow("C", "attn_pv", _gemm_c_layout(backend)))
+        _set_flow_by_name(
+            kernels_by_name,
+            proj,
+            inputs=[_input_flow("A", a_source, _gemm_a_layout(backend))]
+                   + _static_weight_inputs(proj, backend),
+            outputs=outputs,
+        )
+
+    # Q path into QK^T.
+    rope_q = kernels_by_name.get("rope_q")
+    if rope_q:
+        shape = dict(rope_q.get("shape") or {})
+        source = _first_existing(["layout_q_proj_to_rope_q_detile", "q_proj"], names) or "q_proj"
+        target = _first_existing(["layout_rope_q_to_attn_qkT", "attn_qkT"], names)
+        input_layout = str(shape.get("layout_from", "row_major"))
+        output_layout = str(shape.get("layout_to", "row_major"))
+        _set_flow(
+            rope_q,
+            inputs=[_input_flow("x", source, input_layout)],
+            outputs=([_output_flow("q", target, output_layout)] if target else []),
+        )
+
+    rope_k = kernels_by_name.get("rope_k")
+    if rope_k:
+        shape = dict(rope_k.get("shape") or {})
+        source = _first_existing(["layout_k_proj_to_rope_k_detile", "k_proj"], names) or "k_proj"
+        input_layout = str(shape.get("layout_from", "row_major"))
+        output_layout = str(shape.get("layout_to", "row_major"))
+        outputs = []
+        if "kv_cache_quant_rope_k_to_attn_qkT" in names:
+            outputs.append(
+                _output_flow(
+                    "k",
+                    "kv_cache_quant_rope_k_to_attn_qkT",
+                    _kernel_layout_from(kernels_by_name, "kv_cache_quant_rope_k_to_attn_qkT", "row_major_fp16"),
+                )
+            )
+            if _standard_quant_is_cache_store_only(
+                kernels_by_name,
+                names,
+                attn_name="attn_qkT",
+                quant_name="kv_cache_quant_rope_k_to_attn_qkT",
+                tiled_layout_name="layout_rope_k_to_attn_qkT",
+            ):
+                outputs.append(_output_flow("k", "attn_qkT", output_layout))
+        else:
+            target = _first_existing(["layout_rope_k_to_attn_qkT", "attn_qkT"], names)
+            outputs = [_output_flow("k", target, output_layout)] if target else []
+        _set_flow(
+            rope_k,
+            inputs=[_input_flow("x", source, input_layout)],
+            outputs=outputs,
+        )
+
+    k_quant = kernels_by_name.get("kv_cache_quant_rope_k_to_attn_qkT")
+    if k_quant:
+        shape = dict(k_quant.get("shape") or {})
+        if k_quant.get("backend") == "kv_cache_quant_layout_fused_w4a16":
+            outputs = [
+                _output_flow("W", "attn_qkT", str(shape.get("weight_layout_to", "gemm_w_tiled"))),
+                _output_flow("scale/zp", "attn_qkT", str(shape.get("scale_zp_layout_to", "gemm_scale_zp_tiled"))),
+            ]
+        else:
+            outputs = []
+            if "layout_rope_k_to_attn_qkT" in names:
+                outputs.append(_output_flow("packed", "layout_rope_k_to_attn_qkT", "packed_w4a16_row_major"))
+            if "layout_rope_k_qparams_to_attn_qkT" in names:
+                outputs.append(_output_flow("scale/zp", "layout_rope_k_qparams_to_attn_qkT", "qparams_row_major"))
+            if _standard_quant_feeds_attention(
+                kernels_by_name,
+                names,
+                attn_name="attn_qkT",
+                quant_name="kv_cache_quant_rope_k_to_attn_qkT",
+                tiled_layout_name="layout_rope_k_to_attn_qkT",
+            ):
+                attn_backend = _kernel_backend(kernels_by_name, "attn_qkT")
+                outputs.extend([
+                    _output_flow("W", "attn_qkT", _gemm_w_layout(attn_backend)),
+                    _output_flow("scale/zp", "attn_qkT", _gemm_qparam_layout(attn_backend) or "row_major"),
+                ])
+            elif not outputs:
+                target = str(shape.get("consumer", "kv_cache:k"))
+                outputs.extend([
+                    _output_flow("packed", target, "packed_w4a16_row_major"),
+                    _output_flow("scale/zp", target, "qparams_row_major"),
+                ])
+        _set_flow(
+            k_quant,
+            inputs=[_input_flow("x", "rope_k", str(shape.get("layout_from", "row_major_fp16")))],
+            outputs=outputs,
+        )
+
+    # Attention QK^T.
+    attn_qk = kernels_by_name.get("attn_qkT")
+    if attn_qk:
+        backend = _kernel_backend(kernels_by_name, "attn_qkT")
+        a_source = _first_existing(["layout_rope_q_to_attn_qkT", "rope_q"], names) or "rope_q"
+        if "layout_rope_k_to_attn_qkT" in names:
+            w_source = "layout_rope_k_to_attn_qkT"
+            scale_source = "layout_rope_k_qparams_to_attn_qkT"
+        elif kernels_by_name.get("kv_cache_quant_rope_k_to_attn_qkT", {}).get("backend") == "kv_cache_quant_layout_fused_w4a16":
+            w_source = "kv_cache_quant_rope_k_to_attn_qkT"
+            scale_source = "kv_cache_quant_rope_k_to_attn_qkT"
+        elif _standard_quant_feeds_attention(
+            kernels_by_name,
+            names,
+            attn_name="attn_qkT",
+            quant_name="kv_cache_quant_rope_k_to_attn_qkT",
+            tiled_layout_name="layout_rope_k_to_attn_qkT",
+        ):
+            w_source = "kv_cache_quant_rope_k_to_attn_qkT"
+            scale_source = "kv_cache_quant_rope_k_to_attn_qkT"
+        else:
+            w_source = "rope_k"
+            scale_source = f"param:{attn_qk['name']}.qparams"
+        inputs = [
+            _input_flow("A", a_source, _gemm_a_layout(backend)),
+            _input_flow("W" if backend in FPINT_GEMM_BACKENDS else "B", w_source, _gemm_w_layout(backend)),
+        ]
+        qparam_layout = _gemm_qparam_layout(backend)
+        if qparam_layout:
+            inputs.append(_input_flow("scale/zp", scale_source, qparam_layout))
+        target = _first_existing(["layout_attn_qkT_to_softmax_detile", "attn_softmax"], names)
+        _set_flow(
+            attn_qk,
+            inputs=inputs,
+            outputs=([_output_flow("C", target, _gemm_c_layout(backend))] if target else []),
+        )
+
+    softmax = kernels_by_name.get("attn_softmax")
+    if softmax:
+        shape = dict(softmax.get("shape") or {})
+        source = _first_existing(["layout_attn_qkT_to_softmax_detile", "attn_qkT"], names) or "attn_qkT"
+        target = _first_existing(["layout_attn_softmax_to_attn_pv", "attn_pv"], names)
+        _set_flow(
+            softmax,
+            inputs=[_input_flow("scores", source, str(shape.get("layout_from", "row_major")))],
+            outputs=([_output_flow("prob", target, str(shape.get("layout_to", "row_major")))] if target else []),
+        )
+
+    v_quant = kernels_by_name.get("kv_cache_quant_v_cache_to_attn_pv")
+    if v_quant:
+        shape = dict(v_quant.get("shape") or {})
+        if v_quant.get("backend") == "kv_cache_quant_layout_fused_w4a16":
+            outputs = [
+                _output_flow("W", "attn_pv", str(shape.get("weight_layout_to", "gemm_w_tiled"))),
+                _output_flow("scale/zp", "attn_pv", str(shape.get("scale_zp_layout_to", "gemm_scale_zp_tiled"))),
+            ]
+        else:
+            outputs = []
+            if "layout_v_cache_to_attn_pv" in names:
+                outputs.append(_output_flow("packed", "layout_v_cache_to_attn_pv", "packed_w4a16_row_major"))
+            if "layout_v_cache_qparams_to_attn_pv" in names:
+                outputs.append(_output_flow("scale/zp", "layout_v_cache_qparams_to_attn_pv", "qparams_row_major"))
+            if _standard_quant_feeds_attention(
+                kernels_by_name,
+                names,
+                attn_name="attn_pv",
+                quant_name="kv_cache_quant_v_cache_to_attn_pv",
+                tiled_layout_name="layout_v_cache_to_attn_pv",
+            ):
+                attn_backend = _kernel_backend(kernels_by_name, "attn_pv")
+                outputs.extend([
+                    _output_flow("W", "attn_pv", _gemm_w_layout(attn_backend)),
+                    _output_flow("scale/zp", "attn_pv", _gemm_qparam_layout(attn_backend) or "row_major"),
+                ])
+            elif not outputs:
+                target = str(shape.get("consumer", "kv_cache:v"))
+                outputs.extend([
+                    _output_flow("packed", target, "packed_w4a16_row_major"),
+                    _output_flow("scale/zp", target, "qparams_row_major"),
+                ])
+        source = _first_existing(["layout_v_proj_to_v_cache_detile", "v_proj"], names) or "v_proj"
+        _set_flow(
+            v_quant,
+            inputs=[_input_flow("x", source, str(shape.get("layout_from", "row_major_fp16")))],
+            outputs=outputs,
+        )
+
+    attn_pv = kernels_by_name.get("attn_pv")
+    if attn_pv:
+        backend = _kernel_backend(kernels_by_name, "attn_pv")
+        a_source = _first_existing(["layout_attn_softmax_to_attn_pv", "attn_softmax"], names) or "attn_softmax"
+        if "layout_v_cache_to_attn_pv" in names:
+            w_source = "layout_v_cache_to_attn_pv"
+            scale_source = "layout_v_cache_qparams_to_attn_pv"
+        elif kernels_by_name.get("kv_cache_quant_v_cache_to_attn_pv", {}).get("backend") == "kv_cache_quant_layout_fused_w4a16":
+            w_source = "kv_cache_quant_v_cache_to_attn_pv"
+            scale_source = "kv_cache_quant_v_cache_to_attn_pv"
+        elif _standard_quant_feeds_attention(
+            kernels_by_name,
+            names,
+            attn_name="attn_pv",
+            quant_name="kv_cache_quant_v_cache_to_attn_pv",
+            tiled_layout_name="layout_v_cache_to_attn_pv",
+        ):
+            w_source = "kv_cache_quant_v_cache_to_attn_pv"
+            scale_source = "kv_cache_quant_v_cache_to_attn_pv"
+        else:
+            w_source = "v_proj"
+            scale_source = f"param:{attn_pv['name']}.qparams"
+        inputs = [
+            _input_flow("A", a_source, _gemm_a_layout(backend)),
+            _input_flow("W" if backend in FPINT_GEMM_BACKENDS else "B", w_source, _gemm_w_layout(backend)),
+        ]
+        qparam_layout = _gemm_qparam_layout(backend)
+        if qparam_layout:
+            inputs.append(_input_flow("scale/zp", scale_source, qparam_layout))
+        target = _first_existing(["layout_attn_pv_to_head_concat_detile", "attn_head_concat"], names)
+        output_layout = _gemm_c_layout(backend)
+        concat = kernels_by_name.get("attn_head_concat")
+        if target == "attn_head_concat" and concat:
+            concat_shape = dict(concat.get("shape") or {})
+            output_layout = str(concat_shape.get("layout_from", output_layout))
+        _set_flow(
+            attn_pv,
+            inputs=inputs,
+            outputs=([_output_flow("C", target, output_layout)] if target else []),
+        )
+
+    concat = kernels_by_name.get("attn_head_concat")
+    if concat:
+        shape = dict(concat.get("shape") or {})
+        source = _first_existing(["layout_attn_pv_to_head_concat_detile", "attn_pv"], names) or "attn_pv"
+        target = _first_existing(["layout_attn_head_concat_to_o_proj", "o_proj"], names)
+        _set_flow(
+            concat,
+            inputs=[_input_flow("heads", source, str(shape.get("layout_from", "row_major")))],
+            outputs=([_output_flow("hidden", target, str(shape.get("layout_to", "row_major")))] if target else []),
+        )
+
+    # Output projection and attention residual.
+    if "o_proj" in names:
+        backend = _kernel_backend(kernels_by_name, "o_proj")
+        a_source = _first_existing(["layout_attn_head_concat_to_o_proj", "attn_head_concat"], names) or "attn_head_concat"
+        target = _first_existing(["layout_o_proj_to_residual_attn_detile", "residual_attn"], names)
+        _set_flow_by_name(
+            kernels_by_name,
+            "o_proj",
+            inputs=[_input_flow("A", a_source, _gemm_a_layout(backend))]
+                   + _static_weight_inputs("o_proj", backend),
+            outputs=([_output_flow("C", target, _gemm_c_layout(backend))] if target else []),
+        )
+
+    residual_attn = kernels_by_name.get("residual_attn")
+    if residual_attn:
+        shape = dict(residual_attn.get("shape") or {})
+        source = _first_existing(["layout_o_proj_to_residual_attn_detile", "o_proj"], names) or "o_proj"
+        _set_flow(
+            residual_attn,
+            inputs=[
+                _input_flow("x", source, str(shape.get("layout_from", "row_major"))),
+                _input_flow("residual", "residual_stream:attention_input", "row_major"),
+            ],
+            outputs=_output_flows("hidden", _targets_existing(["post_attention_layernorm"], names), "row_major"),
+        )
+
+    post_norm = kernels_by_name.get("post_attention_layernorm")
+    if post_norm:
+        shape = dict(post_norm.get("shape") or {})
+        target = ["layout_post_attention_layernorm_to_gate_up"] if "layout_post_attention_layernorm_to_gate_up" in names else _targets_existing(["gate_proj", "up_proj"], names)
+        output_layout = str(shape.get("layout_to", "row_major"))
+        _set_flow(
+            post_norm,
+            inputs=[_input_flow("x", "residual_attn", str(shape.get("layout_from", "row_major")))],
+            outputs=_output_flows("hidden", target, output_layout),
+        )
+
+    for proj, role in (("gate_proj", "gate"), ("up_proj", "up")):
+        if proj not in names:
+            continue
+        backend = _kernel_backend(kernels_by_name, proj)
+        a_source = "layout_post_attention_layernorm_to_gate_up" if "layout_post_attention_layernorm_to_gate_up" in names else "post_attention_layernorm"
+        target = _first_existing([f"layout_{proj.split('_')[0]}_proj_to_mlp_{'silu' if proj == 'gate_proj' else 'elmul'}_detile", "mlp_silu" if proj == "gate_proj" else "mlp_elmul"], names)
+        _set_flow_by_name(
+            kernels_by_name,
+            proj,
+            inputs=[_input_flow("A", a_source, _gemm_a_layout(backend))]
+                   + _static_weight_inputs(proj, backend),
+            outputs=([_output_flow("C", target, _gemm_c_layout(backend))] if target else []),
+        )
+
+    silu = kernels_by_name.get("mlp_silu")
+    if silu:
+        shape = dict(silu.get("shape") or {})
+        source = _first_existing(["layout_gate_proj_to_mlp_silu_detile", "gate_proj"], names) or "gate_proj"
+        _set_flow(
+            silu,
+            inputs=[_input_flow("x", source, str(shape.get("layout_from", "row_major")))],
+            outputs=[_output_flow("silu", "mlp_elmul", str(shape.get("layout_to", "row_major")))],
+        )
+
+    elmul = kernels_by_name.get("mlp_elmul")
+    if elmul:
+        shape = dict(elmul.get("shape") or {})
+        up_source = _first_existing(["layout_up_proj_to_mlp_elmul_detile", "up_proj"], names) or "up_proj"
+        inputs = [
+            _input_flow("x", "mlp_silu", str(shape.get("layout_from", "row_major"))),
+            _input_flow("y", up_source, "gemm_c_tiled" if elmul.get("backend") == "elmul_layout_fused" else "row_major"),
+        ]
+        target = _first_existing(["layout_mlp_elmul_to_down_proj", "down_proj"], names)
+        _set_flow(
+            elmul,
+            inputs=inputs,
+            outputs=([_output_flow("product", target, str(shape.get("layout_to", "row_major")))] if target else []),
+        )
+
+    if "down_proj" in names:
+        backend = _kernel_backend(kernels_by_name, "down_proj")
+        a_source = _first_existing(["layout_mlp_elmul_to_down_proj", "mlp_elmul"], names) or "mlp_elmul"
+        target = _first_existing(["layout_down_proj_to_residual_ffn_detile", "residual_ffn"], names)
+        _set_flow_by_name(
+            kernels_by_name,
+            "down_proj",
+            inputs=[_input_flow("A", a_source, _gemm_a_layout(backend))]
+                   + _static_weight_inputs("down_proj", backend),
+            outputs=([_output_flow("C", target, _gemm_c_layout(backend))] if target else []),
+        )
+
+    residual_ffn = kernels_by_name.get("residual_ffn")
+    if residual_ffn:
+        shape = dict(residual_ffn.get("shape") or {})
+        source = _first_existing(["layout_down_proj_to_residual_ffn_detile", "down_proj"], names) or "down_proj"
+        targets = _targets_existing(["final_layernorm", "next_layer"], names)
+        if not targets:
+            targets = ["model_output"]
+        _set_flow(
+            residual_ffn,
+            inputs=[
+                _input_flow("x", source, str(shape.get("layout_from", "row_major"))),
+                _input_flow("residual", "residual_attn", "row_major"),
+            ],
+            outputs=_output_flows("hidden", targets, "row_major"),
+        )
+
+    _set_flow_by_name(
+        kernels_by_name,
+        "final_layernorm",
+        inputs=[_input_flow("x", "residual_ffn", "row_major")],
+        outputs=[_output_flow("hidden", "model_output", "row_major")],
+    )
+
+
+# ===========================================================================
+# Text layout visualization.
+# ===========================================================================
+def _shape_summary(shape: dict) -> str:
+    if "M" in shape:
+        keys = ("M", "N", "K", "QBLK", "QDIR", "WTRANS")
+    elif "K" in shape or "N" in shape:
+        keys = ("K", "N", "QBLK", "QDIR", "WTRANS")
+    else:
+        keys = ()
+    keys += (
+        "batch", "seq", "hidden", "heads", "headdim", "seqq", "seqk",
+        "effective_K", "effective_N", "cache_len", "cache_update",
+    )
+    return ", ".join(
+        f"{key}={shape[key]}" for key in keys if key in shape
+    )
+
+
+def _args_summary(kernel: dict) -> str:
+    args = str(kernel.get("args", "")).strip()
+    if not args:
+        return "args=<none>"
+    return f"args={shlex.quote(args)}"
+
+
+def _kernel_input_layout(kernel: dict) -> str:
+    kind = str(kernel.get("kind", ""))
+    backend = str(kernel.get("backend", ""))
+    shape = dict(kernel.get("shape") or {})
+
+    if kind == "gemm":
+        if backend == FPINT_GEMM_IMPROVE_BACKEND:
+            return "A:gemm_a_tiled + W:gemm_w_tiled + scale/zp:gemm_scale_zp_tiled"
+        if backend == FPINT_GEMM_NAIVE_BACKEND:
+            return "A:row_major + W:row_major + scale/zp:row_major"
+        if backend == "sgemm_tcu":
+            return "A:row_major_fp16 + B:row_major_fp16"
+        return "A:row_major + B:row_major"
+
+    if "layout_from" in shape:
+        layout_from = str(shape["layout_from"])
+        if kind == "eladd" and backend == "eladd_layout_fused":
+            return f"{layout_from} + row_major"
+        if kind == "elmul" and backend == "elmul_layout_fused":
+            return f"{layout_from} + gemm_c_tiled"
+        return layout_from
+
+    if kind == "embedding":
+        return "token_ids"
+    if kind in {"eladd", "elmul"}:
+        return "row_major + row_major"
+    if kind in {"rmsnorm", "rope", "softmax", "silu", "concat", "quantization"}:
+        return "row_major"
+    return "unknown"
+
+
+def _kernel_output_layout(kernel: dict) -> str:
+    kind = str(kernel.get("kind", ""))
+    backend = str(kernel.get("backend", ""))
+    shape = dict(kernel.get("shape") or {})
+
+    if kind == "gemm":
+        if backend == FPINT_GEMM_IMPROVE_BACKEND:
+            return "C:gemm_c_tiled"
+        if backend == "sgemm_tcu":
+            return "C:row_major_fp16"
+        return "C:row_major"
+
+    if "weight_layout_to" in shape or "scale_zp_layout_to" in shape:
+        parts = []
+        if "weight_layout_to" in shape:
+            parts.append(f"weight:{shape['weight_layout_to']}")
+        if "scale_zp_layout_to" in shape:
+            parts.append(f"scale/zp:{shape['scale_zp_layout_to']}")
+        return " + ".join(parts)
+
+    if "layout_to" in shape:
+        return str(shape["layout_to"])
+    if kind == "embedding":
+        return "row_major"
+    if kind in {"rmsnorm", "rope", "softmax", "silu", "eladd", "elmul", "concat"}:
+        return "row_major"
+    if kind == "quantization":
+        return "packed_w4a16_row_major + qparams_row_major"
+    return "unknown"
+
+
+def format_layout_view(payload: dict) -> str:
+    """Render a role-level graph view of kernel input/output layouts."""
+    cfg = dict(payload.get("config") or {})
+    stages = list(cfg.get("stages") or [])
+    if not stages:
+        stages = []
+        for kernel in payload.get("kernels", []):
+            stage = str(kernel.get("stage", ""))
+            if stage and stage not in stages:
+                stages.append(stage)
+
+    lines = [
+        (
+            f"# model={payload.get('model')} variant={cfg.get('variant')} "
+            f"batch={cfg.get('batch')} prefill_seq_len={cfg.get('prefill_seq_len')} "
+            f"gen_kv_len={cfg.get('gen_kv_len')} qblk={cfg.get('qblk')}"
+        )
+    ]
+
+    kernels = list(payload.get("kernels") or [])
+    for stage in stages:
+        stage_kernels = [kernel for kernel in kernels if kernel.get("stage") == stage]
+        lines.append("")
+        lines.append(f"[stage: {stage}]")
+        for idx, kernel in enumerate(stage_kernels, start=1):
+            shape = dict(kernel.get("shape") or {})
+            name = str(kernel.get("name", ""))
+            kind = str(kernel.get("kind", ""))
+            backend = str(kernel.get("backend", ""))
+            app = str(kernel.get("app") or "-")
+            calls = kernel.get("calls_per_forward", 1)
+            implemented = "" if kernel.get("implemented", False) else " NOT_IMPL"
+            line = (
+                f"{idx:02d}. {name:<36} "
+                f"[{kind}/{backend} app={app} x{calls}{implemented}]"
+            )
+            summary = _shape_summary(shape)
+            if summary:
+                line += f" | {summary}"
+            line += f" | {_args_summary(kernel)}"
+            lines.append(line)
+
+            inputs = list(kernel.get("inputs") or [])
+            outputs = list(kernel.get("outputs") or [])
+            if not inputs:
+                inputs = [_input_flow("x", "?", _kernel_input_layout(kernel))]
+            if not outputs:
+                outputs = [_output_flow("y", "?", _kernel_output_layout(kernel))]
+            for item in inputs:
+                role = str(item.get("role", "x"))
+                source = str(item.get("source", "?"))
+                layout = str(item.get("layout", "?"))
+                lines.append(f"    in : {role:<9} <- {source:<42} : {layout}")
+            for item in outputs:
+                role = str(item.get("role", "y"))
+                target = str(item.get("target", "?"))
+                layout = str(item.get("layout", "?"))
+                lines.append(f"    out: {role:<9} -> {target:<42} : {layout}")
+
+    return "\n".join(lines) + "\n"
+
+
+# ===========================================================================
 # CLI.
 # ===========================================================================
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -1213,6 +2215,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
             "  --model llama2-7b --stage all --batch 1 \\\n"
             "      --prefill-seq-len 128 --gen-kv-len 512 -o cfgs.json\n"
             "  --model llama2-7b --variant attn_sgemm_tcu_fpint_gemm_naive --filter-kind gemm\n"
+            "  --model llama2-7b --variant all_fpint_gemm_improve_fused_layout --format layout\n"
         ),
     )
     parser.add_argument(
@@ -1265,6 +2268,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="Output JSON file path. If omitted, prints to stdout.",
     )
     parser.add_argument(
+        "--format", choices=("json", "layout", "text"), default="json",
+        help="Output format. 'layout'/'text' prints a compact input/output "
+             "layout view instead of JSON (default: json).",
+    )
+    parser.add_argument(
         "--list", action="store_true",
         help="Print the model registry and kernel-app registry, then exit.",
     )
@@ -1306,12 +2314,15 @@ def main(argv: list[str] | None = None) -> int:
             k for k in payload["kernels"] if k["backend"] == args.filter_backend
         ]
 
-    text = json.dumps(payload, indent=2) + "\n"
+    if args.format in ("layout", "text"):
+        text = format_layout_view(payload)
+    else:
+        text = json.dumps(payload, indent=2) + "\n"
     n = len(payload["kernels"])
     summary = (f"{n} cfgs (stages={','.join(stages)}"
                + (f", filter={args.filter_kind}" if args.filter_kind else "")
                + (f", backend={args.filter_backend}" if args.filter_backend else "")
-               + ")")
+               + f", format={args.format})")
     if args.outfile:
         path = Path(args.outfile)
         path.parent.mkdir(parents=True, exist_ok=True)
