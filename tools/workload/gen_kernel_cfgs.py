@@ -584,11 +584,16 @@ def _with_fused_backend(kernel: dict,
     )
 
 
-def _kv_cache_source_shape(stage: str, seq_kv: int, head_dim: int) -> tuple[int, int, int, int, str]:
-    if stage == "generation":
-        effective_rows = 1
-        return _align_up(effective_rows, LAYOUT_MXU_KT), head_dim, effective_rows, head_dim, "append"
-    return _align_up(seq_kv, LAYOUT_MXU_KT), head_dim, seq_kv, head_dim, "full"
+def _kv_cache_row_major_source_shape(stage: str, seq_kv: int, head_dim: int) -> tuple[int, int, str]:
+    rows = 1 if stage == "generation" else seq_kv
+    update = "append" if stage == "generation" else "full"
+    return rows, head_dim, update
+
+
+def _kv_cache_tiled_source_shape(stage: str, seq_kv: int, head_dim: int) -> tuple[int, int, int | None, int | None, str]:
+    rows = 1 if stage == "generation" else seq_kv
+    update = "append" if stage == "generation" else "full"
+    return rows, head_dim, None, None, update
 
 
 def _apply_standard_kv_cache_quant_variant(kernels: list[dict],
@@ -602,8 +607,8 @@ def _apply_standard_kv_cache_quant_variant(kernels: list[dict],
                                            variant: str) -> list[dict]:
     by_name = {kernel["name"]: kernel for kernel in kernels}
     per_head_kv = layers * batch * heads_kv
-    k_K, k_N, k_eff_K, k_eff_N, k_update = _kv_cache_source_shape(stage, seq_kv, head_dim)
-    v_K, v_N, v_eff_K, v_eff_N, v_update = _kv_cache_source_shape(stage, seq_kv, head_dim)
+    k_K, k_N, k_update = _kv_cache_row_major_source_shape(stage, seq_kv, head_dim)
+    v_K, v_N, v_update = _kv_cache_row_major_source_shape(stage, seq_kv, head_dim)
     attn_qk_backend = str(by_name["attn_qkT"]["backend"])
     attn_pv_backend = str(by_name["attn_pv"]["backend"])
     k_consumer = "attn_qkT" if attn_qk_backend in FPINT_GEMM_BACKENDS else "kv_cache:k"
@@ -622,7 +627,6 @@ def _apply_standard_kv_cache_quant_variant(kernels: list[dict],
             calls_per_forward=per_head_kv,
             producer="rope_k", consumer=k_consumer,
             layout_group="rope_k_to_kv_cache", variant=variant,
-            effective_K=k_eff_K, effective_N=k_eff_N,
             cache_len=seq_kv, cache_update=k_update,
             gemm_QDIR=0, source_transposed=True,
         ),
@@ -634,7 +638,6 @@ def _apply_standard_kv_cache_quant_variant(kernels: list[dict],
             calls_per_forward=per_head_kv,
             producer="v_proj", consumer=v_consumer,
             layout_group="v_cache_to_kv_cache", variant=variant,
-            effective_K=v_eff_K, effective_N=v_eff_N,
             cache_len=seq_kv, cache_update=v_update,
             gemm_QDIR=1,
         ),
@@ -670,8 +673,8 @@ def _apply_standalone_layout_variant(kernels: list[dict],
     by_name = {kernel["name"]: kernel for kernel in kernels}
     per_head_q = layers * batch * heads_q
     per_head_kv = layers * batch * heads_kv
-    k_K, k_N, k_eff_K, k_eff_N, k_update = _kv_cache_source_shape(stage, seq_kv, head_dim)
-    v_K, v_N, v_eff_K, v_eff_N, v_update = _kv_cache_source_shape(stage, seq_kv, head_dim)
+    k_K, k_N, k_eff_K, k_eff_N, k_update = _kv_cache_tiled_source_shape(stage, seq_kv, head_dim)
+    v_K, v_N, v_eff_K, v_eff_N, v_update = _kv_cache_tiled_source_shape(stage, seq_kv, head_dim)
 
     return [
         # embedding_lookup is intentionally disabled in build_decoder_pass_kernels.
@@ -868,8 +871,8 @@ def _apply_fused_layout_variant(kernels: list[dict],
     by_name = {kernel["name"]: kernel for kernel in kernels}
     per_head_q = layers * batch * heads_q
     per_head_kv = layers * batch * heads_kv
-    k_K, k_N, k_eff_K, k_eff_N, k_update = _kv_cache_source_shape(stage, seq_kv, head_dim)
-    v_K, v_N, v_eff_K, v_eff_N, v_update = _kv_cache_source_shape(stage, seq_kv, head_dim)
+    k_K, k_N, k_eff_K, k_eff_N, k_update = _kv_cache_tiled_source_shape(stage, seq_kv, head_dim)
+    v_K, v_N, v_eff_K, v_eff_N, v_update = _kv_cache_tiled_source_shape(stage, seq_kv, head_dim)
 
     return [
         # embedding_lookup is intentionally disabled in build_decoder_pass_kernels.

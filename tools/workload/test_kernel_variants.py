@@ -123,9 +123,11 @@ class KernelVariantTest(unittest.TestCase):
         attn_pv = _kernel_by_name(payload, "attn_pv")
 
         self.assertEqual("kv_cache_quant_w4a16", k_quant["backend"])
-        self.assertEqual("-k 32 -n 128 -q 128 -d 1 -t 1", k_quant["args"])
-        self.assertEqual(8, k_quant["shape"]["effective_K"])
-        self.assertEqual(128, k_quant["shape"]["effective_N"])
+        self.assertEqual("-k 8 -n 128 -q 128 -d 1 -t 1", k_quant["args"])
+        self.assertEqual(8, k_quant["shape"]["K"])
+        self.assertEqual(128, k_quant["shape"]["N"])
+        self.assertNotIn("effective_K", k_quant["shape"])
+        self.assertNotIn("effective_N", k_quant["shape"])
         self.assertEqual(1, k_quant["shape"]["source_QDIR"])
         self.assertEqual(0, k_quant["shape"]["gemm_QDIR"])
         self.assertTrue(k_quant["shape"]["source_transposed"])
@@ -140,8 +142,11 @@ class KernelVariantTest(unittest.TestCase):
         )
 
         self.assertEqual("kv_cache_quant_w4a16", v_quant["backend"])
-        self.assertEqual("-k 32 -n 128 -q 128 -d 1 -t 0", v_quant["args"])
-        self.assertEqual(8, v_quant["shape"]["effective_K"])
+        self.assertEqual("-k 8 -n 128 -q 128 -d 1 -t 0", v_quant["args"])
+        self.assertEqual(8, v_quant["shape"]["K"])
+        self.assertEqual(128, v_quant["shape"]["N"])
+        self.assertNotIn("effective_K", v_quant["shape"])
+        self.assertNotIn("effective_N", v_quant["shape"])
         self.assertEqual("full", v_quant["shape"]["cache_update"])
         self.assertIn(
             {"role": "W", "target": "attn_pv", "layout": "row_major"},
@@ -170,9 +175,11 @@ class KernelVariantTest(unittest.TestCase):
         attn_qk = _kernel_by_name(payload, "attn_qkT")
         attn_pv = _kernel_by_name(payload, "attn_pv")
 
-        self.assertEqual("-k 32 -n 128 -q 128 -d 1 -t 1", k_quant["args"])
-        self.assertEqual(1, k_quant["shape"]["effective_K"])
-        self.assertEqual(128, k_quant["shape"]["effective_N"])
+        self.assertEqual("-k 1 -n 128 -q 128 -d 1 -t 1", k_quant["args"])
+        self.assertEqual(1, k_quant["shape"]["K"])
+        self.assertEqual(128, k_quant["shape"]["N"])
+        self.assertNotIn("effective_K", k_quant["shape"])
+        self.assertNotIn("effective_N", k_quant["shape"])
         self.assertEqual(512, k_quant["shape"]["cache_len"])
         self.assertEqual("append", k_quant["shape"]["cache_update"])
         self.assertIn(
@@ -188,8 +195,11 @@ class KernelVariantTest(unittest.TestCase):
             attn_qk["inputs"],
         )
 
-        self.assertEqual("-k 32 -n 128 -q 128 -d 1 -t 0", v_quant["args"])
-        self.assertEqual(1, v_quant["shape"]["effective_K"])
+        self.assertEqual("-k 1 -n 128 -q 128 -d 1 -t 0", v_quant["args"])
+        self.assertEqual(1, v_quant["shape"]["K"])
+        self.assertEqual(128, v_quant["shape"]["N"])
+        self.assertNotIn("effective_K", v_quant["shape"])
+        self.assertNotIn("effective_N", v_quant["shape"])
         self.assertEqual(512, v_quant["shape"]["cache_len"])
         self.assertEqual("append", v_quant["shape"]["cache_update"])
         self.assertIn(
@@ -382,30 +392,30 @@ class KernelVariantTest(unittest.TestCase):
         k_qparams = _kernel_by_name(payload, "layout_rope_k_qparams_to_attn_qkT")
         v_qparams = _kernel_by_name(payload, "layout_v_cache_qparams_to_attn_pv")
 
-        self.assertEqual("-k 32 -n 128 -t 1 --source-transposed", k_cache["args"])
-        self.assertEqual(1, k_cache["shape"]["effective_K"])
-        self.assertEqual(128, k_cache["shape"]["effective_N"])
+        self.assertEqual("-k 1 -n 128 -t 1 --source-transposed", k_cache["args"])
+        self.assertNotIn("effective_K", k_cache["shape"])
+        self.assertNotIn("effective_N", k_cache["shape"])
         self.assertEqual(512, k_cache["shape"]["cache_len"])
         self.assertEqual("append", k_cache["shape"]["cache_update"])
-        self.assertEqual("-k 32 -n 128 -q 128 -d 1 -t 1", k_quant["args"])
-        self.assertEqual(1, k_quant["shape"]["effective_K"])
-        self.assertEqual(128, k_quant["shape"]["effective_N"])
+        self.assertEqual("-k 1 -n 128 -q 128 -d 1 -t 1", k_quant["args"])
+        self.assertNotIn("effective_K", k_quant["shape"])
+        self.assertNotIn("effective_N", k_quant["shape"])
         self.assertEqual(512, k_quant["shape"]["cache_len"])
         self.assertEqual("append", k_quant["shape"]["cache_update"])
-        self.assertEqual("-k 32 -n 128 -q 128 -d 1 --gemm-qdir 0 --source-transposed", k_qparams["args"])
-        self.assertEqual(1, k_qparams["shape"]["effective_K"])
-        self.assertEqual(128, k_qparams["shape"]["effective_N"])
+        self.assertEqual("-k 1 -n 128 -q 128 -d 1 --gemm-qdir 0 --source-transposed", k_qparams["args"])
+        self.assertNotIn("effective_K", k_qparams["shape"])
+        self.assertNotIn("effective_N", k_qparams["shape"])
         self.assertEqual("append", k_qparams["shape"]["cache_update"])
-        self.assertEqual("-k 32 -n 128 -t 0", v_cache["args"])
-        self.assertEqual(1, v_cache["shape"]["effective_K"])
+        self.assertEqual("-k 1 -n 128 -t 0", v_cache["args"])
+        self.assertNotIn("effective_K", v_cache["shape"])
         self.assertEqual(512, v_cache["shape"]["cache_len"])
         self.assertEqual("append", v_cache["shape"]["cache_update"])
-        self.assertEqual("-k 32 -n 128 -q 128 -d 1 -t 0", v_quant["args"])
-        self.assertEqual(1, v_quant["shape"]["effective_K"])
+        self.assertEqual("-k 1 -n 128 -q 128 -d 1 -t 0", v_quant["args"])
+        self.assertNotIn("effective_K", v_quant["shape"])
         self.assertEqual(512, v_quant["shape"]["cache_len"])
         self.assertEqual("append", v_quant["shape"]["cache_update"])
-        self.assertEqual("-k 32 -n 128 -q 128 -d 1 --gemm-qdir 1", v_qparams["args"])
-        self.assertEqual(1, v_qparams["shape"]["effective_K"])
+        self.assertEqual("-k 1 -n 128 -q 128 -d 1 --gemm-qdir 1", v_qparams["args"])
+        self.assertNotIn("effective_K", v_qparams["shape"])
         self.assertEqual("append", v_qparams["shape"]["cache_update"])
 
     def test_fused_layout_variant_replaces_vector_layout_but_keeps_gemm_bridges(self) -> None:
@@ -560,7 +570,7 @@ class KernelVariantTest(unittest.TestCase):
             text,
         )
         self.assertIn(
-            "args='-k 32 -n 128 -q 128 -d 1 -t 0 "
+            "args='-k 8 -n 128 -q 128 -d 1 -t 0 "
             "--gemm-qdir 1 --layout-from gemm_c_tiled'",
             text,
         )
