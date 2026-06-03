@@ -71,10 +71,14 @@ static void compute_params_cpu(const std::vector<fp16_t>& src,
     }
   }
 
-  float scale = (max_v - min_v) / 15.0f;
-  if (scale == 0.0f) scale = 1.0f;
-  float zpf = -min_v / scale;
-  int32_t zpi = (int32_t)(zpf + ((zpf >= 0.0f) ? 0.5f : -0.5f));
+  const float range = max_v - min_v;
+  float scale = 1.0f;
+  float inv_for_zp = 1.0f;
+  if (range != 0.0f) {
+    scale = range / 15.0f;
+    inv_for_zp = 15.0f / range;
+  }
+  int32_t zpi = kv_round_half_away_from_zero(-min_v * inv_for_zp);
   if (zpi < 0) zpi = 0;
   if (zpi > 15) zpi = 15;
   scale_bits = float_to_fp16(scale);
@@ -102,10 +106,14 @@ static void quantize_cpu(const std::vector<fp16_t>& src,
     for (uint32_t n = 0; n < N; n += 2) {
       uint64_t qidx0 = kv_qparam_index(k, n, K, N, QBLK, QDIR);
       uint64_t qidx1 = kv_qparam_index(k, n + 1, K, N, QBLK, QDIR);
-      uint8_t q0 = kv_quantize_value(
-          fp16_to_float(src[(uint64_t)k * N + n]), fp16_to_float(scales[qidx0]), zeros[qidx0]);
-      uint8_t q1 = kv_quantize_value(
-          fp16_to_float(src[(uint64_t)k * N + n + 1]), fp16_to_float(scales[qidx1]), zeros[qidx1]);
+      const float scale0 = fp16_to_float(scales[qidx0]);
+      const float scale1 = fp16_to_float(scales[qidx1]);
+      const float inv_scale0 = (scale0 == 0.0f) ? 0.0f : (1.0f / scale0);
+      const float inv_scale1 = (scale1 == 0.0f) ? 0.0f : (1.0f / scale1);
+      uint8_t q0 = kv_quantize_value_inv_scale(
+          fp16_to_float(src[(uint64_t)k * N + n]), inv_scale0, zeros[qidx0]);
+      uint8_t q1 = kv_quantize_value_inv_scale(
+          fp16_to_float(src[(uint64_t)k * N + n + 1]), inv_scale1, zeros[qidx1]);
       kv_store_npair(packed.data(), N, k, n >> 1, q0, q1);
     }
   }

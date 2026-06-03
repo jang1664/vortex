@@ -52,6 +52,21 @@ static inline uint8_t kv_quantize_value(float x, float scale, int16_t zp) {
   return (uint8_t)q;
 }
 
+static inline int32_t kv_round_half_away_from_zero(float x) {
+  return (int32_t)(x + ((x >= 0.0f) ? 0.5f : -0.5f));
+}
+
+static inline uint8_t kv_quantize_value_inv_scale(float x, float inv_scale, int16_t zp) {
+  if (inv_scale == 0.0f) {
+    return 0;
+  }
+  float qf = x * inv_scale;
+  int32_t q = kv_round_half_away_from_zero(qf) + (int32_t)zp;
+  if (q < 0) q = 0;
+  if (q > 15) q = 15;
+  return (uint8_t)q;
+}
+
 static inline void kv_store_npair(uint8_t* packed,
                                   uint32_t N,
                                   uint32_t k,

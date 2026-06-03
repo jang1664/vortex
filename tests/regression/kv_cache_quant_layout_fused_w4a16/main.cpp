@@ -68,10 +68,14 @@ static void compute_params_cpu(const std::vector<fp16_t>& src,
     }
   }
 
-  float scale = (max_v - min_v) / 15.0f;
-  if (scale == 0.0f) scale = 1.0f;
-  const float zpf = -min_v / scale;
-  int32_t zpi = (int32_t)(zpf + ((zpf >= 0.0f) ? 0.5f : -0.5f));
+  const float range = max_v - min_v;
+  float scale = 1.0f;
+  float inv_for_zp = 1.0f;
+  if (range != 0.0f) {
+    scale = range / 15.0f;
+    inv_for_zp = 15.0f / range;
+  }
+  int32_t zpi = kv_round_half_away_from_zero(-min_v * inv_for_zp);
   if (zpi < 0) zpi = 0;
   if (zpi > 15) zpi = 15;
   scale_bits = float_to_fp16(scale);
@@ -91,8 +95,10 @@ static uint8_t quant_cpu(const std::vector<fp16_t>& src,
   fp16_t scale_bits = 0;
   int16_t zp = 0;
   compute_params_cpu(src, K, N, QBLK, QDIR, k, n, scale_bits, zp);
-  return kv_quantize_value(fp16_to_float(src[(uint64_t)k * N + n]),
-                           fp16_to_float(scale_bits), zp);
+  const float stored_scale = fp16_to_float(scale_bits);
+  const float inv_scale = (stored_scale == 0.0f) ? 0.0f : (1.0f / stored_scale);
+  return kv_quantize_value_inv_scale(fp16_to_float(src[(uint64_t)k * N + n]),
+                                     inv_scale, zp);
 }
 
 static uint8_t quant_source_cpu(const std::vector<fp16_t>& src,

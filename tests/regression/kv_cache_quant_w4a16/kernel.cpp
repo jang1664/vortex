@@ -33,12 +33,14 @@ static void compute_params(const fp16_t* src,
     }
   }
 
-  float scale = (max_v - min_v) / 15.0f;
-  if (scale == 0.0f) {
-    scale = 1.0f;
+  const float range = max_v - min_v;
+  float scale = 1.0f;
+  float inv_for_zp = 1.0f;
+  if (range != 0.0f) {
+    scale = range / 15.0f;
+    inv_for_zp = 15.0f / range;
   }
-  float zpf = -min_v / scale;
-  int32_t zp = (int32_t)(zpf + ((zpf >= 0.0f) ? 0.5f : -0.5f));
+  int32_t zp = kv_round_half_away_from_zero(-min_v * inv_for_zp);
   if (zp < 0) zp = 0;
   if (zp > 15) zp = 15;
   *scale_out = scale;
@@ -75,15 +77,21 @@ void kernel_kv_cache_quant(kernel_arg_t *__UNIFORM__ arg) {
 
     const uint64_t qidx0 = kv_qparam_index(k, n0, K, N, QBLK, QDIR);
     const uint64_t qidx1 = kv_qparam_index(k, n1, K, N, QBLK, QDIR);
-    scales[qidx0] = float_to_fp16(scale0);
-    scales[qidx1] = float_to_fp16(scale1);
+    const fp16_t scale_bits0 = float_to_fp16(scale0);
+    const fp16_t scale_bits1 = float_to_fp16(scale1);
+    const float stored_scale0 = fp16_to_float(scale_bits0);
+    const float stored_scale1 = fp16_to_float(scale_bits1);
+    const float inv_scale0 = (stored_scale0 == 0.0f) ? 0.0f : (1.0f / stored_scale0);
+    const float inv_scale1 = (stored_scale1 == 0.0f) ? 0.0f : (1.0f / stored_scale1);
+    scales[qidx0] = scale_bits0;
+    scales[qidx1] = scale_bits1;
     zeros[qidx0] = zp0;
     zeros[qidx1] = zp1;
 
     const float x0 = fp16_to_float(src[(uint64_t)k * N + n0]);
     const float x1 = fp16_to_float(src[(uint64_t)k * N + n1]);
-    const uint8_t q0 = kv_quantize_value(x0, fp16_to_float(scales[qidx0]), zp0);
-    const uint8_t q1 = kv_quantize_value(x1, fp16_to_float(scales[qidx1]), zp1);
+    const uint8_t q0 = kv_quantize_value_inv_scale(x0, inv_scale0, zp0);
+    const uint8_t q1 = kv_quantize_value_inv_scale(x1, inv_scale1, zp1);
     kv_store_npair(dst, N, k, n_pair, q0, q1);
   }
 }

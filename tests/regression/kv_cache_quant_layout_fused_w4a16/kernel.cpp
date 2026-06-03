@@ -77,12 +77,14 @@ static void compute_params(const fp16_t* src,
     }
   }
 
-  float scale = (max_v - min_v) / 15.0f;
-  if (scale == 0.0f) {
-    scale = 1.0f;
+  const float range = max_v - min_v;
+  float scale = 1.0f;
+  float inv_for_zp = 1.0f;
+  if (range != 0.0f) {
+    scale = range / 15.0f;
+    inv_for_zp = 15.0f / range;
   }
-  const float zpf = -min_v / scale;
-  int32_t zp = (int32_t)(zpf + ((zpf >= 0.0f) ? 0.5f : -0.5f));
+  int32_t zp = kv_round_half_away_from_zero(-min_v * inv_for_zp);
   if (zp < 0) zp = 0;
   if (zp > 15) zp = 15;
   *scale_out = scale;
@@ -104,9 +106,10 @@ static uint8_t quant_at(const fp16_t* src,
   int16_t zp = 0;
   compute_params(src, K, N, QBLK, QDIR, k, n, src_layout, &scale, &zp);
   const float stored_scale = fp16_to_float(float_to_fp16(scale));
-  return kv_quantize_value(
+  const float inv_scale = (stored_scale == 0.0f) ? 0.0f : (1.0f / stored_scale);
+  return kv_quantize_value_inv_scale(
       fp16_to_float(load_src_value(src, K, N, k, n, src_layout)),
-      stored_scale,
+      inv_scale,
       zp);
 }
 
@@ -116,14 +119,14 @@ static uint8_t quant_with_params(const fp16_t* src,
                                  uint32_t k,
                                  uint32_t n,
                                  uint32_t src_layout,
-                                 float stored_scale,
+                                 float inv_scale,
                                  int16_t zp) {
   if (k >= K || n >= N) {
     return 0;
   }
-  return kv_quantize_value(
+  return kv_quantize_value_inv_scale(
       fp16_to_float(load_src_value(src, K, N, k, n, src_layout)),
-      stored_scale,
+      inv_scale,
       zp);
 }
 
@@ -273,11 +276,12 @@ void kernel_kv_cache_quant_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
       compute_params(src, K, N, QBLK, SOURCE_QDIR,
                      source_row, source_col_start, src_layout, &scale, &zp);
       const float stored_scale = fp16_to_float(float_to_fp16(scale));
+      const float inv_scale = (stored_scale == 0.0f) ? 0.0f : (1.0f / stored_scale);
       for (uint32_t source_col = source_col_start; source_col < source_col_end; source_col += 2) {
         const uint8_t q0 = quant_with_params(src, K, N, source_row, source_col,
-                                             src_layout, stored_scale, zp);
+                                             src_layout, inv_scale, zp);
         const uint8_t q1 = quant_with_params(src, K, N, source_row, source_col + 1,
-                                             src_layout, stored_scale, zp);
+                                             src_layout, inv_scale, zp);
         weight[weight_offset_wtrans1(logical_K, logical_N, source_col, source_row)] =
             (uint8_t)((q0 & 0x0f) | ((q1 & 0x0f) << 4));
       }
@@ -295,11 +299,12 @@ void kernel_kv_cache_quant_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
       compute_params(src, K, N, QBLK, SOURCE_QDIR,
                      source_row, source_col_start, src_layout, &scale, &zp);
       const float stored_scale = fp16_to_float(float_to_fp16(scale));
+      const float inv_scale = (stored_scale == 0.0f) ? 0.0f : (1.0f / stored_scale);
       for (uint32_t source_col = source_col_start; source_col < source_col_end; source_col += 2) {
         const uint8_t q0 = quant_with_params(src, K, N, source_row, source_col,
-                                             src_layout, stored_scale, zp);
+                                             src_layout, inv_scale, zp);
         const uint8_t q1 = quant_with_params(src, K, N, source_row, source_col + 1,
-                                             src_layout, stored_scale, zp);
+                                             src_layout, inv_scale, zp);
         weight[weight_offset_wtrans0(weight_K, weight_N, source_row, source_col >> 1)] =
             (uint8_t)((q0 & 0x0f) | ((q1 & 0x0f) << 4));
       }
