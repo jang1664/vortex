@@ -41,6 +41,7 @@ class ProgressTest(unittest.TestCase):
             self.assertEqual("2", rows[0]["total"])
             self.assertEqual("pass", rows[0]["status"])
             self.assertEqual("12.345", rows[0]["elapsed_wall_s"])
+            self.assertEqual("", rows[0]["failure_reason"])
             self.assertEqual("2.0", rows[0]["p50_us"])
             self.assertEqual("", rows[0]["parse_error"])
 
@@ -71,6 +72,7 @@ class ProgressTest(unittest.TestCase):
 
             self.assertEqual("fail", rows[0]["status"])
             self.assertEqual("", rows[0]["failure_phase"])
+            self.assertEqual("", rows[0]["failure_reason"])
             self.assertEqual("missing_raw_csv", rows[0]["parse_error"])
 
     def test_build_failure_records_build_fail_status(self) -> None:
@@ -101,7 +103,36 @@ class ProgressTest(unittest.TestCase):
 
             self.assertEqual("build_fail", rows[0]["status"])
             self.assertEqual("build", rows[0]["failure_phase"])
+            self.assertEqual("build", rows[0]["failure_reason"])
             self.assertEqual("missing_raw_csv", rows[0]["parse_error"])
+
+    def test_parse_error_records_failure_reason_for_zero_returncode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            progress_csv = tmp_path / "progress.csv"
+
+            append_progress_execution(
+                output=progress_csv,
+                idx=1,
+                total=1,
+                run_id="run_1",
+                suite="suite_a",
+                exec_key="exec_a",
+                app="app_a",
+                args="",
+                warmup=0,
+                iterations=1,
+                returncode=0,
+                elapsed_wall_s="0.010",
+                raw_csv=tmp_path / "missing.csv",
+                log_file=tmp_path / "bench.log",
+            )
+
+            with progress_csv.open(newline="") as fp:
+                rows = list(csv.DictReader(fp))
+
+            self.assertEqual("parse_error", rows[0]["status"])
+            self.assertEqual("parse_error", rows[0]["failure_reason"])
 
 
 if __name__ == "__main__":

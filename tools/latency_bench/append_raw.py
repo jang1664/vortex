@@ -15,6 +15,7 @@ APPENDED_RAW_COLUMNS = [
     "app",
     "returncode",
     "failure_phase",
+    "failure_reason",
     "raw_csv",
     "log_file",
     "bench_label",
@@ -36,6 +37,7 @@ def _base_row(
     app: str,
     returncode: int,
     failure_phase: str,
+    failure_reason: str,
     raw_csv: Path,
     log_file: Path,
 ) -> dict[str, Any]:
@@ -47,6 +49,7 @@ def _base_row(
         "app": app,
         "returncode": returncode,
         "failure_phase": failure_phase,
+        "failure_reason": failure_reason,
         "raw_csv": str(raw_csv),
         "log_file": str(log_file),
         "bench_label": "",
@@ -61,8 +64,13 @@ def _base_row(
 
 
 def _parse_raw_rows(raw_csv: Path, base: dict[str, Any]) -> list[dict[str, Any]]:
+    def with_parse_reason(row: dict[str, Any]) -> dict[str, Any]:
+        if row.get("parse_error") and str(row.get("returncode", "")) == "0" and not row.get("failure_reason"):
+            row["failure_reason"] = "parse_error"
+        return row
+
     if not raw_csv.exists():
-        return [{**base, "parse_error": "missing_raw_csv"}]
+        return [with_parse_reason({**base, "parse_error": "missing_raw_csv"})]
 
     rows: list[dict[str, Any]] = []
     with raw_csv.open(newline="") as fp:
@@ -82,10 +90,10 @@ def _parse_raw_rows(raw_csv: Path, base: dict[str, Any]) -> list[dict[str, Any]]
                     "p50_us": row[5],
                     "p95_us": row[6],
                 })
-            rows.append(out)
+            rows.append(with_parse_reason(out))
 
     if not rows:
-        return [{**base, "parse_error": "empty_raw_csv"}]
+        return [with_parse_reason({**base, "parse_error": "empty_raw_csv"})]
     return rows
 
 
@@ -101,7 +109,19 @@ def _validate_or_write_header(output: Path) -> None:
         reader = csv.reader(fp)
         header = next(reader, [])
     if header != APPENDED_RAW_COLUMNS:
-        raise ValueError(f"append raw CSV has unexpected header: {output}")
+        old_columns = [column for column in APPENDED_RAW_COLUMNS if column != "failure_reason"]
+        if header != old_columns:
+            raise ValueError(f"append raw CSV has unexpected header: {output}")
+
+        with output.open(newline="") as fp:
+            existing_rows = list(csv.DictReader(fp))
+        tmp = output.with_suffix(output.suffix + ".tmp")
+        with tmp.open("w", newline="") as fp:
+            writer = csv.DictWriter(fp, fieldnames=APPENDED_RAW_COLUMNS)
+            writer.writeheader()
+            for row in existing_rows:
+                writer.writerow({column: row.get(column, "") for column in APPENDED_RAW_COLUMNS})
+        tmp.replace(output)
 
 
 def append_raw_execution(
@@ -113,9 +133,15 @@ def append_raw_execution(
     app: str,
     returncode: int,
     failure_phase: str = "",
+    failure_reason: str = "",
     raw_csv: Path,
     log_file: Path,
 ) -> None:
+    if not failure_reason:
+        if failure_phase == "build":
+            failure_reason = "build"
+        elif returncode in {124, 137}:
+            failure_reason = "timeout"
     base = _base_row(
         suite=suite,
         run_id=run_id,
@@ -123,6 +149,7 @@ def append_raw_execution(
         app=app,
         returncode=returncode,
         failure_phase=failure_phase,
+        failure_reason=failure_reason,
         raw_csv=raw_csv,
         log_file=log_file,
     )
@@ -142,6 +169,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--app", required=True, help="Benchmark app name.")
     parser.add_argument("--returncode", required=True, type=int, help="Benchmark process return code.")
     parser.add_argument("--failure-phase", default="", choices=["", "build", "run"], help="Failed phase, if known.")
+    parser.add_argument(
+        "--failure-reason",
+        default="",
+        choices=["", "build", "timeout", "xrt_context_open", "run", "parse_error"],
+        help="Specific failure reason, if known.",
+    )
     parser.add_argument("--raw-csv", required=True, type=Path, help="Raw per-execution benchmark CSV.")
     parser.add_argument("--log-file", required=True, type=Path, help="Per-execution log file.")
     return parser
@@ -157,6 +190,7 @@ def main(argv: list[str] | None = None) -> int:
         app=args.app,
         returncode=args.returncode,
         failure_phase=args.failure_phase,
+        failure_reason=args.failure_reason,
         raw_csv=args.raw_csv,
         log_file=args.log_file,
     )

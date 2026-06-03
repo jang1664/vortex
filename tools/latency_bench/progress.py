@@ -23,6 +23,7 @@ PROGRESS_COLUMNS = [
     "status",
     "returncode",
     "failure_phase",
+    "failure_reason",
     "elapsed_wall_s",
     "raw_csv",
     "log_file",
@@ -103,8 +104,16 @@ def append_progress_execution(
     raw_csv: Path,
     log_file: Path,
     failure_phase: str = "",
+    failure_reason: str = "",
 ) -> None:
     bench = _read_bench_csv(raw_csv)
+    if not failure_reason:
+        if failure_phase == "build":
+            failure_reason = "build"
+        elif returncode in {124, 137}:
+            failure_reason = "timeout"
+        elif returncode == 0 and "parse_error" in bench:
+            failure_reason = "parse_error"
     row = {
         "timestamp_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "idx": idx,
@@ -116,9 +125,15 @@ def append_progress_execution(
         "args": args,
         "warmup": warmup,
         "iterations": iterations,
-        "status": classify_status(returncode, bench=bench, failure_phase=failure_phase),
+        "status": classify_status(
+            returncode,
+            bench=bench,
+            failure_phase=failure_phase,
+            failure_reason=failure_reason,
+        ),
         "returncode": returncode,
         "failure_phase": failure_phase,
+        "failure_reason": failure_reason,
         "elapsed_wall_s": elapsed_wall_s,
         "raw_csv": str(raw_csv),
         "log_file": str(log_file),
@@ -152,6 +167,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--iterations", required=True, type=int, help="Iteration count.")
     parser.add_argument("--returncode", required=True, type=int, help="Benchmark process return code.")
     parser.add_argument("--failure-phase", default="", choices=["", "build", "run"], help="Failed phase, if known.")
+    parser.add_argument(
+        "--failure-reason",
+        default="",
+        choices=["", "build", "timeout", "xrt_context_open", "run", "parse_error"],
+        help="Specific failure reason, if known.",
+    )
     parser.add_argument("--elapsed-wall-s", required=True, help="Wall-clock seconds for the blackbox invocation.")
     parser.add_argument("--raw-csv", required=True, type=Path, help="Raw per-execution benchmark CSV.")
     parser.add_argument("--log-file", required=True, type=Path, help="Per-execution log file.")
@@ -173,6 +194,7 @@ def main(argv: list[str] | None = None) -> int:
         iterations=args.iterations,
         returncode=args.returncode,
         failure_phase=args.failure_phase,
+        failure_reason=args.failure_reason,
         elapsed_wall_s=args.elapsed_wall_s,
         raw_csv=args.raw_csv,
         log_file=args.log_file,

@@ -10,6 +10,7 @@ class ReportTest(unittest.TestCase):
         self.assertEqual("timeout", classify_status(124, has_status=True, bench={}))
         self.assertEqual("timeout", classify_status(137, has_status=True, bench={}))
         self.assertEqual("timeout", classify_status(124, has_status=True, bench={"parse_error": "missing"}))
+        self.assertEqual("timeout", classify_status(2, has_status=True, bench={}, failure_reason="timeout"))
 
     def test_classifies_non_timeout_statuses(self) -> None:
         self.assertEqual("not_run", classify_status(999, has_status=False, bench={}))
@@ -22,6 +23,10 @@ class ReportTest(unittest.TestCase):
         self.assertEqual(
             "build_fail",
             classify_status(2, has_status=True, bench={"parse_error": "missing"}, failure_phase="build"),
+        )
+        self.assertEqual(
+            "build_fail",
+            classify_status(2, has_status=True, bench={"parse_error": "missing"}, failure_reason="build"),
         )
 
 

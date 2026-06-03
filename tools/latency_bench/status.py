@@ -12,12 +12,13 @@ def classify_status(
     has_status: bool = True,
     bench: dict[str, Any] | None = None,
     failure_phase: str = "",
+    failure_reason: str = "",
 ) -> str:
     if not has_status:
         return "not_run"
-    if failure_phase == "build":
+    if failure_phase == "build" or failure_reason == "build":
         return "build_fail"
-    if returncode in TIMEOUT_RETURNCODES:
+    if returncode in TIMEOUT_RETURNCODES or failure_reason == "timeout":
         return "timeout"
 
     bench = bench or {}

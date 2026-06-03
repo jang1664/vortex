@@ -8,6 +8,8 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
+import yaml
+
 from tools.latency_bench.cli import main, merge_override_args, normalize_timeout
 from tools.latency_bench.fpga_bins import FPGA_BIN_ALIAS_MAP_ENV
 
@@ -164,7 +166,8 @@ aliases:
 
             self.assertEqual(0, rc)
             script = (out_root / "runs" / "cli_run" / "run_fpga_bench.sh").read_text()
-            self.assertIn("timeout --foreground --kill-after=30s 30m ./ci/blackbox.sh", script)
+            self.assertIn("timeout --kill-after=30s 30m ./ci/blackbox.sh", script)
+            self.assertNotIn("timeout --foreground", script)
             self.assertIn("--build-only", script)
             self.assertIn("--run-only", script)
 
@@ -283,7 +286,8 @@ cases:
 
             self.assertEqual(0, rc)
             script = (out_root / "runs" / "cli_run" / "run_fpga_bench.sh").read_text()
-            self.assertIn("timeout --foreground --kill-after=30s 5m ./ci/blackbox.sh", script)
+            self.assertIn("timeout --kill-after=30s 5m ./ci/blackbox.sh", script)
+            self.assertNotIn("timeout --foreground", script)
 
             rc = main([
                 "run",
@@ -299,7 +303,7 @@ cases:
 
             self.assertEqual(0, rc)
             script = (out_root / "runs" / "cli_run_no_timeout" / "run_fpga_bench.sh").read_text()
-            self.assertNotIn("timeout --foreground", script)
+            self.assertNotIn("timeout --kill-after", script)
 
     def test_run_accepts_no_prebuild_option(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -324,6 +328,118 @@ cases:
             self.assertNotIn("--run-only", script)
             manifest = json.loads((out_root / "runs" / "cli_run" / "manifest.json").read_text())
             self.assertFalse(manifest["prebuild"])
+
+    def test_run_filter_selects_expanded_cases_by_expression(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            build_dir, fpga_bin, suite = self._write_fake_inputs(tmp_path)
+            suite.write_text(
+                """
+name: filter_suite
+defaults:
+  warmup: 1
+  iterations: 1
+cases:
+  - id: prefill_gemm
+    app: fpint_gemm_ffn_hw
+    stage: prefill
+    backend: fpint_gemm_improve
+    args: "-m 1 -n 128 -k 128 -q 32 -t 0 -d 0"
+  - id: decode_gemm
+    app: fpint_gemm_ffn_hw
+    stage: decode
+    backend: fpint_gemm_improve
+    args: "-m 1 -n 256 -k 128 -q 32 -t 0 -d 0"
+  - id: prefill_silu
+    app: silu
+    stage: prefill
+    backend: scalar
+    args: "-n 128"
+""".lstrip()
+            )
+            out_root = tmp_path / "out"
+
+            rc = main([
+                "run",
+                "--build-dir", str(build_dir),
+                "--fpga-bin", str(fpga_bin),
+                "--suite", str(suite),
+                "--out", str(out_root),
+                "--run-id", "filtered",
+                "--no-srun",
+                "--dry-run",
+                "--filter", "app=fpint_gemm_ffn_hw & stage=prefill",
+            ])
+
+            self.assertEqual(0, rc)
+            run_dir = out_root / "runs" / "filtered"
+            expanded = yaml.safe_load((run_dir / "suite.expanded.yaml").read_text())
+            self.assertEqual(["prefill_gemm"], [case["id"] for case in expanded["cases"]])
+            manifest = json.loads((run_dir / "manifest.json").read_text())
+            self.assertEqual(1, manifest["case_count"])
+            self.assertEqual(1, manifest["execution_count"])
+            self.assertEqual(["app=fpint_gemm_ffn_hw & stage=prefill"], manifest["case_filters"])
+
+    def test_run_filter_supports_glob_match_operator(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            build_dir, fpga_bin, suite = self._write_fake_inputs(tmp_path)
+            suite.write_text(
+                """
+name: filter_suite
+defaults:
+  warmup: 1
+  iterations: 1
+cases:
+  - id: kv_cache_quant_base
+    app: kv_cache_quant
+    args: "-k 128 -n 32 -q 128 -d 0 -t 1"
+  - id: kv_cache_quant_fused
+    app: kv_cache_quant_layout_fused
+    args: "-k 128 -n 32 -q 128 -d 0 -t 1"
+  - id: gemm
+    app: fpint_gemm_ffn_hw
+    args: "-m 1 -n 128 -k 128 -q 32 -t 0 -d 0"
+""".lstrip()
+            )
+            out_root = tmp_path / "out"
+
+            rc = main([
+                "run",
+                "--build-dir", str(build_dir),
+                "--fpga-bin", str(fpga_bin),
+                "--suite", str(suite),
+                "--out", str(out_root),
+                "--run-id", "filtered",
+                "--no-srun",
+                "--dry-run",
+                "--filter", "app=~kv_cache_quant*",
+            ])
+
+            self.assertEqual(0, rc)
+            expanded = yaml.safe_load((out_root / "runs" / "filtered" / "suite.expanded.yaml").read_text())
+            self.assertEqual(
+                ["kv_cache_quant_base", "kv_cache_quant_fused"],
+                [case["id"] for case in expanded["cases"]],
+            )
+
+    def test_run_filter_rejects_empty_selection(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            build_dir, fpga_bin, suite = self._write_fake_inputs(tmp_path)
+
+            with self.assertRaisesRegex(ValueError, "filter matched no cases"):
+                main([
+                    "run",
+                    "--build-dir", str(build_dir),
+                    "--fpga-bin", str(fpga_bin),
+                    "--suite", str(suite),
+                    "--out", str(tmp_path / "out"),
+                    "--run-id", "filtered",
+                    "--no-srun",
+                    "--dry-run",
+                    "--filter", "stage=missing",
+                ])
 
     def test_run_visualizes_when_requested(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

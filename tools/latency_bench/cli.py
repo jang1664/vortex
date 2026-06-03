@@ -9,7 +9,7 @@ from .generate_suites import GenerateSuitesOptions, generate_suites
 from .merge_suites import MergeSuitesOptions, merge_suites
 from .plot import visualize
 from .runner import DEFAULT_SRUN_ARGS, RunOptions, default_run_id, resolve_fpga_bin_config, run_suite
-from .suite import find_repo_root, load_suite
+from .suite import apply_case_filters, find_repo_root, load_suite
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -64,6 +64,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-prebuild",
         action="store_true",
         help="Disable the default build-only preflight and let each blackbox invocation build and run.",
+    )
+    run.add_argument(
+        "--filter",
+        action="append",
+        default=[],
+        help="Filter expanded suite cases, e.g. 'app=fpint_gemm_ffn_hw & stage=prefill'. Repeat to AND filters.",
     )
 
     vis = sub.add_parser("visualize", help="Generate PNG/PDF figures from results.csv.")
@@ -185,6 +191,7 @@ def run_cmd(args: argparse.Namespace) -> int:
         warmup_override=args.warmup,
         iterations_override=args.iterations,
     )
+    suite = apply_case_filters(suite, tuple(args.filter))
     fpga_bin_label = args.fpga_bin or suite.defaults.fpga_bin
     if not fpga_bin_label:
         raise ValueError("run requires --fpga-bin unless the suite sets defaults.fpga_bin")
@@ -218,6 +225,7 @@ def run_cmd(args: argparse.Namespace) -> int:
         run_id=run_id,
         skip_existing=args.skip_existing,
         prebuild=not args.no_prebuild,
+        case_filters=tuple(args.filter),
     )
     rc = run_suite(suite, options)
     results_csv = options.out_dir / "runs" / run_id / "results.csv"

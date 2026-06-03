@@ -55,7 +55,8 @@ For each unique execution it:
 - Passes benchmark-specific args including `--warmup`, `--iterations`, `--csv`,
   and `--output=<out>/runs/<run_id>/raw/<exec_key>.csv`.
 - Records one status row in `run_status.csv` with `exec_key`, `app`,
-  `returncode`, `failure_phase`, `raw_csv`, `log_file`, and `elapsed_wall_s`.
+  `returncode`, `failure_phase`, `failure_reason`, `raw_csv`, `log_file`, and
+  `elapsed_wall_s`.
 - Appends one live progress row to `progress.csv` with status, elapsed time,
   raw latency columns, and parse errors.
 
@@ -136,18 +137,44 @@ example, `--blackbox-arg=--threads=16` replaces a default `--threads=8` while
 keeping other defaults such as `--cores=1`.
 
 Use `--blackbox-timeout 30m` to wrap each `blackbox.sh` execution with GNU
-`timeout --foreground --kill-after=30s`. With the default prebuild flow, this
+`timeout --kill-after=30s`. With the default prebuild flow, this
 timeout wraps only the run-only benchmark execution, not the build-only
 preflight. A timed-out execution records its return code in `run_status.csv`,
-then the run script continues to the next case. Set `defaults.blackbox_timeout`
-in the suite to make this reproducible, or pass `--blackbox-timeout 0` to
-disable a suite default.
+then the run script attempts to clean up stale benchmark processes tied to that
+case's raw CSV path before continuing. Set `defaults.blackbox_timeout` in the
+suite to make this reproducible, or pass `--blackbox-timeout 0` to disable a
+suite default.
+
+Use `--filter` to run only a subset of expanded suite cases without editing the
+suite YAML:
+
+```bash
+python -m tools.latency_bench run \
+  --build-dir build \
+  --suite tools/latency_bench/suites/llama2_7b_prefill.yaml \
+  --out results/latency/prefill_gemm_only \
+  --filter "app=fpint_gemm_ffn_hw & stage=prefill"
+```
+
+Filters are evaluated after explicit cases, `case_matrices`, and `workloads`
+are expanded into `BenchCase` objects. Supported operators are exact equality
+`=`, inequality `!=`, glob match `=~`, glob mismatch `!~`, AND `&`, OR `|`,
+NOT `!`, and parentheses. Supported fields are `id`/`case_id`, `app`, `args`,
+`kind`, `op`, `backend`, `variant`, `stage`, `name`, `calls_per_forward`,
+`warmup`, `iterations`, `source`, `fpga_bin`, and `shape.<key>`. Repeating
+`--filter` ANDs the expressions.
+
+Transient XRT context-open failures are retried within the same execution. If a
+run log contains `failed to open cu context`, the generated script retries that
+case up to two more times with short backoff. Persistent failures are recorded
+with `failure_reason=xrt_context_open`.
 
 The default prebuild flow separates build failures from benchmark failures.
 If a benchmark app fails to build, all executions for that app are recorded as
-`status=build_fail` with `failure_phase=build` and the per-case log points at
-the captured build output. Use `--no-prebuild` only when you intentionally want
-the legacy build-and-run behavior inside each benchmark invocation.
+`status=build_fail` with `failure_phase=build` and `failure_reason=build`, and
+the per-case log points at the captured build output. Use `--no-prebuild` only
+when you intentionally want the legacy build-and-run behavior inside each
+benchmark invocation.
 
 `run` does not generate figures by default. Add `--visualize` to create
 `runs/<run_id>/figures/` after a successful run, or use the `visualize`
@@ -320,7 +347,8 @@ Each `runs/<run_id>/` directory contains:
 - `suite.yaml`: copy of the original suite YAML used for the run.
 - `suite.expanded.yaml`: equivalent suite with all `workloads` materialized as explicit `cases`.
 - `run_fpga_bench.sh`: generated shell script used for the run.
-- `run_status.csv`: one row per unique execution, including `failure_phase`.
+- `run_status.csv`: one row per unique execution, including `failure_phase` and
+  `failure_reason`.
 - `progress.csv`: live per-execution results appended as each benchmark finishes.
 - `raw/*.csv`: raw benchmark rows from `bench_util.h`.
 - `logs/*.log`: per-execution blackbox logs.

@@ -7,6 +7,7 @@ import re
 import shlex
 import sys
 import ast
+import fnmatch
 import operator
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -90,6 +91,204 @@ class BenchSuite:
     cases: list[BenchCase]
     fpga_bins: dict[str, Any] = field(default_factory=dict)
     source_path: Path | None = None
+
+
+_FILTER_FIELDS = {
+    "case_id",
+    "app",
+    "args",
+    "kind",
+    "op",
+    "backend",
+    "variant",
+    "stage",
+    "name",
+    "calls_per_forward",
+    "warmup",
+    "iterations",
+    "source",
+    "fpga_bin",
+}
+_FILTER_FIELD_ALIASES = {"id": "case_id"}
+
+
+@dataclass(frozen=True)
+class _FilterToken:
+    kind: str
+    value: str
+
+
+def _tokenize_case_filter(expr: str) -> list[_FilterToken]:
+    tokens: list[_FilterToken] = []
+    i = 0
+    while i < len(expr):
+        ch = expr[i]
+        if ch.isspace():
+            i += 1
+            continue
+        if ch in "&|()":
+            tokens.append(_FilterToken(ch, ch))
+            i += 1
+            continue
+        if ch == "!":
+            if i + 1 < len(expr) and expr[i + 1] == "=":
+                if i + 2 < len(expr) and expr[i + 2] == "~":
+                    tokens.append(_FilterToken("OP", "!~"))
+                    i += 3
+                else:
+                    tokens.append(_FilterToken("OP", "!="))
+                    i += 2
+            else:
+                tokens.append(_FilterToken("!", "!"))
+                i += 1
+            continue
+        if ch == "=":
+            if i + 1 < len(expr) and expr[i + 1] == "~":
+                tokens.append(_FilterToken("OP", "=~"))
+                i += 2
+                continue
+            if i + 1 < len(expr) and expr[i + 1] == "=":
+                i += 2
+            else:
+                i += 1
+            tokens.append(_FilterToken("OP", "="))
+            continue
+        if ch in "'\"":
+            quote = ch
+            i += 1
+            value = []
+            while i < len(expr):
+                ch = expr[i]
+                if ch == "\\" and i + 1 < len(expr):
+                    value.append(expr[i + 1])
+                    i += 2
+                    continue
+                if ch == quote:
+                    i += 1
+                    break
+                value.append(ch)
+                i += 1
+            else:
+                raise ValueError(f"unterminated quoted string in filter: {expr!r}")
+            tokens.append(_FilterToken("ATOM", "".join(value)))
+            continue
+
+        start = i
+        while i < len(expr) and not expr[i].isspace() and expr[i] not in "&|()!=":
+            i += 1
+        if i == start:
+            raise ValueError(f"unexpected filter character {expr[i]!r} in {expr!r}")
+        tokens.append(_FilterToken("ATOM", expr[start:i]))
+
+    return tokens
+
+
+def _case_filter_value(case: BenchCase, field_name: str) -> object:
+    field_name = _FILTER_FIELD_ALIASES.get(field_name, field_name)
+    if field_name.startswith("shape."):
+        shape_key = field_name[len("shape."):]
+        if not shape_key:
+            raise ValueError("filter shape field must be shape.<key>")
+        return case.shape.get(shape_key, "")
+    if field_name not in _FILTER_FIELDS:
+        supported = ", ".join(sorted(_FILTER_FIELDS | {"id", "shape.<key>"}))
+        raise ValueError(f"unsupported filter field {field_name!r}; supported fields: {supported}")
+    return getattr(case, field_name)
+
+
+class _CaseFilterParser:
+    def __init__(self, expr: str):
+        self.expr = expr
+        self.tokens = _tokenize_case_filter(expr)
+        self.pos = 0
+
+    def parse(self):
+        if not self.tokens:
+            raise ValueError("empty filter expression")
+        node = self._parse_or()
+        if self._peek() is not None:
+            token = self._peek()
+            raise ValueError(f"unexpected token {token.value!r} in filter: {self.expr!r}")
+        return node
+
+    def _peek(self) -> _FilterToken | None:
+        return self.tokens[self.pos] if self.pos < len(self.tokens) else None
+
+    def _match(self, kind: str) -> bool:
+        token = self._peek()
+        if token is None or token.kind != kind:
+            return False
+        self.pos += 1
+        return True
+
+    def _expect(self, kind: str) -> _FilterToken:
+        token = self._peek()
+        if token is None or token.kind != kind:
+            found = "end of expression" if token is None else repr(token.value)
+            raise ValueError(f"expected {kind!r}, found {found} in filter: {self.expr!r}")
+        self.pos += 1
+        return token
+
+    def _parse_or(self):
+        node = self._parse_and()
+        while self._match("|"):
+            rhs = self._parse_and()
+            node = (lambda lhs=node, rhs=rhs: lambda case: lhs(case) or rhs(case))()
+        return node
+
+    def _parse_and(self):
+        node = self._parse_unary()
+        while self._match("&"):
+            rhs = self._parse_unary()
+            node = (lambda lhs=node, rhs=rhs: lambda case: lhs(case) and rhs(case))()
+        return node
+
+    def _parse_unary(self):
+        if self._match("!"):
+            operand = self._parse_unary()
+            return lambda case: not operand(case)
+        return self._parse_primary()
+
+    def _parse_primary(self):
+        if self._match("("):
+            node = self._parse_or()
+            self._expect(")")
+            return node
+        return self._parse_comparison()
+
+    def _parse_comparison(self):
+        field_name = self._expect("ATOM").value
+        op = self._expect("OP").value
+        expected = self._expect("ATOM").value
+
+        def compare(case: BenchCase) -> bool:
+            actual = str(_case_filter_value(case, field_name))
+            if op == "=":
+                return actual == expected
+            if op == "!=":
+                return actual != expected
+            if op == "=~":
+                return fnmatch.fnmatchcase(actual, expected)
+            if op == "!~":
+                return not fnmatch.fnmatchcase(actual, expected)
+            raise ValueError(f"unsupported filter operator {op!r}")
+
+        return compare
+
+
+def compile_case_filter(expr: str):
+    return _CaseFilterParser(expr).parse()
+
+
+def apply_case_filters(suite: BenchSuite, filters: tuple[str, ...]) -> BenchSuite:
+    if not filters:
+        return suite
+    predicates = [compile_case_filter(expr) for expr in filters]
+    cases = [case for case in suite.cases if all(predicate(case) for predicate in predicates)]
+    if not cases:
+        joined = " & ".join(f"({expr})" for expr in filters)
+        raise ValueError(f"filter matched no cases: {joined}")
+    return replace(suite, cases=cases)
 
 
 def _merge_defaults(raw: dict[str, Any]) -> BenchDefaults:

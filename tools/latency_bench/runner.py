@@ -56,6 +56,7 @@ class RunOptions:
     run_id: str | None = None
     skip_existing: bool = False
     prebuild: bool = True
+    case_filters: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -207,7 +208,16 @@ def write_run_script(suite: BenchSuite, options: RunOptions, units: list[Executi
     status_csv = options.out_dir / "run_status.csv"
     progress_csv = options.out_dir / "progress.csv"
     append_raw_csv = options.append_raw_csv.resolve() if options.append_raw_csv else None
-    status_columns = ("exec_key", "app", "returncode", "failure_phase", "raw_csv", "log_file", "elapsed_wall_s")
+    status_columns = (
+        "exec_key",
+        "app",
+        "returncode",
+        "failure_phase",
+        "failure_reason",
+        "raw_csv",
+        "log_file",
+        "elapsed_wall_s",
+    )
     lines = [
         "#!/usr/bin/env bash",
         "set -uo pipefail",
@@ -222,6 +232,51 @@ def write_run_script(suite: BenchSuite, options: RunOptions, units: list[Executi
         f"export XRT_DEVICE_INDEX={_q(str(options.xrt_device_index))}",
         f"export PYTHONPATH={_q(repo_root())}:\"${{PYTHONPATH:-}}\"",
         f"export LATENCY_BENCH_RUN_ID={_q(options.run_id or default_run_id())}",
+        "",
+        "latency_bench_retry_delay_s() {",
+        "  case \"$1\" in",
+        "    1) printf '5\\n' ;;",
+        "    *) printf '15\\n' ;;",
+        "  esac",
+        "}",
+        "",
+        "latency_bench_cleanup_timeout() {",
+        "  local raw_csv=\"$1\"",
+        "  local log_file=\"$2\"",
+        "  local pids parents pid ppid live",
+        "  pids=$(pgrep -f -- \"$raw_csv\" 2>/dev/null || true)",
+        "  if [[ -z \"$pids\" ]]; then return 0; fi",
+        "  printf '[latency-bench] timeout cleanup for %s: pids=%s\\n' \"$raw_csv\" \"$pids\" >> \"$log_file\"",
+        "  parents=\"\"",
+        "  for pid in $pids; do",
+        "    ppid=$(ps -o ppid= -p \"$pid\" 2>/dev/null | tr -d ' ' || true)",
+        "    if [[ -n \"$ppid\" && \"$ppid\" != \"1\" && \"$ppid\" != \"$$\" ]]; then parents=\"$parents $ppid\"; fi",
+        "  done",
+        "  kill $pids 2>/dev/null || true",
+        "  sleep 2",
+        "  live=\"\"",
+        "  for pid in $pids $parents; do",
+        "    if [[ -n \"$pid\" ]] && kill -0 \"$pid\" 2>/dev/null; then live=\"$live $pid\"; fi",
+        "  done",
+        "  if [[ -n \"$live\" ]]; then",
+        "    printf '[latency-bench] timeout cleanup kill -9:%s\\n' \"$live\" >> \"$log_file\"",
+        "    kill -9 $live 2>/dev/null || true",
+        "  fi",
+        "}",
+        "",
+        "latency_bench_failure_reason() {",
+        "  local rc=\"$1\"",
+        "  local failure_phase=\"$2\"",
+        "  local attempt_log=\"$3\"",
+        "  if [[ \"$failure_phase\" == \"build\" ]]; then printf 'build\\n'; return 0; fi",
+        "  if [[ \"$rc\" == \"124\" || \"$rc\" == \"137\" ]]; then printf 'timeout\\n'; return 0; fi",
+        "  if [[ \"$rc\" != \"0\" && -f \"$attempt_log\" ]] && grep -q 'failed to open cu context' \"$attempt_log\"; then",
+        "    printf 'xrt_context_open\\n'",
+        "    return 0",
+        "  fi",
+        "  if [[ \"$rc\" != \"0\" ]]; then printf 'run\\n'; return 0; fi",
+        "  printf '\\n'",
+        "}",
     ]
     if options.configs:
         lines.extend([
@@ -267,33 +322,54 @@ def write_run_script(suite: BenchSuite, options: RunOptions, units: list[Executi
             f"--app={_q(unit.app)} --args={_q(bench_args)} --log={_q(unit.log_file.with_suffix(unit.log_file.suffix + '.blackbox'))}"
         )
         if options.blackbox_timeout:
-            blackbox_cmd = f"timeout --foreground --kill-after=30s {_q(options.blackbox_timeout)} {blackbox_cmd}"
+            blackbox_cmd = f"timeout --kill-after=30s {_q(options.blackbox_timeout)} {blackbox_cmd}"
         lines.extend([
             "",
             f"echo '[{idx}/{len(units)}] {unit.exec_key} app={unit.app} args={bench_args}'",
             f"build_rc=\"${{LATENCY_BENCH_BUILD_RC[{_q(unit.app)}]:-0}}\"",
             f"build_log=\"${{LATENCY_BENCH_BUILD_LOG[{_q(unit.app)}]:-}}\"",
             "failure_phase=\"\"",
+            "failure_reason=\"\"",
+            "final_attempt_log=\"\"",
             "if [[ \"$build_rc\" != \"0\" ]]; then",
             "  rc=\"$build_rc\"",
             "  failure_phase=\"build\"",
+            "  failure_reason=\"build\"",
             "  elapsed_wall_s=\"0.000\"",
             f"  if [[ -n \"$build_log\" && -f \"$build_log\" ]]; then cp \"$build_log\" {_q(unit.log_file)}; fi",
             f"  if [[ ! -f {_q(unit.log_file)} ]]; then printf 'build failed before log was written\\n' > {_q(unit.log_file)}; fi",
+            f"  final_attempt_log={_q(unit.log_file)}",
             "else",
             "  set +e",
             "  start_ns=$(date +%s%N)",
-            f"  {blackbox_cmd} > {_q(unit.log_file)} 2>&1",
-            "  rc=$?",
+            "  attempt=1",
+            "  max_attempts=3",
+            "  while true; do",
+            f"    attempt_log={_q(str(unit.log_file) + '.attempt')}${{attempt}}",
+            "    final_attempt_log=\"$attempt_log\"",
+            f"    {blackbox_cmd} > \"$attempt_log\" 2>&1",
+            "    rc=$?",
+            f"    if [[ \"$attempt\" == \"1\" ]]; then cp \"$attempt_log\" {_q(unit.log_file)}; else printf '\\n[latency-bench] attempt %d/%d log follows\\n' \"$attempt\" \"$max_attempts\" >> {_q(unit.log_file)}; cat \"$attempt_log\" >> {_q(unit.log_file)}; fi",
+            f"    if [[ \"$rc\" == \"124\" || \"$rc\" == \"137\" ]]; then latency_bench_cleanup_timeout {_q(unit.raw_csv)} {_q(unit.log_file)}; fi",
+            "    if [[ \"$rc\" != \"0\" && -f \"$attempt_log\" ]] && grep -q 'failed to open cu context' \"$attempt_log\" && [[ \"$attempt\" -lt \"$max_attempts\" ]]; then",
+            "      delay_s=$(latency_bench_retry_delay_s \"$attempt\")",
+            f"      printf '[latency-bench] xrt_context_open retry %d/%d after %ss\\n' \"$attempt\" \"$max_attempts\" \"$delay_s\" >> {_q(unit.log_file)}",
+            "      sleep \"$delay_s\"",
+            "      attempt=$((attempt + 1))",
+            "      continue",
+            "    fi",
+            "    break",
+            "  done",
             "  end_ns=$(date +%s%N)",
             "  elapsed_ms=$(( (end_ns - start_ns + 500000) / 1000000 ))",
             "  printf -v elapsed_wall_s '%d.%03d' $((elapsed_ms / 1000)) $((elapsed_ms % 1000))",
             "  set -u",
             "  if [[ \"$rc\" != \"0\" ]]; then failure_phase=\"run\"; fi",
+            "  failure_reason=$(latency_bench_failure_reason \"$rc\" \"$failure_phase\" \"$final_attempt_log\")",
             "fi",
             (
-                f"printf '%s,%s,%s,%s,%s,%s,%s\\n' "
-                f"{_q(unit.exec_key)} {_q(unit.app)} \"$rc\" \"$failure_phase\" {_q(unit.raw_csv)} {_q(unit.log_file)} \"$elapsed_wall_s\" "
+                f"printf '%s,%s,%s,%s,%s,%s,%s,%s\\n' "
+                f"{_q(unit.exec_key)} {_q(unit.app)} \"$rc\" \"$failure_phase\" \"$failure_reason\" {_q(unit.raw_csv)} {_q(unit.log_file)} \"$elapsed_wall_s\" "
                 f">> {_q(status_csv)}"
             ),
             (
@@ -310,6 +386,7 @@ def write_run_script(suite: BenchSuite, options: RunOptions, units: list[Executi
                 f"--iterations {unit.iterations} "
                 f"--returncode \"$rc\" "
                 f"--failure-phase \"$failure_phase\" "
+                f"--failure-reason \"$failure_reason\" "
                 f"--elapsed-wall-s \"$elapsed_wall_s\" "
                 f"--raw-csv {_q(unit.raw_csv)} "
                 f"--log-file {_q(unit.log_file)}"
@@ -326,6 +403,7 @@ def write_run_script(suite: BenchSuite, options: RunOptions, units: list[Executi
                     f"--app {_q(unit.app)} "
                     f"--returncode \"$rc\" "
                     f"--failure-phase \"$failure_phase\" "
+                    f"--failure-reason \"$failure_reason\" "
                     f"--raw-csv {_q(unit.raw_csv)} "
                     f"--log-file {_q(unit.log_file)}"
                 ),
@@ -364,6 +442,7 @@ RAW_DB_COLUMNS = [
     "status",
     "returncode",
     "failure_phase",
+    "failure_reason",
     "raw_csv",
     "log_file",
     "elapsed_wall_s",
@@ -552,6 +631,7 @@ def run_suite(suite: BenchSuite, options: RunOptions) -> int:
         "run_execution_count": len(units_to_run),
         "skip_existing": options.skip_existing,
         "prebuild": options.prebuild,
+        "case_filters": list(options.case_filters),
         "skipped_existing_count": len(skipped_existing_exec_keys),
         "skipped_existing_exec_keys": list(skipped_existing_exec_keys),
         "script": str(script),

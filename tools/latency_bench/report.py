@@ -16,7 +16,7 @@ RESULT_COLUMNS = [
     "suite", "case_id", "exec_key", "app", "kind", "op", "backend",
     "variant", "stage", "name", "args", "shape_json", "calls_per_forward",
     "fpga_bin_dir", "xclbin_sha256", "warmup", "iterations", "source",
-    "status", "returncode", "failure_phase", "raw_csv", "log_file", "elapsed_wall_s",
+    "status", "returncode", "failure_phase", "failure_reason", "raw_csv", "log_file", "elapsed_wall_s",
     "samples", "min_us", "avg_us", "max_us", "p50_us", "p95_us",
 ]
 
@@ -78,11 +78,20 @@ def build_results(suite: BenchSuite, out_dir: Path, fpga_bin_dir: Path) -> pd.Da
         bench = read_bench_csv(raw_csv)
         returncode = int(status.get("returncode", 999)) if status else 999
         failure_phase = status.get("failure_phase", "")
+        failure_reason = status.get("failure_reason", "")
+        if not failure_reason:
+            if failure_phase == "build":
+                failure_reason = "build"
+            elif returncode in {124, 137}:
+                failure_reason = "timeout"
+            elif returncode == 0 and "parse_error" in bench:
+                failure_reason = "parse_error"
         run_status = classify_status(
             returncode,
             has_status=bool(status),
             bench=bench,
             failure_phase=failure_phase,
+            failure_reason=failure_reason,
         )
 
         out = {
@@ -92,6 +101,7 @@ def build_results(suite: BenchSuite, out_dir: Path, fpga_bin_dir: Path) -> pd.Da
             "status": run_status,
             "returncode": returncode,
             "failure_phase": failure_phase,
+            "failure_reason": failure_reason,
             "raw_csv": str(raw_csv),
             "log_file": str(log_file),
             "elapsed_wall_s": status.get("elapsed_wall_s"),

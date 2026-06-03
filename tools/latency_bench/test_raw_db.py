@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -47,6 +48,41 @@ printf 'ok\n' > "$log_file"
         xclbin = fpga_bin_dir / "vortex_afu.xclbin"
         xclbin.write_text(content)
         return hashlib.sha256(content.encode()).hexdigest()
+
+    def _write_flaky_xrt_context_blackbox(self, build_dir: Path) -> None:
+        (build_dir / "ci").mkdir(parents=True)
+        blackbox = build_dir / "ci" / "blackbox.sh"
+        blackbox.write_text(
+            """#!/usr/bin/env bash
+set -euo pipefail
+bench_args=""
+log_file=""
+build_only=0
+for arg in "$@"; do
+  case "$arg" in
+    --args=*) bench_args="${arg#--args=}" ;;
+    --log=*) log_file="${arg#--log=}" ;;
+    --build-only) build_only=1 ;;
+  esac
+done
+if [[ "$build_only" == "1" ]]; then
+  printf 'build ok\n'
+  exit 0
+fi
+raw_csv=$(printf '%s\n' "$bench_args" | sed -n 's/.*--output=\\([^ ]*\\).*/\\1/p')
+mkdir -p "$(dirname "$raw_csv")" "$(dirname "$log_file")"
+state_file="${raw_csv}.state"
+if [[ ! -f "$state_file" ]]; then
+  printf 'seen\n' > "$state_file"
+  printf 'terminate called after throwing an instance of '\\''xrt_core::system_error'\\''\n'
+  printf '  what():  failed to open cu context: Invalid argument\n'
+  exit 2
+fi
+printf 'fpint_gemm,3,1.0,2.0,4.0,2.0,3.0\n' > "$raw_csv"
+printf 'ok\n' > "$log_file"
+"""
+        )
+        blackbox.chmod(0o755)
 
     def _write_raw_db_row(self, raw_db: Path, **overrides: object) -> None:
         row = {column: "" for column in RAW_DB_COLUMNS}
@@ -268,7 +304,68 @@ exit 0
             self.assertEqual("build_fail", rows[0]["status"])
             self.assertEqual("2", rows[0]["returncode"])
             self.assertEqual("build", rows[0]["failure_phase"])
+            self.assertEqual("build", rows[0]["failure_reason"])
             self.assertIn("compile failed", Path(rows[0]["log_file"]).read_text())
+
+    def test_xrt_context_open_failure_retries_same_execution(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            build_dir = tmp_path / "build"
+            self._write_flaky_xrt_context_blackbox(build_dir)
+            fpga_bin_dir = tmp_path / "fpga_bin"
+            self._write_fake_fpga_bin(fpga_bin_dir)
+            bash_env = tmp_path / "bash_env.sh"
+            bash_env.write_text("sleep() { :; }\n")
+
+            suite = BenchSuite(
+                name="mini_suite",
+                defaults=BenchDefaults(warmup=1, iterations=1, blackbox_timeout="5m"),
+                cases=[
+                    BenchCase(
+                        case_id="gemm",
+                        app="fpint_gemm_ffn_hw",
+                        args="-m 1 -n 128 -k 128 -q 32 -t 0 -d 0",
+                        warmup=1,
+                        iterations=1,
+                    )
+                ],
+            )
+            out_root = tmp_path / "latency_db"
+            old_bash_env = os.environ.get("BASH_ENV")
+            os.environ["BASH_ENV"] = str(bash_env)
+            try:
+                rc = run_suite(
+                    suite,
+                    RunOptions(
+                        build_dir=build_dir,
+                        fpga_bin_dir=fpga_bin_dir,
+                        fpga_bin_label="improve_tcol1",
+                        out_dir=out_root,
+                        platform=suite.defaults.platform,
+                        xrt_device_index=suite.defaults.xrt_device_index,
+                        blackbox_args=(),
+                        blackbox_timeout=suite.defaults.blackbox_timeout,
+                        srun=False,
+                        run_id="retry_run",
+                    ),
+                )
+            finally:
+                if old_bash_env is None:
+                    os.environ.pop("BASH_ENV", None)
+                else:
+                    os.environ["BASH_ENV"] = old_bash_env
+
+            self.assertEqual(0, rc)
+            with (out_root / "raw_db.csv").open(newline="") as fp:
+                rows = list(csv.DictReader(fp))
+            self.assertEqual(1, len(rows))
+            self.assertEqual("pass", rows[0]["status"])
+            self.assertEqual("0", rows[0]["returncode"])
+            self.assertEqual("", rows[0]["failure_phase"])
+            self.assertEqual("", rows[0]["failure_reason"])
+            log_text = Path(rows[0]["log_file"]).read_text()
+            self.assertIn("xrt_context_open retry 1/3", log_text)
+            self.assertIn("failed to open cu context", log_text)
 
     def test_skip_existing_runs_only_missing_or_failed_measurements(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -442,7 +539,10 @@ exit 0
             out_root = tmp_path / "latency_db"
             raw_db = out_root / "raw_db.csv"
             raw_db.parent.mkdir(parents=True)
-            old_columns = [column for column in RAW_DB_COLUMNS if column != "elapsed_wall_s"]
+            old_columns = [
+                column for column in RAW_DB_COLUMNS
+                if column not in {"elapsed_wall_s", "failure_reason"}
+            ]
             with raw_db.open("w", newline="") as fp:
                 writer = csv.DictWriter(fp, fieldnames=old_columns)
                 writer.writeheader()
@@ -470,6 +570,7 @@ exit 0
             self.assertEqual(RAW_DB_COLUMNS, reader.fieldnames)
             self.assertEqual(2, len(rows))
             self.assertEqual("", rows[0]["elapsed_wall_s"])
+            self.assertEqual("", rows[0]["failure_reason"])
             self.assertGreaterEqual(float(rows[1]["elapsed_wall_s"]), 0.0)
 
 
