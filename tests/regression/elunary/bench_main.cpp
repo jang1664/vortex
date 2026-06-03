@@ -6,7 +6,6 @@
 #include <cmath>
 #include <cstring>
 #include <algorithm>
-#include <functional>
 #include <assert.h>
 #include <vortex.h>
 #include "common.h"
@@ -38,31 +37,6 @@ static void cleanup() {
   if (device) vx_dev_close(device);
 }
 
-static void cpu_rsqrt(const std::vector<data_t>& in, std::vector<data_t>& out) {
-  for (size_t i = 0; i < in.size(); ++i) out[i] = 1.0f / std::sqrt(in[i]);
-}
-static void cpu_sin(const std::vector<data_t>& in, std::vector<data_t>& out) {
-  for (size_t i = 0; i < in.size(); ++i) out[i] = std::sin(in[i]);
-}
-static void cpu_cos(const std::vector<data_t>& in, std::vector<data_t>& out) {
-  for (size_t i = 0; i < in.size(); ++i) out[i] = std::cos(in[i]);
-}
-static void cpu_exp(const std::vector<data_t>& in, std::vector<data_t>& out) {
-  for (size_t i = 0; i < in.size(); ++i) out[i] = std::exp(in[i]);
-}
-static void cpu_log(const std::vector<data_t>& in, std::vector<data_t>& out) {
-  for (size_t i = 0; i < in.size(); ++i) out[i] = std::log(in[i]);
-}
-static void cpu_neg(const std::vector<data_t>& in, std::vector<data_t>& out) {
-  for (size_t i = 0; i < in.size(); ++i) out[i] = -in[i];
-}
-static void cpu_abs(const std::vector<data_t>& in, std::vector<data_t>& out) {
-  for (size_t i = 0; i < in.size(); ++i) out[i] = std::abs(in[i]);
-}
-static void cpu_sqrt(const std::vector<data_t>& in, std::vector<data_t>& out) {
-  for (size_t i = 0; i < in.size(); ++i) out[i] = std::sqrt(in[i]);
-}
-
 static void initialize_random(std::vector<data_t>& vec, float lo, float hi) {
   for (auto& v : vec) v = lo + static_cast<float>(rand()) / RAND_MAX * (hi - lo);
 }
@@ -73,7 +47,6 @@ static void initialize_for_trig(std::vector<data_t>& vec) {
 struct OpInfo {
   uint32_t kernel_id;
   const char* name;
-  std::function<void(const std::vector<data_t>&, std::vector<data_t>&)> cpu_fn;
   bool needs_positive;
   bool is_trig;
 };
@@ -85,14 +58,14 @@ int main(int argc, char *argv[]) {
   uint32_t op_id = KERNEL_RSQRT;
 
   OpInfo ops[] = {
-    {KERNEL_RSQRT, "rsqrt", cpu_rsqrt, true, false},
-    {KERNEL_SIN,   "sin",   cpu_sin,   false, true},
-    {KERNEL_COS,   "cos",   cpu_cos,   false, true},
-    {KERNEL_EXP,   "exp",   cpu_exp,   false, false},
-    {KERNEL_LOG,   "log",   cpu_log,   true, false},
-    {KERNEL_NEG,   "neg",   cpu_neg,   false, false},
-    {KERNEL_ABS,   "abs",   cpu_abs,   false, false},
-    {KERNEL_SQRT,  "sqrt",  cpu_sqrt,  true, false},
+    {KERNEL_RSQRT, "rsqrt", true, false},
+    {KERNEL_SIN,   "sin",   false, true},
+    {KERNEL_COS,   "cos",   false, true},
+    {KERNEL_EXP,   "exp",   false, false},
+    {KERNEL_LOG,   "log",   true, false},
+    {KERNEL_NEG,   "neg",   false, false},
+    {KERNEL_ABS,   "abs",   false, false},
+    {KERNEL_SQRT,  "sqrt",  true, false},
   };
 
   for (int i = 1; i < argc; ++i) {
@@ -119,12 +92,11 @@ int main(int argc, char *argv[]) {
            cur.name, size, bench.warmup, bench.iterations);
   }
 
-  std::vector<data_t> h_in(size), h_out(size), h_ref(size);
+  std::vector<data_t> h_in(size);
   srand(42);
   if (cur.is_trig)            initialize_for_trig(h_in);
   else if (cur.needs_positive) initialize_random(h_in, 0.1f, 4.0f);
   else                         initialize_random(h_in, -2.0f, 2.0f);
-  cur.cpu_fn(h_in, h_ref);
 
   RT_CHECK(vx_dev_open(&device));
 
@@ -155,23 +127,6 @@ int main(int argc, char *argv[]) {
 
   RT_CHECK(vx_upload_bytes(device, &kernel_arg, sizeof(kernel_arg_t), &args_buffer));
   RT_CHECK(vx_upload_kernel_file(device, "kernel.vxbin", &krnl_buffer));
-
-  RT_CHECK(vx_start(device, krnl_buffer, args_buffer));
-  RT_CHECK(vx_ready_wait(device, VX_MAX_TIMEOUT));
-  RT_CHECK(vx_copy_from_dev(h_out.data(), output_buffer, 0, buffer_bytes));
-  int errors = 0;
-  float max_diff = 0.0f;
-  for (uint32_t i = 0; i < size; ++i) {
-    float diff = std::abs(h_out[i] - h_ref[i]);
-    max_diff = std::max(max_diff, diff);
-    float thr = std::abs(h_ref[i]) * 0.001f + 1e-5f;
-    if (diff > thr) ++errors;
-  }
-  if (errors != 0) {
-    printf("Validation FAILED: errors=%d max_diff=%.6f\n", errors, max_diff);
-    cleanup();
-    return -1;
-  }
 
   for (int i = 0; i < bench.warmup; ++i) {
     RT_CHECK(vx_start(device, krnl_buffer, args_buffer));

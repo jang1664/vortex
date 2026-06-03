@@ -58,31 +58,6 @@ static void precompute_freqs(std::vector<data_t>& cos_t, std::vector<data_t>& si
   }
 }
 
-static void rope_cpu(const std::vector<data_t>& in,
-                     const std::vector<data_t>& cos_t,
-                     const std::vector<data_t>& sin_t,
-                     std::vector<data_t>& out,
-                     uint32_t batch, uint32_t seq, uint32_t heads,
-                     uint32_t head_dim, uint32_t pos_offset) {
-  uint32_t half = head_dim / 2;
-  for (uint32_t b = 0; b < batch; ++b) {
-    for (uint32_t s = 0; s < seq; ++s) {
-      uint32_t pos = s + pos_offset;
-      for (uint32_t h = 0; h < heads; ++h) {
-        uint32_t base = ((b * seq + s) * heads + h) * head_dim;
-        for (uint32_t p = 0; p < half; ++p) {
-          float c = fp16_to_float(cos_t[pos * half + p]);
-          float si = fp16_to_float(sin_t[pos * half + p]);
-          float x0 = fp16_to_float(in[base + p]);
-          float x1 = fp16_to_float(in[base + p + half]);
-          out[base + p] = float_to_fp16(x0 * c - x1 * si);
-          out[base + p + half] = float_to_fp16(x0 * si + x1 * c);
-        }
-      }
-    }
-  }
-}
-
 static void initialize_random(std::vector<data_t>& vec) {
   for (auto& v : vec) {
     float x = static_cast<float>(rand()) / RAND_MAX * 2.0f - 1.0f;
@@ -127,11 +102,9 @@ int main(int argc, char *argv[]) {
   uint32_t input_size = batch_size * seq_len * num_heads * head_dim;
   uint32_t freq_size  = max_seq_len * (head_dim / 2);
   std::vector<data_t> h_in(input_size), h_cos(freq_size), h_sin(freq_size);
-  std::vector<data_t> h_out(input_size), h_ref(input_size);
   srand(42);
   initialize_random(h_in);
   precompute_freqs(h_cos, h_sin, max_seq_len, head_dim);
-  rope_cpu(h_in, h_cos, h_sin, h_ref, batch_size, seq_len, num_heads, head_dim, pos_offset);
 
   RT_CHECK(vx_dev_open(&device));
 
@@ -175,25 +148,6 @@ int main(int argc, char *argv[]) {
 
   RT_CHECK(vx_upload_bytes(device, &kernel_arg, sizeof(kernel_arg_t), &args_buffer));
   RT_CHECK(vx_upload_kernel_file(device, "kernel.vxbin", &krnl_buffer));
-
-  RT_CHECK(vx_start(device, krnl_buffer, args_buffer));
-  RT_CHECK(vx_ready_wait(device, VX_MAX_TIMEOUT));
-  RT_CHECK(vx_copy_from_dev(h_out.data(), output_buffer, 0, output_bytes));
-  int errors = 0;
-  float max_diff = 0.0f;
-  for (uint32_t i = 0; i < input_size; ++i) {
-    float got = fp16_to_float(h_out[i]);
-    float expected = fp16_to_float(h_ref[i]);
-    float diff = std::abs(got - expected);
-    max_diff = std::max(max_diff, diff);
-    float thr = std::max(1e-5f, std::abs(expected) * 0.01f);
-    if (diff > thr) ++errors;
-  }
-  if (errors != 0) {
-    printf("Validation FAILED: errors=%d max_diff=%.6f\n", errors, max_diff);
-    cleanup();
-    return -1;
-  }
 
   for (int i = 0; i < bench.warmup; ++i) {
     RT_CHECK(vx_start(device, krnl_buffer, args_buffer));

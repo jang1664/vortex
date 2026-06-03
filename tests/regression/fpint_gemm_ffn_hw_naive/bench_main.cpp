@@ -1,9 +1,7 @@
 // Benchmark harness for fpint_gemm_ffn_hw. See softmax/bench_main.cpp for
 // design notes. Reuses kernel.vxbin built from kernel.cpp; differs from
-// main.cpp only in that it (1) skips the per-element FP16 reference output
-// and per-element verification, (2) runs warmup + timed-iteration loops
-// around vx_start / vx_ready_wait, (3) does a coarse "output is not all-zero"
-// sanity check before the timed loop.
+// main.cpp only in that it skips reference output/per-element verification and
+// runs warmup + timed-iteration loops around vx_start / vx_ready_wait.
 //
 // CLI: same shape args as main.cpp (-m -n -k -q -t -d) plus
 //      --warmup=N / --iterations=N / --csv / --output=PATH / --output-append
@@ -61,17 +59,6 @@ static constexpr uint64_t DMA_KT = GEMM_FSM_KT;
 
 static constexpr uint64_t align_up_u64(uint64_t x, uint64_t a) {
   return (a == 0) ? x : ((x + a - 1) / a) * a;
-}
-
-static const char* status_to_str(uint32_t status) {
-  switch (status) {
-  case MMIO_STATUS_INIT: return "INIT";
-  case MMIO_STATUS_OK: return "OK";
-  case MMIO_STATUS_ALLOC_FAIL: return "ALLOC_FAIL";
-  case MMIO_STATUS_WAIT_STUCK: return "WAIT_STUCK";
-  case MMIO_STATUS_BAD_EID: return "BAD_EID";
-  default: return "UNKNOWN";
-  }
 }
 
 static void cleanup() {
@@ -331,40 +318,6 @@ int main(int argc, char *argv[]) {
   kargs.last_ctrl      = 0;
 
   RT_CHECK(vx_upload_bytes(device, &kargs, sizeof(kargs), &args_buffer));
-
-  // ---- Validate once before timed loop (coarse "output not all-zero") ------
-  RT_CHECK(vx_start(device, krnl_buffer, args_buffer));
-  int wait_ret = vx_ready_wait(device, VX_MAX_TIMEOUT);
-  if (wait_ret != 0) {
-    std::cerr << "vx_ready_wait failed: ret=" << wait_ret << std::endl;
-    if (vx_copy_from_dev(&kargs, args_buffer, 0, sizeof(kargs)) == 0) {
-      std::cerr << "Kernel status: " << kargs.status
-                << " (" << status_to_str(kargs.status) << ")"
-                << ", eid=" << kargs.job_eid
-                << ", gen=" << kargs.job_generation
-                << ", ctrl=0x" << std::hex << kargs.last_ctrl << std::dec
-                << std::endl;
-    }
-    cleanup();
-    return -1;
-  }
-  RT_CHECK(vx_copy_from_dev(&kargs, args_buffer, 0, sizeof(kargs)));
-  if (kargs.status != MMIO_STATUS_OK) {
-    std::cerr << "Kernel failed: status=" << kargs.status
-              << " (" << status_to_str(kargs.status) << ")" << std::endl;
-    cleanup();
-    return -1;
-  }
-
-  std::vector<uint8_t> h_out(out_total_bytes);
-  RT_CHECK(vx_copy_from_dev(h_out.data(), C_buffer, 0, out_total_bytes));
-  bool any_nonzero = false;
-  for (uint8_t b : h_out) { if (b != 0) { any_nonzero = true; break; } }
-  if (!any_nonzero) {
-    printf("Validation FAILED: C buffer is all zero after kernel run\n");
-    cleanup();
-    return -1;
-  }
 
   // ---- Warmup --------------------------------------------------------------
   for (int i = 0; i < bench.warmup; ++i) {

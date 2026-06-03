@@ -1,7 +1,8 @@
 // Benchmark harness for softmax. Reuses the same kernel.vxbin built from
 // kernel.cpp; differs from main.cpp only in that it (1) runs warmup +
-// timed-iteration loops around vx_start/vx_ready_wait, (2) validates the
-// output once before the timed loop, (3) prints latency stats at the end.
+// timed-iteration loops around vx_start/vx_ready_wait and (2) prints latency
+// stats at the end. It intentionally does not validate output:
+// functional checks belong to main.cpp, while this binary is for timing only.
 //
 // CLI: same shape args as main.cpp (-batch / -heads / -seqq / -seqk / -mask /
 // -scale) plus --warmup=N / --iterations=N / --csv / --output=PATH /
@@ -43,43 +44,6 @@ static void cleanup() {
   if (krnl_buffer) vx_mem_free(krnl_buffer);
   if (args_buffer) vx_mem_free(args_buffer);
   if (device) vx_dev_close(device);
-}
-
-static void softmax_cpu(
-    const std::vector<data_t>& input,
-    std::vector<data_t>& output,
-    uint32_t batch_size,
-    uint32_t num_heads,
-    uint32_t seq_len_q,
-    uint32_t seq_len_k,
-    bool use_mask,
-    float scale) {
-  for (uint32_t b = 0; b < batch_size; ++b) {
-    for (uint32_t h = 0; h < num_heads; ++h) {
-      for (uint32_t q = 0; q < seq_len_q; ++q) {
-        uint32_t row_offset = ((b * num_heads + h) * seq_len_q + q) * seq_len_k;
-        float max_val = -INFINITY;
-        for (uint32_t k = 0; k < seq_len_k; ++k) {
-          float val = fp16_to_float(input[row_offset + k]) * scale;
-          if (use_mask && k > q) val = -INFINITY;
-          max_val = std::max(max_val, val);
-        }
-        float sum = 0.0f;
-        for (uint32_t k = 0; k < seq_len_k; ++k) {
-          float val = fp16_to_float(input[row_offset + k]) * scale;
-          if (use_mask && k > q) val = -INFINITY;
-          float exp_val = std::exp(val - max_val);
-          sum += exp_val;
-        }
-        for (uint32_t k = 0; k < seq_len_k; ++k) {
-          float val = fp16_to_float(input[row_offset + k]) * scale;
-          if (use_mask && k > q) val = -INFINITY;
-          float exp_val = std::exp(val - max_val);
-          output[row_offset + k] = float_to_fp16(exp_val / sum);
-        }
-      }
-    }
-  }
 }
 
 static void initialize_random(std::vector<data_t>& vec) {
@@ -127,14 +91,9 @@ int main(int argc, char *argv[]) {
   uint32_t input_size = batch_size * num_heads * seq_len_q * seq_len_k;
 
   std::vector<data_t> h_input(input_size);
-  std::vector<data_t> h_output_gpu(input_size);
-  std::vector<data_t> h_output_cpu(input_size);
 
   srand(42);
   initialize_random(h_input);
-
-  softmax_cpu(h_input, h_output_cpu, batch_size, num_heads,
-              seq_len_q, seq_len_k, use_mask != 0, scale);
 
   RT_CHECK(vx_dev_open(&device));
 
@@ -170,28 +129,6 @@ int main(int argc, char *argv[]) {
 
   RT_CHECK(vx_upload_bytes(device, &kernel_arg, sizeof(kernel_arg_t), &args_buffer));
   RT_CHECK(vx_upload_kernel_file(device, "kernel.vxbin", &krnl_buffer));
-
-  // ---- Validate once before timed loop --------------------------------------
-  RT_CHECK(vx_start(device, krnl_buffer, args_buffer));
-  RT_CHECK(vx_ready_wait(device, VX_MAX_TIMEOUT));
-  RT_CHECK(vx_copy_from_dev(h_output_gpu.data(), output_buffer, 0, buffer_bytes));
-
-  int errors = 0;
-  float max_diff = 0.0f;
-  for (uint32_t i = 0; i < input_size; ++i) {
-    float got = fp16_to_float(h_output_gpu[i]);
-    float expected = fp16_to_float(h_output_cpu[i]);
-    float diff = std::abs(got - expected);
-    max_diff = std::max(max_diff, diff);
-    float threshold = std::max(1e-5f, std::abs(expected) * 0.01f);
-    if (diff > threshold) ++errors;
-  }
-  if (errors != 0) {
-    printf("Validation FAILED before bench loop: errors=%d  max_diff=%.6f\n",
-           errors, max_diff);
-    cleanup();
-    return -1;
-  }
 
   // ---- Warmup ---------------------------------------------------------------
   for (int i = 0; i < bench.warmup; ++i) {

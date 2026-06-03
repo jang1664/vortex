@@ -1,9 +1,8 @@
 // Benchmark harness for sgemm_tcu. See softmax/bench_main.cpp for design notes.
 //
-// Compared with main.cpp this skips the structured-sparsity path and the
-// per-element comparator templates. Validation is a coarse "output is not
-// all-zero" sanity check — kernel correctness is the regression test's job;
-// here we only need to know we're timing a kernel that actually ran.
+// Compared with main.cpp this skips the structured-sparsity path and
+// per-element correctness checks. Kernel correctness is covered by main.cpp;
+// this harness only measures launch-to-ready latency.
 
 #include "common.h"
 #include "bench_util.h"
@@ -168,19 +167,6 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_copy_to_dev(B_buffer, h_B.data(), 0, sizeB * sizeof(itype_t)));
   RT_CHECK(vx_upload_kernel_file(device, kernel_file, &krnl_buffer));
   RT_CHECK(vx_upload_bytes(device, &kernel_arg, sizeof(kernel_arg_t), &args_buffer));
-
-  // One run + sanity check (output not all zeros).
-  RT_CHECK(vx_start(device, krnl_buffer, args_buffer));
-  RT_CHECK(vx_ready_wait(device, VX_MAX_TIMEOUT));
-  std::vector<uint8_t> h_C(sizeC * sizeof(otype_t));
-  RT_CHECK(vx_copy_from_dev(h_C.data(), C_buffer, 0, h_C.size()));
-  bool any_nonzero = false;
-  for (uint8_t b : h_C) { if (b != 0) { any_nonzero = true; break; } }
-  if (!any_nonzero) {
-    printf("Validation FAILED: C buffer is all zero after kernel run\n");
-    cleanup();
-    return -1;
-  }
 
   for (int i = 0; i < bench.warmup; ++i) {
     RT_CHECK(vx_start(device, krnl_buffer, args_buffer));

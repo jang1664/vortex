@@ -4,10 +4,9 @@
 // reserves a multiple-of-8 row count for stripe alignment, while only real M
 // rows are written/read).
 //
-// Differs from main.cpp only in that it (1) skips the per-element FP16
-// reference output and per-element verification, (2) runs warmup + timed
-// iteration loops around vx_start / vx_ready_wait, (3) does a coarse
-// "output is not all-zero" sanity check before the timed loop.
+// Differs from main.cpp only in that it skips reference output/per-element
+// verification and runs warmup + timed-iteration loops around
+// vx_start / vx_ready_wait.
 //
 // CLI: same shape args as main.cpp (-m -n -k -q -t -d) plus
 //      --warmup=N / --iterations=N / --csv / --output=PATH / --output-append
@@ -566,33 +565,6 @@ int main(int argc, char *argv[]) {
   // args_buffer must be read/write: the kernel writes status back to args.
   RT_CHECK(vx_mem_alloc(device, sizeof(kargs), VX_MEM_READ_WRITE, &args_buffer));
   RT_CHECK(vx_copy_to_dev(args_buffer, &kargs, 0, sizeof(kargs)));
-
-  // ---- Validate once before timed loop (coarse "output not all-zero") ------
-  RT_CHECK(vx_start(device, krnl_buffer, args_buffer));
-  int wait_ret = vx_ready_wait(device, VX_MAX_TIMEOUT);
-  if (wait_ret != 0) {
-    std::cerr << "vx_ready_wait failed: ret=" << wait_ret << std::endl;
-    vx_copy_from_dev(&kargs, args_buffer, 0, sizeof(kargs));
-    std::cerr << "Kernel status: " << kargs.status << std::endl;
-    cleanup();
-    return -1;
-  }
-  RT_CHECK(vx_copy_from_dev(&kargs, args_buffer, 0, sizeof(kargs)));
-  if (kargs.status != STATUS_OK) {
-    std::cout << "Kernel failed: status=" << kargs.status << std::endl;
-    cleanup();
-    return -1;
-  }
-
-  std::vector<uint8_t> h_out(out_total_bytes);
-  RT_CHECK(vx_copy_from_dev(h_out.data(), C_buffer, 0, out_total_bytes));
-  bool any_nonzero = false;
-  for (uint8_t b : h_out) { if (b != 0) { any_nonzero = true; break; } }
-  if (!any_nonzero) {
-    printf("Validation FAILED: C buffer is all zero after kernel run\n");
-    cleanup();
-    return -1;
-  }
 
   // ---- Warmup --------------------------------------------------------------
   // No need to re-upload args: the kernel only reads kargs once per launch and

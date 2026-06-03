@@ -63,60 +63,6 @@ static uint32_t log2_u32(uint32_t v) {
   return r;
 }
 
-static std::vector<data_t> build_reference(const std::vector<data_t>& input,
-                                           const std::vector<data_t>& gamma,
-                                           uint32_t M,
-                                           uint32_t M_pad,
-                                           uint32_t K,
-                                           float eps) {
-  std::vector<data_t> plain(size_t(M) * K, 0);
-  for (uint32_t m = 0; m < M; ++m) {
-    double sum_sq = 0.0;
-    for (uint32_t k = 0; k < K; ++k) {
-      double v = fp16_to_float(input[(uint64_t)m * K + k]);
-      sum_sq += v * v;
-    }
-    float rms = 1.0f / std::sqrt(float(sum_sq / K) + eps);
-    for (uint32_t k = 0; k < K; ++k) {
-      float x = fp16_to_float(input[(uint64_t)m * K + k]);
-      float g = fp16_to_float(gamma[k]);
-      plain[(uint64_t)m * K + k] = float_to_fp16(x * rms * g);
-    }
-  }
-
-  std::vector<data_t> ref(size_t(M_pad) * K, 0);
-  for (uint32_t m = 0; m < M; ++m) {
-    uint32_t mt = m / TILE_DMA_MT;
-    uint32_t m0 = m % TILE_DMA_MT;
-    uint32_t cm = ((M_pad - mt * TILE_DMA_MT) < TILE_DMA_MT)
-                    ? (M_pad - mt * TILE_DMA_MT) : TILE_DMA_MT;
-    for (uint32_t k = 0; k < K; ++k) {
-      uint32_t km = k / TILE_DMA_MXU_KT;
-      uint32_t k0 = k % TILE_DMA_MXU_KT;
-      uint64_t idx = uint64_t(mt) * TILE_DMA_MT * K
-                   + uint64_t(km) * cm * TILE_DMA_MXU_KT
-                   + uint64_t(m0) * TILE_DMA_MXU_KT
-                   + k0;
-      ref[idx] = plain[(uint64_t)m * K + k];
-    }
-  }
-  return ref;
-}
-
-static uint64_t tiled_input_index(uint32_t m, uint32_t k,
-                                  uint32_t M_pad, uint32_t K) {
-  uint32_t mt = m / TILE_DMA_MT;
-  uint32_t m0 = m % TILE_DMA_MT;
-  uint32_t cm = ((M_pad - mt * TILE_DMA_MT) < TILE_DMA_MT)
-                  ? (M_pad - mt * TILE_DMA_MT) : TILE_DMA_MT;
-  uint32_t km = k / TILE_DMA_MXU_KT;
-  uint32_t k0 = k % TILE_DMA_MXU_KT;
-  return uint64_t(mt) * TILE_DMA_MT * K
-       + uint64_t(km) * cm * TILE_DMA_MXU_KT
-       + uint64_t(m0) * TILE_DMA_MXU_KT
-       + k0;
-}
-
 int main(int argc, char *argv[]) {
   auto bench = vx_bench::parse(argc, argv);
 
@@ -159,8 +105,6 @@ int main(int argc, char *argv[]) {
   std::vector<data_t> h_gamma(K);
   initialize_input(h_in);
   initialize_gamma(h_gamma);
-  std::vector<data_t> h_ref = build_reference(h_in, h_gamma, M, M_pad, K, eps);
-  std::vector<data_t> h_out(output_elems);
 
   RT_CHECK(vx_dev_open(&device));
   RT_CHECK(vx_upload_kernel_file(device, "kernel.vxbin", &krnl_buffer));
@@ -197,29 +141,6 @@ int main(int argc, char *argv[]) {
   kernel_arg.block_dim[2] = 1;
 
   RT_CHECK(vx_upload_bytes(device, &kernel_arg, sizeof(kernel_arg_t), &args_buffer));
-
-  RT_CHECK(vx_start(device, krnl_buffer, args_buffer));
-  RT_CHECK(vx_ready_wait(device, VX_MAX_TIMEOUT));
-  RT_CHECK(vx_copy_from_dev(h_out.data(), output_buffer, 0, output_bytes));
-
-  size_t errors = 0;
-  float max_diff = 0.0f;
-  for (uint32_t m = 0; m < M; ++m) {
-    for (uint32_t k = 0; k < K; ++k) {
-      uint64_t idx = tiled_input_index(m, k, M_pad, K);
-      float got = fp16_to_float(h_out[idx]);
-      float expected = fp16_to_float(h_ref[idx]);
-      float diff = std::fabs(got - expected);
-      max_diff = std::max(max_diff, diff);
-      float thr = std::max(1e-4f, std::fabs(expected) * 0.01f);
-      if (diff > thr) ++errors;
-    }
-  }
-  if (errors != 0) {
-    printf("Validation FAILED: errors=%zu max_diff=%.6f\n", errors, max_diff);
-    cleanup();
-    return -1;
-  }
 
   for (int i = 0; i < bench.warmup; ++i) {
     RT_CHECK(vx_start(device, krnl_buffer, args_buffer));

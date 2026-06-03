@@ -40,27 +40,6 @@ static void cleanup() {
   if (device) vx_dev_close(device);
 }
 
-static void rmsnorm_cpu(const std::vector<data_t>& in, const std::vector<data_t>& gamma,
-                        std::vector<data_t>& out, uint32_t batch, uint32_t seq,
-                        uint32_t hidden, float eps) {
-  for (uint32_t b = 0; b < batch; ++b) {
-    for (uint32_t s = 0; s < seq; ++s) {
-      uint32_t off = (b * seq + s) * hidden;
-      float sq = 0.0f;
-      for (uint32_t i = 0; i < hidden; ++i) {
-        float v = fp16_to_float(in[off + i]);
-        sq += v * v;
-      }
-      float r = 1.0f / std::sqrt(sq / hidden + eps);
-      for (uint32_t i = 0; i < hidden; ++i) {
-        float v = fp16_to_float(in[off + i]);
-        float g = fp16_to_float(gamma[i]);
-        out[off + i] = float_to_fp16(v * r * g);
-      }
-    }
-  }
-}
-
 static void initialize_random(std::vector<data_t>& vec) {
   for (auto& v : vec) {
     float x = static_cast<float>(rand()) / RAND_MAX * 2.0f - 1.0f;
@@ -97,11 +76,9 @@ int main(int argc, char *argv[]) {
   uint32_t total_tokens = batch_size * seq_len;
   uint32_t input_size = total_tokens * hidden_dim;
   std::vector<data_t> h_in(input_size), h_gamma(hidden_dim);
-  std::vector<data_t> h_out(input_size), h_ref(input_size);
   srand(42);
   initialize_random(h_in);
   initialize_random(h_gamma);
-  rmsnorm_cpu(h_in, h_gamma, h_ref, batch_size, seq_len, hidden_dim, eps);
 
   RT_CHECK(vx_dev_open(&device));
 
@@ -138,25 +115,6 @@ int main(int argc, char *argv[]) {
 
   RT_CHECK(vx_upload_bytes(device, &kernel_arg, sizeof(kernel_arg_t), &args_buffer));
   RT_CHECK(vx_upload_kernel_file(device, "kernel.vxbin", &krnl_buffer));
-
-  RT_CHECK(vx_start(device, krnl_buffer, args_buffer));
-  RT_CHECK(vx_ready_wait(device, VX_MAX_TIMEOUT));
-  RT_CHECK(vx_copy_from_dev(h_out.data(), output_buffer, 0, output_bytes));
-  int errors = 0;
-  float max_diff = 0.0f;
-  for (uint32_t i = 0; i < input_size; ++i) {
-    float got = fp16_to_float(h_out[i]);
-    float expected = fp16_to_float(h_ref[i]);
-    float diff = std::abs(got - expected);
-    max_diff = std::max(max_diff, diff);
-    float thr = std::max(1e-5f, std::abs(expected) * 0.01f);
-    if (diff > thr) ++errors;
-  }
-  if (errors != 0) {
-    printf("Validation FAILED: errors=%d max_diff=%.6f\n", errors, max_diff);
-    cleanup();
-    return -1;
-  }
 
   for (int i = 0; i < bench.warmup; ++i) {
     RT_CHECK(vx_start(device, krnl_buffer, args_buffer));

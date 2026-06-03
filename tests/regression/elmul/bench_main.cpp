@@ -40,13 +40,6 @@ static void cleanup() {
   if (device) vx_dev_close(device);
 }
 
-static void elmul_cpu(const std::vector<data_t>& a, const std::vector<data_t>& b,
-                      std::vector<data_t>& out) {
-  for (size_t i = 0; i < a.size(); ++i) {
-    out[i] = float_to_fp16(fp16_to_float(a[i]) * fp16_to_float(b[i]));
-  }
-}
-
 static void initialize_random(std::vector<data_t>& vec) {
   for (auto& v : vec) {
     float x = static_cast<float>(rand()) / RAND_MAX * 4.0f - 2.0f;
@@ -72,11 +65,10 @@ int main(int argc, char *argv[]) {
            size, bench.warmup, bench.iterations);
   }
 
-  std::vector<data_t> h_a(size), h_b(size), h_out(size), h_ref(size);
+  std::vector<data_t> h_a(size), h_b(size);
   srand(42);
   initialize_random(h_a);
   initialize_random(h_b);
-  elmul_cpu(h_a, h_b, h_ref);
 
   RT_CHECK(vx_dev_open(&device));
 
@@ -110,25 +102,6 @@ int main(int argc, char *argv[]) {
 
   RT_CHECK(vx_upload_bytes(device, &kernel_arg, sizeof(kernel_arg_t), &args_buffer));
   RT_CHECK(vx_upload_kernel_file(device, "kernel.vxbin", &krnl_buffer));
-
-  RT_CHECK(vx_start(device, krnl_buffer, args_buffer));
-  RT_CHECK(vx_ready_wait(device, VX_MAX_TIMEOUT));
-  RT_CHECK(vx_copy_from_dev(h_out.data(), output_buffer, 0, buffer_bytes));
-  int errors = 0;
-  float max_diff = 0.0f;
-  for (uint32_t i = 0; i < size; ++i) {
-    float got = fp16_to_float(h_out[i]);
-    float expected = fp16_to_float(h_ref[i]);
-    float diff = std::abs(got - expected);
-    max_diff = std::max(max_diff, diff);
-    float thr = std::max(1e-6f, std::abs(expected) * 0.01f);
-    if (diff > thr) ++errors;
-  }
-  if (errors != 0) {
-    printf("Validation FAILED: errors=%d max_diff=%.6f\n", errors, max_diff);
-    cleanup();
-    return -1;
-  }
 
   for (int i = 0; i < bench.warmup; ++i) {
     RT_CHECK(vx_start(device, krnl_buffer, args_buffer));

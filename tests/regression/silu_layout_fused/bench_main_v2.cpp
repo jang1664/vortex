@@ -43,10 +43,6 @@ static void cleanup() {
   if (device) vx_dev_close(device);
 }
 
-static float silu_cpu(float x) {
-  return x / (1.0f + std::exp(-x));
-}
-
 static void initialize_input(std::vector<data_t>& vec) {
   for (size_t i = 0; i < vec.size(); ++i) {
     float x = -2.0f + 4.0f * (float((i * 2654435761u) % 1000) / 1000.0f);
@@ -80,30 +76,6 @@ static uint32_t variant_kernel_id(Variant variant) {
   return (variant == Variant::RowMatched)
       ? KERNEL_SILU_ROW_MATCHED
       : KERNEL_SILU_LAYOUT_FUSED;
-}
-
-static std::vector<data_t> build_reference(const std::vector<data_t>& input,
-                                           uint32_t M,
-                                           uint32_t M_pad,
-                                           uint32_t K,
-                                           Variant variant) {
-  std::vector<data_t> ref(size_t(M_pad) * K, 0);
-  if (variant == Variant::RowMatched) {
-    for (uint32_t m = 0; m < M; ++m) {
-      for (uint32_t k = 0; k < K; ++k) {
-        ref[(uint64_t)m * K + k] = float_to_fp16(silu_cpu(fp16_to_float(input[(uint64_t)m * K + k])));
-      }
-    }
-    return ref;
-  }
-
-  for (uint32_t m = 0; m < M; ++m) {
-    for (uint32_t k = 0; k < K; ++k) {
-      uint64_t idx = gemm_c_tiled_index(m, k, M_pad, K);
-      ref[idx] = float_to_fp16(silu_cpu(fp16_to_float(input[(uint64_t)m * K + k])));
-    }
-  }
-  return ref;
 }
 
 int main(int argc, char *argv[]) {
@@ -176,9 +148,6 @@ int main(int argc, char *argv[]) {
       }
     }
   }
-  std::vector<data_t> h_ref = build_reference(h_in, M, M_pad, K, variant);
-  std::vector<data_t> h_out(output_elems);
-
   RT_CHECK(vx_dev_open(&device));
   RT_CHECK(vx_upload_kernel_file(device, "kernel.vxbin", &krnl_buffer));
   RT_CHECK(vx_mem_alloc(device, output_bytes, VX_MEM_READ, &input_buffer));
@@ -216,38 +185,6 @@ int main(int argc, char *argv[]) {
   kernel_arg.block_dim[2] = 1;
 
   RT_CHECK(vx_upload_bytes(device, &kernel_arg, sizeof(kernel_arg_t), &args_buffer));
-
-  RT_CHECK(vx_start(device, krnl_buffer, args_buffer));
-  RT_CHECK(vx_ready_wait(device, VX_MAX_TIMEOUT));
-  RT_CHECK(vx_copy_from_dev(h_out.data(), output_buffer, 0, output_bytes));
-
-  size_t errors = 0;
-  float max_diff = 0.0f;
-  if (variant == Variant::RowMatched) {
-    for (size_t i = 0; i < input_elems; ++i) {
-      float got = fp16_to_float(h_out[i]);
-      float expected = fp16_to_float(h_ref[i]);
-      float diff = std::fabs(got - expected);
-      max_diff = std::max(max_diff, diff);
-      if (diff > 1e-3f) ++errors;
-    }
-  } else {
-    for (uint32_t m = 0; m < M; ++m) {
-      for (uint32_t k = 0; k < K; ++k) {
-        uint64_t idx = gemm_c_tiled_index(m, k, M_pad, K);
-        float got = fp16_to_float(h_out[idx]);
-        float expected = fp16_to_float(h_ref[idx]);
-        float diff = std::fabs(got - expected);
-        max_diff = std::max(max_diff, diff);
-        if (diff > 1e-3f) ++errors;
-      }
-    }
-  }
-  if (errors != 0) {
-    printf("Validation FAILED: errors=%zu max_diff=%.6f\n", errors, max_diff);
-    cleanup();
-    return -1;
-  }
 
   for (int i = 0; i < bench.warmup; ++i) {
     RT_CHECK(vx_start(device, krnl_buffer, args_buffer));
