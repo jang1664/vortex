@@ -74,7 +74,7 @@ ATTN_SGEMM_TCU_FPINT_GEMM_IMPROVE_VARIANT = "attn_sgemm_tcu_fpint_gemm_improve"
 ALL_SGEMM_TCU_VARIANT = "all_sgemm_tcu"
 LAYOUT_ALONE_VARIANT = "all_fpint_gemm_improve_alone_layout"
 LAYOUT_FUSED_VARIANT = "all_fpint_gemm_improve_fused_layout"
-WORKLOAD_VARIANTS = (
+BASE_WORKLOAD_VARIANTS = (
     ALL_FPINT_GEMM_NAIVE_VARIANT,
     ATTN_SGEMM_TCU_FPINT_GEMM_NAIVE_VARIANT,
     ALL_FPINT_GEMM_IMPROVE_VARIANT,
@@ -83,6 +83,11 @@ WORKLOAD_VARIANTS = (
     LAYOUT_ALONE_VARIANT,
     LAYOUT_FUSED_VARIANT,
 )
+SPINQUANT_VARIANT_SUFFIX = "_spinquant"
+SPINQUANT_WORKLOAD_VARIANTS = tuple(
+    f"{variant}{SPINQUANT_VARIANT_SUFFIX}" for variant in BASE_WORKLOAD_VARIANTS
+)
+WORKLOAD_VARIANTS = BASE_WORKLOAD_VARIANTS + SPINQUANT_WORKLOAD_VARIANTS
 DEFAULT_WORKLOAD_VARIANT = ALL_FPINT_GEMM_IMPROVE_VARIANT
 ATTENTION_GEMM_OPS = frozenset(("attn_qkT", "attn_pv"))
 STANDARD_KV_CACHE_QUANT_VARIANTS = frozenset((
@@ -118,6 +123,7 @@ KERNEL_APP_REGISTRY: dict[str, str | None] = {
     "silu":       "silu",
     "eladd":      "eladd",
     "elmul":      "elmul",
+    "hadamard":   "hadamard",
     "kv_cache_quant_w4a16": "kv_cache_quant_w4a16",
     "kv_cache_quant_layout_fused_w4a16": "kv_cache_quant_layout_fused_w4a16",
     "kv_cache_dequant_w4a16": "kv_cache_dequant_w4a16",
@@ -156,20 +162,38 @@ def _llm_kernel(name: str,
     }
 
 
+def _base_workload_variant(variant: str) -> str:
+    if variant in BASE_WORKLOAD_VARIANTS:
+        return variant
+    if variant.endswith(SPINQUANT_VARIANT_SUFFIX):
+        base = variant[:-len(SPINQUANT_VARIANT_SUFFIX)]
+        if base in BASE_WORKLOAD_VARIANTS:
+            return base
+    return variant
+
+
+def _is_spinquant_variant(variant: str) -> bool:
+    return (
+        variant.endswith(SPINQUANT_VARIANT_SUFFIX)
+        and _base_workload_variant(variant) in BASE_WORKLOAD_VARIANTS
+    )
+
+
 def _gemm_backend(op: str, variant: str) -> str:
-    if variant == ALL_FPINT_GEMM_NAIVE_VARIANT:
+    base_variant = _base_workload_variant(variant)
+    if base_variant == ALL_FPINT_GEMM_NAIVE_VARIANT:
         return FPINT_GEMM_NAIVE_BACKEND
-    if variant in (
+    if base_variant in (
         ALL_FPINT_GEMM_IMPROVE_VARIANT,
         LAYOUT_ALONE_VARIANT,
         LAYOUT_FUSED_VARIANT,
     ):
         return FPINT_GEMM_IMPROVE_BACKEND
-    if variant == ALL_SGEMM_TCU_VARIANT:
+    if base_variant == ALL_SGEMM_TCU_VARIANT:
         return "sgemm_tcu"
-    if variant == ATTN_SGEMM_TCU_FPINT_GEMM_NAIVE_VARIANT:
+    if base_variant == ATTN_SGEMM_TCU_FPINT_GEMM_NAIVE_VARIANT:
         return "sgemm_tcu" if op in ATTENTION_GEMM_OPS else FPINT_GEMM_NAIVE_BACKEND
-    if variant == ATTN_SGEMM_TCU_FPINT_GEMM_IMPROVE_VARIANT:
+    if base_variant == ATTN_SGEMM_TCU_FPINT_GEMM_IMPROVE_VARIANT:
         return "sgemm_tcu" if op in ATTENTION_GEMM_OPS else FPINT_GEMM_IMPROVE_BACKEND
     raise ValueError(
         f"unknown variant: {variant!r}. Expected one of {WORKLOAD_VARIANTS}"
@@ -564,6 +588,38 @@ def _head_concat_kernel(stage: str,
     )
 
 
+def _hadamard_kernel(name: str,
+                     stage: str,
+                     *,
+                     rows: int,
+                     dim: int,
+                     calls_per_forward: int,
+                     producer: str,
+                     consumer: str,
+                     layout_group: str,
+                     rotation: str,
+                     variant: str) -> dict:
+    return _llm_kernel(
+        name=name,
+        kind="hadamard",
+        backend="hadamard",
+        stage=stage,
+        args=f"-rows {rows} -dim {dim}",
+        calls_per_forward=calls_per_forward,
+        shape={
+            "rows": rows,
+            "dim": dim,
+            "layout_from": "row_major_fp16",
+            "layout_to": "row_major_fp16",
+            "producer": producer,
+            "consumer": consumer,
+            "layout_group": layout_group,
+            "spinquant_rotation": rotation,
+        },
+        variant=variant,
+    )
+
+
 def _with_fused_backend(kernel: dict,
                         backend: str,
                         *,
@@ -582,6 +638,38 @@ def _with_fused_backend(kernel: dict,
         shape=shape,
         variant=str(kernel["variant"]),
     )
+
+
+def _with_kernel_updates(kernel: dict,
+                         *,
+                         backend: str | None = None,
+                         args: str | None = None,
+                         shape_update: dict | None = None) -> dict:
+    shape = dict(kernel.get("shape") or {})
+    if shape_update:
+        shape.update(shape_update)
+    return _llm_kernel(
+        name=str(kernel["name"]),
+        kind=str(kernel["kind"]),
+        backend=backend or str(kernel["backend"]),
+        stage=str(kernel["stage"]),
+        args=str(kernel["args"] if args is None else args),
+        calls_per_forward=int(kernel["calls_per_forward"]),
+        shape=shape,
+        variant=str(kernel["variant"]),
+    )
+
+
+def _replace_layout_to_arg(args: str, layout_to: str) -> str:
+    parts = args.split()
+    for i, part in enumerate(parts):
+        if part == "--layout-to" and i + 1 < len(parts):
+            parts[i + 1] = layout_to
+            return " ".join(parts)
+        if part.startswith("--layout-to="):
+            parts[i] = f"--layout-to={layout_to}"
+            return " ".join(parts)
+    return " ".join(parts + ["--layout-to", layout_to])
 
 
 def _kv_cache_row_major_source_shape(stage: str, seq_kv: int, head_dim: int) -> tuple[int, int, str]:
@@ -1003,6 +1091,216 @@ def _apply_fused_layout_variant(kernels: list[dict],
     ]
 
 
+def _apply_spinquant_hadamard_variant(kernels: list[dict],
+                                      *,
+                                      stage: str,
+                                      batch: int,
+                                      seq_q: int,
+                                      intermediate: int,
+                                      layers: int,
+                                      heads_q: int,
+                                      heads_kv: int,
+                                      head_dim: int,
+                                      M_proj: int,
+                                      base_variant: str,
+                                      variant: str) -> list[dict]:
+    by_name = {kernel["name"]: kernel for kernel in kernels}
+    names = set(by_name)
+    per_head_q = layers * batch * heads_q
+    q_rows = batch * seq_q * heads_q
+    k_rows = batch * seq_q * heads_kv
+    r4_rows = M_proj
+    mlp_elems = M_proj * intermediate
+
+    q_consumer = "attn_qkT"
+    if base_variant in (LAYOUT_ALONE_VARIANT, LAYOUT_FUSED_VARIANT):
+        q_consumer = "layout_rope_q_to_attn_qkT"
+
+    k_consumers = []
+    if "kv_cache_quant_rope_k_to_attn_qkT" in names:
+        k_consumers.append("kv_cache_quant_rope_k_to_attn_qkT")
+        if _standard_quant_is_cache_store_only(
+            by_name,
+            names,
+            attn_name="attn_qkT",
+            quant_name="kv_cache_quant_rope_k_to_attn_qkT",
+            tiled_layout_name="layout_rope_k_to_attn_qkT",
+        ):
+            k_consumers.append("attn_qkT")
+    else:
+        k_consumers.append("attn_qkT")
+
+    r4_consumer = (
+        "layout_mlp_elmul_to_down_proj"
+        if base_variant in (LAYOUT_ALONE_VARIANT, LAYOUT_FUSED_VARIANT)
+        else "down_proj"
+    )
+
+    q_hadamard = _hadamard_kernel(
+        "spinquant_r3_q_hadamard", stage,
+        rows=q_rows, dim=head_dim, calls_per_forward=layers,
+        producer="rope_q", consumer=q_consumer,
+        layout_group="rope_q_to_spinquant_r3_q_to_attn_qkT",
+        rotation="R3", variant=variant,
+    )
+    k_hadamard = _hadamard_kernel(
+        "spinquant_r3_k_hadamard", stage,
+        rows=k_rows, dim=head_dim, calls_per_forward=layers,
+        producer="rope_k", consumer=",".join(k_consumers),
+        layout_group="rope_k_to_spinquant_r3_k_to_kv_cache",
+        rotation="R3", variant=variant,
+    )
+    r4_hadamard = _hadamard_kernel(
+        "spinquant_r4_mlp_hadamard", stage,
+        rows=r4_rows, dim=intermediate, calls_per_forward=layers,
+        producer="mlp_elmul", consumer=r4_consumer,
+        layout_group="mlp_elmul_to_spinquant_r4_to_down_proj",
+        rotation="R4", variant=variant,
+    )
+
+    q_tile = _tile_input_kernel(
+        "layout_rope_q_to_attn_qkT", stage,
+        M=seq_q, K=head_dim, calls_per_forward=per_head_q,
+        producer="spinquant_r3_q_hadamard", consumer="attn_qkT",
+        layout_group="spinquant_r3_q_hadamard_to_attn_qkT",
+        layout_from="row_major_fp16", variant=variant,
+    )
+    gate_detile = _detile_output_kernel(
+        "layout_gate_proj_to_mlp_silu_detile", stage,
+        M=M_proj, N=intermediate, calls_per_forward=layers,
+        producer="gate_proj", consumer="mlp_silu",
+        layout_group="gate_proj_to_mlp_silu", variant=variant,
+    )
+    up_detile = _detile_output_kernel(
+        "layout_up_proj_to_mlp_elmul_detile", stage,
+        M=M_proj, N=intermediate, calls_per_forward=layers,
+        producer="up_proj", consumer="mlp_elmul",
+        layout_group="up_proj_to_mlp_elmul", variant=variant,
+    )
+    row_major_silu = _llm_kernel(
+        name="mlp_silu", kind="silu", backend="silu", stage=stage,
+        args=f"-n {mlp_elems}",
+        calls_per_forward=layers,
+        shape={
+            "size": mlp_elems,
+            "layout_from": "row_major",
+            "layout_to": "row_major",
+            "producer": "layout_gate_proj_to_mlp_silu_detile",
+            "consumer": "mlp_elmul",
+            "layout_group": "gate_proj_to_mlp_silu",
+        },
+        variant=variant,
+    )
+    row_major_elmul = _llm_kernel(
+        name="mlp_elmul", kind="elmul", backend="elmul", stage=stage,
+        args=f"-n {mlp_elems}",
+        calls_per_forward=layers,
+        shape={
+            "size": mlp_elems,
+            "layout_from": "row_major",
+            "layout_to": "row_major",
+            "producer": "mlp_silu,layout_up_proj_to_mlp_elmul_detile",
+            "consumer": "spinquant_r4_mlp_hadamard",
+            "layout_group": "mlp_elmul_to_spinquant_r4",
+        },
+        variant=variant,
+    )
+    r4_tile = _tile_input_kernel(
+        "layout_mlp_elmul_to_down_proj", stage,
+        M=M_proj, K=intermediate, calls_per_forward=layers,
+        producer="spinquant_r4_mlp_hadamard", consumer="down_proj",
+        layout_group="spinquant_r4_hadamard_to_down_proj",
+        layout_from="row_major_fp16", variant=variant,
+    )
+
+    out: list[dict] = []
+    for kernel in kernels:
+        name = str(kernel["name"])
+
+        if name == "rope_q":
+            if base_variant == LAYOUT_FUSED_VARIANT:
+                kernel = _with_kernel_updates(
+                    kernel,
+                    args=_replace_layout_to_arg(str(kernel["args"]), "row_major"),
+                    shape_update={
+                        "layout_to": "row_major_fp16",
+                        "consumer": "spinquant_r3_q_hadamard",
+                        "layout_group": "q_proj_to_rope_q_to_spinquant_r3_q",
+                    },
+                )
+            out.append(kernel)
+            out.append(q_hadamard)
+            if base_variant == LAYOUT_FUSED_VARIANT:
+                out.append(q_tile)
+            continue
+
+        if name == "rope_k":
+            if base_variant == LAYOUT_FUSED_VARIANT:
+                kernel = _with_kernel_updates(
+                    kernel,
+                    shape_update={
+                        "consumer": "spinquant_r3_k_hadamard",
+                        "layout_group": "k_proj_to_rope_k_to_spinquant_r3_k",
+                    },
+                )
+            out.append(kernel)
+            out.append(k_hadamard)
+            continue
+
+        if name == "layout_rope_q_to_attn_qkT":
+            out.append(_with_kernel_updates(
+                kernel,
+                shape_update={
+                    "layout_from": "row_major_fp16",
+                    "producer": "spinquant_r3_q_hadamard",
+                    "layout_group": "spinquant_r3_q_hadamard_to_attn_qkT",
+                },
+            ))
+            continue
+
+        if name == "kv_cache_quant_rope_k_to_attn_qkT":
+            out.append(_with_kernel_updates(
+                kernel,
+                shape_update={
+                    "producer": "spinquant_r3_k_hadamard",
+                    "layout_group": "spinquant_r3_k_hadamard_to_kv_cache",
+                },
+            ))
+            continue
+
+        if base_variant == LAYOUT_FUSED_VARIANT and name == "mlp_silu":
+            out.append(gate_detile)
+            out.append(row_major_silu)
+            continue
+
+        if base_variant == LAYOUT_FUSED_VARIANT and name == "mlp_elmul":
+            out.append(up_detile)
+            out.append(row_major_elmul)
+            out.append(r4_hadamard)
+            out.append(r4_tile)
+            continue
+
+        if name == "mlp_elmul":
+            out.append(kernel)
+            out.append(r4_hadamard)
+            continue
+
+        if name == "layout_mlp_elmul_to_down_proj":
+            out.append(_with_kernel_updates(
+                kernel,
+                shape_update={
+                    "layout_from": "row_major_fp16",
+                    "producer": "spinquant_r4_mlp_hadamard",
+                    "layout_group": "spinquant_r4_hadamard_to_down_proj",
+                },
+            ))
+            continue
+
+        out.append(kernel)
+
+    return out
+
+
 def build_decoder_pass_kernels(config: dict,
                                stage: str,
                                batch: int,
@@ -1037,6 +1335,8 @@ def build_decoder_pass_kernels(config: dict,
         raise ValueError(
             f"unknown variant: {variant!r}. Expected one of {WORKLOAD_VARIANTS}"
         )
+    base_variant = _base_workload_variant(variant)
+    spinquant = _is_spinquant_variant(variant)
 
     H      = config["hidden_size"]
     I      = config["intermediate_size"]
@@ -1248,8 +1548,8 @@ def build_decoder_pass_kernels(config: dict,
     #     The logits projection is outside the current accelerator evaluation
     #     target, so do not emit an lm_head GEMM case here.
 
-    if variant == LAYOUT_ALONE_VARIANT:
-        return _apply_standalone_layout_variant(
+    if base_variant == LAYOUT_ALONE_VARIANT:
+        kernels = _apply_standalone_layout_variant(
             out,
             stage=stage,
             batch=batch,
@@ -1265,8 +1565,8 @@ def build_decoder_pass_kernels(config: dict,
             M_proj=M_proj,
             variant=variant,
         )
-    if variant == LAYOUT_FUSED_VARIANT:
-        return _apply_fused_layout_variant(
+    elif base_variant == LAYOUT_FUSED_VARIANT:
+        kernels = _apply_fused_layout_variant(
             out,
             stage=stage,
             batch=batch,
@@ -1282,8 +1582,8 @@ def build_decoder_pass_kernels(config: dict,
             M_proj=M_proj,
             variant=variant,
         )
-    if variant in STANDARD_KV_CACHE_QUANT_VARIANTS:
-        return _apply_standard_kv_cache_quant_variant(
+    elif base_variant in STANDARD_KV_CACHE_QUANT_VARIANTS:
+        kernels = _apply_standard_kv_cache_quant_variant(
             out,
             stage=stage,
             seq_kv=seq_kv,
@@ -1291,10 +1591,28 @@ def build_decoder_pass_kernels(config: dict,
             batch=batch,
             heads_kv=H_kv,
             head_dim=D,
+            variant=variant,
+        )
+    else:
+        kernels = out
+
+    if spinquant:
+        return _apply_spinquant_hadamard_variant(
+            kernels,
+            stage=stage,
+            batch=batch,
+            seq_q=seq_q,
+            intermediate=I,
+            layers=L,
+            heads_q=H_q,
+            heads_kv=H_kv,
+            head_dim=D,
+            M_proj=M_proj,
+            base_variant=base_variant,
             variant=variant,
         )
 
-    return out
+    return kernels
 
 
 def build_llm_kernels(model_name: str,
@@ -1598,6 +1916,22 @@ def _kernel_qparam_layout_to(kernels_by_name: dict[str, dict], name: str, defaul
     return str(shape.get("scale_zp_layout_to", shape.get("layout_to", default)))
 
 
+def _producer_output_layout(kernels_by_name: dict[str, dict], name: str | None, default: str) -> str:
+    if not name:
+        return default
+    kernel = kernels_by_name.get(name)
+    if not kernel:
+        return default
+    shape = dict(kernel.get("shape") or {})
+    if "layout_to" in shape:
+        return str(shape["layout_to"])
+    if "weight_layout_to" in shape:
+        return str(shape["weight_layout_to"])
+    if str(kernel.get("kind", "")) == "gemm":
+        return _gemm_c_layout(str(kernel.get("backend", "")))
+    return default
+
+
 def _standard_quant_feeds_attention(kernels_by_name: dict[str, dict],
                                     names: set[str],
                                     *,
@@ -1774,9 +2108,11 @@ def annotate_kernel_flow(kernels: list[dict]) -> None:
     if rope_q:
         shape = dict(rope_q.get("shape") or {})
         source = _first_existing(["layout_q_proj_to_rope_q_detile", "q_proj"], names) or "q_proj"
-        target = _first_existing(["layout_rope_q_to_attn_qkT", "attn_qkT"], names)
+        target = _first_existing(["spinquant_r3_q_hadamard", "layout_rope_q_to_attn_qkT", "attn_qkT"], names)
         input_layout = str(shape.get("layout_from", "row_major"))
         output_layout = str(shape.get("layout_to", "row_major"))
+        if target == "spinquant_r3_q_hadamard":
+            output_layout = _kernel_layout_from(kernels_by_name, target, "row_major_fp16")
         _set_flow(
             rope_q,
             inputs=[_input_flow("x", source, input_layout)],
@@ -1790,7 +2126,13 @@ def annotate_kernel_flow(kernels: list[dict]) -> None:
         input_layout = str(shape.get("layout_from", "row_major"))
         output_layout = str(shape.get("layout_to", "row_major"))
         outputs = []
-        if "kv_cache_quant_rope_k_to_attn_qkT" in names:
+        if "spinquant_r3_k_hadamard" in names:
+            outputs.append(_output_flow(
+                "k",
+                "spinquant_r3_k_hadamard",
+                _kernel_layout_from(kernels_by_name, "spinquant_r3_k_hadamard", "row_major_fp16"),
+            ))
+        elif "kv_cache_quant_rope_k_to_attn_qkT" in names:
             outputs.append(
                 _output_flow(
                     "k",
@@ -1813,6 +2155,31 @@ def annotate_kernel_flow(kernels: list[dict]) -> None:
             rope_k,
             inputs=[_input_flow("x", source, input_layout)],
             outputs=outputs,
+        )
+
+    for hadamard_name, output_role in (
+        ("spinquant_r3_q_hadamard", "q"),
+        ("spinquant_r3_k_hadamard", "k"),
+        ("spinquant_r4_mlp_hadamard", "hidden"),
+    ):
+        hadamard = kernels_by_name.get(hadamard_name)
+        if not hadamard:
+            continue
+        shape = dict(hadamard.get("shape") or {})
+        _set_flow(
+            hadamard,
+            inputs=[
+                _input_flow(
+                    "x",
+                    str(shape.get("producer", "unknown")),
+                    str(shape.get("layout_from", "row_major_fp16")),
+                )
+            ],
+            outputs=_output_flows(
+                output_role,
+                _targets_existing(_split_flow_nodes(shape.get("consumer")), names),
+                str(shape.get("layout_to", "row_major_fp16")),
+            ),
         )
 
     k_quant = kernels_by_name.get("kv_cache_quant_rope_k_to_attn_qkT")
@@ -1851,7 +2218,13 @@ def annotate_kernel_flow(kernels: list[dict]) -> None:
                 ])
         _set_flow(
             k_quant,
-            inputs=[_input_flow("x", "rope_k", str(shape.get("layout_from", "row_major_fp16")))],
+            inputs=[
+                _input_flow(
+                    "x",
+                    _first_existing(["spinquant_r3_k_hadamard", "rope_k"], names) or "rope_k",
+                    str(shape.get("layout_from", "row_major_fp16")),
+                )
+            ],
             outputs=outputs,
         )
 
@@ -1862,7 +2235,12 @@ def annotate_kernel_flow(kernels: list[dict]) -> None:
         attn_shape = dict(attn_qk.get("shape") or {})
         default_w_layout = _gemm_w_layout(backend, int(attn_shape.get("WTRANS", 0)))
         default_qparam_layout = _gemm_qparam_layout(backend)
-        a_source = _first_existing(["layout_rope_q_to_attn_qkT", "rope_q"], names) or "rope_q"
+        a_source = _first_existing([
+            "layout_rope_q_to_attn_qkT",
+            "spinquant_r3_q_hadamard",
+            "rope_q",
+        ], names) or "rope_q"
+        a_layout = _producer_output_layout(kernels_by_name, a_source, _gemm_a_layout(backend))
         if "layout_rope_k_to_attn_qkT" in names:
             w_source = "layout_rope_k_to_attn_qkT"
             scale_source = "layout_rope_k_qparams_to_attn_qkT"
@@ -1885,12 +2263,12 @@ def annotate_kernel_flow(kernels: list[dict]) -> None:
             w_layout = default_w_layout
             scale_layout = default_qparam_layout or "row_major"
         else:
-            w_source = "rope_k"
+            w_source = _first_existing(["spinquant_r3_k_hadamard", "rope_k"], names) or "rope_k"
             scale_source = f"param:{attn_qk['name']}.qparams"
-            w_layout = default_w_layout
+            w_layout = _producer_output_layout(kernels_by_name, w_source, default_w_layout)
             scale_layout = default_qparam_layout or "row_major"
         inputs = [
-            _input_flow("A", a_source, _gemm_a_layout(backend)),
+            _input_flow("A", a_source, a_layout),
             _input_flow("W" if backend in FPINT_GEMM_BACKENDS else "B", w_source, w_layout),
         ]
         if default_qparam_layout:
@@ -2085,21 +2463,29 @@ def annotate_kernel_flow(kernels: list[dict]) -> None:
             _input_flow("x", "mlp_silu", str(shape.get("layout_from", "row_major"))),
             _input_flow("y", up_source, "gemm_c_tiled" if elmul.get("backend") == "elmul_layout_fused" else "row_major"),
         ]
-        target = _first_existing(["layout_mlp_elmul_to_down_proj", "down_proj"], names)
+        target = _first_existing(["spinquant_r4_mlp_hadamard", "layout_mlp_elmul_to_down_proj", "down_proj"], names)
+        output_layout = str(shape.get("layout_to", "row_major"))
+        if target == "spinquant_r4_mlp_hadamard":
+            output_layout = _kernel_layout_from(kernels_by_name, target, "row_major_fp16")
         _set_flow(
             elmul,
             inputs=inputs,
-            outputs=([_output_flow("product", target, str(shape.get("layout_to", "row_major")))] if target else []),
+            outputs=([_output_flow("product", target, output_layout)] if target else []),
         )
 
     if "down_proj" in names:
         backend = _kernel_backend(kernels_by_name, "down_proj")
-        a_source = _first_existing(["layout_mlp_elmul_to_down_proj", "mlp_elmul"], names) or "mlp_elmul"
+        a_source = _first_existing([
+            "layout_mlp_elmul_to_down_proj",
+            "spinquant_r4_mlp_hadamard",
+            "mlp_elmul",
+        ], names) or "mlp_elmul"
+        a_layout = _producer_output_layout(kernels_by_name, a_source, _gemm_a_layout(backend))
         target = _first_existing(["layout_down_proj_to_residual_ffn_detile", "residual_ffn"], names)
         _set_flow_by_name(
             kernels_by_name,
             "down_proj",
-            inputs=[_input_flow("A", a_source, _gemm_a_layout(backend))]
+            inputs=[_input_flow("A", a_source, a_layout)]
                    + _static_weight_inputs("down_proj", backend),
             outputs=([_output_flow("C", target, _gemm_c_layout(backend))] if target else []),
         )
@@ -2139,9 +2525,9 @@ def _shape_summary(shape: dict) -> str:
     else:
         keys = ()
     keys += (
-        "batch", "seq", "hidden", "heads", "headdim", "seqq", "seqk",
+        "rows", "dim", "batch", "seq", "hidden", "heads", "headdim", "seqq", "seqk",
         "effective_K", "effective_N", "cache_len", "cache_update",
-        "source_transposed",
+        "source_transposed", "spinquant_rotation",
     )
     return ", ".join(
         f"{key}={shape[key]}" for key in keys if key in shape
@@ -2182,7 +2568,7 @@ def _kernel_input_layout(kernel: dict) -> str:
         return "token_ids"
     if kind in {"eladd", "elmul"}:
         return "row_major + row_major"
-    if kind in {"rmsnorm", "rope", "softmax", "silu", "concat", "quantization"}:
+    if kind in {"rmsnorm", "rope", "softmax", "silu", "concat", "quantization", "hadamard"}:
         return "row_major"
     return "unknown"
 
@@ -2211,7 +2597,7 @@ def _kernel_output_layout(kernel: dict) -> str:
         return str(shape["layout_to"])
     if kind == "embedding":
         return "row_major"
-    if kind in {"rmsnorm", "rope", "softmax", "silu", "eladd", "elmul", "concat"}:
+    if kind in {"rmsnorm", "rope", "softmax", "silu", "eladd", "elmul", "concat", "hadamard"}:
         return "row_major"
     if kind == "quantization":
         return "packed_w4a16_row_major + qparams_row_major"

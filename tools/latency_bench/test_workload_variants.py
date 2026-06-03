@@ -134,8 +134,8 @@ workloads:
                 {"kv_cache_quant_rope_k_to_attn_qkT", "kv_cache_quant_v_cache_to_attn_pv"},
                 set(by_op),
             )
-            self.assertEqual("-k 128 -n 32 -q 128 -d 0 -t 1", by_op["kv_cache_quant_rope_k_to_attn_qkT"].args)
-            self.assertEqual("-k 32 -n 128 -q 128 -d 1 -t 0", by_op["kv_cache_quant_v_cache_to_attn_pv"].args)
+            self.assertEqual("-k 1 -n 128 -q 128 -d 1 -t 1", by_op["kv_cache_quant_rope_k_to_attn_qkT"].args)
+            self.assertEqual("-k 1 -n 128 -q 128 -d 1 -t 0", by_op["kv_cache_quant_v_cache_to_attn_pv"].args)
 
 
 if __name__ == "__main__":

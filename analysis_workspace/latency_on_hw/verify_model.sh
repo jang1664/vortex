@@ -19,17 +19,32 @@ variant_label() {
     all_sgemm_tcu)
       echo "all_sgemm_tcu"
       ;;
+    all_sgemm_tcu_spinquant)
+      echo "all_sgemm_tcu_spinquant"
+      ;;
     attn_sgemm_tcu_fpint_gemm_naive)
       echo "attn_sgemm_tcu_fpint_gemm_naive"
+      ;;
+    attn_sgemm_tcu_fpint_gemm_naive_spinquant)
+      echo "attn_sgemm_tcu_fpint_gemm_naive_spinquant"
       ;;
     all_fpint_gemm_naive)
       echo "all_fpint_gemm_naive"
       ;;
+    all_fpint_gemm_naive_spinquant)
+      echo "all_fpint_gemm_naive_spinquant"
+      ;;
     all_fpint_gemm_improve_alone_layout)
       echo "all_fpint_improve_alone"
       ;;
+    all_fpint_gemm_improve_alone_layout_spinquant)
+      echo "all_fpint_improve_alone_spinquant"
+      ;;
     all_fpint_gemm_improve_fused_layout)
       echo "all_fpint_improve_fused"
+      ;;
+    all_fpint_gemm_improve_fused_layout_spinquant)
+      echo "all_fpint_improve_fused_spinquant"
       ;;
     *)
       echo "$1"
@@ -74,6 +89,11 @@ emit_stage() {
   emit_layout "${stage}" all_fpint_gemm_naive
   emit_layout "${stage}" all_fpint_gemm_improve_alone_layout
   emit_layout "${stage}" all_fpint_gemm_improve_fused_layout
+  emit_layout "${stage}" all_sgemm_tcu_spinquant
+  emit_layout "${stage}" attn_sgemm_tcu_fpint_gemm_naive_spinquant
+  emit_layout "${stage}" all_fpint_gemm_naive_spinquant
+  emit_layout "${stage}" all_fpint_gemm_improve_alone_layout_spinquant
+  emit_layout "${stage}" all_fpint_gemm_improve_fused_layout_spinquant
 }
 
 emit_stage prefill
