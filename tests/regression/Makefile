@@ -22,6 +22,7 @@ TEST_DIRS := \
 	fpint_gemm_ffn_hw_naive \
 	fpint_gemm_ffn_hw_improve \
 	gemm_fpint \
+	hadamard \
 	io_addr \
 	madmax \
 	mstress \
