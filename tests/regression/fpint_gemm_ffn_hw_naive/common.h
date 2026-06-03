@@ -75,6 +75,10 @@
 #define MMIO_STATUS_WAIT_STUCK  3
 #define MMIO_STATUS_BAD_EID     4
 
+#define GEMM_FSM_MT 128
+#define GEMM_FSM_NT 128
+#define GEMM_FSM_KT 128
+
 typedef struct {
   uint32_t grid_dim[2];
   uint32_t block_dim[2];
