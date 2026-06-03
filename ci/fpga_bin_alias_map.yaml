@@ -11,6 +11,10 @@ aliases:
     path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_noDcache_L2cache_37a280addd/bin
     configs: configs/naive_gemm.sh
 
+  naive_gemm_tcol32:
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_noDcache_L2cache_569775c93b/bin
+    configs: configs/naive_gemm_tcol32.sh
+
   naive_simd:
     path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_noDcache_L2cache_90f22d2615/bin
     configs: configs/naive_simd.sh

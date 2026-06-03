@@ -15,7 +15,7 @@ fpga_bins:
  
   by_backend: 
     sgemm_tcu: naive_simd 
-    fpint_gemm_naive: naive_gemm
+    fpint_gemm_naive: naive_gemm_tcol32
  
   by_app: 
     rmsnorm: naive_simd 

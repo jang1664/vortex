@@ -14,7 +14,7 @@ fpga_bins:
   default: naive_simd
  
   by_backend: 
-    fpint_gemm_naive: naive_gemm
+    fpint_gemm_naive: naive_gemm_tcol32
  
   by_app: 
     rmsnorm: naive_simd 
