@@ -29,7 +29,7 @@ workloads:
   - id: llama2_7b_prefill_C2
     model: llama2-7b
     stage: prefill
-    variant: attn_sgemm_tcu_fpint_gemm_naive
+    variant: attn_sgemm_tcu_fpint_gemm_naive_spinquant
     implemented_only: false
     matrix:
       # batch: {values: [1, 8, 64]}

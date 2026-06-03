@@ -28,7 +28,7 @@ workloads:
   - id: llama2_7b_generation_C3
     model: llama2-7b
     stage: generation
-    variant: all_fpint_gemm_naive
+    variant: all_fpint_gemm_naive_spinquant
     implemented_only: false
     matrix:
       batch: {values: [1]}

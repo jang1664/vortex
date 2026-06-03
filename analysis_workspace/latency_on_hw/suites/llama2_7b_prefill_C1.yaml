@@ -28,7 +28,7 @@ workloads:
   - id: llama2_7b_prefill_all_sgemm_tcu
     model: llama2-7b
     stage: prefill
-    variant: all_sgemm_tcu
+    variant: all_sgemm_tcu_spinquant
     implemented_only: false
     matrix:
       # batch: {values: [1, 8]}
