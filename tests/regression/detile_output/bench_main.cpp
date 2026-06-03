@@ -49,6 +49,10 @@ static uint32_t log2_u32(uint32_t v) {
   return r;
 }
 
+static uint32_t align_up(uint32_t a, uint32_t b) {
+  return ((a + b - 1) / b) * b;
+}
+
 static void parse_args(int argc, char** argv) {
   for (int i = 1; i < argc; ++i) {
     if (strcmp(argv[i], "--help") == 0) {
@@ -73,16 +77,13 @@ int main(int argc, char** argv) {
   parse_args(argc, argv);
 
   const uint32_t M_pad = (M + 7u) & ~7u;
-  if (N % TILE_DMA_MXU_NT != 0) {
-    printf("ERROR: N must be multiple of %u\n", TILE_DMA_MXU_NT);
-    return 1;
-  }
   if (!is_pow2(TILE_DMA_MT) || !is_pow2(TILE_DMA_MXU_NT)) {
     printf("ERROR: tile constants must be powers of two\n");
     return 1;
   }
+  const uint32_t N_pad = align_up(N, TILE_DMA_MXU_NT);
 
-  const size_t src_elems = size_t(M_pad) * N;
+  const size_t src_elems = size_t(M_pad) * N_pad;
   const size_t src_bytes = src_elems * TILE_ELEM_BYTES;
   const size_t dst_bytes = size_t(M) * N * TILE_ELEM_BYTES;
 
@@ -105,7 +106,7 @@ int main(int argc, char** argv) {
     return 1;
   }
   const uint32_t tpb = uint32_t(num_threads);
-  const uint32_t n_tiles = N / TILE_DMA_MXU_NT;
+  const uint32_t n_tiles = N_pad / TILE_DMA_MXU_NT;
   const uint32_t blocks_x = (TILE_DMA_MXU_NT + tpb - 1) / tpb;
 
   kernel_arg_t karg = {};
@@ -119,7 +120,8 @@ int main(int argc, char** argv) {
   RT_CHECK(vx_mem_address(dst_buf, &karg.dst_addr));
   karg.M = M;
   karg.M_pad = M_pad;
-  karg.N = N;
+  karg.N_real = N;
+  karg.N_pad = N_pad;
   karg.log2_mt = log2_u32(TILE_DMA_MT);
   karg.log2_mxu_nt = log2_u32(TILE_DMA_MXU_NT);
 

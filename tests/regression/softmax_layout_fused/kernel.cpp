@@ -14,6 +14,7 @@ void kernel_softmax_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
   const uint32_t num_heads = arg->num_heads;
   const uint32_t seq_len_q = arg->seq_len_q;
   const uint32_t seq_len_k = arg->seq_len_k;
+  const uint32_t seq_len_k_pad = arg->seq_len_k_pad;
   const uint32_t M_pad = arg->M_pad;
   const uint32_t use_mask = arg->use_mask;
   const float scale = arg->scale;
@@ -27,7 +28,7 @@ void kernel_softmax_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
   const uint32_t h = rem / seq_len_q;
   const uint32_t q = rem - h * seq_len_q;
   const uint32_t matrix_idx = b * num_heads + h;
-  const uint64_t matrix_elems = (uint64_t)M_pad * seq_len_k;
+  const uint64_t matrix_elems = (uint64_t)M_pad * seq_len_k_pad;
   const uint64_t base = batched_matrix_base(matrix_idx, matrix_elems);
 
   const uint32_t tid = threadIdx.x;
@@ -37,7 +38,7 @@ void kernel_softmax_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
   float local_max = VX_NEG_INF;
   for (uint32_t k = tid; k < seq_len_k; k += block_size) {
     const uint64_t in_off = base + gemm_c_tiled_elem_offset(
-        q, k, M_pad, seq_len_k, arg->log2_mt, arg->log2_mxu_nt);
+        q, k, M_pad, seq_len_k_pad, arg->log2_mt, arg->log2_mxu_nt);
     float v = fp16_to_float(input[in_off]) * scale;
     if (use_mask && k > q) {
       v = VX_NEG_INF;
@@ -61,7 +62,7 @@ void kernel_softmax_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
   float local_sum = 0.0f;
   for (uint32_t k = tid; k < seq_len_k; k += block_size) {
     const uint64_t in_off = base + gemm_c_tiled_elem_offset(
-        q, k, M_pad, seq_len_k, arg->log2_mt, arg->log2_mxu_nt);
+        q, k, M_pad, seq_len_k_pad, arg->log2_mt, arg->log2_mxu_nt);
     float v = fp16_to_float(input[in_off]) * scale;
     if (use_mask && k > q) {
       v = VX_NEG_INF;
@@ -82,9 +83,9 @@ void kernel_softmax_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
 
   for (uint32_t k = tid; k < seq_len_k; k += block_size) {
     const uint64_t in_off = base + gemm_c_tiled_elem_offset(
-        q, k, M_pad, seq_len_k, arg->log2_mt, arg->log2_mxu_nt);
+        q, k, M_pad, seq_len_k_pad, arg->log2_mt, arg->log2_mxu_nt);
     const uint64_t out_off = base + gemm_a_tiled_elem_offset(
-        q, k, M_pad, seq_len_k, arg->log2_mt, arg->log2_mxu_kt);
+        q, k, M_pad, seq_len_k_pad, arg->log2_mt, arg->log2_mxu_kt);
     float v = fp16_to_float(input[in_off]) * scale;
     if (use_mask && k > q) {
       v = VX_NEG_INF;

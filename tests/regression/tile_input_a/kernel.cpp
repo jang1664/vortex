@@ -24,7 +24,8 @@ void kernel_tile_input_a(kernel_arg_t *__UNIFORM__ arg) {
   auto dst = reinterpret_cast<uint8_t *>(arg->dst_addr);
   const uint32_t M_real = arg->M_real;
   const uint32_t M_pad  = arg->M_pad;
-  const uint32_t K      = arg->K;
+  const uint32_t K_real = arg->K_real;
+  const uint32_t K_pad  = arg->K_pad;
   const uint32_t log2_mt     = arg->log2_mt;
   const uint32_t log2_kt     = arg->log2_kt;
   const uint32_t log2_mxu_kt = arg->log2_mxu_kt;
@@ -50,7 +51,7 @@ void kernel_tile_input_a(kernel_arg_t *__UNIFORM__ arg) {
   const uint32_t k_chunk = cidx & chunks_per_row_mask;
   const uint32_t k_base  = (ktile << log2_kt) + (kb << log2_mxu_kt)
                          + k_chunk * CHUNK_ELEMS;
-  if (k_base >= K) return;
+  if (k_base >= K_pad) return;
 
   const uint32_t mt_idx = m >> log2_mt;
   const uint32_t m0 = m & mt_mask;
@@ -60,16 +61,20 @@ void kernel_tile_input_a(kernel_arg_t *__UNIFORM__ arg) {
   const uint32_t km = k_base >> log2_mxu_kt;
   const uint32_t k0 = k_base & mxu_kt_mask;
   const uint64_t out_elem_off =
-      (uint64_t)mt_idx * mt * K
+      (uint64_t)mt_idx * mt * K_pad
     + (uint64_t)km * cm * mxu_kt
     + (uint64_t)m0 * mxu_kt
     + k0;
   const uint64_t out_byte_off = out_elem_off * TILE_ELEM_BYTES;
 
   uint32_t v = 0;
-  if (m < M_real) {
-    const uint64_t src_byte_off = ((uint64_t)m * K + (uint64_t)k_base) * TILE_ELEM_BYTES;
-    v = *reinterpret_cast<const uint32_t *>(src + src_byte_off);
+  if (m < M_real && k_base < K_real) {
+    const uint64_t src_elem_off = (uint64_t)m * K_real + k_base;
+    if (k_base + 1u < K_real) {
+      v = *reinterpret_cast<const uint32_t *>(src + src_elem_off * TILE_ELEM_BYTES);
+    } else {
+      v = *reinterpret_cast<const uint16_t *>(src + src_elem_off * TILE_ELEM_BYTES);
+    }
   }
   *reinterpret_cast<uint32_t *>(dst + out_byte_off) = v;
 }

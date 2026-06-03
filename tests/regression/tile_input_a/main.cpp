@@ -50,6 +50,10 @@ static uint32_t log2_u32(uint32_t v) {
   return r;
 }
 
+static uint32_t align_up(uint32_t a, uint32_t b) {
+  return ((a + b - 1) / b) * b;
+}
+
 static void parse_args(int argc, char** argv) {
   int c;
   while ((c = getopt(argc, argv, "m:k:h")) != -1) {
@@ -65,22 +69,23 @@ static void parse_args(int argc, char** argv) {
 // CPU reference (pad + reorder).
 static void cpu_tile_input_a(const std::vector<uint16_t>& h_src,
                              std::vector<uint8_t>& h_dst,
-                             uint32_t M_real, uint32_t M_pad, uint32_t K) {
-  size_t total_bytes = size_t(M_pad) * K * TILE_ELEM_BYTES;
+                             uint32_t M_real, uint32_t M_pad,
+                             uint32_t K_real, uint32_t K_pad) {
+  size_t total_bytes = size_t(M_pad) * K_pad * TILE_ELEM_BYTES;
   h_dst.assign(total_bytes, 0);
   for (uint32_t m = 0; m < M_real; m++) {
     uint32_t mt = m / TILE_DMA_MT;
     uint32_t m0 = m % TILE_DMA_MT;
     uint32_t cm = ((M_pad - mt * TILE_DMA_MT) < TILE_DMA_MT)
                     ? (M_pad - mt * TILE_DMA_MT) : TILE_DMA_MT;
-    for (uint32_t k = 0; k < K; k++) {
+    for (uint32_t k = 0; k < K_real; k++) {
       uint32_t km = k / TILE_DMA_MXU_KT;
       uint32_t k0 = k % TILE_DMA_MXU_KT;
-      uint64_t elem_off = uint64_t(mt) * TILE_DMA_MT * K
+      uint64_t elem_off = uint64_t(mt) * TILE_DMA_MT * K_pad
                         + uint64_t(km) * cm * TILE_DMA_MXU_KT
                         + uint64_t(m0) * TILE_DMA_MXU_KT
                         + k0;
-      uint16_t v = h_src[uint64_t(m) * K + k];
+      uint16_t v = h_src[uint64_t(m) * K_real + k];
       uint64_t off = elem_off * TILE_ELEM_BYTES;
       h_dst[off + 0] = uint8_t(v & 0xFF);
       h_dst[off + 1] = uint8_t((v >> 8) & 0xFF);
@@ -103,19 +108,16 @@ static bool validate_tile_params() {
 int main(int argc, char** argv) {
   parse_args(argc, argv);
   uint32_t M_pad = (M + 7u) & ~7u;
-  printf("tile_input_a  M=%u (pad=%u) K=%u\n", M, M_pad, K);
+  uint32_t K_pad = align_up(K, TILE_DMA_MXU_KT);
+  printf("tile_input_a  M=%u (pad=%u) K=%u (pad=%u)\n", M, M_pad, K, K_pad);
 
-  if (K % TILE_DMA_MXU_KT != 0) {
-    printf("ERROR: K must be multiple of %u\n", TILE_DMA_MXU_KT);
-    return 1;
-  }
   if (!validate_tile_params()) return 1;
 
   std::vector<uint16_t> h_src(size_t(M) * K);
   for (size_t i = 0; i < h_src.size(); i++) h_src[i] = uint16_t((i + 1) & 0xFFFF);
 
   std::vector<uint8_t> h_ref;
-  cpu_tile_input_a(h_src, h_ref, M, M_pad, K);
+  cpu_tile_input_a(h_src, h_ref, M, M_pad, K, K_pad);
 
   RT_CHECK(vx_dev_open(&device));
   RT_CHECK(vx_upload_kernel_file(device, kernel_file, &kernel_bin));
@@ -129,7 +131,7 @@ int main(int argc, char** argv) {
   vx_dev_caps(device, VX_CAPS_NUM_THREADS, &num_threads);
   uint32_t tpb = uint32_t(num_threads);
 
-  uint32_t k_tiles = (K + TILE_DMA_KT - 1) / TILE_DMA_KT;
+  uint32_t k_tiles = (K_pad + TILE_DMA_KT - 1) / TILE_DMA_KT;
   uint32_t k_mic   = TILE_DMA_KT / TILE_DMA_MXU_KT;
   // 4B chunk per thread (2 fp16) — mirrors silu_layout_fused store pattern.
   uint32_t CHUNKS_PER_ROW = TILE_DMA_MXU_KT / 2;   // 16
@@ -147,7 +149,8 @@ int main(int argc, char** argv) {
   RT_CHECK(vx_mem_address(dst_buf, &karg.dst_addr));
   karg.M_real = M;
   karg.M_pad  = M_pad;
-  karg.K      = K;
+  karg.K_real = K;
+  karg.K_pad  = K_pad;
   karg.log2_mt     = log2_u32(TILE_DMA_MT);
   karg.log2_kt     = log2_u32(TILE_DMA_KT);
   karg.log2_mxu_kt = log2_u32(TILE_DMA_MXU_KT);

@@ -15,12 +15,13 @@ typedef struct {
   uint32_t grid_dim[3];
   uint32_t block_dim[3];
 
-  uint64_t src_addr;   // kernel output [M_pad, N] nt-major (tile-laid)
-  uint64_t dst_addr;   // [M, N] fp16 row-major  (real rows only)
+  uint64_t src_addr;   // kernel output [M_pad, N_pad] nt-major (tile-laid)
+  uint64_t dst_addr;   // [M, N_real] fp16 row-major (real rows/cols only)
 
   uint32_t M;          // caller's M (real rows to keep)
   uint32_t M_pad;      // padded M used by the GEMM kernel
-  uint32_t N;
+  uint32_t N_real;     // caller's N (real columns to keep)
+  uint32_t N_pad;      // padded N used by the GEMM tile layout
 
   uint32_t log2_mt;
   uint32_t log2_mxu_nt;

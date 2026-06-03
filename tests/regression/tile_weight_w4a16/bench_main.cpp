@@ -53,6 +53,10 @@ static uint32_t log2_u32(uint32_t v) {
   return r;
 }
 
+static uint32_t align_up(uint32_t a, uint32_t b) {
+  return ((a + b - 1) / b) * b;
+}
+
 static void parse_args(int argc, char** argv) {
   for (int i = 1; i < argc; ++i) {
     if (strcmp(argv[i], "--help") == 0) {
@@ -82,9 +86,8 @@ int main(int argc, char** argv) {
   auto bench = vx_bench::parse(argc, argv);
   parse_args(argc, argv);
 
-  if (K % TILE_DMA_MXU_KT != 0 || N % TILE_DMA_MXU_NT != 0 || (N & 1)) {
-    printf("ERROR: K must be multiple of %u, N must be multiple of %u (and even).\n",
-           TILE_DMA_MXU_KT, TILE_DMA_MXU_NT);
+  if (K == 0 || N == 0 || (N & 1)) {
+    printf("ERROR: K,N must be non-zero and N must be even.\n");
     return 1;
   }
   if (WTRANS > 1) {
@@ -100,17 +103,22 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  const size_t total_bytes = size_t(K) * (N / 2);
-  std::vector<uint8_t> h_src(total_bytes);
+  const uint32_t out_K = SOURCE_TRANSPOSED ? align_up(N, TILE_DMA_MXU_KT)
+                                           : align_up(K, TILE_DMA_MXU_KT);
+  const uint32_t out_N = SOURCE_TRANSPOSED ? align_up(K, TILE_DMA_MXU_NT)
+                                           : align_up(N, TILE_DMA_MXU_NT);
+  const size_t src_bytes = size_t(K) * (N / 2);
+  const size_t dst_bytes = size_t(out_K) * (out_N / 2);
+  std::vector<uint8_t> h_src(src_bytes);
   for (size_t i = 0; i < h_src.size(); ++i) {
     h_src[i] = uint8_t(i & 0xff);
   }
 
   RT_CHECK(vx_dev_open(&device));
   RT_CHECK(vx_upload_kernel_file(device, "kernel.vxbin", &kernel_bin));
-  RT_CHECK(vx_mem_alloc(device, total_bytes, VX_MEM_READ, &src_buf));
-  RT_CHECK(vx_mem_alloc(device, total_bytes, VX_MEM_WRITE, &dst_buf));
-  RT_CHECK(vx_copy_to_dev(src_buf, h_src.data(), 0, total_bytes));
+  RT_CHECK(vx_mem_alloc(device, src_bytes, VX_MEM_READ, &src_buf));
+  RT_CHECK(vx_mem_alloc(device, dst_bytes, VX_MEM_WRITE, &dst_buf));
+  RT_CHECK(vx_copy_to_dev(src_buf, h_src.data(), 0, src_bytes));
 
   uint64_t num_threads = 0;
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_THREADS, &num_threads));
@@ -120,8 +128,8 @@ int main(int argc, char** argv) {
     return 1;
   }
   const uint32_t threads_per_block = uint32_t(num_threads);
-  const uint32_t logical_K = SOURCE_TRANSPOSED ? N : K;
-  const uint32_t logical_N = SOURCE_TRANSPOSED ? K : N;
+  const uint32_t logical_K = out_K;
+  const uint32_t logical_N = out_N;
   const uint32_t k_tiles = (logical_K + TILE_DMA_KT - 1) / TILE_DMA_KT;
   const uint32_t max_cur_k = (logical_K < TILE_DMA_KT) ? logical_K : TILE_DMA_KT;
   const uint32_t cur_kb = max_cur_k / TILE_DMA_MXU_KT;

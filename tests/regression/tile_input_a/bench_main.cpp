@@ -49,6 +49,10 @@ static uint32_t log2_u32(uint32_t v) {
   return r;
 }
 
+static uint32_t align_up(uint32_t a, uint32_t b) {
+  return ((a + b - 1) / b) * b;
+}
+
 static void parse_args(int argc, char** argv) {
   for (int i = 1; i < argc; ++i) {
     if (strcmp(argv[i], "--help") == 0) {
@@ -85,11 +89,8 @@ int main(int argc, char** argv) {
   parse_args(argc, argv);
 
   const uint32_t M_pad = (M + 7u) & ~7u;
-  if (K % TILE_DMA_MXU_KT != 0) {
-    printf("ERROR: K must be multiple of %u\n", TILE_DMA_MXU_KT);
-    return 1;
-  }
   if (!validate_tile_params()) return 1;
+  const uint32_t K_pad = align_up(K, TILE_DMA_MXU_KT);
 
   std::vector<uint16_t> h_src(size_t(M) * K);
   for (size_t i = 0; i < h_src.size(); ++i) {
@@ -97,7 +98,7 @@ int main(int argc, char** argv) {
   }
 
   const size_t src_bytes = h_src.size() * TILE_ELEM_BYTES;
-  const size_t dst_bytes = size_t(M_pad) * K * TILE_ELEM_BYTES;
+  const size_t dst_bytes = size_t(M_pad) * K_pad * TILE_ELEM_BYTES;
 
   RT_CHECK(vx_dev_open(&device));
   RT_CHECK(vx_upload_kernel_file(device, "kernel.vxbin", &kernel_bin));
@@ -113,7 +114,7 @@ int main(int argc, char** argv) {
     return 1;
   }
   const uint32_t tpb = uint32_t(num_threads);
-  const uint32_t k_tiles = (K + TILE_DMA_KT - 1) / TILE_DMA_KT;
+  const uint32_t k_tiles = (K_pad + TILE_DMA_KT - 1) / TILE_DMA_KT;
   const uint32_t k_mic = TILE_DMA_KT / TILE_DMA_MXU_KT;
   const uint32_t chunks_per_row = TILE_DMA_MXU_KT / 2;
   const uint32_t chunks_per_kb = M_pad * chunks_per_row;
@@ -130,7 +131,8 @@ int main(int argc, char** argv) {
   RT_CHECK(vx_mem_address(dst_buf, &karg.dst_addr));
   karg.M_real = M;
   karg.M_pad = M_pad;
-  karg.K = K;
+  karg.K_real = K;
+  karg.K_pad = K_pad;
   karg.log2_mt = log2_u32(TILE_DMA_MT);
   karg.log2_kt = log2_u32(TILE_DMA_KT);
   karg.log2_mxu_kt = log2_u32(TILE_DMA_MXU_KT);

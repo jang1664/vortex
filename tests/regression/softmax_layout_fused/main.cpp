@@ -45,6 +45,10 @@ static uint32_t log2_u32(uint32_t v) {
   return r;
 }
 
+static uint32_t align_up(uint32_t a, uint32_t b) {
+  return ((a + b - 1) / b) * b;
+}
+
 static void init_scores(std::vector<data_t>& values) {
   for (size_t i = 0; i < values.size(); ++i) {
     int x = int((i * 22695477u + 1u) & 0xffu) - 128;
@@ -63,10 +67,11 @@ static void pack_scores(const std::vector<data_t>& row,
                         uint32_t heads,
                         uint32_t seq_q,
                         uint32_t seq_k,
+                        uint32_t seq_k_pad,
                         uint32_t M_pad) {
   const uint32_t log2_mt = log2_u32(TILE_DMA_MT);
   const uint32_t log2_mxu_nt = log2_u32(TILE_DMA_MXU_NT);
-  const uint64_t matrix_elems = (uint64_t)M_pad * seq_k;
+  const uint64_t matrix_elems = (uint64_t)M_pad * seq_k_pad;
   std::fill(tiled.begin(), tiled.end(), 0.0f);
   for (uint32_t b = 0; b < batch; ++b) {
     for (uint32_t h = 0; h < heads; ++h) {
@@ -75,7 +80,7 @@ static void pack_scores(const std::vector<data_t>& row,
       for (uint32_t q = 0; q < seq_q; ++q) {
         for (uint32_t k = 0; k < seq_k; ++k) {
           const uint64_t off = base + gemm_c_tiled_elem_offset(
-              q, k, M_pad, seq_k, log2_mt, log2_mxu_nt);
+              q, k, M_pad, seq_k_pad, log2_mt, log2_mxu_nt);
           tiled[off] = row[row_index(b, h, q, k, heads, seq_q, seq_k)];
         }
       }
@@ -89,12 +94,13 @@ static void softmax_reference(const std::vector<data_t>& input,
                               uint32_t heads,
                               uint32_t seq_q,
                               uint32_t seq_k,
+                              uint32_t seq_k_pad,
                               uint32_t M_pad,
                               bool use_mask,
                               float scale) {
   const uint32_t log2_mt = log2_u32(TILE_DMA_MT);
   const uint32_t log2_mxu_kt = log2_u32(TILE_DMA_MXU_KT);
-  const uint64_t matrix_elems = (uint64_t)M_pad * seq_k;
+  const uint64_t matrix_elems = (uint64_t)M_pad * seq_k_pad;
   std::fill(ref_tiled.begin(), ref_tiled.end(), 0.0f);
   for (uint32_t b = 0; b < batch; ++b) {
     for (uint32_t h = 0; h < heads; ++h) {
@@ -117,7 +123,7 @@ static void softmax_reference(const std::vector<data_t>& input,
           float v = fp16_to_float(input[row_index(b, h, q, k, heads, seq_q, seq_k)]) * scale;
           if (use_mask && k > q) v = -INFINITY;
           const uint64_t off = base + gemm_a_tiled_elem_offset(
-              q, k, M_pad, seq_k, log2_mt, log2_mxu_kt);
+              q, k, M_pad, seq_k_pad, log2_mt, log2_mxu_kt);
           ref_tiled[off] = float_to_fp16(std::exp(v - max_v) / sum);
         }
       }
@@ -146,10 +152,6 @@ int main(int argc, char *argv[]) {
     }
   }
 
-  if (seq_k % TILE_DMA_MXU_KT != 0 || seq_k % TILE_DMA_MXU_NT != 0) {
-    printf("ERROR: seqk must be a multiple of %u and %u\n", TILE_DMA_MXU_KT, TILE_DMA_MXU_NT);
-    return 1;
-  }
   if (!is_pow2(TILE_DMA_MT) || !is_pow2(TILE_DMA_KT) ||
       !is_pow2(TILE_DMA_MXU_KT) || !is_pow2(TILE_DMA_MXU_NT)) {
     printf("ERROR: tile constants must be powers of two\n");
@@ -157,19 +159,20 @@ int main(int argc, char *argv[]) {
   }
 
   const uint32_t M_pad = (seq_q + TILE_M_PAD_ALIGN - 1u) & ~(TILE_M_PAD_ALIGN - 1u);
-  printf("softmax_layout_fused batch=%u heads=%u seqq=%u seqk=%u M_pad=%u mask=%u scale=%f\n",
-         batch, heads, seq_q, seq_k, M_pad, use_mask, scale);
+  const uint32_t seq_k_pad = align_up(seq_k, std::max(TILE_DMA_MXU_KT, TILE_DMA_MXU_NT));
+  printf("softmax_layout_fused batch=%u heads=%u seqq=%u seqk=%u seqk_pad=%u M_pad=%u mask=%u scale=%f\n",
+         batch, heads, seq_q, seq_k, seq_k_pad, M_pad, use_mask, scale);
 
   const size_t row_elems = (size_t)batch * heads * seq_q * seq_k;
-  const size_t tiled_elems = (size_t)batch * heads * M_pad * seq_k;
+  const size_t tiled_elems = (size_t)batch * heads * M_pad * seq_k_pad;
   const size_t tiled_bytes = tiled_elems * sizeof(data_t);
   std::vector<data_t> h_input_row(row_elems);
   std::vector<data_t> h_input_tiled(tiled_elems);
   std::vector<data_t> h_ref(tiled_elems);
   std::vector<data_t> h_out(tiled_elems, 0);
   init_scores(h_input_row);
-  pack_scores(h_input_row, h_input_tiled, batch, heads, seq_q, seq_k, M_pad);
-  softmax_reference(h_input_row, h_ref, batch, heads, seq_q, seq_k, M_pad, use_mask != 0, scale);
+  pack_scores(h_input_row, h_input_tiled, batch, heads, seq_q, seq_k, seq_k_pad, M_pad);
+  softmax_reference(h_input_row, h_ref, batch, heads, seq_q, seq_k, seq_k_pad, M_pad, use_mask != 0, scale);
 
   RT_CHECK(vx_dev_open(&device));
   RT_CHECK(vx_upload_kernel_file(device, "kernel.vxbin", &krnl_buffer));
@@ -197,6 +200,7 @@ int main(int argc, char *argv[]) {
   arg.num_heads = heads;
   arg.seq_len_q = seq_q;
   arg.seq_len_k = seq_k;
+  arg.seq_len_k_pad = seq_k_pad;
   arg.M_pad = M_pad;
   arg.use_mask = use_mask;
   arg.scale = scale;
@@ -214,11 +218,11 @@ int main(int argc, char *argv[]) {
   float max_diff = 0.0f;
   for (uint32_t b = 0; b < batch; ++b) {
     for (uint32_t h = 0; h < heads; ++h) {
-      const uint64_t base = batched_matrix_base(b * heads + h, (uint64_t)M_pad * seq_k);
+      const uint64_t base = batched_matrix_base(b * heads + h, (uint64_t)M_pad * seq_k_pad);
       for (uint32_t q = 0; q < seq_q; ++q) {
         for (uint32_t k = 0; k < seq_k; ++k) {
           const uint64_t off = base + gemm_a_tiled_elem_offset(
-              q, k, M_pad, seq_k, arg.log2_mt, arg.log2_mxu_kt);
+              q, k, M_pad, seq_k_pad, arg.log2_mt, arg.log2_mxu_kt);
           const float got = fp16_to_float(h_out[off]);
           const float expected = fp16_to_float(h_ref[off]);
           const float diff = std::abs(got - expected);

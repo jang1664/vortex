@@ -41,6 +41,10 @@ static uint32_t log2_u32(uint32_t v) {
   return r;
 }
 
+static uint32_t align_up(uint32_t a, uint32_t b) {
+  return ((a + b - 1) / b) * b;
+}
+
 static void init_scores(std::vector<data_t>& values) {
   for (size_t i = 0; i < values.size(); ++i) {
     int x = int((i * 22695477u + 1u) & 0xffu) - 128;
@@ -59,17 +63,18 @@ static void pack_scores(const std::vector<data_t>& row,
                         uint32_t heads,
                         uint32_t seq_q,
                         uint32_t seq_k,
+                        uint32_t seq_k_pad,
                         uint32_t M_pad) {
   const uint32_t log2_mt = log2_u32(TILE_DMA_MT);
   const uint32_t log2_mxu_nt = log2_u32(TILE_DMA_MXU_NT);
-  const uint64_t matrix_elems = (uint64_t)M_pad * seq_k;
+  const uint64_t matrix_elems = (uint64_t)M_pad * seq_k_pad;
   std::fill(tiled.begin(), tiled.end(), 0.0f);
   for (uint32_t b = 0; b < batch; ++b) {
     for (uint32_t h = 0; h < heads; ++h) {
       const uint64_t base = batched_matrix_base(b * heads + h, matrix_elems);
       for (uint32_t q = 0; q < seq_q; ++q) {
         for (uint32_t k = 0; k < seq_k; ++k) {
-          tiled[base + gemm_c_tiled_elem_offset(q, k, M_pad, seq_k, log2_mt, log2_mxu_nt)] =
+          tiled[base + gemm_c_tiled_elem_offset(q, k, M_pad, seq_k_pad, log2_mt, log2_mxu_nt)] =
               row[row_index(b, h, q, k, heads, seq_q, seq_k)];
         }
       }
@@ -101,13 +106,14 @@ int main(int argc, char *argv[]) {
   }
 
   const uint32_t M_pad = (seq_q + TILE_M_PAD_ALIGN - 1u) & ~(TILE_M_PAD_ALIGN - 1u);
+  const uint32_t seq_k_pad = align_up(seq_k, std::max(TILE_DMA_MXU_KT, TILE_DMA_MXU_NT));
   const size_t row_elems = (size_t)batch * heads * seq_q * seq_k;
-  const size_t tiled_elems = (size_t)batch * heads * M_pad * seq_k;
+  const size_t tiled_elems = (size_t)batch * heads * M_pad * seq_k_pad;
   const size_t tiled_bytes = tiled_elems * sizeof(data_t);
   std::vector<data_t> h_input_row(row_elems);
   std::vector<data_t> h_input_tiled(tiled_elems);
   init_scores(h_input_row);
-  pack_scores(h_input_row, h_input_tiled, batch, heads, seq_q, seq_k, M_pad);
+  pack_scores(h_input_row, h_input_tiled, batch, heads, seq_q, seq_k, seq_k_pad, M_pad);
 
   RT_CHECK(vx_dev_open(&device));
   RT_CHECK(vx_upload_kernel_file(device, "kernel.vxbin", &krnl_buffer));
@@ -135,6 +141,7 @@ int main(int argc, char *argv[]) {
   arg.num_heads = heads;
   arg.seq_len_q = seq_q;
   arg.seq_len_k = seq_k;
+  arg.seq_len_k_pad = seq_k_pad;
   arg.M_pad = M_pad;
   arg.use_mask = use_mask;
   arg.scale = scale;
