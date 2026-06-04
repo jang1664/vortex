@@ -403,11 +403,51 @@ directory name; otherwise the CLI uses a UTC timestamp.
 
 ## Visualize Existing Results
 
+Use the legacy per-run visualizer for one `results.csv`:
+
 ```bash
 python -m tools.latency_bench visualize \
   --results results/latency/llama2_7b_prefill/runs/<run_id>/results.csv \
   --out results/latency/llama2_7b_prefill/runs/<run_id>/figures
 ```
+
+Use suite/raw DB visualization to compose model-level latency from one or more
+suites and one or more append-only raw DBs, then render grouped bar charts:
+
+```bash
+python -m tools.latency_bench visualize \
+  --suite analysis_workspace/latency_on_hw/outputs_example/suite_example.yaml \
+  --raw-db analysis_workspace/latency_on_hw/outputs_example/raw_db.csv \
+  --out analysis_workspace/latency_on_hw/outputs_example/figures \
+  --x seq_len \
+  --hue variant \
+  --row stage \
+  --col batch \
+  --stack-by name
+```
+
+The suite/raw DB mode expands the input suites, matches passing raw DB rows by
+`app` and normalized `args`, applies `calls_per_forward`, and writes
+`composed_cases.csv`, `plot_data.csv`, `plot_stack_data.csv`,
+`bar_total_<metric>.png`, and `bar_total_<metric>.pdf`. The default plot layout
+is `x=seq_len`, `hue=variant`, `row=stage`, and `col=batch`. Any of those axes
+can be changed with `--x`, `--hue`, `--row`, and `--col`; use `none` for
+optional axes except `--x`.
+
+`--stacked` is enabled by default and stacks the suite cases that make up each
+bar, so a model/workload bar can show the latency contribution of kernels or
+workload components. `--stack-by` selects the segment label from `name`,
+`case_id`, `kind`, `backend`, `op`, or `app`; the default is `name`. Use
+`--no-stacked` to draw only one total bar per axis/hue group. Use `--relative`
+to normalize plotted bar totals so the smallest positive total is `1.0`; stacked
+segments use the same baseline, so each stack still sums to the relative total.
+Subplot y-axes are independent by default; add `--share-y` when panels should
+use one shared y-axis scale.
+
+Repeated raw DB measurements use `--select median` by default. Missing suite
+cases use `--missing nan` by default so partially completed hardware sweeps can
+still be inspected; missing cases are counted in `plot_data.csv` and annotated
+on the affected bars. Use `--missing error` for strict final reporting.
 
 ## Compose Latency From Raw DB
 

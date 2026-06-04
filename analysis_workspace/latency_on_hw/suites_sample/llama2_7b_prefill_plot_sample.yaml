@@ -1,0 +1,27 @@
+name: llama2_7b_prefill_plot_sample
+defaults:
+  warmup: 1
+  iterations: 1
+  app: synthetic_latency_bench
+
+case_matrices:
+  - id: llama2_7b_prefill_plot_sample
+    case_id: llama2_7b_prefill_{variant}_batch{batch}_seq{seq}_{component}
+    app: synthetic_latency_bench
+    kind: workload
+    op: "{component}"
+    backend: synthetic
+    variant: "{variant}"
+    stage: prefill
+    name: "{component}"
+    args: "--sample-op {component} --stage prefill --variant {variant} --batch {batch} --seq {seq}"
+    calls_per_forward: 1
+    matrix:
+      variant: {values: [C1, C2, C3, C4_fused]}
+      batch: {values: [1, 4]}
+      seq: {values: [8, 32]}
+      component: {values: [attn, ffn, norm]}
+    shape:
+      batch: "{batch}"
+      seq: "{seq}"
+      component: "{component}"

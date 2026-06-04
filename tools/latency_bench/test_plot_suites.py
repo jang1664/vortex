@@ -1,0 +1,221 @@
+from __future__ import annotations
+
+import csv
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+import pandas as pd
+
+from tools.latency_bench.cli import main
+from tools.latency_bench import plot as plot_module
+from tools.latency_bench.plot import SuiteBarPlotOptions, _ordered_values, prepare_suite_bar_data, visualize_suites
+from tools.latency_bench.suite import BenchCase, BenchDefaults, BenchSuite
+
+
+class SuiteBarPlotTest(unittest.TestCase):
+    def _suite(self) -> BenchSuite:
+        return BenchSuite(
+            name="plot_suite",
+            defaults=BenchDefaults(warmup=1, iterations=1),
+            cases=[
+                BenchCase(
+                    case_id="llama2_batch1_prefill_seq_len8_v1_attn",
+                    app="sgemm_tcu",
+                    args="-m 8 -n 8 -k 128",
+                    kind="gemm",
+                    stage="prefill",
+                    name="attn_qkT",
+                    variant="v1",
+                    calls_per_forward=2,
+                    warmup=1,
+                    iterations=1,
+                    shape={"batch": 1, "seq": 8},
+                ),
+                BenchCase(
+                    case_id="llama2_batch1_prefill_seq_len8_v1_ffn",
+                    app="fpint_gemm_ffn_hw",
+                    args="-m 8 -n 4096 -k 4096",
+                    kind="gemm",
+                    stage="prefill",
+                    name="gate_proj",
+                    variant="v1",
+                    calls_per_forward=3,
+                    warmup=1,
+                    iterations=1,
+                    shape={"batch": 1, "seq": 8},
+                ),
+            ],
+        )
+
+    def _write_raw_db(self, path: Path) -> None:
+        rows = [
+            {
+                "run_id": "run_a",
+                "timestamp_utc": "2026-01-01T00:00:00+00:00",
+                "app": "sgemm_tcu",
+                "args": "-m 8 -n 8 -k 128",
+                "status": "pass",
+                "p50_us": "10",
+                "avg_us": "11",
+                "p95_us": "12",
+                "min_us": "9",
+                "max_us": "13",
+            },
+            {
+                "run_id": "run_a",
+                "timestamp_utc": "2026-01-01T00:00:00+00:00",
+                "app": "fpint_gemm_ffn_hw",
+                "args": "-m 8 -n 4096 -k 4096",
+                "status": "pass",
+                "p50_us": "20",
+                "avg_us": "21",
+                "p95_us": "22",
+                "min_us": "19",
+                "max_us": "23",
+            },
+        ]
+        with path.open("w", newline="") as fp:
+            writer = csv.DictWriter(fp, fieldnames=list(rows[0].keys()))
+            writer.writeheader()
+            writer.writerows(rows)
+
+    def test_prepare_extracts_axes_and_sums_weighted_latency(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            raw_db = tmp_path / "raw_db.csv"
+            self._write_raw_db(raw_db)
+
+            composed, plot_data, stack_data = prepare_suite_bar_data(
+                [self._suite()],
+                SuiteBarPlotOptions(raw_dbs=(raw_db,), out_dir=tmp_path / "figures"),
+            )
+
+            self.assertEqual([1, 1], list(composed["batch"]))
+            self.assertEqual([8, 8], list(composed["seq_len"]))
+            self.assertEqual(1, len(plot_data))
+            self.assertEqual("prefill", plot_data.loc[0, "stage"])
+            self.assertEqual("v1", plot_data.loc[0, "variant"])
+            self.assertEqual(80.0, float(plot_data.loc[0, "total_latency_us"]))
+            self.assertEqual(0, int(plot_data.loc[0, "missing_case_count"]))
+            self.assertEqual(["attn_qkT", "gate_proj"], sorted(stack_data["stack_key"].tolist()))
+            by_stack = {
+                row["stack_key"]: float(row["total_latency_us"])
+                for _, row in stack_data.iterrows()
+            }
+            self.assertEqual(20.0, by_stack["attn_qkT"])
+            self.assertEqual(60.0, by_stack["gate_proj"])
+
+    def test_duplicate_suite_inputs_are_counted_once(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            raw_db = tmp_path / "raw_db.csv"
+            self._write_raw_db(raw_db)
+
+            _, plot_data, stack_data = prepare_suite_bar_data(
+                [self._suite(), self._suite()],
+                SuiteBarPlotOptions(raw_dbs=(raw_db,), out_dir=tmp_path / "figures"),
+            )
+
+            self.assertEqual(1, len(plot_data))
+            self.assertEqual(80.0, float(plot_data.loc[0, "total_latency_us"]))
+            self.assertEqual(2, int(plot_data.loc[0, "case_count"]))
+            self.assertEqual(2, len(stack_data))
+
+    def test_visualize_suites_writes_csvs_and_figures(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            raw_db = tmp_path / "raw_db.csv"
+            out_dir = tmp_path / "figures"
+            self._write_raw_db(raw_db)
+
+            with patch("tools.latency_bench.plot.plt.subplots", wraps=plot_module.plt.subplots) as subplots:
+                visualize_suites(
+                    [self._suite()],
+                    SuiteBarPlotOptions(raw_dbs=(raw_db,), out_dir=out_dir),
+                )
+
+            self.assertTrue((out_dir / "composed_cases.csv").exists())
+            self.assertTrue((out_dir / "plot_data.csv").exists())
+            self.assertTrue((out_dir / "plot_stack_data.csv").exists())
+            self.assertTrue((out_dir / "bar_total_p50_us.png").exists())
+            self.assertTrue((out_dir / "bar_total_p50_us.pdf").exists())
+            self.assertFalse(subplots.call_args.kwargs["sharey"])
+
+    def test_visualize_suites_can_share_y_axis(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            raw_db = tmp_path / "raw_db.csv"
+            self._write_raw_db(raw_db)
+
+            with patch("tools.latency_bench.plot.plt.subplots", wraps=plot_module.plt.subplots) as subplots:
+                visualize_suites(
+                    [self._suite()],
+                    SuiteBarPlotOptions(raw_dbs=(raw_db,), out_dir=tmp_path / "figures", share_y=True),
+                )
+
+            self.assertTrue(subplots.call_args.kwargs["sharey"])
+
+    def test_cli_visualize_accepts_suite_raw_db_inputs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            raw_db = tmp_path / "raw_db.csv"
+            suite = tmp_path / "suite.yaml"
+            out_dir = tmp_path / "figures"
+            self._write_raw_db(raw_db)
+            suite.write_text(
+                """
+name: plot_cli_suite
+defaults:
+  warmup: 1
+  iterations: 1
+cases:
+  - id: llama2_batch1_prefill_seq_len8_v1_attn
+    app: sgemm_tcu
+    kind: gemm
+    stage: prefill
+    name: attn_qkT
+    variant: v1
+    args: "-m 8 -n 8 -k 128"
+    calls_per_forward: 2
+    shape: {batch: 1, seq: 8}
+  - id: llama2_batch1_prefill_seq_len8_v1_ffn
+    app: fpint_gemm_ffn_hw
+    kind: gemm
+    stage: prefill
+    name: gate_proj
+    variant: v1
+    args: "-m 8 -n 4096 -k 4096"
+    calls_per_forward: 3
+    shape: {batch: 1, seq: 8}
+""".lstrip()
+            )
+
+            rc = main([
+                "visualize",
+                "--suite", str(suite),
+                "--raw-db", str(raw_db),
+                "--out", str(out_dir),
+                "--x", "seq_len",
+                "--hue", "variant",
+                "--row", "stage",
+                "--col", "batch",
+                "--no-stacked",
+                "--no-value-labels",
+                "--relative",
+                "--share-y",
+            ])
+
+            self.assertEqual(0, rc)
+            plot_data = pd.read_csv(out_dir / "plot_data.csv")
+            self.assertEqual(80.0, float(plot_data.loc[0, "total_latency_us"]))
+
+    def test_stage_order_prefers_prefill_before_generation(self) -> None:
+        ordered = _ordered_values(pd.Series(["generation", "prefill"]))
+
+        self.assertEqual(["prefill", "generation"], ordered)
+
+
+if __name__ == "__main__":
+    unittest.main()

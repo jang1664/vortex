@@ -3,11 +3,22 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from .compose import ComposeOptions, compose_to_csv
+from .compose import ComposeOptions, MISSING_POLICIES, METRIC_COLUMNS, SELECT_POLICIES, compose_to_csv
 from .compare import compare_candidates, parse_candidate_spec
 from .generate_suites import GenerateSuitesOptions, generate_suites
 from .merge_suites import MergeSuitesOptions, merge_suites
-from .plot import visualize
+from .plot import (
+    BAR_AXIS_CHOICES,
+    DEFAULT_BAR_COL,
+    DEFAULT_BAR_HUE,
+    DEFAULT_BAR_ROW,
+    DEFAULT_BAR_X,
+    DEFAULT_STACK_BY,
+    STACK_BY_COLUMNS,
+    SuiteBarPlotOptions,
+    visualize,
+    visualize_suites,
+)
 from .runner import DEFAULT_SRUN_ARGS, RunOptions, default_run_id, resolve_fpga_bin_config, run_suite
 from .suite import apply_case_filters, find_repo_root, load_suite
 
@@ -72,9 +83,77 @@ def build_parser() -> argparse.ArgumentParser:
         help="Filter expanded suite cases, e.g. 'app=fpint_gemm_ffn_hw & stage=prefill'. Repeat to AND filters.",
     )
 
-    vis = sub.add_parser("visualize", help="Generate PNG/PDF figures from results.csv.")
-    vis.add_argument("--results", required=True, help="Path to results.csv.")
+    vis = sub.add_parser("visualize", help="Generate PNG/PDF figures from results.csv or suite/raw_db inputs.")
+    vis.add_argument("--results", default=None, help="Path to results.csv for legacy per-run figures.")
+    vis.add_argument("--suite", action="append", default=[], help="Suite YAML path; repeat for multi-suite bar plots.")
+    vis.add_argument("--raw-db", action="append", default=[], help="raw_db.csv path; repeat to search multiple DBs.")
     vis.add_argument("--out", required=True, help="Figure output directory.")
+    vis.add_argument(
+        "--metric",
+        choices=METRIC_COLUMNS,
+        default="p50_us",
+        help="Latency metric for suite/raw_db bar plots.",
+    )
+    vis.add_argument(
+        "--select",
+        choices=SELECT_POLICIES,
+        default="median",
+        help="Policy when multiple raw DB rows match the same case.",
+    )
+    vis.add_argument(
+        "--missing",
+        choices=MISSING_POLICIES,
+        default="nan",
+        help="Policy when a suite case has no matching raw DB row.",
+    )
+    vis.add_argument("--fpga-bin-label", default=None, help="Only use raw DB rows with this fpga_bin_label.")
+    vis.add_argument("--xclbin-sha256", default=None, help="Only use raw DB rows with this xclbin_sha256.")
+    vis.add_argument("--x", choices=BAR_AXIS_CHOICES, default=DEFAULT_BAR_X, help="Bar chart x axis.")
+    vis.add_argument("--hue", choices=BAR_AXIS_CHOICES, default=DEFAULT_BAR_HUE, help="Grouped bar hue axis.")
+    vis.add_argument("--row", choices=BAR_AXIS_CHOICES, default=DEFAULT_BAR_ROW, help="Subplot row axis.")
+    vis.add_argument("--col", choices=BAR_AXIS_CHOICES, default=DEFAULT_BAR_COL, help="Subplot column axis.")
+    vis.add_argument(
+        "--stacked",
+        dest="stacked",
+        action="store_true",
+        default=True,
+        help="Stack workload cases within each bar for suite/raw_db bar plots (default).",
+    )
+    vis.add_argument(
+        "--no-stacked",
+        dest="stacked",
+        action="store_false",
+        help="Draw one total bar per axis/hue group instead of stacking workload cases.",
+    )
+    vis.add_argument(
+        "--stack-by",
+        choices=STACK_BY_COLUMNS,
+        default=DEFAULT_STACK_BY,
+        help="Case field used as the stacked segment label when --stacked is enabled.",
+    )
+    vis.add_argument(
+        "--value-labels",
+        dest="value_labels",
+        action="store_true",
+        default=True,
+        help="Annotate bars with their plotted values (default).",
+    )
+    vis.add_argument(
+        "--no-value-labels",
+        dest="value_labels",
+        action="store_false",
+        help="Do not annotate bars with plotted values.",
+    )
+    vis.add_argument(
+        "--relative",
+        action="store_true",
+        help="Normalize plotted values so the smallest positive bar is 1.0.",
+    )
+    vis.add_argument(
+        "--share-y",
+        action="store_true",
+        help="Share the y-axis scale across subplot panels; disabled by default.",
+    )
 
     cmp = sub.add_parser("compare", help="Merge multiple run outputs and generate candidate comparison plots.")
     cmp.add_argument(
@@ -240,7 +319,36 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "run":
         return run_cmd(args)
     if args.cmd == "visualize":
-        visualize(Path(args.results), Path(args.out))
+        if args.results:
+            if args.suite or args.raw_db:
+                parser.error("visualize --results cannot be combined with --suite or --raw-db")
+            visualize(Path(args.results), Path(args.out))
+            return 0
+        if not args.suite or not args.raw_db:
+            parser.error("visualize requires either --results or both --suite and --raw-db")
+        repo_root = find_repo_root()
+        suites = [load_suite(Path(path), repo_root=repo_root) for path in args.suite]
+        visualize_suites(
+            suites,
+            SuiteBarPlotOptions(
+                raw_dbs=tuple(Path(path).resolve() for path in args.raw_db),
+                out_dir=Path(args.out).resolve(),
+                metric=args.metric,
+                select=args.select,
+                missing=args.missing,
+                x=args.x,
+                hue=args.hue,
+                row=args.row,
+                col=args.col,
+                stacked=args.stacked,
+                stack_by=args.stack_by,
+                value_labels=args.value_labels,
+                relative=args.relative,
+                share_y=args.share_y,
+                fpga_bin_label=args.fpga_bin_label,
+                xclbin_sha256=args.xclbin_sha256,
+            ),
+        )
         return 0
     if args.cmd == "compare":
         candidates = [parse_candidate_spec(value) for value in args.candidate]
