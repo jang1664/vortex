@@ -12,6 +12,9 @@
 static uint32_t K = 64;
 static uint32_t N = 64;
 static uint32_t QBLK = 32;
+static uint32_t DMA_MT = DEFAULT_DMA_MT;
+static uint32_t DMA_KT = DEFAULT_DMA_KT;
+static uint32_t DMA_NT = DEFAULT_DMA_NT;
 static uint32_t QDIR = 0;
 static uint32_t GEMM_QDIR = 0;
 static uint32_t SOURCE_TRANSPOSED = 0;
@@ -42,7 +45,8 @@ static void cleanup() {
 static void show_usage(const char* prog) {
   printf("Usage: %s [--warmup=N] [--iterations=N] [--csv] "
          "[--output=PATH] [--output-append] [-k K] [-n N] [-q QBLK] "
-         "[-d QDIR] [--gemm-qdir QDIR] [--source-transposed]\n", prog);
+         "[-d QDIR] [--mt MT] [--kt KT] [--nt NT] "
+         "[--gemm-qdir QDIR] [--source-transposed]\n", prog);
 }
 
 static bool is_pow2(uint32_t v) {
@@ -55,34 +59,38 @@ static uint32_t log2_u32(uint32_t v) {
   return r;
 }
 
-static uint32_t align_up(uint32_t a, uint32_t b) {
-  return ((a + b - 1) / b) * b;
+static uint32_t align_up_pow2(uint32_t a, uint32_t b) {
+  return (a + b - 1u) & ~(b - 1u);
+}
+
+static uint32_t ceil_div_pow2(uint32_t a, uint32_t b) {
+  return (a + b - 1u) >> log2_u32(b);
 }
 
 static uint32_t output_K() {
   const uint32_t logical = SOURCE_TRANSPOSED ? N : K;
   uint32_t align = TILE_DMA_MXU_KT;
   if (GEMM_QDIR == 0 && QBLK > align) align = QBLK;
-  return align_up(logical, align);
+  return align_up_pow2(logical, align);
 }
 
 static uint32_t output_N() {
   const uint32_t logical = SOURCE_TRANSPOSED ? K : N;
   uint32_t align = TILE_DMA_MXU_NT;
   if (GEMM_QDIR == 1 && QBLK > align) align = QBLK;
-  return align_up(logical, align);
+  return align_up_pow2(logical, align);
 }
 
 static uint32_t slot_body_bytes(uint32_t ck, uint32_t cn) {
-  const uint32_t ng_per_mxu_nt = (TILE_DMA_MXU_NT + QBLK - 1) / QBLK;
+  const uint32_t ng_per_mxu_nt = ceil_div_pow2(TILE_DMA_MXU_NT, QBLK);
   if (GEMM_QDIR == 0) {
-    return (ck / QBLK) * cn * TILE_ELEM_BYTES;
+    return (ck >> log2_u32(QBLK)) * cn * TILE_ELEM_BYTES;
   }
-  return (cn / TILE_DMA_MXU_NT) * ck * ng_per_mxu_nt * TILE_ELEM_BYTES;
+  return (cn >> log2_u32(TILE_DMA_MXU_NT)) * ck * ng_per_mxu_nt * TILE_ELEM_BYTES;
 }
 
 static uint32_t slot_bytes_for(uint32_t ck, uint32_t cn) {
-  return align_up(slot_body_bytes(ck, cn), TILE_SCALE_SLOT_ALIGN);
+  return align_up_pow2(slot_body_bytes(ck, cn), TILE_SCALE_SLOT_ALIGN);
 }
 
 static void compute_slot_layout(uint32_t& total_bytes,
@@ -94,30 +102,30 @@ static void compute_slot_layout(uint32_t& total_bytes,
                                 uint32_t& max_slot_bytes) {
   const uint32_t out_k = output_K();
   const uint32_t out_n = output_N();
-  const uint32_t k_tiles = (out_k + TILE_DMA_KT - 1) / TILE_DMA_KT;
-  nt_dma_count = (out_n + TILE_DMA_NT - 1) / TILE_DMA_NT;
-  const uint32_t ck_last = (out_k - (k_tiles - 1) * TILE_DMA_KT < TILE_DMA_KT)
-                             ? (out_k - (k_tiles - 1) * TILE_DMA_KT)
-                             : TILE_DMA_KT;
-  const uint32_t cn_last = (out_n - (nt_dma_count - 1) * TILE_DMA_NT < TILE_DMA_NT)
-                             ? (out_n - (nt_dma_count - 1) * TILE_DMA_NT)
-                             : TILE_DMA_NT;
+  const uint32_t k_tiles = ceil_div_pow2(out_k, DMA_KT);
+  nt_dma_count = ceil_div_pow2(out_n, DMA_NT);
+  const uint32_t ck_last = (out_k - (k_tiles - 1) * DMA_KT < DMA_KT)
+                             ? (out_k - (k_tiles - 1) * DMA_KT)
+                             : DMA_KT;
+  const uint32_t cn_last = (out_n - (nt_dma_count - 1) * DMA_NT < DMA_NT)
+                             ? (out_n - (nt_dma_count - 1) * DMA_NT)
+                             : DMA_NT;
 
-  slot_fk_fn = slot_bytes_for(TILE_DMA_KT, TILE_DMA_NT);
-  slot_fk_pn = slot_bytes_for(TILE_DMA_KT, cn_last);
-  slot_pk_fn = slot_bytes_for(ck_last, TILE_DMA_NT);
+  slot_fk_fn = slot_bytes_for(DMA_KT, DMA_NT);
+  slot_fk_pn = slot_bytes_for(DMA_KT, cn_last);
+  slot_pk_fn = slot_bytes_for(ck_last, DMA_NT);
   per_kt_full_K = (nt_dma_count - 1) * slot_fk_fn + slot_fk_pn;
 
   total_bytes = 0;
   max_slot_bytes = 0;
   for (uint32_t kt = 0; kt < k_tiles; ++kt) {
-    const uint32_t ck = (out_k - kt * TILE_DMA_KT < TILE_DMA_KT)
-                          ? (out_k - kt * TILE_DMA_KT)
-                          : TILE_DMA_KT;
+    const uint32_t ck = (out_k - kt * DMA_KT < DMA_KT)
+                          ? (out_k - kt * DMA_KT)
+                          : DMA_KT;
     for (uint32_t nt_dma = 0; nt_dma < nt_dma_count; ++nt_dma) {
-      const uint32_t cn = (out_n - nt_dma * TILE_DMA_NT < TILE_DMA_NT)
-                            ? (out_n - nt_dma * TILE_DMA_NT)
-                            : TILE_DMA_NT;
+      const uint32_t cn = (out_n - nt_dma * DMA_NT < DMA_NT)
+                            ? (out_n - nt_dma * DMA_NT)
+                            : DMA_NT;
       const uint32_t slot = slot_bytes_for(ck, cn);
       total_bytes += slot;
       if (slot > max_slot_bytes) max_slot_bytes = slot;
@@ -130,6 +138,9 @@ static void parse_args(int argc, char** argv) {
   static struct option long_opts[] = {
     {"gemm-qdir", required_argument, nullptr, 1000},
     {"source-transposed", no_argument, nullptr, 1001},
+    {"mt", required_argument, nullptr, 1002},
+    {"kt", required_argument, nullptr, 1003},
+    {"nt", required_argument, nullptr, 1004},
     {nullptr, 0, nullptr, 0},
   };
   int c;
@@ -141,6 +152,9 @@ static void parse_args(int argc, char** argv) {
       case 'd': QDIR = atoi(optarg); break;
       case 1000: GEMM_QDIR = atoi(optarg); gemm_qdir_set = true; break;
       case 1001: SOURCE_TRANSPOSED = 1; break;
+      case 1002: DMA_MT = atoi(optarg); break;
+      case 1003: DMA_KT = atoi(optarg); break;
+      case 1004: DMA_NT = atoi(optarg); break;
       case 'h': show_usage(argv[0]); exit(0);
       default: show_usage(argv[0]); exit(1);
     }
@@ -152,9 +166,18 @@ int main(int argc, char** argv) {
   auto bench = vx_bench::parse(argc, argv);
   parse_args(argc, argv);
 
-  if (!is_pow2(TILE_DMA_KT) || !is_pow2(TILE_DMA_NT) ||
-      !is_pow2(TILE_DMA_MXU_NT) || !is_pow2(QBLK)) {
-    printf("ERROR: tile constants and QBLK must be powers of two\n");
+  if (!is_pow2(DMA_MT) || !is_pow2(DMA_KT) || !is_pow2(DMA_NT) ||
+      !is_pow2(TILE_DMA_MXU_KT) || !is_pow2(TILE_DMA_MXU_NT) || !is_pow2(QBLK)) {
+    printf("ERROR: MT, KT, NT, MXU tiles, and QBLK must be powers of two\n");
+    return 1;
+  }
+  if ((DMA_KT & (TILE_DMA_MXU_KT - 1u)) != 0 ||
+      (DMA_NT & (TILE_DMA_MXU_NT - 1u)) != 0) {
+    printf("ERROR: KT must be divisible by MXU_KT and NT by MXU_NT\n");
+    return 1;
+  }
+  if (GEMM_QDIR == 0 && DMA_KT < QBLK) {
+    printf("ERROR: GEMM_QDIR=0 requires KT >= QBLK\n");
     return 1;
   }
   if (QDIR > 1 || GEMM_QDIR > 1) {
@@ -179,11 +202,11 @@ int main(int argc, char** argv) {
   uint32_t src_rows = 0;
   uint32_t src_cols = 0;
   if (QDIR == 0) {
-    src_rows = (K + QBLK - 1) / QBLK;
+    src_rows = ceil_div_pow2(K, QBLK);
     src_cols = N;
   } else {
     src_rows = K;
-    src_cols = (N + QBLK - 1) / QBLK;
+    src_cols = ceil_div_pow2(N, QBLK);
   }
   const size_t src_elems = size_t(src_rows) * src_cols;
   std::vector<uint16_t> h_src(src_elems);
@@ -206,8 +229,8 @@ int main(int argc, char** argv) {
   }
   const uint32_t tpb = uint32_t(num_threads);
   const uint32_t out_k = output_K();
-  const uint32_t k_tiles = (out_k + TILE_DMA_KT - 1) / TILE_DMA_KT;
-  const uint32_t ng_per_mxu_nt = (TILE_DMA_MXU_NT + QBLK - 1) / QBLK;
+  const uint32_t k_tiles = ceil_div_pow2(out_k, DMA_KT);
+  const uint32_t ng_per_mxu_nt = ceil_div_pow2(TILE_DMA_MXU_NT, QBLK);
   const uint32_t slot_elems = max_slot_bytes / TILE_ELEM_BYTES;
   const uint32_t blocks_x = (slot_elems + tpb - 1) / tpb;
 
@@ -233,8 +256,8 @@ int main(int argc, char** argv) {
   karg.slot_pk_fn = slot_pk_fn;
   karg.per_kt_full_K = per_kt_full_K;
   karg.max_slot_bytes = max_slot_bytes;
-  karg.log2_kt = log2_u32(TILE_DMA_KT);
-  karg.log2_nt = log2_u32(TILE_DMA_NT);
+  karg.log2_kt = log2_u32(DMA_KT);
+  karg.log2_nt = log2_u32(DMA_NT);
   karg.log2_mxu_nt = log2_u32(TILE_DMA_MXU_NT);
   karg.log2_ng_per_mxu_nt = (GEMM_QDIR == 1) ? log2_u32(ng_per_mxu_nt) : 0;
   karg.log2_qblk = log2_u32(QBLK);

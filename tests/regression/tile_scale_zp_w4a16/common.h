@@ -3,8 +3,9 @@
 
 #include <stdint.h>
 
-#define TILE_DMA_KT          128
-#define TILE_DMA_NT          128
+#define DEFAULT_DMA_MT       128
+#define DEFAULT_DMA_KT       128
+#define DEFAULT_DMA_NT       128
 #define TILE_DMA_MXU_KT       32
 #define TILE_DMA_MXU_NT       32
 #define TILE_SCALE_SLOT_ALIGN 512

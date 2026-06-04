@@ -39,7 +39,10 @@ int main(int argc, char *argv[]) {
   auto bench = vx_bench::parse(argc, argv);
   uint32_t K = 128;
   uint32_t N = 128;
-  uint32_t QBLK = 128;
+  uint32_t QBLK = 32;
+  uint32_t DMA_MT = DEFAULT_DMA_MT;
+  uint32_t DMA_KT = DEFAULT_DMA_KT;
+  uint32_t DMA_NT = DEFAULT_DMA_NT;
   uint32_t QDIR = 0;
   uint32_t WTRANS = 1;
   uint32_t GEMM_QDIR = 0;
@@ -52,6 +55,12 @@ int main(int argc, char *argv[]) {
     else if (strcmp(argv[i], "-q") == 0) QBLK = atoi(argv[++i]);
     else if (strcmp(argv[i], "-d") == 0) QDIR = atoi(argv[++i]);
     else if (strcmp(argv[i], "-t") == 0) WTRANS = atoi(argv[++i]);
+    else if (strcmp(argv[i], "--mt") == 0) DMA_MT = atoi(argv[++i]);
+    else if (strncmp(argv[i], "--mt=", 5) == 0) DMA_MT = atoi(argv[i] + 5);
+    else if (strcmp(argv[i], "--kt") == 0) DMA_KT = atoi(argv[++i]);
+    else if (strncmp(argv[i], "--kt=", 5) == 0) DMA_KT = atoi(argv[i] + 5);
+    else if (strcmp(argv[i], "--nt") == 0) DMA_NT = atoi(argv[++i]);
+    else if (strncmp(argv[i], "--nt=", 5) == 0) DMA_NT = atoi(argv[i] + 5);
     else if (strcmp(argv[i], "--gemm-qdir") == 0) {
       GEMM_QDIR = atoi(argv[++i]);
       gemm_qdir_set = true;
@@ -67,6 +76,7 @@ int main(int argc, char *argv[]) {
       printf("Usage: %s [--warmup=N] [--iterations=N] [--csv] "
              "[--output=PATH] [--output-append] "
              "[-k K] [-n N] [-q QBLK] [-d QDIR] [-t WTRANS] "
+             "[--mt MT] [--kt KT] [--nt NT] "
              "[--gemm-qdir QDIR] [--source-transposed] "
              "[--layout-from row_major_fp16|gemm_c_tiled]\n", argv[0]);
       return 0;
@@ -74,18 +84,27 @@ int main(int argc, char *argv[]) {
   }
   if (!gemm_qdir_set) GEMM_QDIR = QDIR;
   if (!valid_fused_quant_shape(K, N, QBLK, QDIR, WTRANS, GEMM_QDIR, SOURCE_TRANSPOSED)) {
-    printf("ERROR: require K,N multiples of 32, even N, pow2 QBLK, "
-           "source_QDIR/GEMM_QDIR/WTRANS in {0,1}, and quant axes divisible by QBLK\n");
+    printf("ERROR: require non-zero K/N, even N, pow2 QBLK, "
+           "source_QDIR/GEMM_QDIR/WTRANS in {0,1}, and source-transposed requires WTRANS=1\n");
+    return 1;
+  }
+  if (!is_pow2_u32(DMA_MT) || !is_pow2_u32(DMA_KT) || !is_pow2_u32(DMA_NT) ||
+      (DMA_KT & (TILE_DMA_MXU_KT - 1u)) != 0 ||
+      (DMA_NT & (TILE_DMA_MXU_NT - 1u)) != 0 ||
+      (GEMM_QDIR == 0 && DMA_KT < QBLK)) {
+    printf("ERROR: MT/KT/NT must be powers of two, KT%%MXU_KT=0, "
+           "NT%%MXU_NT=0, and GEMM_QDIR=0 requires KT>=QBLK\n");
     return 1;
   }
 
   const size_t src_elems = (size_t)K * N;
-  const size_t weight_bytes = src_elems / 2;
-  const size_t scale_bytes = scale_total_bytes_host(K, N, QBLK, GEMM_QDIR, SOURCE_TRANSPOSED);
+  const size_t weight_bytes = weight_total_bytes_host(K, N, SOURCE_TRANSPOSED);
+  const size_t scale_bytes = scale_total_bytes_host(K, N, QBLK, GEMM_QDIR,
+                                                    SOURCE_TRANSPOSED, DMA_KT, DMA_NT);
   std::vector<fp16_t> h_src(src_elems);
   init_src(h_src);
   std::vector<fp16_t> h_src_device(src_elems);
-  pack_src_for_layout(h_src, h_src_device, K, N, src_layout);
+  pack_src_for_layout(h_src, h_src_device, K, N, src_layout, DMA_MT);
 
   RT_CHECK(vx_dev_open(&device));
   RT_CHECK(vx_upload_kernel_file(device, "kernel.vxbin", &krnl_buffer));
@@ -104,17 +123,21 @@ int main(int argc, char *argv[]) {
   const uint32_t tpb = std::min(256u, (uint32_t)(num_warps * num_threads));
 
   kernel_arg_t arg = {};
-  const uint32_t max_slot_elems = max_scale_slot_bytes_host(K, N, QBLK, GEMM_QDIR, SOURCE_TRANSPOSED) / TILE_ELEM_BYTES;
-  const uint32_t out_K = SOURCE_TRANSPOSED ? N : K;
-  const uint32_t out_N = SOURCE_TRANSPOSED ? K : N;
-  const uint32_t n_dma_tiles = (out_N + TILE_DMA_NT - 1u) / TILE_DMA_NT;
-  const uint32_t k_tiles = (out_K + TILE_DMA_KT - 1u) / TILE_DMA_KT;
+  const uint32_t max_slot_elems = max_scale_slot_bytes_host(K, N, QBLK, GEMM_QDIR,
+                                                            SOURCE_TRANSPOSED, DMA_KT, DMA_NT)
+                                / TILE_ELEM_BYTES;
+  const uint32_t out_K = padded_qparam_K_host(K, N, QBLK, GEMM_QDIR, SOURCE_TRANSPOSED);
+  const uint32_t out_N = padded_qparam_N_host(K, N, QBLK, GEMM_QDIR, SOURCE_TRANSPOSED);
+  const uint32_t n_dma_tiles = ceil_div_pow2_u32(out_N, DMA_NT);
+  const uint32_t k_tiles = ceil_div_pow2_u32(out_K, DMA_KT);
   const uint32_t qparam_work = k_tiles * n_dma_tiles * max_slot_elems;
   const uint32_t work_items = std::max((uint32_t)weight_bytes, qparam_work);
   const uint32_t blocks = std::min(
       (work_items + tpb - 1u) / tpb,
       std::max(1u, (uint32_t)num_cores * 4u));
-  if (!init_kernel_arg(arg, K, N, QBLK, QDIR, WTRANS, GEMM_QDIR, SOURCE_TRANSPOSED, src_layout, blocks, tpb)) {
+  if (!init_kernel_arg(arg, K, N, QBLK, QDIR, WTRANS, GEMM_QDIR,
+                       SOURCE_TRANSPOSED, src_layout, DMA_MT, DMA_KT, DMA_NT,
+                       blocks, tpb)) {
     printf("ERROR: failed to initialize kernel args\n");
     cleanup();
     return 1;

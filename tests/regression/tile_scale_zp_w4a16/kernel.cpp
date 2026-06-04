@@ -11,8 +11,9 @@
 //   blockIdx.x*blockDim.x + threadIdx.x = elem_in_slot
 //
 // Each thread handles one 2-byte element (fp16 / int16). Inner-slot decode
-// only uses compile-time MXU_NT shift + host-supplied log2 shifts for
-// (cur_groups, cur_k, ng_per_mxu_nt, QBLK).
+// uses compile-time MXU_NT shift + host-supplied log2 shifts. Last partial
+// slots keep a fallback decode because compact qparam slots can have
+// non-power-of-two group counts.
 ///////////////////////////////////////////////////////////////////////////////
 
 void kernel_tile_scale_zp_w4a16(kernel_arg_t *__UNIFORM__ arg) {
@@ -98,8 +99,16 @@ void kernel_tile_scale_zp_w4a16(kernel_arg_t *__UNIFORM__ arg) {
     // body element layout: (nb, g, col)
     const uint32_t col   = elem_in_slot & mxu_nt_mask;
     const uint32_t nb_g  = elem_in_slot >> log2_mxu_nt;
-    const uint32_t g     = nb_g % cur_groups;
-    const uint32_t nb    = nb_g / cur_groups;
+    uint32_t g;
+    uint32_t nb;
+    if (cur_k == kt_size) {
+      const uint32_t log2_groups_per_kt = log2_kt - log2_qblk;
+      g  = nb_g & ((1u << log2_groups_per_kt) - 1u);
+      nb = nb_g >> log2_groups_per_kt;
+    } else {
+      g  = nb_g % cur_groups;
+      nb = nb_g / cur_groups;
+    }
 
     out_k = kt_start + (g << log2_qblk);
     out_n = nt_start + (nb << log2_mxu_nt) + col;
@@ -108,8 +117,15 @@ void kernel_tile_scale_zp_w4a16(kernel_arg_t *__UNIFORM__ arg) {
     const uint32_t ng_m  = ng_per_mxu_nt - 1u;
     const uint32_t ng_loc = elem_in_slot & ng_m;
     const uint32_t nb_k  = elem_in_slot >> log2_ng_per_mxu_nt;
-    const uint32_t k_loc = nb_k % cur_k;
-    const uint32_t nb    = nb_k / cur_k;
+    uint32_t k_loc;
+    uint32_t nb;
+    if (cur_k == kt_size) {
+      k_loc = nb_k & (kt_size - 1u);
+      nb    = nb_k >> log2_kt;
+    } else {
+      k_loc = nb_k % cur_k;
+      nb    = nb_k / cur_k;
+    }
 
     const uint32_t global_nt_mxu = nt_dma * mxu_per_dma_nt + nb;
     const uint32_t global_ng_off = ((global_nt_mxu << log2_mxu_nt) >> log2_qblk) + ng_loc;

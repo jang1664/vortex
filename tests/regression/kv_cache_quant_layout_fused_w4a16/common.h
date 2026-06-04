@@ -7,9 +7,9 @@
 #define SRC_LAYOUT_ROW_MAJOR 0
 #define SRC_LAYOUT_GEMM_C_TILED 1
 
-#define TILE_DMA_MT          128
-#define TILE_DMA_KT          128
-#define TILE_DMA_NT          128
+#define DEFAULT_DMA_MT       128
+#define DEFAULT_DMA_KT       128
+#define DEFAULT_DMA_NT       128
 #define TILE_DMA_MXU_KT       32
 #define TILE_DMA_MXU_NT       32
 #define TILE_SCALE_SLOT_ALIGN 512
@@ -42,6 +42,7 @@ typedef struct {
   uint32_t per_kt_full_K;
   uint32_t max_slot_bytes;
 
+  uint32_t log2_mt;
   uint32_t log2_kt;
   uint32_t log2_nt;
   uint32_t log2_mxu_kt;
