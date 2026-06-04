@@ -40,6 +40,14 @@ module VX_socket import VX_gpu_pkg::*; #(
     // Barrier
     VX_gbar_bus_if.master   gbar_bus_if,
 `endif
+
+`ifdef ENABLE_HW_DEBUG_MODULE
+    output wire                         hw_debug_pc_valid [`SOCKET_SIZE],
+    output wire [HW_DEBUG_CORE_ID_WIDTH-1:0] hw_debug_pc_core_id [`SOCKET_SIZE],
+    output wire [NW_WIDTH-1:0]          hw_debug_pc_wid [`SOCKET_SIZE],
+    output wire [`XLEN-1:0]             hw_debug_pc [`SOCKET_SIZE],
+`endif
+
     // Status
     output wire             busy,
     output wire             dcache_drain
@@ -278,6 +286,13 @@ module VX_socket import VX_gpu_pkg::*; #(
 
         `ifdef GBAR_ENABLE
             .gbar_bus_if    (per_core_gbar_bus_if[core_id]),
+        `endif
+
+        `ifdef ENABLE_HW_DEBUG_MODULE
+            .hw_debug_pc_valid   (hw_debug_pc_valid[core_id]),
+            .hw_debug_pc_core_id (hw_debug_pc_core_id[core_id]),
+            .hw_debug_pc_wid     (hw_debug_pc_wid[core_id]),
+            .hw_debug_pc         (hw_debug_pc[core_id]),
         `endif
 
             .busy           (per_core_busy[core_id])

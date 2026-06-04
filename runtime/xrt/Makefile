@@ -16,7 +16,7 @@ CXXFLAGS += -fPIC
 LDFLAGS += -shared -pthread
 LDFLAGS += -L$(XILINX_XRT)/lib
 
-SRCS := $(SRC_DIR)/vortex.cpp $(SIM_DIR)/common/util.cpp
+SRCS := $(SRC_DIR)/vortex.cpp $(SRC_DIR)/vx_hw_debug.c $(SIM_DIR)/common/util.cpp
 
 # set up target types
 ifeq ($(TARGET), xrtsim)

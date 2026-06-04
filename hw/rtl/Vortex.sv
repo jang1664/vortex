@@ -43,6 +43,13 @@ module Vortex import VX_gpu_pkg::*; (
     input  wire [VX_DCR_ADDR_WIDTH-1:0]     dcr_wr_addr,
     input  wire [VX_DCR_DATA_WIDTH-1:0]     dcr_wr_data,
 
+`ifdef ENABLE_HW_DEBUG_MODULE
+    output wire                             hw_debug_pc_valid [HW_DEBUG_NUM_PC_SOURCES],
+    output wire [HW_DEBUG_CORE_ID_WIDTH-1:0] hw_debug_pc_core_id [HW_DEBUG_NUM_PC_SOURCES],
+    output wire [NW_WIDTH-1:0]              hw_debug_pc_wid [HW_DEBUG_NUM_PC_SOURCES],
+    output wire [`XLEN-1:0]                 hw_debug_pc [HW_DEBUG_NUM_PC_SOURCES],
+`endif
+
     // Status
     output wire                             busy,
     output wire                             cache_drain
@@ -143,6 +150,7 @@ module Vortex import VX_gpu_pkg::*; (
     wire [`NUM_CLUSTERS-1:0] per_cluster_cache_drain;
 
     localparam CLUSTER_DMA_PORTS = NUM_SOCKETS * `SOCKET_SIZE * `NUM_DMA_CHANNELS;
+    localparam CLUSTER_DEBUG_PC_SOURCES = NUM_SOCKETS * `SOCKET_SIZE;
 
     // Generate all clusters
     for (genvar cluster_id = 0; cluster_id < `NUM_CLUSTERS; ++cluster_id) begin : g_clusters
@@ -170,6 +178,13 @@ module Vortex import VX_gpu_pkg::*; (
             .mem_bus_if         (per_cluster_mem_bus_if[cluster_id * `L2_MEM_PORTS +: `L2_MEM_PORTS]),
 
             .dma_axi_m          (dma_axi_m[cluster_id * CLUSTER_DMA_PORTS +: CLUSTER_DMA_PORTS]),
+
+        `ifdef ENABLE_HW_DEBUG_MODULE
+            .hw_debug_pc_valid   (hw_debug_pc_valid[cluster_id * CLUSTER_DEBUG_PC_SOURCES +: CLUSTER_DEBUG_PC_SOURCES]),
+            .hw_debug_pc_core_id (hw_debug_pc_core_id[cluster_id * CLUSTER_DEBUG_PC_SOURCES +: CLUSTER_DEBUG_PC_SOURCES]),
+            .hw_debug_pc_wid     (hw_debug_pc_wid[cluster_id * CLUSTER_DEBUG_PC_SOURCES +: CLUSTER_DEBUG_PC_SOURCES]),
+            .hw_debug_pc         (hw_debug_pc[cluster_id * CLUSTER_DEBUG_PC_SOURCES +: CLUSTER_DEBUG_PC_SOURCES]),
+        `endif
 
             .busy               (per_cluster_busy[cluster_id]),
             .cache_drain        (per_cluster_cache_drain[cluster_id])

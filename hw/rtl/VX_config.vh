@@ -914,6 +914,12 @@
     `define EXT_TCU_ENABLED 0
 `endif
 
+`ifdef ENABLE_GEMM_ACCEL
+    `define GEMM_ACCEL_ENABLED 1
+`else
+    `define GEMM_ACCEL_ENABLED 0
+`endif
+
 `define ISA_STD_A           0
 `define ISA_STD_C           2
 `define ISA_STD_D           3

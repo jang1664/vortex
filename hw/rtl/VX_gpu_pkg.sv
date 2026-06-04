@@ -96,7 +96,9 @@ package VX_gpu_pkg;
     localparam SRC_OPD_BITS = `CLOG2(NUM_SRC_OPDS);
     localparam SRC_OPD_WIDTH = `UP(SRC_OPD_BITS);
 
-	localparam NUM_SOCKETS = `UP(`NUM_CORES / `SOCKET_SIZE);
+    localparam NUM_SOCKETS = `UP(`NUM_CORES / `SOCKET_SIZE);
+    localparam HW_DEBUG_NUM_PC_SOURCES = `NUM_CLUSTERS * NUM_SOCKETS * `SOCKET_SIZE;
+    localparam HW_DEBUG_CORE_ID_WIDTH = `UP(`CLOG2(HW_DEBUG_NUM_PC_SOURCES));
 
     localparam MEM_REQ_FLAG_FLUSH =  0;
     localparam MEM_REQ_FLAG_IO =     1;

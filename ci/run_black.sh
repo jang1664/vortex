@@ -19,7 +19,7 @@ list_fpga_bin_aliases() {
 }
 
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
-  echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"] [--fpga-bin ALIAS_OR_PATH] [--bench] [--perf CLASS] [--debug LEVEL]"
+  echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"] [--fpga-bin ALIAS_OR_PATH] [--bench] [--perf CLASS] [--debug LEVEL] [--hw-debug]"
   echo "Modes:"
   echo "  rtlsim   - Run only rtlsim tests"
   echo "  xrtsim   - Run only xrtsim tests"
@@ -27,6 +27,9 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   echo "  xrt-vcs-pgsim   - Run only xrt-vcs-pgsim tests"
   echo "  hw_emu    - Run only hw_emu tests"
   echo "  hw        - Run only hw tests"
+  echo "Options:"
+  echo "  --hw-debug, --enable-hw-debug-module"
+  echo "      Append -DENABLE_HW_DEBUG_MODULE to CONFIGS"
   aliases="$(list_fpga_bin_aliases)"
   if [[ -n "${aliases}" ]]; then
     echo "FPGA bin aliases: ${aliases}"
@@ -38,7 +41,7 @@ mode="${1:-}"
 shift || true
 
 if [[ "${mode}" == "" ]]; then
-  echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"] [--fpga-bin ALIAS_OR_PATH] [--bench] [--perf CLASS] [--debug LEVEL]"
+  echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"] [--fpga-bin ALIAS_OR_PATH] [--bench] [--perf CLASS] [--debug LEVEL] [--hw-debug]"
   echo "Modes:"
   echo "  rtlsim   - Run only rtlsim tests"
   echo "  xrtsim   - Run only xrtsim tests"
@@ -58,6 +61,7 @@ FPGA_BIN_CONFIGS=""
 BENCH_FLAG=""
 PERF_FLAG=""
 DEBUG_FLAG=""
+HW_DEBUG=0
 
 resolve_fpga_bin() {
   local fpga_bin="$1"
@@ -102,13 +106,18 @@ while [[ $# -gt 0 ]]; do
       DEBUG_FLAG="$1"
       shift
       ;;
+    --hw-debug|--enable-hw-debug-module)
+      HW_DEBUG=1
+      shift
+      ;;
     -h|--help)
-      echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"] [--fpga-bin ALIAS_OR_PATH] [--bench] [--perf CLASS] [--debug LEVEL]"
+      echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"] [--fpga-bin ALIAS_OR_PATH] [--bench] [--perf CLASS] [--debug LEVEL] [--hw-debug]"
+      echo "  --hw-debug, --enable-hw-debug-module: append -DENABLE_HW_DEBUG_MODULE to CONFIGS"
       exit 0
       ;;
     *)
       echo "Unknown argument: $1"
-      echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"] [--fpga-bin ALIAS_OR_PATH] [--bench] [--perf CLASS] [--debug LEVEL]"
+      echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"] [--fpga-bin ALIAS_OR_PATH] [--bench] [--perf CLASS] [--debug LEVEL] [--hw-debug]"
       exit 1
       ;;
   esac
@@ -137,6 +146,10 @@ if [[ -n "${DEBUG_FLAG}" ]]; then
   CONFIGS+=" -DDBG_TRACE_GBAR"
   CONFIGS+=" -DDBG_TRACE_TCU"
   CONFIGS+=" -DDBG_TRACE_GEMM"
+fi
+
+if [[ "${HW_DEBUG}" == "1" ]]; then
+  CONFIGS+=" -DENABLE_HW_DEBUG_MODULE"
 fi
 
 if [[ -n "${CONFIGS_EXTRA}" ]]; then

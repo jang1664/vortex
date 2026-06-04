@@ -36,6 +36,13 @@ module VX_cluster import VX_gpu_pkg::*; #(
     // DMA AXI ports (cache bypass, from all cores in cluster)
     AXI_BUS.Master              dma_axi_m [NUM_SOCKETS * `SOCKET_SIZE * `NUM_DMA_CHANNELS],
 
+`ifdef ENABLE_HW_DEBUG_MODULE
+    output wire                         hw_debug_pc_valid [NUM_SOCKETS * `SOCKET_SIZE],
+    output wire [HW_DEBUG_CORE_ID_WIDTH-1:0] hw_debug_pc_core_id [NUM_SOCKETS * `SOCKET_SIZE],
+    output wire [NW_WIDTH-1:0]          hw_debug_pc_wid [NUM_SOCKETS * `SOCKET_SIZE],
+    output wire [`XLEN-1:0]             hw_debug_pc [NUM_SOCKETS * `SOCKET_SIZE],
+`endif
+
     // Status
     output wire                 busy,
     output wire                 cache_drain
@@ -158,6 +165,13 @@ module VX_cluster import VX_gpu_pkg::*; #(
 
         `ifdef GBAR_ENABLE
             .gbar_bus_if    (per_socket_gbar_bus_if[socket_id]),
+        `endif
+
+        `ifdef ENABLE_HW_DEBUG_MODULE
+            .hw_debug_pc_valid   (hw_debug_pc_valid[socket_id * `SOCKET_SIZE +: `SOCKET_SIZE]),
+            .hw_debug_pc_core_id (hw_debug_pc_core_id[socket_id * `SOCKET_SIZE +: `SOCKET_SIZE]),
+            .hw_debug_pc_wid     (hw_debug_pc_wid[socket_id * `SOCKET_SIZE +: `SOCKET_SIZE]),
+            .hw_debug_pc         (hw_debug_pc[socket_id * `SOCKET_SIZE +: `SOCKET_SIZE]),
         `endif
 
             .busy           (per_socket_busy[socket_id]),

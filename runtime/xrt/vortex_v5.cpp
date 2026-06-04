@@ -37,6 +37,10 @@
 #include <util.h>
 #include <vector>
 
+#ifdef ENABLE_HW_DEBUG_MODULE
+#include "vx_hw_debug.h"
+#endif
+
 // vortex-smi shared memory support
 #include <vx_shm_helper.h>
 
@@ -52,6 +56,16 @@ using namespace vortex;
 #define MMIO_DCR_ADDR 0x20
 #define MMIO_SCP_ADDR 0x28
 #define MMIO_MEM_ADDR 0x30
+
+#ifdef ENABLE_HW_DEBUG_MODULE
+#ifndef HW_DEBUG_PC_RING_DEPTH
+#define HW_DEBUG_PC_RING_DEPTH VX_HW_DEBUG_DEFAULT_PC_RING_DEPTH
+#endif
+#endif
+
+#if defined(ENABLE_HW_DEBUG_MODULE) && defined(NDEBUG)
+#define VX_HW_DEBUG_READY_WAIT_POLL 1
+#endif
 
 #define CTL_AP_START (1 << 0)
 #define CTL_AP_DONE (1 << 1)
@@ -721,6 +735,37 @@ public:
     return 0;
   }
 
+#ifdef ENABLE_HW_DEBUG_MODULE
+  static int hw_debug_read32(void *opaque, uint32_t addr, uint32_t *value) {
+    return static_cast<vx_device *>(opaque)->read_register(addr, value);
+  }
+
+  static int hw_debug_write32(void *opaque, uint32_t addr, uint32_t value) {
+    return static_cast<vx_device *>(opaque)->write_register(addr, value);
+  }
+
+  void dump_hw_debug() {
+    vx_hw_debug_io_t io = {
+      this,
+      &vx_device::hw_debug_read32,
+      &vx_device::hw_debug_write32
+    };
+    (void)vx_hw_debug_dump(stderr, &io, NUM_DMA_CHANNELS, HW_DEBUG_PC_RING_DEPTH, "[VXDRV-HWDBG]");
+  }
+
+  void poll_hw_debug_flags(vx_hw_debug_flag_snapshot_t *previous) {
+    vx_hw_debug_io_t io = {
+      this,
+      &vx_device::hw_debug_read32,
+      &vx_device::hw_debug_write32
+    };
+    int err = vx_hw_debug_poll_flags(stderr, &io, NUM_DMA_CHANNELS, previous, "[VXDRV-HWDBG]");
+    if (err != 0) {
+      fprintf(stderr, "[VXDRV-HWDBG] flag poll failed: %d\n", err);
+    }
+  }
+#endif
+
   int ready_wait(uint64_t timeout) {
     struct timespec sleep_time;
   #ifndef NDEBUG
@@ -739,6 +784,12 @@ public:
 
     uint64_t sleep_time_ms = (sleep_time.tv_sec * 1000) + (sleep_time.tv_nsec / 1000000);
 
+  #ifdef VX_HW_DEBUG_READY_WAIT_POLL
+    vx_hw_debug_flag_snapshot_t hw_debug_previous = {};
+    uint64_t hw_debug_poll_elapsed_ms = 0;
+    const uint64_t hw_debug_poll_period_ms = 1000;
+  #endif
+
     for (;;) {
       if (pending_ap_done_) {
         pending_ap_done_ = false;
@@ -752,10 +803,22 @@ public:
       bool is_done = (status & CTL_AP_DONE) == CTL_AP_DONE;
       if (is_done)
         break;
+    #ifdef VX_HW_DEBUG_READY_WAIT_POLL
+      if (hw_debug_poll_elapsed_ms == 0 || hw_debug_poll_elapsed_ms >= hw_debug_poll_period_ms) {
+        this->poll_hw_debug_flags(&hw_debug_previous);
+        hw_debug_poll_elapsed_ms = 0;
+      }
+    #endif
       if (0 == timeout) {
+      #ifdef ENABLE_HW_DEBUG_MODULE
+        this->dump_hw_debug();
+      #endif
         return -1;
       }
       nanosleep(&sleep_time, nullptr);
+    #ifdef VX_HW_DEBUG_READY_WAIT_POLL
+      hw_debug_poll_elapsed_ms += sleep_time_ms;
+    #endif
       timeout -= sleep_time_ms;
     };
 

@@ -1,0 +1,25 @@
+task: hw-debug-module
+status: verified
+created: "2026-06-04 16:11"
+updated: "2026-06-04 17:57"
+summary: "Add ENABLE_HW_DEBUG_MODULE controlled MMIO debug telemetry for PC sampling, XRT AFU AXI state, and sticky anomaly/protocol flags."
+log:
+  - time: "2026-06-04 16:11"
+    note: "Started implementation from the agreed plan. Main risks are macro-off port compatibility and keeping the 0xC0 debug window from colliding with MEM registers."
+  - time: "2026-06-04 16:24"
+    note: "Added optional PC sideband through the core hierarchy, VX_hw_debug MMIO telemetry, XRT package register map entries, and runtime timeout dump hooks."
+  - time: "2026-06-04 16:30"
+    note: "Fixed VCS issues in VX_commit dynamic interface indexing and VX_hw_debug m_axi_wr_req_fire port typing."
+  - time: "2026-06-04 16:30"
+    note: "Verified with ci/run_black.sh xrt-vcs-sim --configs-extra \"-DENABLE_HW_DEBUG_MODULE\" --app basic --args \"\" and macro-off ci/run_black.sh xrt-vcs-sim --app basic --args \"\" after clean rebuilds."
+  - time: "2026-06-04 16:55"
+    note: "Added sticky anomaly/protocol flags for pending-write underflow/overflow/sign-bit, AXI/control payload stability under backpressure, unexpected B/R responses, and non-OKAY responses. Verified macro-on and macro-off xrt-vcs-sim basic after clean rebuilds."
+  - time: "2026-06-04 17:25"
+    note: "Added callback-based runtime/xrt/vx_hw_debug C util for MMIO flag snapshots, polling, and full dumps; refactored vortex_v5.cpp timeout dumping to use it; added docs/hw-debug-module-porting.md for applying the RTL/debug register changes to other branches. Re-ran configure for generated build files and verified macro-on and macro-off xrt-vcs-sim basic after clean rebuilds."
+  - time: "2026-06-04 17:33"
+    note: "Connected ready_wait debug polling to vx_hw_debug_poll_flags under ENABLE_HW_DEBUG_MODULE and explicit DEBUG/non-NDEBUG runtime builds, with a 1s print cadence to avoid log spam. Verified DEBUG define path with ci/run_black.sh xrt-vcs-sim --configs-extra \"-DENABLE_HW_DEBUG_MODULE -DDEBUG\" --app basic --args \"\"."
+  - time: "2026-06-04 17:57"
+    note: "Switched ready_wait HW debug polling to use ENABLE_HW_DEBUG_MODULE plus NDEBUG only, removing DEBUG macro dependence for the run_black.sh flow. Added ci/run_black.sh --hw-debug/--enable-hw-debug-module to append -DENABLE_HW_DEBUG_MODULE, updated the porting doc, re-ran configure, and verified clean xrt-vcs-sim basic with and without --hw-debug."
+pitfalls:
+  - "VX_afu_ctrl currently decodes only 8 low address bits; debug MMIO must stay within 0xff unless control address width is widened."
+  - "runtime/xrt/vortex.cpp is a symlink to vortex_v5.cpp, so runtime changes should be made in vortex_v5.cpp."

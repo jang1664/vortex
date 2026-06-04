@@ -45,6 +45,13 @@ module VX_core import VX_gpu_pkg::*; #(
     VX_gbar_bus_if.master   gbar_bus_if,
 `endif
 
+`ifdef ENABLE_HW_DEBUG_MODULE
+    output wire                         hw_debug_pc_valid,
+    output wire [HW_DEBUG_CORE_ID_WIDTH-1:0] hw_debug_pc_core_id,
+    output wire [NW_WIDTH-1:0]          hw_debug_pc_wid,
+    output wire [`XLEN-1:0]             hw_debug_pc,
+`endif
+
     // Status
     output wire             busy
 );
@@ -228,7 +235,17 @@ module VX_core import VX_gpu_pkg::*; #(
 
         .commit_csr_if  (commit_csr_if),
         .commit_sched_if(commit_sched_if)
+    `ifdef ENABLE_HW_DEBUG_MODULE
+        ,
+        .hw_debug_pc_valid (hw_debug_pc_valid),
+        .hw_debug_pc_wid   (hw_debug_pc_wid),
+        .hw_debug_pc       (hw_debug_pc)
+    `endif
     );
+
+`ifdef ENABLE_HW_DEBUG_MODULE
+    assign hw_debug_pc_core_id = HW_DEBUG_CORE_ID_WIDTH'(CORE_ID);
+`endif
 
     VX_mem_unit #(
         .INSTANCE_ID (INSTANCE_ID)
@@ -262,6 +279,8 @@ module VX_core import VX_gpu_pkg::*; #(
       .lmem_bus_if(dma_local_data_if)
     );
 
+`ifdef ENABLE_GEMM_ACCEL
+
     VX_gemm_node #(
         .INSTANCE_ID (`SFORMATF(("%s-gemm", INSTANCE_ID))),
         .N_MASTER (`NUM_LSU_BLOCKS),
@@ -281,6 +300,85 @@ module VX_core import VX_gpu_pkg::*; #(
         .mmio_if     (gemm_ctrl_if),
         .dma_axi_m   (dma_axi_m)
     );
+
+`else
+
+    for (genvar i = 0; i < `NUM_LSU_BLOCKS; ++i) begin : g_disabled_gemm_ctrl
+        VX_lsu_mem_zero_rsp #(
+            .NUM_LANES (`NUM_LSU_LANES),
+            .DATA_SIZE (LSU_WORD_SIZE),
+            .TAG_WIDTH (LSU_TAG_WIDTH)
+        ) gemm_ctrl_rsp (
+            .clk    (clk),
+            .reset  (reset),
+            .mem_if (gemm_ctrl_if[i])
+        );
+    end
+
+    for (genvar i = 0; i < NUM_TMEM_BANKS; ++i) begin : g_disabled_gemm_dma_axi
+        assign dma_axi_m[i].aw_id     = '0;
+        assign dma_axi_m[i].aw_addr   = '0;
+        assign dma_axi_m[i].aw_len    = '0;
+        assign dma_axi_m[i].aw_size   = '0;
+        assign dma_axi_m[i].aw_burst  = '0;
+        assign dma_axi_m[i].aw_lock   = 1'b0;
+        assign dma_axi_m[i].aw_cache  = '0;
+        assign dma_axi_m[i].aw_prot   = '0;
+        assign dma_axi_m[i].aw_qos    = '0;
+        assign dma_axi_m[i].aw_region = '0;
+        assign dma_axi_m[i].aw_atop   = '0;
+        assign dma_axi_m[i].aw_user   = '0;
+        assign dma_axi_m[i].aw_valid  = 1'b0;
+
+        assign dma_axi_m[i].w_data    = '0;
+        assign dma_axi_m[i].w_strb    = '0;
+        assign dma_axi_m[i].w_last    = 1'b0;
+        assign dma_axi_m[i].w_user    = '0;
+        assign dma_axi_m[i].w_valid   = 1'b0;
+
+        assign dma_axi_m[i].b_ready   = 1'b0;
+
+        assign dma_axi_m[i].ar_id     = '0;
+        assign dma_axi_m[i].ar_addr   = '0;
+        assign dma_axi_m[i].ar_len    = '0;
+        assign dma_axi_m[i].ar_size   = '0;
+        assign dma_axi_m[i].ar_burst  = '0;
+        assign dma_axi_m[i].ar_lock   = 1'b0;
+        assign dma_axi_m[i].ar_cache  = '0;
+        assign dma_axi_m[i].ar_prot   = '0;
+        assign dma_axi_m[i].ar_qos    = '0;
+        assign dma_axi_m[i].ar_region = '0;
+        assign dma_axi_m[i].ar_user   = '0;
+        assign dma_axi_m[i].ar_valid  = 1'b0;
+
+        assign dma_axi_m[i].r_ready   = 1'b0;
+
+        `UNUSED_VAR (dma_axi_m[i].aw_ready)
+        `UNUSED_VAR (dma_axi_m[i].w_ready)
+        `UNUSED_VAR (dma_axi_m[i].b_id)
+        `UNUSED_VAR (dma_axi_m[i].b_resp)
+        `UNUSED_VAR (dma_axi_m[i].b_user)
+        `UNUSED_VAR (dma_axi_m[i].b_valid)
+        `UNUSED_VAR (dma_axi_m[i].ar_ready)
+        `UNUSED_VAR (dma_axi_m[i].r_id)
+        `UNUSED_VAR (dma_axi_m[i].r_data)
+        `UNUSED_VAR (dma_axi_m[i].r_resp)
+        `UNUSED_VAR (dma_axi_m[i].r_last)
+        `UNUSED_VAR (dma_axi_m[i].r_user)
+        `UNUSED_VAR (dma_axi_m[i].r_valid)
+    end
+
+`ifdef PERF_ENABLE
+    assign accel_perf.gemm_unit       = '0;
+    assign accel_perf.gemm_node       = '0;
+    assign accel_perf.hbm_dma         = '0;
+    assign accel_perf.lmem_dma_input  = '0;
+    assign accel_perf.lmem_dma_weight = '0;
+    assign accel_perf.lmem_dma_sz     = '0;
+    assign accel_perf.lmem_dma_output = '0;
+`endif
+
+`endif
 
 `ifdef PERF_ENABLE
 

@@ -123,6 +123,7 @@ if { $patched_any == 1 } {
 #puts ${vdefines_list}
 
 set chipscope 0
+set hw_debug_module 0
 set num_banks 1
 set merged_mem_if 0
 # Top-level AXI master port count at vortex_afu.v — matches NUM_DMA_CHANNELS in VX_config.vh.
@@ -151,6 +152,9 @@ foreach def $vdefines_list {
     set value [lindex $fields 1]
     if { $name == "CHIPSCOPE" } {
         set chipscope 1
+    }
+    if { $name == "ENABLE_HW_DEBUG_MODULE" } {
+        set hw_debug_module 1
     }
     if { $name == "PLATFORM_MEMORY_NUM_BANKS" && $value ne "" } {
         set num_banks $value
@@ -187,6 +191,12 @@ set ila_afu_probe2_width [expr {$pending_wr_sizew + 1 + $dcr_addr_width + $dcr_d
 
 if { $merged_mem_if == 1 } {
     set num_banks 1
+}
+
+set hw_debug_base 0xC0
+set mem_regs_end [expr {0x30 + $num_ports * 8}]
+if { $hw_debug_module == 1 && $mem_regs_end > $hw_debug_base } {
+    error [format "ENABLE_HW_DEBUG_MODULE register window 0x%02x overlaps MEM registers ending at 0x%02x; increase C_S_AXI_CTRL_ADDR_WIDTH and move the debug base" $hw_debug_base $mem_regs_end]
 }
 
 create_project -force kernel_pack $path_to_tmp_project
@@ -396,6 +406,7 @@ set core [ipx::current_core]
 # (Broad re-add would drag in legitimately unreferenced test tops / sim helpers.)
 set force_packaged_sources {
     VX_dma_engine.sv
+    VX_hw_debug.sv
     vcs_fsdb_init.sv
 }
 
@@ -559,6 +570,28 @@ set_property size           [expr {8*8}]   $reg
 # Associate the bus interface
 set regparam [::ipx::add_register_parameter ASSOCIATED_BUSIF $reg]
 set_property value m_axi_mem_$i $regparam
+}
+
+if { $hw_debug_module == 1 } {
+set reg [::ipx::add_register -quiet "DBG_SEL" $addr_block]
+set_property description    "HW debug indirect selector" $reg
+set_property address_offset 0x0C0 $reg
+set_property size           32    $reg
+
+set reg [::ipx::add_register -quiet "DBG_DATA_LO" $addr_block]
+set_property description    "HW debug indirect read data low" $reg
+set_property address_offset 0x0C4 $reg
+set_property size           32    $reg
+
+set reg [::ipx::add_register -quiet "DBG_DATA_HI" $addr_block]
+set_property description    "HW debug indirect read data high" $reg
+set_property address_offset 0x0C8 $reg
+set_property size           32    $reg
+
+set reg [::ipx::add_register -quiet "DBG_CTRL" $addr_block]
+set_property description    "HW debug control and status" $reg
+set_property address_offset 0x0CC $reg
+set_property size           32    $reg
 }
 
 set_property slave_memory_map_ref "s_axi_ctrl" [::ipx::get_bus_interfaces -of $core "s_axi_ctrl"]

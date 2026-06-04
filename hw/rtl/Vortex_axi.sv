@@ -84,6 +84,13 @@ module Vortex_axi import VX_gpu_pkg::*; #(
     input  wire [VX_DCR_ADDR_WIDTH-1:0] dcr_wr_addr,
     input  wire [VX_DCR_DATA_WIDTH-1:0] dcr_wr_data,
 
+`ifdef ENABLE_HW_DEBUG_MODULE
+    output wire                         hw_debug_pc_valid [HW_DEBUG_NUM_PC_SOURCES],
+    output wire [HW_DEBUG_CORE_ID_WIDTH-1:0] hw_debug_pc_core_id [HW_DEBUG_NUM_PC_SOURCES],
+    output wire [NW_WIDTH-1:0]          hw_debug_pc_wid [HW_DEBUG_NUM_PC_SOURCES],
+    output wire [`XLEN-1:0]             hw_debug_pc [HW_DEBUG_NUM_PC_SOURCES],
+`endif
+
     // Status
     output wire                         busy,
     output wire                         cache_drain
@@ -193,6 +200,13 @@ module Vortex_axi import VX_gpu_pkg::*; #(
         .dcr_wr_valid   (dcr_wr_valid),
         .dcr_wr_addr    (dcr_wr_addr),
         .dcr_wr_data    (dcr_wr_data),
+
+    `ifdef ENABLE_HW_DEBUG_MODULE
+        .hw_debug_pc_valid   (hw_debug_pc_valid),
+        .hw_debug_pc_core_id (hw_debug_pc_core_id),
+        .hw_debug_pc_wid     (hw_debug_pc_wid),
+        .hw_debug_pc         (hw_debug_pc),
+    `endif
 
         .busy           (busy),
         .cache_drain    (vortex_cache_drain)
