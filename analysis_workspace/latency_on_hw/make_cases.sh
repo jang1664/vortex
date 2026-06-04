@@ -2,9 +2,33 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "${SCRIPT_DIR}"
+
 PYTHON_BIN="${PYTHON:-${HOME}/.conda/envs/vortex/bin/python}"
 if [[ ! -x "${PYTHON_BIN}" ]]; then
     PYTHON_BIN="python3"
+fi
+
+usage() {
+    echo "Usage: $0 SUITE_DIR" >&2
+    echo "Example: $0 suites/test2" >&2
+}
+
+if [[ $# -eq 1 && ( "$1" == "-h" || "$1" == "--help" ) ]]; then
+    usage
+    exit 0
+fi
+
+if [[ $# -ne 1 ]]; then
+    usage
+    exit 1
+fi
+
+SUITE_DIR="${1%/}"
+if [[ ! -d "${SUITE_DIR}" ]]; then
+    echo "Error: suite directory does not exist: ${SUITE_DIR}" >&2
+    exit 1
 fi
 
 clean_suite_dir() {
@@ -20,16 +44,16 @@ generate_suite() {
     "${PYTHON_BIN}" -m tools.latency_bench generate-suites --suite "${suite}" --out "${out_dir}" --overwrite
 }
 
-generate_suite suites/llama2_7b_prefill_C1.yaml generated_suites/C1_prefill
-generate_suite suites/llama2_7b_prefill_C2.yaml generated_suites/C2_prefill
-generate_suite suites/llama2_7b_prefill_C3.yaml generated_suites/C3_prefill
-generate_suite suites/llama2_7b_prefill_C4_alone.yaml generated_suites/C4_alone_prefill
-generate_suite suites/llama2_7b_prefill_C4_fused.yaml generated_suites/C4_fused_prefill
-generate_suite suites/llama2_7b_generation_C1.yaml generated_suites/C1_generation
-generate_suite suites/llama2_7b_generation_C2.yaml generated_suites/C2_generation
-generate_suite suites/llama2_7b_generation_C3.yaml generated_suites/C3_generation
-generate_suite suites/llama2_7b_generation_C4_alone.yaml generated_suites/C4_alone_generation
-generate_suite suites/llama2_7b_generation_C4_fused.yaml generated_suites/C4_fused_generation
+generate_suite "${SUITE_DIR}/llama2_7b_prefill_C1.yaml" generated_suites/C1_prefill
+generate_suite "${SUITE_DIR}/llama2_7b_prefill_C2.yaml" generated_suites/C2_prefill
+generate_suite "${SUITE_DIR}/llama2_7b_prefill_C3.yaml" generated_suites/C3_prefill
+generate_suite "${SUITE_DIR}/llama2_7b_prefill_C4_alone.yaml" generated_suites/C4_alone_prefill
+generate_suite "${SUITE_DIR}/llama2_7b_prefill_C4_fused.yaml" generated_suites/C4_fused_prefill
+generate_suite "${SUITE_DIR}/llama2_7b_generation_C1.yaml" generated_suites/C1_generation
+generate_suite "${SUITE_DIR}/llama2_7b_generation_C2.yaml" generated_suites/C2_generation
+generate_suite "${SUITE_DIR}/llama2_7b_generation_C3.yaml" generated_suites/C3_generation
+generate_suite "${SUITE_DIR}/llama2_7b_generation_C4_alone.yaml" generated_suites/C4_alone_generation
+generate_suite "${SUITE_DIR}/llama2_7b_generation_C4_fused.yaml" generated_suites/C4_fused_generation
 
 clean_suite_dir generated_suites/prefill_merged
 "${PYTHON_BIN}" -m tools.latency_bench merge-suites \
