@@ -33,5 +33,5 @@ workloads:
     implemented_only: false
     matrix:
       batch: {values: [1]}
-      gen_kv_len: {values: [8]}
+      gen_kv_len: {values: [32]}
       qblk: 32

@@ -35,5 +35,5 @@ workloads:
       # batch: {values: [1, 8, 64]}
       # prefill_seq_len: {values: [512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072]}
       batch: {values: [1]}
-      prefill_seq_len: {values: [8]}
+      prefill_seq_len: {values: [32]}
       qblk: 32
