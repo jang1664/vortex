@@ -37,6 +37,6 @@ workloads:
     variant: all_fpint_gemm_improve_alone_layout_spinquant
     implemented_only: false
     matrix:
-      batch: {values: [1, 8, 64]}
-      prefill_seq_len: {values: [512, 2048, 8192, 32768, 131072]}
+      batch: {values: [1, 2, 4, 8]}
+      prefill_seq_len: {values: [512, 1024, 2048, 4096]}
       qblk: 32
