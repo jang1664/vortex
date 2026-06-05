@@ -199,7 +199,9 @@ aliases:
             self.assertIn("LATENCY_BENCH_RETRY_MAX_ROUNDS=4", script)
             self.assertIn("LATENCY_BENCH_CURRENT_TIMEOUT_S=1800", script)
             self.assertIn('timeout --kill-after=30s "${LATENCY_BENCH_CURRENT_TIMEOUT_S}s" ./ci/blackbox.sh', script)
-            self.assertIn("printf 'y\\n' | srun", script)
+            self.assertIn('if [[ -n "${SLURM_JOB_ID:-}" ]]; then', script)
+            self.assertIn("timeout --kill-after=10s 60s \"${LATENCY_BENCH_RESET_CMD[@]}\"", script)
+            self.assertIn("timeout --kill-after=10s 60s srun", script)
             self.assertIn("LATENCY_BENCH_RESET_CMD=(xrt-smi reset)", script)
             self.assertIn("attempt_status.csv", script)
             manifest = json.loads((run_dir / "manifest.json").read_text())
@@ -339,7 +341,7 @@ cases:
 
             self.assertEqual(0, rc)
             script = (out_root / "runs" / "cli_run_no_timeout" / "run_fpga_bench.sh").read_text()
-            self.assertNotIn("timeout --kill-after", script)
+            self.assertNotIn("timeout --kill-after=30s", script)
 
     def test_run_accepts_no_prebuild_option(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

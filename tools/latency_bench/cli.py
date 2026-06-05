@@ -66,7 +66,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument(
         "--retry",
         action="store_true",
-        help="Retry timeout failures after resetting the FPGA with srun xrt-smi reset.",
+        help="Retry timeout failures after resetting the FPGA; reset runs directly inside an existing Slurm allocation.",
     )
     run.add_argument(
         "--retry-max-rounds",

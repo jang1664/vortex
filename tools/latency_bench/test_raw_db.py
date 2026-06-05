@@ -497,6 +497,72 @@ exit 0
             self.assertEqual("reset", reset_log.read_text().strip())
             self.assertIn("xrt-smi reset", srun_log.read_text())
 
+    def test_retry_timeout_resets_directly_inside_slurm_allocation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            build_dir = tmp_path / "build"
+            self._write_flaky_timeout_blackbox(build_dir)
+            fpga_bin_dir = tmp_path / "fpga_bin"
+            self._write_fake_fpga_bin(fpga_bin_dir)
+            reset_log = tmp_path / "reset.log"
+            srun_log = tmp_path / "srun.log"
+            fake_bin = tmp_path / "bin"
+            self._write_fake_reset_tools(fake_bin, reset_log, srun_log)
+
+            suite = BenchSuite(
+                name="retry_timeout_suite",
+                defaults=BenchDefaults(warmup=1, iterations=1, blackbox_timeout="10s"),
+                cases=[
+                    BenchCase(
+                        case_id="gemm",
+                        app="fpint_gemm_ffn_hw",
+                        args="-m 1 -n 128 -k 128 -q 32 -t 0 -d 0",
+                        warmup=1,
+                        iterations=1,
+                    )
+                ],
+            )
+            out_root = tmp_path / "latency_db"
+            old_path = os.environ.get("PATH", "")
+            old_slurm_job_id = os.environ.get("SLURM_JOB_ID")
+            os.environ["PATH"] = f"{fake_bin}{os.pathsep}{old_path}"
+            os.environ["SLURM_JOB_ID"] = "test_job"
+            try:
+                rc = run_suite(
+                    suite,
+                    RunOptions(
+                        build_dir=build_dir,
+                        fpga_bin_dir=fpga_bin_dir,
+                        fpga_bin_label="retry_bin",
+                        out_dir=out_root,
+                        platform=suite.defaults.platform,
+                        xrt_device_index=suite.defaults.xrt_device_index,
+                        blackbox_args=(),
+                        blackbox_timeout=suite.defaults.blackbox_timeout,
+                        srun=False,
+                        run_id="retry_timeout_run",
+                        retry=True,
+                        retry_max_rounds=2,
+                        retry_reset_wait="0",
+                    ),
+                )
+            finally:
+                os.environ["PATH"] = old_path
+                if old_slurm_job_id is None:
+                    os.environ.pop("SLURM_JOB_ID", None)
+                else:
+                    os.environ["SLURM_JOB_ID"] = old_slurm_job_id
+
+            self.assertEqual(0, rc)
+            run_dir = out_root / "runs" / "retry_timeout_run"
+            with (run_dir / "attempt_status.csv").open(newline="") as fp:
+                attempt_rows = list(csv.DictReader(fp))
+            self.assertEqual(["1", "0"], [row["reset_ran"] for row in attempt_rows])
+            self.assertEqual("0", attempt_rows[0]["reset_rc"])
+            self.assertEqual("reset", reset_log.read_text().strip())
+            self.assertFalse(srun_log.exists())
+            self.assertIn("timeout reset: direct xrt-smi reset", Path(attempt_rows[0]["log_file"]).read_text())
+
     def test_skip_existing_runs_only_missing_or_failed_measurements(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
