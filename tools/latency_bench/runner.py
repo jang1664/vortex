@@ -24,7 +24,7 @@ DEFAULT_SRUN_ARGS = (
     "--gres=fpga:u55c:1",
     "--cpus-per-task=4",
     "--mem=16G",
-    "--time=01:00:00",
+    "--time=12:00:00",
 )
 DEFAULT_RETRY_MAX_ROUNDS = 5
 DEFAULT_RETRY_TIMEOUT_GROWTH = 1.10

@@ -246,7 +246,7 @@ fi
 # ----------------------------------------------------------------------------
 if [[ "${mode}" == "hw" || "${mode}" == "all" ]]; then
   echo "HW FPGA_BIN=${FPGA_BIN} FPGA_BIN_DIR=${FPGA_BIN_DIR} FPGA_BIN_CONFIGS=${FPGA_BIN_CONFIGS}"
-  srun --gres=fpga:u55c:1 --cpus-per-task=4 --mem=16G --time=01:00:00 --pty bash -c "\
+  srun --gres=fpga:u55c:1 --cpus-per-task=4 --mem=16G --time=12:00:00 --pty bash -c "\
   CONFIGS=\"${CONFIGS}\" \
   FPGA_BIN_DIR=\"${FPGA_BIN_DIR}\" \
   PLATFORM=xilinx_u55c_gen3x16_xdma_3_202210_1 \
