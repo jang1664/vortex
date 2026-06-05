@@ -804,10 +804,11 @@ public:
       if (is_done)
         break;
     #ifdef VX_HW_DEBUG_READY_WAIT_POLL
-      if (hw_debug_poll_elapsed_ms == 0 || hw_debug_poll_elapsed_ms >= hw_debug_poll_period_ms) {
+      // if (hw_debug_poll_elapsed_ms == 0 || hw_debug_poll_elapsed_ms >= hw_debug_poll_period_ms) {
         this->poll_hw_debug_flags(&hw_debug_previous);
+        this->dump_hw_debug();
         hw_debug_poll_elapsed_ms = 0;
-      }
+      // }
     #endif
       if (0 == timeout) {
       #ifdef ENABLE_HW_DEBUG_MODULE
