@@ -13,13 +13,27 @@ from .plot import (
     DEFAULT_BAR_HUE,
     DEFAULT_BAR_ROW,
     DEFAULT_BAR_X,
+    DEFAULT_LEGEND_POSITION,
+    DEFAULT_RELATIVE_SCOPE,
     DEFAULT_STACK_BY,
+    LEGEND_POSITION_CHOICES,
+    RELATIVE_SCOPE_CHOICES,
     STACK_BY_COLUMNS,
     SuiteBarPlotOptions,
     visualize,
     visualize_suites,
 )
-from .runner import DEFAULT_SRUN_ARGS, RunOptions, default_run_id, resolve_fpga_bin_config, run_suite
+from .runner import (
+    DEFAULT_RETRY_MAX_ROUNDS,
+    DEFAULT_RETRY_RESET_CMD,
+    DEFAULT_RETRY_RESET_WAIT,
+    DEFAULT_RETRY_TIMEOUT_GROWTH,
+    DEFAULT_SRUN_ARGS,
+    RunOptions,
+    default_run_id,
+    resolve_fpga_bin_config,
+    run_suite,
+)
 from .suite import apply_case_filters, find_repo_root, load_suite
 
 
@@ -46,6 +60,33 @@ def build_parser() -> argparse.ArgumentParser:
         "--blackbox-timeout",
         default=None,
         help="GNU timeout duration per blackbox.sh execution, e.g. 30m or 2h; 0 disables.",
+    )
+    run.add_argument(
+        "--retry",
+        action="store_true",
+        help="Retry timeout failures after resetting the FPGA with srun xrt-smi reset.",
+    )
+    run.add_argument(
+        "--retry-max-rounds",
+        type=int,
+        default=DEFAULT_RETRY_MAX_ROUNDS,
+        help=f"Maximum total execution rounds when --retry is enabled, including the first run (default: {DEFAULT_RETRY_MAX_ROUNDS}).",
+    )
+    run.add_argument(
+        "--retry-timeout-growth",
+        type=float,
+        default=DEFAULT_RETRY_TIMEOUT_GROWTH,
+        help=f"Timeout growth factor between retry rounds (default: {DEFAULT_RETRY_TIMEOUT_GROWTH:.2f}).",
+    )
+    run.add_argument(
+        "--retry-reset-wait",
+        default=DEFAULT_RETRY_RESET_WAIT,
+        help=f"Sleep duration after timeout reset when --retry is enabled (default: {DEFAULT_RETRY_RESET_WAIT}).",
+    )
+    run.add_argument(
+        "--retry-reset-cmd",
+        default=DEFAULT_RETRY_RESET_CMD,
+        help=f"Reset command run under srun after timeout (default: {DEFAULT_RETRY_RESET_CMD!r}).",
     )
     run.add_argument(
         "--blackbox-arg",
@@ -108,6 +149,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     vis.add_argument("--fpga-bin-label", default=None, help="Only use raw DB rows with this fpga_bin_label.")
     vis.add_argument("--xclbin-sha256", default=None, help="Only use raw DB rows with this xclbin_sha256.")
+    vis.add_argument(
+        "--no-match-fpga-bin",
+        dest="match_fpga_bin",
+        action="store_false",
+        default=True,
+        help="Do not require each suite case to match its resolved fpga_bin_label.",
+    )
     vis.add_argument("--x", choices=BAR_AXIS_CHOICES, default=DEFAULT_BAR_X, help="Bar chart x axis.")
     vis.add_argument("--hue", choices=BAR_AXIS_CHOICES, default=DEFAULT_BAR_HUE, help="Grouped bar hue axis.")
     vis.add_argument("--row", choices=BAR_AXIS_CHOICES, default=DEFAULT_BAR_ROW, help="Subplot row axis.")
@@ -150,9 +198,33 @@ def build_parser() -> argparse.ArgumentParser:
         help="Normalize plotted values so the smallest positive bar is 1.0.",
     )
     vis.add_argument(
+        "--relative-scope",
+        choices=RELATIVE_SCOPE_CHOICES,
+        default=DEFAULT_RELATIVE_SCOPE,
+        help="Scope used to choose the relative baseline when --relative is set.",
+    )
+    vis.add_argument(
         "--share-y",
         action="store_true",
         help="Share the y-axis scale across subplot panels; disabled by default.",
+    )
+    vis.add_argument(
+        "--legend-position",
+        choices=LEGEND_POSITION_CHOICES,
+        default=DEFAULT_LEGEND_POSITION,
+        help="Legend placement for suite/raw_db bar plots.",
+    )
+    vis.add_argument("--legend-ncol", type=int, default=None, help="Override legend column count.")
+    vis.add_argument("--figure-title", default=None, help="Optional figure title.")
+    vis.add_argument("--x-label", default=None, help="Override x-axis label.")
+    vis.add_argument("--y-label", default=None, help="Override y-axis label.")
+    vis.add_argument("--legend-title", default=None, help="Override legend title.")
+    vis.add_argument(
+        "--value-order",
+        action="append",
+        default=[],
+        metavar="AXIS=VALUE[,VALUE...]",
+        help="Explicit display order for axis values, e.g. variant=C1,C2,C3. Repeat for multiple axes.",
     )
 
     cmp = sub.add_parser("compare", help="Merge multiple run outputs and generate candidate comparison plots.")
@@ -203,6 +275,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     comp.add_argument("--fpga-bin-label", default=None, help="Only use rows with this fpga_bin_label.")
     comp.add_argument("--xclbin-sha256", default=None, help="Only use rows with this xclbin_sha256.")
+    comp.add_argument(
+        "--no-match-fpga-bin",
+        dest="match_fpga_bin",
+        action="store_false",
+        default=True,
+        help="Do not require each suite case to match its resolved fpga_bin_label.",
+    )
 
     gen = sub.add_parser(
         "generate-suites",
@@ -262,6 +341,23 @@ def merge_configs_extra(cli_configs: str) -> str:
     return " ".join(parts)
 
 
+def parse_value_order_specs(specs: list[str]) -> dict[str, tuple[str, ...]]:
+    valid_axes = {*BAR_AXIS_CHOICES, *STACK_BY_COLUMNS, "stack_key"} - {"none"}
+    orders: dict[str, tuple[str, ...]] = {}
+    for spec in specs:
+        if "=" not in spec:
+            raise ValueError(f"--value-order must be AXIS=VALUE[,VALUE...], got: {spec}")
+        axis, raw_values = spec.split("=", 1)
+        axis = axis.strip()
+        if axis not in valid_axes:
+            raise ValueError(f"unsupported --value-order axis: {axis}")
+        values = tuple(value.strip() for value in raw_values.split(",") if value.strip())
+        if not values:
+            raise ValueError(f"--value-order for {axis} must include at least one value")
+        orders[axis] = values
+    return orders
+
+
 def run_cmd(args: argparse.Namespace) -> int:
     repo_root = find_repo_root()
     suite = load_suite(
@@ -305,6 +401,11 @@ def run_cmd(args: argparse.Namespace) -> int:
         skip_existing=args.skip_existing,
         prebuild=not args.no_prebuild,
         case_filters=tuple(args.filter),
+        retry=args.retry,
+        retry_max_rounds=args.retry_max_rounds,
+        retry_timeout_growth=args.retry_timeout_growth,
+        retry_reset_wait=args.retry_reset_wait,
+        retry_reset_cmd=args.retry_reset_cmd,
     )
     rc = run_suite(suite, options)
     results_csv = options.out_dir / "runs" / run_id / "results.csv"
@@ -328,6 +429,10 @@ def main(argv: list[str] | None = None) -> int:
             parser.error("visualize requires either --results or both --suite and --raw-db")
         repo_root = find_repo_root()
         suites = [load_suite(Path(path), repo_root=repo_root) for path in args.suite]
+        try:
+            value_orders = parse_value_order_specs(args.value_order)
+        except ValueError as exc:
+            parser.error(str(exc))
         visualize_suites(
             suites,
             SuiteBarPlotOptions(
@@ -344,9 +449,18 @@ def main(argv: list[str] | None = None) -> int:
                 stack_by=args.stack_by,
                 value_labels=args.value_labels,
                 relative=args.relative,
+                relative_scope=args.relative_scope,
                 share_y=args.share_y,
                 fpga_bin_label=args.fpga_bin_label,
                 xclbin_sha256=args.xclbin_sha256,
+                match_fpga_bin=args.match_fpga_bin,
+                legend_position=args.legend_position,
+                legend_ncol=args.legend_ncol,
+                figure_title=args.figure_title,
+                x_label=args.x_label,
+                y_label=args.y_label,
+                legend_title=args.legend_title,
+                value_orders=value_orders,
             ),
         )
         return 0
@@ -375,6 +489,7 @@ def main(argv: list[str] | None = None) -> int:
                 missing=args.missing,
                 fpga_bin_label=args.fpga_bin_label,
                 xclbin_sha256=args.xclbin_sha256,
+                match_fpga_bin=args.match_fpga_bin,
             ),
         )
         print(f"wrote {composed_csv}")

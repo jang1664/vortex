@@ -427,7 +427,8 @@ python -m tools.latency_bench visualize \
 ```
 
 The suite/raw DB mode expands the input suites, matches passing raw DB rows by
-`app` and normalized `args`, applies `calls_per_forward`, and writes
+`app`, normalized `args`, and the case's resolved `fpga_bin_label`, applies
+`calls_per_forward`, and writes
 `composed_cases.csv`, `plot_data.csv`, `plot_stack_data.csv`,
 `bar_total_<metric>.png`, and `bar_total_<metric>.pdf`. The default plot layout
 is `x=seq_len`, `hue=variant`, `row=stage`, and `col=batch`. Any of those axes
@@ -441,8 +442,22 @@ workload components. `--stack-by` selects the segment label from `name`,
 `--no-stacked` to draw only one total bar per axis/hue group. Use `--relative`
 to normalize plotted bar totals so the smallest positive total is `1.0`; stacked
 segments use the same baseline, so each stack still sums to the relative total.
+`--relative-scope` controls where that baseline is selected: `global` preserves
+the original whole-figure behavior, `subplot` normalizes independently per
+subplot, and `x_tick` normalizes independently per x tick within each subplot.
 Subplot y-axes are independent by default; add `--share-y` when panels should
-use one shared y-axis scale.
+use one shared y-axis scale. Use `--legend-position`, `--legend-ncol`,
+`--figure-title`, `--x-label`, `--y-label`, and `--legend-title` to adjust
+presentation without changing the raw DB data. Use `--value-order` to control
+axis value order, for example `--value-order variant=C1,C2,C3,C4_fused`; values
+not listed in the explicit order are appended using the default sort.
+
+Use original workload suites for model-level comparisons; generated/merged
+suites are execution shards split by FPGA bin. By default, `compose` and
+`visualize` resolve each suite case through `fpga_bins` and only use raw DB rows
+from that `fpga_bin_label`, so measurements from different FPGA binaries are not
+mixed when `app` and `args` are identical. Add `--no-match-fpga-bin` only for
+legacy raw DBs that do not carry `fpga_bin_label`.
 
 Repeated raw DB measurements use `--select median` by default. Missing suite
 cases use `--missing nan` by default so partially completed hardware sweeps can

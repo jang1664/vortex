@@ -8,7 +8,7 @@ from typing import Any
 
 import pandas as pd
 
-from .suite import BenchSuite, suite_to_rows
+from .suite import BenchSuite, resolve_case_fpga_bin, suite_to_rows
 
 
 METRIC_COLUMNS = ("avg_us", "p50_us", "p95_us", "min_us", "max_us")
@@ -25,6 +25,7 @@ class ComposeOptions:
     missing: str = "error"
     fpga_bin_label: str | None = None
     xclbin_sha256: str | None = None
+    match_fpga_bin: bool = True
 
 
 def normalize_args(args: str) -> str:
@@ -104,6 +105,7 @@ def _compose_row(
     *,
     metric: str,
     select: str,
+    expected_fpga_bin_label: str,
 ) -> dict[str, Any]:
     value, selected = _select_value(matches, metric, select)
     calls = float(case["calls_per_forward"])
@@ -117,6 +119,8 @@ def _compose_row(
         "compose_status": "pass",
         "source_raw_dbs": _unique_join(matches["raw_db"]),
         "source_run_ids": _unique_join(matches["run_id"]) if "run_id" in matches.columns else "",
+        "expected_fpga_bin_label": expected_fpga_bin_label,
+        "source_fpga_bin_labels": _unique_join(matches["fpga_bin_label"]) if "fpga_bin_label" in matches.columns else "",
         "source_xclbin_sha256s": _unique_join(matches["xclbin_sha256"]) if "xclbin_sha256" in matches.columns else "",
     }
     if selected is not None:
@@ -141,6 +145,8 @@ def compose_latency(suite: BenchSuite, options: ComposeOptions) -> pd.DataFrame:
     raw = raw[raw["status"].astype(str) == "pass"].copy()
     raw["_normalized_args"] = raw["args"].astype(str).map(normalize_args)
 
+    if options.match_fpga_bin:
+        _require_columns(raw, ["fpga_bin_label"])
     if options.fpga_bin_label:
         _require_columns(raw, ["fpga_bin_label"])
         raw = raw[raw["fpga_bin_label"].astype(str) == options.fpga_bin_label].copy()
@@ -150,12 +156,16 @@ def compose_latency(suite: BenchSuite, options: ComposeOptions) -> pd.DataFrame:
 
     rows = []
     missing_cases = []
-    for case in suite_to_rows(suite):
+    case_rows = suite_to_rows(suite)
+    for case_obj, case in zip(suite.cases, case_rows):
         normalized_args = normalize_args(str(case["args"]))
+        expected_fpga_bin_label = resolve_case_fpga_bin(suite, case_obj) if options.match_fpga_bin else ""
         matches = raw[
             (raw["app"].astype(str) == str(case["app"]))
             & (raw["_normalized_args"] == normalized_args)
         ].copy()
+        if options.match_fpga_bin:
+            matches = matches[matches["fpga_bin_label"].astype(str) == expected_fpga_bin_label].copy()
         if matches.empty:
             missing_cases.append(str(case["case_id"]))
             if options.missing == "skip":
@@ -171,6 +181,8 @@ def compose_latency(suite: BenchSuite, options: ComposeOptions) -> pd.DataFrame:
                     "compose_status": "missing",
                     "source_raw_dbs": "",
                     "source_run_ids": "",
+                    "expected_fpga_bin_label": expected_fpga_bin_label,
+                    "source_fpga_bin_labels": "",
                     "source_xclbin_sha256s": "",
                     "selected_run_id": "",
                     "selected_timestamp_utc": "",
@@ -178,7 +190,15 @@ def compose_latency(suite: BenchSuite, options: ComposeOptions) -> pd.DataFrame:
                 continue
             continue
         try:
-            rows.append(_compose_row(case, matches, metric=options.metric, select=options.select))
+            rows.append(
+                _compose_row(
+                    case,
+                    matches,
+                    metric=options.metric,
+                    select=options.select,
+                    expected_fpga_bin_label=expected_fpga_bin_label,
+                )
+            )
         except ValueError as exc:
             raise ValueError(f"{case['case_id']}: {exc}") from exc
 

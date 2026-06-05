@@ -171,6 +171,42 @@ aliases:
             self.assertIn("--build-only", script)
             self.assertIn("--run-only", script)
 
+    def test_run_retry_writes_retry_reset_script(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            build_dir, fpga_bin, suite = self._write_fake_inputs(tmp_path)
+            out_root = tmp_path / "out"
+            rc = main([
+                "run",
+                "--build-dir", str(build_dir),
+                "--fpga-bin", str(fpga_bin),
+                "--suite", str(suite),
+                "--out", str(out_root),
+                "--run-id", "cli_retry_run",
+                "--no-srun",
+                "--dry-run",
+                "--blackbox-timeout", "30m",
+                "--retry",
+                "--retry-max-rounds", "4",
+                "--retry-timeout-growth", "1.2",
+                "--retry-reset-wait", "0",
+            ])
+
+            self.assertEqual(0, rc)
+            run_dir = out_root / "runs" / "cli_retry_run"
+            script = (run_dir / "run_fpga_bench.sh").read_text()
+            self.assertIn("LATENCY_BENCH_RETRY_ENABLED=1", script)
+            self.assertIn("LATENCY_BENCH_RETRY_MAX_ROUNDS=4", script)
+            self.assertIn("LATENCY_BENCH_CURRENT_TIMEOUT_S=1800", script)
+            self.assertIn('timeout --kill-after=30s "${LATENCY_BENCH_CURRENT_TIMEOUT_S}s" ./ci/blackbox.sh', script)
+            self.assertIn("printf 'y\\n' | srun", script)
+            self.assertIn("LATENCY_BENCH_RESET_CMD=(xrt-smi reset)", script)
+            self.assertIn("attempt_status.csv", script)
+            manifest = json.loads((run_dir / "manifest.json").read_text())
+            self.assertTrue(manifest["retry"])
+            self.assertEqual(4, manifest["retry_max_rounds"])
+            self.assertEqual(1.2, manifest["retry_timeout_growth"])
+
     def test_run_accepts_skip_existing_option(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)

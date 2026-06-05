@@ -3,9 +3,9 @@ from __future__ import annotations
 import json
 import math
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Mapping
 
 import matplotlib
 
@@ -14,7 +14,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 from .compose import ComposeOptions, compose_latency, normalize_args
-from .suite import BenchCase, BenchDefaults, BenchSuite
+from .suite import BenchCase, BenchDefaults, BenchSuite, resolve_case_fpga_bin
 
 
 BAR_AXIS_COLUMNS = ("stage", "seq_len", "batch", "variant")
@@ -25,7 +25,11 @@ DEFAULT_BAR_HUE = "variant"
 DEFAULT_BAR_ROW = "stage"
 DEFAULT_BAR_COL = "batch"
 DEFAULT_STACK_BY = "name"
+DEFAULT_RELATIVE_SCOPE = "global"
+DEFAULT_LEGEND_POSITION = "right"
 _NONE_AXIS = "none"
+RELATIVE_SCOPE_CHOICES = ("global", "subplot", "x_tick")
+LEGEND_POSITION_CHOICES = ("right", "bottom", "top", "none")
 BLUE_GREEN_PALETTE = (
     "#0b3d91",
     "#006d77",
@@ -55,9 +59,21 @@ class SuiteBarPlotOptions:
     stack_by: str = DEFAULT_STACK_BY
     value_labels: bool = True
     relative: bool = False
+    relative_scope: str = DEFAULT_RELATIVE_SCOPE
     share_y: bool = False
     fpga_bin_label: str | None = None
     xclbin_sha256: str | None = None
+    match_fpga_bin: bool = True
+    legend_position: str = DEFAULT_LEGEND_POSITION
+    legend_ncol: int | None = None
+    figure_title: str | None = None
+    subplot_title_template: str | None = None
+    x_label: str | None = None
+    y_label: str | None = None
+    legend_title: str | None = None
+    axis_label_map: Mapping[str, str] = field(default_factory=dict)
+    label_maps: Mapping[str, Mapping[object, str]] = field(default_factory=dict)
+    value_orders: Mapping[str, Iterable[object]] = field(default_factory=dict)
 
 
 def _save(fig, out_dir: Path, name: str) -> None:
@@ -137,6 +153,7 @@ def _case_dedupe_key(case: BenchCase) -> tuple[object, ...]:
         case.calls_per_forward,
         case.warmup,
         case.iterations,
+        case.fpga_bin,
     )
 
 
@@ -152,7 +169,7 @@ def _unique_join(values: Iterable[str]) -> str:
     return ";".join(out)
 
 
-def _combine_suites(suites: list[BenchSuite]) -> tuple[BenchSuite, dict[str, str]]:
+def _combine_suites(suites: list[BenchSuite], *, match_fpga_bin: bool = True) -> tuple[BenchSuite, dict[str, str]]:
     if not suites:
         raise ValueError("at least one suite is required")
 
@@ -161,6 +178,8 @@ def _combine_suites(suites: list[BenchSuite]) -> tuple[BenchSuite, dict[str, str
     source_suites: dict[str, list[str]] = {}
     for suite in suites:
         for case in suite.cases:
+            if match_fpga_bin:
+                case = replace(case, fpga_bin=resolve_case_fpga_bin(suite, case))
             key = _case_dedupe_key(case)
             source_suites.setdefault(case.case_id, []).append(suite.name)
             if key in seen:
@@ -265,7 +284,7 @@ def prepare_suite_bar_data(
     suites: list[BenchSuite],
     options: SuiteBarPlotOptions,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    combined_suite, source_suites = _combine_suites(suites)
+    combined_suite, source_suites = _combine_suites(suites, match_fpga_bin=options.match_fpga_bin)
     composed = compose_latency(
         combined_suite,
         ComposeOptions(
@@ -276,6 +295,7 @@ def prepare_suite_bar_data(
             missing=options.missing,
             fpga_bin_label=options.fpga_bin_label,
             xclbin_sha256=options.xclbin_sha256,
+            match_fpga_bin=options.match_fpga_bin,
         ),
     )
     composed = _add_bar_axis_columns(composed, source_suites)
@@ -292,6 +312,8 @@ def prepare_suite_bar_data(
             missing_case_count=("compose_status", lambda values: int((values.astype(str) != "pass").sum())),
             source_suites=("source_suites", lambda values: _unique_join(values.astype(str))),
             source_raw_dbs=("source_raw_dbs", lambda values: _unique_join(values.astype(str))),
+            expected_fpga_bin_labels=("expected_fpga_bin_label", lambda values: _unique_join(values.astype(str))),
+            source_fpga_bin_labels=("source_fpga_bin_labels", lambda values: _unique_join(values.astype(str))),
         )
     )
     plot_data.insert(0, "metric", options.metric)
@@ -306,6 +328,8 @@ def prepare_suite_bar_data(
             source_cases=("case_id", lambda values: _unique_join(values.astype(str))),
             source_suites=("source_suites", lambda values: _unique_join(values.astype(str))),
             source_raw_dbs=("source_raw_dbs", lambda values: _unique_join(values.astype(str))),
+            expected_fpga_bin_labels=("expected_fpga_bin_label", lambda values: _unique_join(values.astype(str))),
+            source_fpga_bin_labels=("source_fpga_bin_labels", lambda values: _unique_join(values.astype(str))),
         )
     )
     stack_data.insert(0, "metric", options.metric)
@@ -334,6 +358,21 @@ def _validate_bar_axes(options: SuiteBarPlotOptions) -> tuple[str, str | None, s
     return x, hue, row, col
 
 
+def _validate_bar_options(options: SuiteBarPlotOptions) -> None:
+    if options.relative_scope not in RELATIVE_SCOPE_CHOICES:
+        raise ValueError(
+            f"unsupported relative scope: {options.relative_scope}; "
+            f"expected one of {', '.join(RELATIVE_SCOPE_CHOICES)}"
+        )
+    if options.legend_position not in LEGEND_POSITION_CHOICES:
+        raise ValueError(
+            f"unsupported legend position: {options.legend_position}; "
+            f"expected one of {', '.join(LEGEND_POSITION_CHOICES)}"
+        )
+    if options.legend_ncol is not None and options.legend_ncol <= 0:
+        raise ValueError("legend_ncol must be positive when set")
+
+
 def _sort_key(value: object) -> tuple[int, float | str]:
     if value is None or (isinstance(value, float) and math.isnan(value)):
         return (2, "")
@@ -343,8 +382,47 @@ def _sort_key(value: object) -> tuple[int, float | str]:
         return (1, str(value))
 
 
-def _ordered_values(series: pd.Series) -> list[object]:
+def _values_match(left: object, right: object) -> bool:
+    if left == right:
+        return True
+    return str(left) == str(right)
+
+
+def _explicit_value_order(
+    values: list[object],
+    axis: str | None,
+    options: SuiteBarPlotOptions | None,
+) -> list[object] | None:
+    if axis is None or options is None:
+        return None
+    explicit = options.value_orders.get(axis)
+    if explicit is None and axis == "stack_key":
+        explicit = options.value_orders.get(options.stack_by)
+    if explicit is None:
+        return None
+
+    ordered: list[object] = []
+    used = [False] * len(values)
+    for requested in explicit:
+        for idx, value in enumerate(values):
+            if used[idx] or not _values_match(value, requested):
+                continue
+            ordered.append(value)
+            used[idx] = True
+            break
+    rest = sorted((value for idx, value in enumerate(values) if not used[idx]), key=_sort_key)
+    return [*ordered, *rest]
+
+
+def _ordered_values(
+    series: pd.Series,
+    axis: str | None = None,
+    options: SuiteBarPlotOptions | None = None,
+) -> list[object]:
     values = series.drop_duplicates().tolist()
+    explicit = _explicit_value_order(values, axis, options)
+    if explicit is not None:
+        return explicit
     if values and all(str(value) in {"prefill", "generation"} for value in values):
         order = {"prefill": 0, "generation": 1}
         return sorted(values, key=lambda value: order[str(value)])
@@ -375,17 +453,103 @@ def _aggregate_stack_for_axes(stack_data: pd.DataFrame, axes: tuple[str, ...]) -
     )
 
 
-def _relative_baseline(rows: pd.DataFrame, value_col: str) -> float:
-    values = pd.to_numeric(rows[value_col], errors="coerce").fillna(0.0)
+def _series_relative_baseline(values: pd.Series) -> float:
+    values = pd.to_numeric(values, errors="coerce").fillna(0.0)
     positive = values[values > 0]
     return float(positive.min()) if not positive.empty else 1.0
 
 
-def _apply_relative_values(rows: pd.DataFrame, value_col: str, baseline: float) -> pd.DataFrame:
+def _relative_group_axes(scope: str, x: str, row: str | None, col: str | None) -> tuple[str, ...]:
+    if scope == "global":
+        return ()
+    if scope == "subplot":
+        return tuple(axis for axis in (row, col) if axis is not None)
+    if scope == "x_tick":
+        return tuple(axis for axis in (row, col, x) if axis is not None)
+    raise ValueError(f"unsupported relative scope: {scope}")
+
+
+def _relative_baselines(rows: pd.DataFrame, value_col: str, group_axes: tuple[str, ...]) -> pd.DataFrame:
+    baseline_col = "_relative_baseline"
+    if not group_axes:
+        return pd.DataFrame({baseline_col: [_series_relative_baseline(rows[value_col])]})
+    return (
+        rows.groupby(list(group_axes), dropna=False, as_index=False, sort=True)[value_col]
+        .agg(_series_relative_baseline)
+        .rename(columns={value_col: baseline_col})
+    )
+
+
+def _apply_relative_values(
+    rows: pd.DataFrame,
+    value_col: str,
+    baselines: pd.DataFrame,
+    group_axes: tuple[str, ...],
+) -> pd.DataFrame:
     out = rows.copy()
     values = pd.to_numeric(out[value_col], errors="coerce").fillna(0.0)
-    out[value_col] = values / baseline
+    if group_axes:
+        out = out.merge(baselines, on=list(group_axes), how="left")
+        baseline_values = pd.to_numeric(out["_relative_baseline"], errors="coerce").fillna(1.0)
+    else:
+        baseline_values = pd.Series(float(baselines.loc[0, "_relative_baseline"]), index=out.index)
+    baseline_values = baseline_values.mask(baseline_values <= 0, 1.0)
+    out[value_col] = values / baseline_values
+    out = out.drop(columns=["_relative_baseline"])
     return out
+
+
+def _axis_label(axis: str | None, options: SuiteBarPlotOptions) -> str:
+    if axis is None:
+        return ""
+    return str(options.axis_label_map.get(axis, axis))
+
+
+def _mapped_value(axis: str | None, value: object, options: SuiteBarPlotOptions) -> str:
+    if axis is None:
+        return str(value)
+    mapping = options.label_maps.get(axis, {})
+    for key in (value, str(value)):
+        try:
+            if key in mapping:
+                return str(mapping[key])
+        except TypeError:
+            continue
+    return str(value)
+
+
+def _stack_label(value: object, options: SuiteBarPlotOptions) -> str:
+    if "stack_key" in options.label_maps:
+        return _mapped_value("stack_key", value, options)
+    return _mapped_value(options.stack_by, value, options)
+
+
+def _subplot_title(
+    row: str | None,
+    row_value: object,
+    col: str | None,
+    col_value: object,
+    options: SuiteBarPlotOptions,
+) -> str:
+    parts = []
+    if row:
+        parts.append(f"{_axis_label(row, options)}={_mapped_value(row, row_value, options)}")
+    if col:
+        parts.append(f"{_axis_label(col, options)}={_mapped_value(col, col_value, options)}")
+    default = ", ".join(parts) if parts else "total"
+    if not options.subplot_title_template:
+        return default
+    return options.subplot_title_template.format(
+        parts=default,
+        row_axis=row or "",
+        row_axis_label=_axis_label(row, options),
+        row_value="" if row is None else row_value,
+        row_value_label="" if row is None else _mapped_value(row, row_value, options),
+        col_axis=col or "",
+        col_axis_label=_axis_label(col, options),
+        col_value="" if col is None else col_value,
+        col_value_label="" if col is None else _mapped_value(col, col_value, options),
+    )
 
 
 def _axis_filter(rows: pd.DataFrame, axis: str | None, value: object) -> pd.Series:
@@ -431,6 +595,8 @@ def _format_value_label(value: float, relative: bool) -> str:
 
 
 def _bar_ylabel(options: SuiteBarPlotOptions) -> str:
+    if options.y_label is not None:
+        return options.y_label
     return "relative latency (best = 1.0)" if options.relative else f"weighted total {options.metric} (us)"
 
 
@@ -439,13 +605,15 @@ def plot_suite_bar_grid(plot_data: pd.DataFrame, stack_data: pd.DataFrame, optio
         raise ValueError("no plot data to visualize")
 
     x, hue, row, col = _validate_bar_axes(options)
+    _validate_bar_options(options)
     active_axes = tuple(axis for axis in (x, hue, row, col) if axis is not None)
     rows = _aggregate_for_axes(plot_data, active_axes)
     value_col = "plot_value"
     rows[value_col] = rows["total_latency_us"]
-    baseline = _relative_baseline(rows, value_col)
+    relative_group_axes = _relative_group_axes(options.relative_scope, x, row, col)
+    baselines = _relative_baselines(rows, value_col, relative_group_axes)
     if options.relative:
-        rows = _apply_relative_values(rows, value_col, baseline)
+        rows = _apply_relative_values(rows, value_col, baselines, relative_group_axes)
 
     if hue is None:
         hue_key = "__series__"
@@ -453,20 +621,20 @@ def plot_suite_bar_grid(plot_data: pd.DataFrame, stack_data: pd.DataFrame, optio
     else:
         hue_key = hue
 
-    row_values = _ordered_values(rows[row]) if row else [None]
-    col_values = _ordered_values(rows[col]) if col else [None]
-    x_values = _ordered_values(rows[x])
-    hue_values = _ordered_values(rows[hue_key])
+    row_values = _ordered_values(rows[row], axis=row, options=options) if row else [None]
+    col_values = _ordered_values(rows[col], axis=col, options=options) if col else [None]
+    x_values = _ordered_values(rows[x], axis=x, options=options)
+    hue_values = _ordered_values(rows[hue_key], axis=hue, options=options)
     stack_rows = pd.DataFrame()
     stack_values: list[object] = []
     if options.stacked:
         stack_rows = _aggregate_stack_for_axes(stack_data, active_axes)
         stack_rows[value_col] = stack_rows["total_latency_us"]
         if options.relative:
-            stack_rows = _apply_relative_values(stack_rows, value_col, baseline)
+            stack_rows = _apply_relative_values(stack_rows, value_col, baselines, relative_group_axes)
         if hue is None:
             stack_rows[hue_key] = "total"
-        stack_values = _ordered_values(stack_rows["stack_key"])
+        stack_values = _ordered_values(stack_rows["stack_key"], axis="stack_key", options=options)
 
     nrows = len(row_values)
     ncols = len(col_values)
@@ -479,6 +647,8 @@ def plot_suite_bar_grid(plot_data: pd.DataFrame, stack_data: pd.DataFrame, optio
         squeeze=False,
         sharey=options.share_y,
     )
+    if options.figure_title:
+        fig.suptitle(options.figure_title)
 
     colors = BLUE_GREEN_PALETTE
     bar_width = min(0.8 / max(1, len(hue_values)), 0.28)
@@ -512,7 +682,7 @@ def plot_suite_bar_grid(plot_data: pd.DataFrame, stack_data: pd.DataFrame, optio
                             heights,
                             width=bar_width,
                             bottom=bottoms,
-                            label=str(stack_value),
+                            label=_stack_label(stack_value, options),
                             color=colors[stack_idx % len(colors)],
                             edgecolor="white",
                             linewidth=0.5,
@@ -552,7 +722,7 @@ def plot_suite_bar_grid(plot_data: pd.DataFrame, stack_data: pd.DataFrame, optio
                         positions,
                         heights,
                         width=bar_width,
-                        label=str(hue_value),
+                        label=_mapped_value(hue, hue_value, options),
                         color=colors[hue_idx % len(colors)],
                         edgecolor="white",
                         linewidth=0.5,
@@ -577,12 +747,7 @@ def plot_suite_bar_grid(plot_data: pd.DataFrame, stack_data: pd.DataFrame, optio
                                 level=2 if options.value_labels else 1,
                             )
 
-            title_parts = []
-            if row:
-                title_parts.append(f"{row}={row_value}")
-            if col:
-                title_parts.append(f"{col}={col_value}")
-            ax.set_title(", ".join(title_parts) if title_parts else "total")
+            ax.set_title(_subplot_title(row, row_value, col, col_value, options))
             if options.stacked and hue is not None and len(hue_values) > 1:
                 tick_positions = []
                 tick_labels = []
@@ -590,13 +755,15 @@ def plot_suite_bar_grid(plot_data: pd.DataFrame, stack_data: pd.DataFrame, optio
                     for hue_idx, hue_value in enumerate(hue_values):
                         offset = (hue_idx - (len(hue_values) - 1) / 2.0) * bar_width
                         tick_positions.append(pos + offset)
-                        tick_labels.append(f"{x_value}\n{hue_value}")
+                        tick_labels.append(
+                            f"{_mapped_value(x, x_value, options)}\n{_mapped_value(hue, hue_value, options)}"
+                        )
                 ax.set_xticks(tick_positions)
                 ax.set_xticklabels(tick_labels, rotation=25, ha="right")
             else:
                 ax.set_xticks(x_positions)
-                ax.set_xticklabels([str(value) for value in x_values], rotation=25, ha="right")
-            ax.set_xlabel(x)
+                ax.set_xticklabels([_mapped_value(x, value, options) for value in x_values], rotation=25, ha="right")
+            ax.set_xlabel(options.x_label if options.x_label is not None else _axis_label(x, options))
             ax.set_ylabel(_bar_ylabel(options))
             ax.grid(axis="y", alpha=0.25)
             if not options.share_y:
@@ -607,20 +774,48 @@ def plot_suite_bar_grid(plot_data: pd.DataFrame, stack_data: pd.DataFrame, optio
             _set_bar_ylim(ax, global_max_height)
 
     handles, labels = axes[0][0].get_legend_handles_labels()
-    if handles:
+    if handles and options.legend_position != "none":
         by_label = dict(zip(labels, handles))
-        legend_title = options.stack_by if options.stacked else hue
-        fig.legend(
-            by_label.values(),
-            by_label.keys(),
-            title=legend_title,
-            loc="upper center",
-            ncol=min(len(by_label), 4),
-            frameon=False,
-        )
-        fig.tight_layout(rect=(0, 0, 1, 0.92))
+        legend_title = options.legend_title
+        if legend_title is None:
+            legend_title = _axis_label(options.stack_by if options.stacked else hue, options)
+        if options.legend_position == "right":
+            fig.tight_layout(rect=(0, 0, 0.78, 0.94 if options.figure_title else 1))
+            fig.legend(
+                by_label.values(),
+                by_label.keys(),
+                title=legend_title,
+                loc="center left",
+                bbox_to_anchor=(0.80, 0.5),
+                ncol=options.legend_ncol or 1,
+                frameon=False,
+            )
+        elif options.legend_position == "bottom":
+            ncol = options.legend_ncol or min(len(by_label), 4)
+            fig.tight_layout(rect=(0, 0.12, 1, 0.94 if options.figure_title else 1))
+            fig.legend(
+                by_label.values(),
+                by_label.keys(),
+                title=legend_title,
+                loc="upper center",
+                bbox_to_anchor=(0.5, 0.06),
+                ncol=ncol,
+                frameon=False,
+            )
+        else:
+            ncol = options.legend_ncol or min(len(by_label), 4)
+            fig.tight_layout(rect=(0, 0, 1, 0.88 if options.figure_title else 0.92))
+            fig.legend(
+                by_label.values(),
+                by_label.keys(),
+                title=legend_title,
+                loc="upper center",
+                bbox_to_anchor=(0.5, 0.98),
+                ncol=ncol,
+                frameon=False,
+            )
     else:
-        fig.tight_layout()
+        fig.tight_layout(rect=(0, 0, 1, 0.94 if options.figure_title else 1))
 
     options.out_dir.mkdir(parents=True, exist_ok=True)
     name = f"bar_total_{options.metric}"

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import csv
+import math
 import os
+import re
 import shutil
 import shlex
 import subprocess
@@ -24,6 +26,10 @@ DEFAULT_SRUN_ARGS = (
     "--mem=16G",
     "--time=01:00:00",
 )
+DEFAULT_RETRY_MAX_ROUNDS = 5
+DEFAULT_RETRY_TIMEOUT_GROWTH = 1.10
+DEFAULT_RETRY_RESET_WAIT = "10s"
+DEFAULT_RETRY_RESET_CMD = "xrt-smi reset"
 
 
 @dataclass(frozen=True)
@@ -57,6 +63,11 @@ class RunOptions:
     skip_existing: bool = False
     prebuild: bool = True
     case_filters: tuple[str, ...] = ()
+    retry: bool = False
+    retry_max_rounds: int = DEFAULT_RETRY_MAX_ROUNDS
+    retry_timeout_growth: float = DEFAULT_RETRY_TIMEOUT_GROWTH
+    retry_reset_wait: str = DEFAULT_RETRY_RESET_WAIT
+    retry_reset_cmd: str = DEFAULT_RETRY_RESET_CMD
 
 
 @dataclass(frozen=True)
@@ -76,6 +87,16 @@ def validate_inputs(options: RunOptions) -> None:
         xclbin = options.fpga_bin_dir / "vortex_afu.xclbin"
         if not xclbin.exists():
             raise FileNotFoundError(f"vortex_afu.xclbin not found under FPGA bin dir: {options.fpga_bin_dir}")
+    if options.retry:
+        if not options.blackbox_timeout:
+            raise ValueError("--retry requires --blackbox-timeout or defaults.blackbox_timeout")
+        _parse_timeout_seconds(options.blackbox_timeout)
+        if options.retry_max_rounds < 1:
+            raise ValueError("--retry-max-rounds must be >= 1")
+        if options.retry_timeout_growth <= 1.0:
+            raise ValueError("--retry-timeout-growth must be > 1.0")
+        if not shlex.split(options.retry_reset_cmd):
+            raise ValueError("--retry-reset-cmd must not be empty")
 
 
 def build_execution_units(suite: BenchSuite, out_dir: Path) -> list[ExecutionUnit]:
@@ -151,6 +172,30 @@ def _q(value: str | Path) -> str:
     return shlex.quote(str(value))
 
 
+def _bash_array(values: tuple[str, ...] | list[str]) -> str:
+    return "(" + " ".join(_q(value) for value in values) + ")"
+
+
+_TIMEOUT_RE = re.compile(r"^\s*(?P<value>(?:\d+(?:\.\d*)?|\.\d+))\s*(?P<unit>[smhdSMHD]?)\s*$")
+_TIMEOUT_UNIT_SECONDS = {
+    "": 1,
+    "s": 1,
+    "m": 60,
+    "h": 60 * 60,
+    "d": 24 * 60 * 60,
+}
+
+
+def _parse_timeout_seconds(value: str) -> int:
+    match = _TIMEOUT_RE.match(value)
+    if not match:
+        raise ValueError(f"unsupported timeout duration for retry: {value!r}")
+    seconds = float(match.group("value")) * _TIMEOUT_UNIT_SECONDS[match.group("unit").lower()]
+    if seconds <= 0:
+        raise ValueError(f"timeout duration must be positive for retry: {value!r}")
+    return max(1, math.ceil(seconds))
+
+
 def _safe_filename(value: str) -> str:
     return "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in value)
 
@@ -207,7 +252,12 @@ def write_run_script(suite: BenchSuite, options: RunOptions, units: list[Executi
     script = options.out_dir / "run_fpga_bench.sh"
     status_csv = options.out_dir / "run_status.csv"
     progress_csv = options.out_dir / "progress.csv"
+    attempt_status_csv = options.out_dir / "attempt_status.csv"
     append_raw_csv = options.append_raw_csv.resolve() if options.append_raw_csv else None
+    retry_enabled = 1 if options.retry else 0
+    retry_initial_timeout_s = _parse_timeout_seconds(options.blackbox_timeout) if options.retry else 0
+    retry_max_rounds = options.retry_max_rounds if options.retry else 1
+    retry_reset_cmd = tuple(shlex.split(options.retry_reset_cmd))
     status_columns = (
         "exec_key",
         "app",
@@ -218,12 +268,27 @@ def write_run_script(suite: BenchSuite, options: RunOptions, units: list[Executi
         "log_file",
         "elapsed_wall_s",
     )
+    attempt_status_columns = (
+        "retry_round",
+        "exec_key",
+        "app",
+        "returncode",
+        "failure_phase",
+        "failure_reason",
+        "blackbox_timeout",
+        "reset_ran",
+        "reset_rc",
+        "raw_csv",
+        "log_file",
+        "elapsed_wall_s",
+    )
     lines = [
         "#!/usr/bin/env bash",
         "set -uo pipefail",
         f"cd {_q(options.build_dir)}",
         f"mkdir -p {_q(options.out_dir / 'raw')} {_q(options.out_dir / 'logs')}",
         f"printf '%s\\n' {_q(','.join(status_columns))} > {_q(status_csv)}",
+        f"printf '%s\\n' {_q(','.join(attempt_status_columns))} > {_q(attempt_status_csv)}",
         f"printf '%s\\n' {_q(','.join(PROGRESS_COLUMNS))} > {_q(progress_csv)}",
         f"export FPGA_BIN_DIR={_q(options.fpga_bin_dir)}",
         f"export TARGET={_q('hw')}",
@@ -232,6 +297,14 @@ def write_run_script(suite: BenchSuite, options: RunOptions, units: list[Executi
         f"export XRT_DEVICE_INDEX={_q(str(options.xrt_device_index))}",
         f"export PYTHONPATH={_q(repo_root())}:\"${{PYTHONPATH:-}}\"",
         f"export LATENCY_BENCH_RUN_ID={_q(options.run_id or default_run_id())}",
+        f"LATENCY_BENCH_RETRY_ENABLED={retry_enabled}",
+        f"LATENCY_BENCH_RETRY_MAX_ROUNDS={retry_max_rounds}",
+        f"LATENCY_BENCH_RETRY_TIMEOUT_GROWTH={_q(str(options.retry_timeout_growth))}",
+        f"LATENCY_BENCH_CURRENT_TIMEOUT_S={retry_initial_timeout_s}",
+        f"LATENCY_BENCH_RETRY_RESET_WAIT={_q(options.retry_reset_wait)}",
+        f"LATENCY_BENCH_RESET_SRUN_ARGS={_bash_array(tuple(options.srun_args))}",
+        f"LATENCY_BENCH_RESET_CMD={_bash_array(retry_reset_cmd)}",
+        "LATENCY_BENCH_LAST_RESET_RC=",
         "",
         "latency_bench_retry_delay_s() {",
         "  case \"$1\" in",
@@ -262,6 +335,33 @@ def write_run_script(suite: BenchSuite, options: RunOptions, units: list[Executi
         "    printf '[latency-bench] timeout cleanup kill -9:%s\\n' \"$live\" >> \"$log_file\"",
         "    kill -9 $live 2>/dev/null || true",
         "  fi",
+        "}",
+        "",
+        "latency_bench_grow_timeout_s() {",
+        "  \"${PYTHON:-python3}\" - \"$1\" \"$2\" <<'PY'",
+        "import math",
+        "import sys",
+        "current = int(sys.argv[1])",
+        "growth = float(sys.argv[2])",
+        "print(max(current + 1, math.ceil(current * growth)))",
+        "PY",
+        "}",
+        "",
+        "latency_bench_reset_fpga() {",
+        "  local log_file=\"$1\"",
+        "  local reset_rc",
+        "  LATENCY_BENCH_LAST_RESET_RC=",
+        "  printf '[latency-bench] timeout reset: srun %s\\n' \"${LATENCY_BENCH_RESET_CMD[*]}\" >> \"$log_file\"",
+        "  set +e",
+        "  printf 'y\\n' | srun \"${LATENCY_BENCH_RESET_SRUN_ARGS[@]}\" \"${LATENCY_BENCH_RESET_CMD[@]}\" >> \"$log_file\" 2>&1",
+        "  reset_rc=$?",
+        "  set -u",
+        "  LATENCY_BENCH_LAST_RESET_RC=\"$reset_rc\"",
+        "  printf '[latency-bench] timeout reset rc=%s\\n' \"$reset_rc\" >> \"$log_file\"",
+        "  if [[ -n \"$LATENCY_BENCH_RETRY_RESET_WAIT\" && \"$LATENCY_BENCH_RETRY_RESET_WAIT\" != \"0\" ]]; then",
+        "    sleep \"$LATENCY_BENCH_RETRY_RESET_WAIT\"",
+        "  fi",
+        "  return \"$reset_rc\"",
         "}",
         "",
         "latency_bench_failure_reason() {",
@@ -314,6 +414,27 @@ def write_run_script(suite: BenchSuite, options: RunOptions, units: list[Executi
                 f"LATENCY_BENCH_BUILD_RC[{_q(app)}]=\"$rc\"",
             ])
 
+    lines.extend([
+        "",
+        "declare -A LATENCY_BENCH_SHOULD_RUN",
+        "declare -A LATENCY_BENCH_NEXT_SHOULD_RUN",
+        "LATENCY_BENCH_EXEC_KEYS=()",
+    ])
+    for unit in units:
+        lines.extend([
+            f"LATENCY_BENCH_EXEC_KEYS+=({_q(unit.exec_key)})",
+            f"LATENCY_BENCH_SHOULD_RUN[{_q(unit.exec_key)}]=1",
+        ])
+    lines.extend([
+        "LATENCY_BENCH_RETRY_ROUND=1",
+        "while true; do",
+        "LATENCY_BENCH_TIMEOUT_FAILURES=0",
+        "for exec_key in \"${LATENCY_BENCH_EXEC_KEYS[@]}\"; do LATENCY_BENCH_NEXT_SHOULD_RUN[\"$exec_key\"]=0; done",
+        "if [[ \"$LATENCY_BENCH_RETRY_ENABLED\" == \"1\" ]]; then",
+        "  echo \"[latency-bench] retry round ${LATENCY_BENCH_RETRY_ROUND}/${LATENCY_BENCH_RETRY_MAX_ROUNDS}, timeout=${LATENCY_BENCH_CURRENT_TIMEOUT_S}s\"",
+        "fi",
+    ])
+
     for idx, unit in enumerate(units, start=1):
         bench_args = f"--warmup={unit.warmup} --iterations={unit.iterations} --csv --output={unit.raw_csv} {unit.args}"
         run_only_arg = "--run-only " if options.prebuild else ""
@@ -321,16 +442,23 @@ def write_run_script(suite: BenchSuite, options: RunOptions, units: list[Executi
             f"./ci/blackbox.sh {blackbox_args}--driver=xrt --bench {run_only_arg}"
             f"--app={_q(unit.app)} --args={_q(bench_args)} --log={_q(unit.log_file.with_suffix(unit.log_file.suffix + '.blackbox'))}"
         )
-        if options.blackbox_timeout:
+        if options.retry:
+            blackbox_cmd = f'timeout --kill-after=30s "${{LATENCY_BENCH_CURRENT_TIMEOUT_S}}s" {blackbox_cmd}'
+        elif options.blackbox_timeout:
             blackbox_cmd = f"timeout --kill-after=30s {_q(options.blackbox_timeout)} {blackbox_cmd}"
         lines.extend([
             "",
+            f"if [[ \"${{LATENCY_BENCH_SHOULD_RUN[{_q(unit.exec_key)}]:-0}}\" == \"1\" ]]; then",
             f"echo '[{idx}/{len(units)}] {unit.exec_key} app={unit.app} args={bench_args}'",
             f"build_rc=\"${{LATENCY_BENCH_BUILD_RC[{_q(unit.app)}]:-0}}\"",
             f"build_log=\"${{LATENCY_BENCH_BUILD_LOG[{_q(unit.app)}]:-}}\"",
             "failure_phase=\"\"",
             "failure_reason=\"\"",
             "final_attempt_log=\"\"",
+            "blackbox_timeout_label=\"\"",
+            "reset_ran=\"0\"",
+            "reset_rc=\"\"",
+            "if [[ \"$LATENCY_BENCH_CURRENT_TIMEOUT_S\" != \"0\" ]]; then blackbox_timeout_label=\"${LATENCY_BENCH_CURRENT_TIMEOUT_S}s\"; fi",
             "if [[ \"$build_rc\" != \"0\" ]]; then",
             "  rc=\"$build_rc\"",
             "  failure_phase=\"build\"",
@@ -367,10 +495,21 @@ def write_run_script(suite: BenchSuite, options: RunOptions, units: list[Executi
             "  if [[ \"$rc\" != \"0\" ]]; then failure_phase=\"run\"; fi",
             "  failure_reason=$(latency_bench_failure_reason \"$rc\" \"$failure_phase\" \"$final_attempt_log\")",
             "fi",
+            "if [[ \"$LATENCY_BENCH_RETRY_ENABLED\" == \"1\" && \"$failure_reason\" == \"timeout\" ]]; then",
+            f"  if latency_bench_reset_fpga {_q(unit.log_file)}; then :; else :; fi",
+            "  reset_ran=\"1\"",
+            "  reset_rc=\"$LATENCY_BENCH_LAST_RESET_RC\"",
+            "fi",
             (
                 f"printf '%s,%s,%s,%s,%s,%s,%s,%s\\n' "
                 f"{_q(unit.exec_key)} {_q(unit.app)} \"$rc\" \"$failure_phase\" \"$failure_reason\" {_q(unit.raw_csv)} {_q(unit.log_file)} \"$elapsed_wall_s\" "
                 f">> {_q(status_csv)}"
+            ),
+            (
+                f"printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\\n' "
+                f"\"$LATENCY_BENCH_RETRY_ROUND\" {_q(unit.exec_key)} {_q(unit.app)} \"$rc\" \"$failure_phase\" \"$failure_reason\" \"$blackbox_timeout_label\" "
+                f"\"$reset_ran\" \"$reset_rc\" {_q(unit.raw_csv)} {_q(unit.log_file)} \"$elapsed_wall_s\" "
+                f">> {_q(attempt_status_csv)}"
             ),
             (
                 f"\"${{PYTHON:-python3}}\" -m tools.latency_bench.progress "
@@ -408,6 +547,26 @@ def write_run_script(suite: BenchSuite, options: RunOptions, units: list[Executi
                     f"--log-file {_q(unit.log_file)}"
                 ),
             ])
+        lines.extend([
+            "if [[ \"$failure_reason\" == \"timeout\" ]]; then",
+            "  LATENCY_BENCH_TIMEOUT_FAILURES=$((LATENCY_BENCH_TIMEOUT_FAILURES + 1))",
+            f"  LATENCY_BENCH_NEXT_SHOULD_RUN[{_q(unit.exec_key)}]=1",
+            "fi",
+            "fi",
+        ])
+    lines.extend([
+        "",
+        "if [[ \"$LATENCY_BENCH_RETRY_ENABLED\" != \"1\" ]]; then break; fi",
+        "if [[ \"$LATENCY_BENCH_TIMEOUT_FAILURES\" == \"0\" ]]; then break; fi",
+        "if [[ \"$LATENCY_BENCH_RETRY_ROUND\" -ge \"$LATENCY_BENCH_RETRY_MAX_ROUNDS\" ]]; then",
+        "  echo \"[latency-bench] retry exhausted with ${LATENCY_BENCH_TIMEOUT_FAILURES} timeout failure(s)\"",
+        "  break",
+        "fi",
+        "for exec_key in \"${LATENCY_BENCH_EXEC_KEYS[@]}\"; do LATENCY_BENCH_SHOULD_RUN[\"$exec_key\"]=\"${LATENCY_BENCH_NEXT_SHOULD_RUN[$exec_key]:-0}\"; done",
+        "LATENCY_BENCH_CURRENT_TIMEOUT_S=$(latency_bench_grow_timeout_s \"$LATENCY_BENCH_CURRENT_TIMEOUT_S\" \"$LATENCY_BENCH_RETRY_TIMEOUT_GROWTH\")",
+        "LATENCY_BENCH_RETRY_ROUND=$((LATENCY_BENCH_RETRY_ROUND + 1))",
+        "done",
+    ])
     lines.append("exit 0")
     script.write_text("\n".join(lines) + "\n")
     script.chmod(0o755)
@@ -615,6 +774,7 @@ def run_suite(suite: BenchSuite, options: RunOptions) -> int:
         "run_dir": str(run_dir),
         "raw_db": str(out_root / "raw_db.csv"),
         "progress_csv": str(run_dir / "progress.csv"),
+        "attempt_status_csv": str(run_dir / "attempt_status.csv"),
         "build_dir": str(run_options.build_dir),
         "fpga_bin_label": run_options.fpga_bin_label,
         "fpga_bin_dir": str(run_options.fpga_bin_dir),
@@ -632,6 +792,12 @@ def run_suite(suite: BenchSuite, options: RunOptions) -> int:
         "skip_existing": options.skip_existing,
         "prebuild": options.prebuild,
         "case_filters": list(options.case_filters),
+        "retry": options.retry,
+        "retry_max_rounds": options.retry_max_rounds,
+        "retry_timeout_growth": options.retry_timeout_growth,
+        "retry_reset_wait": options.retry_reset_wait,
+        "retry_reset_cmd": options.retry_reset_cmd,
+        "retry_reset_srun_args": list(options.srun_args),
         "skipped_existing_count": len(skipped_existing_exec_keys),
         "skipped_existing_exec_keys": list(skipped_existing_exec_keys),
         "script": str(script),

@@ -13,7 +13,7 @@ class ComposeTest(unittest.TestCase):
     def _suite(self) -> BenchSuite:
         return BenchSuite(
             name="mini_suite",
-            defaults=BenchDefaults(warmup=1, iterations=1),
+            defaults=BenchDefaults(warmup=1, iterations=1, fpga_bin="improve_tcol1"),
             cases=[
                 BenchCase(
                     case_id="gemm_a",
@@ -104,7 +104,7 @@ class ComposeTest(unittest.TestCase):
             writer.writeheader()
             writer.writerows(rows)
 
-    def test_compose_uses_median_matches_by_app_and_normalized_args(self) -> None:
+    def test_compose_uses_median_matches_by_app_args_and_resolved_fpga_bin(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             raw_db = Path(tmp) / "raw_db.csv"
             self._write_raw_db(raw_db)
@@ -114,7 +114,6 @@ class ComposeTest(unittest.TestCase):
                 ComposeOptions(
                     raw_dbs=(raw_db,),
                     out=Path(tmp) / "composed.csv",
-                    fpga_bin_label="improve_tcol1",
                 ),
             )
 
@@ -124,6 +123,8 @@ class ComposeTest(unittest.TestCase):
             self.assertEqual(24.0, float(composed.loc[0, "weighted_latency_us"]))
             self.assertEqual(60.0, float(composed.loc[1, "weighted_latency_us"]))
             self.assertEqual("run_old;run_new", composed.loc[0, "source_run_ids"])
+            self.assertEqual("improve_tcol1", composed.loc[0, "expected_fpga_bin_label"])
+            self.assertEqual("improve_tcol1", composed.loc[0, "source_fpga_bin_labels"])
 
     def test_compose_latest_selects_newest_row(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -149,7 +150,7 @@ class ComposeTest(unittest.TestCase):
             self._write_raw_db(raw_db)
             suite = BenchSuite(
                 name="missing_suite",
-                defaults=BenchDefaults(warmup=1, iterations=1),
+                defaults=BenchDefaults(warmup=1, iterations=1, fpga_bin="improve_tcol1"),
                 cases=[
                     BenchCase(
                         case_id="missing",
@@ -162,6 +163,88 @@ class ComposeTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "missing measurements"):
                 compose_latency(suite, ComposeOptions(raw_dbs=(raw_db,), out=Path(tmp) / "out.csv"))
 
+    def test_missing_nan_keeps_expected_fpga_bin_label(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            raw_db = Path(tmp) / "raw_db.csv"
+            self._write_raw_db(raw_db)
+            suite = BenchSuite(
+                name="missing_suite",
+                defaults=BenchDefaults(warmup=1, iterations=1, fpga_bin="improve_tcol1"),
+                cases=[
+                    BenchCase(
+                        case_id="missing",
+                        app="fpint_gemm_ffn_hw",
+                        args="-m 99 -n 128 -k 128 -q 32 -t 0 -d 0",
+                    ),
+                ],
+            )
+
+            composed = compose_latency(
+                suite,
+                ComposeOptions(raw_dbs=(raw_db,), out=Path(tmp) / "out.csv", missing="nan"),
+            )
+
+            self.assertEqual("missing", composed.loc[0, "compose_status"])
+            self.assertEqual("improve_tcol1", composed.loc[0, "expected_fpga_bin_label"])
+            self.assertEqual("", composed.loc[0, "source_fpga_bin_labels"])
+
+    def test_match_fpga_bin_requires_raw_db_column(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            raw_db = tmp_path / "raw_db.csv"
+            rows = [
+                {
+                    "run_id": "run_a",
+                    "timestamp_utc": "2026-01-01T00:00:00+00:00",
+                    "app": "fpint_gemm_ffn_hw",
+                    "args": "-m 1 -n 128 -k 128 -q 32 -t 0 -d 0",
+                    "status": "pass",
+                    "p50_us": "10",
+                    "avg_us": "10",
+                    "p95_us": "10",
+                    "min_us": "10",
+                    "max_us": "10",
+                }
+            ]
+            with raw_db.open("w", newline="") as fp:
+                writer = csv.DictWriter(fp, fieldnames=list(rows[0].keys()))
+                writer.writeheader()
+                writer.writerows(rows)
+
+            with self.assertRaisesRegex(ValueError, "fpga_bin_label"):
+                compose_latency(self._suite(), ComposeOptions(raw_dbs=(raw_db,), out=tmp_path / "out.csv"))
+
+    def test_match_fpga_bin_can_be_disabled_for_legacy_raw_db(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            raw_db = tmp_path / "raw_db.csv"
+            rows = [
+                {
+                    "run_id": "run_a",
+                    "timestamp_utc": "2026-01-01T00:00:00+00:00",
+                    "app": "fpint_gemm_ffn_hw",
+                    "args": "-m 1 -n 128 -k 128 -q 32 -t 0 -d 0",
+                    "status": "pass",
+                    "p50_us": "10",
+                    "avg_us": "10",
+                    "p95_us": "10",
+                    "min_us": "10",
+                    "max_us": "10",
+                }
+            ]
+            with raw_db.open("w", newline="") as fp:
+                writer = csv.DictWriter(fp, fieldnames=list(rows[0].keys()))
+                writer.writeheader()
+                writer.writerows(rows)
+
+            composed = compose_latency(
+                self._suite(),
+                ComposeOptions(raw_dbs=(raw_db,), out=tmp_path / "out.csv", match_fpga_bin=False, missing="skip"),
+            )
+
+            self.assertEqual(10.0, float(composed.loc[0, "latency_us"]))
+            self.assertEqual("", composed.loc[0, "expected_fpga_bin_label"])
+
     def test_directory_out_writes_composed_and_summary(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
@@ -170,7 +253,7 @@ class ComposeTest(unittest.TestCase):
 
             composed_csv, summary_csv = compose_to_csv(
                 self._suite(),
-                ComposeOptions(raw_dbs=(raw_db,), out=tmp_path / "out", fpga_bin_label="improve_tcol1"),
+                ComposeOptions(raw_dbs=(raw_db,), out=tmp_path / "out"),
             )
 
             self.assertTrue(composed_csv.exists())

@@ -93,6 +93,40 @@ class BenchSuite:
     source_path: Path | None = None
 
 
+def _mapping_value(mapping: Any, key: str) -> str:
+    if not key or not isinstance(mapping, dict):
+        return ""
+    value = mapping.get(key)
+    return str(value) if value is not None else ""
+
+
+def resolve_case_fpga_bin(suite: BenchSuite, case: BenchCase) -> str:
+    if case.fpga_bin:
+        return case.fpga_bin
+
+    spec = suite.fpga_bins or {}
+    by_app = spec.get("by_app") or {}
+    by_backend = spec.get("by_backend") or {}
+    by_kind = spec.get("by_kind") or spec.get("by_kernel") or spec.get("kernels") or {}
+
+    fpga_bin = _mapping_value(by_app, case.app)
+    if fpga_bin:
+        return fpga_bin
+    fpga_bin = _mapping_value(by_backend, case.backend)
+    if fpga_bin:
+        return fpga_bin
+    fpga_bin = _mapping_value(by_kind, case.kind)
+    if fpga_bin:
+        return fpga_bin
+    fpga_bin = str(spec.get("default", "") or suite.defaults.fpga_bin)
+    if fpga_bin:
+        return fpga_bin
+    raise ValueError(
+        f"no fpga_bin mapping for case {case.case_id!r}; "
+        "set case.fpga_bin, fpga_bins.default, or defaults.fpga_bin"
+    )
+
+
 _FILTER_FIELDS = {
     "case_id",
     "app",

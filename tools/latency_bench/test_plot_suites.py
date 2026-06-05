@@ -10,7 +10,16 @@ import pandas as pd
 
 from tools.latency_bench.cli import main
 from tools.latency_bench import plot as plot_module
-from tools.latency_bench.plot import SuiteBarPlotOptions, _ordered_values, prepare_suite_bar_data, visualize_suites
+from tools.latency_bench.plot import (
+    SuiteBarPlotOptions,
+    _apply_relative_values,
+    _ordered_values,
+    _relative_baselines,
+    _relative_group_axes,
+    _subplot_title,
+    prepare_suite_bar_data,
+    visualize_suites,
+)
 from tools.latency_bench.suite import BenchCase, BenchDefaults, BenchSuite
 
 
@@ -18,7 +27,7 @@ class SuiteBarPlotTest(unittest.TestCase):
     def _suite(self) -> BenchSuite:
         return BenchSuite(
             name="plot_suite",
-            defaults=BenchDefaults(warmup=1, iterations=1),
+            defaults=BenchDefaults(warmup=1, iterations=1, fpga_bin="plot_bin"),
             cases=[
                 BenchCase(
                     case_id="llama2_batch1_prefill_seq_len8_v1_attn",
@@ -54,6 +63,7 @@ class SuiteBarPlotTest(unittest.TestCase):
             {
                 "run_id": "run_a",
                 "timestamp_utc": "2026-01-01T00:00:00+00:00",
+                "fpga_bin_label": "plot_bin",
                 "app": "sgemm_tcu",
                 "args": "-m 8 -n 8 -k 128",
                 "status": "pass",
@@ -66,6 +76,7 @@ class SuiteBarPlotTest(unittest.TestCase):
             {
                 "run_id": "run_a",
                 "timestamp_utc": "2026-01-01T00:00:00+00:00",
+                "fpga_bin_label": "plot_bin",
                 "app": "fpint_gemm_ffn_hw",
                 "args": "-m 8 -n 4096 -k 4096",
                 "status": "pass",
@@ -99,6 +110,8 @@ class SuiteBarPlotTest(unittest.TestCase):
             self.assertEqual("v1", plot_data.loc[0, "variant"])
             self.assertEqual(80.0, float(plot_data.loc[0, "total_latency_us"]))
             self.assertEqual(0, int(plot_data.loc[0, "missing_case_count"]))
+            self.assertEqual("plot_bin", plot_data.loc[0, "expected_fpga_bin_labels"])
+            self.assertEqual("plot_bin", plot_data.loc[0, "source_fpga_bin_labels"])
             self.assertEqual(["attn_qkT", "gate_proj"], sorted(stack_data["stack_key"].tolist()))
             by_stack = {
                 row["stack_key"]: float(row["total_latency_us"])
@@ -106,6 +119,8 @@ class SuiteBarPlotTest(unittest.TestCase):
             }
             self.assertEqual(20.0, by_stack["attn_qkT"])
             self.assertEqual(60.0, by_stack["gate_proj"])
+            self.assertEqual({"plot_bin"}, set(stack_data["expected_fpga_bin_labels"]))
+            self.assertEqual({"plot_bin"}, set(stack_data["source_fpga_bin_labels"]))
 
     def test_duplicate_suite_inputs_are_counted_once(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -157,6 +172,88 @@ class SuiteBarPlotTest(unittest.TestCase):
 
             self.assertTrue(subplots.call_args.kwargs["sharey"])
 
+    def test_relative_scope_x_tick_uses_one_baseline_per_x_tick(self) -> None:
+        rows = pd.DataFrame(
+            [
+                {"stage": "prefill", "batch": 1, "seq_len": 8, "variant": "a", "plot_value": 10.0},
+                {"stage": "prefill", "batch": 1, "seq_len": 8, "variant": "b", "plot_value": 20.0},
+                {"stage": "prefill", "batch": 1, "seq_len": 32, "variant": "a", "plot_value": 100.0},
+                {"stage": "prefill", "batch": 1, "seq_len": 32, "variant": "b", "plot_value": 150.0},
+            ]
+        )
+        group_axes = _relative_group_axes("x_tick", "seq_len", "stage", "batch")
+        out = _apply_relative_values(rows, "plot_value", _relative_baselines(rows, "plot_value", group_axes), group_axes)
+
+        by_key = {
+            (int(row["seq_len"]), row["variant"]): float(row["plot_value"])
+            for _, row in out.iterrows()
+        }
+        self.assertEqual(1.0, by_key[(8, "a")])
+        self.assertEqual(2.0, by_key[(8, "b")])
+        self.assertEqual(1.0, by_key[(32, "a")])
+        self.assertEqual(1.5, by_key[(32, "b")])
+
+    def test_relative_scope_subplot_uses_one_baseline_per_subplot(self) -> None:
+        rows = pd.DataFrame(
+            [
+                {"stage": "prefill", "batch": 1, "seq_len": 8, "variant": "a", "plot_value": 10.0},
+                {"stage": "prefill", "batch": 1, "seq_len": 32, "variant": "b", "plot_value": 20.0},
+                {"stage": "prefill", "batch": 2, "seq_len": 8, "variant": "a", "plot_value": 50.0},
+                {"stage": "prefill", "batch": 2, "seq_len": 32, "variant": "b", "plot_value": 100.0},
+            ]
+        )
+        group_axes = _relative_group_axes("subplot", "seq_len", "stage", "batch")
+        out = _apply_relative_values(rows, "plot_value", _relative_baselines(rows, "plot_value", group_axes), group_axes)
+
+        by_key = {
+            (int(row["batch"]), int(row["seq_len"])): float(row["plot_value"])
+            for _, row in out.iterrows()
+        }
+        self.assertEqual(1.0, by_key[(1, 8)])
+        self.assertEqual(2.0, by_key[(1, 32)])
+        self.assertEqual(1.0, by_key[(2, 8)])
+        self.assertEqual(2.0, by_key[(2, 32)])
+
+    def test_relative_stacked_segments_use_total_bar_baseline(self) -> None:
+        totals = pd.DataFrame(
+            [
+                {"stage": "prefill", "batch": 1, "seq_len": 8, "variant": "a", "plot_value": 30.0},
+                {"stage": "prefill", "batch": 1, "seq_len": 8, "variant": "b", "plot_value": 60.0},
+            ]
+        )
+        segments = pd.DataFrame(
+            [
+                {"stage": "prefill", "batch": 1, "seq_len": 8, "variant": "a", "stack_key": "q", "plot_value": 10.0},
+                {"stage": "prefill", "batch": 1, "seq_len": 8, "variant": "a", "stack_key": "k", "plot_value": 20.0},
+                {"stage": "prefill", "batch": 1, "seq_len": 8, "variant": "b", "stack_key": "q", "plot_value": 30.0},
+                {"stage": "prefill", "batch": 1, "seq_len": 8, "variant": "b", "stack_key": "k", "plot_value": 30.0},
+            ]
+        )
+        group_axes = _relative_group_axes("x_tick", "seq_len", "stage", "batch")
+        baselines = _relative_baselines(totals, "plot_value", group_axes)
+        scaled_totals = _apply_relative_values(totals, "plot_value", baselines, group_axes)
+        scaled_segments = _apply_relative_values(segments, "plot_value", baselines, group_axes)
+
+        total_by_variant = scaled_totals.groupby("variant")["plot_value"].sum().to_dict()
+        segment_by_variant = scaled_segments.groupby("variant")["plot_value"].sum().to_dict()
+        self.assertEqual(total_by_variant, segment_by_variant)
+
+    def test_subplot_title_uses_axis_and_value_label_maps(self) -> None:
+        title = _subplot_title(
+            "stage",
+            "prefill",
+            "batch",
+            2,
+            SuiteBarPlotOptions(
+                raw_dbs=(Path("raw_db.csv"),),
+                out_dir=Path("figures"),
+                axis_label_map={"stage": "Stage", "batch": "Batch"},
+                label_maps={"stage": {"prefill": "Prefill"}},
+            ),
+        )
+
+        self.assertEqual("Stage=Prefill, Batch=2", title)
+
     def test_cli_visualize_accepts_suite_raw_db_inputs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
@@ -170,6 +267,7 @@ name: plot_cli_suite
 defaults:
   warmup: 1
   iterations: 1
+  fpga_bin: plot_bin
 cases:
   - id: llama2_batch1_prefill_seq_len8_v1_attn
     app: sgemm_tcu
@@ -204,7 +302,15 @@ cases:
                 "--no-stacked",
                 "--no-value-labels",
                 "--relative",
+                "--relative-scope", "x_tick",
                 "--share-y",
+                "--legend-position", "bottom",
+                "--legend-ncol", "2",
+                "--figure-title", "Plot Test",
+                "--x-label", "Seq",
+                "--y-label", "Relative",
+                "--legend-title", "Variant",
+                "--value-order", "variant=v1",
             ])
 
             self.assertEqual(0, rc)
@@ -215,6 +321,32 @@ cases:
         ordered = _ordered_values(pd.Series(["generation", "prefill"]))
 
         self.assertEqual(["prefill", "generation"], ordered)
+
+    def test_ordered_values_uses_explicit_axis_order(self) -> None:
+        ordered = _ordered_values(
+            pd.Series(["C3", "C1", "C4", "C2"]),
+            axis="variant",
+            options=SuiteBarPlotOptions(
+                raw_dbs=(Path("raw_db.csv"),),
+                out_dir=Path("figures"),
+                value_orders={"variant": ("C1", "C2")},
+            ),
+        )
+
+        self.assertEqual(["C1", "C2", "C3", "C4"], ordered)
+
+    def test_ordered_values_matches_explicit_order_by_string_value(self) -> None:
+        ordered = _ordered_values(
+            pd.Series([32, 8, 64]),
+            axis="seq_len",
+            options=SuiteBarPlotOptions(
+                raw_dbs=(Path("raw_db.csv"),),
+                out_dir=Path("figures"),
+                value_orders={"seq_len": ("64", "8")},
+            ),
+        )
+
+        self.assertEqual([64, 8, 32], ordered)
 
 
 if __name__ == "__main__":
