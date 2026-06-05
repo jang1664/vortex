@@ -3,6 +3,7 @@ defaults:
   warmup: 1
   iterations: 1
   app: synthetic_latency_bench
+  fpga_bin: sample
 
 case_matrices:
   - id: llama2_7b_prefill_plot_sample

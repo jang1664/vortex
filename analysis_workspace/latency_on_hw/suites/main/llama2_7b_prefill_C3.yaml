@@ -1,0 +1,36 @@
+name: llama2_7b_prefill_C3
+defaults:
+  warmup: 1
+  iterations: 3
+  app: fpint_gemm_ffn_hw_naive
+  fpga_bin: naive_simd
+  target: hw
+  platform: xilinx_u55c_gen3x16_xdma_3_202210_1
+  blackbox_args:
+    - --cores=1
+    - --threads=8
+
+fpga_bins:
+  default: naive_simd
+
+  by_backend:
+    fpint_gemm_naive: naive_gemm_tcol32
+
+  by_app:
+    rmsnorm: naive_simd
+    rope: naive_simd
+    softmax: naive_simd
+    silu: naive_simd
+    eladd: naive_simd
+    elmul: naive_simd
+
+workloads:
+  - id: llama2_7b_prefill_C3
+    model: llama2-7b
+    stage: prefill
+    variant: all_fpint_gemm_naive_spinquant
+    implemented_only: false
+    matrix:
+      batch: {values: [1, 8, 64]}
+      prefill_seq_len: {values: [512, 2048, 8192, 32768, 131072]}
+      qblk: 32

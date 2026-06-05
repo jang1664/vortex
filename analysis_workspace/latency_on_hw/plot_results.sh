@@ -14,7 +14,7 @@ fi
 #   ./plot_results.sh
 #
 # Typical real run:
-#   SUITES="generated_suites/prefill_merged/prefill_merged_naive_simd.yaml generated_suites/prefill_merged/prefill_merged_naive_gemm_tcol32.yaml generated_suites/prefill_merged/prefill_merged_improve_tcol32.yaml" \
+#   SUITES="suites/main/llama2_7b_prefill_C1.yaml suites/main/llama2_7b_prefill_C2.yaml suites/main/llama2_7b_prefill_C3.yaml" \
 #   RAW_DBS="outputs/naive_simd/raw_db.csv outputs/naive_gemm_tcol32/raw_db.csv outputs/improve_tcol32/raw_db.csv" \
 #   OUT_DIR=figures/prefill_variants \
 #   ./plot_results.sh
@@ -24,6 +24,7 @@ fi
 #   HUE_AXIS=none ROW_AXIS=batch COL_AXIS=stage ./plot_results.sh
 #   STACK_BY=kind ./plot_results.sh
 #   SHARE_Y=1 ./plot_results.sh
+#   RELATIVE_SCOPE=x_tick LEGEND_POSITION=right ./plot_results.sh
 #
 # Measurement controls:
 #   METRIC=p50_us SELECT=median MISSING=nan ./plot_results.sh
@@ -31,10 +32,11 @@ fi
 #
 # Extra latency_bench visualize args can be appended after "--":
 #   ./plot_results.sh -- --fpga-bin-label naive_simd
+#   ./plot_results.sh -- --value-order variant=all_sgemm_tcu_spinquant,attn_sgemm_tcu_fpint_gemm_naive_spinquant,all_fpint_gemm_naive_spinquant
 
-SUITES="${SUITES:-outputs_example/suite_example.yaml}"
-RAW_DBS="${RAW_DBS:-outputs_example/raw_db.csv}"
-OUT_DIR="${OUT_DIR:-outputs_example/figures}"
+SUITES="${SUITES:-suites/main/llama2_7b_prefill_C1.yaml suites/main/llama2_7b_prefill_C2.yaml suites/main/llama2_7b_prefill_C3.yaml suites/main/llama2_7b_prefill_C4_alone.yaml suites/main/llama2_7b_prefill_C4_fused.yaml suites/main/llama2_7b_generation_C1.yaml suites/main/llama2_7b_generation_C2.yaml suites/main/llama2_7b_generation_C3.yaml suites/main/llama2_7b_generation_C4_alone.yaml suites/main/llama2_7b_generation_C4_fused.yaml}"
+RAW_DBS="${RAW_DBS:-outputs/naive_simd/raw_db.csv outputs/naive_gemm_tcol32/raw_db.csv outputs/improve_tcol32/raw_db.csv}"
+OUT_DIR="${OUT_DIR:-outputs/figures}"
 
 METRIC="${METRIC:-p50_us}"
 SELECT="${SELECT:-latest}"
@@ -47,8 +49,15 @@ COL_AXIS="${COL_AXIS:-batch}"
 STACKED="${STACKED:-1}"
 STACK_BY="${STACK_BY:-name}"
 VALUE_LABELS="${VALUE_LABELS:-1}"
-RELATIVE="${RELATIVE:-0}"
+RELATIVE="${RELATIVE:-1}"
+RELATIVE_SCOPE="${RELATIVE_SCOPE:-global}"
 SHARE_Y="${SHARE_Y:-0}"
+LEGEND_POSITION="${LEGEND_POSITION:-right}"
+LEGEND_NCOL="${LEGEND_NCOL:-}"
+FIGURE_TITLE="${FIGURE_TITLE:-}"
+X_LABEL="${X_LABEL:-}"
+Y_LABEL="${Y_LABEL:-}"
+LEGEND_TITLE="${LEGEND_TITLE:-}"
 
 cmd=(
   "${PYTHON_BIN}" -m tools.latency_bench visualize
@@ -61,6 +70,8 @@ cmd=(
   --row "${ROW_AXIS}"
   --col "${COL_AXIS}"
   --stack-by "${STACK_BY}"
+  --relative-scope "${RELATIVE_SCOPE}"
+  --legend-position "${LEGEND_POSITION}"
 )
 
 if [[ "${STACKED}" == "0" ]]; then
@@ -77,6 +88,26 @@ fi
 
 if [[ "${SHARE_Y}" != "0" ]]; then
   cmd+=(--share-y)
+fi
+
+if [[ -n "${LEGEND_NCOL}" ]]; then
+  cmd+=(--legend-ncol "${LEGEND_NCOL}")
+fi
+
+if [[ -n "${FIGURE_TITLE}" ]]; then
+  cmd+=(--figure-title "${FIGURE_TITLE}")
+fi
+
+if [[ -n "${X_LABEL}" ]]; then
+  cmd+=(--x-label "${X_LABEL}")
+fi
+
+if [[ -n "${Y_LABEL}" ]]; then
+  cmd+=(--y-label "${Y_LABEL}")
+fi
+
+if [[ -n "${LEGEND_TITLE}" ]]; then
+  cmd+=(--legend-title "${LEGEND_TITLE}")
 fi
 
 for suite in ${SUITES}; do

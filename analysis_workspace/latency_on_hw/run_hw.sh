@@ -1,13 +1,142 @@
 #!/bin/bash
 
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "${SCRIPT_DIR}"
+
+usage() {
+  cat >&2 <<'EOF'
+Usage:
+  ./run_hw.sh --input GENERATED_SUITE_DIR --output OUTPUT_DIR [latency_bench args...]
+  ./run_hw.sh GENERATED_SUITE_DIR OUTPUT_DIR [latency_bench args...]
+
+Examples:
+  ./run_hw.sh --input generated_suites/main --output outputs/main
+  ./run_hw.sh generated_suites/test2 outputs/test2 --dry-run
+  ./run_hw.sh --input generated_suites/main --output outputs/main --retry --retry-max-rounds 5
+
+Environment overrides:
+  STAGES="prefill generation"
+  FPGA_BINS="naive_gemm_tcol32 naive_simd improve_tcol32"
+EOF
+}
+
+INPUT_DIR=""
+OUTPUT_DIR=""
+positional=()
+pass_args=()
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -i|--input)
+      if [[ $# -lt 2 ]]; then
+        echo "Error: $1 requires a value" >&2
+        usage
+        exit 1
+      fi
+      INPUT_DIR="$2"
+      shift 2
+      ;;
+    -o|--output)
+      if [[ $# -lt 2 ]]; then
+        echo "Error: $1 requires a value" >&2
+        usage
+        exit 1
+      fi
+      OUTPUT_DIR="$2"
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --retry)
+      pass_args+=("$1")
+      shift
+      ;;
+    --retry-max-rounds|--retry-timeout-growth|--retry-reset-wait|--retry-reset-cmd)
+      if [[ $# -lt 2 ]]; then
+        echo "Error: $1 requires a value" >&2
+        usage
+        exit 1
+      fi
+      pass_args+=("$1" "$2")
+      shift 2
+      ;;
+    --retry-max-rounds=*|--retry-timeout-growth=*|--retry-reset-wait=*|--retry-reset-cmd=*)
+      pass_args+=("$1")
+      shift
+      ;;
+    --)
+      shift
+      pass_args+=("$@")
+      break
+      ;;
+    -*)
+      pass_args+=("$@")
+      break
+      ;;
+    *)
+      if [[ ${#positional[@]} -lt 2 ]]; then
+        positional+=("$1")
+      else
+        pass_args+=("$1")
+      fi
+      shift
+      ;;
+  esac
+done
+
+if [[ -z "${INPUT_DIR}" && ${#positional[@]} -ge 1 ]]; then
+  INPUT_DIR="${positional[0]}"
+fi
+
+if [[ -z "${OUTPUT_DIR}" && ${#positional[@]} -ge 2 ]]; then
+  OUTPUT_DIR="${positional[1]}"
+fi
+
+INPUT_DIR="${INPUT_DIR:-generated_suites}"
+OUTPUT_DIR="${OUTPUT_DIR:-outputs}"
+INPUT_DIR="${INPUT_DIR%/}"
+OUTPUT_DIR="${OUTPUT_DIR%/}"
+
+if [[ ! -d "${INPUT_DIR}" ]]; then
+  echo "ERROR: generated suite directory not found: ${INPUT_DIR}" >&2
+  exit 1
+fi
+
+STAGES="${STAGES:-prefill generation}"
+FPGA_BINS="${FPGA_BINS:-naive_gemm_tcol32 naive_simd improve_tcol32}"
+
 echo "Running on HW"
+echo "INPUT_DIR=${INPUT_DIR}"
+echo "OUTPUT_DIR=${OUTPUT_DIR}"
+echo "STAGES=${STAGES}"
+echo "FPGA_BINS=${FPGA_BINS}"
 
-echo "STAGE=prefill"
-STAGE=prefill ./run_naive_gemm.sh
-STAGE=prefill ./run_naive_simd.sh
-STAGE=prefill ./run_improve_tcol32.sh
+for stage in ${STAGES}; do
+  case "${stage}" in
+    prefill|generation)
+      ;;
+    *)
+      echo "ERROR: unsupported stage: ${stage}" >&2
+      exit 1
+      ;;
+  esac
 
-echo "STAGE=generation"
-STAGE=generation ./run_naive_gemm.sh
-STAGE=generation ./run_naive_simd.sh
-STAGE=generation ./run_improve_tcol32.sh
+  echo "STAGE=${stage}"
+  for fpga_bin in ${FPGA_BINS}; do
+    suite="${INPUT_DIR}/${stage}_merged/${stage}_merged_${fpga_bin}.yaml"
+    out_dir="${OUTPUT_DIR}/${fpga_bin}"
+
+    if [[ ! -f "${suite}" ]]; then
+      echo "ERROR: suite not found for ${stage}/${fpga_bin}: ${suite}" >&2
+      exit 1
+    fi
+
+    echo "FPGA_BIN=${fpga_bin} SUITE=${suite} OUT_DIR=${out_dir}"
+    STAGE="${stage}" SUITE="${suite}" OUT_DIR="${out_dir}" \
+      "${SCRIPT_DIR}/run_fpga_bin.sh" "${fpga_bin}" "${pass_args[@]}"
+  done
+done
