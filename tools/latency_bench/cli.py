@@ -16,8 +16,10 @@ from .plot import (
     DEFAULT_LEGEND_POSITION,
     DEFAULT_RELATIVE_SCOPE,
     DEFAULT_STACK_BY,
+    DEFAULT_STACK_LEGEND_SCOPE,
     LEGEND_POSITION_CHOICES,
     RELATIVE_SCOPE_CHOICES,
+    STACK_LEGEND_SCOPE_CHOICES,
     STACK_BY_COLUMNS,
     SuiteBarPlotOptions,
     visualize,
@@ -178,6 +180,12 @@ def build_parser() -> argparse.ArgumentParser:
         choices=STACK_BY_COLUMNS,
         default=DEFAULT_STACK_BY,
         help="Case field used as the stacked segment label when --stacked is enabled.",
+    )
+    vis.add_argument(
+        "--stack-legend-scope",
+        choices=STACK_LEGEND_SCOPE_CHOICES,
+        default=DEFAULT_STACK_LEGEND_SCOPE,
+        help="Use one stacked legend globally or one stacked legend per hue; hue scope also uses hue-specific color families.",
     )
     vis.add_argument(
         "--value-labels",
@@ -447,6 +455,7 @@ def main(argv: list[str] | None = None) -> int:
                 col=args.col,
                 stacked=args.stacked,
                 stack_by=args.stack_by,
+                stack_legend_scope=args.stack_legend_scope,
                 value_labels=args.value_labels,
                 relative=args.relative,
                 relative_scope=args.relative_scope,

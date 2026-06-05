@@ -13,10 +13,14 @@ from tools.latency_bench import plot as plot_module
 from tools.latency_bench.plot import (
     SuiteBarPlotOptions,
     _apply_relative_values,
+    _derive_seq_len,
+    _nonzero_bar_segments,
     _ordered_values,
     _relative_baselines,
     _relative_group_axes,
     _subplot_title,
+    _stack_color,
+    plot_suite_bar_grid,
     prepare_suite_bar_data,
     visualize_suites,
 )
@@ -311,6 +315,7 @@ cases:
                 "--y-label", "Relative",
                 "--legend-title", "Variant",
                 "--value-order", "variant=v1",
+                "--stack-legend-scope", "hue",
             ])
 
             self.assertEqual(0, rc)
@@ -321,6 +326,107 @@ cases:
         ordered = _ordered_values(pd.Series(["generation", "prefill"]))
 
         self.assertEqual(["prefill", "generation"], ordered)
+
+    def test_generation_seq_len_prefers_kv_length_over_decode_seq(self) -> None:
+        row = pd.Series({
+            "stage": "generation",
+            "case_id": "llama2_batch1_gen_kv_len64_generation_rope_q",
+        })
+
+        self.assertEqual(64, _derive_seq_len(row, {"batch": 1, "seq": 1}))
+        self.assertEqual(32, _derive_seq_len(row, {"batch": 1, "seq": 1, "cache_len": 32}))
+        self.assertEqual(128, _derive_seq_len(row, {"batch": 1, "seqq": 1, "seqk": 128}))
+
+    def test_stack_legend_scope_hue_uses_hue_specific_color_families(self) -> None:
+        global_options = SuiteBarPlotOptions(raw_dbs=(Path("raw_db.csv"),), out_dir=Path("figures"))
+        hue_options = SuiteBarPlotOptions(
+            raw_dbs=(Path("raw_db.csv"),),
+            out_dir=Path("figures"),
+            stack_legend_scope="hue",
+        )
+
+        self.assertEqual(_stack_color(0, 0, 3, global_options), _stack_color(0, 1, 3, global_options))
+        self.assertNotEqual(_stack_color(0, 0, 3, hue_options), _stack_color(0, 1, 3, hue_options))
+        self.assertNotEqual(_stack_color(0, 0, 3, hue_options), _stack_color(1, 0, 3, hue_options))
+
+    def test_zero_height_stack_segments_are_never_drawn(self) -> None:
+        self.assertEqual(
+            [(0.0, 3.0, 0.0), (2.0, 4.0, 7.0)],
+            _nonzero_bar_segments(
+                positions=[0.0, 1.0, 2.0],
+                heights=[3.0, 0.0, 4.0],
+                bottoms=[0.0, 3.0, 7.0],
+            ),
+        )
+        self.assertEqual([], _nonzero_bar_segments([0.0, 1.0], [0.0, 0.0], [0.0, 0.0]))
+
+    def test_stack_legend_scope_hue_generates_stacked_plot(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            raw_db = tmp_path / "raw_db.csv"
+            out_dir = tmp_path / "figures"
+            self._write_raw_db(raw_db)
+
+            visualize_suites(
+                [self._suite()],
+                SuiteBarPlotOptions(
+                    raw_dbs=(raw_db,),
+                    out_dir=out_dir,
+                    stack_legend_scope="hue",
+                    legend_position="right",
+                    value_labels=False,
+                ),
+            )
+
+            self.assertTrue((out_dir / "bar_total_p50_us.png").exists())
+            self.assertTrue((out_dir / "bar_total_p50_us.pdf").exists())
+
+    def test_stack_legend_scope_hue_handles_many_stack_labels(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            out_dir = Path(tmp) / "figures"
+            variants = ["C1", "C2", "C3", "C4"]
+            plot_data = pd.DataFrame([
+                {
+                    "stage": "prefill",
+                    "batch": 1,
+                    "seq_len": 32,
+                    "variant": variant,
+                    "total_latency_us": 100.0,
+                    "case_count": 12,
+                    "pass_case_count": 12,
+                    "missing_case_count": 0,
+                }
+                for variant in variants
+            ])
+            stack_data = pd.DataFrame([
+                {
+                    "stage": "prefill",
+                    "batch": 1,
+                    "seq_len": 32,
+                    "variant": variant,
+                    "stack_key": f"kernel_{idx:02d}",
+                    "total_latency_us": float(idx + 1),
+                    "case_count": 1,
+                    "pass_case_count": 1,
+                    "missing_case_count": 0,
+                }
+                for variant in variants
+                for idx in range(12)
+            ])
+
+            plot_suite_bar_grid(
+                plot_data,
+                stack_data,
+                SuiteBarPlotOptions(
+                    raw_dbs=(Path("raw_db.csv"),),
+                    out_dir=out_dir,
+                    stack_legend_scope="hue",
+                    legend_position="right",
+                    value_labels=False,
+                ),
+            )
+
+            self.assertTrue((out_dir / "bar_total_p50_us.png").exists())
 
     def test_ordered_values_uses_explicit_axis_order(self) -> None:
         ordered = _ordered_values(

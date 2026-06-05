@@ -11,6 +11,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.patches import Patch, Rectangle
 import pandas as pd
 
 from .compose import ComposeOptions, compose_latency, normalize_args
@@ -27,9 +28,11 @@ DEFAULT_BAR_COL = "batch"
 DEFAULT_STACK_BY = "name"
 DEFAULT_RELATIVE_SCOPE = "global"
 DEFAULT_LEGEND_POSITION = "right"
+DEFAULT_STACK_LEGEND_SCOPE = "global"
 _NONE_AXIS = "none"
 RELATIVE_SCOPE_CHOICES = ("global", "subplot", "x_tick")
 LEGEND_POSITION_CHOICES = ("right", "bottom", "top", "none")
+STACK_LEGEND_SCOPE_CHOICES = ("global", "hue")
 BLUE_GREEN_PALETTE = (
     "#0b3d91",
     "#006d77",
@@ -41,6 +44,18 @@ BLUE_GREEN_PALETTE = (
     "#40916c",
     "#76c893",
     "#168aad",
+)
+HUE_STACK_CMAPS = (
+    "Blues",
+    "Greens",
+    "Oranges",
+    "Purples",
+    "Reds",
+    "Greys",
+    "YlGnBu",
+    "PuBuGn",
+    "YlOrBr",
+    "PuRd",
 )
 
 
@@ -66,6 +81,7 @@ class SuiteBarPlotOptions:
     match_fpga_bin: bool = True
     legend_position: str = DEFAULT_LEGEND_POSITION
     legend_ncol: int | None = None
+    stack_legend_scope: str = DEFAULT_STACK_LEGEND_SCOPE
     figure_title: str | None = None
     subplot_title_template: str | None = None
     x_label: str | None = None
@@ -238,11 +254,21 @@ def _derive_batch(row: pd.Series, shape: dict[str, object]) -> int | str:
 
 
 def _derive_seq_len(row: pd.Series, shape: dict[str, object]) -> int | str:
-    for key in ("seq_len", "seq", "prefill_seq_len", "gen_kv_len"):
+    stage = str(row.get("stage", ""))
+    case_id = row.get("case_id", "")
+    if stage == "generation":
+        for key in ("seq_len", "gen_kv_len", "cache_len", "seqk"):
+            found = _int_or_none(shape.get(key))
+            if found is not None:
+                return found
+        found = _regex_int(case_id, (r"(?:^|_)gen_kv_len(\d+)(?:_|$)",))
+        if found is not None:
+            return found
+
+    for key in ("seq_len", "prefill_seq_len", "seq", "seqq", "seqk", "gen_kv_len"):
         found = _int_or_none(shape.get(key))
         if found is not None:
             return found
-    case_id = row.get("case_id", "")
     found = _regex_int(
         case_id,
         (
@@ -368,6 +394,11 @@ def _validate_bar_options(options: SuiteBarPlotOptions) -> None:
         raise ValueError(
             f"unsupported legend position: {options.legend_position}; "
             f"expected one of {', '.join(LEGEND_POSITION_CHOICES)}"
+        )
+    if options.stack_legend_scope not in STACK_LEGEND_SCOPE_CHOICES:
+        raise ValueError(
+            f"unsupported stack legend scope: {options.stack_legend_scope}; "
+            f"expected one of {', '.join(STACK_LEGEND_SCOPE_CHOICES)}"
         )
     if options.legend_ncol is not None and options.legend_ncol <= 0:
         raise ValueError("legend_ncol must be positive when set")
@@ -600,6 +631,130 @@ def _bar_ylabel(options: SuiteBarPlotOptions) -> str:
     return "relative latency (best = 1.0)" if options.relative else f"weighted total {options.metric} (us)"
 
 
+def _stack_color(stack_idx: int, hue_idx: int, stack_count: int, options: SuiteBarPlotOptions):
+    if options.stack_legend_scope != "hue":
+        return BLUE_GREEN_PALETTE[stack_idx % len(BLUE_GREEN_PALETTE)]
+    cmap = plt.get_cmap(HUE_STACK_CMAPS[hue_idx % len(HUE_STACK_CMAPS)])
+    if stack_count <= 1:
+        value = 0.68
+    else:
+        value = 0.32 + 0.58 * (stack_idx / max(stack_count - 1, 1))
+    return cmap(value)
+
+
+def _legend_ncol(count: int, options: SuiteBarPlotOptions) -> int:
+    return options.legend_ncol or min(max(count, 1), 4)
+
+
+def _nonzero_bar_segments(
+    positions: list[float],
+    heights: list[float],
+    bottoms: list[float],
+) -> list[tuple[float, float, float]]:
+    return [
+        (position, height, bottom)
+        for position, height, bottom in zip(positions, heights, bottoms)
+        if height > 0.0
+    ]
+
+
+def _add_hue_stack_legends(
+    fig,
+    hue_values: list[object],
+    hue: str,
+    legend_groups: dict[object, dict[str, Patch]],
+    options: SuiteBarPlotOptions,
+) -> None:
+    active_groups = [
+        (hue_value, legend_groups[hue_value])
+        for hue_value in hue_values
+        if legend_groups.get(hue_value)
+    ]
+    if not active_groups:
+        return
+
+    top = 0.94 if options.figure_title else 1.0
+    if options.legend_position == "right":
+        fig.tight_layout(rect=(0, 0, 0.76, top))
+        legend_ax = fig.add_axes([0.78, 0.04, 0.20, max(0.01, top - 0.06)])
+        legend_ax.set_axis_off()
+        ncol = options.legend_ncol or 1
+        group_rows = [
+            (hue_value, by_label, math.ceil(len(by_label) / ncol))
+            for hue_value, by_label in active_groups
+        ]
+        total_lines = sum(1 + rows + 1 for _, _, rows in group_rows)
+        line_step = min(0.045, 0.96 / max(total_lines, 1))
+        fontsize = max(4.5, min(8.0, line_step * fig.get_figheight() * 72.0 * 0.72))
+        y = 0.98
+        for hue_value, by_label, rows in group_rows:
+            legend_ax.text(
+                0.0,
+                y,
+                f"{_axis_label(hue, options)}={_mapped_value(hue, hue_value, options)}",
+                transform=legend_ax.transAxes,
+                ha="left",
+                va="top",
+                fontsize=fontsize,
+                fontweight="bold",
+            )
+            y -= line_step
+            labels = list(by_label.keys())
+            handles = list(by_label.values())
+            col_width = 1.0 / max(ncol, 1)
+            for item_idx, (label, handle) in enumerate(zip(labels, handles)):
+                row_idx = item_idx % rows
+                col_idx = item_idx // rows
+                item_y = y - row_idx * line_step
+                item_x = col_idx * col_width
+                legend_ax.add_patch(Rectangle(
+                    (item_x, item_y - line_step * 0.62),
+                    min(0.045, col_width * 0.20),
+                    line_step * 0.42,
+                    transform=legend_ax.transAxes,
+                    facecolor=handle.get_facecolor(),
+                    edgecolor="none",
+                ))
+                legend_ax.text(
+                    item_x + min(0.065, col_width * 0.28),
+                    item_y,
+                    label,
+                    transform=legend_ax.transAxes,
+                    ha="left",
+                    va="top",
+                    fontsize=fontsize,
+                )
+            y -= rows * line_step + line_step * 0.65
+    elif options.legend_position == "bottom":
+        fig.tight_layout(rect=(0, 0.18, 1, top))
+        step = 1.0 / max(len(active_groups), 1)
+        for idx, (hue_value, by_label) in enumerate(active_groups):
+            x = (idx + 0.5) * step
+            fig.legend(
+                by_label.values(),
+                by_label.keys(),
+                title=f"{_axis_label(hue, options)}={_mapped_value(hue, hue_value, options)}",
+                loc="lower center",
+                bbox_to_anchor=(x, 0.02),
+                ncol=_legend_ncol(len(by_label), options),
+                frameon=False,
+            )
+    else:
+        fig.tight_layout(rect=(0, 0, 1, 0.82 if options.figure_title else 0.86))
+        step = 1.0 / max(len(active_groups), 1)
+        for idx, (hue_value, by_label) in enumerate(active_groups):
+            x = (idx + 0.5) * step
+            fig.legend(
+                by_label.values(),
+                by_label.keys(),
+                title=f"{_axis_label(hue, options)}={_mapped_value(hue, hue_value, options)}",
+                loc="upper center",
+                bbox_to_anchor=(x, 0.98),
+                ncol=_legend_ncol(len(by_label), options),
+                frameon=False,
+            )
+
+
 def plot_suite_bar_grid(plot_data: pd.DataFrame, stack_data: pd.DataFrame, options: SuiteBarPlotOptions) -> None:
     if plot_data.empty:
         raise ValueError("no plot data to visualize")
@@ -650,10 +805,11 @@ def plot_suite_bar_grid(plot_data: pd.DataFrame, stack_data: pd.DataFrame, optio
     if options.figure_title:
         fig.suptitle(options.figure_title)
 
-    colors = BLUE_GREEN_PALETTE
     bar_width = min(0.8 / max(1, len(hue_values)), 0.28)
     x_positions = list(range(len(x_values)))
     global_max_height = max(float(rows[value_col].max()), 1.0)
+    hue_scoped_stack_legend = options.stacked and options.stack_legend_scope == "hue" and hue is not None
+    hue_legend_groups: dict[object, dict[str, Patch]] = {}
 
     for row_idx, row_value in enumerate(row_values):
         for col_idx, col_value in enumerate(col_values):
@@ -677,15 +833,26 @@ def plot_suite_bar_grid(plot_data: pd.DataFrame, stack_data: pd.DataFrame, optio
                         sub = scoped_stack[_axis_filter(scoped_stack, "stack_key", stack_value)]
                         by_x = {item[x]: item for _, item in sub.iterrows()}
                         heights = [float(by_x.get(x_value, {}).get(value_col, 0.0)) for x_value in x_values]
+                        drawable = _nonzero_bar_segments(positions, heights, bottoms)
+                        if not drawable:
+                            continue
+                        stack_label = _stack_label(stack_value, options)
+                        color = _stack_color(stack_idx, hue_idx, len(stack_values), options)
+                        if hue_scoped_stack_legend:
+                            hue_legend_groups.setdefault(hue_value, {}).setdefault(
+                                stack_label,
+                                Patch(facecolor=color, edgecolor="black", label=stack_label),
+                            )
+                        draw_positions, draw_heights, draw_bottoms = zip(*drawable)
                         ax.bar(
-                            positions,
-                            heights,
+                            draw_positions,
+                            draw_heights,
                             width=bar_width,
-                            bottom=bottoms,
-                            label=_stack_label(stack_value, options),
-                            color=colors[stack_idx % len(colors)],
-                            edgecolor="white",
-                            linewidth=0.5,
+                            bottom=draw_bottoms,
+                            label="_nolegend_" if hue_scoped_stack_legend else stack_label,
+                            color=color,
+                            edgecolor="black",
+                            linewidth=0.35,
                         )
                         bottoms = [base + value for base, value in zip(bottoms, heights)]
 
@@ -723,8 +890,8 @@ def plot_suite_bar_grid(plot_data: pd.DataFrame, stack_data: pd.DataFrame, optio
                         heights,
                         width=bar_width,
                         label=_mapped_value(hue, hue_value, options),
-                        color=colors[hue_idx % len(colors)],
-                        edgecolor="white",
+                        color=BLUE_GREEN_PALETTE[hue_idx % len(BLUE_GREEN_PALETTE)],
+                        edgecolor="black",
                         linewidth=0.5,
                     )
                     for xpos, height, missing_count in zip(positions, heights, missing):
@@ -765,7 +932,8 @@ def plot_suite_bar_grid(plot_data: pd.DataFrame, stack_data: pd.DataFrame, optio
                 ax.set_xticklabels([_mapped_value(x, value, options) for value in x_values], rotation=25, ha="right")
             ax.set_xlabel(options.x_label if options.x_label is not None else _axis_label(x, options))
             ax.set_ylabel(_bar_ylabel(options))
-            ax.grid(axis="y", alpha=0.25)
+            ax.set_axisbelow(True)
+            ax.grid(axis="y", alpha=0.25, zorder=0)
             if not options.share_y:
                 _set_bar_ylim(ax, local_max_height)
 
@@ -773,8 +941,13 @@ def plot_suite_bar_grid(plot_data: pd.DataFrame, stack_data: pd.DataFrame, optio
         for ax in axes.flat:
             _set_bar_ylim(ax, global_max_height)
 
-    handles, labels = axes[0][0].get_legend_handles_labels()
-    if handles and options.legend_position != "none":
+    legend_drawn = False
+    if hue_scoped_stack_legend and options.legend_position != "none" and hue_legend_groups:
+        _add_hue_stack_legends(fig, hue_values, hue, hue_legend_groups, options)
+        legend_drawn = True
+    else:
+        handles, labels = axes[0][0].get_legend_handles_labels()
+    if not hue_scoped_stack_legend and handles and options.legend_position != "none":
         by_label = dict(zip(labels, handles))
         legend_title = options.legend_title
         if legend_title is None:
@@ -814,7 +987,8 @@ def plot_suite_bar_grid(plot_data: pd.DataFrame, stack_data: pd.DataFrame, optio
                 ncol=ncol,
                 frameon=False,
             )
-    else:
+        legend_drawn = True
+    if not legend_drawn:
         fig.tight_layout(rect=(0, 0, 1, 0.94 if options.figure_title else 1))
 
     options.out_dir.mkdir(parents=True, exist_ok=True)
