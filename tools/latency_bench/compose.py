@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import math
+import re
 import shlex
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 import pandas as pd
 
@@ -17,6 +18,13 @@ MISSING_POLICIES = ("error", "nan", "skip")
 
 
 @dataclass(frozen=True)
+class LatencyScaleRule:
+    name: str
+    condition: Mapping[str, Any]
+    scale: float
+
+
+@dataclass(frozen=True)
 class ComposeOptions:
     raw_dbs: tuple[Path, ...]
     out: Path
@@ -26,6 +34,7 @@ class ComposeOptions:
     fpga_bin_label: str | None = None
     xclbin_sha256: str | None = None
     match_fpga_bin: bool = True
+    latency_scale_rules: tuple[LatencyScaleRule | Mapping[str, Any], ...] = ()
 
 
 def normalize_args(args: str) -> str:
@@ -68,6 +77,96 @@ def _unique_join(values: pd.Series) -> str:
 
 def _numeric(series: pd.Series) -> pd.Series:
     return pd.to_numeric(series, errors="coerce")
+
+
+def _coerce_latency_scale_rule(rule: LatencyScaleRule | Mapping[str, Any], index: int) -> LatencyScaleRule:
+    if isinstance(rule, LatencyScaleRule):
+        out = rule
+    elif isinstance(rule, Mapping):
+        if "condition" not in rule or "scale" not in rule:
+            raise ValueError("latency scale rule mapping must include condition and scale")
+        out = LatencyScaleRule(
+            name=str(rule.get("name") or f"rule_{index}"),
+            condition=rule["condition"],
+            scale=rule["scale"],
+        )
+    else:
+        raise ValueError(f"unsupported latency scale rule type: {type(rule).__name__}")
+
+    if not isinstance(out.condition, Mapping):
+        raise ValueError(f"latency scale rule {out.name!r} condition must be a mapping")
+    try:
+        scale = float(out.scale)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"latency scale rule {out.name!r} scale must be numeric") from exc
+    if not math.isfinite(scale) or scale <= 0.0:
+        raise ValueError(f"latency scale rule {out.name!r} scale must be a positive finite value")
+    return LatencyScaleRule(name=out.name or f"rule_{index}", condition=out.condition, scale=scale)
+
+
+def _regex_mask(series: pd.Series, pattern: object) -> pd.Series:
+    compiled = pattern if isinstance(pattern, re.Pattern) else re.compile(str(pattern))
+    return series.astype(str).map(lambda value: bool(compiled.search(value)))
+
+
+def _matcher_mask(series: pd.Series, matcher: object) -> pd.Series:
+    if isinstance(matcher, Mapping):
+        if set(matcher.keys()) == {"regex"}:
+            return _regex_mask(series, matcher["regex"])
+        raise ValueError("matcher mapping must be {'regex': pattern}")
+    if isinstance(matcher, re.Pattern):
+        return _regex_mask(series, matcher)
+    if isinstance(matcher, (list, tuple, set, frozenset)):
+        mask = pd.Series(False, index=series.index)
+        for item in matcher:
+            mask = mask | _matcher_mask(series, item)
+        return mask
+    return series.eq(matcher) | series.astype(str).eq(str(matcher))
+
+
+def _scale_rule_mask(raw: pd.DataFrame, rule: LatencyScaleRule) -> pd.Series:
+    mask = pd.Series(True, index=raw.index)
+    for column, matcher in rule.condition.items():
+        if column not in raw.columns:
+            raise ValueError(f"latency scale rule {rule.name!r} references missing column: {column}")
+        mask = mask & _matcher_mask(raw[column], matcher)
+    return mask
+
+
+def apply_latency_scale_rules(
+    raw: pd.DataFrame,
+    rules: tuple[LatencyScaleRule | Mapping[str, Any], ...],
+    *,
+    metric_columns: tuple[str, ...] = METRIC_COLUMNS,
+) -> pd.DataFrame:
+    if not rules:
+        return raw.copy()
+
+    out = raw.copy()
+    metric_cols = [column for column in metric_columns if column in out.columns]
+    if not metric_cols:
+        raise ValueError("raw DB has no latency metric columns to scale")
+
+    out["_latency_scale_factor"] = 1.0
+    out["_latency_scale_rules"] = ""
+    for index, raw_rule in enumerate(rules):
+        rule = _coerce_latency_scale_rule(raw_rule, index)
+        mask = _scale_rule_mask(out, rule)
+        if not bool(mask.any()):
+            continue
+        out.loc[mask, "_latency_scale_factor"] = (
+            pd.to_numeric(out.loc[mask, "_latency_scale_factor"], errors="coerce").fillna(1.0) * rule.scale
+        )
+        existing = out.loc[mask, "_latency_scale_rules"].astype(str)
+        out.loc[mask, "_latency_scale_rules"] = existing.map(
+            lambda value: f"{value};{rule.name}" if value else rule.name
+        )
+
+    scale = pd.to_numeric(out["_latency_scale_factor"], errors="coerce").fillna(1.0)
+    for column in metric_cols:
+        out[column] = pd.to_numeric(out[column], errors="coerce") * scale
+    out["_latency_scale_factor"] = scale.map(lambda value: f"{float(value):.12g}")
+    return out
 
 
 def _select_value(matches: pd.DataFrame, metric: str, policy: str) -> tuple[float, pd.Series | None]:
@@ -123,6 +222,9 @@ def _compose_row(
         "source_fpga_bin_labels": _unique_join(matches["fpga_bin_label"]) if "fpga_bin_label" in matches.columns else "",
         "source_xclbin_sha256s": _unique_join(matches["xclbin_sha256"]) if "xclbin_sha256" in matches.columns else "",
     }
+    if "_latency_scale_rules" in matches.columns:
+        row["source_latency_scale_rules"] = _unique_join(matches["_latency_scale_rules"])
+        row["source_latency_scales"] = _unique_join(matches["_latency_scale_factor"])
     if selected is not None:
         row["selected_run_id"] = str(selected.get("run_id", ""))
         row["selected_timestamp_utc"] = str(selected.get("timestamp_utc", ""))
@@ -142,6 +244,8 @@ def compose_latency(suite: BenchSuite, options: ComposeOptions) -> pd.DataFrame:
 
     raw = _read_raw_dbs(options.raw_dbs)
     _require_columns(raw, ["app", "args", "status", options.metric])
+    if options.latency_scale_rules:
+        raw = apply_latency_scale_rules(raw, options.latency_scale_rules)
     raw = raw[raw["status"].astype(str) == "pass"].copy()
     raw["_normalized_args"] = raw["args"].astype(str).map(normalize_args)
 
@@ -171,7 +275,7 @@ def compose_latency(suite: BenchSuite, options: ComposeOptions) -> pd.DataFrame:
             if options.missing == "skip":
                 continue
             if options.missing == "nan":
-                rows.append({
+                missing_row = {
                     **case,
                     "metric": options.metric,
                     "latency_us": math.nan,
@@ -186,7 +290,11 @@ def compose_latency(suite: BenchSuite, options: ComposeOptions) -> pd.DataFrame:
                     "source_xclbin_sha256s": "",
                     "selected_run_id": "",
                     "selected_timestamp_utc": "",
-                })
+                }
+                if options.latency_scale_rules:
+                    missing_row["source_latency_scale_rules"] = ""
+                    missing_row["source_latency_scales"] = ""
+                rows.append(missing_row)
                 continue
             continue
         try:

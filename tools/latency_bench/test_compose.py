@@ -1,11 +1,20 @@
 from __future__ import annotations
 
 import csv
+import re
 import tempfile
 import unittest
 from pathlib import Path
 
-from tools.latency_bench.compose import ComposeOptions, compose_latency, compose_to_csv
+import pandas as pd
+
+from tools.latency_bench.compose import (
+    ComposeOptions,
+    LatencyScaleRule,
+    apply_latency_scale_rules,
+    compose_latency,
+    compose_to_csv,
+)
 from tools.latency_bench.suite import BenchCase, BenchDefaults, BenchSuite
 
 
@@ -143,6 +152,86 @@ class ComposeTest(unittest.TestCase):
 
             self.assertEqual(14.0, float(composed.loc[0, "latency_us"]))
             self.assertEqual("run_new", composed.loc[0, "selected_run_id"])
+
+    def test_apply_latency_scale_rules_matches_exact_list_and_regex(self) -> None:
+        raw = pd.DataFrame(
+            [
+                {
+                    "app": "sgemm_tcu",
+                    "name": "attn_qkT",
+                    "variant": "v1",
+                    "p50_us": "10",
+                    "avg_us": "11",
+                    "p95_us": "12",
+                    "min_us": "9",
+                    "max_us": "13",
+                },
+                {
+                    "app": "fpint_gemm_ffn_hw",
+                    "name": "gate_proj",
+                    "variant": "v2",
+                    "p50_us": "20",
+                    "avg_us": "21",
+                    "p95_us": "22",
+                    "min_us": "19",
+                    "max_us": "23",
+                },
+            ]
+        )
+
+        scaled = apply_latency_scale_rules(
+            raw,
+            (
+                LatencyScaleRule("sgemm", {"app": "sgemm_tcu"}, 0.5),
+                LatencyScaleRule("attn", {"name": re.compile(r"attn_")}, 0.5),
+                {"name": "variant_v2", "condition": {"variant": ["v2", "v3"]}, "scale": 2.0},
+            ),
+        )
+
+        self.assertEqual(2.5, float(scaled.loc[0, "p50_us"]))
+        self.assertEqual(2.75, float(scaled.loc[0, "avg_us"]))
+        self.assertEqual(40.0, float(scaled.loc[1, "p50_us"]))
+        self.assertEqual("sgemm;attn", scaled.loc[0, "_latency_scale_rules"])
+        self.assertEqual("0.25", scaled.loc[0, "_latency_scale_factor"])
+        self.assertEqual("variant_v2", scaled.loc[1, "_latency_scale_rules"])
+
+    def test_latency_scale_rules_validate_inputs(self) -> None:
+        raw = pd.DataFrame([{"app": "sgemm_tcu", "p50_us": "10"}])
+
+        with self.assertRaisesRegex(ValueError, "missing column"):
+            apply_latency_scale_rules(raw, (LatencyScaleRule("missing", {"name": "x"}, 0.5),))
+        with self.assertRaisesRegex(ValueError, "positive finite"):
+            apply_latency_scale_rules(raw, (LatencyScaleRule("bad", {"app": "sgemm_tcu"}, 0.0),))
+        with self.assertRaisesRegex(ValueError, "matcher mapping"):
+            apply_latency_scale_rules(raw, (LatencyScaleRule("bad_matcher", {"app": {"glob": "sgemm*"}}, 0.5),))
+
+    def test_compose_applies_latency_scale_before_selection(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            raw_db = Path(tmp) / "raw_db.csv"
+            self._write_raw_db(raw_db)
+
+            composed = compose_latency(
+                self._suite(),
+                ComposeOptions(
+                    raw_dbs=(raw_db,),
+                    out=Path(tmp) / "composed.csv",
+                    latency_scale_rules=(
+                        LatencyScaleRule(
+                            "half_m1",
+                            {"args": {"regex": r"-m\s+1(?:\s|$)"}},
+                            0.5,
+                        ),
+                    ),
+                ),
+            )
+
+            self.assertEqual(6.0, float(composed.loc[0, "latency_us"]))
+            self.assertEqual(12.0, float(composed.loc[0, "weighted_latency_us"]))
+            self.assertEqual(60.0, float(composed.loc[1, "weighted_latency_us"]))
+            self.assertEqual("half_m1", composed.loc[0, "source_latency_scale_rules"])
+            self.assertEqual("0.5", composed.loc[0, "source_latency_scales"])
+            self.assertEqual("", composed.loc[1, "source_latency_scale_rules"])
+            self.assertEqual("1", composed.loc[1, "source_latency_scales"])
 
     def test_missing_error_is_default(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

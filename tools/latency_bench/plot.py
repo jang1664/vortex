@@ -14,7 +14,7 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Patch, Rectangle
 import pandas as pd
 
-from .compose import ComposeOptions, compose_latency, normalize_args
+from .compose import ComposeOptions, LatencyScaleRule, compose_latency, normalize_args
 from .suite import BenchCase, BenchDefaults, BenchSuite, resolve_case_fpga_bin
 
 
@@ -90,6 +90,14 @@ class SuiteBarPlotOptions:
     axis_label_map: Mapping[str, str] = field(default_factory=dict)
     label_maps: Mapping[str, Mapping[object, str]] = field(default_factory=dict)
     value_orders: Mapping[str, Iterable[object]] = field(default_factory=dict)
+    latency_scale_rules: tuple[LatencyScaleRule | Mapping[str, object], ...] = ()
+
+
+@dataclass(frozen=True)
+class SuiteBarData:
+    composed: pd.DataFrame
+    plot_data: pd.DataFrame
+    stack_data: pd.DataFrame
 
 
 def _save(fig, out_dir: Path, name: str) -> None:
@@ -322,6 +330,7 @@ def prepare_suite_bar_data(
             fpga_bin_label=options.fpga_bin_label,
             xclbin_sha256=options.xclbin_sha256,
             match_fpga_bin=options.match_fpga_bin,
+            latency_scale_rules=options.latency_scale_rules,
         ),
     )
     composed = _add_bar_axis_columns(composed, source_suites)
@@ -329,37 +338,67 @@ def prepare_suite_bar_data(
     composed["_weighted_latency_filled"] = composed["weighted_latency_us"].fillna(0.0)
     composed["stack_key"] = composed.apply(lambda row: _stack_key(row, options.stack_by), axis=1)
 
+    plot_aggs = dict(
+        total_latency_us=("_weighted_latency_filled", "sum"),
+        case_count=("case_id", "count"),
+        pass_case_count=("compose_status", lambda values: int((values.astype(str) == "pass").sum())),
+        missing_case_count=("compose_status", lambda values: int((values.astype(str) != "pass").sum())),
+        source_suites=("source_suites", lambda values: _unique_join(values.astype(str))),
+        source_raw_dbs=("source_raw_dbs", lambda values: _unique_join(values.astype(str))),
+        expected_fpga_bin_labels=("expected_fpga_bin_label", lambda values: _unique_join(values.astype(str))),
+        source_fpga_bin_labels=("source_fpga_bin_labels", lambda values: _unique_join(values.astype(str))),
+    )
+    stack_aggs = dict(
+        total_latency_us=("_weighted_latency_filled", "sum"),
+        case_count=("case_id", "count"),
+        pass_case_count=("compose_status", lambda values: int((values.astype(str) == "pass").sum())),
+        missing_case_count=("compose_status", lambda values: int((values.astype(str) != "pass").sum())),
+        source_cases=("case_id", lambda values: _unique_join(values.astype(str))),
+        source_suites=("source_suites", lambda values: _unique_join(values.astype(str))),
+        source_raw_dbs=("source_raw_dbs", lambda values: _unique_join(values.astype(str))),
+        expected_fpga_bin_labels=("expected_fpga_bin_label", lambda values: _unique_join(values.astype(str))),
+        source_fpga_bin_labels=("source_fpga_bin_labels", lambda values: _unique_join(values.astype(str))),
+    )
+    if "source_latency_scale_rules" in composed.columns:
+        scale_aggs = dict(
+            source_latency_scale_rules=("source_latency_scale_rules", lambda values: _unique_join(values.astype(str))),
+            source_latency_scales=("source_latency_scales", lambda values: _unique_join(values.astype(str))),
+        )
+        plot_aggs.update(scale_aggs)
+        stack_aggs.update(scale_aggs)
+
     plot_data = (
         composed.groupby(list(BAR_AXIS_COLUMNS), dropna=False, as_index=False, sort=True)
-        .agg(
-            total_latency_us=("_weighted_latency_filled", "sum"),
-            case_count=("case_id", "count"),
-            pass_case_count=("compose_status", lambda values: int((values.astype(str) == "pass").sum())),
-            missing_case_count=("compose_status", lambda values: int((values.astype(str) != "pass").sum())),
-            source_suites=("source_suites", lambda values: _unique_join(values.astype(str))),
-            source_raw_dbs=("source_raw_dbs", lambda values: _unique_join(values.astype(str))),
-            expected_fpga_bin_labels=("expected_fpga_bin_label", lambda values: _unique_join(values.astype(str))),
-            source_fpga_bin_labels=("source_fpga_bin_labels", lambda values: _unique_join(values.astype(str))),
-        )
+        .agg(**plot_aggs)
     )
     plot_data.insert(0, "metric", options.metric)
 
     stack_data = (
         composed.groupby([*BAR_AXIS_COLUMNS, "stack_key"], dropna=False, as_index=False, sort=True)
-        .agg(
-            total_latency_us=("_weighted_latency_filled", "sum"),
-            case_count=("case_id", "count"),
-            pass_case_count=("compose_status", lambda values: int((values.astype(str) == "pass").sum())),
-            missing_case_count=("compose_status", lambda values: int((values.astype(str) != "pass").sum())),
-            source_cases=("case_id", lambda values: _unique_join(values.astype(str))),
-            source_suites=("source_suites", lambda values: _unique_join(values.astype(str))),
-            source_raw_dbs=("source_raw_dbs", lambda values: _unique_join(values.astype(str))),
-            expected_fpga_bin_labels=("expected_fpga_bin_label", lambda values: _unique_join(values.astype(str))),
-            source_fpga_bin_labels=("source_fpga_bin_labels", lambda values: _unique_join(values.astype(str))),
-        )
+        .agg(**stack_aggs)
     )
     stack_data.insert(0, "metric", options.metric)
     return composed.drop(columns=["_weighted_latency_filled"]), plot_data, stack_data
+
+
+def prepare_suite_bar_data_versions(
+    suites: list[BenchSuite],
+    options: SuiteBarPlotOptions,
+) -> tuple[SuiteBarData, SuiteBarData | None]:
+    if not options.latency_scale_rules:
+        return SuiteBarData(*prepare_suite_bar_data(suites, options)), None
+
+    unscaled_options = replace(options, latency_scale_rules=())
+    unscaled = SuiteBarData(*prepare_suite_bar_data(suites, unscaled_options))
+    scaled = SuiteBarData(*prepare_suite_bar_data(suites, options))
+    return unscaled, scaled
+
+
+def write_suite_bar_data_csvs(data: SuiteBarData, out_dir: Path, *, suffix: str = "") -> None:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    data.composed.to_csv(out_dir / f"composed_cases{suffix}.csv", index=False)
+    data.plot_data.to_csv(out_dir / f"plot_data{suffix}.csv", index=False)
+    data.stack_data.to_csv(out_dir / f"plot_stack_data{suffix}.csv", index=False)
 
 
 def _normalize_axis(value: str | None) -> str | None:
@@ -999,10 +1038,10 @@ def plot_suite_bar_grid(plot_data: pd.DataFrame, stack_data: pd.DataFrame, optio
 
 
 def visualize_suites(suites: list[BenchSuite], options: SuiteBarPlotOptions) -> None:
-    composed, plot_data, stack_data = prepare_suite_bar_data(suites, options)
-    options.out_dir.mkdir(parents=True, exist_ok=True)
-    composed.to_csv(options.out_dir / "composed_cases.csv", index=False)
-    plot_data.to_csv(options.out_dir / "plot_data.csv", index=False)
-    stack_data.to_csv(options.out_dir / "plot_stack_data.csv", index=False)
-    plot_suite_bar_grid(plot_data, stack_data, options)
+    unscaled, scaled = prepare_suite_bar_data_versions(suites, options)
+    write_suite_bar_data_csvs(unscaled, options.out_dir)
+    plot_input = scaled or unscaled
+    if scaled is not None:
+        write_suite_bar_data_csvs(scaled, options.out_dir, suffix="_scaled")
+    plot_suite_bar_grid(plot_input.plot_data, plot_input.stack_data, options)
     print(f"wrote suite bar figures to {options.out_dir}")

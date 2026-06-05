@@ -10,6 +10,7 @@ import pandas as pd
 
 from tools.latency_bench.cli import main
 from tools.latency_bench import plot as plot_module
+from tools.latency_bench.compose import LatencyScaleRule
 from tools.latency_bench.plot import (
     SuiteBarPlotOptions,
     _apply_relative_values,
@@ -142,6 +143,33 @@ class SuiteBarPlotTest(unittest.TestCase):
             self.assertEqual(2, int(plot_data.loc[0, "case_count"]))
             self.assertEqual(2, len(stack_data))
 
+    def test_prepare_uses_scaled_latency_when_rules_are_set(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            raw_db = tmp_path / "raw_db.csv"
+            self._write_raw_db(raw_db)
+
+            composed, plot_data, stack_data = prepare_suite_bar_data(
+                [self._suite()],
+                SuiteBarPlotOptions(
+                    raw_dbs=(raw_db,),
+                    out_dir=tmp_path / "figures",
+                    latency_scale_rules=(LatencyScaleRule("half_tcu", {"app": "sgemm_tcu"}, 0.5),),
+                ),
+            )
+
+            self.assertEqual(5.0, float(composed.loc[0, "latency_us"]))
+            self.assertEqual("half_tcu", composed.loc[0, "source_latency_scale_rules"])
+            self.assertEqual("0.5", composed.loc[0, "source_latency_scales"])
+            self.assertEqual(70.0, float(plot_data.loc[0, "total_latency_us"]))
+            self.assertIn("source_latency_scale_rules", plot_data.columns)
+            by_stack = {
+                row["stack_key"]: float(row["total_latency_us"])
+                for _, row in stack_data.iterrows()
+            }
+            self.assertEqual(10.0, by_stack["attn_qkT"])
+            self.assertEqual(60.0, by_stack["gate_proj"])
+
     def test_visualize_suites_writes_csvs_and_figures(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
@@ -158,9 +186,41 @@ class SuiteBarPlotTest(unittest.TestCase):
             self.assertTrue((out_dir / "composed_cases.csv").exists())
             self.assertTrue((out_dir / "plot_data.csv").exists())
             self.assertTrue((out_dir / "plot_stack_data.csv").exists())
+            self.assertFalse((out_dir / "composed_cases_scaled.csv").exists())
+            self.assertFalse((out_dir / "plot_data_scaled.csv").exists())
+            self.assertFalse((out_dir / "plot_stack_data_scaled.csv").exists())
             self.assertTrue((out_dir / "bar_total_p50_us.png").exists())
             self.assertTrue((out_dir / "bar_total_p50_us.pdf").exists())
             self.assertFalse(subplots.call_args.kwargs["sharey"])
+
+    def test_visualize_suites_writes_unscaled_and_scaled_csvs_when_rules_are_set(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            raw_db = tmp_path / "raw_db.csv"
+            out_dir = tmp_path / "figures"
+            self._write_raw_db(raw_db)
+
+            visualize_suites(
+                [self._suite()],
+                SuiteBarPlotOptions(
+                    raw_dbs=(raw_db,),
+                    out_dir=out_dir,
+                    latency_scale_rules=(LatencyScaleRule("half_tcu", {"app": "sgemm_tcu"}, 0.5),),
+                ),
+            )
+
+            self.assertTrue((out_dir / "composed_cases.csv").exists())
+            self.assertTrue((out_dir / "plot_data.csv").exists())
+            self.assertTrue((out_dir / "plot_stack_data.csv").exists())
+            self.assertTrue((out_dir / "composed_cases_scaled.csv").exists())
+            self.assertTrue((out_dir / "plot_data_scaled.csv").exists())
+            self.assertTrue((out_dir / "plot_stack_data_scaled.csv").exists())
+
+            unscaled_plot = pd.read_csv(out_dir / "plot_data.csv")
+            scaled_plot = pd.read_csv(out_dir / "plot_data_scaled.csv")
+            self.assertEqual(80.0, float(unscaled_plot.loc[0, "total_latency_us"]))
+            self.assertEqual(70.0, float(scaled_plot.loc[0, "total_latency_us"]))
+            self.assertIn("source_latency_scale_rules", scaled_plot.columns)
 
     def test_visualize_suites_can_share_y_axis(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
