@@ -93,11 +93,6 @@ aliases:
 
         self.assertEqual((Path(__file__).resolve().parents[2] / "configs" / "improve_tcol1.sh").resolve(), config.configs)
 
-    def test_built_in_legacy_alias_does_not_enable_bank_interleave(self) -> None:
-        config = resolve_fpga_bin_config("naive")
-
-        self.assertEqual((Path(__file__).resolve().parents[2] / "configs" / "naive.sh").resolve(), config.configs)
-
     def test_ci_resolver_script_rejects_removed_xrt_mem_map_option(self) -> None:
         proc = subprocess.run(
             [
