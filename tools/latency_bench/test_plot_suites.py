@@ -11,6 +11,7 @@ import pandas as pd
 from tools.latency_bench.cli import main
 from tools.latency_bench import plot as plot_module
 from tools.latency_bench.compose import LatencyScaleRule
+from tools.latency_bench.estimate import LatencyEstimateOptions
 from tools.latency_bench.plot import (
     SuiteBarPlotOptions,
     _apply_relative_values,
@@ -25,7 +26,7 @@ from tools.latency_bench.plot import (
     prepare_suite_bar_data,
     visualize_suites,
 )
-from tools.latency_bench.suite import BenchCase, BenchDefaults, BenchSuite
+from tools.latency_bench.suite import BenchCase, BenchDefaults, BenchSuite, load_suite
 
 
 class SuiteBarPlotTest(unittest.TestCase):
@@ -96,6 +97,40 @@ class SuiteBarPlotTest(unittest.TestCase):
             writer = csv.DictWriter(fp, fieldnames=list(rows[0].keys()))
             writer.writeheader()
             writer.writerows(rows)
+
+    def _suite_with_missing_estimate_case(self) -> BenchSuite:
+        return BenchSuite(
+            name="plot_estimate_suite",
+            defaults=BenchDefaults(warmup=1, iterations=1, fpga_bin="plot_bin"),
+            cases=[
+                BenchCase(
+                    case_id="llama2_batch1_prefill_seq_len8_v1_attn",
+                    app="sgemm_tcu",
+                    args="-m 8 -n 8 -k 128",
+                    kind="gemm",
+                    stage="prefill",
+                    name="attn_qkT",
+                    variant="v1",
+                    calls_per_forward=2,
+                    warmup=1,
+                    iterations=1,
+                    shape={"batch": 1, "seq": 8},
+                ),
+                BenchCase(
+                    case_id="llama2_batch1_prefill_seq_len16_v1_attn",
+                    app="sgemm_tcu",
+                    args="-m 16 -n 8 -k 128",
+                    kind="gemm",
+                    stage="prefill",
+                    name="attn_qkT",
+                    variant="v1",
+                    calls_per_forward=2,
+                    warmup=1,
+                    iterations=1,
+                    shape={"batch": 1, "seq": 16},
+                ),
+            ],
+        )
 
     def test_prepare_extracts_axes_and_sums_weighted_latency(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -221,6 +256,101 @@ class SuiteBarPlotTest(unittest.TestCase):
             self.assertEqual(80.0, float(unscaled_plot.loc[0, "total_latency_us"]))
             self.assertEqual(70.0, float(scaled_plot.loc[0, "total_latency_us"]))
             self.assertIn("source_latency_scale_rules", scaled_plot.columns)
+
+    def test_visualize_suites_writes_estimated_csvs_when_estimator_is_set(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            raw_db = tmp_path / "raw_db.csv"
+            out_dir = tmp_path / "figures"
+            self._write_raw_db(raw_db)
+
+            visualize_suites(
+                [self._suite_with_missing_estimate_case()],
+                SuiteBarPlotOptions(
+                    raw_dbs=(raw_db,),
+                    out_dir=out_dir,
+                    latency_estimate=LatencyEstimateOptions(min_train_rows=3, warn_extrapolation=False),
+                ),
+            )
+
+            self.assertTrue((out_dir / "composed_cases.csv").exists())
+            self.assertTrue((out_dir / "plot_data.csv").exists())
+            self.assertTrue((out_dir / "composed_cases_estimated.csv").exists())
+            self.assertTrue((out_dir / "plot_data_estimated.csv").exists())
+            self.assertFalse((out_dir / "plot_data_scaled_estimated.csv").exists())
+
+            base_plot = pd.read_csv(out_dir / "plot_data.csv")
+            estimated_plot = pd.read_csv(out_dir / "plot_data_estimated.csv")
+            estimated_cases = pd.read_csv(out_dir / "composed_cases_estimated.csv")
+            self.assertEqual(20.0, float(base_plot["total_latency_us"].sum()))
+            self.assertEqual(60.0, float(estimated_plot["total_latency_us"].sum()))
+            self.assertEqual(1, int(estimated_plot["estimated_case_count"].sum()))
+            self.assertEqual(0, int(estimated_plot["missing_case_count"].sum()))
+            self.assertIn("estimate_model", estimated_plot.columns)
+            self.assertEqual("estimated", estimated_cases.loc[1, "compose_status"])
+
+    def test_visualize_suites_estimates_missing_case_from_sample_csv_fixture(self) -> None:
+        fixture_dir = Path(__file__).resolve().parent / "testdata"
+        suite = load_suite(
+            fixture_dir / "estimate_suite.yaml",
+            repo_root=Path(__file__).resolve().parents[2],
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out_dir = Path(tmp) / "figures"
+            visualize_suites(
+                [suite],
+                SuiteBarPlotOptions(
+                    raw_dbs=(fixture_dir / "estimate_raw_db.csv",),
+                    out_dir=out_dir,
+                    latency_estimate=LatencyEstimateOptions(min_train_rows=3, warn_extrapolation=False),
+                ),
+            )
+
+            base_plot = pd.read_csv(out_dir / "plot_data.csv")
+            estimated_plot = pd.read_csv(out_dir / "plot_data_estimated.csv")
+            estimated_cases = pd.read_csv(out_dir / "composed_cases_estimated.csv")
+            target = estimated_cases[estimated_cases["case_id"] == "estimate_prefill_b1_s64_attn"].iloc[0]
+
+            self.assertEqual(1, int(base_plot["missing_case_count"].sum()))
+            self.assertEqual(0, int(estimated_plot["missing_case_count"].sum()))
+            self.assertEqual(1, int(estimated_plot["estimated_case_count"].sum()))
+            self.assertEqual("estimated", target["compose_status"])
+            self.assertEqual("auto_shape:linear_1d", target["estimate_model"])
+            self.assertAlmostEqual(80.0, float(target["latency_us"]), places=6)
+            self.assertEqual("extrapolation", target["estimate_mode"])
+            self.assertEqual(3, int(target["estimate_train_rows"]))
+            self.assertGreater(float(target["latency_us"]), 0.0)
+            self.assertGreater(
+                float(estimated_plot["total_latency_us"].sum()),
+                float(base_plot["total_latency_us"].sum()),
+            )
+
+    def test_visualize_suites_writes_scaled_estimated_csvs_when_both_are_set(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            raw_db = tmp_path / "raw_db.csv"
+            out_dir = tmp_path / "figures"
+            self._write_raw_db(raw_db)
+
+            visualize_suites(
+                [self._suite_with_missing_estimate_case()],
+                SuiteBarPlotOptions(
+                    raw_dbs=(raw_db,),
+                    out_dir=out_dir,
+                    latency_scale_rules=(LatencyScaleRule("half_tcu", {"app": "sgemm_tcu"}, 0.5),),
+                    latency_estimate=LatencyEstimateOptions(min_train_rows=3, warn_extrapolation=False),
+                ),
+            )
+
+            self.assertTrue((out_dir / "plot_data.csv").exists())
+            self.assertTrue((out_dir / "plot_data_scaled.csv").exists())
+            self.assertTrue((out_dir / "plot_data_estimated.csv").exists())
+            self.assertTrue((out_dir / "plot_data_scaled_estimated.csv").exists())
+
+            scaled_estimated = pd.read_csv(out_dir / "plot_data_scaled_estimated.csv")
+            self.assertEqual(30.0, float(scaled_estimated["total_latency_us"].sum()))
+            self.assertEqual(1, int(scaled_estimated["estimated_case_count"].sum()))
 
     def test_visualize_suites_can_share_y_axis(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -1,0 +1,51 @@
+name: estimate_sample_suite
+defaults:
+  warmup: 1
+  iterations: 1
+  fpga_bin: estimate_sample
+
+cases:
+  - id: estimate_prefill_b1_s8_attn
+    app: synthetic_latency_bench
+    kind: workload
+    op: attn
+    backend: synthetic
+    variant: C1
+    stage: prefill
+    name: attn
+    args: "--sample-op attn --stage prefill --variant C1 --batch 1 --seq 8"
+    calls_per_forward: 1
+    shape: {batch: 1, seq: 8}
+  - id: estimate_prefill_b1_s16_attn
+    app: synthetic_latency_bench
+    kind: workload
+    op: attn
+    backend: synthetic
+    variant: C1
+    stage: prefill
+    name: attn
+    args: "--sample-op attn --stage prefill --variant C1 --batch 1 --seq 16"
+    calls_per_forward: 1
+    shape: {batch: 1, seq: 16}
+  - id: estimate_prefill_b1_s32_attn
+    app: synthetic_latency_bench
+    kind: workload
+    op: attn
+    backend: synthetic
+    variant: C1
+    stage: prefill
+    name: attn
+    args: "--sample-op attn --stage prefill --variant C1 --batch 1 --seq 32"
+    calls_per_forward: 1
+    shape: {batch: 1, seq: 32}
+  - id: estimate_prefill_b1_s64_attn
+    app: synthetic_latency_bench
+    kind: workload
+    op: attn
+    backend: synthetic
+    variant: C1
+    stage: prefill
+    name: attn
+    args: "--sample-op attn --stage prefill --variant C1 --batch 1 --seq 64"
+    calls_per_forward: 1
+    shape: {batch: 1, seq: 64}

@@ -8,6 +8,22 @@ configured build directory. It reuses the generated `build/ci/blackbox.sh` and
 the existing `--bench` flow, so app-specific benchmark code remains in
 `tests/regression/<app>/bench_main.cpp`.
 
+## Python Dependencies
+
+Use the Vortex conda environment and install the analysis packages there:
+
+```bash
+conda activate vortex
+python -m pip install pandas matplotlib pyyaml scikit-learn
+```
+
+Without activating the environment, run the same install through the explicit
+environment Python:
+
+```bash
+$HOME/.conda/envs/vortex/bin/python -m pip install pandas matplotlib pyyaml scikit-learn
+```
+
 ## How It Works
 
 `latency_bench` is a thin orchestration layer around the existing Vortex

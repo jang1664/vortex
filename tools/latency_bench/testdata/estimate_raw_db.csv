@@ -1,0 +1,4 @@
+run_id,timestamp_utc,fpga_bin_label,app,args,status,p50_us,avg_us,p95_us,min_us,max_us
+estimate_b1_s8,2026-06-06T00:00:00+00:00,estimate_sample,synthetic_latency_bench,--sample-op attn --stage prefill --variant C1 --batch 1 --seq 8,pass,10,10,11,9,12
+estimate_b1_s16,2026-06-06T00:00:00+00:00,estimate_sample,synthetic_latency_bench,--sample-op attn --stage prefill --variant C1 --batch 1 --seq 16,pass,20,20,22,18,24
+estimate_b1_s32,2026-06-06T00:00:00+00:00,estimate_sample,synthetic_latency_bench,--sample-op attn --stage prefill --variant C1 --batch 1 --seq 32,pass,40,40,44,36,48

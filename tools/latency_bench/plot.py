@@ -15,6 +15,7 @@ from matplotlib.patches import Patch, Rectangle
 import pandas as pd
 
 from .compose import ComposeOptions, LatencyScaleRule, compose_latency, normalize_args
+from .estimate import LatencyEstimateOptions, estimate_composed_latency
 from .suite import BenchCase, BenchDefaults, BenchSuite, resolve_case_fpga_bin
 
 
@@ -91,6 +92,7 @@ class SuiteBarPlotOptions:
     label_maps: Mapping[str, Mapping[object, str]] = field(default_factory=dict)
     value_orders: Mapping[str, Iterable[object]] = field(default_factory=dict)
     latency_scale_rules: tuple[LatencyScaleRule | Mapping[str, object], ...] = ()
+    latency_estimate: LatencyEstimateOptions | None = None
 
 
 @dataclass(frozen=True)
@@ -98,6 +100,27 @@ class SuiteBarData:
     composed: pd.DataFrame
     plot_data: pd.DataFrame
     stack_data: pd.DataFrame
+
+
+@dataclass(frozen=True)
+class SuiteBarDataVersions:
+    base: SuiteBarData
+    scaled: SuiteBarData | None = None
+    estimated: SuiteBarData | None = None
+    scaled_estimated: SuiteBarData | None = None
+
+    @property
+    def final(self) -> SuiteBarData:
+        return self.scaled_estimated or self.estimated or self.scaled or self.base
+
+    def csv_items(self) -> Iterable[tuple[str, SuiteBarData]]:
+        yield "", self.base
+        if self.scaled is not None:
+            yield "_scaled", self.scaled
+        if self.estimated is not None:
+            yield "_estimated", self.estimated
+        if self.scaled_estimated is not None:
+            yield "_scaled_estimated", self.scaled_estimated
 
 
 def _save(fig, out_dir: Path, name: str) -> None:
@@ -314,6 +337,24 @@ def _stack_key(row: pd.Series, stack_by: str) -> str:
     return text or str(row.get("case_id", "case"))
 
 
+def _count_status(values: pd.Series, expected: str) -> int:
+    status = values.astype(str)
+    return int((status == expected).sum())
+
+
+def _count_unresolved(values: pd.Series) -> int:
+    status = values.astype(str)
+    return int((~status.isin({"pass", "estimated"})).sum())
+
+
+def _optional_string_aggs(composed: pd.DataFrame, columns: tuple[str, ...]) -> dict[str, tuple[str, object]]:
+    return {
+        column: (column, lambda values: _unique_join(values.astype(str)))
+        for column in columns
+        if column in composed.columns
+    }
+
+
 def prepare_suite_bar_data(
     suites: list[BenchSuite],
     options: SuiteBarPlotOptions,
@@ -333,6 +374,7 @@ def prepare_suite_bar_data(
             latency_scale_rules=options.latency_scale_rules,
         ),
     )
+    composed = estimate_composed_latency(composed, options.latency_estimate)
     composed = _add_bar_axis_columns(composed, source_suites)
     composed["weighted_latency_us"] = pd.to_numeric(composed["weighted_latency_us"], errors="coerce")
     composed["_weighted_latency_filled"] = composed["weighted_latency_us"].fillna(0.0)
@@ -341,8 +383,9 @@ def prepare_suite_bar_data(
     plot_aggs = dict(
         total_latency_us=("_weighted_latency_filled", "sum"),
         case_count=("case_id", "count"),
-        pass_case_count=("compose_status", lambda values: int((values.astype(str) == "pass").sum())),
-        missing_case_count=("compose_status", lambda values: int((values.astype(str) != "pass").sum())),
+        pass_case_count=("compose_status", lambda values: _count_status(values, "pass")),
+        estimated_case_count=("compose_status", lambda values: _count_status(values, "estimated")),
+        missing_case_count=("compose_status", _count_unresolved),
         source_suites=("source_suites", lambda values: _unique_join(values.astype(str))),
         source_raw_dbs=("source_raw_dbs", lambda values: _unique_join(values.astype(str))),
         expected_fpga_bin_labels=("expected_fpga_bin_label", lambda values: _unique_join(values.astype(str))),
@@ -351,8 +394,9 @@ def prepare_suite_bar_data(
     stack_aggs = dict(
         total_latency_us=("_weighted_latency_filled", "sum"),
         case_count=("case_id", "count"),
-        pass_case_count=("compose_status", lambda values: int((values.astype(str) == "pass").sum())),
-        missing_case_count=("compose_status", lambda values: int((values.astype(str) != "pass").sum())),
+        pass_case_count=("compose_status", lambda values: _count_status(values, "pass")),
+        estimated_case_count=("compose_status", lambda values: _count_status(values, "estimated")),
+        missing_case_count=("compose_status", _count_unresolved),
         source_cases=("case_id", lambda values: _unique_join(values.astype(str))),
         source_suites=("source_suites", lambda values: _unique_join(values.astype(str))),
         source_raw_dbs=("source_raw_dbs", lambda values: _unique_join(values.astype(str))),
@@ -366,6 +410,25 @@ def prepare_suite_bar_data(
         )
         plot_aggs.update(scale_aggs)
         stack_aggs.update(scale_aggs)
+    estimate_aggs = _optional_string_aggs(
+        composed,
+        (
+            "estimate_model",
+            "estimate_basis",
+            "estimate_selected_by",
+            "estimate_cv_mape",
+            "estimate_train_mape",
+            "estimate_group",
+            "estimate_mode",
+            "estimate_distance",
+            "estimate_source_case_id",
+            "estimate_source_raw_dbs",
+        ),
+    )
+    if estimate_aggs:
+        estimate_aggs["estimate_train_rows"] = ("estimate_train_rows", "max")
+        plot_aggs.update(estimate_aggs)
+        stack_aggs.update(estimate_aggs)
 
     plot_data = (
         composed.groupby(list(BAR_AXIS_COLUMNS), dropna=False, as_index=False, sort=True)
@@ -384,14 +447,30 @@ def prepare_suite_bar_data(
 def prepare_suite_bar_data_versions(
     suites: list[BenchSuite],
     options: SuiteBarPlotOptions,
-) -> tuple[SuiteBarData, SuiteBarData | None]:
-    if not options.latency_scale_rules:
-        return SuiteBarData(*prepare_suite_bar_data(suites, options)), None
+) -> SuiteBarDataVersions:
+    base_options = replace(options, latency_scale_rules=(), latency_estimate=None)
+    base = SuiteBarData(*prepare_suite_bar_data(suites, base_options))
 
-    unscaled_options = replace(options, latency_scale_rules=())
-    unscaled = SuiteBarData(*prepare_suite_bar_data(suites, unscaled_options))
-    scaled = SuiteBarData(*prepare_suite_bar_data(suites, options))
-    return unscaled, scaled
+    scaled = None
+    if options.latency_scale_rules:
+        scaled_options = replace(options, latency_estimate=None)
+        scaled = SuiteBarData(*prepare_suite_bar_data(suites, scaled_options))
+
+    estimated = None
+    if options.latency_estimate is not None and options.latency_estimate.enabled:
+        estimated_options = replace(options, latency_scale_rules=())
+        estimated = SuiteBarData(*prepare_suite_bar_data(suites, estimated_options))
+
+    scaled_estimated = None
+    if options.latency_scale_rules and options.latency_estimate is not None and options.latency_estimate.enabled:
+        scaled_estimated = SuiteBarData(*prepare_suite_bar_data(suites, options))
+
+    return SuiteBarDataVersions(
+        base=base,
+        scaled=scaled,
+        estimated=estimated,
+        scaled_estimated=scaled_estimated,
+    )
 
 
 def write_suite_bar_data_csvs(data: SuiteBarData, out_dir: Path, *, suffix: str = "") -> None:
@@ -500,27 +579,39 @@ def _ordered_values(
 
 
 def _aggregate_for_axes(plot_data: pd.DataFrame, axes: tuple[str, ...]) -> pd.DataFrame:
-    return (
-        plot_data.groupby(list(axes), dropna=False, as_index=False, sort=True)
-        .agg(
-            total_latency_us=("total_latency_us", "sum"),
-            case_count=("case_count", "sum"),
-            pass_case_count=("pass_case_count", "sum"),
-            missing_case_count=("missing_case_count", "sum"),
-        )
+    aggs = dict(
+        total_latency_us=("total_latency_us", "sum"),
+        case_count=("case_count", "sum"),
+        pass_case_count=("pass_case_count", "sum"),
+        missing_case_count=("missing_case_count", "sum"),
     )
+    if "estimated_case_count" in plot_data.columns:
+        aggs["estimated_case_count"] = ("estimated_case_count", "sum")
+    out = (
+        plot_data.groupby(list(axes), dropna=False, as_index=False, sort=True)
+        .agg(**aggs)
+    )
+    if "estimated_case_count" not in out.columns:
+        out["estimated_case_count"] = 0
+    return out
 
 
 def _aggregate_stack_for_axes(stack_data: pd.DataFrame, axes: tuple[str, ...]) -> pd.DataFrame:
-    return (
-        stack_data.groupby([*axes, "stack_key"], dropna=False, as_index=False, sort=True)
-        .agg(
-            total_latency_us=("total_latency_us", "sum"),
-            case_count=("case_count", "sum"),
-            pass_case_count=("pass_case_count", "sum"),
-            missing_case_count=("missing_case_count", "sum"),
-        )
+    aggs = dict(
+        total_latency_us=("total_latency_us", "sum"),
+        case_count=("case_count", "sum"),
+        pass_case_count=("pass_case_count", "sum"),
+        missing_case_count=("missing_case_count", "sum"),
     )
+    if "estimated_case_count" in stack_data.columns:
+        aggs["estimated_case_count"] = ("estimated_case_count", "sum")
+    out = (
+        stack_data.groupby([*axes, "stack_key"], dropna=False, as_index=False, sort=True)
+        .agg(**aggs)
+    )
+    if "estimated_case_count" not in out.columns:
+        out["estimated_case_count"] = 0
+    return out
 
 
 def _series_relative_baseline(values: pd.Series) -> float:
@@ -1038,10 +1129,9 @@ def plot_suite_bar_grid(plot_data: pd.DataFrame, stack_data: pd.DataFrame, optio
 
 
 def visualize_suites(suites: list[BenchSuite], options: SuiteBarPlotOptions) -> None:
-    unscaled, scaled = prepare_suite_bar_data_versions(suites, options)
-    write_suite_bar_data_csvs(unscaled, options.out_dir)
-    plot_input = scaled or unscaled
-    if scaled is not None:
-        write_suite_bar_data_csvs(scaled, options.out_dir, suffix="_scaled")
+    versions = prepare_suite_bar_data_versions(suites, options)
+    for suffix, data in versions.csv_items():
+        write_suite_bar_data_csvs(data, options.out_dir, suffix=suffix)
+    plot_input = versions.final
     plot_suite_bar_grid(plot_input.plot_data, plot_input.stack_data, options)
     print(f"wrote suite bar figures to {options.out_dir}")
