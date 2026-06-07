@@ -45,6 +45,36 @@ def _row(
     }
 
 
+def _softmax_row(
+    *,
+    case_id: str,
+    latency_us: float | None,
+    batch: int,
+    seqq: int,
+    seqk: int,
+    heads: int = 32,
+    status: str = "pass",
+) -> dict[str, object]:
+    return {
+        "case_id": case_id,
+        "app": "softmax",
+        "name": "attn_softmax",
+        "stage": "prefill",
+        "variant": "v1",
+        "args": f"-batch {batch} -heads {heads} -seqq {seqq} -seqk {seqk} -mask 1",
+        "shape_json": json.dumps({"batch": batch, "heads": heads, "seqq": seqq, "seqk": seqk, "mask": 1}),
+        "calls_per_forward": 1,
+        "latency_us": latency_us,
+        "weighted_latency_us": latency_us,
+        "compose_status": status,
+        "expected_fpga_bin_label": "plot_bin",
+        "source_raw_dbs": "raw_db.csv" if status == "pass" else "",
+        "source_run_ids": "run_a" if status == "pass" else "",
+        "selected_run_id": "run_a" if status == "pass" else "",
+        "selected_timestamp_utc": "2026-01-01T00:00:00+00:00" if status == "pass" else "",
+    }
+
+
 class LatencyEstimateTest(unittest.TestCase):
     def test_feature_extraction_uses_shape_and_args(self) -> None:
         row = pd.Series(_row(case_id="c1", latency_us=10.0, m=2, n=3, k=4))
@@ -145,6 +175,31 @@ class LatencyEstimateTest(unittest.TestCase):
         self.assertEqual("auto_shape:linear_3d", target["estimate_model"])
         self.assertEqual("M,N,K,M*N,M*K,N*K,M*N*K", target["estimate_basis"])
         self.assertAlmostEqual(4785.0, float(target["latency_us"]), places=6)
+
+    def test_auto_shape_selects_batch_aware_softmax_basis(self) -> None:
+        rows = []
+        for batch in (1, 2, 4, 8):
+            for seq in (512, 1024, 2048):
+                work = batch * 32 * seq * seq
+                latency = 1000.0 + 0.5 * work + 20.0 * batch * seq
+                rows.append(_softmax_row(case_id=f"b{batch}_s{seq}", latency_us=latency, batch=batch, seqq=seq, seqk=seq))
+        target_latency = 1000.0 + 0.5 * (4 * 32 * 4096 * 4096) + 20.0 * 4 * 4096
+        rows.append(_softmax_row(case_id="target", latency_us=None, batch=4, seqq=4096, seqk=4096, status="missing"))
+        composed = pd.DataFrame(rows)
+
+        out = estimate_composed_latency(
+            composed,
+            LatencyEstimateOptions(warn_extrapolation=False),
+        )
+        target = out[out["case_id"] == "target"].iloc[0]
+        scores = evaluate_latency_estimator_groups(composed, LatencyEstimateOptions())
+        selected = scores[scores["selected"]].iloc[0]
+
+        self.assertEqual("estimated", target["compose_status"])
+        self.assertIn("batch", str(target["estimate_basis"]))
+        self.assertLess(float(target["estimate_cv_mape"]), 0.01)
+        self.assertLess(float(selected["cv_mape"]), 0.01)
+        self.assertAlmostEqual(target_latency, float(target["latency_us"]), places=3)
 
     def test_evaluate_latency_estimator_groups_reports_selected_strategy(self) -> None:
         composed = pd.DataFrame(

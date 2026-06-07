@@ -30,6 +30,8 @@ PRIMARY_WORK_FEATURES = (
     "size",
     "rows*dim",
     "batch*seq*hidden",
+    "batch*heads*seqk*seqq",
+    "batch*seqk*seqq",
     "seqk*seqq*heads",
     "M*N",
     "batch*seq",
@@ -41,7 +43,12 @@ SHAPE_1D_FEATURES = (
     "batch*seq*hidden",
     "batch*seq",
     "rows*dim",
+    "batch*heads*seqk*seqq",
+    "batch*seqk*seqq",
+    "batch*heads*seqk",
+    "batch*seqk",
     "seqk*seqq*heads",
+    "seqk*seqq",
     "N*K",
     "M*K",
     "heads*headdim",
@@ -58,10 +65,13 @@ SHAPE_2D_AXES = (
     ("batch", "seq"),
     ("rows", "dim"),
     ("seqk", "seqq"),
+    ("batch", "seqk"),
+    ("batch", "seqk*seqq"),
 )
 SHAPE_3D_AXES = (
     ("M", "N", "K"),
     ("batch", "seq", "hidden"),
+    ("batch", "seqk", "seqq"),
 )
 SHAPE_MODEL_COMPLEXITY = {"linear_1d": 0, "linear_2d": 1, "linear_3d": 2, "ridge_log": 3}
 _MAPE_EPS = 1.0e-12
@@ -178,7 +188,12 @@ def _numeric_shape_features(row: pd.Series) -> dict[str, float]:
     add_product("batch*seq*hidden", ("batch", "seq", "hidden"))
     add_product("rows*dim", ("rows", "dim"))
     add_product("heads*headdim", ("heads", "headdim"))
+    add_product("seqk*seqq", ("seqk", "seqq"))
     add_product("seqk*seqq*heads", ("seqk", "seqq", "heads"))
+    add_product("batch*seqk", ("batch", "seqk"))
+    add_product("batch*seqk*seqq", ("batch", "seqk", "seqq"))
+    add_product("batch*heads*seqk", ("batch", "heads", "seqk"))
+    add_product("batch*heads*seqk*seqq", ("batch", "heads", "seqk", "seqq"))
     return out
 
 
