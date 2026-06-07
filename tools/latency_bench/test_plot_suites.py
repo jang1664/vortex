@@ -15,6 +15,7 @@ from tools.latency_bench.estimate import LatencyEstimateOptions
 from tools.latency_bench.plot import (
     SuiteBarPlotOptions,
     _apply_relative_values,
+    _bar_width_and_offsets,
     _derive_seq_len,
     _nonzero_bar_segments,
     _ordered_values,
@@ -57,6 +58,29 @@ class SuiteBarPlotTest(unittest.TestCase):
                     name="gate_proj",
                     variant="v1",
                     calls_per_forward=3,
+                    warmup=1,
+                    iterations=1,
+                    shape={"batch": 1, "seq": 8},
+                ),
+            ],
+        )
+
+    def _suite_with_vector_case(self) -> BenchSuite:
+        suite = self._suite()
+        return BenchSuite(
+            name=suite.name,
+            defaults=suite.defaults,
+            cases=[
+                *suite.cases,
+                BenchCase(
+                    case_id="llama2_batch1_prefill_seq_len8_v1_softmax",
+                    app="softmax",
+                    args="-batch 1 -heads 32 -seqq 8 -seqk 8 -mask 1",
+                    kind="softmax",
+                    stage="prefill",
+                    name="attn_softmax",
+                    variant="v1",
+                    calls_per_forward=1,
                     warmup=1,
                     iterations=1,
                     shape={"batch": 1, "seq": 8},
@@ -178,6 +202,77 @@ class SuiteBarPlotTest(unittest.TestCase):
             self.assertEqual(2, int(plot_data.loc[0, "case_count"]))
             self.assertEqual(2, len(stack_data))
 
+    def test_prepare_suite_bar_data_can_filter_rows_by_kind(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            raw_db = tmp_path / "raw_db.csv"
+            self._write_raw_db(raw_db)
+
+            composed, plot_data, stack_data = prepare_suite_bar_data(
+                [self._suite_with_vector_case()],
+                SuiteBarPlotOptions(
+                    raw_dbs=(raw_db,),
+                    out_dir=tmp_path / "figures",
+                    row_filters=(lambda df: df["kind"].eq("gemm"),),
+                ),
+            )
+
+            self.assertEqual({"gemm"}, set(composed["kind"]))
+            self.assertEqual(2, len(composed))
+            self.assertEqual(80.0, float(plot_data.loc[0, "total_latency_us"]))
+            self.assertEqual(["attn_qkT", "gate_proj"], sorted(stack_data["stack_key"].tolist()))
+
+    def test_prepare_suite_bar_data_can_filter_rows_by_derived_axis(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            raw_db = tmp_path / "raw_db.csv"
+            self._write_raw_db(raw_db)
+
+            composed, plot_data, _ = prepare_suite_bar_data(
+                [self._suite_with_missing_estimate_case()],
+                SuiteBarPlotOptions(
+                    raw_dbs=(raw_db,),
+                    out_dir=tmp_path / "figures",
+                    row_filters=(lambda df: df["seq_len"].eq(8),),
+                ),
+            )
+
+            self.assertEqual([8], sorted(composed["seq_len"].unique().tolist()))
+            self.assertEqual(1, len(composed))
+            self.assertEqual(20.0, float(plot_data.loc[0, "total_latency_us"]))
+
+    def test_prepare_suite_bar_data_rejects_empty_row_filter(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            raw_db = tmp_path / "raw_db.csv"
+            self._write_raw_db(raw_db)
+
+            with self.assertRaisesRegex(ValueError, "matched no composed rows"):
+                prepare_suite_bar_data(
+                    [self._suite()],
+                    SuiteBarPlotOptions(
+                        raw_dbs=(raw_db,),
+                        out_dir=tmp_path / "figures",
+                        row_filters=(lambda df: df["kind"].eq("missing"),),
+                    ),
+                )
+
+    def test_prepare_suite_bar_data_rejects_bad_row_filter_mask_length(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            raw_db = tmp_path / "raw_db.csv"
+            self._write_raw_db(raw_db)
+
+            with self.assertRaisesRegex(ValueError, "returned 1 rows for 2 composed rows"):
+                prepare_suite_bar_data(
+                    [self._suite()],
+                    SuiteBarPlotOptions(
+                        raw_dbs=(raw_db,),
+                        out_dir=tmp_path / "figures",
+                        row_filters=(lambda df: [True],),
+                    ),
+                )
+
     def test_prepare_uses_scaled_latency_when_rules_are_set(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
@@ -221,12 +316,22 @@ class SuiteBarPlotTest(unittest.TestCase):
             self.assertTrue((out_dir / "composed_cases.csv").exists())
             self.assertTrue((out_dir / "plot_data.csv").exists())
             self.assertTrue((out_dir / "plot_stack_data.csv").exists())
+            self.assertTrue((out_dir / "plot_data_wide.csv").exists())
+            self.assertTrue((out_dir / "plot_stack_data_wide.csv").exists())
             self.assertFalse((out_dir / "composed_cases_scaled.csv").exists())
             self.assertFalse((out_dir / "plot_data_scaled.csv").exists())
             self.assertFalse((out_dir / "plot_stack_data_scaled.csv").exists())
+            self.assertFalse((out_dir / "plot_data_wide_scaled.csv").exists())
+            self.assertFalse((out_dir / "plot_stack_data_wide_scaled.csv").exists())
             self.assertTrue((out_dir / "bar_total_p50_us.png").exists())
             self.assertTrue((out_dir / "bar_total_p50_us.pdf").exists())
             self.assertFalse(subplots.call_args.kwargs["sharey"])
+
+            plot_wide = pd.read_csv(out_dir / "plot_data_wide.csv")
+            stack_wide = pd.read_csv(out_dir / "plot_stack_data_wide.csv")
+            self.assertEqual(80.0, float(plot_wide.loc[0, "v1"]))
+            self.assertEqual(20.0, float(stack_wide.loc[0, "attn_qkT"]))
+            self.assertEqual(60.0, float(stack_wide.loc[0, "gate_proj"]))
 
     def test_visualize_suites_writes_unscaled_and_scaled_csvs_when_rules_are_set(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -250,11 +355,17 @@ class SuiteBarPlotTest(unittest.TestCase):
             self.assertTrue((out_dir / "composed_cases_scaled.csv").exists())
             self.assertTrue((out_dir / "plot_data_scaled.csv").exists())
             self.assertTrue((out_dir / "plot_stack_data_scaled.csv").exists())
+            self.assertTrue((out_dir / "plot_data_wide.csv").exists())
+            self.assertTrue((out_dir / "plot_stack_data_wide.csv").exists())
+            self.assertTrue((out_dir / "plot_data_wide_scaled.csv").exists())
+            self.assertTrue((out_dir / "plot_stack_data_wide_scaled.csv").exists())
 
             unscaled_plot = pd.read_csv(out_dir / "plot_data.csv")
             scaled_plot = pd.read_csv(out_dir / "plot_data_scaled.csv")
+            scaled_plot_wide = pd.read_csv(out_dir / "plot_data_wide_scaled.csv")
             self.assertEqual(80.0, float(unscaled_plot.loc[0, "total_latency_us"]))
             self.assertEqual(70.0, float(scaled_plot.loc[0, "total_latency_us"]))
+            self.assertEqual(70.0, float(scaled_plot_wide.loc[0, "v1"]))
             self.assertIn("source_latency_scale_rules", scaled_plot.columns)
 
     def test_visualize_suites_writes_estimated_csvs_when_estimator_is_set(self) -> None:
@@ -277,13 +388,17 @@ class SuiteBarPlotTest(unittest.TestCase):
             self.assertTrue((out_dir / "plot_data.csv").exists())
             self.assertTrue((out_dir / "composed_cases_estimated.csv").exists())
             self.assertTrue((out_dir / "plot_data_estimated.csv").exists())
+            self.assertTrue((out_dir / "plot_data_wide_estimated.csv").exists())
+            self.assertTrue((out_dir / "plot_stack_data_wide_estimated.csv").exists())
             self.assertFalse((out_dir / "plot_data_scaled_estimated.csv").exists())
 
             base_plot = pd.read_csv(out_dir / "plot_data.csv")
             estimated_plot = pd.read_csv(out_dir / "plot_data_estimated.csv")
+            estimated_wide = pd.read_csv(out_dir / "plot_data_wide_estimated.csv")
             estimated_cases = pd.read_csv(out_dir / "composed_cases_estimated.csv")
             self.assertEqual(20.0, float(base_plot["total_latency_us"].sum()))
             self.assertEqual(60.0, float(estimated_plot["total_latency_us"].sum()))
+            self.assertEqual(60.0, float(estimated_wide["v1"].sum()))
             self.assertEqual(1, int(estimated_plot["estimated_case_count"].sum()))
             self.assertEqual(0, int(estimated_plot["missing_case_count"].sum()))
             self.assertIn("estimate_model", estimated_plot.columns)
@@ -506,6 +621,12 @@ cases:
                 "--legend-title", "Variant",
                 "--value-order", "variant=v1",
                 "--stack-legend-scope", "hue",
+                "--value-label-rotation", "45",
+                "--value-label-fontsize", "6",
+                "--grouped-bar-gap", "0.06",
+                "--x-tick-label-mode", "bar",
+                "--x-tick-label-rotation", "30",
+                "--x-tick-label-ha", "right",
             ])
 
             self.assertEqual(0, rc)
@@ -534,10 +655,28 @@ cases:
             out_dir=Path("figures"),
             stack_legend_scope="hue",
         )
+        custom_global_options = SuiteBarPlotOptions(
+            raw_dbs=(Path("raw_db.csv"),),
+            out_dir=Path("figures"),
+            palette=("#111111", "#222222"),
+        )
+        custom_hue_options = SuiteBarPlotOptions(
+            raw_dbs=(Path("raw_db.csv"),),
+            out_dir=Path("figures"),
+            stack_legend_scope="hue",
+            hue_stack_cmaps=("viridis", "plasma"),
+            stack_cmap_min=0.10,
+            stack_cmap_max=0.90,
+        )
 
         self.assertEqual(_stack_color(0, 0, 3, global_options), _stack_color(0, 1, 3, global_options))
         self.assertNotEqual(_stack_color(0, 0, 3, hue_options), _stack_color(0, 1, 3, hue_options))
         self.assertNotEqual(_stack_color(0, 0, 3, hue_options), _stack_color(1, 0, 3, hue_options))
+        self.assertEqual("#111111", _stack_color(0, 0, 3, custom_global_options))
+        self.assertNotEqual(
+            _stack_color(0, 0, 3, custom_hue_options),
+            _stack_color(0, 1, 3, custom_hue_options),
+        )
 
     def test_zero_height_stack_segments_are_never_drawn(self) -> None:
         self.assertEqual(
@@ -549,6 +688,17 @@ cases:
             ),
         )
         self.assertEqual([], _nonzero_bar_segments([0.0, 1.0], [0.0, 0.0], [0.0, 0.0]))
+
+    def test_bar_width_and_offsets_include_grouped_bar_gap(self) -> None:
+        width, offsets = _bar_width_and_offsets(4, 0.04)
+
+        self.assertAlmostEqual(0.17, width)
+        self.assertEqual(4, len(offsets))
+        self.assertAlmostEqual(0.21, offsets[1] - offsets[0])
+        self.assertAlmostEqual(-offsets[-1], offsets[0])
+
+        with self.assertRaisesRegex(ValueError, "too large"):
+            _bar_width_and_offsets(4, 0.4)
 
     def test_stack_legend_scope_hue_generates_stacked_plot(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -565,6 +715,109 @@ cases:
                     stack_legend_scope="hue",
                     legend_position="right",
                     value_labels=False,
+                ),
+            )
+
+            self.assertTrue((out_dir / "bar_total_p50_us.png").exists())
+            self.assertTrue((out_dir / "bar_total_p50_us.pdf").exists())
+
+    def test_stack_legend_scope_hue_colors_by_active_stack_subset(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            out_dir = Path(tmp) / "figures"
+            plot_data = pd.DataFrame([
+                {
+                    "stage": "prefill",
+                    "batch": 1,
+                    "seq_len": 32,
+                    "variant": "C1",
+                    "total_latency_us": 6.0,
+                    "case_count": 3,
+                    "pass_case_count": 3,
+                    "missing_case_count": 0,
+                },
+                {
+                    "stage": "prefill",
+                    "batch": 1,
+                    "seq_len": 32,
+                    "variant": "C4",
+                    "total_latency_us": 17.0,
+                    "case_count": 2,
+                    "pass_case_count": 2,
+                    "missing_case_count": 0,
+                },
+            ])
+            stack_data = pd.DataFrame([
+                {
+                    "stage": "prefill",
+                    "batch": 1,
+                    "seq_len": 32,
+                    "variant": "C1",
+                    "stack_key": f"kernel_{idx:02d}",
+                    "total_latency_us": float(idx + 1),
+                    "case_count": 1,
+                    "pass_case_count": 1,
+                    "missing_case_count": 0,
+                }
+                for idx in range(3)
+            ] + [
+                {
+                    "stage": "prefill",
+                    "batch": 1,
+                    "seq_len": 32,
+                    "variant": "C4",
+                    "stack_key": f"kernel_{idx:02d}",
+                    "total_latency_us": float(idx + 1),
+                    "case_count": 1,
+                    "pass_case_count": 1,
+                    "missing_case_count": 0,
+                }
+                for idx in (7, 8)
+            ])
+
+            with patch("tools.latency_bench.plot._stack_color", wraps=plot_module._stack_color) as stack_color:
+                plot_suite_bar_grid(
+                    plot_data,
+                    stack_data,
+                    SuiteBarPlotOptions(
+                        raw_dbs=(Path("raw_db.csv"),),
+                        out_dir=out_dir,
+                        stack_legend_scope="hue",
+                        legend_position="right",
+                        value_labels=False,
+                    ),
+                )
+
+            color_calls = [(call.args[0], call.args[1], call.args[2]) for call in stack_color.call_args_list]
+            self.assertEqual([(0, 1, 2), (1, 1, 2)], [call for call in color_calls if call[1] == 1])
+            self.assertNotIn((3, 1, 5), color_calls)
+            self.assertNotIn((4, 1, 5), color_calls)
+
+    def test_visualize_suites_accepts_custom_bar_style(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            raw_db = tmp_path / "raw_db.csv"
+            out_dir = tmp_path / "figures"
+            self._write_raw_db(raw_db)
+
+            visualize_suites(
+                [self._suite()],
+                SuiteBarPlotOptions(
+                    raw_dbs=(raw_db,),
+                    out_dir=out_dir,
+                    palette=("#123456", "#abcdef"),
+                    hue_stack_cmaps=("tab20", "Set3"),
+                    stack_cmap_min=0.05,
+                    stack_cmap_max=0.95,
+                    bar_edgecolor="none",
+                    bar_linewidth=0.0,
+                    bar_alpha=0.9,
+                    grouped_bar_gap=0.06,
+                    value_label_rotation=45.0,
+                    value_label_fontsize=6.0,
+                    x_tick_label_mode="bar",
+                    x_tick_label_rotation=30.0,
+                    x_tick_label_ha="right",
+                    stack_legend_scope="hue",
                 ),
             )
 

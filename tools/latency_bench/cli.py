@@ -17,11 +17,14 @@ from .plot import (
     DEFAULT_RELATIVE_SCOPE,
     DEFAULT_STACK_BY,
     DEFAULT_STACK_LEGEND_SCOPE,
+    DEFAULT_X_TICK_LABEL_MODE,
     LEGEND_POSITION_CHOICES,
     RELATIVE_SCOPE_CHOICES,
     STACK_LEGEND_SCOPE_CHOICES,
     STACK_BY_COLUMNS,
     SuiteBarPlotOptions,
+    TEXT_ALIGN_CHOICES,
+    X_TICK_LABEL_MODE_CHOICES,
     visualize,
     visualize_suites,
 )
@@ -199,6 +202,42 @@ def build_parser() -> argparse.ArgumentParser:
         dest="value_labels",
         action="store_false",
         help="Do not annotate bars with plotted values.",
+    )
+    vis.add_argument(
+        "--value-label-rotation",
+        type=float,
+        default=0.0,
+        help="Rotation angle in degrees for bar value labels.",
+    )
+    vis.add_argument(
+        "--value-label-fontsize",
+        type=float,
+        default=7.0,
+        help="Font size for bar value labels.",
+    )
+    vis.add_argument(
+        "--grouped-bar-gap",
+        type=float,
+        default=0.04,
+        help="Gap between hue bars inside one x tick, in x-axis units.",
+    )
+    vis.add_argument(
+        "--x-tick-label-mode",
+        choices=X_TICK_LABEL_MODE_CHOICES,
+        default=DEFAULT_X_TICK_LABEL_MODE,
+        help="Use one x tick label per group or one per hue bar.",
+    )
+    vis.add_argument(
+        "--x-tick-label-rotation",
+        type=float,
+        default=0.0,
+        help="Rotation angle in degrees for x tick labels.",
+    )
+    vis.add_argument(
+        "--x-tick-label-ha",
+        choices=TEXT_ALIGN_CHOICES,
+        default="center",
+        help="Horizontal alignment for x tick labels.",
     )
     vis.add_argument(
         "--relative",
@@ -457,6 +496,12 @@ def main(argv: list[str] | None = None) -> int:
                 stack_by=args.stack_by,
                 stack_legend_scope=args.stack_legend_scope,
                 value_labels=args.value_labels,
+                value_label_rotation=args.value_label_rotation,
+                value_label_fontsize=args.value_label_fontsize,
+                grouped_bar_gap=args.grouped_bar_gap,
+                x_tick_label_mode=args.x_tick_label_mode,
+                x_tick_label_rotation=args.x_tick_label_rotation,
+                x_tick_label_ha=args.x_tick_label_ha,
                 relative=args.relative,
                 relative_scope=args.relative_scope,
                 share_y=args.share_y,

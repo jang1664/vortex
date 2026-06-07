@@ -5,7 +5,7 @@ import math
 import re
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Iterable, Mapping
+from typing import Callable, Iterable, Mapping
 
 import matplotlib
 
@@ -30,10 +30,13 @@ DEFAULT_STACK_BY = "name"
 DEFAULT_RELATIVE_SCOPE = "global"
 DEFAULT_LEGEND_POSITION = "right"
 DEFAULT_STACK_LEGEND_SCOPE = "global"
+DEFAULT_X_TICK_LABEL_MODE = "group"
 _NONE_AXIS = "none"
 RELATIVE_SCOPE_CHOICES = ("global", "subplot", "x_tick")
 LEGEND_POSITION_CHOICES = ("right", "bottom", "top", "none")
 STACK_LEGEND_SCOPE_CHOICES = ("global", "hue")
+X_TICK_LABEL_MODE_CHOICES = ("group", "bar")
+TEXT_ALIGN_CHOICES = ("center", "left", "right")
 BLUE_GREEN_PALETTE = (
     "#0b3d91",
     "#006d77",
@@ -58,6 +61,7 @@ HUE_STACK_CMAPS = (
     "YlOrBr",
     "PuRd",
 )
+PlotRowFilter = Callable[[pd.DataFrame], object]
 
 
 @dataclass(frozen=True)
@@ -93,6 +97,20 @@ class SuiteBarPlotOptions:
     value_orders: Mapping[str, Iterable[object]] = field(default_factory=dict)
     latency_scale_rules: tuple[LatencyScaleRule | Mapping[str, object], ...] = ()
     latency_estimate: LatencyEstimateOptions | None = None
+    row_filters: tuple[PlotRowFilter, ...] = ()
+    palette: tuple[str, ...] = BLUE_GREEN_PALETTE
+    hue_stack_cmaps: tuple[str, ...] = HUE_STACK_CMAPS
+    stack_cmap_min: float = 0.20
+    stack_cmap_max: float = 0.92
+    bar_edgecolor: str = "black"
+    bar_linewidth: float = 0.35
+    bar_alpha: float = 1.0
+    grouped_bar_gap: float = 0.04
+    value_label_rotation: float = 0.0
+    value_label_fontsize: float = 7.0
+    x_tick_label_mode: str = DEFAULT_X_TICK_LABEL_MODE
+    x_tick_label_rotation: float = 0.0
+    x_tick_label_ha: str = "center"
 
 
 @dataclass(frozen=True)
@@ -355,6 +373,40 @@ def _optional_string_aggs(composed: pd.DataFrame, columns: tuple[str, ...]) -> d
     }
 
 
+def _apply_row_filters(composed: pd.DataFrame, row_filters: tuple[PlotRowFilter, ...]) -> pd.DataFrame:
+    if not row_filters:
+        return composed
+
+    mask = pd.Series(True, index=composed.index)
+    for idx, row_filter in enumerate(row_filters):
+        raw_mask = row_filter(composed)
+        if isinstance(raw_mask, pd.Series):
+            if len(raw_mask) != len(composed):
+                raise ValueError(
+                    f"plot row filter {idx} returned {len(raw_mask)} rows for "
+                    f"{len(composed)} composed rows"
+                )
+            current = raw_mask.copy()
+            current.index = composed.index
+        else:
+            try:
+                current = pd.Series(raw_mask)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"plot row filter {idx} must return a boolean mask") from exc
+            if len(current) != len(composed):
+                raise ValueError(
+                    f"plot row filter {idx} returned {len(current)} rows for "
+                    f"{len(composed)} composed rows"
+                )
+            current.index = composed.index
+        mask &= current.fillna(False).astype(bool)
+
+    filtered = composed[mask].copy()
+    if filtered.empty:
+        raise ValueError("plot row filter matched no composed rows")
+    return filtered
+
+
 def prepare_suite_bar_data(
     suites: list[BenchSuite],
     options: SuiteBarPlotOptions,
@@ -376,6 +428,7 @@ def prepare_suite_bar_data(
     )
     composed = estimate_composed_latency(composed, options.latency_estimate)
     composed = _add_bar_axis_columns(composed, source_suites)
+    composed = _apply_row_filters(composed, options.row_filters)
     composed["weighted_latency_us"] = pd.to_numeric(composed["weighted_latency_us"], errors="coerce")
     composed["_weighted_latency_filled"] = composed["weighted_latency_us"].fillna(0.0)
     composed["stack_key"] = composed.apply(lambda row: _stack_key(row, options.stack_by), axis=1)
@@ -478,6 +531,42 @@ def write_suite_bar_data_csvs(data: SuiteBarData, out_dir: Path, *, suffix: str 
     data.composed.to_csv(out_dir / f"composed_cases{suffix}.csv", index=False)
     data.plot_data.to_csv(out_dir / f"plot_data{suffix}.csv", index=False)
     data.stack_data.to_csv(out_dir / f"plot_stack_data{suffix}.csv", index=False)
+    _plot_data_wide(data.plot_data).to_csv(out_dir / f"plot_data_wide{suffix}.csv", index=False)
+    _stack_data_wide(data.stack_data).to_csv(out_dir / f"plot_stack_data_wide{suffix}.csv", index=False)
+
+
+def _plot_data_wide(plot_data: pd.DataFrame) -> pd.DataFrame:
+    index_columns = ["metric", "stage", "batch", "seq_len"]
+    if plot_data.empty:
+        return pd.DataFrame(columns=index_columns)
+    return (
+        plot_data.pivot_table(
+            index=index_columns,
+            columns="variant",
+            values="total_latency_us",
+            aggfunc="sum",
+            fill_value=0.0,
+        )
+        .reset_index()
+        .rename_axis(None, axis=1)
+    )
+
+
+def _stack_data_wide(stack_data: pd.DataFrame) -> pd.DataFrame:
+    index_columns = ["metric", "stage", "batch", "seq_len", "variant"]
+    if stack_data.empty:
+        return pd.DataFrame(columns=index_columns)
+    return (
+        stack_data.pivot_table(
+            index=index_columns,
+            columns="stack_key",
+            values="total_latency_us",
+            aggfunc="sum",
+            fill_value=0.0,
+        )
+        .reset_index()
+        .rename_axis(None, axis=1)
+    )
 
 
 def _normalize_axis(value: str | None) -> str | None:
@@ -520,6 +609,30 @@ def _validate_bar_options(options: SuiteBarPlotOptions) -> None:
         )
     if options.legend_ncol is not None and options.legend_ncol <= 0:
         raise ValueError("legend_ncol must be positive when set")
+    if not options.palette:
+        raise ValueError("palette must contain at least one color")
+    if not options.hue_stack_cmaps:
+        raise ValueError("hue_stack_cmaps must contain at least one colormap")
+    if not 0.0 <= float(options.stack_cmap_min) <= float(options.stack_cmap_max) <= 1.0:
+        raise ValueError("stack_cmap_min and stack_cmap_max must satisfy 0 <= min <= max <= 1")
+    if float(options.bar_linewidth) < 0.0:
+        raise ValueError("bar_linewidth must be non-negative")
+    if not 0.0 <= float(options.bar_alpha) <= 1.0:
+        raise ValueError("bar_alpha must be between 0 and 1")
+    if float(options.grouped_bar_gap) < 0.0:
+        raise ValueError("grouped_bar_gap must be non-negative")
+    if float(options.value_label_fontsize) <= 0.0:
+        raise ValueError("value_label_fontsize must be positive")
+    if options.x_tick_label_mode not in X_TICK_LABEL_MODE_CHOICES:
+        raise ValueError(
+            f"unsupported x_tick_label_mode: {options.x_tick_label_mode}; "
+            f"expected one of {', '.join(X_TICK_LABEL_MODE_CHOICES)}"
+        )
+    if options.x_tick_label_ha not in TEXT_ALIGN_CHOICES:
+        raise ValueError(
+            f"unsupported x_tick_label_ha: {options.x_tick_label_ha}; "
+            f"expected one of {', '.join(TEXT_ALIGN_CHOICES)}"
+        )
 
 
 def _sort_key(value: object) -> tuple[int, float | str]:
@@ -732,7 +845,8 @@ def _label_bar(
     text: str,
     max_height: float,
     *,
-    rotation: int = 0,
+    rotation: float = 0.0,
+    fontsize: float = 7.0,
     level: int = 1,
 ) -> None:
     ax.text(
@@ -742,13 +856,68 @@ def _label_bar(
         ha="center",
         va="bottom",
         rotation=rotation,
-        fontsize=7,
+        fontsize=fontsize,
     )
 
 
 def _set_bar_ylim(ax, max_height: float) -> None:
     top = max(float(max_height), 1.0) * 1.14
     ax.set_ylim(0.0, top)
+
+
+def _bar_width_and_offsets(hue_count: int, grouped_bar_gap: float) -> tuple[float, list[float]]:
+    count = max(1, int(hue_count))
+    group_width = 0.8
+    gap = float(grouped_bar_gap)
+    available_width = group_width - gap * (count - 1)
+    if available_width <= 0.0:
+        raise ValueError(
+            f"grouped_bar_gap={gap:g} is too large for {count} hue bars; "
+            f"gap must be smaller than {group_width / max(count - 1, 1):g}"
+        )
+    bar_width = min(available_width / count, 0.28)
+    center_step = bar_width + gap
+    offsets = [
+        (idx - (count - 1) / 2.0) * center_step
+        for idx in range(count)
+    ]
+    return bar_width, offsets
+
+
+def _apply_x_tick_labels(
+    ax,
+    x_positions: list[int],
+    x_values: list[object],
+    hue_values: list[object],
+    hue_offsets: list[float],
+    x: str,
+    hue: str | None,
+    options: SuiteBarPlotOptions,
+) -> None:
+    use_bar_ticks = options.x_tick_label_mode == "bar" and hue is not None and len(hue_values) > 1
+    if use_bar_ticks:
+        tick_positions: list[float] = []
+        tick_labels: list[str] = []
+        for pos, x_value in zip(x_positions, x_values):
+            for hue_value, hue_offset in zip(hue_values, hue_offsets):
+                tick_positions.append(pos + hue_offset)
+                tick_labels.append(
+                    f"{_mapped_value(x, x_value, options)}\n{_mapped_value(hue, hue_value, options)}"
+                )
+        ax.set_xticks(tick_positions)
+        ax.set_xticklabels(
+            tick_labels,
+            rotation=options.x_tick_label_rotation,
+            ha=options.x_tick_label_ha,
+        )
+        return
+
+    ax.set_xticks(x_positions)
+    ax.set_xticklabels(
+        [_mapped_value(x, value, options) for value in x_values],
+        rotation=options.x_tick_label_rotation,
+        ha=options.x_tick_label_ha,
+    )
 
 
 def _format_value_label(value: float, relative: bool) -> str:
@@ -763,12 +932,14 @@ def _bar_ylabel(options: SuiteBarPlotOptions) -> str:
 
 def _stack_color(stack_idx: int, hue_idx: int, stack_count: int, options: SuiteBarPlotOptions):
     if options.stack_legend_scope != "hue":
-        return BLUE_GREEN_PALETTE[stack_idx % len(BLUE_GREEN_PALETTE)]
-    cmap = plt.get_cmap(HUE_STACK_CMAPS[hue_idx % len(HUE_STACK_CMAPS)])
+        return options.palette[stack_idx % len(options.palette)]
+    cmap = plt.get_cmap(options.hue_stack_cmaps[hue_idx % len(options.hue_stack_cmaps)])
     if stack_count <= 1:
-        value = 0.68
+        value = (float(options.stack_cmap_min) + float(options.stack_cmap_max)) / 2.0
     else:
-        value = 0.32 + 0.58 * (stack_idx / max(stack_count - 1, 1))
+        value = float(options.stack_cmap_min) + (
+            float(options.stack_cmap_max) - float(options.stack_cmap_min)
+        ) * (stack_idx / max(stack_count - 1, 1))
     return cmap(value)
 
 
@@ -786,6 +957,21 @@ def _nonzero_bar_segments(
         for position, height, bottom in zip(positions, heights, bottoms)
         if height > 0.0
     ]
+
+
+def _active_stack_values(
+    scoped_stack: pd.DataFrame,
+    stack_values: list[object],
+    value_col: str,
+) -> list[object]:
+    active: list[object] = []
+    for stack_value in stack_values:
+        sub = scoped_stack[_axis_filter(scoped_stack, "stack_key", stack_value)]
+        if sub.empty:
+            continue
+        if any(float(row.get(value_col, 0.0)) > 0.0 for _, row in sub.iterrows()):
+            active.append(stack_value)
+    return active
 
 
 def _add_hue_stack_legends(
@@ -923,6 +1109,7 @@ def plot_suite_bar_grid(plot_data: pd.DataFrame, stack_data: pd.DataFrame, optio
 
     nrows = len(row_values)
     ncols = len(col_values)
+    bar_width, hue_offsets = _bar_width_and_offsets(len(hue_values), options.grouped_bar_gap)
     fig_width = max(7.0, min(22.0, 2.6 * len(x_values) + 1.8 * len(hue_values) + 2.0 * ncols))
     fig_height = max(4.5, 3.8 * nrows)
     fig, axes = plt.subplots(
@@ -935,7 +1122,6 @@ def plot_suite_bar_grid(plot_data: pd.DataFrame, stack_data: pd.DataFrame, optio
     if options.figure_title:
         fig.suptitle(options.figure_title)
 
-    bar_width = min(0.8 / max(1, len(hue_values)), 0.28)
     x_positions = list(range(len(x_values)))
     global_max_height = max(float(rows[value_col].max()), 1.0)
     hue_scoped_stack_legend = options.stacked and options.stack_legend_scope == "hue" and hue is not None
@@ -949,7 +1135,7 @@ def plot_suite_bar_grid(plot_data: pd.DataFrame, stack_data: pd.DataFrame, optio
             label_max_height = global_max_height if options.share_y else local_max_height
             if options.stacked:
                 for hue_idx, hue_value in enumerate(hue_values):
-                    offset = (hue_idx - (len(hue_values) - 1) / 2.0) * bar_width
+                    offset = hue_offsets[hue_idx]
                     positions = [pos + offset for pos in x_positions]
                     total_sub = scoped[_axis_filter(scoped, hue_key, hue_value)]
                     total_by_x = {item[x]: item for _, item in total_sub.iterrows()}
@@ -959,7 +1145,13 @@ def plot_suite_bar_grid(plot_data: pd.DataFrame, stack_data: pd.DataFrame, optio
                         & _axis_filter(stack_rows, hue_key, hue_value)
                     ]
                     bottoms = [0.0] * len(x_values)
-                    for stack_idx, stack_value in enumerate(stack_values):
+                    color_stack_values = (
+                        _active_stack_values(scoped_stack, stack_values, value_col)
+                        if options.stack_legend_scope == "hue" and hue is not None
+                        else stack_values
+                    )
+                    color_stack_count = len(color_stack_values)
+                    for stack_idx, stack_value in enumerate(color_stack_values):
                         sub = scoped_stack[_axis_filter(scoped_stack, "stack_key", stack_value)]
                         by_x = {item[x]: item for _, item in sub.iterrows()}
                         heights = [float(by_x.get(x_value, {}).get(value_col, 0.0)) for x_value in x_values]
@@ -967,11 +1159,16 @@ def plot_suite_bar_grid(plot_data: pd.DataFrame, stack_data: pd.DataFrame, optio
                         if not drawable:
                             continue
                         stack_label = _stack_label(stack_value, options)
-                        color = _stack_color(stack_idx, hue_idx, len(stack_values), options)
+                        color = _stack_color(stack_idx, hue_idx, color_stack_count, options)
                         if hue_scoped_stack_legend:
                             hue_legend_groups.setdefault(hue_value, {}).setdefault(
                                 stack_label,
-                                Patch(facecolor=color, edgecolor="black", label=stack_label),
+                                Patch(
+                                    facecolor=color,
+                                    edgecolor=options.bar_edgecolor,
+                                    alpha=options.bar_alpha,
+                                    label=stack_label,
+                                ),
                             )
                         draw_positions, draw_heights, draw_bottoms = zip(*drawable)
                         ax.bar(
@@ -981,8 +1178,9 @@ def plot_suite_bar_grid(plot_data: pd.DataFrame, stack_data: pd.DataFrame, optio
                             bottom=draw_bottoms,
                             label="_nolegend_" if hue_scoped_stack_legend else stack_label,
                             color=color,
-                            edgecolor="black",
-                            linewidth=0.35,
+                            edgecolor=options.bar_edgecolor,
+                            linewidth=options.bar_linewidth,
+                            alpha=options.bar_alpha,
                         )
                         bottoms = [base + value for base, value in zip(bottoms, heights)]
 
@@ -996,6 +1194,8 @@ def plot_suite_bar_grid(plot_data: pd.DataFrame, stack_data: pd.DataFrame, optio
                                 bar_total,
                                 _format_value_label(bar_total, options.relative),
                                 label_max_height,
+                                rotation=options.value_label_rotation,
+                                fontsize=options.value_label_fontsize,
                             )
                         if missing_count:
                             _label_bar(
@@ -1005,6 +1205,7 @@ def plot_suite_bar_grid(plot_data: pd.DataFrame, stack_data: pd.DataFrame, optio
                                 f"missing {missing_count}",
                                 label_max_height,
                                 rotation=90,
+                                fontsize=options.value_label_fontsize,
                                 level=2 if options.value_labels else 1,
                             )
             else:
@@ -1013,16 +1214,17 @@ def plot_suite_bar_grid(plot_data: pd.DataFrame, stack_data: pd.DataFrame, optio
                     by_x = {item[x]: item for _, item in sub.iterrows()}
                     heights = [float(by_x.get(x_value, {}).get(value_col, 0.0)) for x_value in x_values]
                     missing = [int(by_x.get(x_value, {}).get("missing_case_count", 0)) for x_value in x_values]
-                    offset = (hue_idx - (len(hue_values) - 1) / 2.0) * bar_width
+                    offset = hue_offsets[hue_idx]
                     positions = [pos + offset for pos in x_positions]
                     ax.bar(
                         positions,
                         heights,
                         width=bar_width,
                         label=_mapped_value(hue, hue_value, options),
-                        color=BLUE_GREEN_PALETTE[hue_idx % len(BLUE_GREEN_PALETTE)],
-                        edgecolor="black",
-                        linewidth=0.5,
+                        color=options.palette[hue_idx % len(options.palette)],
+                        edgecolor=options.bar_edgecolor,
+                        linewidth=options.bar_linewidth,
+                        alpha=options.bar_alpha,
                     )
                     for xpos, height, missing_count in zip(positions, heights, missing):
                         if options.value_labels:
@@ -1032,6 +1234,8 @@ def plot_suite_bar_grid(plot_data: pd.DataFrame, stack_data: pd.DataFrame, optio
                                 height,
                                 _format_value_label(height, options.relative),
                                 label_max_height,
+                                rotation=options.value_label_rotation,
+                                fontsize=options.value_label_fontsize,
                             )
                         if missing_count:
                             _label_bar(
@@ -1041,25 +1245,12 @@ def plot_suite_bar_grid(plot_data: pd.DataFrame, stack_data: pd.DataFrame, optio
                                 f"missing {missing_count}",
                                 label_max_height,
                                 rotation=90,
+                                fontsize=options.value_label_fontsize,
                                 level=2 if options.value_labels else 1,
                             )
 
             ax.set_title(_subplot_title(row, row_value, col, col_value, options))
-            if options.stacked and hue is not None and len(hue_values) > 1:
-                tick_positions = []
-                tick_labels = []
-                for pos, x_value in zip(x_positions, x_values):
-                    for hue_idx, hue_value in enumerate(hue_values):
-                        offset = (hue_idx - (len(hue_values) - 1) / 2.0) * bar_width
-                        tick_positions.append(pos + offset)
-                        tick_labels.append(
-                            f"{_mapped_value(x, x_value, options)}\n{_mapped_value(hue, hue_value, options)}"
-                        )
-                ax.set_xticks(tick_positions)
-                ax.set_xticklabels(tick_labels, rotation=25, ha="right")
-            else:
-                ax.set_xticks(x_positions)
-                ax.set_xticklabels([_mapped_value(x, value, options) for value in x_values], rotation=25, ha="right")
+            _apply_x_tick_labels(ax, x_positions, x_values, hue_values, hue_offsets, x, hue, options)
             ax.set_xlabel(options.x_label if options.x_label is not None else _axis_label(x, options))
             ax.set_ylabel(_bar_ylabel(options))
             ax.set_axisbelow(True)

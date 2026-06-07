@@ -446,10 +446,14 @@ The suite/raw DB mode expands the input suites, matches passing raw DB rows by
 `app`, normalized `args`, and the case's resolved `fpga_bin_label`, applies
 `calls_per_forward`, and writes
 `composed_cases.csv`, `plot_data.csv`, `plot_stack_data.csv`,
-`bar_total_<metric>.png`, and `bar_total_<metric>.pdf`. The default plot layout
-is `x=seq_len`, `hue=variant`, `row=stage`, and `col=batch`. Any of those axes
-can be changed with `--x`, `--hue`, `--row`, and `--col`; use `none` for
-optional axes except `--x`.
+`plot_data_wide.csv`, `plot_stack_data_wide.csv`, `bar_total_<metric>.png`, and
+`bar_total_<metric>.pdf`. The `*_wide.csv` files are Excel-friendly pivoted
+exports: `plot_data_wide.csv` has one row per `metric/stage/batch/seq_len` with
+variants as columns, and `plot_stack_data_wide.csv` has one row per
+`metric/stage/batch/seq_len/variant` with stack components as columns. The
+default plot layout is `x=seq_len`, `hue=variant`, `row=stage`, and `col=batch`.
+Any of those axes can be changed with `--x`, `--hue`, `--row`, and `--col`; use
+`none` for optional axes except `--x`.
 
 `--stacked` is enabled by default and stacks the suite cases that make up each
 bar, so a model/workload bar can show the latency contribution of kernels or
@@ -467,6 +471,11 @@ use one shared y-axis scale. Use `--legend-position`, `--legend-ncol`,
 presentation without changing the raw DB data. Use `--value-order` to control
 axis value order, for example `--value-order variant=C1,C2,C3,C4_fused`; values
 not listed in the explicit order are appended using the default sort.
+Use `--grouped-bar-gap` to increase or shrink the gap between hue bars within
+one x tick. Use `--value-label-rotation` and `--value-label-fontsize` to tune
+bar value annotations. X tick labels default to one label per x group; use
+`--x-tick-label-mode bar` to restore one label per hue bar, and adjust it with
+`--x-tick-label-rotation` and `--x-tick-label-ha`.
 
 Use original workload suites for model-level comparisons; generated/merged
 suites are execution shards split by FPGA bin. By default, `compose` and
