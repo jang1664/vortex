@@ -15,6 +15,8 @@ Examples:
   ./run_hw.sh --input generated_suites/main --output outputs/main
   ./run_hw.sh generated_suites/test2 outputs/test2 --dry-run
   ./run_hw.sh --input generated_suites/main --output outputs/main --retry --retry-max-rounds 5
+  ./run_hw.sh --input generated_suites/main_all --output outputs/main_all_gemm --filter "kind=gemm"
+  ./run_hw.sh --input generated_suites/main_all --output outputs/main_all_prefill_gemm --filter "kind=gemm" --filter "stage=prefill"
 
 Environment overrides:
   STAGES="prefill generation"
@@ -65,6 +67,19 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     --retry-max-rounds=*|--retry-timeout-growth=*|--retry-reset-wait=*|--retry-reset-cmd=*)
+      pass_args+=("$1")
+      shift
+      ;;
+    --filter)
+      if [[ $# -lt 2 ]]; then
+        echo "Error: $1 requires a value" >&2
+        usage
+        exit 1
+      fi
+      pass_args+=("$1" "$2")
+      shift 2
+      ;;
+    --filter=*)
       pass_args+=("$1")
       shift
       ;;

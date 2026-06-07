@@ -25,6 +25,8 @@ fi
 #   STACK_BY=kind ./plot_results.sh
 #   SHARE_Y=1 ./plot_results.sh
 #   RELATIVE_SCOPE=x_tick LEGEND_POSITION=right ./plot_results.sh
+#   X_TICK_LABEL_MODE=bar X_TICK_LABEL_ROTATION=25 X_TICK_LABEL_HA=right ./plot_results.sh
+#   GROUPED_BAR_GAP=0.06 VALUE_LABEL_ROTATION=90 VALUE_LABEL_FONTSIZE=6 ./plot_results.sh
 #
 # Measurement controls:
 #   METRIC=p50_us SELECT=median MISSING=nan ./plot_results.sh
@@ -49,6 +51,12 @@ COL_AXIS="${COL_AXIS:-batch}"
 STACKED="${STACKED:-1}"
 STACK_BY="${STACK_BY:-name}"
 VALUE_LABELS="${VALUE_LABELS:-1}"
+VALUE_LABEL_ROTATION="${VALUE_LABEL_ROTATION:-0}"
+VALUE_LABEL_FONTSIZE="${VALUE_LABEL_FONTSIZE:-7}"
+GROUPED_BAR_GAP="${GROUPED_BAR_GAP:-0.04}"
+X_TICK_LABEL_MODE="${X_TICK_LABEL_MODE:-group}"
+X_TICK_LABEL_ROTATION="${X_TICK_LABEL_ROTATION:-0}"
+X_TICK_LABEL_HA="${X_TICK_LABEL_HA:-center}"
 RELATIVE="${RELATIVE:-1}"
 RELATIVE_SCOPE="${RELATIVE_SCOPE:-global}"
 SHARE_Y="${SHARE_Y:-0}"
@@ -72,6 +80,12 @@ cmd=(
   --stack-by "${STACK_BY}"
   --relative-scope "${RELATIVE_SCOPE}"
   --legend-position "${LEGEND_POSITION}"
+  --value-label-rotation "${VALUE_LABEL_ROTATION}"
+  --value-label-fontsize "${VALUE_LABEL_FONTSIZE}"
+  --grouped-bar-gap "${GROUPED_BAR_GAP}"
+  --x-tick-label-mode "${X_TICK_LABEL_MODE}"
+  --x-tick-label-rotation "${X_TICK_LABEL_ROTATION}"
+  --x-tick-label-ha "${X_TICK_LABEL_HA}"
 )
 
 if [[ "${STACKED}" == "0" ]]; then
