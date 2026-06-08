@@ -81,6 +81,17 @@ static void cleanup() {
   device = nullptr;
 }
 
+static const char* status_to_str(uint32_t status) {
+  switch (status) {
+  case MMIO_STATUS_INIT: return "INIT";
+  case MMIO_STATUS_OK: return "OK";
+  case MMIO_STATUS_ALLOC_FAIL: return "ALLOC_FAIL";
+  case MMIO_STATUS_WAIT_STUCK: return "WAIT_STUCK";
+  case MMIO_STATUS_BAD_EID: return "BAD_EID";
+  default: return "UNKNOWN";
+  }
+}
+
 // ============================================================================
 // FP16 conversion (used to produce well-formed FP16 inputs and scales)
 // ============================================================================
@@ -258,6 +269,11 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_THREADS,    &num_threads));
   RT_CHECK(vx_dev_caps(device, VX_CAPS_LOCAL_MEM_SIZE, &local_mem_size));
 
+  // Reserve the kernel's fixed VMA before large data buffers are allocated.
+  // Otherwise large M/N/K cases can place C across STARTUP_ADDR and make the
+  // later kernel upload fail with an address-overlap error.
+  RT_CHECK(vx_upload_kernel_file(device, kernel_file, &krnl_buffer));
+
   // ---- Generate test vectors (no host reference) ----
   std::vector<uint16_t> h_A;
   std::vector<uint8_t>  h_W_int4;
@@ -282,8 +298,6 @@ int main(int argc, char *argv[]) {
 
   std::vector<uint8_t> zero_out(out_total_bytes, 0);
   RT_CHECK(vx_copy_to_dev(C_buffer, zero_out.data(), 0, out_total_bytes));
-
-  RT_CHECK(vx_upload_kernel_file(device, kernel_file, &krnl_buffer));
 
   // ---- Set up kernel arguments ----
   kernel_arg_t kargs = {};
@@ -319,10 +333,28 @@ int main(int argc, char *argv[]) {
 
   RT_CHECK(vx_upload_bytes(device, &kargs, sizeof(kargs), &args_buffer));
 
+  auto check_kernel_status = [&](const char* phase, int iter) -> bool {
+    RT_CHECK(vx_copy_from_dev(&kargs, args_buffer, 0, sizeof(kargs)));
+    if (kargs.status != MMIO_STATUS_OK) {
+      std::cerr << "Kernel failed during " << phase << " iter=" << iter
+                << ": status=" << kargs.status
+                << " (" << status_to_str(kargs.status) << ")"
+                << ", eid=" << kargs.job_eid
+                << ", gen=" << kargs.job_generation
+                << ", ctrl=0x" << std::hex << kargs.last_ctrl << std::dec
+                << std::endl;
+      cleanup();
+      return false;
+    }
+    return true;
+  };
+
   // ---- Warmup --------------------------------------------------------------
   for (int i = 0; i < bench.warmup; ++i) {
     RT_CHECK(vx_start(device, krnl_buffer, args_buffer));
     RT_CHECK(vx_ready_wait(device, VX_MAX_TIMEOUT));
+    if (!check_kernel_status("warmup", i))
+      return -1;
   }
 
   // ---- Timed iterations ----------------------------------------------------
@@ -331,6 +363,8 @@ int main(int argc, char *argv[]) {
     vx_bench::Stopwatch sw; sw.start();
     RT_CHECK(vx_start(device, krnl_buffer, args_buffer));
     RT_CHECK(vx_ready_wait(device, VX_MAX_TIMEOUT));
+    if (!check_kernel_status("timed", i))
+      return -1;
     stats.record(sw.stop_us());
   }
 
