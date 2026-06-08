@@ -407,12 +407,8 @@ def _apply_row_filters(composed: pd.DataFrame, row_filters: tuple[PlotRowFilter,
     return filtered
 
 
-def prepare_suite_bar_data(
-    suites: list[BenchSuite],
-    options: SuiteBarPlotOptions,
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    combined_suite, source_suites = _combine_suites(suites, match_fpga_bin=options.match_fpga_bin)
-    composed = compose_latency(
+def _compose_suite_bar_cases(combined_suite: BenchSuite, options: SuiteBarPlotOptions) -> pd.DataFrame:
+    return compose_latency(
         combined_suite,
         ComposeOptions(
             raw_dbs=options.raw_dbs,
@@ -426,19 +422,30 @@ def prepare_suite_bar_data(
             latency_scale_rules=options.latency_scale_rules,
         ),
     )
+
+
+def _prepare_suite_bar_data_from_composed(
+    composed: pd.DataFrame,
+    source_suites: dict[str, str],
+    options: SuiteBarPlotOptions,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     composed = estimate_composed_latency(composed, options.latency_estimate)
     composed = _add_bar_axis_columns(composed, source_suites)
     composed = _apply_row_filters(composed, options.row_filters)
     composed["weighted_latency_us"] = pd.to_numeric(composed["weighted_latency_us"], errors="coerce")
     composed["_weighted_latency_filled"] = composed["weighted_latency_us"].fillna(0.0)
     composed["stack_key"] = composed.apply(lambda row: _stack_key(row, options.stack_by), axis=1)
+    status = composed["compose_status"].astype(str)
+    composed["_pass_count"] = status.eq("pass").astype(int)
+    composed["_estimated_count"] = status.eq("estimated").astype(int)
+    composed["_missing_count"] = (~status.isin({"pass", "estimated"})).astype(int)
 
     plot_aggs = dict(
         total_latency_us=("_weighted_latency_filled", "sum"),
         case_count=("case_id", "count"),
-        pass_case_count=("compose_status", lambda values: _count_status(values, "pass")),
-        estimated_case_count=("compose_status", lambda values: _count_status(values, "estimated")),
-        missing_case_count=("compose_status", _count_unresolved),
+        pass_case_count=("_pass_count", "sum"),
+        estimated_case_count=("_estimated_count", "sum"),
+        missing_case_count=("_missing_count", "sum"),
         source_suites=("source_suites", lambda values: _unique_join(values.astype(str))),
         source_raw_dbs=("source_raw_dbs", lambda values: _unique_join(values.astype(str))),
         expected_fpga_bin_labels=("expected_fpga_bin_label", lambda values: _unique_join(values.astype(str))),
@@ -447,9 +454,9 @@ def prepare_suite_bar_data(
     stack_aggs = dict(
         total_latency_us=("_weighted_latency_filled", "sum"),
         case_count=("case_id", "count"),
-        pass_case_count=("compose_status", lambda values: _count_status(values, "pass")),
-        estimated_case_count=("compose_status", lambda values: _count_status(values, "estimated")),
-        missing_case_count=("compose_status", _count_unresolved),
+        pass_case_count=("_pass_count", "sum"),
+        estimated_case_count=("_estimated_count", "sum"),
+        missing_case_count=("_missing_count", "sum"),
         source_cases=("case_id", lambda values: _unique_join(values.astype(str))),
         source_suites=("source_suites", lambda values: _unique_join(values.astype(str))),
         source_raw_dbs=("source_raw_dbs", lambda values: _unique_join(values.astype(str))),
@@ -494,29 +501,44 @@ def prepare_suite_bar_data(
         .agg(**stack_aggs)
     )
     stack_data.insert(0, "metric", options.metric)
-    return composed.drop(columns=["_weighted_latency_filled"]), plot_data, stack_data
+    return composed.drop(columns=["_weighted_latency_filled", "_pass_count", "_estimated_count", "_missing_count"]), plot_data, stack_data
+
+
+def prepare_suite_bar_data(
+    suites: list[BenchSuite],
+    options: SuiteBarPlotOptions,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    combined_suite, source_suites = _combine_suites(suites, match_fpga_bin=options.match_fpga_bin)
+    composed = _compose_suite_bar_cases(combined_suite, options)
+    return _prepare_suite_bar_data_from_composed(composed, source_suites, options)
 
 
 def prepare_suite_bar_data_versions(
     suites: list[BenchSuite],
     options: SuiteBarPlotOptions,
 ) -> SuiteBarDataVersions:
+    combined_suite, source_suites = _combine_suites(suites, match_fpga_bin=options.match_fpga_bin)
+
     base_options = replace(options, latency_scale_rules=(), latency_estimate=None)
-    base = SuiteBarData(*prepare_suite_bar_data(suites, base_options))
+    base_composed = _compose_suite_bar_cases(combined_suite, base_options)
+    base = SuiteBarData(*_prepare_suite_bar_data_from_composed(base_composed, source_suites, base_options))
 
     scaled = None
+    scaled_composed = None
     if options.latency_scale_rules:
         scaled_options = replace(options, latency_estimate=None)
-        scaled = SuiteBarData(*prepare_suite_bar_data(suites, scaled_options))
+        scaled_composed = _compose_suite_bar_cases(combined_suite, scaled_options)
+        scaled = SuiteBarData(*_prepare_suite_bar_data_from_composed(scaled_composed, source_suites, scaled_options))
 
     estimated = None
     if options.latency_estimate is not None and options.latency_estimate.enabled:
         estimated_options = replace(options, latency_scale_rules=())
-        estimated = SuiteBarData(*prepare_suite_bar_data(suites, estimated_options))
+        estimated = SuiteBarData(*_prepare_suite_bar_data_from_composed(base_composed.copy(), source_suites, estimated_options))
 
     scaled_estimated = None
     if options.latency_scale_rules and options.latency_estimate is not None and options.latency_estimate.enabled:
-        scaled_estimated = SuiteBarData(*prepare_suite_bar_data(suites, options))
+        assert scaled_composed is not None
+        scaled_estimated = SuiteBarData(*_prepare_suite_bar_data_from_composed(scaled_composed.copy(), source_suites, options))
 
     return SuiteBarDataVersions(
         base=base,

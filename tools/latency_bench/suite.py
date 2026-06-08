@@ -319,9 +319,6 @@ def apply_case_filters(suite: BenchSuite, filters: tuple[str, ...]) -> BenchSuit
         return suite
     predicates = [compile_case_filter(expr) for expr in filters]
     cases = [case for case in suite.cases if all(predicate(case) for predicate in predicates)]
-    if not cases:
-        joined = " & ".join(f"({expr})" for expr in filters)
-        raise ValueError(f"filter matched no cases: {joined}")
     return replace(suite, cases=cases)
 
 

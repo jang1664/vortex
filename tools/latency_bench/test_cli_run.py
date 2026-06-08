@@ -461,23 +461,32 @@ cases:
                 [case["id"] for case in expanded["cases"]],
             )
 
-    def test_run_filter_rejects_empty_selection(self) -> None:
+    def test_run_filter_allows_empty_selection_as_noop(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             build_dir, fpga_bin, suite = self._write_fake_inputs(tmp_path)
+            out_root = tmp_path / "out"
 
-            with self.assertRaisesRegex(ValueError, "filter matched no cases"):
-                main([
-                    "run",
-                    "--build-dir", str(build_dir),
-                    "--fpga-bin", str(fpga_bin),
-                    "--suite", str(suite),
-                    "--out", str(tmp_path / "out"),
-                    "--run-id", "filtered",
-                    "--no-srun",
-                    "--dry-run",
-                    "--filter", "stage=missing",
-                ])
+            rc = main([
+                "run",
+                "--build-dir", str(build_dir),
+                "--fpga-bin", str(fpga_bin),
+                "--suite", str(suite),
+                "--out", str(out_root),
+                "--run-id", "filtered",
+                "--no-srun",
+                "--filter", "stage=missing",
+            ])
+
+            self.assertEqual(0, rc)
+            run_dir = out_root / "runs" / "filtered"
+            manifest = json.loads((run_dir / "manifest.json").read_text())
+            self.assertEqual(0, manifest["case_count"])
+            self.assertEqual(0, manifest["execution_count"])
+            self.assertEqual(0, manifest["run_execution_count"])
+            self.assertTrue((run_dir / "cases.csv").exists())
+            self.assertTrue((run_dir / "results.csv").exists())
+            self.assertTrue((run_dir / "summary.csv").exists())
 
     def test_run_visualizes_when_requested(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -30,6 +30,24 @@ DEFAULT_RETRY_MAX_ROUNDS = 5
 DEFAULT_RETRY_TIMEOUT_GROWTH = 1.10
 DEFAULT_RETRY_RESET_WAIT = "10s"
 DEFAULT_RETRY_RESET_CMD = "xrt-smi reset"
+CASE_COLUMNS = [
+    "suite",
+    "case_id",
+    "exec_key",
+    "app",
+    "kind",
+    "op",
+    "backend",
+    "variant",
+    "stage",
+    "name",
+    "args",
+    "shape_json",
+    "calls_per_forward",
+    "warmup",
+    "iterations",
+    "source",
+]
 
 
 @dataclass(frozen=True)
@@ -235,7 +253,7 @@ def collect_git_metadata(cwd: Path | None = None) -> GitMetadata:
 def write_cases_csv(suite: BenchSuite, out_dir: Path) -> None:
     rows = suite_to_rows(suite)
     with (out_dir / "cases.csv").open("w", newline="") as fp:
-        writer = csv.DictWriter(fp, fieldnames=list(rows[0].keys()))
+        writer = csv.DictWriter(fp, fieldnames=list(rows[0].keys()) if rows else CASE_COLUMNS)
         writer.writeheader()
         writer.writerows(rows)
 

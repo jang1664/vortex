@@ -100,6 +100,14 @@ class _EstimateResult:
     train_mape: float | None = None
 
 
+@dataclass
+class _EstimateGroupCache:
+    train: pd.DataFrame
+    train_maps: list[dict[str, float]]
+    shape_scores: dict[str, list[dict[str, object]]]
+    ridge_models: dict[float, object]
+
+
 def _unique_join(values: pd.Series | list[object]) -> str:
     out: list[str] = []
     seen: set[str] = set()
@@ -386,8 +394,10 @@ def _score_shape_candidate(
     model_name: str,
     basis: tuple[str, ...],
     target_row: pd.Series | None = None,
+    train_maps: list[dict[str, float]] | None = None,
 ) -> dict[str, object] | None:
-    train_maps = [_numeric_shape_features(row) for _, row in train.iterrows()]
+    if train_maps is None:
+        train_maps = [_numeric_shape_features(row) for _, row in train.iterrows()]
     x_train = _shape_matrix_from_maps(train_maps, model_name=model_name, basis=basis)
     if x_train is None:
         return None
@@ -415,8 +425,10 @@ def _score_shape_candidate(
     predicted = None if x_target is None else max(float(model.predict(x_target)[0]), 0.0)
     return {
         "model_name": model_name,
+        "basis_tuple": basis,
         "basis": _basis_label(model_name, basis),
         "predicted": predicted,
+        "model": model,
         "cv_mape": cv_mape,
         "train_mape": train_mape,
         "selected_score": selected_score,
@@ -430,10 +442,19 @@ def _shape_fit_scores(
     *,
     model_name: str,
     target_row: pd.Series | None = None,
+    train_maps: list[dict[str, float]] | None = None,
 ) -> list[dict[str, object]]:
     scores: list[dict[str, object]] = []
+    if train_maps is None:
+        train_maps = [_numeric_shape_features(row) for _, row in train.iterrows()]
     for candidate_model, basis in _shape_candidate_specs(model_name):
-        score = _score_shape_candidate(train, model_name=candidate_model, basis=basis, target_row=target_row)
+        score = _score_shape_candidate(
+            train,
+            model_name=candidate_model,
+            basis=basis,
+            target_row=target_row,
+            train_maps=train_maps,
+        )
         if score is not None:
             scores.append(score)
     return scores
@@ -461,20 +482,42 @@ def _shape_fit_estimate(
     train: pd.DataFrame,
     *,
     requested_model: str,
+    train_maps: list[dict[str, float]] | None = None,
+    scores: list[dict[str, object]] | None = None,
 ) -> _EstimateResult | None:
-    scores = _shape_fit_scores(train, model_name=requested_model, target_row=target_row)
-    selected = _select_shape_score(scores)
-    if selected is None or selected.get("predicted") is None:
-        return None
+    if train_maps is None:
+        train_maps = [_numeric_shape_features(row) for _, row in train.iterrows()]
+    if scores is None:
+        scores = _shape_fit_scores(train, model_name=requested_model, train_maps=train_maps)
 
     target_numeric = _numeric_shape_features(target_row)
-    train_maps = [_numeric_shape_features(row) for _, row in train.iterrows()]
+    compatible_scores: list[dict[str, object]] = []
+    for score in scores:
+        candidate_model = str(score.get("model_name", ""))
+        basis = tuple(score.get("basis_tuple", ()))
+        x_target = _shape_matrix_from_maps([target_numeric], model_name=candidate_model, basis=basis)
+        if x_target is not None:
+            compatible_scores.append(score)
+
+    selected = _select_shape_score(compatible_scores)
+    if selected is None:
+        return None
+
+    selected_model_name = str(selected["model_name"])
+    selected_basis = tuple(selected.get("basis_tuple", ()))
+    x_target = _shape_matrix_from_maps([target_numeric], model_name=selected_model_name, basis=selected_basis)
+    if x_target is None:
+        return None
+    model = selected.get("model")
+    if model is None:
+        return None
+    predicted = max(float(model.predict(x_target)[0]), 0.0)
     distance, nearest_idx = _numeric_distance(target_numeric, train_maps)
-    model_name = str(selected["model_name"])
+    model_name = selected_model_name
     if requested_model == "auto_shape":
         model_name = f"auto_shape:{model_name}"
     return _EstimateResult(
-        latency=float(selected["predicted"]),
+        latency=predicted,
         model_name=model_name,
         distance=distance,
         nearest=train.iloc[nearest_idx],
@@ -488,9 +531,14 @@ def _shape_fit_estimate(
 def _nearest_scale_estimate(
     target_row: pd.Series,
     train: pd.DataFrame,
+    *,
+    train_maps: list[dict[str, float]] | None = None,
+    target_numeric: dict[str, float] | None = None,
 ) -> _EstimateResult:
-    target_numeric = _numeric_shape_features(target_row)
-    train_maps = [_numeric_shape_features(row) for _, row in train.iterrows()]
+    if target_numeric is None:
+        target_numeric = _numeric_shape_features(target_row)
+    if train_maps is None:
+        train_maps = [_numeric_shape_features(row) for _, row in train.iterrows()]
     distance, nearest_idx = _numeric_distance(target_numeric, train_maps)
     nearest = train.iloc[nearest_idx]
     nearest_latency = float(pd.to_numeric(nearest["latency_us"], errors="coerce"))
@@ -512,14 +560,12 @@ def _nearest_scale_estimate(
     )
 
 
-def _ridge_log_estimate(
-    target_row: pd.Series,
+def _fit_ridge_log_model(
     train: pd.DataFrame,
     *,
     alpha: float,
-) -> _EstimateResult:
+) -> object:
     feature_rows = [latency_feature_dict(row) for _, row in train.iterrows()]
-    target_features = latency_feature_dict(target_row)
     y = np.log1p(pd.to_numeric(train["latency_us"], errors="coerce").astype(float).to_numpy())
     model = make_pipeline(
         DictVectorizer(sparse=True),
@@ -527,10 +573,25 @@ def _ridge_log_estimate(
         Ridge(alpha=alpha),
     )
     model.fit(feature_rows, y)
+    return model
+
+
+def _ridge_log_estimate(
+    target_row: pd.Series,
+    train: pd.DataFrame,
+    *,
+    alpha: float,
+    train_maps: list[dict[str, float]] | None = None,
+    model: object | None = None,
+) -> _EstimateResult:
+    if model is None:
+        model = _fit_ridge_log_model(train, alpha=alpha)
+    target_features = latency_feature_dict(target_row)
     predicted = float(np.expm1(model.predict([target_features])[0]))
 
     target_numeric = _numeric_shape_features(target_row)
-    train_maps = [_numeric_shape_features(row) for _, row in train.iterrows()]
+    if train_maps is None:
+        train_maps = [_numeric_shape_features(row) for _, row in train.iterrows()]
     distance, nearest_idx = _numeric_distance(target_numeric, train_maps)
     return _EstimateResult(
         latency=max(predicted, 0.0),
@@ -570,6 +631,37 @@ def _measured_rows(out: pd.DataFrame) -> pd.DataFrame:
     return out[(status == "pass") & latency.notna() & (latency > 0.0)].copy()
 
 
+def _estimate_group_caches(
+    measured: pd.DataFrame,
+    group_columns: tuple[str, ...],
+) -> dict[tuple[str, ...], _EstimateGroupCache]:
+    buckets: dict[tuple[str, ...], list[object]] = {}
+    for idx, row in measured.iterrows():
+        buckets.setdefault(_group_key(row, group_columns), []).append(idx)
+
+    caches: dict[tuple[str, ...], _EstimateGroupCache] = {}
+    for group_key, indices in buckets.items():
+        train = measured.loc[indices].copy()
+        caches[group_key] = _EstimateGroupCache(
+            train=train,
+            train_maps=[_numeric_shape_features(row) for _, row in train.iterrows()],
+            shape_scores={},
+            ridge_models={},
+        )
+    return caches
+
+
+def _shape_scores_for_group(
+    cache: _EstimateGroupCache,
+    model_name: str,
+) -> list[dict[str, object]]:
+    scores = cache.shape_scores.get(model_name)
+    if scores is None:
+        scores = _shape_fit_scores(cache.train, model_name=model_name, train_maps=cache.train_maps)
+        cache.shape_scores[model_name] = scores
+    return scores
+
+
 def evaluate_latency_estimator_groups(
     composed: pd.DataFrame,
     options: LatencyEstimateOptions | None,
@@ -583,11 +675,8 @@ def evaluate_latency_estimator_groups(
         return pd.DataFrame()
 
     rows: list[dict[str, object]] = []
-    group_keys = sorted({_group_key(row, options.group_columns) for _, row in measured.iterrows()})
-    for group_key in group_keys:
-        train_mask = measured.apply(lambda row: _group_key(row, options.group_columns) == group_key, axis=1)
-        train = measured[train_mask].copy()
-        scores = _shape_fit_scores(train, model_name=options.model)
+    for group_key, cache in sorted(_estimate_group_caches(measured, options.group_columns).items()):
+        scores = _shape_scores_for_group(cache, options.model)
         selected = _select_shape_score(scores)
         selected_key = None if selected is None else (selected["model_name"], selected["basis"])
         for score in scores:
@@ -623,39 +712,47 @@ def estimate_composed_latency(
     if measured.empty:
         return out
 
+    group_caches = _estimate_group_caches(measured, options.group_columns)
     target_indices = out.index[status == "missing"].tolist()
     warned_groups: set[tuple[str, ...]] = set()
     for idx in target_indices:
         target = out.loc[idx]
         group_key = _group_key(target, options.group_columns)
-        train_mask = measured.apply(lambda row: _group_key(row, options.group_columns) == group_key, axis=1)
-        train = measured[train_mask].copy()
-        if train.empty:
+        cache = group_caches.get(group_key)
+        if cache is None or cache.train.empty:
             continue
 
         result: _EstimateResult | None = None
-        if len(train) >= options.min_train_rows:
+        if len(cache.train) >= options.min_train_rows:
             if options.model == "ridge_log":
+                ridge_model = cache.ridge_models.get(options.ridge_alpha)
+                if ridge_model is None:
+                    ridge_model = _fit_ridge_log_model(cache.train, alpha=options.ridge_alpha)
+                    cache.ridge_models[options.ridge_alpha] = ridge_model
                 result = _ridge_log_estimate(
                     target,
-                    train,
+                    cache.train,
                     alpha=options.ridge_alpha,
+                    train_maps=cache.train_maps,
+                    model=ridge_model,
                 )
             else:
                 result = _shape_fit_estimate(
                     target,
-                    train,
+                    cache.train,
                     requested_model=options.model,
+                    train_maps=cache.train_maps,
+                    scores=_shape_scores_for_group(cache, options.model),
                 )
         if result is None and options.fallback == "nearest_scale":
-            result = _nearest_scale_estimate(target, train)
+            result = _nearest_scale_estimate(target, cache.train, train_maps=cache.train_maps)
         if result is None:
             continue
 
         calls = _float_or_none(target.get("calls_per_forward"))
         calls = 1.0 if calls is None else calls
-        train_numeric = [_numeric_shape_features(row) for _, row in train.iterrows()]
-        mode = _estimate_mode(_numeric_shape_features(target), train_numeric)
+        target_numeric = _numeric_shape_features(target)
+        mode = _estimate_mode(target_numeric, cache.train_maps)
         if options.warn_extrapolation and mode == "extrapolation" and group_key not in warned_groups:
             warned_groups.add(group_key)
             warnings.warn(
@@ -674,10 +771,10 @@ def estimate_composed_latency(
         out.loc[idx, "estimate_train_mape"] = _format_optional_float(result.train_mape)
         out.loc[idx, "estimate_group"] = _group_label(options.group_columns, group_key)
         out.loc[idx, "estimate_mode"] = mode
-        out.loc[idx, "estimate_train_rows"] = int(len(train))
+        out.loc[idx, "estimate_train_rows"] = int(len(cache.train))
         out.loc[idx, "estimate_distance"] = f"{result.distance:.12g}"
         out.loc[idx, "estimate_source_case_id"] = str(result.nearest.get("case_id", ""))
-        out.loc[idx, "estimate_source_raw_dbs"] = _unique_join(train.get("source_raw_dbs", pd.Series(dtype=str)))
+        out.loc[idx, "estimate_source_raw_dbs"] = _unique_join(cache.train.get("source_raw_dbs", pd.Series(dtype=str)))
         out.loc[idx, "source_raw_dbs"] = out.loc[idx, "estimate_source_raw_dbs"]
         out.loc[idx, "source_run_ids"] = ""
         out.loc[idx, "selected_run_id"] = ""
