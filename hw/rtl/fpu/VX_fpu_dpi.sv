@@ -51,7 +51,8 @@ module VX_fpu_dpi import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
     localparam FPU_DIVSQRT = 1;
     localparam FPU_CVT     = 2;
     localparam FPU_NCP     = 3;
-    localparam NUM_FPC     = 4;
+    localparam FPU_EXP     = 4;
+    localparam NUM_FPC     = 5;
     localparam FPC_BITS    = `LOG2UP(NUM_FPC);
 
     localparam RSP_DATAW = (NUM_LANES * `XLEN) + 1 + $bits(fflags_t) + TAG_WIDTH;
@@ -113,6 +114,7 @@ module VX_fpu_dpi import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
             INST_FPU_MUL:   begin core_select = FPU_FMA; is_fmul = 1; end
             INST_FPU_DIV:   begin core_select = FPU_DIVSQRT; is_div = 1; end
             INST_FPU_SQRT:  begin core_select = FPU_DIVSQRT; end
+            INST_FPU_EXP:   begin core_select = FPU_EXP; end
             INST_FPU_CMP:   begin core_select = FPU_NCP; is_fcmp = 1; end
             INST_FPU_F2I:   begin core_select = FPU_CVT; is_ftoi = 1; end
             INST_FPU_F2U:   begin core_select = FPU_CVT; is_ftou = 1; end
@@ -273,6 +275,45 @@ module VX_fpu_dpi import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
 
         assign sqrt_has_fflags = 1;
         assign sqrt_ready_in = fsqrt_ready;
+
+    end
+    endgenerate
+
+    generate
+    begin : g_fexp
+
+        reg [NUM_LANES-1:0][`XLEN-1:0] result_fexp_r;
+        reg [NUM_LANES-1:0][63:0] result_fexp;
+        fflags_t [NUM_LANES-1:0] fflags_fexp;
+
+        wire fexp_valid = (valid_in && core_select == FPU_EXP);
+        wire fexp_ready = per_core_ready_out[FPU_EXP] || ~per_core_valid_out[FPU_EXP];
+        wire fexp_fire  = fexp_valid && fexp_ready;
+
+        always @(*) begin
+            for (integer i = 0; i < NUM_LANES; ++i) begin
+                dpi_fexp (fexp_fire, int'(f_fmt), operands[0][i], result_fexp[i], fflags_fexp[i]);
+                result_fexp_r[i] = result_fexp[i][`XLEN-1:0];
+            end
+        end
+
+        fflags_t fflags_merged;
+        `FPU_MERGE_FFLAGS(fflags_merged, fflags_fexp, mask_in, NUM_LANES);
+
+        VX_shift_register #(
+            .DATAW  (1 + TAG_WIDTH + NUM_LANES * `XLEN + $bits(fflags_t)),
+            .DEPTH  (`LATENCY_FEXP),
+            .RESETW (1)
+        ) shift_reg (
+            .clk      (clk),
+            .reset    (reset),
+            .enable   (fexp_ready),
+            .data_in  ({fexp_valid, tag_in, result_fexp_r, fflags_merged}),
+            .data_out ({per_core_valid_out[FPU_EXP], per_core_tag_out[FPU_EXP], per_core_result[FPU_EXP], per_core_fflags[FPU_EXP]})
+        );
+
+        assign per_core_has_fflags[FPU_EXP] = 1;
+        assign per_core_ready_in[FPU_EXP] = fexp_ready;
 
     end
     endgenerate

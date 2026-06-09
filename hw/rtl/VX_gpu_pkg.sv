@@ -355,6 +355,7 @@ package VX_gpu_pkg;
     localparam INST_FPU_NMADD =  4'b0011; // SUB=fmt[1]
     localparam INST_FPU_DIV =    4'b0100;
     localparam INST_FPU_SQRT =   4'b0101;
+    localparam INST_FPU_EXP =    4'b0110;
     localparam INST_FPU_F2I =    4'b1000; // fmt[0]: F32=0, F64=1, fmt[1]: I32=0, I64=1
     localparam INST_FPU_F2U =    4'b1001; // fmt[0]: F32=0, F64=1, fmt[1]: I32=0, I64=1
     localparam INST_FPU_I2F =    4'b1010; // fmt[0]: F32=0, F64=1, fmt[1]: I32=0, I64=1

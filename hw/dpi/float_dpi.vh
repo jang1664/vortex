@@ -24,6 +24,7 @@ import "DPI-C" function void dpi_fnmsub(input logic enable, input int dst_fmt, i
 
 import "DPI-C" function void dpi_fdiv(input logic enable, input int dst_fmt, input longint a, input longint b, input bit[2:0] frm, output longint result, output bit[4:0] fflags);
 import "DPI-C" function void dpi_fsqrt(input logic enable, input int dst_fmt, input longint a, input bit[2:0] frm, output longint result, output bit[4:0] fflags);
+import "DPI-C" function void dpi_fexp(input logic enable, input int dst_fmt, input longint a, output longint result, output bit[4:0] fflags);
 
 import "DPI-C" function void dpi_ftoi(input logic enable, input int dst_fmt, input int src_fmt, input longint a, input bit[2:0] frm, output longint result, output bit[4:0] fflags);
 import "DPI-C" function void dpi_ftou(input logic enable, input int dst_fmt, input int src_fmt, input longint a, input bit[2:0] frm, output longint result, output bit[4:0] fflags);

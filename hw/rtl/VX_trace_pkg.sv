@@ -312,6 +312,9 @@ package VX_trace_pkg;
                         `TRACE(level, ("FSQRT.S"))
                     end
                 end
+                INST_FPU_EXP: begin
+                    `TRACE(level, ("VX_EXPF"))
+                end
                 INST_FPU_CMP: begin
                     if (op_args.fpu.fmt[0]) begin
                         case (op_args.fpu.frm[1:0])

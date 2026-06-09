@@ -508,6 +508,18 @@
 `endif
 `endif
 
+// FEXP Latency
+`ifndef LATENCY_FEXP
+`ifdef FPU_DSP
+`ifdef VIVADO
+`define LATENCY_FEXP (6 * `LATENCY_FMA)
+`endif
+`endif
+`ifndef LATENCY_FEXP
+`define LATENCY_FEXP 4
+`endif
+`endif
+
 // FCVT Latency
 `ifndef LATENCY_FCVT
 `define LATENCY_FCVT 5
@@ -521,6 +533,11 @@
 // FDIV Bandwidth ratio
 `ifndef FDIV_PE_RATIO
 `define FDIV_PE_RATIO 8
+`endif
+
+// FEXP Bandwidth ratio
+`ifndef FEXP_PE_RATIO
+`define FEXP_PE_RATIO 1
 `endif
 
 // FSQRT Bandwidth ratio
