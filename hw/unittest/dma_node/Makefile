@@ -6,9 +6,9 @@ include $(ROOT_DIR)/config.mk
 RTL_DIR := $(VORTEX_HOME)/hw/rtl
 SRC_DIR := $(VORTEX_HOME)/hw/unittest/dma_node
 
-# Force use of gcc-11/g++-11 for C++20 features
-export CC := /usr/bin/gcc-11
-export CXX := /usr/bin/g++-11
+# Use the system compiler for host-side Verilator compilation.
+export CC := /usr/bin/gcc
+export CXX := /usr/bin/g++
 
 SIM_EXEC ?= vlt
 
@@ -57,6 +57,7 @@ RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
         $(RTL_DIR)/libs/VX_stream_omega.sv \
         $(RTL_DIR)/libs/VX_mul_u32_pipe.sv \
         $(RTL_DIR)/mem/VX_mem_arb.sv \
+        $(RTL_DIR)/mem/VX_mem_bus_split.sv \
         $(RTL_DIR)/mem/VX_lsu_mem_arb.sv \
         $(RTL_DIR)/mem/VX_mem_switch.sv \
         $(RTL_DIR)/mem/VX_local_mem.sv \

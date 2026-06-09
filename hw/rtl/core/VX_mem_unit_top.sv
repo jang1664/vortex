@@ -88,6 +88,28 @@ module VX_mem_unit_top import VX_gpu_pkg::*; #(
         .TAG_WIDTH (DCACHE_CORE_TAG_WIDTH)
     ) mem_bus_if[DCACHE_NUM_REQS]();
 
+    VX_lsu_mem_if #(
+        .NUM_LANES (`NUM_LSU_LANES),
+        .DATA_SIZE (LSU_WORD_SIZE),
+        .TAG_WIDTH (LSU_TAG_WIDTH)
+    ) dma_ctrl_if[`NUM_LSU_BLOCKS]();
+
+    VX_lsu_mem_if #(
+        .NUM_LANES (`NUM_LSU_LANES),
+        .DATA_SIZE (LSU_WORD_SIZE),
+        .TAG_WIDTH (LSU_TAG_WIDTH)
+    ) gemm_ctrl_if[`NUM_LSU_BLOCKS]();
+
+    VX_mem_bus_if #(
+        .DATA_SIZE (LSU_WORD_SIZE),
+        .TAG_WIDTH (LMEM_TAG_WIDTH)
+    ) dma_local_data_if[`NUM_LSU_LANES]();
+
+    VX_mem_bus_if #(
+        .DATA_SIZE (DCACHE_WORD_SIZE),
+        .TAG_WIDTH (DCACHE_TAG_WIDTH)
+    ) dma_global_data_if();
+
     // memory request
     for (genvar i = 0; i < DCACHE_NUM_REQS; ++i) begin : g_mem_req
         assign mem_req_valid[i] = mem_bus_if[i].req_valid;
@@ -112,6 +134,34 @@ module VX_mem_unit_top import VX_gpu_pkg::*; #(
     VX_cache_pkg::cache_perf_t lmem_perf = '0;
 `endif
 
+    for (genvar i = 0; i < `NUM_LSU_BLOCKS; ++i) begin : g_unused_accel_ctrl
+        VX_lsu_mem_zero_rsp #(
+            .NUM_LANES (`NUM_LSU_LANES),
+            .DATA_SIZE (LSU_WORD_SIZE),
+            .TAG_WIDTH (LSU_TAG_WIDTH)
+        ) dma_ctrl_rsp (
+            .clk    (clk),
+            .reset  (reset),
+            .mem_if (dma_ctrl_if[i])
+        );
+
+        VX_lsu_mem_zero_rsp #(
+            .NUM_LANES (`NUM_LSU_LANES),
+            .DATA_SIZE (LSU_WORD_SIZE),
+            .TAG_WIDTH (LSU_TAG_WIDTH)
+        ) gemm_ctrl_rsp (
+            .clk    (clk),
+            .reset  (reset),
+            .mem_if (gemm_ctrl_if[i])
+        );
+    end
+
+    for (genvar i = 0; i < `NUM_LSU_LANES; ++i) begin : g_unused_dma_lmem
+        `INIT_VX_MEM_BUS_IF(dma_local_data_if[i])
+    end
+
+    `INIT_VX_MEM_BUS_IF(dma_global_data_if)
+
     VX_mem_unit #(
         .INSTANCE_ID (INSTANCE_ID)
     ) mem_unit (
@@ -120,8 +170,12 @@ module VX_mem_unit_top import VX_gpu_pkg::*; #(
     `ifdef PERF_ENABLE
         .lmem_perf     (lmem_perf),
     `endif
-        .lsu_mem_if    (lsu_mem_if),
-        .dcache_bus_if (mem_bus_if)
+        .lsu_mem_if        (lsu_mem_if),
+        .dcache_bus_if     (mem_bus_if),
+        .dma_ctrl_if       (dma_ctrl_if),
+        .gemm_ctrl_if      (gemm_ctrl_if),
+        .dma_local_data_if (dma_local_data_if),
+        .dma_global_data_if(dma_global_data_if)
     );
 
 endmodule

@@ -94,7 +94,7 @@ module VX_core import VX_gpu_pkg::*; #(
     VX_mem_bus_if #(
         .DATA_SIZE (LSU_WORD_SIZE),
         .TAG_WIDTH (LMEM_TAG_WIDTH)
-    ) dma_local_data_if();
+    ) dma_local_data_if[`NUM_LSU_LANES]();
 
     VX_mem_bus_if #(
         .DATA_SIZE (DCACHE_WORD_SIZE),
