@@ -72,6 +72,32 @@ resolve_fpga_bin() {
   FPGA_BIN_CONFIGS="$(printf '%s\n' "${resolved}" | sed -n '2p')"
 }
 
+append_run_configs() {
+  local configs="${1:-}"
+  configs+=" -DWLOAD_AT_ONCE"
+
+  if [[ -n "${DEBUG_FLAG}" ]]; then
+    configs+=" -DDBG_TRACE_PIPELINE"
+    configs+=" -DDBG_TRACE_MEM"
+    configs+=" -DDBG_TRACE_CACHE"
+    configs+=" -DDBG_TRACE_AFU"
+    configs+=" -DDBG_TRACE_SCOPE"
+    configs+=" -DDBG_TRACE_GBAR"
+    configs+=" -DDBG_TRACE_TCU"
+    configs+=" -DDBG_TRACE_GEMM"
+  fi
+
+  if [[ "${HW_DEBUG}" == "1" ]]; then
+    configs+=" -DENABLE_HW_DEBUG_MODULE"
+  fi
+
+  if [[ -n "${CONFIGS_EXTRA}" ]]; then
+    configs+=" ${CONFIGS_EXTRA}"
+  fi
+
+  printf '%s' "${configs}"
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --app)
@@ -123,38 +149,9 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-resolve_fpga_bin "${FPGA_BIN}"
-
-if [[ -n "${FPGA_BIN_CONFIGS}" ]]; then
-  if [[ ! -f "${FPGA_BIN_CONFIGS}" ]]; then
-    echo "config file not found: ${FPGA_BIN_CONFIGS}" >&2
-    exit 1
-  fi
-  source "${FPGA_BIN_CONFIGS}"
-fi
-
-# Base CONFIGS exported by the alias config or environment. Append script-specific flags.
-CONFIGS="${CONFIGS:-}"
-CONFIGS+=" -DWLOAD_AT_ONCE"
-
-if [[ -n "${DEBUG_FLAG}" ]]; then
-  CONFIGS+=" -DDBG_TRACE_PIPELINE"
-  CONFIGS+=" -DDBG_TRACE_MEM"
-  CONFIGS+=" -DDBG_TRACE_CACHE"
-  CONFIGS+=" -DDBG_TRACE_AFU"
-  CONFIGS+=" -DDBG_TRACE_SCOPE"
-  CONFIGS+=" -DDBG_TRACE_GBAR"
-  CONFIGS+=" -DDBG_TRACE_TCU"
-  CONFIGS+=" -DDBG_TRACE_GEMM"
-fi
-
-if [[ "${HW_DEBUG}" == "1" ]]; then
-  CONFIGS+=" -DENABLE_HW_DEBUG_MODULE"
-fi
-
-if [[ -n "${CONFIGS_EXTRA}" ]]; then
-  CONFIGS+=" ${CONFIGS_EXTRA}"
-fi
+# Base CONFIGS for simulation modes comes from the environment only. FPGA bin
+# aliases are resolved below in hw mode, where the alias config is required.
+CONFIGS="$(append_run_configs "${CONFIGS:-}")"
 
 # ----------------------------------------------------------------------------
 # - rtlsim
@@ -196,6 +193,7 @@ if [[ "${mode}" == "xrt-vcs-sim" || "${mode}" == "all" ]]; then
   xrt_vcs_env=(
     "CONFIGS=${CONFIGS} -DNDEBUG"
     "DRIVER=xrt_vcs"
+    "FSDB_DUMP=1"
   )
   if [[ -n "${FPGA_BIN_DIR}" ]]; then
     xrt_vcs_env+=("XRT_XCLBIN_PATH=${FPGA_BIN_DIR}/vortex_afu.xclbin")
@@ -245,6 +243,15 @@ fi
 # - hw
 # ----------------------------------------------------------------------------
 if [[ "${mode}" == "hw" || "${mode}" == "all" ]]; then
+  resolve_fpga_bin "${FPGA_BIN}"
+  if [[ -n "${FPGA_BIN_CONFIGS}" ]]; then
+    if [[ ! -f "${FPGA_BIN_CONFIGS}" ]]; then
+      echo "config file not found: ${FPGA_BIN_CONFIGS}" >&2
+      exit 1
+    fi
+    source "${FPGA_BIN_CONFIGS}"
+    CONFIGS="$(append_run_configs "${CONFIGS:-}")"
+  fi
   echo "HW FPGA_BIN=${FPGA_BIN} FPGA_BIN_DIR=${FPGA_BIN_DIR} FPGA_BIN_CONFIGS=${FPGA_BIN_CONFIGS}"
   srun --gres=fpga:u55c:1 --cpus-per-task=4 --mem=16G --time=12:00:00 --pty bash -c "\
   CONFIGS=\"${CONFIGS}\" \
