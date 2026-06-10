@@ -282,6 +282,7 @@ module VX_fpu_dpi import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
     generate
     begin : g_fexp
 
+    `ifdef VX_ENABLE_HW_EXPF
         reg [NUM_LANES-1:0][`XLEN-1:0] result_fexp_r;
         reg [NUM_LANES-1:0][63:0] result_fexp;
         fflags_t [NUM_LANES-1:0] fflags_fexp;
@@ -314,6 +315,25 @@ module VX_fpu_dpi import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
 
         assign per_core_has_fflags[FPU_EXP] = 1;
         assign per_core_ready_in[FPU_EXP] = fexp_ready;
+    `else
+        wire fexp_valid = (valid_in && core_select == FPU_EXP);
+        wire fexp_ready = per_core_ready_out[FPU_EXP] || ~per_core_valid_out[FPU_EXP];
+
+        VX_shift_register #(
+            .DATAW  (1 + TAG_WIDTH + NUM_LANES * `XLEN + $bits(fflags_t)),
+            .DEPTH  (1),
+            .RESETW (1)
+        ) shift_reg (
+            .clk      (clk),
+            .reset    (reset),
+            .enable   (fexp_ready),
+            .data_in  ({fexp_valid, tag_in, {NUM_LANES{`XLEN'(0)}}, fflags_t'(0)}),
+            .data_out ({per_core_valid_out[FPU_EXP], per_core_tag_out[FPU_EXP], per_core_result[FPU_EXP], per_core_fflags[FPU_EXP]})
+        );
+
+        assign per_core_has_fflags[FPU_EXP] = 1;
+        assign per_core_ready_in[FPU_EXP] = fexp_ready;
+    `endif
 
     end
     endgenerate

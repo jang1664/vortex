@@ -282,6 +282,7 @@ module VX_fpu_dsp import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
     `UNUSED_VAR (per_core_frm[FPU_EXP])
     `UNUSED_VAR (per_core_op_type[FPU_EXP])
 
+`ifdef VX_ENABLE_HW_EXPF
     VX_fpu_exp #(
         .NUM_LANES (NUM_LANES),
         .TAG_WIDTH (TAG_WIDTH)
@@ -300,6 +301,29 @@ module VX_fpu_dsp import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
         .valid_out  (per_core_valid_out[FPU_EXP]),
         .ready_out  (per_core_ready_out[FPU_EXP])
     );
+`else
+    VX_elastic_buffer #(
+        .DATAW (RSP_DATAW),
+        .SIZE  (1)
+    ) fpu_exp_disabled (
+        .clk       (clk),
+        .reset     (reset),
+        .valid_in  (per_core_valid_in[FPU_EXP]),
+        .ready_in  (per_core_ready_in[FPU_EXP]),
+        .data_in   ({ {NUM_LANES{32'(0)}}, 1'b1, fflags_t'(0), per_core_tag_in[FPU_EXP] }),
+        .data_out  ({
+            per_core_result[FPU_EXP],
+            per_core_has_fflags[FPU_EXP],
+            per_core_fflags[FPU_EXP],
+            per_core_tag_out[FPU_EXP]
+        }),
+        .valid_out (per_core_valid_out[FPU_EXP]),
+        .ready_out (per_core_ready_out[FPU_EXP])
+    );
+
+    `UNUSED_VAR (per_core_mask_in[FPU_EXP])
+    `UNUSED_VAR (per_core_dataa[FPU_EXP])
+`endif
 
     wire [1:0][RSP_DATAW-1:0] div_sqrt_arb_data_in;
     for (genvar i = 0; i < 2; ++i) begin : g_div_sqrt_arb_data_in

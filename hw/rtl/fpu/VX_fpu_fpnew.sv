@@ -220,6 +220,7 @@ module VX_fpu_fpnew
     assign ready_in = is_exp_op ? exp_ready_in : fpu_ready_in;
     assign fpu_tag_in = tag_in;
 
+`ifdef VX_ENABLE_HW_EXPF
     VX_fpu_exp_fpnew #(
         .NUM_LANES (NUM_LANES),
         .TAG_WIDTH (TAG_WIDTH)
@@ -238,6 +239,24 @@ module VX_fpu_fpnew
         .ready_out  (exp_ready_out),
         .valid_out  (exp_valid_out)
     );
+`else
+    VX_elastic_buffer #(
+        .DATAW (RSP_DATAW),
+        .SIZE  (1)
+    ) fpu_exp_disabled (
+        .clk       (clk),
+        .reset     (reset),
+        .valid_in  (valid_in && is_exp_op),
+        .ready_in  (exp_ready_in),
+        .data_in   ({ {NUM_LANES{`XLEN'(0)}}, 1'b1, `FP_FLAGS_BITS'(0), tag_in }),
+        .data_out  ({ exp_result, exp_has_fflags, exp_fflags, exp_tag_out }),
+        .valid_out (exp_valid_out),
+        .ready_out (exp_ready_out)
+    );
+
+    `UNUSED_VAR (mask_in)
+    `UNUSED_VAR (dataa)
+`endif
 
     localparam RSP_ARB_DATAW = RSP_DATAW;
     wire [1:0] rsp_valid_in;
