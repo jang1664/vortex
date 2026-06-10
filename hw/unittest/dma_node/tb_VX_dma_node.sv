@@ -172,6 +172,7 @@ module tb_VX_dma_node import VX_gpu_pkg::*; #(
     .N_MASTER    (N_MASTER),
     .NUM_ENTRIES (NUM_ENTRIES),
     .LMEM_NUM_LANES_P(1),
+    .ENABLE_MISALIGN(1'b1),
     .DCACHE_TAG_WIDTH_P(DMA_DCACHE_TAG_WIDTH),
     .LMEM_TAG_WIDTH_P(DMA_LMEM_TAG_WIDTH)
   ) dut (
@@ -1027,6 +1028,12 @@ module tb_VX_dma_node import VX_gpu_pkg::*; #(
             run_bg_global_read_traffic(64, g_rd_base1);
         end
       join
+
+      // VX_dma_node completes when the dcache accepts the destination writes.
+      // The testbench's backing memory observes write-through requests a few
+      // cycles later, so let the cache-side write queue drain before checking
+      // the byte-addressed global_mem model.
+      repeat (20) @(posedge clk);
 
       mem_check_equal_g_to_g_with_padding(
         g_src_base,

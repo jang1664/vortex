@@ -516,9 +516,9 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
                    && (slot_state_r[wr_expect_slot_r] == SLOT_READY)
                    && (direction_bit_r
                        ? ((win_lmem_valid   <= WIN_VALID_W'(WIN_BYTES - LMEM_BYTES))
-                          || (!ENABLE_MISALIGN && dst_req_fire))
+                          || (!ENABLE_MISALIGN && (LMEM_BYTES == DCACHE_BYTES) && dst_req_fire))
                        : ((win_dcache_valid <= WIN_VALID_W'(WIN_BYTES - DCACHE_BYTES))
-                          || (!ENABLE_MISALIGN && dst_req_fire)));
+                          || (!ENABLE_MISALIGN && (DCACHE_BYTES == LMEM_BYTES) && dst_req_fire)));
 
   // ------------------------------------------------------------
   // Trace logging
@@ -736,12 +736,12 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
                       && ((src_bytes == 0)
                        || ((lmem_drop == 0) && (win_lmem_valid >= src_bytes[WIN_VALID_W-1:0])));
         end else begin
-          // Aligned: lmem_drop is statically 0 (see S_PREP_SEG). When we need
-          // real bytes (src_bytes > 0) the staging register must be full; when
-          // we only emit zero-pad bytes we can issue immediately.
+          // Aligned: lmem_drop is statically 0 (see S_PREP_SEG). Source and
+          // destination beats can have different widths, so require the exact
+          // number of payload bytes consumed by this destination beat.
           wr_can_issue = (wr_state == WR_RUN)
                       && (wr_nbytes != 0)
-                      && ((src_bytes == 0) || (win_lmem_valid != '0));
+                      && ((src_bytes == 0) || (win_lmem_valid >= src_bytes[WIN_VALID_W-1:0]));
         end
 
         if (wr_can_issue) begin
@@ -847,7 +847,7 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
         end else begin
           wr_can_issue = (wr_state == WR_RUN)
                       && (wr_nbytes != 0)
-                      && ((src_bytes == 0) || (win_dcache_valid != '0));
+                      && ((src_bytes == 0) || (win_dcache_valid >= src_bytes[WIN_VALID_W-1:0]));
         end
 
         if (wr_can_issue) begin
@@ -1194,11 +1194,8 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
                 tmp_win   = tmp_win >> (src_bytes * 8);
                 tmp_valid = tmp_valid - src_bytes[WIN_VALID_W-1:0];
               end else begin
-                // Aligned: a beat write consumes the entire single-beat
-                // staging in one go. Empty it here so the (potentially
-                // same-cycle) pull below has room to refill.
-                tmp_win   = '0;
-                tmp_valid = '0;
+                tmp_win   = tmp_win >> (src_bytes * 8);
+                tmp_valid = tmp_valid - src_bytes[WIN_VALID_W-1:0];
               end
             end
 
@@ -1237,6 +1234,8 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
               if (wr_is_last) begin
                 wr_state <= WR_DONE;
               end else begin
+                logic [31:0] tail_drop;
+
                 if (wr_i_dim[0] + 32'd1 < bound_r[0]) begin
                   wr_i_dim[0] <= wr_i_dim[0] + 32'd1;
                 end else begin
@@ -1251,13 +1250,13 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
                 wr_base_src_seg_r <= next_wr_base_src;
                 wr_base_dst_seg_r <= next_wr_base_dst;
                 tmp_out_off = 32'd0;
+                tail_drop = 32'(align_up(wr_base_src_seg_r + 64'(valid_total), LMEM_BYTES)
+                               - (wr_base_src_seg_r + 64'(valid_total)));
+                if ((tail_drop != 0) && (tmp_valid >= tail_drop[WIN_VALID_W-1:0])) begin
+                  tmp_win   = tmp_win >> (tail_drop * 8);
+                  tmp_valid = tmp_valid - tail_drop[WIN_VALID_W-1:0];
+                end
                 if (ENABLE_MISALIGN) begin
-                  // Discard any residual window bytes (they belong to
-                  // extra source beats of the CURRENT seg and cannot be
-                  // reused at the NEXT seg's alignment). Re-issue reads
-                  // are worst-case slot-limited, not bandwidth-limited.
-                  tmp_win   = '0;
-                  tmp_valid = '0;
                   // L2G: wr writes to DCACHE; src-side is LMEM, drop
                   // tracks LMEM-beat alignment of the src base.
                   tmp_drop  = 32'(next_wr_base_src & 64'(LMEM_BYTES-1));
@@ -1272,9 +1271,7 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
             if (ENABLE_MISALIGN)
               tmp_win[tmp_valid*8 +: (LMEM_BYTES*8)] = slot_data_r[wr_expect_slot_r][0 +: (LMEM_BYTES*8)];
             else
-              // Aligned: tmp_valid is 0 here (drain cleared it, or no prior pull).
-              // Drop the variable shift so the assembler reduces to a wire mux.
-              tmp_win[0 +: (LMEM_BYTES*8)] = slot_data_r[wr_expect_slot_r][0 +: (LMEM_BYTES*8)];
+              tmp_win[tmp_valid*8 +: (LMEM_BYTES*8)] = slot_data_r[wr_expect_slot_r][0 +: (LMEM_BYTES*8)];
             tmp_valid = tmp_valid + WIN_VALID_W'(LMEM_BYTES);
             slot_state_r[wr_expect_slot_r] <= SLOT_FREE;
             wr_expect_slot_r <= wr_expect_slot_r + RD_SLOT_BITS'(1);
@@ -1331,11 +1328,8 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
                 tmp_win   = tmp_win >> (src_bytes * 8);
                 tmp_valid = tmp_valid - src_bytes[WIN_VALID_W-1:0];
               end else begin
-                // Aligned: a beat write consumes the entire single-beat
-                // staging in one go. Empty it here so the (potentially
-                // same-cycle) pull below has room to refill.
-                tmp_win   = '0;
-                tmp_valid = '0;
+                tmp_win   = tmp_win >> (src_bytes * 8);
+                tmp_valid = tmp_valid - src_bytes[WIN_VALID_W-1:0];
               end
             end
 
@@ -1374,6 +1368,8 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
               if (wr_is_last) begin
                 wr_state <= WR_DONE;
               end else begin
+                logic [31:0] tail_drop;
+
                 if (wr_i_dim[0] + 32'd1 < bound_r[0]) begin
                   wr_i_dim[0] <= wr_i_dim[0] + 32'd1;
                 end else begin
@@ -1388,9 +1384,13 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
                 wr_base_src_seg_r <= next_wr_base_src;
                 wr_base_dst_seg_r <= next_wr_base_dst;
                 tmp_out_off = 32'd0;
+                tail_drop = 32'(align_up(wr_base_src_seg_r + 64'(valid_total), DCACHE_BYTES)
+                               - (wr_base_src_seg_r + 64'(valid_total)));
+                if ((tail_drop != 0) && (tmp_valid >= tail_drop[WIN_VALID_W-1:0])) begin
+                  tmp_win   = tmp_win >> (tail_drop * 8);
+                  tmp_valid = tmp_valid - tail_drop[WIN_VALID_W-1:0];
+                end
                 if (ENABLE_MISALIGN) begin
-                  tmp_win   = '0;
-                  tmp_valid = '0;
                   // G2L: wr writes to LMEM; src-side is DCACHE, drop
                   // tracks DCACHE-beat alignment of the src base.
                   tmp_drop  = 32'(next_wr_base_src & 64'(DCACHE_BYTES-1));
@@ -1405,7 +1405,7 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
             if (ENABLE_MISALIGN)
               tmp_win[tmp_valid*8 +: (DCACHE_BYTES*8)] = slot_data_r[wr_expect_slot_r][0 +: (DCACHE_BYTES*8)];
             else
-              tmp_win[0 +: (DCACHE_BYTES*8)] = slot_data_r[wr_expect_slot_r][0 +: (DCACHE_BYTES*8)];
+              tmp_win[tmp_valid*8 +: (DCACHE_BYTES*8)] = slot_data_r[wr_expect_slot_r][0 +: (DCACHE_BYTES*8)];
             tmp_valid = tmp_valid + WIN_VALID_W'(DCACHE_BYTES);
             slot_state_r[wr_expect_slot_r] <= SLOT_FREE;
             wr_expect_slot_r <= wr_expect_slot_r + RD_SLOT_BITS'(1);

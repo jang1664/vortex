@@ -267,7 +267,8 @@ module VX_core import VX_gpu_pkg::*; #(
     VX_dma_node #(
       .INSTANCE_ID(INSTANCE_ID),
       .N_MASTER(`NUM_LSU_BLOCKS),
-      .NUM_ENTRIES(`JOB_MMIO_NUM_ENTRIES)
+      .NUM_ENTRIES(`JOB_MMIO_NUM_ENTRIES),
+      .ENABLE_MISALIGN(1'b1)
     ) u_VX_dma_node (
       .clk(clk),
       .reset(reset),
