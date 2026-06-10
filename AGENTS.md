@@ -1,7 +1,7 @@
 # Repository Execution Notes
 
 ## hardware/software configuration files
-- Source proper config file in configs/
+- Before run simulation or synthsis, **source proper config file in configs/**
 
 ## Build Prerequisite
 
