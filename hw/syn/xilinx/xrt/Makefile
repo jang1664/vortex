@@ -18,7 +18,7 @@ TARGET ?= hw
 PLATFORM ?=
 
 PREFIX ?= build$(XLEN)
-MAX_JOBS ?= 8
+MAX_JOBS ?= 32
 CLOCK_FREQ_HZ ?= 300
 
 # RTL simulator for hw_emu. Default: VCS (Synopsys); set SIMULATOR=xsim for Vivado xsim.
