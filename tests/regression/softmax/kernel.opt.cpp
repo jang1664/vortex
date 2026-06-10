@@ -3,9 +3,143 @@
 #include <vx_spawn.h>
 #include <vx_intrinsics.h>
 #include <vx_math.h>
+#include <VX_config.h>
 
 // Type aliases
 using data_t = fp16_t;
+
+static inline uint32_t float_to_bits(float value) {
+  union {
+    float f;
+    uint32_t u;
+  } v;
+  v.f = value;
+  return v.u;
+}
+
+static inline float bits_to_float(uint32_t value) {
+  union {
+    uint32_t u;
+    float f;
+  } v;
+  v.u = value;
+  return v.f;
+}
+
+static inline float shfl_down_float(float value, uint32_t offset) {
+  uint32_t bits = float_to_bits(value);
+  return bits_to_float((uint32_t)vx_shfl_down(bits, offset, NUM_THREADS - 1, 0));
+}
+
+static inline float shfl_idx_float(float value, uint32_t index) {
+  uint32_t bits = float_to_bits(value);
+  return bits_to_float((uint32_t)vx_shfl_idx(bits, index, NUM_THREADS - 1, 0));
+}
+
+static inline uint32_t bitfield_mask(uint32_t bits) {
+  return (bits >= 32) ? 0xffffffffu : ((1u << bits) - 1u);
+}
+
+static inline uint32_t align_up_u32(uint32_t value, uint32_t align) {
+  return (value + align - 1u) & ~(align - 1u);
+}
+
+static inline uint32_t mmio_read32(uint64_t addr) {
+  return *reinterpret_cast<volatile uint32_t *>(addr);
+}
+
+static inline void mmio_write32(uint64_t addr, uint32_t value) {
+  *reinterpret_cast<volatile uint32_t *>(addr) = value;
+}
+
+static inline void split_u64(uint64_t value, uint32_t &lo, uint32_t &hi) {
+  lo = uint32_t(value & 0xffffffffull);
+  hi = uint32_t(value >> 32);
+}
+
+static constexpr uint64_t kDmaRegBaseAddr = 0x1480ull;
+static constexpr uint32_t kDmaNumRegs32 = 18u;
+static constexpr uint32_t kMmioBeatBytes = 8u;
+static constexpr uint32_t kWordsPerBeat = kMmioBeatBytes / 4u;
+static constexpr uint32_t kDmaEntryStrideBytes =
+    ((kDmaNumRegs32 + kWordsPerBeat - 1u) / kWordsPerBeat) * kMmioBeatBytes;
+static constexpr uint32_t kDmaGlobalAllocBytes = kMmioBeatBytes;
+
+static inline uint64_t dma_entry_reg32_addr(uint32_t eid, uint32_t reg_idx32) {
+  uint32_t beat_idx = reg_idx32 / kWordsPerBeat;
+  uint32_t word_in_beat = reg_idx32 % kWordsPerBeat;
+
+  return kDmaRegBaseAddr
+       + uint64_t(kDmaGlobalAllocBytes)
+       + uint64_t(eid) * uint64_t(kDmaEntryStrideBytes)
+       + uint64_t(beat_idx) * uint64_t(kMmioBeatBytes)
+       + uint64_t(word_in_beat) * 4ull;
+}
+
+static inline void dma_write_reg32(uint32_t eid, uint32_t reg_idx32, uint32_t value) {
+  mmio_write32(dma_entry_reg32_addr(eid, reg_idx32), value);
+}
+
+static inline uint32_t dma_read_reg32(uint32_t eid, uint32_t reg_idx32) {
+  return mmio_read32(dma_entry_reg32_addr(eid, reg_idx32));
+}
+
+static inline void dma_write_reg64(uint32_t eid, uint32_t reg_lo_idx, uint64_t value) {
+  uint32_t lo, hi;
+  split_u64(value, lo, hi);
+  dma_write_reg32(eid, reg_lo_idx, lo);
+  dma_write_reg32(eid, reg_lo_idx + 1u, hi);
+}
+
+static inline void dma_decode_alloc_rsp(uint32_t rsp, uint32_t &eid, uint32_t &generation) {
+  eid = (rsp >> JOB_MMIO_ALLOC_ENTRY_LSB) & bitfield_mask(JOB_MMIO_ALLOC_ENTRY_BITS);
+  generation = (rsp >> JOB_MMIO_ALLOC_GEN_LSB) & bitfield_mask(JOB_MMIO_ALLOC_GEN_BITS);
+}
+
+static inline void dma_alloc(uint32_t &eid, uint32_t &generation) {
+  for (;;) {
+    uint32_t rsp = mmio_read32(kDmaRegBaseAddr);
+    if (((rsp >> JOB_MMIO_ALLOC_SUCC_BIT) & 1u) != 0) {
+      dma_decode_alloc_rsp(rsp, eid, generation);
+      return;
+    }
+  }
+}
+
+static inline void dma_wait_done(uint32_t eid, uint32_t generation) {
+  for (;;) {
+    uint32_t ctrl = dma_read_reg32(eid, 0u);
+    uint32_t curr_gen = (ctrl >> JOB_MMIO_CTRL_GEN_LSB) & bitfield_mask(JOB_MMIO_GEN_W);
+    uint32_t valid = (ctrl >> JOB_MMIO_CTRL_VALID_BIT) & 1u;
+    if ((generation < curr_gen) || (valid == 0u)) {
+      return;
+    }
+  }
+}
+
+static inline void dma_copy_1d(uint64_t dst_addr, uint64_t src_addr, uint32_t bytes, uint32_t direction) {
+  uint32_t eid, generation;
+  dma_alloc(eid, generation);
+
+  dma_write_reg64(eid, 1u, dst_addr);
+  dma_write_reg64(eid, 3u, src_addr);
+  dma_write_reg32(eid, 5u, bytes);
+  dma_write_reg32(eid, 6u, bytes);
+  dma_write_reg32(eid, 7u, bytes);
+  dma_write_reg32(eid, 8u, bytes);
+  dma_write_reg32(eid, 9u, bytes);
+  dma_write_reg32(eid, 10u, bytes);
+  dma_write_reg32(eid, 11u, 1u);
+  dma_write_reg32(eid, 12u, 1u);
+  dma_write_reg32(eid, 13u, 1u);
+  dma_write_reg32(eid, 14u, bytes);
+  dma_write_reg32(eid, 15u, 0u);
+  dma_write_reg32(eid, 16u, direction);
+  dma_write_reg32(eid, 17u, 0u);
+  dma_write_reg32(eid, 0u, 1u);
+
+  dma_wait_done(eid, generation);
+}
 
 ///////////////////////////////////////////////////////////////////////////////
 // Softmax Kernel for Attention
@@ -15,12 +149,15 @@ using data_t = fp16_t;
 // Input: [batch, num_heads, seq_len_q, seq_len_k]
 // Output: [batch, num_heads, seq_len_q, seq_len_k]
 // 
-// Each thread block processes one row (softmax over seq_len_k dimension)
+// Each thread block processes a strided set of row tiles (softmax over seq_len_k)
 // Strategy:
-//   1. Stage the scaled input row in local memory
-//   2. Parallel reduction to find max value (for numerical stability)
-//   3. Compute exp(x - max) once, cache it locally, and reduce the sum
-//   4. Normalize from the cached exp values and store output
+//   1. Assign one row to each warp in the block
+//   2. Stage scaled input rows in local memory
+//   3. Reduce max/sum independently per row
+//   4. Normalize from cached exp values and store output
+//
+// Each row only communicates among lanes of the same warp, so row slots are
+// independent and do not need block-wide barriers.
 ///////////////////////////////////////////////////////////////////////////////
 
 void kernel_softmax(kernel_arg_t *__UNIFORM__ arg) {
@@ -35,126 +172,148 @@ void kernel_softmax(kernel_arg_t *__UNIFORM__ arg) {
   uint32_t use_mask = arg->use_mask;
   float scale = arg->scale;
   
-  // Each block handles one row: (batch_idx, head_idx, q_idx)
+  // Rows are (batch_idx, head_idx, q_idx). A block handles one tile of rows
+  // at a time, with each warp owning one row inside the tile.
   uint32_t rows_total = batch_size * num_heads * seq_len_q;
-  uint32_t row_idx = blockIdx.x;
-  
-  // Check if this block has work to do
-  bool active = (row_idx < rows_total);
-  
-  // Decode row index (even for inactive blocks, to avoid divergence issues)
-  uint32_t b = active ? row_idx / (num_heads * seq_len_q) : 0;
-  uint32_t remainder = active ? row_idx % (num_heads * seq_len_q) : 0;
-  uint32_t h = active ? remainder / seq_len_q : 0;
-  uint32_t q = active ? remainder % seq_len_q : 0;
-  
-  // Base pointer for this row
-  uint32_t row_offset = ((b * num_heads + h) * seq_len_q + q) * seq_len_k;
-  data_t *input_row = pInput + row_offset;
-  data_t *output_row = pOutput + row_offset;
-  
   uint32_t tid = threadIdx.x;
   uint32_t block_size = blockDim.x;
-  
-  uint32_t input_offset = 0;
-  uint32_t exp_offset = input_offset + seq_len_k * sizeof(float);
-  uint32_t reduce_offset = exp_offset + seq_len_k * sizeof(float);
-  uint32_t local_bytes = reduce_offset + block_size * sizeof(float);
+
+  constexpr uint32_t threads_per_row = NUM_THREADS;
+  uint32_t rows_per_block = block_size / threads_per_row;
+  if (rows_per_block == 0) {
+    rows_per_block = 1;
+  }
+
+  uint32_t row_slot = tid / threads_per_row;
+  uint32_t lane = tid - row_slot * threads_per_row;
+
+  uint32_t row_cache_elems = rows_per_block * seq_len_k;
+  uint32_t row_bytes = seq_len_k * sizeof(data_t);
+  uint32_t dma_input_offset = 0;
+  uint32_t dma_output_offset = dma_input_offset + row_cache_elems * sizeof(data_t);
+  uint32_t input_offset = align_up_u32(dma_output_offset + row_cache_elems * sizeof(data_t), 4u);
+  uint32_t exp_offset = input_offset + row_cache_elems * sizeof(float);
+  uint32_t local_bytes = exp_offset + row_cache_elems * sizeof(float);
 
   auto local_base = (uint8_t *)__local_mem(local_bytes);
+  auto dma_input_cache = (data_t *)(local_base + dma_input_offset);
+  auto dma_output_cache = (data_t *)(local_base + dma_output_offset);
   auto input_cache = (float *)(local_base + input_offset);
   auto exp_cache = (float *)(local_base + exp_offset);
-  auto reduce_cache = (float *)(local_base + reduce_offset);
 
-  //===========================================================================
-  // Step 0: Stage input row in local memory
-  //===========================================================================
-  if (active) {
-    for (uint32_t k = tid; k < seq_len_k; k += block_size) {
-      float val = fp16_to_float(input_row[k]) * scale;
-      input_cache[k] = (use_mask && k > q) ? VX_NEG_INF : val;
+  uint32_t row_stride = gridDim.x * rows_per_block;
+
+  for (uint32_t tile_base = blockIdx.x * rows_per_block;
+       tile_base < rows_total;
+       tile_base += row_stride) {
+    uint32_t row_idx = tile_base + row_slot;
+    bool active = (row_idx < rows_total);
+
+    uint32_t b = active ? row_idx / (num_heads * seq_len_q) : 0;
+    uint32_t remainder = active ? row_idx % (num_heads * seq_len_q) : 0;
+    uint32_t h = remainder / seq_len_q;
+    uint32_t q = remainder % seq_len_q;
+    uint32_t row_offset = ((b * num_heads + h) * seq_len_q + q) * seq_len_k;
+    data_t *input_row = pInput + row_offset;
+    data_t *output_row = pOutput + row_offset;
+    data_t *row_dma_input = dma_input_cache + row_slot * seq_len_k;
+    data_t *row_dma_output = dma_output_cache + row_slot * seq_len_k;
+    float *row_input_cache = input_cache + row_slot * seq_len_k;
+    float *row_exp_cache = exp_cache + row_slot * seq_len_k;
+
+    //=========================================================================
+    // Step 0: DMA input row tile to local memory
+    //=========================================================================
+    if (active && lane == 0) {
+      dma_copy_1d(reinterpret_cast<uint64_t>(row_dma_input),
+                  reinterpret_cast<uint64_t>(input_row),
+                  row_bytes,
+                  0u);
     }
-  }
-  __syncthreads();
-  
-  //===========================================================================
-  // Step 1: Find max value (for numerical stability)
-  //===========================================================================
-  float local_max = VX_NEG_INF;
-  
-  // Each thread finds local max (only if block is active)
-  if (active) {
-    for (uint32_t k = tid; k < seq_len_k; k += block_size) {
-      float val = input_cache[k];
-      
+
+    __syncthreads();
+
+    for (uint32_t k = lane; k < seq_len_k; k += threads_per_row) {
+      float val = VX_NEG_INF;
+      if (active && !(use_mask && k > q)) {
+        val = fp16_to_float(row_dma_input[k]) * scale;
+      }
+      row_input_cache[k] = val;
+    }
+
+    //=========================================================================
+    // Step 1: Find max value (for numerical stability)
+    //=========================================================================
+    float local_max = VX_NEG_INF;
+
+    for (uint32_t k = lane; k < seq_len_k; k += threads_per_row) {
+      float val = row_input_cache[k];
+
       if (val > local_max) {
         local_max = val;
       }
     }
-  }
-  
-  // Store local max in shared memory
-  reduce_cache[tid] = local_max;
-  __syncthreads();
-  
-  // Reduction to find global max
-  for (uint32_t s = block_size / 2; s > 0; s >>= 1) {
-    if (tid < s) {
-      if (reduce_cache[tid + s] > reduce_cache[tid]) {
-        reduce_cache[tid] = reduce_cache[tid + s];
+
+    // Reduction to find global max
+    for (uint32_t s = threads_per_row / 2; s > 0; s >>= 1) {
+      float other = shfl_down_float(local_max, s);
+      if (lane + s < threads_per_row && other > local_max) {
+        local_max = other;
       }
     }
-    __syncthreads();
-  }
-  
-  // Broadcast max to all threads
-  float global_max = reduce_cache[0];
-  __syncthreads();
-  
-  //===========================================================================
-  // Step 2: Compute exp(x - max) once and sum
-  //===========================================================================
-  float local_sum = 0.0f;
-  
-  if (active) {
-    for (uint32_t k = tid; k < seq_len_k; k += block_size) {
-      float val = input_cache[k];
+
+    // Broadcast max to all threads
+    float global_max = shfl_idx_float(local_max, 0);
+
+    //=========================================================================
+    // Step 2: Compute exp(x - max) once and sum
+    //=========================================================================
+    float local_sum = 0.0f;
+
+    for (uint32_t k = lane; k < seq_len_k; k += threads_per_row) {
+      float val = row_input_cache[k];
       float exp_val = 0.0f;
-      
+
       if (val != VX_NEG_INF) {
         exp_val = vx_expf(val - global_max);
       }
-      
-      exp_cache[k] = exp_val;
+
+      row_exp_cache[k] = exp_val;
       local_sum += exp_val;
     }
-  }
-  
-  // Store local sum in shared memory
-  reduce_cache[tid] = local_sum;
-  __syncthreads();
-  
-  // Reduction to find global sum
-  for (uint32_t s = block_size / 2; s > 0; s >>= 1) {
-    if (tid < s) {
-      reduce_cache[tid] += reduce_cache[tid + s];
+
+    // Reduction to find global sum
+    for (uint32_t s = threads_per_row / 2; s > 0; s >>= 1) {
+      float other = shfl_down_float(local_sum, s);
+      if (lane + s < threads_per_row) {
+        local_sum += other;
+      }
     }
+
+    // Broadcast sum to all threads
+    float global_sum = shfl_idx_float(local_sum, 0);
+
+    //=========================================================================
+    // Step 3: Normalize using cached exp values
+    //=========================================================================
+    float inv_sum = 1.0f / global_sum;
+
+    if (active) {
+      for (uint32_t k = lane; k < seq_len_k; k += threads_per_row) {
+        row_dma_output[k] = float_to_fp16(row_exp_cache[k] * inv_sum);
+      }
+    }
+
     __syncthreads();
-  }
-  
-  // Broadcast sum to all threads
-  float global_sum = reduce_cache[0];
-  __syncthreads();
-  
-  //===========================================================================
-  // Step 3: Normalize using cached exp values
-  //===========================================================================
-  float inv_sum = active ? (1.0f / global_sum) : 0.0f;
-  
-  if (active) {
-    for (uint32_t k = tid; k < seq_len_k; k += block_size) {
-      output_row[k] = float_to_fp16(exp_cache[k] * inv_sum);
+
+    if (active && lane == 0) {
+      dma_copy_1d(reinterpret_cast<uint64_t>(output_row),
+                  reinterpret_cast<uint64_t>(row_dma_output),
+                  row_bytes,
+                  1u);
     }
+
+    __syncthreads();
   }
 }
 

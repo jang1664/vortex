@@ -104,14 +104,18 @@ int main(int argc, char *argv[]) {
 
   uint32_t buffer_bytes = input_size * sizeof(data_t);
   RT_CHECK(vx_mem_alloc(device, buffer_bytes, VX_MEM_READ, &input_buffer));
-  RT_CHECK(vx_mem_alloc(device, buffer_bytes, VX_MEM_READ | VX_MEM_WRITE, &output_buffer));
+  RT_CHECK(vx_mem_alloc(device, buffer_bytes, VX_MEM_WRITE, &output_buffer));
   RT_CHECK(vx_copy_to_dev(input_buffer, h_input.data(), 0, buffer_bytes));
 
   kernel_arg_t kernel_arg = {};
   kernel_arg.kernel_id = KERNEL_SOFTMAX;
   uint32_t total_rows = batch_size * num_heads * seq_len_q;
   uint32_t threads_per_block = std::min(256u, (uint32_t)(num_warps * num_threads));
-  kernel_arg.grid_dim[0] = total_rows;
+  uint32_t rows_per_block = std::max(1u, threads_per_block / static_cast<uint32_t>(num_threads));
+  uint32_t row_tiles = (total_rows + rows_per_block - 1) / rows_per_block;
+  uint32_t worker_blocks = std::min(row_tiles, static_cast<uint32_t>(num_cores));
+  worker_blocks = std::max(worker_blocks, 1u);
+  kernel_arg.grid_dim[0] = worker_blocks;
   kernel_arg.grid_dim[1] = 1;
   kernel_arg.grid_dim[2] = 1;
   kernel_arg.block_dim[0] = threads_per_block;
