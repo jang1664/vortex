@@ -1,0 +1,150 @@
+Magic 271485
+Revision Verdi_W-2024.09-SP1
+
+; Window Layout <x> <y> <width> <height> <signalwidth> <valuewidth>
+viewPort 0 25 1920 935 431 124
+
+; File list:
+; openDirFile [-d delimiter] [-s time_offset] [-rf auto_bus_rule_file] path_name file_name
+openDirFile -d / "" "/home/jaeyongjang/project.local/vortex/build/sim/xrtsim_vcs_1/vcs_cosim.fsdb"
+
+; file time scale:
+; fileTimeScale ### s|ms|us|ns|ps
+
+; signal spacing:
+signalSpacing 5
+
+; windowTimeUnit is used for zoom, cursor & marker
+; waveform viewport range
+zoom 0.000000 645637450.000000
+cursor 44140032.61271249503
+marker 0.000000
+
+; user define markers
+; userMarker time_pos marker_name color linestyle
+; visible top row signal index
+top 0
+; marker line index
+markerPos 59
+
+; event list
+; addEvent event_name event_expression
+; curEvent event_name
+
+
+
+COMPLEX_EVENT_BEGIN
+
+
+COMPLEX_EVENT_END
+
+
+
+; toolbar current search type
+; curSTATUS search_type
+curSTATUS ByChange
+
+
+addGroup "commit_if[0]"
+activeDirFile "" "/home/jaeyongjang/project.local/vortex/build/sim/xrtsim_vcs_1/vcs_cosim.fsdb"
+addSignal -h 15 /tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/execute/fpu_unit/commit_if[0]/valid
+addSignal -h 15 -holdScope data
+addSignal -h 15 -holdScope ready
+addGroup "dispatch_if[0]"
+addSignal -h 15 /tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/execute/fpu_unit/dispatch_if[0]/valid
+addSignal -h 15 -holdScope data
+addSignal -h 15 -holdScope ready
+addGroup "per_block_execute_if[0]"
+addSubGroup "master(master)"
+addSignal -h 15 /tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/execute/fpu_unit/per_block_execute_if[0]/master/valid
+addSignal -h 15 -holdScope data
+addSignal -h 15 -holdScope ready
+endSubGroup "master(master)"
+addSubGroup "slave(slave)"
+addSignal -h 15 /tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/execute/fpu_unit/per_block_execute_if[0]/slave/valid
+addSignal -h 15 -holdScope data
+addSignal -h 15 -holdScope ready
+endSubGroup "slave(slave)"
+addSignal -h 15 /tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/execute/fpu_unit/per_block_execute_if[0]/valid
+addSignal -h 15 -holdScope data
+addSignal -h 15 -holdScope ready
+addGroup "per_block_result_if[0]"
+addSubGroup "master(master)"
+addSignal -h 15 /tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/execute/fpu_unit/per_block_result_if[0]/master/valid
+addSignal -h 15 -holdScope data
+addSignal -h 15 -holdScope ready
+endSubGroup "master(master)"
+addSubGroup "slave(slave)"
+addSignal -h 15 /tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/execute/fpu_unit/per_block_result_if[0]/slave/valid
+addSignal -h 15 -holdScope data
+addSignal -h 15 -holdScope ready
+endSubGroup "slave(slave)"
+addSignal -h 15 /tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/execute/fpu_unit/per_block_result_if[0]/valid
+addSignal -h 15 -holdScope data
+addSignal -h 15 -holdScope ready
+addGroup "G5"
+addSignal -h 15 /tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/execute/fpu_unit/g_blocks[0]/execute_fire
+addSignal -h 15 -UNSIGNED -HEX -holdScope fpu_fmt[1:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope fpu_frm[2:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope fpu_req_frm[2:0]
+addSignal -h 15 -holdScope fpu_req_ready
+addSignal -h 15 -holdScope fpu_req_tag[0:0]
+addSignal -h 15 -holdScope fpu_req_valid
+addSignal -h 15 -UNSIGNED -HEX -holdScope fpu_rsp_PC[61:0]
+addSignal -h 15 -holdScope fpu_rsp_eop
+addSignal -h 15 -holdScope fpu_rsp_eop_u
+addSignal -h 15 -holdScope fpu_rsp_fflags
+addSignal -h 15 -holdScope fpu_rsp_fflags_q
+addSignal -h 15 -holdScope fpu_rsp_fire
+addSignal -h 15 -holdScope fpu_rsp_has_fflags
+addSignal -h 15 -holdScope fpu_rsp_pid[0:0]
+addSignal -h 15 -holdScope fpu_rsp_pid_u[0:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope fpu_rsp_rd[5:0]
+addSignal -h 15 -holdScope fpu_rsp_ready
+addSignal -h 15 -holdScope fpu_rsp_result[31:0]
+addSignal -h 15 -holdScope fpu_rsp_sop
+addSignal -h 15 -holdScope fpu_rsp_sop_u
+addSignal -h 15 -holdScope fpu_rsp_tag[0:0]
+addSignal -h 15 -UNSIGNED -HEX -holdScope fpu_rsp_tmask[31:0]
+addSignal -h 15 -holdScope fpu_rsp_uuid[0:0]
+addSignal -h 15 -holdScope fpu_rsp_valid
+addSignal -h 15 -UNSIGNED -HEX -holdScope fpu_rsp_wid[1:0]
+addSignal -h 15 -holdScope mdata_full
+addGroup "G6"
+
+; getSignalForm Scope Hierarchy Status
+; active file of getSignalForm
+activeDirFile "" "/home/jaeyongjang/project.local/vortex/build/sim/xrtsim_vcs_1/vcs_cosim.fsdb"
+
+GETSIGNALFORM_SCOPE_HIERARCHY_BEGIN
+getSignalForm close
+
+"/tb_vcs_xrtsim"
+"/tb_vcs_xrtsim/dut"
+"/tb_vcs_xrtsim/dut/vortex_axi"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/execute"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/execute/fpu_unit"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/execute/fpu_unit/g_blocks[0]"
+
+SCOPE_LIST_BEGIN
+"/tb_vcs_xrtsim"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/execute/fpu_unit"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/execute/fpu_unit/commit_if[0]"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/execute/fpu_unit/dispatch_if[0]"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/execute/fpu_unit/dispatch_unit"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/execute/fpu_unit/gather_unit"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/execute/fpu_unit/per_block_execute_if[0]"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/execute/fpu_unit/per_block_result_if[0]"
+"/tb_vcs_xrtsim/dut/vortex_axi/vortex/g_clusters[0]/cluster/g_sockets[0]/socket/g_cores[0]/core/execute/fpu_unit/g_blocks[0]"
+SCOPE_LIST_END
+
+GETSIGNALFORM_SCOPE_HIERARCHY_END
+
+
