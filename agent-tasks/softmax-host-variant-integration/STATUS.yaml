@@ -1,0 +1,14 @@
+task: softmax-host-variant-integration
+status: DONE
+started: "2026-06-10 22:16"
+updated: "2026-06-10 22:20"
+log:
+  - time: "2026-06-10 22:16"
+    entry: "Loaded repository context and inspected tests/regression/softmax. Existing host variants differ in output buffer flags and grid_dim[0] calculation; kernel variant files remain separate."
+  - time: "2026-06-10 22:16"
+    entry: "Added shared host_variant.h, wired SOFTMAX_VARIANT through the softmax Makefile, and removed duplicate host variant files. Build-side host checks passed for opt and rev1, with rev1 initially showing unused-parameter warnings."
+  - time: "2026-06-10 22:20"
+    entry: "Fixed rev1 helper warnings. Re-ran configure in build/ and verified host+bench builds for SOFTMAX_VARIANT=rev1 and SOFTMAX_VARIANT=opt. Dry-run kernel builds select kernel.rev1.cpp and kernel.opt.cpp respectively."
+pitfalls:
+  - "The working tree already contains user changes in softmax host files and untracked host variant files; preserve intent while consolidating them."
+  - "Host syntax checks from the source tree fail until using a configured build tree because vortex.h includes generated VX_config.h."
