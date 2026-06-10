@@ -54,6 +54,21 @@ static void initialize_random(std::vector<data_t>& vec) {
   }
 }
 
+static void pack_rows_to_pitch(
+    std::vector<uint8_t>& dst,
+    const std::vector<data_t>& src,
+    uint32_t total_rows,
+    uint32_t seq_len_k,
+    uint32_t row_pitch_bytes) {
+  uint32_t row_bytes = seq_len_k * sizeof(data_t);
+  const auto* src_bytes = reinterpret_cast<const uint8_t*>(src.data());
+  for (uint32_t row = 0; row < total_rows; ++row) {
+    std::memcpy(dst.data() + row * row_pitch_bytes,
+                src_bytes + row * row_bytes,
+                row_bytes);
+  }
+}
+
 int main(int argc, char *argv[]) {
   // Bench flags (--warmup / --iterations / --csv / --output / --output-append) — stripped from argv.
   auto bench = vx_bench::parse(argc, argv);
@@ -89,7 +104,8 @@ int main(int argc, char *argv[]) {
            bench.warmup, bench.iterations);
   }
 
-  uint32_t input_size = batch_size * num_heads * seq_len_q * seq_len_k;
+  uint32_t total_rows = batch_size * num_heads * seq_len_q;
+  uint32_t input_size = total_rows * seq_len_k;
 
   std::vector<data_t> h_input(input_size);
 
@@ -103,14 +119,24 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_WARPS, &num_warps));
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_THREADS, &num_threads));
 
-  uint32_t buffer_bytes = input_size * sizeof(data_t);
-  RT_CHECK(vx_mem_alloc(device, buffer_bytes, VX_MEM_READ, &input_buffer));
-  RT_CHECK(vx_mem_alloc(device, buffer_bytes, softmax_output_mem_flags(), &output_buffer));
-  RT_CHECK(vx_copy_to_dev(input_buffer, h_input.data(), 0, buffer_bytes));
+  uint32_t row_pitch_bytes = softmax_row_pitch_bytes(seq_len_k, sizeof(data_t));
+  uint32_t buffer_bytes = total_rows * row_pitch_bytes;
+  std::vector<uint8_t> h_input_pitched;
+
+  if (softmax_uses_pitched_hbm()) {
+    h_input_pitched.assign(buffer_bytes, 0);
+    pack_rows_to_pitch(h_input_pitched, h_input, total_rows, seq_len_k, row_pitch_bytes);
+    RT_CHECK(vx_mem_alloc_aligned(device, buffer_bytes, softmax_hbm_alloc_alignment(), VX_MEM_READ, &input_buffer));
+    RT_CHECK(vx_mem_alloc_aligned(device, buffer_bytes, softmax_hbm_alloc_alignment(), softmax_output_mem_flags(), &output_buffer));
+    RT_CHECK(vx_copy_to_dev(input_buffer, h_input_pitched.data(), 0, buffer_bytes));
+  } else {
+    RT_CHECK(vx_mem_alloc(device, buffer_bytes, VX_MEM_READ, &input_buffer));
+    RT_CHECK(vx_mem_alloc(device, buffer_bytes, softmax_output_mem_flags(), &output_buffer));
+    RT_CHECK(vx_copy_to_dev(input_buffer, h_input.data(), 0, buffer_bytes));
+  }
 
   kernel_arg_t kernel_arg = {};
   kernel_arg.kernel_id = KERNEL_SOFTMAX;
-  uint32_t total_rows = batch_size * num_heads * seq_len_q;
   uint32_t threads_per_block = std::min(256u, (uint32_t)(num_warps * num_threads));
   uint32_t rows_per_block = 1;
   uint32_t row_tiles = total_rows;
@@ -129,6 +155,7 @@ int main(int argc, char *argv[]) {
   kernel_arg.num_heads = num_heads;
   kernel_arg.seq_len_q = seq_len_q;
   kernel_arg.seq_len_k = seq_len_k;
+  kernel_arg.row_pitch_bytes = row_pitch_bytes;
   kernel_arg.use_mask = use_mask;
   kernel_arg.scale = scale;
 
