@@ -1,0 +1,20 @@
+task: fpu-exp-lut
+state: DONE
+log:
+  - time: "2026-06-10 23:33"
+    entry: "Started LUT16 implementation for VX_fpu_exp. Current Taylor Vivado path uses six xil_fma instances per PE; planned LUT path will keep range reduction and replace the polynomial with software-compatible LUT16 interpolation."
+  - time: "2026-06-10 23:39"
+    entry: "Implemented VX_FPU_EXP_LUT path. The LUT path uses one shared registered LUT16 table for base/slope values, four xil_fma stages per PE for t, f, df, and interpolation, and padding shift registers to preserve LATENCY_FEXP."
+  - time: "2026-06-10 23:39"
+    entry: "Verified focused Verilator lint/elaboration for both default Taylor and -DVX_FPU_EXP_LUT Vivado paths using a temporary xil_fma stub."
+  - time: "2026-06-10 23:57"
+    entry: "Replaced LUT path subtraction FMAs with xil_f32add instances. Used generated xil_f32add C_LATENCY=12 from build/sim/xrtsim_vcs/xilinx_ip/xil_f32add/xil_f32add.xml and adjusted LUT/n/p delay alignment."
+  - time: "2026-06-10 23:57"
+    entry: "Added xil_f32add to sim/xrtsim_vcs Makefile XILINX_FPU_IPS so xrt-vcs can bind the VHDL wrapper. Root cause of first zero-output run was stale simv; clean rebuild then exposed the missing wrapper list entry."
+  - time: "2026-06-10 23:57"
+    entry: "Passed xrt-vcs-sim: sourced configs/improve_simd.sh, CONFIGS included -DFPU_DSP -DVIVADO -DVX_ENABLE_HW_EXPF -DVX_FPU_EXP_LUT, ran ci/run_black.sh xrt-vcs-sim --app elunary --args '-n 64 -op exp'. Result PASSED, max diff 0.005544."
+pitfalls:
+  - "VX_pe_serializer depends on LATENCY_FEXP, so LUT mode must keep the same output latency unless VX_config.vh is changed consistently."
+  - "A shared logical LUT may still be replicated by synthesis for fanout/timing."
+  - "Software-compatible linear interpolation needs FP subtraction for f and df. Use xil_f32add with sign-flipped second operand instead of spending an FMA."
+  - "xrt-vcs Makefile must include every generated Xilinx IP wrapper in XILINX_FPU_IPS; otherwise VCS elaboration cannot bind the module even if the IP exists on disk."

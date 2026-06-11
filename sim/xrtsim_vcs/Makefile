@@ -204,7 +204,7 @@ ifdef USE_XILINX_FPU_IP
 	XILINX_IP_GEN_TCL := $(SCRIPT_DIR)/xilinx_ip_gen.tcl
 	XILINX_IP_STAMP := $(XILINX_IP_DIR)/.generated.stamp
 	XILINX_IP_VHDLAN_STAMP := $(DESTDIR)/.xilinx_fpu_ip_vhdlan.stamp
-	XILINX_FPU_IPS := xil_fdiv xil_fsqrt xil_fma xil_fmul xil_fadd
+	XILINX_FPU_IPS := xil_fdiv xil_fsqrt xil_fma xil_fmul xil_fadd xil_f32add
 	XILINX_IP_VHDL_LIBS := xil_defaultlib xbip_utils_v3_0_14 axi_utils_v2_0_10 xbip_pipe_v3_0_10 xbip_dsp48_wrapper_v3_0_7 mult_gen_v12_0_23 floating_point_v7_1_20
 
 	VCS_FLAGS += +vhdllib+xil_defaultlib
