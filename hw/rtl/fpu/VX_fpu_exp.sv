@@ -48,10 +48,18 @@ module VX_fpu_exp import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
     localparam [31:0] F32_HI    = 32'h42b16666; //  88.7f
     localparam [31:0] F32_LO    = 32'hc2ae999a; // -87.3f
     localparam [31:0] F32_LOG2E = 32'h3fb8aa3b;
+`ifndef VX_FPU_EXP_LUT
     localparam [31:0] F32_C1    = 32'h3f317218;
     localparam [31:0] F32_C2    = 32'h3e75fdf0;
     localparam [31:0] F32_C3    = 32'h3d635844;
     localparam [31:0] F32_C4    = 32'h3c1d839f;
+`endif
+
+`ifdef VX_FPU_EXP_LUT
+    localparam FEXP_LUT_BITS = 4;
+    localparam FEXP_LUT_ENTRIES = 1 << FEXP_LUT_BITS;
+    localparam LATENCY_F32ADD = 12;
+`endif
 
     wire [NUM_LANES-1:0][DATAW-1:0] data_in;
 
@@ -190,7 +198,245 @@ module VX_fpu_exp import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
         end
     endfunction
 
+`ifdef VX_FPU_EXP_LUT
+
+    (* ram_style = "registers" *) reg [FEXP_LUT_ENTRIES-1:0][63:0] fexp_lut;
+
+    function automatic [31:0] fexp_lut_base(input [FEXP_LUT_BITS-1:0] idx);
+        begin
+            case (idx)
+                4'h0:    fexp_lut_base = 32'h3f800000; // 1.0f
+                4'h1:    fexp_lut_base = 32'h3f85aac3; // 1.04427378f
+                4'h2:    fexp_lut_base = 32'h3f8b95c2; // 1.09050773f
+                4'h3:    fexp_lut_base = 32'h3f91c3d3; // 1.13878863f
+                4'h4:    fexp_lut_base = 32'h3f9837f0; // 1.18920712f
+                4'h5:    fexp_lut_base = 32'h3f9ef532; // 1.24185781f
+                4'h6:    fexp_lut_base = 32'h3fa5fed7; // 1.29683955f
+                4'h7:    fexp_lut_base = 32'h3fad583f; // 1.35425555f
+                4'h8:    fexp_lut_base = 32'h3fb504f3; // 1.41421356f
+                4'h9:    fexp_lut_base = 32'h3fbd08a4; // 1.47682615f
+                4'ha:    fexp_lut_base = 32'h3fc5672a; // 1.54221083f
+                4'hb:    fexp_lut_base = 32'h3fce248c; // 1.61049033f
+                4'hc:    fexp_lut_base = 32'h3fd744fd; // 1.68179283f
+                4'hd:    fexp_lut_base = 32'h3fe0ccdf; // 1.75625216f
+                4'he:    fexp_lut_base = 32'h3feac0c7; // 1.83400809f
+                default: fexp_lut_base = 32'h3ff5257d; // 1.91520656f
+            endcase
+        end
+    endfunction
+
+    function automatic [31:0] fexp_lut_slope(input [FEXP_LUT_BITS-1:0] idx);
+        begin
+            case (idx)
+                4'h0:    fexp_lut_slope = 32'h3f317218; // 0.693147181f
+                4'h1:    fexp_lut_slope = 32'h3f394d47; // 0.723835428f
+                4'h2:    fexp_lut_slope = 32'h3f418182; // 0.75588236f
+                4'h3:    fexp_lut_slope = 32'h3f4a12b8; // 0.789348131f
+                4'h4:    fexp_lut_slope = 32'h3f530509; // 0.824295559f
+                4'h5:    fexp_lut_slope = 32'h3f5c5cc0; // 0.860790241f
+                4'h6:    fexp_lut_slope = 32'h3f661e5b; // 0.898900681f
+                4'h7:    fexp_lut_slope = 32'h3f704e8a; // 0.938698414f
+                4'h8:    fexp_lut_slope = 32'h3f7af233; // 0.980258143f
+                4'h9:    fexp_lut_slope = 32'h3f830739; // 1.02365788f
+                4'ha:    fexp_lut_slope = 32'h3f88d44f; // 1.06897909f
+                4'hb:    fexp_lut_slope = 32'h3f8ee324; // 1.11630683f
+                4'hc:    fexp_lut_slope = 32'h3f9536a4; // 1.16572996f
+                4'hd:    fexp_lut_slope = 32'h3f9bd1d6; // 1.21734123f
+                4'he:    fexp_lut_slope = 32'h3fa2b7e9; // 1.27123753f
+                default: fexp_lut_slope = 32'h3fa9ec2d; // 1.32752003f
+            endcase
+        end
+    endfunction
+
+    function automatic [31:0] fexp_lut_f0(input [FEXP_LUT_BITS-1:0] idx);
+        begin
+            case (idx)
+                4'h0:    fexp_lut_f0 = 32'h00000000; // 0.0f
+                4'h1:    fexp_lut_f0 = 32'h3d800000; // 0.0625f
+                4'h2:    fexp_lut_f0 = 32'h3e000000; // 0.125f
+                4'h3:    fexp_lut_f0 = 32'h3e400000; // 0.1875f
+                4'h4:    fexp_lut_f0 = 32'h3e800000; // 0.25f
+                4'h5:    fexp_lut_f0 = 32'h3ea00000; // 0.3125f
+                4'h6:    fexp_lut_f0 = 32'h3ec00000; // 0.375f
+                4'h7:    fexp_lut_f0 = 32'h3ee00000; // 0.4375f
+                4'h8:    fexp_lut_f0 = 32'h3f000000; // 0.5f
+                4'h9:    fexp_lut_f0 = 32'h3f100000; // 0.5625f
+                4'ha:    fexp_lut_f0 = 32'h3f200000; // 0.625f
+                4'hb:    fexp_lut_f0 = 32'h3f300000; // 0.6875f
+                4'hc:    fexp_lut_f0 = 32'h3f400000; // 0.75f
+                4'hd:    fexp_lut_f0 = 32'h3f500000; // 0.8125f
+                4'he:    fexp_lut_f0 = 32'h3f600000; // 0.875f
+                default: fexp_lut_f0 = 32'h3f700000; // 0.9375f
+            endcase
+        end
+    endfunction
+
+    function automatic [FEXP_LUT_BITS-1:0] fexp_lut_idx(input [31:0] value);
+        integer exp_i;
+        integer e;
+        integer shift;
+        logic [23:0] sig;
+        begin
+            exp_i = value[30:23];
+            e = exp_i - 127;
+            sig = {1'b1, value[22:0]};
+
+            if (value[31] || exp_i == 0 || e < -FEXP_LUT_BITS) begin
+                fexp_lut_idx = '0;
+            end else if (e >= 0) begin
+                fexp_lut_idx = {FEXP_LUT_BITS{1'b1}};
+            end else begin
+                shift = 23 - FEXP_LUT_BITS - e;
+                fexp_lut_idx = sig >> shift;
+            end
+        end
+    endfunction
+
+    always @(posedge clk) begin
+        for (integer i = 0; i < FEXP_LUT_ENTRIES; ++i) begin
+            fexp_lut[i] <= {fexp_lut_base(i[FEXP_LUT_BITS-1:0]), fexp_lut_slope(i[FEXP_LUT_BITS-1:0])};
+        end
+    end
+
+`endif
+
 `ifdef VIVADO
+
+`ifdef VX_FPU_EXP_LUT
+
+    for (genvar i = 0; i < NUM_PES; ++i) begin : g_fexps
+        wire [31:0] x_clamped;
+        wire [31:0] t;
+        wire signed [9:0] n;
+        wire [31:0] n_f;
+        wire [31:0] n_f_neg;
+        wire [31:0] f;
+        wire [FEXP_LUT_BITS-1:0] idx;
+        wire [31:0] f0;
+        wire [31:0] f0_neg;
+        wire [31:0] df;
+        wire [31:0] p;
+        wire [31:0] p_d;
+        wire [31:0] lut_base;
+        wire [31:0] lut_slope;
+        wire [63:0] lut_entry;
+        wire [31:0] lut_base_d;
+        wire [31:0] lut_slope_d;
+        wire signed [9:0] n_d;
+        wire [31:0] exp_adjust;
+        wire [31:0] result_s;
+        wire [1:0][2:0] tuser;
+
+        assign x_clamped = fp32_clamp(pe_data_in[i]);
+        assign n = fp32_floor_to_i(t);
+        assign n_f = i_to_fp32(n);
+        assign n_f_neg = {~n_f[31], n_f[30:0]};
+        assign idx = fexp_lut_idx(f);
+        assign f0 = fexp_lut_f0(idx);
+        assign f0_neg = {~f0[31], f0[30:0]};
+        assign lut_entry = fexp_lut[idx];
+        assign {lut_base, lut_slope} = lut_entry;
+        assign exp_adjust = ({ {22{n_d[9]}}, n_d } << 23);
+        assign result_s = p_d + exp_adjust;
+
+        xil_fma fma_t (
+            .aclk                (clk),
+            .aclken              (pe_enable),
+            .s_axis_a_tvalid     (1'b1),
+            .s_axis_a_tdata      (x_clamped),
+            .s_axis_b_tvalid     (1'b1),
+            .s_axis_b_tdata      (F32_LOG2E),
+            .s_axis_c_tvalid     (1'b1),
+            .s_axis_c_tdata      (F32_ZERO),
+            `UNUSED_PIN (m_axis_result_tvalid),
+            .m_axis_result_tdata (t),
+            .m_axis_result_tuser (tuser[0])
+        );
+
+        xil_f32add fadd_f (
+            .aclk                (clk),
+            .aresetn             (~reset),
+            .aclken              (pe_enable),
+            .s_axis_a_tvalid     (1'b1),
+            .s_axis_a_tdata      (t),
+            `UNUSED_PIN (s_axis_a_tready),
+            .s_axis_b_tvalid     (1'b1),
+            .s_axis_b_tdata      (n_f_neg),
+            `UNUSED_PIN (s_axis_b_tready),
+            `UNUSED_PIN (m_axis_result_tvalid),
+            .m_axis_result_tready(1'b1),
+            .m_axis_result_tdata (f)
+        );
+
+        xil_f32add fadd_df (
+            .aclk                (clk),
+            .aresetn             (~reset),
+            .aclken              (pe_enable),
+            .s_axis_a_tvalid     (1'b1),
+            .s_axis_a_tdata      (f),
+            `UNUSED_PIN (s_axis_a_tready),
+            .s_axis_b_tvalid     (1'b1),
+            .s_axis_b_tdata      (f0_neg),
+            `UNUSED_PIN (s_axis_b_tready),
+            `UNUSED_PIN (m_axis_result_tvalid),
+            .m_axis_result_tready(1'b1),
+            .m_axis_result_tdata (df)
+        );
+
+        xil_fma fma_p (
+            .aclk                (clk),
+            .aclken              (pe_enable),
+            .s_axis_a_tvalid     (1'b1),
+            .s_axis_a_tdata      (lut_slope_d),
+            .s_axis_b_tvalid     (1'b1),
+            .s_axis_b_tdata      (df),
+            .s_axis_c_tvalid     (1'b1),
+            .s_axis_c_tdata      (lut_base_d),
+            `UNUSED_PIN (m_axis_result_tvalid),
+            .m_axis_result_tdata (p),
+            .m_axis_result_tuser (tuser[1])
+        );
+
+        VX_shift_register #(
+            .DATAW  (64),
+            .DEPTH  (LATENCY_F32ADD)
+        ) lut_delay (
+            .clk      (clk),
+            `UNUSED_PIN (reset),
+            .enable   (pe_enable),
+            .data_in  ({lut_base, lut_slope}),
+            .data_out ({lut_base_d, lut_slope_d})
+        );
+
+        VX_shift_register #(
+            .DATAW  (10),
+            .DEPTH  (`LATENCY_FEXP - `LATENCY_FMA)
+        ) n_delay (
+            .clk      (clk),
+            `UNUSED_PIN (reset),
+            .enable   (pe_enable),
+            .data_in  (n),
+            .data_out (n_d)
+        );
+
+        VX_shift_register #(
+            .DATAW  (32),
+            .DEPTH  (`LATENCY_FEXP - (2 * `LATENCY_FMA) - (2 * LATENCY_F32ADD))
+        ) p_delay (
+            .clk      (clk),
+            `UNUSED_PIN (reset),
+            .enable   (pe_enable),
+            .data_in  (p),
+            .data_out (p_d)
+        );
+
+        assign pe_data_out[i][0 +: 32] = result_s;
+        assign pe_data_out[i][32 +: `FP_FLAGS_BITS] = '0;
+
+        `UNUSED_VAR (tuser)
+    end
+
+`else
 
     for (genvar i = 0; i < NUM_PES; ++i) begin : g_fexps
         wire [31:0] x_clamped;
@@ -351,6 +597,8 @@ module VX_fpu_exp import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
 
         `UNUSED_VAR (tuser)
     end
+
+`endif
 
     assign has_fflags = 1;
     assign per_lane_fflags = fflags_out;
