@@ -20,8 +20,12 @@ aliases:
     configs: configs/naive_simd.sh
 
   improve_simd:
-    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_noDcache_L2cache_617ccd526f
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_noDcache_L2cache_617ccd526f/bin
     configs: configs/improve_simd.sh
+  
+  improve_t32_no_tcu_taylor4_fexp:
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_noDcache_L2cache_26c4abad9f/bin
+    configs: configs/improve_no_tcu_taylor4_fexp.sh
 
   improve_tcol1:
     path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_noDcache_L2cache_c8c5d0d4f3/bin

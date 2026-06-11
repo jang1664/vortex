@@ -74,7 +74,6 @@ resolve_fpga_bin() {
 
 append_run_configs() {
   local configs="${1:-}"
-  configs+=" -DWLOAD_AT_ONCE"
 
   if [[ -n "${DEBUG_FLAG}" ]]; then
     configs+=" -DDBG_TRACE_PIPELINE"
