@@ -52,7 +52,7 @@ static inline bool softmax_uses_pitched_hbm() {
 
 static inline uint32_t softmax_row_pitch_bytes(uint32_t seq_len_k, uint32_t elem_bytes) {
   uint32_t row_bytes = seq_len_k * elem_bytes;
-  return softmax_uses_pitched_hbm() ? softmax_align_up_u32(row_bytes, 64u) : row_bytes;
+  return softmax_uses_pitched_hbm() ? softmax_align_up_u32(row_bytes, 256u) : row_bytes;
 }
 
 static inline uint32_t softmax_hbm_alloc_alignment() {
