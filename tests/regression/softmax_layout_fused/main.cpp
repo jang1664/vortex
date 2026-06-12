@@ -184,7 +184,12 @@ int main(int argc, char *argv[]) {
   uint64_t num_threads = 0;
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_WARPS, &num_warps));
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_THREADS, &num_threads));
-  const uint32_t tpb = std::min(256u, (uint32_t)(num_warps * num_threads));
+  // One warp (= num_threads lanes) per block, so each row occupies a single
+  // warp and up to num_warps rows are co-resident on a core. While one row's
+  // lane 0 busy-waits on its DMA descriptor, the other resident rows keep
+  // computing, hiding the DMA issue/poll latency that otherwise stalls the
+  // whole core when a block spans all warps.
+  const uint32_t tpb = std::min(256u, (uint32_t)num_threads);
 
   kernel_arg_t arg = {};
   arg.kernel_id = KERNEL_SOFTMAX_LAYOUT_FUSED;
