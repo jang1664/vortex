@@ -197,12 +197,12 @@ module tb_VX_dma_node import VX_gpu_pkg::*; #(
   logic [DCACHE_REQ_DATAW-1:0] dcache_req_fifo[DMA_REQ_FIFO_DEPTH];
   logic [LMEM_REQ_DATAW-1:0]   lmem_req_fifo[DMA_REQ_FIFO_DEPTH];
 
-  int unsigned dcache_head_q  = 0;
-  int unsigned dcache_tail_q  = 0;
-  int unsigned dcache_count_q = 0;
-  int unsigned lmem_head_q    = 0;
-  int unsigned lmem_tail_q    = 0;
-  int unsigned lmem_count_q   = 0;
+  int unsigned dcache_head_q;
+  int unsigned dcache_tail_q;
+  int unsigned dcache_count_q;
+  int unsigned lmem_head_q;
+  int unsigned lmem_tail_q;
+  int unsigned lmem_count_q;
 
   assign dma_dcache_if.req_ready = 1'b1;
   assign dma_lmem_if.req_ready   = 1'b1;
@@ -388,7 +388,7 @@ module tb_VX_dma_node import VX_gpu_pkg::*; #(
 
   assign cache_mem_if[0].req_ready = 1'b1;
 
-  always_ff @(posedge clk) begin
+  always @(posedge clk) begin
     if (reset) begin
       mem_rsp_queue.delete();
       cache_mem_if[0].rsp_valid <= 1'b0;

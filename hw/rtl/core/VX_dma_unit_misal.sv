@@ -83,9 +83,18 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
   // variable-byte shift. Aligned mode only needs one beat of staging (no byte
   // shift), so we shrink the register in that case to save ~half the FFs and
   // let the barrel-shift logic in the always blocks fold away.
+  localparam int MIN_BYTES    = (DCACHE_BYTES < LMEM_BYTES) ? DCACHE_BYTES : LMEM_BYTES;
   localparam int MAX_BYTES    = (DCACHE_BYTES > LMEM_BYTES) ? DCACHE_BYTES : LMEM_BYTES;
+  localparam int CHUNK_BYTES  = MIN_BYTES;
   localparam int WIN_BYTES    = ENABLE_MISALIGN ? (2 * MAX_BYTES) : MAX_BYTES;
   localparam int WIN_VALID_W  = `CLOG2(WIN_BYTES + 1);
+
+  initial begin
+    if (!ENABLE_MISALIGN) begin
+      if (!(((DCACHE_BYTES % LMEM_BYTES) == 0) || ((LMEM_BYTES % DCACHE_BYTES) == 0)))
+        $fatal(1, "aligned DMA requires divisible dcache/lmem bus widths");
+    end
+  end
 
   function automatic logic [dcache_bus_if.ADDR_WIDTH-1:0] to_dcache_addr(input logic [63:0] byte_addr);
     to_dcache_addr = dcache_bus_if.ADDR_WIDTH'(byte_addr >> DCACHE_LG2);
@@ -223,19 +232,36 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
 `ifndef SYNTHESIS
   always_ff @(posedge clk) begin
     if (!reset && !ENABLE_MISALIGN && cmd_start) begin
-      if (|cfg_reg_if.regs[3][LMEM_LG2-1:0])
-        $fatal(1, "%s: ENABLE_MISALIGN=0 but src_base_lo=0x%08h is not %0d-byte aligned",
-               INSTANCE_ID, cfg_reg_if.regs[3], LMEM_BYTES);
-      if (|cfg_reg_if.regs[1][DCACHE_LG2-1:0])
-        $fatal(1, "%s: ENABLE_MISALIGN=0 but dst_base_lo=0x%08h is not %0d-byte aligned",
-               INSTANCE_ID, cfg_reg_if.regs[1], DCACHE_BYTES);
-      for (int d = 0; d < NDIM; d++) begin
-        if (|cfg_reg_if.regs[5 + 2*d][LMEM_LG2-1:0])
-          $fatal(1, "%s: ENABLE_MISALIGN=0 but src_stride[%0d]=0x%08h is not %0d-byte aligned",
-                 INSTANCE_ID, d, cfg_reg_if.regs[5 + 2*d], LMEM_BYTES);
-        if (|cfg_reg_if.regs[6 + 2*d][DCACHE_LG2-1:0])
-          $fatal(1, "%s: ENABLE_MISALIGN=0 but dst_stride[%0d]=0x%08h is not %0d-byte aligned",
-                 INSTANCE_ID, d, cfg_reg_if.regs[6 + 2*d], DCACHE_BYTES);
+      if (cfg_reg_if.regs[DESC_DIR_IDX][0]) begin
+        if (|cfg_reg_if.regs[3][LMEM_LG2-1:0])
+          $fatal(1, "%s: ENABLE_MISALIGN=0 but L2G src_base_lo=0x%08h is not %0d-byte aligned",
+                 INSTANCE_ID, cfg_reg_if.regs[3], LMEM_BYTES);
+        if (|cfg_reg_if.regs[1][DCACHE_LG2-1:0])
+          $fatal(1, "%s: ENABLE_MISALIGN=0 but L2G dst_base_lo=0x%08h is not %0d-byte aligned",
+                 INSTANCE_ID, cfg_reg_if.regs[1], DCACHE_BYTES);
+        for (int d = 0; d < NDIM; d++) begin
+          if (|cfg_reg_if.regs[5 + 2*d][LMEM_LG2-1:0])
+            $fatal(1, "%s: ENABLE_MISALIGN=0 but L2G src_stride[%0d]=0x%08h is not %0d-byte aligned",
+                   INSTANCE_ID, d, cfg_reg_if.regs[5 + 2*d], LMEM_BYTES);
+          if (|cfg_reg_if.regs[6 + 2*d][DCACHE_LG2-1:0])
+            $fatal(1, "%s: ENABLE_MISALIGN=0 but L2G dst_stride[%0d]=0x%08h is not %0d-byte aligned",
+                   INSTANCE_ID, d, cfg_reg_if.regs[6 + 2*d], DCACHE_BYTES);
+        end
+      end else begin
+        if (|cfg_reg_if.regs[3][DCACHE_LG2-1:0])
+          $fatal(1, "%s: ENABLE_MISALIGN=0 but G2L src_base_lo=0x%08h is not %0d-byte aligned",
+                 INSTANCE_ID, cfg_reg_if.regs[3], DCACHE_BYTES);
+        if (|cfg_reg_if.regs[1][LMEM_LG2-1:0])
+          $fatal(1, "%s: ENABLE_MISALIGN=0 but G2L dst_base_lo=0x%08h is not %0d-byte aligned",
+                 INSTANCE_ID, cfg_reg_if.regs[1], LMEM_BYTES);
+        for (int d = 0; d < NDIM; d++) begin
+          if (|cfg_reg_if.regs[5 + 2*d][DCACHE_LG2-1:0])
+            $fatal(1, "%s: ENABLE_MISALIGN=0 but G2L src_stride[%0d]=0x%08h is not %0d-byte aligned",
+                   INSTANCE_ID, d, cfg_reg_if.regs[5 + 2*d], DCACHE_BYTES);
+          if (|cfg_reg_if.regs[6 + 2*d][LMEM_LG2-1:0])
+            $fatal(1, "%s: ENABLE_MISALIGN=0 but G2L dst_stride[%0d]=0x%08h is not %0d-byte aligned",
+                   INSTANCE_ID, d, cfg_reg_if.regs[6 + 2*d], LMEM_BYTES);
+        end
       end
     end
   end
@@ -414,12 +440,14 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
   // ------------------------------------------------------------
   logic [WIN_BYTES*8-1:0]  win_lmem;
   logic [WIN_VALID_W-1:0]  win_lmem_valid;
+  logic [WIN_VALID_W-1:0]  win_lmem_head;
   logic [63:0]             lmem_rd_ptr;   // aligned byte addr
   logic [63:0]             lmem_rd_end;   // aligned end (exclusive)
   logic [31:0]             lmem_drop;     // initial misalign bytes to drop
 
   logic [WIN_BYTES*8-1:0]  win_dcache;
   logic [WIN_VALID_W-1:0]  win_dcache_valid;
+  logic [WIN_VALID_W-1:0]  win_dcache_head;
   logic [63:0]             dcache_rd_ptr;
   logic [63:0]             dcache_rd_end;
   logic [31:0]             dcache_drop;
@@ -482,6 +510,7 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
 
   slot_state_e                slot_state_r [RD_OUTSTANDING];
   logic [RD_OUTSTANDING-1:0][MAX_BYTES*8-1:0] slot_data_r;
+  logic [RD_OUTSTANDING-1:0][WIN_VALID_W-1:0] slot_valid_bytes_r;
   logic [RD_SLOT_BITS-1:0]    rd_issue_slot_r;
   logic [RD_SLOT_BITS-1:0]    wr_expect_slot_r;
   logic [SLOT_OCC_W-1:0]      slot_occupancy_r;
@@ -756,12 +785,15 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
               end
             end
           end else begin
-            // lane = 0, wr_nbytes <= DCACHE_BYTES, src_bytes <= wr_nbytes.
-            // Window -> wr_data is a direct copy of the first src_bytes bytes;
-            // the remainder is zero-padding that comes free from the '0 init.
+            // Aligned mode uses a fixed head pointer instead of shifting the
+            // whole source window after every destination write.
             for (int b = 0; b < DCACHE_BYTES; b++) begin
-              if (b < int'(src_bytes))
-                wr_data[b*8 +: 8] = win_lmem[b*8 +: 8];
+              if (b < int'(src_bytes)) begin
+                for (int off = 0; off < WIN_BYTES; off += CHUNK_BYTES) begin
+                  if ((win_lmem_head == WIN_VALID_W'(off)) && ((off + b) < WIN_BYTES))
+                    wr_data[b*8 +: 8] = win_lmem[(off + b)*8 +: 8];
+                end
+              end
             end
           end
 
@@ -863,8 +895,12 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
             end
           end else begin
             for (int b = 0; b < LMEM_BYTES; b++) begin
-              if (b < int'(src_bytes))
-                wr_data[b*8 +: 8] = win_dcache[b*8 +: 8];
+              if (b < int'(src_bytes)) begin
+                for (int off = 0; off < WIN_BYTES; off += CHUNK_BYTES) begin
+                  if ((win_dcache_head == WIN_VALID_W'(off)) && ((off + b) < WIN_BYTES))
+                    wr_data[b*8 +: 8] = win_dcache[(off + b)*8 +: 8];
+                end
+              end
             end
           end
 
@@ -937,12 +973,14 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
 
       win_lmem       <= '0;
       win_lmem_valid <= '0;
+      win_lmem_head  <= '0;
       lmem_rd_ptr    <= '0;
       lmem_rd_end    <= '0;
       lmem_drop      <= '0;
 
       win_dcache       <= '0;
       win_dcache_valid <= '0;
+      win_dcache_head  <= '0;
       dcache_rd_ptr    <= '0;
       dcache_rd_end    <= '0;
       dcache_drop      <= '0;
@@ -955,6 +993,7 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
       for (int i = 0; i < RD_OUTSTANDING; i++) begin
         slot_state_r[i] <= SLOT_FREE;
         slot_data_r[i]  <= '0;
+        slot_valid_bytes_r[i] <= '0;
       end
 
     end else begin
@@ -984,6 +1023,7 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
         for (int i = 0; i < RD_OUTSTANDING; i++) begin
           slot_state_r[i] <= SLOT_FREE;
           slot_data_r[i]  <= '0;
+          slot_valid_bytes_r[i] <= '0;
         end
       end
 
@@ -999,8 +1039,10 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
 
         win_lmem       <= '0;
         win_lmem_valid <= '0;
+        win_lmem_head  <= '0;
         win_dcache       <= '0;
         win_dcache_valid <= '0;
+        win_dcache_head  <= '0;
 
         // reset drops by default (important!)
         lmem_drop   <= 32'd0;
@@ -1011,6 +1053,7 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
         slot_occupancy_r <= '0;
         for (int i = 0; i < RD_OUTSTANDING; i++) begin
           slot_state_r[i] <= SLOT_FREE;
+          slot_valid_bytes_r[i] <= '0;
         end
 
         if (bound_r[0] == 0 || bound_r[1] == 0 || bound_r[2] == 0
@@ -1067,10 +1110,27 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
         if (src_req_fire) begin
           logic [63:0] next_ptr;
           logic [63:0] next_rd_base;
+          logic [63:0] src_ptr;
+          logic [63:0] seg_valid_end;
+          logic [31:0] src_beat_bytes;
+          logic [31:0] beat_valid_bytes;
           logic        rd_is_last;
           logic        rd_crosses_seg;
 
           slot_state_r[rd_issue_slot_r] <= SLOT_WAIT_RSP;
+          src_ptr        = direction_bit_r ? lmem_rd_ptr : dcache_rd_ptr;
+          src_beat_bytes = direction_bit_r ? 32'(LMEM_BYTES) : 32'(DCACHE_BYTES);
+          seg_valid_end  = rd_base_src_seg_r + 64'(valid_total);
+          if (ENABLE_MISALIGN) begin
+            beat_valid_bytes = src_beat_bytes;
+          end else if ((valid_total == 0) || (src_ptr >= seg_valid_end)) begin
+            beat_valid_bytes = 32'd0;
+          end else if ((src_ptr + 64'(src_beat_bytes)) <= seg_valid_end) begin
+            beat_valid_bytes = src_beat_bytes;
+          end else begin
+            beat_valid_bytes = 32'(seg_valid_end - src_ptr);
+          end
+          slot_valid_bytes_r[rd_issue_slot_r] <= WIN_VALID_W'(beat_valid_bytes);
           rd_issue_slot_r <= rd_issue_slot_r + RD_SLOT_BITS'(1);
 
           if (direction_bit_r) next_ptr = lmem_rd_ptr + 64'(LMEM_BYTES);
@@ -1157,6 +1217,7 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
         if (state == S_L2G_DECIDE) begin : l2g_wr_update
           logic [WIN_BYTES*8-1:0] tmp_win;
           logic [WIN_VALID_W-1:0] tmp_valid;
+          logic [WIN_VALID_W-1:0] tmp_head;
           logic [31:0]            tmp_drop;
           logic [31:0]            tmp_out_off;
           logic [63:0]            dst_byte;
@@ -1168,6 +1229,7 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
 
           tmp_win     = win_lmem;
           tmp_valid   = win_lmem_valid;
+          tmp_head    = win_lmem_head;
           tmp_drop    = lmem_drop;
           tmp_out_off = out_off;
 
@@ -1194,8 +1256,13 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
                 tmp_win   = tmp_win >> (src_bytes * 8);
                 tmp_valid = tmp_valid - src_bytes[WIN_VALID_W-1:0];
               end else begin
-                tmp_win   = tmp_win >> (src_bytes * 8);
-                tmp_valid = tmp_valid - src_bytes[WIN_VALID_W-1:0];
+                if (src_bytes[WIN_VALID_W-1:0] >= tmp_valid) begin
+                  tmp_valid = '0;
+                  tmp_head  = '0;
+                end else begin
+                  tmp_valid = tmp_valid - src_bytes[WIN_VALID_W-1:0];
+                  tmp_head  = tmp_head + src_bytes[WIN_VALID_W-1:0];
+                end
               end
             end
 
@@ -1250,16 +1317,18 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
                 wr_base_src_seg_r <= next_wr_base_src;
                 wr_base_dst_seg_r <= next_wr_base_dst;
                 tmp_out_off = 32'd0;
-                tail_drop = 32'(align_up(wr_base_src_seg_r + 64'(valid_total), LMEM_BYTES)
-                               - (wr_base_src_seg_r + 64'(valid_total)));
-                if ((tail_drop != 0) && (tmp_valid >= tail_drop[WIN_VALID_W-1:0])) begin
-                  tmp_win   = tmp_win >> (tail_drop * 8);
-                  tmp_valid = tmp_valid - tail_drop[WIN_VALID_W-1:0];
-                end
                 if (ENABLE_MISALIGN) begin
+                  tail_drop = 32'(align_up(wr_base_src_seg_r + 64'(valid_total), LMEM_BYTES)
+                                 - (wr_base_src_seg_r + 64'(valid_total)));
+                  if ((tail_drop != 0) && (tmp_valid >= tail_drop[WIN_VALID_W-1:0])) begin
+                    tmp_win   = tmp_win >> (tail_drop * 8);
+                    tmp_valid = tmp_valid - tail_drop[WIN_VALID_W-1:0];
+                  end
                   // L2G: wr writes to DCACHE; src-side is LMEM, drop
                   // tracks LMEM-beat alignment of the src base.
                   tmp_drop  = 32'(next_wr_base_src & 64'(LMEM_BYTES-1));
+                end else if (tmp_valid == '0) begin
+                  tmp_head = '0;
                 end
               end
             end
@@ -1268,11 +1337,24 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
           // Pull (after drain) — staging now has up to one beat of room
           // (aligned: cleared by drain; misalign: shifted out by src_bytes).
           if (wr_pull_slot && direction_bit_r && (tmp_valid + LMEM_BYTES <= WIN_BYTES)) begin
-            if (ENABLE_MISALIGN)
+            if (ENABLE_MISALIGN) begin
               tmp_win[tmp_valid*8 +: (LMEM_BYTES*8)] = slot_data_r[wr_expect_slot_r][0 +: (LMEM_BYTES*8)];
-            else
-              tmp_win[tmp_valid*8 +: (LMEM_BYTES*8)] = slot_data_r[wr_expect_slot_r][0 +: (LMEM_BYTES*8)];
-            tmp_valid = tmp_valid + WIN_VALID_W'(LMEM_BYTES);
+              tmp_valid = tmp_valid + WIN_VALID_W'(LMEM_BYTES);
+            end else begin
+              logic [WIN_VALID_W-1:0] pull_valid;
+              pull_valid = slot_valid_bytes_r[wr_expect_slot_r];
+              for (int b = 0; b < LMEM_BYTES; b++) begin
+                if (b < int'(pull_valid)) begin
+                  for (int off = 0; off < WIN_BYTES; off += CHUNK_BYTES) begin
+                    if ((tmp_valid == WIN_VALID_W'(off)) && ((off + b) < WIN_BYTES))
+                      tmp_win[(off + b)*8 +: 8] = slot_data_r[wr_expect_slot_r][b*8 +: 8];
+                  end
+                end
+              end
+              tmp_valid = tmp_valid + pull_valid;
+              if (tmp_valid == '0)
+                tmp_head = '0;
+            end
             slot_state_r[wr_expect_slot_r] <= SLOT_FREE;
             wr_expect_slot_r <= wr_expect_slot_r + RD_SLOT_BITS'(1);
           end
@@ -1289,11 +1371,13 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
 
           win_lmem       <= tmp_win;
           win_lmem_valid <= tmp_valid;
+          win_lmem_head  <= tmp_head;
           lmem_drop      <= tmp_drop;
           out_off        <= tmp_out_off;
         end else begin : g2l_wr_update
           logic [WIN_BYTES*8-1:0] tmp_win;
           logic [WIN_VALID_W-1:0] tmp_valid;
+          logic [WIN_VALID_W-1:0] tmp_head;
           logic [31:0]            tmp_drop;
           logic [31:0]            tmp_out_off;
           logic [63:0]            dst_byte;
@@ -1305,6 +1389,7 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
 
           tmp_win     = win_dcache;
           tmp_valid   = win_dcache_valid;
+          tmp_head    = win_dcache_head;
           tmp_drop    = dcache_drop;
           tmp_out_off = out_off;
 
@@ -1328,8 +1413,13 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
                 tmp_win   = tmp_win >> (src_bytes * 8);
                 tmp_valid = tmp_valid - src_bytes[WIN_VALID_W-1:0];
               end else begin
-                tmp_win   = tmp_win >> (src_bytes * 8);
-                tmp_valid = tmp_valid - src_bytes[WIN_VALID_W-1:0];
+                if (src_bytes[WIN_VALID_W-1:0] >= tmp_valid) begin
+                  tmp_valid = '0;
+                  tmp_head  = '0;
+                end else begin
+                  tmp_valid = tmp_valid - src_bytes[WIN_VALID_W-1:0];
+                  tmp_head  = tmp_head + src_bytes[WIN_VALID_W-1:0];
+                end
               end
             end
 
@@ -1384,16 +1474,18 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
                 wr_base_src_seg_r <= next_wr_base_src;
                 wr_base_dst_seg_r <= next_wr_base_dst;
                 tmp_out_off = 32'd0;
-                tail_drop = 32'(align_up(wr_base_src_seg_r + 64'(valid_total), DCACHE_BYTES)
-                               - (wr_base_src_seg_r + 64'(valid_total)));
-                if ((tail_drop != 0) && (tmp_valid >= tail_drop[WIN_VALID_W-1:0])) begin
-                  tmp_win   = tmp_win >> (tail_drop * 8);
-                  tmp_valid = tmp_valid - tail_drop[WIN_VALID_W-1:0];
-                end
                 if (ENABLE_MISALIGN) begin
+                  tail_drop = 32'(align_up(wr_base_src_seg_r + 64'(valid_total), DCACHE_BYTES)
+                                 - (wr_base_src_seg_r + 64'(valid_total)));
+                  if ((tail_drop != 0) && (tmp_valid >= tail_drop[WIN_VALID_W-1:0])) begin
+                    tmp_win   = tmp_win >> (tail_drop * 8);
+                    tmp_valid = tmp_valid - tail_drop[WIN_VALID_W-1:0];
+                  end
                   // G2L: wr writes to LMEM; src-side is DCACHE, drop
                   // tracks DCACHE-beat alignment of the src base.
                   tmp_drop  = 32'(next_wr_base_src & 64'(DCACHE_BYTES-1));
+                end else if (tmp_valid == '0) begin
+                  tmp_head = '0;
                 end
               end
             end
@@ -1402,11 +1494,24 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
           // Pull (after drain) — staging now has up to one beat of room
           // (aligned: cleared by drain; misalign: shifted out by src_bytes).
           if (wr_pull_slot && !direction_bit_r && (tmp_valid + DCACHE_BYTES <= WIN_BYTES)) begin
-            if (ENABLE_MISALIGN)
+            if (ENABLE_MISALIGN) begin
               tmp_win[tmp_valid*8 +: (DCACHE_BYTES*8)] = slot_data_r[wr_expect_slot_r][0 +: (DCACHE_BYTES*8)];
-            else
-              tmp_win[tmp_valid*8 +: (DCACHE_BYTES*8)] = slot_data_r[wr_expect_slot_r][0 +: (DCACHE_BYTES*8)];
-            tmp_valid = tmp_valid + WIN_VALID_W'(DCACHE_BYTES);
+              tmp_valid = tmp_valid + WIN_VALID_W'(DCACHE_BYTES);
+            end else begin
+              logic [WIN_VALID_W-1:0] pull_valid;
+              pull_valid = slot_valid_bytes_r[wr_expect_slot_r];
+              for (int b = 0; b < DCACHE_BYTES; b++) begin
+                if (b < int'(pull_valid)) begin
+                  for (int off = 0; off < WIN_BYTES; off += CHUNK_BYTES) begin
+                    if ((tmp_valid == WIN_VALID_W'(off)) && ((off + b) < WIN_BYTES))
+                      tmp_win[(off + b)*8 +: 8] = slot_data_r[wr_expect_slot_r][b*8 +: 8];
+                  end
+                end
+              end
+              tmp_valid = tmp_valid + pull_valid;
+              if (tmp_valid == '0)
+                tmp_head = '0;
+            end
             slot_state_r[wr_expect_slot_r] <= SLOT_FREE;
             wr_expect_slot_r <= wr_expect_slot_r + RD_SLOT_BITS'(1);
           end
@@ -1423,6 +1528,7 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
 
           win_dcache       <= tmp_win;
           win_dcache_valid <= tmp_valid;
+          win_dcache_head  <= tmp_head;
           dcache_drop      <= tmp_drop;
           out_off          <= tmp_out_off;
         end
