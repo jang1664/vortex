@@ -1436,12 +1436,17 @@ def build_decoder_pass_kernels(config: dict,
     ))
 
     # 8. Attention softmax over scores [B, H_q, S_q, S_kv]
+    # Prefill uses one-head softmax cases to isolate per-head latency. In
+    # generation, S_q=1, so keep all heads in a single call to avoid measuring
+    # tiny per-head cases dominated by launch/dispatch overhead.
+    softmax_heads = 1 if stage == "prefill" else H_q
+    softmax_calls = L * H_q if stage == "prefill" else L
     out.append(_llm_kernel(
         name="attn_softmax", kind="softmax", stage=stage,
-        args=(f"-batch {batch} -heads {H_q} -seqq {seq_q} -seqk {seq_kv} "
+        args=(f"-batch {batch} -heads {softmax_heads} -seqq {seq_q} -seqk {seq_kv} "
               f"-mask {use_mask}"),
-        calls_per_forward=L,
-        shape={"batch": batch, "heads": H_q,
+        calls_per_forward=softmax_calls,
+        shape={"batch": batch, "heads": softmax_heads,
                "seqq": seq_q, "seqk": seq_kv, "mask": use_mask},
         variant=variant,
     ))
