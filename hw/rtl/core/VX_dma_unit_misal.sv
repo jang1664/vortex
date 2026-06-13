@@ -232,36 +232,34 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
 `ifndef SYNTHESIS
   always_ff @(posedge clk) begin
     if (!reset && !ENABLE_MISALIGN && cmd_start) begin
-      if (cfg_reg_if.regs[DESC_DIR_IDX][0]) begin
-        if (|cfg_reg_if.regs[3][LMEM_LG2-1:0])
-          $fatal(1, "%s: ENABLE_MISALIGN=0 but L2G src_base_lo=0x%08h is not %0d-byte aligned",
-                 INSTANCE_ID, cfg_reg_if.regs[3], LMEM_BYTES);
-        if (|cfg_reg_if.regs[1][DCACHE_LG2-1:0])
-          $fatal(1, "%s: ENABLE_MISALIGN=0 but L2G dst_base_lo=0x%08h is not %0d-byte aligned",
-                 INSTANCE_ID, cfg_reg_if.regs[1], DCACHE_BYTES);
-        for (int d = 0; d < NDIM; d++) begin
-          if (|cfg_reg_if.regs[5 + 2*d][LMEM_LG2-1:0])
-            $fatal(1, "%s: ENABLE_MISALIGN=0 but L2G src_stride[%0d]=0x%08h is not %0d-byte aligned",
-                   INSTANCE_ID, d, cfg_reg_if.regs[5 + 2*d], LMEM_BYTES);
-          if (|cfg_reg_if.regs[6 + 2*d][DCACHE_LG2-1:0])
-            $fatal(1, "%s: ENABLE_MISALIGN=0 but L2G dst_stride[%0d]=0x%08h is not %0d-byte aligned",
-                   INSTANCE_ID, d, cfg_reg_if.regs[6 + 2*d], DCACHE_BYTES);
-        end
-      end else begin
-        if (|cfg_reg_if.regs[3][DCACHE_LG2-1:0])
-          $fatal(1, "%s: ENABLE_MISALIGN=0 but G2L src_base_lo=0x%08h is not %0d-byte aligned",
-                 INSTANCE_ID, cfg_reg_if.regs[3], DCACHE_BYTES);
-        if (|cfg_reg_if.regs[1][LMEM_LG2-1:0])
-          $fatal(1, "%s: ENABLE_MISALIGN=0 but G2L dst_base_lo=0x%08h is not %0d-byte aligned",
-                 INSTANCE_ID, cfg_reg_if.regs[1], LMEM_BYTES);
-        for (int d = 0; d < NDIM; d++) begin
-          if (|cfg_reg_if.regs[5 + 2*d][DCACHE_LG2-1:0])
-            $fatal(1, "%s: ENABLE_MISALIGN=0 but G2L src_stride[%0d]=0x%08h is not %0d-byte aligned",
-                   INSTANCE_ID, d, cfg_reg_if.regs[5 + 2*d], DCACHE_BYTES);
-          if (|cfg_reg_if.regs[6 + 2*d][LMEM_LG2-1:0])
-            $fatal(1, "%s: ENABLE_MISALIGN=0 but G2L dst_stride[%0d]=0x%08h is not %0d-byte aligned",
-                   INSTANCE_ID, d, cfg_reg_if.regs[6 + 2*d], LMEM_BYTES);
-        end
+      // src and dst ride different buses depending on direction, so each must be
+      // checked against the beat of the bus it actually touches:
+      //   dir=0 (G2L): src=DCACHE, dst=LMEM ;  dir=1 (L2G): src=LMEM, dst=DCACHE.
+      // The LMEM beat (NUM_LSU_LANES*LSU_WORD_SIZE) can exceed the DCACHE line, so
+      // a fixed src->LMEM / dst->DCACHE orientation would falsely trip on the
+      // global side of a G2L transfer (e.g. a 64B-aligned global base on a 256B
+      // LMEM bus) while under-checking the LMEM side.
+      logic        l2g_dir;
+      logic [31:0] src_align_mask, dst_align_mask;
+      int          src_align_bytes, dst_align_bytes;
+      l2g_dir         = cfg_reg_if.regs[DESC_DIR_IDX][0];
+      src_align_bytes = l2g_dir ? LMEM_BYTES : DCACHE_BYTES;
+      dst_align_bytes = l2g_dir ? DCACHE_BYTES : LMEM_BYTES;
+      src_align_mask  = 32'(src_align_bytes) - 32'd1;
+      dst_align_mask  = 32'(dst_align_bytes) - 32'd1;
+      if (|(cfg_reg_if.regs[3] & src_align_mask))
+        $fatal(1, "%s: ENABLE_MISALIGN=0 but src_base_lo=0x%08h is not %0d-byte aligned",
+               INSTANCE_ID, cfg_reg_if.regs[3], src_align_bytes);
+      if (|(cfg_reg_if.regs[1] & dst_align_mask))
+        $fatal(1, "%s: ENABLE_MISALIGN=0 but dst_base_lo=0x%08h is not %0d-byte aligned",
+               INSTANCE_ID, cfg_reg_if.regs[1], dst_align_bytes);
+      for (int d = 0; d < NDIM; d++) begin
+        if (|(cfg_reg_if.regs[5 + 2*d] & src_align_mask))
+          $fatal(1, "%s: ENABLE_MISALIGN=0 but src_stride[%0d]=0x%08h is not %0d-byte aligned",
+                 INSTANCE_ID, d, cfg_reg_if.regs[5 + 2*d], src_align_bytes);
+        if (|(cfg_reg_if.regs[6 + 2*d] & dst_align_mask))
+          $fatal(1, "%s: ENABLE_MISALIGN=0 but dst_stride[%0d]=0x%08h is not %0d-byte aligned",
+                 INSTANCE_ID, d, cfg_reg_if.regs[6 + 2*d], dst_align_bytes);
       end
     end
   end
