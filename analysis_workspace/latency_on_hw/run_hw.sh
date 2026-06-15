@@ -20,7 +20,7 @@ Examples:
 
 Environment overrides:
   STAGES="prefill generation"
-  FPGA_BINS="naive_gemm_tcol32 naive_simd improve_tcol32"
+  FPGA_BINS="naive_gemm_tcol32 naive_simd improve_tcol32"  # restrict generated bins
 EOF
 }
 
@@ -122,7 +122,47 @@ if [[ ! -d "${INPUT_DIR}" ]]; then
 fi
 
 STAGES="${STAGES:-prefill generation}"
-FPGA_BINS="${FPGA_BINS:-naive_gemm_tcol32 naive_simd improve_tcol32}"
+
+if [[ -z "${FPGA_BINS:-}" ]]; then
+  fpga_bins=()
+  for stage in ${STAGES}; do
+    case "${stage}" in
+      prefill|generation)
+        ;;
+      *)
+        echo "ERROR: unsupported stage: ${stage}" >&2
+        exit 1
+        ;;
+    esac
+
+    shopt -s nullglob
+    suites=("${INPUT_DIR}/${stage}_merged/${stage}_merged_"*.yaml)
+    shopt -u nullglob
+
+    if [[ ${#suites[@]} -eq 0 ]]; then
+      echo "ERROR: no merged suites found for ${stage}: ${INPUT_DIR}/${stage}_merged/${stage}_merged_*.yaml" >&2
+      exit 1
+    fi
+
+    for suite in "${suites[@]}"; do
+      fpga_bin="$(basename "${suite}")"
+      fpga_bin="${fpga_bin#${stage}_merged_}"
+      fpga_bin="${fpga_bin%.yaml}"
+
+      seen=0
+      for existing in "${fpga_bins[@]}"; do
+        if [[ "${existing}" == "${fpga_bin}" ]]; then
+          seen=1
+          break
+        fi
+      done
+      if [[ ${seen} -eq 0 ]]; then
+        fpga_bins+=("${fpga_bin}")
+      fi
+    done
+  done
+  FPGA_BINS="${fpga_bins[*]}"
+fi
 
 echo "Running on HW"
 echo "INPUT_DIR=${INPUT_DIR}"
