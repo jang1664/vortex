@@ -19,7 +19,7 @@ fpga_bins:
   by_app:
     rms_norm_layout_fused: naive_simd
     rope_layout_fused: naive_simd
-    softmax_layout_fused: naive_simd
+    softmax_layout_fused: improve_no_tcu_lut_fexp
     silu_layout_fused: naive_simd
     eladd_layout_fused: naive_simd
     elmul_layout_fused: naive_simd

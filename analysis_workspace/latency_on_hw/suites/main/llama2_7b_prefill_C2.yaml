@@ -20,7 +20,7 @@ fpga_bins:
   by_app:
     rmsnorm: naive_simd
     rope: naive_simd
-    softmax: naive_simd
+    softmax: improve_no_tcu_lut_fexp
     silu: naive_simd
     eladd: naive_simd
     elmul: naive_simd
