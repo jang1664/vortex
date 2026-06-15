@@ -41,8 +41,8 @@ using data_t = fp16_t;
 
 ///////////////////////////////////////////////////////////////////////////////
 // VX_dma_node MMIO descriptor helpers
-// (ported from tests/regression/softmax/kernel.opt.cpp; dma_copy_2d added for
-//  the strided tiled-row transfer)
+// (ported from tests/regression/softmax/kernel.opt.cpp; dma_copy_3d kept for
+//  aligned row-batch transfers)
 ///////////////////////////////////////////////////////////////////////////////
 
 static inline uint32_t mmio_read32(uint64_t addr) {
@@ -121,30 +121,37 @@ static inline void dma_wait_done(uint32_t eid, uint32_t generation) {
   }
 }
 
-// One-dimensional strided copy: `count` segments of `seg_bytes`, advancing the
-// source by `src_stride` and the destination by `dst_stride` between segments.
-// direction: 0 = global->local (G2L), 1 = local->global (L2G).
+static inline void dma_memory_fence() {
+  __asm__ volatile ("fence iorw, iorw" ::: "memory");
+}
+
+// Aligned strided copy. The optimized softmax path uses it as a 2D row-batch
+// transfer (bound1/bound2 == 1) for each K-tile group, keeping every segment
+// exactly 64B and every source/destination stride beat-aligned.
 // Descriptor word layout (VX_dma_unit_misal):
 //   1-2 dst_base, 3-4 src_base, 5/6 src/dst_stride0, 7..10 stride1/2 (=0),
 //   11-13 bound0..2, 14 seg_size, 16 dir[0], 0 control[0]=start.
-static inline void dma_copy_2d(uint64_t dst_addr, uint64_t src_addr,
-                               uint32_t seg_bytes, uint32_t count,
-                               uint32_t src_stride, uint32_t dst_stride,
+static inline void dma_copy_3d(uint64_t dst_addr, uint64_t src_addr,
+                               uint32_t seg_bytes,
+                               uint32_t bound0, uint32_t bound1, uint32_t bound2,
+                               uint32_t src_stride0, uint32_t dst_stride0,
+                               uint32_t src_stride1, uint32_t dst_stride1,
+                               uint32_t src_stride2, uint32_t dst_stride2,
                                uint32_t direction) {
   uint32_t eid, generation;
   dma_alloc(eid, generation);
 
   dma_write_reg64(eid, 1u, dst_addr);   // dst_base
   dma_write_reg64(eid, 3u, src_addr);   // src_base
-  dma_write_reg32(eid, 5u, src_stride); // src_stride0
-  dma_write_reg32(eid, 6u, dst_stride); // dst_stride0
-  dma_write_reg32(eid, 7u, 0u);         // src_stride1
-  dma_write_reg32(eid, 8u, 0u);         // dst_stride1
-  dma_write_reg32(eid, 9u, 0u);         // src_stride2
-  dma_write_reg32(eid, 10u, 0u);        // dst_stride2
-  dma_write_reg32(eid, 11u, count);     // bound0
-  dma_write_reg32(eid, 12u, 1u);        // bound1
-  dma_write_reg32(eid, 13u, 1u);        // bound2
+  dma_write_reg32(eid, 5u, src_stride0);
+  dma_write_reg32(eid, 6u, dst_stride0);
+  dma_write_reg32(eid, 7u, src_stride1);
+  dma_write_reg32(eid, 8u, dst_stride1);
+  dma_write_reg32(eid, 9u, src_stride2);
+  dma_write_reg32(eid, 10u, dst_stride2);
+  dma_write_reg32(eid, 11u, bound0);
+  dma_write_reg32(eid, 12u, bound1);
+  dma_write_reg32(eid, 13u, bound2);
   dma_write_reg32(eid, 14u, seg_bytes); // seg_size
   dma_write_reg32(eid, 15u, 0u);        // padding
   dma_write_reg32(eid, 16u, direction); // dir
@@ -158,12 +165,11 @@ static inline void dma_copy_2d(uint64_t dst_addr, uint64_t src_addr,
 // Kernel
 ///////////////////////////////////////////////////////////////////////////////
 
-// Max padded fp16 columns staged per row. The cached path holds one fp16
-// in/out buffer (aliased) plus one float score cache, so the per-group local
-// footprint is ~6 bytes/elem; this bound keeps groups_per_core x footprint
-// inside the LMEM region (LMEM_LOG_SIZE=19 -> 512 KiB). Rows whose padded
-// width exceeds this fall back to the per-element global recompute path.
-static constexpr uint32_t SOFTMAX_LMEM_CACHE_MAX = 4096;
+// Max dense fp16 columns cached across all row slots in one full-core block.
+// The target hw config uses NUM_THREADS=32, NUM_WARPS=4, LMEM_LOG_SIZE=20:
+// seqk=128 consumes 128*128 score elems and stays on the DMA path, while very
+// wide rows fall back before a full-block local-memory request can overflow.
+static constexpr uint32_t SOFTMAX_LMEM_TILE_ELEMS_MAX = 32768;
 
 // CPU-side DMA LMEM-side slot geometry. NUM_THREADS and the mxu tile size are
 // build-time constants, so these fold at compile time: the LMEM bus beat is
@@ -182,14 +188,23 @@ static constexpr uint32_t kSoftmaxSlotElems = kSoftmaxSlotBytes / (uint32_t)size
 
 // Column k -> io_lmem element index. /,% by power-of-two constants compile to
 // shift/mask, and the whole expression folds to `k` when slot == tile (8 lanes).
-static inline uint32_t softmax_io_idx(uint32_t k) {
-  return (k / kSoftmaxMxu) * kSoftmaxSlotElems + (k % kSoftmaxMxu);
+static inline uint32_t div_up_u32(uint32_t value, uint32_t divisor) {
+  return (value + divisor - 1u) / divisor;
+}
+
+static inline uint32_t softmax_io_idx(uint32_t row_slot,
+                                      uint32_t k,
+                                      uint32_t rows_per_block) {
+  return (k / kSoftmaxMxu) * rows_per_block * kSoftmaxSlotElems
+       + row_slot * kSoftmaxSlotElems
+       + (k % kSoftmaxMxu);
 }
 
 void kernel_softmax_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
   auto input = reinterpret_cast<data_t *>(arg->input_addr);
   auto output = reinterpret_cast<data_t *>(arg->output_addr);
 
+  const uint32_t batch_size = arg->batch_size;
   const uint32_t num_heads = arg->num_heads;
   const uint32_t seq_len_q = arg->seq_len_q;
   const uint32_t seq_len_k = arg->seq_len_k;
@@ -198,186 +213,179 @@ void kernel_softmax_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
   const uint32_t use_mask = arg->use_mask;
   const float scale = arg->scale;
 
-  const uint32_t rows_total = arg->batch_size * num_heads * seq_len_q;
-  const uint32_t row_idx = blockIdx.x;
-  if (row_idx >= rows_total) return;
-
-  const uint32_t b = row_idx / (num_heads * seq_len_q);
-  const uint32_t rem = row_idx - b * num_heads * seq_len_q;
-  const uint32_t h = rem / seq_len_q;
-  const uint32_t q = rem - h * seq_len_q;
-  const uint32_t matrix_idx = b * num_heads + h;
-  const uint64_t matrix_elems = (uint64_t)M_pad * seq_len_k_pad;
-  const uint64_t base = batched_matrix_base(matrix_idx, matrix_elems);
-
   const uint32_t tid = threadIdx.x;
   const uint32_t block_size = blockDim.x;
+  const uint32_t rows_per_block = block_size;
 
-  // Causal mask: only columns k <= q contribute. Clamp the work range so masked
-  // tiles are never touched and the per-iteration `k > q` branch is dropped.
-  const uint32_t k_end = use_mask ? min_u32(q + 1u, seq_len_k) : seq_len_k;
-
-  // Tile geometry for this row (uniform across the block: q is per-block).
   const uint32_t mt     = 1u << arg->log2_mt;       // M tile rows (128)
   const uint32_t mxu_nt = 1u << arg->log2_mxu_nt;   // GEMM-C inner N tile (32)
   const uint32_t mxu_kt = 1u << arg->log2_mxu_kt;   // GEMM-A inner K tile (32)
-  const uint32_t mt_idx = q >> arg->log2_mt;
-  const uint32_t m0     = q & (mt - 1u);
-  const uint32_t cm     = min_u32(M_pad - (mt_idx << arg->log2_mt), mt);
-
-  // Output must cover the full padded row (masked/padding columns -> 0); the
-  // input DMA only needs the causal range.
   const uint32_t out_groups = (seq_len_k + mxu_kt - 1u) >> arg->log2_mxu_kt;
   const uint32_t row_elems   = out_groups << arg->log2_mxu_kt;   // == seq_len_k_pad
-  const uint32_t in_groups   = (k_end + mxu_nt - 1u) >> arg->log2_mxu_nt;
 
-  const bool cached = (row_elems <= SOFTMAX_LMEM_CACHE_MAX);
-
-  // Local-memory request. io holds one beat-aligned slot per tile (see the
-  // kSoftmax* slot geometry above). __local_mem(size) hands block g the region
-  // LOCAL_MEM_BASE + g*size, so the whole request is padded up to the LMEM beat
-  // too, keeping io_lmem (offset 0) beat-aligned for every co-resident block.
-  const uint32_t io_bytes     = out_groups * kSoftmaxSlotBytes;  // one slot per tile
-  const uint32_t score_bytes  = row_elems * (uint32_t)sizeof(float);
-  const uint32_t reduce_bytes = block_size * (uint32_t)sizeof(float);
-  const uint32_t lmem_bytes =
-      cached ? (((io_bytes + score_bytes + reduce_bytes) + kSoftmaxLmemBeat - 1u)
-                & ~(kSoftmaxLmemBeat - 1u))
-             : reduce_bytes;
-  auto smem = reinterpret_cast<uint8_t *>(__local_mem(lmem_bytes));
-
-  if (!cached) {
-    // ---- Fallback: per-element global recompute (causal-clamped, no caching).
-    auto reduce = reinterpret_cast<float *>(smem);
-
-    float local_max = VX_NEG_INF;
-    for (uint32_t k = tid; k < k_end; k += block_size) {
-      const uint64_t in_off = base + gemm_c_tiled_elem_offset(
-          q, k, M_pad, seq_len_k_pad, arg->log2_mt, arg->log2_mxu_nt);
-      float v = fp16_to_float(input[in_off]) * scale;
-      if (v > local_max) local_max = v;
-    }
-    reduce[tid] = local_max;
-    __syncthreads();
-    for (uint32_t s = block_size >> 1; s > 0; s >>= 1) {
-      if (tid < s && reduce[tid + s] > reduce[tid]) reduce[tid] = reduce[tid + s];
-      __syncthreads();
-    }
-    const float global_max = reduce[0];
-    __syncthreads();
-
-    float local_sum = 0.0f;
-    for (uint32_t k = tid; k < k_end; k += block_size) {
-      const uint64_t in_off = base + gemm_c_tiled_elem_offset(
-          q, k, M_pad, seq_len_k_pad, arg->log2_mt, arg->log2_mxu_nt);
-      float v = fp16_to_float(input[in_off]) * scale;
-      local_sum += vx_expf(v - global_max);
-    }
-    reduce[tid] = local_sum;
-    __syncthreads();
-    for (uint32_t s = block_size >> 1; s > 0; s >>= 1) {
-      if (tid < s) reduce[tid] += reduce[tid + s];
-      __syncthreads();
-    }
-    const float inv_sum = 1.0f / reduce[0];
-    __syncthreads();
-
-    for (uint32_t k = tid; k < k_end; k += block_size) {
-      const uint64_t in_off = base + gemm_c_tiled_elem_offset(
-          q, k, M_pad, seq_len_k_pad, arg->log2_mt, arg->log2_mxu_nt);
-      const uint64_t out_off = base + gemm_a_tiled_elem_offset(
-          q, k, M_pad, seq_len_k_pad, arg->log2_mt, arg->log2_mxu_kt);
-      float v = fp16_to_float(input[in_off]) * scale;
-      output[out_off] = float_to_fp16(vx_expf(v - global_max) * inv_sum);
-    }
-    // Masked columns (k > q) are probability 0; the reference fills them.
-    for (uint32_t k = k_end + tid; k < seq_len_k; k += block_size) {
-      const uint64_t out_off = base + gemm_a_tiled_elem_offset(
-          q, k, M_pad, seq_len_k_pad, arg->log2_mt, arg->log2_mxu_kt);
-      output[out_off] = float_to_fp16(0.0f);
-    }
+  const uint32_t matrices_total = batch_size * num_heads;
+  if (matrices_total == 0 || seq_len_q == 0 || seq_len_k == 0) {
     return;
   }
 
-  // ---- DMA-staged cached path ----------------------------------------------
-  // Local-memory layout: [ io(out_groups beat-aligned slots) | scores(float) | reduce ].
-  // `io` holds the staged input as one beat-aligned slot per tile; it is consumed
-  // by pass 1 and then reused as the output buffer for the writeback. Column k
-  // lives at slot (k>>log2_mxu), element (k & (mxu-1)): io_lmem index
-  //   (k>>log2_mxu)*lmem_slot_elems + (k & (mxu-1)).
-  data_t *io_lmem  = reinterpret_cast<data_t *>(smem);
-  float  *scores   = reinterpret_cast<float *>(smem + io_bytes);
-  float  *reduce   = reinterpret_cast<float *>(smem + io_bytes + score_bytes);
-
-  // Element offset of (q, k=0). GEMM-C and GEMM-A share base_q here since
-  // mxu_kt == mxu_nt and k_dim == n_dim == seq_len_k_pad.
-  const uint64_t base_q_in  = base + (uint64_t)mt_idx * mt * seq_len_k_pad
-                                   + (uint64_t)m0 * mxu_nt;
-  const uint64_t base_q_out = base + (uint64_t)mt_idx * mt * seq_len_k_pad
-                                   + (uint64_t)m0 * mxu_kt;
-  // Stage only the causal range of the tiled row into the beat-aligned slots.
-  if (tid == 0) {
-    dma_copy_2d(reinterpret_cast<uint64_t>(io_lmem),
-                reinterpret_cast<uint64_t>(input + base_q_in),
-                kSoftmaxSegBytes,                        // 32 fp16 = 64 B
-                in_groups,                               // causal-clamped segments
-                cm * mxu_nt * (uint32_t)sizeof(data_t),  // src stride (tiled): cm*64 B
-                kSoftmaxSlotBytes,                       // dst stride: LMEM beat-aligned slot
-                0u /* G2L */);
+  const uint32_t full_mt_chunks = seq_len_q >> arg->log2_mt;
+  const uint32_t tail_rows = seq_len_q - (full_mt_chunks << arg->log2_mt);
+  const uint32_t tiles_per_full_mt = div_up_u32(mt, rows_per_block);
+  const uint32_t tail_tiles = tail_rows ? div_up_u32(tail_rows, rows_per_block) : 0;
+  const uint32_t row_tiles_per_matrix = full_mt_chunks * tiles_per_full_mt + tail_tiles;
+  const uint32_t total_row_tiles = matrices_total * row_tiles_per_matrix;
+  if (row_tiles_per_matrix == 0 || total_row_tiles == 0) {
+    return;
   }
-  __syncthreads();
 
-  // Pass 1: scale the staged score, cache it (dense), compute local max.
-  float local_max = VX_NEG_INF;
-  for (uint32_t k = tid; k < k_end; k += block_size) {
-    float v = fp16_to_float(io_lmem[softmax_io_idx(k)]) * scale;
-    scores[k] = v;
-    if (v > local_max) local_max = v;
-  }
-  reduce[tid] = local_max;
-  __syncthreads();
-  for (uint32_t s = block_size >> 1; s > 0; s >>= 1) {
-    if (tid < s && reduce[tid + s] > reduce[tid]) reduce[tid] = reduce[tid + s];
+  const uint32_t io_bytes = out_groups * rows_per_block * kSoftmaxSlotBytes;
+  const uint32_t score_elems = rows_per_block * row_elems;
+  const uint32_t score_bytes = score_elems * (uint32_t)sizeof(float);
+  const uint32_t cached_lmem_bytes =
+      (io_bytes + score_bytes + kSoftmaxLmemBeat - 1u) & ~(kSoftmaxLmemBeat - 1u);
+  const uint32_t lmem_capacity =
+      (LMEM_LOG_SIZE >= 31) ? 0x7fffffffu : (1u << LMEM_LOG_SIZE);
+  const bool cached = (score_elems <= SOFTMAX_LMEM_TILE_ELEMS_MAX)
+                   && (cached_lmem_bytes <= lmem_capacity);
+
+  auto smem = reinterpret_cast<uint8_t *>(
+      __local_mem(cached ? cached_lmem_bytes : kSoftmaxLmemBeat));
+  data_t *io_lmem = reinterpret_cast<data_t *>(smem);
+  float *scores = reinterpret_cast<float *>(smem + io_bytes);
+
+  for (uint32_t tile_id = blockIdx.x;
+       tile_id < total_row_tiles;
+       tile_id += gridDim.x) {
+    const uint32_t matrix_idx = tile_id / row_tiles_per_matrix;
+    const uint32_t tile_in_matrix = tile_id - matrix_idx * row_tiles_per_matrix;
+    const uint32_t full_tile_count = full_mt_chunks * tiles_per_full_mt;
+
+    uint32_t mt_idx;
+    uint32_t tile_in_mt;
+    uint32_t chunk_rows;
+    if (tile_in_matrix < full_tile_count) {
+      mt_idx = tile_in_matrix / tiles_per_full_mt;
+      tile_in_mt = tile_in_matrix - mt_idx * tiles_per_full_mt;
+      chunk_rows = mt;
+    } else {
+      mt_idx = full_mt_chunks;
+      tile_in_mt = tile_in_matrix - full_tile_count;
+      chunk_rows = tail_rows;
+    }
+
+    const uint32_t q0 = (mt_idx << arg->log2_mt) + tile_in_mt * rows_per_block;
+    const uint32_t rows_left_in_chunk = chunk_rows - tile_in_mt * rows_per_block;
+    const uint32_t rows_in_tile = min_u32(rows_per_block, rows_left_in_chunk);
+    const uint32_t m0 = q0 & (mt - 1u);
+    const uint32_t cm = min_u32(M_pad - (mt_idx << arg->log2_mt), mt);
+    const uint64_t matrix_elems = (uint64_t)M_pad * seq_len_k_pad;
+    const uint64_t base = batched_matrix_base(matrix_idx, matrix_elems);
+
+    if (!cached) {
+      for (uint32_t row_slot = tid; row_slot < rows_in_tile; row_slot += block_size) {
+        const uint32_t q = q0 + row_slot;
+        const uint32_t k_end = use_mask ? min_u32(q + 1u, seq_len_k) : seq_len_k;
+
+        float local_max = VX_NEG_INF;
+        for (uint32_t k = 0; k < k_end; ++k) {
+          const uint64_t in_off = base + gemm_c_tiled_elem_offset(
+              q, k, M_pad, seq_len_k_pad, arg->log2_mt, arg->log2_mxu_nt);
+          const float v = fp16_to_float(input[in_off]) * scale;
+          if (v > local_max) local_max = v;
+        }
+
+        float local_sum = 0.0f;
+        for (uint32_t k = 0; k < k_end; ++k) {
+          const uint64_t in_off = base + gemm_c_tiled_elem_offset(
+              q, k, M_pad, seq_len_k_pad, arg->log2_mt, arg->log2_mxu_nt);
+          const float v = fp16_to_float(input[in_off]) * scale;
+          local_sum += vx_expf(v - local_max);
+        }
+
+        const float inv_sum = 1.0f / local_sum;
+        for (uint32_t k = 0; k < k_end; ++k) {
+          const uint64_t in_off = base + gemm_c_tiled_elem_offset(
+              q, k, M_pad, seq_len_k_pad, arg->log2_mt, arg->log2_mxu_nt);
+          const uint64_t out_off = base + gemm_a_tiled_elem_offset(
+              q, k, M_pad, seq_len_k_pad, arg->log2_mt, arg->log2_mxu_kt);
+          const float v = fp16_to_float(input[in_off]) * scale;
+          output[out_off] = float_to_fp16(vx_expf(v - local_max) * inv_sum);
+        }
+        for (uint32_t k = k_end; k < row_elems; ++k) {
+          const uint64_t out_off = base + gemm_a_tiled_elem_offset(
+              q, k, M_pad, seq_len_k_pad, arg->log2_mt, arg->log2_mxu_kt);
+          output[out_off] = float_to_fp16(0.0f);
+        }
+      }
+      continue;
+    }
+
+    const uint32_t max_k_end = use_mask ? min_u32(q0 + rows_in_tile, seq_len_k) : seq_len_k;
+    const uint32_t in_groups = div_up_u32(max_k_end, mxu_nt);
+    const uint64_t base_q_in  = base + (uint64_t)mt_idx * mt * seq_len_k_pad
+                                     + (uint64_t)m0 * mxu_nt;
+    const uint64_t base_q_out = base + (uint64_t)mt_idx * mt * seq_len_k_pad
+                                     + (uint64_t)m0 * mxu_kt;
+    const uint32_t global_tile_stride = cm * kSoftmaxSegBytes;
+    const uint32_t local_group_stride = rows_per_block * kSoftmaxSlotBytes;
+
+    if (tid == 0) {
+      for (uint32_t g = 0; g < in_groups; ++g) {
+        dma_copy_3d(reinterpret_cast<uint64_t>(io_lmem) + (uint64_t)g * local_group_stride,
+                    reinterpret_cast<uint64_t>(input + base_q_in) + (uint64_t)g * global_tile_stride,
+                    kSoftmaxSegBytes,
+                    rows_in_tile, 1u, 1u,
+                    kSoftmaxSegBytes, kSoftmaxSlotBytes,
+                    0u, 0u,
+                    0u, 0u,
+                    0u /* G2L */);
+      }
+    }
+    __syncthreads();
+
+    for (uint32_t row_slot = tid; row_slot < rows_in_tile; row_slot += block_size) {
+      const uint32_t q = q0 + row_slot;
+      const uint32_t k_end = use_mask ? min_u32(q + 1u, seq_len_k) : seq_len_k;
+      float *row_scores = scores + row_slot * row_elems;
+
+      float local_max = VX_NEG_INF;
+      for (uint32_t k = 0; k < k_end; ++k) {
+        const float v = fp16_to_float(
+            io_lmem[softmax_io_idx(row_slot, k, rows_per_block)]) * scale;
+        row_scores[k] = v;
+        if (v > local_max) local_max = v;
+      }
+
+      float local_sum = 0.0f;
+      for (uint32_t k = 0; k < k_end; ++k) {
+        const float e = vx_expf(row_scores[k] - local_max);
+        row_scores[k] = e;
+        local_sum += e;
+      }
+
+      const float inv_sum = 1.0f / local_sum;
+      for (uint32_t k = 0; k < row_elems; ++k) {
+        const float p = (k < k_end) ? (row_scores[k] * inv_sum) : 0.0f;
+        io_lmem[softmax_io_idx(row_slot, k, rows_per_block)] = float_to_fp16(p);
+      }
+    }
+    dma_memory_fence();
+    __syncthreads();
+
+    if (tid == 0) {
+      for (uint32_t g = 0; g < out_groups; ++g) {
+        dma_copy_3d(reinterpret_cast<uint64_t>(output + base_q_out) + (uint64_t)g * global_tile_stride,
+                    reinterpret_cast<uint64_t>(io_lmem) + (uint64_t)g * local_group_stride,
+                    kSoftmaxSegBytes,
+                    rows_in_tile, 1u, 1u,
+                    kSoftmaxSlotBytes, kSoftmaxSegBytes,
+                    0u, 0u,
+                    0u, 0u,
+                    1u /* L2G */);
+      }
+    }
     __syncthreads();
   }
-  const float global_max = reduce[0];
-  __syncthreads();
-
-  // Pass 2: exp() once, store it back, accumulate the sum.
-  float local_sum = 0.0f;
-  for (uint32_t k = tid; k < k_end; k += block_size) {
-    const float e = vx_expf(scores[k] - global_max);
-    scores[k] = e;
-    local_sum += e;
-  }
-  reduce[tid] = local_sum;
-  __syncthreads();
-  for (uint32_t s = block_size >> 1; s > 0; s >>= 1) {
-    if (tid < s) reduce[tid] += reduce[tid + s];
-    __syncthreads();
-  }
-  const float inv_sum = 1.0f / reduce[0];
-  __syncthreads();
-
-  // Pass 3: normalize cached exp into the slot-laid output buffer; masked/padding
-  // columns [k_end, row_elems) emit 0. (io_lmem is reused as the output here.)
-  for (uint32_t k = tid; k < row_elems; k += block_size) {
-    float p = (k < k_end) ? (scores[k] * inv_sum) : 0.0f;
-    io_lmem[softmax_io_idx(k)] = float_to_fp16(p);
-  }
-  __syncthreads();
-
-  // Write the full padded row back into the GEMM-A tiled layout (L2G).
-  if (tid == 0) {
-    dma_copy_2d(reinterpret_cast<uint64_t>(output + base_q_out),
-                reinterpret_cast<uint64_t>(io_lmem),
-                kSoftmaxSegBytes,                         // 64 B
-                out_groups,                               // full padded row
-                kSoftmaxSlotBytes,                        // src stride: LMEM beat-aligned slot
-                cm * mxu_kt * (uint32_t)sizeof(data_t),   // dst stride (tiled): cm*64 B
-                1u /* L2G */);
-  }
-  __syncthreads();
 }
 
 void kernel_dispatcher(kernel_arg_t *__UNIFORM__ arg) {

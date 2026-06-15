@@ -36,6 +36,7 @@ TEST_DIRS := \
 	sgemv \
 	silu \
 	softmax \
+	softmax_layout_fused \
 	sort \
 	stencil3d \
 	vecadd
