@@ -11,18 +11,6 @@
 
 using data_t = fp16_t;
 
-#define SOFTMAX_LAYOUT_FUSED_VARIANT_REV1 1
-#define SOFTMAX_LAYOUT_FUSED_VARIANT_OPT 2
-
-#ifndef SOFTMAX_LAYOUT_FUSED_VARIANT
-#define SOFTMAX_LAYOUT_FUSED_VARIANT SOFTMAX_LAYOUT_FUSED_VARIANT_REV1
-#endif
-
-#if SOFTMAX_LAYOUT_FUSED_VARIANT != SOFTMAX_LAYOUT_FUSED_VARIANT_REV1 && \
-    SOFTMAX_LAYOUT_FUSED_VARIANT != SOFTMAX_LAYOUT_FUSED_VARIANT_OPT
-#error "SOFTMAX_LAYOUT_FUSED_VARIANT must be SOFTMAX_LAYOUT_FUSED_VARIANT_REV1 or SOFTMAX_LAYOUT_FUSED_VARIANT_OPT"
-#endif
-
 vx_device_h device = nullptr;
 vx_buffer_h krnl_buffer = nullptr;
 vx_buffer_h args_buffer = nullptr;
@@ -60,20 +48,6 @@ static uint32_t log2_u32(uint32_t v) {
 static uint32_t align_up(uint32_t a, uint32_t b) {
   return ((a + b - 1) / b) * b;
 }
-
-#if SOFTMAX_LAYOUT_FUSED_VARIANT == SOFTMAX_LAYOUT_FUSED_VARIANT_OPT
-static uint32_t div_up(uint32_t a, uint32_t b) {
-  return (a + b - 1u) / b;
-}
-
-static uint32_t row_tiles_per_matrix(uint32_t seq_q, uint32_t rows_per_tile) {
-  const uint32_t full_mt_chunks = seq_q / TILE_DMA_MT;
-  const uint32_t tail_rows = seq_q - full_mt_chunks * TILE_DMA_MT;
-  const uint32_t tiles_per_full_mt = div_up(TILE_DMA_MT, rows_per_tile);
-  const uint32_t tail_tiles = tail_rows ? div_up(tail_rows, rows_per_tile) : 0;
-  return full_mt_chunks * tiles_per_full_mt + tail_tiles;
-}
-#endif
 
 static void init_scores(std::vector<data_t>& values) {
   for (size_t i = 0; i < values.size(); ++i) {
@@ -188,7 +162,6 @@ int main(int argc, char *argv[]) {
   const uint32_t seq_k_pad = align_up(seq_k, std::max(TILE_DMA_MXU_KT, TILE_DMA_MXU_NT));
   printf("softmax_layout_fused batch=%u heads=%u seqq=%u seqk=%u seqk_pad=%u M_pad=%u mask=%u scale=%f\n",
          batch, heads, seq_q, seq_k, seq_k_pad, M_pad, use_mask, scale);
-  fflush(stdout);
 
   const size_t row_elems = (size_t)batch * heads * seq_q * seq_k;
   const size_t tiled_elems = (size_t)batch * heads * M_pad * seq_k_pad;
@@ -209,37 +182,27 @@ int main(int argc, char *argv[]) {
 
   uint64_t num_warps = 0;
   uint64_t num_threads = 0;
-  uint64_t num_cores = 0;
-  RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_CORES, &num_cores));
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_WARPS, &num_warps));
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_THREADS, &num_threads));
-#if SOFTMAX_LAYOUT_FUSED_VARIANT == SOFTMAX_LAYOUT_FUSED_VARIANT_REV1
-  const uint32_t tpb = (uint32_t)(num_threads);
+  // One warp (= num_threads lanes) per block, so each row occupies a single
+  // warp and up to num_warps rows are co-resident on a core. While one row's
+  // lane 0 busy-waits on its DMA descriptor, the other resident rows keep
+  // computing, hiding the DMA issue/poll latency that otherwise stalls the
+  // whole core when a block spans all warps.
+#if SOFTMAX_LAYOUT_FUSED_VARIANTS == SOFTMAX_LAYOUT_FUSED_VARIANT_REV1
+  const uint32_t tpb = std::min(256u, (uint32_t)(num_warps * num_threads));
 #else
-  const uint32_t tpb = (uint32_t)(num_warps * num_threads);
+  const uint32_t tpb = std::min(256u, (uint32_t)num_threads);
 #endif
 
   kernel_arg_t arg = {};
   arg.kernel_id = KERNEL_SOFTMAX_LAYOUT_FUSED;
-#if SOFTMAX_LAYOUT_FUSED_VARIANT == SOFTMAX_LAYOUT_FUSED_VARIANT_OPT
-  const uint32_t tiles_per_matrix = row_tiles_per_matrix(seq_q, tpb);
-  const uint32_t total_row_tiles = batch * heads * tiles_per_matrix;
-  arg.grid_dim[0] = std::max(1u, std::min((uint32_t)num_cores, total_row_tiles));
-#else
   arg.grid_dim[0] = batch * heads * seq_q;
-#endif
   arg.grid_dim[1] = 1;
   arg.grid_dim[2] = 1;
   arg.block_dim[0] = tpb;
   arg.block_dim[1] = 1;
   arg.block_dim[2] = 1;
-  printf("launch caps cores=%llu warps=%llu threads=%llu grid=(%u,%u,%u) block=(%u,%u,%u)\n",
-         (unsigned long long)num_cores,
-         (unsigned long long)num_warps,
-         (unsigned long long)num_threads,
-         arg.grid_dim[0], arg.grid_dim[1], arg.grid_dim[2],
-         arg.block_dim[0], arg.block_dim[1], arg.block_dim[2]);
-  fflush(stdout);
   RT_CHECK(vx_mem_address(input_buffer, &arg.input_addr));
   RT_CHECK(vx_mem_address(output_buffer, &arg.output_addr));
   arg.batch_size = batch;

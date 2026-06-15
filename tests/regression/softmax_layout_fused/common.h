@@ -4,6 +4,8 @@
 #include <stdint.h>
 
 #define KERNEL_SOFTMAX_LAYOUT_FUSED 0
+#define SOFTMAX_LAYOUT_FUSED_VARIANT_REV1 0
+#define SOFTMAX_LAYOUT_FUSED_VARIANT_OPT 1
 
 #define TILE_DMA_MT       128
 #define TILE_DMA_KT       128
