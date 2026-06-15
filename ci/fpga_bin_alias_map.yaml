@@ -27,6 +27,10 @@ aliases:
     path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_noDcache_L2cache_26c4abad9f/bin
     configs: configs/improve_no_tcu_taylor4_fexp.sh
 
+  improve_no_tcu_lut_fexp:
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_noDcache_L2cache_bf8685770a/bin
+    configs: configs/improve_no_tcu_lut_fexp.sh
+
   improve_tcol1:
     path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_noDcache_L2cache_c8c5d0d4f3/bin
     configs: configs/improve_tcol1.sh
