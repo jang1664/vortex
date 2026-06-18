@@ -60,6 +60,8 @@ class ExecutionUnit:
     warmup: int
     iterations: int
     raw_csv: Path
+    power_csv: Path
+    power_summary: Path
     log_file: Path
 
 
@@ -70,6 +72,7 @@ class RunOptions:
     out_dir: Path
     platform: str
     xrt_device_index: int
+    xrt_device_bdf: str = ""
     fpga_bin_label: str = ""
     configs: Path | None = None
     configs_extra: str = ""
@@ -82,6 +85,9 @@ class RunOptions:
     run_id: str | None = None
     skip_existing: bool = False
     prebuild: bool = True
+    program_fpga: bool = True
+    measure_latency: bool = True
+    measure_power: bool = True
     case_filters: tuple[str, ...] = ()
     retry: bool = False
     retry_max_rounds: int = DEFAULT_RETRY_MAX_ROUNDS
@@ -131,6 +137,8 @@ def build_execution_units(suite: BenchSuite, out_dir: Path) -> list[ExecutionUni
             warmup=case.warmup,
             iterations=case.iterations,
             raw_csv=out_dir / "raw" / f"{case.exec_key}.csv",
+            power_csv=out_dir / "power" / f"{case.exec_key}.csv",
+            power_summary=out_dir / "power" / f"{case.exec_key}.summary.csv",
             log_file=out_dir / "logs" / f"{case.exec_key}.log",
         )
     return list(units.values())
@@ -147,6 +155,19 @@ def _parse_int(value: object) -> int | None:
         return None
 
 
+def _bool_csv(value: bool) -> str:
+    return "1" if value else "0"
+
+
+def _parse_bool_cell(value: object, *, default: bool) -> bool:
+    text = _clean_raw_value(value).strip().lower()
+    if text in ("1", "true", "yes", "on"):
+        return True
+    if text in ("0", "false", "no", "off"):
+        return False
+    return default
+
+
 def _current_xclbin_sha(fpga_bin_dir: Path) -> str:
     xclbin = fpga_bin_dir / "vortex_afu.xclbin"
     return sha256_file(xclbin) if xclbin.exists() else ""
@@ -158,6 +179,8 @@ def find_existing_pass_exec_keys(
     *,
     fpga_bin_label: str,
     xclbin_sha256: str,
+    measure_latency: bool,
+    measure_power: bool,
 ) -> tuple[str, ...]:
     if not raw_db.exists() or not xclbin_sha256:
         return ()
@@ -171,6 +194,10 @@ def find_existing_pass_exec_keys(
             if row.get("fpga_bin_label") != fpga_bin_label:
                 continue
             if row.get("xclbin_sha256") != xclbin_sha256:
+                continue
+            if _parse_bool_cell(row.get("measure_latency", ""), default=True) != measure_latency:
+                continue
+            if _parse_bool_cell(row.get("measure_power", ""), default=False) != measure_power:
                 continue
             unit = units_by_key.get(row.get("exec_key", ""))
             if unit is None:
@@ -274,7 +301,9 @@ def write_run_script(suite: BenchSuite, options: RunOptions, units: list[Executi
     progress_csv = options.out_dir / "progress.csv"
     attempt_status_csv = options.out_dir / "attempt_status.csv"
     append_raw_csv = options.append_raw_csv.resolve() if options.append_raw_csv else None
+    program_log = options.out_dir / "logs" / "program_fpga.log"
     retry_enabled = 1 if options.retry else 0
+    program_fpga = 1 if options.program_fpga and units else 0
     retry_initial_timeout_s = _parse_timeout_seconds(options.blackbox_timeout) if options.retry else 0
     retry_max_rounds = options.retry_max_rounds if options.retry else 1
     retry_reset_cmd = tuple(shlex.split(options.retry_reset_cmd))
@@ -285,6 +314,10 @@ def write_run_script(suite: BenchSuite, options: RunOptions, units: list[Executi
         "failure_phase",
         "failure_reason",
         "raw_csv",
+        "power_csv",
+        "power_summary",
+        "measure_latency",
+        "measure_power",
         "log_file",
         "elapsed_wall_s",
     )
@@ -306,7 +339,7 @@ def write_run_script(suite: BenchSuite, options: RunOptions, units: list[Executi
         "#!/usr/bin/env bash",
         "set -uo pipefail",
         f"cd {_q(options.build_dir)}",
-        f"mkdir -p {_q(options.out_dir / 'raw')} {_q(options.out_dir / 'logs')}",
+        f"mkdir -p {_q(options.out_dir / 'raw')} {_q(options.out_dir / 'power')} {_q(options.out_dir / 'logs')}",
         f"printf '%s\\n' {_q(','.join(status_columns))} > {_q(status_csv)}",
         f"printf '%s\\n' {_q(','.join(attempt_status_columns))} > {_q(attempt_status_csv)}",
         f"printf '%s\\n' {_q(','.join(PROGRESS_COLUMNS))} > {_q(progress_csv)}",
@@ -315,8 +348,12 @@ def write_run_script(suite: BenchSuite, options: RunOptions, units: list[Executi
         f"export PLATFORM={_q(options.platform)}",
         f"export DRIVER={_q('xrt')}",
         f"export XRT_DEVICE_INDEX={_q(str(options.xrt_device_index))}",
+        f"export XRT_DEVICE_BDF={_q(options.xrt_device_bdf)}" if options.xrt_device_bdf else "export XRT_DEVICE_BDF=\"${XRT_DEVICE_BDF:-}\"",
         f"export PYTHONPATH={_q(repo_root())}:\"${{PYTHONPATH:-}}\"",
         f"export LATENCY_BENCH_RUN_ID={_q(options.run_id or default_run_id())}",
+        f"source {_q(repo_root() / 'ci' / 'xrt_device_detect.sh')}",
+        f"LATENCY_BENCH_PROGRAM_FPGA={program_fpga}",
+        f"LATENCY_BENCH_PROGRAM_LOG={_q(program_log)}",
         f"LATENCY_BENCH_RETRY_ENABLED={retry_enabled}",
         f"LATENCY_BENCH_RETRY_MAX_ROUNDS={retry_max_rounds}",
         f"LATENCY_BENCH_RETRY_TIMEOUT_GROWTH={_q(str(options.retry_timeout_growth))}",
@@ -325,6 +362,38 @@ def write_run_script(suite: BenchSuite, options: RunOptions, units: list[Executi
         f"LATENCY_BENCH_RESET_SRUN_ARGS={_bash_array(tuple(options.srun_args))}",
         f"LATENCY_BENCH_RESET_CMD={_bash_array(retry_reset_cmd)}",
         "LATENCY_BENCH_LAST_RESET_RC=",
+        "",
+        "latency_bench_program_fpga() {",
+        "  local log_file=\"$LATENCY_BENCH_PROGRAM_LOG\"",
+        "  local smi user_bdf xclbin rc",
+        "  if [[ \"$LATENCY_BENCH_PROGRAM_FPGA\" != \"1\" ]]; then return 0; fi",
+        "  xclbin=\"${FPGA_BIN_DIR}/vortex_afu.xclbin\"",
+        "  mkdir -p \"$(dirname \"$log_file\")\"",
+        "  if [[ ! -f \"$xclbin\" ]]; then",
+        "    printf '[latency-bench] FPGA xclbin not found: %s\\n' \"$xclbin\" | tee -a \"$log_file\" >&2",
+        "    return 1",
+        "  fi",
+        "  smi=\"$(resolve_xrt_smi)\"",
+        "  if [[ -z \"$smi\" ]]; then",
+        "    printf '[latency-bench] xrt-smi not found; set XRT_SMI or PATH\\n' | tee -a \"$log_file\" >&2",
+        "    return 1",
+        "  fi",
+        "  if ! user_bdf=\"$(resolve_xrt_user_bdf \"${XRT_DEVICE_INDEX:-auto}\")\"; then",
+        "    printf '[latency-bench] failed to resolve XRT user BDF\\n' | tee -a \"$log_file\" >&2",
+        "    return 1",
+        "  fi",
+        "  if [[ -z \"$user_bdf\" ]]; then",
+        "    printf '[latency-bench] resolved empty XRT user BDF\\n' | tee -a \"$log_file\" >&2",
+        "    return 1",
+        "  fi",
+        "  printf '[latency-bench] programming FPGA: device=%s user=%s\\n' \"$user_bdf\" \"$xclbin\" | tee -a \"$log_file\"",
+        "  set +e",
+        "  \"$smi\" program --device \"$user_bdf\" --user \"$xclbin\" >> \"$log_file\" 2>&1",
+        "  rc=$?",
+        "  set -u",
+        "  printf '[latency-bench] program rc=%s\\n' \"$rc\" >> \"$log_file\"",
+        "  return \"$rc\"",
+        "}",
         "",
         "latency_bench_retry_delay_s() {",
         "  case \"$1\" in",
@@ -381,8 +450,16 @@ def write_run_script(suite: BenchSuite, options: RunOptions, units: list[Executi
         "  fi",
         "  reset_rc=$?",
         "  set -u",
-        "  LATENCY_BENCH_LAST_RESET_RC=\"$reset_rc\"",
         "  printf '[latency-bench] timeout reset rc=%s\\n' \"$reset_rc\" >> \"$log_file\"",
+        "  if [[ \"$reset_rc\" == \"0\" ]]; then",
+        "    if latency_bench_program_fpga; then",
+        "      printf '[latency-bench] timeout reset reprogram rc=0\\n' >> \"$log_file\"",
+        "    else",
+        "      reset_rc=$?",
+        "      printf '[latency-bench] timeout reset reprogram rc=%s\\n' \"$reset_rc\" >> \"$log_file\"",
+        "    fi",
+        "  fi",
+        "  LATENCY_BENCH_LAST_RESET_RC=\"$reset_rc\"",
         "  if [[ -n \"$LATENCY_BENCH_RETRY_RESET_WAIT\" && \"$LATENCY_BENCH_RETRY_RESET_WAIT\" != \"0\" ]]; then",
         "    sleep \"$LATENCY_BENCH_RETRY_RESET_WAIT\"",
         "  fi",
@@ -413,6 +490,12 @@ def write_run_script(suite: BenchSuite, options: RunOptions, units: list[Executi
         ])
     if options.configs_extra:
         lines.append(f"export CONFIGS=\"${{CONFIGS:-}} {options.configs_extra}\"")
+    lines.extend([
+        "if ! latency_bench_program_fpga; then",
+        "  echo \"[latency-bench] FPGA programming failed; see $LATENCY_BENCH_PROGRAM_LOG\" >&2",
+        "  exit 1",
+        "fi",
+    ])
 
     blackbox_args = " ".join(_q(arg) for arg in options.blackbox_args)
     blackbox_args = f"{blackbox_args} " if blackbox_args else ""
@@ -461,7 +544,25 @@ def write_run_script(suite: BenchSuite, options: RunOptions, units: list[Executi
     ])
 
     for idx, unit in enumerate(units, start=1):
-        bench_args = f"--warmup={unit.warmup} --iterations={unit.iterations} --csv --output={unit.raw_csv} {unit.args}"
+        bench_arg_parts = [
+            f"--warmup={unit.warmup}",
+            f"--iterations={unit.iterations}",
+            "--csv",
+            f"--output={unit.raw_csv}",
+        ]
+        if not options.measure_latency:
+            bench_arg_parts.append("--no-latency")
+        if options.measure_power:
+            bench_arg_parts.extend([
+                "--power=separate",
+                f"--power-csv={unit.power_csv}",
+                f"--power-summary={unit.power_summary}",
+            ])
+        if unit.args:
+            bench_arg_parts.append(unit.args)
+        bench_args = " ".join(bench_arg_parts)
+        status_power_csv = unit.power_csv if options.measure_power else ""
+        status_power_summary = unit.power_summary if options.measure_power else ""
         run_only_arg = "--run-only " if options.prebuild else ""
         blackbox_cmd = (
             f"./ci/blackbox.sh {blackbox_args}--driver=xrt --bench {run_only_arg}"
@@ -526,8 +627,11 @@ def write_run_script(suite: BenchSuite, options: RunOptions, units: list[Executi
             "  reset_rc=\"$LATENCY_BENCH_LAST_RESET_RC\"",
             "fi",
             (
-                f"printf '%s,%s,%s,%s,%s,%s,%s,%s\\n' "
-                f"{_q(unit.exec_key)} {_q(unit.app)} \"$rc\" \"$failure_phase\" \"$failure_reason\" {_q(unit.raw_csv)} {_q(unit.log_file)} \"$elapsed_wall_s\" "
+                f"printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\\n' "
+                f"{_q(unit.exec_key)} {_q(unit.app)} \"$rc\" \"$failure_phase\" \"$failure_reason\" "
+                f"{_q(unit.raw_csv)} {_q(status_power_csv)} {_q(status_power_summary)} "
+                f"{_q(_bool_csv(options.measure_latency))} {_q(_bool_csv(options.measure_power))} "
+                f"{_q(unit.log_file)} \"$elapsed_wall_s\" "
                 f">> {_q(status_csv)}"
             ),
             (
@@ -628,6 +732,10 @@ RAW_DB_COLUMNS = [
     "failure_phase",
     "failure_reason",
     "raw_csv",
+    "power_csv",
+    "power_summary",
+    "measure_latency",
+    "measure_power",
     "log_file",
     "elapsed_wall_s",
     "samples",
@@ -775,6 +883,7 @@ def run_suite(suite: BenchSuite, options: RunOptions) -> int:
     out_root.mkdir(parents=True, exist_ok=True)
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "raw").mkdir(exist_ok=True)
+    (run_dir / "power").mkdir(exist_ok=True)
     (run_dir / "logs").mkdir(exist_ok=True)
 
     validate_inputs(run_options)
@@ -787,6 +896,8 @@ def run_suite(suite: BenchSuite, options: RunOptions) -> int:
             units,
             fpga_bin_label=run_options.fpga_bin_label,
             xclbin_sha256=_current_xclbin_sha(run_options.fpga_bin_dir),
+            measure_latency=run_options.measure_latency,
+            measure_power=run_options.measure_power,
         )
         skipped = set(skipped_existing_exec_keys)
         units_to_run = [unit for unit in units if unit.exec_key not in skipped]
@@ -808,6 +919,14 @@ def run_suite(suite: BenchSuite, options: RunOptions) -> int:
         "git_dirty": git.dirty,
         "platform": options.platform,
         "xrt_device_index": options.xrt_device_index,
+        "xrt_device_bdf": options.xrt_device_bdf,
+        "program_fpga": options.program_fpga and bool(units_to_run),
+        "measure_latency": options.measure_latency,
+        "measure_power": options.measure_power,
+        "power_mode": "separate" if options.measure_power else "off",
+        "power_dir": str(run_dir / "power"),
+        "program_log": str(run_dir / "logs" / "program_fpga.log"),
+        "xrt_smi": os.environ.get("XRT_SMI", "/opt/xilinx/xrt/bin/xrt-smi"),
         "blackbox_args": list(options.blackbox_args),
         "blackbox_timeout": options.blackbox_timeout,
         "configs": str(options.configs) if options.configs else "",

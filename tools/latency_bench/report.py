@@ -16,7 +16,9 @@ RESULT_COLUMNS = [
     "suite", "case_id", "exec_key", "app", "kind", "op", "backend",
     "variant", "stage", "name", "args", "shape_json", "calls_per_forward",
     "fpga_bin_dir", "xclbin_sha256", "warmup", "iterations", "source",
-    "status", "returncode", "failure_phase", "failure_reason", "raw_csv", "log_file", "elapsed_wall_s",
+    "status", "returncode", "failure_phase", "failure_reason", "raw_csv",
+    "power_csv", "power_summary", "measure_latency", "measure_power",
+    "log_file", "elapsed_wall_s",
     "samples", "min_us", "avg_us", "max_us", "p50_us", "p95_us",
 ]
 
@@ -103,6 +105,10 @@ def build_results(suite: BenchSuite, out_dir: Path, fpga_bin_dir: Path) -> pd.Da
             "failure_phase": failure_phase,
             "failure_reason": failure_reason,
             "raw_csv": str(raw_csv),
+            "power_csv": status.get("power_csv", ""),
+            "power_summary": status.get("power_summary", ""),
+            "measure_latency": status.get("measure_latency", ""),
+            "measure_power": status.get("measure_power", ""),
             "log_file": str(log_file),
             "elapsed_wall_s": status.get("elapsed_wall_s"),
             "samples": bench.get("samples"),

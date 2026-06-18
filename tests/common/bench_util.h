@@ -45,13 +45,12 @@ namespace vx_bench {
 enum class PowerMode {
     Off,
     Separate,
-    Same,
-    Both,
 };
 
 struct Args {
     int         warmup        = 3;
     int         iterations    = 10;
+    bool        latency_enabled = true;
     bool        csv           = false;
     // Optional report file. Empty => write report to stdout.
     std::string output;
@@ -75,33 +74,45 @@ inline const char* power_mode_name(PowerMode mode) {
     switch (mode) {
     case PowerMode::Off:      return "off";
     case PowerMode::Separate: return "separate";
-    case PowerMode::Same:     return "same";
-    case PowerMode::Both:     return "both";
     }
     return "off";
+}
+
+inline bool latency_enabled(const Args& args) {
+    return args.latency_enabled;
 }
 
 inline bool power_enabled(const Args& args) {
     return args.power_mode != PowerMode::Off;
 }
 
-inline bool power_has_separate(const Args& args) {
-    return args.power_mode == PowerMode::Separate || args.power_mode == PowerMode::Both;
-}
-
-inline bool power_has_same(const Args& args) {
-    return args.power_mode == PowerMode::Same || args.power_mode == PowerMode::Both;
-}
-
 inline bool parse_power_mode(const char* value, PowerMode* mode) {
-    if (std::strcmp(value, "off") == 0) {
+    if (std::strcmp(value, "off") == 0 ||
+        std::strcmp(value, "false") == 0 ||
+        std::strcmp(value, "0") == 0) {
         *mode = PowerMode::Off;
-    } else if (std::strcmp(value, "separate") == 0) {
+    } else if (std::strcmp(value, "separate") == 0 ||
+               std::strcmp(value, "on") == 0 ||
+               std::strcmp(value, "true") == 0 ||
+               std::strcmp(value, "1") == 0) {
         *mode = PowerMode::Separate;
-    } else if (std::strcmp(value, "same") == 0) {
-        *mode = PowerMode::Same;
-    } else if (std::strcmp(value, "both") == 0) {
-        *mode = PowerMode::Both;
+    } else {
+        return false;
+    }
+    return true;
+}
+
+inline bool parse_bool_arg(const char* value, bool* out) {
+    if (std::strcmp(value, "1") == 0 ||
+        std::strcmp(value, "true") == 0 ||
+        std::strcmp(value, "on") == 0 ||
+        std::strcmp(value, "yes") == 0) {
+        *out = true;
+    } else if (std::strcmp(value, "0") == 0 ||
+               std::strcmp(value, "false") == 0 ||
+               std::strcmp(value, "off") == 0 ||
+               std::strcmp(value, "no") == 0) {
+        *out = false;
     } else {
         return false;
     }
@@ -124,7 +135,7 @@ inline bool read_next_value(int& r, int argc, char** argv, const char* flag, con
     return true;
 }
 
-// Parses --warmup=N / --iterations=N / --csv / --output=PATH / --output-append
+// Parses --warmup=N / --iterations=N / --latency / --no-latency / --csv / --output=PATH / --output-append
 // plus optional --power* flags in place:
 // matched flags are removed from argv and argc is decremented so the caller's
 // existing argument parser sees only its own flags.
@@ -137,6 +148,21 @@ inline Args parse(int& argc, char** argv) {
             a.warmup = std::atoi(s + 9);
         } else if (std::strncmp(s, "--iterations=", 13) == 0) {
             a.iterations = std::atoi(s + 13);
+        } else if (std::strcmp(s, "--latency") == 0) {
+            a.latency_enabled = true;
+            if (r + 1 < argc && argv[r + 1][0] != '-') {
+                const char* value = argv[++r];
+                if (!parse_bool_arg(value, &a.latency_enabled)) {
+                    set_parse_error(a, std::string("invalid --latency value: ") + value);
+                }
+            }
+        } else if (std::strncmp(s, "--latency=", 10) == 0) {
+            if (!parse_bool_arg(s + 10, &a.latency_enabled)) {
+                set_parse_error(a, std::string("invalid --latency value: ") + (s + 10));
+            }
+        } else if (std::strcmp(s, "--no-latency") == 0 ||
+                   std::strcmp(s, "--skip-latency") == 0) {
+            a.latency_enabled = false;
         } else if (std::strcmp(s, "--csv") == 0) {
             a.csv = true;
         } else if (std::strncmp(s, "--output=", 9) == 0) {
@@ -215,6 +241,10 @@ inline Args parse(int& argc, char** argv) {
     if (a.power_iterations < 0)  a.power_iterations = a.iterations;
     if (a.power_iterations < 1)  a.power_iterations = 1;
     if (a.power_summary.empty()) a.power_summary = a.power_csv + ".summary.csv";
+    if (!a.latency_enabled) {
+        a.warmup = 0;
+        a.iterations = 0;
+    }
     return a;
 }
 
@@ -265,6 +295,10 @@ public:
     void report(const char* label, FILE* out, bool csv) const {
         auto s = summary();
         if (s.n == 0) {
+            if (csv) {
+                std::fprintf(out, "%s,0,nan,nan,nan,nan,nan\n", label);
+                return;
+            }
             std::fprintf(out, "[bench] %s: no samples\n", label);
             return;
         }
@@ -656,13 +690,7 @@ inline bool run_power_measurement(const char* label,
         return true;
     };
 
-    bool power_ok = true;
-    if (power_has_separate(args)) {
-        power_ok = run_power_phase("separate", false);
-    }
-    if (power_ok && power_has_same(args)) {
-        power_ok = run_power_phase("same", true);
-    }
+    bool power_ok = run_power_phase("separate", false);
 
     sampler.stop();
     if (!power_ok) {

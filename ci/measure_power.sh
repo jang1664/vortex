@@ -16,122 +16,8 @@ FPGA_ID="${1:-auto}"
 INTERVAL="${2:-0.01}"
 OUT="${3:-fpga_power.csv}"
 MAX_BYTES="${4:-1048576}"
-XRT_SMI="${XRT_SMI:-/opt/xilinx/xrt/bin/xrt-smi}"
-XRT_DEVICE_PROBE_MAX="${XRT_DEVICE_PROBE_MAX:-8}"
-if [[ ! "$XRT_DEVICE_PROBE_MAX" =~ ^[0-9]+$ || "$XRT_DEVICE_PROBE_MAX" == "0" ]]; then
-  XRT_DEVICE_PROBE_MAX=8
-fi
-
-fpga_id_to_bdf() {
-  case "$1" in
-    0) echo "0000:2a:00.1" ;;
-    1) echo "0000:3d:00.1" ;;
-    *) return 1 ;;
-  esac
-}
-
-bdf_to_fpga_id() {
-  case "$1" in
-    0000:2a:00.1|2a:00.1|*:2a:00.1) echo "0" ;;
-    0000:3d:00.1|3d:00.1|*:3d:00.1) echo "1" ;;
-    *) return 1 ;;
-  esac
-}
-
-resolve_xrt_smi() {
-  if [[ "$XRT_SMI" == */* ]]; then
-    [[ -x "$XRT_SMI" ]] && echo "$XRT_SMI"
-    return
-  fi
-  command -v "$XRT_SMI" || true
-}
-
-detect_accessible_xrt_index() {
-  local smi="$1"
-  local found=()
-  local idx
-
-  [[ -n "$smi" ]] || return 1
-
-  for ((idx = 0; idx < XRT_DEVICE_PROBE_MAX; ++idx)); do
-    if "$smi" --batch --force examine --device "$idx" --report platform >/dev/null 2>&1; then
-      found+=("$idx")
-    fi
-  done
-
-  if ((${#found[@]} == 0)); then
-    return 1
-  fi
-  if ((${#found[@]} > 1)); then
-    echo "WARNING: multiple accessible XRT devices: ${found[*]}; using ${found[0]}" >&2
-  fi
-  echo "${found[0]}"
-}
-
-detect_available_xrt_bdf() {
-  local smi="$1"
-  local output line
-
-  [[ -n "$smi" ]] || return 1
-
-  output="$("$smi" examine --report platform 2>&1 || true)"
-  while IFS= read -r line; do
-    if [[ "$line" =~ \[([0-9A-Fa-f]{4}:[0-9A-Fa-f]{2}:00\.1)\] ]]; then
-      echo "${BASH_REMATCH[1]}"
-      return 0
-    fi
-  done <<< "$output"
-  return 1
-}
-
-should_auto_detect_fpga_id() {
-  case "$FPGA_ID" in
-    auto|detect|-1) return 0 ;;
-  esac
-
-  if [[ -n "${XRT_DEVICE_INDEX:-}" || -n "${XRT_DEVICE_BDF:-}" ]]; then
-    return 0
-  fi
-
-  if [[ "$FPGA_ID" == "0" && -n "${SLURM_JOB_ID:-}${SLURM_STEP_ID:-}" && -z "${VORTEX_POWER_FORCE_FPGA_ID:-}" ]]; then
-    return 0
-  fi
-
-  return 1
-}
-
-resolve_fpga_id() {
-  local smi bdf detected
-
-  if [[ -n "${XRT_DEVICE_INDEX:-}" ]]; then
-    echo "$XRT_DEVICE_INDEX"
-    return
-  fi
-
-  if [[ -n "${XRT_DEVICE_BDF:-}" ]] && detected="$(bdf_to_fpga_id "$XRT_DEVICE_BDF")"; then
-    echo "$detected"
-    return
-  fi
-
-  if should_auto_detect_fpga_id; then
-    smi="$(resolve_xrt_smi)"
-    if detected="$(detect_accessible_xrt_index "$smi")"; then
-      echo "$detected"
-      return
-    fi
-    if bdf="$(detect_available_xrt_bdf "$smi")" && detected="$(bdf_to_fpga_id "$bdf")"; then
-      echo "$detected"
-      return
-    fi
-
-    if [[ "$FPGA_ID" == "auto" || "$FPGA_ID" == "detect" || "$FPGA_ID" == "-1" ]]; then
-      echo "ERROR: could not auto-detect allocated FPGA index" >&2
-      return 1
-    fi
-  fi
-
-  echo "$FPGA_ID"
-}
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/xrt_device_detect.sh"
 
 hwmon_from_bdf() {
   local bdf="$1"
@@ -180,7 +66,7 @@ default_hwmon_for_fpga_id() {
   esac
 }
 
-FPGA_ID="$(resolve_fpga_id)"
+FPGA_ID="$(resolve_fpga_id "$FPGA_ID")"
 HWMON_DIR="$(default_hwmon_for_fpga_id "$FPGA_ID")"
 
 find_sensor_by_label() {

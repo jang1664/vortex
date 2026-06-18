@@ -19,7 +19,7 @@ list_fpga_bin_aliases() {
 }
 
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
-  echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"] [--fpga-bin ALIAS_OR_PATH] [--bench] [--perf CLASS] [--debug LEVEL] [--hw-debug] [--power[=MODE]] [--power-out-dir DIR]"
+  echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"] [--fpga-bin ALIAS_OR_PATH] [--bench] [--perf CLASS] [--debug LEVEL] [--hw-debug] [--no-latency] [--power[=on|off]] [--power-out-dir DIR]"
   echo "Modes:"
   echo "  rtlsim   - Run only rtlsim tests"
   echo "  xrtsim   - Run only xrtsim tests"
@@ -30,8 +30,10 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   echo "Options:"
   echo "  --hw-debug, --enable-hw-debug-module"
   echo "      Append -DENABLE_HW_DEBUG_MODULE to CONFIGS"
-  echo "  --power[=separate|same|both|off]"
-  echo "      Enable bench power measurement and append matching --power args"
+  echo "  --no-latency"
+  echo "      Skip the normal bench latency phase"
+  echo "  --power[=on|off]"
+  echo "      Enable separate bench power measurement and append matching --power args"
   echo "  --power-out-dir DIR"
   echo "      Directory for default power.csv and power_summary.csv"
   echo "  --power-csv-max-bytes N"
@@ -47,7 +49,7 @@ mode="${1:-}"
 shift || true
 
 if [[ "${mode}" == "" ]]; then
-  echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"] [--fpga-bin ALIAS_OR_PATH] [--bench] [--perf CLASS] [--debug LEVEL] [--hw-debug] [--power[=MODE]] [--power-out-dir DIR]"
+  echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"] [--fpga-bin ALIAS_OR_PATH] [--bench] [--perf CLASS] [--debug LEVEL] [--hw-debug] [--no-latency] [--power[=on|off]] [--power-out-dir DIR]"
   echo "Modes:"
   echo "  rtlsim   - Run only rtlsim tests"
   echo "  xrtsim   - Run only xrtsim tests"
@@ -78,6 +80,7 @@ POWER_ITERATIONS=""
 POWER_IDLE_SEC=""
 POWER_CSV_MAX_BYTES=1048576
 POWER_SCRIPT=""
+LATENCY_ENABLED=1
 
 resolve_fpga_bin() {
   local fpga_bin="$1"
@@ -122,7 +125,27 @@ append_arg() {
   fi
 }
 
+append_latency_args() {
+  if [[ "${LATENCY_ENABLED}" == "0" ]]; then
+    BENCH_FLAG="--bench"
+    append_arg "--no-latency"
+  fi
+}
+
 append_power_args() {
+  case "${POWER_MODE}" in
+    ""|off|false|0)
+      return
+      ;;
+    separate|on|true|1)
+      POWER_MODE="separate"
+      ;;
+    *)
+      echo "Unsupported --power mode: ${POWER_MODE}; supported modes are on, separate, and off" >&2
+      exit 1
+      ;;
+  esac
+
   if [[ -z "${POWER_MODE}" || "${POWER_MODE}" == "off" ]]; then
     return
   fi
@@ -201,6 +224,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --hw-debug|--enable-hw-debug-module)
       HW_DEBUG=1
+      shift
+      ;;
+    --no-latency|--skip-latency)
+      LATENCY_ENABLED=0
+      shift
+      ;;
+    --latency)
+      LATENCY_ENABLED=1
       shift
       ;;
     --power)
@@ -289,9 +320,10 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     -h|--help)
-      echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"] [--fpga-bin ALIAS_OR_PATH] [--bench] [--perf CLASS] [--debug LEVEL] [--hw-debug] [--power[=MODE]] [--power-out-dir DIR]"
+      echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"] [--fpga-bin ALIAS_OR_PATH] [--bench] [--perf CLASS] [--debug LEVEL] [--hw-debug] [--no-latency] [--power[=on|off]] [--power-out-dir DIR]"
       echo "  --hw-debug, --enable-hw-debug-module: append -DENABLE_HW_DEBUG_MODULE to CONFIGS"
-      echo "  --power[=separate|same|both|off]: append bench power-measurement args"
+      echo "  --no-latency: append --no-latency to bench args"
+      echo "  --power[=on|off]: append separate bench power-measurement args"
       echo "  --power-csv-max-bytes N: raw power CSV size limit (default: 1048576, 0 unlimited)"
       exit 0
       ;;
@@ -303,6 +335,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+append_latency_args
 append_power_args
 
 # Base CONFIGS for simulation modes comes from the environment only. FPGA bin

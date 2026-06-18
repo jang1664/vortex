@@ -142,6 +142,27 @@ printf '%s\\n' "$*" >> {reset_log}
         )
         xrt_smi.chmod(0o755)
 
+    def _write_fake_program_tool(self, path: Path, program_log: Path) -> None:
+        path.parent.mkdir()
+        path.write_text(
+            f"""#!/usr/bin/env bash
+set -euo pipefail
+case "${{1:-}}" in
+  examine)
+    printf 'Device [0000:2a:00.1]\\n'
+    ;;
+  program)
+    printf '%s\\n' "$*" >> {program_log}
+    ;;
+  *)
+    printf 'unexpected xrt-smi args: %s\\n' "$*" >&2
+    exit 3
+    ;;
+esac
+"""
+        )
+        path.chmod(0o755)
+
     def _write_raw_db_row(self, raw_db: Path, **overrides: object) -> None:
         row = {column: "" for column in RAW_DB_COLUMNS}
         row.update({
@@ -157,6 +178,8 @@ printf '%s\\n' "$*" >> {reset_log}
             "iterations": "1",
             "status": "pass",
             "returncode": "0",
+            "measure_latency": "1",
+            "measure_power": "1",
             "samples": "3",
             "min_us": "1.0",
             "avg_us": "2.0",
@@ -212,6 +235,7 @@ printf '%s\\n' "$*" >> {reset_log}
                         xrt_device_index=suite.defaults.xrt_device_index,
                         blackbox_args=(),
                         srun=False,
+                        program_fpga=False,
                         run_id=run_id,
                     ),
                 )
@@ -254,6 +278,68 @@ printf '%s\\n' "$*" >> {reset_log}
             self.assertEqual(rows[0]["git_branch"], manifest["git_branch"])
             self.assertEqual(rows[0]["git_dirty"], manifest["git_dirty"])
 
+    def test_programs_fpga_before_bench_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            build_dir = tmp_path / "build"
+            self._write_fake_blackbox(build_dir)
+            fpga_bin_dir = tmp_path / "fpga_bin"
+            self._write_fake_fpga_bin(fpga_bin_dir)
+            fake_xrt_smi = tmp_path / "bin" / "xrt-smi"
+            xrt_program_log = tmp_path / "xrt_program.log"
+            self._write_fake_program_tool(fake_xrt_smi, xrt_program_log)
+
+            suite = BenchSuite(
+                name="program_suite",
+                defaults=BenchDefaults(warmup=1, iterations=1),
+                cases=[
+                    BenchCase(
+                        case_id="gemm",
+                        app="fpint_gemm_ffn_hw",
+                        args="-m 1 -n 128 -k 128 -q 32 -t 0 -d 0",
+                        warmup=1,
+                        iterations=1,
+                    )
+                ],
+            )
+            out_root = tmp_path / "latency_db"
+            old_xrt_smi = os.environ.get("XRT_SMI")
+            old_xrt_device_bdf = os.environ.get("XRT_DEVICE_BDF")
+            os.environ["XRT_SMI"] = str(fake_xrt_smi)
+            os.environ.pop("XRT_DEVICE_BDF", None)
+            try:
+                rc = run_suite(
+                    suite,
+                    RunOptions(
+                        build_dir=build_dir,
+                        fpga_bin_dir=fpga_bin_dir,
+                        fpga_bin_label="program_bin",
+                        out_dir=out_root,
+                        platform=suite.defaults.platform,
+                        xrt_device_index=0,
+                        blackbox_args=(),
+                        srun=False,
+                        run_id="program_run",
+                    ),
+                )
+            finally:
+                if old_xrt_smi is None:
+                    os.environ.pop("XRT_SMI", None)
+                else:
+                    os.environ["XRT_SMI"] = old_xrt_smi
+                if old_xrt_device_bdf is None:
+                    os.environ.pop("XRT_DEVICE_BDF", None)
+                else:
+                    os.environ["XRT_DEVICE_BDF"] = old_xrt_device_bdf
+
+            self.assertEqual(0, rc)
+            self.assertEqual(
+                f"program --device 0000:2a:00.1 --user {fpga_bin_dir / 'vortex_afu.xclbin'}",
+                xrt_program_log.read_text().strip(),
+            )
+            program_log = out_root / "runs" / "program_run" / "logs" / "program_fpga.log"
+            self.assertIn("programming FPGA: device=0000:2a:00.1", program_log.read_text())
+
     def test_timeout_returncode_is_appended_as_timeout_status(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
@@ -292,6 +378,7 @@ printf '%s\\n' "$*" >> {reset_log}
                     xrt_device_index=suite.defaults.xrt_device_index,
                     blackbox_args=(),
                     srun=False,
+                    program_fpga=False,
                     run_id="timeout_run",
                     prebuild=False,
                 ),
@@ -352,6 +439,7 @@ exit 0
                     xrt_device_index=suite.defaults.xrt_device_index,
                     blackbox_args=(),
                     srun=False,
+                    program_fpga=False,
                     run_id="build_fail_run",
                 ),
             )
@@ -404,6 +492,7 @@ exit 0
                         blackbox_args=(),
                         blackbox_timeout=suite.defaults.blackbox_timeout,
                         srun=False,
+                        program_fpga=False,
                         run_id="retry_run",
                     ),
                 )
@@ -466,6 +555,7 @@ exit 0
                         blackbox_args=(),
                         blackbox_timeout=suite.defaults.blackbox_timeout,
                         srun=False,
+                        program_fpga=False,
                         run_id="retry_timeout_run",
                         retry=True,
                         retry_max_rounds=2,
@@ -540,6 +630,7 @@ exit 0
                         blackbox_args=(),
                         blackbox_timeout=suite.defaults.blackbox_timeout,
                         srun=False,
+                        program_fpga=False,
                         run_id="retry_timeout_run",
                         retry=True,
                         retry_max_rounds=2,
@@ -630,6 +721,7 @@ exit 0
                     xrt_device_index=suite.defaults.xrt_device_index,
                     blackbox_args=(),
                     srun=False,
+                    program_fpga=False,
                     run_id="resume_run",
                     skip_existing=True,
                 ),
@@ -699,6 +791,7 @@ exit 0
                     xrt_device_index=suite.defaults.xrt_device_index,
                     blackbox_args=(),
                     srun=False,
+                    program_fpga=False,
                     run_id="strict_run",
                     skip_existing=True,
                 ),
@@ -755,6 +848,7 @@ exit 0
                     xrt_device_index=suite.defaults.xrt_device_index,
                     blackbox_args=(),
                     srun=False,
+                    program_fpga=False,
                     run_id="schema_run",
                 ),
             )

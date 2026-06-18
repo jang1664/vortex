@@ -118,11 +118,96 @@ aliases:
                 "--out", str(out_root),
                 "--run-id", "cli_run",
                 "--no-srun",
+                "--no-program-fpga",
             ])
 
             self.assertEqual(0, rc)
             self.assertTrue((out_root / "runs" / "cli_run" / "results.csv").exists())
             self.assertFalse((out_root / "runs" / "cli_run" / "figures").exists())
+
+    def test_run_writes_fpga_programming_script(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            build_dir, fpga_bin, suite = self._write_fake_inputs(tmp_path)
+            out_root = tmp_path / "out"
+            rc = main([
+                "run",
+                "--build-dir", str(build_dir),
+                "--fpga-bin", str(fpga_bin),
+                "--suite", str(suite),
+                "--out", str(out_root),
+                "--run-id", "program_run",
+                "--no-srun",
+                "--dry-run",
+                "--xrt-device-bdf", "0000:3d:00.1",
+            ])
+
+            self.assertEqual(0, rc)
+            run_dir = out_root / "runs" / "program_run"
+            script = (run_dir / "run_fpga_bench.sh").read_text()
+            self.assertIn("source", script)
+            self.assertIn("ci/xrt_device_detect.sh", script)
+            self.assertIn("LATENCY_BENCH_PROGRAM_FPGA=1", script)
+            self.assertIn("export XRT_DEVICE_BDF=0000:3d:00.1", script)
+            self.assertIn('program --device "$user_bdf" --user "$xclbin"', script)
+            self.assertLess(script.index("if ! latency_bench_program_fpga"), script.index("declare -A LATENCY_BENCH_BUILD_RC"))
+            manifest = json.loads((run_dir / "manifest.json").read_text())
+            self.assertTrue(manifest["program_fpga"])
+            self.assertEqual("0000:3d:00.1", manifest["xrt_device_bdf"])
+
+    def test_run_defaults_to_separate_power_and_can_skip_latency(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            build_dir, fpga_bin, suite = self._write_fake_inputs(tmp_path)
+            out_root = tmp_path / "out"
+            rc = main([
+                "run",
+                "--build-dir", str(build_dir),
+                "--fpga-bin", str(fpga_bin),
+                "--suite", str(suite),
+                "--out", str(out_root),
+                "--run-id", "power_default",
+                "--no-srun",
+                "--dry-run",
+                "--no-program-fpga",
+            ])
+
+            self.assertEqual(0, rc)
+            run_dir = out_root / "runs" / "power_default"
+            script = (run_dir / "run_fpga_bench.sh").read_text()
+            self.assertIn("--power=separate", script)
+            self.assertIn("/power/", script)
+            self.assertIn("--power-csv=", script)
+            self.assertIn("--power-summary=", script)
+            self.assertNotIn("--no-latency", script)
+            manifest = json.loads((run_dir / "manifest.json").read_text())
+            self.assertTrue(manifest["measure_latency"])
+            self.assertTrue(manifest["measure_power"])
+            self.assertEqual("separate", manifest["power_mode"])
+
+            rc = main([
+                "run",
+                "--build-dir", str(build_dir),
+                "--fpga-bin", str(fpga_bin),
+                "--suite", str(suite),
+                "--out", str(out_root),
+                "--run-id", "power_off_latency_off",
+                "--no-srun",
+                "--dry-run",
+                "--no-program-fpga",
+                "--no-latency",
+                "--no-power",
+            ])
+
+            self.assertEqual(0, rc)
+            run_dir = out_root / "runs" / "power_off_latency_off"
+            script = (run_dir / "run_fpga_bench.sh").read_text()
+            self.assertIn("--no-latency", script)
+            self.assertNotIn("--power=separate", script)
+            manifest = json.loads((run_dir / "manifest.json").read_text())
+            self.assertFalse(manifest["measure_latency"])
+            self.assertFalse(manifest["measure_power"])
+            self.assertEqual("off", manifest["power_mode"])
 
     def test_run_blackbox_args_merge_into_generated_script(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -501,6 +586,7 @@ cases:
                 "--out", str(out_root),
                 "--run-id", "cli_run",
                 "--no-srun",
+                "--no-program-fpga",
                 "--visualize",
             ])
 

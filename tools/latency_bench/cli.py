@@ -58,8 +58,19 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--run-id", default=None, help="Optional run id under OUT/runs; default is UTC timestamp.")
     run.add_argument("--warmup", type=int, default=None, help="Override suite warmup.")
     run.add_argument("--iterations", type=int, default=None, help="Override suite iterations.")
+    run.set_defaults(measure_latency=True, measure_power=True)
+    run.add_argument("--latency", dest="measure_latency", action="store_true", help="Enable normal latency measurement.")
+    run.add_argument("--no-latency", dest="measure_latency", action="store_false", help="Skip the normal latency measurement phase.")
+    run.add_argument("--power", dest="measure_power", action="store_true", help="Enable separate power measurement.")
+    run.add_argument("--no-power", dest="measure_power", action="store_false", help="Disable power measurement.")
     run.add_argument("--platform", default=None, help="Override suite/default Xilinx platform.")
     run.add_argument("--xrt-device-index", type=int, default=None, help="Override XRT device index.")
+    run.add_argument("--xrt-device-bdf", default="", help="Override XRT user-function BDF for FPGA programming.")
+    run.add_argument(
+        "--no-program-fpga",
+        action="store_true",
+        help="Skip explicit xrt-smi programming before HW benchmark execution.",
+    )
     run.add_argument("--configs-extra", default="", help="Extra CONFIGS defines appended inside the run script.")
     run.add_argument(
         "--blackbox-timeout",
@@ -436,6 +447,7 @@ def run_cmd(args: argparse.Namespace) -> int:
         out_dir=Path(args.out).resolve(),
         platform=platform,
         xrt_device_index=xrt_device_index,
+        xrt_device_bdf=args.xrt_device_bdf,
         configs=fpga_bin.configs,
         configs_extra=configs_extra,
         blackbox_args=blackbox_args,
@@ -447,6 +459,9 @@ def run_cmd(args: argparse.Namespace) -> int:
         run_id=run_id,
         skip_existing=args.skip_existing,
         prebuild=not args.no_prebuild,
+        program_fpga=not args.no_program_fpga,
+        measure_latency=args.measure_latency,
+        measure_power=args.measure_power,
         case_filters=tuple(args.filter),
         retry=args.retry,
         retry_max_rounds=args.retry_max_rounds,

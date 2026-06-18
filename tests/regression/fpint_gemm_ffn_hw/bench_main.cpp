@@ -456,9 +456,9 @@ int main(int argc, char *argv[]) {
     case 't': WTRANS = atoi(optarg); break;
     case 'd': QDIR = atoi(optarg); break;
     case 'h':
-      printf("Usage: %s [--warmup=N] [--iterations=N] [--csv] "
-             "[--output=PATH] [--output-append] "
-             "[--power[=separate|same|both|off]] [--power-csv=PATH] "
+      printf("Usage: %s [--warmup=N] [--iterations=N] [--latency=on|off] "
+             "[--no-latency] [--csv] [--output=PATH] [--output-append] "
+             "[--power[=on|off]] [--power-csv=PATH] "
              "[--power-summary=PATH] [--power-interval=SEC] "
              "[--power-fpga-id=ID] [--power-iterations=N] "
              "[--power-idle-sec=SEC] [--power-csv-max-bytes=N] "
@@ -466,9 +466,9 @@ int main(int argc, char *argv[]) {
              "[-m M] [-n N] [-k K] [-q QBLK] [-t WTRANS] [-d QDIR]\n", argv[0]);
       return 0;
     default:
-      printf("Usage: %s [--warmup=N] [--iterations=N] [--csv] "
-             "[--output=PATH] [--output-append] "
-             "[--power[=separate|same|both|off]] [--power-csv=PATH] "
+      printf("Usage: %s [--warmup=N] [--iterations=N] [--latency=on|off] "
+             "[--no-latency] [--csv] [--output=PATH] [--output-append] "
+             "[--power[=on|off]] [--power-csv=PATH] "
              "[--power-summary=PATH] [--power-interval=SEC] "
              "[--power-fpga-id=ID] [--power-iterations=N] "
              "[--power-idle-sec=SEC] [--power-csv-max-bytes=N] "

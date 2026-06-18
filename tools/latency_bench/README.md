@@ -65,14 +65,22 @@ For each unique execution it:
   `ci/blackbox.sh`, generated Makefiles, and app build trees live there.
 - Exports FPGA runtime environment variables: `FPGA_BIN_DIR`, `TARGET=hw`,
   `PLATFORM`, `DRIVER=xrt`, and `XRT_DEVICE_INDEX`.
+- Sources `ci/xrt_device_detect.sh` and programs the allocated FPGA with
+  `xrt-smi program --device <user_bdf> --user "$FPGA_BIN_DIR/vortex_afu.xclbin"`
+  before any build-only or run-only benchmark command. Pass `--xrt-device-bdf`
+  to override BDF detection, or `--no-program-fpga` to skip this step.
 - Calls `./ci/blackbox.sh --driver=xrt --bench --build-only --app=<app>`
   once per app, then `./ci/blackbox.sh --driver=xrt --bench --run-only`
   for each concrete execution.
 - Passes benchmark-specific args including `--warmup`, `--iterations`, `--csv`,
   and `--output=<out>/runs/<run_id>/raw/<exec_key>.csv`.
+- By default also passes `--power=separate` with per-execution power outputs
+  under `<out>/runs/<run_id>/power/`. Use `--no-power` for latency-only runs.
+  Use `--no-latency` to skip the normal latency loop and keep only the separate
+  power phase.
 - Records one status row in `run_status.csv` with `exec_key`, `app`,
-  `returncode`, `failure_phase`, `failure_reason`, `raw_csv`, `log_file`, and
-  `elapsed_wall_s`.
+  `returncode`, `failure_phase`, `failure_reason`, `raw_csv`, `power_csv`,
+  `power_summary`, measurement mode flags, `log_file`, and `elapsed_wall_s`.
 - Appends one live progress row to `progress.csv` with status, elapsed time,
   raw latency columns, and parse errors.
 
@@ -171,6 +179,10 @@ python -m tools.latency_bench run \
   --out results/latency/prefill_gemm_only \
   --filter "app=fpint_gemm_ffn_hw & stage=prefill"
 ```
+
+`latency_bench run` measures both latency and separate FPGA power by default.
+Pass `--no-latency` for power-only runs. Pass `--no-power` when you only want
+the traditional latency CSV outputs.
 
 Filters are evaluated after explicit cases, `case_matrices`, and `workloads`
 are expanded into `BenchCase` objects. Supported operators are exact equality
