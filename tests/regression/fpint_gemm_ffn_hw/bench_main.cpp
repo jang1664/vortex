@@ -662,75 +662,13 @@ int main(int argc, char *argv[]) {
 
   stats.report("fpint_gemm_ffn_hw", bench);
 
-  if (vx_bench::power_enabled(bench)) {
-    if (!bench.csv) {
-      printf("[power] starting sampler: mode=%s csv=%s summary=%s idle=%.3fs iterations=%d\n",
-             vx_bench::power_mode_name(bench.power_mode),
-             bench.power_csv.c_str(),
-             bench.power_summary.c_str(),
-             bench.power_idle_sec,
-             bench.power_iterations);
-    }
-
-    vx_bench::PowerSampler sampler;
-    if (!sampler.start(bench)) {
-      cleanup();
-      return -1;
-    }
-
-    vx_bench::PowerPhase idle_phase;
-    idle_phase.mode = "idle";
-    idle_phase.phase = "idle";
-    idle_phase.start_s = vx_bench::epoch_seconds();
-    vx_bench::sleep_seconds(bench.power_idle_sec);
-    idle_phase.end_s = vx_bench::epoch_seconds();
-
-    std::vector<vx_bench::PowerPhase> power_runs;
-    auto run_power_phase = [&](const char* mode, bool measure_latency) -> bool {
-      vx_bench::PowerPhase phase;
-      phase.mode = mode;
-      phase.phase = "run";
-      phase.start_s = vx_bench::epoch_seconds();
-
-      vx_bench::Stats phase_latency;
-      for (int i = 0; i < bench.power_iterations; ++i) {
-        if (measure_latency) {
-          vx_bench::Stopwatch sw; sw.start();
-          if (!run_kernel_checked(mode, i))
-            return false;
-          phase_latency.record(sw.stop_us());
-        } else {
-          if (!run_kernel_checked(mode, i))
-            return false;
-        }
-      }
-
-      phase.end_s = vx_bench::epoch_seconds();
-      if (measure_latency) {
-        phase.has_latency = true;
-        phase.latency = phase_latency.summary();
-      }
-      power_runs.push_back(phase);
-      return true;
-    };
-
-    bool power_ok = true;
-    if (vx_bench::power_has_separate(bench)) {
-      power_ok = run_power_phase("separate", false);
-    }
-    if (power_ok && vx_bench::power_has_same(bench)) {
-      power_ok = run_power_phase("same", true);
-    }
-
-    sampler.stop();
-    if (!power_ok) {
-      cleanup();
-      return -1;
-    }
-    if (!vx_bench::write_power_summary("fpint_gemm_ffn_hw", bench, idle_phase, power_runs)) {
-      cleanup();
-      return -1;
-    }
+  if (!vx_bench::run_power_measurement(
+          "fpint_gemm_ffn_hw", bench,
+          [&](const char* phase, int iter) -> bool {
+            return run_kernel_checked(phase, iter);
+          })) {
+    cleanup();
+    return -1;
   }
 
   if (!bench.csv) {

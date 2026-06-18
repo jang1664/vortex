@@ -49,6 +49,9 @@ struct OpInfo {
 
 int main(int argc, char *argv[]) {
   auto bench = vx_bench::parse(argc, argv);
+  if (vx_bench::report_parse_error(bench)) {
+    return -1;
+  }
 
   uint32_t batch_size = 128;
   uint32_t reduce_dim = 512;
@@ -137,6 +140,12 @@ int main(int argc, char *argv[]) {
   }
 
   stats.report(label, bench);
+
+  if (!vx_bench::run_power_measurement(
+          label, bench, device, krnl_buffer, args_buffer)) {
+    cleanup();
+    return -1;
+  }
 
   if (!bench.csv) {
     printf("\n[Performance]\n");

@@ -224,6 +224,9 @@ static bool compute_lmem_layout(kernel_arg_t& kargs, uint64_t local_mem_size) {
 int main(int argc, char *argv[]) {
   // Strip --warmup / --iterations / --csv first; remaining argv goes to getopt.
   auto bench = vx_bench::parse(argc, argv);
+  if (vx_bench::report_parse_error(bench)) {
+    return -1;
+  }
 
   optind = 1;
   int c;
@@ -369,6 +372,12 @@ int main(int argc, char *argv[]) {
   }
 
   stats.report("fpint_gemm_ffn_hw", bench);
+
+  if (!vx_bench::run_power_measurement(
+          "fpint_gemm_ffn_hw", bench, device, krnl_buffer, args_buffer)) {
+    cleanup();
+    return -1;
+  }
 
   if (!bench.csv) {
     printf("\n[Performance]\n");

@@ -38,6 +38,7 @@
 #include <thread>
 #include <unistd.h>
 #include <vector>
+#include <vortex.h>
 
 namespace vx_bench {
 
@@ -555,6 +556,133 @@ inline bool write_power_summary(const char* label,
     std::fprintf(msg, "[power] summary written to %s (raw samples: %s)\n",
                  args.power_summary.c_str(), args.power_csv.c_str());
     return true;
+}
+
+inline bool report_parse_error(const Args& args, FILE* err = stderr) {
+    if (!args.parse_error) {
+        return false;
+    }
+    std::fprintf(err, "Argument error: %s\n", args.parse_error_message.c_str());
+    return true;
+}
+
+inline bool run_vx_kernel_once(vx_device_h device,
+                               vx_buffer_h kernel_buffer,
+                               vx_buffer_h args_buffer,
+                               const char* phase,
+                               int iter,
+                               FILE* msg = stderr) {
+    int ret = vx_start(device, kernel_buffer, args_buffer);
+    if (ret != 0) {
+        std::fprintf(msg, "[power] vx_start failed during %s iter=%d: ret=%d\n",
+                     phase, iter, ret);
+        return false;
+    }
+
+    ret = vx_ready_wait(device, VX_MAX_TIMEOUT);
+    if (ret != 0) {
+        std::fprintf(msg, "[power] vx_ready_wait failed during %s iter=%d: ret=%d\n",
+                     phase, iter, ret);
+        return false;
+    }
+
+    return true;
+}
+
+template <typename RunOnce>
+inline bool run_power_measurement(const char* label,
+                                  const Args& args,
+                                  RunOnce run_once,
+                                  FILE* msg = stderr) {
+    if (!power_enabled(args)) {
+        return true;
+    }
+
+    if (!args.csv) {
+        std::fprintf(msg,
+            "[power] starting sampler: label=%s mode=%s csv=%s summary=%s "
+            "idle=%.3fs iterations=%d interval=%.6g max_bytes=%llu\n",
+            label,
+            power_mode_name(args.power_mode),
+            args.power_csv.c_str(),
+            args.power_summary.c_str(),
+            args.power_idle_sec,
+            args.power_iterations,
+            args.power_interval,
+            static_cast<unsigned long long>(args.power_csv_max_bytes));
+    }
+
+    PowerSampler sampler;
+    if (!sampler.start(args, msg)) {
+        return false;
+    }
+
+    PowerPhase idle_phase;
+    idle_phase.mode = "idle";
+    idle_phase.phase = "idle";
+    idle_phase.start_s = epoch_seconds();
+    sleep_seconds(args.power_idle_sec);
+    idle_phase.end_s = epoch_seconds();
+
+    std::vector<PowerPhase> power_runs;
+    auto run_power_phase = [&](const char* mode, bool measure_latency) -> bool {
+        PowerPhase phase;
+        phase.mode = mode;
+        phase.phase = "run";
+        phase.start_s = epoch_seconds();
+
+        Stats phase_latency;
+        for (int i = 0; i < args.power_iterations; ++i) {
+            if (measure_latency) {
+                Stopwatch sw;
+                sw.start();
+                if (!run_once(mode, i)) {
+                    return false;
+                }
+                phase_latency.record(sw.stop_us());
+            } else {
+                if (!run_once(mode, i)) {
+                    return false;
+                }
+            }
+        }
+
+        phase.end_s = epoch_seconds();
+        if (measure_latency) {
+            phase.has_latency = true;
+            phase.latency = phase_latency.summary();
+        }
+        power_runs.push_back(phase);
+        return true;
+    };
+
+    bool power_ok = true;
+    if (power_has_separate(args)) {
+        power_ok = run_power_phase("separate", false);
+    }
+    if (power_ok && power_has_same(args)) {
+        power_ok = run_power_phase("same", true);
+    }
+
+    sampler.stop();
+    if (!power_ok) {
+        return false;
+    }
+    return write_power_summary(label, args, idle_phase, power_runs, msg);
+}
+
+inline bool run_power_measurement(const char* label,
+                                  const Args& args,
+                                  vx_device_h device,
+                                  vx_buffer_h kernel_buffer,
+                                  vx_buffer_h args_buffer,
+                                  FILE* msg = stderr) {
+    return run_power_measurement(
+        label, args,
+        [&](const char* phase, int iter) -> bool {
+            return run_vx_kernel_once(device, kernel_buffer, args_buffer, phase, iter, msg);
+        },
+        msg);
 }
 
 } // namespace vx_bench

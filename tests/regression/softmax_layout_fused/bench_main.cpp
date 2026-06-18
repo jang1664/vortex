@@ -84,6 +84,9 @@ static void pack_scores(const std::vector<data_t>& row,
 
 int main(int argc, char *argv[]) {
   auto bench = vx_bench::parse(argc, argv);
+  if (vx_bench::report_parse_error(bench)) {
+    return -1;
+  }
   uint32_t batch = 1;
   uint32_t heads = 1;
   uint32_t seq_q = 128;
@@ -170,6 +173,12 @@ int main(int argc, char *argv[]) {
   }
 
   stats.report("softmax_layout_fused", bench);
+
+  if (!vx_bench::run_power_measurement(
+          "softmax_layout_fused", bench, device, krnl_buffer, args_buffer)) {
+    cleanup();
+    return -1;
+  }
   cleanup();
   return 0;
 }

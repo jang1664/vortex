@@ -49,6 +49,9 @@ static void init_input(std::vector<data_t>& input) {
 
 int main(int argc, char *argv[]) {
   auto bench = vx_bench::parse(argc, argv);
+  if (vx_bench::report_parse_error(bench)) {
+    return -1;
+  }
   uint32_t batch = 1;
   uint32_t seq = 128;
   uint32_t heads = 32;
@@ -136,6 +139,12 @@ int main(int argc, char *argv[]) {
   }
 
   stats.report("head_concat_layout_fused", bench);
+
+  if (!vx_bench::run_power_measurement(
+          "head_concat_layout_fused", bench, device, krnl_buffer, args_buffer)) {
+    cleanup();
+    return -1;
+  }
   cleanup();
   return 0;
 }

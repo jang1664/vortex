@@ -86,6 +86,9 @@ static bool validate_tile_params() {
 
 int main(int argc, char** argv) {
   auto bench = vx_bench::parse(argc, argv);
+  if (vx_bench::report_parse_error(bench)) {
+    return -1;
+  }
   parse_args(argc, argv);
 
   const uint32_t M_pad = (M + 7u) & ~7u;
@@ -154,6 +157,12 @@ int main(int argc, char** argv) {
   }
 
   stats.report("tile_input_a", bench);
+
+  if (!vx_bench::run_power_measurement(
+          "tile_input_a", bench, device, kernel_bin, args_buf)) {
+    cleanup();
+    return -1;
+  }
   cleanup();
   return 0;
 }

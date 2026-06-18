@@ -63,6 +63,9 @@ static void cleanup() {
 
 int main(int argc, char *argv[]) {
   auto bench = vx_bench::parse(argc, argv);
+  if (vx_bench::report_parse_error(bench)) {
+    return -1;
+  }
 
   // Reuse getopt for the original -n / -k flags.
   optind = 1;
@@ -127,6 +130,12 @@ int main(int argc, char *argv[]) {
   }
 
   stats.report("dropout", bench);
+
+  if (!vx_bench::run_power_measurement(
+          "dropout", bench, device, krnl_buffer, args_buffer)) {
+    cleanup();
+    return -1;
+  }
 
   if (!bench.csv) {
     printf("\n[Performance]\n");

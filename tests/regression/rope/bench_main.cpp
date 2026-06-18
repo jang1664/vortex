@@ -67,6 +67,9 @@ static void initialize_random(std::vector<data_t>& vec) {
 
 int main(int argc, char *argv[]) {
   auto bench = vx_bench::parse(argc, argv);
+  if (vx_bench::report_parse_error(bench)) {
+    return -1;
+  }
 
   uint32_t batch_size = 2;
   uint32_t seq_len = 8;
@@ -163,6 +166,12 @@ int main(int argc, char *argv[]) {
   }
 
   stats.report("rope", bench);
+
+  if (!vx_bench::run_power_measurement(
+          "rope", bench, device, krnl_buffer, args_buffer)) {
+    cleanup();
+    return -1;
+  }
 
   if (!bench.csv) {
     printf("\n[Performance]\n");

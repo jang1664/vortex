@@ -45,6 +45,9 @@ static void init_src(std::vector<fp16_t>& src) {
 
 int main(int argc, char *argv[]) {
   auto bench = vx_bench::parse(argc, argv);
+  if (vx_bench::report_parse_error(bench)) {
+    return -1;
+  }
   uint32_t K = 128;
   uint32_t N = 128;
   uint32_t QBLK = 32;
@@ -122,6 +125,12 @@ int main(int argc, char *argv[]) {
     stats.record(sw.stop_us());
   }
   stats.report("kv_cache_quant_w4a16", bench);
+
+  if (!vx_bench::run_power_measurement(
+          "kv_cache_quant_w4a16", bench, device, krnl_buffer, args_buffer)) {
+    cleanup();
+    return -1;
+  }
   cleanup();
   return 0;
 }

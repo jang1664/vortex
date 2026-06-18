@@ -84,6 +84,9 @@ static void parse_args(int argc, char** argv) {
 
 int main(int argc, char** argv) {
   auto bench = vx_bench::parse(argc, argv);
+  if (vx_bench::report_parse_error(bench)) {
+    return -1;
+  }
   parse_args(argc, argv);
 
   if (K == 0 || N == 0 || (N & 1)) {
@@ -172,6 +175,12 @@ int main(int argc, char** argv) {
   }
 
   stats.report("tile_weight_w4a16", bench);
+
+  if (!vx_bench::run_power_measurement(
+          "tile_weight_w4a16", bench, device, kernel_bin, args_buf)) {
+    cleanup();
+    return -1;
+  }
   cleanup();
   return 0;
 }

@@ -77,6 +77,9 @@ static std::vector<data_t> build_reference(const std::vector<data_t>& input,
 
 int main(int argc, char *argv[]) {
   auto bench = vx_bench::parse(argc, argv);
+  if (vx_bench::report_parse_error(bench)) {
+    return -1;
+  }
 
   uint32_t M = 4;
   uint32_t K = 4096;
@@ -193,6 +196,12 @@ int main(int argc, char *argv[]) {
   }
 
   stats.report("silu_layout_fused", bench);
+
+  if (!vx_bench::run_power_measurement(
+          "silu_layout_fused", bench, device, krnl_buffer, args_buffer)) {
+    cleanup();
+    return -1;
+  }
 
   if (!bench.csv) {
     printf("\n[Performance]\n");

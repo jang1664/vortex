@@ -164,6 +164,9 @@ static void parse_args(int argc, char** argv) {
 
 int main(int argc, char** argv) {
   auto bench = vx_bench::parse(argc, argv);
+  if (vx_bench::report_parse_error(bench)) {
+    return -1;
+  }
   parse_args(argc, argv);
 
   if (!is_pow2(DMA_MT) || !is_pow2(DMA_KT) || !is_pow2(DMA_NT) ||
@@ -279,6 +282,12 @@ int main(int argc, char** argv) {
   }
 
   stats.report("tile_scale_zp_w4a16", bench);
+
+  if (!vx_bench::run_power_measurement(
+          "tile_scale_zp_w4a16", bench, device, kernel_bin, args_buf)) {
+    cleanup();
+    return -1;
+  }
   cleanup();
   return 0;
 }

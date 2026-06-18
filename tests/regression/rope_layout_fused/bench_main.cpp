@@ -116,6 +116,9 @@ static void pack_projection(const std::vector<data_t>& row,
 
 int main(int argc, char *argv[]) {
   auto bench = vx_bench::parse(argc, argv);
+  if (vx_bench::report_parse_error(bench)) {
+    return -1;
+  }
   uint32_t batch = 1;
   uint32_t seq = 128;
   uint32_t heads = 32;
@@ -229,6 +232,14 @@ int main(int argc, char *argv[]) {
   stats.report(layout_to == ROPE_LAYOUT_TO_GEMM_A ? "rope_layout_fused_a" :
                layout_to == ROPE_LAYOUT_TO_GEMM_W ? "rope_layout_fused_w" :
                "rope_layout_fused_row", bench);
+
+  if (!vx_bench::run_power_measurement(
+          layout_to == ROPE_LAYOUT_TO_GEMM_A ? "rope_layout_fused_a" :
+               layout_to == ROPE_LAYOUT_TO_GEMM_W ? "rope_layout_fused_w" :
+               "rope_layout_fused_row", bench, device, krnl_buffer, args_buffer)) {
+    cleanup();
+    return -1;
+  }
   cleanup();
   return 0;
 }

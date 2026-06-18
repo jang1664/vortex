@@ -79,6 +79,9 @@ static void random_bytes(void* p, size_t n) {
 
 int main(int argc, char *argv[]) {
   auto bench = vx_bench::parse(argc, argv);
+  if (vx_bench::report_parse_error(bench)) {
+    return -1;
+  }
 
   optind = 1;
   int c;
@@ -182,6 +185,12 @@ int main(int argc, char *argv[]) {
   }
 
   stats.report("sgemm_tcu", bench);
+
+  if (!vx_bench::run_power_measurement(
+          "sgemm_tcu", bench, device, krnl_buffer, args_buffer)) {
+    cleanup();
+    return -1;
+  }
 
   if (!bench.csv) {
     printf("\n[Performance]\n");

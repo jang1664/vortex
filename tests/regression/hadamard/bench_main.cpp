@@ -71,6 +71,9 @@ static void print_usage(const char* prog) {
 
 int main(int argc, char *argv[]) {
   auto bench = vx_bench::parse(argc, argv);
+  if (vx_bench::report_parse_error(bench)) {
+    return -1;
+  }
 
   uint32_t rows = 4;
   uint32_t dim = 11008;
@@ -173,6 +176,12 @@ int main(int argc, char *argv[]) {
   }
 
   stats.report("hadamard", bench);
+
+  if (!vx_bench::run_power_measurement(
+          "hadamard", bench, device, krnl_buffer, args_buffer)) {
+    cleanup();
+    return -1;
+  }
 
   if (!bench.csv) {
     printf("\n[Performance]\n");

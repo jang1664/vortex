@@ -72,6 +72,9 @@ static void pack_rows_to_pitch(
 int main(int argc, char *argv[]) {
   // Bench flags (--warmup / --iterations / --csv / --output / --output-append) — stripped from argv.
   auto bench = vx_bench::parse(argc, argv);
+  if (vx_bench::report_parse_error(bench)) {
+    return -1;
+  }
 
   // Shape defaults match main.cpp.
   uint32_t batch_size = 2;
@@ -179,6 +182,12 @@ int main(int argc, char *argv[]) {
   }
 
   stats.report("softmax", bench);
+
+  if (!vx_bench::run_power_measurement(
+          "softmax", bench, device, krnl_buffer, args_buffer)) {
+    cleanup();
+    return -1;
+  }
 
   if (!bench.csv) {
     printf("\n[Performance]\n");

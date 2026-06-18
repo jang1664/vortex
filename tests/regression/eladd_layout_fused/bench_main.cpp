@@ -68,6 +68,9 @@ static void pack_gemm_c_tiled(const std::vector<data_t>& row,
 
 int main(int argc, char *argv[]) {
   auto bench = vx_bench::parse(argc, argv);
+  if (vx_bench::report_parse_error(bench)) {
+    return -1;
+  }
   uint32_t M = 4;
   uint32_t K = 4096;
   for (int i = 1; i < argc; ++i) {
@@ -146,6 +149,12 @@ int main(int argc, char *argv[]) {
   }
 
   stats.report("eladd_layout_fused", bench);
+
+  if (!vx_bench::run_power_measurement(
+          "eladd_layout_fused", bench, device, krnl_buffer, args_buffer)) {
+    cleanup();
+    return -1;
+  }
   cleanup();
   return 0;
 }
