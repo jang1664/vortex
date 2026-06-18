@@ -31,6 +31,7 @@
 
 #include <limits>
 #include <stdarg.h>
+#include <stdlib.h>
 #include <string>
 #include <unistd.h>
 #include <unordered_map>
@@ -90,6 +91,8 @@ typedef xrtBufferHandle xrt_buffer_t;
 
 #define DEFAULT_DEVICE_INDEX 0
 
+#define DEFAULT_DEVICE_PROBE_MAX 8
+
 #define DEFAULT_XCLBIN_PATH "vortex_afu.xclbin"
 
 #define KERNEL_NAME "vortex_afu"
@@ -118,6 +121,91 @@ static bool is_xrt_emulation() {
   const char* emu_mode = getenv("XCL_EMULATION_MODE");
   return emu_mode != nullptr && emu_mode[0] != '\0';
 #endif
+}
+
+static bool parse_xrt_device_index(const char* value, int* device_index) {
+  if (value == nullptr || value[0] == '\0') {
+    return false;
+  }
+
+  char* end = nullptr;
+  long parsed = strtol(value, &end, 10);
+  if (end == value || *end != '\0' || parsed < 0
+   || parsed > std::numeric_limits<int>::max()) {
+    return false;
+  }
+
+  *device_index = static_cast<int>(parsed);
+  return true;
+}
+
+static int get_xrt_device_probe_max() {
+  int probe_max = DEFAULT_DEVICE_PROBE_MAX;
+  parse_xrt_device_index(getenv("XRT_DEVICE_PROBE_MAX"), &probe_max);
+  if (probe_max <= 0) {
+    return DEFAULT_DEVICE_PROBE_MAX;
+  }
+  return probe_max;
+}
+
+#ifdef CPP_API
+static bool can_open_xrt_device_index(int device_index) {
+  try {
+    auto xrtDevice = xrt::device(device_index);
+    (void)xrtDevice;
+    return true;
+  } catch (...) {
+    return false;
+  }
+}
+
+static int detect_xrt_device_index() {
+  int found_index = -1;
+  int found_count = 0;
+  const int probe_max = get_xrt_device_probe_max();
+
+  for (int index = 0; index < probe_max; ++index) {
+    if (!can_open_xrt_device_index(index)) {
+      continue;
+    }
+    if (found_index < 0) {
+      found_index = index;
+    }
+    ++found_count;
+  }
+
+  if (found_index < 0) {
+    printf("[VXDRV] warning: could not auto-detect accessible XRT device; using index %d\n",
+           DEFAULT_DEVICE_INDEX);
+    return DEFAULT_DEVICE_INDEX;
+  }
+
+  if (found_count > 1) {
+    printf("[VXDRV] warning: multiple accessible XRT devices; using index %d\n",
+           found_index);
+  }
+  return found_index;
+}
+#endif
+
+static int select_xrt_device_index() {
+  int device_index = DEFAULT_DEVICE_INDEX;
+  const char *device_index_s = getenv("XRT_DEVICE_INDEX");
+  if (parse_xrt_device_index(device_index_s, &device_index)) {
+    return device_index;
+  }
+  if (device_index_s != nullptr && device_index_s[0] != '\0') {
+    printf("[VXDRV] warning: invalid XRT_DEVICE_INDEX=%s; auto-detecting device\n",
+           device_index_s);
+  }
+
+#ifdef CPP_API
+  if (!is_xrt_emulation()) {
+    return detect_xrt_device_index();
+  }
+#endif
+
+  return DEFAULT_DEVICE_INDEX;
 }
 
 static void get_xrt_shm_path_policy(
@@ -216,11 +304,7 @@ public:
   }
 
   int init() {
-    int device_index = DEFAULT_DEVICE_INDEX;
-    const char *device_index_s = getenv("XRT_DEVICE_INDEX");
-    if (device_index_s != nullptr) {
-      device_index = atoi(device_index_s);
-    }
+    int device_index = select_xrt_device_index();
 
     const char *xlbin_path_s = getenv("XRT_XCLBIN_PATH");
     if (xlbin_path_s == nullptr) {
@@ -237,6 +321,8 @@ public:
     auto xclbin = xrt::xclbin(std::string(xlbin_path_s));
     auto device_name = xrtDevice.get_info<xrt::info::device::name>();
     device_bdf = xrtDevice.get_info<xrt::info::device::bdf>();
+    printf("[VXDRV] XRT device: index=%d, bdf=%s, name=%s\n",
+           device_index, device_bdf.c_str(), device_name.c_str());
 
   #else
 

@@ -8,9 +8,8 @@
 // verification and runs warmup + timed-iteration loops around
 // vx_start / vx_ready_wait.
 //
-// CLI: same shape args as main.cpp (-m -n -k -q -t -d) plus
-//      --warmup=N / --iterations=N / --csv / --output=PATH / --output-append
-//      parsed by bench_util.
+// CLI: same shape args as main.cpp (-m -n -k -q -t -d) plus benchmark and
+//      optional power-measurement flags parsed by bench_util.
 
 #include <iostream>
 #include <unistd.h>
@@ -439,8 +438,12 @@ static bool compute_tmem_layout(kernel_arg_t& kargs, uint64_t tensor_mem_size) {
 // ============================================================================
 
 int main(int argc, char *argv[]) {
-  // Strip --warmup / --iterations / --csv first; remaining argv goes to getopt.
+  // Strip benchmark/power flags first; remaining argv goes to getopt.
   auto bench = vx_bench::parse(argc, argv);
+  if (bench.parse_error) {
+    std::cerr << "Argument error: " << bench.parse_error_message << std::endl;
+    return -1;
+  }
 
   optind = 1;
   int c;
@@ -455,11 +458,21 @@ int main(int argc, char *argv[]) {
     case 'h':
       printf("Usage: %s [--warmup=N] [--iterations=N] [--csv] "
              "[--output=PATH] [--output-append] "
+             "[--power[=separate|same|both|off]] [--power-csv=PATH] "
+             "[--power-summary=PATH] [--power-interval=SEC] "
+             "[--power-fpga-id=ID] [--power-iterations=N] "
+             "[--power-idle-sec=SEC] [--power-csv-max-bytes=N] "
+             "[--power-script=PATH] "
              "[-m M] [-n N] [-k K] [-q QBLK] [-t WTRANS] [-d QDIR]\n", argv[0]);
       return 0;
     default:
       printf("Usage: %s [--warmup=N] [--iterations=N] [--csv] "
              "[--output=PATH] [--output-append] "
+             "[--power[=separate|same|both|off]] [--power-csv=PATH] "
+             "[--power-summary=PATH] [--power-interval=SEC] "
+             "[--power-fpga-id=ID] [--power-iterations=N] "
+             "[--power-idle-sec=SEC] [--power-csv-max-bytes=N] "
+             "[--power-script=PATH] "
              "[-m M] [-n N] [-k K] [-q QBLK] [-t WTRANS] [-d QDIR]\n", argv[0]);
       return -1;
     }
@@ -495,8 +508,17 @@ int main(int argc, char *argv[]) {
 
   if (!bench.csv) {
     printf("FPINT-GEMM-FFN-HW Bench: M=%u (padded to %u) N=%u K=%u "
-           "QBLK=%u WTRANS=%u QDIR=%u  warmup=%d iterations=%d\n",
+           "QBLK=%u WTRANS=%u QDIR=%u  warmup=%d iterations=%d",
            M, M_pad, N, K, QBLK, WTRANS, QDIR, bench.warmup, bench.iterations);
+    if (vx_bench::power_enabled(bench)) {
+      printf(" power=%s power_iterations=%d power_interval=%.6g",
+             vx_bench::power_mode_name(bench.power_mode),
+             bench.power_iterations,
+             bench.power_interval);
+      printf(" power_csv_max_bytes=%llu",
+             static_cast<unsigned long long>(bench.power_csv_max_bytes));
+    }
+    printf("\n");
   }
 
   RT_CHECK(vx_dev_open(&device));
@@ -581,16 +603,36 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_copy_to_dev(args_buffer, &kargs, 0, sizeof(kargs)));
 
   auto check_kernel_status = [&](const char* phase, int iter) -> bool {
-    RT_CHECK(vx_copy_from_dev(&kargs, args_buffer, 0, sizeof(kargs)));
+    int ret = vx_copy_from_dev(&kargs, args_buffer, 0, sizeof(kargs));
+    if (ret != 0) {
+      std::cerr << "vx_copy_from_dev failed during " << phase
+                << " iter=" << iter << ": ret=" << ret << std::endl;
+      return false;
+    }
     if (kargs.status != STATUS_OK) {
       std::cerr << "Kernel failed during " << phase << " iter=" << iter
                 << ": status=" << kargs.status
                 << " (" << status_to_str(kargs.status) << ")"
                 << std::endl;
-      cleanup();
       return false;
     }
     return true;
+  };
+
+  auto run_kernel_checked = [&](const char* phase, int iter) -> bool {
+    int ret = vx_start(device, krnl_buffer, args_buffer);
+    if (ret != 0) {
+      std::cerr << "vx_start failed during " << phase
+                << " iter=" << iter << ": ret=" << ret << std::endl;
+      return false;
+    }
+    ret = vx_ready_wait(device, VX_MAX_TIMEOUT);
+    if (ret != 0) {
+      std::cerr << "vx_ready_wait failed during " << phase
+                << " iter=" << iter << ": ret=" << ret << std::endl;
+      return false;
+    }
+    return check_kernel_status(phase, iter);
   };
 
   // ---- Warmup --------------------------------------------------------------
@@ -599,8 +641,10 @@ int main(int argc, char *argv[]) {
   for (int i = 0; i < bench.warmup; ++i) {
     RT_CHECK(vx_start(device, krnl_buffer, args_buffer));
     RT_CHECK(vx_ready_wait(device, VX_MAX_TIMEOUT));
-    if (!check_kernel_status("warmup", i))
+    if (!check_kernel_status("warmup", i)) {
+      cleanup();
       return -1;
+    }
   }
 
   // ---- Timed iterations ----------------------------------------------------
@@ -609,12 +653,85 @@ int main(int argc, char *argv[]) {
     vx_bench::Stopwatch sw; sw.start();
     RT_CHECK(vx_start(device, krnl_buffer, args_buffer));
     RT_CHECK(vx_ready_wait(device, VX_MAX_TIMEOUT));
-    if (!check_kernel_status("timed", i))
+    if (!check_kernel_status("timed", i)) {
+      cleanup();
       return -1;
+    }
     stats.record(sw.stop_us());
   }
 
   stats.report("fpint_gemm_ffn_hw", bench);
+
+  if (vx_bench::power_enabled(bench)) {
+    if (!bench.csv) {
+      printf("[power] starting sampler: mode=%s csv=%s summary=%s idle=%.3fs iterations=%d\n",
+             vx_bench::power_mode_name(bench.power_mode),
+             bench.power_csv.c_str(),
+             bench.power_summary.c_str(),
+             bench.power_idle_sec,
+             bench.power_iterations);
+    }
+
+    vx_bench::PowerSampler sampler;
+    if (!sampler.start(bench)) {
+      cleanup();
+      return -1;
+    }
+
+    vx_bench::PowerPhase idle_phase;
+    idle_phase.mode = "idle";
+    idle_phase.phase = "idle";
+    idle_phase.start_s = vx_bench::epoch_seconds();
+    vx_bench::sleep_seconds(bench.power_idle_sec);
+    idle_phase.end_s = vx_bench::epoch_seconds();
+
+    std::vector<vx_bench::PowerPhase> power_runs;
+    auto run_power_phase = [&](const char* mode, bool measure_latency) -> bool {
+      vx_bench::PowerPhase phase;
+      phase.mode = mode;
+      phase.phase = "run";
+      phase.start_s = vx_bench::epoch_seconds();
+
+      vx_bench::Stats phase_latency;
+      for (int i = 0; i < bench.power_iterations; ++i) {
+        if (measure_latency) {
+          vx_bench::Stopwatch sw; sw.start();
+          if (!run_kernel_checked(mode, i))
+            return false;
+          phase_latency.record(sw.stop_us());
+        } else {
+          if (!run_kernel_checked(mode, i))
+            return false;
+        }
+      }
+
+      phase.end_s = vx_bench::epoch_seconds();
+      if (measure_latency) {
+        phase.has_latency = true;
+        phase.latency = phase_latency.summary();
+      }
+      power_runs.push_back(phase);
+      return true;
+    };
+
+    bool power_ok = true;
+    if (vx_bench::power_has_separate(bench)) {
+      power_ok = run_power_phase("separate", false);
+    }
+    if (power_ok && vx_bench::power_has_same(bench)) {
+      power_ok = run_power_phase("same", true);
+    }
+
+    sampler.stop();
+    if (!power_ok) {
+      cleanup();
+      return -1;
+    }
+    if (!vx_bench::write_power_summary("fpint_gemm_ffn_hw", bench, idle_phase, power_runs)) {
+      cleanup();
+      return -1;
+    }
+  }
 
   if (!bench.csv) {
     printf("\n[Performance]\n");

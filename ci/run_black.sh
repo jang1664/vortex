@@ -19,7 +19,7 @@ list_fpga_bin_aliases() {
 }
 
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
-  echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"] [--fpga-bin ALIAS_OR_PATH] [--bench] [--perf CLASS] [--debug LEVEL] [--hw-debug]"
+  echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"] [--fpga-bin ALIAS_OR_PATH] [--bench] [--perf CLASS] [--debug LEVEL] [--hw-debug] [--power[=MODE]] [--power-out-dir DIR]"
   echo "Modes:"
   echo "  rtlsim   - Run only rtlsim tests"
   echo "  xrtsim   - Run only xrtsim tests"
@@ -30,6 +30,12 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   echo "Options:"
   echo "  --hw-debug, --enable-hw-debug-module"
   echo "      Append -DENABLE_HW_DEBUG_MODULE to CONFIGS"
+  echo "  --power[=separate|same|both|off]"
+  echo "      Enable bench power measurement and append matching --power args"
+  echo "  --power-out-dir DIR"
+  echo "      Directory for default power.csv and power_summary.csv"
+  echo "  --power-csv-max-bytes N"
+  echo "      Raw power CSV size limit in bytes (default: 1048576, 0 unlimited)"
   aliases="$(list_fpga_bin_aliases)"
   if [[ -n "${aliases}" ]]; then
     echo "FPGA bin aliases: ${aliases}"
@@ -41,7 +47,7 @@ mode="${1:-}"
 shift || true
 
 if [[ "${mode}" == "" ]]; then
-  echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"] [--fpga-bin ALIAS_OR_PATH] [--bench] [--perf CLASS] [--debug LEVEL] [--hw-debug]"
+  echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"] [--fpga-bin ALIAS_OR_PATH] [--bench] [--perf CLASS] [--debug LEVEL] [--hw-debug] [--power[=MODE]] [--power-out-dir DIR]"
   echo "Modes:"
   echo "  rtlsim   - Run only rtlsim tests"
   echo "  xrtsim   - Run only xrtsim tests"
@@ -62,6 +68,16 @@ BENCH_FLAG=""
 PERF_FLAG=""
 DEBUG_FLAG=""
 HW_DEBUG=0
+POWER_MODE=""
+POWER_OUT_DIR=""
+POWER_CSV=""
+POWER_SUMMARY=""
+POWER_INTERVAL=""
+POWER_FPGA_ID=""
+POWER_ITERATIONS=""
+POWER_IDLE_SEC=""
+POWER_CSV_MAX_BYTES=1048576
+POWER_SCRIPT=""
 
 resolve_fpga_bin() {
   local fpga_bin="$1"
@@ -95,6 +111,58 @@ append_run_configs() {
   fi
 
   printf '%s' "${configs}"
+}
+
+append_arg() {
+  local value="$1"
+  if [[ -z "${ARGS}" ]]; then
+    ARGS="${value}"
+  else
+    ARGS="${ARGS} ${value}"
+  fi
+}
+
+append_power_args() {
+  if [[ -z "${POWER_MODE}" || "${POWER_MODE}" == "off" ]]; then
+    return
+  fi
+
+  BENCH_FLAG="--bench"
+
+  if [[ -z "${POWER_OUT_DIR}" ]]; then
+    POWER_OUT_DIR="$(pwd)/power_logs/$(date +%Y%m%d_%H%M%S)"
+  fi
+  mkdir -p "${POWER_OUT_DIR}"
+
+  if [[ -z "${POWER_CSV}" ]]; then
+    POWER_CSV="${POWER_OUT_DIR}/power.csv"
+  fi
+  if [[ -z "${POWER_SUMMARY}" ]]; then
+    POWER_SUMMARY="${POWER_OUT_DIR}/power_summary.csv"
+  fi
+
+  append_arg "--power=${POWER_MODE}"
+  append_arg "--power-csv=${POWER_CSV}"
+  append_arg "--power-summary=${POWER_SUMMARY}"
+  append_arg "--power-csv-max-bytes=${POWER_CSV_MAX_BYTES}"
+
+  if [[ -n "${POWER_INTERVAL}" ]]; then
+    append_arg "--power-interval=${POWER_INTERVAL}"
+  fi
+  if [[ -n "${POWER_FPGA_ID}" ]]; then
+    append_arg "--power-fpga-id=${POWER_FPGA_ID}"
+  fi
+  if [[ -n "${POWER_ITERATIONS}" ]]; then
+    append_arg "--power-iterations=${POWER_ITERATIONS}"
+  fi
+  if [[ -n "${POWER_IDLE_SEC}" ]]; then
+    append_arg "--power-idle-sec=${POWER_IDLE_SEC}"
+  fi
+  if [[ -n "${POWER_SCRIPT}" ]]; then
+    append_arg "--power-script=${POWER_SCRIPT}"
+  fi
+
+  echo "Power measurement enabled: mode=${POWER_MODE} csv=${POWER_CSV} summary=${POWER_SUMMARY} max_bytes=${POWER_CSV_MAX_BYTES}"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -135,9 +203,96 @@ while [[ $# -gt 0 ]]; do
       HW_DEBUG=1
       shift
       ;;
+    --power)
+      POWER_MODE="separate"
+      if [[ $# -gt 1 && "${2:0:1}" != "-" ]]; then
+        POWER_MODE="$2"
+        shift 2
+      else
+        shift
+      fi
+      ;;
+    --power=*)
+      POWER_MODE="${1#*=}"
+      shift
+      ;;
+    --power-out-dir)
+      POWER_OUT_DIR="$2"
+      shift 2
+      ;;
+    --power-out-dir=*)
+      POWER_OUT_DIR="${1#*=}"
+      shift
+      ;;
+    --power-csv)
+      POWER_CSV="$2"
+      shift 2
+      ;;
+    --power-csv=*)
+      POWER_CSV="${1#*=}"
+      shift
+      ;;
+    --power-summary)
+      POWER_SUMMARY="$2"
+      shift 2
+      ;;
+    --power-summary=*)
+      POWER_SUMMARY="${1#*=}"
+      shift
+      ;;
+    --power-interval)
+      POWER_INTERVAL="$2"
+      shift 2
+      ;;
+    --power-interval=*)
+      POWER_INTERVAL="${1#*=}"
+      shift
+      ;;
+    --power-fpga-id)
+      POWER_FPGA_ID="$2"
+      shift 2
+      ;;
+    --power-fpga-id=*)
+      POWER_FPGA_ID="${1#*=}"
+      shift
+      ;;
+    --power-iterations)
+      POWER_ITERATIONS="$2"
+      shift 2
+      ;;
+    --power-iterations=*)
+      POWER_ITERATIONS="${1#*=}"
+      shift
+      ;;
+    --power-idle-sec)
+      POWER_IDLE_SEC="$2"
+      shift 2
+      ;;
+    --power-idle-sec=*)
+      POWER_IDLE_SEC="${1#*=}"
+      shift
+      ;;
+    --power-csv-max-bytes)
+      POWER_CSV_MAX_BYTES="$2"
+      shift 2
+      ;;
+    --power-csv-max-bytes=*)
+      POWER_CSV_MAX_BYTES="${1#*=}"
+      shift
+      ;;
+    --power-script)
+      POWER_SCRIPT="$2"
+      shift 2
+      ;;
+    --power-script=*)
+      POWER_SCRIPT="${1#*=}"
+      shift
+      ;;
     -h|--help)
-      echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"] [--fpga-bin ALIAS_OR_PATH] [--bench] [--perf CLASS] [--debug LEVEL] [--hw-debug]"
+      echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"] [--fpga-bin ALIAS_OR_PATH] [--bench] [--perf CLASS] [--debug LEVEL] [--hw-debug] [--power[=MODE]] [--power-out-dir DIR]"
       echo "  --hw-debug, --enable-hw-debug-module: append -DENABLE_HW_DEBUG_MODULE to CONFIGS"
+      echo "  --power[=separate|same|both|off]: append bench power-measurement args"
+      echo "  --power-csv-max-bytes N: raw power CSV size limit (default: 1048576, 0 unlimited)"
       exit 0
       ;;
     *)
@@ -147,6 +302,8 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+append_power_args
 
 # Base CONFIGS for simulation modes comes from the environment only. FPGA bin
 # aliases are resolved below in hw mode, where the alias config is required.
