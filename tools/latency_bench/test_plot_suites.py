@@ -300,6 +300,138 @@ class SuiteBarPlotTest(unittest.TestCase):
             self.assertEqual(10.0, by_stack["attn_qkT"])
             self.assertEqual(60.0, by_stack["gate_proj"])
 
+    def test_case_latency_scale_rules_use_composed_case_variant_after_raw_match(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            raw_db = tmp_path / "raw_db.csv"
+            rows = [
+                {
+                    "run_id": "run_shared",
+                    "timestamp_utc": "2026-01-01T00:00:00+00:00",
+                    "fpga_bin_label": "plot_bin",
+                    "app": "shared_gemm",
+                    "kind": "gemm",
+                    "variant": "C1",
+                    "args": "-m 8 -n 8 -k 128",
+                    "status": "pass",
+                    "p50_us": "10",
+                    "avg_us": "10",
+                    "p95_us": "10",
+                    "min_us": "10",
+                    "max_us": "10",
+                },
+                {
+                    "run_id": "run_softmax",
+                    "timestamp_utc": "2026-01-01T00:00:00+00:00",
+                    "fpga_bin_label": "plot_bin",
+                    "app": "softmax",
+                    "kind": "softmax",
+                    "variant": "C1",
+                    "args": "-size 8",
+                    "status": "pass",
+                    "p50_us": "7",
+                    "avg_us": "7",
+                    "p95_us": "7",
+                    "min_us": "7",
+                    "max_us": "7",
+                },
+            ]
+            with raw_db.open("w", newline="") as fp:
+                writer = csv.DictWriter(fp, fieldnames=list(rows[0].keys()))
+                writer.writeheader()
+                writer.writerows(rows)
+
+            suite = BenchSuite(
+                name="shared_variant_suite",
+                defaults=BenchDefaults(warmup=1, iterations=1, fpga_bin="plot_bin"),
+                cases=[
+                    BenchCase(
+                        case_id="c1_gemm",
+                        app="shared_gemm",
+                        args="-m 8 -n 8 -k 128",
+                        kind="gemm",
+                        stage="prefill",
+                        name="shared_gemm",
+                        variant="C1",
+                        calls_per_forward=1,
+                        warmup=1,
+                        iterations=1,
+                        shape={"batch": 1, "seq": 8},
+                    ),
+                    BenchCase(
+                        case_id="c2_gemm",
+                        app="shared_gemm",
+                        args="-m 8 -n 8 -k 128",
+                        kind="gemm",
+                        stage="prefill",
+                        name="shared_gemm",
+                        variant="C2",
+                        calls_per_forward=2,
+                        warmup=1,
+                        iterations=1,
+                        shape={"batch": 1, "seq": 8},
+                    ),
+                    BenchCase(
+                        case_id="c2_softmax",
+                        app="softmax",
+                        args="-size 8",
+                        kind="softmax",
+                        stage="prefill",
+                        name="attn_softmax",
+                        variant="C2",
+                        calls_per_forward=3,
+                        warmup=1,
+                        iterations=1,
+                        shape={"batch": 1, "seq": 8},
+                    ),
+                ],
+            )
+            scale_rules = (
+                LatencyScaleRule("C2_gemm_area_norm", {"kind": "gemm", "variant": "C2"}, 2.29),
+            )
+
+            composed, plot_data, stack_data = prepare_suite_bar_data(
+                [suite],
+                SuiteBarPlotOptions(
+                    raw_dbs=(raw_db,),
+                    out_dir=tmp_path / "figures",
+                    case_latency_scale_rules=scale_rules,
+                ),
+            )
+
+            by_case = {row["case_id"]: row for _, row in composed.iterrows()}
+            self.assertEqual(10.0, float(by_case["c1_gemm"]["latency_us"]))
+            self.assertEqual("", by_case["c1_gemm"]["case_latency_scale_rules"])
+            self.assertAlmostEqual(22.9, float(by_case["c2_gemm"]["latency_us"]), places=6)
+            self.assertAlmostEqual(45.8, float(by_case["c2_gemm"]["weighted_latency_us"]), places=6)
+            self.assertEqual("C2_gemm_area_norm", by_case["c2_gemm"]["case_latency_scale_rules"])
+            self.assertEqual("2.29", by_case["c2_gemm"]["case_latency_scales"])
+            self.assertEqual(7.0, float(by_case["c2_softmax"]["latency_us"]))
+            self.assertEqual("", by_case["c2_softmax"]["case_latency_scale_rules"])
+
+            totals_by_variant = {
+                row["variant"]: float(row["total_latency_us"])
+                for _, row in plot_data.iterrows()
+            }
+            self.assertEqual(10.0, totals_by_variant["C1"])
+            self.assertAlmostEqual(66.8, totals_by_variant["C2"], places=6)
+            self.assertIn("case_latency_scale_rules", plot_data.columns)
+            self.assertIn("case_latency_scale_rules", stack_data.columns)
+
+            out_dir = tmp_path / "figures"
+            visualize_suites(
+                [suite],
+                SuiteBarPlotOptions(
+                    raw_dbs=(raw_db,),
+                    out_dir=out_dir,
+                    case_latency_scale_rules=scale_rules,
+                ),
+            )
+            scaled_plot = pd.read_csv(out_dir / "plot_data_scaled.csv")
+            scaled_stack = pd.read_csv(out_dir / "plot_stack_data_scaled.csv")
+            self.assertIn("case_latency_scale_rules", scaled_plot.columns)
+            self.assertIn("case_latency_scale_rules", scaled_stack.columns)
+
     def test_visualize_suites_writes_csvs_and_figures(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
@@ -332,6 +464,28 @@ class SuiteBarPlotTest(unittest.TestCase):
             self.assertEqual(80.0, float(plot_wide.loc[0, "v1"]))
             self.assertEqual(20.0, float(stack_wide.loc[0, "attn_qkT"]))
             self.assertEqual(60.0, float(stack_wide.loc[0, "gate_proj"]))
+
+    def test_title_right_legend_position_generates_plot(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            raw_db = tmp_path / "raw_db.csv"
+            out_dir = tmp_path / "figures"
+            self._write_raw_db(raw_db)
+
+            visualize_suites(
+                [self._suite()],
+                SuiteBarPlotOptions(
+                    raw_dbs=(raw_db,),
+                    out_dir=out_dir,
+                    stacked=False,
+                    legend_position="title_right",
+                    legend_ncol=2,
+                    figure_title="E2E latency",
+                ),
+            )
+
+            self.assertTrue((out_dir / "bar_total_p50_us.png").exists())
+            self.assertTrue((out_dir / "bar_total_p50_us.pdf").exists())
 
     def test_visualize_suites_writes_unscaled_and_scaled_csvs_when_rules_are_set(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

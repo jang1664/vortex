@@ -14,7 +14,7 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Patch, Rectangle
 import pandas as pd
 
-from .compose import ComposeOptions, LatencyScaleRule, compose_latency, normalize_args
+from .compose import ComposeOptions, LatencyScaleRule, apply_latency_scale_rules, compose_latency, normalize_args
 from .estimate import LatencyEstimateOptions, estimate_composed_latency
 from .suite import BenchCase, BenchDefaults, BenchSuite, resolve_case_fpga_bin
 
@@ -33,7 +33,7 @@ DEFAULT_STACK_LEGEND_SCOPE = "global"
 DEFAULT_X_TICK_LABEL_MODE = "group"
 _NONE_AXIS = "none"
 RELATIVE_SCOPE_CHOICES = ("global", "subplot", "x_tick")
-LEGEND_POSITION_CHOICES = ("right", "bottom", "top", "none")
+LEGEND_POSITION_CHOICES = ("right", "bottom", "top", "title_right", "none")
 STACK_LEGEND_SCOPE_CHOICES = ("global", "hue")
 X_TICK_LABEL_MODE_CHOICES = ("group", "bar")
 TEXT_ALIGN_CHOICES = ("center", "left", "right")
@@ -96,6 +96,7 @@ class SuiteBarPlotOptions:
     label_maps: Mapping[str, Mapping[object, str]] = field(default_factory=dict)
     value_orders: Mapping[str, Iterable[object]] = field(default_factory=dict)
     latency_scale_rules: tuple[LatencyScaleRule | Mapping[str, object], ...] = ()
+    case_latency_scale_rules: tuple[LatencyScaleRule | Mapping[str, object], ...] = ()
     latency_estimate: LatencyEstimateOptions | None = None
     row_filters: tuple[PlotRowFilter, ...] = ()
     palette: tuple[str, ...] = BLUE_GREEN_PALETTE
@@ -424,12 +425,41 @@ def _compose_suite_bar_cases(combined_suite: BenchSuite, options: SuiteBarPlotOp
     )
 
 
+def _apply_case_latency_scale_rules(composed: pd.DataFrame, options: SuiteBarPlotOptions) -> pd.DataFrame:
+    if not options.case_latency_scale_rules:
+        return composed
+
+    out = composed.copy()
+    out["case_latency_scale_rules"] = ""
+    out["case_latency_scales"] = "1"
+
+    if "compose_status" in out.columns:
+        eligible = out["compose_status"].astype(str).isin({"pass", "estimated"})
+    else:
+        eligible = pd.Series(True, index=out.index)
+    if bool(eligible.any()):
+        scaled = apply_latency_scale_rules(
+            out.loc[eligible],
+            options.case_latency_scale_rules,
+            metric_columns=("latency_us",),
+        )
+        out.loc[eligible, "latency_us"] = scaled["latency_us"]
+        out.loc[eligible, "case_latency_scale_rules"] = scaled["_latency_scale_rules"]
+        out.loc[eligible, "case_latency_scales"] = scaled["_latency_scale_factor"]
+
+    latency = pd.to_numeric(out["latency_us"], errors="coerce")
+    calls = pd.to_numeric(out["calls_per_forward"], errors="coerce")
+    out["weighted_latency_us"] = latency * calls
+    return out
+
+
 def _prepare_suite_bar_data_from_composed(
     composed: pd.DataFrame,
     source_suites: dict[str, str],
     options: SuiteBarPlotOptions,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     composed = estimate_composed_latency(composed, options.latency_estimate)
+    composed = _apply_case_latency_scale_rules(composed, options)
     composed = _add_bar_axis_columns(composed, source_suites)
     composed = _apply_row_filters(composed, options.row_filters)
     composed["weighted_latency_us"] = pd.to_numeric(composed["weighted_latency_us"], errors="coerce")
@@ -470,6 +500,13 @@ def _prepare_suite_bar_data_from_composed(
         )
         plot_aggs.update(scale_aggs)
         stack_aggs.update(scale_aggs)
+    if "case_latency_scale_rules" in composed.columns:
+        case_scale_aggs = dict(
+            case_latency_scale_rules=("case_latency_scale_rules", lambda values: _unique_join(values.astype(str))),
+            case_latency_scales=("case_latency_scales", lambda values: _unique_join(values.astype(str))),
+        )
+        plot_aggs.update(case_scale_aggs)
+        stack_aggs.update(case_scale_aggs)
     estimate_aggs = _optional_string_aggs(
         composed,
         (
@@ -519,24 +556,25 @@ def prepare_suite_bar_data_versions(
 ) -> SuiteBarDataVersions:
     combined_suite, source_suites = _combine_suites(suites, match_fpga_bin=options.match_fpga_bin)
 
-    base_options = replace(options, latency_scale_rules=(), latency_estimate=None)
+    base_options = replace(options, latency_scale_rules=(), case_latency_scale_rules=(), latency_estimate=None)
     base_composed = _compose_suite_bar_cases(combined_suite, base_options)
     base = SuiteBarData(*_prepare_suite_bar_data_from_composed(base_composed, source_suites, base_options))
 
     scaled = None
     scaled_composed = None
-    if options.latency_scale_rules:
+    has_scale_rules = bool(options.latency_scale_rules or options.case_latency_scale_rules)
+    if has_scale_rules:
         scaled_options = replace(options, latency_estimate=None)
         scaled_composed = _compose_suite_bar_cases(combined_suite, scaled_options)
         scaled = SuiteBarData(*_prepare_suite_bar_data_from_composed(scaled_composed, source_suites, scaled_options))
 
     estimated = None
     if options.latency_estimate is not None and options.latency_estimate.enabled:
-        estimated_options = replace(options, latency_scale_rules=())
+        estimated_options = replace(options, latency_scale_rules=(), case_latency_scale_rules=())
         estimated = SuiteBarData(*_prepare_suite_bar_data_from_composed(base_composed.copy(), source_suites, estimated_options))
 
     scaled_estimated = None
-    if options.latency_scale_rules and options.latency_estimate is not None and options.latency_estimate.enabled:
+    if has_scale_rules and options.latency_estimate is not None and options.latency_estimate.enabled:
         assert scaled_composed is not None
         scaled_estimated = SuiteBarData(*_prepare_suite_bar_data_from_composed(scaled_composed.copy(), source_suites, options))
 
@@ -1142,7 +1180,7 @@ def plot_suite_bar_grid(plot_data: pd.DataFrame, stack_data: pd.DataFrame, optio
         sharey=options.share_y,
     )
     if options.figure_title:
-        fig.suptitle(options.figure_title)
+        fig.suptitle(options.figure_title, x=0.5, ha="center")
 
     x_positions = list(range(len(x_values)))
     global_max_height = max(float(rows[value_col].max()), 1.0)
@@ -1304,6 +1342,18 @@ def plot_suite_bar_grid(plot_data: pd.DataFrame, stack_data: pd.DataFrame, optio
                 loc="center left",
                 bbox_to_anchor=(0.80, 0.5),
                 ncol=options.legend_ncol or 1,
+                frameon=False,
+            )
+        elif options.legend_position == "title_right":
+            ncol = options.legend_ncol or min(len(by_label), 4)
+            fig.tight_layout(rect=(0, 0, 1, 0.90 if options.figure_title else 0.94))
+            fig.legend(
+                by_label.values(),
+                by_label.keys(),
+                title=legend_title,
+                loc="upper right",
+                bbox_to_anchor=(0.98, 0.98),
+                ncol=ncol,
                 frameon=False,
             )
         elif options.legend_position == "bottom":
