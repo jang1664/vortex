@@ -52,10 +52,10 @@ The main `run` flow is:
 11. Build each unique benchmark app once with `blackbox.sh --build-only --bench`.
 12. Run each unique execution with `blackbox.sh --run-only --bench`.
 13. Append one row to `progress.csv` after each unique execution finishes.
-14. Read `run_status.csv` and `raw/*.csv` to build `results.csv`.
-15. Build `summary.csv` by applying `calls_per_forward` weights to successful
+14. Update the top-level `<out>/raw_db.csv` for that completed execution.
+15. Read `run_status.csv` and `raw/*.csv` to build `results.csv`.
+16. Build `summary.csv` by applying `calls_per_forward` weights to successful
     rows in `results.csv`.
-16. Append all `results.csv` rows to the top-level `<out>/raw_db.csv`.
 17. Optionally call `visualize` to create figures under the per-run `figures/`.
 
 The generated `run_fpga_bench.sh` is the source of truth for what actually ran.
@@ -77,12 +77,18 @@ For each unique execution it:
 - By default also passes `--power=separate` with per-execution power outputs
   under `<out>/runs/<run_id>/power/`. Use `--no-power` for latency-only runs.
   Use `--no-latency` to skip the normal latency loop and keep only the separate
-  power phase.
+  power phase. Power auto-duration is enabled by default and capped with
+  `--power-max-iterations=1024` to avoid very large repeated FPGA launch counts;
+  pass a smaller value for risky runs or `--power-max-iterations=0` to disable
+  the cap.
 - Records one status row in `run_status.csv` with `exec_key`, `app`,
   `returncode`, `failure_phase`, `failure_reason`, `raw_csv`, `power_csv`,
   `power_summary`, measurement mode flags, `log_file`, and `elapsed_wall_s`.
 - Appends one live progress row to `progress.csv` with status, elapsed time,
   raw latency columns, and parse errors.
+- Updates the top-level `raw_db.csv` immediately after the progress row, so
+  completed executions remain resumable with `--skip-existing` even if the
+  script is interrupted before `results.csv` is built.
 
 `results.csv` is case-oriented, not execution-oriented. If two logical cases
 share the same `exec_key`, they reuse the same raw benchmark measurement but
@@ -94,11 +100,11 @@ is the benchmark executable passed to blackbox. `summary.csv` is derived from
 `results.csv`; it groups successful rows by stage, kind, backend, op, kernel
 name, and total suite latency.
 
-The top-level `raw_db.csv` is append-only. Reusing the same `--out` across
-multiple days preserves every measurement row, including repeated measurements
-of the same `(FPGA bin, app, args, warmup, iterations)` tuple. Aggregate or
-interpolate from this DB in a later analysis step instead of overwriting older
-measurements.
+The top-level `raw_db.csv` is updated as each execution completes. Reusing the
+same `--out` across multiple days preserves every measurement row, including
+repeated measurements of the same `(FPGA bin, app, args, warmup, iterations)`
+tuple. Aggregate or interpolate from this DB in a later analysis step instead
+of overwriting older measurements.
 
 ## Launch Location
 
@@ -390,9 +396,9 @@ In `summary.csv`, `weighted_total_avg_us` means
 
 ## Append-Only Raw DB
 
-By default, every non-dry run appends its `results.csv` rows to
-`<out>/raw_db.csv`. Reuse the same `--out` for the same long-lived measurement
-DB:
+By default, every non-dry run appends completed execution rows to
+`<out>/raw_db.csv` as the generated script runs. Reuse the same `--out` for the
+same long-lived measurement DB:
 
 ```bash
 python -m tools.latency_bench run \

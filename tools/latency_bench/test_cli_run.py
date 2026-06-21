@@ -51,8 +51,15 @@ if [[ "$build_only" == "1" ]]; then
   exit 0
 fi
 raw_csv=$(printf '%s\n' "$bench_args" | sed -n 's/.*--output=\\([^ ]*\\).*/\\1/p')
+power_csv=$(printf '%s\n' "$bench_args" | sed -n 's/.*--power-csv=\\([^ ]*\\).*/\\1/p')
+power_summary=$(printf '%s\n' "$bench_args" | sed -n 's/.*--power-summary=\\([^ ]*\\).*/\\1/p')
 mkdir -p "$(dirname "$raw_csv")" "$(dirname "$log_file")"
 printf 'fpint_gemm,3,1.0,2.0,4.0,2.0,3.0\n' > "$raw_csv"
+if [[ -n "$power_summary" ]]; then
+  mkdir -p "$(dirname "$power_summary")"
+  printf 'label,mode,phase,samples,elapsed_s,idle_samples,idle_avg_w,run_min_w,run_avg_w,run_max_w,delta_avg_w,delta_peak_w,energy_j,latency_samples,latency_min_us,latency_avg_us,latency_max_us,raw_csv\n' > "$power_summary"
+  printf 'fpint_gemm,separate,run,5,10.0,2,1.0,3.0,4.0,5.0,3.0,4.0,40.0,0,nan,nan,nan,%s\n' "$power_csv" >> "$power_summary"
+fi
 printf 'ok\n' > "$log_file"
 """
         )
@@ -179,11 +186,34 @@ aliases:
             self.assertIn("/power/", script)
             self.assertIn("--power-csv=", script)
             self.assertIn("--power-summary=", script)
+            self.assertIn("--power-auto-duration=on", script)
+            self.assertIn("--power-min-run-sec=10.0", script)
+            self.assertIn("--power-max-run-sec=60.0", script)
+            self.assertIn("--power-max-iterations=1024", script)
+            self.assertIn("--power-target-samples=100", script)
+            self.assertIn("--power-min-interval=0.05", script)
+            self.assertIn("--power-max-interval=1.0", script)
             self.assertNotIn("--no-latency", script)
+            self.assertIn("stage=build_begin", script)
+            self.assertIn("stage=build_end", script)
+            self.assertIn("stage=case_begin", script)
+            self.assertIn("stage=case_args", script)
+            self.assertIn("stage=run_attempt_begin", script)
+            self.assertIn("stage=run_attempt_end", script)
+            self.assertIn("stage=case_end", script)
+            self.assertIn("2>&1 | tee -a", script)
+            self.assertIn("\"$attempt_log\"", script)
             manifest = json.loads((run_dir / "manifest.json").read_text())
             self.assertTrue(manifest["measure_latency"])
             self.assertTrue(manifest["measure_power"])
             self.assertEqual("separate", manifest["power_mode"])
+            self.assertTrue(manifest["power_auto_duration"])
+            self.assertEqual(10.0, manifest["power_min_run_sec"])
+            self.assertEqual(60.0, manifest["power_max_run_sec"])
+            self.assertEqual(1024, manifest["power_max_iterations"])
+            self.assertEqual(100, manifest["power_target_samples"])
+            self.assertEqual(0.05, manifest["power_min_interval"])
+            self.assertEqual(1.0, manifest["power_max_interval"])
 
             rc = main([
                 "run",
@@ -208,6 +238,60 @@ aliases:
             self.assertFalse(manifest["measure_latency"])
             self.assertFalse(manifest["measure_power"])
             self.assertEqual("off", manifest["power_mode"])
+            self.assertFalse(manifest["power_auto_duration"])
+
+    def test_run_can_disable_power_auto_duration(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            build_dir, fpga_bin, suite = self._write_fake_inputs(tmp_path)
+            out_root = tmp_path / "out"
+            rc = main([
+                "run",
+                "--build-dir", str(build_dir),
+                "--fpga-bin", str(fpga_bin),
+                "--suite", str(suite),
+                "--out", str(out_root),
+                "--run-id", "fixed_power",
+                "--no-srun",
+                "--dry-run",
+                "--no-program-fpga",
+                "--no-power-auto-duration",
+            ])
+
+            self.assertEqual(0, rc)
+            run_dir = out_root / "runs" / "fixed_power"
+            script = (run_dir / "run_fpga_bench.sh").read_text()
+            self.assertIn("--power=separate", script)
+            self.assertNotIn("--power-auto-duration=on", script)
+            self.assertNotIn("--power-min-run-sec=", script)
+            self.assertNotIn("--power-max-iterations=", script)
+            manifest = json.loads((run_dir / "manifest.json").read_text())
+            self.assertFalse(manifest["power_auto_duration"])
+
+    def test_run_can_override_power_max_iterations(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            build_dir, fpga_bin, suite = self._write_fake_inputs(tmp_path)
+            out_root = tmp_path / "out"
+            rc = main([
+                "run",
+                "--build-dir", str(build_dir),
+                "--fpga-bin", str(fpga_bin),
+                "--suite", str(suite),
+                "--out", str(out_root),
+                "--run-id", "power_cap",
+                "--no-srun",
+                "--dry-run",
+                "--no-program-fpga",
+                "--power-max-iterations", "256",
+            ])
+
+            self.assertEqual(0, rc)
+            run_dir = out_root / "runs" / "power_cap"
+            script = (run_dir / "run_fpga_bench.sh").read_text()
+            self.assertIn("--power-max-iterations=256", script)
+            manifest = json.loads((run_dir / "manifest.json").read_text())
+            self.assertEqual(256, manifest["power_max_iterations"])
 
     def test_run_blackbox_args_merge_into_generated_script(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

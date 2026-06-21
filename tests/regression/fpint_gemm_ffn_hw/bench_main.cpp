@@ -462,7 +462,7 @@ int main(int argc, char *argv[]) {
              "[--power-summary=PATH] [--power-interval=SEC] "
              "[--power-fpga-id=ID] [--power-iterations=N] "
              "[--power-idle-sec=SEC] [--power-csv-max-bytes=N] "
-             "[--power-script=PATH] "
+             "[--power-script=PATH] [--power-max-iterations=N] "
              "[-m M] [-n N] [-k K] [-q QBLK] [-t WTRANS] [-d QDIR]\n", argv[0]);
       return 0;
     default:
@@ -472,7 +472,7 @@ int main(int argc, char *argv[]) {
              "[--power-summary=PATH] [--power-interval=SEC] "
              "[--power-fpga-id=ID] [--power-iterations=N] "
              "[--power-idle-sec=SEC] [--power-csv-max-bytes=N] "
-             "[--power-script=PATH] "
+             "[--power-script=PATH] [--power-max-iterations=N] "
              "[-m M] [-n N] [-k K] [-q QBLK] [-t WTRANS] [-d QDIR]\n", argv[0]);
       return -1;
     }

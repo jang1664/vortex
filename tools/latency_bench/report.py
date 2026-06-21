@@ -8,6 +8,7 @@ from typing import Any
 
 import pandas as pd
 
+from .power_summary import read_power_summary
 from .status import classify_status
 from .suite import BenchSuite, suite_to_rows
 
@@ -18,6 +19,8 @@ RESULT_COLUMNS = [
     "fpga_bin_dir", "xclbin_sha256", "warmup", "iterations", "source",
     "status", "returncode", "failure_phase", "failure_reason", "raw_csv",
     "power_csv", "power_summary", "measure_latency", "measure_power",
+    "power_samples", "power_elapsed_s", "power_min_w", "power_avg_w",
+    "power_max_w", "power_parse_error",
     "log_file", "elapsed_wall_s",
     "samples", "min_us", "avg_us", "max_us", "p50_us", "p95_us",
 ]
@@ -77,7 +80,9 @@ def build_results(suite: BenchSuite, out_dir: Path, fpga_bin_dir: Path) -> pd.Da
         status = status_rows.get(exec_key, {})
         raw_csv = Path(status.get("raw_csv", out_dir / "raw" / f"{exec_key}.csv"))
         log_file = Path(status.get("log_file", out_dir / "logs" / f"{exec_key}.log"))
+        power_summary = status.get("power_summary", "")
         bench = read_bench_csv(raw_csv)
+        power = read_power_summary(power_summary)
         returncode = int(status.get("returncode", 999)) if status else 999
         failure_phase = status.get("failure_phase", "")
         failure_reason = status.get("failure_reason", "")
@@ -106,9 +111,15 @@ def build_results(suite: BenchSuite, out_dir: Path, fpga_bin_dir: Path) -> pd.Da
             "failure_reason": failure_reason,
             "raw_csv": str(raw_csv),
             "power_csv": status.get("power_csv", ""),
-            "power_summary": status.get("power_summary", ""),
+            "power_summary": power_summary,
             "measure_latency": status.get("measure_latency", ""),
             "measure_power": status.get("measure_power", ""),
+            "power_samples": power.get("power_samples"),
+            "power_elapsed_s": power.get("power_elapsed_s"),
+            "power_min_w": power.get("power_min_w"),
+            "power_avg_w": power.get("power_avg_w"),
+            "power_max_w": power.get("power_max_w"),
+            "power_parse_error": power.get("power_parse_error", ""),
             "log_file": str(log_file),
             "elapsed_wall_s": status.get("elapsed_wall_s"),
             "samples": bench.get("samples"),

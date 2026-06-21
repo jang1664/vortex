@@ -14,6 +14,14 @@ class ProgressTest(unittest.TestCase):
             tmp_path = Path(tmp)
             raw_csv = tmp_path / "raw.csv"
             raw_csv.write_text("# comment\nfpint_gemm,3,1.0,2.0,4.0,2.0,3.0\n")
+            power_csv = tmp_path / "power.csv"
+            power_summary = tmp_path / "power.summary.csv"
+            power_summary.write_text(
+                "label,mode,phase,samples,elapsed_s,idle_samples,idle_avg_w,"
+                "run_min_w,run_avg_w,run_max_w,delta_avg_w,delta_peak_w,energy_j,"
+                "latency_samples,latency_min_us,latency_avg_us,latency_max_us,raw_csv\n"
+                f"fpint_gemm,separate,run,5,10.0,2,1.0,3.0,4.0,5.0,3.0,4.0,40.0,0,nan,nan,nan,{power_csv}\n"
+            )
             progress_csv = tmp_path / "progress.csv"
 
             append_progress_execution(
@@ -30,6 +38,8 @@ class ProgressTest(unittest.TestCase):
                 returncode=0,
                 elapsed_wall_s="12.345",
                 raw_csv=raw_csv,
+                power_csv=power_csv,
+                power_summary=power_summary,
                 log_file=tmp_path / "bench.log",
             )
 
@@ -44,6 +54,14 @@ class ProgressTest(unittest.TestCase):
             self.assertEqual("", rows[0]["failure_reason"])
             self.assertEqual("2.0", rows[0]["p50_us"])
             self.assertEqual("", rows[0]["parse_error"])
+            self.assertEqual(str(power_csv), rows[0]["power_csv"])
+            self.assertEqual(str(power_summary), rows[0]["power_summary"])
+            self.assertEqual("5", rows[0]["power_samples"])
+            self.assertEqual("10.0", rows[0]["power_elapsed_s"])
+            self.assertEqual("3.0", rows[0]["power_min_w"])
+            self.assertEqual("4.0", rows[0]["power_avg_w"])
+            self.assertEqual("5.0", rows[0]["power_max_w"])
+            self.assertEqual("", rows[0]["power_parse_error"])
 
     def test_failed_execution_records_parse_error_without_parse_status(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

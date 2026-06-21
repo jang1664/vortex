@@ -29,6 +29,7 @@ from .plot import (
     visualize_suites,
 )
 from .runner import (
+    DEFAULT_POWER_MAX_ITERATIONS,
     DEFAULT_RETRY_MAX_ROUNDS,
     DEFAULT_RETRY_RESET_CMD,
     DEFAULT_RETRY_RESET_WAIT,
@@ -63,6 +64,55 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--no-latency", dest="measure_latency", action="store_false", help="Skip the normal latency measurement phase.")
     run.add_argument("--power", dest="measure_power", action="store_true", help="Enable separate power measurement.")
     run.add_argument("--no-power", dest="measure_power", action="store_false", help="Disable power measurement.")
+    run.set_defaults(power_auto_duration=True)
+    run.add_argument(
+        "--power-auto-duration",
+        dest="power_auto_duration",
+        action="store_true",
+        help="Calibrate each kernel and automatically choose power iterations and sample interval.",
+    )
+    run.add_argument(
+        "--no-power-auto-duration",
+        dest="power_auto_duration",
+        action="store_false",
+        help="Use the bench binary's fixed power iteration and sample interval defaults.",
+    )
+    run.add_argument(
+        "--power-min-run-sec",
+        type=float,
+        default=10.0,
+        help="Minimum target sampled run duration per kernel when power auto-duration is enabled.",
+    )
+    run.add_argument(
+        "--power-max-run-sec",
+        type=float,
+        default=60.0,
+        help="Maximum target sampled run duration per kernel when power auto-duration is enabled.",
+    )
+    run.add_argument(
+        "--power-target-samples",
+        type=int,
+        default=100,
+        help="Target raw power samples per kernel when power auto-duration is enabled.",
+    )
+    run.add_argument(
+        "--power-max-iterations",
+        type=int,
+        default=DEFAULT_POWER_MAX_ITERATIONS,
+        help="Hard iteration cap for power auto-duration planning; 0 disables the cap.",
+    )
+    run.add_argument(
+        "--power-min-interval",
+        type=float,
+        default=0.05,
+        help="Minimum sampler interval in seconds when power auto-duration is enabled.",
+    )
+    run.add_argument(
+        "--power-max-interval",
+        type=float,
+        default=1.0,
+        help="Maximum sampler interval in seconds when power auto-duration is enabled.",
+    )
     run.add_argument("--platform", default=None, help="Override suite/default Xilinx platform.")
     run.add_argument("--xrt-device-index", type=int, default=None, help="Override XRT device index.")
     run.add_argument("--xrt-device-bdf", default="", help="Override XRT user-function BDF for FPGA programming.")
@@ -462,6 +512,13 @@ def run_cmd(args: argparse.Namespace) -> int:
         program_fpga=not args.no_program_fpga,
         measure_latency=args.measure_latency,
         measure_power=args.measure_power,
+        power_auto_duration=args.power_auto_duration,
+        power_min_run_sec=args.power_min_run_sec,
+        power_max_run_sec=args.power_max_run_sec,
+        power_max_iterations=args.power_max_iterations,
+        power_target_samples=args.power_target_samples,
+        power_min_interval=args.power_min_interval,
+        power_max_interval=args.power_max_interval,
         case_filters=tuple(args.filter),
         retry=args.retry,
         retry_max_rounds=args.retry_max_rounds,

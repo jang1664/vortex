@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .power_summary import read_power_summary
 from .status import classify_status
 
 
@@ -26,6 +27,8 @@ PROGRESS_COLUMNS = [
     "failure_reason",
     "elapsed_wall_s",
     "raw_csv",
+    "power_csv",
+    "power_summary",
     "log_file",
     "bench_label",
     "samples",
@@ -35,6 +38,12 @@ PROGRESS_COLUMNS = [
     "p50_us",
     "p95_us",
     "parse_error",
+    "power_samples",
+    "power_elapsed_s",
+    "power_min_w",
+    "power_avg_w",
+    "power_max_w",
+    "power_parse_error",
 ]
 
 
@@ -103,10 +112,13 @@ def append_progress_execution(
     elapsed_wall_s: str,
     raw_csv: Path,
     log_file: Path,
+    power_csv: Path | None = None,
+    power_summary: Path | None = None,
     failure_phase: str = "",
     failure_reason: str = "",
 ) -> None:
     bench = _read_bench_csv(raw_csv)
+    power = read_power_summary(power_summary)
     if not failure_reason:
         if failure_phase == "build":
             failure_reason = "build"
@@ -136,6 +148,8 @@ def append_progress_execution(
         "failure_reason": failure_reason,
         "elapsed_wall_s": elapsed_wall_s,
         "raw_csv": str(raw_csv),
+        "power_csv": str(power_csv) if power_csv else "",
+        "power_summary": str(power_summary) if power_summary else "",
         "log_file": str(log_file),
         "bench_label": bench.get("bench_label", ""),
         "samples": bench.get("samples", ""),
@@ -145,6 +159,12 @@ def append_progress_execution(
         "p50_us": bench.get("p50_us", ""),
         "p95_us": bench.get("p95_us", ""),
         "parse_error": bench.get("parse_error", ""),
+        "power_samples": power.get("power_samples", ""),
+        "power_elapsed_s": power.get("power_elapsed_s", ""),
+        "power_min_w": power.get("power_min_w", ""),
+        "power_avg_w": power.get("power_avg_w", ""),
+        "power_max_w": power.get("power_max_w", ""),
+        "power_parse_error": power.get("power_parse_error", ""),
     }
 
     _validate_or_write_header(output)
@@ -175,6 +195,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--elapsed-wall-s", required=True, help="Wall-clock seconds for the blackbox invocation.")
     parser.add_argument("--raw-csv", required=True, type=Path, help="Raw per-execution benchmark CSV.")
+    parser.add_argument("--power-csv", default=None, type=Path, help="Raw per-execution power CSV, when enabled.")
+    parser.add_argument("--power-summary", default=None, type=Path, help="Per-execution power summary CSV, when enabled.")
     parser.add_argument("--log-file", required=True, type=Path, help="Per-execution log file.")
     return parser
 
@@ -197,6 +219,8 @@ def main(argv: list[str] | None = None) -> int:
         failure_reason=args.failure_reason,
         elapsed_wall_s=args.elapsed_wall_s,
         raw_csv=args.raw_csv,
+        power_csv=args.power_csv,
+        power_summary=args.power_summary,
         log_file=args.log_file,
     )
     return 0

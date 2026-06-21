@@ -24,6 +24,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -66,6 +67,13 @@ struct Args {
     double      power_idle_sec   = 2.0;
     uint64_t    power_csv_max_bytes = 1024ull * 1024ull;
     std::string power_script;
+    bool        power_auto_duration = false;
+    double      power_min_run_sec = 10.0;
+    double      power_max_run_sec = 60.0;
+    int         power_max_iterations = 1024;
+    int         power_target_samples = 100;
+    double      power_min_interval = 0.05;
+    double      power_max_interval = 1.0;
     bool        parse_error = false;
     std::string parse_error_message;
 };
@@ -223,6 +231,50 @@ inline Args parse(int& argc, char** argv) {
         } else if (std::strcmp(s, "--power-script") == 0) {
             const char* value = nullptr;
             if (read_next_value(r, argc, argv, "--power-script", &value, a)) a.power_script = value;
+        } else if (std::strcmp(s, "--power-auto-duration") == 0) {
+            a.power_auto_duration = true;
+            if (r + 1 < argc && argv[r + 1][0] != '-') {
+                const char* value = argv[++r];
+                if (!parse_bool_arg(value, &a.power_auto_duration)) {
+                    set_parse_error(a, std::string("invalid --power-auto-duration value: ") + value);
+                }
+            }
+        } else if (std::strncmp(s, "--power-auto-duration=", 22) == 0) {
+            if (!parse_bool_arg(s + 22, &a.power_auto_duration)) {
+                set_parse_error(a, std::string("invalid --power-auto-duration value: ") + (s + 22));
+            }
+        } else if (std::strcmp(s, "--no-power-auto-duration") == 0) {
+            a.power_auto_duration = false;
+        } else if (std::strncmp(s, "--power-min-run-sec=", 20) == 0) {
+            a.power_min_run_sec = std::atof(s + 20);
+        } else if (std::strcmp(s, "--power-min-run-sec") == 0) {
+            const char* value = nullptr;
+            if (read_next_value(r, argc, argv, "--power-min-run-sec", &value, a)) a.power_min_run_sec = std::atof(value);
+        } else if (std::strncmp(s, "--power-max-run-sec=", 20) == 0) {
+            a.power_max_run_sec = std::atof(s + 20);
+        } else if (std::strcmp(s, "--power-max-run-sec") == 0) {
+            const char* value = nullptr;
+            if (read_next_value(r, argc, argv, "--power-max-run-sec", &value, a)) a.power_max_run_sec = std::atof(value);
+        } else if (std::strncmp(s, "--power-max-iterations=", 23) == 0) {
+            a.power_max_iterations = std::atoi(s + 23);
+        } else if (std::strcmp(s, "--power-max-iterations") == 0) {
+            const char* value = nullptr;
+            if (read_next_value(r, argc, argv, "--power-max-iterations", &value, a)) a.power_max_iterations = std::atoi(value);
+        } else if (std::strncmp(s, "--power-target-samples=", 23) == 0) {
+            a.power_target_samples = std::atoi(s + 23);
+        } else if (std::strcmp(s, "--power-target-samples") == 0) {
+            const char* value = nullptr;
+            if (read_next_value(r, argc, argv, "--power-target-samples", &value, a)) a.power_target_samples = std::atoi(value);
+        } else if (std::strncmp(s, "--power-min-interval=", 21) == 0) {
+            a.power_min_interval = std::atof(s + 21);
+        } else if (std::strcmp(s, "--power-min-interval") == 0) {
+            const char* value = nullptr;
+            if (read_next_value(r, argc, argv, "--power-min-interval", &value, a)) a.power_min_interval = std::atof(value);
+        } else if (std::strncmp(s, "--power-max-interval=", 21) == 0) {
+            a.power_max_interval = std::atof(s + 21);
+        } else if (std::strcmp(s, "--power-max-interval") == 0) {
+            const char* value = nullptr;
+            if (read_next_value(r, argc, argv, "--power-max-interval", &value, a)) a.power_max_interval = std::atof(value);
         } else if (std::strcmp(s, "--warmup") == 0 && r + 1 < argc) {
             a.warmup = std::atoi(argv[++r]);
         } else if (std::strcmp(s, "--iterations") == 0 && r + 1 < argc) {
@@ -240,6 +292,14 @@ inline Args parse(int& argc, char** argv) {
     if (a.power_idle_sec < 0.0)  a.power_idle_sec = 0.0;
     if (a.power_iterations < 0)  a.power_iterations = a.iterations;
     if (a.power_iterations < 1)  a.power_iterations = 1;
+    if (a.power_min_run_sec < 0.0) a.power_min_run_sec = 0.0;
+    if (a.power_max_run_sec <= 0.0) a.power_max_run_sec = a.power_min_run_sec;
+    if (a.power_max_run_sec < a.power_min_run_sec) a.power_max_run_sec = a.power_min_run_sec;
+    if (a.power_max_iterations < 0) a.power_max_iterations = 0;
+    if (a.power_target_samples < 1) a.power_target_samples = 1;
+    if (a.power_min_interval <= 0.0) a.power_min_interval = 0.05;
+    if (a.power_max_interval <= 0.0) a.power_max_interval = a.power_min_interval;
+    if (a.power_max_interval < a.power_min_interval) a.power_max_interval = a.power_min_interval;
     if (a.power_summary.empty()) a.power_summary = a.power_csv + ".summary.csv";
     if (!a.latency_enabled) {
         a.warmup = 0;
@@ -549,7 +609,7 @@ inline bool write_power_summary(const char* label,
 
     std::fprintf(f,
         "label,mode,phase,samples,elapsed_s,idle_samples,idle_avg_w,"
-        "run_avg_w,run_max_w,delta_avg_w,delta_peak_w,energy_j,"
+        "run_min_w,run_avg_w,run_max_w,delta_avg_w,delta_peak_w,energy_j,"
         "latency_samples,latency_min_us,latency_avg_us,latency_max_us,raw_csv\n");
 
     const PowerStats idle_stats = read_power_stats(args.power_csv, idle.start_s, idle.end_s);
@@ -565,7 +625,7 @@ inline bool write_power_summary(const char* label,
         const double lat_max = run.has_latency ? run.latency.max : nan;
 
         std::fprintf(f,
-            "%s,%s,%s,%zu,%.6f,%zu,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,"
+            "%s,%s,%s,%zu,%.6f,%zu,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,"
             "%zu,%.3f,%.3f,%.3f,%s\n",
             label,
             run.mode.c_str(),
@@ -574,6 +634,7 @@ inline bool write_power_summary(const char* label,
             run_stats.elapsed_s,
             idle_stats.samples,
             idle_stats.avg_w,
+            run_stats.min_w,
             run_stats.avg_w,
             run_stats.max_w,
             dP_avg,
@@ -590,6 +651,75 @@ inline bool write_power_summary(const char* label,
     std::fprintf(msg, "[power] summary written to %s (raw samples: %s)\n",
                  args.power_summary.c_str(), args.power_csv.c_str());
     return true;
+}
+
+inline int clamp_power_iterations_from_double(double value) {
+    if (!std::isfinite(value) || value < 1.0) {
+        return 1;
+    }
+    const double max_int = static_cast<double>(std::numeric_limits<int>::max());
+    if (value > max_int) {
+        return std::numeric_limits<int>::max();
+    }
+    return static_cast<int>(value);
+}
+
+inline Args plan_power_measurement_args(const Args& args,
+                                        double calibration_us,
+                                        const char* label,
+                                        FILE* msg = stderr) {
+    Args planned = args;
+    double kernel_s = calibration_us / 1000000.0;
+    if (!std::isfinite(kernel_s) || kernel_s <= 0.0) {
+        kernel_s = 0.000001;
+    }
+
+    const int desired_iterations =
+        clamp_power_iterations_from_double(std::ceil(args.power_min_run_sec / kernel_s));
+    const int max_iterations_by_time =
+        clamp_power_iterations_from_double(std::floor(args.power_max_run_sec / kernel_s));
+    planned.power_iterations = std::max(1, std::min(desired_iterations, max_iterations_by_time));
+    const bool capped_by_max_iterations =
+        args.power_max_iterations > 0 && planned.power_iterations > args.power_max_iterations;
+    if (capped_by_max_iterations) {
+        planned.power_iterations = args.power_max_iterations;
+    }
+
+    const double planned_run_s = static_cast<double>(planned.power_iterations) * kernel_s;
+    double planned_interval = planned_run_s / static_cast<double>(std::max(1, args.power_target_samples));
+    if (!std::isfinite(planned_interval) || planned_interval <= 0.0) {
+        planned_interval = args.power_min_interval;
+    }
+    planned.power_interval = std::max(args.power_min_interval, std::min(planned_interval, args.power_max_interval));
+
+    std::fprintf(msg,
+        "[power] stage=auto_duration_plan label=%s calibration_us=%.3f "
+        "estimated_kernel_s=%.6f iterations=%d interval=%.6g "
+        "target_samples=%d min_run_s=%.3f max_run_s=%.3f "
+        "max_iterations=%d capped=%s\n",
+        label,
+        calibration_us,
+        kernel_s,
+        planned.power_iterations,
+        planned.power_interval,
+        args.power_target_samples,
+        args.power_min_run_sec,
+        args.power_max_run_sec,
+        args.power_max_iterations,
+        capped_by_max_iterations ? "yes" : "no");
+    std::fflush(msg);
+    return planned;
+}
+
+inline bool should_log_power_iteration(int completed, int total) {
+    if (total <= 20) {
+        return true;
+    }
+    if (completed == 1 || completed == total) {
+        return true;
+    }
+    const int step = std::max(1, total / 20);
+    return (completed % step) == 0;
 }
 
 inline bool report_parse_error(const Args& args, FILE* err = stderr) {
@@ -632,31 +762,62 @@ inline bool run_power_measurement(const char* label,
         return true;
     }
 
-    if (!args.csv) {
+    Args power_args = args;
+    if (args.power_auto_duration) {
+        std::fprintf(msg, "[power] stage=auto_duration_calibration_begin label=%s\n", label);
+        std::fflush(msg);
+        Stopwatch sw;
+        sw.start();
+        if (!run_once("power_calibrate", 0)) {
+            std::fprintf(msg, "[power] stage=auto_duration_calibration_failed label=%s\n", label);
+            std::fflush(msg);
+            return false;
+        }
+        const double calibration_us = sw.stop_us();
         std::fprintf(msg,
-            "[power] starting sampler: label=%s mode=%s csv=%s summary=%s "
-            "idle=%.3fs iterations=%d interval=%.6g max_bytes=%llu\n",
+            "[power] stage=auto_duration_calibration_end label=%s calibration_us=%.3f\n",
             label,
-            power_mode_name(args.power_mode),
-            args.power_csv.c_str(),
-            args.power_summary.c_str(),
-            args.power_idle_sec,
-            args.power_iterations,
-            args.power_interval,
-            static_cast<unsigned long long>(args.power_csv_max_bytes));
+            calibration_us);
+        std::fflush(msg);
+        power_args = plan_power_measurement_args(args, calibration_us, label, msg);
     }
 
+    std::fprintf(msg,
+        "[power] stage=sampler_start label=%s mode=%s csv=%s summary=%s "
+        "idle_s=%.3f iterations=%d interval=%.6g auto_duration=%s max_iterations=%d max_bytes=%llu\n",
+        label,
+        power_mode_name(power_args.power_mode),
+        power_args.power_csv.c_str(),
+        power_args.power_summary.c_str(),
+        power_args.power_idle_sec,
+        power_args.power_iterations,
+        power_args.power_interval,
+        power_args.power_auto_duration ? "on" : "off",
+        power_args.power_max_iterations,
+        static_cast<unsigned long long>(power_args.power_csv_max_bytes));
+    std::fflush(msg);
+
     PowerSampler sampler;
-    if (!sampler.start(args, msg)) {
+    if (!sampler.start(power_args, msg)) {
+        std::fprintf(msg, "[power] stage=sampler_start_failed label=%s\n", label);
+        std::fflush(msg);
         return false;
     }
 
     PowerPhase idle_phase;
     idle_phase.mode = "idle";
     idle_phase.phase = "idle";
+    std::fprintf(msg, "[power] stage=idle_begin label=%s duration_s=%.3f\n",
+                 label,
+                 power_args.power_idle_sec);
+    std::fflush(msg);
     idle_phase.start_s = epoch_seconds();
-    sleep_seconds(args.power_idle_sec);
+    sleep_seconds(power_args.power_idle_sec);
     idle_phase.end_s = epoch_seconds();
+    std::fprintf(msg, "[power] stage=idle_end label=%s elapsed_s=%.6f\n",
+                 label,
+                 idle_phase.end_s - idle_phase.start_s);
+    std::fflush(msg);
 
     std::vector<PowerPhase> power_runs;
     auto run_power_phase = [&](const char* mode, bool measure_latency) -> bool {
@@ -664,24 +825,65 @@ inline bool run_power_measurement(const char* label,
         phase.mode = mode;
         phase.phase = "run";
         phase.start_s = epoch_seconds();
+        std::fprintf(msg,
+            "[power] stage=run_begin label=%s mode=%s iterations=%d measure_latency=%s\n",
+            label,
+            mode,
+            power_args.power_iterations,
+            measure_latency ? "on" : "off");
+        std::fflush(msg);
 
         Stats phase_latency;
-        for (int i = 0; i < args.power_iterations; ++i) {
+        for (int i = 0; i < power_args.power_iterations; ++i) {
             if (measure_latency) {
                 Stopwatch sw;
                 sw.start();
                 if (!run_once(mode, i)) {
+                    std::fprintf(msg,
+                        "[power] stage=run_failed label=%s mode=%s completed=%d/%d\n",
+                        label,
+                        mode,
+                        i,
+                        power_args.power_iterations);
+                    std::fflush(msg);
                     return false;
                 }
                 phase_latency.record(sw.stop_us());
             } else {
                 if (!run_once(mode, i)) {
+                    std::fprintf(msg,
+                        "[power] stage=run_failed label=%s mode=%s completed=%d/%d\n",
+                        label,
+                        mode,
+                        i,
+                        power_args.power_iterations);
+                    std::fflush(msg);
                     return false;
                 }
+            }
+            const int completed = i + 1;
+            if (should_log_power_iteration(completed, power_args.power_iterations)) {
+                const double elapsed_s = epoch_seconds() - phase.start_s;
+                std::fprintf(msg,
+                    "[power] stage=run_progress label=%s mode=%s completed=%d/%d elapsed_s=%.6f\n",
+                    label,
+                    mode,
+                    completed,
+                    power_args.power_iterations,
+                    elapsed_s);
+                std::fflush(msg);
             }
         }
 
         phase.end_s = epoch_seconds();
+        std::fprintf(msg,
+            "[power] stage=run_end label=%s mode=%s completed=%d/%d elapsed_s=%.6f\n",
+            label,
+            mode,
+            power_args.power_iterations,
+            power_args.power_iterations,
+            phase.end_s - phase.start_s);
+        std::fflush(msg);
         if (measure_latency) {
             phase.has_latency = true;
             phase.latency = phase_latency.summary();
@@ -692,11 +894,19 @@ inline bool run_power_measurement(const char* label,
 
     bool power_ok = run_power_phase("separate", false);
 
+    std::fprintf(msg, "[power] stage=sampler_stop_begin label=%s\n", label);
+    std::fflush(msg);
     sampler.stop();
+    std::fprintf(msg, "[power] stage=sampler_stop_end label=%s\n", label);
+    std::fflush(msg);
     if (!power_ok) {
         return false;
     }
-    return write_power_summary(label, args, idle_phase, power_runs, msg);
+    std::fprintf(msg, "[power] stage=summary_begin label=%s summary=%s\n",
+                 label,
+                 power_args.power_summary.c_str());
+    std::fflush(msg);
+    return write_power_summary(label, power_args, idle_phase, power_runs, msg);
 }
 
 inline bool run_power_measurement(const char* label,

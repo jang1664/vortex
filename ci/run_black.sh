@@ -19,7 +19,7 @@ list_fpga_bin_aliases() {
 }
 
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
-  echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"] [--fpga-bin ALIAS_OR_PATH] [--bench] [--perf CLASS] [--debug LEVEL] [--hw-debug] [--no-latency] [--power[=on|off]] [--power-out-dir DIR]"
+  echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"] [--fpga-bin ALIAS_OR_PATH] [--bench] [--perf CLASS] [--debug LEVEL] [--hw-debug] [--no-latency] [--power[=on|off]] [--power-out-dir DIR] [--power-auto-duration] [--power-max-iterations N]"
   echo "Modes:"
   echo "  rtlsim   - Run only rtlsim tests"
   echo "  xrtsim   - Run only xrtsim tests"
@@ -38,6 +38,14 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   echo "      Directory for default power.csv and power_summary.csv"
   echo "  --power-csv-max-bytes N"
   echo "      Raw power CSV size limit in bytes (default: 1048576, 0 unlimited)"
+  echo "  --power-auto-duration, --no-power-auto-duration"
+  echo "      Forward bench auto-duration control when power measurement is enabled"
+  echo "  --power-min-run-sec N, --power-max-run-sec N, --power-target-samples N"
+  echo "      Auto-duration planning bounds"
+  echo "  --power-max-iterations N"
+  echo "      Auto-duration hard iteration cap (0 unlimited)"
+  echo "  --power-min-interval N, --power-max-interval N"
+  echo "      Auto-duration sampler interval bounds in seconds"
   aliases="$(list_fpga_bin_aliases)"
   if [[ -n "${aliases}" ]]; then
     echo "FPGA bin aliases: ${aliases}"
@@ -49,7 +57,7 @@ mode="${1:-}"
 shift || true
 
 if [[ "${mode}" == "" ]]; then
-  echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"] [--fpga-bin ALIAS_OR_PATH] [--bench] [--perf CLASS] [--debug LEVEL] [--hw-debug] [--no-latency] [--power[=on|off]] [--power-out-dir DIR]"
+  echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"] [--fpga-bin ALIAS_OR_PATH] [--bench] [--perf CLASS] [--debug LEVEL] [--hw-debug] [--no-latency] [--power[=on|off]] [--power-out-dir DIR] [--power-auto-duration] [--power-max-iterations N]"
   echo "Modes:"
   echo "  rtlsim   - Run only rtlsim tests"
   echo "  xrtsim   - Run only xrtsim tests"
@@ -80,6 +88,13 @@ POWER_ITERATIONS=""
 POWER_IDLE_SEC=""
 POWER_CSV_MAX_BYTES=1048576
 POWER_SCRIPT=""
+POWER_AUTO_DURATION=""
+POWER_MIN_RUN_SEC=""
+POWER_MAX_RUN_SEC=""
+POWER_MAX_ITERATIONS=""
+POWER_TARGET_SAMPLES=""
+POWER_MIN_INTERVAL=""
+POWER_MAX_INTERVAL=""
 LATENCY_ENABLED=1
 
 resolve_fpga_bin() {
@@ -183,6 +198,27 @@ append_power_args() {
   fi
   if [[ -n "${POWER_SCRIPT}" ]]; then
     append_arg "--power-script=${POWER_SCRIPT}"
+  fi
+  if [[ -n "${POWER_AUTO_DURATION}" ]]; then
+    append_arg "--power-auto-duration=${POWER_AUTO_DURATION}"
+  fi
+  if [[ -n "${POWER_MIN_RUN_SEC}" ]]; then
+    append_arg "--power-min-run-sec=${POWER_MIN_RUN_SEC}"
+  fi
+  if [[ -n "${POWER_MAX_RUN_SEC}" ]]; then
+    append_arg "--power-max-run-sec=${POWER_MAX_RUN_SEC}"
+  fi
+  if [[ -n "${POWER_MAX_ITERATIONS}" ]]; then
+    append_arg "--power-max-iterations=${POWER_MAX_ITERATIONS}"
+  fi
+  if [[ -n "${POWER_TARGET_SAMPLES}" ]]; then
+    append_arg "--power-target-samples=${POWER_TARGET_SAMPLES}"
+  fi
+  if [[ -n "${POWER_MIN_INTERVAL}" ]]; then
+    append_arg "--power-min-interval=${POWER_MIN_INTERVAL}"
+  fi
+  if [[ -n "${POWER_MAX_INTERVAL}" ]]; then
+    append_arg "--power-max-interval=${POWER_MAX_INTERVAL}"
   fi
 
   echo "Power measurement enabled: mode=${POWER_MODE} csv=${POWER_CSV} summary=${POWER_SUMMARY} max_bytes=${POWER_CSV_MAX_BYTES}"
@@ -319,12 +355,79 @@ while [[ $# -gt 0 ]]; do
       POWER_SCRIPT="${1#*=}"
       shift
       ;;
+    --power-auto-duration)
+      POWER_AUTO_DURATION="on"
+      if [[ $# -gt 1 && "${2:0:1}" != "-" ]]; then
+        POWER_AUTO_DURATION="$2"
+        shift 2
+      else
+        shift
+      fi
+      ;;
+    --power-auto-duration=*)
+      POWER_AUTO_DURATION="${1#*=}"
+      shift
+      ;;
+    --no-power-auto-duration)
+      POWER_AUTO_DURATION="off"
+      shift
+      ;;
+    --power-min-run-sec)
+      POWER_MIN_RUN_SEC="$2"
+      shift 2
+      ;;
+    --power-min-run-sec=*)
+      POWER_MIN_RUN_SEC="${1#*=}"
+      shift
+      ;;
+    --power-max-run-sec)
+      POWER_MAX_RUN_SEC="$2"
+      shift 2
+      ;;
+    --power-max-run-sec=*)
+      POWER_MAX_RUN_SEC="${1#*=}"
+      shift
+      ;;
+    --power-max-iterations)
+      POWER_MAX_ITERATIONS="$2"
+      shift 2
+      ;;
+    --power-max-iterations=*)
+      POWER_MAX_ITERATIONS="${1#*=}"
+      shift
+      ;;
+    --power-target-samples)
+      POWER_TARGET_SAMPLES="$2"
+      shift 2
+      ;;
+    --power-target-samples=*)
+      POWER_TARGET_SAMPLES="${1#*=}"
+      shift
+      ;;
+    --power-min-interval)
+      POWER_MIN_INTERVAL="$2"
+      shift 2
+      ;;
+    --power-min-interval=*)
+      POWER_MIN_INTERVAL="${1#*=}"
+      shift
+      ;;
+    --power-max-interval)
+      POWER_MAX_INTERVAL="$2"
+      shift 2
+      ;;
+    --power-max-interval=*)
+      POWER_MAX_INTERVAL="${1#*=}"
+      shift
+      ;;
     -h|--help)
-      echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"] [--fpga-bin ALIAS_OR_PATH] [--bench] [--perf CLASS] [--debug LEVEL] [--hw-debug] [--no-latency] [--power[=on|off]] [--power-out-dir DIR]"
+      echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"] [--fpga-bin ALIAS_OR_PATH] [--bench] [--perf CLASS] [--debug LEVEL] [--hw-debug] [--no-latency] [--power[=on|off]] [--power-out-dir DIR] [--power-auto-duration] [--power-max-iterations N]"
       echo "  --hw-debug, --enable-hw-debug-module: append -DENABLE_HW_DEBUG_MODULE to CONFIGS"
       echo "  --no-latency: append --no-latency to bench args"
       echo "  --power[=on|off]: append separate bench power-measurement args"
       echo "  --power-csv-max-bytes N: raw power CSV size limit (default: 1048576, 0 unlimited)"
+      echo "  --power-auto-duration, --no-power-auto-duration: forward bench auto-duration control"
+      echo "  --power-max-iterations N: auto-duration hard iteration cap (0 unlimited)"
       exit 0
       ;;
     *)

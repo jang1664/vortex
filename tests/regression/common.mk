@@ -186,8 +186,9 @@ ifneq ($(wildcard $(SRC_DIR)/bench_main.cpp),)
 BENCH_PROJECT := $(PROJECT)_bench
 BENCH_SRCS    := $(filter-out $(SRC_DIR)/main.cpp,$(SRCS)) $(SRC_DIR)/bench_main.cpp
 BENCH_CXXFLAGS := $(CXXFLAGS) -I$(VORTEX_HOME)/tests/common
+BENCH_COMMON_HEADERS := $(VORTEX_HOME)/tests/common/bench_util.h
 
-$(BENCH_PROJECT): $(BENCH_SRCS) $(HOST_CONFIG_FILE)
+$(BENCH_PROJECT): $(BENCH_SRCS) $(BENCH_COMMON_HEADERS) $(HOST_CONFIG_FILE)
 	$(CXX) $(BENCH_CXXFLAGS) $(BENCH_SRCS) $(LDFLAGS) -o $@
 
 bench: $(BENCH_PROJECT) kernel.vxbin
@@ -238,8 +239,11 @@ endif
 endif
 # -----------------------------------------------------------------------------
 
-.depend: $(SRCS)
-	$(CXX) $(CXXFLAGS) -MM $^ > .depend;
+.depend: $(SRCS) $(BENCH_SRCS)
+	$(CXX) $(CXXFLAGS) -MM $(SRCS) > .depend;
+ifneq ($(strip $(BENCH_SRCS)),)
+	$(CXX) $(BENCH_CXXFLAGS) -MM -MT $(BENCH_PROJECT) $(BENCH_SRCS) >> .depend;
+endif
 
 clean-kernel:
 	rm -rf *.elf *.vxbin *.dump

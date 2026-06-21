@@ -4,6 +4,7 @@ import csv
 import hashlib
 import json
 import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -36,8 +37,15 @@ if [[ "$build_only" == "1" ]]; then
 fi
 {log_line}
 raw_csv=$(printf '%s\n' "$bench_args" | sed -n 's/.*--output=\\([^ ]*\\).*/\\1/p')
+power_csv=$(printf '%s\n' "$bench_args" | sed -n 's/.*--power-csv=\\([^ ]*\\).*/\\1/p')
+power_summary=$(printf '%s\n' "$bench_args" | sed -n 's/.*--power-summary=\\([^ ]*\\).*/\\1/p')
 mkdir -p "$(dirname "$raw_csv")" "$(dirname "$log_file")"
 printf 'fpint_gemm,3,1.0,2.0,4.0,2.0,3.0\n' > "$raw_csv"
+if [[ -n "$power_summary" ]]; then
+  mkdir -p "$(dirname "$power_summary")"
+  printf 'label,mode,phase,samples,elapsed_s,idle_samples,idle_avg_w,run_min_w,run_avg_w,run_max_w,delta_avg_w,delta_peak_w,energy_j,latency_samples,latency_min_us,latency_avg_us,latency_max_us,raw_csv\n' > "$power_summary"
+  printf 'fpint_gemm,separate,run,5,10.0,2,1.0,3.0,4.0,5.0,3.0,4.0,40.0,0,nan,nan,nan,%s\n' "$power_csv" >> "$power_summary"
+fi
 printf 'ok\n' > "$log_file"
 """
         )
@@ -255,6 +263,12 @@ esac
             self.assertIn("elapsed_wall_s", rows[0])
             self.assertGreaterEqual(float(rows[0]["elapsed_wall_s"]), 0.0)
             self.assertEqual("2.0", rows[0]["p50_us"])
+            self.assertEqual("5", rows[0]["power_samples"])
+            self.assertEqual("10.0", rows[0]["power_elapsed_s"])
+            self.assertEqual("3.0", rows[0]["power_min_w"])
+            self.assertEqual("4.0", rows[0]["power_avg_w"])
+            self.assertEqual("5.0", rows[0]["power_max_w"])
+            self.assertEqual("", rows[0]["power_parse_error"])
             self.assertTrue(rows[0]["git_commit"])
             self.assertTrue(rows[0]["git_branch"])
             self.assertIn(rows[0]["git_dirty"], ("0", "1"))
@@ -265,18 +279,63 @@ esac
             self.assertEqual(rows[0]["git_branch"], result_rows[0]["git_branch"])
             self.assertEqual(rows[0]["git_dirty"], result_rows[0]["git_dirty"])
             self.assertEqual(rows[0]["elapsed_wall_s"], result_rows[0]["elapsed_wall_s"])
+            self.assertEqual(rows[0]["power_avg_w"], result_rows[0]["power_avg_w"])
 
             with (out_root / "runs" / "run_a" / "progress.csv").open(newline="") as fp:
                 progress_rows = list(csv.DictReader(fp))
             self.assertEqual(1, len(progress_rows))
             self.assertEqual("pass", progress_rows[0]["status"])
             self.assertEqual("2.0", progress_rows[0]["p50_us"])
+            self.assertEqual("4.0", progress_rows[0]["power_avg_w"])
             self.assertEqual(rows[0]["elapsed_wall_s"], progress_rows[0]["elapsed_wall_s"])
 
             manifest = json.loads((out_root / "runs" / "run_a" / "manifest.json").read_text())
             self.assertEqual(rows[0]["git_commit"], manifest["git_commit"])
             self.assertEqual(rows[0]["git_branch"], manifest["git_branch"])
             self.assertEqual(rows[0]["git_dirty"], manifest["git_dirty"])
+
+    def test_live_raw_db_keeps_all_logical_cases_for_shared_execution(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            build_dir = tmp_path / "build"
+            invocation_log = tmp_path / "invocations.log"
+            self._write_fake_blackbox(build_dir, invocation_log=invocation_log)
+            fpga_bin_dir = tmp_path / "fpga_bin"
+            self._write_fake_fpga_bin(fpga_bin_dir)
+
+            shared_args = "-m 1 -n 128 -k 128 -q 32 -t 0 -d 0"
+            suite = BenchSuite(
+                name="shared_exec_suite",
+                defaults=BenchDefaults(warmup=1, iterations=1),
+                cases=[
+                    BenchCase(case_id="case_a", app="fpint_gemm_ffn_hw", args=shared_args, warmup=1, iterations=1),
+                    BenchCase(case_id="case_b", app="fpint_gemm_ffn_hw", args=shared_args, warmup=1, iterations=1),
+                ],
+            )
+            out_root = tmp_path / "latency_db"
+            rc = run_suite(
+                suite,
+                RunOptions(
+                    build_dir=build_dir,
+                    fpga_bin_dir=fpga_bin_dir,
+                    fpga_bin_label="improve_tcol1",
+                    out_dir=out_root,
+                    platform=suite.defaults.platform,
+                    xrt_device_index=suite.defaults.xrt_device_index,
+                    blackbox_args=(),
+                    srun=False,
+                    program_fpga=False,
+                    run_id="shared_run",
+                ),
+            )
+
+            self.assertEqual(0, rc)
+            self.assertEqual(1, len(invocation_log.read_text().splitlines()))
+            with (out_root / "raw_db.csv").open(newline="") as fp:
+                rows = list(csv.DictReader(fp))
+            self.assertEqual(2, len(rows))
+            self.assertEqual(["case_a", "case_b"], [row["case_id"] for row in rows])
+            self.assertEqual(["pass", "pass"], [row["status"] for row in rows])
 
     def test_programs_fpga_before_bench_run(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -803,6 +862,83 @@ exit 0
                 rows = list(csv.DictReader(fp))
             self.assertEqual(2, len(rows))
             self.assertEqual(["different_sha", current_sha], [row["xclbin_sha256"] for row in rows])
+
+    def test_generated_script_updates_raw_db_before_post_processing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            build_dir = tmp_path / "build"
+            invocation_log = tmp_path / "invocations.log"
+            self._write_fake_blackbox(build_dir, invocation_log=invocation_log)
+            fpga_bin_dir = tmp_path / "fpga_bin"
+            self._write_fake_fpga_bin(fpga_bin_dir)
+
+            case = BenchCase(
+                case_id="live_raw",
+                app="fpint_gemm_ffn_hw",
+                args="-m 1 -n 128 -k 128 -q 32 -t 0 -d 0",
+                warmup=1,
+                iterations=1,
+            )
+            suite = BenchSuite(
+                name="mini_suite",
+                defaults=BenchDefaults(warmup=1, iterations=1),
+                cases=[case],
+            )
+            out_root = tmp_path / "latency_db"
+
+            rc = run_suite(
+                suite,
+                RunOptions(
+                    build_dir=build_dir,
+                    fpga_bin_dir=fpga_bin_dir,
+                    fpga_bin_label="improve_tcol1",
+                    out_dir=out_root,
+                    platform=suite.defaults.platform,
+                    xrt_device_index=suite.defaults.xrt_device_index,
+                    blackbox_args=(),
+                    srun=False,
+                    program_fpga=False,
+                    run_id="script_only",
+                    dry_run=True,
+                ),
+            )
+            self.assertEqual(0, rc)
+
+            run_dir = out_root / "runs" / "script_only"
+            script = run_dir / "run_fpga_bench.sh"
+            env = os.environ.copy()
+            env["PYTHONPATH"] = str(Path.cwd())
+            self.assertEqual(0, subprocess.call(["bash", str(script)], env=env))
+
+            raw_db = out_root / "raw_db.csv"
+            with raw_db.open(newline="") as fp:
+                rows = list(csv.DictReader(fp))
+            self.assertEqual(1, len(rows))
+            self.assertEqual("pass", rows[0]["status"])
+            self.assertEqual(case.exec_key, rows[0]["exec_key"])
+            self.assertFalse((run_dir / "results.csv").exists())
+
+            rc = run_suite(
+                suite,
+                RunOptions(
+                    build_dir=build_dir,
+                    fpga_bin_dir=fpga_bin_dir,
+                    fpga_bin_label="improve_tcol1",
+                    out_dir=out_root,
+                    platform=suite.defaults.platform,
+                    xrt_device_index=suite.defaults.xrt_device_index,
+                    blackbox_args=(),
+                    srun=False,
+                    program_fpga=False,
+                    run_id="resume_dry",
+                    skip_existing=True,
+                    dry_run=True,
+                ),
+            )
+            self.assertEqual(0, rc)
+            manifest = json.loads((out_root / "runs" / "resume_dry" / "manifest.json").read_text())
+            self.assertEqual(1, manifest["skipped_existing_count"])
+            self.assertEqual(0, manifest["run_execution_count"])
 
     def test_append_migrates_raw_db_header_when_elapsed_column_is_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
