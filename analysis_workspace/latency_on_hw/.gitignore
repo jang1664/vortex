@@ -1,7 +1,22 @@
 generated_suites*/
+
+# Run outputs are generated artifacts. Keep only raw DBs that are used as
+# durable plot inputs; figures and composed/intermediate CSVs are regenerated.
 outputs*/
+!outputs_main/
+outputs_main/**
+!outputs_main/*/
+!outputs_main/*/raw_db.csv
+!outputs_main_power/
+outputs_main_power/**
+!outputs_main_power/*/
+!outputs_main_power/*/raw_db.csv
+!outputs_main_power_long/
+outputs_main_power_long/**
+!outputs_main_power_long/*/
+!outputs_main_power_long/*/raw_db.csv
 !outputs_example/
 !outputs_example/**
 !outputs_sample/
+outputs_sample/**
 !outputs_sample/raw_db.csv
-outputs_sample/figures/

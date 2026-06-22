@@ -981,7 +981,7 @@ def _apply_x_tick_labels(
 
 
 def _format_value_label(value: float, relative: bool) -> str:
-    return f"{value:.2f}x" if relative else f"{value:.1f}"
+    return f"{value:.3f}x" if relative else f"{value:.1f}"
 
 
 def _bar_ylabel(options: SuiteBarPlotOptions) -> str:

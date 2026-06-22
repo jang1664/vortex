@@ -20,6 +20,9 @@ POWER_SUMMARY_FIELDS = (
     "tokens",
     "total_energy_j",
     "joules_per_token",
+    "relative_joules_per_token",
+    "relative_baseline_joules_per_token",
+    "relative_scope",
     "component_count",
     "energy_component_count",
     "measured_power_count",
@@ -313,6 +316,17 @@ def plot_energy_per_token(
     label_maps: Mapping[str, Mapping[Any, str]] | None = None,
     value_orders: Mapping[str, Sequence[Any]] | None = None,
     palette: Sequence[str] | None = None,
+    relative: bool = True,
+    relative_scope: str = "x_tick",
+    value_labels: bool = True,
+    value_label_rotation: float = 90.0,
+    value_label_fontsize: float = 7.0,
+    grouped_bar_gap: float = 0.04,
+    bar_edgecolor: str = "white",
+    bar_linewidth: float = 0.25,
+    bar_alpha: float = 1.0,
+    x_tick_label_rotation: float = 0.0,
+    x_tick_label_ha: str = "center",
 ) -> EnergyPlotResult:
     pd, plt = _import_plotting_modules()
     records = _records_from_plot_result(plot_result)
@@ -322,7 +336,10 @@ def plot_energy_per_token(
         idle_power_w=idle_power_w,
         include_idle_power=include_idle_power,
     )
-    summary = summarize_energy_rows(rows)
+    summary = add_relative_energy_values(
+        summarize_energy_rows(rows),
+        relative_scope=relative_scope,
+    )
     rows_csv, summary_csv = write_energy_csvs(rows, summary, out_dir)
 
     summary_df = pd.DataFrame(summary)
@@ -336,6 +353,16 @@ def plot_energy_per_token(
         value_orders=value_orders or {},
         palette=palette,
         include_idle_power=include_idle_power,
+        relative=relative,
+        value_labels=value_labels,
+        value_label_rotation=value_label_rotation,
+        value_label_fontsize=value_label_fontsize,
+        grouped_bar_gap=grouped_bar_gap,
+        bar_edgecolor=bar_edgecolor,
+        bar_linewidth=bar_linewidth,
+        bar_alpha=bar_alpha,
+        x_tick_label_rotation=x_tick_label_rotation,
+        x_tick_label_ha=x_tick_label_ha,
     )
     return EnergyPlotResult(
         rows=rows_df,
@@ -344,6 +371,33 @@ def plot_energy_per_token(
         summary_csv=summary_csv,
         figure_path=figure_path,
     )
+
+
+def add_relative_energy_values(
+    summary: Iterable[Mapping[str, Any]],
+    *,
+    relative_scope: str = "x_tick",
+) -> list[dict[str, Any]]:
+    rows = [dict(row) for row in summary]
+    baselines: dict[tuple[Any, ...], float] = {}
+    grouped_values: dict[tuple[Any, ...], list[float]] = {}
+    for row in rows:
+        value = _to_float(row.get("joules_per_token"))
+        if value is None:
+            continue
+        grouped_values.setdefault(_relative_group_key(row, relative_scope), []).append(value)
+
+    for key, values in grouped_values.items():
+        baselines[key] = _series_relative_baseline(values)
+
+    for row in rows:
+        key = _relative_group_key(row, relative_scope)
+        baseline = baselines.get(key, 1.0)
+        value = _to_float(row.get("joules_per_token"))
+        row["relative_baseline_joules_per_token"] = baseline
+        row["relative_scope"] = relative_scope
+        row["relative_joules_per_token"] = value / baseline if value is not None and baseline > 0 else None
+    return rows
 
 
 def _power_candidates(rows: Iterable[Mapping[str, Any]]) -> list[PowerCandidate]:
@@ -400,6 +454,16 @@ def _plot_summary_dataframe(
     value_orders: Mapping[str, Sequence[Any]],
     palette: Sequence[str] | None,
     include_idle_power: bool,
+    relative: bool,
+    value_labels: bool,
+    value_label_rotation: float,
+    value_label_fontsize: float,
+    grouped_bar_gap: float,
+    bar_edgecolor: str,
+    bar_linewidth: float,
+    bar_alpha: float,
+    x_tick_label_rotation: float,
+    x_tick_label_ha: str,
 ) -> None:
     _, plt = _import_plotting_modules()
     figure_path.parent.mkdir(parents=True, exist_ok=True)
@@ -411,7 +475,10 @@ def _plot_summary_dataframe(
         plt.close(fig)
         return
 
-    plottable = summary_df[summary_df["joules_per_token"].notna()].copy()
+    value_col = "relative_joules_per_token" if relative else "joules_per_token"
+    if value_col not in summary_df.columns:
+        value_col = "joules_per_token"
+    plottable = summary_df[summary_df[value_col].notna()].copy()
     if plottable.empty:
         fig, ax = plt.subplots(figsize=(9, 3))
         ax.text(0.5, 0.5, "No plottable energy rows", ha="center", va="center")
@@ -428,10 +495,10 @@ def _plot_summary_dataframe(
 
     nrows = max(len(stages), 1)
     ncols = max(len(batches), 1)
-    fig_width = max(8.0, 3.2 * ncols + 1.5)
+    fig_width = max(7.0, min(22.0, 2.6 * len(seq_values) + 1.8 * len(variants) + 2.0 * ncols))
     fig_height = max(3.6, 3.0 * nrows + 1.0)
     fig, axes = plt.subplots(nrows, ncols, squeeze=False, figsize=(fig_width, fig_height), sharey=False)
-    width = min(0.75 / max(len(variants), 1), 0.22)
+    width, variant_offsets = _bar_width_and_offsets(len(variants), grouped_bar_gap)
 
     for row_index, stage in enumerate(stages):
         for col_index, batch in enumerate(batches):
@@ -440,9 +507,11 @@ def _plot_summary_dataframe(
                 (plottable["stage"].astype(str) == str(stage))
                 & (plottable["batch"].astype(str) == str(batch))
             ]
+            panel_values = _finite_plot_values(subset[value_col].tolist())
+            panel_max_height = max(panel_values, default=1.0)
             x_positions = list(range(len(seq_values)))
             for variant_index, variant in enumerate(variants):
-                offset = (variant_index - (len(variants) - 1) / 2.0) * width
+                offset = variant_offsets[variant_index]
                 values = []
                 complete_values = []
                 for seq_len in seq_values:
@@ -454,7 +523,7 @@ def _plot_summary_dataframe(
                         values.append(math.nan)
                         complete_values.append(True)
                     else:
-                        values.append(float(matched.iloc[0]["joules_per_token"]))
+                        values.append(float(matched.iloc[0][value_col]))
                         complete_values.append(bool(matched.iloc[0]["complete"]))
                 bars = ax.bar(
                     [pos + offset for pos in x_positions],
@@ -462,27 +531,46 @@ def _plot_summary_dataframe(
                     width=width,
                     label=_label("variant", variant, label_maps),
                     color=colors[variant_index % len(colors)],
-                    edgecolor="#222222",
-                    linewidth=0.5,
+                    edgecolor=bar_edgecolor,
+                    linewidth=bar_linewidth,
+                    alpha=bar_alpha,
                 )
                 for bar, is_complete in zip(bars, complete_values):
                     if not is_complete:
                         bar.set_hatch("//")
                         bar.set_alpha(0.7)
+                if value_labels:
+                    for xpos, value in zip([pos + offset for pos in x_positions], values):
+                        if math.isfinite(value):
+                            _label_bar(
+                                ax,
+                                xpos,
+                                value,
+                                _format_plot_value_label(value, relative),
+                                panel_max_height,
+                                rotation=value_label_rotation,
+                                fontsize=value_label_fontsize,
+                            )
             ax.set_title(
                 f"{_label('stage', stage, label_maps)}, batch={_format_value(batch)}",
                 fontsize=10,
             )
             ax.set_xticks(x_positions)
-            ax.set_xticklabels([_format_value(value) for value in seq_values], rotation=0)
+            ax.set_xticklabels(
+                [_format_value(value) for value in seq_values],
+                rotation=x_tick_label_rotation,
+                ha=x_tick_label_ha,
+            )
             ax.set_xlabel("sequence length")
-            ax.set_ylabel("J/token")
+            ax.set_ylabel("relative J/token (best = 1.0)" if relative else "J/token")
+            ax.set_ylim(0.0, max(panel_max_height, 1.0) * (1.18 if value_labels else 1.08))
             ax.grid(axis="y", color="#dddddd", linewidth=0.7)
             ax.set_axisbelow(True)
 
     handles, labels = axes[0][0].get_legend_handles_labels()
     if handles:
-        fig.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, 1.02), ncol=min(len(labels), 4))
+        # fig.legend(handles, labels, loc="upper right", bbox_to_anchor=(0.5, 1.02), ncol=min(len(labels), 4))
+        fig.legend(handles, labels, loc="upper right", ncol=min(len(labels), 4))
     if not plottable["complete"].astype(bool).all():
         fig.text(
             0.5,
@@ -528,6 +616,78 @@ def _normalize_shape_keys(shape: Mapping[str, Any]) -> dict[str, Any]:
     for key, value in shape.items():
         normalized[str(key).strip().lower()] = value
     return normalized
+
+
+def _relative_group_key(row: Mapping[str, Any], relative_scope: str) -> tuple[Any, ...]:
+    if relative_scope == "global":
+        return ()
+    if relative_scope == "subplot":
+        return (row.get("stage"), row.get("batch"))
+    if relative_scope == "x_tick":
+        return (row.get("stage"), row.get("batch"), row.get("seq_len"))
+    raise ValueError(f"unsupported relative scope: {relative_scope}")
+
+
+def _series_relative_baseline(values: Iterable[Any]) -> float:
+    positive = [value for value in (_to_float(item) for item in values) if value is not None and value > 0]
+    return min(positive) if positive else 1.0
+
+
+def _finite_plot_values(values: Iterable[Any]) -> list[float]:
+    finite = []
+    for value in values:
+        number = _to_float(value)
+        if number is not None:
+            finite.append(number)
+    return finite
+
+
+def _label_offset(max_height: float) -> float:
+    return max(float(max_height), 1.0) * 0.01
+
+
+def _label_bar(
+    ax: Any,
+    xpos: float,
+    height: float,
+    text: str,
+    max_height: float,
+    *,
+    rotation: float = 0.0,
+    fontsize: float = 7.0,
+) -> None:
+    ax.text(
+        xpos,
+        height + _label_offset(max_height),
+        text,
+        ha="center",
+        va="bottom",
+        rotation=rotation,
+        fontsize=fontsize,
+    )
+
+
+def _format_plot_value_label(value: float, relative: bool) -> str:
+    return f"{value:.3f}x" if relative else f"{value:.3f}"
+
+
+def _bar_width_and_offsets(hue_count: int, grouped_bar_gap: float) -> tuple[float, list[float]]:
+    count = max(1, int(hue_count))
+    group_width = 0.8
+    gap = float(grouped_bar_gap)
+    available_width = group_width - gap * (count - 1)
+    if available_width <= 0.0:
+        raise ValueError(
+            f"grouped_bar_gap={gap:g} is too large for {count} bars; "
+            f"gap must be smaller than {group_width / max(count - 1, 1):g}"
+        )
+    bar_width = min(available_width / count, 0.28)
+    center_step = bar_width + gap
+    offsets = [
+        (idx - (count - 1) / 2.0) * center_step
+        for idx in range(count)
+    ]
+    return bar_width, offsets
 
 
 def _split_shape(shape: Mapping[str, Any]) -> tuple[dict[str, float], dict[str, str]]:

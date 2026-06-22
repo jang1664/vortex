@@ -202,6 +202,32 @@ class EnergyPerTokenTest(unittest.TestCase):
         self.assertEqual(1, summary[0]["measured_power_count"])
         self.assertEqual(1, summary[0]["missing_power_count"])
 
+    def test_relative_energy_values_use_x_tick_baseline(self) -> None:
+        summary = energy_per_token.add_relative_energy_values(
+            [
+                {"stage": "prefill", "batch": 1, "seq_len": 512, "variant": "v1", "joules_per_token": 2.0},
+                {"stage": "prefill", "batch": 1, "seq_len": 512, "variant": "v2", "joules_per_token": 4.0},
+                {"stage": "prefill", "batch": 1, "seq_len": 1024, "variant": "v1", "joules_per_token": 10.0},
+                {"stage": "prefill", "batch": 1, "seq_len": 1024, "variant": "v2", "joules_per_token": 20.0},
+            ],
+            relative_scope="x_tick",
+        )
+
+        by_key = {
+            (row["seq_len"], row["variant"]): row
+            for row in summary
+        }
+        self.assertEqual(1.0, by_key[(512, "v1")]["relative_joules_per_token"])
+        self.assertEqual(2.0, by_key[(512, "v2")]["relative_joules_per_token"])
+        self.assertEqual(1.0, by_key[(1024, "v1")]["relative_joules_per_token"])
+        self.assertEqual(2.0, by_key[(1024, "v2")]["relative_joules_per_token"])
+        self.assertEqual(2.0, by_key[(512, "v1")]["relative_baseline_joules_per_token"])
+        self.assertEqual(10.0, by_key[(1024, "v1")]["relative_baseline_joules_per_token"])
+
+    def test_energy_value_labels_keep_small_relative_differences(self) -> None:
+        self.assertEqual("1.002x", energy_per_token._format_plot_value_label(1.00156, True))
+        self.assertEqual("13.849", energy_per_token._format_plot_value_label(13.84852, False))
+
 
 if __name__ == "__main__":
     unittest.main()
