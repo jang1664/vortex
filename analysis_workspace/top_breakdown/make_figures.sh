@@ -4,8 +4,6 @@ set -euo pipefail
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 cd "$script_dir"
 
-python_bin="${PYTHON:-python3}"
-
 usage() {
     cat <<'EOF'
 Usage: ./make_figures.sh [nt8|nt32 ...]
@@ -25,6 +23,45 @@ if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
     usage
     exit 0
 fi
+
+find_python() {
+    if [ -n "${PYTHON:-}" ]; then
+        printf '%s\n' "$PYTHON"
+        return 0
+    fi
+
+    local candidate resolved
+    for candidate in \
+        "$HOME/anaconda3/bin/python" \
+        "$HOME/miniconda3/bin/python" \
+        python3.11 python3.10 python3.9 python3
+    do
+        resolved=""
+        if resolved="$(command -v "$candidate" 2>/dev/null)"; then
+            :
+        elif [ -x "$candidate" ]; then
+            resolved="$candidate"
+        else
+            continue
+        fi
+
+        if "$resolved" - <<'PY' >/dev/null 2>&1
+import importlib
+for name in ("matplotlib", "pandas", "hwexplorer"):
+    importlib.import_module(name)
+PY
+        then
+            printf '%s\n' "$resolved"
+            return 0
+        fi
+    done
+
+    echo "error: no Python interpreter with matplotlib, pandas, and hwexplorer found" >&2
+    echo "       set PYTHON=/path/to/python and retry" >&2
+    return 1
+}
+
+python_bin="$(find_python)"
 
 runs=("$@")
 if [ "${#runs[@]}" -eq 0 ]; then

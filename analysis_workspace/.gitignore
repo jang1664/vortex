@@ -4,3 +4,9 @@
 *.pdf
 *.png
 *.svg
+
+# Portable inputs/tables for arr_level_comparison figure generation.
+!arr_level_comparison/data.csv
+!arr_level_comparison/wkvwoq_breakdown.csv
+!arr_level_comparison/table_efficiency.csv
+!arr_level_comparison/table_efficiency_scaled.csv
