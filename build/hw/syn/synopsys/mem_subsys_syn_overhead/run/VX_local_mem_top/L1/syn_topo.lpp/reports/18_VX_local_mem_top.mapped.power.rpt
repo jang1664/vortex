@@ -1,0 +1,245 @@
+Information: Propagating switching activity (high effort zero delay simulation). (PWR-6)
+Warning: Design has unannotated primary inputs. (PWR-414)
+Warning: Design has unannotated sequential cell outputs. (PWR-415)
+Warning: Design has unannotated black box outputs. (PWR-428)
+ 
+****************************************
+Report : power
+        -hier
+        -analysis_effort high
+        -verbose
+Design : VX_local_mem_top
+Scenario(s): mode_norm.OC_rvt_ss_0p900v_125c
+Version: V-2023.12-SP5-3
+Date   : Mon May 11 16:22:06 2026
+****************************************
+
+
+Library(s) Used:
+
+    sc9_cmos28lpp_base_rvt_ss_nominal_max_0p900v_125c_sadhm (File: /tool/PDK/Samsung/LN28LPP_202203/PRIMITIVES/RVT/ln28lpp_sc_9t_base_rvt_c130_V1.00d/FE-Common/LIBERTY/sc9_cmos28lpp_base_rvt_ss_nominal_max_0p900v_125c_sadhm.db)
+    USERLIB_ss_0p900v_0p900v_125c (File: /home/data/memory_compiler/28LPP/genSEC/cmos28lpp_ra1w_hd_8192x64m16/cmos28lpp_ra1w_hd_8192x64m16_ss_0p900v_0p900v_125c.db)
+
+
+Global Operating Voltage = 0.9  
+Power-specific unit information :
+    Voltage Units = 1V
+    Capacitance Units = 1.000000pf
+    Time Units = 1ns
+    Dynamic Power Units = 1mW    (derived from V,C,T units)
+    Leakage Power Units = 1uW
+
+
+--------------------------------------------------------------------------------
+                                       Switch   Int      Leak     Total
+Hierarchy                              Power    Power    Power    Power    %
+--------------------------------------------------------------------------------
+VX_local_mem_top                          0.293    6.275 1.63e+03    8.199 100.0
+  local_mem (VX_local_mem_I_mem_bus_if_VX_mem_bus_if__DATA_SIZE_8_TAG_WIDTH_16_ADDR_WIDTH_16)    0.292    6.275 1.63e+03    8.199 100.0
+    rsp_xbar (VX_stream_xbar_1)        8.06e-02    0.271   51.136    0.403   4.9
+      g_multi_inputs_g_multiple_outputs_g_xbar_arbs_7__xbar_arb (VX_stream_arb_1_0) 1.67e-02 4.14e-02    6.148 6.42e-02   0.8
+        g_input_select_g_arbiter_g_out_buf_0__out_buf (VX_elastic_buffer_83_2_1_0_0) 9.32e-03 3.76e-02    3.761 5.06e-02   0.6
+          g_eb2_out_buf (VX_pipe_buffer_2_0) 1.22e-03 9.95e-04    0.550 2.76e-03   0.0
+          g_eb2_stream_buffer (VX_stream_buffer_83_1_0) 8.11e-03 3.66e-02    3.211 4.79e-02   0.6
+        g_input_select_g_arbiter_arbiter (VX_generic_arbiter_0) 2.87e-04 1.49e-04    0.107 5.43e-04   0.0
+          g_priority_priority_arbiter (VX_priority_arbiter_0) 2.87e-04 1.49e-04    0.107 5.43e-04   0.0
+            g_encoder_grant_sel (VX_priority_encoder_0) 2.87e-04 1.49e-04    0.107 5.43e-04   0.0
+              g_lsb_g_model1_lzc (VX_lzc_0) 2.44e-04 8.79e-05 5.62e-02 3.89e-04   0.0
+                g_lzc_find_first (VX_find_first_8_3_0_0) 2.44e-04 8.79e-05 5.62e-02 3.89e-04   0.0
+      g_multi_inputs_g_multiple_outputs_g_xbar_arbs_6__xbar_arb (VX_stream_arb_1_1) 8.79e-03 3.18e-02    6.271 4.69e-02   0.6
+        g_input_select_g_arbiter_g_out_buf_0__out_buf (VX_elastic_buffer_83_2_1_0_1) 6.34e-03 3.03e-02    3.854 4.05e-02   0.5
+          g_eb2_out_buf (VX_pipe_buffer_2_1) 7.91e-04 6.29e-04    0.549 1.97e-03   0.0
+          g_eb2_stream_buffer (VX_stream_buffer_83_1_1) 5.55e-03 2.97e-02    3.305 3.85e-02   0.5
+        g_input_select_g_arbiter_arbiter (VX_generic_arbiter_1) 7.16e-05 3.74e-05    0.127 2.36e-04   0.0
+          g_priority_priority_arbiter (VX_priority_arbiter_1) 7.16e-05 3.74e-05    0.127 2.36e-04   0.0
+            g_encoder_grant_sel (VX_priority_encoder_1) 7.16e-05 3.74e-05    0.127 2.36e-04   0.0
+              g_lsb_g_model1_lzc (VX_lzc_1) 5.90e-05 2.29e-05 6.97e-02 1.52e-04   0.0
+                g_lzc_find_first (VX_find_first_8_3_0_1) 5.90e-05 2.29e-05 6.97e-02 1.52e-04   0.0
+      g_multi_inputs_g_multiple_outputs_g_xbar_arbs_5__xbar_arb (VX_stream_arb_1_2) 8.89e-03 3.23e-02    6.283 4.75e-02   0.6
+        g_input_select_g_arbiter_g_out_buf_0__out_buf (VX_elastic_buffer_83_2_1_0_2) 6.02e-03 3.08e-02    3.835 4.06e-02   0.5
+          g_eb2_out_buf (VX_pipe_buffer_2_2) 7.47e-04 6.49e-04    0.549 1.95e-03   0.0
+          g_eb2_stream_buffer (VX_stream_buffer_83_1_2) 5.27e-03 3.01e-02    3.285 3.87e-02   0.5
+        g_input_select_g_arbiter_arbiter (VX_generic_arbiter_2) 1.08e-04 4.31e-05    0.127 2.79e-04   0.0
+          g_priority_priority_arbiter (VX_priority_arbiter_2) 1.08e-04 4.31e-05    0.127 2.79e-04   0.0
+            g_encoder_grant_sel (VX_priority_encoder_2) 1.08e-04 4.31e-05    0.127 2.79e-04   0.0
+              g_lsb_g_model1_lzc (VX_lzc_2) 9.32e-05 2.63e-05 6.97e-02 1.89e-04   0.0
+                g_lzc_find_first (VX_find_first_8_3_0_2) 9.32e-05 2.63e-05 6.97e-02 1.89e-04   0.0
+      g_multi_inputs_g_multiple_outputs_g_xbar_arbs_4__xbar_arb (VX_stream_arb_1_3) 8.84e-03 3.26e-02    6.276 4.77e-02   0.6
+        g_input_select_g_arbiter_g_out_buf_0__out_buf (VX_elastic_buffer_83_2_1_0_3) 6.16e-03 3.10e-02    3.825 4.10e-02   0.5
+          g_eb2_out_buf (VX_pipe_buffer_2_3) 7.27e-04 6.35e-04    0.549 1.91e-03   0.0
+          g_eb2_stream_buffer (VX_stream_buffer_83_1_3) 5.43e-03 3.04e-02    3.275 3.91e-02   0.5
+        g_input_select_g_arbiter_arbiter (VX_generic_arbiter_3) 1.12e-04 4.32e-05    0.126 2.81e-04   0.0
+          g_priority_priority_arbiter (VX_priority_arbiter_3) 1.12e-04 4.32e-05    0.126 2.81e-04   0.0
+            g_encoder_grant_sel (VX_priority_encoder_3) 1.12e-04 4.32e-05    0.126 2.81e-04   0.0
+              g_lsb_g_model1_lzc (VX_lzc_3) 9.75e-05 2.63e-05 6.90e-02 1.93e-04   0.0
+                g_lzc_find_first (VX_find_first_8_3_0_3) 9.75e-05 2.63e-05 6.90e-02 1.93e-04   0.0
+      g_multi_inputs_g_multiple_outputs_g_xbar_arbs_3__xbar_arb (VX_stream_arb_1_4) 8.86e-03 3.26e-02    6.241 4.77e-02   0.6
+        g_input_select_g_arbiter_g_out_buf_0__out_buf (VX_elastic_buffer_83_2_1_0_4) 6.11e-03 3.09e-02    3.830 4.09e-02   0.5
+          g_eb2_out_buf (VX_pipe_buffer_2_4) 7.25e-04 6.45e-04    0.550 1.92e-03   0.0
+          g_eb2_stream_buffer (VX_stream_buffer_83_1_4) 5.38e-03 3.03e-02    3.281 3.89e-02   0.5
+        g_input_select_g_arbiter_arbiter (VX_generic_arbiter_4) 1.27e-04 4.51e-05    0.120 2.92e-04   0.0
+          g_priority_priority_arbiter (VX_priority_arbiter_4) 1.27e-04 4.51e-05    0.120 2.92e-04   0.0
+            g_encoder_grant_sel (VX_priority_encoder_4) 1.27e-04 4.51e-05    0.120 2.92e-04   0.0
+              g_lsb_g_model1_lzc (VX_lzc_4) 1.12e-04 2.68e-05 6.30e-02 2.01e-04   0.0
+                g_lzc_find_first (VX_find_first_8_3_0_4) 1.12e-04 2.68e-05 6.30e-02 2.01e-04   0.0
+      g_multi_inputs_g_multiple_outputs_g_xbar_arbs_2__xbar_arb (VX_stream_arb_1_5) 9.11e-03 3.28e-02    6.272 4.82e-02   0.6
+        g_input_select_g_arbiter_g_out_buf_0__out_buf (VX_elastic_buffer_83_2_1_0_5) 6.30e-03 3.11e-02    3.821 4.13e-02   0.5
+          g_eb2_out_buf (VX_pipe_buffer_2_5) 7.89e-04 6.45e-04    0.550 1.98e-03   0.0
+          g_eb2_stream_buffer (VX_stream_buffer_83_1_5) 5.51e-03 3.05e-02    3.271 3.93e-02   0.5
+        g_input_select_g_arbiter_arbiter (VX_generic_arbiter_5) 1.20e-04 4.46e-05    0.120 2.85e-04   0.0
+          g_priority_priority_arbiter (VX_priority_arbiter_5) 1.20e-04 4.46e-05    0.120 2.85e-04   0.0
+            g_encoder_grant_sel (VX_priority_encoder_5) 1.20e-04 4.46e-05    0.120 2.85e-04   0.0
+              g_lsb_g_model1_lzc (VX_lzc_5) 1.06e-04 2.68e-05 6.29e-02 1.95e-04   0.0
+                g_lzc_find_first (VX_find_first_8_3_0_5) 1.06e-04 2.68e-05 6.29e-02 1.95e-04   0.0
+      g_multi_inputs_g_multiple_outputs_g_xbar_arbs_1__xbar_arb (VX_stream_arb_1_6) 9.29e-03 3.37e-02    6.245 4.92e-02   0.6
+        g_input_select_g_arbiter_g_out_buf_0__out_buf (VX_elastic_buffer_83_2_1_0_6) 6.48e-03 3.20e-02    3.825 4.23e-02   0.5
+          g_eb2_out_buf (VX_pipe_buffer_2_6) 6.79e-04 6.42e-04    0.550 1.87e-03   0.0
+          g_eb2_stream_buffer (VX_stream_buffer_83_1_6) 5.80e-03 3.13e-02    3.276 4.04e-02   0.5
+        g_input_select_g_arbiter_arbiter (VX_generic_arbiter_6) 1.24e-04 5.02e-05    0.124 2.98e-04   0.0
+          g_priority_priority_arbiter (VX_priority_arbiter_6) 1.24e-04 5.02e-05    0.124 2.98e-04   0.0
+            g_encoder_grant_sel (VX_priority_encoder_6) 1.24e-04 5.02e-05    0.124 2.98e-04   0.0
+              g_lsb_g_model1_lzc (VX_lzc_6) 1.06e-04 3.06e-05 6.79e-02 2.04e-04   0.0
+                g_lzc_find_first (VX_find_first_8_3_0_6) 1.06e-04 3.06e-05 6.79e-02 2.04e-04   0.0
+      g_multi_inputs_g_multiple_outputs_g_xbar_arbs_0__xbar_arb (VX_stream_arb_1_7) 9.17e-03 3.37e-02    6.237 4.91e-02   0.6
+        g_input_select_g_arbiter_g_out_buf_0__out_buf (VX_elastic_buffer_83_2_1_0_7) 6.34e-03 3.20e-02    3.821 4.21e-02   0.5
+          g_eb2_out_buf (VX_pipe_buffer_2_7) 6.44e-04 6.49e-04    0.550 1.84e-03   0.0
+          g_eb2_stream_buffer (VX_stream_buffer_83_1_7) 5.69e-03 3.13e-02    3.271 4.03e-02   0.5
+        g_input_select_g_arbiter_arbiter (VX_generic_arbiter_7) 1.11e-04 4.98e-05    0.124 2.85e-04   0.0
+          g_priority_priority_arbiter (VX_priority_arbiter_7) 1.11e-04 4.98e-05    0.124 2.85e-04   0.0
+            g_encoder_grant_sel (VX_priority_encoder_7) 1.11e-04 4.98e-05    0.124 2.85e-04   0.0
+              g_lsb_g_model1_lzc (VX_lzc_7) 9.44e-05 3.01e-05 6.78e-02 1.92e-04   0.0
+                g_lzc_find_first (VX_find_first_8_3_0_7) 9.44e-05 3.01e-05 6.78e-02 1.92e-04   0.0
+      g_multi_inputs_g_multiple_outputs_val_in_transpose (VX_transpose_0) 1.85e-04 9.49e-05    0.397 6.77e-04   0.0
+      g_multi_inputs_g_multiple_outputs_g_sel_in_demux_7__sel_in_demux (VX_demux_0) 3.78e-05 1.90e-05 2.38e-02 8.05e-05   0.0
+      g_multi_inputs_g_multiple_outputs_g_sel_in_demux_6__sel_in_demux (VX_demux_1) 4.10e-05 2.09e-05 2.39e-02 8.57e-05   0.0
+      g_multi_inputs_g_multiple_outputs_g_sel_in_demux_5__sel_in_demux (VX_demux_2) 4.51e-05 2.19e-05 2.33e-02 9.03e-05   0.0
+      g_multi_inputs_g_multiple_outputs_g_sel_in_demux_4__sel_in_demux (VX_demux_3) 4.40e-05 2.30e-05 2.29e-02 8.99e-05   0.0
+      g_multi_inputs_g_multiple_outputs_g_sel_in_demux_3__sel_in_demux (VX_demux_4) 5.13e-05 2.53e-05 2.44e-02 1.01e-04   0.0
+      g_multi_inputs_g_multiple_outputs_g_sel_in_demux_2__sel_in_demux (VX_demux_5) 5.73e-05 2.73e-05 2.62e-02 1.11e-04   0.0
+      g_multi_inputs_g_multiple_outputs_g_sel_in_demux_1__sel_in_demux (VX_demux_6) 5.67e-05 2.69e-05 2.41e-02 1.08e-04   0.0
+      g_multi_inputs_g_multiple_outputs_g_sel_in_demux_0__sel_in_demux (VX_demux_7) 6.41e-05 2.95e-05 2.56e-02 1.19e-04   0.0
+      g_multi_inputs_g_multiple_outputs_rdy_in_transpose (VX_transpose_1) 4.17e-05 1.03e-04    0.393 5.38e-04   0.0
+    g_data_store_7__bram_buf (VX_pipe_buffer_0) 7.48e-04 3.53e-03    0.355 4.64e-03   0.1
+      g_register_g_pipe_regs_0__pipe_register (VX_pipe_register_1_0) 6.95e-04 3.51e-03    0.328 4.54e-03   0.1
+        g_shift_register (VX_shift_register_20_1_1_0_0) 6.95e-04 3.51e-03    0.328 4.54e-03   0.1
+    g_data_store_7__lmem_store (VX_sp_ram_0) 5.22e-03    0.633  189.540    0.827  10.1
+      g_compiled_u_compiled (VX_sp_ram_compiled_0) 5.22e-03    0.633  189.540    0.827  10.1
+    g_data_store_6__bram_buf (VX_pipe_buffer_3) 8.25e-04 3.73e-03    0.357 4.91e-03   0.1
+      g_register_g_pipe_regs_0__pipe_register (VX_pipe_register_1_1) 7.56e-04 3.71e-03    0.328 4.79e-03   0.1
+        g_shift_register (VX_shift_register_20_1_1_0_1) 7.56e-04 3.71e-03    0.328 4.79e-03   0.1
+    g_data_store_6__lmem_store (VX_sp_ram_1) 4.24e-03    0.667  189.539    0.861  10.5
+      g_compiled_u_compiled (VX_sp_ram_compiled_1) 4.24e-03    0.667  189.539    0.861  10.5
+    g_data_store_5__bram_buf (VX_pipe_buffer_4) 9.52e-04 4.11e-03    0.357 5.41e-03   0.1
+      g_register_g_pipe_regs_0__pipe_register (VX_pipe_register_1_2) 8.56e-04 4.08e-03    0.327 5.26e-03   0.1
+        g_shift_register (VX_shift_register_20_1_1_0_2) 8.56e-04 4.08e-03    0.327 5.26e-03   0.1
+    g_data_store_5__lmem_store (VX_sp_ram_2) 4.62e-03    0.680  189.541    0.874  10.7
+      g_compiled_u_compiled (VX_sp_ram_compiled_2) 4.62e-03    0.680  189.541    0.874  10.7
+    g_data_store_4__bram_buf (VX_pipe_buffer_5) 1.01e-03 4.26e-03    0.356 5.62e-03   0.1
+      g_register_g_pipe_regs_0__pipe_register (VX_pipe_register_1_3) 9.21e-04 4.23e-03    0.327 5.48e-03   0.1
+        g_shift_register (VX_shift_register_20_1_1_0_3) 9.21e-04 4.23e-03    0.327 5.48e-03   0.1
+    g_data_store_4__lmem_store (VX_sp_ram_3) 4.31e-03    0.685  189.542    0.879  10.7
+      g_compiled_u_compiled (VX_sp_ram_compiled_3) 4.31e-03    0.685  189.542    0.879  10.7
+    g_data_store_3__bram_buf (VX_pipe_buffer_6) 1.04e-03 4.56e-03    0.356 5.96e-03   0.1
+      g_register_g_pipe_regs_0__pipe_register (VX_pipe_register_1_4) 9.60e-04 4.54e-03    0.326 5.82e-03   0.1
+        g_shift_register (VX_shift_register_20_1_1_0_4) 9.60e-04 4.54e-03    0.326 5.82e-03   0.1
+    g_data_store_3__lmem_store (VX_sp_ram_4) 4.00e-03    0.706  189.542    0.899  11.0
+      g_compiled_u_compiled (VX_sp_ram_compiled_4) 4.00e-03    0.706  189.542    0.899  11.0
+    g_data_store_2__bram_buf (VX_pipe_buffer_7) 1.15e-03 4.73e-03    0.355 6.24e-03   0.1
+      g_register_g_pipe_regs_0__pipe_register (VX_pipe_register_1_5) 1.06e-03 4.70e-03    0.326 6.08e-03   0.1
+        g_shift_register (VX_shift_register_20_1_1_0_5) 1.06e-03 4.70e-03    0.326 6.08e-03   0.1
+    g_data_store_2__lmem_store (VX_sp_ram_5) 4.06e-03    0.720  189.542    0.914  11.1
+      g_compiled_u_compiled (VX_sp_ram_compiled_5) 4.06e-03    0.720  189.542    0.914  11.1
+    g_data_store_1__bram_buf (VX_pipe_buffer_8) 1.16e-03 4.91e-03    0.352 6.42e-03   0.1
+      g_register_g_pipe_regs_0__pipe_register (VX_pipe_register_1_6) 1.07e-03 4.88e-03    0.325 6.27e-03   0.1
+        g_shift_register (VX_shift_register_20_1_1_0_6) 1.07e-03 4.88e-03    0.325 6.27e-03   0.1
+    g_data_store_1__lmem_store (VX_sp_ram_6) 4.01e-03    0.715  189.542    0.908  11.1
+      g_compiled_u_compiled (VX_sp_ram_compiled_6) 4.01e-03    0.715  189.542    0.908  11.1
+    g_data_store_0__bram_buf (VX_pipe_buffer_9) 1.27e-03 5.10e-03    0.347 6.71e-03   0.1
+      g_register_g_pipe_regs_0__pipe_register (VX_pipe_register_1_7) 1.17e-03 5.08e-03    0.325 6.57e-03   0.1
+        g_shift_register (VX_shift_register_20_1_1_0_7) 1.17e-03 5.08e-03    0.325 6.57e-03   0.1
+    g_data_store_0__lmem_store (VX_sp_ram_7) 5.44e-03    0.748  189.543    0.942  11.5
+      g_compiled_u_compiled (VX_sp_ram_compiled_7) 5.44e-03    0.748  189.543    0.942  11.5
+    req_xbar (VX_stream_xbar)             0.164    0.377   58.083    0.600   7.3
+      g_multi_inputs_g_multiple_outputs_g_xbar_arbs_7__xbar_arb (VX_stream_arb_0) 2.02e-02 4.14e-02    7.184 6.88e-02   0.8
+        g_input_select_g_arbiter_g_out_buf_0__out_buf (VX_elastic_buffer_105_2_1_0_0) 8.70e-03 3.81e-02    4.918 5.17e-02   0.6
+          g_eb2_out_buf (VX_pipe_buffer_1_0) 2.35e-03 8.42e-04    0.718 3.91e-03   0.0
+          g_eb2_stream_buffer (VX_stream_buffer_105_1_0) 6.35e-03 3.72e-02    4.200 4.78e-02   0.6
+        g_input_select_g_arbiter_arbiter (VX_generic_arbiter_8) 3.15e-04 1.30e-04    0.116 5.61e-04   0.0
+          g_priority_priority_arbiter (VX_priority_arbiter_8) 3.15e-04 1.30e-04    0.116 5.61e-04   0.0
+            g_encoder_grant_sel (VX_priority_encoder_8) 3.15e-04 1.30e-04    0.116 5.61e-04   0.0
+              g_lsb_g_model1_lzc (VX_lzc_8) 2.73e-04 7.64e-05 6.06e-02 4.10e-04   0.0
+                g_lzc_find_first (VX_find_first_8_3_0_8) 2.73e-04 7.64e-05 6.06e-02 4.10e-04   0.0
+      g_multi_inputs_g_multiple_outputs_g_xbar_arbs_6__xbar_arb (VX_stream_arb_2) 1.90e-02 4.32e-02    7.113 6.93e-02   0.8
+        g_input_select_g_arbiter_g_out_buf_0__out_buf (VX_elastic_buffer_105_2_1_0_1) 9.84e-03 3.99e-02    4.925 5.46e-02   0.7
+          g_eb2_out_buf (VX_pipe_buffer_1_1) 2.36e-03 8.94e-04    0.718 3.97e-03   0.0
+          g_eb2_stream_buffer (VX_stream_buffer_105_1_1) 7.48e-03 3.90e-02    4.207 5.07e-02   0.6
+        g_input_select_g_arbiter_arbiter (VX_generic_arbiter_9) 3.64e-04 1.35e-04    0.122 6.21e-04   0.0
+          g_priority_priority_arbiter (VX_priority_arbiter_9) 3.64e-04 1.35e-04    0.122 6.21e-04   0.0
+            g_encoder_grant_sel (VX_priority_encoder_9) 3.64e-04 1.35e-04    0.122 6.21e-04   0.0
+              g_lsb_g_model1_lzc (VX_lzc_9) 3.18e-04 8.14e-05 6.60e-02 4.66e-04   0.0
+                g_lzc_find_first (VX_find_first_8_3_0_9) 3.18e-04 8.14e-05 6.60e-02 4.66e-04   0.0
+      g_multi_inputs_g_multiple_outputs_g_xbar_arbs_5__xbar_arb (VX_stream_arb_3) 2.04e-02 4.49e-02    7.132 7.23e-02   0.9
+        g_input_select_g_arbiter_g_out_buf_0__out_buf (VX_elastic_buffer_105_2_1_0_2) 1.13e-02 4.16e-02    4.945 5.78e-02   0.7
+          g_eb2_out_buf (VX_pipe_buffer_1_2) 2.50e-03 9.48e-04    0.718 4.17e-03   0.1
+          g_eb2_stream_buffer (VX_stream_buffer_105_1_2) 8.77e-03 4.07e-02    4.226 5.37e-02   0.7
+        g_input_select_g_arbiter_arbiter (VX_generic_arbiter_10) 4.36e-04 1.29e-04    0.124 6.89e-04   0.0
+          g_priority_priority_arbiter (VX_priority_arbiter_10) 4.36e-04 1.29e-04    0.124 6.89e-04   0.0
+            g_encoder_grant_sel (VX_priority_encoder_10) 4.36e-04 1.29e-04    0.124 6.89e-04   0.0
+              g_lsb_g_model1_lzc (VX_lzc_10) 3.88e-04 7.69e-05 6.80e-02 5.33e-04   0.0
+                g_lzc_find_first (VX_find_first_8_3_0_10) 3.88e-04 7.69e-05 6.80e-02 5.33e-04   0.0
+      g_multi_inputs_g_multiple_outputs_g_xbar_arbs_4__xbar_arb (VX_stream_arb_4) 1.94e-02 4.70e-02    7.064 7.34e-02   0.9
+        g_input_select_g_arbiter_g_out_buf_0__out_buf (VX_elastic_buffer_105_2_1_0_3) 1.16e-02 4.38e-02    4.937 6.03e-02   0.7
+          g_eb2_out_buf (VX_pipe_buffer_1_3) 2.98e-03 1.00e-03    0.718 4.70e-03   0.1
+          g_eb2_stream_buffer (VX_stream_buffer_105_1_3) 8.66e-03 4.28e-02    4.219 5.56e-02   0.7
+        g_input_select_g_arbiter_arbiter (VX_generic_arbiter_11) 4.37e-04 1.33e-04    0.121 6.91e-04   0.0
+          g_priority_priority_arbiter (VX_priority_arbiter_11) 4.37e-04 1.33e-04    0.121 6.91e-04   0.0
+            g_encoder_grant_sel (VX_priority_encoder_11) 4.37e-04 1.33e-04    0.121 6.91e-04   0.0
+              g_lsb_g_model1_lzc (VX_lzc_11) 3.93e-04 8.03e-05 6.60e-02 5.39e-04   0.0
+                g_lzc_find_first (VX_find_first_8_3_0_11) 3.93e-04 8.03e-05 6.60e-02 5.39e-04   0.0
+      g_multi_inputs_g_multiple_outputs_g_xbar_arbs_3__xbar_arb (VX_stream_arb_5) 2.08e-02 4.94e-02    7.063 7.73e-02   0.9
+        g_input_select_g_arbiter_g_out_buf_0__out_buf (VX_elastic_buffer_105_2_1_0_4) 1.22e-02 4.62e-02    4.951 6.34e-02   0.8
+          g_eb2_out_buf (VX_pipe_buffer_1_4) 3.60e-03 1.07e-03    0.718 5.40e-03   0.1
+          g_eb2_stream_buffer (VX_stream_buffer_105_1_4) 8.64e-03 4.51e-02    4.232 5.80e-02   0.7
+        g_input_select_g_arbiter_arbiter (VX_generic_arbiter_12) 4.54e-04 1.32e-04    0.122 7.07e-04   0.0
+          g_priority_priority_arbiter (VX_priority_arbiter_12) 4.54e-04 1.32e-04    0.122 7.07e-04   0.0
+            g_encoder_grant_sel (VX_priority_encoder_12) 4.54e-04 1.32e-04    0.122 7.07e-04   0.0
+              g_lsb_g_model1_lzc (VX_lzc_12) 4.11e-04 7.98e-05 6.61e-02 5.57e-04   0.0
+                g_lzc_find_first (VX_find_first_8_3_0_12) 4.11e-04 7.98e-05 6.61e-02 5.57e-04   0.0
+      g_multi_inputs_g_multiple_outputs_g_xbar_arbs_2__xbar_arb (VX_stream_arb_6) 1.92e-02 4.94e-02    7.015 7.56e-02   0.9
+        g_input_select_g_arbiter_g_out_buf_0__out_buf (VX_elastic_buffer_105_2_1_0_5) 1.06e-02 4.62e-02    4.935 6.18e-02   0.8
+          g_eb2_out_buf (VX_pipe_buffer_1_5) 3.05e-03 1.10e-03    0.718 4.87e-03   0.1
+          g_eb2_stream_buffer (VX_stream_buffer_105_1_5) 7.57e-03 4.51e-02    4.217 5.69e-02   0.7
+        g_input_select_g_arbiter_arbiter (VX_generic_arbiter_13) 4.33e-04 1.34e-04    0.122 6.89e-04   0.0
+          g_priority_priority_arbiter (VX_priority_arbiter_13) 4.33e-04 1.34e-04    0.122 6.89e-04   0.0
+            g_encoder_grant_sel (VX_priority_encoder_13) 4.33e-04 1.34e-04    0.122 6.89e-04   0.0
+              g_lsb_g_model1_lzc (VX_lzc_13) 3.92e-04 8.14e-05 6.60e-02 5.39e-04   0.0
+                g_lzc_find_first (VX_find_first_8_3_0_13) 3.92e-04 8.14e-05 6.60e-02 5.39e-04   0.0
+      g_multi_inputs_g_multiple_outputs_g_xbar_arbs_1__xbar_arb (VX_stream_arb_7) 1.97e-02 4.97e-02    7.010 7.63e-02   0.9
+        g_input_select_g_arbiter_g_out_buf_0__out_buf (VX_elastic_buffer_105_2_1_0_6) 1.19e-02 4.65e-02    4.964 6.34e-02   0.8
+          g_eb2_out_buf (VX_pipe_buffer_1_6) 3.30e-03 1.11e-03    0.719 5.13e-03   0.1
+          g_eb2_stream_buffer (VX_stream_buffer_105_1_6) 8.56e-03 4.54e-02    4.245 5.82e-02   0.7
+        g_input_select_g_arbiter_arbiter (VX_generic_arbiter_14) 4.10e-04 1.28e-04    0.121 6.59e-04   0.0
+          g_priority_priority_arbiter (VX_priority_arbiter_14) 4.10e-04 1.28e-04    0.121 6.59e-04   0.0
+            g_encoder_grant_sel (VX_priority_encoder_14) 4.10e-04 1.28e-04    0.121 6.59e-04   0.0
+              g_lsb_g_model1_lzc (VX_lzc_14) 3.66e-04 7.58e-05 6.57e-02 5.08e-04   0.0
+                g_lzc_find_first (VX_find_first_8_3_0_14) 3.66e-04 7.58e-05 6.57e-02 5.08e-04   0.0
+      g_multi_inputs_g_multiple_outputs_g_xbar_arbs_0__xbar_arb (VX_stream_arb_8) 2.43e-02 5.16e-02    7.252 8.32e-02   1.0
+        g_input_select_g_arbiter_g_out_buf_0__out_buf (VX_elastic_buffer_105_2_1_0_7) 1.28e-02 4.82e-02    4.958 6.60e-02   0.8
+          g_eb2_out_buf (VX_pipe_buffer_1_7) 3.13e-03 1.15e-03    0.718 5.00e-03   0.1
+          g_eb2_stream_buffer (VX_stream_buffer_105_1_7) 9.66e-03 4.71e-02    4.240 6.10e-02   0.7
+        g_input_select_g_arbiter_arbiter (VX_generic_arbiter_15) 4.10e-04 1.28e-04    0.116 6.54e-04   0.0
+          g_priority_priority_arbiter (VX_priority_arbiter_15) 4.10e-04 1.28e-04    0.116 6.54e-04   0.0
+            g_encoder_grant_sel (VX_priority_encoder_15) 4.10e-04 1.28e-04    0.116 6.54e-04   0.0
+              g_lsb_g_model1_lzc (VX_lzc_15) 3.66e-04 7.44e-05 6.05e-02 5.01e-04   0.0
+                g_lzc_find_first (VX_find_first_8_3_0_15) 3.66e-04 7.44e-05 6.05e-02 5.01e-04   0.0
+      g_multi_inputs_g_multiple_outputs_val_in_transpose (VX_transpose_2) 3.75e-04 2.16e-04    0.397 9.87e-04   0.0
+      g_multi_inputs_g_multiple_outputs_g_sel_in_demux_7__sel_in_demux (VX_demux_8) 5.78e-05 3.40e-05 2.42e-02 1.16e-04   0.0
+      g_multi_inputs_g_multiple_outputs_g_sel_in_demux_6__sel_in_demux (VX_demux_9) 6.20e-05 3.40e-05 2.41e-02 1.20e-04   0.0
+      g_multi_inputs_g_multiple_outputs_g_sel_in_demux_5__sel_in_demux (VX_demux_10) 6.17e-05 3.43e-05 2.41e-02 1.20e-04   0.0
+      g_multi_inputs_g_multiple_outputs_g_sel_in_demux_4__sel_in_demux (VX_demux_11) 5.92e-05 3.41e-05 2.41e-02 1.17e-04   0.0
+      g_multi_inputs_g_multiple_outputs_g_sel_in_demux_3__sel_in_demux (VX_demux_12) 6.50e-05 3.40e-05 2.41e-02 1.23e-04   0.0
+      g_multi_inputs_g_multiple_outputs_g_sel_in_demux_2__sel_in_demux (VX_demux_13) 7.18e-05 3.41e-05 2.41e-02 1.30e-04   0.0
+      g_multi_inputs_g_multiple_outputs_g_sel_in_demux_1__sel_in_demux (VX_demux_14) 6.67e-05 3.42e-05 2.41e-02 1.25e-04   0.0
+      g_multi_inputs_g_multiple_outputs_g_sel_in_demux_0__sel_in_demux (VX_demux_15) 7.06e-05 3.41e-05 2.41e-02 1.29e-04   0.0
+      g_multi_inputs_g_multiple_outputs_rdy_in_transpose (VX_transpose_3) 7.45e-05 1.58e-04    0.395 6.27e-04   0.0
+1

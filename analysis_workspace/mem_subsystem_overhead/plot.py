@@ -50,13 +50,27 @@ TOP_OF = {
     "A0": "VX_axi_adapter",   "A1": "VX_axi_adapter",   "A2": "VX_axi_adapter",   "A3": "VX_axi_adapter", "A4": "VX_axi_adapter",
 }
 COLORS = {
-    "xbar":     "#d9774a",   # interconnect — burnt orange (the bit we're measuring)
-    "ctrl":     "#f3c969",   # MSHR / arb / fill / replace logic — wheat
-    "sram_peri":"#a4c8c9",   # SRAM peripheral overhead (decoder, sense-amp dup) — pale teal
-    "sram_base":"#5a7891",   # SRAM bit-cell baseline (fixed by CAP spec)   — dark blue-grey
-    "pnr":      "#7d6b8c",   # PnR whitespace (DC-Topo: cell × (1/util - 1)) — dusty purple
-    "gemm":     "#444444",   # VX_gemm_unit_top reference — dark grey
+    "xbar":      "#0f4c81",  # dark blue
+    "ctrl":      "#2f80b7",  # blue
+    "sram_peri": "#2ca25f",  # green
+    "sram_base": "#74c476",  # light green
+    "pnr":       "#147d8f",  # teal
+    "gemm":      "#486581",  # blue-gray reference
+    "baseline":  "#6b7c93",  # muted blue-gray
+    "fpint":     "#2f80b7",  # blue
 }
+
+plt.rcParams.update({
+    "font.size": 14,
+    "axes.titlesize": 16,
+    "axes.labelsize": 15,
+    "xtick.labelsize": 13,
+    "ytick.labelsize": 13,
+    "legend.fontsize": 12,
+    "figure.titlesize": 17,
+    "pdf.fonttype": 42,
+    "ps.fonttype": 42,
+})
 
 # DC-Topographical PnR overhead model.
 # Synthesized gemm_32 util is reused for any gemm size (per user instruction).
@@ -126,7 +140,7 @@ def fig1_stacked(table):
         cell_no_base = s[lb]["xbar"] + s[lb]["ctrl"] + s[lb]["sram_peri"]
         pnrs.append(_pnr_oh(cell_no_base, _util_of(routing, lb)) / 1e6)
 
-    fig, ax = plt.subplots(figsize=(11.5, 5.2))
+    fig, ax = plt.subplots(figsize=(13.5, 6.2))
     x = np.arange(len(ORDER) + 1)  # +1 for gemm
 
     # Stacked: xbar | ctrl | sram_peri | PnR whitespace
@@ -144,7 +158,7 @@ def fig1_stacked(table):
            edgecolor="black", linewidth=0.4, hatch="///")
 
     # gemm_unit reference bar — cell + PnR (gemm area always includes PnR).
-    ax.bar(x[-1], gemm / 1e6, color=COLORS["gemm"], label="VX_gemm_unit_top (WKQ, cell)", edgecolor="black", linewidth=0.4)
+    ax.bar(x[-1], gemm / 1e6, color=COLORS["gemm"], label="VX gemm unit top (WKQ, cell)", edgecolor="black", linewidth=0.4)
     ax.bar(x[-1], pnr_gemm / 1e6, bottom=gemm / 1e6, color=COLORS["pnr"],
            edgecolor="black", linewidth=0.4, hatch="///")
 
@@ -157,22 +171,21 @@ def fig1_stacked(table):
         if y < ymax * 1.05:
             ax.axhline(y, color=COLORS["gemm"], linestyle=ls, linewidth=0.9, alpha=0.55)
             ax.text(len(ORDER) - 0.3, y, f" {k}× gemm (w/ PnR)", color=COLORS["gemm"],
-                    fontsize=8, va="bottom", ha="left", alpha=0.7)
+                    fontsize=11, va="bottom", ha="left", alpha=0.7)
 
     # Annotate effective overhead (= xbar + ctrl + sram_peri + PnR) above each mem bar
     for i, lb in enumerate(ORDER):
         icn_eff = xbars[i] + ctrls[i] + speris[i] + pnrs[i]
         ax.text(i, icn_eff + ymax * 0.005,
-                f"icn={icn_eff*1000:.0f}k", ha="center", fontsize=7, color="#222")
+                f"icn={icn_eff*1000:.0f}k", ha="center", fontsize=10, color="#222")
 
     ax.set_xticks(x)
-    ax.set_xticklabels(ORDER + ["GEMM\nunit"], fontsize=9)
+    ax.set_xticklabels(ORDER + ["GEMM\nunit"])
     ax.set_ylabel("Area (mm² equivalent, ×10⁶ µm²)")
-    ax.set_title("Bank-induced overhead per memory-subsystem point vs one VX_gemm_unit_top\n"
+    ax.set_title("Bank-induced overhead per memory-subsystem point vs one VX gemm unit top\n"
                  "(xbar + ctrl + SRAM peri + PnR whitespace; CAP-intrinsic storage excluded. "
-                 "Samsung 28LPP, DC Topo, 10 ns)",
-                 fontsize=10.5)
-    ax.legend(loc="upper left", framealpha=0.95, fontsize=8.5)
+                 "Samsung 28LPP, DC Topo, 10 ns)")
+    ax.legend(loc="upper left", framealpha=0.95, fontsize=11)
     ax.yaxis.grid(True, alpha=0.3)
     ax.set_axisbelow(True)
 
@@ -181,11 +194,11 @@ def fig1_stacked(table):
     for label, (s, e) in group_pos.items():
         ax.annotate(label,
                     xy=((s + e) / 2, -0.13), xycoords=("data", "axes fraction"),
-                    ha="center", va="top", fontsize=9, color="#444")
+                    ha="center", va="top", fontsize=12, color="#444")
 
     fig.tight_layout()
     for ext in ("png", "pdf"):
-        fig.savefig(HERE / f"fig1_stacked_vs_gemm.{ext}", dpi=150, bbox_inches="tight")
+        fig.savefig(HERE / f"fig1_stacked_vs_gemm.{ext}", dpi=300, bbox_inches="tight")
     plt.close(fig)
     print("wrote fig1_stacked_vs_gemm.{png,pdf}")
 
@@ -206,7 +219,7 @@ def fig2_ratio(table):
 
     x = np.arange(len(ORDER))
     width = 0.21
-    fig, ax = plt.subplots(figsize=(12.5, 4.8))
+    fig, ax = plt.subplots(figsize=(14.5, 5.8))
     b1 = ax.bar(x - 1.5*width, r_xbar, width, color=COLORS["xbar"], label="xbar only",
                 edgecolor="black", linewidth=0.4)
     b2 = ax.bar(x - 0.5*width, r_xc,   width, color=COLORS["ctrl"], label="xbar + ctrl",
@@ -219,22 +232,21 @@ def fig2_ratio(table):
                 edgecolor="black", linewidth=0.4, hatch="///")
 
     ax.axhline(1.0, color=COLORS["gemm"], linestyle="--", linewidth=1.0)
-    ax.text(len(ORDER) - 0.6, 1.02, "= 1 GEMM unit (w/ PnR)", color=COLORS["gemm"], fontsize=8.5)
+    ax.text(len(ORDER) - 0.6, 1.02, "= 1 GEMM unit (w/ PnR)", color=COLORS["gemm"], fontsize=11)
 
     for bars in (b1, b2, b3, b4):
         for b in bars:
             h = b.get_height()
             if h > 0:
                 ax.text(b.get_x() + b.get_width() / 2, h + 0.05,
-                        f"{h:.2f}", ha="center", fontsize=6.5, color="#222")
+                        f"{h:.2f}", ha="center", fontsize=10, color="#222")
 
     ax.set_xticks(x)
-    ax.set_xticklabels(ORDER, fontsize=9)
-    ax.set_ylabel("area / area(VX_gemm_unit_top, cell + PnR)")
+    ax.set_xticklabels(ORDER)
+    ax.set_ylabel("area / area(VX gemm unit top, cell + PnR)")
     ax.set_title("Interconnect overhead expressed in GEMM-unit equivalents\n"
-                 "(GEMM reference always includes PnR overhead; CAP-intrinsic SRAM excluded)",
-                 fontsize=10.5)
-    ax.legend(loc="upper left", framealpha=0.95, fontsize=9)
+                 "(GEMM reference always includes PnR overhead; CAP-intrinsic SRAM excluded)")
+    ax.legend(loc="upper left", framealpha=0.95, fontsize=11)
     ax.yaxis.grid(True, alpha=0.3)
     ax.set_axisbelow(True)
 
@@ -242,11 +254,11 @@ def fig2_ratio(table):
     for label, (s, e) in group_pos.items():
         ax.annotate(label,
                     xy=((s + e) / 2, -0.13), xycoords=("data", "axes fraction"),
-                    ha="center", va="top", fontsize=9, color="#444")
+                    ha="center", va="top", fontsize=12, color="#444")
 
     fig.tight_layout()
     for ext in ("png", "pdf"):
-        fig.savefig(HERE / f"fig2_ratio_to_gemm.{ext}", dpi=150, bbox_inches="tight")
+        fig.savefig(HERE / f"fig2_ratio_to_gemm.{ext}", dpi=300, bbox_inches="tight")
     plt.close(fig)
     print("wrote fig2_ratio_to_gemm.{png,pdf}")
 
@@ -264,10 +276,10 @@ def fig3_scaling(table):
     LABEL_N = {"L1": 8, "L2": 16, "L3": 32, "L4": 64,
                "C1": 4, "C2":  8, "C3": 16, "C4": 32,
                "A1": 4, "A2":  8, "A3": 16, "A4": 32}
-    colors = {"LMEM": "#3a7ca5", "DCACHE": "#d9774a", "AXI": "#5a8a3b"}
+    colors = {"LMEM": COLORS["xbar"], "DCACHE": COLORS["ctrl"], "AXI": COLORS["sram_peri"]}
     markers = {"LMEM": "o", "DCACHE": "s", "AXI": "^"}
 
-    fig, ax = plt.subplots(figsize=(8.5, 5.0))
+    fig, ax = plt.subplots(figsize=(10.5, 6.2))
     for name, labels in series.items():
         n_actual = [LABEL_N[lb] for lb in labels]
         # Cell-only effective interconnect overhead = xbar + ctrl + sram_peri
@@ -302,28 +314,28 @@ def fig3_scaling(table):
                       label=f"{name} (xbar only)")
 
     ax.axhline(gemm_die, color=COLORS["gemm"], linestyle="--", linewidth=1.0)
-    ax.text(4.1, gemm_die * 1.05, "1× VX_gemm_unit_top (w/ PnR)",
-            color=COLORS["gemm"], fontsize=8.5)
+    ax.text(4.1, gemm_die * 1.05, "1× VX gemm unit top (w/ PnR)",
+            color=COLORS["gemm"], fontsize=11)
 
     # Reference slopes
     xx = np.array([4, 64])
     base = 5e3
     ax.loglog(xx, base * xx, color="#888", linestyle=":", linewidth=0.8)
-    ax.text(64, base * 64 * 1.05, "O(N)", color="#888", fontsize=8)
+    ax.text(64, base * 64 * 1.05, "O(N)", color="#888", fontsize=11)
     ax.loglog(xx, base * xx ** 2 / 8, color="#888", linestyle=":", linewidth=0.8)
-    ax.text(64, base * 64 ** 2 / 8 * 1.05, "O(N²)", color="#888", fontsize=8)
+    ax.text(64, base * 64 ** 2 / 8 * 1.05, "O(N²)", color="#888", fontsize=11)
 
-    ax.set_xlabel("N (NUM_PORTS / NUM_BANKS)")
+    ax.set_xlabel("N (ports / banks)")
     ax.set_ylabel("overhead area (µm²)")
     ax.set_title("Effective interconnect overhead vs N\n"
                  "(solid = cell; dotted = + PnR whitespace; dashed = xbar-only)")
-    ax.legend(loc="upper left", framealpha=0.95, fontsize=8)
+    ax.legend(loc="upper left", framealpha=0.95, fontsize=11)
     ax.grid(True, which="both", alpha=0.3)
     ax.set_axisbelow(True)
 
     fig.tight_layout()
     for ext in ("png", "pdf"):
-        fig.savefig(HERE / f"fig3_scaling.{ext}", dpi=150, bbox_inches="tight")
+        fig.savefig(HERE / f"fig3_scaling.{ext}", dpi=300, bbox_inches="tight")
     plt.close(fig)
     print("wrote fig3_scaling.{png,pdf}")
 
@@ -352,12 +364,12 @@ def load_routing():
 
 def fig4_routing(rt):
     series = {
-        "VX_local_mem_top": ("LMEM",      ["L1", "L2", "L3", "L4"], "#3a7ca5", "o"),
-        "VX_cache_top":     ("DCACHE",    ["C1", "C2", "C3", "C4"], "#d9774a", "s"),
-        "VX_axi_adapter":   ("AXI adapter", ["A1", "A2", "A3", "A4"], "#5a8a3b", "^"),
+        "VX_local_mem_top": ("LMEM",      ["L1", "L2", "L3", "L4"], COLORS["xbar"], "o"),
+        "VX_cache_top":     ("DCACHE",    ["C1", "C2", "C3", "C4"], COLORS["ctrl"], "s"),
+        "VX_axi_adapter":   ("AXI adapter", ["A1", "A2", "A3", "A4"], COLORS["sram_peri"], "^"),
     }
 
-    fig, (axU, axC) = plt.subplots(1, 2, figsize=(13, 4.6))
+    fig, (axU, axC) = plt.subplots(1, 2, figsize=(15, 5.8))
     for design, (name, labels, color, marker) in series.items():
         ns, utils, ovfs = [], [], []
         for lb in labels:
@@ -375,34 +387,34 @@ def fig4_routing(rt):
     # gemm_unit reference (single point, plotted as a horizontal band)
     g = rt.get(("VX_gemm_unit_top", "WKQ"))
     if g and g["util"] > 0:
-        axU.axhline(g["util"], color="#444", linestyle="--", linewidth=1.0,
-                    label=f"VX_gemm_unit (util={g['util']:.2f})")
+        axU.axhline(g["util"], color=COLORS["gemm"], linestyle="--", linewidth=1.2,
+                    label=f"VX gemm unit (util={g['util']:.2f})")
         if g["overflow_pct"] > 0:
-            axC.axhline(g["overflow_pct"], color="#444", linestyle="--", linewidth=1.0,
-                        label=f"VX_gemm_unit (ovf={g['overflow_pct']:.2f}%)")
+            axC.axhline(g["overflow_pct"], color=COLORS["gemm"], linestyle="--", linewidth=1.2,
+                        label=f"VX gemm unit (ovf={g['overflow_pct']:.2f}%)")
 
     axU.set_xscale("log", base=2)
-    axU.set_xlabel("N (NUM_PORTS / NUM_BANKS)")
+    axU.set_xlabel("N (ports / banks)")
     axU.set_ylabel("Core utilization (cells / core area)")
     axU.set_title("Utilization — DC auto-spreads cells when routing tightens\n"
                   "(↓ = harder to route)")
     axU.set_ylim(0, max(0.7, axU.get_ylim()[1]))
-    axU.legend(loc="lower left", fontsize=9, framealpha=0.95)
+    axU.legend(loc="lower left", fontsize=11, framealpha=0.95)
     axU.grid(True, which="both", alpha=0.3)
     axU.set_axisbelow(True)
 
     axC.set_xscale("log", base=2)
-    axC.set_xlabel("N (NUM_PORTS / NUM_BANKS)")
+    axC.set_xlabel("N (ports / banks)")
     axC.set_ylabel("Zroute residual overflow (% of GRCs)")
     axC.set_title("Congestion overflow — direct routing-pain proxy\n"
                   "(↑ = harder to route)")
-    axC.legend(loc="upper left", fontsize=9, framealpha=0.95)
+    axC.legend(loc="upper left", fontsize=11, framealpha=0.95)
     axC.grid(True, which="both", alpha=0.3)
     axC.set_axisbelow(True)
 
     fig.tight_layout()
     for ext in ("png", "pdf"):
-        fig.savefig(HERE / f"fig4_routing_proxies.{ext}", dpi=150, bbox_inches="tight")
+        fig.savefig(HERE / f"fig4_routing_proxies.{ext}", dpi=300, bbox_inches="tight")
     plt.close(fig)
     print("wrote fig4_routing_proxies.{png,pdf}")
 
@@ -422,9 +434,9 @@ FP_ADDSUB_FP32   = 1004.44498   # µm² per FP32 add/sub (for accumulator tree)
 FP_FLT2I_FP16    = 205.568998   # µm² per FP16 flt2i (output cast)
 
 FIG7_BASE  = {"name": "Baseline\n16×16 FP16×FP16", "N": 16, "kind": "fpfp",
-              "L": "L2", "C": "C0", "A": "A0", "color": "#888888"}
+              "L": "L2", "C": "C0", "A": "A0", "color": COLORS["baseline"]}
 FIG7_FPINT = {"name": "FPxINT\n32×32 FP16×INT4", "N": 32, "kind": "fpint",
-              "L": "L4", "C": "C2", "A": "A2", "color": "#d9774a"}
+              "L": "L4", "C": "C2", "A": "A2", "color": COLORS["fpint"]}
 
 
 def _gemm_area_any(n, kind):
@@ -504,7 +516,7 @@ def fig7_tops_per_mm2_3set(table):
     x = np.arange(4)
     width = 0.36
 
-    fig, ax = plt.subplots(figsize=(12, 5.8))
+    fig, ax = plt.subplots(figsize=(13.5, 6.6))
     bars_b = ax.bar(x - width/2, eff_b, width, color=FIG7_BASE ["color"],
                     label="Baseline (16×16 FP16×FP16)", edgecolor="black", linewidth=0.5)
     bars_f = ax.bar(x + width/2, eff_f, width, color=FIG7_FPINT["color"],
@@ -518,33 +530,32 @@ def fig7_tops_per_mm2_3set(table):
     # value labels above bars
     for bb, v in list(zip(bars_b, eff_b)) + list(zip(bars_f, eff_f)):
         ax.text(bb.get_x() + bb.get_width()/2, v * 1.10,
-                f"{v:.4f}", ha="center", fontsize=8.5, color="#222")
+                f"{v:.4f}", ha="center", fontsize=12, color="#222")
     # area in-bar (use log midpoint)
     for bb, a in list(zip(bars_b, sets_b)) + list(zip(bars_f, sets_f)):
         ax.text(bb.get_x() + bb.get_width()/2, bb.get_height() * 0.55,
                 f"{a:.2f}\nmm²", ha="center", va="center",
-                fontsize=8, color="white", fontweight="bold")
+                fontsize=12, color="white", fontweight="bold")
     # ratio above each group (near top of log axis)
     top_y = ymax * 0.7
     for i, r in enumerate(ratio):
         ax.text(x[i], top_y,
                 f"FPxINT / Base\n= {r:.2f}×",
-                ha="center", fontsize=10, fontweight="bold",
-                color="#3a5c25" if r >= 1.5 else "#666",
+                ha="center", fontsize=13, fontweight="bold",
+                color=COLORS["sram_peri"] if r >= 1.5 else COLORS["gemm"],
                 bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="#aaa", alpha=0.9))
 
     ax.set_xticks(x)
-    ax.set_xticklabels(set_names, fontsize=9)
+    ax.set_xticklabels(set_names, fontsize=12)
     ax.set_ylabel("TOPS / mm²   (log scale; 100 MHz, 28LPP)")
-    ax.set_title("TOPS/mm² across four cumulative area sets: gemm → overhead → full die",
-                 fontsize=11)
-    ax.legend(loc="lower left", fontsize=10, framealpha=0.95)
+    ax.set_title("TOPS/mm² across four cumulative area sets: gemm → overhead → full die")
+    ax.legend(loc="lower left", fontsize=12, framealpha=0.95)
     ax.yaxis.grid(True, which="both", alpha=0.3)
     ax.set_axisbelow(True)
 
     fig.tight_layout()
     for ext in ("png", "pdf"):
-        fig.savefig(HERE / f"fig7_tops_baseline_vs_fpint.{ext}", dpi=150, bbox_inches="tight")
+        fig.savefig(HERE / f"fig7_tops_baseline_vs_fpint.{ext}", dpi=300, bbox_inches="tight")
     plt.close(fig)
     print("wrote fig7_tops_baseline_vs_fpint.{png,pdf}")
 
@@ -664,10 +675,10 @@ def _draw_variant_on_axis(ax, d, ymax):
                  "Set 3\n+ SRAM peri\n(FPxINT only)",
                  "Set 4\n+ memory system PnR\n(full die)"]
 
-    bars_b = ax.bar(x - width/2, d["rel_b"], width, color="#888888",
+    bars_b = ax.bar(x - width/2, d["rel_b"], width, color=COLORS["baseline"],
                     edgecolor="black", linewidth=0.5,
                     label=f"Baseline ({d['base_n']}×{d['base_n']} FP16×FP16; {d['base_mem']})")
-    bars_f = ax.bar(x + width/2, d["rel_f"], width, color="#3a7ca5",
+    bars_f = ax.bar(x + width/2, d["rel_f"], width, color=COLORS["fpint"],
                     edgecolor="black", linewidth=0.5,
                     label=f"FPxINT ({d['fpint_n']}×{d['fpint_n']} FP16×INT4; {d['fpint_mem']})")
 
@@ -676,26 +687,26 @@ def _draw_variant_on_axis(ax, d, ymax):
 
     for bb, v in list(zip(bars_b, d["rel_b"])) + list(zip(bars_f, d["rel_f"])):
         ax.text(bb.get_x() + bb.get_width()/2, v + ymax * 0.015,
-                f"{v:.2f}×", ha="center", fontsize=9, color="#222", fontweight="bold")
+                f"{v:.2f}×", ha="center", fontsize=12, color="#222", fontweight="bold")
     for bb, a in list(zip(bars_b, d["sets_b"])) + list(zip(bars_f, d["sets_f"])):
         ax.text(bb.get_x() + bb.get_width()/2, bb.get_height() * 0.5,
                 f"{a:.2f}\nmm²", ha="center", va="center",
-                fontsize=8, color="white", fontweight="bold")
+                fontsize=12, color="white", fontweight="bold")
 
     # MXU-size badge in the top-left of the subplot.
     ax.text(0.012, 0.97,
             f"{d['base_n']}×{d['base_n']} FPxFP VS "
             f"{d['fpint_n']}×{d['fpint_n']} FPxINT",
             transform=ax.transAxes, ha="left", va="top",
-            fontsize=11, fontweight="bold", color="#222",
-            bbox=dict(boxstyle="round,pad=0.35", fc="#fff8e0", ec="#aaa", alpha=0.95))
+            fontsize=14, fontweight="bold", color="#222",
+            bbox=dict(boxstyle="round,pad=0.35", fc="#e8f2fb", ec="#9ebbd4", alpha=0.95))
 
     ax.set_xticks(x)
-    ax.set_xticklabels(set_names, fontsize=8.5)
+    ax.set_xticklabels(set_names, fontsize=12)
     ax.yaxis.grid(True, alpha=0.3)
     ax.set_axisbelow(True)
     ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.16),
-              ncol=1, fontsize=8.5, framealpha=0.95)
+              ncol=1, fontsize=12, framealpha=0.95)
 
 
 FIG8_VARIANTS = [
@@ -725,7 +736,7 @@ def fig8_tops_recovery_all(table):
     ymax = max(max(d["rel_b"] + d["rel_f"]) for d in datas) * 1.22
 
     n = len(datas)
-    fig, axes = plt.subplots(1, n, figsize=(8.5 * n, 6.3), sharey=True)
+    fig, axes = plt.subplots(1, n, figsize=(9.8 * n, 7.2), sharey=True)
     if n == 1:
         axes = [axes]
     for ax, d in zip(axes, datas):
@@ -734,10 +745,10 @@ def fig8_tops_recovery_all(table):
                        "in-bar = absolute area in mm²")
 
     fig.suptitle("Relative TOPS/mm² across four cumulative area sets",
-                 fontsize=11)
+                 fontsize=17)
     fig.tight_layout(rect=[0, 0, 1, 0.97])
     for ext in ("png", "pdf"):
-        fig.savefig(HERE / f"fig8_tops_recovery.{ext}", dpi=150, bbox_inches="tight")
+        fig.savefig(HERE / f"fig8_tops_recovery.{ext}", dpi=300, bbox_inches="tight")
     plt.close(fig)
     print("wrote fig8_tops_recovery.{png,pdf}")
 

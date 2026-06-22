@@ -30,6 +30,39 @@ CSV = HERE / "data.csv"
 VORTEX_BUILD_GEMM = HERE.parents[1] / "build" / "hw" / "syn" / "synopsys" \
     / "gemm_unit_breakdown" / "syn" / "run" / "v0"
 
+BLUE_DARK = "#0f4c81"
+BLUE = "#2f80b7"
+BLUE_LIGHT = "#6baed6"
+BLUE_PALE = "#9ecae1"
+TEAL = "#147d8f"
+TEAL_LIGHT = "#41b6c4"
+GREEN_DARK = "#1b7837"
+GREEN = "#2ca25f"
+GREEN_LIGHT = "#74c476"
+GREEN_PALE = "#a1d99b"
+GRAY = "#7a7f85"
+TEXT = "#202124"
+
+plt.rcParams.update({
+    "font.size": 14,
+    "axes.titlesize": 16,
+    "axes.labelsize": 15,
+    "xtick.labelsize": 13,
+    "ytick.labelsize": 13,
+    "legend.fontsize": 12,
+    "figure.titlesize": 17,
+    "pdf.fonttype": 42,
+    "ps.fonttype": 42,
+    "svg.fonttype": "none",
+})
+
+
+def display_name(name: str) -> str:
+    """Paper-facing label: drop RTL instance prefix and underscores."""
+    if name.startswith("u_"):
+        name = name[2:]
+    return name.replace("_", " ")
+
 
 def load() -> list[dict]:
     rows = []
@@ -60,17 +93,17 @@ def fig1_per_component(rows):
 
     x = np.arange(len(designs))
     width = 0.38
-    fig, ax = plt.subplots(figsize=(9, 4.2))
-    b1 = ax.bar(x - width / 2, fp16, width, label="FP16", color="#3a7ca5")
-    b2 = ax.bar(x + width / 2, fp32, width, label="FP32", color="#d9774a")
+    fig, ax = plt.subplots(figsize=(11, 5.2))
+    b1 = ax.bar(x - width / 2, fp16, width, label="FP16", color=BLUE)
+    b2 = ax.bar(x + width / 2, fp32, width, label="FP32", color=GREEN)
     # Add an INT8 reference for context
     int_v = get(rows, "int_mac_pe", "INT8/INT32")
     if int_v:
-        ax.axhline(int_v["total_uw"], color="#444", linestyle="--", linewidth=1,
-                   label=f"int_mac_pe (INT8) = {int_v['total_uw']:.1f} µW")
+        ax.axhline(int_v["total_uw"], color=GRAY, linestyle="--", linewidth=1.2,
+                   label=f"{display_name('int_mac_pe')} (INT8) = {int_v['total_uw']:.1f} µW")
 
     ax.set_xticks(x)
-    ax.set_xticklabels(designs, rotation=25, ha="right")
+    ax.set_xticklabels([display_name(d) for d in designs], rotation=25, ha="right")
     ax.set_ylabel("Power (µW)")
     ax.set_title("Per-component power @ 10 ns clock (28 nm LPP, ss 0.9 V 125°C)")
     ax.legend(loc="upper left", framealpha=0.95)
@@ -79,10 +112,10 @@ def fig1_per_component(rows):
     for b, v in zip(list(b1) + list(b2), fp16 + fp32):
         if v > 0:
             ax.text(b.get_x() + b.get_width() / 2, v, f"{v:.0f}",
-                    ha="center", va="bottom", fontsize=7)
+                    ha="center", va="bottom", fontsize=11)
     fig.tight_layout()
     for ext in ("png", "pdf", "svg"):
-        fig.savefig(HERE / f"fig1_per_component_power.{ext}", dpi=200)
+        fig.savefig(HERE / f"fig1_per_component_power.{ext}", dpi=300)
     plt.close(fig)
 
 
@@ -112,14 +145,14 @@ def fig2_native_vs_naive(rows):
     naive_cast = 32 * flt2i
     naive_total = naive_mult + naive_tree + naive_dequant + naive_cast
 
-    fig, ax = plt.subplots(figsize=(7, 4.2))
-    cats = ["Native mpGEMM\n(VX_gemm_unit)", "Naive FP16×FP16\n+ dequant"]
+    fig, ax = plt.subplots(figsize=(8.5, 5.2))
+    cats = ["Native mpGEMM\n(VX gemm unit)", "Naive FP16×FP16\n+ dequant"]
     bottoms = [0.0, 0.0]
     parts = [
-        ("Multipliers (1024×fp_mult)",  [native, naive_mult],    "#3a7ca5"),
-        ("Adder tree 32×(31 fp_addsub)", [0.0,   naive_tree],    "#5dade2"),
-        ("Dequant INT4→FP16 (32×fp_i2flt)", [0.0, naive_dequant], "#d9774a"),
-        ("Output cast (32×fp_flt2i)",  [0.0,    naive_cast],     "#9b59b6"),
+        ("Multipliers (1024×fp mult)",  [native, naive_mult], BLUE_DARK),
+        ("Adder tree 32×(31 fp addsub)", [0.0, naive_tree], BLUE_LIGHT),
+        ("Dequant INT4→FP16 (32×fp i2flt)", [0.0, naive_dequant], GREEN),
+        ("Output cast (32×fp flt2i)",  [0.0, naive_cast], GREEN_LIGHT),
     ]
     for label, vals, color in parts:
         ax.bar(cats, vals, bottom=bottoms, color=color, label=label,
@@ -127,18 +160,18 @@ def fig2_native_vs_naive(rows):
         bottoms = [b + v for b, v in zip(bottoms, vals)]
 
     for i, total in enumerate([native, naive_total]):
-        ax.text(i, total, f"{total / 1000:.1f} mW", ha="center", va="bottom", fontsize=10)
+        ax.text(i, total, f"{total / 1000:.1f} mW", ha="center", va="bottom", fontsize=13)
 
     ratio = naive_total / native
     ax.set_ylabel("Power (µW)")
     ax.set_title(f"32×32 GEMM @ 100 MHz: native mpGEMM vs naive FP16×FP16 + dequant\n"
                  f"naive / native = {ratio:.2f}×")
-    ax.legend(loc="upper left", fontsize=8)
+    ax.legend(loc="upper left", fontsize=11)
     ax.yaxis.grid(True, alpha=0.3)
     ax.set_axisbelow(True)
     fig.tight_layout()
     for ext in ("png", "pdf", "svg"):
-        fig.savefig(HERE / f"fig2_native_vs_naive_mpgemm.{ext}", dpi=200)
+        fig.savefig(HERE / f"fig2_native_vs_naive_mpgemm.{ext}", dpi=300)
     plt.close(fig)
     print(f"[fig2] native = {native:.0f} µW, naive = {naive_total:.0f} µW "
           f"(mult={naive_mult:.0f}, tree={naive_tree:.0f}, "
@@ -150,26 +183,26 @@ def fig3_area_breakdown(rows):
     if not r:
         return
     parts = [
-        ("Combinational", r["comb_area_um2"], "#3a7ca5"),
-        ("Sequential", r["seq_area_um2"], "#d9774a"),
-        ("Buf/Inv", r["buf_area_um2"], "#9b59b6"),
+        ("Combinational", r["comb_area_um2"], BLUE),
+        ("Sequential", r["seq_area_um2"], GREEN),
+        ("Buf/Inv", r["buf_area_um2"], TEAL_LIGHT),
     ]
-    fig, ax = plt.subplots(figsize=(5.5, 4.2))
+    fig, ax = plt.subplots(figsize=(6.8, 5.2))
     labels = [p[0] for p in parts]
     vals = [p[1] for p in parts]
     colors = [p[2] for p in parts]
     bottom = 0.0
     for label, v, c in parts:
-        ax.bar(["VX_gemm_unit\n32×32 mpGEMM"], [v], bottom=bottom, color=c, label=label,
+        ax.bar(["VX gemm unit\n32×32 mpGEMM"], [v], bottom=bottom, color=c, label=label,
                edgecolor="white", linewidth=0.6)
         ax.text(0, bottom + v / 2, f"{label}\n{v / 1000:.1f} k µm²",
-                ha="center", va="center", color="white", fontsize=8)
+                ha="center", va="center", color="white", fontsize=12)
         bottom += v
     ax.set_ylabel("Cell area (µm²)")
-    ax.set_title(f"VX_gemm_unit area breakdown — total {bottom / 1000:.1f} k µm²")
+    ax.set_title(f"VX gemm unit area breakdown — total {bottom / 1000:.1f} k µm²")
     fig.tight_layout()
     for ext in ("png", "pdf", "svg"):
-        fig.savefig(HERE / f"fig3_area_breakdown.{ext}", dpi=200)
+        fig.savefig(HERE / f"fig3_area_breakdown.{ext}", dpi=300)
     plt.close(fig)
 
 
@@ -191,10 +224,10 @@ def fig4_tops_per_w(rows):
     tops_naive = flops_s / naive_total / 1e6
     # 1 TOPS/W = 1e12 ops/(W*s); flops/s / W = ops_per_W_per_s; /1e12 = TOPS/W
 
-    fig, ax = plt.subplots(figsize=(5.5, 4.2))
+    fig, ax = plt.subplots(figsize=(6.8, 5.2))
     cats = ["Native mpGEMM", "Naive FP16+dequant"]
     vals = [tops_native, tops_naive]
-    colors = ["#3a7ca5", "#d9774a"]
+    colors = [BLUE, GREEN]
     bars = ax.bar(cats, vals, color=colors)
     for b, v in zip(bars, vals):
         ax.text(b.get_x() + b.get_width() / 2, v, f"{v:.2f}", ha="center", va="bottom")
@@ -204,7 +237,7 @@ def fig4_tops_per_w(rows):
     ax.set_axisbelow(True)
     fig.tight_layout()
     for ext in ("png", "pdf", "svg"):
-        fig.savefig(HERE / f"fig4_tops_per_w.{ext}", dpi=200)
+        fig.savefig(HERE / f"fig4_tops_per_w.{ext}", dpi=300)
     plt.close(fig)
     print(f"[fig4] TOPS/W: native={tops_native:.2f}, naive={tops_naive:.2f}, "
           f"speedup={tops_native / tops_naive:.2f}×")
@@ -238,10 +271,10 @@ def fig5_tops_per_mm2(rows):
     native_tpmm = tops / native_area_mm2
     naive_tpmm = tops / naive_area_mm2
 
-    fig, ax = plt.subplots(figsize=(5.5, 4.2))
+    fig, ax = plt.subplots(figsize=(6.8, 5.2))
     cats = ["Native mpGEMM", "Naive FP16+dequant"]
     vals = [native_tpmm, naive_tpmm]
-    colors = ["#3a7ca5", "#d9774a"]
+    colors = [BLUE, GREEN]
     bars = ax.bar(cats, vals, color=colors)
     for b, v in zip(bars, vals):
         ax.text(b.get_x() + b.get_width() / 2, v, f"{v:.3f}",
@@ -256,7 +289,7 @@ def fig5_tops_per_mm2(rows):
     ax.set_axisbelow(True)
     fig.tight_layout()
     for ext in ("png", "pdf", "svg"):
-        fig.savefig(HERE / f"fig5_tops_per_mm2.{ext}", dpi=200)
+        fig.savefig(HERE / f"fig5_tops_per_mm2.{ext}", dpi=300)
     plt.close(fig)
     print(f"[fig5] TOPS/mm^2: native={native_tpmm:.3f} (area {native_area_mm2:.3f} mm^2), "
           f"naive={naive_tpmm:.3f} (area {naive_area_mm2:.3f} mm^2 = "
@@ -277,9 +310,9 @@ def fig6_wkv_vs_w_only(rows):
     if not vx or not fp:
         return
 
-    fig, axes = plt.subplots(1, 2, figsize=(9, 4.2))
+    fig, axes = plt.subplots(1, 2, figsize=(11, 5.2))
     cats = ["VX (WKV-quant)", "fpint m32 (W-only)"]
-    colors = ["#3a7ca5", "#d9774a"]
+    colors = [BLUE, GREEN]
 
     # Power
     pw = [vx["total_uw"] / 1000, fp["total_uw"] / 1000]  # mW
@@ -307,7 +340,7 @@ def fig6_wkv_vs_w_only(rows):
                  y=1.0)
     fig.tight_layout()
     for ext in ("png", "pdf", "svg"):
-        fig.savefig(HERE / f"fig6_wkv_vs_w_only.{ext}", dpi=200)
+        fig.savefig(HERE / f"fig6_wkv_vs_w_only.{ext}", dpi=300)
     plt.close(fig)
     flops_s = 32 * 32 * 2 * 1e8
     tops_vx = flops_s / vx["total_uw"] / 1e6
@@ -322,8 +355,9 @@ def fig6_wkv_vs_w_only(rows):
 
 
 def fig7_wkv_vs_woq_breakdown():
-    """Module-level breakdown of WKV (VX_gemm_unit_top) vs WoQ
-    (VX_woq_gemm_unit_top). Same RTL base, WoQ removes:
+    """Module-level area/power breakdown of WKV vs WoQ.
+
+    Same RTL base, WoQ removes:
       - in_scaler vec (per-row activation × scale)
       - QROW data path in act_reduce/zp_mul (widths shrink, mux removed)
       - MXU column-direction weight load (smaller weight regs)
@@ -331,78 +365,89 @@ def fig7_wkv_vs_woq_breakdown():
     bd_path = HERE / "wkvwoq_breakdown.csv"
     if not bd_path.exists():
         return
-    insts, wkv, woq = [], [], []
+    insts, wkv_p, woq_p, wkv_a, woq_a = [], [], [], [], []
     with bd_path.open() as f:
         r = csv.DictReader(f)
         for row in r:
             insts.append(row["instance"])
-            wkv.append(float(row["WKV_uW"]))
-            woq.append(float(row["WoQ_uW"]))
+            wkv_p.append(float(row["WKV_uW"]))
+            woq_p.append(float(row["WoQ_uW"]))
+            wkv_a.append(float(row.get("WKV_area_um2") or 0.0))
+            woq_a.append(float(row.get("WoQ_area_um2") or 0.0))
 
-    # Color map: WKV-only blocks highlighted differently
+    # Use blue/green shades only; display labels are sanitized below.
     colors = {
-        "u_mxu":                    "#3a7ca5",
-        "u_pre_proc_pipe_buffer":   "#5dade2",
-        "u_out_scaler_vec":         "#9b59b6",
-        "u_int2fp_vec":             "#8e44ad",
-        "u_accumulator_vec":        "#16a085",
-        "u_act_reduce":             "#e67e22",
-        "u_in_scaler_vec":          "#c0392b",   # WKV-specific
-        "u_zp_mul_out_reg":         "#d9774a",
-        "u_act_reduce_shl_vec":     "#f39c12",
-        "u_merger_vec":             "#7f8c8d",
-        "u_f32_to_f16_vec":         "#34495e",
+        "u_mxu":                    BLUE_DARK,
+        "u_pre_proc_pipe_buffer":   BLUE,
+        "u_out_scaler_vec":         BLUE_LIGHT,
+        "u_int2fp_vec":             BLUE_PALE,
+        "u_accumulator_vec":        TEAL,
+        "u_act_reduce":             TEAL_LIGHT,
+        "u_in_scaler_vec":          GREEN_DARK,
+        "u_zp_mul_out_reg":         GREEN,
+        "u_act_reduce_shl_vec":     GREEN_LIGHT,
+        "u_merger_vec":             GREEN_PALE,
+        "u_f32_to_f16_vec":         GRAY,
     }
 
-    fig, axes = plt.subplots(1, 2, figsize=(11, 5.0))
+    fig, axes = plt.subplots(1, 2, figsize=(14, 6.8))
     cats = ["WKV", "WoQ"]
-    bottoms = [0.0, 0.0]
-    for inst, wkv_v, woq_v in zip(insts, wkv, woq):
-        vals = [wkv_v / 1000, woq_v / 1000]  # uW -> mW
-        c = colors.get(inst, "#888")
-        axes[0].bar(cats, vals, bottom=bottoms, color=c, label=inst,
-                    edgecolor="white", linewidth=0.6)
-        bottoms = [b + v for b, v in zip(bottoms, vals)]
-    axes[0].set_ylabel("Power (mW)")
-    axes[0].set_title("Module-level power")
-    axes[0].yaxis.grid(True, alpha=0.3)
-    axes[0].set_axisbelow(True)
-    axes[0].legend(loc="center left", bbox_to_anchor=(1.0, 0.5), fontsize=8)
-    for i, t in enumerate(bottoms):
-        axes[0].text(i, t, f"{t:.2f} mW", ha="center", va="bottom", fontsize=10)
+    handles = []
 
-    # Right pane: per-block delta (WKV - WoQ). Drop near-zero deltas
-    # (|Δ| < 1 µW = 0.001 mW) so only the contributing blocks remain.
-    DELTA_EPS_MW = 0.001
-    raw_deltas = [(wkv_v - woq_v) / 1000 for wkv_v, woq_v in zip(wkv, woq)]
-    total_delta = sum(raw_deltas)
-    keep = [i for i, d in enumerate(raw_deltas) if abs(d) >= DELTA_EPS_MW]
-    order = sorted(keep, key=lambda i: -raw_deltas[i])
-    labels = [insts[i] for i in order]
-    vals = [raw_deltas[i] for i in order]
-    bar_colors = [colors.get(insts[i], "#888") for i in order]
-    axes[1].barh(labels[::-1], vals[::-1], color=bar_colors[::-1])
-    axes[1].set_xlabel("Δ Power, WKV − WoQ  (mW)")
-    axes[1].set_title(f"WKV overhead per block — total {total_delta:.2f} mW")
-    axes[1].xaxis.grid(True, alpha=0.3)
-    axes[1].set_axisbelow(True)
-    for i, v in enumerate(vals[::-1]):
-        axes[1].text(v, i, f"  {v:+.3f}", va="center", fontsize=8)
+    def draw_stacked(ax, left_vals, right_vals, ylabel, title, total_fmt):
+        bottoms = [0.0, 0.0]
+        local_handles = []
+        for inst, left_v, right_v in zip(insts, left_vals, right_vals):
+            vals = [left_v, right_v]
+            c = colors.get(inst, GRAY)
+            bars = ax.bar(cats, vals, bottom=bottoms, color=c,
+                          label=display_name(inst), edgecolor="white", linewidth=0.6)
+            local_handles.append(bars[0])
+            bottoms = [b + v for b, v in zip(bottoms, vals)]
+        ax.set_ylabel(ylabel)
+        ax.set_title(title)
+        ax.yaxis.grid(True, alpha=0.3)
+        ax.set_axisbelow(True)
+        ymax = max(bottoms) * 1.16
+        ax.set_ylim(0, ymax)
+        for i, total in enumerate(bottoms):
+            ax.text(i, total + ymax * 0.015, total_fmt.format(total),
+                    ha="center", va="bottom", fontsize=13)
+        return local_handles, bottoms
+
+    handles, area_totals = draw_stacked(
+        axes[0],
+        [v / 1e6 for v in wkv_a],
+        [v / 1e6 for v in woq_a],
+        "Area (mm²)",
+        "Module-level area",
+        "{:.3f} mm²",
+    )
+    _, power_totals = draw_stacked(
+        axes[1],
+        [v / 1000 for v in wkv_p],
+        [v / 1000 for v in woq_p],
+        "Power (mW)",
+        "Module-level power",
+        "{:.2f} mW",
+    )
 
     fig.suptitle(
-        "32×32 mpGEMM @ 100 MHz, FP16 act × INT4 weight (VX_gemm_unit_top)",
+        "32×32 mpGEMM @ 100 MHz, FP16 act × INT4 weight (VX gemm unit top)",
         y=1.0
     )
-    fig.tight_layout()
+    fig.legend(handles, [display_name(inst) for inst in insts],
+               loc="lower center", bbox_to_anchor=(0.5, -0.01),
+               ncol=4, fontsize=11, framealpha=0.95)
+    fig.tight_layout(rect=[0, 0.22, 1, 0.94])
     for ext in ("png", "pdf", "svg"):
-        fig.savefig(HERE / f"fig7_wkv_vs_woq_breakdown.{ext}", dpi=200,
+        fig.savefig(HERE / f"fig7_wkv_vs_woq_breakdown.{ext}", dpi=300,
                     bbox_inches="tight")
     plt.close(fig)
-    total_wkv = sum(wkv) / 1000
-    total_woq = sum(woq) / 1000
-    print(f"[fig7] WKV={total_wkv:.2f} mW, WoQ={total_woq:.2f} mW, "
-          f"WKV overhead={total_wkv - total_woq:.2f} mW "
-          f"({100 * (total_wkv - total_woq) / total_wkv:.1f}%)")
+    print(f"[fig7] area: WKV={area_totals[0]:.3f} mm^2, WoQ={area_totals[1]:.3f} mm^2, "
+          f"delta={area_totals[0] - area_totals[1]:.3f} mm^2")
+    print(f"[fig7] power: WKV={power_totals[0]:.2f} mW, WoQ={power_totals[1]:.2f} mW, "
+          f"delta={power_totals[0] - power_totals[1]:.2f} mW")
 
 
 def _parse_woq_totals():

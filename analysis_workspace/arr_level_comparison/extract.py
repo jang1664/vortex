@@ -418,13 +418,34 @@ def parse_module_breakdown(rpt_path: Path):
     return out
 
 
+def parse_module_area_breakdown(rpt_path: Path):
+    """Return dict instance_name -> global cell area in um^2."""
+    if not rpt_path.exists():
+        return {}
+    out = {}
+    wanted = set(WKVWOQ_INSTANCES)
+    line_re = re.compile(r"^\s*gemm_unit/(u_\w+)\s+([\d.]+)\s+")
+    for raw in rpt_path.read_text(errors="ignore").splitlines():
+        m = line_re.match(raw)
+        if not m:
+            continue
+        name = m.group(1)
+        if name in wanted:
+            out.setdefault(name, float(m.group(2)))
+    return out
+
+
 def collect_wkv_woq_breakdown():
     base = VORTEX_BUILD_GEMM
     wkv_rpt = base / "pwr.run1" / "reports" / "VX_gemm_unit_top_report_power.report"
     woq_rpt = base / "pwr_woq.run1" / "reports" / "VX_woq_gemm_unit_top_report_power.report"
+    wkv_area_rpt = base / "syn_topo.run1" / "reports" / "14_VX_gemm_unit_top.mapped.area.rpt"
+    woq_area_rpt = base / "syn_topo_woq.run1" / "reports" / "14_VX_woq_gemm_unit_top.mapped.area.rpt"
     return {
-        "WKV": parse_module_breakdown(wkv_rpt),
-        "WoQ": parse_module_breakdown(woq_rpt),
+        "WKV_power": parse_module_breakdown(wkv_rpt),
+        "WoQ_power": parse_module_breakdown(woq_rpt),
+        "WKV_area": parse_module_area_breakdown(wkv_area_rpt),
+        "WoQ_area": parse_module_area_breakdown(woq_area_rpt),
     }
 
 
@@ -464,23 +485,34 @@ def main():
     bd_path = HERE / "wkvwoq_breakdown.csv"
     with bd_path.open("w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["instance", "WKV_uW", "WoQ_uW", "delta_uW"])
+        w.writerow(["instance", "WKV_uW", "WoQ_uW", "delta_uW",
+                    "WKV_area_um2", "WoQ_area_um2", "delta_area_um2"])
         for inst in WKVWOQ_INSTANCES:
-            wkv = bd["WKV"].get(inst, 0.0)
-            woq = bd["WoQ"].get(inst, 0.0)
-            w.writerow([inst, f"{wkv:.3f}", f"{woq:.3f}", f"{wkv - woq:.3f}"])
+            wkv = bd["WKV_power"].get(inst, 0.0)
+            woq = bd["WoQ_power"].get(inst, 0.0)
+            wkv_area = bd["WKV_area"].get(inst, 0.0)
+            woq_area = bd["WoQ_area"].get(inst, 0.0)
+            w.writerow([inst, f"{wkv:.3f}", f"{woq:.3f}", f"{wkv - woq:.3f}",
+                        f"{wkv_area:.3f}", f"{woq_area:.3f}", f"{wkv_area - woq_area:.3f}"])
     print(f"\nWKV/WoQ module-level breakdown -> {bd_path}")
-    print(f"{'instance':<28} {'WKV (uW)':>12} {'WoQ (uW)':>12} {'Δ (uW)':>10}")
-    print("-" * 70)
-    sum_wkv = sum_woq = 0.0
+    print(f"{'instance':<28} {'WKV (uW)':>12} {'WoQ (uW)':>12} {'Δ (uW)':>10} "
+          f"{'WKV area':>12} {'WoQ area':>12} {'Δ area':>10}")
+    print("-" * 110)
+    sum_wkv = sum_woq = sum_wkv_area = sum_woq_area = 0.0
     for inst in WKVWOQ_INSTANCES:
-        wkv = bd["WKV"].get(inst, 0.0)
-        woq = bd["WoQ"].get(inst, 0.0)
+        wkv = bd["WKV_power"].get(inst, 0.0)
+        woq = bd["WoQ_power"].get(inst, 0.0)
+        wkv_area = bd["WKV_area"].get(inst, 0.0)
+        woq_area = bd["WoQ_area"].get(inst, 0.0)
         sum_wkv += wkv
         sum_woq += woq
-        print(f"{inst:<28} {wkv:>12.3f} {woq:>12.3f} {wkv - woq:>10.3f}")
-    print("-" * 70)
-    print(f"{'(sum of listed)':<28} {sum_wkv:>12.3f} {sum_woq:>12.3f} {sum_wkv - sum_woq:>10.3f}")
+        sum_wkv_area += wkv_area
+        sum_woq_area += woq_area
+        print(f"{inst:<28} {wkv:>12.3f} {woq:>12.3f} {wkv - woq:>10.3f} "
+              f"{wkv_area:>12.1f} {woq_area:>12.1f} {wkv_area - woq_area:>10.1f}")
+    print("-" * 110)
+    print(f"{'(sum of listed)':<28} {sum_wkv:>12.3f} {sum_woq:>12.3f} {sum_wkv - sum_woq:>10.3f} "
+          f"{sum_wkv_area:>12.1f} {sum_woq_area:>12.1f} {sum_wkv_area - sum_woq_area:>10.1f}")
 
 
 if __name__ == "__main__":

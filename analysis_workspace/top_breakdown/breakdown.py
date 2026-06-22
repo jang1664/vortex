@@ -39,6 +39,31 @@ from hwexplorer.report_parser import SynopsysDesignCompilerAreaParser
 HERE = Path(__file__).resolve().parent
 VORTEX = HERE.parents[1]
 
+BLUE_DARK = "#0f4c81"
+BLUE = "#2f80b7"
+BLUE_LIGHT = "#6baed6"
+BLUE_PALE = "#9ecae1"
+TEAL = "#147d8f"
+TEAL_LIGHT = "#41b6c4"
+GREEN_DARK = "#1b7837"
+GREEN = "#2ca25f"
+GREEN_LIGHT = "#74c476"
+GREEN_PALE = "#a1d99b"
+GRAY = "#8a8f96"
+
+plt.rcParams.update({
+    "font.size": 14,
+    "axes.titlesize": 16,
+    "axes.labelsize": 15,
+    "xtick.labelsize": 13,
+    "ytick.labelsize": 13,
+    "legend.fontsize": 12,
+    "figure.titlesize": 17,
+    "pdf.fonttype": 42,
+    "ps.fonttype": 42,
+    "svg.fonttype": "none",
+})
+
 RUNS = {
     "nt8": {
         "syn_dir": "Vortex_axi",
@@ -107,36 +132,35 @@ BREAKDOWN: list[tuple[str, list[str]]] = [
                                       r"^Vortex_axi/u_lsu_(ar|aw)_remap$"]),
 ]
 
-# Reds → gemm compute, browns/yellows → gemm memory & DMA, mustards → core,
-# teals → caches, purples → AXI plumbing. Sibling shades stay close.
+# Blue/green family for paper consistency. Sibling shades stay close.
 COLORS = {
     # gemm_node compute
-    "GEMM unit (MXU compute)":               "#c4452a",  # deep red-orange
+    "GEMM unit (MXU compute)":               BLUE_DARK,
     # gemm_node memory side
-    "TMEM banks (tensor memory SRAM)":        "#d9774a",  # burnt orange
-    "TMEM DMA engine":                        "#e8a838",  # gold
-    "TMEM local DMAs":                        "#f3c969",  # wheat
-    "TMEM switches":                          "#e6d9a0",  # pale wheat
+    "TMEM banks (tensor memory SRAM)":        BLUE,
+    "TMEM DMA engine":                        BLUE_LIGHT,
+    "TMEM local DMAs":                        BLUE_PALE,
+    "TMEM switches":                          TEAL_LIGHT,
     "GEMM control + TMEM DMA control + job frontend":
-                                             "#b89860",  # tan
+                                             TEAL,
     # rest of core
-    "memory unit":                           "#9aa05a",  # olive
-    "execute":                               "#7a8543",  # darker olive
-    "issue":                                 "#5a6a3a",  # forest
-    "schedule":                              "#465230",  # dark olive
-    "DMA node":                              "#8b7b5a",  # taupe
-    "fetch / commit / decode / DCR":         "#a4937a",  # warm grey
+    "memory unit":                           GREEN_DARK,
+    "execute":                               GREEN,
+    "issue":                                 GREEN_LIGHT,
+    "schedule":                              GREEN_PALE,
+    "DMA node":                              TEAL,
+    "fetch / commit / decode / DCR":         TEAL_LIGHT,
     # caches
-    "L1 data cache":                         "#a4c8c9",  # pale teal
-    "L1 instruction cache":                  "#7da8a9",  # teal
-    "socket memory arbiter":                 "#5a8a8b",  # blue-teal
-    "L2 cache":                              "#5a7891",  # dark blue-grey
-    "L3 cache":                              "#3a5c75",  # navy
+    "L1 data cache":                         BLUE_PALE,
+    "L1 instruction cache":                  BLUE_LIGHT,
+    "socket memory arbiter":                 BLUE,
+    "L2 cache":                              BLUE_DARK,
+    "L3 cache":                              "#063b66",
     # AXI plumbing
-    "HBM AXI mux x8":                        "#7d6b8c",  # dusty purple
-    "LSU demux":                             "#6a5b7a",  # darker purple
-    "AXI adapter / memory adapter / remaps": "#5a4d6a",  # deepest purple
-    "Other":                                 "#bbbbbb",
+    "HBM AXI mux x8":                        GREEN_PALE,
+    "LSU demux":                             GREEN_LIGHT,
+    "AXI adapter / memory adapter / remaps": GREEN,
+    "Other":                                 GRAY,
 }
 
 MISC_LABEL = "misc (interconnection + mux/demux)"
@@ -184,8 +208,8 @@ def parse_args() -> argparse.Namespace:
 
 def bucket_color(label: str) -> str:
     if label.startswith("misc"):
-        return "#bbbbbb"
-    return COLORS.get(label, "#999999")
+        return GRAY
+    return COLORS.get(label, GRAY)
 
 
 def pin_selected_labels_to_top(
@@ -284,7 +308,7 @@ def main():
     print(f"wrote {csv_path}")
 
     # ---- stacked bar ----
-    fig, ax = plt.subplots(figsize=(7.5, 9.5))
+    fig, ax = plt.subplots(figsize=(9.5, 10.8))
     bottom = 0.0
     total_mm2 = sum(areas_mm2)
     handles = []
@@ -296,7 +320,7 @@ def main():
             short = label.split(" (")[0]
             ax.text(0, bottom + val_mm2 / 2,
                     f"{short}\n{val_mm2:.2f} mm²  ({pct:.1f}%)",
-                    ha="center", va="center", fontsize=9.5,
+                    ha="center", va="center", fontsize=12,
                     color="white" if pct >= 8 else "#111")
         handles.append(plt.Rectangle((0, 0), 1, 1, fc=color,
                                      label=f"{label}: {val_mm2:.2f} mm² ({pct:.1f}%)",
@@ -310,17 +334,17 @@ def main():
         # f"Vortex_axi {run['title']} area breakdown\n"
         # f"Area breakdown\n"
         f"DC topo, Samsung 28LPP — total cell area = {total_mm2:.2f} mm²",
-        fontsize=11,
+        fontsize=16,
     )
     ax.legend(handles=handles, loc="center left", bbox_to_anchor=(1.02, 0.5),
-              fontsize=8.5, framealpha=0.95, handlelength=1.2)
+              fontsize=12, framealpha=0.95, handlelength=1.2)
     ax.yaxis.grid(True, alpha=0.3)
     ax.set_axisbelow(True)
 
     fig.tight_layout()
     for ext in ("png", "pdf"):
         p = out_dir / f"vortex_axi_breakdown.{ext}"
-        fig.savefig(p, dpi=150, bbox_inches="tight")
+        fig.savefig(p, dpi=300, bbox_inches="tight")
         print(f"wrote {p}")
     plt.close(fig)
 
@@ -330,7 +354,7 @@ def main():
     def pct_label(pct: float) -> str:
         return f"{pct:.1f}%" if pct >= 2.0 else ""
 
-    fig, ax = plt.subplots(figsize=(10.5, 8.0))
+    fig, ax = plt.subplots(figsize=(12.5, 9.2))
     wedges, _, autotexts = ax.pie(
         areas_mm2,
         colors=pie_colors,
@@ -345,7 +369,7 @@ def main():
         },
     )
     for text in autotexts:
-        text.set_fontsize(9)
+        text.set_fontsize(12)
         text.set_fontweight("bold")
 
     ax.text(
@@ -354,7 +378,7 @@ def main():
         f"{total_mm2:.2f} mm²",
         ha="center",
         va="center",
-        fontsize=14,
+        fontsize=18,
         fontweight="bold",
     )
     legend_labels = [
@@ -366,7 +390,7 @@ def main():
         legend_labels,
         loc="center left",
         bbox_to_anchor=(1.02, 0.5),
-        fontsize=10.2,
+        fontsize=12,
         framealpha=0.95,
     )
     ax.set_aspect("equal")
@@ -374,7 +398,7 @@ def main():
     fig.tight_layout()
     for ext in ("png", "pdf", "svg"):
         p = out_dir / f"vortex_axi_breakdown_pie.{ext}"
-        fig.savefig(p, dpi=150, bbox_inches="tight")
+        fig.savefig(p, dpi=300, bbox_inches="tight")
         print(f"wrote {p}")
     plt.close(fig)
 
