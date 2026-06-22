@@ -450,6 +450,216 @@ def fig7_wkv_vs_woq_breakdown():
           f"delta={power_totals[0] - power_totals[1]:.2f} mW")
 
 
+def fig8_wkv_vs_woq_breakdown():
+    """Module-level power and WKV-over-WoQ power overhead per block."""
+    bd_path = HERE / "wkvwoq_breakdown.csv"
+    if not bd_path.exists():
+        return
+    insts, wkv_p, woq_p = [], [], []
+    with bd_path.open() as f:
+        r = csv.DictReader(f)
+        for row in r:
+            insts.append(row["instance"])
+            wkv_p.append(float(row["WKV_uW"]) / 1000.0)
+            woq_p.append(float(row["WoQ_uW"]) / 1000.0)
+
+    colors = {
+        "u_mxu":                    BLUE_DARK,
+        "u_pre_proc_pipe_buffer":   BLUE,
+        "u_out_scaler_vec":         BLUE_LIGHT,
+        "u_int2fp_vec":             BLUE_PALE,
+        "u_accumulator_vec":        TEAL,
+        "u_act_reduce":             TEAL_LIGHT,
+        "u_in_scaler_vec":          GREEN_DARK,
+        "u_zp_mul_out_reg":         GREEN,
+        "u_act_reduce_shl_vec":     GREEN_LIGHT,
+        "u_merger_vec":             GREEN_PALE,
+        "u_f32_to_f16_vec":         GRAY,
+    }
+
+    fig, axes = plt.subplots(
+        1, 2, figsize=(12.5, 6.4),
+        gridspec_kw={"width_ratios": [0.95, 1.05]},
+    )
+    cats = ["WKV", "WoQ"]
+
+    bottoms = [0.0, 0.0]
+    handles = []
+    for inst, wkv_v, woq_v in zip(insts, wkv_p, woq_p):
+        vals = [wkv_v, woq_v]
+        c = colors.get(inst, GRAY)
+        bars = axes[0].bar(cats, vals, bottom=bottoms, color=c,
+                           label=display_name(inst), edgecolor="white", linewidth=0.6)
+        handles.append(bars[0])
+        bottoms = [b + v for b, v in zip(bottoms, vals)]
+
+    axes[0].set_ylabel("Power (mW)")
+    axes[0].set_title("Module-level power")
+    axes[0].yaxis.grid(True, alpha=0.3)
+    axes[0].set_axisbelow(True)
+    ymax = max(bottoms) * 1.16
+    axes[0].set_ylim(0, ymax)
+    for i, total in enumerate(bottoms):
+        axes[0].text(i, total + ymax * 0.015, f"{total:.2f} mW",
+                     ha="center", va="bottom", fontsize=13)
+
+    overhead = [
+        (inst, (wkv_v - woq_v))
+        for inst, wkv_v, woq_v in zip(insts, wkv_p, woq_p)
+        if (wkv_v - woq_v) > 0.001
+    ]
+    overhead.sort(key=lambda item: item[1])
+    y = np.arange(len(overhead))
+    overhead_vals = [v for _, v in overhead]
+    overhead_colors = [colors.get(inst, GRAY) for inst, _ in overhead]
+    axes[1].barh(y, overhead_vals, color=overhead_colors,
+                 edgecolor="black", linewidth=0.4)
+    axes[1].set_yticks(y)
+    axes[1].set_yticklabels([display_name(inst) for inst, _ in overhead], fontsize=11)
+    axes[1].set_xlabel("Δ Power, WKV − WoQ (mW)")
+    total_overhead = sum(overhead_vals)
+    axes[1].set_title(f"WKV overhead per block — total {total_overhead:.2f} mW")
+    axes[1].xaxis.grid(True, alpha=0.3)
+    axes[1].set_axisbelow(True)
+    xmax = max(overhead_vals) * 1.24 if overhead_vals else 1.0
+    axes[1].set_xlim(0, xmax)
+    for yi, v in zip(y, overhead_vals):
+        axes[1].text(v + xmax * 0.015, yi, f"{v:.3f}",
+                     va="center", ha="left", fontsize=11)
+
+    fig.suptitle(
+        "32×32 mpGEMM @ 100 MHz, FP16 act × INT4 weight (VX gemm unit top)",
+        y=0.99,
+    )
+    fig.legend(handles, [display_name(inst) for inst in insts],
+               loc="lower center", bbox_to_anchor=(0.5, -0.01),
+               ncol=4, fontsize=10.5, framealpha=0.95)
+    fig.tight_layout(rect=[0, 0.18, 1, 0.93])
+    out = HERE / "fig8_wkv_vs_woq_breakdown.svg"
+    fig.savefig(out, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    print(f"[fig8] wrote {out}; WKV overhead = {total_overhead:.3f} mW")
+
+
+def fig9_wkv_vs_woq_breakdown():
+    """Combined module-level power/area and WKV-over-WoQ overhead per block."""
+    bd_path = HERE / "wkvwoq_breakdown.csv"
+    if not bd_path.exists():
+        return
+    insts, wkv_p, woq_p, wkv_a, woq_a = [], [], [], [], []
+    with bd_path.open() as f:
+        r = csv.DictReader(f)
+        for row in r:
+            insts.append(row["instance"])
+            wkv_p.append(float(row["WKV_uW"]) / 1000.0)
+            woq_p.append(float(row["WoQ_uW"]) / 1000.0)
+            wkv_a.append(float(row["WKV_area_um2"]) / 1e6)
+            woq_a.append(float(row["WoQ_area_um2"]) / 1e6)
+
+    colors = {
+        "u_mxu":                    BLUE_DARK,
+        "u_pre_proc_pipe_buffer":   BLUE,
+        "u_out_scaler_vec":         BLUE_LIGHT,
+        "u_int2fp_vec":             BLUE_PALE,
+        "u_accumulator_vec":        TEAL,
+        "u_act_reduce":             TEAL_LIGHT,
+        "u_in_scaler_vec":          GREEN_DARK,
+        "u_zp_mul_out_reg":         GREEN,
+        "u_act_reduce_shl_vec":     GREEN_LIGHT,
+        "u_merger_vec":             GREEN_PALE,
+        "u_f32_to_f16_vec":         GRAY,
+    }
+
+    fig, axes = plt.subplots(
+        2, 2, figsize=(13.8, 10.2),
+        gridspec_kw={"width_ratios": [0.95, 1.05], "hspace": 0.38, "wspace": 0.35},
+    )
+    cats = ["WKV", "WoQ"]
+
+    def draw_stacked(ax, left_vals, right_vals, ylabel, title, total_fmt):
+        bottoms = [0.0, 0.0]
+        local_handles = []
+        for inst, left_v, right_v in zip(insts, left_vals, right_vals):
+            vals = [left_v, right_v]
+            c = colors.get(inst, GRAY)
+            bars = ax.bar(cats, vals, bottom=bottoms, color=c,
+                          label=display_name(inst), edgecolor="white", linewidth=0.6)
+            local_handles.append(bars[0])
+            bottoms = [b + v for b, v in zip(bottoms, vals)]
+        ax.set_ylabel(ylabel)
+        ax.set_title(title)
+        ax.yaxis.grid(True, alpha=0.3)
+        ax.set_axisbelow(True)
+        ymax = max(bottoms) * 1.16
+        ax.set_ylim(0, ymax)
+        for i, total in enumerate(bottoms):
+            ax.text(i, total + ymax * 0.015, total_fmt.format(total),
+                    ha="center", va="bottom", fontsize=12)
+        return local_handles, bottoms
+
+    def draw_overhead(ax, left_vals, right_vals, xlabel, title, total_fmt,
+                      value_fmt, min_value):
+        overhead = [
+            (inst, left_v - right_v)
+            for inst, left_v, right_v in zip(insts, left_vals, right_vals)
+            if (left_v - right_v) > min_value
+        ]
+        overhead.sort(key=lambda item: item[1])
+        y = np.arange(len(overhead))
+        vals = [v for _, v in overhead]
+        ax.barh(y, vals, color=[colors.get(inst, GRAY) for inst, _ in overhead],
+                edgecolor="black", linewidth=0.4)
+        ax.set_yticks(y)
+        ax.set_yticklabels([display_name(inst) for inst, _ in overhead], fontsize=10.5)
+        ax.set_xlabel(xlabel)
+        total = sum(vals)
+        ax.set_title(f"{title} — total {total_fmt.format(total)}")
+        ax.xaxis.grid(True, alpha=0.3)
+        ax.set_axisbelow(True)
+        xmax = max(vals) * 1.24 if vals else 1.0
+        ax.set_xlim(0, xmax)
+        for yi, v in zip(y, vals):
+            ax.text(v + xmax * 0.015, yi, value_fmt.format(v),
+                    va="center", ha="left", fontsize=10.5)
+        return total
+
+    handles, power_totals = draw_stacked(
+        axes[0, 0], wkv_p, woq_p,
+        "Power (mW)", "Module-level power", "{:.2f} mW",
+    )
+    power_overhead = draw_overhead(
+        axes[0, 1], wkv_p, woq_p,
+        "Δ Power, WKV − WoQ (mW)", "Power overhead per block",
+        "{:.2f} mW", "{:.3f}", 0.001,
+    )
+    _, area_totals = draw_stacked(
+        axes[1, 0], wkv_a, woq_a,
+        "Area (mm²)", "Module-level area", "{:.3f} mm²",
+    )
+    area_overhead = draw_overhead(
+        axes[1, 1], wkv_a, woq_a,
+        "Δ Area, WKV − WoQ (mm²)", "Area overhead per block",
+        "{:.3f} mm²", "{:.4f}", 0.00001,
+    )
+
+    fig.suptitle(
+        "32×32 mpGEMM @ 100 MHz, FP16 act × INT4 weight (VX gemm unit top)",
+        y=0.99,
+    )
+    fig.legend(handles, [display_name(inst) for inst in insts],
+               loc="lower center", bbox_to_anchor=(0.5, -0.01),
+               ncol=4, fontsize=10.5, framealpha=0.95)
+    fig.subplots_adjust(left=0.08, right=0.98, top=0.90, bottom=0.18,
+                        wspace=0.36, hspace=0.45)
+    out = HERE / "fig9_wkv_vs_woq_breakdown.svg"
+    fig.savefig(out, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    print(f"[fig9] wrote {out}; power overhead = {power_overhead:.3f} mW, "
+          f"area overhead = {area_overhead:.4f} mm^2; "
+          f"power totals WKV={power_totals[0]:.2f} mW WoQ={power_totals[1]:.2f} mW, "
+          f"area totals WKV={area_totals[0]:.3f} mm^2 WoQ={area_totals[1]:.3f} mm^2")
+
+
 def _parse_woq_totals():
     """Parse WoQ top-level power (W -> uW) and area (um^2) from synthesis."""
     pwr_rpt = VORTEX_BUILD_GEMM / "pwr_woq.run1" / "reports" \
@@ -545,6 +755,8 @@ def main():
     fig5_tops_per_mm2(rows)
     fig6_wkv_vs_w_only(rows)
     fig7_wkv_vs_woq_breakdown()
+    fig8_wkv_vs_woq_breakdown()
+    fig9_wkv_vs_woq_breakdown()
     table_efficiency(rows)
     print(f"saved figures to {HERE}")
 
