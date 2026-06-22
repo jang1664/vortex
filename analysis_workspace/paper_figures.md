@@ -1,5 +1,10 @@
 # Figures
 - analysis_workspace/arr_level_comparison/plot.py : WoQ gemm unit vs WKV gemm unit
+  - run make_figure.sh
+  - check  fig8* and fig9*
 - analysis_workspace/mem_subsystem_overhead/plot.py : xbar overhead figure
+  - run make_figure.sh
+  - check analysis_workspace/mem_subsystem_overhead/fig8_tops_recovery.png
 - analysis_workspace/top_breakdown/breakdown.py : area breakdown
-  - use nt32 result
+  - run make_figure.sh
+  - check analysis_workspace/top_breakdown/nt32/vortex_axi_breakdown_pie.png
