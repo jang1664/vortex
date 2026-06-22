@@ -1,0 +1,35 @@
+Information: Propagating switching activity (high effort zero delay simulation). (PWR-6)
+Warning: Design has unannotated sequential cell outputs. (PWR-415)
+ 
+****************************************
+Report : power
+        -hier
+        -analysis_effort high
+        -verbose
+Design : VX_barrel_shifter
+Scenario(s): mode_norm.OC_rvt_ss_0p900v_125c
+Version: V-2023.12-SP5-3
+Date   : Thu May 21 21:50:20 2026
+****************************************
+
+
+Library(s) Used:
+
+    sc9_cmos28lpp_base_rvt_ss_nominal_max_0p900v_125c_sadhm (File: /tool/PDK/Samsung/LN28LPP_202203/PRIMITIVES/RVT/ln28lpp_sc_9t_base_rvt_c130_V1.00d/FE-Common/LIBERTY/sc9_cmos28lpp_base_rvt_ss_nominal_max_0p900v_125c_sadhm.db)
+
+
+Global Operating Voltage = 0.9  
+Power-specific unit information :
+    Voltage Units = 1V
+    Capacitance Units = 1.000000pf
+    Time Units = 1ns
+    Dynamic Power Units = 1mW    (derived from V,C,T units)
+    Leakage Power Units = 1uW
+
+
+--------------------------------------------------------------------------------
+                                       Switch   Int      Leak     Total
+Hierarchy                              Power    Power    Power    Power    %
+--------------------------------------------------------------------------------
+VX_barrel_shifter                      2.61e-03 1.07e-02    2.408 1.58e-02 100.0
+1

@@ -1,0 +1,58 @@
+ 
+****************************************
+Report : area
+Design : VX_barrel_shifter
+Version: V-2023.12-SP5-3
+Date   : Thu May 21 23:26:16 2026
+****************************************
+
+Library(s) Used:
+
+    sc9_cmos28lpp_base_rvt_ss_nominal_max_0p900v_125c_sadhm (File: /tool/PDK/Samsung/LN28LPP_202203/PRIMITIVES/RVT/ln28lpp_sc_9t_base_rvt_c130_V1.00d/FE-Common/LIBERTY/sc9_cmos28lpp_base_rvt_ss_nominal_max_0p900v_125c_sadhm.db)
+
+Number of ports:                         4121
+Number of nets:                         27529
+Number of cells:                        25459
+Number of combinational cells:          23404
+Number of sequential cells:              2051
+Number of macros/black boxes:               0
+Number of buf/inv:                       2657
+Number of references:                      68
+
+Combinational area:              15750.891357
+Buf/Inv area:                     1076.868009
+Noncombinational area:            4318.352891
+Macro/Black Box area:                0.000000
+Net Interconnect area:      undefined  (No wire load specified)
+
+Total cell area:                 20069.244248
+Total area:                 undefined
+
+Core Area:                     34034
+Aspect Ratio:                 1.0002
+Utilization Ratio:            0.5897
+
+
+The above information was reported from the logical library. The following are from the physical library:
+
+  Total moveable cell area: 20069.2
+  Total fixed cell area: 0.0
+  Total physical cell area: 20069.2
+ Core area: 0.000, 0.000, 184.470, 184.500
+
+Hierarchical area distribution
+------------------------------
+
+                                  Global cell area            Local cell area
+                                  -------------------  ----------------------------- 
+Hierarchical cell                 Absolute    Percent  Combi-      Noncombi-  Black-
+                                  Total       Total    national    national   boxes   Design
+--------------------------------  ----------  -------  ----------  ---------  ------  ----------------------------------------
+VX_barrel_shifter                 20069.2442    100.0  15750.8914  4313.0879  0.0000  VX_barrel_shifter
+clk_gate_shifted_reg                  1.7550      0.0      0.0000     1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_barrel_shifter_0
+clk_gate_shifted_reg_0                1.7550      0.0      0.0000     1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_barrel_shifter_2
+clk_gate_shifted_reg_1                1.7550      0.0      0.0000     1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_barrel_shifter_1
+--------------------------------  ----------  -------  ----------  ---------  ------  ----------------------------------------
+Total                                                  15750.8914  4318.3529  0.0000
+
+1

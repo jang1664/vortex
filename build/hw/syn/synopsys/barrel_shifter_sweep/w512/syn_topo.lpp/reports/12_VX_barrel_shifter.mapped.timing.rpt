@@ -1,0 +1,920 @@
+ 
+****************************************
+Report : timing
+        -path full
+        -delay max
+        -nets
+        -max_paths 10
+        -transition_time
+Design : VX_barrel_shifter
+Scenario(s): mode_norm.OC_rvt_ss_0p900v_125c
+Version: V-2023.12-SP5-3
+Date   : Thu May 21 21:52:31 2026
+****************************************
+
+ * Some/all delay information is back-annotated.
+Wire Load Model Mode: Inactive.
+
+  Startpoint: shift_amount[6]
+              (input port clocked by CLK)
+  Endpoint: shifted_reg_2_
+            (rising edge-triggered flip-flop clocked by CLK)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: REGIN
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                        Fanout     Trans      Incr       Path      Attributes     Voltage
+  ----------------------------------------------------------------------------------------------------
+  clock CLK (rise edge)                              0.00       0.00                     
+  clock network delay (ideal)                        0.00       0.00                     
+  input external delay                               0.00       0.00 f                   
+  shift_amount[6] (in)                     0.02      0.01       0.01 f                   
+  shift_amount[6] (net)          1                   0.00       0.01 f                   
+  U7514/Y (BUF_X1P4B_A9TR)                 0.60      0.37 *     0.37 f                   0.90
+  n9432 (net)                   98                   0.00       0.37 f                   
+  U8012/Y (BUF_X1M_A9TR)                   0.10      0.20 *     0.58 f                   0.90
+  n9459 (net)                   16                   0.00       0.58 f                   
+  U4777/Y (NOR2_X1B_A9TR)                  0.45      0.29 *     0.87 r                   0.90
+  n8539 (net)                   18                   0.00       0.87 r                   
+  U4781/Y (NAND2_X0P7B_A9TR)               0.67      0.54 *     1.40 f                   0.90
+  n4813 (net)                   50                   0.00       1.40 f                   
+  U9597/Y (INV_X0P7M_A9TR)                 0.40      0.42 *     1.82 r                   0.90
+  n9569 (net)                   23                   0.00       1.82 r                   
+  U7296/Y (NAND2_X0P7B_A9TR)               0.34      0.32 *     2.14 f                   0.90
+  n8997 (net)                   18                   0.00       2.14 f                   
+  U9605/Y (INV_X0P7M_A9TR)                 0.13      0.13 *     2.27 r                   0.90
+  n9577 (net)                    3                   0.00       2.27 r                   
+  U9448/Y (OAI21_X0P7M_A9TR)               0.10      0.10 *     2.37 f                   0.90
+  n8822 (net)                    1                   0.00       2.37 f                   
+  U9452/Y (OAI211_X0P5M_A9TR)              0.09      0.08 *     2.45 r                   0.90
+  n2 (net)                       1                   0.00       2.45 r                   
+  shifted_reg_2_/D (DFFQ_X0P5M_A9TR)       0.09      0.00 *     2.45 r                   0.90
+  data arrival time                                             2.45                     
+
+  clock CLK (rise edge)                             10.00      10.00                     
+  clock network delay (ideal)                        0.00      10.00                     
+  shifted_reg_2_/CK (DFFQ_X0P5M_A9TR)                0.00      10.00 r                   
+  library setup time                                -0.05       9.95                     
+  data required time                                            9.95                     
+  ----------------------------------------------------------------------------------------------------
+  data required time                                            9.95                     
+  data arrival time                                            -2.45                     
+  ----------------------------------------------------------------------------------------------------
+  slack (MET)                                                   7.50                     
+
+
+  Startpoint: shift_amount[6]
+              (input port clocked by CLK)
+  Endpoint: shifted_reg_3_
+            (rising edge-triggered flip-flop clocked by CLK)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: REGIN
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                        Fanout     Trans      Incr       Path      Attributes     Voltage
+  ----------------------------------------------------------------------------------------------------
+  clock CLK (rise edge)                              0.00       0.00                     
+  clock network delay (ideal)                        0.00       0.00                     
+  input external delay                               0.00       0.00 f                   
+  shift_amount[6] (in)                     0.02      0.01       0.01 f                   
+  shift_amount[6] (net)          1                   0.00       0.01 f                   
+  U7514/Y (BUF_X1P4B_A9TR)                 0.60      0.37 *     0.37 f                   0.90
+  n9432 (net)                   98                   0.00       0.37 f                   
+  U8012/Y (BUF_X1M_A9TR)                   0.10      0.20 *     0.58 f                   0.90
+  n9459 (net)                   16                   0.00       0.58 f                   
+  U4777/Y (NOR2_X1B_A9TR)                  0.45      0.29 *     0.87 r                   0.90
+  n8539 (net)                   18                   0.00       0.87 r                   
+  U4781/Y (NAND2_X0P7B_A9TR)               0.67      0.54 *     1.40 f                   0.90
+  n4813 (net)                   50                   0.00       1.40 f                   
+  U9597/Y (INV_X0P7M_A9TR)                 0.40      0.42 *     1.82 r                   0.90
+  n9569 (net)                   23                   0.00       1.82 r                   
+  U7296/Y (NAND2_X0P7B_A9TR)               0.34      0.32 *     2.14 f                   0.90
+  n8997 (net)                   18                   0.00       2.14 f                   
+  U9605/Y (INV_X0P7M_A9TR)                 0.13      0.13 *     2.27 r                   0.90
+  n9577 (net)                    3                   0.00       2.27 r                   
+  U9407/Y (AO1B2_X0P7M_A9TR)               0.06      0.06 *     2.33 f                   0.90
+  n8718 (net)                    1                   0.00       2.33 f                   
+  U9412/Y (OAI211_X0P5M_A9TR)              0.11      0.10 *     2.42 r                   0.90
+  n3 (net)                       1                   0.00       2.42 r                   
+  shifted_reg_3_/D (DFFQ_X0P5M_A9TR)       0.11      0.00 *     2.42 r                   0.90
+  data arrival time                                             2.42                     
+
+  clock CLK (rise edge)                             10.00      10.00                     
+  clock network delay (ideal)                        0.00      10.00                     
+  shifted_reg_3_/CK (DFFQ_X0P5M_A9TR)                0.00      10.00 r                   
+  library setup time                                -0.06       9.94                     
+  data required time                                            9.94                     
+  ----------------------------------------------------------------------------------------------------
+  data required time                                            9.94                     
+  data arrival time                                            -2.42                     
+  ----------------------------------------------------------------------------------------------------
+  slack (MET)                                                   7.51                     
+
+
+  Startpoint: shift_amount[6]
+              (input port clocked by CLK)
+  Endpoint: shifted_reg_20_
+            (rising edge-triggered flip-flop clocked by CLK)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: REGIN
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                        Fanout     Trans      Incr       Path      Attributes     Voltage
+  ----------------------------------------------------------------------------------------------------
+  clock CLK (rise edge)                              0.00       0.00                     
+  clock network delay (ideal)                        0.00       0.00                     
+  input external delay                               0.00       0.00 f                   
+  shift_amount[6] (in)                     0.02      0.01       0.01 f                   
+  shift_amount[6] (net)          1                   0.00       0.01 f                   
+  U7514/Y (BUF_X1P4B_A9TR)                 0.60      0.37 *     0.37 f                   0.90
+  n9432 (net)                   98                   0.00       0.37 f                   
+  U8012/Y (BUF_X1M_A9TR)                   0.10      0.20 *     0.58 f                   0.90
+  n9459 (net)                   16                   0.00       0.58 f                   
+  U4777/Y (NOR2_X1B_A9TR)                  0.45      0.29 *     0.87 r                   0.90
+  n8539 (net)                   18                   0.00       0.87 r                   
+  U4781/Y (NAND2_X0P7B_A9TR)               0.67      0.54 *     1.40 f                   0.90
+  n4813 (net)                   50                   0.00       1.40 f                   
+  U9597/Y (INV_X0P7M_A9TR)                 0.40      0.42 *     1.82 r                   0.90
+  n9569 (net)                   23                   0.00       1.82 r                   
+  U7296/Y (NAND2_X0P7B_A9TR)               0.34      0.32 *     2.14 f                   0.90
+  n8997 (net)                   18                   0.00       2.14 f                   
+  U9605/Y (INV_X0P7M_A9TR)                 0.13      0.13 *     2.27 r                   0.90
+  n9577 (net)                    3                   0.00       2.27 r                   
+  U9458/Y (AOI22_X0P5M_A9TR)               0.12      0.07 *     2.34 f                   0.90
+  n8841 (net)                    1                   0.00       2.34 f                   
+  U9461/Y (OAI211_X0P5M_A9TR)              0.11      0.08 *     2.42 r                   0.90
+  n20 (net)                      1                   0.00       2.42 r                   
+  shifted_reg_20_/D (DFFQ_X0P5M_A9TR)      0.11      0.00 *     2.42 r                   0.90
+  data arrival time                                             2.42                     
+
+  clock CLK (rise edge)                             10.00      10.00                     
+  clock network delay (ideal)                        0.00      10.00                     
+  shifted_reg_20_/CK (DFFQ_X0P5M_A9TR)               0.00      10.00 r                   
+  library setup time                                -0.06       9.94                     
+  data required time                                            9.94                     
+  ----------------------------------------------------------------------------------------------------
+  data required time                                            9.94                     
+  data arrival time                                            -2.42                     
+  ----------------------------------------------------------------------------------------------------
+  slack (MET)                                                   7.52                     
+
+
+  Startpoint: shift_amount[6]
+              (input port clocked by CLK)
+  Endpoint: shifted_reg_502_
+            (rising edge-triggered flip-flop clocked by CLK)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: REGIN
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                         Fanout     Trans      Incr       Path      Attributes     Voltage
+  -----------------------------------------------------------------------------------------------------
+  clock CLK (rise edge)                               0.00       0.00                     
+  clock network delay (ideal)                         0.00       0.00                     
+  input external delay                                0.00       0.00 f                   
+  shift_amount[6] (in)                      0.02      0.01       0.01 f                   
+  shift_amount[6] (net)           1                   0.00       0.01 f                   
+  U7514/Y (BUF_X1P4B_A9TR)                  0.60      0.37 *     0.37 f                   0.90
+  n9432 (net)                    98                   0.00       0.37 f                   
+  U8012/Y (BUF_X1M_A9TR)                    0.10      0.20 *     0.58 f                   0.90
+  n9459 (net)                    16                   0.00       0.58 f                   
+  U4777/Y (NOR2_X1B_A9TR)                   0.45      0.29 *     0.87 r                   0.90
+  n8539 (net)                    18                   0.00       0.87 r                   
+  U4781/Y (NAND2_X0P7B_A9TR)                0.67      0.54 *     1.40 f                   0.90
+  n4813 (net)                    50                   0.00       1.40 f                   
+  U9597/Y (INV_X0P7M_A9TR)                  0.40      0.42 *     1.82 r                   0.90
+  n9569 (net)                    23                   0.00       1.82 r                   
+  U7296/Y (NAND2_X0P7B_A9TR)                0.34      0.32 *     2.14 f                   0.90
+  n8997 (net)                    18                   0.00       2.14 f                   
+  U7299/Y (NOR2_X0P5B_A9TR)                 0.23      0.23 *     2.38 r                   0.90
+  n502 (net)                      1                   0.00       2.38 r                   
+  shifted_reg_502_/D (DFFQ_X0P5M_A9TR)      0.23      0.00 *     2.38 r                   0.90
+  data arrival time                                              2.38                     
+
+  clock CLK (rise edge)                              10.00      10.00                     
+  clock network delay (ideal)                         0.00      10.00                     
+  shifted_reg_502_/CK (DFFQ_X0P5M_A9TR)               0.00      10.00 r                   
+  library setup time                                 -0.09       9.91                     
+  data required time                                             9.91                     
+  -----------------------------------------------------------------------------------------------------
+  data required time                                             9.91                     
+  data arrival time                                             -2.38                     
+  -----------------------------------------------------------------------------------------------------
+  slack (MET)                                                    7.53                     
+
+
+  Startpoint: shift_amount[6]
+              (input port clocked by CLK)
+  Endpoint: shifted_reg_6_
+            (rising edge-triggered flip-flop clocked by CLK)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: REGIN
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                        Fanout     Trans      Incr       Path      Attributes     Voltage
+  ----------------------------------------------------------------------------------------------------
+  clock CLK (rise edge)                              0.00       0.00                     
+  clock network delay (ideal)                        0.00       0.00                     
+  input external delay                               0.00       0.00 f                   
+  shift_amount[6] (in)                     0.02      0.01       0.01 f                   
+  shift_amount[6] (net)          1                   0.00       0.01 f                   
+  U7514/Y (BUF_X1P4B_A9TR)                 0.60      0.37 *     0.37 f                   0.90
+  n9432 (net)                   98                   0.00       0.37 f                   
+  U8012/Y (BUF_X1M_A9TR)                   0.10      0.20 *     0.58 f                   0.90
+  n9459 (net)                   16                   0.00       0.58 f                   
+  U4777/Y (NOR2_X1B_A9TR)                  0.45      0.29 *     0.87 r                   0.90
+  n8539 (net)                   18                   0.00       0.87 r                   
+  U4781/Y (NAND2_X0P7B_A9TR)               0.67      0.54 *     1.40 f                   0.90
+  n4813 (net)                   50                   0.00       1.40 f                   
+  U9597/Y (INV_X0P7M_A9TR)                 0.40      0.42 *     1.82 r                   0.90
+  n9569 (net)                   23                   0.00       1.82 r                   
+  U7296/Y (NAND2_X0P7B_A9TR)               0.34      0.32 *     2.14 f                   0.90
+  n8997 (net)                   18                   0.00       2.14 f                   
+  U9521/Y (OAI22_X0P5M_A9TR)               0.12      0.12 *     2.26 r                   0.90
+  n9001 (net)                    1                   0.00       2.26 r                   
+  U9522/Y (AOI21_X0P7M_A9TR)               0.12      0.07 *     2.34 f                   0.90
+  n9009 (net)                    1                   0.00       2.34 f                   
+  U9524/Y (OAI211_X0P5M_A9TR)              0.10      0.07 *     2.41 r                   0.90
+  n6 (net)                       1                   0.00       2.41 r                   
+  shifted_reg_6_/D (DFFQ_X0P5M_A9TR)       0.10      0.00 *     2.41 r                   0.90
+  data arrival time                                             2.41                     
+
+  clock CLK (rise edge)                             10.00      10.00                     
+  clock network delay (ideal)                        0.00      10.00                     
+  shifted_reg_6_/CK (DFFQ_X0P5M_A9TR)                0.00      10.00 r                   
+  library setup time                                -0.06       9.94                     
+  data required time                                            9.94                     
+  ----------------------------------------------------------------------------------------------------
+  data required time                                            9.94                     
+  data arrival time                                            -2.41                     
+  ----------------------------------------------------------------------------------------------------
+  slack (MET)                                                   7.54                     
+
+
+  Startpoint: shift_amount[6]
+              (input port clocked by CLK)
+  Endpoint: shifted_reg_4_
+            (rising edge-triggered flip-flop clocked by CLK)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: REGIN
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                        Fanout     Trans      Incr       Path      Attributes     Voltage
+  ----------------------------------------------------------------------------------------------------
+  clock CLK (rise edge)                              0.00       0.00                     
+  clock network delay (ideal)                        0.00       0.00                     
+  input external delay                               0.00       0.00 f                   
+  shift_amount[6] (in)                     0.02      0.01       0.01 f                   
+  shift_amount[6] (net)          1                   0.00       0.01 f                   
+  U7514/Y (BUF_X1P4B_A9TR)                 0.60      0.37 *     0.37 f                   0.90
+  n9432 (net)                   98                   0.00       0.37 f                   
+  U8012/Y (BUF_X1M_A9TR)                   0.10      0.20 *     0.58 f                   0.90
+  n9459 (net)                   16                   0.00       0.58 f                   
+  U4777/Y (NOR2_X1B_A9TR)                  0.45      0.29 *     0.87 r                   0.90
+  n8539 (net)                   18                   0.00       0.87 r                   
+  U4781/Y (NAND2_X0P7B_A9TR)               0.67      0.54 *     1.40 f                   0.90
+  n4813 (net)                   50                   0.00       1.40 f                   
+  U9597/Y (INV_X0P7M_A9TR)                 0.40      0.42 *     1.82 r                   0.90
+  n9569 (net)                   23                   0.00       1.82 r                   
+  U7296/Y (NAND2_X0P7B_A9TR)               0.34      0.32 *     2.14 f                   0.90
+  n8997 (net)                   18                   0.00       2.14 f                   
+  U9516/Y (OAI22_X0P5M_A9TR)               0.12      0.12 *     2.26 r                   0.90
+  n8982 (net)                    1                   0.00       2.26 r                   
+  U9517/Y (AOI21_X0P7M_A9TR)               0.12      0.07 *     2.33 f                   0.90
+  n8988 (net)                    1                   0.00       2.33 f                   
+  U9519/Y (OAI211_X0P5M_A9TR)              0.10      0.07 *     2.40 r                   0.90
+  n4 (net)                       1                   0.00       2.40 r                   
+  shifted_reg_4_/D (DFFQ_X0P5M_A9TR)       0.10      0.00 *     2.40 r                   0.90
+  data arrival time                                             2.40                     
+
+  clock CLK (rise edge)                             10.00      10.00                     
+  clock network delay (ideal)                        0.00      10.00                     
+  shifted_reg_4_/CK (DFFQ_X0P5M_A9TR)                0.00      10.00 r                   
+  library setup time                                -0.06       9.94                     
+  data required time                                            9.94                     
+  ----------------------------------------------------------------------------------------------------
+  data required time                                            9.94                     
+  data arrival time                                            -2.40                     
+  ----------------------------------------------------------------------------------------------------
+  slack (MET)                                                   7.54                     
+
+
+  Startpoint: shift_amount[6]
+              (input port clocked by CLK)
+  Endpoint: shifted_reg_509_
+            (rising edge-triggered flip-flop clocked by CLK)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: REGIN
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                         Fanout     Trans      Incr       Path      Attributes     Voltage
+  -----------------------------------------------------------------------------------------------------
+  clock CLK (rise edge)                               0.00       0.00                     
+  clock network delay (ideal)                         0.00       0.00                     
+  input external delay                                0.00       0.00 f                   
+  shift_amount[6] (in)                      0.02      0.01       0.01 f                   
+  shift_amount[6] (net)           1                   0.00       0.01 f                   
+  U7514/Y (BUF_X1P4B_A9TR)                  0.60      0.37 *     0.37 f                   0.90
+  n9432 (net)                    98                   0.00       0.37 f                   
+  U8012/Y (BUF_X1M_A9TR)                    0.10      0.20 *     0.58 f                   0.90
+  n9459 (net)                    16                   0.00       0.58 f                   
+  U4777/Y (NOR2_X1B_A9TR)                   0.45      0.29 *     0.87 r                   0.90
+  n8539 (net)                    18                   0.00       0.87 r                   
+  U4781/Y (NAND2_X0P7B_A9TR)                0.67      0.54 *     1.40 f                   0.90
+  n4813 (net)                    50                   0.00       1.40 f                   
+  U9597/Y (INV_X0P7M_A9TR)                  0.40      0.42 *     1.82 r                   0.90
+  n9569 (net)                    23                   0.00       1.82 r                   
+  U7296/Y (NAND2_X0P7B_A9TR)                0.34      0.32 *     2.14 f                   0.90
+  n8997 (net)                    18                   0.00       2.14 f                   
+  U7298/Y (NOR2_X0P5B_A9TR)                 0.18      0.19 *     2.34 r                   0.90
+  n509 (net)                      1                   0.00       2.34 r                   
+  shifted_reg_509_/D (DFFQ_X0P5M_A9TR)      0.18      0.00 *     2.34 r                   0.90
+  data arrival time                                              2.34                     
+
+  clock CLK (rise edge)                              10.00      10.00                     
+  clock network delay (ideal)                         0.00      10.00                     
+  shifted_reg_509_/CK (DFFQ_X0P5M_A9TR)               0.00      10.00 r                   
+  library setup time                                 -0.08       9.92                     
+  data required time                                             9.92                     
+  -----------------------------------------------------------------------------------------------------
+  data required time                                             9.92                     
+  data arrival time                                             -2.34                     
+  -----------------------------------------------------------------------------------------------------
+  slack (MET)                                                    7.58                     
+
+
+  Startpoint: shift_amount[6]
+              (input port clocked by CLK)
+  Endpoint: shifted_reg_58_
+            (rising edge-triggered flip-flop clocked by CLK)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: REGIN
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                        Fanout     Trans      Incr       Path      Attributes     Voltage
+  ----------------------------------------------------------------------------------------------------
+  clock CLK (rise edge)                              0.00       0.00                     
+  clock network delay (ideal)                        0.00       0.00                     
+  input external delay                               0.00       0.00 r                   
+  shift_amount[6] (in)                     0.03      0.01       0.01 r                   
+  shift_amount[6] (net)          1                   0.00       0.01 r                   
+  U7514/Y (BUF_X1P4B_A9TR)                 0.71      0.42 *     0.44 r                   0.90
+  n9432 (net)                   98                   0.00       0.44 r                   
+  U8012/Y (BUF_X1M_A9TR)                   0.14      0.21 *     0.64 r                   0.90
+  n9459 (net)                   16                   0.00       0.64 r                   
+  U4777/Y (NOR2_X1B_A9TR)                  0.28      0.22 *     0.86 f                   0.90
+  n8539 (net)                   18                   0.00       0.86 f                   
+  U4781/Y (NAND2_X0P7B_A9TR)               0.76      0.53 *     1.39 r                   0.90
+  n4813 (net)                   50                   0.00       1.39 r                   
+  U6957/Y (NOR2_X0P5B_A9TR)                0.37      0.43 *     1.82 f                   0.90
+  n8860 (net)                   21                   0.00       1.82 f                   
+  U9603/Y (INV_X0P7M_A9TR)                 0.25      0.25 *     2.08 r                   0.90
+  n9575 (net)                   13                   0.00       2.08 r                   
+  U9480/Y (OA22_X0P7M_A9TR)                0.07      0.13 *     2.21 r                   0.90
+  n8896 (net)                    1                   0.00       2.21 r                   
+  U9482/Y (OAI211_X0P5M_A9TR)              0.17      0.09 *     2.29 f                   0.90
+  n58 (net)                      1                   0.00       2.29 f                   
+  shifted_reg_58_/D (DFFQ_X0P5M_A9TR)      0.17      0.00 *     2.29 f                   0.90
+  data arrival time                                             2.29                     
+
+  clock CLK (rise edge)                             10.00      10.00                     
+  clock network delay (ideal)                        0.00      10.00                     
+  shifted_reg_58_/CK (DFFQ_X0P5M_A9TR)               0.00      10.00 r                   
+  library setup time                                -0.10       9.90                     
+  data required time                                            9.90                     
+  ----------------------------------------------------------------------------------------------------
+  data required time                                            9.90                     
+  data arrival time                                            -2.29                     
+  ----------------------------------------------------------------------------------------------------
+  slack (MET)                                                   7.61                     
+
+
+  Startpoint: shift_amount[6]
+              (input port clocked by CLK)
+  Endpoint: shifted_reg_507_
+            (rising edge-triggered flip-flop clocked by CLK)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: REGIN
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                         Fanout     Trans      Incr       Path      Attributes     Voltage
+  -----------------------------------------------------------------------------------------------------
+  clock CLK (rise edge)                               0.00       0.00                     
+  clock network delay (ideal)                         0.00       0.00                     
+  input external delay                                0.00       0.00 r                   
+  shift_amount[6] (in)                      0.03      0.01       0.01 r                   
+  shift_amount[6] (net)           1                   0.00       0.01 r                   
+  U7514/Y (BUF_X1P4B_A9TR)                  0.71      0.42 *     0.44 r                   0.90
+  n9432 (net)                    98                   0.00       0.44 r                   
+  U8012/Y (BUF_X1M_A9TR)                    0.14      0.21 *     0.64 r                   0.90
+  n9459 (net)                    16                   0.00       0.64 r                   
+  U4777/Y (NOR2_X1B_A9TR)                   0.28      0.22 *     0.86 f                   0.90
+  n8539 (net)                    18                   0.00       0.86 f                   
+  U4781/Y (NAND2_X0P7B_A9TR)                0.76      0.53 *     1.39 r                   0.90
+  n4813 (net)                    50                   0.00       1.39 r                   
+  U6957/Y (NOR2_X0P5B_A9TR)                 0.37      0.43 *     1.82 f                   0.90
+  n8860 (net)                    21                   0.00       1.82 f                   
+  U9604/Y (INV_X0P7M_A9TR)                  0.29      0.29 *     2.11 r                   0.90
+  n9576 (net)                    14                   0.00       2.11 r                   
+  U7905/Y (NOR2_X0P5B_A9TR)                 0.15      0.18 *     2.29 f                   0.90
+  n507 (net)                      1                   0.00       2.29 f                   
+  shifted_reg_507_/D (DFFQ_X0P5M_A9TR)      0.15      0.00 *     2.29 f                   0.90
+  data arrival time                                              2.29                     
+
+  clock CLK (rise edge)                              10.00      10.00                     
+  clock network delay (ideal)                         0.00      10.00                     
+  shifted_reg_507_/CK (DFFQ_X0P5M_A9TR)               0.00      10.00 r                   
+  library setup time                                 -0.09       9.91                     
+  data required time                                             9.91                     
+  -----------------------------------------------------------------------------------------------------
+  data required time                                             9.91                     
+  data arrival time                                             -2.29                     
+  -----------------------------------------------------------------------------------------------------
+  slack (MET)                                                    7.62                     
+
+
+  Startpoint: shift_amount[6]
+              (input port clocked by CLK)
+  Endpoint: shifted_reg_501_
+            (rising edge-triggered flip-flop clocked by CLK)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: REGIN
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                         Fanout     Trans      Incr       Path      Attributes     Voltage
+  -----------------------------------------------------------------------------------------------------
+  clock CLK (rise edge)                               0.00       0.00                     
+  clock network delay (ideal)                         0.00       0.00                     
+  input external delay                                0.00       0.00 f                   
+  shift_amount[6] (in)                      0.02      0.01       0.01 f                   
+  shift_amount[6] (net)           1                   0.00       0.01 f                   
+  U7514/Y (BUF_X1P4B_A9TR)                  0.60      0.37 *     0.37 f                   0.90
+  n9432 (net)                    98                   0.00       0.37 f                   
+  U8012/Y (BUF_X1M_A9TR)                    0.10      0.20 *     0.58 f                   0.90
+  n9459 (net)                    16                   0.00       0.58 f                   
+  U4777/Y (NOR2_X1B_A9TR)                   0.45      0.29 *     0.87 r                   0.90
+  n8539 (net)                    18                   0.00       0.87 r                   
+  U4781/Y (NAND2_X0P7B_A9TR)                0.67      0.54 *     1.40 f                   0.90
+  n4813 (net)                    50                   0.00       1.40 f                   
+  U9597/Y (INV_X0P7M_A9TR)                  0.40      0.42 *     1.82 r                   0.90
+  n9569 (net)                    23                   0.00       1.82 r                   
+  U7296/Y (NAND2_X0P7B_A9TR)                0.34      0.32 *     2.14 f                   0.90
+  n8997 (net)                    18                   0.00       2.14 f                   
+  U7304/Y (NOR2_X0P5B_A9TR)                 0.15      0.16 *     2.31 r                   0.90
+  n501 (net)                      1                   0.00       2.31 r                   
+  shifted_reg_501_/D (DFFQ_X0P5M_A9TR)      0.15      0.00 *     2.31 r                   0.90
+  data arrival time                                              2.31                     
+
+  clock CLK (rise edge)                              10.00      10.00                     
+  clock network delay (ideal)                         0.00      10.00                     
+  shifted_reg_501_/CK (DFFQ_X0P5M_A9TR)               0.00      10.00 r                   
+  library setup time                                 -0.07       9.93                     
+  data required time                                             9.93                     
+  -----------------------------------------------------------------------------------------------------
+  data required time                                             9.93                     
+  data arrival time                                             -2.31                     
+  -----------------------------------------------------------------------------------------------------
+  slack (MET)                                                    7.62                     
+
+
+  Startpoint: shifted_reg_122_
+              (rising edge-triggered flip-flop clocked by CLK)
+  Endpoint: out[122] (output port clocked by CLK)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: REGOUT
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                          Fanout     Trans      Incr       Path      Attributes     Voltage
+  ------------------------------------------------------------------------------------------------------
+  clock CLK (rise edge)                                0.00       0.00                     
+  clock network delay (ideal)                          0.00       0.00                     
+  shifted_reg_122_/CK (DFFQ_X0P5M_A9TR)      0.00      0.00       0.00 r                   0.90
+  shifted_reg_122_/Q (DFFQ_X0P5M_A9TR)       0.12      0.16       0.16 r                   0.90
+  out[122] (net)                   1                   0.00       0.16 r                   
+  out[122] (out)                             0.12      0.00 *     0.16 r                   
+  data arrival time                                               0.16                     
+
+  clock CLK (rise edge)                               10.00      10.00                     
+  clock network delay (ideal)                          0.00      10.00                     
+  output external delay                                0.00      10.00                     
+  data required time                                             10.00                     
+  ------------------------------------------------------------------------------------------------------
+  data required time                                             10.00                     
+  data arrival time                                              -0.16                     
+  ------------------------------------------------------------------------------------------------------
+  slack (MET)                                                     9.84                     
+
+
+  Startpoint: shifted_reg_85_
+              (rising edge-triggered flip-flop clocked by CLK)
+  Endpoint: out[85] (output port clocked by CLK)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: REGOUT
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                         Fanout     Trans      Incr       Path      Attributes     Voltage
+  -----------------------------------------------------------------------------------------------------
+  clock CLK (rise edge)                               0.00       0.00                     
+  clock network delay (ideal)                         0.00       0.00                     
+  shifted_reg_85_/CK (DFFQ_X0P5M_A9TR)      0.00      0.00       0.00 r                   0.90
+  shifted_reg_85_/Q (DFFQ_X0P5M_A9TR)       0.11      0.15       0.15 r                   0.90
+  out[85] (net)                   1                   0.00       0.15 r                   
+  out[85] (out)                             0.11      0.00 *     0.15 r                   
+  data arrival time                                              0.15                     
+
+  clock CLK (rise edge)                              10.00      10.00                     
+  clock network delay (ideal)                         0.00      10.00                     
+  output external delay                               0.00      10.00                     
+  data required time                                            10.00                     
+  -----------------------------------------------------------------------------------------------------
+  data required time                                            10.00                     
+  data arrival time                                             -0.15                     
+  -----------------------------------------------------------------------------------------------------
+  slack (MET)                                                    9.85                     
+
+
+  Startpoint: shifted_reg_66_
+              (rising edge-triggered flip-flop clocked by CLK)
+  Endpoint: out[66] (output port clocked by CLK)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: REGOUT
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                         Fanout     Trans      Incr       Path      Attributes     Voltage
+  -----------------------------------------------------------------------------------------------------
+  clock CLK (rise edge)                               0.00       0.00                     
+  clock network delay (ideal)                         0.00       0.00                     
+  shifted_reg_66_/CK (DFFQ_X0P5M_A9TR)      0.00      0.00       0.00 r                   0.90
+  shifted_reg_66_/Q (DFFQ_X0P5M_A9TR)       0.09      0.14       0.14 r                   0.90
+  out[66] (net)                   1                   0.00       0.14 r                   
+  out[66] (out)                             0.09      0.00 *     0.14 r                   
+  data arrival time                                              0.14                     
+
+  clock CLK (rise edge)                              10.00      10.00                     
+  clock network delay (ideal)                         0.00      10.00                     
+  output external delay                               0.00      10.00                     
+  data required time                                            10.00                     
+  -----------------------------------------------------------------------------------------------------
+  data required time                                            10.00                     
+  data arrival time                                             -0.14                     
+  -----------------------------------------------------------------------------------------------------
+  slack (MET)                                                    9.86                     
+
+
+  Startpoint: shifted_reg_2_
+              (rising edge-triggered flip-flop clocked by CLK)
+  Endpoint: out[2] (output port clocked by CLK)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: REGOUT
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                        Fanout     Trans      Incr       Path      Attributes     Voltage
+  ----------------------------------------------------------------------------------------------------
+  clock CLK (rise edge)                              0.00       0.00                     
+  clock network delay (ideal)                        0.00       0.00                     
+  shifted_reg_2_/CK (DFFQ_X0P5M_A9TR)      0.00      0.00       0.00 r                   0.90
+  shifted_reg_2_/Q (DFFQ_X0P5M_A9TR)       0.09      0.14       0.14 r                   0.90
+  out[2] (net)                   1                   0.00       0.14 r                   
+  out[2] (out)                             0.09      0.00 *     0.14 r                   
+  data arrival time                                             0.14                     
+
+  clock CLK (rise edge)                             10.00      10.00                     
+  clock network delay (ideal)                        0.00      10.00                     
+  output external delay                              0.00      10.00                     
+  data required time                                           10.00                     
+  ----------------------------------------------------------------------------------------------------
+  data required time                                           10.00                     
+  data arrival time                                            -0.14                     
+  ----------------------------------------------------------------------------------------------------
+  slack (MET)                                                   9.86                     
+
+
+  Startpoint: shifted_reg_263_
+              (rising edge-triggered flip-flop clocked by CLK)
+  Endpoint: out[263] (output port clocked by CLK)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: REGOUT
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                          Fanout     Trans      Incr       Path      Attributes     Voltage
+  ------------------------------------------------------------------------------------------------------
+  clock CLK (rise edge)                                0.00       0.00                     
+  clock network delay (ideal)                          0.00       0.00                     
+  shifted_reg_263_/CK (DFFQ_X0P5M_A9TR)      0.00      0.00       0.00 r                   0.90
+  shifted_reg_263_/Q (DFFQ_X0P5M_A9TR)       0.09      0.14       0.14 r                   0.90
+  out[263] (net)                   1                   0.00       0.14 r                   
+  out[263] (out)                             0.09      0.00 *     0.14 r                   
+  data arrival time                                               0.14                     
+
+  clock CLK (rise edge)                               10.00      10.00                     
+  clock network delay (ideal)                          0.00      10.00                     
+  output external delay                                0.00      10.00                     
+  data required time                                             10.00                     
+  ------------------------------------------------------------------------------------------------------
+  data required time                                             10.00                     
+  data arrival time                                              -0.14                     
+  ------------------------------------------------------------------------------------------------------
+  slack (MET)                                                     9.86                     
+
+
+  Startpoint: shifted_reg_124_
+              (rising edge-triggered flip-flop clocked by CLK)
+  Endpoint: out[124] (output port clocked by CLK)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: REGOUT
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                          Fanout     Trans      Incr       Path      Attributes     Voltage
+  ------------------------------------------------------------------------------------------------------
+  clock CLK (rise edge)                                0.00       0.00                     
+  clock network delay (ideal)                          0.00       0.00                     
+  shifted_reg_124_/CK (DFFQ_X0P5M_A9TR)      0.00      0.00       0.00 r                   0.90
+  shifted_reg_124_/Q (DFFQ_X0P5M_A9TR)       0.09      0.14       0.14 r                   0.90
+  out[124] (net)                   1                   0.00       0.14 r                   
+  out[124] (out)                             0.09      0.00 *     0.14 r                   
+  data arrival time                                               0.14                     
+
+  clock CLK (rise edge)                               10.00      10.00                     
+  clock network delay (ideal)                          0.00      10.00                     
+  output external delay                                0.00      10.00                     
+  data required time                                             10.00                     
+  ------------------------------------------------------------------------------------------------------
+  data required time                                             10.00                     
+  data arrival time                                              -0.14                     
+  ------------------------------------------------------------------------------------------------------
+  slack (MET)                                                     9.86                     
+
+
+  Startpoint: shifted_reg_70_
+              (rising edge-triggered flip-flop clocked by CLK)
+  Endpoint: out[70] (output port clocked by CLK)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: REGOUT
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                         Fanout     Trans      Incr       Path      Attributes     Voltage
+  -----------------------------------------------------------------------------------------------------
+  clock CLK (rise edge)                               0.00       0.00                     
+  clock network delay (ideal)                         0.00       0.00                     
+  shifted_reg_70_/CK (DFFQ_X0P5M_A9TR)      0.00      0.00       0.00 r                   0.90
+  shifted_reg_70_/Q (DFFQ_X0P5M_A9TR)       0.08      0.14       0.14 r                   0.90
+  out[70] (net)                   1                   0.00       0.14 r                   
+  out[70] (out)                             0.08      0.00 *     0.14 r                   
+  data arrival time                                              0.14                     
+
+  clock CLK (rise edge)                              10.00      10.00                     
+  clock network delay (ideal)                         0.00      10.00                     
+  output external delay                               0.00      10.00                     
+  data required time                                            10.00                     
+  -----------------------------------------------------------------------------------------------------
+  data required time                                            10.00                     
+  data arrival time                                             -0.14                     
+  -----------------------------------------------------------------------------------------------------
+  slack (MET)                                                    9.86                     
+
+
+  Startpoint: shifted_reg_35_
+              (rising edge-triggered flip-flop clocked by CLK)
+  Endpoint: out[35] (output port clocked by CLK)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: REGOUT
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                         Fanout     Trans      Incr       Path      Attributes     Voltage
+  -----------------------------------------------------------------------------------------------------
+  clock CLK (rise edge)                               0.00       0.00                     
+  clock network delay (ideal)                         0.00       0.00                     
+  shifted_reg_35_/CK (DFFQ_X0P5M_A9TR)      0.00      0.00       0.00 r                   0.90
+  shifted_reg_35_/Q (DFFQ_X0P5M_A9TR)       0.08      0.14       0.14 r                   0.90
+  out[35] (net)                   1                   0.00       0.14 r                   
+  out[35] (out)                             0.08      0.00 *     0.14 r                   
+  data arrival time                                              0.14                     
+
+  clock CLK (rise edge)                              10.00      10.00                     
+  clock network delay (ideal)                         0.00      10.00                     
+  output external delay                               0.00      10.00                     
+  data required time                                            10.00                     
+  -----------------------------------------------------------------------------------------------------
+  data required time                                            10.00                     
+  data arrival time                                             -0.14                     
+  -----------------------------------------------------------------------------------------------------
+  slack (MET)                                                    9.86                     
+
+
+  Startpoint: shifted_reg_7_
+              (rising edge-triggered flip-flop clocked by CLK)
+  Endpoint: out[7] (output port clocked by CLK)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: REGOUT
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                        Fanout     Trans      Incr       Path      Attributes     Voltage
+  ----------------------------------------------------------------------------------------------------
+  clock CLK (rise edge)                              0.00       0.00                     
+  clock network delay (ideal)                        0.00       0.00                     
+  shifted_reg_7_/CK (DFFQ_X0P5M_A9TR)      0.00      0.00       0.00 r                   0.90
+  shifted_reg_7_/Q (DFFQ_X0P5M_A9TR)       0.08      0.14       0.14 r                   0.90
+  out[7] (net)                   1                   0.00       0.14 r                   
+  out[7] (out)                             0.08      0.00 *     0.14 r                   
+  data arrival time                                             0.14                     
+
+  clock CLK (rise edge)                             10.00      10.00                     
+  clock network delay (ideal)                        0.00      10.00                     
+  output external delay                              0.00      10.00                     
+  data required time                                           10.00                     
+  ----------------------------------------------------------------------------------------------------
+  data required time                                           10.00                     
+  data arrival time                                            -0.14                     
+  ----------------------------------------------------------------------------------------------------
+  slack (MET)                                                   9.86                     
+
+
+  Startpoint: shifted_reg_510_
+              (rising edge-triggered flip-flop clocked by CLK)
+  Endpoint: out[510] (output port clocked by CLK)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: REGOUT
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                          Fanout     Trans      Incr       Path      Attributes     Voltage
+  ------------------------------------------------------------------------------------------------------
+  clock CLK (rise edge)                                0.00       0.00                     
+  clock network delay (ideal)                          0.00       0.00                     
+  shifted_reg_510_/CK (DFFQ_X0P5M_A9TR)      0.00      0.00       0.00 r                   0.90
+  shifted_reg_510_/Q (DFFQ_X0P5M_A9TR)       0.07      0.13       0.13 r                   0.90
+  out[510] (net)                   1                   0.00       0.13 r                   
+  out[510] (out)                             0.07      0.00 *     0.13 r                   
+  data arrival time                                               0.13                     
+
+  clock CLK (rise edge)                               10.00      10.00                     
+  clock network delay (ideal)                          0.00      10.00                     
+  output external delay                                0.00      10.00                     
+  data required time                                             10.00                     
+  ------------------------------------------------------------------------------------------------------
+  data required time                                             10.00                     
+  data arrival time                                              -0.13                     
+  ------------------------------------------------------------------------------------------------------
+  slack (MET)                                                     9.87                     
+
+
+1
