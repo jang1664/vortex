@@ -8,3 +8,9 @@
 - analysis_workspace/top_breakdown/breakdown.py : area breakdown
   - run make_figure.sh
   - check analysis_workspace/top_breakdown/nt32/vortex_axi_breakdown_pie.png
+- analysis_workspace/llm_analysis/plot_progression_roofline.py : LLM-analysis progression roofline
+  - run python analysis_workspace/llm_analysis/plot_progression_roofline.py
+  - check analysis_workspace/llm_analysis/figures/progression_roofline.{pdf,png,svg}
+- analysis_workspace/llm_analysis/plot_long_seq_attn_breakdown.py : long-sequence attention FLOP breakdown
+  - run python analysis_workspace/llm_analysis/plot_long_seq_attn_breakdown.py
+  - check analysis_workspace/llm_analysis/figures/long_seq_attn_breakdown.{pdf,png,svg}
