@@ -7,6 +7,8 @@
 #include <assert.h>
 #include <vortex.h>
 #include "common.h"
+#include "host_variant.h"
+#include "../vector_common/fp16.h"
 
 #define RT_CHECK(_expr)                                         \
    do {                                                         \
@@ -18,7 +20,7 @@
      exit(-1);                                                  \
    } while (false)
 
-using data_t = float;
+using data_t = fp16_t;
 
 vx_device_h device = nullptr;
 vx_buffer_h krnl_buffer = nullptr;
@@ -57,7 +59,7 @@ void softmax_cpu(
         // Find max for numerical stability
         float max_val = -INFINITY;
         for (uint32_t k = 0; k < seq_len_k; ++k) {
-          float val = input[row_offset + k] * scale;
+          float val = fp16_to_float(input[row_offset + k]) * scale;
           if (use_mask && k > q) {
             val = -INFINITY;
           }
@@ -67,18 +69,22 @@ void softmax_cpu(
         // Compute exp and sum
         float sum = 0.0f;
         for (uint32_t k = 0; k < seq_len_k; ++k) {
-          float val = input[row_offset + k] * scale;
+          float val = fp16_to_float(input[row_offset + k]) * scale;
           if (use_mask && k > q) {
             val = -INFINITY;
           }
           float exp_val = std::exp(val - max_val);
-          output[row_offset + k] = exp_val;
           sum += exp_val;
         }
         
         // Normalize
         for (uint32_t k = 0; k < seq_len_k; ++k) {
-          output[row_offset + k] /= sum;
+          float val = fp16_to_float(input[row_offset + k]) * scale;
+          if (use_mask && k > q) {
+            val = -INFINITY;
+          }
+          float exp_val = std::exp(val - max_val);
+          output[row_offset + k] = float_to_fp16(exp_val / sum);
         }
       }
     }
@@ -90,7 +96,38 @@ void softmax_cpu(
 ///////////////////////////////////////////////////////////////////////////////
 void initialize_random(std::vector<data_t>& vec) {
   for (auto& val : vec) {
-    val = static_cast<float>(rand()) / RAND_MAX * 4.0f - 2.0f;  // [-2, 2]
+    float x = static_cast<float>(rand()) / RAND_MAX * 4.0f - 2.0f;  // [-2, 2]
+    val = float_to_fp16(x);
+  }
+}
+
+static void pack_rows_to_pitch(
+    std::vector<uint8_t>& dst,
+    const std::vector<data_t>& src,
+    uint32_t total_rows,
+    uint32_t seq_len_k,
+    uint32_t row_pitch_bytes) {
+  uint32_t row_bytes = seq_len_k * sizeof(data_t);
+  const auto* src_bytes = reinterpret_cast<const uint8_t*>(src.data());
+  for (uint32_t row = 0; row < total_rows; ++row) {
+    std::memcpy(dst.data() + row * row_pitch_bytes,
+                src_bytes + row * row_bytes,
+                row_bytes);
+  }
+}
+
+static void unpack_rows_from_pitch(
+    std::vector<data_t>& dst,
+    const std::vector<uint8_t>& src,
+    uint32_t total_rows,
+    uint32_t seq_len_k,
+    uint32_t row_pitch_bytes) {
+  uint32_t row_bytes = seq_len_k * sizeof(data_t);
+  auto* dst_bytes = reinterpret_cast<uint8_t*>(dst.data());
+  for (uint32_t row = 0; row < total_rows; ++row) {
+    std::memcpy(dst_bytes + row * row_bytes,
+                src.data() + row * row_pitch_bytes,
+                row_bytes);
   }
 }
 
@@ -133,8 +170,10 @@ int main(int argc, char *argv[]) {
   printf("  Seq Len K:    %d\n", seq_len_k);
   printf("  Use Mask:     %d\n", use_mask);
   printf("  Scale:        %.6f\n", scale);
+  printf("  Variant:      %s\n", softmax_variant_name());
   
-  uint32_t input_size = batch_size * num_heads * seq_len_q * seq_len_k;
+  uint32_t total_rows = batch_size * num_heads * seq_len_q;
+  uint32_t input_size = total_rows * seq_len_k;
   
   // Allocate host memory
   std::vector<data_t> h_input(input_size);
@@ -163,26 +202,36 @@ int main(int argc, char *argv[]) {
   printf("Device Caps: cores=%ld, warps=%ld, threads=%ld\n", 
          num_cores, num_warps, num_threads);
   
-  // Allocate device memory
-  uint32_t buffer_bytes = input_size * sizeof(data_t);
-  
-  RT_CHECK(vx_mem_alloc(device, buffer_bytes, VX_MEM_READ, &input_buffer));
-  // Output buffer needs READ+WRITE because kernel reads back intermediate exp values
-  RT_CHECK(vx_mem_alloc(device, buffer_bytes, VX_MEM_READ | VX_MEM_WRITE, &output_buffer));
-  
-  // Copy data to device
-  RT_CHECK(vx_copy_to_dev(input_buffer, h_input.data(), 0, buffer_bytes));
+  uint32_t row_pitch_bytes = softmax_row_pitch_bytes(seq_len_k, sizeof(data_t));
+  uint32_t buffer_bytes = total_rows * row_pitch_bytes;
+  std::vector<uint8_t> h_input_pitched;
+  std::vector<uint8_t> h_output_pitched;
+
+  if (softmax_uses_pitched_hbm()) {
+    h_input_pitched.assign(buffer_bytes, 0);
+    h_output_pitched.assign(buffer_bytes, 0);
+    pack_rows_to_pitch(h_input_pitched, h_input, total_rows, seq_len_k, row_pitch_bytes);
+    RT_CHECK(vx_mem_alloc_aligned(device, buffer_bytes, softmax_hbm_alloc_alignment(), VX_MEM_READ, &input_buffer));
+    RT_CHECK(vx_mem_alloc_aligned(device, buffer_bytes, softmax_hbm_alloc_alignment(), softmax_output_mem_flags(), &output_buffer));
+    RT_CHECK(vx_copy_to_dev(input_buffer, h_input_pitched.data(), 0, buffer_bytes));
+  } else {
+    RT_CHECK(vx_mem_alloc(device, buffer_bytes, VX_MEM_READ, &input_buffer));
+    RT_CHECK(vx_mem_alloc(device, buffer_bytes, softmax_output_mem_flags(), &output_buffer));
+    RT_CHECK(vx_copy_to_dev(input_buffer, h_input.data(), 0, buffer_bytes));
+  }
   
   // Setup kernel arguments
   kernel_arg_t kernel_arg = {};
   kernel_arg.kernel_id = KERNEL_SOFTMAX;
   
   // Grid/Block configuration
-  // Each block processes one row (one query position across key dimension)
-  uint32_t total_rows = batch_size * num_heads * seq_len_q;
   uint32_t threads_per_block = std::min(256u, (uint32_t)(num_warps * num_threads));
+  uint32_t rows_per_block = 1;
+  uint32_t row_tiles = total_rows;
   
-  kernel_arg.grid_dim[0] = total_rows;  // One block per row
+  kernel_arg.grid_dim[0] = softmax_grid_x(total_rows, threads_per_block,
+                                          num_threads, num_cores,
+                                          &rows_per_block, &row_tiles);
   kernel_arg.grid_dim[1] = 1;
   kernel_arg.grid_dim[2] = 1;
   kernel_arg.block_dim[0] = threads_per_block;
@@ -199,6 +248,7 @@ int main(int argc, char *argv[]) {
   kernel_arg.num_heads = num_heads;
   kernel_arg.seq_len_q = seq_len_q;
   kernel_arg.seq_len_k = seq_len_k;
+  kernel_arg.row_pitch_bytes = row_pitch_bytes;
   kernel_arg.use_mask = use_mask;
   kernel_arg.scale = scale;
   
@@ -206,6 +256,7 @@ int main(int argc, char *argv[]) {
          kernel_arg.grid_dim[0], kernel_arg.grid_dim[1], kernel_arg.grid_dim[2]);
   printf("Block: [%d, %d, %d]\n", 
          kernel_arg.block_dim[0], kernel_arg.block_dim[1], kernel_arg.block_dim[2]);
+  softmax_print_variant_launch(total_rows, rows_per_block, row_tiles, kernel_arg.grid_dim[0]);
   
   // Upload kernel arguments
   RT_CHECK(vx_upload_bytes(device, &kernel_arg, sizeof(kernel_arg_t), &args_buffer));
@@ -220,7 +271,12 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_ready_wait(device, VX_MAX_TIMEOUT));
   
   // Copy results back
-  RT_CHECK(vx_copy_from_dev(h_output_gpu.data(), output_buffer, 0, buffer_bytes));
+  if (softmax_uses_pitched_hbm()) {
+    RT_CHECK(vx_copy_from_dev(h_output_pitched.data(), output_buffer, 0, buffer_bytes));
+    unpack_rows_from_pitch(h_output_gpu, h_output_pitched, total_rows, seq_len_k, row_pitch_bytes);
+  } else {
+    RT_CHECK(vx_copy_from_dev(h_output_gpu.data(), output_buffer, 0, buffer_bytes));
+  }
   
   // Print performance statistics
   printf("\n[Performance]\n");
@@ -244,30 +300,32 @@ int main(int argc, char *argv[]) {
         
         for (uint32_t k = 0; k < seq_len_k; ++k) {
           uint32_t idx = row_offset + k;
-          float diff = std::abs(h_output_gpu[idx] - h_output_cpu[idx]);
+          float got = fp16_to_float(h_output_gpu[idx]);
+          float expected = fp16_to_float(h_output_cpu[idx]);
+          float diff = std::abs(got - expected);
           max_diff = std::max(max_diff, diff);
           
-          sum_gpu += h_output_gpu[idx];
-          sum_cpu += h_output_cpu[idx];
+          sum_gpu += got;
+          sum_cpu += expected;
           
           // Check relative error
           float abs_threshold = 1e-5f;
-          float rel_threshold = std::abs(h_output_cpu[idx]) * 0.01f;  // 1%
+          float rel_threshold = std::abs(expected) * 0.01f;  // 1%
           float threshold = std::max(abs_threshold, rel_threshold);
           
           if (diff > threshold) {
             if (errors < 10) {
-              float rel_error = (h_output_cpu[idx] != 0.0f) ? diff / std::abs(h_output_cpu[idx]) : 0.0f;
+              float rel_error = (expected != 0.0f) ? diff / std::abs(expected) : 0.0f;
               max_rel_error = std::max(max_rel_error, rel_error);
               printf("Error at [%d,%d,%d,%d]: GPU=%.6f, CPU=%.6f, diff=%.6f, rel_err=%.2f%%\n", 
-                     b, h, q, k, h_output_gpu[idx], h_output_cpu[idx], diff, rel_error * 100.0f);
+                     b, h, q, k, got, expected, diff, rel_error * 100.0f);
             }
             ++errors;
           }
         }
         
         // Check if sums are close to 1.0
-        if (std::abs(sum_gpu - 1.0f) > 1e-4f) {
+        if (std::abs(sum_gpu - 1.0f) > 2e-3f) {
           if (errors < 10) {
             printf("Row sum error at [%d,%d,%d]: GPU sum=%.6f (expected ~1.0)\n", 
                    b, h, q, sum_gpu);

@@ -119,11 +119,24 @@ module VX_afu_wrap import VX_gpu_pkg::*; #(
 	wire vx_busy;
 	wire vx_cache_drain;
 
-	wire                         dcr_wr_valid;
-	wire [VX_DCR_ADDR_WIDTH-1:0] dcr_wr_addr;
-	wire [VX_DCR_DATA_WIDTH-1:0] dcr_wr_data;
+		wire                         dcr_wr_valid;
+		wire [VX_DCR_ADDR_WIDTH-1:0] dcr_wr_addr;
+		wire [VX_DCR_DATA_WIDTH-1:0] dcr_wr_data;
 
-	state_e state;
+	`ifdef ENABLE_HW_DEBUG_MODULE
+		wire [31:0] hw_debug_select;
+		wire        hw_debug_clear;
+		wire        hw_debug_freeze;
+		wire [63:0] hw_debug_rdata;
+		wire [31:0] hw_debug_status;
+
+		wire                         hw_debug_pc_valid [HW_DEBUG_NUM_PC_SOURCES];
+		wire [HW_DEBUG_CORE_ID_WIDTH-1:0] hw_debug_pc_core_id [HW_DEBUG_NUM_PC_SOURCES];
+		wire [NW_WIDTH-1:0]          hw_debug_pc_wid [HW_DEBUG_NUM_PC_SOURCES];
+		wire [`XLEN-1:0]             hw_debug_pc [HW_DEBUG_NUM_PC_SOURCES];
+	`endif
+
+		state_e state;
 
 	wire ap_reset;
 	wire ap_start;
@@ -312,14 +325,22 @@ module VX_afu_wrap import VX_gpu_pkg::*; #(
 
 		.ap_ctrl_read   (ap_ctrl_read),
 
-	`ifdef SCOPE
-		.scope_bus_in   (scope_bus_out),
-		.scope_bus_out  (scope_bus_in),
-	`endif
+		`ifdef SCOPE
+			.scope_bus_in   (scope_bus_out),
+			.scope_bus_out  (scope_bus_in),
+		`endif
 
-		.dcr_wr_valid	(dcr_wr_valid),
-		.dcr_wr_addr	(dcr_wr_addr),
-		.dcr_wr_data	(dcr_wr_data)
+		`ifdef ENABLE_HW_DEBUG_MODULE
+			.hw_debug_select (hw_debug_select),
+			.hw_debug_clear  (hw_debug_clear),
+			.hw_debug_freeze (hw_debug_freeze),
+			.hw_debug_rdata  (hw_debug_rdata),
+			.hw_debug_status (hw_debug_status),
+		`endif
+
+			.dcr_wr_valid	(dcr_wr_valid),
+			.dcr_wr_addr	(dcr_wr_addr),
+			.dcr_wr_data	(dcr_wr_data)
 	);
 
 	wire [M_AXI_MEM_ADDR_WIDTH-1:0] m_axi_mem_awaddr_u [C_M_AXI_MEM_NUM_PORTS];
@@ -387,15 +408,98 @@ module VX_afu_wrap import VX_gpu_pkg::*; #(
 		.m_axi_rid    	(m_axi_mem_rid_a),
 		.m_axi_rresp	(m_axi_mem_rresp_a),
 
-		.dcr_wr_valid	(dcr_wr_valid),
-		.dcr_wr_addr	(dcr_wr_addr),
-		.dcr_wr_data	(dcr_wr_data),
+			.dcr_wr_valid	(dcr_wr_valid),
+			.dcr_wr_addr	(dcr_wr_addr),
+			.dcr_wr_data	(dcr_wr_data),
 
-		.busy			(vx_busy),
-		.cache_drain	(vx_cache_drain)
-	);
+		`ifdef ENABLE_HW_DEBUG_MODULE
+			.hw_debug_pc_valid   (hw_debug_pc_valid),
+			.hw_debug_pc_core_id (hw_debug_pc_core_id),
+			.hw_debug_pc_wid     (hw_debug_pc_wid),
+			.hw_debug_pc         (hw_debug_pc),
+		`endif
 
-    // SCOPE //////////////////////////////////////////////////////////////////////
+			.busy			(vx_busy),
+			.cache_drain	(vx_cache_drain)
+		);
+
+	`ifdef ENABLE_HW_DEBUG_MODULE
+		VX_hw_debug #(
+			.NUM_AXI_PORTS     (C_M_AXI_MEM_NUM_PORTS),
+			.AXI_ADDR_WIDTH    (C_M_AXI_MEM_ADDR_WIDTH),
+			.AXI_ID_WIDTH      (C_M_AXI_MEM_ID_WIDTH),
+			.PENDING_WR_SIZEW  (PENDING_WR_SIZEW)
+		) hw_debug (
+			.clk                (clk),
+			.reset              (reset || ap_reset),
+			.debug_select       (hw_debug_select),
+			.debug_clear        (hw_debug_clear),
+			.debug_freeze       (hw_debug_freeze),
+			.debug_rdata        (hw_debug_rdata),
+			.debug_status       (hw_debug_status),
+
+			.ap_reset           (ap_reset),
+			.ap_start           (ap_start),
+			.ap_done            (ap_done),
+			.ap_idle            (ap_idle),
+			.ap_ready           (ap_ready),
+			.ap_state           (state),
+			.ap_done_base       (ap_done_base),
+			.ap_done_wait_cache (ap_done_wait_cache),
+			.vx_busy            (vx_busy),
+			.vx_cache_drain     (vx_cache_drain),
+			.vx_pending_writes  (vx_pending_writes),
+
+			.hw_debug_pc_valid   (hw_debug_pc_valid),
+			.hw_debug_pc_core_id (hw_debug_pc_core_id),
+			.hw_debug_pc_wid     (hw_debug_pc_wid),
+			.hw_debug_pc         (hw_debug_pc),
+
+			.s_axi_ctrl_awvalid (s_axi_ctrl_awvalid),
+			.s_axi_ctrl_awready (s_axi_ctrl_awready),
+			.s_axi_ctrl_awaddr  (s_axi_ctrl_awaddr[7:0]),
+			.s_axi_ctrl_wvalid  (s_axi_ctrl_wvalid),
+			.s_axi_ctrl_wready  (s_axi_ctrl_wready),
+			.s_axi_ctrl_wdata   (s_axi_ctrl_wdata),
+			.s_axi_ctrl_wstrb   (s_axi_ctrl_wstrb),
+			.s_axi_ctrl_bvalid  (s_axi_ctrl_bvalid),
+			.s_axi_ctrl_bready  (s_axi_ctrl_bready),
+			.s_axi_ctrl_bresp   (s_axi_ctrl_bresp),
+			.s_axi_ctrl_arvalid (s_axi_ctrl_arvalid),
+			.s_axi_ctrl_arready (s_axi_ctrl_arready),
+			.s_axi_ctrl_araddr  (s_axi_ctrl_araddr[7:0]),
+			.s_axi_ctrl_rvalid  (s_axi_ctrl_rvalid),
+			.s_axi_ctrl_rready  (s_axi_ctrl_rready),
+			.s_axi_ctrl_rdata   (s_axi_ctrl_rdata),
+			.s_axi_ctrl_rresp   (s_axi_ctrl_rresp),
+
+			.m_axi_awvalid      (m_axi_mem_awvalid_a),
+			.m_axi_awready      (m_axi_mem_awready_a),
+			.m_axi_awaddr       (m_axi_mem_awaddr_a),
+			.m_axi_awid         (m_axi_mem_awid_a),
+			.m_axi_awlen        (m_axi_mem_awlen_a),
+			.m_axi_wvalid       (m_axi_mem_wvalid_a),
+			.m_axi_wready       (m_axi_mem_wready_a),
+			.m_axi_wlast        (m_axi_mem_wlast_a),
+			.m_axi_bvalid       (m_axi_mem_bvalid_a),
+			.m_axi_bready       (m_axi_mem_bready_a),
+			.m_axi_bid          (m_axi_mem_bid_a),
+			.m_axi_bresp        (m_axi_mem_bresp_a),
+			.m_axi_arvalid      (m_axi_mem_arvalid_a),
+			.m_axi_arready      (m_axi_mem_arready_a),
+			.m_axi_araddr       (m_axi_mem_araddr_a),
+			.m_axi_arid         (m_axi_mem_arid_a),
+			.m_axi_arlen        (m_axi_mem_arlen_a),
+			.m_axi_rvalid       (m_axi_mem_rvalid_a),
+			.m_axi_rready       (m_axi_mem_rready_a),
+			.m_axi_rlast        (m_axi_mem_rlast_a),
+			.m_axi_rid          (m_axi_mem_rid_a),
+			.m_axi_rresp        (m_axi_mem_rresp_a),
+			.m_axi_wr_req_fire  (m_axi_wr_req_fire)
+		);
+	`endif
+
+	    // SCOPE //////////////////////////////////////////////////////////////////////
 
 `ifdef SCOPE
 `ifdef DBG_SCOPE_AFU

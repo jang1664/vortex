@@ -1,0 +1,23 @@
+task: dma-local-lane-port
+status: completed
+created: "2026-06-09 11:42"
+updated: "2026-06-09 11:53"
+goal: "Port only the wide DMA-to-local-memory lane expansion from vortex_naive into this branch."
+scope:
+  - "Add VX_mem_bus_split for wide-to-per-lane memory bus scatter/gather."
+  - "Expand VX_dma_node local-memory side from one LSU_WORD_SIZE lane to NUM_LSU_LANES lanes."
+  - "Expand VX_mem_unit DMA-local arbitration from lane 0 only to all LMEM lanes."
+  - "Update VX_core wiring for dma_local_data_if arrays."
+constraints:
+  - "Do not port vortex_naive GEMM data path through VX_mem_unit."
+  - "Do not change current TMEM/AXI GEMM node structure."
+  - "Keep legacy wrapper compatibility where possible."
+log:
+  - time: "2026-06-09 11:42"
+    note: "Started selective port after comparing vortex_naive DMA and mem_unit paths."
+  - time: "2026-06-09 11:53"
+    note: "Implemented wide DMA LMEM path through VX_mem_bus_split and per-lane VX_mem_unit arbitration."
+  - time: "2026-06-09 11:53"
+    note: "Verified full core path with ci/run_black.sh xrt-vcs-sim --app vecadd --args \"-n 16\" from build; test passed."
+pitfalls:
+  - "hw/unittest/dma_node now compiles under Verilator after compatibility fixes, but its smoke simulation still times out waiting for a DMA job entry to clear. The full xrt-vcs-sim vecadd blackbox passed, so this is tracked as a dedicated unittest follow-up rather than a core integration blocker."

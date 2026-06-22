@@ -88,13 +88,18 @@ module VX_fpu_fpnew
 
     wire fpu_ready_in, fpu_valid_in;
     wire fpu_ready_out, fpu_valid_out;
+    wire exp_ready_in, exp_ready_out, exp_valid_out;
 
     reg [TAG_WIDTH-1:0] fpu_tag_in, fpu_tag_out;
 
     logic [2:0][NUM_LANES-1:0][`XLEN-1:0] fpu_operands;
 
     wire [NUM_LANES-1:0][`XLEN-1:0] fpu_result;
+    wire [NUM_LANES-1:0][`XLEN-1:0] exp_result;
     fpnew_pkg::status_t fpu_status;
+    wire exp_has_fflags;
+    wire [`FP_FLAGS_BITS-1:0] exp_fflags;
+    wire [TAG_WIDTH-1:0] exp_tag_out;
 
     fpnew_pkg::operation_e fpu_op;
     reg [INST_FRM_BITS-1:0] fpu_rnd;
@@ -162,7 +167,8 @@ module VX_fpu_fpnew
         endcase
     end
 
-    `UNUSED_VAR (mask_in)
+    wire is_exp_op = (op_type == INST_FPU_EXP);
+
     for (genvar i = 0; i < NUM_LANES; ++i) begin : g_fpnew_coreses
         wire [(TAG_WIDTH+1)-1:0] fpu_tag;
         wire fpu_valid_out_uq;
@@ -210,9 +216,78 @@ module VX_fpu_fpnew
         end
     end
 
-    assign fpu_valid_in = valid_in;
-    assign ready_in = fpu_ready_in;
+    assign fpu_valid_in = valid_in && ~is_exp_op;
+    assign ready_in = is_exp_op ? exp_ready_in : fpu_ready_in;
     assign fpu_tag_in = tag_in;
+
+`ifdef VX_ENABLE_HW_EXPF
+    VX_fpu_exp_fpnew #(
+        .NUM_LANES (NUM_LANES),
+        .TAG_WIDTH (TAG_WIDTH)
+    ) fpu_exp (
+        .clk        (clk),
+        .reset      (reset),
+        .valid_in   (valid_in && is_exp_op),
+        .ready_in   (exp_ready_in),
+        .mask_in    (mask_in),
+        .tag_in     (tag_in),
+        .dataa      (dataa),
+        .result     (exp_result),
+        .has_fflags (exp_has_fflags),
+        .fflags     (exp_fflags),
+        .tag_out    (exp_tag_out),
+        .ready_out  (exp_ready_out),
+        .valid_out  (exp_valid_out)
+    );
+`else
+    VX_elastic_buffer #(
+        .DATAW (RSP_DATAW),
+        .SIZE  (1)
+    ) fpu_exp_disabled (
+        .clk       (clk),
+        .reset     (reset),
+        .valid_in  (valid_in && is_exp_op),
+        .ready_in  (exp_ready_in),
+        .data_in   ({ {NUM_LANES{`XLEN'(0)}}, 1'b1, `FP_FLAGS_BITS'(0), tag_in }),
+        .data_out  ({ exp_result, exp_has_fflags, exp_fflags, exp_tag_out }),
+        .valid_out (exp_valid_out),
+        .ready_out (exp_ready_out)
+    );
+
+    `UNUSED_VAR (mask_in)
+    `UNUSED_VAR (dataa)
+`endif
+
+    localparam RSP_ARB_DATAW = RSP_DATAW;
+    wire [1:0] rsp_valid_in;
+    wire [1:0] rsp_ready_in;
+    wire [1:0][RSP_ARB_DATAW-1:0] rsp_data_in;
+    wire rsp_valid_out;
+    wire rsp_ready_out;
+    wire [RSP_ARB_DATAW-1:0] rsp_data_out;
+
+    assign rsp_valid_in = {exp_valid_out, fpu_valid_out};
+    assign fpu_ready_out = rsp_ready_in[0];
+    assign exp_ready_out = rsp_ready_in[1];
+    assign rsp_data_in[0] = {fpu_result, fpu_has_fflags_out, fpu_status, fpu_tag_out};
+    assign rsp_data_in[1] = {exp_result, exp_has_fflags, exp_fflags, exp_tag_out};
+
+    VX_stream_arb #(
+        .NUM_INPUTS (2),
+        .DATAW      (RSP_ARB_DATAW),
+        .ARBITER    ("R"),
+        .OUT_BUF    (0)
+    ) rsp_arb (
+        .clk       (clk),
+        .reset     (reset),
+        .valid_in  (rsp_valid_in),
+        .ready_in  (rsp_ready_in),
+        .data_in   (rsp_data_in),
+        .data_out  (rsp_data_out),
+        .valid_out (rsp_valid_out),
+        .ready_out (rsp_ready_out),
+        `UNUSED_PIN (sel_out)
+    );
 
     VX_elastic_buffer #(
         .DATAW   (RSP_DATAW),
@@ -221,9 +296,9 @@ module VX_fpu_fpnew
     ) rsp_buf (
         .clk       (clk),
         .reset     (reset),
-        .valid_in  (fpu_valid_out),
-        .ready_in  (fpu_ready_out),
-        .data_in   ({fpu_result, fpu_has_fflags_out, fpu_status, fpu_tag_out}),
+        .valid_in  (rsp_valid_out),
+        .ready_in  (rsp_ready_out),
+        .data_in   (rsp_data_out),
         .data_out  ({result, has_fflags, fflags, tag_out}),
         .valid_out (valid_out),
         .ready_out (ready_out)

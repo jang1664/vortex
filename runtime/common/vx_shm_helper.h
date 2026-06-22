@@ -51,13 +51,22 @@ public:
     path_ = path.empty() ? VX_SHM_PATH : path;
     unlink_on_close_ = unlink_on_close;
 
-    // Suppress umask so the file is actually created with 0666 permissions,
-    // allowing any user to read/write (nvidia-smi style shared status).
-    mode_t old_umask = ::umask(0);
-    fd_ = ::open(path_.c_str(), O_CREAT | O_RDWR, 0666);
-    ::umask(old_umask);
+    // In sticky directories such as /dev/shm, Linux fs.protected_regular can
+    // reject O_CREAT on an existing file owned by another user even when the
+    // file mode is 0666/0777. Open existing status files without O_CREAT and
+    // only create the file when it is genuinely missing.
+    fd_ = ::open(path_.c_str(), O_RDWR);
+    if (fd_ < 0 && errno == ENOENT) {
+      mode_t old_umask = ::umask(0);
+      fd_ = ::open(path_.c_str(), O_CREAT | O_EXCL | O_RDWR, 0666);
+      int create_errno = errno;
+      ::umask(old_umask);
+      if (fd_ < 0 && create_errno == EEXIST) {
+        fd_ = ::open(path_.c_str(), O_RDWR);
+      }
+    }
     if (fd_ < 0) {
-      fprintf(stderr, "[VXDRV] Warning: cannot create shm %s: %s\n",
+      fprintf(stderr, "[VXDRV] Warning: cannot open shm %s: %s\n",
               path_.c_str(), strerror(errno));
       return false;
     }

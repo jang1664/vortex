@@ -38,6 +38,20 @@ static void cleanup() {
 
 static void show_usage() { printf("Usage: ./detile_output [-m M] [-n N]\n"); }
 
+static bool is_pow2(uint32_t v) {
+  return v && ((v & (v - 1)) == 0);
+}
+
+static uint32_t log2_u32(uint32_t v) {
+  uint32_t r = 0;
+  while ((1u << r) < v) ++r;
+  return r;
+}
+
+static uint32_t align_up(uint32_t a, uint32_t b) {
+  return ((a + b - 1) / b) * b;
+}
+
 static void parse_args(int argc, char** argv) {
   int c;
   while ((c = getopt(argc, argv, "m:n:h")) != -1) {
@@ -50,20 +64,27 @@ static void parse_args(int argc, char** argv) {
   }
 }
 
-// CPU reference: given nt-major src [M_pad, N], produce row-major dst [M, N].
+// CPU reference: given tiled src [M_pad, N], produce row-major dst [M, N].
 static void cpu_detile_output(const std::vector<uint16_t>& h_src,
                               std::vector<uint8_t>& h_dst,
-                              uint32_t M, uint32_t M_pad, uint32_t N) {
-  size_t out_bytes = size_t(M) * N * TILE_ELEM_BYTES;
+                              uint32_t M, uint32_t M_pad,
+                              uint32_t N_real, uint32_t N_pad) {
+  size_t out_bytes = size_t(M) * N_real * TILE_ELEM_BYTES;
   h_dst.assign(out_bytes, 0);
-  const uint32_t MXU_NT = TILE_DMA_MXU_NT;
   for (uint32_t m = 0; m < M; m++) {
-    for (uint32_t n = 0; n < N; n++) {
-      uint32_t nt = n / MXU_NT;
-      uint32_t n_in_sub = n - nt * MXU_NT;
-      uint32_t src_elem = nt * (M_pad * MXU_NT) + m * MXU_NT + n_in_sub;
+    uint32_t mt = m / TILE_DMA_MT;
+    uint32_t m0 = m % TILE_DMA_MT;
+    uint32_t cm = ((M_pad - mt * TILE_DMA_MT) < TILE_DMA_MT)
+                    ? (M_pad - mt * TILE_DMA_MT) : TILE_DMA_MT;
+    for (uint32_t n = 0; n < N_real; n++) {
+      uint32_t nt32 = n / TILE_DMA_MXU_NT;
+      uint32_t n_in_sub = n % TILE_DMA_MXU_NT;
+      uint64_t src_elem = uint64_t(mt) * TILE_DMA_MT * N_pad
+                        + uint64_t(nt32) * cm * TILE_DMA_MXU_NT
+                        + uint64_t(m0) * TILE_DMA_MXU_NT
+                        + n_in_sub;
       uint16_t v = h_src[src_elem];
-      uint32_t off = (m * N + n) * 2;
+      uint32_t off = (m * N_real + n) * 2;
       h_dst[off + 0] = uint8_t(v & 0xFF);
       h_dst[off + 1] = uint8_t((v >> 8) & 0xFF);
     }
@@ -73,20 +94,21 @@ static void cpu_detile_output(const std::vector<uint16_t>& h_src,
 int main(int argc, char** argv) {
   parse_args(argc, argv);
   uint32_t M_pad = (M + 7u) & ~7u;
-  printf("detile_output  M=%u (pad=%u) N=%u\n", M, M_pad, N);
+  uint32_t N_pad = align_up(N, TILE_DMA_MXU_NT);
+  printf("detile_output  M=%u (pad=%u) N=%u (pad=%u)\n", M, M_pad, N, N_pad);
 
-  if (N % TILE_DMA_MXU_NT != 0) {
-    printf("ERROR: N must be multiple of %u\n", TILE_DMA_MXU_NT);
+  if (!is_pow2(TILE_DMA_MT) || !is_pow2(TILE_DMA_MXU_NT)) {
+    printf("ERROR: tile constants must be powers of two\n");
     return 1;
   }
 
   // Synthetic nt-major source: fill with deterministic uint16.
-  size_t src_elems = size_t(M_pad) * N;
+  size_t src_elems = size_t(M_pad) * N_pad;
   std::vector<uint16_t> h_src(src_elems);
   for (size_t i = 0; i < src_elems; i++) h_src[i] = uint16_t((i + 1) & 0xFFFF);
 
   std::vector<uint8_t> h_ref;
-  cpu_detile_output(h_src, h_ref, M, M_pad, N);
+  cpu_detile_output(h_src, h_ref, M, M_pad, N, N_pad);
 
   RT_CHECK(vx_dev_open(&device));
   RT_CHECK(vx_upload_kernel_file(device, kernel_file, &kernel_bin));
@@ -100,7 +122,7 @@ int main(int argc, char** argv) {
   vx_dev_caps(device, VX_CAPS_NUM_THREADS, &num_threads);
   uint32_t tpb = uint32_t(num_threads);
 
-  uint32_t n_tiles = N / TILE_DMA_MXU_NT;
+  uint32_t n_tiles = N_pad / TILE_DMA_MXU_NT;
   uint32_t blocks_x = (TILE_DMA_MXU_NT + tpb - 1) / tpb;
 
   kernel_arg_t karg = {};
@@ -114,7 +136,10 @@ int main(int argc, char** argv) {
   RT_CHECK(vx_mem_address(dst_buf, &karg.dst_addr));
   karg.M     = M;
   karg.M_pad = M_pad;
-  karg.N     = N;
+  karg.N_real = N;
+  karg.N_pad  = N_pad;
+  karg.log2_mt     = log2_u32(TILE_DMA_MT);
+  karg.log2_mxu_nt = log2_u32(TILE_DMA_MXU_NT);
 
   RT_CHECK(vx_upload_bytes(device, &karg, sizeof(karg), &args_buf));
   RT_CHECK(vx_start(device, kernel_bin, args_buf));

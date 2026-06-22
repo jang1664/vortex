@@ -1,0 +1,13 @@
+task: sgemm-tcu-fp16-output
+status: completed
+created_at: "2026-06-02 12:58"
+updated_at: "2026-06-02 13:05"
+summary: "Change sgemm_tcu to expose fp16 DRAM output while preserving fp32 accumulation."
+log:
+  - time: "2026-06-02 12:58"
+    entry: "Started implementation. Existing investigation shows sgemm_tcu host buffers are OTYPE-sized, but vx_tensor store path needs numeric fp32-to-fp16 conversion rather than raw reinterpretation."
+  - time: "2026-06-02 13:05"
+    entry: "Implemented fp32 accumulator and fp16 memory output split for sgemm_tcu, updated workload layout output to row_major_fp16, and verified with unit tests plus xrt-vcs-sim on two small padded shapes."
+pitfalls:
+  - "Do not change unrelated dirty files in the current worktree."
+  - "xrt-vcs-sim can reuse a stale simv built with a different config; clean build/sim/xrtsim_vcs when CONFIGS changes."

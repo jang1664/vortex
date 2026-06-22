@@ -1,0 +1,96 @@
+name: llama2_7b_layout_fused_seq_sweep
+defaults:
+  target: hw
+  platform: xilinx_u55c_gen3x16_xdma_3_202210_1
+  warmup: 1
+  iterations: 3
+  xrt_device_index: 0
+  blackbox_timeout: 30m
+  blackbox_args:
+    - --cores=1
+    - --threads=8
+
+# Sequence-length sweep for layout-fused vector kernels used around Llama2-7B
+# projection inputs, plus plain baseline kernels for comparison.
+#   rmsnorm:               batch, seq, hidden_size=4096 row-major baseline
+#   rms_norm_layout_fused: M=batch*seq, K=hidden_size=4096 tiled-output fused
+#   silu:                  n=batch*seq*intermediate_size row-major baseline
+#   silu_layout_fused:     M=batch*seq, K=intermediate_size=11008 tiled-output fused
+case_matrices:
+  # - id: rmsnorm_baseline
+  #   app: rmsnorm
+  #   kind: rmsnorm
+  #   stage: seq_sweep
+  #   name: rmsnorm_b{batch}_s{seq}
+  #   args: "-batch {batch} -seq {seq} -hidden 4096"
+  #   matrix:
+  #     batch: {values: [1]}
+  #     seq: {values: [512, 8192, 16384]}
+  #   derived:
+  #     m: "batch * seq"
+  #   shape:
+  #     variant: baseline
+  #     batch: "{batch}"
+  #     seq: "{seq}"
+  #     M: "{m}"
+  #     K: 4096
+
+  # - id: rms_norm_layout_fused
+  #   app: rms_norm_layout_fused
+  #   kind: rms_norm_layout_fused
+  #   stage: seq_sweep
+  #   name: rms_norm_layout_fused_b{batch}_s{seq}
+  #   args: "-m {m} -k 4096"
+  #   matrix:
+  #     batch: {values: [1]}
+  #     seq: {values: [512, 8192, 16384]}
+  #   derived:
+  #     m: "batch * seq"
+  #   shape:
+  #     batch: "{batch}"
+  #     seq: "{seq}"
+  #     M: "{m}"
+  #     K: 4096
+
+  - id: silu_baseline
+    app: silu
+    kind: silu
+    stage: seq_sweep
+    name: silu_b{batch}_s{seq}
+    args: "-n {n}"
+    matrix:
+      batch: {values: [1]}
+      # seq: {values: [512, 8192, 16384]}
+      seq: {values: [512]}
+      # batch: {values: [1]}
+      # seq: {values: [1]}
+    derived:
+      m: "batch * seq"
+      n: "batch * seq * 11008"
+    shape:
+      variant: baseline
+      batch: "{batch}"
+      seq: "{seq}"
+      M: "{m}"
+      K: 11008
+      size: "{n}"
+
+  - id: silu_layout_fused
+    app: silu_layout_fused
+    kind: silu_layout_fused
+    stage: seq_sweep
+    name: silu_layout_fused_b{batch}_s{seq}
+    args: "-m {m} -k 11008"
+    matrix:
+      batch: {values: [1]}
+      # seq: {values: [512, 8192, 16384]}
+      seq: {values: [512]}
+      # batch: {values: [1]}
+      # seq: {values: [1]}
+    derived:
+      m: "batch * seq"
+    shape:
+      batch: "{batch}"
+      seq: "{seq}"
+      M: "{m}"
+      K: 11008

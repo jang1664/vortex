@@ -1,0 +1,26 @@
+name: llama2_7b_elscalar_sweep
+defaults:
+  app: elscalar
+  target: hw
+  platform: xilinx_u55c_gen3x16_xdma_3_202210_1
+  warmup: 1
+  iterations: 3
+  xrt_device_index: 0
+  blackbox_timeout: 30m
+  blackbox_args:
+    - --cores=1
+    - --threads=8
+
+case_matrices:
+  - id: elscalar
+    kind: elscalar
+    stage: elementwise
+    name: elscalar_{op}_n{n}
+    args: "-n {n} -op {op}"
+    matrix:
+      op: {values: [pow, mul, add]}
+      n: {values: [4096, 32768, 524288, 2097152, 4194304, 16777216, 33554432]}
+    shape:
+      op: "{op}"
+      size: "{n}"
+      source_tensor: batch_seq_hidden

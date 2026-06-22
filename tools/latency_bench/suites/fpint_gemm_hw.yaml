@@ -1,0 +1,32 @@
+name: fpint_gemm_hw
+defaults:
+  warmup: 1
+  iterations: 3
+  app: fpint_gemm_ffn_hw
+  target: hw
+  platform: xilinx_u55c_gen3x16_xdma_3_202210_1
+  blackbox_args:
+    - --cores=1
+    - --threads=8
+case_matrices:
+  - id: fpint_gemm
+    kind: gemm
+    backend: fpint_gemm_improve
+    stage: sweep
+    name: fpint_gemm_m{m}_n{n}_k{k}
+    args: "-m {m} -n {n} -k {k} -q {qblk} -t {wtrans} -d {qdir}"
+    calls_per_forward: 1
+    matrix:
+      m: {pow2: [1024, 8192]}
+      n: {pow2: [1024, 1024]}
+      k: {pow2: [1024, 1024]}
+      qblk: 32
+      wtrans: 0
+      qdir: 0
+    shape:
+      M: "{m}"
+      N: "{n}"
+      K: "{k}"
+      QBLK: "{qblk}"
+      WTRANS: "{wtrans}"
+      QDIR: "{qdir}"

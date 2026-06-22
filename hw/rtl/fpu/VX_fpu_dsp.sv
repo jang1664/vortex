@@ -51,7 +51,8 @@ module VX_fpu_dsp import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
     localparam FPU_DIVSQRT = 1;
     localparam FPU_CVT     = 2;
     localparam FPU_NCP     = 3;
-    localparam NUM_FPCORES = 4;
+    localparam FPU_EXP     = 4;
+    localparam NUM_FPCORES = 5;
     localparam FPCORES_BITS = `LOG2UP(NUM_FPCORES);
 
     localparam REQ_DATAW = NUM_LANES + TAG_WIDTH + INST_FPU_BITS + INST_FMT_BITS + INST_FRM_BITS + 3 * (NUM_LANES * 32);
@@ -94,7 +95,8 @@ module VX_fpu_dsp import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
     `UNUSED_VAR (datac)
 
     // Decode fpu core type
-    wire [FPCORES_BITS-1:0] core_select = op_type[3:2];
+    wire is_exp_op = (op_type == INST_FPU_EXP);
+    wire [FPCORES_BITS-1:0] core_select = is_exp_op ? FPCORES_BITS'(FPU_EXP) : FPCORES_BITS'(op_type[3:2]);
 
     VX_stream_switch #(
         .DATAW       (REQ_DATAW),
@@ -271,6 +273,57 @@ module VX_fpu_dsp import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
         .valid_out  (div_sqrt_valid_out[1]),
         .ready_out  (div_sqrt_ready_out[1])
     );
+
+    // EXP core ///////////////////////////////////////////////////////////////
+
+    `UNUSED_VAR (per_core_datab[FPU_EXP])
+    `UNUSED_VAR (per_core_datac[FPU_EXP])
+    `UNUSED_VAR (per_core_fmt[FPU_EXP])
+    `UNUSED_VAR (per_core_frm[FPU_EXP])
+    `UNUSED_VAR (per_core_op_type[FPU_EXP])
+
+`ifdef VX_ENABLE_HW_EXPF
+    VX_fpu_exp #(
+        .NUM_LANES (NUM_LANES),
+        .TAG_WIDTH (TAG_WIDTH)
+    ) fpu_exp (
+        .clk        (clk),
+        .reset      (reset),
+        .valid_in   (per_core_valid_in[FPU_EXP]),
+        .ready_in   (per_core_ready_in[FPU_EXP]),
+        .mask_in    (per_core_mask_in[FPU_EXP]),
+        .tag_in     (per_core_tag_in[FPU_EXP]),
+        .dataa      (per_core_dataa[FPU_EXP]),
+        .has_fflags (per_core_has_fflags[FPU_EXP]),
+        .fflags     (per_core_fflags[FPU_EXP]),
+        .result     (per_core_result[FPU_EXP]),
+        .tag_out    (per_core_tag_out[FPU_EXP]),
+        .valid_out  (per_core_valid_out[FPU_EXP]),
+        .ready_out  (per_core_ready_out[FPU_EXP])
+    );
+`else
+    VX_elastic_buffer #(
+        .DATAW (RSP_DATAW),
+        .SIZE  (1)
+    ) fpu_exp_disabled (
+        .clk       (clk),
+        .reset     (reset),
+        .valid_in  (per_core_valid_in[FPU_EXP]),
+        .ready_in  (per_core_ready_in[FPU_EXP]),
+        .data_in   ({ {NUM_LANES{32'(0)}}, 1'b1, fflags_t'(0), per_core_tag_in[FPU_EXP] }),
+        .data_out  ({
+            per_core_result[FPU_EXP],
+            per_core_has_fflags[FPU_EXP],
+            per_core_fflags[FPU_EXP],
+            per_core_tag_out[FPU_EXP]
+        }),
+        .valid_out (per_core_valid_out[FPU_EXP]),
+        .ready_out (per_core_ready_out[FPU_EXP])
+    );
+
+    `UNUSED_VAR (per_core_mask_in[FPU_EXP])
+    `UNUSED_VAR (per_core_dataa[FPU_EXP])
+`endif
 
     wire [1:0][RSP_DATAW-1:0] div_sqrt_arb_data_in;
     for (genvar i = 0; i < 2; ++i) begin : g_div_sqrt_arb_data_in

@@ -95,7 +95,6 @@ static tb_partition_t compute_partition(uint32_t core_id, uint32_t num_tbs, uint
   return part;
 }
 
-static constexpr uint32_t kMaxPollIters = 2000000u;
 static constexpr uint32_t kPoisonWord = 0xBAADF00Du;
 
 static inline void split_u64(uint64_t value, uint32_t& lo, uint32_t& hi) {
@@ -224,17 +223,16 @@ static void program_job_regs(uint32_t eid, const kernel_arg_t* arg, const tb_par
   job_write_reg32(eid, REG_CONTROL, 1u);
 }
 
-static bool wait_job_done(uint32_t eid, uint32_t generation, uint32_t& last_ctrl) {
-  for (uint32_t iter = 0; iter < kMaxPollIters; ++iter) {
+static void wait_job_done(uint32_t eid, uint32_t generation, uint32_t& last_ctrl) {
+  for (;;) {
     uint32_t ctrl = job_read_reg32(eid, REG_CONTROL);
     uint32_t curr_gen = (ctrl >> JOB_MMIO_CTRL_GEN_LSB) & bitfield_mask(JOB_MMIO_GEN_W);
     uint32_t valid = (ctrl >> JOB_MMIO_CTRL_VALID_BIT) & 1u;
     last_ctrl = ctrl;
 
     if ((generation < curr_gen) || (valid == 0u))
-      return true;
+      return;
   }
-  return false;
 }
 
 void kernel_mmio_driver(kernel_arg_t *__UNIFORM__ arg) {
@@ -313,12 +311,7 @@ void kernel_mmio_driver(kernel_arg_t *__UNIFORM__ arg) {
   program_job_regs(eid, arg, part);
 
   uint32_t last_ctrl = 0;
-  if (!wait_job_done(eid, generation, last_ctrl)) {
-    if (reporter) {
-      arg->status = STATUS_WAIT_STUCK;
-    }
-    return;
-  }
+  wait_job_done(eid, generation, last_ctrl);
 
   if (reporter) {
     arg->status = STATUS_OK;

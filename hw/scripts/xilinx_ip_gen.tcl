@@ -28,6 +28,9 @@ if { $::argc == 2 } {
     create_project -in_memory
 }
 
+set_property target_language Verilog [current_project]
+set_property simulator_language Mixed [current_project]
+
 # IP folder does not exist. Create IP folder
 file mkdir ${ip_dir}
 

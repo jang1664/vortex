@@ -534,6 +534,21 @@ module VX_decode import VX_gpu_pkg::*; #(
                         endcase
                     end
                 `endif
+                `ifdef EXT_F_ENABLE
+                    7'h03: begin
+                        case (funct3)
+                            3'h0: begin // VX_EXPF
+                                ex_type = EX_FPU;
+                                op_type = INST_OP_BITS'(INST_FPU_EXP);
+                                op_args.fpu.frm = INST_FRM_RNE;
+                                op_args.fpu.fmt = '0;
+                                `USED_FREG (rd);
+                                `USED_FREG (rs1);
+                            end
+                            default:;
+                        endcase
+                    end
+                `endif
                     default:;
                 endcase
             end

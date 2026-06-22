@@ -26,6 +26,102 @@ enum mem_layout {
 
 namespace detail {
 
+  static inline uint32_t fp32_bits(float value) {
+    union {
+      float f;
+      uint32_t u;
+    } bits;
+    bits.f = value;
+    return bits.u;
+  }
+
+  static inline float fp32_from_bits(uint32_t value) {
+    union {
+      uint32_t u;
+      float f;
+    } bits;
+    bits.u = value;
+    return bits.f;
+  }
+
+  static inline uint16_t fp32_to_fp16_bits(float value) {
+    const uint32_t bits = fp32_bits(value);
+    const uint32_t sign = (bits >> 16) & 0x8000u;
+    const uint32_t exp = (bits >> 23) & 0xffu;
+    uint32_t mant = bits & 0x007fffffu;
+
+    if (exp == 0xffu) {
+      if (mant == 0) {
+        return static_cast<uint16_t>(sign | 0x7c00u);
+      }
+      mant >>= 13;
+      return static_cast<uint16_t>(sign | 0x7c00u | mant | (mant == 0));
+    }
+
+    int32_t exp16 = static_cast<int32_t>(exp) - 127 + 15;
+    if (exp16 >= 31) {
+      return static_cast<uint16_t>(sign | 0x7c00u);
+    }
+
+    if (exp16 <= 0) {
+      if (exp16 < -10) {
+        return static_cast<uint16_t>(sign);
+      }
+
+      mant |= 0x00800000u;
+      const uint32_t shift = static_cast<uint32_t>(14 - exp16);
+      uint32_t mant16 = mant >> shift;
+      const uint32_t round_bits = mant & ((1u << shift) - 1u);
+      const uint32_t half = 1u << (shift - 1u);
+      if (round_bits > half || (round_bits == half && (mant16 & 1u))) {
+        ++mant16;
+      }
+      return static_cast<uint16_t>(sign | mant16);
+    }
+
+    uint32_t mant16 = mant >> 13;
+    const uint32_t round_bits = mant & 0x1fffu;
+    if (round_bits > 0x1000u || (round_bits == 0x1000u && (mant16 & 1u))) {
+      ++mant16;
+      if (mant16 == 0x0400u) {
+        mant16 = 0;
+        ++exp16;
+        if (exp16 >= 31) {
+          return static_cast<uint16_t>(sign | 0x7c00u);
+        }
+      }
+    }
+
+    return static_cast<uint16_t>(sign | (static_cast<uint32_t>(exp16) << 10) | mant16);
+  }
+
+  static inline float fp16_bits_to_fp32(uint16_t value) {
+    const uint32_t sign = (static_cast<uint32_t>(value) & 0x8000u) << 16;
+    uint32_t exp = (static_cast<uint32_t>(value) >> 10) & 0x1fu;
+    uint32_t mant = static_cast<uint32_t>(value) & 0x03ffu;
+
+    if (exp == 0) {
+      if (mant == 0) {
+        return fp32_from_bits(sign);
+      }
+
+      int32_t e = -14;
+      while ((mant & 0x0400u) == 0) {
+        mant <<= 1;
+        --e;
+      }
+      mant &= 0x03ffu;
+      return fp32_from_bits(sign | (static_cast<uint32_t>(e + 127) << 23) | (mant << 13));
+    }
+
+    if (exp == 0x1fu) {
+      return fp32_from_bits(sign | 0x7f800000u | (mant << 13));
+    }
+
+    exp = exp + (127u - 15u);
+    return fp32_from_bits(sign | (exp << 23) | (mant << 13));
+  }
+
   template <typename F, std::size_t... Is>
   __attribute__((always_inline))
   constexpr void unroll_for_impl(std::index_sequence<Is...>, F&& f) {
@@ -125,7 +221,8 @@ namespace detail {
 
 template <uint32_t NT, // number of threads per warp
           typename It, // input type (A,B)
-          typename Ot> // output type (C,D)
+          typename Ot, // memory output type (D)
+          typename At = Ot> // accumulator type (C)
 struct wmma_context {
 private:
   using cfg = wmma_config_t<NT>;
@@ -146,9 +243,11 @@ public:
 
   using input_t  = typename It::dtype;
   using output_t = typename Ot::dtype;
+  using accumulator_t = typename At::dtype;
 
   using input_acessor_t = detail::data_accessor_t<It, vreg_t>;
   using output_acessor_t = detail::data_accessor_t<Ot, vreg_t>;
+  using accumulator_acessor_t = detail::data_accessor_t<At, vreg_t>;
 
   static constexpr uint32_t input_is_subbyte = (It::bits < 8);
 
@@ -159,13 +258,13 @@ public:
 
   using fragment_a   = fragment_t<matrix_a, input_t, cfg::NRA>;
   using fragment_b   = fragment_t<matrix_b, input_t, cfg::NRB>;
-  using fragment_acc = fragment_t<accumulator, output_t, cfg::NRC>;
+  using fragment_acc = fragment_t<accumulator, accumulator_t, cfg::NRC>;
 
   template <typename Frag, typename T>
   static __attribute__((always_inline)) void fill_fragment(Frag &dst, T value) {
     vreg_t fill_data;
     if constexpr (Frag::Use == accumulator) {
-      fill_data = output_acessor_t::bit_fill(value);
+      fill_data = accumulator_acessor_t::bit_fill(value);
     } else {
       fill_data = input_acessor_t::bit_fill(value);
     }
@@ -264,8 +363,10 @@ public:
           std::swap(elem_row, elem_col);
         }
         auto ptr = base + elem_row * ldm + elem_col;
-        if constexpr (sizeof(vreg_t) == sizeof(output_t)) {
+        if constexpr (std::is_same_v<At, Ot> && sizeof(vreg_t) == sizeof(output_t)) {
           dst.data[r] = *reinterpret_cast<const vreg_t *>(ptr);
+        } else if constexpr (std::is_same_v<At, fp32> && std::is_same_v<Ot, fp16>) {
+          dst.data[r] = detail::fp16_bits_to_fp32(*ptr);
         } else {
           vreg_t tmp(0);
           *reinterpret_cast<output_t*>(&tmp) = *ptr;
@@ -296,8 +397,10 @@ public:
         std::swap(elem_row, elem_col);
       }
       auto ptr = base + elem_row * ldm + elem_col;
-      if constexpr (sizeof(vreg_t) == sizeof(output_t)) {
+      if constexpr (std::is_same_v<At, Ot> && sizeof(vreg_t) == sizeof(output_t)) {
         *reinterpret_cast<vreg_t*>(ptr) = src.data[r];
+      } else if constexpr (std::is_same_v<At, fp32> && std::is_same_v<Ot, fp16>) {
+        *ptr = detail::fp32_to_fp16_bits(src.data[r]);
       } else {
         vreg_t tmp(src.data[r]);
         *ptr = *reinterpret_cast<const output_t*>(&tmp);
@@ -355,7 +458,7 @@ public:
 
       __asm__ volatile (".insn r %[insn], 0, 2, x%[fmd], x%[fms], x0"
         : "=f"(fd0), "=f"(fd1), "=f"(fd2), "=f"(fd3), "=f"(fd4), "=f"(fd5), "=f"(fd6), "=f"(fd7)
-        : [insn]"i"(RISCV_CUSTOM0), [fmd]"i"(Ot::id), [fms]"i"(It::id),
+        : [insn]"i"(RISCV_CUSTOM0), [fmd]"i"(At::id), [fms]"i"(It::id),
           "f"(fa0), "f"(fa1), "f"(fa2), "f"(fa3), "f"(fa4), "f"(fa5), "f"(fa6), "f"(fa7),
           "f"(fb0), "f"(fb1), "f"(fb2), "f"(fb3), "f"(fb4), "f"(fb5), "f"(fb6), "f"(fb7),
           "f"(fc0), "f"(fc1), "f"(fc2), "f"(fc3), "f"(fc4), "f"(fc5), "f"(fc6), "f"(fc7)
@@ -393,7 +496,7 @@ public:
 
       __asm__ volatile (".insn r %[insn], 0, 2, x%[fmd], x%[fms], x0"
         : "=f"(fd0), "=f"(fd1), "=f"(fd2), "=f"(fd3), "=f"(fd4), "=f"(fd5), "=f"(fd6), "=f"(fd7)
-        : [insn]"i"(RISCV_CUSTOM0), [fmd]"i"(Ot::id), [fms]"i"(It::id),
+        : [insn]"i"(RISCV_CUSTOM0), [fmd]"i"(At::id), [fms]"i"(It::id),
           "f"(fa0), "f"(fa1), "f"(fa2), "f"(fa3), "f"(fa4), "f"(fa5), "f"(fa6), "f"(fa7),
           "f"(fb0), "f"(fb1), "f"(fb2), "f"(fb3),
           "f"(fc0), "f"(fc1), "f"(fc2), "f"(fc3), "f"(fc4), "f"(fc5), "f"(fc6), "f"(fc7)

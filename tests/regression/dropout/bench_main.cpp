@@ -63,6 +63,9 @@ static void cleanup() {
 
 int main(int argc, char *argv[]) {
   auto bench = vx_bench::parse(argc, argv);
+  if (vx_bench::report_parse_error(bench)) {
+    return -1;
+  }
 
   // Reuse getopt for the original -n / -k flags.
   optind = 1;
@@ -105,28 +108,13 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_mem_alloc(device, buf_size, VX_MEM_WRITE, &dst_buffer));
   RT_CHECK(vx_mem_address(dst_buffer, &kernel_arg.dst_addr));
 
-  std::vector<TYPE> h_src0(num_points), h_dst(num_points);
+  std::vector<TYPE> h_src0(num_points);
   for (uint32_t i = 0; i < num_points; ++i) {
     h_src0[i] = Compare<TYPE>::gen();
   }
   RT_CHECK(vx_copy_to_dev(src0_buffer, h_src0.data(), 0, buf_size));
   RT_CHECK(vx_upload_kernel_file(device, kernel_file, &krnl_buffer));
   RT_CHECK(vx_upload_bytes(device, &kernel_arg, sizeof(kernel_arg_t), &args_buffer));
-
-  RT_CHECK(vx_start(device, krnl_buffer, args_buffer));
-  RT_CHECK(vx_ready_wait(device, VX_MAX_TIMEOUT));
-  RT_CHECK(vx_copy_from_dev(h_dst.data(), dst_buffer, 0, buf_size));
-  int errors = 0;
-  for (uint32_t i = 0; i < num_points; ++i) {
-    float r = RandomFloat(WangHash(i));
-    auto ref = (r < dropout_p) ? (TYPE)0 : (TYPE)(kernel_arg.multiplier * h_src0[i]);
-    if (!Compare<TYPE>::eq(h_dst[i], ref)) ++errors;
-  }
-  if (errors != 0) {
-    printf("Validation FAILED: errors=%d\n", errors);
-    cleanup();
-    return -1;
-  }
 
   for (int i = 0; i < bench.warmup; ++i) {
     RT_CHECK(vx_start(device, krnl_buffer, args_buffer));
@@ -142,6 +130,12 @@ int main(int argc, char *argv[]) {
   }
 
   stats.report("dropout", bench);
+
+  if (!vx_bench::run_power_measurement(
+          "dropout", bench, device, krnl_buffer, args_buffer)) {
+    cleanup();
+    return -1;
+  }
 
   if (!bench.csv) {
     printf("\n[Performance]\n");

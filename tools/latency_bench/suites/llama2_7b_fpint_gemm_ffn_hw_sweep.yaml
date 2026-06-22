@@ -1,0 +1,179 @@
+name: llama2_7b_fpint_gemm_ffn_hw_sweep
+defaults:
+  app: fpint_gemm_ffn_hw
+  target: hw
+  platform: xilinx_u55c_gen3x16_xdma_3_202210_1
+  warmup: 1
+  iterations: 3
+  xrt_device_index: 0
+  blackbox_timeout: 30m
+  blackbox_args:
+    - --cores=1
+    - --threads=8
+
+# Parameter sweep for Llama2-7B FPINT GEMM shapes.
+# Model constants:
+#   hidden_size=4096, intermediate_size=11008, heads=32, head_dim=128,
+#   vocab_size=32000.
+case_matrices:
+  - id: qkvo_proj
+    kind: gemm
+    backend: fpint_gemm_improve
+    stage: projection
+    name: qkvo_proj_b{batch}_s{seq}_q{qblk}
+    args: "-m {m} -n 4096 -k 4096 -q {qblk} -t 0 -d 0"
+    matrix:
+      batch: {values: [1, 8]}
+      seq: {values: [1, 128, 512, 1024]}
+      qblk: {values: [32, 64, 128]}
+    derived:
+      m: "batch * seq"
+    shape:
+      op: q_proj/k_proj/v_proj/o_proj
+      batch: "{batch}"
+      seq: "{seq}"
+      M: "{m}"
+      N: 4096
+      K: 4096
+      QBLK: "{qblk}"
+      WTRANS: 0
+      QDIR: 0
+
+  - id: gate_up_proj
+    kind: gemm
+    backend: fpint_gemm_improve
+    stage: ffn
+    name: gate_up_proj_b{batch}_s{seq}_q{qblk}
+    args: "-m {m} -n 11008 -k 4096 -q {qblk} -t 0 -d 0"
+    matrix:
+      batch: {values: [1, 8]}
+      seq: {values: [1, 128, 512, 1024]}
+      qblk: {values: [32, 64, 128]}
+    derived:
+      m: "batch * seq"
+    shape:
+      op: gate_proj/up_proj
+      batch: "{batch}"
+      seq: "{seq}"
+      M: "{m}"
+      N: 11008
+      K: 4096
+      QBLK: "{qblk}"
+      WTRANS: 0
+      QDIR: 0
+
+  - id: down_proj
+    kind: gemm
+    backend: fpint_gemm_improve
+    stage: ffn
+    name: down_proj_b{batch}_s{seq}_q{qblk}
+    args: "-m {m} -n 4096 -k 11008 -q {qblk} -t 0 -d 0"
+    matrix:
+      batch: {values: [1, 8]}
+      seq: {values: [1, 128, 512, 1024]}
+      qblk: {values: [32, 64, 128]}
+    derived:
+      m: "batch * seq"
+    shape:
+      op: down_proj
+      batch: "{batch}"
+      seq: "{seq}"
+      M: "{m}"
+      N: 4096
+      K: 11008
+      QBLK: "{qblk}"
+      WTRANS: 0
+      QDIR: 0
+
+  - id: attn_qkT_prefill
+    kind: gemm
+    backend: fpint_gemm_improve
+    stage: attention_prefill
+    name: attn_qkT_prefill_s{seq}
+    args: "-m {seq} -n {seq} -k 128 -q 128 -t 1 -d 0"
+    matrix:
+      seq: {values: [128, 512, 1024]}
+    shape:
+      op: attn_qkT
+      M: "{seq}"
+      N: "{seq}"
+      K: 128
+      QBLK: 128
+      WTRANS: 1
+      QDIR: 0
+      per_head: true
+
+  - id: attn_qkT_generation
+    kind: gemm
+    backend: fpint_gemm_improve
+    stage: attention_generation
+    name: attn_qkT_generation_kv{kv_len}
+    args: "-m 1 -n {kv_len} -k 128 -q 128 -t 1 -d 0"
+    matrix:
+      kv_len: {values: [128, 512, 1024, 2048, 4096]}
+    shape:
+      op: attn_qkT
+      M: 1
+      N: "{kv_len}"
+      K: 128
+      QBLK: 128
+      WTRANS: 1
+      QDIR: 0
+      per_head: true
+
+  - id: attn_pv_prefill
+    kind: gemm
+    backend: fpint_gemm_improve
+    stage: attention_prefill
+    name: attn_pv_prefill_s{seq}
+    args: "-m {seq} -n 128 -k {seq} -q 128 -t 0 -d 1"
+    matrix:
+      seq: {values: [128, 512, 1024]}
+    shape:
+      op: attn_pv
+      M: "{seq}"
+      N: 128
+      K: "{seq}"
+      QBLK: 128
+      WTRANS: 0
+      QDIR: 1
+      per_head: true
+
+  - id: attn_pv_generation
+    kind: gemm
+    backend: fpint_gemm_improve
+    stage: attention_generation
+    name: attn_pv_generation_kv{kv_len}
+    args: "-m 1 -n 128 -k {kv_len} -q 128 -t 0 -d 1"
+    matrix:
+      kv_len: {values: [128, 512, 1024, 2048, 4096]}
+    shape:
+      op: attn_pv
+      M: 1
+      N: 128
+      K: "{kv_len}"
+      QBLK: 128
+      WTRANS: 0
+      QDIR: 1
+      per_head: true
+
+  # lm_head is intentionally excluded from the Llama2 latency workload.
+  # The logits projection is outside the current accelerator evaluation target.
+  # - id: lm_head
+  #   kind: gemm
+  #   backend: fpint_gemm_improve
+  #   stage: output
+  #   name: lm_head_b{batch}_q{qblk}
+  #   args: "-m {batch} -n 32000 -k 4096 -q {qblk} -t 0 -d 0"
+  #   matrix:
+  #     batch: {values: [1, 8]}
+  #     qblk: {values: [32, 64, 128]}
+  #   shape:
+  #     op: lm_head
+  #     batch: "{batch}"
+  #     M: "{batch}"
+  #     N: 32000
+  #     K: 4096
+  #     QBLK: "{qblk}"
+  #     WTRANS: 0
+  #     QDIR: 0

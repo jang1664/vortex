@@ -1,0 +1,83 @@
+name: llama2_7b_sgemm_tcu_sweep
+defaults:
+  app: sgemm_tcu
+  target: hw
+  platform: xilinx_u55c_gen3x16_xdma_3_202210_1
+  warmup: 1
+  iterations: 3
+  xrt_device_index: 0
+  blackbox_timeout: 30m
+  blackbox_args:
+    - --cores=1
+    - --threads=8
+
+# FP TCU GEMM sweep for Llama2-7B-sized shapes.
+# sgemm_tcu requires M/N/K to be multiples of its compile-time TCU tile sizes,
+# so decode M=1 cases are intentionally omitted here.
+case_matrices:
+  - id: qkvo_proj
+    kind: sgemm_tcu
+    stage: projection
+    name: qkvo_proj_m{m}
+    args: "-m {m} -n 4096 -k 4096"
+    matrix:
+      m: {values: [32, 128, 512, 1024, 8192]}
+    shape:
+      op: q_proj/k_proj/v_proj/o_proj
+      M: "{m}"
+      N: 4096
+      K: 4096
+
+  - id: gate_up_proj
+    kind: sgemm_tcu
+    stage: ffn
+    name: gate_up_proj_m{m}
+    args: "-m {m} -n 11008 -k 4096"
+    matrix:
+      m: {values: [32, 128, 512, 1024, 8192]}
+    shape:
+      op: gate_proj/up_proj
+      M: "{m}"
+      N: 11008
+      K: 4096
+
+  - id: down_proj
+    kind: sgemm_tcu
+    stage: ffn
+    name: down_proj_m{m}
+    args: "-m {m} -n 4096 -k 11008"
+    matrix:
+      m: {values: [32, 128, 512, 1024, 8192]}
+    shape:
+      op: down_proj
+      M: "{m}"
+      N: 4096
+      K: 11008
+
+  - id: attn_qkT
+    kind: sgemm_tcu
+    stage: attention
+    name: attn_qkT_s{seq}
+    args: "-m {seq} -n {seq} -k 128"
+    matrix:
+      seq: {values: [128, 512, 1024]}
+    shape:
+      op: attn_qkT
+      M: "{seq}"
+      N: "{seq}"
+      K: 128
+      per_head: true
+
+  - id: attn_pv
+    kind: sgemm_tcu
+    stage: attention
+    name: attn_pv_s{seq}
+    args: "-m {seq} -n 128 -k {seq}"
+    matrix:
+      seq: {values: [128, 512, 1024]}
+    shape:
+      op: attn_pv
+      M: "{seq}"
+      N: 128
+      K: "{seq}"
+      per_head: true

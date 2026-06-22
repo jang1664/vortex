@@ -1,0 +1,35 @@
+name: llama2_7b_eldiv_sweep
+defaults:
+  app: eldiv
+  target: hw
+  platform: xilinx_u55c_gen3x16_xdma_3_202210_1
+  warmup: 1
+  iterations: 3
+  xrt_device_index: 0
+  blackbox_timeout: 30m
+  blackbox_args:
+    - --cores=1
+    - --threads=8
+
+case_matrices:
+  - id: eldiv_hidden
+    kind: eldiv
+    stage: elementwise
+    name: eldiv_hidden_n{n}
+    args: "-n {n}"
+    matrix:
+      n: {values: [4096, 32768, 524288, 2097152, 4194304, 16777216, 33554432]}
+    shape:
+      size: "{n}"
+      source_tensor: batch_seq_hidden
+
+  - id: eldiv_intermediate
+    kind: eldiv
+    stage: elementwise
+    name: eldiv_intermediate_n{n}
+    args: "-n {n}"
+    matrix:
+      n: {values: [11008, 88064, 1409024, 5636096, 11272192, 45088768, 90177536]}
+    shape:
+      size: "{n}"
+      source_tensor: batch_seq_intermediate

@@ -1,0 +1,7 @@
+generated_suites*/
+outputs*/
+!outputs_example/
+!outputs_example/**
+!outputs_sample/
+!outputs_sample/raw_db.csv
+outputs_sample/figures/

@@ -1,0 +1,22 @@
+task: layout-fused-kernels
+status: completed
+created: "2026-06-01 17:25"
+updated: "2026-06-01 19:33"
+summary: "Implement missing layout-fused regression apps and refine vector fp16 ABI, head concat, and KV cache quant/dequant kernels."
+log:
+  - time: "2026-06-01 17:25"
+    entry: "Started implementation from docs/superpowers/plans/2026-06-01-layout-fused-kernels.md. Existing xrt-vcs smoke for tile_input_a M=129 K=32 completed successfully while starting this task."
+  - time: "2026-06-01 17:39"
+    entry: "Added red tests for fused layout app existence and rope layout mode args. Implemented source-tree regression apps for eladd_layout_fused, elmul_layout_fused, softmax_layout_fused, and rope_layout_fused, plus shared layout offset helpers. Generator/workload unittest now passes before build verification."
+  - time: "2026-06-01 17:46"
+    entry: "Reconfigured build tree, built all four new apps plus bench binaries, and ran xrt-vcs-sim smoke tests for eladd, elmul, softmax, rope Q mode, and rope K mode. Re-ran workload unittest, git diff whitespace check, and fused workload missing-app check successfully."
+  - time: "2026-06-01 18:59"
+    entry: "Started vector refinement implementation. User clarified standalone head_concat is row-major input/output only; layout_fused head_concat alone bridges attn_pv tiled output to o_proj tiled input. KV quantization format is fpint-compatible asymmetric uint4 with fp16 scale and int16 zero-point."
+  - time: "2026-06-01 19:32"
+    entry: "Implemented fp16 external ABI for vector kernels, added head_concat and head_concat_layout_fused regression apps, and added kv_cache_quant_w4a16/kv_cache_dequant_w4a16. Updated workload generator metadata and layout docs for row-major concat, fused concat, and KV cache packed/qparam formats."
+  - time: "2026-06-01 19:32"
+    entry: "Verified workload Python tests, whitespace check, bench binary builds for changed vector apps, and xrt-vcs-sim functional plus one-iteration bench smoke for head_concat, head_concat_layout_fused, kv_cache_quant_w4a16, and kv_cache_dequant_w4a16."
+pitfalls:
+  - "rope_k layout_to=gemm_w_tiled is not packed int4 tile_weight_w4a16 format; it is W-like fp16 tiled latency-model storage and still needs kv_cache_quant_w4a16 before the packed GEMM-W path."
+  - "bench_util uses --warmup=N and --iterations=N. Passing '-warmup 0 -iterations 1' is ignored and runs the default, much longer bench loop."
+  - "KV cache quant/dequant WTRANS is CLI parity only; packed dynamic cache storage remains row-major n-pair order and is not tile_weight_w4a16 byte layout."

@@ -1,10 +1,11 @@
 #include "common.h"
+#include "../vector_common/fp16.h"
 #include <vx_spawn.h>
 #include <vx_intrinsics.h>
 #include <math.h>
 
 // Type aliases
-using data_t = float;  // fp32 for now, can be changed to fp16
+using data_t = fp16_t;
 
 ///////////////////////////////////////////////////////////////////////////////
 // RMSNorm Kernel
@@ -45,7 +46,7 @@ void kernel_rmsnorm(kernel_arg_t *__UNIFORM__ arg) {
   
   // Each thread accumulates its portion
   for (uint32_t i = cache_idx; i < hidden_dim; i += blockDim.x) {
-    float val = pInputRow[i];
+    float val = fp16_to_float(pInputRow[i]);
     sum_sq += val * val;
   }
   
@@ -73,9 +74,9 @@ void kernel_rmsnorm(kernel_arg_t *__UNIFORM__ arg) {
   
   // Phase 2: Normalize and apply gamma
   for (uint32_t i = cache_idx; i < hidden_dim; i += blockDim.x) {
-    float val = pInputRow[i];
-    float gamma = pGamma[i];
-    pOutputRow[i] = val * rms_norm * gamma;
+    float val = fp16_to_float(pInputRow[i]);
+    float gamma = fp16_to_float(pGamma[i]);
+    pOutputRow[i] = float_to_fp16(val * rms_norm * gamma);
   }
 }
 

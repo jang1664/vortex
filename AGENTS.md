@@ -1,5 +1,7 @@
 # Repository Execution Notes
 
+## hardware/software configuration files
+- Before run simulation or synthsis, **source proper config file in configs/**
 
 ## Build Prerequisite
 
@@ -26,6 +28,8 @@
 ## Blackbox Flow
 
 - Blackbox test have to be run at **build directory**
+- For RTL simulation blackbox runs, use **xrt-vcs-sim**. Do **not** use `simx`
+  or Verilator `rtlsim` unless the user explicitly requests those modes.
 - To run `blackbox.sh`, use the wrapper script:
 
 ```bash
@@ -38,7 +42,24 @@ ci/run_black.sh
 ci/run_black.sh --help
 ```
 
-- Always use **xrt-vcs-sim** mode if not explicitly requested by user
+- Default command shape for RTL functionality checks:
+
+```bash
+ci/run_black.sh xrt-vcs-sim --app APP --args "..."
+```
+
+- For real FPGA hardware runs, use `hw` mode from the configured build
+  directory and pass an FPGA binary alias with `--fpga-bin`. The wrapper
+  resolves the alias through `ci/fpga_bin_alias_map.yaml`, sources the mapped
+  config file, and launches `blackbox.sh` through Slurm:
+
+```bash
+ci/run_black.sh hw --fpga-bin naive_simd --app APP --args "..."
+```
+
+- Do not add `--configs-extra` for hardware runs unless the user explicitly
+  requests extra compile-time defines; prefer the alias config as the source of
+  truth.
 
 ## Codex Skills
 

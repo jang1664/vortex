@@ -1,0 +1,39 @@
+task: softmax-isa-expf
+created: "2026-06-09 13:03"
+status: in_progress
+summary: "Implement the docs/softmax/ISA_ext.md plan: add a Vortex custom FP32 expf instruction, wire compiler/kernel support, then verify before considering later DMA/local-memory kernel optimization."
+current_step: "Summarize implemented expf ISA extension and remaining backend/toolchain gaps"
+log:
+  - time: "2026-06-09 13:03"
+    entry: "Started implementation from docs/softmax/ISA_ext.md. User clarified kernel DMA/local-memory optimization must remain last; first goal is expf instruction itself."
+  - time: "2026-06-09 13:12"
+    entry: "First xrt-vcs softmax run failed with output mismatch because simv was stale; simv timestamp predated RTL/DPI edits and make reported nothing to rebuild."
+  - time: "2026-06-09 13:14"
+    entry: "Forced sim/xrtsim_vcs clean rebuild. Rebuilt VCS simv compiled the new decode/DPI path and passed softmax xrt-vcs smoke tests for mask=0 and mask=1."
+  - time: "2026-06-09 14:08"
+    entry: "Started FPU_FPNEW path for FPGA use. Clean xrt-vcs build with -DFPU_FPNEW currently fails before running softmax because cvfpu common_cells/assertions.svh shadows the AXI common_cells ASSERT_INIT macro signature."
+  - time: "2026-06-09 14:17"
+    entry: "Added synthesizable VX_fpu_exp_fpnew sequential engine using fpnew_top operations and routed INST_FPU_EXP through VX_fpu_fpnew. Added a smoke testbench for exp(0.0)."
+pitfalls:
+  - "Do not optimize softmax kernel with DMA/local-memory before vx_expf instruction is independently implemented and verified."
+  - "Do not use GPR bitcast fallback for vx_expf_hw if RTL decodes FP registers; that would read the wrong register file."
+  - "xrt-vcs blackbox must be run from configured build directory through ci/run_black.sh, not ad hoc blackbox.sh."
+  - "After RTL/DPI source edits, xrt-vcs may reuse a stale simv; clean build/sim/xrtsim_vcs before trusting functional results."
+  - "For -DFPU_FPNEW xrt-vcs builds, cvfpu and AXI both provide common_cells/assertions.svh with incompatible ASSERT_INIT macros; include order must be fixed before FPNEW blackbox verification is meaningful."
+verification:
+  red_tests:
+    - "2026-06-09 13:04: clang probe including vx_math.h and calling vx_expf_hw failed because vx_expf_hw was undeclared."
+    - "2026-06-09 14:08: clean ci/run_black.sh xrt-vcs-sim --configs-extra \"-DFPU_FPNEW\" failed during VCS compile at third_party/axi/.../fifo_v3.sv:143 due ASSERT_INIT macro argument mismatch from cvfpu common_cells/assertions.svh."
+  green_tests:
+    - "2026-06-09 13:06: clang probe with -DVX_ENABLE_HW_EXPF compiled after adding kernel/include/vx_intrinsics.h helper and build-tree hw include path."
+    - "2026-06-09 13:10: make -C build/tests/regression/softmax -j4 passed and kernel.dump contained two raw custom exp instructions."
+    - "2026-06-09 13:14: ci/run_black.sh xrt-vcs-sim --app softmax --args \"-batch 1 -heads 1 -seqq 4 -seqk 32 -mask 0\" passed after clean simv rebuild."
+    - "2026-06-09 13:15: ci/run_black.sh xrt-vcs-sim --app softmax --args \"-batch 1 -heads 1 -seqq 4 -seqk 32 -mask 1\" passed."
+    - "2026-06-09 13:16: /opt/vortex/llvm-vortex/bin/llvm-tblgen parsed modified RISCV.td instruction info and Intrinsics.td intrinsic enums successfully."
+    - "2026-06-09 14:14: Direct VCS compile of VX_fpu_exp_fpnew and parent VX_fpu_fpnew passed with -DFPU_FPNEW."
+    - "2026-06-09 14:17: Direct VCS smoke test tb_VX_fpu_exp_fpnew_smoke passed for exp(0.0) -> 1.0."
+  blocked:
+    - "2026-06-09 13:09: /home/jaeyongjang/project.local/vortex-llvm has no CMake build directory or build/bin tools, so LLVM MC/llc/clang rebuild and /opt/vortex/llvm-vortex install verification cannot run until LLVM is configured/built."
+  notes:
+    - "build/hw/VX_types.h is configure-generated; source-tree-only kernel compile probes need -I build/hw or a configured build-side test."
+    - "Current RTL implementation wires vx_expf through the FPU_DPI backend used by xrt-vcs-style simulation. FPU_FPNEW/FPU_DSP still need a synthesizable exp datapath before hardware/synthesis use."

@@ -38,6 +38,7 @@ extern "C" {
 
   void dpi_fdiv(bool enable, int dst_fmt, int64_t a, int64_t b, const svBitVecVal* frm, int64_t* result, svBitVecVal* fflags);
   void dpi_fsqrt(bool enable, int dst_fmt, int64_t a, const svBitVecVal* frm, int64_t* result, svBitVecVal* fflags);
+  void dpi_fexp(bool enable, int dst_fmt, int64_t a, int64_t* result, svBitVecVal* fflags);
 
   void dpi_ftoi(bool enable, int dst_fmt, int src_fmt, int64_t a, const svBitVecVal* frm, int64_t* result, svBitVecVal* fflags);
   void dpi_ftou(bool enable, int dst_fmt, int src_fmt, int64_t a, const svBitVecVal* frm, int64_t* result, svBitVecVal* fflags);
@@ -99,6 +100,35 @@ inline int64_t check_boxing16(int64_t a) {
   if (is_nan_boxed16(a))
     return a;
   return nan_box16(0x7fc0); // NaN
+}
+
+inline float f32_from_bits(uint32_t value) {
+  union { uint32_t i; float f; } u;
+  u.i = value;
+  return u.f;
+}
+
+inline uint32_t f32_to_bits(float value) {
+  union { float f; uint32_t i; } u;
+  u.f = value;
+  return u.i;
+}
+
+inline uint32_t vx_expf_approx(uint32_t value) {
+  float x = f32_from_bits(value);
+  float clamped = fmaxf(fminf(x, 88.7f), -87.3f);
+
+  const float LOG2E = 1.4426950408889634f;
+  float t = clamped * LOG2E;
+
+  int n = (int)t;
+  n -= ((float)n > t);
+  float f = t - (float)n;
+
+  float p = 1.0f + f * (0.6931472f + f * (0.2402265f + f * (0.0555041f + f * 0.0096139f)));
+  uint32_t result = f32_to_bits(p);
+  result += (uint32_t)n << 23;
+  return result;
 }
 
 void dpi_fadd(bool enable, int dst_fmt, int64_t a, int64_t b, const svBitVecVal* frm, int64_t* result, svBitVecVal* fflags) {
@@ -188,6 +218,17 @@ void dpi_fsqrt(bool enable, int dst_fmt, int64_t a, const svBitVecVal* frm, int6
     *result = rv_fsqrt_d(a, (*frm & 0x7), fflags);
   } else {
     *result = nan_box(rv_fsqrt_s(check_boxing(a), (*frm & 0x7), fflags));
+  }
+}
+
+void dpi_fexp(bool enable, int dst_fmt, int64_t a, int64_t* result, svBitVecVal* fflags) {
+  if (!enable)
+    return;
+  *fflags = 0;
+  if (dst_fmt) {
+    *result = 0;
+  } else {
+    *result = nan_box(vx_expf_approx(uint32_t(check_boxing(a))));
   }
 }
 

@@ -1,0 +1,185 @@
+name: llama2_7b_prefill_s1024_b8_gemm_only
+defaults:
+  app: fpint_gemm_ffn_hw
+  target: hw
+  platform: xilinx_u55c_gen3x16_xdma_3_202210_1
+  warmup: 1
+  iterations: 3
+  xrt_device_index: 0
+  blackbox_args:
+  - --cores=1
+  - --threads=8
+cases:
+- id: llama2_7b_prefill_s1024_b8_prefill_q_proj
+  app: fpint_gemm_ffn_hw
+  kind: gemm
+  op: q_proj
+  backend: fpint_gemm_improve
+  variant: all_fpint_gemm_improve
+  stage: prefill
+  name: q_proj
+  args: -m 8192 -n 4096 -k 4096 -q 32 -t 0 -d 0
+  calls_per_forward: 32.0
+  warmup: 1
+  iterations: 3
+  shape:
+    M: 8192
+    N: 4096
+    K: 4096
+    QBLK: 32
+    WTRANS: 0
+    QDIR: 0
+- id: llama2_7b_prefill_s1024_b8_prefill_k_proj
+  app: fpint_gemm_ffn_hw
+  kind: gemm
+  op: k_proj
+  backend: fpint_gemm_improve
+  variant: all_fpint_gemm_improve
+  stage: prefill
+  name: k_proj
+  args: -m 8192 -n 4096 -k 4096 -q 32 -t 0 -d 0
+  calls_per_forward: 32.0
+  warmup: 1
+  iterations: 3
+  shape:
+    M: 8192
+    N: 4096
+    K: 4096
+    QBLK: 32
+    WTRANS: 0
+    QDIR: 0
+- id: llama2_7b_prefill_s1024_b8_prefill_v_proj
+  app: fpint_gemm_ffn_hw
+  kind: gemm
+  op: v_proj
+  backend: fpint_gemm_improve
+  variant: all_fpint_gemm_improve
+  stage: prefill
+  name: v_proj
+  args: -m 8192 -n 4096 -k 4096 -q 32 -t 0 -d 0
+  calls_per_forward: 32.0
+  warmup: 1
+  iterations: 3
+  shape:
+    M: 8192
+    N: 4096
+    K: 4096
+    QBLK: 32
+    WTRANS: 0
+    QDIR: 0
+- id: llama2_7b_prefill_s1024_b8_prefill_attn_qkT
+  app: fpint_gemm_ffn_hw
+  kind: gemm
+  op: attn_qkT
+  backend: fpint_gemm_improve
+  variant: all_fpint_gemm_improve
+  stage: prefill
+  name: attn_qkT
+  args: -m 1024 -n 1024 -k 128 -q 128 -t 1 -d 0
+  calls_per_forward: 8192.0
+  warmup: 1
+  iterations: 3
+  shape:
+    M: 1024
+    N: 1024
+    K: 128
+    QBLK: 128
+    WTRANS: 1
+    QDIR: 0
+    per_head: true
+- id: llama2_7b_prefill_s1024_b8_prefill_attn_pv
+  app: fpint_gemm_ffn_hw
+  kind: gemm
+  op: attn_pv
+  backend: fpint_gemm_improve
+  variant: all_fpint_gemm_improve
+  stage: prefill
+  name: attn_pv
+  args: -m 1024 -n 128 -k 1024 -q 128 -t 0 -d 1
+  calls_per_forward: 8192.0
+  warmup: 1
+  iterations: 3
+  shape:
+    M: 1024
+    N: 128
+    K: 1024
+    QBLK: 128
+    WTRANS: 0
+    QDIR: 1
+    per_head: true
+- id: llama2_7b_prefill_s1024_b8_prefill_o_proj
+  app: fpint_gemm_ffn_hw
+  kind: gemm
+  op: o_proj
+  backend: fpint_gemm_improve
+  variant: all_fpint_gemm_improve
+  stage: prefill
+  name: o_proj
+  args: -m 8192 -n 4096 -k 4096 -q 32 -t 0 -d 0
+  calls_per_forward: 32.0
+  warmup: 1
+  iterations: 3
+  shape:
+    M: 8192
+    N: 4096
+    K: 4096
+    QBLK: 32
+    WTRANS: 0
+    QDIR: 0
+- id: llama2_7b_prefill_s1024_b8_prefill_gate_proj
+  app: fpint_gemm_ffn_hw
+  kind: gemm
+  op: gate_proj
+  backend: fpint_gemm_improve
+  variant: all_fpint_gemm_improve
+  stage: prefill
+  name: gate_proj
+  args: -m 8192 -n 11008 -k 4096 -q 32 -t 0 -d 0
+  calls_per_forward: 32.0
+  warmup: 1
+  iterations: 3
+  shape:
+    M: 8192
+    N: 11008
+    K: 4096
+    QBLK: 32
+    WTRANS: 0
+    QDIR: 0
+- id: llama2_7b_prefill_s1024_b8_prefill_up_proj
+  app: fpint_gemm_ffn_hw
+  kind: gemm
+  op: up_proj
+  backend: fpint_gemm_improve
+  variant: all_fpint_gemm_improve
+  stage: prefill
+  name: up_proj
+  args: -m 8192 -n 11008 -k 4096 -q 32 -t 0 -d 0
+  calls_per_forward: 32.0
+  warmup: 1
+  iterations: 3
+  shape:
+    M: 8192
+    N: 11008
+    K: 4096
+    QBLK: 32
+    WTRANS: 0
+    QDIR: 0
+- id: llama2_7b_prefill_s1024_b8_prefill_down_proj
+  app: fpint_gemm_ffn_hw
+  kind: gemm
+  op: down_proj
+  backend: fpint_gemm_improve
+  variant: all_fpint_gemm_improve
+  stage: prefill
+  name: down_proj
+  args: -m 8192 -n 4096 -k 11008 -q 32 -t 0 -d 0
+  calls_per_forward: 32.0
+  warmup: 1
+  iterations: 3
+  shape:
+    M: 8192
+    N: 4096
+    K: 11008
+    QBLK: 32
+    WTRANS: 0
+    QDIR: 0

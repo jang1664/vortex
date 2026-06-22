@@ -61,15 +61,16 @@ ifneq (,$(findstring -DFPU_FPNEW, $(CONFIGS)))
 	FPU_INCLUDE += -I$(THIRD_PARTY_DIR)/cvfpu/src/common_cells/include -I$(THIRD_PARTY_DIR)/cvfpu/src/common_cells/src -I$(THIRD_PARTY_DIR)/cvfpu/src/fpu_div_sqrt_mvp/hdl -I$(THIRD_PARTY_DIR)/cvfpu/src
 endif
 
-RTL_INCLUDE = -I$(SRC_DIR) -I$(RTL_DIR) -I$(DPI_DIR) -I$(RTL_DIR)/libs -I$(RTL_DIR)/interfaces -I$(RTL_DIR)/core -I$(RTL_DIR)/core/gemm -I$(RTL_DIR)/mem -I$(RTL_DIR)/cache $(FPU_INCLUDE)
-RTL_INCLUDE += -I$(RTL_DIR)/verification
-RTL_INCLUDE += -I$(AFU_DIR)
-
 # AXI third-party library (for axi_mux, axi_demux in Vortex_axi)
 AXI_DIR := $(THIRD_PARTY_DIR)/axi
 AXI_COMMON_CELLS_DIR := $(AXI_DIR)/.bender/git/checkouts/common_cells-3e2fcccecd7aee7b
+
+RTL_INCLUDE = -I$(SRC_DIR) -I$(RTL_DIR) -I$(DPI_DIR) -I$(RTL_DIR)/libs -I$(RTL_DIR)/interfaces -I$(RTL_DIR)/core -I$(RTL_DIR)/core/gemm -I$(RTL_DIR)/mem -I$(RTL_DIR)/cache
 RTL_INCLUDE += -I$(AXI_DIR)/src -I$(AXI_DIR)/include
 RTL_INCLUDE += -I$(AXI_COMMON_CELLS_DIR)/include -I$(AXI_COMMON_CELLS_DIR)/src
+RTL_INCLUDE += $(FPU_INCLUDE)
+RTL_INCLUDE += -I$(RTL_DIR)/verification
+RTL_INCLUDE += -I$(AFU_DIR)
 
 # V extension
 ifneq (,$(findstring -DEXT_V_ENABLE, $(CONFIGS)))
@@ -160,6 +161,11 @@ VCS_CONFIGS := $(patsubst -D%,+define+%,$(CONFIGS))
 VCS_FLAGS += $(VCS_CONFIGS)
 VCS_FLAGS += $(VCS_DEFINES)
 
+VCS_P2_FLAGS := ""
+ifdef FSDB_DUMP
+	VCS_P2_FLAGS += "-debug_access=all"  
+endif
+
 # VCS top module
 VCS_TOP = tb_vcs_xrtsim
 
@@ -182,6 +188,48 @@ ifdef PERF
 	CXXFLAGS     += -DPERF_ENABLE
 	VCS_CPPFLAGS += -DPERF_ENABLE
 	VCS_FLAGS    += +define+PERF_ENABLE
+endif
+
+ifneq (,$(findstring -DFPU_DSP, $(CONFIGS)))
+ifneq (,$(findstring -DVIVADO, $(CONFIGS)))
+	USE_XILINX_FPU_IP := 1
+endif
+endif
+
+# RTL simulation of the VIVADO FPU_DSP path needs the generated Xilinx
+# floating_point IP VHDL wrappers and their encrypted support libraries.
+ifdef USE_XILINX_FPU_IP
+	XILINX_IP_DIR ?= $(DESTDIR)/xilinx_ip
+	XILINX_DEVICE_PART ?= xcu55c-fsvh2892-2L-e
+	XILINX_IP_GEN_TCL := $(SCRIPT_DIR)/xilinx_ip_gen.tcl
+	XILINX_IP_STAMP := $(XILINX_IP_DIR)/.generated.stamp
+	XILINX_IP_VHDLAN_STAMP := $(DESTDIR)/.xilinx_fpu_ip_vhdlan.stamp
+	XILINX_FPU_IPS := xil_fdiv xil_fsqrt xil_fma xil_fmul xil_fadd xil_f32add
+	XILINX_IP_VHDL_LIBS := xil_defaultlib xbip_utils_v3_0_14 axi_utils_v2_0_10 xbip_pipe_v3_0_10 xbip_dsp48_wrapper_v3_0_7 mult_gen_v12_0_23 floating_point_v7_1_20
+
+	VCS_FLAGS += +vhdllib+xil_defaultlib
+	RTL_PKGS += $(SRC_DIR)/xilinx_fpu_ip_config.sv
+	VCS_TOP := tb_vcs_xrtsim_xilinx_fpu_cfg
+
+	SIMLIB_DIR ?= $(VORTEX_HOME)/build/vcs_simlib
+	SIMLIB_SETUP := $(SIMLIB_DIR)/synopsys_sim.setup
+	COMPILE_VCS_SIMLIB_TCL := $(SRC_DIR)/compile_vcs_simlib.tcl
+
+	VCS_SETUP_CMD = mkdir -p $(DESTDIR)/vcs_lib/work $(foreach lib,$(XILINX_IP_VHDL_LIBS),$(DESTDIR)/vcs_lib/$(lib)) && \
+		{ echo "LIBRARY_SCAN=TRUE"; \
+		  echo "work:$(abspath $(DESTDIR))/vcs_lib/work"; \
+		  $(foreach lib,$(XILINX_IP_VHDL_LIBS),echo "$(lib):$(abspath $(DESTDIR))/vcs_lib/$(lib)";) \
+			  echo "OTHERS=$(abspath $(SIMLIB_SETUP))"; \
+			} > $(DESTDIR)/synopsys_sim.setup
+endif
+
+VLOGAN_FLAGS = -full64 -sverilog +v2k -timescale=1ns/1ps +lint=TFIPC-L
+VLOGAN_FLAGS += $(foreach d,$(RTL_DIRS),+incdir+$(d))
+VLOGAN_FLAGS += $(foreach d,$(RTL_DIRS),-y $(d)) +libext+.v+.sv
+VLOGAN_FLAGS += $(VCS_CONFIGS)
+VLOGAN_FLAGS += $(VCS_DEFINES)
+ifdef FSDB_DUMP
+	VLOGAN_FLAGS += +define+FSDB_DUMP
 endif
 
 # Post-impl gate-level simulation support
@@ -254,6 +302,45 @@ all: simv applib
 # ---- simv (VCS executable) ----
 simv: $(DESTDIR)/simv
 
+ifdef USE_XILINX_FPU_IP
+$(SIMLIB_SETUP):
+	@mkdir -p "$(SIMLIB_DIR)"
+	vivado -mode batch -nolog -nojournal -notrace \
+		-source "$(COMPILE_VCS_SIMLIB_TCL)" \
+		-tclargs "$(SIMLIB_DIR)" "$$(dirname $$(readlink -f $$(which vlogan)))" "" "0" "all" "all" \
+		> "$(DESTDIR)/compile_simlib.log" 2>&1 || { \
+			echo "ERROR: compile_simlib failed. See $(DESTDIR)/compile_simlib.log"; \
+			exit 1; \
+		}
+	@test -f "$(SIMLIB_SETUP)" || { echo "ERROR: $(SIMLIB_SETUP) not found after compile_simlib."; exit 1; }
+
+$(XILINX_IP_STAMP): $(XILINX_IP_GEN_TCL)
+	@mkdir -p "$(XILINX_IP_DIR)"
+	@if [ ! -f "$(XILINX_IP_DIR)/xil_fma/xil_fma.xci" ]; then \
+		echo "INFO: generating Xilinx floating_point IP in $(XILINX_IP_DIR)"; \
+		vivado -mode batch -nolog -nojournal -notrace \
+			-source "$(XILINX_IP_GEN_TCL)" \
+			-tclargs "$(XILINX_IP_DIR)" "$(XILINX_DEVICE_PART)" \
+			> "$(DESTDIR)/xilinx_ip_gen.log" 2>&1 || { \
+				echo "ERROR: Xilinx IP generation failed. See $(DESTDIR)/xilinx_ip_gen.log"; \
+				exit 1; \
+			}; \
+	fi
+	@touch $@
+
+$(XILINX_IP_VHDLAN_STAMP): $(XILINX_IP_STAMP) $(SIMLIB_SETUP) Makefile
+	@mkdir -p "$(DESTDIR)"
+	$(VCS_SETUP_CMD)
+	cd $(DESTDIR) && vhdlan -full64 -work xbip_utils_v3_0_14 "$(XILINX_IP_DIR)/xil_fma/hdl/xbip_utils_v3_0_vh_rfs.vhd" -l vhdlan_xbip_utils.log
+	cd $(DESTDIR) && vhdlan -full64 -work axi_utils_v2_0_10 "$(XILINX_IP_DIR)/xil_fma/hdl/axi_utils_v2_0_vh_rfs.vhd" -l vhdlan_axi_utils.log
+	cd $(DESTDIR) && vhdlan -full64 -work xbip_pipe_v3_0_10 "$(XILINX_IP_DIR)/xil_fma/hdl/xbip_pipe_v3_0_vh_rfs.vhd" -l vhdlan_xbip_pipe.log
+	cd $(DESTDIR) && vhdlan -full64 -work xbip_dsp48_wrapper_v3_0_7 "$(XILINX_IP_DIR)/xil_fma/hdl/xbip_dsp48_wrapper_v3_0_vh_rfs.vhd" -l vhdlan_xbip_dsp48.log
+	cd $(DESTDIR) && vhdlan -full64 -work mult_gen_v12_0_23 "$(XILINX_IP_DIR)/xil_fma/hdl/mult_gen_v12_0_vh_rfs.vhd" -l vhdlan_mult_gen.log
+	cd $(DESTDIR) && vhdlan -full64 -work floating_point_v7_1_20 "$(XILINX_IP_DIR)/xil_fma/hdl/floating_point_v7_1_vh_rfs.vhd" -l vhdlan_floating_point.log
+	cd $(DESTDIR) && vhdlan -full64 -work xil_defaultlib $(foreach ip,$(XILINX_FPU_IPS),"$(XILINX_IP_DIR)/$(ip)/sim/$(ip).vhd") -l vhdlan_xilinx_wrappers.log
+	@touch $@
+endif
+
 ifdef POST_IMPL
 # Post-impl: compile netlist + TB + DPI (no RTL sources)
 $(DESTDIR)/simv: $(SRC_DIR)/tb_vcs_xrtsim.sv $(SRC_DIR)/dpi_vcs_server.cpp
@@ -293,8 +380,22 @@ $(DESTDIR)/simv: $(SRC_DIR)/tb_vcs_xrtsim.sv $(SRC_DIR)/dpi_vcs_server.cpp
 		-o $(DESTDIR)/simv
 else
 # RTL sim: compile RTL + TB + DPI
-$(DESTDIR)/simv: $(SRC_DIR)/tb_vcs_xrtsim.sv $(SRC_DIR)/dpi_vcs_server.cpp
+$(DESTDIR)/simv: $(SRC_DIR)/tb_vcs_xrtsim.sv $(SRC_DIR)/dpi_vcs_server.cpp $(if $(USE_XILINX_FPU_IP),$(XILINX_IP_VHDLAN_STAMP))
 	@mkdir -p $(DESTDIR)
+	$(if $(USE_XILINX_FPU_IP),$(VCS_SETUP_CMD))
+ifdef USE_XILINX_FPU_IP
+	cd $(DESTDIR) && vlogan $(VLOGAN_FLAGS) \
+		$(RTL_PKGS) \
+		$(SRC_DIR)/tb_vcs_xrtsim.sv \
+		-l vlogan.log
+	cd $(DESTDIR) && vcs $(VCS_P2_FLAGS) -full64 -timescale=1ns/1ps +lint=TFIPC-L \
+		-CFLAGS "$(VCS_CPPFLAGS)" \
+		-LDFLAGS "-Wl,--whole-archive $(SOFTFLOAT_LIB) -Wl,--no-whole-archive" \
+		$(DPI_SRCS) \
+		$(VCS_TOP) \
+		-l compile.log \
+		-o $(DESTDIR)/simv
+else
 	cd $(DESTDIR) && vcs $(VCS_FLAGS) \
 		-LDFLAGS "-Wl,--whole-archive $(SOFTFLOAT_LIB) -Wl,--no-whole-archive" \
 		$(RTL_PKGS) \
@@ -303,6 +404,7 @@ $(DESTDIR)/simv: $(SRC_DIR)/tb_vcs_xrtsim.sv $(SRC_DIR)/dpi_vcs_server.cpp
 		-l compile.log \
 		-top $(VCS_TOP) \
 		-o $(DESTDIR)/simv
+endif
 endif
 
 # ---- applib (shared library for App process) ----

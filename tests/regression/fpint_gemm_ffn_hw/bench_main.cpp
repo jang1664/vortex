@@ -4,14 +4,12 @@
 // reserves a multiple-of-8 row count for stripe alignment, while only real M
 // rows are written/read).
 //
-// Differs from main.cpp only in that it (1) skips the per-element FP16
-// reference output and per-element verification, (2) runs warmup + timed
-// iteration loops around vx_start / vx_ready_wait, (3) does a coarse
-// "output is not all-zero" sanity check before the timed loop.
+// Differs from main.cpp only in that it skips reference output/per-element
+// verification and runs warmup + timed-iteration loops around
+// vx_start / vx_ready_wait.
 //
-// CLI: same shape args as main.cpp (-m -n -k -q -t -d) plus
-//      --warmup=N / --iterations=N / --csv / --output=PATH / --output-append
-//      parsed by bench_util.
+// CLI: same shape args as main.cpp (-m -n -k -q -t -d) plus benchmark and
+//      optional power-measurement flags parsed by bench_util.
 
 #include <iostream>
 #include <unistd.h>
@@ -91,6 +89,17 @@ static void cleanup() {
   krnl_buffer = nullptr;
   args_buffer = nullptr;
   device = nullptr;
+}
+
+static const char* status_to_str(uint32_t status) {
+  switch (status) {
+  case STATUS_INIT: return "INIT";
+  case STATUS_OK: return "OK";
+  case STATUS_ALLOC_FAIL: return "ALLOC_FAIL";
+  case STATUS_WAIT_STUCK: return "WAIT_STUCK";
+  case STATUS_BAD_EID: return "BAD_EID";
+  default: return "UNKNOWN";
+  }
 }
 
 // ============================================================================
@@ -429,8 +438,12 @@ static bool compute_tmem_layout(kernel_arg_t& kargs, uint64_t tensor_mem_size) {
 // ============================================================================
 
 int main(int argc, char *argv[]) {
-  // Strip --warmup / --iterations / --csv first; remaining argv goes to getopt.
+  // Strip benchmark/power flags first; remaining argv goes to getopt.
   auto bench = vx_bench::parse(argc, argv);
+  if (bench.parse_error) {
+    std::cerr << "Argument error: " << bench.parse_error_message << std::endl;
+    return -1;
+  }
 
   optind = 1;
   int c;
@@ -443,13 +456,23 @@ int main(int argc, char *argv[]) {
     case 't': WTRANS = atoi(optarg); break;
     case 'd': QDIR = atoi(optarg); break;
     case 'h':
-      printf("Usage: %s [--warmup=N] [--iterations=N] [--csv] "
-             "[--output=PATH] [--output-append] "
+      printf("Usage: %s [--warmup=N] [--iterations=N] [--latency=on|off] "
+             "[--no-latency] [--csv] [--output=PATH] [--output-append] "
+             "[--power[=on|off]] [--power-csv=PATH] "
+             "[--power-summary=PATH] [--power-interval=SEC] "
+             "[--power-fpga-id=ID] [--power-iterations=N] "
+             "[--power-idle-sec=SEC] [--power-csv-max-bytes=N] "
+             "[--power-script=PATH] [--power-max-iterations=N] "
              "[-m M] [-n N] [-k K] [-q QBLK] [-t WTRANS] [-d QDIR]\n", argv[0]);
       return 0;
     default:
-      printf("Usage: %s [--warmup=N] [--iterations=N] [--csv] "
-             "[--output=PATH] [--output-append] "
+      printf("Usage: %s [--warmup=N] [--iterations=N] [--latency=on|off] "
+             "[--no-latency] [--csv] [--output=PATH] [--output-append] "
+             "[--power[=on|off]] [--power-csv=PATH] "
+             "[--power-summary=PATH] [--power-interval=SEC] "
+             "[--power-fpga-id=ID] [--power-iterations=N] "
+             "[--power-idle-sec=SEC] [--power-csv-max-bytes=N] "
+             "[--power-script=PATH] [--power-max-iterations=N] "
              "[-m M] [-n N] [-k K] [-q QBLK] [-t WTRANS] [-d QDIR]\n", argv[0]);
       return -1;
     }
@@ -485,8 +508,17 @@ int main(int argc, char *argv[]) {
 
   if (!bench.csv) {
     printf("FPINT-GEMM-FFN-HW Bench: M=%u (padded to %u) N=%u K=%u "
-           "QBLK=%u WTRANS=%u QDIR=%u  warmup=%d iterations=%d\n",
+           "QBLK=%u WTRANS=%u QDIR=%u  warmup=%d iterations=%d",
            M, M_pad, N, K, QBLK, WTRANS, QDIR, bench.warmup, bench.iterations);
+    if (vx_bench::power_enabled(bench)) {
+      printf(" power=%s power_iterations=%d power_interval=%.6g",
+             vx_bench::power_mode_name(bench.power_mode),
+             bench.power_iterations,
+             bench.power_interval);
+      printf(" power_csv_max_bytes=%llu",
+             static_cast<unsigned long long>(bench.power_csv_max_bytes));
+    }
+    printf("\n");
   }
 
   RT_CHECK(vx_dev_open(&device));
@@ -497,6 +529,11 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_THREADS, &num_threads));
 
   uint64_t tensor_mem_size = TMEM_BANK_SIZE * NUM_DMA_CHANNELS;
+
+  // Reserve the kernel's fixed VMA before large data buffers are allocated.
+  // Otherwise large M/N/K cases can place C across STARTUP_ADDR and make the
+  // later kernel upload fail with an address-overlap error.
+  RT_CHECK(vx_upload_kernel_file(device, kernel_file, &krnl_buffer));
 
   // ---- Generate test vectors (no host reference) ----
   std::vector<uint16_t> h_A;
@@ -537,8 +574,6 @@ int main(int argc, char *argv[]) {
   std::vector<uint8_t> zero_out(out_total_bytes, 0);
   RT_CHECK(vx_copy_to_dev(C_buffer, zero_out.data(), 0, out_total_bytes));
 
-  RT_CHECK(vx_upload_kernel_file(device, kernel_file, &krnl_buffer));
-
   // ---- Set up kernel arguments ----
   kernel_arg_t kargs = {};
 
@@ -567,39 +602,49 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_mem_alloc(device, sizeof(kargs), VX_MEM_READ_WRITE, &args_buffer));
   RT_CHECK(vx_copy_to_dev(args_buffer, &kargs, 0, sizeof(kargs)));
 
-  // ---- Validate once before timed loop (coarse "output not all-zero") ------
-  RT_CHECK(vx_start(device, krnl_buffer, args_buffer));
-  int wait_ret = vx_ready_wait(device, VX_MAX_TIMEOUT);
-  if (wait_ret != 0) {
-    std::cerr << "vx_ready_wait failed: ret=" << wait_ret << std::endl;
-    vx_copy_from_dev(&kargs, args_buffer, 0, sizeof(kargs));
-    std::cerr << "Kernel status: " << kargs.status << std::endl;
-    cleanup();
-    return -1;
-  }
-  RT_CHECK(vx_copy_from_dev(&kargs, args_buffer, 0, sizeof(kargs)));
-  if (kargs.status != STATUS_OK) {
-    std::cout << "Kernel failed: status=" << kargs.status << std::endl;
-    cleanup();
-    return -1;
-  }
+  auto check_kernel_status = [&](const char* phase, int iter) -> bool {
+    int ret = vx_copy_from_dev(&kargs, args_buffer, 0, sizeof(kargs));
+    if (ret != 0) {
+      std::cerr << "vx_copy_from_dev failed during " << phase
+                << " iter=" << iter << ": ret=" << ret << std::endl;
+      return false;
+    }
+    if (kargs.status != STATUS_OK) {
+      std::cerr << "Kernel failed during " << phase << " iter=" << iter
+                << ": status=" << kargs.status
+                << " (" << status_to_str(kargs.status) << ")"
+                << std::endl;
+      return false;
+    }
+    return true;
+  };
 
-  std::vector<uint8_t> h_out(out_total_bytes);
-  RT_CHECK(vx_copy_from_dev(h_out.data(), C_buffer, 0, out_total_bytes));
-  bool any_nonzero = false;
-  for (uint8_t b : h_out) { if (b != 0) { any_nonzero = true; break; } }
-  if (!any_nonzero) {
-    printf("Validation FAILED: C buffer is all zero after kernel run\n");
-    cleanup();
-    return -1;
-  }
+  auto run_kernel_checked = [&](const char* phase, int iter) -> bool {
+    int ret = vx_start(device, krnl_buffer, args_buffer);
+    if (ret != 0) {
+      std::cerr << "vx_start failed during " << phase
+                << " iter=" << iter << ": ret=" << ret << std::endl;
+      return false;
+    }
+    ret = vx_ready_wait(device, VX_MAX_TIMEOUT);
+    if (ret != 0) {
+      std::cerr << "vx_ready_wait failed during " << phase
+                << " iter=" << iter << ": ret=" << ret << std::endl;
+      return false;
+    }
+    return check_kernel_status(phase, iter);
+  };
 
   // ---- Warmup --------------------------------------------------------------
   // No need to re-upload args: the kernel only reads kargs once per launch and
-  // never reads back its own status field. DRAM contents persist between runs.
+  // updates its own status field in DRAM. DRAM contents persist between runs.
   for (int i = 0; i < bench.warmup; ++i) {
     RT_CHECK(vx_start(device, krnl_buffer, args_buffer));
     RT_CHECK(vx_ready_wait(device, VX_MAX_TIMEOUT));
+    if (!check_kernel_status("warmup", i)) {
+      cleanup();
+      return -1;
+    }
   }
 
   // ---- Timed iterations ----------------------------------------------------
@@ -608,10 +653,23 @@ int main(int argc, char *argv[]) {
     vx_bench::Stopwatch sw; sw.start();
     RT_CHECK(vx_start(device, krnl_buffer, args_buffer));
     RT_CHECK(vx_ready_wait(device, VX_MAX_TIMEOUT));
+    if (!check_kernel_status("timed", i)) {
+      cleanup();
+      return -1;
+    }
     stats.record(sw.stop_us());
   }
 
   stats.report("fpint_gemm_ffn_hw", bench);
+
+  if (!vx_bench::run_power_measurement(
+          "fpint_gemm_ffn_hw", bench,
+          [&](const char* phase, int iter) -> bool {
+            return run_kernel_checked(phase, iter);
+          })) {
+    cleanup();
+    return -1;
+  }
 
   if (!bench.csv) {
     printf("\n[Performance]\n");

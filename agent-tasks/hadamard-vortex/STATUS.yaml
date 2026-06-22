@@ -1,0 +1,18 @@
+task: hadamard-vortex
+state: COMPLETE
+created: "2026-06-03 17:45"
+updated: "2026-06-03 17:53"
+summary: "Implement a Vortex regression app for FP16 input/output Fast Hadamard Transform with FP32 internal butterfly and zero padding to next power-of-two dim."
+log:
+  - time: "2026-06-03 17:45"
+    entry: "Reviewed plan and existing regression app patterns. Scope is tests/regression only; no PyTorch or SpinQuant direct integration."
+  - time: "2026-06-03 17:47"
+    entry: "Added RED host harness and ran build from configured build directory. Build failed as expected because tests/regression/hadamard/kernel.cpp was not implemented yet."
+  - time: "2026-06-03 17:53"
+    entry: "Implemented FP16 I/O Hadamard regression app, FP32 local-memory FWHT kernel, zero padding to next power-of-two dim, and benchmark target."
+  - time: "2026-06-03 17:53"
+    entry: "Verified from configured build directory with ci/run_black.sh xrt-vcs-sim --app hadamard --args \"-rows 2 -dim 96\". Result: padded_dim=128, max_diff=0, mean_diff=0, errors=0."
+pitfalls:
+  - "Existing SpinQuant non-power-of-two Hadamard decomposition is not the same math as zero-padded FHT. This app intentionally follows the user's zero-padding semantics."
+  - "Generated build-tree files can differ from source templates; run configure from the build directory before build-side tests."
+  - "Building regression apps directly from the source tree can fail on missing generated VX_config.h; use the configured build directory."

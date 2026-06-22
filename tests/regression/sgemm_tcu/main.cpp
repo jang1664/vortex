@@ -367,12 +367,29 @@ struct muladd_t<vt::uint4, vt::int32> {
   }
 };
 
+template <typename A, typename O>
+struct accum_to_output_t {
+  using atype = typename A::dtype;
+  using otype = typename O::dtype;
+  static otype eval(atype value) {
+    return static_cast<otype>(value);
+  }
+};
+
+template <>
+struct accum_to_output_t<vt::fp32, vt::fp16> {
+  static uint16_t eval(float value) {
+    return rv_ftoh_s(bit_cast<uint32_t>(value), 0, nullptr);
+  }
+};
+
 ///////////////////////////////////////////////////////////////////////////////
 
 using cfg = vt::wmma_config_t<NUM_THREADS, vt::ITYPE, vt::OTYPE>;
 
 using itype_t = typename vt::ITYPE::dtype;
 using otype_t = typename vt::OTYPE::dtype;
+using atype_t = typename vt::ACC_TYPE::dtype;
 
 struct SparseMat {
   std::vector<itype_t> values;   // non-zeros
@@ -383,17 +400,26 @@ struct SparseMat {
   uint32_t rows, cols;           // original A dims (M × K)
 };
 
-static void matmul_cpu(otype_t *C, const itype_t *A, const itype_t *B, uint32_t M, uint32_t N, uint32_t K) {
+static void matmul_cpu(otype_t *C,
+                       const itype_t *A,
+                       const itype_t *B,
+                       uint32_t M,
+                       uint32_t N,
+                       uint32_t K,
+                       uint32_t lda,
+                       uint32_t ldb) {
   uint32_t subbytes = 8 / vt::ITYPE::bits;
   uint32_t KS = subbytes ? (K * subbytes) : K;
+  uint32_t LDAS = subbytes ? (lda * subbytes) : lda;
   for (uint32_t m = 0; m < M; ++m) {
     for (uint32_t n = 0; n < N; ++n) {
-      otype_t sum(0);
+      atype_t acc(0);
       for (uint32_t k = 0; k < KS; ++k) {
-        auto a = data_accessor_t<vt::ITYPE>::read(A, m * KS + k);
-        auto b = data_accessor_t<vt::ITYPE>::read(B, k * N + n);
-        sum = muladd_t<vt::ITYPE, vt::OTYPE>::eval(a, b, sum);
+        auto a = data_accessor_t<vt::ITYPE>::read(A, m * LDAS + k);
+        auto b = data_accessor_t<vt::ITYPE>::read(B, k * ldb + n);
+        acc = muladd_t<vt::ITYPE, vt::ACC_TYPE>::eval(a, b, acc);
       }
+      otype_t sum = accum_to_output_t<vt::ACC_TYPE, vt::OTYPE>::eval(acc);
       data_accessor_t<vt::OTYPE>::write(C, m * N + n, sum);
     }
   }
@@ -555,44 +581,46 @@ int main(int argc, char *argv[]) {
   uint32_t M = xm;
   uint32_t N = xn;
   uint32_t K = xk;
+  uint32_t M_exec = align_up_u32(M, cfg::tileM);
+  uint32_t N_exec = align_up_u32(N, cfg::tileN);
+  uint32_t K_exec = align_up_u32(K, cfg::tileK);
 
-  if ((M % cfg::tileM) != 0) {
-    std::cout << "Error: M must be a multiple of tensor tileM!" << std::endl;
-    return -1;
-  }
-
-  if ((N % cfg::tileN) != 0) {
-    std::cout << "Error: M must be a multiple of tensor tileN!" << std::endl;
-    return -1;
-  }
-
-  if ((K % cfg::tileK) != 0) {
-    std::cout << "Error: M must be a multiple of tensor tileK!" << std::endl;
-    return -1;
-  }
-
-  size_t sizeA = M * K;
-  size_t sizeB = K * N;
-  size_t sizeC = M * N;
+  size_t sizeA = M_exec * K_exec;
+  size_t sizeB = K_exec * N_exec;
+  size_t sizeC = M_exec * N_exec;
+  size_t sizeC_logical = M * N;
 
   std::cout << "input data type: " << vt::ITYPE::name << " (id=" << vt::ITYPE::id << ")" << std::endl;
   std::cout << "output data type: " << vt::OTYPE::name << " (id=" << vt::OTYPE::id << ")" << std::endl;
+  std::cout << "accumulator data type: " << vt::ACC_TYPE::name << " (id=" << vt::ACC_TYPE::id << ")" << std::endl;
   std::cout << "WMMA Core Dimension: M=" << cfg::tcM << ", N=" << cfg::tcN << ", K=" << cfg::tcK << std::endl;
   std::cout << "WMMA Tile Dimension: M=" << cfg::tileM << ", N=" << cfg::tileN << ", K=" << cfg::tileK << std::endl;
-  std::cout << "matrix A: " << M << "x" << K << std::endl;
-  std::cout << "matrix B: " << K << "x" << N << std::endl;
-  std::cout << "matrix C: " << M << "x" << N << std::endl;
+  std::cout << "matrix A: " << M << "x" << K;
+  if ((M_exec != M) || (K_exec != K)) {
+    std::cout << " (padded " << M_exec << "x" << K_exec << ")";
+  }
+  std::cout << std::endl;
+  std::cout << "matrix B: " << K << "x" << N;
+  if ((K_exec != K) || (N_exec != N)) {
+    std::cout << " (padded " << K_exec << "x" << N_exec << ")";
+  }
+  std::cout << std::endl;
+  std::cout << "matrix C: " << M << "x" << N;
+  if ((M_exec != M) || (N_exec != N)) {
+    std::cout << " (padded " << M_exec << "x" << N_exec << ")";
+  }
+  std::cout << std::endl;
 
   // set block size to warp size
-  kernel_arg.grid_dim[0] = N / cfg::tileN;
-  kernel_arg.grid_dim[1] = M / cfg::tileM;
+  kernel_arg.grid_dim[0] = N_exec / cfg::tileN;
+  kernel_arg.grid_dim[1] = M_exec / cfg::tileM;
   kernel_arg.block_dim[0] = NT; // warp sizeb
   kernel_arg.block_dim[1] = 1;
 
   // set matrix dimensions
-  kernel_arg.M = M;
-  kernel_arg.N = N;
-  kernel_arg.K = K;
+  kernel_arg.M = M_exec;
+  kernel_arg.N = N_exec;
+  kernel_arg.K = K_exec;
 
   // allocate device memory
   std::cout << "allocate device memory" << std::endl;
@@ -608,13 +636,17 @@ int main(int argc, char *argv[]) {
   std::cout << "C_addr=0x" << std::hex << kernel_arg.C_addr << std::endl;
 
   // generate source data
-  std::vector<itype_t> h_A(sizeA);
-  std::vector<itype_t> h_B(sizeB);
-  for (uint32_t i = 0; i < sizeA; ++i) {
-    h_A[i] = Comparator<vt::ITYPE>::generate();
+  std::vector<itype_t> h_A(sizeA, 0);
+  std::vector<itype_t> h_B(sizeB, 0);
+  for (uint32_t m = 0; m < M; ++m) {
+    for (uint32_t k = 0; k < K; ++k) {
+      h_A[m * K_exec + k] = Comparator<vt::ITYPE>::generate();
+    }
   }
-  for (uint32_t i = 0; i < sizeB; ++i) {
-    h_B[i] = Comparator<vt::ITYPE>::generate();
+  for (uint32_t k = 0; k < K; ++k) {
+    for (uint32_t n = 0; n < N; ++n) {
+      h_B[k * N_exec + n] = Comparator<vt::ITYPE>::generate();
+    }
   }
 
   // upload matrix A buffer
@@ -630,7 +662,7 @@ int main(int argc, char *argv[]) {
       // sub-byte matrix B must be in col-major format
       // we convert the 4-bit row-major to col-major here
       std::vector<uint8_t> h_B_col(sizeB);
-      convert_row_to_col_major_4bit(h_B_col.data(), N, 2 * K, (uint8_t*)h_B.data());
+      convert_row_to_col_major_4bit(h_B_col.data(), N_exec, 2 * K_exec, (uint8_t*)h_B.data());
       RT_CHECK(vx_copy_to_dev(B_buffer, h_B_col.data(), 0, sizeB));
     } else {
       RT_CHECK(vx_copy_to_dev(B_buffer, h_B.data(), 0, sizeB * sizeof(itype_t)));
@@ -668,12 +700,16 @@ int main(int argc, char *argv[]) {
   std::cout << "verify result" << std::endl;
   int errors = 0;
   {
-    std::vector<otype_t> h_ref(sizeC);
-    matmul_cpu(h_ref.data(), h_A.data(), h_B.data(), M, N, K);
+    std::vector<otype_t> h_ref(sizeC_logical);
+    matmul_cpu(h_ref.data(), h_A.data(), h_B.data(), M, N, K, K_exec, N_exec);
 
-    for (uint32_t i = 0; i < h_ref.size(); ++i) {
-      if (!Comparator<vt::OTYPE>::compare(h_C[i], h_ref[i], i, errors)) {
-        ++errors;
+    for (uint32_t m = 0; m < M; ++m) {
+      for (uint32_t n = 0; n < N; ++n) {
+        uint32_t logical_idx = m * N + n;
+        uint32_t padded_idx = m * N_exec + n;
+        if (!Comparator<vt::OTYPE>::compare(h_C[padded_idx], h_ref[logical_idx], logical_idx, errors)) {
+          ++errors;
+        }
       }
     }
   }
@@ -683,7 +719,7 @@ int main(int argc, char *argv[]) {
   cleanup();
 
   if (errors != 0) {
-    std::cout << "Found " << std::dec << errors << " / " << sizeC << " errors!" << std::endl;
+    std::cout << "Found " << std::dec << errors << " / " << sizeC_logical << " errors!" << std::endl;
     std::cout << "FAILED!" << std::endl;
     return errors;
   }

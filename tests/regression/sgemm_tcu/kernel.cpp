@@ -3,7 +3,7 @@
 #include <vx_tensor.h>
 
 namespace vt = vortex::tensor;
-using ctx = vt::wmma_context<NUM_THREADS, vt::ITYPE, vt::OTYPE>;
+using ctx = vt::wmma_context<NUM_THREADS, vt::ITYPE, vt::OTYPE, vt::ACC_TYPE>;
 
 void kernel_body(kernel_arg_t *__UNIFORM__ arg) {
   auto pA = reinterpret_cast<ctx::input_t *>(arg->A_addr);

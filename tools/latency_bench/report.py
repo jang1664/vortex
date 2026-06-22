@@ -8,14 +8,21 @@ from typing import Any
 
 import pandas as pd
 
+from .power_summary import read_power_summary
+from .status import DEFAULT_POWER_MIN_SAMPLES, classify_status, power_sample_failure_reason
 from .suite import BenchSuite, suite_to_rows
 
 
 RESULT_COLUMNS = [
-    "suite", "case_id", "exec_key", "app", "kind", "stage", "name", "args",
-    "shape_json", "calls_per_forward", "fpga_bin_dir", "xclbin_sha256",
-    "warmup", "iterations", "source", "status", "returncode", "raw_csv",
-    "log_file", "samples", "min_us", "avg_us", "max_us", "p50_us", "p95_us",
+    "suite", "case_id", "exec_key", "app", "kind", "op", "backend",
+    "variant", "stage", "name", "args", "shape_json", "calls_per_forward",
+    "fpga_bin_dir", "xclbin_sha256", "warmup", "iterations", "source",
+    "status", "returncode", "failure_phase", "failure_reason", "raw_csv",
+    "power_csv", "power_summary", "measure_latency", "measure_power",
+    "power_samples", "power_elapsed_s", "power_min_w", "power_avg_w",
+    "power_max_w", "power_parse_error",
+    "log_file", "elapsed_wall_s",
+    "samples", "min_us", "avg_us", "max_us", "p50_us", "p95_us",
 ]
 
 
@@ -36,7 +43,7 @@ def read_status_csv(path: Path) -> dict[str, dict[str, str]]:
 
 def read_bench_csv(path: Path) -> dict[str, Any]:
     if not path.exists():
-        return {}
+        return {"parse_error": "missing_raw_csv"}
     rows = []
     with path.open(newline="") as fp:
         for row in csv.reader(fp):
@@ -44,7 +51,7 @@ def read_bench_csv(path: Path) -> dict[str, Any]:
                 continue
             rows.append(row)
     if not rows:
-        return {}
+        return {"parse_error": "empty_raw_csv"}
     row = rows[-1]
     if len(row) < 7:
         return {"parse_error": f"expected 7 columns, got {len(row)}"}
@@ -62,7 +69,17 @@ def read_bench_csv(path: Path) -> dict[str, Any]:
         return {"parse_error": str(exc)}
 
 
-def build_results(suite: BenchSuite, out_dir: Path, fpga_bin_dir: Path) -> pd.DataFrame:
+def _parse_bool_cell(value: Any) -> bool:
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def build_results(
+    suite: BenchSuite,
+    out_dir: Path,
+    fpga_bin_dir: Path,
+    *,
+    power_min_samples: int = DEFAULT_POWER_MIN_SAMPLES,
+) -> pd.DataFrame:
     status_rows = read_status_csv(out_dir / "run_status.csv")
     xclbin = fpga_bin_dir / "vortex_afu.xclbin"
     xclbin_sha = sha256_file(xclbin) if xclbin.exists() else ""
@@ -73,13 +90,36 @@ def build_results(suite: BenchSuite, out_dir: Path, fpga_bin_dir: Path) -> pd.Da
         status = status_rows.get(exec_key, {})
         raw_csv = Path(status.get("raw_csv", out_dir / "raw" / f"{exec_key}.csv"))
         log_file = Path(status.get("log_file", out_dir / "logs" / f"{exec_key}.log"))
+        power_summary = status.get("power_summary", "")
+        measure_power = _parse_bool_cell(status.get("measure_power", ""))
         bench = read_bench_csv(raw_csv)
+        power = read_power_summary(power_summary if measure_power else None)
         returncode = int(status.get("returncode", 999)) if status else 999
-        run_status = "pass" if returncode == 0 and bench and "parse_error" not in bench else "fail"
-        if not status:
-            run_status = "not_run"
-        if "parse_error" in bench:
-            run_status = "parse_error"
+        failure_phase = status.get("failure_phase", "")
+        failure_reason = status.get("failure_reason", "")
+        if not failure_reason:
+            if failure_phase == "build":
+                failure_reason = "build"
+            elif returncode in {124, 137}:
+                failure_reason = "timeout"
+            elif returncode == 0 and "parse_error" in bench:
+                failure_reason = "parse_error"
+            elif returncode == 0:
+                failure_reason = power_sample_failure_reason(
+                    power,
+                    measure_power=measure_power,
+                    power_min_samples=power_min_samples,
+                )
+        run_status = classify_status(
+            returncode,
+            has_status=bool(status),
+            bench=bench,
+            power=power,
+            measure_power=measure_power,
+            power_min_samples=power_min_samples,
+            failure_phase=failure_phase,
+            failure_reason=failure_reason,
+        )
 
         out = {
             **row,
@@ -87,8 +127,21 @@ def build_results(suite: BenchSuite, out_dir: Path, fpga_bin_dir: Path) -> pd.Da
             "xclbin_sha256": xclbin_sha,
             "status": run_status,
             "returncode": returncode,
+            "failure_phase": failure_phase,
+            "failure_reason": failure_reason,
             "raw_csv": str(raw_csv),
+            "power_csv": status.get("power_csv", ""),
+            "power_summary": power_summary,
+            "measure_latency": status.get("measure_latency", ""),
+            "measure_power": status.get("measure_power", ""),
+            "power_samples": power.get("power_samples"),
+            "power_elapsed_s": power.get("power_elapsed_s"),
+            "power_min_w": power.get("power_min_w"),
+            "power_avg_w": power.get("power_avg_w"),
+            "power_max_w": power.get("power_max_w"),
+            "power_parse_error": power.get("power_parse_error", ""),
             "log_file": str(log_file),
+            "elapsed_wall_s": status.get("elapsed_wall_s"),
             "samples": bench.get("samples"),
             "min_us": bench.get("min_us"),
             "avg_us": bench.get("avg_us"),
@@ -115,6 +168,8 @@ def build_summary(results: pd.DataFrame) -> pd.DataFrame:
     group_specs = [
         ("stage", ["suite", "stage"]),
         ("kind", ["suite", "stage", "kind"]),
+        ("backend", ["suite", "stage", "backend"]),
+        ("op", ["suite", "stage", "op"]),
         ("kernel", ["suite", "stage", "name"]),
         ("total", ["suite"]),
     ]
@@ -122,6 +177,8 @@ def build_summary(results: pd.DataFrame) -> pd.DataFrame:
         for keys, sub in ok.groupby(cols, dropna=False, sort=True):
             if not isinstance(keys, tuple):
                 keys = (keys,)
+            if group_name in ("kind", "backend", "op", "kernel") and not str(keys[2]):
+                continue
             row = {"suite": keys[0], "stage": "", "group": group_name}
             if group_name == "stage":
                 row["stage"] = keys[1]
@@ -129,6 +186,12 @@ def build_summary(results: pd.DataFrame) -> pd.DataFrame:
             elif group_name == "kind":
                 row["stage"] = keys[1]
                 row["group"] = f"kind:{keys[2]}"
+            elif group_name == "backend":
+                row["stage"] = keys[1]
+                row["group"] = f"backend:{keys[2]}"
+            elif group_name == "op":
+                row["stage"] = keys[1]
+                row["group"] = f"op:{keys[2]}"
             elif group_name == "kernel":
                 row["stage"] = keys[1]
                 row["group"] = f"kernel:{keys[2]}"

@@ -57,6 +57,14 @@ module VX_afu_ctrl import VX_gpu_pkg::*; #(
     output wire                         scope_bus_out,
 `endif
 
+`ifdef ENABLE_HW_DEBUG_MODULE
+    output wire [31:0]                  hw_debug_select,
+    output wire                         hw_debug_clear,
+    output wire                         hw_debug_freeze,
+    input  wire [63:0]                  hw_debug_rdata,
+    input  wire [31:0]                  hw_debug_status,
+`endif
+
     output wire                         dcr_wr_valid,
     output wire [VX_DCR_ADDR_WIDTH-1:0] dcr_wr_addr,
     output wire [VX_DCR_DATA_WIDTH-1:0] dcr_wr_data
@@ -120,6 +128,13 @@ module VX_afu_ctrl import VX_gpu_pkg::*; #(
         ADDR_SCP_1      = 8'h2C,
     `endif
 
+    `ifdef ENABLE_HW_DEBUG_MODULE
+        ADDR_DBG_SEL    = 8'hC0,
+        ADDR_DBG_DATA_0 = 8'hC4,
+        ADDR_DBG_DATA_1 = 8'hC8,
+        ADDR_DBG_CTRL   = 8'hCC,
+    `endif
+
         ADDR_BITS       = 8;
 
     localparam
@@ -172,6 +187,12 @@ module VX_afu_ctrl import VX_gpu_pkg::*; #(
     reg [31:0]  dcra_r;
     reg [31:0]  dcrv_r;
     reg         dcr_wr_valid_r;
+
+`ifdef ENABLE_HW_DEBUG_MODULE
+    reg [31:0]  hw_debug_select_r;
+    reg         hw_debug_clear_r;
+    reg         hw_debug_freeze_r;
+`endif
 
     logic wready_stall;
     logic rvalid_stall;
@@ -307,9 +328,17 @@ module VX_afu_ctrl import VX_gpu_pkg::*; #(
             dcra_r <= '0;
             dcrv_r <= '0;
             dcr_wr_valid_r <= 0;
+        `ifdef ENABLE_HW_DEBUG_MODULE
+            hw_debug_select_r <= '0;
+            hw_debug_clear_r <= 0;
+            hw_debug_freeze_r <= 0;
+        `endif
         end else begin
             dcr_wr_valid_r <= 0;
             ap_reset_r <= 0;
+        `ifdef ENABLE_HW_DEBUG_MODULE
+            hw_debug_clear_r <= 0;
+        `endif
 
             if (ap_ready)
                 ap_start_r <= auto_restart_r;
@@ -345,6 +374,17 @@ module VX_afu_ctrl import VX_gpu_pkg::*; #(
                     dcrv_r <= (s_axi_wdata & wmask) | (dcrv_r & ~wmask);
                     dcr_wr_valid_r <= 1;
                 end
+            `ifdef ENABLE_HW_DEBUG_MODULE
+                ADDR_DBG_SEL: begin
+                    hw_debug_select_r <= (s_axi_wdata & wmask) | (hw_debug_select_r & ~wmask);
+                end
+                ADDR_DBG_CTRL: begin
+                    if (s_axi_wstrb[0]) begin
+                        hw_debug_clear_r <= s_axi_wdata[0];
+                        hw_debug_freeze_r <= s_axi_wdata[1];
+                    end
+                end
+            `endif
                 default:;
                 endcase
 
@@ -422,6 +462,21 @@ module VX_afu_ctrl import VX_gpu_pkg::*; #(
             ADDR_ISA_1: begin
                 rdata <= isa_caps[63:32];
             end
+        `ifdef ENABLE_HW_DEBUG_MODULE
+            ADDR_DBG_SEL: begin
+                rdata <= hw_debug_select_r;
+            end
+            ADDR_DBG_DATA_0: begin
+                rdata <= hw_debug_rdata[31:0];
+            end
+            ADDR_DBG_DATA_1: begin
+                rdata <= hw_debug_rdata[63:32];
+            end
+            ADDR_DBG_CTRL: begin
+                rdata <= hw_debug_status;
+                rdata[1] <= hw_debug_freeze_r;
+            end
+        `endif
         `ifdef SCOPE
             ADDR_SCP_0: begin
                 rdata <= scope_bus_rdata[31:0];
@@ -443,5 +498,11 @@ module VX_afu_ctrl import VX_gpu_pkg::*; #(
     assign dcr_wr_valid = dcr_wr_valid_r;
     assign dcr_wr_addr  = VX_DCR_ADDR_WIDTH'(dcra_r);
     assign dcr_wr_data  = VX_DCR_DATA_WIDTH'(dcrv_r);
+
+`ifdef ENABLE_HW_DEBUG_MODULE
+    assign hw_debug_select = hw_debug_select_r;
+    assign hw_debug_clear  = hw_debug_clear_r;
+    assign hw_debug_freeze = hw_debug_freeze_r;
+`endif
 
 endmodule

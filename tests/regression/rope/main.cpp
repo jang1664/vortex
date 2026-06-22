@@ -6,6 +6,7 @@
 #include <assert.h>
 #include <vortex.h>
 #include "common.h"
+#include "../vector_common/fp16.h"
 
 #define RT_CHECK(_expr)                                         \
    do {                                                         \
@@ -20,7 +21,7 @@
 #define FLOAT_ULP 6
 #define M_PI 3.14159265358979323846
 
-using data_t = float;
+using data_t = fp16_t;
 
 vx_device_h device = nullptr;
 vx_buffer_h krnl_buffer = nullptr;
@@ -60,8 +61,8 @@ void precompute_freqs(
       float freq = std::pow(theta_base, -2.0f * i / head_dim);
       float theta = pos * freq;
       
-      cos_table[pos * half_dim + i] = std::cos(theta);
-      sin_table[pos * half_dim + i] = std::sin(theta);
+      cos_table[pos * half_dim + i] = float_to_fp16(std::cos(theta));
+      sin_table[pos * half_dim + i] = float_to_fp16(std::sin(theta));
     }
   }
 }
@@ -91,14 +92,14 @@ void rope_cpu(
         
         // Apply rotation to each pair
         for (uint32_t p = 0; p < half_dim; ++p) {
-          float cos_val = cos_table[pos * half_dim + p];
-          float sin_val = sin_table[pos * half_dim + p];
+          float cos_val = fp16_to_float(cos_table[pos * half_dim + p]);
+          float sin_val = fp16_to_float(sin_table[pos * half_dim + p]);
           
-          float x0 = input[base_idx + p];
-          float x1 = input[base_idx + p + half_dim];
+          float x0 = fp16_to_float(input[base_idx + p]);
+          float x1 = fp16_to_float(input[base_idx + p + half_dim]);
           
-          output[base_idx + p] = x0 * cos_val - x1 * sin_val;
-          output[base_idx + p + half_dim] = x0 * sin_val + x1 * cos_val;
+          output[base_idx + p] = float_to_fp16(x0 * cos_val - x1 * sin_val);
+          output[base_idx + p + half_dim] = float_to_fp16(x0 * sin_val + x1 * cos_val);
         }
       }
     }
@@ -119,7 +120,8 @@ int float_compare(float a, float b, int ulp = FLOAT_ULP) {
 
 void initialize_random(std::vector<data_t>& vec) {
   for (auto& val : vec) {
-    val = static_cast<float>(rand()) / RAND_MAX * 2.0f - 1.0f;  // [-1, 1]
+    float x = static_cast<float>(rand()) / RAND_MAX * 2.0f - 1.0f;  // [-1, 1]
+    val = float_to_fp16(x);
   }
 }
 
@@ -276,20 +278,22 @@ int main(int argc, char *argv[]) {
   float max_rel_error = 0.0f;
   
   for (uint32_t i = 0; i < input_size; ++i) {
-    float diff = std::abs(h_output_gpu[i] - h_output_cpu[i]);
+    float got = fp16_to_float(h_output_gpu[i]);
+    float expected = fp16_to_float(h_output_cpu[i]);
+    float diff = std::abs(got - expected);
     max_diff = std::max(max_diff, diff);
     
     // Use relative error tolerance (for trigonometric operations)
     float abs_threshold = 1e-5f;  // Absolute tolerance for values near zero
-    float rel_threshold = std::abs(h_output_cpu[i]) * 0.01f;  // 1% relative error
+    float rel_threshold = std::abs(expected) * 0.01f;  // 1% relative error
     float threshold = std::max(abs_threshold, rel_threshold);
     
     if (diff > threshold) {
       if (errors < 10) {
-        float rel_error = (h_output_cpu[i] != 0.0f) ? diff / std::abs(h_output_cpu[i]) : 0.0f;
+        float rel_error = (expected != 0.0f) ? diff / std::abs(expected) : 0.0f;
         max_rel_error = std::max(max_rel_error, rel_error);
         printf("Error at %d: GPU=%.6f, CPU=%.6f, diff=%.6f, rel_err=%.2f%%\n", 
-               i, h_output_gpu[i], h_output_cpu[i], diff, rel_error * 100.0f);
+               i, got, expected, diff, rel_error * 100.0f);
       }
       ++errors;
     }

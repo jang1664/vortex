@@ -1,0 +1,21 @@
+task: fpu-exp-fpnew-hang-analysis
+state: VERIFIED
+created: "2026-06-09 20:11"
+updated: "2026-06-09 20:32"
+summary: "Reworked VX_fpu_exp_fpnew into a fully unrolled fpnew streaming pipeline and verified a softmax xrt-vcs smoke test."
+log:
+  - time: "2026-06-09 20:11"
+    entry: "Read debug-xrt-vcs and systematic-debugging workflows. Inspected untracked VX_fpu_exp_fpnew.sv, VX_pe_serializer.sv, and existing DSP exp/FMA serializer users. Initial suspicion: VX_pe_serializer assumes a fixed-latency PE result per accepted input, while VX_fpu_exp_fpnew drives a multi-step FSM whose final data is not aligned with the serializer's fixed shift-register valid."
+  - time: "2026-06-09 20:13"
+    entry: "Checked existing build logs. compile.log passes. simv.log shows repeated AFU status register reads of 0x00000001 with no PASSED/FAILED, consistent with kernel hang waiting for completion. Root RTL issue found: VX_fpu_exp_fpnew gates external ready_in with state == IDLE but still feeds raw valid_in to VX_pe_serializer; serializer can shift/consume valid while the wrapper reports not-ready. A second issue is fixed LATENCY_EXP_FPNEW output timing, which does not account for FSM issue/wait gaps and is not tied to STATE_DONE."
+  - time: "2026-06-09 20:31"
+    entry: "Replaced the FSM/serializer implementation with an 8-stage fully unrolled fpnew pipeline: MUL x*log2e, F2I floor, I2F, subtract fractional part, and four FMADD polynomial stages. Sideband state (tag, mask, accumulated fflags, n, t, n_float, f) is carried through fpnew TagType, and backpressure is propagated stage-to-stage through fpnew valid/ready."
+  - time: "2026-06-09 20:31"
+    entry: "Verification passed: FPU_FPNEW VCS compile completed with no VX_fpu_exp_fpnew SIOB/Error/Fatal matches in compile.log. xrt-vcs-sim softmax smoke passed with args '-batch 1 -heads 1 -seqq 1 -seqk 8 -mask 0', CONFIGS from improve_tcol1 plus -DFPU_FPNEW."
+  - time: "2026-06-09 20:32"
+    entry: "Additional masked xrt-vcs-sim softmax smoke passed with args '-batch 1 -heads 1 -seqq 2 -seqk 8 -mask 1'."
+pitfalls:
+  - "Do not rely on git diff for VX_fpu_exp_fpnew.sv because the file is currently untracked."
+  - "Do not run blackbox outside the configured build directory."
+  - "VX_pe_serializer should only see a valid input for cycles accepted by the module's external ready/valid contract, otherwise its tag/valid shift register can emit phantom responses."
+  - "For multi-step fpnew expressions, fixed-latency serializers are fragile unless every internal operation has a deterministic no-bubble schedule. Carrying sideband through fpnew TagType keeps data and metadata aligned under backpressure."

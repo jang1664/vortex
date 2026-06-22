@@ -26,6 +26,12 @@ module VX_commit import VX_gpu_pkg::*; #(
     VX_writeback_if.master  writeback_if  [`ISSUE_WIDTH],
     VX_commit_csr_if.master commit_csr_if,
     VX_commit_sched_if.master commit_sched_if
+`ifdef ENABLE_HW_DEBUG_MODULE
+    ,
+    output wire                         hw_debug_pc_valid,
+    output wire [NW_WIDTH-1:0]          hw_debug_pc_wid,
+    output wire [`XLEN-1:0]             hw_debug_pc
+`endif
 );
     `UNUSED_SPARAM (INSTANCE_ID)
     localparam OUT_DATAW = $bits(commit_t);
@@ -40,6 +46,9 @@ module VX_commit import VX_gpu_pkg::*; #(
     wire [`ISSUE_WIDTH-1:0][NW_WIDTH-1:0] per_issue_commit_wid;
     wire [`ISSUE_WIDTH-1:0][`SIMD_WIDTH-1:0] per_issue_commit_tmask;
     wire [`ISSUE_WIDTH-1:0] per_issue_commit_eop;
+`ifdef ENABLE_HW_DEBUG_MODULE
+    wire [`ISSUE_WIDTH-1:0][`XLEN-1:0] per_issue_commit_pc;
+`endif
 
     for (genvar i = 0; i < `ISSUE_WIDTH; ++i) begin : g_commit_arbs
 
@@ -74,6 +83,9 @@ module VX_commit import VX_gpu_pkg::*; #(
         assign per_issue_commit_tmask[i]= {`SIMD_WIDTH{per_issue_commit_fire[i]}} & commit_arb_if[i].data.tmask;
         assign per_issue_commit_wid[i]  = commit_arb_if[i].data.wid;
         assign per_issue_commit_eop[i]  = commit_arb_if[i].data.eop;
+    `ifdef ENABLE_HW_DEBUG_MODULE
+        assign per_issue_commit_pc[i]   = to_fullPC(commit_arb_if[i].data.PC);
+    `endif
     end
 
     // CSRs update
@@ -173,6 +185,29 @@ module VX_commit import VX_gpu_pkg::*; #(
         assign writeback_if[i].data.eop  = commit_arb_if[i].data.eop;
         assign commit_arb_if[i].ready    = 1;
     end
+
+`ifdef ENABLE_HW_DEBUG_MODULE
+    reg                    hw_debug_pc_valid_r;
+    reg [NW_WIDTH-1:0]     hw_debug_pc_wid_r;
+    reg [`XLEN-1:0]        hw_debug_pc_r;
+
+    always @(*) begin
+        hw_debug_pc_valid_r = 1'b0;
+        hw_debug_pc_wid_r   = '0;
+        hw_debug_pc_r       = '0;
+        for (integer i = 0; i < `ISSUE_WIDTH; ++i) begin
+            if (!hw_debug_pc_valid_r && per_issue_commit_fire[i] && per_issue_commit_eop[i]) begin
+                hw_debug_pc_valid_r = 1'b1;
+                hw_debug_pc_wid_r   = per_issue_commit_wid[i];
+                hw_debug_pc_r       = per_issue_commit_pc[i];
+            end
+        end
+    end
+
+    assign hw_debug_pc_valid = hw_debug_pc_valid_r;
+    assign hw_debug_pc_wid   = hw_debug_pc_wid_r;
+    assign hw_debug_pc       = hw_debug_pc_r;
+`endif
 
 `ifdef DBG_TRACE_PIPELINE
     for (genvar i = 0; i < `ISSUE_WIDTH; ++i) begin : g_trace
