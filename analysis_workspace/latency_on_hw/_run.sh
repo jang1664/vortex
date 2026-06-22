@@ -11,6 +11,7 @@ SOFTMAX_LAYOUT_FUSED_VARIANT=opt SOFTMAX_VARIANT=opt_align ./run_hw.sh \
 SKIP_EXISTING=1 ./run_hw.sh --input generated_suites/main_power --output outputs_main_power \
   --no-latency --retry --retry-timeout-growth 2 \
   --power-auto-duration --power-max-iterations 1 \
+  --filter "app==kv_cache_quant_layout_fused_w4a16" \
   | tee -i logs/main_power.log
 
   # --filter \ "app==sgemm_tcu" \
