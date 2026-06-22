@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from .power_summary import read_power_summary
-from .status import classify_status
+from .status import DEFAULT_POWER_MIN_SAMPLES, classify_status, power_sample_failure_reason
 
 
 RAW_DB_COLUMNS = [
@@ -263,6 +263,9 @@ def _default_failure_reason(
     failure_phase: str,
     failure_reason: str,
     bench: dict[str, Any],
+    power: dict[str, Any],
+    measure_power: bool,
+    power_min_samples: int,
 ) -> str:
     if failure_reason:
         return failure_reason
@@ -272,6 +275,12 @@ def _default_failure_reason(
         return "timeout"
     if returncode == 0 and "parse_error" in bench:
         return "parse_error"
+    if returncode == 0:
+        return power_sample_failure_reason(
+            power,
+            measure_power=measure_power,
+            power_min_samples=power_min_samples,
+        )
     return ""
 
 
@@ -295,6 +304,7 @@ def append_raw_execution(
     power_summary: Path | None,
     measure_latency: bool,
     measure_power: bool,
+    power_min_samples: int = DEFAULT_POWER_MIN_SAMPLES,
     log_file: Path,
     elapsed_wall_s: str,
     mode: str,
@@ -310,10 +320,16 @@ def append_raw_execution(
         failure_phase=failure_phase,
         failure_reason=failure_reason,
         bench=bench,
+        power=power,
+        measure_power=measure_power,
+        power_min_samples=power_min_samples,
     )
     status = classify_status(
         returncode,
         bench=bench,
+        power=power,
+        measure_power=measure_power,
+        power_min_samples=power_min_samples,
         failure_phase=failure_phase,
         failure_reason=failure_reason,
     )
@@ -382,7 +398,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--failure-reason",
         default="",
-        choices=["", "build", "timeout", "xrt_context_open", "run", "parse_error"],
+        choices=["", "build", "timeout", "xrt_context_open", "run", "parse_error", "power_samples_low"],
         help="Specific failure reason, if known.",
     )
     parser.add_argument("--raw-csv", required=True, type=Path, help="Raw per-execution benchmark CSV.")
@@ -390,6 +406,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--power-summary", default=None, type=Path, help="Per-execution power summary CSV, when enabled.")
     parser.add_argument("--measure-latency", required=True, type=_parse_bool_arg, help="Whether latency was enabled.")
     parser.add_argument("--measure-power", required=True, type=_parse_bool_arg, help="Whether power was enabled.")
+    parser.add_argument(
+        "--power-min-samples",
+        default=DEFAULT_POWER_MIN_SAMPLES,
+        type=int,
+        help="Minimum required power samples when power measurement is enabled; 0 disables this status check.",
+    )
     parser.add_argument("--log-file", required=True, type=Path, help="Per-execution log file.")
     parser.add_argument("--elapsed-wall-s", required=True, help="Wall-clock seconds for the blackbox invocation.")
     parser.add_argument(
@@ -422,6 +444,7 @@ def main(argv: list[str] | None = None) -> int:
         power_summary=args.power_summary,
         measure_latency=args.measure_latency,
         measure_power=args.measure_power,
+        power_min_samples=args.power_min_samples,
         log_file=args.log_file,
         elapsed_wall_s=args.elapsed_wall_s,
         mode=args.mode,

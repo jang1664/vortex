@@ -9,7 +9,7 @@ from typing import Any
 import pandas as pd
 
 from .power_summary import read_power_summary
-from .status import classify_status
+from .status import DEFAULT_POWER_MIN_SAMPLES, classify_status, power_sample_failure_reason
 from .suite import BenchSuite, suite_to_rows
 
 
@@ -69,7 +69,17 @@ def read_bench_csv(path: Path) -> dict[str, Any]:
         return {"parse_error": str(exc)}
 
 
-def build_results(suite: BenchSuite, out_dir: Path, fpga_bin_dir: Path) -> pd.DataFrame:
+def _parse_bool_cell(value: Any) -> bool:
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def build_results(
+    suite: BenchSuite,
+    out_dir: Path,
+    fpga_bin_dir: Path,
+    *,
+    power_min_samples: int = DEFAULT_POWER_MIN_SAMPLES,
+) -> pd.DataFrame:
     status_rows = read_status_csv(out_dir / "run_status.csv")
     xclbin = fpga_bin_dir / "vortex_afu.xclbin"
     xclbin_sha = sha256_file(xclbin) if xclbin.exists() else ""
@@ -81,8 +91,9 @@ def build_results(suite: BenchSuite, out_dir: Path, fpga_bin_dir: Path) -> pd.Da
         raw_csv = Path(status.get("raw_csv", out_dir / "raw" / f"{exec_key}.csv"))
         log_file = Path(status.get("log_file", out_dir / "logs" / f"{exec_key}.log"))
         power_summary = status.get("power_summary", "")
+        measure_power = _parse_bool_cell(status.get("measure_power", ""))
         bench = read_bench_csv(raw_csv)
-        power = read_power_summary(power_summary)
+        power = read_power_summary(power_summary if measure_power else None)
         returncode = int(status.get("returncode", 999)) if status else 999
         failure_phase = status.get("failure_phase", "")
         failure_reason = status.get("failure_reason", "")
@@ -93,10 +104,19 @@ def build_results(suite: BenchSuite, out_dir: Path, fpga_bin_dir: Path) -> pd.Da
                 failure_reason = "timeout"
             elif returncode == 0 and "parse_error" in bench:
                 failure_reason = "parse_error"
+            elif returncode == 0:
+                failure_reason = power_sample_failure_reason(
+                    power,
+                    measure_power=measure_power,
+                    power_min_samples=power_min_samples,
+                )
         run_status = classify_status(
             returncode,
             has_status=bool(status),
             bench=bench,
+            power=power,
+            measure_power=measure_power,
+            power_min_samples=power_min_samples,
             failure_phase=failure_phase,
             failure_reason=failure_reason,
         )

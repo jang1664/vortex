@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from .power_summary import read_power_summary
-from .status import classify_status
+from .status import DEFAULT_POWER_MIN_SAMPLES, classify_status, power_sample_failure_reason
 
 
 PROGRESS_COLUMNS = [
@@ -114,11 +114,13 @@ def append_progress_execution(
     log_file: Path,
     power_csv: Path | None = None,
     power_summary: Path | None = None,
+    power_min_samples: int = DEFAULT_POWER_MIN_SAMPLES,
     failure_phase: str = "",
     failure_reason: str = "",
 ) -> None:
     bench = _read_bench_csv(raw_csv)
     power = read_power_summary(power_summary)
+    measure_power = power_summary is not None
     if not failure_reason:
         if failure_phase == "build":
             failure_reason = "build"
@@ -126,6 +128,12 @@ def append_progress_execution(
             failure_reason = "timeout"
         elif returncode == 0 and "parse_error" in bench:
             failure_reason = "parse_error"
+        elif returncode == 0:
+            failure_reason = power_sample_failure_reason(
+                power,
+                measure_power=measure_power,
+                power_min_samples=power_min_samples,
+            )
     row = {
         "timestamp_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "idx": idx,
@@ -140,6 +148,9 @@ def append_progress_execution(
         "status": classify_status(
             returncode,
             bench=bench,
+            power=power,
+            measure_power=measure_power,
+            power_min_samples=power_min_samples,
             failure_phase=failure_phase,
             failure_reason=failure_reason,
         ),
@@ -190,13 +201,19 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--failure-reason",
         default="",
-        choices=["", "build", "timeout", "xrt_context_open", "run", "parse_error"],
+        choices=["", "build", "timeout", "xrt_context_open", "run", "parse_error", "power_samples_low"],
         help="Specific failure reason, if known.",
     )
     parser.add_argument("--elapsed-wall-s", required=True, help="Wall-clock seconds for the blackbox invocation.")
     parser.add_argument("--raw-csv", required=True, type=Path, help="Raw per-execution benchmark CSV.")
     parser.add_argument("--power-csv", default=None, type=Path, help="Raw per-execution power CSV, when enabled.")
     parser.add_argument("--power-summary", default=None, type=Path, help="Per-execution power summary CSV, when enabled.")
+    parser.add_argument(
+        "--power-min-samples",
+        default=DEFAULT_POWER_MIN_SAMPLES,
+        type=int,
+        help="Minimum required power samples when power measurement is enabled; 0 disables this status check.",
+    )
     parser.add_argument("--log-file", required=True, type=Path, help="Per-execution log file.")
     return parser
 
@@ -221,6 +238,7 @@ def main(argv: list[str] | None = None) -> int:
         raw_csv=args.raw_csv,
         power_csv=args.power_csv,
         power_summary=args.power_summary,
+        power_min_samples=args.power_min_samples,
         log_file=args.log_file,
     )
     return 0

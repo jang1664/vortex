@@ -193,6 +193,7 @@ aliases:
             self.assertIn("--power-target-samples=100", script)
             self.assertIn("--power-min-interval=0.05", script)
             self.assertIn("--power-max-interval=1.0", script)
+            self.assertIn("--power-min-samples 5", script)
             self.assertNotIn("--no-latency", script)
             self.assertIn("stage=build_begin", script)
             self.assertIn("stage=build_end", script)
@@ -214,6 +215,7 @@ aliases:
             self.assertEqual(100, manifest["power_target_samples"])
             self.assertEqual(0.05, manifest["power_min_interval"])
             self.assertEqual(1.0, manifest["power_max_interval"])
+            self.assertEqual(5, manifest["power_min_samples"])
 
             rc = main([
                 "run",
@@ -239,6 +241,7 @@ aliases:
             self.assertFalse(manifest["measure_power"])
             self.assertEqual("off", manifest["power_mode"])
             self.assertFalse(manifest["power_auto_duration"])
+            self.assertEqual(5, manifest["power_min_samples"])
 
     def test_run_can_disable_power_auto_duration(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -292,6 +295,31 @@ aliases:
             self.assertIn("--power-max-iterations=256", script)
             manifest = json.loads((run_dir / "manifest.json").read_text())
             self.assertEqual(256, manifest["power_max_iterations"])
+
+    def test_run_can_override_power_min_samples(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            build_dir, fpga_bin, suite = self._write_fake_inputs(tmp_path)
+            out_root = tmp_path / "out"
+            rc = main([
+                "run",
+                "--build-dir", str(build_dir),
+                "--fpga-bin", str(fpga_bin),
+                "--suite", str(suite),
+                "--out", str(out_root),
+                "--run-id", "power_min_samples",
+                "--no-srun",
+                "--dry-run",
+                "--no-program-fpga",
+                "--power-min-samples", "8",
+            ])
+
+            self.assertEqual(0, rc)
+            run_dir = out_root / "runs" / "power_min_samples"
+            script = (run_dir / "run_fpga_bench.sh").read_text()
+            self.assertIn("--power-min-samples 8", script)
+            manifest = json.loads((run_dir / "manifest.json").read_text())
+            self.assertEqual(8, manifest["power_min_samples"])
 
     def test_run_blackbox_args_merge_into_generated_script(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -369,7 +397,9 @@ aliases:
             self.assertIn("LATENCY_BENCH_CURRENT_TIMEOUT_S=1800", script)
             self.assertIn('timeout --kill-after=30s "${LATENCY_BENCH_CURRENT_TIMEOUT_S}s" ./ci/blackbox.sh', script)
             self.assertIn('if [[ -n "${SLURM_JOB_ID:-}" ]]; then', script)
-            self.assertIn("timeout --kill-after=10s 60s \"${LATENCY_BENCH_RESET_CMD[@]}\"", script)
+            self.assertIn("LATENCY_BENCH_RESET_ADD_DEVICE=1", script)
+            self.assertIn('reset_cmd+=("-d" "$reset_bdf")', script)
+            self.assertIn("timeout --kill-after=10s 60s \"${reset_cmd[@]}\"", script)
             self.assertIn("timeout --kill-after=10s 60s srun", script)
             self.assertIn("LATENCY_BENCH_RESET_CMD=(xrt-smi reset)", script)
             self.assertIn("attempt_status.csv", script)
@@ -377,6 +407,7 @@ aliases:
             self.assertTrue(manifest["retry"])
             self.assertEqual(4, manifest["retry_max_rounds"])
             self.assertEqual(1.2, manifest["retry_timeout_growth"])
+            self.assertTrue(manifest["retry_reset_add_device"])
 
     def test_run_accepts_skip_existing_option(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -25,6 +25,7 @@ from .raw_db import (
     replace_raw_db_rows,
 )
 from .report import build_results, build_summary, sha256_file, write_manifest
+from .status import DEFAULT_POWER_MIN_SAMPLES, power_samples_below_threshold
 from .suite import DEFAULT_BLACKBOX_ARGS, BenchCase, BenchSuite, suite_to_expanded_yaml, suite_to_rows
 
 
@@ -104,6 +105,7 @@ class RunOptions:
     power_target_samples: int = 100
     power_min_interval: float = 0.05
     power_max_interval: float = 1.0
+    power_min_samples: int = DEFAULT_POWER_MIN_SAMPLES
     case_filters: tuple[str, ...] = ()
     retry: bool = False
     retry_max_rounds: int = DEFAULT_RETRY_MAX_ROUNDS
@@ -139,6 +141,8 @@ def validate_inputs(options: RunOptions) -> None:
             raise ValueError("--retry-timeout-growth must be > 1.0")
         if not shlex.split(options.retry_reset_cmd):
             raise ValueError("--retry-reset-cmd must not be empty")
+    if options.power_min_samples < 0:
+        raise ValueError("--power-min-samples must be >= 0")
     if options.measure_power and options.power_auto_duration:
         if options.power_min_run_sec < 0:
             raise ValueError("--power-min-run-sec must be >= 0")
@@ -192,6 +196,7 @@ def find_existing_pass_exec_keys(
     xclbin_sha256: str,
     measure_latency: bool,
     measure_power: bool,
+    power_min_samples: int = DEFAULT_POWER_MIN_SAMPLES,
 ) -> tuple[str, ...]:
     if not raw_db.exists() or not xclbin_sha256:
         return ()
@@ -209,6 +214,8 @@ def find_existing_pass_exec_keys(
             if _parse_bool_cell(row.get("measure_latency", ""), default=True) != measure_latency:
                 continue
             if _parse_bool_cell(row.get("measure_power", ""), default=False) != measure_power:
+                continue
+            if measure_power and power_samples_below_threshold(row, power_min_samples):
                 continue
             unit = units_by_key.get(row.get("exec_key", ""))
             if unit is None:
@@ -327,6 +334,7 @@ def write_run_script(
     retry_initial_timeout_s = _parse_timeout_seconds(options.blackbox_timeout) if options.retry else 0
     retry_max_rounds = options.retry_max_rounds if options.retry else 1
     retry_reset_cmd = tuple(shlex.split(options.retry_reset_cmd))
+    retry_reset_add_device = 1 if retry_reset_cmd == tuple(shlex.split(DEFAULT_RETRY_RESET_CMD)) else 0
     status_columns = (
         "exec_key",
         "app",
@@ -381,6 +389,7 @@ def write_run_script(
         f"LATENCY_BENCH_RETRY_RESET_WAIT={_q(options.retry_reset_wait)}",
         f"LATENCY_BENCH_RESET_SRUN_ARGS={_bash_array(tuple(options.srun_args))}",
         f"LATENCY_BENCH_RESET_CMD={_bash_array(retry_reset_cmd)}",
+        f"LATENCY_BENCH_RESET_ADD_DEVICE={retry_reset_add_device}",
         "LATENCY_BENCH_LAST_RESET_RC=",
         "",
         "latency_bench_program_fpga() {",
@@ -458,15 +467,32 @@ def write_run_script(
         "",
         "latency_bench_reset_fpga() {",
         "  local log_file=\"$1\"",
-        "  local reset_rc",
+        "  local reset_rc reset_bdf",
+        "  local -a reset_cmd",
         "  LATENCY_BENCH_LAST_RESET_RC=",
         "  set +e",
+        "  reset_cmd=(\"${LATENCY_BENCH_RESET_CMD[@]}\")",
+        "  if [[ \"${LATENCY_BENCH_RESET_ADD_DEVICE:-0}\" == \"1\" ]]; then",
+        "    if ! reset_bdf=\"$(resolve_xrt_user_bdf \"${XRT_DEVICE_INDEX:-auto}\")\"; then",
+        "      printf '[latency-bench] timeout reset failed to resolve XRT user BDF\\n' >> \"$log_file\"",
+        "      LATENCY_BENCH_LAST_RESET_RC=1",
+        "      set -u",
+        "      return 1",
+        "    fi",
+        "    if [[ -z \"$reset_bdf\" ]]; then",
+        "      printf '[latency-bench] timeout reset resolved empty XRT user BDF\\n' >> \"$log_file\"",
+        "      LATENCY_BENCH_LAST_RESET_RC=1",
+        "      set -u",
+        "      return 1",
+        "    fi",
+        "    reset_cmd+=(\"-d\" \"$reset_bdf\")",
+        "  fi",
         "  if [[ -n \"${SLURM_JOB_ID:-}\" ]]; then",
-        "    printf '[latency-bench] timeout reset: direct %s\\n' \"${LATENCY_BENCH_RESET_CMD[*]}\" >> \"$log_file\"",
-        "    printf 'y\\n' | timeout --kill-after=10s 60s \"${LATENCY_BENCH_RESET_CMD[@]}\" >> \"$log_file\" 2>&1",
+        "    printf '[latency-bench] timeout reset: direct %s\\n' \"${reset_cmd[*]}\" >> \"$log_file\"",
+        "    printf 'y\\n' | timeout --kill-after=10s 60s \"${reset_cmd[@]}\" >> \"$log_file\" 2>&1",
         "  else",
-        "    printf '[latency-bench] timeout reset: srun %s\\n' \"${LATENCY_BENCH_RESET_CMD[*]}\" >> \"$log_file\"",
-        "    printf 'y\\n' | timeout --kill-after=10s 60s srun \"${LATENCY_BENCH_RESET_SRUN_ARGS[@]}\" \"${LATENCY_BENCH_RESET_CMD[@]}\" >> \"$log_file\" 2>&1",
+        "    printf '[latency-bench] timeout reset: srun %s\\n' \"${reset_cmd[*]}\" >> \"$log_file\"",
+        "    printf 'y\\n' | timeout --kill-after=10s 60s srun \"${LATENCY_BENCH_RESET_SRUN_ARGS[@]}\" \"${reset_cmd[@]}\" >> \"$log_file\" 2>&1",
         "  fi",
         "  reset_rc=$?",
         "  set -u",
@@ -602,6 +628,7 @@ def write_run_script(
             progress_power_args = (
                 f"--power-csv {_q(unit.power_csv)} "
                 f"--power-summary {_q(unit.power_summary)} "
+                f"--power-min-samples {_q(str(options.power_min_samples))} "
             )
             raw_db_power_args = progress_power_args
         run_only_arg = "--run-only " if options.prebuild else ""
@@ -827,6 +854,7 @@ def run_suite(suite: BenchSuite, options: RunOptions) -> int:
             xclbin_sha256=xclbin_sha256,
             measure_latency=run_options.measure_latency,
             measure_power=run_options.measure_power,
+            power_min_samples=run_options.power_min_samples,
         )
         skipped = set(skipped_existing_exec_keys)
         units_to_run = [unit for unit in units if unit.exec_key not in skipped]
@@ -867,6 +895,7 @@ def run_suite(suite: BenchSuite, options: RunOptions) -> int:
         "power_target_samples": options.power_target_samples,
         "power_min_interval": options.power_min_interval,
         "power_max_interval": options.power_max_interval,
+        "power_min_samples": options.power_min_samples,
         "power_dir": str(run_dir / "power"),
         "program_log": str(run_dir / "logs" / "program_fpga.log"),
         "xrt_smi": os.environ.get("XRT_SMI", "/opt/xilinx/xrt/bin/xrt-smi"),
@@ -884,6 +913,7 @@ def run_suite(suite: BenchSuite, options: RunOptions) -> int:
         "retry_timeout_growth": options.retry_timeout_growth,
         "retry_reset_wait": options.retry_reset_wait,
         "retry_reset_cmd": options.retry_reset_cmd,
+        "retry_reset_add_device": tuple(shlex.split(options.retry_reset_cmd)) == tuple(shlex.split(DEFAULT_RETRY_RESET_CMD)),
         "retry_reset_srun_args": list(options.srun_args),
         "skipped_existing_count": len(skipped_existing_exec_keys),
         "skipped_existing_exec_keys": list(skipped_existing_exec_keys),
@@ -905,7 +935,7 @@ def run_suite(suite: BenchSuite, options: RunOptions) -> int:
     print("+ " + " ".join(shlex.quote(part) for part in cmd), flush=True)
     rc = subprocess.call(cmd, env=os.environ.copy())
 
-    results = build_results(suite, run_dir, options.fpga_bin_dir)
+    results = build_results(suite, run_dir, options.fpga_bin_dir, power_min_samples=run_options.power_min_samples)
     results = add_git_metadata(results, git)
     summary = build_summary(results)
     results.to_csv(run_dir / "results.csv", index=False)

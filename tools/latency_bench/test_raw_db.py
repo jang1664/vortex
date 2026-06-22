@@ -14,7 +14,12 @@ from tools.latency_bench.suite import BenchCase, BenchDefaults, BenchSuite
 
 
 class RawDbTest(unittest.TestCase):
-    def _write_fake_blackbox(self, build_dir: Path, invocation_log: Path | None = None) -> None:
+    def _write_fake_blackbox(
+        self,
+        build_dir: Path,
+        invocation_log: Path | None = None,
+        power_samples: int = 5,
+    ) -> None:
         (build_dir / "ci").mkdir(parents=True)
         blackbox = build_dir / "ci" / "blackbox.sh"
         log_line = f"printf '%s\\n' \"$*\" >> {invocation_log}\n" if invocation_log else ""
@@ -44,7 +49,7 @@ printf 'fpint_gemm,3,1.0,2.0,4.0,2.0,3.0\n' > "$raw_csv"
 if [[ -n "$power_summary" ]]; then
   mkdir -p "$(dirname "$power_summary")"
   printf 'label,mode,phase,samples,elapsed_s,idle_samples,idle_avg_w,run_min_w,run_avg_w,run_max_w,delta_avg_w,delta_peak_w,energy_j,latency_samples,latency_min_us,latency_avg_us,latency_max_us,raw_csv\n' > "$power_summary"
-  printf 'fpint_gemm,separate,run,5,10.0,2,1.0,3.0,4.0,5.0,3.0,4.0,40.0,0,nan,nan,nan,%s\n' "$power_csv" >> "$power_summary"
+  printf 'fpint_gemm,separate,run,{power_samples},10.0,2,1.0,3.0,4.0,5.0,3.0,4.0,40.0,0,nan,nan,nan,%s\n' "$power_csv" >> "$power_summary"
 fi
 printf 'ok\n' > "$log_file"
 """
@@ -144,8 +149,19 @@ exec "$@"
         xrt_smi.write_text(
             f"""#!/usr/bin/env bash
 set -euo pipefail
-cat >/dev/null
-printf '%s\\n' "$*" >> {reset_log}
+case "${{1:-}}" in
+  examine)
+    printf 'Device [0000:2a:00.1]\\n'
+    ;;
+  reset)
+    cat >/dev/null
+    printf '%s\\n' "$*" >> {reset_log}
+    ;;
+  *)
+    printf 'unexpected xrt-smi args: %s\\n' "$*" >&2
+    exit 3
+    ;;
+esac
 """
         )
         xrt_smi.chmod(0o755)
@@ -293,6 +309,61 @@ esac
             self.assertEqual(rows[0]["git_commit"], manifest["git_commit"])
             self.assertEqual(rows[0]["git_branch"], manifest["git_branch"])
             self.assertEqual(rows[0]["git_dirty"], manifest["git_dirty"])
+
+    def test_low_power_samples_marks_status_fail(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            build_dir = tmp_path / "build"
+            self._write_fake_blackbox(build_dir, power_samples=4)
+            fpga_bin_dir = tmp_path / "fpga_bin"
+            self._write_fake_fpga_bin(fpga_bin_dir)
+
+            suite = BenchSuite(
+                name="mini_suite",
+                defaults=BenchDefaults(warmup=1, iterations=1),
+                cases=[
+                    BenchCase(
+                        case_id="gemm_m1_n128_k128",
+                        app="fpint_gemm_ffn_hw",
+                        args="-m 1 -n 128 -k 128 -q 32 -t 0 -d 0",
+                        warmup=1,
+                        iterations=1,
+                    )
+                ],
+            )
+            out_root = tmp_path / "latency_db"
+
+            rc = run_suite(
+                suite,
+                RunOptions(
+                    build_dir=build_dir,
+                    fpga_bin_dir=fpga_bin_dir,
+                    fpga_bin_label="improve_tcol1",
+                    out_dir=out_root,
+                    platform=suite.defaults.platform,
+                    xrt_device_index=suite.defaults.xrt_device_index,
+                    blackbox_args=(),
+                    srun=False,
+                    program_fpga=False,
+                    run_id="low_power_samples",
+                ),
+            )
+            self.assertEqual(0, rc)
+
+            with (out_root / "raw_db.csv").open(newline="") as fp:
+                raw_rows = list(csv.DictReader(fp))
+            with (out_root / "runs" / "low_power_samples" / "results.csv").open(newline="") as fp:
+                result_rows = list(csv.DictReader(fp))
+            with (out_root / "runs" / "low_power_samples" / "progress.csv").open(newline="") as fp:
+                progress_rows = list(csv.DictReader(fp))
+
+            self.assertEqual("4", raw_rows[0]["power_samples"])
+            self.assertEqual("fail", raw_rows[0]["status"])
+            self.assertEqual("power_samples_low", raw_rows[0]["failure_reason"])
+            self.assertEqual("fail", result_rows[0]["status"])
+            self.assertEqual("power_samples_low", result_rows[0]["failure_reason"])
+            self.assertEqual("fail", progress_rows[0]["status"])
+            self.assertEqual("power_samples_low", progress_rows[0]["failure_reason"])
 
     def test_live_raw_db_keeps_all_logical_cases_for_shared_execution(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -643,8 +714,8 @@ exit 0
             self.assertEqual(["10s", "11s"], [row["blackbox_timeout"] for row in attempt_rows])
             self.assertEqual(["1", "0"], [row["reset_ran"] for row in attempt_rows])
             self.assertEqual("0", attempt_rows[0]["reset_rc"])
-            self.assertEqual("reset", reset_log.read_text().strip())
-            self.assertIn("xrt-smi reset", srun_log.read_text())
+            self.assertEqual("reset -d 0000:2a:00.1", reset_log.read_text().strip())
+            self.assertIn("xrt-smi reset -d 0000:2a:00.1", srun_log.read_text())
 
     def test_retry_timeout_resets_directly_inside_slurm_allocation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -709,9 +780,12 @@ exit 0
                 attempt_rows = list(csv.DictReader(fp))
             self.assertEqual(["1", "0"], [row["reset_ran"] for row in attempt_rows])
             self.assertEqual("0", attempt_rows[0]["reset_rc"])
-            self.assertEqual("reset", reset_log.read_text().strip())
+            self.assertEqual("reset -d 0000:2a:00.1", reset_log.read_text().strip())
             self.assertFalse(srun_log.exists())
-            self.assertIn("timeout reset: direct xrt-smi reset", Path(attempt_rows[0]["log_file"]).read_text())
+            self.assertIn(
+                "timeout reset: direct xrt-smi reset -d 0000:2a:00.1",
+                Path(attempt_rows[0]["log_file"]).read_text(),
+            )
 
     def test_skip_existing_runs_only_missing_or_failed_measurements(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

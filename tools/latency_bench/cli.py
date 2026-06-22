@@ -29,6 +29,7 @@ from .plot import (
     visualize_suites,
 )
 from .runner import (
+    DEFAULT_POWER_MIN_SAMPLES,
     DEFAULT_POWER_MAX_ITERATIONS,
     DEFAULT_RETRY_MAX_ROUNDS,
     DEFAULT_RETRY_RESET_CMD,
@@ -104,7 +105,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument(
         "--power-min-interval",
         type=float,
-        default=0.05,
+        default=0.01,
         help="Minimum sampler interval in seconds when power auto-duration is enabled.",
     )
     run.add_argument(
@@ -112,6 +113,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=1.0,
         help="Maximum sampler interval in seconds when power auto-duration is enabled.",
+    )
+    run.add_argument(
+        "--power-min-samples",
+        type=int,
+        default=DEFAULT_POWER_MIN_SAMPLES,
+        help=f"Minimum required power samples for power-mode pass status; 0 disables the check (default: {DEFAULT_POWER_MIN_SAMPLES}).",
     )
     run.add_argument("--platform", default=None, help="Override suite/default Xilinx platform.")
     run.add_argument("--xrt-device-index", type=int, default=None, help="Override XRT device index.")
@@ -519,6 +526,7 @@ def run_cmd(args: argparse.Namespace) -> int:
         power_target_samples=args.power_target_samples,
         power_min_interval=args.power_min_interval,
         power_max_interval=args.power_max_interval,
+        power_min_samples=args.power_min_samples,
         case_filters=tuple(args.filter),
         retry=args.retry,
         retry_max_rounds=args.retry_max_rounds,

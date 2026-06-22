@@ -19,6 +19,52 @@ class ReportTest(unittest.TestCase):
         self.assertEqual("fail", classify_status(1, has_status=True, bench={}))
         self.assertEqual("fail", classify_status(1, has_status=True, bench={"parse_error": "missing"}))
 
+    def test_classifies_low_power_samples_as_fail(self) -> None:
+        self.assertEqual(
+            "pass",
+            classify_status(
+                0,
+                has_status=True,
+                bench={"samples": 3},
+                power={"power_samples": 5},
+                measure_power=True,
+                power_min_samples=5,
+            ),
+        )
+        self.assertEqual(
+            "fail",
+            classify_status(
+                0,
+                has_status=True,
+                bench={"samples": 3},
+                power={"power_samples": 4},
+                measure_power=True,
+                power_min_samples=5,
+            ),
+        )
+        self.assertEqual(
+            "fail",
+            classify_status(
+                0,
+                has_status=True,
+                bench={"samples": 3},
+                power={},
+                measure_power=True,
+                power_min_samples=5,
+            ),
+        )
+        self.assertEqual(
+            "pass",
+            classify_status(
+                0,
+                has_status=True,
+                bench={"samples": 3},
+                power={},
+                measure_power=True,
+                power_min_samples=0,
+            ),
+        )
+
     def test_classifies_build_fail_phase(self) -> None:
         self.assertEqual(
             "build_fail",
