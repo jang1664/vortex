@@ -4,7 +4,6 @@ set -euo pipefail
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 cd "$script_dir"
 
-python_bin="${PYTHON:-python3}"
 skip_extract=0
 
 usage() {
@@ -20,6 +19,43 @@ Options:
   --skip-extract           Reuse existing area.csv and routing.csv
   -h, --help               Show this help text
 EOF
+}
+
+find_python() {
+    if [ -n "${PYTHON:-}" ]; then
+        printf '%s\n' "$PYTHON"
+        return 0
+    fi
+
+    local candidate resolved
+    for candidate in \
+        "$HOME/anaconda3/bin/python" \
+        "$HOME/miniconda3/bin/python" \
+        python3.11 python3.10 python3.9 python3
+    do
+        resolved=""
+        if resolved="$(command -v "$candidate" 2>/dev/null)"; then
+            :
+        elif [ -x "$candidate" ]; then
+            resolved="$candidate"
+        else
+            continue
+        fi
+
+        if "$resolved" - <<'PY' >/dev/null 2>&1
+import importlib
+for name in ("matplotlib", "numpy"):
+    importlib.import_module(name)
+PY
+        then
+            printf '%s\n' "$resolved"
+            return 0
+        fi
+    done
+
+    echo "error: no Python interpreter with matplotlib and numpy found" >&2
+    echo "       set PYTHON=/path/to/python and retry" >&2
+    return 1
 }
 
 while [ "$#" -gt 0 ]; do
@@ -39,6 +75,8 @@ while [ "$#" -gt 0 ]; do
     esac
     shift
 done
+
+python_bin="$(find_python)"
 
 if [ "$skip_extract" -eq 0 ]; then
     "$python_bin" extract.py
