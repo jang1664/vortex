@@ -457,6 +457,7 @@ class SuiteBarPlotTest(unittest.TestCase):
             self.assertFalse((out_dir / "plot_stack_data_wide_scaled.csv").exists())
             self.assertTrue((out_dir / "bar_total_p50_us.png").exists())
             self.assertTrue((out_dir / "bar_total_p50_us.pdf").exists())
+            self.assertTrue((out_dir / "bar_total_p50_us.svg").exists())
             self.assertFalse(subplots.call_args.kwargs["sharey"])
 
             plot_wide = pd.read_csv(out_dir / "plot_data_wide.csv")
@@ -486,6 +487,45 @@ class SuiteBarPlotTest(unittest.TestCase):
 
             self.assertTrue((out_dir / "bar_total_p50_us.png").exists())
             self.assertTrue((out_dir / "bar_total_p50_us.pdf").exists())
+            self.assertTrue((out_dir / "bar_total_p50_us.svg").exists())
+
+    def test_title_right_legend_uses_visible_frame(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            out_dir = Path(tmp) / "figures"
+            plot_data = pd.DataFrame(
+                [
+                    {
+                        "stage": "prefill",
+                        "batch": 1,
+                        "seq_len": 32,
+                        "variant": variant,
+                        "total_latency_us": 1.0,
+                        "case_count": 1,
+                        "pass_case_count": 1,
+                        "missing_case_count": 0,
+                    }
+                    for variant in ("C1", "C2")
+                ]
+            )
+
+            plot_module.plt.close("all")
+            with patch("tools.latency_bench.plot.plt.close"):
+                plot_suite_bar_grid(
+                    plot_data,
+                    pd.DataFrame(),
+                    SuiteBarPlotOptions(
+                        raw_dbs=(Path("raw_db.csv"),),
+                        out_dir=out_dir,
+                        stacked=False,
+                        legend_position="title_right",
+                        legend_ncol=2,
+                        value_labels=False,
+                    ),
+                )
+                legends = plot_module.plt.gcf().legends
+                self.assertEqual(1, len(legends))
+                self.assertTrue(legends[0].get_frame().get_visible())
+            plot_module.plt.close("all")
 
     def test_visualize_suites_writes_unscaled_and_scaled_csvs_when_rules_are_set(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -634,6 +674,43 @@ class SuiteBarPlotTest(unittest.TestCase):
                 )
 
             self.assertTrue(subplots.call_args.kwargs["sharey"])
+
+    def test_relative_bar_plot_labels_y_axis_only_on_first_column(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            plot_data = pd.DataFrame(
+                [
+                    {
+                        "stage": "prefill",
+                        "batch": batch,
+                        "seq_len": 32,
+                        "variant": "C1",
+                        "total_latency_us": float(batch),
+                        "case_count": 1,
+                        "pass_case_count": 1,
+                        "missing_case_count": 0,
+                    }
+                    for batch in (1, 2)
+                ]
+            )
+
+            plot_module.plt.close("all")
+            with patch("tools.latency_bench.plot.plt.close"):
+                plot_suite_bar_grid(
+                    plot_data,
+                    pd.DataFrame(),
+                    SuiteBarPlotOptions(
+                        raw_dbs=(Path("raw_db.csv"),),
+                        out_dir=Path(tmp) / "figures",
+                        stacked=False,
+                        relative=True,
+                        relative_scope="x_tick",
+                        legend_position="none",
+                        value_labels=False,
+                    ),
+                )
+                axes = plot_module.plt.gcf().axes
+                self.assertEqual(["relative latency", ""], [ax.get_ylabel() for ax in axes])
+            plot_module.plt.close("all")
 
     def test_relative_scope_x_tick_uses_one_baseline_per_x_tick(self) -> None:
         rows = pd.DataFrame(

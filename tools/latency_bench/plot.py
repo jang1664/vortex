@@ -147,6 +147,7 @@ def _save(fig, out_dir: Path, name: str) -> None:
     fig.tight_layout()
     fig.savefig(out_dir / f"{name}.png", dpi=180)
     fig.savefig(out_dir / f"{name}.pdf")
+    fig.savefig(out_dir / f"{name}.svg")
     plt.close(fig)
 
 
@@ -987,7 +988,7 @@ def _format_value_label(value: float, relative: bool) -> str:
 def _bar_ylabel(options: SuiteBarPlotOptions) -> str:
     if options.y_label is not None:
         return options.y_label
-    return "relative latency (best = 1.0)" if options.relative else f"weighted total {options.metric} (us)"
+    return "relative latency" if options.relative else f"weighted total {options.metric} (us)"
 
 
 def _stack_color(stack_idx: int, hue_idx: int, stack_count: int, options: SuiteBarPlotOptions):
@@ -1312,7 +1313,7 @@ def plot_suite_bar_grid(plot_data: pd.DataFrame, stack_data: pd.DataFrame, optio
             ax.set_title(_subplot_title(row, row_value, col, col_value, options))
             _apply_x_tick_labels(ax, x_positions, x_values, hue_values, hue_offsets, x, hue, options)
             ax.set_xlabel(options.x_label if options.x_label is not None else _axis_label(x, options))
-            ax.set_ylabel(_bar_ylabel(options))
+            ax.set_ylabel(_bar_ylabel(options) if col_idx == 0 else "")
             ax.set_axisbelow(True)
             ax.grid(axis="y", alpha=0.25, zorder=0)
             if not options.share_y:
@@ -1342,7 +1343,7 @@ def plot_suite_bar_grid(plot_data: pd.DataFrame, stack_data: pd.DataFrame, optio
                 loc="center left",
                 bbox_to_anchor=(0.80, 0.5),
                 ncol=options.legend_ncol or 1,
-                frameon=False,
+                frameon=True,
             )
         elif options.legend_position == "title_right":
             ncol = options.legend_ncol or min(len(by_label), 4)
@@ -1354,7 +1355,7 @@ def plot_suite_bar_grid(plot_data: pd.DataFrame, stack_data: pd.DataFrame, optio
                 loc="upper right",
                 bbox_to_anchor=(0.98, 0.98),
                 ncol=ncol,
-                frameon=False,
+                frameon=True,
             )
         elif options.legend_position == "bottom":
             ncol = options.legend_ncol or min(len(by_label), 4)
@@ -1366,7 +1367,7 @@ def plot_suite_bar_grid(plot_data: pd.DataFrame, stack_data: pd.DataFrame, optio
                 loc="upper center",
                 bbox_to_anchor=(0.5, 0.06),
                 ncol=ncol,
-                frameon=False,
+                frameon=True,
             )
         else:
             ncol = options.legend_ncol or min(len(by_label), 4)
@@ -1378,7 +1379,7 @@ def plot_suite_bar_grid(plot_data: pd.DataFrame, stack_data: pd.DataFrame, optio
                 loc="upper center",
                 bbox_to_anchor=(0.5, 0.98),
                 ncol=ncol,
-                frameon=False,
+                frameon=True,
             )
         legend_drawn = True
     if not legend_drawn:
@@ -1388,6 +1389,7 @@ def plot_suite_bar_grid(plot_data: pd.DataFrame, stack_data: pd.DataFrame, optio
     name = f"bar_total_{options.metric}"
     fig.savefig(options.out_dir / f"{name}.png", dpi=180, bbox_inches="tight")
     fig.savefig(options.out_dir / f"{name}.pdf", bbox_inches="tight")
+    fig.savefig(options.out_dir / f"{name}.svg", bbox_inches="tight")
     plt.close(fig)
 
 

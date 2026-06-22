@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 SCRIPT = Path(__file__).resolve().parents[2] / "analysis_workspace" / "latency_on_hw" / "energy_per_token.py"
@@ -227,6 +228,147 @@ class EnergyPerTokenTest(unittest.TestCase):
     def test_energy_value_labels_keep_small_relative_differences(self) -> None:
         self.assertEqual("1.002x", energy_per_token._format_plot_value_label(1.00156, True))
         self.assertEqual("13.849", energy_per_token._format_plot_value_label(13.84852, False))
+
+    def test_relative_energy_plot_labels_y_axis_only_on_first_column(self) -> None:
+        import matplotlib.pyplot as plt
+        import pandas as pd
+
+        summary = pd.DataFrame(
+            [
+                {
+                    "stage": "prefill",
+                    "batch": batch,
+                    "seq_len": 512,
+                    "variant": "C1",
+                    "joules_per_token": float(batch),
+                    "relative_joules_per_token": float(batch),
+                    "complete": True,
+                }
+                for batch in (1, 2)
+            ]
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            plt.close("all")
+            with patch("matplotlib.pyplot.close"):
+                energy_per_token._plot_summary_dataframe(
+                    summary,
+                    Path(tmp) / "energy.png",
+                    title=None,
+                    label_maps={},
+                    value_orders={},
+                    palette=None,
+                    legend_title="candidates",
+                    include_idle_power=False,
+                    relative=True,
+                    value_labels=False,
+                    value_label_rotation=90.0,
+                    value_label_fontsize=7.0,
+                    grouped_bar_gap=0.04,
+                    bar_edgecolor="white",
+                    bar_linewidth=0.25,
+                    bar_alpha=1.0,
+                    x_tick_label_rotation=0.0,
+                    x_tick_label_ha="center",
+                )
+                axes = plt.gcf().axes
+                self.assertEqual(["relative J/token", ""], [ax.get_ylabel() for ax in axes])
+            plt.close("all")
+
+    def test_energy_plot_uses_configured_ylim_top_scale(self) -> None:
+        import matplotlib.pyplot as plt
+        import pandas as pd
+
+        summary = pd.DataFrame(
+            [
+                {
+                    "stage": "prefill",
+                    "batch": 1,
+                    "seq_len": 512,
+                    "variant": "C1",
+                    "joules_per_token": 4.0,
+                    "relative_joules_per_token": 4.0,
+                    "complete": True,
+                },
+            ]
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            plt.close("all")
+            with patch("matplotlib.pyplot.close"):
+                energy_per_token._plot_summary_dataframe(
+                    summary,
+                    Path(tmp) / "energy.png",
+                    title=None,
+                    label_maps={},
+                    value_orders={},
+                    palette=None,
+                    legend_title="candidates",
+                    include_idle_power=False,
+                    relative=True,
+                    value_labels=True,
+                    value_label_rotation=90.0,
+                    value_label_fontsize=7.0,
+                    grouped_bar_gap=0.04,
+                    bar_edgecolor="white",
+                    bar_linewidth=0.25,
+                    bar_alpha=1.0,
+                    x_tick_label_rotation=0.0,
+                    x_tick_label_ha="center",
+                    ylim_top_scale=1.22,
+                )
+                self.assertAlmostEqual(4.0 * 1.22, plt.gcf().axes[0].get_ylim()[1])
+            plt.close("all")
+
+    def test_energy_plot_can_place_legend_at_bottom(self) -> None:
+        import matplotlib.pyplot as plt
+        import pandas as pd
+        from matplotlib.legend import Legend
+
+        summary = pd.DataFrame(
+            [
+                {
+                    "stage": "prefill",
+                    "batch": 1,
+                    "seq_len": 512,
+                    "variant": variant,
+                    "joules_per_token": float(idx + 1),
+                    "relative_joules_per_token": float(idx + 1),
+                    "complete": True,
+                }
+                for idx, variant in enumerate(("C1", "C2"))
+            ]
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            plt.close("all")
+            with patch("matplotlib.pyplot.close"):
+                energy_per_token._plot_summary_dataframe(
+                    summary,
+                    Path(tmp) / "energy.png",
+                    title=None,
+                    label_maps={},
+                    value_orders={},
+                    palette=None,
+                    legend_title="candidates",
+                    legend_position="bottom",
+                    include_idle_power=False,
+                    relative=True,
+                    value_labels=False,
+                    value_label_rotation=90.0,
+                    value_label_fontsize=7.0,
+                    grouped_bar_gap=0.04,
+                    bar_edgecolor="white",
+                    bar_linewidth=0.25,
+                    bar_alpha=1.0,
+                    x_tick_label_rotation=0.0,
+                    x_tick_label_ha="center",
+                )
+                legends = plt.gcf().legends
+                self.assertEqual(1, len(legends))
+                self.assertEqual(Legend.codes["lower center"], legends[0]._loc)
+                self.assertTrue((Path(tmp) / "energy.svg").exists())
+            plt.close("all")
 
 
 if __name__ == "__main__":

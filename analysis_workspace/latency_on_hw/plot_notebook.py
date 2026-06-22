@@ -329,6 +329,7 @@ def run_suite_plot(
     stack_legend_scope: str | None = None,
     legend_position: str | None = None,
     legend_ncol: int | None = None,
+    legend_title: str | None = None,
     palette: tuple[str, ...] | None = None,
     emit_outputs: bool = True,
 ) -> PlotRunResult:
@@ -340,7 +341,8 @@ def run_suite_plot(
         raise FileNotFoundError("missing plot inputs:\n" + "\n".join(str(path) for path in missing_inputs))
 
     stacked_value = STACKED if stacked is None else stacked
-    legend_title = LEGEND_TITLE if LEGEND_TITLE is not None else ("kernel" if stacked_value else "variant")
+    default_legend_title = LEGEND_TITLE if LEGEND_TITLE is not None else ("kernel" if stacked_value else "variant")
+    effective_legend_title = default_legend_title if legend_title is None else legend_title
     plot_row_filters = tuple(() if row_filters is None else row_filters)
     if not include_c4_alone and exclude_c4_alone not in plot_row_filters:
         plot_row_filters = (*plot_row_filters, exclude_c4_alone)
@@ -369,7 +371,7 @@ def run_suite_plot(
         subplot_title_template=SUBPLOT_TITLE_TEMPLATE,
         x_label=X_LABEL,
         y_label=Y_LABEL,
-        legend_title=legend_title,
+        legend_title=effective_legend_title,
         axis_label_map=AXIS_LABEL_MAP,
         label_maps=plot_label_maps(include_c4_alone=include_c4_alone),
         value_orders=VALUE_ORDERS,
@@ -432,7 +434,9 @@ def run_main_all_plot(
         stacked=False,
         include_c4_alone=False,
         legend_position="title_right",
+        # legend_position="bottom",
         legend_ncol=4,
+        legend_title="candidates",
         emit_outputs=emit_outputs,
     )
 
@@ -451,13 +455,14 @@ def run_gemm_only_plot(
         output_root=output_root,
         tag="main_all",
         out_name="main_all_gemm_only",
-        figure_title="GEMM Latency (ISO-area)",
+        figure_title="GEMM Latency (Area normalized)",
         row_filters=(only_gemm, exclude_c4_alone),
         stacked=True,
         include_c4_alone=False,
         stack_legend_scope="global",
         palette=GEMM_ONLY_STACK_PALETTE,
         legend_position="title_right",
+        legend_ncol=5,
     )
 
 
@@ -488,6 +493,8 @@ def run_energy_plot(
         label_maps=plot_label_maps(include_c4_alone=False),
         value_orders=VALUE_ORDERS,
         palette=BAR_PALETTE,
+        legend_title="candidates",
+        legend_position="top_right",
         relative=RELATIVE,
         relative_scope=RELATIVE_SCOPE,
         value_labels=VALUE_LABELS,
@@ -499,8 +506,11 @@ def run_energy_plot(
         bar_alpha=BAR_ALPHA,
         x_tick_label_rotation=X_TICK_LABEL_ROTATION,
         x_tick_label_ha=X_TICK_LABEL_HA,
+        ylim_top_scale=Y_LIM_TOP_SCALE,
     )
     print(f"wrote {result.figure_path}")
+    if result.figure_svg_path is not None:
+        print(f"wrote {result.figure_svg_path}")
     print(f"wrote {result.summary_csv}")
     print(f"wrote {result.rows_csv}")
     return result

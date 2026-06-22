@@ -62,6 +62,7 @@ class EnergyPlotResult:
     rows_csv: Path
     summary_csv: Path
     figure_path: Path
+    figure_svg_path: Path | None = None
 
 
 class PowerResolver:
@@ -316,6 +317,8 @@ def plot_energy_per_token(
     label_maps: Mapping[str, Mapping[Any, str]] | None = None,
     value_orders: Mapping[str, Sequence[Any]] | None = None,
     palette: Sequence[str] | None = None,
+    legend_title: str | None = "candidates",
+    legend_position: str = "bottom",
     relative: bool = True,
     relative_scope: str = "x_tick",
     value_labels: bool = True,
@@ -327,6 +330,7 @@ def plot_energy_per_token(
     bar_alpha: float = 1.0,
     x_tick_label_rotation: float = 0.0,
     x_tick_label_ha: str = "center",
+    ylim_top_scale: float = 1.22,
 ) -> EnergyPlotResult:
     pd, plt = _import_plotting_modules()
     records = _records_from_plot_result(plot_result)
@@ -345,6 +349,7 @@ def plot_energy_per_token(
     summary_df = pd.DataFrame(summary)
     rows_df = pd.DataFrame(rows)
     figure_path = Path(out_dir) / "energy_per_token.png"
+    figure_svg_path = figure_path.with_suffix(".svg")
     _plot_summary_dataframe(
         summary_df,
         figure_path,
@@ -352,6 +357,8 @@ def plot_energy_per_token(
         label_maps=label_maps or {},
         value_orders=value_orders or {},
         palette=palette,
+        legend_title=legend_title,
+        legend_position=legend_position,
         include_idle_power=include_idle_power,
         relative=relative,
         value_labels=value_labels,
@@ -363,6 +370,7 @@ def plot_energy_per_token(
         bar_alpha=bar_alpha,
         x_tick_label_rotation=x_tick_label_rotation,
         x_tick_label_ha=x_tick_label_ha,
+        ylim_top_scale=ylim_top_scale,
     )
     return EnergyPlotResult(
         rows=rows_df,
@@ -370,6 +378,7 @@ def plot_energy_per_token(
         rows_csv=rows_csv,
         summary_csv=summary_csv,
         figure_path=figure_path,
+        figure_svg_path=figure_svg_path,
     )
 
 
@@ -453,6 +462,7 @@ def _plot_summary_dataframe(
     label_maps: Mapping[str, Mapping[Any, str]],
     value_orders: Mapping[str, Sequence[Any]],
     palette: Sequence[str] | None,
+    legend_title: str | None,
     include_idle_power: bool,
     relative: bool,
     value_labels: bool,
@@ -464,6 +474,8 @@ def _plot_summary_dataframe(
     bar_alpha: float,
     x_tick_label_rotation: float,
     x_tick_label_ha: str,
+    ylim_top_scale: float = 1.22,
+    legend_position: str = "bottom",
 ) -> None:
     _, plt = _import_plotting_modules()
     figure_path.parent.mkdir(parents=True, exist_ok=True)
@@ -472,6 +484,7 @@ def _plot_summary_dataframe(
         ax.text(0.5, 0.5, "No energy rows", ha="center", va="center")
         ax.axis("off")
         fig.savefig(figure_path, bbox_inches="tight", dpi=160)
+        fig.savefig(figure_path.with_suffix(".svg"), bbox_inches="tight")
         plt.close(fig)
         return
 
@@ -484,6 +497,7 @@ def _plot_summary_dataframe(
         ax.text(0.5, 0.5, "No plottable energy rows", ha="center", va="center")
         ax.axis("off")
         fig.savefig(figure_path, bbox_inches="tight", dpi=160)
+        fig.savefig(figure_path.with_suffix(".svg"), bbox_inches="tight")
         plt.close(fig)
         return
 
@@ -562,15 +576,20 @@ def _plot_summary_dataframe(
                 ha=x_tick_label_ha,
             )
             ax.set_xlabel("sequence length")
-            ax.set_ylabel("relative J/token (best = 1.0)" if relative else "J/token")
-            ax.set_ylim(0.0, max(panel_max_height, 1.0) * (1.18 if value_labels else 1.08))
+            y_label = "relative J/token" if relative else "J/token"
+            ax.set_ylabel(y_label if col_index == 0 else "")
+            ax.set_ylim(0.0, max(panel_max_height, 1.0) * ylim_top_scale)
             ax.grid(axis="y", color="#dddddd", linewidth=0.7)
             ax.set_axisbelow(True)
 
     handles, labels = axes[0][0].get_legend_handles_labels()
-    if handles:
-        # fig.legend(handles, labels, loc="upper right", bbox_to_anchor=(0.5, 1.02), ncol=min(len(labels), 4))
-        fig.legend(handles, labels, loc="upper right", ncol=min(len(labels), 4))
+    legend_drawn = _add_energy_legend(
+        fig,
+        handles,
+        labels,
+        legend_title=legend_title,
+        legend_position=legend_position,
+    )
     if not plottable["complete"].astype(bool).all():
         fig.text(
             0.5,
@@ -582,10 +601,46 @@ def _plot_summary_dataframe(
         )
     default_title = "E2E energy per token"
     power_mode = "including idle power" if include_idle_power else "idle power subtracted"
-    fig.suptitle(f"{title or default_title} ({power_mode})", y=1.08, fontsize=13)
-    fig.tight_layout()
+    fig.suptitle(f"{title or default_title} ({power_mode})", y=0.99, fontsize=13)
+    bottom = 0.12 if legend_drawn and legend_position == "bottom" else 0.0
+    fig.tight_layout(rect=(0.0, bottom, 1.0, 0.94))
     fig.savefig(figure_path, bbox_inches="tight", dpi=180)
+    fig.savefig(figure_path.with_suffix(".svg"), bbox_inches="tight")
     plt.close(fig)
+
+
+def _add_energy_legend(
+    fig: Any,
+    handles: Sequence[Any],
+    labels: Sequence[str],
+    *,
+    legend_title: str | None,
+    legend_position: str,
+) -> bool:
+    if not handles or legend_position == "none":
+        return False
+    ncol = min(len(labels), 4)
+    if legend_position == "bottom":
+        fig.legend(
+            handles,
+            labels,
+            title=legend_title,
+            loc="lower center",
+            bbox_to_anchor=(0.5, 0.02),
+            ncol=ncol,
+        )
+        return True
+    if legend_position == "top_right":
+        fig.legend(
+            handles,
+            labels,
+            title=legend_title,
+            loc="upper right",
+            bbox_to_anchor=(0.995, 0.995),
+            ncol=ncol,
+        )
+        return True
+    raise ValueError(f"unsupported energy legend position: {legend_position}")
 
 
 def _shape_for_row(row: Mapping[str, Any]) -> dict[str, Any]:
