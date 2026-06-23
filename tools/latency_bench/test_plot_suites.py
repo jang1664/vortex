@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import csv
+import importlib.util
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -675,6 +677,53 @@ class SuiteBarPlotTest(unittest.TestCase):
 
             self.assertTrue(subplots.call_args.kwargs["sharey"])
 
+    def test_bar_grid_can_share_y_axis_by_row(self) -> None:
+        plot_data = pd.DataFrame(
+            [
+                {
+                    "stage": stage,
+                    "batch": batch,
+                    "seq_len": 512,
+                    "variant": "C1",
+                    "total_latency_us": value,
+                    "case_count": 1,
+                    "pass_case_count": 1,
+                    "missing_case_count": 0,
+                }
+                for stage, batch, value in (
+                    ("prefill", 1, 1.0),
+                    ("prefill", 2, 3.0),
+                    ("generation", 1, 10.0),
+                    ("generation", 2, 30.0),
+                )
+            ]
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            plot_module.plt.close("all")
+            with patch("tools.latency_bench.plot.plt.close"):
+                plot_suite_bar_grid(
+                    plot_data,
+                    pd.DataFrame(),
+                    SuiteBarPlotOptions(
+                        raw_dbs=(Path("raw_db.csv"),),
+                        out_dir=Path(tmp) / "figures",
+                        stacked=False,
+                        value_labels=False,
+                        legend_position="none",
+                        share_y_scope="row",
+                    ),
+                )
+                axes = plot_module.plt.gcf().axes
+                self.assertEqual(4, len(axes))
+                self.assertEqual(axes[0].get_ylim(), axes[1].get_ylim())
+                self.assertEqual(axes[2].get_ylim(), axes[3].get_ylim())
+                self.assertNotEqual(axes[0].get_ylim(), axes[2].get_ylim())
+                self.assertGreater(axes[2].get_ylim()[1], axes[0].get_ylim()[1])
+                self.assertTrue(any(label.get_visible() for label in axes[0].get_yticklabels()))
+                self.assertFalse(any(label.get_visible() for label in axes[1].get_yticklabels()))
+            plot_module.plt.close("all")
+
     def test_relative_bar_plot_labels_y_axis_only_on_first_column(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             plot_data = pd.DataFrame(
@@ -711,6 +760,128 @@ class SuiteBarPlotTest(unittest.TestCase):
                 axes = plot_module.plt.gcf().axes
                 self.assertEqual(["relative latency", ""], [ax.get_ylabel() for ax in axes])
             plot_module.plt.close("all")
+
+    def test_bar_grid_can_use_one_shared_x_axis_label(self) -> None:
+        plot_data = pd.DataFrame(
+            [
+                {
+                    "stage": stage,
+                    "batch": batch,
+                    "seq_len": 1024,
+                    "variant": "C1",
+                    "total_latency_us": 1.0,
+                    "case_count": 1,
+                    "pass_case_count": 1,
+                    "missing_case_count": 0,
+                }
+                for stage in ("prefill", "generation")
+                for batch in (1, 2)
+            ]
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            plot_module.plt.close("all")
+            with patch("tools.latency_bench.plot.plt.close"):
+                plot_suite_bar_grid(
+                    plot_data,
+                    pd.DataFrame(),
+                    SuiteBarPlotOptions(
+                        raw_dbs=(Path("raw_db.csv"),),
+                        out_dir=Path(tmp) / "figures",
+                        stacked=False,
+                        value_labels=False,
+                        legend_position="none",
+                        shared_x_label=True,
+                        shared_x_label_y=0.08,
+                        x_label="sequence length",
+                    ),
+                )
+                fig = plot_module.plt.gcf()
+                self.assertEqual(["", "", "", ""], [ax.get_xlabel() for ax in fig.axes])
+                shared_labels = [text for text in fig.texts if text.get_text() == "sequence length"]
+                self.assertEqual(1, len(shared_labels))
+                self.assertAlmostEqual(0.08, shared_labels[0].get_position()[1])
+            plot_module.plt.close("all")
+
+    def test_bar_grid_can_group_column_axis_on_x_axis(self) -> None:
+        plot_data = pd.DataFrame(
+            [
+                {
+                    "stage": stage,
+                    "batch": batch,
+                    "seq_len": seq_len,
+                    "variant": "C1",
+                    "total_latency_us": float(batch + seq_len / 1024),
+                    "case_count": 1,
+                    "pass_case_count": 1,
+                    "missing_case_count": 0,
+                }
+                for stage in ("prefill", "generation")
+                for batch in (1, 2)
+                for seq_len in (512, 1024)
+            ]
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            plot_module.plt.close("all")
+            with patch("tools.latency_bench.plot.plt.close"):
+                plot_suite_bar_grid(
+                    plot_data,
+                    pd.DataFrame(),
+                    SuiteBarPlotOptions(
+                        raw_dbs=(Path("raw_db.csv"),),
+                        out_dir=Path(tmp) / "figures",
+                        stacked=False,
+                        value_labels=False,
+                        legend_position="none",
+                        x_group_axis="batch",
+                    ),
+                )
+                axes = plot_module.plt.gcf().axes
+                self.assertEqual(2, len(axes))
+                self.assertEqual(["512", "1024", "512", "1024"], [tick.get_text() for tick in axes[0].get_xticklabels()])
+                self.assertEqual(["batch=1", "batch=2"], [text.get_text() for text in axes[0].texts])
+                self.assertEqual(1, len(axes[0].lines))
+                self.assertAlmostEqual(-0.21, axes[0].get_xlim()[0])
+                self.assertAlmostEqual(4.41, axes[0].get_xlim()[1])
+            plot_module.plt.close("all")
+
+    def test_bar_grid_saves_with_default_figure_padding(self) -> None:
+        plot_data = pd.DataFrame(
+            [
+                {
+                    "stage": "prefill",
+                    "batch": 1,
+                    "seq_len": 1024,
+                    "variant": "C1",
+                    "total_latency_us": 1.0,
+                    "case_count": 1,
+                    "pass_case_count": 1,
+                    "missing_case_count": 0,
+                }
+            ]
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with (
+                patch("matplotlib.figure.Figure.savefig") as savefig,
+                patch("tools.latency_bench.plot.plt.close"),
+            ):
+                plot_suite_bar_grid(
+                    plot_data,
+                    pd.DataFrame(),
+                    SuiteBarPlotOptions(
+                        raw_dbs=(Path("raw_db.csv"),),
+                        out_dir=Path(tmp) / "figures",
+                        stacked=False,
+                        value_labels=False,
+                        legend_position="none",
+                    ),
+                )
+
+            self.assertGreater(len(savefig.call_args_list), 0)
+            for call in savefig.call_args_list:
+                self.assertNotIn("pad_inches", call.kwargs)
 
     def test_relative_scope_x_tick_uses_one_baseline_per_x_tick(self) -> None:
         rows = pd.DataFrame(
@@ -930,6 +1101,29 @@ cases:
 
         with self.assertRaisesRegex(ValueError, "too large"):
             _bar_width_and_offsets(4, 0.4)
+
+    def test_paper_plot_defaults_use_compact_grouped_axis_spacing(self) -> None:
+        script = (
+            Path(__file__).resolve().parents[2]
+            / "analysis_workspace"
+            / "latency_on_hw"
+            / "plot_notebook.py"
+        )
+        spec = importlib.util.spec_from_file_location("latency_on_hw_plot_notebook", script)
+        assert spec is not None
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+
+        width, _ = _bar_width_and_offsets(4, module.GROUPED_BAR_GAP)
+        old_width, _ = _bar_width_and_offsets(4, 0.04)
+        self.assertEqual("batch", module.X_GROUP_AXIS)
+        self.assertLessEqual(module.X_GROUP_GAP, 0.4)
+        self.assertGreater(width, old_width)
+        self.assertGreaterEqual(module.TWO_COLUMN_FIGSIZE[1], 4.8)
+        self.assertLessEqual(module.VALUE_LABEL_FONTSIZE, 4.0)
+        self.assertGreaterEqual(module.SHARED_X_LABEL_Y, 0.055)
 
     def test_stack_legend_scope_hue_generates_stacked_plot(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -42,6 +42,9 @@ fi
 if ! has_arg "--out-dir" "$@"; then
   cmd+=(--out-dir "${OUT_DIR}")
 fi
+if ! has_arg "--x-group-axis" "$@"; then
+  cmd+=(--x-group-axis batch)
+fi
 cmd+=("$@")
 
 printf '+'

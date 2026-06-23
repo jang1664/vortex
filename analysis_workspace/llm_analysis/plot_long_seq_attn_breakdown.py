@@ -138,6 +138,10 @@ ANNOTATION_FONTSIZE = 5.8
 LEGEND_FONTSIZE = 6.4
 BAR_WIDTH = 0.88
 MIN_LABEL_ATTENTION_SHARE = 0.30
+LINEAR_COLOR = "#7a7f85"
+ATTENTION_COLOR = "#2f80b7"
+BAR_EDGE_COLOR = "#4f545a"
+ANNOTATION_TEXT_COLOR = "white"
 
 
 def parse_args(argv=None):
@@ -216,15 +220,12 @@ def plot_one(ax, model: ModelConfig, show_xlabel: bool):
               f"attn%={pct:5.1f}")
 
     x = np.arange(len(SEQS))
-    c_lin = "#4C78A8"
-    c_att = "#E45756"
-
     ax.bar(x, linear_share, BAR_WIDTH,
            label="Linear",
-           color=c_lin, edgecolor="black", linewidth=0.5)
+           color=LINEAR_COLOR, edgecolor=BAR_EDGE_COLOR, linewidth=0.5)
     ax.bar(x, attn_share, BAR_WIDTH, bottom=linear_share,
            label="Attention core",
-           color=c_att, edgecolor="black", linewidth=0.5)
+           color=ATTENTION_COLOR, edgecolor=BAR_EDGE_COLOR, linewidth=0.5)
 
     for i, (lin_share, at_share, pct) in enumerate(
             zip(linear_share, attn_share, attn_pct)):
@@ -234,7 +235,7 @@ def plot_one(ax, model: ModelConfig, show_xlabel: bool):
         ax.text(x[i], label_y,
                 f"{pct:.0f}%",
                 ha="center", va="center",
-                fontsize=ANNOTATION_FONTSIZE, color="white",
+                fontsize=ANNOTATION_FONTSIZE, color=ANNOTATION_TEXT_COLOR,
                 fontweight="bold", rotation=90)
 
     ax.set_xticks(x)

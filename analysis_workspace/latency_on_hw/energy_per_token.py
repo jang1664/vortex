@@ -12,6 +12,8 @@ from typing import Any, Iterable, Mapping, Sequence
 PREFILL_STAGE = "prefill"
 GENERATION_STAGE = "generation"
 DEFAULT_STAGE_ORDER = (PREFILL_STAGE, GENERATION_STAGE)
+SHARE_Y_SCOPE_CHOICES = ("none", "global", "row")
+FIGURE_TITLE_LAYOUT_TOP = 0.97
 POWER_SUMMARY_FIELDS = (
     "stage",
     "batch",
@@ -331,6 +333,21 @@ def plot_energy_per_token(
     x_tick_label_rotation: float = 0.0,
     x_tick_label_ha: str = "center",
     ylim_top_scale: float = 1.22,
+    figure_size: tuple[float, float] | None = None,
+    save_dpi: int = 180,
+    title_fontsize: float = 13,
+    subplot_title_fontsize: float = 10,
+    axis_label_fontsize: float | None = None,
+    tick_label_fontsize: float | None = None,
+    legend_fontsize: float | None = None,
+    legend_title_fontsize: float | None = None,
+    share_y_scope: str = "none",
+    subplot_wspace: float | None = None,
+    subplot_hspace: float | None = None,
+    shared_x_label: bool = False,
+    shared_x_label_y: float | None = None,
+    x_group_axis: str | None = None,
+    x_group_gap: float = 1.2,
 ) -> EnergyPlotResult:
     pd, plt = _import_plotting_modules()
     records = _records_from_plot_result(plot_result)
@@ -371,6 +388,21 @@ def plot_energy_per_token(
         x_tick_label_rotation=x_tick_label_rotation,
         x_tick_label_ha=x_tick_label_ha,
         ylim_top_scale=ylim_top_scale,
+        figure_size=figure_size,
+        save_dpi=save_dpi,
+        title_fontsize=title_fontsize,
+        subplot_title_fontsize=subplot_title_fontsize,
+        axis_label_fontsize=axis_label_fontsize,
+        tick_label_fontsize=tick_label_fontsize,
+        legend_fontsize=legend_fontsize,
+        legend_title_fontsize=legend_title_fontsize,
+        share_y_scope=share_y_scope,
+        subplot_wspace=subplot_wspace,
+        subplot_hspace=subplot_hspace,
+        shared_x_label=shared_x_label,
+        shared_x_label_y=shared_x_label_y,
+        x_group_axis=x_group_axis,
+        x_group_gap=x_group_gap,
     )
     return EnergyPlotResult(
         rows=rows_df,
@@ -475,10 +507,34 @@ def _plot_summary_dataframe(
     x_tick_label_rotation: float,
     x_tick_label_ha: str,
     ylim_top_scale: float = 1.22,
+    figure_size: tuple[float, float] | None = None,
+    save_dpi: int = 180,
+    title_fontsize: float = 13,
+    subplot_title_fontsize: float = 10,
+    axis_label_fontsize: float | None = None,
+    tick_label_fontsize: float | None = None,
+    legend_fontsize: float | None = None,
+    legend_title_fontsize: float | None = None,
     legend_position: str = "bottom",
+    share_y_scope: str = "none",
+    subplot_wspace: float | None = None,
+    subplot_hspace: float | None = None,
+    shared_x_label: bool = False,
+    shared_x_label_y: float | None = None,
+    x_group_axis: str | None = None,
+    x_group_gap: float = 1.2,
 ) -> None:
     _, plt = _import_plotting_modules()
     figure_path.parent.mkdir(parents=True, exist_ok=True)
+    x_group_axis = _normalize_energy_x_group_axis(x_group_axis)
+    _validate_energy_plot_layout_options(
+        share_y_scope,
+        subplot_wspace,
+        subplot_hspace,
+        x_group_axis,
+        x_group_gap,
+        shared_x_label_y,
+    )
     if summary_df.empty:
         fig, ax = plt.subplots(figsize=(8, 3))
         ax.text(0.5, 0.5, "No energy rows", ha="center", va="center")
@@ -506,33 +562,59 @@ def _plot_summary_dataframe(
     seq_values = _ordered_numeric_values(plottable["seq_len"].tolist())
     variants = _ordered_values(plottable["variant"].tolist(), value_orders.get("variant"))
     colors = list(palette or _default_palette())
+    group_batch_on_x = x_group_axis == "batch"
+    batch_panels = [None] if group_batch_on_x else batches
+    x_group_values = batches if group_batch_on_x else [None]
+    x_slots, x_group_centers, x_group_boundaries = _energy_x_axis_slots(
+        seq_values,
+        x_group_values,
+        x_group_gap,
+    )
+    x_positions = [position for _, _, position in x_slots]
 
     nrows = max(len(stages), 1)
-    ncols = max(len(batches), 1)
-    fig_width = max(7.0, min(22.0, 2.6 * len(seq_values) + 1.8 * len(variants) + 2.0 * ncols))
+    ncols = max(len(batch_panels), 1)
+    fig_width = max(7.0, min(22.0, 2.6 * len(x_slots) + 1.8 * len(variants) + 2.0 * ncols))
     fig_height = max(3.6, 3.0 * nrows + 1.0)
-    fig, axes = plt.subplots(nrows, ncols, squeeze=False, figsize=(fig_width, fig_height), sharey=False)
+    fig, axes = plt.subplots(
+        nrows,
+        ncols,
+        squeeze=False,
+        figsize=figure_size or (fig_width, fig_height),
+        sharey=False,
+    )
     width, variant_offsets = _bar_width_and_offsets(len(variants), grouped_bar_gap)
+    global_max_height = max(_finite_plot_values(plottable[value_col].tolist()), default=1.0)
+    row_max_heights = []
+    for stage in stages:
+        row_subset = plottable[plottable["stage"].astype(str) == str(stage)]
+        row_max_heights.append(max(_finite_plot_values(row_subset[value_col].tolist()), default=1.0))
 
     for row_index, stage in enumerate(stages):
-        for col_index, batch in enumerate(batches):
+        for col_index, batch in enumerate(batch_panels):
             ax = axes[row_index][col_index]
-            subset = plottable[
-                (plottable["stage"].astype(str) == str(stage))
-                & (plottable["batch"].astype(str) == str(batch))
-            ]
+            subset_filter = plottable["stage"].astype(str) == str(stage)
+            if not group_batch_on_x:
+                subset_filter = subset_filter & (plottable["batch"].astype(str) == str(batch))
+            subset = plottable[subset_filter]
             panel_values = _finite_plot_values(subset[value_col].tolist())
             panel_max_height = max(panel_values, default=1.0)
-            x_positions = list(range(len(seq_values)))
+            label_max_height = {
+                "global": global_max_height,
+                "row": row_max_heights[row_index],
+            }.get(share_y_scope, panel_max_height)
             for variant_index, variant in enumerate(variants):
                 offset = variant_offsets[variant_index]
                 values = []
                 complete_values = []
-                for seq_len in seq_values:
-                    matched = subset[
+                for group_batch, seq_len, _ in x_slots:
+                    matched_filter = (
                         (subset["variant"].astype(str) == str(variant))
                         & (subset["seq_len"].astype(str) == str(seq_len))
-                    ]
+                    )
+                    if group_batch_on_x:
+                        matched_filter = matched_filter & (subset["batch"].astype(str) == str(group_batch))
+                    matched = subset[matched_filter]
                     if matched.empty:
                         values.append(math.nan)
                         complete_values.append(True)
@@ -561,26 +643,69 @@ def _plot_summary_dataframe(
                                 xpos,
                                 value,
                                 _format_plot_value_label(value, relative),
-                                panel_max_height,
+                                label_max_height,
                                 rotation=value_label_rotation,
                                 fontsize=value_label_fontsize,
                             )
             ax.set_title(
-                f"{_label('stage', stage, label_maps)}, batch={_format_value(batch)}",
-                fontsize=10,
+                (
+                    _label("stage", stage, label_maps)
+                    if group_batch_on_x
+                    else f"{_label('stage', stage, label_maps)}, batch={_format_value(batch)}"
+                ),
+                fontsize=subplot_title_fontsize,
             )
-            ax.set_xticks(x_positions)
-            ax.set_xticklabels(
-                [_format_value(value) for value in seq_values],
-                rotation=x_tick_label_rotation,
-                ha=x_tick_label_ha,
-            )
-            ax.set_xlabel("sequence length")
+            if group_batch_on_x:
+                _apply_energy_grouped_x_axis(
+                    ax,
+                    x_slots,
+                    x_group_centers,
+                    x_group_boundaries,
+                    label_maps=label_maps,
+                    tick_label_fontsize=tick_label_fontsize,
+                    axis_label_fontsize=axis_label_fontsize,
+                    x_tick_label_rotation=x_tick_label_rotation,
+                    x_tick_label_ha=x_tick_label_ha,
+                )
+            else:
+                ax.set_xticks(x_positions)
+                ax.set_xticklabels(
+                    [_label("seq_len", value, label_maps) for value in seq_values],
+                    rotation=x_tick_label_rotation,
+                    ha=x_tick_label_ha,
+                )
+            _apply_energy_bar_x_limits(ax, x_positions, variant_offsets, width)
+            if tick_label_fontsize is not None:
+                ax.tick_params(axis="both", labelsize=tick_label_fontsize)
+            ax.set_xlabel("" if shared_x_label else "sequence length", fontsize=axis_label_fontsize)
             y_label = "relative J/token" if relative else "J/token"
-            ax.set_ylabel(y_label if col_index == 0 else "")
-            ax.set_ylim(0.0, max(panel_max_height, 1.0) * ylim_top_scale)
+            ax.set_ylabel(y_label if col_index == 0 else "", fontsize=axis_label_fontsize)
+            if share_y_scope == "none":
+                ax.set_ylim(0.0, max(panel_max_height, 1.0) * ylim_top_scale)
             ax.grid(axis="y", color="#dddddd", linewidth=0.7)
             ax.set_axisbelow(True)
+
+    if share_y_scope == "global":
+        top = max(global_max_height, 1.0) * ylim_top_scale
+        for ax in axes.flat:
+            ax.set_ylim(0.0, top)
+    elif share_y_scope == "row":
+        for row_index, row_max_height in enumerate(row_max_heights):
+            top = max(row_max_height, 1.0) * ylim_top_scale
+            for ax in axes[row_index]:
+                ax.set_ylim(0.0, top)
+
+    if share_y_scope in {"global", "row"}:
+        for col_index in range(1, ncols):
+            for ax in axes[:, col_index]:
+                ax.tick_params(axis="y", left=False, labelleft=False)
+
+    if shared_x_label:
+        fig.supxlabel(
+            "sequence length",
+            fontsize=axis_label_fontsize,
+            **_shared_x_label_kwargs(legend_position, shared_x_label_y),
+        )
 
     handles, labels = axes[0][0].get_legend_handles_labels()
     legend_drawn = _add_energy_legend(
@@ -589,6 +714,8 @@ def _plot_summary_dataframe(
         labels,
         legend_title=legend_title,
         legend_position=legend_position,
+        legend_fontsize=legend_fontsize,
+        legend_title_fontsize=legend_title_fontsize,
     )
     if not plottable["complete"].astype(bool).all():
         fig.text(
@@ -597,16 +724,63 @@ def _plot_summary_dataframe(
             "Hatched bars have at least one kernel without a matched or imputed power value.",
             ha="center",
             va="top",
-            fontsize=9,
+            fontsize=legend_fontsize or 9,
         )
     default_title = "E2E energy per token"
     power_mode = "including idle power" if include_idle_power else "idle power subtracted"
-    fig.suptitle(f"{title or default_title} ({power_mode})", y=0.99, fontsize=13)
+    fig.suptitle(f"{title or default_title} ({power_mode})", y=0.99, fontsize=title_fontsize)
     bottom = 0.12 if legend_drawn and legend_position == "bottom" else 0.0
-    fig.tight_layout(rect=(0.0, bottom, 1.0, 0.94))
-    fig.savefig(figure_path, bbox_inches="tight", dpi=180)
+    fig.tight_layout(rect=(0.0, bottom, 1.0, FIGURE_TITLE_LAYOUT_TOP))
+    _apply_energy_subplot_spacing(fig, subplot_wspace, subplot_hspace)
+    fig.savefig(figure_path, bbox_inches="tight", dpi=save_dpi)
     fig.savefig(figure_path.with_suffix(".svg"), bbox_inches="tight")
     plt.close(fig)
+
+
+def _validate_energy_plot_layout_options(
+    share_y_scope: str,
+    subplot_wspace: float | None,
+    subplot_hspace: float | None,
+    x_group_axis: str | None,
+    x_group_gap: float,
+    shared_x_label_y: float | None,
+) -> None:
+    if share_y_scope not in SHARE_Y_SCOPE_CHOICES:
+        raise ValueError(
+            f"unsupported share y scope: {share_y_scope}; "
+            f"expected one of {', '.join(SHARE_Y_SCOPE_CHOICES)}"
+        )
+    if x_group_axis not in (None, "batch"):
+        raise ValueError("x_group_axis currently supports only batch")
+    if float(x_group_gap) < 0.0:
+        raise ValueError("x_group_gap must be non-negative")
+    for name, value in (("subplot_wspace", subplot_wspace), ("subplot_hspace", subplot_hspace)):
+        if value is not None and float(value) < 0.0:
+            raise ValueError(f"{name} must be non-negative when set")
+    if shared_x_label_y is not None and not 0.0 <= float(shared_x_label_y) <= 1.0:
+        raise ValueError("shared_x_label_y must be between 0 and 1 when set")
+
+
+def _apply_energy_subplot_spacing(
+    fig: Any,
+    subplot_wspace: float | None,
+    subplot_hspace: float | None,
+) -> None:
+    spacing = {}
+    if subplot_wspace is not None:
+        spacing["wspace"] = subplot_wspace
+    if subplot_hspace is not None:
+        spacing["hspace"] = subplot_hspace
+    if spacing:
+        fig.subplots_adjust(**spacing)
+
+
+def _shared_x_label_kwargs(legend_position: str, shared_x_label_y: float | None = None) -> dict[str, float]:
+    if shared_x_label_y is not None:
+        return {"y": float(shared_x_label_y)}
+    if legend_position == "bottom":
+        return {"y": 0.13}
+    return {}
 
 
 def _add_energy_legend(
@@ -616,6 +790,8 @@ def _add_energy_legend(
     *,
     legend_title: str | None,
     legend_position: str,
+    legend_fontsize: float | None = None,
+    legend_title_fontsize: float | None = None,
 ) -> bool:
     if not handles or legend_position == "none":
         return False
@@ -628,6 +804,8 @@ def _add_energy_legend(
             loc="lower center",
             bbox_to_anchor=(0.5, 0.02),
             ncol=ncol,
+            fontsize=legend_fontsize,
+            title_fontsize=legend_title_fontsize,
         )
         return True
     if legend_position == "top_right":
@@ -638,6 +816,8 @@ def _add_energy_legend(
             loc="upper right",
             bbox_to_anchor=(0.995, 0.995),
             ncol=ncol,
+            fontsize=legend_fontsize,
+            title_fontsize=legend_title_fontsize,
         )
         return True
     raise ValueError(f"unsupported energy legend position: {legend_position}")
@@ -743,6 +923,84 @@ def _bar_width_and_offsets(hue_count: int, grouped_bar_gap: float) -> tuple[floa
         for idx in range(count)
     ]
     return bar_width, offsets
+
+
+def _normalize_energy_x_group_axis(x_group_axis: str | None) -> str | None:
+    if x_group_axis is None:
+        return None
+    normalized = str(x_group_axis).strip().lower()
+    return normalized or None
+
+
+def _energy_x_axis_slots(
+    seq_values: list[Any],
+    group_values: list[Any | None],
+    group_gap: float,
+) -> tuple[list[tuple[Any | None, Any, float]], list[tuple[Any | None, float]], list[float]]:
+    slots: list[tuple[Any | None, Any, float]] = []
+    centers: list[tuple[Any | None, float]] = []
+    boundaries: list[float] = []
+    group_step = len(seq_values) + float(group_gap)
+    previous_last: float | None = None
+    for group_index, group_value in enumerate(group_values):
+        base = group_index * group_step
+        positions = [base + seq_index for seq_index, _ in enumerate(seq_values)]
+        if positions:
+            centers.append((group_value, sum(positions) / len(positions)))
+            if previous_last is not None:
+                boundaries.append((previous_last + positions[0]) / 2.0)
+            previous_last = positions[-1]
+        for seq_len, position in zip(seq_values, positions):
+            slots.append((group_value, seq_len, position))
+    return slots, centers, boundaries
+
+
+def _apply_energy_grouped_x_axis(
+    ax: Any,
+    slots: list[tuple[Any | None, Any, float]],
+    group_centers: list[tuple[Any | None, float]],
+    group_boundaries: list[float],
+    *,
+    label_maps: Mapping[str, Mapping[Any, str]],
+    tick_label_fontsize: float | None,
+    axis_label_fontsize: float | None,
+    x_tick_label_rotation: float,
+    x_tick_label_ha: str,
+) -> None:
+    ax.set_xticks([position for _, _, position in slots])
+    ax.set_xticklabels(
+        [_label("seq_len", seq_len, label_maps) for _, seq_len, _ in slots],
+        rotation=x_tick_label_rotation,
+        ha=x_tick_label_ha,
+    )
+    label_size = tick_label_fontsize or axis_label_fontsize
+    for group_value, center in group_centers:
+        ax.text(
+            center,
+            -0.18,
+            f"batch={_label('batch', group_value, label_maps)}",
+            transform=ax.get_xaxis_transform(),
+            ha="center",
+            va="top",
+            fontsize=label_size,
+        )
+    for boundary in group_boundaries:
+        ax.axvline(boundary, color="#999999", linewidth=0.6, alpha=0.65)
+
+
+def _apply_energy_bar_x_limits(
+    ax: Any,
+    x_positions: list[float],
+    variant_offsets: list[float],
+    bar_width: float,
+) -> None:
+    if not x_positions:
+        return
+    offsets = variant_offsets or [0.0]
+    edge_padding = bar_width * 0.25
+    left = min(x_positions) + min(offsets) - bar_width / 2.0 - edge_padding
+    right = max(x_positions) + max(offsets) + bar_width / 2.0 + edge_padding
+    ax.set_xlim(left, right)
 
 
 def _split_shape(shape: Mapping[str, Any]) -> tuple[dict[str, float], dict[str, str]]:

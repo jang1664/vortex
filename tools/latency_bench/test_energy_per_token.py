@@ -320,6 +320,218 @@ class EnergyPerTokenTest(unittest.TestCase):
                 self.assertAlmostEqual(4.0 * 1.22, plt.gcf().axes[0].get_ylim()[1])
             plt.close("all")
 
+    def test_energy_plot_can_share_y_axis_by_row(self) -> None:
+        import matplotlib.pyplot as plt
+        import pandas as pd
+
+        summary = pd.DataFrame(
+            [
+                {
+                    "stage": stage,
+                    "batch": batch,
+                    "seq_len": 512,
+                    "variant": "C1",
+                    "joules_per_token": value,
+                    "relative_joules_per_token": value,
+                    "complete": True,
+                }
+                for stage, batch, value in (
+                    ("prefill", 1, 1.0),
+                    ("prefill", 2, 3.0),
+                    ("generation", 1, 10.0),
+                    ("generation", 2, 30.0),
+                )
+            ]
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            plt.close("all")
+            with patch("matplotlib.pyplot.close"):
+                energy_per_token._plot_summary_dataframe(
+                    summary,
+                    Path(tmp) / "energy.png",
+                    title=None,
+                    label_maps={},
+                    value_orders={},
+                    palette=None,
+                    legend_title="candidates",
+                    legend_position="none",
+                    include_idle_power=False,
+                    relative=True,
+                    value_labels=False,
+                    value_label_rotation=90.0,
+                    value_label_fontsize=7.0,
+                    grouped_bar_gap=0.04,
+                    bar_edgecolor="white",
+                    bar_linewidth=0.25,
+                    bar_alpha=1.0,
+                    x_tick_label_rotation=0.0,
+                    x_tick_label_ha="center",
+                    ylim_top_scale=1.22,
+                    share_y_scope="row",
+                )
+                axes = plt.gcf().axes
+                self.assertEqual(axes[0].get_ylim(), axes[1].get_ylim())
+                self.assertEqual(axes[2].get_ylim(), axes[3].get_ylim())
+                self.assertNotEqual(axes[0].get_ylim(), axes[2].get_ylim())
+                self.assertTrue(any(label.get_visible() for label in axes[0].get_yticklabels()))
+                self.assertFalse(any(label.get_visible() for label in axes[1].get_yticklabels()))
+            plt.close("all")
+
+    def test_energy_plot_uses_seq_len_label_map_for_x_ticks(self) -> None:
+        import matplotlib.pyplot as plt
+        import pandas as pd
+
+        summary = pd.DataFrame(
+            [
+                {
+                    "stage": "prefill",
+                    "batch": 1,
+                    "seq_len": seq_len,
+                    "variant": "C1",
+                    "joules_per_token": 1.0,
+                    "relative_joules_per_token": 1.0,
+                    "complete": True,
+                }
+                for seq_len in (1024, 2048)
+            ]
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            plt.close("all")
+            with patch("matplotlib.pyplot.close"):
+                energy_per_token._plot_summary_dataframe(
+                    summary,
+                    Path(tmp) / "energy.png",
+                    title=None,
+                    label_maps={"seq_len": {1024: "1k", 2048: "2k"}},
+                    value_orders={},
+                    palette=None,
+                    legend_title="candidates",
+                    legend_position="none",
+                    include_idle_power=False,
+                    relative=True,
+                    value_labels=False,
+                    value_label_rotation=90.0,
+                    value_label_fontsize=7.0,
+                    grouped_bar_gap=0.04,
+                    bar_edgecolor="white",
+                    bar_linewidth=0.25,
+                    bar_alpha=1.0,
+                    x_tick_label_rotation=0.0,
+                    x_tick_label_ha="center",
+                )
+                self.assertEqual(["1k", "2k"], [label.get_text() for label in plt.gcf().axes[0].get_xticklabels()])
+            plt.close("all")
+
+    def test_energy_plot_can_use_one_shared_x_axis_label(self) -> None:
+        import matplotlib.pyplot as plt
+        import pandas as pd
+
+        summary = pd.DataFrame(
+            [
+                {
+                    "stage": stage,
+                    "batch": batch,
+                    "seq_len": 1024,
+                    "variant": "C1",
+                    "joules_per_token": 1.0,
+                    "relative_joules_per_token": 1.0,
+                    "complete": True,
+                }
+                for stage in ("prefill", "generation")
+                for batch in (1, 2)
+            ]
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            plt.close("all")
+            with patch("matplotlib.pyplot.close"):
+                energy_per_token._plot_summary_dataframe(
+                    summary,
+                    Path(tmp) / "energy.png",
+                    title=None,
+                    label_maps={},
+                    value_orders={},
+                    palette=None,
+                    legend_title="candidates",
+                    legend_position="none",
+                    include_idle_power=False,
+                    relative=True,
+                    value_labels=False,
+                    value_label_rotation=90.0,
+                    value_label_fontsize=7.0,
+                    grouped_bar_gap=0.04,
+                    bar_edgecolor="white",
+                    bar_linewidth=0.25,
+                    bar_alpha=1.0,
+                    x_tick_label_rotation=0.0,
+                    x_tick_label_ha="center",
+                    shared_x_label=True,
+                    shared_x_label_y=0.08,
+                )
+                fig = plt.gcf()
+                self.assertEqual(["", "", "", ""], [ax.get_xlabel() for ax in fig.axes])
+                shared_labels = [text for text in fig.texts if text.get_text() == "sequence length"]
+                self.assertEqual(1, len(shared_labels))
+                self.assertAlmostEqual(0.08, shared_labels[0].get_position()[1])
+            plt.close("all")
+
+    def test_energy_plot_can_group_batch_axis_on_x_axis(self) -> None:
+        import matplotlib.pyplot as plt
+        import pandas as pd
+
+        summary = pd.DataFrame(
+            [
+                {
+                    "stage": stage,
+                    "batch": batch,
+                    "seq_len": seq_len,
+                    "variant": "C1",
+                    "joules_per_token": float(batch + seq_len / 1024),
+                    "relative_joules_per_token": float(batch + seq_len / 1024),
+                    "complete": True,
+                }
+                for stage in ("prefill", "generation")
+                for batch in (1, 2)
+                for seq_len in (512, 1024)
+            ]
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            plt.close("all")
+            with patch("matplotlib.pyplot.close"):
+                energy_per_token._plot_summary_dataframe(
+                    summary,
+                    Path(tmp) / "energy.png",
+                    title=None,
+                    label_maps={},
+                    value_orders={},
+                    palette=None,
+                    legend_title="candidates",
+                    legend_position="none",
+                    include_idle_power=False,
+                    relative=True,
+                    value_labels=False,
+                    value_label_rotation=90.0,
+                    value_label_fontsize=7.0,
+                    grouped_bar_gap=0.04,
+                    bar_edgecolor="white",
+                    bar_linewidth=0.25,
+                    bar_alpha=1.0,
+                    x_tick_label_rotation=0.0,
+                    x_tick_label_ha="center",
+                    x_group_axis="batch",
+                )
+                axes = plt.gcf().axes
+                self.assertEqual(2, len(axes))
+                self.assertEqual(["512", "1024", "512", "1024"], [tick.get_text() for tick in axes[0].get_xticklabels()])
+                self.assertEqual(["batch=1", "batch=2"], [text.get_text() for text in axes[0].texts])
+                self.assertEqual(1, len(axes[0].lines))
+                self.assertAlmostEqual(-0.21, axes[0].get_xlim()[0])
+                self.assertAlmostEqual(4.41, axes[0].get_xlim()[1])
+            plt.close("all")
+
     def test_energy_plot_can_place_legend_at_bottom(self) -> None:
         import matplotlib.pyplot as plt
         import pandas as pd

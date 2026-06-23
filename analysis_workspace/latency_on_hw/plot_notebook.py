@@ -12,6 +12,17 @@ from typing import Any, Callable, Mapping, Sequence
 DEFAULT_OUT_DIR = "outputs_main/figures_script"
 PLOT_CHOICES = ("main_all", "gemm_only", "energy", "layout_overhead", "latency", "all")
 
+TWO_COLUMN_FIGSIZE = (7.16, 4.9)  # Matplotlib order: width, height in inches.
+LAYOUT_OVERHEAD_FIGSIZE = (7.16, 3.2)
+SAVE_DPI = 600
+
+TITLE_FONTSIZE = 8.0
+SUBPLOT_TITLE_FONTSIZE = 7.2
+AXIS_LABEL_FONTSIZE = 7.0
+TICK_LABEL_FONTSIZE = 6.2
+LEGEND_FONTSIZE = 5.4
+LEGEND_TITLE_FONTSIZE = 5.6
+
 FPGA_IDLE_POWER = 0.854 * 6.300 + 0.852 * 0.200
 
 RAW_DBS_OUTPUT_MAIN_REL = (
@@ -43,12 +54,20 @@ X_AXIS = "seq_len"
 HUE_AXIS = "variant"
 ROW_AXIS = "stage"
 COL_AXIS = "batch"
+X_GROUP_AXIS = COL_AXIS
+X_GROUP_GAP = 0.35
 STACKED = True
 STACK_BY = "name"
 VALUE_LABELS = True
 RELATIVE = True
 RELATIVE_SCOPE = "x_tick"
 SHARE_Y = False
+SHARE_Y_SCOPE = "row"
+SUBPLOT_WSPACE = 0.04
+SUBPLOT_HSPACE = 0.52
+SHARED_X_LABEL = True
+SHARED_X_LABEL_Y = 0.06
+BOTTOM_LEGEND_SHARED_X_LABEL_Y = 0.15
 
 C4_ALONE_VARIANT = "all_fpint_gemm_improve_alone_layout_spinquant"
 C4_FUSED_VARIANT = "all_fpint_gemm_improve_fused_layout_spinquant"
@@ -62,6 +81,14 @@ AXIS_LABEL_MAP = {
 }
 LABEL_MAPS = {
     "stage": {"prefill": "Prefill", "generation": "Generation"},
+    "seq_len": {
+        1024: "1k",
+        2048: "2k",
+        4096: "4k",
+        8192: "8k",
+        16384: "16k",
+        32768: "32k",
+    },
     "variant": {
         "all_fpint_gemm_improve_alone_layout_spinquant": "C4-alone",
         "all_fpint_gemm_improve_fused_layout_spinquant": "C4-fused",
@@ -83,6 +110,7 @@ VALUE_ORDERS = {
 
 FIGURE_TITLE = None
 SUBPLOT_TITLE_TEMPLATE = "{row_axis_label}={row_value_label}, {col_axis_label}={col_value_label}"
+X_GROUP_SUBPLOT_TITLE_TEMPLATE = "{row_axis_label}={row_value_label}"
 X_LABEL = "sequence length"
 Y_LABEL = None
 LEGEND_TITLE = None
@@ -120,13 +148,13 @@ STACK_CMAP_MAX = 0.98
 BAR_EDGECOLOR = "white"
 BAR_LINEWIDTH = 0.25
 BAR_ALPHA = 1.0
-GROUPED_BAR_GAP = 0.04
+GROUPED_BAR_GAP = 0.01
 VALUE_LABEL_ROTATION = 90.0
-VALUE_LABEL_FONTSIZE = 7.0
+VALUE_LABEL_FONTSIZE = 3.8
 X_TICK_LABEL_MODE = "group"
 X_TICK_LABEL_ROTATION = 0.0
 X_TICK_LABEL_HA = "center"
-Y_LIM_TOP_SCALE = 1.22
+Y_LIM_TOP_SCALE = 1.30
 
 LAYOUT_FUSED_APP_MAP = {
     "eladd_layout_fused": "eladd",
@@ -212,6 +240,18 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--include-idle-power",
         action="store_true",
         help="use raw measured power for energy instead of subtracting --idle-power-w",
+    )
+    parser.add_argument(
+        "--x-group-axis",
+        choices=("none", "batch"),
+        default=X_GROUP_AXIS or "none",
+        help="fold this axis into grouped x-axis regions instead of subplot columns",
+    )
+    parser.add_argument(
+        "--x-group-gap",
+        type=float,
+        default=X_GROUP_GAP,
+        help=f"gap between x-axis groups when --x-group-axis is enabled (default: {X_GROUP_GAP:g})",
     )
     return parser.parse_args(argv)
 
@@ -331,6 +371,8 @@ def run_suite_plot(
     legend_ncol: int | None = None,
     legend_title: str | None = None,
     palette: tuple[str, ...] | None = None,
+    x_group_axis: str | None = X_GROUP_AXIS,
+    x_group_gap: float = X_GROUP_GAP,
     emit_outputs: bool = True,
 ) -> PlotRunResult:
     suites_in = suite_paths(latency_dir, tag)
@@ -347,6 +389,12 @@ def run_suite_plot(
     if not include_c4_alone and exclude_c4_alone not in plot_row_filters:
         plot_row_filters = (*plot_row_filters, exclude_c4_alone)
     effective_stack_legend_scope = STACK_LEGEND_SCOPE if stack_legend_scope is None else stack_legend_scope
+    effective_legend_position = LEGEND_POSITION if legend_position is None else legend_position
+    shared_x_label_y = (
+        BOTTOM_LEGEND_SHARED_X_LABEL_Y
+        if effective_legend_position == "bottom"
+        else SHARED_X_LABEL_Y
+    )
 
     suites = [deps.load_suite(path, repo_root=repo_root) for path in suites_in]
     options = deps.SuiteBarPlotOptions(
@@ -365,10 +413,11 @@ def run_suite_plot(
         relative=RELATIVE,
         relative_scope=RELATIVE_SCOPE,
         share_y=SHARE_Y,
-        legend_position=LEGEND_POSITION if legend_position is None else legend_position,
+        share_y_scope=SHARE_Y_SCOPE,
+        legend_position=effective_legend_position,
         legend_ncol=LEGEND_NCOL if legend_ncol is None else legend_ncol,
         figure_title=figure_title if figure_title is not None else FIGURE_TITLE,
-        subplot_title_template=SUBPLOT_TITLE_TEMPLATE,
+        subplot_title_template=X_GROUP_SUBPLOT_TITLE_TEMPLATE if x_group_axis else SUBPLOT_TITLE_TEMPLATE,
         x_label=X_LABEL,
         y_label=Y_LABEL,
         legend_title=effective_legend_title,
@@ -393,6 +442,20 @@ def run_suite_plot(
         x_tick_label_mode=X_TICK_LABEL_MODE,
         x_tick_label_rotation=X_TICK_LABEL_ROTATION,
         x_tick_label_ha=X_TICK_LABEL_HA,
+        figure_size=TWO_COLUMN_FIGSIZE,
+        save_dpi=SAVE_DPI,
+        figure_title_fontsize=TITLE_FONTSIZE,
+        subplot_title_fontsize=SUBPLOT_TITLE_FONTSIZE,
+        axis_label_fontsize=AXIS_LABEL_FONTSIZE,
+        tick_label_fontsize=TICK_LABEL_FONTSIZE,
+        legend_fontsize=LEGEND_FONTSIZE,
+        legend_title_fontsize=LEGEND_TITLE_FONTSIZE,
+        subplot_wspace=SUBPLOT_WSPACE,
+        subplot_hspace=SUBPLOT_HSPACE,
+        shared_x_label=SHARED_X_LABEL,
+        shared_x_label_y=shared_x_label_y,
+        x_group_axis=x_group_axis,
+        x_group_gap=x_group_gap,
     )
 
     versions = deps.prepare_suite_bar_data_versions(suites, options)
@@ -421,6 +484,8 @@ def run_main_all_plot(
     repo_root: Path,
     latency_dir: Path,
     output_root: Path,
+    x_group_axis: str | None = X_GROUP_AXIS,
+    x_group_gap: float = X_GROUP_GAP,
     emit_outputs: bool = True,
 ) -> PlotRunResult:
     return run_suite_plot(
@@ -434,9 +499,10 @@ def run_main_all_plot(
         stacked=False,
         include_c4_alone=False,
         legend_position="title_right",
-        # legend_position="bottom",
         legend_ncol=4,
         legend_title="candidates",
+        x_group_axis=x_group_axis,
+        x_group_gap=x_group_gap,
         emit_outputs=emit_outputs,
     )
 
@@ -447,6 +513,8 @@ def run_gemm_only_plot(
     repo_root: Path,
     latency_dir: Path,
     output_root: Path,
+    x_group_axis: str | None = X_GROUP_AXIS,
+    x_group_gap: float = X_GROUP_GAP,
 ) -> PlotRunResult:
     return run_suite_plot(
         deps,
@@ -461,8 +529,10 @@ def run_gemm_only_plot(
         include_c4_alone=False,
         stack_legend_scope="global",
         palette=GEMM_ONLY_STACK_PALETTE,
-        legend_position="title_right",
-        legend_ncol=5,
+        legend_position="bottom",
+        legend_ncol=9,
+        x_group_axis=x_group_axis,
+        x_group_gap=x_group_gap,
     )
 
 
@@ -473,6 +543,8 @@ def run_energy_plot(
     main_all_result: PlotRunResult,
     idle_power_w: float,
     include_idle_power: bool,
+    x_group_axis: str | None = X_GROUP_AXIS,
+    x_group_gap: float = X_GROUP_GAP,
 ) -> Any:
     if str(latency_dir) not in sys.path:
         sys.path.insert(0, str(latency_dir))
@@ -507,6 +579,21 @@ def run_energy_plot(
         x_tick_label_rotation=X_TICK_LABEL_ROTATION,
         x_tick_label_ha=X_TICK_LABEL_HA,
         ylim_top_scale=Y_LIM_TOP_SCALE,
+        figure_size=TWO_COLUMN_FIGSIZE,
+        save_dpi=SAVE_DPI,
+        title_fontsize=TITLE_FONTSIZE,
+        subplot_title_fontsize=SUBPLOT_TITLE_FONTSIZE,
+        axis_label_fontsize=AXIS_LABEL_FONTSIZE,
+        tick_label_fontsize=TICK_LABEL_FONTSIZE,
+        legend_fontsize=LEGEND_FONTSIZE,
+        legend_title_fontsize=LEGEND_TITLE_FONTSIZE,
+        share_y_scope=SHARE_Y_SCOPE,
+        subplot_wspace=SUBPLOT_WSPACE,
+        subplot_hspace=SUBPLOT_HSPACE,
+        shared_x_label=SHARED_X_LABEL,
+        shared_x_label_y=SHARED_X_LABEL_Y,
+        x_group_axis=x_group_axis,
+        x_group_gap=x_group_gap,
     )
     print(f"wrote {result.figure_path}")
     if result.figure_svg_path is not None:
@@ -680,23 +767,36 @@ def run_layout_overhead_plot(*, latency_dir: Path, output_root: Path) -> None:
         return
 
     plot_df = layout_overhead_summary.sort_values("overhead_pct_median", ascending=True)
-    fig, ax = plt.subplots(figsize=(10, max(3.5, 0.45 * len(plot_df))))
+    layout_height = max(LAYOUT_OVERHEAD_FIGSIZE[1], 0.32 * len(plot_df) + 0.8)
+    fig, ax = plt.subplots(figsize=(LAYOUT_OVERHEAD_FIGSIZE[0], layout_height))
     labels = plot_df["canonical_app"] + "\n" + plot_df["layout_fused_app"]
     bars = ax.barh(labels, plot_df["overhead_pct_median"], color="#087E8B")
     ax.axvline(0, color="#333333", linewidth=0.8)
-    ax.set_xlabel("median overhead vs baseline (%)")
-    ax.set_title("Layout fused overhead by canonical app")
+    ax.set_xlabel("median overhead vs baseline (%)", fontsize=AXIS_LABEL_FONTSIZE)
+    ax.set_title("Layout fused overhead by canonical app", fontsize=TITLE_FONTSIZE)
+    ax.tick_params(axis="both", labelsize=TICK_LABEL_FONTSIZE)
     ax.grid(axis="x", alpha=0.25)
     for bar, value in zip(bars, plot_df["overhead_pct_median"]):
         x = bar.get_width()
         ha = "left" if x >= 0 else "right"
         dx = 1.0 if x >= 0 else -1.0
-        ax.text(x + dx, bar.get_y() + bar.get_height() / 2, f"{value:.1f}%", va="center", ha=ha, fontsize=8)
+        ax.text(
+            x + dx,
+            bar.get_y() + bar.get_height() / 2,
+            f"{value:.1f}%",
+            va="center",
+            ha=ha,
+            fontsize=VALUE_LABEL_FONTSIZE,
+        )
     fig.tight_layout()
     fig_path = out_dir / "layout_transform_overhead_median_pct.png"
-    fig.savefig(fig_path, dpi=200, bbox_inches="tight")
+    fig.savefig(fig_path, dpi=SAVE_DPI, bbox_inches="tight")
+    fig.savefig(fig_path.with_suffix(".pdf"), bbox_inches="tight")
+    fig.savefig(fig_path.with_suffix(".svg"), bbox_inches="tight")
     plt.close(fig)
     print(f"wrote {fig_path}")
+    print(f"wrote {fig_path.with_suffix('.pdf')}")
+    print(f"wrote {fig_path.with_suffix('.svg')}")
 
 
 def run_selected_plots(args: argparse.Namespace) -> None:
@@ -709,6 +809,7 @@ def run_selected_plots(args: argparse.Namespace) -> None:
     set_suite_bar_ylim_padding(deps)
 
     plot = args.plot
+    x_group_axis = None if args.x_group_axis == "none" else args.x_group_axis
     main_all_result: PlotRunResult | None = None
 
     if plot in {"main_all", "latency", "all"}:
@@ -717,6 +818,8 @@ def run_selected_plots(args: argparse.Namespace) -> None:
             repo_root=repo_root,
             latency_dir=latency_dir,
             output_root=output_root,
+            x_group_axis=x_group_axis,
+            x_group_gap=args.x_group_gap,
         )
 
     if plot in {"gemm_only", "latency", "all"}:
@@ -725,6 +828,8 @@ def run_selected_plots(args: argparse.Namespace) -> None:
             repo_root=repo_root,
             latency_dir=latency_dir,
             output_root=output_root,
+            x_group_axis=x_group_axis,
+            x_group_gap=args.x_group_gap,
         )
 
     if plot in {"energy", "all"}:
@@ -734,6 +839,8 @@ def run_selected_plots(args: argparse.Namespace) -> None:
                 repo_root=repo_root,
                 latency_dir=latency_dir,
                 output_root=output_root,
+                x_group_axis=x_group_axis,
+                x_group_gap=args.x_group_gap,
                 emit_outputs=False,
             )
         run_energy_plot(
@@ -742,10 +849,13 @@ def run_selected_plots(args: argparse.Namespace) -> None:
             main_all_result=main_all_result,
             idle_power_w=args.idle_power_w,
             include_idle_power=args.include_idle_power,
+            x_group_axis=x_group_axis,
+            x_group_gap=args.x_group_gap,
         )
 
-    if plot in {"layout_overhead", "all"}:
-        run_layout_overhead_plot(latency_dir=latency_dir, output_root=output_root)
+    # we don't need layout overhead plot
+    # if plot in {"layout_overhead", "all"}:
+    #     run_layout_overhead_plot(latency_dir=latency_dir, output_root=output_root)
 
 
 def main(argv: Sequence[str] | None = None) -> int:

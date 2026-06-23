@@ -31,12 +31,15 @@ DEFAULT_RELATIVE_SCOPE = "global"
 DEFAULT_LEGEND_POSITION = "right"
 DEFAULT_STACK_LEGEND_SCOPE = "global"
 DEFAULT_X_TICK_LABEL_MODE = "group"
+DEFAULT_SHARE_Y_SCOPE = "none"
 _NONE_AXIS = "none"
 RELATIVE_SCOPE_CHOICES = ("global", "subplot", "x_tick")
 LEGEND_POSITION_CHOICES = ("right", "bottom", "top", "title_right", "none")
 STACK_LEGEND_SCOPE_CHOICES = ("global", "hue")
 X_TICK_LABEL_MODE_CHOICES = ("group", "bar")
 TEXT_ALIGN_CHOICES = ("center", "left", "right")
+SHARE_Y_SCOPE_CHOICES = ("none", "global", "row")
+FIGURE_TITLE_LAYOUT_TOP = 0.97
 BLUE_GREEN_PALETTE = (
     "#0b3d91",
     "#006d77",
@@ -81,6 +84,7 @@ class SuiteBarPlotOptions:
     relative: bool = False
     relative_scope: str = DEFAULT_RELATIVE_SCOPE
     share_y: bool = False
+    share_y_scope: str | None = None
     fpga_bin_label: str | None = None
     xclbin_sha256: str | None = None
     match_fpga_bin: bool = True
@@ -112,6 +116,20 @@ class SuiteBarPlotOptions:
     x_tick_label_mode: str = DEFAULT_X_TICK_LABEL_MODE
     x_tick_label_rotation: float = 0.0
     x_tick_label_ha: str = "center"
+    figure_size: tuple[float, float] | None = None
+    save_dpi: int = 180
+    figure_title_fontsize: float | None = None
+    subplot_title_fontsize: float | None = None
+    axis_label_fontsize: float | None = None
+    tick_label_fontsize: float | None = None
+    legend_fontsize: float | None = None
+    legend_title_fontsize: float | None = None
+    subplot_wspace: float | None = None
+    subplot_hspace: float | None = None
+    shared_x_label: bool = False
+    shared_x_label_y: float | None = None
+    x_group_axis: str | None = None
+    x_group_gap: float = 1.2
 
 
 @dataclass(frozen=True)
@@ -652,7 +670,32 @@ def _validate_bar_axes(options: SuiteBarPlotOptions) -> tuple[str, str | None, s
     return x, hue, row, col
 
 
+def _effective_share_y_scope(options: SuiteBarPlotOptions) -> str:
+    if options.share_y_scope is not None:
+        return str(options.share_y_scope)
+    return "global" if options.share_y else DEFAULT_SHARE_Y_SCOPE
+
+
+def _effective_x_group_axis(options: SuiteBarPlotOptions) -> str | None:
+    return _normalize_axis(options.x_group_axis)
+
+
 def _validate_bar_options(options: SuiteBarPlotOptions) -> None:
+    share_y_scope = _effective_share_y_scope(options)
+    x_group_axis = _effective_x_group_axis(options)
+    if share_y_scope not in SHARE_Y_SCOPE_CHOICES:
+        raise ValueError(
+            f"unsupported share y scope: {share_y_scope}; "
+            f"expected one of {', '.join(SHARE_Y_SCOPE_CHOICES)}"
+        )
+    if x_group_axis is not None:
+        col_axis = _normalize_axis(options.col)
+        if x_group_axis not in BAR_AXIS_COLUMNS:
+            raise ValueError(f"unsupported x group axis: {x_group_axis}")
+        if col_axis is None or x_group_axis != col_axis:
+            raise ValueError("x_group_axis currently supports grouping the active column axis")
+        if float(options.x_group_gap) < 0.0:
+            raise ValueError("x_group_gap must be non-negative")
     if options.relative_scope not in RELATIVE_SCOPE_CHOICES:
         raise ValueError(
             f"unsupported relative scope: {options.relative_scope}; "
@@ -694,6 +737,11 @@ def _validate_bar_options(options: SuiteBarPlotOptions) -> None:
             f"unsupported x_tick_label_ha: {options.x_tick_label_ha}; "
             f"expected one of {', '.join(TEXT_ALIGN_CHOICES)}"
         )
+    for name, value in (("subplot_wspace", options.subplot_wspace), ("subplot_hspace", options.subplot_hspace)):
+        if value is not None and float(value) < 0.0:
+            raise ValueError(f"{name} must be non-negative when set")
+    if options.shared_x_label_y is not None and not 0.0 <= float(options.shared_x_label_y) <= 1.0:
+        raise ValueError("shared_x_label_y must be between 0 and 1 when set")
 
 
 def _sort_key(value: object) -> tuple[int, float | str]:
@@ -981,6 +1029,86 @@ def _apply_x_tick_labels(
     )
 
 
+def _x_axis_slots(
+    x_values: list[object],
+    group_values: list[object | None],
+    group_gap: float,
+) -> tuple[list[tuple[object | None, object, float]], list[tuple[object | None, float]], list[float]]:
+    slots: list[tuple[object | None, object, float]] = []
+    centers: list[tuple[object | None, float]] = []
+    boundaries: list[float] = []
+    group_step = len(x_values) + float(group_gap)
+    previous_last: float | None = None
+    for group_idx, group_value in enumerate(group_values):
+        base = group_idx * group_step
+        positions = [base + x_idx for x_idx, _ in enumerate(x_values)]
+        if positions:
+            centers.append((group_value, sum(positions) / len(positions)))
+            if previous_last is not None:
+                boundaries.append((previous_last + positions[0]) / 2.0)
+            previous_last = positions[-1]
+        for x_value, position in zip(x_values, positions):
+            slots.append((group_value, x_value, position))
+    return slots, centers, boundaries
+
+
+def _lookup_key(group_axis: str | None, group_value: object | None, x_value: object) -> object:
+    if group_axis is None:
+        return x_value
+    return (group_value, x_value)
+
+
+def _row_lookup_key(item: pd.Series, group_axis: str | None, x: str) -> object:
+    if group_axis is None:
+        return item[x]
+    return (item[group_axis], item[x])
+
+
+def _apply_grouped_x_axis(
+    ax,
+    slots: list[tuple[object | None, object, float]],
+    group_centers: list[tuple[object | None, float]],
+    group_boundaries: list[float],
+    x: str,
+    group_axis: str,
+    options: SuiteBarPlotOptions,
+) -> None:
+    ax.set_xticks([position for _, _, position in slots])
+    ax.set_xticklabels(
+        [_mapped_value(x, x_value, options) for _, x_value, _ in slots],
+        rotation=options.x_tick_label_rotation,
+        ha=options.x_tick_label_ha,
+    )
+    label_size = options.tick_label_fontsize or options.axis_label_fontsize
+    for group_value, center in group_centers:
+        ax.text(
+            center,
+            -0.18,
+            f"{_axis_label(group_axis, options)}={_mapped_value(group_axis, group_value, options)}",
+            transform=ax.get_xaxis_transform(),
+            ha="center",
+            va="top",
+            fontsize=label_size,
+        )
+    for boundary in group_boundaries:
+        ax.axvline(boundary, color="#999999", linewidth=0.6, alpha=0.65)
+
+
+def _apply_bar_x_limits(
+    ax,
+    x_positions: list[float],
+    hue_offsets: list[float],
+    bar_width: float,
+) -> None:
+    if not x_positions:
+        return
+    offsets = hue_offsets or [0.0]
+    edge_padding = bar_width * 0.25
+    left = min(x_positions) + min(offsets) - bar_width / 2.0 - edge_padding
+    right = max(x_positions) + max(offsets) + bar_width / 2.0 + edge_padding
+    ax.set_xlim(left, right)
+
+
 def _format_value_label(value: float, relative: bool) -> str:
     return f"{value:.3f}x" if relative else f"{value:.1f}"
 
@@ -989,6 +1117,12 @@ def _bar_ylabel(options: SuiteBarPlotOptions) -> str:
     if options.y_label is not None:
         return options.y_label
     return "relative latency" if options.relative else f"weighted total {options.metric} (us)"
+
+
+def _bar_xlabel(x: str, options: SuiteBarPlotOptions) -> str:
+    if options.x_label is not None:
+        return options.x_label
+    return _axis_label(x, options)
 
 
 def _stack_color(stack_idx: int, hue_idx: int, stack_count: int, options: SuiteBarPlotOptions):
@@ -1006,6 +1140,24 @@ def _stack_color(stack_idx: int, hue_idx: int, stack_count: int, options: SuiteB
 
 def _legend_ncol(count: int, options: SuiteBarPlotOptions) -> int:
     return options.legend_ncol or min(max(count, 1), 4)
+
+
+def _apply_subplot_spacing(fig, options: SuiteBarPlotOptions) -> None:
+    spacing = {}
+    if options.subplot_wspace is not None:
+        spacing["wspace"] = options.subplot_wspace
+    if options.subplot_hspace is not None:
+        spacing["hspace"] = options.subplot_hspace
+    if spacing:
+        fig.subplots_adjust(**spacing)
+
+
+def _shared_x_label_kwargs(legend_position: str, shared_x_label_y: float | None = None) -> dict[str, float]:
+    if shared_x_label_y is not None:
+        return {"y": float(shared_x_label_y)}
+    if legend_position == "bottom":
+        return {"y": 0.13}
+    return {}
 
 
 def _nonzero_bar_segments(
@@ -1050,9 +1202,10 @@ def _add_hue_stack_legends(
     if not active_groups:
         return
 
-    top = 0.94 if options.figure_title else 1.0
+    top = FIGURE_TITLE_LAYOUT_TOP if options.figure_title else 1.0
     if options.legend_position == "right":
         fig.tight_layout(rect=(0, 0, 0.76, top))
+        _apply_subplot_spacing(fig, options)
         legend_ax = fig.add_axes([0.78, 0.04, 0.20, max(0.01, top - 0.06)])
         legend_ax.set_axis_off()
         ncol = options.legend_ncol or 1
@@ -1062,7 +1215,7 @@ def _add_hue_stack_legends(
         ]
         total_lines = sum(1 + rows + 1 for _, _, rows in group_rows)
         line_step = min(0.045, 0.96 / max(total_lines, 1))
-        fontsize = max(4.5, min(8.0, line_step * fig.get_figheight() * 72.0 * 0.72))
+        fontsize = options.legend_fontsize or max(4.5, min(8.0, line_step * fig.get_figheight() * 72.0 * 0.72))
         y = 0.98
         for hue_value, by_label, rows in group_rows:
             legend_ax.text(
@@ -1104,6 +1257,7 @@ def _add_hue_stack_legends(
             y -= rows * line_step + line_step * 0.65
     elif options.legend_position == "bottom":
         fig.tight_layout(rect=(0, 0.18, 1, top))
+        _apply_subplot_spacing(fig, options)
         step = 1.0 / max(len(active_groups), 1)
         for idx, (hue_value, by_label) in enumerate(active_groups):
             x = (idx + 0.5) * step
@@ -1115,9 +1269,12 @@ def _add_hue_stack_legends(
                 bbox_to_anchor=(x, 0.02),
                 ncol=_legend_ncol(len(by_label), options),
                 frameon=False,
+                fontsize=options.legend_fontsize,
+                title_fontsize=options.legend_title_fontsize,
             )
     else:
         fig.tight_layout(rect=(0, 0, 1, 0.82 if options.figure_title else 0.86))
+        _apply_subplot_spacing(fig, options)
         step = 1.0 / max(len(active_groups), 1)
         for idx, (hue_value, by_label) in enumerate(active_groups):
             x = (idx + 0.5) * step
@@ -1129,6 +1286,8 @@ def _add_hue_stack_legends(
                 bbox_to_anchor=(x, 0.98),
                 ncol=_legend_ncol(len(by_label), options),
                 frameon=False,
+                fontsize=options.legend_fontsize,
+                title_fontsize=options.legend_title_fontsize,
             )
 
 
@@ -1138,6 +1297,7 @@ def plot_suite_bar_grid(plot_data: pd.DataFrame, stack_data: pd.DataFrame, optio
 
     x, hue, row, col = _validate_bar_axes(options)
     _validate_bar_options(options)
+    share_y_scope = _effective_share_y_scope(options)
     active_axes = tuple(axis for axis in (x, hue, row, col) if axis is not None)
     rows = _aggregate_for_axes(plot_data, active_axes)
     value_col = "plot_value"
@@ -1157,6 +1317,15 @@ def plot_suite_bar_grid(plot_data: pd.DataFrame, stack_data: pd.DataFrame, optio
     col_values = _ordered_values(rows[col], axis=col, options=options) if col else [None]
     x_values = _ordered_values(rows[x], axis=x, options=options)
     hue_values = _ordered_values(rows[hue_key], axis=hue, options=options)
+    x_group_axis = _effective_x_group_axis(options)
+    group_col_on_x = x_group_axis is not None
+    panel_col_values = [None] if group_col_on_x else col_values
+    x_group_values = col_values if group_col_on_x else [None]
+    x_slots, x_group_centers, x_group_boundaries = _x_axis_slots(
+        x_values,
+        x_group_values,
+        options.x_group_gap,
+    )
     stack_rows = pd.DataFrame()
     stack_values: list[object] = []
     if options.stacked:
@@ -1169,43 +1338,69 @@ def plot_suite_bar_grid(plot_data: pd.DataFrame, stack_data: pd.DataFrame, optio
         stack_values = _ordered_values(stack_rows["stack_key"], axis="stack_key", options=options)
 
     nrows = len(row_values)
-    ncols = len(col_values)
+    ncols = len(panel_col_values)
     bar_width, hue_offsets = _bar_width_and_offsets(len(hue_values), options.grouped_bar_gap)
-    fig_width = max(7.0, min(22.0, 2.6 * len(x_values) + 1.8 * len(hue_values) + 2.0 * ncols))
+    fig_width = max(7.0, min(22.0, 2.6 * len(x_slots) + 1.8 * len(hue_values) + 2.0 * ncols))
     fig_height = max(4.5, 3.8 * nrows)
+    figure_size = options.figure_size or (fig_width, fig_height)
     fig, axes = plt.subplots(
         nrows,
         ncols,
-        figsize=(fig_width, fig_height),
+        figsize=figure_size,
         squeeze=False,
-        sharey=options.share_y,
+        sharey=share_y_scope == "global",
     )
     if options.figure_title:
-        fig.suptitle(options.figure_title, x=0.5, ha="center")
+        fig.suptitle(
+            options.figure_title,
+            x=0.5,
+            ha="center",
+            fontsize=options.figure_title_fontsize,
+        )
 
-    x_positions = list(range(len(x_values)))
+    x_positions = [position for _, _, position in x_slots]
     global_max_height = max(float(rows[value_col].max()), 1.0)
+    row_max_heights = [
+        max(
+            float(rows[_axis_filter(rows, row, row_value)][value_col].max())
+            if not rows[_axis_filter(rows, row, row_value)].empty
+            else 0.0,
+            1.0,
+        )
+        for row_value in row_values
+    ]
     hue_scoped_stack_legend = options.stacked and options.stack_legend_scope == "hue" and hue is not None
     hue_legend_groups: dict[object, dict[str, Patch]] = {}
 
     for row_idx, row_value in enumerate(row_values):
-        for col_idx, col_value in enumerate(col_values):
+        for col_idx, col_value in enumerate(panel_col_values):
             ax = axes[row_idx][col_idx]
-            scoped = rows[_axis_filter(rows, row, row_value) & _axis_filter(rows, col, col_value)]
+            scope_filter = _axis_filter(rows, row, row_value)
+            if not group_col_on_x:
+                scope_filter = scope_filter & _axis_filter(rows, col, col_value)
+            scoped = rows[scope_filter]
             local_max_height = max(float(scoped[value_col].max()) if not scoped.empty else 0.0, 1.0)
-            label_max_height = global_max_height if options.share_y else local_max_height
+            label_max_height = {
+                "global": global_max_height,
+                "row": row_max_heights[row_idx],
+            }.get(share_y_scope, local_max_height)
             if options.stacked:
                 for hue_idx, hue_value in enumerate(hue_values):
                     offset = hue_offsets[hue_idx]
                     positions = [pos + offset for pos in x_positions]
                     total_sub = scoped[_axis_filter(scoped, hue_key, hue_value)]
-                    total_by_x = {item[x]: item for _, item in total_sub.iterrows()}
-                    scoped_stack = stack_rows[
+                    total_by_x = {
+                        _row_lookup_key(item, x_group_axis if group_col_on_x else None, x): item
+                        for _, item in total_sub.iterrows()
+                    }
+                    stack_scope_filter = (
                         _axis_filter(stack_rows, row, row_value)
-                        & _axis_filter(stack_rows, col, col_value)
                         & _axis_filter(stack_rows, hue_key, hue_value)
-                    ]
-                    bottoms = [0.0] * len(x_values)
+                    )
+                    if not group_col_on_x:
+                        stack_scope_filter = stack_scope_filter & _axis_filter(stack_rows, col, col_value)
+                    scoped_stack = stack_rows[stack_scope_filter]
+                    bottoms = [0.0] * len(x_slots)
                     color_stack_values = (
                         _active_stack_values(scoped_stack, stack_values, value_col)
                         if options.stack_legend_scope == "hue" and hue is not None
@@ -1214,8 +1409,19 @@ def plot_suite_bar_grid(plot_data: pd.DataFrame, stack_data: pd.DataFrame, optio
                     color_stack_count = len(color_stack_values)
                     for stack_idx, stack_value in enumerate(color_stack_values):
                         sub = scoped_stack[_axis_filter(scoped_stack, "stack_key", stack_value)]
-                        by_x = {item[x]: item for _, item in sub.iterrows()}
-                        heights = [float(by_x.get(x_value, {}).get(value_col, 0.0)) for x_value in x_values]
+                        by_x = {
+                            _row_lookup_key(item, x_group_axis if group_col_on_x else None, x): item
+                            for _, item in sub.iterrows()
+                        }
+                        heights = [
+                            float(
+                                by_x.get(
+                                    _lookup_key(x_group_axis if group_col_on_x else None, group_value, x_value),
+                                    {},
+                                ).get(value_col, 0.0)
+                            )
+                            for group_value, x_value, _ in x_slots
+                        ]
                         drawable = _nonzero_bar_segments(positions, heights, bottoms)
                         if not drawable:
                             continue
@@ -1245,9 +1451,14 @@ def plot_suite_bar_grid(plot_data: pd.DataFrame, stack_data: pd.DataFrame, optio
                         )
                         bottoms = [base + value for base, value in zip(bottoms, heights)]
 
-                    for xpos, x_value, total in zip(positions, x_values, bottoms):
-                        missing_count = int(total_by_x.get(x_value, {}).get("missing_case_count", 0))
-                        bar_total = float(total_by_x.get(x_value, {}).get(value_col, total))
+                    for xpos, (group_value, x_value, _), total in zip(positions, x_slots, bottoms):
+                        lookup_key = _lookup_key(
+                            x_group_axis if group_col_on_x else None,
+                            group_value,
+                            x_value,
+                        )
+                        missing_count = int(total_by_x.get(lookup_key, {}).get("missing_case_count", 0))
+                        bar_total = float(total_by_x.get(lookup_key, {}).get(value_col, total))
                         if options.value_labels:
                             _label_bar(
                                 ax,
@@ -1272,9 +1483,28 @@ def plot_suite_bar_grid(plot_data: pd.DataFrame, stack_data: pd.DataFrame, optio
             else:
                 for hue_idx, hue_value in enumerate(hue_values):
                     sub = scoped[_axis_filter(scoped, hue_key, hue_value)]
-                    by_x = {item[x]: item for _, item in sub.iterrows()}
-                    heights = [float(by_x.get(x_value, {}).get(value_col, 0.0)) for x_value in x_values]
-                    missing = [int(by_x.get(x_value, {}).get("missing_case_count", 0)) for x_value in x_values]
+                    by_x = {
+                        _row_lookup_key(item, x_group_axis if group_col_on_x else None, x): item
+                        for _, item in sub.iterrows()
+                    }
+                    heights = [
+                        float(
+                            by_x.get(
+                                _lookup_key(x_group_axis if group_col_on_x else None, group_value, x_value),
+                                {},
+                            ).get(value_col, 0.0)
+                        )
+                        for group_value, x_value, _ in x_slots
+                    ]
+                    missing = [
+                        int(
+                            by_x.get(
+                                _lookup_key(x_group_axis if group_col_on_x else None, group_value, x_value),
+                                {},
+                            ).get("missing_case_count", 0)
+                        )
+                        for group_value, x_value, _ in x_slots
+                    ]
                     offset = hue_offsets[hue_idx]
                     positions = [pos + offset for pos in x_positions]
                     ax.bar(
@@ -1310,18 +1540,63 @@ def plot_suite_bar_grid(plot_data: pd.DataFrame, stack_data: pd.DataFrame, optio
                                 level=2 if options.value_labels else 1,
                             )
 
-            ax.set_title(_subplot_title(row, row_value, col, col_value, options))
-            _apply_x_tick_labels(ax, x_positions, x_values, hue_values, hue_offsets, x, hue, options)
-            ax.set_xlabel(options.x_label if options.x_label is not None else _axis_label(x, options))
-            ax.set_ylabel(_bar_ylabel(options) if col_idx == 0 else "")
+            ax.set_title(
+                _subplot_title(
+                    row,
+                    row_value,
+                    None if group_col_on_x else col,
+                    None if group_col_on_x else col_value,
+                    options,
+                ),
+                fontsize=options.subplot_title_fontsize,
+            )
+            if group_col_on_x:
+                _apply_grouped_x_axis(
+                    ax,
+                    x_slots,
+                    x_group_centers,
+                    x_group_boundaries,
+                    x,
+                    x_group_axis,
+                    options,
+                )
+            else:
+                _apply_x_tick_labels(ax, x_positions, x_values, hue_values, hue_offsets, x, hue, options)
+            _apply_bar_x_limits(ax, x_positions, hue_offsets, bar_width)
+            ax.set_xlabel(
+                "" if options.shared_x_label else _bar_xlabel(x, options),
+                fontsize=options.axis_label_fontsize,
+            )
+            ax.set_ylabel(
+                _bar_ylabel(options) if col_idx == 0 else "",
+                fontsize=options.axis_label_fontsize,
+            )
+            if options.tick_label_fontsize is not None:
+                ax.tick_params(axis="both", labelsize=options.tick_label_fontsize)
             ax.set_axisbelow(True)
             ax.grid(axis="y", alpha=0.25, zorder=0)
-            if not options.share_y:
+            if share_y_scope == "none":
                 _set_bar_ylim(ax, local_max_height)
 
-    if options.share_y:
+    if share_y_scope == "global":
         for ax in axes.flat:
             _set_bar_ylim(ax, global_max_height)
+    elif share_y_scope == "row":
+        for row_idx, row_max_height in enumerate(row_max_heights):
+            for ax in axes[row_idx]:
+                _set_bar_ylim(ax, row_max_height)
+
+    if share_y_scope in {"global", "row"}:
+        for col_idx in range(1, ncols):
+            for ax in axes[:, col_idx]:
+                ax.tick_params(axis="y", left=False, labelleft=False)
+
+    if options.shared_x_label:
+        fig.supxlabel(
+            _bar_xlabel(x, options),
+            fontsize=options.axis_label_fontsize,
+            **_shared_x_label_kwargs(options.legend_position, options.shared_x_label_y),
+        )
 
     legend_drawn = False
     if hue_scoped_stack_legend and options.legend_position != "none" and hue_legend_groups:
@@ -1335,7 +1610,8 @@ def plot_suite_bar_grid(plot_data: pd.DataFrame, stack_data: pd.DataFrame, optio
         if legend_title is None:
             legend_title = _axis_label(options.stack_by if options.stacked else hue, options)
         if options.legend_position == "right":
-            fig.tight_layout(rect=(0, 0, 0.78, 0.94 if options.figure_title else 1))
+            fig.tight_layout(rect=(0, 0, 0.78, FIGURE_TITLE_LAYOUT_TOP if options.figure_title else 1))
+            _apply_subplot_spacing(fig, options)
             fig.legend(
                 by_label.values(),
                 by_label.keys(),
@@ -1344,10 +1620,13 @@ def plot_suite_bar_grid(plot_data: pd.DataFrame, stack_data: pd.DataFrame, optio
                 bbox_to_anchor=(0.80, 0.5),
                 ncol=options.legend_ncol or 1,
                 frameon=True,
+                fontsize=options.legend_fontsize,
+                title_fontsize=options.legend_title_fontsize,
             )
         elif options.legend_position == "title_right":
             ncol = options.legend_ncol or min(len(by_label), 4)
-            fig.tight_layout(rect=(0, 0, 1, 0.90 if options.figure_title else 0.94))
+            fig.tight_layout(rect=(0, 0, 1, FIGURE_TITLE_LAYOUT_TOP if options.figure_title else 0.94))
+            _apply_subplot_spacing(fig, options)
             fig.legend(
                 by_label.values(),
                 by_label.keys(),
@@ -1356,22 +1635,28 @@ def plot_suite_bar_grid(plot_data: pd.DataFrame, stack_data: pd.DataFrame, optio
                 bbox_to_anchor=(0.98, 0.98),
                 ncol=ncol,
                 frameon=True,
+                fontsize=options.legend_fontsize,
+                title_fontsize=options.legend_title_fontsize,
             )
         elif options.legend_position == "bottom":
             ncol = options.legend_ncol or min(len(by_label), 4)
-            fig.tight_layout(rect=(0, 0.12, 1, 0.94 if options.figure_title else 1))
+            fig.tight_layout(rect=(0, 0.12, 1, FIGURE_TITLE_LAYOUT_TOP if options.figure_title else 1))
+            _apply_subplot_spacing(fig, options)
             fig.legend(
                 by_label.values(),
                 by_label.keys(),
                 title=legend_title,
                 loc="upper center",
-                bbox_to_anchor=(0.5, 0.06),
+                bbox_to_anchor=(0.5, 0.12),
                 ncol=ncol,
                 frameon=True,
+                fontsize=options.legend_fontsize,
+                title_fontsize=options.legend_title_fontsize,
             )
         else:
             ncol = options.legend_ncol or min(len(by_label), 4)
-            fig.tight_layout(rect=(0, 0, 1, 0.88 if options.figure_title else 0.92))
+            fig.tight_layout(rect=(0, 0, 1, FIGURE_TITLE_LAYOUT_TOP if options.figure_title else 0.92))
+            _apply_subplot_spacing(fig, options)
             fig.legend(
                 by_label.values(),
                 by_label.keys(),
@@ -1380,14 +1665,17 @@ def plot_suite_bar_grid(plot_data: pd.DataFrame, stack_data: pd.DataFrame, optio
                 bbox_to_anchor=(0.5, 0.98),
                 ncol=ncol,
                 frameon=True,
+                fontsize=options.legend_fontsize,
+                title_fontsize=options.legend_title_fontsize,
             )
         legend_drawn = True
     if not legend_drawn:
-        fig.tight_layout(rect=(0, 0, 1, 0.94 if options.figure_title else 1))
+        fig.tight_layout(rect=(0, 0, 1, FIGURE_TITLE_LAYOUT_TOP if options.figure_title else 1))
+        _apply_subplot_spacing(fig, options)
 
     options.out_dir.mkdir(parents=True, exist_ok=True)
     name = f"bar_total_{options.metric}"
-    fig.savefig(options.out_dir / f"{name}.png", dpi=180, bbox_inches="tight")
+    fig.savefig(options.out_dir / f"{name}.png", dpi=options.save_dpi, bbox_inches="tight")
     fig.savefig(options.out_dir / f"{name}.pdf", bbox_inches="tight")
     fig.savefig(options.out_dir / f"{name}.svg", bbox_inches="tight")
     plt.close(fig)

@@ -153,6 +153,17 @@ ROOFLINE_TEXT_FONTSIZE = 5.2
 LEGEND_FONTSIZE = 5.5
 MARKER_SIZE = 32
 LINEWIDTH = 0.9
+ROOFLINE_COLOR = "#4f545a"
+RIDGE_COLOR = "#7a7f85"
+MARKER_EDGE_COLOR = "#4f545a"
+PROGRESSION_COLORS = (
+    "#7a7f85",
+    "#9ecae1",
+    "#6baed6",
+    "#2f80b7",
+    "#0f4c81",
+    "#08306b",
+)
 
 
 def parse_args(argv=None):
@@ -186,13 +197,13 @@ def draw_roofline(ax, peak_tflops, hbm_gbs, label):
 
     xs_left = [0.5, ridge]
     ys_left = [0.5 * bw, ridge * bw]
-    ax.plot(xs_left, ys_left, color="black", linewidth=LINEWIDTH)
+    ax.plot(xs_left, ys_left, color=ROOFLINE_COLOR, linewidth=LINEWIDTH)
     ax.plot([ridge, 1e6], [peak, peak],
-            color="black", linewidth=LINEWIDTH, label=label)
-    ax.axvline(ridge, color="gray", linestyle=":", linewidth=0.55)
+            color=ROOFLINE_COLOR, linewidth=LINEWIDTH, label=label)
+    ax.axvline(ridge, color=RIDGE_COLOR, linestyle=":", linewidth=0.55)
     ax.text(ridge * 1.10, peak * 0.12,
             f"ridge\n{ridge:.0f}",
-            fontsize=ROOFLINE_TEXT_FONTSIZE, color="gray")
+            fontsize=ROOFLINE_TEXT_FONTSIZE, color=RIDGE_COLOR)
     return bw, peak, ridge
 
 
@@ -214,18 +225,17 @@ def format_legend_label(label: str) -> str:
     return label.replace("\n", ", ")
 
 
-def plot_progression(ax, points, cmap_name="plasma", show_arrows=True):
-    cmap = plt.get_cmap(cmap_name)
+def plot_progression(ax, points, color_sequence=PROGRESSION_COLORS, show_arrows=True):
     n = len(points)
     handles = []
     for i, (label, x, y, b, wb, kvb, _r) in enumerate(points):
-        color = cmap(0.05 + 0.85 * i / max(1, n - 1))
-        ax.scatter(x, y, s=MARKER_SIZE, color=color, edgecolors="black",
+        color = color_sequence[i % len(color_sequence)]
+        ax.scatter(x, y, s=MARKER_SIZE, color=color, edgecolors=MARKER_EDGE_COLOR,
                    linewidths=0.45, zorder=5)
         handles.append(Line2D(
             [0], [0],
             marker="o", linestyle="",
-            markerfacecolor=color, markeredgecolor="black",
+            markerfacecolor=color, markeredgecolor=MARKER_EDGE_COLOR,
             markeredgewidth=0.45, markersize=3.5,
             label=format_legend_label(label),
         ))
