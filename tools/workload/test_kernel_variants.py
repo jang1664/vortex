@@ -7,6 +7,7 @@ from tools.workload.gen_kernel_cfgs import (
     KERNEL_APP_REGISTRY,
     LAYOUT_ALONE_VARIANT,
     LAYOUT_FUSED_VARIANT,
+    MODELS,
     WORKLOAD_VARIANTS,
     build_fpint_gemm_args_for_model,
     build_llm_kernels,
@@ -281,6 +282,40 @@ class KernelVariantTest(unittest.TestCase):
 
         self.assertIn("-m 128 -n 4096 -k 4096 -q 32 -t 0 -d 0", args)
         self.assertTrue(all("-q " in arg for arg in args))
+
+    def test_llama3_8b_registry_uses_gqa_projection_and_kv_counts(self) -> None:
+        self.assertIn("llama3-8b", MODELS)
+
+        payload = build_llm_kernels(
+            model_name="llama3-8b",
+            stages=["prefill"],
+            batch=1,
+            prefill_seq_len=128,
+            gen_kv_len=128,
+            qblk=32,
+            variant="all_fpint_gemm_naive",
+        )
+
+        q_proj = _kernel_by_name(payload, "q_proj")
+        k_proj = _kernel_by_name(payload, "k_proj")
+        v_proj = _kernel_by_name(payload, "v_proj")
+        o_proj = _kernel_by_name(payload, "o_proj")
+        attn_qk = _kernel_by_name(payload, "attn_qkT")
+        attn_pv = _kernel_by_name(payload, "attn_pv")
+        k_quant = _kernel_by_name(payload, "kv_cache_quant_rope_k_to_attn_qkT")
+        v_quant = _kernel_by_name(payload, "kv_cache_quant_v_cache_to_attn_pv")
+
+        self.assertEqual("-m 128 -n 4096 -k 4096 -q 32 -t 0 -d 0", q_proj["args"])
+        self.assertEqual("-m 128 -n 1024 -k 4096 -q 32 -t 0 -d 0", k_proj["args"])
+        self.assertEqual("-m 128 -n 1024 -k 4096 -q 32 -t 0 -d 0", v_proj["args"])
+        self.assertEqual("-m 128 -n 4096 -k 4096 -q 32 -t 0 -d 0", o_proj["args"])
+        self.assertEqual(1024, k_proj["shape"]["N"])
+        self.assertEqual(1024, v_proj["shape"]["N"])
+
+        self.assertEqual(32 * 1 * 32, attn_qk["calls_per_forward"])
+        self.assertEqual(32 * 1 * 32, attn_pv["calls_per_forward"])
+        self.assertEqual(32 * 1 * 8, k_quant["calls_per_forward"])
+        self.assertEqual(32 * 1 * 8, v_quant["calls_per_forward"])
 
     def test_layout_variants_are_registered(self) -> None:
         self.assertIn("all_fpint_gemm_improve_alone_layout", WORKLOAD_VARIANTS)

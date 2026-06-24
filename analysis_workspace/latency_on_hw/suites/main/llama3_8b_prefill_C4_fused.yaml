@@ -1,0 +1,42 @@
+name: llama3_8b_prefill_C4_fused
+defaults:
+  warmup: 1
+  iterations: 3
+  app: fpint_gemm_ffn_hw
+  fpga_bin: naive_simd
+  target: hw
+  platform: xilinx_u55c_gen3x16_xdma_3_202210_1
+  blackbox_args:
+    - --cores=1
+    - --threads=8
+
+fpga_bins:
+  default: naive_simd
+
+  by_backend:
+    fpint_gemm_improve: improve_tcol32
+
+  by_app:
+    rms_norm_layout_fused: naive_simd
+    rope_layout_fused: naive_simd
+    softmax_layout_fused: improve_no_tcu_lut_fexp
+    silu_layout_fused: naive_simd
+    eladd_layout_fused: naive_simd
+    elmul_layout_fused: naive_simd
+    kv_cache_quant_w4a16: naive_simd
+    kv_cache_quant_layout_fused_w4a16: naive_simd
+    tile_weight_w4a16: naive_simd
+    tile_scale_zp_w4a16: naive_simd
+    detile_output: naive_simd
+    head_concat_layout_fused: naive_simd
+
+workloads:
+  - id: llama3_8b_prefill_C4_fused
+    model: llama3-8b
+    stage: prefill
+    variant: all_fpint_gemm_improve_fused_layout_spinquant
+    implemented_only: false
+    matrix:
+      batch: {values: [1, 2, 4, 8]}
+      prefill_seq_len: {values: [512, 1024, 2048, 4096]}
+      qblk: 32

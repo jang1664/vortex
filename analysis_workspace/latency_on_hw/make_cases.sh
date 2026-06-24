@@ -13,20 +13,23 @@ fi
 usage() {
     cat >&2 <<'EOF'
 Usage:
-  ./make_cases.sh --input SUITE_DIR --output GENERATED_SUITE_DIR
+  ./make_cases.sh --input SUITE_DIR --output GENERATED_SUITE_DIR [--model-prefix PREFIX]
   ./make_cases.sh SUITE_DIR [GENERATED_SUITE_DIR]
 
 Examples:
   ./make_cases.sh --input suites/main --output generated_suites/main
+  ./make_cases.sh --input suites/main_all --output generated_suites/llama3_8b_main_all --model-prefix llama3_8b
   ./make_cases.sh suites/test2 generated_suites/test2
 
 Defaults:
   GENERATED_SUITE_DIR defaults to generated_suites when omitted.
+  MODEL_PREFIX defaults to llama2_7b.
 EOF
 }
 
 SUITE_DIR=""
 OUTPUT_DIR=""
+MODEL_PREFIX="llama2_7b"
 positional=()
 
 while [[ $# -gt 0 ]]; do
@@ -47,6 +50,15 @@ while [[ $# -gt 0 ]]; do
                 exit 1
             fi
             OUTPUT_DIR="$2"
+            shift 2
+            ;;
+        --model-prefix)
+            if [[ $# -lt 2 ]]; then
+                echo "Error: $1 requires a value" >&2
+                usage
+                exit 1
+            fi
+            MODEL_PREFIX="$2"
             shift 2
             ;;
         -h|--help)
@@ -117,16 +129,16 @@ generate_suite() {
     "${PYTHON_BIN}" -m tools.latency_bench generate-suites --suite "${suite}" --out "${out_dir}" --overwrite
 }
 
-generate_suite "${SUITE_DIR}/llama2_7b_prefill_C1.yaml" "${OUTPUT_DIR}/C1_prefill"
-generate_suite "${SUITE_DIR}/llama2_7b_prefill_C2.yaml" "${OUTPUT_DIR}/C2_prefill"
-generate_suite "${SUITE_DIR}/llama2_7b_prefill_C3.yaml" "${OUTPUT_DIR}/C3_prefill"
-generate_suite "${SUITE_DIR}/llama2_7b_prefill_C4_alone.yaml" "${OUTPUT_DIR}/C4_alone_prefill"
-generate_suite "${SUITE_DIR}/llama2_7b_prefill_C4_fused.yaml" "${OUTPUT_DIR}/C4_fused_prefill"
-generate_suite "${SUITE_DIR}/llama2_7b_generation_C1.yaml" "${OUTPUT_DIR}/C1_generation"
-generate_suite "${SUITE_DIR}/llama2_7b_generation_C2.yaml" "${OUTPUT_DIR}/C2_generation"
-generate_suite "${SUITE_DIR}/llama2_7b_generation_C3.yaml" "${OUTPUT_DIR}/C3_generation"
-generate_suite "${SUITE_DIR}/llama2_7b_generation_C4_alone.yaml" "${OUTPUT_DIR}/C4_alone_generation"
-generate_suite "${SUITE_DIR}/llama2_7b_generation_C4_fused.yaml" "${OUTPUT_DIR}/C4_fused_generation"
+generate_suite "${SUITE_DIR}/${MODEL_PREFIX}_prefill_C1.yaml" "${OUTPUT_DIR}/C1_prefill"
+generate_suite "${SUITE_DIR}/${MODEL_PREFIX}_prefill_C2.yaml" "${OUTPUT_DIR}/C2_prefill"
+generate_suite "${SUITE_DIR}/${MODEL_PREFIX}_prefill_C3.yaml" "${OUTPUT_DIR}/C3_prefill"
+generate_suite "${SUITE_DIR}/${MODEL_PREFIX}_prefill_C4_alone.yaml" "${OUTPUT_DIR}/C4_alone_prefill"
+generate_suite "${SUITE_DIR}/${MODEL_PREFIX}_prefill_C4_fused.yaml" "${OUTPUT_DIR}/C4_fused_prefill"
+generate_suite "${SUITE_DIR}/${MODEL_PREFIX}_generation_C1.yaml" "${OUTPUT_DIR}/C1_generation"
+generate_suite "${SUITE_DIR}/${MODEL_PREFIX}_generation_C2.yaml" "${OUTPUT_DIR}/C2_generation"
+generate_suite "${SUITE_DIR}/${MODEL_PREFIX}_generation_C3.yaml" "${OUTPUT_DIR}/C3_generation"
+generate_suite "${SUITE_DIR}/${MODEL_PREFIX}_generation_C4_alone.yaml" "${OUTPUT_DIR}/C4_alone_generation"
+generate_suite "${SUITE_DIR}/${MODEL_PREFIX}_generation_C4_fused.yaml" "${OUTPUT_DIR}/C4_fused_generation"
 
 clean_suite_dir "${OUTPUT_DIR}/prefill_merged"
 "${PYTHON_BIN}" -m tools.latency_bench merge-suites \

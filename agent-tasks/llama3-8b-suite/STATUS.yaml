@@ -1,0 +1,16 @@
+task: llama3-8b-suite
+state: DONE
+created: "2026-06-24 23:21"
+updated: "2026-06-24 23:31"
+summary: Add llama3-8b workload generator support and latency suite generation.
+log:
+  - time: "2026-06-24 23:21"
+    entry: "Started implementation from the approved plan. Current branch is fpint_improve; unrelated untracked configs/improve_tcol32_lutfexp.sh will be left untouched."
+  - time: "2026-06-24 23:26"
+    entry: "Added llama3-8b generator support, GQA regression coverage, main_all suite mirrors, and make_cases.sh --model-prefix support. Llama3 and default Llama2 make_cases expansion both completed into /tmp validation directories."
+  - time: "2026-06-24 23:27"
+    entry: "Final checks passed: targeted pytest suite, generator registry listing, git diff --check, and no llama3.2 references in touched areas."
+  - time: "2026-06-24 23:31"
+    entry: "Added llama3-8b suite mirrors under analysis_workspace/latency_on_hw/suites/main. Validated make_cases.sh --input suites/main --model-prefix llama3_8b into /tmp/vortex_llama3_8b_main_cases_validate; prefill and generation merged suites were generated."
+pitfalls:
+  - "make_cases.sh changes directory to analysis_workspace/latency_on_hw, so --input should be relative to that directory or absolute; repo-root-relative paths fail."
