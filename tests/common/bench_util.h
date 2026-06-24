@@ -332,6 +332,7 @@ struct StatsSummary {
 class Stats {
 public:
     void record(double us) { samples_.push_back(us); }
+    float last() {return samples_.back();}
 
     StatsSummary summary() const {
         StatsSummary out;

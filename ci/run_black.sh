@@ -19,7 +19,7 @@ list_fpga_bin_aliases() {
 }
 
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
-  echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"] [--fpga-bin ALIAS_OR_PATH] [--bench] [--perf CLASS] [--debug LEVEL] [--hw-debug] [--no-latency] [--power[=on|off]] [--power-out-dir DIR] [--power-auto-duration] [--power-max-iterations N]"
+  echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"] [--fpga-bin ALIAS_OR_PATH] [--bench] [--perf CLASS] [--debug LEVEL] [--hw-debug] [--no-srun] [--no-latency] [--power[=on|off]] [--power-out-dir DIR] [--power-auto-duration] [--power-max-iterations N]"
   echo "Modes:"
   echo "  rtlsim   - Run only rtlsim tests"
   echo "  xrtsim   - Run only xrtsim tests"
@@ -30,6 +30,8 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   echo "Options:"
   echo "  --hw-debug, --enable-hw-debug-module"
   echo "      Append -DENABLE_HW_DEBUG_MODULE to CONFIGS"
+  echo "  --no-srun"
+  echo "      Run hw mode directly instead of launching through srun"
   echo "  --no-latency"
   echo "      Skip the normal bench latency phase"
   echo "  --power[=on|off]"
@@ -57,7 +59,7 @@ mode="${1:-}"
 shift || true
 
 if [[ "${mode}" == "" ]]; then
-  echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"] [--fpga-bin ALIAS_OR_PATH] [--bench] [--perf CLASS] [--debug LEVEL] [--hw-debug] [--no-latency] [--power[=on|off]] [--power-out-dir DIR] [--power-auto-duration] [--power-max-iterations N]"
+  echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"] [--fpga-bin ALIAS_OR_PATH] [--bench] [--perf CLASS] [--debug LEVEL] [--hw-debug] [--no-srun] [--no-latency] [--power[=on|off]] [--power-out-dir DIR] [--power-auto-duration] [--power-max-iterations N]"
   echo "Modes:"
   echo "  rtlsim   - Run only rtlsim tests"
   echo "  xrtsim   - Run only xrtsim tests"
@@ -78,6 +80,7 @@ BENCH_FLAG=""
 PERF_FLAG=""
 DEBUG_FLAG=""
 HW_DEBUG=0
+USE_SRUN=1
 POWER_MODE=""
 POWER_OUT_DIR=""
 POWER_CSV=""
@@ -262,6 +265,10 @@ while [[ $# -gt 0 ]]; do
       HW_DEBUG=1
       shift
       ;;
+    --no-srun)
+      USE_SRUN=0
+      shift
+      ;;
     --no-latency|--skip-latency)
       LATENCY_ENABLED=0
       shift
@@ -421,8 +428,9 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     -h|--help)
-      echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"] [--fpga-bin ALIAS_OR_PATH] [--bench] [--perf CLASS] [--debug LEVEL] [--hw-debug] [--no-latency] [--power[=on|off]] [--power-out-dir DIR] [--power-auto-duration] [--power-max-iterations N]"
+      echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"] [--fpga-bin ALIAS_OR_PATH] [--bench] [--perf CLASS] [--debug LEVEL] [--hw-debug] [--no-srun] [--no-latency] [--power[=on|off]] [--power-out-dir DIR] [--power-auto-duration] [--power-max-iterations N]"
       echo "  --hw-debug, --enable-hw-debug-module: append -DENABLE_HW_DEBUG_MODULE to CONFIGS"
+      echo "  --no-srun: run hw mode directly instead of launching through srun"
       echo "  --no-latency: append --no-latency to bench args"
       echo "  --power[=on|off]: append separate bench power-measurement args"
       echo "  --power-csv-max-bytes N: raw power CSV size limit (default: 1048576, 0 unlimited)"
@@ -432,7 +440,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     *)
       echo "Unknown argument: $1"
-      echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"] [--fpga-bin ALIAS_OR_PATH] [--bench] [--perf CLASS] [--debug LEVEL] [--hw-debug]"
+      echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"] [--fpga-bin ALIAS_OR_PATH] [--bench] [--perf CLASS] [--debug LEVEL] [--hw-debug] [--no-srun]"
       exit 1
       ;;
   esac
@@ -545,13 +553,18 @@ if [[ "${mode}" == "hw" || "${mode}" == "all" ]]; then
     CONFIGS="$(append_run_configs "${CONFIGS:-}")"
   fi
   echo "HW FPGA_BIN=${FPGA_BIN} FPGA_BIN_DIR=${FPGA_BIN_DIR} FPGA_BIN_CONFIGS=${FPGA_BIN_CONFIGS}"
-  srun --gres=fpga:u55c:1 --cpus-per-task=4 --mem=16G --time=12:00:00 --pty bash -c "\
+  HW_COMMAND="\
   CONFIGS=\"${CONFIGS}\" \
   FPGA_BIN_DIR=\"${FPGA_BIN_DIR}\" \
   PLATFORM=xilinx_u55c_gen3x16_xdma_3_202210_1 \
   DRIVER=xrt \
   TARGET=hw \
-  ./ci/blackbox.sh ${BENCH_FLAG} ${PERF_FLAG} ${DEBUG_FLAG} --driver=xrt --app=${APP} --args=\"${ARGS}\" | tee bb.log
+  ./ci/blackbox.sh ${BENCH_FLAG} ${PERF_FLAG} ${DEBUG_FLAG} --driver=xrt --app=${APP} --args=\"${ARGS}\"
   "
+  if [[ "${USE_SRUN}" == "1" ]]; then
+    srun --gres=fpga:u55c:1 --cpus-per-task=4 --mem=16G --time=12:00:00 --pty bash -c "${HW_COMMAND}"
+  else
+    bash -c "${HW_COMMAND}"
+  fi
   # CHIPSCOPE=1 \
 fi
