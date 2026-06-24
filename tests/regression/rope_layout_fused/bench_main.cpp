@@ -215,18 +215,22 @@ int main(int argc, char *argv[]) {
   arg.log2_mxu_nt = log2_u32(TILE_DMA_MXU_NT);
   RT_CHECK(vx_upload_bytes(device, &arg, sizeof(arg), &args_buffer));
 
+  printf("Warmup Start\n"); fflush(stdout);
   for (int i = 0; i < bench.warmup; ++i) {
     RT_CHECK(vx_start(device, krnl_buffer, args_buffer));
     RT_CHECK(vx_ready_wait(device, VX_MAX_TIMEOUT));
+    printf("Warmup iteration %0d/%0d\n", i+1, bench.warmup); fflush(stdout);
   }
 
   vx_bench::Stats stats;
+  printf("Start latency measurement.\n"); fflush(stdout);
   for (int i = 0; i < bench.iterations; ++i) {
     vx_bench::Stopwatch sw;
     sw.start();
     RT_CHECK(vx_start(device, krnl_buffer, args_buffer));
     RT_CHECK(vx_ready_wait(device, VX_MAX_TIMEOUT));
     stats.record(sw.stop_us());
+    printf("iteration %0d/%0d, elapsed:%f\n", i+1, bench.iterations, stats.last()); fflush(stdout);
   }
 
   stats.report(layout_to == ROPE_LAYOUT_TO_GEMM_A ? "rope_layout_fused_a" :
