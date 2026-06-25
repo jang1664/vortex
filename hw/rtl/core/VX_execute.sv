@@ -52,6 +52,8 @@ module VX_execute import VX_gpu_pkg::*; #(
     VX_fpu_csr_if fpu_csr_if[`NUM_FPU_BLOCKS]();
 `endif
 
+    wire lsu_drained;
+
     VX_alu_unit #(
         .INSTANCE_ID (`SFORMATF(("%s-alu", INSTANCE_ID)))
     ) alu_unit (
@@ -72,7 +74,8 @@ module VX_execute import VX_gpu_pkg::*; #(
         .reset          (reset),
         .dispatch_if    (dispatch_if[EX_LSU * `ISSUE_WIDTH +: `ISSUE_WIDTH]),
         .commit_if      (commit_if[EX_LSU * `ISSUE_WIDTH +: `ISSUE_WIDTH]),
-        .lsu_mem_if     (lsu_mem_if)
+        .lsu_mem_if     (lsu_mem_if),
+        .lsu_drained    (lsu_drained)
     );
 
 `ifdef EXT_F_ENABLE
@@ -117,6 +120,7 @@ module VX_execute import VX_gpu_pkg::*; #(
     `endif
         .commit_csr_if  (commit_csr_if),
         .sched_csr_if   (sched_csr_if),
+        .lsu_drained    (lsu_drained),
         .warp_ctl_if    (warp_ctl_if)
     );
 

@@ -26,7 +26,8 @@ module VX_lsu_slice import VX_gpu_pkg::*; #(
 
     // Outputs
     VX_result_if.master     result_if,
-    VX_lsu_mem_if.master    lsu_mem_if
+    VX_lsu_mem_if.master    lsu_mem_if,
+    output wire             lsu_drained
 );
     localparam NUM_LANES    = `NUM_LSU_LANES;
     localparam PID_BITS     = `CLOG2(`NUM_THREADS / NUM_LANES);
@@ -309,6 +310,7 @@ module VX_lsu_slice import VX_gpu_pkg::*; #(
     wire [NUM_LANES-1:0][(LSU_WORD_SIZE*8)-1:0] lsu_mem_rsp_data;
     wire [LSU_TAG_WIDTH-1:0]                lsu_mem_rsp_tag;
     wire                                    lsu_mem_rsp_ready;
+    wire                                    req_queue_empty;
 
     VX_mem_scheduler #(
         .INSTANCE_ID (`SFORMATF(("%s-memsched", INSTANCE_ID))),
@@ -341,7 +343,7 @@ module VX_lsu_slice import VX_gpu_pkg::*; #(
         .core_req_ready (mem_req_ready),
 
         // request queue info
-        `UNUSED_PIN (req_queue_empty),
+        .req_queue_empty(req_queue_empty),
         `UNUSED_PIN (req_queue_rw_notify),
 
         // Output response
@@ -371,6 +373,8 @@ module VX_lsu_slice import VX_gpu_pkg::*; #(
         .mem_rsp_tag    (lsu_mem_rsp_tag),
         .mem_rsp_ready  (lsu_mem_rsp_ready)
     );
+
+    assign lsu_drained = req_queue_empty && ~execute_if.valid && ~fence_lock;
 
     assign lsu_mem_if.req_valid = lsu_mem_req_valid;
     assign lsu_mem_if.req_data.mask = lsu_mem_req_mask;

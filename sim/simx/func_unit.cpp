@@ -337,6 +337,60 @@ void LsuUnit::tick() {
 	}
 }
 
+bool LsuUnit::drained() const {
+	if (pending_loads_ != 0 || remain_addrs_ != 0 || !pending_addrs_.empty())
+		return false;
+
+	for (auto& input : Inputs) {
+		if (!input.empty())
+			return false;
+	}
+
+	for (uint32_t b = 0; b < NUM_LSU_BLOCKS; ++b) {
+		auto& state = states_.at(b);
+		if (!state.pending_rd_reqs.empty() || state.fence_lock)
+			return false;
+
+		auto& lmem_switch = core_->lmem_switch_.at(b);
+		if (!lmem_switch->ReqIn.empty()
+		 || !lmem_switch->RspIn.empty()
+		 || !lmem_switch->ReqLmem.empty()
+		 || !lmem_switch->RspLmem.empty()
+		 || !lmem_switch->ReqDC.empty()
+		 || !lmem_switch->RspDC.empty())
+			return false;
+
+		auto& coalescer = core_->mem_coalescers_.at(b);
+		if (!coalescer->ReqIn.empty()
+		 || !coalescer->RspIn.empty()
+		 || !coalescer->ReqOut.empty()
+		 || !coalescer->RspOut.empty())
+			return false;
+	}
+
+	for (auto& req_port : core_->dcache_req_ports) {
+		if (!req_port.empty())
+			return false;
+	}
+
+	for (auto& rsp_port : core_->dcache_rsp_ports) {
+		if (!rsp_port.empty())
+			return false;
+	}
+
+	for (auto& req_port : core_->local_mem()->Inputs) {
+		if (!req_port.empty())
+			return false;
+	}
+
+	for (auto& rsp_port : core_->local_mem()->Outputs) {
+		if (!rsp_port.empty())
+			return false;
+	}
+
+	return true;
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 
 SfuUnit::SfuUnit(const SimContext& ctx, Core* core)
@@ -356,6 +410,8 @@ void SfuUnit::tick() {
 
 		if (std::get_if<WctlType>(&trace->op_type)) {
 			auto wctl_type = std::get<WctlType>(trace->op_type);
+			if (wctl_type == WctlType::BAR && trace->eop && !core_->lsu_drained())
+				continue;
 			switch (wctl_type) {
 			case WctlType::WSPAWN:
 				output.push(trace, 2+delay);

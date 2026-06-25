@@ -13,6 +13,7 @@
 
 #include <iostream>
 #include <iomanip>
+#include <memory>
 #include <string.h>
 #include <assert.h>
 #include <util.h>
@@ -456,6 +457,11 @@ void Core::resume(uint32_t wid) {
 
 bool Core::barrier(uint32_t bar_id, uint32_t count, uint32_t wid) {
   return emulator_.barrier(bar_id, count, wid);
+}
+
+bool Core::lsu_drained() const {
+  auto lsu = std::dynamic_pointer_cast<LsuUnit>(func_units_.at((int)FUType::LSU));
+  return lsu && lsu->drained();
 }
 
 bool Core::wspawn(uint32_t num_warps, Word nextPC) {

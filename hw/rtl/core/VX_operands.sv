@@ -88,7 +88,7 @@ module VX_operands import VX_gpu_pkg::*; #(
         .NUM_INPUTS  (`NUM_OPCS),
         .NUM_OUTPUTS (1),
         .DATAW       (OUT_DATAW),
-        .ARBITER     ("P"),
+        .ARBITER     ("R"),
         .STICKY      (OUT_ARB_STICKY),
         .OUT_BUF     ((`NUM_OPCS > 1) ? 3 : 0)
     ) output_arb (

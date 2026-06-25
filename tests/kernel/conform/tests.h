@@ -21,6 +21,8 @@ int test_serial();
 
 int test_barrier();
 
+int test_barrier_lmem_ordering();
+
 int test_tls();
 
 int test_vote();

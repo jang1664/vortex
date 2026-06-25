@@ -26,7 +26,8 @@ module VX_lsu_unit import VX_gpu_pkg::*; #(
 
     // Outputs
     VX_commit_if.master     commit_if [`ISSUE_WIDTH],
-    VX_lsu_mem_if.master    lsu_mem_if [`NUM_LSU_BLOCKS]
+    VX_lsu_mem_if.master    lsu_mem_if [`NUM_LSU_BLOCKS],
+    output wire             lsu_drained
 );
     localparam BLOCK_SIZE = `NUM_LSU_BLOCKS;
     localparam NUM_LANES  = `NUM_LSU_LANES;
@@ -52,6 +53,8 @@ module VX_lsu_unit import VX_gpu_pkg::*; #(
         .data_t (lsu_res_t)
     ) per_block_result_if[BLOCK_SIZE]();
 
+    wire [BLOCK_SIZE-1:0] per_block_lsu_drained;
+
     for (genvar block_idx = 0; block_idx < BLOCK_SIZE; ++block_idx) begin : g_blocks
         VX_lsu_slice #(
             .INSTANCE_ID (`SFORMATF(("%s%0d", INSTANCE_ID, block_idx)))
@@ -61,9 +64,12 @@ module VX_lsu_unit import VX_gpu_pkg::*; #(
             .reset      (reset),
             .execute_if (per_block_execute_if[block_idx]),
             .result_if  (per_block_result_if[block_idx]),
-            .lsu_mem_if (lsu_mem_if[block_idx])
+            .lsu_mem_if (lsu_mem_if[block_idx]),
+            .lsu_drained(per_block_lsu_drained[block_idx])
         );
     end
+
+    assign lsu_drained = &per_block_lsu_drained;
 
     VX_gather_unit #(
         .BLOCK_SIZE (BLOCK_SIZE),

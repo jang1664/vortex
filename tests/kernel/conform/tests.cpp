@@ -285,6 +285,66 @@ int test_barrier() {
 
 ///////////////////////////////////////////////////////////////////////////////
 
+constexpr int BARRIER_LMEM_MAX_WARPS = 8;
+constexpr int BARRIER_LMEM_STRIDE = 64;
+constexpr int BARRIER_LMEM_ROUNDS = 4;
+
+int barrier_lmem_buffer[BARRIER_LMEM_MAX_WARPS];
+
+void barrier_lmem_kernel() {
+	unsigned wid = vx_warp_id();
+	vx_tmc(1);
+
+	int base = int(wid) * BARRIER_LMEM_STRIDE;
+	int value = 65 + int(wid) + (BARRIER_LMEM_ROUNDS - 1);
+
+	for (int round = 0; round < BARRIER_LMEM_ROUNDS; ++round) {
+		for (int i = 0; i < BARRIER_LMEM_STRIDE; ++i) {
+			lmem_addr[base + i] = 65 + int(wid) + round;
+		}
+	}
+
+	vx_barrier(0, barrier_ctr);
+
+	unsigned neighbor = (wid + 1) % unsigned(barrier_ctr);
+	barrier_lmem_buffer[wid] = lmem_addr[int(neighbor) * BARRIER_LMEM_STRIDE + (BARRIER_LMEM_STRIDE - 1)];
+	(void)value;
+	vx_tmc(0 == wid);
+}
+
+int test_barrier_lmem_ordering() {
+	PRINTF("Barrier LMEM Ordering Test\n");
+
+	int num_warps = std::min(vx_num_warps(), BARRIER_LMEM_MAX_WARPS);
+	if (num_warps < 2) {
+		PRINTF("Skipped\n");
+		return 0;
+	}
+
+	barrier_ctr = num_warps;
+	for (int i = 0; i < BARRIER_LMEM_STRIDE * BARRIER_LMEM_MAX_WARPS; ++i) {
+		lmem_addr[i] = -1;
+	}
+	for (int i = 0; i < BARRIER_LMEM_MAX_WARPS; ++i) {
+		barrier_lmem_buffer[i] = -1;
+	}
+
+	vx_wspawn(num_warps, barrier_lmem_kernel);
+	barrier_lmem_kernel();
+
+	int errors = 0;
+	for (int i = 0; i < num_warps; ++i) {
+		int expected = 65 + ((i + 1) % num_warps) + (BARRIER_LMEM_ROUNDS - 1);
+		if (barrier_lmem_buffer[i] != expected) {
+			PRINTF("*** error: [%d] 0x%x, expected 0x%x\n", i, barrier_lmem_buffer[i], expected);
+			++errors;
+		}
+	}
+	return errors;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
 int tls_buffer[8];
 __thread int tls_var;
 

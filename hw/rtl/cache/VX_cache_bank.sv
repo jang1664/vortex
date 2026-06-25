@@ -664,9 +664,9 @@ module VX_cache_bank import VX_gpu_pkg::*; #(
                 .data_out (line_byteen)
             );
             // issue a fill request on a read miss
-            // issue a memory write on a write request
+            // issue a memory write on a write request, but don't resend on replay
             assign mreq_queue_push = ((do_read_st2 && ~is_hit_st2 && ~mshr_pending_st2)
-                                  || do_write_st2)
+                                  || (do_write_st2 && ~is_replay_st2))
                                   && ~pipe_stall;
             assign mreq_queue_addr = addr_st2;
             assign mreq_queue_rw = rw_st2;

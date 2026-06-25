@@ -1065,7 +1065,9 @@ for block_size in range(1, full_bitwidth+1):
 
 // Tiling parameters for parallel processing
 `define MXU_ROW_TILE 1            // Row tile size for pipelined processing
+`ifndef MXU_COL_TILE
 `define MXU_COL_TILE 1            // Column tile size for pipelined processing
+`endif
 `define MXU_WLOAD_NUM 1           // Number of weight loads per cycle
 
 // -------------------------------------------------------

@@ -70,6 +70,7 @@ public:
 
 	void reset() override;
 	void tick() override;
+	bool drained() const;
 
 private:
 

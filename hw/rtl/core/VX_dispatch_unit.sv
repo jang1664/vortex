@@ -84,7 +84,7 @@ module VX_dispatch_unit import VX_gpu_pkg::*; #(
 
         VX_generic_arbiter #(
             .NUM_REQS    (BATCH_COUNT),
-            .TYPE        ("P")
+            .TYPE        ("M")
         ) batch_sel (
             .clk          (clk),
             .reset        (reset),

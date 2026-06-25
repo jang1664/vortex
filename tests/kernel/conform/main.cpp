@@ -5,27 +5,17 @@ int main() {
 	int errors = 0;
 
 	errors += test_global_memory();
-
 	errors += test_local_memory();
-
 	errors += test_tmc();
-
 	errors += test_pred();
-
 	errors += test_divergence();
-
 	errors += test_wsapwn();
-
 	errors += test_spawn_tasks();
-
 	errors += test_serial();
-
 	errors += test_barrier();
-
+	errors += test_barrier_lmem_ordering();
 	errors += test_tls();
-
 	errors += test_vote();
-
 	errors += test_shfl();
 
 	if (0 == errors) {

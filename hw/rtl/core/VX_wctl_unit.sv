@@ -22,6 +22,7 @@ module VX_wctl_unit import VX_gpu_pkg::*; #(
 
     // Inputs
     VX_execute_if.slave     execute_if,
+    input wire              lsu_drained,
 
     // Outputs
     VX_warp_ctl_if.master   warp_ctl_if,
@@ -158,6 +159,8 @@ module VX_wctl_unit import VX_gpu_pkg::*; #(
 
     assign warp_ctl_if.dvstack_wid = execute_if.data.wid;
     wire [DV_STACK_SIZEW-1:0] dvstack_ptr;
+    wire bar_drain = execute_if.valid && is_bar && execute_if.data.eop && ~lsu_drained;
+    wire rsp_buf_ready;
 
     VX_elastic_buffer #(
         .DATAW (DATAW),
@@ -165,13 +168,15 @@ module VX_wctl_unit import VX_gpu_pkg::*; #(
     ) rsp_buf (
         .clk       (clk),
         .reset     (reset),
-        .valid_in  (execute_if.valid),
-        .ready_in  (execute_if.ready),
+        .valid_in  (execute_if.valid && ~bar_drain),
+        .ready_in  (rsp_buf_ready),
         .data_in   ({execute_if.data.uuid, execute_if.data.wid, execute_if.data.tmask, execute_if.data.PC, execute_if.data.rd, execute_if.data.wb, execute_if.data.pid, execute_if.data.sop, execute_if.data.eop, warp_ctl_if.dvstack_ptr}),
         .data_out  ({result_if.data.uuid,  result_if.data.wid,  result_if.data.tmask,  result_if.data.PC,  result_if.data.rd,  result_if.data.wb,  result_if.data.pid,  result_if.data.sop,  result_if.data.eop,  dvstack_ptr}),
         .valid_out (result_if.valid),
         .ready_out (result_if.ready)
     );
+
+    assign execute_if.ready = rsp_buf_ready && ~bar_drain;
 
     wire execute_fire = execute_if.valid && execute_if.ready;
     wire wctl_valid = execute_fire && execute_if.data.eop;

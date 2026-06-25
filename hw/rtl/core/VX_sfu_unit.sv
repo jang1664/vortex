@@ -37,6 +37,7 @@ module VX_sfu_unit import VX_gpu_pkg::*; #(
 
     VX_commit_csr_if.slave  commit_csr_if,
     VX_sched_csr_if.slave   sched_csr_if,
+    input wire              lsu_drained,
 
     // Outputs
     VX_commit_if.master     commit_if [`ISSUE_WIDTH],
@@ -108,6 +109,7 @@ module VX_sfu_unit import VX_gpu_pkg::*; #(
         .clk        (clk),
         .reset      (reset),
         .execute_if (pe_execute_if[PE_IDX_WCTL]),
+        .lsu_drained(lsu_drained),
         .warp_ctl_if(warp_ctl_if),
         .result_if  (pe_result_if[PE_IDX_WCTL])
     );

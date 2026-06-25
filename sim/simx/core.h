@@ -128,6 +128,7 @@ public:
   void resume(uint32_t wid);
 
   bool barrier(uint32_t bar_id, uint32_t count, uint32_t wid);
+  bool lsu_drained() const;
 
   bool wspawn(uint32_t num_warps, Word nextPC);
 
