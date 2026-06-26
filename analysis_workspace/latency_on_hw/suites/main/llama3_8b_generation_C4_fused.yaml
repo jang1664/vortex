@@ -37,6 +37,6 @@ workloads:
     variant: all_fpint_gemm_improve_fused_layout_spinquant
     implemented_only: false
     matrix:
-      batch: {values: [1, 2, 4, 8]}
+      batch: {values: [1]}
       gen_kv_len: {values: [512, 1024, 2048, 4096]}
       qblk: 32

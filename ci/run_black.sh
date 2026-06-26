@@ -7,11 +7,15 @@ SCRIPT_DIR="$(cd "$(dirname "${SCRIPT_PATH}")" && pwd)"
 PYTHON_BIN="${PYTHON:-python3}"
 FPGA_BIN_ALIAS_RESOLVER="${SCRIPT_DIR}/resolve_fpga_bin_alias.py"
 FPGA_BIN_ALIAS_MAP="${VORTEX_FPGA_BIN_ALIAS_MAP:-${SCRIPT_DIR}/fpga_bin_alias_map.yaml}"
+XRT_DEVICE_DETECTOR="${SCRIPT_DIR}/xrt_device_detect.sh"
 if [[ ! -f "${FPGA_BIN_ALIAS_RESOLVER}" && -f "../ci/resolve_fpga_bin_alias.py" ]]; then
   FPGA_BIN_ALIAS_RESOLVER="$(realpath ../ci/resolve_fpga_bin_alias.py)"
 fi
 if [[ ! -f "${FPGA_BIN_ALIAS_MAP}" && -f "../ci/fpga_bin_alias_map.yaml" ]]; then
   FPGA_BIN_ALIAS_MAP="$(realpath ../ci/fpga_bin_alias_map.yaml)"
+fi
+if [[ ! -f "${XRT_DEVICE_DETECTOR}" && -f "../ci/xrt_device_detect.sh" ]]; then
+  XRT_DEVICE_DETECTOR="$(realpath ../ci/xrt_device_detect.sh)"
 fi
 
 list_fpga_bin_aliases() {
@@ -554,6 +558,26 @@ if [[ "${mode}" == "hw" || "${mode}" == "all" ]]; then
   fi
   echo "HW FPGA_BIN=${FPGA_BIN} FPGA_BIN_DIR=${FPGA_BIN_DIR} FPGA_BIN_CONFIGS=${FPGA_BIN_CONFIGS}"
   HW_COMMAND="\
+  source \"${XRT_DEVICE_DETECTOR}\"; \
+  if [[ -z \"\${XRT_INI_PATH:-}\" ]]; then \
+    export XRT_INI_PATH=/dev/null; \
+  fi; \
+  if [[ -z \"\${XRT_DEVICE_INDEX:-}\" ]]; then \
+    if ! XRT_DEVICE_INDEX=\"\$(resolve_fpga_id auto)\"; then \
+      echo \"failed to resolve allocated XRT_DEVICE_INDEX\" >&2; \
+      exit 1; \
+    fi; \
+    export XRT_DEVICE_INDEX; \
+  fi; \
+  if [[ -z \"\${XRT_DEVICE_BDF:-}\" ]]; then \
+    if ! XRT_DEVICE_BDF=\"\$(resolve_xrt_user_bdf \"\${XRT_DEVICE_INDEX:-auto}\")\"; then \
+      echo \"failed to resolve allocated XRT_DEVICE_BDF\" >&2; \
+      exit 1; \
+    fi; \
+    export XRT_DEVICE_BDF; \
+  fi; \
+  echo \"HW XRT_DEVICE_INDEX=\${XRT_DEVICE_INDEX:-} XRT_DEVICE_BDF=\${XRT_DEVICE_BDF:-}\"; \
+  echo \"HW XRT_INI_PATH=\${XRT_INI_PATH:-}\"; \
   CONFIGS=\"${CONFIGS}\" \
   FPGA_BIN_DIR=\"${FPGA_BIN_DIR}\" \
   PLATFORM=xilinx_u55c_gen3x16_xdma_3_202210_1 \

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,7 +13,8 @@ from typing import Any, Callable, Mapping, Sequence
 DEFAULT_OUT_DIR = "outputs_main/figures_script"
 PLOT_CHOICES = ("main_all", "gemm_only", "energy", "layout_overhead", "latency", "all")
 
-TWO_COLUMN_FIGSIZE = (7.16, 4.9)  # Matplotlib order: width, height in inches.
+# TWO_COLUMN_FIGSIZE = (7.16, 4.9)  # Matplotlib order: width, height in inches.
+TWO_COLUMN_FIGSIZE = (7.16, 3)  # Matplotlib order: width, height in inches.
 LAYOUT_OVERHEAD_FIGSIZE = (7.16, 3.2)
 SAVE_DPI = 600
 
@@ -155,6 +157,8 @@ X_TICK_LABEL_MODE = "group"
 X_TICK_LABEL_ROTATION = 0.0
 X_TICK_LABEL_HA = "center"
 Y_LIM_TOP_SCALE = 1.30
+EXCEL_FIGURE_DATA_CSV = "excel_figure_data.csv"
+E2E_CANDIDATE_COLUMNS = ("C1", "C2", "C3", "C4")
 
 LAYOUT_FUSED_APP_MAP = {
     "eladd_layout_fused": "eladd",
@@ -200,6 +204,12 @@ class PlotRunResult:
     composed: Any
     plot_data: Any
     stack_data: Any
+
+
+@dataclass
+class EnergyExcelResult:
+    summary: Any
+    figure_path: Path
 
 
 def find_repo_root(start: Path | None = None) -> Path:
@@ -252,6 +262,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         type=float,
         default=X_GROUP_GAP,
         help=f"gap between x-axis groups when --x-group-axis is enabled (default: {X_GROUP_GAP:g})",
+    )
+    parser.add_argument(
+        "--excel-only",
+        action="store_true",
+        help="write only compact excel_figure_data.csv exports; skip figures and broad intermediate CSVs",
     )
     return parser.parse_args(argv)
 
@@ -325,6 +340,216 @@ def set_suite_bar_ylim_padding(deps: PlotDeps, scale: float = Y_LIM_TOP_SCALE) -
     deps.latency_plot_module._set_bar_ylim = _set_bar_ylim_with_padding
 
 
+def _is_missing_label_value(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, float) and math.isnan(value):
+        return True
+    return False
+
+
+def _display_label(axis: str | None, value: Any, options: Any) -> str:
+    if axis is None or _is_missing_label_value(value):
+        return ""
+    for key, label in getattr(options, "label_maps", {}).get(axis, {}).items():
+        if key == value or str(key) == str(value):
+            return str(label)
+    return str(value)
+
+
+def _stack_display_label(value: Any, options: Any) -> str:
+    axis = "stack_key" if "stack_key" in getattr(options, "label_maps", {}) else options.stack_by
+    return _display_label(axis, value, options)
+
+
+def _axis_sort_order(deps: PlotDeps, frame: Any, axis: str, options: Any) -> dict[str, int]:
+    if axis not in frame.columns:
+        return {}
+    ordered = deps.latency_plot_module._ordered_values(frame[axis], axis=axis, options=options)
+    return {repr(value): idx for idx, value in enumerate(ordered)}
+
+
+def _sort_latency_export(deps: PlotDeps, frame: Any, options: Any, *, stacked: bool) -> Any:
+    sort_axes = ["stage", "batch", "seq_len", "variant"]
+    if stacked:
+        sort_axes.append("stack_key")
+
+    out = frame.copy()
+    sort_cols = []
+    for axis in sort_axes:
+        if axis not in out.columns:
+            continue
+        order = _axis_sort_order(deps, out, axis, options)
+        sort_col = f"__sort_{axis}"
+        out[sort_col] = out[axis].map(lambda value, order=order: order.get(repr(value), len(order)))
+        sort_cols.append(sort_col)
+    if sort_cols:
+        out = out.sort_values(sort_cols)
+        out = out.drop(columns=sort_cols)
+    return out
+
+
+def _stack_column_order(deps: PlotDeps, frame: Any, options: Any) -> list[str]:
+    if "stack_key" not in frame.columns:
+        return []
+    ordered = deps.latency_plot_module._ordered_values(frame["stack_key"], axis="stack_key", options=options)
+    labels = [_stack_display_label(value, options) for value in ordered]
+    return list(dict.fromkeys(label for label in labels if label))
+
+
+def _wide_value_columns(frame: Any, desired: Sequence[str]) -> list[str]:
+    desired_present = [column for column in desired if column in frame.columns]
+    extras = [column for column in frame.columns if column not in desired_present]
+    return [*desired_present, *extras]
+
+
+def _ensure_columns(frame: Any, columns: Sequence[str]) -> None:
+    for column in columns:
+        if column not in frame.columns:
+            frame[column] = ""
+
+
+def _format_seq_for_excel(value: Any) -> str:
+    mapped = LABEL_MAPS.get("seq_len", {}).get(value)
+    if mapped is not None:
+        return str(mapped)
+    try:
+        seq = int(value)
+    except (TypeError, ValueError):
+        return "" if _is_missing_label_value(value) else str(value)
+    if seq >= 1024 and seq % 1024 == 0:
+        return f"{seq // 1024}k"
+    return str(seq)
+
+
+def _seq_sort_for_excel(value: Any) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 1 << 60
+
+
+def write_latency_figure_data_csv(deps: PlotDeps, result: PlotRunResult) -> Path:
+    """Write only the values needed to reproduce the latency figure in Excel."""
+    options = result.options
+    plot_mod = deps.latency_plot_module
+    x, hue, row, col = plot_mod._validate_bar_axes(options)
+    active_axes = tuple(axis for axis in (x, hue, row, col) if axis is not None)
+    value_col = "relative_value"
+
+    rows = plot_mod._aggregate_for_axes(result.plot_data, active_axes)
+    rows[value_col] = rows["total_latency_us"]
+    relative_group_axes = plot_mod._relative_group_axes(options.relative_scope, x, row, col)
+    baselines = plot_mod._relative_baselines(rows, value_col, relative_group_axes)
+    if options.relative:
+        rows = plot_mod._apply_relative_values(rows, value_col, baselines, relative_group_axes)
+
+    if options.stacked:
+        export = plot_mod._aggregate_stack_for_axes(result.stack_data, active_axes)
+        export[value_col] = export["total_latency_us"]
+        if options.relative:
+            export = plot_mod._apply_relative_values(export, value_col, baselines, relative_group_axes)
+        export = _sort_latency_export(deps, export, options, stacked=True)
+        export["candidate"] = export[hue].map(lambda value: _display_label(hue, value, options)) if hue else ""
+        export["legend"] = export["stack_key"].map(lambda value: _stack_display_label(value, options))
+        export["stage"] = export["stage"].map(lambda value: _display_label("stage", value, options)) if "stage" in export else ""
+        export["seq"] = export["seq_len"].map(_format_seq_for_excel) if "seq_len" in export else ""
+        export["seq_sort"] = export["seq_len"].map(_seq_sort_for_excel) if "seq_len" in export else 0
+        stack_columns = _stack_column_order(deps, export, options)
+        wide = (
+            export.pivot_table(
+                index=["stage", "batch", "seq_sort", "seq", "candidate"],
+                columns="legend",
+                values=value_col,
+                aggfunc="sum",
+            )
+            .reset_index()
+            .rename_axis(None, axis=1)
+            .sort_values(["stage", "batch", "seq_sort", "candidate"])
+        )
+        value_columns = _wide_value_columns(
+            wide.drop(columns=["stage", "batch", "seq_sort", "seq", "candidate"]),
+            stack_columns,
+        )
+        wide["total"] = wide[value_columns].sum(axis=1, skipna=True)
+        wide = wide[["stage", "batch", "seq_sort", "seq", "candidate", *value_columns, "total"]]
+        wide["batch"] = wide["batch"].astype(str)
+        wide["seq"] = wide["seq"].astype(str)
+        repeated_group = wide[["stage", "batch", "seq_sort"]].duplicated()
+        wide.loc[repeated_group, ["batch", "seq"]] = ""
+        wide = wide.drop(columns=["seq_sort"])
+        export = wide
+        columns = list(export.columns)
+    else:
+        export = _sort_latency_export(deps, rows, options, stacked=False)
+        export["legend"] = export[hue].map(lambda value: _display_label(hue, value, options)) if hue else "total"
+        export["stage"] = export["stage"].map(lambda value: _display_label("stage", value, options)) if "stage" in export else ""
+        export["seq"] = export["seq_len"].map(_format_seq_for_excel) if "seq_len" in export else ""
+        export["seq_sort"] = export["seq_len"].map(_seq_sort_for_excel) if "seq_len" in export else 0
+        wide = (
+            export.pivot_table(
+                index=["stage", "batch", "seq_sort", "seq"],
+                columns="legend",
+                values=value_col,
+                aggfunc="sum",
+            )
+            .reset_index()
+            .rename_axis(None, axis=1)
+            .sort_values(["stage", "batch", "seq_sort"])
+        )
+        _ensure_columns(wide, E2E_CANDIDATE_COLUMNS)
+        export = wide[["stage", "batch", "seq", *E2E_CANDIDATE_COLUMNS]]
+        columns = list(export.columns)
+
+    path = result.out_dir / EXCEL_FIGURE_DATA_CSV
+    result.out_dir.mkdir(parents=True, exist_ok=True)
+    export[columns].to_csv(path, index=False)
+    print(f"wrote {path}")
+    return path
+
+
+def write_energy_figure_data_csv(result: Any, *, label_maps: Mapping[str, Mapping[Any, str]]) -> Path:
+    """Write only the values needed to reproduce the energy figure in Excel."""
+    summary = result.summary.copy()
+    value_col = "relative_joules_per_token" if "relative_joules_per_token" in summary.columns else "joules_per_token"
+    if value_col not in summary.columns:
+        export = summary.iloc[0:0].copy()
+    else:
+        export = summary[summary[value_col].notna()].copy()
+
+    class _Options:
+        pass
+
+    options = _Options()
+    options.label_maps = label_maps
+    export["stage"] = export["stage"].map(lambda value: _display_label("stage", value, options)) if "stage" in export else ""
+    export["batch"] = export["batch"] if "batch" in export else ""
+    export["seq"] = export["seq_len"].map(_format_seq_for_excel) if "seq_len" in export else ""
+    export["seq_sort"] = export["seq_len"].map(_seq_sort_for_excel) if "seq_len" in export else 0
+    export["legend"] = export["variant"].map(lambda value: _display_label("variant", value, options)) if "variant" in export else ""
+    export["relative_value"] = export[value_col].astype(float) if value_col in export else []
+    export = export.sort_values(["stage", "batch", "seq_sort", "legend"])
+    wide = (
+        export.pivot_table(
+            index=["stage", "batch", "seq_sort", "seq"],
+            columns="legend",
+            values="relative_value",
+            aggfunc="sum",
+        )
+        .reset_index()
+        .rename_axis(None, axis=1)
+        .sort_values(["stage", "batch", "seq_sort"])
+    )
+    _ensure_columns(wide, E2E_CANDIDATE_COLUMNS)
+    wide = wide[["stage", "batch", "seq", *E2E_CANDIDATE_COLUMNS]]
+
+    path = result.figure_path.parent / EXCEL_FIGURE_DATA_CSV
+    path.parent.mkdir(parents=True, exist_ok=True)
+    wide.to_csv(path, index=False)
+    print(f"wrote {path}")
+    return path
+
+
 def latency_estimate_options(deps: PlotDeps) -> Any:
     return deps.LatencyEstimateOptions(
         model="auto_shape",
@@ -374,6 +599,7 @@ def run_suite_plot(
     x_group_axis: str | None = X_GROUP_AXIS,
     x_group_gap: float = X_GROUP_GAP,
     emit_outputs: bool = True,
+    excel_only: bool = False,
 ) -> PlotRunResult:
     suites_in = suite_paths(latency_dir, tag)
     out_dir = output_root / (out_name or tag)
@@ -460,13 +686,7 @@ def run_suite_plot(
 
     versions = deps.prepare_suite_bar_data_versions(suites, options)
     plot_input = versions.final
-    if emit_outputs:
-        for suffix, data in versions.csv_items():
-            deps.write_suite_bar_data_csvs(data, out_dir, suffix=suffix)
-        deps.plot_suite_bar_grid(plot_input.plot_data, plot_input.stack_data, options)
-        print(f"wrote {out_dir}")
-
-    return PlotRunResult(
+    result = PlotRunResult(
         tag=tag,
         out_dir=out_dir,
         suites=suites,
@@ -476,6 +696,15 @@ def run_suite_plot(
         plot_data=plot_input.plot_data,
         stack_data=plot_input.stack_data,
     )
+    if emit_outputs:
+        if not excel_only:
+            for suffix, data in versions.csv_items():
+                deps.write_suite_bar_data_csvs(data, out_dir, suffix=suffix)
+            deps.plot_suite_bar_grid(plot_input.plot_data, plot_input.stack_data, options)
+        write_latency_figure_data_csv(deps, result)
+        print(f"wrote {out_dir}")
+
+    return result
 
 
 def run_main_all_plot(
@@ -487,6 +716,7 @@ def run_main_all_plot(
     x_group_axis: str | None = X_GROUP_AXIS,
     x_group_gap: float = X_GROUP_GAP,
     emit_outputs: bool = True,
+    excel_only: bool = False,
 ) -> PlotRunResult:
     return run_suite_plot(
         deps,
@@ -504,6 +734,7 @@ def run_main_all_plot(
         x_group_axis=x_group_axis,
         x_group_gap=x_group_gap,
         emit_outputs=emit_outputs,
+        excel_only=excel_only,
     )
 
 
@@ -515,6 +746,8 @@ def run_gemm_only_plot(
     output_root: Path,
     x_group_axis: str | None = X_GROUP_AXIS,
     x_group_gap: float = X_GROUP_GAP,
+    emit_outputs: bool = True,
+    excel_only: bool = False,
 ) -> PlotRunResult:
     return run_suite_plot(
         deps,
@@ -533,6 +766,8 @@ def run_gemm_only_plot(
         legend_ncol=9,
         x_group_axis=x_group_axis,
         x_group_gap=x_group_gap,
+        emit_outputs=emit_outputs,
+        excel_only=excel_only,
     )
 
 
@@ -600,7 +835,46 @@ def run_energy_plot(
         print(f"wrote {result.figure_svg_path}")
     print(f"wrote {result.summary_csv}")
     print(f"wrote {result.rows_csv}")
+    write_energy_figure_data_csv(result, label_maps=plot_label_maps(include_c4_alone=False))
     return result
+
+
+def run_energy_excel_export(
+    deps: PlotDeps,
+    *,
+    latency_dir: Path,
+    output_root: Path,
+    main_all_result: PlotRunResult,
+    idle_power_w: float,
+    include_idle_power: bool,
+) -> Path:
+    if str(latency_dir) not in sys.path:
+        sys.path.insert(0, str(latency_dir))
+    from energy_per_token import add_relative_energy_values, energy_rows_from_records, summarize_energy_rows
+
+    raw_dbs = raw_dbs_power(latency_dir)
+    missing_inputs = [path for path in raw_dbs if not path.exists()]
+    if missing_inputs:
+        raise FileNotFoundError("missing energy plot inputs:\n" + "\n".join(str(path) for path in missing_inputs))
+
+    composed = main_all_result.composed
+    records = list(composed.to_dict(orient="records")) if hasattr(composed, "to_dict") else list(composed)
+    rows = energy_rows_from_records(
+        records,
+        raw_dbs,
+        idle_power_w=idle_power_w,
+        include_idle_power=include_idle_power,
+    )
+    summary = add_relative_energy_values(
+        summarize_energy_rows(rows),
+        relative_scope=RELATIVE_SCOPE,
+    )
+    pd = deps.latency_plot_module.pd
+    result = EnergyExcelResult(
+        summary=pd.DataFrame(summary),
+        figure_path=output_root / "energy_per_token" / "energy_per_token.png",
+    )
+    return write_energy_figure_data_csv(result, label_maps=plot_label_maps(include_c4_alone=False))
 
 
 def _import_layout_modules() -> tuple[Any, Any]:
@@ -810,6 +1084,7 @@ def run_selected_plots(args: argparse.Namespace) -> None:
 
     plot = args.plot
     x_group_axis = None if args.x_group_axis == "none" else args.x_group_axis
+    excel_only = bool(args.excel_only)
     main_all_result: PlotRunResult | None = None
 
     if plot in {"main_all", "latency", "all"}:
@@ -820,6 +1095,7 @@ def run_selected_plots(args: argparse.Namespace) -> None:
             output_root=output_root,
             x_group_axis=x_group_axis,
             x_group_gap=args.x_group_gap,
+            excel_only=excel_only,
         )
 
     if plot in {"gemm_only", "latency", "all"}:
@@ -830,6 +1106,7 @@ def run_selected_plots(args: argparse.Namespace) -> None:
             output_root=output_root,
             x_group_axis=x_group_axis,
             x_group_gap=args.x_group_gap,
+            excel_only=excel_only,
         )
 
     if plot in {"energy", "all"}:
@@ -843,15 +1120,25 @@ def run_selected_plots(args: argparse.Namespace) -> None:
                 x_group_gap=args.x_group_gap,
                 emit_outputs=False,
             )
-        run_energy_plot(
-            latency_dir=latency_dir,
-            output_root=output_root,
-            main_all_result=main_all_result,
-            idle_power_w=args.idle_power_w,
-            include_idle_power=args.include_idle_power,
-            x_group_axis=x_group_axis,
-            x_group_gap=args.x_group_gap,
-        )
+        if excel_only:
+            run_energy_excel_export(
+                deps,
+                latency_dir=latency_dir,
+                output_root=output_root,
+                main_all_result=main_all_result,
+                idle_power_w=args.idle_power_w,
+                include_idle_power=args.include_idle_power,
+            )
+        else:
+            run_energy_plot(
+                latency_dir=latency_dir,
+                output_root=output_root,
+                main_all_result=main_all_result,
+                idle_power_w=args.idle_power_w,
+                include_idle_power=args.include_idle_power,
+                x_group_axis=x_group_axis,
+                x_group_gap=args.x_group_gap,
+            )
 
     # we don't need layout overhead plot
     # if plot in {"layout_overhead", "all"}:

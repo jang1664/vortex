@@ -429,6 +429,29 @@ aliases:
             self.assertEqual(0, rc)
             manifest = json.loads((out_root / "runs" / "cli_run" / "manifest.json").read_text())
             self.assertTrue(manifest["skip_existing"])
+            self.assertEqual(["status", "xclbin_sha256", "app", "args"], manifest["skip_existing_columns"])
+
+    def test_run_accepts_skip_existing_columns_option(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            build_dir, fpga_bin, suite = self._write_fake_inputs(tmp_path)
+            out_root = tmp_path / "out"
+            rc = main([
+                "run",
+                "--build-dir", str(build_dir),
+                "--fpga-bin", str(fpga_bin),
+                "--suite", str(suite),
+                "--out", str(out_root),
+                "--run-id", "cli_run",
+                "--no-srun",
+                "--dry-run",
+                "--skip-existing",
+                "--skip-existing-columns", "status,app,args",
+            ])
+
+            self.assertEqual(0, rc)
+            manifest = json.loads((out_root / "runs" / "cli_run" / "manifest.json").read_text())
+            self.assertEqual(["status", "app", "args"], manifest["skip_existing_columns"])
 
     def test_run_uses_suite_default_fpga_bin_when_cli_arg_is_omitted(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -35,9 +35,11 @@ from .runner import (
     DEFAULT_RETRY_RESET_CMD,
     DEFAULT_RETRY_RESET_WAIT,
     DEFAULT_RETRY_TIMEOUT_GROWTH,
+    DEFAULT_SKIP_EXISTING_COLUMNS,
     DEFAULT_SRUN_ARGS,
     RunOptions,
     default_run_id,
+    normalize_skip_existing_columns,
     resolve_fpga_bin_config,
     run_suite,
 )
@@ -183,7 +185,15 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument(
         "--skip-existing",
         action="store_true",
-        help="Skip executions that already have a matching status=pass row in OUT/raw_db.csv.",
+        help="Skip executions that already have a matching row in OUT/raw_db.csv.",
+    )
+    run.add_argument(
+        "--skip-existing-columns",
+        default=None,
+        help=(
+            "Comma-separated raw_db.csv columns used by --skip-existing "
+            f"(default: {','.join(DEFAULT_SKIP_EXISTING_COLUMNS)})."
+        ),
     )
     run.add_argument(
         "--no-prebuild",
@@ -515,6 +525,7 @@ def run_cmd(args: argparse.Namespace) -> int:
         append_raw_csv=Path(args.append_raw).resolve() if args.append_raw else None,
         run_id=run_id,
         skip_existing=args.skip_existing,
+        skip_existing_columns=normalize_skip_existing_columns(args.skip_existing_columns),
         prebuild=not args.no_prebuild,
         program_fpga=not args.no_program_fpga,
         measure_latency=args.measure_latency,

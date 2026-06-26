@@ -42,6 +42,20 @@ DEFAULT_RETRY_TIMEOUT_GROWTH = 1.10
 DEFAULT_RETRY_RESET_WAIT = "10s"
 DEFAULT_RETRY_RESET_CMD = "xrt-smi reset"
 DEFAULT_POWER_MAX_ITERATIONS = 1024
+DEFAULT_SKIP_EXISTING_COLUMNS = ("status", "xclbin_sha256", "app", "args")
+SUPPORTED_SKIP_EXISTING_COLUMNS = frozenset((
+    "status",
+    "fpga_bin_label",
+    "xclbin_sha256",
+    "measure_latency",
+    "measure_power",
+    "power_samples",
+    "exec_key",
+    "app",
+    "args",
+    "warmup",
+    "iterations",
+))
 CASE_COLUMNS = [
     "suite",
     "case_id",
@@ -94,6 +108,7 @@ class RunOptions:
     append_raw_csv: Path | None = None
     run_id: str | None = None
     skip_existing: bool = False
+    skip_existing_columns: tuple[str, ...] = DEFAULT_SKIP_EXISTING_COLUMNS
     prebuild: bool = True
     program_fpga: bool = True
     measure_latency: bool = True
@@ -122,6 +137,7 @@ class GitMetadata:
 
 
 def validate_inputs(options: RunOptions) -> None:
+    normalize_skip_existing_columns(options.skip_existing_columns)
     if not options.build_dir.is_dir():
         raise FileNotFoundError(f"build directory not found: {options.build_dir}")
     blackbox = options.build_dir / "ci" / "blackbox.sh"
@@ -188,6 +204,67 @@ def _current_xclbin_sha(fpga_bin_dir: Path) -> str:
     return sha256_file(xclbin) if xclbin.exists() else ""
 
 
+def normalize_skip_existing_columns(columns: object) -> tuple[str, ...]:
+    raw_columns: list[str] = []
+    if columns is None:
+        raw_columns.extend(DEFAULT_SKIP_EXISTING_COLUMNS)
+    elif isinstance(columns, str):
+        raw_columns.extend(columns.split(","))
+    else:
+        for value in columns:
+            raw_columns.extend(str(value).split(","))
+
+    normalized: list[str] = []
+    for column in raw_columns:
+        column = column.strip()
+        if not column:
+            continue
+        if column not in SUPPORTED_SKIP_EXISTING_COLUMNS:
+            supported = ", ".join(sorted(SUPPORTED_SKIP_EXISTING_COLUMNS))
+            raise ValueError(f"unsupported skip-existing column {column!r}; supported columns: {supported}")
+        if column not in normalized:
+            normalized.append(column)
+    if not normalized:
+        raise ValueError("--skip-existing-columns must include at least one column")
+    return tuple(normalized)
+
+
+def _skip_existing_column_matches(
+    column: str,
+    row: dict[str, str],
+    unit: ExecutionUnit,
+    *,
+    fpga_bin_label: str,
+    xclbin_sha256: str,
+    measure_latency: bool,
+    measure_power: bool,
+    power_min_samples: int,
+) -> bool:
+    if column == "status":
+        return row.get("status") == "pass"
+    if column == "fpga_bin_label":
+        return row.get("fpga_bin_label") == fpga_bin_label
+    if column == "xclbin_sha256":
+        return bool(xclbin_sha256) and row.get("xclbin_sha256") == xclbin_sha256
+    if column == "measure_latency":
+        return _parse_bool_cell(row.get("measure_latency", ""), default=True) == measure_latency
+    if column == "measure_power":
+        return _parse_bool_cell(row.get("measure_power", ""), default=False) == measure_power
+    if column == "power_samples":
+        return not measure_power or not power_samples_below_threshold(row, power_min_samples)
+    if column == "exec_key":
+        return row.get("exec_key", "") == unit.exec_key
+    if column == "app":
+        return row.get("app") == unit.app
+    if column == "args":
+        return _normalize_args(row.get("args", "")) == _normalize_args(unit.args)
+    if column == "warmup":
+        return _parse_int(row.get("warmup")) == unit.warmup
+    if column == "iterations":
+        return _parse_int(row.get("iterations")) == unit.iterations
+    raise AssertionError(f"unhandled skip-existing column: {column}")
+
+
 def find_existing_pass_exec_keys(
     raw_db: Path,
     units: list[ExecutionUnit],
@@ -197,38 +274,32 @@ def find_existing_pass_exec_keys(
     measure_latency: bool,
     measure_power: bool,
     power_min_samples: int = DEFAULT_POWER_MIN_SAMPLES,
+    skip_existing_columns: tuple[str, ...] = DEFAULT_SKIP_EXISTING_COLUMNS,
 ) -> tuple[str, ...]:
-    if not raw_db.exists() or not xclbin_sha256:
+    if not raw_db.exists():
         return ()
 
-    units_by_key = {unit.exec_key: unit for unit in units}
+    skip_existing_columns = normalize_skip_existing_columns(skip_existing_columns)
     matched: set[str] = set()
     with raw_db.open(newline="") as fp:
         for row in csv.DictReader(fp):
-            if row.get("status") != "pass":
-                continue
-            if row.get("fpga_bin_label") != fpga_bin_label:
-                continue
-            if row.get("xclbin_sha256") != xclbin_sha256:
-                continue
-            if _parse_bool_cell(row.get("measure_latency", ""), default=True) != measure_latency:
-                continue
-            if _parse_bool_cell(row.get("measure_power", ""), default=False) != measure_power:
-                continue
-            if measure_power and power_samples_below_threshold(row, power_min_samples):
-                continue
-            unit = units_by_key.get(row.get("exec_key", ""))
-            if unit is None:
-                continue
-            if row.get("app") != unit.app:
-                continue
-            if _normalize_args(row.get("args", "")) != _normalize_args(unit.args):
-                continue
-            if _parse_int(row.get("warmup")) != unit.warmup:
-                continue
-            if _parse_int(row.get("iterations")) != unit.iterations:
-                continue
-            matched.add(unit.exec_key)
+            for unit in units:
+                if unit.exec_key in matched:
+                    continue
+                if all(
+                    _skip_existing_column_matches(
+                        column,
+                        row,
+                        unit,
+                        fpga_bin_label=fpga_bin_label,
+                        xclbin_sha256=xclbin_sha256,
+                        measure_latency=measure_latency,
+                        measure_power=measure_power,
+                        power_min_samples=power_min_samples,
+                    )
+                    for column in skip_existing_columns
+                ):
+                    matched.add(unit.exec_key)
 
     return tuple(unit.exec_key for unit in units if unit.exec_key in matched)
 
@@ -833,7 +904,12 @@ def run_suite(suite: BenchSuite, options: RunOptions) -> int:
     out_root = options.out_dir
     run_id = options.run_id or os.environ.get("LATENCY_BENCH_RUN_ID") or default_run_id()
     run_dir = out_root / "runs" / run_id
-    run_options = replace(options, out_dir=run_dir, run_id=run_id)
+    run_options = replace(
+        options,
+        out_dir=run_dir,
+        run_id=run_id,
+        skip_existing_columns=normalize_skip_existing_columns(options.skip_existing_columns),
+    )
 
     out_root.mkdir(parents=True, exist_ok=True)
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -855,6 +931,7 @@ def run_suite(suite: BenchSuite, options: RunOptions) -> int:
             measure_latency=run_options.measure_latency,
             measure_power=run_options.measure_power,
             power_min_samples=run_options.power_min_samples,
+            skip_existing_columns=run_options.skip_existing_columns,
         )
         skipped = set(skipped_existing_exec_keys)
         units_to_run = [unit for unit in units if unit.exec_key not in skipped]
@@ -906,6 +983,7 @@ def run_suite(suite: BenchSuite, options: RunOptions) -> int:
         "execution_count": len(units),
         "run_execution_count": len(units_to_run),
         "skip_existing": options.skip_existing,
+        "skip_existing_columns": list(run_options.skip_existing_columns),
         "prebuild": options.prebuild,
         "case_filters": list(options.case_filters),
         "retry": options.retry,

@@ -877,6 +877,66 @@ exit 0
             self.assertEqual(1, manifest["skipped_existing_count"])
             self.assertEqual([passed_case.exec_key], manifest["skipped_existing_exec_keys"])
 
+    def test_skip_existing_default_columns_do_not_require_exec_key_or_iteration_match(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            build_dir = tmp_path / "build"
+            self._write_fake_blackbox(build_dir)
+            fpga_bin_dir = tmp_path / "fpga_bin"
+            xclbin_sha = self._write_fake_fpga_bin(fpga_bin_dir)
+
+            case = BenchCase(
+                case_id="same_command",
+                app="fpint_gemm_ffn_hw",
+                args="-m 1 -n 128 -k 128 -q 32 -t 0 -d 0",
+                warmup=1,
+                iterations=1,
+            )
+            suite = BenchSuite(
+                name="mini_suite",
+                defaults=BenchDefaults(warmup=1, iterations=1),
+                cases=[case],
+            )
+            out_root = tmp_path / "latency_db"
+            raw_db = out_root / "raw_db.csv"
+            self._write_raw_db_row(
+                raw_db,
+                case_id=case.case_id,
+                exec_key="different_exec_key",
+                app=case.app,
+                args=case.args,
+                fpga_bin_label="improve_tcol1",
+                xclbin_sha256=xclbin_sha,
+                warmup="99",
+                iterations="99",
+                status="pass",
+            )
+
+            rc = run_suite(
+                suite,
+                RunOptions(
+                    build_dir=build_dir,
+                    fpga_bin_dir=fpga_bin_dir,
+                    fpga_bin_label="improve_tcol1",
+                    out_dir=out_root,
+                    platform=suite.defaults.platform,
+                    xrt_device_index=suite.defaults.xrt_device_index,
+                    blackbox_args=(),
+                    srun=False,
+                    program_fpga=False,
+                    run_id="resume_run",
+                    skip_existing=True,
+                    dry_run=True,
+                ),
+            )
+
+            self.assertEqual(0, rc)
+            manifest = json.loads((out_root / "runs" / "resume_run" / "manifest.json").read_text())
+            self.assertEqual(["status", "xclbin_sha256", "app", "args"], manifest["skip_existing_columns"])
+            self.assertEqual(1, manifest["skipped_existing_count"])
+            self.assertEqual([case.exec_key], manifest["skipped_existing_exec_keys"])
+            self.assertEqual(0, manifest["run_execution_count"])
+
     def test_skip_existing_does_not_skip_when_xclbin_sha_mismatches(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
@@ -936,6 +996,67 @@ exit 0
                 rows = list(csv.DictReader(fp))
             self.assertEqual(2, len(rows))
             self.assertEqual(["different_sha", current_sha], [row["xclbin_sha256"] for row in rows])
+
+    def test_skip_existing_columns_can_ignore_xclbin_sha_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            build_dir = tmp_path / "build"
+            self._write_fake_blackbox(build_dir)
+            fpga_bin_dir = tmp_path / "fpga_bin"
+            self._write_fake_fpga_bin(fpga_bin_dir, content="current bitstream")
+
+            case = BenchCase(
+                case_id="same_command",
+                app="fpint_gemm_ffn_hw",
+                args="-m 1 -n 128 -k 128 -q 32 -t 0 -d 0",
+                warmup=1,
+                iterations=1,
+            )
+            suite = BenchSuite(
+                name="mini_suite",
+                defaults=BenchDefaults(warmup=1, iterations=1),
+                cases=[case],
+            )
+            out_root = tmp_path / "latency_db"
+            raw_db = out_root / "raw_db.csv"
+            self._write_raw_db_row(
+                raw_db,
+                case_id=case.case_id,
+                exec_key=case.exec_key,
+                app=case.app,
+                args=case.args,
+                fpga_bin_label="improve_tcol1",
+                xclbin_sha256="different_sha",
+                warmup=case.warmup,
+                iterations=case.iterations,
+                status="pass",
+            )
+
+            rc = run_suite(
+                suite,
+                RunOptions(
+                    build_dir=build_dir,
+                    fpga_bin_dir=fpga_bin_dir,
+                    fpga_bin_label="improve_tcol1",
+                    out_dir=out_root,
+                    platform=suite.defaults.platform,
+                    xrt_device_index=suite.defaults.xrt_device_index,
+                    blackbox_args=(),
+                    srun=False,
+                    program_fpga=False,
+                    run_id="relaxed_run",
+                    skip_existing=True,
+                    skip_existing_columns=("status", "app", "args"),
+                    dry_run=True,
+                ),
+            )
+
+            self.assertEqual(0, rc)
+            manifest = json.loads((out_root / "runs" / "relaxed_run" / "manifest.json").read_text())
+            self.assertEqual(["status", "app", "args"], manifest["skip_existing_columns"])
+            self.assertEqual(1, manifest["skipped_existing_count"])
+            self.assertEqual([case.exec_key], manifest["skipped_existing_exec_keys"])
+            self.assertEqual(0, manifest["run_execution_count"])
 
     def test_generated_script_updates_raw_db_before_post_processing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

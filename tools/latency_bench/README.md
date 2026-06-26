@@ -420,11 +420,24 @@ python -m tools.latency_bench run \
   --skip-existing
 ```
 
-An execution is skipped only when `<out>/raw_db.csv` already has a `status=pass`
-row whose `fpga_bin_label`, `xclbin_sha256`, `exec_key`, `app`, normalized
-`args`, `warmup`, and `iterations` all match the current run. `build_fail`,
-`fail`, `timeout`, `parse_error`, and `not_run` rows are not skipped, so they
-are retried.
+With the default columns, an execution is skipped only when `<out>/raw_db.csv`
+already has a `status=pass` row whose `xclbin_sha256`, `app`, and normalized
+`args` match the current run. `build_fail`, `fail`, `timeout`, `parse_error`,
+and `not_run` rows are not skipped, so they are retried.
+
+Use `--skip-existing-columns` to choose the raw DB columns that determine a
+resume match. The default is:
+
+```bash
+--skip-existing-columns status,xclbin_sha256,app,args
+```
+
+`status` means "skip only pass rows"; `xclbin_sha256` matches the current
+`vortex_afu.xclbin`; `args` is compared after whitespace normalization. If the
+custom column list omits `status`, non-pass rows can match too.
+Supported columns are `status`, `fpga_bin_label`, `xclbin_sha256`,
+`measure_latency`, `measure_power`, `power_samples`, `exec_key`, `app`, `args`,
+`warmup`, and `iterations`.
 When a retried execution writes a new row, any older `raw_db.csv` rows with the
 same strict match key are replaced by the new result. Skipped `pass` executions
 are not appended back into `raw_db.csv`.
