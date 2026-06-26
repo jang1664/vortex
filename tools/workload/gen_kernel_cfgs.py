@@ -214,12 +214,25 @@ def _gemm_args(backend: str, *, M: int, N: int, K: int, qblk: int, wtrans: int, 
     raise ValueError(f"unknown GEMM backend: {backend!r}")
 
 
-def _gemm_shape(backend: str, *, M: int, N: int, K: int, qblk: int, wtrans: int, qdir: int, per_head: bool = False) -> dict:
+def _gemm_shape(
+    backend: str,
+    *,
+    M: int,
+    N: int,
+    K: int,
+    qblk: int,
+    wtrans: int,
+    qdir: int,
+    per_head: bool = False,
+    shape_update: dict | None = None,
+) -> dict:
     shape = {"M": M, "N": N, "K": K}
     if backend in FPINT_GEMM_BACKENDS:
         shape.update({"QBLK": qblk, "WTRANS": wtrans, "QDIR": qdir})
     if per_head:
         shape["per_head"] = True
+    if shape_update:
+        shape.update(shape_update)
     return shape
 
 
@@ -234,7 +247,8 @@ def _llm_gemm_kernel(name: str,
                      wtrans: int,
                      qdir: int,
                      variant: str,
-                     per_head: bool = False) -> dict:
+                     per_head: bool = False,
+                     shape_update: dict | None = None) -> dict:
     backend = _gemm_backend(name, variant)
     return _llm_kernel(
         name=name,
@@ -243,9 +257,53 @@ def _llm_gemm_kernel(name: str,
         stage=stage,
         args=_gemm_args(backend, M=M, N=N, K=K, qblk=qblk, wtrans=wtrans, qdir=qdir),
         calls_per_forward=calls_per_forward,
-        shape=_gemm_shape(backend, M=M, N=N, K=K, qblk=qblk, wtrans=wtrans, qdir=qdir, per_head=per_head),
+        shape=_gemm_shape(
+            backend,
+            M=M,
+            N=N,
+            K=K,
+            qblk=qblk,
+            wtrans=wtrans,
+            qdir=qdir,
+            per_head=per_head,
+            shape_update=shape_update,
+        ),
         variant=variant,
     )
+
+
+def _attention_gemm_geometry(stage: str,
+                             *,
+                             seq_q: int,
+                             heads_q: int,
+                             heads_kv: int) -> tuple[int, int, int]:
+    """Return (M, call_heads, query_heads_per_kv) for QK^T/PV GEMMs."""
+    if heads_kv <= 0:
+        raise ValueError(f"num_key_value_heads must be positive, got {heads_kv}")
+    if heads_q % heads_kv != 0:
+        raise ValueError(
+            f"num_attention_heads must be divisible by num_key_value_heads, got "
+            f"{heads_q} and {heads_kv}"
+        )
+    query_heads_per_kv = heads_q // heads_kv
+    if stage == "generation":
+        return seq_q * query_heads_per_kv, heads_kv, query_heads_per_kv
+    return seq_q, heads_q, 1
+
+
+def _attention_gemm_shape_update(stage: str,
+                                 *,
+                                 heads_q: int,
+                                 heads_kv: int,
+                                 query_heads_per_kv: int) -> dict:
+    if stage != "generation" or query_heads_per_kv == 1:
+        return {}
+    return {
+        "grouped_query_attention": True,
+        "query_heads": heads_q,
+        "key_value_heads": heads_kv,
+        "query_heads_per_kv": query_heads_per_kv,
+    }
 
 
 def _align_up(value: int, alignment: int) -> int:
@@ -765,8 +823,11 @@ def _apply_standalone_layout_variant(kernels: list[dict],
                                      M_proj: int,
                                      variant: str) -> list[dict]:
     by_name = {kernel["name"]: kernel for kernel in kernels}
-    per_head_q = layers * batch * heads_q
     per_head_kv = layers * batch * heads_kv
+    attention_M, attention_call_heads, _query_heads_per_kv = _attention_gemm_geometry(
+        stage, seq_q=seq_q, heads_q=heads_q, heads_kv=heads_kv
+    )
+    attention_calls = layers * batch * attention_call_heads
     k_K, k_N, k_eff_K, k_eff_N, k_update = _kv_cache_tiled_source_shape(stage, seq_kv, head_dim)
     v_K, v_N, v_eff_K, v_eff_N, v_update = _kv_cache_tiled_source_shape(stage, seq_kv, head_dim)
 
@@ -798,7 +859,7 @@ def _apply_standalone_layout_variant(kernels: list[dict],
         by_name["rope_k"],
         _tile_input_kernel(
             "layout_rope_q_to_attn_qkT", stage,
-            M=seq_q, K=head_dim, calls_per_forward=per_head_q,
+            M=attention_M, K=head_dim, calls_per_forward=attention_calls,
             producer="rope_q", consumer="attn_qkT",
             layout_group="rope_q_to_attn_qkT", variant=variant,
         ),
@@ -834,14 +895,14 @@ def _apply_standalone_layout_variant(kernels: list[dict],
         by_name["attn_qkT"],
         _detile_output_kernel(
             "layout_attn_qkT_to_softmax_detile", stage,
-            M=seq_q, N=seq_kv, calls_per_forward=per_head_q,
+            M=attention_M, N=seq_kv, calls_per_forward=attention_calls,
             producer="attn_qkT", consumer="attn_softmax",
             layout_group="attn_qkT_to_softmax", variant=variant,
         ),
         by_name["attn_softmax"],
         _tile_input_kernel(
             "layout_attn_softmax_to_attn_pv", stage,
-            M=seq_q, K=seq_kv, calls_per_forward=per_head_q,
+            M=attention_M, K=seq_kv, calls_per_forward=attention_calls,
             producer="attn_softmax", consumer="attn_pv",
             layout_group="attn_softmax_to_attn_pv", variant=variant,
         ),
@@ -882,7 +943,7 @@ def _apply_standalone_layout_variant(kernels: list[dict],
         by_name["attn_pv"],
         _detile_output_kernel(
             "layout_attn_pv_to_head_concat_detile", stage,
-            M=seq_q, N=head_dim, calls_per_forward=per_head_q,
+            M=attention_M, N=head_dim, calls_per_forward=attention_calls,
             producer="attn_pv", consumer="attn_head_concat",
             layout_group="attn_pv_to_head_concat", variant=variant,
         ),
@@ -1112,7 +1173,10 @@ def _apply_spinquant_hadamard_variant(kernels: list[dict],
                                       variant: str) -> list[dict]:
     by_name = {kernel["name"]: kernel for kernel in kernels}
     names = set(by_name)
-    per_head_q = layers * batch * heads_q
+    attention_M, attention_call_heads, _query_heads_per_kv = _attention_gemm_geometry(
+        stage, seq_q=seq_q, heads_q=heads_q, heads_kv=heads_kv
+    )
+    attention_calls = layers * batch * attention_call_heads
     q_rows = batch * seq_q * heads_q
     k_rows = batch * seq_q * heads_kv
     r4_rows = M_proj
@@ -1166,7 +1230,7 @@ def _apply_spinquant_hadamard_variant(kernels: list[dict],
 
     q_tile = _tile_input_kernel(
         "layout_rope_q_to_attn_qkT", stage,
-        M=seq_q, K=head_dim, calls_per_forward=per_head_q,
+        M=attention_M, K=head_dim, calls_per_forward=attention_calls,
         producer="spinquant_r3_q_hadamard", consumer="attn_qkT",
         layout_group="spinquant_r3_q_hadamard_to_attn_qkT",
         layout_from="row_major_fp16", variant=variant,
@@ -1368,6 +1432,16 @@ def build_decoder_pass_kernels(config: dict,
     use_mask   = 1 if stage == "prefill" else 0
     pos_offset = 0 if stage == "prefill" else (seq_kv - seq_q)
     max_seq    = max(seq_kv, max_pe)
+    attention_M, attention_call_heads, query_heads_per_kv = _attention_gemm_geometry(
+        stage, seq_q=seq_q, heads_q=H_q, heads_kv=H_kv
+    )
+    attention_calls = L * batch * attention_call_heads
+    attention_shape_update = _attention_gemm_shape_update(
+        stage,
+        heads_q=H_q,
+        heads_kv=H_kv,
+        query_heads_per_kv=query_heads_per_kv,
+    )
 
     out: list[dict] = []
 
@@ -1434,11 +1508,12 @@ def build_decoder_pass_kernels(config: dict,
         variant=variant,
     ))
 
-    # 7. Attention QK^T (per-head per-batch GEMM)
+    # 7. Attention QK^T. In generation, GQA groups query heads that share a
+    # KV head into the GEMM M dimension instead of emitting separate GEMVs.
     out.append(_llm_gemm_kernel(
-        name="attn_qkT", stage=stage, calls_per_forward=L * batch * H_q,
-        M=seq_q, N=seq_kv, K=D, qblk=D, wtrans=1, qdir=0,
-        variant=variant, per_head=True,
+        name="attn_qkT", stage=stage, calls_per_forward=attention_calls,
+        M=attention_M, N=seq_kv, K=D, qblk=D, wtrans=1, qdir=0,
+        variant=variant, per_head=True, shape_update=attention_shape_update,
     ))
 
     # 8. Attention softmax over scores [B, H_q, S_q, S_kv]
@@ -1457,11 +1532,12 @@ def build_decoder_pass_kernels(config: dict,
         variant=variant,
     ))
 
-    # 9. Attention PV (per-head per-batch GEMM)
+    # 9. Attention PV. Generation GQA uses the same grouped-query M dimension
+    # as QK^T, turning per-query-head GEMV work into small GEMMs.
     out.append(_llm_gemm_kernel(
-        name="attn_pv", stage=stage, calls_per_forward=L * batch * H_q,
-        M=seq_q, N=D, K=seq_kv, qblk=D, wtrans=0, qdir=1,
-        variant=variant, per_head=True,
+        name="attn_pv", stage=stage, calls_per_forward=attention_calls,
+        M=attention_M, N=D, K=seq_kv, qblk=D, wtrans=0, qdir=1,
+        variant=variant, per_head=True, shape_update=attention_shape_update,
     ))
 
     # 10. Concatenate per-head attention outputs into [B*S_q, H].

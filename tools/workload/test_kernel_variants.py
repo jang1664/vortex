@@ -317,6 +317,51 @@ class KernelVariantTest(unittest.TestCase):
         self.assertEqual(32 * 1 * 8, k_quant["calls_per_forward"])
         self.assertEqual(32 * 1 * 8, v_quant["calls_per_forward"])
 
+    def test_llama3_generation_gqa_groups_attention_gemms(self) -> None:
+        payload = build_llm_kernels(
+            model_name="llama3-8b",
+            stages=["generation"],
+            batch=1,
+            prefill_seq_len=128,
+            gen_kv_len=128,
+            qblk=32,
+            variant="all_fpint_gemm_improve",
+        )
+
+        attn_qk = _kernel_by_name(payload, "attn_qkT")
+        attn_pv = _kernel_by_name(payload, "attn_pv")
+
+        self.assertEqual("-m 4 -n 128 -k 128 -q 128 -t 1 -d 0", attn_qk["args"])
+        self.assertEqual("-m 4 -n 128 -k 128 -q 128 -t 0 -d 1", attn_pv["args"])
+        self.assertEqual(32 * 1 * 8, attn_qk["calls_per_forward"])
+        self.assertEqual(32 * 1 * 8, attn_pv["calls_per_forward"])
+        self.assertEqual(4, attn_qk["shape"]["M"])
+        self.assertEqual(4, attn_pv["shape"]["M"])
+        self.assertTrue(attn_qk["shape"]["grouped_query_attention"])
+        self.assertTrue(attn_pv["shape"]["grouped_query_attention"])
+        self.assertEqual(32, attn_qk["shape"]["query_heads"])
+        self.assertEqual(8, attn_qk["shape"]["key_value_heads"])
+        self.assertEqual(4, attn_qk["shape"]["query_heads_per_kv"])
+
+    def test_llama3_generation_gqa_groups_fused_spinquant_q_layout(self) -> None:
+        payload = build_llm_kernels(
+            model_name="llama3-8b",
+            stages=["generation"],
+            batch=1,
+            prefill_seq_len=128,
+            gen_kv_len=128,
+            qblk=32,
+            variant="all_fpint_gemm_improve_fused_layout_spinquant",
+        )
+
+        q_tile = _kernel_by_name(payload, "layout_rope_q_to_attn_qkT")
+        attn_qk = _kernel_by_name(payload, "attn_qkT")
+
+        self.assertEqual("-m 4 -k 128", q_tile["args"])
+        self.assertEqual(32 * 1 * 8, q_tile["calls_per_forward"])
+        self.assertEqual(4, q_tile["shape"]["M"])
+        self.assertEqual(4, attn_qk["shape"]["M"])
+
     def test_layout_variants_are_registered(self) -> None:
         self.assertIn("all_fpint_gemm_improve_alone_layout", WORKLOAD_VARIANTS)
         self.assertIn("all_fpint_gemm_improve_fused_layout", WORKLOAD_VARIANTS)

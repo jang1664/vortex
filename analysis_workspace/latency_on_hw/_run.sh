@@ -25,7 +25,7 @@ STAGES=prefill SKIP_EXISTING=1 ./run_hw.sh \
   --power-auto-duration --power-max-iterations 1 \
   --filter "app==kv_cache_quant_layout_fused_w4a16"
 
-
+./make_cases.sh --input suites/main --output generated_suites/llama3_8b_main --model-prefix llama3_8b
 SOFTMAX_LAYOUT_FUSED_VARIANT=opt SOFTMAX_VARIANT=opt_align BLACKBOX_TIMEOUT=3m FPGA_BINS="naive_simd" ./run_hw.sh \
     --input generated_suites/llama3_8b_main \
     --output outputs_main \
@@ -34,7 +34,7 @@ SOFTMAX_LAYOUT_FUSED_VARIANT=opt SOFTMAX_VARIANT=opt_align BLACKBOX_TIMEOUT=3m F
     --no-power \
     | tee -i logs/main.log
 
-SOFTMAX_LAYOUT_FUSED_VARIANT=opt SOFTMAX_VARIANT=opt_align BLACKBOX_TIMEOUT=3m FPGA_BINS="improve_tcol32" ./run_hw.sh \
+SOFTMAX_LAYOUT_FUSED_VARIANT=opt SOFTMAX_VARIANT=opt_align BLACKBOX_TIMEOUT=3m FPGA_BINS="improve_tcol32 naive_gemm_tcol32 improve_no_tcu_lut_fexp" ./run_hw.sh \
     --input generated_suites/main \
     --output outputs_main \
     --retry \
