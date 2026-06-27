@@ -19,7 +19,8 @@
 
 static const char* kernel_file = "kernel.vxbin";
 
-static uint32_t M = 2;
+static uint32_t M = 2;        // user-requested (real) M
+static uint32_t M_pad = 0;    // padded to multiple of 8 (set after parse_args)
 static uint32_t N = 32;
 static uint32_t K = 128;
 static uint32_t QBLK = 32;
@@ -245,27 +246,30 @@ static void build_test_vectors(std::vector<uint16_t>& h_A,
 // Tiled DRAM data conversion (matching tb_VX_gemm_node_improve layout)
 // ============================================================================
 
-// Input tiled: for each (mt, km), store [cur_m][MXU_KT] fp16 contiguously
+// Input tiled: for each (mt, km), store [cur_m_pad][MXU_KT] fp16 contiguously.
+// Layout uses padded M (M_pad) so the kernel's DMA byte counts stay 512B-aligned;
+// rows beyond real M are zero-filled (don't-care, ignored by MXU bound).
 static void convert_input_tiled(const std::vector<uint16_t>& h_A,
                                 std::vector<uint8_t>& tiled) {
-  uint32_t m_tiles  = (M + DMA_MT - 1) / DMA_MT;
+  uint32_t m_tiles  = (M_pad + DMA_MT - 1) / DMA_MT;
   uint32_t k_micros = K / DMA_MXU_KT;
   size_t idx = 0;
 
-  // Pre-compute total size
+  // Pre-compute total size (padded layout)
   size_t total = 0;
   for (uint32_t mt = 0; mt < m_tiles; mt++) {
-    uint32_t cur_m = ((M - mt * DMA_MT) < DMA_MT) ? (M - mt * DMA_MT) : DMA_MT;
-    total += cur_m * K * 2;
+    uint32_t cur_m_pad = ((M_pad - mt * DMA_MT) < DMA_MT) ? (M_pad - mt * DMA_MT) : DMA_MT;
+    total += cur_m_pad * K * 2;
   }
-  tiled.resize(total);
+  tiled.assign(total, 0);
 
   for (uint32_t mt = 0; mt < m_tiles; mt++) {
-    uint32_t cur_m = ((M - mt * DMA_MT) < DMA_MT) ? (M - mt * DMA_MT) : DMA_MT;
+    uint32_t cur_m_pad = ((M_pad - mt * DMA_MT) < DMA_MT) ? (M_pad - mt * DMA_MT) : DMA_MT;
     for (uint32_t km = 0; km < k_micros; km++) {
-      for (uint32_t m = 0; m < cur_m; m++) {
+      for (uint32_t m = 0; m < cur_m_pad; m++) {
+        uint32_t gm = mt * DMA_MT + m;
         for (uint32_t k = 0; k < DMA_MXU_KT; k++) {
-          uint16_t val = h_A[(mt * DMA_MT + m) * K + (km * DMA_MXU_KT + k)];
+          uint16_t val = (gm < M) ? h_A[gm * K + (km * DMA_MXU_KT + k)] : 0;
           tiled[idx++] = val & 0xFF;
           tiled[idx++] = (val >> 8) & 0xFF;
         }
@@ -449,14 +453,14 @@ static bool compare_fp16(uint16_t actual, uint16_t expected, float tolerance) {
 
 static int verify_results_tiled(vx_buffer_h out_buffer,
                                 const std::vector<uint16_t>& ref) {
-  uint32_t m_tiles = (M + DMA_MT - 1) / DMA_MT;
+  uint32_t m_tiles = (M_pad + DMA_MT - 1) / DMA_MT;
   uint32_t n_tiles = N / DMA_MXU_NT;
 
-  // Compute total output size
+  // Compute total output size (padded — DMA writes M_pad rows worth)
   size_t total_bytes = 0;
   for (uint32_t mt = 0; mt < m_tiles; mt++) {
-    uint32_t cur_m = ((M - mt * DMA_MT) < DMA_MT) ? (M - mt * DMA_MT) : DMA_MT;
-    total_bytes += n_tiles * cur_m * DMA_MXU_NT * 2;
+    uint32_t cur_m_pad = ((M_pad - mt * DMA_MT) < DMA_MT) ? (M_pad - mt * DMA_MT) : DMA_MT;
+    total_bytes += n_tiles * cur_m_pad * DMA_MXU_NT * 2;
   }
 
   std::vector<uint8_t> raw(total_bytes);
@@ -466,16 +470,19 @@ static int verify_results_tiled(vx_buffer_h out_buffer,
   size_t idx = 0;
 
   for (uint32_t mt = 0; mt < m_tiles; mt++) {
-    uint32_t cur_m = ((M - mt * DMA_MT) < DMA_MT) ? (M - mt * DMA_MT) : DMA_MT;
+    uint32_t cur_m_pad = ((M_pad - mt * DMA_MT) < DMA_MT) ? (M_pad - mt * DMA_MT) : DMA_MT;
     for (uint32_t nt = 0; nt < n_tiles; nt++) {
-      for (uint32_t m = 0; m < cur_m; m++) {
+      for (uint32_t m = 0; m < cur_m_pad; m++) {
+        uint32_t gm = mt * DMA_MT + m;
         for (uint32_t n = 0; n < DMA_MXU_NT; n++) {
-          uint32_t gm = mt * DMA_MT + m;
           uint32_t gn = nt * DMA_MXU_NT + n;
           uint16_t got = uint16_t(raw[idx]) | (uint16_t(raw[idx + 1]) << 8);
-          uint16_t exp = ref[gm * N + gn];
           idx += 2;
 
+          // Skip padded rows: kernel didn't compute these (MXU bound = real M).
+          if (gm >= M) continue;
+
+          uint16_t exp = ref[gm * N + gn];
           if (!compare_fp16(got, exp, FP16_TOL)) {
             if (errors < 10) {
               printf("Mismatch[m=%u,n=%u]: got=0x%04x (%f), exp=0x%04x (%f)\n",
@@ -548,11 +555,13 @@ int main(int argc, char *argv[]) {
               << " WTRANS=" << WTRANS << " QDIR=" << QDIR << std::endl;
     return -1;
   }
-  if (M % 8 != 0) {
-    std::cerr << "M=" << M << " must be a multiple of 8"
-              << std::endl;
+  if (M == 0) {
+    std::cerr << "M must be > 0" << std::endl;
     return -1;
   }
+  // Pad M up to multiple of 8 for DMA stripe alignment (NUM_DMA_CHANNELS=8).
+  // DRAM buffers and TMEM layouts use M_pad; compute is bounded to real M.
+  M_pad = (M + 7u) & ~7u;
   if (N % DMA_MXU_NT != 0) {
     std::cerr << "N=" << N << " must be a multiple of DMA_MXU_NT=" << DMA_MXU_NT
               << std::endl;
@@ -568,7 +577,8 @@ int main(int argc, char *argv[]) {
   }
 
   std::cout << "Core-level GEMM instruction stream test" << std::endl;
-  std::cout << "M=" << M << ", N=" << N << ", K=" << K
+  std::cout << "M=" << M << " (padded to " << M_pad << ")"
+            << ", N=" << N << ", K=" << K
             << ", QBLK=" << QBLK << ", WTRANS=" << WTRANS
             << ", QDIR=" << QDIR << std::endl;
   std::cout << "Tile: MT=" << DMA_MT << " KT=" << DMA_KT
@@ -645,13 +655,13 @@ int main(int argc, char *argv[]) {
            fp16_to_float(h_ref_out_fp16[DMA_MXU_NT]));
   }
 
-  // Compute tiled output buffer size
-  uint32_t m_tiles = (M + DMA_MT - 1) / DMA_MT;
+  // Compute tiled output buffer size (padded — DMA writes M_pad rows worth)
+  uint32_t m_tiles = (M_pad + DMA_MT - 1) / DMA_MT;
   uint32_t n_tiles = N / DMA_MXU_NT;
   size_t out_total_bytes = 0;
   for (uint32_t mt = 0; mt < m_tiles; mt++) {
-    uint32_t cur_m = ((M - mt * DMA_MT) < DMA_MT) ? (M - mt * DMA_MT) : DMA_MT;
-    out_total_bytes += n_tiles * cur_m * DMA_MXU_NT * 2;
+    uint32_t cur_m_pad = ((M_pad - mt * DMA_MT) < DMA_MT) ? (M_pad - mt * DMA_MT) : DMA_MT;
+    out_total_bytes += n_tiles * cur_m_pad * DMA_MXU_NT * 2;
   }
 
   // ---- Allocate device buffers ----

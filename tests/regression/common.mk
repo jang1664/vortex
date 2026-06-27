@@ -4,6 +4,7 @@ TARGET ?= opaesim
 
 XRT_SYN_DIR ?= $(VORTEX_HOME)/hw/syn/xilinx/xrt
 XRT_DEVICE_INDEX ?= 0
+XRT_INI_PATH ?= $(VORTEX_RT_PATH)/xrt/xrt.ini
 
 VORTEX_RT_PATH ?= $(ROOT_DIR)/runtime
 VORTEX_KN_PATH ?= $(ROOT_DIR)/kernel
@@ -96,6 +97,7 @@ endif
 all: $(PROJECT) kernel.vxbin kernel.dump
 
 KERNEL_CONFIG_FILE := .kernel.flags.stamp
+HOST_CONFIG_FILE := .host.flags.stamp
 
 kernel.dump: kernel.elf
 	$(VX_DP) -D $< > $@
@@ -111,19 +113,42 @@ $(KERNEL_CONFIG_FILE): force
 	  rm $@.tmp; \
 	fi
 
+$(HOST_CONFIG_FILE): force
+	@printf '%s\n' "$(CXXFLAGS) $(LDFLAGS)" > $@.tmp
+	@if ! cmp -s $@.tmp $@; then \
+	  mv $@.tmp $@; \
+	else \
+	  rm $@.tmp; \
+	fi
+
 kernel.elf: $(VX_SRCS) $(KERNEL_CONFIG_FILE)
 	$(VX_CXX) $(VX_CFLAGS) $(VX_SRCS) $(VX_LDFLAGS) -o kernel.elf
 
-$(PROJECT): $(SRCS)
-	$(CXX) $(CXXFLAGS) $^ $(LDFLAGS) -o $@
+$(PROJECT): $(SRCS) $(HOST_CONFIG_FILE)
+	$(CXX) $(CXXFLAGS) $(SRCS) $(LDFLAGS) -o $@
 
 run-simx: $(PROJECT) kernel.vxbin
+	LD_LIBRARY_PATH=$(VORTEX_RT_PATH):$(LD_LIBRARY_PATH) VORTEX_DRIVER=simx ./$(PROJECT) $(OPTS)
+
+exec-simx:
+	@test -x ./$(PROJECT) || { echo "Missing host binary: $(PROJECT)"; exit 2; }
+	@test -f kernel.vxbin || { echo "Missing kernel.vxbin"; exit 2; }
 	LD_LIBRARY_PATH=$(VORTEX_RT_PATH):$(LD_LIBRARY_PATH) VORTEX_DRIVER=simx ./$(PROJECT) $(OPTS)
 
 run-rtlsim: $(PROJECT) kernel.vxbin
 	LD_LIBRARY_PATH=$(VORTEX_RT_PATH):$(LD_LIBRARY_PATH) VORTEX_DRIVER=rtlsim ./$(PROJECT) $(OPTS)
 
+exec-rtlsim:
+	@test -x ./$(PROJECT) || { echo "Missing host binary: $(PROJECT)"; exit 2; }
+	@test -f kernel.vxbin || { echo "Missing kernel.vxbin"; exit 2; }
+	LD_LIBRARY_PATH=$(VORTEX_RT_PATH):$(LD_LIBRARY_PATH) VORTEX_DRIVER=rtlsim ./$(PROJECT) $(OPTS)
+
 run-opae: $(PROJECT) kernel.vxbin
+	SCOPE_JSON_PATH=$(VORTEX_RT_PATH)/scope.json OPAE_DRV_PATHS=$(OPAE_DRV_PATHS) LD_LIBRARY_PATH=$(VORTEX_RT_PATH):$(LD_LIBRARY_PATH) VORTEX_DRIVER=opae ./$(PROJECT) $(OPTS)
+
+exec-opae:
+	@test -x ./$(PROJECT) || { echo "Missing host binary: $(PROJECT)"; exit 2; }
+	@test -f kernel.vxbin || { echo "Missing kernel.vxbin"; exit 2; }
 	SCOPE_JSON_PATH=$(VORTEX_RT_PATH)/scope.json OPAE_DRV_PATHS=$(OPAE_DRV_PATHS) LD_LIBRARY_PATH=$(VORTEX_RT_PATH):$(LD_LIBRARY_PATH) VORTEX_DRIVER=opae ./$(PROJECT) $(OPTS)
 
 VCS_SIMLIB_DIR ?= $(VORTEX_HOME)/build/vcs_simlib
@@ -136,7 +161,18 @@ HW_EMU_LD_PATHS := /usr/lib/x86_64-linux-gnu:$(XILINX_XRT)/lib:$(XILINX_VIVADO)/
 
 run-xrt: $(PROJECT) kernel.vxbin
 ifeq ($(TARGET), hw)
-	SCOPE_JSON_PATH=$(FPGA_BIN_DIR)/scope.json XRT_INI_PATH=$(VORTEX_RT_PATH)/xrt/xrt.ini EMCONFIG_PATH=$(FPGA_BIN_DIR) XRT_DEVICE_INDEX=$(XRT_DEVICE_INDEX) XRT_XCLBIN_PATH=$(FPGA_BIN_DIR)/vortex_afu.xclbin LD_LIBRARY_PATH=$(XILINX_XRT)/lib:$(VORTEX_RT_PATH):$(LD_LIBRARY_PATH) VORTEX_DRIVER=xrt ./$(PROJECT) $(OPTS)
+	SCOPE_JSON_PATH=$(FPGA_BIN_DIR)/scope.json XRT_INI_PATH=$(XRT_INI_PATH) EMCONFIG_PATH=$(FPGA_BIN_DIR) XRT_DEVICE_INDEX=$(XRT_DEVICE_INDEX) XRT_XCLBIN_PATH=$(FPGA_BIN_DIR)/vortex_afu.xclbin LD_LIBRARY_PATH=$(XILINX_XRT)/lib:$(VORTEX_RT_PATH):$(LD_LIBRARY_PATH) VORTEX_DRIVER=xrt ./$(PROJECT) $(OPTS)
+else ifeq ($(TARGET), hw_emu)
+	SCOPE_JSON_PATH=$(FPGA_BIN_DIR)/scope.json XCL_EMULATION_MODE=$(TARGET) XRT_INI_PATH=$(if $(wildcard $(FPGA_BIN_DIR)/xrt.ini),$(FPGA_BIN_DIR)/xrt.ini,$(VORTEX_RT_PATH)/xrt/xrt.ini) EMCONFIG_PATH=$(FPGA_BIN_DIR) XRT_DEVICE_INDEX=$(XRT_DEVICE_INDEX) XRT_XCLBIN_PATH=$(FPGA_BIN_DIR)/vortex_afu.xclbin LD_LIBRARY_PATH=$(HW_EMU_LD_PATHS) VORTEX_DRIVER=xrt ./$(PROJECT) $(OPTS)
+else
+	SCOPE_JSON_PATH=$(VORTEX_RT_PATH)/scope.json LD_LIBRARY_PATH=$(XILINX_XRT)/lib:$(VORTEX_RT_PATH):$(LD_LIBRARY_PATH) VORTEX_DRIVER=xrt ./$(PROJECT) $(OPTS)
+endif
+
+exec-xrt:
+	@test -x ./$(PROJECT) || { echo "Missing host binary: $(PROJECT)"; exit 2; }
+	@test -f kernel.vxbin || { echo "Missing kernel.vxbin"; exit 2; }
+ifeq ($(TARGET), hw)
+	SCOPE_JSON_PATH=$(FPGA_BIN_DIR)/scope.json XRT_INI_PATH=$(XRT_INI_PATH) EMCONFIG_PATH=$(FPGA_BIN_DIR) XRT_DEVICE_INDEX=$(XRT_DEVICE_INDEX) XRT_XCLBIN_PATH=$(FPGA_BIN_DIR)/vortex_afu.xclbin LD_LIBRARY_PATH=$(XILINX_XRT)/lib:$(VORTEX_RT_PATH):$(LD_LIBRARY_PATH) VORTEX_DRIVER=xrt ./$(PROJECT) $(OPTS)
 else ifeq ($(TARGET), hw_emu)
 	SCOPE_JSON_PATH=$(FPGA_BIN_DIR)/scope.json XCL_EMULATION_MODE=$(TARGET) XRT_INI_PATH=$(if $(wildcard $(FPGA_BIN_DIR)/xrt.ini),$(FPGA_BIN_DIR)/xrt.ini,$(VORTEX_RT_PATH)/xrt/xrt.ini) EMCONFIG_PATH=$(FPGA_BIN_DIR) XRT_DEVICE_INDEX=$(XRT_DEVICE_INDEX) XRT_XCLBIN_PATH=$(FPGA_BIN_DIR)/vortex_afu.xclbin LD_LIBRARY_PATH=$(HW_EMU_LD_PATHS) VORTEX_DRIVER=xrt ./$(PROJECT) $(OPTS)
 else
@@ -151,24 +187,51 @@ ifneq ($(wildcard $(SRC_DIR)/bench_main.cpp),)
 BENCH_PROJECT := $(PROJECT)_bench
 BENCH_SRCS    := $(filter-out $(SRC_DIR)/main.cpp,$(SRCS)) $(SRC_DIR)/bench_main.cpp
 BENCH_CXXFLAGS := $(CXXFLAGS) -I$(VORTEX_HOME)/tests/common
+BENCH_COMMON_HEADERS := $(VORTEX_HOME)/tests/common/bench_util.h
 
-$(BENCH_PROJECT): $(BENCH_SRCS)
-	$(CXX) $(BENCH_CXXFLAGS) $^ $(LDFLAGS) -o $@
+$(BENCH_PROJECT): $(BENCH_SRCS) $(BENCH_COMMON_HEADERS) $(HOST_CONFIG_FILE)
+	$(CXX) $(BENCH_CXXFLAGS) $(BENCH_SRCS) $(LDFLAGS) -o $@
 
 bench: $(BENCH_PROJECT) kernel.vxbin
 
 run-simx-bench: $(BENCH_PROJECT) kernel.vxbin
 	LD_LIBRARY_PATH=$(VORTEX_RT_PATH):$(LD_LIBRARY_PATH) VORTEX_DRIVER=simx ./$(BENCH_PROJECT) $(OPTS)
 
+exec-simx-bench:
+	@test -x ./$(BENCH_PROJECT) || { echo "Missing bench binary: $(BENCH_PROJECT)"; exit 2; }
+	@test -f kernel.vxbin || { echo "Missing kernel.vxbin"; exit 2; }
+	LD_LIBRARY_PATH=$(VORTEX_RT_PATH):$(LD_LIBRARY_PATH) VORTEX_DRIVER=simx ./$(BENCH_PROJECT) $(OPTS)
+
 run-rtlsim-bench: $(BENCH_PROJECT) kernel.vxbin
+	LD_LIBRARY_PATH=$(VORTEX_RT_PATH):$(LD_LIBRARY_PATH) VORTEX_DRIVER=rtlsim ./$(BENCH_PROJECT) $(OPTS)
+
+exec-rtlsim-bench:
+	@test -x ./$(BENCH_PROJECT) || { echo "Missing bench binary: $(BENCH_PROJECT)"; exit 2; }
+	@test -f kernel.vxbin || { echo "Missing kernel.vxbin"; exit 2; }
 	LD_LIBRARY_PATH=$(VORTEX_RT_PATH):$(LD_LIBRARY_PATH) VORTEX_DRIVER=rtlsim ./$(BENCH_PROJECT) $(OPTS)
 
 run-opae-bench: $(BENCH_PROJECT) kernel.vxbin
 	SCOPE_JSON_PATH=$(VORTEX_RT_PATH)/scope.json OPAE_DRV_PATHS=$(OPAE_DRV_PATHS) LD_LIBRARY_PATH=$(VORTEX_RT_PATH):$(LD_LIBRARY_PATH) VORTEX_DRIVER=opae ./$(BENCH_PROJECT) $(OPTS)
 
+exec-opae-bench:
+	@test -x ./$(BENCH_PROJECT) || { echo "Missing bench binary: $(BENCH_PROJECT)"; exit 2; }
+	@test -f kernel.vxbin || { echo "Missing kernel.vxbin"; exit 2; }
+	SCOPE_JSON_PATH=$(VORTEX_RT_PATH)/scope.json OPAE_DRV_PATHS=$(OPAE_DRV_PATHS) LD_LIBRARY_PATH=$(VORTEX_RT_PATH):$(LD_LIBRARY_PATH) VORTEX_DRIVER=opae ./$(BENCH_PROJECT) $(OPTS)
+
 run-xrt-bench: $(BENCH_PROJECT) kernel.vxbin
 ifeq ($(TARGET), hw)
-	SCOPE_JSON_PATH=$(FPGA_BIN_DIR)/scope.json XRT_INI_PATH=$(VORTEX_RT_PATH)/xrt/xrt.ini EMCONFIG_PATH=$(FPGA_BIN_DIR) XRT_DEVICE_INDEX=$(XRT_DEVICE_INDEX) XRT_XCLBIN_PATH=$(FPGA_BIN_DIR)/vortex_afu.xclbin LD_LIBRARY_PATH=$(XILINX_XRT)/lib:$(VORTEX_RT_PATH):$(LD_LIBRARY_PATH) VORTEX_DRIVER=xrt ./$(BENCH_PROJECT) $(OPTS)
+	SCOPE_JSON_PATH=$(FPGA_BIN_DIR)/scope.json XRT_INI_PATH=$(XRT_INI_PATH) EMCONFIG_PATH=$(FPGA_BIN_DIR) XRT_DEVICE_INDEX=$(XRT_DEVICE_INDEX) XRT_XCLBIN_PATH=$(FPGA_BIN_DIR)/vortex_afu.xclbin LD_LIBRARY_PATH=$(XILINX_XRT)/lib:$(VORTEX_RT_PATH):$(LD_LIBRARY_PATH) VORTEX_DRIVER=xrt ./$(BENCH_PROJECT) $(OPTS)
+else ifeq ($(TARGET), hw_emu)
+	SCOPE_JSON_PATH=$(FPGA_BIN_DIR)/scope.json XCL_EMULATION_MODE=$(TARGET) XRT_INI_PATH=$(if $(wildcard $(FPGA_BIN_DIR)/xrt.ini),$(FPGA_BIN_DIR)/xrt.ini,$(VORTEX_RT_PATH)/xrt/xrt.ini) EMCONFIG_PATH=$(FPGA_BIN_DIR) XRT_DEVICE_INDEX=$(XRT_DEVICE_INDEX) XRT_XCLBIN_PATH=$(FPGA_BIN_DIR)/vortex_afu.xclbin LD_LIBRARY_PATH=$(HW_EMU_LD_PATHS) VORTEX_DRIVER=xrt ./$(BENCH_PROJECT) $(OPTS)
+else
+	SCOPE_JSON_PATH=$(VORTEX_RT_PATH)/scope.json LD_LIBRARY_PATH=$(XILINX_XRT)/lib:$(VORTEX_RT_PATH):$(LD_LIBRARY_PATH) VORTEX_DRIVER=xrt ./$(BENCH_PROJECT) $(OPTS)
+endif
+
+exec-xrt-bench:
+	@test -x ./$(BENCH_PROJECT) || { echo "Missing bench binary: $(BENCH_PROJECT)"; exit 2; }
+	@test -f kernel.vxbin || { echo "Missing kernel.vxbin"; exit 2; }
+ifeq ($(TARGET), hw)
+	SCOPE_JSON_PATH=$(FPGA_BIN_DIR)/scope.json XRT_INI_PATH=$(XRT_INI_PATH) EMCONFIG_PATH=$(FPGA_BIN_DIR) XRT_DEVICE_INDEX=$(XRT_DEVICE_INDEX) XRT_XCLBIN_PATH=$(FPGA_BIN_DIR)/vortex_afu.xclbin LD_LIBRARY_PATH=$(XILINX_XRT)/lib:$(VORTEX_RT_PATH):$(LD_LIBRARY_PATH) VORTEX_DRIVER=xrt ./$(BENCH_PROJECT) $(OPTS)
 else ifeq ($(TARGET), hw_emu)
 	SCOPE_JSON_PATH=$(FPGA_BIN_DIR)/scope.json XCL_EMULATION_MODE=$(TARGET) XRT_INI_PATH=$(if $(wildcard $(FPGA_BIN_DIR)/xrt.ini),$(FPGA_BIN_DIR)/xrt.ini,$(VORTEX_RT_PATH)/xrt/xrt.ini) EMCONFIG_PATH=$(FPGA_BIN_DIR) XRT_DEVICE_INDEX=$(XRT_DEVICE_INDEX) XRT_XCLBIN_PATH=$(FPGA_BIN_DIR)/vortex_afu.xclbin LD_LIBRARY_PATH=$(HW_EMU_LD_PATHS) VORTEX_DRIVER=xrt ./$(BENCH_PROJECT) $(OPTS)
 else
@@ -177,18 +240,22 @@ endif
 endif
 # -----------------------------------------------------------------------------
 
-.depend: $(SRCS)
-	$(CXX) $(CXXFLAGS) -MM $^ > .depend;
+.depend: $(SRCS) $(BENCH_SRCS)
+	$(CXX) $(CXXFLAGS) -MM $(SRCS) > .depend;
+ifneq ($(strip $(BENCH_SRCS)),)
+	$(CXX) $(BENCH_CXXFLAGS) -MM -MT $(BENCH_PROJECT) $(BENCH_SRCS) >> .depend;
+endif
 
 clean-kernel:
 	rm -rf *.elf *.vxbin *.dump
 
 clean-host:
-	rm -rf $(PROJECT) $(PROJECT)_bench *.o *.log .depend
+	rm -rf $(PROJECT) $(PROJECT)_bench *.o *.log .depend $(HOST_CONFIG_FILE)
 
 clean: clean-kernel clean-host
 
-.PHONY: force
+.PHONY: force exec-simx exec-rtlsim exec-opae exec-xrt \
+        exec-simx-bench exec-rtlsim-bench exec-opae-bench exec-xrt-bench
 force:
 
 ifneq ($(MAKECMDGOALS),clean)

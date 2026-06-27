@@ -6,7 +6,6 @@
 #include <cmath>
 #include <cstring>
 #include <algorithm>
-#include <functional>
 #include <cfloat>
 #include <assert.h>
 #include <vortex.h>
@@ -39,39 +38,6 @@ static void cleanup() {
   if (device) vx_dev_close(device);
 }
 
-static void cpu_mean(const std::vector<data_t>& in, std::vector<data_t>& out,
-                     uint32_t batch, uint32_t reduce) {
-  for (uint32_t r = 0; r < batch; ++r) {
-    float sum = 0.0f;
-    for (uint32_t c = 0; c < reduce; ++c) sum += in[r * reduce + c];
-    out[r] = sum / static_cast<float>(reduce);
-  }
-}
-static void cpu_sum(const std::vector<data_t>& in, std::vector<data_t>& out,
-                    uint32_t batch, uint32_t reduce) {
-  for (uint32_t r = 0; r < batch; ++r) {
-    float sum = 0.0f;
-    for (uint32_t c = 0; c < reduce; ++c) sum += in[r * reduce + c];
-    out[r] = sum;
-  }
-}
-static void cpu_max(const std::vector<data_t>& in, std::vector<data_t>& out,
-                    uint32_t batch, uint32_t reduce) {
-  for (uint32_t r = 0; r < batch; ++r) {
-    float m = -FLT_MAX;
-    for (uint32_t c = 0; c < reduce; ++c) m = std::max(m, in[r * reduce + c]);
-    out[r] = m;
-  }
-}
-static void cpu_min(const std::vector<data_t>& in, std::vector<data_t>& out,
-                    uint32_t batch, uint32_t reduce) {
-  for (uint32_t r = 0; r < batch; ++r) {
-    float m = FLT_MAX;
-    for (uint32_t c = 0; c < reduce; ++c) m = std::min(m, in[r * reduce + c]);
-    out[r] = m;
-  }
-}
-
 static void initialize_random(std::vector<data_t>& vec) {
   for (auto& v : vec) v = static_cast<float>(rand()) / RAND_MAX * 4.0f - 2.0f;
 }
@@ -79,21 +45,23 @@ static void initialize_random(std::vector<data_t>& vec) {
 struct OpInfo {
   uint32_t kernel_id;
   const char* name;
-  std::function<void(const std::vector<data_t>&, std::vector<data_t>&, uint32_t, uint32_t)> cpu_fn;
 };
 
 int main(int argc, char *argv[]) {
   auto bench = vx_bench::parse(argc, argv);
+  if (vx_bench::report_parse_error(bench)) {
+    return -1;
+  }
 
   uint32_t batch_size = 128;
   uint32_t reduce_dim = 512;
   uint32_t op_id = KERNEL_MEAN;
 
   OpInfo ops[] = {
-    {KERNEL_MEAN, "mean", cpu_mean},
-    {KERNEL_SUM,  "sum",  cpu_sum},
-    {KERNEL_MAX,  "max",  cpu_max},
-    {KERNEL_MIN,  "min",  cpu_min},
+    {KERNEL_MEAN, "mean"},
+    {KERNEL_SUM,  "sum"},
+    {KERNEL_MAX,  "max"},
+    {KERNEL_MIN,  "min"},
   };
 
   for (int i = 1; i < argc; ++i) {
@@ -122,10 +90,9 @@ int main(int argc, char *argv[]) {
   }
 
   uint32_t input_size = batch_size * reduce_dim;
-  std::vector<data_t> h_in(input_size), h_out(batch_size), h_ref(batch_size);
+  std::vector<data_t> h_in(input_size);
   srand(42);
   initialize_random(h_in);
-  cur.cpu_fn(h_in, h_ref, batch_size, reduce_dim);
 
   RT_CHECK(vx_dev_open(&device));
 
@@ -159,37 +126,30 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_upload_bytes(device, &kernel_arg, sizeof(kernel_arg_t), &args_buffer));
   RT_CHECK(vx_upload_kernel_file(device, "kernel.vxbin", &krnl_buffer));
 
-  RT_CHECK(vx_start(device, krnl_buffer, args_buffer));
-  RT_CHECK(vx_ready_wait(device, VX_MAX_TIMEOUT));
-  RT_CHECK(vx_copy_from_dev(h_out.data(), output_buffer, 0, output_bytes));
-  int errors = 0;
-  float max_diff = 0.0f;
-  for (uint32_t i = 0; i < batch_size; ++i) {
-    float diff = std::abs(h_out[i] - h_ref[i]);
-    max_diff = std::max(max_diff, diff);
-    float thr = std::abs(h_ref[i]) * 0.001f + 1e-5f;
-    if (diff > thr) ++errors;
-  }
-  if (errors != 0) {
-    printf("Validation FAILED: errors=%d max_diff=%.6f\n", errors, max_diff);
-    cleanup();
-    return -1;
-  }
-
+  printf("Warmup Start\n"); fflush(stdout);
   for (int i = 0; i < bench.warmup; ++i) {
     RT_CHECK(vx_start(device, krnl_buffer, args_buffer));
     RT_CHECK(vx_ready_wait(device, VX_MAX_TIMEOUT));
+    printf("Warmup iteration %0d/%0d\n", i+1, bench.warmup); fflush(stdout);
   }
 
   vx_bench::Stats stats;
+  printf("Start latency measurement.\n"); fflush(stdout);
   for (int i = 0; i < bench.iterations; ++i) {
     vx_bench::Stopwatch sw; sw.start();
     RT_CHECK(vx_start(device, krnl_buffer, args_buffer));
     RT_CHECK(vx_ready_wait(device, VX_MAX_TIMEOUT));
     stats.record(sw.stop_us());
+    printf("iteration %0d/%0d, elapsed:%f\n", i+1, bench.iterations, stats.last()); fflush(stdout);
   }
 
   stats.report(label, bench);
+
+  if (!vx_bench::run_power_measurement(
+          label, bench, device, krnl_buffer, args_buffer)) {
+    cleanup();
+    return -1;
+  }
 
   if (!bench.csv) {
     printf("\n[Performance]\n");

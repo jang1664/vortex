@@ -1,9 +1,7 @@
 // Benchmark harness for fpint_gemm_ffn_hw. See softmax/bench_main.cpp for
 // design notes. Reuses kernel.vxbin built from kernel.cpp; differs from
-// main.cpp only in that it (1) skips the per-element FP16 reference output
-// and per-element verification, (2) runs warmup + timed-iteration loops
-// around vx_start / vx_ready_wait, (3) does a coarse "output is not all-zero"
-// sanity check before the timed loop.
+// main.cpp only in that it skips reference output/per-element verification and
+// runs warmup + timed-iteration loops around vx_start / vx_ready_wait.
 //
 // CLI: same shape args as main.cpp (-m -n -k -q -t -d) plus
 //      --warmup=N / --iterations=N / --csv / --output=PATH / --output-append
@@ -63,17 +61,6 @@ static constexpr uint64_t align_up_u64(uint64_t x, uint64_t a) {
   return (a == 0) ? x : ((x + a - 1) / a) * a;
 }
 
-static const char* status_to_str(uint32_t status) {
-  switch (status) {
-  case MMIO_STATUS_INIT: return "INIT";
-  case MMIO_STATUS_OK: return "OK";
-  case MMIO_STATUS_ALLOC_FAIL: return "ALLOC_FAIL";
-  case MMIO_STATUS_WAIT_STUCK: return "WAIT_STUCK";
-  case MMIO_STATUS_BAD_EID: return "BAD_EID";
-  default: return "UNKNOWN";
-  }
-}
-
 static void cleanup() {
   if (A_buffer) vx_mem_free(A_buffer);
   if (W_int4_buffer) vx_mem_free(W_int4_buffer);
@@ -92,6 +79,17 @@ static void cleanup() {
   krnl_buffer = nullptr;
   args_buffer = nullptr;
   device = nullptr;
+}
+
+static const char* status_to_str(uint32_t status) {
+  switch (status) {
+  case MMIO_STATUS_INIT: return "INIT";
+  case MMIO_STATUS_OK: return "OK";
+  case MMIO_STATUS_ALLOC_FAIL: return "ALLOC_FAIL";
+  case MMIO_STATUS_WAIT_STUCK: return "WAIT_STUCK";
+  case MMIO_STATUS_BAD_EID: return "BAD_EID";
+  default: return "UNKNOWN";
+  }
 }
 
 // ============================================================================
@@ -226,6 +224,9 @@ static bool compute_lmem_layout(kernel_arg_t& kargs, uint64_t local_mem_size) {
 int main(int argc, char *argv[]) {
   // Strip --warmup / --iterations / --csv first; remaining argv goes to getopt.
   auto bench = vx_bench::parse(argc, argv);
+  if (vx_bench::report_parse_error(bench)) {
+    return -1;
+  }
 
   optind = 1;
   int c;
@@ -271,6 +272,11 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_THREADS,    &num_threads));
   RT_CHECK(vx_dev_caps(device, VX_CAPS_LOCAL_MEM_SIZE, &local_mem_size));
 
+  // Reserve the kernel's fixed VMA before large data buffers are allocated.
+  // Otherwise large M/N/K cases can place C across STARTUP_ADDR and make the
+  // later kernel upload fail with an address-overlap error.
+  RT_CHECK(vx_upload_kernel_file(device, kernel_file, &krnl_buffer));
+
   // ---- Generate test vectors (no host reference) ----
   std::vector<uint16_t> h_A;
   std::vector<uint8_t>  h_W_int4;
@@ -295,8 +301,6 @@ int main(int argc, char *argv[]) {
 
   std::vector<uint8_t> zero_out(out_total_bytes, 0);
   RT_CHECK(vx_copy_to_dev(C_buffer, zero_out.data(), 0, out_total_bytes));
-
-  RT_CHECK(vx_upload_kernel_file(device, kernel_file, &krnl_buffer));
 
   // ---- Set up kernel arguments ----
   kernel_arg_t kargs = {};
@@ -332,56 +336,52 @@ int main(int argc, char *argv[]) {
 
   RT_CHECK(vx_upload_bytes(device, &kargs, sizeof(kargs), &args_buffer));
 
-  // ---- Validate once before timed loop (coarse "output not all-zero") ------
-  RT_CHECK(vx_start(device, krnl_buffer, args_buffer));
-  int wait_ret = vx_ready_wait(device, VX_MAX_TIMEOUT);
-  if (wait_ret != 0) {
-    std::cerr << "vx_ready_wait failed: ret=" << wait_ret << std::endl;
-    if (vx_copy_from_dev(&kargs, args_buffer, 0, sizeof(kargs)) == 0) {
-      std::cerr << "Kernel status: " << kargs.status
+  auto check_kernel_status = [&](const char* phase, int iter) -> bool {
+    RT_CHECK(vx_copy_from_dev(&kargs, args_buffer, 0, sizeof(kargs)));
+    if (kargs.status != MMIO_STATUS_OK) {
+      std::cerr << "Kernel failed during " << phase << " iter=" << iter
+                << ": status=" << kargs.status
                 << " (" << status_to_str(kargs.status) << ")"
                 << ", eid=" << kargs.job_eid
                 << ", gen=" << kargs.job_generation
                 << ", ctrl=0x" << std::hex << kargs.last_ctrl << std::dec
                 << std::endl;
+      cleanup();
+      return false;
     }
-    cleanup();
-    return -1;
-  }
-  RT_CHECK(vx_copy_from_dev(&kargs, args_buffer, 0, sizeof(kargs)));
-  if (kargs.status != MMIO_STATUS_OK) {
-    std::cerr << "Kernel failed: status=" << kargs.status
-              << " (" << status_to_str(kargs.status) << ")" << std::endl;
-    cleanup();
-    return -1;
-  }
-
-  std::vector<uint8_t> h_out(out_total_bytes);
-  RT_CHECK(vx_copy_from_dev(h_out.data(), C_buffer, 0, out_total_bytes));
-  bool any_nonzero = false;
-  for (uint8_t b : h_out) { if (b != 0) { any_nonzero = true; break; } }
-  if (!any_nonzero) {
-    printf("Validation FAILED: C buffer is all zero after kernel run\n");
-    cleanup();
-    return -1;
-  }
+    return true;
+  };
 
   // ---- Warmup --------------------------------------------------------------
+  printf("Warmup Start\n"); fflush(stdout);
   for (int i = 0; i < bench.warmup; ++i) {
     RT_CHECK(vx_start(device, krnl_buffer, args_buffer));
     RT_CHECK(vx_ready_wait(device, VX_MAX_TIMEOUT));
+    printf("Warmup iteration %0d/%0d\n", i+1, bench.warmup); fflush(stdout);
+    if (!check_kernel_status("warmup", i))
+      return -1;
   }
 
   // ---- Timed iterations ----------------------------------------------------
   vx_bench::Stats stats;
+  printf("Start latency measurement.\n"); fflush(stdout);
   for (int i = 0; i < bench.iterations; ++i) {
     vx_bench::Stopwatch sw; sw.start();
     RT_CHECK(vx_start(device, krnl_buffer, args_buffer));
     RT_CHECK(vx_ready_wait(device, VX_MAX_TIMEOUT));
+    if (!check_kernel_status("timed", i))
+      return -1;
     stats.record(sw.stop_us());
+    printf("iteration %0d/%0d, elapsed:%f\n", i+1, bench.iterations, stats.last()); fflush(stdout);
   }
 
   stats.report("fpint_gemm_ffn_hw", bench);
+
+  if (!vx_bench::run_power_measurement(
+          "fpint_gemm_ffn_hw", bench, device, krnl_buffer, args_buffer)) {
+    cleanup();
+    return -1;
+  }
 
   if (!bench.csv) {
     printf("\n[Performance]\n");

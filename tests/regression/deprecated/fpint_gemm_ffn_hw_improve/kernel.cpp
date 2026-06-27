@@ -166,7 +166,11 @@ static inline uint32_t rid_output(uint32_t b) { return b ? RID_O1  : RID_O0;  }
 // Follows fi_gemm.c pattern with per-buffer monotonic SET-mode targets.
 // ============================================================================
 static void run_tiled_gemm(const kernel_arg_t* arg) {
-  const uint32_t M      = arg->M;
+  // Host passes the real (unpadded) M. Internally pad up to multiple of 8 so
+  // DMA byte counts stay aligned to the 8-channel TMEM stripe (8*64B=512B).
+  // MXU compute bound stays at the real M; padded rows are skipped.
+  const uint32_t M_real = arg->M;
+  const uint32_t M      = (M_real + 7u) & ~7u;
   const uint32_t N      = arg->N;
   const uint32_t K      = arg->K;
   const uint32_t qblk   = arg->QBLK;
@@ -320,6 +324,12 @@ static void run_tiled_gemm(const kernel_arg_t* arg) {
   uint32_t tile_idx = 0;
   for (uint32_t mt = 0; mt < m_tiles; mt++) {
     const uint32_t cur_m = ((M - mt * DMA_MT) < DMA_MT) ? (M - mt * DMA_MT) : DMA_MT;
+    // Real-M-bounded compute size for this tile. Used only as MXU bound so
+    // padded rows never enter the accumulator or the output store.
+    const uint32_t mt_off = mt * DMA_MT;
+    const uint32_t cur_m_compute =
+        (mt_off >= M_real) ? 0u
+        : (((M_real - mt_off) < DMA_MT) ? (M_real - mt_off) : DMA_MT);
     const uint32_t per_nb_output_bytes = cur_m * DMA_MXU_NT * 2u;   // one 32-wide sub-output
 
     for (uint32_t nt_dma = 0; nt_dma < n_tiles; nt_dma++) {
@@ -435,15 +445,17 @@ static void run_tiled_gemm(const kernel_arg_t* arg) {
 
             // ---- GEMM compute (each nb accumulates into its own acc region) ----
             const uint32_t acc_mem_base_nb = acc_group_base + nb * ACC_NB_STRIDE;
+            // i_src offset uses the padded cur_m because that's how the input
+            // buffer is laid out (DMA loaded cur_m rows per kb chunk).
             const uint32_t i_src = ibuf[tile_buf] + kb * cur_m * DMA_MXU_KT * 2u;
             send_mxu_input(
               is_first_k ? 0u : 1u,   // is_accum (false only for first k-block)
               is_last_k  ? 1u : 0u,   // is_last  (true  only for last  k-block)
               mxu_buf, mxu_buf, mxu_buf, qdir,
               i_src, acc_mem_base_nb,
-              cur_m,
+              cur_m_compute,           // acc_cnt: only real rows accumulate
               DMA_MXU_KT * 2u,
-              cur_m
+              cur_m_compute            // bound:  MXU iterates real rows only
             );
             g_target[mxu_buf] += 1;
             stream_send(make_notify(1, g_target[mxu_buf], rid_gemm(mxu_buf)));
@@ -458,10 +470,13 @@ static void run_tiled_gemm(const kernel_arg_t* arg) {
                 stream_send(make_wait(store_reuse_target[output_buf], RID_ST));
               }
 
-              // MXU_STORE: acc[nb] → obuf at nb-specific offset
+              // MXU_STORE: acc[nb] → obuf at nb-specific offset.
+              // obuf slot stride uses padded cur_m (matches output DMA layout);
+              // store bound is real cur_m_compute so padded rows in obuf retain
+              // stale data, which is fine because the host discards them.
               const uint32_t obuf_nb = obuf[output_buf] + nb * per_nb_output_bytes;
               const uint32_t acc_store_base_nb = acc_mem_base_nb >> 1;
-              send_mxu_store_output(obuf_nb, acc_store_base_nb, 0, cur_m);
+              send_mxu_store_output(obuf_nb, acc_store_base_nb, 0, cur_m_compute);
               o_target[output_buf] += 1;
               stream_send(make_notify(1, o_target[output_buf], rid_output(output_buf)));
 
@@ -503,8 +518,11 @@ static void run_tiled_gemm(const kernel_arg_t* arg) {
 // Entry point: only core 0, warp 0, thread 0
 // ============================================================================
 int main() {
-  if (vx_warp_id() != 0 || vx_thread_id() != 0)
-    return 0;
+  if (vx_warp_id() != 0) {                                                                                                                                                                              
+    vx_tmc_zero();                                                                                                                                                                                      
+  }                                                                                                                                                                                                     
+                                                                                                                                                                                                          
+  vx_tmc_one();
 
   auto arg = reinterpret_cast<kernel_arg_t*>(csr_read(VX_CSR_MSCRATCH));
 

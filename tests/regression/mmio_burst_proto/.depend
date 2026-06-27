@@ -1,0 +1,2 @@
+main.o: \
+ /home/jaeyongjang/project.local/vortex/tests/regression/mmio_burst_proto/main.cpp

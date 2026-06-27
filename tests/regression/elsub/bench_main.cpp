@@ -39,17 +39,15 @@ static void cleanup() {
   if (device) vx_dev_close(device);
 }
 
-static void elsub_cpu(const std::vector<data_t>& a, const std::vector<data_t>& b,
-                      std::vector<data_t>& out) {
-  for (size_t i = 0; i < a.size(); ++i) out[i] = a[i] - b[i];
-}
-
 static void initialize_random(std::vector<data_t>& vec) {
   for (auto& v : vec) v = static_cast<float>(rand()) / RAND_MAX * 4.0f - 2.0f;
 }
 
 int main(int argc, char *argv[]) {
   auto bench = vx_bench::parse(argc, argv);
+  if (vx_bench::report_parse_error(bench)) {
+    return -1;
+  }
 
   uint32_t size = 8192;
   for (int i = 1; i < argc; ++i) {
@@ -66,11 +64,10 @@ int main(int argc, char *argv[]) {
            size, bench.warmup, bench.iterations);
   }
 
-  std::vector<data_t> h_a(size), h_b(size), h_out(size), h_ref(size);
+  std::vector<data_t> h_a(size), h_b(size);
   srand(42);
   initialize_random(h_a);
   initialize_random(h_b);
-  elsub_cpu(h_a, h_b, h_ref);
 
   RT_CHECK(vx_dev_open(&device));
 
@@ -105,36 +102,30 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_upload_bytes(device, &kernel_arg, sizeof(kernel_arg_t), &args_buffer));
   RT_CHECK(vx_upload_kernel_file(device, "kernel.vxbin", &krnl_buffer));
 
-  RT_CHECK(vx_start(device, krnl_buffer, args_buffer));
-  RT_CHECK(vx_ready_wait(device, VX_MAX_TIMEOUT));
-  RT_CHECK(vx_copy_from_dev(h_out.data(), output_buffer, 0, buffer_bytes));
-  int errors = 0;
-  float max_diff = 0.0f;
-  for (uint32_t i = 0; i < size; ++i) {
-    float diff = std::abs(h_out[i] - h_ref[i]);
-    max_diff = std::max(max_diff, diff);
-    if (diff > 1e-5f) ++errors;
-  }
-  if (errors != 0) {
-    printf("Validation FAILED: errors=%d max_diff=%.6f\n", errors, max_diff);
-    cleanup();
-    return -1;
-  }
-
+  printf("Warmup Start\n"); fflush(stdout);
   for (int i = 0; i < bench.warmup; ++i) {
     RT_CHECK(vx_start(device, krnl_buffer, args_buffer));
     RT_CHECK(vx_ready_wait(device, VX_MAX_TIMEOUT));
+    printf("Warmup iteration %0d/%0d\n", i+1, bench.warmup); fflush(stdout);
   }
 
   vx_bench::Stats stats;
+  printf("Start latency measurement.\n"); fflush(stdout);
   for (int i = 0; i < bench.iterations; ++i) {
     vx_bench::Stopwatch sw; sw.start();
     RT_CHECK(vx_start(device, krnl_buffer, args_buffer));
     RT_CHECK(vx_ready_wait(device, VX_MAX_TIMEOUT));
     stats.record(sw.stop_us());
+    printf("iteration %0d/%0d, elapsed:%f\n", i+1, bench.iterations, stats.last()); fflush(stdout);
   }
 
   stats.report("elsub", bench);
+
+  if (!vx_bench::run_power_measurement(
+          "elsub", bench, device, krnl_buffer, args_buffer)) {
+    cleanup();
+    return -1;
+  }
 
   if (!bench.csv) {
     printf("\n[Performance]\n");

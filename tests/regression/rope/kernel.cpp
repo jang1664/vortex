@@ -1,10 +1,11 @@
 #include "common.h"
+#include "../vector_common/fp16.h"
 #include <vx_spawn.h>
 #include <vx_intrinsics.h>
 #include <math.h>
 
 // Type aliases
-using data_t = float;  // fp32 for now, can be changed to fp16
+using data_t = fp16_t;
 
 ///////////////////////////////////////////////////////////////////////////////
 // RoPE (Rotary Position Embedding) Kernel
@@ -55,24 +56,24 @@ void kernel_rope(kernel_arg_t *__UNIFORM__ arg) {
     
     // Load cos and sin for this position and pair
     uint32_t freq_idx = pos * half_dim + p;
-    float cos_val = pCos[freq_idx];
-    float sin_val = pSin[freq_idx];
+    float cos_val = fp16_to_float(pCos[freq_idx]);
+    float sin_val = fp16_to_float(pSin[freq_idx]);
     
     // Load the pair of values from input
     uint32_t base_idx = ((b * seq_len + s) * num_heads + h) * head_dim;
     uint32_t idx0 = base_idx + p;
     uint32_t idx1 = base_idx + p + half_dim;
     
-    float x0 = pInput[idx0];
-    float x1 = pInput[idx1];
+    float x0 = fp16_to_float(pInput[idx0]);
+    float x1 = fp16_to_float(pInput[idx1]);
     
     // Apply rotation
     float y0 = x0 * cos_val - x1 * sin_val;
     float y1 = x0 * sin_val + x1 * cos_val;
     
     // Store results
-    pOutput[idx0] = y0;
-    pOutput[idx1] = y1;
+    pOutput[idx0] = float_to_fp16(y0);
+    pOutput[idx1] = float_to_fp16(y1);
   }
 }
 

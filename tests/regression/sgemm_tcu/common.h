@@ -12,12 +12,16 @@
 #endif
 
 #ifndef OTYPE
-#define OTYPE fp32
+#define OTYPE fp16
 #endif
 
-#ifndef B_COL_MAJOR
-#define B_COL_MAJOR 0
+#ifndef ACC_TYPE
+#define ACC_TYPE fp32
 #endif
+
+static inline uint32_t align_up_u32(uint32_t value, uint32_t alignment) {
+  return ((value + alignment - 1) / alignment) * alignment;
+}
 
 typedef struct {
   uint32_t grid_dim[2];

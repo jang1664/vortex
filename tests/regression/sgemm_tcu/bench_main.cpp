@@ -1,9 +1,8 @@
 // Benchmark harness for sgemm_tcu. See softmax/bench_main.cpp for design notes.
 //
-// Compared with main.cpp this skips the structured-sparsity path and the
-// per-element comparator templates. Validation is a coarse "output is not
-// all-zero" sanity check — kernel correctness is the regression test's job;
-// here we only need to know we're timing a kernel that actually ran.
+// Compared with main.cpp this skips the structured-sparsity path and
+// per-element correctness checks. Kernel correctness is covered by main.cpp;
+// this harness only measures launch-to-ready latency.
 
 #include "common.h"
 #include "bench_util.h"
@@ -78,17 +77,11 @@ static void random_bytes(void* p, size_t n) {
   for (size_t i = 0; i < n; ++i) b[i] = static_cast<uint8_t>(rand());
 }
 
-template <typename T>
-static void convert_row_to_col_major(T *dst, uint32_t width, uint32_t height, const T *src) {
-  for (uint32_t r = 0; r < height; ++r) {
-    for (uint32_t c = 0; c < width; ++c) {
-      dst[c * height + r] = src[r * width + c];
-    }
-  }
-}
-
 int main(int argc, char *argv[]) {
   auto bench = vx_bench::parse(argc, argv);
+  if (vx_bench::report_parse_error(bench)) {
+    return -1;
+  }
 
   optind = 1;
   int c;
@@ -137,23 +130,25 @@ int main(int argc, char *argv[]) {
   }
 
   uint32_t M = xm, N = xn, K = xk;
-  if ((M % cfg::tileM) || (N % cfg::tileN) || (K % cfg::tileK)) {
-    printf("Error: M/N/K must be multiples of tileM/tileN/tileK\n");
-    cleanup();
-    return -1;
+  uint32_t M_exec = align_up_u32(M, cfg::tileM);
+  uint32_t N_exec = align_up_u32(N, cfg::tileN);
+  uint32_t K_exec = align_up_u32(K, cfg::tileK);
+  if (!bench.csv && ((M_exec != M) || (N_exec != N) || (K_exec != K))) {
+    printf("Sgemm-TCU Bench padded shape: M=%u N=%u K=%u\n",
+           M_exec, N_exec, K_exec);
   }
 
-  size_t sizeA = M * K;
-  size_t sizeB = K * N;
-  size_t sizeC = M * N;
+  size_t sizeA = M_exec * K_exec;
+  size_t sizeB = K_exec * N_exec;
+  size_t sizeC = M_exec * N_exec;
 
-  kernel_arg.grid_dim[0] = N / cfg::tileN;
-  kernel_arg.grid_dim[1] = M / cfg::tileM;
+  kernel_arg.grid_dim[0] = N_exec / cfg::tileN;
+  kernel_arg.grid_dim[1] = M_exec / cfg::tileM;
   kernel_arg.block_dim[0] = NT;
   kernel_arg.block_dim[1] = 1;
-  kernel_arg.M = M;
-  kernel_arg.N = N;
-  kernel_arg.K = K;
+  kernel_arg.M = M_exec;
+  kernel_arg.N = N_exec;
+  kernel_arg.K = K_exec;
 
   RT_CHECK(vx_mem_alloc(device, sizeA * sizeof(itype_t), VX_MEM_READ,  &A_buffer));
   RT_CHECK(vx_mem_address(A_buffer, &kernel_arg.A_addr));
@@ -162,49 +157,44 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_mem_alloc(device, sizeC * sizeof(otype_t), VX_MEM_WRITE, &C_buffer));
   RT_CHECK(vx_mem_address(C_buffer, &kernel_arg.C_addr));
 
-  std::vector<itype_t> h_A(sizeA);
-  std::vector<itype_t> h_B(sizeB);
-  random_bytes(h_A.data(), sizeA * sizeof(itype_t));
-  random_bytes(h_B.data(), sizeB * sizeof(itype_t));
+  std::vector<itype_t> h_A(sizeA, 0);
+  std::vector<itype_t> h_B(sizeB, 0);
+  for (uint32_t m = 0; m < M; ++m) {
+    random_bytes(&h_A[m * K_exec], K * sizeof(itype_t));
+  }
+  for (uint32_t k = 0; k < K; ++k) {
+    random_bytes(&h_B[k * N_exec], N * sizeof(itype_t));
+  }
 
   RT_CHECK(vx_copy_to_dev(A_buffer, h_A.data(), 0, sizeA * sizeof(itype_t)));
-  if constexpr (B_COL_MAJOR && vt::ITYPE::bits >= 8) {
-    std::vector<itype_t> h_B_col(sizeB);
-    convert_row_to_col_major(h_B_col.data(), N, K, h_B.data());
-    RT_CHECK(vx_copy_to_dev(B_buffer, h_B_col.data(), 0, sizeB * sizeof(itype_t)));
-  } else {
-    RT_CHECK(vx_copy_to_dev(B_buffer, h_B.data(), 0, sizeB * sizeof(itype_t)));
-  }
+  RT_CHECK(vx_copy_to_dev(B_buffer, h_B.data(), 0, sizeB * sizeof(itype_t)));
   RT_CHECK(vx_upload_kernel_file(device, kernel_file, &krnl_buffer));
   RT_CHECK(vx_upload_bytes(device, &kernel_arg, sizeof(kernel_arg_t), &args_buffer));
 
-  // One run + sanity check (output not all zeros).
-  RT_CHECK(vx_start(device, krnl_buffer, args_buffer));
-  RT_CHECK(vx_ready_wait(device, VX_MAX_TIMEOUT));
-  std::vector<uint8_t> h_C(sizeC * sizeof(otype_t));
-  RT_CHECK(vx_copy_from_dev(h_C.data(), C_buffer, 0, h_C.size()));
-  bool any_nonzero = false;
-  for (uint8_t b : h_C) { if (b != 0) { any_nonzero = true; break; } }
-  if (!any_nonzero) {
-    printf("Validation FAILED: C buffer is all zero after kernel run\n");
-    cleanup();
-    return -1;
-  }
-
+  printf("Warmup Start\n"); fflush(stdout);
   for (int i = 0; i < bench.warmup; ++i) {
     RT_CHECK(vx_start(device, krnl_buffer, args_buffer));
     RT_CHECK(vx_ready_wait(device, VX_MAX_TIMEOUT));
+    printf("Warmup iteration %0d/%0d\n", i+1, bench.warmup); fflush(stdout);
   }
 
   vx_bench::Stats stats;
+  printf("Start latency measurement.\n"); fflush(stdout);
   for (int i = 0; i < bench.iterations; ++i) {
     vx_bench::Stopwatch sw; sw.start();
     RT_CHECK(vx_start(device, krnl_buffer, args_buffer));
     RT_CHECK(vx_ready_wait(device, VX_MAX_TIMEOUT));
     stats.record(sw.stop_us());
+    printf("iteration %0d/%0d, elapsed:%f\n", i+1, bench.iterations, stats.last()); fflush(stdout);
   }
 
   stats.report("sgemm_tcu", bench);
+
+  if (!vx_bench::run_power_measurement(
+          "sgemm_tcu", bench, device, krnl_buffer, args_buffer)) {
+    cleanup();
+    return -1;
+  }
 
   if (!bench.csv) {
     printf("\n[Performance]\n");

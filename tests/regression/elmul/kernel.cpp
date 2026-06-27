@@ -1,9 +1,10 @@
 #include "common.h"
+#include "../vector_common/fp16.h"
 #include <vx_spawn.h>
 #include <vx_intrinsics.h>
 
 // Type aliases
-using data_t = float;
+using data_t = fp16_t;
 
 ///////////////////////////////////////////////////////////////////////////////
 // Element-wise Multiplication Kernel
@@ -29,7 +30,9 @@ void kernel_elmul(kernel_arg_t *__UNIFORM__ arg) {
   uint32_t thread_id = blockIdx.x * blockDim.x + threadIdx.x;
   
   for (uint32_t i = thread_id; i < size; i += total_threads) {
-    pOutput[i] = pInputA[i] * pInputB[i];
+    float a = fp16_to_float(pInputA[i]);
+    float b = fp16_to_float(pInputB[i]);
+    pOutput[i] = float_to_fp16(a * b);
   }
 }
 
