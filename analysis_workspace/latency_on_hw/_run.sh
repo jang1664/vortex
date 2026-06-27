@@ -35,7 +35,7 @@ SOFTMAX_LAYOUT_FUSED_VARIANT=opt SOFTMAX_VARIANT=opt_align BLACKBOX_TIMEOUT=3m F
     | tee -i logs/main.log
 
 SOFTMAX_LAYOUT_FUSED_VARIANT=opt SOFTMAX_VARIANT=opt_align BLACKBOX_TIMEOUT=3m FPGA_BINS="improve_tcol32 naive_gemm_tcol32 improve_no_tcu_lut_fexp" ./run_hw.sh \
-    --input generated_suites/main \
+    --input generated_suites/llama3_8b_main \
     --output outputs_main \
     --retry \
     --retry-timeout-growth 2 \
