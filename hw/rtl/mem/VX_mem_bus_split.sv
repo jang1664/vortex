@@ -59,9 +59,10 @@ module VX_mem_bus_split import VX_gpu_pkg::*; #(
     wire                 req_all_done;
 
     for (genvar i = 0; i < NUM_LANES; ++i) begin : g_lane_req
+        wire [LANE_ADDR_W-1:0] lane_addr_base = LANE_ADDR_W'(wide_bus_if.req_data.addr);
         wire [LANE_ADDR_W-1:0] lane_addr_in = (NUM_LANES > 1)
             ? {wide_bus_if.req_data.addr, LANE_INDEX_BITS'(i)}
-            : wide_bus_if.req_data.addr;
+            : lane_addr_base;
 
         wire [LANE_REQ_DATAW-1:0] lane_req_in = {
             wide_bus_if.req_data.rw,

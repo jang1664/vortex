@@ -67,10 +67,13 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
   localparam int DCACHE_LG2 = `CLOG2(DCACHE_BYTES);
   localparam int LMEM_LG2   = `CLOG2(LMEM_BYTES);
 
-  // NOTE: This window scheme assumes MAX_BYTES=DCACHE_BYTES is enough buffering.
-  // If LMEM_BYTES > DCACHE_BYTES, increase WIN_BYTES appropriately.
-  localparam int MAX_BYTES    = DCACHE_BYTES;
-  localparam int WIN_BYTES    = 2 * MAX_BYTES; // for safe
+  // The misalignment window must be able to accumulate one full source beat,
+  // one full destination beat, and any initial drop bytes that realign the
+  // stream. When LMEM_BYTES grows beyond the 64B dcache beat (for example
+  // 32 LSU lanes x 8B = 256B), the old 128B window silently truncated
+  // incoming dcache data and later emitted X-filled LMEM writes.
+  localparam int MAX_BYTES    = (DCACHE_BYTES > LMEM_BYTES) ? DCACHE_BYTES : LMEM_BYTES;
+  localparam int WIN_BYTES    = 2 * MAX_BYTES;
   localparam int WIN_VALID_W  = `CLOG2(WIN_BYTES + 1);
 
   function automatic logic [dcache_bus_if.ADDR_WIDTH-1:0] to_dcache_addr(input logic [63:0] byte_addr);

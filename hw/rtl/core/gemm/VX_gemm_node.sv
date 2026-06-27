@@ -47,6 +47,9 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     localparam int I_GEMM_TAG_WIDTH  = GEMM_BASE_TAG_WIDTH;
     localparam int W_GEMM_TAG_WIDTH  = GEMM_BASE_TAG_WIDTH;
     localparam int SZ_GEMM_TAG_WIDTH = GEMM_BASE_TAG_WIDTH;
+    localparam int GEMM_INPUT_LANES  = `GEMM_INPUT_DATA_SIZE / LSU_WORD_SIZE;
+    localparam int GEMM_SZ_LANES     = `GEMM_SCALE_ZERO_DATA_SIZE / LSU_WORD_SIZE;
+    localparam int GEMM_OUTPUT_LANES = `GEMM_OUTPUT_DATA_SIZE / LSU_WORD_SIZE;
 
     // DMA tile sizes
     localparam int MT = `GEMM_FSM_MT;
@@ -83,13 +86,16 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     ) o_gemm_bus_if ();
 
     // Per-lane LMEM-ARB-facing buses (LSU width).
-    // Input/sz/output paths produce all NUM_LSU_LANES lanes (vector wide load/store).
+    // Input/sz/output paths only drive as many LSU lanes as their fixed
+    // aggregate bus width can cover. Remaining core-wide LSU lanes are tied off
+    // in the per-lane arbiter when NUM_THREADS expands beyond the GEMM vector
+    // width (for example 32-thread cores with 64B GEMM tiles still use 8 lanes).
     // Weight stays narrow (16B → 8B single lane via weight_data_adapter); only
     // lane 0 carries weight traffic, the rest are tied off in the per-lane mux.
     VX_mem_bus_if # (
       .DATA_SIZE(LSU_WORD_SIZE),
       .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
-    ) i_lane_mem_if [`NUM_LSU_LANES] ();
+    ) i_lane_mem_if [GEMM_INPUT_LANES] ();
     VX_mem_bus_if # (
       .DATA_SIZE(LSU_WORD_SIZE),
       .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
@@ -97,11 +103,11 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     VX_mem_bus_if # (
       .DATA_SIZE(LSU_WORD_SIZE),
       .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
-    ) sz_lane_mem_if [`NUM_LSU_LANES] ();
+    ) sz_lane_mem_if [GEMM_SZ_LANES] ();
     VX_mem_bus_if # (
       .DATA_SIZE(LSU_WORD_SIZE),
       .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
-    ) o_lane_mem_if [`NUM_LSU_LANES] ();
+    ) o_lane_mem_if [GEMM_OUTPUT_LANES] ();
 
     // Internal wide buses between load-path adapters and DMAs.
     VX_mem_bus_if # (
@@ -449,7 +455,13 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
         .TAG_WIDTH(GEMM_LMEM_TAG_WIDTH)
       ) lane_arb_out_if [1] ();
 
-      `ASSIGN_VX_MEM_BUS_IF(lane_arb_in_if[0], i_lane_mem_if[i]);
+      if (i < GEMM_INPUT_LANES) begin : g_i_active
+        `ASSIGN_VX_MEM_BUS_IF(lane_arb_in_if[0], i_lane_mem_if[i]);
+      end else begin : g_i_tied
+        assign lane_arb_in_if[0].req_valid = 1'b0;
+        assign lane_arb_in_if[0].req_data  = '0;
+        assign lane_arb_in_if[0].rsp_ready = 1'b1;
+      end
 
       if (i == 0) begin : g_w_active
         `ASSIGN_VX_MEM_BUS_IF(lane_arb_in_if[1], w_dma_lmem_bus_if);
@@ -459,8 +471,21 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
         assign lane_arb_in_if[1].rsp_ready = 1'b1;
       end
 
-      `ASSIGN_VX_MEM_BUS_IF(lane_arb_in_if[2], sz_lane_mem_if[i]);
-      `ASSIGN_VX_MEM_BUS_IF(lane_arb_in_if[3], o_lane_mem_if[i]);
+      if (i < GEMM_SZ_LANES) begin : g_sz_active
+        `ASSIGN_VX_MEM_BUS_IF(lane_arb_in_if[2], sz_lane_mem_if[i]);
+      end else begin : g_sz_tied
+        assign lane_arb_in_if[2].req_valid = 1'b0;
+        assign lane_arb_in_if[2].req_data  = '0;
+        assign lane_arb_in_if[2].rsp_ready = 1'b1;
+      end
+
+      if (i < GEMM_OUTPUT_LANES) begin : g_o_active
+        `ASSIGN_VX_MEM_BUS_IF(lane_arb_in_if[3], o_lane_mem_if[i]);
+      end else begin : g_o_tied
+        assign lane_arb_in_if[3].req_valid = 1'b0;
+        assign lane_arb_in_if[3].req_data  = '0;
+        assign lane_arb_in_if[3].rsp_ready = 1'b1;
+      end
 
       VX_mem_arb #(
         .NUM_INPUTS(4),
@@ -486,9 +511,9 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     // -------------------------------------------------------------------------
     // Address widths are beat-based and depend on each bus data size.
     // Only the weight path needs a width-conversion adapter (16B <-> 8B).
-    // Input/sz/output paths are width-matched at aggregate level
-    // (GEMM_*_DATA_SIZE = NUM_LSU_LANES * LSU_WORD_SIZE = 64B), so they are
-    // fanned out to per-lane buses via VX_lsu_adapter (no in-time split).
+    // Input/sz/output paths are width-matched at aggregate level to a fixed
+    // number of LSU lanes, so they are fanned out to per-lane buses via
+    // VX_mem_bus_split before entering the core-wide LMEM arbiter.
     localparam W_SRC_ADDR_WIDTH = `MEM_ADDR_WIDTH - `CLOG2(`GEMM_WEIGHT_DATA_SIZE);
     localparam DST_ADDR_WIDTH   = `MEM_ADDR_WIDTH - `CLOG2(LSU_WORD_SIZE);
 
@@ -537,13 +562,13 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     `WIRES_TO_MEM_BUS_IF(w_dma_lmem_bus_if, w_dst);
 
     // -------------------------------------------------------------------------
-    // Input/sz/output lane scatter: 64B wide bus -> NUM_LSU_LANES x 8B lanes.
-    // VX_mem_bus_split waits for *all* lanes to respond before emitting a
+    // Input/sz/output lane scatter: fixed GEMM-wide bus -> active LSU lanes.
+    // VX_mem_bus_split waits for *all* active lanes to respond before emitting a
     // wide rsp_valid (per-lane skid buffer + AND release), which is required
     // because the wide bus has no per-lane mask.
     // -------------------------------------------------------------------------
     VX_mem_bus_split #(
-      .NUM_LANES     (`NUM_LSU_LANES),
+      .NUM_LANES     (GEMM_INPUT_LANES),
       .LANE_DATA_SIZE(LSU_WORD_SIZE),
       .TAG_WIDTH     (GEMM_BASE_TAG_WIDTH)
     ) input_lane_split (
@@ -554,7 +579,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     );
 
     VX_mem_bus_split #(
-      .NUM_LANES     (`NUM_LSU_LANES),
+      .NUM_LANES     (GEMM_SZ_LANES),
       .LANE_DATA_SIZE(LSU_WORD_SIZE),
       .TAG_WIDTH     (GEMM_BASE_TAG_WIDTH)
     ) sz_lane_split (
@@ -565,7 +590,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     );
 
     VX_mem_bus_split #(
-      .NUM_LANES     (`NUM_LSU_LANES),
+      .NUM_LANES     (GEMM_OUTPUT_LANES),
       .LANE_DATA_SIZE(LSU_WORD_SIZE),
       .TAG_WIDTH     (GEMM_BASE_TAG_WIDTH)
     ) output_lane_split (
