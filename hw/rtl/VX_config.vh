@@ -510,6 +510,13 @@
 
 // FEXP Latency
 `ifndef LATENCY_FEXP
+`ifdef FPU_FPNEW
+`ifdef VX_FPU_EXP_LUT
+`define LATENCY_FEXP (5 * `LATENCY_FMA)
+`else
+`define LATENCY_FEXP (10 * `LATENCY_FMA)
+`endif
+`endif
 `ifdef FPU_DSP
 `ifdef VIVADO
 `define LATENCY_FEXP (6 * `LATENCY_FMA)

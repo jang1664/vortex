@@ -1,0 +1,28 @@
+task: fpu-exp-fpnew-cleanup
+state: complete
+created: "2026-06-27 21:16"
+updated: "2026-06-27 21:34"
+summary: "Refactor VX_fpu_exp_fpnew to mirror the DSP exp datapath shape while using fpnew-backed add/mul leaf wrappers, and enable hardware exp in the Synopsys fpnew path."
+log:
+  - time: "2026-06-27 21:16"
+    entry: "Initial status: git branch fpint_improve is clean and synced with origin. Current fpnew exp is an 8-stage unrolled fpnew_top pipeline; DSP exp uses VX_pe_serializer plus Xilinx/DPI arithmetic leaves. User approved cleanup to make fpnew exp follow the DSP structure and use fpnew only through add/mul-style leaf wrappers."
+  - time: "2026-06-27 21:34"
+    entry: "Implemented VX_fpu_exp_fpnew as a DSP-shaped serializer datapath. The main exp module now uses VX_pe_serializer and only calls local fpnew fmul/fadd leaf wrappers; fpnew_top is isolated inside the generic addmul wrapper. Added FPU_FPNEW LATENCY_FEXP formulas and enabled VX_ENABLE_HW_EXPF in the Synopsys run script."
+  - time: "2026-06-27 21:34"
+    entry: "Debug note: the older agent-tasks/softmax-isa-expf smoke uses wait(valid_out) and checks result in the same time slot as the output buffer update. It can report X even when a clocked trace and race-free smoke observe the correct result."
+pitfalls:
+  - "Synopsys run_syn_vortex_axi.py relies on SYNOPSYS selecting FPU_FPNEW in VX_config.vh; this task now also adds VX_ENABLE_HW_EXPF so the fpnew exp RTL is enabled."
+  - "Do not reintroduce a multi-step FSM under VX_pe_serializer; prior fpnew exp attempt hung because serializer valid timing was not tied to internal operation completion."
+  - "Blackbox runs must use the configured build directory and ci/run_black.sh / run-bb-common flow."
+verification:
+  red_tests:
+    - "python3 agent-tasks/fpu-exp-fpnew-cleanup/check_fpnew_exp_structure.py initially failed before the refactor: VX_fpu_exp_fpnew main module still instantiated fpnew_top directly."
+    - "agent-tasks/softmax-isa-expf/tb_VX_fpu_exp_fpnew_smoke.sv reported X after rebuild, but trace showed this is a race in the smoke check timing, not the RTL output."
+  green_tests:
+    - "python3 agent-tasks/fpu-exp-fpnew-cleanup/check_fpnew_exp_structure.py -> PASS."
+    - "VCS add/mul wrapper latency probe -> MUL and ADD both returned 0x40000000."
+    - "VCS clocked exp trace -> serializer output for exp(0.0) was 0xffffffff3f800000."
+    - "VCS race-free fpnew exp smoke under agent-tasks/fpu-exp-fpnew-cleanup -> passed exp(0.0) == 1.0."
+    - "make -B -C build/sim/xrtsim_vcs simv with improve_simd_fpnew-style CONFIGS including VX_ENABLE_HW_EXPF and FPU_FPNEW -> exit 0."
+    - "python3 -m py_compile hw/syn/synopsys/run_syn_vortex_axi.py -> exit 0."
+    - "git diff --check -> exit 0."

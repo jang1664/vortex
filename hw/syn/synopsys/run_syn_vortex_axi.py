@@ -103,6 +103,7 @@ DEFINES = [
     "AFU_DONE_WAIT_CACHE_DRAIN",
     # extension
     "EXT_TCU_ENABLE",
+    "VX_ENABLE_HW_EXPF",
     "TCU_BHF",
 ]
 
