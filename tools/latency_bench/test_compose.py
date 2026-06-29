@@ -64,6 +64,7 @@ class ComposeTest(unittest.TestCase):
                 "p95_us": "12",
                 "min_us": "9",
                 "max_us": "13",
+                "fpga_cycle": "100",
             },
             {
                 "run_id": "run_new",
@@ -78,6 +79,7 @@ class ComposeTest(unittest.TestCase):
                 "p95_us": "16",
                 "min_us": "13",
                 "max_us": "17",
+                "fpga_cycle": "140",
             },
             {
                 "run_id": "run_b",
@@ -92,6 +94,7 @@ class ComposeTest(unittest.TestCase):
                 "p95_us": "22",
                 "min_us": "19",
                 "max_us": "23",
+                "fpga_cycle": "200",
             },
             {
                 "run_id": "wrong_bin",
@@ -106,6 +109,7 @@ class ComposeTest(unittest.TestCase):
                 "p95_us": "100",
                 "min_us": "100",
                 "max_us": "100",
+                "fpga_cycle": "1000",
             },
         ]
         with path.open("w", newline="") as fp:
@@ -134,6 +138,25 @@ class ComposeTest(unittest.TestCase):
             self.assertEqual("run_old;run_new", composed.loc[0, "source_run_ids"])
             self.assertEqual("improve_tcol1", composed.loc[0, "expected_fpga_bin_label"])
             self.assertEqual("improve_tcol1", composed.loc[0, "source_fpga_bin_labels"])
+
+    def test_compose_accepts_fpga_cycle_metric(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            raw_db = Path(tmp) / "raw_db.csv"
+            self._write_raw_db(raw_db)
+
+            composed = compose_latency(
+                self._suite(),
+                ComposeOptions(
+                    raw_dbs=(raw_db,),
+                    out=Path(tmp) / "composed.csv",
+                    metric="fpga_cycle",
+                ),
+            )
+
+            self.assertEqual("fpga_cycle", composed.loc[0, "metric"])
+            self.assertEqual(120.0, float(composed.loc[0, "latency_us"]))
+            self.assertEqual(240.0, float(composed.loc[0, "weighted_latency_us"]))
+            self.assertEqual(600.0, float(composed.loc[1, "weighted_latency_us"]))
 
     def test_compose_latest_selects_newest_row(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

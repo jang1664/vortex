@@ -661,6 +661,7 @@ int main(int argc, char *argv[]) {
       return -1;
     }
     stats.record(sw.stop_us());
+    vx_bench::dump_iteration_perf(device, bench, i);
     printf("iteration %0d/%0d, elapsed:%f\n", i+1, bench.iterations, stats.last()); fflush(stdout);
   }
 

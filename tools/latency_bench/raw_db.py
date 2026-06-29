@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from .power_summary import read_power_summary
+from .perf_log import FPGA_CYCLE_COLUMNS, parse_fpga_cycle_stats
 from .status import DEFAULT_POWER_MIN_SAMPLES, classify_status, power_sample_failure_reason
 
 
@@ -58,6 +59,7 @@ RAW_DB_COLUMNS = [
     "max_us",
     "p50_us",
     "p95_us",
+    *FPGA_CYCLE_COLUMNS,
 ]
 
 
@@ -314,6 +316,7 @@ def append_raw_execution(
         raise ValueError(f"cases CSV has no rows for exec_key={exec_key!r}: {cases_csv}")
 
     bench = _read_bench_csv(raw_csv)
+    cycle = parse_fpga_cycle_stats(log_file)
     power = read_power_summary(power_summary if measure_power else None)
     failure_reason = _default_failure_reason(
         returncode=returncode,
@@ -371,6 +374,7 @@ def append_raw_execution(
             "max_us": bench.get("max_us", ""),
             "p50_us": bench.get("p50_us", ""),
             "p95_us": bench.get("p95_us", ""),
+            **cycle,
         })
         rows.append(row)
 

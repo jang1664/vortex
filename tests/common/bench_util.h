@@ -731,6 +731,29 @@ inline bool report_parse_error(const Args& args, FILE* err = stderr) {
     return true;
 }
 
+inline bool should_dump_iteration_perf(const Args& args) {
+    return latency_enabled(args) && args.csv && !args.output.empty();
+}
+
+inline void dump_iteration_perf(vx_device_h device,
+                                const Args& args,
+                                int iteration,
+                                FILE* stream = stdout) {
+    if (!should_dump_iteration_perf(args)) {
+        return;
+    }
+    const int completed = iteration + 1;
+    std::fprintf(stream, "[bench-perf] iteration=%d/%d begin\n", completed, args.iterations);
+    std::fflush(stream);
+    const int ret = vx_dump_perf(device, stream);
+    if (ret != 0) {
+        std::fprintf(stream, "[bench-perf] iteration=%d/%d vx_dump_perf_ret=%d\n",
+                     completed, args.iterations, ret);
+    }
+    std::fprintf(stream, "[bench-perf] iteration=%d/%d end\n", completed, args.iterations);
+    std::fflush(stream);
+}
+
 inline bool run_vx_kernel_once(vx_device_h device,
                                vx_buffer_h kernel_buffer,
                                vx_buffer_h args_buffer,

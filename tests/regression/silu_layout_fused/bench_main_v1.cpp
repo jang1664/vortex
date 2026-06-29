@@ -193,6 +193,7 @@ int main(int argc, char *argv[]) {
     RT_CHECK(vx_start(device, krnl_buffer, args_buffer));
     RT_CHECK(vx_ready_wait(device, VX_MAX_TIMEOUT));
     stats.record(sw.stop_us());
+    vx_bench::dump_iteration_perf(device, bench, i);
   }
 
   stats.report("silu_layout_fused", bench);

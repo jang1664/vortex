@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from .power_summary import read_power_summary
+from .perf_log import FPGA_CYCLE_COLUMNS, parse_fpga_cycle_stats
 from .status import DEFAULT_POWER_MIN_SAMPLES, classify_status, power_sample_failure_reason
 
 
@@ -37,6 +38,7 @@ PROGRESS_COLUMNS = [
     "max_us",
     "p50_us",
     "p95_us",
+    *FPGA_CYCLE_COLUMNS,
     "parse_error",
     "power_samples",
     "power_elapsed_s",
@@ -119,6 +121,7 @@ def append_progress_execution(
     failure_reason: str = "",
 ) -> None:
     bench = _read_bench_csv(raw_csv)
+    cycle = parse_fpga_cycle_stats(log_file)
     power = read_power_summary(power_summary)
     measure_power = power_summary is not None
     if not failure_reason:
@@ -169,6 +172,7 @@ def append_progress_execution(
         "max_us": bench.get("max_us", ""),
         "p50_us": bench.get("p50_us", ""),
         "p95_us": bench.get("p95_us", ""),
+        **cycle,
         "parse_error": bench.get("parse_error", ""),
         "power_samples": power.get("power_samples", ""),
         "power_elapsed_s": power.get("power_elapsed_s", ""),

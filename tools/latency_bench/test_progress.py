@@ -14,6 +14,18 @@ class ProgressTest(unittest.TestCase):
             tmp_path = Path(tmp)
             raw_csv = tmp_path / "raw.csv"
             raw_csv.write_text("# comment\nfpint_gemm,3,1.0,2.0,4.0,2.0,3.0\n")
+            log_file = tmp_path / "bench.log"
+            log_file.write_text(
+                "[bench-perf] iteration=1/3 begin\n"
+                "PERF: instrs=10, cycles=100, IPC=0.100000\n"
+                "[bench-perf] iteration=1/3 end\n"
+                "[bench-perf] iteration=2/3 begin\n"
+                "PERF: instrs=20, cycles=300, IPC=0.066667\n"
+                "[bench-perf] iteration=2/3 end\n"
+                "[bench-perf] iteration=3/3 begin\n"
+                "PERF: instrs=30, cycles=200, IPC=0.150000\n"
+                "[bench-perf] iteration=3/3 end\n"
+            )
             power_csv = tmp_path / "power.csv"
             power_summary = tmp_path / "power.summary.csv"
             power_summary.write_text(
@@ -40,7 +52,7 @@ class ProgressTest(unittest.TestCase):
                 raw_csv=raw_csv,
                 power_csv=power_csv,
                 power_summary=power_summary,
-                log_file=tmp_path / "bench.log",
+                log_file=log_file,
             )
 
             with progress_csv.open(newline="") as fp:
@@ -53,6 +65,14 @@ class ProgressTest(unittest.TestCase):
             self.assertEqual("12.345", rows[0]["elapsed_wall_s"])
             self.assertEqual("", rows[0]["failure_reason"])
             self.assertEqual("2.0", rows[0]["p50_us"])
+            self.assertEqual("3", rows[0]["fpga_cycle_samples"])
+            self.assertEqual("100", rows[0]["fpga_cycle_min"])
+            self.assertEqual("200", rows[0]["fpga_cycle_avg"])
+            self.assertEqual("300", rows[0]["fpga_cycle_max"])
+            self.assertEqual("200", rows[0]["fpga_cycle_p50"])
+            self.assertEqual("300", rows[0]["fpga_cycle_p95"])
+            self.assertEqual("200", rows[0]["fpga_cycle"])
+            self.assertEqual("", rows[0]["fpga_cycle_parse_error"])
             self.assertEqual("", rows[0]["parse_error"])
             self.assertEqual(str(power_csv), rows[0]["power_csv"])
             self.assertEqual(str(power_summary), rows[0]["power_summary"])

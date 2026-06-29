@@ -382,7 +382,7 @@ def build_parser() -> argparse.ArgumentParser:
     comp.add_argument("--out", required=True, help="Output CSV path, or directory for composed.csv and summary.csv.")
     comp.add_argument(
         "--metric",
-        choices=["avg_us", "p50_us", "p95_us", "min_us", "max_us"],
+        choices=METRIC_COLUMNS,
         default="p50_us",
         help="Latency metric to compose.",
     )

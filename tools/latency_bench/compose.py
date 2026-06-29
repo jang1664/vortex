@@ -12,7 +12,7 @@ import pandas as pd
 from .suite import BenchSuite, resolve_case_fpga_bin, suite_to_rows
 
 
-METRIC_COLUMNS = ("avg_us", "p50_us", "p95_us", "min_us", "max_us")
+METRIC_COLUMNS = ("avg_us", "p50_us", "p95_us", "min_us", "max_us", "fpga_cycle")
 SELECT_POLICIES = ("median", "latest", "mean", "min", "strict")
 MISSING_POLICIES = ("error", "nan", "skip")
 

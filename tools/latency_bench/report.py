@@ -9,6 +9,7 @@ from typing import Any
 import pandas as pd
 
 from .power_summary import read_power_summary
+from .perf_log import FPGA_CYCLE_COLUMNS, parse_fpga_cycle_stats
 from .status import DEFAULT_POWER_MIN_SAMPLES, classify_status, power_sample_failure_reason
 from .suite import BenchSuite, suite_to_rows
 
@@ -23,6 +24,7 @@ RESULT_COLUMNS = [
     "power_max_w", "power_parse_error",
     "log_file", "elapsed_wall_s",
     "samples", "min_us", "avg_us", "max_us", "p50_us", "p95_us",
+    *FPGA_CYCLE_COLUMNS,
 ]
 
 
@@ -93,6 +95,7 @@ def build_results(
         power_summary = status.get("power_summary", "")
         measure_power = _parse_bool_cell(status.get("measure_power", ""))
         bench = read_bench_csv(raw_csv)
+        cycle = parse_fpga_cycle_stats(log_file)
         power = read_power_summary(power_summary if measure_power else None)
         returncode = int(status.get("returncode", 999)) if status else 999
         failure_phase = status.get("failure_phase", "")
@@ -148,6 +151,7 @@ def build_results(
             "max_us": bench.get("max_us"),
             "p50_us": bench.get("p50_us"),
             "p95_us": bench.get("p95_us"),
+            **cycle,
         }
         rows.append(out)
 

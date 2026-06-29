@@ -25,7 +25,11 @@ STAGES=prefill SKIP_EXISTING=1 ./run_hw.sh \
   --power-auto-duration --power-max-iterations 1 \
   --filter "app==kv_cache_quant_layout_fused_w4a16"
 
-./make_cases.sh --input suites/main --output generated_suites/llama3_8b_main --model-prefix llama3_8b
+./make_cases.sh --input suites/main --output generated_suites/main
+./make_cases.sh --input suites/main --output generated_suites/main --model-prefix llama3_8b
+./make_cases.sh --input suites/main_all --output generated_suites/main_all
+./make_cases.sh --input suites/main_all --output generated_suites/main_all --model-prefix llama3_8b
+
 SOFTMAX_LAYOUT_FUSED_VARIANT=opt SOFTMAX_VARIANT=opt_align BLACKBOX_TIMEOUT=3m FPGA_BINS="naive_simd" ./run_hw.sh \
     --input generated_suites/llama3_8b_main \
     --output outputs_main \
@@ -36,6 +40,42 @@ SOFTMAX_LAYOUT_FUSED_VARIANT=opt SOFTMAX_VARIANT=opt_align BLACKBOX_TIMEOUT=3m F
 
 SOFTMAX_LAYOUT_FUSED_VARIANT=opt SOFTMAX_VARIANT=opt_align BLACKBOX_TIMEOUT=3m FPGA_BINS="improve_tcol32 naive_gemm_tcol32 improve_no_tcu_lut_fexp" ./run_hw.sh \
     --input generated_suites/llama3_8b_main \
+    --output outputs_main \
+    --retry \
+    --retry-timeout-growth 2 \
+    --no-power \
+    | tee -i logs/main.log
+
+SOFTMAX_LAYOUT_FUSED_VARIANT=opt SOFTMAX_VARIANT=opt_align BLACKBOX_TIMEOUT=30m FPGA_BINS="improve_tcol32 naive_gemm_tcol32" ./run_hw.sh \
+    --input generated_suites/main_all \
+    --output outputs_main \
+    --retry \
+    --retry-timeout-growth 2 \
+    --no-power \
+    --filter "(app==fpint_gemm_ffn_hw | app==fpint_gemm_ffn_hw_naive) & stage==generation" \
+    | tee -i logs/main.log
+
+SOFTMAX_LAYOUT_FUSED_VARIANT=opt SOFTMAX_VARIANT=opt_align BLACKBOX_TIMEOUT=3m FPGA_BINS="improve_tcol32 naive_simd" ./run_hw.sh \
+    --input generated_suites/llama3_8b_main_all \
+    --output outputs_main \
+    --retry \
+    --retry-timeout-growth 2 \
+    --no-power \
+    --filter "app==fpint_gemm_ffn_hw | app==sgemm_tcu" \
+    | tee -i logs/main.log
+
+SOFTMAX_LAYOUT_FUSED_VARIANT=opt SOFTMAX_VARIANT=opt_align BLACKBOX_TIMEOUT=3m FPGA_BINS="improve_tcol32 naive_simd" ./run_hw.sh \
+    --input generated_suites/llama3_8b_main_all \
+    --output outputs_main \
+    --retry \
+    --retry-timeout-growth 2 \
+    --no-power \
+    --filter "app==fpint_gemm_ffn_hw | app==sgemm_tcu" \
+    | tee -i logs/main.log
+
+
+SOFTMAX_LAYOUT_FUSED_VARIANT=opt SOFTMAX_VARIANT=opt_align BLACKBOX_TIMEOUT=30m FPGA_BINS="improve_tcol32 naive_gemm_tcol32" ./run_hw.sh \
+    --input generated_suites/main_all \
     --output outputs_main \
     --retry \
     --retry-timeout-growth 2 \

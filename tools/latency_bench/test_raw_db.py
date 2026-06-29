@@ -46,6 +46,15 @@ power_csv=$(printf '%s\n' "$bench_args" | sed -n 's/.*--power-csv=\\([^ ]*\\).*/
 power_summary=$(printf '%s\n' "$bench_args" | sed -n 's/.*--power-summary=\\([^ ]*\\).*/\\1/p')
 mkdir -p "$(dirname "$raw_csv")" "$(dirname "$log_file")"
 printf 'fpint_gemm,3,1.0,2.0,4.0,2.0,3.0\n' > "$raw_csv"
+printf '[bench-perf] iteration=1/3 begin\n'
+printf 'PERF: instrs=10, cycles=100, IPC=0.100000\n'
+printf '[bench-perf] iteration=1/3 end\n'
+printf '[bench-perf] iteration=2/3 begin\n'
+printf 'PERF: instrs=20, cycles=300, IPC=0.066667\n'
+printf '[bench-perf] iteration=2/3 end\n'
+printf '[bench-perf] iteration=3/3 begin\n'
+printf 'PERF: instrs=30, cycles=200, IPC=0.150000\n'
+printf '[bench-perf] iteration=3/3 end\n'
 if [[ -n "$power_summary" ]]; then
   mkdir -p "$(dirname "$power_summary")"
   printf 'label,mode,phase,samples,elapsed_s,idle_samples,idle_avg_w,run_min_w,run_avg_w,run_max_w,delta_avg_w,delta_peak_w,energy_j,latency_samples,latency_min_us,latency_avg_us,latency_max_us,raw_csv\n' > "$power_summary"
@@ -279,6 +288,11 @@ esac
             self.assertIn("elapsed_wall_s", rows[0])
             self.assertGreaterEqual(float(rows[0]["elapsed_wall_s"]), 0.0)
             self.assertEqual("2.0", rows[0]["p50_us"])
+            self.assertEqual("200", rows[0]["fpga_cycle"])
+            self.assertEqual("3", rows[0]["fpga_cycle_samples"])
+            self.assertEqual("200", rows[0]["fpga_cycle_p50"])
+            self.assertEqual("300", rows[0]["fpga_cycle_p95"])
+            self.assertEqual("", rows[0]["fpga_cycle_parse_error"])
             self.assertEqual("5", rows[0]["power_samples"])
             self.assertEqual("10.0", rows[0]["power_elapsed_s"])
             self.assertEqual("3.0", rows[0]["power_min_w"])
@@ -296,12 +310,14 @@ esac
             self.assertEqual(rows[0]["git_dirty"], result_rows[0]["git_dirty"])
             self.assertEqual(rows[0]["elapsed_wall_s"], result_rows[0]["elapsed_wall_s"])
             self.assertEqual(rows[0]["power_avg_w"], result_rows[0]["power_avg_w"])
+            self.assertEqual(rows[0]["fpga_cycle"], result_rows[0]["fpga_cycle"])
 
             with (out_root / "runs" / "run_a" / "progress.csv").open(newline="") as fp:
                 progress_rows = list(csv.DictReader(fp))
             self.assertEqual(1, len(progress_rows))
             self.assertEqual("pass", progress_rows[0]["status"])
             self.assertEqual("2.0", progress_rows[0]["p50_us"])
+            self.assertEqual("200", progress_rows[0]["fpga_cycle"])
             self.assertEqual("4.0", progress_rows[0]["power_avg_w"])
             self.assertEqual(rows[0]["elapsed_wall_s"], progress_rows[0]["elapsed_wall_s"])
 

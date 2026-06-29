@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .perf_log import FPGA_CYCLE_COLUMNS, empty_fpga_cycle_stats, parse_fpga_cycle_stats
+
 
 APPENDED_RAW_COLUMNS = [
     "timestamp_utc",
@@ -25,6 +27,7 @@ APPENDED_RAW_COLUMNS = [
     "max_us",
     "p50_us",
     "p95_us",
+    *FPGA_CYCLE_COLUMNS,
     "parse_error",
 ]
 
@@ -40,7 +43,9 @@ def _base_row(
     failure_reason: str,
     raw_csv: Path,
     log_file: Path,
+    cycle: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    cycle = cycle or empty_fpga_cycle_stats()
     return {
         "timestamp_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "run_id": run_id,
@@ -59,6 +64,7 @@ def _base_row(
         "max_us": "",
         "p50_us": "",
         "p95_us": "",
+        **cycle,
         "parse_error": "",
     }
 
@@ -109,8 +115,8 @@ def _validate_or_write_header(output: Path) -> None:
         reader = csv.reader(fp)
         header = next(reader, [])
     if header != APPENDED_RAW_COLUMNS:
-        old_columns = [column for column in APPENDED_RAW_COLUMNS if column != "failure_reason"]
-        if header != old_columns:
+        unknown_columns = [column for column in header if column not in APPENDED_RAW_COLUMNS]
+        if unknown_columns:
             raise ValueError(f"append raw CSV has unexpected header: {output}")
 
         with output.open(newline="") as fp:
@@ -142,6 +148,7 @@ def append_raw_execution(
             failure_reason = "build"
         elif returncode in {124, 137}:
             failure_reason = "timeout"
+    cycle = parse_fpga_cycle_stats(log_file)
     base = _base_row(
         suite=suite,
         run_id=run_id,
@@ -152,6 +159,7 @@ def append_raw_execution(
         failure_reason=failure_reason,
         raw_csv=raw_csv,
         log_file=log_file,
+        cycle=cycle,
     )
     rows = _parse_raw_rows(raw_csv, base)
     _validate_or_write_header(output)
