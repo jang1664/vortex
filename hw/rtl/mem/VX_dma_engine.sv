@@ -15,7 +15,7 @@
 
 // VX_dma_engine (passthrough FSM, burst-reorder free)
 //  Multi-channel DMA engine bridging HBM (AXI) and TMEM (VX_mem_bus_if).
-//  Each channel instantiates VX_dma_unit_misal for the 3D strided FSM.
+//  Each channel instantiates VX_dma_unit for the 3D strided FSM.
 //
 //  Phase 2 of the dma-burst-reorder refactor. Upstream (VX_gemm_tmem_dma_ctrl)
 //  emits 2D descriptors whose inner dim (BND0) is the AXI burst length in
@@ -37,7 +37,7 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
     parameter AXI_USER_WIDTH        = 1,
     parameter MEM_ADDR_WIDTH        = `MEM_ADDR_WIDTH,
     parameter TAG_WIDTH             = 8,
-    // Forwarded to each VX_dma_unit_misal channel — see that module for
+    // Forwarded to each VX_dma_unit channel — see that module for
     // semantics. Default 0 (aligned-only) to match the chip-level SW
     // convention; parents that still need byte-misalign must override.
     parameter bit ENABLE_MISALIGN   = 1'b0
@@ -120,7 +120,7 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
 `endif
 
 `ifdef PERF_ENABLE
-    // Per-channel perf collected from each VX_dma_unit_misal instance below.
+    // Per-channel perf collected from each VX_dma_unit instance below.
     // Aggregated combinationally after the g_channel block.
     dma_perf_t ch_perf [NUM_CHANNELS];
 `endif
@@ -137,7 +137,7 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
         ) hbm_bus_if ();
 
         // --------------------------------------------------------
-        // VX_dma_unit_misal instance
+        // VX_dma_unit instance
         //   dcache_bus_if -> hbm_bus_if
         //   lmem_bus_if   -> tmem_bus_if[ch]
         //   done gated by write-B drain
@@ -147,7 +147,7 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
         // hbm_bus_if and tmem_bus_if[*] are both parameterized with this
         // module's TAG_WIDTH, so we forward it directly. (DC v2023 rejects
         // `interface_inst.PARAM` in parameter binding contexts.)
-        VX_dma_unit_misal #(
+        VX_dma_unit #(
             .INSTANCE_ID      (INSTANCE_ID),
             .ENABLE_MISALIGN  (ENABLE_MISALIGN),
             .DCACHE_TAG_WIDTH (TAG_WIDTH),

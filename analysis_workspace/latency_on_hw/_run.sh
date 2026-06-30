@@ -9,14 +9,14 @@
 # latency measure examples
 # --------------------------------------------------------------------------------------------------------
 # fpint gemm
-SOFTMAX_LAYOUT_FUSED_VARIANT=opt SOFTMAX_VARIANT=opt_align BLACKBOX_TIMEOUT=30m FPGA_BINS="improve_tcol32 naive_gemm_tcol32" ./run_hw.sh \
+SOFTMAX_LAYOUT_FUSED_VARIANT=opt SOFTMAX_VARIANT=opt_align BLACKBOX_TIMEOUT=1h FPGA_BINS="improve_tcol32 naive_gemm_tcol32" ./run_hw.sh \
     --input generated_suites/main_all \
     --output outputs_main \
     --no-power \
     | tee -i logs/main.log
 
 # others
-SOFTMAX_LAYOUT_FUSED_VARIANT=opt SOFTMAX_VARIANT=opt_align BLACKBOX_TIMEOUT=30m FPGA_BINS="naive_simd improve_no_tcu_lut_fexp" ./run_hw.sh \
+SOFTMAX_LAYOUT_FUSED_VARIANT=opt SOFTMAX_VARIANT=opt_align BLACKBOX_TIMEOUT=1h FPGA_BINS="naive_simd improve_no_tcu_lut_fexp" ./run_hw.sh \
     --input generated_suites/main \
     --output outputs_main \
     --no-power \

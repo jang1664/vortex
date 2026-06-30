@@ -74,7 +74,9 @@ RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
         $(RTL_DIR)/core/VX_job_desc_mmio_regs.sv \
         $(RTL_DIR)/core/VX_job_dispatcher.sv \
         $(RTL_DIR)/core/VX_job_frontend.sv \
+        $(RTL_DIR)/core/VX_dma_unit_align.sv \
         $(RTL_DIR)/core/VX_dma_unit_misal.sv \
+        $(RTL_DIR)/core/VX_dma_unit.sv \
         $(RTL_DIR)/core/VX_dma_node.sv
 
 INCDIRS_ := $(VORTEX_HOME)/build/hw \

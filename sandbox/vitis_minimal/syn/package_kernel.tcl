@@ -395,6 +395,9 @@ set core [ipx::current_core]
 # groups. Add new entries here when similar drops occur.
 # (Broad re-add would drag in legitimately unreferenced test tops / sim helpers.)
 set force_packaged_sources {
+    VX_dma_unit_align.sv
+    VX_dma_unit_misal.sv
+    VX_dma_unit.sv
     VX_dma_engine.sv
 }
 

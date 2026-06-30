@@ -26,7 +26,9 @@ RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
 				$(RTL_DIR)/core/VX_config_reg_if.sv \
 				$(RTL_DIR)/core/VX_mem_remap.sv \
 				$(RTL_DIR)/core/VX_node_done_if.sv \
+				$(RTL_DIR)/core/VX_dma_unit_align.sv \
 				$(RTL_DIR)/core/VX_dma_unit_misal.sv \
+				$(RTL_DIR)/core/VX_dma_unit.sv \
 				$(RTL_DIR)/mem/VX_dma_engine.sv \
 				$(LIB_RTLS)
 

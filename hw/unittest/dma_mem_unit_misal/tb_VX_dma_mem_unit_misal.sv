@@ -94,8 +94,8 @@ module tb_VX_dma_mem_unit_misal import VX_gpu_pkg::*; ();
   // DUT
   // -----------------------------
   // Default run exercises byte-misaligned scenarios. Parameter overrides can
-  // force ENABLE_MISALIGN=0 for aligned-only width conversion coverage.
-  VX_dma_unit_misal #(
+  // select VX_dma_unit_align for aligned-only width conversion coverage.
+  VX_dma_unit #(
     .INSTANCE_ID     ("dma0"),
     .ENABLE_MISALIGN (ENABLE_MISALIGN_P),
     .DCACHE_TAG_WIDTH(TAG_WIDTH),

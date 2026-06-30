@@ -112,8 +112,10 @@ RTLS := $(AXI_DIR)/src/axi_pkg.sv \
         $(RTL_DIR)/cache/VX_cache.sv \
         $(RTL_DIR)/cache/VX_cache_bypass.sv \
         $(RTL_DIR)/cache/VX_cache_wrap.sv \
-        $(RTL_DIR)/core/VX_dma_node.sv \
+        $(RTL_DIR)/core/VX_dma_unit_align.sv \
         $(RTL_DIR)/core/VX_dma_unit_misal.sv \
+        $(RTL_DIR)/core/VX_dma_unit.sv \
+        $(RTL_DIR)/core/VX_dma_node.sv \
         $(RTL_DIR)/core/gemm/VX_gemm_tmem_dma_ctrl.sv \
         $(RTL_DIR)/libs/VX_allocator.sv \
         $(RTL_DIR)/libs/VX_index_buffer.sv \
