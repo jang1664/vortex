@@ -57,6 +57,10 @@ Start with soft placement pblocks for DMA channel groups. These constraints
 should guide placement only; routing must remain free to cross pblock
 boundaries.
 
+The current `hw/syn/xilinx/xrt/floorplan.tcl` implements this first-pass
+grouping. Treat it as the next experiment after the no-floorplan baseline,
+not as a final floorplan.
+
 Suggested first-pass SLR0 grouping:
 
 | Group | Initial region | Purpose |
@@ -66,7 +70,7 @@ Suggested first-pass SLR0 grouping:
 | channels 4-5 | `CLOCKREGION_X0Y2:CLOCKREGION_X2Y3` | Pull the failing channel 4 away from the prior east congestion window. |
 | channels 6-7 | `CLOCKREGION_X3Y2:CLOCKREGION_X5Y3` | Keep high-index channels grouped but separated from channel 4. |
 
-Example Tcl skeleton:
+Implemented Tcl shape:
 
 ```tcl
 proc vortex_soft_pblock {name range cells} {
