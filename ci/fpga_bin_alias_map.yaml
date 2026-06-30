@@ -23,6 +23,10 @@ aliases:
     path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_noDcache_L2cache_90f22d2615_1/bin
     configs: configs/naive_simd.sh
 
+  naive_simd_bugfix_slow:
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f10_fpint_tcu_noDcache_L2cache_2df7fbf9c2/bin
+    configs: configs/naive_simd.sh
+
   improve_simd:
     path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_noDcache_L2cache_617ccd526f/bin
     configs: configs/improve_simd.sh
