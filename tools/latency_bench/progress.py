@@ -45,6 +45,8 @@ PROGRESS_COLUMNS = [
     "power_min_w",
     "power_avg_w",
     "power_max_w",
+    "power_latency",
+    "power_fpga_cycle",
     "power_parse_error",
 ]
 
@@ -179,6 +181,8 @@ def append_progress_execution(
         "power_min_w": power.get("power_min_w", ""),
         "power_avg_w": power.get("power_avg_w", ""),
         "power_max_w": power.get("power_max_w", ""),
+        "power_latency": power.get("power_latency", ""),
+        "power_fpga_cycle": power.get("power_fpga_cycle", ""),
         "power_parse_error": power.get("power_parse_error", ""),
     }
 

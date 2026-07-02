@@ -67,6 +67,7 @@ struct Args {
     double      power_idle_sec   = 2.0;
     uint64_t    power_csv_max_bytes = 1024ull * 1024ull;
     std::string power_script;
+    bool        power_measure_latency = false;
     bool        power_auto_duration = false;
     double      power_min_run_sec = 10.0;
     double      power_max_run_sec = 60.0;
@@ -231,6 +232,20 @@ inline Args parse(int& argc, char** argv) {
         } else if (std::strcmp(s, "--power-script") == 0) {
             const char* value = nullptr;
             if (read_next_value(r, argc, argv, "--power-script", &value, a)) a.power_script = value;
+        } else if (std::strcmp(s, "--power-measure-latency") == 0) {
+            a.power_measure_latency = true;
+            if (r + 1 < argc && argv[r + 1][0] != '-') {
+                const char* value = argv[++r];
+                if (!parse_bool_arg(value, &a.power_measure_latency)) {
+                    set_parse_error(a, std::string("invalid --power-measure-latency value: ") + value);
+                }
+            }
+        } else if (std::strncmp(s, "--power-measure-latency=", 24) == 0) {
+            if (!parse_bool_arg(s + 24, &a.power_measure_latency)) {
+                set_parse_error(a, std::string("invalid --power-measure-latency value: ") + (s + 24));
+            }
+        } else if (std::strcmp(s, "--no-power-measure-latency") == 0) {
+            a.power_measure_latency = false;
         } else if (std::strcmp(s, "--power-auto-duration") == 0) {
             a.power_auto_duration = true;
             if (r + 1 < argc && argv[r + 1][0] != '-') {
@@ -550,7 +565,66 @@ struct PowerPhase {
     double end_s = 0.0;
     bool has_latency = false;
     StatsSummary latency;
+    std::vector<uint64_t> fpga_cycles;
 };
+
+struct UIntStatsSummary {
+    size_t n = 0;
+    uint64_t min = 0;
+    double avg = 0.0;
+    uint64_t max = 0;
+    uint64_t p50 = 0;
+    uint64_t p95 = 0;
+};
+
+inline UIntStatsSummary summarize_uint64(const std::vector<uint64_t>& samples) {
+    UIntStatsSummary out;
+    if (samples.empty()) {
+        return out;
+    }
+    std::vector<uint64_t> s = samples;
+    std::sort(s.begin(), s.end());
+    long double sum = 0.0;
+    for (uint64_t v : s) sum += static_cast<long double>(v);
+    out.n = s.size();
+    out.min = s.front();
+    out.avg = static_cast<double>(sum / static_cast<long double>(s.size()));
+    out.max = s.back();
+    auto pct = [](const std::vector<uint64_t>& sorted, double q) {
+        size_t idx = static_cast<size_t>(q * (sorted.size() - 1) + 0.5);
+        if (idx >= sorted.size()) idx = sorted.size() - 1;
+        return sorted[idx];
+    };
+    out.p50 = pct(s, 0.50);
+    out.p95 = pct(s, 0.95);
+    return out;
+}
+
+static constexpr uint32_t VX_BENCH_CSR_MCYCLE = 0xB00;
+
+inline bool read_max_fpga_cycle(vx_device_h device, uint64_t* value, FILE* msg = stderr) {
+    uint64_t num_cores = 0;
+    int ret = vx_dev_caps(device, VX_CAPS_NUM_CORES, &num_cores);
+    if (ret != 0) {
+        std::fprintf(msg, "[power] vx_dev_caps(VX_CAPS_NUM_CORES) failed during fpga_cycle read: ret=%d\n", ret);
+        return false;
+    }
+
+    uint64_t max_cycles = 0;
+    for (uint32_t core_id = 0; core_id < num_cores; ++core_id) {
+        uint64_t cycles_per_core = 0;
+        ret = vx_mpm_query(device, VX_BENCH_CSR_MCYCLE, core_id, &cycles_per_core);
+        if (ret != 0) {
+            std::fprintf(msg, "[power] vx_mpm_query(VX_CSR_MCYCLE) failed during fpga_cycle read: core=%u ret=%d\n",
+                         core_id, ret);
+            return false;
+        }
+        max_cycles = std::max<uint64_t>(max_cycles, cycles_per_core);
+    }
+
+    *value = max_cycles;
+    return true;
+}
 
 inline PowerStats read_power_stats(const std::string& csv_path, double start_s, double end_s) {
     PowerStats stats;
@@ -611,7 +685,7 @@ inline bool write_power_summary(const char* label,
     std::fprintf(f,
         "label,mode,phase,samples,elapsed_s,idle_samples,idle_avg_w,"
         "run_min_w,run_avg_w,run_max_w,delta_avg_w,delta_peak_w,energy_j,"
-        "latency_samples,latency_min_us,latency_avg_us,latency_max_us,raw_csv\n");
+        "power_latency,power_fpga_cycle,raw_csv\n");
 
     const PowerStats idle_stats = read_power_stats(args.power_csv, idle.start_s, idle.end_s);
     const double nan = std::numeric_limits<double>::quiet_NaN();
@@ -620,14 +694,13 @@ inline bool write_power_summary(const char* label,
         const double dP_avg = (idle_stats.samples && run_stats.samples) ? (run_stats.avg_w - idle_stats.avg_w) : nan;
         const double dP_peak = (idle_stats.samples && run_stats.samples) ? (run_stats.max_w - idle_stats.avg_w) : nan;
         const double energy = (idle_stats.samples && run_stats.samples) ? (dP_avg * run_stats.elapsed_s) : nan;
-        const size_t lat_n = run.has_latency ? run.latency.n : 0;
-        const double lat_min = run.has_latency ? run.latency.min : nan;
-        const double lat_avg = run.has_latency ? run.latency.avg : nan;
-        const double lat_max = run.has_latency ? run.latency.max : nan;
+        const double power_latency = run.has_latency ? run.latency.avg : nan;
+        const UIntStatsSummary cycle = summarize_uint64(run.fpga_cycles);
+        const double power_fpga_cycle = cycle.n ? cycle.avg : nan;
 
         std::fprintf(f,
             "%s,%s,%s,%zu,%.6f,%zu,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,"
-            "%zu,%.3f,%.3f,%.3f,%s\n",
+            "%.3f,%.3f,%s\n",
             label,
             run.mode.c_str(),
             run.phase.c_str(),
@@ -641,10 +714,8 @@ inline bool write_power_summary(const char* label,
             dP_avg,
             dP_peak,
             energy,
-            lat_n,
-            lat_min,
-            lat_avg,
-            lat_max,
+            power_latency,
+            power_fpga_cycle,
             args.power_csv.c_str());
     }
 
@@ -777,11 +848,13 @@ inline bool run_vx_kernel_once(vx_device_h device,
     return true;
 }
 
-template <typename RunOnce>
-inline bool run_power_measurement(const char* label,
-                                  const Args& args,
-                                  RunOnce run_once,
-                                  FILE* msg = stderr) {
+template <typename RunOnce, typename ReadFpgaCycle>
+inline bool run_power_measurement_impl(const char* label,
+                                       const Args& args,
+                                       RunOnce run_once,
+                                       ReadFpgaCycle read_fpga_cycle,
+                                       bool measure_power_latency,
+                                       FILE* msg) {
     if (!power_enabled(args)) {
         return true;
     }
@@ -844,7 +917,8 @@ inline bool run_power_measurement(const char* label,
     std::fflush(msg);
 
     std::vector<PowerPhase> power_runs;
-    auto run_power_phase = [&](const char* mode, bool measure_latency) -> bool {
+    bool warned_missing_fpga_cycle = false;
+    auto run_power_phase = [&](const char* mode, bool record_power_latency) -> bool {
         PowerPhase phase;
         phase.mode = mode;
         phase.phase = "run";
@@ -854,12 +928,12 @@ inline bool run_power_measurement(const char* label,
             label,
             mode,
             power_args.power_iterations,
-            measure_latency ? "on" : "off");
+            record_power_latency ? "on" : "off");
         std::fflush(msg);
 
         Stats phase_latency;
         for (int i = 0; i < power_args.power_iterations; ++i) {
-            if (measure_latency) {
+            if (record_power_latency) {
                 Stopwatch sw;
                 sw.start();
                 if (!run_once(mode, i)) {
@@ -873,6 +947,17 @@ inline bool run_power_measurement(const char* label,
                     return false;
                 }
                 phase_latency.record(sw.stop_us());
+                uint64_t fpga_cycle = 0;
+                if (read_fpga_cycle(&fpga_cycle)) {
+                    phase.fpga_cycles.push_back(fpga_cycle);
+                } else if (!warned_missing_fpga_cycle) {
+                    std::fprintf(msg,
+                        "[power] stage=fpga_cycle_unavailable label=%s mode=%s\n",
+                        label,
+                        mode);
+                    std::fflush(msg);
+                    warned_missing_fpga_cycle = true;
+                }
             } else {
                 if (!run_once(mode, i)) {
                     std::fprintf(msg,
@@ -908,7 +993,7 @@ inline bool run_power_measurement(const char* label,
             power_args.power_iterations,
             phase.end_s - phase.start_s);
         std::fflush(msg);
-        if (measure_latency) {
+        if (record_power_latency) {
             phase.has_latency = true;
             phase.latency = phase_latency.summary();
         }
@@ -916,7 +1001,7 @@ inline bool run_power_measurement(const char* label,
         return true;
     };
 
-    bool power_ok = run_power_phase("separate", false);
+    bool power_ok = run_power_phase("separate", measure_power_latency);
 
     std::fprintf(msg, "[power] stage=sampler_stop_begin label=%s\n", label);
     std::fflush(msg);
@@ -933,18 +1018,75 @@ inline bool run_power_measurement(const char* label,
     return write_power_summary(label, power_args, idle_phase, power_runs, msg);
 }
 
+template <typename RunOnce>
+inline bool run_power_measurement(const char* label,
+                                  const Args& args,
+                                  RunOnce run_once,
+                                  bool measure_power_latency,
+                                  FILE* msg = stderr) {
+    return run_power_measurement_impl(
+        label, args, run_once,
+        [](uint64_t*) -> bool { return false; },
+        measure_power_latency,
+        msg);
+}
+
+template <typename RunOnce>
+inline bool run_power_measurement(const char* label,
+                                  const Args& args,
+                                  RunOnce run_once,
+                                  FILE* msg = stderr) {
+    return run_power_measurement(label, args, run_once, args.power_measure_latency, msg);
+}
+
+template <typename RunOnce>
+inline bool run_power_measurement(const char* label,
+                                  const Args& args,
+                                  vx_device_h device,
+                                  RunOnce run_once,
+                                  bool measure_power_latency,
+                                  FILE* msg = stderr) {
+    return run_power_measurement_impl(
+        label, args, run_once,
+        [device, msg](uint64_t* value) -> bool {
+            return read_max_fpga_cycle(device, value, msg);
+        },
+        measure_power_latency,
+        msg);
+}
+
+template <typename RunOnce>
+inline bool run_power_measurement(const char* label,
+                                  const Args& args,
+                                  vx_device_h device,
+                                  RunOnce run_once,
+                                  FILE* msg = stderr) {
+    return run_power_measurement(label, args, device, run_once, args.power_measure_latency, msg);
+}
+
+inline bool run_power_measurement(const char* label,
+                                  const Args& args,
+                                  vx_device_h device,
+                                  vx_buffer_h kernel_buffer,
+                                  vx_buffer_h args_buffer,
+                                  bool measure_power_latency,
+                                  FILE* msg = stderr) {
+    return run_power_measurement(
+        label, args, device,
+        [&](const char* phase, int iter) -> bool {
+            return run_vx_kernel_once(device, kernel_buffer, args_buffer, phase, iter, msg);
+        },
+        measure_power_latency,
+        msg);
+}
+
 inline bool run_power_measurement(const char* label,
                                   const Args& args,
                                   vx_device_h device,
                                   vx_buffer_h kernel_buffer,
                                   vx_buffer_h args_buffer,
                                   FILE* msg = stderr) {
-    return run_power_measurement(
-        label, args,
-        [&](const char* phase, int iter) -> bool {
-            return run_vx_kernel_once(device, kernel_buffer, args_buffer, phase, iter, msg);
-        },
-        msg);
+    return run_power_measurement(label, args, device, kernel_buffer, args_buffer, args.power_measure_latency, msg);
 }
 
 } // namespace vx_bench

@@ -637,8 +637,30 @@ module Vortex_axi import VX_gpu_pkg::*; #(
         mst_axi_resp_t mux_mst_resp;
 
         // Slave[0] = LSU demux output for this HBM port
-        assign mux_slv_reqs[0] = lsu_demux_req[j];
-        assign lsu_demux_resp[j] = mux_slv_resps[0];
+        slv_axi_req_t  lsu_mux_req;
+        slv_axi_resp_t lsu_mux_resp;
+
+        axi_cut #(
+            .Bypass     (1'b0),
+            .aw_chan_t  (slv_axi_aw_chan_t),
+            .w_chan_t   (slv_axi_w_chan_t),
+            .b_chan_t   (slv_axi_b_chan_t),
+            .ar_chan_t  (slv_axi_ar_chan_t),
+            .r_chan_t   (slv_axi_r_chan_t),
+            .axi_req_t  (slv_axi_req_t),
+            .axi_resp_t (slv_axi_resp_t)
+        ) u_lsu_mux_cut (
+            .clk_i      (clk),
+            .rst_ni     (~reset),
+            .slv_req_i  (lsu_demux_req[j]),
+            .slv_resp_o (lsu_demux_resp[j]),
+            .mst_req_o  (lsu_mux_req),
+            .mst_resp_i (lsu_mux_resp)
+        );
+
+        assign mux_slv_reqs[0] = lsu_mux_req;
+        assign lsu_mux_resp = mux_slv_resps[0];
+
         // Slave[1..NUM_DMA_PER_MUX] = DMA channels for this HBM port
         if (NUM_HBM_PORTS == `NUM_DMA_CHANNELS) begin : g_dma_multi_port
             // Non-merged: each HBM port j gets DMA channel j from each core

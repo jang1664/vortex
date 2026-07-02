@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 import re
 import shlex
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
@@ -77,6 +78,53 @@ def _unique_join(values: pd.Series) -> str:
 
 def _numeric(series: pd.Series) -> pd.Series:
     return pd.to_numeric(series, errors="coerce")
+
+
+def _filter_pass_raw_rows(raw: pd.DataFrame) -> pd.DataFrame:
+    status = raw["status"].astype(str)
+    keep = status.eq("pass")
+    dropped = int((~keep).sum())
+    if dropped:
+        status_counts = status[~keep].value_counts(sort=False)
+        status_summary = ", ".join(f"{value}={count}" for value, count in status_counts.items())
+        warnings.warn(
+            f"filtered out {dropped} raw DB row(s) with status != 'pass'"
+            + (f": {status_summary}" if status_summary else ""),
+            RuntimeWarning,
+            stacklevel=2,
+        )
+    return raw.loc[keep].copy()
+
+
+def _dedupe_latest_raw_rows(raw: pd.DataFrame, *, key_columns: list[str]) -> pd.DataFrame:
+    if raw.empty:
+        return raw.copy()
+
+    duplicate_mask = raw.duplicated(subset=key_columns, keep=False)
+    if not bool(duplicate_mask.any()):
+        return raw.copy()
+
+    duplicate_rows = int(duplicate_mask.sum())
+    duplicate_keys = int(raw.loc[duplicate_mask, key_columns].drop_duplicates().shape[0])
+    ordered = raw.copy()
+    ordered["_raw_order"] = range(len(ordered))
+    helper_columns = ["_raw_order"]
+    if "timestamp_utc" in ordered.columns:
+        ordered["_raw_timestamp_utc"] = pd.to_datetime(ordered["timestamp_utc"], errors="coerce", utc=True)
+        helper_columns.append("_raw_timestamp_utc")
+        ordered = ordered.sort_values(["_raw_timestamp_utc", "_raw_order"], kind="stable", na_position="first")
+    else:
+        ordered = ordered.sort_values("_raw_order", kind="stable")
+
+    deduped = ordered.drop_duplicates(subset=key_columns, keep="last")
+    deduped = deduped.sort_values("_raw_order", kind="stable").drop(columns=helper_columns)
+    warnings.warn(
+        f"found {duplicate_rows} duplicate raw DB row(s) across {duplicate_keys} "
+        "(fpga_bin, app, args) key(s); using the most recent row",
+        RuntimeWarning,
+        stacklevel=2,
+    )
+    return deduped.reset_index(drop=True)
 
 
 def _coerce_latency_scale_rule(rule: LatencyScaleRule | Mapping[str, Any], index: int) -> LatencyScaleRule:
@@ -173,6 +221,9 @@ def _select_value(matches: pd.DataFrame, metric: str, policy: str) -> tuple[floa
     values = _numeric(matches[metric]).dropna()
     if values.empty:
         return math.nan, None
+    if len(matches) == 1:
+        row = matches.iloc[0]
+        return float(pd.to_numeric(row[metric], errors="coerce")), row
 
     if policy == "strict":
         if len(matches) != 1:
@@ -398,9 +449,7 @@ def compose_latency(suite: BenchSuite, options: ComposeOptions) -> pd.DataFrame:
 
     raw = _read_raw_dbs(options.raw_dbs)
     _require_columns(raw, ["app", "args", "status", options.metric])
-    if options.latency_scale_rules:
-        raw = apply_latency_scale_rules(raw, options.latency_scale_rules)
-    raw = raw[raw["status"].astype(str) == "pass"].copy()
+    raw = _filter_pass_raw_rows(raw)
 
     if options.match_fpga_bin:
         _require_columns(raw, ["fpga_bin_label"])
@@ -414,6 +463,9 @@ def compose_latency(suite: BenchSuite, options: ComposeOptions) -> pd.DataFrame:
     cases = _case_rows_with_match_keys(suite, match_fpga_bin=options.match_fpga_bin)
     raw = _raw_with_match_keys(raw, match_fpga_bin=options.match_fpga_bin)
     key_columns = _match_key_columns(options.match_fpga_bin)
+    raw = _dedupe_latest_raw_rows(raw, key_columns=key_columns)
+    if options.latency_scale_rules:
+        raw = apply_latency_scale_rules(raw, options.latency_scale_rules)
     selected_raw = _selected_raw_rows(
         raw,
         cases,

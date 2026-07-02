@@ -160,6 +160,7 @@ AXI_SOURCES += $(AXI_COMMON_CELLS_DIR)/src/counter.sv
 AXI_SOURCES += $(AXI_COMMON_CELLS_DIR)/src/delta_counter.sv
 AXI_SOURCES += $(AXI_COMMON_CELLS_DIR)/src/onehot_to_bin.sv
 AXI_SOURCES += $(AXI_COMMON_CELLS_DIR)/src/id_queue.sv
+AXI_SOURCES += $(AXI_DIR)/src/axi_cut.sv
 AXI_SOURCES += $(AXI_DIR)/src/axi_demux_simple.sv
 AXI_SOURCES += $(AXI_DIR)/src/axi_demux.sv
 AXI_SOURCES += $(AXI_DIR)/src/axi_id_prepend.sv

@@ -199,6 +199,7 @@ AXI_SOURCES = [
     f"{AXI_COMMON_CELLS_DIR}/src/delta_counter.sv",
     f"{AXI_COMMON_CELLS_DIR}/src/onehot_to_bin.sv",
     f"{AXI_COMMON_CELLS_DIR}/src/id_queue.sv",
+    f"{AXI_DIR}/src/axi_cut.sv",
     f"{AXI_DIR}/src/axi_demux_simple.sv",
     f"{AXI_DIR}/src/axi_demux.sv",
     f"{AXI_DIR}/src/axi_id_prepend.sv",

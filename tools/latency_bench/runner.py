@@ -21,8 +21,7 @@ from .raw_db import (
     _normalize_args,
     _parse_bool_cell,
     _parse_int,
-    append_raw_db,
-    replace_raw_db_rows,
+    _write_raw_rows,
 )
 from .report import build_results, build_summary, sha256_file, write_manifest
 from .status import DEFAULT_POWER_MIN_SAMPLES, power_samples_below_threshold
@@ -113,6 +112,7 @@ class RunOptions:
     program_fpga: bool = True
     measure_latency: bool = True
     measure_power: bool = True
+    power_measure_latency: bool = False
     power_auto_duration: bool = True
     power_min_run_sec: float = 10.0
     power_max_run_sec: float = 60.0
@@ -304,6 +304,57 @@ def find_existing_pass_exec_keys(
     return tuple(unit.exec_key for unit in units if unit.exec_key in matched)
 
 
+def raw_db_update_mode(options: RunOptions) -> str:
+    if options.skip_existing or options.retry:
+        return "replace"
+    return "replace-run"
+
+
+def seed_raw_db_cases(
+    suite: BenchSuite,
+    units: list[ExecutionUnit],
+    *,
+    raw_db: Path,
+    options: RunOptions,
+    git: GitMetadata,
+    xclbin_sha256: str,
+) -> int:
+    unit_by_exec_key = {unit.exec_key: unit for unit in units}
+    if not unit_by_exec_key:
+        return 0
+
+    timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    rows: list[dict[str, object]] = []
+    for case in suite_to_rows(suite):
+        unit = unit_by_exec_key.get(str(case.get("exec_key", "")))
+        if unit is None:
+            continue
+        row = {column: "" for column in RAW_DB_COLUMNS}
+        row.update({column: case.get(column, "") for column in RAW_DB_COLUMNS})
+        row.update({
+            "run_id": options.run_id or "",
+            "timestamp_utc": timestamp,
+            "fpga_bin_label": options.fpga_bin_label,
+            "git_commit": git.commit,
+            "git_branch": git.branch,
+            "git_dirty": git.dirty,
+            "fpga_bin_dir": str(options.fpga_bin_dir),
+            "xclbin_sha256": xclbin_sha256,
+            "raw_csv": str(unit.raw_csv),
+            "power_csv": str(unit.power_csv) if options.measure_power else "",
+            "power_summary": str(unit.power_summary) if options.measure_power else "",
+            "measure_latency": _bool_csv(options.measure_latency),
+            "measure_power": _bool_csv(options.measure_power),
+            "log_file": str(unit.log_file),
+        })
+        rows.append(row)
+
+    if not rows:
+        return 0
+    _write_raw_rows(rows, raw_db, mode=raw_db_update_mode(options), run_id=options.run_id or "")
+    return len(rows)
+
+
 def _q(value: str | Path) -> str:
     return shlex.quote(str(value))
 
@@ -401,7 +452,9 @@ def write_run_script(
     program_log = options.out_dir / "logs" / "program_fpga.log"
     retry_enabled = 1 if options.retry else 0
     program_fpga = 1 if options.program_fpga and units else 0
-    raw_db_mode = "replace" if options.skip_existing else "replace-run" if options.retry else "append"
+    # The raw DB is seeded before this script starts. Normal runs replace only
+    # their seed rows; retry/resume paths replace stale matching measurements.
+    raw_db_mode = raw_db_update_mode(options)
     retry_initial_timeout_s = _parse_timeout_seconds(options.blackbox_timeout) if options.retry else 0
     retry_max_rounds = options.retry_max_rounds if options.retry else 1
     retry_reset_cmd = tuple(shlex.split(options.retry_reset_cmd))
@@ -688,6 +741,8 @@ def write_run_script(
                     f"--power-min-interval={options.power_min_interval}",
                     f"--power-max-interval={options.power_max_interval}",
                 ])
+            if options.power_measure_latency:
+                bench_arg_parts.append("--power-measure-latency=on")
         if unit.args:
             bench_arg_parts.append(unit.args)
         bench_args = " ".join(bench_arg_parts)
@@ -715,7 +770,7 @@ def write_run_script(
             "",
             f"if [[ \"${{LATENCY_BENCH_SHOULD_RUN[{_q(unit.exec_key)}]:-0}}\" == \"1\" ]]; then",
             f"echo '[{idx}/{len(units)}] {unit.exec_key} app={unit.app} args={bench_args}'",
-            f": > {_q(unit.log_file)}",
+            f"if [[ \"$LATENCY_BENCH_RETRY_ROUND\" == \"1\" ]]; then : > {_q(unit.log_file)}; fi",
             (
                 f"printf '[latency-bench] stage=case_begin idx=%d total=%d exec_key=%s app=%s raw_csv=%s power_csv=%s power_summary=%s log=%s\\n' "
                 f"{idx} {len(units)} {_q(unit.exec_key)} {_q(unit.app)} {_q(unit.raw_csv)} {_q(status_power_csv)} {_q(status_power_summary)} {_q(unit.log_file)} "
@@ -964,6 +1019,7 @@ def run_suite(suite: BenchSuite, options: RunOptions) -> int:
         "program_fpga": options.program_fpga and bool(units_to_run),
         "measure_latency": options.measure_latency,
         "measure_power": options.measure_power,
+        "power_measure_latency": options.power_measure_latency if options.measure_power else False,
         "power_mode": "separate" if options.measure_power else "off",
         "power_auto_duration": options.power_auto_duration if options.measure_power else False,
         "power_min_run_sec": options.power_min_run_sec,
@@ -1006,6 +1062,17 @@ def run_suite(suite: BenchSuite, options: RunOptions) -> int:
         if options.skip_existing:
             print(f"dry-run: skipped {len(skipped_existing_exec_keys)} existing pass executions")
         return 0
+
+    seeded_rows = seed_raw_db_cases(
+        suite,
+        units_to_run,
+        raw_db=out_root / "raw_db.csv",
+        options=run_options,
+        git=git,
+        xclbin_sha256=xclbin_sha256,
+    )
+    if seeded_rows:
+        print(f"pre-seeded {seeded_rows} row(s) in {out_root / 'raw_db.csv'}", flush=True)
 
     cmd = ["bash", str(script)]
     if options.srun:

@@ -57,8 +57,8 @@ printf 'PERF: instrs=30, cycles=200, IPC=0.150000\n'
 printf '[bench-perf] iteration=3/3 end\n'
 if [[ -n "$power_summary" ]]; then
   mkdir -p "$(dirname "$power_summary")"
-  printf 'label,mode,phase,samples,elapsed_s,idle_samples,idle_avg_w,run_min_w,run_avg_w,run_max_w,delta_avg_w,delta_peak_w,energy_j,latency_samples,latency_min_us,latency_avg_us,latency_max_us,raw_csv\n' > "$power_summary"
-  printf 'fpint_gemm,separate,run,{power_samples},10.0,2,1.0,3.0,4.0,5.0,3.0,4.0,40.0,0,nan,nan,nan,%s\n' "$power_csv" >> "$power_summary"
+  printf 'label,mode,phase,samples,elapsed_s,idle_samples,idle_avg_w,run_min_w,run_avg_w,run_max_w,delta_avg_w,delta_peak_w,energy_j,power_latency,power_fpga_cycle,raw_csv\n' > "$power_summary"
+  printf 'fpint_gemm,separate,run,{power_samples},10.0,2,1.0,3.0,4.0,5.0,3.0,4.0,40.0,12.5,2000,%s\n' "$power_csv" >> "$power_summary"
 fi
 printf 'ok\n' > "$log_file"
 """
@@ -92,6 +92,8 @@ if [[ "$build_only" == "1" ]]; then
   exit 0
 fi
 raw_csv=$(printf '%s\n' "$bench_args" | sed -n 's/.*--output=\\([^ ]*\\).*/\\1/p')
+power_csv=$(printf '%s\n' "$bench_args" | sed -n 's/.*--power-csv=\\([^ ]*\\).*/\\1/p')
+power_summary=$(printf '%s\n' "$bench_args" | sed -n 's/.*--power-summary=\\([^ ]*\\).*/\\1/p')
 mkdir -p "$(dirname "$raw_csv")" "$(dirname "$log_file")"
 state_file="${raw_csv}.state"
 if [[ ! -f "$state_file" ]]; then
@@ -101,6 +103,11 @@ if [[ ! -f "$state_file" ]]; then
   exit 2
 fi
 printf 'fpint_gemm,3,1.0,2.0,4.0,2.0,3.0\n' > "$raw_csv"
+if [[ -n "$power_summary" ]]; then
+  mkdir -p "$(dirname "$power_summary")"
+  printf 'label,mode,phase,samples,elapsed_s,idle_samples,idle_avg_w,run_min_w,run_avg_w,run_max_w,delta_avg_w,delta_peak_w,energy_j,latency_samples,latency_min_us,latency_avg_us,latency_max_us,raw_csv\n' > "$power_summary"
+  printf 'fpint_gemm,separate,run,5,10.0,2,1.0,3.0,4.0,5.0,3.0,4.0,40.0,0,nan,nan,nan,%s\n' "$power_csv" >> "$power_summary"
+fi
 printf 'ok\n' > "$log_file"
 """
         )
@@ -127,6 +134,8 @@ if [[ "$build_only" == "1" ]]; then
   exit 0
 fi
 raw_csv=$(printf '%s\n' "$bench_args" | sed -n 's/.*--output=\\([^ ]*\\).*/\\1/p')
+power_csv=$(printf '%s\n' "$bench_args" | sed -n 's/.*--power-csv=\\([^ ]*\\).*/\\1/p')
+power_summary=$(printf '%s\n' "$bench_args" | sed -n 's/.*--power-summary=\\([^ ]*\\).*/\\1/p')
 mkdir -p "$(dirname "$raw_csv")" "$(dirname "$log_file")"
 state_file="${raw_csv}.timeout_state"
 if [[ ! -f "$state_file" ]]; then
@@ -135,6 +144,11 @@ if [[ ! -f "$state_file" ]]; then
   exit 124
 fi
 printf 'fpint_gemm,3,1.0,2.0,4.0,2.0,3.0\n' > "$raw_csv"
+if [[ -n "$power_summary" ]]; then
+  mkdir -p "$(dirname "$power_summary")"
+  printf 'label,mode,phase,samples,elapsed_s,idle_samples,idle_avg_w,run_min_w,run_avg_w,run_max_w,delta_avg_w,delta_peak_w,energy_j,latency_samples,latency_min_us,latency_avg_us,latency_max_us,raw_csv\n' > "$power_summary"
+  printf 'fpint_gemm,separate,run,5,10.0,2,1.0,3.0,4.0,5.0,3.0,4.0,40.0,0,nan,nan,nan,%s\n' "$power_csv" >> "$power_summary"
+fi
 printf 'ok\n' > "$log_file"
 """
         )
@@ -298,6 +312,8 @@ esac
             self.assertEqual("3.0", rows[0]["power_min_w"])
             self.assertEqual("4.0", rows[0]["power_avg_w"])
             self.assertEqual("5.0", rows[0]["power_max_w"])
+            self.assertEqual("12.5", rows[0]["power_latency"])
+            self.assertEqual("2000", rows[0]["power_fpga_cycle"])
             self.assertEqual("", rows[0]["power_parse_error"])
             self.assertTrue(rows[0]["git_commit"])
             self.assertTrue(rows[0]["git_branch"])
@@ -310,6 +326,8 @@ esac
             self.assertEqual(rows[0]["git_dirty"], result_rows[0]["git_dirty"])
             self.assertEqual(rows[0]["elapsed_wall_s"], result_rows[0]["elapsed_wall_s"])
             self.assertEqual(rows[0]["power_avg_w"], result_rows[0]["power_avg_w"])
+            self.assertEqual(rows[0]["power_latency"], result_rows[0]["power_latency"])
+            self.assertEqual(rows[0]["power_fpga_cycle"], result_rows[0]["power_fpga_cycle"])
             self.assertEqual(rows[0]["fpga_cycle"], result_rows[0]["fpga_cycle"])
 
             with (out_root / "runs" / "run_a" / "progress.csv").open(newline="") as fp:
@@ -319,6 +337,8 @@ esac
             self.assertEqual("2.0", progress_rows[0]["p50_us"])
             self.assertEqual("200", progress_rows[0]["fpga_cycle"])
             self.assertEqual("4.0", progress_rows[0]["power_avg_w"])
+            self.assertEqual("12.5", progress_rows[0]["power_latency"])
+            self.assertEqual("2000", progress_rows[0]["power_fpga_cycle"])
             self.assertEqual(rows[0]["elapsed_wall_s"], progress_rows[0]["elapsed_wall_s"])
 
             manifest = json.loads((out_root / "runs" / "run_a" / "manifest.json").read_text())
@@ -732,6 +752,89 @@ exit 0
             self.assertEqual("0", attempt_rows[0]["reset_rc"])
             self.assertEqual("reset -d 0000:2a:00.1", reset_log.read_text().strip())
             self.assertIn("xrt-smi reset -d 0000:2a:00.1", srun_log.read_text())
+
+    def test_retry_timeout_rerun_replaces_previous_failed_row(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            build_dir = tmp_path / "build"
+            (build_dir / "ci").mkdir(parents=True)
+            blackbox = build_dir / "ci" / "blackbox.sh"
+            blackbox.write_text("#!/usr/bin/env bash\nexit 124\n")
+            blackbox.chmod(0o755)
+            fpga_bin_dir = tmp_path / "fpga_bin"
+            xclbin_sha = self._write_fake_fpga_bin(fpga_bin_dir)
+
+            case = BenchCase(
+                case_id="gemm_timeout",
+                app="fpint_gemm_ffn_hw",
+                args="-m 1 -n 128 -k 128 -q 32 -t 0 -d 0",
+                warmup=1,
+                iterations=1,
+            )
+            suite = BenchSuite(
+                name="retry_timeout_suite",
+                defaults=BenchDefaults(warmup=1, iterations=1, blackbox_timeout="1s"),
+                cases=[case],
+            )
+            out_root = tmp_path / "latency_db"
+            raw_db = out_root / "raw_db.csv"
+            self._write_raw_db_row(
+                raw_db,
+                run_id="old_timeout_run",
+                case_id=case.case_id,
+                exec_key=case.exec_key,
+                app=case.app,
+                args=case.args,
+                fpga_bin_label="retry_bin",
+                xclbin_sha256=xclbin_sha,
+                warmup=case.warmup,
+                iterations=case.iterations,
+                status="timeout",
+                returncode="124",
+                failure_phase="run",
+                failure_reason="timeout",
+                elapsed_wall_s="10.000",
+            )
+
+            old_slurm_job_id = os.environ.get("SLURM_JOB_ID")
+            os.environ["SLURM_JOB_ID"] = "test_job"
+            try:
+                rc = run_suite(
+                    suite,
+                    RunOptions(
+                        build_dir=build_dir,
+                        fpga_bin_dir=fpga_bin_dir,
+                        fpga_bin_label="retry_bin",
+                        out_dir=out_root,
+                        platform=suite.defaults.platform,
+                        xrt_device_index=suite.defaults.xrt_device_index,
+                        blackbox_args=(),
+                        blackbox_timeout=suite.defaults.blackbox_timeout,
+                        srun=False,
+                        program_fpga=False,
+                        measure_power=False,
+                        run_id="new_timeout_run",
+                        retry=True,
+                        retry_max_rounds=1,
+                        retry_reset_wait="0",
+                        retry_reset_cmd="true",
+                        prebuild=False,
+                    ),
+                )
+            finally:
+                if old_slurm_job_id is None:
+                    os.environ.pop("SLURM_JOB_ID", None)
+                else:
+                    os.environ["SLURM_JOB_ID"] = old_slurm_job_id
+
+            self.assertEqual(0, rc)
+            with raw_db.open(newline="") as fp:
+                rows = list(csv.DictReader(fp))
+            self.assertEqual(1, len(rows))
+            self.assertEqual("new_timeout_run", rows[0]["run_id"])
+            self.assertEqual("timeout", rows[0]["status"])
+            self.assertEqual("124", rows[0]["returncode"])
+            self.assertNotEqual("10.000", rows[0]["elapsed_wall_s"])
 
     def test_retry_timeout_resets_directly_inside_slurm_allocation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

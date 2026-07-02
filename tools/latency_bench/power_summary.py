@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import math
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +12,15 @@ def _parse_int_field(value: str) -> int:
 
 def _parse_float_field(value: str) -> float:
     return float(value)
+
+
+def _parse_cycle_field(value: str) -> int | float:
+    parsed = float(value)
+    if math.isnan(parsed):
+        return parsed
+    if parsed.is_integer():
+        return int(parsed)
+    return parsed
 
 
 def _select_power_summary_row(rows: list[dict[str, str]]) -> dict[str, str]:
@@ -59,6 +69,23 @@ def read_power_summary(path: Path | str | None) -> dict[str, Any]:
             out[output_key] = parser(value)
         except ValueError as exc:
             errors.append(f"{input_key}:{exc}")
+
+    optional_fields = (
+        ("power_latency", ("power_latency", "latency_avg_us"), _parse_float_field),
+        ("power_fpga_cycle", ("power_fpga_cycle",), _parse_cycle_field),
+    )
+    for output_key, input_keys, parser in optional_fields:
+        value = ""
+        for input_key in input_keys:
+            value = row.get(input_key, "")
+            if value != "":
+                break
+        if value == "":
+            continue
+        try:
+            out[output_key] = parser(value)
+        except ValueError as exc:
+            errors.append(f"{output_key}:{exc}")
 
     if errors:
         out["power_parse_error"] = ";".join(errors)

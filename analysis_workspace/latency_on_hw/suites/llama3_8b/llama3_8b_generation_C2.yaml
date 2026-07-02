@@ -1,4 +1,4 @@
-name: llama2_7b_prefill_C2
+name: llama3_8b_generation_C2
 defaults:
   warmup: 1
   iterations: 3
@@ -20,20 +20,18 @@ fpga_bins:
   by_app:
     rmsnorm: naive_simd
     rope: naive_simd
-    softmax: naive_simd
+    softmax: improve_no_tcu_lut_fexp
     silu: naive_simd
     eladd: naive_simd
     elmul: naive_simd
 
 workloads:
-  - id: llama2_7b_prefill_C2
-    model: llama2-7b
-    stage: prefill
+  - id: llama3_8b_generation_C2
+    model: llama3-8b
+    stage: generation
     variant: attn_sgemm_tcu_fpint_gemm_naive_spinquant
     implemented_only: false
     matrix:
-      # batch: {values: [1, 8, 64]}
-      # prefill_seq_len: {values: [512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072]}
-      batch: {values: [1, 2]}
-      prefill_seq_len: {values: [32, 64]}
+      batch: {values: [1]}
+      gen_kv_len: {values: [512, 1024, 2048, 4096]}
       qblk: 32

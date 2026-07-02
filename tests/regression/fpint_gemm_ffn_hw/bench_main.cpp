@@ -462,7 +462,8 @@ int main(int argc, char *argv[]) {
              "[--power-summary=PATH] [--power-interval=SEC] "
              "[--power-fpga-id=ID] [--power-iterations=N] "
              "[--power-idle-sec=SEC] [--power-csv-max-bytes=N] "
-             "[--power-script=PATH] [--power-max-iterations=N] "
+             "[--power-script=PATH] [--power-measure-latency[=on|off]] "
+             "[--power-max-iterations=N] "
              "[-m M] [-n N] [-k K] [-q QBLK] [-t WTRANS] [-d QDIR]\n", argv[0]);
       return 0;
     default:
@@ -472,7 +473,8 @@ int main(int argc, char *argv[]) {
              "[--power-summary=PATH] [--power-interval=SEC] "
              "[--power-fpga-id=ID] [--power-iterations=N] "
              "[--power-idle-sec=SEC] [--power-csv-max-bytes=N] "
-             "[--power-script=PATH] [--power-max-iterations=N] "
+             "[--power-script=PATH] [--power-measure-latency[=on|off]] "
+             "[--power-max-iterations=N] "
              "[-m M] [-n N] [-k K] [-q QBLK] [-t WTRANS] [-d QDIR]\n", argv[0]);
       return -1;
     }
@@ -668,7 +670,7 @@ int main(int argc, char *argv[]) {
   stats.report("fpint_gemm_ffn_hw", bench);
 
   if (!vx_bench::run_power_measurement(
-          "fpint_gemm_ffn_hw", bench,
+          "fpint_gemm_ffn_hw", bench, device,
           [&](const char* phase, int iter) -> bool {
             return run_kernel_checked(phase, iter);
           })) {

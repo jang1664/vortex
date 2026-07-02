@@ -13,23 +13,39 @@ fi
 usage() {
     cat >&2 <<'EOF'
 Usage:
-  ./make_cases.sh --input SUITE_DIR --output GENERATED_SUITE_DIR [--model-prefix PREFIX]
+  ./make_cases.sh --input SUITE_DIR --output GENERATED_SUITE_DIR [override options]
   ./make_cases.sh SUITE_DIR [GENERATED_SUITE_DIR]
 
 Examples:
-  ./make_cases.sh --input suites/main --output generated_suites/main
-  ./make_cases.sh --input suites/main_all --output generated_suites/llama3_8b_main_all --model-prefix llama3_8b
+  ./make_cases.sh --input suites/llama2_7b --output generated_suites/llama2_7b
+  ./make_cases.sh --input suites/llama3_8b --output generated_suites/llama3_8b
+  ./make_cases.sh --input suites/main --output generated_suites/main_b1_s512 --batches 1 --seq-lens 512
+  ./make_cases.sh --input suites/main --output generated_suites/main_custom --prefill-batches 1,2 --generation-batches 8 --prefill-seq-lens 512,1024 --generation-seq-lens 4096
   ./make_cases.sh suites/test2 generated_suites/test2
+
+Override options:
+  --batches LIST                 Override batch values for both prefill and generation.
+  --seq-lens LIST                Override sequence values for both prefill and generation.
+  --prefill-batches LIST         Override prefill batch values.
+  --generation-batches LIST      Override generation batch values.
+  --prefill-seq-lens LIST        Override prefill sequence values.
+  --generation-seq-lens LIST     Override generation sequence values.
 
 Defaults:
   GENERATED_SUITE_DIR defaults to generated_suites when omitted.
-  MODEL_PREFIX defaults to llama2_7b.
+  Override options default to the values already encoded in each input YAML.
+  SUITE_DIR should contain one model family; matching multiple files for the same case is an error.
 EOF
 }
 
 SUITE_DIR=""
 OUTPUT_DIR=""
-MODEL_PREFIX="llama2_7b"
+BATCHES=""
+SEQ_LENS=""
+PREFILL_BATCHES=""
+GENERATION_BATCHES=""
+PREFILL_SEQ_LENS=""
+GENERATION_SEQ_LENS=""
 positional=()
 
 while [[ $# -gt 0 ]]; do
@@ -52,13 +68,58 @@ while [[ $# -gt 0 ]]; do
             OUTPUT_DIR="$2"
             shift 2
             ;;
-        --model-prefix)
+        --batches|--batch-list)
             if [[ $# -lt 2 ]]; then
                 echo "Error: $1 requires a value" >&2
                 usage
                 exit 1
             fi
-            MODEL_PREFIX="$2"
+            BATCHES="$2"
+            shift 2
+            ;;
+        --prefill-batches|--prefill-batch-list)
+            if [[ $# -lt 2 ]]; then
+                echo "Error: $1 requires a value" >&2
+                usage
+                exit 1
+            fi
+            PREFILL_BATCHES="$2"
+            shift 2
+            ;;
+        --generation-batches|--generation-batch-list|--gen-batches|--gen-batch-list)
+            if [[ $# -lt 2 ]]; then
+                echo "Error: $1 requires a value" >&2
+                usage
+                exit 1
+            fi
+            GENERATION_BATCHES="$2"
+            shift 2
+            ;;
+        --seq-lens|--seq-len-list)
+            if [[ $# -lt 2 ]]; then
+                echo "Error: $1 requires a value" >&2
+                usage
+                exit 1
+            fi
+            SEQ_LENS="$2"
+            shift 2
+            ;;
+        --prefill-seq-lens|--prefill-seq-len-list)
+            if [[ $# -lt 2 ]]; then
+                echo "Error: $1 requires a value" >&2
+                usage
+                exit 1
+            fi
+            PREFILL_SEQ_LENS="$2"
+            shift 2
+            ;;
+        --generation-seq-lens|--generation-seq-len-list|--gen-seq-lens|--gen-seq-len-list)
+            if [[ $# -lt 2 ]]; then
+                echo "Error: $1 requires a value" >&2
+                usage
+                exit 1
+            fi
+            GENERATION_SEQ_LENS="$2"
             shift 2
             ;;
         -h|--help)
@@ -116,6 +177,44 @@ fi
 
 mkdir -p "${OUTPUT_DIR}"
 
+GENERATE_ARGS=()
+if [[ -n "${BATCHES}" ]]; then
+    GENERATE_ARGS+=(--batches "${BATCHES}")
+fi
+if [[ -n "${PREFILL_BATCHES}" ]]; then
+    GENERATE_ARGS+=(--prefill-batches "${PREFILL_BATCHES}")
+fi
+if [[ -n "${GENERATION_BATCHES}" ]]; then
+    GENERATE_ARGS+=(--generation-batches "${GENERATION_BATCHES}")
+fi
+if [[ -n "${SEQ_LENS}" ]]; then
+    GENERATE_ARGS+=(--seq-lens "${SEQ_LENS}")
+fi
+if [[ -n "${PREFILL_SEQ_LENS}" ]]; then
+    GENERATE_ARGS+=(--prefill-seq-lens "${PREFILL_SEQ_LENS}")
+fi
+if [[ -n "${GENERATION_SEQ_LENS}" ]]; then
+    GENERATE_ARGS+=(--generation-seq-lens "${GENERATION_SEQ_LENS}")
+fi
+
+shopt -s nullglob
+
+find_suite() {
+    local suffix="$1"
+    local matches=("${SUITE_DIR}"/*"${suffix}".yaml)
+    if [[ ${#matches[@]} -eq 0 ]]; then
+        echo "Error: no suite YAML matching *${suffix}.yaml in ${SUITE_DIR}" >&2
+        exit 1
+    fi
+    if [[ ${#matches[@]} -gt 1 ]]; then
+        echo "Error: multiple suite YAMLs match *${suffix}.yaml in ${SUITE_DIR}" >&2
+        printf '  %s\n' "${matches[@]}" >&2
+        echo "Use a suite directory containing one model family." >&2
+        exit 1
+    fi
+    printf '%s\n' "${matches[0]}"
+}
+
 clean_suite_dir() {
     local out_dir="$1"
     mkdir -p "${out_dir}"
@@ -126,19 +225,31 @@ generate_suite() {
     local suite="$1"
     local out_dir="$2"
     clean_suite_dir "${out_dir}"
-    "${PYTHON_BIN}" -m tools.latency_bench generate-suites --suite "${suite}" --out "${out_dir}" --overwrite
+    "${PYTHON_BIN}" -m tools.latency_bench generate-suites \
+        --suite "${suite}" \
+        --out "${out_dir}" \
+        --overwrite \
+        "${GENERATE_ARGS[@]}"
 }
 
-generate_suite "${SUITE_DIR}/${MODEL_PREFIX}_prefill_C1.yaml" "${OUTPUT_DIR}/C1_prefill"
-generate_suite "${SUITE_DIR}/${MODEL_PREFIX}_prefill_C2.yaml" "${OUTPUT_DIR}/C2_prefill"
-generate_suite "${SUITE_DIR}/${MODEL_PREFIX}_prefill_C3.yaml" "${OUTPUT_DIR}/C3_prefill"
-generate_suite "${SUITE_DIR}/${MODEL_PREFIX}_prefill_C4_alone.yaml" "${OUTPUT_DIR}/C4_alone_prefill"
-generate_suite "${SUITE_DIR}/${MODEL_PREFIX}_prefill_C4_fused.yaml" "${OUTPUT_DIR}/C4_fused_prefill"
-generate_suite "${SUITE_DIR}/${MODEL_PREFIX}_generation_C1.yaml" "${OUTPUT_DIR}/C1_generation"
-generate_suite "${SUITE_DIR}/${MODEL_PREFIX}_generation_C2.yaml" "${OUTPUT_DIR}/C2_generation"
-generate_suite "${SUITE_DIR}/${MODEL_PREFIX}_generation_C3.yaml" "${OUTPUT_DIR}/C3_generation"
-generate_suite "${SUITE_DIR}/${MODEL_PREFIX}_generation_C4_alone.yaml" "${OUTPUT_DIR}/C4_alone_generation"
-generate_suite "${SUITE_DIR}/${MODEL_PREFIX}_generation_C4_fused.yaml" "${OUTPUT_DIR}/C4_fused_generation"
+generate_suite_by_suffix() {
+    local suffix="$1"
+    local out_dir="$2"
+    local suite
+    suite="$(find_suite "${suffix}")"
+    generate_suite "${suite}" "${out_dir}"
+}
+
+generate_suite_by_suffix "prefill_C1" "${OUTPUT_DIR}/C1_prefill"
+generate_suite_by_suffix "prefill_C2" "${OUTPUT_DIR}/C2_prefill"
+generate_suite_by_suffix "prefill_C3" "${OUTPUT_DIR}/C3_prefill"
+generate_suite_by_suffix "prefill_C4_alone" "${OUTPUT_DIR}/C4_alone_prefill"
+generate_suite_by_suffix "prefill_C4_fused" "${OUTPUT_DIR}/C4_fused_prefill"
+generate_suite_by_suffix "generation_C1" "${OUTPUT_DIR}/C1_generation"
+generate_suite_by_suffix "generation_C2" "${OUTPUT_DIR}/C2_generation"
+generate_suite_by_suffix "generation_C3" "${OUTPUT_DIR}/C3_generation"
+generate_suite_by_suffix "generation_C4_alone" "${OUTPUT_DIR}/C4_alone_generation"
+generate_suite_by_suffix "generation_C4_fused" "${OUTPUT_DIR}/C4_fused_generation"
 
 clean_suite_dir "${OUTPUT_DIR}/prefill_merged"
 "${PYTHON_BIN}" -m tools.latency_bench merge-suites \

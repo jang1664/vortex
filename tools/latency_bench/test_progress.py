@@ -31,8 +31,8 @@ class ProgressTest(unittest.TestCase):
             power_summary.write_text(
                 "label,mode,phase,samples,elapsed_s,idle_samples,idle_avg_w,"
                 "run_min_w,run_avg_w,run_max_w,delta_avg_w,delta_peak_w,energy_j,"
-                "latency_samples,latency_min_us,latency_avg_us,latency_max_us,raw_csv\n"
-                f"fpint_gemm,separate,run,5,10.0,2,1.0,3.0,4.0,5.0,3.0,4.0,40.0,0,nan,nan,nan,{power_csv}\n"
+                "power_latency,power_fpga_cycle,raw_csv\n"
+                f"fpint_gemm,separate,run,5,10.0,2,1.0,3.0,4.0,5.0,3.0,4.0,40.0,12.5,2000,{power_csv}\n"
             )
             progress_csv = tmp_path / "progress.csv"
 
@@ -81,6 +81,8 @@ class ProgressTest(unittest.TestCase):
             self.assertEqual("3.0", rows[0]["power_min_w"])
             self.assertEqual("4.0", rows[0]["power_avg_w"])
             self.assertEqual("5.0", rows[0]["power_max_w"])
+            self.assertEqual("12.5", rows[0]["power_latency"])
+            self.assertEqual("2000", rows[0]["power_fpga_cycle"])
             self.assertEqual("", rows[0]["power_parse_error"])
 
     def test_low_power_samples_records_failure_reason(self) -> None:

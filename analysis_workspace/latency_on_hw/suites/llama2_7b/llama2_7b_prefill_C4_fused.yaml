@@ -19,7 +19,7 @@ fpga_bins:
   by_app:
     rms_norm_layout_fused: naive_simd
     rope_layout_fused: naive_simd
-    softmax_layout_fused: naive_simd
+    softmax_layout_fused: improve_no_tcu_lut_fexp
     silu_layout_fused: naive_simd
     eladd_layout_fused: naive_simd
     elmul_layout_fused: naive_simd
@@ -37,8 +37,6 @@ workloads:
     variant: all_fpint_gemm_improve_fused_layout_spinquant
     implemented_only: false
     matrix:
-      # batch: {values: [1, 8, 64]}
-      # prefill_seq_len: {values: [512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072]}
-      batch: {values: [1, 2]}
-      prefill_seq_len: {values: [32, 64]}
+      batch: {values: [1, 2, 4, 8]}
+      prefill_seq_len: {values: [512, 1024, 2048, 4096]}
       qblk: 32

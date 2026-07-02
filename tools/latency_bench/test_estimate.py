@@ -98,9 +98,10 @@ class LatencyEstimateTest(unittest.TestCase):
             ]
         )
 
-        with self.assertWarnsRegex(RuntimeWarning, "extrapolation"):
+        with self.assertWarnsRegex(RuntimeWarning, "extrapolation") as warning:
             out = estimate_composed_latency(composed, LatencyEstimateOptions(min_train_rows=3))
         target = out[out["case_id"] == "m40"].iloc[0]
+        warning_message = str(warning.warning)
 
         self.assertEqual("estimated", target["compose_status"])
         self.assertGreater(float(target["latency_us"]), 0.0)
@@ -116,6 +117,12 @@ class LatencyEstimateTest(unittest.TestCase):
         self.assertEqual(3, int(target["estimate_train_rows"]))
         self.assertIn("fpga_bin_label=plot_bin", target["estimate_group"])
         self.assertEqual("raw_db.csv", target["source_raw_dbs"])
+        self.assertIn("target_case_id='m40'", warning_message)
+        self.assertIn("target_app='sgemm_tcu'", warning_message)
+        self.assertIn("target_args='-m 40 -n 8 -k 8'", warning_message)
+        self.assertIn("source_case_id='m30'", warning_message)
+        self.assertIn("source_app='sgemm_tcu'", warning_message)
+        self.assertIn("source_args='-m 30 -n 8 -k 8'", warning_message)
 
     def test_explicit_ridge_log_estimator_still_works(self) -> None:
         composed = pd.DataFrame(

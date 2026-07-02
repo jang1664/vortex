@@ -114,6 +114,7 @@ RTL_PKGS += $(AXI_COMMON_CELLS_DIR)/src/counter.sv
 RTL_PKGS += $(AXI_COMMON_CELLS_DIR)/src/delta_counter.sv
 RTL_PKGS += $(AXI_COMMON_CELLS_DIR)/src/onehot_to_bin.sv
 RTL_PKGS += $(AXI_COMMON_CELLS_DIR)/src/id_queue.sv
+RTL_PKGS += $(AXI_DIR)/src/axi_cut.sv
 RTL_PKGS += $(AXI_DIR)/src/axi_demux_simple.sv
 RTL_PKGS += $(AXI_DIR)/src/axi_demux.sv
 RTL_PKGS += $(AXI_DIR)/src/axi_id_prepend.sv

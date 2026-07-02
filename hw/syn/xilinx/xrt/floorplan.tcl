@@ -123,12 +123,12 @@ proc vortex_dma_channel_cells {channels} {
 # spread channel groups across SLR0 clock regions so channel 4 does not fight
 # neighboring channels in the same route window.
 # ---------------------------------------------------------------
-set dma_ch0_1 [vortex_dma_channel_cells {0 1}]
-set dma_ch2_3 [vortex_dma_channel_cells {2 3}]
-set dma_ch4_5 [vortex_dma_channel_cells {4 5}]
-set dma_ch6_7 [vortex_dma_channel_cells {6 7}]
+# set dma_ch0_1 [vortex_dma_channel_cells {0 1}]
+# set dma_ch2_3 [vortex_dma_channel_cells {2 3}]
+# set dma_ch4_5 [vortex_dma_channel_cells {4 5}]
+# set dma_ch6_7 [vortex_dma_channel_cells {6 7}]
 
-vortex_soft_pblock pblock_dma_ch0_1 CLOCKREGION_X0Y0:CLOCKREGION_X1Y1 $dma_ch0_1
-vortex_soft_pblock pblock_dma_ch2_3 CLOCKREGION_X2Y0:CLOCKREGION_X3Y1 $dma_ch2_3
-vortex_soft_pblock pblock_dma_ch4_5 CLOCKREGION_X0Y2:CLOCKREGION_X2Y3 $dma_ch4_5
-vortex_soft_pblock pblock_dma_ch6_7 CLOCKREGION_X3Y2:CLOCKREGION_X5Y3 $dma_ch6_7
+# vortex_soft_pblock pblock_dma_ch0_1 CLOCKREGION_X0Y0:CLOCKREGION_X1Y1 $dma_ch0_1
+# vortex_soft_pblock pblock_dma_ch2_3 CLOCKREGION_X2Y0:CLOCKREGION_X3Y1 $dma_ch2_3
+# vortex_soft_pblock pblock_dma_ch4_5 CLOCKREGION_X0Y2:CLOCKREGION_X2Y3 $dma_ch4_5
+# vortex_soft_pblock pblock_dma_ch6_7 CLOCKREGION_X3Y2:CLOCKREGION_X5Y3 $dma_ch6_7

@@ -67,6 +67,19 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--no-latency", dest="measure_latency", action="store_false", help="Skip the normal latency measurement phase.")
     run.add_argument("--power", dest="measure_power", action="store_true", help="Enable separate power measurement.")
     run.add_argument("--no-power", dest="measure_power", action="store_false", help="Disable power measurement.")
+    run.set_defaults(power_measure_latency=False)
+    run.add_argument(
+        "--power-measure-latency",
+        dest="power_measure_latency",
+        action="store_true",
+        help="Record per-launch latency and FPGA cycles during the separate power measurement phase.",
+    )
+    run.add_argument(
+        "--no-power-measure-latency",
+        dest="power_measure_latency",
+        action="store_false",
+        help="Do not record latency/cycle metrics during the separate power measurement phase.",
+    )
     run.set_defaults(power_auto_duration=True)
     run.add_argument(
         "--power-auto-duration",
@@ -415,6 +428,49 @@ def build_parser() -> argparse.ArgumentParser:
     gen.add_argument("--suite", required=True, help="Base suite YAML path.")
     gen.add_argument("--out", required=True, help="Output directory for generated suites and index.yaml.")
     gen.add_argument("--overwrite", action="store_true", help="Replace existing generated suite files.")
+    gen.add_argument(
+        "--batches",
+        "--batch-list",
+        default=None,
+        help="Override workload/case matrix batch values for both prefill and generation, e.g. 1,2,4,8.",
+    )
+    gen.add_argument(
+        "--prefill-batches",
+        "--prefill-batch-list",
+        default=None,
+        help="Override prefill workload/case matrix batch values, e.g. 1,2,4.",
+    )
+    gen.add_argument(
+        "--generation-batches",
+        "--generation-batch-list",
+        "--gen-batches",
+        "--gen-batch-list",
+        default=None,
+        help="Override generation workload/case matrix batch values, e.g. 1,2,4.",
+    )
+    gen.add_argument(
+        "--seq-lens",
+        "--seq-len-list",
+        default=None,
+        help=(
+            "Override existing workload/case matrix sequence-length values for both prefill and generation "
+            "prefill_seq_len, gen_kv_len, seq_len, or seq keys, e.g. 512,1024."
+        ),
+    )
+    gen.add_argument(
+        "--prefill-seq-lens",
+        "--prefill-seq-len-list",
+        default=None,
+        help="Override prefill matrix sequence-length values for existing prefill_seq_len, seq_len, or seq keys.",
+    )
+    gen.add_argument(
+        "--generation-seq-lens",
+        "--generation-seq-len-list",
+        "--gen-seq-lens",
+        "--gen-seq-len-list",
+        default=None,
+        help="Override generation matrix sequence-length values for existing gen_kv_len, seq_len, or seq keys.",
+    )
 
     merge = sub.add_parser(
         "merge-suites",
@@ -483,6 +539,26 @@ def parse_value_order_specs(specs: list[str]) -> dict[str, tuple[str, ...]]:
     return orders
 
 
+def parse_positive_int_csv(raw: str | None, option_name: str) -> tuple[int, ...]:
+    if raw is None or not str(raw).strip():
+        return ()
+    values: list[int] = []
+    for token in str(raw).split(","):
+        token = token.strip()
+        if not token:
+            continue
+        try:
+            value = int(token)
+        except ValueError as exc:
+            raise ValueError(f"{option_name} must be a comma-separated list of positive integers") from exc
+        if value <= 0:
+            raise ValueError(f"{option_name} values must be positive: {value}")
+        values.append(value)
+    if not values:
+        raise ValueError(f"{option_name} must include at least one value")
+    return tuple(values)
+
+
 def run_cmd(args: argparse.Namespace) -> int:
     repo_root = find_repo_root()
     suite = load_suite(
@@ -530,6 +606,7 @@ def run_cmd(args: argparse.Namespace) -> int:
         program_fpga=not args.no_program_fpga,
         measure_latency=args.measure_latency,
         measure_power=args.measure_power,
+        power_measure_latency=args.power_measure_latency,
         power_auto_duration=args.power_auto_duration,
         power_min_run_sec=args.power_min_run_sec,
         power_max_run_sec=args.power_max_run_sec,
@@ -642,10 +719,28 @@ def main(argv: list[str] | None = None) -> int:
             print(f"wrote {summary_csv}")
         return 0
     if args.cmd == "generate-suites":
+        try:
+            batch_values = parse_positive_int_csv(args.batches, "--batches")
+            seq_len_values = parse_positive_int_csv(args.seq_lens, "--seq-lens")
+            prefill_batch_values = parse_positive_int_csv(args.prefill_batches, "--prefill-batches")
+            generation_batch_values = parse_positive_int_csv(args.generation_batches, "--generation-batches")
+            prefill_seq_len_values = parse_positive_int_csv(args.prefill_seq_lens, "--prefill-seq-lens")
+            generation_seq_len_values = parse_positive_int_csv(
+                args.generation_seq_lens,
+                "--generation-seq-lens",
+            )
+        except ValueError as exc:
+            parser.error(str(exc))
         index = generate_suites(GenerateSuitesOptions(
             suite=Path(args.suite),
             out_dir=Path(args.out),
             overwrite=args.overwrite,
+            batch_values=batch_values,
+            seq_len_values=seq_len_values,
+            prefill_batch_values=prefill_batch_values,
+            generation_batch_values=generation_batch_values,
+            prefill_seq_len_values=prefill_seq_len_values,
+            generation_seq_len_values=generation_seq_len_values,
         ))
         print(f"wrote {Path(args.out).resolve() / 'index.yaml'}")
         print(f"generated {len(index['generated'])} suites")
