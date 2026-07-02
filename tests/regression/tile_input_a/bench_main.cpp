@@ -36,7 +36,7 @@ static void cleanup() {
 
 static void show_usage(const char* prog) {
   printf("Usage: %s [--warmup=N] [--iterations=N] [--csv] "
-         "[--output=PATH] [--output-append] [-m M] [-k K]\n", prog);
+         "[--output=PATH] [--output-append] [--power-measure-latency[=on|off]] [-m M] [-k K]\n", prog);
 }
 
 static bool is_pow2(uint32_t v) {
@@ -164,7 +164,7 @@ int main(int argc, char** argv) {
   stats.report("tile_input_a", bench);
 
   if (!vx_bench::run_power_measurement(
-          "tile_input_a", bench, device, kernel_bin, args_buf)) {
+          "tile_input_a", bench, device, kernel_bin, args_buf, bench.power_measure_latency)) {
     cleanup();
     return -1;
   }

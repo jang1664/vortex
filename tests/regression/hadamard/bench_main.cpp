@@ -64,7 +64,7 @@ static void initialize_random(std::vector<data_t>& vec) {
 
 static void print_usage(const char* prog) {
   printf("Usage: %s [--warmup=N] [--iterations=N] [--csv] "
-         "[--output=PATH] [--output-append] "
+         "[--output=PATH] [--output-append] [--power-measure-latency[=on|off]] "
          "[-rows N] [-dim D] [-seed S] [-k kernel.vxbin]\n",
          prog);
 }
@@ -183,7 +183,7 @@ int main(int argc, char *argv[]) {
   stats.report("hadamard", bench);
 
   if (!vx_bench::run_power_measurement(
-          "hadamard", bench, device, krnl_buffer, args_buffer)) {
+          "hadamard", bench, device, krnl_buffer, args_buffer, bench.power_measure_latency)) {
     cleanup();
     return -1;
   }

@@ -76,12 +76,12 @@ int main(int argc, char *argv[]) {
       case 'k': kernel_file = optarg; break;
       case 'h':
         printf("Usage: %s [--warmup=N] [--iterations=N] [--csv] "
-               "[--output=PATH] [--output-append] [-n SIZE] [-k FILE]\n",
+               "[--output=PATH] [--output-append] [--power-measure-latency[=on|off]] [-n SIZE] [-k FILE]\n",
                argv[0]);
         return 0;
       default:
         printf("Usage: %s [--warmup=N] [--iterations=N] [--csv] "
-               "[--output=PATH] [--output-append] [-n SIZE] [-k FILE]\n",
+               "[--output=PATH] [--output-append] [--power-measure-latency[=on|off]] [-n SIZE] [-k FILE]\n",
                argv[0]);
         return -1;
     }
@@ -137,7 +137,7 @@ int main(int argc, char *argv[]) {
   stats.report("dropout", bench);
 
   if (!vx_bench::run_power_measurement(
-          "dropout", bench, device, krnl_buffer, args_buffer)) {
+          "dropout", bench, device, krnl_buffer, args_buffer, bench.power_measure_latency)) {
     cleanup();
     return -1;
   }

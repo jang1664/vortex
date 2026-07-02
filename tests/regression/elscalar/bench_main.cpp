@@ -78,7 +78,7 @@ int main(int argc, char *argv[]) {
       scalar = atof(argv[++i]);
     } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
       printf("Usage: %s [--warmup=N] [--iterations=N] [--csv] "
-             "[--output=PATH] [--output-append] "
+             "[--output=PATH] [--output-append] [--power-measure-latency[=on|off]] "
              "[-n SIZE] [-op pow|mul|add] [-s SCALAR]\n", argv[0]);
       return 0;
     }
@@ -149,7 +149,7 @@ int main(int argc, char *argv[]) {
   stats.report(label, bench);
 
   if (!vx_bench::run_power_measurement(
-          label, bench, device, krnl_buffer, args_buffer)) {
+          label, bench, device, krnl_buffer, args_buffer, bench.power_measure_latency)) {
     cleanup();
     return -1;
   }

@@ -54,7 +54,7 @@ int main(int argc, char *argv[]) {
     else if (strcmp(argv[i], "-t") == 0) WTRANS = atoi(argv[++i]);
     else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
       printf("Usage: %s [--warmup=N] [--iterations=N] [--csv] "
-             "[--output=PATH] [--output-append] "
+             "[--output=PATH] [--output-append] [--power-measure-latency[=on|off]] "
              "[-k K] [-n N] [-q QBLK] [-d QDIR] [-t WTRANS]\n", argv[0]);
       return 0;
     }
@@ -128,7 +128,7 @@ int main(int argc, char *argv[]) {
   stats.report("kv_cache_dequant_w4a16", bench);
 
   if (!vx_bench::run_power_measurement(
-          "kv_cache_dequant_w4a16", bench, device, krnl_buffer, args_buffer)) {
+          "kv_cache_dequant_w4a16", bench, device, krnl_buffer, args_buffer, bench.power_measure_latency)) {
     cleanup();
     return -1;
   }

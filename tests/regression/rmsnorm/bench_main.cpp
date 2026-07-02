@@ -65,7 +65,7 @@ int main(int argc, char *argv[]) {
     else if (strcmp(argv[i], "-eps") == 0)    eps        = atof(argv[++i]);
     else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
       printf("Usage: %s [--warmup=N] [--iterations=N] [--csv] "
-             "[--output=PATH] [--output-append] "
+             "[--output=PATH] [--output-append] [--power-measure-latency[=on|off]] "
              "[-batch N] [-seq S] [-hidden H] [-eps E]\n", argv[0]);
       return 0;
     }
@@ -140,7 +140,7 @@ int main(int argc, char *argv[]) {
   stats.report("rmsnorm", bench);
 
   if (!vx_bench::run_power_measurement(
-          "rmsnorm", bench, device, krnl_buffer, args_buffer)) {
+          "rmsnorm", bench, device, krnl_buffer, args_buffer, bench.power_measure_latency)) {
     cleanup();
     return -1;
   }

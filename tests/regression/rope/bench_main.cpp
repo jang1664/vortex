@@ -87,7 +87,7 @@ int main(int argc, char *argv[]) {
     else if (strcmp(argv[i], "-offset") == 0) pos_offset  = atoi(argv[++i]);
     else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
       printf("Usage: %s [--warmup=N] [--iterations=N] [--csv] "
-             "[--output=PATH] [--output-append] "
+             "[--output=PATH] [--output-append] [--power-measure-latency[=on|off]] "
              "[-batch N] [-seq S] [-heads H] [-headdim D] [-maxseq M] [-offset O]\n", argv[0]);
       return 0;
     }
@@ -173,7 +173,7 @@ int main(int argc, char *argv[]) {
   stats.report("rope", bench);
 
   if (!vx_bench::run_power_measurement(
-          "rope", bench, device, krnl_buffer, args_buffer)) {
+          "rope", bench, device, krnl_buffer, args_buffer, bench.power_measure_latency)) {
     cleanup();
     return -1;
   }

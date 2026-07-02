@@ -113,7 +113,8 @@ int main(int argc, char *argv[]) {
     }
     else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
       printf("Usage: %s [--warmup=N] [--iterations=N] [--csv] "
-             "[--output=PATH] [--output-append] [--variant=row|layout] "
+             "[--output=PATH] [--output-append] [--power-measure-latency[=on|off]] "
+             "[--variant=row|layout] "
              "[-m M] [-k K]\n", argv[0]);
       return 0;
     }
@@ -210,7 +211,7 @@ int main(int argc, char *argv[]) {
   stats.report(variant_label(variant), bench);
 
   if (!vx_bench::run_power_measurement(
-          variant_label(variant), bench, device, krnl_buffer, args_buffer)) {
+          variant_label(variant), bench, device, krnl_buffer, args_buffer, bench.power_measure_latency)) {
     cleanup();
     return -1;
   }

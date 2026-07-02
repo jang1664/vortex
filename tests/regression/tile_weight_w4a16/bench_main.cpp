@@ -39,7 +39,7 @@ static void cleanup() {
 
 static void show_usage(const char* prog) {
   printf("Usage: %s [--warmup=N] [--iterations=N] [--csv] "
-         "[--output=PATH] [--output-append] [-k K] [-n N] [-t WTRANS] "
+         "[--output=PATH] [--output-append] [--power-measure-latency[=on|off]] [-k K] [-n N] [-t WTRANS] "
          "[--source-transposed]\n", prog);
 }
 
@@ -182,7 +182,7 @@ int main(int argc, char** argv) {
   stats.report("tile_weight_w4a16", bench);
 
   if (!vx_bench::run_power_measurement(
-          "tile_weight_w4a16", bench, device, kernel_bin, args_buf)) {
+          "tile_weight_w4a16", bench, device, kernel_bin, args_buf, bench.power_measure_latency)) {
     cleanup();
     return -1;
   }

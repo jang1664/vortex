@@ -54,7 +54,7 @@ int main(int argc, char *argv[]) {
     if (strcmp(argv[i], "-n") == 0) size = atoi(argv[++i]);
     else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
       printf("Usage: %s [--warmup=N] [--iterations=N] [--csv] "
-             "[--output=PATH] [--output-append] [-n SIZE]\n", argv[0]);
+             "[--output=PATH] [--output-append] [--power-measure-latency[=on|off]] [-n SIZE]\n", argv[0]);
       return 0;
     }
   }
@@ -123,7 +123,7 @@ int main(int argc, char *argv[]) {
   stats.report("elsub", bench);
 
   if (!vx_bench::run_power_measurement(
-          "elsub", bench, device, krnl_buffer, args_buffer)) {
+          "elsub", bench, device, krnl_buffer, args_buffer, bench.power_measure_latency)) {
     cleanup();
     return -1;
   }

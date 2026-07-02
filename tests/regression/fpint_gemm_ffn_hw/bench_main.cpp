@@ -673,7 +673,8 @@ int main(int argc, char *argv[]) {
           "fpint_gemm_ffn_hw", bench, device,
           [&](const char* phase, int iter) -> bool {
             return run_kernel_checked(phase, iter);
-          })) {
+          },
+          bench.power_measure_latency)) {
     cleanup();
     return -1;
   }

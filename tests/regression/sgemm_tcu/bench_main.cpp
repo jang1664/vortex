@@ -92,12 +92,12 @@ int main(int argc, char *argv[]) {
       case 'k': xk = atoi(optarg); break;
       case 'h':
         printf("Usage: %s [--warmup=N] [--iterations=N] [--csv] "
-               "[--output=PATH] [--output-append] "
+               "[--output=PATH] [--output-append] [--power-measure-latency[=on|off]] "
                "[-m M] [-n N] [-k K]\n", argv[0]);
         return 0;
       default:
         printf("Usage: %s [--warmup=N] [--iterations=N] [--csv] "
-               "[--output=PATH] [--output-append] "
+               "[--output=PATH] [--output-append] [--power-measure-latency[=on|off]] "
                "[-m M] [-n N] [-k K]\n", argv[0]);
         return -1;
     }
@@ -192,7 +192,7 @@ int main(int argc, char *argv[]) {
   stats.report("sgemm_tcu", bench);
 
   if (!vx_bench::run_power_measurement(
-          "sgemm_tcu", bench, device, krnl_buffer, args_buffer)) {
+          "sgemm_tcu", bench, device, krnl_buffer, args_buffer, bench.power_measure_latency)) {
     cleanup();
     return -1;
   }

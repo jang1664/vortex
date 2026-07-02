@@ -138,7 +138,7 @@ int main(int argc, char *argv[]) {
     else if (strncmp(argv[i], "--layout-to=", 12) == 0) layout_to = parse_layout_to(argv[i] + 12);
     else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
       printf("Usage: %s [--warmup=N] [--iterations=N] [--csv] [--output=PATH] "
-             "[--output-append] [-batch B] [-seq S] [-heads H] [-headdim D] "
+             "[--output-append] [--power-measure-latency[=on|off]] [-batch B] [-seq S] [-heads H] [-headdim D] "
              "[-maxseq N] [-offset O] [--layout-to gemm_a_tiled|gemm_w_tiled|row_major]\n", argv[0]);
       return 0;
     }
@@ -241,7 +241,7 @@ int main(int argc, char *argv[]) {
   if (!vx_bench::run_power_measurement(
           layout_to == ROPE_LAYOUT_TO_GEMM_A ? "rope_layout_fused_a" :
                layout_to == ROPE_LAYOUT_TO_GEMM_W ? "rope_layout_fused_w" :
-               "rope_layout_fused_row", bench, device, krnl_buffer, args_buffer)) {
+               "rope_layout_fused_row", bench, device, krnl_buffer, args_buffer, bench.power_measure_latency)) {
     cleanup();
     return -1;
   }

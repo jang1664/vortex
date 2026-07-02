@@ -55,7 +55,7 @@ static T generate_value() {
 
 static void print_usage(const char* prog) {
   printf("Usage: %s [--warmup=N] [--iterations=N] [--csv] "
-         "[--output=PATH] [--output-append] [-n SIZE] [-seed S] [-k kernel.vxbin]\n",
+         "[--output=PATH] [--output-append] [--power-measure-latency[=on|off]] [-n SIZE] [-seed S] [-k kernel.vxbin]\n",
          prog);
 }
 
@@ -142,7 +142,7 @@ int main(int argc, char *argv[]) {
   stats.report("vecadd", bench);
 
   if (!vx_bench::run_power_measurement(
-          "vecadd", bench, device, krnl_buffer, args_buffer)) {
+          "vecadd", bench, device, krnl_buffer, args_buffer, bench.power_measure_latency)) {
     cleanup();
     return -1;
   }

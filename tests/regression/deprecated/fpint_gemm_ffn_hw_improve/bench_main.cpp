@@ -423,12 +423,12 @@ int main(int argc, char *argv[]) {
     case 'd': QDIR = atoi(optarg); break;
     case 'h':
       printf("Usage: %s [--warmup=N] [--iterations=N] [--csv] "
-             "[--output=PATH] [--output-append] "
+             "[--output=PATH] [--output-append] [--power-measure-latency[=on|off]] "
              "[-m M] [-n N] [-k K] [-q QBLK] [-t WTRANS] [-d QDIR]\n", argv[0]);
       return 0;
     default:
       printf("Usage: %s [--warmup=N] [--iterations=N] [--csv] "
-             "[--output=PATH] [--output-append] "
+             "[--output=PATH] [--output-append] [--power-measure-latency[=on|off]] "
              "[-m M] [-n N] [-k K] [-q QBLK] [-t WTRANS] [-d QDIR]\n", argv[0]);
       return -1;
     }
@@ -565,7 +565,7 @@ int main(int argc, char *argv[]) {
   stats.report("fpint_gemm_ffn_hw_improve", bench);
 
   if (!vx_bench::run_power_measurement(
-          "fpint_gemm_ffn_hw_improve", bench, device, krnl_buffer, args_buffer)) {
+          "fpint_gemm_ffn_hw_improve", bench, device, krnl_buffer, args_buffer, bench.power_measure_latency)) {
     cleanup();
     return -1;
   }

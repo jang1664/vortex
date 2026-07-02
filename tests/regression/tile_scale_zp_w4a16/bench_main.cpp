@@ -44,7 +44,7 @@ static void cleanup() {
 
 static void show_usage(const char* prog) {
   printf("Usage: %s [--warmup=N] [--iterations=N] [--csv] "
-         "[--output=PATH] [--output-append] [-k K] [-n N] [-q QBLK] "
+         "[--output=PATH] [--output-append] [--power-measure-latency[=on|off]] [-k K] [-n N] [-q QBLK] "
          "[-d QDIR] [--mt MT] [--kt KT] [--nt NT] "
          "[--gemm-qdir QDIR] [--source-transposed]\n", prog);
 }
@@ -289,7 +289,7 @@ int main(int argc, char** argv) {
   stats.report("tile_scale_zp_w4a16", bench);
 
   if (!vx_bench::run_power_measurement(
-          "tile_scale_zp_w4a16", bench, device, kernel_bin, args_buf)) {
+          "tile_scale_zp_w4a16", bench, device, kernel_bin, args_buf, bench.power_measure_latency)) {
     cleanup();
     return -1;
   }

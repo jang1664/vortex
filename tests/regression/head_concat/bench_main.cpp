@@ -58,7 +58,7 @@ int main(int argc, char *argv[]) {
     else if (strcmp(argv[i], "-headdim") == 0) headdim = atoi(argv[++i]);
     else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
       printf("Usage: %s [--warmup=N] [--iterations=N] [--csv] "
-             "[--output=PATH] [--output-append] "
+             "[--output=PATH] [--output-append] [--power-measure-latency[=on|off]] "
              "[-batch B] [-seq S] [-heads H] [-headdim D]\n", argv[0]);
       return 0;
     }
@@ -125,7 +125,7 @@ int main(int argc, char *argv[]) {
   stats.report("head_concat", bench);
 
   if (!vx_bench::run_power_measurement(
-          "head_concat", bench, device, krnl_buffer, args_buffer)) {
+          "head_concat", bench, device, krnl_buffer, args_buffer, bench.power_measure_latency)) {
     cleanup();
     return -1;
   }
