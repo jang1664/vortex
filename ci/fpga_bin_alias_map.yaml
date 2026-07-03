@@ -50,3 +50,8 @@ aliases:
   improve_tcol32:
     path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_noDcache_L2cache_8a0e684a24/bin
     configs: configs/improve_tcol32.sh
+
+  improve_th16_tcol32:
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_noDcache_L2cache_d66a546a2d/bin
+    configs: configs/improve_th16_tcol32.sh
+

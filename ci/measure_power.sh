@@ -67,7 +67,15 @@ default_hwmon_for_fpga_id() {
 }
 
 FPGA_ID="$(resolve_fpga_id "$FPGA_ID")"
-HWMON_DIR="$(default_hwmon_for_fpga_id "$FPGA_ID")"
+FPGA_BDF="${XRT_DEVICE_BDF:-}"
+if [[ -z "$FPGA_BDF" ]]; then
+  FPGA_BDF="$(resolve_xrt_user_bdf "$FPGA_ID" 2>/dev/null || true)"
+fi
+if [[ -n "$FPGA_BDF" ]] && HWMON_DIR="$(hwmon_from_bdf "$FPGA_BDF")"; then
+  :
+else
+  HWMON_DIR="$(default_hwmon_for_fpga_id "$FPGA_ID")"
+fi
 
 find_sensor_by_label() {
   local prefix="$1"       # in, curr, power, temp, ...
@@ -98,7 +106,10 @@ VCC085_I="$(find_sensor_by_label curr "VCC 0V85 Current")"
 
 echo "Using sensors:" >&2
 echo "  FPGA index     : ${FPGA_ID}" >&2
-if FPGA_BDF="$(fpga_id_to_bdf "$FPGA_ID")"; then
+if [[ -z "$FPGA_BDF" ]]; then
+  FPGA_BDF="$(fpga_id_to_bdf "$FPGA_ID" 2>/dev/null || true)"
+fi
+if [[ -n "$FPGA_BDF" ]]; then
   echo "  FPGA BDF       : ${FPGA_BDF}" >&2
 fi
 echo "  HWMON dir      : ${HWMON_DIR}" >&2

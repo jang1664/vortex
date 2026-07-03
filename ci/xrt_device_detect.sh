@@ -28,15 +28,23 @@ bdf_to_fpga_id() {
 }
 
 resolve_xrt_smi() {
-  local xrt_smi="${XRT_SMI:-/opt/xilinx/xrt/bin/xrt-smi}"
-  if [[ "$xrt_smi" == */* ]]; then
-    [[ -x "$xrt_smi" ]] && echo "$xrt_smi"
+  local xrt_smi="${XRT_SMI:-}"
+  if [[ -n "$xrt_smi" ]]; then
+    if [[ "$xrt_smi" == */* ]]; then
+      [[ -x "$xrt_smi" ]] && echo "$xrt_smi"
+      return
+    fi
+    command -v "$xrt_smi" || true
     return
   fi
-  command -v "$xrt_smi" || true
+  if command -v xrt-smi >/dev/null 2>&1; then
+    command -v xrt-smi
+    return
+  fi
+  [[ -x /opt/xilinx/xrt/bin/xrt-smi ]] && echo /opt/xilinx/xrt/bin/xrt-smi
 }
 
-detect_accessible_xrt_index() {
+detect_accessible_xrt_indexes() {
   local smi="$1"
   local probe_max found=()
   local idx
@@ -45,7 +53,7 @@ detect_accessible_xrt_index() {
   probe_max="$(_xrt_device_probe_max)"
 
   for ((idx = 0; idx < probe_max; ++idx)); do
-    if "$smi" --batch --force examine --device "$idx" --report platform >/dev/null 2>&1; then
+    if probe_xrt_index "$smi" "$idx"; then
       found+=("$idx")
     fi
   done
@@ -53,8 +61,55 @@ detect_accessible_xrt_index() {
   if ((${#found[@]} == 0)); then
     return 1
   fi
+  printf '%s\n' "${found[@]}"
+}
+
+detect_accessible_xrt_index() {
+  local smi="$1"
+  local found=()
+
+  mapfile -t found < <(detect_accessible_xrt_indexes "$smi")
+  if ((${#found[@]} == 0)); then
+    return 1
+  fi
   if ((${#found[@]} > 1)); then
     echo "WARNING: multiple accessible XRT devices: ${found[*]}; using ${found[0]}" >&2
+  fi
+  echo "${found[0]}"
+}
+
+probe_xrt_index() {
+  local smi="$1"
+  local index="$2"
+
+  [[ -n "$smi" ]] || return 1
+  [[ -n "$index" ]] || return 1
+
+  "$smi" --batch --force examine --device "$index" --report platform >/dev/null 2>&1 \
+    || "$smi" examine --device "$index" --report platform >/dev/null 2>&1
+}
+
+detect_single_accessible_xrt_index() {
+  local smi="$1"
+  local found=()
+  local bdf detected
+
+  mapfile -t found < <(detect_accessible_xrt_indexes "$smi")
+  if ((${#found[@]} == 0)); then
+    if bdf="$(detect_single_available_xrt_bdf "$smi")"; then
+      if detected="$(bdf_to_fpga_id "$bdf")"; then
+        echo "$detected"
+        return 0
+      fi
+      echo "ERROR: single XRT BDF ${bdf} does not match a known FPGA index" >&2
+      return 1
+    fi
+    echo "ERROR: no accessible XRT devices found" >&2
+    return 1
+  fi
+  if ((${#found[@]} > 1)); then
+    echo "ERROR: multiple accessible XRT devices found: ${found[*]}" >&2
+    return 1
   fi
   echo "${found[0]}"
 }
@@ -70,6 +125,19 @@ _detect_xrt_bdf_from_output() {
   return 1
 }
 
+_detect_xrt_bdfs_from_output() {
+  local line bdf seen=" "
+  while IFS= read -r line; do
+    if [[ "$line" =~ \[([0-9A-Fa-f]{4}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}\.1)\] ]]; then
+      bdf="${BASH_REMATCH[1]}"
+      if [[ "$seen" != *" ${bdf} "* ]]; then
+        echo "$bdf"
+        seen+="${bdf} "
+      fi
+    fi
+  done
+}
+
 detect_xrt_bdf_for_index() {
   local smi="$1"
   local index="$2"
@@ -82,14 +150,42 @@ detect_xrt_bdf_for_index() {
   _detect_xrt_bdf_from_output <<< "$output"
 }
 
-detect_available_xrt_bdf() {
+detect_available_xrt_bdfs() {
   local smi="$1"
   local output
 
   [[ -n "$smi" ]] || return 1
 
   output="$("$smi" examine --report platform 2>&1 || true)"
-  _detect_xrt_bdf_from_output <<< "$output"
+  _detect_xrt_bdfs_from_output <<< "$output"
+}
+
+detect_single_available_xrt_bdf() {
+  local smi="$1"
+  local found=()
+
+  mapfile -t found < <(detect_available_xrt_bdfs "$smi")
+  if ((${#found[@]} == 0)); then
+    return 1
+  fi
+  if ((${#found[@]} > 1)); then
+    echo "ERROR: multiple XRT device BDFs found: ${found[*]}" >&2
+    return 1
+  fi
+  echo "${found[0]}"
+}
+
+detect_available_xrt_bdf() {
+  local smi="$1"
+  local found=()
+
+  [[ -n "$smi" ]] || return 1
+
+  mapfile -t found < <(detect_available_xrt_bdfs "$smi")
+  if ((${#found[@]} == 0)); then
+    return 1
+  fi
+  echo "${found[0]}"
 }
 
 should_auto_detect_fpga_id() {

@@ -1445,6 +1445,12 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
 `ifdef DBG_TRACE_GEMM_CTRL
     // FSM state names for debug
 `ifndef SYNTHESIS
+`define VX_GEMM_UNIT_STRING_HELPERS
+`elsif SIMULATION
+`define VX_GEMM_UNIT_STRING_HELPERS
+`endif
+
+`ifdef VX_GEMM_UNIT_STRING_HELPERS
     function automatic string state_to_str(input gemm_state_t s);
         case (s)
             IDLE:    return "IDLE";
@@ -1452,6 +1458,10 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
             default: return "UNKNOWN";
         endcase
     endfunction
+`endif // VX_GEMM_UNIT_STRING_HELPERS
+
+`ifdef VX_GEMM_UNIT_STRING_HELPERS
+`undef VX_GEMM_UNIT_STRING_HELPERS
 `endif
 
     always @(posedge clk) begin

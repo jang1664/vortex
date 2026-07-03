@@ -94,7 +94,7 @@ class RunOptions:
     fpga_bin_dir: Path
     out_dir: Path
     platform: str
-    xrt_device_index: int
+    xrt_device_index: int | None = None
     xrt_device_bdf: str = ""
     fpga_bin_label: str = ""
     configs: Path | None = None
@@ -310,6 +310,25 @@ def raw_db_update_mode(options: RunOptions) -> str:
     return "replace-run"
 
 
+def has_slurm_allocation(env: dict[str, str] | os._Environ[str] | None = None) -> bool:
+    source = os.environ if env is None else env
+    return bool(source.get("SLURM_JOB_ID") or source.get("SLURM_STEP_ID"))
+
+
+def slurm_run_mode(options: RunOptions, env: dict[str, str] | os._Environ[str] | None = None) -> str:
+    if options.srun and has_slurm_allocation(env):
+        return "inherited_slurm"
+    if options.srun:
+        return "managed_srun"
+    return "direct_no_srun_compat"
+
+
+def run_script_command(script: Path, options: RunOptions, env: dict[str, str] | os._Environ[str] | None = None) -> list[str]:
+    if slurm_run_mode(options, env) == "managed_srun":
+        return ["srun", *options.srun_args, "bash", str(script)]
+    return ["bash", str(script)]
+
+
 def seed_raw_db_cases(
     suite: BenchSuite,
     units: list[ExecutionUnit],
@@ -448,10 +467,13 @@ def write_run_script(
     status_csv = options.out_dir / "run_status.csv"
     progress_csv = options.out_dir / "progress.csv"
     attempt_status_csv = options.out_dir / "attempt_status.csv"
+    identity_env = options.out_dir / "fpga_identity.env"
+    identity_json = options.out_dir / "fpga_identity.json"
     append_raw_csv = options.append_raw_csv.resolve() if options.append_raw_csv else None
     program_log = options.out_dir / "logs" / "program_fpga.log"
     retry_enabled = 1 if options.retry else 0
     program_fpga = 1 if options.program_fpga and units else 0
+    slurm_inherited = has_slurm_allocation()
     # The raw DB is seeded before this script starts. Normal runs replace only
     # their seed rows; retry/resume paths replace stale matching measurements.
     raw_db_mode = raw_db_update_mode(options)
@@ -459,6 +481,12 @@ def write_run_script(
     retry_max_rounds = options.retry_max_rounds if options.retry else 1
     retry_reset_cmd = tuple(shlex.split(options.retry_reset_cmd))
     retry_reset_add_device = 1 if retry_reset_cmd == tuple(shlex.split(DEFAULT_RETRY_RESET_CMD)) else 0
+    capture_fpga_identity = 1 if units and (
+        options.srun
+        or slurm_inherited
+        or options.program_fpga
+        or (options.retry and bool(retry_reset_add_device))
+    ) else 0
     status_columns = (
         "exec_key",
         "app",
@@ -499,8 +527,11 @@ def write_run_script(
         f"export TARGET={_q('hw')}",
         f"export PLATFORM={_q(options.platform)}",
         f"export DRIVER={_q('xrt')}",
-        f"export XRT_DEVICE_INDEX={_q(str(options.xrt_device_index))}",
-        f"export XRT_DEVICE_BDF={_q(options.xrt_device_bdf)}" if options.xrt_device_bdf else "export XRT_DEVICE_BDF=\"${XRT_DEVICE_BDF:-}\"",
+        f"LATENCY_BENCH_REQUESTED_XRT_DEVICE_INDEX={_q('' if options.xrt_device_index is None else str(options.xrt_device_index))}",
+        f"LATENCY_BENCH_REQUESTED_XRT_DEVICE_BDF={_q(options.xrt_device_bdf)}",
+        f"LATENCY_BENCH_CAPTURE_FPGA_IDENTITY={capture_fpga_identity}",
+        f"LATENCY_BENCH_FPGA_IDENTITY_ENV={_q(identity_env)}",
+        f"LATENCY_BENCH_FPGA_IDENTITY_JSON={_q(identity_json)}",
         f"export PYTHONPATH={_q(repo_root())}:\"${{PYTHONPATH:-}}\"",
         f"export LATENCY_BENCH_RUN_ID={_q(options.run_id or default_run_id())}",
         f"source {_q(repo_root() / 'ci' / 'xrt_device_detect.sh')}",
@@ -511,10 +542,106 @@ def write_run_script(
         f"LATENCY_BENCH_RETRY_TIMEOUT_GROWTH={_q(str(options.retry_timeout_growth))}",
         f"LATENCY_BENCH_CURRENT_TIMEOUT_S={retry_initial_timeout_s}",
         f"LATENCY_BENCH_RETRY_RESET_WAIT={_q(options.retry_reset_wait)}",
-        f"LATENCY_BENCH_RESET_SRUN_ARGS={_bash_array(tuple(options.srun_args))}",
         f"LATENCY_BENCH_RESET_CMD={_bash_array(retry_reset_cmd)}",
         f"LATENCY_BENCH_RESET_ADD_DEVICE={retry_reset_add_device}",
         "LATENCY_BENCH_LAST_RESET_RC=",
+        "LATENCY_BENCH_XRT_DEVICE_INDEX=",
+        "LATENCY_BENCH_XRT_DEVICE_BDF=",
+        "",
+        "latency_bench_capture_fpga_identity() {",
+        "  local smi index bdf host requested_index requested_bdf env_file json_file",
+        "  requested_index=\"$LATENCY_BENCH_REQUESTED_XRT_DEVICE_INDEX\"",
+        "  requested_bdf=\"$LATENCY_BENCH_REQUESTED_XRT_DEVICE_BDF\"",
+        "  env_file=\"$LATENCY_BENCH_FPGA_IDENTITY_ENV\"",
+        "  json_file=\"$LATENCY_BENCH_FPGA_IDENTITY_JSON\"",
+        "  mkdir -p \"$(dirname \"$env_file\")\" \"$(dirname \"$json_file\")\"",
+        "  smi=\"$(resolve_xrt_smi)\"",
+        "  if [[ -z \"$smi\" ]]; then",
+        "    printf '[latency-bench] xrt-smi not found; set XRT_SMI or PATH\\n' >&2",
+        "    return 1",
+        "  fi",
+        "  unset XRT_DEVICE_INDEX XRT_DEVICE_BDF",
+        "  if [[ -n \"$requested_bdf\" ]]; then",
+        "    bdf=\"$requested_bdf\"",
+        "    if [[ -n \"$requested_index\" ]]; then",
+        "      index=\"$requested_index\"",
+        "    elif ! index=\"$(bdf_to_fpga_id \"$bdf\")\"; then",
+        "      printf '[latency-bench] failed to derive XRT index for requested BDF=%s\\n' \"$bdf\" >&2",
+        "      return 1",
+        "    fi",
+        "  elif [[ -n \"$requested_index\" ]]; then",
+        "    index=\"$requested_index\"",
+        "    if ! probe_xrt_index \"$smi\" \"$index\"; then",
+        "      printf '[latency-bench] requested XRT_DEVICE_INDEX=%s could not be checked with per-index xrt-smi; using resolver fallback\\n' \"$index\" >&2",
+        "    fi",
+        "    XRT_DEVICE_INDEX=\"$index\"",
+        "    if ! bdf=\"$(resolve_xrt_user_bdf \"$index\")\"; then",
+        "      printf '[latency-bench] failed to resolve BDF for requested XRT_DEVICE_INDEX=%s\\n' \"$index\" >&2",
+        "      return 1",
+        "    fi",
+        "  else",
+        "    if ! index=\"$(detect_single_accessible_xrt_index \"$smi\")\"; then",
+        "      return 1",
+        "    fi",
+        "    XRT_DEVICE_INDEX=\"$index\"",
+        "    if ! bdf=\"$(resolve_xrt_user_bdf \"$index\")\"; then",
+        "      printf '[latency-bench] failed to resolve BDF for allocated XRT_DEVICE_INDEX=%s\\n' \"$index\" >&2",
+        "      return 1",
+        "    fi",
+        "  fi",
+        "  if [[ -z \"$index\" || -z \"$bdf\" ]]; then",
+        "    printf '[latency-bench] resolved empty FPGA identity index=%s bdf=%s\\n' \"$index\" \"$bdf\" >&2",
+        "    return 1",
+        "  fi",
+        "  export XRT_DEVICE_INDEX=\"$index\"",
+        "  export XRT_DEVICE_BDF=\"$bdf\"",
+        "  export LATENCY_BENCH_XRT_DEVICE_INDEX=\"$index\"",
+        "  export LATENCY_BENCH_XRT_DEVICE_BDF=\"$bdf\"",
+        "  export LATENCY_BENCH_XRT_SMI=\"$smi\"",
+        "  host=\"$(hostname 2>/dev/null || printf unknown)\"",
+        "  export LATENCY_BENCH_HOSTNAME=\"$host\"",
+        "  {",
+        "    printf 'XRT_DEVICE_INDEX=%s\\n' \"$XRT_DEVICE_INDEX\"",
+        "    printf 'XRT_DEVICE_BDF=%s\\n' \"$XRT_DEVICE_BDF\"",
+        "    printf 'XRT_SMI=%s\\n' \"$smi\"",
+        "    printf 'HOSTNAME=%s\\n' \"$host\"",
+        "    printf 'SLURM_JOB_ID=%s\\n' \"${SLURM_JOB_ID:-}\"",
+        "    printf 'SLURM_STEP_ID=%s\\n' \"${SLURM_STEP_ID:-}\"",
+        "  } > \"$env_file\"",
+        "  \"${PYTHON:-python3}\" - \"$json_file\" <<'PY'",
+        "import json",
+        "import os",
+        "import sys",
+        "path = sys.argv[1]",
+        "data = {",
+        "    'xrt_device_index': os.environ.get('XRT_DEVICE_INDEX', ''),",
+        "    'xrt_device_bdf': os.environ.get('XRT_DEVICE_BDF', ''),",
+        "    'xrt_smi': os.environ.get('LATENCY_BENCH_XRT_SMI', ''),",
+        "    'hostname': os.environ.get('LATENCY_BENCH_HOSTNAME', ''),",
+        "    'slurm_job_id': os.environ.get('SLURM_JOB_ID', ''),",
+        "    'slurm_step_id': os.environ.get('SLURM_STEP_ID', ''),",
+        "}",
+        "with open(path, 'w', encoding='utf-8') as fp:",
+        "    json.dump(data, fp, indent=2, sort_keys=True)",
+        "    fp.write('\\n')",
+        "PY",
+        "  printf '[latency-bench] FPGA identity: index=%s bdf=%s host=%s slurm_job=%s\\n' \"$XRT_DEVICE_INDEX\" \"$XRT_DEVICE_BDF\" \"$host\" \"${SLURM_JOB_ID:-}\"",
+        "}",
+        "",
+        "latency_bench_init_fpga_identity() {",
+        "  if [[ \"$LATENCY_BENCH_CAPTURE_FPGA_IDENTITY\" == \"1\" ]]; then",
+        "    latency_bench_capture_fpga_identity",
+        "    return",
+        "  fi",
+        "  if [[ -n \"$LATENCY_BENCH_REQUESTED_XRT_DEVICE_INDEX\" ]]; then",
+        "    export XRT_DEVICE_INDEX=\"$LATENCY_BENCH_REQUESTED_XRT_DEVICE_INDEX\"",
+        "  fi",
+        "  if [[ -n \"$LATENCY_BENCH_REQUESTED_XRT_DEVICE_BDF\" ]]; then",
+        "    export XRT_DEVICE_BDF=\"$LATENCY_BENCH_REQUESTED_XRT_DEVICE_BDF\"",
+        "  fi",
+        "  export LATENCY_BENCH_XRT_DEVICE_INDEX=\"${XRT_DEVICE_INDEX:-}\"",
+        "  export LATENCY_BENCH_XRT_DEVICE_BDF=\"${XRT_DEVICE_BDF:-}\"",
+        "}",
         "",
         "latency_bench_program_fpga() {",
         "  local log_file=\"$LATENCY_BENCH_PROGRAM_LOG\"",
@@ -531,7 +658,8 @@ def write_run_script(
         "    printf '[latency-bench] xrt-smi not found; set XRT_SMI or PATH\\n' | tee -a \"$log_file\" >&2",
         "    return 1",
         "  fi",
-        "  if ! user_bdf=\"$(resolve_xrt_user_bdf \"${XRT_DEVICE_INDEX:-auto}\")\"; then",
+        "  user_bdf=\"${LATENCY_BENCH_XRT_DEVICE_BDF:-}\"",
+        "  if [[ -z \"$user_bdf\" ]] && ! user_bdf=\"$(resolve_xrt_user_bdf \"${XRT_DEVICE_INDEX:-auto}\")\"; then",
         "    printf '[latency-bench] failed to resolve XRT user BDF\\n' | tee -a \"$log_file\" >&2",
         "    return 1",
         "  fi",
@@ -597,36 +725,26 @@ def write_run_script(
         "  set +e",
         "  reset_cmd=(\"${LATENCY_BENCH_RESET_CMD[@]}\")",
         "  if [[ \"${LATENCY_BENCH_RESET_ADD_DEVICE:-0}\" == \"1\" ]]; then",
-        "    if ! reset_bdf=\"$(resolve_xrt_user_bdf \"${XRT_DEVICE_INDEX:-auto}\")\"; then",
-        "      printf '[latency-bench] timeout reset failed to resolve XRT user BDF\\n' >> \"$log_file\"",
-        "      LATENCY_BENCH_LAST_RESET_RC=1",
-        "      set -u",
-        "      return 1",
-        "    fi",
+        "    reset_bdf=\"${LATENCY_BENCH_XRT_DEVICE_BDF:-${XRT_DEVICE_BDF:-}}\"",
         "    if [[ -z \"$reset_bdf\" ]]; then",
-        "      printf '[latency-bench] timeout reset resolved empty XRT user BDF\\n' >> \"$log_file\"",
+        "      printf '[latency-bench] retry reset has no saved XRT user BDF\\n' >> \"$log_file\"",
         "      LATENCY_BENCH_LAST_RESET_RC=1",
         "      set -u",
         "      return 1",
         "    fi",
         "    reset_cmd+=(\"-d\" \"$reset_bdf\")",
         "  fi",
-        "  if [[ -n \"${SLURM_JOB_ID:-}\" ]]; then",
-        "    printf '[latency-bench] timeout reset: direct %s\\n' \"${reset_cmd[*]}\" >> \"$log_file\"",
-        "    printf 'y\\n' | timeout --kill-after=10s 60s \"${reset_cmd[@]}\" >> \"$log_file\" 2>&1",
-        "  else",
-        "    printf '[latency-bench] timeout reset: srun %s\\n' \"${reset_cmd[*]}\" >> \"$log_file\"",
-        "    printf 'y\\n' | timeout --kill-after=10s 60s srun \"${LATENCY_BENCH_RESET_SRUN_ARGS[@]}\" \"${reset_cmd[@]}\" >> \"$log_file\" 2>&1",
-        "  fi",
+        "  printf '[latency-bench] retry reset: direct %s\\n' \"${reset_cmd[*]}\" >> \"$log_file\"",
+        "  printf 'y\\n' | timeout --kill-after=10s 60s \"${reset_cmd[@]}\" >> \"$log_file\" 2>&1",
         "  reset_rc=$?",
         "  set -u",
-        "  printf '[latency-bench] timeout reset rc=%s\\n' \"$reset_rc\" >> \"$log_file\"",
+        "  printf '[latency-bench] retry reset rc=%s\\n' \"$reset_rc\" >> \"$log_file\"",
         "  if [[ \"$reset_rc\" == \"0\" ]]; then",
         "    if latency_bench_program_fpga; then",
-        "      printf '[latency-bench] timeout reset reprogram rc=0\\n' >> \"$log_file\"",
+        "      printf '[latency-bench] retry reset reprogram rc=0\\n' >> \"$log_file\"",
         "    else",
         "      reset_rc=$?",
-        "      printf '[latency-bench] timeout reset reprogram rc=%s\\n' \"$reset_rc\" >> \"$log_file\"",
+        "      printf '[latency-bench] retry reset reprogram rc=%s\\n' \"$reset_rc\" >> \"$log_file\"",
         "    fi",
         "  fi",
         "  LATENCY_BENCH_LAST_RESET_RC=\"$reset_rc\"",
@@ -646,8 +764,32 @@ def write_run_script(
         "    printf 'xrt_context_open\\n'",
         "    return 0",
         "  fi",
+        "  if [[ \"$rc\" != \"0\" && -f \"$attempt_log\" ]] && grep -q \"Could not open device\" \"$attempt_log\"; then",
+        "    printf 'xrt_device_open\\n'",
+        "    return 0",
+        "  fi",
         "  if [[ \"$rc\" != \"0\" ]]; then printf 'run\\n'; return 0; fi",
         "  printf '\\n'",
+        "}",
+        "",
+        "latency_bench_power_failure_reason() {",
+        "  local measure_power=\"$1\"",
+        "  local power_summary=\"$2\"",
+        "  local power_min_samples=\"$3\"",
+        "  if [[ \"$measure_power\" != \"1\" ]]; then printf '\\n'; return 0; fi",
+        "  \"${PYTHON:-python3}\" - \"$power_summary\" \"$power_min_samples\" <<'PY'",
+        "import sys",
+        "from tools.latency_bench.power_summary import read_power_summary",
+        "from tools.latency_bench.status import power_sample_failure_reason",
+        "summary = sys.argv[1]",
+        "power_min_samples = int(sys.argv[2])",
+        "reason = power_sample_failure_reason(",
+        "    read_power_summary(summary),",
+        "    measure_power=True,",
+        "    power_min_samples=power_min_samples,",
+        ")",
+        "print(reason)",
+        "PY",
         "}",
     ]
     if options.configs:
@@ -661,6 +803,10 @@ def write_run_script(
     if options.configs_extra:
         lines.append(f"export CONFIGS=\"${{CONFIGS:-}} {options.configs_extra}\"")
     lines.extend([
+        "if ! latency_bench_init_fpga_identity; then",
+        "  echo \"[latency-bench] FPGA identity capture failed\" >&2",
+        "  exit 1",
+        "fi",
         "if ! latency_bench_program_fpga; then",
         "  echo \"[latency-bench] FPGA programming failed; see $LATENCY_BENCH_PROGRAM_LOG\" >&2",
         "  exit 1",
@@ -709,7 +855,8 @@ def write_run_script(
     lines.extend([
         "LATENCY_BENCH_RETRY_ROUND=1",
         "while true; do",
-        "LATENCY_BENCH_TIMEOUT_FAILURES=0",
+        "LATENCY_BENCH_RETRYABLE_FAILURES=0",
+        "LATENCY_BENCH_TIMEOUT_RETRIES=0",
         "for exec_key in \"${LATENCY_BENCH_EXEC_KEYS[@]}\"; do LATENCY_BENCH_NEXT_SHOULD_RUN[\"$exec_key\"]=0; done",
         "if [[ \"$LATENCY_BENCH_RETRY_ENABLED\" == \"1\" ]]; then",
         "  echo \"[latency-bench] retry round ${LATENCY_BENCH_RETRY_ROUND}/${LATENCY_BENCH_RETRY_MAX_ROUNDS}, timeout=${LATENCY_BENCH_CURRENT_TIMEOUT_S}s\"",
@@ -823,6 +970,9 @@ def write_run_script(
             "    if [[ \"$rc\" != \"0\" && -f \"$attempt_log\" ]] && grep -q 'failed to open cu context' \"$attempt_log\" && [[ \"$attempt\" -lt \"$max_attempts\" ]]; then",
             "      delay_s=$(latency_bench_retry_delay_s \"$attempt\")",
             f"      printf '[latency-bench] xrt_context_open retry %d/%d after %ss\\n' \"$attempt\" \"$max_attempts\" \"$delay_s\" | tee -a {_q(unit.log_file)} \"$attempt_log\"",
+            f"      if latency_bench_reset_fpga {_q(unit.log_file)}; then :; else :; fi",
+            "      reset_ran=\"1\"",
+            "      reset_rc=\"$LATENCY_BENCH_LAST_RESET_RC\"",
             "      sleep \"$delay_s\"",
             "      attempt=$((attempt + 1))",
             "      continue",
@@ -835,6 +985,10 @@ def write_run_script(
             "  set -u",
             "  if [[ \"$rc\" != \"0\" ]]; then failure_phase=\"run\"; fi",
             "  failure_reason=$(latency_bench_failure_reason \"$rc\" \"$failure_phase\" \"$final_attempt_log\")",
+            f"  if [[ \"$rc\" == \"0\" && -z \"$failure_reason\" ]]; then",
+            f"    power_failure_reason=$(latency_bench_power_failure_reason {_q(_bool_csv(options.measure_power))} {_q(status_power_summary)} {_q(str(options.power_min_samples))})",
+            "    if [[ -n \"$power_failure_reason\" ]]; then failure_reason=\"$power_failure_reason\"; fi",
+            "  fi",
             "fi",
             "if [[ \"$LATENCY_BENCH_RETRY_ENABLED\" == \"1\" && \"$failure_reason\" == \"timeout\" ]]; then",
             f"  if latency_bench_reset_fpga {_q(unit.log_file)}; then :; else :; fi",
@@ -921,8 +1075,11 @@ def write_run_script(
                 ),
             ])
         lines.extend([
-            "if [[ \"$failure_reason\" == \"timeout\" ]]; then",
-            "  LATENCY_BENCH_TIMEOUT_FAILURES=$((LATENCY_BENCH_TIMEOUT_FAILURES + 1))",
+            'if [[ "$failure_reason" == "timeout" ]]; then',
+            "  LATENCY_BENCH_TIMEOUT_RETRIES=$((LATENCY_BENCH_TIMEOUT_RETRIES + 1))",
+            "fi",
+            'if [[ "$failure_reason" == "timeout" || "$failure_reason" == "power_samples_low" ]]; then',
+            "  LATENCY_BENCH_RETRYABLE_FAILURES=$((LATENCY_BENCH_RETRYABLE_FAILURES + 1))",
             f"  LATENCY_BENCH_NEXT_SHOULD_RUN[{_q(unit.exec_key)}]=1",
             "fi",
             "fi",
@@ -930,13 +1087,15 @@ def write_run_script(
     lines.extend([
         "",
         "if [[ \"$LATENCY_BENCH_RETRY_ENABLED\" != \"1\" ]]; then break; fi",
-        "if [[ \"$LATENCY_BENCH_TIMEOUT_FAILURES\" == \"0\" ]]; then break; fi",
+        "if [[ \"$LATENCY_BENCH_RETRYABLE_FAILURES\" == \"0\" ]]; then break; fi",
         "if [[ \"$LATENCY_BENCH_RETRY_ROUND\" -ge \"$LATENCY_BENCH_RETRY_MAX_ROUNDS\" ]]; then",
-        "  echo \"[latency-bench] retry exhausted with ${LATENCY_BENCH_TIMEOUT_FAILURES} timeout failure(s)\"",
+        "  echo \"[latency-bench] retry exhausted with ${LATENCY_BENCH_RETRYABLE_FAILURES} retryable failure(s)\"",
         "  break",
         "fi",
         "for exec_key in \"${LATENCY_BENCH_EXEC_KEYS[@]}\"; do LATENCY_BENCH_SHOULD_RUN[\"$exec_key\"]=\"${LATENCY_BENCH_NEXT_SHOULD_RUN[$exec_key]:-0}\"; done",
-        "LATENCY_BENCH_CURRENT_TIMEOUT_S=$(latency_bench_grow_timeout_s \"$LATENCY_BENCH_CURRENT_TIMEOUT_S\" \"$LATENCY_BENCH_RETRY_TIMEOUT_GROWTH\")",
+        "if [[ \"$LATENCY_BENCH_TIMEOUT_RETRIES\" != \"0\" ]]; then",
+        "  LATENCY_BENCH_CURRENT_TIMEOUT_S=$(latency_bench_grow_timeout_s \"$LATENCY_BENCH_CURRENT_TIMEOUT_S\" \"$LATENCY_BENCH_RETRY_TIMEOUT_GROWTH\")",
+        "fi",
         "LATENCY_BENCH_RETRY_ROUND=$((LATENCY_BENCH_RETRY_ROUND + 1))",
         "done",
     ])
@@ -1000,6 +1159,7 @@ def run_suite(suite: BenchSuite, options: RunOptions) -> int:
         git=git,
         xclbin_sha256=xclbin_sha256,
     )
+    slurm_mode = slurm_run_mode(options)
     write_manifest(suite, run_dir, {
         "run_id": run_id,
         "out_root": str(out_root),
@@ -1015,7 +1175,13 @@ def run_suite(suite: BenchSuite, options: RunOptions) -> int:
         "git_dirty": git.dirty,
         "platform": options.platform,
         "xrt_device_index": options.xrt_device_index,
+        "xrt_device_index_request": "auto" if options.xrt_device_index is None else str(options.xrt_device_index),
         "xrt_device_bdf": options.xrt_device_bdf,
+        "fpga_identity_env": str(run_dir / "fpga_identity.env"),
+        "fpga_identity_json": str(run_dir / "fpga_identity.json"),
+        "slurm_mode": slurm_mode,
+        "srun": options.srun,
+        "srun_args": list(options.srun_args),
         "program_fpga": options.program_fpga and bool(units_to_run),
         "measure_latency": options.measure_latency,
         "measure_power": options.measure_power,
@@ -1048,7 +1214,6 @@ def run_suite(suite: BenchSuite, options: RunOptions) -> int:
         "retry_reset_wait": options.retry_reset_wait,
         "retry_reset_cmd": options.retry_reset_cmd,
         "retry_reset_add_device": tuple(shlex.split(options.retry_reset_cmd)) == tuple(shlex.split(DEFAULT_RETRY_RESET_CMD)),
-        "retry_reset_srun_args": list(options.srun_args),
         "skipped_existing_count": len(skipped_existing_exec_keys),
         "skipped_existing_exec_keys": list(skipped_existing_exec_keys),
         "script": str(script),
@@ -1074,9 +1239,7 @@ def run_suite(suite: BenchSuite, options: RunOptions) -> int:
     if seeded_rows:
         print(f"pre-seeded {seeded_rows} row(s) in {out_root / 'raw_db.csv'}", flush=True)
 
-    cmd = ["bash", str(script)]
-    if options.srun:
-        cmd = ["srun", *options.srun_args, "bash", str(script)]
+    cmd = run_script_command(script, options)
     print("+ " + " ".join(shlex.quote(part) for part in cmd), flush=True)
     rc = subprocess.call(cmd, env=os.environ.copy())
 

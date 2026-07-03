@@ -35,7 +35,7 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   echo "  --hw-debug, --enable-hw-debug-module"
   echo "      Append -DENABLE_HW_DEBUG_MODULE to CONFIGS"
   echo "  --no-srun"
-  echo "      Run hw mode directly instead of launching through srun"
+  echo "      Compatibility mode: run hw directly instead of launching through managed srun"
   echo "  --no-latency"
   echo "      Skip the normal bench latency phase"
   echo "  --power[=on|off]"
@@ -434,7 +434,7 @@ while [[ $# -gt 0 ]]; do
     -h|--help)
       echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"] [--fpga-bin ALIAS_OR_PATH] [--bench] [--perf CLASS] [--debug LEVEL] [--hw-debug] [--no-srun] [--no-latency] [--power[=on|off]] [--power-out-dir DIR] [--power-auto-duration] [--power-max-iterations N]"
       echo "  --hw-debug, --enable-hw-debug-module: append -DENABLE_HW_DEBUG_MODULE to CONFIGS"
-      echo "  --no-srun: run hw mode directly instead of launching through srun"
+      echo "  --no-srun: compatibility mode; run hw directly instead of launching through managed srun"
       echo "  --no-latency: append --no-latency to bench args"
       echo "  --power[=on|off]: append separate bench power-measurement args"
       echo "  --power-csv-max-bytes N: raw power CSV size limit (default: 1048576, 0 unlimited)"
@@ -562,15 +562,20 @@ if [[ "${mode}" == "hw" || "${mode}" == "all" ]]; then
   if [[ -z \"\${XRT_INI_PATH:-}\" ]]; then \
     export XRT_INI_PATH=/dev/null; \
   fi; \
+  XRT_SMI=\"\$(resolve_xrt_smi)\"; \
+  if [[ -z \"\${XRT_SMI}\" ]]; then \
+    echo \"failed to locate xrt-smi\" >&2; \
+    exit 1; \
+  fi; \
   if [[ -z \"\${XRT_DEVICE_INDEX:-}\" ]]; then \
-    if ! XRT_DEVICE_INDEX=\"\$(resolve_fpga_id auto)\"; then \
+    if ! XRT_DEVICE_INDEX=\"\$(detect_single_accessible_xrt_index \"\${XRT_SMI}\")\"; then \
       echo \"failed to resolve allocated XRT_DEVICE_INDEX\" >&2; \
       exit 1; \
     fi; \
     export XRT_DEVICE_INDEX; \
   fi; \
   if [[ -z \"\${XRT_DEVICE_BDF:-}\" ]]; then \
-    if ! XRT_DEVICE_BDF=\"\$(resolve_xrt_user_bdf \"\${XRT_DEVICE_INDEX:-auto}\")\"; then \
+    if ! XRT_DEVICE_BDF=\"\$(resolve_xrt_user_bdf \"\${XRT_DEVICE_INDEX}\")\"; then \
       echo \"failed to resolve allocated XRT_DEVICE_BDF\" >&2; \
       exit 1; \
     fi; \
@@ -585,7 +590,7 @@ if [[ "${mode}" == "hw" || "${mode}" == "all" ]]; then
   TARGET=hw \
   ./ci/blackbox.sh ${BENCH_FLAG} ${PERF_FLAG} ${DEBUG_FLAG} --driver=xrt --app=${APP} --args=\"${ARGS}\"
   "
-  if [[ "${USE_SRUN}" == "1" ]]; then
+  if [[ "${USE_SRUN}" == "1" && -z "${SLURM_JOB_ID:-}${SLURM_STEP_ID:-}" ]]; then
     srun --gres=fpga:u55c:1 --cpus-per-task=4 --mem=16G --time=12:00:00 --pty bash -c "${HW_COMMAND}"
   else
     bash -c "${HW_COMMAND}"

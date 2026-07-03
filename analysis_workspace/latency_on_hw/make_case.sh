@@ -30,7 +30,7 @@ if [[ "$target" == "power" ]]; then
     --prefill-batches 1 \
     --prefill-seq-lens 8192 \
     --generation-batches 2048 \
-    --generation-seq-lens 8192
+    --generation-seq-lens 16384
 
   ./make_cases.sh \
     --input suites/llama3_8b \
@@ -38,5 +38,5 @@ if [[ "$target" == "power" ]]; then
     --prefill-batches 1 \
     --prefill-seq-lens 8192 \
     --generation-batches 2048 \
-    --generation-seq-lens 8192
+    --generation-seq-lens 16384
 fi

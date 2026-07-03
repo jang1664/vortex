@@ -65,6 +65,58 @@ printf 'ok\n' > "$log_file"
         )
         blackbox.chmod(0o755)
 
+    def _write_flaky_power_samples_blackbox(self, build_dir: Path, invocation_log: Path) -> None:
+        (build_dir / "ci").mkdir(parents=True)
+        blackbox = build_dir / "ci" / "blackbox.sh"
+        blackbox.write_text(
+            f"""#!/usr/bin/env bash
+set -euo pipefail
+bench_args=""
+log_file=""
+build_only=0
+for arg in "$@"; do
+  case "$arg" in
+    --args=*) bench_args="${{arg#--args=}}" ;;
+    --log=*) log_file="${{arg#--log=}}" ;;
+    --build-only) build_only=1 ;;
+  esac
+done
+if [[ "$build_only" == "1" ]]; then
+  printf 'build ok\n'
+  exit 0
+fi
+printf '%s\n' "$*" >> {invocation_log}
+raw_csv=$(printf '%s\n' "$bench_args" | sed -n 's/.*--output=\\([^ ]*\\).*/\\1/p')
+power_csv=$(printf '%s\n' "$bench_args" | sed -n 's/.*--power-csv=\\([^ ]*\\).*/\\1/p')
+power_summary=$(printf '%s\n' "$bench_args" | sed -n 's/.*--power-summary=\\([^ ]*\\).*/\\1/p')
+mkdir -p "$(dirname "$raw_csv")" "$(dirname "$log_file")"
+state_file="${{raw_csv}}.power_samples_state"
+if [[ ! -f "$state_file" ]]; then
+  printf 'seen\n' > "$state_file"
+  samples=0
+else
+  samples=5
+fi
+printf 'fpint_gemm,3,1.0,2.0,4.0,2.0,3.0\n' > "$raw_csv"
+printf '[bench-perf] iteration=1/3 begin\n'
+printf 'PERF: instrs=10, cycles=100, IPC=0.100000\n'
+printf '[bench-perf] iteration=1/3 end\n'
+printf '[bench-perf] iteration=2/3 begin\n'
+printf 'PERF: instrs=20, cycles=300, IPC=0.066667\n'
+printf '[bench-perf] iteration=2/3 end\n'
+printf '[bench-perf] iteration=3/3 begin\n'
+printf 'PERF: instrs=30, cycles=200, IPC=0.150000\n'
+printf '[bench-perf] iteration=3/3 end\n'
+if [[ -n "$power_summary" ]]; then
+  mkdir -p "$(dirname "$power_summary")"
+  printf 'label,mode,phase,samples,elapsed_s,idle_samples,idle_avg_w,run_min_w,run_avg_w,run_max_w,delta_avg_w,delta_peak_w,energy_j,power_latency,power_fpga_cycle,raw_csv\n' > "$power_summary"
+  printf 'fpint_gemm,separate,run,%s,10.0,2,1.0,3.0,4.0,5.0,3.0,4.0,40.0,12.5,2000,%s\n' "$samples" "$power_csv" >> "$power_summary"
+fi
+printf 'ok\n' > "$log_file"
+"""
+        )
+        blackbox.chmod(0o755)
+
     def _write_fake_fpga_bin(self, fpga_bin_dir: Path, content: str = "fake bitstream") -> str:
         fpga_bin_dir.mkdir()
         xclbin = fpga_bin_dir / "vortex_afu.xclbin"
@@ -172,7 +224,16 @@ exec "$@"
         xrt_smi.write_text(
             f"""#!/usr/bin/env bash
 set -euo pipefail
-case "${{1:-}}" in
+cmd=""
+for arg in "$@"; do
+  case "$arg" in
+    examine|reset)
+      cmd="$arg"
+      break
+      ;;
+  esac
+done
+case "$cmd" in
   examine)
     printf 'Device [0000:2a:00.1]\\n'
     ;;
@@ -194,8 +255,54 @@ esac
         path.write_text(
             f"""#!/usr/bin/env bash
 set -euo pipefail
-case "${{1:-}}" in
+cmd=""
+for arg in "$@"; do
+  case "$arg" in
+    examine|program)
+      cmd="$arg"
+      break
+      ;;
+  esac
+done
+case "$cmd" in
   examine)
+    printf 'Device [0000:2a:00.1]\\n'
+    ;;
+  program)
+    printf '%s\\n' "$*" >> {program_log}
+    ;;
+  *)
+    printf 'unexpected xrt-smi args: %s\\n' "$*" >&2
+    exit 3
+    ;;
+esac
+"""
+        )
+        path.chmod(0o755)
+
+    def _write_fake_global_only_program_tool(self, path: Path, program_log: Path) -> None:
+        path.parent.mkdir()
+        path.write_text(
+            f"""#!/usr/bin/env bash
+set -euo pipefail
+cmd=""
+uses_device=0
+for arg in "$@"; do
+  case "$arg" in
+    examine|program)
+      cmd="$arg"
+      ;;
+    --device)
+      uses_device=1
+      ;;
+  esac
+done
+case "$cmd" in
+  examine)
+    if [[ "$uses_device" == "1" ]]; then
+      printf 'per-index examine is unavailable\\n' >&2
+      exit 2
+    fi
     printf 'Device [0000:2a:00.1]\\n'
     ;;
   program)
@@ -401,6 +508,80 @@ esac
             self.assertEqual("fail", progress_rows[0]["status"])
             self.assertEqual("power_samples_low", progress_rows[0]["failure_reason"])
 
+    def test_retry_power_samples_low_reruns_and_keeps_final_success(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            build_dir = tmp_path / "build"
+            invocation_log = tmp_path / "invocations.log"
+            self._write_flaky_power_samples_blackbox(build_dir, invocation_log)
+            fpga_bin_dir = tmp_path / "fpga_bin"
+            self._write_fake_fpga_bin(fpga_bin_dir)
+            reset_log = tmp_path / "reset.log"
+            srun_log = tmp_path / "srun.log"
+            fake_bin = tmp_path / "bin"
+            self._write_fake_reset_tools(fake_bin, reset_log, srun_log)
+
+            suite = BenchSuite(
+                name="retry_power_samples_suite",
+                defaults=BenchDefaults(warmup=1, iterations=1, blackbox_timeout="5m"),
+                cases=[
+                    BenchCase(
+                        case_id="gemm",
+                        app="fpint_gemm_ffn_hw",
+                        args="-m 1 -n 128 -k 128 -q 32 -t 0 -d 0",
+                        warmup=1,
+                        iterations=1,
+                    )
+                ],
+            )
+            out_root = tmp_path / "latency_db"
+            old_path = os.environ.get("PATH", "")
+            os.environ["PATH"] = f"{fake_bin}{os.pathsep}{old_path}"
+            try:
+                rc = run_suite(
+                    suite,
+                    RunOptions(
+                        build_dir=build_dir,
+                        fpga_bin_dir=fpga_bin_dir,
+                        fpga_bin_label="retry_power_bin",
+                        out_dir=out_root,
+                        platform=suite.defaults.platform,
+                        xrt_device_index=suite.defaults.xrt_device_index,
+                        blackbox_args=(),
+                        blackbox_timeout=suite.defaults.blackbox_timeout,
+                        srun=False,
+                        program_fpga=False,
+                        run_id="retry_power_samples_run",
+                        retry=True,
+                        retry_max_rounds=2,
+                        retry_reset_wait="0",
+                    ),
+                )
+            finally:
+                os.environ["PATH"] = old_path
+
+            self.assertEqual(0, rc)
+            self.assertEqual(2, len(invocation_log.read_text().splitlines()))
+
+            with (out_root / "raw_db.csv").open(newline="") as fp:
+                rows = list(csv.DictReader(fp))
+            self.assertEqual(1, len(rows))
+            self.assertEqual("pass", rows[0]["status"])
+            self.assertEqual("0", rows[0]["returncode"])
+            self.assertEqual("", rows[0]["failure_phase"])
+            self.assertEqual("", rows[0]["failure_reason"])
+            self.assertEqual("5", rows[0]["power_samples"])
+
+            run_dir = out_root / "runs" / "retry_power_samples_run"
+            with (run_dir / "attempt_status.csv").open(newline="") as fp:
+                attempt_rows = list(csv.DictReader(fp))
+            self.assertEqual(2, len(attempt_rows))
+            self.assertEqual(["1", "2"], [row["retry_round"] for row in attempt_rows])
+            self.assertEqual(["power_samples_low", ""], [row["failure_reason"] for row in attempt_rows])
+            self.assertEqual(["0", "0"], [row["reset_ran"] for row in attempt_rows])
+            self.assertFalse(reset_log.exists())
+            self.assertFalse(srun_log.exists())
+
     def test_live_raw_db_keeps_all_logical_cases_for_shared_execution(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
@@ -503,8 +684,85 @@ esac
                 f"program --device 0000:2a:00.1 --user {fpga_bin_dir / 'vortex_afu.xclbin'}",
                 xrt_program_log.read_text().strip(),
             )
+            identity_env = out_root / "runs" / "program_run" / "fpga_identity.env"
+            identity_json = out_root / "runs" / "program_run" / "fpga_identity.json"
+            self.assertIn("XRT_DEVICE_INDEX=0", identity_env.read_text())
+            self.assertEqual("0000:2a:00.1", json.loads(identity_json.read_text())["xrt_device_bdf"])
             program_log = out_root / "runs" / "program_run" / "logs" / "program_fpga.log"
             self.assertIn("programming FPGA: device=0000:2a:00.1", program_log.read_text())
+
+    def test_program_identity_falls_back_to_single_global_xrt_bdf(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            build_dir = tmp_path / "build"
+            self._write_fake_blackbox(build_dir)
+            fpga_bin_dir = tmp_path / "fpga_bin"
+            self._write_fake_fpga_bin(fpga_bin_dir)
+            fake_xrt_smi = tmp_path / "bin" / "xrt-smi"
+            xrt_program_log = tmp_path / "xrt_program.log"
+            self._write_fake_global_only_program_tool(fake_xrt_smi, xrt_program_log)
+
+            suite = BenchSuite(
+                name="program_suite",
+                defaults=BenchDefaults(warmup=1, iterations=1),
+                cases=[
+                    BenchCase(
+                        case_id="gemm",
+                        app="fpint_gemm_ffn_hw",
+                        args="-m 1 -n 128 -k 128 -q 32 -t 0 -d 0",
+                        warmup=1,
+                        iterations=1,
+                    )
+                ],
+            )
+            out_root = tmp_path / "latency_db"
+            old_xrt_smi = os.environ.get("XRT_SMI")
+            old_xrt_device_index = os.environ.get("XRT_DEVICE_INDEX")
+            old_xrt_device_bdf = os.environ.get("XRT_DEVICE_BDF")
+            os.environ["XRT_SMI"] = str(fake_xrt_smi)
+            os.environ.pop("XRT_DEVICE_INDEX", None)
+            os.environ.pop("XRT_DEVICE_BDF", None)
+            try:
+                rc = run_suite(
+                    suite,
+                    RunOptions(
+                        build_dir=build_dir,
+                        fpga_bin_dir=fpga_bin_dir,
+                        fpga_bin_label="program_bin",
+                        out_dir=out_root,
+                        platform=suite.defaults.platform,
+                        blackbox_args=(),
+                        srun=False,
+                        run_id="program_run",
+                    ),
+                )
+            finally:
+                if old_xrt_smi is None:
+                    os.environ.pop("XRT_SMI", None)
+                else:
+                    os.environ["XRT_SMI"] = old_xrt_smi
+                if old_xrt_device_index is None:
+                    os.environ.pop("XRT_DEVICE_INDEX", None)
+                else:
+                    os.environ["XRT_DEVICE_INDEX"] = old_xrt_device_index
+                if old_xrt_device_bdf is None:
+                    os.environ.pop("XRT_DEVICE_BDF", None)
+                else:
+                    os.environ["XRT_DEVICE_BDF"] = old_xrt_device_bdf
+
+            self.assertEqual(0, rc)
+            identity_json = out_root / "runs" / "program_run" / "fpga_identity.json"
+            self.assertEqual(
+                {"xrt_device_index": "0", "xrt_device_bdf": "0000:2a:00.1"},
+                {
+                    key: json.loads(identity_json.read_text())[key]
+                    for key in ("xrt_device_index", "xrt_device_bdf")
+                },
+            )
+            self.assertEqual(
+                f"program --device 0000:2a:00.1 --user {fpga_bin_dir / 'vortex_afu.xclbin'}",
+                xrt_program_log.read_text().strip(),
+            )
 
     def test_timeout_returncode_is_appended_as_timeout_status(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -626,6 +884,10 @@ exit 0
             self._write_flaky_xrt_context_blackbox(build_dir)
             fpga_bin_dir = tmp_path / "fpga_bin"
             self._write_fake_fpga_bin(fpga_bin_dir)
+            reset_log = tmp_path / "reset.log"
+            srun_log = tmp_path / "srun.log"
+            fake_bin = tmp_path / "bin"
+            self._write_fake_reset_tools(fake_bin, reset_log, srun_log)
             bash_env = tmp_path / "bash_env.sh"
             bash_env.write_text("sleep() { :; }\n")
 
@@ -643,8 +905,12 @@ exit 0
                 ],
             )
             out_root = tmp_path / "latency_db"
+            old_path = os.environ.get("PATH", "")
             old_bash_env = os.environ.get("BASH_ENV")
+            old_slurm_job_id = os.environ.get("SLURM_JOB_ID")
+            os.environ["PATH"] = f"{fake_bin}{os.pathsep}{old_path}"
             os.environ["BASH_ENV"] = str(bash_env)
+            os.environ["SLURM_JOB_ID"] = "test_job"
             try:
                 rc = run_suite(
                     suite,
@@ -660,13 +926,19 @@ exit 0
                         srun=False,
                         program_fpga=False,
                         run_id="retry_run",
+                        retry_reset_wait="0",
                     ),
                 )
             finally:
+                os.environ["PATH"] = old_path
                 if old_bash_env is None:
                     os.environ.pop("BASH_ENV", None)
                 else:
                     os.environ["BASH_ENV"] = old_bash_env
+                if old_slurm_job_id is None:
+                    os.environ.pop("SLURM_JOB_ID", None)
+                else:
+                    os.environ["SLURM_JOB_ID"] = old_slurm_job_id
 
             self.assertEqual(0, rc)
             with (out_root / "raw_db.csv").open(newline="") as fp:
@@ -679,6 +951,8 @@ exit 0
             log_text = Path(rows[0]["log_file"]).read_text()
             self.assertIn("xrt_context_open retry 1/3", log_text)
             self.assertIn("failed to open cu context", log_text)
+            self.assertEqual("reset -d 0000:2a:00.1", reset_log.read_text().strip())
+            self.assertFalse(srun_log.exists())
 
     def test_retry_timeout_resets_fpga_and_keeps_final_success(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -751,7 +1025,7 @@ exit 0
             self.assertEqual(["1", "0"], [row["reset_ran"] for row in attempt_rows])
             self.assertEqual("0", attempt_rows[0]["reset_rc"])
             self.assertEqual("reset -d 0000:2a:00.1", reset_log.read_text().strip())
-            self.assertIn("xrt-smi reset -d 0000:2a:00.1", srun_log.read_text())
+            self.assertFalse(srun_log.exists())
 
     def test_retry_timeout_rerun_replaces_previous_failed_row(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -796,36 +1070,28 @@ exit 0
                 elapsed_wall_s="10.000",
             )
 
-            old_slurm_job_id = os.environ.get("SLURM_JOB_ID")
-            os.environ["SLURM_JOB_ID"] = "test_job"
-            try:
-                rc = run_suite(
-                    suite,
-                    RunOptions(
-                        build_dir=build_dir,
-                        fpga_bin_dir=fpga_bin_dir,
-                        fpga_bin_label="retry_bin",
-                        out_dir=out_root,
-                        platform=suite.defaults.platform,
-                        xrt_device_index=suite.defaults.xrt_device_index,
-                        blackbox_args=(),
-                        blackbox_timeout=suite.defaults.blackbox_timeout,
-                        srun=False,
-                        program_fpga=False,
-                        measure_power=False,
-                        run_id="new_timeout_run",
-                        retry=True,
-                        retry_max_rounds=1,
-                        retry_reset_wait="0",
-                        retry_reset_cmd="true",
-                        prebuild=False,
-                    ),
-                )
-            finally:
-                if old_slurm_job_id is None:
-                    os.environ.pop("SLURM_JOB_ID", None)
-                else:
-                    os.environ["SLURM_JOB_ID"] = old_slurm_job_id
+            rc = run_suite(
+                suite,
+                RunOptions(
+                    build_dir=build_dir,
+                    fpga_bin_dir=fpga_bin_dir,
+                    fpga_bin_label="retry_bin",
+                    out_dir=out_root,
+                    platform=suite.defaults.platform,
+                    xrt_device_index=suite.defaults.xrt_device_index,
+                    blackbox_args=(),
+                    blackbox_timeout=suite.defaults.blackbox_timeout,
+                    srun=False,
+                    program_fpga=False,
+                    measure_power=False,
+                    run_id="new_timeout_run",
+                    retry=True,
+                    retry_max_rounds=1,
+                    retry_reset_wait="0",
+                    retry_reset_cmd="true",
+                    prebuild=False,
+                ),
+            )
 
             self.assertEqual(0, rc)
             with raw_db.open(newline="") as fp:
@@ -902,7 +1168,7 @@ exit 0
             self.assertEqual("reset -d 0000:2a:00.1", reset_log.read_text().strip())
             self.assertFalse(srun_log.exists())
             self.assertIn(
-                "timeout reset: direct xrt-smi reset -d 0000:2a:00.1",
+                "retry reset: direct xrt-smi reset -d 0000:2a:00.1",
                 Path(attempt_rows[0]["log_file"]).read_text(),
             )
 

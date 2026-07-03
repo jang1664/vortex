@@ -155,11 +155,14 @@ aliases:
             self.assertIn("source", script)
             self.assertIn("ci/xrt_device_detect.sh", script)
             self.assertIn("LATENCY_BENCH_PROGRAM_FPGA=1", script)
-            self.assertIn("export XRT_DEVICE_BDF=0000:3d:00.1", script)
+            self.assertIn("LATENCY_BENCH_REQUESTED_XRT_DEVICE_BDF=0000:3d:00.1", script)
+            self.assertIn("LATENCY_BENCH_FPGA_IDENTITY_ENV=", script)
             self.assertIn('program --device "$user_bdf" --user "$xclbin"', script)
+            self.assertNotIn("export XRT_DEVICE_INDEX=0", script)
             self.assertLess(script.index("if ! latency_bench_program_fpga"), script.index("declare -A LATENCY_BENCH_BUILD_RC"))
             manifest = json.loads((run_dir / "manifest.json").read_text())
             self.assertTrue(manifest["program_fpga"])
+            self.assertEqual("auto", manifest["xrt_device_index_request"])
             self.assertEqual("0000:3d:00.1", manifest["xrt_device_bdf"])
 
     def test_run_defaults_to_separate_power_and_can_skip_latency(self) -> None:
@@ -191,7 +194,7 @@ aliases:
             self.assertIn("--power-max-run-sec=60.0", script)
             self.assertIn("--power-max-iterations=1024", script)
             self.assertIn("--power-target-samples=100", script)
-            self.assertIn("--power-min-interval=0.05", script)
+            self.assertIn("--power-min-interval=0.01", script)
             self.assertIn("--power-max-interval=1.0", script)
             self.assertIn("--power-min-samples 5", script)
             self.assertNotIn("--no-latency", script)
@@ -213,7 +216,7 @@ aliases:
             self.assertEqual(60.0, manifest["power_max_run_sec"])
             self.assertEqual(1024, manifest["power_max_iterations"])
             self.assertEqual(100, manifest["power_target_samples"])
-            self.assertEqual(0.05, manifest["power_min_interval"])
+            self.assertEqual(0.01, manifest["power_min_interval"])
             self.assertEqual(1.0, manifest["power_max_interval"])
             self.assertEqual(5, manifest["power_min_samples"])
 
@@ -242,6 +245,31 @@ aliases:
             self.assertEqual("off", manifest["power_mode"])
             self.assertFalse(manifest["power_auto_duration"])
             self.assertEqual(5, manifest["power_min_samples"])
+
+    def test_run_records_explicit_xrt_device_index_request(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            build_dir, fpga_bin, suite = self._write_fake_inputs(tmp_path)
+            out_root = tmp_path / "out"
+            rc = main([
+                "run",
+                "--build-dir", str(build_dir),
+                "--fpga-bin", str(fpga_bin),
+                "--suite", str(suite),
+                "--out", str(out_root),
+                "--run-id", "index_run",
+                "--no-srun",
+                "--dry-run",
+                "--xrt-device-index", "1",
+            ])
+
+            self.assertEqual(0, rc)
+            run_dir = out_root / "runs" / "index_run"
+            script = (run_dir / "run_fpga_bench.sh").read_text()
+            self.assertIn("LATENCY_BENCH_REQUESTED_XRT_DEVICE_INDEX=1", script)
+            self.assertNotIn("export XRT_DEVICE_INDEX=0", script)
+            manifest = json.loads((run_dir / "manifest.json").read_text())
+            self.assertEqual("1", manifest["xrt_device_index_request"])
 
     def test_run_can_disable_power_auto_duration(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -396,13 +424,17 @@ aliases:
             self.assertIn("LATENCY_BENCH_RETRY_MAX_ROUNDS=4", script)
             self.assertIn("LATENCY_BENCH_CURRENT_TIMEOUT_S=1800", script)
             self.assertIn('timeout --kill-after=30s "${LATENCY_BENCH_CURRENT_TIMEOUT_S}s" ./ci/blackbox.sh', script)
-            self.assertIn('if [[ -n "${SLURM_JOB_ID:-}" ]]; then', script)
             self.assertIn("LATENCY_BENCH_RESET_ADD_DEVICE=1", script)
             self.assertIn('reset_cmd+=("-d" "$reset_bdf")', script)
             self.assertIn("timeout --kill-after=10s 60s \"${reset_cmd[@]}\"", script)
-            self.assertIn("timeout --kill-after=10s 60s srun", script)
+            self.assertNotIn("timeout --kill-after=10s 60s srun", script)
+            self.assertIn('reset_bdf="${LATENCY_BENCH_XRT_DEVICE_BDF:-${XRT_DEVICE_BDF:-}}"', script)
             self.assertIn("LATENCY_BENCH_RESET_CMD=(xrt-smi reset)", script)
             self.assertIn("attempt_status.csv", script)
+            self.assertIn("latency_bench_power_failure_reason", script)
+            self.assertIn("LATENCY_BENCH_RETRYABLE_FAILURES=0", script)
+            self.assertIn('[[ "$failure_reason" == "timeout" || "$failure_reason" == "power_samples_low" ]]', script)
+            self.assertNotIn("LATENCY_BENCH_TIMEOUT_FAILURES", script)
             manifest = json.loads((run_dir / "manifest.json").read_text())
             self.assertTrue(manifest["retry"])
             self.assertEqual(4, manifest["retry_max_rounds"])

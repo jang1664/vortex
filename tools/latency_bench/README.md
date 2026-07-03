@@ -139,13 +139,22 @@ python -m tools.latency_bench run \
   --iterations 10
 ```
 
-By default, the tool wraps the generated run script in:
+There are two supported Slurm modes for hardware runs. If the command starts
+outside Slurm, the tool wraps the generated run script once in:
 
 ```bash
 srun --gres=fpga:u55c:1 --cpus-per-task=4 --mem=16G --time=01:00:00
 ```
 
-Use `--no-srun` only when already running on an FPGA host with XRT access.
+If the command starts inside an existing `srun --gres=fpga:u55c:1 --pty
+/bin/bash` allocation, the generated script runs directly and does not call
+`srun` anywhere. In both modes, the script captures one FPGA `XRT_DEVICE_INDEX`
+and `XRT_DEVICE_BDF` at startup, writes `fpga_identity.env` and
+`fpga_identity.json`, and reuses that identity for programming, benchmark
+execution, power measurement, and reset.
+
+`--no-srun` is kept only as a direct-run compatibility path for tests and
+manual FPGA-host debugging.
 
 If the FPGA bin path is too long to type repeatedly, add or update an entry in
 `ci/fpga_bin_alias_map.yaml` and pass the alias name to `--fpga-bin`. The same
@@ -199,9 +208,16 @@ NOT `!`, and parentheses. Supported fields are `id`/`case_id`, `app`, `args`,
 `--filter` ANDs the expressions.
 
 Transient XRT context-open failures are retried within the same execution. If a
-run log contains `failed to open cu context`, the generated script retries that
-case up to two more times with short backoff. Persistent failures are recorded
-with `failure_reason=xrt_context_open`.
+run log contains `failed to open cu context`, the generated script resets the
+saved FPGA BDF, reprograms that same BDF when FPGA programming is enabled, then
+retries that case up to two more times with short backoff. Persistent failures
+are recorded with `failure_reason=xrt_context_open`.
+
+When `--retry` is enabled, retry rounds rerun cases that end with
+`failure_reason=timeout` or `failure_reason=power_samples_low`. Timeout retries
+use the reset/reprogram path and grow the blackbox timeout; low power sample
+retries rerun the case without a reset. Set `--power-min-samples 0` to disable
+the low-sample failure check and its retry trigger.
 
 The default prebuild flow separates build failures from benchmark failures.
 If a benchmark app fails to build, all executions for that app are recorded as

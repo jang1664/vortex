@@ -152,7 +152,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument(
         "--retry",
         action="store_true",
-        help="Retry timeout failures after resetting the FPGA; reset runs directly inside an existing Slurm allocation.",
+        help="Retry timeout failures after resetting the saved FPGA BDF in the current allocation.",
     )
     run.add_argument(
         "--retry-max-rounds",
@@ -169,12 +169,12 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument(
         "--retry-reset-wait",
         default=DEFAULT_RETRY_RESET_WAIT,
-        help=f"Sleep duration after timeout reset when --retry is enabled (default: {DEFAULT_RETRY_RESET_WAIT}).",
+        help=f"Sleep duration after retry reset when --retry is enabled (default: {DEFAULT_RETRY_RESET_WAIT}).",
     )
     run.add_argument(
         "--retry-reset-cmd",
         default=DEFAULT_RETRY_RESET_CMD,
-        help=f"Reset command run under srun after timeout (default: {DEFAULT_RETRY_RESET_CMD!r}).",
+        help=f"Reset command run directly against the saved FPGA BDF after timeout (default: {DEFAULT_RETRY_RESET_CMD!r}).",
     )
     run.add_argument(
         "--blackbox-arg",
@@ -182,7 +182,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=[],
         help="Add or override a blackbox arg from suite defaults; repeat for each arg.",
     )
-    run.add_argument("--no-srun", action="store_true", help="Run directly without srun.")
+    run.add_argument("--no-srun", action="store_true", help="Compatibility mode: run directly without managed srun.")
     run.add_argument("--srun-arg", action="append", default=[], help="Replace default srun args; repeat for each arg.")
     run.add_argument(
         "--dry-run",
@@ -574,8 +574,6 @@ def run_cmd(args: argparse.Namespace) -> int:
     fpga_bin = resolve_fpga_bin_config(fpga_bin_label)
     platform = args.platform or suite.defaults.platform
     xrt_device_index = args.xrt_device_index
-    if xrt_device_index is None:
-        xrt_device_index = suite.defaults.xrt_device_index
     blackbox_args = merge_override_args(suite.defaults.blackbox_args, args.blackbox_arg)
     blackbox_timeout = normalize_timeout(args.blackbox_timeout)
     if args.blackbox_timeout is None:

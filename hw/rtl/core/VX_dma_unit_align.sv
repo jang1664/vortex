@@ -195,6 +195,12 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
   state_e state, state_n;
 
 `ifndef SYNTHESIS
+`define VX_DMA_UNIT_ALIGN_STRING_HELPERS
+`elsif SIMULATION
+`define VX_DMA_UNIT_ALIGN_STRING_HELPERS
+`endif
+
+`ifdef VX_DMA_UNIT_ALIGN_STRING_HELPERS
   function automatic string state_to_str(input state_e s);
     case (s)
       S_IDLE:           return "S_IDLE";
@@ -212,6 +218,10 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
       default:          return "S_UNKNOWN";
     endcase
   endfunction
+`endif // VX_DMA_UNIT_ALIGN_STRING_HELPERS
+
+`ifdef VX_DMA_UNIT_ALIGN_STRING_HELPERS
+`undef VX_DMA_UNIT_ALIGN_STRING_HELPERS
 `endif
 
   // ------------------------------------------------------------

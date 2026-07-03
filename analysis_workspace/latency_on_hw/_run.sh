@@ -15,6 +15,7 @@ if [[ "$target" == "latency" ]]; then
       --input generated_suites/llama2_7b_main \
       --output outputs_main_small \
       --no-power \
+      --retry \
       | tee -i logs/main.log
 
   # others
@@ -22,12 +23,14 @@ if [[ "$target" == "latency" ]]; then
       --input generated_suites/llama2_7b_main \
       --output outputs_main_small \
       --no-power \
+      --retry \
       | tee -i logs/main.log
 
   SOFTMAX_LAYOUT_FUSED_VARIANT=opt SOFTMAX_VARIANT=opt_align BLACKBOX_TIMEOUT=10m FPGA_BINS="improve_tcol32 naive_gemm_tcol32" ./run_hw.sh \
       --input generated_suites/llama3_8b_main \
       --output outputs_main_small \
       --no-power \
+      --retry \
       | tee -i logs/main.log
 
   # others
@@ -35,6 +38,7 @@ if [[ "$target" == "latency" ]]; then
       --input generated_suites/llama3_8b_main \
       --output outputs_main_small \
       --no-power \
+      --retry \
       | tee -i logs/main.log
 fi
 
@@ -42,14 +46,22 @@ fi
 # power measure
 # ----------------------------------------------------------------------------
 if [[ "$target" == "power" ]]; then
-  BLACKBOX_TIMEOUT=20m ./run_hw.sh --input generated_suites/llama2_7b_main_power --output outputs_main_small_power \
+  FPGA_BINS="naive_simd" BLACKBOX_TIMEOUT=30m ./run_hw.sh --input generated_suites/llama2_7b_main_power --output outputs_main_small_power \
     --no-latency \
     --no-power-auto-duration \
+    --power-measure-latency \
+    --power-min-interval 0.01 --power-max-interval 0.01 \
+    --power-min-samples 1 \
+    --retry \
     | tee -i logs/main_power.log
 
-  BLACKBOX_TIMEOUT=20m ./run_hw.sh --input generated_suites/llama3_8b_main_power --output outputs_main_small_power \
+  FPGA_BINS="naive_simd" BLACKBOX_TIMEOUT=30m ./run_hw.sh --input generated_suites/llama3_8b_main_power --output outputs_main_small_power \
     --no-latency \
     --no-power-auto-duration \
+    --power-measure-latency \
+    --power-min-interval 0.01 --power-max-interval 0.01 \
+    --power-min-samples 1 \
+    --retry \
     | tee -i logs/main_power.log
 fi
 

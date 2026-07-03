@@ -2,6 +2,12 @@ package VX_utils_pkg;
   import cf_math_util_pkg::*;
 
 `ifndef SYNTHESIS
+`define VX_UTILS_STRING_HELPERS
+`elsif SIMULATION
+`define VX_UTILS_STRING_HELPERS
+`endif
+
+`ifdef VX_UTILS_STRING_HELPERS
   function automatic string parseWord(input logic [9999:0] data, input int word_width, input string data_type);
     string sdata;
     int data_width;
@@ -57,7 +63,7 @@ package VX_utils_pkg;
 
     return sdata;
   endfunction
-`endif
+`endif // VX_UTILS_STRING_HELPERS
 
   localparam SLICE_MAX_WIDTH = 2048;
   localparam SLICE_MAX_WIDTH_ = SLICE_MAX_WIDTH + 1;
@@ -103,7 +109,7 @@ package VX_utils_pkg;
     return result;
   endfunction
 
-`ifndef SYNTHESIS
+`ifdef VX_UTILS_STRING_HELPERS
   function automatic string parseWordNoNormal(
       input logic [9999:0] data,
       input int word_width,
@@ -158,5 +164,9 @@ package VX_utils_pkg;
 
     return sdata;
   endfunction
+`endif // VX_UTILS_STRING_HELPERS
+
+`ifdef VX_UTILS_STRING_HELPERS
+`undef VX_UTILS_STRING_HELPERS
 `endif
 endpackage
