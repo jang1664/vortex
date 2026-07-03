@@ -1,19 +1,21 @@
 # Include Vortex configuration
-ROOT_DIR := $(realpath ../../..)
+UNITTEST_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
+ROOT_DIR := $(abspath $(UNITTEST_DIR)/../../..)
 include $(ROOT_DIR)/config.mk
 
 RTL_DIR := $(VORTEX_HOME)/hw/rtl
+SRC_DIR := $(VORTEX_HOME)/hw/unittest/gemm_node
 
-# Force use of gcc-11/g++-11 for C++20 features
-export CC := /usr/bin/gcc-11
-export CXX := /usr/bin/g++-11
+# Use the system compiler for host-side simulator compilation.
+export CC := /usr/bin/gcc
+export CXX := /usr/bin/g++
 
 SIM_EXEC ?= vcs
 
 TIME_SCALE=1ns/1ps
 TOP_MODULE := tb_VX_gemm_node
 
-TB   := tb_VX_gemm_node.sv
+TB   := $(SRC_DIR)/tb_VX_gemm_node.sv
 RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
 				$(RTL_DIR)/mem/VX_mem_bus_if.sv \
         $(RTL_DIR)/mem/VX_lsu_mem_if.sv \
@@ -102,8 +104,10 @@ RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
         $(RTL_DIR)/cache/VX_cache.sv \
         $(RTL_DIR)/cache/VX_cache_bypass.sv \
         $(RTL_DIR)/cache/VX_cache_wrap.sv \
-        $(RTL_DIR)/core/VX_dma_node.sv \
-        $(RTL_DIR)/core/VX_dma_unit_misal.sv
+        $(RTL_DIR)/core/VX_dma_unit_align.sv \
+        $(RTL_DIR)/core/VX_dma_unit_misal.sv \
+        $(RTL_DIR)/core/VX_dma_unit.sv \
+        $(RTL_DIR)/core/VX_dma_node.sv
 
 DPI_SRCS := $(VORTEX_HOME)/hw/dpi/float_dpi.cpp \
             $(VORTEX_HOME)/sim/common/util.cpp \

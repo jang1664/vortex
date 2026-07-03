@@ -1,7 +1,8 @@
 `include "VX_define.vh"
 
 module VX_gemm_dma_ctrl_with_dma import VX_gpu_pkg::*; #(
-  parameter `STRING INSTANCE_ID = ""
+  parameter `STRING INSTANCE_ID = "",
+  parameter bit ENABLE_MISALIGN = 1'b0
 ) (
   input wire clk,
   input wire reset,
@@ -30,6 +31,11 @@ module VX_gemm_dma_ctrl_with_dma import VX_gpu_pkg::*; #(
     .TAG_WIDTH(45)
   ) dma_if[1]();
 
+  VX_mem_bus_if #(
+    .DATA_SIZE(LSU_WORD_SIZE),
+    .TAG_WIDTH(LMEM_TAG_WIDTH)
+  ) lmem_bus_if_array[1]();
+
   VX_gemm_dma_ctrl #(
     .DMA_CFG_BASE_ADDR(`DMA_REG_BASE_ADDR),
     .DMA_CFG_STRIDE_BYTES(REGS_DW/8),
@@ -49,14 +55,18 @@ module VX_gemm_dma_ctrl_with_dma import VX_gpu_pkg::*; #(
   VX_dma_node #(
     .INSTANCE_ID(INSTANCE_ID),
     .N_MASTER(1),
-    .NUM_ENTRIES(NUM_ENTRIES)
+    .NUM_ENTRIES(NUM_ENTRIES),
+    .LMEM_NUM_LANES_P(1),
+    .ENABLE_MISALIGN(ENABLE_MISALIGN)
   ) dma_node (
     .clk(clk),
     .reset(reset),
 
     .mmio_if(dma_if.slave),
     .dcache_bus_if(dcache_bus_if),
-    .lmem_bus_if(lmem_bus_if)
+    .lmem_bus_if(lmem_bus_if_array)
   );
+
+  `ASSIGN_VX_MEM_BUS_IF(lmem_bus_if, lmem_bus_if_array[0]);
 
 endmodule

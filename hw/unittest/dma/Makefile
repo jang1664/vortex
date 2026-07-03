@@ -1,12 +1,14 @@
 # Include Vortex configuration
-ROOT_DIR := $(realpath ../../..)
+UNITTEST_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
+ROOT_DIR := $(abspath $(UNITTEST_DIR)/../../..)
 include $(ROOT_DIR)/config.mk
 
 RTL_DIR := $(VORTEX_HOME)/hw/rtl
+SRC_DIR := $(VORTEX_HOME)/hw/unittest/dma
 
-# Force use of gcc-11/g++-11 for C++20 features
-export CC := /usr/bin/gcc-11
-export CXX := /usr/bin/g++-11
+# Use the system compiler for host-side simulator compilation.
+export CC := /usr/bin/gcc
+export CXX := /usr/bin/g++
 
 SIM_EXEC ?= vlt
 
@@ -17,8 +19,12 @@ TOP_MODULE := tb_VX_dma_node
 #PIPE_ALIGN ?= 1
 #PIPE_INTERVAL ?= 2
 
-TB   := tb_VX_dma_node.sv
+TB   := $(SRC_DIR)/tb_VX_dma_node.sv
 RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
+				$(RTL_DIR)/libs/VX_mul_u32_pipe.sv \
+				$(RTL_DIR)/core/VX_dma_unit_align.sv \
+				$(RTL_DIR)/core/VX_dma_unit_misal.sv \
+				$(RTL_DIR)/core/VX_dma_unit.sv \
 				$(RTL_DIR)/core/VX_dma_node.sv \
 				$(RTL_DIR)/mem/VX_mem_bus_if.sv \
 				$(RTL_DIR)/core/VX_config_reg_if.sv 

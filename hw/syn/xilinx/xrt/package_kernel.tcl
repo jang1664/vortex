@@ -226,6 +226,58 @@ ipx::edit_ip_in_project -upgrade true -name tmp_edit_project -directory $path_to
 
 set core [ipx::current_core]
 
+# ipx::package_project can miss files referenced through SystemVerilog
+# generate/interface-array paths. Keep the DMA wrapper and both selectable
+# implementations in the packaged synthesis/simulation file groups.
+set force_packaged_sources {
+    VX_dma_unit_align.sv
+    VX_dma_unit_misal.sv
+    VX_dma_unit.sv
+}
+
+set packaged_src_dir [file normalize "${path_to_packaged}/src"]
+file mkdir $packaged_src_dir
+
+set target_file_groups {}
+foreach fg [ipx::get_file_groups -of $core] {
+    set fname [get_property NAME $fg]
+    if {[string match "*synthesis*" $fname] || [string match "*simulation*" $fname]} {
+        lappend target_file_groups $fg
+    }
+}
+if {[llength $target_file_groups] == 0} {
+    puts "WARNING: no synthesis/simulation file group found on IP core; skipping DMA force-package"
+}
+foreach base $force_packaged_sources {
+    set src_file ""
+    foreach src $vsources_list {
+        if {[file tail $src] eq $base} {
+            set src_file $src
+            break
+        }
+    }
+    if { $src_file eq "" } {
+        puts "WARNING: force-packaged source $base not found in vsources_list"
+        continue
+    }
+    set dst [file normalize "${packaged_src_dir}/${base}"]
+    if {![file exists $dst]} {
+        file copy -force $src_file $dst
+    }
+    foreach fg $target_file_groups {
+        set already_present 0
+        foreach fobj [ipx::get_files -of $fg] {
+            if {[file tail [get_property NAME $fobj]] eq $base} {
+                set already_present 1
+                break
+            }
+        }
+        if { $already_present } { continue }
+        ipx::add_file "src/${base}" $fg
+        puts "INFO: re-added src/${base} to [get_property NAME $fg]"
+    }
+}
+
 set_property core_revision 2 $core
 foreach up [ipx::get_user_parameters] {
   ipx::remove_user_parameter [get_property NAME $up] $core

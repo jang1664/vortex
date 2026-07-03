@@ -15,9 +15,9 @@ module tb_VX_gemm_dma_ctrl_with_dma import VX_gpu_pkg::*; ();
   localparam int MEM_BYTES  = 64*1024;
   localparam int TAG_WIDTH  = 45;
 
-  // Make DCACHE wider than LMEM to test width mismatch
+  // Make DCACHE wider than the wrapper's single LSU-word LMEM lane.
   localparam int DCACHE_BYTES = 32;
-  localparam int LMEM_BYTES   = 16;
+  localparam int LMEM_BYTES   = LSU_WORD_SIZE;
 
   localparam int LMEM_PORTS = 1;
   localparam int NUM_REQS   = LMEM_PORTS;
@@ -68,7 +68,8 @@ module tb_VX_gemm_dma_ctrl_with_dma import VX_gpu_pkg::*; ();
   // DUT wrapper (gemm_dma_ctrl + config_registers + dma_node_misal)
   // ---------------------------------------------------------------------------
   VX_gemm_dma_ctrl_with_dma #(
-    .INSTANCE_ID("wrap0")
+    .INSTANCE_ID("wrap0"),
+    .ENABLE_MISALIGN(1'b1)
   ) dut (
     .clk             (clk),
     .reset           (reset),
@@ -304,10 +305,16 @@ module tb_VX_gemm_dma_ctrl_with_dma import VX_gpu_pkg::*; ();
     input logic [31:0] wid_i
   );
     @(posedge clk);
-    gemm_dma_ctrl_if.cmd   <= cmd_i;
-    gemm_dma_ctrl_if.M_tot <= M_tot_i;
-    gemm_dma_ctrl_if.N_tot <= N_tot_i;
-    gemm_dma_ctrl_if.K_tot <= K_tot_i;
+    gemm_dma_ctrl_if.cmd      <= cmd_i;
+    gemm_dma_ctrl_if.M_orig   <= M_tot_i;
+    gemm_dma_ctrl_if.N_orig   <= N_tot_i;
+    gemm_dma_ctrl_if.K_orig   <= K_tot_i;
+    gemm_dma_ctrl_if.qblk_orig <= '0;
+    gemm_dma_ctrl_if.M_target <= M_tot_i;
+    gemm_dma_ctrl_if.N_target <= N_tot_i;
+    gemm_dma_ctrl_if.K_target <= K_tot_i;
+    gemm_dma_ctrl_if.wtrans_tot <= '0;
+    gemm_dma_ctrl_if.qdir_tot <= '0;
     gemm_dma_ctrl_if.entry_id <= wid_i;
     gemm_dma_ctrl_if.start <= 1'b1;
     @(posedge clk);
@@ -534,9 +541,15 @@ module tb_VX_gemm_dma_ctrl_with_dma import VX_gpu_pkg::*; ();
     // defaults
     gemm_dma_ctrl_if.start <= 1'b0;
     gemm_dma_ctrl_if.cmd   <= '0;
-    gemm_dma_ctrl_if.M_tot <= '0;
-    gemm_dma_ctrl_if.N_tot <= '0;
-    gemm_dma_ctrl_if.K_tot <= '0;
+    gemm_dma_ctrl_if.M_orig <= '0;
+    gemm_dma_ctrl_if.N_orig <= '0;
+    gemm_dma_ctrl_if.K_orig <= '0;
+    gemm_dma_ctrl_if.qblk_orig <= '0;
+    gemm_dma_ctrl_if.M_target <= '0;
+    gemm_dma_ctrl_if.N_target <= '0;
+    gemm_dma_ctrl_if.K_target <= '0;
+    gemm_dma_ctrl_if.wtrans_tot <= '0;
+    gemm_dma_ctrl_if.qdir_tot <= '0;
     gemm_dma_ctrl_if.entry_id   <= '0;
 
     repeat (10) @(posedge clk);
@@ -570,9 +583,15 @@ module tb_VX_gemm_dma_ctrl_with_dma import VX_gpu_pkg::*; ();
 
     gemm_dma_ctrl_if.start <= 1'b0;
     gemm_dma_ctrl_if.cmd   <= '0;
-    gemm_dma_ctrl_if.M_tot <= '0;
-    gemm_dma_ctrl_if.N_tot <= '0;
-    gemm_dma_ctrl_if.K_tot <= '0;
+    gemm_dma_ctrl_if.M_orig <= '0;
+    gemm_dma_ctrl_if.N_orig <= '0;
+    gemm_dma_ctrl_if.K_orig <= '0;
+    gemm_dma_ctrl_if.qblk_orig <= '0;
+    gemm_dma_ctrl_if.M_target <= '0;
+    gemm_dma_ctrl_if.N_target <= '0;
+    gemm_dma_ctrl_if.K_target <= '0;
+    gemm_dma_ctrl_if.wtrans_tot <= '0;
+    gemm_dma_ctrl_if.qdir_tot <= '0;
     gemm_dma_ctrl_if.entry_id   <= '0;
 
     repeat (10) @(posedge clk);

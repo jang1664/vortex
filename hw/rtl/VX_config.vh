@@ -257,6 +257,10 @@
 `define LMEM_BASE_ADDR  `STACK_BASE_ADDR
 `endif
 
+`ifndef DMA_RD_OUTSTANDING_SLOT
+`define DMA_RD_OUTSTANDING_SLOT 2
+`endif
+
 `ifndef IO_COUT_ADDR
 `define IO_COUT_ADDR    `IO_BASE_ADDR
 `endif

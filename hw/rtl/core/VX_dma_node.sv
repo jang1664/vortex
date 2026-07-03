@@ -3,14 +3,23 @@
 module VX_dma_node import VX_gpu_pkg::*; #(
   parameter `STRING INSTANCE_ID = "",
   parameter int N_MASTER     = 1,
-  parameter int NUM_ENTRIES  = 16
+  parameter int NUM_ENTRIES  = 16,
+  parameter int LMEM_NUM_LANES_P = `NUM_LSU_LANES,
+  // See VX_dma_unit. Default 0 (aligned-only) to track the engine-level
+  // convention; override to 1 on paths where SW still emits misaligned bases.
+  parameter bit ENABLE_MISALIGN = 1'b0,
+  // Forwarded to VX_dma_unit — DC v2023 rejects `interface_inst.PARAM`
+  // in parameter binding contexts, so the parent must pass these explicitly.
+  // Defaults track the VX_core-side interface widths (see VX_core.sv:87-95).
+  parameter int DCACHE_TAG_WIDTH_P = DCACHE_TAG_WIDTH,
+  parameter int LMEM_TAG_WIDTH_P   = LMEM_TAG_WIDTH
 ) (
   input wire clk,
   input wire reset,
 
   VX_lsu_mem_if.slave     mmio_if[N_MASTER], // from LSU
-  VX_mem_bus_if.master    dcache_bus_if, // to dcache (single 64B port)
-  VX_mem_bus_if.master    lmem_bus_if [`NUM_LSU_LANES] // per-lane to lmem
+  VX_mem_bus_if.master    dcache_bus_if, // to dcache
+  VX_mem_bus_if.master    lmem_bus_if [LMEM_NUM_LANES_P] // to local memory lanes
 `ifdef PERF_ENABLE
   ,output dma_perf_t perf
 `endif
@@ -18,7 +27,7 @@ module VX_dma_node import VX_gpu_pkg::*; #(
 
   localparam int NUM_REGS32      = `DMA_CFG_REG_NUM;
   localparam int ENTRYID_W       = `JOB_MMIO_ENTRYID_W;
-  localparam int LMEM_WIDE_BYTES = `NUM_LSU_LANES * LSU_WORD_SIZE;
+  localparam int LMEM_WIDE_BYTES = LMEM_NUM_LANES_P * LSU_WORD_SIZE;
 
   VX_config_reg_if #(
     .NUM(NUM_REGS32),
@@ -27,13 +36,11 @@ module VX_dma_node import VX_gpu_pkg::*; #(
 
   VX_node_done_if done_if ();
 
-  // Internal wide LMEM bus seen by VX_dma_unit_misal (DATA_SIZE = 64B).
-  // VX_dma_unit_misal is width-parameterized via lmem_bus_if.DATA_SIZE so the
-  // engine works at the aggregate 64B granularity; the per-lane scatter below
-  // converts that to NUM_LSU_LANES x 8B for the external interface.
+  // VX_dma_unit operates on one aggregate local-memory beat. Split the
+  // aggregate beat across LMEM lanes so DMA bandwidth scales with NUM_LSU_LANES.
   VX_mem_bus_if #(
     .DATA_SIZE(LMEM_WIDE_BYTES),
-    .TAG_WIDTH(LMEM_TAG_WIDTH)
+    .TAG_WIDTH(LMEM_TAG_WIDTH_P)
   ) lmem_wide_bus_if ();
 
   // MMIO front-end:
@@ -57,36 +64,38 @@ module VX_dma_node import VX_gpu_pkg::*; #(
 
   // DMA backend worker:
   //  - consumes one dispatched descriptor at a time
-  //  - performs misalignment-safe 3D copy
+  //  - selects aligned-only or misaligned implementation by parameter
   //  - reports completion via done_if(entry_id)
-  VX_dma_unit_misal #(
-    .INSTANCE_ID(INSTANCE_ID)
-  ) u_dma_unit_misal (
+  VX_dma_unit #(
+    .INSTANCE_ID      (INSTANCE_ID),
+    .ENABLE_MISALIGN  (ENABLE_MISALIGN),
+    .DCACHE_TAG_WIDTH (DCACHE_TAG_WIDTH_P),
+    .LMEM_TAG_WIDTH   (LMEM_TAG_WIDTH_P)
+  ) u_dma_unit (
     .clk          (clk),
     .reset        (reset),
     .cfg_reg_if   (cfg_reg_if.slave),
     .dcache_bus_if(dcache_bus_if),
     .lmem_bus_if  (lmem_wide_bus_if),
     .done_if      (done_if.master)
-  `ifdef PERF_ENABLE
-    ,.perf(perf)
-  `endif
+`ifdef PERF_ENABLE
+    ,.perf        (perf)
+`endif
   );
 
-  // -------------------------------------------------------------------------
-  // Lane scatter: 64B wide LMEM bus -> NUM_LSU_LANES x 8B narrow buses.
-  // Wait-all-lanes rsp gather (per-lane skid + AND release) is required
-  // because the wide bus has no per-lane mask field.
-  // -------------------------------------------------------------------------
-  VX_mem_bus_split #(
-    .NUM_LANES     (`NUM_LSU_LANES),
-    .LANE_DATA_SIZE(LSU_WORD_SIZE),
-    .TAG_WIDTH     (LMEM_TAG_WIDTH)
-  ) lmem_lane_split (
-    .clk         (clk),
-    .reset       (reset),
-    .wide_bus_if (lmem_wide_bus_if),
-    .lane_bus_if (lmem_bus_if)
-  );
+  if (LMEM_NUM_LANES_P == 1) begin : g_single_lmem_lane
+    `ASSIGN_VX_MEM_BUS_IF(lmem_bus_if[0], lmem_wide_bus_if);
+  end else begin : g_split_lmem_lanes
+    VX_mem_bus_split #(
+      .NUM_LANES      (LMEM_NUM_LANES_P),
+      .LANE_DATA_SIZE (LSU_WORD_SIZE),
+      .TAG_WIDTH      (LMEM_TAG_WIDTH_P)
+    ) lmem_lane_split (
+      .clk         (clk),
+      .reset       (reset),
+      .wide_bus_if (lmem_wide_bus_if),
+      .lane_bus_if (lmem_bus_if)
+    );
+  end
 
 endmodule

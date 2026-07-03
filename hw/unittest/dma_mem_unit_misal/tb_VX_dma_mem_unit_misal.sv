@@ -18,19 +18,21 @@ module tb_VX_dma_mem_unit_misal import VX_gpu_pkg::*; ();
   parameter real   PERIOD       = 10.0;
   parameter string OBJ          = "func";  // "func" or "power"
   parameter string FILE_POSTFIX = "func";
+  parameter int    DCACHE_BYTES_P = 32;
+  parameter int    LMEM_BYTES_P   = 16;
+  parameter bit    ENABLE_MISALIGN_P = 1'b1;
 
   // -----------------------------
   // Params
   // -----------------------------
-  localparam int CFG_NUM    = 16;
+  localparam int CFG_NUM    = `DMA_CFG_REG_NUM;
   localparam int CFG_DW     = 32;
 
   localparam int MEM_BYTES  = 64*1024;
   localparam int TAG_WIDTH  = 45;  // >= `UP(UUID_WIDTH) is enough
 
-  // Make DCACHE wider than LMEM to test width mismatch
-  localparam int DCACHE_BYTES = 32;
-  localparam int LMEM_BYTES   = 16;
+  localparam int DCACHE_BYTES = DCACHE_BYTES_P;
+  localparam int LMEM_BYTES   = LMEM_BYTES_P;
 
   // LMEM instance: 1 port
   localparam int LMEM_PORTS = 1;
@@ -91,7 +93,14 @@ module tb_VX_dma_mem_unit_misal import VX_gpu_pkg::*; ();
   // -----------------------------
   // DUT
   // -----------------------------
-  VX_dma_unit_misal #(.INSTANCE_ID("dma0")) dut (
+  // Default run exercises byte-misaligned scenarios. Parameter overrides can
+  // select VX_dma_unit_align for aligned-only width conversion coverage.
+  VX_dma_unit #(
+    .INSTANCE_ID     ("dma0"),
+    .ENABLE_MISALIGN (ENABLE_MISALIGN_P),
+    .DCACHE_TAG_WIDTH(TAG_WIDTH),
+    .LMEM_TAG_WIDTH  (TAG_WIDTH)
+  ) dut (
     .clk          (clk),
     .reset        (reset),
     .cfg_reg_if   (cfg_reg_if),
@@ -345,6 +354,11 @@ module tb_VX_dma_mem_unit_misal import VX_gpu_pkg::*; ();
     l_mid_base = 64'h2000 + 64'(l_mid_off);
     g_dst_base = 64'h3000 + 64'(g_dst_off);
 
+    for (int i = 0; i < CFG_NUM; i++) begin
+      d1[i] = '0;
+      d2[i] = '0;
+    end
+
     // bounds safety
     if ((g_src_base + total_bytes) >= MEM_BYTES) $fatal(1, "SRC OOR: base=%0h total=%0d", g_src_base, total_bytes);
     if ((g_dst_base + total_bytes) >= MEM_BYTES) $fatal(1, "DST OOR: base=%0h total=%0d", g_dst_base, total_bytes);
@@ -365,7 +379,7 @@ module tb_VX_dma_mem_unit_misal import VX_gpu_pkg::*; ();
     // -------------------------
     // GLOBAL -> LMEM
     // -------------------------
-    d1[0]  = 32'h0000_0001; // start=1, dir=0 (GLOBAL->LMEM) load
+    d1[0]  = 32'h0000_0001; // start=1
     d1[1]  = l_mid_base[31:0];      // reserved
     d1[2]  = l_mid_base[63:32];
     d1[3]  = g_src_base[31:0];
@@ -376,6 +390,7 @@ module tb_VX_dma_mem_unit_misal import VX_gpu_pkg::*; ();
     d1[11] = b0;      d1[12] = b1; d1[13] = b2;
     d1[14] = seg_bytes;
     d1[15] = padding;
+    d1[16] = 32'd0; // G2L: GLOBAL/DCACHE -> LMEM
 
     cfg_send_desc(d1, 32'd0);
     wait_dma_done();
@@ -383,7 +398,7 @@ module tb_VX_dma_mem_unit_misal import VX_gpu_pkg::*; ();
     // -------------------------
     // LMEM -> GLOBAL
     // -------------------------
-    d2[0]  = 32'h0000_0009; // start=1, dir(bit3)=1 (LMEM->GLOBAL)
+    d2[0]  = 32'h0000_0001; // start=1
     d2[1]  = g_dst_base[31:0];      // reserved
     d2[2]  = g_dst_base[63:32];
     d2[3]  = l_mid_base[31:0];
@@ -394,6 +409,7 @@ module tb_VX_dma_mem_unit_misal import VX_gpu_pkg::*; ();
     d2[11] = b0;      d2[12] = b1; d2[13] = b2;
     d2[14] = seg_bytes;
     d2[15] = padding;
+    d2[16] = 32'd1; // L2G: LMEM -> GLOBAL/DCACHE
 
     cfg_send_desc(d2, 32'd1);
     wait_dma_done();
@@ -492,32 +508,46 @@ module tb_VX_dma_mem_unit_misal import VX_gpu_pkg::*; ();
 
     repeat (5) @(posedge clk);
 
-    // Basic seg sizes
-    run_case_sweep_misalign(SEG_SIZE_1, b0,b1,b2, PADDING_1);
-    run_case_sweep_misalign(SEG_SIZE_1, b0,b1,b2, PADDING_2);
-    run_case_sweep_misalign(SEG_SIZE_1, b0,b1,b2, PADDING_3);
+    if (ENABLE_MISALIGN_P) begin
+      // Basic seg sizes
+      run_case_sweep_misalign(SEG_SIZE_1, b0,b1,b2, PADDING_1);
+      run_case_sweep_misalign(SEG_SIZE_1, b0,b1,b2, PADDING_2);
+      run_case_sweep_misalign(SEG_SIZE_1, b0,b1,b2, PADDING_3);
 
-    run_case_sweep_misalign(SEG_SIZE_2, b0,b1,b2, PADDING_1);
-    run_case_sweep_misalign(SEG_SIZE_2, b0,b1,b2, PADDING_2);
-    run_case_sweep_misalign(SEG_SIZE_2, b0,b1,b2, PADDING_3);
+      run_case_sweep_misalign(SEG_SIZE_2, b0,b1,b2, PADDING_1);
+      run_case_sweep_misalign(SEG_SIZE_2, b0,b1,b2, PADDING_2);
+      run_case_sweep_misalign(SEG_SIZE_2, b0,b1,b2, PADDING_3);
 
-    run_case_sweep_misalign(SEG_SIZE_3, b0,b1,b2, PADDING_1);
-    run_case_sweep_misalign(SEG_SIZE_3, b0,b1,b2, PADDING_2);
-    run_case_sweep_misalign(SEG_SIZE_3, b0,b1,b2, PADDING_3);
+      run_case_sweep_misalign(SEG_SIZE_3, b0,b1,b2, PADDING_1);
+      run_case_sweep_misalign(SEG_SIZE_3, b0,b1,b2, PADDING_2);
+      run_case_sweep_misalign(SEG_SIZE_3, b0,b1,b2, PADDING_3);
 
-    // Big padding stress (optionally comment out if too slow)
-    run_case_sweep_misalign(SEG_SIZE_3, b0,b1,b2, BIG_PADDING_1);
-    run_case_sweep_misalign(SEG_SIZE_3, b0,b1,b2, BIG_PADDING_2);
-    run_case_sweep_misalign(SEG_SIZE_3, b0,b1,b2, BIG_PADDING_3);
+      // Big padding stress (optionally comment out if too slow)
+      run_case_sweep_misalign(SEG_SIZE_3, b0,b1,b2, BIG_PADDING_1);
+      run_case_sweep_misalign(SEG_SIZE_3, b0,b1,b2, BIG_PADDING_2);
+      run_case_sweep_misalign(SEG_SIZE_3, b0,b1,b2, BIG_PADDING_3);
 
-    // Odd seg sizes
-    run_case_sweep_misalign(SEG_SIZE_ODD1, b0,b1,b2, PADDING_1);
-    run_case_sweep_misalign(SEG_SIZE_ODD2, b0,b1,b2, PADDING_1);
+      // Odd seg sizes
+      run_case_sweep_misalign(SEG_SIZE_ODD1, b0,b1,b2, PADDING_1);
+      run_case_sweep_misalign(SEG_SIZE_ODD2, b0,b1,b2, PADDING_1);
 
-    // Small seg sized
-    run_case_sweep_misalign(SEG_SIZE_SMALL1, b0,b1,b2, PADDING_1);
-    run_case_sweep_misalign(SEG_SIZE_SMALL2, b0,b1,b2, PADDING_1);
-    run_case_sweep_misalign(SEG_SIZE_SMALL3, b0,b1,b2, PADDING_1);
+      // Small seg sized
+      run_case_sweep_misalign(SEG_SIZE_SMALL1, b0,b1,b2, PADDING_1);
+      run_case_sweep_misalign(SEG_SIZE_SMALL2, b0,b1,b2, PADDING_1);
+      run_case_sweep_misalign(SEG_SIZE_SMALL3, b0,b1,b2, PADDING_1);
+    end else begin
+      run_case(SEG_SIZE_1, b0,b1,b2, PADDING_1, 0, 0, 0);
+      run_case(SEG_SIZE_1, b0,b1,b2, PADDING_2, 0, 0, 0);
+      run_case(SEG_SIZE_1, b0,b1,b2, PADDING_3, 0, 0, 0);
+
+      run_case(SEG_SIZE_2, b0,b1,b2, PADDING_1, 0, 0, 0);
+      run_case(SEG_SIZE_2, b0,b1,b2, PADDING_2, 0, 0, 0);
+      run_case(SEG_SIZE_2, b0,b1,b2, PADDING_3, 0, 0, 0);
+
+      run_case(SEG_SIZE_3, b0,b1,b2, BIG_PADDING_1, 0, 0, 0);
+      run_case(SEG_SIZE_3, b0,b1,b2, BIG_PADDING_2, 0, 0, 0);
+      run_case(SEG_SIZE_3, b0,b1,b2, BIG_PADDING_3, 0, 0, 0);
+    end
     
     $display("=====================================================================");
     $display("=====================  ALL TESTS COMPLETED  =========================");

@@ -22,9 +22,8 @@ module tb_VX_dma_mem_unit import VX_gpu_pkg::*; ();
   // -----------------------------
   // Params
   // -----------------------------
-  localparam int CFG_NUM    = 7;
-  localparam int CFG_DW     = 64;
-  localparam int DESC_WORDS = 14;
+  localparam int CFG_NUM    = `DMA_CFG_REG_NUM;
+  localparam int CFG_DW     = 32;
 
   localparam int MEM_BYTES  = 64*1024;
   localparam int TAG_WIDTH  = 45;  // 일단 `UP(UUID_WIDTH) 보다 크기만 하면 됨
@@ -81,15 +80,26 @@ module tb_VX_dma_mem_unit import VX_gpu_pkg::*; ();
     .TAG_WIDTH(TAG_WIDTH)
   ) lmem_bus_ifs [LMEM_PORTS](); // [0]=DMA only
 
+  VX_node_done_if done_if();
+
   // -----------------------------
   // DUT
   // -----------------------------
-  VX_dma_node #(.INSTANCE_ID("dma0")) dut (
+  // Aligned-path coverage: the bases (0x1000 / 0x3000) and strides in this
+  // testbench are all LMEM_BYTES-aligned, so keep ENABLE_MISALIGN=0 (default)
+  // to exercise the simplified datapath.
+  VX_dma_unit #(
+    .INSTANCE_ID     ("dma0"),
+    .ENABLE_MISALIGN (1'b0),
+    .DCACHE_TAG_WIDTH(TAG_WIDTH),
+    .LMEM_TAG_WIDTH  (TAG_WIDTH)
+  ) dut (
     .clk          (clk),
     .reset        (reset),
     .cfg_reg_if   (cfg_reg_if),
     .dcache_bus_if(dcache_bus_if),
-    .lmem_bus_if  (lmem_bus_ifs[0])     // DMA uses LMEM port 0
+    .lmem_bus_if  (lmem_bus_ifs[0]),     // DMA uses LMEM port 0
+    .done_if      (done_if)
   );
 
   // -----------------------------
@@ -165,6 +175,7 @@ module tb_VX_dma_mem_unit import VX_gpu_pkg::*; ();
 
   // always ready for DCACHE model
   assign dcache_bus_if.req_ready = 1'b1;
+  assign done_if.ready = 1'b1;
 
   // -----------------------------
   // DCACHE slave: 1-cycle latency, rsp_valid asserted for 1 cycle
@@ -288,32 +299,26 @@ module tb_VX_dma_mem_unit import VX_gpu_pkg::*; ();
   // cfg helpers
   // -----------------------------
   task automatic cfg_send_desc(
-    input logic [31:0] w [0:DESC_WORDS-1],
-    input logic [31:0] wid,
-    input logic [31:0] tid
+    input logic [31:0] w [0:CFG_NUM-1],
+    input logic [31:0] wid
   );
-    cfg_reg_if.wid = wid;
-    cfg_reg_if.tid = tid;
+    cfg_reg_if.entry_id = wid;
 
     for (int r = 0; r < CFG_NUM; r++) cfg_reg_if.regs[r] = '0;
 
-    for (int i = 0; i < DESC_WORDS; i++) begin
-      int r = i / 2;
-      if ((i % 2) == 0) cfg_reg_if.regs[r][31:0]  = w[i];
-      else              cfg_reg_if.regs[r][63:32] = w[i];
+    for (int i = 0; i < CFG_NUM; i++) begin
+      cfg_reg_if.regs[i] = w[i];
     end
 
+    while (!cfg_reg_if.ready) @(posedge clk);
     cfg_reg_if.valid = 1'b1;
-    // wait accept (ready only high in S_IDLE)
-    do @(posedge clk); while (!cfg_reg_if.ready);
     @(posedge clk);
     cfg_reg_if.valid = 1'b0;
   endtask
 
-  // done detect: ready deassert -> assert
   task automatic wait_dma_done();
-    do @(posedge clk); while (cfg_reg_if.ready);   // left IDLE
-    do @(posedge clk); while (!cfg_reg_if.ready);  // back to IDLE
+    do @(posedge clk); while (!done_if.valid);
+    @(posedge clk);
   endtask
 
   // -----------------------------
@@ -330,8 +335,8 @@ module tb_VX_dma_mem_unit import VX_gpu_pkg::*; ();
     int unsigned stride0, stride1, stride2;
     int unsigned g_src_base, l_mid_base, g_dst_base;
 
-    logic [31:0] d1 [0:DESC_WORDS-1];
-    logic [31:0] d2 [0:DESC_WORDS-1];
+    logic [31:0] d1 [0:CFG_NUM-1];
+    logic [31:0] d2 [0:CFG_NUM-1];
 
     total_bytes = b0*b1*b2*seg_bytes;
 
@@ -343,6 +348,11 @@ module tb_VX_dma_mem_unit import VX_gpu_pkg::*; ();
     g_src_base = 16'h1000;
     l_mid_base = 16'h2000;
     g_dst_base = 16'h3000;
+
+    for (int i = 0; i < CFG_NUM; i++) begin
+      d1[i] = '0;
+      d2[i] = '0;
+    end
 
     // init global
     mem_clear_global();
@@ -360,33 +370,39 @@ module tb_VX_dma_mem_unit import VX_gpu_pkg::*; ();
     // -------------------------
     // GLOBAL -> LMEM
     // -------------------------
-    d1[0]  = 32'h0000_0003; // start=1, dir=1 (GLOBAL->LMEM)
-    d1[1]  = g_src_base;
-    d1[2]  = l_mid_base;
-    d1[3]  = stride0; d1[4]  = stride0;
-    d1[5]  = stride1; d1[6]  = stride1;
-    d1[7]  = stride2; d1[8]  = stride2;
-    d1[9]  = b0;      d1[10] = b1; d1[11] = b2;
-    d1[12] = seg_bytes;
-    d1[13] = padding;
+    d1[0]  = 32'h0000_0001; // start=1
+    d1[1]  = l_mid_base[31:0];
+    d1[2]  = 32'(l_mid_base >> 32);
+    d1[3]  = g_src_base[31:0];
+    d1[4]  = 32'(g_src_base >> 32);
+    d1[5]  = stride0; d1[6]  = stride0;
+    d1[7]  = stride1; d1[8]  = stride1;
+    d1[9]  = stride2; d1[10] = stride2;
+    d1[11] = b0;      d1[12] = b1; d1[13] = b2;
+    d1[14] = seg_bytes;
+    d1[15] = padding;
+    d1[16] = 32'd0; // G2L: GLOBAL/DCACHE -> LMEM
 
-    cfg_send_desc(d1, 32'd5, 32'd7);
+    cfg_send_desc(d1, 32'd5);
     wait_dma_done();
 
     // -------------------------
     // LMEM -> GLOBAL
     // -------------------------
-    d2[0]  = 32'h0000_0001; // start=1, dir=0 (LMEM->GLOBAL)
-    d2[1]  = l_mid_base;
-    d2[2]  = g_dst_base;
-    d2[3]  = stride0; d2[4]  = stride0;
-    d2[5]  = stride1; d2[6]  = stride1;
-    d2[7]  = stride2; d2[8]  = stride2;
-    d2[9]  = b0;      d2[10] = b1; d2[11] = b2;
-    d2[12] = seg_bytes;
-    d2[13] = padding;
+    d2[0]  = 32'h0000_0001; // start=1
+    d2[1]  = g_dst_base[31:0];
+    d2[2]  = 32'(g_dst_base >> 32);
+    d2[3]  = l_mid_base[31:0];
+    d2[4]  = 32'(l_mid_base >> 32);
+    d2[5]  = stride0; d2[6]  = stride0;
+    d2[7]  = stride1; d2[8]  = stride1;
+    d2[9]  = stride2; d2[10] = stride2;
+    d2[11] = b0;      d2[12] = b1; d2[13] = b2;
+    d2[14] = seg_bytes;
+    d2[15] = padding;
+    d2[16] = 32'd1; // L2G: LMEM -> GLOBAL/DCACHE
 
-    cfg_send_desc(d2, 32'd9, 32'd11);
+    cfg_send_desc(d2, 32'd9);
     wait_dma_done();
 
     // -------------------------
@@ -415,8 +431,7 @@ module tb_VX_dma_mem_unit import VX_gpu_pkg::*; ();
 
     // cfg defaults
     cfg_reg_if.valid = 1'b0;
-    cfg_reg_if.wid   = '0;
-    cfg_reg_if.tid   = '0;
+    cfg_reg_if.entry_id = '0;
     for (int r = 0; r < CFG_NUM; r++) cfg_reg_if.regs[r] = '0;
 
     repeat (5) @(posedge clk);

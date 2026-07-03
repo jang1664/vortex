@@ -125,6 +125,7 @@ append_run_configs() {
     configs+=" -DDBG_TRACE_GBAR"
     configs+=" -DDBG_TRACE_TCU"
     configs+=" -DDBG_TRACE_GEMM"
+    configs+=" -DDBG_TRACE_GEMM_CTRL"
   fi
 
   if [[ "${HW_DEBUG}" == "1" ]]; then
@@ -483,11 +484,6 @@ fi
 # ----------------------------------------------------------------------------
 # - xrt-vcs-sim
 # ----------------------------------------------------------------------------
-# DRAM_REQ_STALL_P_ENTER_PCT=0 \
-# DRAM_REQ_STALL_P_EXIT_PCT=100 \
-# DRAM_RSP_STALL_P_ENTER_PCT=0 \
-# DRAM_RSP_STALL_P_EXIT_PCT=100 \
-# DRAM_STALL_SEED=1234 \
 # CACHE_REQ_STALL_P_ENTER_PCT=0 \
 # CACHE_REQ_STALL_P_EXIT_PCT=100 \
 # CACHE_RSP_STALL_P_ENTER_PCT=0 \
@@ -495,9 +491,14 @@ fi
 # CACHE_STALL_SEED=1234 \
 if [[ "${mode}" == "xrt-vcs-sim" || "${mode}" == "all" ]]; then
   xrt_vcs_env=(
-    "CONFIGS=${CONFIGS} -DNDEBUG"
+    "CONFIGS=${CONFIGS}"
     "DRIVER=xrt_vcs"
     "FSDB_DUMP=1"
+    "DRAM_REQ_STALL_P_ENTER_PCT=50"
+    "DRAM_REQ_STALL_P_EXIT_PCT=50"
+    "DRAM_RSP_STALL_P_ENTER_PCT=50"
+    "DRAM_RSP_STALL_P_EXIT_PCT=50"
+    "DRAM_STALL_SEED=1234"
   )
   if [[ -n "${FPGA_BIN_DIR}" ]]; then
     xrt_vcs_env+=("XRT_XCLBIN_PATH=${FPGA_BIN_DIR}/vortex_afu.xclbin")

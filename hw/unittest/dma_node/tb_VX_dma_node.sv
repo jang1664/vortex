@@ -104,6 +104,11 @@ module tb_VX_dma_node import VX_gpu_pkg::*; #(
     .TAG_WIDTH (DMA_LMEM_TAG_WIDTH)
   ) dma_lmem_if();
 
+  VX_mem_bus_if #(
+    .DATA_SIZE (LMEM_BYTES),
+    .TAG_WIDTH (DMA_LMEM_TAG_WIDTH)
+  ) dma_lmem_if_array[1]();
+
   // Decoupling shims:
   // keep DUT req_ready independent from arb combinational paths.
   VX_mem_bus_if #(
@@ -165,29 +170,39 @@ module tb_VX_dma_node import VX_gpu_pkg::*; #(
   VX_dma_node #(
     .INSTANCE_ID ("dma_node_tb"),
     .N_MASTER    (N_MASTER),
-    .NUM_ENTRIES (NUM_ENTRIES)
+    .NUM_ENTRIES (NUM_ENTRIES),
+    .LMEM_NUM_LANES_P(1),
+    .ENABLE_MISALIGN(1'b1),
+    .DCACHE_TAG_WIDTH_P(DMA_DCACHE_TAG_WIDTH),
+    .LMEM_TAG_WIDTH_P(DMA_LMEM_TAG_WIDTH)
   ) dut (
     .clk          (clk),
     .reset        (reset),
     .mmio_if      (mmio_if),
     .dcache_bus_if(dma_dcache_if),
-    .lmem_bus_if  (dma_lmem_if)
+    .lmem_bus_if  (dma_lmem_if_array)
   );
 
-  typedef dma_dcache_if.req_data_t dcache_req_t;
-  typedef dma_lmem_if.req_data_t   lmem_req_t;
+  `ASSIGN_VX_MEM_BUS_IF(dma_lmem_if, dma_lmem_if_array[0]);
 
   localparam int DMA_REQ_FIFO_DEPTH = 128;
 
-  dcache_req_t dcache_req_fifo[DMA_REQ_FIFO_DEPTH];
-  lmem_req_t   lmem_req_fifo[DMA_REQ_FIFO_DEPTH];
+  localparam int DCACHE_REQ_DATAW = 1 + (`MEM_ADDR_WIDTH - `CLOG2(DCACHE_BYTES))
+                                  + (DCACHE_BYTES * 8) + DCACHE_BYTES
+                                  + MEM_FLAGS_WIDTH + DMA_DCACHE_TAG_WIDTH;
+  localparam int LMEM_REQ_DATAW   = 1 + (`MEM_ADDR_WIDTH - `CLOG2(LMEM_BYTES))
+                                  + (LMEM_BYTES * 8) + LMEM_BYTES
+                                  + MEM_FLAGS_WIDTH + DMA_LMEM_TAG_WIDTH;
 
-  int unsigned dcache_head_q  = 0;
-  int unsigned dcache_tail_q  = 0;
-  int unsigned dcache_count_q = 0;
-  int unsigned lmem_head_q    = 0;
-  int unsigned lmem_tail_q    = 0;
-  int unsigned lmem_count_q   = 0;
+  logic [DCACHE_REQ_DATAW-1:0] dcache_req_fifo[DMA_REQ_FIFO_DEPTH];
+  logic [LMEM_REQ_DATAW-1:0]   lmem_req_fifo[DMA_REQ_FIFO_DEPTH];
+
+  int unsigned dcache_head_q;
+  int unsigned dcache_tail_q;
+  int unsigned dcache_count_q;
+  int unsigned lmem_head_q;
+  int unsigned lmem_tail_q;
+  int unsigned lmem_count_q;
 
   assign dma_dcache_if.req_ready = 1'b1;
   assign dma_lmem_if.req_ready   = 1'b1;
@@ -373,7 +388,7 @@ module tb_VX_dma_node import VX_gpu_pkg::*; #(
 
   assign cache_mem_if[0].req_ready = 1'b1;
 
-  always_ff @(posedge clk) begin
+  always @(posedge clk) begin
     if (reset) begin
       mem_rsp_queue.delete();
       cache_mem_if[0].rsp_valid <= 1'b0;
@@ -1013,6 +1028,12 @@ module tb_VX_dma_node import VX_gpu_pkg::*; #(
             run_bg_global_read_traffic(64, g_rd_base1);
         end
       join
+
+      // VX_dma_node completes when the dcache accepts the destination writes.
+      // The testbench's backing memory observes write-through requests a few
+      // cycles later, so let the cache-side write queue drain before checking
+      // the byte-addressed global_mem model.
+      repeat (20) @(posedge clk);
 
       mem_check_equal_g_to_g_with_padding(
         g_src_base,
