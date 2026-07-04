@@ -156,6 +156,9 @@ public:
                   GLOBAL_MEM_SIZE - ALLOC_BASE_ADDR,
                   RAM_PAGE_SIZE,
                   CACHE_BLOCK_SIZE)
+  #ifdef BANK_INTERLEAVE
+    , min_bank_alloc_size_(0)
+  #endif
   #ifndef CPP_API
     , xrtDevice_(nullptr)
     , xrtKernel_(nullptr)
@@ -170,7 +173,7 @@ public:
   #ifndef CPP_API
     for (auto &entry : xrtBuffers_) {
     #ifdef BANK_INTERLEAVE
-      xrtBOFree(entry);
+      xrtBOFree(entry.second.xrtBuffer);
     #else
       xrtBOFree(entry.second.xrtBuffer);
     #endif
@@ -281,18 +284,17 @@ public:
     printf("info: device name=%s, memory_capacity=0x%lx bytes, memory_banks=%ld.\n", device_name.c_str(), global_mem_size_, num_banks);
 
   #ifdef BANK_INTERLEAVE
-    xrtBuffers_.reserve(num_banks);
-    for (uint32_t i = 0; i < num_banks; ++i) {
-    #ifdef CPP_API
-      xrtBuffers_.emplace_back(xrtDevice_, bank_size, xrt::bo::flags::normal, i);
-    #else
-      CHECK_HANDLE(xrtBuffer, xrtBOAlloc(xrtDevice_, bank_size, XRT_BO_FLAGS_NONE, i), {
-         return -1;
-      });
-      xrtBuffers_.push_back(xrtBuffer);
-    #endif
-      printf("*** allocated bank%u/%u, size=%lu\n", i, num_banks, bank_size);
+    uint64_t startup_tail_addr = uint64_t(STARTUP_ADDR) + ((num_banks - 1) * CACHE_BLOCK_SIZE);
+    uint64_t startup_tail_offset;
+    CHECK_ERR(this->get_bank_info(startup_tail_addr, nullptr, &startup_tail_offset), {
+      return err;
+    });
+    min_bank_alloc_size_ = aligned_size(startup_tail_offset + RAM_PAGE_SIZE, RAM_PAGE_SIZE);
+    if (min_bank_alloc_size_ > bank_size) {
+      min_bank_alloc_size_ = bank_size;
     }
+    printf("info: interleaved memory uses lazy bank allocation, bank_size=%lu, min_alloc_size=0x%lx.\n",
+           bank_size, min_bank_alloc_size_);
   #endif
 
   #ifdef SCOPE
@@ -419,6 +421,9 @@ public:
       global_mem_.release(addr);
       return err;
     });
+  #ifdef BANK_INTERLEAVE
+    allocated_ranges_.push_back({addr, asize});
+  #endif
     *dev_addr = addr;
     shm_.update_mem(global_mem_.allocated(), global_mem_.free());
     return 0;
@@ -443,6 +448,9 @@ public:
       global_mem_.release(dev_addr);
       return err;
     });
+  #ifdef BANK_INTERLEAVE
+    allocated_ranges_.push_back({dev_addr, aligned_size(size, CACHE_BLOCK_SIZE)});
+  #endif
     shm_.update_mem(global_mem_.allocated(), global_mem_.free());
     return 0;
   }
@@ -452,6 +460,12 @@ public:
       return err;
     });
   #ifdef BANK_INTERLEAVE
+    for (auto it = allocated_ranges_.begin(); it != allocated_ranges_.end(); ++it) {
+      if (it->addr == dev_addr) {
+        allocated_ranges_.erase(it);
+        break;
+      }
+    }
     // Note: do NOT clear xrtBuffers_ here even when allocated()==0.
     // The device destructor may still need them (e.g. vx_dump_perf -> mpm_query -> download).
     // Cleanup is handled in ~vx_device().
@@ -529,6 +543,12 @@ public:
     if (dev_addr + asize > global_mem_size_)
       return -1;
 
+  #ifdef BANK_INTERLEAVE
+    CHECK_ERR(this->ensure_buffers_for_range(dev_addr, asize), {
+      return err;
+    });
+  #endif
+
     shm_.set_state(VX_STATE_UPLOADING);
     uint64_t remaining = size;
     while (remaining != 0) {
@@ -538,15 +558,18 @@ public:
       CHECK_ERR(this->get_bank_info(dev_addr, &bo_index, &bo_offset), {
         return err;
       });
-      CHECK_ERR(this->get_buffer(bo_index, &xrtBuffer), {
-        return err;
-      });
 
-      uint64_t bank_size = 1ull << lg2_bank_size_;
       uint64_t xfer_size;
 #ifdef BANK_INTERLEAVE
       xfer_size = (remaining > CACHE_BLOCK_SIZE) ? CACHE_BLOCK_SIZE : remaining;
+      CHECK_ERR(this->get_buffer(bo_index, bo_offset + xfer_size, &xrtBuffer), {
+        return err;
+      });
 #else
+      CHECK_ERR(this->get_buffer(bo_index, &xrtBuffer), {
+        return err;
+      });
+      uint64_t bank_size = 1ull << lg2_bank_size_;
       uint64_t bank_headroom = bank_size - bo_offset;
       xfer_size = (remaining > bank_headroom) ? bank_headroom : remaining;
 #endif
@@ -589,6 +612,12 @@ public:
     if (dev_addr + asize > global_mem_size_)
       return -1;
 
+  #ifdef BANK_INTERLEAVE
+    CHECK_ERR(this->ensure_buffers_for_range(dev_addr, asize), {
+      return err;
+    });
+  #endif
+
     shm_.set_state(VX_STATE_DOWNLOADING);
     uint64_t remaining = size;
     while (remaining != 0) {
@@ -598,15 +627,18 @@ public:
       CHECK_ERR(this->get_bank_info(dev_addr, &bo_index, &bo_offset), {
         return err;
       });
-      CHECK_ERR(this->get_buffer(bo_index, &xrtBuffer), {
-        return err;
-      });
 
-      uint64_t bank_size = 1ull << lg2_bank_size_;
       uint64_t xfer_size;
 #ifdef BANK_INTERLEAVE
       xfer_size = (remaining > CACHE_BLOCK_SIZE) ? CACHE_BLOCK_SIZE : remaining;
+      CHECK_ERR(this->get_buffer(bo_index, bo_offset + xfer_size, &xrtBuffer), {
+        return err;
+      });
 #else
+      CHECK_ERR(this->get_buffer(bo_index, &xrtBuffer), {
+        return err;
+      });
+      uint64_t bank_size = 1ull << lg2_bank_size_;
       uint64_t bank_headroom = bank_size - bo_offset;
       xfer_size = (remaining > bank_headroom) ? bank_headroom : remaining;
 #endif
@@ -637,6 +669,12 @@ public:
   }
 
   int start(uint64_t krnl_addr, uint64_t args_addr) {
+  #ifdef BANK_INTERLEAVE
+    CHECK_ERR(this->ensure_buffers_for_allocations(), {
+      return err;
+    });
+  #endif
+
     // Pre-flight status read
     uint32_t status = 0;
     CHECK_ERR(this->read_register(MMIO_CTL_ADDR, &status), {
@@ -769,6 +807,9 @@ public:
 private:
 
   MemoryAllocator global_mem_;
+#ifdef BANK_INTERLEAVE
+  uint64_t min_bank_alloc_size_;
+#endif
   xrt_device_t xrtDevice_;
   xrt_kernel_t xrtKernel_;
   uint64_t dev_caps_;
@@ -782,11 +823,23 @@ private:
 
 #ifdef BANK_INTERLEAVE
 
-  std::vector<xrt_buffer_t> xrtBuffers_;
+  struct range_t {
+    uint64_t addr;
+    uint64_t size;
+  };
+
+  struct bank_buffer_t {
+    xrt_buffer_t xrtBuffer;
+    uint64_t size;
+  };
+
+  std::vector<range_t> allocated_ranges_;
+  std::unordered_map<uint32_t, bank_buffer_t> xrtBuffers_;
 
   int get_bank_info(uint64_t addr, uint32_t *pIdx, uint64_t *pOff) {
     uint32_t num_banks = 1 << lg2_num_banks_;
     uint64_t block_addr = addr / CACHE_BLOCK_SIZE;
+    // Interleave by cache line: addr 0 -> bank0, addr 64 -> bank1.
     uint32_t index = block_addr & (num_banks - 1);
     uint64_t offset = (block_addr >> lg2_num_banks_) * CACHE_BLOCK_SIZE;
     if (pIdx) {
@@ -799,9 +852,120 @@ private:
     return 0;
   }
 
-  int get_buffer(uint32_t bank_id, xrt_buffer_t *pBuf) {
+  int get_buffer(uint32_t bank_id, uint64_t min_size, xrt_buffer_t *pBuf) {
+    uint32_t num_banks = 1 << lg2_num_banks_;
+    if (bank_id >= num_banks) {
+      fprintf(stderr, "[VXDRV] Error: invalid bank id: %u\n", bank_id);
+      return -1;
+    }
+    uint64_t bank_size = 1ull << lg2_bank_size_;
+    if (min_size > bank_size) {
+      fprintf(stderr, "[VXDRV] Error: bank%u BO size out of range: 0x%lx > 0x%lx\n",
+              bank_id, min_size, bank_size);
+      return -1;
+    }
+    min_size = aligned_size(min_size, RAM_PAGE_SIZE);
+    if (min_size < min_bank_alloc_size_) {
+      min_size = min_bank_alloc_size_;
+    }
+    if (0 == min_size) {
+      min_size = RAM_PAGE_SIZE;
+    }
+    auto it = xrtBuffers_.find(bank_id);
+    if (it == xrtBuffers_.end() || it->second.size < min_size) {
+      CHECK_ERR(this->resize_buffer(bank_id, min_size), {
+        return err;
+      });
+      it = xrtBuffers_.find(bank_id);
+    }
     if (pBuf) {
-      *pBuf = xrtBuffers_.at(bank_id);
+      *pBuf = it->second.xrtBuffer;
+    }
+    return 0;
+  }
+
+  int resize_buffer(uint32_t bank_id, uint64_t new_size) {
+    std::vector<uint8_t> backup;
+    auto old_it = xrtBuffers_.find(bank_id);
+    if (old_it != xrtBuffers_.end()) {
+      uint64_t old_size = old_it->second.size;
+      backup.resize(old_size);
+    #ifdef CPP_API
+      old_it->second.xrtBuffer.sync(XCL_BO_SYNC_BO_FROM_DEVICE, old_size, 0);
+      old_it->second.xrtBuffer.read(backup.data(), old_size, 0);
+    #else
+      CHECK_ERR(xrtBOSync(old_it->second.xrtBuffer, XCL_BO_SYNC_BO_FROM_DEVICE, old_size, 0), {
+        dump_xrt_error(xrtDevice_, err);
+        return err;
+      });
+      CHECK_ERR(xrtBORead(old_it->second.xrtBuffer, backup.data(), old_size, 0), {
+        dump_xrt_error(xrtDevice_, err);
+        return err;
+      });
+      xrtBOFree(old_it->second.xrtBuffer);
+    #endif
+      xrtBuffers_.erase(old_it);
+    }
+
+    printf("allocating interleaved bank%u lazily, size=0x%lx...\n", bank_id, new_size);
+    #ifdef CPP_API
+      xrt::bo xrtBuffer(xrtDevice_, new_size, xrt::bo::flags::normal, bank_id);
+      uint64_t bo_addr = xrtBuffer.address();
+      uint64_t expected_addr = bank_id * (1ull << lg2_bank_size_);
+      if (bo_addr != expected_addr) {
+        fprintf(stderr, "[VXDRV] Error: bank%u BO base mismatch: got=0x%lx, expected=0x%lx\n",
+                bank_id, bo_addr, expected_addr);
+        return -1;
+      }
+    #else
+      CHECK_HANDLE(xrtBuffer, xrtBOAlloc(xrtDevice_, new_size, XRT_BO_FLAGS_NONE, bank_id), {
+        return -1;
+      });
+    #endif
+
+    if (!backup.empty()) {
+    #ifdef CPP_API
+      xrtBuffer.write(backup.data(), backup.size(), 0);
+      xrtBuffer.sync(XCL_BO_SYNC_BO_TO_DEVICE, backup.size(), 0);
+    #else
+      CHECK_ERR(xrtBOWrite(xrtBuffer, backup.data(), backup.size(), 0), {
+        dump_xrt_error(xrtDevice_, err);
+        return err;
+      });
+      CHECK_ERR(xrtBOSync(xrtBuffer, XCL_BO_SYNC_BO_TO_DEVICE, backup.size(), 0), {
+        dump_xrt_error(xrtDevice_, err);
+        return err;
+      });
+    #endif
+    }
+
+    xrtBuffers_.insert({bank_id, {xrtBuffer, new_size}});
+    return 0;
+  }
+
+  int ensure_buffers_for_range(uint64_t addr, uint64_t size) {
+    uint32_t num_banks = 1 << lg2_num_banks_;
+    uint64_t num_blocks = aligned_size(size, CACHE_BLOCK_SIZE) / CACHE_BLOCK_SIZE;
+    uint32_t banks_to_check = (num_blocks < num_banks) ? num_blocks : num_banks;
+    uint64_t start_block = addr / CACHE_BLOCK_SIZE;
+    for (uint32_t i = 0; i < banks_to_check; ++i) {
+      uint64_t first_block = start_block + i;
+      uint64_t remaining_blocks = num_blocks - 1 - i;
+      uint64_t last_block = first_block + (remaining_blocks / num_banks) * num_banks;
+      uint32_t bank_id = last_block & (num_banks - 1);
+      uint64_t min_size = ((last_block >> lg2_num_banks_) + 1) * CACHE_BLOCK_SIZE;
+      CHECK_ERR(this->get_buffer(bank_id, min_size, nullptr), {
+        return err;
+      });
+    }
+    return 0;
+  }
+
+  int ensure_buffers_for_allocations() {
+    for (auto range : allocated_ranges_) {
+      CHECK_ERR(this->ensure_buffers_for_range(range.addr, range.size), {
+        return err;
+      });
     }
     return 0;
   }

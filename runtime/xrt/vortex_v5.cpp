@@ -29,14 +29,18 @@
 #include "experimental/xrt_xclbin.h"
 #endif
 
-#include <cctype>
 #include <limits>
 #include <stdarg.h>
+#include <stdlib.h>
 #include <string>
 #include <unistd.h>
 #include <unordered_map>
 #include <util.h>
 #include <vector>
+
+#ifdef ENABLE_HW_DEBUG_MODULE
+#include "vx_hw_debug.h"
+#endif
 
 // vortex-smi shared memory support
 #include <vx_shm_helper.h>
@@ -47,14 +51,22 @@ using namespace vortex;
 #define CPP_API
 #endif
 
-#define BANK_INTERLEAVE
-
 #define MMIO_CTL_ADDR 0x00
 #define MMIO_DEV_ADDR 0x10
 #define MMIO_ISA_ADDR 0x18
 #define MMIO_DCR_ADDR 0x20
 #define MMIO_SCP_ADDR 0x28
 #define MMIO_MEM_ADDR 0x30
+
+#ifdef ENABLE_HW_DEBUG_MODULE
+#ifndef HW_DEBUG_PC_RING_DEPTH
+#define HW_DEBUG_PC_RING_DEPTH VX_HW_DEBUG_DEFAULT_PC_RING_DEPTH
+#endif
+#endif
+
+#if defined(ENABLE_HW_DEBUG_MODULE) && defined(NDEBUG)
+#define VX_HW_DEBUG_READY_WAIT_POLL 1
+#endif
 
 #define CTL_AP_START (1 << 0)
 #define CTL_AP_DONE (1 << 1)
@@ -79,6 +91,8 @@ typedef xrtBufferHandle xrt_buffer_t;
 
 #define DEFAULT_DEVICE_INDEX 0
 
+#define DEFAULT_DEVICE_PROBE_MAX 8
+
 #define DEFAULT_XCLBIN_PATH "vortex_afu.xclbin"
 
 #define KERNEL_NAME "vortex_afu"
@@ -100,19 +114,6 @@ static void dump_xrt_error(xrtDeviceHandle xrtDevice, xrtErrorCode err) {
 }
 #endif
 
-static std::string sanitize_shm_tag(const std::string& value) {
-  std::string out;
-  out.reserve(value.size());
-  for (char c : value) {
-    if (std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '-') {
-      out.push_back(c);
-    } else {
-      out.push_back('_');
-    }
-  }
-  return out;
-}
-
 static bool is_xrt_emulation() {
 #ifdef XRTSIM
   return true;
@@ -122,9 +123,94 @@ static bool is_xrt_emulation() {
 #endif
 }
 
+static bool parse_xrt_device_index(const char* value, int* device_index) {
+  if (value == nullptr || value[0] == '\0') {
+    return false;
+  }
+
+  char* end = nullptr;
+  long parsed = strtol(value, &end, 10);
+  if (end == value || *end != '\0' || parsed < 0
+   || parsed > std::numeric_limits<int>::max()) {
+    return false;
+  }
+
+  *device_index = static_cast<int>(parsed);
+  return true;
+}
+
+static int get_xrt_device_probe_max() {
+  int probe_max = DEFAULT_DEVICE_PROBE_MAX;
+  parse_xrt_device_index(getenv("XRT_DEVICE_PROBE_MAX"), &probe_max);
+  if (probe_max <= 0) {
+    return DEFAULT_DEVICE_PROBE_MAX;
+  }
+  return probe_max;
+}
+
+#ifdef CPP_API
+static bool can_open_xrt_device_index(int device_index) {
+  try {
+    auto xrtDevice = xrt::device(device_index);
+    (void)xrtDevice;
+    return true;
+  } catch (...) {
+    return false;
+  }
+}
+
+static int detect_xrt_device_index() {
+  int found_index = -1;
+  int found_count = 0;
+  const int probe_max = get_xrt_device_probe_max();
+
+  for (int index = 0; index < probe_max; ++index) {
+    if (!can_open_xrt_device_index(index)) {
+      continue;
+    }
+    if (found_index < 0) {
+      found_index = index;
+    }
+    ++found_count;
+  }
+
+  if (found_index < 0) {
+    printf("[VXDRV] warning: could not auto-detect accessible XRT device; using index %d\n",
+           DEFAULT_DEVICE_INDEX);
+    return DEFAULT_DEVICE_INDEX;
+  }
+
+  if (found_count > 1) {
+    printf("[VXDRV] warning: multiple accessible XRT devices; using index %d\n",
+           found_index);
+  }
+  return found_index;
+}
+#endif
+
+static int select_xrt_device_index() {
+  int device_index = DEFAULT_DEVICE_INDEX;
+  const char *device_index_s = getenv("XRT_DEVICE_INDEX");
+  if (parse_xrt_device_index(device_index_s, &device_index)) {
+    return device_index;
+  }
+  if (device_index_s != nullptr && device_index_s[0] != '\0') {
+    printf("[VXDRV] warning: invalid XRT_DEVICE_INDEX=%s; auto-detecting device\n",
+           device_index_s);
+  }
+
+#ifdef CPP_API
+  if (!is_xrt_emulation()) {
+    return detect_xrt_device_index();
+  }
+#endif
+
+  return DEFAULT_DEVICE_INDEX;
+}
+
 static void get_xrt_shm_path_policy(
-  int device_index,
-  const std::string& device_bdf,
+  int /*device_index*/,
+  const std::string& /*device_bdf*/,
   std::string* shm_path,
   bool* unlink_on_close) {
   const bool emulation = is_xrt_emulation();
@@ -147,6 +233,35 @@ static void get_xrt_shm_path_policy(
   *unlink_on_close = false;
 }
 
+enum class XrtMemMapMode {
+  Legacy,
+  Remap,
+};
+
+#ifdef PLATFORM_MEMORY_REMAP
+#define VX_USE_PLATFORM_MEMORY_REMAP
+#endif
+
+#if defined(PLATFORM_MEMORY_REMAP) || defined(BANK_INTERLEAVE)
+#define VX_USE_BANKED_XRT_BO
+#endif
+
+#ifdef VX_USE_PLATFORM_MEMORY_REMAP
+static constexpr XrtMemMapMode kXrtMemMapMode = XrtMemMapMode::Remap;
+#else
+static constexpr XrtMemMapMode kXrtMemMapMode = XrtMemMapMode::Legacy;
+#endif
+
+static const char* xrt_mem_map_mode_name(XrtMemMapMode mode) {
+  switch (mode) {
+  case XrtMemMapMode::Legacy:
+    return "legacy";
+  case XrtMemMapMode::Remap:
+    return "remap";
+  }
+  return "unknown";
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 
 class vx_device {
@@ -156,10 +271,14 @@ public:
                   GLOBAL_MEM_SIZE - ALLOC_BASE_ADDR,
                   RAM_PAGE_SIZE,
                   CACHE_BLOCK_SIZE)
+  #ifdef VX_USE_BANKED_XRT_BO
+    , bo_size_(0)
+  #endif
   #ifndef CPP_API
     , xrtDevice_(nullptr)
     , xrtKernel_(nullptr)
   #endif
+    , pending_ap_done_(false)
   {}
 
   ~vx_device() {
@@ -169,7 +288,7 @@ public:
   #endif
   #ifndef CPP_API
     for (auto &entry : xrtBuffers_) {
-    #ifdef BANK_INTERLEAVE
+    #ifdef VX_USE_BANKED_XRT_BO
       xrtBOFree(entry);
     #else
       xrtBOFree(entry.second.xrtBuffer);
@@ -185,11 +304,7 @@ public:
   }
 
   int init() {
-    int device_index = DEFAULT_DEVICE_INDEX;
-    const char *device_index_s = getenv("XRT_DEVICE_INDEX");
-    if (device_index_s != nullptr) {
-      device_index = atoi(device_index_s);
-    }
+    int device_index = select_xrt_device_index();
 
     const char *xlbin_path_s = getenv("XRT_XCLBIN_PATH");
     if (xlbin_path_s == nullptr) {
@@ -206,6 +321,8 @@ public:
     auto xclbin = xrt::xclbin(std::string(xlbin_path_s));
     auto device_name = xrtDevice.get_info<xrt::info::device::name>();
     device_bdf = xrtDevice.get_info<xrt::info::device::bdf>();
+    printf("[VXDRV] XRT device: index=%d, bdf=%s, name=%s\n",
+           device_index, device_bdf.c_str(), device_name.c_str());
 
   #else
 
@@ -278,21 +395,36 @@ public:
 
     global_mem_size_ = num_banks * bank_size;
 
-    printf("info: device name=%s, memory_capacity=0x%lx bytes, memory_banks=%ld.\n", device_name.c_str(), global_mem_size_, num_banks);
+    printf("info: device name=%s, memory_capacity=0x%lx bytes, memory_banks=%ld, xrt_mem_map=%s.\n",
+           device_name.c_str(), global_mem_size_, num_banks,
+           xrt_mem_map_mode_name(kXrtMemMapMode));
 
-  #ifdef BANK_INTERLEAVE
+  #ifdef VX_USE_BANKED_XRT_BO
+    // hw_emu sim_qdma has an off-by-one in its PC-region bookkeeping when
+    // BO size exactly equals bank_size: allocating BO[0]=bank_size also
+    // registers a stale region for the next PC, and BO[1]'s later alloc
+    // then hits a duplicate and eventually FATAL. Subtracting one page
+    // keeps the BO one cache page below the PC boundary and avoids the
+    // trigger entirely. Real HW does not exhibit this and uses bank_size.
+    bo_size_ = bank_size;
+    if (is_xrt_emulation() && bo_size_ > RAM_PAGE_SIZE) {
+      bo_size_ -= RAM_PAGE_SIZE;
+      printf("info: hw_emu detected, BO size reduced to 0x%lx (bank_size-1page) "
+             "to avoid sim_qdma region conflict.\n", bo_size_);
+    }
+
     xrtBuffers_.reserve(num_banks);
     for (uint32_t i = 0; i < num_banks; ++i) {
     #ifdef CPP_API
-      xrtBuffers_.emplace_back(xrtDevice_, bank_size, xrt::bo::flags::normal, i);
+      xrtBuffers_.emplace_back(xrtDevice_, bo_size_, xrt::bo::flags::normal, i);
     #else
-      CHECK_HANDLE(xrtBuffer, xrtBOAlloc(xrtDevice_, bank_size, XRT_BO_FLAGS_NONE, i), {
+      CHECK_HANDLE(xrtBuffer, xrtBOAlloc(xrtDevice_, bo_size_, XRT_BO_FLAGS_NONE, i), {
          return -1;
       });
       xrtBuffers_.push_back(xrtBuffer);
     #endif
-      printf("*** allocated bank%u/%u, size=%lu\n", i, num_banks, bank_size);
     }
+    printf("info: allocated %lu banks, size=0x%lx each.\n", num_banks, bo_size_);
   #endif
 
   #ifdef SCOPE
@@ -404,7 +536,7 @@ public:
     CHECK_ERR(global_mem_.allocate(asize, &addr), {
       return err;
     });
-  #ifndef BANK_INTERLEAVE
+  #ifndef VX_USE_BANKED_XRT_BO
     uint32_t bank_id;
     CHECK_ERR(this->get_bank_info(addr, &bank_id, nullptr), {
       global_mem_.release(addr);
@@ -428,7 +560,7 @@ public:
     CHECK_ERR(global_mem_.reserve(dev_addr, size), {
       return err;
     });
-  #ifndef BANK_INTERLEAVE
+  #ifndef VX_USE_BANKED_XRT_BO
     uint32_t bank_id;
     CHECK_ERR(this->get_bank_info(dev_addr, &bank_id, nullptr), {
       global_mem_.release(dev_addr);
@@ -451,10 +583,10 @@ public:
     CHECK_ERR(global_mem_.release(dev_addr), {
       return err;
     });
-  #ifdef BANK_INTERLEAVE
-    // Note: do NOT clear xrtBuffers_ here even when allocated()==0.
-    // The device destructor may still need them (e.g. vx_dump_perf -> mpm_query -> download).
-    // Cleanup is handled in ~vx_device().
+  #ifdef VX_USE_BANKED_XRT_BO
+    // Banked XRT BOs are pre-allocated in init and released in dtor.
+    // Individual mem_free calls do not touch xrtBuffers_ (the device may
+    // still need them, e.g. vx_dump_perf -> mpm_query -> download).
   #else
     uint32_t bank_id;
     CHECK_ERR(this->get_bank_info(dev_addr, &bank_id, nullptr), {
@@ -519,13 +651,10 @@ public:
   int upload(uint64_t dev_addr, const void *src, uint64_t size) {
     auto host_ptr = (const uint8_t *)src;
 
-    // check alignment
     if (!is_aligned(dev_addr, CACHE_BLOCK_SIZE))
       return -1;
 
     auto asize = aligned_size(size, CACHE_BLOCK_SIZE);
-
-    // bound checking
     if (dev_addr + asize > global_mem_size_)
       return -1;
 
@@ -542,11 +671,20 @@ public:
         return err;
       });
 
-      uint64_t bank_size = 1ull << lg2_bank_size_;
       uint64_t xfer_size;
-#ifdef BANK_INTERLEAVE
+#ifdef VX_USE_BANKED_XRT_BO
       xfer_size = (remaining > CACHE_BLOCK_SIZE) ? CACHE_BLOCK_SIZE : remaining;
+      // In hw_emu the last page of each bank is not backed (bo_size_ =
+      // bank_size - 1 page). Flag accesses that would fall outside before
+      // XRT throws.
+      if (bo_offset + xfer_size > bo_size_) {
+        fprintf(stderr, "[VXDRV] upload oob: dev_addr=0x%lx bank=%u off=0x%lx "
+                        "xfer=0x%lx bo_size=0x%lx\n",
+                dev_addr, bo_index, bo_offset, xfer_size, bo_size_);
+        return -1;
+      }
 #else
+      uint64_t bank_size = 1ull << lg2_bank_size_;
       uint64_t bank_headroom = bank_size - bo_offset;
       xfer_size = (remaining > bank_headroom) ? bank_headroom : remaining;
 #endif
@@ -579,13 +717,10 @@ public:
   int download(void *dest, uint64_t dev_addr, uint64_t size) {
     auto host_ptr = (uint8_t *)dest;
 
-    // check alignment
     if (!is_aligned(dev_addr, CACHE_BLOCK_SIZE))
       return -1;
 
     auto asize = aligned_size(size, CACHE_BLOCK_SIZE);
-
-    // bound checking
     if (dev_addr + asize > global_mem_size_)
       return -1;
 
@@ -602,11 +737,17 @@ public:
         return err;
       });
 
-      uint64_t bank_size = 1ull << lg2_bank_size_;
       uint64_t xfer_size;
-#ifdef BANK_INTERLEAVE
+#ifdef VX_USE_BANKED_XRT_BO
       xfer_size = (remaining > CACHE_BLOCK_SIZE) ? CACHE_BLOCK_SIZE : remaining;
+      if (bo_offset + xfer_size > bo_size_) {
+        fprintf(stderr, "[VXDRV] download oob: dev_addr=0x%lx bank=%u off=0x%lx "
+                        "xfer=0x%lx bo_size=0x%lx\n",
+                dev_addr, bo_index, bo_offset, xfer_size, bo_size_);
+        return -1;
+      }
 #else
+      uint64_t bank_size = 1ull << lg2_bank_size_;
       uint64_t bank_headroom = bank_size - bo_offset;
       xfer_size = (remaining > bank_headroom) ? bank_headroom : remaining;
 #endif
@@ -639,11 +780,16 @@ public:
   int start(uint64_t krnl_addr, uint64_t args_addr) {
     // Pre-flight status read
     uint32_t status = 0;
-    CHECK_ERR(this->read_register(MMIO_CTL_ADDR, &status), {
-      return err;
-    });
+    while (true) {
+      CHECK_ERR(this->read_register(MMIO_CTL_ADDR, &status), {
+        return err;
+      });
+      bool is_idle = (status & CTL_AP_IDLE) == CTL_AP_IDLE;
+      if (is_idle) {
+        break;
+      }
+    }
 
-    // set kernel info
     CHECK_ERR(this->dcr_write(VX_DCR_BASE_STARTUP_ADDR0, krnl_addr & 0xffffffff), {
       return err;
     });
@@ -657,23 +803,23 @@ public:
       return err;
     });
 
-    // Ordering barrier:
-    // make sure all DCR writes are committed before AP_START.
+    // Ordering barrier: ensure DCR writes commit before AP_START.
     CHECK_ERR(this->read_register(MMIO_CTL_ADDR, &status), {
       return err;
     });
 
-    // start execution
     CHECK_ERR(this->write_register(MMIO_CTL_ADDR, CTL_AP_START), {
       return err;
     });
 
     // Barrier after AP_START to avoid posted-write timing surprises.
-    CHECK_ERR(this->read_register(MMIO_CTL_ADDR, &status), {
-      return err;
-    });
+    // AP_DONE is read-clear on ap_ctrl_hs.  Tiny kernels can complete before
+    // this barrier read, so latch that completion for ready_wait().
+    // CHECK_ERR(this->read_register(MMIO_CTL_ADDR, &status), {
+    //   return err;
+    // });
+    // pending_ap_done_ = (status & CTL_AP_DONE) != 0;
 
-    // clear mpm cache
     mpm_cache_.clear();
     shm_.record_kernel(krnl_addr);
     shm_.set_state(VX_STATE_RUNNING);
@@ -681,42 +827,105 @@ public:
     return 0;
   }
 
+#ifdef ENABLE_HW_DEBUG_MODULE
+  static int hw_debug_read32(void *opaque, uint32_t addr, uint32_t *value) {
+    return static_cast<vx_device *>(opaque)->read_register(addr, value);
+  }
+
+  static int hw_debug_write32(void *opaque, uint32_t addr, uint32_t value) {
+    return static_cast<vx_device *>(opaque)->write_register(addr, value);
+  }
+
+  void dump_hw_debug() {
+    vx_hw_debug_io_t io = {
+      this,
+      &vx_device::hw_debug_read32,
+      &vx_device::hw_debug_write32
+    };
+    (void)vx_hw_debug_dump(stderr, &io, NUM_DMA_CHANNELS, HW_DEBUG_PC_RING_DEPTH, "[VXDRV-HWDBG]");
+  }
+
+  void poll_hw_debug_flags(vx_hw_debug_flag_snapshot_t *previous) {
+    vx_hw_debug_io_t io = {
+      this,
+      &vx_device::hw_debug_read32,
+      &vx_device::hw_debug_write32
+    };
+    int err = vx_hw_debug_poll_flags(stderr, &io, NUM_DMA_CHANNELS, previous, "[VXDRV-HWDBG]");
+    if (err != 0) {
+      fprintf(stderr, "[VXDRV-HWDBG] flag poll failed: %d\n", err);
+    }
+  }
+#endif
+
   int ready_wait(uint64_t timeout) {
     struct timespec sleep_time;
   #ifndef NDEBUG
+    // If you want slow polling for easier debugging, set VORTEX_READY_WAIT_SLOW=1 MACRO
+  #ifdef VORTEX_READY_WAIT_SLOW
     sleep_time.tv_sec = 1;
     sleep_time.tv_nsec = 0;
   #else
     sleep_time.tv_sec = 0;
     sleep_time.tv_nsec = 1000000;
   #endif
+  #else
+    sleep_time.tv_sec = 0;
+    sleep_time.tv_nsec = 1000000;
+  #endif
 
-    // to milliseconds
     uint64_t sleep_time_ms = (sleep_time.tv_sec * 1000) + (sleep_time.tv_nsec / 1000000);
 
+  #ifdef VX_HW_DEBUG_READY_WAIT_POLL
+    vx_hw_debug_flag_snapshot_t hw_debug_previous = {};
+    uint64_t hw_debug_poll_elapsed_ms = 0;
+    const uint64_t hw_debug_poll_period_ms = 1000;
+  #endif
+
+    printf("[VXDRV] waiting for kernel completion (timeout=%lu ms)...\n", timeout);
     for (;;) {
+      // if (pending_ap_done_) {
+      //   pending_ap_done_ = false;
+      //   break;
+      // }
+
       uint32_t status = 0;
       CHECK_ERR(this->read_register(MMIO_CTL_ADDR, &status), {
         return err;
       });
+      // printf("[VXDRV] status=0x%08x\n", status);
       bool is_done = (status & CTL_AP_DONE) == CTL_AP_DONE;
       if (is_done)
         break;
+    #ifdef VX_HW_DEBUG_READY_WAIT_POLL
+      if (hw_debug_poll_elapsed_ms == 0 || hw_debug_poll_elapsed_ms >= hw_debug_poll_period_ms) {
+        this->poll_hw_debug_flags(&hw_debug_previous);
+        this->dump_hw_debug();
+        hw_debug_poll_elapsed_ms = 0;
+      }
+    #endif
       if (0 == timeout) {
+      #ifdef ENABLE_HW_DEBUG_MODULE
+        this->dump_hw_debug();
+      #endif
         return -1;
       }
       nanosleep(&sleep_time, nullptr);
+    #ifdef VX_HW_DEBUG_READY_WAIT_POLL
+      hw_debug_poll_elapsed_ms += sleep_time_ms;
+    #endif
       timeout -= sleep_time_ms;
     };
 
-    // Runtime-only mitigation:
     // Wait briefly for AP_IDLE and allow outstanding write path to settle
     // before host-side download starts.
     {
-      const struct timespec idle_poll = {0, 100000};   // 0.1ms
-      const struct timespec settle_wait = {0, 500000}; // 0.5ms
-      const uint32_t idle_retries = 200;               // up to 20ms
-      for (uint32_t i = 0; i < idle_retries; ++i) {
+      const struct timespec idle_poll = {0, 100000};
+      const struct timespec settle_wait = {0, 500000};
+      const uint32_t idle_retries = 200;
+      // for (uint32_t i = 0; i < idle_retries; ++i) {
+      printf("[VXDRV] waiting for AP_IDLE...\n");
+      while(true) {
         uint32_t status = 0;
         CHECK_ERR(this->read_register(MMIO_CTL_ADDR, &status), {
           return err;
@@ -769,6 +978,9 @@ public:
 private:
 
   MemoryAllocator global_mem_;
+#ifdef VX_USE_BANKED_XRT_BO
+  uint64_t bo_size_;  // per-bank BO size (bank_size, or bank_size-1page in hw_emu)
+#endif
   xrt_device_t xrtDevice_;
   xrt_kernel_t xrtKernel_;
   uint64_t dev_caps_;
@@ -779,27 +991,74 @@ private:
   uint32_t lg2_num_banks_;
   uint32_t lg2_bank_size_;
   ShmStatus shm_;
+  bool pending_ap_done_;
 
-#ifdef BANK_INTERLEAVE
+#ifdef VX_USE_BANKED_XRT_BO
 
   std::vector<xrt_buffer_t> xrtBuffers_;
 
-  int get_bank_info(uint64_t addr, uint32_t *pIdx, uint64_t *pOff) {
+  int get_bank_info_legacy(uint64_t addr, uint32_t *pIdx, uint64_t *pOff) const {
     uint32_t num_banks = 1 << lg2_num_banks_;
     uint64_t block_addr = addr / CACHE_BLOCK_SIZE;
-    uint32_t index = block_addr & (num_banks - 1);
-    uint64_t offset = (block_addr >> lg2_num_banks_) * CACHE_BLOCK_SIZE;
+    uint64_t byte_off = addr & (CACHE_BLOCK_SIZE - 1);
+    uint32_t index = (uint32_t)(block_addr & (num_banks - 1));
+    uint64_t offset = (block_addr >> lg2_num_banks_) * CACHE_BLOCK_SIZE + byte_off;
     if (pIdx) {
       *pIdx = index;
     }
     if (pOff) {
       *pOff = offset;
     }
-    //printf("get_bank_info(addr=0x%lx, bank=%d, offset=0x%lx\n", addr, index, offset);
     return 0;
   }
 
+  int get_bank_info_remap(uint64_t addr, uint32_t *pIdx, uint64_t *pOff) const {
+    // Mirror of hw/rtl/core/VX_mem_remap.sv. Parameter names kept in sync:
+    //   NUM_BANKS      = total HBM banks
+    //   NUM_PORTS      = AXI / HBM ports (= NUM_DMA_CHANNELS)
+    //   BANKS_PER_PORT = NUM_BANKS / NUM_PORTS
+    // Decompose block_idx = q*NUM_PORTS + r, then
+    //   bank   = BANKS_PER_PORT*r + (q % BANKS_PER_PORT)
+    //   offset = (q / BANKS_PER_PORT) * BLOCK + byte_off
+    constexpr uint32_t NUM_BANKS      = PLATFORM_MEMORY_NUM_BANKS;
+    constexpr uint32_t NUM_PORTS      = NUM_DMA_CHANNELS;
+    constexpr uint32_t BANKS_PER_PORT = NUM_BANKS / NUM_PORTS;
+    static_assert(NUM_BANKS % NUM_PORTS == 0,
+                  "NUM_BANKS must be a multiple of NUM_PORTS");
+    static_assert(ispow2(NUM_PORTS),      "NUM_PORTS must be a power of 2");
+    static_assert(ispow2(BANKS_PER_PORT), "BANKS_PER_PORT must be a power of 2");
+    constexpr uint32_t PORT_BITS  = log2ceil(NUM_PORTS);
+    constexpr uint32_t LOCAL_BITS = log2ceil(BANKS_PER_PORT);
+
+    uint64_t block_addr = addr / CACHE_BLOCK_SIZE;
+    uint64_t byte_off   = addr & (CACHE_BLOCK_SIZE - 1);
+    uint64_t q          = block_addr >> PORT_BITS;
+    uint32_t r          = (uint32_t)(block_addr & (NUM_PORTS - 1));
+    uint32_t index      = (r << LOCAL_BITS)
+                        | (uint32_t)(q & (BANKS_PER_PORT - 1));
+    uint64_t offset     = (q >> LOCAL_BITS) * CACHE_BLOCK_SIZE + byte_off;
+    if (pIdx) {
+      *pIdx = index;
+    }
+    if (pOff) {
+      *pOff = offset;
+    }
+    return 0;
+  }
+
+  int get_bank_info(uint64_t addr, uint32_t *pIdx, uint64_t *pOff) const {
+    if constexpr (kXrtMemMapMode == XrtMemMapMode::Legacy) {
+      return get_bank_info_legacy(addr, pIdx, pOff);
+    }
+    return get_bank_info_remap(addr, pIdx, pOff);
+  }
+
   int get_buffer(uint32_t bank_id, xrt_buffer_t *pBuf) {
+    if (bank_id >= xrtBuffers_.size()) {
+      fprintf(stderr, "[VXDRV] Error: invalid bank id: %u (num_banks=%zu)\n",
+              bank_id, xrtBuffers_.size());
+      return -1;
+    }
     if (pBuf) {
       *pBuf = xrtBuffers_.at(bank_id);
     }
@@ -830,7 +1089,6 @@ private:
     if (pOff) {
       *pOff = offset;
     }
-    //printf("get_bank_info(addr=0x%lx, bank=%d, offset=0x%lx\n", addr, index, offset);
     return 0;
   }
 

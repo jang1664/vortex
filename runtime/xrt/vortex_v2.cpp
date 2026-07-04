@@ -47,7 +47,7 @@ using namespace vortex;
 #define CPP_API
 #endif
 
-// #define BANK_INTERLEAVE
+#define BANK_INTERLEAVE
 
 // Debug print macro: enabled only when compiled with -DDEBUG_XRT
 // Usage: DEBUG_XRT=1 make -C runtime/xrt
@@ -243,9 +243,9 @@ public:
   #ifdef CPP_API
 
     auto xrtDevice = xrt::device(device_index);
-    auto uuid = xrtDevice.load_xclbin(xlbin_path_s);
+    auto uuid = xrtDevice.load_xclbin(std::string(xlbin_path_s));
     auto xrtKernel = xrt::ip(xrtDevice, uuid, KERNEL_NAME);
-    auto xclbin = xrt::xclbin(xlbin_path_s);
+    auto xclbin = xrt::xclbin(std::string(xlbin_path_s));
     auto device_name = xrtDevice.get_info<xrt::info::device::name>();
     device_bdf = xrtDevice.get_info<xrt::info::device::bdf>();
 
@@ -1238,6 +1238,7 @@ private:
         if (it->second.count == 0) {
           DBG_PRINT("reactivating cached bank%d...\n", bank_id);
         } else {
+          DBG_PRINT("reusing bank%d...\n", bank_id);
         }
         ++it->second.count;
       }
