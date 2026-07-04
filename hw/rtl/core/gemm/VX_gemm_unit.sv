@@ -55,7 +55,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     localparam BLK_IDX_DLY = DEFAULT_OUT_DLY;
     localparam MXU_OUT_DLY = (`MXU_PIPE_MUL_EN + `MXU_PIPE_ALIGN_EN + 1) + get_pipe_stage_num(`MXU_ROW, `MXU_PIPE_ADD_INTV) + ((`MXU_COL / `MXU_COL_TILE) - 1);
     localparam MAX_EXP_IN_DELAY = MXU_OUT_DLY + DEFAULT_OUT_DLY;
-    `STATIC_ASSERT(MXU_OUT_DLY >= ACT_REDUCE_OUT_DLY + DEFAULT_OUT_DLY, ("MXU_OUT_DLY must be >= ACT_REDUCE_OUT_DLY + DEFAULT_OUT_DLY"));
+    `VX_STATIC_ASSERT(MXU_OUT_DLY >= ACT_REDUCE_OUT_DLY + DEFAULT_OUT_DLY, ("MXU_OUT_DLY must be >= ACT_REDUCE_OUT_DLY + DEFAULT_OUT_DLY"));
     localparam PRE_PROC_OUT_DLY = MXU_OUT_DLY - (ACT_REDUCE_OUT_DLY + DEFAULT_OUT_DLY);
     localparam INTTOFP_OUT_DLY = 2;
 
@@ -195,13 +195,28 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     // MXU (GEMM Tree) Signals
     // -------------------------------------------------------------------------
     logic [`MXU_WLOAD_NUM-1:0][`MXU_COL-1:0][`W_BIT_WIDTH-1:0]  mxu_weight;
+`ifdef WLOAD_AT_ONCE
+    // WLOAD_AT_ONCE: MXU_WLOAD_NUM = MXU_ROW (=32), so weight bus is 4096
+    // bits wide and the 1-bit broadcasts below each fan out to ~4096
+    // u_weight_regs cells. max_fanout = 32 forces Vivado to replicate the
+    // u_mxu_weight_pipe source FFs (~128 copies) so the placer can co-locate
+    // them with destination cell tiles. (mxu_weight itself is NOT decorated:
+    // each data bit has fanout ~2, so replication would just bloat.)
+    (* max_fanout = 32 *) logic                                 mxu_ready_weight;
+`else
     logic                                                       mxu_ready_weight;
+`endif
     logic [`MXU_COL-1:0][`O_BIT_WIDTH-1:0]                      mxu_output;
     logic [`MXU_COL/`MXU_COL_TILE-1:0]                          mxu_output_valid;
     logic [`MXU_COL-1:0][`O_BIT_WIDTH-1:0]                      mxu_output_dly;
     logic [`MXU_COL/`MXU_COL_TILE-1:0]                          mxu_output_valid_dly;
+`ifdef WLOAD_AT_ONCE
+    (* max_fanout = 32 *) logic wreg_wr_idx;
+    (* max_fanout = 32 *) logic wreg_load_dir;
+`else
     logic wreg_wr_idx;
     logic wreg_load_dir;
+`endif
 
     // -------------------------------------------------------------------------
     // Merger Signals
@@ -276,6 +291,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     logic [`GEMM_ACC_MEM_BANK_ADDR_WIDTH-1:0]      acc_mem_out_rd_bank_addr;
     logic [1:0]                                    acc_mem_out_rd_bank;
     logic [1:0]                                    acc_mem_out_rd_bank_q;
+    logic [$bits(o_lmem_bus_if.req_data.tag)-1:0]  acc_mem_out_rd_tag_q;
 
     logic [3:0][`MXU_COL-1:0][FP32_WIDTH-1:0]            acc_mem_out_data;
     logic [3:0][`GEMM_ACC_MEM_ADDR_WIDTH-1:0]            acc_mem_wr_addr;
@@ -290,9 +306,10 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     // -------------------------------------------------------------------------
     acc_mem_accum_rd_state_t                       acc_mem_accum_rd_state, acc_mem_accum_rd_state_next;
     logic                                          acc_mem_accum_rd_req;
+    logic                                          acc_mem_accum_rd_accept;
     logic [`GEMM_ACC_MAX_CNT-1:0]                  acc_mem_accum_rd_cnt, acc_mem_accum_rd_cnt_next;
     logic                                          acc_rd_fifo_push, acc_rd_fifo_pop;
-    logic                                          acc_rd_fifo_full, acc_rd_fifo_empty;
+    logic                                          acc_rd_fifo_full, acc_rd_fifo_empty, acc_rd_fifo_alm_full;
     logic                                          acc_mem_rd_data_valid;
     logic [`MXU_COL-1:0][FP32_WIDTH-1:0]           acc_rd_fifo_out_data;
 
@@ -302,6 +319,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     acc_mem_accum_wr_state_t                       acc_mem_accum_wr_state, acc_mem_accum_wr_state_next;
     acc_mem_accum_wr_state_t                       acc_mem_accum_wr_state_q;
     logic                                          acc_mem_accum_wr_req;
+    logic                                          acc_mem_accum_wr_fire;
     logic [`GEMM_ACC_MAX_CNT-1:0]                  acc_mem_accum_wr_cnt, acc_mem_accum_wr_cnt_next;
 
     // -------------------------------------------------------------------------
@@ -322,11 +340,54 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     // ------------------------------------------------------------------------
     assign i_lmem_bus_if.rsp_valid = 1'b0;
 
+`ifdef WLOAD_AT_ONCE
+    // ====================================================================
+    // MXU weight write register slice (timing fix, WLOAD_AT_ONCE only).
+    //
+    // With WLOAD_AT_ONCE the weight broadcast is 4096 bits wide
+    // (u_ldma_weight slot mux -> req_data.data -> u_weight_regs.mem[row][col])
+    // driving a 32x32x2x4 FF array spread across SLR1; post-route showed
+    // 97% route delay on this path (logic 0.27ns / route 10.55ns ->
+    // -1.13ns WNS at 100 MHz). One pipeline stage on the consumer side
+    // lets the placer co-locate the registered driver with the destination
+    // FFs.
+    //
+    // {data, addr[1], addr[0]} are bundled and delayed together so that
+    // weight_i, weight_load_dir_i, in_weight_sel_i, and the implied write
+    // enable stay aligned at the u_weight_regs clock edge. out_weight_sel_i
+    // (read-side) is NOT delayed. The hazard interlock that prevents
+    // writing the buffer currently being read now compares against the
+    // BUFFERED wreg_wr_idx, so the actual write cycle still cannot collide.
+    //
+    // Without WLOAD_AT_ONCE the bus is only 512 bits (MXU_WLOAD_NUM=4) and
+    // this extra stage is unnecessary, so we keep the original direct path.
+    // ====================================================================
+    wire mxu_w_pipe_valid_out;
+    wire mxu_w_pipe_ready_out =
+        ~in_flight | (gemm_unit_ctrl.wreg_use_idx != wreg_wr_idx);
+
+    VX_pipe_buffer #(
+        .DATAW (`MXU_WLOAD_NUM * `MXU_COL * `W_BIT_WIDTH + 2),
+        .DEPTH (1)
+    ) u_mxu_weight_pipe (
+        .clk       (clk),
+        .reset     (reset),
+        .valid_in  (w_lmem_bus_if.req_valid),
+        .ready_in  (w_lmem_bus_if.req_ready),
+        .data_in   ({w_lmem_bus_if.req_data.data, w_lmem_bus_if.req_data.addr[1:0]}),
+        .ready_out (mxu_w_pipe_ready_out),
+        .data_out  ({mxu_weight, wreg_load_dir, wreg_wr_idx}),
+        .valid_out (mxu_w_pipe_valid_out)
+    );
+
+    assign mxu_ready_weight = mxu_w_pipe_valid_out & mxu_w_pipe_ready_out;
+`else
     assign mxu_weight              = w_lmem_bus_if.req_data.data;
     assign w_lmem_bus_if.req_ready = ~in_flight | (gemm_unit_ctrl.wreg_use_idx != w_lmem_bus_if.req_data.addr[0]);
     assign mxu_ready_weight        = w_lmem_bus_if.req_valid & w_lmem_bus_if.req_ready;
     assign wreg_wr_idx             = w_lmem_bus_if.req_data.addr[0];
     assign wreg_load_dir           = w_lmem_bus_if.req_data.addr[1];
+`endif
     assign w_lmem_bus_if.rsp_valid = 1'b0;
 
     assign sz_req_hs    = sz_lmem_bus_if.req_valid & sz_lmem_bus_if.req_ready;
@@ -351,8 +412,8 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     wire out_mem_rd_req_fire = o_lmem_bus_if.req_valid & o_lmem_bus_if.req_ready & ~o_lmem_bus_if.req_data.rw;
     assign o_lmem_bus_if.rsp_valid = fp16_out_valid[0];
     assign o_lmem_bus_if.rsp_data.data  = fp16_out_data;
-    assign o_lmem_bus_if.rsp_data.tag  = '0;
-    assign acc_mem_out_rd_addr = o_lmem_bus_if.req_data.addr << `CLOG2(o_lmem_bus_if.DATA_SIZE);
+    assign o_lmem_bus_if.rsp_data.tag  = acc_mem_out_rd_tag_q;
+    assign acc_mem_out_rd_addr = o_lmem_bus_if.req_data.addr << `CLOG2(`GEMM_OUTPUT_DATA_SIZE);
 
     // =========================================================================
     // Accumulator Memory Bank Address Calculation
@@ -363,6 +424,10 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     assign acc_mem_accum_wr_bank      = get_acc_mem_idx(acc_mem_accum_wr_addr);
     assign acc_mem_out_rd_bank_addr   = get_acc_mem_bank_addr(acc_mem_out_rd_addr);
     assign acc_mem_out_rd_bank        = get_acc_mem_idx(acc_mem_out_rd_addr);
+    assign acc_mem_accum_wr_fire      = acc_mem_accum_wr_req && in_flight
+                                      && (gemm_unit_ctrl.is_load ? final_scaler_output_valid : acc_output_valid[0]);
+    assign acc_mem_accum_rd_accept    = acc_mem_accum_rd_req && in_flight && ~gemm_unit_ctrl.is_load
+                                      && ~(acc_mem_accum_wr_fire && (acc_mem_accum_rd_bank == acc_mem_accum_wr_bank));
 
     // =========================================================================
     // Done/Idle Signal Generation
@@ -433,7 +498,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
         if (reset) begin
             acc_mem_rd_data_valid <= '0;
         end else begin
-            if (acc_mem_accum_rd_req) begin
+            if (acc_mem_accum_rd_accept) begin
                 acc_mem_rd_data_valid <= 1'b1;
             end else if (acc_rd_fifo_push) begin
                 acc_mem_rd_data_valid <= 1'b0;
@@ -448,7 +513,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
         end else begin
             if (gemm_unit_if.start & ~gemm_unit_if.gemm_unit_ctrl.is_load) begin
                 acc_mem_accum_rd_addr <= gemm_unit_if.gemm_unit_ctrl.acc_mem_base_addr;
-            end else if (acc_mem_accum_rd_req) begin
+            end else if (acc_mem_accum_rd_accept) begin
                 acc_mem_accum_rd_addr <= acc_mem_accum_rd_addr + (`MXU_COL * (FP32_WIDTH/8));
             end
         end
@@ -473,10 +538,10 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
             end
 
             ACCUM_RD_READ: begin
-                acc_rd_fifo_push     = acc_mem_rd_data_valid & (~acc_rd_fifo_full | acc_rd_fifo_pop);
+                acc_rd_fifo_push = acc_mem_rd_data_valid & (~acc_rd_fifo_full | acc_rd_fifo_pop);
                 if (acc_mem_accum_rd_cnt > 0) begin
-                    acc_mem_accum_rd_req = ~acc_mem_rd_data_valid | acc_rd_fifo_push;
-                    if (acc_rd_fifo_push) begin
+                    acc_mem_accum_rd_req = (~acc_rd_fifo_full | acc_rd_fifo_pop) & ~(acc_rd_fifo_alm_full & acc_rd_fifo_push & ~acc_rd_fifo_pop);
+                    if (acc_mem_accum_rd_accept) begin
                         acc_mem_accum_rd_cnt_next = acc_mem_accum_rd_cnt - 1;
                     end
                 end else if (~acc_mem_rd_data_valid) begin
@@ -672,11 +737,13 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
             acc_mem_rd_out_valid <= 1'b0;
             acc_mem_out_rd_addr_q <= '0;
             acc_mem_out_rd_bank_q <= '0;
+            acc_mem_out_rd_tag_q <= '0;
         end else begin
             if (out_mem_rd_req_fire) begin
                 acc_mem_rd_out_valid <= 1'b1;
                 acc_mem_out_rd_addr_q <= acc_mem_out_rd_addr;
                 acc_mem_out_rd_bank_q <= acc_mem_out_rd_bank;
+                acc_mem_out_rd_tag_q <= o_lmem_bus_if.req_data.tag;
             end else if (fp16_out_valid[0] & o_lmem_bus_if.rsp_ready) begin
                 acc_mem_rd_out_valid <= 1'b0;
             end
@@ -727,6 +794,9 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     // -------------------------------------------------------------------------
     generate
         for (genvar i = 0; i < `MXU_ROW; i++) begin : gen_in_scaler
+`ifndef SYNTHESIS
+            localparam int LANE_ID = i;
+`endif
             logic activated;
             logic a_valid, b_valid;
             logic [`IFP_WIDTH-1:0] a_data, b_data;
@@ -738,7 +808,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
             assign b_data    = activated ? scale_regs[gemm_unit_ctrl.sreg_use_idx][i] : '0;
 
             VX_fp16_mul #(
-                .LATENCY (1),
+                .LATENCY (10),
                 .OUT_BUF (1)
             ) u_in_scaler (
                 .clk          (clk),
@@ -753,6 +823,19 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
                 .result_ready (1'b1),
                 .result_data  (in_scaler_result_data[i])
             );
+
+`ifndef SYNTHESIS
+            always @(posedge clk) begin
+                if (!reset && a_valid && !in_scaler_a_ready[i] && in_flight===1) begin
+                    $fatal(1, "[%0t] GEMM input scaler lane %0d backpressured while a_valid is asserted",
+                           $time, LANE_ID);
+                end
+                if (!reset && b_valid && !in_scaler_b_ready[i] && in_flight===1) begin
+                    $fatal(1, "[%0t] GEMM input scaler lane %0d backpressured while b_valid is asserted",
+                           $time, LANE_ID);
+                end
+            end
+`endif
         end
     endgenerate
 
@@ -979,7 +1062,11 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     // QROW: output already scaled at input, bypass the scaler
     generate
         for (genvar i = 0; i < `MXU_COL; i++) begin : gen_out_scaler
+`ifndef SYNTHESIS
+            localparam int LANE_ID = i;
+`endif
             logic a_valid, b_valid;
+            logic a_ready, b_ready;
 
 `ifdef GEMM_UNIT_FP16_OUT_SCALE
             logic [FP16_WIDTH-1:0] a_data, b_data;
@@ -1003,39 +1090,63 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
 
 `ifdef GEMM_UNIT_FP16_OUT_SCALE
             VX_fp16_mul #(
-                .LATENCY (1),
+                .LATENCY (10),
                 .OUT_BUF (1)
             ) u_out_scaler (
                 .clk          (clk),
                 .reset        (reset),
                 .a_valid      (a_valid),
-                .a_ready      (),
+                .a_ready      (a_ready),
                 .a_data       (a_data),
                 .b_valid      (b_valid),
-                .b_ready      (),
+                .b_ready      (b_ready),
                 .b_data       (b_data),
                 .result_valid (scaler_output_valid[i]),
                 .result_ready (1'b1),
                 .result_data  (scaled_fp_out_data[i])
             );
+`ifndef SYNTHESIS
+            always @(posedge clk) begin
+                if (!reset && a_valid && !a_ready && in_flight===1) begin
+                    $fatal(1, "[%0t] GEMM output scaler lane %0d backpressured while a_valid is asserted",
+                           $time, LANE_ID);
+                end
+                if (!reset && b_valid && !b_ready && in_flight===1) begin
+                    $fatal(1, "[%0t] GEMM output scaler lane %0d backpressured while b_valid is asserted",
+                           $time, LANE_ID);
+                end
+            end
+`endif
         end
 `else
             VX_fp32_mul #(
-                .LATENCY (1),
+                .LATENCY (10),
                 .OUT_BUF (1)
             ) u_out_scaler (
                 .clk          (clk),
                 .reset        (reset),
                 .a_valid      (a_valid),
-                .a_ready      (),
+                .a_ready      (a_ready),
                 .a_data       (a_data),
                 .b_valid      (b_valid),
-                .b_ready      (),
+                .b_ready      (b_ready),
                 .b_data       (b_data),
                 .result_valid (scaler_output_valid[i]),
                 .result_ready (1'b1),
                 .result_data  (scaled_fp_out_data[i])
             );
+`ifndef SYNTHESIS
+            always @(posedge clk) begin
+                if (!reset && a_valid && !a_ready && in_flight===1) begin
+                    $fatal(1, "[%0t] GEMM output scaler lane %0d backpressured while a_valid is asserted",
+                           $time, LANE_ID);
+                end
+                if (!reset && b_valid && !b_ready && in_flight===1) begin
+                    $fatal(1, "[%0t] GEMM output scaler lane %0d backpressured while b_valid is asserted",
+                           $time, LANE_ID);
+                end
+            end
+`endif
         end
 `endif
     endgenerate
@@ -1083,8 +1194,12 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     // -------------------------------------------------------------------------
     generate
         for (genvar i = 0; i < `MXU_COL; i++) begin : gen_accumulator
+`ifndef SYNTHESIS
+            localparam int LANE_ID = i;
+`endif
             logic [FP32_WIDTH-1:0] a_data;
             logic [FP32_WIDTH-1:0] b_data;
+            logic a_ready, b_ready;
 
             assign acc_in_data_valid[i] = final_scaler_output_valid & ~gemm_unit_ctrl.is_load;
             assign acc_psum_data_valid[i] = ~acc_rd_fifo_empty & ~gemm_unit_ctrl.is_load & acc_in_data_valid[i];
@@ -1092,21 +1207,34 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
             assign b_data  = ~acc_rd_fifo_empty ? acc_rd_fifo_out_data[i] : '0;
 
             VX_fp32_add #(
-                .LATENCY (1),
+                .LATENCY (10),
                 .OUT_BUF (1)
             ) u_accumulator (
                 .clk          (clk),
                 .reset        (reset),
                 .a_valid      (acc_in_data_valid[i]),
-                .a_ready      (),
+                .a_ready      (a_ready),
                 .a_data       (a_data),
                 .b_valid      (acc_psum_data_valid[i]),
-                .b_ready      (),
+                .b_ready      (b_ready),
                 .b_data       (b_data),  // Use FIFO output, not direct memory read
                 .result_valid (acc_output_valid[i]),
                 .result_ready (1'b1),
                 .result_data  (acc_output_data[i])
             );
+
+`ifndef SYNTHESIS
+            always @(posedge clk) begin
+                if (!reset && acc_in_data_valid[i] && !a_ready && in_flight===1) begin
+                    $fatal(1, "[%0t] GEMM accumulator lane %0d backpressured while input data is valid",
+                           $time, LANE_ID);
+                end
+                if (!reset && acc_psum_data_valid[i] && !b_ready && in_flight===1) begin
+                    $fatal(1, "[%0t] GEMM accumulator lane %0d backpressured while psum data is valid",
+                           $time, LANE_ID);
+                end
+            end
+`endif
         end
     endgenerate
 
@@ -1117,7 +1245,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
       if(reset) begin
         acc_mem_accum_rd_bank_q <= '0;
       end else begin
-        if(acc_mem_accum_rd_req) begin
+        if(acc_mem_accum_rd_accept) begin
           acc_mem_accum_rd_bank_q <= acc_mem_accum_rd_bank;
         end
       end
@@ -1134,13 +1262,24 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
         .testmode_i  (1'b0),
         .full_o      (acc_rd_fifo_full),
         .empty_o     (acc_rd_fifo_empty),
-        .alm_full_o  (),
+        .alm_full_o  (acc_rd_fifo_alm_full),
         .alm_empty_o (),
         .data_i      (acc_rd_fifo_in_data),
         .push_i      (acc_rd_fifo_push),
         .data_o      (acc_rd_fifo_out_data),
         .pop_i       (acc_rd_fifo_pop)
     );
+
+`ifndef SYNTHESIS
+    always @(posedge clk) begin
+        if (!reset && !gemm_unit_ctrl.is_load && final_scaler_output_valid && acc_rd_fifo_empty && in_flight===1) begin
+            $fatal(1, "[%0t] GEMM accumulator psum FIFO empty when scaler output is valid: rd_cnt=%0d wr_cnt=%0d rd_addr=0x%0h wr_addr=0x%0h rd_state=%0d wr_state=%0d",
+                   $time, acc_mem_accum_rd_cnt, acc_mem_accum_wr_cnt,
+                   acc_mem_accum_rd_addr, acc_mem_accum_wr_addr,
+                   acc_mem_accum_rd_state, acc_mem_accum_wr_state);
+        end
+    end
+`endif
 
     // -------------------------------------------------------------------------
     // Accumulator Memory Banks
@@ -1151,12 +1290,12 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
             logic this_bank_out_rd; 
             logic this_bank_accum_wr; 
 
-            assign this_bank_accum_rd = (~gemm_unit_ctrl.is_load && acc_mem_accum_rd_bank == i && acc_mem_accum_rd_req && in_flight);
+            assign this_bank_accum_rd = (acc_mem_accum_rd_bank == i && acc_mem_accum_rd_accept);
             assign this_bank_out_rd   = (acc_mem_out_rd_bank == i && out_mem_rd_req_fire);
             assign this_bank_accum_wr = (acc_mem_accum_wr_bank == i && acc_mem_accum_wr_req && in_flight);
 
             assign acc_mem_wr_en[i] = this_bank_accum_wr && (gemm_unit_ctrl.is_load ? final_scaler_output_valid : acc_output_valid[0]);
-            assign acc_mem_rd_en[i] = this_bank_accum_rd ? acc_mem_accum_rd_req :
+            assign acc_mem_rd_en[i] = this_bank_accum_rd ? acc_mem_accum_rd_accept :
                                       this_bank_out_rd   ? out_mem_rd_req_fire : 1'b0;
             assign acc_mem_wr_addr[i] = acc_mem_accum_wr_bank_addr;
             assign acc_mem_rd_addr[i] = this_bank_accum_rd ? acc_mem_accum_rd_bank_addr :
@@ -1167,10 +1306,11 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
             assign acc_mem_rd_depth_addr[i] = get_acc_mem_bank_depth_addr(acc_mem_rd_addr[i]);
 
             VX_sp_ram #(
-                .DATAW   (`MXU_COL * FP32_WIDTH),
-                .SIZE    (`GEMM_ACC_MEM_DEPTH),
-                .OUT_REG (1),
-                .RDW_MODE("R")  // Read-first mode for accumulator, enables URAM
+                .DATAW    (`MXU_COL * FP32_WIDTH),
+                .SIZE     (`GEMM_ACC_MEM_DEPTH),
+                .OUT_REG  (1),
+                .USE_URAM (1),   // Force URAM after VX_sp_ram auto-infer removal
+                .RDW_MODE ("R")  // Read-first required for URAM mapping
             ) VX_sp_ram_instance (
                 .clk   (clk),
                 .reset (reset),
@@ -1381,6 +1521,13 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     // =========================================================================
 `ifdef DBG_TRACE_GEMM_CTRL
     // FSM state names for debug
+`ifndef SYNTHESIS
+`define VX_GEMM_UNIT_STRING_HELPERS
+`elsif SIMULATION
+`define VX_GEMM_UNIT_STRING_HELPERS
+`endif
+
+`ifdef VX_GEMM_UNIT_STRING_HELPERS
     function automatic string state_to_str(input gemm_state_t s);
         case (s)
             IDLE:    return "IDLE";
@@ -1388,6 +1535,11 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
             default: return "UNKNOWN";
         endcase
     endfunction
+`endif // VX_GEMM_UNIT_STRING_HELPERS
+
+`ifdef VX_GEMM_UNIT_STRING_HELPERS
+`undef VX_GEMM_UNIT_STRING_HELPERS
+`endif
 
     always @(posedge clk) begin
         if (~reset) begin
@@ -1517,7 +1669,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
             end
 
             // Accumulator read
-            if (acc_mem_accum_rd_req) begin
+            if (acc_mem_accum_rd_accept) begin
                 `TRACE(3, ("%m : [%0t] | GEMM_ACC_MEM_READ_ACCUM | {inst=%s, addr=0x%0h, bank=%0d, cnt=%0d}\n",
                     $time, INSTANCE_ID, acc_mem_accum_rd_addr, acc_mem_accum_rd_bank, acc_mem_accum_rd_cnt))
             end
@@ -1569,7 +1721,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
             end
             if (o_lmem_bus_if.rsp_valid & o_lmem_bus_if.rsp_ready) begin
                 `TRACE(2, ("%m : [%0t] | GEMM_ACC_MEM_OUT_READ_RSP | {inst=%s, addr=0x%0h, bank=%0d, data=%s}\n",
-                    $time, INSTANCE_ID, acc_mem_out_rd_addr_q >> `CLOG2(o_lmem_bus_if.DATA_SIZE), acc_mem_out_rd_bank_q,
+                    $time, INSTANCE_ID, acc_mem_out_rd_addr_q >> `CLOG2(`GEMM_PSUM_DATA_SIZE), acc_mem_out_rd_bank_q,
                     VX_utils_pkg::parseWordNoNormal(o_lmem_bus_if.rsp_data.data, `MXU_ROW * FP16_WIDTH, FP16_WIDTH, "fp")))
             end
         end
@@ -1598,6 +1750,9 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
 `endif
 
 `ifdef PERF_ENABLE
+    // -------------------------------------------------------------------------
+    // Performance counters
+    // -------------------------------------------------------------------------
     reg [PERF_CTR_BITS-1:0] perf_compute_r;
     reg [PERF_CTR_BITS-1:0] perf_stall_r;
     reg [PERF_CTR_BITS-1:0] perf_jobs_r;
@@ -1605,7 +1760,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     reg [PERF_CTR_BITS-1:0] perf_input_fire_r,  perf_input_stall_r;
     reg [PERF_CTR_BITS-1:0] perf_weight_fire_r, perf_weight_stall_r;
     reg [PERF_CTR_BITS-1:0] perf_psum_fire_r,   perf_psum_stall_r;
-    reg [PERF_CTR_BITS-1:0] perf_output_fire_r,  perf_output_stall_r;
+    reg [PERF_CTR_BITS-1:0] perf_output_fire_r, perf_output_stall_r;
 
     // Input: pipe buffer output valid-ready (ready = in_flight = COMPUTE)
     wire perf_input_fire  = in_pipe_valid_out && in_flight;
@@ -1619,6 +1774,52 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     // Output: LMEM output bus fire / stall (actual data written out)
     wire perf_output_fire  = o_lmem_bus_if.req_valid && o_lmem_bus_if.req_ready;
     wire perf_output_stall = o_lmem_bus_if.req_valid && !o_lmem_bus_if.req_ready;
+
+    // ------------------------------------------------------------
+    // Perf-trigger register stage (timing fix).
+    //
+    // Decouples perf counter CEs from the FSM state and bus_if
+    // handshake combinational fanout (w/o/i/sz LMEM buses plus
+    // acc_mem read path). Telemetry-only path: every predicate is
+    // delayed by exactly 1 cycle, so counter totals stay exact
+    // (events slide together).
+    // Cost: 11 flops per VX_gemm_unit instance, inside PERF_ENABLE.
+    // ------------------------------------------------------------
+    reg state_compute_q;
+    reg state_stall_q;
+    reg gemm_done_q;
+    reg perf_input_fire_q,   perf_input_stall_q;
+    reg perf_weight_fire_q,  perf_weight_stall_q;
+    reg perf_psum_fire_q,    perf_psum_stall_q;
+    reg perf_output_fire_q,  perf_output_stall_q;
+
+    always @(posedge clk) begin
+        if (reset) begin
+            state_compute_q     <= 1'b0;
+            state_stall_q       <= 1'b0;
+            gemm_done_q         <= 1'b0;
+            perf_input_fire_q   <= 1'b0;
+            perf_input_stall_q  <= 1'b0;
+            perf_weight_fire_q  <= 1'b0;
+            perf_weight_stall_q <= 1'b0;
+            perf_psum_fire_q    <= 1'b0;
+            perf_psum_stall_q   <= 1'b0;
+            perf_output_fire_q  <= 1'b0;
+            perf_output_stall_q <= 1'b0;
+        end else begin
+            state_compute_q     <= (state == COMPUTE);
+            state_stall_q       <= (state == IDLE) && !gemm_idle;
+            gemm_done_q         <= gemm_done;
+            perf_input_fire_q   <= perf_input_fire;
+            perf_input_stall_q  <= perf_input_stall;
+            perf_weight_fire_q  <= perf_weight_fire;
+            perf_weight_stall_q <= perf_weight_stall;
+            perf_psum_fire_q    <= perf_psum_fire;
+            perf_psum_stall_q   <= perf_psum_stall;
+            perf_output_fire_q  <= perf_output_fire;
+            perf_output_stall_q <= perf_output_stall;
+        end
+    end
 
     always @(posedge clk) begin
         if (reset) begin
@@ -1635,29 +1836,29 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
             perf_output_fire_r  <= '0;
             perf_output_stall_r <= '0;
         end else begin
-            if (state == COMPUTE)
+            if (state_compute_q)
                 perf_compute_r <= perf_compute_r + PERF_CTR_BITS'(1);
-            if (!gemm_idle && state == IDLE)
+            if (state_stall_q)
                 perf_stall_r <= perf_stall_r + PERF_CTR_BITS'(1);
-            if (gemm_done)
+            if (gemm_done_q)
                 perf_jobs_r <= perf_jobs_r + PERF_CTR_BITS'(1);
-            if (perf_output_fire)
+            if (perf_output_fire_q)
                 perf_mac_count_r <= perf_mac_count_r + PERF_CTR_BITS'(`MXU_ROW * `MXU_COL);
-            if (perf_input_fire)
+            if (perf_input_fire_q)
                 perf_input_fire_r <= perf_input_fire_r + PERF_CTR_BITS'(1);
-            if (perf_input_stall)
+            if (perf_input_stall_q)
                 perf_input_stall_r <= perf_input_stall_r + PERF_CTR_BITS'(1);
-            if (perf_weight_fire)
+            if (perf_weight_fire_q)
                 perf_weight_fire_r <= perf_weight_fire_r + PERF_CTR_BITS'(1);
-            if (perf_weight_stall)
+            if (perf_weight_stall_q)
                 perf_weight_stall_r <= perf_weight_stall_r + PERF_CTR_BITS'(1);
-            if (perf_psum_fire)
+            if (perf_psum_fire_q)
                 perf_psum_fire_r <= perf_psum_fire_r + PERF_CTR_BITS'(1);
-            if (perf_psum_stall)
+            if (perf_psum_stall_q)
                 perf_psum_stall_r <= perf_psum_stall_r + PERF_CTR_BITS'(1);
-            if (perf_output_fire)
+            if (perf_output_fire_q)
                 perf_output_fire_r <= perf_output_fire_r + PERF_CTR_BITS'(1);
-            if (perf_output_stall)
+            if (perf_output_stall_q)
                 perf_output_stall_r <= perf_output_stall_r + PERF_CTR_BITS'(1);
         end
     end

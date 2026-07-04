@@ -1132,6 +1132,14 @@ for block_size in range(1, full_bitwidth+1):
 // -------------------------------------------------------
 `define GEMM_CFG_REG_NUM 40       // Number of GEMM configuration registers
 `define DMA_CFG_REG_NUM 18        // Number of DMA configuration registers
+
+// Optional job-MMIO area reduction mode:
+//   GEMM job frontend is always one-lane because the GEMM kernel issues a
+//   single valid request lane. DMA stays multi-lane unless this macro is set.
+//   When DMA is one-lane, the GEMM DMA controller also serializes descriptor
+//   programming to match the DMA job frontend.
+//   Define JOB_MMIO_DMA_DESC_ONE_LANE to enable DMA one-lane mode.
+
 `ifdef XLEN_64
 `define GEMM_REG_BASE_ADDR 64'h0000_0000_0000_1080 // Base byte address for GEMM config registers
 `define DMA_REG_BASE_ADDR 64'h0000_0000_0000_1480  // Base byte address for DMA config registers

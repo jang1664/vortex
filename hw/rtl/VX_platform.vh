@@ -30,6 +30,12 @@
         $error msg; \
     end \
     /* verilator lint_on GENUNNAMED */
+`define VX_STATIC_ASSERT(cond, msg) \
+    /* verilator lint_off GENUNNAMED */ \
+    initial if (!(cond)) begin \
+        $error msg; \
+    end \
+    /* verilator lint_on GENUNNAMED */
 
 `ifdef VCS
 // VCS has issues with $bits() in package static assertions
@@ -150,6 +156,7 @@
 
 `else // SYNTHESIS
 
+`define VX_STATIC_ASSERT(cond, msg)
 `define STATIC_ASSERT(cond, msg)
 `define PACKAGE_ASSERT(cond)
 `define ERROR(msg)                  //

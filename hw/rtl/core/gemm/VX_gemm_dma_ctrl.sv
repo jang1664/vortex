@@ -590,7 +590,9 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
         if (gemm_sync_if.ready) state_d = S_DONE;
       end
 
-      // 레지스터 번들 write (NUM_LANES 병렬, lane당 DATA_SIZE 바이트를 꽉 채워서 씀)
+      // Descriptor register programming. Default uses packed multi-lane writes
+      // for control-plane latency; JOB_MMIO_DMA_DESC_ONE_LANE restricts this
+      // path to lane0 so a one-lane DMA job frontend can be used.
       S_PROG_W: begin
         int base_idx;
         base_idx = wr_idx_q;
@@ -603,6 +605,28 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
         dma_if.req_data.addr   = '0;
         dma_if.req_data.data   = '0;
 
+      `ifdef JOB_MMIO_DMA_DESC_ONE_LANE
+        dma_if.req_data.mask[0] = 1'b1;
+        dma_if.req_data.addr[0] = to_lsu_addr(entry_reg_byte_addr(entry_id_q, base_idx));
+
+        for (int w = 0; w < REGS_PER_LANE; w++) begin
+          int idx;
+          idx = base_idx + w;
+
+          if (idx <= DMA_R_LAST) begin
+            dma_if.req_data.data[0][(w*32) +: 32] = prog_w_data(idx);
+            dma_if.req_data.byteen[0][(w*4) +: 4] = 4'b1111;
+          end
+        end
+
+        if (dma_if.req_valid && dma_if.req_ready) begin
+          int next_base;
+          next_base = base_idx + REGS_PER_LANE;
+
+          if (next_base > DMA_R_LAST) state_d = S_KICK_W;
+          else                        wr_idx_d = next_base;
+        end
+      `else
         // lane 한 개가 한 번에 쓸 수 있는 바이트(DATA_SIZE)를 32-bit regs로 꽉 채움
         for (int l = 0; l < dma_if.NUM_LANES; l++) begin
           int idx0;
@@ -636,6 +660,7 @@ module VX_gemm_dma_ctrl import VX_gpu_pkg::*; #(
           if (next_base > DMA_R_LAST) state_d = S_KICK_W;
           else                        wr_idx_d = next_base;
         end
+      `endif
       end
 
       // CONTROL write (start)

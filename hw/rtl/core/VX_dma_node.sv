@@ -28,6 +28,11 @@ module VX_dma_node import VX_gpu_pkg::*; #(
   localparam int NUM_REGS32      = `DMA_CFG_REG_NUM;
   localparam int ENTRYID_W       = `JOB_MMIO_ENTRYID_W;
   localparam int LMEM_WIDE_BYTES = LMEM_NUM_LANES_P * LSU_WORD_SIZE;
+`ifdef JOB_MMIO_DMA_DESC_ONE_LANE
+  localparam bit JOB_DESC_ONE_LANE = 1'b1;
+`else
+  localparam bit JOB_DESC_ONE_LANE = 1'b0;
+`endif
 
   VX_config_reg_if #(
     .NUM(NUM_REGS32),
@@ -53,7 +58,8 @@ module VX_dma_node import VX_gpu_pkg::*; #(
     .NUM_ENTRIES  (NUM_ENTRIES),
     .NUM_REGS32   (NUM_REGS32),
     .ENTRYID_W    (ENTRYID_W),
-    .CFG_BASE_ADDR(`DMA_REG_BASE_ADDR)
+    .CFG_BASE_ADDR(`DMA_REG_BASE_ADDR),
+    .ONE_LANE_MMIO(JOB_DESC_ONE_LANE)
   ) u_job_frontend (
     .clk    (clk),
     .reset  (reset),

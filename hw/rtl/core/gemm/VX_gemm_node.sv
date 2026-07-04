@@ -434,7 +434,8 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
       .NUM_MASTERS(N_MASTER),
       .NUM_ENTRIES(NUM_ENTRIES),
       .NUM_REGS32(`GEMM_CFG_REG_NUM),
-      .CFG_BASE_ADDR(`GEMM_REG_BASE_ADDR)
+      .CFG_BASE_ADDR(`GEMM_REG_BASE_ADDR),
+      .ONE_LANE_MMIO(1'b1)
     ) VX_job_frontend_instance (
       .clk(clk),
       .reset(reset),

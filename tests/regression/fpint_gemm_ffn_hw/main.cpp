@@ -207,6 +207,25 @@ static uint8_t pack_int4_pair(int8_t lo, int8_t hi) {
   return uint8_t((uint8_t(hi) & 0x0F) << 4) | uint8_t(lo & 0x0F);
 }
 
+static int8_t unpack_int4(uint8_t packed, bool high) {
+  uint8_t nibble = high ? (packed >> 4) : (packed & 0x0F);
+  return int8_t((nibble & 0x08) ? (nibble | 0xF0) : nibble);
+}
+
+static int8_t read_weight_int4(const std::vector<uint8_t>& h_W_int4,
+                               uint32_t k,
+                               uint32_t n) {
+  if (WTRANS == 0) {
+    uint32_t n_pair = n / 2;
+    uint8_t packed = h_W_int4[k * ((N + 1) / 2) + n_pair];
+    return unpack_int4(packed, (n & 1u) != 0);
+  }
+
+  uint32_t k_pair = k / 2;
+  uint8_t packed = h_W_int4[n * ((K + 1) / 2) + k_pair];
+  return unpack_int4(packed, (k & 1u) != 0);
+}
+
 static void build_test_vectors(std::vector<uint16_t>& h_A,
                                std::vector<uint8_t>& h_W_int4,
                                std::vector<uint16_t>& h_scales,
@@ -227,6 +246,7 @@ static void build_test_vectors(std::vector<uint16_t>& h_A,
   for (uint32_t m = 0; m < M; ++m) {
     for (uint32_t k = 0; k < K; ++k) {
       float v = 1.0f + float((m + k) % 7);
+      // float v = 1.0f + float(1.0);
       h_A[m * K + k] = float_to_fp16(v);
     }
   }
@@ -237,9 +257,11 @@ static void build_test_vectors(std::vector<uint16_t>& h_A,
         uint32_t n0 = n_pair * 2;
         uint32_t n1 = n0 + 1;
         int8_t w0 = int8_t(int((k * N + n0) % 7) - 3);
+        // int8_t w0 = int8_t(1);
         int8_t w1 = 0;
         if (n1 < N) {
           w1 = int8_t(int((k * N + n1) % 7) - 3);
+          // w1 = int8_t(1);
         }
         h_W_int4[k * ((N + 1) / 2) + n_pair] = pack_int4_pair(w0, w1);
       }
@@ -250,9 +272,11 @@ static void build_test_vectors(std::vector<uint16_t>& h_A,
         uint32_t k0 = k_pair * 2;
         uint32_t k1 = k0 + 1;
         int8_t w0 = int8_t(int((k0 * N + n) % 7) - 3);
+        // int8_t w0 = int8_t(1);
         int8_t w1 = 0;
         if (k1 < K) {
           w1 = int8_t(int((k1 * N + n) % 7) - 3);
+          // w1 = int8_t(1);
         }
         h_W_int4[n * ((K + 1) / 2) + k_pair] = pack_int4_pair(w0, w1);
       }
@@ -262,6 +286,8 @@ static void build_test_vectors(std::vector<uint16_t>& h_A,
   if (QDIR == 0) {
     for (uint32_t kg = 0; kg < groups_total; ++kg) {
       for (uint32_t n = 0; n < N; ++n) {
+        // float scale = 1.0f;
+        // int16_t zp = int16_t(-1);
         float scale = 1.0f + float(n % 7);
         int16_t zp = int16_t(int(n % 7) - 3);
         h_scales[kg * N + n] = float_to_fp16(scale);
@@ -271,6 +297,8 @@ static void build_test_vectors(std::vector<uint16_t>& h_A,
   } else {
     for (uint32_t k = 0; k < K; ++k) {
       for (uint32_t ng = 0; ng < ng_total; ++ng) {
+        // float scale = 1.0f;
+        // int16_t zp = int16_t(-1);
         float scale = 1.0f + float(ng % 7);
         int16_t zp = int16_t(int(ng % 7) - 3);
         h_scales[k * ng_total + ng] = float_to_fp16(scale);
@@ -300,7 +328,7 @@ static void build_test_vectors(std::vector<uint16_t>& h_A,
           zp = float(h_zeros[k * ng_total + ng]);
         }
 
-        int8_t w = int8_t(int((k * N + n) % 7) - 3);
+        int8_t w = read_weight_int4(h_W_int4, k, n);
 
         float dequant = (float(w) - zp) * scale;
         sum += a * dequant;
