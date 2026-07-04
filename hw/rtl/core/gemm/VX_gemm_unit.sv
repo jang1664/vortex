@@ -794,7 +794,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     // -------------------------------------------------------------------------
     generate
         for (genvar i = 0; i < `MXU_ROW; i++) begin : gen_in_scaler
-`ifndef SYNTHESIS
+`ifdef VX_SIMULATION_OR_NOT_SYNTHESIS
             localparam int LANE_ID = i;
 `endif
             logic activated;
@@ -824,7 +824,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
                 .result_data  (in_scaler_result_data[i])
             );
 
-`ifndef SYNTHESIS
+`ifdef VX_SIMULATION_OR_NOT_SYNTHESIS
             always @(posedge clk) begin
                 if (!reset && a_valid && !in_scaler_a_ready[i] && in_flight===1) begin
                     $fatal(1, "[%0t] GEMM input scaler lane %0d backpressured while a_valid is asserted",
@@ -1062,7 +1062,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     // QROW: output already scaled at input, bypass the scaler
     generate
         for (genvar i = 0; i < `MXU_COL; i++) begin : gen_out_scaler
-`ifndef SYNTHESIS
+`ifdef VX_SIMULATION_OR_NOT_SYNTHESIS
             localparam int LANE_ID = i;
 `endif
             logic a_valid, b_valid;
@@ -1105,7 +1105,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
                 .result_ready (1'b1),
                 .result_data  (scaled_fp_out_data[i])
             );
-`ifndef SYNTHESIS
+`ifdef VX_SIMULATION_OR_NOT_SYNTHESIS
             always @(posedge clk) begin
                 if (!reset && a_valid && !a_ready && in_flight===1) begin
                     $fatal(1, "[%0t] GEMM output scaler lane %0d backpressured while a_valid is asserted",
@@ -1135,7 +1135,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
                 .result_ready (1'b1),
                 .result_data  (scaled_fp_out_data[i])
             );
-`ifndef SYNTHESIS
+`ifdef VX_SIMULATION_OR_NOT_SYNTHESIS
             always @(posedge clk) begin
                 if (!reset && a_valid && !a_ready && in_flight===1) begin
                     $fatal(1, "[%0t] GEMM output scaler lane %0d backpressured while a_valid is asserted",
@@ -1194,7 +1194,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     // -------------------------------------------------------------------------
     generate
         for (genvar i = 0; i < `MXU_COL; i++) begin : gen_accumulator
-`ifndef SYNTHESIS
+`ifdef VX_SIMULATION_OR_NOT_SYNTHESIS
             localparam int LANE_ID = i;
 `endif
             logic [FP32_WIDTH-1:0] a_data;
@@ -1223,7 +1223,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
                 .result_data  (acc_output_data[i])
             );
 
-`ifndef SYNTHESIS
+`ifdef VX_SIMULATION_OR_NOT_SYNTHESIS
             always @(posedge clk) begin
                 if (!reset && acc_in_data_valid[i] && !a_ready && in_flight===1) begin
                     $fatal(1, "[%0t] GEMM accumulator lane %0d backpressured while input data is valid",
@@ -1254,7 +1254,8 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     VX_fifo_v2 #(
         .FALL_THROUGH (0),
         .DATA_WIDTH   (`MXU_COL * FP32_WIDTH),
-        .DEPTH        (2)
+        .DEPTH        (3),
+        .ALM_FULL_TH  (2)
     ) u_acc_rd_fifo (
         .clk_i       (clk),
         .rst_ni      (~reset),
@@ -1270,7 +1271,7 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
         .pop_i       (acc_rd_fifo_pop)
     );
 
-`ifndef SYNTHESIS
+`ifdef VX_SIMULATION_OR_NOT_SYNTHESIS
     always @(posedge clk) begin
         if (!reset && !gemm_unit_ctrl.is_load && final_scaler_output_valid && acc_rd_fifo_empty && in_flight===1) begin
             $fatal(1, "[%0t] GEMM accumulator psum FIFO empty when scaler output is valid: rd_cnt=%0d wr_cnt=%0d rd_addr=0x%0h wr_addr=0x%0h rd_state=%0d wr_state=%0d",
@@ -1325,7 +1326,6 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     endgenerate
 
 `ifdef SIMULATION
-`ifndef SYNTHESIS
     task initialize_acc_mem(
         input logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0] base_addr,
         input int size,
@@ -1391,7 +1391,6 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
             2'd3: gen_acc_mem[3].VX_sp_ram_instance.ram[bank_depth_addr] = data;
         endcase
     endtask
-`endif
 `endif
 
     // -------------------------------------------------------------------------

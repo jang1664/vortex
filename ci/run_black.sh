@@ -4,6 +4,7 @@ set -euo pipefail
 
 SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
 SCRIPT_DIR="$(cd "$(dirname "${SCRIPT_PATH}")" && pwd)"
+VORTEX_HOME="${VORTEX_HOME:-$(realpath "${SCRIPT_DIR}/..")}"
 PYTHON_BIN="${PYTHON:-python3}"
 FPGA_BIN_ALIAS_RESOLVER="${SCRIPT_DIR}/resolve_fpga_bin_alias.py"
 FPGA_BIN_ALIAS_MAP="${VORTEX_FPGA_BIN_ALIAS_MAP:-${SCRIPT_DIR}/fpga_bin_alias_map.yaml}"
@@ -77,8 +78,8 @@ fi
 APP=fpint_gemm_ffn_hw
 ARGS="-m 2 -n 32 -k 128"
 CONFIGS_EXTRA=""
-FPGA_BIN=naive_gemm
-FPGA_BIN_DIR=""
+FPGA_BIN="${FPGA_BIN:-naive_gemm}"
+FPGA_BIN_DIR="${FPGA_BIN_DIR:-}"
 FPGA_BIN_CONFIGS=""
 BENCH_FLAG=""
 PERF_FLAG=""
@@ -536,8 +537,10 @@ fi
 # - hw_emu
 # ----------------------------------------------------------------------------
 if [[ "${mode}" == "hw_emu" || "${mode}" == "all" ]]; then
+  HW_EMU_FPGA_BIN_DIR="${FPGA_BIN_DIR:-${VORTEX_HOME}/build/hw/syn/xilinx/xrt/hw_emu/bin}"
+  echo "HW_EMU FPGA_BIN_DIR=${HW_EMU_FPGA_BIN_DIR}"
   CONFIGS=${CONFIGS} \
-  FPGA_BIN_DIR=/home/jaeyongjang/project.local/vortex/build/hw/syn/xilinx/xrt/hw_emu/bin \
+  FPGA_BIN_DIR="${HW_EMU_FPGA_BIN_DIR}" \
   PLATFORM=xilinx_u55c_gen3x16_xdma_3_202210_1 \
   DRIVER=xrt \
   TARGET=hw_emu \

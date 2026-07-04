@@ -1890,7 +1890,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 `endif
 `endif
 
-`ifndef SYNTHESIS
+`ifdef VX_SIMULATION_OR_NOT_SYNTHESIS
   task automatic log_tile_progress(
     input u32_t tile_i,
     input u32_t tile_total_i,

@@ -18,6 +18,13 @@
 `include "VX_config.vh"
 `include "VX_types.vh"
 
+`ifdef SIMULATION
+`define VX_SIMULATION_OR_NOT_SYNTHESIS
+`elsif SYNTHESIS
+`else
+`define VX_SIMULATION_OR_NOT_SYNTHESIS
+`endif
+
 `ifdef ICACHE_ENABLE
     `define L1_ENABLE
 `endif

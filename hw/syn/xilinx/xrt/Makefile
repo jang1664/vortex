@@ -109,7 +109,7 @@ CONFIGS += $(CONFIGS_$(NUM_CORES)c)
 endif
 
 # include sources
-RTL_PKGS = $(RTL_DIR)/VX_gpu_pkg.sv $(RTL_DIR)/fpu/VX_fpu_pkg.sv $(RTL_DIR)/verification/cf_math_util_pkg.sv $(RTL_DIR)/verification/VX_utils_pkg.sv $(RTL_DIR)/verification/utils.sv
+RTL_PKGS = $(RTL_DIR)/VX_gpu_pkg.sv $(RTL_DIR)/fpu/VX_fpu_pkg.sv $(RTL_DIR)/verification/cf_math_util_pkg.sv $(RTL_DIR)/verification/VX_utils_pkg.sv $(RTL_DIR)/verification/utils.sv $(RTL_DIR)/VX_trace_pkg.sv
 FPU_INCLUDE = -I$(RTL_DIR)/fpu
 ifneq (,$(findstring -DFPU_FPNEW, $(CONFIGS)))
 	RTL_PKGS += $(RTL_DIR)/fpu/patched_cvfpu/fpnew_pkg.sv $(THIRD_PARTY_DIR)/cvfpu/src/common_cells/src/cf_math_pkg $(THIRD_PARTY_DIR)/cvfpu/src/fpu_div_sqrt_mvp/hdl/defs_div_sqrt_mvp.sv

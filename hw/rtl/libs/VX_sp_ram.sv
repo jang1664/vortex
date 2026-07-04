@@ -100,7 +100,14 @@ module VX_sp_ram #(
     `STATIC_ASSERT((RDW_MODE == "R" || RDW_MODE == "W" || RDW_MODE == "N"), ("invalid parameter"))
     `UNUSED_PARAM (RDW_ASSERT)
 
-`ifdef SYNTHESIS
+`ifdef SIMULATION
+`define VX_SP_RAM_SIM_MODEL
+`elsif SYNTHESIS
+`else
+`define VX_SP_RAM_SIM_MODEL
+`endif
+
+`ifndef VX_SP_RAM_SIM_MODEL
     localparam FORCE_BRAM = !LUTRAM && `FORCE_BRAM(SIZE, DATAW);
     // USE_URAM: 0=auto (use URAM if size >= 256Kb), 1=force URAM, 2=force BRAM
     localparam SELECT_URAM = (USE_URAM == 1) || (USE_URAM == 0 && `FORCE_URAM(SIZE, DATAW));
@@ -467,6 +474,10 @@ module VX_sp_ram #(
             end
         end
     end
+`endif
+
+`ifdef VX_SP_RAM_SIM_MODEL
+`undef VX_SP_RAM_SIM_MODEL
 `endif
 
 endmodule
