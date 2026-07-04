@@ -23,7 +23,8 @@ module VX_job_desc_mmio_regs import VX_gpu_pkg::*; #(
   parameter logic [63:0] CFG_BASE_ADDR = 64'h0,
   parameter int NUM_LANES              = 1,
   parameter int DATA_SIZE              = 4,
-  parameter int TAG_WIDTH              = 1
+  parameter int TAG_WIDTH              = 1,
+  parameter bit ONE_LANE               = 1'b0
 ) (
   input  wire clk,
   input  wire reset,
@@ -84,6 +85,7 @@ module VX_job_desc_mmio_regs import VX_gpu_pkg::*; #(
   localparam int GLOBAL_ALLOC_B    = DATA_SIZE;
   localparam int ENTRY_BASE_OFF_B  = GLOBAL_ALLOC_B;
   localparam int ADDR_WIDTH        = `MEM_ADDR_WIDTH - `CLOG2(DATA_SIZE);
+  localparam int LANEID_W          = (NUM_LANES <= 1) ? 1 : $clog2(NUM_LANES);
 
   initial begin
     if ((DATA_SIZE & (DATA_SIZE - 1)) != 0) $fatal(1, "%s: DATA_SIZE must be power-of-two", INSTANCE_ID);
@@ -175,6 +177,28 @@ module VX_job_desc_mmio_regs import VX_gpu_pkg::*; #(
   logic [NUM_LANES-1:0][DATA_SIZE*8-1:0] rsp_data_q, rsp_data_d;
   logic [TAG_WIDTH-1:0] rsp_tag_q, rsp_tag_d;
 
+  // One-entry request stage breaks the long path from the LSU/MMIO request bus
+  // into the descriptor register file update logic. ONE_LANE selects a reduced
+  // scalar stage; otherwise the original per-lane request payload is preserved.
+  logic req_valid_q, req_valid_d;
+  logic req_rw_q, req_rw_d;
+  logic [NUM_LANES-1:0] req_mask_q, req_mask_d;
+  logic [NUM_LANES-1:0][ADDR_WIDTH-1:0] req_addr_vec_q, req_addr_vec_d;
+  logic [NUM_LANES-1:0][DATA_SIZE*8-1:0] req_data_vec_q, req_data_vec_d;
+  logic [NUM_LANES-1:0][DATA_SIZE-1:0] req_byteen_vec_q, req_byteen_vec_d;
+  logic req_mask_valid_q, req_mask_valid_d;
+  logic [LANEID_W-1:0] req_lane_q, req_lane_d;
+  logic [ADDR_WIDTH-1:0] req_addr_q, req_addr_d;
+  logic [DATA_SIZE*8-1:0] req_data_q, req_data_d;
+  logic [DATA_SIZE-1:0] req_byteen_q, req_byteen_d;
+  logic [TAG_WIDTH-1:0] req_tag_q, req_tag_d;
+
+  logic req_mask_valid_sel;
+  logic [LANEID_W-1:0] req_lane_sel;
+  logic [ADDR_WIDTH-1:0] req_addr_sel;
+  logic [DATA_SIZE*8-1:0] req_data_sel;
+  logic [DATA_SIZE-1:0] req_byteen_sel;
+
   logic [63:0]          byte_addr;
   logic [63:0]          off;
   logic [ENTRYID_W-1:0] eid;
@@ -192,6 +216,8 @@ module VX_job_desc_mmio_regs import VX_gpu_pkg::*; #(
   logic                 alloc_success;
   logic                 alloc_taken;
   logic                 rsp_holding;
+  logic                 req_process;
+  logic                 req_capture;
 
   // ------------------------------------------------------------
   // next-state + outputs
@@ -205,9 +231,26 @@ module VX_job_desc_mmio_regs import VX_gpu_pkg::*; #(
     rr_alloc_d   = rr_alloc_q;
 
     // If previous read response is still pending and requester is not ready,
-    // stall new requests until response handshake completes.
+    // stall both the staged request and new request intake.
     rsp_holding       = rsp_valid_q && ~mmio_if.rsp_ready;
+    req_process       = req_valid_q && ~rsp_holding;
     mmio_if.req_ready = ~rsp_holding;
+    req_capture       = mmio_if.req_valid && mmio_if.req_ready;
+
+    req_mask_valid_sel = 1'b0;
+    req_lane_sel       = '0;
+    req_addr_sel       = '0;
+    req_data_sel       = '0;
+    req_byteen_sel     = '0;
+    for (int l = 0; l < NUM_LANES; l++) begin
+      if (mmio_if.req_data.mask[l] && !req_mask_valid_sel) begin
+        req_mask_valid_sel = 1'b1;
+        req_lane_sel       = LANEID_W'(l);
+        req_addr_sel       = mmio_if.req_data.addr[l];
+        req_data_sel       = mmio_if.req_data.data[l];
+        req_byteen_sel     = mmio_if.req_data.byteen[l];
+      end
+    end
 
     // Hold response payload by default until handshake.
     rsp_valid_d = rsp_valid_q;
@@ -215,12 +258,47 @@ module VX_job_desc_mmio_regs import VX_gpu_pkg::*; #(
     rsp_data_d  = rsp_data_q;
     rsp_tag_d   = rsp_tag_q;
 
+    req_valid_d  = req_valid_q;
+    req_rw_d     = req_rw_q;
+    req_mask_d   = req_mask_q;
+    req_addr_vec_d   = req_addr_vec_q;
+    req_data_vec_d   = req_data_vec_q;
+    req_byteen_vec_d = req_byteen_vec_q;
+    req_mask_valid_d = req_mask_valid_q;
+    req_lane_d   = req_lane_q;
+    req_addr_d   = req_addr_q;
+    req_data_d   = req_data_q;
+    req_byteen_d = req_byteen_q;
+    req_tag_d    = req_tag_q;
+
     // Drop response after successful handshake.
     if (rsp_valid_q && mmio_if.rsp_ready) begin
       rsp_valid_d = 1'b0;
       rsp_mask_d  = '0;
       rsp_data_d  = '0;
       rsp_tag_d   = '0;
+    end
+
+    if (req_process) begin
+      req_valid_d = 1'b0;
+    end
+
+    if (req_capture) begin
+      req_valid_d  = 1'b1;
+      req_rw_d     = mmio_if.req_data.rw;
+      if (ONE_LANE) begin
+        req_mask_valid_d = req_mask_valid_sel;
+        req_lane_d       = req_lane_sel;
+        req_addr_d       = req_addr_sel;
+        req_data_d       = req_data_sel;
+        req_byteen_d     = req_byteen_sel;
+      end else begin
+        req_mask_d       = mmio_if.req_data.mask;
+        req_addr_vec_d   = mmio_if.req_data.addr;
+        req_data_vec_d   = mmio_if.req_data.data;
+        req_byteen_vec_d = mmio_if.req_data.byteen;
+      end
+      req_tag_d = mmio_if.req_data.tag;
     end
 
     byte_addr   = '0;
@@ -260,59 +338,59 @@ module VX_job_desc_mmio_regs import VX_gpu_pkg::*; #(
     end
 
     // MMIO request handling
-    if (mmio_if.req_valid && mmio_if.req_ready) begin
+    if (req_process) begin
       req_owner  = '0;
-      rsp_valid_d = ~mmio_if.req_data.rw;
-      rsp_mask_d  = mmio_if.req_data.mask;
-      rsp_tag_d   = mmio_if.req_data.tag;
+      rsp_valid_d = ~req_rw_q;
+      rsp_tag_d   = req_tag_q;
       rsp_data_d  = '0;
 
-      for (int l = 0; l < NUM_LANES; l++) begin
-        if (mmio_if.req_data.mask[l]) begin
-          byte_addr = addr_to_byte(mmio_if.req_data.addr[l]);
+      if (ONE_LANE) begin
+        rsp_mask_d = '0;
+        if (req_mask_valid_q) begin
+          rsp_mask_d[req_lane_q] = 1'b1;
+        end
+
+        if (req_mask_valid_q) begin
+          byte_addr = addr_to_byte(req_addr_q);
           off       = get_off(byte_addr);
 
-          if (~mmio_if.req_data.rw && is_alloc_reg(off)) begin
-            // Global alloc read: lane0 only to avoid ambiguous multi-lane side effects.
-            if (!alloc_taken && (l == 0)) begin
-              alloc_success = 1'b0;
-              alloc_sel_e   = -1;
-              for (int k = 0; k < NUM_ENTRIES; k++) begin
-                alloc_probe_e = (int'(rr_alloc_q) + k) % NUM_ENTRIES;
-                if (!occupy_d[alloc_probe_e]) begin
-                  alloc_success = 1'b1;
-                  alloc_sel_e   = alloc_probe_e;
-                  break;
-                end
+          if (~req_rw_q && is_alloc_reg(off)) begin
+            // With the one-hot request contract, the selected lane is the sole
+            // owner of this side effect; it does not need to be lane 0.
+            alloc_success = 1'b0;
+            alloc_sel_e   = -1;
+            for (int k = 0; k < NUM_ENTRIES; k++) begin
+              alloc_probe_e = (int'(rr_alloc_q) + k) % NUM_ENTRIES;
+              if (!occupy_d[alloc_probe_e]) begin
+                alloc_success = 1'b1;
+                alloc_sel_e   = alloc_probe_e;
+                break;
               end
-
-              if (alloc_success) begin
-                occupy_d[alloc_sel_e]     = 1'b1;
-                working_d[alloc_sel_e]    = 1'b0;
-                owner_d[alloc_sel_e]      = req_owner;
-                generation_d[alloc_sel_e] = generation_q[alloc_sel_e] + GEN_W'(1);
-                next_alloc = (alloc_sel_e + 1) % NUM_ENTRIES;
-                rr_alloc_d = next_alloc[RRW-1:0];
-                rsp_data_d[l][0 +: 32] = pack_alloc_rsp(
-                    1'b1,
-                    ENTRYID_W'(alloc_sel_e),
-                    req_owner,
-                    generation_d[alloc_sel_e]
-                );
-              end else begin
-                rsp_data_d[l][0 +: 32] = 32'd0;
-              end
-            end else begin
-              rsp_data_d[l] = '0;
             end
-            alloc_taken = 1'b1;
+
+            if (alloc_success) begin
+              occupy_d[alloc_sel_e]     = 1'b1;
+              working_d[alloc_sel_e]    = 1'b0;
+              owner_d[alloc_sel_e]      = req_owner;
+              generation_d[alloc_sel_e] = generation_q[alloc_sel_e] + GEN_W'(1);
+              next_alloc = (alloc_sel_e + 1) % NUM_ENTRIES;
+              rr_alloc_d = next_alloc[RRW-1:0];
+              rsp_data_d[req_lane_q][0 +: 32] = pack_alloc_rsp(
+                  1'b1,
+                  ENTRYID_W'(alloc_sel_e),
+                  req_owner,
+                  generation_d[alloc_sel_e]
+              );
+            end else begin
+              rsp_data_d[req_lane_q][0 +: 32] = 32'd0;
+            end
 
           end else if (in_entry_range(off)) begin
             eid      = off_to_entry(off);
             beat_idx = off_to_beatidx(off);
             base32   = beat_idx * WORDS_PER_BEAT;
 
-            if (mmio_if.req_data.rw) begin
+            if (req_rw_q) begin
               // write: beat -> regs32 merge write
               for (int i = 0; i < WORDS_PER_BEAT; i++) begin
                 r32 = base32 + i;
@@ -321,8 +399,8 @@ module VX_job_desc_mmio_regs import VX_gpu_pkg::*; #(
                   new_w = old_w;
 
                   for (int b = 0; b < 4; b++) begin
-                    if (mmio_if.req_data.byteen[l][i*4 + b]) begin
-                      new_w[b*8 +: 8] = mmio_if.req_data.data[l][i*32 + b*8 +: 8];
+                    if (req_byteen_q[i*4 + b]) begin
+                      new_w[b*8 +: 8] = req_data_q[i*32 + b*8 +: 8];
                     end
                   end
 
@@ -339,17 +417,107 @@ module VX_job_desc_mmio_regs import VX_gpu_pkg::*; #(
               end
             end else begin
               // read: regs32 -> beat pack
-              rsp_data_d[l] = '0;
+              rsp_data_d[req_lane_q] = '0;
               for (int i = 0; i < WORDS_PER_BEAT; i++) begin
                 r32 = base32 + i;
                 if (r32 < NUM_REGS32) begin
-                  rsp_data_d[l][i*32 +: 32] = regs32_q[eid][r32];
+                  rsp_data_d[req_lane_q][i*32 +: 32] = regs32_q[eid][r32];
                 end
               end
             end
           end else begin
-            if (!mmio_if.req_data.rw) begin
-              rsp_data_d[l] = '0;
+            if (!req_rw_q) begin
+              rsp_data_d[req_lane_q] = '0;
+            end
+          end
+        end
+      end else begin
+        rsp_mask_d = req_mask_q;
+
+        for (int l = 0; l < NUM_LANES; l++) begin
+          if (req_mask_q[l]) begin
+            byte_addr = addr_to_byte(req_addr_vec_q[l]);
+            off       = get_off(byte_addr);
+
+            if (~req_rw_q && is_alloc_reg(off)) begin
+              // Global alloc read: lane0 only to avoid ambiguous multi-lane side effects.
+              if (!alloc_taken && (l == 0)) begin
+                alloc_success = 1'b0;
+                alloc_sel_e   = -1;
+                for (int k = 0; k < NUM_ENTRIES; k++) begin
+                  alloc_probe_e = (int'(rr_alloc_q) + k) % NUM_ENTRIES;
+                  if (!occupy_d[alloc_probe_e]) begin
+                    alloc_success = 1'b1;
+                    alloc_sel_e   = alloc_probe_e;
+                    break;
+                  end
+                end
+
+                if (alloc_success) begin
+                  occupy_d[alloc_sel_e]     = 1'b1;
+                  working_d[alloc_sel_e]    = 1'b0;
+                  owner_d[alloc_sel_e]      = req_owner;
+                  generation_d[alloc_sel_e] = generation_q[alloc_sel_e] + GEN_W'(1);
+                  next_alloc = (alloc_sel_e + 1) % NUM_ENTRIES;
+                  rr_alloc_d = next_alloc[RRW-1:0];
+                  rsp_data_d[l][0 +: 32] = pack_alloc_rsp(
+                      1'b1,
+                      ENTRYID_W'(alloc_sel_e),
+                      req_owner,
+                      generation_d[alloc_sel_e]
+                  );
+                end else begin
+                  rsp_data_d[l][0 +: 32] = 32'd0;
+                end
+              end else begin
+                rsp_data_d[l] = '0;
+              end
+              alloc_taken = 1'b1;
+
+            end else if (in_entry_range(off)) begin
+              eid      = off_to_entry(off);
+              beat_idx = off_to_beatidx(off);
+              base32   = beat_idx * WORDS_PER_BEAT;
+
+              if (req_rw_q) begin
+                // write: beat -> regs32 merge write
+                for (int i = 0; i < WORDS_PER_BEAT; i++) begin
+                  r32 = base32 + i;
+                  if (r32 < NUM_REGS32) begin
+                    old_w = regs32_q[eid][r32];
+                    new_w = old_w;
+
+                    for (int b = 0; b < 4; b++) begin
+                      if (req_byteen_vec_q[l][i*4 + b]) begin
+                        new_w[b*8 +: 8] = req_data_vec_q[l][i*32 + b*8 +: 8];
+                      end
+                    end
+
+                    // CONTROL bit1/bit2 are read-only
+                    if (r32 == CONTROL_IDX) begin
+                      new_w[CTRL_OCCUPY_BIT]  = old_w[CTRL_OCCUPY_BIT];
+                      new_w[CTRL_WORKING_BIT] = old_w[CTRL_WORKING_BIT];
+                      new_w[CTRL_OWNER_LSB +: OWNER_W] = old_w[CTRL_OWNER_LSB +: OWNER_W];
+                      new_w[CTRL_GEN_LSB +: GEN_W]     = old_w[CTRL_GEN_LSB +: GEN_W];
+                    end
+
+                    regs32_d[eid][r32] = new_w;
+                  end
+                end
+              end else begin
+                // read: regs32 -> beat pack
+                rsp_data_d[l] = '0;
+                for (int i = 0; i < WORDS_PER_BEAT; i++) begin
+                  r32 = base32 + i;
+                  if (r32 < NUM_REGS32) begin
+                    rsp_data_d[l][i*32 +: 32] = regs32_q[eid][r32];
+                  end
+                end
+              end
+            end else begin
+              if (!req_rw_q) begin
+                rsp_data_d[l] = '0;
+              end
             end
           end
         end
@@ -381,6 +549,19 @@ module VX_job_desc_mmio_regs import VX_gpu_pkg::*; #(
       rsp_mask_q   <= '0;
       rsp_data_q   <= '0;
       rsp_tag_q    <= '0;
+
+      req_valid_q      <= 1'b0;
+      req_rw_q         <= 1'b0;
+      req_mask_q       <= '0;
+      req_addr_vec_q   <= '0;
+      req_data_vec_q   <= '0;
+      req_byteen_vec_q <= '0;
+      req_mask_valid_q <= 1'b0;
+      req_lane_q       <= '0;
+      req_addr_q       <= '0;
+      req_data_q       <= '0;
+      req_byteen_q     <= '0;
+      req_tag_q        <= '0;
     end else begin
       regs32_q     <= regs32_d;
       occupy_q     <= occupy_d;
@@ -393,6 +574,19 @@ module VX_job_desc_mmio_regs import VX_gpu_pkg::*; #(
       rsp_mask_q   <= rsp_mask_d;
       rsp_data_q   <= rsp_data_d;
       rsp_tag_q    <= rsp_tag_d;
+
+      req_valid_q      <= req_valid_d;
+      req_rw_q         <= req_rw_d;
+      req_mask_q       <= req_mask_d;
+      req_addr_vec_q   <= req_addr_vec_d;
+      req_data_vec_q   <= req_data_vec_d;
+      req_byteen_vec_q <= req_byteen_vec_d;
+      req_mask_valid_q <= req_mask_valid_d;
+      req_lane_q       <= req_lane_d;
+      req_addr_q       <= req_addr_d;
+      req_data_q       <= req_data_d;
+      req_byteen_q     <= req_byteen_d;
+      req_tag_q        <= req_tag_d;
     end
   end
 
@@ -400,6 +594,11 @@ module VX_job_desc_mmio_regs import VX_gpu_pkg::*; #(
   assign mmio_if.rsp_data.mask = rsp_mask_q;
   assign mmio_if.rsp_data.data = rsp_data_q;
   assign mmio_if.rsp_data.tag  = rsp_tag_q;
+
+  `VX_RUNTIME_ASSERT(
+      ~ONE_LANE || ~req_capture || $onehot0(mmio_if.req_data.mask),
+      ("%t: *** %s job MMIO expects at most one active lane: mask=%0h", $time, INSTANCE_ID, mmio_if.req_data.mask)
+  )
 
   assign occupy_o     = occupy_q;
   assign working_o    = working_q;

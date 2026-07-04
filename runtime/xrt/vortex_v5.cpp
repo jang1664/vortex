@@ -780,9 +780,15 @@ public:
   int start(uint64_t krnl_addr, uint64_t args_addr) {
     // Pre-flight status read
     uint32_t status = 0;
-    CHECK_ERR(this->read_register(MMIO_CTL_ADDR, &status), {
-      return err;
-    });
+    while (true) {
+      CHECK_ERR(this->read_register(MMIO_CTL_ADDR, &status), {
+        return err;
+      });
+      bool is_idle = (status & CTL_AP_IDLE) == CTL_AP_IDLE;
+      if (is_idle) {
+        break;
+      }
+    }
 
     CHECK_ERR(this->dcr_write(VX_DCR_BASE_STARTUP_ADDR0, krnl_addr & 0xffffffff), {
       return err;
@@ -809,10 +815,10 @@ public:
     // Barrier after AP_START to avoid posted-write timing surprises.
     // AP_DONE is read-clear on ap_ctrl_hs.  Tiny kernels can complete before
     // this barrier read, so latch that completion for ready_wait().
-    CHECK_ERR(this->read_register(MMIO_CTL_ADDR, &status), {
-      return err;
-    });
-    pending_ap_done_ = (status & CTL_AP_DONE) != 0;
+    // CHECK_ERR(this->read_register(MMIO_CTL_ADDR, &status), {
+    //   return err;
+    // });
+    // pending_ap_done_ = (status & CTL_AP_DONE) != 0;
 
     mpm_cache_.clear();
     shm_.record_kernel(krnl_addr);
@@ -876,16 +882,18 @@ public:
     const uint64_t hw_debug_poll_period_ms = 1000;
   #endif
 
+    printf("[VXDRV] waiting for kernel completion (timeout=%lu ms)...\n", timeout);
     for (;;) {
-      if (pending_ap_done_) {
-        pending_ap_done_ = false;
-        break;
-      }
+      // if (pending_ap_done_) {
+      //   pending_ap_done_ = false;
+      //   break;
+      // }
 
       uint32_t status = 0;
       CHECK_ERR(this->read_register(MMIO_CTL_ADDR, &status), {
         return err;
       });
+      // printf("[VXDRV] status=0x%08x\n", status);
       bool is_done = (status & CTL_AP_DONE) == CTL_AP_DONE;
       if (is_done)
         break;
@@ -915,7 +923,9 @@ public:
       const struct timespec idle_poll = {0, 100000};
       const struct timespec settle_wait = {0, 500000};
       const uint32_t idle_retries = 200;
-      for (uint32_t i = 0; i < idle_retries; ++i) {
+      // for (uint32_t i = 0; i < idle_retries; ++i) {
+      printf("[VXDRV] waiting for AP_IDLE...\n");
+      while(true) {
         uint32_t status = 0;
         CHECK_ERR(this->read_register(MMIO_CTL_ADDR, &status), {
           return err;

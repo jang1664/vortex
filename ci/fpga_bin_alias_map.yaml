@@ -26,6 +26,10 @@ aliases:
   naive_simd_bugfix_slow:
     path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f10_fpint_tcu_noDcache_L2cache_2df7fbf9c2/bin
     configs: configs/naive_simd.sh
+  
+  naive_simd_th16:
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_noDcache_L2cache_92934100cd/bin
+    configs: configs/naive_simd_th16.sh
 
   improve_simd:
     path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_noDcache_L2cache_617ccd526f/bin
@@ -52,6 +56,6 @@ aliases:
     configs: configs/improve_tcol32.sh
 
   improve_th16_tcol32:
-    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_noDcache_L2cache_d66a546a2d/bin
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_noDcache_L2cache_d66a546a2d_1/bin
     configs: configs/improve_th16_tcol32.sh
 

@@ -20,6 +20,10 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*; import cf_mat
     localparam SCALE_WIDTH = `SCALE_WIDTH;
     localparam FP32_WIDTH = 32;
     localparam FP16_WIDTH = 16;
+    localparam MULTI_VECTOR_MAX_INPUTS = 256;
+    localparam INTERVAL_SEGMENTS = 8;
+    localparam MIN_STIM_INTERVAL = 1;
+    localparam MAX_STIM_INTERVAL = 8;
 
     // Data sizes
     localparam GEMM_INPUT_DATA_SIZE = `GEMM_INPUT_DATA_SIZE;
@@ -58,6 +62,19 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*; import cf_mat
     // =========================================================================
     function automatic logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0] acc_addr_row(input int row_idx);
         return `GEMM_ACC_MEM_ADDR_WIDTH'(row_idx * ACC_ROW_STRIDE_BYTES);
+    endfunction
+
+    function automatic int interval_segment_idx(input int item_idx, input int total_items);
+        int seg_idx;
+        if (total_items <= 0) begin
+            return 0;
+        end
+
+        seg_idx = (item_idx * INTERVAL_SEGMENTS) / total_items;
+        if (seg_idx >= INTERVAL_SEGMENTS) begin
+            seg_idx = INTERVAL_SEGMENTS - 1;
+        end
+        return seg_idx;
     endfunction
 
     // =========================================================================
@@ -479,14 +496,14 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*; import cf_mat
           else      $display("TEST 4 PASSED on different quantization direction test (QDIR_ROW)");
 
           test4_case_idx++;
-          $sformat(case_name, "test4_case_%0d_load0_qcol_w0_s0_z0_addr_bank_n8", test4_case_idx);
+          $sformat(case_name, "test4_case_%0d_load0_qcol_w0_s0_z0_addr_bank_n128", test4_case_idx);
           test_multi_in_vector(
             .is_load(0), .quant_dir(`QDIR_COL),
             .acc_mem_base_addr(acc_addr_row(`GEMM_ACC_MEM_BANK_NUM)),
             .wreg_use_idx(0),
             .sreg_use_idx(0),
             .zreg_use_idx(0),
-            .num_inputs(8),
+            .num_inputs(128),
             .fail(fail),
             .input_random(1),
             .weight_random(1),
@@ -502,14 +519,14 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*; import cf_mat
 
           // Larger number of inputs test
           test4_case_idx++;
-          $sformat(case_name, "test4_case_%0d_load1_qcol_w0_s0_z0_n16", test4_case_idx);
+          $sformat(case_name, "test4_case_%0d_load1_qcol_w0_s0_z0_n256", test4_case_idx);
           test_multi_in_vector(
             .is_load(1), .quant_dir(`QDIR_COL),
             .acc_mem_base_addr(acc_addr_row(4)),
             .wreg_use_idx(0),
             .sreg_use_idx(0),
             .zreg_use_idx(0),
-            .num_inputs(16),
+            .num_inputs(256),
             .fail(fail),
             .input_random(1),
             .weight_random(1),
@@ -520,8 +537,8 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*; import cf_mat
           );
           log_test_result(case_name, ~fail);
           test4_fail |= fail;
-          if(fail) $display("TEST 4 FAILED on larger num_inputs test (16 inputs)");
-          else      $display("TEST 4 PASSED on larger num_inputs test (16 inputs)");
+          if(fail) $display("TEST 4 FAILED on larger num_inputs test (256 inputs)");
+          else      $display("TEST 4 PASSED on larger num_inputs test (256 inputs)");
         end
         overall_fail |= test4_fail;
         log_test_result("TEST 4 Multi Input Vector Test", ~test4_fail);
@@ -773,7 +790,7 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*; import cf_mat
     );
         @(posedge clk);
         o_lmem_bus_if.req_valid = 1'b1;
-        o_lmem_bus_if.req_data.addr = addr >> `CLOG2(o_lmem_bus_if.DATA_SIZE);
+        o_lmem_bus_if.req_data.addr = addr >> `CLOG2(`GEMM_PSUM_DATA_SIZE);
         o_lmem_bus_if.req_data.rw = 1'b0;  // Read
 
         @(posedge clk);
@@ -1469,14 +1486,18 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*; import cf_mat
       input bit   psum_random=0,
       input string case_name="test4_multi_in_vector"
     );
-        logic [MXU_ROW-1:0][IFP_WIDTH-1:0] input_data[64];  // Max 64 inputs
+        logic [MXU_ROW-1:0][IFP_WIDTH-1:0] input_data[MULTI_VECTOR_MAX_INPUTS];
         logic [MXU_ROW-1:0][MXU_COL-1:0][W_BIT_WIDTH-1:0] weight_data;
         logic [1:0][`MXU_MAX_DIM-1:0][SCALE_WIDTH-1:0] scale_values;
         logic [1:0][`MXU_MAX_DIM-1:0][ZP_WIDTH-1:0] zp_values;
         int i, j, k;
         bit test_pass;
         logic [`MXU_COL-1:0][FP32_WIDTH-1:0] acc_init_value;
-        int random_delay;
+        int input_interval_by_segment[INTERVAL_SEGMENTS];
+        int output_interval_by_segment[INTERVAL_SEGMENTS];
+        int segment_idx;
+        int input_interval;
+        int output_interval;
         int num_fail;
         integer case_fd;
         string case_log_path;
@@ -1508,8 +1529,25 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*; import cf_mat
         num_fail = 0;
 
         // Clamp num_inputs to valid range
-        if (num_inputs > 64) num_inputs = 64;
+        if (num_inputs > MULTI_VECTOR_MAX_INPUTS) num_inputs = MULTI_VECTOR_MAX_INPUTS;
         if (num_inputs < 1) num_inputs = 1;
+
+        $display("[%0t] Assigning %0d input/output pacing segments for %0d vectors...",
+                 $time, INTERVAL_SEGMENTS, num_inputs);
+        if (case_fd) begin
+            $fdisplay(case_fd, "[%0t] pacing: segments=%0d interval_range=%0d..%0d",
+                      $time, INTERVAL_SEGMENTS, MIN_STIM_INTERVAL, MAX_STIM_INTERVAL);
+        end
+        for (i = 0; i < INTERVAL_SEGMENTS; i++) begin
+            input_interval_by_segment[i] = $urandom_range(MAX_STIM_INTERVAL, MIN_STIM_INTERVAL);
+            output_interval_by_segment[i] = $urandom_range(MAX_STIM_INTERVAL, MIN_STIM_INTERVAL);
+            $display("[%0t]   segment[%0d]: input_interval=%0d output_interval=%0d",
+                     $time, i, input_interval_by_segment[i], output_interval_by_segment[i]);
+            if (case_fd) begin
+                $fdisplay(case_fd, "[%0t] segment[%0d]: input_interval=%0d output_interval=%0d",
+                          $time, i, input_interval_by_segment[i], output_interval_by_segment[i]);
+            end
+        end
 
         // -----------------------------------------------------------------
         // Step 1: Setup scale registers
@@ -1627,7 +1665,7 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*; import cf_mat
         end
 
         // ----------------------------------------------------------------
-        // Step 6: Start GEMM and send inputs with random timing
+        // Step 6: Start GEMM and send inputs with segment-randomized timing
         // ----------------------------------------------------------------
         $display("[%0t] GEMM MULTI INPUT TEST (is_load=%b, QDIR=%b, wreg=%0d, sreg=%0d, zreg=%0d, acc_addr=%0d, num_inputs=%0d)...",
                   $time, is_load, quant_dir, wreg_use_idx, sreg_use_idx, zreg_use_idx, acc_mem_base_addr, num_inputs);
@@ -1644,12 +1682,13 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*; import cf_mat
             .zreg_use_idx(zreg_use_idx)
         );
 
-        // Send inputs with randomized timing
+        // Send inputs with segment-randomized timing.
         for (k = 0; k < num_inputs; k++) begin
-            // Random delay between 0-10 cycles before sending each input
-            random_delay = $urandom_range(0, 10);
-            $display("[%0t]   Sending input[%0d] after %0d cycle delay...", $time, k, random_delay);
-            repeat(random_delay) @(posedge clk);
+            segment_idx = interval_segment_idx(k, num_inputs);
+            input_interval = input_interval_by_segment[segment_idx];
+            $display("[%0t]   Sending input[%0d] segment=%0d interval=%0d...",
+                     $time, k, segment_idx, input_interval);
+            repeat(input_interval) @(posedge clk);
 
             send_input(input_data[k]);
         end
@@ -1716,6 +1755,12 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*; import cf_mat
 
         // Compare each output row (total M rows, each with N elements)
         for (int m = 0; m < num_inputs; m++) begin
+            segment_idx = interval_segment_idx(m, num_inputs);
+            output_interval = output_interval_by_segment[segment_idx];
+            $display("[%0t]   Reading output[%0d] segment=%0d interval=%0d...",
+                     $time, m, segment_idx, output_interval);
+            repeat(output_interval) @(posedge clk);
+
             // Read output for row m
             read_output(acc_mem_base_addr + m * ACC_ROW_STRIDE_BYTES, dut_output);
 

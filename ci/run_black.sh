@@ -495,7 +495,7 @@ fi
 # CACHE_STALL_SEED=1234 \
 if [[ "${mode}" == "xrt-vcs-sim" || "${mode}" == "all" ]]; then
   xrt_vcs_env=(
-    "CONFIGS=${CONFIGS} -DNDEBUG"
+    "CONFIGS=${CONFIGS}"
     "DRIVER=xrt_vcs"
     "FSDB_DUMP=1"
   )
