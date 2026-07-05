@@ -5,6 +5,7 @@ module VX_dma_node import VX_gpu_pkg::*; #(
   parameter int N_MASTER     = 1,
   parameter int NUM_ENTRIES  = 16,
   parameter int LMEM_NUM_LANES_P = `NUM_LSU_LANES,
+  parameter int MISALIGN_PACK_BYTES = LSU_WORD_SIZE,
   // See VX_dma_unit. Default 0 (aligned-only) to track the engine-level
   // convention; override to 1 on paths where SW still emits misaligned bases.
   parameter bit ENABLE_MISALIGN = 1'b0,
@@ -75,6 +76,7 @@ module VX_dma_node import VX_gpu_pkg::*; #(
   VX_dma_unit #(
     .INSTANCE_ID      (INSTANCE_ID),
     .ENABLE_MISALIGN  (ENABLE_MISALIGN),
+    .MISALIGN_PACK_BYTES(MISALIGN_PACK_BYTES),
     .DCACHE_TAG_WIDTH (DCACHE_TAG_WIDTH_P),
     .LMEM_TAG_WIDTH   (LMEM_TAG_WIDTH_P)
   ) u_dma_unit (

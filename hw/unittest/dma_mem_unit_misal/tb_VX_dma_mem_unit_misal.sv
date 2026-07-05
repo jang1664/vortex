@@ -21,6 +21,7 @@ module tb_VX_dma_mem_unit_misal import VX_gpu_pkg::*; ();
   parameter int    DCACHE_BYTES_P = 32;
   parameter int    LMEM_BYTES_P   = 16;
   parameter bit    ENABLE_MISALIGN_P = 1'b1;
+  parameter int    MISALIGN_PACK_BYTES_P = LSU_WORD_SIZE;
 
   // -----------------------------
   // Params
@@ -98,6 +99,7 @@ module tb_VX_dma_mem_unit_misal import VX_gpu_pkg::*; ();
   VX_dma_unit #(
     .INSTANCE_ID     ("dma0"),
     .ENABLE_MISALIGN (ENABLE_MISALIGN_P),
+    .MISALIGN_PACK_BYTES(MISALIGN_PACK_BYTES_P),
     .DCACHE_TAG_WIDTH(TAG_WIDTH),
     .LMEM_TAG_WIDTH  (TAG_WIDTH)
   ) dut (

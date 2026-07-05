@@ -12,6 +12,7 @@
 module VX_dma_unit import VX_gpu_pkg::*; #(
   parameter `STRING INSTANCE_ID = "",
   parameter bit ENABLE_MISALIGN = 1'b0,
+  parameter int MISALIGN_PACK_BYTES = LSU_WORD_SIZE,
   // Parent forwards interface TAG_WIDTH values explicitly. Synopsys DC
   // rejects `interface_inst.PARAM` access inside localparam initializers.
   parameter int DCACHE_TAG_WIDTH = 1,
@@ -34,6 +35,7 @@ module VX_dma_unit import VX_gpu_pkg::*; #(
   if (ENABLE_MISALIGN) begin : g_misaligned
     VX_dma_unit_misal #(
       .INSTANCE_ID      (INSTANCE_ID),
+      .MISALIGN_PACK_BYTES(MISALIGN_PACK_BYTES),
       .DCACHE_TAG_WIDTH (DCACHE_TAG_WIDTH),
       .LMEM_TAG_WIDTH   (LMEM_TAG_WIDTH)
     ) u_impl (
