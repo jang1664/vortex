@@ -64,7 +64,7 @@ module VX_afu_wrap import VX_gpu_pkg::*; #(
 	} state_e;
 
 	localparam PENDING_WR_SIZEW    = 12; // max outstanding requests size
-	localparam NUM_MEM_PORTS_SIZEW = `CLOG2(C_M_AXI_MEM_NUM_PORTS+1);
+	localparam WR_TRACK_SIZEW      = 32;
 
 	wire                                 m_axi_mem_awvalid_a [C_M_AXI_MEM_NUM_PORTS];
     wire                                 m_axi_mem_awready_a [C_M_AXI_MEM_NUM_PORTS];
@@ -114,7 +114,7 @@ module VX_afu_wrap import VX_gpu_pkg::*; #(
 	`REPEAT (`PLATFORM_MEMORY_NUM_PORTS, AXI_MEM_TO_ARRAY, REPEAT_SEMICOLON);
 
 	reg [`CLOG2(`RESET_DELAY+1)-1:0] vx_reset_ctr;
-	reg [PENDING_WR_SIZEW-1:0] vx_pending_writes;
+	wire [PENDING_WR_SIZEW-1:0] vx_pending_writes;
 	reg vx_reset;
 	wire vx_busy;
 	wire vx_cache_drain;
@@ -129,6 +129,7 @@ module VX_afu_wrap import VX_gpu_pkg::*; #(
 	wire ap_start;
 	wire ap_ctrl_read;
 	wire ap_idle  = (state == STATE_IDLE);
+	wire vx_pending_writes_empty;
 `ifdef AFU_DONE_WAIT_CACHE_DRAIN
     localparam USE_APDONE_CACHE_DRAIN =
         (`DCACHE_WRITEBACK == 0) &&
@@ -138,7 +139,7 @@ module VX_afu_wrap import VX_gpu_pkg::*; #(
     localparam USE_APDONE_CACHE_DRAIN = 0;
 `endif
 
-	wire ap_done_base = (state == STATE_DONE) && (vx_pending_writes == '0);
+	wire ap_done_base = (state == STATE_DONE) && vx_pending_writes_empty;
 	wire ap_done_wait_cache = ap_done_base && USE_APDONE_CACHE_DRAIN && !vx_cache_drain;
 	wire ap_done_raw = ap_done_base && (!USE_APDONE_CACHE_DRAIN || vx_cache_drain);
 
@@ -239,40 +240,50 @@ module VX_afu_wrap import VX_gpu_pkg::*; #(
 	end
 
 	wire [C_M_AXI_MEM_NUM_PORTS-1:0] m_axi_wr_req_fire, m_axi_wr_rsp_fire;
-	wire [NUM_MEM_PORTS_SIZEW-1:0] cur_wr_reqs, cur_wr_rsps;
+	wire [C_M_AXI_MEM_NUM_PORTS-1:0] m_axi_wr_pending_empty;
+	wire [PENDING_WR_SIZEW-1:0] m_axi_wr_pending [C_M_AXI_MEM_NUM_PORTS];
+	wire m_axi_wr_track_reset = reset || ap_reset || (state == STATE_IDLE && ap_start);
 
 	for (genvar i = 0; i < C_M_AXI_MEM_NUM_PORTS; ++i) begin : g_m_axi_wr_req_fire
-		VX_axi_write_ack axi_write_ack (
-            .clk    (clk),
-            .reset  (reset),
-            .awvalid(m_axi_mem_awvalid_a[i]),
-            .awready(m_axi_mem_awready_a[i]),
-            .wvalid (m_axi_mem_wvalid_a[i]),
-            .wready (m_axi_mem_wready_a[i]),
-			.tx_ack (m_axi_wr_req_fire[i]),
-			`UNUSED_PIN (aw_ack),
-			`UNUSED_PIN (w_ack),
-			`UNUSED_PIN (tx_rdy)
+		VX_axi_write_drain #(
+			.COUNT_WIDTH   (WR_TRACK_SIZEW),
+			.PENDING_WIDTH (PENDING_WR_SIZEW)
+		) axi_write_drain (
+            .clk                (clk),
+            .reset              (m_axi_wr_track_reset),
+            .awvalid            (m_axi_mem_awvalid_a[i]),
+            .awready            (m_axi_mem_awready_a[i]),
+            .awlen              (m_axi_mem_awlen_a[i]),
+            .wvalid             (m_axi_mem_wvalid_a[i]),
+            .wready             (m_axi_mem_wready_a[i]),
+            .wlast              (m_axi_mem_wlast_a[i]),
+            .bvalid             (m_axi_mem_bvalid_a[i]),
+            .bready             (m_axi_mem_bready_a[i]),
+			.aw_fire            (m_axi_wr_req_fire[i]),
+			`UNUSED_PIN (w_fire),
+			`UNUSED_PIN (wlast_fire),
+			.b_fire             (m_axi_wr_rsp_fire[i]),
+			.pending_empty      (m_axi_wr_pending_empty[i]),
+			`UNUSED_PIN (aw_handshake_cnt),
+			`UNUSED_PIN (aw_burst_total_cnt),
+			`UNUSED_PIN (w_handshake_cnt),
+			`UNUSED_PIN (wlast_cnt),
+			`UNUSED_PIN (b_handshake_cnt),
+			.pending_writes     (m_axi_wr_pending[i])
         );
 	end
 
-	for (genvar i = 0; i < C_M_AXI_MEM_NUM_PORTS; ++i) begin : g_m_axi_wr_rsp_fire
-		assign m_axi_wr_rsp_fire[i] = m_axi_mem_bvalid_a[i] && m_axi_mem_bready_a[i];
-	end
+	assign vx_pending_writes_empty = &m_axi_wr_pending_empty;
 
-	`POP_COUNT(cur_wr_reqs, m_axi_wr_req_fire);
-	`POP_COUNT(cur_wr_rsps, m_axi_wr_rsp_fire);
-
-	wire signed [NUM_MEM_PORTS_SIZEW:0] reqs_sub = (NUM_MEM_PORTS_SIZEW+1)'(cur_wr_reqs) -
-	                                                     (NUM_MEM_PORTS_SIZEW+1)'(cur_wr_rsps);
-
-	always @(posedge clk) begin
-		if (reset || ap_reset) begin
-			vx_pending_writes <= '0;
-		end else begin
-			vx_pending_writes <= vx_pending_writes + PENDING_WR_SIZEW'(reqs_sub);
+	reg [PENDING_WR_SIZEW-1:0] vx_pending_writes_r;
+	integer pending_i;
+	always @(*) begin
+		vx_pending_writes_r = '0;
+		for (pending_i = 0; pending_i < C_M_AXI_MEM_NUM_PORTS; pending_i = pending_i + 1) begin
+			vx_pending_writes_r = vx_pending_writes_r + m_axi_wr_pending[pending_i];
 		end
 	end
+	assign vx_pending_writes = vx_pending_writes_r;
 
 	VX_afu_ctrl #(
 		.S_AXI_ADDR_WIDTH (C_S_AXI_CTRL_ADDR_WIDTH),

@@ -270,6 +270,11 @@ module VX_afu_ctrl import VX_gpu_pkg::*; #(
     assign s_axi_w_fire  = s_axi_wvalid && s_axi_wready;
     assign s_axi_b_fire  = s_axi_bvalid && s_axi_bready;
 
+    wire ap_reset_req = s_axi_w_fire
+                     && (waddr == ADDR_AP_CTRL)
+                     && s_axi_wstrb[0]
+                     && s_axi_wdata[4];
+
     // wstate
     always @(posedge clk) begin
         if (reset) begin
@@ -295,18 +300,18 @@ module VX_afu_ctrl import VX_gpu_pkg::*; #(
 
     // wdata
     always @(posedge clk) begin
-        if (reset) begin
+        if (reset || ap_reset_req) begin
             ap_start_r <= 0;
-            ap_reset_r <= 0;
             auto_restart_r <= 0;
-
-            gie_r <= 0;
-            ier_r <= '0;
             isr_r <= '0;
-
-            dcra_r <= '0;
-            dcrv_r <= '0;
             dcr_wr_valid_r <= 0;
+            ap_reset_r <= ap_reset_req && !reset;
+            if (reset) begin
+                gie_r <= 0;
+                ier_r <= '0;
+                dcra_r <= '0;
+                dcrv_r <= '0;
+            end
         end else begin
             dcr_wr_valid_r <= 0;
             ap_reset_r <= 0;
