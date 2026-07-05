@@ -38,7 +38,7 @@
 #include <util.h>
 #include <vector>
 
-#ifdef ENABLE_HW_DEBUG_MODULE
+#ifdef ENABLE_HW_DEBUG_MODULE_EXPORT
 #include "vx_hw_debug.h"
 #endif
 
@@ -58,13 +58,13 @@ using namespace vortex;
 #define MMIO_SCP_ADDR 0x28
 #define MMIO_MEM_ADDR 0x30
 
-#ifdef ENABLE_HW_DEBUG_MODULE
+#ifdef ENABLE_HW_DEBUG_MODULE_EXPORT
 #ifndef HW_DEBUG_PC_RING_DEPTH
 #define HW_DEBUG_PC_RING_DEPTH VX_HW_DEBUG_DEFAULT_PC_RING_DEPTH
 #endif
 #endif
 
-#if defined(ENABLE_HW_DEBUG_MODULE) && defined(NDEBUG)
+#if defined(ENABLE_HW_DEBUG_MODULE_EXPORT) && defined(NDEBUG)
 #define VX_HW_DEBUG_READY_WAIT_POLL 1
 #endif
 
@@ -827,7 +827,7 @@ public:
     return 0;
   }
 
-#ifdef ENABLE_HW_DEBUG_MODULE
+#ifdef ENABLE_HW_DEBUG_MODULE_EXPORT
   static int hw_debug_read32(void *opaque, uint32_t addr, uint32_t *value) {
     return static_cast<vx_device *>(opaque)->read_register(addr, value);
   }
@@ -905,7 +905,7 @@ public:
       }
     #endif
       if (0 == timeout) {
-      #ifdef ENABLE_HW_DEBUG_MODULE
+      #ifdef ENABLE_HW_DEBUG_MODULE_EXPORT
         this->dump_hw_debug();
       #endif
         return -1;
