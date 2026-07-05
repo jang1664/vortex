@@ -26,11 +26,14 @@ module VX_issue_slice import VX_gpu_pkg::*; #(
     output issue_perf_t     issue_perf,
 `endif
 
-    VX_decode_if.slave      decode_if,
-    VX_writeback_if.slave   writeback_if,
-    VX_dispatch_if.master   dispatch_if [NUM_EX_UNITS],
-    VX_issue_sched_if.master issue_sched_if
-);
+	    VX_decode_if.slave      decode_if,
+	    VX_writeback_if.slave   writeback_if,
+	    VX_dispatch_if.master   dispatch_if [NUM_EX_UNITS],
+	    VX_issue_sched_if.master issue_sched_if
+	`ifdef ENABLE_HW_DEBUG_MODULE
+	    , output issue_slice_debug_t issue_slice_debug
+	`endif
+	);
     `UNUSED_PARAM (ISSUE_ID)
 
     VX_ibuffer_if ibuffer_if [PER_ISSUE_WARPS]();
@@ -94,10 +97,58 @@ module VX_issue_slice import VX_gpu_pkg::*; #(
     );
 
     // notify scheduler
-    assign issue_sched_if.valid = operands_if.valid && operands_if.ready && operands_if.data.sop;
-    assign issue_sched_if.wis = operands_if.data.wis;
+	    assign issue_sched_if.valid = operands_if.valid && operands_if.ready && operands_if.data.sop;
+	    assign issue_sched_if.wis = operands_if.data.wis;
 
-`ifdef SCOPE
+	`ifdef ENABLE_HW_DEBUG_MODULE
+	    VX_hw_debug_vr_probe issue_decode_debug (
+	        .clk          (clk),
+	        .reset        (reset),
+	        .valid        (decode_if.valid),
+	        .ready        (decode_if.ready),
+	        .wid          (decode_if.data.wid),
+	        .tag          (16'(decode_if.data.uuid) ^ 16'(decode_if.data.PC)),
+	        .payload_hash (16'(decode_if.data.uuid) ^ 16'(decode_if.data.PC) ^ 16'(decode_if.data.rd) ^ 16'(decode_if.data.op_type)),
+	        .debug        (issue_slice_debug.channels[HW_DBG_ISSUE_SLICE_DECODE])
+	    );
+
+	    for (genvar dbg_wis = 0; dbg_wis < PER_ISSUE_WARPS; ++dbg_wis) begin : g_hw_debug_ibuffer
+	        VX_hw_debug_vr_probe issue_ibuffer_debug (
+	            .clk          (clk),
+	            .reset        (reset),
+	            .valid        (ibuffer_if[dbg_wis].valid),
+	            .ready        (ibuffer_if[dbg_wis].ready),
+	            .wid          (wis_to_wid(ISSUE_WIS_W'(dbg_wis), ISSUE_ISW_W'(ISSUE_ID))),
+	            .tag          (16'(ibuffer_if[dbg_wis].data.uuid) ^ 16'(ibuffer_if[dbg_wis].data.PC)),
+	            .payload_hash (16'(ibuffer_if[dbg_wis].data.uuid) ^ 16'(ibuffer_if[dbg_wis].data.PC) ^ 16'(ibuffer_if[dbg_wis].data.rd)),
+	            .debug        (issue_slice_debug.channels[HW_DBG_ISSUE_SLICE_IBUFFER_BASE + dbg_wis])
+	        );
+	    end
+
+	    VX_hw_debug_vr_probe issue_scoreboard_debug (
+	        .clk          (clk),
+	        .reset        (reset),
+	        .valid        (scoreboard_if.valid),
+	        .ready        (scoreboard_if.ready),
+	        .wid          (wis_to_wid(scoreboard_if.data.wis, ISSUE_ISW_W'(ISSUE_ID))),
+	        .tag          (16'(scoreboard_if.data.uuid) ^ 16'(scoreboard_if.data.PC)),
+	        .payload_hash (16'(scoreboard_if.data.uuid) ^ 16'(scoreboard_if.data.PC) ^ 16'(scoreboard_if.data.rd)),
+	        .debug        (issue_slice_debug.channels[HW_DBG_ISSUE_SLICE_SCOREBOARD])
+	    );
+
+	    VX_hw_debug_vr_probe issue_operands_debug (
+	        .clk          (clk),
+	        .reset        (reset),
+	        .valid        (operands_if.valid),
+	        .ready        (operands_if.ready),
+	        .wid          (wis_to_wid(operands_if.data.wis, ISSUE_ISW_W'(ISSUE_ID))),
+	        .tag          (16'(operands_if.data.uuid) ^ 16'(operands_if.data.PC)),
+	        .payload_hash (16'(operands_if.data.uuid) ^ 16'(operands_if.data.PC) ^ 16'(operands_if.data.rd) ^ 16'(operands_if.data.sid)),
+	        .debug        (issue_slice_debug.channels[HW_DBG_ISSUE_SLICE_OPERANDS])
+	    );
+	`endif
+
+	`ifdef SCOPE
 `ifdef DBG_SCOPE_ISSUE
     `SCOPE_IO_SWITCH (1);
     wire decode_fire = decode_if.valid && decode_if.ready;

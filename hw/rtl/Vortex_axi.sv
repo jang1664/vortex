@@ -85,11 +85,13 @@ module Vortex_axi import VX_gpu_pkg::*; #(
     input  wire [VX_DCR_DATA_WIDTH-1:0] dcr_wr_data,
 
 `ifdef ENABLE_HW_DEBUG_MODULE
-    output wire                         hw_debug_pc_valid [HW_DEBUG_NUM_PC_SOURCES],
-    output wire [HW_DEBUG_CORE_ID_WIDTH-1:0] hw_debug_pc_core_id [HW_DEBUG_NUM_PC_SOURCES],
-    output wire [NW_WIDTH-1:0]          hw_debug_pc_wid [HW_DEBUG_NUM_PC_SOURCES],
-    output wire [`XLEN-1:0]             hw_debug_pc [HW_DEBUG_NUM_PC_SOURCES],
-`endif
+	    output wire                         hw_debug_pc_valid [HW_DEBUG_NUM_PC_SOURCES],
+	    output wire [HW_DEBUG_CORE_ID_WIDTH-1:0] hw_debug_pc_core_id [HW_DEBUG_NUM_PC_SOURCES],
+		    output wire [NW_WIDTH-1:0]          hw_debug_pc_wid [HW_DEBUG_NUM_PC_SOURCES],
+		    output wire [`XLEN-1:0]             hw_debug_pc [HW_DEBUG_NUM_PC_SOURCES],
+		    output core_pipeline_debug_t        core_pipeline_debug [HW_DEBUG_NUM_PC_SOURCES],
+		    output cache_debug_t                cache_debug [HW_DEBUG_CACHE_NUM_SOURCES],
+		`endif
 
     // Status
     output wire                         busy,
@@ -203,10 +205,12 @@ module Vortex_axi import VX_gpu_pkg::*; #(
 
     `ifdef ENABLE_HW_DEBUG_MODULE
         .hw_debug_pc_valid   (hw_debug_pc_valid),
-        .hw_debug_pc_core_id (hw_debug_pc_core_id),
-        .hw_debug_pc_wid     (hw_debug_pc_wid),
-        .hw_debug_pc         (hw_debug_pc),
-    `endif
+	        .hw_debug_pc_core_id (hw_debug_pc_core_id),
+		        .hw_debug_pc_wid     (hw_debug_pc_wid),
+		        .hw_debug_pc         (hw_debug_pc),
+		        .core_pipeline_debug (core_pipeline_debug),
+		        .cache_debug         (cache_debug),
+		    `endif
 
         .busy           (busy),
         .cache_drain    (vortex_cache_drain)

@@ -68,9 +68,14 @@ module VX_cache_wrap import VX_gpu_pkg::*; #(
     // Core response output buffer
     parameter CORE_OUT_BUF          = 3,
 
-    // Memory request output buffer
-    parameter MEM_OUT_BUF           = 3
- ) (
+	    // Memory request output buffer
+	    parameter MEM_OUT_BUF           = 3,
+
+	    // Hardware debug source metadata
+	    parameter DEBUG_CACHE_KIND      = HW_DBG_CACHE_KIND_NONE,
+	    parameter DEBUG_CACHE_LOCATION  = 0,
+	    parameter DEBUG_CACHE_UNIT      = 0
+	 ) (
 
     input wire clk,
     input wire reset,
@@ -80,11 +85,15 @@ module VX_cache_wrap import VX_gpu_pkg::*; #(
     output cache_perf_t     cache_perf,
 `endif
 
-    VX_mem_bus_if.slave     core_bus_if [NUM_REQS],
-    VX_mem_bus_if.master    mem_bus_if [MEM_PORTS],
+	    VX_mem_bus_if.slave     core_bus_if [NUM_REQS],
+	    VX_mem_bus_if.master    mem_bus_if [MEM_PORTS],
 
-    output wire             cache_drain
-);
+	`ifdef ENABLE_HW_DEBUG_MODULE
+	    output cache_debug_t    cache_debug,
+	`endif
+
+	    output wire             cache_drain
+	);
 
     `VX_STATIC_ASSERT(NUM_BANKS == (1 << `CLOG2(NUM_BANKS)), ("invalid parameter"))
 
@@ -300,10 +309,81 @@ module VX_cache_wrap import VX_gpu_pkg::*; #(
         assign cache_drain = ~wrap_core_pending
                           && ~wrap_mem_pending;
 
-    end
+	    end
 
-`ifdef DBG_TRACE_CACHE
-    for (genvar i = 0; i < NUM_REQS; ++i) begin : g_trace_core
+	`ifdef ENABLE_HW_DEBUG_MODULE
+	    assign cache_debug.valid = 1'b1;
+	    assign cache_debug.kind = 4'(DEBUG_CACHE_KIND);
+	    assign cache_debug.location = 16'(DEBUG_CACHE_LOCATION);
+	    assign cache_debug.unit = 8'(DEBUG_CACHE_UNIT);
+	    assign cache_debug.passthru = PASSTHRU;
+	    assign cache_debug.write_enable = WRITE_ENABLE;
+	    assign cache_debug.core_port_count = 8'(NUM_REQS);
+	    assign cache_debug.mem_port_count = 8'(MEM_PORTS);
+
+	    for (genvar i = 0; i < HW_DEBUG_CACHE_MAX_PORTS; ++i) begin : g_hw_debug_cache_core_ports
+	        if (i < NUM_REQS) begin : g_active
+	            assign cache_debug.core_ports[i].req_valid = core_bus_if[i].req_valid;
+	            assign cache_debug.core_ports[i].req_ready = core_bus_if[i].req_ready;
+	            assign cache_debug.core_ports[i].req_fire = core_bus_if[i].req_valid && core_bus_if[i].req_ready;
+	            assign cache_debug.core_ports[i].req_stall = core_bus_if[i].req_valid && !core_bus_if[i].req_ready;
+	            assign cache_debug.core_ports[i].rsp_valid = core_bus_if[i].rsp_valid;
+	            assign cache_debug.core_ports[i].rsp_ready = core_bus_if[i].rsp_ready;
+	            assign cache_debug.core_ports[i].rsp_fire = core_bus_if[i].rsp_valid && core_bus_if[i].rsp_ready;
+	            assign cache_debug.core_ports[i].rsp_stall = core_bus_if[i].rsp_valid && !core_bus_if[i].rsp_ready;
+	            assign cache_debug.core_ports[i].req_rw = core_bus_if[i].req_data.rw;
+	            assign cache_debug.core_ports[i].req_addr = 48'(core_bus_if[i].req_data.addr);
+	            assign cache_debug.core_ports[i].req_tag = 16'(core_bus_if[i].req_data.tag.uuid)
+	                                                     ^ 16'(core_bus_if[i].req_data.tag.value);
+	            assign cache_debug.core_ports[i].rsp_tag = 16'(core_bus_if[i].rsp_data.tag.uuid)
+	                                                     ^ 16'(core_bus_if[i].rsp_data.tag.value);
+	            assign cache_debug.core_ports[i].req_payload_hash = 16'(core_bus_if[i].req_data.tag.uuid)
+	                                                              ^ 16'(core_bus_if[i].req_data.tag.value)
+	                                                              ^ 16'(core_bus_if[i].req_data.addr)
+	                                                              ^ 16'(core_bus_if[i].req_data.byteen)
+	                                                              ^ 16'(core_bus_if[i].req_data.flags)
+	                                                              ^ {15'b0, core_bus_if[i].req_data.rw};
+	            assign cache_debug.core_ports[i].rsp_payload_hash = 16'(core_bus_if[i].rsp_data.tag.uuid)
+	                                                              ^ 16'(core_bus_if[i].rsp_data.tag.value)
+	                                                              ^ 16'(core_bus_if[i].rsp_data.data);
+	        end else begin : g_inactive
+	            assign cache_debug.core_ports[i] = '0;
+	        end
+	    end
+
+	    for (genvar i = 0; i < HW_DEBUG_CACHE_MAX_PORTS; ++i) begin : g_hw_debug_cache_mem_ports
+	        if (i < MEM_PORTS) begin : g_active
+	            assign cache_debug.mem_ports[i].req_valid = mem_bus_if[i].req_valid;
+	            assign cache_debug.mem_ports[i].req_ready = mem_bus_if[i].req_ready;
+	            assign cache_debug.mem_ports[i].req_fire = mem_bus_if[i].req_valid && mem_bus_if[i].req_ready;
+	            assign cache_debug.mem_ports[i].req_stall = mem_bus_if[i].req_valid && !mem_bus_if[i].req_ready;
+	            assign cache_debug.mem_ports[i].rsp_valid = mem_bus_if[i].rsp_valid;
+	            assign cache_debug.mem_ports[i].rsp_ready = mem_bus_if[i].rsp_ready;
+	            assign cache_debug.mem_ports[i].rsp_fire = mem_bus_if[i].rsp_valid && mem_bus_if[i].rsp_ready;
+	            assign cache_debug.mem_ports[i].rsp_stall = mem_bus_if[i].rsp_valid && !mem_bus_if[i].rsp_ready;
+	            assign cache_debug.mem_ports[i].req_rw = mem_bus_if[i].req_data.rw;
+	            assign cache_debug.mem_ports[i].req_addr = 48'(mem_bus_if[i].req_data.addr);
+	            assign cache_debug.mem_ports[i].req_tag = 16'(mem_bus_if[i].req_data.tag.uuid)
+	                                                    ^ 16'(mem_bus_if[i].req_data.tag.value);
+	            assign cache_debug.mem_ports[i].rsp_tag = 16'(mem_bus_if[i].rsp_data.tag.uuid)
+	                                                    ^ 16'(mem_bus_if[i].rsp_data.tag.value);
+	            assign cache_debug.mem_ports[i].req_payload_hash = 16'(mem_bus_if[i].req_data.tag.uuid)
+	                                                             ^ 16'(mem_bus_if[i].req_data.tag.value)
+	                                                             ^ 16'(mem_bus_if[i].req_data.addr)
+	                                                             ^ 16'(mem_bus_if[i].req_data.byteen)
+	                                                             ^ 16'(mem_bus_if[i].req_data.flags)
+	                                                             ^ {15'b0, mem_bus_if[i].req_data.rw};
+	            assign cache_debug.mem_ports[i].rsp_payload_hash = 16'(mem_bus_if[i].rsp_data.tag.uuid)
+	                                                             ^ 16'(mem_bus_if[i].rsp_data.tag.value)
+	                                                             ^ 16'(mem_bus_if[i].rsp_data.data);
+	        end else begin : g_inactive
+	            assign cache_debug.mem_ports[i] = '0;
+	        end
+	    end
+	`endif
+
+	`ifdef DBG_TRACE_CACHE
+	    for (genvar i = 0; i < NUM_REQS; ++i) begin : g_trace_core
         always @(posedge clk) begin
             if (core_bus_if[i].req_valid && core_bus_if[i].req_ready) begin
                 if (core_bus_if[i].req_data.rw) begin

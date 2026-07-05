@@ -44,11 +44,13 @@ module Vortex import VX_gpu_pkg::*; (
     input  wire [VX_DCR_DATA_WIDTH-1:0]     dcr_wr_data,
 
 `ifdef ENABLE_HW_DEBUG_MODULE
-    output wire                             hw_debug_pc_valid [HW_DEBUG_NUM_PC_SOURCES],
-    output wire [HW_DEBUG_CORE_ID_WIDTH-1:0] hw_debug_pc_core_id [HW_DEBUG_NUM_PC_SOURCES],
-    output wire [NW_WIDTH-1:0]              hw_debug_pc_wid [HW_DEBUG_NUM_PC_SOURCES],
-    output wire [`XLEN-1:0]                 hw_debug_pc [HW_DEBUG_NUM_PC_SOURCES],
-`endif
+	    output wire                             hw_debug_pc_valid [HW_DEBUG_NUM_PC_SOURCES],
+	    output wire [HW_DEBUG_CORE_ID_WIDTH-1:0] hw_debug_pc_core_id [HW_DEBUG_NUM_PC_SOURCES],
+		    output wire [NW_WIDTH-1:0]              hw_debug_pc_wid [HW_DEBUG_NUM_PC_SOURCES],
+		    output wire [`XLEN-1:0]                 hw_debug_pc [HW_DEBUG_NUM_PC_SOURCES],
+		    output core_pipeline_debug_t            core_pipeline_debug [HW_DEBUG_NUM_PC_SOURCES],
+		    output cache_debug_t                    cache_debug [HW_DEBUG_CACHE_NUM_SOURCES],
+		`endif
 
     // Status
     output wire                             busy,
@@ -81,10 +83,15 @@ module Vortex import VX_gpu_pkg::*; (
         .TAG_WIDTH (L3_MEM_TAG_WIDTH)
     ) mem_bus_if[`L3_MEM_PORTS]();
 
-    `RESET_RELAY (l3_reset, reset);
-    wire l3_cache_drain;
+	    `RESET_RELAY (l3_reset, reset);
+	    wire l3_cache_drain;
 
-    VX_cache_wrap #(
+	`ifdef ENABLE_HW_DEBUG_MODULE
+	    cache_debug_t l3_cache_debug;
+	    cache_debug_t cluster_cache_debug [`NUM_CLUSTERS * HW_DEBUG_CLUSTER_CACHE_SOURCES];
+	`endif
+
+	    VX_cache_wrap #(
         .INSTANCE_ID    ("l3cache"),
         .CACHE_SIZE     (`L3_CACHE_SIZE),
         .LINE_SIZE      (`L3_LINE_SIZE),
@@ -102,11 +109,14 @@ module Vortex import VX_gpu_pkg::*; (
         .WRITEBACK      (`L3_WRITEBACK),
         .DIRTY_BYTES    (`L3_DIRTYBYTES),
         .REPL_POLICY    (`L3_REPL_POLICY),
-        .CORE_OUT_BUF   (3),
-        .MEM_OUT_BUF    (3),
-        .NC_ENABLE      (1),
-        .PASSTHRU       (!`L3_ENABLED)
-    ) l3cache (
+	        .CORE_OUT_BUF   (3),
+	        .MEM_OUT_BUF    (3),
+	        .NC_ENABLE      (1),
+	        .PASSTHRU       (!`L3_ENABLED),
+	        .DEBUG_CACHE_KIND     (HW_DBG_CACHE_KIND_L3),
+	        .DEBUG_CACHE_LOCATION (0),
+	        .DEBUG_CACHE_UNIT     (0)
+	    ) l3cache (
         .clk            (clk),
         .reset          (l3_reset),
 
@@ -114,10 +124,13 @@ module Vortex import VX_gpu_pkg::*; (
         .cache_perf     (l3_perf),
     `endif
 
-        .core_bus_if    (per_cluster_mem_bus_if),
-        .mem_bus_if     (mem_bus_if),
-        .cache_drain    (l3_cache_drain)
-    );
+	        .core_bus_if    (per_cluster_mem_bus_if),
+	        .mem_bus_if     (mem_bus_if),
+	    `ifdef ENABLE_HW_DEBUG_MODULE
+	        .cache_debug    (l3_cache_debug),
+	    `endif
+	        .cache_drain    (l3_cache_drain)
+	    );
 
     wire [`L3_MEM_PORTS-1:0] l3_req_pending;
     wire [`L3_MEM_PORTS-1:0] l3_rsp_pending;
@@ -181,17 +194,27 @@ module Vortex import VX_gpu_pkg::*; (
 
         `ifdef ENABLE_HW_DEBUG_MODULE
             .hw_debug_pc_valid   (hw_debug_pc_valid[cluster_id * CLUSTER_DEBUG_PC_SOURCES +: CLUSTER_DEBUG_PC_SOURCES]),
-            .hw_debug_pc_core_id (hw_debug_pc_core_id[cluster_id * CLUSTER_DEBUG_PC_SOURCES +: CLUSTER_DEBUG_PC_SOURCES]),
-            .hw_debug_pc_wid     (hw_debug_pc_wid[cluster_id * CLUSTER_DEBUG_PC_SOURCES +: CLUSTER_DEBUG_PC_SOURCES]),
-            .hw_debug_pc         (hw_debug_pc[cluster_id * CLUSTER_DEBUG_PC_SOURCES +: CLUSTER_DEBUG_PC_SOURCES]),
-        `endif
+		            .hw_debug_pc_core_id (hw_debug_pc_core_id[cluster_id * CLUSTER_DEBUG_PC_SOURCES +: CLUSTER_DEBUG_PC_SOURCES]),
+		            .hw_debug_pc_wid     (hw_debug_pc_wid[cluster_id * CLUSTER_DEBUG_PC_SOURCES +: CLUSTER_DEBUG_PC_SOURCES]),
+		            .hw_debug_pc         (hw_debug_pc[cluster_id * CLUSTER_DEBUG_PC_SOURCES +: CLUSTER_DEBUG_PC_SOURCES]),
+		            .core_pipeline_debug (core_pipeline_debug[cluster_id * CLUSTER_DEBUG_PC_SOURCES +: CLUSTER_DEBUG_PC_SOURCES]),
+		            .cache_debug         (cluster_cache_debug[cluster_id * HW_DEBUG_CLUSTER_CACHE_SOURCES +: HW_DEBUG_CLUSTER_CACHE_SOURCES]),
+		        `endif
 
             .busy               (per_cluster_busy[cluster_id]),
             .cache_drain        (per_cluster_cache_drain[cluster_id])
-        );
-    end
+	        );
+	    end
 
-    `BUFFER_EX(busy, (| per_cluster_busy), 1'b1, 1, (`NUM_CLUSTERS > 1));
+	`ifdef ENABLE_HW_DEBUG_MODULE
+	    for (genvar cache_dbg_i = 0; cache_dbg_i < (`NUM_CLUSTERS * HW_DEBUG_CLUSTER_CACHE_SOURCES); ++cache_dbg_i) begin : g_hw_debug_cluster_cache
+	        assign cache_debug[cache_dbg_i] = cluster_cache_debug[cache_dbg_i];
+	    end
+
+	    assign cache_debug[`NUM_CLUSTERS * HW_DEBUG_CLUSTER_CACHE_SOURCES] = l3_cache_debug;
+	`endif
+
+	    `BUFFER_EX(busy, (| per_cluster_busy), 1'b1, 1, (`NUM_CLUSTERS > 1));
     assign cache_drain = (& per_cluster_cache_drain)
                       && l3_cache_drain
                       && ~(| l3_req_pending)

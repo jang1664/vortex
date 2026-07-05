@@ -25,12 +25,15 @@ module VX_issue import VX_gpu_pkg::*; #(
     output issue_perf_t     issue_perf,
 `endif
 
-    VX_decode_if.slave      decode_if,
-    VX_writeback_if.slave   writeback_if [`ISSUE_WIDTH],
-    VX_dispatch_if.master   dispatch_if [NUM_EX_UNITS * `ISSUE_WIDTH],
-    VX_issue_sched_if.master issue_sched_if[`ISSUE_WIDTH]
-);
-    `VX_STATIC_ASSERT ((`ISSUE_WIDTH <= `NUM_WARPS), ("invalid parameter"))
+	    VX_decode_if.slave      decode_if,
+	    VX_writeback_if.slave   writeback_if [`ISSUE_WIDTH],
+	    VX_dispatch_if.master   dispatch_if [NUM_EX_UNITS * `ISSUE_WIDTH],
+	    VX_issue_sched_if.master issue_sched_if[`ISSUE_WIDTH]
+	`ifdef ENABLE_HW_DEBUG_MODULE
+	    , output issue_pipeline_debug_t issue_pipeline_debug
+	`endif
+	);
+	    `VX_STATIC_ASSERT ((`ISSUE_WIDTH <= `NUM_WARPS), ("invalid parameter"))
 
 `ifdef PERF_ENABLE
     issue_perf_t per_issue_perf [`ISSUE_WIDTH];
@@ -43,9 +46,13 @@ module VX_issue import VX_gpu_pkg::*; #(
     for (genvar i = 0; i < NUM_SFU_UNITS; ++i) begin : g_issue_perf_sfu_uses
         `PERF_COUNTER_ADD (issue_perf, per_issue_perf, sfu_uses[i], PERF_CTR_BITS, `ISSUE_WIDTH, (`ISSUE_WIDTH > 2))
     end
-`endif
+	`endif
 
-    wire [ISSUE_ISW_W-1:0] decode_isw = wid_to_isw(decode_if.data.wid);
+	`ifdef ENABLE_HW_DEBUG_MODULE
+	    issue_slice_debug_t per_issue_debug [`ISSUE_WIDTH];
+	`endif
+
+	    wire [ISSUE_ISW_W-1:0] decode_isw = wid_to_isw(decode_if.data.wid);
 
     wire [`ISSUE_WIDTH-1:0] decode_ready_in;
     assign decode_if.ready = decode_ready_in[decode_isw];
@@ -75,16 +82,35 @@ module VX_issue import VX_gpu_pkg::*; #(
         `ifdef PERF_ENABLE
             .issue_perf   (per_issue_perf[issue_id]),
         `endif
-            .decode_if    (slice_decode_if),
-            .writeback_if (writeback_if[issue_id]),
-            .dispatch_if  (per_issue_dispatch_if),
-            .issue_sched_if(issue_sched_if[issue_id])
-        );
+	            .decode_if    (slice_decode_if),
+	            .writeback_if (writeback_if[issue_id]),
+	            .dispatch_if  (per_issue_dispatch_if),
+	            .issue_sched_if(issue_sched_if[issue_id])
+	        `ifdef ENABLE_HW_DEBUG_MODULE
+	            ,
+	            .issue_slice_debug(per_issue_debug[issue_id])
+	        `endif
+	        );
 
         // Assign transposed dispatch_if
         for (genvar ex_id = 0; ex_id < NUM_EX_UNITS; ++ex_id) begin : g_dispatch_if
             `ASSIGN_VX_IF(dispatch_if[ex_id * `ISSUE_WIDTH + issue_id], per_issue_dispatch_if[ex_id]);
         end
-     end
+	     end
 
-endmodule
+	`ifdef ENABLE_HW_DEBUG_MODULE
+	    for (genvar dbg_issue_id = 0; dbg_issue_id < `ISSUE_WIDTH; ++dbg_issue_id) begin : g_hw_debug_issue
+	        assign issue_pipeline_debug.channels[HW_DBG_ISSUE_DECODE_BASE + dbg_issue_id]
+	            = per_issue_debug[dbg_issue_id].channels[HW_DBG_ISSUE_SLICE_DECODE];
+	        for (genvar dbg_wis = 0; dbg_wis < PER_ISSUE_WARPS; ++dbg_wis) begin : g_ibuffer
+	            assign issue_pipeline_debug.channels[HW_DBG_ISSUE_IBUFFER_BASE + dbg_issue_id * PER_ISSUE_WARPS + dbg_wis]
+	                = per_issue_debug[dbg_issue_id].channels[HW_DBG_ISSUE_SLICE_IBUFFER_BASE + dbg_wis];
+	        end
+	        assign issue_pipeline_debug.channels[HW_DBG_ISSUE_SCOREBOARD_BASE + dbg_issue_id]
+	            = per_issue_debug[dbg_issue_id].channels[HW_DBG_ISSUE_SLICE_SCOREBOARD];
+	        assign issue_pipeline_debug.channels[HW_DBG_ISSUE_OPERANDS_BASE + dbg_issue_id]
+	            = per_issue_debug[dbg_issue_id].channels[HW_DBG_ISSUE_SLICE_OPERANDS];
+	    end
+	`endif
+
+	endmodule

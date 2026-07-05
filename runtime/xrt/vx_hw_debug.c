@@ -30,6 +30,8 @@ static const char *const k_global_flag_names[] = {
   "axi_protocol",
   "ctrl_resp_error",
   "axi_resp_error",
+  "core_stall",
+  "cache_stall",
 };
 
 static const char *const k_axi_flag_names[] = {
@@ -44,8 +46,26 @@ static const char *const k_axi_flag_names[] = {
   "rresp_error",
 };
 
+static const char *const k_core_flag_names[] = {
+  "stall_seen",
+  "payload_changed",
+  "stuck_timeout",
+};
+
+static const char *const k_cache_flag_names[] = {
+  "req_stall_seen",
+  "rsp_stall_seen",
+  "req_payload_changed",
+  "rsp_payload_changed",
+  "stuck_timeout",
+};
+
 #define VX_HW_DEBUG_ARRAY_SIZE(x) ((uint32_t)(sizeof(x) / sizeof((x)[0])))
 #define VX_HW_DEBUG_AXI_ADDR_MASK UINT64_C(0x0000ffffffffffff)
+#define VX_HW_DEBUG_MAX_CORE_SOURCES 256u
+#define VX_HW_DEBUG_MAX_CORE_CHANNELS 1024u
+#define VX_HW_DEBUG_MAX_CACHE_SOURCES 256u
+#define VX_HW_DEBUG_MAX_CACHE_PORTS 128u
 
 typedef struct vx_hw_debug_axi_port_dump {
   uint64_t aw_fire;
@@ -60,6 +80,10 @@ typedef struct vx_hw_debug_axi_port_dump {
   uint64_t r_stall;
   uint64_t rd_outstanding;
   uint64_t wr_outstanding;
+  uint64_t wr_drain_status;
+  uint64_t wr_txn_counts;
+  uint64_t wr_beat_counts;
+  uint64_t wr_last_counts;
   uint64_t errors;
   uint64_t flags;
   uint64_t last_aw;
@@ -67,6 +91,24 @@ typedef struct vx_hw_debug_axi_port_dump {
   uint64_t last_b;
   uint64_t last_r;
 } vx_hw_debug_axi_port_dump_t;
+
+typedef struct vx_hw_debug_core_channel_dump {
+  uint64_t live;
+  uint64_t flags;
+} vx_hw_debug_core_channel_dump_t;
+
+typedef struct vx_hw_debug_cache_source_dump {
+  uint64_t meta;
+} vx_hw_debug_cache_source_dump_t;
+
+typedef struct vx_hw_debug_cache_port_dump {
+  uint64_t live;
+  uint64_t req_counts;
+  uint64_t rsp_counts;
+  uint64_t last_req;
+  uint64_t last_rsp;
+  uint64_t flags;
+} vx_hw_debug_cache_port_dump_t;
 
 const char *vx_hw_debug_global_flag_name(uint32_t bit) {
   if (bit < VX_HW_DEBUG_ARRAY_SIZE(k_global_flag_names)) {
@@ -99,6 +141,30 @@ static uint32_t vx_hw_debug_status_num_axi_ports(uint32_t status) {
 
 static uint32_t vx_hw_debug_status_num_pc_sources(uint32_t status) {
   return (status >> 16) & 0xffu;
+}
+
+static uint32_t vx_hw_debug_core_status_num_channels(uint64_t status) {
+  return (uint32_t)((status >> 16) & 0xffffu);
+}
+
+static uint32_t vx_hw_debug_core_status_timeout(uint64_t status) {
+  return (uint32_t)(status >> 32);
+}
+
+static uint32_t vx_hw_debug_cache_status_num_sources(uint64_t status) {
+  return (uint32_t)(status & 0xffffu);
+}
+
+static uint32_t vx_hw_debug_cache_status_max_core_ports(uint64_t status) {
+  return (uint32_t)((status >> 16) & 0xffu);
+}
+
+static uint32_t vx_hw_debug_cache_status_max_mem_ports(uint64_t status) {
+  return (uint32_t)((status >> 24) & 0xffu);
+}
+
+static uint32_t vx_hw_debug_cache_status_timeout(uint64_t status) {
+  return (uint32_t)(status >> 32);
 }
 
 static const char *vx_hw_debug_yesno(uint32_t value) {
@@ -137,6 +203,25 @@ static const char *vx_hw_debug_axi_resp_name(uint32_t resp) {
   default:
     return "UNKNOWN";
   }
+}
+
+static const char *vx_hw_debug_cache_kind_name(uint32_t kind) {
+  switch (kind) {
+  case 1:
+    return "l1i";
+  case 2:
+    return "l1d";
+  case 3:
+    return "l2";
+  case 4:
+    return "l3";
+  default:
+    return "unknown";
+  }
+}
+
+static const char *vx_hw_debug_cache_side_name(uint32_t side) {
+  return side ? "mem" : "core";
 }
 
 static int vx_hw_debug_snapshot_has_flags(const vx_hw_debug_flag_snapshot_t *snapshot) {
@@ -342,13 +427,14 @@ static void vx_hw_debug_print_afu_status(FILE *out,
   uint32_t cache_drain = (uint32_t)((afu_status >> 6) & 0x1u);
   uint32_t done_base = (uint32_t)((afu_status >> 7) & 0x1u);
   uint32_t done_wait_cache = (uint32_t)((afu_status >> 8) & 0x1u);
+  uint32_t wr_drain_empty = (uint32_t)((afu_status >> 9) & 0x1u);
   uint32_t state = (uint32_t)((afu_status >> 10) & 0x3u);
   uint64_t pending_writes = afu_status >> 16;
 
   fprintf(out, "%s afu: state=%s(%u) cycle=%" PRIu64
                " reset=%u start=%u done=%u idle=%u ready=%u"
                " vx_busy=%u cache_drain=%u done_base=%u done_wait_cache=%u"
-               " pending_writes=%" PRIu64 " raw=0x%016" PRIx64 "\n",
+               " wr_drain_empty=%u pending_writes=%" PRIu64 " raw=0x%016" PRIx64 "\n",
           prefix,
           vx_hw_debug_afu_state_name(state),
           state,
@@ -362,6 +448,7 @@ static void vx_hw_debug_print_afu_status(FILE *out,
           cache_drain,
           done_base,
           done_wait_cache,
+          wr_drain_empty,
           pending_writes,
           afu_status);
 }
@@ -464,6 +551,10 @@ static int vx_hw_debug_axi_port_has_detail(const vx_hw_debug_axi_port_dump_t *po
       || port->r_stall != 0
       || port->rd_outstanding != 0
       || port->wr_outstanding != 0
+      || port->wr_drain_status != 0
+      || port->wr_txn_counts != 0
+      || port->wr_beat_counts != 0
+      || port->wr_last_counts != 0
       || port->errors != 0
       || port->flags != 0
       || port->last_aw != 0
@@ -478,6 +569,7 @@ static const char *vx_hw_debug_axi_port_severity(const vx_hw_debug_axi_port_dump
   }
   if (port->rd_outstanding != 0
    || port->wr_outstanding != 0
+   || port->wr_drain_status != 0
    || port->aw_stall != 0
    || port->w_stall != 0
    || port->b_stall != 0
@@ -502,6 +594,39 @@ static void vx_hw_debug_print_axi_resp_value(FILE *out, const char *label, uint6
   uint32_t resp = (uint32_t)((value >> 9) & 0x3u);
   fprintf(out, "%s={id=%u,resp=%s(%u),last=%u,raw=0x%016" PRIx64 "}",
           label, id, vx_hw_debug_axi_resp_name(resp), resp, last, value);
+}
+
+static void vx_hw_debug_print_axi_wr_drain(FILE *out, const vx_hw_debug_axi_port_dump_t *port) {
+  uint32_t drain_busy = (uint32_t)((port->wr_drain_status >> 0) & 0x1u);
+  uint32_t txn_mismatch = (uint32_t)((port->wr_drain_status >> 1) & 0x1u);
+  uint32_t wlast_mismatch = (uint32_t)((port->wr_drain_status >> 2) & 0x1u);
+  uint32_t beat_mismatch = (uint32_t)((port->wr_drain_status >> 3) & 0x1u);
+  uint32_t w_overflow = (uint32_t)((port->wr_drain_status >> 4) & 0x1u);
+  uint32_t wlast_overflow = (uint32_t)((port->wr_drain_status >> 5) & 0x1u);
+  uint32_t pending_aw_minus_b = (uint32_t)(port->wr_drain_status >> 32);
+  uint32_t aw_count = (uint32_t)(port->wr_txn_counts & UINT64_C(0xffffffff));
+  uint32_t b_count = (uint32_t)(port->wr_txn_counts >> 32);
+  uint32_t aw_beats = (uint32_t)(port->wr_beat_counts & UINT64_C(0xffffffff));
+  uint32_t w_count = (uint32_t)(port->wr_beat_counts >> 32);
+  uint32_t wlast_count = (uint32_t)(port->wr_last_counts & UINT64_C(0xffffffff));
+  uint32_t b_count_last = (uint32_t)(port->wr_last_counts >> 32);
+
+  fprintf(out,
+          " wr_drain={busy:%u,txn_mis:%u,wlast_mis:%u,beat_mis:%u,w_over:%u,wlast_over:%u,"
+          "pending_aw_b:%u,aw:%u,b:%u,aw_beats:%u,w:%u,wlast:%u,b_last:%u}",
+          drain_busy,
+          txn_mismatch,
+          wlast_mismatch,
+          beat_mismatch,
+          w_overflow,
+          wlast_overflow,
+          pending_aw_minus_b,
+          aw_count,
+          b_count,
+          aw_beats,
+          w_count,
+          wlast_count,
+          b_count_last);
 }
 
 static void vx_hw_debug_print_axi_port_dump(FILE *out,
@@ -534,6 +659,20 @@ static void vx_hw_debug_print_axi_port_dump(FILE *out,
           port->errors,
           port->flags);
 
+  if (port->wr_drain_status != 0 || port->wr_txn_counts != 0
+   || port->wr_beat_counts != 0 || port->wr_last_counts != 0) {
+    fprintf(out, "%s axi[%u].write_accounting:", prefix, port_id);
+    vx_hw_debug_print_axi_wr_drain(out, port);
+    fprintf(out, " raw_status=0x%016" PRIx64
+                 " raw_txn=0x%016" PRIx64
+                 " raw_beats=0x%016" PRIx64
+                 " raw_last=0x%016" PRIx64 "\n",
+            port->wr_drain_status,
+            port->wr_txn_counts,
+            port->wr_beat_counts,
+            port->wr_last_counts);
+  }
+
   if (port->aw_fire != 0 || port->ar_fire != 0) {
     fprintf(out, "%s axi[%u].last_addr: ", prefix, port_id);
     if (port->aw_fire != 0) {
@@ -565,6 +704,206 @@ static void vx_hw_debug_print_axi_port_dump(FILE *out,
     }
     fprintf(out, "\n");
   }
+}
+
+static const char *vx_hw_debug_core_channel_name(uint32_t channel) {
+  switch (channel) {
+  case 0:
+    return "schedule";
+  case 1:
+    return "icache_req";
+  case 2:
+    return "icache_rsp";
+  case 3:
+    return "fetch";
+  case 4:
+    return "decode";
+  default:
+    return "pipeline";
+  }
+}
+
+static int vx_hw_debug_core_channel_has_detail(const vx_hw_debug_core_channel_dump_t *channel) {
+  return channel->flags != 0
+      || (channel->live & UINT64_C(0x1f)) != 0;
+}
+
+static const char *vx_hw_debug_core_channel_severity(uint64_t live, uint64_t flags) {
+  uint32_t stall = (uint32_t)((live >> 3) & 0x1u);
+  uint32_t payload_changed = (uint32_t)((live >> 4) & 0x1u);
+  if ((flags & UINT64_C(0x4)) != 0) {
+    return "FAIL";
+  }
+  if (stall || payload_changed || flags != 0) {
+    return "WARN";
+  }
+  return "OK";
+}
+
+static void vx_hw_debug_print_core_channel_dump(FILE *out,
+                                                const char *prefix,
+                                                uint32_t core_id,
+                                                uint32_t channel_id,
+                                                const vx_hw_debug_core_channel_dump_t *channel) {
+  uint64_t live = channel->live;
+  uint32_t valid = (uint32_t)((live >> 0) & 0x1u);
+  uint32_t ready = (uint32_t)((live >> 1) & 0x1u);
+  uint32_t fire = (uint32_t)((live >> 2) & 0x1u);
+  uint32_t stall = (uint32_t)((live >> 3) & 0x1u);
+  uint32_t payload_changed = (uint32_t)((live >> 4) & 0x1u);
+  uint32_t wid = (uint32_t)((live >> 8) & 0xffu);
+  uint32_t tag = (uint32_t)((live >> 16) & 0xffffu);
+  uint32_t stall_age = (uint32_t)(live >> 32);
+
+  fprintf(out, "%s core[%u].ch[%u:%s]: %s vr=%u/%u fire=%u stall=%u age=%u wid=%u tag=0x%04x payload_changed=%u flags=",
+          prefix,
+          core_id,
+          channel_id,
+          vx_hw_debug_core_channel_name(channel_id),
+          vx_hw_debug_core_channel_severity(live, channel->flags),
+          valid,
+          ready,
+          fire,
+          stall,
+          stall_age,
+          wid,
+          tag,
+          payload_changed);
+  vx_hw_debug_print_flag_names(out,
+                               channel->flags,
+                               k_core_flag_names,
+                               VX_HW_DEBUG_ARRAY_SIZE(k_core_flag_names));
+  fprintf(out, " raw_live=0x%016" PRIx64 " raw_flags=0x%016" PRIx64 "\n",
+          live,
+          channel->flags);
+}
+
+static uint32_t vx_hw_debug_cache_source_kind(uint64_t meta) {
+  return (uint32_t)((meta >> 1) & 0xfu);
+}
+
+static uint32_t vx_hw_debug_cache_source_unit(uint64_t meta) {
+  return (uint32_t)((meta >> 5) & 0xffu);
+}
+
+static uint32_t vx_hw_debug_cache_source_passthru(uint64_t meta) {
+  return (uint32_t)((meta >> 13) & 0x1u);
+}
+
+static uint32_t vx_hw_debug_cache_source_write_enable(uint64_t meta) {
+  return (uint32_t)((meta >> 14) & 0x1u);
+}
+
+static uint32_t vx_hw_debug_cache_source_core_ports(uint64_t meta) {
+  return (uint32_t)((meta >> 16) & 0xffu);
+}
+
+static uint32_t vx_hw_debug_cache_source_mem_ports(uint64_t meta) {
+  return (uint32_t)((meta >> 24) & 0xffu);
+}
+
+static uint32_t vx_hw_debug_cache_source_location(uint64_t meta) {
+  return (uint32_t)((meta >> 32) & 0xffffu);
+}
+
+static uint32_t vx_hw_debug_cache_ring(uint32_t side, uint32_t port) {
+  return ((side & 0x1u) << 7) | (port & 0x7fu);
+}
+
+static int vx_hw_debug_cache_port_has_detail(const vx_hw_debug_cache_port_dump_t *port) {
+  return port->flags != 0
+      || (port->live & UINT64_C(0x3ff)) != 0
+      || port->req_counts != 0
+      || port->rsp_counts != 0;
+}
+
+static const char *vx_hw_debug_cache_port_severity(const vx_hw_debug_cache_port_dump_t *port) {
+  uint64_t flags = port->flags & UINT64_C(0xffffffff);
+  uint32_t req_stall = (uint32_t)((port->live >> 3) & 0x1u);
+  uint32_t rsp_stall = (uint32_t)((port->live >> 7) & 0x1u);
+  if ((flags & UINT64_C(0x10)) != 0) {
+    return "FAIL";
+  }
+  if (req_stall || rsp_stall || flags != 0) {
+    return "WARN";
+  }
+  return "OK";
+}
+
+static void vx_hw_debug_print_cache_port_dump(FILE *out,
+                                              const char *prefix,
+                                              uint32_t source_id,
+                                              uint64_t source_meta,
+                                              uint32_t side,
+                                              uint32_t port_id,
+                                              const vx_hw_debug_cache_port_dump_t *port) {
+  uint64_t live = port->live;
+  uint32_t req_valid = (uint32_t)((live >> 0) & 0x1u);
+  uint32_t req_ready = (uint32_t)((live >> 1) & 0x1u);
+  uint32_t req_fire = (uint32_t)((live >> 2) & 0x1u);
+  uint32_t req_stall = (uint32_t)((live >> 3) & 0x1u);
+  uint32_t rsp_valid = (uint32_t)((live >> 4) & 0x1u);
+  uint32_t rsp_ready = (uint32_t)((live >> 5) & 0x1u);
+  uint32_t rsp_fire = (uint32_t)((live >> 6) & 0x1u);
+  uint32_t rsp_stall = (uint32_t)((live >> 7) & 0x1u);
+  uint32_t req_rw = (uint32_t)((live >> 8) & 0x1u);
+  uint32_t req_tag = (uint32_t)((live >> 16) & 0xffffu);
+  uint32_t rsp_tag = (uint32_t)((live >> 32) & 0xffffu);
+  uint32_t req_hash = (uint32_t)((live >> 48) & 0xffffu);
+  uint32_t req_fire_count = (uint32_t)(port->req_counts & UINT64_C(0xffffffff));
+  uint32_t req_stall_count = (uint32_t)(port->req_counts >> 32);
+  uint32_t rsp_fire_count = (uint32_t)(port->rsp_counts & UINT64_C(0xffffffff));
+  uint32_t rsp_stall_count = (uint32_t)(port->rsp_counts >> 32);
+  uint64_t last_req_addr = port->last_req & VX_HW_DEBUG_AXI_ADDR_MASK;
+  uint32_t last_req_tag = (uint32_t)(port->last_req >> 48);
+  uint32_t last_rsp_tag = (uint32_t)(port->last_rsp & 0xffffu);
+  uint32_t last_rsp_hash = (uint32_t)((port->last_rsp >> 16) & 0xffffu);
+  uint32_t stall_age = (uint32_t)(port->flags >> 32);
+  uint64_t flags = port->flags & UINT64_C(0xffffffff);
+
+  fprintf(out,
+          "%s cache[%u:%s loc=%u unit=%u].%s[%u]: %s "
+          "req_vr=%u/%u req_fire=%u req_stall=%u req_rw=%u req_age=%u "
+          "rsp_vr=%u/%u rsp_fire=%u rsp_stall=%u "
+          "counts={req_fire:%u,req_stall:%u,rsp_fire:%u,rsp_stall:%u} "
+          "last_req={addr:0x%012" PRIx64 ",tag:0x%04x} "
+          "last_rsp={tag:0x%04x,hash:0x%04x} live_tags={req:0x%04x,rsp:0x%04x,hash:0x%04x} flags=",
+          prefix,
+          source_id,
+          vx_hw_debug_cache_kind_name(vx_hw_debug_cache_source_kind(source_meta)),
+          vx_hw_debug_cache_source_location(source_meta),
+          vx_hw_debug_cache_source_unit(source_meta),
+          vx_hw_debug_cache_side_name(side),
+          port_id,
+          vx_hw_debug_cache_port_severity(port),
+          req_valid,
+          req_ready,
+          req_fire,
+          req_stall,
+          req_rw,
+          stall_age,
+          rsp_valid,
+          rsp_ready,
+          rsp_fire,
+          rsp_stall,
+          req_fire_count,
+          req_stall_count,
+          rsp_fire_count,
+          rsp_stall_count,
+          last_req_addr,
+          last_req_tag,
+          last_rsp_tag,
+          last_rsp_hash,
+          req_tag,
+          rsp_tag,
+          req_hash);
+  vx_hw_debug_print_flag_names(out,
+                               flags,
+                               k_cache_flag_names,
+                               VX_HW_DEBUG_ARRAY_SIZE(k_cache_flag_names));
+  fprintf(out, " raw_live=0x%016" PRIx64 " raw_flags=0x%016" PRIx64 "\n",
+          live,
+          port->flags);
 }
 
 int vx_hw_debug_read64(const vx_hw_debug_io_t *io, uint32_t metric,
@@ -749,6 +1088,12 @@ int vx_hw_debug_dump(FILE *out, const vx_hw_debug_io_t *io,
   uint64_t ctrl_counts = 0;
   uint64_t ctrl_last_write = 0;
   uint64_t ctrl_last_read = 0;
+  uint64_t core_status = 0;
+  uint64_t core_progress = 0;
+  uint64_t core_first_stuck = 0;
+  uint64_t cache_status = 0;
+  uint64_t cache_progress = 0;
+  uint64_t cache_first_stuck = 0;
   vx_hw_debug_axi_port_dump_t axi_ports[VX_HW_DEBUG_MAX_AXI_PORTS];
   vx_hw_debug_flag_snapshot_t flags;
   int err;
@@ -811,12 +1156,209 @@ int vx_hw_debug_dump(FILE *out, const vx_hw_debug_io_t *io,
       ++pc_ring_printed;
     }
   }
-  if (pc_ring_printed == 0) {
-    fprintf(out, "%s pc_ring: empty checked=%u\n", prefix, pc_ring_depth);
-  }
+	  if (pc_ring_printed == 0) {
+	    fprintf(out, "%s pc_ring: empty checked=%u\n", prefix, pc_ring_depth);
+	  }
 
-  if (vx_hw_debug_read64(io, VX_HWDBG_CTRL_STATUS, 0, 0, &ctrl_live) == 0
-   && vx_hw_debug_read64(io, VX_HWDBG_CTRL_COUNTS, 0, 0, &ctrl_counts) == 0
+	  if (vx_hw_debug_read64(io, VX_HWDBG_CORE_STATUS, 0, 0, &core_status) == 0
+	   && vx_hw_debug_read64(io, VX_HWDBG_CORE_PROGRESS, 0, 0, &core_progress) == 0
+	   && vx_hw_debug_read64(io, VX_HWDBG_CORE_FIRST_STUCK, 0, 0, &core_first_stuck) == 0) {
+	    uint32_t core_sources = vx_hw_debug_status_num_pc_sources(status);
+	    uint32_t core_channels = vx_hw_debug_core_status_num_channels(core_status);
+	    uint32_t timeout = vx_hw_debug_core_status_timeout(core_status);
+	    uint32_t progress_cycles = (uint32_t)(core_progress & UINT64_C(0xffffffff));
+	    uint32_t payload_change_cycles = (uint32_t)(core_progress >> 32);
+	    uint32_t first_valid = (uint32_t)(core_first_stuck & 0x1u);
+	    uint32_t first_core = (uint32_t)((core_first_stuck >> 8) & 0xffu);
+	    uint32_t first_channel = (uint32_t)((core_first_stuck >> 16) & 0xffffu);
+	    uint32_t first_cycle = (uint32_t)(core_first_stuck >> 32);
+	    uint32_t core;
+	    uint32_t channel;
+	    uint32_t shown_channels = 0;
+	    uint32_t fail_channels = 0;
+	    uint32_t warn_channels = 0;
+
+	    if (core_sources > VX_HW_DEBUG_MAX_CORE_SOURCES) {
+	      core_sources = VX_HW_DEBUG_MAX_CORE_SOURCES;
+	    }
+	    if (core_channels > VX_HW_DEBUG_MAX_CORE_CHANNELS) {
+	      core_channels = VX_HW_DEBUG_MAX_CORE_CHANNELS;
+	    }
+
+	    fprintf(out, "%s core_pipeline: cores=%u channels=%u timeout=%u progress_fire_cycles=%u payload_change_cycles=%u raw_status=0x%016" PRIx64 "\n",
+	            prefix,
+	            core_sources,
+	            core_channels,
+	            timeout,
+	            progress_cycles,
+	            payload_change_cycles,
+	            core_status);
+	    if (first_valid) {
+	      fprintf(out, "%s core_pipeline.first_stuck: core=%u channel=%u cycle_lo=%u raw=0x%016" PRIx64 "\n",
+	              prefix,
+	              first_core,
+	              first_channel,
+	              first_cycle,
+	              core_first_stuck);
+	    } else {
+	      fprintf(out, "%s core_pipeline.first_stuck: none raw=0x%016" PRIx64 "\n",
+	              prefix,
+	              core_first_stuck);
+	    }
+
+	    for (core = 0; core < core_sources; ++core) {
+	      for (channel = 0; channel < core_channels; ++channel) {
+	        vx_hw_debug_core_channel_dump_t core_channel;
+	        const char *severity;
+	        if (vx_hw_debug_read64(io, VX_HWDBG_CORE_CHANNEL, core, channel, &core_channel.live) != 0
+	         || vx_hw_debug_read64(io, VX_HWDBG_CORE_FLAGS, core, channel, &core_channel.flags) != 0) {
+	          continue;
+	        }
+	        if (!vx_hw_debug_core_channel_has_detail(&core_channel)) {
+	          continue;
+	        }
+	        severity = vx_hw_debug_core_channel_severity(core_channel.live, core_channel.flags);
+	        ++shown_channels;
+	        if (strcmp(severity, "FAIL") == 0) {
+	          ++fail_channels;
+	        } else if (strcmp(severity, "WARN") == 0) {
+	          ++warn_channels;
+	        }
+	        vx_hw_debug_print_core_channel_dump(out, prefix, core, channel, &core_channel);
+	      }
+	    }
+	    fprintf(out, "%s core_pipeline: %s shown=%u fail=%u warn=%u\n",
+	            prefix,
+	            fail_channels != 0 ? "FAIL" : (warn_channels != 0 ? "WARN" : "OK"),
+	            shown_channels,
+	            fail_channels,
+	            warn_channels);
+	  }
+
+	  if (vx_hw_debug_read64(io, VX_HWDBG_CACHE_STATUS, 0, 0, &cache_status) == 0
+	   && vx_hw_debug_read64(io, VX_HWDBG_CACHE_PROGRESS, 0, 0, &cache_progress) == 0
+	   && vx_hw_debug_read64(io, VX_HWDBG_CACHE_FIRST_STUCK, 0, 0, &cache_first_stuck) == 0) {
+	    uint32_t cache_sources = vx_hw_debug_cache_status_num_sources(cache_status);
+	    uint32_t max_core_ports = vx_hw_debug_cache_status_max_core_ports(cache_status);
+	    uint32_t max_mem_ports = vx_hw_debug_cache_status_max_mem_ports(cache_status);
+	    uint32_t timeout = vx_hw_debug_cache_status_timeout(cache_status);
+	    uint32_t progress_cycles = (uint32_t)(cache_progress & UINT64_C(0xffffffff));
+	    uint32_t payload_change_cycles = (uint32_t)(cache_progress >> 32);
+	    uint32_t first_valid = (uint32_t)(cache_first_stuck & 0x1u);
+	    uint32_t first_source = (uint32_t)((cache_first_stuck >> 8) & 0xffu);
+	    uint32_t first_side = (uint32_t)((cache_first_stuck >> 16) & 0x1u);
+	    uint32_t first_port = (uint32_t)((cache_first_stuck >> 24) & 0xffu);
+	    uint32_t first_cycle = (uint32_t)(cache_first_stuck >> 32);
+	    uint32_t source;
+	    uint32_t shown_ports = 0;
+	    uint32_t checked_ports = 0;
+	    uint32_t fail_ports = 0;
+	    uint32_t warn_ports = 0;
+
+	    if (cache_sources > VX_HW_DEBUG_MAX_CACHE_SOURCES) {
+	      cache_sources = VX_HW_DEBUG_MAX_CACHE_SOURCES;
+	    }
+	    if (max_core_ports > VX_HW_DEBUG_MAX_CACHE_PORTS) {
+	      max_core_ports = VX_HW_DEBUG_MAX_CACHE_PORTS;
+	    }
+	    if (max_mem_ports > VX_HW_DEBUG_MAX_CACHE_PORTS) {
+	      max_mem_ports = VX_HW_DEBUG_MAX_CACHE_PORTS;
+	    }
+
+	    fprintf(out, "%s cache_pipeline: sources=%u max_core_ports=%u max_mem_ports=%u timeout=%u progress_fire_cycles=%u payload_change_cycles=%u raw_status=0x%016" PRIx64 "\n",
+	            prefix,
+	            cache_sources,
+	            max_core_ports,
+	            max_mem_ports,
+	            timeout,
+	            progress_cycles,
+	            payload_change_cycles,
+	            cache_status);
+	    if (first_valid) {
+	      fprintf(out, "%s cache_pipeline.first_stuck: source=%u side=%s port=%u cycle_lo=%u raw=0x%016" PRIx64 "\n",
+	              prefix,
+	              first_source,
+	              vx_hw_debug_cache_side_name(first_side),
+	              first_port,
+	              first_cycle,
+	              cache_first_stuck);
+	    } else {
+	      fprintf(out, "%s cache_pipeline.first_stuck: none raw=0x%016" PRIx64 "\n",
+	              prefix,
+	              cache_first_stuck);
+	    }
+
+	    for (source = 0; source < cache_sources; ++source) {
+	      vx_hw_debug_cache_source_dump_t cache_source;
+	      uint32_t side;
+	      if (vx_hw_debug_read64(io, VX_HWDBG_CACHE_SOURCE, source, 0, &cache_source.meta) != 0) {
+	        continue;
+	      }
+	      fprintf(out,
+	              "%s cache[%u:%s]: loc=%u unit=%u passthru=%s write=%s core_ports=%u mem_ports=%u raw=0x%016" PRIx64 "\n",
+	              prefix,
+	              source,
+	              vx_hw_debug_cache_kind_name(vx_hw_debug_cache_source_kind(cache_source.meta)),
+	              vx_hw_debug_cache_source_location(cache_source.meta),
+	              vx_hw_debug_cache_source_unit(cache_source.meta),
+	              vx_hw_debug_yesno(vx_hw_debug_cache_source_passthru(cache_source.meta)),
+	              vx_hw_debug_yesno(vx_hw_debug_cache_source_write_enable(cache_source.meta)),
+	              vx_hw_debug_cache_source_core_ports(cache_source.meta),
+	              vx_hw_debug_cache_source_mem_ports(cache_source.meta),
+	              cache_source.meta);
+	      for (side = 0; side < 2; ++side) {
+	        uint32_t port_count = side ? vx_hw_debug_cache_source_mem_ports(cache_source.meta)
+	                                   : vx_hw_debug_cache_source_core_ports(cache_source.meta);
+	        uint32_t port_limit = side ? max_mem_ports : max_core_ports;
+	        uint32_t cache_port;
+	        if (port_count > port_limit) {
+	          port_count = port_limit;
+	        }
+	        for (cache_port = 0; cache_port < port_count; ++cache_port) {
+	          vx_hw_debug_cache_port_dump_t cache_port_dump;
+	          const char *severity;
+	          uint32_t ring_sel = vx_hw_debug_cache_ring(side, cache_port);
+	          if (vx_hw_debug_read64(io, VX_HWDBG_CACHE_PORT_LIVE, source, ring_sel, &cache_port_dump.live) != 0
+	           || vx_hw_debug_read64(io, VX_HWDBG_CACHE_REQ_COUNTS, source, ring_sel, &cache_port_dump.req_counts) != 0
+	           || vx_hw_debug_read64(io, VX_HWDBG_CACHE_RSP_COUNTS, source, ring_sel, &cache_port_dump.rsp_counts) != 0
+	           || vx_hw_debug_read64(io, VX_HWDBG_CACHE_LAST_REQ, source, ring_sel, &cache_port_dump.last_req) != 0
+	           || vx_hw_debug_read64(io, VX_HWDBG_CACHE_LAST_RSP, source, ring_sel, &cache_port_dump.last_rsp) != 0
+	           || vx_hw_debug_read64(io, VX_HWDBG_CACHE_PORT_FLAGS, source, ring_sel, &cache_port_dump.flags) != 0) {
+	            continue;
+	          }
+	          ++checked_ports;
+	          if (!vx_hw_debug_cache_port_has_detail(&cache_port_dump)) {
+	            continue;
+	          }
+	          severity = vx_hw_debug_cache_port_severity(&cache_port_dump);
+	          ++shown_ports;
+	          if (strcmp(severity, "FAIL") == 0) {
+	            ++fail_ports;
+	          } else if (strcmp(severity, "WARN") == 0) {
+	            ++warn_ports;
+	          }
+	          vx_hw_debug_print_cache_port_dump(out,
+	                                           prefix,
+	                                           source,
+	                                           cache_source.meta,
+	                                           side,
+	                                           cache_port,
+	                                           &cache_port_dump);
+	        }
+	      }
+	    }
+	    fprintf(out, "%s cache_pipeline: %s checked=%u shown=%u omitted_idle=%u fail=%u warn=%u\n",
+	            prefix,
+	            fail_ports != 0 ? "FAIL" : (warn_ports != 0 ? "WARN" : "OK"),
+	            checked_ports,
+	            shown_ports,
+	            checked_ports - shown_ports,
+	            fail_ports,
+	            warn_ports);
+	  }
+
+	  if (vx_hw_debug_read64(io, VX_HWDBG_CTRL_STATUS, 0, 0, &ctrl_live) == 0
+	   && vx_hw_debug_read64(io, VX_HWDBG_CTRL_COUNTS, 0, 0, &ctrl_counts) == 0
    && vx_hw_debug_read64(io, VX_HWDBG_CTRL_LAST_WRITE, 0, 0, &ctrl_last_write) == 0
    && vx_hw_debug_read64(io, VX_HWDBG_CTRL_LAST_READ, 0, 0, &ctrl_last_read) == 0) {
     vx_hw_debug_print_ctrl_status(out,
@@ -848,6 +1390,10 @@ int vx_hw_debug_dump(FILE *out, const vx_hw_debug_io_t *io,
     (void)vx_hw_debug_read64(io, VX_HWDBG_AXI_R_STALL, port, 0, &axi->r_stall);
     (void)vx_hw_debug_read64(io, VX_HWDBG_AXI_RD_OUTSTAND, port, 0, &axi->rd_outstanding);
     (void)vx_hw_debug_read64(io, VX_HWDBG_AXI_WR_OUTSTAND, port, 0, &axi->wr_outstanding);
+    (void)vx_hw_debug_read64(io, VX_HWDBG_AXI_WR_DRAIN_STATUS, port, 0, &axi->wr_drain_status);
+    (void)vx_hw_debug_read64(io, VX_HWDBG_AXI_WR_TXN_COUNTS, port, 0, &axi->wr_txn_counts);
+    (void)vx_hw_debug_read64(io, VX_HWDBG_AXI_WR_BEAT_COUNTS, port, 0, &axi->wr_beat_counts);
+    (void)vx_hw_debug_read64(io, VX_HWDBG_AXI_WR_LAST_COUNTS, port, 0, &axi->wr_last_counts);
     (void)vx_hw_debug_read64(io, VX_HWDBG_AXI_ERRORS, port, 0, &axi->errors);
     (void)vx_hw_debug_read64(io, VX_HWDBG_AXI_FLAGS, port, 0, &axi->flags);
     (void)vx_hw_debug_read64(io, VX_HWDBG_AXI_LAST_AW, port, 0, &axi->last_aw);

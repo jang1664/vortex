@@ -67,9 +67,13 @@ module VX_cache_cluster import VX_gpu_pkg::*; #(
     // Core response output buffer
     parameter CORE_OUT_BUF          = 3,
 
-    // Memory request output buffer
-    parameter MEM_OUT_BUF           = 3
- ) (
+	    // Memory request output buffer
+	    parameter MEM_OUT_BUF           = 3,
+
+	    // Hardware debug source metadata
+	    parameter DEBUG_CACHE_KIND      = HW_DBG_CACHE_KIND_NONE,
+	    parameter DEBUG_CACHE_LOCATION  = 0
+	 ) (
     input wire clk,
     input wire reset,
 
@@ -78,11 +82,15 @@ module VX_cache_cluster import VX_gpu_pkg::*; #(
     output cache_perf_t     cache_perf,
 `endif
 
-    VX_mem_bus_if.slave     core_bus_if [NUM_INPUTS * NUM_REQS],
-    VX_mem_bus_if.master    mem_bus_if [MEM_PORTS],
+	    VX_mem_bus_if.slave     core_bus_if [NUM_INPUTS * NUM_REQS],
+	    VX_mem_bus_if.master    mem_bus_if [MEM_PORTS],
 
-    output wire             cache_drain
-);
+	`ifdef ENABLE_HW_DEBUG_MODULE
+	    output cache_debug_t    cache_debug [`UP(NUM_UNITS)],
+	`endif
+
+	    output wire             cache_drain
+	);
     localparam NUM_CACHES = `UP(NUM_UNITS);
     localparam PASSTHRU   = (NUM_UNITS == 0);
     localparam ARB_TAG_WIDTH = TAG_WIDTH + `ARB_SEL_BITS(NUM_INPUTS, NUM_CACHES);
@@ -191,20 +199,26 @@ module VX_cache_cluster import VX_gpu_pkg::*; #(
             .MREQ_SIZE    (MREQ_SIZE),
             .TAG_WIDTH    (ARB_TAG_WIDTH),
             .TAG_SEL_IDX  (TAG_SEL_IDX),
-            .CORE_OUT_BUF ((NUM_INPUTS != NUM_CACHES) ? 2 : CORE_OUT_BUF),
-            .MEM_OUT_BUF  ((NUM_CACHES > 1) ? 2 : MEM_OUT_BUF),
-            .NC_ENABLE    (NC_ENABLE),
-            .PASSTHRU     (PASSTHRU)
-        ) cache_wrap (
-        `ifdef PERF_ENABLE
-            .cache_perf  (perf_cache_unit[i]),
-        `endif
-            .clk         (clk),
-            .reset       (reset),
-            .core_bus_if (arb_core_bus_if[i * NUM_REQS +: NUM_REQS]),
-            .mem_bus_if  (cache_mem_bus_if[i * MEM_PORTS +: MEM_PORTS]),
-            .cache_drain (per_cache_drain[i])
-        );
+	            .CORE_OUT_BUF ((NUM_INPUTS != NUM_CACHES) ? 2 : CORE_OUT_BUF),
+	            .MEM_OUT_BUF  ((NUM_CACHES > 1) ? 2 : MEM_OUT_BUF),
+	            .NC_ENABLE    (NC_ENABLE),
+	            .PASSTHRU     (PASSTHRU),
+	            .DEBUG_CACHE_KIND     (DEBUG_CACHE_KIND),
+	            .DEBUG_CACHE_LOCATION (DEBUG_CACHE_LOCATION),
+	            .DEBUG_CACHE_UNIT     (i)
+	        ) cache_wrap (
+	        `ifdef PERF_ENABLE
+	            .cache_perf  (perf_cache_unit[i]),
+	        `endif
+	            .clk         (clk),
+	            .reset       (reset),
+	            .core_bus_if (arb_core_bus_if[i * NUM_REQS +: NUM_REQS]),
+	            .mem_bus_if  (cache_mem_bus_if[i * MEM_PORTS +: MEM_PORTS]),
+	        `ifdef ENABLE_HW_DEBUG_MODULE
+	            .cache_debug (cache_debug[i]),
+	        `endif
+	            .cache_drain (per_cache_drain[i])
+	        );
     end
 
     for (genvar i = 0; i < MEM_PORTS; ++i) begin : g_mem_bus_if

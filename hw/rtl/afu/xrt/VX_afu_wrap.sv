@@ -64,7 +64,8 @@ module VX_afu_wrap import VX_gpu_pkg::*; #(
 	} state_e;
 
 	localparam PENDING_WR_SIZEW    = 12; // max outstanding requests size
-	localparam NUM_MEM_PORTS_SIZEW = `CLOG2(C_M_AXI_MEM_NUM_PORTS+1);
+	localparam WR_TRACK_SIZEW      = 32;
+	localparam DBG_AFU_MEM_PORT    = (C_M_AXI_MEM_NUM_PORTS > 4) ? 4 : 0;
 
 	wire                                 m_axi_mem_awvalid_a [C_M_AXI_MEM_NUM_PORTS];
     wire                                 m_axi_mem_awready_a [C_M_AXI_MEM_NUM_PORTS];
@@ -114,7 +115,7 @@ module VX_afu_wrap import VX_gpu_pkg::*; #(
 	`REPEAT (`NUM_DMA_CHANNELS, AXI_MEM_TO_ARRAY, REPEAT_SEMICOLON);
 
 	reg [`CLOG2(`RESET_DELAY+1)-1:0] vx_reset_ctr;
-	reg [PENDING_WR_SIZEW-1:0] vx_pending_writes;
+	wire [PENDING_WR_SIZEW-1:0] vx_pending_writes;
 	reg vx_reset; 
 	wire vx_busy;
 	wire vx_cache_drain;
@@ -134,6 +135,8 @@ module VX_afu_wrap import VX_gpu_pkg::*; #(
 		wire [HW_DEBUG_CORE_ID_WIDTH-1:0] hw_debug_pc_core_id [HW_DEBUG_NUM_PC_SOURCES];
 		wire [NW_WIDTH-1:0]          hw_debug_pc_wid [HW_DEBUG_NUM_PC_SOURCES];
 		wire [`XLEN-1:0]             hw_debug_pc [HW_DEBUG_NUM_PC_SOURCES];
+		core_pipeline_debug_t        core_pipeline_debug [HW_DEBUG_NUM_PC_SOURCES];
+		cache_debug_t                cache_debug [HW_DEBUG_CACHE_NUM_SOURCES];
 	`endif
 
 		state_e state;
@@ -142,6 +145,7 @@ module VX_afu_wrap import VX_gpu_pkg::*; #(
 	wire ap_start;
 	wire ap_ctrl_read;
 	wire ap_idle  = (state == STATE_IDLE);
+	wire vx_pending_writes_empty;
 `ifdef AFU_DONE_WAIT_CACHE_DRAIN
     localparam USE_APDONE_CACHE_DRAIN =
         (`DCACHE_WRITEBACK == 0) &&
@@ -151,7 +155,7 @@ module VX_afu_wrap import VX_gpu_pkg::*; #(
     localparam USE_APDONE_CACHE_DRAIN = 0;
 `endif
 
-	wire ap_done_base = (state == STATE_DONE) && (vx_pending_writes == '0);
+	wire ap_done_base = (state == STATE_DONE) && vx_pending_writes_empty;
 	wire ap_done_wait_cache = ap_done_base && USE_APDONE_CACHE_DRAIN && !vx_cache_drain;
 	wire ap_done_raw = ap_done_base && (!USE_APDONE_CACHE_DRAIN || vx_cache_drain);
 
@@ -252,40 +256,55 @@ module VX_afu_wrap import VX_gpu_pkg::*; #(
 	end
 
 	wire [C_M_AXI_MEM_NUM_PORTS-1:0] m_axi_wr_req_fire, m_axi_wr_rsp_fire;
-	wire [NUM_MEM_PORTS_SIZEW-1:0] cur_wr_reqs, cur_wr_rsps;
+	wire [C_M_AXI_MEM_NUM_PORTS-1:0] m_axi_wr_pending_empty;
+	wire [PENDING_WR_SIZEW-1:0] m_axi_wr_pending [C_M_AXI_MEM_NUM_PORTS];
+	wire [WR_TRACK_SIZEW-1:0] m_axi_wr_aw_handshake_cnt [C_M_AXI_MEM_NUM_PORTS];
+	wire [WR_TRACK_SIZEW-1:0] m_axi_wr_aw_burst_total_cnt [C_M_AXI_MEM_NUM_PORTS];
+	wire [WR_TRACK_SIZEW-1:0] m_axi_wr_w_handshake_cnt [C_M_AXI_MEM_NUM_PORTS];
+	wire [WR_TRACK_SIZEW-1:0] m_axi_wr_wlast_cnt [C_M_AXI_MEM_NUM_PORTS];
+	wire [WR_TRACK_SIZEW-1:0] m_axi_wr_b_handshake_cnt [C_M_AXI_MEM_NUM_PORTS];
+	wire m_axi_wr_track_reset = reset || ap_reset || (state == STATE_IDLE && ap_start);
 
 	for (genvar i = 0; i < C_M_AXI_MEM_NUM_PORTS; ++i) begin : g_m_axi_wr_req_fire
-		VX_axi_write_ack axi_write_ack (
-            .clk    (clk),
-            .reset  (reset),
-            .awvalid(m_axi_mem_awvalid_a[i]),
-            .awready(m_axi_mem_awready_a[i]),
-            .wvalid (m_axi_mem_wvalid_a[i]),
-            .wready (m_axi_mem_wready_a[i]),
-			.tx_ack (m_axi_wr_req_fire[i]),
-			`UNUSED_PIN (aw_ack),
-			`UNUSED_PIN (w_ack),
-			`UNUSED_PIN (tx_rdy)
+		VX_axi_write_drain #(
+			.COUNT_WIDTH   (WR_TRACK_SIZEW),
+			.PENDING_WIDTH (PENDING_WR_SIZEW)
+		) axi_write_drain (
+			.clk                (clk),
+			.reset              (m_axi_wr_track_reset),
+			.awvalid            (m_axi_mem_awvalid_a[i]),
+			.awready            (m_axi_mem_awready_a[i]),
+			.awlen              (m_axi_mem_awlen_a[i]),
+			.wvalid             (m_axi_mem_wvalid_a[i]),
+			.wready             (m_axi_mem_wready_a[i]),
+			.wlast              (m_axi_mem_wlast_a[i]),
+			.bvalid             (m_axi_mem_bvalid_a[i]),
+			.bready             (m_axi_mem_bready_a[i]),
+			.aw_fire            (m_axi_wr_req_fire[i]),
+			`UNUSED_PIN (w_fire),
+			`UNUSED_PIN (wlast_fire),
+			.b_fire             (m_axi_wr_rsp_fire[i]),
+			.pending_empty      (m_axi_wr_pending_empty[i]),
+			.aw_handshake_cnt   (m_axi_wr_aw_handshake_cnt[i]),
+			.aw_burst_total_cnt (m_axi_wr_aw_burst_total_cnt[i]),
+			.w_handshake_cnt    (m_axi_wr_w_handshake_cnt[i]),
+			.wlast_cnt          (m_axi_wr_wlast_cnt[i]),
+			.b_handshake_cnt    (m_axi_wr_b_handshake_cnt[i]),
+			.pending_writes     (m_axi_wr_pending[i])
         );
 	end
 
-	for (genvar i = 0; i < C_M_AXI_MEM_NUM_PORTS; ++i) begin : g_m_axi_wr_rsp_fire
-		assign m_axi_wr_rsp_fire[i] = m_axi_mem_bvalid_a[i] && m_axi_mem_bready_a[i];
-	end
+	assign vx_pending_writes_empty = &m_axi_wr_pending_empty;
 
-	`POP_COUNT(cur_wr_reqs, m_axi_wr_req_fire);
-	`POP_COUNT(cur_wr_rsps, m_axi_wr_rsp_fire);
-
-	wire signed [NUM_MEM_PORTS_SIZEW:0] reqs_sub = (NUM_MEM_PORTS_SIZEW+1)'(cur_wr_reqs) -
-	                                                     (NUM_MEM_PORTS_SIZEW+1)'(cur_wr_rsps);
-
-	always @(posedge clk) begin
-		if (reset || ap_reset) begin
-			vx_pending_writes <= '0;
-		end else begin
-			vx_pending_writes <= vx_pending_writes + PENDING_WR_SIZEW'(reqs_sub);
+	reg [PENDING_WR_SIZEW-1:0] vx_pending_writes_r;
+	integer pending_i;
+	always @(*) begin
+		vx_pending_writes_r = '0;
+		for (pending_i = 0; pending_i < C_M_AXI_MEM_NUM_PORTS; pending_i = pending_i + 1) begin
+			vx_pending_writes_r = vx_pending_writes_r + m_axi_wr_pending[pending_i];
 		end
 	end
+	assign vx_pending_writes = vx_pending_writes_r;
 
 	VX_afu_ctrl #(
 		.S_AXI_ADDR_WIDTH (C_S_AXI_CTRL_ADDR_WIDTH),
@@ -417,6 +436,8 @@ module VX_afu_wrap import VX_gpu_pkg::*; #(
 			.hw_debug_pc_core_id (hw_debug_pc_core_id),
 			.hw_debug_pc_wid     (hw_debug_pc_wid),
 			.hw_debug_pc         (hw_debug_pc),
+			.core_pipeline_debug (core_pipeline_debug),
+			.cache_debug         (cache_debug),
 		`endif
 
 			.busy			(vx_busy),
@@ -428,7 +449,8 @@ module VX_afu_wrap import VX_gpu_pkg::*; #(
 			.NUM_AXI_PORTS     (C_M_AXI_MEM_NUM_PORTS),
 			.AXI_ADDR_WIDTH    (C_M_AXI_MEM_ADDR_WIDTH),
 			.AXI_ID_WIDTH      (C_M_AXI_MEM_ID_WIDTH),
-			.PENDING_WR_SIZEW  (PENDING_WR_SIZEW)
+			.PENDING_WR_SIZEW  (PENDING_WR_SIZEW),
+			.WR_TRACK_SIZEW    (WR_TRACK_SIZEW)
 		) hw_debug (
 			.clk                (clk),
 			.reset              (reset || ap_reset),
@@ -449,11 +471,14 @@ module VX_afu_wrap import VX_gpu_pkg::*; #(
 			.vx_busy            (vx_busy),
 			.vx_cache_drain     (vx_cache_drain),
 			.vx_pending_writes  (vx_pending_writes),
+			.vx_pending_writes_empty (vx_pending_writes_empty),
 
 			.hw_debug_pc_valid   (hw_debug_pc_valid),
 			.hw_debug_pc_core_id (hw_debug_pc_core_id),
 			.hw_debug_pc_wid     (hw_debug_pc_wid),
 			.hw_debug_pc         (hw_debug_pc),
+			.core_pipeline_debug (core_pipeline_debug),
+			.cache_debug         (cache_debug),
 
 			.s_axi_ctrl_awvalid (s_axi_ctrl_awvalid),
 			.s_axi_ctrl_awready (s_axi_ctrl_awready),
@@ -495,7 +520,13 @@ module VX_afu_wrap import VX_gpu_pkg::*; #(
 			.m_axi_rlast        (m_axi_mem_rlast_a),
 			.m_axi_rid          (m_axi_mem_rid_a),
 			.m_axi_rresp        (m_axi_mem_rresp_a),
-			.m_axi_wr_req_fire  (m_axi_wr_req_fire)
+			.m_axi_wr_req_fire  (m_axi_wr_req_fire),
+			.m_axi_wr_pending_empty (m_axi_wr_pending_empty),
+			.m_axi_wr_aw_handshake_cnt (m_axi_wr_aw_handshake_cnt),
+			.m_axi_wr_aw_burst_total_cnt (m_axi_wr_aw_burst_total_cnt),
+			.m_axi_wr_w_handshake_cnt (m_axi_wr_w_handshake_cnt),
+			.m_axi_wr_wlast_cnt (m_axi_wr_wlast_cnt),
+			.m_axi_wr_b_handshake_cnt (m_axi_wr_b_handshake_cnt)
 		);
 	`endif
 
@@ -503,10 +534,10 @@ module VX_afu_wrap import VX_gpu_pkg::*; #(
 
 `ifdef SCOPE
 `ifdef DBG_SCOPE_AFU
-	wire m_axi_mem_awfire_0 = m_axi_mem_awvalid_a[0] & m_axi_mem_awready_a[0];
-	wire m_axi_mem_arfire_0 = m_axi_mem_arvalid_a[0] & m_axi_mem_arready_a[0];
-	wire m_axi_mem_wfire_0  = m_axi_mem_wvalid_a[0]  & m_axi_mem_wready_a[0];
-	wire m_axi_mem_bfire_0  = m_axi_mem_bvalid_a[0]  & m_axi_mem_bready_a[0];
+	wire m_axi_mem_awfire_dbg = m_axi_mem_awvalid_a[DBG_AFU_MEM_PORT] & m_axi_mem_awready_a[DBG_AFU_MEM_PORT];
+	wire m_axi_mem_arfire_dbg = m_axi_mem_arvalid_a[DBG_AFU_MEM_PORT] & m_axi_mem_arready_a[DBG_AFU_MEM_PORT];
+	wire m_axi_mem_wfire_dbg  = m_axi_mem_wvalid_a[DBG_AFU_MEM_PORT]  & m_axi_mem_wready_a[DBG_AFU_MEM_PORT];
+	wire m_axi_mem_bfire_dbg  = m_axi_mem_bvalid_a[DBG_AFU_MEM_PORT]  & m_axi_mem_bready_a[DBG_AFU_MEM_PORT];
 	wire reset_negedge;
 	`NEG_EDGE (reset_negedge, reset);
 	`SCOPE_TAP (0, 0, {
@@ -521,32 +552,32 @@ module VX_afu_wrap import VX_gpu_pkg::*; #(
 			vx_busy,
 			vx_cache_drain,
 			state,
-			m_axi_mem_awvalid_a[0],
-			m_axi_mem_awready_a[0],
-			m_axi_mem_wvalid_a[0],
-			m_axi_mem_wready_a[0],
-			m_axi_mem_bvalid_a[0],
-			m_axi_mem_bready_a[0],
-			m_axi_mem_arvalid_a[0],
-			m_axi_mem_arready_a[0],
-			m_axi_mem_rvalid_a[0],
-			m_axi_mem_rready_a[0]
+			m_axi_mem_awvalid_a[DBG_AFU_MEM_PORT],
+			m_axi_mem_awready_a[DBG_AFU_MEM_PORT],
+			m_axi_mem_wvalid_a[DBG_AFU_MEM_PORT],
+			m_axi_mem_wready_a[DBG_AFU_MEM_PORT],
+			m_axi_mem_bvalid_a[DBG_AFU_MEM_PORT],
+			m_axi_mem_bready_a[DBG_AFU_MEM_PORT],
+			m_axi_mem_arvalid_a[DBG_AFU_MEM_PORT],
+			m_axi_mem_arready_a[DBG_AFU_MEM_PORT],
+			m_axi_mem_rvalid_a[DBG_AFU_MEM_PORT],
+			m_axi_mem_rready_a[DBG_AFU_MEM_PORT]
 		}, {
 			dcr_wr_valid,
-			m_axi_mem_awfire_0,
-			m_axi_mem_arfire_0,
-			m_axi_mem_wfire_0,
-			m_axi_mem_bfire_0
+			m_axi_mem_awfire_dbg,
+			m_axi_mem_arfire_dbg,
+			m_axi_mem_wfire_dbg,
+			m_axi_mem_bfire_dbg
 		}, {
 			dcr_wr_addr,
 			dcr_wr_data,
 			vx_pending_writes,
-			m_axi_mem_awaddr_u[0],
-			m_axi_mem_awid_a[0],
-			m_axi_mem_bid_a[0],
-			m_axi_mem_araddr_u[0],
-			m_axi_mem_arid_a[0],
-			m_axi_mem_rid_a[0]
+			m_axi_mem_awaddr_u[DBG_AFU_MEM_PORT],
+			m_axi_mem_awid_a[DBG_AFU_MEM_PORT],
+			m_axi_mem_bid_a[DBG_AFU_MEM_PORT],
+			m_axi_mem_araddr_u[DBG_AFU_MEM_PORT],
+			m_axi_mem_arid_a[DBG_AFU_MEM_PORT],
+			m_axi_mem_rid_a[DBG_AFU_MEM_PORT]
 		},
 		reset_negedge, 1'b0, 4096
 	);
@@ -579,32 +610,32 @@ module VX_afu_wrap import VX_gpu_pkg::*; #(
 			s_axi_ctrl_arready,
 			s_axi_ctrl_rvalid,
 			s_axi_ctrl_rready,
-			s_axi_ctrl_bvalid,
-			s_axi_ctrl_bready,
-			m_axi_mem_awvalid_a[0],
-			m_axi_mem_awready_a[0],
-			m_axi_mem_wvalid_a[0],
-			m_axi_mem_wready_a[0],
-			m_axi_mem_wlast_a[0],
-			m_axi_mem_bvalid_a[0],
-			m_axi_mem_bready_a[0],
-			m_axi_mem_arvalid_a[0],
-			m_axi_mem_arready_a[0],
-			m_axi_mem_rvalid_a[0],
-			m_axi_mem_rready_a[0],
-			m_axi_mem_rlast_a[0]
+			m_axi_wr_req_fire[DBG_AFU_MEM_PORT],
+			m_axi_wr_rsp_fire[DBG_AFU_MEM_PORT],
+			m_axi_mem_awvalid_a[DBG_AFU_MEM_PORT],
+			m_axi_mem_awready_a[DBG_AFU_MEM_PORT],
+			m_axi_mem_wvalid_a[DBG_AFU_MEM_PORT],
+			m_axi_mem_wready_a[DBG_AFU_MEM_PORT],
+			m_axi_mem_wlast_a[DBG_AFU_MEM_PORT],
+			m_axi_mem_bvalid_a[DBG_AFU_MEM_PORT],
+			m_axi_mem_bready_a[DBG_AFU_MEM_PORT],
+			m_axi_mem_arvalid_a[DBG_AFU_MEM_PORT],
+			m_axi_mem_arready_a[DBG_AFU_MEM_PORT],
+			m_axi_mem_rvalid_a[DBG_AFU_MEM_PORT],
+			m_axi_mem_rready_a[DBG_AFU_MEM_PORT],
+			m_axi_mem_rlast_a[DBG_AFU_MEM_PORT]
 		}),
 		.probe1 ({
-        	m_axi_mem_awaddr_u[0][31:0],
-        	m_axi_mem_araddr_u[0][31:0],
-        	m_axi_mem_awlen_a[0],
-        	m_axi_mem_arlen_a[0],
-        	m_axi_mem_awid_a[0],
-        	m_axi_mem_arid_a[0],
-        	m_axi_mem_bid_a[0],
-        	m_axi_mem_rid_a[0],
-        	m_axi_mem_bresp_a[0],
-        	m_axi_mem_rresp_a[0]
+			m_axi_mem_awaddr_u[DBG_AFU_MEM_PORT][31:0],
+			m_axi_mem_araddr_u[DBG_AFU_MEM_PORT][31:0],
+			m_axi_mem_awlen_a[DBG_AFU_MEM_PORT],
+			m_axi_mem_arlen_a[DBG_AFU_MEM_PORT],
+			m_axi_mem_awid_a[DBG_AFU_MEM_PORT],
+			m_axi_mem_arid_a[DBG_AFU_MEM_PORT],
+			m_axi_mem_bid_a[DBG_AFU_MEM_PORT],
+			m_axi_mem_rid_a[DBG_AFU_MEM_PORT],
+			m_axi_mem_bresp_a[DBG_AFU_MEM_PORT],
+			m_axi_mem_rresp_a[DBG_AFU_MEM_PORT]
 		}),
 		.probe2 ({
 			vx_pending_writes,
