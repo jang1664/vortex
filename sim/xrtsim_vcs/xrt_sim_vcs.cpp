@@ -232,12 +232,16 @@ private:
   using mem_req_list_t = std::list<mem_req_t*>;
   using mem_req_iter_t = mem_req_list_t::iterator;
 
-  // AW state for two-phase write handling (per AXI port)
+  // AW/W queues handle independently accepted AXI write channels.
   typedef struct {
     uint64_t addr;
     uint32_t tag;
-    bool     valid;
   } aw_state_t;
+
+  typedef struct {
+    std::array<uint8_t, PLATFORM_MEMORY_DATA_SIZE> data;
+    uint64_t strb;
+  } w_state_t;
 
   void assert_port_range(uint8_t port_id, uint64_t addr) {
   #ifdef PLATFORM_MEMORY_REMAP
@@ -319,6 +323,30 @@ private:
     return pending_reqs.end();
   }
 
+  void drain_write_queues(uint8_t port) {
+    while (!aw_queue_[port].empty() && !w_queue_[port].empty()) {
+      auto aw = aw_queue_[port].front();
+      auto w  = w_queue_[port].front();
+      aw_queue_[port].pop();
+      w_queue_[port].pop();
+
+      for (int i = 0; i < PLATFORM_MEMORY_DATA_SIZE; ++i) {
+        if ((w.strb >> i) & 0x1) {
+          (*ram_)[aw.addr + i] = w.data[i];
+        }
+      }
+
+      auto mem_req = new mem_req_t();
+      mem_req->tag   = aw.tag;
+      mem_req->addr  = aw.addr;
+      mem_req->port  = port;
+      mem_req->write = true;
+      mem_req->ready = false;
+      pending_mem_reqs_[port].emplace_back(mem_req);
+      dram_queues_[port].push(mem_req);
+    }
+  }
+
   void process_axi_events() {
     // 1. Receive AXI events from VCS via mem_sock (non-blocking)
     while (sock_has_data(mem_fd_) > 0) {
@@ -348,9 +376,11 @@ private:
         case EVT_AXI_AW: {
           // Write address from DUT
           assert_port_range(pkt.port_id, pkt.addr);
-          aw_state_[pkt.port_id].addr  = pkt.addr;
-          aw_state_[pkt.port_id].tag   = pkt.id;
-          aw_state_[pkt.port_id].valid = true;
+          aw_state_t aw;
+          aw.addr = pkt.addr;
+          aw.tag  = pkt.id;
+          aw_queue_[pkt.port_id].push(aw);
+          drain_write_queues(pkt.port_id);
           break;
         }
         case EVT_AXI_W: {
@@ -365,28 +395,13 @@ private:
           }
 
           uint8_t port = pkt.port_id;
-          if (aw_state_[port].valid) {
-            uint64_t byte_addr = aw_state_[port].addr;
-            uint64_t strb = pkt.addr; // strb is stored in addr field
-
-            // Write with byte enables
-            for (int i = 0; i < PLATFORM_MEMORY_DATA_SIZE; ++i) {
-              if ((strb >> i) & 0x1) {
-                (*ram_)[byte_addr + i] = data_buf[i];
-              }
-            }
-
-            auto mem_req = new mem_req_t();
-            mem_req->tag   = aw_state_[port].tag;
-            mem_req->addr  = byte_addr;
-            mem_req->port  = port;
-            mem_req->write = true;
-            mem_req->ready = false;
-            pending_mem_reqs_[port].emplace_back(mem_req);
-            dram_queues_[port].push(mem_req);
-
-            aw_state_[port].valid = false;
+          w_state_t w;
+          w.strb = pkt.addr; // strb is stored in addr field
+          for (int i = 0; i < PLATFORM_MEMORY_DATA_SIZE; ++i) {
+            w.data[i] = data_buf[i];
           }
+          w_queue_[port].push(w);
+          drain_write_queues(port);
           break;
         }
         default:
@@ -475,7 +490,8 @@ private:
   MemoryAllocator* mem_alloc_[PLATFORM_MEMORY_NUM_BANKS];
   mem_req_list_t pending_mem_reqs_[PLATFORM_MEMORY_NUM_PORTS];
   std::queue<mem_req_t*> dram_queues_[PLATFORM_MEMORY_NUM_PORTS];
-  aw_state_t aw_state_[PLATFORM_MEMORY_NUM_PORTS];
+  std::queue<aw_state_t> aw_queue_[PLATFORM_MEMORY_NUM_PORTS];
+  std::queue<w_state_t> w_queue_[PLATFORM_MEMORY_NUM_PORTS];
 };
 
 ///////////////////////////////////////////////////////////////////////////////

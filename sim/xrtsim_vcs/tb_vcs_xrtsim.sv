@@ -40,6 +40,12 @@ module tb_vcs_xrtsim #(
   // Response queue depth limit for backpressure
   localparam int RSP_QUEUE_LIMIT = 16;
 
+  // Default AXI memory-slave random backpressure.
+  localparam int DEFAULT_DRAM_READY_STALL_P_ENTER_PCT = 5;
+  localparam int DEFAULT_DRAM_READY_STALL_P_EXIT_PCT  = 45;
+  localparam int DEFAULT_DRAM_VALID_STALL_P_ENTER_PCT = 5;
+  localparam int DEFAULT_DRAM_VALID_STALL_P_EXIT_PCT  = 45;
+
   // Packet type constants (must match vcs_protocol.h)
   localparam int CMD_REG_WRITE = 8'h01;
   localparam int CMD_REG_READ  = 8'h03;
@@ -150,8 +156,21 @@ module tb_vcs_xrtsim #(
   int dram_req_stall_p_exit;
   int dram_rsp_stall_p_enter;
   int dram_rsp_stall_p_exit;
-  bit req_stalling [NUM_PORTS];
-  bit rsp_stalling [NUM_PORTS];
+  int dram_arready_stall_p_enter;
+  int dram_arready_stall_p_exit;
+  int dram_awready_stall_p_enter;
+  int dram_awready_stall_p_exit;
+  int dram_wready_stall_p_enter;
+  int dram_wready_stall_p_exit;
+  int dram_rvalid_stall_p_enter;
+  int dram_rvalid_stall_p_exit;
+  int dram_bvalid_stall_p_enter;
+  int dram_bvalid_stall_p_exit;
+  bit arready_stalling [NUM_PORTS];
+  bit awready_stalling [NUM_PORTS];
+  bit wready_stalling [NUM_PORTS];
+  bit rvalid_stalling [NUM_PORTS];
+  bit bvalid_stalling [NUM_PORTS];
 
   // ---- Fire flags: set by always_ff (<=), cleared by initial (=) ----
   bit ar_fire_flag [NUM_PORTS];
@@ -388,11 +407,11 @@ module tb_vcs_xrtsim #(
 
       // ---- Ready signals (always_comb — queue.size() requires procedural context) ----
       always_comb begin
-        m_axi_mem_arready[gi] = !req_stalling[gi]
+        m_axi_mem_arready[gi] = !arready_stalling[gi]
                               && (r_queue[gi].size() < RSP_QUEUE_LIMIT);
-        m_axi_mem_awready[gi] = !req_stalling[gi]
+        m_axi_mem_awready[gi] = !awready_stalling[gi]
                               && (b_queue[gi].size() < RSP_QUEUE_LIMIT);
-        m_axi_mem_wready[gi]  = !req_stalling[gi]
+        m_axi_mem_wready[gi]  = !wready_stalling[gi]
                               && (b_queue[gi].size() < RSP_QUEUE_LIMIT);
       end
 
@@ -410,7 +429,7 @@ module tb_vcs_xrtsim #(
             m_axi_mem_rvalid[gi] <= 0;
           // Drive next response (last NBA wins → zero-bubble back-to-back)
           if ((!m_axi_mem_rvalid[gi] || (m_axi_mem_rvalid[gi] && m_axi_mem_rready[gi]))
-              && !rsp_stalling[gi] && r_queue[gi].size() > 0) begin
+              && !rvalid_stalling[gi] && r_queue[gi].size() > 0) begin
             automatic r_rsp_t entry = r_queue[gi].pop_front();
             m_axi_mem_rvalid[gi] <= 1;
             m_axi_mem_rid[gi]    <= entry.id;
@@ -435,7 +454,7 @@ module tb_vcs_xrtsim #(
           if (m_axi_mem_bvalid[gi] && m_axi_mem_bready[gi])
             m_axi_mem_bvalid[gi] <= 0;
           if ((!m_axi_mem_bvalid[gi] || (m_axi_mem_bvalid[gi] && m_axi_mem_bready[gi]))
-              && !rsp_stalling[gi] && b_queue[gi].size() > 0) begin
+              && !bvalid_stalling[gi] && b_queue[gi].size() > 0) begin
             automatic b_rsp_t entry = b_queue[gi].pop_front();
             m_axi_mem_bvalid[gi] <= 1;
             m_axi_mem_bid[gi]    <= entry.id;
@@ -480,13 +499,22 @@ module tb_vcs_xrtsim #(
       // (uses `always` — stall state also initialized by initial block)
       always @(posedge ap_clk) begin
         if (!ap_rst_n) begin
-          req_stalling[gi] <= 0;
-          rsp_stalling[gi] <= 0;
+          arready_stalling[gi] <= 0;
+          awready_stalling[gi] <= 0;
+          wready_stalling[gi]  <= 0;
+          rvalid_stalling[gi]  <= 0;
+          bvalid_stalling[gi]  <= 0;
         end else begin
-          req_stalling[gi] <= markov_step(req_stalling[gi],
-                                          dram_req_stall_p_enter, dram_req_stall_p_exit);
-          rsp_stalling[gi] <= markov_step(rsp_stalling[gi],
-                                          dram_rsp_stall_p_enter, dram_rsp_stall_p_exit);
+          arready_stalling[gi] <= markov_step(arready_stalling[gi],
+                                             dram_arready_stall_p_enter, dram_arready_stall_p_exit);
+          awready_stalling[gi] <= markov_step(awready_stalling[gi],
+                                             dram_awready_stall_p_enter, dram_awready_stall_p_exit);
+          wready_stalling[gi] <= markov_step(wready_stalling[gi],
+                                            dram_wready_stall_p_enter, dram_wready_stall_p_exit);
+          rvalid_stalling[gi] <= markov_step(rvalid_stalling[gi],
+                                            dram_rvalid_stall_p_enter, dram_rvalid_stall_p_exit);
+          bvalid_stalling[gi] <= markov_step(bvalid_stalling[gi],
+                                            dram_bvalid_stall_p_enter, dram_bvalid_stall_p_exit);
         end
       end
 
@@ -509,16 +537,45 @@ module tb_vcs_xrtsim #(
 
     // Read DRAM stall parameters
     if (!$value$plusargs("DRAM_REQ_STALL_P_ENTER_PCT=%d", dram_req_stall_p_enter))
-      dram_req_stall_p_enter = 0;
+      dram_req_stall_p_enter = DEFAULT_DRAM_READY_STALL_P_ENTER_PCT;
     if (!$value$plusargs("DRAM_REQ_STALL_P_EXIT_PCT=%d", dram_req_stall_p_exit))
-      dram_req_stall_p_exit = 50;
+      dram_req_stall_p_exit = DEFAULT_DRAM_READY_STALL_P_EXIT_PCT;
     if (!$value$plusargs("DRAM_RSP_STALL_P_ENTER_PCT=%d", dram_rsp_stall_p_enter))
-      dram_rsp_stall_p_enter = 0;
+      dram_rsp_stall_p_enter = DEFAULT_DRAM_VALID_STALL_P_ENTER_PCT;
     if (!$value$plusargs("DRAM_RSP_STALL_P_EXIT_PCT=%d", dram_rsp_stall_p_exit))
-      dram_rsp_stall_p_exit = 50;
-    $display("[TB] DRAM stall config: req_enter=%0d%% req_exit=%0d%% rsp_enter=%0d%% rsp_exit=%0d%%",
+      dram_rsp_stall_p_exit = DEFAULT_DRAM_VALID_STALL_P_EXIT_PCT;
+
+    dram_arready_stall_p_enter = dram_req_stall_p_enter;
+    dram_arready_stall_p_exit  = dram_req_stall_p_exit;
+    dram_awready_stall_p_enter = dram_req_stall_p_enter;
+    dram_awready_stall_p_exit  = dram_req_stall_p_exit;
+    dram_wready_stall_p_enter  = dram_req_stall_p_enter;
+    dram_wready_stall_p_exit   = dram_req_stall_p_exit;
+    dram_rvalid_stall_p_enter  = dram_rsp_stall_p_enter;
+    dram_rvalid_stall_p_exit   = dram_rsp_stall_p_exit;
+    dram_bvalid_stall_p_enter  = dram_rsp_stall_p_enter;
+    dram_bvalid_stall_p_exit   = dram_rsp_stall_p_exit;
+
+    ret = $value$plusargs("DRAM_ARREADY_STALL_P_ENTER_PCT=%d", dram_arready_stall_p_enter);
+    ret = $value$plusargs("DRAM_ARREADY_STALL_P_EXIT_PCT=%d", dram_arready_stall_p_exit);
+    ret = $value$plusargs("DRAM_AWREADY_STALL_P_ENTER_PCT=%d", dram_awready_stall_p_enter);
+    ret = $value$plusargs("DRAM_AWREADY_STALL_P_EXIT_PCT=%d", dram_awready_stall_p_exit);
+    ret = $value$plusargs("DRAM_WREADY_STALL_P_ENTER_PCT=%d", dram_wready_stall_p_enter);
+    ret = $value$plusargs("DRAM_WREADY_STALL_P_EXIT_PCT=%d", dram_wready_stall_p_exit);
+    ret = $value$plusargs("DRAM_RVALID_STALL_P_ENTER_PCT=%d", dram_rvalid_stall_p_enter);
+    ret = $value$plusargs("DRAM_RVALID_STALL_P_EXIT_PCT=%d", dram_rvalid_stall_p_exit);
+    ret = $value$plusargs("DRAM_BVALID_STALL_P_ENTER_PCT=%d", dram_bvalid_stall_p_enter);
+    ret = $value$plusargs("DRAM_BVALID_STALL_P_EXIT_PCT=%d", dram_bvalid_stall_p_exit);
+
+    $display("[TB] DRAM stall group defaults: req_enter=%0d%% req_exit=%0d%% rsp_enter=%0d%% rsp_exit=%0d%%",
              dram_req_stall_p_enter, dram_req_stall_p_exit,
              dram_rsp_stall_p_enter, dram_rsp_stall_p_exit);
+    $display("[TB] DRAM AXI channel stall config: ARREADY=%0d/%0d%% AWREADY=%0d/%0d%% WREADY=%0d/%0d%% RVALID=%0d/%0d%% BVALID=%0d/%0d%%",
+             dram_arready_stall_p_enter, dram_arready_stall_p_exit,
+             dram_awready_stall_p_enter, dram_awready_stall_p_exit,
+             dram_wready_stall_p_enter, dram_wready_stall_p_exit,
+             dram_rvalid_stall_p_enter, dram_rvalid_stall_p_exit,
+             dram_bvalid_stall_p_enter, dram_bvalid_stall_p_exit);
 
     // Initialize clock and reset
     ap_clk   = 0;

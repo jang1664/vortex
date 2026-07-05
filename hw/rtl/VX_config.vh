@@ -1132,6 +1132,7 @@ for block_size in range(1, full_bitwidth+1):
 // -------------------------------------------------------
 `define GEMM_CFG_REG_NUM 40       // Number of GEMM configuration registers
 `define DMA_CFG_REG_NUM 18        // Number of DMA configuration registers
+`define NUM_DMA_CHANNELS 8
 
 // Optional job-MMIO area reduction mode:
 //   GEMM job frontend is always one-lane because the GEMM kernel issues a
