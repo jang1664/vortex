@@ -1,0 +1,51 @@
+task: measure-power-sweep
+state: DONE
+created: "2026-07-03 16:00"
+updated: "2026-07-03 16:45"
+summary: >
+  Implement analysis_workspace/latency_on_hw/measure_power.py to sweep
+  regression bench_main.cpp apps over small-to-large argument shapes and run
+  power-only latency_bench measurements with regex filtering.
+log:
+  - time: "2026-07-03 16:00"
+    entry: >
+      Started implementation. Existing measure_power.py is empty; debug.ipynb
+      is already modified and will be left untouched.
+  - time: "2026-07-03 16:07"
+    entry: >
+      Added measure_power.py with app/shape profile registry, regex filtering,
+      suite YAML generation, latency_bench power-only command construction,
+      optional execution, and power_sweep_summary.csv generation. Added focused
+      unittest coverage and verified latency_bench can dry-run the generated
+      suite.
+  - time: "2026-07-03 16:29"
+    entry: >
+      Fixed relative path handling when measure_power.py is launched from
+      analysis_workspace/latency_on_hw. Relative generated-root, output,
+      regression-root, and build-dir values are now resolved against the
+      invocation CWD before invoking latency_bench from the repo root. Also made
+      --cores and --threads optional so generated suites do not force blackbox
+      thread settings unless explicitly requested.
+  - time: "2026-07-03 16:38"
+    entry: >
+      Updated run_power.sh to call measure_power.py once per llama2_7b FPGA bin
+      group: naive_simd, improve_no_tcu_lut_fexp, naive_gemm_tcol32, and
+      improve_tcol32. Kept the script simple with no app-discovery loop and no
+      default thread override.
+  - time: "2026-07-03 16:45"
+    entry: >
+      Added fixed-power-mode controls. measure_power.py now defaults to
+      --no-power-auto-duration, --power-measure-latency, and one fixed power
+      iteration via --power-iterations 1 / latency_bench --iterations 1. The
+      auto-duration and power-latency modes can be toggled from both
+      measure_power.py and run_power.sh environment variables.
+pitfalls:
+  - Existing latency_bench CLI requires pandas in the active Python env; system
+    python3 currently fails importing pandas.
+  - Power sample failures should remain visible as power_samples_low rows
+    instead of being hidden, because small shapes may legitimately be too short.
+  - Shape regex filters must match shape_id independently from the descriptive
+    label; anchoring against a combined string drops valid s00/s01 filters.
+  - If latency_bench is executed from repo root, generated suite paths must be
+    absolute or repo-root relative; CWD-relative paths from latency_on_hw will
+    otherwise fail with FileNotFoundError.

@@ -1,0 +1,14 @@
+task: core-pipeline-hw-debug
+status: complete
+summary: "Extend ENABLE_HW_DEBUG_MODULE to track registered core pipeline/cache valid-ready debug signals."
+started_at: "2026-07-05 01:47"
+log:
+  - time: "2026-07-05 01:47"
+    note: "User confirmed scope: focus on core pipeline/cache, not GEMM. Use packed debug structs and register debug outputs at module boundaries."
+  - time: "2026-07-05 02:04"
+    note: "Added core pipeline debug structs, registered valid-ready probes, hierarchy fanout, VX_hw_debug core metrics, and runtime dump support."
+  - time: "2026-07-05 02:04"
+    note: "Verified structural checker, runtime C syntax, VCS debug-on compile, and VCS macro-off compile."
+pitfalls:
+  - "Existing worktree has unrelated modified/untracked files; do not touch them."
+  - "Keep all RTL port changes under ENABLE_HW_DEBUG_MODULE so macro-off hierarchy is unchanged."

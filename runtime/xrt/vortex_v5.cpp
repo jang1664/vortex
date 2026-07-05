@@ -893,7 +893,7 @@ public:
       CHECK_ERR(this->read_register(MMIO_CTL_ADDR, &status), {
         return err;
       });
-      printf("[VXDRV] status=0x%08x\n", status);
+      // printf("[VXDRV] status=0x%08x\n", status);
       bool is_done = (status & CTL_AP_DONE) == CTL_AP_DONE;
       if (is_done)
         break;

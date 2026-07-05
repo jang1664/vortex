@@ -795,10 +795,14 @@ int main(int argc, char *argv[]) {
       kargs.QDIR = POLL_ONLY_QDIR_SENTINEL;
       kargs.K    = POLL_ONLY_ITERS;
     }
+    printf("Init kernel args: status=%u, QDIR=%u, K=%u\n",
+           kargs.status, kargs.QDIR, kargs.K);
     RT_CHECK(vx_copy_to_dev(args_buffer, &kargs, 0, sizeof(kargs)));
 
+    printf("Launching kernel (rep=%u/%u)...\n", rep + 1, REPS);
     RT_CHECK(vx_start(device, krnl_buffer, args_buffer));
 
+    printf("Waiting for kernel to complete (rep=%u/%u)...\n", rep + 1, REPS);
     int wait_ret = vx_ready_wait(device, VX_MAX_TIMEOUT);
     if (wait_ret != 0) {
       std::cerr << "vx_ready_wait failed at rep=" << rep

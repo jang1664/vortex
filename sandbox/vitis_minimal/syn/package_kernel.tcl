@@ -189,7 +189,11 @@ if { $merged_mem_if == 1 } {
     set num_banks 1
 }
 
-create_project -force kernel_pack $path_to_tmp_project
+if {[string length $device_part] != 0} {
+    create_project -force kernel_pack $path_to_tmp_project -part $device_part
+} else {
+    create_project -force kernel_pack $path_to_tmp_project
+}
 
 add_files -norecurse ${vsources_list}
 

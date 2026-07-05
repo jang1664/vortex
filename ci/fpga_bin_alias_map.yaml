@@ -60,7 +60,7 @@ aliases:
     configs: configs/improve_th16_tcol32.sh
 
   improve_simd_th16_dbg:
-    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_noDcache_L2cache_02dfdff3c4/bin
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_noDcache_L2cache_a9d1611965/bin
     configs: configs/improve_simd_th16_dbg.sh
 
 

@@ -20,3 +20,5 @@ outputs_main_power_long/**
 !outputs_sample/
 outputs_sample/**
 !outputs_sample/raw_db.csv
+power_measure_suites_generated/
+power_measure_suites_outputs/

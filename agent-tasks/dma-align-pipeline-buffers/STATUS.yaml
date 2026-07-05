@@ -1,0 +1,24 @@
+task: dma-align-pipeline-buffers
+status: verified_with_limitations
+created: "2026-07-04 15:39"
+updated: "2026-07-04 15:56"
+goal: "Add depth-2 elastic buffering inside VX_dma_unit_align to break the DMA aligned write/ready timing cone."
+scope:
+  - "hw/rtl/core/VX_dma_unit_align.sv"
+log:
+  - time: "2026-07-04 15:39"
+    entry: "Started implementation from the agreed plan: replace the single-entry write slot stage and add an internal LMEM request issue buffer using VX_elastic_buffer SIZE=2, OUT_REG=1."
+  - time: "2026-07-04 15:46"
+    entry: "Attempted DMA engine VCS unittest compile from build/hw/unittest/dma_engine after sourcing configs/naive_simd.sh; compile stopped before RTL analysis because build/hw/unittest/common/AXI_BUS_if.sv is missing."
+  - time: "2026-07-04 15:48"
+    entry: "Ran standalone VCS analyzer syntax compile for VX_dma_unit_align.sv and direct dependencies with vlogan; it passed."
+  - time: "2026-07-04 15:56"
+    entry: "Fixed dma_engine unittest compile infrastructure: Makefile now uses third_party/axi axi_pkg.sv/axi_intf.sv plus axi include path, passes naive SIMD HBM remap defines, and tb timeout XMR debug uses current VX_dma_engine/VX_dma_unit_misal signal paths."
+  - time: "2026-07-04 15:56"
+    entry: "Verified `source configs/naive_simd.sh && make -C build/hw/unittest/dma_engine SIM_EXEC=vcs compile` passes. Follow-up `sim` reaches runtime and fails separately in case0_remap_burst_read because the test still expects old burst-reorder AR logging (expected 4, current passthrough engine emits 1 burst len=5)."
+pitfalls:
+  - "The timing path is in g_aligned.u_impl, not VX_dma_unit_misal."
+  - "VX_pipe_buffer does not decouple ready_in from ready_out, so the timing-cut buffers must use VX_elastic_buffer SIZE=2."
+  - "The dma_engine unittest compile path must include third_party/axi/src/axi_pkg.sv before axi_intf.sv; the old AXI_BUS_if.sv reference is stale."
+  - "The remap unittest must define PLATFORM_MEMORY_NUM_BANKS=32 with NUM_DMA_CHANNELS=8; otherwise VX_mem_remap elaboration sees NUM_BANKS=2 and BANK_BITS-PORT_BITS becomes negative."
+  - "The current dma_engine sim test expectations for remap burst AR/AW counts still match the old burst-reorder engine, not the current passthrough FSM."
