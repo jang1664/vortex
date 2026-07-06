@@ -49,6 +49,7 @@ module Vortex import VX_gpu_pkg::*; (
 		    output wire [NW_WIDTH-1:0]              hw_debug_pc_wid [HW_DEBUG_NUM_PC_SOURCES],
 		    output wire [`XLEN-1:0]                 hw_debug_pc [HW_DEBUG_NUM_PC_SOURCES],
 		    output core_pipeline_debug_t            core_pipeline_debug [HW_DEBUG_NUM_PC_SOURCES],
+            output gemm_unit_debug_t               gemm_unit_debug [HW_DEBUG_NUM_PC_SOURCES],
 		    output cache_debug_t                    cache_debug [HW_DEBUG_CACHE_NUM_SOURCES],
 		`endif
 
@@ -198,6 +199,7 @@ module Vortex import VX_gpu_pkg::*; (
 		            .hw_debug_pc_wid     (hw_debug_pc_wid[cluster_id * CLUSTER_DEBUG_PC_SOURCES +: CLUSTER_DEBUG_PC_SOURCES]),
 		            .hw_debug_pc         (hw_debug_pc[cluster_id * CLUSTER_DEBUG_PC_SOURCES +: CLUSTER_DEBUG_PC_SOURCES]),
 		            .core_pipeline_debug (core_pipeline_debug[cluster_id * CLUSTER_DEBUG_PC_SOURCES +: CLUSTER_DEBUG_PC_SOURCES]),
+                    .gemm_unit_debug     (gemm_unit_debug[cluster_id * CLUSTER_DEBUG_PC_SOURCES +: CLUSTER_DEBUG_PC_SOURCES]),
 		            .cache_debug         (cluster_cache_debug[cluster_id * HW_DEBUG_CLUSTER_CACHE_SOURCES +: HW_DEBUG_CLUSTER_CACHE_SOURCES]),
 		        `endif
 

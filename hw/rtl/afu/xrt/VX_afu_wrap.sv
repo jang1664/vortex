@@ -136,6 +136,7 @@ module VX_afu_wrap import VX_gpu_pkg::*; #(
 		wire [NW_WIDTH-1:0]          hw_debug_pc_wid [HW_DEBUG_NUM_PC_SOURCES];
 		wire [`XLEN-1:0]             hw_debug_pc [HW_DEBUG_NUM_PC_SOURCES];
 		core_pipeline_debug_t        core_pipeline_debug [HW_DEBUG_NUM_PC_SOURCES];
+        gemm_unit_debug_t           gemm_unit_debug [HW_DEBUG_NUM_PC_SOURCES];
 		cache_debug_t                cache_debug [HW_DEBUG_CACHE_NUM_SOURCES];
 	`endif
 
@@ -437,6 +438,7 @@ module VX_afu_wrap import VX_gpu_pkg::*; #(
 			.hw_debug_pc_wid     (hw_debug_pc_wid),
 			.hw_debug_pc         (hw_debug_pc),
 			.core_pipeline_debug (core_pipeline_debug),
+            .gemm_unit_debug     (gemm_unit_debug),
 			.cache_debug         (cache_debug),
 		`endif
 
@@ -478,6 +480,7 @@ module VX_afu_wrap import VX_gpu_pkg::*; #(
 			.hw_debug_pc_wid     (hw_debug_pc_wid),
 			.hw_debug_pc         (hw_debug_pc),
 			.core_pipeline_debug (core_pipeline_debug),
+            .gemm_unit_debug     (gemm_unit_debug),
 			.cache_debug         (cache_debug),
 
 			.s_axi_ctrl_awvalid (s_axi_ctrl_awvalid),

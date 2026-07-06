@@ -42,6 +42,7 @@ module VX_cluster import VX_gpu_pkg::*; #(
 		    output wire [NW_WIDTH-1:0]          hw_debug_pc_wid [NUM_SOCKETS * `SOCKET_SIZE],
 		    output wire [`XLEN-1:0]             hw_debug_pc [NUM_SOCKETS * `SOCKET_SIZE],
 		    output core_pipeline_debug_t        core_pipeline_debug [NUM_SOCKETS * `SOCKET_SIZE],
+            output gemm_unit_debug_t           gemm_unit_debug [NUM_SOCKETS * `SOCKET_SIZE],
 		    output cache_debug_t                cache_debug [HW_DEBUG_CLUSTER_CACHE_SOURCES],
 		`endif
 
@@ -186,6 +187,7 @@ module VX_cluster import VX_gpu_pkg::*; #(
 		            .hw_debug_pc_wid     (hw_debug_pc_wid[socket_id * `SOCKET_SIZE +: `SOCKET_SIZE]),
 		            .hw_debug_pc         (hw_debug_pc[socket_id * `SOCKET_SIZE +: `SOCKET_SIZE]),
 		            .core_pipeline_debug (core_pipeline_debug[socket_id * `SOCKET_SIZE +: `SOCKET_SIZE]),
+                    .gemm_unit_debug     (gemm_unit_debug[socket_id * `SOCKET_SIZE +: `SOCKET_SIZE]),
 		            .cache_debug         (socket_cache_debug[socket_id * HW_DEBUG_SOCKET_CACHE_SOURCES +: HW_DEBUG_SOCKET_CACHE_SOURCES]),
 		        `endif
 

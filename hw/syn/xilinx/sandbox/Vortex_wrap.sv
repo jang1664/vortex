@@ -148,6 +148,16 @@ module Vortex_wrap #(
 	assign m_axi_mem_bresp_a[0] = m_axi_mem_bresp;
 	assign m_axi_mem_bid_a[0] = m_axi_mem_bid;
 
+`ifdef ENABLE_HW_DEBUG_MODULE
+	wire                         hw_debug_pc_valid [HW_DEBUG_NUM_PC_SOURCES];
+	wire [HW_DEBUG_CORE_ID_WIDTH-1:0] hw_debug_pc_core_id [HW_DEBUG_NUM_PC_SOURCES];
+	wire [NW_WIDTH-1:0]          hw_debug_pc_wid [HW_DEBUG_NUM_PC_SOURCES];
+	wire [`XLEN-1:0]             hw_debug_pc [HW_DEBUG_NUM_PC_SOURCES];
+	core_pipeline_debug_t        core_pipeline_debug [HW_DEBUG_NUM_PC_SOURCES];
+	gemm_unit_debug_t            gemm_unit_debug [HW_DEBUG_NUM_PC_SOURCES];
+	cache_debug_t                cache_debug [HW_DEBUG_CACHE_NUM_SOURCES];
+`endif
+
 	Vortex_axi #(
 		.AXI_DATA_WIDTH (C_M_AXI_GMEM_DATA_WIDTH),
 		.AXI_ADDR_WIDTH (C_M_AXI_GMEM_ADDR_WIDTH),
@@ -201,6 +211,16 @@ module Vortex_wrap #(
 		.dcr_wr_valid	(dcr_wr_valid),
 		.dcr_wr_addr	(dcr_wr_addr),
 		.dcr_wr_data	(dcr_wr_data),
+
+	`ifdef ENABLE_HW_DEBUG_MODULE
+		.hw_debug_pc_valid   (hw_debug_pc_valid),
+		.hw_debug_pc_core_id (hw_debug_pc_core_id),
+		.hw_debug_pc_wid     (hw_debug_pc_wid),
+		.hw_debug_pc         (hw_debug_pc),
+		.core_pipeline_debug (core_pipeline_debug),
+		.gemm_unit_debug     (gemm_unit_debug),
+		.cache_debug         (cache_debug),
+	`endif
 
 		.busy           (busy)
 	);

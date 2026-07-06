@@ -90,6 +90,7 @@ module Vortex_axi import VX_gpu_pkg::*; #(
 		    output wire [NW_WIDTH-1:0]          hw_debug_pc_wid [HW_DEBUG_NUM_PC_SOURCES],
 		    output wire [`XLEN-1:0]             hw_debug_pc [HW_DEBUG_NUM_PC_SOURCES],
 		    output core_pipeline_debug_t        core_pipeline_debug [HW_DEBUG_NUM_PC_SOURCES],
+            output gemm_unit_debug_t           gemm_unit_debug [HW_DEBUG_NUM_PC_SOURCES],
 		    output cache_debug_t                cache_debug [HW_DEBUG_CACHE_NUM_SOURCES],
 		`endif
 
@@ -209,6 +210,7 @@ module Vortex_axi import VX_gpu_pkg::*; #(
 		        .hw_debug_pc_wid     (hw_debug_pc_wid),
 		        .hw_debug_pc         (hw_debug_pc),
 		        .core_pipeline_debug (core_pipeline_debug),
+                .gemm_unit_debug     (gemm_unit_debug),
 		        .cache_debug         (cache_debug),
 		    `endif
 

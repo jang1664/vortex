@@ -86,6 +86,11 @@ enum vx_hw_debug_metric {
 	  VX_HWDBG_CACHE_PORT_FLAGS  = 0x57,
 	  VX_HWDBG_CACHE_FIRST_STUCK = 0x58,
 	  VX_HWDBG_CACHE_PROGRESS    = 0x59,
+      VX_HWDBG_GEMM_STATUS       = 0x60,
+      VX_HWDBG_GEMM_ADDR         = 0x61,
+      VX_HWDBG_GEMM_COUNTS0      = 0x62,
+      VX_HWDBG_GEMM_COUNTS1      = 0x63,
+      VX_HWDBG_GEMM_COUNTS2      = 0x64,
 		};
 
 enum vx_hw_debug_global_flag {

@@ -25,6 +25,8 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*; import cf_mat
     localparam MIN_STIM_INTERVAL = 1;
     localparam MAX_STIM_INTERVAL = 8;
 
+    typedef logic [MXU_ROW-1:0][IFP_WIDTH-1:0] input_vector_t;
+
     // Data sizes
     localparam GEMM_INPUT_DATA_SIZE = `GEMM_INPUT_DATA_SIZE;
     localparam GEMM_WEIGHT_DATA_SIZE = `GEMM_WEIGHT_DATA_SIZE;
@@ -42,6 +44,7 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*; import cf_mat
     string rpt_file_path;
     string log_file_path;
     string name;
+    bit wave_dump_enabled;
 
     // =========================================================================
     // Clock and Reset
@@ -141,6 +144,10 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*; import cf_mat
     // Control interface
     VX_gemm_unit_if gemm_unit_if();
 
+`ifdef ENABLE_HW_DEBUG_MODULE
+    gemm_unit_debug_t debug_dummy;
+`endif
+
     // =========================================================================
     // DUT Instantiation
     // =========================================================================
@@ -154,6 +161,9 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*; import cf_mat
         .sz_lmem_bus_if(sz_lmem_bus_if),
         .o_lmem_bus_if (o_lmem_bus_if),
         .gemm_unit_if  (gemm_unit_if)
+`ifdef ENABLE_HW_DEBUG_MODULE
+       ,.debug         (debug_dummy)
+`endif
     );
 
     // =========================================================================
@@ -178,13 +188,16 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*; import cf_mat
         $sformat(rpt_file_path, "./reports/%s.rpt", name);
 
         // Waveform dump
+        wave_dump_enabled = !$test$plusargs("NO_WAVE");
+        if (wave_dump_enabled) begin
 `ifdef VCS
-        $fsdbDumpfile(fsdb_file_path);
-        $fsdbDumpvars(0, "+all", "+parameter", "+functions");
+            $fsdbDumpfile(fsdb_file_path);
+            $fsdbDumpvars(0, "+all", "+parameter", "+functions");
 `else
-        $dumpfile(fst_file_path);
-        $dumpvars(0, tb_VX_gemm_unit);
+            $dumpfile(fst_file_path);
+            $dumpvars(0, tb_VX_gemm_unit);
 `endif
+        end
 
         // Open result files
         rpt_fd = $fopen(rpt_file_path, "w");
@@ -206,11 +219,14 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*; import cf_mat
             end
 
             // Close resources
+            if (wave_dump_enabled) begin
 `ifdef VCS
-            $fsdbDumpoff();
+                // VCS/Verdi can crash in explicit fsdbDumpoff after very large
+                // DEBUG traces; let $finish close the FSDB.
 `else
-            $dumpoff();
+                $dumpoff();
 `endif
+            end
             $fclose(rpt_fd);
             $fclose(log_fd);
             $finish;
@@ -225,9 +241,11 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*; import cf_mat
         bit test_pass = 1'b0;
         bit test3_fail = 1'b0;
         bit test4_fail = 1'b0;
+        bit test5_fail = 1'b0;
         bit overall_fail = 1'b0;
         int test3_case_idx = 0;
         int test4_case_idx = 0;
+        int test5_case_idx = 0;
         string case_name;
 
         $display("=====================================================================");
@@ -543,6 +561,27 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*; import cf_mat
         overall_fail |= test4_fail;
         log_test_result("TEST 4 Multi Input Vector Test", ~test4_fail);
 
+        // Test Case 5: Back-to-back load then accumulate on the same acc rows
+        $display("\n[TEST 5] Back-to-back Accumulate Sequence Test");
+        log_test_start("TEST 5 Back-to-back Accumulate Sequence Test");
+        begin
+          test5_case_idx++;
+          $sformat(case_name, "test5_case_%0d_load_then_accum_qcol_addr_bank_n128", test5_case_idx);
+          test_load_then_accumulate_sequence(
+            .quant_dir(`QDIR_COL),
+            .acc_mem_base_addr(acc_addr_row(`GEMM_ACC_MEM_BANK_NUM)),
+            .num_inputs(128),
+            .fail(fail),
+            .case_name(case_name)
+          );
+          log_test_result(case_name, ~fail);
+          test5_fail |= fail;
+          if(fail) $display("TEST 5 FAILED on load-then-accumulate sequence");
+          else      $display("TEST 5 PASSED on load-then-accumulate sequence");
+        end
+        overall_fail |= test5_fail;
+        log_test_result("TEST 5 Back-to-back Accumulate Sequence Test", ~test5_fail);
+
         // Wait for completion
         repeat(100) @(posedge clk);
 
@@ -711,7 +750,7 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*; import cf_mat
     // Send Input Data
     // =========================================================================
     task send_input(
-        input logic [MXU_ROW-1:0][IFP_WIDTH-1:0] input_data
+        input input_vector_t input_data
     );
         while (!i_lmem_bus_if.req_ready) begin
             @(posedge clk);
@@ -724,6 +763,57 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*; import cf_mat
 
         @(posedge clk);
         i_lmem_bus_if.req_valid = 1'b0;
+    endtask
+
+    task automatic send_input_stream_full_speed(
+        ref input_vector_t input_data[MULTI_VECTOR_MAX_INPUTS],
+        input int num_inputs,
+        input string stream_name,
+        output int stall_cycles
+    );
+        int sent;
+        int cycles;
+        int max_cycles;
+
+        sent = 0;
+        cycles = 0;
+        stall_cycles = 0;
+        max_cycles = (num_inputs * 64) + 1024;
+
+        if (num_inputs > 0) begin
+            @(negedge clk);
+            i_lmem_bus_if.req_valid = 1'b1;
+            i_lmem_bus_if.req_data.data = input_data[0];
+            i_lmem_bus_if.req_data.rw = 1'b0;
+
+            while (sent < num_inputs) begin
+                @(posedge clk);
+                cycles += 1;
+
+                if (i_lmem_bus_if.req_ready === 1'b1) begin
+                    sent += 1;
+                    if (sent < num_inputs) begin
+                        @(negedge clk);
+                        i_lmem_bus_if.req_valid = 1'b1;
+                        i_lmem_bus_if.req_data.data = input_data[sent];
+                        i_lmem_bus_if.req_data.rw = 1'b0;
+                    end else begin
+                        @(negedge clk);
+                        i_lmem_bus_if.req_valid = 1'b0;
+                    end
+                end else begin
+                    stall_cycles += 1;
+                end
+
+                if (cycles > max_cycles) begin
+                    $fatal(1, "[%0t] ERROR: full-speed %s input stream timed out; sent=%0d/%0d ready=%0b",
+                           $time, stream_name, sent, num_inputs, i_lmem_bus_if.req_ready);
+                end
+            end
+        end
+
+        $display("[%0t]   Full-speed %s input stream sent %0d vectors, input_ready_stall_cycles=%0d",
+                 $time, stream_name, num_inputs, stall_cycles);
     endtask
 
     // =========================================================================
@@ -1438,7 +1528,7 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*; import cf_mat
             ref_output,
             quant_dir,
             fpint_emul::WNOTRANS,
-            1'b1,
+            1'b0,
             ref_psum
         );
 
@@ -1468,7 +1558,7 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*; import cf_mat
     // -----------------------------------------------------------------
     // Test: multiple input vectors test
     //       Similar to test_one_in_vector but sends multiple input vectors
-    //       with randomized valid timing between each input.
+    //       at full input pressure while output reads keep randomized pacing.
     // -----------------------------------------------------------------
     task test_multi_in_vector(
       input logic is_load,
@@ -1486,18 +1576,17 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*; import cf_mat
       input bit   psum_random=0,
       input string case_name="test4_multi_in_vector"
     );
-        logic [MXU_ROW-1:0][IFP_WIDTH-1:0] input_data[MULTI_VECTOR_MAX_INPUTS];
+        input_vector_t input_data[MULTI_VECTOR_MAX_INPUTS];
         logic [MXU_ROW-1:0][MXU_COL-1:0][W_BIT_WIDTH-1:0] weight_data;
         logic [1:0][`MXU_MAX_DIM-1:0][SCALE_WIDTH-1:0] scale_values;
         logic [1:0][`MXU_MAX_DIM-1:0][ZP_WIDTH-1:0] zp_values;
         int i, j, k;
         bit test_pass;
         logic [`MXU_COL-1:0][FP32_WIDTH-1:0] acc_init_value;
-        int input_interval_by_segment[INTERVAL_SEGMENTS];
         int output_interval_by_segment[INTERVAL_SEGMENTS];
         int segment_idx;
-        int input_interval;
         int output_interval;
+        int input_stall_cycles;
         int num_fail;
         integer case_fd;
         string case_log_path;
@@ -1532,20 +1621,19 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*; import cf_mat
         if (num_inputs > MULTI_VECTOR_MAX_INPUTS) num_inputs = MULTI_VECTOR_MAX_INPUTS;
         if (num_inputs < 1) num_inputs = 1;
 
-        $display("[%0t] Assigning %0d input/output pacing segments for %0d vectors...",
+        $display("[%0t] Assigning %0d output pacing segments for %0d vectors...",
                  $time, INTERVAL_SEGMENTS, num_inputs);
         if (case_fd) begin
-            $fdisplay(case_fd, "[%0t] pacing: segments=%0d interval_range=%0d..%0d",
+            $fdisplay(case_fd, "[%0t] pacing: input=full_speed output_segments=%0d output_interval_range=%0d..%0d",
                       $time, INTERVAL_SEGMENTS, MIN_STIM_INTERVAL, MAX_STIM_INTERVAL);
         end
         for (i = 0; i < INTERVAL_SEGMENTS; i++) begin
-            input_interval_by_segment[i] = $urandom_range(MAX_STIM_INTERVAL, MIN_STIM_INTERVAL);
             output_interval_by_segment[i] = $urandom_range(MAX_STIM_INTERVAL, MIN_STIM_INTERVAL);
-            $display("[%0t]   segment[%0d]: input_interval=%0d output_interval=%0d",
-                     $time, i, input_interval_by_segment[i], output_interval_by_segment[i]);
+            $display("[%0t]   segment[%0d]: output_interval=%0d",
+                     $time, i, output_interval_by_segment[i]);
             if (case_fd) begin
-                $fdisplay(case_fd, "[%0t] segment[%0d]: input_interval=%0d output_interval=%0d",
-                          $time, i, input_interval_by_segment[i], output_interval_by_segment[i]);
+                $fdisplay(case_fd, "[%0t] segment[%0d]: output_interval=%0d",
+                          $time, i, output_interval_by_segment[i]);
             end
         end
 
@@ -1665,7 +1753,7 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*; import cf_mat
         end
 
         // ----------------------------------------------------------------
-        // Step 6: Start GEMM and send inputs with segment-randomized timing
+        // Step 6: Start GEMM and send inputs at full speed
         // ----------------------------------------------------------------
         $display("[%0t] GEMM MULTI INPUT TEST (is_load=%b, QDIR=%b, wreg=%0d, sreg=%0d, zreg=%0d, acc_addr=%0d, num_inputs=%0d)...",
                   $time, is_load, quant_dir, wreg_use_idx, sreg_use_idx, zreg_use_idx, acc_mem_base_addr, num_inputs);
@@ -1682,15 +1770,10 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*; import cf_mat
             .zreg_use_idx(zreg_use_idx)
         );
 
-        // Send inputs with segment-randomized timing.
-        for (k = 0; k < num_inputs; k++) begin
-            segment_idx = interval_segment_idx(k, num_inputs);
-            input_interval = input_interval_by_segment[segment_idx];
-            $display("[%0t]   Sending input[%0d] segment=%0d interval=%0d...",
-                     $time, k, segment_idx, input_interval);
-            repeat(input_interval) @(posedge clk);
-
-            send_input(input_data[k]);
+        send_input_stream_full_speed(input_data, num_inputs, case_name, input_stall_cycles);
+        if (case_fd) begin
+            $fdisplay(case_fd, "[%0t] input_stream: full_speed ready_stall_cycles=%0d",
+                      $time, input_stall_cycles);
         end
 
         wait_for_done();
@@ -1789,6 +1872,208 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*; import cf_mat
         end
 
         $display("[%0t] GEMM MULTI IN VECTOR TEST : %s", $time, test_pass ? "PASSED" : "FAILED");
+        if(num_fail > 0) begin
+            $display("[%0t]   Total Mismatches: %0d/%0d", $time, num_fail, num_inputs * MXU_COL);
+        end
+        if (case_fd) begin
+            if (num_fail > 0) begin
+                $fdisplay(case_fd, "[%0t] Total mismatches: %0d/%0d", $time, num_fail, num_inputs * MXU_COL);
+            end
+            $fdisplay(case_fd, "[%0t] [RESULT] %s: %s", $time, case_name, test_pass ? "PASSED" : "FAILED");
+            $fclose(case_fd);
+        end
+        fail = ~test_pass;
+    endtask
+
+    // -----------------------------------------------------------------
+    // Test: load pass immediately followed by accumulate pass.
+    //       This models K split across two MXU tiles: the first pass creates
+    //       psum in accumulator memory, and the second pass reads the same
+    //       rows through the accumulator FIFO while new MXU outputs arrive.
+    // -----------------------------------------------------------------
+    task test_load_then_accumulate_sequence(
+      input logic quant_dir,
+      input logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0] acc_mem_base_addr,
+      input int   num_inputs,
+      ref   bit   fail,
+      input string case_name="test5_load_then_accumulate_sequence"
+    );
+        input_vector_t input_load[MULTI_VECTOR_MAX_INPUTS];
+        input_vector_t input_accum[MULTI_VECTOR_MAX_INPUTS];
+        logic [MXU_ROW-1:0][MXU_COL-1:0][W_BIT_WIDTH-1:0] weight_load;
+        logic [MXU_ROW-1:0][MXU_COL-1:0][W_BIT_WIDTH-1:0] weight_accum;
+        logic [1:0][`MXU_MAX_DIM-1:0][SCALE_WIDTH-1:0] scale_values;
+        logic [1:0][`MXU_MAX_DIM-1:0][ZP_WIDTH-1:0] zp_values;
+        logic [`MXU_COL-1:0][FP32_WIDTH-1:0] acc_row_fp32;
+        logic [MXU_COL-1:0][FP16_WIDTH-1:0] dut_output;
+        logic [fpint_emul::IN_WIDTH-1:0] ref_input[fpint_emul::MAX_M*fpint_emul::MAX_K];
+        logic [fpint_emul::MAX_W_WIDTH-1:0] ref_weight[fpint_emul::MAX_K*fpint_emul::MAX_N];
+        logic [fpint_emul::S_WIDTH-1:0] ref_scale[fpint_emul::MAX_KG*fpint_emul::MAX_N];
+        logic [fpint_emul::Z_WIDTH-1:0] ref_zero[fpint_emul::MAX_KG*fpint_emul::MAX_N];
+        logic [fpint_emul::O_WIDTH-1:0] ref_output[fpint_emul::MAX_M*fpint_emul::MAX_N];
+        logic [fpint_emul::P_WIDTH-1:0] ref_psum[fpint_emul::MAX_M*fpint_emul::MAX_N];
+        int i, j, k;
+        bit test_pass;
+        int num_fail;
+        int load_input_stall_cycles;
+        int accum_input_stall_cycles;
+        integer case_fd;
+        string case_log_path;
+
+        fail = 0;
+        test_pass = 1;
+        num_fail = 0;
+
+        if (num_inputs > MULTI_VECTOR_MAX_INPUTS) num_inputs = MULTI_VECTOR_MAX_INPUTS;
+        if (num_inputs < 1) num_inputs = 1;
+
+        open_case_log(case_name, case_fd, case_log_path);
+        if (case_fd) begin
+            $fdisplay(case_fd, "[%0t] [START] %s", $time, case_name);
+            $fdisplay(case_fd, "[%0t] cfg: quant_dir=%0d acc_mem_base_addr=%0d num_inputs=%0d",
+                      $time, quant_dir, acc_mem_base_addr, num_inputs);
+        end
+
+        $display("\n[%0t] ============================================", $time);
+        $display("[%0t] TEST: Load-then-accumulate Sequence Test (num_inputs=%0d)", $time, num_inputs);
+        $display("[%0t] ============================================", $time);
+
+        for (i = 0; i < fpint_emul::MAX_M * fpint_emul::MAX_K; i++) ref_input[i] = '0;
+        for (i = 0; i < fpint_emul::MAX_K * fpint_emul::MAX_N; i++) ref_weight[i] = '0;
+        for (i = 0; i < fpint_emul::MAX_KG * fpint_emul::MAX_N; i++) ref_scale[i] = '0;
+        for (i = 0; i < fpint_emul::MAX_KG * fpint_emul::MAX_N; i++) ref_zero[i] = '0;
+        for (i = 0; i < fpint_emul::MAX_M * fpint_emul::MAX_N; i++) ref_psum[i] = '0;
+
+        for (i = 0; i < `MXU_MAX_DIM; i++) begin
+            scale_values[0][i] = fp32_val_to_fp16_bit(shortreal'(0.5 + ((i % 3) * 0.25)));
+            scale_values[1][i] = fp32_val_to_fp16_bit(shortreal'(0.75 + ((i % 5) * 0.125)));
+            zp_values[0][i] = `ZP_WIDTH'((i % 3) - 1);
+            zp_values[1][i] = `ZP_WIDTH'((i % 5) - 2);
+        end
+
+        for (i = 0; i < MXU_ROW; i++) begin
+            for (j = 0; j < MXU_COL; j++) begin
+                weight_load[i][j]  = W_BIT_WIDTH'(((i * 3 + j * 5) % 13) - 6);
+                weight_accum[i][j] = W_BIT_WIDTH'(((i * 7 + j * 2) % 11) - 5);
+            end
+        end
+
+        for (k = 0; k < num_inputs; k++) begin
+            for (i = 0; i < MXU_ROW; i++) begin
+                input_load[k][i]  = fp32_val_to_fp16_bit(shortreal'(((k + i) % 7) - 3) * 0.25);
+                input_accum[k][i] = fp32_val_to_fp16_bit(shortreal'(((2 * k + i) % 9) - 4) * 0.25);
+            end
+        end
+
+        write_scale_reg(0, scale_values[0]);
+        write_zp_reg(0, zp_values[0]);
+        write_weight(weight_load, 1'b0, 1'b0);
+        repeat(5) @(posedge clk);
+
+        wait_for_idle();
+        start_gemm(
+            .is_load(1'b1),
+            .quant_dir(quant_dir),
+            .acc_mem_base_addr(acc_mem_base_addr),
+            .acc_cnt(num_inputs),
+            .wreg_use_idx(1'b0),
+            .sreg_use_idx(1'b0),
+            .zreg_use_idx(1'b0)
+        );
+
+        send_input_stream_full_speed(input_load, num_inputs, "load-pass", load_input_stall_cycles);
+        if (case_fd) begin
+            $fdisplay(case_fd, "[%0t] load_input_stream: full_speed ready_stall_cycles=%0d",
+                      $time, load_input_stall_cycles);
+        end
+
+        wait_for_done();
+        wait_for_idle();
+        repeat(5) @(posedge clk);
+
+        for (k = 0; k < num_inputs; k++) begin
+            u_dut.read_acc_mem(acc_mem_base_addr + k * ACC_ROW_STRIDE_BYTES, acc_row_fp32);
+            for (j = 0; j < MXU_COL; j++) begin
+                ref_psum[k * MXU_COL + j] = acc_row_fp32[j];
+            end
+        end
+
+        write_scale_reg(1, scale_values[1]);
+        write_zp_reg(1, zp_values[1]);
+        write_weight(weight_accum, 1'b1, 1'b0);
+        repeat(5) @(posedge clk);
+
+        for (i = 0; i < fpint_emul::MAX_M * fpint_emul::MAX_K; i++) ref_input[i] = '0;
+        for (i = 0; i < fpint_emul::MAX_K * fpint_emul::MAX_N; i++) ref_weight[i] = '0;
+        for (i = 0; i < fpint_emul::MAX_KG * fpint_emul::MAX_N; i++) ref_scale[i] = '0;
+        for (i = 0; i < fpint_emul::MAX_KG * fpint_emul::MAX_N; i++) ref_zero[i] = '0;
+
+        for (int m = 0; m < num_inputs; m++) begin
+            for (int kk = 0; kk < MXU_ROW; kk++) begin
+                ref_input[m * MXU_ROW + kk] = input_accum[m][kk];
+            end
+        end
+
+        for (i = 0; i < MXU_ROW; i++) begin
+            for (j = 0; j < MXU_COL; j++) begin
+                ref_weight[i * MXU_COL + j] = signed'(weight_accum[i][j]);
+            end
+        end
+
+        for (j = 0; j < MXU_COL; j++) begin
+            ref_scale[j] = scale_values[1][j];
+            ref_zero[j] = zp_values[1][j];
+        end
+
+        fpint_emul::fpint_gemm_ref(
+            ref_input, ref_weight, ref_scale, ref_zero,
+            num_inputs, MXU_COL, MXU_ROW,
+            ref_output,
+            quant_dir,
+            fpint_emul::WNOTRANS,
+            1'b1,
+            ref_psum
+        );
+
+        wait_for_idle();
+        start_gemm(
+            .is_load(1'b0),
+            .quant_dir(quant_dir),
+            .acc_mem_base_addr(acc_mem_base_addr),
+            .acc_cnt(num_inputs),
+            .wreg_use_idx(1'b1),
+            .sreg_use_idx(1'b1),
+            .zreg_use_idx(1'b1)
+        );
+
+        send_input_stream_full_speed(input_accum, num_inputs, "accumulate-pass", accum_input_stall_cycles);
+        if (case_fd) begin
+            $fdisplay(case_fd, "[%0t] accum_input_stream: full_speed ready_stall_cycles=%0d",
+                      $time, accum_input_stall_cycles);
+        end
+
+        wait_for_done();
+        repeat(10) @(posedge clk);
+
+        for (int m = 0; m < num_inputs; m++) begin
+            read_output(acc_mem_base_addr + m * ACC_ROW_STRIDE_BYTES, dut_output);
+            for (j = 0; j < MXU_COL; j++) begin
+                if (!compare_fp16(dut_output[j], ref_output[m * MXU_COL + j], 0.01)) begin
+                    $display("[%0t]   ERROR: seq output[%0d][%0d] mismatch - DUT=0x%h (%f), REF=0x%h (%f)",
+                             $time, m, j, dut_output[j], cf_math_util_pkg::fp16_bit_to_fp16_val(dut_output[j]),
+                             ref_output[m * MXU_COL + j], cf_math_util_pkg::fp16_bit_to_fp16_val(ref_output[m * MXU_COL + j]));
+                    if (case_fd) begin
+                        $fdisplay(case_fd, "[%0t] ERROR: seq output[%0d][%0d] mismatch - DUT=0x%h (%f), REF=0x%h (%f)",
+                                  $time, m, j, dut_output[j], cf_math_util_pkg::fp16_bit_to_fp16_val(dut_output[j]),
+                                  ref_output[m * MXU_COL + j], cf_math_util_pkg::fp16_bit_to_fp16_val(ref_output[m * MXU_COL + j]));
+                    end
+                    test_pass = 0;
+                    num_fail += 1;
+                end
+            end
+        end
+
+        $display("[%0t] LOAD-THEN-ACCUMULATE SEQUENCE TEST : %s", $time, test_pass ? "PASSED" : "FAILED");
         if(num_fail > 0) begin
             $display("[%0t]   Total Mismatches: %0d/%0d", $time, num_fail, num_inputs * MXU_COL);
         end

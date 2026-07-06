@@ -51,6 +51,7 @@ module VX_core import VX_gpu_pkg::*; #(
 	    output wire [NW_WIDTH-1:0]          hw_debug_pc_wid,
 	    output wire [`XLEN-1:0]             hw_debug_pc,
 	    output core_pipeline_debug_t        core_pipeline_debug,
+        output gemm_unit_debug_t           gemm_unit_debug,
 	`endif
 
 	    // Status
@@ -298,6 +299,9 @@ module VX_core import VX_gpu_pkg::*; #(
     ) gemm_node (
         .clk         (clk),
         .reset       (reset),
+    `ifdef ENABLE_HW_DEBUG_MODULE
+        .gemm_unit_debug      (gemm_unit_debug),
+    `endif
     `ifdef PERF_ENABLE
         .gemm_unit_perf       (accel_perf.gemm_unit),
         .gemm_node_perf       (accel_perf.gemm_node),
@@ -387,8 +391,11 @@ module VX_core import VX_gpu_pkg::*; #(
     assign accel_perf.lmem_dma_sz     = '0;
     assign accel_perf.lmem_dma_output = '0;
 `endif
+`ifdef ENABLE_HW_DEBUG_MODULE
+    assign gemm_unit_debug = '0;
+`endif
 
-	`endif
+`endif
 
 	`ifdef ENABLE_HW_DEBUG_MODULE
 	    reg hw_debug_core_busy_r;

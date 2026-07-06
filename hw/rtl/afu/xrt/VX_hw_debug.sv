@@ -57,6 +57,7 @@ module VX_hw_debug import VX_gpu_pkg::*; #(
 	    input  wire [NW_WIDTH-1:0]              hw_debug_pc_wid [HW_DEBUG_NUM_PC_SOURCES],
 	    input  wire [`XLEN-1:0]                 hw_debug_pc [HW_DEBUG_NUM_PC_SOURCES],
 	    input  wire core_pipeline_debug_t       core_pipeline_debug [HW_DEBUG_NUM_PC_SOURCES],
+        input  wire gemm_unit_debug_t          gemm_unit_debug [HW_DEBUG_NUM_PC_SOURCES],
 	    input  wire cache_debug_t               cache_debug [HW_DEBUG_CACHE_NUM_SOURCES],
 
 	    input  wire                             s_axi_ctrl_awvalid,
@@ -180,6 +181,12 @@ module VX_hw_debug import VX_gpu_pkg::*; #(
 	    localparam DBG_CACHE_PORT_FLAGS  = 8'h57;
 	    localparam DBG_CACHE_FIRST_STUCK = 8'h58;
 	    localparam DBG_CACHE_PROGRESS    = 8'h59;
+
+        localparam DBG_GEMM_STATUS       = 8'h60;
+        localparam DBG_GEMM_ADDR         = 8'h61;
+        localparam DBG_GEMM_COUNTS0      = 8'h62;
+        localparam DBG_GEMM_COUNTS1      = 8'h63;
+        localparam DBG_GEMM_COUNTS2      = 8'h64;
 
 	    localparam GLB_FLAG_PENDING_SIGN      = 1;
 	    localparam GLB_FLAG_PENDING_UNDERFLOW = 2;
@@ -1588,6 +1595,62 @@ module VX_hw_debug import VX_gpu_pkg::*; #(
 		    DBG_CACHE_PROGRESS: begin
 		        debug_rdata = {cache_payload_change_count[31:0], cache_progress_count[31:0]};
 		    end
+            DBG_GEMM_STATUS: begin
+                if (core_valid) begin
+                    debug_rdata = '0;
+                    debug_rdata[0]  = gemm_unit_debug[core_idx].valid;
+                    debug_rdata[1]  = gemm_unit_debug[core_idx].computing;
+                    debug_rdata[2]  = gemm_unit_debug[core_idx].idle;
+                    debug_rdata[3]  = gemm_unit_debug[core_idx].done;
+                    debug_rdata[4]  = gemm_unit_debug[core_idx].is_load;
+                    debug_rdata[5]  = gemm_unit_debug[core_idx].is_qcol;
+                    debug_rdata[6]  = gemm_unit_debug[core_idx].rd_req;
+                    debug_rdata[7]  = gemm_unit_debug[core_idx].rd_accept;
+                    debug_rdata[8]  = gemm_unit_debug[core_idx].rd_fifo_push;
+                    debug_rdata[9]  = gemm_unit_debug[core_idx].rd_fifo_pop;
+                    debug_rdata[10] = gemm_unit_debug[core_idx].rd_fifo_empty;
+                    debug_rdata[11] = gemm_unit_debug[core_idx].rd_fifo_full;
+                    debug_rdata[12] = gemm_unit_debug[core_idx].rd_fifo_alm_full;
+                    debug_rdata[13] = gemm_unit_debug[core_idx].mem_rd_data_valid;
+                    debug_rdata[14] = gemm_unit_debug[core_idx].wr_req;
+                    debug_rdata[15] = gemm_unit_debug[core_idx].wr_fire;
+                    debug_rdata[16] = gemm_unit_debug[core_idx].final_scaler_valid;
+                    debug_rdata[17] = gemm_unit_debug[core_idx].acc_in_valid;
+                    debug_rdata[18] = gemm_unit_debug[core_idx].psum_valid;
+                    debug_rdata[19] = gemm_unit_debug[core_idx].acc_output_valid;
+                    debug_rdata[20] = gemm_unit_debug[core_idx].psum_underflow;
+                    debug_rdata[21] = gemm_unit_debug[core_idx].rd_wr_conflict;
+                    debug_rdata[23:22] = gemm_unit_debug[core_idx].state;
+                    debug_rdata[25:24] = gemm_unit_debug[core_idx].rd_state;
+                    debug_rdata[27:26] = gemm_unit_debug[core_idx].wr_state;
+                    debug_rdata[29:28] = gemm_unit_debug[core_idx].rd_bank;
+                    debug_rdata[31:30] = gemm_unit_debug[core_idx].wr_bank;
+                    debug_rdata[47:32] = 16'(gemm_unit_debug[core_idx].rd_cnt);
+                    debug_rdata[63:48] = 16'(gemm_unit_debug[core_idx].wr_cnt);
+                end else begin
+                    debug_rdata = 64'hBAD0_DB60_0000_0060;
+                end
+            end
+            DBG_GEMM_ADDR: begin
+                debug_rdata = core_valid
+                    ? {32'(gemm_unit_debug[core_idx].wr_addr), 32'(gemm_unit_debug[core_idx].rd_addr)}
+                    : 64'hBAD0_DB60_0000_0061;
+            end
+            DBG_GEMM_COUNTS0: begin
+                debug_rdata = core_valid
+                    ? {32'(gemm_unit_debug[core_idx].wr_fire_count), 32'(gemm_unit_debug[core_idx].rd_accept_count)}
+                    : 64'hBAD0_DB60_0000_0062;
+            end
+            DBG_GEMM_COUNTS1: begin
+                debug_rdata = core_valid
+                    ? {32'(gemm_unit_debug[core_idx].acc_output_count), 32'(gemm_unit_debug[core_idx].scaler_valid_count)}
+                    : 64'hBAD0_DB60_0000_0063;
+            end
+            DBG_GEMM_COUNTS2: begin
+                debug_rdata = core_valid
+                    ? {32'(gemm_unit_debug[core_idx].rd_wr_conflict_count), 32'(gemm_unit_debug[core_idx].psum_underflow_count)}
+                    : 64'hBAD0_DB60_0000_0064;
+            end
 		    default: begin
 		        debug_rdata = 64'hDEAD_DB60_BAD0_0000;
 		    end

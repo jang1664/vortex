@@ -47,6 +47,7 @@ module VX_socket import VX_gpu_pkg::*; #(
 		    output wire [NW_WIDTH-1:0]          hw_debug_pc_wid [`SOCKET_SIZE],
 		    output wire [`XLEN-1:0]             hw_debug_pc [`SOCKET_SIZE],
 		    output core_pipeline_debug_t        core_pipeline_debug [`SOCKET_SIZE],
+            output gemm_unit_debug_t           gemm_unit_debug [`SOCKET_SIZE],
 		    output cache_debug_t                cache_debug [HW_DEBUG_SOCKET_CACHE_SOURCES],
 		`endif
 
@@ -324,6 +325,7 @@ module VX_socket import VX_gpu_pkg::*; #(
 	            .hw_debug_pc_wid     (hw_debug_pc_wid[core_id]),
 	            .hw_debug_pc         (hw_debug_pc[core_id]),
 	            .core_pipeline_debug (core_pipeline_debug[core_id]),
+                .gemm_unit_debug     (gemm_unit_debug[core_id]),
 	        `endif
 
             .busy           (per_core_busy[core_id])

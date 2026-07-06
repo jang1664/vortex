@@ -226,6 +226,12 @@ extern int vx_dump_perf(vx_device_h hdevice, FILE* stream) {
   uint64_t mxu_output_fire = 0, mxu_output_stall = 0;
   uint64_t mxu_mac_count = 0;
   uint64_t overlap_dma_mxu = 0;
+  uint64_t mxu_accum_rd_accept = 0;
+  uint64_t mxu_accum_wr_fire = 0;
+  uint64_t mxu_scaler_valid = 0;
+  uint64_t mxu_acc_output_valid = 0;
+  uint64_t mxu_psum_underflow = 0;
+  uint64_t mxu_rd_wr_conflict = 0;
 
   // Common to all ACCEL_* classes (CSR B03 / B04)
   uint64_t busy_cycles = 0;
@@ -653,6 +659,12 @@ extern int vx_dump_perf(vx_device_h hdevice, FILE* stream) {
       READ_PERF(VX_CSR_MPM_MXU_OUTPUT_FIRE,   mxu_output_fire);
       READ_PERF(VX_CSR_MPM_MXU_OUTPUT_STALL,  mxu_output_stall);
       READ_PERF(VX_CSR_MPM_OVERLAP_DMA_MXU,   overlap_dma_mxu);
+      READ_PERF(VX_CSR_MPM_MXU_ACCUM_RD_ACCEPT, mxu_accum_rd_accept);
+      READ_PERF(VX_CSR_MPM_MXU_ACCUM_WR_FIRE,   mxu_accum_wr_fire);
+      READ_PERF(VX_CSR_MPM_MXU_SCALER_VALID,    mxu_scaler_valid);
+      READ_PERF(VX_CSR_MPM_MXU_ACC_OUTPUT_VALID,mxu_acc_output_valid);
+      READ_PERF(VX_CSR_MPM_MXU_PSUM_UNDERFLOW,  mxu_psum_underflow);
+      READ_PERF(VX_CSR_MPM_MXU_RD_WR_CONFLICT,  mxu_rd_wr_conflict);
       #undef READ_PERF
     } break;
     case VX_DCR_MPM_CLASS_ACCEL_DMA: {
@@ -834,6 +846,9 @@ extern int vx_dump_perf(vx_device_h hdevice, FILE* stream) {
     fprintf(stream, "PERF: weight: fire=%ld stall=%ld\n", mxu_weight_fire, mxu_weight_stall);
     fprintf(stream, "PERF: psum:   fire=%ld stall=%ld\n", mxu_psum_fire,   mxu_psum_stall);
     fprintf(stream, "PERF: output: fire=%ld stall=%ld\n", mxu_output_fire, mxu_output_stall);
+    fprintf(stream, "PERF: accum: rd_accept=%ld wr_fire=%ld scaler_valid=%ld acc_output_valid=%ld psum_underflow=%ld rd_wr_conflict=%ld\n",
+            mxu_accum_rd_accept, mxu_accum_wr_fire, mxu_scaler_valid, mxu_acc_output_valid,
+            mxu_psum_underflow, mxu_rd_wr_conflict);
     // MXU utilization table — fire / (denominator)
     fprintf(stream, "PERF: --- MXU Utilization ---\n");
     fprintf(stream, "PERF: %-8s  /total_cycles   /compute_cycles   /busy_cycles\n", "");

@@ -22,6 +22,9 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
 
     // Control Interface
     VX_gemm_unit_if.slave   gemm_unit_if      // for ctrl gemm
+`ifdef ENABLE_HW_DEBUG_MODULE
+    ,output gemm_unit_debug_t debug
+`endif
 `ifdef PERF_ENABLE
     ,output gemm_unit_perf_t perf
 `endif
@@ -321,6 +324,8 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     logic                                          acc_mem_accum_wr_req;
     logic                                          acc_mem_accum_wr_fire;
     logic [`GEMM_ACC_MAX_CNT-1:0]                  acc_mem_accum_wr_cnt, acc_mem_accum_wr_cnt_next;
+    logic                                          psum_underflow_event;
+    logic                                          rd_wr_conflict_event;
 
     // -------------------------------------------------------------------------
     // FP32 to FP16 Output Signals
@@ -428,6 +433,9 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
                                       && (gemm_unit_ctrl.is_load ? final_scaler_output_valid : acc_output_valid[0]);
     assign acc_mem_accum_rd_accept    = acc_mem_accum_rd_req && in_flight && ~gemm_unit_ctrl.is_load
                                       && ~(acc_mem_accum_wr_fire && (acc_mem_accum_rd_bank == acc_mem_accum_wr_bank));
+    assign psum_underflow_event       = ~gemm_unit_ctrl.is_load && final_scaler_output_valid && acc_rd_fifo_empty && in_flight;
+    assign rd_wr_conflict_event       = acc_mem_accum_rd_req && in_flight && ~gemm_unit_ctrl.is_load
+                                      && acc_mem_accum_wr_fire && (acc_mem_accum_rd_bank == acc_mem_accum_wr_bank);
 
     // =========================================================================
     // Done/Idle Signal Generation
@@ -538,9 +546,14 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
             end
 
             ACCUM_RD_READ: begin
-                acc_rd_fifo_push = acc_mem_rd_data_valid & (~acc_rd_fifo_full | acc_rd_fifo_pop);
+                // acc_rd_fifo_push = acc_mem_rd_data_valid & (~acc_rd_fifo_full | acc_rd_fifo_pop);
+                acc_rd_fifo_push = acc_mem_rd_data_valid; 
                 if (acc_mem_accum_rd_cnt > 0) begin
-                    acc_mem_accum_rd_req = (~acc_rd_fifo_full | acc_rd_fifo_pop) & ~(acc_rd_fifo_alm_full & acc_rd_fifo_push & ~acc_rd_fifo_pop);
+                    // acc_mem_accum_rd_req = (~acc_rd_fifo_full | acc_rd_fifo_pop) & ~(acc_rd_fifo_alm_full & acc_rd_fifo_push & ~acc_rd_fifo_pop);
+                    acc_mem_accum_rd_req = (~acc_rd_fifo_push & acc_rd_fifo_pop) |
+                                           (~acc_rd_fifo_push & ~acc_rd_fifo_full) |
+                                           (acc_rd_fifo_push & acc_rd_fifo_pop & ~acc_rd_fifo_full) |
+                                           (acc_rd_fifo_push & ~acc_rd_fifo_alm_full);
                     if (acc_mem_accum_rd_accept) begin
                         acc_mem_accum_rd_cnt_next = acc_mem_accum_rd_cnt - 1;
                     end
@@ -1273,8 +1286,14 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
 
 `ifndef SYNTHESIS
     always @(posedge clk) begin
-        if (!reset && !gemm_unit_ctrl.is_load && final_scaler_output_valid && acc_rd_fifo_empty && in_flight===1) begin
+        if (!reset && psum_underflow_event && in_flight===1) begin
             $fatal(1, "[%0t] GEMM accumulator psum FIFO empty when scaler output is valid: rd_cnt=%0d wr_cnt=%0d rd_addr=0x%0h wr_addr=0x%0h rd_state=%0d wr_state=%0d",
+                   $time, acc_mem_accum_rd_cnt, acc_mem_accum_wr_cnt,
+                   acc_mem_accum_rd_addr, acc_mem_accum_wr_addr,
+                   acc_mem_accum_rd_state, acc_mem_accum_wr_state);
+        end
+        if(!reset && in_flight===1 && acc_rd_fifo_push && acc_rd_fifo_full) begin
+            $fatal(1, "[%0t] GEMM accumulator read FIFO full when trying to push data: rd_cnt=%0d wr_cnt=%0d rd_addr=0x%0h wr_addr=0x%0h rd_state=%0d wr_state=%0d",
                    $time, acc_mem_accum_rd_cnt, acc_mem_accum_wr_cnt,
                    acc_mem_accum_rd_addr, acc_mem_accum_wr_addr,
                    acc_mem_accum_rd_state, acc_mem_accum_wr_state);
@@ -1750,6 +1769,77 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     end
 `endif
 
+`ifdef ENABLE_HW_DEBUG_MODULE
+    reg [PERF_CTR_BITS-1:0] debug_rd_accept_count_r;
+    reg [PERF_CTR_BITS-1:0] debug_wr_fire_count_r;
+    reg [PERF_CTR_BITS-1:0] debug_scaler_valid_count_r;
+    reg [PERF_CTR_BITS-1:0] debug_acc_output_count_r;
+    reg [PERF_CTR_BITS-1:0] debug_psum_underflow_count_r;
+    reg [PERF_CTR_BITS-1:0] debug_rd_wr_conflict_count_r;
+
+    always @(posedge clk) begin
+        if (reset) begin
+            debug_rd_accept_count_r      <= '0;
+            debug_wr_fire_count_r        <= '0;
+            debug_scaler_valid_count_r   <= '0;
+            debug_acc_output_count_r     <= '0;
+            debug_psum_underflow_count_r <= '0;
+            debug_rd_wr_conflict_count_r <= '0;
+        end else begin
+            if (acc_mem_accum_rd_accept)
+                debug_rd_accept_count_r <= debug_rd_accept_count_r + PERF_CTR_BITS'(1);
+            if (acc_mem_accum_wr_fire)
+                debug_wr_fire_count_r <= debug_wr_fire_count_r + PERF_CTR_BITS'(1);
+            if (final_scaler_output_valid && in_flight)
+                debug_scaler_valid_count_r <= debug_scaler_valid_count_r + PERF_CTR_BITS'(1);
+            if (acc_output_valid[0] && in_flight && ~gemm_unit_ctrl.is_load)
+                debug_acc_output_count_r <= debug_acc_output_count_r + PERF_CTR_BITS'(1);
+            if (psum_underflow_event)
+                debug_psum_underflow_count_r <= debug_psum_underflow_count_r + PERF_CTR_BITS'(1);
+            if (rd_wr_conflict_event)
+                debug_rd_wr_conflict_count_r <= debug_rd_wr_conflict_count_r + PERF_CTR_BITS'(1);
+        end
+    end
+
+    assign debug.valid                = 1'b1;
+    assign debug.computing            = (state == COMPUTE);
+    assign debug.idle                 = gemm_idle;
+    assign debug.done                 = gemm_done;
+    assign debug.is_load              = gemm_unit_ctrl.is_load;
+    assign debug.is_qcol              = is_qcol;
+    assign debug.rd_req               = acc_mem_accum_rd_req;
+    assign debug.rd_accept            = acc_mem_accum_rd_accept;
+    assign debug.rd_fifo_push         = acc_rd_fifo_push;
+    assign debug.rd_fifo_pop          = acc_rd_fifo_pop;
+    assign debug.rd_fifo_empty        = acc_rd_fifo_empty;
+    assign debug.rd_fifo_full         = acc_rd_fifo_full;
+    assign debug.rd_fifo_alm_full     = acc_rd_fifo_alm_full;
+    assign debug.mem_rd_data_valid    = acc_mem_rd_data_valid;
+    assign debug.wr_req               = acc_mem_accum_wr_req;
+    assign debug.wr_fire              = acc_mem_accum_wr_fire;
+    assign debug.final_scaler_valid   = final_scaler_output_valid;
+    assign debug.acc_in_valid         = acc_in_data_valid[0];
+    assign debug.psum_valid           = acc_psum_data_valid[0];
+    assign debug.acc_output_valid     = acc_output_valid[0];
+    assign debug.psum_underflow       = psum_underflow_event;
+    assign debug.rd_wr_conflict       = rd_wr_conflict_event;
+    assign debug.state                = 2'(state);
+    assign debug.rd_state             = 2'(acc_mem_accum_rd_state);
+    assign debug.wr_state             = 2'(acc_mem_accum_wr_state);
+    assign debug.rd_bank              = acc_mem_accum_rd_bank;
+    assign debug.wr_bank              = acc_mem_accum_wr_bank;
+    assign debug.rd_cnt               = acc_mem_accum_rd_cnt;
+    assign debug.wr_cnt               = acc_mem_accum_wr_cnt;
+    assign debug.rd_addr              = acc_mem_accum_rd_addr;
+    assign debug.wr_addr              = acc_mem_accum_wr_addr;
+    assign debug.rd_accept_count      = debug_rd_accept_count_r;
+    assign debug.wr_fire_count        = debug_wr_fire_count_r;
+    assign debug.scaler_valid_count   = debug_scaler_valid_count_r;
+    assign debug.acc_output_count     = debug_acc_output_count_r;
+    assign debug.psum_underflow_count = debug_psum_underflow_count_r;
+    assign debug.rd_wr_conflict_count = debug_rd_wr_conflict_count_r;
+`endif
+
 `ifdef PERF_ENABLE
     // -------------------------------------------------------------------------
     // Performance counters
@@ -1762,6 +1852,9 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     reg [PERF_CTR_BITS-1:0] perf_weight_fire_r, perf_weight_stall_r;
     reg [PERF_CTR_BITS-1:0] perf_psum_fire_r,   perf_psum_stall_r;
     reg [PERF_CTR_BITS-1:0] perf_output_fire_r, perf_output_stall_r;
+    reg [PERF_CTR_BITS-1:0] perf_accum_rd_accept_r, perf_accum_wr_fire_r;
+    reg [PERF_CTR_BITS-1:0] perf_scaler_valid_r, perf_acc_output_valid_r;
+    reg [PERF_CTR_BITS-1:0] perf_psum_underflow_r, perf_rd_wr_conflict_r;
 
     // Input: pipe buffer output valid-ready (ready = in_flight = COMPUTE)
     wire perf_input_fire  = in_pipe_valid_out && in_flight;
@@ -1775,6 +1868,12 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     // Output: LMEM output bus fire / stall (actual data written out)
     wire perf_output_fire  = o_lmem_bus_if.req_valid && o_lmem_bus_if.req_ready;
     wire perf_output_stall = o_lmem_bus_if.req_valid && !o_lmem_bus_if.req_ready;
+    wire perf_accum_rd_accept  = acc_mem_accum_rd_accept;
+    wire perf_accum_wr_fire    = acc_mem_accum_wr_fire;
+    wire perf_scaler_valid     = final_scaler_output_valid && in_flight;
+    wire perf_acc_output_valid = acc_output_valid[0] && in_flight && ~gemm_unit_ctrl.is_load;
+    wire perf_psum_underflow   = psum_underflow_event;
+    wire perf_rd_wr_conflict   = rd_wr_conflict_event;
 
     // ------------------------------------------------------------
     // Perf-trigger register stage (timing fix).
@@ -1793,6 +1892,9 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     reg perf_weight_fire_q,  perf_weight_stall_q;
     reg perf_psum_fire_q,    perf_psum_stall_q;
     reg perf_output_fire_q,  perf_output_stall_q;
+    reg perf_accum_rd_accept_q, perf_accum_wr_fire_q;
+    reg perf_scaler_valid_q, perf_acc_output_valid_q;
+    reg perf_psum_underflow_q, perf_rd_wr_conflict_q;
 
     always @(posedge clk) begin
         if (reset) begin
@@ -1807,6 +1909,12 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
             perf_psum_stall_q   <= 1'b0;
             perf_output_fire_q  <= 1'b0;
             perf_output_stall_q <= 1'b0;
+            perf_accum_rd_accept_q <= 1'b0;
+            perf_accum_wr_fire_q   <= 1'b0;
+            perf_scaler_valid_q    <= 1'b0;
+            perf_acc_output_valid_q <= 1'b0;
+            perf_psum_underflow_q  <= 1'b0;
+            perf_rd_wr_conflict_q  <= 1'b0;
         end else begin
             state_compute_q     <= (state == COMPUTE);
             state_stall_q       <= (state == IDLE) && !gemm_idle;
@@ -1819,6 +1927,12 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
             perf_psum_stall_q   <= perf_psum_stall;
             perf_output_fire_q  <= perf_output_fire;
             perf_output_stall_q <= perf_output_stall;
+            perf_accum_rd_accept_q <= perf_accum_rd_accept;
+            perf_accum_wr_fire_q   <= perf_accum_wr_fire;
+            perf_scaler_valid_q    <= perf_scaler_valid;
+            perf_acc_output_valid_q <= perf_acc_output_valid;
+            perf_psum_underflow_q  <= perf_psum_underflow;
+            perf_rd_wr_conflict_q  <= perf_rd_wr_conflict;
         end
     end
 
@@ -1836,6 +1950,12 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
             perf_psum_stall_r   <= '0;
             perf_output_fire_r  <= '0;
             perf_output_stall_r <= '0;
+            perf_accum_rd_accept_r <= '0;
+            perf_accum_wr_fire_r   <= '0;
+            perf_scaler_valid_r    <= '0;
+            perf_acc_output_valid_r <= '0;
+            perf_psum_underflow_r  <= '0;
+            perf_rd_wr_conflict_r  <= '0;
         end else begin
             if (state_compute_q)
                 perf_compute_r <= perf_compute_r + PERF_CTR_BITS'(1);
@@ -1861,6 +1981,18 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
                 perf_output_fire_r <= perf_output_fire_r + PERF_CTR_BITS'(1);
             if (perf_output_stall_q)
                 perf_output_stall_r <= perf_output_stall_r + PERF_CTR_BITS'(1);
+            if (perf_accum_rd_accept_q)
+                perf_accum_rd_accept_r <= perf_accum_rd_accept_r + PERF_CTR_BITS'(1);
+            if (perf_accum_wr_fire_q)
+                perf_accum_wr_fire_r <= perf_accum_wr_fire_r + PERF_CTR_BITS'(1);
+            if (perf_scaler_valid_q)
+                perf_scaler_valid_r <= perf_scaler_valid_r + PERF_CTR_BITS'(1);
+            if (perf_acc_output_valid_q)
+                perf_acc_output_valid_r <= perf_acc_output_valid_r + PERF_CTR_BITS'(1);
+            if (perf_psum_underflow_q)
+                perf_psum_underflow_r <= perf_psum_underflow_r + PERF_CTR_BITS'(1);
+            if (perf_rd_wr_conflict_q)
+                perf_rd_wr_conflict_r <= perf_rd_wr_conflict_r + PERF_CTR_BITS'(1);
         end
     end
 
@@ -1876,6 +2008,12 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     assign perf.psum_stall     = perf_psum_stall_r;
     assign perf.output_fire    = perf_output_fire_r;
     assign perf.output_stall   = perf_output_stall_r;
+    assign perf.accum_rd_accept = perf_accum_rd_accept_r;
+    assign perf.accum_wr_fire   = perf_accum_wr_fire_r;
+    assign perf.scaler_valid    = perf_scaler_valid_r;
+    assign perf.acc_output_valid = perf_acc_output_valid_r;
+    assign perf.psum_underflow  = perf_psum_underflow_r;
+    assign perf.rd_wr_conflict  = perf_rd_wr_conflict_r;
     assign perf.computing      = (state == COMPUTE);
 `endif
 

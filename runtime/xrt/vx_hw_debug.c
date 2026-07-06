@@ -1235,6 +1235,170 @@ int vx_hw_debug_dump(FILE *out, const vx_hw_debug_io_t *io,
 	            warn_channels);
 	  }
 
+  {
+    uint32_t gemm_sources = vx_hw_debug_status_num_pc_sources(status);
+    uint32_t shown_gemm = 0;
+    uint32_t fail_gemm = 0;
+    uint32_t core;
+
+    if (gemm_sources > VX_HW_DEBUG_MAX_CORE_SOURCES) {
+      gemm_sources = VX_HW_DEBUG_MAX_CORE_SOURCES;
+    }
+
+    for (core = 0; core < gemm_sources; ++core) {
+      uint64_t gemm_status = 0;
+      uint64_t gemm_addr = 0;
+      uint64_t gemm_counts0 = 0;
+      uint64_t gemm_counts1 = 0;
+      uint64_t gemm_counts2 = 0;
+      uint32_t valid;
+      uint32_t computing;
+      uint32_t idle;
+      uint32_t done;
+      uint32_t is_load;
+      uint32_t is_qcol;
+      uint32_t rd_req;
+      uint32_t rd_accept;
+      uint32_t rd_push;
+      uint32_t rd_pop;
+      uint32_t rd_empty;
+      uint32_t rd_full;
+      uint32_t rd_alm_full;
+      uint32_t mem_valid;
+      uint32_t wr_req;
+      uint32_t wr_fire;
+      uint32_t final_valid;
+      uint32_t acc_in_valid;
+      uint32_t psum_valid;
+      uint32_t acc_valid;
+      uint32_t underflow;
+      uint32_t conflict;
+      uint32_t state;
+      uint32_t rd_state;
+      uint32_t wr_state;
+      uint32_t rd_bank;
+      uint32_t wr_bank;
+      uint32_t rd_cnt;
+      uint32_t wr_cnt;
+      uint32_t rd_addr;
+      uint32_t wr_addr;
+      uint32_t rd_accept_count;
+      uint32_t wr_fire_count;
+      uint32_t scaler_count;
+      uint32_t acc_output_count;
+      uint32_t underflow_count;
+      uint32_t conflict_count;
+      const char *severity;
+
+      if (vx_hw_debug_read64(io, VX_HWDBG_GEMM_STATUS, core, 0, &gemm_status) != 0
+       || vx_hw_debug_read64(io, VX_HWDBG_GEMM_ADDR, core, 0, &gemm_addr) != 0
+       || vx_hw_debug_read64(io, VX_HWDBG_GEMM_COUNTS0, core, 0, &gemm_counts0) != 0
+       || vx_hw_debug_read64(io, VX_HWDBG_GEMM_COUNTS1, core, 0, &gemm_counts1) != 0
+       || vx_hw_debug_read64(io, VX_HWDBG_GEMM_COUNTS2, core, 0, &gemm_counts2) != 0) {
+        continue;
+      }
+
+      valid = (uint32_t)(gemm_status & 0x1u);
+      if (!valid) {
+        continue;
+      }
+
+      computing = (uint32_t)((gemm_status >> 1) & 0x1u);
+      if (!computing && gemm_counts0 == 0 && gemm_counts1 == 0 && gemm_counts2 == 0) {
+        continue;
+      }
+
+      idle = (uint32_t)((gemm_status >> 2) & 0x1u);
+      done = (uint32_t)((gemm_status >> 3) & 0x1u);
+      is_load = (uint32_t)((gemm_status >> 4) & 0x1u);
+      is_qcol = (uint32_t)((gemm_status >> 5) & 0x1u);
+      rd_req = (uint32_t)((gemm_status >> 6) & 0x1u);
+      rd_accept = (uint32_t)((gemm_status >> 7) & 0x1u);
+      rd_push = (uint32_t)((gemm_status >> 8) & 0x1u);
+      rd_pop = (uint32_t)((gemm_status >> 9) & 0x1u);
+      rd_empty = (uint32_t)((gemm_status >> 10) & 0x1u);
+      rd_full = (uint32_t)((gemm_status >> 11) & 0x1u);
+      rd_alm_full = (uint32_t)((gemm_status >> 12) & 0x1u);
+      mem_valid = (uint32_t)((gemm_status >> 13) & 0x1u);
+      wr_req = (uint32_t)((gemm_status >> 14) & 0x1u);
+      wr_fire = (uint32_t)((gemm_status >> 15) & 0x1u);
+      final_valid = (uint32_t)((gemm_status >> 16) & 0x1u);
+      acc_in_valid = (uint32_t)((gemm_status >> 17) & 0x1u);
+      psum_valid = (uint32_t)((gemm_status >> 18) & 0x1u);
+      acc_valid = (uint32_t)((gemm_status >> 19) & 0x1u);
+      underflow = (uint32_t)((gemm_status >> 20) & 0x1u);
+      conflict = (uint32_t)((gemm_status >> 21) & 0x1u);
+      state = (uint32_t)((gemm_status >> 22) & 0x3u);
+      rd_state = (uint32_t)((gemm_status >> 24) & 0x3u);
+      wr_state = (uint32_t)((gemm_status >> 26) & 0x3u);
+      rd_bank = (uint32_t)((gemm_status >> 28) & 0x3u);
+      wr_bank = (uint32_t)((gemm_status >> 30) & 0x3u);
+      rd_cnt = (uint32_t)((gemm_status >> 32) & 0xffffu);
+      wr_cnt = (uint32_t)((gemm_status >> 48) & 0xffffu);
+      rd_addr = (uint32_t)(gemm_addr & UINT64_C(0xffffffff));
+      wr_addr = (uint32_t)(gemm_addr >> 32);
+      rd_accept_count = (uint32_t)(gemm_counts0 & UINT64_C(0xffffffff));
+      wr_fire_count = (uint32_t)(gemm_counts0 >> 32);
+      scaler_count = (uint32_t)(gemm_counts1 & UINT64_C(0xffffffff));
+      acc_output_count = (uint32_t)(gemm_counts1 >> 32);
+      underflow_count = (uint32_t)(gemm_counts2 & UINT64_C(0xffffffff));
+      conflict_count = (uint32_t)(gemm_counts2 >> 32);
+      severity = (underflow || underflow_count) ? "FAIL" : (computing ? "WARN" : "OK");
+      if (underflow || underflow_count) {
+        ++fail_gemm;
+      }
+      ++shown_gemm;
+
+      fprintf(out,
+              "%s gemm[%u]: %s live{compute=%u idle=%u done=%u load=%u qcol=%u state=%u rd_state=%u wr_state=%u rd_req=%u rd_accept=%u rd_push=%u rd_pop=%u rd_empty=%u rd_full=%u rd_alm_full=%u mem_valid=%u wr_req=%u wr_fire=%u final=%u acc_in=%u psum=%u acc=%u conflict=%u} cnt{rd=%u wr=%u} bank{rd=%u wr=%u} addr{rd=0x%08x wr=0x%08x} counts{rd_accept=%u wr_fire=%u scaler=%u acc_out=%u underflow=%u conflict=%u} raw=0x%016" PRIx64 "\n",
+              prefix,
+              core,
+              severity,
+              computing,
+              idle,
+              done,
+              is_load,
+              is_qcol,
+              state,
+              rd_state,
+              wr_state,
+              rd_req,
+              rd_accept,
+              rd_push,
+              rd_pop,
+              rd_empty,
+              rd_full,
+              rd_alm_full,
+              mem_valid,
+              wr_req,
+              wr_fire,
+              final_valid,
+              acc_in_valid,
+              psum_valid,
+              acc_valid,
+              conflict,
+              rd_cnt,
+              wr_cnt,
+              rd_bank,
+              wr_bank,
+              rd_addr,
+              wr_addr,
+              rd_accept_count,
+              wr_fire_count,
+              scaler_count,
+              acc_output_count,
+              underflow_count,
+              conflict_count,
+              gemm_status);
+    }
+
+    fprintf(out, "%s gemm: %s shown=%u fail=%u\n",
+            prefix,
+            fail_gemm != 0 ? "FAIL" : "OK",
+            shown_gemm,
+            fail_gemm);
+  }
+
 	  if (vx_hw_debug_read64(io, VX_HWDBG_CACHE_STATUS, 0, 0, &cache_status) == 0
 	   && vx_hw_debug_read64(io, VX_HWDBG_CACHE_PROGRESS, 0, 0, &cache_progress) == 0
 	   && vx_hw_debug_read64(io, VX_HWDBG_CACHE_FIRST_STUCK, 0, 0, &cache_first_stuck) == 0) {
