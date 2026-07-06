@@ -57,8 +57,8 @@ printf 'PERF: instrs=30, cycles=200, IPC=0.150000\n'
 printf '[bench-perf] iteration=3/3 end\n'
 if [[ -n "$power_summary" ]]; then
   mkdir -p "$(dirname "$power_summary")"
-  printf 'label,mode,phase,samples,elapsed_s,idle_samples,idle_avg_w,run_min_w,run_avg_w,run_max_w,delta_avg_w,delta_peak_w,energy_j,power_latency,power_fpga_cycle,raw_csv\n' > "$power_summary"
-  printf 'fpint_gemm,separate,run,{power_samples},10.0,2,1.0,3.0,4.0,5.0,3.0,4.0,40.0,12.5,2000,%s\n' "$power_csv" >> "$power_summary"
+  printf 'label,mode,phase,samples,elapsed_s,idle_samples,idle_avg_w,run_min_w,run_avg_w,run_max_w,delta_avg_w,delta_peak_w,energy_j,power_latency,power_fpga_cycle,power_kernel_iterations,power_kernel_iterations_auto,power_target_sec,raw_csv\n' > "$power_summary"
+  printf 'fpint_gemm,separate,run,{power_samples},10.0,2,1.0,3.0,4.0,5.0,3.0,4.0,40.0,12.5,2000,64,1,1.0,%s\n' "$power_csv" >> "$power_summary"
 fi
 printf 'ok\n' > "$log_file"
 """
@@ -421,6 +421,9 @@ esac
             self.assertEqual("5.0", rows[0]["power_max_w"])
             self.assertEqual("12.5", rows[0]["power_latency"])
             self.assertEqual("2000", rows[0]["power_fpga_cycle"])
+            self.assertEqual("64", rows[0]["power_kernel_iterations"])
+            self.assertEqual("1", rows[0]["power_kernel_iterations_auto"])
+            self.assertEqual("1.0", rows[0]["power_target_sec"])
             self.assertEqual("", rows[0]["power_parse_error"])
             self.assertTrue(rows[0]["git_commit"])
             self.assertTrue(rows[0]["git_branch"])
@@ -435,6 +438,9 @@ esac
             self.assertEqual(rows[0]["power_avg_w"], result_rows[0]["power_avg_w"])
             self.assertEqual(rows[0]["power_latency"], result_rows[0]["power_latency"])
             self.assertEqual(rows[0]["power_fpga_cycle"], result_rows[0]["power_fpga_cycle"])
+            self.assertEqual(rows[0]["power_kernel_iterations"], result_rows[0]["power_kernel_iterations"])
+            self.assertEqual(rows[0]["power_kernel_iterations_auto"], result_rows[0]["power_kernel_iterations_auto"])
+            self.assertEqual(rows[0]["power_target_sec"], result_rows[0]["power_target_sec"])
             self.assertEqual(rows[0]["fpga_cycle"], result_rows[0]["fpga_cycle"])
 
             with (out_root / "runs" / "run_a" / "progress.csv").open(newline="") as fp:
@@ -446,6 +452,9 @@ esac
             self.assertEqual("4.0", progress_rows[0]["power_avg_w"])
             self.assertEqual("12.5", progress_rows[0]["power_latency"])
             self.assertEqual("2000", progress_rows[0]["power_fpga_cycle"])
+            self.assertEqual("64", progress_rows[0]["power_kernel_iterations"])
+            self.assertEqual("1", progress_rows[0]["power_kernel_iterations_auto"])
+            self.assertEqual("1.0", progress_rows[0]["power_target_sec"])
             self.assertEqual(rows[0]["elapsed_wall_s"], progress_rows[0]["elapsed_wall_s"])
 
             manifest = json.loads((out_root / "runs" / "run_a" / "manifest.json").read_text())

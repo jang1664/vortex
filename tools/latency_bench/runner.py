@@ -121,6 +121,12 @@ class RunOptions:
     power_min_interval: float = 0.05
     power_max_interval: float = 1.0
     power_min_samples: int = DEFAULT_POWER_MIN_SAMPLES
+    power_kernel_iterations: int = 1
+    power_kernel_iterations_auto: bool = False
+    power_target_sec: float = 20.0
+    power_fpga_freq_mhz: float = 100.0
+    power_fpga_freq_mhz_auto: bool = True
+    power_xclbin_info: str = ""
     case_filters: tuple[str, ...] = ()
     retry: bool = False
     retry_max_rounds: int = DEFAULT_RETRY_MAX_ROUNDS
@@ -159,6 +165,12 @@ def validate_inputs(options: RunOptions) -> None:
             raise ValueError("--retry-reset-cmd must not be empty")
     if options.power_min_samples < 0:
         raise ValueError("--power-min-samples must be >= 0")
+    if options.power_kernel_iterations < 1:
+        raise ValueError("--power-kernel-iterations must be >= 1")
+    if options.power_target_sec <= 0:
+        raise ValueError("--power-target-sec must be > 0")
+    if options.power_fpga_freq_mhz <= 0:
+        raise ValueError("--power-fpga-freq-mhz must be > 0")
     if options.measure_power and options.power_auto_duration:
         if options.power_min_run_sec < 0:
             raise ValueError("--power-min-run-sec must be >= 0")
@@ -890,6 +902,17 @@ def write_run_script(
                 ])
             if options.power_measure_latency:
                 bench_arg_parts.append("--power-measure-latency=on")
+            if options.power_kernel_iterations_auto:
+                xclbin_info = options.power_xclbin_info or str(options.fpga_bin_dir / "vortex_afu.xclbin.info")
+                fpga_freq_arg = "auto" if options.power_fpga_freq_mhz_auto else str(options.power_fpga_freq_mhz)
+                bench_arg_parts.extend([
+                    "--power-kernel-iterations=auto",
+                    f"--power-target-sec={options.power_target_sec}",
+                    f"--power-fpga-freq-mhz={fpga_freq_arg}",
+                    f"--power-xclbin-info={xclbin_info}",
+                ])
+            elif options.power_kernel_iterations > 1:
+                bench_arg_parts.append(f"--power-kernel-iterations={options.power_kernel_iterations}")
         if unit.args:
             bench_arg_parts.append(unit.args)
         bench_args = " ".join(bench_arg_parts)
@@ -1124,6 +1147,8 @@ def run_suite(suite: BenchSuite, options: RunOptions) -> int:
         run_id=run_id,
         skip_existing_columns=normalize_skip_existing_columns(options.skip_existing_columns),
     )
+    if run_options.power_kernel_iterations_auto and not run_options.measure_latency:
+        run_options = replace(run_options, measure_latency=True)
 
     out_root.mkdir(parents=True, exist_ok=True)
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -1183,18 +1208,24 @@ def run_suite(suite: BenchSuite, options: RunOptions) -> int:
         "srun": options.srun,
         "srun_args": list(options.srun_args),
         "program_fpga": options.program_fpga and bool(units_to_run),
-        "measure_latency": options.measure_latency,
-        "measure_power": options.measure_power,
-        "power_measure_latency": options.power_measure_latency if options.measure_power else False,
-        "power_mode": "separate" if options.measure_power else "off",
-        "power_auto_duration": options.power_auto_duration if options.measure_power else False,
-        "power_min_run_sec": options.power_min_run_sec,
-        "power_max_run_sec": options.power_max_run_sec,
-        "power_max_iterations": options.power_max_iterations,
-        "power_target_samples": options.power_target_samples,
-        "power_min_interval": options.power_min_interval,
-        "power_max_interval": options.power_max_interval,
-        "power_min_samples": options.power_min_samples,
+        "measure_latency": run_options.measure_latency,
+        "measure_power": run_options.measure_power,
+        "power_measure_latency": run_options.power_measure_latency if run_options.measure_power else False,
+        "power_mode": "separate" if run_options.measure_power else "off",
+        "power_auto_duration": run_options.power_auto_duration if run_options.measure_power else False,
+        "power_min_run_sec": run_options.power_min_run_sec,
+        "power_max_run_sec": run_options.power_max_run_sec,
+        "power_max_iterations": run_options.power_max_iterations,
+        "power_target_samples": run_options.power_target_samples,
+        "power_min_interval": run_options.power_min_interval,
+        "power_max_interval": run_options.power_max_interval,
+        "power_min_samples": run_options.power_min_samples,
+        "power_kernel_iterations": run_options.power_kernel_iterations,
+        "power_kernel_iterations_auto": run_options.power_kernel_iterations_auto,
+        "power_target_sec": run_options.power_target_sec,
+        "power_fpga_freq_mhz": run_options.power_fpga_freq_mhz,
+        "power_fpga_freq_mhz_auto": run_options.power_fpga_freq_mhz_auto,
+        "power_xclbin_info": run_options.power_xclbin_info,
         "power_dir": str(run_dir / "power"),
         "program_log": str(run_dir / "logs" / "program_fpga.log"),
         "xrt_smi": os.environ.get("XRT_SMI", "/opt/xilinx/xrt/bin/xrt-smi"),

@@ -73,6 +73,9 @@ def read_power_summary(path: Path | str | None) -> dict[str, Any]:
     optional_fields = (
         ("power_latency", ("power_latency", "latency_avg_us"), _parse_float_field),
         ("power_fpga_cycle", ("power_fpga_cycle",), _parse_cycle_field),
+        ("power_kernel_iterations", ("power_kernel_iterations",), _parse_int_field),
+        ("power_kernel_iterations_auto", ("power_kernel_iterations_auto",), _parse_int_field),
+        ("power_target_sec", ("power_target_sec",), _parse_float_field),
     )
     for output_key, input_keys, parser in optional_fields:
         value = ""

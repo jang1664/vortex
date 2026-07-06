@@ -110,6 +110,7 @@ typedef struct {
   uint32_t job_eid;
   uint32_t job_generation;
   uint32_t last_ctrl;
+  uint32_t power_kernel_iterations;
 } kernel_arg_t;
 
 #endif // _COMMON_H_

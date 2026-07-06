@@ -462,7 +462,10 @@ int main(int argc, char *argv[]) {
              "[--power-summary=PATH] [--power-interval=SEC] "
              "[--power-fpga-id=ID] [--power-iterations=N] "
              "[--power-idle-sec=SEC] [--power-csv-max-bytes=N] "
-             "[--power-script=PATH] [--power-measure-latency[=on|off]] "
+             "[--power-script=PATH] [--power-kernel-iterations=N|auto] "
+             "[--power-target-sec=SEC] "
+             "[--power-fpga-freq-mhz=MHz|auto] [--power-xclbin-info=PATH] "
+             "[--power-measure-latency[=on|off]] "
              "[--power-max-iterations=N] "
              "[-m M] [-n N] [-k K] [-q QBLK] [-t WTRANS] [-d QDIR]\n", argv[0]);
       return 0;
@@ -473,7 +476,10 @@ int main(int argc, char *argv[]) {
              "[--power-summary=PATH] [--power-interval=SEC] "
              "[--power-fpga-id=ID] [--power-iterations=N] "
              "[--power-idle-sec=SEC] [--power-csv-max-bytes=N] "
-             "[--power-script=PATH] [--power-measure-latency[=on|off]] "
+             "[--power-script=PATH] [--power-kernel-iterations=N|auto] "
+             "[--power-target-sec=SEC] "
+             "[--power-fpga-freq-mhz=MHz|auto] [--power-xclbin-info=PATH] "
+             "[--power-measure-latency[=on|off]] "
              "[--power-max-iterations=N] "
              "[-m M] [-n N] [-k K] [-q QBLK] [-t WTRANS] [-d QDIR]\n", argv[0]);
       return -1;
@@ -599,10 +605,14 @@ int main(int argc, char *argv[]) {
   kargs.WTRANS = WTRANS;
   kargs.QDIR   = QDIR;
   kargs.status = STATUS_INIT;
+  kargs.power_kernel_iterations = 1;
 
   // args_buffer must be read/write: the kernel writes status back to args.
   RT_CHECK(vx_mem_alloc(device, sizeof(kargs), VX_MEM_READ_WRITE, &args_buffer));
   RT_CHECK(vx_copy_to_dev(args_buffer, &kargs, 0, sizeof(kargs)));
+  double first_latency_us = 0.0;
+  uint64_t first_fpga_cycle = 0;
+  bool has_first_fpga_cycle = false;
 
   auto check_kernel_status = [&](const char* phase, int iter) -> bool {
     int ret = vx_copy_from_dev(&kargs, args_buffer, 0, sizeof(kargs));
@@ -616,6 +626,24 @@ int main(int argc, char *argv[]) {
                 << ": status=" << kargs.status
                 << " (" << status_to_str(kargs.status) << ")"
                 << std::endl;
+      return false;
+    }
+    return true;
+  };
+
+  auto upload_power_kernel_args = [&]() -> bool {
+    kargs.status = STATUS_INIT;
+    bench.power_kernel_iterations = vx_bench::compute_power_kernel_iterations(
+        bench,
+        first_latency_us,
+        first_fpga_cycle,
+        has_first_fpga_cycle,
+        "fpint_gemm_ffn_hw");
+    kargs.power_kernel_iterations = static_cast<uint32_t>(bench.power_kernel_iterations);
+    int ret = vx_copy_to_dev(args_buffer, &kargs, 0, sizeof(kargs));
+    if (ret != 0) {
+      std::cerr << "vx_copy_to_dev failed while enabling power kernel iterations: ret="
+                << ret << std::endl;
       return false;
     }
     return true;
@@ -662,12 +690,25 @@ int main(int argc, char *argv[]) {
       cleanup();
       return -1;
     }
-    stats.record(sw.stop_us());
-    vx_bench::dump_iteration_perf(device, bench, i);
+    const double elapsed_us = sw.stop_us();
+    if (i == 0)
+      first_latency_us = elapsed_us;
+    stats.record(elapsed_us);
+    const vx_bench::IterationPerf first_iter_perf =
+        vx_bench::dump_iteration_perf(device, bench, i);
+    if (i == 0 && first_iter_perf.has_fpga_cycle) {
+      first_fpga_cycle = first_iter_perf.fpga_cycle;
+      has_first_fpga_cycle = (first_fpga_cycle > 0);
+    }
     printf("iteration %0d/%0d, elapsed:%f\n", i+1, bench.iterations, stats.last()); fflush(stdout);
   }
 
   stats.report("fpint_gemm_ffn_hw", bench);
+
+  if (vx_bench::power_enabled(bench) && !upload_power_kernel_args()) {
+    cleanup();
+    return -1;
+  }
 
   if (!vx_bench::run_power_measurement(
           "fpint_gemm_ffn_hw", bench, device,

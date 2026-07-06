@@ -89,6 +89,7 @@ typedef struct {
   uint32_t QDIR;
 
   uint32_t status;
+  uint32_t power_kernel_iterations;
 } kernel_arg_t;
 
 #endif // _COMMON_H_

@@ -68,6 +68,12 @@ struct Args {
     uint64_t    power_csv_max_bytes = 1024ull * 1024ull;
     std::string power_script;
     bool        power_measure_latency = false;
+    int         power_kernel_iterations = 1;
+    bool        power_kernel_iterations_auto = false;
+    double      power_target_sec = 1.0;
+    double      power_fpga_freq_mhz = 100.0;
+    bool        power_fpga_freq_mhz_auto = true;
+    std::string power_xclbin_info;
     bool        power_auto_duration = false;
     double      power_min_run_sec = 10.0;
     double      power_max_run_sec = 60.0;
@@ -93,6 +99,146 @@ inline bool latency_enabled(const Args& args) {
 
 inline bool power_enabled(const Args& args) {
     return args.power_mode != PowerMode::Off;
+}
+
+inline bool path_exists(const std::string& path) {
+    struct stat st;
+    return !path.empty() && ::stat(path.c_str(), &st) == 0;
+}
+
+inline bool parse_frequency_mhz_line(const char* line, double* freq_mhz) {
+    const char* p = std::strchr(line, ':');
+    if (!p) p = line;
+    char* end = nullptr;
+    double value = std::strtod(p + 1, &end);
+    if (end == p + 1 || !std::isfinite(value) || value <= 0.0)
+        return false;
+    *freq_mhz = value;
+    return true;
+}
+
+inline bool parse_data_clk_mhz_from_xclbin_info(const std::string& path, double* freq_mhz) {
+    FILE* f = std::fopen(path.c_str(), "r");
+    if (!f)
+        return false;
+
+    bool in_data_clk = false;
+    char line[1024];
+    while (std::fgets(line, sizeof(line), f)) {
+        if (std::strstr(line, "Name:") != nullptr) {
+            in_data_clk = (std::strstr(line, "DATA_CLK") != nullptr);
+        }
+        if (in_data_clk && std::strstr(line, "Frequency:") != nullptr) {
+            double parsed_mhz = 0.0;
+            if (parse_frequency_mhz_line(line, &parsed_mhz)) {
+                std::fclose(f);
+                *freq_mhz = parsed_mhz;
+                return true;
+            }
+        }
+    }
+
+    std::fclose(f);
+    return false;
+}
+
+inline std::string default_xclbin_info_path() {
+    const char* explicit_info = std::getenv("VORTEX_POWER_XCLBIN_INFO");
+    if (explicit_info && path_exists(explicit_info))
+        return explicit_info;
+
+    const char* xclbin = std::getenv("XRT_XCLBIN_PATH");
+    if (xclbin) {
+        std::string info = std::string(xclbin) + ".info";
+        if (path_exists(info))
+            return info;
+    }
+
+    const char* fpga_bin_dir = std::getenv("FPGA_BIN_DIR");
+    if (fpga_bin_dir) {
+        std::string info = std::string(fpga_bin_dir) + "/vortex_afu.xclbin.info";
+        if (path_exists(info))
+            return info;
+    }
+
+    return std::string();
+}
+
+inline double resolve_power_fpga_freq_mhz(const Args& args, FILE* msg = stderr) {
+    if (!args.power_fpga_freq_mhz_auto)
+        return args.power_fpga_freq_mhz;
+
+    std::string info = args.power_xclbin_info.empty() ? default_xclbin_info_path() : args.power_xclbin_info;
+    double parsed_mhz = 0.0;
+    if (!info.empty() && parse_data_clk_mhz_from_xclbin_info(info, &parsed_mhz)) {
+        if (msg) {
+            std::fprintf(msg, "[power] stage=fpga_freq_resolve source=xclbin_info path=%s data_clk_mhz=%.6f\n",
+                         info.c_str(), parsed_mhz);
+        }
+        return parsed_mhz;
+    }
+
+    if (msg) {
+        std::fprintf(msg, "[power] stage=fpga_freq_resolve source=fallback data_clk_mhz=%.6f",
+                     args.power_fpga_freq_mhz);
+        if (!info.empty())
+            std::fprintf(msg, " xclbin_info=%s", info.c_str());
+        std::fprintf(msg, "\n");
+    }
+    return args.power_fpga_freq_mhz;
+}
+
+inline int compute_power_kernel_iterations(const Args& args,
+                                           double first_latency_us,
+                                           uint64_t fpga_cycle = 0,
+                                           bool has_fpga_cycle = false,
+                                           const char* label = "",
+                                           FILE* msg = stderr) {
+    if (!args.power_kernel_iterations_auto)
+        return args.power_kernel_iterations;
+
+    const char* source = "host_latency";
+    double kernel_s = 0.0;
+    double fpga_freq_mhz = 0.0;
+    if (has_fpga_cycle && fpga_cycle > 0) {
+        fpga_freq_mhz = resolve_power_fpga_freq_mhz(args, msg);
+        if (std::isfinite(fpga_freq_mhz) && fpga_freq_mhz > 0.0) {
+            kernel_s = static_cast<double>(fpga_cycle) / (fpga_freq_mhz * 1000000.0);
+            source = "fpga_cycle";
+        }
+    }
+
+    if (kernel_s <= 0.0 || !std::isfinite(kernel_s)) {
+        if (first_latency_us <= 0.0 || !std::isfinite(first_latency_us))
+            return 1;
+        kernel_s = first_latency_us / 1000000.0;
+        source = "host_latency";
+    }
+
+    double iterations = std::ceil(args.power_target_sec / kernel_s);
+    if (!std::isfinite(iterations) || iterations < 1.0)
+        return 1;
+
+    const double max_iterations = static_cast<double>(std::numeric_limits<int>::max());
+    if (iterations > max_iterations)
+        return std::numeric_limits<int>::max();
+
+    int planned_iterations = static_cast<int>(iterations);
+    if (msg) {
+        std::fprintf(msg,
+            "[power] stage=kernel_iterations_auto label=%s source=%s target_s=%.6f "
+            "kernel_s=%.9f host_latency_us=%.3f fpga_cycle=%llu fpga_freq_mhz=%.6f "
+            "kernel_iterations=%d\n",
+            label ? label : "",
+            source,
+            args.power_target_sec,
+            kernel_s,
+            first_latency_us,
+            static_cast<unsigned long long>(fpga_cycle),
+            fpga_freq_mhz,
+            planned_iterations);
+    }
+    return planned_iterations;
 }
 
 inline bool parse_power_mode(const char* value, PowerMode* mode) {
@@ -126,6 +272,25 @@ inline bool parse_bool_arg(const char* value, bool* out) {
         return false;
     }
     return true;
+}
+
+inline void parse_power_kernel_iterations_arg(const char* value, Args& args) {
+    if (std::strcmp(value, "auto") == 0) {
+        args.power_kernel_iterations_auto = true;
+        args.power_kernel_iterations = 1;
+        return;
+    }
+    args.power_kernel_iterations_auto = false;
+    args.power_kernel_iterations = std::atoi(value);
+}
+
+inline void parse_power_fpga_freq_mhz_arg(const char* value, Args& args) {
+    if (std::strcmp(value, "auto") == 0) {
+        args.power_fpga_freq_mhz_auto = true;
+        return;
+    }
+    args.power_fpga_freq_mhz_auto = false;
+    args.power_fpga_freq_mhz = std::atof(value);
 }
 
 inline void set_parse_error(Args& args, const std::string& message) {
@@ -232,6 +397,44 @@ inline Args parse(int& argc, char** argv) {
         } else if (std::strcmp(s, "--power-script") == 0) {
             const char* value = nullptr;
             if (read_next_value(r, argc, argv, "--power-script", &value, a)) a.power_script = value;
+        } else if (std::strncmp(s, "--power-kernel-iterations=", 26) == 0) {
+            parse_power_kernel_iterations_arg(s + 26, a);
+        } else if (std::strcmp(s, "--power-kernel-iterations") == 0) {
+            const char* value = nullptr;
+            if (read_next_value(r, argc, argv, "--power-kernel-iterations", &value, a)) {
+                parse_power_kernel_iterations_arg(value, a);
+            }
+        } else if (std::strcmp(s, "--power-kernel-iterations-auto") == 0) {
+            a.power_kernel_iterations_auto = true;
+            if (r + 1 < argc && argv[r + 1][0] != '-') {
+                const char* value = argv[++r];
+                if (!parse_bool_arg(value, &a.power_kernel_iterations_auto)) {
+                    set_parse_error(a, std::string("invalid --power-kernel-iterations-auto value: ") + value);
+                }
+            }
+        } else if (std::strncmp(s, "--power-kernel-iterations-auto=", 31) == 0) {
+            if (!parse_bool_arg(s + 31, &a.power_kernel_iterations_auto)) {
+                set_parse_error(a, std::string("invalid --power-kernel-iterations-auto value: ") + (s + 31));
+            }
+        } else if (std::strcmp(s, "--no-power-kernel-iterations-auto") == 0) {
+            a.power_kernel_iterations_auto = false;
+        } else if (std::strncmp(s, "--power-target-sec=", 19) == 0) {
+            a.power_target_sec = std::atof(s + 19);
+        } else if (std::strcmp(s, "--power-target-sec") == 0) {
+            const char* value = nullptr;
+            if (read_next_value(r, argc, argv, "--power-target-sec", &value, a)) a.power_target_sec = std::atof(value);
+        } else if (std::strncmp(s, "--power-fpga-freq-mhz=", 22) == 0) {
+            parse_power_fpga_freq_mhz_arg(s + 22, a);
+        } else if (std::strcmp(s, "--power-fpga-freq-mhz") == 0) {
+            const char* value = nullptr;
+            if (read_next_value(r, argc, argv, "--power-fpga-freq-mhz", &value, a)) {
+                parse_power_fpga_freq_mhz_arg(value, a);
+            }
+        } else if (std::strncmp(s, "--power-xclbin-info=", 20) == 0) {
+            a.power_xclbin_info = s + 20;
+        } else if (std::strcmp(s, "--power-xclbin-info") == 0) {
+            const char* value = nullptr;
+            if (read_next_value(r, argc, argv, "--power-xclbin-info", &value, a)) a.power_xclbin_info = value;
         } else if (std::strcmp(s, "--power-measure-latency") == 0) {
             a.power_measure_latency = true;
             if (r + 1 < argc && argv[r + 1][0] != '-') {
@@ -307,6 +510,9 @@ inline Args parse(int& argc, char** argv) {
     if (a.power_idle_sec < 0.0)  a.power_idle_sec = 0.0;
     if (a.power_iterations < 0)  a.power_iterations = a.iterations;
     if (a.power_iterations < 1)  a.power_iterations = 1;
+    if (a.power_kernel_iterations < 1) a.power_kernel_iterations = 1;
+    if (a.power_target_sec <= 0.0) a.power_target_sec = 1.0;
+    if (a.power_fpga_freq_mhz <= 0.0) a.power_fpga_freq_mhz = 100.0;
     if (a.power_min_run_sec < 0.0) a.power_min_run_sec = 0.0;
     if (a.power_max_run_sec <= 0.0) a.power_max_run_sec = a.power_min_run_sec;
     if (a.power_max_run_sec < a.power_min_run_sec) a.power_max_run_sec = a.power_min_run_sec;
@@ -316,6 +522,7 @@ inline Args parse(int& argc, char** argv) {
     if (a.power_max_interval <= 0.0) a.power_max_interval = a.power_min_interval;
     if (a.power_max_interval < a.power_min_interval) a.power_max_interval = a.power_min_interval;
     if (a.power_summary.empty()) a.power_summary = a.power_csv + ".summary.csv";
+    if (a.power_kernel_iterations_auto) a.latency_enabled = true;
     if (!a.latency_enabled) {
         a.warmup = 0;
         a.iterations = 0;
@@ -685,7 +892,8 @@ inline bool write_power_summary(const char* label,
     std::fprintf(f,
         "label,mode,phase,samples,elapsed_s,idle_samples,idle_avg_w,"
         "run_min_w,run_avg_w,run_max_w,delta_avg_w,delta_peak_w,energy_j,"
-        "power_latency,power_fpga_cycle,raw_csv\n");
+        "power_latency,power_fpga_cycle,power_kernel_iterations,"
+        "power_kernel_iterations_auto,power_target_sec,raw_csv\n");
 
     const PowerStats idle_stats = read_power_stats(args.power_csv, idle.start_s, idle.end_s);
     const double nan = std::numeric_limits<double>::quiet_NaN();
@@ -700,7 +908,7 @@ inline bool write_power_summary(const char* label,
 
         std::fprintf(f,
             "%s,%s,%s,%zu,%.6f,%zu,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,"
-            "%.3f,%.3f,%s\n",
+            "%.3f,%.3f,%d,%d,%.6f,%s\n",
             label,
             run.mode.c_str(),
             run.phase.c_str(),
@@ -716,6 +924,9 @@ inline bool write_power_summary(const char* label,
             energy,
             power_latency,
             power_fpga_cycle,
+            args.power_kernel_iterations,
+            args.power_kernel_iterations_auto ? 1 : 0,
+            args.power_target_sec,
             args.power_csv.c_str());
     }
 
@@ -806,23 +1017,37 @@ inline bool should_dump_iteration_perf(const Args& args) {
     return latency_enabled(args) && args.csv && !args.output.empty();
 }
 
-inline void dump_iteration_perf(vx_device_h device,
-                                const Args& args,
-                                int iteration,
-                                FILE* stream = stdout) {
-    if (!should_dump_iteration_perf(args)) {
-        return;
-    }
+struct IterationPerf {
+    bool has_fpga_cycle = false;
+    uint64_t fpga_cycle = 0;
+};
+
+inline IterationPerf dump_iteration_perf(vx_device_h device,
+                                         const Args& args,
+                                         int iteration,
+                                         FILE* stream = stdout) {
+    IterationPerf perf;
+    const bool should_dump = should_dump_iteration_perf(args);
     const int completed = iteration + 1;
-    std::fprintf(stream, "[bench-perf] iteration=%d/%d begin\n", completed, args.iterations);
-    std::fflush(stream);
-    const int ret = vx_dump_perf(device, stream);
-    if (ret != 0) {
-        std::fprintf(stream, "[bench-perf] iteration=%d/%d vx_dump_perf_ret=%d\n",
-                     completed, args.iterations, ret);
+    if (should_dump) {
+        std::fprintf(stream, "[bench-perf] iteration=%d/%d begin\n", completed, args.iterations);
+        std::fflush(stream);
+        const int ret = vx_dump_perf(device, stream);
+        if (ret != 0) {
+            std::fprintf(stream, "[bench-perf] iteration=%d/%d vx_dump_perf_ret=%d\n",
+                         completed, args.iterations, ret);
+        }
+        std::fprintf(stream, "[bench-perf] iteration=%d/%d end\n", completed, args.iterations);
+        std::fflush(stream);
     }
-    std::fprintf(stream, "[bench-perf] iteration=%d/%d end\n", completed, args.iterations);
-    std::fflush(stream);
+    if (args.power_kernel_iterations_auto) {
+        uint64_t fpga_cycle = 0;
+        if (read_max_fpga_cycle(device, &fpga_cycle)) {
+            perf.has_fpga_cycle = true;
+            perf.fpga_cycle = fpga_cycle;
+        }
+    }
+    return perf;
 }
 
 inline bool run_vx_kernel_once(vx_device_h device,
@@ -881,13 +1106,17 @@ inline bool run_power_measurement_impl(const char* label,
 
     std::fprintf(msg,
         "[power] stage=sampler_start label=%s mode=%s csv=%s summary=%s "
-        "idle_s=%.3f iterations=%d interval=%.6g auto_duration=%s max_iterations=%d max_bytes=%llu\n",
+        "idle_s=%.3f iterations=%d kernel_iterations=%d kernel_iterations_auto=%s "
+        "target_sec=%.6f interval=%.6g auto_duration=%s max_iterations=%d max_bytes=%llu\n",
         label,
         power_mode_name(power_args.power_mode),
         power_args.power_csv.c_str(),
         power_args.power_summary.c_str(),
         power_args.power_idle_sec,
         power_args.power_iterations,
+        power_args.power_kernel_iterations,
+        power_args.power_kernel_iterations_auto ? "on" : "off",
+        power_args.power_target_sec,
         power_args.power_interval,
         power_args.power_auto_duration ? "on" : "off",
         power_args.power_max_iterations,

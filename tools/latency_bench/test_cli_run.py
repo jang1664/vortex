@@ -212,6 +212,11 @@ aliases:
             self.assertTrue(manifest["measure_power"])
             self.assertEqual("separate", manifest["power_mode"])
             self.assertTrue(manifest["power_auto_duration"])
+            self.assertEqual(1, manifest["power_kernel_iterations"])
+            self.assertFalse(manifest["power_kernel_iterations_auto"])
+            self.assertEqual(20.0, manifest["power_target_sec"])
+            self.assertEqual(100.0, manifest["power_fpga_freq_mhz"])
+            self.assertTrue(manifest["power_fpga_freq_mhz_auto"])
             self.assertEqual(10.0, manifest["power_min_run_sec"])
             self.assertEqual(60.0, manifest["power_max_run_sec"])
             self.assertEqual(1024, manifest["power_max_iterations"])
@@ -244,6 +249,9 @@ aliases:
             self.assertFalse(manifest["measure_power"])
             self.assertEqual("off", manifest["power_mode"])
             self.assertFalse(manifest["power_auto_duration"])
+            self.assertEqual(1, manifest["power_kernel_iterations"])
+            self.assertFalse(manifest["power_kernel_iterations_auto"])
+            self.assertEqual(20.0, manifest["power_target_sec"])
             self.assertEqual(5, manifest["power_min_samples"])
 
     def test_run_records_explicit_xrt_device_index_request(self) -> None:
@@ -323,6 +331,113 @@ aliases:
             self.assertIn("--power-max-iterations=256", script)
             manifest = json.loads((run_dir / "manifest.json").read_text())
             self.assertEqual(256, manifest["power_max_iterations"])
+
+    def test_run_can_override_power_kernel_iterations(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            build_dir, fpga_bin, suite = self._write_fake_inputs(tmp_path)
+            out_root = tmp_path / "out"
+            rc = main([
+                "run",
+                "--build-dir", str(build_dir),
+                "--fpga-bin", str(fpga_bin),
+                "--suite", str(suite),
+                "--out", str(out_root),
+                "--run-id", "power_kernel_iters",
+                "--no-srun",
+                "--dry-run",
+                "--no-program-fpga",
+                "--power",
+                "--power-kernel-iterations", "64",
+            ])
+
+            self.assertEqual(0, rc)
+            run_dir = out_root / "runs" / "power_kernel_iters"
+            script = (run_dir / "run_fpga_bench.sh").read_text()
+            self.assertIn("--power-kernel-iterations=64", script)
+            manifest = json.loads((run_dir / "manifest.json").read_text())
+            self.assertEqual(64, manifest["power_kernel_iterations"])
+            self.assertFalse(manifest["power_kernel_iterations_auto"])
+            self.assertEqual(20.0, manifest["power_target_sec"])
+
+    def test_run_can_auto_power_kernel_iterations(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            build_dir, fpga_bin, suite = self._write_fake_inputs(tmp_path)
+            out_root = tmp_path / "out"
+            rc = main([
+                "run",
+                "--build-dir", str(build_dir),
+                "--fpga-bin", str(fpga_bin),
+                "--suite", str(suite),
+                "--out", str(out_root),
+                "--run-id", "power_kernel_iters_auto",
+                "--no-srun",
+                "--dry-run",
+                "--no-program-fpga",
+                "--no-latency",
+                "--power",
+                "--power-kernel-iterations", "auto",
+                "--power-target-sec", "2.5",
+                "--power-fpga-freq-mhz", "125",
+            ])
+
+            self.assertEqual(0, rc)
+            run_dir = out_root / "runs" / "power_kernel_iters_auto"
+            script = (run_dir / "run_fpga_bench.sh").read_text()
+            self.assertNotIn("--no-latency", script)
+            self.assertIn("--power-kernel-iterations=auto", script)
+            self.assertIn("--power-target-sec=2.5", script)
+            self.assertIn("--power-fpga-freq-mhz=125.0", script)
+            self.assertIn("--power-xclbin-info=", script)
+            manifest = json.loads((run_dir / "manifest.json").read_text())
+            self.assertTrue(manifest["measure_latency"])
+            self.assertEqual(1, manifest["power_kernel_iterations"])
+            self.assertTrue(manifest["power_kernel_iterations_auto"])
+            self.assertEqual(2.5, manifest["power_target_sec"])
+            self.assertEqual(125.0, manifest["power_fpga_freq_mhz"])
+            self.assertFalse(manifest["power_fpga_freq_mhz_auto"])
+
+    def test_run_rejects_invalid_power_kernel_iterations(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            build_dir, fpga_bin, suite = self._write_fake_inputs(tmp_path)
+            out_root = tmp_path / "out"
+
+            with self.assertRaisesRegex(ValueError, "--power-kernel-iterations must be >= 1"):
+                main([
+                    "run",
+                    "--build-dir", str(build_dir),
+                    "--fpga-bin", str(fpga_bin),
+                    "--suite", str(suite),
+                    "--out", str(out_root),
+                    "--run-id", "bad_power_kernel_iters",
+                    "--no-srun",
+                    "--dry-run",
+                    "--no-program-fpga",
+                    "--power-kernel-iterations", "0",
+                ])
+
+    def test_run_rejects_invalid_power_target_sec(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            build_dir, fpga_bin, suite = self._write_fake_inputs(tmp_path)
+            out_root = tmp_path / "out"
+
+            with self.assertRaisesRegex(ValueError, "--power-target-sec must be > 0"):
+                main([
+                    "run",
+                    "--build-dir", str(build_dir),
+                    "--fpga-bin", str(fpga_bin),
+                    "--suite", str(suite),
+                    "--out", str(out_root),
+                    "--run-id", "bad_power_target_sec",
+                    "--no-srun",
+                    "--dry-run",
+                    "--no-program-fpga",
+                    "--power-kernel-iterations", "auto",
+                    "--power-target-sec", "0",
+                ])
 
     def test_run_can_override_power_min_samples(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

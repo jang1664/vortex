@@ -46,6 +46,32 @@ from .runner import (
 from .suite import apply_case_filters, find_repo_root, load_suite
 
 
+def normalize_power_kernel_iterations(value: str | int, auto: bool = False) -> tuple[int, bool]:
+    text = str(value).strip().lower()
+    if text == "auto":
+        return 1, True
+    try:
+        iterations = int(text)
+    except ValueError as exc:
+        raise ValueError("--power-kernel-iterations must be a positive integer or 'auto'") from exc
+    if iterations < 1:
+        raise ValueError("--power-kernel-iterations must be >= 1")
+    return iterations, auto
+
+
+def normalize_power_fpga_freq_mhz(value: str | float) -> tuple[float, bool]:
+    text = str(value).strip().lower()
+    if text == "auto":
+        return 100.0, True
+    try:
+        freq_mhz = float(text)
+    except ValueError as exc:
+        raise ValueError("--power-fpga-freq-mhz must be a positive number or 'auto'") from exc
+    if freq_mhz <= 0:
+        raise ValueError("--power-fpga-freq-mhz must be > 0")
+    return freq_mhz, False
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run and visualize Vortex FPGA latency benchmarks.")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -134,6 +160,34 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=DEFAULT_POWER_MIN_SAMPLES,
         help=f"Minimum required power samples for power-mode pass status; 0 disables the check (default: {DEFAULT_POWER_MIN_SAMPLES}).",
+    )
+    run.add_argument(
+        "--power-kernel-iterations",
+        default="1",
+        help="Device-side kernel body repetitions per power-phase launch, or 'auto' to derive from first latency iteration.",
+    )
+    run.set_defaults(power_kernel_iterations_auto=False)
+    run.add_argument(
+        "--power-kernel-iterations-auto",
+        dest="power_kernel_iterations_auto",
+        action="store_true",
+        help="Derive device-side power kernel repetitions from the first latency iteration.",
+    )
+    run.add_argument(
+        "--power-target-sec",
+        type=float,
+        default=20.0,
+        help="Target duration in seconds for each power-phase kernel launch when power kernel iterations are auto-derived.",
+    )
+    run.add_argument(
+        "--power-fpga-freq-mhz",
+        default="auto",
+        help="FPGA DATA_CLK frequency in MHz for cycle-based power kernel iteration planning, or 'auto' to parse xclbin.info.",
+    )
+    run.add_argument(
+        "--power-xclbin-info",
+        default="",
+        help="Optional vortex_afu.xclbin.info path used to parse DATA_CLK for power kernel iteration planning.",
     )
     run.add_argument("--platform", default=None, help="Override suite/default Xilinx platform.")
     run.add_argument("--xrt-device-index", type=int, default=None, help="Override XRT device index.")
@@ -581,6 +635,11 @@ def run_cmd(args: argparse.Namespace) -> int:
     srun_args = tuple(args.srun_arg) if args.srun_arg else DEFAULT_SRUN_ARGS
     run_id = args.run_id or default_run_id()
     configs_extra = merge_configs_extra(args.configs_extra)
+    power_kernel_iterations, power_kernel_iterations_auto = normalize_power_kernel_iterations(
+        args.power_kernel_iterations,
+        args.power_kernel_iterations_auto,
+    )
+    power_fpga_freq_mhz, power_fpga_freq_mhz_auto = normalize_power_fpga_freq_mhz(args.power_fpga_freq_mhz)
     options = RunOptions(
         build_dir=Path(args.build_dir).resolve(),
         fpga_bin_dir=fpga_bin.path,
@@ -613,6 +672,12 @@ def run_cmd(args: argparse.Namespace) -> int:
         power_min_interval=args.power_min_interval,
         power_max_interval=args.power_max_interval,
         power_min_samples=args.power_min_samples,
+        power_kernel_iterations=power_kernel_iterations,
+        power_kernel_iterations_auto=power_kernel_iterations_auto,
+        power_target_sec=args.power_target_sec,
+        power_fpga_freq_mhz=power_fpga_freq_mhz,
+        power_fpga_freq_mhz_auto=power_fpga_freq_mhz_auto,
+        power_xclbin_info=args.power_xclbin_info,
         case_filters=tuple(args.filter),
         retry=args.retry,
         retry_max_rounds=args.retry_max_rounds,
