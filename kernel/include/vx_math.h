@@ -28,6 +28,10 @@
 //        float y = vx_expf(x);
 ///////////////////////////////////////////////////////////////////////////////
 
+#ifdef VX_ENABLE_HW_EXPF
+#include <vx_intrinsics.h>
+#endif
+
 // --- Constants via bit manipulation (no libc dependency) ---
 
 static inline float vx_pos_inf() {
@@ -51,12 +55,12 @@ static inline float vx_nanf() {
 #define VX_INFINITY  vx_pos_inf()
 #define VX_NEG_INF   vx_neg_inf()
 
-///////////////////////////////////////////////////////////////////////////////
-// vx_expf: e^x via 2^(x/ln2) decomposition + degree-4 minimax polynomial
-// Max error: < 2e-7 relative
-// ** Branchless ** — safe for Vortex SIMT (no divergent branches)
-///////////////////////////////////////////////////////////////////////////////
 static inline float vx_expf(float x) {
+#ifdef VX_ENABLE_HW_EXPF
+  return vx_expf_hw(x);
+#else
+  // e^x via 2^(x/ln2) decomposition + degree-4 minimax polynomial.
+  // Max error: < 2e-7 relative.
   // Branchless clamp using fmin.s / fmax.s hardware instructions
   float clamped = __builtin_fmaxf(__builtin_fminf(x, 88.7f), -87.3f);
 
@@ -77,6 +81,7 @@ static inline float vx_expf(float x) {
   u.fval = p;
   u.ival += (unsigned int)n << 23;
   return u.fval;
+#endif
 }
 
 ///////////////////////////////////////////////////////////////////////////////

@@ -36,6 +36,14 @@ extern "C" {
 #define RISCV_CUSTOM2   0x5B
 #define RISCV_CUSTOM3   0x7B
 
+inline __attribute__((always_inline)) float vx_expf_hw(float x) {
+    float ret;
+    __asm__ volatile (".insn r %1, 0, 3, %0, %2, x0"
+                      : "=f"(ret)
+                      : "i"(RISCV_CUSTOM0), "f"(x));
+    return ret;
+}
+
 #define csr_read(csr) ({                        \
 	size_t __r;	               		            \
 	__asm__ __volatile__ ("csrr %0, %1" : "=r" (__r) : "i" (csr)); \

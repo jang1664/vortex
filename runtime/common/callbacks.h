@@ -33,6 +33,9 @@ typedef struct {
   // allocate device memory and return address
   int (*mem_alloc) (vx_device_h hdevice, uint64_t size, int flags, vx_buffer_h* hbuffer);
 
+  // allocate device memory and return aligned address
+  int (*mem_alloc_aligned) (vx_device_h hdevice, uint64_t size, uint64_t alignment, int flags, vx_buffer_h* hbuffer);
+
   // reserve memory address range
   int (*mem_reserve) (vx_device_h hdevice, uint64_t address, uint64_t size, int flags, vx_buffer_h* hbuffer);
 

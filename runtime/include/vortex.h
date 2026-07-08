@@ -83,6 +83,9 @@ int vx_dev_caps(vx_device_h hdevice, uint32_t caps_id, uint64_t *value);
 // allocate device memory and return address
 int vx_mem_alloc(vx_device_h hdevice, uint64_t size, int flags, vx_buffer_h* hbuffer);
 
+// allocate device memory and return aligned address
+int vx_mem_alloc_aligned(vx_device_h hdevice, uint64_t size, uint64_t alignment, int flags, vx_buffer_h* hbuffer);
+
 // reserve memory address range
 int vx_mem_reserve(vx_device_h hdevice, uint64_t address, uint64_t size, int flags, vx_buffer_h* hbuffer);
 
