@@ -82,8 +82,8 @@ for path_name, text in (
 ):
     if "cache_debug_t" not in text:
         fail(f"{path_name} does not route cache_debug_t")
-    if "ENABLE_HW_DEBUG_MODULE" not in text:
-        fail(f"{path_name} cache debug routing is not macro guarded")
+    if "ENABLE_HW_DEBUG_CACHE" not in text:
+        fail(f"{path_name} cache debug routing is not cache-group macro guarded")
 
 if not re.search(r"input\s+wire\s+cache_debug_t\s+cache_debug\s*\[HW_DEBUG_CACHE_NUM_SOURCES\]", hw_debug):
     fail("VX_hw_debug.sv does not accept cache_debug array")

@@ -65,8 +65,8 @@ for path_name, text in (
 ):
     if "core_pipeline_debug_t" not in text:
         fail(f"{path_name} does not route core_pipeline_debug_t")
-    if "ENABLE_HW_DEBUG_MODULE" not in text:
-        fail(f"{path_name} debug routing is not macro guarded")
+    if "ENABLE_HW_DEBUG_CORE" not in text:
+        fail(f"{path_name} debug routing is not core-group macro guarded")
 
 for channel in (
     "HW_DBG_CH_SCHEDULE",

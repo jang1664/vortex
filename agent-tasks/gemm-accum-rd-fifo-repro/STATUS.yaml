@@ -1,0 +1,70 @@
+task: gemm-accum-rd-fifo-repro
+state: functional_baseline_fixed
+created: "2026-07-09 01:12"
+updated: "2026-07-09 02:08"
+summary: >
+  Reproduce a GEMM FPGA-only deadlock in simulation by changing GEMM unit
+  unittest input timing, with focus on accumulation read FIFO empty behavior.
+log:
+  - time: "2026-07-09 01:12"
+    entry: >
+      Started investigation. User reports VX_gemm_unit.sv passes unittest,
+      xrt-vcs-sim, and hw_emu, but deadlocks on real FPGA. Suspected symptom is
+      accumulation read FIFO becoming empty. Goal is to make a unittest fail by
+      adjusting input timing.
+  - time: "2026-07-09 01:37"
+    entry: >
+      Added a plusarg-gated accumulate input timing sweep to
+      hw/unittest/gemm_unit/tb_VX_gemm_unit.sv. The bursty sender waits for DUT
+      in_flight before driving accumulate-pass input, so it models the realistic
+      case where data arrives only after GEMM has entered compute/in-flight
+      state. Default burst_len/gap_cycles zero path keeps using the original
+      full-speed sender.
+  - time: "2026-07-09 01:38"
+    entry: >
+      make compile succeeded from hw/unittest/gemm_unit. The generated build
+      copy under build/hw/unittest/gemm_unit could not be used because its
+      Makefile resolved config.mk as build/build/config.mk.
+  - time: "2026-07-09 01:40"
+    entry: >
+      Ran ./simv +NO_WAVE -reportstats -l logs/sim_default.log. Baseline,
+      without GEMM_ACCUM_TIMING_SWEEP, already fails many existing cases and
+      Test 5 load-then-accumulate fails with 4009/4096 mismatches. No
+      GEMM accumulator psum FIFO empty fatal was present.
+  - time: "2026-07-09 01:41"
+    entry: >
+      Ran ./simv +NO_WAVE +GEMM_ACCUM_TIMING_SWEEP -reportstats -l
+      logs/sim_timing_sweep.log. All eight burst/gap patterns failed
+      functionally, but none produced the psum FIFO empty fatal. Trace samples
+      around GEMM_ACCUM_INPUT showed fifo_empty=0, and case logs showed FIFO
+      level after accumulate input remained 2-4 entries.
+  - time: "2026-07-09 01:55"
+    entry: >
+      Queried synthesized URAM primitive properties with Vivado from
+      hw/syn/xilinx/dut/unittest/gemm_unit_32x32/project_1/project_1.runs/synth_1/VX_gemm_unit_top.dcp
+      and the XRT hardware AFU checkpoint
+      build/hw/syn/xilinx/xrt/improve_th16_tcol32_hwexp_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/_x/link/vivado/vpl/prj/prj.gen/my_rm/bd/ulp/ip/ulp_vortex_afu_1_0/ulp_vortex_afu_1_0.dcp.
+      In both checkpoints, all URAM288 cells had IREG_PRE_A/B=FALSE,
+      OREG_A/B=FALSE, OREG_ECC_A/B=FALSE, REG_CAS_A/B=FALSE, and
+      CASCADE_ORDER_A/B=NONE. The RM ulp.dcp blackboxes the AFU and exposes no
+      URAM cells, so it cannot be used for this latency check.
+  - time: "2026-07-09 02:08"
+    entry: >
+      Identified the unittest functional failures as an output read address unit
+      mismatch, separate from the suspected accumulation FIFO timing issue.
+      Non-GEMM_NAIVE RTL now interprets o_lmem read addresses in
+      GEMM_PSUM_DATA_SIZE units, while GEMM_NAIVE uses GEMM_OUTPUT_DATA_SIZE
+      units. Updated tb_VX_gemm_unit.sv read_output() to encode addresses with
+      the same conditional stride. After this, make compile passed and
+      ./simv +NO_WAVE -reportstats -l logs/sim_default_addrstride_fixed.log
+      passed with [RESULT] Functional simulation PASSED and Test 5 PASSED.
+pitfalls:
+  - >
+    Earlier timing sweep results were polluted by the output read address stride
+    mismatch. Treat them only as pre-fix evidence that no psum FIFO empty fatal
+    fired; rerun the sweep after the address fix before drawing timing
+    conclusions.
+  - >
+    The tested burst/gap input timing does not support the hypothesis that legal
+    post-COMPUTE input stalls alone cause accumulation read FIFO underflow in
+    simulation.
