@@ -52,13 +52,21 @@ module VX_hw_debug import VX_gpu_pkg::*; #(
     input  wire [PENDING_WR_SIZEW-1:0]      vx_pending_writes,
     input  wire                             vx_pending_writes_empty,
 
+`ifdef ENABLE_HW_DEBUG_PC
     input  wire                             hw_debug_pc_valid [HW_DEBUG_NUM_PC_SOURCES],
-	    input  wire [HW_DEBUG_CORE_ID_WIDTH-1:0] hw_debug_pc_core_id [HW_DEBUG_NUM_PC_SOURCES],
-	    input  wire [NW_WIDTH-1:0]              hw_debug_pc_wid [HW_DEBUG_NUM_PC_SOURCES],
-	    input  wire [`XLEN-1:0]                 hw_debug_pc [HW_DEBUG_NUM_PC_SOURCES],
-	    input  wire core_pipeline_debug_t       core_pipeline_debug [HW_DEBUG_NUM_PC_SOURCES],
-        input  wire gemm_unit_debug_t          gemm_unit_debug [HW_DEBUG_NUM_PC_SOURCES],
-	    input  wire cache_debug_t               cache_debug [HW_DEBUG_CACHE_NUM_SOURCES],
+    input  wire [HW_DEBUG_CORE_ID_WIDTH-1:0] hw_debug_pc_core_id [HW_DEBUG_NUM_PC_SOURCES],
+    input  wire [NW_WIDTH-1:0]              hw_debug_pc_wid [HW_DEBUG_NUM_PC_SOURCES],
+    input  wire [`XLEN-1:0]                 hw_debug_pc [HW_DEBUG_NUM_PC_SOURCES],
+`endif
+`ifdef ENABLE_HW_DEBUG_CORE
+    input  wire core_pipeline_debug_t       core_pipeline_debug [HW_DEBUG_NUM_PC_SOURCES],
+`endif
+`ifdef ENABLE_HW_DEBUG_GEMM
+    input  wire gemm_unit_debug_t           gemm_unit_debug [HW_DEBUG_NUM_PC_SOURCES],
+`endif
+`ifdef ENABLE_HW_DEBUG_CACHE
+    input  wire cache_debug_t               cache_debug [HW_DEBUG_CACHE_NUM_SOURCES],
+`endif
 
 	    input  wire                             s_axi_ctrl_awvalid,
     input  wire                             s_axi_ctrl_awready,
@@ -120,8 +128,63 @@ module VX_hw_debug import VX_gpu_pkg::*; #(
 
 	    `VX_STATIC_ASSERT(`IS_POW2(PC_RING_DEPTH), ("PC_RING_DEPTH must be a power of 2"))
 	    `VX_STATIC_ASSERT(PC_SAMPLE_LOG2 > 0, ("PC_SAMPLE_LOG2 must be greater than zero"))
-	    `VX_STATIC_ASSERT(HW_DEBUG_CACHE_NUM_SOURCES <= 256, ("too many HW debug cache sources"))
-	    `VX_STATIC_ASSERT(HW_DEBUG_CACHE_MAX_PORTS <= 128, ("too many HW debug cache ports"))
+		    `VX_STATIC_ASSERT(HW_DEBUG_CACHE_NUM_SOURCES <= 256, ("too many HW debug cache sources"))
+		    `VX_STATIC_ASSERT(HW_DEBUG_CACHE_MAX_PORTS <= 128, ("too many HW debug cache ports"))
+
+    localparam [12:0] HW_DEBUG_CAPS = {
+        6'b0,
+`ifdef ENABLE_HW_DEBUG_GEMM
+        1'b1,
+`else
+        1'b0,
+`endif
+`ifdef ENABLE_HW_DEBUG_CACHE
+        1'b1,
+`else
+        1'b0,
+`endif
+`ifdef ENABLE_HW_DEBUG_CORE
+        1'b1,
+`else
+        1'b0,
+`endif
+`ifdef ENABLE_HW_DEBUG_PC
+        1'b1,
+`else
+        1'b0,
+`endif
+`ifdef ENABLE_HW_DEBUG_AXI
+        1'b1,
+`else
+        1'b0,
+`endif
+`ifdef ENABLE_HW_DEBUG_AFU
+        1'b1,
+`else
+        1'b0,
+`endif
+`ifdef ENABLE_HW_DEBUG_BASE
+        1'b1
+`else
+        1'b0
+`endif
+    };
+
+`ifdef ENABLE_HW_DEBUG_AXI
+    localparam [7:0] HW_DEBUG_STATUS_AXI_PORTS = 8'(NUM_AXI_PORTS);
+`else
+    localparam [7:0] HW_DEBUG_STATUS_AXI_PORTS = 8'(0);
+`endif
+
+`ifdef ENABLE_HW_DEBUG_PC
+    localparam [7:0] HW_DEBUG_STATUS_CORE_SOURCES = 8'(HW_DEBUG_NUM_PC_SOURCES);
+`elsif ENABLE_HW_DEBUG_CORE
+    localparam [7:0] HW_DEBUG_STATUS_CORE_SOURCES = 8'(HW_DEBUG_NUM_PC_SOURCES);
+`elsif ENABLE_HW_DEBUG_GEMM
+    localparam [7:0] HW_DEBUG_STATUS_CORE_SOURCES = 8'(HW_DEBUG_NUM_PC_SOURCES);
+`else
+    localparam [7:0] HW_DEBUG_STATUS_CORE_SOURCES = 8'(0);
+`endif
 
     localparam DBG_ID              = 8'h00;
     localparam DBG_AFU_STATUS      = 8'h01;
@@ -246,6 +309,7 @@ module VX_hw_debug import VX_gpu_pkg::*; #(
 
     reg [63:0] cycle_count;
 
+`ifdef ENABLE_HW_DEBUG_PC
     reg [PC_SOURCEW-1:0] pc_source_rr;
     reg [63:0] pc_event_count;
     reg [63:0] pc_sample_count;
@@ -279,9 +343,9 @@ module VX_hw_debug import VX_gpu_pkg::*; #(
         pc_event_src     = '0;
         pc_event_core_id = '0;
         pc_event_wid     = '0;
-        pc_event_pc      = '0;
-        for (pc_sel_offset = 0; pc_sel_offset < HW_DEBUG_NUM_PC_SOURCES; pc_sel_offset = pc_sel_offset + 1) begin
-            pc_sel_candidate = pc_source_rr + pc_sel_offset;
+	        pc_event_pc      = '0;
+	        for (pc_sel_offset = 0; pc_sel_offset < HW_DEBUG_NUM_PC_SOURCES; pc_sel_offset = pc_sel_offset + 1) begin
+	            pc_sel_candidate = 32'(pc_source_rr) + pc_sel_offset;
             if (pc_sel_candidate >= HW_DEBUG_NUM_PC_SOURCES) begin
                 pc_sel_candidate = pc_sel_candidate - HW_DEBUG_NUM_PC_SOURCES;
             end
@@ -294,6 +358,7 @@ module VX_hw_debug import VX_gpu_pkg::*; #(
             end
         end
     end
+`endif
 
     wire s_axi_ctrl_aw_fire = s_axi_ctrl_awvalid && s_axi_ctrl_awready;
     wire s_axi_ctrl_w_fire  = s_axi_ctrl_wvalid && s_axi_ctrl_wready;
@@ -331,6 +396,7 @@ module VX_hw_debug import VX_gpu_pkg::*; #(
     reg [31:0] ctrl_rdata_hold;
     reg [1:0]  ctrl_rresp_hold;
 
+`ifdef ENABLE_HW_DEBUG_AXI
     reg [63:0] axi_aw_fire_count [NUM_AXI_PORTS];
     reg [63:0] axi_w_fire_count [NUM_AXI_PORTS];
     reg [63:0] axi_b_fire_count [NUM_AXI_PORTS];
@@ -363,70 +429,84 @@ module VX_hw_debug import VX_gpu_pkg::*; #(
     reg [AXI_ADDR_WIDTH-1:0] axi_araddr_hold [NUM_AXI_PORTS];
     reg [AXI_ID_WIDTH-1:0]   axi_arid_hold [NUM_AXI_PORTS];
     reg [7:0]                axi_arlen_hold [NUM_AXI_PORTS];
-	    reg [AXI_ID_WIDTH-1:0]   axi_rid_hold [NUM_AXI_PORTS];
-	    reg [1:0]                axi_rresp_hold [NUM_AXI_PORTS];
-	    reg                      axi_rlast_hold [NUM_AXI_PORTS];
+    reg [AXI_ID_WIDTH-1:0]   axi_rid_hold [NUM_AXI_PORTS];
+    reg [1:0]                axi_rresp_hold [NUM_AXI_PORTS];
+    reg                      axi_rlast_hold [NUM_AXI_PORTS];
+`endif
 
-	    reg [31:0]               core_stall_age [HW_DEBUG_NUM_PC_SOURCES][HW_DEBUG_CORE_PIPE_CHANNELS];
-	    reg [63:0]               core_flags [HW_DEBUG_NUM_PC_SOURCES][HW_DEBUG_CORE_PIPE_CHANNELS];
-	    reg [63:0]               core_progress_count;
-	    reg [63:0]               core_payload_change_count;
-	    reg                      core_first_stuck_valid;
-	    reg [PC_SOURCEW-1:0]     core_first_stuck_core;
-	    reg [CORE_CHANNELW-1:0]  core_first_stuck_channel;
-	    reg [63:0]               core_first_stuck_cycle;
+`ifdef ENABLE_HW_DEBUG_CORE
+    reg [31:0]               core_stall_age [HW_DEBUG_NUM_PC_SOURCES][HW_DEBUG_CORE_PIPE_CHANNELS];
+    reg [63:0]               core_flags [HW_DEBUG_NUM_PC_SOURCES][HW_DEBUG_CORE_PIPE_CHANNELS];
+    reg [63:0]               core_progress_count;
+    reg [63:0]               core_payload_change_count;
+    reg                      core_first_stuck_valid;
+    reg [PC_SOURCEW-1:0]     core_first_stuck_core;
+    reg [CORE_CHANNELW-1:0]  core_first_stuck_channel;
+    reg [63:0]               core_first_stuck_cycle;
 
-	    reg [31:0]               cache_req_stall_age [HW_DEBUG_CACHE_NUM_SOURCES][2][HW_DEBUG_CACHE_MAX_PORTS];
-	    reg [31:0]               cache_rsp_stall_age [HW_DEBUG_CACHE_NUM_SOURCES][2][HW_DEBUG_CACHE_MAX_PORTS];
-	    reg [63:0]               cache_flags [HW_DEBUG_CACHE_NUM_SOURCES][2][HW_DEBUG_CACHE_MAX_PORTS];
-	    reg [63:0]               cache_req_fire_count [HW_DEBUG_CACHE_NUM_SOURCES][2][HW_DEBUG_CACHE_MAX_PORTS];
-	    reg [63:0]               cache_req_stall_count [HW_DEBUG_CACHE_NUM_SOURCES][2][HW_DEBUG_CACHE_MAX_PORTS];
-	    reg [63:0]               cache_rsp_fire_count [HW_DEBUG_CACHE_NUM_SOURCES][2][HW_DEBUG_CACHE_MAX_PORTS];
-	    reg [63:0]               cache_rsp_stall_count [HW_DEBUG_CACHE_NUM_SOURCES][2][HW_DEBUG_CACHE_MAX_PORTS];
-	    reg [63:0]               cache_last_req [HW_DEBUG_CACHE_NUM_SOURCES][2][HW_DEBUG_CACHE_MAX_PORTS];
-	    reg [63:0]               cache_last_rsp [HW_DEBUG_CACHE_NUM_SOURCES][2][HW_DEBUG_CACHE_MAX_PORTS];
-	    reg [15:0]               cache_req_payload_hash_hold [HW_DEBUG_CACHE_NUM_SOURCES][2][HW_DEBUG_CACHE_MAX_PORTS];
-	    reg [15:0]               cache_rsp_payload_hash_hold [HW_DEBUG_CACHE_NUM_SOURCES][2][HW_DEBUG_CACHE_MAX_PORTS];
-	    reg                      cache_req_stalled [HW_DEBUG_CACHE_NUM_SOURCES][2][HW_DEBUG_CACHE_MAX_PORTS];
-	    reg                      cache_rsp_stalled [HW_DEBUG_CACHE_NUM_SOURCES][2][HW_DEBUG_CACHE_MAX_PORTS];
-	    reg [63:0]               cache_progress_count;
-	    reg [63:0]               cache_payload_change_count;
-	    reg                      cache_first_stuck_valid;
-	    reg [CACHE_SOURCEW-1:0]  cache_first_stuck_source;
-	    reg                      cache_first_stuck_side;
-	    reg [CACHE_PORTW-1:0]    cache_first_stuck_port;
-	    reg [63:0]               cache_first_stuck_cycle;
+    hw_debug_vr_t            core_selected_channel;
+    reg                      core_any_fire;
+    reg                      core_payload_changed_now;
+    reg                      core_stuck_now;
+    reg [PC_SOURCEW-1:0]     core_stuck_core;
+    reg [CORE_CHANNELW-1:0]  core_stuck_channel;
+    reg [63:0]               core_selected_flags;
+    reg [31:0]               core_selected_stall_age;
+`endif
 
-	    hw_debug_vr_t            core_selected_channel;
-	    reg                      core_any_fire;
-	    reg                      core_payload_changed_now;
-	    reg                      core_stuck_now;
-	    reg [PC_SOURCEW-1:0]     core_stuck_core;
-	    reg [CORE_CHANNELW-1:0]  core_stuck_channel;
-	    reg [63:0]               core_selected_flags;
-	    reg [31:0]               core_selected_stall_age;
-	    cache_bus_port_debug_t   cache_selected_port;
-	    reg [63:0]               cache_selected_flags;
-	    reg [31:0]               cache_selected_stall_age;
-	    reg                      cache_port_valid;
-	    reg                      cache_any_fire;
-	    reg                      cache_payload_changed_now;
-	    reg                      cache_stuck_now;
-	    reg [CACHE_SOURCEW-1:0]  cache_stuck_source;
-	    reg                      cache_stuck_side;
-	    reg [CACHE_PORTW-1:0]    cache_stuck_port;
-	    reg                      cache_flags_any;
-	    cache_bus_port_debug_t   cache_scan_port;
-	    cache_bus_port_debug_t   cache_update_port;
+`ifdef ENABLE_HW_DEBUG_CACHE
+    reg [31:0]               cache_req_stall_age [HW_DEBUG_CACHE_NUM_SOURCES][2][HW_DEBUG_CACHE_MAX_PORTS];
+    reg [31:0]               cache_rsp_stall_age [HW_DEBUG_CACHE_NUM_SOURCES][2][HW_DEBUG_CACHE_MAX_PORTS];
+    reg [63:0]               cache_flags [HW_DEBUG_CACHE_NUM_SOURCES][2][HW_DEBUG_CACHE_MAX_PORTS];
+    reg [63:0]               cache_req_fire_count [HW_DEBUG_CACHE_NUM_SOURCES][2][HW_DEBUG_CACHE_MAX_PORTS];
+    reg [63:0]               cache_req_stall_count [HW_DEBUG_CACHE_NUM_SOURCES][2][HW_DEBUG_CACHE_MAX_PORTS];
+    reg [63:0]               cache_rsp_fire_count [HW_DEBUG_CACHE_NUM_SOURCES][2][HW_DEBUG_CACHE_MAX_PORTS];
+    reg [63:0]               cache_rsp_stall_count [HW_DEBUG_CACHE_NUM_SOURCES][2][HW_DEBUG_CACHE_MAX_PORTS];
+    reg [63:0]               cache_last_req [HW_DEBUG_CACHE_NUM_SOURCES][2][HW_DEBUG_CACHE_MAX_PORTS];
+    reg [63:0]               cache_last_rsp [HW_DEBUG_CACHE_NUM_SOURCES][2][HW_DEBUG_CACHE_MAX_PORTS];
+    reg [15:0]               cache_req_payload_hash_hold [HW_DEBUG_CACHE_NUM_SOURCES][2][HW_DEBUG_CACHE_MAX_PORTS];
+    reg [15:0]               cache_rsp_payload_hash_hold [HW_DEBUG_CACHE_NUM_SOURCES][2][HW_DEBUG_CACHE_MAX_PORTS];
+    reg                      cache_req_stalled [HW_DEBUG_CACHE_NUM_SOURCES][2][HW_DEBUG_CACHE_MAX_PORTS];
+    reg                      cache_rsp_stalled [HW_DEBUG_CACHE_NUM_SOURCES][2][HW_DEBUG_CACHE_MAX_PORTS];
+    reg [63:0]               cache_progress_count;
+    reg [63:0]               cache_payload_change_count;
+    reg                      cache_first_stuck_valid;
+    reg [CACHE_SOURCEW-1:0]  cache_first_stuck_source;
+    reg                      cache_first_stuck_side;
+    reg [CACHE_PORTW-1:0]    cache_first_stuck_port;
+    reg [63:0]               cache_first_stuck_cycle;
 
-	    reg [AXI_PORT_COUNTW-1:0] wr_req_count;
-    reg [AXI_PORT_COUNTW-1:0] wr_rsp_count;
-    reg [AXI_PORT_COUNTW-1:0] wr_req_delta;
-    reg [AXI_PORT_COUNTW-1:0] wr_rsp_delta;
-    reg                       axi_flags_any;
-    reg [63:0]                global_flags_set;
-    reg [63:0]                ctrl_flags_set;
+    cache_bus_port_debug_t   cache_selected_port;
+    reg [63:0]               cache_selected_flags;
+    reg [31:0]               cache_selected_stall_age;
+    reg                      cache_port_valid;
+    reg                      cache_any_fire;
+    reg                      cache_payload_changed_now;
+    reg                      cache_stuck_now;
+    reg [CACHE_SOURCEW-1:0]  cache_stuck_source;
+    reg                      cache_stuck_side;
+    reg [CACHE_PORTW-1:0]    cache_stuck_port;
+    reg                      cache_flags_any;
+    cache_bus_port_debug_t   cache_scan_port;
+    cache_bus_port_debug_t   cache_update_port;
+`endif
+
+`ifdef ENABLE_HW_DEBUG_AXI
+    reg [AXI_PORT_COUNTW-1:0] wr_req_count;
+	    reg [AXI_PORT_COUNTW-1:0] wr_rsp_count;
+	    reg [AXI_PORT_COUNTW-1:0] wr_req_delta;
+	    reg [AXI_PORT_COUNTW-1:0] wr_rsp_delta;
+	    reg                       axi_flags_any;
     reg [63:0]                axi_flags_set [NUM_AXI_PORTS];
+`else
+    wire [AXI_PORT_COUNTW-1:0] wr_req_count = '0;
+    wire [AXI_PORT_COUNTW-1:0] wr_rsp_count = '0;
+    wire [AXI_PORT_COUNTW-1:0] wr_req_delta = '0;
+    wire [AXI_PORT_COUNTW-1:0] wr_rsp_delta = '0;
+    wire                       axi_flags_any = 1'b0;
+`endif
+	    reg [63:0]                global_flags_set;
+	    reg [63:0]                ctrl_flags_set;
 
     function automatic [63:0] pack_pc_meta(
         input logic valid,
@@ -640,6 +720,7 @@ module VX_hw_debug import VX_gpu_pkg::*; #(
 	        ctrl_status_data[29:28] = s_axi_ctrl_rresp;
 	    end
 
+`ifdef ENABLE_HW_DEBUG_CORE
 	    reg [63:0] core_status_data;
 	    always @(*) begin
 	        core_status_data = '0;
@@ -680,9 +761,11 @@ module VX_hw_debug import VX_gpu_pkg::*; #(
 	                    core_stuck_channel = CORE_CHANNELW'(core_scan_j);
 	                end
 		            end
-		        end
-		    end
+	        end
+	    end
+`endif
 
+`ifdef ENABLE_HW_DEBUG_CACHE
 	    integer cache_scan_i;
 	    integer cache_scan_s;
 	    integer cache_scan_p;
@@ -692,7 +775,7 @@ module VX_hw_debug import VX_gpu_pkg::*; #(
 	        cache_selected_stall_age = '0;
 	        cache_port_valid = 1'b0;
 	        if (cache_valid
-	         && cache_port_idx < cache_side_port_count(cache_debug[cache_idx], cache_side)) begin
+	         && 8'(cache_port_idx) < cache_side_port_count(cache_debug[cache_idx], cache_side)) begin
 	            cache_selected_port = select_cache_port(cache_debug[cache_idx], cache_side, cache_port_idx);
 	            cache_selected_flags = cache_flags[cache_idx][cache_side][cache_port_idx];
 	            cache_selected_stall_age =
@@ -740,7 +823,9 @@ module VX_hw_debug import VX_gpu_pkg::*; #(
 	            end
 	        end
 	    end
+`endif
 
+`ifdef ENABLE_HW_DEBUG_AXI
 		    integer count_i;
     always @(*) begin
         wr_req_count = '0;
@@ -753,19 +838,27 @@ module VX_hw_debug import VX_gpu_pkg::*; #(
                 wr_rsp_count = wr_rsp_count + AXI_PORT_COUNTW'(1);
             end
         end
-        wr_req_delta = wr_req_count - wr_rsp_count;
-        wr_rsp_delta = wr_rsp_count - wr_req_count;
-    end
+	        wr_req_delta = wr_req_count - wr_rsp_count;
+	        wr_rsp_delta = wr_rsp_count - wr_req_count;
+	    end
 
-    integer any_i;
+	    integer any_i;
     always @(*) begin
         axi_flags_any = 1'b0;
         for (any_i = 0; any_i < NUM_AXI_PORTS; any_i = any_i + 1) begin
             axi_flags_any = axi_flags_any || (|axi_flags[any_i]);
-        end
-    end
+	        end
+	    end
+`endif
 
-	    wire anomaly_seen = (|global_anomaly_flags[63:1]) || (|ctrl_flags) || axi_flags_any || cache_flags_any;
+	    wire anomaly_seen = (|global_anomaly_flags[63:1]) || (|ctrl_flags)
+`ifdef ENABLE_HW_DEBUG_AXI
+                           || axi_flags_any
+`endif
+`ifdef ENABLE_HW_DEBUG_CACHE
+                           || cache_flags_any
+`endif
+                           ;
     wire pending_sign_now = vx_pending_writes[PENDING_WR_SIZEW-1];
     wire pending_underflow_now = (wr_rsp_count > wr_req_count)
                               && (vx_pending_writes < PENDING_WR_SIZEW'(wr_rsp_delta));
@@ -779,12 +872,14 @@ module VX_hw_debug import VX_gpu_pkg::*; #(
     wire ctrl_r_underflow_now = s_axi_ctrl_r_fire && !((ctrl_r_pending != 0) || s_axi_ctrl_ar_fire);
 
     integer flag_i;
-    always @(*) begin
-        global_flags_set = '0;
-        ctrl_flags_set = '0;
-        for (flag_i = 0; flag_i < NUM_AXI_PORTS; flag_i = flag_i + 1) begin
-            axi_flags_set[flag_i] = '0;
-        end
+	    always @(*) begin
+	        global_flags_set = '0;
+	        ctrl_flags_set = '0;
+`ifdef ENABLE_HW_DEBUG_AXI
+	        for (flag_i = 0; flag_i < NUM_AXI_PORTS; flag_i = flag_i + 1) begin
+	            axi_flags_set[flag_i] = '0;
+	        end
+`endif
 
         if (pending_sign_now) begin
             global_flags_set[GLB_FLAG_PENDING_SIGN] = 1'b1;
@@ -795,12 +890,16 @@ module VX_hw_debug import VX_gpu_pkg::*; #(
 	        if (pending_overflow_now) begin
 	            global_flags_set[GLB_FLAG_PENDING_OVERFLOW] = 1'b1;
 	        end
-		    if (core_stuck_now) begin
-		        global_flags_set[GLB_FLAG_CORE_STALL] = 1'b1;
-		    end
-		    if (cache_stuck_now) begin
-		        global_flags_set[GLB_FLAG_CACHE_STALL] = 1'b1;
-		    end
+`ifdef ENABLE_HW_DEBUG_CORE
+			    if (core_stuck_now) begin
+			        global_flags_set[GLB_FLAG_CORE_STALL] = 1'b1;
+			    end
+`endif
+`ifdef ENABLE_HW_DEBUG_CACHE
+			    if (cache_stuck_now) begin
+			        global_flags_set[GLB_FLAG_CACHE_STALL] = 1'b1;
+			    end
+`endif
 
 	        if (s_axi_ctrl_awvalid && !s_axi_ctrl_awready
          && ctrl_aw_stalled && s_axi_ctrl_awaddr != ctrl_awaddr_hold) begin
@@ -842,7 +941,8 @@ module VX_hw_debug import VX_gpu_pkg::*; #(
             global_flags_set[GLB_FLAG_CTRL_PROTOCOL] = 1'b1;
         end
 
-        for (flag_i = 0; flag_i < NUM_AXI_PORTS; flag_i = flag_i + 1) begin
+`ifdef ENABLE_HW_DEBUG_AXI
+	        for (flag_i = 0; flag_i < NUM_AXI_PORTS; flag_i = flag_i + 1) begin
             if (m_axi_awvalid[flag_i] && !m_axi_awready[flag_i]
              && axi_aw_stalled[flag_i]
              && (m_axi_awaddr[flag_i] != axi_awaddr_hold[flag_i]
@@ -891,31 +991,34 @@ module VX_hw_debug import VX_gpu_pkg::*; #(
                 axi_flags_set[flag_i][AXI_FLAG_RRESP_ERROR] = 1'b1;
                 global_flags_set[GLB_FLAG_AXI_RESP_ERROR] = 1'b1;
             end
-            if (|axi_flags_set[flag_i][AXI_FLAG_R_UNDERFLOW:AXI_FLAG_AW_STABLE]) begin
-                global_flags_set[GLB_FLAG_AXI_PROTOCOL] = 1'b1;
-            end
-        end
-    end
+	            if (|axi_flags_set[flag_i][AXI_FLAG_R_UNDERFLOW:AXI_FLAG_AW_STABLE]) begin
+	                global_flags_set[GLB_FLAG_AXI_PROTOCOL] = 1'b1;
+		        end
+		    end
+`endif
+	    end
 
 		    integer i;
 		    integer j;
 		    integer k;
-		    always @(posedge clk) begin
-		        if (reset || debug_clear) begin
-            cycle_count        <= '0;
-            pc_source_rr       <= '0;
-            pc_event_count     <= '0;
-            pc_sample_count    <= '0;
+			    always @(posedge clk) begin
+			        if (reset || debug_clear) begin
+	            cycle_count        <= '0;
+`ifdef ENABLE_HW_DEBUG_PC
+	            pc_source_rr       <= '0;
+	            pc_event_count     <= '0;
+	            pc_sample_count    <= '0;
             pc_same_count      <= '0;
             pc_hash            <= '0;
             pc_sample_ctr      <= '0;
             pc_ring_wptr       <= '0;
             pc_last_valid      <= 1'b0;
             pc_last_core_id    <= '0;
-            pc_last_wid        <= '0;
-            pc_last_pc         <= '0;
-            pc_last_cycle      <= '0;
-            ctrl_aw_fire_count <= '0;
+	            pc_last_wid        <= '0;
+	            pc_last_pc         <= '0;
+	            pc_last_cycle      <= '0;
+`endif
+	            ctrl_aw_fire_count <= '0;
             ctrl_w_fire_count  <= '0;
             ctrl_b_fire_count  <= '0;
             ctrl_ar_fire_count <= '0;
@@ -944,33 +1047,42 @@ module VX_hw_debug import VX_gpu_pkg::*; #(
             ctrl_araddr_hold   <= '0;
 	            ctrl_rdata_hold    <= '0;
 	            ctrl_rresp_hold    <= '0;
-	            core_progress_count <= '0;
-	            core_payload_change_count <= '0;
-	            core_first_stuck_valid <= 1'b0;
-		            core_first_stuck_core <= '0;
-		            core_first_stuck_channel <= '0;
-		            core_first_stuck_cycle <= '0;
-		            cache_progress_count <= '0;
-		            cache_payload_change_count <= '0;
+`ifdef ENABLE_HW_DEBUG_CORE
+		            core_progress_count <= '0;
+		            core_payload_change_count <= '0;
+		            core_first_stuck_valid <= 1'b0;
+			            core_first_stuck_core <= '0;
+			            core_first_stuck_channel <= '0;
+			            core_first_stuck_cycle <= '0;
+`endif
+`ifdef ENABLE_HW_DEBUG_CACHE
+			            cache_progress_count <= '0;
+			            cache_payload_change_count <= '0;
 		            cache_first_stuck_valid <= 1'b0;
 		            cache_first_stuck_source <= '0;
-		            cache_first_stuck_side <= 1'b0;
-		            cache_first_stuck_port <= '0;
-		            cache_first_stuck_cycle <= '0;
-	            for (i = 0; i < PC_RING_DEPTH; i = i + 1) begin
-	                pc_ring_valid[i]   <= 1'b0;
+			            cache_first_stuck_side <= 1'b0;
+			            cache_first_stuck_port <= '0;
+			            cache_first_stuck_cycle <= '0;
+`endif
+`ifdef ENABLE_HW_DEBUG_PC
+		            for (i = 0; i < PC_RING_DEPTH; i = i + 1) begin
+		                pc_ring_valid[i]   <= 1'b0;
 	                pc_ring_core_id[i] <= '0;
 	                pc_ring_wid[i]     <= '0;
-	                pc_ring_pc[i]      <= '0;
-	                pc_ring_cycle[i]   <= '0;
-	            end
-		            for (i = 0; i < HW_DEBUG_NUM_PC_SOURCES; i = i + 1) begin
-		                for (j = 0; j < HW_DEBUG_CORE_PIPE_CHANNELS; j = j + 1) begin
-		                    core_stall_age[i][j] <= '0;
-		                    core_flags[i][j] <= '0;
-		                end
+		                pc_ring_pc[i]      <= '0;
+		                pc_ring_cycle[i]   <= '0;
 		            end
-		            for (i = 0; i < HW_DEBUG_CACHE_NUM_SOURCES; i = i + 1) begin
+`endif
+`ifdef ENABLE_HW_DEBUG_CORE
+			            for (i = 0; i < HW_DEBUG_NUM_PC_SOURCES; i = i + 1) begin
+			                for (j = 0; j < HW_DEBUG_CORE_PIPE_CHANNELS; j = j + 1) begin
+		                    core_stall_age[i][j] <= '0;
+			                    core_flags[i][j] <= '0;
+			                end
+			            end
+`endif
+`ifdef ENABLE_HW_DEBUG_CACHE
+			            for (i = 0; i < HW_DEBUG_CACHE_NUM_SOURCES; i = i + 1) begin
 		                for (j = 0; j < 2; j = j + 1) begin
 		                    for (k = 0; k < HW_DEBUG_CACHE_MAX_PORTS; k = k + 1) begin
 		                        cache_req_stall_age[i][j][k] <= '0;
@@ -986,10 +1098,12 @@ module VX_hw_debug import VX_gpu_pkg::*; #(
 		                        cache_rsp_payload_hash_hold[i][j][k] <= '0;
 		                        cache_req_stalled[i][j][k] <= 1'b0;
 		                        cache_rsp_stalled[i][j][k] <= 1'b0;
-		                    end
-		                end
-		            end
-		            for (i = 0; i < NUM_AXI_PORTS; i = i + 1) begin
+			                    end
+			                end
+			            end
+`endif
+`ifdef ENABLE_HW_DEBUG_AXI
+			            for (i = 0; i < NUM_AXI_PORTS; i = i + 1) begin
                 axi_aw_fire_count[i]  <= '0;
                 axi_w_fire_count[i]   <= '0;
                 axi_b_fire_count[i]   <= '0;
@@ -1023,10 +1137,11 @@ module VX_hw_debug import VX_gpu_pkg::*; #(
                 axi_arid_hold[i]      <= '0;
                 axi_arlen_hold[i]     <= '0;
                 axi_rid_hold[i]       <= '0;
-                axi_rresp_hold[i]     <= '0;
-                axi_rlast_hold[i]     <= 1'b0;
-            end
-        end else if (!debug_freeze) begin
+	                axi_rresp_hold[i]     <= '0;
+	                axi_rlast_hold[i]     <= 1'b0;
+	            end
+`endif
+	        end else if (!debug_freeze) begin
             cycle_count <= cycle_count + 1;
 
             if (|global_flags_set) begin
@@ -1035,11 +1150,12 @@ module VX_hw_debug import VX_gpu_pkg::*; #(
                     anomaly_first_cycle <= cycle_count;
                 end
                 anomaly_last_cycle <= cycle_count;
-	            end
-	            ctrl_flags <= ctrl_flags | ctrl_flags_set;
+		            end
+		            ctrl_flags <= ctrl_flags | ctrl_flags_set;
 
-	            if (core_any_fire) begin
-	                core_progress_count <= core_progress_count + 1;
+`ifdef ENABLE_HW_DEBUG_CORE
+		            if (core_any_fire) begin
+		                core_progress_count <= core_progress_count + 1;
 	            end
 	            if (core_payload_changed_now) begin
 	                core_payload_change_count <= core_payload_change_count + 1;
@@ -1067,11 +1183,13 @@ module VX_hw_debug import VX_gpu_pkg::*; #(
 	                    if (core_pipeline_debug[i].channels[j].payload_changed) begin
 	                        core_flags[i][j][CORE_FLAG_PAYLOAD_CHANGED] <= 1'b1;
 	                    end
-		                end
-		            end
+				                end
+			            end
 
-		            if (cache_any_fire) begin
-		                cache_progress_count <= cache_progress_count + 1;
+`endif
+`ifdef ENABLE_HW_DEBUG_CACHE
+			            if (cache_any_fire) begin
+			                cache_progress_count <= cache_progress_count + 1;
 		            end
 		            if (cache_payload_changed_now) begin
 		                cache_payload_change_count <= cache_payload_change_count + 1;
@@ -1143,10 +1261,11 @@ module VX_hw_debug import VX_gpu_pkg::*; #(
 		                            end
 		                        end
 		                    end
-		                end
-		            end
+			                end
+			            end
 
-		            if (s_axi_ctrl_awvalid && !s_axi_ctrl_awready) begin
+`endif
+			            if (s_axi_ctrl_awvalid && !s_axi_ctrl_awready) begin
 	                if (!ctrl_aw_stalled) begin
 	                    ctrl_awaddr_hold <= s_axi_ctrl_awaddr;
                 end
@@ -1204,14 +1323,15 @@ module VX_hw_debug import VX_gpu_pkg::*; #(
             end else if (!ctrl_write_pair_fire && s_axi_ctrl_b_fire && ctrl_b_pending != 0) begin
                 ctrl_b_pending <= ctrl_b_pending - 8'd1;
             end
-            if (s_axi_ctrl_ar_fire && !s_axi_ctrl_r_fire) begin
-                ctrl_r_pending <= ctrl_r_pending + 8'd1;
-            end else if (!s_axi_ctrl_ar_fire && s_axi_ctrl_r_fire && ctrl_r_pending != 0) begin
-                ctrl_r_pending <= ctrl_r_pending - 8'd1;
-            end
+	            if (s_axi_ctrl_ar_fire && !s_axi_ctrl_r_fire) begin
+	                ctrl_r_pending <= ctrl_r_pending + 8'd1;
+	            end else if (!s_axi_ctrl_ar_fire && s_axi_ctrl_r_fire && ctrl_r_pending != 0) begin
+	                ctrl_r_pending <= ctrl_r_pending - 8'd1;
+	            end
 
-            if (pc_event_valid) begin
-                pc_event_count <= pc_event_count + 1;
+`ifdef ENABLE_HW_DEBUG_PC
+	            if (pc_event_valid) begin
+	                pc_event_count <= pc_event_count + 1;
                 pc_hash <= {pc_hash[62:0], pc_hash[63]} ^ 64'(pc_event_pc);
                 if (pc_last_valid && pc_event_pc == pc_last_pc) begin
                     pc_same_count <= pc_same_count + 1;
@@ -1243,15 +1363,16 @@ module VX_hw_debug import VX_gpu_pkg::*; #(
                         pc_ring_wptr <= pc_ring_wptr + PC_RING_ADDRW'(1);
                     end
                 end
-                pc_sample_ctr <= pc_sample_ctr + PC_SAMPLE_LOG2'(1);
-            end
+	                pc_sample_ctr <= pc_sample_ctr + PC_SAMPLE_LOG2'(1);
+	            end
 
-            if (s_axi_ctrl_aw_fire) begin
+`endif
+	            if (s_axi_ctrl_aw_fire) begin
                 ctrl_aw_fire_count <= ctrl_aw_fire_count + 1;
             end
             if (s_axi_ctrl_w_fire) begin
                 ctrl_w_fire_count <= ctrl_w_fire_count + 1;
-                ctrl_last_write <= {s_axi_ctrl_wdata, 8'b0, s_axi_ctrl_awaddr, 4'b0, s_axi_ctrl_wstrb, 4'b0, s_axi_ctrl_bresp};
+	                ctrl_last_write <= {2'b0, s_axi_ctrl_wdata, 8'b0, s_axi_ctrl_awaddr, 4'b0, s_axi_ctrl_wstrb, 4'b0, s_axi_ctrl_bresp};
             end
             if (s_axi_ctrl_b_fire) begin
                 ctrl_b_fire_count <= ctrl_b_fire_count + 1;
@@ -1275,9 +1396,10 @@ module VX_hw_debug import VX_gpu_pkg::*; #(
              || (s_axi_ctrl_arvalid && !s_axi_ctrl_arready)
              || (s_axi_ctrl_rvalid && !s_axi_ctrl_rready)) begin
                 ctrl_stall_count <= ctrl_stall_count + 1;
-            end
+	            end
 
-            for (i = 0; i < NUM_AXI_PORTS; i = i + 1) begin
+`ifdef ENABLE_HW_DEBUG_AXI
+	            for (i = 0; i < NUM_AXI_PORTS; i = i + 1) begin
                 axi_flags[i] <= axi_flags[i] | axi_flags_set[i];
 
                 if (m_axi_awvalid[i] && !m_axi_awready[i]) begin
@@ -1376,12 +1498,13 @@ module VX_hw_debug import VX_gpu_pkg::*; #(
                 if (m_axi_arvalid[i] && !m_axi_arready[i]) begin
                     axi_ar_stall_count[i] <= axi_ar_stall_count[i] + 1;
                 end
-                if (m_axi_rvalid[i] && !m_axi_rready[i]) begin
-                    axi_r_stall_count[i] <= axi_r_stall_count[i] + 1;
-                end
-            end
-        end
-    end
+	                if (m_axi_rvalid[i] && !m_axi_rready[i]) begin
+	                    axi_r_stall_count[i] <= axi_r_stall_count[i] + 1;
+	                end
+	            end
+`endif
+	        end
+	    end
 
     always @(*) begin
         debug_rdata = 64'h0;
@@ -1392,12 +1515,13 @@ module VX_hw_debug import VX_gpu_pkg::*; #(
             DBG_AFU_STATUS: begin
                 debug_rdata = afu_status_data;
             end
-            DBG_CYCLE_COUNT: begin
-                debug_rdata = cycle_count;
-            end
-            DBG_PC_EVENT_COUNT: begin
-                debug_rdata = pc_event_count;
-            end
+	            DBG_CYCLE_COUNT: begin
+	                debug_rdata = cycle_count;
+	            end
+`ifdef ENABLE_HW_DEBUG_PC
+	            DBG_PC_EVENT_COUNT: begin
+	                debug_rdata = pc_event_count;
+	            end
             DBG_PC_LAST_META: begin
                 debug_rdata = pack_pc_meta(pc_last_valid, pc_last_core_id, pc_last_wid, pc_last_cycle);
             end
@@ -1418,18 +1542,20 @@ module VX_hw_debug import VX_gpu_pkg::*; #(
                     pc_ring_cycle[ring_idx]
                 ) : 64'hBAD0_DB60_0000_0000;
             end
-            DBG_PC_RING_VALUE: begin
-                debug_rdata = ring_valid ? pc_ring_pc[ring_idx] : 64'hBAD0_DB60_0000_0001;
-            end
-            DBG_ANOMALY_FLAGS: begin
-                debug_rdata = {global_anomaly_flags[63:1], anomaly_seen};
-            end
-            DBG_ANOMALY_CYCLES: begin
-                debug_rdata = {anomaly_last_cycle[31:0], anomaly_first_cycle[31:0]};
-            end
-            DBG_AXI_AW_FIRE: begin
-                debug_rdata = port_valid ? axi_aw_fire_count[port_idx] : 64'hBAD0_DB60_0000_0010;
-            end
+	            DBG_PC_RING_VALUE: begin
+	                debug_rdata = ring_valid ? pc_ring_pc[ring_idx] : 64'hBAD0_DB60_0000_0001;
+	            end
+`endif
+	            DBG_ANOMALY_FLAGS: begin
+	                debug_rdata = {global_anomaly_flags[63:1], anomaly_seen};
+	            end
+	            DBG_ANOMALY_CYCLES: begin
+	                debug_rdata = {anomaly_last_cycle[31:0], anomaly_first_cycle[31:0]};
+	            end
+`ifdef ENABLE_HW_DEBUG_AXI
+	            DBG_AXI_AW_FIRE: begin
+	                debug_rdata = port_valid ? axi_aw_fire_count[port_idx] : 64'hBAD0_DB60_0000_0010;
+	            end
             DBG_AXI_W_FIRE: begin
                 debug_rdata = port_valid ? axi_w_fire_count[port_idx] : 64'hBAD0_DB60_0000_0011;
             end
@@ -1505,14 +1631,15 @@ module VX_hw_debug import VX_gpu_pkg::*; #(
                     ? {32'(m_axi_wr_w_handshake_cnt[port_idx]), 32'(m_axi_wr_aw_burst_total_cnt[port_idx])}
                     : 64'hBAD0_DB60_0000_0024;
             end
-            DBG_AXI_WR_LAST_COUNTS: begin
-                debug_rdata = port_valid
-                    ? {32'(m_axi_wr_b_handshake_cnt[port_idx]), 32'(m_axi_wr_wlast_cnt[port_idx])}
-                    : 64'hBAD0_DB60_0000_0025;
-            end
-            DBG_CTRL_STATUS: begin
-                debug_rdata = ctrl_status_data;
-            end
+	            DBG_AXI_WR_LAST_COUNTS: begin
+	                debug_rdata = port_valid
+	                    ? {32'(m_axi_wr_b_handshake_cnt[port_idx]), 32'(m_axi_wr_wlast_cnt[port_idx])}
+	                    : 64'hBAD0_DB60_0000_0025;
+	            end
+`endif
+	            DBG_CTRL_STATUS: begin
+	                debug_rdata = ctrl_status_data;
+	            end
             DBG_CTRL_COUNTS: begin
                 debug_rdata = {ctrl_r_fire_count[15:0], ctrl_ar_fire_count[15:0], ctrl_w_fire_count[15:0], ctrl_aw_fire_count[15:0]};
             end
@@ -1522,12 +1649,13 @@ module VX_hw_debug import VX_gpu_pkg::*; #(
             DBG_CTRL_LAST_READ: begin
                 debug_rdata = ctrl_last_read;
             end
-	            DBG_CTRL_FLAGS: begin
-	                debug_rdata = ctrl_flags;
-	            end
-	            DBG_CORE_STATUS: begin
-	                debug_rdata = core_status_data;
-	            end
+		            DBG_CTRL_FLAGS: begin
+		                debug_rdata = ctrl_flags;
+		            end
+`ifdef ENABLE_HW_DEBUG_CORE
+		            DBG_CORE_STATUS: begin
+		                debug_rdata = core_status_data;
+		            end
 	            DBG_CORE_CHANNEL: begin
 	                debug_rdata = (core_valid && core_channel_valid)
 	                    ? pack_core_channel(core_selected_channel, core_selected_stall_age)
@@ -1546,11 +1674,13 @@ module VX_hw_debug import VX_gpu_pkg::*; #(
 	                    core_first_stuck_cycle
 	                );
 	            end
-		    DBG_CORE_PROGRESS: begin
-		        debug_rdata = {core_payload_change_count[31:0], core_progress_count[31:0]};
-		    end
-		    DBG_CACHE_STATUS: begin
-		        debug_rdata = '0;
+			    DBG_CORE_PROGRESS: begin
+			        debug_rdata = {core_payload_change_count[31:0], core_progress_count[31:0]};
+			    end
+`endif
+`ifdef ENABLE_HW_DEBUG_CACHE
+			    DBG_CACHE_STATUS: begin
+			        debug_rdata = '0;
 		        debug_rdata[15:0] = 16'(HW_DEBUG_CACHE_NUM_SOURCES);
 		        debug_rdata[23:16] = 8'(HW_DEBUG_CACHE_MAX_CORE_PORTS);
 		        debug_rdata[31:24] = 8'(HW_DEBUG_CACHE_MAX_MEM_PORTS);
@@ -1592,11 +1722,13 @@ module VX_hw_debug import VX_gpu_pkg::*; #(
 		            cache_first_stuck_cycle
 		        );
 		    end
-		    DBG_CACHE_PROGRESS: begin
-		        debug_rdata = {cache_payload_change_count[31:0], cache_progress_count[31:0]};
-		    end
-            DBG_GEMM_STATUS: begin
-                if (core_valid) begin
+			    DBG_CACHE_PROGRESS: begin
+			        debug_rdata = {cache_payload_change_count[31:0], cache_progress_count[31:0]};
+			    end
+`endif
+`ifdef ENABLE_HW_DEBUG_GEMM
+	            DBG_GEMM_STATUS: begin
+	                if (core_valid) begin
                     debug_rdata = '0;
                     debug_rdata[0]  = gemm_unit_debug[core_idx].valid;
                     debug_rdata[1]  = gemm_unit_debug[core_idx].computing;
@@ -1646,24 +1778,25 @@ module VX_hw_debug import VX_gpu_pkg::*; #(
                     ? {32'(gemm_unit_debug[core_idx].acc_output_count), 32'(gemm_unit_debug[core_idx].scaler_valid_count)}
                     : 64'hBAD0_DB60_0000_0063;
             end
-            DBG_GEMM_COUNTS2: begin
-                debug_rdata = core_valid
-                    ? {32'(gemm_unit_debug[core_idx].rd_wr_conflict_count), 32'(gemm_unit_debug[core_idx].psum_underflow_count)}
-                    : 64'hBAD0_DB60_0000_0064;
-            end
-		    default: begin
-		        debug_rdata = 64'hDEAD_DB60_BAD0_0000;
+	            DBG_GEMM_COUNTS2: begin
+	                debug_rdata = core_valid
+	                    ? {32'(gemm_unit_debug[core_idx].rd_wr_conflict_count), 32'(gemm_unit_debug[core_idx].psum_underflow_count)}
+	                    : 64'hBAD0_DB60_0000_0064;
+	            end
+`endif
+			    default: begin
+			        debug_rdata = 64'hDEAD_DB60_BAD0_0000;
 		    end
         endcase
     end
 
-    assign debug_status = {
-        8'(NUM_AXI_PORTS),
-        8'(HW_DEBUG_NUM_PC_SOURCES),
-        13'b0,
-        anomaly_seen,
-        debug_freeze,
-        1'b1
+	    assign debug_status = {
+	        HW_DEBUG_STATUS_AXI_PORTS,
+	        HW_DEBUG_STATUS_CORE_SOURCES,
+	        HW_DEBUG_CAPS,
+	        anomaly_seen,
+	        debug_freeze,
+	        1'b1
     };
 
 endmodule

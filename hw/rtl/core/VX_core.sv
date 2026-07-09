@@ -45,14 +45,18 @@ module VX_core import VX_gpu_pkg::*; #(
     VX_gbar_bus_if.master   gbar_bus_if,
 `endif
 
-`ifdef ENABLE_HW_DEBUG_MODULE
+`ifdef ENABLE_HW_DEBUG_PC
 	    output wire                         hw_debug_pc_valid,
 	    output wire [HW_DEBUG_CORE_ID_WIDTH-1:0] hw_debug_pc_core_id,
 	    output wire [NW_WIDTH-1:0]          hw_debug_pc_wid,
 	    output wire [`XLEN-1:0]             hw_debug_pc,
+`endif
+`ifdef ENABLE_HW_DEBUG_CORE
 	    output core_pipeline_debug_t        core_pipeline_debug,
+`endif
+`ifdef ENABLE_HW_DEBUG_GEMM
         output gemm_unit_debug_t           gemm_unit_debug,
-	`endif
+`endif
 
 	    // Status
     output wire             busy
@@ -103,7 +107,7 @@ module VX_core import VX_gpu_pkg::*; #(
 	        .TAG_WIDTH (DCACHE_TAG_WIDTH)
 	    ) dma_global_data_if();
 
-	`ifdef ENABLE_HW_DEBUG_MODULE
+	`ifdef ENABLE_HW_DEBUG_CORE
 	    issue_pipeline_debug_t issue_pipeline_debug;
 	`endif
 
@@ -198,7 +202,7 @@ module VX_core import VX_gpu_pkg::*; #(
 	        .writeback_if   (writeback_if),
 	        .dispatch_if    (dispatch_if),
 	        .issue_sched_if (issue_sched_if)
-	    `ifdef ENABLE_HW_DEBUG_MODULE
+	    `ifdef ENABLE_HW_DEBUG_CORE
 	        ,
 	        .issue_pipeline_debug(issue_pipeline_debug)
 	    `endif
@@ -245,7 +249,7 @@ module VX_core import VX_gpu_pkg::*; #(
 
         .commit_csr_if  (commit_csr_if),
         .commit_sched_if(commit_sched_if)
-    `ifdef ENABLE_HW_DEBUG_MODULE
+    `ifdef ENABLE_HW_DEBUG_PC
         ,
         .hw_debug_pc_valid (hw_debug_pc_valid),
         .hw_debug_pc_wid   (hw_debug_pc_wid),
@@ -253,7 +257,7 @@ module VX_core import VX_gpu_pkg::*; #(
     `endif
     );
 
-`ifdef ENABLE_HW_DEBUG_MODULE
+`ifdef ENABLE_HW_DEBUG_PC
     assign hw_debug_pc_core_id = HW_DEBUG_CORE_ID_WIDTH'(CORE_ID);
 `endif
 
@@ -299,7 +303,7 @@ module VX_core import VX_gpu_pkg::*; #(
     ) gemm_node (
         .clk         (clk),
         .reset       (reset),
-    `ifdef ENABLE_HW_DEBUG_MODULE
+    `ifdef ENABLE_HW_DEBUG_GEMM
         .gemm_unit_debug      (gemm_unit_debug),
     `endif
     `ifdef PERF_ENABLE
@@ -391,13 +395,13 @@ module VX_core import VX_gpu_pkg::*; #(
     assign accel_perf.lmem_dma_sz     = '0;
     assign accel_perf.lmem_dma_output = '0;
 `endif
-`ifdef ENABLE_HW_DEBUG_MODULE
+`ifdef ENABLE_HW_DEBUG_GEMM
     assign gemm_unit_debug = '0;
 `endif
 
 `endif
 
-	`ifdef ENABLE_HW_DEBUG_MODULE
+	`ifdef ENABLE_HW_DEBUG_CORE
 	    reg hw_debug_core_busy_r;
 
 	    always @(posedge clk) begin
@@ -544,7 +548,7 @@ module VX_core import VX_gpu_pkg::*; #(
 	            .debug        (core_pipeline_debug.channels[HW_DBG_CH_DCACHE_RSP_BASE + dbg_dcache])
 	        );
 	    end
-	`endif
+		`endif
 
 	`ifdef PERF_ENABLE
 

@@ -43,15 +43,21 @@ module Vortex import VX_gpu_pkg::*; (
     input  wire [VX_DCR_ADDR_WIDTH-1:0]     dcr_wr_addr,
     input  wire [VX_DCR_DATA_WIDTH-1:0]     dcr_wr_data,
 
-`ifdef ENABLE_HW_DEBUG_MODULE
+`ifdef ENABLE_HW_DEBUG_PC
 	    output wire                             hw_debug_pc_valid [HW_DEBUG_NUM_PC_SOURCES],
 	    output wire [HW_DEBUG_CORE_ID_WIDTH-1:0] hw_debug_pc_core_id [HW_DEBUG_NUM_PC_SOURCES],
 		    output wire [NW_WIDTH-1:0]              hw_debug_pc_wid [HW_DEBUG_NUM_PC_SOURCES],
 		    output wire [`XLEN-1:0]                 hw_debug_pc [HW_DEBUG_NUM_PC_SOURCES],
+`endif
+`ifdef ENABLE_HW_DEBUG_CORE
 		    output core_pipeline_debug_t            core_pipeline_debug [HW_DEBUG_NUM_PC_SOURCES],
+`endif
+`ifdef ENABLE_HW_DEBUG_GEMM
             output gemm_unit_debug_t               gemm_unit_debug [HW_DEBUG_NUM_PC_SOURCES],
+`endif
+`ifdef ENABLE_HW_DEBUG_CACHE
 		    output cache_debug_t                    cache_debug [HW_DEBUG_CACHE_NUM_SOURCES],
-		`endif
+`endif
 
     // Status
     output wire                             busy,
@@ -87,7 +93,7 @@ module Vortex import VX_gpu_pkg::*; (
 	    `RESET_RELAY (l3_reset, reset);
 	    wire l3_cache_drain;
 
-	`ifdef ENABLE_HW_DEBUG_MODULE
+	`ifdef ENABLE_HW_DEBUG_CACHE
 	    cache_debug_t l3_cache_debug;
 	    cache_debug_t cluster_cache_debug [`NUM_CLUSTERS * HW_DEBUG_CLUSTER_CACHE_SOURCES];
 	`endif
@@ -127,9 +133,9 @@ module Vortex import VX_gpu_pkg::*; (
 
 	        .core_bus_if    (per_cluster_mem_bus_if),
 	        .mem_bus_if     (mem_bus_if),
-	    `ifdef ENABLE_HW_DEBUG_MODULE
-	        .cache_debug    (l3_cache_debug),
-	    `endif
+		    `ifdef ENABLE_HW_DEBUG_CACHE
+		        .cache_debug    (l3_cache_debug),
+		    `endif
 	        .cache_drain    (l3_cache_drain)
 	    );
 
@@ -193,22 +199,28 @@ module Vortex import VX_gpu_pkg::*; (
 
             .dma_axi_m          (dma_axi_m[cluster_id * CLUSTER_DMA_PORTS +: CLUSTER_DMA_PORTS]),
 
-        `ifdef ENABLE_HW_DEBUG_MODULE
+        `ifdef ENABLE_HW_DEBUG_PC
             .hw_debug_pc_valid   (hw_debug_pc_valid[cluster_id * CLUSTER_DEBUG_PC_SOURCES +: CLUSTER_DEBUG_PC_SOURCES]),
-		            .hw_debug_pc_core_id (hw_debug_pc_core_id[cluster_id * CLUSTER_DEBUG_PC_SOURCES +: CLUSTER_DEBUG_PC_SOURCES]),
-		            .hw_debug_pc_wid     (hw_debug_pc_wid[cluster_id * CLUSTER_DEBUG_PC_SOURCES +: CLUSTER_DEBUG_PC_SOURCES]),
-		            .hw_debug_pc         (hw_debug_pc[cluster_id * CLUSTER_DEBUG_PC_SOURCES +: CLUSTER_DEBUG_PC_SOURCES]),
-		            .core_pipeline_debug (core_pipeline_debug[cluster_id * CLUSTER_DEBUG_PC_SOURCES +: CLUSTER_DEBUG_PC_SOURCES]),
+			            .hw_debug_pc_core_id (hw_debug_pc_core_id[cluster_id * CLUSTER_DEBUG_PC_SOURCES +: CLUSTER_DEBUG_PC_SOURCES]),
+			            .hw_debug_pc_wid     (hw_debug_pc_wid[cluster_id * CLUSTER_DEBUG_PC_SOURCES +: CLUSTER_DEBUG_PC_SOURCES]),
+			            .hw_debug_pc         (hw_debug_pc[cluster_id * CLUSTER_DEBUG_PC_SOURCES +: CLUSTER_DEBUG_PC_SOURCES]),
+        `endif
+        `ifdef ENABLE_HW_DEBUG_CORE
+			            .core_pipeline_debug (core_pipeline_debug[cluster_id * CLUSTER_DEBUG_PC_SOURCES +: CLUSTER_DEBUG_PC_SOURCES]),
+        `endif
+        `ifdef ENABLE_HW_DEBUG_GEMM
                     .gemm_unit_debug     (gemm_unit_debug[cluster_id * CLUSTER_DEBUG_PC_SOURCES +: CLUSTER_DEBUG_PC_SOURCES]),
-		            .cache_debug         (cluster_cache_debug[cluster_id * HW_DEBUG_CLUSTER_CACHE_SOURCES +: HW_DEBUG_CLUSTER_CACHE_SOURCES]),
-		        `endif
+        `endif
+        `ifdef ENABLE_HW_DEBUG_CACHE
+			            .cache_debug         (cluster_cache_debug[cluster_id * HW_DEBUG_CLUSTER_CACHE_SOURCES +: HW_DEBUG_CLUSTER_CACHE_SOURCES]),
+			        `endif
 
             .busy               (per_cluster_busy[cluster_id]),
             .cache_drain        (per_cluster_cache_drain[cluster_id])
 	        );
 	    end
 
-	`ifdef ENABLE_HW_DEBUG_MODULE
+	`ifdef ENABLE_HW_DEBUG_CACHE
 	    for (genvar cache_dbg_i = 0; cache_dbg_i < (`NUM_CLUSTERS * HW_DEBUG_CLUSTER_CACHE_SOURCES); ++cache_dbg_i) begin : g_hw_debug_cluster_cache
 	        assign cache_debug[cache_dbg_i] = cluster_cache_debug[cache_dbg_i];
 	    end

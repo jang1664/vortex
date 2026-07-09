@@ -60,6 +60,16 @@ static const char *const k_cache_flag_names[] = {
   "stuck_timeout",
 };
 
+static const char *const k_cap_names[] = {
+  "base",
+  "afu",
+  "axi",
+  "pc",
+  "core",
+  "cache",
+  "gemm",
+};
+
 #define VX_HW_DEBUG_ARRAY_SIZE(x) ((uint32_t)(sizeof(x) / sizeof((x)[0])))
 #define VX_HW_DEBUG_AXI_ADDR_MASK UINT64_C(0x0000ffffffffffff)
 #define VX_HW_DEBUG_MAX_CORE_SOURCES 256u
@@ -141,6 +151,14 @@ static uint32_t vx_hw_debug_status_num_axi_ports(uint32_t status) {
 
 static uint32_t vx_hw_debug_status_num_pc_sources(uint32_t status) {
   return (status >> 16) & 0xffu;
+}
+
+static uint32_t vx_hw_debug_status_caps(uint32_t status) {
+  return (status >> 3) & 0x1fffu;
+}
+
+static int vx_hw_debug_status_has_cap(uint32_t status, uint32_t cap) {
+  return (vx_hw_debug_status_caps(status) & (1u << cap)) != 0;
 }
 
 static uint32_t vx_hw_debug_core_status_num_channels(uint64_t status) {
@@ -286,18 +304,36 @@ static void vx_hw_debug_print_flag_names(FILE *out, uint64_t flags,
   fprintf(out, "]");
 }
 
+static void vx_hw_debug_print_caps(FILE *out, uint32_t status) {
+  uint32_t cap;
+  int first = 1;
+  fprintf(out, "[");
+  for (cap = 0; cap < VX_HW_DEBUG_ARRAY_SIZE(k_cap_names); ++cap) {
+    if (!vx_hw_debug_status_has_cap(status, cap)) {
+      continue;
+    }
+    fprintf(out, "%s%s", first ? "" : ",", k_cap_names[cap]);
+    first = 0;
+  }
+  if (first) {
+    fprintf(out, "none");
+  }
+  fprintf(out, "]");
+}
+
 static void vx_hw_debug_print_status_line(FILE *out,
                                           const char *prefix,
                                           uint32_t status,
                                           const vx_hw_debug_flag_snapshot_t *previous) {
-  fprintf(out, "%s module: present=%s frozen=%s anomaly_seen=%s axi_ports=%u pc_sources=%u raw_status=0x%08x",
+  fprintf(out, "%s module: present=%s frozen=%s anomaly_seen=%s axi_ports=%u sources=%u caps=",
           prefix,
           vx_hw_debug_yesno(status & 0x1u),
           vx_hw_debug_yesno((status >> 1) & 0x1u),
           vx_hw_debug_yesno((status >> 2) & 0x1u),
           vx_hw_debug_status_num_axi_ports(status),
-          vx_hw_debug_status_num_pc_sources(status),
-          status);
+          vx_hw_debug_status_num_pc_sources(status));
+  vx_hw_debug_print_caps(out, status);
+  fprintf(out, " raw_status=0x%08x", status);
   if (previous != NULL && previous->valid && status != previous->status) {
     fprintf(out, " prev_status=0x%08x", previous->status);
   }
@@ -984,29 +1020,39 @@ int vx_hw_debug_read_flag_snapshot(const vx_hw_debug_io_t *io,
   if ((snapshot->status & 0x1u) == 0) {
     return -ENODEV;
   }
-  if (num_axi_ports == 0) {
-    num_axi_ports = vx_hw_debug_status_num_axi_ports(snapshot->status);
-  }
-  if (num_axi_ports > VX_HW_DEBUG_MAX_AXI_PORTS) {
-    num_axi_ports = VX_HW_DEBUG_MAX_AXI_PORTS;
+  if (vx_hw_debug_status_has_cap(snapshot->status, VX_HWDBG_CAP_AXI)) {
+    if (num_axi_ports == 0) {
+      num_axi_ports = vx_hw_debug_status_num_axi_ports(snapshot->status);
+    }
+    if (num_axi_ports > VX_HW_DEBUG_MAX_AXI_PORTS) {
+      num_axi_ports = VX_HW_DEBUG_MAX_AXI_PORTS;
+    }
+  } else {
+    num_axi_ports = 0;
   }
   snapshot->num_axi_ports = num_axi_ports;
-  err = vx_hw_debug_read64(io, VX_HWDBG_ANOMALY_FLAGS, 0, 0, &snapshot->anomaly_flags);
-  if (err != 0) {
-    return err;
-  }
-  err = vx_hw_debug_read64(io, VX_HWDBG_ANOMALY_CYCLES, 0, 0, &snapshot->anomaly_cycles);
-  if (err != 0) {
-    return err;
-  }
-  err = vx_hw_debug_read64(io, VX_HWDBG_CTRL_FLAGS, 0, 0, &snapshot->ctrl_flags);
-  if (err != 0) {
-    return err;
-  }
-  for (port = 0; port < num_axi_ports; ++port) {
-    err = vx_hw_debug_read64(io, VX_HWDBG_AXI_FLAGS, port, 0, &snapshot->axi_flags[port]);
+  if (vx_hw_debug_status_has_cap(snapshot->status, VX_HWDBG_CAP_BASE)) {
+    err = vx_hw_debug_read64(io, VX_HWDBG_ANOMALY_FLAGS, 0, 0, &snapshot->anomaly_flags);
     if (err != 0) {
       return err;
+    }
+    err = vx_hw_debug_read64(io, VX_HWDBG_ANOMALY_CYCLES, 0, 0, &snapshot->anomaly_cycles);
+    if (err != 0) {
+      return err;
+    }
+  }
+  if (vx_hw_debug_status_has_cap(snapshot->status, VX_HWDBG_CAP_AFU)) {
+    err = vx_hw_debug_read64(io, VX_HWDBG_CTRL_FLAGS, 0, 0, &snapshot->ctrl_flags);
+    if (err != 0) {
+      return err;
+    }
+  }
+  if (vx_hw_debug_status_has_cap(snapshot->status, VX_HWDBG_CAP_AXI)) {
+    for (port = 0; port < num_axi_ports; ++port) {
+      err = vx_hw_debug_read64(io, VX_HWDBG_AXI_FLAGS, port, 0, &snapshot->axi_flags[port]);
+      if (err != 0) {
+        return err;
+      }
     }
   }
   snapshot->valid = 1;
@@ -1025,9 +1071,15 @@ int vx_hw_debug_print_flag_snapshot(FILE *out,
   }
   vx_hw_debug_print_status_line(out, prefix, snapshot->status, previous);
   fprintf(out, "%s flags: %s\n", prefix, vx_hw_debug_status_severity(snapshot));
-  vx_hw_debug_print_anomaly_line(out, prefix, snapshot, previous);
-  vx_hw_debug_print_ctrl_flag_line(out, prefix, snapshot, previous);
-  vx_hw_debug_print_axi_flag_lines(out, prefix, snapshot, previous);
+  if (vx_hw_debug_status_has_cap(snapshot->status, VX_HWDBG_CAP_BASE)) {
+    vx_hw_debug_print_anomaly_line(out, prefix, snapshot, previous);
+  }
+  if (vx_hw_debug_status_has_cap(snapshot->status, VX_HWDBG_CAP_AFU)) {
+    vx_hw_debug_print_ctrl_flag_line(out, prefix, snapshot, previous);
+  }
+  if (vx_hw_debug_status_has_cap(snapshot->status, VX_HWDBG_CAP_AXI)) {
+    vx_hw_debug_print_axi_flag_lines(out, prefix, snapshot, previous);
+  }
   return 0;
 }
 
@@ -1110,11 +1162,15 @@ int vx_hw_debug_dump(FILE *out, const vx_hw_debug_io_t *io,
 
   (void)vx_hw_debug_freeze(io);
   (void)vx_hw_debug_get_status(io, &status);
-  if (num_axi_ports == 0) {
-    num_axi_ports = vx_hw_debug_status_num_axi_ports(status);
-  }
-  if (num_axi_ports > VX_HW_DEBUG_MAX_AXI_PORTS) {
-    num_axi_ports = VX_HW_DEBUG_MAX_AXI_PORTS;
+  if (vx_hw_debug_status_has_cap(status, VX_HWDBG_CAP_AXI)) {
+    if (num_axi_ports == 0) {
+      num_axi_ports = vx_hw_debug_status_num_axi_ports(status);
+    }
+    if (num_axi_ports > VX_HW_DEBUG_MAX_AXI_PORTS) {
+      num_axi_ports = VX_HW_DEBUG_MAX_AXI_PORTS;
+    }
+  } else {
+    num_axi_ports = 0;
   }
 
   fprintf(out, "%s ==== hardware debug snapshot ====\n", prefix);
@@ -1127,42 +1183,46 @@ int vx_hw_debug_dump(FILE *out, const vx_hw_debug_io_t *io,
     vx_hw_debug_print_status_line(out, prefix, status, NULL);
     fprintf(out, "%s flags: read_failed err=%d\n", prefix, err);
   }
-  if (vx_hw_debug_read64(io, VX_HWDBG_AFU_STATUS, 0, 0, &afu_status) == 0
+  if (vx_hw_debug_status_has_cap(status, VX_HWDBG_CAP_AFU)
+   && vx_hw_debug_read64(io, VX_HWDBG_AFU_STATUS, 0, 0, &afu_status) == 0
    && vx_hw_debug_read64(io, VX_HWDBG_CYCLE_COUNT, 0, 0, &cycle_count) == 0) {
     vx_hw_debug_print_afu_status(out, prefix, afu_status, cycle_count);
   }
-  if (vx_hw_debug_read64(io, VX_HWDBG_PC_EVENT_COUNT, 0, 0, &pc_events) == 0
-   && vx_hw_debug_read64(io, VX_HWDBG_PC_LAST_META, 0, 0, &pc_last_meta) == 0
-   && vx_hw_debug_read64(io, VX_HWDBG_PC_LAST_VALUE, 0, 0, &pc_last_value) == 0
-   && vx_hw_debug_read64(io, VX_HWDBG_PC_SAME_COUNT, 0, 0, &pc_same_count) == 0
-   && vx_hw_debug_read64(io, VX_HWDBG_PC_HASH, 0, 0, &pc_hash) == 0) {
-    fprintf(out, "%s pc: events=%" PRIu64 " same_pc_streak=%" PRIu64 " hash=0x%016" PRIx64 "\n",
-            prefix, pc_events, pc_same_count, pc_hash);
-    vx_hw_debug_print_pc_meta(out, prefix, "pc_last", pc_last_meta, pc_last_value);
+  if (vx_hw_debug_status_has_cap(status, VX_HWDBG_CAP_PC)) {
+    if (vx_hw_debug_read64(io, VX_HWDBG_PC_EVENT_COUNT, 0, 0, &pc_events) == 0
+     && vx_hw_debug_read64(io, VX_HWDBG_PC_LAST_META, 0, 0, &pc_last_meta) == 0
+     && vx_hw_debug_read64(io, VX_HWDBG_PC_LAST_VALUE, 0, 0, &pc_last_value) == 0
+     && vx_hw_debug_read64(io, VX_HWDBG_PC_SAME_COUNT, 0, 0, &pc_same_count) == 0
+     && vx_hw_debug_read64(io, VX_HWDBG_PC_HASH, 0, 0, &pc_hash) == 0) {
+      fprintf(out, "%s pc: events=%" PRIu64 " same_pc_streak=%" PRIu64 " hash=0x%016" PRIx64 "\n",
+              prefix, pc_events, pc_same_count, pc_hash);
+      vx_hw_debug_print_pc_meta(out, prefix, "pc_last", pc_last_meta, pc_last_value);
+    }
+
+    uint32_t pc_ring_printed = 0;
+    for (ring = 0; ring < pc_ring_depth; ++ring) {
+      uint64_t meta = 0;
+      uint64_t pc = 0;
+      if (vx_hw_debug_read64(io, VX_HWDBG_PC_RING_META, 0, ring, &meta) != 0
+       || vx_hw_debug_read64(io, VX_HWDBG_PC_RING_VALUE, 0, ring, &pc) != 0) {
+        break;
+      }
+      if ((meta & 0x1u) != 0) {
+        char label[32];
+        snprintf(label, sizeof(label), "pc_ring[%u]", ring);
+        vx_hw_debug_print_pc_meta(out, prefix, label, meta, pc);
+        ++pc_ring_printed;
+      }
+    }
+    if (pc_ring_printed == 0) {
+      fprintf(out, "%s pc_ring: empty checked=%u\n", prefix, pc_ring_depth);
+    }
   }
 
-  uint32_t pc_ring_printed = 0;
-  for (ring = 0; ring < pc_ring_depth; ++ring) {
-    uint64_t meta = 0;
-    uint64_t pc = 0;
-    if (vx_hw_debug_read64(io, VX_HWDBG_PC_RING_META, 0, ring, &meta) != 0
-     || vx_hw_debug_read64(io, VX_HWDBG_PC_RING_VALUE, 0, ring, &pc) != 0) {
-      break;
-    }
-    if ((meta & 0x1u) != 0) {
-      char label[32];
-      snprintf(label, sizeof(label), "pc_ring[%u]", ring);
-      vx_hw_debug_print_pc_meta(out, prefix, label, meta, pc);
-      ++pc_ring_printed;
-    }
-  }
-	  if (pc_ring_printed == 0) {
-	    fprintf(out, "%s pc_ring: empty checked=%u\n", prefix, pc_ring_depth);
-	  }
-
-	  if (vx_hw_debug_read64(io, VX_HWDBG_CORE_STATUS, 0, 0, &core_status) == 0
-	   && vx_hw_debug_read64(io, VX_HWDBG_CORE_PROGRESS, 0, 0, &core_progress) == 0
-	   && vx_hw_debug_read64(io, VX_HWDBG_CORE_FIRST_STUCK, 0, 0, &core_first_stuck) == 0) {
+		  if (vx_hw_debug_status_has_cap(status, VX_HWDBG_CAP_CORE)
+       && vx_hw_debug_read64(io, VX_HWDBG_CORE_STATUS, 0, 0, &core_status) == 0
+		   && vx_hw_debug_read64(io, VX_HWDBG_CORE_PROGRESS, 0, 0, &core_progress) == 0
+		   && vx_hw_debug_read64(io, VX_HWDBG_CORE_FIRST_STUCK, 0, 0, &core_first_stuck) == 0) {
 	    uint32_t core_sources = vx_hw_debug_status_num_pc_sources(status);
 	    uint32_t core_channels = vx_hw_debug_core_status_num_channels(core_status);
 	    uint32_t timeout = vx_hw_debug_core_status_timeout(core_status);
@@ -1235,7 +1295,7 @@ int vx_hw_debug_dump(FILE *out, const vx_hw_debug_io_t *io,
 	            warn_channels);
 	  }
 
-  {
+  if (vx_hw_debug_status_has_cap(status, VX_HWDBG_CAP_GEMM)) {
     uint32_t gemm_sources = vx_hw_debug_status_num_pc_sources(status);
     uint32_t shown_gemm = 0;
     uint32_t fail_gemm = 0;
@@ -1399,9 +1459,10 @@ int vx_hw_debug_dump(FILE *out, const vx_hw_debug_io_t *io,
             fail_gemm);
   }
 
-	  if (vx_hw_debug_read64(io, VX_HWDBG_CACHE_STATUS, 0, 0, &cache_status) == 0
-	   && vx_hw_debug_read64(io, VX_HWDBG_CACHE_PROGRESS, 0, 0, &cache_progress) == 0
-	   && vx_hw_debug_read64(io, VX_HWDBG_CACHE_FIRST_STUCK, 0, 0, &cache_first_stuck) == 0) {
+		  if (vx_hw_debug_status_has_cap(status, VX_HWDBG_CAP_CACHE)
+       && vx_hw_debug_read64(io, VX_HWDBG_CACHE_STATUS, 0, 0, &cache_status) == 0
+		   && vx_hw_debug_read64(io, VX_HWDBG_CACHE_PROGRESS, 0, 0, &cache_progress) == 0
+		   && vx_hw_debug_read64(io, VX_HWDBG_CACHE_FIRST_STUCK, 0, 0, &cache_first_stuck) == 0) {
 	    uint32_t cache_sources = vx_hw_debug_cache_status_num_sources(cache_status);
 	    uint32_t max_core_ports = vx_hw_debug_cache_status_max_core_ports(cache_status);
 	    uint32_t max_mem_ports = vx_hw_debug_cache_status_max_mem_ports(cache_status);
@@ -1521,8 +1582,9 @@ int vx_hw_debug_dump(FILE *out, const vx_hw_debug_io_t *io,
 	            warn_ports);
 	  }
 
-	  if (vx_hw_debug_read64(io, VX_HWDBG_CTRL_STATUS, 0, 0, &ctrl_live) == 0
-	   && vx_hw_debug_read64(io, VX_HWDBG_CTRL_COUNTS, 0, 0, &ctrl_counts) == 0
+		  if (vx_hw_debug_status_has_cap(status, VX_HWDBG_CAP_AFU)
+       && vx_hw_debug_read64(io, VX_HWDBG_CTRL_STATUS, 0, 0, &ctrl_live) == 0
+		   && vx_hw_debug_read64(io, VX_HWDBG_CTRL_COUNTS, 0, 0, &ctrl_counts) == 0
    && vx_hw_debug_read64(io, VX_HWDBG_CTRL_LAST_WRITE, 0, 0, &ctrl_last_write) == 0
    && vx_hw_debug_read64(io, VX_HWDBG_CTRL_LAST_READ, 0, 0, &ctrl_last_read) == 0) {
     vx_hw_debug_print_ctrl_status(out,
@@ -1534,59 +1596,61 @@ int vx_hw_debug_dump(FILE *out, const vx_hw_debug_io_t *io,
                                   err == 0 ? flags.ctrl_flags : 0);
   }
 
-  uint32_t read_ports = 0;
-  uint32_t shown_ports = 0;
-  uint32_t fail_ports = 0;
-  uint32_t warn_ports = 0;
-  for (port = 0; port < num_axi_ports; ++port) {
-    vx_hw_debug_axi_port_dump_t *axi = &axi_ports[port];
-    if (vx_hw_debug_read64(io, VX_HWDBG_AXI_AW_FIRE, port, 0, &axi->aw_fire) != 0
-     || vx_hw_debug_read64(io, VX_HWDBG_AXI_W_FIRE, port, 0, &axi->w_fire) != 0
-     || vx_hw_debug_read64(io, VX_HWDBG_AXI_B_FIRE, port, 0, &axi->b_fire) != 0
-     || vx_hw_debug_read64(io, VX_HWDBG_AXI_AR_FIRE, port, 0, &axi->ar_fire) != 0
-     || vx_hw_debug_read64(io, VX_HWDBG_AXI_R_FIRE, port, 0, &axi->r_fire) != 0) {
-      break;
-    }
-    (void)vx_hw_debug_read64(io, VX_HWDBG_AXI_AW_STALL, port, 0, &axi->aw_stall);
-    (void)vx_hw_debug_read64(io, VX_HWDBG_AXI_W_STALL, port, 0, &axi->w_stall);
-    (void)vx_hw_debug_read64(io, VX_HWDBG_AXI_B_STALL, port, 0, &axi->b_stall);
-    (void)vx_hw_debug_read64(io, VX_HWDBG_AXI_AR_STALL, port, 0, &axi->ar_stall);
-    (void)vx_hw_debug_read64(io, VX_HWDBG_AXI_R_STALL, port, 0, &axi->r_stall);
-    (void)vx_hw_debug_read64(io, VX_HWDBG_AXI_RD_OUTSTAND, port, 0, &axi->rd_outstanding);
-    (void)vx_hw_debug_read64(io, VX_HWDBG_AXI_WR_OUTSTAND, port, 0, &axi->wr_outstanding);
-    (void)vx_hw_debug_read64(io, VX_HWDBG_AXI_WR_DRAIN_STATUS, port, 0, &axi->wr_drain_status);
-    (void)vx_hw_debug_read64(io, VX_HWDBG_AXI_WR_TXN_COUNTS, port, 0, &axi->wr_txn_counts);
-    (void)vx_hw_debug_read64(io, VX_HWDBG_AXI_WR_BEAT_COUNTS, port, 0, &axi->wr_beat_counts);
-    (void)vx_hw_debug_read64(io, VX_HWDBG_AXI_WR_LAST_COUNTS, port, 0, &axi->wr_last_counts);
-    (void)vx_hw_debug_read64(io, VX_HWDBG_AXI_ERRORS, port, 0, &axi->errors);
-    (void)vx_hw_debug_read64(io, VX_HWDBG_AXI_FLAGS, port, 0, &axi->flags);
-    (void)vx_hw_debug_read64(io, VX_HWDBG_AXI_LAST_AW, port, 0, &axi->last_aw);
-    (void)vx_hw_debug_read64(io, VX_HWDBG_AXI_LAST_AR, port, 0, &axi->last_ar);
-    (void)vx_hw_debug_read64(io, VX_HWDBG_AXI_LAST_B, port, 0, &axi->last_b);
-    (void)vx_hw_debug_read64(io, VX_HWDBG_AXI_LAST_R, port, 0, &axi->last_r);
-    ++read_ports;
-    if (vx_hw_debug_axi_port_has_detail(axi)) {
-      const char *severity = vx_hw_debug_axi_port_severity(axi);
-      ++shown_ports;
-      if (strcmp(severity, "FAIL") == 0) {
-        ++fail_ports;
-      } else if (strcmp(severity, "WARN") == 0) {
-        ++warn_ports;
+  if (vx_hw_debug_status_has_cap(status, VX_HWDBG_CAP_AXI)) {
+    uint32_t read_ports = 0;
+    uint32_t shown_ports = 0;
+    uint32_t fail_ports = 0;
+    uint32_t warn_ports = 0;
+    for (port = 0; port < num_axi_ports; ++port) {
+      vx_hw_debug_axi_port_dump_t *axi = &axi_ports[port];
+      if (vx_hw_debug_read64(io, VX_HWDBG_AXI_AW_FIRE, port, 0, &axi->aw_fire) != 0
+       || vx_hw_debug_read64(io, VX_HWDBG_AXI_W_FIRE, port, 0, &axi->w_fire) != 0
+       || vx_hw_debug_read64(io, VX_HWDBG_AXI_B_FIRE, port, 0, &axi->b_fire) != 0
+       || vx_hw_debug_read64(io, VX_HWDBG_AXI_AR_FIRE, port, 0, &axi->ar_fire) != 0
+       || vx_hw_debug_read64(io, VX_HWDBG_AXI_R_FIRE, port, 0, &axi->r_fire) != 0) {
+        break;
+      }
+      (void)vx_hw_debug_read64(io, VX_HWDBG_AXI_AW_STALL, port, 0, &axi->aw_stall);
+      (void)vx_hw_debug_read64(io, VX_HWDBG_AXI_W_STALL, port, 0, &axi->w_stall);
+      (void)vx_hw_debug_read64(io, VX_HWDBG_AXI_B_STALL, port, 0, &axi->b_stall);
+      (void)vx_hw_debug_read64(io, VX_HWDBG_AXI_AR_STALL, port, 0, &axi->ar_stall);
+      (void)vx_hw_debug_read64(io, VX_HWDBG_AXI_R_STALL, port, 0, &axi->r_stall);
+      (void)vx_hw_debug_read64(io, VX_HWDBG_AXI_RD_OUTSTAND, port, 0, &axi->rd_outstanding);
+      (void)vx_hw_debug_read64(io, VX_HWDBG_AXI_WR_OUTSTAND, port, 0, &axi->wr_outstanding);
+      (void)vx_hw_debug_read64(io, VX_HWDBG_AXI_WR_DRAIN_STATUS, port, 0, &axi->wr_drain_status);
+      (void)vx_hw_debug_read64(io, VX_HWDBG_AXI_WR_TXN_COUNTS, port, 0, &axi->wr_txn_counts);
+      (void)vx_hw_debug_read64(io, VX_HWDBG_AXI_WR_BEAT_COUNTS, port, 0, &axi->wr_beat_counts);
+      (void)vx_hw_debug_read64(io, VX_HWDBG_AXI_WR_LAST_COUNTS, port, 0, &axi->wr_last_counts);
+      (void)vx_hw_debug_read64(io, VX_HWDBG_AXI_ERRORS, port, 0, &axi->errors);
+      (void)vx_hw_debug_read64(io, VX_HWDBG_AXI_FLAGS, port, 0, &axi->flags);
+      (void)vx_hw_debug_read64(io, VX_HWDBG_AXI_LAST_AW, port, 0, &axi->last_aw);
+      (void)vx_hw_debug_read64(io, VX_HWDBG_AXI_LAST_AR, port, 0, &axi->last_ar);
+      (void)vx_hw_debug_read64(io, VX_HWDBG_AXI_LAST_B, port, 0, &axi->last_b);
+      (void)vx_hw_debug_read64(io, VX_HWDBG_AXI_LAST_R, port, 0, &axi->last_r);
+      ++read_ports;
+      if (vx_hw_debug_axi_port_has_detail(axi)) {
+        const char *severity = vx_hw_debug_axi_port_severity(axi);
+        ++shown_ports;
+        if (strcmp(severity, "FAIL") == 0) {
+          ++fail_ports;
+        } else if (strcmp(severity, "WARN") == 0) {
+          ++warn_ports;
+        }
       }
     }
-  }
 
-  fprintf(out, "%s axi: %s checked=%u shown=%u omitted_idle=%u fail=%u warn=%u\n",
-          prefix,
-          fail_ports != 0 ? "FAIL" : (warn_ports != 0 ? "WARN" : "OK"),
-          read_ports,
-          shown_ports,
-          read_ports - shown_ports,
-          fail_ports,
-          warn_ports);
-  for (port = 0; port < read_ports; ++port) {
-    if (vx_hw_debug_axi_port_has_detail(&axi_ports[port])) {
-      vx_hw_debug_print_axi_port_dump(out, prefix, port, &axi_ports[port]);
+    fprintf(out, "%s axi: %s checked=%u shown=%u omitted_idle=%u fail=%u warn=%u\n",
+            prefix,
+            fail_ports != 0 ? "FAIL" : (warn_ports != 0 ? "WARN" : "OK"),
+            read_ports,
+            shown_ports,
+            read_ports - shown_ports,
+            fail_ports,
+            warn_ports);
+    for (port = 0; port < read_ports; ++port) {
+      if (vx_hw_debug_axi_port_has_detail(&axi_ports[port])) {
+        vx_hw_debug_print_axi_port_dump(out, prefix, port, &axi_ports[port]);
+      }
     }
   }
 

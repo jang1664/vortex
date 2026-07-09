@@ -131,13 +131,21 @@ module VX_afu_wrap import VX_gpu_pkg::*; #(
 		wire [63:0] hw_debug_rdata;
 		wire [31:0] hw_debug_status;
 
+	`ifdef ENABLE_HW_DEBUG_PC
 		wire                         hw_debug_pc_valid [HW_DEBUG_NUM_PC_SOURCES];
 		wire [HW_DEBUG_CORE_ID_WIDTH-1:0] hw_debug_pc_core_id [HW_DEBUG_NUM_PC_SOURCES];
 		wire [NW_WIDTH-1:0]          hw_debug_pc_wid [HW_DEBUG_NUM_PC_SOURCES];
 		wire [`XLEN-1:0]             hw_debug_pc [HW_DEBUG_NUM_PC_SOURCES];
+	`endif
+	`ifdef ENABLE_HW_DEBUG_CORE
 		core_pipeline_debug_t        core_pipeline_debug [HW_DEBUG_NUM_PC_SOURCES];
+	`endif
+	`ifdef ENABLE_HW_DEBUG_GEMM
         gemm_unit_debug_t           gemm_unit_debug [HW_DEBUG_NUM_PC_SOURCES];
+	`endif
+	`ifdef ENABLE_HW_DEBUG_CACHE
 		cache_debug_t                cache_debug [HW_DEBUG_CACHE_NUM_SOURCES];
+	`endif
 	`endif
 
 		state_e state;
@@ -432,13 +440,19 @@ module VX_afu_wrap import VX_gpu_pkg::*; #(
 			.dcr_wr_addr	(dcr_wr_addr),
 			.dcr_wr_data	(dcr_wr_data),
 
-		`ifdef ENABLE_HW_DEBUG_MODULE
+		`ifdef ENABLE_HW_DEBUG_PC
 			.hw_debug_pc_valid   (hw_debug_pc_valid),
 			.hw_debug_pc_core_id (hw_debug_pc_core_id),
 			.hw_debug_pc_wid     (hw_debug_pc_wid),
 			.hw_debug_pc         (hw_debug_pc),
+		`endif
+		`ifdef ENABLE_HW_DEBUG_CORE
 			.core_pipeline_debug (core_pipeline_debug),
+		`endif
+		`ifdef ENABLE_HW_DEBUG_GEMM
             .gemm_unit_debug     (gemm_unit_debug),
+		`endif
+		`ifdef ENABLE_HW_DEBUG_CACHE
 			.cache_debug         (cache_debug),
 		`endif
 
@@ -475,13 +489,21 @@ module VX_afu_wrap import VX_gpu_pkg::*; #(
 			.vx_pending_writes  (vx_pending_writes),
 			.vx_pending_writes_empty (vx_pending_writes_empty),
 
+		`ifdef ENABLE_HW_DEBUG_PC
 			.hw_debug_pc_valid   (hw_debug_pc_valid),
 			.hw_debug_pc_core_id (hw_debug_pc_core_id),
 			.hw_debug_pc_wid     (hw_debug_pc_wid),
 			.hw_debug_pc         (hw_debug_pc),
+		`endif
+		`ifdef ENABLE_HW_DEBUG_CORE
 			.core_pipeline_debug (core_pipeline_debug),
+		`endif
+		`ifdef ENABLE_HW_DEBUG_GEMM
             .gemm_unit_debug     (gemm_unit_debug),
+		`endif
+		`ifdef ENABLE_HW_DEBUG_CACHE
 			.cache_debug         (cache_debug),
+		`endif
 
 			.s_axi_ctrl_awvalid (s_axi_ctrl_awvalid),
 			.s_axi_ctrl_awready (s_axi_ctrl_awready),

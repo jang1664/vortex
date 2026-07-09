@@ -85,7 +85,7 @@ module VX_cache_cluster import VX_gpu_pkg::*; #(
 	    VX_mem_bus_if.slave     core_bus_if [NUM_INPUTS * NUM_REQS],
 	    VX_mem_bus_if.master    mem_bus_if [MEM_PORTS],
 
-	`ifdef ENABLE_HW_DEBUG_MODULE
+	`ifdef ENABLE_HW_DEBUG_CACHE
 	    output cache_debug_t    cache_debug [`UP(NUM_UNITS)],
 	`endif
 
@@ -214,7 +214,7 @@ module VX_cache_cluster import VX_gpu_pkg::*; #(
 	            .reset       (reset),
 	            .core_bus_if (arb_core_bus_if[i * NUM_REQS +: NUM_REQS]),
 	            .mem_bus_if  (cache_mem_bus_if[i * MEM_PORTS +: MEM_PORTS]),
-	        `ifdef ENABLE_HW_DEBUG_MODULE
+	        `ifdef ENABLE_HW_DEBUG_CACHE
 	            .cache_debug (cache_debug[i]),
 	        `endif
 	            .cache_drain (per_cache_drain[i])

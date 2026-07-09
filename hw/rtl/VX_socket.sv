@@ -41,15 +41,21 @@ module VX_socket import VX_gpu_pkg::*; #(
     VX_gbar_bus_if.master   gbar_bus_if,
 `endif
 
-`ifdef ENABLE_HW_DEBUG_MODULE
+`ifdef ENABLE_HW_DEBUG_PC
 	    output wire                         hw_debug_pc_valid [`SOCKET_SIZE],
 	    output wire [HW_DEBUG_CORE_ID_WIDTH-1:0] hw_debug_pc_core_id [`SOCKET_SIZE],
 		    output wire [NW_WIDTH-1:0]          hw_debug_pc_wid [`SOCKET_SIZE],
 		    output wire [`XLEN-1:0]             hw_debug_pc [`SOCKET_SIZE],
+`endif
+`ifdef ENABLE_HW_DEBUG_CORE
 		    output core_pipeline_debug_t        core_pipeline_debug [`SOCKET_SIZE],
+`endif
+`ifdef ENABLE_HW_DEBUG_GEMM
             output gemm_unit_debug_t           gemm_unit_debug [`SOCKET_SIZE],
+`endif
+`ifdef ENABLE_HW_DEBUG_CACHE
 		    output cache_debug_t                cache_debug [HW_DEBUG_SOCKET_CACHE_SOURCES],
-		`endif
+`endif
 
     // Status
     output wire             busy,
@@ -101,7 +107,7 @@ module VX_socket import VX_gpu_pkg::*; #(
 
 	    wire icache_drain;
 
-	`ifdef ENABLE_HW_DEBUG_MODULE
+	`ifdef ENABLE_HW_DEBUG_CACHE
 	    cache_debug_t icache_cache_debug [HW_DEBUG_L1I_CACHE_SOURCES_PER_SOCKET];
 	`endif
 
@@ -139,7 +145,7 @@ module VX_socket import VX_gpu_pkg::*; #(
 	        .reset          (icache_reset),
 	        .core_bus_if    (per_core_icache_bus_if),
 	        .mem_bus_if     (icache_mem_bus_if),
-	    `ifdef ENABLE_HW_DEBUG_MODULE
+	    `ifdef ENABLE_HW_DEBUG_CACHE
 	        .cache_debug    (icache_cache_debug),
 	    `endif
 	        .cache_drain    (icache_drain)
@@ -159,7 +165,7 @@ module VX_socket import VX_gpu_pkg::*; #(
 
 	    wire dcache_cache_drain;
 
-	`ifdef ENABLE_HW_DEBUG_MODULE
+	`ifdef ENABLE_HW_DEBUG_CACHE
 	    cache_debug_t dcache_cache_debug [HW_DEBUG_L1D_CACHE_SOURCES_PER_SOCKET];
 	`endif
 
@@ -199,13 +205,13 @@ module VX_socket import VX_gpu_pkg::*; #(
 	        .reset          (dcache_reset),
 	        .core_bus_if    (per_core_dcache_bus_if),
 	        .mem_bus_if     (dcache_mem_bus_if),
-	    `ifdef ENABLE_HW_DEBUG_MODULE
+	    `ifdef ENABLE_HW_DEBUG_CACHE
 	        .cache_debug    (dcache_cache_debug),
 	    `endif
 	        .cache_drain    (dcache_cache_drain)
 	    );
 
-	`ifdef ENABLE_HW_DEBUG_MODULE
+	`ifdef ENABLE_HW_DEBUG_CACHE
 	    for (genvar cache_dbg_i = 0; cache_dbg_i < HW_DEBUG_L1I_CACHE_SOURCES_PER_SOCKET; ++cache_dbg_i) begin : g_hw_debug_icache
 	        assign cache_debug[cache_dbg_i] = icache_cache_debug[cache_dbg_i];
 	    end
@@ -319,14 +325,18 @@ module VX_socket import VX_gpu_pkg::*; #(
             .gbar_bus_if    (per_core_gbar_bus_if[core_id]),
         `endif
 
-        `ifdef ENABLE_HW_DEBUG_MODULE
+        `ifdef ENABLE_HW_DEBUG_PC
             .hw_debug_pc_valid   (hw_debug_pc_valid[core_id]),
-	            .hw_debug_pc_core_id (hw_debug_pc_core_id[core_id]),
-	            .hw_debug_pc_wid     (hw_debug_pc_wid[core_id]),
-	            .hw_debug_pc         (hw_debug_pc[core_id]),
-	            .core_pipeline_debug (core_pipeline_debug[core_id]),
-                .gemm_unit_debug     (gemm_unit_debug[core_id]),
-	        `endif
+		            .hw_debug_pc_core_id (hw_debug_pc_core_id[core_id]),
+		            .hw_debug_pc_wid     (hw_debug_pc_wid[core_id]),
+		            .hw_debug_pc         (hw_debug_pc[core_id]),
+        `endif
+        `ifdef ENABLE_HW_DEBUG_CORE
+		            .core_pipeline_debug (core_pipeline_debug[core_id]),
+        `endif
+        `ifdef ENABLE_HW_DEBUG_GEMM
+	                .gemm_unit_debug     (gemm_unit_debug[core_id]),
+		        `endif
 
             .busy           (per_core_busy[core_id])
         );

@@ -30,7 +30,7 @@ module VX_issue_slice import VX_gpu_pkg::*; #(
 	    VX_writeback_if.slave   writeback_if,
 	    VX_dispatch_if.master   dispatch_if [NUM_EX_UNITS],
 	    VX_issue_sched_if.master issue_sched_if
-	`ifdef ENABLE_HW_DEBUG_MODULE
+	`ifdef ENABLE_HW_DEBUG_CORE
 	    , output issue_slice_debug_t issue_slice_debug
 	`endif
 	);
@@ -100,7 +100,7 @@ module VX_issue_slice import VX_gpu_pkg::*; #(
 	    assign issue_sched_if.valid = operands_if.valid && operands_if.ready && operands_if.data.sop;
 	    assign issue_sched_if.wis = operands_if.data.wis;
 
-	`ifdef ENABLE_HW_DEBUG_MODULE
+	`ifdef ENABLE_HW_DEBUG_CORE
 	    VX_hw_debug_vr_probe issue_decode_debug (
 	        .clk          (clk),
 	        .reset        (reset),

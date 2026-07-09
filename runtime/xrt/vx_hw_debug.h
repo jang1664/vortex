@@ -91,7 +91,17 @@ enum vx_hw_debug_metric {
       VX_HWDBG_GEMM_COUNTS0      = 0x62,
       VX_HWDBG_GEMM_COUNTS1      = 0x63,
       VX_HWDBG_GEMM_COUNTS2      = 0x64,
-		};
+			};
+
+enum vx_hw_debug_cap {
+  VX_HWDBG_CAP_BASE  = 0,
+  VX_HWDBG_CAP_AFU   = 1,
+  VX_HWDBG_CAP_AXI   = 2,
+  VX_HWDBG_CAP_PC    = 3,
+  VX_HWDBG_CAP_CORE  = 4,
+  VX_HWDBG_CAP_CACHE = 5,
+  VX_HWDBG_CAP_GEMM  = 6,
+};
 
 enum vx_hw_debug_global_flag {
   VX_HWDBG_GLBL_ANY               = 0,

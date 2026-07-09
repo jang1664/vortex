@@ -29,7 +29,7 @@ module VX_issue import VX_gpu_pkg::*; #(
 	    VX_writeback_if.slave   writeback_if [`ISSUE_WIDTH],
 	    VX_dispatch_if.master   dispatch_if [NUM_EX_UNITS * `ISSUE_WIDTH],
 	    VX_issue_sched_if.master issue_sched_if[`ISSUE_WIDTH]
-	`ifdef ENABLE_HW_DEBUG_MODULE
+	`ifdef ENABLE_HW_DEBUG_CORE
 	    , output issue_pipeline_debug_t issue_pipeline_debug
 	`endif
 	);
@@ -48,7 +48,7 @@ module VX_issue import VX_gpu_pkg::*; #(
     end
 	`endif
 
-	`ifdef ENABLE_HW_DEBUG_MODULE
+	`ifdef ENABLE_HW_DEBUG_CORE
 	    issue_slice_debug_t per_issue_debug [`ISSUE_WIDTH];
 	`endif
 
@@ -86,10 +86,10 @@ module VX_issue import VX_gpu_pkg::*; #(
 	            .writeback_if (writeback_if[issue_id]),
 	            .dispatch_if  (per_issue_dispatch_if),
 	            .issue_sched_if(issue_sched_if[issue_id])
-	        `ifdef ENABLE_HW_DEBUG_MODULE
-	            ,
-	            .issue_slice_debug(per_issue_debug[issue_id])
-	        `endif
+	        `ifdef ENABLE_HW_DEBUG_CORE
+		            ,
+		            .issue_slice_debug(per_issue_debug[issue_id])
+		        `endif
 	        );
 
         // Assign transposed dispatch_if
@@ -98,7 +98,7 @@ module VX_issue import VX_gpu_pkg::*; #(
         end
 	     end
 
-	`ifdef ENABLE_HW_DEBUG_MODULE
+	`ifdef ENABLE_HW_DEBUG_CORE
 	    for (genvar dbg_issue_id = 0; dbg_issue_id < `ISSUE_WIDTH; ++dbg_issue_id) begin : g_hw_debug_issue
 	        assign issue_pipeline_debug.channels[HW_DBG_ISSUE_DECODE_BASE + dbg_issue_id]
 	            = per_issue_debug[dbg_issue_id].channels[HW_DBG_ISSUE_SLICE_DECODE];

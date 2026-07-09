@@ -88,7 +88,7 @@ module VX_cache_wrap import VX_gpu_pkg::*; #(
 	    VX_mem_bus_if.slave     core_bus_if [NUM_REQS],
 	    VX_mem_bus_if.master    mem_bus_if [MEM_PORTS],
 
-	`ifdef ENABLE_HW_DEBUG_MODULE
+	`ifdef ENABLE_HW_DEBUG_CACHE
 	    output cache_debug_t    cache_debug,
 	`endif
 
@@ -311,7 +311,7 @@ module VX_cache_wrap import VX_gpu_pkg::*; #(
 
 	    end
 
-	`ifdef ENABLE_HW_DEBUG_MODULE
+	`ifdef ENABLE_HW_DEBUG_CACHE
 	    assign cache_debug.valid = 1'b1;
 	    assign cache_debug.kind = 4'(DEBUG_CACHE_KIND);
 	    assign cache_debug.location = 16'(DEBUG_CACHE_LOCATION);

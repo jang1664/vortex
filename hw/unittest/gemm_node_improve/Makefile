@@ -116,6 +116,7 @@ RTLS := $(AXI_DIR)/src/axi_pkg.sv \
         $(RTL_DIR)/core/VX_dma_unit_misal.sv \
         $(RTL_DIR)/core/VX_dma_unit.sv \
         $(RTL_DIR)/core/VX_dma_node.sv \
+        $(RTL_DIR)/core/VX_mem_remap.sv \
         $(RTL_DIR)/core/gemm/VX_gemm_tmem_dma_ctrl.sv \
         $(RTL_DIR)/libs/VX_allocator.sv \
         $(RTL_DIR)/libs/VX_index_buffer.sv \
@@ -149,7 +150,11 @@ INCDIRS_ := $(VORTEX_HOME)/build/hw \
             $(THIRD_PARTY_DIR)/axi/include \
             $(THIRD_PARTY_DIR)/axi/.bender/git/checkouts/common_cells-3e2fcccecd7aee7b/include
 
-DEFINES_ := SIMULATION DEBUG_LEVEL=3 DBG_TRACE_GEMM XLEN_64 PLATFORM_MEMORY_ID_WIDTH=8
+DEFINES_ := SIMULATION DEBUG_LEVEL=3 XLEN_64 PLATFORM_MEMORY_ID_WIDTH=8 PLATFORM_MEMORY_NUM_BANKS=32 PLATFORM_MEMORY_INTERLEAVE=1 PLATFORM_MEMORY_REMAP FPINT_EMUL_MAX_K=4096
+GEMM_TRACE ?= 0
+ifeq ($(GEMM_TRACE),1)
+DEFINES_ += DBG_TRACE_GEMM
+endif
 FPU_NEW_EN ?= 1
 ifeq ($(FPU_NEW_EN),1)
 DEFINES_ += FPU_FPNEW

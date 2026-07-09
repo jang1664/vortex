@@ -21,6 +21,7 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*; import cf_mat
     localparam FP32_WIDTH = 32;
     localparam FP16_WIDTH = 16;
     localparam MULTI_VECTOR_MAX_INPUTS = 256;
+    localparam MAX_K_ITER_STIM = 8;
     localparam INTERVAL_SEGMENTS = 8;
     localparam MIN_STIM_INTERVAL = 1;
     localparam MAX_STIM_INTERVAL = 8;
@@ -33,6 +34,11 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*; import cf_mat
     localparam GEMM_SCALE_ZERO_DATA_SIZE = `GEMM_SCALE_ZERO_DATA_SIZE;
     localparam GEMM_OUTPUT_DATA_SIZE = `GEMM_OUTPUT_DATA_SIZE;
     localparam ACC_ROW_STRIDE_BYTES = `GEMM_PSUM_DATA_SIZE;
+`ifdef GEMM_NAIVE
+    localparam OUTPUT_ADDR_STRIDE_BYTES = `GEMM_OUTPUT_DATA_SIZE;
+`else
+    localparam OUTPUT_ADDR_STRIDE_BYTES = `GEMM_PSUM_DATA_SIZE;
+`endif
 
     // =========================================================================
     // File Handles
@@ -578,6 +584,87 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*; import cf_mat
           test5_fail |= fail;
           if(fail) $display("TEST 5 FAILED on load-then-accumulate sequence");
           else      $display("TEST 5 PASSED on load-then-accumulate sequence");
+
+          if ($test$plusargs("GEMM_ACCUM_TIMING_SWEEP")) begin
+            int burst_len;
+            int gap_cycles;
+            int initial_gap_cycles;
+            int base_row;
+
+            $display("\n[TEST 5] Accumulate Input Timing Sweep enabled");
+            log_test_start("TEST 5 Accumulate Input Timing Sweep");
+
+            for (int p = 0; p < 8; p++) begin
+              case (p)
+                0: begin burst_len = 1;  gap_cycles = 1;  initial_gap_cycles = 0; base_row = 0; end
+                1: begin burst_len = 2;  gap_cycles = 1;  initial_gap_cycles = 0; base_row = 1; end
+                2: begin burst_len = 4;  gap_cycles = 2;  initial_gap_cycles = 0; base_row = 2; end
+                3: begin burst_len = 8;  gap_cycles = 4;  initial_gap_cycles = 0; base_row = 3; end
+                4: begin burst_len = 16; gap_cycles = 8;  initial_gap_cycles = 0; base_row = 4; end
+                5: begin burst_len = 32; gap_cycles = 16; initial_gap_cycles = 0; base_row = 5; end
+                6: begin burst_len = 3;  gap_cycles = 5;  initial_gap_cycles = 0; base_row = 6; end
+                7: begin burst_len = 5;  gap_cycles = 3;  initial_gap_cycles = 0; base_row = 7; end
+                default: begin burst_len = 0; gap_cycles = 0; initial_gap_cycles = 0; base_row = `GEMM_ACC_MEM_BANK_NUM; end
+              endcase
+
+              test5_case_idx++;
+              $sformat(case_name, "test5_case_%0d_accum_timing_burst%0d_gap%0d_base%0d_n128",
+                       test5_case_idx, burst_len, gap_cycles, base_row);
+              test_load_then_accumulate_sequence(
+                .quant_dir(`QDIR_COL),
+                .acc_mem_base_addr(acc_addr_row(base_row)),
+                .num_inputs(128),
+                .fail(fail),
+                .case_name(case_name),
+                .accum_burst_len(burst_len),
+                .accum_gap_cycles(gap_cycles),
+                .accum_initial_gap_cycles(initial_gap_cycles)
+              );
+              log_test_result(case_name, ~fail);
+              test5_fail |= fail;
+              if(fail) $display("TEST 5 FAILED on accumulate timing sweep pattern %0d", p);
+              else      $display("TEST 5 PASSED on accumulate timing sweep pattern %0d", p);
+            end
+
+            log_test_result("TEST 5 Accumulate Input Timing Sweep", ~test5_fail);
+          end
+
+          if ($test$plusargs("GEMM_K_ITER_ACCUM")) begin
+            int k_iters;
+            int k_num_inputs;
+            int k_input_interval;
+            int k_initial_gap;
+            int k_base_row;
+
+            k_iters = 3;
+            k_num_inputs = 128;
+            k_input_interval = 1;
+            k_initial_gap = 0;
+            k_base_row = 0;
+            void'($value$plusargs("GEMM_K_ITERS=%d", k_iters));
+            void'($value$plusargs("GEMM_K_NUM_INPUTS=%d", k_num_inputs));
+            void'($value$plusargs("GEMM_K_INPUT_INTERVAL=%d", k_input_interval));
+            void'($value$plusargs("GEMM_K_INITIAL_GAP=%d", k_initial_gap));
+            void'($value$plusargs("GEMM_K_BASE_ROW=%d", k_base_row));
+
+            test5_case_idx++;
+            $sformat(case_name, "test5_case_%0d_k_iter_accum_iters%0d_interval%0d_base%0d_n%0d",
+                     test5_case_idx, k_iters, k_input_interval, k_base_row, k_num_inputs);
+            test_k_iter_accumulate_sequence(
+              .quant_dir(`QDIR_COL),
+              .acc_mem_base_addr(acc_addr_row(k_base_row)),
+              .num_inputs(k_num_inputs),
+              .k_iters(k_iters),
+              .input_interval_cycles(k_input_interval),
+              .fail(fail),
+              .case_name(case_name),
+              .input_initial_gap_cycles(k_initial_gap)
+            );
+            log_test_result(case_name, ~fail);
+            test5_fail |= fail;
+            if(fail) $display("TEST 5 FAILED on K-iteration accumulate sequence");
+            else      $display("TEST 5 PASSED on K-iteration accumulate sequence");
+          end
         end
         overall_fail |= test5_fail;
         log_test_result("TEST 5 Back-to-back Accumulate Sequence Test", ~test5_fail);
@@ -816,6 +903,180 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*; import cf_mat
                  $time, stream_name, num_inputs, stall_cycles);
     endtask
 
+    task automatic send_input_stream_bursty(
+        ref input_vector_t input_data[MULTI_VECTOR_MAX_INPUTS],
+        input int num_inputs,
+        input string stream_name,
+        input int burst_len,
+        input int gap_cycles,
+        input int initial_gap_cycles,
+        output int stall_cycles,
+        output int inserted_gap_cycles
+    );
+        int sent;
+        int cycles;
+        int max_cycles;
+        int accepted_in_burst;
+        int gap_left;
+
+        if ((burst_len <= 0) || (gap_cycles <= 0)) begin
+            inserted_gap_cycles = 0;
+            send_input_stream_full_speed(input_data, num_inputs, stream_name, stall_cycles);
+            return;
+        end
+
+        sent = 0;
+        cycles = 0;
+        stall_cycles = 0;
+        inserted_gap_cycles = 0;
+        accepted_in_burst = 0;
+        gap_left = 0;
+        max_cycles = (num_inputs * (64 + gap_cycles + burst_len)) + 4096;
+
+        while (u_dut.in_flight !== 1'b1) begin
+            @(posedge clk);
+        end
+
+        repeat(initial_gap_cycles) @(posedge clk);
+
+        if (num_inputs > 0) begin
+            @(negedge clk);
+            i_lmem_bus_if.req_valid = 1'b1;
+            i_lmem_bus_if.req_data.data = input_data[0];
+            i_lmem_bus_if.req_data.rw = 1'b0;
+
+            while (sent < num_inputs) begin
+                @(posedge clk);
+                cycles += 1;
+
+                if (i_lmem_bus_if.req_valid && (i_lmem_bus_if.req_ready === 1'b1)) begin
+                    sent += 1;
+                    accepted_in_burst += 1;
+
+                    if (sent >= num_inputs) begin
+                        @(negedge clk);
+                        i_lmem_bus_if.req_valid = 1'b0;
+                    end else if (accepted_in_burst >= burst_len) begin
+                        @(negedge clk);
+                        i_lmem_bus_if.req_valid = 1'b0;
+                        accepted_in_burst = 0;
+                        gap_left = gap_cycles;
+                        inserted_gap_cycles += gap_cycles;
+                    end else begin
+                        @(negedge clk);
+                        i_lmem_bus_if.req_valid = 1'b1;
+                        i_lmem_bus_if.req_data.data = input_data[sent];
+                        i_lmem_bus_if.req_data.rw = 1'b0;
+                    end
+                end else if (!i_lmem_bus_if.req_valid && (gap_left > 0)) begin
+                    gap_left -= 1;
+                    if ((gap_left == 0) && (sent < num_inputs)) begin
+                        @(negedge clk);
+                        i_lmem_bus_if.req_valid = 1'b1;
+                        i_lmem_bus_if.req_data.data = input_data[sent];
+                        i_lmem_bus_if.req_data.rw = 1'b0;
+                    end
+                end else if (i_lmem_bus_if.req_valid) begin
+                    stall_cycles += 1;
+                end
+
+                if (cycles > max_cycles) begin
+                    $fatal(1, "[%0t] ERROR: bursty %s input stream timed out; sent=%0d/%0d ready=%0b valid=%0b burst_len=%0d gap_cycles=%0d gap_left=%0d",
+                           $time, stream_name, sent, num_inputs, i_lmem_bus_if.req_ready,
+                           i_lmem_bus_if.req_valid, burst_len, gap_cycles, gap_left);
+                end
+            end
+        end
+
+        $display("[%0t]   Bursty %s input stream sent %0d vectors, burst_len=%0d, gap_cycles=%0d, initial_gap=%0d, inserted_gap_cycles=%0d, input_ready_stall_cycles=%0d",
+                 $time, stream_name, num_inputs, burst_len, gap_cycles, initial_gap_cycles,
+                 inserted_gap_cycles, stall_cycles);
+    endtask
+
+    task automatic send_input_stream_interval(
+        ref input_vector_t input_data[MULTI_VECTOR_MAX_INPUTS],
+        input int num_inputs,
+        input string stream_name,
+        input int input_interval_cycles,
+        input int initial_gap_cycles,
+        output int stall_cycles,
+        output int inserted_gap_cycles
+    );
+        int sent;
+        int cycles;
+        int max_cycles;
+        int gap_left;
+        int interval_cycles;
+
+        sent = 0;
+        cycles = 0;
+        stall_cycles = 0;
+        inserted_gap_cycles = 0;
+        gap_left = 0;
+        interval_cycles = (input_interval_cycles < 1) ? 1 : input_interval_cycles;
+        max_cycles = (num_inputs * (64 + interval_cycles)) + initial_gap_cycles + 4096;
+
+        while (u_dut.in_flight !== 1'b1) begin
+            @(posedge clk);
+        end
+
+        repeat(initial_gap_cycles) begin
+            @(posedge clk);
+            inserted_gap_cycles += 1;
+        end
+
+        if (num_inputs > 0) begin
+            @(negedge clk);
+            i_lmem_bus_if.req_valid = 1'b1;
+            i_lmem_bus_if.req_data.data = input_data[0];
+            i_lmem_bus_if.req_data.rw = 1'b0;
+
+            while (sent < num_inputs) begin
+                @(posedge clk);
+                cycles += 1;
+
+                if (i_lmem_bus_if.req_valid && (i_lmem_bus_if.req_ready === 1'b1)) begin
+                    sent += 1;
+
+                    if (sent >= num_inputs) begin
+                        @(negedge clk);
+                        i_lmem_bus_if.req_valid = 1'b0;
+                    end else if (interval_cycles > 1) begin
+                        @(negedge clk);
+                        i_lmem_bus_if.req_valid = 1'b0;
+                        gap_left = interval_cycles - 1;
+                    end else begin
+                        @(negedge clk);
+                        i_lmem_bus_if.req_valid = 1'b1;
+                        i_lmem_bus_if.req_data.data = input_data[sent];
+                        i_lmem_bus_if.req_data.rw = 1'b0;
+                    end
+                end else if (!i_lmem_bus_if.req_valid && (gap_left > 0)) begin
+                    gap_left -= 1;
+                    inserted_gap_cycles += 1;
+                    if ((gap_left == 0) && (sent < num_inputs)) begin
+                        @(negedge clk);
+                        i_lmem_bus_if.req_valid = 1'b1;
+                        i_lmem_bus_if.req_data.data = input_data[sent];
+                        i_lmem_bus_if.req_data.rw = 1'b0;
+                    end
+                end else if (i_lmem_bus_if.req_valid) begin
+                    stall_cycles += 1;
+                end
+
+                if (cycles > max_cycles) begin
+                    $fatal(1, "[%0t] ERROR: interval %s input stream timed out; sent=%0d/%0d ready=%0b valid=%0b interval=%0d gap_left=%0d",
+                           $time, stream_name, sent, num_inputs, i_lmem_bus_if.req_ready,
+                           i_lmem_bus_if.req_valid, interval_cycles, gap_left);
+                end
+            end
+        end
+
+        $display("[%0t]   Interval %s input stream sent %0d vectors, interval_cycles=%0d, initial_gap=%0d, inserted_gap_cycles=%0d, input_ready_stall_cycles=%0d",
+                 $time, stream_name, num_inputs, interval_cycles, initial_gap_cycles,
+                 inserted_gap_cycles, stall_cycles);
+    endtask
+
     // =========================================================================
     // Start GEMM Operation
     // =========================================================================
@@ -880,7 +1141,7 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*; import cf_mat
     );
         @(posedge clk);
         o_lmem_bus_if.req_valid = 1'b1;
-        o_lmem_bus_if.req_data.addr = addr >> `CLOG2(`GEMM_PSUM_DATA_SIZE);
+        o_lmem_bus_if.req_data.addr = addr >> `CLOG2(OUTPUT_ADDR_STRIDE_BYTES);
         o_lmem_bus_if.req_data.rw = 1'b0;  // Read
 
         @(posedge clk);
@@ -1896,7 +2157,10 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*; import cf_mat
       input logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0] acc_mem_base_addr,
       input int   num_inputs,
       ref   bit   fail,
-      input string case_name="test5_load_then_accumulate_sequence"
+      input string case_name="test5_load_then_accumulate_sequence",
+      input int   accum_burst_len=0,
+      input int   accum_gap_cycles=0,
+      input int   accum_initial_gap_cycles=0
     );
         input_vector_t input_load[MULTI_VECTOR_MAX_INPUTS];
         input_vector_t input_accum[MULTI_VECTOR_MAX_INPUTS];
@@ -1917,6 +2181,7 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*; import cf_mat
         int num_fail;
         int load_input_stall_cycles;
         int accum_input_stall_cycles;
+        int accum_inserted_gap_cycles;
         integer case_fd;
         string case_log_path;
 
@@ -1930,12 +2195,14 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*; import cf_mat
         open_case_log(case_name, case_fd, case_log_path);
         if (case_fd) begin
             $fdisplay(case_fd, "[%0t] [START] %s", $time, case_name);
-            $fdisplay(case_fd, "[%0t] cfg: quant_dir=%0d acc_mem_base_addr=%0d num_inputs=%0d",
-                      $time, quant_dir, acc_mem_base_addr, num_inputs);
+            $fdisplay(case_fd, "[%0t] cfg: quant_dir=%0d acc_mem_base_addr=%0d num_inputs=%0d accum_burst_len=%0d accum_gap_cycles=%0d accum_initial_gap_cycles=%0d",
+                      $time, quant_dir, acc_mem_base_addr, num_inputs,
+                      accum_burst_len, accum_gap_cycles, accum_initial_gap_cycles);
         end
 
         $display("\n[%0t] ============================================", $time);
-        $display("[%0t] TEST: Load-then-accumulate Sequence Test (num_inputs=%0d)", $time, num_inputs);
+        $display("[%0t] TEST: Load-then-accumulate Sequence Test (num_inputs=%0d, accum_burst_len=%0d, accum_gap_cycles=%0d, accum_initial_gap=%0d)",
+                 $time, num_inputs, accum_burst_len, accum_gap_cycles, accum_initial_gap_cycles);
         $display("[%0t] ============================================", $time);
 
         for (i = 0; i < fpint_emul::MAX_M * fpint_emul::MAX_K; i++) ref_input[i] = '0;
@@ -2031,7 +2298,7 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*; import cf_mat
             ref_output,
             quant_dir,
             fpint_emul::WNOTRANS,
-            1'b1,
+            1'b0,
             ref_psum
         );
 
@@ -2046,10 +2313,26 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*; import cf_mat
             .zreg_use_idx(1'b1)
         );
 
-        send_input_stream_full_speed(input_accum, num_inputs, "accumulate-pass", accum_input_stall_cycles);
+        if ((accum_burst_len <= 0) || (accum_gap_cycles <= 0)) begin
+            accum_inserted_gap_cycles = 0;
+            send_input_stream_full_speed(input_accum, num_inputs, "accumulate-pass", accum_input_stall_cycles);
+        end else begin
+            send_input_stream_bursty(
+                input_accum,
+                num_inputs,
+                "accumulate-pass",
+                accum_burst_len,
+                accum_gap_cycles,
+                accum_initial_gap_cycles,
+                accum_input_stall_cycles,
+                accum_inserted_gap_cycles
+            );
+        end
         if (case_fd) begin
-            $fdisplay(case_fd, "[%0t] accum_input_stream: full_speed ready_stall_cycles=%0d",
-                      $time, accum_input_stall_cycles);
+            $fdisplay(case_fd, "[%0t] accum_input_stream: burst_len=%0d gap_cycles=%0d initial_gap=%0d inserted_gap_cycles=%0d ready_stall_cycles=%0d fifo_level_after_input=%0d",
+                      $time, accum_burst_len, accum_gap_cycles, accum_initial_gap_cycles,
+                      accum_inserted_gap_cycles, accum_input_stall_cycles,
+                      u_dut.u_acc_rd_fifo.status_cnt_q);
         end
 
         wait_for_done();
@@ -2080,6 +2363,221 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*; import cf_mat
         if (case_fd) begin
             if (num_fail > 0) begin
                 $fdisplay(case_fd, "[%0t] Total mismatches: %0d/%0d", $time, num_fail, num_inputs * MXU_COL);
+            end
+            $fdisplay(case_fd, "[%0t] [RESULT] %s: %s", $time, case_name, test_pass ? "PASSED" : "FAILED");
+            $fclose(case_fd);
+        end
+        fail = ~test_pass;
+    endtask
+
+    // -----------------------------------------------------------------
+    // Test: one output tile accumulated across multiple K iterations.
+    //       This models the FSM sequence for K growth:
+    //         K0 load, then K1/K2/... accumulate into the same acc rows.
+    // -----------------------------------------------------------------
+    task test_k_iter_accumulate_sequence(
+      input logic quant_dir,
+      input logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0] acc_mem_base_addr,
+      input int   num_inputs,
+      input int   k_iters,
+      input int   input_interval_cycles,
+      ref   bit   fail,
+      input string case_name="test5_k_iter_accumulate_sequence",
+      input int   input_initial_gap_cycles=0
+    );
+        input_vector_t input_data[MULTI_VECTOR_MAX_INPUTS];
+        logic [MXU_ROW-1:0][MXU_COL-1:0][W_BIT_WIDTH-1:0] weight_data;
+        logic [`MXU_MAX_DIM-1:0][SCALE_WIDTH-1:0] scale_values;
+        logic [`MXU_MAX_DIM-1:0][ZP_WIDTH-1:0] zp_values;
+        logic [`MXU_COL-1:0][FP32_WIDTH-1:0] acc_row_fp32;
+        logic [MXU_COL-1:0][FP16_WIDTH-1:0] dut_output;
+        logic [fpint_emul::IN_WIDTH-1:0] ref_input[fpint_emul::MAX_M*fpint_emul::MAX_K];
+        logic [fpint_emul::MAX_W_WIDTH-1:0] ref_weight[fpint_emul::MAX_K*fpint_emul::MAX_N];
+        logic [fpint_emul::S_WIDTH-1:0] ref_scale[fpint_emul::MAX_KG*fpint_emul::MAX_N];
+        logic [fpint_emul::Z_WIDTH-1:0] ref_zero[fpint_emul::MAX_KG*fpint_emul::MAX_N];
+        logic [fpint_emul::O_WIDTH-1:0] ref_output[fpint_emul::MAX_M*fpint_emul::MAX_N];
+        logic [fpint_emul::P_WIDTH-1:0] ref_psum[fpint_emul::MAX_M*fpint_emul::MAX_N];
+        bit test_pass;
+        int num_fail;
+        int input_stall_cycles;
+        int inserted_gap_cycles;
+        int i, j, k, m, iter;
+        integer case_fd;
+        string case_log_path;
+        string stream_name;
+        string mode_name;
+
+        fail = 0;
+        test_pass = 1;
+        num_fail = 0;
+
+        if (num_inputs > MULTI_VECTOR_MAX_INPUTS) num_inputs = MULTI_VECTOR_MAX_INPUTS;
+        if (num_inputs < 1) num_inputs = 1;
+        if (k_iters > MAX_K_ITER_STIM) k_iters = MAX_K_ITER_STIM;
+        if (k_iters < 2) k_iters = 2;
+        if (input_interval_cycles < 1) input_interval_cycles = 1;
+        if (input_initial_gap_cycles < 0) input_initial_gap_cycles = 0;
+
+        open_case_log(case_name, case_fd, case_log_path);
+        if (case_fd) begin
+            $fdisplay(case_fd, "[%0t] [START] %s", $time, case_name);
+            $fdisplay(case_fd, "[%0t] cfg: quant_dir=%0d acc_mem_base_addr=%0d num_inputs=%0d k_iters=%0d input_interval_cycles=%0d input_initial_gap_cycles=%0d",
+                      $time, quant_dir, acc_mem_base_addr, num_inputs, k_iters,
+                      input_interval_cycles, input_initial_gap_cycles);
+        end
+
+        $display("\n[%0t] ============================================", $time);
+        $display("[%0t] TEST: K-Iteration Accumulate Sequence (num_inputs=%0d, k_iters=%0d, input_interval_cycles=%0d, initial_gap=%0d)",
+                 $time, num_inputs, k_iters, input_interval_cycles, input_initial_gap_cycles);
+        $display("[%0t] ============================================", $time);
+
+        for (i = 0; i < fpint_emul::MAX_M * fpint_emul::MAX_N; i++) ref_psum[i] = '0;
+
+        for (iter = 0; (iter < k_iters) && test_pass; iter++) begin
+            logic reg_idx;
+            reg_idx = ((iter & 1) != 0);
+            mode_name = (iter == 0) ? "load" : "accum";
+
+            for (i = 0; i < `MXU_MAX_DIM; i++) begin
+                scale_values[i] = fp32_val_to_fp16_bit(shortreal'(0.5 + (((iter + i) % 5) * 0.125)));
+                zp_values[i] = `ZP_WIDTH'(((iter * 2 + i) % 5) - 2);
+            end
+
+            for (i = 0; i < MXU_ROW; i++) begin
+                for (j = 0; j < MXU_COL; j++) begin
+                    weight_data[i][j] = W_BIT_WIDTH'(((iter * 5 + i * 3 + j * 7) % 13) - 6);
+                end
+            end
+
+            for (k = 0; k < num_inputs; k++) begin
+                for (i = 0; i < MXU_ROW; i++) begin
+                    input_data[k][i] = fp32_val_to_fp16_bit(shortreal'(((iter * 3 + k * 2 + i) % 11) - 5) * 0.25);
+                end
+            end
+
+            write_scale_reg(reg_idx, scale_values);
+            write_zp_reg(reg_idx, zp_values);
+            write_weight(weight_data, reg_idx, 1'b0);
+            repeat(5) @(posedge clk);
+
+            for (i = 0; i < fpint_emul::MAX_M * fpint_emul::MAX_K; i++) ref_input[i] = '0;
+            for (i = 0; i < fpint_emul::MAX_K * fpint_emul::MAX_N; i++) ref_weight[i] = '0;
+            for (i = 0; i < fpint_emul::MAX_KG * fpint_emul::MAX_N; i++) ref_scale[i] = '0;
+            for (i = 0; i < fpint_emul::MAX_KG * fpint_emul::MAX_N; i++) ref_zero[i] = '0;
+
+            for (m = 0; m < num_inputs; m++) begin
+                for (int kk = 0; kk < MXU_ROW; kk++) begin
+                    ref_input[m * MXU_ROW + kk] = input_data[m][kk];
+                end
+            end
+
+            for (i = 0; i < MXU_ROW; i++) begin
+                for (j = 0; j < MXU_COL; j++) begin
+                    ref_weight[i * MXU_COL + j] = signed'(weight_data[i][j]);
+                end
+            end
+
+            if (quant_dir == `QDIR_COL) begin
+                for (j = 0; j < MXU_COL; j++) begin
+                    ref_scale[j] = scale_values[j];
+                    ref_zero[j] = zp_values[j];
+                end
+            end else begin
+                for (i = 0; i < MXU_ROW; i++) begin
+                    ref_scale[i] = scale_values[i];
+                    ref_zero[i] = zp_values[i];
+                end
+            end
+
+            fpint_emul::fpint_gemm_ref(
+                ref_input, ref_weight, ref_scale, ref_zero,
+                num_inputs, MXU_COL, MXU_ROW,
+                ref_output,
+                quant_dir,
+                fpint_emul::WNOTRANS,
+                1'b0,
+                ref_psum
+            );
+
+            wait_for_idle();
+            start_gemm(
+                .is_load((iter == 0) ? 1'b1 : 1'b0),
+                .quant_dir(quant_dir),
+                .acc_mem_base_addr(acc_mem_base_addr),
+                .acc_cnt(num_inputs),
+                .wreg_use_idx(reg_idx),
+                .sreg_use_idx(reg_idx),
+                .zreg_use_idx(reg_idx)
+            );
+
+            $sformat(stream_name, "k-iter-%0d-%s", iter, mode_name);
+            send_input_stream_interval(
+                input_data,
+                num_inputs,
+                stream_name,
+                input_interval_cycles,
+                input_initial_gap_cycles,
+                input_stall_cycles,
+                inserted_gap_cycles
+            );
+
+            if (case_fd) begin
+                $fdisplay(case_fd, "[%0t] iter=%0d mode=%s reg_idx=%0d inserted_gap_cycles=%0d ready_stall_cycles=%0d fifo_level_after_input=%0d",
+                          $time, iter, mode_name, reg_idx,
+                          inserted_gap_cycles, input_stall_cycles,
+                          u_dut.u_acc_rd_fifo.status_cnt_q);
+            end
+
+            wait_for_done();
+            if (!gemm_unit_if.done) begin
+                $display("[%0t] ERROR: K-iteration test timed out at iter=%0d", $time, iter);
+                if (case_fd) begin
+                    $fdisplay(case_fd, "[%0t] ERROR: timed out at iter=%0d", $time, iter);
+                end
+                test_pass = 0;
+                num_fail += 1;
+            end else begin
+                wait_for_idle();
+
+                if (iter + 1 < k_iters) begin
+                    for (m = 0; m < num_inputs; m++) begin
+                        u_dut.read_acc_mem(acc_mem_base_addr + m * ACC_ROW_STRIDE_BYTES, acc_row_fp32);
+                        for (j = 0; j < MXU_COL; j++) begin
+                            ref_psum[m * MXU_COL + j] = acc_row_fp32[j];
+                        end
+                    end
+                end
+            end
+        end
+
+        if (test_pass) begin
+            repeat(10) @(posedge clk);
+            for (m = 0; m < num_inputs; m++) begin
+                read_output(acc_mem_base_addr + m * ACC_ROW_STRIDE_BYTES, dut_output);
+                for (j = 0; j < MXU_COL; j++) begin
+                    if (!compare_fp16(dut_output[j], ref_output[m * MXU_COL + j], 0.01)) begin
+                        $display("[%0t]   ERROR: k-iter output[%0d][%0d] mismatch - DUT=0x%h (%f), REF=0x%h (%f)",
+                                 $time, m, j, dut_output[j], cf_math_util_pkg::fp16_bit_to_fp16_val(dut_output[j]),
+                                 ref_output[m * MXU_COL + j], cf_math_util_pkg::fp16_bit_to_fp16_val(ref_output[m * MXU_COL + j]));
+                        if (case_fd) begin
+                            $fdisplay(case_fd, "[%0t] ERROR: k-iter output[%0d][%0d] mismatch - DUT=0x%h (%f), REF=0x%h (%f)",
+                                      $time, m, j, dut_output[j], cf_math_util_pkg::fp16_bit_to_fp16_val(dut_output[j]),
+                                      ref_output[m * MXU_COL + j], cf_math_util_pkg::fp16_bit_to_fp16_val(ref_output[m * MXU_COL + j]));
+                        end
+                        test_pass = 0;
+                        num_fail += 1;
+                    end
+                end
+            end
+        end
+
+        $display("[%0t] K-ITERATION ACCUMULATE SEQUENCE TEST : %s", $time, test_pass ? "PASSED" : "FAILED");
+        if (num_fail > 0) begin
+            $display("[%0t]   Total K-iteration errors: %0d", $time, num_fail);
+        end
+        if (case_fd) begin
+            if (num_fail > 0) begin
+                $fdisplay(case_fd, "[%0t] Total K-iteration errors: %0d", $time, num_fail);
             end
             $fdisplay(case_fd, "[%0t] [RESULT] %s: %s", $time, case_name, test_pass ? "PASSED" : "FAILED");
             $fclose(case_fd);

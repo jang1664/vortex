@@ -10,6 +10,7 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+// #define ENABLE_HW_DEBUG_MODULE_EXPORT
 
 #include <common.h>
 
@@ -64,7 +65,7 @@ using namespace vortex;
 #endif
 #endif
 
-#if defined(ENABLE_HW_DEBUG_MODULE_EXPORT) && defined(NDEBUG)
+#if defined(ENABLE_HW_DEBUG_MODULE_EXPORT) && defined(ENABLE_HW_DEBUG_MODULE) && defined(NDEBUG)
 #define VX_HW_DEBUG_READY_WAIT_POLL 1
 #endif
 
@@ -279,6 +280,10 @@ public:
     , xrtKernel_(nullptr)
   #endif
     , pending_ap_done_(false)
+  #ifdef ENABLE_HW_DEBUG_MODULE_EXPORT
+    , hw_debug_present_checked_(false)
+    , hw_debug_present_(false)
+  #endif
   {}
 
   ~vx_device() {
@@ -836,7 +841,33 @@ public:
     return static_cast<vx_device *>(opaque)->write_register(addr, value);
   }
 
+  bool hw_debug_available() {
+    if (hw_debug_present_checked_) {
+      return hw_debug_present_;
+    }
+
+    vx_hw_debug_io_t io = {
+      this,
+      &vx_device::hw_debug_read32,
+      &vx_device::hw_debug_write32
+    };
+    uint32_t status = 0;
+    int err = vx_hw_debug_get_status(&io, &status);
+    hw_debug_present_checked_ = true;
+    hw_debug_present_ = (err == 0) && ((status & 0x1u) != 0);
+    if (!hw_debug_present_) {
+      fprintf(stderr,
+              "[VXDRV-HWDBG] hardware debug module not present; "
+              "suppressing HW debug dumps (status=0x%08x err=%d)\n",
+              status, err);
+    }
+    return hw_debug_present_;
+  }
+
   void dump_hw_debug() {
+    if (!this->hw_debug_available()) {
+      return;
+    }
     vx_hw_debug_io_t io = {
       this,
       &vx_device::hw_debug_read32,
@@ -846,6 +877,9 @@ public:
   }
 
   void poll_hw_debug_flags(vx_hw_debug_flag_snapshot_t *previous) {
+    if (!this->hw_debug_available()) {
+      return;
+    }
     vx_hw_debug_io_t io = {
       this,
       &vx_device::hw_debug_read32,
@@ -992,6 +1026,10 @@ private:
   uint32_t lg2_bank_size_;
   ShmStatus shm_;
   bool pending_ap_done_;
+#ifdef ENABLE_HW_DEBUG_MODULE_EXPORT
+  bool hw_debug_present_checked_;
+  bool hw_debug_present_;
+#endif
 
 #ifdef VX_USE_BANKED_XRT_BO
 
