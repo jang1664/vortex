@@ -21,6 +21,6 @@ typedef struct {
   // Dimensions
   uint32_t batch_size;     // Number of rows
   uint32_t reduce_dim;     // Size of dimension to reduce (columns)
+  uint32_t power_kernel_iterations;
 } kernel_arg_t;
-
 #endif // _COMMON_H_

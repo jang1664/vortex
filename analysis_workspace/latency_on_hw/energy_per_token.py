@@ -4,17 +4,33 @@ import csv
 import json
 import math
 import re
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from tools.latency_bench.fpga_bins import resolve_fpga_bin_config  # noqa: E402
 
 PREFILL_STAGE = "prefill"
 GENERATION_STAGE = "generation"
 DEFAULT_STAGE_ORDER = (PREFILL_STAGE, GENERATION_STAGE)
 SHARE_Y_SCOPE_CHOICES = ("none", "global", "row")
 FIGURE_TITLE_LAYOUT_TOP = 0.97
+DEFAULT_POWER_METRIC = "power_avg_W"
+DEFAULT_FPGA_PERIOD_S = 10e-9
+POWER_METRIC_COLUMN_ALIASES = {
+    "power_avg_W": ("power_avg_W", "power_avg_w"),
+    "power_vcc_avg_W": ("power_vcc_avg_W", "power_vcc_avg_w"),
+    "power_dynamic_avg_W": ("power_dynamic_avg_W", "power_dynamic_avg_w"),
+}
+XCLBIN_INFO_FILENAMES = ("vortex_xclbin.info", "vortex_afu.xclbin.info")
 POWER_SUMMARY_FIELDS = (
+    "power_metric",
     "stage",
     "batch",
     "seq_len",
@@ -30,6 +46,7 @@ POWER_SUMMARY_FIELDS = (
     "measured_power_count",
     "imputed_power_count",
     "missing_power_count",
+    "missing_cycle_count",
     "missing_latency_count",
     "complete",
 )
@@ -45,8 +62,9 @@ class PowerCandidate:
     shape: dict[str, Any]
     numeric_shape: dict[str, float]
     categorical_shape: dict[str, str]
-    power_avg_w: float
+    power_values_W: dict[str, float]
     power_samples: int
+    fpga_cycle_avg: float | None
 
 
 @dataclass(frozen=True)
@@ -152,18 +170,30 @@ def read_power_records(raw_dbs: Sequence[str | Path]) -> list[dict[str, str]]:
     return rows
 
 
-def build_power_resolver(raw_dbs: Sequence[str | Path]) -> PowerResolver:
-    return PowerResolver(_power_candidates(read_power_records(raw_dbs)))
+def build_power_resolver(
+    raw_dbs: Sequence[str | Path],
+    *,
+    power_metric: str = DEFAULT_POWER_METRIC,
+) -> PowerResolver:
+    return PowerResolver(
+        _power_candidates(
+            read_power_records(raw_dbs),
+            required_power_metric=_canonical_power_metric(power_metric),
+        )
+    )
 
 
 def energy_rows_from_records(
     composed_records: Iterable[Mapping[str, Any]],
     raw_dbs: Sequence[str | Path],
     *,
-    idle_power_w: float,
+    idle_power_w: float = 0.0,
     include_idle_power: bool = False,
+    power_metric: str = DEFAULT_POWER_METRIC,
+    fpga_period_s: float = DEFAULT_FPGA_PERIOD_S,
 ) -> list[dict[str, Any]]:
-    resolver = build_power_resolver(raw_dbs)
+    canonical_power_metric = _canonical_power_metric(power_metric)
+    resolver = build_power_resolver(raw_dbs, power_metric=canonical_power_metric)
     rows: list[dict[str, Any]] = []
     for row in composed_records:
         rows.append(
@@ -172,6 +202,8 @@ def energy_rows_from_records(
                 resolver=resolver,
                 idle_power_w=idle_power_w,
                 include_idle_power=include_idle_power,
+                power_metric=canonical_power_metric,
+                fpga_period_s=fpga_period_s,
             )
         )
     return rows
@@ -181,30 +213,39 @@ def energy_row_from_record(
     row: Mapping[str, Any],
     *,
     resolver: PowerResolver,
-    idle_power_w: float,
+    idle_power_w: float = 0.0,
     include_idle_power: bool = False,
+    power_metric: str = DEFAULT_POWER_METRIC,
+    fpga_period_s: float = DEFAULT_FPGA_PERIOD_S,
 ) -> dict[str, Any]:
+    canonical_power_metric = _canonical_power_metric(power_metric)
     resolution = resolver.resolve(row)
     candidate = resolution.candidate
-    weighted_latency_us = _weighted_latency_us(row)
+    exact_candidate = candidate if resolution.scope == "exact" else None
+    weighted_fpga_cycles = _weighted_fpga_cycles(row, exact_candidate)
+    resolved_fpga_period_s = _fpga_period_s(row, candidate, default=fpga_period_s)
     tokens = _token_count(row)
 
-    raw_power_w: float | None = None
-    effective_power_w: float | None = None
+    raw_power_W: float | None = None
+    effective_power_W: float | None = None
     if candidate is not None:
-        raw_power_w = candidate.power_avg_w
-        effective_power_w = raw_power_w if include_idle_power else max(raw_power_w - idle_power_w, 0.0)
+        raw_power_W = candidate.power_values_W.get(canonical_power_metric)
+        effective_power_W = raw_power_W
 
+    energy_time_s: float | None = None
     kernel_energy_j: float | None = None
     joules_per_token_component: float | None = None
-    if weighted_latency_us is not None and effective_power_w is not None:
-        kernel_energy_j = weighted_latency_us * effective_power_w / 1_000_000.0
+    if weighted_fpga_cycles is not None and resolved_fpga_period_s is not None:
+        energy_time_s = weighted_fpga_cycles * resolved_fpga_period_s
+    if energy_time_s is not None and effective_power_W is not None:
+        kernel_energy_j = energy_time_s * effective_power_W
         if tokens and tokens > 0:
             joules_per_token_component = kernel_energy_j / tokens
 
     output = dict(row)
     output.update(
         {
+            "power_metric": canonical_power_metric,
             "energy_stage": _stage(row),
             "energy_batch": _batch(row),
             "energy_seq_len": _seq_len(row),
@@ -218,23 +259,30 @@ def energy_row_from_record(
             "power_source_args": candidate.args if candidate else "",
             "power_source_shape_json": candidate.row.get("shape_json", "") if candidate else "",
             "power_source_samples": candidate.power_samples if candidate else "",
-            "raw_power_w": raw_power_w,
+            "raw_power_W": raw_power_W,
+            "raw_power_w": raw_power_W,
             "idle_power_w": idle_power_w,
             "include_idle_power": include_idle_power,
-            "effective_power_w": effective_power_w,
-            "energy_weighted_latency_us": weighted_latency_us,
+            "effective_power_W": effective_power_W,
+            "effective_power_w": effective_power_W,
+            "fpga_cycle_avg": _fpga_cycle_avg(row, exact_candidate),
+            "energy_weighted_fpga_cycles": weighted_fpga_cycles,
+            "fpga_period_s": resolved_fpga_period_s,
+            "energy_time_s": energy_time_s,
             "kernel_energy_j": kernel_energy_j,
             "joules_per_token_component": joules_per_token_component,
-            "energy_missing_latency": weighted_latency_us is None,
-            "energy_missing_power": candidate is None,
+            "energy_missing_cycle": weighted_fpga_cycles is None,
+            "energy_missing_latency": weighted_fpga_cycles is None,
+            "energy_missing_power": raw_power_W is None,
         }
     )
     return output
 
 
 def summarize_energy_rows(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
-    groups: dict[tuple[str, Any, Any, str], dict[str, Any]] = {}
+    groups: dict[tuple[str, str, Any, Any, str], dict[str, Any]] = {}
     for row in rows:
+        power_metric = _canonical_power_metric(row.get("power_metric") or DEFAULT_POWER_METRIC)
         stage = _text(row.get("energy_stage")) or _stage(row)
         batch = row.get("energy_batch")
         if batch in (None, ""):
@@ -243,10 +291,11 @@ def summarize_energy_rows(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, A
         if seq_len in (None, ""):
             seq_len = _seq_len(row)
         variant = _text(row.get("variant"))
-        key = (stage, batch, seq_len, variant)
+        key = (power_metric, stage, batch, seq_len, variant)
         group = groups.setdefault(
             key,
             {
+                "power_metric": power_metric,
                 "stage": stage,
                 "batch": batch,
                 "seq_len": seq_len,
@@ -258,6 +307,7 @@ def summarize_energy_rows(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, A
                 "measured_power_count": 0,
                 "imputed_power_count": 0,
                 "missing_power_count": 0,
+                "missing_cycle_count": 0,
                 "missing_latency_count": 0,
             },
         )
@@ -266,7 +316,19 @@ def summarize_energy_rows(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, A
         if energy is not None:
             group["total_energy_j"] += energy
             group["energy_component_count"] += 1
-        if row.get("energy_missing_latency") is True or _to_float(row.get("energy_weighted_latency_us")) is None:
+        missing_cycle = (
+            row.get("energy_missing_cycle") is True
+            or (
+                "energy_weighted_fpga_cycles" in row
+                and _to_float(row.get("energy_weighted_fpga_cycles")) is None
+            )
+            or (
+                "energy_weighted_fpga_cycles" not in row
+                and row.get("energy_missing_latency") is True
+            )
+        )
+        if missing_cycle:
+            group["missing_cycle_count"] += 1
             group["missing_latency_count"] += 1
         resolution = _text(row.get("power_resolution"))
         if resolution == "measured":
@@ -281,7 +343,7 @@ def summarize_energy_rows(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, A
         tokens = _to_float(group.get("tokens"))
         complete = (
             group["missing_power_count"] == 0
-            and group["missing_latency_count"] == 0
+            and group["missing_cycle_count"] == 0
             and tokens is not None
             and tokens > 0
         )
@@ -315,6 +377,8 @@ def plot_energy_per_token(
     out_dir: str | Path,
     idle_power_w: float,
     include_idle_power: bool = False,
+    power_metric: str = DEFAULT_POWER_METRIC,
+    fpga_period_s: float = DEFAULT_FPGA_PERIOD_S,
     title: str | None = None,
     label_maps: Mapping[str, Mapping[Any, str]] | None = None,
     value_orders: Mapping[str, Sequence[Any]] | None = None,
@@ -356,6 +420,8 @@ def plot_energy_per_token(
         raw_dbs,
         idle_power_w=idle_power_w,
         include_idle_power=include_idle_power,
+        power_metric=power_metric,
+        fpga_period_s=fpga_period_s,
     )
     summary = add_relative_energy_values(
         summarize_energy_rows(rows),
@@ -441,12 +507,28 @@ def add_relative_energy_values(
     return rows
 
 
-def _power_candidates(rows: Iterable[Mapping[str, Any]]) -> list[PowerCandidate]:
+def _power_candidates(
+    rows: Iterable[Mapping[str, Any]],
+    *,
+    required_power_metric: str | None = None,
+) -> list[PowerCandidate]:
     candidates: list[PowerCandidate] = []
+    required = _canonical_power_metric(required_power_metric) if required_power_metric else None
     for row in rows:
-        power_avg_w = _to_float(row.get("power_avg_w"))
         power_samples = _to_int(row.get("power_samples"))
-        if power_avg_w is None or power_samples is None or power_samples <= 0:
+        if power_samples is None or power_samples <= 0:
+            continue
+        power_values_W = {
+            metric: value
+            for metric in POWER_METRIC_COLUMN_ALIASES
+            if (value := _power_value(row, metric)) is not None
+        }
+        if required is not None:
+            required_value = _power_value(row, required)
+            if required_value is None:
+                continue
+            power_values_W[required] = required_value
+        if not power_values_W:
             continue
         shape = _shape_for_row(row)
         numeric_shape, categorical_shape = _split_shape(shape)
@@ -460,8 +542,9 @@ def _power_candidates(rows: Iterable[Mapping[str, Any]]) -> list[PowerCandidate]
                 shape=shape,
                 numeric_shape=numeric_shape,
                 categorical_shape=categorical_shape,
-                power_avg_w=power_avg_w,
+                power_values_W=power_values_W,
                 power_samples=power_samples,
+                fpga_cycle_avg=_to_float(row.get("fpga_cycle_avg")),
             )
         )
     return candidates
@@ -727,8 +810,8 @@ def _plot_summary_dataframe(
             fontsize=legend_fontsize or 9,
         )
     default_title = "E2E energy per token"
-    power_mode = "including idle power" if include_idle_power else "idle power subtracted"
-    fig.suptitle(f"{title or default_title} ({power_mode})", y=0.99, fontsize=title_fontsize)
+    metric_label = _summary_power_metric_label(summary_df)
+    fig.suptitle(f"{title or default_title} ({metric_label}, fpga cycles)", y=0.99, fontsize=title_fontsize)
     bottom = 0.12 if legend_drawn and legend_position == "bottom" else 0.0
     fig.tight_layout(rect=(0.0, bottom, 1.0, FIGURE_TITLE_LAYOUT_TOP))
     _apply_energy_subplot_spacing(fig, subplot_wspace, subplot_hspace)
@@ -821,6 +904,237 @@ def _add_energy_legend(
         )
         return True
     raise ValueError(f"unsupported energy legend position: {legend_position}")
+
+
+def _summary_power_metric_label(summary_df: Any) -> str:
+    if not hasattr(summary_df, "columns") or "power_metric" not in summary_df.columns:
+        return DEFAULT_POWER_METRIC
+    try:
+        values = [str(value) for value in summary_df["power_metric"].dropna().unique() if str(value)]
+    except Exception:
+        return DEFAULT_POWER_METRIC
+    return values[0] if values else DEFAULT_POWER_METRIC
+
+
+def _canonical_power_metric(value: Any) -> str:
+    metric = _text(value) or DEFAULT_POWER_METRIC
+    if metric in POWER_METRIC_COLUMN_ALIASES:
+        return metric
+    if metric.endswith("_w"):
+        upper_metric = f"{metric[:-2]}_W"
+        if upper_metric in POWER_METRIC_COLUMN_ALIASES:
+            return upper_metric
+    return metric
+
+
+def _power_metric_columns(metric: str) -> tuple[str, ...]:
+    canonical = _canonical_power_metric(metric)
+    if canonical in POWER_METRIC_COLUMN_ALIASES:
+        return POWER_METRIC_COLUMN_ALIASES[canonical]
+    if canonical.endswith("_W"):
+        return (canonical, f"{canonical[:-2]}_w")
+    return (canonical,)
+
+
+def _power_value(row: Mapping[str, Any], metric: str) -> float | None:
+    for column in _power_metric_columns(metric):
+        value = _to_float(row.get(column))
+        if value is not None:
+            return value
+    return None
+
+
+def _weighted_fpga_cycles(row: Mapping[str, Any], exact_candidate: PowerCandidate | None = None) -> float | None:
+    fpga_cycle_avg = _fpga_cycle_avg(row, exact_candidate)
+    if fpga_cycle_avg is None:
+        return None
+    calls = _to_float(row.get("calls_per_forward")) or 1.0
+    return fpga_cycle_avg * calls
+
+
+def _fpga_cycle_avg(row: Mapping[str, Any], exact_candidate: PowerCandidate | None = None) -> float | None:
+    for key in ("fpga_cycle_avg", "fpga_cycle"):
+        value = _to_float(row.get(key))
+        if value is not None:
+            return value
+    if _text(row.get("metric")) == "fpga_cycle":
+        value = _to_float(row.get("latency_us"))
+        if value is not None:
+            return value
+    if exact_candidate is not None:
+        return exact_candidate.fpga_cycle_avg
+    return None
+
+
+def _fpga_period_s(
+    row: Mapping[str, Any],
+    candidate: PowerCandidate | None,
+    *,
+    default: float,
+) -> float | None:
+    for context in _period_contexts(row, candidate):
+        explicit = _first_float(context, ("fpga_period_s", "power_fpga_period_s"))
+        if explicit is not None and explicit > 0.0:
+            return explicit
+        freq_mhz = _first_float(
+            context,
+            (
+                "fpga_freq_mhz",
+                "power_fpga_freq_mhz",
+                "power_fpga_freq_MHz",
+                "clock_mhz",
+                "clock_MHz",
+            ),
+        )
+        if freq_mhz is not None and freq_mhz > 0.0:
+            return 1.0 / (freq_mhz * 1_000_000.0)
+        for info_path in _xclbin_info_paths(context):
+            period_s = _data_clk_period_s_from_xclbin_info(info_path)
+            if period_s is not None:
+                return period_s
+    return default if default > 0.0 else None
+
+
+def _period_contexts(
+    row: Mapping[str, Any],
+    candidate: PowerCandidate | None,
+) -> tuple[Mapping[str, Any], ...]:
+    if candidate is None:
+        return (row,)
+    return (row, candidate.row)
+
+
+def _first_float(row: Mapping[str, Any], keys: Sequence[str]) -> float | None:
+    for key in keys:
+        value = _to_float(row.get(key))
+        if value is not None:
+            return value
+    return None
+
+
+def _xclbin_info_paths(row: Mapping[str, Any]) -> list[Path]:
+    paths: list[Path] = []
+    for key in ("xclbin_info", "xclbin_info_path", "power_xclbin_info", "power_xclbin_info_path"):
+        value = _text(row.get(key))
+        if value:
+            paths.append(Path(value).expanduser())
+    for key in ("xclbin_path", "xrt_xclbin_path", "XRT_XCLBIN_PATH"):
+        value = _text(row.get(key))
+        if value:
+            paths.append(Path(f"{value}.info").expanduser())
+    fpga_bin_dir = _text(row.get("fpga_bin_dir"))
+    if fpga_bin_dir:
+        paths.extend(_xclbin_info_paths_for_bin_dir(Path(fpga_bin_dir).expanduser()))
+    for label in _fpga_bin_labels(row):
+        resolved_dir = _resolve_fpga_bin_dir(label)
+        if resolved_dir is not None:
+            paths.extend(_xclbin_info_paths_for_bin_dir(resolved_dir))
+    return _existing_unique_paths(paths)
+
+
+def _xclbin_info_paths_for_bin_dir(bin_dir: Path) -> list[Path]:
+    return [bin_dir / filename for filename in XCLBIN_INFO_FILENAMES]
+
+
+def _fpga_bin_labels(row: Mapping[str, Any]) -> list[str]:
+    labels: list[str] = []
+    for key in ("expected_fpga_bin_label", "fpga_bin_label"):
+        value = _text(row.get(key))
+        if value:
+            labels.append(value)
+    source_labels = _text(row.get("source_fpga_bin_labels"))
+    if source_labels:
+        labels.extend(label.strip() for label in source_labels.split(";") if label.strip())
+    return list(dict.fromkeys(labels))
+
+
+def _resolve_fpga_bin_dir(label: str) -> Path | None:
+    try:
+        return resolve_fpga_bin_config(label).path
+    except Exception:
+        return None
+
+
+def _existing_unique_paths(paths: Iterable[Path]) -> list[Path]:
+    out: list[Path] = []
+    seen: set[str] = set()
+    for path in paths:
+        resolved = path.expanduser()
+        key = str(resolved)
+        if key in seen or not resolved.exists():
+            continue
+        seen.add(key)
+        out.append(resolved)
+    return out
+
+
+def _data_clk_period_s_from_xclbin_info(path: Path) -> float | None:
+    in_data_clk = False
+    try:
+        with path.open(errors="ignore") as handle:
+            for line in handle:
+                if "DATA_CLK" in line:
+                    period_s = _period_s_from_info_line(line)
+                    if period_s is not None:
+                        return period_s
+                if "Name:" in line:
+                    in_data_clk = "DATA_CLK" in line
+                if not in_data_clk:
+                    continue
+                period_s = _period_s_from_info_line(line)
+                if period_s is not None:
+                    return period_s
+    except OSError:
+        return None
+    return None
+
+
+def _period_s_from_info_line(line: str) -> float | None:
+    if "Period:" in line:
+        period_s = _parse_period_s_line(line)
+        if period_s is not None:
+            return period_s
+    if "Frequency:" in line:
+        freq_mhz = _parse_frequency_mhz_line(line)
+        if freq_mhz is not None and freq_mhz > 0.0:
+            return 1.0 / (freq_mhz * 1_000_000.0)
+    return None
+
+
+def _parse_frequency_mhz_line(line: str) -> float | None:
+    number = _number_after_colon(line)
+    if number is None or number <= 0.0:
+        return None
+    lowered = line.lower()
+    if "ghz" in lowered:
+        return number * 1_000.0
+    if "khz" in lowered:
+        return number / 1_000.0
+    if re.search(r"\bhz\b", lowered) and "mhz" not in lowered:
+        return number / 1_000_000.0
+    return number
+
+
+def _parse_period_s_line(line: str) -> float | None:
+    number = _number_after_colon(line)
+    if number is None or number <= 0.0:
+        return None
+    lowered = line.lower()
+    if "ps" in lowered:
+        return number * 1e-12
+    if "us" in lowered:
+        return number * 1e-6
+    if "ms" in lowered:
+        return number * 1e-3
+    if re.search(r"\bs\b", lowered) and "ns" not in lowered:
+        return number
+    return number * 1e-9
+
+
+def _number_after_colon(line: str) -> float | None:
+    text = line.split(":", 1)[1] if ":" in line else line
+    match = re.search(r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?", text)
+    return _to_float(match.group(0)) if match else None
 
 
 def _shape_for_row(row: Mapping[str, Any]) -> dict[str, Any]:

@@ -28,13 +28,13 @@ from tools.latency_bench.compose import LatencyScaleRule
 from tools.latency_bench.estimate import LatencyEstimateOptions
 from tools.latency_bench.plot import SuiteBarPlotOptions, prepare_suite_bar_data_versions
 from tools.latency_bench.suite import SuiteMatrixOverrides, load_suite
-from energy_per_token import add_relative_energy_values, energy_rows_from_records, summarize_energy_rows
+from energy_per_token import DEFAULT_FPGA_PERIOD_S, add_relative_energy_values, energy_rows_from_records, summarize_energy_rows
 import plot as plot_script
 
 FPGA_IDLE_POWER = 0.854 * 6.300 + 0.852 * 0.200
 
 # outputs_main raw DBs are shared by the prepared latency CSVs.
-LATENCY_FOLDER = "outputs_main_small"
+LATENCY_FOLDER = "outputs_main_small_test"
 
 # Main workload selection. Use a string for one model or a list/tuple for
 # multiple models.
@@ -154,20 +154,24 @@ def gemm_only_out_name(model: str) -> str:
     return f"{model}_gemm_only_{_stage_shape_name_for_selection(GEMM_ONLY_SHAPE_SELECTION)}"
 
 
-def energy_out_name(model: str) -> str:
-    return f"{model}_energy_per_token_{_stage_shape_name_for_selection(ENERGY_SHAPE_SELECTION)}"
+def energy_out_name(model: str, power_metric: str) -> str:
+    return f"{model}_energy_per_token_{power_metric}_{_stage_shape_name_for_selection(ENERGY_SHAPE_SELECTION)}"
+
+RAW_DB_SUBDIRS = (
+    "naive_gemm_simd_th16_tcol32",
+    "naive_gemm_tcol32",
+    "improve_tcol32",
+)
 RAW_DBS_OUTPUT_MAIN = [
-    LATENCY_DIR / f"{LATENCY_FOLDER}/naive_simd/raw_db.csv",
-    LATENCY_DIR / f"{LATENCY_FOLDER}/naive_gemm_tcol32/raw_db.csv",
-    LATENCY_DIR / f"{LATENCY_FOLDER}/improve_tcol32/raw_db.csv",
-    LATENCY_DIR / f"{LATENCY_FOLDER}/improve_no_tcu_lut_fexp/raw_db.csv"
+    LATENCY_DIR / LATENCY_FOLDER / subdir / "raw_db.csv"
+    for subdir in RAW_DB_SUBDIRS
 ]
 
 # Power-only raw DBs are kept separate from RAW_DBS_OUTPUT_MAIN so latency
 # composition never consumes rows with blank latency metrics.
 RAW_DBS_POWER_CANDIDATES = [
     *RAW_DBS_OUTPUT_MAIN,
-    LATENCY_DIR / f"{LATENCY_FOLDER}/power/naive_simd/raw_db.csv",
+    LATENCY_DIR / LATENCY_FOLDER / "power" / "naive_gemm_simd_th16_tcol32" / "raw_db.csv",
 ]
 RAW_DBS_POWER = [path for path in RAW_DBS_POWER_CANDIDATES if path.exists()]
 
@@ -740,6 +744,8 @@ main_all_result: PlotRunResult | None = None
 # Energy per token.
 ENERGY_IDLE_POWER_W = FPGA_IDLE_POWER
 INCLUDE_IDLE_POWER = False
+ENERGY_POWER_METRICS = ("power_avg_W", "power_vcc_avg_W", "power_dynamic_avg_W")
+ENERGY_FPGA_PERIOD_S = DEFAULT_FPGA_PERIOD_S
 
 
 def _shape_selection_matches(
@@ -781,6 +787,8 @@ def export_energy_figure_data(
     suite_tag: str,
     main_result: PlotRunResult | None,
     out_name: str,
+    power_metric: str,
+    fpga_period_s: float = ENERGY_FPGA_PERIOD_S,
     force_rebuild: bool | None = None,
 ) -> tuple[pd.DataFrame, str]:
     energy_out_dir = FIGURE_OUTPUT_ROOT / out_name
@@ -801,6 +809,8 @@ def export_energy_figure_data(
         RAW_DBS_POWER,
         idle_power_w=ENERGY_IDLE_POWER_W,
         include_idle_power=INCLUDE_IDLE_POWER,
+        power_metric=power_metric,
+        fpga_period_s=fpga_period_s,
     )
     summary = add_relative_energy_values(summarize_energy_rows(rows), relative_scope=RELATIVE_SCOPE)
     result = plot_script.EnergyExcelResult(
@@ -846,12 +856,7 @@ ALL_LLAMA_COMPARE_MODELS = (
 LLAMA_COMPARE_MODELS = tuple(
     model_spec for model_spec in ALL_LLAMA_COMPARE_MODELS if model_spec["suite_prefix"] in TARGET_MODELS
 )
-LLAMA_COMPARE_RAW_DB_SUBDIRS = (
-    "naive_simd",
-    "naive_gemm_tcol32",
-    "improve_tcol32",
-    "improve_no_tcu_lut_fexp",
-)
+LLAMA_COMPARE_RAW_DB_SUBDIRS = RAW_DB_SUBDIRS
 LLAMA_COMPARE_SUITE_SUFFIXES = (
     "prefill_C1",
     "prefill_C2",
@@ -1034,7 +1039,6 @@ def main() -> int:
         suite_tag = suite_tag_for_model(model)
         main_name = main_out_name(model)
         gemm_name = gemm_only_out_name(model)
-        energy_name = energy_out_name(model)
 
         print(f"model: {model}")
         print(f"suite tag: {suite_tag}")
@@ -1059,13 +1063,18 @@ def main() -> int:
         )
         print(f"{model} GEMM-only figure data source: {main_all_gemm_only_result.cache_status}")
 
-        _energy_frame, energy_cache_status = export_energy_figure_data(
-            model=model,
-            suite_tag=suite_tag,
-            main_result=main_all_result,
-            out_name=energy_name,
-        )
-        print(f"{model} energy figure data source: {energy_cache_status}")
+        energy_names = []
+        for power_metric in ENERGY_POWER_METRICS:
+            energy_name = energy_out_name(model, power_metric)
+            _energy_frame, energy_cache_status = export_energy_figure_data(
+                model=model,
+                suite_tag=suite_tag,
+                main_result=main_all_result,
+                out_name=energy_name,
+                power_metric=power_metric,
+            )
+            print(f"{model} {power_metric} energy figure data source: {energy_cache_status}")
+            energy_names.append(energy_name)
 
         prepared_outputs.extend(
             [
@@ -1073,7 +1082,7 @@ def main() -> int:
                 total_data_path(main_name),
                 figure_data_path(gemm_name),
                 total_data_path(gemm_name),
-                figure_data_path(energy_name),
+                *(figure_data_path(energy_name) for energy_name in energy_names),
             ]
         )
 

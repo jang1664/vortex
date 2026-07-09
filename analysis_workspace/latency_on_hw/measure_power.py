@@ -441,8 +441,6 @@ def write_suite(
     cases: Sequence[PowerCase],
     fpga_bin: str,
     platform: str,
-    cores: int | None,
-    threads: int | None,
     warmup: int,
     iterations: int,
 ) -> None:
@@ -470,12 +468,6 @@ def write_suite(
             }
         )
 
-    blackbox_args = []
-    if cores is not None:
-        blackbox_args.append(f"--cores={cores}")
-    if threads is not None:
-        blackbox_args.append(f"--threads={threads}")
-
     suite = {
         "name": suite_name,
         "defaults": {
@@ -484,7 +476,6 @@ def write_suite(
             "fpga_bin": fpga_bin,
             "target": "hw",
             "platform": platform,
-            "blackbox_args": blackbox_args,
         },
         "fpga_bins": {
             "default": fpga_bin,
@@ -646,6 +637,9 @@ def write_power_summary(
                 "power_avg_w": row.get("power_avg_w", ""),
                 "power_min_w": row.get("power_min_w", ""),
                 "power_max_w": row.get("power_max_w", ""),
+                "power_std_w": row.get("power_std_w", ""),
+                "power_idle_std_w": row.get("power_idle_std_w", ""),
+                "power_dynamic_stderr_w": row.get("power_dynamic_stderr_w", ""),
                 "power_elapsed_s": row.get("power_elapsed_s", ""),
                 "power_csv": row.get("power_csv", ""),
                 "power_summary": row.get("power_summary", ""),
@@ -668,6 +662,9 @@ def write_power_summary(
             "power_avg_w",
             "power_min_w",
             "power_max_w",
+            "power_std_w",
+            "power_idle_std_w",
+            "power_dynamic_stderr_w",
             "power_elapsed_s",
             "power_csv",
             "power_summary",
@@ -736,8 +733,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--build-dir", type=Path, default=REPO_ROOT / "build")
     parser.add_argument("--platform", default=DEFAULT_PLATFORM)
     parser.add_argument("--python", dest="python_bin", default=default_python_bin())
-    parser.add_argument("--cores", type=int, default=None, help="Optional blackbox --cores override; omitted by default.")
-    parser.add_argument("--threads", type=int, default=None, help="Optional blackbox --threads override; omitted by default.")
     parser.add_argument("--warmup", type=int, default=0)
     parser.add_argument(
         "--iterations",
@@ -814,10 +809,6 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _validate_args(args: argparse.Namespace) -> None:
-    if args.cores is not None and args.cores < 1:
-        raise ValueError("--cores must be >= 1")
-    if args.threads is not None and args.threads < 1:
-        raise ValueError("--threads must be >= 1")
     if args.warmup < 0:
         raise ValueError("--warmup must be >= 0")
     if args.power_iterations < 1:
@@ -894,8 +885,6 @@ def main(argv: list[str] | None = None) -> int:
         cases=cases,
         fpga_bin=args.fpga_bin,
         platform=args.platform,
-        cores=args.cores,
-        threads=args.threads,
         warmup=args.warmup,
         iterations=args.iterations,
     )

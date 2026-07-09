@@ -762,6 +762,7 @@ struct PowerStats {
     double min_w = std::numeric_limits<double>::quiet_NaN();
     double avg_w = std::numeric_limits<double>::quiet_NaN();
     double max_w = std::numeric_limits<double>::quiet_NaN();
+    double std_w = std::numeric_limits<double>::quiet_NaN();
     double elapsed_s = 0.0;
 };
 
@@ -833,7 +834,41 @@ inline bool read_max_fpga_cycle(vx_device_h device, uint64_t* value, FILE* msg =
     return true;
 }
 
-inline PowerStats read_power_stats(const std::string& csv_path, double start_s, double end_s) {
+inline std::string trim_csv_cell(std::string value) {
+    while (!value.empty() && (value.back() == '\n' || value.back() == '\r')) {
+        value.pop_back();
+    }
+    return value;
+}
+
+inline std::vector<std::string> split_csv_line(const char* line) {
+    std::vector<std::string> fields;
+    std::string current;
+    for (const char* p = line; *p; ++p) {
+        if (*p == ',') {
+            fields.push_back(trim_csv_cell(current));
+            current.clear();
+        } else {
+            current.push_back(*p);
+        }
+    }
+    fields.push_back(trim_csv_cell(current));
+    return fields;
+}
+
+inline int csv_column_index(const std::vector<std::string>& header, const char* column_name) {
+    for (size_t i = 0; i < header.size(); ++i) {
+        if (header[i] == column_name) {
+            return static_cast<int>(i);
+        }
+    }
+    return -1;
+}
+
+inline PowerStats read_power_stats(const std::string& csv_path,
+                                   double start_s,
+                                   double end_s,
+                                   const char* power_column = "total_power_w") {
     PowerStats stats;
     stats.elapsed_s = end_s - start_s;
     if (stats.elapsed_s < 0.0) stats.elapsed_s = 0.0;
@@ -844,21 +879,40 @@ inline PowerStats read_power_stats(const std::string& csv_path, double start_s, 
     }
 
     char line[1024];
-    double sum = 0.0;
+    if (!std::fgets(line, sizeof(line), f)) {
+        std::fclose(f);
+        return stats;
+    }
+
+    const std::vector<std::string> header = split_csv_line(line);
+    int timestamp_idx = csv_column_index(header, "timestamp_s");
+    if (timestamp_idx < 0) {
+        timestamp_idx = 0;
+    }
+    int power_idx = csv_column_index(header, power_column);
+    if (power_idx < 0 && std::strcmp(power_column, "total_power_w") == 0) {
+        power_idx = csv_column_index(header, "p_total_w");
+    }
+    if (power_idx < 0) {
+        std::fclose(f);
+        return stats;
+    }
+
+    long double sum = 0.0;
+    long double sum_sq = 0.0;
     while (std::fgets(line, sizeof(line), f)) {
-        char* endptr = nullptr;
-        double ts = std::strtod(line, &endptr);
-        if (endptr == line) {
+        const std::vector<std::string> fields = split_csv_line(line);
+        if (timestamp_idx >= static_cast<int>(fields.size())
+         || power_idx >= static_cast<int>(fields.size())) {
             continue;
         }
+        char* endptr = nullptr;
+        double ts = std::strtod(fields[timestamp_idx].c_str(), &endptr);
+        if (endptr == fields[timestamp_idx].c_str()) continue;
         if (ts < start_s || ts > end_s) {
             continue;
         }
-        char* last_comma = std::strrchr(line, ',');
-        if (!last_comma) {
-            continue;
-        }
-        double watts = std::strtod(last_comma + 1, nullptr);
+        double watts = std::strtod(fields[power_idx].c_str(), nullptr);
         if (stats.samples == 0) {
             stats.min_w = watts;
             stats.max_w = watts;
@@ -867,12 +921,25 @@ inline PowerStats read_power_stats(const std::string& csv_path, double start_s, 
             stats.max_w = std::max(stats.max_w, watts);
         }
         sum += watts;
+        sum_sq += static_cast<long double>(watts) * static_cast<long double>(watts);
         ++stats.samples;
     }
     std::fclose(f);
 
     if (stats.samples != 0) {
-        stats.avg_w = sum / static_cast<double>(stats.samples);
+        const long double n = static_cast<long double>(stats.samples);
+        stats.avg_w = static_cast<double>(sum / n);
+        if (stats.samples == 1) {
+            stats.std_w = 0.0;
+        } else {
+            long double variance = (sum_sq - (sum * sum / n)) / (n - 1.0L);
+            if (variance < 0.0L && variance > -1e-12L) {
+                variance = 0.0L;
+            }
+            stats.std_w = (variance >= 0.0L)
+                ? std::sqrt(static_cast<double>(variance))
+                : std::numeric_limits<double>::quiet_NaN();
+        }
     }
     return stats;
 }
@@ -891,23 +958,39 @@ inline bool write_power_summary(const char* label,
 
     std::fprintf(f,
         "label,mode,phase,samples,elapsed_s,idle_samples,idle_avg_w,"
-        "run_min_w,run_avg_w,run_max_w,delta_avg_w,delta_peak_w,energy_j,"
+        "idle_std_w,idle_vcc_avg_w,idle_pcie_avg_w,"
+        "run_min_w,run_avg_w,run_max_w,run_std_w,"
+        "run_vcc_min_w,run_vcc_avg_w,run_vcc_max_w,"
+        "run_pcie_min_w,run_pcie_avg_w,run_pcie_max_w,"
+        "delta_avg_w,delta_peak_w,dynamic_stderr_w,energy_j,"
         "power_latency,power_fpga_cycle,power_kernel_iterations,"
         "power_kernel_iterations_auto,power_target_sec,raw_csv\n");
 
-    const PowerStats idle_stats = read_power_stats(args.power_csv, idle.start_s, idle.end_s);
+    const PowerStats idle_stats = read_power_stats(args.power_csv, idle.start_s, idle.end_s, "total_power_w");
+    const PowerStats idle_vcc_stats = read_power_stats(args.power_csv, idle.start_s, idle.end_s, "vcc_power_w");
+    const PowerStats idle_pcie_stats = read_power_stats(args.power_csv, idle.start_s, idle.end_s, "pcie_power_w");
     const double nan = std::numeric_limits<double>::quiet_NaN();
     for (const auto& run : runs) {
-        const PowerStats run_stats = read_power_stats(args.power_csv, run.start_s, run.end_s);
+        const PowerStats run_stats = read_power_stats(args.power_csv, run.start_s, run.end_s, "total_power_w");
+        const PowerStats run_vcc_stats = read_power_stats(args.power_csv, run.start_s, run.end_s, "vcc_power_w");
+        const PowerStats run_pcie_stats = read_power_stats(args.power_csv, run.start_s, run.end_s, "pcie_power_w");
         const double dP_avg = (idle_stats.samples && run_stats.samples) ? (run_stats.avg_w - idle_stats.avg_w) : nan;
         const double dP_peak = (idle_stats.samples && run_stats.samples) ? (run_stats.max_w - idle_stats.avg_w) : nan;
+        const double dP_stderr = (idle_stats.samples && run_stats.samples)
+            ? std::sqrt((run_stats.std_w * run_stats.std_w / static_cast<double>(run_stats.samples))
+                      + (idle_stats.std_w * idle_stats.std_w / static_cast<double>(idle_stats.samples)))
+            : nan;
         const double energy = (idle_stats.samples && run_stats.samples) ? (dP_avg * run_stats.elapsed_s) : nan;
         const double power_latency = run.has_latency ? run.latency.avg : nan;
         const UIntStatsSummary cycle = summarize_uint64(run.fpga_cycles);
         const double power_fpga_cycle = cycle.n ? cycle.avg : nan;
 
         std::fprintf(f,
-            "%s,%s,%s,%zu,%.6f,%zu,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,"
+            "%s,%s,%s,%zu,%.6f,%zu,%.6f,%.6f,%.6f,%.6f,"
+            "%.6f,%.6f,%.6f,%.6f,"
+            "%.6f,%.6f,%.6f,"
+            "%.6f,%.6f,%.6f,"
+            "%.6f,%.6f,%.6f,%.6f,"
             "%.3f,%.3f,%d,%d,%.6f,%s\n",
             label,
             run.mode.c_str(),
@@ -916,11 +999,22 @@ inline bool write_power_summary(const char* label,
             run_stats.elapsed_s,
             idle_stats.samples,
             idle_stats.avg_w,
+            idle_stats.std_w,
+            idle_vcc_stats.samples ? idle_vcc_stats.avg_w : nan,
+            idle_pcie_stats.samples ? idle_pcie_stats.avg_w : nan,
             run_stats.min_w,
             run_stats.avg_w,
             run_stats.max_w,
+            run_stats.std_w,
+            run_vcc_stats.min_w,
+            run_vcc_stats.avg_w,
+            run_vcc_stats.max_w,
+            run_pcie_stats.min_w,
+            run_pcie_stats.avg_w,
+            run_pcie_stats.max_w,
             dP_avg,
             dP_peak,
+            dP_stderr,
             energy,
             power_latency,
             power_fpga_cycle,
@@ -1048,6 +1142,40 @@ inline IterationPerf dump_iteration_perf(vx_device_h device,
         }
     }
     return perf;
+}
+
+template <typename KernelArgs>
+inline bool prepare_power_kernel_iterations(Args& args,
+                                            KernelArgs& kernel_args,
+                                            vx_buffer_h args_buffer,
+                                            double first_latency_us,
+                                            const IterationPerf& first_iter_perf,
+                                            const char* label,
+                                            FILE* msg = stderr) {
+    if (!power_enabled(args)) {
+        return true;
+    }
+
+    args.power_kernel_iterations = compute_power_kernel_iterations(
+        args,
+        first_latency_us,
+        first_iter_perf.fpga_cycle,
+        first_iter_perf.has_fpga_cycle,
+        label,
+        msg);
+    kernel_args.power_kernel_iterations =
+        static_cast<uint32_t>(args.power_kernel_iterations);
+
+    const int ret = vx_copy_to_dev(args_buffer, &kernel_args, 0, sizeof(kernel_args));
+    if (ret != 0) {
+        std::fprintf(msg,
+                     "[power] vx_copy_to_dev failed while enabling power kernel "
+                     "iterations: label=%s ret=%d\n",
+                     label,
+                     ret);
+        return false;
+    }
+    return true;
 }
 
 inline bool run_vx_kernel_once(vx_device_h device,

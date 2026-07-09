@@ -98,7 +98,7 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_mem_address(input_b_buffer, &kernel_arg.input_b_addr));
   RT_CHECK(vx_mem_address(output_buffer, &kernel_arg.output_addr));
   kernel_arg.size = size;
-
+  kernel_arg.power_kernel_iterations = 1;
   RT_CHECK(vx_upload_bytes(device, &kernel_arg, sizeof(kernel_arg_t), &args_buffer));
   RT_CHECK(vx_upload_kernel_file(device, "kernel.vxbin", &krnl_buffer));
 
@@ -110,17 +110,32 @@ int main(int argc, char *argv[]) {
   }
 
   vx_bench::Stats stats;
+  double first_latency_us = 0.0;
+  vx_bench::IterationPerf first_iter_perf;
   printf("Start latency measurement.\n"); fflush(stdout);
   for (int i = 0; i < bench.iterations; ++i) {
     vx_bench::Stopwatch sw; sw.start();
     RT_CHECK(vx_start(device, krnl_buffer, args_buffer));
     RT_CHECK(vx_ready_wait(device, VX_MAX_TIMEOUT));
-    stats.record(sw.stop_us());
-    vx_bench::dump_iteration_perf(device, bench, i);
+    const double elapsed_us = sw.stop_us();
+    if (i == 0)
+      first_latency_us = elapsed_us;
+    stats.record(elapsed_us);
+    const vx_bench::IterationPerf iter_perf =
+        vx_bench::dump_iteration_perf(device, bench, i);
+    if (i == 0)
+      first_iter_perf = iter_perf;
     printf("iteration %0d/%0d, elapsed:%f\n", i+1, bench.iterations, stats.last()); fflush(stdout);
   }
 
   stats.report("elsub", bench);
+
+  if (!vx_bench::prepare_power_kernel_iterations(
+          bench, kernel_arg, args_buffer, first_latency_us, first_iter_perf,
+          "elsub")) {
+    cleanup();
+    return -1;
+  }
 
   if (!vx_bench::run_power_measurement(
           "elsub", bench, device, krnl_buffer, args_buffer, bench.power_measure_latency)) {

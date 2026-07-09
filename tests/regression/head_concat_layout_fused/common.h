@@ -28,6 +28,6 @@ typedef struct {
   uint32_t log2_mt;
   uint32_t log2_mxu_kt;
   uint32_t log2_mxu_nt;
+  uint32_t power_kernel_iterations;
 } kernel_arg_t;
-
 #endif // _HEAD_CONCAT_LAYOUT_FUSED_COMMON_H_

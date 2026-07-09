@@ -58,8 +58,6 @@ class MeasurePowerTest(unittest.TestCase):
                 cases=cases,
                 fpga_bin="naive_simd",
                 platform="test_platform",
-                cores=1,
-                threads=16,
                 warmup=0,
                 iterations=1,
             )
@@ -67,7 +65,7 @@ class MeasurePowerTest(unittest.TestCase):
 
             self.assertEqual("power_sweep_test", suite["name"])
             self.assertEqual("naive_simd", suite["defaults"]["fpga_bin"])
-            self.assertEqual(["--cores=1", "--threads=16"], suite["defaults"]["blackbox_args"])
+            self.assertNotIn("blackbox_args", suite["defaults"])
             self.assertEqual(["eladd_s00", "eladd_s01"], [case["id"] for case in suite["cases"]])
             self.assertEqual("s00", suite["cases"][0]["shape"]["shape_id"])
 
@@ -163,14 +161,12 @@ class MeasurePowerTest(unittest.TestCase):
                 cases=cases,
                 fpga_bin="naive_simd",
                 platform="test_platform",
-                cores=None,
-                threads=None,
                 warmup=0,
                 iterations=1,
             )
             suite = yaml.safe_load(suite_path.read_text())
 
-            self.assertEqual([], suite["defaults"]["blackbox_args"])
+            self.assertNotIn("blackbox_args", suite["defaults"])
 
     def test_normalize_path_args_resolves_user_paths_against_invocation_cwd(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

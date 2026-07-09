@@ -29,7 +29,6 @@ class MergeSuitesTest(unittest.TestCase):
                         "iterations": 2,
                         "app": app,
                         "fpga_bin": fpga_bin,
-                        "blackbox_args": ["--cores=1", "--threads=8"],
                     },
                     "cases": cases,
                 },

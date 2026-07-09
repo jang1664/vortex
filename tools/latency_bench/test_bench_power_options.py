@@ -7,6 +7,22 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
+def active_regression_bench_dirs() -> list[Path]:
+    return sorted(
+        path.parent
+        for path in (REPO_ROOT / "tests" / "regression").glob("*/bench_main.cpp")
+        if "deprecated" not in path.parts
+    )
+
+
+def active_kernel_sources(app_dir: Path) -> list[Path]:
+    return sorted(
+        path
+        for path in app_dir.glob("kernel*.cpp")
+        if ".modified_old." not in path.name
+    )
+
+
 class BenchPowerOptionsTest(unittest.TestCase):
     def test_all_power_benches_expose_power_latency_option(self) -> None:
         missing: list[str] = []
@@ -24,28 +40,27 @@ class BenchPowerOptionsTest(unittest.TestCase):
 
         self.assertEqual([], missing)
 
-    def test_fpint_gemm_power_benches_expose_kernel_iterations(self) -> None:
-        targets = (
-            "fpint_gemm_ffn_hw",
-            "fpint_gemm_ffn_hw_naive",
-        )
+    def test_active_power_benches_expose_kernel_iterations(self) -> None:
         missing: list[str] = []
 
-        for app in targets:
-            app_dir = REPO_ROOT / "tests" / "regression" / app
+        for app_dir in active_regression_bench_dirs():
             bench = (app_dir / "bench_main.cpp").read_text()
             common = (app_dir / "common.h").read_text()
-            kernel = (app_dir / "kernel.cpp").read_text()
             rel = app_dir.relative_to(REPO_ROOT)
+            kernels = active_kernel_sources(app_dir)
 
-            if "bench.power_kernel_iterations" not in bench:
-                missing.append(f"{rel}/bench_main.cpp: missing bench.power_kernel_iterations")
+            if "vx_bench::prepare_power_kernel_iterations" not in bench:
+                missing.append(f"{rel}/bench_main.cpp: missing shared power kernel iteration upload")
             if "power_kernel_iterations" not in common:
                 missing.append(f"{rel}/common.h: missing kernel_arg_t power_kernel_iterations")
-            if "power_kernel_iterations" not in kernel:
-                missing.append(f"{rel}/kernel.cpp: missing inner power iteration loop")
-            if "run_kernel_checked" not in bench:
-                missing.append(f"{rel}/bench_main.cpp: power measurement must check kernel status")
+            if not kernels:
+                missing.append(f"{rel}: missing active kernel source")
+            for kernel_path in kernels:
+                kernel = kernel_path.read_text()
+                if "effective_power_kernel_iterations" not in kernel:
+                    missing.append(
+                        f"{kernel_path.relative_to(REPO_ROOT)}: missing inner power iteration loop"
+                    )
 
         self.assertEqual([], missing)
 
@@ -89,30 +104,22 @@ class BenchPowerOptionsTest(unittest.TestCase):
 
         self.assertEqual([], missing)
 
-    def test_fpint_gemm_power_benches_compute_auto_kernel_iterations(self) -> None:
-        targets = (
-            "fpint_gemm_ffn_hw",
-            "fpint_gemm_ffn_hw_naive",
-        )
+    def test_active_power_benches_compute_auto_kernel_iterations(self) -> None:
         missing: list[str] = []
 
-        for app in targets:
-            bench_path = REPO_ROOT / "tests" / "regression" / app / "bench_main.cpp"
+        for app_dir in active_regression_bench_dirs():
+            bench_path = app_dir / "bench_main.cpp"
             text = bench_path.read_text()
             rel = bench_path.relative_to(REPO_ROOT)
 
             if "first_latency_us" not in text:
                 missing.append(f"{rel}: missing first latency capture")
-            if "first_fpga_cycle" not in text:
-                missing.append(f"{rel}: missing first FPGA cycle capture")
             if "first_iter_perf" not in text:
                 missing.append(f"{rel}: missing first iteration perf snapshot")
             if "first_fpga_cycle_delta" in text:
                 missing.append(f"{rel}: must not use begin/end FPGA cycle delta")
-            if "vx_bench::compute_power_kernel_iterations" not in text:
-                missing.append(f"{rel}: missing auto iteration helper")
-            if "bench.power_kernel_iterations =" not in text:
-                missing.append(f"{rel}: must record computed iterations before power summary")
+            if "vx_bench::prepare_power_kernel_iterations" not in text:
+                missing.append(f"{rel}: missing shared auto iteration helper")
 
         self.assertEqual([], missing)
 

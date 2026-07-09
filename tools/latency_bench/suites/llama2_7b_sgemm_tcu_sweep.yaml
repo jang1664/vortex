@@ -7,9 +7,6 @@ defaults:
   iterations: 3
   xrt_device_index: 0
   blackbox_timeout: 30m
-  blackbox_args:
-    - --cores=1
-    - --threads=8
 
 # FP TCU GEMM sweep for Llama2-7B-sized shapes.
 # sgemm_tcu requires M/N/K to be multiples of its compile-time TCU tile sizes,

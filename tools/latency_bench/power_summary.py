@@ -57,6 +57,9 @@ def read_power_summary(path: Path | str | None) -> dict[str, Any]:
         ("power_min_w", "run_min_w", _parse_float_field),
         ("power_avg_w", "run_avg_w", _parse_float_field),
         ("power_max_w", "run_max_w", _parse_float_field),
+        ("power_total_min_w", "run_min_w", _parse_float_field),
+        ("power_total_avg_w", "run_avg_w", _parse_float_field),
+        ("power_total_max_w", "run_max_w", _parse_float_field),
     )
     out: dict[str, Any] = {}
     errors: list[str] = []
@@ -71,6 +74,21 @@ def read_power_summary(path: Path | str | None) -> dict[str, Any]:
             errors.append(f"{input_key}:{exc}")
 
     optional_fields = (
+        ("power_idle_w", ("idle_avg_w",), _parse_float_field),
+        ("power_idle_std_w", ("idle_std_w",), _parse_float_field),
+        ("power_std_w", ("run_std_w",), _parse_float_field),
+        ("power_idle_vcc_avg_w", ("idle_vcc_avg_w",), _parse_float_field),
+        ("power_idle_pcie_avg_w", ("idle_pcie_avg_w",), _parse_float_field),
+        ("power_vcc_min_w", ("run_vcc_min_w",), _parse_float_field),
+        ("power_vcc_avg_w", ("run_vcc_avg_w",), _parse_float_field),
+        ("power_vcc_max_w", ("run_vcc_max_w",), _parse_float_field),
+        ("power_pcie_min_w", ("run_pcie_min_w",), _parse_float_field),
+        ("power_pcie_avg_w", ("run_pcie_avg_w",), _parse_float_field),
+        ("power_pcie_max_w", ("run_pcie_max_w",), _parse_float_field),
+        ("power_dynamic_avg_w", ("delta_avg_w",), _parse_float_field),
+        ("power_dynamic_peak_w", ("delta_peak_w",), _parse_float_field),
+        ("power_dynamic_stderr_w", ("dynamic_stderr_w",), _parse_float_field),
+        ("power_dynamic_energy_j", ("energy_j",), _parse_float_field),
         ("power_latency", ("power_latency", "latency_avg_us"), _parse_float_field),
         ("power_fpga_cycle", ("power_fpga_cycle",), _parse_cycle_field),
         ("power_kernel_iterations", ("power_kernel_iterations",), _parse_int_field),

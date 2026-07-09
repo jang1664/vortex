@@ -25,6 +25,6 @@ typedef struct {
   
   // Dimensions
   uint32_t size;  // Total number of elements
+  uint32_t power_kernel_iterations;
 } kernel_arg_t;
-
 #endif // _COMMON_H_

@@ -17,11 +17,11 @@ from tools.latency_bench.fpga_bins import FPGA_BIN_ALIAS_MAP_ENV
 class CliRunTest(unittest.TestCase):
     def test_blackbox_args_merge_and_override_defaults(self) -> None:
         merged = merge_override_args(
-            ("--cores=1", "--threads=8", "--driver=xrt"),
-            ["--threads=16", "--trace", "--cores=2"],
+            ("--driver=xrt", "--log=old.log"),
+            ["--log=new.log", "--trace"],
         )
 
-        self.assertEqual(("--cores=2", "--threads=16", "--driver=xrt", "--trace"), merged)
+        self.assertEqual(("--driver=xrt", "--log=new.log", "--trace"), merged)
 
     def test_normalize_timeout(self) -> None:
         self.assertEqual("", normalize_timeout(None))
@@ -478,14 +478,14 @@ aliases:
                 "--run-id", "cli_run",
                 "--no-srun",
                 "--dry-run",
-                "--blackbox-arg=--threads=16",
                 "--blackbox-arg=--trace",
             ])
 
             self.assertEqual(0, rc)
             script = (out_root / "runs" / "cli_run" / "run_fpga_bench.sh").read_text()
-            self.assertIn("--cores=1 --threads=16 --trace", script)
-            self.assertNotIn("--threads=8", script)
+            self.assertIn("--trace --driver=xrt", script)
+            manifest = json.loads((out_root / "runs" / "cli_run" / "manifest.json").read_text())
+            self.assertEqual(["--trace"], manifest["blackbox_args"])
 
     def test_run_blackbox_timeout_wraps_generated_script(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

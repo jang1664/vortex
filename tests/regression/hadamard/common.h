@@ -17,6 +17,6 @@ typedef struct {
   uint32_t dim;
   uint32_t padded_dim;
   float inv_sqrt_dim;
+  uint32_t power_kernel_iterations;
 } kernel_arg_t;
-
 #endif // _HADAMARD_COMMON_H_

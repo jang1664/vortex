@@ -104,10 +104,21 @@ void kernel_dispatcher(kernel_arg_t *__UNIFORM__ arg) {
   }
 }
 
+static inline uint32_t effective_power_kernel_iterations(const kernel_arg_t* arg) {
+  return (arg->power_kernel_iterations == 0u) ? 1u : arg->power_kernel_iterations;
+}
+
+void kernel_dispatcher_power(kernel_arg_t *__UNIFORM__ arg) {
+  const uint32_t repeat = effective_power_kernel_iterations(arg);
+  for (uint32_t power_iter = 0; power_iter < repeat; ++power_iter) {
+    kernel_dispatcher(arg);
+  }
+}
+
 int main() {
   auto arg = (kernel_arg_t *)csr_read(VX_CSR_MSCRATCH);
   // Use 3D grid count when fused, 1D for plain silu.
   uint32_t num_dim = (arg->kernel_id == KERNEL_SILU_LAYOUT_FUSED) ? 3 : 1;
   return vx_spawn_threads(num_dim, arg->grid_dim, arg->block_dim,
-                          (vx_kernel_func_cb)kernel_dispatcher, arg);
+                          (vx_kernel_func_cb)kernel_dispatcher_power, arg);
 }

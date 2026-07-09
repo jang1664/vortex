@@ -171,9 +171,8 @@ The built-in aliases source files under `configs/`, including per-alias improve
 configs.
 
 `--blackbox-arg` starts from suite `defaults.blackbox_args`; repeated CLI values
-add new options or overwrite existing options with the same flag key. For
-example, `--blackbox-arg=--threads=16` replaces a default `--threads=8` while
-keeping other defaults such as `--cores=1`.
+add new options or overwrite existing options with the same flag key. Hardware
+topology is owned by the selected FPGA bin config, not by suite blackbox args.
 
 Use `--blackbox-timeout 30m` to wrap each `blackbox.sh` execution with GNU
 `timeout --kill-after=30s`. With the default prebuild flow, this
@@ -242,9 +241,6 @@ defaults:
   target: hw
   platform: xilinx_u55c_gen3x16_xdma_3_202210_1
   blackbox_timeout: 30m
-  blackbox_args:
-    - --cores=1
-    - --threads=8
 cases:
   - id: q_proj_s128
     app: fpint_gemm_ffn_hw

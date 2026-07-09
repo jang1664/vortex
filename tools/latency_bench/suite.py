@@ -17,9 +17,6 @@ from typing import Any
 import yaml
 
 
-DEFAULT_BLACKBOX_ARGS = ("--cores=1", "--threads=8")
-
-
 def find_repo_root(start: Path | None = None) -> Path:
     start = Path.cwd() if start is None else start.resolve()
     for path in [start, *start.parents]:
@@ -51,7 +48,7 @@ class BenchDefaults:
     warmup: int = 3
     iterations: int = 10
     xrt_device_index: int = 0
-    blackbox_args: tuple[str, ...] = DEFAULT_BLACKBOX_ARGS
+    blackbox_args: tuple[str, ...] = ()
     blackbox_timeout: str = ""
     fpga_bin: str = ""
 
@@ -507,7 +504,7 @@ def apply_case_filters(suite: BenchSuite, filters: tuple[str, ...]) -> BenchSuit
 
 def _merge_defaults(raw: dict[str, Any]) -> BenchDefaults:
     defaults = raw.get("defaults") or {}
-    blackbox_args_raw = defaults.get("blackbox_args", DEFAULT_BLACKBOX_ARGS)
+    blackbox_args_raw = defaults.get("blackbox_args", ())
     if isinstance(blackbox_args_raw, str):
         blackbox_args = tuple(shlex.split(blackbox_args_raw))
     else:
@@ -879,7 +876,10 @@ def suite_to_rows(suite: BenchSuite) -> list[dict[str, Any]]:
 
 def suite_to_expanded_yaml(suite: BenchSuite) -> dict[str, Any]:
     defaults = dict(suite.defaults.__dict__)
-    defaults["blackbox_args"] = list(suite.defaults.blackbox_args)
+    if suite.defaults.blackbox_args:
+        defaults["blackbox_args"] = list(suite.defaults.blackbox_args)
+    else:
+        defaults.pop("blackbox_args", None)
     if not defaults.get("fpga_bin"):
         defaults.pop("fpga_bin", None)
 

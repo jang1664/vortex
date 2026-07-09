@@ -29,10 +29,10 @@ class ProgressTest(unittest.TestCase):
             power_csv = tmp_path / "power.csv"
             power_summary = tmp_path / "power.summary.csv"
             power_summary.write_text(
-                "label,mode,phase,samples,elapsed_s,idle_samples,idle_avg_w,"
-                "run_min_w,run_avg_w,run_max_w,delta_avg_w,delta_peak_w,energy_j,"
+                "label,mode,phase,samples,elapsed_s,idle_samples,idle_avg_w,idle_std_w,"
+                "run_min_w,run_avg_w,run_max_w,run_std_w,delta_avg_w,delta_peak_w,dynamic_stderr_w,energy_j,"
                 "power_latency,power_fpga_cycle,raw_csv\n"
-                f"fpint_gemm,separate,run,5,10.0,2,1.0,3.0,4.0,5.0,3.0,4.0,40.0,12.5,2000,{power_csv}\n"
+                f"fpint_gemm,separate,run,5,10.0,2,1.0,0.1,3.0,4.0,5.0,0.2,3.0,4.0,0.15,40.0,12.5,2000,{power_csv}\n"
             )
             progress_csv = tmp_path / "progress.csv"
 
@@ -81,6 +81,9 @@ class ProgressTest(unittest.TestCase):
             self.assertEqual("3.0", rows[0]["power_min_w"])
             self.assertEqual("4.0", rows[0]["power_avg_w"])
             self.assertEqual("5.0", rows[0]["power_max_w"])
+            self.assertEqual("0.2", rows[0]["power_std_w"])
+            self.assertEqual("0.1", rows[0]["power_idle_std_w"])
+            self.assertEqual("0.15", rows[0]["power_dynamic_stderr_w"])
             self.assertEqual("12.5", rows[0]["power_latency"])
             self.assertEqual("2000", rows[0]["power_fpga_cycle"])
             self.assertEqual("", rows[0]["power_parse_error"])

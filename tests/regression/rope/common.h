@@ -29,6 +29,6 @@ typedef struct {
   // RoPE parameters
   uint32_t pos_offset;      // Position offset for incremental decoding
   
+  uint32_t power_kernel_iterations;
 } kernel_arg_t;
-
 #endif // _COMMON_H_

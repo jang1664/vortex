@@ -25,7 +25,7 @@ from .raw_db import (
 )
 from .report import build_results, build_summary, sha256_file, write_manifest
 from .status import DEFAULT_POWER_MIN_SAMPLES, power_samples_below_threshold
-from .suite import DEFAULT_BLACKBOX_ARGS, BenchCase, BenchSuite, suite_to_expanded_yaml, suite_to_rows
+from .suite import BenchCase, BenchSuite, suite_to_expanded_yaml, suite_to_rows
 
 
 DEFAULT_SRUN_ARGS = (
@@ -99,7 +99,7 @@ class RunOptions:
     fpga_bin_label: str = ""
     configs: Path | None = None
     configs_extra: str = ""
-    blackbox_args: tuple[str, ...] = DEFAULT_BLACKBOX_ARGS
+    blackbox_args: tuple[str, ...] = ()
     blackbox_timeout: str = ""
     srun: bool = True
     srun_args: tuple[str, ...] = DEFAULT_SRUN_ARGS

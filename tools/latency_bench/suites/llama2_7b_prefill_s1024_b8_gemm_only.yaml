@@ -6,9 +6,6 @@ defaults:
   warmup: 1
   iterations: 3
   xrt_device_index: 0
-  blackbox_args:
-  - --cores=1
-  - --threads=8
 cases:
 - id: llama2_7b_prefill_s1024_b8_prefill_q_proj
   app: fpint_gemm_ffn_hw

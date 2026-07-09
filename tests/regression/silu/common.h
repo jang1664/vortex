@@ -19,6 +19,6 @@ typedef struct {
   uint32_t size;  // Total number of elements
   uint32_t M;     // Logical rows for M x K traversal
   uint32_t K;     // Logical row width for M x K traversal
+  uint32_t power_kernel_iterations;
 } kernel_arg_t;
-
 #endif // _COMMON_H_

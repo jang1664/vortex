@@ -6,9 +6,6 @@ defaults:
   fpga_bin: naive_simd
   target: hw
   platform: xilinx_u55c_gen3x16_xdma_3_202210_1
-  blackbox_args:
-    - --cores=1
-    - --threads=8
 
 fpga_bins:
   default: naive_simd
@@ -17,12 +14,12 @@ fpga_bins:
     fpint_gemm_naive: naive_gemm_tcol32
 
   by_app:
-    rmsnorm: naive_simd
-    rope: naive_simd
-    softmax: improve_no_tcu_lut_fexp
-    silu: naive_simd
-    eladd: naive_simd
-    elmul: naive_simd
+    rmsnorm: naive_gemm_simd_th16_tcol32
+    rope: naive_gemm_simd_th16_tcol32
+    softmax: naive_gemm_simd_th16_tcol32
+    silu: naive_gemm_simd_th16_tcol32
+    eladd: naive_gemm_simd_th16_tcol32
+    elmul: naive_gemm_simd_th16_tcol32
 
 workloads:
   - id: llama3_8b_prefill_C3

@@ -20,6 +20,6 @@ typedef struct {
   uint32_t QBLK;
   uint32_t QDIR;
   uint32_t WTRANS;      // Accepted for CLI parity; packed source remains n-pair row-major.
+  uint32_t power_kernel_iterations;
 } kernel_arg_t;
-
 #endif // _KV_CACHE_DEQUANT_W4A16_COMMON_H_

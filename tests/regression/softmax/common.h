@@ -28,6 +28,6 @@ typedef struct {
   // Options
   uint32_t use_mask;   // 0: no mask, 1: apply causal mask
   float scale;         // Scaling factor (e.g., 1/sqrt(d_k) for attention)
+  uint32_t power_kernel_iterations;
 } kernel_arg_t;
-
 #endif // _COMMON_H_
