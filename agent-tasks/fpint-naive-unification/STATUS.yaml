@@ -1,0 +1,112 @@
+task: fpint-naive-unification
+state: complete
+created: "2026-07-10 16:54"
+updated: "2026-07-10 19:45"
+summary: >
+  Unify the naive LMEM/shared-DMA and improve TMEM/AXI FPINT GEMM RTL paths
+  under the GEMM_NAIVE compile-time selector while sharing the current GEMM
+  unit and local DMA implementations.
+log:
+  - time: "2026-07-10 16:54"
+    entry: >
+      Confirmed the implementation scope. Naive preserves one-row 16-byte
+      weight loads, improve preserves four-row 64-byte loads, and no weight
+      packing bridge will be introduced. The current VX_gemm_unit source is
+      explicitly excluded from functional edits.
+  - time: "2026-07-10 17:04"
+    entry: >
+      Implemented the compile-time backend split. Added namespaced naive
+      controller RTL, shared-LMEM routing, the naive local-DMA completion
+      bypass, architecture-specific configuration constants, and
+      configuration-aware GEMM unit/node unittest manifests. The optimized
+      VX_gemm_unit source remains unchanged. Compile and simulation evidence
+      are pending the Verification worker.
+  - time: "2026-07-10 17:12"
+    entry: >
+      Verification iteration 1 used tools/verify_rtl.py in independent improve
+      and naive configured build directories. Both gemm_unit configurations
+      reached RTL elaboration with FPU_NEW_EN=0, then failed in the testbench
+      at lines 2335 and 2528 because it referenced the removed singleton
+      u_dut.u_acc_rd_fifo instead of the current two-bank generate hierarchy.
+      No design-RTL failure or simulation failure was reached. The implementation
+      was also hardened by fixing the configured-build config.mk include and
+      guarding all namespaced naive source definitions from improve builds.
+  - time: "2026-07-10 17:20"
+    entry: >
+      Verification iterations 2 through 4 repaired unittest plumbing without
+      changing the GEMM unit: updated two stale accumulator-FIFO hierarchy
+      diagnostics, added the make run contract, and fixed verify_rtl.py to
+      prefer simulation logs while still using compile.log on compile errors.
+      Improve gemm_unit completed at 106745 ns and naive gemm_unit completed at
+      114185 ns; both ended with Functional simulation PASSED.
+  - time: "2026-07-10 17:33"
+    entry: >
+      Verification iterations 5 through 7 are compiling the naive node against
+      current interfaces. Added private FSM dimension typedefs and converted
+      the testbench to the current per-lane shared-LMEM topology. The remaining
+      iteration-7 issue is VCS rejecting procedural variable indexing into an
+      interface array during background-lane initialization. Separately, the
+      improve node compiles but returns all-zero outputs in both sourced and
+      default configurations, with both FPU_NEW_EN=0 and the pinned fpnew
+      dependency; this is reproducible without the naive integration path.
+  - time: "2026-07-10 19:05"
+    entry: >
+      Verification iterations 8 through 10 completed the naive node harness
+      adaptation to the production LMEM bank count and misaligned DMA behavior.
+      The naive GEMM unit passed, and all four focused naive node cases passed:
+      M32/N32/K32 with WTRANS 0 and 1, M32/N32/K128, and M128/N128/K128 with
+      QDIR 1. The largest case compared all 16384 output elements successfully.
+      Rechecking the current improve node with the initialized pinned fpnew
+      dependency still reproduced the isolated all-zero baseline failure.
+  - time: "2026-07-10 19:32"
+    entry: >
+      Completed focused xrt-vcs-sim blackbox testing with physically separate
+      improve and naive VCS/runtime build outputs. Both fpint_gemm_ffn_hw and
+      fpint_gemm_ffn_hw_naive passed all four focused cases, including WTRANS 1,
+      K=128, and M128/N128/K128 with QDIR 1. Improve cycles were 7159, 7158,
+      7387, and 10575; naive cycles were 12798, 12799, 18348, and 56754.
+      Also replaced an `elsif preprocessor branch with nested `ifdef/`else so
+      configure-generated C headers and SystemVerilog select MXU_WLOAD_NUM
+      consistently.
+  - time: "2026-07-10 19:45"
+    entry: >
+      Final simplification and review applied three behavior-preserving code
+      improvements: reused the standard memory-bus assignment macro for the
+      weight path, removed a redundant equal-width unittest interface, and
+      made gemm_unit compilation an incremental file target. The post-review
+      naive M32/N32/K32 node unittest passed, then a forced fresh full-core VCS
+      compile and fpint_gemm_ffn_hw_naive blackbox rerun also passed. Final
+      diff checks confirm VX_gemm_unit.sv remains unchanged.
+pitfalls:
+  - >
+    The current local DMA waits in TOP_SYNC after data drain, while the old
+    naive controller emits synchronization separately. GEMM_NAIVE must bypass
+    TOP_SYNC or the naive command stream can hang.
+  - >
+    GEMM unittests use explicit RTL lists and historically did not all forward
+    sourced CONFIGS into VCS defines. A passing build without GEMM_NAIVE is not
+    evidence for the naive topology.
+  - >
+    Configure-generated build Makefiles can be stale after source-tree edits.
+    Reconfigure or deliberately use the refreshed generated copy before tests.
+  - >
+    The cvfpu parent submodule initially lacked its nested common_cells sources.
+    The pinned dependency is now initialized; the original prerequisite errors
+    remain saved as compile_missing_cvfpu.log in both verification builds.
+  - >
+    The optimized GEMM unit uses two generated accumulator read FIFOs. Any
+    diagnostic hierarchy in the testbench must address gen_acc_rd_fifo[0/1]
+    rather than the historical singleton u_acc_rd_fifo path.
+  - >
+    VCS does not permit procedural runtime indexing into arrays of interfaces.
+    Per-lane interface initialization must use constant genvar indices.
+  - >
+    The existing improve gemm_node_improve M32/N32/K32 test currently writes
+    all-zero accumulators and fails 1024/1024 outputs even when CONFIGS is
+    absent and when fpnew is available. This is a baseline node-test failure,
+    not evidence that GEMM_NAIVE altered the improve RTL branch.
+  - >
+    sim/xrtsim_vcs does not key the simv target on CONFIGS. Switching improve
+    and naive CONFIGS in one build directory can silently reuse the previous
+    mode's binary; verification must use separate build outputs or explicitly
+    force a safe rebuild.

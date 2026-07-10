@@ -87,7 +87,11 @@ module VX_core import VX_gpu_pkg::*; #(
         .NUM_LANES (`NUM_LSU_LANES),
         .DATA_SIZE (LSU_WORD_SIZE),
         .TAG_WIDTH (LSU_TAG_WIDTH)
+`ifdef GEMM_NAIVE
+    ) dma_ctrl_if[`NUM_LSU_BLOCKS+1]();
+`else
     ) dma_ctrl_if[`NUM_LSU_BLOCKS]();
+`endif
 
     // GEMM control interfaces from mem_unit
     VX_lsu_mem_if #(
@@ -101,6 +105,14 @@ module VX_core import VX_gpu_pkg::*; #(
         .DATA_SIZE (LSU_WORD_SIZE),
         .TAG_WIDTH (LMEM_TAG_WIDTH)
     ) dma_local_data_if[`NUM_LSU_LANES]();
+
+`ifdef GEMM_NAIVE
+    // Shared-LMEM GEMM data path used by the naive backend.
+    VX_mem_bus_if #(
+        .DATA_SIZE (LSU_WORD_SIZE),
+        .TAG_WIDTH (GEMM_LMEM_TAG_WIDTH)
+    ) gemm_data_if[`NUM_LSU_LANES]();
+`endif
 
 	    VX_mem_bus_if #(
 	        .DATA_SIZE (DCACHE_WORD_SIZE),
@@ -272,15 +284,26 @@ module VX_core import VX_gpu_pkg::*; #(
     `endif
         .lsu_mem_if        (lsu_mem_if),
         .dcache_bus_if     (dcache_bus_if),
+`ifdef GEMM_NAIVE
+        .dma_ctrl_if       (dma_ctrl_if[0:`NUM_LSU_BLOCKS-1]),
+`else
         .dma_ctrl_if       (dma_ctrl_if),
+`endif
         .gemm_ctrl_if      (gemm_ctrl_if),
         .dma_local_data_if (dma_local_data_if),
         .dma_global_data_if(dma_global_data_if)
+`ifdef GEMM_NAIVE
+       ,.gemm_data_if      (gemm_data_if)
+`endif
     );
 
     VX_dma_node #(
       .INSTANCE_ID(INSTANCE_ID),
+`ifdef GEMM_NAIVE
+      .N_MASTER(`NUM_LSU_BLOCKS+1),
+`else
       .N_MASTER(`NUM_LSU_BLOCKS),
+`endif
       .NUM_ENTRIES(`JOB_MMIO_NUM_ENTRIES),
       .ENABLE_MISALIGN(1'b1)
     ) u_VX_dma_node (
@@ -295,6 +318,90 @@ module VX_core import VX_gpu_pkg::*; #(
     );
 
 `ifdef ENABLE_GEMM_ACCEL
+
+`ifdef GEMM_NAIVE
+
+    VX_gemm_node_naive #(
+        .INSTANCE_ID (`SFORMATF(("%s-gemm-naive", INSTANCE_ID))),
+        .N_MASTER    (`NUM_LSU_BLOCKS),
+        .NUM_ENTRIES (`JOB_MMIO_NUM_ENTRIES)
+    ) gemm_node_naive (
+        .clk         (clk),
+        .reset       (reset),
+    `ifdef PERF_ENABLE
+        .gemm_unit_perf (accel_perf.gemm_unit),
+        .gemm_node_perf (accel_perf.gemm_node),
+    `endif
+        .mmio_if     (gemm_ctrl_if),
+        .dma_if      (dma_ctrl_if[`NUM_LSU_BLOCKS]),
+        .lmem_bus_if (gemm_data_if)
+    );
+
+    for (genvar i = 0; i < NUM_TMEM_BANKS; ++i) begin : g_naive_gemm_dma_axi
+        assign dma_axi_m[i].aw_id     = '0;
+        assign dma_axi_m[i].aw_addr   = '0;
+        assign dma_axi_m[i].aw_len    = '0;
+        assign dma_axi_m[i].aw_size   = '0;
+        assign dma_axi_m[i].aw_burst  = '0;
+        assign dma_axi_m[i].aw_lock   = 1'b0;
+        assign dma_axi_m[i].aw_cache  = '0;
+        assign dma_axi_m[i].aw_prot   = '0;
+        assign dma_axi_m[i].aw_qos    = '0;
+        assign dma_axi_m[i].aw_region = '0;
+        assign dma_axi_m[i].aw_atop   = '0;
+        assign dma_axi_m[i].aw_user   = '0;
+        assign dma_axi_m[i].aw_valid  = 1'b0;
+
+        assign dma_axi_m[i].w_data    = '0;
+        assign dma_axi_m[i].w_strb    = '0;
+        assign dma_axi_m[i].w_last    = 1'b0;
+        assign dma_axi_m[i].w_user    = '0;
+        assign dma_axi_m[i].w_valid   = 1'b0;
+
+        assign dma_axi_m[i].b_ready   = 1'b0;
+
+        assign dma_axi_m[i].ar_id     = '0;
+        assign dma_axi_m[i].ar_addr   = '0;
+        assign dma_axi_m[i].ar_len    = '0;
+        assign dma_axi_m[i].ar_size   = '0;
+        assign dma_axi_m[i].ar_burst  = '0;
+        assign dma_axi_m[i].ar_lock   = 1'b0;
+        assign dma_axi_m[i].ar_cache  = '0;
+        assign dma_axi_m[i].ar_prot   = '0;
+        assign dma_axi_m[i].ar_qos    = '0;
+        assign dma_axi_m[i].ar_region = '0;
+        assign dma_axi_m[i].ar_user   = '0;
+        assign dma_axi_m[i].ar_valid  = 1'b0;
+
+        assign dma_axi_m[i].r_ready   = 1'b0;
+
+        `UNUSED_VAR (dma_axi_m[i].aw_ready)
+        `UNUSED_VAR (dma_axi_m[i].w_ready)
+        `UNUSED_VAR (dma_axi_m[i].b_id)
+        `UNUSED_VAR (dma_axi_m[i].b_resp)
+        `UNUSED_VAR (dma_axi_m[i].b_user)
+        `UNUSED_VAR (dma_axi_m[i].b_valid)
+        `UNUSED_VAR (dma_axi_m[i].ar_ready)
+        `UNUSED_VAR (dma_axi_m[i].r_id)
+        `UNUSED_VAR (dma_axi_m[i].r_data)
+        `UNUSED_VAR (dma_axi_m[i].r_resp)
+        `UNUSED_VAR (dma_axi_m[i].r_last)
+        `UNUSED_VAR (dma_axi_m[i].r_user)
+        `UNUSED_VAR (dma_axi_m[i].r_valid)
+    end
+
+`ifdef PERF_ENABLE
+    assign accel_perf.hbm_dma         = '0;
+    assign accel_perf.lmem_dma_input  = '0;
+    assign accel_perf.lmem_dma_weight = '0;
+    assign accel_perf.lmem_dma_sz     = '0;
+    assign accel_perf.lmem_dma_output = '0;
+`endif
+`ifdef ENABLE_HW_DEBUG_GEMM
+    assign gemm_unit_debug = '0;
+`endif
+
+`else
 
     VX_gemm_node #(
         .INSTANCE_ID (`SFORMATF(("%s-gemm", INSTANCE_ID))),
@@ -319,6 +426,8 @@ module VX_core import VX_gpu_pkg::*; #(
         .dma_axi_m   (dma_axi_m)
     );
 
+`endif
+
 `else
 
     for (genvar i = 0; i < `NUM_LSU_BLOCKS; ++i) begin : g_disabled_gemm_ctrl
@@ -332,6 +441,13 @@ module VX_core import VX_gpu_pkg::*; #(
             .mem_if (gemm_ctrl_if[i])
         );
     end
+
+`ifdef GEMM_NAIVE
+    `INIT_VX_LSU_MEM_IF (dma_ctrl_if[`NUM_LSU_BLOCKS])
+    for (genvar i = 0; i < `NUM_LSU_LANES; ++i) begin : g_disabled_gemm_data
+        `INIT_VX_MEM_BUS_IF (gemm_data_if[i])
+    end
+`endif
 
     for (genvar i = 0; i < NUM_TMEM_BANKS; ++i) begin : g_disabled_gemm_dma_axi
         assign dma_axi_m[i].aw_id     = '0;

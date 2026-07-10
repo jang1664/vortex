@@ -1,4 +1,4 @@
-compile: setup
+compile: $(TB) $(RTLS) $(DPI_SRCS) $(SOFTFLOAT_LIB) Makefile vcs.mk | setup
 	vcs \
 	-V \
 	-kdb \
@@ -17,6 +17,9 @@ compile: setup
 	$(DPI_SRCS) \
 	$(SOFTFLOAT_LIB) \
 	$(PARAMS)
+	@touch $@
 
-sim: compile
+run: compile
 	./simv -reportstats -l $(SIM_LOG)
+
+sim: run

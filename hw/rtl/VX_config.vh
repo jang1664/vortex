@@ -1099,10 +1099,14 @@ for block_size in range(1, full_bitwidth+1):
 `ifndef MXU_COL_TILE
 `define MXU_COL_TILE 1            // Column tile size for pipelined processing
 `endif
+`ifdef GEMM_NAIVE
+`define MXU_WLOAD_NUM 1           // Naive LMEM backend loads one weight row per request
+`else
 `ifdef WLOAD_AT_ONCE
 `define MXU_WLOAD_NUM `MXU_ROW    // Load a full MXU weight tile in one beat
 `else
 `define MXU_WLOAD_NUM 4           // Number of weight loads per cycle
+`endif
 `endif
 
 // -------------------------------------------------------
@@ -1172,7 +1176,11 @@ for block_size in range(1, full_bitwidth+1):
 // across all DMA channels before advancing to the next stripe within one HBM bank.
 `define HBM_BUS_STRIDE (`MEM_BLOCK_SIZE * `NUM_DMA_CHANNELS)
 
-`define GEMM_CFG_REG_NUM 43       // Number of GEMM configuration registers
+`ifdef GEMM_NAIVE
+`define GEMM_CFG_REG_NUM 40       // Naive LMEM backend register map
+`else
+`define GEMM_CFG_REG_NUM 43       // Improve TMEM backend register map
+`endif
 `define DMA_CFG_REG_NUM 18        // Number of DMA configuration registers
 `ifdef XLEN_64
 `define GEMM_REG_BASE_ADDR 64'h0000_0000_0000_1080 // Base byte address for GEMM config registers
@@ -1186,7 +1194,11 @@ for block_size in range(1, full_bitwidth+1):
 `define MM_MAX_LOG_TILEDIM 10 // Maximum log2 tile dimension size (1K)
 
 // job frontend number of entries
+`ifdef GEMM_NAIVE
+`define JOB_MMIO_NUM_ENTRIES 4
+`else
 `define JOB_MMIO_NUM_ENTRIES 1
+`endif
 
 // job frontend reg idx
 `define JOB_MMIO_CONTROL_REG_IDX 0
@@ -1210,6 +1222,15 @@ for block_size in range(1, full_bitwidth+1):
 `define JOB_MMIO_ALLOC_OWNER_BITS `JOB_MMIO_OWNER_W
 `define JOB_MMIO_ALLOC_GEN_LSB (`JOB_MMIO_ALLOC_OWNER_LSB + `JOB_MMIO_ALLOC_OWNER_BITS)
 `define JOB_MMIO_ALLOC_GEN_BITS `JOB_MMIO_GEN_W
+
+`ifdef GEMM_NAIVE
+// Naive controller compile-time tile dimensions.
+`define GEMM_FSM_MT 128
+`define GEMM_FSM_NT 128
+`define GEMM_FSM_KT 128
+`define GEMM_FSM_MXU_KT 32
+`define GEMM_FSM_MXU_NT 32
+`endif
 
 // Output scaling mode (uncomment to enable FP16 output scaling)
 // `define GEMM_UNIT_FP16_OUT_SCALE

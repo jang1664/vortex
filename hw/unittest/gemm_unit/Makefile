@@ -1,14 +1,14 @@
 # Include Vortex configuration
 UNITTEST_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 ROOT_DIR := $(abspath $(UNITTEST_DIR)/../../..)
-include $(ROOT_DIR)/build/config.mk
+include $(ROOT_DIR)/config.mk
 
 RTL_DIR := $(VORTEX_HOME)/hw/rtl
 SRC_DIR := $(VORTEX_HOME)/hw/unittest/gemm_unit
 
-# Force use of gcc-11/g++-11 for C++20 features
-export CC := /usr/bin/gcc-11
-export CXX := /usr/bin/g++-11
+# Use the system compiler for host-side simulator compilation.
+export CC := /usr/bin/gcc
+export CXX := /usr/bin/g++
 
 SIM_EXEC ?= vcs
 
@@ -63,6 +63,8 @@ INCDIRS_ := $(VORTEX_HOME)/build/hw \
             $(THIRD_PARTY_DIR)/softfloat/source/include
 
 DEFINES_ := SIMULATION DEBUG_LEVEL=3 DBG_TRACE_GEMM
+CONFIG_DEFINES := $(patsubst -D%,%,$(CONFIGS))
+DEFINES_ += $(CONFIG_DEFINES)
 FPU_NEW_EN ?= 1
 ifeq ($(FPU_NEW_EN),1)
 DEFINES_ += FPU_FPNEW

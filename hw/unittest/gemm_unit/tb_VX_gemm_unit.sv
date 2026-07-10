@@ -2332,7 +2332,8 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*; import cf_mat
             $fdisplay(case_fd, "[%0t] accum_input_stream: burst_len=%0d gap_cycles=%0d initial_gap=%0d inserted_gap_cycles=%0d ready_stall_cycles=%0d fifo_level_after_input=%0d",
                       $time, accum_burst_len, accum_gap_cycles, accum_initial_gap_cycles,
                       accum_inserted_gap_cycles, accum_input_stall_cycles,
-                      u_dut.u_acc_rd_fifo.status_cnt_q);
+                      int'(u_dut.gen_acc_rd_fifo[0].u_acc_rd_fifo.status_cnt_q)
+                    + int'(u_dut.gen_acc_rd_fifo[1].u_acc_rd_fifo.status_cnt_q));
         end
 
         wait_for_done();
@@ -2525,7 +2526,8 @@ module tb_VX_gemm_unit import VX_gpu_pkg::*; import fpint_emul::*; import cf_mat
                 $fdisplay(case_fd, "[%0t] iter=%0d mode=%s reg_idx=%0d inserted_gap_cycles=%0d ready_stall_cycles=%0d fifo_level_after_input=%0d",
                           $time, iter, mode_name, reg_idx,
                           inserted_gap_cycles, input_stall_cycles,
-                          u_dut.u_acc_rd_fifo.status_cnt_q);
+                          int'(u_dut.gen_acc_rd_fifo[0].u_acc_rd_fifo.status_cnt_q)
+                        + int'(u_dut.gen_acc_rd_fifo[1].u_acc_rd_fifo.status_cnt_q));
             end
 
             wait_for_done();

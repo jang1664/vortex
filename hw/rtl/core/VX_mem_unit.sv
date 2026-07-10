@@ -30,6 +30,9 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
     VX_lsu_mem_if.master    gemm_ctrl_if [`NUM_LSU_BLOCKS],
     VX_mem_bus_if.slave     dma_local_data_if [`NUM_LSU_LANES],
     VX_mem_bus_if.slave     dma_global_data_if
+`ifdef GEMM_NAIVE
+   ,VX_mem_bus_if.slave     gemm_data_if [`NUM_LSU_LANES]
+`endif
 );
     VX_lsu_mem_if #(
         .NUM_LANES (`NUM_LSU_LANES),
@@ -123,14 +126,17 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
         .TAG_WIDTH (LMEM_LOCAL_TAG_WIDTH)
     ) lmem_membus_arb_out_if[`NUM_LSU_LANES]();
 
-    // Per-lane 2:1 arbiter: {LSU local lane, DMA local lane}.
-    // This lets VX_dma_node use the full local-memory lane width instead of
-    // bottlenecking on lane 0.
+    // Per-lane local-memory arbitration. The naive backend adds the GEMM
+    // shared-LMEM client; the improve backend retains the current 2:1 path.
     for (genvar i = 0; i < `NUM_LSU_LANES; ++i) begin : g_lmem_lane_dma_arb
         VX_mem_bus_if #(
             .DATA_SIZE (LSU_WORD_SIZE),
             .TAG_WIDTH (GEMM_LMEM_TAG_WIDTH)
+`ifdef GEMM_NAIVE
+        ) lane_arb_in_if[3]();
+`else
         ) lane_arb_in_if[2]();
+`endif
 
         VX_mem_bus_if #(
             .DATA_SIZE (LSU_WORD_SIZE),
@@ -139,9 +145,16 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
 
         `ASSIGN_VX_MEM_BUS_IF_EX(lane_arb_in_if[0], lmem_adapt_if[i],     GEMM_LMEM_TAG_WIDTH, LMEM_TAG_WIDTH, UUID_WIDTH);
         `ASSIGN_VX_MEM_BUS_IF_EX(lane_arb_in_if[1], dma_local_data_if[i], GEMM_LMEM_TAG_WIDTH, LMEM_TAG_WIDTH, UUID_WIDTH);
+`ifdef GEMM_NAIVE
+        `ASSIGN_VX_MEM_BUS_IF(lane_arb_in_if[2], gemm_data_if[i]);
+`endif
 
         VX_mem_arb #(
+`ifdef GEMM_NAIVE
+            .NUM_INPUTS  (3),
+`else
             .NUM_INPUTS  (2),
+`endif
             .NUM_OUTPUTS (1),
             .DATA_SIZE   (LSU_WORD_SIZE),
             .TAG_WIDTH   (GEMM_LMEM_TAG_WIDTH),
@@ -186,6 +199,12 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
     for (genvar i = 0; i < `NUM_LSU_BLOCKS; ++i) begin : g_lsu_dcache_if
         `ASSIGN_VX_MEM_BUS_IF (lsu_dcache_if[i], lsu_mem_if[i]);
     end
+
+`ifdef GEMM_NAIVE
+    for (genvar i = 0; i < `NUM_LSU_LANES; ++i) begin : g_unused_gemm_data_if
+        `UNUSED_VX_MEM_BUS_IF (gemm_data_if[i])
+    end
+`endif
 
 `endif
 

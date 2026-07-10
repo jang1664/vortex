@@ -115,7 +115,14 @@ def find_log_file(test_dir, test_name=None):
         if os.path.isfile(sim_log):
             return sim_log
 
-    # Fall back to compile log
+    # Prefer the default simulation log over compile output.  Most unittest
+    # Makefiles write to logs/sim.log, and a successful compile log does not
+    # contain the simulation pass marker.
+    sim_log = os.path.join(logs_dir, "sim.log")
+    if os.path.isfile(sim_log):
+        return sim_log
+
+    # Fall back to compile log when simulation never started.
     compile_log = os.path.join(logs_dir, "compile.log")
     if os.path.isfile(compile_log):
         return compile_log
@@ -189,7 +196,8 @@ def run_unittest_make(test_dir, sim, params, extra_sim_args):
     rc, output = run_cmd(compile_cmd, cwd=test_dir, timeout=300)
 
     if rc != 0:
-        log_file = find_log_file(test_dir) or ""
+        compile_log = os.path.join(test_dir, "logs", "compile.log")
+        log_file = compile_log if os.path.isfile(compile_log) else ""
         log_text = output
         if log_file and os.path.isfile(log_file):
             with open(log_file) as f:

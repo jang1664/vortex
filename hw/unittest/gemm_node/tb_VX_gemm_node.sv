@@ -55,7 +55,7 @@ module tb_VX_gemm_node
   // VX_local_mem is most robust with power-of-two footprint.
   localparam longint unsigned LMEM_SIZE_U = (64'd1 << `CLOG2(LMEM_REQUIRED_BYTES));
   localparam int LMEM_SIZE             = int'(LMEM_SIZE_U);
-  localparam int LMEM_NUM_BANKS        = 4;
+  localparam int TB_LMEM_NUM_BANKS     = `LMEM_NUM_BANKS;
   localparam int LMEM_WORD_ADDR_WIDTH  = `CLOG2(LMEM_SIZE / LSU_WORD_SIZE);
 
   // DCACHE model size (byte addressed)
@@ -152,13 +152,7 @@ module tb_VX_gemm_node
   VX_mem_bus_if #(
     .DATA_SIZE(LSU_WORD_SIZE),
     .TAG_WIDTH(GEMM_LMEM_TAG_WIDTH)
-  ) lmem_bus_if ();
-
-  // DUT LMEM tag adaption toward shared LMEM arbiter domain
-  VX_mem_bus_if #(
-    .DATA_SIZE(LSU_WORD_SIZE),
-    .TAG_WIDTH(DMA_TAG_WIDTH)
-  ) lmem_bus_if_dut_arb ();
+  ) lmem_bus_if[`NUM_LSU_LANES] ();
 
   // dma_node dcache/lmem ports
   VX_mem_bus_if #(
@@ -169,7 +163,7 @@ module tb_VX_gemm_node
   VX_mem_bus_if #(
     .DATA_SIZE(LSU_WORD_SIZE),
     .TAG_WIDTH(DMA_TAG_WIDTH)
-  ) lmem_bus_if_dma ();
+  ) lmem_bus_if_dma[`NUM_LSU_LANES] ();
 
   // Optional background ports to drive contention/initialization
   VX_mem_bus_if #(
@@ -180,7 +174,7 @@ module tb_VX_gemm_node
   VX_mem_bus_if #(
     .DATA_SIZE(LSU_WORD_SIZE),
     .TAG_WIDTH(DMA_TAG_WIDTH)
-  ) bg_local_if ();
+  ) bg_local_if[`NUM_LSU_LANES] ();
 
   // Global path: arbiter -> cache wrap -> backing memory
   VX_mem_bus_if #(
@@ -198,21 +192,16 @@ module tb_VX_gemm_node
     .TAG_WIDTH(CACHE_MEM_TAG_WIDTH)
   ) cache_mem_if[CACHE_MEM_PORTS] ();
 
-  // Local path: arbiter -> local mem
-  VX_mem_bus_if #(
-    .DATA_SIZE(LSU_WORD_SIZE),
-    .TAG_WIDTH(DMA_TAG_WIDTH)
-  ) l_arb_in_if[L_ARB_NUM_INPUTS] ();
-
+  // Per-lane local arbiter outputs toward local memory.
   VX_mem_bus_if #(
     .DATA_SIZE(LSU_WORD_SIZE),
     .TAG_WIDTH(L_ARB_TAG_WIDTH)
-  ) l_arb_out_if[1] ();
+  ) lmem_input_if[`NUM_LSU_LANES] ();
 
   // =========================================================================
   // DUT
   // =========================================================================
-  VX_gemm_node #(
+  VX_gemm_node_naive #(
     .INSTANCE_ID("gemm_node_0"),
     .N_MASTER(N_MASTER),
     .N_CHILDREN(5)
@@ -230,7 +219,10 @@ module tb_VX_gemm_node
   VX_dma_node #(
     .INSTANCE_ID("dma_node_tb"),
     .N_MASTER(1),
-    .NUM_ENTRIES(4)
+    .NUM_ENTRIES(4),
+    .ENABLE_MISALIGN(1'b1),
+    .DCACHE_TAG_WIDTH_P(DMA_TAG_WIDTH),
+    .LMEM_TAG_WIDTH_P(DMA_TAG_WIDTH)
   ) u_dma_node (
     .clk          (clk),
     .reset        (reset),
@@ -291,21 +283,6 @@ module tb_VX_gemm_node
   //   local : gemm+dma(+tb init) -> mem_arb -> local_mem
   // =========================================================================
 
-  // DUT LMEM tag-width adaptation into arbiter domain
-  assign lmem_bus_if_dut_arb.req_valid       = lmem_bus_if.req_valid;
-  assign lmem_bus_if_dut_arb.req_data.rw     = lmem_bus_if.req_data.rw;
-  assign lmem_bus_if_dut_arb.req_data.addr   = lmem_bus_if.req_data.addr;
-  assign lmem_bus_if_dut_arb.req_data.data   = lmem_bus_if.req_data.data;
-  assign lmem_bus_if_dut_arb.req_data.byteen = lmem_bus_if.req_data.byteen;
-  assign lmem_bus_if_dut_arb.req_data.flags  = lmem_bus_if.req_data.flags;
-  assign lmem_bus_if_dut_arb.req_data.tag    = DMA_TAG_WIDTH'(lmem_bus_if.req_data.tag);
-  assign lmem_bus_if.req_ready               = lmem_bus_if_dut_arb.req_ready;
-
-  assign lmem_bus_if.rsp_valid               = lmem_bus_if_dut_arb.rsp_valid;
-  assign lmem_bus_if.rsp_data.data           = lmem_bus_if_dut_arb.rsp_data.data;
-  assign lmem_bus_if.rsp_data.tag            = GEMM_LMEM_TAG_WIDTH'(lmem_bus_if_dut_arb.rsp_data.tag);
-  assign lmem_bus_if_dut_arb.rsp_ready       = lmem_bus_if.rsp_ready;
-
   `ASSIGN_VX_MEM_BUS_IF(g_arb_in_if[0], dcache_bus_if);
   `ASSIGN_VX_MEM_BUS_IF(g_arb_in_if[1], bg_global_if);
 
@@ -354,31 +331,47 @@ module tb_VX_gemm_node
     .mem_bus_if (cache_mem_if)
   );
 
-  `ASSIGN_VX_MEM_BUS_IF(l_arb_in_if[0], lmem_bus_if_dut_arb);
-  `ASSIGN_VX_MEM_BUS_IF(l_arb_in_if[1], lmem_bus_if_dma);
-  `ASSIGN_VX_MEM_BUS_IF(l_arb_in_if[2], bg_local_if);
+  // Match VX_mem_unit: independently arbitrate GEMM, CPU DMA, and background
+  // traffic on every physical local-memory lane.
+  for (genvar i = 0; i < `NUM_LSU_LANES; ++i) begin : g_lmem_lane_arb
+    VX_mem_bus_if #(
+      .DATA_SIZE(LSU_WORD_SIZE),
+      .TAG_WIDTH(DMA_TAG_WIDTH)
+    ) lane_arb_in_if[L_ARB_NUM_INPUTS] ();
 
-  VX_mem_arb #(
-    .NUM_INPUTS  (L_ARB_NUM_INPUTS),
-    .NUM_OUTPUTS (1),
-    .DATA_SIZE   (LSU_WORD_SIZE),
-    .TAG_WIDTH   (DMA_TAG_WIDTH),
-    .TAG_SEL_IDX (DMA_TAG_WIDTH - UUID_WIDTH),
-    .REQ_OUT_BUF (2),
-    .RSP_OUT_BUF (2),
-    .ARBITER     ("P")
-  ) u_l_mem_arb (
-    .clk        (clk),
-    .reset      (reset),
-    .bus_in_if  (l_arb_in_if),
-    .bus_out_if (l_arb_out_if)
-  );
+    VX_mem_bus_if #(
+      .DATA_SIZE(LSU_WORD_SIZE),
+      .TAG_WIDTH(L_ARB_TAG_WIDTH)
+    ) lane_arb_out_if[1] ();
+
+    `ASSIGN_VX_MEM_BUS_IF(lane_arb_in_if[0], lmem_bus_if[i]);
+    `ASSIGN_VX_MEM_BUS_IF(lane_arb_in_if[1], lmem_bus_if_dma[i]);
+    `ASSIGN_VX_MEM_BUS_IF(lane_arb_in_if[2], bg_local_if[i]);
+
+    VX_mem_arb #(
+      .NUM_INPUTS  (L_ARB_NUM_INPUTS),
+      .NUM_OUTPUTS (1),
+      .DATA_SIZE   (LSU_WORD_SIZE),
+      .TAG_WIDTH   (DMA_TAG_WIDTH),
+      .TAG_SEL_IDX (DMA_TAG_WIDTH - UUID_WIDTH),
+      .REQ_OUT_BUF (2),
+      .RSP_OUT_BUF (2),
+      .ARBITER     ("P")
+    ) u_l_mem_arb (
+      .clk        (clk),
+      .reset      (reset),
+      .bus_in_if  (lane_arb_in_if),
+      .bus_out_if (lane_arb_out_if)
+    );
+
+    `ASSIGN_VX_MEM_BUS_IF(lmem_input_if[i], lane_arb_out_if[0]);
+  end
 
   VX_local_mem #(
     .INSTANCE_ID ("gemm_node_lmem"),
     .SIZE        (LMEM_SIZE),
-    .NUM_REQS    (1),
-    .NUM_BANKS   (LMEM_NUM_BANKS),
+    .NUM_REQS    (`NUM_LSU_LANES),
+    .NUM_BANKS   (TB_LMEM_NUM_BANKS),
     .ADDR_WIDTH  (LMEM_WORD_ADDR_WIDTH),
     .WORD_SIZE   (LSU_WORD_SIZE),
     .TAG_WIDTH   (L_ARB_TAG_WIDTH),
@@ -389,7 +382,7 @@ module tb_VX_gemm_node
 `ifdef PERF_ENABLE
     .lmem_perf (),
 `endif
-    .mem_bus_if(l_arb_out_if)
+    .mem_bus_if(lmem_input_if)
   );
 
   // Global memory backend (byte addressed, served by cache line interface)
@@ -468,9 +461,18 @@ module tb_VX_gemm_node
     bg_global_if.req_data  = '0;
     bg_global_if.rsp_ready = 1'b1;
 
-    bg_local_if.req_valid = 1'b0;
-    bg_local_if.req_data  = '0;
-    bg_local_if.rsp_ready = 1'b1;
+    bg_local_if[0].req_valid = 1'b0;
+    bg_local_if[0].req_data  = '0;
+    bg_local_if[0].rsp_ready = 1'b1;
+  end
+
+  // Lane 0 remains task-driven. VCS requires constant indices when an
+  // interface array is accessed from procedural code, so all other lanes are
+  // elaboration-time idle tie-offs.
+  for (genvar i = 1; i < `NUM_LSU_LANES; ++i) begin : g_bg_local_idle
+    assign bg_local_if[i].req_valid = 1'b0;
+    assign bg_local_if[i].req_data  = '0;
+    assign bg_local_if[i].rsp_ready = 1'b1;
   end
 
   logic [LSU_TAG_WIDTH-1:0] mmio_tag_cnt = '0;
@@ -519,7 +521,8 @@ module tb_VX_gemm_node
   task automatic mmio_read32_word(
     input  logic [63:0] addr,          // byte address of beat
     input  int unsigned word_in_beat,
-    output logic [31:0] data
+    output logic [31:0] data,
+    input  bit verbose = 1'b1
   );
     int unsigned timeout;
     logic [`NUM_LSU_LANES-1:0] lane_mask;
@@ -555,7 +558,8 @@ module tb_VX_gemm_node
 
     data = mmio_if[0].rsp_data.data[0][word_in_beat*32 +: 32];
     @(posedge clk);
-    $display("[%0t] MMIO READ32: addr=0x%h word=%0d data=0x%08h", $time, addr, word_in_beat, data);
+    if (verbose)
+      $display("[%0t] MMIO READ32: addr=0x%h word=%0d data=0x%08h", $time, addr, word_in_beat, data);
   endtask
 
   // =========================================================================
@@ -583,11 +587,16 @@ module tb_VX_gemm_node
     mmio_write32_word(addr, word_in_beat, data);
   endtask
 
-  task automatic job_read_reg32(input int unsigned eid, input int unsigned r32, output logic [31:0] data);
+  task automatic job_read_reg32(
+    input int unsigned eid,
+    input int unsigned r32,
+    output logic [31:0] data,
+    input bit verbose = 1'b1
+  );
     int unsigned beat_idx     = r32 / WORDS_PER_BEAT;
     int unsigned word_in_beat = r32 % WORDS_PER_BEAT;
     logic [63:0]  addr        = job_entry_beat_addr(eid, beat_idx);
-    mmio_read32_word(addr, word_in_beat, data);
+    mmio_read32_word(addr, word_in_beat, data, verbose);
   endtask
 
   task automatic job_write_reg64(input int unsigned eid, input int unsigned reg_lo_idx, input logic [63:0] value);
@@ -609,8 +618,8 @@ module tb_VX_gemm_node
   // =========================================================================
   // Reset/init
   // =========================================================================
-  function automatic logic [bg_local_if.ADDR_WIDTH-1:0] to_local_addr(input logic [63:0] byte_addr);
-    return bg_local_if.ADDR_WIDTH'(byte_addr >> $clog2(LSU_WORD_SIZE));
+  function automatic logic [bg_local_if[0].ADDR_WIDTH-1:0] to_local_addr(input logic [63:0] byte_addr);
+    return bg_local_if[0].ADDR_WIDTH'(byte_addr >> $clog2(LSU_WORD_SIZE));
   endfunction
 
   task automatic lmem_bg_write_word(
@@ -620,18 +629,18 @@ module tb_VX_gemm_node
   );
     int guard;
     begin
-      bg_local_if.req_data        = '0;
-      bg_local_if.req_data.rw     = 1'b1;
-      bg_local_if.req_data.addr   = to_local_addr(byte_addr);
-      bg_local_if.req_data.byteen = byteen;
-      bg_local_if.req_data.data   = data;
-      bg_local_if.req_data.flags  = '0;
-      bg_local_if.req_data.tag    = '0;
+      bg_local_if[0].req_data        = '0;
+      bg_local_if[0].req_data.rw     = 1'b1;
+      bg_local_if[0].req_data.addr   = to_local_addr(byte_addr);
+      bg_local_if[0].req_data.byteen = byteen;
+      bg_local_if[0].req_data.data   = data;
+      bg_local_if[0].req_data.flags  = '0;
+      bg_local_if[0].req_data.tag    = '0;
 
       @(negedge clk);
-      bg_local_if.req_valid = 1'b1;
+      bg_local_if[0].req_valid = 1'b1;
       guard = 0;
-      while (!(bg_local_if.req_valid && bg_local_if.req_ready)) begin
+      while (!(bg_local_if[0].req_valid && bg_local_if[0].req_ready)) begin
         @(posedge clk);
         guard++;
         if (guard > 200000)
@@ -639,7 +648,7 @@ module tb_VX_gemm_node
       end
 
       @(negedge clk);
-      bg_local_if.req_valid = 1'b0;
+      bg_local_if[0].req_valid = 1'b0;
       @(posedge clk);
     end
   endtask
@@ -1044,12 +1053,12 @@ module tb_VX_gemm_node
     int unsigned curr_gen=0;
     $display("[%0t] wait_job_done: polling entry%0d generation%0d CONTROL.valid(bit0)==0", $time, eid, generation);
     do begin
-      job_read_reg32(eid, REG_CONTROL, ctrl);
+      job_read_reg32(eid, REG_CONTROL, ctrl, 1'b0);
       @(posedge clk);
-      // timeout++;
-      // if (timeout > 100000) begin
-      //   $fatal(1, "[%0t] wait_job_done timeout (ctrl=0x%08h)", $time, ctrl);
-      // end
+      timeout++;
+      if (timeout > 100000) begin
+        $fatal(1, "[%0t] wait_job_done timeout (ctrl=0x%08h)", $time, ctrl);
+      end
       curr_gen = ctrl[`JOB_MMIO_CTRL_GEN_LSB +: `JOB_MMIO_GEN_W];
     end while (generation >= curr_gen && ctrl[`JOB_MMIO_CTRL_VALID_BIT] == 1'b1);
     $display("[%0t] JOB DONE detected for entry%0d", $time, eid);

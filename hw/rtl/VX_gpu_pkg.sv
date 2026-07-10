@@ -974,12 +974,17 @@ package VX_gpu_pkg;
                                                    `MAX(GEMM_ADAPTER_SZ_SPLIT_BITS, GEMM_ADAPTER_O_SPLIT_BITS));
     localparam GEMM_BASE_TAG_WIDTH         = `MAX(LMEM_TAG_WIDTH, (GEMM_ADAPTER_MAX_SPLIT_BITS + GEMM_ADAPTER_OOO_SLOT_BITS));
 
-    // GEMM no longer accesses LMEM (uses TMEM subsystem).
-    // Keep GEMM_ARB_ROUTE_TAG_BITS for GEMM_LMEM_TAG_WIDTH consistency.
+    // The naive backend merges four GEMM clients before shared LMEM. Improve
+    // keeps this width for interface consistency even though it uses TMEM.
     localparam GEMM_ARB_ROUTE_TAG_BITS = `ARB_SEL_BITS(4, 1);
     localparam GEMM_LMEM_TAG_WIDTH = (GEMM_BASE_TAG_WIDTH + GEMM_ARB_ROUTE_TAG_BITS);
-    // Mem-unit LMEM path: 2->1 arb (LSU + DMA local). GEMM removed.
+`ifdef GEMM_NAIVE
+    // Naive mem-unit LMEM path: LSU + CPU DMA + GEMM.
+    localparam LMEM_ARB_ROUTE_TAG_BITS = `ARB_SEL_BITS(3, 1);
+`else
+    // Improve mem-unit LMEM path: LSU + CPU DMA.
     localparam LMEM_ARB_ROUTE_TAG_BITS = `ARB_SEL_BITS(2, 1);
+`endif
     localparam LMEM_LOCAL_TAG_WIDTH = (GEMM_LMEM_TAG_WIDTH + LMEM_ARB_ROUTE_TAG_BITS);
 
     ///////////////////////// GEMM Unit Parameters ///////////////////////////

@@ -713,7 +713,12 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
                 && (wr_state == WR_DONE)
                 && (slot_occupancy_next == 0)
                 && (wr_win_valid_r == 0)) begin
+`ifdef GEMM_NAIVE
+              // Naive command synchronization is emitted by VX_gemm_node_naive.
+              top_state <= TOP_DONE;
+`else
               top_state <= TOP_SYNC;
+`endif
             end
           end
 

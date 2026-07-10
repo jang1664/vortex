@@ -6,9 +6,9 @@ include $(ROOT_DIR)/config.mk
 RTL_DIR := $(VORTEX_HOME)/hw/rtl
 SRC_DIR := $(VORTEX_HOME)/hw/unittest/gemm_node_improve
 
-# Force use of gcc-11/g++-11 for C++20 features
-#export CC := /usr/bin/gcc-11
-#export CXX := /usr/bin/g++-11
+# Use the system compiler for host-side simulator compilation.
+export CC := /usr/bin/gcc
+export CXX := /usr/bin/g++
 
 SIM_EXEC ?= vcs
 
@@ -210,6 +210,8 @@ M ?=
 N ?=
 K ?=
 QBLK ?=
+WTRANS ?=
+QDIR ?=
 EXTRA_SIM_ARGS ?=
 
 ifneq ($(strip $(TEST)),)
@@ -233,6 +235,12 @@ SIM_ARGS += +K=$(K)
 endif
 ifneq ($(strip $(QBLK)),)
 SIM_ARGS += +QBLK=$(QBLK)
+endif
+ifneq ($(strip $(WTRANS)),)
+SIM_ARGS += +WTRANS=$(WTRANS)
+endif
+ifneq ($(strip $(QDIR)),)
+SIM_ARGS += +QDIR=$(QDIR)
 endif
 SIM_ARGS += $(EXTRA_SIM_ARGS)
 

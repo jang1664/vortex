@@ -6,9 +6,9 @@ include $(ROOT_DIR)/config.mk
 RTL_DIR := $(VORTEX_HOME)/hw/rtl
 SRC_DIR := $(VORTEX_HOME)/hw/unittest/gemm_node
 
-# Force use of gcc-11/g++-11 for C++20 features
-export CC := /usr/bin/gcc-11
-export CXX := /usr/bin/g++-11
+# Use the system compiler for host-side simulator compilation.
+export CC := /usr/bin/gcc
+export CXX := /usr/bin/g++
 
 SIM_EXEC ?= vcs
 
@@ -50,26 +50,27 @@ RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
         $(RTL_DIR)/libs/VX_async_ram_patch.sv \
         $(RTL_DIR)/libs/VX_placeholder.sv \
         $(RTL_DIR)/libs/VX_popcount.sv \
-        $(RTL_DIR)/core/gemm/VX_gemm_node.sv \
+        $(RTL_DIR)/core/gemm/VX_gemm_node_naive.sv \
         $(RTL_DIR)/libs/VX_fifo_queue.sv \
 				$(RTL_DIR)/libs/VX_pending_size.sv \
 				$(RTL_DIR)/libs/VX_dp_ram.sv \
-        $(RTL_DIR)/core/gemm/VX_gemm_ctrl.sv \
-        $(RTL_DIR)/core/gemm/VX_gemm_ctrl_if.sv \
-        $(RTL_DIR)/core/gemm/VX_gemm_fsm.sv \
-        $(RTL_DIR)/core/gemm/VX_gemm_fsm_if.sv \
-        $(RTL_DIR)/core/gemm/VX_gemm_sync.sv \
+        $(RTL_DIR)/core/gemm/VX_gemm_ctrl_naive.sv \
+        $(RTL_DIR)/core/gemm/VX_gemm_ctrl_naive_if.sv \
+        $(RTL_DIR)/core/gemm/VX_gemm_fsm_naive.sv \
+        $(RTL_DIR)/core/gemm/VX_gemm_fsm_naive_if.sv \
+        $(RTL_DIR)/core/gemm/VX_gemm_sync_naive.sv \
         $(RTL_DIR)/core/gemm/VX_gemm_sync_if.sv \
         $(RTL_DIR)/core/gemm/VX_lmem_dma_misal.sv \
         $(RTL_DIR)/core/gemm/VX_lmem_dma_ctrl_if.sv \
-        $(RTL_DIR)/core/gemm/VX_gemm_dma_ctrl.sv \
-        $(RTL_DIR)/core/gemm/VX_gemm_dma_ctrl_if.sv \
+        $(RTL_DIR)/core/gemm/VX_gemm_dma_ctrl_naive.sv \
+        $(RTL_DIR)/core/gemm/VX_gemm_dma_ctrl_naive_if.sv \
         $(RTL_DIR)/core/VX_job_frontend.sv \
         $(RTL_DIR)/core/VX_job_desc_mmio_regs.sv \
         $(RTL_DIR)/core/VX_job_dispatcher.sv \
         $(RTL_DIR)/core/VX_config_reg_if.sv \
         $(RTL_DIR)/core/VX_node_done_if.sv \
         $(RTL_DIR)/mem/VX_mem_arb.sv \
+        $(RTL_DIR)/mem/VX_mem_bus_split.sv \
         $(RTL_DIR)/libs/VX_stream_switch.sv \
 	      $(RTL_DIR)/libs/VX_mem_data_adapter2.sv \
         $(RTL_DIR)/mem/VX_lsu_mem_arb.sv \
@@ -129,7 +130,9 @@ INCDIRS_ := $(VORTEX_HOME)/build/hw \
             $(THIRD_PARTY_DIR)/softfloat/source/include
 
 # DEFINES_ := SIMULATION DEBUG_LEVEL=3 DBG_TRACE_GEMM XLEN_64
-DEFINES_ := SIMULATION XLEN_64
+DEFINES_ := SIMULATION XLEN_64 GEMM_NAIVE
+CONFIG_DEFINES := $(patsubst -D%,%,$(CONFIGS))
+DEFINES_ += $(CONFIG_DEFINES)
 FPU_NEW_EN ?= 1
 ifeq ($(FPU_NEW_EN),1)
 DEFINES_ += FPU_FPNEW
@@ -170,6 +173,8 @@ M ?=
 N ?=
 K ?=
 QBLK ?=
+WTRANS ?=
+QDIR ?=
 EXTRA_SIM_ARGS ?=
 
 ifneq ($(strip $(TEST)),)
@@ -193,6 +198,12 @@ SIM_ARGS += +K=$(K)
 endif
 ifneq ($(strip $(QBLK)),)
 SIM_ARGS += +QBLK=$(QBLK)
+endif
+ifneq ($(strip $(WTRANS)),)
+SIM_ARGS += +WTRANS=$(WTRANS)
+endif
+ifneq ($(strip $(QDIR)),)
+SIM_ARGS += +QDIR=$(QDIR)
 endif
 SIM_ARGS += $(EXTRA_SIM_ARGS)
 
