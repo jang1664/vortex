@@ -51,6 +51,9 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
   localparam int LMEM_TAG_VALUE_W   = LMEM_TAG_WIDTH - `UP(UUID_WIDTH);
   localparam int MIN_TAG_VALUE_W    = (DCACHE_TAG_VALUE_W < LMEM_TAG_VALUE_W)
                                     ? DCACHE_TAG_VALUE_W : LMEM_TAG_VALUE_W;
+  localparam int DCACHE_REQ_DATAW   = 1 + dcache_bus_if.ADDR_WIDTH + (DCACHE_BYTES * 8)
+                                   + DCACHE_BYTES + MEM_FLAGS_WIDTH
+                                   + `UP(UUID_WIDTH) + DCACHE_TAG_VALUE_W;
 
   function automatic bit is_power_of_two(input int value);
     return (value > 0) && ((value & (value - 1)) == 0);
@@ -279,6 +282,7 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
     S_G2L_SRC_RD_WAIT,
     S_G2L_PACK,
     S_G2L_DST_WR_REQ,
+    S_DCACHE_DRAIN,
     S_DONE
   } state_e;
 
@@ -304,6 +308,7 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
       S_G2L_SRC_RD_WAIT: return "S_G2L_SRC_RD_WAIT";
       S_G2L_PACK:        return "S_G2L_PACK";
       S_G2L_DST_WR_REQ:  return "S_G2L_DST_WR_REQ";
+      S_DCACHE_DRAIN:    return "S_DCACHE_DRAIN";
       S_DONE:            return "S_DONE";
       default:           return "S_UNKNOWN";
     endcase
@@ -442,6 +447,50 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
   logic [LMEM_BYTES-1:0]     dst_lmem_be_r;
   logic                      seg_done_r;
 
+  logic                      dcache_req_valid_w;
+  wire                       dcache_req_ready_w;
+  logic                      dcache_req_rw_w;
+  logic [dcache_bus_if.ADDR_WIDTH-1:0] dcache_req_addr_w;
+  logic [DCACHE_BYTES*8-1:0] dcache_req_data_w;
+  logic [DCACHE_BYTES-1:0]   dcache_req_byteen_w;
+  logic [MEM_FLAGS_WIDTH-1:0] dcache_req_flags_w;
+  logic [`UP(UUID_WIDTH)-1:0] dcache_req_tag_uuid_w;
+  logic [DCACHE_TAG_VALUE_W-1:0] dcache_req_tag_value_w;
+  wire                       dcache_req_issue_fire;
+  logic [1:0]                dcache_req_buf_pending_r;
+  wire [1:0]                 dcache_req_buf_pending_next;
+
+  VX_elastic_buffer #(
+    .DATAW   (DCACHE_REQ_DATAW),
+    .SIZE    (2),
+    .OUT_REG (1)
+  ) dcache_req_buf (
+    .clk       (clk),
+    .reset     (reset),
+    .valid_in  (dcache_req_valid_w),
+    .ready_in  (dcache_req_ready_w),
+    .data_in   ({
+      dcache_req_rw_w,
+      dcache_req_addr_w,
+      dcache_req_data_w,
+      dcache_req_byteen_w,
+      dcache_req_flags_w,
+      dcache_req_tag_uuid_w,
+      dcache_req_tag_value_w
+    }),
+    .data_out  ({
+      dcache_bus_if.req_data.rw,
+      dcache_bus_if.req_data.addr,
+      dcache_bus_if.req_data.data,
+      dcache_bus_if.req_data.byteen,
+      dcache_bus_if.req_data.flags,
+      dcache_bus_if.req_data.tag.uuid,
+      dcache_bus_if.req_data.tag.value
+    }),
+    .valid_out (dcache_bus_if.req_valid),
+    .ready_out (dcache_bus_if.req_ready)
+  );
+
   wire finished = (state == S_DONE);
   wire current_seg_last = (i_dim[0] + 32'd1 >= bound_r[0])
                        && (i_dim[1] + 32'd1 >= bound_r[1])
@@ -449,17 +498,21 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
 
   wire dcache_req_fire = dcache_bus_if.req_valid && dcache_bus_if.req_ready;
   wire lmem_req_fire   = lmem_bus_if.req_valid   && lmem_bus_if.req_ready;
+  assign dcache_req_issue_fire = dcache_req_valid_w && dcache_req_ready_w;
+  assign dcache_req_buf_pending_next = dcache_req_buf_pending_r
+                                     + 2'(dcache_req_issue_fire)
+                                     - 2'(dcache_req_fire);
   wire dcache_rsp_fire = dcache_bus_if.rsp_valid && dcache_bus_if.rsp_ready;
   wire lmem_rsp_fire   = lmem_bus_if.rsp_valid   && lmem_bus_if.rsp_ready;
 
 `ifdef PERF_ENABLE
-  wire src_req_fire = ((state == S_G2L_SRC_RD_REQ) && dcache_req_fire)
+  wire src_req_fire = ((!direction_bit_r) && dcache_req_fire && !dcache_bus_if.req_data.rw)
                    || ((state == S_L2G_SRC_RD_REQ) && lmem_req_fire);
   wire src_rsp_fire = ((state == S_G2L_SRC_RD_WAIT) && dcache_rsp_fire)
                    || ((state == S_L2G_SRC_RD_WAIT) && lmem_rsp_fire);
 `endif
-  wire dst_req_fire = ((state == S_G2L_DST_WR_REQ) && lmem_req_fire)
-                   || ((state == S_L2G_DST_WR_REQ) && dcache_req_fire);
+  wire dst_req_issue_fire = ((state == S_G2L_DST_WR_REQ) && lmem_req_fire)
+                         || ((state == S_L2G_DST_WR_REQ) && dcache_req_issue_fire);
 
   logic pack_can_move;
   logic pack_flush;
@@ -476,8 +529,14 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
     logic [31:0] src_room;
     logic [31:0] tmp_min;
 
-    dcache_bus_if.req_valid = 1'b0;
-    dcache_bus_if.req_data  = '0;
+    dcache_req_valid_w = 1'b0;
+    dcache_req_rw_w = 1'b0;
+    dcache_req_addr_w = '0;
+    dcache_req_data_w = '0;
+    dcache_req_byteen_w = '0;
+    dcache_req_flags_w = '0;
+    dcache_req_tag_uuid_w = '0;
+    dcache_req_tag_value_w = '0;
     dcache_bus_if.rsp_ready = (state == S_G2L_SRC_RD_WAIT);
 
     lmem_bus_if.req_valid = 1'b0;
@@ -578,27 +637,27 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
       end
 
       S_L2G_DST_WR_REQ: begin
-        dcache_bus_if.req_valid          = 1'b1;
-        dcache_bus_if.req_data.rw        = 1'b1;
-        dcache_bus_if.req_data.addr      = to_dcache_addr(dst_write_base_r);
-        dcache_bus_if.req_data.data      = dst_dcache_data_r;
-        dcache_bus_if.req_data.byteen    = dst_dcache_be_r;
-        dcache_bus_if.req_data.flags     = '0;
-        dcache_bus_if.req_data.tag.uuid  = dma_uuid;
-        dcache_bus_if.req_data.tag.value = '0;
-        if (dcache_bus_if.req_ready)
-          state_n = seg_done_r ? (current_seg_last ? S_DONE : S_PREP_SEG) : S_L2G_PACK;
+        dcache_req_valid_w     = 1'b1;
+        dcache_req_rw_w        = 1'b1;
+        dcache_req_addr_w      = to_dcache_addr(dst_write_base_r);
+        dcache_req_data_w      = dst_dcache_data_r;
+        dcache_req_byteen_w    = dst_dcache_be_r;
+        dcache_req_flags_w     = '0;
+        dcache_req_tag_uuid_w  = dma_uuid;
+        dcache_req_tag_value_w = '0;
+        if (dcache_req_issue_fire)
+          state_n = seg_done_r ? (current_seg_last ? S_DCACHE_DRAIN : S_PREP_SEG) : S_L2G_PACK;
       end
 
       S_G2L_SRC_RD_REQ: begin
-        dcache_bus_if.req_valid          = (src_rd_ptr_r < src_rd_end_r);
-        dcache_bus_if.req_data.rw        = 1'b0;
-        dcache_bus_if.req_data.addr      = to_dcache_addr(src_rd_ptr_r);
-        dcache_bus_if.req_data.byteen    = '0;
-        dcache_bus_if.req_data.flags     = '0;
-        dcache_bus_if.req_data.tag.uuid  = dma_uuid;
-        dcache_bus_if.req_data.tag.value = '0;
-        if ((src_rd_ptr_r < src_rd_end_r) && dcache_bus_if.req_ready)
+        dcache_req_valid_w     = (src_rd_ptr_r < src_rd_end_r);
+        dcache_req_rw_w        = 1'b0;
+        dcache_req_addr_w      = to_dcache_addr(src_rd_ptr_r);
+        dcache_req_byteen_w    = '0;
+        dcache_req_flags_w     = '0;
+        dcache_req_tag_uuid_w  = dma_uuid;
+        dcache_req_tag_value_w = '0;
+        if (dcache_req_issue_fire)
           state_n = S_G2L_SRC_RD_WAIT;
       end
 
@@ -625,6 +684,11 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
         lmem_bus_if.req_data.tag.value = '0;
         if (lmem_bus_if.req_ready)
           state_n = seg_done_r ? (current_seg_last ? S_DONE : S_PREP_SEG) : S_G2L_PACK;
+      end
+
+      S_DCACHE_DRAIN: begin
+        if (dcache_req_buf_pending_next == 0)
+          state_n = S_DONE;
       end
 
       S_DONE: begin
@@ -654,10 +718,12 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
       dst_lmem_data_r <= '0;
       dst_lmem_be_r <= '0;
       seg_done_r <= 1'b0;
+      dcache_req_buf_pending_r <= '0;
       for (int d = 0; d < NDIM; ++d)
         i_dim[d] <= '0;
     end else begin
       state <= state_n;
+      dcache_req_buf_pending_r <= dcache_req_buf_pending_next;
 
       if (cmd_start) begin
         src_seg_base_r <= {cfg_reg_if.regs[4][31:0], cfg_reg_if.regs[3][31:0]};
@@ -703,7 +769,7 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
       if ((state == S_L2G_SRC_RD_REQ) && lmem_req_fire)
         src_rd_ptr_r <= src_rd_ptr_r + 64'(LMEM_BYTES);
 
-      if ((state == S_G2L_SRC_RD_REQ) && dcache_req_fire)
+      if ((state == S_G2L_SRC_RD_REQ) && dcache_req_issue_fire)
         src_rd_ptr_r <= src_rd_ptr_r + 64'(DCACHE_BYTES);
 
       if ((state == S_L2G_SRC_RD_WAIT) && lmem_rsp_fire) begin
@@ -752,7 +818,7 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
           seg_done_r <= (out_off_next >= seg_size_r);
       end
 
-      if (dst_req_fire) begin
+      if (dst_req_issue_fire) begin
         dst_dcache_data_r <= '0;
         dst_dcache_be_r <= '0;
         dst_lmem_data_r <= '0;
@@ -821,13 +887,13 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
                   (64'(lmem_bus_if.req_data.addr) << LMEM_LG2), out_off))
       end
 
-      if ((state == S_G2L_SRC_RD_REQ) && dcache_req_fire) begin
+      if (!direction_bit_r && dcache_req_fire && !dcache_bus_if.req_data.rw) begin
         `TRACE(2, ("%m : [%0t] | DMA_RUN_G2L_RD_REQ_DCACHE | {inst=%s, addr=0x%0h, byte_addr=0x%0h, out_off=%0d}\n",
                   $time, INSTANCE_ID, dcache_bus_if.req_data.addr,
                   (64'(dcache_bus_if.req_data.addr) << DCACHE_LG2), out_off))
       end
 
-      if ((state == S_L2G_DST_WR_REQ) && dcache_req_fire) begin
+      if (direction_bit_r && dcache_req_fire && dcache_bus_if.req_data.rw) begin
         `TRACE(2, ("%m : [%0t] | DMA_RUN_L2G_WR_REQ_DCACHE | {inst=%s, addr=0x%0h, byte_addr=0x%0h, byteen=0x%0h, out_off=%0d}\n",
                   $time, INSTANCE_ID, dcache_bus_if.req_data.addr,
                   (64'(dcache_bus_if.req_data.addr) << DCACHE_LG2),
@@ -861,24 +927,26 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
   reg [PERF_CTR_BITS-1:0] perf_dst_wr_fire_r,      perf_dst_wr_stall_r;
 
   wire g2l_rd_beat = (state == S_G2L_SRC_RD_WAIT) && dcache_rsp_fire;
-  wire l2g_wr_beat = (state == S_L2G_DST_WR_REQ) && dcache_req_fire;
+  wire l2g_wr_beat = direction_bit_r && dcache_req_fire && dcache_bus_if.req_data.rw;
   wire dma_is_active = (state != S_IDLE) && (state != S_DONE);
   wire dma_xfer_done = (state != S_DONE) && (state_n == S_DONE);
-  wire dma_stall_dcache = ((state == S_G2L_SRC_RD_REQ) && dcache_bus_if.req_valid && !dcache_bus_if.req_ready)
-                        | ((state == S_G2L_SRC_RD_WAIT) && dcache_bus_if.rsp_valid && !dcache_bus_if.rsp_ready)
-                        | ((state == S_L2G_DST_WR_REQ) && dcache_bus_if.req_valid && !dcache_bus_if.req_ready);
+  wire dma_stall_dcache = (dcache_bus_if.req_valid && !dcache_bus_if.req_ready)
+                        | ((state == S_G2L_SRC_RD_WAIT) && dcache_bus_if.rsp_valid && !dcache_bus_if.rsp_ready);
   wire dma_stall_lmem = ((state == S_L2G_SRC_RD_REQ) && lmem_bus_if.req_valid && !lmem_bus_if.req_ready)
                       | ((state == S_L2G_SRC_RD_WAIT) && lmem_bus_if.rsp_valid && !lmem_bus_if.rsp_ready)
                       | ((state == S_G2L_DST_WR_REQ) && lmem_bus_if.req_valid && !lmem_bus_if.req_ready);
   wire perf_src_rd_req_fire  = src_req_fire;
-  wire perf_src_rd_req_stall = ((state == S_G2L_SRC_RD_REQ) && dcache_bus_if.req_valid && !dcache_bus_if.req_ready)
+  wire perf_src_rd_req_stall = ((!direction_bit_r) && dcache_bus_if.req_valid && !dcache_bus_if.req_ready
+                                && !dcache_bus_if.req_data.rw)
                              | ((state == S_L2G_SRC_RD_REQ) && lmem_bus_if.req_valid && !lmem_bus_if.req_ready);
   wire perf_src_rd_data_fire  = src_rsp_fire;
   wire perf_src_rd_data_stall = ((state == S_G2L_SRC_RD_WAIT) && dcache_bus_if.rsp_valid && !dcache_bus_if.rsp_ready)
                               | ((state == S_L2G_SRC_RD_WAIT) && lmem_bus_if.rsp_valid && !lmem_bus_if.rsp_ready);
-  wire perf_dst_wr_fire  = dst_req_fire;
+  wire perf_dst_wr_fire  = ((state == S_G2L_DST_WR_REQ) && lmem_req_fire)
+                         | (direction_bit_r && dcache_req_fire && dcache_bus_if.req_data.rw);
   wire perf_dst_wr_stall = ((state == S_G2L_DST_WR_REQ) && lmem_bus_if.req_valid && !lmem_bus_if.req_ready)
-                         | ((state == S_L2G_DST_WR_REQ) && dcache_bus_if.req_valid && !dcache_bus_if.req_ready);
+                         | (direction_bit_r && dcache_bus_if.req_valid && !dcache_bus_if.req_ready
+                            && dcache_bus_if.req_data.rw);
 
   always_ff @(posedge clk) begin
     if (reset) begin

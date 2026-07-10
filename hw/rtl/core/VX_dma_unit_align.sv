@@ -550,6 +550,9 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
   logic [SLOT_OCC_W-1:0]      slot_occupancy_r;
 
   localparam int WR_SLOT_DATAW = MAX_BYTES*8 + WIN_VALID_W;
+  localparam int DCACHE_REQ_DATAW = 1 + dcache_bus_if.ADDR_WIDTH + (DCACHE_BYTES*8)
+                                  + DCACHE_BYTES + MEM_FLAGS_WIDTH
+                                  + `UP(UUID_WIDTH) + DCACHE_TAG_VALUE_W;
   localparam int LMEM_REQ_DATAW = 1 + lmem_bus_if.ADDR_WIDTH + (LMEM_BYTES*8)
                                 + LMEM_BYTES + MEM_FLAGS_WIDTH
                                 + `UP(UUID_WIDTH) + LMEM_TAG_VALUE_W;
@@ -564,6 +567,19 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
   wire                       wr_slot_drain_fire;
   logic [1:0]                wr_slot_buf_pending_r;
   wire [1:0]                 wr_slot_buf_pending_next;
+
+  logic                      dcache_req_valid_w;
+  wire                       dcache_req_ready_w;
+  logic                      dcache_req_rw_w;
+  logic [dcache_bus_if.ADDR_WIDTH-1:0] dcache_req_addr_w;
+  logic [DCACHE_BYTES*8-1:0] dcache_req_data_w;
+  logic [DCACHE_BYTES-1:0]   dcache_req_byteen_w;
+  logic [MEM_FLAGS_WIDTH-1:0] dcache_req_flags_w;
+  logic [`UP(UUID_WIDTH)-1:0] dcache_req_tag_uuid_w;
+  logic [DCACHE_TAG_VALUE_W-1:0] dcache_req_tag_value_w;
+  wire                       dcache_req_issue_fire;
+  logic [1:0]                dcache_req_buf_pending_r;
+  wire [1:0]                 dcache_req_buf_pending_next;
 
   logic                      lmem_req_valid_w;
   wire                       lmem_req_ready_w;
@@ -591,6 +607,37 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
     .data_out  ({wr_slot_data_r, wr_slot_valid_bytes_r}),
     .valid_out (wr_slot_valid_r),
     .ready_out (wr_slot_pop_ready)
+  );
+
+  VX_elastic_buffer #(
+    .DATAW   (DCACHE_REQ_DATAW),
+    .SIZE    (2),
+    .OUT_REG (1)
+  ) dcache_req_buf (
+    .clk       (clk),
+    .reset     (reset),
+    .valid_in  (dcache_req_valid_w),
+    .ready_in  (dcache_req_ready_w),
+    .data_in   ({
+      dcache_req_rw_w,
+      dcache_req_addr_w,
+      dcache_req_data_w,
+      dcache_req_byteen_w,
+      dcache_req_flags_w,
+      dcache_req_tag_uuid_w,
+      dcache_req_tag_value_w
+    }),
+    .data_out  ({
+      dcache_bus_if.req_data.rw,
+      dcache_bus_if.req_data.addr,
+      dcache_bus_if.req_data.data,
+      dcache_bus_if.req_data.byteen,
+      dcache_bus_if.req_data.flags,
+      dcache_bus_if.req_data.tag.uuid,
+      dcache_bus_if.req_data.tag.value
+    }),
+    .valid_out (dcache_bus_if.req_valid),
+    .ready_out (dcache_bus_if.req_ready)
   );
 
   VX_elastic_buffer #(
@@ -640,6 +687,7 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
   // ------------------------------------------------------------
   wire dcache_req_fire = dcache_bus_if.req_valid && dcache_bus_if.req_ready;
   wire lmem_req_fire   = lmem_bus_if.req_valid   && lmem_bus_if.req_ready;
+  assign dcache_req_issue_fire = dcache_req_valid_w && dcache_req_ready_w;
   assign lmem_req_issue_fire = lmem_req_valid_w && lmem_req_ready_w;
 
   wire dcache_rsp_fire = dcache_bus_if.rsp_valid && dcache_bus_if.rsp_ready;
@@ -647,10 +695,10 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
 
   wire src_req_fire = direction_bit_r
                     ? ((state == S_L2G_DECIDE) && lmem_req_issue_fire && (lmem_req_rw_w == 1'b0))
-                    : ((state == S_G2L_DECIDE) && dcache_req_fire && (dcache_bus_if.req_data.rw == 1'b0));
+                    : ((state == S_G2L_DECIDE) && dcache_req_issue_fire && (dcache_req_rw_w == 1'b0));
 
   wire dst_req_fire = direction_bit_r
-                    ? ((state == S_L2G_DECIDE) && dcache_req_fire && (dcache_bus_if.req_data.rw == 1'b1))
+                    ? ((state == S_L2G_DECIDE) && dcache_req_issue_fire && (dcache_req_rw_w == 1'b1))
                     : ((state == S_G2L_DECIDE) && lmem_req_issue_fire && (lmem_req_rw_w == 1'b1));
 
   wire src_rsp_fire = direction_bit_r ? lmem_rsp_fire : dcache_rsp_fire;
@@ -734,6 +782,9 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
   assign wr_slot_buf_pending_next = wr_slot_buf_pending_r
                                   + 2'(wr_slot_read_fire)
                                   - 2'(wr_slot_drain_fire);
+  assign dcache_req_buf_pending_next = dcache_req_buf_pending_r
+                                     + 2'(dcache_req_issue_fire)
+                                     - 2'(dcache_req_fire);
   assign lmem_req_buf_pending_next = lmem_req_buf_pending_r
                                    + 2'(lmem_req_issue_fire)
                                    - 2'(lmem_req_fire);
@@ -979,8 +1030,14 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
   // Combinational bus driving + next state
   // ------------------------------------------------------------
   always_comb begin
-    dcache_bus_if.req_valid = 1'b0;
-    dcache_bus_if.req_data  = '0;
+    dcache_req_valid_w = 1'b0;
+    dcache_req_rw_w = 1'b0;
+    dcache_req_addr_w = '0;
+    dcache_req_data_w = '0;
+    dcache_req_byteen_w = '0;
+    dcache_req_flags_w = '0;
+    dcache_req_tag_uuid_w = '0;
+    dcache_req_tag_value_w = '0;
     dcache_bus_if.rsp_ready = 1'b1;
 
     lmem_req_valid_w = 1'b0;
@@ -1090,14 +1147,14 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
 
           wr_byteen = mask_dcache_range(lane, int'(wr_nbytes));
 
-          dcache_bus_if.req_valid          = 1'b1;
-          dcache_bus_if.req_data.rw        = 1'b1;
-          dcache_bus_if.req_data.addr      = to_dcache_addr(dst_byte - 64'(lane));
-          dcache_bus_if.req_data.data      = wr_data;
-          dcache_bus_if.req_data.byteen    = wr_byteen;
-          dcache_bus_if.req_data.flags     = '0;
-          dcache_bus_if.req_data.tag.uuid  = dma_uuid;
-          dcache_bus_if.req_data.tag.value = '0;
+          dcache_req_valid_w     = 1'b1;
+          dcache_req_rw_w        = 1'b1;
+          dcache_req_addr_w      = to_dcache_addr(dst_byte - 64'(lane));
+          dcache_req_data_w      = wr_data;
+          dcache_req_byteen_w    = wr_byteen;
+          dcache_req_flags_w     = '0;
+          dcache_req_tag_uuid_w  = dma_uuid;
+          dcache_req_tag_value_w = '0;
         end
 
         occ_next = slot_occupancy_r;
@@ -1113,6 +1170,7 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
         if ((rd_state == RD_DONE) && (wr_state == WR_DONE)
             && (occ_next == 0)
             && (wr_slot_buf_pending_next == 0)
+            && (dcache_req_buf_pending_next == 0)
             && (lmem_req_buf_pending_next == 0))
           state_n = S_DONE;
       end
@@ -1145,13 +1203,13 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
           rd_tag_value = '0;
           rd_tag_value[RD_SLOT_BITS-1:0] = rd_issue_slot_r;
 
-          dcache_bus_if.req_valid          = 1'b1;
-          dcache_bus_if.req_data.rw        = 1'b0;
-          dcache_bus_if.req_data.addr      = to_dcache_addr(dcache_rd_ptr);
-          dcache_bus_if.req_data.byteen    = '0;
-          dcache_bus_if.req_data.flags     = '0;
-          dcache_bus_if.req_data.tag.uuid  = dma_uuid;
-          dcache_bus_if.req_data.tag.value = rd_tag_value;
+          dcache_req_valid_w     = 1'b1;
+          dcache_req_rw_w        = 1'b0;
+          dcache_req_addr_w      = to_dcache_addr(dcache_rd_ptr);
+          dcache_req_byteen_w    = '0;
+          dcache_req_flags_w     = '0;
+          dcache_req_tag_uuid_w  = dma_uuid;
+          dcache_req_tag_value_w = rd_tag_value;
         end
 
         dst_byte   = wr_base_dst_seg + 64'(out_off);
@@ -1211,6 +1269,7 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
         if ((rd_state == RD_DONE) && (wr_state == WR_DONE)
             && (occ_next == 0)
             && (wr_slot_buf_pending_next == 0)
+            && (dcache_req_buf_pending_next == 0)
             && (lmem_req_buf_pending_next == 0))
           state_n = S_DONE;
       end
@@ -1274,6 +1333,7 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
       wr_expect_slot_r <= '0;
       slot_occupancy_r <= '0;
       wr_slot_buf_pending_r <= '0;
+      dcache_req_buf_pending_r <= '0;
       lmem_req_buf_pending_r <= '0;
       foreach (slot_state_r[i]) begin
         slot_state_r[i] <= SLOT_FREE;
@@ -1284,6 +1344,7 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
     end else begin
       state <= state_n;
       wr_slot_buf_pending_r <= wr_slot_buf_pending_next;
+      dcache_req_buf_pending_r <= dcache_req_buf_pending_next;
       lmem_req_buf_pending_r <= lmem_req_buf_pending_next;
 
       // -------------------------

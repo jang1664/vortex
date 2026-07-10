@@ -22,9 +22,9 @@ module tb_VX_dma_mem_unit import VX_gpu_pkg::*; ();
   // -----------------------------
   // Params
   // -----------------------------
-  localparam int CFG_NUM    = 7;
-  localparam int CFG_DW     = 64;
-  localparam int DESC_WORDS = 14;
+  localparam int CFG_NUM    = `DMA_CFG_REG_NUM;
+  localparam int CFG_DW     = 32;
+  localparam int DESC_WORDS = `DMA_CFG_REG_NUM;
 
   localparam int MEM_BYTES  = 64*1024;
   localparam int TAG_WIDTH  = 45;  // 일단 `UP(UUID_WIDTH) 보다 크기만 하면 됨
@@ -70,6 +70,7 @@ module tb_VX_dma_mem_unit import VX_gpu_pkg::*; ();
   // Interfaces
   // -----------------------------
   VX_config_reg_if #(.NUM(CFG_NUM), .DW(CFG_DW)) cfg_reg_if();
+  VX_node_done_if done_if();
 
   VX_mem_bus_if #(
     .DATA_SIZE(DCACHE_BYTES),
@@ -87,16 +88,20 @@ module tb_VX_dma_mem_unit import VX_gpu_pkg::*; ();
   // Aligned-path coverage: the bases (0x1000 / 0x3000) and strides in this
   // testbench are all LMEM_BYTES-aligned, so keep ENABLE_MISALIGN=0 (default)
   // to exercise the simplified datapath.
-  VX_dma_node #(
-    .INSTANCE_ID     ("dma0"),
-    .ENABLE_MISALIGN (1'b0)
+  VX_dma_unit_align #(
+    .INSTANCE_ID      ("dma0"),
+    .DCACHE_TAG_WIDTH (TAG_WIDTH),
+    .LMEM_TAG_WIDTH   (TAG_WIDTH)
   ) dut (
     .clk          (clk),
     .reset        (reset),
     .cfg_reg_if   (cfg_reg_if),
     .dcache_bus_if(dcache_bus_if),
-    .lmem_bus_if  (lmem_bus_ifs[0])     // DMA uses LMEM port 0
+    .lmem_bus_if  (lmem_bus_ifs[0]),
+    .done_if      (done_if)
   );
+
+  assign done_if.ready = 1'b1;
 
   // -----------------------------
   // Real LMEM (banked) instance
@@ -169,8 +174,48 @@ module tb_VX_dma_mem_unit import VX_gpu_pkg::*; ();
   // -----------------------------
   byte dcache_mem [0:MEM_BYTES-1];
 
-  // always ready for DCACHE model
-  assign dcache_bus_if.req_ready = 1'b1;
+  logic [2:0] dcache_ready_phase;
+  logic dcache_req_stalled;
+  logic [$bits(dcache_bus_if.req_data)-1:0] dcache_req_hold;
+  int unsigned dcache_rd_stall_cycles;
+  int unsigned dcache_wr_stall_cycles;
+
+  // Two ready cycles followed by three blocked cycles. This fills the
+  // request buffer and exercises its registered backpressure boundary.
+  assign dcache_bus_if.req_ready = (dcache_ready_phase < 3'd2);
+
+  always @(posedge clk) begin
+    if (reset) begin
+      dcache_ready_phase <= '0;
+      dcache_req_stalled <= 1'b0;
+      dcache_req_hold <= '0;
+      dcache_rd_stall_cycles <= 0;
+      dcache_wr_stall_cycles <= 0;
+    end else begin
+      dcache_ready_phase <= (dcache_ready_phase == 3'd4)
+                          ? 3'd0 : dcache_ready_phase + 3'd1;
+
+      if (dcache_bus_if.req_valid && !dcache_bus_if.req_ready) begin
+        if (dcache_req_stalled && (dcache_bus_if.req_data !== dcache_req_hold))
+          $fatal(1, "DCACHE request payload changed while stalled");
+        dcache_req_stalled <= 1'b1;
+        dcache_req_hold <= dcache_bus_if.req_data;
+        if (dcache_bus_if.req_data.rw)
+          dcache_wr_stall_cycles <= dcache_wr_stall_cycles + 1;
+        else
+          dcache_rd_stall_cycles <= dcache_rd_stall_cycles + 1;
+      end else begin
+        dcache_req_stalled <= 1'b0;
+      end
+
+      if (done_if.valid) begin
+        if (dut.dcache_req_buf_pending_r != 0)
+          $fatal(1, "DMA completed with %0d buffered DCACHE requests", dut.dcache_req_buf_pending_r);
+        if (dcache_bus_if.req_valid)
+          $fatal(1, "DMA completed while a DCACHE request was still valid");
+      end
+    end
+  end
 
   // -----------------------------
   // DCACHE slave: 1-cycle latency, rsp_valid asserted for 1 cycle
@@ -295,19 +340,14 @@ module tb_VX_dma_mem_unit import VX_gpu_pkg::*; ();
   // -----------------------------
   task automatic cfg_send_desc(
     input logic [31:0] w [0:DESC_WORDS-1],
-    input logic [31:0] wid,
-    input logic [31:0] tid
+    input logic [31:0] entry_id
   );
-    cfg_reg_if.wid = wid;
-    cfg_reg_if.tid = tid;
+    cfg_reg_if.entry_id = entry_id;
 
     for (int r = 0; r < CFG_NUM; r++) cfg_reg_if.regs[r] = '0;
 
-    for (int i = 0; i < DESC_WORDS; i++) begin
-      int r = i / 2;
-      if ((i % 2) == 0) cfg_reg_if.regs[r][31:0]  = w[i];
-      else              cfg_reg_if.regs[r][63:32] = w[i];
-    end
+    for (int i = 0; i < DESC_WORDS; i++)
+      cfg_reg_if.regs[i] = w[i];
 
     cfg_reg_if.valid = 1'b1;
     // wait accept (ready only high in S_IDLE)
@@ -366,33 +406,37 @@ module tb_VX_dma_mem_unit import VX_gpu_pkg::*; ();
     // -------------------------
     // GLOBAL -> LMEM
     // -------------------------
-    d1[0]  = 32'h0000_0003; // start=1, dir=1 (GLOBAL->LMEM)
-    d1[1]  = g_src_base;
-    d1[2]  = l_mid_base;
-    d1[3]  = stride0; d1[4]  = stride0;
-    d1[5]  = stride1; d1[6]  = stride1;
-    d1[7]  = stride2; d1[8]  = stride2;
-    d1[9]  = b0;      d1[10] = b1; d1[11] = b2;
-    d1[12] = seg_bytes;
-    d1[13] = padding;
+    d1 = '{default:'0};
+    d1[0]  = 32'h0000_0001;
+    d1[1]  = l_mid_base; d1[2] = 32'd0;
+    d1[3]  = g_src_base; d1[4] = 32'd0;
+    d1[5]  = stride0; d1[6]  = stride0;
+    d1[7]  = stride1; d1[8]  = stride1;
+    d1[9]  = stride2; d1[10] = stride2;
+    d1[11] = b0;      d1[12] = b1; d1[13] = b2;
+    d1[14] = seg_bytes;
+    d1[15] = padding;
+    d1[16] = 32'd0; // GLOBAL -> LMEM
 
-    cfg_send_desc(d1, 32'd5, 32'd7);
+    cfg_send_desc(d1, 32'd7);
     wait_dma_done();
 
     // -------------------------
     // LMEM -> GLOBAL
     // -------------------------
-    d2[0]  = 32'h0000_0001; // start=1, dir=0 (LMEM->GLOBAL)
-    d2[1]  = l_mid_base;
-    d2[2]  = g_dst_base;
-    d2[3]  = stride0; d2[4]  = stride0;
-    d2[5]  = stride1; d2[6]  = stride1;
-    d2[7]  = stride2; d2[8]  = stride2;
-    d2[9]  = b0;      d2[10] = b1; d2[11] = b2;
-    d2[12] = seg_bytes;
-    d2[13] = padding;
+    d2 = '{default:'0};
+    d2[0]  = 32'h0000_0001;
+    d2[1]  = g_dst_base; d2[2] = 32'd0;
+    d2[3]  = l_mid_base; d2[4] = 32'd0;
+    d2[5]  = stride0; d2[6]  = stride0;
+    d2[7]  = stride1; d2[8]  = stride1;
+    d2[9]  = stride2; d2[10] = stride2;
+    d2[11] = b0;      d2[12] = b1; d2[13] = b2;
+    d2[14] = seg_bytes;
+    d2[15] = padding;
+    d2[16] = 32'd1; // LMEM -> GLOBAL
 
-    cfg_send_desc(d2, 32'd9, 32'd11);
+    cfg_send_desc(d2, 32'd11);
     wait_dma_done();
 
     // -------------------------
@@ -421,8 +465,7 @@ module tb_VX_dma_mem_unit import VX_gpu_pkg::*; ();
 
     // cfg defaults
     cfg_reg_if.valid = 1'b0;
-    cfg_reg_if.wid   = '0;
-    cfg_reg_if.tid   = '0;
+    cfg_reg_if.entry_id = '0;
     for (int r = 0; r < CFG_NUM; r++) cfg_reg_if.regs[r] = '0;
 
     repeat (5) @(posedge clk);
@@ -438,6 +481,10 @@ module tb_VX_dma_mem_unit import VX_gpu_pkg::*; ();
     run_case(SEG_SIZE_3, b0, b1, b2, BIG_PADDING_1);
     run_case(SEG_SIZE_3, b0, b1, b2, BIG_PADDING_2);
     run_case(SEG_SIZE_3, b0, b1, b2, BIG_PADDING_3);
+
+    if (dcache_rd_stall_cycles == 0 || dcache_wr_stall_cycles == 0)
+      $fatal(1, "backpressure coverage missing: read=%0d write=%0d",
+             dcache_rd_stall_cycles, dcache_wr_stall_cycles);
 
     $display("=====================================================================");
     $display("=====================  ALL TESTS COMPLETED  =========================");

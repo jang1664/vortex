@@ -496,8 +496,11 @@ module VX_hw_debug import VX_gpu_pkg::*; #(
 	    reg [AXI_PORT_COUNTW-1:0] wr_rsp_count;
 	    reg [AXI_PORT_COUNTW-1:0] wr_req_delta;
 	    reg [AXI_PORT_COUNTW-1:0] wr_rsp_delta;
-	    reg                       axi_flags_any;
+    reg                       axi_flags_any;
     reg [63:0]                axi_flags_set [NUM_AXI_PORTS];
+    reg [63:0]                axi_flags_event_q1 [NUM_AXI_PORTS];
+    reg                       axi_protocol_event_q1_any;
+    reg                       axi_resp_error_event_q1_any;
 `else
     wire [AXI_PORT_COUNTW-1:0] wr_req_count = '0;
     wire [AXI_PORT_COUNTW-1:0] wr_rsp_count = '0;
@@ -507,6 +510,12 @@ module VX_hw_debug import VX_gpu_pkg::*; #(
 `endif
 	    reg [63:0]                global_flags_set;
 	    reg [63:0]                ctrl_flags_set;
+        reg [63:0]                ctrl_flags_event_q1;
+        reg [63:0]                global_flags_event_q1;
+        reg [63:0]                global_flags_event_q2;
+        reg [63:0]                global_flags_event_q2_next;
+        reg [63:0]                global_event_cycle_q1;
+        reg [63:0]                global_event_cycle_q2;
 
     function automatic [63:0] pack_pc_meta(
         input logic valid,
@@ -843,13 +852,30 @@ module VX_hw_debug import VX_gpu_pkg::*; #(
 	    end
 
 	    integer any_i;
-    always @(*) begin
+	    always @(*) begin
         axi_flags_any = 1'b0;
         for (any_i = 0; any_i < NUM_AXI_PORTS; any_i = any_i + 1) begin
             axi_flags_any = axi_flags_any || (|axi_flags[any_i]);
 	        end
 	    end
 `endif
+
+    integer event_i;
+    always @(*) begin
+        global_flags_event_q2_next = global_flags_event_q1;
+`ifdef ENABLE_HW_DEBUG_AXI
+        axi_protocol_event_q1_any = 1'b0;
+        axi_resp_error_event_q1_any = 1'b0;
+        for (event_i = 0; event_i < NUM_AXI_PORTS; event_i = event_i + 1) begin
+            axi_protocol_event_q1_any = axi_protocol_event_q1_any
+                                      || (|axi_flags_event_q1[event_i][AXI_FLAG_R_UNDERFLOW:AXI_FLAG_AW_STABLE]);
+            axi_resp_error_event_q1_any = axi_resp_error_event_q1_any
+                                        || (|axi_flags_event_q1[event_i][AXI_FLAG_RRESP_ERROR:AXI_FLAG_BRESP_ERROR]);
+        end
+        global_flags_event_q2_next[GLB_FLAG_AXI_PROTOCOL] = axi_protocol_event_q1_any;
+        global_flags_event_q2_next[GLB_FLAG_AXI_RESP_ERROR] = axi_resp_error_event_q1_any;
+`endif
+    end
 
 	    wire anomaly_seen = (|global_anomaly_flags[63:1]) || (|ctrl_flags)
 `ifdef ENABLE_HW_DEBUG_AXI
@@ -985,18 +1011,40 @@ module VX_hw_debug import VX_gpu_pkg::*; #(
             end
             if (m_axi_bvalid[flag_i] && m_axi_bready[flag_i] && m_axi_bresp[flag_i] != 2'b00) begin
                 axi_flags_set[flag_i][AXI_FLAG_BRESP_ERROR] = 1'b1;
-                global_flags_set[GLB_FLAG_AXI_RESP_ERROR] = 1'b1;
             end
             if (m_axi_rvalid[flag_i] && m_axi_rready[flag_i] && m_axi_rresp[flag_i] != 2'b00) begin
                 axi_flags_set[flag_i][AXI_FLAG_RRESP_ERROR] = 1'b1;
-                global_flags_set[GLB_FLAG_AXI_RESP_ERROR] = 1'b1;
-            end
-	            if (|axi_flags_set[flag_i][AXI_FLAG_R_UNDERFLOW:AXI_FLAG_AW_STABLE]) begin
-	                global_flags_set[GLB_FLAG_AXI_PROTOCOL] = 1'b1;
-		        end
+	        end
 		    end
 `endif
 	    end
+
+    integer event_q_i;
+    always @(posedge clk) begin
+        if (reset || debug_clear || debug_freeze) begin
+            ctrl_flags_event_q1 <= '0;
+            global_flags_event_q1 <= '0;
+            global_flags_event_q2 <= '0;
+            global_event_cycle_q1 <= '0;
+            global_event_cycle_q2 <= '0;
+`ifdef ENABLE_HW_DEBUG_AXI
+            for (event_q_i = 0; event_q_i < NUM_AXI_PORTS; event_q_i = event_q_i + 1) begin
+                axi_flags_event_q1[event_q_i] <= '0;
+            end
+`endif
+        end else begin
+            ctrl_flags_event_q1 <= ctrl_flags_set;
+            global_flags_event_q1 <= global_flags_set;
+            global_flags_event_q2 <= global_flags_event_q2_next;
+            global_event_cycle_q1 <= cycle_count;
+            global_event_cycle_q2 <= global_event_cycle_q1;
+`ifdef ENABLE_HW_DEBUG_AXI
+            for (event_q_i = 0; event_q_i < NUM_AXI_PORTS; event_q_i = event_q_i + 1) begin
+                axi_flags_event_q1[event_q_i] <= axi_flags_set[event_q_i];
+            end
+`endif
+        end
+    end
 
 		    integer i;
 		    integer j;
@@ -1144,14 +1192,14 @@ module VX_hw_debug import VX_gpu_pkg::*; #(
 	        end else if (!debug_freeze) begin
             cycle_count <= cycle_count + 1;
 
-            if (|global_flags_set) begin
-                global_anomaly_flags <= global_anomaly_flags | global_flags_set;
-                if (!anomaly_seen) begin
-                    anomaly_first_cycle <= cycle_count;
+            if (|global_flags_event_q2) begin
+                global_anomaly_flags <= global_anomaly_flags | global_flags_event_q2;
+                if (!(|global_anomaly_flags)) begin
+                    anomaly_first_cycle <= global_event_cycle_q2;
                 end
-                anomaly_last_cycle <= cycle_count;
+                anomaly_last_cycle <= global_event_cycle_q2;
 		            end
-		            ctrl_flags <= ctrl_flags | ctrl_flags_set;
+		            ctrl_flags <= ctrl_flags | ctrl_flags_event_q1;
 
 `ifdef ENABLE_HW_DEBUG_CORE
 		            if (core_any_fire) begin
@@ -1400,7 +1448,7 @@ module VX_hw_debug import VX_gpu_pkg::*; #(
 
 `ifdef ENABLE_HW_DEBUG_AXI
 	            for (i = 0; i < NUM_AXI_PORTS; i = i + 1) begin
-                axi_flags[i] <= axi_flags[i] | axi_flags_set[i];
+                axi_flags[i] <= axi_flags[i] | axi_flags_event_q1[i];
 
                 if (m_axi_awvalid[i] && !m_axi_awready[i]) begin
                     if (!axi_aw_stalled[i]) begin
