@@ -1006,6 +1006,7 @@
 `define IMPLEMENTATION_ID   0
 
 // GEMM Unit Parameters ///////////////////////////////////////////////////////
+`define GEMM_NAIVE 1
 
 // ------------------------------------------------------
 // common FP bitwidths
