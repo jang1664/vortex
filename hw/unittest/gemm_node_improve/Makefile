@@ -151,11 +151,26 @@ INCDIRS_ := $(VORTEX_HOME)/build/hw \
             $(THIRD_PARTY_DIR)/axi/.bender/git/checkouts/common_cells-3e2fcccecd7aee7b/include
 
 DEFINES_ := SIMULATION DEBUG_LEVEL=3 XLEN_64 PLATFORM_MEMORY_ID_WIDTH=8 PLATFORM_MEMORY_NUM_BANKS=32 PLATFORM_MEMORY_INTERLEAVE=1 PLATFORM_MEMORY_REMAP FPINT_EMUL_MAX_K=4096
+CONFIG_DEFINES := $(patsubst -D%,%,$(CONFIGS))
+DEFINES_ += $(CONFIG_DEFINES)
 GEMM_TRACE ?= 0
 ifeq ($(GEMM_TRACE),1)
 DEFINES_ += DBG_TRACE_GEMM
 endif
+FPU_XILINX_EN ?= 0
 FPU_NEW_EN ?= 1
+ifeq ($(FPU_XILINX_EN),1)
+FPU_NEW_EN := 0
+USE_XILINX_FPU_IP := 1
+DEFINES_ += VIVADO FPU_DSP XILINX_FPU_SIM
+COMPILE_TARGET := compile_xilinx
+SIMV := simv_xilinx
+XILINX_FPU_DESTDIR := $(CURDIR)
+include $(VORTEX_HOME)/sim/xrtsim_vcs/xilinx_fpu_vcs.mk
+else
+COMPILE_TARGET := compile_fpnew
+SIMV := simv_fpnew
+endif
 ifeq ($(FPU_NEW_EN),1)
 DEFINES_ += FPU_FPNEW
 endif

@@ -200,28 +200,12 @@ endif
 # RTL simulation of the VIVADO FPU_DSP path needs the generated Xilinx
 # floating_point IP VHDL wrappers and their encrypted support libraries.
 ifdef USE_XILINX_FPU_IP
-	XILINX_IP_DIR ?= $(DESTDIR)/xilinx_ip
-	XILINX_DEVICE_PART ?= xcu55c-fsvh2892-2L-e
-	XILINX_IP_GEN_TCL := $(SCRIPT_DIR)/xilinx_ip_gen.tcl
-	XILINX_IP_STAMP := $(XILINX_IP_DIR)/.generated.stamp
-	XILINX_IP_VHDLAN_STAMP := $(DESTDIR)/.xilinx_fpu_ip_vhdlan.stamp
-	XILINX_FPU_IPS := xil_fdiv xil_fsqrt xil_fma xil_fmul xil_fadd xil_f32add
-	XILINX_IP_VHDL_LIBS := xil_defaultlib xbip_utils_v3_0_14 axi_utils_v2_0_10 xbip_pipe_v3_0_10 xbip_dsp48_wrapper_v3_0_7 mult_gen_v12_0_23 floating_point_v7_1_20
-
-	VCS_FLAGS += +vhdllib+xil_defaultlib
+	XILINX_FPU_DESTDIR := $(DESTDIR)
+	include $(SRC_DIR)/xilinx_fpu_vcs.mk
+	VCS_FLAGS += $(XILINX_FPU_VCS_LIB_FLAGS)
 	RTL_PKGS += $(SRC_DIR)/xilinx_fpu_ip_config.sv
 	VCS_TOP := tb_vcs_xrtsim_xilinx_fpu_cfg
-
-	SIMLIB_DIR ?= $(VORTEX_HOME)/build/vcs_simlib
-	SIMLIB_SETUP := $(SIMLIB_DIR)/synopsys_sim.setup
-	COMPILE_VCS_SIMLIB_TCL := $(SRC_DIR)/compile_vcs_simlib.tcl
-
-	VCS_SETUP_CMD = mkdir -p $(DESTDIR)/vcs_lib/work $(foreach lib,$(XILINX_IP_VHDL_LIBS),$(DESTDIR)/vcs_lib/$(lib)) && \
-		{ echo "LIBRARY_SCAN=TRUE"; \
-		  echo "work:$(abspath $(DESTDIR))/vcs_lib/work"; \
-		  $(foreach lib,$(XILINX_IP_VHDL_LIBS),echo "$(lib):$(abspath $(DESTDIR))/vcs_lib/$(lib)";) \
-			  echo "OTHERS=$(abspath $(SIMLIB_SETUP))"; \
-			} > $(DESTDIR)/synopsys_sim.setup
+	VCS_SETUP_CMD = $(XILINX_FPU_VCS_SETUP_CMD)
 endif
 
 VLOGAN_FLAGS = -full64 -sverilog +v2k -timescale=1ns/1ps +lint=TFIPC-L
@@ -302,45 +286,6 @@ all: simv applib
 
 # ---- simv (VCS executable) ----
 simv: $(DESTDIR)/simv
-
-ifdef USE_XILINX_FPU_IP
-$(SIMLIB_SETUP):
-	@mkdir -p "$(SIMLIB_DIR)"
-	vivado -mode batch -nolog -nojournal -notrace \
-		-source "$(COMPILE_VCS_SIMLIB_TCL)" \
-		-tclargs "$(SIMLIB_DIR)" "$$(dirname $$(readlink -f $$(which vlogan)))" "" "0" "all" "all" \
-		> "$(DESTDIR)/compile_simlib.log" 2>&1 || { \
-			echo "ERROR: compile_simlib failed. See $(DESTDIR)/compile_simlib.log"; \
-			exit 1; \
-		}
-	@test -f "$(SIMLIB_SETUP)" || { echo "ERROR: $(SIMLIB_SETUP) not found after compile_simlib."; exit 1; }
-
-$(XILINX_IP_STAMP): $(XILINX_IP_GEN_TCL)
-	@mkdir -p "$(XILINX_IP_DIR)"
-	@if [ ! -f "$(XILINX_IP_DIR)/xil_fma/xil_fma.xci" ]; then \
-		echo "INFO: generating Xilinx floating_point IP in $(XILINX_IP_DIR)"; \
-		vivado -mode batch -nolog -nojournal -notrace \
-			-source "$(XILINX_IP_GEN_TCL)" \
-			-tclargs "$(XILINX_IP_DIR)" "$(XILINX_DEVICE_PART)" \
-			> "$(DESTDIR)/xilinx_ip_gen.log" 2>&1 || { \
-				echo "ERROR: Xilinx IP generation failed. See $(DESTDIR)/xilinx_ip_gen.log"; \
-				exit 1; \
-			}; \
-	fi
-	@touch $@
-
-$(XILINX_IP_VHDLAN_STAMP): $(XILINX_IP_STAMP) $(SIMLIB_SETUP) Makefile
-	@mkdir -p "$(DESTDIR)"
-	$(VCS_SETUP_CMD)
-	cd $(DESTDIR) && vhdlan -full64 -work xbip_utils_v3_0_14 "$(XILINX_IP_DIR)/xil_fma/hdl/xbip_utils_v3_0_vh_rfs.vhd" -l vhdlan_xbip_utils.log
-	cd $(DESTDIR) && vhdlan -full64 -work axi_utils_v2_0_10 "$(XILINX_IP_DIR)/xil_fma/hdl/axi_utils_v2_0_vh_rfs.vhd" -l vhdlan_axi_utils.log
-	cd $(DESTDIR) && vhdlan -full64 -work xbip_pipe_v3_0_10 "$(XILINX_IP_DIR)/xil_fma/hdl/xbip_pipe_v3_0_vh_rfs.vhd" -l vhdlan_xbip_pipe.log
-	cd $(DESTDIR) && vhdlan -full64 -work xbip_dsp48_wrapper_v3_0_7 "$(XILINX_IP_DIR)/xil_fma/hdl/xbip_dsp48_wrapper_v3_0_vh_rfs.vhd" -l vhdlan_xbip_dsp48.log
-	cd $(DESTDIR) && vhdlan -full64 -work mult_gen_v12_0_23 "$(XILINX_IP_DIR)/xil_fma/hdl/mult_gen_v12_0_vh_rfs.vhd" -l vhdlan_mult_gen.log
-	cd $(DESTDIR) && vhdlan -full64 -work floating_point_v7_1_20 "$(XILINX_IP_DIR)/xil_fma/hdl/floating_point_v7_1_vh_rfs.vhd" -l vhdlan_floating_point.log
-	cd $(DESTDIR) && vhdlan -full64 -work xil_defaultlib $(foreach ip,$(XILINX_FPU_IPS),"$(XILINX_IP_DIR)/$(ip)/sim/$(ip).vhd") -l vhdlan_xilinx_wrappers.log
-	@touch $@
-endif
 
 ifdef POST_IMPL
 # Post-impl: compile netlist + TB + DPI (no RTL sources)

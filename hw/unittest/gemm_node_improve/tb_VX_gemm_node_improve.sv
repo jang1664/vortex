@@ -19,9 +19,9 @@ module tb_VX_gemm_node_improve
   localparam real FP16_TOL = 0.01; // ~1.5 LSB of FP16
 
   // default smoke sizes (runtime-configurable via tasks)
-  localparam int DEFAULT_M_TEST = 160;
-  localparam int DEFAULT_N_TEST = 160;
-  localparam int DEFAULT_K_TEST = 128;
+  localparam int DEFAULT_M_TEST = 256;
+  localparam int DEFAULT_N_TEST = 1024;
+  localparam int DEFAULT_K_TEST = 256;
   localparam int DEFAULT_QBLK   = 32;
 
   // GEMM DMA tile/micro-tile shape (must match DUT build-time config)
@@ -133,10 +133,17 @@ module tb_VX_gemm_node_improve
     $sformat(rpt_file_path,  "./reports/%s.rpt",  name);
 
 `ifdef VCS
+`ifdef XILINX_FPU_SIM
+    if (!$test$plusargs("NO_WAVE")) begin
+      $dumpfile(fst_file_path);
+      $dumpvars(0, tb_VX_gemm_node_improve);
+    end
+`else
     if (!$test$plusargs("NO_WAVE")) begin
       $fsdbDumpfile(fsdb_file_path);
       $fsdbDumpvars(0, "+all", "+parameter", "+functions");
     end
+`endif
 `else
     if (!$test$plusargs("NO_WAVE")) begin
       $dumpfile(fst_file_path);
@@ -200,10 +207,15 @@ module tb_VX_gemm_node_improve
   byte dram [0:DRAM_SIZE-1];
 
   bit randomize_input_speed = 1'b0;
+  bit deterministic_input_stall = 1'b0;
   bit trace_input_speed_en  = 1'b0;
   bit trace_rd_fifo_en      = 1'b0;
+  bit require_dual_bank_prefetch = 1'b0;
   int input_gap_min         = 1;
   int input_gap_max         = 3;
+  int input_stall_period    = 0;
+  int input_stall_phase     = 0;
+  int input_stall_cycles    = 1;
 
   task force_input_stall;
     force u_dut.i_gemm_bus_if.req_valid = 1'b0;
@@ -2138,7 +2150,12 @@ module tb_VX_gemm_node_improve
     void'($value$plusargs("SCALE_RANDOM_TYPE=%d", vector_scale_random_type));
     void'($value$plusargs("ZP_RANDOM_TYPE=%d", vector_zp_random_type));
     randomize_input_speed = $test$plusargs("RANDOMIZE_INPUT_SPEED");
+    void'($value$plusargs("INPUT_STALL_PERIOD=%d", input_stall_period));
+    void'($value$plusargs("INPUT_STALL_PHASE=%d", input_stall_phase));
+    void'($value$plusargs("INPUT_STALL_CYCLES=%d", input_stall_cycles));
+    deterministic_input_stall = (input_stall_period > 0);
     trace_rd_fifo_en = $test$plusargs("TRACE_RD_FIFO");
+    require_dual_bank_prefetch = $test$plusargs("REQUIRE_DUAL_BANK_PREFETCH");
     trace_input_speed_en = randomize_input_speed || $test$plusargs("TRACE_INPUT_SPEED");
     void'($value$plusargs("INPUT_GAP_MIN=%d", input_gap_min));
     void'($value$plusargs("INPUT_GAP_MAX=%d", input_gap_max));
@@ -2147,6 +2164,11 @@ module tb_VX_gemm_node_improve
     if (input_gap_max < input_gap_min)
       $fatal(1, "[%0t] INPUT_GAP_MAX must be >= INPUT_GAP_MIN (got min=%0d max=%0d)",
              $time, input_gap_min, input_gap_max);
+    if (deterministic_input_stall
+        && ((input_stall_phase < 0) || (input_stall_phase >= input_stall_period)))
+      $fatal(1, "[%0t] INPUT_STALL_PHASE must be in [0, INPUT_STALL_PERIOD)", $time);
+    if (deterministic_input_stall && input_stall_cycles < 1)
+      $fatal(1, "[%0t] INPUT_STALL_CYCLES must be >= 1", $time);
     if (!$value$plusargs("TEST=%s", case_name)) begin
       $sformat(case_name, "stream_gemm_M%0d_N%0d_K%0d_WT%0d", test_m, test_n, test_k, test_wtrans);
     end
@@ -2158,10 +2180,12 @@ module tb_VX_gemm_node_improve
       lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base, lmem_obuf_base
     );
 
-    $display("[%0t] TILED_GEMM_TEST_CFG | {name=%s, M=%0d, N=%0d, K=%0d, QBLK=%0d, WTRANS=%0d, QDIR=%0d, input_type=%0d, weight_type=%0d, scale_type=%0d, zp_type=%0d, random_input_speed=%0d, input_gap_min=%0d, input_gap_max=%0d, trace_rd_fifo=%0d}",
+    $display("[%0t] TILED_GEMM_TEST_CFG | {name=%s, M=%0d, N=%0d, K=%0d, QBLK=%0d, WTRANS=%0d, QDIR=%0d, input_type=%0d, weight_type=%0d, scale_type=%0d, zp_type=%0d, random_input_speed=%0d, input_gap_min=%0d, input_gap_max=%0d, stall_period=%0d, stall_phase=%0d, stall_cycles=%0d, strict_dual_bank=%0d, trace_rd_fifo=%0d}",
              $time, case_name, test_m, test_n, test_k, test_qblk, test_wtrans, test_qdir,
              vector_input_random_type, vector_weight_random_type, vector_scale_random_type, vector_zp_random_type,
-             randomize_input_speed, input_gap_min, input_gap_max, trace_rd_fifo_en);
+             randomize_input_speed, input_gap_min, input_gap_max,
+             input_stall_period, input_stall_phase, input_stall_cycles,
+             require_dual_bank_prefetch, trace_rd_fifo_en);
     run_config_gemm_tiled(
       case_name,
       test_m, test_n, test_k, test_qblk, test_wtrans, test_qdir,
@@ -2170,11 +2194,19 @@ module tb_VX_gemm_node_improve
       lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base, lmem_obuf_base
     );
 
+    if (require_dual_bank_prefetch)
+      check_dual_bank_prefetch();
+
     $display("[%0t] TB completed", $time);
 
 `ifdef VCS
+`ifdef XILINX_FPU_SIM
+    if (!$test$plusargs("NO_WAVE"))
+      $dumpoff();
+`else
     if (!$test$plusargs("NO_WAVE"))
       $fsdbDumpoff();
+`endif
 `else
     if (!$test$plusargs("NO_WAVE"))
       $dumpoff();
@@ -2246,7 +2278,7 @@ module tb_VX_gemm_node_improve
       input_stall_cycles_left <= 0;
       input_accept_count <= 0;
       input_last_accept_cycle <= 0;
-    end else if (randomize_input_speed) begin
+    end else if (randomize_input_speed || deterministic_input_stall) begin
       if (input_stall_cycles_left > 0) begin
         if (trace_input_speed_en) begin
           `TRACE(1, ("%m : [%0t] | TB_INPUT_STALL | {cycle=%0d, rem=%0d, req_valid=%b, req_ready=%b}\n",
@@ -2268,8 +2300,16 @@ module tb_VX_gemm_node_improve
         release_input_stall();
         if (input_accept) begin
           accept_gap = (input_accept_count == 0) ? -1 : longint'(tb_cycle - input_last_accept_cycle);
-          next_gap = random_input_gap();
-          next_stall_cycles = next_gap - 1;
+          if (deterministic_input_stall) begin
+            if ((input_accept_count % input_stall_period) == input_stall_phase)
+              next_stall_cycles = input_stall_cycles;
+            else
+              next_stall_cycles = 0;
+            next_gap = next_stall_cycles + 1;
+          end else begin
+            next_gap = random_input_gap();
+            next_stall_cycles = next_gap - 1;
+          end
           if (trace_input_speed_en) begin
             `TRACE(1, ("%m : [%0t] | TB_INPUT_ACCEPT | {cycle=%0d, beat=%0d, accept_gap=%0d, next_gap=%0d, stall_cycles=%0d, data0=0x%04h}\n",
                        $time, tb_cycle, input_accept_count, accept_gap, next_gap, next_stall_cycles,
@@ -2296,54 +2336,120 @@ module tb_VX_gemm_node_improve
     end
   end
 
-  int acc_rd_fifo_depth_mon = 0;
+  int acc_rd_fifo_depth_mon [2] = '{0, 0};
+  longint unsigned dual_rd_accept_count [2] = '{0, 0};
+  longint unsigned dual_rd_response_count [2] = '{0, 0};
+  longint unsigned dual_rd_push_count [2] = '{0, 0};
+  longint unsigned dual_rd_pop_count [2] = '{0, 0};
+  longint unsigned dual_rd_conflict_count = 0;
+  longint unsigned dual_rd_underflow_count = 0;
+
+  task check_dual_bank_prefetch;
+    for (int i = 0; i < 2; ++i) begin
+      if (dual_rd_accept_count[i] != dual_rd_response_count[i])
+        $fatal(1, "Dual-bank read response mismatch for bank %0d: accept=%0d response=%0d",
+               i, dual_rd_accept_count[i], dual_rd_response_count[i]);
+      if (dual_rd_response_count[i] != dual_rd_push_count[i])
+        $fatal(1, "Dual-bank FIFO push mismatch for bank %0d: response=%0d push=%0d",
+               i, dual_rd_response_count[i], dual_rd_push_count[i]);
+      if (dual_rd_push_count[i] != dual_rd_pop_count[i])
+        $fatal(1, "Dual-bank FIFO pop mismatch for bank %0d: push=%0d pop=%0d",
+               i, dual_rd_push_count[i], dual_rd_pop_count[i]);
+      if (!u_dut.u_VX_gemm_unit.acc_rd_fifo_empty_by_bank[i])
+        $fatal(1, "Dual-bank FIFO %0d is not empty at test completion", i);
+    end
+    if (dual_rd_conflict_count != 0)
+      $fatal(1, "Dual-bank scheduler observed %0d read/write conflicts", dual_rd_conflict_count);
+    if (dual_rd_underflow_count != 0)
+      $fatal(1, "Dual-bank scheduler observed %0d psum underflows", dual_rd_underflow_count);
+    if (u_dut.u_VX_gemm_unit.acc_mem_rd_data_valid)
+      $fatal(1, "Dual-bank scheduler has a pending read response at test completion");
+
+    $display("[%0t] DUAL_BANK_PREFETCH_PASSED | {accept={%0d,%0d}, push={%0d,%0d}, pop={%0d,%0d}, conflict=%0d, underflow=%0d}",
+             $time,
+             dual_rd_accept_count[1], dual_rd_accept_count[0],
+             dual_rd_push_count[1], dual_rd_push_count[0],
+             dual_rd_pop_count[1], dual_rd_pop_count[0],
+             dual_rd_conflict_count, dual_rd_underflow_count);
+  endtask
+
   always @(posedge clk) begin
-    bit push;
-    bit pop;
-    int next_depth;
+    int next_depth [2];
+    bit low_cushion_event;
 
     if (reset) begin
-      acc_rd_fifo_depth_mon <= 0;
+      for (int i = 0; i < 2; ++i) begin
+        acc_rd_fifo_depth_mon[i] <= 0;
+        dual_rd_accept_count[i] <= 0;
+        dual_rd_response_count[i] <= 0;
+        dual_rd_push_count[i] <= 0;
+        dual_rd_pop_count[i] <= 0;
+      end
+      dual_rd_conflict_count <= 0;
+      dual_rd_underflow_count <= 0;
     end else begin
-      push = u_dut.u_VX_gemm_unit.acc_rd_fifo_push;
-      pop  = u_dut.u_VX_gemm_unit.acc_rd_fifo_pop;
-      next_depth = acc_rd_fifo_depth_mon;
-      if (push && !pop) begin
-        next_depth++;
-      end else if (!push && pop) begin
-        if (next_depth > 0)
-          next_depth--;
+      for (int i = 0; i < 2; ++i) begin
+        next_depth[i] = acc_rd_fifo_depth_mon[i];
+        if (u_dut.u_VX_gemm_unit.acc_rd_fifo_push_by_bank[i]
+            && !u_dut.u_VX_gemm_unit.acc_rd_fifo_pop_fire_by_bank[i]) begin
+          next_depth[i]++;
+        end else if (!u_dut.u_VX_gemm_unit.acc_rd_fifo_push_by_bank[i]
+                     && u_dut.u_VX_gemm_unit.acc_rd_fifo_pop_fire_by_bank[i]) begin
+          next_depth[i]--;
+        end
+
+        if (u_dut.u_VX_gemm_unit.acc_mem_accum_rd_accept
+            && (u_dut.u_VX_gemm_unit.acc_mem_accum_rd_bank[0] == i))
+          dual_rd_accept_count[i] <= dual_rd_accept_count[i] + 1;
+        if (u_dut.u_VX_gemm_unit.acc_mem_rd_data_take
+            && (u_dut.u_VX_gemm_unit.acc_mem_accum_rd_bank_q[0] == i))
+          dual_rd_response_count[i] <= dual_rd_response_count[i] + 1;
+        if (u_dut.u_VX_gemm_unit.acc_rd_fifo_push_by_bank[i])
+          dual_rd_push_count[i] <= dual_rd_push_count[i] + 1;
+        if (u_dut.u_VX_gemm_unit.acc_rd_fifo_pop_fire_by_bank[i])
+          dual_rd_pop_count[i] <= dual_rd_pop_count[i] + 1;
+
+        acc_rd_fifo_depth_mon[i] <= next_depth[i];
       end
 
+      if (u_dut.u_VX_gemm_unit.rd_wr_conflict_event)
+        dual_rd_conflict_count <= dual_rd_conflict_count + 1;
+      if (u_dut.u_VX_gemm_unit.psum_underflow_event)
+        dual_rd_underflow_count <= dual_rd_underflow_count + 1;
+
+      low_cushion_event = u_dut.u_VX_gemm_unit.acc_rd_fifo_pop
+                       && (next_depth[u_dut.u_VX_gemm_unit.acc_rd_consume_bank] <= 1);
       if (trace_rd_fifo_en &&
-          (push || pop || u_dut.u_VX_gemm_unit.acc_mem_accum_rd_accept ||
-           (u_dut.u_VX_gemm_unit.final_scaler_output_valid && !u_dut.u_VX_gemm_unit.gemm_unit_ctrl.is_load) ||
-           u_dut.u_VX_gemm_unit.psum_underflow_event)) begin
-        `TRACE(1, ("%m : [%0t] | TB_ACC_RD_FIFO_DEPTH | {cycle=%0d, depth=%0d, next_depth=%0d, push=%b, pop=%b, empty=%b, full=%b, alm_full=%b, rd_req=%b, rd_accept=%b, mem_valid=%b, scaler=%b, acc=%b, underflow=%b, is_load=%b, state=%0d, rd_state=%0d, wr_state=%0d, rd_cnt=%0d, wr_cnt=%0d, rd_bank=%0d, wr_bank=%0d, rd_addr=0x%0h, wr_addr=0x%0h}\n",
-                   $time, tb_cycle, acc_rd_fifo_depth_mon, next_depth,
-                   push, pop,
-                   u_dut.u_VX_gemm_unit.acc_rd_fifo_empty,
-                   u_dut.u_VX_gemm_unit.acc_rd_fifo_full,
-                   u_dut.u_VX_gemm_unit.acc_rd_fifo_alm_full,
+          (u_dut.u_VX_gemm_unit.gemm_unit_if.start || u_dut.u_VX_gemm_unit.gemm_done
+           || low_cushion_event || u_dut.u_VX_gemm_unit.rd_wr_conflict_event
+           || u_dut.u_VX_gemm_unit.psum_underflow_event)) begin
+        `TRACE(1, ("%m : [%0t] | TB_ACC_RD_FIFO_DEPTH | {cycle=%0d, depth={%0d,%0d}, next={%0d,%0d}, push=%b, pop_fire=%b, empty=%b, full=%b, credit={%0d,%0d}, consume_bank=%0d, rd_req=%b, rd_accept=%b, mem_valid=%b, scaler=%b, acc=%b, underflow=%b, conflict=%b, is_load=%b, rd_cnt={%0d,%0d}, wr_cnt=%0d, rd_bank=%0d, wr_bank=%0d, rd_addr=0x%0h, wr_addr=0x%0h}\n",
+                   $time, tb_cycle,
+                   acc_rd_fifo_depth_mon[1], acc_rd_fifo_depth_mon[0],
+                   next_depth[1], next_depth[0],
+                   u_dut.u_VX_gemm_unit.acc_rd_fifo_push_by_bank,
+                   u_dut.u_VX_gemm_unit.acc_rd_fifo_pop_fire_by_bank,
+                   u_dut.u_VX_gemm_unit.acc_rd_fifo_empty_by_bank,
+                   u_dut.u_VX_gemm_unit.acc_rd_fifo_full_by_bank,
+                   u_dut.u_VX_gemm_unit.acc_rd_credit_count_by_bank[1],
+                   u_dut.u_VX_gemm_unit.acc_rd_credit_count_by_bank[0],
+                   u_dut.u_VX_gemm_unit.acc_rd_consume_bank,
                    u_dut.u_VX_gemm_unit.acc_mem_accum_rd_req,
                    u_dut.u_VX_gemm_unit.acc_mem_accum_rd_accept,
                    u_dut.u_VX_gemm_unit.acc_mem_rd_data_valid,
                    u_dut.u_VX_gemm_unit.final_scaler_output_valid,
                    u_dut.u_VX_gemm_unit.acc_output_valid[0],
                    u_dut.u_VX_gemm_unit.psum_underflow_event,
+                   u_dut.u_VX_gemm_unit.rd_wr_conflict_event,
                    u_dut.u_VX_gemm_unit.gemm_unit_ctrl.is_load,
-                   u_dut.u_VX_gemm_unit.state,
-                   u_dut.u_VX_gemm_unit.acc_mem_accum_rd_state,
-                   u_dut.u_VX_gemm_unit.acc_mem_accum_wr_state,
-                   u_dut.u_VX_gemm_unit.acc_mem_accum_rd_cnt,
+                   u_dut.u_VX_gemm_unit.acc_mem_accum_rd_cnt_by_bank[1],
+                   u_dut.u_VX_gemm_unit.acc_mem_accum_rd_cnt_by_bank[0],
                    u_dut.u_VX_gemm_unit.acc_mem_accum_wr_cnt,
                    u_dut.u_VX_gemm_unit.acc_mem_accum_rd_bank,
                    u_dut.u_VX_gemm_unit.acc_mem_accum_wr_bank,
                    u_dut.u_VX_gemm_unit.acc_mem_accum_rd_addr,
                    u_dut.u_VX_gemm_unit.acc_mem_accum_wr_addr))
       end
-
-      acc_rd_fifo_depth_mon <= next_depth;
     end
   end
 

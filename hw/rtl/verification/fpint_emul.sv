@@ -13,13 +13,13 @@ package fpint_emul;
   localparam int Z_WIDTH  = `ZP_WIDTH;
   localparam int QBLOCK = `MXU_ROW;
 `ifndef FPINT_EMUL_MAX_M
-`define FPINT_EMUL_MAX_M 512
+`define FPINT_EMUL_MAX_M 1024
 `endif
 `ifndef FPINT_EMUL_MAX_N
-`define FPINT_EMUL_MAX_N 512
+`define FPINT_EMUL_MAX_N 1024
 `endif
 `ifndef FPINT_EMUL_MAX_K
-`define FPINT_EMUL_MAX_K 512
+`define FPINT_EMUL_MAX_K 1024
 `endif
 
   localparam int MAX_M=`FPINT_EMUL_MAX_M;

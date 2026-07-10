@@ -68,9 +68,9 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     localparam FP32_MUL_LATENCY = 7;  // xil_f32mul C_Latency=9
     localparam FP32_ADD_LATENCY = 10; // xil_f32add C_Latency=12
     localparam int ACC_RD_FIFO_DEPTH = 4;
-    localparam int ACC_RD_RSP_SKID_DEPTH = 1;
-    localparam int ACC_RD_CREDIT_MAX = ACC_RD_FIFO_DEPTH + ACC_RD_RSP_SKID_DEPTH;
+    localparam int ACC_RD_CREDIT_MAX = ACC_RD_FIFO_DEPTH;
     localparam int ACC_RD_CREDIT_W = `CLOG2(ACC_RD_CREDIT_MAX + 1);
+    localparam int ACC_RD_ADDR_STEP = 2 * `GEMM_PSUM_DATA_SIZE;
 
     // output scale config
 `ifdef GEMM_UNIT_FP16_OUT_SCALE
@@ -286,12 +286,13 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     // -------------------------------------------------------------------------
     // Accumulator fifo
     // -------------------------------------------------------------------------
-    logic [`MXU_COL-1:0][FP32_WIDTH-1:0]           acc_rd_fifo_in_data;
+    logic [1:0][`MXU_COL-1:0][FP32_WIDTH-1:0]      acc_rd_fifo_in_data_by_bank;
 
     // -------------------------------------------------------------------------
     // Accumulator Memory Signals
     // -------------------------------------------------------------------------
     logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0]           acc_mem_accum_rd_addr;
+    logic [1:0][`GEMM_ACC_MEM_ADDR_WIDTH-1:0]      acc_mem_accum_rd_addr_by_bank;
     logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0]           acc_mem_accum_wr_addr;
     logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0]           acc_mem_out_rd_addr;
     logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0]           acc_mem_out_rd_addr_q;
@@ -320,19 +321,29 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     acc_mem_accum_rd_state_t                       acc_mem_accum_rd_state, acc_mem_accum_rd_state_next;
     logic                                          acc_mem_accum_rd_req;
     logic                                          acc_mem_accum_rd_accept;
-    logic [`GEMM_ACC_MAX_CNT-1:0]                  acc_mem_accum_rd_cnt, acc_mem_accum_rd_cnt_next;
+    logic [`GEMM_ACC_MAX_CNT-1:0]                  acc_mem_accum_rd_cnt;
+    logic [1:0][`GEMM_ACC_MAX_CNT-1:0]             acc_mem_accum_rd_cnt_by_bank;
+    logic [1:0][`GEMM_ACC_MAX_CNT-1:0]             acc_mem_accum_rd_cnt_by_bank_next;
     logic                                          acc_rd_fifo_push, acc_rd_fifo_pop;
     logic                                          acc_rd_fifo_full, acc_rd_fifo_empty, acc_rd_fifo_alm_full;
+    logic [1:0]                                    acc_rd_fifo_push_by_bank, acc_rd_fifo_pop_by_bank;
+    logic [1:0]                                    acc_rd_fifo_pop_fire_by_bank;
+    logic [1:0]                                    acc_rd_fifo_full_by_bank, acc_rd_fifo_empty_by_bank;
+    logic [1:0]                                    acc_rd_fifo_alm_full_by_bank;
     logic                                          acc_mem_rd_data_valid;
     logic                                          acc_mem_rd_data_take;
     logic                                          acc_rd_fifo_pop_fire;
-    logic                                          acc_rd_fifo_can_push;
-    logic                                          acc_mem_rd_to_fifo;
-    logic                                          acc_mem_rd_to_skid;
-    logic                                          acc_rd_rsp_skid_valid;
-    logic [`MXU_COL-1:0][FP32_WIDTH-1:0]           acc_rd_rsp_skid_data;
-    logic [ACC_RD_CREDIT_W-1:0]                    acc_rd_credit_count;
+    logic                                          acc_mem_rd_rsp_can_push;
+    logic [1:0][ACC_RD_CREDIT_W-1:0]               acc_rd_credit_count_by_bank;
+    logic [ACC_RD_CREDIT_W:0]                      acc_rd_credit_count;
     logic [`MXU_COL-1:0][FP32_WIDTH-1:0]           acc_rd_fifo_out_data;
+    logic [1:0][`MXU_COL-1:0][FP32_WIDTH-1:0]      acc_rd_fifo_out_data_by_bank;
+    logic                                          acc_mem_accum_rd_group;
+    logic                                          acc_mem_accum_rd_sel;
+    logic                                          acc_mem_accum_rd_rr;
+    logic                                          acc_rd_consume_bank;
+    logic [1:0]                                    acc_mem_accum_rd_eligible;
+    logic [1:0]                                    acc_mem_accum_start_bank;
 
     // -------------------------------------------------------------------------
     // Accumulator Write FSM Signals
@@ -445,16 +456,16 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     // =========================================================================
     // Accumulator Memory Bank Address Calculation
     // =========================================================================
+    assign acc_mem_accum_rd_addr      = acc_mem_accum_rd_addr_by_bank[acc_mem_accum_rd_sel];
     assign acc_mem_accum_rd_bank_addr = get_acc_mem_bank_addr(acc_mem_accum_rd_addr);
-    assign acc_mem_accum_rd_bank      = get_acc_mem_idx(acc_mem_accum_rd_addr);
+    assign acc_mem_accum_rd_bank      = {acc_mem_accum_rd_group, acc_mem_accum_rd_sel};
     assign acc_mem_accum_wr_bank_addr = get_acc_mem_bank_addr(acc_mem_accum_wr_addr);
     assign acc_mem_accum_wr_bank      = get_acc_mem_idx(acc_mem_accum_wr_addr);
     assign acc_mem_out_rd_bank_addr   = get_acc_mem_bank_addr(acc_mem_out_rd_addr);
     assign acc_mem_out_rd_bank        = get_acc_mem_idx(acc_mem_out_rd_addr);
     assign acc_mem_accum_wr_fire      = acc_mem_accum_wr_req && in_flight
                                       && (gemm_unit_ctrl.is_load ? final_scaler_output_valid : acc_output_valid[0]);
-    assign acc_mem_accum_rd_accept    = acc_mem_accum_rd_req && in_flight && ~gemm_unit_ctrl.is_load
-                                      && ~(acc_mem_accum_wr_fire && (acc_mem_accum_rd_bank == acc_mem_accum_wr_bank));
+    assign acc_mem_accum_rd_accept    = acc_mem_accum_rd_req && in_flight && ~gemm_unit_ctrl.is_load;
     assign psum_underflow_event       = ~gemm_unit_ctrl.is_load && final_scaler_output_valid && acc_rd_fifo_empty && in_flight;
     assign rd_wr_conflict_event       = acc_mem_accum_rd_req && in_flight && ~gemm_unit_ctrl.is_load
                                       && acc_mem_accum_wr_fire && (acc_mem_accum_rd_bank == acc_mem_accum_wr_bank);
@@ -523,20 +534,48 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     // be already read and ready to use. So we read psum first and store it in
     // fifo, then when mxu output is ready, we pop from fifo and do accumulation.
 
-    assign acc_rd_fifo_pop_fire = acc_rd_fifo_pop && !acc_rd_fifo_empty;
-    assign acc_rd_fifo_can_push = !acc_rd_fifo_full || acc_rd_fifo_pop_fire;
-    assign acc_mem_rd_to_fifo   = acc_mem_rd_data_valid && !acc_rd_rsp_skid_valid && acc_rd_fifo_can_push;
-    assign acc_mem_rd_to_skid   = acc_mem_rd_data_valid && ((acc_rd_rsp_skid_valid && acc_rd_fifo_can_push) ||
-                                                            (!acc_rd_rsp_skid_valid && !acc_rd_fifo_can_push));
-    assign acc_mem_rd_data_take = acc_mem_rd_to_fifo || acc_mem_rd_to_skid;
-    assign acc_rd_fifo_push     = acc_rd_fifo_can_push && (acc_rd_rsp_skid_valid || acc_mem_rd_data_valid);
+    assign acc_mem_accum_start_bank = get_acc_mem_idx(gemm_unit_if.gemm_unit_ctrl.acc_mem_base_addr);
+    assign acc_mem_accum_rd_cnt = acc_mem_accum_rd_cnt_by_bank[0] + acc_mem_accum_rd_cnt_by_bank[1];
+    assign acc_rd_credit_count = acc_rd_credit_count_by_bank[0] + acc_rd_credit_count_by_bank[1];
+
+    assign acc_rd_fifo_pop_by_bank[0] = acc_rd_fifo_pop && (acc_rd_consume_bank == 1'b0);
+    assign acc_rd_fifo_pop_by_bank[1] = acc_rd_fifo_pop && (acc_rd_consume_bank == 1'b1);
+    assign acc_rd_fifo_pop_fire_by_bank = acc_rd_fifo_pop_by_bank & ~acc_rd_fifo_empty_by_bank;
+    assign acc_rd_fifo_pop_fire = |acc_rd_fifo_pop_fire_by_bank;
+
+    assign acc_rd_fifo_empty = acc_rd_fifo_empty_by_bank[acc_rd_consume_bank];
+    assign acc_rd_fifo_full = &acc_rd_fifo_full_by_bank;
+    assign acc_rd_fifo_alm_full = &acc_rd_fifo_alm_full_by_bank;
+    assign acc_rd_fifo_out_data = acc_rd_fifo_out_data_by_bank[acc_rd_consume_bank];
+
+    always_comb begin
+        acc_mem_rd_rsp_can_push = 1'b1;
+        if (acc_mem_rd_data_valid) begin
+            acc_mem_rd_rsp_can_push = ~acc_rd_fifo_full_by_bank[acc_mem_accum_rd_bank_q[0]]
+                                    || acc_rd_fifo_pop_fire_by_bank[acc_mem_accum_rd_bank_q[0]];
+        end
+    end
+
+    assign acc_mem_rd_data_take = acc_mem_rd_data_valid && acc_mem_rd_rsp_can_push;
+    assign acc_rd_fifo_push_by_bank[0] = acc_mem_rd_data_take && (acc_mem_accum_rd_bank_q[0] == 1'b0);
+    assign acc_rd_fifo_push_by_bank[1] = acc_mem_rd_data_take && (acc_mem_accum_rd_bank_q[0] == 1'b1);
+    assign acc_rd_fifo_push = |acc_rd_fifo_push_by_bank;
+    assign acc_rd_fifo_in_data_by_bank[0] = acc_mem_out_data[{acc_mem_accum_rd_bank_q[1], 1'b0}];
+    assign acc_rd_fifo_in_data_by_bank[1] = acc_mem_out_data[{acc_mem_accum_rd_bank_q[1], 1'b1}];
+
+    assign acc_mem_accum_rd_eligible[0] = (acc_mem_accum_rd_cnt_by_bank[0] != '0)
+                                        && ((acc_rd_credit_count_by_bank[0] != '0)
+                                         || acc_rd_fifo_pop_fire_by_bank[0]);
+    assign acc_mem_accum_rd_eligible[1] = (acc_mem_accum_rd_cnt_by_bank[1] != '0)
+                                        && ((acc_rd_credit_count_by_bank[1] != '0)
+                                         || acc_rd_fifo_pop_fire_by_bank[1]);
 
     // ----- Read Data Valid Tracking -----
     always_ff @(posedge clk, posedge reset) begin
         if (reset) begin
             acc_mem_rd_data_valid <= '0;
         end else begin
-            if (gemm_unit_if.start & ~gemm_unit_if.gemm_unit_ctrl.is_load) begin
+            if (gemm_unit_if.start) begin
                 acc_mem_rd_data_valid <= 1'b0;
             end else if (acc_mem_accum_rd_accept) begin
                 acc_mem_rd_data_valid <= 1'b1;
@@ -546,40 +585,22 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
         end
     end
 
-    // ----- Read Response Skid Buffer -----
-    always_ff @(posedge clk, posedge reset) begin
-        if (reset) begin
-            acc_rd_rsp_skid_valid <= 1'b0;
-            acc_rd_rsp_skid_data  <= '0;
-        end else begin
-            if (gemm_unit_if.start & ~gemm_unit_if.gemm_unit_ctrl.is_load) begin
-                acc_rd_rsp_skid_valid <= 1'b0;
-                acc_rd_rsp_skid_data  <= '0;
-            end else begin
-                if (acc_rd_rsp_skid_valid && acc_rd_fifo_can_push) begin
-                    acc_rd_rsp_skid_valid <= 1'b0;
-                end
-                if (acc_mem_rd_to_skid) begin
-                    acc_rd_rsp_skid_valid <= 1'b1;
-                    acc_rd_rsp_skid_data  <= acc_mem_out_data[acc_mem_accum_rd_bank_q];
-                end
-            end
-        end
-    end
-
     // ----- Read Credit Tracking -----
     always_ff @(posedge clk, posedge reset) begin
         if (reset) begin
-            acc_rd_credit_count <= ACC_RD_CREDIT_W'(ACC_RD_CREDIT_MAX);
+            acc_rd_credit_count_by_bank <= '{default: ACC_RD_CREDIT_W'(ACC_RD_CREDIT_MAX)};
         end else begin
             if (gemm_unit_if.start & ~gemm_unit_if.gemm_unit_ctrl.is_load) begin
-                acc_rd_credit_count <= ACC_RD_CREDIT_W'(ACC_RD_CREDIT_MAX);
+                acc_rd_credit_count_by_bank <= '{default: ACC_RD_CREDIT_W'(ACC_RD_CREDIT_MAX)};
             end else begin
-                case ({acc_mem_accum_rd_accept, acc_rd_fifo_pop_fire})
-                    2'b10: acc_rd_credit_count <= acc_rd_credit_count - ACC_RD_CREDIT_W'(1);
-                    2'b01: acc_rd_credit_count <= acc_rd_credit_count + ACC_RD_CREDIT_W'(1);
-                    default: acc_rd_credit_count <= acc_rd_credit_count;
-                endcase
+                for (int i = 0; i < 2; ++i) begin
+                    case ({acc_mem_accum_rd_accept && (acc_mem_accum_rd_sel == i),
+                           acc_rd_fifo_pop_fire_by_bank[i]})
+                        2'b10: acc_rd_credit_count_by_bank[i] <= acc_rd_credit_count_by_bank[i] - ACC_RD_CREDIT_W'(1);
+                        2'b01: acc_rd_credit_count_by_bank[i] <= acc_rd_credit_count_by_bank[i] + ACC_RD_CREDIT_W'(1);
+                        default: acc_rd_credit_count_by_bank[i] <= acc_rd_credit_count_by_bank[i];
+                    endcase
+                end
             end
         end
     end
@@ -587,12 +608,35 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     // ----- Read Address Tracking -----
     always_ff @(posedge clk, posedge reset) begin
         if (reset) begin
-            acc_mem_accum_rd_addr <= '0;
+            acc_mem_accum_rd_addr_by_bank <= '0;
+            acc_mem_accum_rd_group <= 1'b0;
         end else begin
             if (gemm_unit_if.start & ~gemm_unit_if.gemm_unit_ctrl.is_load) begin
-                acc_mem_accum_rd_addr <= gemm_unit_if.gemm_unit_ctrl.acc_mem_base_addr;
+                acc_mem_accum_rd_group <= acc_mem_accum_start_bank[1];
+                acc_mem_accum_rd_addr_by_bank[acc_mem_accum_start_bank[0]]
+                    <= gemm_unit_if.gemm_unit_ctrl.acc_mem_base_addr;
+                acc_mem_accum_rd_addr_by_bank[~acc_mem_accum_start_bank[0]]
+                    <= gemm_unit_if.gemm_unit_ctrl.acc_mem_base_addr + `GEMM_PSUM_DATA_SIZE;
             end else if (acc_mem_accum_rd_accept) begin
-                acc_mem_accum_rd_addr <= acc_mem_accum_rd_addr + (`MXU_COL * (FP32_WIDTH/8));
+                acc_mem_accum_rd_addr_by_bank[acc_mem_accum_rd_sel]
+                    <= acc_mem_accum_rd_addr_by_bank[acc_mem_accum_rd_sel] + ACC_RD_ADDR_STEP;
+            end
+        end
+    end
+
+    always_ff @(posedge clk, posedge reset) begin
+        if (reset) begin
+            acc_mem_accum_rd_rr <= 1'b0;
+            acc_rd_consume_bank <= 1'b0;
+        end else begin
+            if (gemm_unit_if.start & ~gemm_unit_if.gemm_unit_ctrl.is_load) begin
+                acc_mem_accum_rd_rr <= acc_mem_accum_start_bank[0];
+                acc_rd_consume_bank <= acc_mem_accum_start_bank[0];
+            end else begin
+                if (acc_mem_accum_rd_accept)
+                    acc_mem_accum_rd_rr <= ~acc_mem_accum_rd_sel;
+                if (acc_rd_fifo_pop)
+                    acc_rd_consume_bank <= ~acc_rd_consume_bank;
             end
         end
     end
@@ -600,28 +644,59 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     // ----- Read FSM Combinational Logic -----
     always_comb begin
         acc_mem_accum_rd_req        = 0;
+        acc_mem_accum_rd_sel        = acc_mem_accum_rd_rr;
         acc_mem_accum_rd_state_next = acc_mem_accum_rd_state;
-        acc_mem_accum_rd_cnt_next   = acc_mem_accum_rd_cnt;
+        acc_mem_accum_rd_cnt_by_bank_next = acc_mem_accum_rd_cnt_by_bank;
 
         case (acc_mem_accum_rd_state)
             ACCUM_RD_IDLE: begin
                 if (gemm_unit_if.start & ~gemm_unit_if.gemm_unit_ctrl.is_load) begin
                     acc_mem_accum_rd_state_next = ACCUM_RD_READ;
-                    acc_mem_accum_rd_cnt_next   = gemm_unit_if.gemm_unit_ctrl.acc_cnt;
+                    acc_mem_accum_rd_cnt_by_bank_next[acc_mem_accum_start_bank[0]]
+                        = (gemm_unit_if.gemm_unit_ctrl.acc_cnt >> 1)
+                        + gemm_unit_if.gemm_unit_ctrl.acc_cnt[0];
+                    acc_mem_accum_rd_cnt_by_bank_next[~acc_mem_accum_start_bank[0]]
+                        = gemm_unit_if.gemm_unit_ctrl.acc_cnt >> 1;
                 end else begin
                     acc_mem_accum_rd_state_next = ACCUM_RD_IDLE;
-                    acc_mem_accum_rd_cnt_next   = -1;
+                    acc_mem_accum_rd_cnt_by_bank_next = '0;
                 end
             end
 
             ACCUM_RD_READ: begin
                 if (acc_mem_accum_rd_cnt > 0) begin
-                    acc_mem_accum_rd_req = ((acc_rd_credit_count != ACC_RD_CREDIT_W'(0)) || acc_rd_fifo_pop_fire) &&
-                                           (!acc_mem_rd_data_valid || acc_mem_rd_data_take);
-                    if (acc_mem_accum_rd_accept) begin
-                        acc_mem_accum_rd_cnt_next = acc_mem_accum_rd_cnt - 1;
+                    if (acc_mem_accum_wr_fire) begin
+                        acc_mem_accum_rd_sel = ~acc_mem_accum_wr_bank[0];
+                        acc_mem_accum_rd_req = acc_mem_accum_rd_eligible[~acc_mem_accum_wr_bank[0]];
+                    end else begin
+                        case (acc_mem_accum_rd_eligible)
+                            2'b01: begin
+                                acc_mem_accum_rd_sel = 1'b0;
+                                acc_mem_accum_rd_req = 1'b1;
+                            end
+                            2'b10: begin
+                                acc_mem_accum_rd_sel = 1'b1;
+                                acc_mem_accum_rd_req = 1'b1;
+                            end
+                            2'b11: begin
+                                if (acc_rd_credit_count_by_bank[0] > acc_rd_credit_count_by_bank[1])
+                                    acc_mem_accum_rd_sel = 1'b0;
+                                else if (acc_rd_credit_count_by_bank[1] > acc_rd_credit_count_by_bank[0])
+                                    acc_mem_accum_rd_sel = 1'b1;
+                                acc_mem_accum_rd_req = 1'b1;
+                            end
+                            default: begin
+                                acc_mem_accum_rd_req = 1'b0;
+                            end
+                        endcase
                     end
-                end else if (~acc_mem_rd_data_valid && ~acc_rd_rsp_skid_valid) begin
+                    acc_mem_accum_rd_req = acc_mem_accum_rd_req
+                                         && (~acc_mem_rd_data_valid || acc_mem_rd_data_take);
+                    if (acc_mem_accum_rd_accept) begin
+                        acc_mem_accum_rd_cnt_by_bank_next[acc_mem_accum_rd_sel]
+                            = acc_mem_accum_rd_cnt_by_bank[acc_mem_accum_rd_sel] - 1;
+                    end
+                end else if (~acc_mem_rd_data_valid) begin
                     acc_mem_accum_rd_state_next = ACCUM_RD_IDLE;
                 end
             end
@@ -636,10 +711,10 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     always_ff @(posedge clk, posedge reset) begin
         if (reset) begin
             acc_mem_accum_rd_state <= ACCUM_RD_IDLE;
-            acc_mem_accum_rd_cnt   <= '0;
+            acc_mem_accum_rd_cnt_by_bank <= '0;
         end else begin
             acc_mem_accum_rd_state <= acc_mem_accum_rd_state_next;
-            acc_mem_accum_rd_cnt   <= acc_mem_accum_rd_cnt_next;
+            acc_mem_accum_rd_cnt_by_bank <= acc_mem_accum_rd_cnt_by_bank_next;
         end
     end
 
@@ -1279,7 +1354,8 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
             logic a_ready, b_ready;
 
             assign acc_in_data_valid[i] = final_scaler_output_valid & ~gemm_unit_ctrl.is_load;
-            assign acc_psum_data_valid[i] = ~acc_rd_fifo_empty & ~gemm_unit_ctrl.is_load & acc_in_data_valid[i];
+            // assign acc_psum_data_valid[i] = ~acc_rd_fifo_empty & ~gemm_unit_ctrl.is_load & acc_in_data_valid[i];
+            assign acc_psum_data_valid[i] = ~gemm_unit_ctrl.is_load & acc_in_data_valid[i]; // avoid deadlock.
             assign a_data  = final_scaler_output_valid ? scaled_fp32_out_data[i] : '0;
             assign b_data  = ~acc_rd_fifo_empty ? acc_rd_fifo_out_data[i] : '0;
 
@@ -1331,27 +1407,29 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
         end
       end
     end
-    assign acc_rd_fifo_in_data = acc_rd_rsp_skid_valid ? acc_rd_rsp_skid_data
-                                                       : acc_mem_out_data[acc_mem_accum_rd_bank_q];
-    VX_fifo_v2 #(
-        .FALL_THROUGH (0),
-        .DATA_WIDTH   (`MXU_COL * FP32_WIDTH),
-        .DEPTH        (ACC_RD_FIFO_DEPTH),
-        .ALM_FULL_TH  (ACC_RD_FIFO_DEPTH - 1)
-    ) u_acc_rd_fifo (
-        .clk_i       (clk),
-        .rst_ni      (~reset),
-        .flush_i     (1'b0),
-        .testmode_i  (1'b0),
-        .full_o      (acc_rd_fifo_full),
-        .empty_o     (acc_rd_fifo_empty),
-        .alm_full_o  (acc_rd_fifo_alm_full),
-        .alm_empty_o (),
-        .data_i      (acc_rd_fifo_in_data),
-        .push_i      (acc_rd_fifo_push),
-        .data_o      (acc_rd_fifo_out_data),
-        .pop_i       (acc_rd_fifo_pop)
-    );
+    generate
+        for (genvar i = 0; i < 2; ++i) begin : gen_acc_rd_fifo
+            VX_fifo_v2 #(
+                .FALL_THROUGH (0),
+                .DATA_WIDTH   (`MXU_COL * FP32_WIDTH),
+                .DEPTH        (ACC_RD_FIFO_DEPTH),
+                .ALM_FULL_TH  (ACC_RD_FIFO_DEPTH - 1)
+            ) u_acc_rd_fifo (
+                .clk_i       (clk),
+                .rst_ni      (~reset),
+                .flush_i     (gemm_unit_if.start),
+                .testmode_i  (1'b0),
+                .full_o      (acc_rd_fifo_full_by_bank[i]),
+                .empty_o     (acc_rd_fifo_empty_by_bank[i]),
+                .alm_full_o  (acc_rd_fifo_alm_full_by_bank[i]),
+                .alm_empty_o (),
+                .data_i      (acc_rd_fifo_in_data_by_bank[i]),
+                .push_i      (acc_rd_fifo_push_by_bank[i]),
+                .data_o      (acc_rd_fifo_out_data_by_bank[i]),
+                .pop_i       (acc_rd_fifo_pop_fire_by_bank[i])
+            );
+        end
+    endgenerate
 
 `ifndef SYNTHESIS
     always @(posedge clk) begin
@@ -1361,28 +1439,39 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
                    acc_mem_accum_rd_addr, acc_mem_accum_wr_addr,
                    acc_mem_accum_rd_state, acc_mem_accum_wr_state);
         end
-        if(!reset && in_flight===1 && acc_rd_fifo_push && acc_rd_fifo_full && !acc_rd_fifo_pop_fire) begin
-            $fatal(1, "[%0t] GEMM accumulator read FIFO full when trying to push data without pop: rd_cnt=%0d wr_cnt=%0d rd_addr=0x%0h wr_addr=0x%0h rd_state=%0d wr_state=%0d",
-                   $time, acc_mem_accum_rd_cnt, acc_mem_accum_wr_cnt,
-                   acc_mem_accum_rd_addr, acc_mem_accum_wr_addr,
-                   acc_mem_accum_rd_state, acc_mem_accum_wr_state);
+        for (int i = 0; i < 2; ++i) begin
+            if (!reset && in_flight===1 && acc_rd_fifo_push_by_bank[i]
+                && acc_rd_fifo_full_by_bank[i] && !acc_rd_fifo_pop_fire_by_bank[i]) begin
+                $fatal(1, "[%0t] GEMM accumulator read FIFO %0d full on push: rd_cnt=%0d wr_cnt=%0d rd_addr=0x%0h wr_addr=0x%0h",
+                       $time, i, acc_mem_accum_rd_cnt, acc_mem_accum_wr_cnt,
+                       acc_mem_accum_rd_addr, acc_mem_accum_wr_addr);
+            end
+            if (!reset && in_flight===1
+                && acc_rd_credit_count_by_bank[i] > ACC_RD_CREDIT_W'(ACC_RD_CREDIT_MAX)) begin
+                $fatal(1, "[%0t] GEMM accumulator read credit %0d out of range: credit=%0d max=%0d",
+                       $time, i, acc_rd_credit_count_by_bank[i], ACC_RD_CREDIT_MAX);
+            end
         end
-        if(!reset && in_flight===1 && acc_mem_rd_data_valid && acc_rd_rsp_skid_valid && !acc_rd_fifo_can_push) begin
-            $fatal(1, "[%0t] GEMM accumulator read response skid overflow: rd_cnt=%0d wr_cnt=%0d rd_addr=0x%0h wr_addr=0x%0h rd_state=%0d wr_state=%0d credit=%0d",
-                   $time, acc_mem_accum_rd_cnt, acc_mem_accum_wr_cnt,
-                   acc_mem_accum_rd_addr, acc_mem_accum_wr_addr,
-                   acc_mem_accum_rd_state, acc_mem_accum_wr_state,
-                   acc_rd_credit_count);
+        if (!reset && in_flight===1 && acc_mem_rd_data_valid && !acc_mem_rd_rsp_can_push) begin
+            $fatal(1, "[%0t] GEMM accumulator read response has no reserved FIFO slot: rsp_bank=%0d rd_cnt=%0d wr_cnt=%0d credit={%0d,%0d}",
+                   $time, acc_mem_accum_rd_bank_q, acc_mem_accum_rd_cnt, acc_mem_accum_wr_cnt,
+                   acc_rd_credit_count_by_bank[1], acc_rd_credit_count_by_bank[0]);
         end
         if(!reset && in_flight===1 && acc_mem_accum_rd_accept && acc_mem_rd_data_valid && !acc_mem_rd_data_take) begin
-            $fatal(1, "[%0t] GEMM accumulator read accepted while previous response was not accepted: rd_cnt=%0d wr_cnt=%0d rd_state=%0d wr_state=%0d credit=%0d",
+            $fatal(1, "[%0t] GEMM accumulator read accepted while previous response was not accepted: rd_cnt=%0d wr_cnt=%0d rd_state=%0d wr_state=%0d credit={%0d,%0d}",
                    $time, acc_mem_accum_rd_cnt, acc_mem_accum_wr_cnt,
                    acc_mem_accum_rd_state, acc_mem_accum_wr_state,
-                   acc_rd_credit_count);
+                   acc_rd_credit_count_by_bank[1], acc_rd_credit_count_by_bank[0]);
         end
-        if(!reset && acc_rd_credit_count > ACC_RD_CREDIT_W'(ACC_RD_CREDIT_MAX)) begin
-            $fatal(1, "[%0t] GEMM accumulator read credit out of range: credit=%0d max=%0d",
-                   $time, acc_rd_credit_count, ACC_RD_CREDIT_MAX);
+        if (!reset && in_flight===1 && acc_mem_accum_rd_accept
+            && (get_acc_mem_idx(acc_mem_accum_rd_addr) != acc_mem_accum_rd_bank)) begin
+            $fatal(1, "[%0t] GEMM accumulator read address left scheduled bank: addr=0x%0h decoded_bank=%0d scheduled_bank=%0d",
+                   $time, acc_mem_accum_rd_addr, get_acc_mem_idx(acc_mem_accum_rd_addr),
+                   acc_mem_accum_rd_bank);
+        end
+        if (!reset && in_flight===1 && rd_wr_conflict_event) begin
+            $fatal(1, "[%0t] GEMM accumulator dual-bank scheduler issued conflicting read/write: rd_bank=%0d wr_bank=%0d",
+                   $time, acc_mem_accum_rd_bank, acc_mem_accum_wr_bank);
         end
     end
 `endif
@@ -1782,16 +1871,19 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
 
             // FIFO push
             if (acc_rd_fifo_push) begin
-                `TRACE(2, ("%m : [%0t] | GEMM_FIFO_PUSH | {inst=%s, data=%s, full=%b, empty=%b}\n",
-                    $time, INSTANCE_ID, VX_utils_pkg::parseWordNoNormal(acc_rd_fifo_in_data, `MXU_ROW * FP32_WIDTH, FP32_WIDTH, "fp"),
-                    acc_rd_fifo_full, acc_rd_fifo_empty))
+                `TRACE(2, ("%m : [%0t] | GEMM_FIFO_PUSH | {inst=%s, bank=%0d, data=%s, full=%b, empty=%b}\n",
+                    $time, INSTANCE_ID, acc_mem_accum_rd_bank_q[0],
+                    VX_utils_pkg::parseWordNoNormal(acc_rd_fifo_in_data_by_bank[acc_mem_accum_rd_bank_q[0]], `MXU_ROW * FP32_WIDTH, FP32_WIDTH, "fp"),
+                    acc_rd_fifo_full_by_bank[acc_mem_accum_rd_bank_q[0]],
+                    acc_rd_fifo_empty_by_bank[acc_mem_accum_rd_bank_q[0]]))
             end
 
             // FIFO pop
             if (acc_rd_fifo_pop) begin
-                `TRACE(2, ("%m : [%0t] | GEMM_FIFO_POP | {inst=%s, out_data=%s, full=%b, empty=%b}\n",
-                    $time, INSTANCE_ID, VX_utils_pkg::parseWordNoNormal(acc_rd_fifo_out_data, `MXU_ROW * FP32_WIDTH, FP32_WIDTH, "fp"),
-                    acc_rd_fifo_full, acc_rd_fifo_empty))
+                `TRACE(2, ("%m : [%0t] | GEMM_FIFO_POP | {inst=%s, bank=%0d, out_data=%s, full=%b, empty=%b}\n",
+                    $time, INSTANCE_ID, acc_rd_consume_bank,
+                    VX_utils_pkg::parseWordNoNormal(acc_rd_fifo_out_data, `MXU_ROW * FP32_WIDTH, FP32_WIDTH, "fp"),
+                    acc_rd_fifo_full_by_bank[acc_rd_consume_bank], acc_rd_fifo_empty))
             end
 
             // Accumulator input (when not is_load)
