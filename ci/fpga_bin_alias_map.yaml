@@ -72,7 +72,7 @@ aliases:
     configs: configs/improve_tcol32.sh
 
   improve_th16_tcol32:
-    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_noDcache_L2cache_d1de220c1b_1/bin
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_noDcache_L2cache_d1de220c1b_2/bin
     configs: configs/improve_th16_tcol32.sh
 
   improve_th16_tcol32_dbg:
@@ -83,4 +83,6 @@ aliases:
     path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_noDcache_L2cache_a9d1611965/bin
     configs: configs/improve_simd_th16_dbg.sh
 
-
+  improve_th16_tcol32_hwexp_dcache:
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_L2cache_ecde637ae3/bin
+    configs: configs/improve_th16_tcol32_hwexp_dcache.sh
