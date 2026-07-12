@@ -70,3 +70,4 @@ novas.rc
 verdiLog/
 .fsdb_dump.tcl
 .codegraph/
+.context/

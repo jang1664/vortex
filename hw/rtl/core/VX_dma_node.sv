@@ -12,7 +12,8 @@ module VX_dma_node import VX_gpu_pkg::*; #(
   // in parameter binding contexts, so the parent must pass these explicitly.
   // Defaults track the VX_core-side interface widths (see VX_core.sv:87-95).
   parameter int DCACHE_TAG_WIDTH_P = DCACHE_TAG_WIDTH,
-  parameter int LMEM_TAG_WIDTH_P   = LMEM_TAG_WIDTH
+  parameter int LMEM_TAG_WIDTH_P   = LMEM_TAG_WIDTH,
+  parameter int MISALIGN_PACK_BYTES = LSU_WORD_SIZE
 ) (
   input wire clk,
   input wire reset,
@@ -76,7 +77,8 @@ module VX_dma_node import VX_gpu_pkg::*; #(
     .INSTANCE_ID      (INSTANCE_ID),
     .ENABLE_MISALIGN  (ENABLE_MISALIGN),
     .DCACHE_TAG_WIDTH (DCACHE_TAG_WIDTH_P),
-    .LMEM_TAG_WIDTH   (LMEM_TAG_WIDTH_P)
+    .LMEM_TAG_WIDTH   (LMEM_TAG_WIDTH_P),
+    .MISALIGN_PACK_BYTES (MISALIGN_PACK_BYTES)
   ) u_dma_unit (
     .clk          (clk),
     .reset        (reset),

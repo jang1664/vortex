@@ -96,8 +96,13 @@ int main(int argc, char** argv) {
   parse_args(argc, argv);
 
   uint32_t M_pad = (M + 7u) & ~7u;
-  printf("rms_norm_layout_fused  M=%u (pad=%u) K=%u iters=%u\n",
-         M, M_pad, K, ITERS);
+#if RMS_NORM_LAYOUT_FUSED_VARIANT_TAG == 1
+  const char* variant = "shuffle_warp";
+#else
+  const char* variant = "baseline";
+#endif
+  printf("rms_norm_layout_fused  variant=%s M=%u (pad=%u) K=%u iters=%u\n",
+         variant, M, M_pad, K, ITERS);
 
   if (K % TILE_DMA_KT != 0) {
     printf("ERROR: K must be multiple of %u (got %u)\n", TILE_DMA_KT, K);
@@ -184,6 +189,11 @@ int main(int argc, char** argv) {
   // Round down to power of two for the tree reduction.
   uint32_t tpb = 1;
   while ((tpb << 1) <= threads_per_block) tpb <<= 1;
+#if RMS_NORM_LAYOUT_FUSED_VARIANT_TAG == 1
+  const uint32_t rms_tpb = (uint32_t)num_threads_dev;
+#else
+  const uint32_t rms_tpb = tpb;
+#endif
 
   uint64_t src_addr = 0, dst_addr = 0, mid_addr = 0, gamma_addr = 0;
   RT_CHECK(vx_mem_address(src_buf,   &src_addr));
@@ -209,7 +219,7 @@ int main(int argc, char** argv) {
   karg.grid_dim[0]  = M;        // one block per real row
   karg.grid_dim[1]  = 1;
   karg.grid_dim[2]  = 1;
-  karg.block_dim[0] = tpb;
+  karg.block_dim[0] = rms_tpb;
   karg.block_dim[1] = 1;
   karg.block_dim[2] = 1;
 
@@ -309,7 +319,7 @@ int main(int argc, char** argv) {
   karg.grid_dim[0]  = M;
   karg.grid_dim[1]  = 1;
   karg.grid_dim[2]  = 1;
-  karg.block_dim[0] = tpb;
+  karg.block_dim[0] = rms_tpb;
   karg.block_dim[1] = 1;
   karg.block_dim[2] = 1;
 

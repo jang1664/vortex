@@ -123,6 +123,9 @@ int main(int argc, char *argv[]) {
   uint32_t threads_per_block = std::min(256u, (uint32_t)(num_warps * num_threads));
   uint32_t tpb = 1;
   while ((tpb << 1) <= threads_per_block) tpb <<= 1;
+#if RMS_NORM_LAYOUT_FUSED_VARIANT_TAG == 1
+  tpb = (uint32_t)num_threads;
+#endif
 
   kernel_arg_t kernel_arg = {};
   kernel_arg.kernel_id = KERNEL_RMSNORM_LAYOUT_FUSED;

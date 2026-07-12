@@ -32,6 +32,37 @@ namespace vt = tensor;
 static bool g_enable_sparse = false;
 ///////////////////////////////////////////////////////////////////////////////
 
+static const char* sgemm_tcu_variant_name() {
+#if SGEMM_TCU_VARIANT == SGEMM_TCU_VARIANT_B_COLMAJOR
+  return "b_colmajor";
+#elif SGEMM_TCU_VARIANT == SGEMM_TCU_VARIANT_LMEM
+  return "lmem";
+#elif SGEMM_TCU_VARIANT == SGEMM_TCU_VARIANT_LMEM_B_COLMAJOR
+  return "lmem_b_colmajor";
+#elif SGEMM_TCU_VARIANT == SGEMM_TCU_VARIANT_KSTAGE4
+  return "kstage4";
+#elif SGEMM_TCU_VARIANT == SGEMM_TCU_VARIANT_KSTAGE4_N2
+  return "kstage4_n2";
+#elif SGEMM_TCU_VARIANT == SGEMM_TCU_VARIANT_KSTAGE4_M2N2
+  return "kstage4_m2n2";
+#elif SGEMM_TCU_VARIANT == SGEMM_TCU_VARIANT_KSTAGE4_M2N2_WIDE64
+  return "kstage4_m2n2_wide64";
+#elif SGEMM_TCU_VARIANT == SGEMM_TCU_VARIANT_KSTAGE4_WIDE64
+  return "kstage4_wide64";
+#else
+  return "baseline";
+#endif
+}
+
+template <typename T>
+static void convert_row_to_col_major(T *dst, uint32_t rows, uint32_t cols, const T *src) {
+  for (uint32_t col = 0; col < cols; ++col) {
+    for (uint32_t row = 0; row < rows; ++row) {
+      dst[col * rows + row] = src[row * cols + col];
+    }
+  }
+}
+
 static void convert_row_to_col_major_4bit(uint8_t *dst, uint32_t width, uint32_t height, const uint8_t *src) {
   // Calculate output size and stride
   uint32_t out_bytes = (width * height + 1) / 2;
@@ -578,12 +609,28 @@ int main(int argc, char *argv[]) {
     return -1;
   }
 
+#if SGEMM_TCU_USE_LMEM
+  uint64_t NW;
+  RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_WARPS, &NW));
+  constexpr uint32_t kRequiredWarps = SGEMM_TCU_WARPS_M * SGEMM_TCU_WARPS_N;
+  if (NW < kRequiredWarps) {
+    std::cout << "Error: device warps (" << NW << ") are fewer than the LMEM variant requires ("
+              << kRequiredWarps << ")!" << std::endl;
+    cleanup();
+    return -1;
+  }
+#endif
+
   uint32_t M = xm;
   uint32_t N = xn;
   uint32_t K = xk;
   uint32_t M_exec = align_up_u32(M, cfg::tileM);
   uint32_t N_exec = align_up_u32(N, cfg::tileN);
+#if SGEMM_TCU_USE_LMEM
+  uint32_t K_exec = align_up_u32(K, cfg::tileK * SGEMM_TCU_K_STAGE_TILES);
+#else
   uint32_t K_exec = align_up_u32(K, cfg::tileK);
+#endif
 
   size_t sizeA = M_exec * K_exec;
   size_t sizeB = K_exec * N_exec;
@@ -595,6 +642,13 @@ int main(int argc, char *argv[]) {
   std::cout << "accumulator data type: " << vt::ACC_TYPE::name << " (id=" << vt::ACC_TYPE::id << ")" << std::endl;
   std::cout << "WMMA Core Dimension: M=" << cfg::tcM << ", N=" << cfg::tcN << ", K=" << cfg::tcK << std::endl;
   std::cout << "WMMA Tile Dimension: M=" << cfg::tileM << ", N=" << cfg::tileN << ", K=" << cfg::tileK << std::endl;
+  std::cout << "sgemm_tcu variant: " << sgemm_tcu_variant_name() << std::endl;
+#if SGEMM_TCU_USE_LMEM
+  std::cout << "LMEM blocking: warps=" << SGEMM_TCU_WARPS_M << "x" << SGEMM_TCU_WARPS_N
+            << ", fragments/warp=" << SGEMM_TCU_FRAGS_M << "x" << SGEMM_TCU_FRAGS_N
+            << ", K-stage tiles=" << SGEMM_TCU_K_STAGE_TILES
+            << ", load bytes=" << SGEMM_TCU_LOAD_BYTES << std::endl;
+#endif
   std::cout << "matrix A: " << M << "x" << K;
   if ((M_exec != M) || (K_exec != K)) {
     std::cout << " (padded " << M_exec << "x" << K_exec << ")";
@@ -612,9 +666,17 @@ int main(int argc, char *argv[]) {
   std::cout << std::endl;
 
   // set block size to warp size
+#if SGEMM_TCU_USE_LMEM
+  constexpr uint32_t kBlockTilesM = SGEMM_TCU_WARPS_M * SGEMM_TCU_FRAGS_M;
+  constexpr uint32_t kBlockTilesN = SGEMM_TCU_WARPS_N * SGEMM_TCU_FRAGS_N;
+  kernel_arg.grid_dim[0] = (N_exec / cfg::tileN + kBlockTilesN - 1) / kBlockTilesN;
+  kernel_arg.grid_dim[1] = (M_exec / cfg::tileM + kBlockTilesM - 1) / kBlockTilesM;
+  kernel_arg.block_dim[0] = NT * SGEMM_TCU_WARPS_M * SGEMM_TCU_WARPS_N;
+#else
   kernel_arg.grid_dim[0] = N_exec / cfg::tileN;
   kernel_arg.grid_dim[1] = M_exec / cfg::tileM;
-  kernel_arg.block_dim[0] = NT; // warp sizeb
+  kernel_arg.block_dim[0] = NT;
+#endif
   kernel_arg.block_dim[1] = 1;
 
   // set matrix dimensions
@@ -664,8 +726,15 @@ int main(int argc, char *argv[]) {
       std::vector<uint8_t> h_B_col(sizeB);
       convert_row_to_col_major_4bit(h_B_col.data(), N_exec, 2 * K_exec, (uint8_t*)h_B.data());
       RT_CHECK(vx_copy_to_dev(B_buffer, h_B_col.data(), 0, sizeB));
+#if SGEMM_TCU_USE_B_COLMAJOR
+    } else {
+      std::vector<itype_t> h_B_col(sizeB);
+      convert_row_to_col_major(h_B_col.data(), K_exec, N_exec, h_B.data());
+      RT_CHECK(vx_copy_to_dev(B_buffer, h_B_col.data(), 0, sizeB * sizeof(itype_t)));
+#else
     } else {
       RT_CHECK(vx_copy_to_dev(B_buffer, h_B.data(), 0, sizeB * sizeof(itype_t)));
+#endif
     }
   }
 

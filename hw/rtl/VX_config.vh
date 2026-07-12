@@ -1172,6 +1172,10 @@ for block_size in range(1, full_bitwidth+1):
 `define TMEM_BANK_SIZE (64 * 1024) // 64KB
 `endif
 
+`ifndef MISALIGN_PACK_BYTES
+`define MISALIGN_PACK_BYTES LSU_WORD_SIZE
+`endif
+
 // HBM interleave stride (bytes): consecutive MEM_BLOCK_SIZE blocks round-robin
 // across all DMA channels before advancing to the next stripe within one HBM bank.
 `define HBM_BUS_STRIDE (`MEM_BLOCK_SIZE * `NUM_DMA_CHANNELS)

@@ -140,7 +140,7 @@ int main(int argc, char *argv[]) {
 
   kernel_arg_t kernel_arg = {};
   kernel_arg.kernel_id = KERNEL_SOFTMAX;
-  uint32_t threads_per_block = std::min(256u, (uint32_t)(num_warps * num_threads));
+  uint32_t threads_per_block = softmax_threads_per_block(num_warps, num_threads);
   uint32_t rows_per_block = 1;
   uint32_t row_tiles = total_rows;
   kernel_arg.grid_dim[0] = softmax_grid_x(total_rows, threads_per_block,

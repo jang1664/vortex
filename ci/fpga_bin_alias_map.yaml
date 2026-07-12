@@ -27,8 +27,8 @@ aliases:
     path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_noDcache_L2cache_95f8f2cae2/bin
     configs: configs/naive_gemm_simd_th16_tcol32_hwexp.sh
 
-  naive_gemm_simd_th16_tcol32_hwexp_dcache: # naive tcu + mxu
-    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_L2cache_9a1af575ca/bin
+  naive_gemm_simd_th16_tcol32_hwexp_dcache_pack16: # naive tcu + mxu
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_L2cache_d9a6765361/bin
     configs: configs/naive_gemm_simd_th16_tcol32_hwexp.sh
 
   naive_simd:
@@ -46,6 +46,10 @@ aliases:
   naive_simd_th16:
     path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_noDcache_L2cache_92934100cd/bin
     configs: configs/naive_simd_th16.sh
+
+  naive_gemm_simd_th16_tcol32_hwexp_dcache: # naive tcu + mxu + pack16
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_L2cache_d9a6765361/bin
+    configs: configs/naive_gemm_simd_th16_tcol32_hwexp.sh
 
   improve_simd:
     path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_noDcache_L2cache_617ccd526f/bin
@@ -83,6 +87,6 @@ aliases:
     path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_noDcache_L2cache_a9d1611965/bin
     configs: configs/improve_simd_th16_dbg.sh
 
-  improve_th16_tcol32_hwexp_dcache:
-    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_L2cache_ecde637ae3/bin
+  improve_th16_tcol32_hwexp_dcache: # pack16
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_L2cache_53d1219a71/bin
     configs: configs/improve_th16_tcol32_hwexp_dcache.sh

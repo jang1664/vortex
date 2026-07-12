@@ -38,7 +38,8 @@ LATENCY_FOLDER = "outputs_main_small_test"
 
 # Main workload selection. Use a string for one model or a list/tuple for
 # multiple models.
-TARGET_MODEL = ["llama2_7b", "llama3_8b"]
+# TARGET_MODEL = ["llama2_7b", "llama3_8b"]
+TARGET_MODEL = ["llama2_7b"]
 
 
 def target_models() -> tuple[str, ...]:
@@ -56,9 +57,9 @@ TARGET_MODELS = target_models()
 # Match make_case.sh / make_cases.sh stage-specific shape controls:
 # --prefill-batches, --prefill-seq-lens, --generation-batches, --generation-seq-lens.
 TARGET_PREFILL_BATCHES = (1,)
-TARGET_PREFILL_SEQ_LENS = (1024, 2048)
-TARGET_GENERATION_BATCHES = (1, 2)
-TARGET_GENERATION_SEQ_LENS = (1024, 2048)
+TARGET_PREFILL_SEQ_LENS = (1024,2048,4096,8192,16384,32768,65536)
+TARGET_GENERATION_BATCHES = (1, 2, 4)
+TARGET_GENERATION_SEQ_LENS = (1024,2048,4096,8192,16384,32768,65536)
 
 # Per-output shape selection. Empty tuples mean "all available shapes" for that stage.
 E2E_PREFILL_BATCHES = TARGET_PREFILL_BATCHES
@@ -159,8 +160,7 @@ def energy_out_name(model: str, power_metric: str) -> str:
 
 RAW_DB_SUBDIRS = (
     "naive_gemm_simd_th16_tcol32",
-    "naive_gemm_tcol32",
-    "improve_tcol32",
+    "improve_th16_tcol32_hwexp_dcache",
 )
 RAW_DBS_OUTPUT_MAIN = [
     LATENCY_DIR / LATENCY_FOLDER / subdir / "raw_db.csv"

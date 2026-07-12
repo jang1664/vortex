@@ -119,7 +119,11 @@ int main(int argc, char** argv) {
   const uint32_t tpb = uint32_t(num_threads);
   const uint32_t k_tiles = (K_pad + TILE_DMA_KT - 1) / TILE_DMA_KT;
   const uint32_t k_mic = TILE_DMA_KT / TILE_DMA_MXU_KT;
+#if TILE_INPUT_A_VARIANT_TAG == 1
+  const uint32_t chunks_per_row = TILE_DMA_MXU_KT / 4;
+#else
   const uint32_t chunks_per_row = TILE_DMA_MXU_KT / 2;
+#endif
   const uint32_t chunks_per_kb = M_pad * chunks_per_row;
   const uint32_t blocks_x = (chunks_per_kb + tpb - 1) / tpb;
 

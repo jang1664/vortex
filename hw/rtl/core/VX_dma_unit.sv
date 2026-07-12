@@ -15,7 +15,8 @@ module VX_dma_unit import VX_gpu_pkg::*; #(
   // Parent forwards interface TAG_WIDTH values explicitly. Synopsys DC
   // rejects `interface_inst.PARAM` access inside localparam initializers.
   parameter int DCACHE_TAG_WIDTH = 1,
-  parameter int LMEM_TAG_WIDTH   = 1
+  parameter int LMEM_TAG_WIDTH   = 1,
+  parameter int MISALIGN_PACK_BYTES = LSU_WORD_SIZE
 ) (
   input wire clk,
   input wire reset,
@@ -35,7 +36,8 @@ module VX_dma_unit import VX_gpu_pkg::*; #(
     VX_dma_unit_misal #(
       .INSTANCE_ID      (INSTANCE_ID),
       .DCACHE_TAG_WIDTH (DCACHE_TAG_WIDTH),
-      .LMEM_TAG_WIDTH   (LMEM_TAG_WIDTH)
+      .LMEM_TAG_WIDTH   (LMEM_TAG_WIDTH),
+      .MISALIGN_PACK_BYTES (MISALIGN_PACK_BYTES)
     ) u_impl (
       .clk            (clk),
       .reset          (reset),

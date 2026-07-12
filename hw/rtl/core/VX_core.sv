@@ -305,7 +305,8 @@ module VX_core import VX_gpu_pkg::*; #(
       .N_MASTER(`NUM_LSU_BLOCKS),
 `endif
       .NUM_ENTRIES(`JOB_MMIO_NUM_ENTRIES),
-      .ENABLE_MISALIGN(1'b1)
+      .ENABLE_MISALIGN(1'b1),
+      .MISALIGN_PACK_BYTES(`MISALIGN_PACK_BYTES)
     ) u_VX_dma_node (
       .clk(clk),
       .reset(reset),

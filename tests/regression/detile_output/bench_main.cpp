@@ -110,7 +110,11 @@ int main(int argc, char** argv) {
   }
   const uint32_t tpb = uint32_t(num_threads);
   const uint32_t n_tiles = N_pad / TILE_DMA_MXU_NT;
+#if DETILE_OUTPUT_VARIANT_TAG == 1
+  const uint32_t blocks_x = (TILE_DMA_MXU_NT / 2 + tpb - 1) / tpb;
+#else
   const uint32_t blocks_x = (TILE_DMA_MXU_NT + tpb - 1) / tpb;
+#endif
 
   kernel_arg_t karg = {};
   karg.grid_dim[0] = blocks_x;

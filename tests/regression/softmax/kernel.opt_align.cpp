@@ -5,6 +5,10 @@
 #include <vx_math.h>
 #include <VX_config.h>
 
+#ifndef SOFTMAX_SERIAL_BLOCK_DMA
+#define SOFTMAX_SERIAL_BLOCK_DMA 0
+#endif
+
 // Type aliases
 using data_t = fp16_t;
 
@@ -226,12 +230,28 @@ void kernel_softmax(kernel_arg_t *__UNIFORM__ arg) {
     //=========================================================================
     // Step 0: DMA input row tile to local memory
     //=========================================================================
+#if SOFTMAX_SERIAL_BLOCK_DMA
+    if (tid == 0) {
+      for (uint32_t slot = 0; slot < rows_per_block; ++slot) {
+        uint32_t dma_row_idx = tile_base + slot;
+        if (dma_row_idx < rows_total) {
+          auto src = pInput + dma_row_idx * row_pitch_bytes;
+          auto dst = dma_input_cache + slot * dma_row_pitch_bytes;
+          dma_copy_1d(reinterpret_cast<uint64_t>(dst),
+                      reinterpret_cast<uint64_t>(src),
+                      row_pitch_bytes,
+                      0u);
+        }
+      }
+    }
+#else
     if (active && lane == 0) {
       dma_copy_1d(reinterpret_cast<uint64_t>(row_dma_input),
                   reinterpret_cast<uint64_t>(input_row),
                   row_pitch_bytes,
                   0u);
     }
+#endif
 
     __syncthreads();
 
@@ -308,12 +328,28 @@ void kernel_softmax(kernel_arg_t *__UNIFORM__ arg) {
 
     __syncthreads();
 
+#if SOFTMAX_SERIAL_BLOCK_DMA
+    if (tid == 0) {
+      for (uint32_t slot = 0; slot < rows_per_block; ++slot) {
+        uint32_t dma_row_idx = tile_base + slot;
+        if (dma_row_idx < rows_total) {
+          auto dst = pOutput + dma_row_idx * row_pitch_bytes;
+          auto src = dma_output_cache + slot * dma_row_pitch_bytes;
+          dma_copy_1d(reinterpret_cast<uint64_t>(dst),
+                      reinterpret_cast<uint64_t>(src),
+                      row_pitch_bytes,
+                      1u);
+        }
+      }
+    }
+#else
     if (active && lane == 0) {
       dma_copy_1d(reinterpret_cast<uint64_t>(output_row),
                   reinterpret_cast<uint64_t>(row_dma_output),
                   row_pitch_bytes,
                   1u);
     }
+#endif
 
     __syncthreads();
   }

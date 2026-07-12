@@ -3,17 +3,19 @@ defaults:
   warmup: 1
   iterations: 3
   app: fpint_gemm_ffn_hw
-  fpga_bin: naive_simd
+  fpga_bin: improve_th16_tcol32_hwexp_dcache
   target: hw
   platform: xilinx_u55c_gen3x16_xdma_3_202210_1
 
 fpga_bins:
-  default: naive_simd
+  default: improve_th16_tcol32_hwexp_dcache
 
   by_backend:
     fpint_gemm_improve: improve_tcol32
 
   by_app:
+    fpint_gemm_ffn_hw: improve_th16_tcol32_hwexp_dcache
+    fpint_gemm_ffn_hw_naive: naive_gemm_simd_th16_tcol32
     rmsnorm: naive_gemm_simd_th16_tcol32
     rope: naive_gemm_simd_th16_tcol32
     softmax: naive_gemm_simd_th16_tcol32

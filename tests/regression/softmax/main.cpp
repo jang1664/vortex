@@ -225,7 +225,7 @@ int main(int argc, char *argv[]) {
   kernel_arg.kernel_id = KERNEL_SOFTMAX;
   
   // Grid/Block configuration
-  uint32_t threads_per_block = std::min(256u, (uint32_t)(num_warps * num_threads));
+  uint32_t threads_per_block = softmax_threads_per_block(num_warps, num_threads);
   uint32_t rows_per_block = 1;
   uint32_t row_tiles = total_rows;
   

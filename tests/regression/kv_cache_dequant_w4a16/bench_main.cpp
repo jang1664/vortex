@@ -1,4 +1,5 @@
 #include "common.h"
+#include "host_variant.h"
 #include "../kv_cache_common/kv_cache_w4a16.h"
 #include "bench_util.h"
 #include <vortex.h>
@@ -84,8 +85,9 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_WARPS, &num_warps));
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_THREADS, &num_threads));
   uint32_t tpb = std::min(256u, (uint32_t)(num_warps * num_threads));
+  uint32_t work_items = kv_cache_dequant_work_items(K, N);
   uint32_t blocks = std::min(
-      (uint32_t)((dst_elems + tpb - 1) / tpb),
+      (work_items + tpb - 1u) / tpb,
       std::max(1u, (uint32_t)num_cores * 4u));
 
   kernel_arg_t arg = {};
