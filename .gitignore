@@ -12,6 +12,8 @@
 !/build/hw/syn/synopsys/**/18*power*.rpt
 !/build/hw/syn/synopsys/**/*report_power.report
 
+/build_*/
+
 /.vscode
 *.cache
 *.code-workspace

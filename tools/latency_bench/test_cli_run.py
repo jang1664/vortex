@@ -154,6 +154,12 @@ aliases:
             script = (run_dir / "run_fpga_bench.sh").read_text()
             self.assertIn("source", script)
             self.assertIn("ci/xrt_device_detect.sh", script)
+            self.assertIn(
+                'export XRT_INI_PATH="${XRT_INI_PATH:-/dev/null}"',
+                script,
+            )
+            self.assertIn(f"export VORTEX_RT_PATH={build_dir / 'runtime'}", script)
+            self.assertIn(f"export VORTEX_KN_PATH={build_dir / 'kernel'}", script)
             self.assertIn("LATENCY_BENCH_PROGRAM_FPGA=1", script)
             self.assertIn("LATENCY_BENCH_REQUESTED_XRT_DEVICE_BDF=0000:3d:00.1", script)
             self.assertIn("LATENCY_BENCH_FPGA_IDENTITY_ENV=", script)
