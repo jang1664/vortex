@@ -1,7 +1,7 @@
 task: vector-kernel-optimization
 status: DONE
 started: "2026-07-12 19:14"
-updated: "2026-07-12 21:23"
+updated: "2026-07-12 22:45"
 summary: "Optimize the highest-latency vector kernels in measured order, preserving selectable variants and recording correctness and hardware-cycle results."
 log:
   - time: "2026-07-12 19:14"
@@ -50,6 +50,8 @@ log:
     entry: "Promoted identical-slot traversal for elmul_layout_fused and silu_layout_fused. ELMUL improved 56.0% (1,155,876,972 to 508,495,338 cycles); SiLU improved 12.8% (584,739,293 to 509,626,917). Both padded-row edge shapes passed."
   - time: "2026-07-12 21:23"
     entry: "Promoted packed_pair detile_output and packed4 tile_input_a. Primary cycles improved 50.6% and 51.0%, respectively; odd-N, odd-K, and pad-row edge cases passed. Completed the requested ordered vector-kernel pass and preserved every baseline/rejected variant for review."
+  - time: "2026-07-12 22:45"
+    entry: "Added OPTIMIZATIONS.md with a per-kernel explanation of the original bottleneck, selected transformation, rejected experiments, cycle results, edge handling, and cross-cutting optimization lessons."
 pitfalls:
   - "The partial latency database contains inconsistent host latency values; compare FPGA cycles within the same binary, app, variant, and argument shape."
   - "Changing a Make variable does not by itself guarantee an existing kernel binary was built from that variant; verify the selected source and build flag stamps."

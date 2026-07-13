@@ -11,23 +11,27 @@ fpga_bins:
   default: improve_th16_tcol32_hwexp_dcache
 
   by_backend:
-    fpint_gemm_improve: improve_tcol32
+    fpint_gemm_improve: improve_th16_tcol32_hwexp_dcache
 
   by_app:
     fpint_gemm_ffn_hw: improve_th16_tcol32_hwexp_dcache
-    fpint_gemm_ffn_hw_naive: naive_gemm_simd_th16_tcol32
-    rms_norm_layout_fused: naive_gemm_simd_th16_tcol32
-    rope_layout_fused: naive_gemm_simd_th16_tcol32
-    softmax_layout_fused: naive_gemm_simd_th16_tcol32
-    silu_layout_fused: naive_gemm_simd_th16_tcol32
-    eladd_layout_fused: naive_gemm_simd_th16_tcol32
-    elmul_layout_fused: naive_gemm_simd_th16_tcol32
-    kv_cache_quant_w4a16: naive_gemm_simd_th16_tcol32
-    kv_cache_quant_layout_fused_w4a16: naive_gemm_simd_th16_tcol32
-    tile_weight_w4a16: naive_gemm_simd_th16_tcol32
-    tile_scale_zp_w4a16: naive_gemm_simd_th16_tcol32
-    detile_output: naive_gemm_simd_th16_tcol32
-    head_concat_layout_fused: naive_gemm_simd_th16_tcol32
+    fpint_gemm_ffn_hw_naive: naive_gemm_simd_th16_tcol32_hwexp_dcache
+    rms_norm_layout_fused: naive_gemm_simd_th16_tcol32_hwexp_dcache
+    rope_layout_fused: naive_gemm_simd_th16_tcol32_hwexp_dcache
+    softmax_layout_fused: naive_gemm_simd_th16_tcol32_hwexp_dcache
+    hadamard: naive_gemm_simd_th16_tcol32_hwexp_dcache
+    silu: naive_gemm_simd_th16_tcol32_hwexp_dcache
+    elmul: naive_gemm_simd_th16_tcol32_hwexp_dcache
+    tile_input_a: naive_gemm_simd_th16_tcol32_hwexp_dcache
+    silu_layout_fused: naive_gemm_simd_th16_tcol32_hwexp_dcache
+    eladd_layout_fused: naive_gemm_simd_th16_tcol32_hwexp_dcache
+    elmul_layout_fused: naive_gemm_simd_th16_tcol32_hwexp_dcache
+    kv_cache_quant_w4a16: naive_gemm_simd_th16_tcol32_hwexp_dcache
+    kv_cache_quant_layout_fused_w4a16: naive_gemm_simd_th16_tcol32_hwexp_dcache
+    tile_weight_w4a16: naive_gemm_simd_th16_tcol32_hwexp_dcache
+    tile_scale_zp_w4a16: naive_gemm_simd_th16_tcol32_hwexp_dcache
+    detile_output: naive_gemm_simd_th16_tcol32_hwexp_dcache
+    head_concat_layout_fused: naive_gemm_simd_th16_tcol32_hwexp_dcache
 
 workloads:
   - id: llama3_8b_generation_C4_fused
