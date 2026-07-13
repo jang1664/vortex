@@ -94,6 +94,11 @@ int main(int argc, char *argv[]) {
   std::vector<data_t> h_in(size);
   initialize_input(h_in);
 
+  vx_bench::LatencyPowerMeasurement latency_power(bench);
+  if (!latency_power.prestart()) {
+    return -1;
+  }
+
   RT_CHECK(vx_dev_open(&device));
 
   uint64_t num_cores, num_warps, num_threads;
@@ -137,8 +142,7 @@ int main(int argc, char *argv[]) {
   vx_bench::Stats stats;
   double first_latency_us = 0.0;
   vx_bench::IterationPerf first_iter_perf;
-  vx_bench::LatencyPowerMeasurement latency_power(bench);
-  if (!latency_power.start()) {
+  if (!latency_power.begin_latency_window()) {
     cleanup();
     return -1;
   }

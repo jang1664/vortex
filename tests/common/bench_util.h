@@ -1169,8 +1169,18 @@ public:
     }
 
     bool start() {
+        return prestart() && begin_latency_window();
+    }
+
+    // Fork the sampler before opening XRT; inherited BO mappings break later
+    // device-write/host-rewrite synchronization on hardware.
+    bool prestart() {
         if (!power_enabled(args_) || !latency_enabled(args_)) {
             return true;
+        }
+        if (active_) {
+            std::fprintf(msg_, "[power] ERROR: latency sampler already active\n");
+            return false;
         }
 
         reset_power_capture_files(args_);
@@ -1192,7 +1202,6 @@ public:
 
         Args latency_args = args_;
         latency_args.power_interval = args_.power_latency_interval;
-        args_.power_latency_run_start_s = epoch_seconds();
         if (!sampler_.start(latency_args, msg_)) {
             return false;
         }
@@ -1205,14 +1214,37 @@ public:
         return true;
     }
 
+    // This only marks the measured interval and never creates a process.
+    bool begin_latency_window() {
+        if (!active_) {
+            return true;
+        }
+        if (window_started_) {
+            std::fprintf(msg_, "[power] ERROR: latency window already active\n");
+            return false;
+        }
+        args_.power_latency_run_start_s = epoch_seconds();
+        window_started_ = true;
+        std::fprintf(msg_, "[power] stage=latency_window_start\n");
+        std::fflush(msg_);
+        return true;
+    }
+
     bool finish(const StatsSummary& latency, const IterationPerf& perf) {
         if (!active_) {
             return true;
+        }
+        if (!window_started_) {
+            std::fprintf(msg_, "[power] ERROR: latency window was not started\n");
+            sampler_.stop();
+            active_ = false;
+            return false;
         }
 
         args_.power_latency_run_end_s = epoch_seconds();
         sampler_.stop();
         active_ = false;
+        window_started_ = false;
         args_.power_latency_sampled = true;
         args_.power_latency_samples = latency.n;
         args_.power_latency_min_us = latency.min;
@@ -1235,6 +1267,7 @@ private:
     FILE* msg_;
     PowerSampler sampler_;
     bool active_ = false;
+    bool window_started_ = false;
 };
 
 inline IterationPerf dump_iteration_perf(vx_device_h device,

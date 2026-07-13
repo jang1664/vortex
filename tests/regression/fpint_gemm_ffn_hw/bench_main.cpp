@@ -529,6 +529,11 @@ int main(int argc, char *argv[]) {
     printf("\n");
   }
 
+  vx_bench::LatencyPowerMeasurement latency_power(bench);
+  if (!latency_power.prestart()) {
+    return -1;
+  }
+
   RT_CHECK(vx_dev_open(&device));
 
   uint64_t num_cores = 0, num_warps = 0, num_threads = 0;
@@ -612,8 +617,7 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_copy_to_dev(args_buffer, &kargs, 0, sizeof(kargs)));
   double first_latency_us = 0.0;
   vx_bench::IterationPerf first_iter_perf;
-  vx_bench::LatencyPowerMeasurement latency_power(bench);
-  if (!latency_power.start()) {
+  if (!latency_power.begin_latency_window()) {
     cleanup();
     return -1;
   }

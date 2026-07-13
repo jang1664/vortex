@@ -68,6 +68,11 @@ int main(int argc, char *argv[]) {
   std::vector<fp16_t> h_scales(qparam_elems, float_to_fp16(0.125f));
   std::vector<int16_t> h_zeros(qparam_elems, 3);
 
+  vx_bench::LatencyPowerMeasurement latency_power(bench);
+  if (!latency_power.prestart()) {
+    return -1;
+  }
+
   RT_CHECK(vx_dev_open(&device));
   RT_CHECK(vx_upload_kernel_file(device, "kernel.vxbin", &krnl_buffer));
   RT_CHECK(vx_mem_alloc(device, packed_bytes, VX_MEM_READ, &src_buffer));
@@ -120,8 +125,7 @@ int main(int argc, char *argv[]) {
   vx_bench::Stats stats;
   double first_latency_us = 0.0;
   vx_bench::IterationPerf first_iter_perf;
-  vx_bench::LatencyPowerMeasurement latency_power(bench);
-  if (!latency_power.start()) {
+  if (!latency_power.begin_latency_window()) {
     cleanup();
     return -1;
   }

@@ -217,6 +217,11 @@ int main(int argc, char** argv) {
     h_src[i] = uint16_t(i & 0xffff);
   }
 
+  vx_bench::LatencyPowerMeasurement latency_power(bench);
+  if (!latency_power.prestart()) {
+    return -1;
+  }
+
   RT_CHECK(vx_dev_open(&device));
   RT_CHECK(vx_upload_kernel_file(device, "kernel.vxbin", &kernel_bin));
   RT_CHECK(vx_mem_alloc(device, src_elems * sizeof(uint16_t), VX_MEM_READ, &src_buf));
@@ -277,8 +282,7 @@ int main(int argc, char** argv) {
   vx_bench::Stats stats;
   double first_latency_us = 0.0;
   vx_bench::IterationPerf first_iter_perf;
-  vx_bench::LatencyPowerMeasurement latency_power(bench);
-  if (!latency_power.start()) {
+  if (!latency_power.begin_latency_window()) {
     cleanup();
     return -1;
   }

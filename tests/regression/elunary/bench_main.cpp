@@ -101,6 +101,11 @@ int main(int argc, char *argv[]) {
   else if (cur.needs_positive) initialize_random(h_in, 0.1f, 4.0f);
   else                         initialize_random(h_in, -2.0f, 2.0f);
 
+  vx_bench::LatencyPowerMeasurement latency_power(bench);
+  if (!latency_power.prestart()) {
+    return -1;
+  }
+
   RT_CHECK(vx_dev_open(&device));
 
   uint64_t num_cores, num_warps, num_threads;
@@ -141,8 +146,7 @@ int main(int argc, char *argv[]) {
   vx_bench::Stats stats;
   double first_latency_us = 0.0;
   vx_bench::IterationPerf first_iter_perf;
-  vx_bench::LatencyPowerMeasurement latency_power(bench);
-  if (!latency_power.start()) {
+  if (!latency_power.begin_latency_window()) {
     cleanup();
     return -1;
   }

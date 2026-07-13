@@ -134,8 +134,22 @@ class BenchPowerOptionsTest(unittest.TestCase):
             rel = bench_path.relative_to(REPO_ROOT)
             if "vx_bench::LatencyPowerMeasurement latency_power(bench)" not in text:
                 missing.append(f"{rel}: missing latency power session")
-            if "latency_power.start()" not in text:
-                missing.append(f"{rel}: missing latency sampler start")
+            if "latency_power.start()" in text:
+                missing.append(f"{rel}: legacy sampler start may fork after XRT open")
+            if "latency_power.prestart()" not in text:
+                missing.append(f"{rel}: missing pre-XRT latency sampler start")
+                continue
+            if "latency_power.begin_latency_window()" not in text:
+                missing.append(f"{rel}: missing latency window start")
+                continue
+            prestart = text.index("latency_power.prestart()")
+            device_open = text.index("vx_dev_open(&device)")
+            window_start = text.index("latency_power.begin_latency_window()")
+            if not prestart < device_open < window_start:
+                missing.append(
+                    f"{rel}: latency sampler must prestart before XRT open "
+                    "and begin its window afterward"
+                )
             if "latency_power.finish(stats.summary(), first_iter_perf)" not in text:
                 missing.append(f"{rel}: missing latency sampler finish")
 
