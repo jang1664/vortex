@@ -1,0 +1,18 @@
+task: fpint-scale-group-offset-fix
+state: DONE
+spec: fpint-scale-group-offset-fix-spec.md
+iterations:
+  - iteration: 1
+    test: gemm_node_improve/scale_group_offset
+    status: pass
+    error_summary: none
+    root_cause: QCOL LMEM scale and zero-point addresses omitted the K quant-group offset.
+    fix_applied: Added g0 and g0_n row offsets to current and next QCOL scale/ZP addresses.
+    lesson: Group-invariant qparam vectors can mask K-group address reuse; verify with group-dependent data.
+  - iteration: 2
+    test: xrt-vcs/fpint_gemm_ffn_hw
+    status: pass
+    error_summary: none
+    root_cause: Confirmed fixed; group-dependent QCOL output now matches all 16384 reference elements.
+    fix_applied: No additional change after iteration 1.
+    lesson: Fresh simv rebuild is required because the xrt-vcs Makefile does not track RTL source dependencies.

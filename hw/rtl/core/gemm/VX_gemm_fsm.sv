@@ -1050,8 +1050,12 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     // Scale/ZP slice base
     if (!job_q.qdir) begin
       // QCOL: [nb][groups_per_kt][MXU_NT], shared across kb.
-      lmem_sc_mxu = scbuf_base(buf_cur) + 64'(nt_mxu_q) * 64'(scale_nb_stride);
-      lmem_zp_mxu = zpbuf_base(buf_cur) + 64'(nt_mxu_q) * 64'(scale_nb_stride);
+      lmem_sc_mxu = scbuf_base(buf_cur)
+                  + 64'(nt_mxu_q) * 64'(scale_nb_stride)
+                  + 64'(g0) * 64'(MXU_NT * FP16_BYTES);
+      lmem_zp_mxu = zpbuf_base(buf_cur)
+                  + 64'(nt_mxu_q) * 64'(scale_nb_stride)
+                  + 64'(g0) * 64'(MXU_NT * INT16_BYTES);
     end else begin
       // QROW: [nb][KT][ng_per_mxu_nt], differs per (nb, kb).
       lmem_sc_mxu = scbuf_base(buf_cur)
@@ -1076,8 +1080,12 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
                     + 64'(n_kt_mxu) * 64'(w_seg_bytes);
 
     if (!job_q.qdir) begin
-      lmem_sc_mxu_next = scbuf_base(buf_cur) + 64'(n_nt_mxu) * 64'(scale_nb_stride);
-      lmem_zp_mxu_next = zpbuf_base(buf_cur) + 64'(n_nt_mxu) * 64'(scale_nb_stride);
+      lmem_sc_mxu_next = scbuf_base(buf_cur)
+                       + 64'(n_nt_mxu) * 64'(scale_nb_stride)
+                       + 64'(g0_n) * 64'(MXU_NT * FP16_BYTES);
+      lmem_zp_mxu_next = zpbuf_base(buf_cur)
+                       + 64'(n_nt_mxu) * 64'(scale_nb_stride)
+                       + 64'(g0_n) * 64'(MXU_NT * INT16_BYTES);
     end else begin
       lmem_sc_mxu_next = scbuf_base(buf_cur)
                        + 64'(n_nt_mxu) * 64'(scale_nb_stride)
