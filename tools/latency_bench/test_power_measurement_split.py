@@ -77,6 +77,45 @@ class PowerMeasurementSplitTest(unittest.TestCase):
             self.assertAlmostEqual(27.3, float(row["pcie_power_w"]), places=6)
             self.assertAlmostEqual(38.418, float(row["total_power_w"]), places=6)
 
+    def test_sampler_stops_and_marks_truncated_csv_at_size_limit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            hwmon = tmp_path / "hwmon0"
+            hwmon.mkdir()
+            (hwmon / "name").write_text("fake_xilinx_u55c\n")
+            write_sensor(hwmon, "in", 9, "VCC INT", 855)
+            write_sensor(hwmon, "curr", 3, "VCC INT Current", 10000)
+            write_sensor(hwmon, "in", 18, "VCC INT BRAM", 856)
+            write_sensor(hwmon, "curr", 5, "VCC 0V85 Current", 3000)
+            write_sensor(hwmon, "in", 0, "12V PEX", 12000)
+            write_sensor(hwmon, "curr", 1, "12V PEX Current", 2000)
+            write_sensor(hwmon, "in", 2, "3V3 PEX", 3300)
+            write_sensor(hwmon, "curr", 4, "3V3 PEX Current", 1000)
+
+            out_csv = tmp_path / "power.csv"
+            env = os.environ.copy()
+            env.update({"XRT_DEVICE_INDEX": "0", "FPGA_0_HWMON": str(hwmon)})
+            result = subprocess.run(
+                [
+                    str(REPO_ROOT / "ci" / "measure_power.sh"),
+                    "0",
+                    "0.01",
+                    str(out_csv),
+                    "1",
+                ],
+                cwd=REPO_ROOT,
+                env=env,
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=2,
+            )
+
+            self.assertEqual(0, result.returncode)
+            self.assertTrue(Path(f"{out_csv}.truncated").exists())
+            self.assertIn("stopping sampler", result.stderr)
+
     def test_power_summary_parser_reads_split_power_fields(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             summary = Path(tmp) / "power.summary.csv"
@@ -106,6 +145,20 @@ class PowerMeasurementSplitTest(unittest.TestCase):
             self.assertEqual(25.0, power["power_pcie_avg_w"])
             self.assertEqual(7.0, power["power_dynamic_avg_w"])
             self.assertEqual(0.95, power["power_dynamic_stderr_w"])
+
+    def test_power_summary_parser_reads_capture_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            summary = Path(tmp) / "power.summary.csv"
+            summary.write_text(
+                "label,mode,phase,samples,elapsed_s,run_min_w,run_avg_w,run_max_w,"
+                "power_source,power_raw_truncated\n"
+                "eladd,latency,run,100,101.0,30.0,31.0,32.0,latency,1\n"
+            )
+
+            power = read_power_summary(summary)
+
+            self.assertEqual("latency", power["power_source"])
+            self.assertEqual(1, power["power_raw_truncated"])
 
 
 if __name__ == "__main__":

@@ -60,7 +60,7 @@ while [[ $# -gt 0 ]]; do
       pass_args+=("$1")
       shift
       ;;
-    --power-min-run-sec|--power-max-run-sec|--power-max-iterations|--power-target-samples|--power-min-interval|--power-max-interval)
+    --power-min-run-sec|--power-max-run-sec|--power-max-iterations|--power-target-samples|--power-latency-interval|--power-min-interval|--power-max-interval)
       if [[ $# -lt 2 ]]; then
         echo "Error: $1 requires a value" >&2
         usage
@@ -69,7 +69,7 @@ while [[ $# -gt 0 ]]; do
       pass_args+=("$1" "$2")
       shift 2
       ;;
-    --power-min-run-sec=*|--power-max-run-sec=*|--power-max-iterations=*|--power-target-samples=*|--power-min-interval=*|--power-max-interval=*)
+    --power-min-run-sec=*|--power-max-run-sec=*|--power-max-iterations=*|--power-target-samples=*|--power-latency-interval=*|--power-min-interval=*|--power-max-interval=*)
       pass_args+=("$1")
       shift
       ;;

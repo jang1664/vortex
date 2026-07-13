@@ -194,6 +194,7 @@ aliases:
             self.assertIn("--power-max-run-sec=60.0", script)
             self.assertIn("--power-max-iterations=1024", script)
             self.assertIn("--power-target-samples=100", script)
+            self.assertIn("--power-latency-interval=1.0", script)
             self.assertIn("--power-min-interval=0.01", script)
             self.assertIn("--power-max-interval=1.0", script)
             self.assertIn("--power-min-samples 5", script)
@@ -304,6 +305,8 @@ aliases:
             self.assertNotIn("--power-auto-duration=on", script)
             self.assertNotIn("--power-min-run-sec=", script)
             self.assertNotIn("--power-max-iterations=", script)
+            self.assertIn("--power-target-samples=100", script)
+            self.assertIn("--power-latency-interval=1.0", script)
             manifest = json.loads((run_dir / "manifest.json").read_text())
             self.assertFalse(manifest["power_auto_duration"])
 
@@ -548,7 +551,10 @@ aliases:
             self.assertIn("attempt_status.csv", script)
             self.assertIn("latency_bench_power_failure_reason", script)
             self.assertIn("LATENCY_BENCH_RETRYABLE_FAILURES=0", script)
-            self.assertIn('[[ "$failure_reason" == "timeout" || "$failure_reason" == "power_samples_low" ]]', script)
+            self.assertIn(
+                '[[ "$failure_reason" == "timeout" || "$failure_reason" == "power_samples_low" || ( "$failure_reason" == "xrt_device_open" && "$reset_rc" == "0" ) ]]',
+                script,
+            )
             self.assertNotIn("LATENCY_BENCH_TIMEOUT_FAILURES", script)
             manifest = json.loads((run_dir / "manifest.json").read_text())
             self.assertTrue(manifest["retry"])

@@ -94,6 +94,8 @@ def read_power_summary(path: Path | str | None) -> dict[str, Any]:
         ("power_kernel_iterations", ("power_kernel_iterations",), _parse_int_field),
         ("power_kernel_iterations_auto", ("power_kernel_iterations_auto",), _parse_int_field),
         ("power_target_sec", ("power_target_sec",), _parse_float_field),
+        ("power_source", ("power_source",), str),
+        ("power_raw_truncated", ("power_raw_truncated",), _parse_int_field),
     )
     for output_key, input_keys, parser in optional_fields:
         value = ""

@@ -344,6 +344,11 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_upload_bytes(device, &kargs, sizeof(kargs), &args_buffer));
   double first_latency_us = 0.0;
   vx_bench::IterationPerf first_iter_perf;
+  vx_bench::LatencyPowerMeasurement latency_power(bench);
+  if (!latency_power.start()) {
+    cleanup();
+    return -1;
+  }
 
   auto check_kernel_status = [&](const char* phase, int iter) -> bool {
     RT_CHECK(vx_copy_from_dev(&kargs, args_buffer, 0, sizeof(kargs)));
@@ -408,6 +413,11 @@ int main(int argc, char *argv[]) {
     if (i == 0)
       first_iter_perf = iter_perf;
     printf("iteration %0d/%0d, elapsed:%f\n", i+1, bench.iterations, stats.last()); fflush(stdout);
+  }
+
+  if (!latency_power.finish(stats.summary(), first_iter_perf)) {
+    cleanup();
+    return -1;
   }
 
   stats.report("fpint_gemm_ffn_hw", bench);

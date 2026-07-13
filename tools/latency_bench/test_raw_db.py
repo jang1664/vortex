@@ -165,6 +165,24 @@ printf 'ok\n' > "$log_file"
         )
         blackbox.chmod(0o755)
 
+    def _write_failing_xrt_device_blackbox(self, build_dir: Path) -> None:
+        (build_dir / "ci").mkdir(parents=True)
+        blackbox = build_dir / "ci" / "blackbox.sh"
+        blackbox.write_text(
+            """#!/usr/bin/env bash
+set -euo pipefail
+for arg in "$@"; do
+  if [[ "$arg" == "--build-only" ]]; then
+    printf 'build ok\n'
+    exit 0
+  fi
+done
+printf 'Could not open device\n'
+exit 2
+"""
+        )
+        blackbox.chmod(0o755)
+
     def _write_flaky_timeout_blackbox(self, build_dir: Path) -> None:
         (build_dir / "ci").mkdir(parents=True)
         blackbox = build_dir / "ci" / "blackbox.sh"
@@ -672,7 +690,6 @@ esac
                         fpga_bin_label="program_bin",
                         out_dir=out_root,
                         platform=suite.defaults.platform,
-                        xrt_device_index=0,
                         blackbox_args=(),
                         srun=False,
                         run_id="program_run",
@@ -740,6 +757,7 @@ esac
                         fpga_bin_label="program_bin",
                         out_dir=out_root,
                         platform=suite.defaults.platform,
+                        xrt_device_index=0,
                         blackbox_args=(),
                         srun=False,
                         run_id="program_run",
@@ -962,6 +980,84 @@ exit 0
             self.assertIn("failed to open cu context", log_text)
             self.assertEqual("reset -d 0000:2a:00.1", reset_log.read_text().strip())
             self.assertFalse(srun_log.exists())
+
+    def test_xrt_device_open_reset_failure_is_recorded_without_outer_retry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            build_dir = tmp_path / "build"
+            self._write_failing_xrt_device_blackbox(build_dir)
+            fpga_bin_dir = tmp_path / "fpga_bin"
+            self._write_fake_fpga_bin(fpga_bin_dir)
+            reset_log = tmp_path / "reset.log"
+            srun_log = tmp_path / "srun.log"
+            fake_bin = tmp_path / "bin"
+            self._write_fake_reset_tools(fake_bin, reset_log, srun_log)
+            xrt_smi = fake_bin / "xrt-smi"
+            xrt_smi.write_text(
+                f"""#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$*" == *examine* ]]; then
+  printf 'Device [0000:2a:00.1]\n'
+  exit 0
+fi
+cat >/dev/null
+printf '%s\n' "$*" >> {reset_log}
+exit 2
+"""
+            )
+            xrt_smi.chmod(0o755)
+            bash_env = tmp_path / "bash_env.sh"
+            bash_env.write_text("sleep() { :; }\n")
+
+            suite = BenchSuite(
+                name="device_open_fail_suite",
+                defaults=BenchDefaults(warmup=1, iterations=1, blackbox_timeout="5m"),
+                cases=[BenchCase(case_id="device_fail", app="fpint_gemm_ffn_hw", args="")],
+            )
+            out_root = tmp_path / "latency_db"
+            old_env = {
+                key: os.environ.get(key)
+                for key in ("PATH", "BASH_ENV", "SLURM_JOB_ID")
+            }
+            os.environ["PATH"] = f"{fake_bin}{os.pathsep}{old_env['PATH'] or ''}"
+            os.environ["BASH_ENV"] = str(bash_env)
+            os.environ["SLURM_JOB_ID"] = "test_job"
+            try:
+                rc = run_suite(
+                    suite,
+                    RunOptions(
+                        build_dir=build_dir,
+                        fpga_bin_dir=fpga_bin_dir,
+                        fpga_bin_label="device_fail_bin",
+                        out_dir=out_root,
+                        platform=suite.defaults.platform,
+                        xrt_device_index=0,
+                        blackbox_args=(),
+                        blackbox_timeout=suite.defaults.blackbox_timeout,
+                        srun=False,
+                        program_fpga=False,
+                        measure_power=False,
+                        run_id="device_fail_run",
+                        retry=True,
+                        retry_reset_wait="0",
+                    ),
+                )
+            finally:
+                for key, value in old_env.items():
+                    if value is None:
+                        os.environ.pop(key, None)
+                    else:
+                        os.environ[key] = value
+
+            self.assertEqual(0, rc)
+            with (out_root / "raw_db.csv").open(newline="") as fp:
+                rows = list(csv.DictReader(fp))
+            self.assertEqual(1, len(rows))
+            self.assertEqual("xrt_device_open", rows[0]["failure_reason"])
+            with (out_root / "runs" / "device_fail_run" / "attempt_status.csv").open(newline="") as fp:
+                attempts = list(csv.DictReader(fp))
+            self.assertEqual(1, len(attempts))
+            self.assertEqual("2", attempts[0]["reset_rc"])
 
     def test_retry_timeout_resets_fpga_and_keeps_final_success(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

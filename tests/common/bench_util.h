@@ -32,6 +32,9 @@
 #include <fcntl.h>
 #include <limits>
 #include <signal.h>
+#ifdef __linux__
+#include <sys/prctl.h>
+#endif
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -79,8 +82,23 @@ struct Args {
     double      power_max_run_sec = 60.0;
     int         power_max_iterations = 1024;
     int         power_target_samples = 100;
+    double      power_latency_interval = 1.0;
     double      power_min_interval = 0.05;
     double      power_max_interval = 1.0;
+    bool        power_latency_sampled = false;
+    double      power_latency_idle_start_s = 0.0;
+    double      power_latency_idle_end_s = 0.0;
+    double      power_latency_run_start_s = 0.0;
+    double      power_latency_run_end_s = 0.0;
+    size_t      power_latency_samples = 0;
+    double      power_latency_min_us = 0.0;
+    double      power_latency_avg_us = 0.0;
+    double      power_latency_max_us = 0.0;
+    double      power_latency_p50_us = 0.0;
+    double      power_latency_p95_us = 0.0;
+    bool        power_latency_has_fpga_cycle = false;
+    uint64_t    power_latency_fpga_cycle = 0;
+    int         power_latency_kernel_iterations = 1;
     bool        parse_error = false;
     std::string parse_error_message;
 };
@@ -483,6 +501,11 @@ inline Args parse(int& argc, char** argv) {
         } else if (std::strcmp(s, "--power-target-samples") == 0) {
             const char* value = nullptr;
             if (read_next_value(r, argc, argv, "--power-target-samples", &value, a)) a.power_target_samples = std::atoi(value);
+        } else if (std::strncmp(s, "--power-latency-interval=", 25) == 0) {
+            a.power_latency_interval = std::atof(s + 25);
+        } else if (std::strcmp(s, "--power-latency-interval") == 0) {
+            const char* value = nullptr;
+            if (read_next_value(r, argc, argv, "--power-latency-interval", &value, a)) a.power_latency_interval = std::atof(value);
         } else if (std::strncmp(s, "--power-min-interval=", 21) == 0) {
             a.power_min_interval = std::atof(s + 21);
         } else if (std::strcmp(s, "--power-min-interval") == 0) {
@@ -518,6 +541,7 @@ inline Args parse(int& argc, char** argv) {
     if (a.power_max_run_sec < a.power_min_run_sec) a.power_max_run_sec = a.power_min_run_sec;
     if (a.power_max_iterations < 0) a.power_max_iterations = 0;
     if (a.power_target_samples < 1) a.power_target_samples = 1;
+    if (a.power_latency_interval <= 0.0) a.power_latency_interval = 1.0;
     if (a.power_min_interval <= 0.0) a.power_min_interval = 0.05;
     if (a.power_max_interval <= 0.0) a.power_max_interval = a.power_min_interval;
     if (a.power_max_interval < a.power_min_interval) a.power_max_interval = a.power_min_interval;
@@ -701,6 +725,7 @@ public:
         std::snprintf(max_bytes, sizeof(max_bytes), "%llu",
                       static_cast<unsigned long long>(args.power_csv_max_bytes));
 
+        const pid_t parent_pid = ::getpid();
         pid_t child = ::fork();
         if (child < 0) {
             std::fprintf(err, "[power] ERROR: fork failed: %s\n", std::strerror(errno));
@@ -710,6 +735,11 @@ public:
 
         if (child == 0) {
             ::setpgid(0, 0);
+#ifdef __linux__
+            if (::prctl(PR_SET_PDEATHSIG, SIGTERM) != 0 || ::getppid() != parent_pid) {
+                _exit(126);
+            }
+#endif
             ::dup2(log_fd, STDOUT_FILENO);
             ::dup2(log_fd, STDERR_FILENO);
             ::close(log_fd);
@@ -964,7 +994,8 @@ inline bool write_power_summary(const char* label,
         "run_pcie_min_w,run_pcie_avg_w,run_pcie_max_w,"
         "delta_avg_w,delta_peak_w,dynamic_stderr_w,energy_j,"
         "power_latency,power_fpga_cycle,power_kernel_iterations,"
-        "power_kernel_iterations_auto,power_target_sec,raw_csv\n");
+        "power_kernel_iterations_auto,power_target_sec,power_source,"
+        "power_raw_truncated,raw_csv\n");
 
     const PowerStats idle_stats = read_power_stats(args.power_csv, idle.start_s, idle.end_s, "total_power_w");
     const PowerStats idle_vcc_stats = read_power_stats(args.power_csv, idle.start_s, idle.end_s, "vcc_power_w");
@@ -991,7 +1022,7 @@ inline bool write_power_summary(const char* label,
             "%.6f,%.6f,%.6f,"
             "%.6f,%.6f,%.6f,"
             "%.6f,%.6f,%.6f,%.6f,"
-            "%.3f,%.3f,%d,%d,%.6f,%s\n",
+            "%.3f,%.3f,%d,%d,%.6f,%s,%d,%s\n",
             label,
             run.mode.c_str(),
             run.phase.c_str(),
@@ -1021,6 +1052,8 @@ inline bool write_power_summary(const char* label,
             args.power_kernel_iterations,
             args.power_kernel_iterations_auto ? 1 : 0,
             args.power_target_sec,
+            run.mode.c_str(),
+            ::access((args.power_csv + ".truncated").c_str(), F_OK) == 0 ? 1 : 0,
             args.power_csv.c_str());
     }
 
@@ -1114,6 +1147,94 @@ inline bool should_dump_iteration_perf(const Args& args) {
 struct IterationPerf {
     bool has_fpga_cycle = false;
     uint64_t fpga_cycle = 0;
+};
+
+inline std::string power_truncation_marker(const Args& args) {
+    return args.power_csv + ".truncated";
+}
+
+inline void reset_power_capture_files(const Args& args) {
+    std::remove(args.power_csv.c_str());
+    const std::string marker = power_truncation_marker(args);
+    std::remove(marker.c_str());
+}
+
+class LatencyPowerMeasurement {
+public:
+    explicit LatencyPowerMeasurement(Args& args, FILE* msg = stderr)
+        : args_(args), msg_(msg) {}
+
+    ~LatencyPowerMeasurement() {
+        sampler_.stop();
+    }
+
+    bool start() {
+        if (!power_enabled(args_) || !latency_enabled(args_)) {
+            return true;
+        }
+
+        reset_power_capture_files(args_);
+
+        Args idle_args = args_;
+        idle_args.power_interval = args_.power_interval;
+        if (!sampler_.start(idle_args, msg_)) {
+            return false;
+        }
+        std::fprintf(msg_,
+            "[power] stage=latency_idle_begin duration_s=%.3f interval=%.6g\n",
+            args_.power_idle_sec,
+            idle_args.power_interval);
+        std::fflush(msg_);
+        args_.power_latency_idle_start_s = epoch_seconds();
+        sleep_seconds(args_.power_idle_sec);
+        args_.power_latency_idle_end_s = epoch_seconds();
+        sampler_.stop();
+
+        Args latency_args = args_;
+        latency_args.power_interval = args_.power_latency_interval;
+        args_.power_latency_run_start_s = epoch_seconds();
+        if (!sampler_.start(latency_args, msg_)) {
+            return false;
+        }
+        active_ = true;
+        std::fprintf(msg_,
+            "[power] stage=latency_sampler_start interval=%.6g target_samples=%d\n",
+            latency_args.power_interval,
+            args_.power_target_samples);
+        std::fflush(msg_);
+        return true;
+    }
+
+    bool finish(const StatsSummary& latency, const IterationPerf& perf) {
+        if (!active_) {
+            return true;
+        }
+
+        args_.power_latency_run_end_s = epoch_seconds();
+        sampler_.stop();
+        active_ = false;
+        args_.power_latency_sampled = true;
+        args_.power_latency_samples = latency.n;
+        args_.power_latency_min_us = latency.min;
+        args_.power_latency_avg_us = latency.avg;
+        args_.power_latency_max_us = latency.max;
+        args_.power_latency_p50_us = latency.p50;
+        args_.power_latency_p95_us = latency.p95;
+        args_.power_latency_has_fpga_cycle = perf.has_fpga_cycle;
+        args_.power_latency_fpga_cycle = perf.fpga_cycle;
+        args_.power_latency_kernel_iterations = args_.power_kernel_iterations;
+        std::fprintf(msg_,
+            "[power] stage=latency_sampler_stop elapsed_s=%.6f\n",
+            args_.power_latency_run_end_s - args_.power_latency_run_start_s);
+        std::fflush(msg_);
+        return true;
+    }
+
+private:
+    Args& args_;
+    FILE* msg_;
+    PowerSampler sampler_;
+    bool active_ = false;
 };
 
 inline IterationPerf dump_iteration_perf(vx_device_h device,
@@ -1212,23 +1333,97 @@ inline bool run_power_measurement_impl(const char* label,
         return true;
     }
 
+    if (args.power_latency_sampled) {
+        const PowerStats captured = read_power_stats(
+            args.power_csv,
+            args.power_latency_run_start_s,
+            args.power_latency_run_end_s,
+            "total_power_w");
+        std::fprintf(msg,
+            "[power] stage=latency_sample_check label=%s samples=%zu target_samples=%d "
+            "elapsed_s=%.6f truncated=%s\n",
+            label,
+            captured.samples,
+            args.power_target_samples,
+            captured.elapsed_s,
+            ::access(power_truncation_marker(args).c_str(), F_OK) == 0 ? "yes" : "no");
+        std::fflush(msg);
+
+        if (captured.samples >= static_cast<size_t>(args.power_target_samples)) {
+            PowerPhase idle_phase;
+            idle_phase.mode = "idle";
+            idle_phase.phase = "idle";
+            idle_phase.start_s = args.power_latency_idle_start_s;
+            idle_phase.end_s = args.power_latency_idle_end_s;
+
+            PowerPhase latency_phase;
+            latency_phase.mode = "latency";
+            latency_phase.phase = "run";
+            latency_phase.start_s = args.power_latency_run_start_s;
+            latency_phase.end_s = args.power_latency_run_end_s;
+            latency_phase.has_latency = args.power_latency_samples > 0;
+            latency_phase.latency.n = args.power_latency_samples;
+            latency_phase.latency.min = args.power_latency_min_us;
+            latency_phase.latency.avg = args.power_latency_avg_us;
+            latency_phase.latency.max = args.power_latency_max_us;
+            latency_phase.latency.p50 = args.power_latency_p50_us;
+            latency_phase.latency.p95 = args.power_latency_p95_us;
+            if (args.power_latency_has_fpga_cycle) {
+                latency_phase.fpga_cycles.push_back(args.power_latency_fpga_cycle);
+            }
+
+            Args summary_args = args;
+            summary_args.power_kernel_iterations = args.power_latency_kernel_iterations;
+            summary_args.power_kernel_iterations_auto = false;
+            std::fprintf(msg,
+                "[power] stage=separate_skip label=%s reason=latency_samples_sufficient\n",
+                label);
+            std::fflush(msg);
+            return write_power_summary(
+                label, summary_args, idle_phase, {latency_phase}, msg);
+        }
+
+        std::fprintf(msg,
+            "[power] stage=separate_fallback label=%s reason=latency_samples_low "
+            "samples=%zu target_samples=%d\n",
+            label,
+            captured.samples,
+            args.power_target_samples);
+        std::fflush(msg);
+    }
+
+    reset_power_capture_files(args);
     Args power_args = args;
     if (args.power_auto_duration) {
-        std::fprintf(msg, "[power] stage=auto_duration_calibration_begin label=%s\n", label);
-        std::fflush(msg);
-        Stopwatch sw;
-        sw.start();
-        if (!run_once("power_calibrate", 0)) {
-            std::fprintf(msg, "[power] stage=auto_duration_calibration_failed label=%s\n", label);
+        double calibration_us = 0.0;
+        if (args.power_latency_sampled && args.power_latency_avg_us > 0.0) {
+            calibration_us = args.power_latency_avg_us
+                * static_cast<double>(std::max(1, args.power_kernel_iterations));
+            std::fprintf(msg,
+                "[power] stage=auto_duration_calibration_reuse label=%s "
+                "latency_avg_us=%.3f kernel_iterations=%d estimated_us=%.3f\n",
+                label,
+                args.power_latency_avg_us,
+                args.power_kernel_iterations,
+                calibration_us);
             std::fflush(msg);
-            return false;
+        } else {
+            std::fprintf(msg, "[power] stage=auto_duration_calibration_begin label=%s\n", label);
+            std::fflush(msg);
+            Stopwatch sw;
+            sw.start();
+            if (!run_once("power_calibrate", 0)) {
+                std::fprintf(msg, "[power] stage=auto_duration_calibration_failed label=%s\n", label);
+                std::fflush(msg);
+                return false;
+            }
+            calibration_us = sw.stop_us();
+            std::fprintf(msg,
+                "[power] stage=auto_duration_calibration_end label=%s calibration_us=%.3f\n",
+                label,
+                calibration_us);
+            std::fflush(msg);
         }
-        const double calibration_us = sw.stop_us();
-        std::fprintf(msg,
-            "[power] stage=auto_duration_calibration_end label=%s calibration_us=%.3f\n",
-            label,
-            calibration_us);
-        std::fflush(msg);
         power_args = plan_power_measurement_args(args, calibration_us, label, msg);
     }
 

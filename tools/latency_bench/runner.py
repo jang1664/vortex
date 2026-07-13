@@ -118,6 +118,7 @@ class RunOptions:
     power_max_run_sec: float = 60.0
     power_max_iterations: int = DEFAULT_POWER_MAX_ITERATIONS
     power_target_samples: int = 100
+    power_latency_interval: float = 1.0
     power_min_interval: float = 0.05
     power_max_interval: float = 1.0
     power_min_samples: int = DEFAULT_POWER_MIN_SAMPLES
@@ -171,6 +172,10 @@ def validate_inputs(options: RunOptions) -> None:
         raise ValueError("--power-target-sec must be > 0")
     if options.power_fpga_freq_mhz <= 0:
         raise ValueError("--power-fpga-freq-mhz must be > 0")
+    if options.measure_power and options.power_target_samples < 1:
+        raise ValueError("--power-target-samples must be >= 1")
+    if options.measure_power and options.power_latency_interval <= 0:
+        raise ValueError("--power-latency-interval must be > 0")
     if options.measure_power and options.power_auto_duration:
         if options.power_min_run_sec < 0:
             raise ValueError("--power-min-run-sec must be >= 0")
@@ -180,8 +185,6 @@ def validate_inputs(options: RunOptions) -> None:
             raise ValueError("--power-max-run-sec must be >= --power-min-run-sec")
         if options.power_max_iterations < 0:
             raise ValueError("--power-max-iterations must be >= 0")
-        if options.power_target_samples < 1:
-            raise ValueError("--power-target-samples must be >= 1")
         if options.power_min_interval <= 0:
             raise ValueError("--power-min-interval must be > 0")
         if options.power_max_interval < options.power_min_interval:
@@ -889,6 +892,8 @@ def write_run_script(
                 "--power=separate",
                 f"--power-csv={unit.power_csv}",
                 f"--power-summary={unit.power_summary}",
+                f"--power-target-samples={options.power_target_samples}",
+                f"--power-latency-interval={options.power_latency_interval}",
             ])
             if options.power_auto_duration:
                 bench_arg_parts.extend([
@@ -896,7 +901,6 @@ def write_run_script(
                     f"--power-min-run-sec={options.power_min_run_sec}",
                     f"--power-max-run-sec={options.power_max_run_sec}",
                     f"--power-max-iterations={options.power_max_iterations}",
-                    f"--power-target-samples={options.power_target_samples}",
                     f"--power-min-interval={options.power_min_interval}",
                     f"--power-max-interval={options.power_max_interval}",
                 ])
@@ -990,12 +994,18 @@ def write_run_script(
                 f"| tee -a {_q(unit.log_file)} \"$attempt_log\""
             ),
             f"    if [[ \"$rc\" == \"124\" || \"$rc\" == \"137\" ]]; then latency_bench_cleanup_timeout {_q(unit.raw_csv)} {_q(unit.log_file)}; fi",
-            "    if [[ \"$rc\" != \"0\" && -f \"$attempt_log\" ]] && grep -q 'failed to open cu context' \"$attempt_log\" && [[ \"$attempt\" -lt \"$max_attempts\" ]]; then",
+            "    xrt_open_failure=\"\"",
+            "    if [[ \"$rc\" != \"0\" && -f \"$attempt_log\" ]]; then",
+            "      if grep -q 'failed to open cu context' \"$attempt_log\"; then xrt_open_failure=\"xrt_context_open\"; fi",
+            "      if grep -q 'Could not open device' \"$attempt_log\"; then xrt_open_failure=\"xrt_device_open\"; fi",
+            "    fi",
+            "    if [[ -n \"$xrt_open_failure\" && \"$attempt\" -lt \"$max_attempts\" ]]; then",
             "      delay_s=$(latency_bench_retry_delay_s \"$attempt\")",
-            f"      printf '[latency-bench] xrt_context_open retry %d/%d after %ss\\n' \"$attempt\" \"$max_attempts\" \"$delay_s\" | tee -a {_q(unit.log_file)} \"$attempt_log\"",
-            f"      if latency_bench_reset_fpga {_q(unit.log_file)}; then :; else :; fi",
+            f"      printf '[latency-bench] %s retry %d/%d after reset and %ss\\n' \"$xrt_open_failure\" \"$attempt\" \"$max_attempts\" \"$delay_s\" | tee -a {_q(unit.log_file)} \"$attempt_log\"",
+            f"      if latency_bench_reset_fpga {_q(unit.log_file)}; then reset_ok=1; else reset_ok=0; fi",
             "      reset_ran=\"1\"",
             "      reset_rc=\"$LATENCY_BENCH_LAST_RESET_RC\"",
+            "      if [[ \"$reset_ok\" != \"1\" ]]; then break; fi",
             "      sleep \"$delay_s\"",
             "      attempt=$((attempt + 1))",
             "      continue",
@@ -1013,7 +1023,7 @@ def write_run_script(
             "    if [[ -n \"$power_failure_reason\" ]]; then failure_reason=\"$power_failure_reason\"; fi",
             "  fi",
             "fi",
-            "if [[ \"$LATENCY_BENCH_RETRY_ENABLED\" == \"1\" && \"$failure_reason\" == \"timeout\" ]]; then",
+            "if [[ \"$LATENCY_BENCH_RETRY_ENABLED\" == \"1\" && ( \"$failure_reason\" == \"timeout\" || \"$failure_reason\" == \"xrt_device_open\" ) ]]; then",
             f"  if latency_bench_reset_fpga {_q(unit.log_file)}; then :; else :; fi",
             "  reset_ran=\"1\"",
             "  reset_rc=\"$LATENCY_BENCH_LAST_RESET_RC\"",
@@ -1101,7 +1111,7 @@ def write_run_script(
             'if [[ "$failure_reason" == "timeout" ]]; then',
             "  LATENCY_BENCH_TIMEOUT_RETRIES=$((LATENCY_BENCH_TIMEOUT_RETRIES + 1))",
             "fi",
-            'if [[ "$failure_reason" == "timeout" || "$failure_reason" == "power_samples_low" ]]; then',
+            'if [[ "$failure_reason" == "timeout" || "$failure_reason" == "power_samples_low" || ( "$failure_reason" == "xrt_device_open" && "$reset_rc" == "0" ) ]]; then',
             "  LATENCY_BENCH_RETRYABLE_FAILURES=$((LATENCY_BENCH_RETRYABLE_FAILURES + 1))",
             f"  LATENCY_BENCH_NEXT_SHOULD_RUN[{_q(unit.exec_key)}]=1",
             "fi",
@@ -1217,6 +1227,7 @@ def run_suite(suite: BenchSuite, options: RunOptions) -> int:
         "power_max_run_sec": run_options.power_max_run_sec,
         "power_max_iterations": run_options.power_max_iterations,
         "power_target_samples": run_options.power_target_samples,
+        "power_latency_interval": run_options.power_latency_interval,
         "power_min_interval": run_options.power_min_interval,
         "power_max_interval": run_options.power_max_interval,
         "power_min_samples": run_options.power_min_samples,

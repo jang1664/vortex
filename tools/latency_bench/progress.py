@@ -68,6 +68,8 @@ PROGRESS_COLUMNS = [
     "power_kernel_iterations",
     "power_kernel_iterations_auto",
     "power_target_sec",
+    "power_source",
+    "power_raw_truncated",
     "power_parse_error",
 ]
 
@@ -225,6 +227,8 @@ def append_progress_execution(
         "power_kernel_iterations": power.get("power_kernel_iterations", ""),
         "power_kernel_iterations_auto": power.get("power_kernel_iterations_auto", ""),
         "power_target_sec": power.get("power_target_sec", ""),
+        "power_source": power.get("power_source", ""),
+        "power_raw_truncated": power.get("power_raw_truncated", ""),
         "power_parse_error": power.get("power_parse_error", ""),
     }
 
@@ -251,7 +255,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--failure-reason",
         default="",
-        choices=["", "build", "timeout", "xrt_context_open", "run", "parse_error", "power_samples_low"],
+        choices=["", "build", "timeout", "xrt_context_open", "xrt_device_open", "run", "parse_error", "power_samples_low"],
         help="Specific failure reason, if known.",
     )
     parser.add_argument("--elapsed-wall-s", required=True, help="Wall-clock seconds for the blackbox invocation.")

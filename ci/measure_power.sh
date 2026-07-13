@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+trap 'exit 0' TERM INT
 
 # Usage:
 #   ./measure_power.sh [fpga_id|auto] [interval_sec] [out_csv] [max_bytes]
@@ -156,7 +157,12 @@ append_row_if_room() {
   next_size=$((cur_size + row_size))
   if (( next_size <= MAX_BYTES )); then
     printf "%s\n" "$row" | tee -a "$OUT"
+    return
   fi
+
+  : > "${OUT}.truncated"
+  echo "Power CSV reached ${MAX_BYTES} bytes; stopping sampler and marking ${OUT}.truncated" >&2
+  exit 0
 }
 
 while true; do

@@ -39,12 +39,13 @@ class RunnerRetryScriptTest(unittest.TestCase):
 
     def test_xrt_context_retry_resets_before_continue(self) -> None:
         runner = Path(__file__).with_name("runner.py").read_text()
-        retry_log = "xrt_context_open retry"
-        start = runner.index(retry_log)
+        start = runner.index('"    xrt_open_failure=')
         continue_pos = runner.index('"      continue",', start)
         reset_pos = runner.index("latency_bench_reset_fpga", start)
 
         self.assertLess(reset_pos, continue_pos)
+        self.assertIn("Could not open device", runner[start:continue_pos])
+        self.assertIn("xrt_device_open", runner[start:continue_pos])
 
     def test_power_samples_low_is_retryable(self) -> None:
         runner = Path(__file__).with_name("runner.py").read_text()
@@ -53,9 +54,12 @@ class RunnerRetryScriptTest(unittest.TestCase):
         self.assertIn("power_samples_low", runner)
         self.assertIn("LATENCY_BENCH_RETRYABLE_FAILURES", runner)
         self.assertIn(
-            '[[ "$failure_reason" == "timeout" || "$failure_reason" == "power_samples_low" ]]',
+            '[[ "$failure_reason" == "timeout" || "$failure_reason" == "power_samples_low" || ( "$failure_reason" == "xrt_device_open" && "$reset_rc" == "0" ) ]]',
             runner,
         )
+        choice_prefix = 'choices=["", "build", "timeout", "xrt_context_open", "xrt_device_open"'
+        for filename in ("raw_db.py", "progress.py", "append_raw.py"):
+            self.assertIn(choice_prefix, Path(__file__).with_name(filename).read_text())
         self.assertNotIn("LATENCY_BENCH_TIMEOUT_FAILURES", runner)
 
     def test_xrt_detector_falls_back_to_single_global_bdf(self) -> None:

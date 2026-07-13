@@ -80,6 +80,7 @@ class BenchPowerOptionsTest(unittest.TestCase):
             "parse_data_clk_mhz_from_xclbin_info": "missing DATA_CLK parser",
             "resolve_power_fpga_freq_mhz": "missing DATA_CLK resolver",
             "fpga_cycle": "auto iterations must use FPGA cycle snapshot",
+            "PR_SET_PDEATHSIG": "sampler must terminate when the benchmark parent dies",
         }
         missing = [message for token, message in required.items() if token not in text]
 
@@ -93,6 +94,7 @@ class BenchPowerOptionsTest(unittest.TestCase):
             "--power-target-sec=": 19,
             "--power-fpga-freq-mhz=": 22,
             "--power-xclbin-info=": 20,
+            "--power-latency-interval=": 25,
         }
         missing: list[str] = []
 
@@ -120,6 +122,22 @@ class BenchPowerOptionsTest(unittest.TestCase):
                 missing.append(f"{rel}: must not use begin/end FPGA cycle delta")
             if "vx_bench::prepare_power_kernel_iterations" not in text:
                 missing.append(f"{rel}: missing shared auto iteration helper")
+
+        self.assertEqual([], missing)
+
+    def test_active_power_benches_capture_power_during_latency(self) -> None:
+        missing: list[str] = []
+
+        for app_dir in active_regression_bench_dirs():
+            bench_path = app_dir / "bench_main.cpp"
+            text = bench_path.read_text()
+            rel = bench_path.relative_to(REPO_ROOT)
+            if "vx_bench::LatencyPowerMeasurement latency_power(bench)" not in text:
+                missing.append(f"{rel}: missing latency power session")
+            if "latency_power.start()" not in text:
+                missing.append(f"{rel}: missing latency sampler start")
+            if "latency_power.finish(stats.summary(), first_iter_perf)" not in text:
+                missing.append(f"{rel}: missing latency sampler finish")
 
         self.assertEqual([], missing)
 

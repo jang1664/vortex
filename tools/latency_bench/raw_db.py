@@ -73,6 +73,8 @@ RAW_DB_COLUMNS = [
     "power_kernel_iterations",
     "power_kernel_iterations_auto",
     "power_target_sec",
+    "power_source",
+    "power_raw_truncated",
     "power_parse_error",
     "log_file",
     "elapsed_wall_s",
@@ -411,6 +413,8 @@ def append_raw_execution(
             "power_kernel_iterations": power.get("power_kernel_iterations", ""),
             "power_kernel_iterations_auto": power.get("power_kernel_iterations_auto", ""),
             "power_target_sec": power.get("power_target_sec", ""),
+            "power_source": power.get("power_source", ""),
+            "power_raw_truncated": power.get("power_raw_truncated", ""),
             "power_parse_error": power.get("power_parse_error", ""),
             "log_file": str(log_file),
             "elapsed_wall_s": elapsed_wall_s,
@@ -448,7 +452,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--failure-reason",
         default="",
-        choices=["", "build", "timeout", "xrt_context_open", "run", "parse_error", "power_samples_low"],
+        choices=["", "build", "timeout", "xrt_context_open", "xrt_device_open", "run", "parse_error", "power_samples_low"],
         help="Specific failure reason, if known.",
     )
     parser.add_argument("--raw-csv", required=True, type=Path, help="Raw per-execution benchmark CSV.")

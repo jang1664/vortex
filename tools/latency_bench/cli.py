@@ -135,7 +135,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--power-target-samples",
         type=int,
         default=100,
-        help="Target raw power samples per kernel when power auto-duration is enabled.",
+        help="Target raw power samples required before the separate power phase can be skipped.",
+    )
+    run.add_argument(
+        "--power-latency-interval",
+        type=float,
+        default=1.0,
+        help="Power sampling interval in seconds during normal latency measurement.",
     )
     run.add_argument(
         "--power-max-iterations",
@@ -669,6 +675,7 @@ def run_cmd(args: argparse.Namespace) -> int:
         power_max_run_sec=args.power_max_run_sec,
         power_max_iterations=args.power_max_iterations,
         power_target_samples=args.power_target_samples,
+        power_latency_interval=args.power_latency_interval,
         power_min_interval=args.power_min_interval,
         power_max_interval=args.power_max_interval,
         power_min_samples=args.power_min_samples,
