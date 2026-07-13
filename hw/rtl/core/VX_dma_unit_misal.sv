@@ -948,6 +948,46 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
                          | (direction_bit_r && dcache_bus_if.req_valid && !dcache_bus_if.req_ready
                             && dcache_bus_if.req_data.rw);
 
+  reg g2l_rd_beat_q;
+  reg l2g_wr_beat_q;
+  reg dma_is_active_q;
+  reg dma_xfer_done_q;
+  reg dma_stall_dcache_q;
+  reg dma_stall_lmem_q;
+  reg perf_src_rd_req_fire_q,   perf_src_rd_req_stall_q;
+  reg perf_src_rd_data_fire_q,  perf_src_rd_data_stall_q;
+  reg perf_dst_wr_fire_q,       perf_dst_wr_stall_q;
+
+  always_ff @(posedge clk) begin
+    if (reset) begin
+      g2l_rd_beat_q            <= 1'b0;
+      l2g_wr_beat_q            <= 1'b0;
+      dma_is_active_q          <= 1'b0;
+      dma_xfer_done_q          <= 1'b0;
+      dma_stall_dcache_q       <= 1'b0;
+      dma_stall_lmem_q         <= 1'b0;
+      perf_src_rd_req_fire_q   <= 1'b0;
+      perf_src_rd_req_stall_q  <= 1'b0;
+      perf_src_rd_data_fire_q  <= 1'b0;
+      perf_src_rd_data_stall_q <= 1'b0;
+      perf_dst_wr_fire_q       <= 1'b0;
+      perf_dst_wr_stall_q      <= 1'b0;
+    end else begin
+      g2l_rd_beat_q            <= g2l_rd_beat;
+      l2g_wr_beat_q            <= l2g_wr_beat;
+      dma_is_active_q          <= dma_is_active;
+      dma_xfer_done_q          <= dma_xfer_done;
+      dma_stall_dcache_q       <= dma_stall_dcache;
+      dma_stall_lmem_q         <= dma_stall_lmem;
+      perf_src_rd_req_fire_q   <= perf_src_rd_req_fire;
+      perf_src_rd_req_stall_q  <= perf_src_rd_req_stall;
+      perf_src_rd_data_fire_q  <= perf_src_rd_data_fire;
+      perf_src_rd_data_stall_q <= perf_src_rd_data_stall;
+      perf_dst_wr_fire_q       <= perf_dst_wr_fire;
+      perf_dst_wr_stall_q      <= perf_dst_wr_stall;
+    end
+  end
+
   always_ff @(posedge clk) begin
     if (reset) begin
       perf_rd_bytes_r <= '0;
@@ -963,29 +1003,29 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
       perf_dst_wr_fire_r <= '0;
       perf_dst_wr_stall_r <= '0;
     end else begin
-      if (g2l_rd_beat)
+      if (g2l_rd_beat_q)
         perf_rd_bytes_r <= perf_rd_bytes_r + PERF_CTR_BITS'(DCACHE_BYTES);
-      if (l2g_wr_beat)
+      if (l2g_wr_beat_q)
         perf_wr_bytes_r <= perf_wr_bytes_r + PERF_CTR_BITS'(DCACHE_BYTES);
-      if (dma_xfer_done)
+      if (dma_xfer_done_q)
         perf_xfers_r <= perf_xfers_r + PERF_CTR_BITS'(1);
-      if (dma_is_active)
+      if (dma_is_active_q)
         perf_active_r <= perf_active_r + PERF_CTR_BITS'(1);
-      if (dma_stall_dcache)
+      if (dma_stall_dcache_q)
         perf_wait_dcache_r <= perf_wait_dcache_r + PERF_CTR_BITS'(1);
-      if (dma_stall_lmem)
+      if (dma_stall_lmem_q)
         perf_wait_lmem_r <= perf_wait_lmem_r + PERF_CTR_BITS'(1);
-      if (perf_src_rd_req_fire)
+      if (perf_src_rd_req_fire_q)
         perf_src_rd_req_fire_r <= perf_src_rd_req_fire_r + PERF_CTR_BITS'(1);
-      if (perf_src_rd_req_stall)
+      if (perf_src_rd_req_stall_q)
         perf_src_rd_req_stall_r <= perf_src_rd_req_stall_r + PERF_CTR_BITS'(1);
-      if (perf_src_rd_data_fire)
+      if (perf_src_rd_data_fire_q)
         perf_src_rd_data_fire_r <= perf_src_rd_data_fire_r + PERF_CTR_BITS'(1);
-      if (perf_src_rd_data_stall)
+      if (perf_src_rd_data_stall_q)
         perf_src_rd_data_stall_r <= perf_src_rd_data_stall_r + PERF_CTR_BITS'(1);
-      if (perf_dst_wr_fire)
+      if (perf_dst_wr_fire_q)
         perf_dst_wr_fire_r <= perf_dst_wr_fire_r + PERF_CTR_BITS'(1);
-      if (perf_dst_wr_stall)
+      if (perf_dst_wr_stall_q)
         perf_dst_wr_stall_r <= perf_dst_wr_stall_r + PERF_CTR_BITS'(1);
     end
   end

@@ -163,6 +163,11 @@ module tb_VX_dma_node import VX_gpu_pkg::*; #(
     .TAG_WIDTH (DMA_LMEM_TAG_WIDTH)
   ) l_arb_out_if[1]();
 
+`ifdef PERF_ENABLE
+  dma_perf_t perf;
+  dma_perf_t perf_expected;
+`endif
+
   `ASSIGN_VX_MEM_BUS_IF(l_arb_in_if[0], dma_to_arb_lmem_if);
   `ASSIGN_VX_MEM_BUS_IF(l_arb_in_if[1], bg_local_if);
 
@@ -181,7 +186,44 @@ module tb_VX_dma_node import VX_gpu_pkg::*; #(
     .mmio_if      (mmio_if),
     .dcache_bus_if(dma_dcache_if),
     .lmem_bus_if  (dma_lmem_if_array)
+`ifdef PERF_ENABLE
+    ,.perf        (perf)
+`endif
   );
+
+`ifdef PERF_ENABLE
+  always_ff @(posedge clk) begin
+    if (reset) begin
+      perf_expected <= '0;
+    end else begin
+      perf_expected.busy <= 1'b0;
+      if (dut.u_dma_unit.g_misaligned.u_impl.g2l_rd_beat)
+        perf_expected.rd_bytes <= perf_expected.rd_bytes + PERF_CTR_BITS'(DCACHE_BYTES);
+      if (dut.u_dma_unit.g_misaligned.u_impl.l2g_wr_beat)
+        perf_expected.wr_bytes <= perf_expected.wr_bytes + PERF_CTR_BITS'(DCACHE_BYTES);
+      if (dut.u_dma_unit.g_misaligned.u_impl.dma_xfer_done)
+        perf_expected.xfer_count <= perf_expected.xfer_count + PERF_CTR_BITS'(1);
+      if (dut.u_dma_unit.g_misaligned.u_impl.dma_is_active)
+        perf_expected.active_cycles <= perf_expected.active_cycles + PERF_CTR_BITS'(1);
+      if (dut.u_dma_unit.g_misaligned.u_impl.perf_src_rd_req_fire)
+        perf_expected.src_rd_req_fire <= perf_expected.src_rd_req_fire + PERF_CTR_BITS'(1);
+      if (dut.u_dma_unit.g_misaligned.u_impl.perf_src_rd_req_stall)
+        perf_expected.src_rd_req_stall <= perf_expected.src_rd_req_stall + PERF_CTR_BITS'(1);
+      if (dut.u_dma_unit.g_misaligned.u_impl.perf_src_rd_data_fire)
+        perf_expected.src_rd_data_fire <= perf_expected.src_rd_data_fire + PERF_CTR_BITS'(1);
+      if (dut.u_dma_unit.g_misaligned.u_impl.perf_src_rd_data_stall)
+        perf_expected.src_rd_data_stall <= perf_expected.src_rd_data_stall + PERF_CTR_BITS'(1);
+      if (dut.u_dma_unit.g_misaligned.u_impl.perf_dst_wr_fire)
+        perf_expected.dst_wr_fire <= perf_expected.dst_wr_fire + PERF_CTR_BITS'(1);
+      if (dut.u_dma_unit.g_misaligned.u_impl.perf_dst_wr_stall)
+        perf_expected.dst_wr_stall <= perf_expected.dst_wr_stall + PERF_CTR_BITS'(1);
+      if (dut.u_dma_unit.g_misaligned.u_impl.dma_stall_dcache)
+        perf_expected.wait_dcache <= perf_expected.wait_dcache + PERF_CTR_BITS'(1);
+      if (dut.u_dma_unit.g_misaligned.u_impl.dma_stall_lmem)
+        perf_expected.wait_lmem <= perf_expected.wait_lmem + PERF_CTR_BITS'(1);
+    end
+  end
+`endif
 
   `ASSIGN_VX_MEM_BUS_IF(dma_lmem_if, dma_lmem_if_array[0]);
 
@@ -1254,10 +1296,17 @@ module tb_VX_dma_node import VX_gpu_pkg::*; #(
       run_roundtrip_case("smoke_global_read_content", 3, 1'b0, 1'b0, 1'b1);
       run_misaligned_sweep_case();
 
+`ifdef PERF_ENABLE
+      repeat (2) @(posedge clk);
+      if (perf !== perf_expected)
+        $fatal(1, "PERF counters mismatch: expected=%h actual=%h", perf_expected, perf);
+`endif
+
       print_summary();
 
       if (case_pass_count != case_total_count)
         $fatal(1, "Smoke failed: pass=%0d total=%0d", case_pass_count, case_total_count);
+      $display("TEST PASSED");
     end
   endtask
 

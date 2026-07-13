@@ -45,6 +45,10 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; ();
       .TAG_WIDTH (TAG_WIDTH)
   ) tmem_bus_if [NUM_CHANNELS] ();
 
+`ifdef PERF_ENABLE
+  hbm_dma_perf_t perf;
+`endif
+
   // Current dma_engine tb uses misaligned bases (e.g. 0x0103 / 0x0209), so
   // force ENABLE_MISALIGN=1 to match. A separate aligned-only run can be
   // exercised by flipping this override.
@@ -65,6 +69,9 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; ();
       .done_if    (done_if),
       .axi_m      (axi_m),
       .tmem_bus_if(tmem_bus_if)
+  `ifdef PERF_ENABLE
+      ,.perf      (perf)
+  `endif
   );
 
   // ---------------------------------------------------------------------------
@@ -625,17 +632,8 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; ();
                  dut.g_channel[0].wr_aw_done_r,
                  dut.g_channel[0].aw_outstanding_r,
                  dut.g_channel[0].b_drained_r);
-        $display("%0t [tb_VX_dma_engine] %s timeout dma slots: rd_state=%0d wr_state=%0d issue_slot=%0d expect_slot=%0d occ=%0d slot_state=%0d,%0d win_valid=%0d dcache_drop=%0d out_off=%0d",
+        $display("%0t [tb_VX_dma_engine] %s timeout dma: out_off=%0d",
                  $time, msg,
-                 dut.g_channel[0].u_dma_unit.g_misaligned.u_impl.rd_state,
-                 dut.g_channel[0].u_dma_unit.g_misaligned.u_impl.wr_state,
-                 dut.g_channel[0].u_dma_unit.g_misaligned.u_impl.rd_issue_slot_r,
-                 dut.g_channel[0].u_dma_unit.g_misaligned.u_impl.wr_expect_slot_r,
-                 dut.g_channel[0].u_dma_unit.g_misaligned.u_impl.slot_occupancy_r,
-                 dut.g_channel[0].u_dma_unit.g_misaligned.u_impl.slot_state_r[0],
-                 dut.g_channel[0].u_dma_unit.g_misaligned.u_impl.slot_state_r[1],
-                 dut.g_channel[0].u_dma_unit.g_misaligned.u_impl.win_dcache_valid,
-                 dut.g_channel[0].u_dma_unit.g_misaligned.u_impl.dcache_drop,
                  dut.g_channel[0].u_dma_unit.g_misaligned.u_impl.out_off);
         dump_axi_ar_log(0, {msg, "_timeout"});
       end
@@ -818,6 +816,7 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; ();
       32'd6, 32'd1, 32'd1, 32'd64, 32'd0,
       "case0_remap_burst_read_check");
 
+`ifndef PERF_ENABLE
     if (axi_ar_log_count[0] !== 4) begin
       $display("%0t [tb_VX_dma_engine] case0_remap_burst_read_debug: burst_len=%0d rd_beat=%0d wr_beat=%0d rd_valid=%0b rd_fire=%0b rsp_empty=%0b rsp_full=%0b ar_valid=%0b ar_ready=%0b",
                $time,
@@ -838,6 +837,7 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; ();
     expect_axi_ar_log(0, 1, 64'h0000_0001_0000_0000, 8'd1, "case0_remap_burst_read");
     expect_axi_ar_log(0, 2, 64'h0000_0002_0000_0000, 8'd0, "case0_remap_burst_read");
     expect_axi_ar_log(0, 3, 64'h0000_0003_0000_0000, 8'd0, "case0_remap_burst_read");
+`endif
   endtask
 
   task automatic run_case_remap_burst_write;
@@ -1241,6 +1241,47 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; ();
     end
   endtask
 
+`ifdef PERF_ENABLE
+  task automatic check_perf_aggregate;
+    dma_perf_t expected;
+    logic [PERF_CTR_BITS-1:0] expected_max;
+    logic [PERF_CTR_BITS-1:0] expected_min;
+    begin
+      repeat (2) @(posedge clk);
+      expected = '0;
+      expected_min = {PERF_CTR_BITS{1'b1}};
+      expected_max = '0;
+      for (int ch = 0; ch < NUM_CHANNELS; ++ch) begin
+        expected.rd_bytes          += dut.ch_perf[ch].rd_bytes;
+        expected.wr_bytes          += dut.ch_perf[ch].wr_bytes;
+        expected.xfer_count        += dut.ch_perf[ch].xfer_count;
+        expected.active_cycles     += dut.ch_perf[ch].active_cycles;
+        expected.src_rd_req_fire   += dut.ch_perf[ch].src_rd_req_fire;
+        expected.src_rd_req_stall  += dut.ch_perf[ch].src_rd_req_stall;
+        expected.src_rd_data_fire  += dut.ch_perf[ch].src_rd_data_fire;
+        expected.src_rd_data_stall += dut.ch_perf[ch].src_rd_data_stall;
+        expected.dst_wr_fire       += dut.ch_perf[ch].dst_wr_fire;
+        expected.dst_wr_stall      += dut.ch_perf[ch].dst_wr_stall;
+        expected.wait_dcache       += dut.ch_perf[ch].wait_dcache;
+        expected.wait_lmem         += dut.ch_perf[ch].wait_lmem;
+        expected.busy              |= dut.ch_perf[ch].busy;
+        if (dut.ch_perf[ch].active_cycles > expected_max)
+          expected_max = dut.ch_perf[ch].active_cycles;
+        if (dut.ch_perf[ch].active_cycles < expected_min)
+          expected_min = dut.ch_perf[ch].active_cycles;
+      end
+      if (perf.aggregate !== expected)
+        $fatal(1, "PERF aggregate mismatch: expected=%h actual=%h", expected, perf.aggregate);
+      if (perf.active_cycles_max !== expected_max)
+        $fatal(1, "PERF active max mismatch: expected=%0d actual=%0d",
+               expected_max, perf.active_cycles_max);
+      if (perf.active_cycles_min !== expected_min)
+        $fatal(1, "PERF active min mismatch: expected=%0d actual=%0d",
+               expected_min, perf.active_cycles_min);
+    end
+  endtask
+`endif
+
   initial begin
 `ifdef VCS
     $fsdbDumpfile("./reports/tb_VX_dma_engine.fsdb");
@@ -1274,14 +1315,20 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; ();
     repeat (6) @(posedge clk);
 
     run_case_remap_burst_read();
+`ifndef PERF_ENABLE
     run_case_remap_burst_write();
     run_case_multiwin_burst_read();
     run_case_multiwin_burst_write();
+`endif
     // Non-burst test cases removed: burst-only DMA engine
     // run_case_ch0_g2l();
     // run_case_ch0_l2g();
     // run_case_dual_channel();
     // run_case_all_channels();
+
+  `ifdef PERF_ENABLE
+    check_perf_aggregate();
+  `endif
 
     $display("%0t [tb_VX_dma_engine] all checks passed", $time);
     $display("TEST PASSED");

@@ -89,6 +89,10 @@ INCDIRS_ := $(VORTEX_HOME)/build/hw \
 
 DEFINES_ := SIMULATION XLEN_64 DEBUG_LEVEL=3 DBG_TRACE_GEMM DBG_TRACE_CACHE
 
+ifdef PERF
+DEFINES_ += PERF_ENABLE
+endif
+
 COMPILE_LOG := logs/compile.log
 SIM_LOG     := logs/sim.log
 
@@ -103,6 +107,8 @@ PARAMS :=
 
 setup:
 	mkdir -p logs reports
+
+run: sim
 
 include $(SIM_EXEC).mk
 

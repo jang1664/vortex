@@ -575,27 +575,37 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
 
 `ifdef PERF_ENABLE
     // --------------------------------------------------------
-    // Per-channel sum (combinational) of every dma_perf_t field.
-    //   busy is OR-reduced: aggregate is busy if any channel is busy.
+    // Per-channel counter aggregation. Each sum uses a balanced reduction
+    // tree and is registered to keep the channel counters off the CSR path.
+    // Busy remains combinational so overlap edge semantics are unchanged.
     // --------------------------------------------------------
-    always_comb begin
-        perf.aggregate = '0;
-        for (int c = 0; c < NUM_CHANNELS; c++) begin
-            perf.aggregate.rd_bytes          += ch_perf[c].rd_bytes;
-            perf.aggregate.wr_bytes          += ch_perf[c].wr_bytes;
-            perf.aggregate.xfer_count        += ch_perf[c].xfer_count;
-            perf.aggregate.active_cycles     += ch_perf[c].active_cycles;
-            perf.aggregate.src_rd_req_fire   += ch_perf[c].src_rd_req_fire;
-            perf.aggregate.src_rd_req_stall  += ch_perf[c].src_rd_req_stall;
-            perf.aggregate.src_rd_data_fire  += ch_perf[c].src_rd_data_fire;
-            perf.aggregate.src_rd_data_stall += ch_perf[c].src_rd_data_stall;
-            perf.aggregate.dst_wr_fire       += ch_perf[c].dst_wr_fire;
-            perf.aggregate.dst_wr_stall      += ch_perf[c].dst_wr_stall;
-            perf.aggregate.wait_dcache       += ch_perf[c].wait_dcache;
-            perf.aggregate.wait_lmem         += ch_perf[c].wait_lmem;
-            perf.aggregate.busy              |= ch_perf[c].busy;
-        end
+    `PERF_COUNTER_ADD (perf.aggregate, ch_perf, rd_bytes,          PERF_CTR_BITS, NUM_CHANNELS, 1)
+    `PERF_COUNTER_ADD (perf.aggregate, ch_perf, wr_bytes,          PERF_CTR_BITS, NUM_CHANNELS, 1)
+    `PERF_COUNTER_ADD (perf.aggregate, ch_perf, xfer_count,        PERF_CTR_BITS, NUM_CHANNELS, 1)
+    `PERF_COUNTER_ADD (perf.aggregate, ch_perf, active_cycles,     PERF_CTR_BITS, NUM_CHANNELS, 1)
+    `PERF_COUNTER_ADD (perf.aggregate, ch_perf, src_rd_req_fire,   PERF_CTR_BITS, NUM_CHANNELS, 1)
+    `PERF_COUNTER_ADD (perf.aggregate, ch_perf, src_rd_req_stall,  PERF_CTR_BITS, NUM_CHANNELS, 1)
+    `PERF_COUNTER_ADD (perf.aggregate, ch_perf, src_rd_data_fire,  PERF_CTR_BITS, NUM_CHANNELS, 1)
+    `PERF_COUNTER_ADD (perf.aggregate, ch_perf, src_rd_data_stall, PERF_CTR_BITS, NUM_CHANNELS, 1)
+    `PERF_COUNTER_ADD (perf.aggregate, ch_perf, dst_wr_fire,       PERF_CTR_BITS, NUM_CHANNELS, 1)
+    `PERF_COUNTER_ADD (perf.aggregate, ch_perf, dst_wr_stall,      PERF_CTR_BITS, NUM_CHANNELS, 1)
+    `PERF_COUNTER_ADD (perf.aggregate, ch_perf, wait_dcache,       PERF_CTR_BITS, NUM_CHANNELS, 1)
+    `PERF_COUNTER_ADD (perf.aggregate, ch_perf, wait_lmem,         PERF_CTR_BITS, NUM_CHANNELS, 1)
+
+    wire [NUM_CHANNELS-1:0] ch_busy;
+    wire aggregate_busy;
+    for (genvar c = 0; c < NUM_CHANNELS; ++c) begin : g_perf_busy
+        assign ch_busy[c] = ch_perf[c].busy;
     end
+    VX_reduce_tree #(
+        .IN_W (1),
+        .N    (NUM_CHANNELS),
+        .OP   ("|")
+    ) perf_busy_reduce (
+        .data_in  (ch_busy),
+        .data_out (aggregate_busy)
+    );
+    assign perf.aggregate.busy = aggregate_busy;
 
     // --------------------------------------------------------
     // active_cycles max/min binary-tree reduction.
@@ -606,6 +616,8 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
     localparam int MAX_STAGES = $clog2(NUM_CHANNELS);
     logic [PERF_CTR_BITS-1:0] tree_max [MAX_STAGES+1][NUM_CHANNELS];
     logic [PERF_CTR_BITS-1:0] tree_min [MAX_STAGES+1][NUM_CHANNELS];
+    logic [PERF_CTR_BITS-1:0] active_cycles_max_r;
+    logic [PERF_CTR_BITS-1:0] active_cycles_min_r;
 
     always_comb begin
         // Default: all tree cells '0 to suppress latch inference on unused upper indices.
@@ -629,9 +641,20 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
                                ? tree_min[s-1][2*i] : tree_min[s-1][2*i+1];
             end
         end
-        perf.active_cycles_max = tree_max[MAX_STAGES][0];
-        perf.active_cycles_min = tree_min[MAX_STAGES][0];
     end
+
+    always_ff @(posedge clk) begin
+        if (reset) begin
+            active_cycles_max_r <= '0;
+            active_cycles_min_r <= '0;
+        end else begin
+            active_cycles_max_r <= tree_max[MAX_STAGES][0];
+            active_cycles_min_r <= tree_min[MAX_STAGES][0];
+        end
+    end
+
+    assign perf.active_cycles_max = active_cycles_max_r;
+    assign perf.active_cycles_min = active_cycles_min_r;
 `endif
 
     `UNUSED_PARAM (AXI_USER_WIDTH)
