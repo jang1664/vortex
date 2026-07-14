@@ -278,6 +278,7 @@ module tb_vcs_xrtsim #(
 `endif
 
 `ifdef FSDB_DUMP
+`ifndef DISABLE_FSDB
   initial begin : fsdb_dump
     string fsdb_file;
     if (!$value$plusargs("fsdb_file=%s", fsdb_file)) fsdb_file = "vcs_cosim.fsdb";
@@ -285,6 +286,11 @@ module tb_vcs_xrtsim #(
     $fsdbDumpvars(0, tb_vcs_xrtsim, "+all");
     $display("[TB] FSDB dump enabled: %0s", fsdb_file);
   end
+`else
+  initial begin : fsdb_dump_disabled
+    $display("[TB] FSDB dump disabled by DISABLE_FSDB");
+  end
+`endif
 `endif
 
   // ---- Markov stall helper ----
