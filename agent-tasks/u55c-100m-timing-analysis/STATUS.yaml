@@ -1,0 +1,27 @@
+name: u55c_100m_timing_analysis
+goal: |
+  Remove the three identified RTL timing structures while preserving behavior:
+  parallelize GEMM sync updates, pipeline hardware-debug observation and flag
+  aggregation, and register aligned-DMA DCACHE requests. Verify with focused
+  unittests and four fpint_gemm_ffn_hw xrt-vcs-sim cases.
+state: complete
+created: "2026-07-10 10:46"
+children: []
+log:
+  - {ts: "2026-07-10 10:46", note: "Started analysis. The named build directory was not found under the repository parent or the first six levels of the user home; locating the implementation artifacts next."}
+  - {ts: "2026-07-10 10:52", note: "Found the implementation under build/hw/syn/xilinx/xrt. Post-route physical optimization has WNS=-0.464 ns, TNS=-405.341 ns, and 3097 failing endpoints; v++ auto-scaled the 100 MHz kernel clock to 95.5 MHz."}
+  - {ts: "2026-07-10 10:52", note: "Top-five paths collapse into three causes: three VX_gemm_sync paths from a serial five-node same-cycle update fold, one DMA-to-HW-debug path through live AXI protocol aggregation, and one DMA request/arbitration/ready-feedback path into dcache read bookkeeping."}
+  - {ts: "2026-07-10 10:52", note: "Recommended fix order: restructure/pipeline the GEMM sync update fold while preserving node0-to-node4 set/add semantics; add a registered DMA dcache request stage with issue-side bookkeeping; pipeline the HW debug AXI flag aggregation or disable ENABLE_HW_DEBUG_AXI in performance builds. No RTL, configuration, or synthesis artifact was modified."}
+  - {ts: "2026-07-10 13:58", note: "Implementation started from the confirmed plan. All verification will source configs/improve_th16_tcol32_hwexp_dcache.sh; unit tests precede four representative fpint_gemm_ffn_hw xrt-vcs-sim cases. Post-route synthesis is intentionally out of scope."}
+  - {ts: "2026-07-10 14:07", note: "Replaced the serial GEMM sync fold with a balanced update reduction that preserves node0-to-node4 SET/ADD priority. The focused VCS unittest covers simultaneous adds, mixed SET/ADD ordering, distinct registers, invalid IDs, and wraparound and passed."}
+  - {ts: "2026-07-10 14:08", note: "Registered hardware-debug CTRL/AXI events before sticky flags and added a second registered global AXI reduction stage with event-cycle tags. The focused VCS unittest covers delayed protocol and response flags plus clear behavior and passed."}
+  - {ts: "2026-07-10 14:13", note: "Added a SIZE=2 OUT_REG=1 elastic buffer to aligned-DMA DCACHE requests, split producer issue from external bus fire, and gated DONE on buffer drain. The updated dma_mem_unit VCS test applies deterministic read/write backpressure, checks stable stalled payload and no early DONE, and passed all nine G2L-to-L2G round trips."}
+  - {ts: "2026-07-10 14:14", note: "Existing gemm_ctrl VCS regression passed. The optional gemm_node_improve default M256 N1024 K256 regression compiled and ran without assertions through 351705 ns, but was stopped after more than 40 minutes before completion."}
+  - {ts: "2026-07-10 15:00", note: "fpint_gemm_ffn_hw xrt-vcs-sim passed four valid cases: M2/N32/T0/D0, M2/N32/T1/D1, M31/N64/T0/D1, and M33/N32/T1/D0, all with K128/Q32 and no hardware-debug anomalies. Planned N33/N31 cases were replaced because the app requires N to be a multiple of DMA_MXU_NT=32."}
+  - {ts: "2026-07-10 15:00", note: "Implementation and requested simulation verification are complete. U55C synthesis remains intentionally unrun, so post-route frequency improvement is not yet measured."}
+  - {ts: "2026-07-10 15:32", note: "Hardened the core misaligned DMA DCACHE request boundary with a SIZE=2 OUT_REG=1 elastic buffer, separate producer-issue and external-bus handshakes, a pending counter, and S_DCACHE_DRAIN before final L2G completion. Updated trace/performance classification to observe delayed bus handshakes by direction and rw payload."}
+  - {ts: "2026-07-10 15:32", note: "Extended dma_mem_unit_misal with deterministic DCACHE backpressure, stalled-payload stability, read/write stall coverage, and no-early-DONE checks. Configured VCS unittest passed all 2125 misalignment round-trip cases twice, including the final observability correction."}
+pitfalls:
+  - "The requested name may be an FPGA binary alias or artifact name rather than a local build-directory basename."
+  - "Vivado flattened and relocated logic into misleading hierarchy names under elastic buffers and AXI register slices; source/destination endpoints and RTL semantics are more reliable than intermediate synthesized cell hierarchy alone."
+  - "The design is globally moderate in LUT use, but SLR1 CLB occupancy is 83.30 percent and QoR reports one level-5 long-congestion region; routing accounts for 69-76 percent of the top-five data-path delays."

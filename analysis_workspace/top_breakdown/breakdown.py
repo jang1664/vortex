@@ -6,12 +6,14 @@ sub-blocks (gemm_node / mem_unit / caches / AXI infra / ...). The breakdown
 deliberately reaches inside `vortex/cluster/socket/core` since the top-level
 hierarchy is 99.6% `vortex` and not informative on its own.
 
-Run from a Python with hwexplorer installed (e.g. `conda activate stable`):
+Run from a Python with plotting dependencies installed (e.g. `conda activate stable`):
 
     python analysis_workspace/top_breakdown/breakdown.py
 
-Defaults to the NT32 synthesis run. Use `--run nt8` to regenerate the NT8
-breakdown.
+Defaults to the current synthesis run (`SYN_RUN_NAME`, or `Vortex_axi` to match
+hw/syn/synopsys/run_syn_vortex_axi.py). Use `--run nt32` for the named NT32
+run. If the exact run directory is incomplete, the newest valid dated backup
+directory is used.
 
 Outputs (under analysis_workspace/top_breakdown/<run>/):
     vortex_axi_breakdown.csv  - per-bucket area table
@@ -25,6 +27,7 @@ Outputs (under analysis_workspace/top_breakdown/<run>/):
 from __future__ import annotations
 
 import argparse
+import os
 import re
 from pathlib import Path
 
@@ -34,10 +37,18 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import pandas as pd
 
-from hwexplorer.report_parser import SynopsysDesignCompilerAreaParser
+try:
+    from hwexplorer.report_parser import SynopsysDesignCompilerAreaParser
+except Exception as exc:  # pragma: no cover - environment-dependent fallback
+    SynopsysDesignCompilerAreaParser = None
+    HWEXPLORER_IMPORT_ERROR = exc
+else:
+    HWEXPLORER_IMPORT_ERROR = None
 
 HERE = Path(__file__).resolve().parent
 VORTEX = HERE.parents[1]
+DESIGN_NAME = "Vortex_axi"
+REPORT_REL = Path("syn_topo.lpp/reports/14_Vortex_axi.mapped.area.rpt")
 
 BLUE_DARK = "#0f4c81"
 BLUE = "#2f80b7"
@@ -65,6 +76,10 @@ plt.rcParams.update({
 })
 
 RUNS = {
+    "current": {
+        "syn_dir": os.environ.get("SYN_RUN_NAME", "Vortex_axi"),
+        "title": "current",
+    },
     "nt8": {
         "syn_dir": "Vortex_axi",
         "title": "NT8",
@@ -80,18 +95,22 @@ RUNS = {
 # matched row is consumed at most once (longest/first-listed pattern wins),
 # so the order matters and the sum is double-count free.
 #
-# Bottom-up order in the stack: core internals first, then per-socket caches,
-# then per-cluster / per-chip caches, then AXI memory plumbing.
+# Bottom-up order in the stack: accelerator / core internals first, then
+# per-socket caches, then per-cluster / per-chip caches, then AXI memory
+# plumbing.
+PREFIX_TOP = rf"^(?:{DESIGN_NAME}/)?"
 PREFIX_CORE = (
-    r"^Vortex_axi/vortex/g_clusters_\d+__cluster/"
+    PREFIX_TOP
+    + r"vortex/g_clusters_\d+__cluster/"
     r"g_sockets_\d+__socket/g_cores_\d+__core"
 )
 PREFIX_GEMM_NODE = PREFIX_CORE + r"/gemm_node"
 PREFIX_TMEM = PREFIX_GEMM_NODE + r"/u_tmem_subsystem"
 PREFIX_SOCKET = (
-    r"^Vortex_axi/vortex/g_clusters_\d+__cluster/g_sockets_\d+__socket"
+    PREFIX_TOP + r"vortex/g_clusters_\d+__cluster/g_sockets_\d+__socket"
 )
-PREFIX_CLUSTER = r"^Vortex_axi/vortex/g_clusters_\d+__cluster"
+PREFIX_CLUSTER = PREFIX_TOP + r"vortex/g_clusters_\d+__cluster"
+PREFIX_EXECUTE = PREFIX_CORE + r"/execute"
 
 # `gemm_node` is split into its direct children. Inside `u_tmem_subsystem`
 # we go one level deeper to separate the tensor-mem banks (SRAM-dominated)
@@ -110,7 +129,11 @@ BREAKDOWN: list[tuple[str, list[str]]] = [
                                       PREFIX_GEMM_NODE + r"/u_job_frontend$"]),
     # --- rest of core ---
     ("memory unit",                  [PREFIX_CORE + r"/mem_unit$"]),
-    ("execute",                      [PREFIX_CORE + r"/execute$"]),
+    ("ALU unit",                     [PREFIX_EXECUTE + r"/alu_unit$"]),
+    ("LSU unit",                     [PREFIX_EXECUTE + r"/lsu_unit$"]),
+    ("FPU unit (FPNEW + HW exp)",    [PREFIX_EXECUTE + r"/fpu_unit$"]),
+    ("SFU unit",                     [PREFIX_EXECUTE + r"/sfu_unit$"]),
+    ("TCU unit",                     [PREFIX_EXECUTE + r"/tcu_unit$"]),
     ("issue",                        [PREFIX_CORE + r"/issue$"]),
     ("schedule",                     [PREFIX_CORE + r"/schedule$"]),
     ("DMA node",                     [PREFIX_CORE + r"/u_VX_dma_node$"]),
@@ -122,14 +145,14 @@ BREAKDOWN: list[tuple[str, list[str]]] = [
     ("socket memory arbiter",
                                      [PREFIX_SOCKET + r"/g_mem_bus_if_\d+__g_i\d+_mem_arb$"]),
     ("L2 cache",                     [PREFIX_CLUSTER + r"/l2cache$"]),
-    ("L3 cache",                     [r"^Vortex_axi/vortex/l3cache$"]),
+    ("L3 cache",                     [PREFIX_TOP + r"vortex/l3cache$"]),
     # --- AXI memory plumbing outside vortex ---
-    ("HBM AXI mux x8",               [r"^Vortex_axi/g_hbm_mux_\d+__u_axi_mux$"]),
-    ("LSU demux",                    [r"^Vortex_axi/u_lsu_demux$"]),
+    ("HBM AXI mux x8",               [PREFIX_TOP + r"g_hbm_mux_\d+__u_axi_mux$"]),
+    ("LSU demux",                    [PREFIX_TOP + r"u_lsu_demux$"]),
     ("AXI adapter / memory adapter / remaps",
-                                     [r"^Vortex_axi/axi_adapter$",
-                                      r"^Vortex_axi/g_mem_adapter_\d+__mem_data_adapter$",
-                                      r"^Vortex_axi/u_lsu_(ar|aw)_remap$"]),
+                                     [PREFIX_TOP + r"axi_adapter$",
+                                      PREFIX_TOP + r"g_mem_adapter_\d+__mem_data_adapter$",
+                                      PREFIX_TOP + r"u_lsu_(ar|aw)_remap$"]),
 ]
 
 # Blue/green family for paper consistency. Sibling shades stay close.
@@ -145,7 +168,11 @@ COLORS = {
                                              TEAL,
     # rest of core
     "memory unit":                           GREEN_DARK,
-    "execute":                               GREEN,
+    "ALU unit":                              GREEN,
+    "LSU unit":                              GREEN_LIGHT,
+    "FPU unit (FPNEW + HW exp)":             "#7b3294",
+    "SFU unit":                              TEAL_LIGHT,
+    "TCU unit":                              "#5e3c99",
     "issue":                                 GREEN_LIGHT,
     "schedule":                              GREEN_PALE,
     "DMA node":                              TEAL,
@@ -200,8 +227,25 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--run",
         choices=RUNS.keys(),
-        default="nt32",
-        help="Synthesis run to analyze. Default: nt32.",
+        default="current",
+        help="Named synthesis run to analyze. Default: current.",
+    )
+    parser.add_argument(
+        "--syn-root",
+        type=Path,
+        default=None,
+        help="Synthesis result root. Default: SYN_RESULT_ROOT, then build/syn/synopsys with legacy fallback.",
+    )
+    parser.add_argument(
+        "--syn-dir",
+        default=None,
+        help="Run directory under the synthesis result root. Overrides --run.",
+    )
+    parser.add_argument(
+        "--report",
+        type=Path,
+        default=None,
+        help="Exact area report path. Overrides --run, --syn-root, and --syn-dir.",
     )
     return parser.parse_args()
 
@@ -229,24 +273,129 @@ def pin_selected_labels_to_top(
     )
 
 
+def report_is_valid(path: Path) -> bool:
+    if not path.is_file():
+        return False
+    try:
+        text = path.read_text(errors="ignore")
+    except OSError:
+        return False
+    return (
+        "Total cell area:" in text
+        and "Hierarchical area distribution" in text
+    )
+
+
+def candidate_roots(explicit_root: Path | None) -> list[Path]:
+    roots: list[Path] = []
+    if explicit_root is not None:
+        roots.append(explicit_root)
+    elif os.environ.get("SYN_RESULT_ROOT"):
+        roots.append(Path(os.environ["SYN_RESULT_ROOT"]))
+    else:
+        roots.extend([
+            VORTEX / "build/syn/synopsys",
+            VORTEX / "build/hw/syn/synopsys",
+        ])
+
+    deduped: list[Path] = []
+    seen: set[Path] = set()
+    for root in roots:
+        resolved = root if root.is_absolute() else VORTEX / root
+        if resolved not in seen:
+            deduped.append(resolved)
+            seen.add(resolved)
+    return deduped
+
+
+def resolve_report(args: argparse.Namespace) -> Path:
+    if args.report is not None:
+        rpt = args.report if args.report.is_absolute() else VORTEX / args.report
+        if not report_is_valid(rpt):
+            raise SystemExit(f"area report is missing or incomplete: {rpt}")
+        return rpt
+
+    run = RUNS[args.run]
+    syn_dir = args.syn_dir or run["syn_dir"]
+    candidates: list[Path] = []
+    for root in candidate_roots(args.syn_root):
+        candidates.append(root / syn_dir / REPORT_REL)
+        dated = sorted(
+            root.glob(f"{syn_dir}.*"),
+            key=lambda p: p.stat().st_mtime if p.exists() else 0,
+            reverse=True,
+        )
+        candidates.extend(d / REPORT_REL for d in dated)
+
+    for rpt in candidates:
+        if report_is_valid(rpt):
+            return rpt
+
+    searched = "\n  ".join(str(p) for p in candidates)
+    raise SystemExit(f"no valid area report found; searched:\n  {searched}")
+
+
+def load_area_report(rpt: Path) -> tuple[pd.DataFrame, float]:
+    if SynopsysDesignCompilerAreaParser is not None:
+        parser = SynopsysDesignCompilerAreaParser()
+        db = parser.load(str(rpt))
+        if db.HIERARCHY_KEY not in db.tables:
+            raise SystemExit(f"hierarchy table missing in {rpt}")
+        return db.tables[db.HIERARCHY_KEY], float(db.metadata["total_cell_area"])
+
+    print(f"warning: hwexplorer unavailable ({HWEXPLORER_IMPORT_ERROR}); using local area parser")
+    total_area: float | None = None
+    design_name = DESIGN_NAME
+    rows: list[dict[str, float | str]] = []
+    in_table = False
+    with rpt.open(errors="ignore") as f:
+        for line in f:
+            if line.startswith("Design :"):
+                design_name = line.split(":", 1)[1].strip()
+            elif line.startswith("Total cell area:"):
+                total_area = float(line.split()[-1])
+            elif line.startswith("Hierarchical area distribution"):
+                in_table = True
+                continue
+
+            if not in_table:
+                continue
+            stripped = line.strip()
+            if (
+                not stripped
+                or stripped.startswith("-")
+                or stripped.startswith("Global")
+                or stripped.startswith("Local")
+                or stripped.startswith("Hierarchical")
+                or stripped.startswith("Absolute")
+                or stripped.startswith("Total")
+            ):
+                continue
+
+            parts = stripped.split()
+            if len(parts) < 6:
+                continue
+            try:
+                area = float(parts[1])
+            except ValueError:
+                continue
+            cell = parts[0]
+            full_path = cell if cell == design_name else f"{design_name}/{cell}"
+            rows.append({"full_path": full_path, "area": area})
+
+    if total_area is None:
+        raise SystemExit(f"total cell area missing in {rpt}")
+    return pd.DataFrame(rows), total_area
+
+
 def main():
     args = parse_args()
-    run = RUNS[args.run]
-    rpt = (
-        VORTEX
-        / "build/hw/syn/synopsys"
-        / run["syn_dir"]
-        / "syn_topo.lpp/reports/14_Vortex_axi.mapped.area.rpt"
-    )
-    out_dir = HERE / args.run
+    rpt = resolve_report(args)
+    out_name = args.syn_dir or args.run
+    out_dir = HERE / re.sub(r"[^A-Za-z0-9_.-]+", "_", out_name)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    parser = SynopsysDesignCompilerAreaParser()
-    db = parser.load(str(rpt))
-    if db.HIERARCHY_KEY not in db.tables:
-        raise SystemExit(f"hierarchy table missing in {rpt}")
-    hdf = db.tables[db.HIERARCHY_KEY]
-    total_area = float(db.metadata["total_cell_area"])
+    hdf, total_area = load_area_report(rpt)
 
     sums, counts, _ = aggregate(hdf)
 
@@ -266,6 +415,8 @@ def main():
     new_sums: dict[str, float] = {}
     new_counts: dict[str, int] = {}
     for i, (label, area) in enumerate(sums.items()):
+        if area <= 0.0 and counts[label] == 0:
+            continue
         if area < MISC_THRESHOLD_UM2 or label in FORCE_MISC_LABELS:
             if misc_position is None:
                 misc_position = len(new_sums)
@@ -331,7 +482,6 @@ def main():
     ax.set_xlim(-0.8, 0.8)
     ax.set_ylabel("Cell area (mm²)")
     ax.set_title(
-        # f"Vortex_axi {run['title']} area breakdown\n"
         # f"Area breakdown\n"
         f"DC topo, Samsung 28LPP — total cell area = {total_mm2:.2f} mm²",
         fontsize=16,

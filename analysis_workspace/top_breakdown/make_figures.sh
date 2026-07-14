@@ -65,7 +65,7 @@ python_bin="$(find_python)"
 
 runs=("$@")
 if [ "${#runs[@]}" -eq 0 ]; then
-    runs=(nt8 nt32)
+    runs=(nt32)
 fi
 
 for run in "${runs[@]}"; do
