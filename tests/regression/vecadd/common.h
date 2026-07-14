@@ -10,6 +10,6 @@ typedef struct {
   uint64_t src0_addr;
   uint64_t src1_addr;
   uint64_t dst_addr;  
+  uint32_t power_kernel_iterations;
 } kernel_arg_t;
-
 #endif

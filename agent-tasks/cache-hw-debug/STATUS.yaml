@@ -1,0 +1,12 @@
+task: cache-hw-debug
+state: complete
+log:
+  - time: "2026-07-05 02:45"
+    note: "Started cache HW debug implementation. Plan is to add structural coverage first, then wire VX_cache_wrap core/mem port summaries into VX_hw_debug."
+  - time: "2026-07-05 03:02 KST"
+    note: "Implemented cache bus debug structs, VX_cache_wrap core/mem public port capture, hierarchy flattening to VX_hw_debug, runtime metric decode, and structural coverage."
+  - time: "2026-07-05 03:02 KST"
+    note: "Verification passed: structural cache HW debug check, runtime vx_hw_debug.c gcc compile, VX_hw_debug VCS standalone elaboration, xrtsim_vcs simv VCS elaboration with ENABLE_HW_DEBUG_MODULE, and cache_top VCS compile with ENABLE_HW_DEBUG_MODULE."
+pitfalls:
+  - "cache_top compile emits a TFIPC warning because the existing testbench leaves the new optional cache_debug output unconnected under ENABLE_HW_DEBUG_MODULE."
+  - "Plain xrtsim_vcs simv without CONFIGS omitted platform memory defines and failed in pre-existing VX_mem_remap parameterization; rerun with the build config defines passed."

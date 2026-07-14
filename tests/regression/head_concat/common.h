@@ -17,6 +17,6 @@ typedef struct {
   uint32_t seq;
   uint32_t heads;
   uint32_t headdim;
+  uint32_t power_kernel_iterations;
 } kernel_arg_t;
-
 #endif // _HEAD_CONCAT_COMMON_H_

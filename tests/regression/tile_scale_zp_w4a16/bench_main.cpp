@@ -44,7 +44,7 @@ static void cleanup() {
 
 static void show_usage(const char* prog) {
   printf("Usage: %s [--warmup=N] [--iterations=N] [--csv] "
-         "[--output=PATH] [--output-append] [-k K] [-n N] [-q QBLK] "
+         "[--output=PATH] [--output-append] [--power-measure-latency[=on|off]] [-k K] [-n N] [-q QBLK] "
          "[-d QDIR] [--mt MT] [--kt KT] [--nt NT] "
          "[--gemm-qdir QDIR] [--source-transposed]\n", prog);
 }
@@ -264,7 +264,7 @@ int main(int argc, char** argv) {
   karg.log2_mxu_nt = log2_u32(TILE_DMA_MXU_NT);
   karg.log2_ng_per_mxu_nt = (GEMM_QDIR == 1) ? log2_u32(ng_per_mxu_nt) : 0;
   karg.log2_qblk = log2_u32(QBLK);
-
+  karg.power_kernel_iterations = 1;
   RT_CHECK(vx_upload_bytes(device, &karg, sizeof(karg), &args_buf));
 
   printf("Warmup Start\n"); fflush(stdout);
@@ -275,20 +275,36 @@ int main(int argc, char** argv) {
   }
 
   vx_bench::Stats stats;
+  double first_latency_us = 0.0;
+  vx_bench::IterationPerf first_iter_perf;
   printf("Start latency measurement.\n"); fflush(stdout);
   for (int i = 0; i < bench.iterations; ++i) {
     vx_bench::Stopwatch sw;
     sw.start();
     RT_CHECK(vx_start(device, kernel_bin, args_buf));
     RT_CHECK(vx_ready_wait(device, VX_MAX_TIMEOUT));
-    stats.record(sw.stop_us());
+    const double elapsed_us = sw.stop_us();
+    if (i == 0)
+      first_latency_us = elapsed_us;
+    stats.record(elapsed_us);
+    const vx_bench::IterationPerf iter_perf =
+        vx_bench::dump_iteration_perf(device, bench, i);
+    if (i == 0)
+      first_iter_perf = iter_perf;
     printf("iteration %0d/%0d, elapsed:%f\n", i+1, bench.iterations, stats.last()); fflush(stdout);
   }
 
   stats.report("tile_scale_zp_w4a16", bench);
 
+  if (!vx_bench::prepare_power_kernel_iterations(
+          bench, karg, args_buf, first_latency_us, first_iter_perf,
+          "tile_scale_zp_w4a16")) {
+    cleanup();
+    return -1;
+  }
+
   if (!vx_bench::run_power_measurement(
-          "tile_scale_zp_w4a16", bench, device, kernel_bin, args_buf)) {
+          "tile_scale_zp_w4a16", bench, device, kernel_bin, args_buf, bench.power_measure_latency)) {
     cleanup();
     return -1;
   }

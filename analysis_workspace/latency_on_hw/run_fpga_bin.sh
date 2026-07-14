@@ -35,7 +35,6 @@ fi
 
 WARMUP="${WARMUP:-0}"
 ITERATIONS="${ITERATIONS:-1}"
-THREADS="${THREADS:-32}"
 BLACKBOX_TIMEOUT="${BLACKBOX_TIMEOUT:-24h}"
 BUILD_DIR="${BUILD_DIR:-../../build}"
 OUT_DIR="${OUT_DIR:-outputs/${FPGA_BIN}}"
@@ -56,7 +55,6 @@ cmd=(
   --out "${OUT_DIR}"
   --warmup "${WARMUP}"
   --iterations "${ITERATIONS}"
-  "--blackbox-arg=--threads=${THREADS}"
   --blackbox-timeout "${BLACKBOX_TIMEOUT}"
 )
 

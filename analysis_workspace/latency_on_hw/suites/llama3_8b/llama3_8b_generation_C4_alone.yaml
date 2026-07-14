@@ -1,0 +1,39 @@
+name: llama3_8b_generation_C4_alone
+defaults:
+  warmup: 1
+  iterations: 3
+  app: fpint_gemm_ffn_hw
+  fpga_bin: naive_simd
+  target: hw
+  platform: xilinx_u55c_gen3x16_xdma_3_202210_1
+
+fpga_bins:
+  default: naive_simd
+
+  by_backend:
+    fpint_gemm_improve: improve_tcol32
+
+  by_app:
+    rmsnorm: naive_gemm_simd_th16_tcol32
+    rope: naive_gemm_simd_th16_tcol32
+    softmax: naive_gemm_simd_th16_tcol32
+    silu: naive_gemm_simd_th16_tcol32
+    eladd: naive_gemm_simd_th16_tcol32
+    elmul: naive_gemm_simd_th16_tcol32
+    tile_input_a: naive_gemm_simd_th16_tcol32
+    detile_output: naive_gemm_simd_th16_tcol32
+    kv_cache_quant_w4a16: naive_gemm_simd_th16_tcol32
+    tile_weight_w4a16: naive_gemm_simd_th16_tcol32
+    tile_scale_zp_w4a16: naive_gemm_simd_th16_tcol32
+    head_concat: naive_gemm_simd_th16_tcol32
+
+workloads:
+  - id: llama3_8b_generation_C4_alone
+    model: llama3-8b
+    stage: generation
+    variant: all_fpint_gemm_improve_alone_layout_spinquant
+    implemented_only: false
+    matrix:
+      batch: {values: [1]}
+      gen_kv_len: {values: [512, 1024, 2048, 4096]}
+      qblk: 32

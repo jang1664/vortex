@@ -67,6 +67,13 @@ struct Args {
     double      power_idle_sec   = 2.0;
     uint64_t    power_csv_max_bytes = 1024ull * 1024ull;
     std::string power_script;
+    bool        power_measure_latency = false;
+    int         power_kernel_iterations = 1;
+    bool        power_kernel_iterations_auto = false;
+    double      power_target_sec = 1.0;
+    double      power_fpga_freq_mhz = 100.0;
+    bool        power_fpga_freq_mhz_auto = true;
+    std::string power_xclbin_info;
     bool        power_auto_duration = false;
     double      power_min_run_sec = 10.0;
     double      power_max_run_sec = 60.0;
@@ -92,6 +99,146 @@ inline bool latency_enabled(const Args& args) {
 
 inline bool power_enabled(const Args& args) {
     return args.power_mode != PowerMode::Off;
+}
+
+inline bool path_exists(const std::string& path) {
+    struct stat st;
+    return !path.empty() && ::stat(path.c_str(), &st) == 0;
+}
+
+inline bool parse_frequency_mhz_line(const char* line, double* freq_mhz) {
+    const char* p = std::strchr(line, ':');
+    if (!p) p = line;
+    char* end = nullptr;
+    double value = std::strtod(p + 1, &end);
+    if (end == p + 1 || !std::isfinite(value) || value <= 0.0)
+        return false;
+    *freq_mhz = value;
+    return true;
+}
+
+inline bool parse_data_clk_mhz_from_xclbin_info(const std::string& path, double* freq_mhz) {
+    FILE* f = std::fopen(path.c_str(), "r");
+    if (!f)
+        return false;
+
+    bool in_data_clk = false;
+    char line[1024];
+    while (std::fgets(line, sizeof(line), f)) {
+        if (std::strstr(line, "Name:") != nullptr) {
+            in_data_clk = (std::strstr(line, "DATA_CLK") != nullptr);
+        }
+        if (in_data_clk && std::strstr(line, "Frequency:") != nullptr) {
+            double parsed_mhz = 0.0;
+            if (parse_frequency_mhz_line(line, &parsed_mhz)) {
+                std::fclose(f);
+                *freq_mhz = parsed_mhz;
+                return true;
+            }
+        }
+    }
+
+    std::fclose(f);
+    return false;
+}
+
+inline std::string default_xclbin_info_path() {
+    const char* explicit_info = std::getenv("VORTEX_POWER_XCLBIN_INFO");
+    if (explicit_info && path_exists(explicit_info))
+        return explicit_info;
+
+    const char* xclbin = std::getenv("XRT_XCLBIN_PATH");
+    if (xclbin) {
+        std::string info = std::string(xclbin) + ".info";
+        if (path_exists(info))
+            return info;
+    }
+
+    const char* fpga_bin_dir = std::getenv("FPGA_BIN_DIR");
+    if (fpga_bin_dir) {
+        std::string info = std::string(fpga_bin_dir) + "/vortex_afu.xclbin.info";
+        if (path_exists(info))
+            return info;
+    }
+
+    return std::string();
+}
+
+inline double resolve_power_fpga_freq_mhz(const Args& args, FILE* msg = stderr) {
+    if (!args.power_fpga_freq_mhz_auto)
+        return args.power_fpga_freq_mhz;
+
+    std::string info = args.power_xclbin_info.empty() ? default_xclbin_info_path() : args.power_xclbin_info;
+    double parsed_mhz = 0.0;
+    if (!info.empty() && parse_data_clk_mhz_from_xclbin_info(info, &parsed_mhz)) {
+        if (msg) {
+            std::fprintf(msg, "[power] stage=fpga_freq_resolve source=xclbin_info path=%s data_clk_mhz=%.6f\n",
+                         info.c_str(), parsed_mhz);
+        }
+        return parsed_mhz;
+    }
+
+    if (msg) {
+        std::fprintf(msg, "[power] stage=fpga_freq_resolve source=fallback data_clk_mhz=%.6f",
+                     args.power_fpga_freq_mhz);
+        if (!info.empty())
+            std::fprintf(msg, " xclbin_info=%s", info.c_str());
+        std::fprintf(msg, "\n");
+    }
+    return args.power_fpga_freq_mhz;
+}
+
+inline int compute_power_kernel_iterations(const Args& args,
+                                           double first_latency_us,
+                                           uint64_t fpga_cycle = 0,
+                                           bool has_fpga_cycle = false,
+                                           const char* label = "",
+                                           FILE* msg = stderr) {
+    if (!args.power_kernel_iterations_auto)
+        return args.power_kernel_iterations;
+
+    const char* source = "host_latency";
+    double kernel_s = 0.0;
+    double fpga_freq_mhz = 0.0;
+    if (has_fpga_cycle && fpga_cycle > 0) {
+        fpga_freq_mhz = resolve_power_fpga_freq_mhz(args, msg);
+        if (std::isfinite(fpga_freq_mhz) && fpga_freq_mhz > 0.0) {
+            kernel_s = static_cast<double>(fpga_cycle) / (fpga_freq_mhz * 1000000.0);
+            source = "fpga_cycle";
+        }
+    }
+
+    if (kernel_s <= 0.0 || !std::isfinite(kernel_s)) {
+        if (first_latency_us <= 0.0 || !std::isfinite(first_latency_us))
+            return 1;
+        kernel_s = first_latency_us / 1000000.0;
+        source = "host_latency";
+    }
+
+    double iterations = std::ceil(args.power_target_sec / kernel_s);
+    if (!std::isfinite(iterations) || iterations < 1.0)
+        return 1;
+
+    const double max_iterations = static_cast<double>(std::numeric_limits<int>::max());
+    if (iterations > max_iterations)
+        return std::numeric_limits<int>::max();
+
+    int planned_iterations = static_cast<int>(iterations);
+    if (msg) {
+        std::fprintf(msg,
+            "[power] stage=kernel_iterations_auto label=%s source=%s target_s=%.6f "
+            "kernel_s=%.9f host_latency_us=%.3f fpga_cycle=%llu fpga_freq_mhz=%.6f "
+            "kernel_iterations=%d\n",
+            label ? label : "",
+            source,
+            args.power_target_sec,
+            kernel_s,
+            first_latency_us,
+            static_cast<unsigned long long>(fpga_cycle),
+            fpga_freq_mhz,
+            planned_iterations);
+    }
+    return planned_iterations;
 }
 
 inline bool parse_power_mode(const char* value, PowerMode* mode) {
@@ -125,6 +272,25 @@ inline bool parse_bool_arg(const char* value, bool* out) {
         return false;
     }
     return true;
+}
+
+inline void parse_power_kernel_iterations_arg(const char* value, Args& args) {
+    if (std::strcmp(value, "auto") == 0) {
+        args.power_kernel_iterations_auto = true;
+        args.power_kernel_iterations = 1;
+        return;
+    }
+    args.power_kernel_iterations_auto = false;
+    args.power_kernel_iterations = std::atoi(value);
+}
+
+inline void parse_power_fpga_freq_mhz_arg(const char* value, Args& args) {
+    if (std::strcmp(value, "auto") == 0) {
+        args.power_fpga_freq_mhz_auto = true;
+        return;
+    }
+    args.power_fpga_freq_mhz_auto = false;
+    args.power_fpga_freq_mhz = std::atof(value);
 }
 
 inline void set_parse_error(Args& args, const std::string& message) {
@@ -231,6 +397,58 @@ inline Args parse(int& argc, char** argv) {
         } else if (std::strcmp(s, "--power-script") == 0) {
             const char* value = nullptr;
             if (read_next_value(r, argc, argv, "--power-script", &value, a)) a.power_script = value;
+        } else if (std::strncmp(s, "--power-kernel-iterations=", 26) == 0) {
+            parse_power_kernel_iterations_arg(s + 26, a);
+        } else if (std::strcmp(s, "--power-kernel-iterations") == 0) {
+            const char* value = nullptr;
+            if (read_next_value(r, argc, argv, "--power-kernel-iterations", &value, a)) {
+                parse_power_kernel_iterations_arg(value, a);
+            }
+        } else if (std::strcmp(s, "--power-kernel-iterations-auto") == 0) {
+            a.power_kernel_iterations_auto = true;
+            if (r + 1 < argc && argv[r + 1][0] != '-') {
+                const char* value = argv[++r];
+                if (!parse_bool_arg(value, &a.power_kernel_iterations_auto)) {
+                    set_parse_error(a, std::string("invalid --power-kernel-iterations-auto value: ") + value);
+                }
+            }
+        } else if (std::strncmp(s, "--power-kernel-iterations-auto=", 31) == 0) {
+            if (!parse_bool_arg(s + 31, &a.power_kernel_iterations_auto)) {
+                set_parse_error(a, std::string("invalid --power-kernel-iterations-auto value: ") + (s + 31));
+            }
+        } else if (std::strcmp(s, "--no-power-kernel-iterations-auto") == 0) {
+            a.power_kernel_iterations_auto = false;
+        } else if (std::strncmp(s, "--power-target-sec=", 19) == 0) {
+            a.power_target_sec = std::atof(s + 19);
+        } else if (std::strcmp(s, "--power-target-sec") == 0) {
+            const char* value = nullptr;
+            if (read_next_value(r, argc, argv, "--power-target-sec", &value, a)) a.power_target_sec = std::atof(value);
+        } else if (std::strncmp(s, "--power-fpga-freq-mhz=", 22) == 0) {
+            parse_power_fpga_freq_mhz_arg(s + 22, a);
+        } else if (std::strcmp(s, "--power-fpga-freq-mhz") == 0) {
+            const char* value = nullptr;
+            if (read_next_value(r, argc, argv, "--power-fpga-freq-mhz", &value, a)) {
+                parse_power_fpga_freq_mhz_arg(value, a);
+            }
+        } else if (std::strncmp(s, "--power-xclbin-info=", 20) == 0) {
+            a.power_xclbin_info = s + 20;
+        } else if (std::strcmp(s, "--power-xclbin-info") == 0) {
+            const char* value = nullptr;
+            if (read_next_value(r, argc, argv, "--power-xclbin-info", &value, a)) a.power_xclbin_info = value;
+        } else if (std::strcmp(s, "--power-measure-latency") == 0) {
+            a.power_measure_latency = true;
+            if (r + 1 < argc && argv[r + 1][0] != '-') {
+                const char* value = argv[++r];
+                if (!parse_bool_arg(value, &a.power_measure_latency)) {
+                    set_parse_error(a, std::string("invalid --power-measure-latency value: ") + value);
+                }
+            }
+        } else if (std::strncmp(s, "--power-measure-latency=", 24) == 0) {
+            if (!parse_bool_arg(s + 24, &a.power_measure_latency)) {
+                set_parse_error(a, std::string("invalid --power-measure-latency value: ") + (s + 24));
+            }
+        } else if (std::strcmp(s, "--no-power-measure-latency") == 0) {
+            a.power_measure_latency = false;
         } else if (std::strcmp(s, "--power-auto-duration") == 0) {
             a.power_auto_duration = true;
             if (r + 1 < argc && argv[r + 1][0] != '-') {
@@ -292,6 +510,9 @@ inline Args parse(int& argc, char** argv) {
     if (a.power_idle_sec < 0.0)  a.power_idle_sec = 0.0;
     if (a.power_iterations < 0)  a.power_iterations = a.iterations;
     if (a.power_iterations < 1)  a.power_iterations = 1;
+    if (a.power_kernel_iterations < 1) a.power_kernel_iterations = 1;
+    if (a.power_target_sec <= 0.0) a.power_target_sec = 1.0;
+    if (a.power_fpga_freq_mhz <= 0.0) a.power_fpga_freq_mhz = 100.0;
     if (a.power_min_run_sec < 0.0) a.power_min_run_sec = 0.0;
     if (a.power_max_run_sec <= 0.0) a.power_max_run_sec = a.power_min_run_sec;
     if (a.power_max_run_sec < a.power_min_run_sec) a.power_max_run_sec = a.power_min_run_sec;
@@ -301,6 +522,7 @@ inline Args parse(int& argc, char** argv) {
     if (a.power_max_interval <= 0.0) a.power_max_interval = a.power_min_interval;
     if (a.power_max_interval < a.power_min_interval) a.power_max_interval = a.power_min_interval;
     if (a.power_summary.empty()) a.power_summary = a.power_csv + ".summary.csv";
+    if (a.power_kernel_iterations_auto) a.latency_enabled = true;
     if (!a.latency_enabled) {
         a.warmup = 0;
         a.iterations = 0;
@@ -540,6 +762,7 @@ struct PowerStats {
     double min_w = std::numeric_limits<double>::quiet_NaN();
     double avg_w = std::numeric_limits<double>::quiet_NaN();
     double max_w = std::numeric_limits<double>::quiet_NaN();
+    double std_w = std::numeric_limits<double>::quiet_NaN();
     double elapsed_s = 0.0;
 };
 
@@ -550,9 +773,102 @@ struct PowerPhase {
     double end_s = 0.0;
     bool has_latency = false;
     StatsSummary latency;
+    std::vector<uint64_t> fpga_cycles;
 };
 
-inline PowerStats read_power_stats(const std::string& csv_path, double start_s, double end_s) {
+struct UIntStatsSummary {
+    size_t n = 0;
+    uint64_t min = 0;
+    double avg = 0.0;
+    uint64_t max = 0;
+    uint64_t p50 = 0;
+    uint64_t p95 = 0;
+};
+
+inline UIntStatsSummary summarize_uint64(const std::vector<uint64_t>& samples) {
+    UIntStatsSummary out;
+    if (samples.empty()) {
+        return out;
+    }
+    std::vector<uint64_t> s = samples;
+    std::sort(s.begin(), s.end());
+    long double sum = 0.0;
+    for (uint64_t v : s) sum += static_cast<long double>(v);
+    out.n = s.size();
+    out.min = s.front();
+    out.avg = static_cast<double>(sum / static_cast<long double>(s.size()));
+    out.max = s.back();
+    auto pct = [](const std::vector<uint64_t>& sorted, double q) {
+        size_t idx = static_cast<size_t>(q * (sorted.size() - 1) + 0.5);
+        if (idx >= sorted.size()) idx = sorted.size() - 1;
+        return sorted[idx];
+    };
+    out.p50 = pct(s, 0.50);
+    out.p95 = pct(s, 0.95);
+    return out;
+}
+
+static constexpr uint32_t VX_BENCH_CSR_MCYCLE = 0xB00;
+
+inline bool read_max_fpga_cycle(vx_device_h device, uint64_t* value, FILE* msg = stderr) {
+    uint64_t num_cores = 0;
+    int ret = vx_dev_caps(device, VX_CAPS_NUM_CORES, &num_cores);
+    if (ret != 0) {
+        std::fprintf(msg, "[power] vx_dev_caps(VX_CAPS_NUM_CORES) failed during fpga_cycle read: ret=%d\n", ret);
+        return false;
+    }
+
+    uint64_t max_cycles = 0;
+    for (uint32_t core_id = 0; core_id < num_cores; ++core_id) {
+        uint64_t cycles_per_core = 0;
+        ret = vx_mpm_query(device, VX_BENCH_CSR_MCYCLE, core_id, &cycles_per_core);
+        if (ret != 0) {
+            std::fprintf(msg, "[power] vx_mpm_query(VX_CSR_MCYCLE) failed during fpga_cycle read: core=%u ret=%d\n",
+                         core_id, ret);
+            return false;
+        }
+        max_cycles = std::max<uint64_t>(max_cycles, cycles_per_core);
+    }
+
+    *value = max_cycles;
+    return true;
+}
+
+inline std::string trim_csv_cell(std::string value) {
+    while (!value.empty() && (value.back() == '\n' || value.back() == '\r')) {
+        value.pop_back();
+    }
+    return value;
+}
+
+inline std::vector<std::string> split_csv_line(const char* line) {
+    std::vector<std::string> fields;
+    std::string current;
+    for (const char* p = line; *p; ++p) {
+        if (*p == ',') {
+            fields.push_back(trim_csv_cell(current));
+            current.clear();
+        } else {
+            current.push_back(*p);
+        }
+    }
+    fields.push_back(trim_csv_cell(current));
+    return fields;
+}
+
+inline int csv_column_index(const std::vector<std::string>& header, const char* column_name) {
+    for (size_t i = 0; i < header.size(); ++i) {
+        if (header[i] == column_name) {
+            return static_cast<int>(i);
+        }
+    }
+    return -1;
+}
+
+inline PowerStats read_power_stats(const std::string& csv_path,
+                                   double start_s,
+                                   double end_s,
+                                   const char* power_column = "total_power_w") {
     PowerStats stats;
     stats.elapsed_s = end_s - start_s;
     if (stats.elapsed_s < 0.0) stats.elapsed_s = 0.0;
@@ -563,21 +879,40 @@ inline PowerStats read_power_stats(const std::string& csv_path, double start_s, 
     }
 
     char line[1024];
-    double sum = 0.0;
+    if (!std::fgets(line, sizeof(line), f)) {
+        std::fclose(f);
+        return stats;
+    }
+
+    const std::vector<std::string> header = split_csv_line(line);
+    int timestamp_idx = csv_column_index(header, "timestamp_s");
+    if (timestamp_idx < 0) {
+        timestamp_idx = 0;
+    }
+    int power_idx = csv_column_index(header, power_column);
+    if (power_idx < 0 && std::strcmp(power_column, "total_power_w") == 0) {
+        power_idx = csv_column_index(header, "p_total_w");
+    }
+    if (power_idx < 0) {
+        std::fclose(f);
+        return stats;
+    }
+
+    long double sum = 0.0;
+    long double sum_sq = 0.0;
     while (std::fgets(line, sizeof(line), f)) {
-        char* endptr = nullptr;
-        double ts = std::strtod(line, &endptr);
-        if (endptr == line) {
+        const std::vector<std::string> fields = split_csv_line(line);
+        if (timestamp_idx >= static_cast<int>(fields.size())
+         || power_idx >= static_cast<int>(fields.size())) {
             continue;
         }
+        char* endptr = nullptr;
+        double ts = std::strtod(fields[timestamp_idx].c_str(), &endptr);
+        if (endptr == fields[timestamp_idx].c_str()) continue;
         if (ts < start_s || ts > end_s) {
             continue;
         }
-        char* last_comma = std::strrchr(line, ',');
-        if (!last_comma) {
-            continue;
-        }
-        double watts = std::strtod(last_comma + 1, nullptr);
+        double watts = std::strtod(fields[power_idx].c_str(), nullptr);
         if (stats.samples == 0) {
             stats.min_w = watts;
             stats.max_w = watts;
@@ -586,12 +921,25 @@ inline PowerStats read_power_stats(const std::string& csv_path, double start_s, 
             stats.max_w = std::max(stats.max_w, watts);
         }
         sum += watts;
+        sum_sq += static_cast<long double>(watts) * static_cast<long double>(watts);
         ++stats.samples;
     }
     std::fclose(f);
 
     if (stats.samples != 0) {
-        stats.avg_w = sum / static_cast<double>(stats.samples);
+        const long double n = static_cast<long double>(stats.samples);
+        stats.avg_w = static_cast<double>(sum / n);
+        if (stats.samples == 1) {
+            stats.std_w = 0.0;
+        } else {
+            long double variance = (sum_sq - (sum * sum / n)) / (n - 1.0L);
+            if (variance < 0.0L && variance > -1e-12L) {
+                variance = 0.0L;
+            }
+            stats.std_w = (variance >= 0.0L)
+                ? std::sqrt(static_cast<double>(variance))
+                : std::numeric_limits<double>::quiet_NaN();
+        }
     }
     return stats;
 }
@@ -610,24 +958,40 @@ inline bool write_power_summary(const char* label,
 
     std::fprintf(f,
         "label,mode,phase,samples,elapsed_s,idle_samples,idle_avg_w,"
-        "run_min_w,run_avg_w,run_max_w,delta_avg_w,delta_peak_w,energy_j,"
-        "latency_samples,latency_min_us,latency_avg_us,latency_max_us,raw_csv\n");
+        "idle_std_w,idle_vcc_avg_w,idle_pcie_avg_w,"
+        "run_min_w,run_avg_w,run_max_w,run_std_w,"
+        "run_vcc_min_w,run_vcc_avg_w,run_vcc_max_w,"
+        "run_pcie_min_w,run_pcie_avg_w,run_pcie_max_w,"
+        "delta_avg_w,delta_peak_w,dynamic_stderr_w,energy_j,"
+        "power_latency,power_fpga_cycle,power_kernel_iterations,"
+        "power_kernel_iterations_auto,power_target_sec,raw_csv\n");
 
-    const PowerStats idle_stats = read_power_stats(args.power_csv, idle.start_s, idle.end_s);
+    const PowerStats idle_stats = read_power_stats(args.power_csv, idle.start_s, idle.end_s, "total_power_w");
+    const PowerStats idle_vcc_stats = read_power_stats(args.power_csv, idle.start_s, idle.end_s, "vcc_power_w");
+    const PowerStats idle_pcie_stats = read_power_stats(args.power_csv, idle.start_s, idle.end_s, "pcie_power_w");
     const double nan = std::numeric_limits<double>::quiet_NaN();
     for (const auto& run : runs) {
-        const PowerStats run_stats = read_power_stats(args.power_csv, run.start_s, run.end_s);
+        const PowerStats run_stats = read_power_stats(args.power_csv, run.start_s, run.end_s, "total_power_w");
+        const PowerStats run_vcc_stats = read_power_stats(args.power_csv, run.start_s, run.end_s, "vcc_power_w");
+        const PowerStats run_pcie_stats = read_power_stats(args.power_csv, run.start_s, run.end_s, "pcie_power_w");
         const double dP_avg = (idle_stats.samples && run_stats.samples) ? (run_stats.avg_w - idle_stats.avg_w) : nan;
         const double dP_peak = (idle_stats.samples && run_stats.samples) ? (run_stats.max_w - idle_stats.avg_w) : nan;
+        const double dP_stderr = (idle_stats.samples && run_stats.samples)
+            ? std::sqrt((run_stats.std_w * run_stats.std_w / static_cast<double>(run_stats.samples))
+                      + (idle_stats.std_w * idle_stats.std_w / static_cast<double>(idle_stats.samples)))
+            : nan;
         const double energy = (idle_stats.samples && run_stats.samples) ? (dP_avg * run_stats.elapsed_s) : nan;
-        const size_t lat_n = run.has_latency ? run.latency.n : 0;
-        const double lat_min = run.has_latency ? run.latency.min : nan;
-        const double lat_avg = run.has_latency ? run.latency.avg : nan;
-        const double lat_max = run.has_latency ? run.latency.max : nan;
+        const double power_latency = run.has_latency ? run.latency.avg : nan;
+        const UIntStatsSummary cycle = summarize_uint64(run.fpga_cycles);
+        const double power_fpga_cycle = cycle.n ? cycle.avg : nan;
 
         std::fprintf(f,
-            "%s,%s,%s,%zu,%.6f,%zu,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,"
-            "%zu,%.3f,%.3f,%.3f,%s\n",
+            "%s,%s,%s,%zu,%.6f,%zu,%.6f,%.6f,%.6f,%.6f,"
+            "%.6f,%.6f,%.6f,%.6f,"
+            "%.6f,%.6f,%.6f,"
+            "%.6f,%.6f,%.6f,"
+            "%.6f,%.6f,%.6f,%.6f,"
+            "%.3f,%.3f,%d,%d,%.6f,%s\n",
             label,
             run.mode.c_str(),
             run.phase.c_str(),
@@ -635,16 +999,28 @@ inline bool write_power_summary(const char* label,
             run_stats.elapsed_s,
             idle_stats.samples,
             idle_stats.avg_w,
+            idle_stats.std_w,
+            idle_vcc_stats.samples ? idle_vcc_stats.avg_w : nan,
+            idle_pcie_stats.samples ? idle_pcie_stats.avg_w : nan,
             run_stats.min_w,
             run_stats.avg_w,
             run_stats.max_w,
+            run_stats.std_w,
+            run_vcc_stats.min_w,
+            run_vcc_stats.avg_w,
+            run_vcc_stats.max_w,
+            run_pcie_stats.min_w,
+            run_pcie_stats.avg_w,
+            run_pcie_stats.max_w,
             dP_avg,
             dP_peak,
+            dP_stderr,
             energy,
-            lat_n,
-            lat_min,
-            lat_avg,
-            lat_max,
+            power_latency,
+            power_fpga_cycle,
+            args.power_kernel_iterations,
+            args.power_kernel_iterations_auto ? 1 : 0,
+            args.power_target_sec,
             args.power_csv.c_str());
     }
 
@@ -731,6 +1107,77 @@ inline bool report_parse_error(const Args& args, FILE* err = stderr) {
     return true;
 }
 
+inline bool should_dump_iteration_perf(const Args& args) {
+    return latency_enabled(args) && args.csv && !args.output.empty();
+}
+
+struct IterationPerf {
+    bool has_fpga_cycle = false;
+    uint64_t fpga_cycle = 0;
+};
+
+inline IterationPerf dump_iteration_perf(vx_device_h device,
+                                         const Args& args,
+                                         int iteration,
+                                         FILE* stream = stdout) {
+    IterationPerf perf;
+    const bool should_dump = should_dump_iteration_perf(args);
+    const int completed = iteration + 1;
+    if (should_dump) {
+        std::fprintf(stream, "[bench-perf] iteration=%d/%d begin\n", completed, args.iterations);
+        std::fflush(stream);
+        const int ret = vx_dump_perf(device, stream);
+        if (ret != 0) {
+            std::fprintf(stream, "[bench-perf] iteration=%d/%d vx_dump_perf_ret=%d\n",
+                         completed, args.iterations, ret);
+        }
+        std::fprintf(stream, "[bench-perf] iteration=%d/%d end\n", completed, args.iterations);
+        std::fflush(stream);
+    }
+    if (args.power_kernel_iterations_auto) {
+        uint64_t fpga_cycle = 0;
+        if (read_max_fpga_cycle(device, &fpga_cycle)) {
+            perf.has_fpga_cycle = true;
+            perf.fpga_cycle = fpga_cycle;
+        }
+    }
+    return perf;
+}
+
+template <typename KernelArgs>
+inline bool prepare_power_kernel_iterations(Args& args,
+                                            KernelArgs& kernel_args,
+                                            vx_buffer_h args_buffer,
+                                            double first_latency_us,
+                                            const IterationPerf& first_iter_perf,
+                                            const char* label,
+                                            FILE* msg = stderr) {
+    if (!power_enabled(args)) {
+        return true;
+    }
+
+    args.power_kernel_iterations = compute_power_kernel_iterations(
+        args,
+        first_latency_us,
+        first_iter_perf.fpga_cycle,
+        first_iter_perf.has_fpga_cycle,
+        label,
+        msg);
+    kernel_args.power_kernel_iterations =
+        static_cast<uint32_t>(args.power_kernel_iterations);
+
+    const int ret = vx_copy_to_dev(args_buffer, &kernel_args, 0, sizeof(kernel_args));
+    if (ret != 0) {
+        std::fprintf(msg,
+                     "[power] vx_copy_to_dev failed while enabling power kernel "
+                     "iterations: label=%s ret=%d\n",
+                     label,
+                     ret);
+        return false;
+    }
+    return true;
+}
+
 inline bool run_vx_kernel_once(vx_device_h device,
                                vx_buffer_h kernel_buffer,
                                vx_buffer_h args_buffer,
@@ -754,11 +1201,13 @@ inline bool run_vx_kernel_once(vx_device_h device,
     return true;
 }
 
-template <typename RunOnce>
-inline bool run_power_measurement(const char* label,
-                                  const Args& args,
-                                  RunOnce run_once,
-                                  FILE* msg = stderr) {
+template <typename RunOnce, typename ReadFpgaCycle>
+inline bool run_power_measurement_impl(const char* label,
+                                       const Args& args,
+                                       RunOnce run_once,
+                                       ReadFpgaCycle read_fpga_cycle,
+                                       bool measure_power_latency,
+                                       FILE* msg) {
     if (!power_enabled(args)) {
         return true;
     }
@@ -785,13 +1234,17 @@ inline bool run_power_measurement(const char* label,
 
     std::fprintf(msg,
         "[power] stage=sampler_start label=%s mode=%s csv=%s summary=%s "
-        "idle_s=%.3f iterations=%d interval=%.6g auto_duration=%s max_iterations=%d max_bytes=%llu\n",
+        "idle_s=%.3f iterations=%d kernel_iterations=%d kernel_iterations_auto=%s "
+        "target_sec=%.6f interval=%.6g auto_duration=%s max_iterations=%d max_bytes=%llu\n",
         label,
         power_mode_name(power_args.power_mode),
         power_args.power_csv.c_str(),
         power_args.power_summary.c_str(),
         power_args.power_idle_sec,
         power_args.power_iterations,
+        power_args.power_kernel_iterations,
+        power_args.power_kernel_iterations_auto ? "on" : "off",
+        power_args.power_target_sec,
         power_args.power_interval,
         power_args.power_auto_duration ? "on" : "off",
         power_args.power_max_iterations,
@@ -821,7 +1274,8 @@ inline bool run_power_measurement(const char* label,
     std::fflush(msg);
 
     std::vector<PowerPhase> power_runs;
-    auto run_power_phase = [&](const char* mode, bool measure_latency) -> bool {
+    bool warned_missing_fpga_cycle = false;
+    auto run_power_phase = [&](const char* mode, bool record_power_latency) -> bool {
         PowerPhase phase;
         phase.mode = mode;
         phase.phase = "run";
@@ -831,12 +1285,12 @@ inline bool run_power_measurement(const char* label,
             label,
             mode,
             power_args.power_iterations,
-            measure_latency ? "on" : "off");
+            record_power_latency ? "on" : "off");
         std::fflush(msg);
 
         Stats phase_latency;
         for (int i = 0; i < power_args.power_iterations; ++i) {
-            if (measure_latency) {
+            if (record_power_latency) {
                 Stopwatch sw;
                 sw.start();
                 if (!run_once(mode, i)) {
@@ -850,6 +1304,17 @@ inline bool run_power_measurement(const char* label,
                     return false;
                 }
                 phase_latency.record(sw.stop_us());
+                uint64_t fpga_cycle = 0;
+                if (read_fpga_cycle(&fpga_cycle)) {
+                    phase.fpga_cycles.push_back(fpga_cycle);
+                } else if (!warned_missing_fpga_cycle) {
+                    std::fprintf(msg,
+                        "[power] stage=fpga_cycle_unavailable label=%s mode=%s\n",
+                        label,
+                        mode);
+                    std::fflush(msg);
+                    warned_missing_fpga_cycle = true;
+                }
             } else {
                 if (!run_once(mode, i)) {
                     std::fprintf(msg,
@@ -885,7 +1350,7 @@ inline bool run_power_measurement(const char* label,
             power_args.power_iterations,
             phase.end_s - phase.start_s);
         std::fflush(msg);
-        if (measure_latency) {
+        if (record_power_latency) {
             phase.has_latency = true;
             phase.latency = phase_latency.summary();
         }
@@ -893,7 +1358,7 @@ inline bool run_power_measurement(const char* label,
         return true;
     };
 
-    bool power_ok = run_power_phase("separate", false);
+    bool power_ok = run_power_phase("separate", measure_power_latency);
 
     std::fprintf(msg, "[power] stage=sampler_stop_begin label=%s\n", label);
     std::fflush(msg);
@@ -910,18 +1375,75 @@ inline bool run_power_measurement(const char* label,
     return write_power_summary(label, power_args, idle_phase, power_runs, msg);
 }
 
+template <typename RunOnce>
+inline bool run_power_measurement(const char* label,
+                                  const Args& args,
+                                  RunOnce run_once,
+                                  bool measure_power_latency,
+                                  FILE* msg = stderr) {
+    return run_power_measurement_impl(
+        label, args, run_once,
+        [](uint64_t*) -> bool { return false; },
+        measure_power_latency,
+        msg);
+}
+
+template <typename RunOnce>
+inline bool run_power_measurement(const char* label,
+                                  const Args& args,
+                                  RunOnce run_once,
+                                  FILE* msg = stderr) {
+    return run_power_measurement(label, args, run_once, args.power_measure_latency, msg);
+}
+
+template <typename RunOnce>
+inline bool run_power_measurement(const char* label,
+                                  const Args& args,
+                                  vx_device_h device,
+                                  RunOnce run_once,
+                                  bool measure_power_latency,
+                                  FILE* msg = stderr) {
+    return run_power_measurement_impl(
+        label, args, run_once,
+        [device, msg](uint64_t* value) -> bool {
+            return read_max_fpga_cycle(device, value, msg);
+        },
+        measure_power_latency,
+        msg);
+}
+
+template <typename RunOnce>
+inline bool run_power_measurement(const char* label,
+                                  const Args& args,
+                                  vx_device_h device,
+                                  RunOnce run_once,
+                                  FILE* msg = stderr) {
+    return run_power_measurement(label, args, device, run_once, args.power_measure_latency, msg);
+}
+
+inline bool run_power_measurement(const char* label,
+                                  const Args& args,
+                                  vx_device_h device,
+                                  vx_buffer_h kernel_buffer,
+                                  vx_buffer_h args_buffer,
+                                  bool measure_power_latency,
+                                  FILE* msg = stderr) {
+    return run_power_measurement(
+        label, args, device,
+        [&](const char* phase, int iter) -> bool {
+            return run_vx_kernel_once(device, kernel_buffer, args_buffer, phase, iter, msg);
+        },
+        measure_power_latency,
+        msg);
+}
+
 inline bool run_power_measurement(const char* label,
                                   const Args& args,
                                   vx_device_h device,
                                   vx_buffer_h kernel_buffer,
                                   vx_buffer_h args_buffer,
                                   FILE* msg = stderr) {
-    return run_power_measurement(
-        label, args,
-        [&](const char* phase, int iter) -> bool {
-            return run_vx_kernel_once(device, kernel_buffer, args_buffer, phase, iter, msg);
-        },
-        msg);
+    return run_power_measurement(label, args, device, kernel_buffer, args_buffer, args.power_measure_latency, msg);
 }
 
 } // namespace vx_bench

@@ -1,0 +1,52 @@
+task: fpint-hw-emu-vcs-compare
+state: ANALYZED
+created: "2026-07-03 18:56"
+updated: "2026-07-03 19:24"
+summary: >
+  Compare fpint_gemm_ffn_hw hw_emu simulate.log against xrt-vcs-sim simv.log
+  to identify whether the hw_emu-only failure points to FP arithmetic,
+  HBM/runtime mapping, or cache/memory behavior.
+log:
+  - time: "2026-07-03 18:56"
+    entry: >
+      Started log-only investigation. User reports xrt-vcs-sim passes while
+      hw_emu fails for fpint_gemm_ffn_hw with equivalent command sequence.
+  - time: "2026-07-03 19:24"
+    entry: >
+      Compared hw_emu simulate.log against build/sim/xrtsim_vcs/simv.log.
+      Both runs reach AFU execution completed/ap_done. No host mismatch text
+      is present in simulate.log. Arithmetic trace counts match for PINT2FP,
+      FP32_MUL, F32_TO_F16, scaler, accumulator, TMEM DMA, and LMEM DMA tags.
+      First payload divergence is at GEMM_FIFO_PUSH idx 16 / GEMM_FIFO_POP idx
+      15 / GEMM_ACCUM_INPUT idx 15. a_data is identical; b_data_fifo differs.
+      GEMM_ACC_MEM_READ_ACCUM request sequence is identical, and initial
+      accumulator-memory writes are identical until the first divergent
+      accumulate write. This points to accumulator read FIFO / local accumulator
+      memory read-data alignment rather than FP operator, HBM, or host input.
+  - time: "2026-07-03 19:39"
+    entry: >
+      Root-cause evidence refined: hw_emu accumulator writeback starts much
+      later relative to read-ahead than xrt_vcs. In hw_emu, each 128-entry
+      accumulate block has the first 14 FIFO pops matching expected reads, then
+      pop 15 through 128 mismatch. The first mismatch occurs when W1
+      addr=0x0/bank0 coincides with R15 addr=0x700/bank0. Because the
+      accumulator memory is a single-port VX_sp_ram wrapper with write address
+      priority when acc_mem_wr_en is asserted, a same-bank read/write cycle can
+      issue read=1 while the shared addr is the write address. hw_emu has 1368
+      same-time read/write events and all 1368 are same-bank collisions. xrt_vcs
+      has same-time read/write events too, but zero same-bank collisions because
+      the shorter accumulator writeback latency keeps read/write banks opposite.
+      This explains how the FIFO receives the old psum from the write address
+      instead of the requested read address.
+pitfalls:
+  - Do not assume command equality; verify app args, CONFIGS, thread/core
+    settings, and generated runtime flags from logs before analyzing RTL data.
+  - PC/X reset noise in xrt_vcs logs is not by itself evidence of X
+    propagation; inspect post-reset behavior and final status.
+  - GEMM_FIFO_PUSH trace prints acc_mem_out_data[acc_mem_accum_rd_bank], while
+    the actual FIFO input is acc_mem_out_data[acc_mem_accum_rd_bank_q]; use
+    FIFO_POP / ACCUM_INPUT or add a trace for acc_rd_fifo_in_data when
+    debugging bank/read-data phase.
+  - Same-cycle accumulator read/write to the same bank is not safe in the
+    current single-port memory wiring: acc_mem_rd_en can stay high while the
+    memory addr mux selects acc_mem_wr_depth_addr due to acc_mem_wr_en priority.

@@ -1,11 +1,10 @@
 # Floorplan constraints for U55C/VU47P
 #
 # Sourced from post_init_hook.tcl after init_design and before place_design.
-# At present NO pblocks are active — the placer is left to distribute the
-# user logic freely after earlier attempts to pblock u_VX_gemm_unit and
-# u_tmem_subsystem to specific SLRs caused either RP clock-column
-# violations or SLR0 CLB overflow. The helper proc below is kept in place
-# so a future iteration can re-enable single-module pblocks if needed.
+# Avoid whole-module SLR locks. Earlier attempts to pblock u_VX_gemm_unit
+# and u_tmem_subsystem to specific SLRs caused either RP clock-column
+# violations or SLR0 CLB overflow. The active constraints below only spread
+# DMA channels inside SLR0 clock regions to reduce local routing conflicts.
 #
 # Clock-region ranges for U55C/VU47P:
 #   SLR0 = CLOCKREGION_X0Y0:CLOCKREGION_X7Y3
@@ -44,6 +43,47 @@ proc vortex_pblock_slrs {pblock_name cell slr_list cr_range} {
 }
 
 # ---------------------------------------------------------------
+# vortex_soft_pblock - placement-only pblock for congestion relief
+#
+# CONTAIN_ROUTING=false keeps routing free to cross the pblock boundary.
+# EXCLUDE_PLACEMENT=false lets other unrelated logic share the region.
+# IS_SOFT is enabled when supported by the Vivado version, so these act as
+# guidance rather than rigid ownership of the clock region.
+# ---------------------------------------------------------------
+proc vortex_soft_pblock {pblock_name cr_range cells} {
+    if {[llength $cells] == 0} {
+        puts "WARNING: pblock $pblock_name matched no cells; skipping"
+        return
+    }
+
+    catch {delete_pblocks $pblock_name}
+    create_pblock $pblock_name
+    resize_pblock [get_pblocks $pblock_name] -add $cr_range
+    add_cells_to_pblock [get_pblocks $pblock_name] $cells
+
+    set_property CONTAIN_ROUTING false [get_pblocks $pblock_name]
+    set_property EXCLUDE_PLACEMENT false [get_pblocks $pblock_name]
+    if {[catch {set_property IS_SOFT true [get_pblocks $pblock_name]} err]} {
+        puts "INFO: pblock $pblock_name could not set IS_SOFT ($err)"
+    }
+
+    puts "INFO: pblock $pblock_name cells=[llength $cells] range=$cr_range"
+}
+
+proc vortex_dma_channel_cells {channels} {
+    set cells [list]
+    foreach ch $channels {
+        set pattern [format {.*u_dma_engine/g_channel\[%d\]\.u_dma_unit/.*} $ch]
+        set ch_cells [get_cells -hier -quiet -regexp $pattern]
+        if {[llength $ch_cells] == 0} {
+            puts "WARNING: no cells matched DMA channel $ch using pattern $pattern"
+        }
+        set cells [concat $cells $ch_cells]
+    }
+    return $cells
+}
+
+# ---------------------------------------------------------------
 # u_VX_gemm_unit / gen_acc_mem SLR floorplan — NOT CONSTRAINED
 #
 # Intentionally left unconstrained. The placer naturally biases
@@ -73,3 +113,22 @@ proc vortex_pblock_slrs {pblock_name cell slr_list cr_range} {
 # where the AXI shim sits.
 # ---------------------------------------------------------------
 # (No pblock for u_tmem_subsystem — intentional.)
+
+# ---------------------------------------------------------------
+# DMA channel placement spread
+#
+# The no-floorplan failing run placed u_tmem_subsystem/u_dma_engine in SLR0
+# and reported overlap nodes in g_channel[4].u_dma_unit together with HMSS
+# path_13 nets. Keep the engine near the SLR0 memory/HMSS interface, but
+# spread channel groups across SLR0 clock regions so channel 4 does not fight
+# neighboring channels in the same route window.
+# ---------------------------------------------------------------
+# set dma_ch0_1 [vortex_dma_channel_cells {0 1}]
+# set dma_ch2_3 [vortex_dma_channel_cells {2 3}]
+# set dma_ch4_5 [vortex_dma_channel_cells {4 5}]
+# set dma_ch6_7 [vortex_dma_channel_cells {6 7}]
+
+# vortex_soft_pblock pblock_dma_ch0_1 CLOCKREGION_X0Y0:CLOCKREGION_X1Y1 $dma_ch0_1
+# vortex_soft_pblock pblock_dma_ch2_3 CLOCKREGION_X2Y0:CLOCKREGION_X3Y1 $dma_ch2_3
+# vortex_soft_pblock pblock_dma_ch4_5 CLOCKREGION_X0Y2:CLOCKREGION_X2Y3 $dma_ch4_5
+# vortex_soft_pblock pblock_dma_ch6_7 CLOCKREGION_X3Y2:CLOCKREGION_X5Y3 $dma_ch6_7

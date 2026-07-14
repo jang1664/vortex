@@ -7,9 +7,6 @@ defaults:
   iterations: 3
   xrt_device_index: 0
   blackbox_timeout: 30m
-  blackbox_args:
-    - --cores=1
-    - --threads=8
 
 case_matrices:
   - id: elreduce_hidden

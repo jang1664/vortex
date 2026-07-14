@@ -16,8 +16,10 @@
 `ifndef FPU_FPNEW
 `ifdef SIMULATION
 `ifndef XSIM
+`ifndef VIVADO
 `define USE_DPI
 `include "float_dpi.vh"
+`endif
 `endif
 `endif
 `endif

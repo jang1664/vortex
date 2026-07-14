@@ -10,7 +10,8 @@ module VX_job_frontend import VX_gpu_pkg::*; #(
   parameter int NUM_ENTRIES = 16,
   parameter int NUM_REGS32  = 16,
   parameter int ENTRYID_W   = `JOB_MMIO_ENTRYID_W,
-  parameter logic [63:0] CFG_BASE_ADDR = 64'h0
+  parameter logic [63:0] CFG_BASE_ADDR = 64'h0,
+  parameter bit ONE_LANE_MMIO = 1'b0
 ) (
   input  wire clk,
   input  wire reset,
@@ -66,7 +67,8 @@ module VX_job_frontend import VX_gpu_pkg::*; #(
     .CFG_BASE_ADDR     (CFG_BASE_ADDR),
     .NUM_LANES         (`NUM_LSU_LANES),
     .DATA_SIZE         (LSU_WORD_SIZE),
-    .TAG_WIDTH         (MMIO_ARB_TAG_WIDTH)
+    .TAG_WIDTH         (MMIO_ARB_TAG_WIDTH),
+    .ONE_LANE          (ONE_LANE_MMIO)
   ) u_job_desc_mmio_regs (
     .clk                        (clk),
     .reset                      (reset),

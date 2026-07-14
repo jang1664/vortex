@@ -199,7 +199,11 @@ if { $hw_debug_module == 1 && $mem_regs_end > $hw_debug_base } {
     error [format "ENABLE_HW_DEBUG_MODULE register window 0x%02x overlaps MEM registers ending at 0x%02x; increase C_S_AXI_CTRL_ADDR_WIDTH and move the debug base" $hw_debug_base $mem_regs_end]
 }
 
-create_project -force kernel_pack $path_to_tmp_project
+if {[string length $device_part] != 0} {
+    create_project -force kernel_pack $path_to_tmp_project -part $device_part
+} else {
+    create_project -force kernel_pack $path_to_tmp_project
+}
 
 add_files -norecurse ${vsources_list}
 
@@ -405,6 +409,9 @@ set core [ipx::current_core]
 # groups. Add new entries here when similar drops occur.
 # (Broad re-add would drag in legitimately unreferenced test tops / sim helpers.)
 set force_packaged_sources {
+    VX_dma_unit_align.sv
+    VX_dma_unit_misal.sv
+    VX_dma_unit.sv
     VX_dma_engine.sv
     VX_hw_debug.sv
     vcs_fsdb_init.sv

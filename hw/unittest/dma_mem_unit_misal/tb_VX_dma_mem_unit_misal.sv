@@ -94,8 +94,8 @@ module tb_VX_dma_mem_unit_misal import VX_gpu_pkg::*; ();
   // DUT
   // -----------------------------
   // Default run exercises byte-misaligned scenarios. Parameter overrides can
-  // force ENABLE_MISALIGN=0 for aligned-only width conversion coverage.
-  VX_dma_unit_misal #(
+  // select VX_dma_unit_align for aligned-only width conversion coverage.
+  VX_dma_unit #(
     .INSTANCE_ID     ("dma0"),
     .ENABLE_MISALIGN (ENABLE_MISALIGN_P),
     .DCACHE_TAG_WIDTH(TAG_WIDTH),
@@ -172,8 +172,53 @@ module tb_VX_dma_mem_unit_misal import VX_gpu_pkg::*; ();
   // -----------------------------
   byte dcache_mem [0:MEM_BYTES-1];
 
-  // always ready for DCACHE model
-  assign dcache_bus_if.req_ready = 1'b1;
+  logic [2:0] dcache_ready_phase;
+  logic dcache_req_stalled;
+  logic [$bits(dcache_bus_if.req_data)-1:0] dcache_req_hold;
+  int unsigned dcache_rd_stall_cycles;
+  int unsigned dcache_wr_stall_cycles;
+
+  // Two ready cycles followed by three blocked cycles. The pattern fills the
+  // depth-2 request buffer and verifies its registered ready boundary.
+  assign dcache_bus_if.req_ready = (dcache_ready_phase < 3'd2);
+
+  always @(posedge clk) begin
+    if (reset) begin
+      dcache_ready_phase <= '0;
+      dcache_req_stalled <= 1'b0;
+      dcache_req_hold <= '0;
+      dcache_rd_stall_cycles <= 0;
+      dcache_wr_stall_cycles <= 0;
+    end else begin
+      dcache_ready_phase <= (dcache_ready_phase == 3'd4)
+                          ? 3'd0 : dcache_ready_phase + 3'd1;
+
+      if (dcache_bus_if.req_valid && !dcache_bus_if.req_ready) begin
+        if (dcache_req_stalled && (dcache_bus_if.req_data !== dcache_req_hold))
+          $fatal(1, "DCACHE request payload changed while stalled");
+        dcache_req_stalled <= 1'b1;
+        dcache_req_hold <= dcache_bus_if.req_data;
+        if (dcache_bus_if.req_data.rw)
+          dcache_wr_stall_cycles <= dcache_wr_stall_cycles + 1;
+        else
+          dcache_rd_stall_cycles <= dcache_rd_stall_cycles + 1;
+      end else begin
+        dcache_req_stalled <= 1'b0;
+      end
+    end
+  end
+
+  if (ENABLE_MISALIGN_P) begin : g_misal_backpressure_checks
+    always @(posedge clk) begin
+      if (!reset && done_if.valid) begin
+        if (dut.g_misaligned.u_impl.dcache_req_buf_pending_r != 0)
+          $fatal(1, "DMA completed with %0d buffered DCACHE requests",
+                 dut.g_misaligned.u_impl.dcache_req_buf_pending_r);
+        if (dcache_bus_if.req_valid)
+          $fatal(1, "DMA completed while a DCACHE request was still valid");
+      end
+    end
+  end
 
   // -----------------------------
   // DCACHE slave: 1-cycle latency, rsp_valid asserted for 1 cycle
@@ -614,6 +659,12 @@ module tb_VX_dma_mem_unit_misal import VX_gpu_pkg::*; ();
         sim_func();
       end else begin
         $display("please set proper objective of the simulation");
+      end
+
+      if (ENABLE_MISALIGN_P
+       && ((dcache_rd_stall_cycles == 0) || (dcache_wr_stall_cycles == 0))) begin
+        $fatal(1, "backpressure coverage missing: read=%0d write=%0d",
+               dcache_rd_stall_cycles, dcache_wr_stall_cycles);
       end
 
       print_summary();

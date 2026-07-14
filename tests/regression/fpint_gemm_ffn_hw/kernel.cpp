@@ -235,6 +235,34 @@ static void wait_job_done(uint32_t eid, uint32_t generation, uint32_t& last_ctrl
   }
 }
 
+static inline uint32_t effective_power_kernel_iterations(const kernel_arg_t* arg) {
+  return (arg->power_kernel_iterations == 0u) ? 1u : arg->power_kernel_iterations;
+}
+
+static bool run_gemm_job_once(kernel_arg_t* arg, const tb_partition_t& part, bool reporter) {
+  uint32_t eid = 0, generation = 0;
+  uint32_t alloc_raw = 0;
+
+  if (!gemm_job_alloc_fixed(eid, generation, alloc_raw)) {
+    if (reporter) {
+      if (alloc_raw == kPoisonWord) {
+        arg->status = STATUS_ALLOC_FAIL;
+      } else if (((alloc_raw >> JOB_MMIO_ALLOC_SUCC_BIT) & 1u) == 0) {
+        arg->status = STATUS_ALLOC_FAIL;
+      } else {
+        arg->status = STATUS_BAD_EID;
+      }
+    }
+    return false;
+  }
+
+  program_job_regs(eid, arg, part);
+
+  uint32_t last_ctrl = 0;
+  wait_job_done(eid, generation, last_ctrl);
+  return true;
+}
+
 void kernel_mmio_driver(kernel_arg_t *__UNIFORM__ arg) {
   uint32_t core_id = vx_core_id();
   bool reporter = (core_id == 0);
@@ -292,26 +320,11 @@ void kernel_mmio_driver(kernel_arg_t *__UNIFORM__ arg) {
     return;
   }
 
-  uint32_t eid = 0, generation = 0;
-  uint32_t alloc_raw = 0;
-
-  if (!gemm_job_alloc_fixed(eid, generation, alloc_raw)) {
-    if (reporter) {
-      if (alloc_raw == kPoisonWord) {
-        arg->status = STATUS_ALLOC_FAIL;
-      } else if (((alloc_raw >> JOB_MMIO_ALLOC_SUCC_BIT) & 1u) == 0) {
-        arg->status = STATUS_ALLOC_FAIL;
-      } else {
-        arg->status = STATUS_BAD_EID;
-      }
-    }
-    return;
+  const uint32_t repeat = effective_power_kernel_iterations(arg);
+  for (uint32_t i = 0; i < repeat; ++i) {
+    if (!run_gemm_job_once(arg, part, reporter))
+      return;
   }
-
-  program_job_regs(eid, arg, part);
-
-  uint32_t last_ctrl = 0;
-  wait_job_done(eid, generation, last_ctrl);
 
   if (reporter) {
     arg->status = STATUS_OK;

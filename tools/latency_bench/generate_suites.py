@@ -11,6 +11,7 @@ from .suite import (
     BenchCase,
     BenchDefaults,
     BenchSuite,
+    SuiteMatrixOverrides,
     find_repo_root,
     load_suite,
     resolve_case_fpga_bin,
@@ -25,6 +26,12 @@ class GenerateSuitesOptions:
     out_dir: Path
     overwrite: bool = False
     repo_root: Path | None = None
+    batch_values: tuple[int, ...] = ()
+    seq_len_values: tuple[int, ...] = ()
+    prefill_batch_values: tuple[int, ...] = ()
+    generation_batch_values: tuple[int, ...] = ()
+    prefill_seq_len_values: tuple[int, ...] = ()
+    generation_seq_len_values: tuple[int, ...] = ()
 
 
 def _case_without_fpga_bin(case: BenchCase) -> BenchCase:
@@ -50,7 +57,18 @@ def _run_command(suite_path: Path, out_dir: Path) -> str:
 
 def generate_suites(options: GenerateSuitesOptions) -> dict[str, Any]:
     repo_root = options.repo_root or find_repo_root()
-    source_suite = load_suite(options.suite, repo_root=repo_root)
+    source_suite = load_suite(
+        options.suite,
+        repo_root=repo_root,
+        matrix_overrides=SuiteMatrixOverrides(
+            batch_values=tuple(options.batch_values),
+            seq_len_values=tuple(options.seq_len_values),
+            prefill_batch_values=tuple(options.prefill_batch_values),
+            generation_batch_values=tuple(options.generation_batch_values),
+            prefill_seq_len_values=tuple(options.prefill_seq_len_values),
+            generation_seq_len_values=tuple(options.generation_seq_len_values),
+        ),
+    )
     out_dir = options.out_dir.expanduser().resolve()
 
     groups: dict[tuple[str, str], list[BenchCase]] = {}

@@ -45,14 +45,20 @@ module VX_core import VX_gpu_pkg::*; #(
     VX_gbar_bus_if.master   gbar_bus_if,
 `endif
 
-`ifdef ENABLE_HW_DEBUG_MODULE
-    output wire                         hw_debug_pc_valid,
-    output wire [HW_DEBUG_CORE_ID_WIDTH-1:0] hw_debug_pc_core_id,
-    output wire [NW_WIDTH-1:0]          hw_debug_pc_wid,
-    output wire [`XLEN-1:0]             hw_debug_pc,
+`ifdef ENABLE_HW_DEBUG_PC
+	    output wire                         hw_debug_pc_valid,
+	    output wire [HW_DEBUG_CORE_ID_WIDTH-1:0] hw_debug_pc_core_id,
+	    output wire [NW_WIDTH-1:0]          hw_debug_pc_wid,
+	    output wire [`XLEN-1:0]             hw_debug_pc,
+`endif
+`ifdef ENABLE_HW_DEBUG_CORE
+	    output core_pipeline_debug_t        core_pipeline_debug,
+`endif
+`ifdef ENABLE_HW_DEBUG_GEMM
+        output gemm_unit_debug_t           gemm_unit_debug,
 `endif
 
-    // Status
+	    // Status
     output wire             busy
 );
     VX_schedule_if      schedule_if();
@@ -96,13 +102,17 @@ module VX_core import VX_gpu_pkg::*; #(
         .TAG_WIDTH (LMEM_TAG_WIDTH)
     ) dma_local_data_if[`NUM_LSU_LANES]();
 
-    VX_mem_bus_if #(
-        .DATA_SIZE (DCACHE_WORD_SIZE),
-        .TAG_WIDTH (DCACHE_TAG_WIDTH)
-    ) dma_global_data_if();
+	    VX_mem_bus_if #(
+	        .DATA_SIZE (DCACHE_WORD_SIZE),
+	        .TAG_WIDTH (DCACHE_TAG_WIDTH)
+	    ) dma_global_data_if();
+
+	`ifdef ENABLE_HW_DEBUG_CORE
+	    issue_pipeline_debug_t issue_pipeline_debug;
+	`endif
 
 
-`ifdef PERF_ENABLE
+	`ifdef PERF_ENABLE
     lmem_perf_t lmem_perf;
     coalescer_perf_t coalescer_perf;
     pipeline_perf_t pipeline_perf;
@@ -188,11 +198,15 @@ module VX_core import VX_gpu_pkg::*; #(
         .issue_perf     (pipeline_perf.issue),
     `endif
 
-        .decode_if      (decode_if),
-        .writeback_if   (writeback_if),
-        .dispatch_if    (dispatch_if),
-        .issue_sched_if (issue_sched_if)
-    );
+	        .decode_if      (decode_if),
+	        .writeback_if   (writeback_if),
+	        .dispatch_if    (dispatch_if),
+	        .issue_sched_if (issue_sched_if)
+	    `ifdef ENABLE_HW_DEBUG_CORE
+	        ,
+	        .issue_pipeline_debug(issue_pipeline_debug)
+	    `endif
+	    );
 
     VX_execute #(
         .INSTANCE_ID (`SFORMATF(("%s-execute", INSTANCE_ID))),
@@ -235,7 +249,7 @@ module VX_core import VX_gpu_pkg::*; #(
 
         .commit_csr_if  (commit_csr_if),
         .commit_sched_if(commit_sched_if)
-    `ifdef ENABLE_HW_DEBUG_MODULE
+    `ifdef ENABLE_HW_DEBUG_PC
         ,
         .hw_debug_pc_valid (hw_debug_pc_valid),
         .hw_debug_pc_wid   (hw_debug_pc_wid),
@@ -243,7 +257,7 @@ module VX_core import VX_gpu_pkg::*; #(
     `endif
     );
 
-`ifdef ENABLE_HW_DEBUG_MODULE
+`ifdef ENABLE_HW_DEBUG_PC
     assign hw_debug_pc_core_id = HW_DEBUG_CORE_ID_WIDTH'(CORE_ID);
 `endif
 
@@ -268,7 +282,7 @@ module VX_core import VX_gpu_pkg::*; #(
       .INSTANCE_ID(INSTANCE_ID),
       .N_MASTER(`NUM_LSU_BLOCKS),
       .NUM_ENTRIES(`JOB_MMIO_NUM_ENTRIES),
-      .ENABLE_MISALIGN(1'b0)
+      .ENABLE_MISALIGN(1'b1)
     ) u_VX_dma_node (
       .clk(clk),
       .reset(reset),
@@ -289,6 +303,9 @@ module VX_core import VX_gpu_pkg::*; #(
     ) gemm_node (
         .clk         (clk),
         .reset       (reset),
+    `ifdef ENABLE_HW_DEBUG_GEMM
+        .gemm_unit_debug      (gemm_unit_debug),
+    `endif
     `ifdef PERF_ENABLE
         .gemm_unit_perf       (accel_perf.gemm_unit),
         .gemm_node_perf       (accel_perf.gemm_node),
@@ -378,10 +395,162 @@ module VX_core import VX_gpu_pkg::*; #(
     assign accel_perf.lmem_dma_sz     = '0;
     assign accel_perf.lmem_dma_output = '0;
 `endif
+`ifdef ENABLE_HW_DEBUG_GEMM
+    assign gemm_unit_debug = '0;
+`endif
 
 `endif
 
-`ifdef PERF_ENABLE
+	`ifdef ENABLE_HW_DEBUG_CORE
+	    reg hw_debug_core_busy_r;
+
+	    always @(posedge clk) begin
+	        if (reset) begin
+	            hw_debug_core_busy_r <= 1'b0;
+	        end else begin
+	            hw_debug_core_busy_r <= busy;
+	        end
+	    end
+
+	    assign core_pipeline_debug.busy = hw_debug_core_busy_r;
+
+	    VX_hw_debug_vr_probe core_schedule_debug (
+	        .clk          (clk),
+	        .reset        (reset),
+	        .valid        (schedule_if.valid),
+	        .ready        (schedule_if.ready),
+	        .wid          (schedule_if.data.wid),
+	        .tag          (16'(schedule_if.data.uuid) ^ 16'(schedule_if.data.PC)),
+	        .payload_hash (16'(schedule_if.data.uuid) ^ 16'(schedule_if.data.PC)),
+	        .debug        (core_pipeline_debug.channels[HW_DBG_CH_SCHEDULE])
+	    );
+
+	    VX_hw_debug_vr_probe core_icache_req_debug (
+	        .clk          (clk),
+	        .reset        (reset),
+	        .valid        (icache_bus_if.req_valid),
+	        .ready        (icache_bus_if.req_ready),
+	        .wid          (NW_WIDTH'(icache_bus_if.req_data.tag.value)),
+	        .tag          (16'(icache_bus_if.req_data.tag.uuid) ^ 16'(icache_bus_if.req_data.tag.value)),
+	        .payload_hash (16'(icache_bus_if.req_data.tag.uuid) ^ 16'(icache_bus_if.req_data.tag.value) ^ 16'(icache_bus_if.req_data.addr)),
+	        .debug        (core_pipeline_debug.channels[HW_DBG_CH_ICACHE_REQ])
+	    );
+
+	    VX_hw_debug_vr_probe core_icache_rsp_debug (
+	        .clk          (clk),
+	        .reset        (reset),
+	        .valid        (icache_bus_if.rsp_valid),
+	        .ready        (icache_bus_if.rsp_ready),
+	        .wid          (NW_WIDTH'(icache_bus_if.rsp_data.tag.value)),
+	        .tag          (16'(icache_bus_if.rsp_data.tag.uuid) ^ 16'(icache_bus_if.rsp_data.tag.value)),
+	        .payload_hash (16'(icache_bus_if.rsp_data.tag.uuid) ^ 16'(icache_bus_if.rsp_data.tag.value)),
+	        .debug        (core_pipeline_debug.channels[HW_DBG_CH_ICACHE_RSP])
+	    );
+
+	    VX_hw_debug_vr_probe core_fetch_debug (
+	        .clk          (clk),
+	        .reset        (reset),
+	        .valid        (fetch_if.valid),
+	        .ready        (fetch_if.ready),
+	        .wid          (fetch_if.data.wid),
+	        .tag          (16'(fetch_if.data.uuid) ^ 16'(fetch_if.data.PC)),
+	        .payload_hash (16'(fetch_if.data.uuid) ^ 16'(fetch_if.data.PC) ^ 16'(fetch_if.data.instr)),
+	        .debug        (core_pipeline_debug.channels[HW_DBG_CH_FETCH])
+	    );
+
+	    VX_hw_debug_vr_probe core_decode_debug (
+	        .clk          (clk),
+	        .reset        (reset),
+	        .valid        (decode_if.valid),
+	        .ready        (decode_if.ready),
+	        .wid          (decode_if.data.wid),
+	        .tag          (16'(decode_if.data.uuid) ^ 16'(decode_if.data.PC)),
+	        .payload_hash (16'(decode_if.data.uuid) ^ 16'(decode_if.data.PC) ^ 16'(decode_if.data.rd) ^ 16'(decode_if.data.op_type)),
+	        .debug        (core_pipeline_debug.channels[HW_DBG_CH_DECODE])
+	    );
+
+	    for (genvar dbg_issue_ch = 0; dbg_issue_ch < HW_DEBUG_ISSUE_PIPE_CHANNELS; ++dbg_issue_ch) begin : g_hw_debug_issue
+	        assign core_pipeline_debug.channels[HW_DBG_CH_ISSUE_BASE + dbg_issue_ch] =
+	            issue_pipeline_debug.channels[dbg_issue_ch];
+	    end
+
+	    for (genvar dbg_ex = 0; dbg_ex < NUM_EX_UNITS; ++dbg_ex) begin : g_hw_debug_ex
+	        for (genvar dbg_issue = 0; dbg_issue < `ISSUE_WIDTH; ++dbg_issue) begin : g_issue
+	            localparam DBG_EX_CHANNEL = dbg_ex * `ISSUE_WIDTH + dbg_issue;
+	            VX_hw_debug_vr_probe core_dispatch_debug (
+	                .clk          (clk),
+	                .reset        (reset),
+	                .valid        (dispatch_if[DBG_EX_CHANNEL].valid),
+	                .ready        (dispatch_if[DBG_EX_CHANNEL].ready),
+	                .wid          (wis_to_wid(dispatch_if[DBG_EX_CHANNEL].data.wis, ISSUE_ISW_W'(dbg_issue))),
+	                .tag          (16'(dispatch_if[DBG_EX_CHANNEL].data.uuid) ^ 16'(dispatch_if[DBG_EX_CHANNEL].data.PC)),
+	                .payload_hash (16'(dispatch_if[DBG_EX_CHANNEL].data.uuid) ^ 16'(dispatch_if[DBG_EX_CHANNEL].data.PC) ^ 16'(dispatch_if[DBG_EX_CHANNEL].data.rd) ^ 16'(dispatch_if[DBG_EX_CHANNEL].data.op_type)),
+	                .debug        (core_pipeline_debug.channels[HW_DBG_CH_DISPATCH_BASE + DBG_EX_CHANNEL])
+	            );
+
+	            VX_hw_debug_vr_probe core_commit_debug (
+	                .clk          (clk),
+	                .reset        (reset),
+	                .valid        (commit_if[DBG_EX_CHANNEL].valid),
+	                .ready        (commit_if[DBG_EX_CHANNEL].ready),
+	                .wid          (commit_if[DBG_EX_CHANNEL].data.wid),
+	                .tag          (16'(commit_if[DBG_EX_CHANNEL].data.uuid) ^ 16'(commit_if[DBG_EX_CHANNEL].data.PC)),
+	                .payload_hash (16'(commit_if[DBG_EX_CHANNEL].data.uuid) ^ 16'(commit_if[DBG_EX_CHANNEL].data.PC) ^ 16'(commit_if[DBG_EX_CHANNEL].data.rd) ^ 16'(commit_if[DBG_EX_CHANNEL].data.sid)),
+	                .debug        (core_pipeline_debug.channels[HW_DBG_CH_COMMIT_BASE + DBG_EX_CHANNEL])
+	            );
+	        end
+	    end
+
+	    for (genvar dbg_lsu = 0; dbg_lsu < `NUM_LSU_BLOCKS; ++dbg_lsu) begin : g_hw_debug_lsu
+	        VX_hw_debug_vr_probe core_lsu_req_debug (
+	            .clk          (clk),
+	            .reset        (reset),
+	            .valid        (lsu_mem_if[dbg_lsu].req_valid),
+	            .ready        (lsu_mem_if[dbg_lsu].req_ready),
+	            .wid          ('0),
+	            .tag          (16'(lsu_mem_if[dbg_lsu].req_data.tag.uuid) ^ 16'(lsu_mem_if[dbg_lsu].req_data.tag.value)),
+	            .payload_hash (16'(lsu_mem_if[dbg_lsu].req_data.tag.uuid) ^ 16'(lsu_mem_if[dbg_lsu].req_data.tag.value) ^ 16'(lsu_mem_if[dbg_lsu].req_data.addr[0])),
+	            .debug        (core_pipeline_debug.channels[HW_DBG_CH_LSU_REQ_BASE + dbg_lsu])
+	        );
+
+	        VX_hw_debug_vr_probe core_lsu_rsp_debug (
+	            .clk          (clk),
+	            .reset        (reset),
+	            .valid        (lsu_mem_if[dbg_lsu].rsp_valid),
+	            .ready        (lsu_mem_if[dbg_lsu].rsp_ready),
+	            .wid          ('0),
+	            .tag          (16'(lsu_mem_if[dbg_lsu].rsp_data.tag.uuid) ^ 16'(lsu_mem_if[dbg_lsu].rsp_data.tag.value)),
+	            .payload_hash (16'(lsu_mem_if[dbg_lsu].rsp_data.tag.uuid) ^ 16'(lsu_mem_if[dbg_lsu].rsp_data.tag.value)),
+	            .debug        (core_pipeline_debug.channels[HW_DBG_CH_LSU_RSP_BASE + dbg_lsu])
+	        );
+	    end
+
+	    for (genvar dbg_dcache = 0; dbg_dcache < DCACHE_NUM_REQS; ++dbg_dcache) begin : g_hw_debug_dcache
+	        VX_hw_debug_vr_probe core_dcache_req_debug (
+	            .clk          (clk),
+	            .reset        (reset),
+	            .valid        (dcache_bus_if[dbg_dcache].req_valid),
+	            .ready        (dcache_bus_if[dbg_dcache].req_ready),
+	            .wid          ('0),
+	            .tag          (16'(dcache_bus_if[dbg_dcache].req_data.tag.uuid) ^ 16'(dcache_bus_if[dbg_dcache].req_data.tag.value)),
+	            .payload_hash (16'(dcache_bus_if[dbg_dcache].req_data.tag.uuid) ^ 16'(dcache_bus_if[dbg_dcache].req_data.tag.value) ^ 16'(dcache_bus_if[dbg_dcache].req_data.addr)),
+	            .debug        (core_pipeline_debug.channels[HW_DBG_CH_DCACHE_REQ_BASE + dbg_dcache])
+	        );
+
+	        VX_hw_debug_vr_probe core_dcache_rsp_debug (
+	            .clk          (clk),
+	            .reset        (reset),
+	            .valid        (dcache_bus_if[dbg_dcache].rsp_valid),
+	            .ready        (dcache_bus_if[dbg_dcache].rsp_ready),
+	            .wid          ('0),
+	            .tag          (16'(dcache_bus_if[dbg_dcache].rsp_data.tag.uuid) ^ 16'(dcache_bus_if[dbg_dcache].rsp_data.tag.value)),
+	            .payload_hash (16'(dcache_bus_if[dbg_dcache].rsp_data.tag.uuid) ^ 16'(dcache_bus_if[dbg_dcache].rsp_data.tag.value)),
+	            .debug        (core_pipeline_debug.channels[HW_DBG_CH_DCACHE_RSP_BASE + dbg_dcache])
+	        );
+	    end
+		`endif
+
+	`ifdef PERF_ENABLE
 
     wire [`CLOG2(LSU_NUM_REQS+1)-1:0] perf_dcache_rd_req_per_cycle;
     wire [`CLOG2(LSU_NUM_REQS+1)-1:0] perf_dcache_wr_req_per_cycle;

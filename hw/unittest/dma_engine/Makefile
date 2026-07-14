@@ -17,24 +17,29 @@ TOP_MODULE := tb_VX_dma_engine
 
 TB   := $(SRC_DIR)/tb_VX_dma_engine.sv
 
-AXI_IF := $(ROOT_DIR)/hw/unittest/common/AXI_BUS_if.sv
+AXI_DIR := $(THIRD_PARTY_DIR)/axi
 LIB_RTLS := $(filter-out %_tb.sv,$(wildcard $(RTL_DIR)/libs/*.sv))
 
-RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
-				$(AXI_IF) \
+RTLS := $(AXI_DIR)/src/axi_pkg.sv \
+				$(AXI_DIR)/src/axi_intf.sv \
+				$(RTL_DIR)/VX_gpu_pkg.sv \
 				$(RTL_DIR)/mem/VX_mem_bus_if.sv \
 				$(RTL_DIR)/core/VX_config_reg_if.sv \
 				$(RTL_DIR)/core/VX_mem_remap.sv \
 				$(RTL_DIR)/core/VX_node_done_if.sv \
+				$(RTL_DIR)/core/VX_dma_unit_align.sv \
 				$(RTL_DIR)/core/VX_dma_unit_misal.sv \
+				$(RTL_DIR)/core/VX_dma_unit.sv \
 				$(RTL_DIR)/mem/VX_dma_engine.sv \
 				$(LIB_RTLS)
 
 INCDIRS_ := $(RTL_DIR) \
             $(RTL_DIR)/libs \
             $(RTL_DIR)/core \
-            $(RTL_DIR)/mem
-DEFINES_ := SIMULATION NDEBUG PLATFORM_MEMORY_ID_WIDTH=32 PLATFORM_MEMORY_ADDR_WIDTH=34 MEM_ADDR_WIDTH=34
+            $(RTL_DIR)/mem \
+            $(AXI_DIR)/include
+DEFINES_ := SIMULATION NDEBUG PLATFORM_MEMORY_ID_WIDTH=32 PLATFORM_MEMORY_ADDR_WIDTH=34 MEM_ADDR_WIDTH=34 \
+            PLATFORM_MEMORY_NUM_BANKS=32 PLATFORM_MEMORY_NUM_PORTS=8 PLATFORM_MEMORY_INTERLEAVE=1 PLATFORM_MEMORY_REMAP
 
 COMPILE_LOG := logs/compile.log
 SIM_LOG     := logs/sim.log

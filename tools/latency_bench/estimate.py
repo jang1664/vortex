@@ -239,6 +239,16 @@ def _group_label(columns: tuple[str, ...], key: tuple[str, ...]) -> str:
     return ";".join(f"{column}={value}" for column, value in zip(columns, key))
 
 
+def _warning_row_label(prefix: str, row: pd.Series) -> str:
+    fields = ("case_id", "app", "args")
+    parts: list[str] = []
+    for field in fields:
+        value = row.get(field, "")
+        text = "" if _is_missing(value) else str(value)
+        parts.append(f"{prefix}_{field}={text!r}")
+    return "; ".join(parts)
+
+
 def _validate_options(options: LatencyEstimateOptions) -> None:
     if options.model not in MODEL_CHOICES:
         raise ValueError(f"unsupported latency estimate model: {options.model}")
@@ -756,7 +766,10 @@ def estimate_composed_latency(
         if options.warn_extrapolation and mode == "extrapolation" and group_key not in warned_groups:
             warned_groups.add(group_key)
             warnings.warn(
-                f"latency estimate for {_group_label(options.group_columns, group_key)} uses extrapolation",
+                "latency estimate for "
+                f"{_group_label(options.group_columns, group_key)} uses extrapolation; "
+                f"{_warning_row_label('target', target)}; "
+                f"{_warning_row_label('source', result.nearest)}",
                 RuntimeWarning,
                 stacklevel=2,
             )

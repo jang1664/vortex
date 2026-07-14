@@ -10,6 +10,7 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+#define ENABLE_HW_DEBUG_MODULE_EXPORT
 
 #include <common.h>
 
@@ -38,7 +39,7 @@
 #include <util.h>
 #include <vector>
 
-#ifdef ENABLE_HW_DEBUG_MODULE
+#ifdef ENABLE_HW_DEBUG_MODULE_EXPORT
 #include "vx_hw_debug.h"
 #endif
 
@@ -58,13 +59,13 @@ using namespace vortex;
 #define MMIO_SCP_ADDR 0x28
 #define MMIO_MEM_ADDR 0x30
 
-#ifdef ENABLE_HW_DEBUG_MODULE
+#ifdef ENABLE_HW_DEBUG_MODULE_EXPORT
 #ifndef HW_DEBUG_PC_RING_DEPTH
 #define HW_DEBUG_PC_RING_DEPTH VX_HW_DEBUG_DEFAULT_PC_RING_DEPTH
 #endif
 #endif
 
-#if defined(ENABLE_HW_DEBUG_MODULE) && defined(NDEBUG)
+#if defined(ENABLE_HW_DEBUG_MODULE_EXPORT) && defined(ENABLE_HW_DEBUG_MODULE) && defined(NDEBUG)
 #define VX_HW_DEBUG_READY_WAIT_POLL 1
 #endif
 
@@ -279,6 +280,10 @@ public:
     , xrtKernel_(nullptr)
   #endif
     , pending_ap_done_(false)
+  #ifdef ENABLE_HW_DEBUG_MODULE_EXPORT
+    , hw_debug_present_checked_(false)
+    , hw_debug_present_(false)
+  #endif
   {}
 
   ~vx_device() {
@@ -780,9 +785,15 @@ public:
   int start(uint64_t krnl_addr, uint64_t args_addr) {
     // Pre-flight status read
     uint32_t status = 0;
-    CHECK_ERR(this->read_register(MMIO_CTL_ADDR, &status), {
-      return err;
-    });
+    while (true) {
+      CHECK_ERR(this->read_register(MMIO_CTL_ADDR, &status), {
+        return err;
+      });
+      bool is_idle = (status & CTL_AP_IDLE) == CTL_AP_IDLE;
+      if (is_idle) {
+        break;
+      }
+    }
 
     CHECK_ERR(this->dcr_write(VX_DCR_BASE_STARTUP_ADDR0, krnl_addr & 0xffffffff), {
       return err;
@@ -809,10 +820,10 @@ public:
     // Barrier after AP_START to avoid posted-write timing surprises.
     // AP_DONE is read-clear on ap_ctrl_hs.  Tiny kernels can complete before
     // this barrier read, so latch that completion for ready_wait().
-    CHECK_ERR(this->read_register(MMIO_CTL_ADDR, &status), {
-      return err;
-    });
-    pending_ap_done_ = (status & CTL_AP_DONE) != 0;
+    // CHECK_ERR(this->read_register(MMIO_CTL_ADDR, &status), {
+    //   return err;
+    // });
+    // pending_ap_done_ = (status & CTL_AP_DONE) != 0;
 
     mpm_cache_.clear();
     shm_.record_kernel(krnl_addr);
@@ -821,7 +832,7 @@ public:
     return 0;
   }
 
-#ifdef ENABLE_HW_DEBUG_MODULE
+#ifdef ENABLE_HW_DEBUG_MODULE_EXPORT
   static int hw_debug_read32(void *opaque, uint32_t addr, uint32_t *value) {
     return static_cast<vx_device *>(opaque)->read_register(addr, value);
   }
@@ -830,7 +841,33 @@ public:
     return static_cast<vx_device *>(opaque)->write_register(addr, value);
   }
 
+  bool hw_debug_available() {
+    if (hw_debug_present_checked_) {
+      return hw_debug_present_;
+    }
+
+    vx_hw_debug_io_t io = {
+      this,
+      &vx_device::hw_debug_read32,
+      &vx_device::hw_debug_write32
+    };
+    uint32_t status = 0;
+    int err = vx_hw_debug_get_status(&io, &status);
+    hw_debug_present_checked_ = true;
+    hw_debug_present_ = (err == 0) && ((status & 0x1u) != 0);
+    if (!hw_debug_present_) {
+      fprintf(stderr,
+              "[VXDRV-HWDBG] hardware debug module not present; "
+              "suppressing HW debug dumps (status=0x%08x err=%d)\n",
+              status, err);
+    }
+    return hw_debug_present_;
+  }
+
   void dump_hw_debug() {
+    if (!this->hw_debug_available()) {
+      return;
+    }
     vx_hw_debug_io_t io = {
       this,
       &vx_device::hw_debug_read32,
@@ -840,6 +877,9 @@ public:
   }
 
   void poll_hw_debug_flags(vx_hw_debug_flag_snapshot_t *previous) {
+    if (!this->hw_debug_available()) {
+      return;
+    }
     vx_hw_debug_io_t io = {
       this,
       &vx_device::hw_debug_read32,
@@ -876,16 +916,18 @@ public:
     const uint64_t hw_debug_poll_period_ms = 1000;
   #endif
 
+    printf("[VXDRV] waiting for kernel completion (timeout=%lu ms)...\n", timeout);
     for (;;) {
-      if (pending_ap_done_) {
-        pending_ap_done_ = false;
-        break;
-      }
+      // if (pending_ap_done_) {
+      //   pending_ap_done_ = false;
+      //   break;
+      // }
 
       uint32_t status = 0;
       CHECK_ERR(this->read_register(MMIO_CTL_ADDR, &status), {
         return err;
       });
+      // printf("[VXDRV] status=0x%08x\n", status);
       bool is_done = (status & CTL_AP_DONE) == CTL_AP_DONE;
       if (is_done)
         break;
@@ -897,7 +939,7 @@ public:
       }
     #endif
       if (0 == timeout) {
-      #ifdef ENABLE_HW_DEBUG_MODULE
+      #ifdef ENABLE_HW_DEBUG_MODULE_EXPORT
         this->dump_hw_debug();
       #endif
         return -1;
@@ -915,7 +957,9 @@ public:
       const struct timespec idle_poll = {0, 100000};
       const struct timespec settle_wait = {0, 500000};
       const uint32_t idle_retries = 200;
-      for (uint32_t i = 0; i < idle_retries; ++i) {
+      // for (uint32_t i = 0; i < idle_retries; ++i) {
+      printf("[VXDRV] waiting for AP_IDLE...\n");
+      while(true) {
         uint32_t status = 0;
         CHECK_ERR(this->read_register(MMIO_CTL_ADDR, &status), {
           return err;
@@ -982,6 +1026,10 @@ private:
   uint32_t lg2_bank_size_;
   ShmStatus shm_;
   bool pending_ap_done_;
+#ifdef ENABLE_HW_DEBUG_MODULE_EXPORT
+  bool hw_debug_present_checked_;
+  bool hw_debug_present_;
+#endif
 
 #ifdef VX_USE_BANKED_XRT_BO
 

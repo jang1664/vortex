@@ -25,6 +25,6 @@ typedef struct {
 
   uint32_t log2_mt;
   uint32_t log2_mxu_nt;
+  uint32_t power_kernel_iterations;
 } kernel_arg_t;
-
 #endif // _COMMON_H_

@@ -5,9 +5,6 @@ defaults:
   warmup: 1
   iterations: 3
   xrt_device_index: 0
-  blackbox_args:
-    - --cores=1
-    - --threads=8
 
 # Raw-DB sweep for Llama2-7B non-GEMM kernels.
 # Covered dimensions:

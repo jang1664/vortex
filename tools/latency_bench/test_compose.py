@@ -4,6 +4,7 @@ import csv
 import re
 import tempfile
 import unittest
+import warnings
 from pathlib import Path
 
 import pandas as pd
@@ -52,20 +53,6 @@ class ComposeTest(unittest.TestCase):
     def _write_raw_db(self, path: Path) -> None:
         rows = [
             {
-                "run_id": "run_old",
-                "timestamp_utc": "2026-01-01T00:00:00+00:00",
-                "fpga_bin_label": "improve_tcol1",
-                "xclbin_sha256": "abc",
-                "app": "fpint_gemm_ffn_hw",
-                "args": "-m 1 -n 128 -k 128 -q 32 -t 0 -d 0",
-                "status": "pass",
-                "avg_us": "11",
-                "p50_us": "10",
-                "p95_us": "12",
-                "min_us": "9",
-                "max_us": "13",
-            },
-            {
                 "run_id": "run_new",
                 "timestamp_utc": "2026-01-02T00:00:00+00:00",
                 "fpga_bin_label": "improve_tcol1",
@@ -78,6 +65,7 @@ class ComposeTest(unittest.TestCase):
                 "p95_us": "16",
                 "min_us": "13",
                 "max_us": "17",
+                "fpga_cycle": "140",
             },
             {
                 "run_id": "run_b",
@@ -92,6 +80,7 @@ class ComposeTest(unittest.TestCase):
                 "p95_us": "22",
                 "min_us": "19",
                 "max_us": "23",
+                "fpga_cycle": "200",
             },
             {
                 "run_id": "wrong_bin",
@@ -106,14 +95,18 @@ class ComposeTest(unittest.TestCase):
                 "p95_us": "100",
                 "min_us": "100",
                 "max_us": "100",
+                "fpga_cycle": "1000",
             },
         ]
+        self._write_rows(path, rows)
+
+    def _write_rows(self, path: Path, rows: list[dict[str, str]]) -> None:
         with path.open("w", newline="") as fp:
             writer = csv.DictWriter(fp, fieldnames=list(rows[0].keys()))
             writer.writeheader()
             writer.writerows(rows)
 
-    def test_compose_uses_median_matches_by_app_args_and_resolved_fpga_bin(self) -> None:
+    def test_compose_matches_by_app_args_and_resolved_fpga_bin(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             raw_db = Path(tmp) / "raw_db.csv"
             self._write_raw_db(raw_db)
@@ -127,13 +120,118 @@ class ComposeTest(unittest.TestCase):
             )
 
             self.assertEqual(["gemm_a", "gemm_b"], list(composed["case_id"]))
-            self.assertEqual([2, 1], list(composed["match_count"]))
-            self.assertEqual(12.0, float(composed.loc[0, "latency_us"]))
-            self.assertEqual(24.0, float(composed.loc[0, "weighted_latency_us"]))
+            self.assertEqual([1, 1], list(composed["match_count"]))
+            self.assertEqual(14.0, float(composed.loc[0, "latency_us"]))
+            self.assertEqual(28.0, float(composed.loc[0, "weighted_latency_us"]))
             self.assertEqual(60.0, float(composed.loc[1, "weighted_latency_us"]))
-            self.assertEqual("run_old;run_new", composed.loc[0, "source_run_ids"])
+            self.assertEqual("run_new", composed.loc[0, "source_run_ids"])
             self.assertEqual("improve_tcol1", composed.loc[0, "expected_fpga_bin_label"])
             self.assertEqual("improve_tcol1", composed.loc[0, "source_fpga_bin_labels"])
+
+    def test_compose_accepts_fpga_cycle_metric(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            raw_db = Path(tmp) / "raw_db.csv"
+            self._write_raw_db(raw_db)
+
+            composed = compose_latency(
+                self._suite(),
+                ComposeOptions(
+                    raw_dbs=(raw_db,),
+                    out=Path(tmp) / "composed.csv",
+                    metric="fpga_cycle",
+                ),
+            )
+
+            self.assertEqual("fpga_cycle", composed.loc[0, "metric"])
+            self.assertEqual(140.0, float(composed.loc[0, "latency_us"]))
+            self.assertEqual(280.0, float(composed.loc[0, "weighted_latency_us"]))
+            self.assertEqual(600.0, float(composed.loc[1, "weighted_latency_us"]))
+
+    def test_compose_filters_non_pass_and_dedupes_latest_with_warnings(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            raw_db = Path(tmp) / "raw_db.csv"
+            rows = [
+                {
+                    "run_id": "run_old",
+                    "timestamp_utc": "2026-01-01T00:00:00+00:00",
+                    "fpga_bin_label": "improve_tcol1",
+                    "xclbin_sha256": "abc",
+                    "app": "fpint_gemm_ffn_hw",
+                    "args": "-m 1 -n 128 -k 128 -q 32 -t 0 -d 0",
+                    "status": "pass",
+                    "avg_us": "11",
+                    "p50_us": "10",
+                    "p95_us": "12",
+                    "min_us": "9",
+                    "max_us": "13",
+                    "fpga_cycle": "100",
+                },
+                {
+                    "run_id": "run_timeout",
+                    "timestamp_utc": "2026-01-03T00:00:00+00:00",
+                    "fpga_bin_label": "improve_tcol1",
+                    "xclbin_sha256": "abc",
+                    "app": "fpint_gemm_ffn_hw",
+                    "args": "-m 1 -n 128 -k 128 -q 32 -t 0 -d 0",
+                    "status": "timeout",
+                    "avg_us": "",
+                    "p50_us": "",
+                    "p95_us": "",
+                    "min_us": "",
+                    "max_us": "",
+                    "fpga_cycle": "",
+                },
+                {
+                    "run_id": "run_new",
+                    "timestamp_utc": "2026-01-02T00:00:00+00:00",
+                    "fpga_bin_label": "improve_tcol1",
+                    "xclbin_sha256": "abc",
+                    "app": "fpint_gemm_ffn_hw",
+                    "args": "-m 1   -n 128 -k 128 -q 32 -t 0 -d 0",
+                    "status": "pass",
+                    "avg_us": "15",
+                    "p50_us": "14",
+                    "p95_us": "16",
+                    "min_us": "13",
+                    "max_us": "17",
+                    "fpga_cycle": "140",
+                },
+                {
+                    "run_id": "run_b",
+                    "timestamp_utc": "2026-01-01T00:00:00+00:00",
+                    "fpga_bin_label": "improve_tcol1",
+                    "xclbin_sha256": "abc",
+                    "app": "fpint_gemm_ffn_hw",
+                    "args": "-m 2 -n 128 -k 128 -q 32 -t 0 -d 0",
+                    "status": "pass",
+                    "avg_us": "20",
+                    "p50_us": "20",
+                    "p95_us": "22",
+                    "min_us": "19",
+                    "max_us": "23",
+                    "fpga_cycle": "200",
+                },
+            ]
+            self._write_rows(raw_db, rows)
+
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always", RuntimeWarning)
+                composed = compose_latency(
+                    self._suite(),
+                    ComposeOptions(
+                        raw_dbs=(raw_db,),
+                        out=Path(tmp) / "composed.csv",
+                        select="median",
+                    ),
+                )
+
+            messages = [str(item.message) for item in caught if issubclass(item.category, RuntimeWarning)]
+            self.assertTrue(any("filtered out 1 raw DB row(s) with status != 'pass'" in message for message in messages))
+            self.assertTrue(any("duplicate raw DB row(s)" in message and "using the most recent row" in message for message in messages))
+            self.assertEqual(14.0, float(composed.loc[0, "latency_us"]))
+            self.assertEqual(1, int(composed.loc[0, "match_count"]))
+            self.assertEqual("run_new", composed.loc[0, "source_run_ids"])
+            self.assertEqual("run_new", composed.loc[0, "selected_run_id"])
 
     def test_compose_latest_selects_newest_row(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -225,8 +323,8 @@ class ComposeTest(unittest.TestCase):
                 ),
             )
 
-            self.assertEqual(6.0, float(composed.loc[0, "latency_us"]))
-            self.assertEqual(12.0, float(composed.loc[0, "weighted_latency_us"]))
+            self.assertEqual(7.0, float(composed.loc[0, "latency_us"]))
+            self.assertEqual(14.0, float(composed.loc[0, "weighted_latency_us"]))
             self.assertEqual(60.0, float(composed.loc[1, "weighted_latency_us"]))
             self.assertEqual("half_m1", composed.loc[0, "source_latency_scale_rules"])
             self.assertEqual("0.5", composed.loc[0, "source_latency_scales"])
@@ -349,7 +447,7 @@ class ComposeTest(unittest.TestCase):
             self.assertTrue(summary_csv and summary_csv.exists())
             with summary_csv.open(newline="") as fp:
                 rows = list(csv.DictReader(fp))
-            self.assertEqual("84.0", rows[0]["total_latency_us"])
+            self.assertEqual("88.0", rows[0]["total_latency_us"])
 
 
 if __name__ == "__main__":

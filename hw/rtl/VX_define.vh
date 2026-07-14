@@ -18,6 +18,17 @@
 `include "VX_config.vh"
 `include "VX_types.vh"
 
+// ENABLE_HW_DEBUG_AXI, ENABLE_HW_DEBUG_PC, ENABLE_HW_DEBUG_CORE,
+// ENABLE_HW_DEBUG_CACHE, and ENABLE_HW_DEBUG_GEMM are opt-in debug groups.
+`ifdef ENABLE_HW_DEBUG_MODULE
+`ifndef ENABLE_HW_DEBUG_BASE
+`define ENABLE_HW_DEBUG_BASE
+`endif
+`ifndef ENABLE_HW_DEBUG_AFU
+`define ENABLE_HW_DEBUG_AFU
+`endif
+`endif
+
 `ifdef ICACHE_ENABLE
     `define L1_ENABLE
 `endif

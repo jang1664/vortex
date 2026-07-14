@@ -78,7 +78,7 @@ int main(int argc, char *argv[]) {
     else if (strcmp(argv[i], "-eps") == 0) eps = atof(argv[++i]);
     else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
       printf("Usage: %s [--warmup=N] [--iterations=N] [--csv] "
-             "[--output=PATH] [--output-append] [-m M] [-k K] [-eps E]\n", argv[0]);
+             "[--output=PATH] [--output-append] [--power-measure-latency[=on|off]] [-m M] [-k K] [-eps E]\n", argv[0]);
       return 0;
     }
   }
@@ -142,7 +142,7 @@ int main(int argc, char *argv[]) {
   kernel_arg.block_dim[0] = tpb;
   kernel_arg.block_dim[1] = 1;
   kernel_arg.block_dim[2] = 1;
-
+  kernel_arg.power_kernel_iterations = 1;
   RT_CHECK(vx_upload_bytes(device, &kernel_arg, sizeof(kernel_arg_t), &args_buffer));
 
   printf("Warmup Start\n"); fflush(stdout);
@@ -153,19 +153,35 @@ int main(int argc, char *argv[]) {
   }
 
   vx_bench::Stats stats;
+  double first_latency_us = 0.0;
+  vx_bench::IterationPerf first_iter_perf;
   printf("Start latency measurement.\n"); fflush(stdout);
   for (int i = 0; i < bench.iterations; ++i) {
     vx_bench::Stopwatch sw; sw.start();
     RT_CHECK(vx_start(device, krnl_buffer, args_buffer));
     RT_CHECK(vx_ready_wait(device, VX_MAX_TIMEOUT));
-    stats.record(sw.stop_us());
+    const double elapsed_us = sw.stop_us();
+    if (i == 0)
+      first_latency_us = elapsed_us;
+    stats.record(elapsed_us);
+    const vx_bench::IterationPerf iter_perf =
+        vx_bench::dump_iteration_perf(device, bench, i);
+    if (i == 0)
+      first_iter_perf = iter_perf;
     printf("iteration %0d/%0d, elapsed:%f\n", i+1, bench.iterations, stats.last()); fflush(stdout);
   }
 
   stats.report("rms_norm_layout_fused", bench);
 
+  if (!vx_bench::prepare_power_kernel_iterations(
+          bench, kernel_arg, args_buffer, first_latency_us, first_iter_perf,
+          "rms_norm_layout_fused")) {
+    cleanup();
+    return -1;
+  }
+
   if (!vx_bench::run_power_measurement(
-          "rms_norm_layout_fused", bench, device, krnl_buffer, args_buffer)) {
+          "rms_norm_layout_fused", bench, device, krnl_buffer, args_buffer, bench.power_measure_latency)) {
     cleanup();
     return -1;
   }

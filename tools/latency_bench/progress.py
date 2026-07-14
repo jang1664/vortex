@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from .power_summary import read_power_summary
+from .perf_log import FPGA_CYCLE_COLUMNS, parse_fpga_cycle_stats
 from .status import DEFAULT_POWER_MIN_SAMPLES, classify_status, power_sample_failure_reason
 
 
@@ -37,12 +38,36 @@ PROGRESS_COLUMNS = [
     "max_us",
     "p50_us",
     "p95_us",
+    *FPGA_CYCLE_COLUMNS,
     "parse_error",
     "power_samples",
     "power_elapsed_s",
     "power_min_w",
     "power_avg_w",
     "power_max_w",
+    "power_std_w",
+    "power_total_min_w",
+    "power_total_avg_w",
+    "power_total_max_w",
+    "power_idle_w",
+    "power_idle_std_w",
+    "power_idle_vcc_avg_w",
+    "power_idle_pcie_avg_w",
+    "power_vcc_min_w",
+    "power_vcc_avg_w",
+    "power_vcc_max_w",
+    "power_pcie_min_w",
+    "power_pcie_avg_w",
+    "power_pcie_max_w",
+    "power_dynamic_avg_w",
+    "power_dynamic_peak_w",
+    "power_dynamic_stderr_w",
+    "power_dynamic_energy_j",
+    "power_latency",
+    "power_fpga_cycle",
+    "power_kernel_iterations",
+    "power_kernel_iterations_auto",
+    "power_target_sec",
     "power_parse_error",
 ]
 
@@ -119,6 +144,7 @@ def append_progress_execution(
     failure_reason: str = "",
 ) -> None:
     bench = _read_bench_csv(raw_csv)
+    cycle = parse_fpga_cycle_stats(log_file)
     power = read_power_summary(power_summary)
     measure_power = power_summary is not None
     if not failure_reason:
@@ -169,12 +195,36 @@ def append_progress_execution(
         "max_us": bench.get("max_us", ""),
         "p50_us": bench.get("p50_us", ""),
         "p95_us": bench.get("p95_us", ""),
+        **cycle,
         "parse_error": bench.get("parse_error", ""),
         "power_samples": power.get("power_samples", ""),
         "power_elapsed_s": power.get("power_elapsed_s", ""),
         "power_min_w": power.get("power_min_w", ""),
         "power_avg_w": power.get("power_avg_w", ""),
         "power_max_w": power.get("power_max_w", ""),
+        "power_std_w": power.get("power_std_w", ""),
+        "power_total_min_w": power.get("power_total_min_w", ""),
+        "power_total_avg_w": power.get("power_total_avg_w", ""),
+        "power_total_max_w": power.get("power_total_max_w", ""),
+        "power_idle_w": power.get("power_idle_w", ""),
+        "power_idle_std_w": power.get("power_idle_std_w", ""),
+        "power_idle_vcc_avg_w": power.get("power_idle_vcc_avg_w", ""),
+        "power_idle_pcie_avg_w": power.get("power_idle_pcie_avg_w", ""),
+        "power_vcc_min_w": power.get("power_vcc_min_w", ""),
+        "power_vcc_avg_w": power.get("power_vcc_avg_w", ""),
+        "power_vcc_max_w": power.get("power_vcc_max_w", ""),
+        "power_pcie_min_w": power.get("power_pcie_min_w", ""),
+        "power_pcie_avg_w": power.get("power_pcie_avg_w", ""),
+        "power_pcie_max_w": power.get("power_pcie_max_w", ""),
+        "power_dynamic_avg_w": power.get("power_dynamic_avg_w", ""),
+        "power_dynamic_peak_w": power.get("power_dynamic_peak_w", ""),
+        "power_dynamic_stderr_w": power.get("power_dynamic_stderr_w", ""),
+        "power_dynamic_energy_j": power.get("power_dynamic_energy_j", ""),
+        "power_latency": power.get("power_latency", ""),
+        "power_fpga_cycle": power.get("power_fpga_cycle", ""),
+        "power_kernel_iterations": power.get("power_kernel_iterations", ""),
+        "power_kernel_iterations_auto": power.get("power_kernel_iterations_auto", ""),
+        "power_target_sec": power.get("power_target_sec", ""),
         "power_parse_error": power.get("power_parse_error", ""),
     }
 

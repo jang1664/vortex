@@ -297,6 +297,12 @@ import VX_fpu_pkg::*;
                         `CSR_READ_64(`VX_CSR_MPM_MXU_OUTPUT_FIRE,     read_data_ro_w, accel_perf.gemm_unit.output_fire);
                         `CSR_READ_64(`VX_CSR_MPM_MXU_OUTPUT_STALL,    read_data_ro_w, accel_perf.gemm_unit.output_stall);
                         `CSR_READ_64(`VX_CSR_MPM_OVERLAP_DMA_MXU,     read_data_ro_w, accel_perf.overlap_dma_mxu);
+                        `CSR_READ_64(`VX_CSR_MPM_MXU_ACCUM_RD_ACCEPT, read_data_ro_w, accel_perf.gemm_unit.accum_rd_accept);
+                        `CSR_READ_64(`VX_CSR_MPM_MXU_ACCUM_WR_FIRE,   read_data_ro_w, accel_perf.gemm_unit.accum_wr_fire);
+                        `CSR_READ_64(`VX_CSR_MPM_MXU_SCALER_VALID,    read_data_ro_w, accel_perf.gemm_unit.scaler_valid);
+                        `CSR_READ_64(`VX_CSR_MPM_MXU_ACC_OUTPUT_VALID,read_data_ro_w, accel_perf.gemm_unit.acc_output_valid);
+                        `CSR_READ_64(`VX_CSR_MPM_MXU_PSUM_UNDERFLOW,  read_data_ro_w, accel_perf.gemm_unit.psum_underflow);
+                        `CSR_READ_64(`VX_CSR_MPM_MXU_RD_WR_CONFLICT,  read_data_ro_w, accel_perf.gemm_unit.rd_wr_conflict);
                         default:;
                         endcase
                     end

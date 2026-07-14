@@ -12,9 +12,19 @@ package fpint_emul;
   localparam int S_WIDTH  = `SCALE_WIDTH;
   localparam int Z_WIDTH  = `ZP_WIDTH;
   localparam int QBLOCK = `MXU_ROW;
-  localparam int MAX_M=512;
-  localparam int MAX_N=512;
-  localparam int MAX_K=512;
+`ifndef FPINT_EMUL_MAX_M
+`define FPINT_EMUL_MAX_M 1024
+`endif
+`ifndef FPINT_EMUL_MAX_N
+`define FPINT_EMUL_MAX_N 1024
+`endif
+`ifndef FPINT_EMUL_MAX_K
+`define FPINT_EMUL_MAX_K 1024
+`endif
+
+  localparam int MAX_M=`FPINT_EMUL_MAX_M;
+  localparam int MAX_N=`FPINT_EMUL_MAX_N;
+  localparam int MAX_K=`FPINT_EMUL_MAX_K;
   localparam int MAX_KG=(MAX_K+QBLOCK-1)/QBLOCK;
   localparam int MAX_NG=(MAX_N+QBLOCK-1)/QBLOCK;
   localparam int MXU_K=`MXU_ROW;

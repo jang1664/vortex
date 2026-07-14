@@ -50,7 +50,18 @@ void kernel_body(kernel_arg_t *__UNIFORM__ arg) {
   ctx::store_matrix_sync(pTileC, fragC, N);
 }
 
+static inline uint32_t effective_power_kernel_iterations(const kernel_arg_t* arg) {
+  return (arg->power_kernel_iterations == 0u) ? 1u : arg->power_kernel_iterations;
+}
+
+void kernel_body_power(kernel_arg_t *__UNIFORM__ arg) {
+  const uint32_t repeat = effective_power_kernel_iterations(arg);
+  for (uint32_t power_iter = 0; power_iter < repeat; ++power_iter) {
+    kernel_body(arg);
+  }
+}
+
 int main() {
   auto arg = (kernel_arg_t *)csr_read(VX_CSR_MSCRATCH);
-  return vx_spawn_threads(2, arg->grid_dim, arg->block_dim, (vx_kernel_func_cb)kernel_body, arg);
+  return vx_spawn_threads(2, arg->grid_dim, arg->block_dim, (vx_kernel_func_cb)kernel_body_power, arg);
 }

@@ -19,17 +19,17 @@ module tb_VX_gemm_node_improve
   localparam real FP16_TOL = 0.01; // ~1.5 LSB of FP16
 
   // default smoke sizes (runtime-configurable via tasks)
-  localparam int DEFAULT_M_TEST = 160;
-  localparam int DEFAULT_N_TEST = 160;
-  localparam int DEFAULT_K_TEST = 128;
+  localparam int DEFAULT_M_TEST = 256;
+  localparam int DEFAULT_N_TEST = 1024;
+  localparam int DEFAULT_K_TEST = 256;
   localparam int DEFAULT_QBLK   = 32;
 
   // GEMM DMA tile/micro-tile shape (must match DUT build-time config)
-  localparam int DMA_MT     = `GEMM_FSM_MT;
-  localparam int DMA_NT     = `GEMM_FSM_NT;
-  localparam int DMA_KT     = `GEMM_FSM_KT;
-  localparam int DMA_MXU_KT = `GEMM_FSM_MXU_KT;
-  localparam int DMA_MXU_NT = `GEMM_FSM_MXU_NT;
+  localparam int DMA_MT     = 128;
+  localparam int DMA_NT     = 128;
+  localparam int DMA_KT     = 128;
+  localparam int DMA_MXU_KT = `MXU_ROW;
+  localparam int DMA_MXU_NT = `MXU_COL;
 
   localparam int FP16_WIDTH   = 16;
 
@@ -55,6 +55,56 @@ module tb_VX_gemm_node_improve
   localparam logic [3:0] RAW_OP_CLEAR            = 4'd9;
 
   localparam logic [63:0] GEMM_STREAM_ADDR = GEMM_BASE + 64'd8;
+
+  // Job regs indices (must mirror VX_gemm_fsm.sv)
+  localparam int REG_CONTROL             =  0;
+  localparam int REG_INPUT_BASE_LO       =  1;
+  localparam int REG_INPUT_BASE_HI       =  2;
+  localparam int REG_WEIGHT_BASE_LO      =  3;
+  localparam int REG_WEIGHT_BASE_HI      =  4;
+  localparam int REG_OUTPUT_BASE_LO      =  5;
+  localparam int REG_OUTPUT_BASE_HI      =  6;
+  localparam int REG_SCALE_BASE_LO       =  7;
+  localparam int REG_SCALE_BASE_HI       =  8;
+  localparam int REG_ZP_BASE_LO          =  9;
+  localparam int REG_ZP_BASE_HI          = 10;
+
+  localparam int REG_LMEM_IBUF0_LO       = 11;
+  localparam int REG_LMEM_IBUF0_HI       = 12;
+  localparam int REG_LMEM_IBUF1_LO       = 13;
+  localparam int REG_LMEM_IBUF1_HI       = 14;
+  localparam int REG_LMEM_WBUF0_LO       = 15;
+  localparam int REG_LMEM_WBUF0_HI       = 16;
+  localparam int REG_LMEM_WBUF1_LO       = 17;
+  localparam int REG_LMEM_WBUF1_HI       = 18;
+  localparam int REG_LMEM_SCBUF0_LO      = 19;
+  localparam int REG_LMEM_SCBUF0_HI      = 20;
+  localparam int REG_LMEM_SCBUF1_LO      = 21;
+  localparam int REG_LMEM_SCBUF1_HI      = 22;
+  localparam int REG_LMEM_ZPBUF0_LO      = 23;
+  localparam int REG_LMEM_ZPBUF0_HI      = 24;
+  localparam int REG_LMEM_ZPBUF1_LO      = 25;
+  localparam int REG_LMEM_ZPBUF1_HI      = 26;
+  localparam int REG_LMEM_OBUF_LO        = 27;
+  localparam int REG_LMEM_OBUF_HI        = 28;
+
+  localparam int REG_M_ORIG              = 29;
+  localparam int REG_N_ORIG              = 30;
+  localparam int REG_K_ORIG              = 31;
+  localparam int REG_QBLK_ORIG           = 32;
+  localparam int REG_M_TARGET            = 33;
+  localparam int REG_N_TARGET            = 34;
+  localparam int REG_K_TARGET            = 35;
+  localparam int REG_M_START             = 36;
+  localparam int REG_N_START             = 37;
+  localparam int REG_WTRANS              = 38;
+  localparam int REG_QDIR                = 39;
+  localparam int REG_LOG2_DMA_MT         = 40;
+  localparam int REG_LOG2_DMA_KT         = 41;
+  localparam int REG_LOG2_DMA_NT         = 42;
+
+  localparam int JOB_NUM_ENTRIES = `JOB_MMIO_NUM_ENTRIES;
+  localparam int JOB_NUM_REGS32  = `GEMM_CFG_REG_NUM;
 
   // =========================================================================
   // Clock/Reset
@@ -83,11 +133,22 @@ module tb_VX_gemm_node_improve
     $sformat(rpt_file_path,  "./reports/%s.rpt",  name);
 
 `ifdef VCS
-    $fsdbDumpfile(fsdb_file_path);
-    $fsdbDumpvars(0, "+all", "+parameter", "+functions");
+`ifdef XILINX_FPU_SIM
+    if (!$test$plusargs("NO_WAVE")) begin
+      $dumpfile(fst_file_path);
+      $dumpvars(0, tb_VX_gemm_node_improve);
+    end
 `else
-    $dumpfile(fst_file_path);
-    $dumpvars(0, tb_VX_gemm_node_improve);
+    if (!$test$plusargs("NO_WAVE")) begin
+      $fsdbDumpfile(fsdb_file_path);
+      $fsdbDumpvars(0, "+all", "+parameter", "+functions");
+    end
+`endif
+`else
+    if (!$test$plusargs("NO_WAVE")) begin
+      $dumpfile(fst_file_path);
+      $dumpvars(0, tb_VX_gemm_node_improve);
+    end
 `endif
 
     rpt_fd = $fopen(rpt_file_path, "w");
@@ -110,6 +171,13 @@ module tb_VX_gemm_node_improve
   localparam int AXI_USER_WIDTH = 1;
   localparam int AXI_STRB_WIDTH = AXI_DATA_WIDTH / 8;
   localparam int NUM_TMEM_BANKS = 8;
+  localparam int HBM_NUM_BANKS       = `PLATFORM_MEMORY_NUM_BANKS;
+  localparam int HBM_BANK_BITS       = `CLOG2(HBM_NUM_BANKS);
+  localparam int HBM_PORT_BITS       = `CLOG2(NUM_TMEM_BANKS);
+  localparam int HBM_BANKS_PER_PORT  = HBM_NUM_BANKS / NUM_TMEM_BANKS;
+  localparam int HBM_LOCAL_BITS      = `CLOG2(HBM_BANKS_PER_PORT);
+  localparam int HBM_BANK_SHIFT      = AXI_ADDR_WIDTH - HBM_BANK_BITS;
+  localparam int HBM_BLOCK_SHIFT     = `CLOG2(`MEM_BLOCK_SIZE);
 
   // DMA AXI ports
   AXI_BUS #(
@@ -138,10 +206,39 @@ module tb_VX_gemm_node_improve
   // Global memory backend (byte addressed)
   byte dram [0:DRAM_SIZE-1];
 
+  bit randomize_input_speed = 1'b0;
+  bit deterministic_input_stall = 1'b0;
+  bit trace_input_speed_en  = 1'b0;
+  bit trace_rd_fifo_en      = 1'b0;
+  bit require_dual_bank_prefetch = 1'b0;
+  int input_gap_min         = 1;
+  int input_gap_max         = 3;
+  int input_stall_period    = 0;
+  int input_stall_phase     = 0;
+  int input_stall_cycles    = 1;
+
+  task force_input_stall;
+    force u_dut.i_gemm_bus_if.req_valid = 1'b0;
+    force u_dut.tmem_i_gemm_bus_if.req_ready = 1'b0;
+  endtask
+
+  task release_input_stall;
+    release u_dut.i_gemm_bus_if.req_valid;
+    release u_dut.tmem_i_gemm_bus_if.req_ready;
+  endtask
+
+  function automatic int random_input_gap();
+    if (input_gap_max <= input_gap_min)
+      random_input_gap = input_gap_min;
+    else
+      random_input_gap = int'($urandom_range(input_gap_max, input_gap_min));
+  endfunction
+
   // =========================================================================
   // AXI Slave Memory Model (8 channels)
-  // Each channel receives per-port contiguous addresses.
-  // Convert to flat software address: flat = (axi_addr/64)*512 + ch*64 + (axi_addr%64)
+  // VX_dma_engine applies VX_mem_remap before issuing AXI requests. Undo that
+  // 32-bank/8-channel HBM address layout and present a dense byte-addressed
+  // DRAM image to the software-side checkers.
   // =========================================================================
   localparam int AXI_MEM_LATENCY = 4;
 
@@ -150,21 +247,41 @@ module tb_VX_gemm_node_improve
     typedef struct {
       logic [AXI_DATA_WIDTH-1:0] data;
       logic [AXI_ID_WIDTH-1:0]   id;
+      logic                      last;
       int unsigned               delay;
     } axi_rd_entry_t;
 
     axi_rd_entry_t rd_queue[$];
 
-    // DMA channels send full HBM addresses directly (no per-bank offset).
-    // AXI address == flat DRAM address, no translation needed.
     function automatic longint unsigned to_flat_addr(input longint unsigned axi_addr, input int ch_id);
-      return axi_addr;
+      longint unsigned bank_idx;
+      longint unsigned bank_port;
+      longint unsigned local_bank;
+      longint unsigned local_addr;
+      longint unsigned byte_offset;
+      longint unsigned bank_offset_blocks;
+      longint unsigned q;
+      longint unsigned block_idx;
+      begin
+        bank_idx           = (axi_addr >> HBM_BANK_SHIFT) & ((longint'(1) << HBM_BANK_BITS) - 1);
+        bank_port          = bank_idx >> HBM_LOCAL_BITS;
+        local_bank         = bank_idx & ((longint'(1) << HBM_LOCAL_BITS) - 1);
+        local_addr         = axi_addr & ((longint'(1) << HBM_BANK_SHIFT) - 1);
+        byte_offset        = local_addr & longint'(`MEM_BLOCK_SIZE - 1);
+        bank_offset_blocks = local_addr >> HBM_BLOCK_SHIFT;
+        q                  = (bank_offset_blocks * longint'(HBM_BANKS_PER_PORT)) + local_bank;
+        block_idx          = (q * longint'(NUM_TMEM_BANKS)) + bank_port;
+        return (block_idx << HBM_BLOCK_SHIFT) | byte_offset;
+      end
     endfunction
 
     // AW/W channel: accept writes
     logic aw_pending;
     logic [AXI_ADDR_WIDTH-1:0] aw_addr_q;
     logic [AXI_ID_WIDTH-1:0]   aw_id_q;
+    int unsigned               aw_beat_idx_q;
+    int unsigned               aw_beats_q;
+    int unsigned               aw_beat_bytes_q;
 
     assign dma_axi[ch].aw_ready = !aw_pending;
     assign dma_axi[ch].w_ready  = aw_pending;
@@ -172,6 +289,9 @@ module tb_VX_gemm_node_improve
     always @(posedge clk) begin
       if (reset) begin
         aw_pending <= 1'b0;
+        aw_beat_idx_q <= 0;
+        aw_beats_q <= 0;
+        aw_beat_bytes_q <= 0;
         dma_axi[ch].b_valid <= 1'b0;
       end else begin
         // B channel handshake
@@ -180,24 +300,41 @@ module tb_VX_gemm_node_improve
 
         // AW accept
         if (dma_axi[ch].aw_valid && dma_axi[ch].aw_ready) begin
-          aw_pending <= 1'b1;
-          aw_addr_q  <= dma_axi[ch].aw_addr;
-          aw_id_q    <= dma_axi[ch].aw_id;
+          aw_pending      <= 1'b1;
+          aw_addr_q       <= dma_axi[ch].aw_addr;
+          aw_id_q         <= dma_axi[ch].aw_id;
+          aw_beat_idx_q   <= 0;
+          aw_beats_q      <= int'(dma_axi[ch].aw_len) + 1;
+          aw_beat_bytes_q <= 1 << int'(dma_axi[ch].aw_size);
         end
 
         // W accept (write data to DRAM)
         if (dma_axi[ch].w_valid && dma_axi[ch].w_ready) begin
           longint unsigned flat;
-          flat = to_flat_addr(longint'(aw_addr_q), ch);
+          longint unsigned beat_addr;
+          logic expected_last;
+          beat_addr = longint'(aw_addr_q) + longint'(aw_beat_idx_q * aw_beat_bytes_q);
+          flat = to_flat_addr(beat_addr, ch);
           for (int b = 0; b < AXI_STRB_WIDTH; b++) begin
             if (dma_axi[ch].w_strb[b] && ((flat + b) < DRAM_SIZE))
               dram[flat + b] = dma_axi[ch].w_data[b*8 +: 8];
           end
-          aw_pending <= 1'b0;
-          dma_axi[ch].b_valid <= 1'b1;
-          dma_axi[ch].b_id    <= aw_id_q;
-          dma_axi[ch].b_resp  <= 2'b00;
-          dma_axi[ch].b_user  <= '0;
+
+          expected_last = ((aw_beat_idx_q + 1) == aw_beats_q);
+          if (dma_axi[ch].w_last !== expected_last) begin
+            $fatal(1, "[%0t] AXI WLAST mismatch ch=%0d beat=%0d beats=%0d w_last=%0b",
+                   $time, ch, aw_beat_idx_q, aw_beats_q, dma_axi[ch].w_last);
+          end
+
+          if (expected_last) begin
+            aw_pending <= 1'b0;
+            dma_axi[ch].b_valid <= 1'b1;
+            dma_axi[ch].b_id    <= aw_id_q;
+            dma_axi[ch].b_resp  <= 2'b00;
+            dma_axi[ch].b_user  <= '0;
+          end else begin
+            aw_beat_idx_q <= aw_beat_idx_q + 1;
+          end
         end
       end
     end
@@ -212,18 +349,27 @@ module tb_VX_gemm_node_improve
       end else begin
         // AR accept
         if (dma_axi[ch].ar_valid && dma_axi[ch].ar_ready) begin
-          axi_rd_entry_t e;
-          longint unsigned flat;
-          flat = to_flat_addr(longint'(dma_axi[ch].ar_addr), ch);
-          e.id = dma_axi[ch].ar_id;
-          e.delay = AXI_MEM_LATENCY;
-          for (int b = 0; b < AXI_STRB_WIDTH; b++) begin
-            if ((flat + b) < DRAM_SIZE)
-              e.data[b*8 +: 8] = dram[flat + b];
-            else
-              e.data[b*8 +: 8] = 8'h00;
+          int unsigned ar_beats;
+          int unsigned ar_beat_bytes;
+          ar_beats = int'(dma_axi[ch].ar_len) + 1;
+          ar_beat_bytes = 1 << int'(dma_axi[ch].ar_size);
+          for (int beat = 0; beat < ar_beats; beat++) begin
+            axi_rd_entry_t e;
+            longint unsigned flat;
+            longint unsigned beat_addr;
+            beat_addr = longint'(dma_axi[ch].ar_addr) + longint'(beat * ar_beat_bytes);
+            flat = to_flat_addr(beat_addr, ch);
+            e.id = dma_axi[ch].ar_id;
+            e.last = (beat == (ar_beats - 1));
+            e.delay = AXI_MEM_LATENCY + beat;
+            for (int b = 0; b < AXI_STRB_WIDTH; b++) begin
+              if ((flat + b) < DRAM_SIZE)
+                e.data[b*8 +: 8] = dram[flat + b];
+              else
+                e.data[b*8 +: 8] = 8'h00;
+            end
+            rd_queue.push_back(e);
           end
-          rd_queue.push_back(e);
         end
 
         // Tick delays
@@ -241,7 +387,7 @@ module tb_VX_gemm_node_improve
           dma_axi[ch].r_data  <= rd_queue[0].data;
           dma_axi[ch].r_id    <= rd_queue[0].id;
           dma_axi[ch].r_resp  <= 2'b00;
-          dma_axi[ch].r_last  <= 1'b1;
+          dma_axi[ch].r_last  <= rd_queue[0].last;
           dma_axi[ch].r_user  <= '0;
           rd_queue.delete(0);
         end
@@ -261,6 +407,45 @@ module tb_VX_gemm_node_improve
   end
 
   logic [LSU_TAG_WIDTH-1:0] mmio_tag_cnt = '0;
+
+  task automatic mmio_write32_word(
+    input logic [63:0] addr,
+    input int unsigned word_in_beat,
+    input logic [31:0] data
+  );
+    logic [`NUM_LSU_LANES-1:0] lane_mask;
+    logic [`NUM_LSU_LANES-1:0][`MEM_ADDR_WIDTH-`CLOG2(LSU_WORD_SIZE)-1:0] lane_addr;
+    logic [`NUM_LSU_LANES-1:0][LSU_WORD_SIZE*8-1:0] lane_data;
+    logic [`NUM_LSU_LANES-1:0][LSU_WORD_SIZE-1:0]   lane_byteen;
+
+    lane_mask   = '0;
+    lane_addr   = '0;
+    lane_data   = '0;
+    lane_byteen = '0;
+
+    lane_mask[0] = 1'b1;
+    lane_addr[0] = addr >> `CLOG2(LSU_WORD_SIZE);
+    lane_data[0][word_in_beat*32 +: 32] = data;
+    lane_byteen[0][word_in_beat*4 +: 4] = 4'b1111;
+
+    @(posedge clk);
+    mmio_if[0].req_valid       <= 1'b1;
+    mmio_if[0].req_data.rw     <= 1'b1;
+    mmio_if[0].req_data.mask   <= lane_mask;
+    mmio_if[0].req_data.addr   <= lane_addr;
+    mmio_if[0].req_data.data   <= lane_data;
+    mmio_if[0].req_data.byteen <= lane_byteen;
+    mmio_if[0].req_data.flags  <= '0;
+    mmio_if[0].req_data.tag    <= mmio_tag_cnt;
+    mmio_if[0].rsp_ready       <= 1'b1;
+    mmio_tag_cnt++;
+
+    while (!(mmio_if[0].req_valid && mmio_if[0].req_ready)) @(posedge clk);
+    mmio_if[0].req_valid <= 1'b0;
+
+    if ($test$plusargs("MMIO_TRACE"))
+      $display("[%0t] MMIO WRITE32: addr=0x%h word=%0d data=0x%08h", $time, addr, word_in_beat, data);
+  endtask
 
   task automatic mmio_read32_word(
     input  logic [63:0] addr,          // byte address of beat
@@ -302,7 +487,8 @@ module tb_VX_gemm_node_improve
 
     data = mmio_if[0].rsp_data.data[0][word_in_beat*32 +: 32];
     @(posedge clk);
-    $display("[%0t] MMIO READ32: addr=0x%h word=%0d data=0x%08h", $time, addr, word_in_beat, data);
+    if ($test$plusargs("MMIO_TRACE"))
+      $display("[%0t] MMIO READ32: addr=0x%h word=%0d data=0x%08h", $time, addr, word_in_beat, data);
   endtask
 
   task automatic mmio_write64_beat(
@@ -341,7 +527,73 @@ module tb_VX_gemm_node_improve
     // does not consume the same MMIO request twice on the following cycle.
     mmio_if[0].req_valid <= 1'b0;
 
-    $display("[%0t] MMIO WRITE64: addr=0x%h data=0x%016h", $time, addr, data);
+    if ($test$plusargs("MMIO_TRACE"))
+      $display("[%0t] MMIO WRITE64: addr=0x%h data=0x%016h", $time, addr, data);
+  endtask
+
+  // =========================================================================
+  // Job frontend address mapping helpers (must mirror VX_job_desc_mmio_regs)
+  // =========================================================================
+  localparam int WORDS_PER_BEAT = (LSU_WORD_SIZE / 4);
+  localparam int NUM_BEATS      = (JOB_NUM_REGS32 + WORDS_PER_BEAT - 1) / WORDS_PER_BEAT;
+  localparam int ENTRY_STRIDE_B = NUM_BEATS * LSU_WORD_SIZE;
+  localparam int GLOBAL_ALLOC_B = LSU_WORD_SIZE;
+
+  function automatic logic [63:0] job_entry_beat_addr(
+    input int unsigned eid,
+    input int unsigned beat_idx
+  );
+    return GEMM_BASE
+         + GLOBAL_ALLOC_B
+         + 64'(eid) * 64'(ENTRY_STRIDE_B)
+         + 64'(beat_idx) * 64'(LSU_WORD_SIZE);
+  endfunction
+
+  task automatic job_write_reg32(input int unsigned eid, input int unsigned r32, input logic [31:0] data);
+    int unsigned beat_idx;
+    int unsigned word_in_beat;
+    logic [63:0] addr;
+    begin
+      beat_idx = r32 / WORDS_PER_BEAT;
+      word_in_beat = r32 % WORDS_PER_BEAT;
+      addr = job_entry_beat_addr(eid, beat_idx);
+      mmio_write32_word(addr, word_in_beat, data);
+    end
+  endtask
+
+  task automatic job_read_reg32(input int unsigned eid, input int unsigned r32, output logic [31:0] data);
+    int unsigned beat_idx;
+    int unsigned word_in_beat;
+    logic [63:0] addr;
+    begin
+      beat_idx = r32 / WORDS_PER_BEAT;
+      word_in_beat = r32 % WORDS_PER_BEAT;
+      addr = job_entry_beat_addr(eid, beat_idx);
+      mmio_read32_word(addr, word_in_beat, data);
+    end
+  endtask
+
+  task automatic job_write_reg64(input int unsigned eid, input int unsigned reg_lo_idx, input logic [63:0] value);
+    begin
+      job_write_reg32(eid, reg_lo_idx,     value[31:0]);
+      job_write_reg32(eid, reg_lo_idx + 1, value[63:32]);
+    end
+  endtask
+
+  task automatic job_alloc(output int unsigned eid, output int unsigned generation);
+    logic [31:0] r;
+    begin
+      mmio_read32_word(GEMM_BASE + 64'(0), 0, r);
+      if (r[`JOB_MMIO_ALLOC_SUCC_BIT] != 1'b1)
+        $fatal(1, "[%0t] JOB ALLOC failed r=0x%08h", $time, r);
+
+      eid = r[`JOB_MMIO_ALLOC_ENTRY_LSB +: `JOB_MMIO_ALLOC_ENTRY_BITS];
+      generation = r[`JOB_MMIO_ALLOC_GEN_LSB +: `JOB_MMIO_ALLOC_GEN_BITS];
+      if (eid >= JOB_NUM_ENTRIES)
+        $fatal(1, "[%0t] JOB ALLOC returned invalid eid=%0d", $time, eid);
+
+      $display("[%0t] JOB ALLOC ok: eid=%0d generation=%0d r=0x%08h", $time, eid, generation, r);
+    end
   endtask
 
   function automatic logic [63:0] make_raw_notify_word(
@@ -650,12 +902,12 @@ module tb_VX_gemm_node_improve
     int unsigned timeout;
     begin
       timeout = 0;
-      while (u_dut.u_gemm_job_frontend.occupied_q !== expected_occupied) begin
+      while (u_dut.u_job_frontend.u_job_desc_mmio_regs.occupy_q[0] !== expected_occupied) begin
         @(posedge clk);
         timeout++;
         if (timeout > timeout_cycles) begin
           $fatal(1, "[%0t] frontend occupied timeout: expected=%0d got=%0d",
-                 $time, expected_occupied, u_dut.u_gemm_job_frontend.occupied_q);
+                 $time, expected_occupied, u_dut.u_job_frontend.u_job_desc_mmio_regs.occupy_q[0]);
         end
       end
     end
@@ -736,6 +988,11 @@ module tb_VX_gemm_node_improve
   logic [fpint_emul::O_WIDTH-1:0] ref_output[fpint_emul::MAX_M*fpint_emul::MAX_N];
   logic [fpint_emul::P_WIDTH-1:0] ref_psum[fpint_emul::MAX_M*fpint_emul::MAX_N];
 
+  int vector_input_random_type  = 3;
+  int vector_weight_random_type = 3;
+  int vector_scale_random_type  = 3;
+  int vector_zp_random_type     = 3;
+
   task automatic build_test_vectors(
     input int test_m,
     input int test_n,
@@ -770,6 +1027,8 @@ module tb_VX_gemm_node_improve
           v = shortreal'(1.0 + ((m+k) % 7));
         end else if(input_random_type == 2) begin
           v = shortreal'(((m*test_k+k) % 5 - 2.0));
+        end else if(input_random_type == 3) begin
+          v = shortreal'(0.25 + 0.03125 * ((m + 3*k) % 4));
         end else begin
           v = shortreal'(1.0);
         end
@@ -786,6 +1045,8 @@ module tb_VX_gemm_node_improve
           w = ((k*test_n + n) % 7) - 3; // -3..3
         end else if(weight_random_type == 2) begin
           w = ((k*test_n + n) % 15) - 7; // -7..7
+        end else if(weight_random_type == 3) begin
+          w = ((k + n) % 3) - 1; // -1..1
         end else begin
           w = 1;
         end
@@ -802,6 +1063,8 @@ module tb_VX_gemm_node_improve
         v = shortreal'(1.0 + (n % 7));
       end else if(scale_random_type == 2) begin
         v = shortreal'(((n*5) % 11 - 5.0));
+      end else if(scale_random_type == 3) begin
+        v = shortreal'(0.25 + 0.03125 * (n % 4));
       end else begin
         v = shortreal'(1.0);
       end
@@ -812,6 +1075,8 @@ module tb_VX_gemm_node_improve
         z = (n % 7) - 3; // -3..3
       end else if(zp_random_type == 2) begin
          z = (n % 15) - 7; // -7..7
+      end else if(zp_random_type == 3) begin
+        z = 0;
       end else begin
         z = 2;
       end
@@ -860,40 +1125,42 @@ module tb_VX_gemm_node_improve
         test_qblk
     );
 
-    $display("Test Inputs:");
-    for (int m = 0; m < test_m; m++) begin
+    if ($test$plusargs("DUMP_TEST_VECTORS")) begin
+      $display("Test Inputs:");
+      for (int m = 0; m < test_m; m++) begin
+        for (int k = 0; k < test_k; k++) begin
+          $write("%0x ", input_mat[m*test_k + k]);
+        end
+        $write("\n");
+      end
+
+      $display("Test Weights:");
       for (int k = 0; k < test_k; k++) begin
-        $write("%0x ", input_mat[m*test_k + k]);
+        for (int n = 0; n < test_n; n++) begin
+          $write("%0x ", weight_mat[k*test_n + n]);
+        end
+        $write("\n");
       end
-      $write("\n");
-    end
 
-    $display("Test Weights:");
-    for (int k = 0; k < test_k; k++) begin
+      $display("Test Scales:");
       for (int n = 0; n < test_n; n++) begin
-        $write("%0x ", weight_mat[k*test_n + n]);
+        $write("%0x ", scale_vec[n]);
       end
       $write("\n");
-    end
 
-    $display("Test Scales:");
-    for (int n = 0; n < test_n; n++) begin
-      $write("%0x ", scale_vec[n]);
-    end
-    $write("\n");
-
-    $display("Test ZPs:");
-    for (int n = 0; n < test_n; n++) begin
-      $write("%0x ", zp_vec[n]);
-    end
-    $write("\n");
-
-    $display("Reference Output:");
-    for (int m = 0; m < test_m; m++) begin
+      $display("Test ZPs:");
       for (int n = 0; n < test_n; n++) begin
-        $write("%0x ", ref_output[m*test_n + n]);
+        $write("%0x ", zp_vec[n]);
       end
       $write("\n");
+
+      $display("Reference Output:");
+      for (int m = 0; m < test_m; m++) begin
+        for (int n = 0; n < test_n; n++) begin
+          $write("%0x ", ref_output[m*test_n + n]);
+        end
+        $write("\n");
+      end
     end
   endtask
 
@@ -901,6 +1168,38 @@ module tb_VX_gemm_node_improve
   // Tiled DRAM write functions
   //   Convert row-major test vectors to tiled layout in DRAM.
   // =========================================================================
+
+  function automatic int ceil_div_int(input int value, input int divisor);
+    ceil_div_int = (value + divisor - 1) / divisor;
+  endfunction
+
+  function automatic int align512_int(input int value);
+    align512_int = ((value + 511) / 512) * 512;
+  endfunction
+
+  function automatic int qparam_slot_bytes(
+    input int ck,
+    input int cn,
+    input int test_qblk,
+    input int test_qdir,
+    input int elem_bytes
+  );
+    int nb_per_nt;
+    int ng_per_mxu_nt;
+    int actual_bytes;
+    begin
+      nb_per_nt     = ceil_div_int(cn, DMA_MXU_NT);
+      ng_per_mxu_nt = ceil_div_int(DMA_MXU_NT, test_qblk);
+
+      if (test_qdir == 0) begin
+        actual_bytes = ceil_div_int(ck, test_qblk) * cn * elem_bytes;
+      end else begin
+        actual_bytes = nb_per_nt * ck * ng_per_mxu_nt * elem_bytes;
+      end
+
+      qparam_slot_bytes = align512_int(actual_bytes);
+    end
+  endfunction
 
   // Input tiled: (k,MXU_KT),(m,actual_m),(k,K/MXU_KT),(m,ceil(M/MT))
   task automatic write_dram_tiled_input(
@@ -999,48 +1298,70 @@ module tb_VX_gemm_node_improve
     input int test_qdir,
     input logic [63:0] dram_sc_base
   );
-    int k_tiles, n_tiles, dram_idx;
+    int k_tiles, nt_tiles, kt_base_offset;
     int ng_total;
     begin
-      k_tiles  = test_k / DMA_KT;
-      n_tiles  = test_n / DMA_MXU_NT;
+      k_tiles  = ceil_div_int(test_k, DMA_KT);
+      nt_tiles = ceil_div_int(test_n, DMA_NT);
       ng_total = (test_n + test_qblk - 1) / test_qblk;
-      dram_idx = 0;
+      kt_base_offset = 0;
       for (int kt = 0; kt < k_tiles; kt++) begin
-        for (int nt = 0; nt < n_tiles; nt++) begin
+        int cur_k;
+        int nt_base_offset;
+        cur_k = (test_k - kt * DMA_KT < DMA_KT) ? (test_k - kt * DMA_KT) : DMA_KT;
+        nt_base_offset = 0;
+
+        for (int nt = 0; nt < nt_tiles; nt++) begin
+          int cur_n;
+          int slot_base;
+          int slot_idx;
+          int slot_bytes;
+          cur_n = (test_n - nt * DMA_NT < DMA_NT) ? (test_n - nt * DMA_NT) : DMA_NT;
+          slot_base = kt_base_offset + nt_base_offset;
+          slot_idx = 0;
+          slot_bytes = qparam_slot_bytes(cur_k, cur_n, test_qblk, test_qdir, 2);
+
           if (test_qdir == 0) begin
             // QCOL: [groups_per_kt][MXU_NT]
             int groups_per_kt;
-            groups_per_kt = DMA_KT / test_qblk;
+            groups_per_kt = ceil_div_int(cur_k, test_qblk);
             for (int g = 0; g < groups_per_kt; g++) begin
-              for (int n = 0; n < DMA_MXU_NT; n++) begin
+              for (int n = 0; n < cur_n; n++) begin
                 logic [15:0] val;
                 int global_g;
-                global_g = kt * groups_per_kt + g;
-                val = ref_scale[global_g * test_n + nt * DMA_MXU_NT + n];
-                if ((dram_sc_base + dram_idx)   < DRAM_SIZE) dram[dram_sc_base + dram_idx]   = val[7:0];
-                if ((dram_sc_base + dram_idx+1) < DRAM_SIZE) dram[dram_sc_base + dram_idx+1] = val[15:8];
-                dram_idx += 2;
+                int global_n;
+                global_g = (kt * DMA_KT) / test_qblk + g;
+                global_n = nt * DMA_NT + n;
+                val = ref_scale[global_g * test_n + global_n];
+                if ((dram_sc_base + slot_base + slot_idx)   < DRAM_SIZE) dram[dram_sc_base + slot_base + slot_idx]   = val[7:0];
+                if ((dram_sc_base + slot_base + slot_idx+1) < DRAM_SIZE) dram[dram_sc_base + slot_base + slot_idx+1] = val[15:8];
+                slot_idx += 2;
               end
             end
           end else begin
-            // QROW: [KT][ng_per_nt]
-            int ng_per_nt;
-            ng_per_nt = (DMA_MXU_NT + test_qblk - 1) / test_qblk;
-            for (int k = 0; k < DMA_KT; k++) begin
-              for (int ng = 0; ng < ng_per_nt; ng++) begin
-                logic [15:0] val;
-                int global_k, global_ng;
-                global_k  = kt * DMA_KT + k;
-                global_ng = (nt * DMA_MXU_NT) / test_qblk + ng;
-                val = ref_scale[global_k * ng_total + global_ng];
-                if ((dram_sc_base + dram_idx)   < DRAM_SIZE) dram[dram_sc_base + dram_idx]   = val[7:0];
-                if ((dram_sc_base + dram_idx+1) < DRAM_SIZE) dram[dram_sc_base + dram_idx+1] = val[15:8];
-                dram_idx += 2;
+            // QROW: [nb][KT][ng_per_mxu_nt]
+            int nb_per_nt;
+            int ng_per_mxu_nt;
+            nb_per_nt = ceil_div_int(cur_n, DMA_MXU_NT);
+            ng_per_mxu_nt = ceil_div_int(DMA_MXU_NT, test_qblk);
+            for (int nb = 0; nb < nb_per_nt; nb++) begin
+              for (int k = 0; k < cur_k; k++) begin
+                for (int ng = 0; ng < ng_per_mxu_nt; ng++) begin
+                  logic [15:0] val;
+                  int global_k, global_ng;
+                  global_k  = kt * DMA_KT + k;
+                  global_ng = ((nt * DMA_NT) + (nb * DMA_MXU_NT)) / test_qblk + ng;
+                  val = ref_scale[global_k * ng_total + global_ng];
+                  if ((dram_sc_base + slot_base + slot_idx)   < DRAM_SIZE) dram[dram_sc_base + slot_base + slot_idx]   = val[7:0];
+                  if ((dram_sc_base + slot_base + slot_idx+1) < DRAM_SIZE) dram[dram_sc_base + slot_base + slot_idx+1] = val[15:8];
+                  slot_idx += 2;
+                end
               end
             end
           end
+          nt_base_offset += slot_bytes;
         end
+        kt_base_offset += nt_base_offset;
       end
     end
   endtask
@@ -1053,46 +1374,68 @@ module tb_VX_gemm_node_improve
     input int test_qdir,
     input logic [63:0] dram_zp_base
   );
-    int k_tiles, n_tiles, dram_idx;
+    int k_tiles, nt_tiles, kt_base_offset;
     int ng_total;
     begin
-      k_tiles  = test_k / DMA_KT;
-      n_tiles  = test_n / DMA_MXU_NT;
+      k_tiles  = ceil_div_int(test_k, DMA_KT);
+      nt_tiles = ceil_div_int(test_n, DMA_NT);
       ng_total = (test_n + test_qblk - 1) / test_qblk;
-      dram_idx = 0;
+      kt_base_offset = 0;
       for (int kt = 0; kt < k_tiles; kt++) begin
-        for (int nt = 0; nt < n_tiles; nt++) begin
+        int cur_k;
+        int nt_base_offset;
+        cur_k = (test_k - kt * DMA_KT < DMA_KT) ? (test_k - kt * DMA_KT) : DMA_KT;
+        nt_base_offset = 0;
+
+        for (int nt = 0; nt < nt_tiles; nt++) begin
+          int cur_n;
+          int slot_base;
+          int slot_idx;
+          int slot_bytes;
+          cur_n = (test_n - nt * DMA_NT < DMA_NT) ? (test_n - nt * DMA_NT) : DMA_NT;
+          slot_base = kt_base_offset + nt_base_offset;
+          slot_idx = 0;
+          slot_bytes = qparam_slot_bytes(cur_k, cur_n, test_qblk, test_qdir, 2);
+
           if (test_qdir == 0) begin
             int groups_per_kt;
-            groups_per_kt = DMA_KT / test_qblk;
+            groups_per_kt = ceil_div_int(cur_k, test_qblk);
             for (int g = 0; g < groups_per_kt; g++) begin
-              for (int n = 0; n < DMA_MXU_NT; n++) begin
+              for (int n = 0; n < cur_n; n++) begin
                 logic [15:0] val;
                 int global_g;
-                global_g = kt * groups_per_kt + g;
-                val = ref_zero[global_g * test_n + nt * DMA_MXU_NT + n];
-                if ((dram_zp_base + dram_idx)   < DRAM_SIZE) dram[dram_zp_base + dram_idx]   = val[7:0];
-                if ((dram_zp_base + dram_idx+1) < DRAM_SIZE) dram[dram_zp_base + dram_idx+1] = val[15:8];
-                dram_idx += 2;
+                int global_n;
+                global_g = (kt * DMA_KT) / test_qblk + g;
+                global_n = nt * DMA_NT + n;
+                val = ref_zero[global_g * test_n + global_n];
+                if ((dram_zp_base + slot_base + slot_idx)   < DRAM_SIZE) dram[dram_zp_base + slot_base + slot_idx]   = val[7:0];
+                if ((dram_zp_base + slot_base + slot_idx+1) < DRAM_SIZE) dram[dram_zp_base + slot_base + slot_idx+1] = val[15:8];
+                slot_idx += 2;
               end
             end
           end else begin
-            int ng_per_nt;
-            ng_per_nt = (DMA_MXU_NT + test_qblk - 1) / test_qblk;
-            for (int k = 0; k < DMA_KT; k++) begin
-              for (int ng = 0; ng < ng_per_nt; ng++) begin
-                logic [15:0] val;
-                int global_k, global_ng;
-                global_k  = kt * DMA_KT + k;
-                global_ng = (nt * DMA_MXU_NT) / test_qblk + ng;
-                val = ref_zero[global_k * ng_total + global_ng];
-                if ((dram_zp_base + dram_idx)   < DRAM_SIZE) dram[dram_zp_base + dram_idx]   = val[7:0];
-                if ((dram_zp_base + dram_idx+1) < DRAM_SIZE) dram[dram_zp_base + dram_idx+1] = val[15:8];
-                dram_idx += 2;
+            int nb_per_nt;
+            int ng_per_mxu_nt;
+            nb_per_nt = ceil_div_int(cur_n, DMA_MXU_NT);
+            ng_per_mxu_nt = ceil_div_int(DMA_MXU_NT, test_qblk);
+            for (int nb = 0; nb < nb_per_nt; nb++) begin
+              for (int k = 0; k < cur_k; k++) begin
+                for (int ng = 0; ng < ng_per_mxu_nt; ng++) begin
+                  logic [15:0] val;
+                  int global_k, global_ng;
+                  global_k  = kt * DMA_KT + k;
+                  global_ng = ((nt * DMA_NT) + (nb * DMA_MXU_NT)) / test_qblk + ng;
+                  val = ref_zero[global_k * ng_total + global_ng];
+                  if ((dram_zp_base + slot_base + slot_idx)   < DRAM_SIZE) dram[dram_zp_base + slot_base + slot_idx]   = val[7:0];
+                  if ((dram_zp_base + slot_base + slot_idx+1) < DRAM_SIZE) dram[dram_zp_base + slot_base + slot_idx+1] = val[15:8];
+                  slot_idx += 2;
+                end
               end
             end
           end
+          nt_base_offset += slot_bytes;
         end
+        kt_base_offset += nt_base_offset;
       end
     end
   endtask
@@ -1221,6 +1564,33 @@ module tb_VX_gemm_node_improve
     end
   endtask
 
+  function automatic longint unsigned qparam_total_bytes(
+    input int test_n,
+    input int test_k,
+    input int test_qblk,
+    input int test_qdir,
+    input int elem_bytes
+  );
+    int k_tiles;
+    int nt_tiles;
+    longint unsigned total;
+    begin
+      k_tiles = ceil_div_int(test_k, DMA_KT);
+      nt_tiles = ceil_div_int(test_n, DMA_NT);
+      total = 0;
+      for (int kt = 0; kt < k_tiles; kt++) begin
+        int cur_k;
+        cur_k = (test_k - kt * DMA_KT < DMA_KT) ? (test_k - kt * DMA_KT) : DMA_KT;
+        for (int nt = 0; nt < nt_tiles; nt++) begin
+          int cur_n;
+          cur_n = (test_n - nt * DMA_NT < DMA_NT) ? (test_n - nt * DMA_NT) : DMA_NT;
+          total += longint'(qparam_slot_bytes(cur_k, cur_n, test_qblk, test_qdir, elem_bytes));
+        end
+      end
+      qparam_total_bytes = total;
+    end
+  endfunction
+
   task automatic compute_auto_layout(
     input int test_m,
     input int test_n,
@@ -1264,15 +1634,8 @@ module tb_VX_gemm_node_improve
       dram_w_bytes   = (test_wtrans == 0)
                      ? (longint'(test_k) * longint'((test_n + 1) / 2))
                      : (longint'(test_n) * longint'((test_k + 1) / 2));
-      if (test_qdir == 0) begin
-        // QCOL: [KG, N]
-        dram_sc_bytes  = groups_total * longint'(test_n) * 2;
-        dram_zp_bytes  = groups_total * longint'(test_n) * 2;
-      end else begin
-        // QROW: [K, NG]
-        dram_sc_bytes  = longint'(test_k) * ng_total * 2;
-        dram_zp_bytes  = longint'(test_k) * ng_total * 2;
-      end
+      dram_sc_bytes  = qparam_total_bytes(test_n, test_k, test_qblk, test_qdir, 2);
+      dram_zp_bytes  = qparam_total_bytes(test_n, test_k, test_qblk, test_qdir, 2);
       dram_out_bytes = longint'(test_m) * longint'(test_n) * 2;
 
       groups_tile      = (longint'(DMA_KT) + longint'(test_qblk) - 1) / longint'(test_qblk);
@@ -1405,8 +1768,8 @@ module tb_VX_gemm_node_improve
       build_test_vectors(
         .test_m(test_m), .test_n(test_n), .test_k(test_k),
         .test_qblk(test_qblk), .test_wtrans(test_wtrans), .test_qdir(test_qdir),
-        .input_random_type(1), .weight_random_type(1),
-        .scale_random_type(1), .zp_random_type(1)
+        .input_random_type(vector_input_random_type), .weight_random_type(vector_weight_random_type),
+        .scale_random_type(vector_scale_random_type), .zp_random_type(vector_zp_random_type)
       );
 
       // Write tiled data to DRAM
@@ -1611,6 +1974,153 @@ module tb_VX_gemm_node_improve
   endtask
 
   // =========================================================================
+  // Current VX_gemm_node path: job_frontend config regs -> gemm_ctrl FSM
+  // =========================================================================
+  task automatic program_job_regs(
+    input int unsigned eid,
+    input int test_m,
+    input int test_n,
+    input int test_k,
+    input int test_qblk,
+    input int test_wtrans,
+    input int test_qdir,
+    input logic [63:0] dram_in_base,
+    input logic [63:0] dram_w_base,
+    input logic [63:0] dram_out_base,
+    input logic [63:0] dram_sc_base,
+    input logic [63:0] dram_zp_base,
+    input logic [63:0] lmem_ibuf0_base,
+    input logic [63:0] lmem_ibuf1_base,
+    input logic [63:0] lmem_wbuf0_base,
+    input logic [63:0] lmem_wbuf1_base,
+    input logic [63:0] lmem_scbuf0_base,
+    input logic [63:0] lmem_scbuf1_base,
+    input logic [63:0] lmem_zpbuf0_base,
+    input logic [63:0] lmem_zpbuf1_base,
+    input logic [63:0] lmem_obuf_base
+  );
+    begin
+      job_write_reg64(eid, REG_INPUT_BASE_LO,  dram_in_base);
+      job_write_reg64(eid, REG_WEIGHT_BASE_LO, dram_w_base);
+      job_write_reg64(eid, REG_OUTPUT_BASE_LO, dram_out_base);
+      job_write_reg64(eid, REG_SCALE_BASE_LO,  dram_sc_base);
+      job_write_reg64(eid, REG_ZP_BASE_LO,     dram_zp_base);
+
+      job_write_reg64(eid, REG_LMEM_IBUF0_LO,  lmem_ibuf0_base);
+      job_write_reg64(eid, REG_LMEM_IBUF1_LO,  lmem_ibuf1_base);
+      job_write_reg64(eid, REG_LMEM_WBUF0_LO,  lmem_wbuf0_base);
+      job_write_reg64(eid, REG_LMEM_WBUF1_LO,  lmem_wbuf1_base);
+      job_write_reg64(eid, REG_LMEM_SCBUF0_LO, lmem_scbuf0_base);
+      job_write_reg64(eid, REG_LMEM_SCBUF1_LO, lmem_scbuf1_base);
+      job_write_reg64(eid, REG_LMEM_ZPBUF0_LO, lmem_zpbuf0_base);
+      job_write_reg64(eid, REG_LMEM_ZPBUF1_LO, lmem_zpbuf1_base);
+      job_write_reg64(eid, REG_LMEM_OBUF_LO,   lmem_obuf_base);
+
+      job_write_reg32(eid, REG_M_ORIG,      test_m);
+      job_write_reg32(eid, REG_N_ORIG,      test_n);
+      job_write_reg32(eid, REG_K_ORIG,      test_k);
+      job_write_reg32(eid, REG_QBLK_ORIG,   $clog2(test_qblk));
+      job_write_reg32(eid, REG_M_TARGET,    test_m);
+      job_write_reg32(eid, REG_N_TARGET,    test_n);
+      job_write_reg32(eid, REG_K_TARGET,    test_k);
+      job_write_reg32(eid, REG_M_START,     32'd0);
+      job_write_reg32(eid, REG_N_START,     32'd0);
+      job_write_reg32(eid, REG_WTRANS,      test_wtrans);
+      job_write_reg32(eid, REG_QDIR,        test_qdir);
+      job_write_reg32(eid, REG_LOG2_DMA_MT, $clog2(DMA_MT));
+      job_write_reg32(eid, REG_LOG2_DMA_KT, $clog2(DMA_KT));
+      job_write_reg32(eid, REG_LOG2_DMA_NT, $clog2(DMA_NT));
+
+      job_write_reg32(eid, REG_CONTROL, 32'h1);
+    end
+  endtask
+
+  task automatic wait_job_done(input int unsigned eid);
+    logic [31:0] ctrl;
+    int unsigned timeout;
+    begin
+      timeout = 0;
+      $display("[%0t] wait_job_done: polling entry%0d CONTROL.valid(bit0)==0", $time, eid);
+      do begin
+        job_read_reg32(eid, REG_CONTROL, ctrl);
+        @(posedge clk);
+        timeout++;
+        if (timeout > 1000000)
+          $fatal(1, "[%0t] wait_job_done timeout ctrl=0x%08h", $time, ctrl);
+      end while (ctrl[`JOB_MMIO_CTRL_VALID_BIT] == 1'b1);
+      $display("[%0t] JOB DONE detected for entry%0d", $time, eid);
+    end
+  endtask
+
+  task automatic run_config_gemm_tiled(
+    input string case_name,
+    input int test_m,
+    input int test_n,
+    input int test_k,
+    input int test_qblk,
+    input int test_wtrans,
+    input int test_qdir,
+    input logic [63:0] dram_in_base,
+    input logic [63:0] dram_w_base,
+    input logic [63:0] dram_sc_base,
+    input logic [63:0] dram_zp_base,
+    input logic [63:0] dram_out_base,
+    input logic [63:0] lmem_ibuf0_base,
+    input logic [63:0] lmem_ibuf1_base,
+    input logic [63:0] lmem_wbuf0_base,
+    input logic [63:0] lmem_wbuf1_base,
+    input logic [63:0] lmem_scbuf0_base,
+    input logic [63:0] lmem_scbuf1_base,
+    input logic [63:0] lmem_zpbuf0_base,
+    input logic [63:0] lmem_zpbuf1_base,
+    input logic [63:0] lmem_obuf_base
+  );
+    int unsigned job_eid;
+    int unsigned job_generation;
+    begin
+      $display("\n[%0t] === RUN CONFIG GEMM: %s (M=%0d, N=%0d, K=%0d, QBLK=%0d, WTRANS=%0d, QDIR=%0d) ===",
+               $time, case_name, test_m, test_n, test_k, test_qblk, test_wtrans, test_qdir);
+
+      if ((test_m <= 0) || (test_m % DMA_MXU_KT != 0))
+        $fatal(1, "[%0t] M must be positive multiple of MXU_KT=%0d (got %0d)", $time, DMA_MXU_KT, test_m);
+      if ((test_n <= 0) || (test_n % DMA_MXU_NT != 0))
+        $fatal(1, "[%0t] N must be positive multiple of MXU_NT=%0d (got %0d)", $time, DMA_MXU_NT, test_n);
+      if ((test_k <= 0) || (test_k % DMA_MXU_KT != 0))
+        $fatal(1, "[%0t] K must be positive multiple of MXU_KT=%0d (got %0d)", $time, DMA_MXU_KT, test_k);
+
+      apply_reset();
+      init_memories();
+
+      build_test_vectors(
+        .test_m(test_m), .test_n(test_n), .test_k(test_k),
+        .test_qblk(test_qblk), .test_wtrans(test_wtrans), .test_qdir(test_qdir),
+        .input_random_type(vector_input_random_type), .weight_random_type(vector_weight_random_type),
+        .scale_random_type(vector_scale_random_type), .zp_random_type(vector_zp_random_type)
+      );
+
+      write_dram_tiled_input(test_m, test_k, dram_in_base);
+      write_dram_tiled_weight(test_n, test_k, test_wtrans, dram_w_base);
+      write_dram_tiled_scale(test_n, test_k, test_qblk, test_qdir, dram_sc_base);
+      write_dram_tiled_zp(test_n, test_k, test_qblk, test_qdir, dram_zp_base);
+
+      job_alloc(job_eid, job_generation);
+      program_job_regs(
+        job_eid,
+        test_m, test_n, test_k, test_qblk, test_wtrans, test_qdir,
+        dram_in_base, dram_w_base, dram_out_base, dram_sc_base, dram_zp_base,
+        lmem_ibuf0_base, lmem_ibuf1_base, lmem_wbuf0_base, lmem_wbuf1_base,
+        lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base, lmem_obuf_base
+      );
+      wait_job_done(job_eid);
+
+      repeat (1000) @(posedge clk);
+      check_output_tiled(test_m, test_n, dram_out_base);
+      $display("[%0t] CONFIG GEMM PASSED: M=%0d N=%0d K=%0d WTRANS=%0d QDIR=%0d",
+               $time, test_m, test_n, test_k, test_wtrans, test_qdir);
+    end
+  endtask
+
+  // =========================================================================
   // Main sim
   // =========================================================================
   initial begin
@@ -1635,6 +2145,30 @@ module tb_VX_gemm_node_improve
       test_wtrans = 0;
     if (!$value$plusargs("QDIR=%d", test_qdir))
       test_qdir = 0;
+    void'($value$plusargs("INPUT_RANDOM_TYPE=%d", vector_input_random_type));
+    void'($value$plusargs("WEIGHT_RANDOM_TYPE=%d", vector_weight_random_type));
+    void'($value$plusargs("SCALE_RANDOM_TYPE=%d", vector_scale_random_type));
+    void'($value$plusargs("ZP_RANDOM_TYPE=%d", vector_zp_random_type));
+    randomize_input_speed = $test$plusargs("RANDOMIZE_INPUT_SPEED");
+    void'($value$plusargs("INPUT_STALL_PERIOD=%d", input_stall_period));
+    void'($value$plusargs("INPUT_STALL_PHASE=%d", input_stall_phase));
+    void'($value$plusargs("INPUT_STALL_CYCLES=%d", input_stall_cycles));
+    deterministic_input_stall = (input_stall_period > 0);
+    trace_rd_fifo_en = $test$plusargs("TRACE_RD_FIFO");
+    require_dual_bank_prefetch = $test$plusargs("REQUIRE_DUAL_BANK_PREFETCH");
+    trace_input_speed_en = randomize_input_speed || $test$plusargs("TRACE_INPUT_SPEED");
+    void'($value$plusargs("INPUT_GAP_MIN=%d", input_gap_min));
+    void'($value$plusargs("INPUT_GAP_MAX=%d", input_gap_max));
+    if (input_gap_min < 1)
+      $fatal(1, "[%0t] INPUT_GAP_MIN must be >= 1 (got %0d)", $time, input_gap_min);
+    if (input_gap_max < input_gap_min)
+      $fatal(1, "[%0t] INPUT_GAP_MAX must be >= INPUT_GAP_MIN (got min=%0d max=%0d)",
+             $time, input_gap_min, input_gap_max);
+    if (deterministic_input_stall
+        && ((input_stall_phase < 0) || (input_stall_phase >= input_stall_period)))
+      $fatal(1, "[%0t] INPUT_STALL_PHASE must be in [0, INPUT_STALL_PERIOD)", $time);
+    if (deterministic_input_stall && input_stall_cycles < 1)
+      $fatal(1, "[%0t] INPUT_STALL_CYCLES must be >= 1", $time);
     if (!$value$plusargs("TEST=%s", case_name)) begin
       $sformat(case_name, "stream_gemm_M%0d_N%0d_K%0d_WT%0d", test_m, test_n, test_k, test_wtrans);
     end
@@ -1646,9 +2180,13 @@ module tb_VX_gemm_node_improve
       lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base, lmem_obuf_base
     );
 
-    $display("[%0t] TILED_GEMM_TEST_CFG | {name=%s, M=%0d, N=%0d, K=%0d, QBLK=%0d, WTRANS=%0d, QDIR=%0d}",
-             $time, case_name, test_m, test_n, test_k, test_qblk, test_wtrans, test_qdir);
-    run_instruction_stream_gemm_tiled(
+    $display("[%0t] TILED_GEMM_TEST_CFG | {name=%s, M=%0d, N=%0d, K=%0d, QBLK=%0d, WTRANS=%0d, QDIR=%0d, input_type=%0d, weight_type=%0d, scale_type=%0d, zp_type=%0d, random_input_speed=%0d, input_gap_min=%0d, input_gap_max=%0d, stall_period=%0d, stall_phase=%0d, stall_cycles=%0d, strict_dual_bank=%0d, trace_rd_fifo=%0d}",
+             $time, case_name, test_m, test_n, test_k, test_qblk, test_wtrans, test_qdir,
+             vector_input_random_type, vector_weight_random_type, vector_scale_random_type, vector_zp_random_type,
+             randomize_input_speed, input_gap_min, input_gap_max,
+             input_stall_period, input_stall_phase, input_stall_cycles,
+             require_dual_bank_prefetch, trace_rd_fifo_en);
+    run_config_gemm_tiled(
       case_name,
       test_m, test_n, test_k, test_qblk, test_wtrans, test_qdir,
       dram_in_base, dram_w_base, dram_sc_base, dram_zp_base, dram_out_base,
@@ -1656,12 +2194,22 @@ module tb_VX_gemm_node_improve
       lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base, lmem_obuf_base
     );
 
+    if (require_dual_bank_prefetch)
+      check_dual_bank_prefetch();
+
     $display("[%0t] TB completed", $time);
 
 `ifdef VCS
-    $fsdbDumpoff();
+`ifdef XILINX_FPU_SIM
+    if (!$test$plusargs("NO_WAVE"))
+      $dumpoff();
 `else
-    $dumpoff();
+    if (!$test$plusargs("NO_WAVE"))
+      $fsdbDumpoff();
+`endif
+`else
+    if (!$test$plusargs("NO_WAVE"))
+      $dumpoff();
 `endif
     $finish;
   end
@@ -1677,21 +2225,19 @@ module tb_VX_gemm_node_improve
   int acc_wr_mon_cnt = 0;
   always @(posedge clk) begin
     if (!reset && u_dut.u_VX_gemm_unit.acc_mem_wr_en[0] && acc_wr_mon_cnt < 3) begin
-      $display("[%0t] [ACC_WR_MON] bank0 wr: addr=0x%h depth=%0d data[31:0]=0x%08h data[63:32]=0x%08h",
+      $display("[%0t] [ACC_WR_MON] bank0 wr: addr=0x%h depth=%0d data=0x%08h",
                $time,
                u_dut.u_VX_gemm_unit.acc_mem_accum_wr_addr,
                u_dut.u_VX_gemm_unit.acc_mem_wr_depth_addr[0],
-               u_dut.u_VX_gemm_unit.acc_mem_in_data[0][31:0],
-               u_dut.u_VX_gemm_unit.acc_mem_in_data[0][63:32]);
+               u_dut.u_VX_gemm_unit.acc_mem_in_data[0]);
       acc_wr_mon_cnt++;
     end
     if (!reset && u_dut.u_VX_gemm_unit.acc_mem_wr_en[1] && acc_wr_mon_cnt < 3) begin
-      $display("[%0t] [ACC_WR_MON] bank1 wr: addr=0x%h depth=%0d data[31:0]=0x%08h data[63:32]=0x%08h",
+      $display("[%0t] [ACC_WR_MON] bank1 wr: addr=0x%h depth=%0d data=0x%08h",
                $time,
                u_dut.u_VX_gemm_unit.acc_mem_accum_wr_addr,
                u_dut.u_VX_gemm_unit.acc_mem_wr_depth_addr[1],
-               u_dut.u_VX_gemm_unit.acc_mem_in_data[1][31:0],
-               u_dut.u_VX_gemm_unit.acc_mem_in_data[1][63:32]);
+               u_dut.u_VX_gemm_unit.acc_mem_in_data[1]);
       acc_wr_mon_cnt++;
     end
   end
@@ -1705,6 +2251,205 @@ module tb_VX_gemm_node_improve
                u_dut.u_VX_gemm_unit.in_pipe_data_out[15:0],
                u_dut.u_VX_gemm_unit.in_pipe_data_out[31:16]);
       in_pipe_cnt++;
+    end
+  end
+
+  longint unsigned tb_cycle = 0;
+  always @(posedge clk) begin
+    if (reset)
+      tb_cycle <= 0;
+    else
+      tb_cycle <= tb_cycle + 1;
+  end
+
+  int input_stall_cycles_left = 0;
+  longint unsigned input_accept_count = 0;
+  longint unsigned input_last_accept_cycle = 0;
+  always @(posedge clk) begin
+    bit input_accept;
+    int next_gap;
+    int next_stall_cycles;
+    longint signed accept_gap;
+
+    input_accept = !reset && u_dut.i_gemm_bus_if.req_valid && u_dut.i_gemm_bus_if.req_ready;
+
+    if (reset) begin
+      release_input_stall();
+      input_stall_cycles_left <= 0;
+      input_accept_count <= 0;
+      input_last_accept_cycle <= 0;
+    end else if (randomize_input_speed || deterministic_input_stall) begin
+      if (input_stall_cycles_left > 0) begin
+        if (trace_input_speed_en) begin
+          `TRACE(1, ("%m : [%0t] | TB_INPUT_STALL | {cycle=%0d, rem=%0d, req_valid=%b, req_ready=%b}\n",
+                     $time, tb_cycle, input_stall_cycles_left,
+                     u_dut.i_gemm_bus_if.req_valid, u_dut.tmem_i_gemm_bus_if.req_ready))
+        end
+
+        if (input_stall_cycles_left == 1) begin
+          release_input_stall();
+          if (trace_input_speed_en) begin
+            `TRACE(1, ("%m : [%0t] | TB_INPUT_STALL_RELEASE | {cycle=%0d}\n",
+                       $time, tb_cycle))
+          end
+        end else begin
+          force_input_stall();
+        end
+        input_stall_cycles_left <= input_stall_cycles_left - 1;
+      end else begin
+        release_input_stall();
+        if (input_accept) begin
+          accept_gap = (input_accept_count == 0) ? -1 : longint'(tb_cycle - input_last_accept_cycle);
+          if (deterministic_input_stall) begin
+            if ((input_accept_count % input_stall_period) == input_stall_phase)
+              next_stall_cycles = input_stall_cycles;
+            else
+              next_stall_cycles = 0;
+            next_gap = next_stall_cycles + 1;
+          end else begin
+            next_gap = random_input_gap();
+            next_stall_cycles = next_gap - 1;
+          end
+          if (trace_input_speed_en) begin
+            `TRACE(1, ("%m : [%0t] | TB_INPUT_ACCEPT | {cycle=%0d, beat=%0d, accept_gap=%0d, next_gap=%0d, stall_cycles=%0d, data0=0x%04h}\n",
+                       $time, tb_cycle, input_accept_count, accept_gap, next_gap, next_stall_cycles,
+                       u_dut.i_gemm_bus_if.req_data.data[15:0]))
+          end
+          input_accept_count <= input_accept_count + 1;
+          input_last_accept_cycle <= tb_cycle;
+          input_stall_cycles_left <= next_stall_cycles;
+          if (next_stall_cycles > 0)
+            force_input_stall();
+        end
+      end
+    end else begin
+      release_input_stall();
+      input_stall_cycles_left <= 0;
+      if (input_accept && trace_input_speed_en) begin
+        accept_gap = (input_accept_count == 0) ? -1 : longint'(tb_cycle - input_last_accept_cycle);
+        `TRACE(1, ("%m : [%0t] | TB_INPUT_ACCEPT | {cycle=%0d, beat=%0d, accept_gap=%0d, next_gap=1, stall_cycles=0, data0=0x%04h}\n",
+                   $time, tb_cycle, input_accept_count, accept_gap,
+                   u_dut.i_gemm_bus_if.req_data.data[15:0]))
+        input_accept_count <= input_accept_count + 1;
+        input_last_accept_cycle <= tb_cycle;
+      end
+    end
+  end
+
+  int acc_rd_fifo_depth_mon [2] = '{0, 0};
+  longint unsigned dual_rd_accept_count [2] = '{0, 0};
+  longint unsigned dual_rd_response_count [2] = '{0, 0};
+  longint unsigned dual_rd_push_count [2] = '{0, 0};
+  longint unsigned dual_rd_pop_count [2] = '{0, 0};
+  longint unsigned dual_rd_conflict_count = 0;
+  longint unsigned dual_rd_underflow_count = 0;
+
+  task check_dual_bank_prefetch;
+    for (int i = 0; i < 2; ++i) begin
+      if (dual_rd_accept_count[i] != dual_rd_response_count[i])
+        $fatal(1, "Dual-bank read response mismatch for bank %0d: accept=%0d response=%0d",
+               i, dual_rd_accept_count[i], dual_rd_response_count[i]);
+      if (dual_rd_response_count[i] != dual_rd_push_count[i])
+        $fatal(1, "Dual-bank FIFO push mismatch for bank %0d: response=%0d push=%0d",
+               i, dual_rd_response_count[i], dual_rd_push_count[i]);
+      if (dual_rd_push_count[i] != dual_rd_pop_count[i])
+        $fatal(1, "Dual-bank FIFO pop mismatch for bank %0d: push=%0d pop=%0d",
+               i, dual_rd_push_count[i], dual_rd_pop_count[i]);
+      if (!u_dut.u_VX_gemm_unit.acc_rd_fifo_empty_by_bank[i])
+        $fatal(1, "Dual-bank FIFO %0d is not empty at test completion", i);
+    end
+    if (dual_rd_conflict_count != 0)
+      $fatal(1, "Dual-bank scheduler observed %0d read/write conflicts", dual_rd_conflict_count);
+    if (dual_rd_underflow_count != 0)
+      $fatal(1, "Dual-bank scheduler observed %0d psum underflows", dual_rd_underflow_count);
+    if (u_dut.u_VX_gemm_unit.acc_mem_rd_data_valid)
+      $fatal(1, "Dual-bank scheduler has a pending read response at test completion");
+
+    $display("[%0t] DUAL_BANK_PREFETCH_PASSED | {accept={%0d,%0d}, push={%0d,%0d}, pop={%0d,%0d}, conflict=%0d, underflow=%0d}",
+             $time,
+             dual_rd_accept_count[1], dual_rd_accept_count[0],
+             dual_rd_push_count[1], dual_rd_push_count[0],
+             dual_rd_pop_count[1], dual_rd_pop_count[0],
+             dual_rd_conflict_count, dual_rd_underflow_count);
+  endtask
+
+  always @(posedge clk) begin
+    int next_depth [2];
+    bit low_cushion_event;
+
+    if (reset) begin
+      for (int i = 0; i < 2; ++i) begin
+        acc_rd_fifo_depth_mon[i] <= 0;
+        dual_rd_accept_count[i] <= 0;
+        dual_rd_response_count[i] <= 0;
+        dual_rd_push_count[i] <= 0;
+        dual_rd_pop_count[i] <= 0;
+      end
+      dual_rd_conflict_count <= 0;
+      dual_rd_underflow_count <= 0;
+    end else begin
+      for (int i = 0; i < 2; ++i) begin
+        next_depth[i] = acc_rd_fifo_depth_mon[i];
+        if (u_dut.u_VX_gemm_unit.acc_rd_fifo_push_by_bank[i]
+            && !u_dut.u_VX_gemm_unit.acc_rd_fifo_pop_fire_by_bank[i]) begin
+          next_depth[i]++;
+        end else if (!u_dut.u_VX_gemm_unit.acc_rd_fifo_push_by_bank[i]
+                     && u_dut.u_VX_gemm_unit.acc_rd_fifo_pop_fire_by_bank[i]) begin
+          next_depth[i]--;
+        end
+
+        if (u_dut.u_VX_gemm_unit.acc_mem_accum_rd_accept
+            && (u_dut.u_VX_gemm_unit.acc_mem_accum_rd_bank[0] == i))
+          dual_rd_accept_count[i] <= dual_rd_accept_count[i] + 1;
+        if (u_dut.u_VX_gemm_unit.acc_mem_rd_data_take
+            && (u_dut.u_VX_gemm_unit.acc_mem_accum_rd_bank_q[0] == i))
+          dual_rd_response_count[i] <= dual_rd_response_count[i] + 1;
+        if (u_dut.u_VX_gemm_unit.acc_rd_fifo_push_by_bank[i])
+          dual_rd_push_count[i] <= dual_rd_push_count[i] + 1;
+        if (u_dut.u_VX_gemm_unit.acc_rd_fifo_pop_fire_by_bank[i])
+          dual_rd_pop_count[i] <= dual_rd_pop_count[i] + 1;
+
+        acc_rd_fifo_depth_mon[i] <= next_depth[i];
+      end
+
+      if (u_dut.u_VX_gemm_unit.rd_wr_conflict_event)
+        dual_rd_conflict_count <= dual_rd_conflict_count + 1;
+      if (u_dut.u_VX_gemm_unit.psum_underflow_event)
+        dual_rd_underflow_count <= dual_rd_underflow_count + 1;
+
+      low_cushion_event = u_dut.u_VX_gemm_unit.acc_rd_fifo_pop
+                       && (next_depth[u_dut.u_VX_gemm_unit.acc_rd_consume_bank] <= 1);
+      if (trace_rd_fifo_en &&
+          (u_dut.u_VX_gemm_unit.gemm_unit_if.start || u_dut.u_VX_gemm_unit.gemm_done
+           || low_cushion_event || u_dut.u_VX_gemm_unit.rd_wr_conflict_event
+           || u_dut.u_VX_gemm_unit.psum_underflow_event)) begin
+        `TRACE(1, ("%m : [%0t] | TB_ACC_RD_FIFO_DEPTH | {cycle=%0d, depth={%0d,%0d}, next={%0d,%0d}, push=%b, pop_fire=%b, empty=%b, full=%b, credit={%0d,%0d}, consume_bank=%0d, rd_req=%b, rd_accept=%b, mem_valid=%b, scaler=%b, acc=%b, underflow=%b, conflict=%b, is_load=%b, rd_cnt={%0d,%0d}, wr_cnt=%0d, rd_bank=%0d, wr_bank=%0d, rd_addr=0x%0h, wr_addr=0x%0h}\n",
+                   $time, tb_cycle,
+                   acc_rd_fifo_depth_mon[1], acc_rd_fifo_depth_mon[0],
+                   next_depth[1], next_depth[0],
+                   u_dut.u_VX_gemm_unit.acc_rd_fifo_push_by_bank,
+                   u_dut.u_VX_gemm_unit.acc_rd_fifo_pop_fire_by_bank,
+                   u_dut.u_VX_gemm_unit.acc_rd_fifo_empty_by_bank,
+                   u_dut.u_VX_gemm_unit.acc_rd_fifo_full_by_bank,
+                   u_dut.u_VX_gemm_unit.acc_rd_credit_count_by_bank[1],
+                   u_dut.u_VX_gemm_unit.acc_rd_credit_count_by_bank[0],
+                   u_dut.u_VX_gemm_unit.acc_rd_consume_bank,
+                   u_dut.u_VX_gemm_unit.acc_mem_accum_rd_req,
+                   u_dut.u_VX_gemm_unit.acc_mem_accum_rd_accept,
+                   u_dut.u_VX_gemm_unit.acc_mem_rd_data_valid,
+                   u_dut.u_VX_gemm_unit.final_scaler_output_valid,
+                   u_dut.u_VX_gemm_unit.acc_output_valid[0],
+                   u_dut.u_VX_gemm_unit.psum_underflow_event,
+                   u_dut.u_VX_gemm_unit.rd_wr_conflict_event,
+                   u_dut.u_VX_gemm_unit.gemm_unit_ctrl.is_load,
+                   u_dut.u_VX_gemm_unit.acc_mem_accum_rd_cnt_by_bank[1],
+                   u_dut.u_VX_gemm_unit.acc_mem_accum_rd_cnt_by_bank[0],
+                   u_dut.u_VX_gemm_unit.acc_mem_accum_wr_cnt,
+                   u_dut.u_VX_gemm_unit.acc_mem_accum_rd_bank,
+                   u_dut.u_VX_gemm_unit.acc_mem_accum_wr_bank,
+                   u_dut.u_VX_gemm_unit.acc_mem_accum_rd_addr,
+                   u_dut.u_VX_gemm_unit.acc_mem_accum_wr_addr))
+      end
     end
   end
 

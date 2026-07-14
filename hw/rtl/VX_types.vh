@@ -232,6 +232,18 @@
 `define VX_CSR_MPM_MXU_OUTPUT_STALL_H    12'hB90
 `define VX_CSR_MPM_OVERLAP_DMA_MXU       12'hB11
 `define VX_CSR_MPM_OVERLAP_DMA_MXU_H     12'hB91
+`define VX_CSR_MPM_MXU_ACCUM_RD_ACCEPT   12'hB12
+`define VX_CSR_MPM_MXU_ACCUM_RD_ACCEPT_H 12'hB92
+`define VX_CSR_MPM_MXU_ACCUM_WR_FIRE     12'hB13
+`define VX_CSR_MPM_MXU_ACCUM_WR_FIRE_H   12'hB93
+`define VX_CSR_MPM_MXU_SCALER_VALID      12'hB14
+`define VX_CSR_MPM_MXU_SCALER_VALID_H    12'hB94
+`define VX_CSR_MPM_MXU_ACC_OUTPUT_VALID  12'hB15
+`define VX_CSR_MPM_MXU_ACC_OUTPUT_VALID_H 12'hB95
+`define VX_CSR_MPM_MXU_PSUM_UNDERFLOW    12'hB16
+`define VX_CSR_MPM_MXU_PSUM_UNDERFLOW_H  12'hB96
+`define VX_CSR_MPM_MXU_RD_WR_CONFLICT    12'hB17
+`define VX_CSR_MPM_MXU_RD_WR_CONFLICT_H  12'hB97
 
 // ===========================================================================
 // Machine Performance-monitoring accelerator counters (class 4: ACCEL_DMA)

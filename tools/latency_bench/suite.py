@@ -7,6 +7,7 @@ import re
 import shlex
 import sys
 import ast
+import copy
 import fnmatch
 import operator
 from dataclasses import dataclass, field, replace
@@ -14,9 +15,6 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-
-
-DEFAULT_BLACKBOX_ARGS = ("--cores=1", "--threads=8")
 
 
 def find_repo_root(start: Path | None = None) -> Path:
@@ -50,7 +48,7 @@ class BenchDefaults:
     warmup: int = 3
     iterations: int = 10
     xrt_device_index: int = 0
-    blackbox_args: tuple[str, ...] = DEFAULT_BLACKBOX_ARGS
+    blackbox_args: tuple[str, ...] = ()
     blackbox_timeout: str = ""
     fpga_bin: str = ""
 
@@ -91,6 +89,188 @@ class BenchSuite:
     cases: list[BenchCase]
     fpga_bins: dict[str, Any] = field(default_factory=dict)
     source_path: Path | None = None
+
+
+@dataclass(frozen=True)
+class SuiteMatrixOverrides:
+    batch_values: tuple[int, ...] = ()
+    seq_len_values: tuple[int, ...] = ()
+    prefill_batch_values: tuple[int, ...] = ()
+    generation_batch_values: tuple[int, ...] = ()
+    prefill_seq_len_values: tuple[int, ...] = ()
+    generation_seq_len_values: tuple[int, ...] = ()
+
+
+_SEQ_LEN_MATRIX_KEYS = ("prefill_seq_len", "gen_kv_len", "seq_len", "seq")
+_PREFILL_SEQ_LEN_MATRIX_KEYS = ("prefill_seq_len", "seq_len", "seq")
+_GENERATION_SEQ_LEN_MATRIX_KEYS = ("gen_kv_len", "seq_len", "seq")
+_STAGES_WITH_CONFIG = {"prefill", "generation"}
+
+
+def _matrix_values_spec(values: tuple[int, ...]) -> dict[str, list[int]]:
+    return {"values": [int(value) for value in values]}
+
+
+def _has_suite_matrix_overrides(overrides: SuiteMatrixOverrides) -> bool:
+    return any((
+        overrides.batch_values,
+        overrides.seq_len_values,
+        overrides.prefill_batch_values,
+        overrides.generation_batch_values,
+        overrides.prefill_seq_len_values,
+        overrides.generation_seq_len_values,
+    ))
+
+
+def _has_stage_specific_matrix_overrides(overrides: SuiteMatrixOverrides) -> bool:
+    return any((
+        overrides.prefill_batch_values,
+        overrides.generation_batch_values,
+        overrides.prefill_seq_len_values,
+        overrides.generation_seq_len_values,
+    ))
+
+
+def _stage_tokens(raw_stage: Any) -> set[str]:
+    stage = str(raw_stage or "").strip()
+    if not stage or stage == "all":
+        return set(_STAGES_WITH_CONFIG)
+    return {part.strip() for part in stage.split(",") if part.strip()}
+
+
+def _batch_values_for_stage(overrides: SuiteMatrixOverrides, stage: str) -> tuple[int, ...]:
+    if stage == "prefill" and overrides.prefill_batch_values:
+        return overrides.prefill_batch_values
+    if stage == "generation" and overrides.generation_batch_values:
+        return overrides.generation_batch_values
+    return overrides.batch_values
+
+
+def _seq_len_values_for_stage(overrides: SuiteMatrixOverrides, stage: str) -> tuple[int, ...]:
+    if stage == "prefill" and overrides.prefill_seq_len_values:
+        return overrides.prefill_seq_len_values
+    if stage == "generation" and overrides.generation_seq_len_values:
+        return overrides.generation_seq_len_values
+    return overrides.seq_len_values
+
+
+def _seq_len_keys_for_stage(stage: str) -> tuple[str, ...]:
+    if stage == "prefill":
+        return _PREFILL_SEQ_LEN_MATRIX_KEYS
+    if stage == "generation":
+        return _GENERATION_SEQ_LEN_MATRIX_KEYS
+    return _SEQ_LEN_MATRIX_KEYS
+
+
+def _apply_matrix_values_for_stage(
+    item: dict[str, Any],
+    overrides: SuiteMatrixOverrides,
+    stage: str,
+    *,
+    split_stage_all: bool = False,
+) -> dict[str, Any]:
+    out = copy.deepcopy(item)
+    matrix = out.get("matrix")
+    if not isinstance(matrix, dict):
+        return out
+
+    if split_stage_all:
+        out["stage"] = stage
+        if "id" in out:
+            out["id"] = f"{out['id']}_{stage}"
+        if stage == "prefill":
+            matrix.pop("gen_kv_len", None)
+        elif stage == "generation":
+            matrix.pop("prefill_seq_len", None)
+
+    batch_values = _batch_values_for_stage(overrides, stage)
+    if batch_values and "batch" in matrix:
+        matrix["batch"] = _matrix_values_spec(batch_values)
+
+    seq_len_values = _seq_len_values_for_stage(overrides, stage)
+    if seq_len_values:
+        for key in _seq_len_keys_for_stage(stage):
+            if key in matrix:
+                matrix[key] = _matrix_values_spec(seq_len_values)
+
+    return out
+
+
+def _apply_matrix_values_common(item: dict[str, Any], overrides: SuiteMatrixOverrides) -> dict[str, Any]:
+    out = copy.deepcopy(item)
+    matrix = out.get("matrix")
+    if not isinstance(matrix, dict):
+        return out
+    if overrides.batch_values and "batch" in matrix:
+        matrix["batch"] = _matrix_values_spec(overrides.batch_values)
+    if overrides.seq_len_values:
+        for key in _SEQ_LEN_MATRIX_KEYS:
+            if key in matrix:
+                matrix[key] = _matrix_values_spec(overrides.seq_len_values)
+    return out
+
+
+def _apply_case_matrix_overrides(item: dict[str, Any], overrides: SuiteMatrixOverrides) -> dict[str, Any]:
+    stages = _stage_tokens(item.get("stage", ""))
+    if stages == {"prefill"}:
+        return _apply_matrix_values_for_stage(item, overrides, "prefill")
+    if stages == {"generation"}:
+        return _apply_matrix_values_for_stage(item, overrides, "generation")
+    return _apply_matrix_values_common(item, overrides)
+
+
+def _workload_needs_stage_split(item: dict[str, Any], overrides: SuiteMatrixOverrides) -> bool:
+    matrix = item.get("matrix")
+    if not isinstance(matrix, dict):
+        return False
+    if not _STAGES_WITH_CONFIG.issubset(_stage_tokens(item.get("stage", "all"))):
+        return False
+    if _has_stage_specific_matrix_overrides(overrides):
+        return True
+    return bool(
+        overrides.seq_len_values
+        and ("prefill_seq_len" in matrix or "gen_kv_len" in matrix)
+    )
+
+
+def _apply_workload_matrix_overrides(item: dict[str, Any], overrides: SuiteMatrixOverrides) -> list[dict[str, Any]]:
+    if _workload_needs_stage_split(item, overrides):
+        return [
+            _apply_matrix_values_for_stage(item, overrides, "prefill", split_stage_all=True),
+            _apply_matrix_values_for_stage(item, overrides, "generation", split_stage_all=True),
+        ]
+
+    stages = _stage_tokens(item.get("stage", "all"))
+    if stages == {"prefill"}:
+        return [_apply_matrix_values_for_stage(item, overrides, "prefill")]
+    if stages == {"generation"}:
+        return [_apply_matrix_values_for_stage(item, overrides, "generation")]
+    return [_apply_matrix_values_common(item, overrides)]
+
+
+def _apply_suite_matrix_overrides(raw: dict[str, Any], overrides: SuiteMatrixOverrides | None) -> dict[str, Any]:
+    if overrides is None or not _has_suite_matrix_overrides(overrides):
+        return raw
+
+    out = copy.deepcopy(raw)
+    case_matrices = out.get("case_matrices") or []
+    if isinstance(case_matrices, list):
+        out["case_matrices"] = [
+            _apply_case_matrix_overrides(item, overrides) if isinstance(item, dict) else item
+            for item in case_matrices
+        ]
+
+    workloads = out.get("workloads") or []
+    if isinstance(workloads, list):
+        replaced_workloads: list[Any] = []
+        for item in workloads:
+            if isinstance(item, dict):
+                replaced_workloads.extend(_apply_workload_matrix_overrides(item, overrides))
+            else:
+                replaced_workloads.append(item)
+        out["workloads"] = replaced_workloads
+
+    return out
 
 
 def _mapping_value(mapping: Any, key: str) -> str:
@@ -324,7 +504,7 @@ def apply_case_filters(suite: BenchSuite, filters: tuple[str, ...]) -> BenchSuit
 
 def _merge_defaults(raw: dict[str, Any]) -> BenchDefaults:
     defaults = raw.get("defaults") or {}
-    blackbox_args_raw = defaults.get("blackbox_args", DEFAULT_BLACKBOX_ARGS)
+    blackbox_args_raw = defaults.get("blackbox_args", ())
     if isinstance(blackbox_args_raw, str):
         blackbox_args = tuple(shlex.split(blackbox_args_raw))
     else:
@@ -623,11 +803,13 @@ def _expand_workload(raw: dict[str, Any], defaults: BenchDefaults, repo_root: Pa
 
 def load_suite(path: Path, repo_root: Path | None = None,
                warmup_override: int | None = None,
-               iterations_override: int | None = None) -> BenchSuite:
+               iterations_override: int | None = None,
+               matrix_overrides: SuiteMatrixOverrides | None = None) -> BenchSuite:
     repo_root = find_repo_root() if repo_root is None else repo_root
     raw = yaml.safe_load(path.read_text()) or {}
     if not isinstance(raw, dict):
         raise ValueError(f"suite must be a YAML mapping: {path}")
+    raw = _apply_suite_matrix_overrides(raw, matrix_overrides)
 
     defaults = _merge_defaults(raw)
     fpga_bins_raw = raw.get("fpga_bins") or {}
@@ -694,7 +876,10 @@ def suite_to_rows(suite: BenchSuite) -> list[dict[str, Any]]:
 
 def suite_to_expanded_yaml(suite: BenchSuite) -> dict[str, Any]:
     defaults = dict(suite.defaults.__dict__)
-    defaults["blackbox_args"] = list(suite.defaults.blackbox_args)
+    if suite.defaults.blackbox_args:
+        defaults["blackbox_args"] = list(suite.defaults.blackbox_args)
+    else:
+        defaults.pop("blackbox_args", None)
     if not defaults.get("fpga_bin"):
         defaults.pop("fpga_bin", None)
 

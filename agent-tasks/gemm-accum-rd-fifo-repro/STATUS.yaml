@@ -1,0 +1,187 @@
+task: gemm-accum-rd-fifo-repro
+state: implementation_verified_simulation_pending_hardware
+created: "2026-07-09 01:12"
+updated: "2026-07-10 13:40"
+summary: >
+  Reproduce a GEMM FPGA-only deadlock in simulation by changing GEMM unit
+  unittest input timing, with focus on accumulation read FIFO empty behavior.
+log:
+  - time: "2026-07-09 01:12"
+    entry: >
+      Started investigation. User reports VX_gemm_unit.sv passes unittest,
+      xrt-vcs-sim, and hw_emu, but deadlocks on real FPGA. Suspected symptom is
+      accumulation read FIFO becoming empty. Goal is to make a unittest fail by
+      adjusting input timing.
+  - time: "2026-07-09 01:37"
+    entry: >
+      Added a plusarg-gated accumulate input timing sweep to
+      hw/unittest/gemm_unit/tb_VX_gemm_unit.sv. The bursty sender waits for DUT
+      in_flight before driving accumulate-pass input, so it models the realistic
+      case where data arrives only after GEMM has entered compute/in-flight
+      state. Default burst_len/gap_cycles zero path keeps using the original
+      full-speed sender.
+  - time: "2026-07-09 01:38"
+    entry: >
+      make compile succeeded from hw/unittest/gemm_unit. The generated build
+      copy under build/hw/unittest/gemm_unit could not be used because its
+      Makefile resolved config.mk as build/build/config.mk.
+  - time: "2026-07-09 01:40"
+    entry: >
+      Ran ./simv +NO_WAVE -reportstats -l logs/sim_default.log. Baseline,
+      without GEMM_ACCUM_TIMING_SWEEP, already fails many existing cases and
+      Test 5 load-then-accumulate fails with 4009/4096 mismatches. No
+      GEMM accumulator psum FIFO empty fatal was present.
+  - time: "2026-07-09 01:41"
+    entry: >
+      Ran ./simv +NO_WAVE +GEMM_ACCUM_TIMING_SWEEP -reportstats -l
+      logs/sim_timing_sweep.log. All eight burst/gap patterns failed
+      functionally, but none produced the psum FIFO empty fatal. Trace samples
+      around GEMM_ACCUM_INPUT showed fifo_empty=0, and case logs showed FIFO
+      level after accumulate input remained 2-4 entries.
+  - time: "2026-07-09 01:55"
+    entry: >
+      Queried synthesized URAM primitive properties with Vivado from
+      hw/syn/xilinx/dut/unittest/gemm_unit_32x32/project_1/project_1.runs/synth_1/VX_gemm_unit_top.dcp
+      and the XRT hardware AFU checkpoint
+      build/hw/syn/xilinx/xrt/improve_th16_tcol32_hwexp_xilinx_u55c_gen3x16_xdma_3_202210_1_hw/_x/link/vivado/vpl/prj/prj.gen/my_rm/bd/ulp/ip/ulp_vortex_afu_1_0/ulp_vortex_afu_1_0.dcp.
+      In both checkpoints, all URAM288 cells had IREG_PRE_A/B=FALSE,
+      OREG_A/B=FALSE, OREG_ECC_A/B=FALSE, REG_CAS_A/B=FALSE, and
+      CASCADE_ORDER_A/B=NONE. The RM ulp.dcp blackboxes the AFU and exposes no
+      URAM cells, so it cannot be used for this latency check.
+  - time: "2026-07-09 02:08"
+    entry: >
+      Identified the unittest functional failures as an output read address unit
+      mismatch, separate from the suspected accumulation FIFO timing issue.
+      Non-GEMM_NAIVE RTL now interprets o_lmem read addresses in
+      GEMM_PSUM_DATA_SIZE units, while GEMM_NAIVE uses GEMM_OUTPUT_DATA_SIZE
+      units. Updated tb_VX_gemm_unit.sv read_output() to encode addresses with
+      the same conditional stride. After this, make compile passed and
+      ./simv +NO_WAVE -reportstats -l logs/sim_default_addrstride_fixed.log
+      passed with [RESULT] Functional simulation PASSED and Test 5 PASSED.
+  - time: "2026-07-10 12:30"
+    entry: >
+      User reports that the credit plus one-entry response-skid implementation
+      improved hardware behavior but still produces a psum FIFO underflow and
+      deadlock for M=256, K=1024, N=256. The gemm_node_improve unittest still
+      passes. Diagnosis reopened without changing RTL. The deadlock-avoidance
+      acc_psum_data_valid behavior must remain enabled; an empty FIFO therefore
+      injects zero psum data and records the error instead of stalling.
+  - time: "2026-07-10 12:30"
+    entry: >
+      Initial RTL review shows four physical accumulator banks, while a
+      sequential command normally alternates within one bank pair. The current
+      single FIFO and single sequential read pointer create head-of-line
+      blocking: when the next read bank conflicts with a write, the idle bank
+      cannot be used to prefetch the following psum. Credit and skid buffering
+      prevent response overflow but cannot replace read bandwidth lost to such
+      conflicts. A bank-split prefetch design remains a hypothesis pending
+      cycle-level trace validation and ordering analysis.
+  - time: "2026-07-10 12:34"
+    entry: >
+      The first configured-build unittest attempt failed during VCS compile
+      because the configure-generated gemm_node_improve Makefile is stale and
+      omits VX_mem_remap.sv. The source Makefile contains that dependency and
+      compiled successfully when used with ROOT_DIR pointing at the configured
+      build tree. The sourced hardware CONFIGS are also not propagated into the
+      unittest's VCS define list, so the normal unittest is not configuration
+      equivalent to the FPGA build.
+  - time: "2026-07-10 12:39"
+    entry: >
+      Ran the M=256, N=256, K=1024, QBLK=32 qcol test with TRACE_RD_FIFO using
+      the configured build and source Makefile. The long trace run was stopped
+      after 53,705 cycles to avoid excessive output, but it already reproduced
+      the draining mechanism. At cycles 3907 and 3919, rd_req=1, wr_valid=1,
+      and rd_bank=wr_bank caused rd_accept=0. Each conflict was followed one
+      cycle later by push=0 and pop=1, reducing FIFO depth from 4 to 3 and then
+      from 3 to 2. The second conflict followed a scaler-valid/acc-output-invalid
+      write bubble at cycle 3918, proving that write-valid bubbles can restore
+      the conflicting bank parity.
+  - time: "2026-07-10 12:39"
+    entry: >
+      Root cause confirmed: the single sequential read pointer has head-of-line
+      blocking. A conflict prevents the read from being accepted, while the
+      continuous scaler stream still consumes one psum. Credit and skid storage
+      cannot recover the lost read because the RAM can accept at most one read
+      per later cycle, equal to the consume rate. The idle bank contains the
+      following sequential psum but cannot be selected by the single pointer.
+      Repeated write-valid bubbles re-align the read/write bank parity and cause
+      repeated one-entry losses until underflow.
+  - time: "2026-07-10 12:39"
+    entry: >
+      The inspected FPGA build snapshot under the hwexp_dcache build directory
+      is dated 2026-07-09 19:01 and still gates acc_psum_data_valid with FIFO
+      non-empty. The current source deadlock-avoidance assignment is dated
+      2026-07-10 11:06, so that existing xclbin does not contain the requested
+      deadlock bypass. This explains the observed hard deadlock after the
+      underflow but is separate from the underflow root cause.
+  - time: "2026-07-10 13:05"
+    entry: >
+      Replaced the single accumulator psum read FIFO and response skid with two
+      depth-4 non-fall-through FIFOs indexed by bank offset. Read addresses,
+      remaining counts, and reserved-slot credits are tracked independently per
+      bank. The scheduler reads only the bank opposite an active write and uses
+      credit-aware round-robin arbitration when no write is present. Responses
+      carry the accepted physical-bank tag and are routed directly into the
+      reserved destination FIFO. Sequential psum order is restored by a consume
+      bank selector initialized from the base address and toggled for each psum
+      consume attempt. The requested acc_psum_data_valid deadlock bypass remains
+      unchanged and no final skid was added.
+  - time: "2026-07-10 13:19"
+    entry: >
+      Added FPU_XILINX_EN=1 support to gemm_node_improve. A shared
+      sim/xrtsim_vcs/xilinx_fpu_vcs.mk now owns Xilinx IP generation, compiled
+      simulation-library setup, and VHDL wrapper analysis for xrtsim_vcs and the
+      unittest. The Xilinx IP list now includes xil_f32mul, xil_f16add, and
+      xil_f16mul in addition to the previous IPs. GEMM FP wrappers no longer
+      select DPI when VIVADO is defined, so mixed-language VCS loads the actual
+      XIL_F16MUL, XIL_F32MUL, and XIL_F32ADD entities. FPNEW and Xilinx modes
+      use separate compile stamps and simulator binaries to prevent stale mode
+      reuse.
+  - time: "2026-07-10 13:27"
+    entry: >
+      Added strict dual-bank unittest accounting and deterministic input stalls.
+      +REQUIRE_DUAL_BANK_PREFETCH checks per-bank accept, response, push, and pop
+      totals, both FIFO empty states, pending responses, read/write conflicts,
+      and psum underflows in addition to the numerical output comparison. Xilinx
+      IP tests passed for M=64 N=96 K=256 QDIR=1 with a period-5 three-cycle
+      deterministic input stall, and M=96 N=64 K=128 QBLK=16 WTRANS=1. Both
+      reported balanced bank counts and zero conflict/underflow.
+  - time: "2026-07-10 13:40"
+    entry: >
+      Final Xilinx-IP exact-shape verification passed for M=256 N=256 K=1024
+      QBLK=32. Numerical comparison passed for all 65,536 outputs. Strict
+      dual-bank totals were accept={31744,31744}, push={31744,31744}, and
+      pop={31744,31744}, with conflict=0 and underflow=0. FPNEW strict small
+      verification also passed after rebuilding and switching between the two
+      mode-specific simulator binaries. tools/verify_rtl.py reported pass for
+      the configured-build M=32 N=32 K=128 strict case.
+pitfalls:
+  - >
+    Earlier timing sweep results were polluted by the output read address stride
+    mismatch. Treat them only as pre-fix evidence that no psum FIFO empty fatal
+    fired; rerun the sweep after the address fix before drawing timing
+    conclusions.
+  - >
+    The tested burst/gap input timing does not support the hypothesis that legal
+    post-COMPUTE input stalls alone cause accumulation read FIFO underflow in
+    simulation.
+  - >
+    Do not treat a larger FIFO or response skid as a throughput fix. They only
+    absorb finite bursts; a positive long-run difference between psum consume
+    rate and accepted read rate still drains any finite buffer.
+  - >
+    A bank-split FIFO cannot be added as a data-only change. Read requests may
+    complete out of address order, so the design also needs explicit per-bank
+    read pointers/counts and an in-order consume-bank selector.
+  - >
+    TRACE_RD_FIFO on the full 256x256x1024 case emits too much terminal output.
+    Use a compact event-only monitor or log post-processing for future runs.
+  - >
+    The existing hwexp_dcache xclbin snapshot predates the current
+    acc_psum_data_valid deadlock-bypass source edit. Rebuild before using that
+    behavior as hardware evidence.
+  - >
+    Simulation now covers the actual Xilinx floating-point IP latency and the
+    conflict-free bank scheduler, but the new RTL has not yet been synthesized,
+    timed, or tested in a rebuilt FPGA image. Hardware closure remains the next
+    validation boundary.

@@ -5,7 +5,7 @@
 //
 // CLI: same shape args as main.cpp (-m -n -k -q -t -d) plus
 //      --warmup=N / --iterations=N / --csv / --output=PATH / --output-append
-//      parsed by bench_util.
+//      and optional power-measurement flags parsed by bench_util.
 //
 // Unlike fpint_gemm_ffn_hw_improve, this variant uploads DRAM buffers in
 // plain row-major form (no tile conversion) and uses LMEM-based scratch
@@ -240,12 +240,18 @@ int main(int argc, char *argv[]) {
     case 'd': QDIR = atoi(optarg); break;
     case 'h':
       printf("Usage: %s [--warmup=N] [--iterations=N] [--csv] "
-             "[--output=PATH] [--output-append] "
+             "[--output=PATH] [--output-append] [--power-kernel-iterations=N|auto] "
+             "[--power-target-sec=SEC] "
+             "[--power-fpga-freq-mhz=MHz|auto] [--power-xclbin-info=PATH] "
+             "[--power-measure-latency[=on|off]] "
              "[-m M] [-n N] [-k K] [-q QBLK] [-t WTRANS] [-d QDIR]\n", argv[0]);
       return 0;
     default:
       printf("Usage: %s [--warmup=N] [--iterations=N] [--csv] "
-             "[--output=PATH] [--output-append] "
+             "[--output=PATH] [--output-append] [--power-kernel-iterations=N|auto] "
+             "[--power-target-sec=SEC] "
+             "[--power-fpga-freq-mhz=MHz|auto] [--power-xclbin-info=PATH] "
+             "[--power-measure-latency[=on|off]] "
              "[-m M] [-n N] [-k K] [-q QBLK] [-t WTRANS] [-d QDIR]\n", argv[0]);
       return -1;
     }
@@ -333,8 +339,11 @@ int main(int argc, char *argv[]) {
   kargs.job_eid        = 0;
   kargs.job_generation = 0;
   kargs.last_ctrl      = 0;
+  kargs.power_kernel_iterations = 1;
 
   RT_CHECK(vx_upload_bytes(device, &kargs, sizeof(kargs), &args_buffer));
+  double first_latency_us = 0.0;
+  vx_bench::IterationPerf first_iter_perf;
 
   auto check_kernel_status = [&](const char* phase, int iter) -> bool {
     RT_CHECK(vx_copy_from_dev(&kargs, args_buffer, 0, sizeof(kargs)));
@@ -346,10 +355,25 @@ int main(int argc, char *argv[]) {
                 << ", gen=" << kargs.job_generation
                 << ", ctrl=0x" << std::hex << kargs.last_ctrl << std::dec
                 << std::endl;
-      cleanup();
       return false;
     }
     return true;
+  };
+
+  auto run_kernel_checked = [&](const char* phase, int iter) -> bool {
+    int ret = vx_start(device, krnl_buffer, args_buffer);
+    if (ret != 0) {
+      std::cerr << "vx_start failed during " << phase
+                << " iter=" << iter << ": ret=" << ret << std::endl;
+      return false;
+    }
+    ret = vx_ready_wait(device, VX_MAX_TIMEOUT);
+    if (ret != 0) {
+      std::cerr << "vx_ready_wait failed during " << phase
+                << " iter=" << iter << ": ret=" << ret << std::endl;
+      return false;
+    }
+    return check_kernel_status(phase, iter);
   };
 
   // ---- Warmup --------------------------------------------------------------
@@ -358,8 +382,10 @@ int main(int argc, char *argv[]) {
     RT_CHECK(vx_start(device, krnl_buffer, args_buffer));
     RT_CHECK(vx_ready_wait(device, VX_MAX_TIMEOUT));
     printf("Warmup iteration %0d/%0d\n", i+1, bench.warmup); fflush(stdout);
-    if (!check_kernel_status("warmup", i))
+    if (!check_kernel_status("warmup", i)) {
+      cleanup();
       return -1;
+    }
   }
 
   // ---- Timed iterations ----------------------------------------------------
@@ -369,16 +395,37 @@ int main(int argc, char *argv[]) {
     vx_bench::Stopwatch sw; sw.start();
     RT_CHECK(vx_start(device, krnl_buffer, args_buffer));
     RT_CHECK(vx_ready_wait(device, VX_MAX_TIMEOUT));
-    if (!check_kernel_status("timed", i))
+    if (!check_kernel_status("timed", i)) {
+      cleanup();
       return -1;
-    stats.record(sw.stop_us());
+    }
+    const double elapsed_us = sw.stop_us();
+    if (i == 0)
+      first_latency_us = elapsed_us;
+    stats.record(elapsed_us);
+    const vx_bench::IterationPerf iter_perf =
+        vx_bench::dump_iteration_perf(device, bench, i);
+    if (i == 0)
+      first_iter_perf = iter_perf;
     printf("iteration %0d/%0d, elapsed:%f\n", i+1, bench.iterations, stats.last()); fflush(stdout);
   }
 
   stats.report("fpint_gemm_ffn_hw", bench);
 
+  kargs.status = MMIO_STATUS_INIT;
+  if (!vx_bench::prepare_power_kernel_iterations(
+          bench, kargs, args_buffer, first_latency_us, first_iter_perf,
+          "fpint_gemm_ffn_hw")) {
+    cleanup();
+    return -1;
+  }
+
   if (!vx_bench::run_power_measurement(
-          "fpint_gemm_ffn_hw", bench, device, krnl_buffer, args_buffer)) {
+          "fpint_gemm_ffn_hw", bench, device,
+          [&](const char* phase, int iter) -> bool {
+            return run_kernel_checked(phase, iter);
+          },
+          bench.power_measure_latency)) {
     cleanup();
     return -1;
   }

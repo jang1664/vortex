@@ -462,7 +462,11 @@ int main(int argc, char *argv[]) {
              "[--power-summary=PATH] [--power-interval=SEC] "
              "[--power-fpga-id=ID] [--power-iterations=N] "
              "[--power-idle-sec=SEC] [--power-csv-max-bytes=N] "
-             "[--power-script=PATH] [--power-max-iterations=N] "
+             "[--power-script=PATH] [--power-kernel-iterations=N|auto] "
+             "[--power-target-sec=SEC] "
+             "[--power-fpga-freq-mhz=MHz|auto] [--power-xclbin-info=PATH] "
+             "[--power-measure-latency[=on|off]] "
+             "[--power-max-iterations=N] "
              "[-m M] [-n N] [-k K] [-q QBLK] [-t WTRANS] [-d QDIR]\n", argv[0]);
       return 0;
     default:
@@ -472,7 +476,11 @@ int main(int argc, char *argv[]) {
              "[--power-summary=PATH] [--power-interval=SEC] "
              "[--power-fpga-id=ID] [--power-iterations=N] "
              "[--power-idle-sec=SEC] [--power-csv-max-bytes=N] "
-             "[--power-script=PATH] [--power-max-iterations=N] "
+             "[--power-script=PATH] [--power-kernel-iterations=N|auto] "
+             "[--power-target-sec=SEC] "
+             "[--power-fpga-freq-mhz=MHz|auto] [--power-xclbin-info=PATH] "
+             "[--power-measure-latency[=on|off]] "
+             "[--power-max-iterations=N] "
              "[-m M] [-n N] [-k K] [-q QBLK] [-t WTRANS] [-d QDIR]\n", argv[0]);
       return -1;
     }
@@ -597,10 +605,13 @@ int main(int argc, char *argv[]) {
   kargs.WTRANS = WTRANS;
   kargs.QDIR   = QDIR;
   kargs.status = STATUS_INIT;
+  kargs.power_kernel_iterations = 1;
 
   // args_buffer must be read/write: the kernel writes status back to args.
   RT_CHECK(vx_mem_alloc(device, sizeof(kargs), VX_MEM_READ_WRITE, &args_buffer));
   RT_CHECK(vx_copy_to_dev(args_buffer, &kargs, 0, sizeof(kargs)));
+  double first_latency_us = 0.0;
+  vx_bench::IterationPerf first_iter_perf;
 
   auto check_kernel_status = [&](const char* phase, int iter) -> bool {
     int ret = vx_copy_from_dev(&kargs, args_buffer, 0, sizeof(kargs));
@@ -660,17 +671,33 @@ int main(int argc, char *argv[]) {
       cleanup();
       return -1;
     }
-    stats.record(sw.stop_us());
+    const double elapsed_us = sw.stop_us();
+    if (i == 0)
+      first_latency_us = elapsed_us;
+    stats.record(elapsed_us);
+    const vx_bench::IterationPerf iter_perf =
+        vx_bench::dump_iteration_perf(device, bench, i);
+    if (i == 0)
+      first_iter_perf = iter_perf;
     printf("iteration %0d/%0d, elapsed:%f\n", i+1, bench.iterations, stats.last()); fflush(stdout);
   }
 
   stats.report("fpint_gemm_ffn_hw", bench);
 
+  kargs.status = STATUS_INIT;
+  if (!vx_bench::prepare_power_kernel_iterations(
+          bench, kargs, args_buffer, first_latency_us, first_iter_perf,
+          "fpint_gemm_ffn_hw")) {
+    cleanup();
+    return -1;
+  }
+
   if (!vx_bench::run_power_measurement(
-          "fpint_gemm_ffn_hw", bench,
+          "fpint_gemm_ffn_hw", bench, device,
           [&](const char* phase, int iter) -> bool {
             return run_kernel_checked(phase, iter);
-          })) {
+          },
+          bench.power_measure_latency)) {
     cleanup();
     return -1;
   }

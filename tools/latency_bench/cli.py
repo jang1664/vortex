@@ -46,6 +46,32 @@ from .runner import (
 from .suite import apply_case_filters, find_repo_root, load_suite
 
 
+def normalize_power_kernel_iterations(value: str | int, auto: bool = False) -> tuple[int, bool]:
+    text = str(value).strip().lower()
+    if text == "auto":
+        return 1, True
+    try:
+        iterations = int(text)
+    except ValueError as exc:
+        raise ValueError("--power-kernel-iterations must be a positive integer or 'auto'") from exc
+    if iterations < 1:
+        raise ValueError("--power-kernel-iterations must be >= 1")
+    return iterations, auto
+
+
+def normalize_power_fpga_freq_mhz(value: str | float) -> tuple[float, bool]:
+    text = str(value).strip().lower()
+    if text == "auto":
+        return 100.0, True
+    try:
+        freq_mhz = float(text)
+    except ValueError as exc:
+        raise ValueError("--power-fpga-freq-mhz must be a positive number or 'auto'") from exc
+    if freq_mhz <= 0:
+        raise ValueError("--power-fpga-freq-mhz must be > 0")
+    return freq_mhz, False
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run and visualize Vortex FPGA latency benchmarks.")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -67,6 +93,19 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--no-latency", dest="measure_latency", action="store_false", help="Skip the normal latency measurement phase.")
     run.add_argument("--power", dest="measure_power", action="store_true", help="Enable separate power measurement.")
     run.add_argument("--no-power", dest="measure_power", action="store_false", help="Disable power measurement.")
+    run.set_defaults(power_measure_latency=False)
+    run.add_argument(
+        "--power-measure-latency",
+        dest="power_measure_latency",
+        action="store_true",
+        help="Record per-launch latency and FPGA cycles during the separate power measurement phase.",
+    )
+    run.add_argument(
+        "--no-power-measure-latency",
+        dest="power_measure_latency",
+        action="store_false",
+        help="Do not record latency/cycle metrics during the separate power measurement phase.",
+    )
     run.set_defaults(power_auto_duration=True)
     run.add_argument(
         "--power-auto-duration",
@@ -122,6 +161,34 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_POWER_MIN_SAMPLES,
         help=f"Minimum required power samples for power-mode pass status; 0 disables the check (default: {DEFAULT_POWER_MIN_SAMPLES}).",
     )
+    run.add_argument(
+        "--power-kernel-iterations",
+        default="1",
+        help="Device-side kernel body repetitions per power-phase launch, or 'auto' to derive from first latency iteration.",
+    )
+    run.set_defaults(power_kernel_iterations_auto=False)
+    run.add_argument(
+        "--power-kernel-iterations-auto",
+        dest="power_kernel_iterations_auto",
+        action="store_true",
+        help="Derive device-side power kernel repetitions from the first latency iteration.",
+    )
+    run.add_argument(
+        "--power-target-sec",
+        type=float,
+        default=20.0,
+        help="Target duration in seconds for each power-phase kernel launch when power kernel iterations are auto-derived.",
+    )
+    run.add_argument(
+        "--power-fpga-freq-mhz",
+        default="auto",
+        help="FPGA DATA_CLK frequency in MHz for cycle-based power kernel iteration planning, or 'auto' to parse xclbin.info.",
+    )
+    run.add_argument(
+        "--power-xclbin-info",
+        default="",
+        help="Optional vortex_afu.xclbin.info path used to parse DATA_CLK for power kernel iteration planning.",
+    )
     run.add_argument("--platform", default=None, help="Override suite/default Xilinx platform.")
     run.add_argument("--xrt-device-index", type=int, default=None, help="Override XRT device index.")
     run.add_argument("--xrt-device-bdf", default="", help="Override XRT user-function BDF for FPGA programming.")
@@ -139,7 +206,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument(
         "--retry",
         action="store_true",
-        help="Retry timeout failures after resetting the FPGA; reset runs directly inside an existing Slurm allocation.",
+        help="Retry timeout failures after resetting the saved FPGA BDF in the current allocation.",
     )
     run.add_argument(
         "--retry-max-rounds",
@@ -156,12 +223,12 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument(
         "--retry-reset-wait",
         default=DEFAULT_RETRY_RESET_WAIT,
-        help=f"Sleep duration after timeout reset when --retry is enabled (default: {DEFAULT_RETRY_RESET_WAIT}).",
+        help=f"Sleep duration after retry reset when --retry is enabled (default: {DEFAULT_RETRY_RESET_WAIT}).",
     )
     run.add_argument(
         "--retry-reset-cmd",
         default=DEFAULT_RETRY_RESET_CMD,
-        help=f"Reset command run under srun after timeout (default: {DEFAULT_RETRY_RESET_CMD!r}).",
+        help=f"Reset command run directly against the saved FPGA BDF after timeout (default: {DEFAULT_RETRY_RESET_CMD!r}).",
     )
     run.add_argument(
         "--blackbox-arg",
@@ -169,7 +236,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=[],
         help="Add or override a blackbox arg from suite defaults; repeat for each arg.",
     )
-    run.add_argument("--no-srun", action="store_true", help="Run directly without srun.")
+    run.add_argument("--no-srun", action="store_true", help="Compatibility mode: run directly without managed srun.")
     run.add_argument("--srun-arg", action="append", default=[], help="Replace default srun args; repeat for each arg.")
     run.add_argument(
         "--dry-run",
@@ -382,7 +449,7 @@ def build_parser() -> argparse.ArgumentParser:
     comp.add_argument("--out", required=True, help="Output CSV path, or directory for composed.csv and summary.csv.")
     comp.add_argument(
         "--metric",
-        choices=["avg_us", "p50_us", "p95_us", "min_us", "max_us"],
+        choices=METRIC_COLUMNS,
         default="p50_us",
         help="Latency metric to compose.",
     )
@@ -415,6 +482,49 @@ def build_parser() -> argparse.ArgumentParser:
     gen.add_argument("--suite", required=True, help="Base suite YAML path.")
     gen.add_argument("--out", required=True, help="Output directory for generated suites and index.yaml.")
     gen.add_argument("--overwrite", action="store_true", help="Replace existing generated suite files.")
+    gen.add_argument(
+        "--batches",
+        "--batch-list",
+        default=None,
+        help="Override workload/case matrix batch values for both prefill and generation, e.g. 1,2,4,8.",
+    )
+    gen.add_argument(
+        "--prefill-batches",
+        "--prefill-batch-list",
+        default=None,
+        help="Override prefill workload/case matrix batch values, e.g. 1,2,4.",
+    )
+    gen.add_argument(
+        "--generation-batches",
+        "--generation-batch-list",
+        "--gen-batches",
+        "--gen-batch-list",
+        default=None,
+        help="Override generation workload/case matrix batch values, e.g. 1,2,4.",
+    )
+    gen.add_argument(
+        "--seq-lens",
+        "--seq-len-list",
+        default=None,
+        help=(
+            "Override existing workload/case matrix sequence-length values for both prefill and generation "
+            "prefill_seq_len, gen_kv_len, seq_len, or seq keys, e.g. 512,1024."
+        ),
+    )
+    gen.add_argument(
+        "--prefill-seq-lens",
+        "--prefill-seq-len-list",
+        default=None,
+        help="Override prefill matrix sequence-length values for existing prefill_seq_len, seq_len, or seq keys.",
+    )
+    gen.add_argument(
+        "--generation-seq-lens",
+        "--generation-seq-len-list",
+        "--gen-seq-lens",
+        "--gen-seq-len-list",
+        default=None,
+        help="Override generation matrix sequence-length values for existing gen_kv_len, seq_len, or seq keys.",
+    )
 
     merge = sub.add_parser(
         "merge-suites",
@@ -483,6 +593,26 @@ def parse_value_order_specs(specs: list[str]) -> dict[str, tuple[str, ...]]:
     return orders
 
 
+def parse_positive_int_csv(raw: str | None, option_name: str) -> tuple[int, ...]:
+    if raw is None or not str(raw).strip():
+        return ()
+    values: list[int] = []
+    for token in str(raw).split(","):
+        token = token.strip()
+        if not token:
+            continue
+        try:
+            value = int(token)
+        except ValueError as exc:
+            raise ValueError(f"{option_name} must be a comma-separated list of positive integers") from exc
+        if value <= 0:
+            raise ValueError(f"{option_name} values must be positive: {value}")
+        values.append(value)
+    if not values:
+        raise ValueError(f"{option_name} must include at least one value")
+    return tuple(values)
+
+
 def run_cmd(args: argparse.Namespace) -> int:
     repo_root = find_repo_root()
     suite = load_suite(
@@ -498,8 +628,6 @@ def run_cmd(args: argparse.Namespace) -> int:
     fpga_bin = resolve_fpga_bin_config(fpga_bin_label)
     platform = args.platform or suite.defaults.platform
     xrt_device_index = args.xrt_device_index
-    if xrt_device_index is None:
-        xrt_device_index = suite.defaults.xrt_device_index
     blackbox_args = merge_override_args(suite.defaults.blackbox_args, args.blackbox_arg)
     blackbox_timeout = normalize_timeout(args.blackbox_timeout)
     if args.blackbox_timeout is None:
@@ -507,6 +635,11 @@ def run_cmd(args: argparse.Namespace) -> int:
     srun_args = tuple(args.srun_arg) if args.srun_arg else DEFAULT_SRUN_ARGS
     run_id = args.run_id or default_run_id()
     configs_extra = merge_configs_extra(args.configs_extra)
+    power_kernel_iterations, power_kernel_iterations_auto = normalize_power_kernel_iterations(
+        args.power_kernel_iterations,
+        args.power_kernel_iterations_auto,
+    )
+    power_fpga_freq_mhz, power_fpga_freq_mhz_auto = normalize_power_fpga_freq_mhz(args.power_fpga_freq_mhz)
     options = RunOptions(
         build_dir=Path(args.build_dir).resolve(),
         fpga_bin_dir=fpga_bin.path,
@@ -530,6 +663,7 @@ def run_cmd(args: argparse.Namespace) -> int:
         program_fpga=not args.no_program_fpga,
         measure_latency=args.measure_latency,
         measure_power=args.measure_power,
+        power_measure_latency=args.power_measure_latency,
         power_auto_duration=args.power_auto_duration,
         power_min_run_sec=args.power_min_run_sec,
         power_max_run_sec=args.power_max_run_sec,
@@ -538,6 +672,12 @@ def run_cmd(args: argparse.Namespace) -> int:
         power_min_interval=args.power_min_interval,
         power_max_interval=args.power_max_interval,
         power_min_samples=args.power_min_samples,
+        power_kernel_iterations=power_kernel_iterations,
+        power_kernel_iterations_auto=power_kernel_iterations_auto,
+        power_target_sec=args.power_target_sec,
+        power_fpga_freq_mhz=power_fpga_freq_mhz,
+        power_fpga_freq_mhz_auto=power_fpga_freq_mhz_auto,
+        power_xclbin_info=args.power_xclbin_info,
         case_filters=tuple(args.filter),
         retry=args.retry,
         retry_max_rounds=args.retry_max_rounds,
@@ -642,10 +782,28 @@ def main(argv: list[str] | None = None) -> int:
             print(f"wrote {summary_csv}")
         return 0
     if args.cmd == "generate-suites":
+        try:
+            batch_values = parse_positive_int_csv(args.batches, "--batches")
+            seq_len_values = parse_positive_int_csv(args.seq_lens, "--seq-lens")
+            prefill_batch_values = parse_positive_int_csv(args.prefill_batches, "--prefill-batches")
+            generation_batch_values = parse_positive_int_csv(args.generation_batches, "--generation-batches")
+            prefill_seq_len_values = parse_positive_int_csv(args.prefill_seq_lens, "--prefill-seq-lens")
+            generation_seq_len_values = parse_positive_int_csv(
+                args.generation_seq_lens,
+                "--generation-seq-lens",
+            )
+        except ValueError as exc:
+            parser.error(str(exc))
         index = generate_suites(GenerateSuitesOptions(
             suite=Path(args.suite),
             out_dir=Path(args.out),
             overwrite=args.overwrite,
+            batch_values=batch_values,
+            seq_len_values=seq_len_values,
+            prefill_batch_values=prefill_batch_values,
+            generation_batch_values=generation_batch_values,
+            prefill_seq_len_values=prefill_seq_len_values,
+            generation_seq_len_values=generation_seq_len_values,
         ))
         print(f"wrote {Path(args.out).resolve() / 'index.yaml'}")
         print(f"generated {len(index['generated'])} suites")

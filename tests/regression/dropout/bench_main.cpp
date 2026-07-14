@@ -76,12 +76,12 @@ int main(int argc, char *argv[]) {
       case 'k': kernel_file = optarg; break;
       case 'h':
         printf("Usage: %s [--warmup=N] [--iterations=N] [--csv] "
-               "[--output=PATH] [--output-append] [-n SIZE] [-k FILE]\n",
+               "[--output=PATH] [--output-append] [--power-measure-latency[=on|off]] [-n SIZE] [-k FILE]\n",
                argv[0]);
         return 0;
       default:
         printf("Usage: %s [--warmup=N] [--iterations=N] [--csv] "
-               "[--output=PATH] [--output-append] [-n SIZE] [-k FILE]\n",
+               "[--output=PATH] [--output-append] [--power-measure-latency[=on|off]] [-n SIZE] [-k FILE]\n",
                argv[0]);
         return -1;
     }
@@ -114,6 +114,7 @@ int main(int argc, char *argv[]) {
   }
   RT_CHECK(vx_copy_to_dev(src0_buffer, h_src0.data(), 0, buf_size));
   RT_CHECK(vx_upload_kernel_file(device, kernel_file, &krnl_buffer));
+  kernel_arg.power_kernel_iterations = 1;
   RT_CHECK(vx_upload_bytes(device, &kernel_arg, sizeof(kernel_arg_t), &args_buffer));
 
   printf("Warmup Start\n"); fflush(stdout);
@@ -124,19 +125,35 @@ int main(int argc, char *argv[]) {
   }
 
   vx_bench::Stats stats;
+  double first_latency_us = 0.0;
+  vx_bench::IterationPerf first_iter_perf;
   printf("Start latency measurement.\n"); fflush(stdout);
   for (int i = 0; i < bench.iterations; ++i) {
     vx_bench::Stopwatch sw; sw.start();
     RT_CHECK(vx_start(device, krnl_buffer, args_buffer));
     RT_CHECK(vx_ready_wait(device, VX_MAX_TIMEOUT));
-    stats.record(sw.stop_us());
+    const double elapsed_us = sw.stop_us();
+    if (i == 0)
+      first_latency_us = elapsed_us;
+    stats.record(elapsed_us);
+    const vx_bench::IterationPerf iter_perf =
+        vx_bench::dump_iteration_perf(device, bench, i);
+    if (i == 0)
+      first_iter_perf = iter_perf;
     printf("iteration %0d/%0d, elapsed:%f\n", i+1, bench.iterations, stats.last()); fflush(stdout);
   }
 
   stats.report("dropout", bench);
 
+  if (!vx_bench::prepare_power_kernel_iterations(
+          bench, kernel_arg, args_buffer, first_latency_us, first_iter_perf,
+          "dropout")) {
+    cleanup();
+    return -1;
+  }
+
   if (!vx_bench::run_power_measurement(
-          "dropout", bench, device, krnl_buffer, args_buffer)) {
+          "dropout", bench, device, krnl_buffer, args_buffer, bench.power_measure_latency)) {
     cleanup();
     return -1;
   }

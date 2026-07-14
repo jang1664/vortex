@@ -28,6 +28,20 @@ def routing_target_root(root: Path, flag_fpint: bool) -> Path:
     return root / ("fpint" if flag_fpint else "baseline")
 
 
+def reserve_target_path(target_root: Path, base_name: str, src: Path, reserved: set[Path]) -> Path:
+    """Pick the next available target path using base, then _1, _2, ..."""
+
+    suffix: int | None = None
+    while True:
+        candidate_name = base_name if suffix is None else f"{base_name}_{suffix}"
+        candidate = target_root / candidate_name
+        if candidate == src:
+            return candidate
+        if candidate not in reserved and not candidate.exists() and not candidate.is_symlink():
+            return candidate
+        suffix = 1 if suffix is None else suffix + 1
+
+
 def read_text(path: Path) -> str | None:
     try:
         return path.read_text()
@@ -584,9 +598,7 @@ def plan_entries(dirs: list[Path], hash_len: int) -> list[dict]:
             continue
         # Stable order by original dir name
         group_sorted = sorted(group, key=lambda e: e["dir_name"])
-        for idx, e in enumerate(group_sorted, start=1):
-            if idx == 1:
-                continue
+        for idx, e in enumerate(group_sorted[1:], start=1):
             e["name_final"] = f"{base}_{idx}"
             e["collision_suffix"] = idx
             e["duplicate_of"] = group_sorted[0]["name_base"]
@@ -595,15 +607,30 @@ def plan_entries(dirs: list[Path], hash_len: int) -> list[dict]:
 
 
 def plan_actions(root: Path, entries: list[dict]) -> dict:
+    reserved_by_root: dict[Path, set[Path]] = {}
+    grouped_entries: dict[tuple[Path, str], list[dict]] = {}
+
+    for e in entries:
+        target_root = routing_target_root(root, e["flag_fpint"])
+        e["target_root"] = target_root
+        grouped_entries.setdefault((target_root, e["name_base"]), []).append(e)
+
+    for (target_root, base_name), group in grouped_entries.items():
+        reserved = reserved_by_root.setdefault(target_root, set())
+        for e in sorted(group, key=lambda item: item["dir_name"]):
+            src = e["dir_path"]
+            canonical = reserve_target_path(target_root, base_name, src, reserved)
+            reserved.add(canonical)
+            e["name_final"] = canonical.name
+            e["canonical_path"] = canonical
+
     renames = []
     symlinks = []
     manifests = []
     for e in entries:
         src = e["dir_path"]
-        target_root = routing_target_root(root, e["flag_fpint"])
-        canonical = target_root / e["name_final"]
-        e["target_root"] = target_root
-        e["canonical_path"] = canonical
+        target_root = e["target_root"]
+        canonical = e["canonical_path"]
         manifest_path = canonical / "manifest.json"
 
         if src == canonical:
@@ -703,7 +730,7 @@ def apply_actions(root: Path, entries: list[dict], actions: dict, force: bool) -
         )
 
     # Execute renames in two phases to avoid destination conflicts.
-    # Example: old_name -> xrt_name and xrt_name -> xrt_name_2.
+    # Example: old_name -> xrt_name and xrt_name -> xrt_name_1.
     # tmp file is staged in the source's own parent so the source-side rename
     # never depends on root being writable. The second phase uses shutil.move
     # so external --dir sources on a different filesystem still work

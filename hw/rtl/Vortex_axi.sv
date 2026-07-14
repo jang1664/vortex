@@ -84,11 +84,20 @@ module Vortex_axi import VX_gpu_pkg::*; #(
     input  wire [VX_DCR_ADDR_WIDTH-1:0] dcr_wr_addr,
     input  wire [VX_DCR_DATA_WIDTH-1:0] dcr_wr_data,
 
-`ifdef ENABLE_HW_DEBUG_MODULE
-    output wire                         hw_debug_pc_valid [HW_DEBUG_NUM_PC_SOURCES],
-    output wire [HW_DEBUG_CORE_ID_WIDTH-1:0] hw_debug_pc_core_id [HW_DEBUG_NUM_PC_SOURCES],
-    output wire [NW_WIDTH-1:0]          hw_debug_pc_wid [HW_DEBUG_NUM_PC_SOURCES],
-    output wire [`XLEN-1:0]             hw_debug_pc [HW_DEBUG_NUM_PC_SOURCES],
+`ifdef ENABLE_HW_DEBUG_PC
+	    output wire                         hw_debug_pc_valid [HW_DEBUG_NUM_PC_SOURCES],
+	    output wire [HW_DEBUG_CORE_ID_WIDTH-1:0] hw_debug_pc_core_id [HW_DEBUG_NUM_PC_SOURCES],
+		    output wire [NW_WIDTH-1:0]          hw_debug_pc_wid [HW_DEBUG_NUM_PC_SOURCES],
+		    output wire [`XLEN-1:0]             hw_debug_pc [HW_DEBUG_NUM_PC_SOURCES],
+`endif
+`ifdef ENABLE_HW_DEBUG_CORE
+		    output core_pipeline_debug_t        core_pipeline_debug [HW_DEBUG_NUM_PC_SOURCES],
+`endif
+`ifdef ENABLE_HW_DEBUG_GEMM
+            output gemm_unit_debug_t           gemm_unit_debug [HW_DEBUG_NUM_PC_SOURCES],
+`endif
+`ifdef ENABLE_HW_DEBUG_CACHE
+		    output cache_debug_t                cache_debug [HW_DEBUG_CACHE_NUM_SOURCES],
 `endif
 
     // Status
@@ -201,12 +210,21 @@ module Vortex_axi import VX_gpu_pkg::*; #(
         .dcr_wr_addr    (dcr_wr_addr),
         .dcr_wr_data    (dcr_wr_data),
 
-    `ifdef ENABLE_HW_DEBUG_MODULE
+    `ifdef ENABLE_HW_DEBUG_PC
         .hw_debug_pc_valid   (hw_debug_pc_valid),
-        .hw_debug_pc_core_id (hw_debug_pc_core_id),
-        .hw_debug_pc_wid     (hw_debug_pc_wid),
-        .hw_debug_pc         (hw_debug_pc),
+	        .hw_debug_pc_core_id (hw_debug_pc_core_id),
+		        .hw_debug_pc_wid     (hw_debug_pc_wid),
+		        .hw_debug_pc         (hw_debug_pc),
     `endif
+    `ifdef ENABLE_HW_DEBUG_CORE
+		        .core_pipeline_debug (core_pipeline_debug),
+    `endif
+    `ifdef ENABLE_HW_DEBUG_GEMM
+                .gemm_unit_debug     (gemm_unit_debug),
+    `endif
+    `ifdef ENABLE_HW_DEBUG_CACHE
+		        .cache_debug         (cache_debug),
+		    `endif
 
         .busy           (busy),
         .cache_drain    (vortex_cache_drain)
@@ -637,8 +655,30 @@ module Vortex_axi import VX_gpu_pkg::*; #(
         mst_axi_resp_t mux_mst_resp;
 
         // Slave[0] = LSU demux output for this HBM port
-        assign mux_slv_reqs[0] = lsu_demux_req[j];
-        assign lsu_demux_resp[j] = mux_slv_resps[0];
+        slv_axi_req_t  lsu_mux_req;
+        slv_axi_resp_t lsu_mux_resp;
+
+        axi_cut #(
+            .Bypass     (1'b0),
+            .aw_chan_t  (slv_axi_aw_chan_t),
+            .w_chan_t   (slv_axi_w_chan_t),
+            .b_chan_t   (slv_axi_b_chan_t),
+            .ar_chan_t  (slv_axi_ar_chan_t),
+            .r_chan_t   (slv_axi_r_chan_t),
+            .axi_req_t  (slv_axi_req_t),
+            .axi_resp_t (slv_axi_resp_t)
+        ) u_lsu_mux_cut (
+            .clk_i      (clk),
+            .rst_ni     (~reset),
+            .slv_req_i  (lsu_demux_req[j]),
+            .slv_resp_o (lsu_demux_resp[j]),
+            .mst_req_o  (lsu_mux_req),
+            .mst_resp_i (lsu_mux_resp)
+        );
+
+        assign mux_slv_reqs[0] = lsu_mux_req;
+        assign lsu_mux_resp = mux_slv_resps[0];
+
         // Slave[1..NUM_DMA_PER_MUX] = DMA channels for this HBM port
         if (NUM_HBM_PORTS == `NUM_DMA_CHANNELS) begin : g_dma_multi_port
             // Non-merged: each HBM port j gets DMA channel j from each core

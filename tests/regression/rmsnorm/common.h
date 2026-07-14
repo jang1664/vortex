@@ -27,6 +27,6 @@ typedef struct {
   // RMSNorm parameters
   float eps;                // Epsilon for numerical stability (typically 1e-6)
   
+  uint32_t power_kernel_iterations;
 } kernel_arg_t;
-
 #endif // _COMMON_H_

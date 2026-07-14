@@ -768,8 +768,54 @@ package VX_gpu_pkg;
         logic [PERF_CTR_BITS-1:0] output_fire;
         logic [PERF_CTR_BITS-1:0] output_stall;
         logic [PERF_CTR_BITS-1:0] mac_count;
+        logic [PERF_CTR_BITS-1:0] accum_rd_accept;
+        logic [PERF_CTR_BITS-1:0] accum_wr_fire;
+        logic [PERF_CTR_BITS-1:0] scaler_valid;
+        logic [PERF_CTR_BITS-1:0] acc_output_valid;
+        logic [PERF_CTR_BITS-1:0] psum_underflow;
+        logic [PERF_CTR_BITS-1:0] rd_wr_conflict;
         logic                     computing;
     } gemm_unit_perf_t;
+
+    typedef struct packed {
+        logic valid;
+        logic computing;
+        logic idle;
+        logic done;
+        logic is_load;
+        logic is_qcol;
+        logic rd_req;
+        logic rd_accept;
+        logic rd_fifo_push;
+        logic rd_fifo_pop;
+        logic rd_fifo_empty;
+        logic rd_fifo_full;
+        logic rd_fifo_alm_full;
+        logic mem_rd_data_valid;
+        logic wr_req;
+        logic wr_fire;
+        logic final_scaler_valid;
+        logic acc_in_valid;
+        logic psum_valid;
+        logic acc_output_valid;
+        logic psum_underflow;
+        logic rd_wr_conflict;
+        logic [1:0] state;
+        logic [1:0] rd_state;
+        logic [1:0] wr_state;
+        logic [1:0] rd_bank;
+        logic [1:0] wr_bank;
+        logic [`GEMM_ACC_MAX_CNT-1:0] rd_cnt;
+        logic [`GEMM_ACC_MAX_CNT-1:0] wr_cnt;
+        logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0] rd_addr;
+        logic [`GEMM_ACC_MEM_ADDR_WIDTH-1:0] wr_addr;
+        logic [PERF_CTR_BITS-1:0] rd_accept_count;
+        logic [PERF_CTR_BITS-1:0] wr_fire_count;
+        logic [PERF_CTR_BITS-1:0] scaler_valid_count;
+        logic [PERF_CTR_BITS-1:0] acc_output_count;
+        logic [PERF_CTR_BITS-1:0] psum_underflow_count;
+        logic [PERF_CTR_BITS-1:0] rd_wr_conflict_count;
+    } gemm_unit_debug_t;
 
     typedef struct packed {
         logic [PERF_CTR_BITS-1:0] total_cycles;
@@ -990,14 +1036,71 @@ package VX_gpu_pkg;
     // Memory request data bits
     localparam DCACHE_MEM_DATA_WIDTH = (DCACHE_LINE_SIZE * 8);
 
-    // Memory request tag bits
+	    // Memory request tag bits
 `ifdef DCACHE_ENABLE
-    localparam DCACHE_MEM_TAG_WIDTH = `CACHE_CLUSTER_NC_MEM_TAG_WIDTH(`DCACHE_MSHR_SIZE, `DCACHE_NUM_BANKS, DCACHE_NUM_REQS, `L1_MEM_PORTS, DCACHE_LINE_SIZE, DCACHE_WORD_SIZE, DCACHE_CORE_TAG_WIDTH, `SOCKET_SIZE, `NUM_DCACHES, UUID_WIDTH);
+	    localparam DCACHE_MEM_TAG_WIDTH = `CACHE_CLUSTER_NC_MEM_TAG_WIDTH(`DCACHE_MSHR_SIZE, `DCACHE_NUM_BANKS, DCACHE_NUM_REQS, `L1_MEM_PORTS, DCACHE_LINE_SIZE, DCACHE_WORD_SIZE, DCACHE_CORE_TAG_WIDTH, `SOCKET_SIZE, `NUM_DCACHES, UUID_WIDTH);
 `else
-    localparam DCACHE_MEM_TAG_WIDTH = `CACHE_CLUSTER_BYPASS_MEM_TAG_WIDTH(DCACHE_NUM_REQS, `L1_MEM_PORTS, DCACHE_LINE_SIZE, DCACHE_WORD_SIZE, DCACHE_CORE_TAG_WIDTH, `SOCKET_SIZE, `NUM_DCACHES);
+	    localparam DCACHE_MEM_TAG_WIDTH = `CACHE_CLUSTER_BYPASS_MEM_TAG_WIDTH(DCACHE_NUM_REQS, `L1_MEM_PORTS, DCACHE_LINE_SIZE, DCACHE_WORD_SIZE, DCACHE_CORE_TAG_WIDTH, `SOCKET_SIZE, `NUM_DCACHES);
 `endif
 
-    /////////////////////////////// L1 Parameters /////////////////////////////
+	    ////////////////////////// Hardware Debug Types ////////////////////////////
+
+	    localparam HW_DEBUG_CORE_STALL_TIMEOUT = 32'd1048576;
+
+	    localparam HW_DBG_ISSUE_SLICE_DECODE       = 0;
+	    localparam HW_DBG_ISSUE_SLICE_IBUFFER_BASE = HW_DBG_ISSUE_SLICE_DECODE + 1;
+	    localparam HW_DBG_ISSUE_SLICE_SCOREBOARD   = HW_DBG_ISSUE_SLICE_IBUFFER_BASE + PER_ISSUE_WARPS;
+	    localparam HW_DBG_ISSUE_SLICE_OPERANDS     = HW_DBG_ISSUE_SLICE_SCOREBOARD + 1;
+	    localparam HW_DEBUG_ISSUE_SLICE_CHANNELS   = HW_DBG_ISSUE_SLICE_OPERANDS + 1;
+
+	    localparam HW_DBG_ISSUE_DECODE_BASE     = 0;
+	    localparam HW_DBG_ISSUE_IBUFFER_BASE    = HW_DBG_ISSUE_DECODE_BASE + `ISSUE_WIDTH;
+	    localparam HW_DBG_ISSUE_SCOREBOARD_BASE = HW_DBG_ISSUE_IBUFFER_BASE + (`ISSUE_WIDTH * PER_ISSUE_WARPS);
+	    localparam HW_DBG_ISSUE_OPERANDS_BASE   = HW_DBG_ISSUE_SCOREBOARD_BASE + `ISSUE_WIDTH;
+	    localparam HW_DEBUG_ISSUE_PIPE_CHANNELS = HW_DBG_ISSUE_OPERANDS_BASE + `ISSUE_WIDTH;
+
+	    localparam HW_DBG_CH_SCHEDULE        = 0;
+	    localparam HW_DBG_CH_ICACHE_REQ      = HW_DBG_CH_SCHEDULE + 1;
+	    localparam HW_DBG_CH_ICACHE_RSP      = HW_DBG_CH_ICACHE_REQ + 1;
+	    localparam HW_DBG_CH_FETCH           = HW_DBG_CH_ICACHE_RSP + 1;
+	    localparam HW_DBG_CH_DECODE          = HW_DBG_CH_FETCH + 1;
+	    localparam HW_DBG_CH_ISSUE_BASE      = HW_DBG_CH_DECODE + 1;
+	    localparam HW_DBG_CH_ISSUE_DECODE_BASE     = HW_DBG_CH_ISSUE_BASE + HW_DBG_ISSUE_DECODE_BASE;
+	    localparam HW_DBG_CH_ISSUE_IBUFFER_BASE    = HW_DBG_CH_ISSUE_BASE + HW_DBG_ISSUE_IBUFFER_BASE;
+	    localparam HW_DBG_CH_ISSUE_SCOREBOARD_BASE = HW_DBG_CH_ISSUE_BASE + HW_DBG_ISSUE_SCOREBOARD_BASE;
+	    localparam HW_DBG_CH_ISSUE_OPERANDS_BASE   = HW_DBG_CH_ISSUE_BASE + HW_DBG_ISSUE_OPERANDS_BASE;
+	    localparam HW_DBG_CH_DISPATCH_BASE   = HW_DBG_CH_ISSUE_BASE + HW_DEBUG_ISSUE_PIPE_CHANNELS;
+	    localparam HW_DBG_CH_COMMIT_BASE     = HW_DBG_CH_DISPATCH_BASE + (NUM_EX_UNITS * `ISSUE_WIDTH);
+	    localparam HW_DBG_CH_LSU_REQ_BASE    = HW_DBG_CH_COMMIT_BASE + (NUM_EX_UNITS * `ISSUE_WIDTH);
+	    localparam HW_DBG_CH_LSU_RSP_BASE    = HW_DBG_CH_LSU_REQ_BASE + `NUM_LSU_BLOCKS;
+	    localparam HW_DBG_CH_DCACHE_REQ_BASE = HW_DBG_CH_LSU_RSP_BASE + `NUM_LSU_BLOCKS;
+	    localparam HW_DBG_CH_DCACHE_RSP_BASE = HW_DBG_CH_DCACHE_REQ_BASE + DCACHE_NUM_REQS;
+	    localparam HW_DEBUG_CORE_PIPE_CHANNELS = HW_DBG_CH_DCACHE_RSP_BASE + DCACHE_NUM_REQS;
+
+	    typedef struct packed {
+	        logic              valid;
+	        logic              ready;
+	        logic              fire;
+	        logic              stall;
+	        logic              payload_changed;
+	        logic [NW_WIDTH-1:0] wid;
+	        logic [15:0]       tag;
+	    } hw_debug_vr_t;
+
+	    typedef struct packed {
+	        hw_debug_vr_t [HW_DEBUG_ISSUE_SLICE_CHANNELS-1:0] channels;
+	    } issue_slice_debug_t;
+
+	    typedef struct packed {
+	        hw_debug_vr_t [HW_DEBUG_ISSUE_PIPE_CHANNELS-1:0] channels;
+	    } issue_pipeline_debug_t;
+
+	    typedef struct packed {
+	        logic busy;
+	        hw_debug_vr_t [HW_DEBUG_CORE_PIPE_CHANNELS-1:0] channels;
+	    } core_pipeline_debug_t;
+
+	    /////////////////////////////// L1 Parameters /////////////////////////////
 
     // arbitrate between icache and dcache
     localparam L1_MEM_TAG_WIDTH     = `MAX(ICACHE_MEM_TAG_WIDTH, DCACHE_MEM_TAG_WIDTH);
@@ -1027,7 +1130,7 @@ package VX_gpu_pkg;
     localparam L2_MEM_TAG_WIDTH     = `CACHE_BYPASS_TAG_WIDTH(L2_NUM_REQS, `L2_MEM_PORTS, `L2_LINE_SIZE, L2_WORD_SIZE, L2_TAG_WIDTH);
 `endif
 
-    /////////////////////////////// L3 Parameters /////////////////////////////
+	    /////////////////////////////// L3 Parameters /////////////////////////////
 
     // Word size in bytes
     localparam L3_WORD_SIZE	        = `L2_LINE_SIZE;
@@ -1045,12 +1148,62 @@ package VX_gpu_pkg;
 `ifdef L3_ENABLE
     localparam L3_MEM_TAG_WIDTH     = `CACHE_NC_MEM_TAG_WIDTH(`L3_MSHR_SIZE, `L3_NUM_BANKS, L3_NUM_REQS, `L3_MEM_PORTS, `L3_LINE_SIZE, L3_WORD_SIZE, L3_TAG_WIDTH, UUID_WIDTH);
 `else
-    localparam L3_MEM_TAG_WIDTH     = `CACHE_BYPASS_TAG_WIDTH(L3_NUM_REQS, `L3_MEM_PORTS, `L3_LINE_SIZE, L3_WORD_SIZE, L3_TAG_WIDTH);
+	    localparam L3_MEM_TAG_WIDTH     = `CACHE_BYPASS_TAG_WIDTH(L3_NUM_REQS, `L3_MEM_PORTS, `L3_LINE_SIZE, L3_WORD_SIZE, L3_TAG_WIDTH);
 `endif
 
-    ///////////////////////////////////////////////////////////////////////////
+	    ///////////////////////// Cache Hardware Debug Types //////////////////////
 
-    localparam VX_MEM_PORTS =           `L3_MEM_PORTS;
+	    localparam HW_DEBUG_CACHE_STALL_TIMEOUT = 32'd1048576;
+
+	    localparam HW_DBG_CACHE_KIND_NONE = 0;
+	    localparam HW_DBG_CACHE_KIND_L1I  = 1;
+	    localparam HW_DBG_CACHE_KIND_L1D  = 2;
+	    localparam HW_DBG_CACHE_KIND_L2   = 3;
+	    localparam HW_DBG_CACHE_KIND_L3   = 4;
+
+	    localparam HW_DEBUG_L1I_CACHE_SOURCES_PER_SOCKET = `UP(`NUM_ICACHES);
+	    localparam HW_DEBUG_L1D_CACHE_SOURCES_PER_SOCKET = `UP(`NUM_DCACHES);
+	    localparam HW_DEBUG_SOCKET_CACHE_SOURCES = HW_DEBUG_L1I_CACHE_SOURCES_PER_SOCKET
+	                                             + HW_DEBUG_L1D_CACHE_SOURCES_PER_SOCKET;
+	    localparam HW_DEBUG_CLUSTER_CACHE_SOURCES = (NUM_SOCKETS * HW_DEBUG_SOCKET_CACHE_SOURCES) + 1;
+	    localparam HW_DEBUG_CACHE_NUM_SOURCES = (`NUM_CLUSTERS * HW_DEBUG_CLUSTER_CACHE_SOURCES) + 1;
+	    localparam HW_DEBUG_CACHE_MAX_CORE_PORTS = `MAX(`MAX(1, DCACHE_NUM_REQS), `MAX(L2_NUM_REQS, L3_NUM_REQS));
+	    localparam HW_DEBUG_CACHE_MAX_MEM_PORTS = `MAX(`MAX(1, `L1_MEM_PORTS), `MAX(`L2_MEM_PORTS, `L3_MEM_PORTS));
+	    localparam HW_DEBUG_CACHE_MAX_PORTS = `MAX(HW_DEBUG_CACHE_MAX_CORE_PORTS, HW_DEBUG_CACHE_MAX_MEM_PORTS);
+
+	    typedef struct packed {
+	        logic        req_valid;
+	        logic        req_ready;
+	        logic        req_fire;
+	        logic        req_stall;
+	        logic        rsp_valid;
+	        logic        rsp_ready;
+	        logic        rsp_fire;
+	        logic        rsp_stall;
+	        logic        req_rw;
+	        logic [47:0] req_addr;
+	        logic [15:0] req_tag;
+	        logic [15:0] rsp_tag;
+	        logic [15:0] req_payload_hash;
+	        logic [15:0] rsp_payload_hash;
+	    } cache_bus_port_debug_t;
+
+	    typedef struct packed {
+	        logic        valid;
+	        logic [3:0]  kind;
+	        logic [15:0] location;
+	        logic [7:0]  unit;
+	        logic        passthru;
+	        logic        write_enable;
+	        logic [7:0]  core_port_count;
+	        logic [7:0]  mem_port_count;
+	        cache_bus_port_debug_t [HW_DEBUG_CACHE_MAX_PORTS-1:0] core_ports;
+	        cache_bus_port_debug_t [HW_DEBUG_CACHE_MAX_PORTS-1:0] mem_ports;
+	    } cache_debug_t;
+
+	    ///////////////////////////////////////////////////////////////////////////
+
+	    localparam VX_MEM_PORTS =           `L3_MEM_PORTS;
     localparam VX_MEM_BYTEEN_WIDTH =    `L3_LINE_SIZE;
     localparam VX_MEM_ADDR_WIDTH =      (`MEM_ADDR_WIDTH - `CLOG2(`L3_LINE_SIZE));
     localparam VX_MEM_DATA_WIDTH =      (`L3_LINE_SIZE * 8);

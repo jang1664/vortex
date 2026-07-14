@@ -230,6 +230,47 @@ static void wait_job_done(uint32_t eid, uint32_t generation, uint32_t& last_ctrl
   }
 }
 
+static inline uint32_t effective_power_kernel_iterations(const kernel_arg_t* arg) {
+  return (arg->power_kernel_iterations == 0u) ? 1u : arg->power_kernel_iterations;
+}
+
+static bool run_gemm_job_once(kernel_arg_t* arg, const tb_partition_t& part, bool reporter) {
+  uint32_t eid = 0, generation = 0;
+  uint32_t alloc_raw = 0;
+
+  if (!gemm_job_alloc_fixed(eid, generation, alloc_raw)) {
+    if (reporter) {
+      arg->last_ctrl = alloc_raw;
+      if (alloc_raw == kPoisonWord) {
+        arg->status = MMIO_STATUS_ALLOC_FAIL;
+      } else if (((alloc_raw >> JOB_MMIO_ALLOC_SUCC_BIT) & 1u) == 0) {
+        arg->status = MMIO_STATUS_ALLOC_FAIL;
+      } else {
+        arg->job_eid = eid;
+        arg->job_generation = generation;
+        arg->status = MMIO_STATUS_BAD_EID;
+      }
+    }
+    return false;
+  }
+
+  if (reporter) {
+    arg->last_ctrl = alloc_raw;
+    arg->job_eid = eid;
+    arg->job_generation = generation;
+  }
+
+  program_job_regs(eid, arg, part);
+
+  uint32_t last_ctrl = 0;
+  wait_job_done(eid, generation, last_ctrl);
+
+  if (reporter) {
+    arg->last_ctrl = last_ctrl;
+  }
+  return true;
+}
+
 void kernel_mmio_driver(kernel_arg_t *__UNIFORM__ arg) {
   uint32_t core_id = vx_core_id();
   uint32_t num_cores = vx_num_cores();
@@ -291,38 +332,13 @@ void kernel_mmio_driver(kernel_arg_t *__UNIFORM__ arg) {
     return;
   }
 
-  uint32_t eid = 0, generation = 0;
-  uint32_t alloc_raw = 0;
-
-  if (!gemm_job_alloc_fixed(eid, generation, alloc_raw)) {
-    if (reporter) {
-      arg->last_ctrl = alloc_raw;
-      if (alloc_raw == kPoisonWord) {
-        arg->status = MMIO_STATUS_ALLOC_FAIL;
-      } else if (((alloc_raw >> JOB_MMIO_ALLOC_SUCC_BIT) & 1u) == 0) {
-        arg->status = MMIO_STATUS_ALLOC_FAIL;
-      } else {
-        arg->job_eid = eid;
-        arg->job_generation = generation;
-        arg->status = MMIO_STATUS_BAD_EID;
-      }
-    }
-    return;
+  const uint32_t repeat = effective_power_kernel_iterations(arg);
+  for (uint32_t i = 0; i < repeat; ++i) {
+    if (!run_gemm_job_once(arg, part, reporter))
+      return;
   }
 
   if (reporter) {
-    arg->last_ctrl = alloc_raw;
-    arg->job_eid = eid;
-    arg->job_generation = generation;
-  }
-
-  program_job_regs(eid, arg, part);
-
-  uint32_t last_ctrl = 0;
-  wait_job_done(eid, generation, last_ctrl);
-
-  if (reporter) {
-    arg->last_ctrl = last_ctrl;
     arg->status = MMIO_STATUS_OK;
   }
 }

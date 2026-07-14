@@ -11,8 +11,8 @@ typedef struct {
   float multiplier;
   uint64_t src0_addr;
   uint64_t dst_addr; 
+  uint32_t power_kernel_iterations;
 } kernel_arg_t;
-
 unsigned int WangHash(unsigned int s){
 	s = (s^61) ^ (s >> 16);
 	s *= 9;

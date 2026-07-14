@@ -6,6 +6,7 @@ from pathlib import Path
 
 import yaml
 
+from tools.latency_bench.cli import main
 from tools.latency_bench.generate_suites import GenerateSuitesOptions, generate_suites
 from tools.latency_bench.suite import load_suite
 
@@ -114,6 +115,111 @@ cases:
             self.assertEqual("explicit_alias", explicit_suite["defaults"]["fpga_bin"])
             self.assertEqual(["silu_explicit"], [case["id"] for case in explicit_suite["cases"]])
             self.assertNotIn("fpga_bin", explicit_suite["cases"][0])
+
+    def test_generate_suites_cli_overrides_workload_batch_and_seq_lists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            suite_path = tmp_path / "suite.yaml"
+            suite_path.write_text(
+                """
+name: override_workload_matrix
+defaults:
+  warmup: 1
+  iterations: 1
+  fpga_bin: test_bin
+fpga_bins:
+  default: test_bin
+workloads:
+  - id: softmax
+    model: llama2-7b
+    stage: all
+    filter_kind: softmax
+    implemented_only: true
+    matrix:
+      batch: {values: [1, 2]}
+      prefill_seq_len: {values: [32]}
+      gen_kv_len: {values: [64]}
+      qblk: 32
+""".lstrip()
+            )
+            out_dir = tmp_path / "generated"
+
+            rc = main([
+                "generate-suites",
+                "--suite", str(suite_path),
+                "--out", str(out_dir),
+                "--batches", "3",
+                "--seq-lens", "128,256",
+            ])
+
+            self.assertEqual(0, rc)
+            index = yaml.safe_load((out_dir / "index.yaml").read_text())
+            self.assertEqual(1, len(index["generated"]))
+            generated = yaml.safe_load(Path(index["generated"][0]["suite"]).read_text())
+            cases = generated["cases"]
+            self.assertEqual({3}, {case["shape"]["batch"] for case in cases})
+            self.assertEqual(
+                {128, 256},
+                {case["shape"]["seqq"] for case in cases if case["stage"] == "prefill"},
+            )
+            self.assertEqual(
+                {128, 256},
+                {case["shape"]["seqk"] for case in cases if case["stage"] == "generation"},
+            )
+
+    def test_generate_suites_cli_overrides_prefill_and_generation_separately(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            suite_path = tmp_path / "suite.yaml"
+            suite_path.write_text(
+                """
+name: split_override_workload_matrix
+defaults:
+  warmup: 1
+  iterations: 1
+  fpga_bin: test_bin
+fpga_bins:
+  default: test_bin
+workloads:
+  - id: softmax
+    model: llama2-7b
+    stage: all
+    filter_kind: softmax
+    implemented_only: true
+    matrix:
+      batch: {values: [1]}
+      prefill_seq_len: {values: [32]}
+      gen_kv_len: {values: [64]}
+      qblk: 32
+""".lstrip()
+            )
+            out_dir = tmp_path / "generated"
+
+            rc = main([
+                "generate-suites",
+                "--suite", str(suite_path),
+                "--out", str(out_dir),
+                "--prefill-batches", "2",
+                "--generation-batches", "4",
+                "--prefill-seq-lens", "128",
+                "--generation-seq-lens", "512",
+            ])
+
+            self.assertEqual(0, rc)
+            index = yaml.safe_load((out_dir / "index.yaml").read_text())
+            generated = yaml.safe_load(Path(index["generated"][0]["suite"]).read_text())
+            cases = generated["cases"]
+            self.assertEqual(2, len(cases))
+            prefill = [case for case in cases if case["stage"] == "prefill"]
+            generation = [case for case in cases if case["stage"] == "generation"]
+            self.assertEqual(1, len(prefill))
+            self.assertEqual(1, len(generation))
+            self.assertEqual(2, prefill[0]["shape"]["batch"])
+            self.assertEqual(128, prefill[0]["shape"]["seqq"])
+            self.assertEqual(128, prefill[0]["shape"]["seqk"])
+            self.assertEqual(4, generation[0]["shape"]["batch"])
+            self.assertEqual(1, generation[0]["shape"]["seqq"])
+            self.assertEqual(512, generation[0]["shape"]["seqk"])
 
 
 if __name__ == "__main__":

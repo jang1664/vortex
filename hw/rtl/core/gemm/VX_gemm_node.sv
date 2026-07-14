@@ -28,6 +28,9 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
 
     // DMA engine AXI ports (pass through to VX_tmem_subsystem -> HBM)
     AXI_BUS.Master          dma_axi_m [NUM_TMEM_BANKS]
+`ifdef ENABLE_HW_DEBUG_GEMM
+    ,output gemm_unit_debug_t gemm_unit_debug
+`endif
 `ifdef PERF_ENABLE
     ,output gemm_unit_perf_t  gemm_unit_perf
     ,output gemm_node_perf_t  gemm_node_perf
@@ -451,7 +454,8 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
       .NUM_MASTERS(N_MASTER),
       .NUM_ENTRIES(`JOB_MMIO_NUM_ENTRIES),
       .NUM_REGS32(`GEMM_CFG_REG_NUM),
-      .CFG_BASE_ADDR(`GEMM_REG_BASE_ADDR)
+      .CFG_BASE_ADDR(`GEMM_REG_BASE_ADDR),
+      .ONE_LANE_MMIO(1'b1)
     ) u_job_frontend (
       .clk(clk),
       .reset(reset),
@@ -552,6 +556,9 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
       .sz_lmem_bus_if(sz_gemm_bus_if),
       .o_lmem_bus_if(o_gemm_bus_if),
       .gemm_unit_if(gemm_unit_if)
+`ifdef ENABLE_HW_DEBUG_GEMM
+      ,.debug(gemm_unit_debug)
+`endif
 `ifdef PERF_ENABLE
       ,.perf(gemm_unit_perf)
 `endif

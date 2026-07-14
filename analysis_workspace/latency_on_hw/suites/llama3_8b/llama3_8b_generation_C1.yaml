@@ -1,0 +1,33 @@
+name: llama3_8b_generation_C1
+defaults:
+  warmup: 1
+  iterations: 3
+  app: sgemm_tcu
+  fpga_bin: naive_simd
+  target: hw
+  platform: xilinx_u55c_gen3x16_xdma_3_202210_1
+
+fpga_bins:
+  default: naive_simd
+
+  by_backend:
+    sgemm_tcu: naive_gemm_simd_th16_tcol32
+
+  by_app:
+    rmsnorm: naive_gemm_simd_th16_tcol32
+    rope: naive_gemm_simd_th16_tcol32
+    softmax: naive_gemm_simd_th16_tcol32
+    silu: naive_gemm_simd_th16_tcol32
+    eladd: naive_gemm_simd_th16_tcol32
+    elmul: naive_gemm_simd_th16_tcol32
+
+workloads:
+  - id: llama3_8b_generation_C1
+    model: llama3-8b
+    stage: generation
+    variant: all_sgemm_tcu_spinquant
+    implemented_only: false
+    matrix:
+      batch: {values: [1]}
+      gen_kv_len: {values: [512, 1024, 2048, 4096]}
+      qblk: 32

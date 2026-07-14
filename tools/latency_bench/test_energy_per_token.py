@@ -25,8 +25,15 @@ RAW_COLUMNS = [
     "args",
     "stage",
     "shape_json",
+    "power_avg_W",
+    "power_vcc_avg_W",
+    "power_dynamic_avg_W",
     "power_avg_w",
+    "power_vcc_avg_w",
+    "power_dynamic_avg_w",
     "power_samples",
+    "fpga_cycle_avg",
+    "fpga_bin_dir",
 ]
 
 
@@ -47,8 +54,12 @@ def _raw_row(**overrides: str) -> dict[str, str]:
         "args": "-m 512 -n 128 -k 512",
         "stage": "prefill",
         "shape_json": '{"M": 512, "N": 128, "K": 512}',
-        "power_avg_w": "12.0",
+        "power_avg_W": "12.0",
+        "power_vcc_avg_W": "7.0",
+        "power_dynamic_avg_W": "2.0",
         "power_samples": "7",
+        "fpga_cycle_avg": "1000",
+        "fpga_bin_dir": "/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint/bin",
     }
     row.update(overrides)
     return row
@@ -65,31 +76,177 @@ def _composed_row(**overrides: object) -> dict[str, object]:
         "shape_json": '{"M": 512, "N": 128, "K": 512}',
         "batch": "2",
         "seq_len": "512",
-        "weighted_latency_us": "2000000",
+        "calls_per_forward": "2",
+        "metric": "fpga_cycle",
+        "latency_us": "1000",
+        "fpga_cycle_avg": "1000",
     }
     row.update(overrides)
     return row
 
 
 class EnergyPerTokenTest(unittest.TestCase):
-    def test_exact_power_match_uses_idle_subtracted_power(self) -> None:
+    def test_exact_power_match_uses_fpga_cycle_period_and_selected_power_metric(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             raw_db = Path(tmp) / "raw_db.csv"
-            _write_raw_db(raw_db, [_raw_row(power_avg_w="12.0", power_samples="5")])
+            _write_raw_db(raw_db, [_raw_row(power_avg_W="5.0", power_samples="5")])
 
             rows = energy_per_token.energy_rows_from_records(
                 [_composed_row()],
                 [raw_db],
                 idle_power_w=2.0,
                 include_idle_power=False,
+                power_metric="power_avg_W",
+                fpga_period_s=10e-9,
             )
 
             self.assertEqual("measured", rows[0]["power_resolution"])
             self.assertEqual("exact", rows[0]["power_match_scope"])
-            self.assertEqual(10.0, rows[0]["effective_power_w"])
-            self.assertEqual(20.0, rows[0]["kernel_energy_j"])
+            self.assertEqual("power_avg_W", rows[0]["power_metric"])
+            self.assertEqual(5.0, rows[0]["raw_power_W"])
+            self.assertEqual(5.0, rows[0]["effective_power_W"])
+            self.assertEqual(2000.0, rows[0]["energy_weighted_fpga_cycles"])
+            self.assertEqual(10e-9, rows[0]["fpga_period_s"])
+            self.assertEqual(0.00002, rows[0]["energy_time_s"])
+            self.assertEqual(0.0001, rows[0]["kernel_energy_j"])
             self.assertEqual(1024, rows[0]["energy_tokens"])
-            self.assertAlmostEqual(20.0 / 1024.0, rows[0]["joules_per_token_component"])
+            self.assertAlmostEqual(0.0001 / 1024.0, rows[0]["joules_per_token_component"])
+
+    def test_power_metric_selection_uses_vcc_and_dynamic_columns(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            raw_db = Path(tmp) / "raw_db.csv"
+            _write_raw_db(
+                raw_db,
+                [
+                    _raw_row(
+                        power_avg_W="9.0",
+                        power_vcc_avg_W="7.0",
+                        power_dynamic_avg_W="1.25",
+                        power_samples="5",
+                    )
+                ],
+            )
+
+            vcc_rows = energy_per_token.energy_rows_from_records(
+                [_composed_row(calls_per_forward="1", fpga_cycle_avg="4000", latency_us="4000")],
+                [raw_db],
+                idle_power_w=0.0,
+                power_metric="power_vcc_avg_W",
+                fpga_period_s=10e-9,
+            )
+            dynamic_rows = energy_per_token.energy_rows_from_records(
+                [_composed_row(calls_per_forward="1", fpga_cycle_avg="4000", latency_us="4000")],
+                [raw_db],
+                idle_power_w=0.0,
+                power_metric="power_dynamic_avg_W",
+                fpga_period_s=10e-9,
+            )
+
+            self.assertEqual(7.0, vcc_rows[0]["raw_power_W"])
+            self.assertAlmostEqual(0.00028, vcc_rows[0]["kernel_energy_j"])
+            self.assertEqual(1.25, dynamic_rows[0]["raw_power_W"])
+            self.assertEqual(0.00005, dynamic_rows[0]["kernel_energy_j"])
+
+    def test_lowercase_power_columns_fall_back_to_uppercase_metric_name(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            raw_db = Path(tmp) / "raw_db.csv"
+            _write_raw_db(
+                raw_db,
+                [
+                    _raw_row(
+                        power_avg_W="",
+                        power_avg_w="6.0",
+                        power_samples="5",
+                    )
+                ],
+            )
+
+            rows = energy_per_token.energy_rows_from_records(
+                [_composed_row(calls_per_forward="1", fpga_cycle_avg="1000", latency_us="1000")],
+                [raw_db],
+                idle_power_w=0.0,
+                power_metric="power_avg_W",
+                fpga_period_s=10e-9,
+            )
+
+            self.assertEqual("power_avg_W", rows[0]["power_metric"])
+            self.assertEqual(6.0, rows[0]["raw_power_W"])
+            self.assertAlmostEqual(0.00006, rows[0]["kernel_energy_j"])
+
+    def test_fpga_bin_alias_xclbin_info_sets_cycle_period(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            bin_dir = root / "bins" / "xrt_hw_u55c_c1_custom" / "bin"
+            bin_dir.mkdir(parents=True)
+            (bin_dir / "vortex_xclbin.info").write_text(
+                "Clock Information\n"
+                "  Name: KERNEL_CLK\n"
+                "  Frequency: 100.000000 MHz\n"
+                "  Name: DATA_CLK\n"
+                "  Period: 4.000 ns\n",
+                encoding="utf-8",
+            )
+            alias_map = root / "fpga_bin_alias_map.yaml"
+            alias_map.write_text(
+                "aliases:\n"
+                "  custom_alias:\n"
+                f"    path: {bin_dir}\n",
+                encoding="utf-8",
+            )
+            raw_db = Path(tmp) / "raw_db.csv"
+            _write_raw_db(
+                raw_db,
+                [
+                    _raw_row(
+                        fpga_bin_label="custom_alias",
+                        power_avg_W="5.0",
+                        fpga_bin_dir="",
+                    )
+                ],
+            )
+
+            with patch.dict("os.environ", {"VORTEX_FPGA_BIN_ALIAS_MAP": str(alias_map)}):
+                rows = energy_per_token.energy_rows_from_records(
+                    [
+                        _composed_row(
+                            expected_fpga_bin_label="custom_alias",
+                            calls_per_forward="1",
+                            fpga_cycle_avg="250",
+                            latency_us="250",
+                        )
+                    ],
+                    [raw_db],
+                    power_metric="power_avg_W",
+                    fpga_period_s=10e-9,
+                )
+
+            self.assertAlmostEqual(4e-9, rows[0]["fpga_period_s"])
+            self.assertAlmostEqual(0.000005, rows[0]["kernel_energy_j"])
+
+    def test_fpga_bin_dir_name_does_not_set_cycle_period_without_xclbin_info(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bin_dir = Path(tmp) / "xrt_hw_u55c_c1_f200_fpint" / "bin"
+            bin_dir.mkdir(parents=True)
+            raw_db = Path(tmp) / "raw_db.csv"
+            _write_raw_db(
+                raw_db,
+                [
+                    _raw_row(
+                        power_avg_W="5.0",
+                        fpga_bin_dir=str(bin_dir),
+                    )
+                ],
+            )
+
+            rows = energy_per_token.energy_rows_from_records(
+                [_composed_row(calls_per_forward="1", fpga_cycle_avg="200", latency_us="200")],
+                [raw_db],
+                power_metric="power_avg_W",
+                fpga_period_s=10e-9,
+            )
+
+            self.assertAlmostEqual(10e-9, rows[0]["fpga_period_s"])
+            self.assertAlmostEqual(0.00001, rows[0]["kernel_energy_j"])
 
     def test_nearest_shape_imputes_same_fpga_app_power(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -101,14 +258,14 @@ class EnergyPerTokenTest(unittest.TestCase):
                         case_id="near",
                         args="-m 512 -n 128 -k 512",
                         shape_json='{"M": 512, "N": 128, "K": 512}',
-                        power_avg_w="11.0",
+                        power_avg_W="11.0",
                         power_samples="6",
                     ),
                     _raw_row(
                         case_id="far",
                         args="-m 4096 -n 128 -k 512",
                         shape_json='{"M": 4096, "N": 128, "K": 512}',
-                        power_avg_w="20.0",
+                        power_avg_W="20.0",
                         power_samples="100",
                     ),
                 ],
@@ -124,12 +281,14 @@ class EnergyPerTokenTest(unittest.TestCase):
                 [raw_db],
                 idle_power_w=1.0,
                 include_idle_power=False,
+                power_metric="power_avg_W",
+                fpga_period_s=10e-9,
             )
 
             self.assertEqual("imputed", rows[0]["power_resolution"])
             self.assertEqual("same_fpga_app", rows[0]["power_match_scope"])
             self.assertEqual("near", rows[0]["power_source_case_id"])
-            self.assertEqual(10.0, rows[0]["effective_power_w"])
+            self.assertEqual(11.0, rows[0]["effective_power_W"])
 
     def test_invalid_power_candidates_are_ignored_and_generation_tokens_use_batch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -137,12 +296,12 @@ class EnergyPerTokenTest(unittest.TestCase):
             _write_raw_db(
                 raw_db,
                 [
-                    _raw_row(case_id="invalid", power_avg_w="99.0", power_samples="0"),
+                    _raw_row(case_id="invalid", power_avg_W="99.0", power_samples="0"),
                     _raw_row(
                         case_id="valid",
                         args="-m 256",
                         shape_json='{"M": 256}',
-                        power_avg_w="9.0",
+                        power_avg_W="9.0",
                         power_samples="5",
                     ),
                 ],
@@ -157,18 +316,23 @@ class EnergyPerTokenTest(unittest.TestCase):
                         batch="8",
                         seq_len="512",
                         shape_json='{"M": 512}',
-                        weighted_latency_us="1000000",
+                        calls_per_forward="2",
+                        metric="fpga_cycle",
+                        latency_us="1000",
+                        fpga_cycle_avg="1000",
                     )
                 ],
                 [raw_db],
                 idle_power_w=4.0,
                 include_idle_power=False,
+                power_metric="power_avg_W",
+                fpga_period_s=10e-9,
             )
 
             self.assertEqual("valid", rows[0]["power_source_case_id"])
             self.assertEqual(8, rows[0]["energy_tokens"])
-            self.assertEqual(5.0, rows[0]["kernel_energy_j"])
-            self.assertAlmostEqual(5.0 / 8.0, rows[0]["joules_per_token_component"])
+            self.assertEqual(0.00018, rows[0]["kernel_energy_j"])
+            self.assertAlmostEqual(0.00018 / 8.0, rows[0]["joules_per_token_component"])
 
     def test_summary_marks_missing_power_group_incomplete(self) -> None:
         summary = energy_per_token.summarize_energy_rows(

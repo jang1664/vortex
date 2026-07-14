@@ -36,11 +36,20 @@ module VX_cluster import VX_gpu_pkg::*; #(
     // DMA AXI ports (cache bypass, from all cores in cluster)
     AXI_BUS.Master              dma_axi_m [NUM_SOCKETS * `SOCKET_SIZE * `NUM_DMA_CHANNELS],
 
-`ifdef ENABLE_HW_DEBUG_MODULE
-    output wire                         hw_debug_pc_valid [NUM_SOCKETS * `SOCKET_SIZE],
-    output wire [HW_DEBUG_CORE_ID_WIDTH-1:0] hw_debug_pc_core_id [NUM_SOCKETS * `SOCKET_SIZE],
-    output wire [NW_WIDTH-1:0]          hw_debug_pc_wid [NUM_SOCKETS * `SOCKET_SIZE],
-    output wire [`XLEN-1:0]             hw_debug_pc [NUM_SOCKETS * `SOCKET_SIZE],
+`ifdef ENABLE_HW_DEBUG_PC
+	    output wire                         hw_debug_pc_valid [NUM_SOCKETS * `SOCKET_SIZE],
+	    output wire [HW_DEBUG_CORE_ID_WIDTH-1:0] hw_debug_pc_core_id [NUM_SOCKETS * `SOCKET_SIZE],
+		    output wire [NW_WIDTH-1:0]          hw_debug_pc_wid [NUM_SOCKETS * `SOCKET_SIZE],
+		    output wire [`XLEN-1:0]             hw_debug_pc [NUM_SOCKETS * `SOCKET_SIZE],
+`endif
+`ifdef ENABLE_HW_DEBUG_CORE
+		    output core_pipeline_debug_t        core_pipeline_debug [NUM_SOCKETS * `SOCKET_SIZE],
+`endif
+`ifdef ENABLE_HW_DEBUG_GEMM
+            output gemm_unit_debug_t           gemm_unit_debug [NUM_SOCKETS * `SOCKET_SIZE],
+`endif
+`ifdef ENABLE_HW_DEBUG_CACHE
+		    output cache_debug_t                cache_debug [HW_DEBUG_CLUSTER_CACHE_SOURCES],
 `endif
 
     // Status
@@ -92,10 +101,15 @@ module VX_cluster import VX_gpu_pkg::*; #(
         .TAG_WIDTH (L1_MEM_ARB_TAG_WIDTH)
     ) per_socket_mem_bus_if[NUM_SOCKETS * `L1_MEM_PORTS]();
 
-    `RESET_RELAY (l2_reset, reset);
-    wire l2_cache_drain;
+	    `RESET_RELAY (l2_reset, reset);
+	    wire l2_cache_drain;
 
-    VX_cache_wrap #(
+	`ifdef ENABLE_HW_DEBUG_CACHE
+	    cache_debug_t l2_cache_debug;
+	    cache_debug_t socket_cache_debug [NUM_SOCKETS * HW_DEBUG_SOCKET_CACHE_SOURCES];
+	`endif
+
+	    VX_cache_wrap #(
         .INSTANCE_ID    (`SFORMATF(("%s-l2cache", INSTANCE_ID))),
         .CACHE_SIZE     (`L2_CACHE_SIZE),
         .LINE_SIZE      (`L2_LINE_SIZE),
@@ -113,20 +127,26 @@ module VX_cluster import VX_gpu_pkg::*; #(
         .WRITEBACK      (`L2_WRITEBACK),
         .DIRTY_BYTES    (`L2_DIRTYBYTES),
         .REPL_POLICY    (`L2_REPL_POLICY),
-        .CORE_OUT_BUF   (3),
-        .MEM_OUT_BUF    (3),
-        .NC_ENABLE      (1),
-        .PASSTHRU       (!`L2_ENABLED)
-    ) l2cache (
+	        .CORE_OUT_BUF   (3),
+	        .MEM_OUT_BUF    (3),
+	        .NC_ENABLE      (1),
+	        .PASSTHRU       (!`L2_ENABLED),
+	        .DEBUG_CACHE_KIND     (HW_DBG_CACHE_KIND_L2),
+	        .DEBUG_CACHE_LOCATION (CLUSTER_ID),
+	        .DEBUG_CACHE_UNIT     (0)
+	    ) l2cache (
         .clk            (clk),
         .reset          (l2_reset),
     `ifdef PERF_ENABLE
         .cache_perf     (l2_perf),
-    `endif
-        .core_bus_if    (per_socket_mem_bus_if),
-        .mem_bus_if     (mem_bus_if),
-        .cache_drain    (l2_cache_drain)
-    );
+	`endif
+	        .core_bus_if    (per_socket_mem_bus_if),
+	        .mem_bus_if     (mem_bus_if),
+	    `ifdef ENABLE_HW_DEBUG_CACHE
+	        .cache_debug    (l2_cache_debug),
+	    `endif
+	        .cache_drain    (l2_cache_drain)
+	    );
 
     ///////////////////////////////////////////////////////////////////////////
 
@@ -167,19 +187,36 @@ module VX_cluster import VX_gpu_pkg::*; #(
             .gbar_bus_if    (per_socket_gbar_bus_if[socket_id]),
         `endif
 
-        `ifdef ENABLE_HW_DEBUG_MODULE
-            .hw_debug_pc_valid   (hw_debug_pc_valid[socket_id * `SOCKET_SIZE +: `SOCKET_SIZE]),
-            .hw_debug_pc_core_id (hw_debug_pc_core_id[socket_id * `SOCKET_SIZE +: `SOCKET_SIZE]),
-            .hw_debug_pc_wid     (hw_debug_pc_wid[socket_id * `SOCKET_SIZE +: `SOCKET_SIZE]),
-            .hw_debug_pc         (hw_debug_pc[socket_id * `SOCKET_SIZE +: `SOCKET_SIZE]),
-        `endif
+	        `ifdef ENABLE_HW_DEBUG_PC
+		            .hw_debug_pc_valid   (hw_debug_pc_valid[socket_id * `SOCKET_SIZE +: `SOCKET_SIZE]),
+			            .hw_debug_pc_core_id (hw_debug_pc_core_id[socket_id * `SOCKET_SIZE +: `SOCKET_SIZE]),
+			            .hw_debug_pc_wid     (hw_debug_pc_wid[socket_id * `SOCKET_SIZE +: `SOCKET_SIZE]),
+			            .hw_debug_pc         (hw_debug_pc[socket_id * `SOCKET_SIZE +: `SOCKET_SIZE]),
+	        `endif
+	        `ifdef ENABLE_HW_DEBUG_CORE
+			            .core_pipeline_debug (core_pipeline_debug[socket_id * `SOCKET_SIZE +: `SOCKET_SIZE]),
+	        `endif
+	        `ifdef ENABLE_HW_DEBUG_GEMM
+                    .gemm_unit_debug     (gemm_unit_debug[socket_id * `SOCKET_SIZE +: `SOCKET_SIZE]),
+	        `endif
+	        `ifdef ENABLE_HW_DEBUG_CACHE
+			            .cache_debug         (socket_cache_debug[socket_id * HW_DEBUG_SOCKET_CACHE_SOURCES +: HW_DEBUG_SOCKET_CACHE_SOURCES]),
+			        `endif
 
-            .busy           (per_socket_busy[socket_id]),
-            .dcache_drain   (per_socket_dcache_drain[socket_id])
-        );
-    end
+	            .busy           (per_socket_busy[socket_id]),
+	            .dcache_drain   (per_socket_dcache_drain[socket_id])
+	        );
+	    end
 
-    wire [NUM_SOCKETS * `L1_MEM_PORTS-1:0] l1_req_pending;
+	`ifdef ENABLE_HW_DEBUG_CACHE
+	    for (genvar cache_dbg_i = 0; cache_dbg_i < (NUM_SOCKETS * HW_DEBUG_SOCKET_CACHE_SOURCES); ++cache_dbg_i) begin : g_hw_debug_socket_cache
+	        assign cache_debug[cache_dbg_i] = socket_cache_debug[cache_dbg_i];
+	    end
+
+	    assign cache_debug[NUM_SOCKETS * HW_DEBUG_SOCKET_CACHE_SOURCES] = l2_cache_debug;
+	`endif
+
+	    wire [NUM_SOCKETS * `L1_MEM_PORTS-1:0] l1_req_pending;
     wire [NUM_SOCKETS * `L1_MEM_PORTS-1:0] l1_rsp_pending;
     wire [`L2_MEM_PORTS-1:0] l2_req_pending;
     wire [`L2_MEM_PORTS-1:0] l2_rsp_pending;

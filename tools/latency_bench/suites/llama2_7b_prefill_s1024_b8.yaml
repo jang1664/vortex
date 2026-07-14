@@ -5,9 +5,6 @@ defaults:
   app: fpint_gemm_ffn_hw
   target: hw
   platform: xilinx_u55c_gen3x16_xdma_3_202210_1
-  blackbox_args:
-    - --cores=1
-    - --threads=8
 workloads:
   - id: llama2_7b_prefill_s1024_b8
     model: llama2-7b

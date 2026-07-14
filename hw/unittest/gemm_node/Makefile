@@ -104,8 +104,10 @@ RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
         $(RTL_DIR)/cache/VX_cache.sv \
         $(RTL_DIR)/cache/VX_cache_bypass.sv \
         $(RTL_DIR)/cache/VX_cache_wrap.sv \
-        $(RTL_DIR)/core/VX_dma_node.sv \
-        $(RTL_DIR)/core/VX_dma_unit_misal.sv
+        $(RTL_DIR)/core/VX_dma_unit_align.sv \
+        $(RTL_DIR)/core/VX_dma_unit_misal.sv \
+        $(RTL_DIR)/core/VX_dma_unit.sv \
+        $(RTL_DIR)/core/VX_dma_node.sv
 
 DPI_SRCS := $(VORTEX_HOME)/hw/dpi/float_dpi.cpp \
             $(VORTEX_HOME)/sim/common/util.cpp \

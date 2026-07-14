@@ -189,7 +189,11 @@ if { $merged_mem_if == 1 } {
     set num_banks 1
 }
 
-create_project -force kernel_pack $path_to_tmp_project
+if {[string length $device_part] != 0} {
+    create_project -force kernel_pack $path_to_tmp_project -part $device_part
+} else {
+    create_project -force kernel_pack $path_to_tmp_project
+}
 
 add_files -norecurse ${vsources_list}
 
@@ -395,6 +399,9 @@ set core [ipx::current_core]
 # groups. Add new entries here when similar drops occur.
 # (Broad re-add would drag in legitimately unreferenced test tops / sim helpers.)
 set force_packaged_sources {
+    VX_dma_unit_align.sv
+    VX_dma_unit_misal.sv
+    VX_dma_unit.sv
     VX_dma_engine.sv
 }
 

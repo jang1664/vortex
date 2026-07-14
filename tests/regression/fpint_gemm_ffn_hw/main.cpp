@@ -225,27 +225,37 @@ static void build_test_vectors(std::vector<uint16_t>& h_A,
   h_ref_out_fp16.resize(M * N);
 
   // Input matrix A [M x K] fp16
-  for (uint32_t m = 0; m < M; ++m)
-    for (uint32_t k = 0; k < K; ++k)
-      h_A[m * K + k] = float_to_fp16(1.0f + float((m + k) % 7)/10.0);
+  for (uint32_t m = 0; m < M; ++m) {
+    for (uint32_t k = 0; k < K; ++k) {
+      h_A[m * K + k] = float_to_fp16(1.0f + float((m + k) % 3)/100.0);
+      // h_A[m * K + k] = float_to_fp16(1.0f);
+    }
+  }
 
   // Weight matrix W [K x N] raw int4 values (unpacked for reference)
-  for (uint32_t k = 0; k < K; ++k)
-    for (uint32_t n = 0; n < N; ++n)
+  for (uint32_t k = 0; k < K; ++k){
+    for (uint32_t n = 0; n < N; ++n) {
       h_W_raw[k * N + n] = int8_t(int((k * N + n) % 7) - 3);
+      // h_W_raw[k * N + n] = int8_t(int(1));
+    }
+  }
 
   // Scale and zero-point
   if (QDIR == 0) {
     for (uint32_t kg = 0; kg < groups_total; ++kg)
       for (uint32_t n = 0; n < N; ++n) {
-        h_scales[kg * N + n] = float_to_fp16(1.0f + float(n % 7)/10.0);
+        h_scales[kg * N + n] = float_to_fp16(1.0f + float(n % 3)/100.0);
         h_zeros[kg * N + n] = int16_t(int(n % 7) - 3);
+        // h_scales[kg * N + n] = float_to_fp16(1.0f);
+        // h_zeros[kg * N + n] = int16_t(-1);
       }
   } else {
     for (uint32_t k = 0; k < K; ++k)
       for (uint32_t ng = 0; ng < ng_total; ++ng) {
-        h_scales[k * ng_total + ng] = float_to_fp16(1.0f + float(ng % 7)/10.0);
+        h_scales[k * ng_total + ng] = float_to_fp16(1.0f + float(ng % 3)/100.0);
         h_zeros[k * ng_total + ng] = int16_t(int(ng % 7) - 3);
+        // h_scales[k * ng_total + ng] = float_to_fp16(1.0f);
+        // h_zeros[k * ng_total + ng] = int16_t(-1);
       }
   }
 
@@ -785,10 +795,14 @@ int main(int argc, char *argv[]) {
       kargs.QDIR = POLL_ONLY_QDIR_SENTINEL;
       kargs.K    = POLL_ONLY_ITERS;
     }
+    printf("Init kernel args: status=%u, QDIR=%u, K=%u\n",
+           kargs.status, kargs.QDIR, kargs.K);
     RT_CHECK(vx_copy_to_dev(args_buffer, &kargs, 0, sizeof(kargs)));
 
+    printf("Launching kernel (rep=%u/%u)...\n", rep + 1, REPS);
     RT_CHECK(vx_start(device, krnl_buffer, args_buffer));
 
+    printf("Waiting for kernel to complete (rep=%u/%u)...\n", rep + 1, REPS);
     int wait_ret = vx_ready_wait(device, VX_MAX_TIMEOUT);
     if (wait_ret != 0) {
       std::cerr << "vx_ready_wait failed at rep=" << rep
@@ -820,7 +834,7 @@ int main(int argc, char *argv[]) {
   cleanup();
 
   if (errors != 0) {
-    std::cout << "FAILED: errors=" << errors << std::endl;
+    std::cout << "FAILED: errors/total=" << errors << "/" << (M * N) << std::endl;
     return -1;
   }
 

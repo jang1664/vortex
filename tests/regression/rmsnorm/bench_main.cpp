@@ -65,7 +65,7 @@ int main(int argc, char *argv[]) {
     else if (strcmp(argv[i], "-eps") == 0)    eps        = atof(argv[++i]);
     else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
       printf("Usage: %s [--warmup=N] [--iterations=N] [--csv] "
-             "[--output=PATH] [--output-append] "
+             "[--output=PATH] [--output-append] [--power-measure-latency[=on|off]] "
              "[-batch N] [-seq S] [-hidden H] [-eps E]\n", argv[0]);
       return 0;
     }
@@ -115,7 +115,7 @@ int main(int argc, char *argv[]) {
   kernel_arg.seq_len = seq_len;
   kernel_arg.hidden_dim = hidden_dim;
   kernel_arg.eps = eps;
-
+  kernel_arg.power_kernel_iterations = 1;
   RT_CHECK(vx_upload_bytes(device, &kernel_arg, sizeof(kernel_arg_t), &args_buffer));
   RT_CHECK(vx_upload_kernel_file(device, "kernel.vxbin", &krnl_buffer));
 
@@ -127,19 +127,35 @@ int main(int argc, char *argv[]) {
   }
 
   vx_bench::Stats stats;
+  double first_latency_us = 0.0;
+  vx_bench::IterationPerf first_iter_perf;
   printf("Start latency measurement.\n"); fflush(stdout);
   for (int i = 0; i < bench.iterations; ++i) {
     vx_bench::Stopwatch sw; sw.start();
     RT_CHECK(vx_start(device, krnl_buffer, args_buffer));
     RT_CHECK(vx_ready_wait(device, VX_MAX_TIMEOUT));
-    stats.record(sw.stop_us());
+    const double elapsed_us = sw.stop_us();
+    if (i == 0)
+      first_latency_us = elapsed_us;
+    stats.record(elapsed_us);
+    const vx_bench::IterationPerf iter_perf =
+        vx_bench::dump_iteration_perf(device, bench, i);
+    if (i == 0)
+      first_iter_perf = iter_perf;
     printf("iteration %0d/%0d, elapsed:%f\n", i+1, bench.iterations, stats.last()); fflush(stdout);
   }
 
   stats.report("rmsnorm", bench);
 
+  if (!vx_bench::prepare_power_kernel_iterations(
+          bench, kernel_arg, args_buffer, first_latency_us, first_iter_perf,
+          "rmsnorm")) {
+    cleanup();
+    return -1;
+  }
+
   if (!vx_bench::run_power_measurement(
-          "rmsnorm", bench, device, krnl_buffer, args_buffer)) {
+          "rmsnorm", bench, device, krnl_buffer, args_buffer, bench.power_measure_latency)) {
     cleanup();
     return -1;
   }
