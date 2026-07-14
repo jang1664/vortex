@@ -20,6 +20,9 @@
 #include "arch.h"
 #include "mem.h"
 #include "core.h"
+#include "socket.h"
+#include "cluster.h"
+#include "processor_impl.h"
 #include "debug.h"
 #include "constants.h"
 
@@ -36,6 +39,10 @@ Core::Core(const SimContext& ctx,
   , icache_rsp_ports(1, this)
   , dcache_req_ports(DCACHE_NUM_REQS, this)
   , dcache_rsp_ports(DCACHE_NUM_REQS, this)
+  , gemm_cache_req_port(this)
+  , gemm_cache_rsp_port(this)
+  , gemm_dma_req_ports(NUM_DMA_CHANNELS, this)
+  , gemm_dma_rsp_ports(NUM_DMA_CHANNELS, this)
   , core_id_(core_id)
   , socket_(socket)
   , arch_(arch)
@@ -68,6 +75,9 @@ Core::Core(const SimContext& ctx,
     snprintf(sname, 100, "%s-coalescer%d", this->name().c_str(), b);
     mem_coalescers_.at(b) = MemCoalescer::Create(sname, LSU_CHANNELS, DCACHE_CHANNELS, DCACHE_WORD_SIZE, LSUQ_OUT_SIZE, 1);
   }
+
+  socket_->cluster()->processor()->bind_gemm_dma_ports(
+      core_id_, gemm_dma_req_ports, gemm_dma_rsp_ports);
 
   // create local memory
   snprintf(sname, 100, "%s-lmem", this->name().c_str());

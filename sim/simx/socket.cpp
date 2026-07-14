@@ -57,7 +57,7 @@ Socket::Socket(const SimContext& ctx,
     log2ceil(DCACHE_NUM_WAYS),// A
     log2ceil(DCACHE_NUM_BANKS), // B
     XLEN,                   // address bits
-    DCACHE_NUM_REQS,        // number of inputs
+    DCACHE_NUM_REQS + 1,    // LSU inputs plus the naive GEMM DMA requester
     L1_MEM_PORTS,           // memory ports
     DCACHE_WRITEBACK,       // write-back
     false,                  // write response
@@ -110,6 +110,8 @@ Socket::Socket(const SimContext& ctx,
       cores_.at(i)->dcache_req_ports.at(j).bind(&dcaches_->CoreReqPorts.at(i).at(j));
       dcaches_->CoreRspPorts.at(i).at(j).bind(&cores_.at(i)->dcache_rsp_ports.at(j));
     }
+    cores_.at(i)->gemm_cache_req_port.bind(&dcaches_->CoreReqPorts.at(i).at(DCACHE_NUM_REQS));
+    dcaches_->CoreRspPorts.at(i).at(DCACHE_NUM_REQS).bind(&cores_.at(i)->gemm_cache_rsp_port);
   }
 }
 

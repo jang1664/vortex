@@ -19,6 +19,7 @@ using namespace vortex;
 ProcessorImpl::ProcessorImpl(const Arch& arch)
   : arch_(arch)
   , clusters_(arch.num_clusters())
+  , memory_arbs_(L3_MEM_PORTS)
 {
   SimPlatform::instance().initialize();
 
@@ -31,11 +32,6 @@ ProcessorImpl::ProcessorImpl(const Arch& arch)
     MEM_BLOCK_SIZE,
     MEM_CLOCK_RATIO
   });
-
-  // create clusters
-  for (uint32_t i = 0; i < arch.num_clusters(); ++i) {
-    clusters_.at(i) = Cluster::Create(i, this, arch, dcrs_);
-  }
 
   // create L3 cache
   l3cache_ = CacheSim::Create("l3cache", CacheSim::Config{
@@ -55,18 +51,41 @@ ProcessorImpl::ProcessorImpl(const Arch& arch)
     }
   );
 
+  // The improve backend exposes NUM_DMA_CHANNELS cache-bypass ports per core.
+  // Requests share the physical memory ports with normal L3 traffic, so the
+  // existing MemSim bank model captures both core and channel contention.
+  const uint32_t dma_inputs = arch.num_cores() * NUM_DMA_CHANNELS;
+  gemm_dma_xbar_ = MemCrossBar::Create(
+      "gemm-dma-xbar", ArbiterType::RoundRobin, dma_inputs, L3_MEM_PORTS,
+      [](const MemReq& req) {
+        return uint32_t((req.addr / MEM_BLOCK_SIZE) % L3_MEM_PORTS);
+      });
+
+  for (uint32_t i = 0; i < L3_MEM_PORTS; ++i) {
+    char sname[64];
+    snprintf(sname, sizeof(sname), "memory-arb%u", i);
+    memory_arbs_.at(i) = MemArbiter::Create(sname, ArbiterType::RoundRobin, 2, 1);
+
+    l3cache_->MemReqPorts.at(i).bind(&memory_arbs_.at(i)->ReqIn.at(0));
+    memory_arbs_.at(i)->RspIn.at(0).bind(&l3cache_->MemRspPorts.at(i));
+    gemm_dma_xbar_->ReqOut.at(i).bind(&memory_arbs_.at(i)->ReqIn.at(1));
+    memory_arbs_.at(i)->RspIn.at(1).bind(&gemm_dma_xbar_->RspOut.at(i));
+
+    memory_arbs_.at(i)->ReqOut.at(0).bind(&memsim_->MemReqPorts.at(i));
+    memsim_->MemRspPorts.at(i).bind(&memory_arbs_.at(i)->RspOut.at(0));
+  }
+
+  // Core construction binds each improve DMA producer to gemm_dma_xbar_.
+  for (uint32_t i = 0; i < arch.num_clusters(); ++i) {
+    clusters_.at(i) = Cluster::Create(i, this, arch, dcrs_);
+  }
+
   // connect L3 core interfaces
   for (uint32_t i = 0; i < arch.num_clusters(); ++i) {
     for (uint32_t j = 0; j < L2_MEM_PORTS; ++j) {
       clusters_.at(i)->mem_req_ports.at(j).bind(&l3cache_->CoreReqPorts.at(i * L2_MEM_PORTS + j));
       l3cache_->CoreRspPorts.at(i * L2_MEM_PORTS + j).bind(&clusters_.at(i)->mem_rsp_ports.at(j));
     }
-  }
-
-  // connect L3 memory interfaces
-  for (uint32_t i = 0; i < L3_MEM_PORTS; ++i) {
-    l3cache_->MemReqPorts.at(i).bind(&memsim_->MemReqPorts.at(i));
-    memsim_->MemRspPorts.at(i).bind(&l3cache_->MemRspPorts.at(i));
   }
 
   // set up memory profiling
@@ -97,6 +116,21 @@ ProcessorImpl::ProcessorImpl(const Arch& arch)
 #endif
   // reset the device
   this->reset();
+}
+
+void ProcessorImpl::bind_gemm_dma_ports(
+    uint32_t core_id,
+    std::vector<SimPort<MemReq>>& req_ports,
+    std::vector<SimPort<MemRsp>>& rsp_ports) {
+  assert(req_ports.size() == NUM_DMA_CHANNELS);
+  assert(rsp_ports.size() == NUM_DMA_CHANNELS);
+  assert(core_id < arch_.num_cores());
+
+  for (uint32_t channel = 0; channel < NUM_DMA_CHANNELS; ++channel) {
+    const uint32_t input = core_id * NUM_DMA_CHANNELS + channel;
+    req_ports.at(channel).bind(&gemm_dma_xbar_->ReqIn.at(input));
+    gemm_dma_xbar_->RspIn.at(input).bind(&rsp_ports.at(channel));
+  }
 }
 
 ProcessorImpl::~ProcessorImpl() {

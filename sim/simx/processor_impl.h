@@ -46,6 +46,10 @@ public:
 
   PerfStats perf_stats() const;
 
+  void bind_gemm_dma_ports(uint32_t core_id,
+                           std::vector<SimPort<MemReq>>& req_ports,
+                           std::vector<SimPort<MemRsp>>& rsp_ports);
+
 private:
 
   void reset();
@@ -55,6 +59,8 @@ private:
   DCRS dcrs_;
   MemSim::Ptr memsim_;
   CacheSim::Ptr l3cache_;
+  MemCrossBar::Ptr gemm_dma_xbar_;
+  std::vector<MemArbiter::Ptr> memory_arbs_;
   uint64_t perf_mem_reads_;
   uint64_t perf_mem_writes_;
   uint64_t perf_mem_latency_;

@@ -16,6 +16,8 @@
 #include <algorithm>
 #include <cassert>
 #include <cstring>
+#include <iostream>
+#include <unordered_set>
 
 #include "core.h"
 #include "debug.h"
@@ -37,6 +39,7 @@ constexpr uint32_t SZ_REG_BYTES     = 0x40;
 // Small fixed completion delay after CLEAR (cycles) so that the SW polling loop
 // can observe occupied_=1 at least once.
 constexpr uint64_t CLEAR_DELAY_CYCLES = 8;
+constexpr uint64_t WRITE_DRAIN_CYCLES = 8;
 
 // Pack the STATE/ALLOC response word: bit0=success/occupied, bits[30:1]=generation.
 uint32_t pack_state(bool bit0, uint32_t gen) {
@@ -96,6 +99,14 @@ GemmNode::GemmNode(Core* core)
   , cycle_counter_(0)
   , expected_words_(0)
   , mmio_mode_(MmioMode::Unknown)
+  , descriptor_job_active_(false)
+  , active_eid_(0)
+  , outstanding_traffic_reads_(0)
+  , outstanding_traffic_writes_(0)
+  , descriptor_start_cycle_(0)
+  , descriptor_compute_done_cycle_(0)
+  , descriptor_last_issue_cycle_(0)
+  , traffic_queues_(NUM_DMA_CHANNELS)
   , tmem_(TMEM_SIZE, 0)
   , acc_mem_(ACC_MEM_FP32_COUNT, 0.0f)
 {
@@ -116,6 +127,16 @@ void GemmNode::reset() {
   cmd_buf_.clear();
   expected_words_ = 0;
   mmio_mode_ = MmioMode::Unknown;
+  descriptor_job_active_ = false;
+  active_eid_ = 0;
+  outstanding_traffic_reads_ = 0;
+  outstanding_traffic_writes_ = 0;
+  descriptor_start_cycle_ = 0;
+  descriptor_compute_done_cycle_ = 0;
+  descriptor_last_issue_cycle_ = 0;
+  for (auto& queue : traffic_queues_)
+    queue.clear();
+  traffic_stats_ = TrafficStats{};
   for (auto& entry : desc_entries_) {
     entry.regs.fill(0);
     entry.occupied = false;
@@ -297,11 +318,12 @@ bool GemmNode::descriptor_write(uint64_t off, const void* data, uint32_t size) {
         && !entry.working
         && ((entry.regs[REG_CONTROL] >> GN_CTRL_VALID_BIT) & 1u)) {
       entry.working = true;
-      execute_descriptor_job(eid);
-      entry.regs[REG_CONTROL] &= ~(1u << GN_CTRL_VALID_BIT);
-      entry.working = false;
-      entry.occupied = false;
-      occupied_ = false;
+      if (execute_descriptor_job(eid)) {
+        start_descriptor_timing(eid);
+      } else {
+        active_eid_ = eid;
+        finish_descriptor_job();
+      }
     }
   }
 
@@ -469,7 +491,35 @@ uint64_t GemmNode::output_offset(uint32_t M, uint32_t N, uint32_t dma_mt, uint32
   return offset;
 }
 
-void GemmNode::execute_descriptor_job(uint32_t eid) {
+uint64_t GemmNode::naive_input_offset(uint32_t K, uint32_t gm, uint32_t gk) const {
+  return (uint64_t(gm) * K + gk) * 2;
+}
+
+uint64_t GemmNode::naive_weight_offset(uint32_t N, uint32_t K, uint32_t gn, uint32_t gk, bool wtrans, uint32_t* nibble_hi) const {
+  if (!wtrans) {
+    const uint64_t packed_n = (uint64_t(N) + 1) / 2;
+    *nibble_hi = gn & 1u;
+    return uint64_t(gk) * packed_n + gn / 2;
+  }
+
+  const uint64_t packed_k = (uint64_t(K) + 1) / 2;
+  *nibble_hi = gk & 1u;
+  return uint64_t(gn) * packed_k + gk / 2;
+}
+
+uint64_t GemmNode::naive_qparam_offset(uint32_t N, uint32_t qblk, uint32_t qdir, uint32_t gn, uint32_t gk) const {
+  if (qdir == 0)
+    return (uint64_t(gk / qblk) * N + gn) * 2;
+
+  const uint64_t n_groups = (uint64_t(N) + qblk - 1) / qblk;
+  return (uint64_t(gk) * n_groups + gn / qblk) * 2;
+}
+
+uint64_t GemmNode::naive_output_offset(uint32_t N, uint32_t gm, uint32_t gn) const {
+  return (uint64_t(gm) * N + gn) * 2;
+}
+
+bool GemmNode::execute_descriptor_job(uint32_t eid) {
   const auto& entry = desc_entries_[eid];
 
   const uint64_t input_base  = reg_u64(entry, REG_INPUT_BASE_LO);
@@ -489,9 +539,15 @@ void GemmNode::execute_descriptor_job(uint32_t eid) {
   const uint32_t n_start  = entry.regs[REG_N_START];
   const bool wtrans = (entry.regs[REG_WTRANS] & 1u) != 0;
   const uint32_t qdir = entry.regs[REG_QDIR] & 1u;
+#ifdef GEMM_NAIVE
+  const uint32_t dma_mt = GEMM_FSM_MT;
+  const uint32_t dma_kt = GEMM_FSM_KT;
+  const uint32_t dma_nt = GEMM_FSM_NT;
+#else
   const uint32_t dma_mt = log2_to_size(entry.regs[REG_LOG2_DMA_MT], 128);
   const uint32_t dma_kt = log2_to_size(entry.regs[REG_LOG2_DMA_KT], 128);
   const uint32_t dma_nt = log2_to_size(entry.regs[REG_LOG2_DMA_NT], 128);
+#endif
 
   DP(2, "GemmNode: descriptor job eid=" << eid
         << " M=" << M << " N=" << N << " K=" << K
@@ -499,28 +555,43 @@ void GemmNode::execute_descriptor_job(uint32_t eid) {
         << " start=(" << m_start << "," << n_start << ")"
         << " qblk=" << qblk << " qdir=" << qdir << " wtrans=" << wtrans);
 
-  if (M == 0 || N == 0 || K == 0 || qblk == 0 || dma_mt == 0 || dma_kt == 0 || dma_nt == 0) {
+  if (M == 0 || N == 0 || K == 0 || qblk == 0
+   || target_M == 0 || target_N == 0 || target_K == 0
+   || dma_mt == 0 || dma_kt == 0 || dma_nt == 0) {
     DP(1, "GemmNode: descriptor job has invalid dimensions");
-    return;
+    return false;
+  }
+
+  const bool m_bounds_valid = m_start <= M && target_M <= M - m_start;
+  const bool n_bounds_valid = n_start <= N && target_N <= N - n_start;
+  if (!m_bounds_valid || !n_bounds_valid || target_K > K) {
+    DP(1, "GemmNode: descriptor job is out of bounds"
+          << " M=" << M << " N=" << N << " K=" << K
+          << " target=(" << target_M << "," << target_N << "," << target_K << ")"
+          << " start=(" << m_start << "," << n_start << ")");
+    return false;
   }
 
   for (uint32_t m = 0; m < target_M; ++m) {
     const uint32_t gm = m_start + m;
-    if (gm >= M)
-      continue;
     for (uint32_t n = 0; n < target_N; ++n) {
       const uint32_t gn = n_start + n;
-      if (gn >= N)
-        continue;
 
       float sum = 0.0f;
-      for (uint32_t k = 0; k < target_K && k < K; ++k) {
-        const uint64_t in_addr = input_base + input_offset(M, K, dma_mt, dma_kt, gm, k);
-
+      for (uint32_t k = 0; k < target_K; ++k) {
         uint32_t nibble_hi = 0;
-        const uint64_t w_addr = weight_base + weight_offset(N, K, dma_kt, gn, k, wtrans, &nibble_hi);
-
+#ifdef GEMM_NAIVE
+        const uint64_t input_off = naive_input_offset(K, gm, k);
+        const uint64_t weight_off = naive_weight_offset(N, K, gn, k, wtrans, &nibble_hi);
+        const uint64_t qparam_off = naive_qparam_offset(N, qblk, qdir, gn, k);
+#else
+        const uint64_t input_off = input_offset(M, K, dma_mt, dma_kt, gm, k);
+        const uint64_t weight_off = weight_offset(N, K, dma_kt, gn, k, wtrans, &nibble_hi);
         const uint64_t qparam_off = scale_offset(N, K, dma_kt, dma_nt, qblk, qdir, gn, k);
+#endif
+
+        const uint64_t in_addr = input_base + input_off;
+        const uint64_t w_addr = weight_base + weight_off;
         const uint64_t sc_addr = scale_base + qparam_off;
         const uint64_t zp_addr = zp_base + qparam_off;
 
@@ -534,9 +605,201 @@ void GemmNode::execute_descriptor_job(uint32_t eid) {
         sum += a * (float(wv) - zp) * scale;
       }
 
-      write_u16(output_base + output_offset(M, N, dma_mt, gm, gn), float_to_fp16(sum));
+#ifdef GEMM_NAIVE
+      const uint64_t output_off = naive_output_offset(N, gm, gn);
+#else
+      const uint64_t output_off = output_offset(M, N, dma_mt, gm, gn);
+#endif
+      write_u16(output_base + output_off, float_to_fp16(sum));
     }
   }
+  return true;
+}
+
+void GemmNode::enqueue_traffic_block(uint64_t addr, bool write) {
+  const uint64_t block_addr = addr & ~(uint64_t(MEM_BLOCK_SIZE) - 1);
+#ifdef GEMM_NAIVE
+  traffic_queues_.at(0).push_back({block_addr, write});
+#else
+  const uint32_t channel = uint32_t((block_addr / MEM_BLOCK_SIZE) % NUM_DMA_CHANNELS);
+  traffic_queues_.at(channel).push_back({block_addr, write});
+#endif
+}
+
+void GemmNode::enqueue_traffic_range(uint64_t addr, uint64_t size, bool write) {
+  if (size == 0)
+    return;
+
+  const uint64_t first = addr & ~(uint64_t(MEM_BLOCK_SIZE) - 1);
+  const uint64_t end = align_up_u64(addr + size, MEM_BLOCK_SIZE);
+  for (uint64_t block = first; block < end; block += MEM_BLOCK_SIZE)
+    enqueue_traffic_block(block, write);
+}
+
+void GemmNode::build_descriptor_traffic(uint32_t eid) {
+  const auto& entry = desc_entries_[eid];
+  const uint64_t input_base  = reg_u64(entry, REG_INPUT_BASE_LO);
+  const uint64_t weight_base = reg_u64(entry, REG_WEIGHT_BASE_LO);
+  const uint64_t output_base = reg_u64(entry, REG_OUTPUT_BASE_LO);
+  const uint64_t scale_base  = reg_u64(entry, REG_SCALE_BASE_LO);
+  const uint64_t zp_base     = reg_u64(entry, REG_ZP_BASE_LO);
+
+#ifndef GEMM_NAIVE
+  const uint32_t M = entry.regs[REG_M_ORIG];
+#endif
+  const uint32_t N = entry.regs[REG_N_ORIG];
+  const uint32_t K = entry.regs[REG_K_ORIG];
+  const uint32_t qblk = log2_to_size(entry.regs[REG_QBLK_ORIG], 32);
+  const uint32_t target_M = entry.regs[REG_M_TARGET];
+  const uint32_t target_N = entry.regs[REG_N_TARGET];
+  const uint32_t target_K = entry.regs[REG_K_TARGET];
+  const uint32_t m_start = entry.regs[REG_M_START];
+  const uint32_t n_start = entry.regs[REG_N_START];
+  const bool wtrans = (entry.regs[REG_WTRANS] & 1u) != 0;
+  const uint32_t qdir = entry.regs[REG_QDIR] & 1u;
+#ifdef GEMM_NAIVE
+  const uint32_t dma_mt = GEMM_FSM_MT;
+  const uint32_t dma_kt = GEMM_FSM_KT;
+  const uint32_t dma_nt = GEMM_FSM_NT;
+#else
+  const uint32_t dma_mt = log2_to_size(entry.regs[REG_LOG2_DMA_MT], 128);
+  const uint32_t dma_kt = log2_to_size(entry.regs[REG_LOG2_DMA_KT], 128);
+  const uint32_t dma_nt = log2_to_size(entry.regs[REG_LOG2_DMA_NT], 128);
+#endif
+
+  auto enqueue_unique = [this](const std::unordered_set<uint64_t>& blocks, bool write) {
+    std::vector<uint64_t> ordered(blocks.begin(), blocks.end());
+    std::sort(ordered.begin(), ordered.end());
+    for (uint64_t block : ordered)
+      enqueue_traffic_block(block, write);
+  };
+
+  const uint32_t mt_dim = ceil_div(target_M, dma_mt);
+  const uint32_t nt_dim = ceil_div(target_N, dma_nt);
+  const uint32_t kt_dim = ceil_div(target_K, dma_kt);
+
+  for (uint32_t mt = 0; mt < mt_dim; ++mt) {
+    const uint32_t local_m0 = mt * dma_mt;
+    const uint32_t mt_eff = min_left(target_M, local_m0, dma_mt);
+    const uint32_t gm0 = m_start + local_m0;
+
+    for (uint32_t nt = 0; nt < nt_dim; ++nt) {
+      const uint32_t local_n0 = nt * dma_nt;
+      const uint32_t nt_eff = min_left(target_N, local_n0, dma_nt);
+      const uint32_t gn0 = n_start + local_n0;
+
+      for (uint32_t kt = 0; kt < kt_dim; ++kt) {
+        const uint32_t gk0 = kt * dma_kt;
+        const uint32_t kt_eff = min_left(target_K, gk0, dma_kt);
+
+        // Input is transferred once per output tile. Repeated N tiles retain
+        // the same addresses, allowing the naive cache model to observe reuse.
+        for (uint32_t m = 0; m < mt_eff; ++m) {
+#ifdef GEMM_NAIVE
+          const uint64_t offset = naive_input_offset(K, gm0 + m, gk0);
+#else
+          const uint64_t offset = input_offset(M, K, dma_mt, dma_kt, gm0 + m, gk0);
+#endif
+          enqueue_traffic_range(input_base + offset, uint64_t(kt_eff) * 2, false);
+        }
+
+        std::unordered_set<uint64_t> weight_blocks;
+        std::unordered_set<uint64_t> qparam_blocks;
+        for (uint32_t n = 0; n < nt_eff; ++n) {
+          const uint32_t gn = gn0 + n;
+          for (uint32_t k = 0; k < kt_eff; ++k) {
+            const uint32_t gk = gk0 + k;
+            uint32_t nibble_hi = 0;
+#ifdef GEMM_NAIVE
+            const uint64_t weight_off = naive_weight_offset(N, K, gn, gk, wtrans, &nibble_hi);
+            const uint64_t qparam_off = naive_qparam_offset(N, qblk, qdir, gn, gk);
+#else
+            const uint64_t weight_off = weight_offset(N, K, dma_kt, gn, gk, wtrans, &nibble_hi);
+            const uint64_t qparam_off = scale_offset(N, K, dma_kt, dma_nt, qblk, qdir, gn, gk);
+#endif
+            weight_blocks.insert((weight_base + weight_off) & ~(uint64_t(MEM_BLOCK_SIZE) - 1));
+            qparam_blocks.insert((scale_base + qparam_off) & ~(uint64_t(MEM_BLOCK_SIZE) - 1));
+            qparam_blocks.insert((zp_base + qparam_off) & ~(uint64_t(MEM_BLOCK_SIZE) - 1));
+          }
+        }
+        enqueue_unique(weight_blocks, false);
+        enqueue_unique(qparam_blocks, false);
+      }
+
+      // Improve output layout is grouped by MXU_NT columns, whereas naive is
+      // row-major. Emit contiguous ranges that match each physical layout.
+      for (uint32_t m = 0; m < mt_eff; ++m) {
+#ifdef GEMM_NAIVE
+        const uint64_t offset = naive_output_offset(N, gm0 + m, gn0);
+        enqueue_traffic_range(output_base + offset, uint64_t(nt_eff) * 2, true);
+#else
+        for (uint32_t nb = 0; nb < nt_eff; nb += MXU_NT) {
+          const uint32_t nb_eff = std::min(MXU_NT, nt_eff - nb);
+          const uint64_t offset = output_offset(M, N, dma_mt, gm0 + m, gn0 + nb);
+          enqueue_traffic_range(output_base + offset, uint64_t(nb_eff) * 2, true);
+        }
+#endif
+      }
+    }
+  }
+}
+
+void GemmNode::start_descriptor_timing(uint32_t eid) {
+  active_eid_ = eid;
+  descriptor_job_active_ = true;
+  outstanding_traffic_reads_ = 0;
+  outstanding_traffic_writes_ = 0;
+  descriptor_start_cycle_ = cycle_counter_;
+  descriptor_last_issue_cycle_ = cycle_counter_;
+  traffic_stats_ = TrafficStats{};
+  for (auto& queue : traffic_queues_)
+    queue.clear();
+
+  const auto& entry = desc_entries_[eid];
+  const uint64_t macs = uint64_t(entry.regs[REG_M_TARGET])
+                      * uint64_t(entry.regs[REG_N_TARGET])
+                      * uint64_t(entry.regs[REG_K_TARGET]);
+  const uint64_t mxu_macs_per_cycle = uint64_t(MXU_KT) * MXU_NT;
+  traffic_stats_.compute_cycles = std::max<uint64_t>(1, (macs + mxu_macs_per_cycle - 1) / mxu_macs_per_cycle);
+  descriptor_compute_done_cycle_ = descriptor_start_cycle_ + traffic_stats_.compute_cycles;
+  build_descriptor_traffic(eid);
+}
+
+bool GemmNode::traffic_queues_empty() const {
+  for (const auto& queue : traffic_queues_) {
+    if (!queue.empty())
+      return false;
+  }
+  return true;
+}
+
+void GemmNode::finish_descriptor_job() {
+  auto& entry = desc_entries_[active_eid_];
+  entry.regs[REG_CONTROL] &= ~(1u << GN_CTRL_VALID_BIT);
+  entry.working = false;
+  entry.occupied = false;
+  occupied_ = false;
+
+  if (descriptor_job_active_) {
+    const uint64_t elapsed = cycle_counter_ - descriptor_start_cycle_;
+#ifdef GEMM_NAIVE
+    const char* backend = "naive-cache";
+#else
+    const char* backend = "improve-tmem";
+#endif
+    std::cout << "PERF: core" << core_->id()
+              << ": gemm backend=" << backend
+              << ", cycles=" << elapsed
+              << ", compute_cycles=" << traffic_stats_.compute_cycles
+              << ", cache_reads=" << traffic_stats_.cache_reads
+              << ", cache_writes=" << traffic_stats_.cache_writes
+              << ", bypass_reads=" << traffic_stats_.bypass_reads
+              << ", bypass_writes=" << traffic_stats_.bypass_writes
+              << ", max_outstanding_reads=" << traffic_stats_.max_outstanding_reads
+              << ", max_outstanding_writes=" << traffic_stats_.max_outstanding_writes
+              << std::endl;
+  }
+  descriptor_job_active_ = false;
 }
 
 void GemmNode::push_stream_word(uint64_t w) {
@@ -933,4 +1196,81 @@ void GemmNode::tick() {
     occupied_ = false;
     completion_cycle_ = 0;
   }
+
+  if (!descriptor_job_active_)
+    return;
+
+#ifdef GEMM_NAIVE
+  if (!core_->gemm_cache_rsp_port.empty()) {
+    core_->gemm_cache_rsp_port.pop();
+    assert(outstanding_traffic_reads_ != 0);
+    --outstanding_traffic_reads_;
+  }
+
+  auto& queue = traffic_queues_.at(0);
+  if (!queue.empty() && !core_->gemm_cache_req_port.full()) {
+    const auto req_desc = queue.front();
+    queue.pop_front();
+    MemReq req(req_desc.addr, req_desc.write, AddrType::Global,
+               0, core_->id(), 0);
+    core_->gemm_cache_req_port.push(req);
+    descriptor_last_issue_cycle_ = cycle_counter_;
+    if (req_desc.write) {
+      ++traffic_stats_.cache_writes;
+    } else {
+      ++traffic_stats_.cache_reads;
+      ++outstanding_traffic_reads_;
+    }
+  }
+#else
+  for (uint32_t channel = 0; channel < NUM_DMA_CHANNELS; ++channel) {
+    auto& rsp_port = core_->gemm_dma_rsp_ports.at(channel);
+    if (!rsp_port.empty()) {
+      const auto rsp = rsp_port.front();
+      rsp_port.pop();
+      if (rsp.tag == 1) {
+        assert(outstanding_traffic_writes_ != 0);
+        --outstanding_traffic_writes_;
+      } else {
+        assert(outstanding_traffic_reads_ != 0);
+        --outstanding_traffic_reads_;
+      }
+    }
+
+    auto& queue = traffic_queues_.at(channel);
+    auto& req_port = core_->gemm_dma_req_ports.at(channel);
+    if (!queue.empty() && !req_port.full()) {
+      const auto req_desc = queue.front();
+      queue.pop_front();
+      MemReq req(req_desc.addr, req_desc.write, AddrType::Global,
+                 req_desc.write ? 1 : 0, core_->id(), 0, req_desc.write);
+      req_port.push(req);
+      descriptor_last_issue_cycle_ = cycle_counter_;
+      if (req_desc.write) {
+        ++traffic_stats_.bypass_writes;
+        ++outstanding_traffic_writes_;
+      } else {
+        ++traffic_stats_.bypass_reads;
+        ++outstanding_traffic_reads_;
+      }
+    }
+  }
+#endif
+
+  traffic_stats_.max_outstanding_reads = std::max(
+      traffic_stats_.max_outstanding_reads, outstanding_traffic_reads_);
+  traffic_stats_.max_outstanding_writes = std::max(
+      traffic_stats_.max_outstanding_writes, outstanding_traffic_writes_);
+
+#ifdef GEMM_NAIVE
+  const bool traffic_done = traffic_queues_empty()
+                         && outstanding_traffic_reads_ == 0
+                         && cycle_counter_ >= descriptor_last_issue_cycle_ + WRITE_DRAIN_CYCLES;
+#else
+  const bool traffic_done = traffic_queues_empty()
+                         && outstanding_traffic_reads_ == 0
+                         && outstanding_traffic_writes_ == 0;
+#endif
+  if (traffic_done && cycle_counter_ >= descriptor_compute_done_cycle_)
+    finish_descriptor_job();
 }

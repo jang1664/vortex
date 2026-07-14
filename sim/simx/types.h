@@ -968,25 +968,29 @@ struct MemReq {
   uint32_t tag;
   uint32_t cid;
   uint64_t uuid;
+  bool     rsp_requested;
 
   MemReq(uint64_t _addr = 0,
           bool _write = false,
           AddrType _type = AddrType::Global,
           uint64_t _tag = 0,
           uint32_t _cid = 0,
-          uint64_t _uuid = 0
+          uint64_t _uuid = 0,
+          bool _rsp_requested = false
   ) : addr(_addr)
     , write(_write)
     , type(_type)
     , tag(_tag)
     , cid(_cid)
     , uuid(_uuid)
+    , rsp_requested(_rsp_requested)
   {}
 
   friend std::ostream &operator<<(std::ostream &os, const MemReq& req) {
     os << "rw=" << req.write << ", ";
     os << "addr=0x" << std::hex << req.addr << std::dec << ", type=" << req.type;
     os << ", tag=0x" << std::hex << req.tag << std::dec << ", cid=" << req.cid;
+    os << ", rsp=" << req.rsp_requested;
     os << " (#" << req.uuid << ")";
     return os;
   }
