@@ -1,0 +1,313 @@
+task: gemm-multicore-support
+state: READY_FOR_REVIEW
+spec: gemm-multicore-support-spec.md
+plan: PLAN.md
+branch: feat/gemm-multicore-support-v2
+updated: "2026-07-14 16:22"
+progress:
+  - timestamp: "2026-07-14 10:17"
+    status: started
+    attempted: Created an isolated worktree, confirmed the implementation plan, and fixed the scope for improve and naive multi-core support.
+    result: Implementation can proceed without touching the latency benchmark running in the primary checkout.
+    learned: The naive kernel already partitions work, while the improve kernel is intentionally restricted to core 0 and the improve RTL output path omits global starts.
+  - timestamp: "2026-07-14 10:31"
+    status: implementation
+    attempted: Added partition-aware RTL testbench modes, activated improve kernel partitioning, added simx naive layout support, and extended the blackbox wrapper.
+    result: Source changes are in place; authoritative RTL and blackbox verification is in progress.
+    learned: A new worktree requires initialized submodules, a built softfloat library, and generated build/hw/VX_config.h before VCS unit tests can compile.
+  - timestamp: "2026-07-14 13:19"
+    status: verification
+    attempted: Exercised improve and naive kernels through simx and focused VCS RTL tests, then bootstrapped the xrt-vcs integration flow.
+    result: Both implementations pass the required simx partition shapes and QCOL/QROW RTL address tests; xrt-vcs integration remains in progress.
+    learned: The naive host must allocate its argument buffer read-write because the kernel writes completion status into that structure.
+  - timestamp: "2026-07-14 13:37"
+    status: ready_for_review
+    attempted: Ran improve and naive xrt-vcs integration on a four-core RTL device with two active N partitions and two inactive cores.
+    result: Both applications passed full output comparison; exact four-active-core xrt-vcs remains a long-running verification item because each active core must process at least one 128 x 128 tile with full FSDB enabled.
+    learned: M=1, N=160 is the smallest useful xrt-vcs integration shape for proving concurrent global-N partitioning while keeping the four-core device configuration.
+  - timestamp: "2026-07-14 14:31"
+    status: ready_for_review
+    attempted: Added asynchronous simx GEMM traffic, distinct cache and cache-bypass paths, per-channel/core contention, direct-write completion responses, and per-core GEMM performance reporting.
+    result: Naive and improve pass one-core and exact four-core 256x256x128 output comparison while reporting traffic on only their intended memory paths.
+    learned: Naive uses compile-time 128x128x128 DMA tiles and the cache hierarchy; improve uses descriptor tile sizes and NUM_DMA_CHANNELS direct-memory ports. The tested improve configuration saturates shared DRAM bandwidth at four cores.
+  - timestamp: "2026-07-14 15:15"
+    status: ready_for_review
+    attempted: Compared fresh simx and xrt-vcs-sim builds using matching GEMM shapes and backend configurations, with summed per-core descriptor cycles as the common metric.
+    result: All comparisons passed output validation. Improve underpredicts RTL by 46.1-59.0% for one core and 10.0% for the four-core/two-active-core boundary; naive underpredicts by 88.7-93.5%.
+    learned: The improve bypass traffic model captures the multi-core boundary reasonably, while both backends still omit RTL controller, DMA programming, pipeline fill/drain, and full MXU execution costs; these omissions dominate naive timing.
+  - timestamp: "2026-07-14 16:10"
+    status: ready_for_review
+    attempted: Added compile-time FSDB suppression and compared two remainder-free four-core partitions with all cores active.
+    result: DISABLE_FSDB prevents waveform creation even when FSDB_DUMP is set. Improve overpredicts aggregate RTL cycles by 89.9-102.5%; naive underpredicts by 63.1-78.2% on 8x512x32 and 8x1024x32.
+    learned: Equal per-core traffic exposes excessive serialization in the improve shared-DRAM model, while naive still lacks most RTL DMA and controller latency.
+iterations:
+  - iteration: 1
+    timestamp: "2026-07-14 10:22"
+    test: gemm_node_improve/partition_qcol
+    status: compile_error
+    error_summary: The isolated worktree had empty submodule directories and no softfloat library.
+    root_cause: Git worktree creation does not initialize submodule working trees or their generated libraries.
+    fix_applied: Initialized recursive submodules and built third_party/softfloat/build/Linux-x86_64-GCC/softfloat.a.
+    lesson: Bootstrap worktree-local third-party dependencies before invoking verify_rtl.py.
+  - iteration: 2
+    timestamp: "2026-07-14 10:25"
+    test: gemm_node_improve/partition_qcol
+    status: compile_error
+    error_summary: Testbench target/start arguments were inserted into earlier helpers, then VX_config.h was missing.
+    root_cause: A broad patch context matched repeated task argument lists, and configure alone does not generate the C configuration header.
+    fix_applied: Moved target/start arguments to program_job_regs and ran make -C build/hw config.
+    lesson: Anchor testbench patches on task names and generate build/hw configuration headers explicitly.
+  - iteration: 3
+    timestamp: "2026-07-14 10:27"
+    test: gemm_node_improve/partition_qcol_k32
+    status: sim_fail
+    error_summary: Both partitioned and single-descriptor K=32 cases produced zero output.
+    root_cause: The improve RTL unit configuration has an existing minimum/full DMA K-tile assumption unrelated to partition starts.
+    fix_applied: Moved focused RTL address verification to K=128 so the baseline uses the supported DMA K tile.
+    lesson: Establish a passing single-descriptor baseline before attributing a partitioned mismatch to start-offset addressing.
+  - iteration: 4
+    timestamp: "2026-07-14 10:45"
+    test: gemm_node_improve/partition_qcol_k128
+    status: sim_fail
+    error_summary: Output placement improved, but 22656 elements in the n_start=128 partitions mismatched.
+    root_cause: Weight addressing uses nt_base_q, while scale_slot_offset and the per-KT scale stride still use target-local N tiles.
+    fix_applied: In progress; iteration 2 will globalize scale/ZP N tile indices and original-N per-KT stride computation.
+    lesson: Every tiled tensor whose layout spans global N must use original dimensions for strides and partition starts for indices.
+  - iteration: 5
+    timestamp: "2026-07-14 10:57"
+    test: gemm_node_improve/partition_qcol_k128_iter2
+    status: sim_fail
+    error_summary: The result was byte-for-byte identical to iteration 4 after the RTL scale/ZP fix.
+    root_cause: The unittest VCS Makefile reused its existing simv because RTL sources are not build dependencies.
+    fix_applied: Cleaning build/hw/unittest/gemm_node_improve before iteration 3 recompilation.
+    lesson: Clean both standalone unittest and xrt-vcs simulator outputs after every RTL edit, not only before blackbox runs.
+  - iteration: 6
+    timestamp: "2026-07-14 11:10"
+    test: gemm_node_improve/partition_qcol_k128_iter3
+    status: sim_fail
+    error_summary: Iteration 3 still ran the old executable after the documented clean target.
+    root_cause: The clean target removes simv and compile but the active FPU configuration produces simv_fpnew and compile_fpnew.
+    fix_applied: Moved both stale fpnew artifacts to /tmp and confirmed a fresh VCS compile of VX_gemm_fsm.sv before rerunning.
+    lesson: Check the active SIMV and COMPILE_TARGET names; a nominal clean is insufficient when target-specific artifacts have different names.
+  - iteration: 7
+    timestamp: "2026-07-14 11:34"
+    test: gemm_node_improve/partition_qcol_k128_fresh
+    status: sim_fail
+    error_summary: A confirmed fresh executable still reports 22656 mismatches, all beginning in the n_start=128 half.
+    root_cause: The trace confirms correct global weight, scale, zero-point, and output DRAM addresses; the remaining issue is either compute state reused across sequential descriptors or local tile interpretation.
+    fix_applied: Added a focused SINGLE_PARTITION_N test mode that runs only the n_start=128 descriptor after reset and checks only its output region.
+    lesson: Validate the failing partition in isolation before changing address arithmetic that trace evidence already confirms.
+  - iteration: 8
+    timestamp: "2026-07-14 11:52"
+    test: gemm_node_improve/single_partition_n_qcol_k128
+    status: pass
+    error_summary: none
+    root_cause: The prior four-descriptor test reused one node's compute state, while real cores own independent GEMM nodes.
+    fix_applied: Reset the DUT between partition descriptors while preserving shared DRAM, modeling four independent cores in one sequential unittest.
+    lesson: Partition address tests may share DRAM, but per-core accelerator state must start from reset for each descriptor.
+  - iteration: 9
+    timestamp: "2026-07-14 12:03"
+    test: gemm_node_improve/partition_qcol_k128_reset_per_core
+    status: pass
+    error_summary: none
+    root_cause: none
+    fix_applied: none
+    lesson: Four independently reset GEMM nodes correctly populate one shared 256x256 tiled output through global partition starts.
+  - iteration: 10
+    timestamp: "2026-07-14 12:18"
+    test: gemm_node/partition_qcol_k128_reset_per_core
+    status: sim_fail
+    error_summary: verify_rtl.py terminated at its ten-minute limit while the second of four naive partitions was being configured.
+    root_cause: The naive node's K=128 four-partition runtime exceeds the verification wrapper timeout; no RTL fatal or mismatch occurred.
+    fix_applied: Reduced the focused naive address-partition test to K=32 while preserving M/N starts and all four shared-output regions.
+    lesson: Size focused address tests for the slower naive datapath independently from improve tests.
+  - iteration: 11
+    timestamp: "2026-07-14 12:25"
+    test: gemm_node/partition_qcol_k32_reset_per_core
+    status: pass
+    error_summary: none
+    root_cause: none
+    fix_applied: none
+    lesson: The naive node honors all four global M/N partition starts when each descriptor begins with independent per-core state.
+  - iteration: 12
+    timestamp: "2026-07-14 12:38"
+    test: simx/naive_multicore_matrix
+    status: pass
+    error_summary: The initial four-core run failed when the kernel wrote completion status to a read-only argument buffer.
+    root_cause: The naive host allocated kernel_args with vx_upload_bytes, which creates a read-only device buffer.
+    fix_applied: Allocated the argument buffer with VX_MEM_READ_WRITE and copied the initialized arguments explicitly in main.cpp and bench_main.cpp.
+    lesson: Kernel argument blocks that double as status mailboxes require device write permission in every host entry point.
+  - iteration: 13
+    timestamp: "2026-07-14 12:45"
+    test: simx/improve_and_naive_partition_matrix
+    status: pass
+    error_summary: none
+    root_cause: none
+    fix_applied: none
+    lesson: Both kernels pass one-core, exact four-core, partial-edge, inactive-core, and QROW/WTRANS four-core cases with full output comparison.
+  - iteration: 14
+    timestamp: "2026-07-14 12:52"
+    test: gemm_node_improve/partition_qrow_wtrans_k128
+    status: pass
+    error_summary: none
+    root_cause: none
+    fix_applied: none
+    lesson: Improve RTL uses global partition starts correctly for transposed QROW scale and zero-point addressing.
+  - iteration: 15
+    timestamp: "2026-07-14 12:58"
+    test: gemm_node/partition_qrow_wtrans_k32
+    status: pass
+    error_summary: The first command used the source-tree unittest path, whose generated Makefile referenced a stale checkout location.
+    root_cause: RTL unittests must run from the configured build-tree copy.
+    fix_applied: Re-ran verify_rtl.py against build/hw/unittest/gemm_node.
+    lesson: Always use configured build-tree unittest paths, even when a generated source-tree Makefile happens to exist.
+  - iteration: 16
+    timestamp: "2026-07-14 13:05"
+    test: xrt-vcs/improve_exact_4core
+    status: infrastructure_fixed
+    error_summary: Initial VCS compilation could not resolve the common_cells Bender dependency.
+    root_cause: The isolated worktree's third_party/axi Bender dependencies had not been materialized.
+    fix_applied: Ran bender update in third_party/axi and rebuilt the xrt-vcs simulator successfully.
+    lesson: Recursive Git submodule initialization does not populate Bender-managed dependencies.
+  - iteration: 17
+    timestamp: "2026-07-14 13:12"
+    test: xrt-vcs/improve_exact_256x256x32
+    status: resource_limit
+    error_summary: The run entered the four-core kernel without RTL or socket errors but remained busy after 41 minutes while FSDB output continued growing.
+    root_cause: The xrt-vcs wrapper unconditionally enables full FSDB dumping, making the exact integration case too expensive for an interactive verification cycle.
+    fix_applied: Stopped the run cleanly and selected the smaller valid four-active-core boundary case M=129, N=160, K=32.
+    lesson: Keep exact partition coverage in focused RTL and simx tests; use a boundary-size workload for xrt-vcs integration when waveform dumping cannot be disabled.
+  - iteration: 18
+    timestamp: "2026-07-14 13:34"
+    test: xrt-vcs/improve_boundary_129x160x32
+    status: resource_limit
+    error_summary: The valid four-active-core boundary case remained busy after 20 minutes without RTL, socket, or host errors.
+    root_cause: Four active partitions require at least a 2 x 2 global tile grid, so core 0 still processes one complete 128 x 128 tile; the boundary case does not reduce the longest per-core RTL workload.
+    fix_applied: Stopped the run cleanly and selected M=1, N=160, K=32, which retains two disjoint active N partitions on a four-core RTL device.
+    lesson: Reducing edge dimensions does not shorten a tile-based parallel run unless it reduces the largest per-core tile count.
+  - iteration: 19
+    timestamp: "2026-07-14 13:35"
+    test: xrt-vcs/improve_two_active_1x160x32
+    status: pass
+    error_summary: none
+    root_cause: none
+    fix_applied: none
+    lesson: Improve passes full output comparison on a four-core RTL device with core0/core1 processing disjoint global-N regions and core2/core3 taking the inactive path.
+  - iteration: 20
+    timestamp: "2026-07-14 13:37"
+    test: xrt-vcs/naive_two_active_1x160x32
+    status: pass
+    error_summary: none
+    root_cause: none
+    fix_applied: none
+    lesson: Naive passes the same four-core RTL integration shape after rebuilding simv with GEMM_NAIVE.
+  - iteration: 21
+    timestamp: "2026-07-14 13:58"
+    test: simx/naive_cache_path_1core_1x32x32
+    status: pass
+    error_summary: The first timing run dequeued multiple responses from one SimPort in a cycle and asserted; the initial naive traffic builder also interpreted unused DMA registers as one-element tiles.
+    root_cause: SimPort permits one dequeue per cycle, and naive DMA tile dimensions are compile-time GEMM_FSM_MT/NT/KT constants rather than descriptor registers.
+    fix_applied: Limited response consumption to one per port per cycle and selected fixed 128x128x128 tiles under GEMM_NAIVE.
+    lesson: Match both simulator port throughput rules and backend-specific RTL configuration sources when constructing synthetic traffic.
+  - iteration: 22
+    timestamp: "2026-07-14 14:07"
+    test: simx/improve_bypass_path_1core_1x32x32
+    status: pass
+    error_summary: none
+    root_cause: none
+    fix_applied: none
+    lesson: The same 11 read and one write blocks take the naive cache route in 85 cycles and the eight-channel improve bypass route in 75 cycles; route counters are mutually exclusive.
+  - iteration: 23
+    timestamp: "2026-07-14 14:25"
+    test: simx/improve_scaling_256x256x128
+    status: pass
+    error_summary: none
+    root_cause: none
+    fix_applied: Added opt-in MemReq write responses so improve completion waits for the DRAM callback rather than a fixed drain delay.
+    lesson: Improve measures 18986 GEMM cycles with one core and a last-core completion of 19066 cycles with four cores; compute work drops from 8192 to 2048 cycles per core, but this configuration is bandwidth saturated.
+  - iteration: 24
+    timestamp: "2026-07-14 14:31"
+    test: simx/naive_scaling_256x256x128
+    status: pass
+    error_summary: none
+    root_cause: none
+    fix_applied: none
+    lesson: Naive measures 10962 GEMM cycles with one core and 5894-6118 cycles across four cores while all GEMM traffic remains on the cache path.
+  - iteration: 25
+    timestamp: "2026-07-14 14:33"
+    test: simx/basic_memcopy
+    status: pass
+    error_summary: The first wrapper invocation inherited GEMM-specific default arguments that the basic test does not accept.
+    root_cause: ci/run_black.sh defaults ARGS to a GEMM shape unless --args is provided.
+    fix_applied: Re-ran with the basic test's own arguments, -t 0 -n 16.
+    lesson: Existing non-GEMM memory traffic still passes with MemReq response opt-in defaulting off.
+  - iteration: 26
+    timestamp: "2026-07-14 15:01"
+    test: simx-vs-xrt-vcs/improve_1core
+    status: pass
+    error_summary: Simx reports 75 versus 183 RTL cycles for 1x32x32 and 269 versus 499 RTL cycles for 1x160x32, errors of -59.0% and -46.1% respectively.
+    root_cause: The block traffic model omits controller setup, DMA programming, pipeline fill/drain, and most MXU execution latency.
+    fix_applied: none
+    lesson: One-core improve timing is useful for traffic trends but is not cycle accurate without backend calibration.
+  - iteration: 27
+    timestamp: "2026-07-14 15:04"
+    test: simx-vs-xrt-vcs/naive_1core
+    status: pass
+    error_summary: Simx reports 85 versus 1316 RTL cycles for 1x32x32 and 263 versus 3019 RTL cycles for 1x160x32, errors of -93.5% and -91.3% respectively.
+    root_cause: The naive cache traffic model does not include the serialized local-memory DMA and GEMM controller costs visible in RTL.
+    fix_applied: none
+    lesson: Naive simx cycle counts currently represent modeled cache traffic completion, not RTL descriptor latency.
+  - iteration: 28
+    timestamp: "2026-07-14 15:15"
+    test: simx-vs-xrt-vcs/4core_two_active_1x160x32
+    status: pass
+    error_summary: Improve reports 540 summed simx cycles versus 600 RTL cycles (-10.0%); naive reports 463 versus 4107 (-88.7%).
+    root_cause: Improve's eight-channel bypass model captures the tested concurrent traffic pattern, while naive remains dominated by unmodeled RTL fixed costs.
+    fix_applied: Rebuilt each xrt-vcs simulator with its matching backend configuration before measurement.
+    lesson: Use the RTL MXU total_cycles counter and the sum of active simx per-core GEMM cycles for aggregate comparisons; CPU cycle counters are not equivalent.
+  - iteration: 29
+    timestamp: "2026-07-14 15:44"
+    test: xrt-vcs/disable_fsdb
+    status: pass
+    error_summary: none
+    root_cause: none
+    fix_applied: Guarded the SystemVerilog FSDB initializer with DISABLE_FSDB while retaining the existing FSDB_DUMP enable guard.
+    lesson: Passing --configs-extra '-DDISABLE_FSDB' compiles both macros, prints the disabled message, and produces no FSDB file.
+  - iteration: 30
+    timestamp: "2026-07-14 16:03"
+    test: simx-vs-xrt-vcs/improve_4core_equal_n_partitions
+    status: pass
+    error_summary: Simx reports 3630 versus 1912 RTL cycles for 8x512x32 and 6838 versus 3376 RTL cycles for 8x1024x32, errors of +89.9% and +102.5% respectively.
+    root_cause: The improve model serializes equal per-core bypass traffic too strongly through shared DRAM; later cores complete progressively later despite identical work.
+    fix_applied: none
+    lesson: Four equal active partitions invalidate the favorable -10% error seen on the smaller two-active-core boundary case.
+  - iteration: 31
+    timestamp: "2026-07-14 16:10"
+    test: simx-vs-xrt-vcs/naive_4core_equal_n_partitions
+    status: pass
+    error_summary: Simx reports 2910 versus 13358 RTL cycles for 8x512x32 and 7753 versus 21030 RTL cycles for 8x1024x32, errors of -78.2% and -63.1% respectively.
+    root_cause: Cache traffic contention grows with the workload, but the model still omits most naive local-memory DMA, controller, and MXU pipeline costs.
+    fix_applied: none
+    lesson: Naive remains an absolute-cycle underprediction even when every core receives identical complete N-tile groups.
+  - iteration: 32
+    timestamp: "2026-07-14 16:22"
+    test: xrt-vcs/core_scaling_8x512x32
+    status: pass
+    error_summary: none
+    root_cause: none
+    fix_applied: none
+    lesson: With equal N partitions, naive average GEMM descriptor cycles scale 9856, 5260, and 3339.5 for 1/2/4 cores while kernel cycles fall 18727, 15227, and 14542. Improve descriptor cycles scale 1615, 840.5, and 478, but kernel cycles rise 9783, 10088, and 10891, so fixed launch/synchronization overhead hides accelerator speedup.
+remaining_work:
+  - Run a full 128x128 tile per core xrt-vcs case in a batch environment; DISABLE_FSDB removes waveform I/O, but the RTL workload still exceeds the interactive verification budget.
+  - Calibrate simx block-level compute and DMA issue costs against RTL counters if cycle-level prediction, rather than relative cache/bypass contention studies, becomes a requirement.
+pitfalls:
+  - The primary checkout has an unrelated modification to ci/fpga_bin_alias_map.yaml; do not modify, copy, or revert it.
+  - Checked-in config scripts must remain at NUM_CORES=1; four-core verification uses overrides only.
+  - The VCS simulator must be cleaned and rebuilt after RTL changes because its Makefile does not track RTL dependencies.
+  - Standalone VCS unittest Makefiles also reuse stale simv after RTL changes; run their clean target before recompilation.
+  - gemm_node_improve clean does not remove simv_fpnew or compile_fpnew; move those artifacts aside before a required RTL rebuild.
+  - Do not run blackbox.sh directly; use ci/run_black.sh from a configured build directory.
+  - The improve RTL unit test does not produce valid output for K=32 in either single or partitioned mode; use K=128 for focused RTL verification.
+  - Use --configs-extra '-DDISABLE_FSDB' to suppress FSDB generation; omit --debug entirely for non-debug runs because --debug 0 still enables DBG_TRACE defines.
+  - A 256 x 256 grid assigns one full 128 x 128 tile to each core and remains expensive even without FSDB; 8 x 512 activates all four cores with equal 8 x 128 partitions and completes quickly.
+  - Simx GEMM timing is a cache-line traffic and contention model; functional output remains computed eagerly, while descriptor completion is delayed until modeled compute and memory work finish.
