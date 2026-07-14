@@ -346,7 +346,9 @@ int main(int argc, char *argv[]) {
   kargs.last_ctrl      = 0;
   kargs.power_kernel_iterations = 1;
 
-  RT_CHECK(vx_upload_bytes(device, &kargs, sizeof(kargs), &args_buffer));
+  // The kernel reports completion and allocation failures through kargs.
+  RT_CHECK(vx_mem_alloc(device, sizeof(kargs), VX_MEM_READ_WRITE, &args_buffer));
+  RT_CHECK(vx_copy_to_dev(args_buffer, &kargs, 0, sizeof(kargs)));
   double first_latency_us = 0.0;
   vx_bench::IterationPerf first_iter_perf;
   if (!latency_power.begin_latency_window()) {

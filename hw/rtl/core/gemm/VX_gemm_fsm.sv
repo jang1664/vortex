@@ -267,7 +267,9 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
   // Tile dims and last sizes (latched at start)
   mm_dim_t     mt_dim_q, nt_dim_q, kt_dim_q;
+  mm_dim_t     nt_orig_dim_q;
   mm_tile_sz_t m_last_q, n_last_q, k_last_q;
+  mm_tile_sz_t n_orig_last_q;
   mm_tile_sz_t MT_q, NT_q, KT_q;
   logic [5:0]  LOG2_MT_q, LOG2_NT_q, LOG2_KT_q;
 
@@ -293,9 +295,9 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
   logic [63:0] O_MT_STRIDE_q;        // MT * orig_N * FP16 (per dma mt-tile)
   logic [63:0] O_BASE_OFF_q;         // (m_start*orig_N + n_start) * FP16
   logic [63:0] SCALE_FK_FN_q;        // scale_slot_bytes(KT,    NT)
-  logic [63:0] SCALE_FK_PN_q;        // scale_slot_bytes(KT,    n_last)
+  logic [63:0] SCALE_FK_PN_q;        // scale_slot_bytes(KT,    n_orig_last)
   logic [63:0] SCALE_PK_FN_q;        // scale_slot_bytes(k_last,NT)
-  logic [63:0] SCALE_PER_KT_FULL_K_q;// (nt_dim-1)*FK_FN + FK_PN
+  logic [63:0] SCALE_PER_KT_FULL_K_q;// (nt_orig_dim-1)*FK_FN + FK_PN
 
   // --------------------------------------------------------------------------
   // LMEM base helpers (DMA tile level ping-pong)
@@ -529,7 +531,7 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
       // SCALE_FK_FN_q / SCALE_PK_FN_q / SCALE_PER_KT_FULL_K_q are
       // pre-computed in S_INIT_STRIDE_0/1; argument j is unused but kept
       // for backward-compatible callers.
-      nt_idx = u32_t'(nt);
+      nt_idx = nt_base_q + u32_t'(nt);
       kt_idx = u32_t'(kt);
 
       slot_full_N = (kt == kt_dim_q - 1) ? SCALE_PK_FN_q : SCALE_FK_FN_q;
@@ -689,7 +691,9 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
 
       job_q <= '0;
       mt_dim_q <= 0; nt_dim_q <= 0; kt_dim_q <= 0;
+      nt_orig_dim_q <= 0;
       m_last_q <= 0; n_last_q <= 0; k_last_q <= 0;
+      n_orig_last_q <= 0;
       MT_q <= mm_tile_sz_t'(MT_DEFAULT);
       NT_q <= mm_tile_sz_t'(NT_DEFAULT);
       KT_q <= mm_tile_sz_t'(KT_DEFAULT);
@@ -751,9 +755,11 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
         mm_dim_t mt_dim_n;
         mm_dim_t nt_dim_n;
         mm_dim_t kt_dim_n;
+        mm_dim_t nt_orig_dim_n;
         mm_tile_sz_t mt_rem;
         mm_tile_sz_t nt_rem;
         mm_tile_sz_t kt_rem;
+        mm_tile_sz_t nt_orig_rem;
         logic [5:0] log2_mt_n;
         logic [5:0] log2_nt_n;
         logic [5:0] log2_kt_n;
@@ -771,10 +777,12 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
         mt_dim_n = mm_dim_t'(ceil_div_log2(job_d.target_M, log2_mt_n));
         nt_dim_n = mm_dim_t'(ceil_div_log2(job_d.target_N, log2_nt_n));
         kt_dim_n = mm_dim_t'(ceil_div_log2(job_d.target_K, log2_kt_n));
+        nt_orig_dim_n = mm_dim_t'(ceil_div_log2(job_d.orig_N, log2_nt_n));
 
         mt_dim_q <= mt_dim_n;
         nt_dim_q <= nt_dim_n;
         kt_dim_q <= kt_dim_n;
+        nt_orig_dim_q <= nt_orig_dim_n;
         MT_q <= mt_n;
         NT_q <= nt_n;
         KT_q <= kt_n;
@@ -785,10 +793,12 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
         mt_rem = mm_tile_sz_t'(job_d.target_M & (u32_t'(mt_n) - 1));
         nt_rem = mm_tile_sz_t'(job_d.target_N & (u32_t'(nt_n) - 1));
         kt_rem = mm_tile_sz_t'(job_d.target_K & (u32_t'(kt_n) - 1));
+        nt_orig_rem = mm_tile_sz_t'(job_d.orig_N & (u32_t'(nt_n) - 1));
 
         m_last_q <= (mt_rem == 0) ? mt_n : mt_rem;
         n_last_q <= (nt_rem == 0) ? nt_n : nt_rem;
         k_last_q <= (kt_rem == 0) ? kt_n : kt_rem;
+        n_orig_last_q <= (nt_orig_rem == 0) ? nt_n : nt_orig_rem;
       end
 
       // Stride pre-compute stage 0: latch from job_q / *_q registers.
@@ -810,14 +820,14 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
                          + 64'(job_q.n_start)) << 1;
 
         SCALE_FK_FN_q <= scale_slot_bytes(job_q, u32_t'(KT_q),     u32_t'(NT_q));
-        SCALE_FK_PN_q <= scale_slot_bytes(job_q, u32_t'(KT_q),     u32_t'(n_last_q));
+        SCALE_FK_PN_q <= scale_slot_bytes(job_q, u32_t'(KT_q),     u32_t'(n_orig_last_q));
         SCALE_PK_FN_q <= scale_slot_bytes(job_q, u32_t'(k_last_q), u32_t'(NT_q));
       end
 
       // Stride pre-compute stage 1: combine stage-0 registers (no fresh
       // 64-bit multiplier chain on this cycle).
       if (state_q == S_INIT_STRIDE_1) begin
-        SCALE_PER_KT_FULL_K_q <= 64'(u32_t'(nt_dim_q - 1)) * SCALE_FK_FN_q
+        SCALE_PER_KT_FULL_K_q <= 64'(u32_t'(nt_orig_dim_q - 1)) * SCALE_FK_FN_q
                               +  SCALE_FK_PN_q;
       end
     end
@@ -916,6 +926,8 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     u32_t acc_base_nb;
     u32_t output_nb_bytes;
     u32_t output_nb_stride_bytes;
+    u32_t global_mt;
+    u32_t global_nt_mxu;
     logic [63:0] lmem_obuf_nb;
     logic [63:0] dram_out_nb;
 
@@ -1103,11 +1115,13 @@ module VX_gemm_fsm import VX_gpu_pkg::*; #(
     output_nt_mxu_dim = nt_mxu_dim;
     output_nb_bytes = u32_t'(mt_eff_cur) * u32_t'(MXU_NT * FP16_BYTES);
     output_nb_stride_bytes = align8_u32(u32_t'(mt_eff_cur)) * u32_t'(MXU_NT * FP16_BYTES);
+    global_mt = mt_base_q + u32_t'(mt_cur);
+    global_nt_mxu = (nt_base_q + u32_t'(nt_cur)) * dma_nt_mxu_dim
+                  + u32_t'(o_nt_mxu_q);
     lmem_obuf_nb = job_q.lmem_obuf_base + 64'(o_nt_mxu_q) * 64'(output_nb_stride_bytes);
     dram_out_nb = job_q.output_base
-                + 64'(mt_cur) * 64'(MT_q) * 64'(job_q.orig_N) * FP16_BYTES
-                + 64'((u32_t'(nt_cur) * dma_nt_mxu_dim) + u32_t'(o_nt_mxu_q))
-                  * 64'(output_nb_stride_bytes);
+                + 64'(global_mt) * 64'(MT_q) * 64'(job_q.orig_N) * FP16_BYTES
+                + 64'(global_nt_mxu) * 64'(output_nb_stride_bytes);
 
     gemm_start_o = 1'b0;
 

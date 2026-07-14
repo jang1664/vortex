@@ -265,6 +265,7 @@ static bool run_gemm_job_once(kernel_arg_t* arg, const tb_partition_t& part, boo
 
 void kernel_mmio_driver(kernel_arg_t *__UNIFORM__ arg) {
   uint32_t core_id = vx_core_id();
+  uint32_t num_cores = vx_num_cores();
   bool reporter = (core_id == 0);
 
   if (reporter) {
@@ -302,12 +303,10 @@ void kernel_mmio_driver(kernel_arg_t *__UNIFORM__ arg) {
     return;
   }
 
-  // The FSM descriptor path accepts one full rectangular GEMM job. Keep this
-  // regression deterministic by letting core 0 own the MMIO transaction.
-  tb_partition_t part = {core_id == 0, 0u, 0u, arg->M, arg->N};
+  tb_partition_t part = compute_partition(core_id, num_cores, arg->M, arg->N);
 #ifdef GEMM_PARTITION_LOG
-  vx_printf("[gemm-part] cid=%u has_work=%u m_start=%u n_start=%u target_M=%u target_N=%u K=%u\n",
-            core_id,
+  vx_printf("[gemm-part] cid=%u/%u tbs=%u has_work=%u m_start=%u n_start=%u target_M=%u target_N=%u K=%u\n",
+            core_id, num_cores, num_cores,
             part.has_work ? 1u : 0u,
             part.m_start, part.n_start,
             part.target_M, part.target_N,

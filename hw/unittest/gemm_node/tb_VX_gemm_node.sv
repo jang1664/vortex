@@ -996,6 +996,10 @@ module tb_VX_gemm_node
     input int test_qblk,
     input int test_wtrans,
     input int test_qdir,
+    input int target_m,
+    input int target_n,
+    input int m_start,
+    input int n_start,
     input logic [63:0] gmem_in_base,
     input logic [63:0] gmem_w_base,
     input logic [63:0] gmem_out_base,
@@ -1030,16 +1034,15 @@ module tb_VX_gemm_node
     job_write_reg64(eid, REG_LMEM_OBUF_LO,    lmem_obuf_base);
 
     // problem shape/control
-    // single-core mode: ORIG == TARGET, START == 0
     job_write_reg32(eid, REG_M_ORIG, test_m);
     job_write_reg32(eid, REG_N_ORIG, test_n);
     job_write_reg32(eid, REG_K_ORIG, test_k);
     job_write_reg32(eid, REG_QBLK_ORIG, $clog2(test_qblk));
-    job_write_reg32(eid, REG_M_TARGET, test_m);
-    job_write_reg32(eid, REG_N_TARGET, test_n);
+    job_write_reg32(eid, REG_M_TARGET, target_m);
+    job_write_reg32(eid, REG_N_TARGET, target_n);
     job_write_reg32(eid, REG_K_TARGET, test_k);
-    job_write_reg32(eid, REG_M_START, 32'd0);
-    job_write_reg32(eid, REG_N_START, 32'd0);
+    job_write_reg32(eid, REG_M_START, m_start);
+    job_write_reg32(eid, REG_N_START, n_start);
     job_write_reg32(eid, REG_WTRANS, test_wtrans);
     job_write_reg32(eid, REG_QDIR, test_qdir);
 
@@ -1372,14 +1375,38 @@ module tb_VX_gemm_node
       );
 
       job_alloc(job_eid_local, job_gen_local);
-      program_job_regs(
-        job_eid_local,
-        test_m, test_n, test_k, test_qblk, test_wtrans, test_qdir,
-        gmem_in_base, gmem_w_base, gmem_out_base, gmem_sc_base, gmem_zp_base,
-        lmem_ibuf0_base, lmem_ibuf1_base, lmem_wbuf0_base, lmem_wbuf1_base,
-        lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base, lmem_obuf_base
-      );
-      wait_job_done(job_eid_local, job_gen_local);
+      if ($test$plusargs("PARTITIONED")) begin
+        if ((test_m != (2 * DMA_MT)) || (test_n != (2 * DMA_NT)))
+          $fatal(1, "[%0t] PARTITIONED requires M=%0d N=%0d", $time, 2 * DMA_MT, 2 * DMA_NT);
+
+        for (int part_m = 0; part_m < 2; part_m++) begin
+          for (int part_n = 0; part_n < 2; part_n++) begin
+            if ((part_m != 0) || (part_n != 0)) begin
+              apply_reset();
+              job_alloc(job_eid_local, job_gen_local);
+            end
+            program_job_regs(
+              job_eid_local,
+              test_m, test_n, test_k, test_qblk, test_wtrans, test_qdir,
+              DMA_MT, DMA_NT, part_m * DMA_MT, part_n * DMA_NT,
+              gmem_in_base, gmem_w_base, gmem_out_base, gmem_sc_base, gmem_zp_base,
+              lmem_ibuf0_base, lmem_ibuf1_base, lmem_wbuf0_base, lmem_wbuf1_base,
+              lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base, lmem_obuf_base
+            );
+            wait_job_done(job_eid_local, job_gen_local);
+          end
+        end
+      end else begin
+        program_job_regs(
+          job_eid_local,
+          test_m, test_n, test_k, test_qblk, test_wtrans, test_qdir,
+          test_m, test_n, 0, 0,
+          gmem_in_base, gmem_w_base, gmem_out_base, gmem_sc_base, gmem_zp_base,
+          lmem_ibuf0_base, lmem_ibuf1_base, lmem_wbuf0_base, lmem_wbuf1_base,
+          lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base, lmem_obuf_base
+        );
+        wait_job_done(job_eid_local, job_gen_local);
+      end
 
       repeat (50) @(posedge clk);
       check_output(test_m, test_n, gmem_out_base);

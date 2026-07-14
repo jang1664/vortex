@@ -1493,6 +1493,58 @@ module tb_VX_gemm_node_improve
     end
   endtask
 
+  task automatic check_output_tiled_region(
+    input int test_m,
+    input int test_n,
+    input int target_m,
+    input int target_n,
+    input int m_start,
+    input int n_start,
+    input logic [63:0] dram_out_base
+  );
+    int mismatch_count;
+    begin
+      mismatch_count = 0;
+
+      for (int gm = m_start; gm < m_start + target_m; gm++) begin
+        int mt, local_m, cur_m;
+        mt = gm / DMA_MT;
+        local_m = gm % DMA_MT;
+        cur_m = (test_m - mt * DMA_MT < DMA_MT) ? (test_m - mt * DMA_MT) : DMA_MT;
+
+        for (int gn = n_start; gn < n_start + target_n; gn++) begin
+          int nt, local_n;
+          int unsigned addr;
+          logic [15:0] got, exp;
+          nt = gn / DMA_MXU_NT;
+          local_n = gn % DMA_MXU_NT;
+          addr = dram_out_base
+               + mt * DMA_MT * test_n * 2
+               + nt * cur_m * DMA_MXU_NT * 2
+               + local_m * DMA_MXU_NT * 2
+               + local_n * 2;
+          got = dram_read_u16(addr);
+          exp = ref_output[gm * test_n + gn];
+          if (!compare_fp16(got, exp, FP16_TOL)) begin
+            mismatch_count++;
+            if (mismatch_count <= 20)
+              $display("[%0t] REGION MISMATCH gm=%0d gn=%0d got=%f exp=%f",
+                       $time, gm, gn,
+                       cf_math_util_pkg::fp16_bit_to_fp16_val(got),
+                       cf_math_util_pkg::fp16_bit_to_fp16_val(exp));
+          end
+        end
+      end
+
+      if (mismatch_count != 0)
+        $fatal(1, "[%0t] TILED OUTPUT REGION CHECK FAILED: mismatches=%0d / %0d",
+               $time, mismatch_count, target_m * target_n);
+      else
+        $display("[%0t] TILED OUTPUT REGION CHECK PASSED: compared %0d elements",
+                 $time, target_m * target_n);
+    end
+  endtask
+
   // =========================================================================
   // Simple output checker
   // =========================================================================
@@ -1984,6 +2036,10 @@ module tb_VX_gemm_node_improve
     input int test_qblk,
     input int test_wtrans,
     input int test_qdir,
+    input int target_m,
+    input int target_n,
+    input int m_start,
+    input int n_start,
     input logic [63:0] dram_in_base,
     input logic [63:0] dram_w_base,
     input logic [63:0] dram_out_base,
@@ -2020,11 +2076,11 @@ module tb_VX_gemm_node_improve
       job_write_reg32(eid, REG_N_ORIG,      test_n);
       job_write_reg32(eid, REG_K_ORIG,      test_k);
       job_write_reg32(eid, REG_QBLK_ORIG,   $clog2(test_qblk));
-      job_write_reg32(eid, REG_M_TARGET,    test_m);
-      job_write_reg32(eid, REG_N_TARGET,    test_n);
+      job_write_reg32(eid, REG_M_TARGET,    target_m);
+      job_write_reg32(eid, REG_N_TARGET,    target_n);
       job_write_reg32(eid, REG_K_TARGET,    test_k);
-      job_write_reg32(eid, REG_M_START,     32'd0);
-      job_write_reg32(eid, REG_N_START,     32'd0);
+      job_write_reg32(eid, REG_M_START,     m_start);
+      job_write_reg32(eid, REG_N_START,     n_start);
       job_write_reg32(eid, REG_WTRANS,      test_wtrans);
       job_write_reg32(eid, REG_QDIR,        test_qdir);
       job_write_reg32(eid, REG_LOG2_DMA_MT, $clog2(DMA_MT));
@@ -2104,17 +2160,57 @@ module tb_VX_gemm_node_improve
       write_dram_tiled_zp(test_n, test_k, test_qblk, test_qdir, dram_zp_base);
 
       job_alloc(job_eid, job_generation);
-      program_job_regs(
-        job_eid,
-        test_m, test_n, test_k, test_qblk, test_wtrans, test_qdir,
-        dram_in_base, dram_w_base, dram_out_base, dram_sc_base, dram_zp_base,
-        lmem_ibuf0_base, lmem_ibuf1_base, lmem_wbuf0_base, lmem_wbuf1_base,
-        lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base, lmem_obuf_base
-      );
-      wait_job_done(job_eid);
+      if ($test$plusargs("SINGLE_PARTITION_N")) begin
+        if ((test_m != (2 * DMA_MT)) || (test_n != (2 * DMA_NT)))
+          $fatal(1, "[%0t] SINGLE_PARTITION_N requires M=%0d N=%0d", $time, 2 * DMA_MT, 2 * DMA_NT);
+
+        program_job_regs(
+          job_eid,
+          test_m, test_n, test_k, test_qblk, test_wtrans, test_qdir,
+          DMA_MT, DMA_NT, 0, DMA_NT,
+          dram_in_base, dram_w_base, dram_out_base, dram_sc_base, dram_zp_base,
+          lmem_ibuf0_base, lmem_ibuf1_base, lmem_wbuf0_base, lmem_wbuf1_base,
+          lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base, lmem_obuf_base
+        );
+        wait_job_done(job_eid);
+      end else if ($test$plusargs("PARTITIONED")) begin
+        if ((test_m != (2 * DMA_MT)) || (test_n != (2 * DMA_NT)))
+          $fatal(1, "[%0t] PARTITIONED requires M=%0d N=%0d", $time, 2 * DMA_MT, 2 * DMA_NT);
+
+        for (int part_m = 0; part_m < 2; part_m++) begin
+          for (int part_n = 0; part_n < 2; part_n++) begin
+            if ((part_m != 0) || (part_n != 0)) begin
+              apply_reset();
+              job_alloc(job_eid, job_generation);
+            end
+            program_job_regs(
+              job_eid,
+              test_m, test_n, test_k, test_qblk, test_wtrans, test_qdir,
+              DMA_MT, DMA_NT, part_m * DMA_MT, part_n * DMA_NT,
+              dram_in_base, dram_w_base, dram_out_base, dram_sc_base, dram_zp_base,
+              lmem_ibuf0_base, lmem_ibuf1_base, lmem_wbuf0_base, lmem_wbuf1_base,
+              lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base, lmem_obuf_base
+            );
+            wait_job_done(job_eid);
+          end
+        end
+      end else begin
+        program_job_regs(
+          job_eid,
+          test_m, test_n, test_k, test_qblk, test_wtrans, test_qdir,
+          test_m, test_n, 0, 0,
+          dram_in_base, dram_w_base, dram_out_base, dram_sc_base, dram_zp_base,
+          lmem_ibuf0_base, lmem_ibuf1_base, lmem_wbuf0_base, lmem_wbuf1_base,
+          lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base, lmem_obuf_base
+        );
+        wait_job_done(job_eid);
+      end
 
       repeat (1000) @(posedge clk);
-      check_output_tiled(test_m, test_n, dram_out_base);
+      if ($test$plusargs("SINGLE_PARTITION_N"))
+        check_output_tiled_region(test_m, test_n, DMA_MT, DMA_NT, 0, DMA_NT, dram_out_base);
+      else
+        check_output_tiled(test_m, test_n, dram_out_base);
       $display("[%0t] CONFIG GEMM PASSED: M=%0d N=%0d K=%0d WTRANS=%0d QDIR=%0d",
                $time, test_m, test_n, test_k, test_wtrans, test_qdir);
     end
