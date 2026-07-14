@@ -88,5 +88,5 @@ aliases:
     configs: configs/improve_simd_th16_dbg.sh
 
   improve_th16_tcol32_hwexp_dcache: # pack16
-    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_L2cache_53d1219a71/bin
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_L2cache_8d9b4939d1/bin
     configs: configs/improve_th16_tcol32_hwexp_dcache.sh
