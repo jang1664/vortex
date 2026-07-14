@@ -96,15 +96,16 @@ DEFINES = [
     f"NUM_THREADS={NUM_THREADS}",
     # local + tensor mem
     "LMEM_LOG_SIZE=19",
-    "TMEM_BANK_SIZE=65536",
+    "TMEM_BANK_SIZE=32768",
     "NUM_DMA_CHANNELS=8",
-    "GEMM_ACC_MEM_DEPTH=1024",
-    "MXU_COL_TILE=1",
+    "GEMM_ACC_MEM_DEPTH=512",
+    "MXU_COL_TILE=32",
     "AFU_DONE_WAIT_CACHE_DRAIN",
     # extension
-    "EXT_TCU_ENABLE",
+    # "EXT_TCU_ENABLE",
+    "ENABLE_GEMM_ACCEL",
     "VX_ENABLE_HW_EXPF",
-    "TCU_BHF",
+    # "TCU_BHF",
 ]
 
 # Vortex include search paths. Order matters for package emission order in
@@ -180,6 +181,15 @@ SOURCE_BLACKLIST = {
     f"{RTL}/libs/VX_reduce_tree_pipelined_tb.sv",
 }
 
+
+def _define_enabled(name):
+    return any(d == name or d.startswith(f"{name}=") for d in DEFINES)
+
+
+def _is_tcu_source(path):
+    return path.startswith(f"{RTL}/tcu/")
+
+
 # AXI sources prepended to the analysis order — must come AFTER cvfpu packages
 # (axi_pkg.sv depends on common_cells), so we splice them after the gen_sources
 # package block.
@@ -211,6 +221,7 @@ def _enumerate_sources():
     out_dir = f"{RESULT_ROOT}/{RUN_NAME}"
     os.makedirs(out_dir, exist_ok=True)
     out_file = f"{out_dir}/gen_sources.txt"
+    tcu_enabled = _define_enabled("EXT_TCU_ENABLE")
 
     cmd = [f"{SCRIPTS}/gen_sources.sh", "-T", "Vortex_axi", "-O", out_file]
     for d in DEFINES:
@@ -235,6 +246,8 @@ def _enumerate_sources():
             elif line.endswith(".sv") or line.endswith(".v"):
                 if line in SOURCE_BLACKLIST:
                     continue
+                if not tcu_enabled and _is_tcu_source(line):
+                    continue
                 sources.append(line)
 
     # Topologically order packages with cross-file imports. gen_sources.sh
@@ -246,7 +259,8 @@ def _enumerate_sources():
     #   defs_div_sqrt_mvp     <-  cvfpu/fpu_div_sqrt_mvp/hdl/* consumers
     #   fpnew_pkg (patched)   <-  cvfpu/fpnew_*.sv
     #   cf_math_util_pkg      <-  VX_utils_pkg
-    #   VX_gpu_pkg            <-  VX_fpu_pkg, VX_tcu_pkg, VX_trace_pkg
+    #   VX_gpu_pkg            <-  VX_fpu_pkg, VX_trace_pkg
+    #   VX_tcu_pkg            <-  VX_trace_pkg (only when EXT_TCU_ENABLE)
     priority_pkgs = [
         f"{THIRD_PARTY}/cvfpu/src/common_cells/src/cf_math_pkg.sv",
         f"{THIRD_PARTY}/cvfpu/src/fpu_div_sqrt_mvp/hdl/defs_div_sqrt_mvp.sv",
@@ -256,9 +270,10 @@ def _enumerate_sources():
         f"{RTL}/verification/VX_mem_pkg.sv",
         f"{RTL}/VX_gpu_pkg.sv",
         f"{RTL}/fpu/VX_fpu_pkg.sv",
-        f"{RTL}/tcu/VX_tcu_pkg.sv",
         f"{RTL}/VX_trace_pkg.sv",
     ]
+    if tcu_enabled:
+        priority_pkgs.insert(-1, f"{RTL}/tcu/VX_tcu_pkg.sv")
     sources = [s for s in sources if s not in priority_pkgs]
 
     # priority_pkgs first (cf_math_pkg before AXI consumers), then AXI sources,
