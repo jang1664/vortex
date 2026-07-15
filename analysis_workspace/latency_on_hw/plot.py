@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 
-DEFAULT_OUT_BASE= "outputs_main_small_test"
+DEFAULT_OUT_BASE = "output_figure"
 DEFAULT_PREPARED_ROOT = f"{DEFAULT_OUT_BASE}/figures_prepare"
 DEFAULT_OUT_DIR = f"{DEFAULT_OUT_BASE}/figures_script"
 PLOT_CHOICES = (
@@ -18,17 +18,21 @@ PLOT_CHOICES = (
     "gemm_only",
     "energy",
     "llama_e2e",
+    "llama_e2e_stacked",
     "llama_gemm_only",
     "llama_energy",
+    "llama_energy_stacked",
     "latency",
     "all",
 )
 EXCEL_FIGURE_DATA_CSV = "excel_figure_data.csv"
 
-TWO_COLUMN_FIGSIZE = (7.16, 3.0)
-GEMM_FIGSIZE = (7.16, 4.2)
-LLAMA_E2E_FIGSIZE = (7.16, 5.8)
-LLAMA_GEMM_FIGSIZE = (7.16, 8.0)
+ONE_COLUMN_FIGSIZE = (3.5, 9.3)
+TWO_COLUMN_FIGSIZE = (7.16, 9.3)
+GEMM_FIGSIZE = (3.5, 4.0)
+LLAMA_E2E_FIGSIZE = (3.5, 4.0)
+LLAMA_GEMM_FIGSIZE = (3.5, 4.0)
+LLAMA_E2E_STACKED_FIGSIZE = (3.5, 4.0)
 SAVE_DPI = 600
 BAR_EDGECOLOR = "white"
 BAR_LINEWIDTH = 0.25
@@ -39,6 +43,7 @@ MAIN_ALL_TITLE = "E2E latency"
 GEMM_ONLY_TITLE = "GEMM latency breakdown"
 ENERGY_TITLE = "E2E energy per token"
 LLAMA_E2E_TITLE = "Llama 2 and Llama 3 E2E latency"
+LLAMA_E2E_STACKED_TITLE = "Llama 2 and Llama 3 E2E latency breakdown"
 LLAMA_GEMM_ONLY_TITLE = "Llama 2 and Llama 3 GEMM latency breakdown"
 LLAMA_ENERGY_TITLE = "Llama 2 and Llama 3 energy per token"
 SUBPLOT_TITLE_TEMPLATE = "{stage}"
@@ -50,17 +55,18 @@ LEGEND_TITLE = "candidate"
 LEGEND_NCOL = 4
 GEMM_LEGEND_TITLE = "kernel"
 
-TITLE_FONTSIZE = 8.0
-SUBPLOT_TITLE_FONTSIZE = 7.2
-AXIS_LABEL_FONTSIZE = 6.6
-TICK_LABEL_FONTSIZE = 6.2
-LEGEND_FONTSIZE = 5.4
-LEGEND_TITLE_FONTSIZE = 5.6
-VALUE_LABEL_FONTSIZE = 4.0
+MIN_FONT_SIZE = 4.0
+TITLE_FONTSIZE = MIN_FONT_SIZE+1
+SUBPLOT_TITLE_FONTSIZE = MIN_FONT_SIZE+0.2
+AXIS_LABEL_FONTSIZE = MIN_FONT_SIZE
+TICK_LABEL_FONTSIZE = MIN_FONT_SIZE
+LEGEND_TITLE_FONTSIZE = MIN_FONT_SIZE+0.2
+LEGEND_FONTSIZE = MIN_FONT_SIZE
+VALUE_LABEL_FONTSIZE = MIN_FONT_SIZE
 
 X_GROUP_AXIS = "batch"
 X_GROUP_GAP = 0.35
-VALUE_LABELS = True
+VALUE_LABELS = False
 E2E_CANDIDATE_COLUMNS = ("C1", "C2", "C3", "C4")
 ENERGY_POWER_METRICS = ("power_avg_W", "power_vcc_avg_W", "power_dynamic_avg_W")
 STAGE_ORDER = ("Prefill", "Generation")
@@ -110,6 +116,8 @@ class WideBarKnobs:
     y_label: str = Y_LABEL
     title_fontsize: float = TITLE_FONTSIZE
     subplot_title_fontsize: float = SUBPLOT_TITLE_FONTSIZE
+    subplot_title_inside: bool = False
+    subplot_title_replacements: tuple[tuple[str, str], ...] = ()
     axis_label_fontsize: float = AXIS_LABEL_FONTSIZE
     tick_label_fontsize: float = TICK_LABEL_FONTSIZE
     legend_fontsize: float = LEGEND_FONTSIZE
@@ -126,8 +134,11 @@ class WideBarKnobs:
     value_label_ha: str = "center"
     value_label_va: str = "bottom"
     value_label_dy: float = 0.0
+    x_tick_label_rotation: float = 0.0
+    stage_x_tick_label_rotations: dict[str, float] = field(default_factory=dict)
     x_group_axis: str | None = X_GROUP_AXIS
     x_group_gap: float = X_GROUP_GAP
+    x_group_labels_inside: bool = False
     y_lim_top_scale: float = 1.25
     y_lim: tuple[float | None, float | None] | None = None
     stage_y_lims: dict[str, tuple[float | None, float | None]] = field(default_factory=dict)
@@ -140,9 +151,64 @@ class WideBarKnobs:
     suptitle_y: float = 0.995
     legend_y: float = 0.94
     tight_layout_rect: tuple[float, float, float, float] = (0.0, 0.04, 1.0, 0.88)
+    tight_layout_pad: float = 1.08
+    tight_layout_h_pad: float | None = None
     save_png: bool = True
     save_pdf: bool = True
     save_svg: bool = True
+
+
+@dataclass(frozen=True)
+class StackGroupKnobs:
+    label: str
+    columns: tuple[str, ...] | None
+
+
+GEMM_ONLY_STACK_GROUPS = (
+    StackGroupKnobs(
+        label="linear-qkvo",
+        columns=("q_proj", "k_proj", "v_proj", "o_proj"),
+    ),
+    StackGroupKnobs(
+        label="attn",
+        columns=("attn_qkT", "attn_pv"),
+    ),
+    StackGroupKnobs(
+        label="linear-ffn",
+        columns=("down_proj", "gate_proj", "up_proj"),
+    ),
+)
+GEMM_ONLY_GROUP_PALETTE = ("#08306B", "#2171B5", "#6BAED6")
+E2E_KIND_STACK_PALETTE = ("#08306B", "#238B45", "#3690C0")
+E2E_KIND_STACK_GROUPS = (
+    StackGroupKnobs(label="gemm", columns=("gemm",)),
+    StackGroupKnobs(label="vector", columns=None),
+    StackGroupKnobs(label="layout", columns=("layout",)),
+)
+
+
+def _llama_compact_kwargs(y_label: str) -> dict[str, Any]:
+    return {
+        "figsize": LLAMA_E2E_STACKED_FIGSIZE,
+        "row_height": LLAMA_E2E_STACKED_FIGSIZE[1] / len(LLAMA_E2E_ROW_ORDER),
+        "title": None,
+        "subplot_title_template": LLAMA_E2E_SUBPLOT_TITLE_TEMPLATE,
+        "subplot_title_inside": True,
+        "subplot_title_replacements": (
+            ("Llama 2, ", "L2 "),
+            ("Llama 3, ", "L3 "),
+        ),
+        "x_label": "",
+        "y_label": y_label,
+        "x_group_labels_inside": True,
+        "legend_position": "top",
+        "legend_title": None,
+        "legend_y": 0.950,
+        "tight_layout_rect": (0.0, 0.02, 1.0, 0.93),
+        "tight_layout_h_pad": 0.2,
+        "value_labels": VALUE_LABELS,
+        "stage_x_tick_label_rotations": {"Prefill": 0.0, "Generation": 45.0},
+    }
 
 
 @dataclass
@@ -157,6 +223,7 @@ class StackedBarKnobs(WideBarKnobs):
     legend_y: float = -0.32
     tight_layout_rect: tuple[float, float, float, float] = (0.0, 0.08, 1.0, 0.96)
     stack_palette: tuple[str, ...] | None = None
+    stack_groups: tuple[StackGroupKnobs, ...] = ()
 
 
 @dataclass
@@ -167,12 +234,17 @@ class PlotKnobs:
             row_height=TWO_COLUMN_FIGSIZE[1],
             title=MAIN_ALL_TITLE,
             y_label=Y_LABEL,
+            value_labels=VALUE_LABELS
         )
     )
     gemm_only: StackedBarKnobs = field(
         default_factory=lambda: StackedBarKnobs(
             title=GEMM_ONLY_TITLE,
             y_label=Y_LABEL,
+            value_labels=VALUE_LABELS,
+            legend_ncol=3,
+            stack_palette=GEMM_ONLY_GROUP_PALETTE,
+            stack_groups=GEMM_ONLY_STACK_GROUPS,
         )
     )
     energy: WideBarKnobs = field(
@@ -181,6 +253,7 @@ class PlotKnobs:
             row_height=TWO_COLUMN_FIGSIZE[1],
             title=ENERGY_TITLE,
             y_label=ENERGY_Y_LABEL,
+            value_labels=VALUE_LABELS
         )
     )
     llama_e2e: WideBarKnobs = field(
@@ -192,30 +265,38 @@ class PlotKnobs:
             y_label=Y_LABEL,
             legend_y=0.965,
             tight_layout_rect=(0.0, 0.04, 1.0, 0.92),
-            value_labels=False
+            value_labels=VALUE_LABELS,
+            x_tick_label_rotation=90.0,
+        )
+    )
+    llama_e2e_stacked: StackedBarKnobs = field(
+        default_factory=lambda: StackedBarKnobs(
+            **_llama_compact_kwargs(Y_LABEL),
+            legend_ncol=3,
+            stack_palette=E2E_KIND_STACK_PALETTE,
+            stack_groups=E2E_KIND_STACK_GROUPS,
         )
     )
     llama_gemm_only: StackedBarKnobs = field(
         default_factory=lambda: StackedBarKnobs(
-            figsize=LLAMA_GEMM_FIGSIZE,
-            row_height=LLAMA_GEMM_FIGSIZE[1] / len(LLAMA_E2E_ROW_ORDER),
-            title=LLAMA_GEMM_ONLY_TITLE,
-            subplot_title_template=LLAMA_E2E_SUBPLOT_TITLE_TEMPLATE,
-            y_label=Y_LABEL,
-            legend_y=-0.18,
-            tight_layout_rect=(0.0, 0.08, 1.0, 0.96),
+            **_llama_compact_kwargs(Y_LABEL),
+            legend_ncol=3,
+            stack_palette=GEMM_ONLY_GROUP_PALETTE,
+            stack_groups=GEMM_ONLY_STACK_GROUPS,
         )
     )
     llama_energy: WideBarKnobs = field(
         default_factory=lambda: WideBarKnobs(
-            figsize=LLAMA_E2E_FIGSIZE,
-            row_height=LLAMA_E2E_FIGSIZE[1] / len(LLAMA_E2E_ROW_ORDER),
-            title=LLAMA_ENERGY_TITLE,
-            subplot_title_template=LLAMA_E2E_SUBPLOT_TITLE_TEMPLATE,
-            y_label=ENERGY_Y_LABEL,
-            legend_y=0.965,
-            tight_layout_rect=(0.0, 0.04, 1.0, 0.92),
-            value_labels=False,
+            **_llama_compact_kwargs(ENERGY_Y_LABEL),
+            legend_ncol=4,
+        )
+    )
+    llama_energy_stacked: StackedBarKnobs = field(
+        default_factory=lambda: StackedBarKnobs(
+            **_llama_compact_kwargs(ENERGY_Y_LABEL),
+            legend_ncol=3,
+            stack_palette=E2E_KIND_STACK_PALETTE,
+            stack_groups=E2E_KIND_STACK_GROUPS,
         )
     )
 
@@ -249,7 +330,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default="all",
         help=(
             "plot to generate: main_all, gemm_only, energy, llama_e2e, "
-            "llama_gemm_only, llama_energy, latency, or all"
+            "llama_e2e_stacked, llama_gemm_only, llama_energy, "
+            "llama_energy_stacked, latency, or all"
         ),
     )
     parser.add_argument(
@@ -293,6 +375,16 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Llama 3 E2E prepared directory or excel_figure_data.csv for --plot llama_e2e.",
     )
     parser.add_argument(
+        "--llama2-e2e-stacked-data",
+        default=None,
+        help="Llama 2 stacked E2E prepared directory or excel_figure_data.csv for --plot llama_e2e_stacked.",
+    )
+    parser.add_argument(
+        "--llama3-e2e-stacked-data",
+        default=None,
+        help="Llama 3 stacked E2E prepared directory or excel_figure_data.csv for --plot llama_e2e_stacked.",
+    )
+    parser.add_argument(
         "--llama2-gemm-data",
         default=None,
         help="Llama 2 GEMM-only prepared directory or excel_figure_data.csv for --plot llama_gemm_only.",
@@ -311,6 +403,16 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--llama3-energy-data",
         default=None,
         help="Llama 3 energy prepared directory or excel_figure_data.csv for --plot llama_energy.",
+    )
+    parser.add_argument(
+        "--llama2-energy-stacked-data",
+        default=None,
+        help="Llama 2 stacked energy prepared directory or excel_figure_data.csv for --plot llama_energy_stacked.",
+    )
+    parser.add_argument(
+        "--llama3-energy-stacked-data",
+        default=None,
+        help="Llama 3 stacked energy prepared directory or excel_figure_data.csv for --plot llama_energy_stacked.",
     )
     parser.add_argument(
         "--figure-width",
@@ -416,11 +518,15 @@ def _prepared_csv_from_path(path: Path) -> Path:
 def _candidate_matches_kind(path: Path, kind: str) -> bool:
     name = path.parent.name if path.name == EXCEL_FIGURE_DATA_CSV else path.name
     if kind == "main_all":
-        return "gemm_only" not in name and "energy_per_token" not in name and "llama_compare" not in name
+        return all(token not in name for token in ("e2e_stacked", "gemm_only", "energy_per_token", "llama_compare"))
+    if kind == "e2e_stacked":
+        return "e2e_stacked_by_kind" in name
     if kind == "gemm_only":
         return "gemm_only" in name
     if kind == "energy":
-        return "energy_per_token" in name
+        return "energy_per_token" in name and "stacked_by_kind" not in name
+    if kind == "energy_stacked":
+        return "energy_per_token_stacked_by_kind" in name
     raise ValueError(f"unsupported prepared data kind: {kind}")
 
 
@@ -477,25 +583,52 @@ def _energy_csv_power_metric(path: Path) -> str | None:
     return None
 
 
-def _discover_model_energy_csv(prepared_root: Path, model_key: str, power_metric: str) -> Path:
+def _validate_energy_csv_schema(path: Path, kind: str) -> str:
+    with path.open(newline="") as handle:
+        columns = set(csv.DictReader(handle).fieldnames or ())
+    required = {"power_metric", "stage", "batch", "seq"}
+    if kind == "energy_stacked":
+        required.update(("candidate", "total"))
+    elif kind == "energy":
+        if not columns.intersection(E2E_CANDIDATE_COLUMNS):
+            raise ValueError(f"flat energy data has no candidate columns: {path}")
+    else:
+        raise ValueError(f"unsupported energy data kind: {kind}")
+    missing = required - columns
+    if missing:
+        raise ValueError(f"{kind} data missing columns {sorted(missing)}: {path}")
+
+    power_metric = _energy_csv_power_metric(path)
+    if not power_metric:
+        raise ValueError(f"{kind} data has no power_metric value: {path}")
+    return power_metric
+
+
+def _discover_model_energy_csv(
+    prepared_root: Path,
+    model_key: str,
+    power_metric: str,
+    *,
+    kind: str = "energy",
+) -> Path:
     if not prepared_root.exists():
         raise FileNotFoundError(f"prepared root does not exist: {prepared_root}")
     candidates = []
     for path in prepared_root.glob(f"*/{EXCEL_FIGURE_DATA_CSV}"):
         if model_key not in path.parent.name:
             continue
-        if not _candidate_matches_kind(path, "energy"):
+        if not _candidate_matches_kind(path, kind):
             continue
         if _energy_csv_power_metric(path) != power_metric:
             continue
         candidates.append(path)
     if not candidates:
         raise FileNotFoundError(
-            f"no {model_key} energy {power_metric} {EXCEL_FIGURE_DATA_CSV} found under {prepared_root}"
+            f"no {model_key} {kind} {power_metric} {EXCEL_FIGURE_DATA_CSV} found under {prepared_root}"
         )
     candidates.sort(key=lambda path: (path.stat().st_mtime, str(path)), reverse=True)
     selected = candidates[0]
-    print(f"{model_key} energy {power_metric} data: {selected}")
+    print(f"{model_key} {kind} {power_metric} data: {selected}")
     return selected
 
 
@@ -565,11 +698,17 @@ def model_energy_csv_path(
     latency_dir: Path,
     model_key: str,
     power_metric: str,
+    kind: str = "energy",
 ) -> Path:
     if explicit:
         csv_path = _prepared_csv_from_path(resolve_under_latency_dir(explicit, latency_dir, prefer_existing=True))
     else:
-        csv_path = _discover_model_energy_csv(prepared_root, model_key, power_metric)
+        csv_path = _discover_model_energy_csv(
+            prepared_root,
+            model_key,
+            power_metric,
+            kind=kind,
+        )
     if not csv_path.exists():
         raise FileNotFoundError(csv_path)
     if csv_path.name != EXCEL_FIGURE_DATA_CSV:
@@ -651,8 +790,10 @@ def _plot_knobs_from_args(args: argparse.Namespace) -> PlotKnobs:
         knobs.gemm_only,
         knobs.energy,
         knobs.llama_e2e,
+        knobs.llama_e2e_stacked,
         knobs.llama_gemm_only,
         knobs.llama_energy,
+        knobs.llama_energy_stacked,
     ]
 
     for item in plot_knobs:
@@ -689,6 +830,13 @@ def _format_template(template: str, **values: Any) -> str:
         missing = exc.args[0]
         valid = ", ".join(sorted(values))
         raise ValueError(f"unknown template field {{{missing}}}; valid fields: {valid}") from exc
+
+
+def _format_subplot_title(knobs: WideBarKnobs, **values: Any) -> str:
+    title = _format_template(knobs.subplot_title_template, **values)
+    for source, replacement in knobs.subplot_title_replacements:
+        title = title.replace(source, replacement)
+    return title
 
 
 def _display_label(axis: str | None, value: Any, options: Any) -> str:
@@ -764,7 +912,7 @@ def write_latency_figure_data_csv(deps: Any, result: Any) -> Path:
         export["seq"] = export["seq_len"].map(_format_seq_for_excel) if "seq_len" in export else ""
         export["seq_sort"] = export["seq_len"].map(_seq_sort_key) if "seq_len" in export else 0
         export = export.sort_values(["stage", "batch", "seq_sort", "candidate", "legend"])
-        stack_columns = list(dict.fromkeys(export["legend"].dropna().astype(str)))
+        stack_columns = _ordered_unique(export["legend"].dropna().astype(str).tolist())
         wide = (
             export.pivot_table(
                 index=["stage", "batch", "seq_sort", "seq", "candidate"],
@@ -826,11 +974,7 @@ def write_energy_figure_data_csv(result: EnergyExcelResult, *, label_maps: dict[
     else:
         export = summary[summary[value_col].notna()].copy()
 
-    class _Options:
-        pass
-
-    options = _Options()
-    options.label_maps = label_maps
+    options = argparse.Namespace(label_maps=label_maps)
     export["stage"] = export["stage"].map(lambda value: _display_label("stage", value, options)) if "stage" in export else ""
     export["batch"] = export["batch"] if "batch" in export else ""
     export["seq"] = export["seq_len"].map(_format_seq_for_excel) if "seq_len" in export else ""
@@ -864,6 +1008,77 @@ def write_energy_figure_data_csv(result: EnergyExcelResult, *, label_maps: dict[
     return path
 
 
+def write_energy_stacked_figure_data_csv(
+    result: EnergyExcelResult,
+    *,
+    label_maps: dict[str, dict[Any, str]],
+    stack_by: str = "kind",
+) -> Path:
+    """Write candidate rows with relative energy split across kernel kinds."""
+    summary = result.summary.copy()
+    value_col = "relative_joules_per_token"
+    required = {"stage", "batch", "seq_len", "variant", stack_by, value_col}
+    missing = required - set(summary.columns)
+    if missing:
+        raise ValueError(f"stacked energy summary missing columns: {sorted(missing)}")
+
+    options = argparse.Namespace(label_maps=label_maps)
+    export = summary[summary[value_col].notna()].copy()
+    export["stage"] = export["stage"].map(lambda value: _display_label("stage", value, options))
+    export["seq"] = export["seq_len"].map(_format_seq_for_excel)
+    export["seq_sort"] = export["seq_len"].map(_seq_sort_key)
+    export["candidate"] = export["variant"].map(
+        lambda value: _display_label("variant", value, options)
+    )
+    export["legend"] = export[stack_by].astype(str)
+    export["relative_value"] = export[value_col].astype(float)
+    export = export.sort_values(
+        ["power_metric", "stage", "batch", "seq_sort", "candidate", "legend"]
+    )
+    stack_columns = _ordered_unique(export["legend"].dropna().astype(str).tolist())
+    wide = (
+        export.pivot_table(
+            index=["power_metric", "stage", "batch", "seq_sort", "seq", "candidate"],
+            columns="legend",
+            values="relative_value",
+            aggfunc="sum",
+        )
+        .reset_index()
+        .rename_axis(None, axis=1)
+        .sort_values(["power_metric", "stage", "batch", "seq_sort", "candidate"])
+    )
+    value_columns = _wide_value_columns(
+        wide.drop(
+            columns=["power_metric", "stage", "batch", "seq_sort", "seq", "candidate"]
+        ),
+        stack_columns,
+    )
+    wide["total"] = wide[value_columns].sum(axis=1, skipna=True)
+    wide = wide[
+        [
+            "power_metric",
+            "stage",
+            "batch",
+            "seq_sort",
+            "seq",
+            "candidate",
+            *value_columns,
+            "total",
+        ]
+    ]
+    wide["batch"] = wide["batch"].astype(str)
+    wide["seq"] = wide["seq"].astype(str)
+    repeated_group = wide[["power_metric", "stage", "batch", "seq_sort"]].duplicated()
+    wide.loc[repeated_group, ["batch", "seq"]] = ""
+    wide = wide.drop(columns=["seq_sort"])
+
+    path = result.figure_path.parent / EXCEL_FIGURE_DATA_CSV
+    path.parent.mkdir(parents=True, exist_ok=True)
+    wide.to_csv(path, index=False)
+    print(f"wrote {path}")
+    return path
+
+
 def _read_excel_figure_data(path: Path) -> Any:
     pd, _ = _import_plot_modules()
     df = pd.read_csv(path)
@@ -887,11 +1102,73 @@ def _save_figure(fig: Any, path: Path, knobs: WideBarKnobs) -> None:
         print(f"wrote {path.with_suffix('.svg')}")
 
 
-def _x_label(row: Any, *, include_batch: bool) -> str:
-    seq = str(row["seq"])
-    if include_batch:
-        return f"b{_format_batch(row['batch'])}\n{seq}"
-    return seq
+def _set_grouped_x_ticks(
+    ax: Any,
+    stage_df: Any,
+    positions: Sequence[float],
+    *,
+    include_batch: bool,
+    knobs: WideBarKnobs,
+) -> None:
+    stage = str(stage_df["stage"].iloc[0]) if "stage" in stage_df.columns and not stage_df.empty else ""
+    tick_label_rotation = knobs.stage_x_tick_label_rotations.get(
+        stage,
+        knobs.x_tick_label_rotation,
+    )
+    grouped_positions: dict[tuple[str, str], list[float]] = {}
+    for position, (_, row) in zip(positions, stage_df.iterrows()):
+        group = (str(row["batch"]), str(row["seq"]))
+        grouped_positions.setdefault(group, []).append(position)
+
+    tick_positions: list[float] = []
+    tick_labels: list[str] = []
+    batch_positions: dict[str, list[float]] = {}
+    for (batch, seq), group_positions in grouped_positions.items():
+        center = (group_positions[0] + group_positions[-1]) / 2.0
+        tick_positions.append(center)
+        tick_labels.append(seq if include_batch else f"seq {seq}")
+        batch_positions.setdefault(batch, []).append(center)
+
+    ax.set_xticks(tick_positions)
+    ax.set_xticklabels(
+        tick_labels,
+        fontsize=knobs.tick_label_fontsize,
+        rotation=tick_label_rotation,
+    )
+    if not include_batch:
+        return
+
+    batch_tick_positions = [
+        (centers[0] + centers[-1]) / 2.0
+        for centers in batch_positions.values()
+    ]
+    batch_tick_labels = [
+        f"b{_format_batch(batch)}"
+        for batch in batch_positions
+    ]
+    if knobs.x_group_labels_inside:
+        for position, label in zip(batch_tick_positions, batch_tick_labels):
+            ax.text(
+                position,
+                0.96,
+                label,
+                transform=ax.get_xaxis_transform(),
+                ha="center",
+                va="top",
+                fontsize=knobs.tick_label_fontsize,
+                color="0.25",
+            )
+        return
+
+    ax.set_xticks(batch_tick_positions, minor=True)
+    ax.set_xticklabels(
+        batch_tick_labels,
+        minor=True,
+        fontsize=knobs.tick_label_fontsize,
+        rotation=0.0,
+    )
+    group_label_pad = 14 if tick_label_rotation == 0 else 22
+    ax.tick_params(axis="x", which="minor", length=0, pad=group_label_pad)
 
 
 def _add_value_labels(ax: Any, bars: Any, knobs: WideBarKnobs) -> None:
@@ -903,6 +1180,26 @@ def _add_value_labels(ax: Any, bars: Any, knobs: WideBarKnobs) -> None:
             bar.get_x() + bar.get_width() / 2,
             height + knobs.value_label_dy,
             knobs.value_label_format.format(height),
+            ha=knobs.value_label_ha,
+            va=knobs.value_label_va,
+            rotation=knobs.value_label_rotation,
+            fontsize=knobs.value_label_fontsize,
+        )
+
+
+def _add_stacked_total_labels(
+    ax: Any,
+    positions: Sequence[float],
+    totals: Sequence[float],
+    knobs: StackedBarKnobs,
+) -> None:
+    for position, total in zip(positions, totals):
+        if not math.isfinite(float(total)) or abs(float(total)) < 1.0e-12:
+            continue
+        ax.text(
+            position,
+            total + knobs.value_label_dy,
+            knobs.value_label_format.format(total),
             ha=knobs.value_label_ha,
             va=knobs.value_label_va,
             rotation=knobs.value_label_rotation,
@@ -977,7 +1274,7 @@ def plot_wide_candidate_bars(
         stage_df["__batch_sort"] = pd.to_numeric(stage_df["batch"], errors="coerce")
         stage_df = stage_df.sort_values(["__batch_sort", "__seq_sort", "seq"])
 
-        include_batch = knobs.x_group_axis == "batch" and stage_df["batch"].nunique(dropna=True) > 1
+        include_batch = knobs.x_group_axis == "batch"
         group_keys = list(zip(stage_df["batch"].astype(str), stage_df["seq"].astype(str)))
         positions: list[float] = []
         current = 0.0
@@ -1012,10 +1309,12 @@ def plot_wide_candidate_bars(
             fontsize=knobs.subplot_title_fontsize,
         )
         ax.set_ylabel(knobs.y_label, fontsize=knobs.axis_label_fontsize)
-        ax.set_xticks(positions)
-        ax.set_xticklabels(
-            [_x_label(row, include_batch=include_batch) for _, row in stage_df.iterrows()],
-            fontsize=knobs.tick_label_fontsize,
+        _set_grouped_x_ticks(
+            ax,
+            stage_df,
+            positions,
+            include_batch=include_batch,
+            knobs=knobs,
         )
         ax.tick_params(axis="y", labelsize=knobs.tick_label_fontsize)
         ax.grid(axis="y", alpha=knobs.grid_alpha)
@@ -1026,21 +1325,53 @@ def plot_wide_candidate_bars(
     _add_top_legend(fig, handles, labels, len(value_columns), knobs)
     if knobs.title is not None:
         fig.suptitle(knobs.title, fontsize=knobs.title_fontsize, y=knobs.suptitle_y)
-    fig.supxlabel(knobs.x_label, fontsize=knobs.axis_label_fontsize)
-    fig.tight_layout(rect=knobs.tight_layout_rect)
+    if knobs.x_label:
+        fig.supxlabel(knobs.x_label, fontsize=knobs.axis_label_fontsize)
+    fig.tight_layout(
+        rect=knobs.tight_layout_rect,
+        pad=knobs.tight_layout_pad,
+        h_pad=knobs.tight_layout_h_pad,
+    )
     _save_figure(fig, out_dir / filename, knobs)
     plt.close(fig)
 
 
-def _gemm_stack_columns(pd: Any, df: Any) -> list[str]:
+def _stack_value_columns(pd: Any, df: Any) -> list[str]:
     excluded = {"stage", "batch", "seq", "candidate", "total"}
     columns = _numeric_columns(pd, df, excluded)
     return [column for column in columns if column != "total"]
 
 
-def _gemm_row_label(row: Any, *, include_batch: bool) -> str:
-    prefix = f"b{_format_batch(row['batch'])} " if include_batch else ""
-    return f"{row['candidate']}\n{prefix}{row['seq']}"
+def _apply_stack_groups(
+    df: Any,
+    stack_columns: Sequence[str],
+    groups: Sequence[StackGroupKnobs],
+) -> tuple[Any, list[str]]:
+    if not groups:
+        return df, list(stack_columns)
+
+    remaining_group_count = sum(group.columns is None for group in groups)
+    if remaining_group_count > 1:
+        raise ValueError("only one stack group may use columns=None")
+    labels = [group.label for group in groups]
+    if len(labels) != len(set(labels)):
+        raise ValueError("stack group labels must be unique")
+
+    explicitly_grouped = {
+        column
+        for group in groups
+        if group.columns is not None
+        for column in group.columns
+    }
+    grouped = df.copy()
+    for group in groups:
+        source_columns = (
+            [column for column in stack_columns if column not in explicitly_grouped]
+            if group.columns is None
+            else [column for column in group.columns if column in stack_columns]
+        )
+        grouped[group.label] = grouped[source_columns].sum(axis=1) if source_columns else 0.0
+    return grouped, labels
 
 
 def plot_gemm_stacked_bars(
@@ -1059,11 +1390,12 @@ def plot_gemm_stacked_bars(
     if missing:
         raise ValueError(f"{csv_path} missing columns: {sorted(missing)}")
 
-    stack_columns = _gemm_stack_columns(pd, df)
+    stack_columns = _stack_value_columns(pd, df)
     if not stack_columns:
         raise ValueError(f"{csv_path} has no GEMM stack value columns")
     for column in stack_columns:
         df[column] = pd.to_numeric(df[column], errors="coerce").fillna(0.0)
+    df, stack_columns = _apply_stack_groups(df, stack_columns, knobs.stack_groups)
 
     stages = sorted(_ordered_unique(df["stage"].tolist()), key=_stage_sort_key)
     fig, axes = plt.subplots(len(stages), 1, figsize=_plot_size(knobs, len(stages)), squeeze=False)
@@ -1079,7 +1411,7 @@ def plot_gemm_stacked_bars(
         stage_df["__candidate_sort"] = stage_df["candidate"].map(lambda value: candidate_order.get(str(value), len(candidate_order)))
         stage_df = stage_df.sort_values(["__batch_sort", "__seq_sort", "__candidate_sort", "candidate"])
 
-        include_batch = knobs.x_group_axis == "batch" and stage_df["batch"].nunique(dropna=True) > 1
+        include_batch = knobs.x_group_axis == "batch"
         positions: list[float] = []
         current = 0.0
         previous_group: tuple[str, str] | None = None
@@ -1106,16 +1438,20 @@ def plot_gemm_stacked_bars(
                 label=column,
             )
             bottoms = [bottom + value for bottom, value in zip(bottoms, values)]
+        if knobs.value_labels:
+            _add_stacked_total_labels(ax, positions, bottoms, knobs)
 
         ax.set_title(
             _format_template(knobs.subplot_title_template, stage=stage, model=""),
             fontsize=knobs.subplot_title_fontsize,
         )
         ax.set_ylabel(knobs.y_label, fontsize=knobs.axis_label_fontsize)
-        ax.set_xticks(positions)
-        ax.set_xticklabels(
-            [_gemm_row_label(row, include_batch=include_batch) for _, row in stage_df.iterrows()],
-            fontsize=knobs.tick_label_fontsize,
+        _set_grouped_x_ticks(
+            ax,
+            stage_df,
+            positions,
+            include_batch=include_batch,
+            knobs=knobs,
         )
         ax.tick_params(axis="y", labelsize=knobs.tick_label_fontsize)
         ax.grid(axis="y", alpha=knobs.grid_alpha)
@@ -1126,8 +1462,13 @@ def plot_gemm_stacked_bars(
     _add_top_legend(fig, handles, labels, len(stack_columns), knobs)
     if knobs.title is not None:
         fig.suptitle(knobs.title, fontsize=knobs.title_fontsize, y=knobs.suptitle_y)
-    fig.supxlabel(knobs.x_label, fontsize=knobs.axis_label_fontsize)
-    fig.tight_layout(rect=knobs.tight_layout_rect)
+    if knobs.x_label:
+        fig.supxlabel(knobs.x_label, fontsize=knobs.axis_label_fontsize)
+    fig.tight_layout(
+        rect=knobs.tight_layout_rect,
+        pad=knobs.tight_layout_pad,
+        h_pad=knobs.tight_layout_h_pad,
+    )
     _save_figure(fig, out_dir / "gemm_only_latency.png", knobs)
     plt.close(fig)
 
@@ -1180,10 +1521,25 @@ def plot_model_wide_candidate_bars(
             combined["model"].astype(str).eq(model_label)
             & combined["stage"].astype(str).eq(stage)
         ].copy()
-        ax.set_title(
-            _format_template(knobs.subplot_title_template, model=model_label, stage=stage),
-            fontsize=knobs.subplot_title_fontsize,
+        subplot_title = _format_subplot_title(
+            knobs,
+            model=model_label,
+            stage=stage,
         )
+        if knobs.subplot_title_inside:
+            ax.text(
+                0.01,
+                0.96,
+                subplot_title,
+                transform=ax.transAxes,
+                ha="left",
+                va="top",
+                fontsize=knobs.subplot_title_fontsize,
+                fontweight="bold",
+                bbox={"facecolor": "white", "edgecolor": "none", "pad": 0.5},
+            )
+        else:
+            ax.set_title(subplot_title, fontsize=knobs.subplot_title_fontsize)
         if stage_df.empty:
             ax.text(
                 0.5,
@@ -1202,7 +1558,7 @@ def plot_model_wide_candidate_bars(
         stage_df["__batch_sort"] = pd.to_numeric(stage_df["batch"], errors="coerce")
         stage_df = stage_df.sort_values(["__batch_sort", "__seq_sort", "seq"])
 
-        include_batch = knobs.x_group_axis == "batch" and stage_df["batch"].nunique(dropna=True) > 1
+        include_batch = knobs.x_group_axis == "batch"
         group_keys = list(zip(stage_df["batch"].astype(str), stage_df["seq"].astype(str)))
         positions: list[float] = []
         current = 0.0
@@ -1235,10 +1591,12 @@ def plot_model_wide_candidate_bars(
         if legend_handles is None:
             legend_handles, legend_labels = ax.get_legend_handles_labels()
         ax.set_ylabel(knobs.y_label, fontsize=knobs.axis_label_fontsize)
-        ax.set_xticks(positions)
-        ax.set_xticklabels(
-            [_x_label(row, include_batch=include_batch) for _, row in stage_df.iterrows()],
-            fontsize=knobs.tick_label_fontsize,
+        _set_grouped_x_ticks(
+            ax,
+            stage_df,
+            positions,
+            include_batch=include_batch,
+            knobs=knobs,
         )
         ax.tick_params(axis="y", labelsize=knobs.tick_label_fontsize)
         ax.grid(axis="y", alpha=knobs.grid_alpha)
@@ -1248,8 +1606,13 @@ def plot_model_wide_candidate_bars(
     _add_top_legend(fig, legend_handles, legend_labels, len(value_columns), knobs)
     if knobs.title is not None:
         fig.suptitle(knobs.title, fontsize=knobs.title_fontsize, y=knobs.suptitle_y)
-    fig.supxlabel(knobs.x_label, fontsize=knobs.axis_label_fontsize)
-    fig.tight_layout(rect=knobs.tight_layout_rect)
+    if knobs.x_label:
+        fig.supxlabel(knobs.x_label, fontsize=knobs.axis_label_fontsize)
+    fig.tight_layout(
+        rect=knobs.tight_layout_rect,
+        pad=knobs.tight_layout_pad,
+        h_pad=knobs.tight_layout_h_pad,
+    )
     _save_figure(fig, out_dir / filename, knobs)
     plt.close(fig)
 
@@ -1268,10 +1631,12 @@ def plot_llama_e2e_bars(
     )
 
 
-def plot_model_gemm_stacked_bars(
+def plot_model_stacked_bars(
     model_csvs: Sequence[tuple[str, str, Path]],
     out_dir: Path,
     *,
+    filename: str,
+    data_label: str,
     knobs: StackedBarKnobs,
 ) -> None:
     pd, plt = _import_plot_modules()
@@ -1284,13 +1649,14 @@ def plot_model_gemm_stacked_bars(
     required = {"model", "stage", "batch", "seq", "candidate"}
     missing = required - set(combined.columns)
     if missing:
-        raise ValueError(f"Llama GEMM-only data missing columns: {sorted(missing)}")
+        raise ValueError(f"{data_label} data missing columns: {sorted(missing)}")
 
-    stack_columns = _gemm_stack_columns(pd, combined)
+    stack_columns = _stack_value_columns(pd, combined)
     if not stack_columns:
-        raise ValueError("Llama GEMM-only data has no GEMM stack value columns")
+        raise ValueError(f"{data_label} data has no stack value columns")
     for column in stack_columns:
         combined[column] = pd.to_numeric(combined[column], errors="coerce").fillna(0.0)
+    combined, stack_columns = _apply_stack_groups(combined, stack_columns, knobs.stack_groups)
 
     row_specs = list(LLAMA_E2E_ROW_ORDER)
     fig, axes = plt.subplots(len(row_specs), 1, figsize=_plot_size(knobs, len(row_specs)), squeeze=False)
@@ -1306,10 +1672,25 @@ def plot_model_gemm_stacked_bars(
             combined["model"].astype(str).eq(model_label)
             & combined["stage"].astype(str).eq(stage)
         ].copy()
-        ax.set_title(
-            _format_template(knobs.subplot_title_template, model=model_label, stage=stage),
-            fontsize=knobs.subplot_title_fontsize,
+        subplot_title = _format_subplot_title(
+            knobs,
+            model=model_label,
+            stage=stage,
         )
+        if knobs.subplot_title_inside:
+            ax.text(
+                0.01,
+                0.96,
+                subplot_title,
+                transform=ax.transAxes,
+                ha="left",
+                va="top",
+                fontsize=knobs.subplot_title_fontsize,
+                fontweight="bold",
+                bbox={"facecolor": "white", "edgecolor": "none", "pad": 0.5},
+            )
+        else:
+            ax.set_title(subplot_title, fontsize=knobs.subplot_title_fontsize)
         if stage_df.empty:
             ax.text(
                 0.5,
@@ -1329,7 +1710,7 @@ def plot_model_gemm_stacked_bars(
         stage_df["__candidate_sort"] = stage_df["candidate"].map(lambda value: candidate_order.get(str(value), len(candidate_order)))
         stage_df = stage_df.sort_values(["__batch_sort", "__seq_sort", "__candidate_sort", "candidate"])
 
-        include_batch = knobs.x_group_axis == "batch" and stage_df["batch"].nunique(dropna=True) > 1
+        include_batch = knobs.x_group_axis == "batch"
         positions: list[float] = []
         current = 0.0
         previous_group: tuple[str, str] | None = None
@@ -1356,14 +1737,18 @@ def plot_model_gemm_stacked_bars(
                 label=column,
             )
             bottoms = [bottom + value for bottom, value in zip(bottoms, values)]
+        if knobs.value_labels:
+            _add_stacked_total_labels(ax, positions, bottoms, knobs)
 
         if legend_handles is None:
             legend_handles, legend_labels = ax.get_legend_handles_labels()
         ax.set_ylabel(knobs.y_label, fontsize=knobs.axis_label_fontsize)
-        ax.set_xticks(positions)
-        ax.set_xticklabels(
-            [_gemm_row_label(row, include_batch=include_batch) for _, row in stage_df.iterrows()],
-            fontsize=knobs.tick_label_fontsize,
+        _set_grouped_x_ticks(
+            ax,
+            stage_df,
+            positions,
+            include_batch=include_batch,
+            knobs=knobs,
         )
         ax.tick_params(axis="y", labelsize=knobs.tick_label_fontsize)
         ax.grid(axis="y", alpha=knobs.grid_alpha)
@@ -1373,10 +1758,45 @@ def plot_model_gemm_stacked_bars(
     _add_top_legend(fig, legend_handles, legend_labels, len(stack_columns), knobs)
     if knobs.title is not None:
         fig.suptitle(knobs.title, fontsize=knobs.title_fontsize, y=knobs.suptitle_y)
-    fig.supxlabel(knobs.x_label, fontsize=knobs.axis_label_fontsize)
-    fig.tight_layout(rect=knobs.tight_layout_rect)
-    _save_figure(fig, out_dir / "llama_gemm_only_latency.png", knobs)
+    if knobs.x_label:
+        fig.supxlabel(knobs.x_label, fontsize=knobs.axis_label_fontsize)
+    fig.tight_layout(
+        rect=knobs.tight_layout_rect,
+        pad=knobs.tight_layout_pad,
+        h_pad=knobs.tight_layout_h_pad,
+    )
+    _save_figure(fig, out_dir / filename, knobs)
     plt.close(fig)
+
+
+def plot_llama_e2e_stacked_bars(
+    model_csvs: Sequence[tuple[str, str, Path]],
+    out_dir: Path,
+    *,
+    knobs: StackedBarKnobs,
+) -> None:
+    plot_model_stacked_bars(
+        model_csvs,
+        out_dir,
+        filename="llama_e2e_latency_stacked.png",
+        data_label="Llama E2E stacked",
+        knobs=knobs,
+    )
+
+
+def plot_model_gemm_stacked_bars(
+    model_csvs: Sequence[tuple[str, str, Path]],
+    out_dir: Path,
+    *,
+    knobs: StackedBarKnobs,
+) -> None:
+    plot_model_stacked_bars(
+        model_csvs,
+        out_dir,
+        filename="llama_gemm_only_latency.png",
+        data_label="Llama GEMM-only",
+        knobs=knobs,
+    )
 
 
 def run_main_all_plot(
@@ -1433,6 +1853,19 @@ def run_llama_e2e_plot(
     )
 
 
+def run_llama_e2e_stacked_plot(
+    model_csvs: Sequence[tuple[str, str, Path]],
+    output_root: Path,
+    *,
+    knobs: StackedBarKnobs,
+) -> None:
+    plot_llama_e2e_stacked_bars(
+        model_csvs,
+        output_root / "llama_e2e_stacked",
+        knobs=knobs,
+    )
+
+
 def run_llama_gemm_only_plot(
     model_csvs: Sequence[tuple[str, str, Path]],
     output_root: Path,
@@ -1464,6 +1897,22 @@ def run_llama_energy_plot(
     )
 
 
+def run_llama_energy_stacked_plot(
+    power_metric: str,
+    model_csvs: Sequence[tuple[str, str, Path]],
+    output_root: Path,
+    *,
+    knobs: StackedBarKnobs,
+) -> None:
+    plot_model_stacked_bars(
+        model_csvs,
+        output_root / "llama_energy_stacked",
+        filename=f"llama_energy_per_token_{power_metric}_stacked.png",
+        data_label=f"Llama stacked energy ({power_metric})",
+        knobs=knobs,
+    )
+
+
 def collect_model_csvs(
     *,
     explicit_by_model: dict[str, str | None],
@@ -1491,10 +1940,11 @@ def collect_model_energy_csv_groups(
     explicit_by_model: dict[str, str | None],
     prepared_root: Path,
     latency_dir: Path,
+    kind: str = "energy",
 ) -> list[tuple[str, list[tuple[str, str, Path]]]]:
     if any(explicit_by_model.values()):
         explicit_paths: dict[str, Path] = {}
-        explicit_metric: str | None = None
+        explicit_metrics: set[str] = set()
         for model_key, explicit in explicit_by_model.items():
             if not explicit:
                 continue
@@ -1502,29 +1952,26 @@ def collect_model_energy_csv_groups(
             if not csv_path.exists():
                 raise FileNotFoundError(csv_path)
             explicit_paths[model_key] = csv_path
-            explicit_metric = explicit_metric or _energy_csv_power_metric(csv_path)
-        if explicit_metric in ENERGY_POWER_METRICS:
-            model_csvs = []
-            for model_key, model_label in LLAMA_E2E_MODELS:
-                csv_path = explicit_paths.get(model_key)
-                if csv_path is None:
-                    csv_path = model_energy_csv_path(
-                        explicit=None,
-                        prepared_root=prepared_root,
-                        latency_dir=latency_dir,
-                        model_key=model_key,
-                        power_metric=explicit_metric,
-                    )
-                model_csvs.append((model_key, model_label, csv_path))
-            return [(explicit_metric, model_csvs)]
-        model_csvs = collect_model_csvs(
-            explicit_by_model=explicit_by_model,
-            prepared_root=prepared_root,
-            latency_dir=latency_dir,
-            kind="energy",
-            label="energy",
-        )
-        return [(explicit_metric or "custom", model_csvs)]
+            explicit_metrics.add(_validate_energy_csv_schema(csv_path, kind))
+        if len(explicit_metrics) != 1:
+            raise ValueError(
+                f"explicit {kind} inputs must use one power metric: {sorted(explicit_metrics)}"
+            )
+        explicit_metric = next(iter(explicit_metrics))
+        model_csvs = []
+        for model_key, model_label in LLAMA_E2E_MODELS:
+            csv_path = explicit_paths.get(model_key)
+            if csv_path is None:
+                csv_path = model_energy_csv_path(
+                    explicit=None,
+                    prepared_root=prepared_root,
+                    latency_dir=latency_dir,
+                    model_key=model_key,
+                    power_metric=explicit_metric,
+                    kind=kind,
+                )
+            model_csvs.append((model_key, model_label, csv_path))
+        return [(explicit_metric, model_csvs)]
 
     groups: list[tuple[str, list[tuple[str, str, Path]]]] = []
     missing: list[FileNotFoundError] = []
@@ -1538,6 +1985,7 @@ def collect_model_energy_csv_groups(
                     latency_dir=latency_dir,
                     model_key=model_key,
                     power_metric=power_metric,
+                    kind=kind,
                 )
                 model_csvs.append((model_key, model_label, csv_path))
         except FileNotFoundError as exc:
@@ -1547,7 +1995,7 @@ def collect_model_energy_csv_groups(
     if not groups and missing:
         raise missing[0]
     for exc in missing:
-        print(f"skip llama_energy metric: {exc}")
+        print(f"skip llama_{kind} metric: {exc}")
     return groups
 
 
@@ -1629,6 +2077,39 @@ def run_selected_plots(args: argparse.Namespace) -> None:
                 knobs=knobs.llama_e2e,
             )
 
+    if plot in {"llama_e2e_stacked", "all"}:
+        required = (
+            plot == "llama_e2e_stacked"
+            or bool(args.llama2_e2e_stacked_data)
+            or bool(args.llama3_e2e_stacked_data)
+        )
+        explicit_by_model = {
+            "llama2_7b": args.llama2_e2e_stacked_data,
+            "llama3_8b": args.llama3_e2e_stacked_data,
+        }
+        missing_error: Exception | None = None
+        try:
+            model_csvs = collect_model_csvs(
+                explicit_by_model=explicit_by_model,
+                prepared_root=prepared_root,
+                latency_dir=latency_dir,
+                kind="e2e_stacked",
+                label="E2E stacked",
+            )
+        except FileNotFoundError as exc:
+            missing_error = exc
+
+        if missing_error is not None:
+            if required:
+                raise missing_error
+            print(f"skip llama_e2e_stacked: {missing_error}")
+        else:
+            run_llama_e2e_stacked_plot(
+                model_csvs,
+                output_root,
+                knobs=knobs.llama_e2e_stacked,
+            )
+
     if plot in {"llama_gemm_only", "all"}:
         required = plot == "llama_gemm_only" or bool(args.llama2_gemm_data) or bool(args.llama3_gemm_data)
         explicit_by_model = {
@@ -1685,6 +2166,40 @@ def run_selected_plots(args: argparse.Namespace) -> None:
                     model_csvs,
                     output_root,
                     knobs=knobs.llama_energy,
+                )
+
+    if plot in {"llama_energy_stacked", "all"}:
+        required = (
+            plot == "llama_energy_stacked"
+            or bool(args.llama2_energy_stacked_data)
+            or bool(args.llama3_energy_stacked_data)
+        )
+        explicit_by_model = {
+            "llama2_7b": args.llama2_energy_stacked_data,
+            "llama3_8b": args.llama3_energy_stacked_data,
+        }
+        missing_error: Exception | None = None
+        try:
+            model_csv_groups = collect_model_energy_csv_groups(
+                explicit_by_model=explicit_by_model,
+                prepared_root=prepared_root,
+                latency_dir=latency_dir,
+                kind="energy_stacked",
+            )
+        except FileNotFoundError as exc:
+            missing_error = exc
+
+        if missing_error is not None:
+            if required:
+                raise missing_error
+            print(f"skip llama_energy_stacked: {missing_error}")
+        else:
+            for power_metric, model_csvs in model_csv_groups:
+                run_llama_energy_stacked_plot(
+                    power_metric,
+                    model_csvs,
+                    output_root,
+                    knobs=knobs.llama_energy_stacked,
                 )
 
 

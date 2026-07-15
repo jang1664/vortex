@@ -1,0 +1,17 @@
+task: vivado-util-cli
+status: completed
+updated: "2026-07-15 14:41"
+summary: "Added and verified tools/vivado_util.py, including filtered summary export to text, CSV, or JSON; generated the requested LUT/BRAM/URAM/DSP CSV."
+attempts:
+  - timestamp: "2026-07-15 14:32"
+    action: "Inspected hwexplorer and parsed the requested routed utilization report."
+    result: "VivadoUtilizationParser.load() successfully extracts metadata and 16 top-level utilization tables; parse() itself is hierarchy-only and the package has no console entry point."
+  - timestamp: "2026-07-15 14:36"
+    action: "Implemented the CLI, added unit tests, and ran it against the requested routed report."
+    result: "All three tests pass. Actual report output matches the source values, including Block RAM Tile=806.5, RAMB36/FIFO=779, RAMB18=55, URAM=92, and DSPs=2722."
+  - timestamp: "2026-07-15 14:41"
+    action: "Extended the summary command with filtering and CSV/JSON output, then exported the requested four resources."
+    result: "All four tests pass; analysis_workspace/tcu/xrt_hw_u55c_c1_f100_fpint_tcu_L2cache_utilization.csv contains CLB LUTs, Block RAM Tile, URAM, and DSPs."
+pitfalls:
+  - "The system Python lacks hwexplorer dependencies; the vortex conda environment has them, and the CLI must discover the sibling hwexplorer checkout."
+  - "impl_1_full_util_routed.rpt has no Utilization by Hierarchy section, so the CLI must use load()/table() rather than parse()."
