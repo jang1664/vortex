@@ -29,6 +29,7 @@
 // tasks exist.
 
 `ifdef VCS_FSDB_DUMP
+`ifndef DISABLE_FSDB
 module vcs_fsdb_dump_init;
     // Scope the dump to `vortex_afu` (kernel) and everything below it.
     // $fsdbDumpvars(0) without scope dumps from $root — on this design
@@ -59,4 +60,5 @@ module vcs_fsdb_dump_init;
 endmodule
 
 bind vortex_afu vcs_fsdb_dump_init u_vcs_fsdb_dump_init ();
+`endif
 `endif
