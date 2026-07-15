@@ -33,7 +33,11 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
     VX_config_reg_if.slave        cfg_reg_if,         // from job frontend
     VX_gemm_ctrl_if.master        gemm_ctrl_if,       // to gemm unit + cmd ctrls
     VX_node_done_if.master        done_if,            // to job frontend (clear)
-    VX_gemm_sync_if.slave         gemm_sync_slv_if[N_NODE] // from cmd ctrls (notify events)
+    VX_gemm_sync_if.slave         gemm_sync_slv_if[N_NODE], // from cmd ctrls (notify events)
+    input wire                    output_store_done_i,
+    output wire                   progress_update_valid_o,
+    output wire [`JOB_MMIO_ENTRYID_W-1:0] progress_update_entry_id_o,
+    output wire [31:0]            progress_update_value_o
 `ifdef PERF_ENABLE
     ,input  logic            gemm_unit_computing
     ,output gemm_node_perf_t perf
@@ -55,14 +59,23 @@ module VX_gemm_ctrl import VX_gpu_pkg::*; #(
     wire queues_idle    = parent_q_empty && (&child_q_empty_v);
     wire done_fire      = done_if.valid && done_if.ready;
     logic [31:0] active_entry_id_q;
+    logic [31:0] output_progress_q;
 
     always_ff @(posedge clk) begin
       if (reset) begin
         active_entry_id_q <= '0;
+        output_progress_q <= '0;
       end else if (cfg_fire) begin
         active_entry_id_q <= cfg_reg_if.entry_id;
+        output_progress_q <= '0;
+      end else if (output_store_done_i) begin
+        output_progress_q <= output_progress_q + 32'd1;
       end
     end
+
+    assign progress_update_valid_o = output_store_done_i;
+    assign progress_update_entry_id_o = active_entry_id_q[`JOB_MMIO_ENTRYID_W-1:0];
+    assign progress_update_value_o = output_progress_q + 32'd1;
 
 `ifdef DBG_TRACE_GEMM_CTRL
     always_ff @(posedge clk) begin

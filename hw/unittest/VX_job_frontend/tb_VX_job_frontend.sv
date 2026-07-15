@@ -6,6 +6,7 @@ module tb_VX_job_frontend;
 
   localparam int NUM_ENTRIES = 4;
   localparam int NUM_REGS32  = 16;
+  localparam int HW_WRITE_REG_IDX = NUM_REGS32 - 1;
   localparam int ENTRYID_W   = 4;
   localparam int NUM_MASTERS = 2;
 
@@ -18,14 +19,14 @@ module tb_VX_job_frontend;
   localparam int WORDS_PER_BEAT = (TB_DATA_SIZE / 4);
   localparam int NUM_BEATS      = (NUM_REGS32 + WORDS_PER_BEAT - 1) / WORDS_PER_BEAT;
   localparam int ENTRY_BASE_BEAT= 1; // beat0 is global alloc register
-  localparam int OWNER_W        = `ARB_SEL_BITS(NUM_MASTERS, 1);
+  localparam int OWNER_W        = `JOB_MMIO_OWNER_W;
   localparam int GEN_W          = 16;
 
-  localparam int CTRL_VALID_BIT   = 0;
-  localparam int CTRL_OCCUPY_BIT  = 1;
-  localparam int CTRL_WORKING_BIT = 2;
-  localparam int CTRL_OWNER_LSB   = 4;
-  localparam int CTRL_GEN_LSB     = CTRL_OWNER_LSB + OWNER_W;
+  localparam int CTRL_VALID_BIT   = `JOB_MMIO_CTRL_VALID_BIT;
+  localparam int CTRL_OCCUPY_BIT  = `JOB_MMIO_CTRL_OCCUPY_BIT;
+  localparam int CTRL_WORKING_BIT = `JOB_MMIO_CTRL_WORKING_BIT;
+  localparam int CTRL_OWNER_LSB   = `JOB_MMIO_CTRL_OWNER_LSB;
+  localparam int CTRL_GEN_LSB     = `JOB_MMIO_CTRL_GEN_LSB;
 
   localparam int ALLOC_SUCCESS_BIT = 0;
   localparam int ALLOC_ENTRY_LSB   = 1;
@@ -53,6 +54,10 @@ module tb_VX_job_frontend;
 
   VX_node_done_if done_if();
 
+  logic                 hw_write_valid;
+  logic [ENTRYID_W-1:0] hw_write_entry_id;
+  logic [31:0]          hw_write_value;
+
   logic [NUM_MASTERS-1:0] mmio_rsp_ready;
 
   for (genvar m = 0; m < NUM_MASTERS; ++m) begin : g_mmio_rsp_ready
@@ -65,13 +70,17 @@ module tb_VX_job_frontend;
     .NUM_ENTRIES(NUM_ENTRIES),
     .NUM_REGS32 (NUM_REGS32),
     .ENTRYID_W  (ENTRYID_W),
+    .HW_WRITE_REG_IDX(HW_WRITE_REG_IDX),
     .CFG_BASE_ADDR(TB_CFG_BASE_ADDR)
   ) dut (
     .clk(clk),
     .reset(reset),
     .mmio_if(mmio_if),
     .issue_if(issue_if),
-    .done_if(done_if)
+    .done_if(done_if),
+    .hw_write_valid_i(hw_write_valid),
+    .hw_write_entry_id_i(hw_write_entry_id),
+    .hw_write_value_i(hw_write_value)
   );
 
   function automatic logic [mmio_if[0].ADDR_WIDTH-1:0] alloc_addr();
@@ -102,6 +111,10 @@ module tb_VX_job_frontend;
 
       done_if.valid    = 1'b0;
       done_if.entry_id = '0;
+
+      hw_write_valid    = 1'b0;
+      hw_write_entry_id = '0;
+      hw_write_value    = '0;
 
       repeat (5) @(posedge clk);
       reset = 1'b0;
@@ -437,6 +450,26 @@ module tb_VX_job_frontend;
     end
   endtask
 
+  task automatic read_hw_word(input int entry, output logic [31:0] value);
+    logic [TB_DATA_SIZE*8-1:0] beat;
+    begin
+      mmio_read_lane0(entry_beat_addr(entry, HW_WRITE_REG_IDX / WORDS_PER_BEAT), beat);
+      value = beat[(HW_WRITE_REG_IDX % WORDS_PER_BEAT) * 32 +: 32];
+    end
+  endtask
+
+  task automatic send_hw_write(input int entry_id, input logic [31:0] value);
+    begin
+      @(negedge clk);
+      hw_write_entry_id = ENTRYID_W'(entry_id);
+      hw_write_value    = value;
+      hw_write_valid    = 1'b1;
+      @(posedge clk);
+      @(negedge clk);
+      hw_write_valid    = 1'b0;
+    end
+  endtask
+
   int issues_seen;
   int issue_entry_q[$];
 
@@ -473,6 +506,7 @@ module tb_VX_job_frontend;
     int l;
     int ml_used;
     logic [31:0] ctrl;
+    logic [31:0] hw_word;
     logic [TB_DATA_SIZE*8-1:0] rd;
     logic [TB_DATA_SIZE*8-1:0] wr_pat;
     logic [TB_DATA_SIZE*8-1:0] wr_init;
@@ -507,6 +541,18 @@ module tb_VX_job_frontend;
     alloc_try(ok, eid, owner, gen); if (!ok || eid != 2 || owner != 0 || gen != 1) $fatal(1, "alloc #2 mismatch");
     alloc_try(ok, eid, owner, gen); if (!ok || eid != 3 || owner != 0 || gen != 1) $fatal(1, "alloc #3 mismatch");
     alloc_try(ok, eid, owner, gen); if (ok)                                         $fatal(1, "alloc must fail when full");
+
+    read_hw_word(0, hw_word);
+    if (hw_word !== 32'd0)
+      $fatal(1, "hardware-managed register was not reset on allocation: 0x%08x", hw_word);
+
+    // Software writes, including byte-enabled writes, must not modify the
+    // hardware-managed register.
+    mmio_write_lane0(entry_beat_addr(0, HW_WRITE_REG_IDX / WORDS_PER_BEAT),
+                     (TB_DATA_SIZE*8)'(64'hA5A5_5A5A_1234_5678), '1);
+    read_hw_word(0, hw_word);
+    if (hw_word !== 32'd0)
+      $fatal(1, "software modified hardware-managed register: 0x%08x", hw_word);
 
     // 2) Basic MMIO write/read sanity on entry2 beat1
     wr_pat = (TB_DATA_SIZE*8)'(64'h1122_3344_AABB_CCDD);
@@ -597,6 +643,11 @@ module tb_VX_job_frontend;
     if (issue_entry_q[0] != 0 || issue_entry_q[1] != 1 || issue_entry_q[2] != 2 || issue_entry_q[3] != 3)
       $fatal(1, "issue RR mismatch: %0d,%0d,%0d,%0d", issue_entry_q[0], issue_entry_q[1], issue_entry_q[2], issue_entry_q[3]);
 
+    send_hw_write(1, 32'd7);
+    read_hw_word(1, hw_word);
+    if (hw_word !== 32'd7)
+      $fatal(1, "hardware update mismatch: got 0x%08x", hw_word);
+
     // 5) done clears valid/occupy/working
     send_done(1);
     send_done(3);
@@ -605,6 +656,9 @@ module tb_VX_job_frontend;
     read_control_word(1, ctrl);
     if ((ctrl[0] !== 1'b0) || (ctrl[1] !== 1'b0) || (ctrl[2] !== 1'b0))
       $fatal(1, "entry1 control mismatch after done: ctrl=0x%08x", ctrl);
+    read_hw_word(1, hw_word);
+    if (hw_word !== 32'd7)
+      $fatal(1, "done cleared hardware-managed register: 0x%08x", hw_word);
 
     read_control_word(3, ctrl);
     if ((ctrl[0] !== 1'b0) || (ctrl[1] !== 1'b0) || (ctrl[2] !== 1'b0))
@@ -614,6 +668,10 @@ module tb_VX_job_frontend;
     alloc_try_m1(ok, eid, owner, gen); if (!ok || eid != 1 || owner != 1 || gen != 2) $fatal(1, "re-alloc #0 mismatch");
     alloc_try(ok, eid, owner, gen);    if (!ok || eid != 3 || owner != 0 || gen != 2) $fatal(1, "re-alloc #1 mismatch");
     alloc_try(ok, eid, owner, gen);    if (ok)                                          $fatal(1, "alloc must fail when full again");
+
+    read_hw_word(1, hw_word);
+    if (hw_word !== 32'd0)
+      $fatal(1, "re-allocation did not reset hardware-managed register: 0x%08x", hw_word);
 
     read_control_word(1, ctrl);
     if ((ctrl[CTRL_OCCUPY_BIT] !== 1'b1)

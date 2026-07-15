@@ -17,6 +17,7 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
 
     // From gemm_ctrl (commands)
     VX_gemm_dma_ctrl_if.slave  gemm_dma_ctrl_if,
+    output wire                store_done,
 
     // To gemm_sync (notify completion)
     VX_gemm_sync_if.master     gemm_sync_if,
@@ -343,6 +344,7 @@ module VX_gemm_tmem_dma_ctrl import VX_gpu_pkg::*; #(
     // =========================================================
     assign gemm_dma_ctrl_if.idle = (state_q == S_IDLE);
     assign gemm_dma_ctrl_if.done = (state_q == S_DONE);
+    assign store_done = (state_q == S_WAIT_DONE) && done_all_valid && (cmd_op == OP_DMA_ST);
 
     // =========================================================
     // FSM combinational logic

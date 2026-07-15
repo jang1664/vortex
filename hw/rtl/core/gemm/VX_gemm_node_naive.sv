@@ -452,7 +452,10 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
       .reset(reset),
       .mmio_if(mmio_if),
       .issue_if(issue_if),
-      .done_if(done_if)
+      .done_if(done_if),
+      .hw_write_valid_i(1'b0),
+      .hw_write_entry_id_i('0),
+      .hw_write_value_i('0)
     );
 
     // Per-lane 4:1 LMEM arbiter: {i_lane[i], w (lane 0 only), sz_lane[i], o_lane[i]}

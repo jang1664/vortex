@@ -58,7 +58,11 @@ module tb_VX_gemm_ctrl;
     .cfg_reg_if       (cfg_reg_if.slave),
     .done_if          (done_if.master),
     .gemm_ctrl_if     (gemm_ctrl_if.master),
-    .gemm_sync_slv_if (gemm_sync_slv_if)
+    .gemm_sync_slv_if (gemm_sync_slv_if),
+    .output_store_done_i(1'b0),
+    .progress_update_valid_o(),
+    .progress_update_entry_id_o(),
+    .progress_update_value_o()
   );
 
   // --------------------------------------------------------------------------

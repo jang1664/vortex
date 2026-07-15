@@ -18,6 +18,8 @@ module VX_job_desc_mmio_regs import VX_gpu_pkg::*; #(
   parameter int NUM_REGS32             = 16,
   parameter int ENTRYID_W              = `JOB_MMIO_ENTRYID_W,
   parameter int OWNER_W                = `JOB_MMIO_OWNER_W,
+  parameter int OWNER_TAG_BITS         = 0,
+  parameter int HW_WRITE_REG_IDX       = -1,
 
   parameter int GEN_W                  = `JOB_MMIO_GEN_W,
   parameter logic [63:0] CFG_BASE_ADDR = 64'h0,
@@ -35,6 +37,10 @@ module VX_job_desc_mmio_regs import VX_gpu_pkg::*; #(
   input  wire [ENTRYID_W-1:0]    disp_set_working_entry_id_i,
   input  wire                    disp_clear_entry_valid_i,
   input  wire [ENTRYID_W-1:0]    disp_clear_entry_id_i,
+
+  input  wire                    hw_write_valid_i,
+  input  wire [ENTRYID_W-1:0]    hw_write_entry_id_i,
+  input  wire [31:0]             hw_write_value_i,
 
   output logic [NUM_ENTRIES-1:0] valid_o,
   output logic [NUM_ENTRIES-1:0] occupy_o,
@@ -93,6 +99,8 @@ module VX_job_desc_mmio_regs import VX_gpu_pkg::*; #(
     if (WORDS_PER_BEAT <= 0)          $fatal(1, "%s: WORDS_PER_BEAT invalid", INSTANCE_ID);
     if (ENTRYID_W < $clog2(NUM_ENTRIES)) $fatal(1, "%s: ENTRYID_W too small", INSTANCE_ID);
     if (OWNER_W <= 0)                 $fatal(1, "%s: OWNER_W must be >= 1", INSTANCE_ID);
+    if (OWNER_TAG_BITS > OWNER_W)      $fatal(1, "%s: OWNER_TAG_BITS exceeds OWNER_W", INSTANCE_ID);
+    if (OWNER_TAG_BITS > TAG_WIDTH)    $fatal(1, "%s: OWNER_TAG_BITS exceeds TAG_WIDTH", INSTANCE_ID);
     if (GEN_W <= 0)                   $fatal(1, "%s: GEN_W must be >= 1", INSTANCE_ID);
     if ((CTRL_GEN_LSB + GEN_W) > 32)  $fatal(1, "%s: CONTROL owner/gen bits exceed 32b", INSTANCE_ID);
   end
@@ -213,6 +221,7 @@ module VX_job_desc_mmio_regs import VX_gpu_pkg::*; #(
   int                   alloc_sel_e;
   int                   alloc_probe_e;
   int                   next_alloc;
+  int                   hw_write_e;
   logic                 alloc_success;
   logic                 alloc_taken;
   logic                 rsp_holding;
@@ -316,6 +325,7 @@ module VX_job_desc_mmio_regs import VX_gpu_pkg::*; #(
     alloc_sel_e = -1;
     alloc_probe_e = 0;
     next_alloc  = 0;
+    hw_write_e  = 0;
     alloc_success = 1'b0;
     alloc_taken   = 1'b0;
 
@@ -337,9 +347,18 @@ module VX_job_desc_mmio_regs import VX_gpu_pkg::*; #(
       end
     end
 
+    if (hw_write_valid_i && HW_WRITE_REG_IDX >= 0 && HW_WRITE_REG_IDX < NUM_REGS32) begin
+      hw_write_e = int'(hw_write_entry_id_i);
+      if (hw_write_e >= 0 && hw_write_e < NUM_ENTRIES
+       && occupy_q[hw_write_e] && working_q[hw_write_e]) begin
+        regs32_d[hw_write_e][HW_WRITE_REG_IDX] = hw_write_value_i;
+      end
+    end
+
     // MMIO request handling
     if (req_process) begin
-      req_owner  = '0;
+      req_owner = OWNER_W'(req_tag_q
+                        & TAG_WIDTH'((64'(1) << OWNER_TAG_BITS) - 1));
       rsp_valid_d = ~req_rw_q;
       rsp_tag_d   = req_tag_q;
       rsp_data_d  = '0;
@@ -373,6 +392,9 @@ module VX_job_desc_mmio_regs import VX_gpu_pkg::*; #(
               working_d[alloc_sel_e]    = 1'b0;
               owner_d[alloc_sel_e]      = req_owner;
               generation_d[alloc_sel_e] = generation_q[alloc_sel_e] + GEN_W'(1);
+              if (HW_WRITE_REG_IDX >= 0 && HW_WRITE_REG_IDX < NUM_REGS32) begin
+                regs32_d[alloc_sel_e][HW_WRITE_REG_IDX] = '0;
+              end
               next_alloc = (alloc_sel_e + 1) % NUM_ENTRIES;
               rr_alloc_d = next_alloc[RRW-1:0];
               rsp_data_d[req_lane_q][0 +: 32] = pack_alloc_rsp(
@@ -410,6 +432,10 @@ module VX_job_desc_mmio_regs import VX_gpu_pkg::*; #(
                     new_w[CTRL_WORKING_BIT] = old_w[CTRL_WORKING_BIT];
                     new_w[CTRL_OWNER_LSB +: OWNER_W] = old_w[CTRL_OWNER_LSB +: OWNER_W];
                     new_w[CTRL_GEN_LSB +: GEN_W]     = old_w[CTRL_GEN_LSB +: GEN_W];
+                  end
+
+                  if (r32 == HW_WRITE_REG_IDX) begin
+                    new_w = old_w;
                   end
 
                   regs32_d[eid][r32] = new_w;
@@ -458,6 +484,9 @@ module VX_job_desc_mmio_regs import VX_gpu_pkg::*; #(
                   working_d[alloc_sel_e]    = 1'b0;
                   owner_d[alloc_sel_e]      = req_owner;
                   generation_d[alloc_sel_e] = generation_q[alloc_sel_e] + GEN_W'(1);
+                  if (HW_WRITE_REG_IDX >= 0 && HW_WRITE_REG_IDX < NUM_REGS32) begin
+                    regs32_d[alloc_sel_e][HW_WRITE_REG_IDX] = '0;
+                  end
                   next_alloc = (alloc_sel_e + 1) % NUM_ENTRIES;
                   rr_alloc_d = next_alloc[RRW-1:0];
                   rsp_data_d[l][0 +: 32] = pack_alloc_rsp(
@@ -499,6 +528,10 @@ module VX_job_desc_mmio_regs import VX_gpu_pkg::*; #(
                       new_w[CTRL_WORKING_BIT] = old_w[CTRL_WORKING_BIT];
                       new_w[CTRL_OWNER_LSB +: OWNER_W] = old_w[CTRL_OWNER_LSB +: OWNER_W];
                       new_w[CTRL_GEN_LSB +: GEN_W]     = old_w[CTRL_GEN_LSB +: GEN_W];
+                    end
+
+                    if (r32 == HW_WRITE_REG_IDX) begin
+                      new_w = old_w;
                     end
 
                     regs32_d[eid][r32] = new_w;

@@ -102,6 +102,7 @@ module tb_VX_gemm_node_improve
   localparam int REG_LOG2_DMA_MT         = 40;
   localparam int REG_LOG2_DMA_KT         = 41;
   localparam int REG_LOG2_DMA_NT         = 42;
+  localparam int REG_OUTPUT_PROGRESS     = 43;
 
   localparam int JOB_NUM_ENTRIES = `JOB_MMIO_NUM_ENTRIES;
   localparam int JOB_NUM_REGS32  = `GEMM_CFG_REG_NUM;
@@ -2091,19 +2092,37 @@ module tb_VX_gemm_node_improve
     end
   endtask
 
-  task automatic wait_job_done(input int unsigned eid);
+  task automatic wait_job_done(
+    input int unsigned eid,
+    input int unsigned expected_progress
+  );
     logic [31:0] ctrl;
+    logic [31:0] progress;
+    logic [31:0] prev_progress;
     int unsigned timeout;
     begin
       timeout = 0;
+      prev_progress = 0;
       $display("[%0t] wait_job_done: polling entry%0d CONTROL.valid(bit0)==0", $time, eid);
       do begin
+        job_read_reg32(eid, REG_OUTPUT_PROGRESS, progress);
+        if (progress < prev_progress)
+          $fatal(1, "[%0t] output progress regressed: prev=%0d current=%0d", $time,
+                 prev_progress, progress);
+        if (progress > expected_progress)
+          $fatal(1, "[%0t] output progress exceeded expected count: current=%0d expected=%0d", $time,
+                 progress, expected_progress);
+        prev_progress = progress;
         job_read_reg32(eid, REG_CONTROL, ctrl);
         @(posedge clk);
         timeout++;
         if (timeout > 1000000)
           $fatal(1, "[%0t] wait_job_done timeout ctrl=0x%08h", $time, ctrl);
       end while (ctrl[`JOB_MMIO_CTRL_VALID_BIT] == 1'b1);
+      job_read_reg32(eid, REG_OUTPUT_PROGRESS, progress);
+      if (progress != expected_progress)
+        $fatal(1, "[%0t] final output progress mismatch: got=%0d expected=%0d", $time,
+               progress, expected_progress);
       $display("[%0t] JOB DONE detected for entry%0d", $time, eid);
     end
   endtask
@@ -2172,7 +2191,7 @@ module tb_VX_gemm_node_improve
           lmem_ibuf0_base, lmem_ibuf1_base, lmem_wbuf0_base, lmem_wbuf1_base,
           lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base, lmem_obuf_base
         );
-        wait_job_done(job_eid);
+        wait_job_done(job_eid, (DMA_MT / DMA_MT) * (DMA_NT / DMA_MXU_NT));
       end else if ($test$plusargs("PARTITIONED")) begin
         if ((test_m != (2 * DMA_MT)) || (test_n != (2 * DMA_NT)))
           $fatal(1, "[%0t] PARTITIONED requires M=%0d N=%0d", $time, 2 * DMA_MT, 2 * DMA_NT);
@@ -2191,7 +2210,7 @@ module tb_VX_gemm_node_improve
               lmem_ibuf0_base, lmem_ibuf1_base, lmem_wbuf0_base, lmem_wbuf1_base,
               lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base, lmem_obuf_base
             );
-            wait_job_done(job_eid);
+            wait_job_done(job_eid, (DMA_MT / DMA_MT) * (DMA_NT / DMA_MXU_NT));
           end
         end
       end else begin
@@ -2203,7 +2222,9 @@ module tb_VX_gemm_node_improve
           lmem_ibuf0_base, lmem_ibuf1_base, lmem_wbuf0_base, lmem_wbuf1_base,
           lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base, lmem_obuf_base
         );
-        wait_job_done(job_eid);
+        wait_job_done(job_eid,
+                      ((test_m + DMA_MT - 1) / DMA_MT)
+                    * ((test_n + DMA_MXU_NT - 1) / DMA_MXU_NT));
       end
 
       repeat (1000) @(posedge clk);

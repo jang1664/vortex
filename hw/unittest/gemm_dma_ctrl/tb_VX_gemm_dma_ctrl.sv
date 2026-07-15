@@ -92,7 +92,10 @@ module tb_VX_gemm_dma_ctrl;
     .reset(reset),
     .mmio_if(mmio_if),
     .issue_if(issue_if.master),
-    .done_if(done_if.slave)
+    .done_if(done_if.slave),
+    .hw_write_valid_i(1'b0),
+    .hw_write_entry_id_i('0),
+    .hw_write_value_i('0)
   );
 
   // --------------------------------------------------------------------------

@@ -156,7 +156,11 @@ module VX_gemm_ctrl_with_ldma import VX_gpu_pkg::*; #(
     .cfg_reg_if(cfg_reg_if),
     .gemm_ctrl_if(gemm_ctrl_if),
     .done_if(gemm_node_done_if),
-    .gemm_sync_slv_if(gemm_sync_if)
+    .gemm_sync_slv_if(gemm_sync_if),
+    .output_store_done_i(1'b0),
+    .progress_update_valid_o(),
+    .progress_update_entry_id_o(),
+    .progress_update_value_o()
   );
 
   VX_gemm_dma_ctrl #(

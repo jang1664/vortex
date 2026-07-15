@@ -10,6 +10,7 @@ module VX_job_frontend import VX_gpu_pkg::*; #(
   parameter int NUM_ENTRIES = 16,
   parameter int NUM_REGS32  = 16,
   parameter int ENTRYID_W   = `JOB_MMIO_ENTRYID_W,
+  parameter int HW_WRITE_REG_IDX = -1,
   parameter logic [63:0] CFG_BASE_ADDR = 64'h0,
   parameter bit ONE_LANE_MMIO = 1'b0
 ) (
@@ -18,7 +19,11 @@ module VX_job_frontend import VX_gpu_pkg::*; #(
 
   VX_lsu_mem_if.slave            mmio_if[NUM_MASTERS],
   VX_config_reg_if.master        issue_if,
-  VX_node_done_if.slave          done_if
+  VX_node_done_if.slave          done_if,
+
+  input wire                     hw_write_valid_i,
+  input wire [ENTRYID_W-1:0]     hw_write_entry_id_i,
+  input wire [31:0]              hw_write_value_i
 );
 
   logic [NUM_ENTRIES-1:0] valid;
@@ -63,6 +68,8 @@ module VX_job_frontend import VX_gpu_pkg::*; #(
     .NUM_ENTRIES       (NUM_ENTRIES),
     .NUM_REGS32        (NUM_REGS32),
     .ENTRYID_W         (ENTRYID_W),
+    .OWNER_TAG_BITS    (MMIO_ARB_SEL_BITS),
+    .HW_WRITE_REG_IDX  (HW_WRITE_REG_IDX),
     .OWNER_W           (OWNER_W),
     .CFG_BASE_ADDR     (CFG_BASE_ADDR),
     .NUM_LANES         (`NUM_LSU_LANES),
@@ -77,6 +84,9 @@ module VX_job_frontend import VX_gpu_pkg::*; #(
     .disp_set_working_entry_id_i(reg_set_working_entry_id),
     .disp_clear_entry_valid_i   (reg_clear_entry_valid),
     .disp_clear_entry_id_i      (reg_clear_entry_id),
+    .hw_write_valid_i           (hw_write_valid_i),
+    .hw_write_entry_id_i        (hw_write_entry_id_i),
+    .hw_write_value_i           (hw_write_value_i),
     .valid_o                    (valid),
     .occupy_o                   (occupy),
     .working_o                  (working),
