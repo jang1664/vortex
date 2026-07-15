@@ -51,14 +51,14 @@ iterations:
     error_summary: "None. FP16-only sgemm_tcu completed and reported PASSED."
     root_cause: "N/A"
     fix_applied: "N/A"
-    lesson: "DISALBE_BF16 structurally removes the BF16 BHF multiplier while preserving functional FP16 TCU execution."
+    lesson: "DISABLE_BF16 structurally removes the BF16 BHF multiplier while preserving functional FP16 TCU execution."
   - iteration: 8
     timestamp: "2026-07-15 12:35"
     status: pass
     error_summary: "None. BF16-only sgemm_tcu completed and reported PASSED."
     root_cause: "N/A"
     fix_applied: "N/A"
-    lesson: "DISALBE_FP16 structurally removes the FP16 BHF multiplier while preserving functional BF16 TCU execution."
+    lesson: "DISABLE_FP16 structurally removes the FP16 BHF multiplier while preserving functional BF16 TCU execution."
   - iteration: 9
     timestamp: "2026-07-15 12:42"
     status: pass
@@ -96,12 +96,14 @@ log:
   - timestamp: "2026-07-15 12:30"
     entry: "Iteration 6 found the final missing build prerequisite, build/kernel/libvortex.a, after the user-local Vortex device compiler was invoked successfully."
   - timestamp: "2026-07-15 12:32"
-    entry: "Iteration 7 passed FP16-only sgemm_tcu with DISALBE_BF16: 16x16x16 matrices, 19774 instructions, 14566 cycles, and PASSED."
+    entry: "Iteration 7 passed FP16-only sgemm_tcu with DISABLE_BF16: 16x16x16 matrices, 19774 instructions, 14566 cycles, and PASSED."
   - timestamp: "2026-07-15 12:35"
-    entry: "Iteration 8 passed BF16-only sgemm_tcu with DISALBE_FP16: 16x16x16 matrices, 19774 instructions, 14563 cycles, and PASSED. Task complete."
+    entry: "Iteration 8 passed BF16-only sgemm_tcu with DISABLE_FP16: 16x16x16 matrices, 19774 instructions, 14563 cycles, and PASSED. Task complete."
   - timestamp: "2026-07-15 12:42"
     entry: "After explicitly removing the single-format BHF mux and format-delay pipeline, FP16-only sgemm_tcu passed with 19774 instructions and 14570 cycles."
   - timestamp: "2026-07-15 12:45"
     entry: "The corresponding BF16-only sgemm_tcu passed with 19774 instructions and 14580 cycles; the default dual-format VCS compile/elaboration also completed successfully."
   - timestamp: "2026-07-15 12:48"
     entry: "Removed the DSP runtime format mux in both single-format configurations by directly connecting the enabled converter output; FP16-only and BF16-only DSP VCS compile/elaboration both passed."
+  - timestamp: "2026-07-15 15:21"
+    entry: "Corrected the typo in the public macro API to DISABLE_* across RTL and documentation so it matches syn_tcu.py. Fresh FP16-only DISABLE_BF16 and BF16-only DISABLE_FP16 xrt-vcs-sim sgemm_tcu runs both passed."

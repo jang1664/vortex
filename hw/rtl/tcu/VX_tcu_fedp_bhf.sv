@@ -56,9 +56,9 @@ module VX_tcu_fedp_bhf #(
 
     // Transprecision Multiply
 
-`ifdef DISALBE_FP16
+`ifdef DISABLE_FP16
     `UNUSED_VAR (fmt_s);
-`elsif DISALBE_BF16
+`elsif DISABLE_BF16
     `UNUSED_VAR (fmt_s);
 `else
     localparam FMT_DELAY = FMUL_LATENCY + FRND_LATENCY;
@@ -80,14 +80,14 @@ module VX_tcu_fedp_bhf #(
     wire [32:0] mult_result [TCK];
 
     for (genvar i = 0; i < TCK; i++) begin : g_prod
-    `ifndef DISALBE_FP16
+    `ifndef DISABLE_FP16
         wire [32:0] mult_result_fp16;
     `endif
-    `ifndef DISALBE_BF16
+    `ifndef DISABLE_BF16
         wire [32:0] mult_result_bf16;
     `endif
 
-    `ifndef DISALBE_FP16
+    `ifndef DISABLE_FP16
         // FP16 multiplication
         VX_tcu_bhf_fmul #(
             .IN_EXPW (5),
@@ -110,7 +110,7 @@ module VX_tcu_fedp_bhf #(
         );
     `endif
 
-    `ifndef DISALBE_BF16
+    `ifndef DISABLE_BF16
         // BF16 multiplication
         VX_tcu_bhf_fmul #(
             .IN_EXPW (8),
@@ -133,9 +133,9 @@ module VX_tcu_fedp_bhf #(
         );
     `endif
 
-    `ifdef DISALBE_FP16
+    `ifdef DISABLE_FP16
         wire [32:0] mult_result_sel = mult_result_bf16;
-    `elsif DISALBE_BF16
+    `elsif DISABLE_BF16
         wire [32:0] mult_result_sel = mult_result_fp16;
     `else
         logic [32:0] mult_result_sel;

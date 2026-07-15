@@ -6,14 +6,13 @@ Add compile-time controls that allow the floating-point TCU to be built with
 only the FP16 datapath or only the BF16 datapath. The current behavior, in
 which both formats are available, must remain the default.
 
-The macro spelling below intentionally preserves the requested `DISALBE_*`
-form:
+The format controls use the standard `DISABLE_*` spelling:
 
 | Build defines | Supported input formats | BHF multiplier hardware |
 | --- | --- | --- |
 | Neither macro defined | FP16 and BF16 | FP16 and BF16 multipliers |
-| `DISALBE_BF16` | FP16 only | FP16 multiplier only |
-| `DISALBE_FP16` | BF16 only | BF16 multiplier only |
+| `DISABLE_BF16` | FP16 only | FP16 multiplier only |
+| `DISABLE_FP16` | BF16 only | BF16 multiplier only |
 | Both macros defined | Invalid configuration | Elaboration must fail |
 
 No macro will be defined by default. This preserves the current RTL and
@@ -44,21 +43,21 @@ Files:
 - `hw/rtl/VX_config.vh`
 - `hw/rtl/tcu/VX_tcu_fp.sv`
 
-Document `DISALBE_FP16` and `DISALBE_BF16` in the TCU configurable-knobs
+Document `DISABLE_FP16` and `DISABLE_BF16` in the TCU configurable-knobs
 section. Do not synthesize an enable macro when neither disable macro is
 present; absence of both macros is the dual-format default.
 
 Add a configuration check that rejects simultaneous definition of
-`DISALBE_FP16` and `DISALBE_BF16`. Keep a simulation/elaboration check in
+`DISABLE_FP16` and `DISABLE_BF16`. Keep a simulation/elaboration check in
 `VX_tcu_fp` as a second line of defense so an invalid TCU cannot silently
 produce zero results.
 
 Add simulation-only assertions at the single `VX_tcu_fp` request boundary:
 
 - A valid request with `fmt_s == TCU_FP16_ID` is illegal when
-  `DISALBE_FP16` is defined.
+  `DISABLE_FP16` is defined.
 - A valid request with `fmt_s == TCU_BF16_ID` is illegal when
-  `DISALBE_BF16` is defined.
+  `DISABLE_BF16` is defined.
 
 Place these checks at the request boundary rather than in every generated
 FEDP instance to avoid duplicate assertion messages. Gate them with an
@@ -72,9 +71,9 @@ File: `hw/rtl/tcu/VX_tcu_fedp_bhf.sv`
 Within each `g_prod` generate iteration:
 
 1. Guard the FP16 result wire and `fp16_mul` instance with
-   `` `ifndef DISALBE_FP16 ``.
+   `` `ifndef DISABLE_FP16 ``.
 2. Guard the BF16 result wire and `bf16_mul` instance with
-   `` `ifndef DISALBE_BF16 ``.
+   `` `ifndef DISABLE_BF16 ``.
 3. Guard the corresponding `fmt_s_delayed` case items with the same macros.
 4. Retain a zero-valued default case so unsupported or malformed format IDs
    have a fully assigned combinational result and do not infer latches.
@@ -89,8 +88,8 @@ Expected elaborated structures are:
 
 ```text
 default:         fp16_mul + bf16_mul -> format mux -> shared reduction tree
-DISALBE_BF16:    fp16_mul -> direct connection -> shared reduction tree
-DISALBE_FP16:    bf16_mul -> direct connection -> shared reduction tree
+DISABLE_BF16:    fp16_mul -> direct connection -> shared reduction tree
+DISABLE_FP16:    bf16_mul -> direct connection -> shared reduction tree
 ```
 
 The preprocessor guards, not synthesis constant propagation alone, must remove
@@ -128,8 +127,7 @@ Files:
 - `docs/rtl/tcu/VX_tcu_fp.md`
 - `docs/rtl/tcu/README.md`
 
-Add the configuration table from this plan, state that the misspelled
-`DISALBE_*` spelling is intentional API, and clarify that the macros control
+Add the configuration table from this plan and clarify that the macros control
 input formats only. FP32 accumulation/output behavior and integer TCU formats
 are unaffected.
 
@@ -141,8 +139,8 @@ unchanged so the default continues to include both formats. A user can append
 one of the following after sourcing the selected configuration:
 
 ```bash
-CONFIGS+=" -DDISALBE_BF16"  # FP16-only TCU
-CONFIGS+=" -DDISALBE_FP16"  # BF16-only TCU
+CONFIGS+=" -DDISABLE_BF16"  # FP16-only TCU
+CONFIGS+=" -DDISABLE_FP16"  # BF16-only TCU
 export CONFIGS
 ```
 
@@ -175,8 +173,8 @@ synthesis run.
 Elaborate `TCU_BHF` in these four configurations:
 
 1. No disable macro: both multiplier instance names must exist.
-2. `DISALBE_BF16`: only FP16 multiplier instances must exist.
-3. `DISALBE_FP16`: only BF16 multiplier instances must exist.
+2. `DISABLE_BF16`: only FP16 multiplier instances must exist.
+3. `DISABLE_FP16`: only BF16 multiplier instances must exist.
 4. Both macros: compilation/elaboration must fail with a clear configuration
    error.
 
@@ -199,10 +197,10 @@ Run at least these cases, rebuilding the `sgemm_tcu` application with matching
 | --- | --- | --- |
 | Default dual-format | FP16 | Pass |
 | Default dual-format | BF16 | Pass |
-| `DISALBE_BF16` | FP16 | Pass |
-| `DISALBE_FP16` | BF16 | Pass |
-| `DISALBE_BF16` | BF16 | Simulation assertion failure |
-| `DISALBE_FP16` | FP16 | Simulation assertion failure |
+| `DISABLE_BF16` | FP16 | Pass |
+| `DISABLE_FP16` | BF16 | Pass |
+| `DISABLE_BF16` | BF16 | Simulation assertion failure |
+| `DISABLE_FP16` | FP16 | Simulation assertion failure |
 
 Use `-DTCU_BHF` in these runs so verification exercises the structurally
 duplicated multipliers targeted by the change. Repeat a supported-format smoke
@@ -234,16 +232,16 @@ that:
 ## Acceptance Criteria
 
 - Existing builds with no new macros retain dual FP16/BF16 support.
-- `DISALBE_BF16` produces a functional FP16-only TCU and structurally removes
+- `DISABLE_BF16` produces a functional FP16-only TCU and structurally removes
   the BHF BF16 multipliers.
-- `DISALBE_FP16` produces a functional BF16-only TCU and structurally removes
+- `DISABLE_FP16` produces a functional BF16-only TCU and structurally removes
   the BHF FP16 multipliers.
 - Defining both macros is rejected.
 - Issuing a disabled input format is detected in RTL simulation.
 - Interface widths, ISA format IDs, pipeline latency, and FP32 accumulation are
   unchanged.
 - The implementation and documentation use the exact requested
-  `DISALBE_FP16` and `DISALBE_BF16` spellings consistently.
+  `DISABLE_FP16` and `DISABLE_BF16` spellings consistently.
 
 ## Non-Goals
 

@@ -155,6 +155,7 @@ BASE_DEFINES = [
     "NDEBUG",
     "XLEN_64",
     "EXT_TCU_ENABLE",  # gates the .tcu member of op_args_t and TCU pipe stage
+    "DISABLE_TCU_INT",  # remove integer TCU and FP/INT routing for FP-only area
     "DISABLE_BF16",    # disable bf16_mul in VX_tcu_fp (for area comparison)
 ]
 

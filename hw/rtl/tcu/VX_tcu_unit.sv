@@ -29,7 +29,6 @@ module VX_tcu_unit import VX_gpu_pkg::*, VX_tcu_pkg::*; #(
 );
     localparam BLOCK_SIZE = `NUM_TCU_BLOCKS;
     localparam NUM_LANES  = `NUM_TCU_LANES;
-    localparam PE_COUNT   = 2;
 
     `VX_STATIC_ASSERT (BLOCK_SIZE == `ISSUE_WIDTH, ("must be full issue execution"));
     `VX_STATIC_ASSERT (NUM_LANES == `NUM_THREADS, ("must be full warp execution"));
@@ -55,6 +54,44 @@ module VX_tcu_unit import VX_gpu_pkg::*, VX_tcu_pkg::*; #(
     ) per_block_result_if[BLOCK_SIZE]();
 
     for (genvar block_idx = 0; block_idx < BLOCK_SIZE; ++block_idx) begin : g_blocks
+
+    `ifdef DISABLE_TCU_INT
+
+        `VX_RUNTIME_ASSERT (~(per_block_execute_if[block_idx].valid
+                           && per_block_execute_if[block_idx].ready)
+                         || ~per_block_execute_if[block_idx].data.op_args.tcu.fmt_s[3],
+            ("%t: %s integer TCU input format requested in FP-only build", $time, INSTANCE_ID))
+
+        VX_tcu_fp #(
+            .INSTANCE_ID (`SFORMATF(("%s-fp%0d", INSTANCE_ID, block_idx)))
+        ) tcu_fp (
+            `SCOPE_IO_BIND (block_idx)
+            .clk        (clk),
+            .reset      (reset),
+            .execute_if (per_block_execute_if[block_idx]),
+            .result_if  (per_block_result_if[block_idx])
+        );
+
+    `elsif DISABLE_TCU_FP
+
+        `VX_RUNTIME_ASSERT (~(per_block_execute_if[block_idx].valid
+                           && per_block_execute_if[block_idx].ready)
+                         || per_block_execute_if[block_idx].data.op_args.tcu.fmt_s[3],
+            ("%t: %s floating-point TCU input format requested in INT-only build", $time, INSTANCE_ID))
+
+        VX_tcu_int #(
+            .INSTANCE_ID (`SFORMATF(("%s-int%0d", INSTANCE_ID, block_idx)))
+        ) tcu_int (
+            `SCOPE_IO_BIND (block_idx)
+            .clk        (clk),
+            .reset      (reset),
+            .execute_if (per_block_execute_if[block_idx]),
+            .result_if  (per_block_result_if[block_idx])
+        );
+
+    `else
+
+        localparam PE_COUNT = 2;
 
         VX_execute_if #(
             .data_t (tcu_exe_t)
@@ -99,6 +136,8 @@ module VX_tcu_unit import VX_gpu_pkg::*, VX_tcu_pkg::*; #(
             .execute_if (pe_execute_if[1]),
             .result_if  (pe_result_if[1])
         );
+
+    `endif
     end
 
     VX_gather_unit #(

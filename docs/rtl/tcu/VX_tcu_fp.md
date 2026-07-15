@@ -57,10 +57,9 @@ The supported format can be restricted at compile time:
 | Build defines | Supported input formats | BHF multipliers |
 |---------------|-------------------------|-----------------|
 | Neither macro defined | FP16 and BF16 | FP16 and BF16 |
-| `DISALBE_BF16` | FP16 only | FP16 only |
-| `DISALBE_FP16` | BF16 only | BF16 only |
+| `DISABLE_BF16` | FP16 only | FP16 only |
+| `DISABLE_FP16` | BF16 only | BF16 only |
 
-The misspelled `DISALBE_*` names are intentional configuration API spellings.
 Defining both macros is rejected. A simulation assertion reports an accepted
 request that selects a disabled input format. The macros do not change the
 format IDs, interface, pipeline latency, FP32 accumulator/output, or integer

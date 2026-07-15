@@ -836,13 +836,23 @@
 
 // TCU Configurable Knobs /////////////////////////////////////////////////////
 
-// Floating-point input format controls. The DISALBE spelling is intentional.
+// TCU execution path controls.
+// By default, both floating-point and integer paths are enabled.
+// Define DISABLE_TCU_INT for an FP-only TCU.
+// Define DISABLE_TCU_FP for an INT-only TCU.
+`ifdef DISABLE_TCU_INT
+`ifdef DISABLE_TCU_FP
+`error "DISABLE_TCU_INT and DISABLE_TCU_FP cannot be defined together"
+`endif
+`endif
+
+// Floating-point input format controls.
 // By default, both FP16 and BF16 input formats are enabled.
-// Define DISALBE_FP16 for a BF16-only TCU.
-// Define DISALBE_BF16 for an FP16-only TCU.
-`ifdef DISALBE_FP16
-`ifdef DISALBE_BF16
-`error "DISALBE_FP16 and DISALBE_BF16 cannot be defined together"
+// Define DISABLE_FP16 for a BF16-only TCU.
+// Define DISABLE_BF16 for an FP16-only TCU.
+`ifdef DISABLE_FP16
+`ifdef DISABLE_BF16
+`error "DISABLE_FP16 and DISABLE_BF16 cannot be defined together"
 `endif
 `endif
 

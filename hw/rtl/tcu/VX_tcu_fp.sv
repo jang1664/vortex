@@ -78,11 +78,11 @@ module VX_tcu_fp import VX_gpu_pkg::*, VX_tcu_pkg::*; #(
     wire result_fire = result_if.valid && result_if.ready;
     wire fedp_enable, fedp_done;
 
-`ifdef DISALBE_FP16
+`ifdef DISABLE_FP16
     `VX_RUNTIME_ASSERT (~execute_fire || fmt_s != TCU_FP16_ID,
         ("%t: %s disabled FP16 TCU input format requested", $time, INSTANCE_ID))
 `endif
-`ifdef DISALBE_BF16
+`ifdef DISABLE_BF16
     `VX_RUNTIME_ASSERT (~execute_fire || fmt_s != TCU_BF16_ID,
         ("%t: %s disabled BF16 TCU input format requested", $time, INSTANCE_ID))
 `endif

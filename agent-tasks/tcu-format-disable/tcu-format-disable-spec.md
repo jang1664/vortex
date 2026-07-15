@@ -23,9 +23,9 @@ worktree modifications and is not required for the requested functional test.
 
 ## Design Decisions
 
-- Preserve the requested macro spelling exactly:
-  - `DISALBE_BF16` creates an FP16-only TCU.
-  - `DISALBE_FP16` creates a BF16-only TCU.
+- Use the corrected macro spelling consistently:
+  - `DISABLE_BF16` creates an FP16-only TCU.
+  - `DISABLE_FP16` creates a BF16-only TCU.
 - With neither macro defined, both FP16 and BF16 remain supported.
 - Defining both macros is an invalid configuration and must fail at compile or
   elaboration.
@@ -50,11 +50,10 @@ worktree modifications and is not required for the requested functional test.
 ## Acceptance Criteria
 
 - Default dual-format build elaborates both BHF multiplier families.
-- `DISALBE_BF16` passes an FP16 `sgemm_tcu` test and omits BF16 BHF
+- `DISABLE_BF16` passes an FP16 `sgemm_tcu` test and omits BF16 BHF
   multipliers.
-- `DISALBE_FP16` passes a BF16 `sgemm_tcu` test and omits FP16 BHF
+- `DISABLE_FP16` passes a BF16 `sgemm_tcu` test and omits FP16 BHF
   multipliers.
 - Both macros together are rejected.
 - Disabled-format requests fail clearly in simulation.
 - Existing TCU latency and handshaking are unchanged.
-

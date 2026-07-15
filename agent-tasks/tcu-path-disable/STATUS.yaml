@@ -1,0 +1,31 @@
+task: tcu-path-disable
+state: DONE
+summary: Add compile-time whole-path FP/INT TCU controls with direct single-path wiring.
+spec: agent-tasks/tcu-path-disable/tcu-path-disable-spec.md
+iterations:
+  - iteration: 1
+    timestamp: "2026-07-15 15:37"
+    status: pass
+    error_summary: "None. Default dual-path elaboration and FP-only, INT-only I8, and INT-only I4 functional tests passed; the invalid dual-disable configuration was rejected."
+    root_cause: "N/A"
+    fix_applied: "N/A"
+    lesson: "Conditional top-level branching removes the switch and inactive backend while preserving enabled-path handshaking through the existing per-block interfaces."
+  - iteration: 2
+    timestamp: "2026-07-15 15:40"
+    status: pass
+    error_summary: "None. FP-only dual-format elaboration and FP-only BF16 functional execution passed."
+    root_cause: "N/A"
+    fix_applied: "N/A"
+    lesson: "Whole-path FP selection composes correctly with both the dual FP16/BF16 backend and either individual FP format-disable macro."
+pitfalls:
+  - "I32 has a declared format ID but is not implemented by VX_tcu_fedp_int; functional INT-only tests must use I8/U8/I4/U4 inputs with I32 accumulation/output."
+  - "Single-path builds must not leave VX_pe_switch or unused two-entry interface arrays elaborated."
+log:
+  - timestamp: "2026-07-15 15:30"
+    entry: "Confirmed DISABLE_TCU_INT and DISABLE_TCU_FP semantics, retained independent FP16/BF16 controls, and defined direct single-path request/result wiring."
+  - timestamp: "2026-07-15 15:32"
+    entry: "Implemented conditional dual/FP-only/INT-only branches, configuration rejection, wrong-class request assertions, documentation, and DISABLE_TCU_INT in the standalone FP synthesis configuration."
+  - timestamp: "2026-07-15 15:37"
+    entry: "Verification iteration 1 passed: default dual-path VCS elaboration, FP-only FP16 sgemm_tcu, INT-only I8 and I4 sgemm_tcu, and expected rejection of simultaneous DISABLE_TCU_INT and DISABLE_TCU_FP."
+  - timestamp: "2026-07-15 15:40"
+    entry: "Verification iteration 2 passed FP-only dual-format elaboration with both FP16/BF16 multiplier families and FP-only BF16 sgemm_tcu using DISABLE_TCU_INT plus DISABLE_FP16."

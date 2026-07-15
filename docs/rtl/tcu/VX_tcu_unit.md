@@ -61,10 +61,29 @@ Tensor Core Unit의 메인 모듈. Dispatch에서 WMMA micro-op을 받아 FP/INT
 ```systemverilog
 localparam BLOCK_SIZE = `NUM_TCU_BLOCKS;  // 보통 ISSUE_WIDTH와 동일
 localparam NUM_LANES  = `NUM_TCU_LANES;   // 보통 NUM_THREADS와 동일
-localparam PE_COUNT   = 2;                 // FP + INT 백엔드
+localparam PE_COUNT   = 2;                 // dual-path 구성에만 존재
 ```
 
 ## 주요 특징
+
+### Compile-time path configuration
+
+The execution path is selected structurally at compile time:
+
+| Build defines | Instantiated backend | Request/result connection |
+|---------------|----------------------|---------------------------|
+| Neither macro defined | FP and INT | Two-way `VX_pe_switch` |
+| `DISABLE_TCU_INT` | FP only | Direct per-block connection |
+| `DISABLE_TCU_FP` | INT only | Direct per-block connection |
+
+The two single-path configurations do not elaborate `VX_pe_switch` or its
+two-entry execute/result interface arrays. Accepted requests are checked in
+simulation so an FP-only build rejects an integer format and an INT-only build
+rejects a floating-point format. Defining both macros is invalid.
+
+`DISABLE_FP16` and `DISABLE_BF16` remain available within an enabled FP path.
+The integer path is enabled or disabled as a whole and supports I8, U8, I4,
+and U4 inputs.
 
 ### Full Warp Execution
 

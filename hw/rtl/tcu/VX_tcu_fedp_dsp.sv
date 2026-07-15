@@ -123,9 +123,9 @@ module VX_tcu_fedp_dsp #(
     localparam C_DELAY = FCVT_LATENCY + FMUL_LATENCY + FRED_LATENCY;
 
     `UNUSED_VAR ({fmt_d, c_val});
-`ifdef DISALBE_FP16
+`ifdef DISABLE_FP16
     `UNUSED_VAR (fmt_s);
-`elsif DISALBE_BF16
+`elsif DISABLE_BF16
     `UNUSED_VAR (fmt_s);
 `endif
 
@@ -143,14 +143,14 @@ module VX_tcu_fedp_dsp #(
     // convert to fp32
 
     for (genvar i = 0; i < TCK; i++) begin : g_cvt
-    `ifndef DISALBE_FP16
+    `ifndef DISABLE_FP16
         wire [31:0] a_row_fp16, b_col_fp16;
     `endif
-    `ifndef DISALBE_BF16
+    `ifndef DISABLE_BF16
         wire [31:0] a_row_bf16, b_col_bf16;
     `endif
 
-    `ifndef DISALBE_FP16
+    `ifndef DISABLE_FP16
         fp16_to_fp32 cvt_row_fp16 (
             .fp16_in  (a_row16[i]),
             .fp32_out (a_row_fp16)
@@ -162,7 +162,7 @@ module VX_tcu_fedp_dsp #(
         );
     `endif
 
-    `ifndef DISALBE_BF16
+    `ifndef DISABLE_BF16
         bf16_to_fp32 cvt_row_bf16 (
             .bf16_in  (a_row16[i]),
             .fp32_out (a_row_bf16)
@@ -174,10 +174,10 @@ module VX_tcu_fedp_dsp #(
         );
     `endif
 
-    `ifdef DISALBE_FP16
+    `ifdef DISABLE_FP16
         wire [31:0] a_row_sel = a_row_bf16;
         wire [31:0] a_col_sel = b_col_bf16;
-    `elsif DISALBE_BF16
+    `elsif DISABLE_BF16
         wire [31:0] a_row_sel = a_row_fp16;
         wire [31:0] a_col_sel = b_col_fp16;
     `else

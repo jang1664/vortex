@@ -54,6 +54,21 @@ Vortex GPU의 Tensor Core Unit (TCU)은 행렬 곱셈-누산 (Matrix Multiply-Ac
 | I4 | 11 | 4 | 부호있는 4비트 정수 |
 | U4 | 12 | 4 | 부호없는 4비트 정수 |
 
+### TCU execution path configuration
+
+Both floating-point and integer execution paths are enabled by default. A
+build can remove one complete path with the following compile-time macros:
+
+| Build defines | Enabled paths | Routing structure |
+|---------------|---------------|-------------------|
+| Neither macro defined | FP and INT | Two-way `VX_pe_switch` |
+| `DISABLE_TCU_INT` | FP only | Direct dispatch/result connection |
+| `DISABLE_TCU_FP` | INT only | Direct dispatch/result connection |
+
+Defining both path-disable macros is invalid. The integer path includes I8,
+U8, I4, and U4 as one unit. When the FP path is enabled, `DISABLE_FP16` and
+`DISABLE_BF16` can still remove an individual floating-point input format.
+
 ### Floating-point input format configuration
 
 The floating-point TCU supports both FP16 and BF16 inputs by default. A build
@@ -62,12 +77,12 @@ can remove one input-format datapath with the following compile-time macros:
 | Build defines | Supported FP input formats |
 |---------------|----------------------------|
 | Neither macro defined | FP16 and BF16 |
-| `DISALBE_BF16` | FP16 only |
-| `DISALBE_FP16` | BF16 only |
+| `DISABLE_BF16` | FP16 only |
+| `DISABLE_FP16` | BF16 only |
 
-The `DISALBE_*` spelling is intentional and is part of the configuration API.
-Defining both macros is invalid. These macros do not change FP32 accumulation,
-FP32 output, or integer TCU formats.
+Defining both macros is invalid. These macros do not change FP32 accumulation
+or FP32 output, and they do not affect integer formats when the integer path is
+enabled.
 
 ## WMMA 연산
 
