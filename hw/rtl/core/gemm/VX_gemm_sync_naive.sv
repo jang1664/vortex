@@ -197,18 +197,17 @@ module VX_gemm_sync_naive import VX_gpu_pkg::*; #(
   //    value[31]==1 -> set (= value[30:0])
   //    else         -> add (+= value)
   // --------------------------------------------------------------------------
-  function automatic [31:0] apply_update(input [31:0] cur, input [31:0] v);
-    begin
-      if (v[31]) apply_update = {1'b0, v[30:0]}; // set
-      else      apply_update = cur + {1'b0, v[30:0]}; // add
-    end
-  endfunction
-
   wire [7:0] rid0 = gemm_sync_slv_if[0].reg_idx[7:0];
   wire [7:0] rid1 = gemm_sync_slv_if[1].reg_idx[7:0];
   wire [7:0] rid2 = gemm_sync_slv_if[2].reg_idx[7:0];
   wire [7:0] rid3 = gemm_sync_slv_if[3].reg_idx[7:0];
   wire [7:0] rid4 = gemm_sync_slv_if[4].reg_idx[7:0];
+
+  wire [31:0] val0 = gemm_sync_slv_if[0].value;
+  wire [31:0] val1 = gemm_sync_slv_if[1].value;
+  wire [31:0] val2 = gemm_sync_slv_if[2].value;
+  wire [31:0] val3 = gemm_sync_slv_if[3].value;
+  wire [31:0] val4 = gemm_sync_slv_if[4].value;
 
   wire upd0_valid = gemm_sync_slv_if[0].valid && (rid0 < NUM_SYNC_REGS);
   wire upd1_valid = gemm_sync_slv_if[1].valid && (rid1 < NUM_SYNC_REGS);
@@ -218,22 +217,54 @@ module VX_gemm_sync_naive import VX_gpu_pkg::*; #(
 
   logic [31:0] sync_regs_n [NUM_SYNC_REGS];
 
+  function automatic [31:0] reduce_updates(
+    input logic [31:0] cur,
+    input logic [7:0]  reg_id
+  );
+    logic hit0, hit1, hit2, hit3, hit4;
+    logic set0, set1, set2, set3, set4;
+    logic [31:0] base;
+    logic [31:0] add0, add1, add2, add3, add4;
+    logic [31:0] sum01, sum23, sum4base;
+    begin
+      hit0 = upd0_valid && (rid0 == reg_id);
+      hit1 = upd1_valid && (rid1 == reg_id);
+      hit2 = upd2_valid && (rid2 == reg_id);
+      hit3 = upd3_valid && (rid3 == reg_id);
+      hit4 = upd4_valid && (rid4 == reg_id);
+
+      set0 = hit0 && val0[31];
+      set1 = hit1 && val1[31];
+      set2 = hit2 && val2[31];
+      set3 = hit3 && val3[31];
+      set4 = hit4 && val4[31];
+
+      base = cur;
+      if (set0) base = {1'b0, val0[30:0]};
+      if (set1) base = {1'b0, val1[30:0]};
+      if (set2) base = {1'b0, val2[30:0]};
+      if (set3) base = {1'b0, val3[30:0]};
+      if (set4) base = {1'b0, val4[30:0]};
+
+      // An add contributes only when no later node overwrites it with SET.
+      add0 = (hit0 && !val0[31] && !(set1 || set2 || set3 || set4)) ? val0 : 32'd0;
+      add1 = (hit1 && !val1[31] && !(set2 || set3 || set4)) ? val1 : 32'd0;
+      add2 = (hit2 && !val2[31] && !(set3 || set4)) ? val2 : 32'd0;
+      add3 = (hit3 && !val3[31] && !set4) ? val3 : 32'd0;
+      add4 = (hit4 && !val4[31]) ? val4 : 32'd0;
+
+      // Six operands reduce through three balanced 32-bit adder levels.
+      sum01 = add0 + add1;
+      sum23 = add2 + add3;
+      sum4base = add4 + base;
+      reduce_updates = (sum01 + sum23) + sum4base;
+    end
+  endfunction
+
   always_comb begin
     for (int k = 0; k < NUM_SYNC_REGS; k++) begin
-      sync_regs_n[k] = sync_regs[k];
+      sync_regs_n[k] = reduce_updates(sync_regs[k], 8'(k));
     end
-
-    // Fold all same-cycle updates deterministically (node0 -> node4).
-    if (upd0_valid)
-      sync_regs_n[rid0] = apply_update(sync_regs_n[rid0], gemm_sync_slv_if[0].value);
-    if (upd1_valid)
-      sync_regs_n[rid1] = apply_update(sync_regs_n[rid1], gemm_sync_slv_if[1].value);
-    if (upd2_valid)
-      sync_regs_n[rid2] = apply_update(sync_regs_n[rid2], gemm_sync_slv_if[2].value);
-    if (upd3_valid)
-      sync_regs_n[rid3] = apply_update(sync_regs_n[rid3], gemm_sync_slv_if[3].value);
-    if (upd4_valid)
-      sync_regs_n[rid4] = apply_update(sync_regs_n[rid4], gemm_sync_slv_if[4].value);
   end
 
   always_ff @(posedge clk) begin

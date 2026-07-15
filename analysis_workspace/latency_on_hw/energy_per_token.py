@@ -279,8 +279,37 @@ def energy_row_from_record(
     return output
 
 
-def summarize_energy_rows(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
-    groups: dict[tuple[str, str, Any, Any, str], dict[str, Any]] = {}
+def summarize_energy_rows(
+    rows: Iterable[Mapping[str, Any]],
+    *,
+    group_by: Sequence[str] = (),
+) -> list[dict[str, Any]]:
+    group_fields = tuple(group_by)
+    if len(set(group_fields)) != len(group_fields):
+        raise ValueError(f"group_by fields must be unique: {group_fields}")
+    reserved_fields = {
+        "power_metric",
+        "stage",
+        "batch",
+        "seq_len",
+        "variant",
+        "tokens",
+        "total_energy_j",
+        "component_count",
+        "energy_component_count",
+        "measured_power_count",
+        "imputed_power_count",
+        "missing_power_count",
+        "missing_cycle_count",
+        "missing_latency_count",
+        "complete",
+        "joules_per_token",
+    }
+    collisions = reserved_fields.intersection(group_fields)
+    if collisions:
+        raise ValueError(f"group_by fields conflict with summary columns: {sorted(collisions)}")
+
+    groups: dict[tuple[Any, ...], dict[str, Any]] = {}
     for row in rows:
         power_metric = _canonical_power_metric(row.get("power_metric") or DEFAULT_POWER_METRIC)
         stage = _text(row.get("energy_stage")) or _stage(row)
@@ -291,7 +320,8 @@ def summarize_energy_rows(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, A
         if seq_len in (None, ""):
             seq_len = _seq_len(row)
         variant = _text(row.get("variant"))
-        key = (power_metric, stage, batch, seq_len, variant)
+        group_values = tuple(_text(row.get(field)) for field in group_fields)
+        key = (power_metric, stage, batch, seq_len, variant, *group_values)
         group = groups.setdefault(
             key,
             {
@@ -309,6 +339,7 @@ def summarize_energy_rows(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, A
                 "missing_power_count": 0,
                 "missing_cycle_count": 0,
                 "missing_latency_count": 0,
+                **dict(zip(group_fields, group_values)),
             },
         )
         group["component_count"] += 1
@@ -352,7 +383,12 @@ def summarize_energy_rows(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, A
         group["joules_per_token"] = group["total_energy_j"] / tokens if has_energy else None
         summary.append(group)
 
-    summary.sort(key=_summary_sort_key)
+    summary.sort(
+        key=lambda row: (
+            *_summary_sort_key(row),
+            *(_text(row.get(field)) for field in group_fields),
+        )
+    )
     return summary
 
 
@@ -504,6 +540,34 @@ def add_relative_energy_values(
         row["relative_baseline_joules_per_token"] = baseline
         row["relative_scope"] = relative_scope
         row["relative_joules_per_token"] = value / baseline if value is not None and baseline > 0 else None
+    return rows
+
+
+def add_relative_energy_component_values(
+    component_summary: Iterable[Mapping[str, Any]],
+    total_summary: Iterable[Mapping[str, Any]],
+    *,
+    relative_scope: str = "x_tick",
+) -> list[dict[str, Any]]:
+    totals = add_relative_energy_values(total_summary, relative_scope=relative_scope)
+    baselines = {
+        _relative_group_key(row, relative_scope): _to_float(
+            row.get("relative_baseline_joules_per_token")
+        )
+        for row in totals
+    }
+
+    rows = [dict(row) for row in component_summary]
+    for row in rows:
+        baseline = baselines.get(_relative_group_key(row, relative_scope))
+        value = _to_float(row.get("joules_per_token"))
+        row["relative_baseline_joules_per_token"] = baseline
+        row["relative_scope"] = relative_scope
+        row["relative_joules_per_token"] = (
+            value / baseline
+            if value is not None and baseline is not None and baseline > 0
+            else None
+        )
     return rows
 
 

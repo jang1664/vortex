@@ -1,0 +1,15 @@
+task: naive-gemm-sync-balanced-reduction
+status: complete
+iterations:
+  - iteration: 1
+    status: sim_fail
+    error_summary: "gemm_node timed out waiting for job completion at 7,329,205 ns"
+    root_cause: "The verifier reused a VCS build compiled without the requested naive target CONFIGS; compile.log omitted NUM_THREADS=16, MXU_COL_TILE=32, and VX_ENABLE_HW_EXPF."
+    fix_applied: "No RTL fix; regenerated build/hw/VX_config.h, invalidated the stale compile stamp/simv, and rebuilt with configs/naive_gemm_simd_th16_tcol32_hwexp_dcache.sh sourced."
+    lesson: "RTL unittest results are valid only after sourcing the target config and forcing a rebuild when CONFIGS change, because the compile stamp does not track environment-defined macros."
+  - iteration: 2
+    status: pass
+    error_summary: "None; gemm_node completed and all 64 outputs matched."
+    root_cause: "N/A"
+    fix_applied: "Verified the balanced per-register reduction with the requested target CONFIGS and a VCS build containing NUM_THREADS=16, MXU_COL_TILE=32, and VX_ENABLE_HW_EXPF."
+    lesson: "The balanced reducer preserves the naive sync behavior under the target hardware configuration while removing the serialized update chain."

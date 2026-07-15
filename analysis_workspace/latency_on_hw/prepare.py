@@ -28,18 +28,22 @@ from tools.latency_bench.compose import LatencyScaleRule
 from tools.latency_bench.estimate import LatencyEstimateOptions
 from tools.latency_bench.plot import SuiteBarPlotOptions, prepare_suite_bar_data_versions
 from tools.latency_bench.suite import SuiteMatrixOverrides, load_suite
-from energy_per_token import DEFAULT_FPGA_PERIOD_S, add_relative_energy_values, energy_rows_from_records, summarize_energy_rows
+from energy_per_token import (
+    DEFAULT_FPGA_PERIOD_S,
+    add_relative_energy_component_values,
+    add_relative_energy_values,
+    energy_rows_from_records,
+    summarize_energy_rows,
+)
 import plot as plot_script
 
 FPGA_IDLE_POWER = 0.854 * 6.300 + 0.852 * 0.200
 
-# outputs_main raw DBs are shared by the prepared latency CSVs.
-LATENCY_FOLDER = "outputs_main_small_test"
+OUTPUT_FOLDER = "output_figure"
 
 # Main workload selection. Use a string for one model or a list/tuple for
 # multiple models.
-# TARGET_MODEL = ["llama2_7b", "llama3_8b"]
-TARGET_MODEL = ["llama2_7b"]
+TARGET_MODEL = ["llama2_7b", "llama3_8b"]
 
 
 def target_models() -> tuple[str, ...]:
@@ -57,9 +61,11 @@ TARGET_MODELS = target_models()
 # Match make_case.sh / make_cases.sh stage-specific shape controls:
 # --prefill-batches, --prefill-seq-lens, --generation-batches, --generation-seq-lens.
 TARGET_PREFILL_BATCHES = (1,)
-TARGET_PREFILL_SEQ_LENS = (1024,2048,4096,8192,16384,32768,65536)
+# TARGET_PREFILL_SEQ_LENS = (1024,2048,4096,8192,16384,32768,65536)
+TARGET_PREFILL_SEQ_LENS = (1024,2048,4096,8192,16384,32768)
 TARGET_GENERATION_BATCHES = (1, 2, 4)
-TARGET_GENERATION_SEQ_LENS = (1024,2048,4096,8192,16384,32768,65536)
+# TARGET_GENERATION_SEQ_LENS = (1024,2048,4096,8192,16384,32768,65536)
+TARGET_GENERATION_SEQ_LENS = (1024,2048,4096,8192,16384,32768)
 
 # Per-output shape selection. Empty tuples mean "all available shapes" for that stage.
 E2E_PREFILL_BATCHES = TARGET_PREFILL_BATCHES
@@ -151,6 +157,10 @@ def main_out_name(model: str) -> str:
     return f"{model}_{_stage_shape_name_for_selection(E2E_SHAPE_SELECTION)}"
 
 
+def e2e_stacked_out_name(model: str) -> str:
+    return f"{model}_e2e_stacked_by_{E2E_STACK_BY}_{_stage_shape_name_for_selection(E2E_SHAPE_SELECTION)}"
+
+
 def gemm_only_out_name(model: str) -> str:
     return f"{model}_gemm_only_{_stage_shape_name_for_selection(GEMM_ONLY_SHAPE_SELECTION)}"
 
@@ -158,22 +168,26 @@ def gemm_only_out_name(model: str) -> str:
 def energy_out_name(model: str, power_metric: str) -> str:
     return f"{model}_energy_per_token_{power_metric}_{_stage_shape_name_for_selection(ENERGY_SHAPE_SELECTION)}"
 
+
+def energy_stacked_out_name(model: str, power_metric: str) -> str:
+    return f"{model}_energy_per_token_stacked_by_{E2E_STACK_BY}_{power_metric}_{_stage_shape_name_for_selection(ENERGY_SHAPE_SELECTION)}"
+
 RAW_DB_SUBDIRS = (
-    "naive_gemm_simd_th16_tcol32",
+    "naive_gemm_simd_th16_tcol32_hwexp_dcache",
     "improve_th16_tcol32_hwexp_dcache",
 )
-RAW_DBS_OUTPUT_MAIN = [
-    LATENCY_DIR / LATENCY_FOLDER / subdir / "raw_db.csv"
-    for subdir in RAW_DB_SUBDIRS
-]
+RAW_DB_ROOTS = {
+    "llama2_7b": LATENCY_DIR / "outputs_llama2_main",
+    "llama3_8b": LATENCY_DIR / "outputs_llama3_main",
+}
 
-# Power-only raw DBs are kept separate from RAW_DBS_OUTPUT_MAIN so latency
-# composition never consumes rows with blank latency metrics.
-RAW_DBS_POWER_CANDIDATES = [
-    *RAW_DBS_OUTPUT_MAIN,
-    LATENCY_DIR / LATENCY_FOLDER / "power" / "naive_gemm_simd_th16_tcol32" / "raw_db.csv",
-]
-RAW_DBS_POWER = [path for path in RAW_DBS_POWER_CANDIDATES if path.exists()]
+
+def raw_dbs_for_model(model: str) -> tuple[Path, ...]:
+    try:
+        root = RAW_DB_ROOTS[model]
+    except KeyError as exc:
+        raise ValueError(f"no raw DB root configured for model: {model}") from exc
+    return tuple(root / subdir / "raw_db.csv" for subdir in RAW_DB_SUBDIRS)
 
 SUITE_CASE_SUFFIXES = (
     "prefill_C1",
@@ -230,7 +244,7 @@ def load_suites(tag: str, *, model: str, shape_selection: ShapeSelection | None 
 
 
 # Prepared CSV controls. The expensive compose/estimate step writes excel_figure_data.csv and total.csv.
-FIGURE_OUTPUT_ROOT = LATENCY_DIR / LATENCY_FOLDER / "figures_prepare"
+FIGURE_OUTPUT_ROOT = LATENCY_DIR / OUTPUT_FOLDER / "figures_prepare"
 FIGURE_DATA_CSV_NAME = "excel_figure_data.csv"
 TOTAL_CSV_NAME = "total.csv"
 USE_FIGURE_DATA_CACHE = True
@@ -246,6 +260,7 @@ HUE_AXIS = "variant"
 ROW_AXIS = "stage"
 COL_AXIS = "batch"
 STACK_BY = "name"
+E2E_STACK_BY = "kind"
 RELATIVE = True
 RELATIVE_SCOPE = "x_tick"  # global, subplot, or x_tick
 
@@ -375,22 +390,25 @@ LATENCY_SCALE_RULES = []
 
 # Target-case area normalization rules. These match composed suite-case columns
 # after raw measurements are mapped back to C1/C2/C3/C4 variants.
+TH16_FP_TCU_CELL_AREA=276593.0284
+FPINT_MXU_CELL_AREA=693436.0606
+AREA_RATIO=FPINT_MXU_CELL_AREA / TH16_FP_TCU_CELL_AREA
 CASE_LATENCY_SCALE_RULES = [
     # C1 GEMM scale is 1.0, so no rule is needed.
     LatencyScaleRule(
         "C2_gemm_area_norm",
         {"kind": "gemm", "variant": "attn_sgemm_tcu_fpint_gemm_naive_spinquant"},
-        2.29,
+        1+AREA_RATIO,
     ),
     LatencyScaleRule(
         "C3_gemm_area_norm",
         {"kind": "gemm", "variant": "all_fpint_gemm_naive_spinquant"},
-        1.29,
+        AREA_RATIO,
     ),
     LatencyScaleRule(
         "C4_gemm_area_norm",
         {"kind": "gemm", "variant": (C4_ALONE_VARIANT, C4_FUSED_VARIANT)},
-        1.29,
+        AREA_RATIO,
     ),
 ]
 
@@ -619,6 +637,7 @@ def _make_suite_options(
     model: str,
     suite_tag: str,
     stacked: bool,
+    stack_by: str = STACK_BY,
     include_c4_alone: bool,
     row_filters: tuple | None,
     shape_selection: ShapeSelection | None,
@@ -627,8 +646,9 @@ def _make_suite_options(
     if not include_c4_alone and exclude_c4_alone not in plot_row_filters:
         plot_row_filters = (*plot_row_filters, exclude_c4_alone)
     suites = load_suites(suite_tag, model=model, shape_selection=shape_selection)
+    raw_dbs = raw_dbs_for_model(model)
     options = SuiteBarPlotOptions(
-        raw_dbs=tuple(RAW_DBS_OUTPUT_MAIN),
+        raw_dbs=raw_dbs,
         out_dir=out_dir,
         metric=METRIC,
         select=SELECT,
@@ -638,7 +658,7 @@ def _make_suite_options(
         row=ROW_AXIS,
         col=COL_AXIS,
         stacked=stacked,
-        stack_by=STACK_BY,
+        stack_by=stack_by,
         relative=RELATIVE,
         relative_scope=RELATIVE_SCOPE,
         label_maps=plot_label_maps(include_c4_alone=include_c4_alone),
@@ -657,6 +677,7 @@ def export_suite_figure_data(
     suite_tag: str,
     out_name: str,
     stacked: bool,
+    stack_by: str = STACK_BY,
     include_c4_alone: bool = False,
     row_filters: tuple | None = None,
     shape_selection: ShapeSelection | None = E2E_SHAPE_SELECTION,
@@ -665,7 +686,7 @@ def export_suite_figure_data(
     suites_in = suite_paths(suite_tag, model)
     if not suites_in:
         raise FileNotFoundError(f"no suite YAMLs found for SUITE_SOURCE={SUITE_SOURCE!r}, suite_tag={suite_tag!r}")
-    missing_inputs = [path for path in [*suites_in, *RAW_DBS_OUTPUT_MAIN] if not path.exists()]
+    missing_inputs = [path for path in [*suites_in, *raw_dbs_for_model(model)] if not path.exists()]
     if missing_inputs:
         raise FileNotFoundError("missing plot inputs:\n" + "\n".join(str(path) for path in missing_inputs))
     suites, options = _make_suite_options(
@@ -673,6 +694,7 @@ def export_suite_figure_data(
         model=model,
         suite_tag=suite_tag,
         stacked=stacked,
+        stack_by=stack_by,
         include_c4_alone=include_c4_alone,
         row_filters=row_filters,
         shape_selection=shape_selection,
@@ -704,6 +726,7 @@ def load_or_export_suite_figure_data(
     suite_tag: str,
     out_name: str,
     stacked: bool,
+    stack_by: str = STACK_BY,
     include_c4_alone: bool = False,
     row_filters: tuple | None = None,
     shape_selection: ShapeSelection | None = E2E_SHAPE_SELECTION,
@@ -733,6 +756,7 @@ def load_or_export_suite_figure_data(
         suite_tag=suite_tag,
         out_name=out_name,
         stacked=stacked,
+        stack_by=stack_by,
         include_c4_alone=include_c4_alone,
         row_filters=row_filters,
         shape_selection=shape_selection,
@@ -781,44 +805,67 @@ def _energy_composed_rows(
     return rebuilt.composed
 
 
-def export_energy_figure_data(
+def export_energy_figure_data_pair(
     *,
     model: str,
     suite_tag: str,
     main_result: PlotRunResult | None,
     out_name: str,
+    stacked_out_name: str,
     power_metric: str,
     fpga_period_s: float = ENERGY_FPGA_PERIOD_S,
     force_rebuild: bool | None = None,
-) -> tuple[pd.DataFrame, str]:
-    energy_out_dir = FIGURE_OUTPUT_ROOT / out_name
-    energy_csv = energy_out_dir / FIGURE_DATA_CSV_NAME
+) -> tuple[str, str]:
+    """Build flat and stacked energy tables from one shared energy calculation."""
     force = FORCE_REBUILD_FIGURE_DATA if force_rebuild is None else force_rebuild
-    if USE_FIGURE_DATA_CACHE and energy_csv.exists() and not force:
-        return _read_figure_data(energy_csv), "cache"
+    output_names = (out_name, stacked_out_name)
+    output_paths = tuple(figure_data_path(name) for name in output_names)
+    cached = tuple(USE_FIGURE_DATA_CACHE and path.exists() and not force for path in output_paths)
+    if all(cached):
+        return "cache", "cache"
 
+    composition_out_name = next(name for name, is_cached in zip(output_names, cached) if not is_cached)
     composed = _energy_composed_rows(
         model=model,
         suite_tag=suite_tag,
         main_result=main_result,
-        out_name=out_name,
+        out_name=composition_out_name,
     )
     records = list(composed.to_dict(orient="records")) if hasattr(composed, "to_dict") else list(composed)
     rows = energy_rows_from_records(
         records,
-        RAW_DBS_POWER,
+        raw_dbs_for_model(model),
         idle_power_w=ENERGY_IDLE_POWER_W,
         include_idle_power=INCLUDE_IDLE_POWER,
         power_metric=power_metric,
         fpga_period_s=fpga_period_s,
     )
-    summary = add_relative_energy_values(summarize_energy_rows(rows), relative_scope=RELATIVE_SCOPE)
+    totals = summarize_energy_rows(rows)
+    label_maps = plot_label_maps(include_c4_alone=False)
+
+    summary = add_relative_energy_values(totals, relative_scope=RELATIVE_SCOPE)
     result = plot_script.EnergyExcelResult(
         summary=pd.DataFrame(summary),
-        figure_path=energy_out_dir / "energy_per_token.png",
+        figure_path=FIGURE_OUTPUT_ROOT / out_name / "energy_per_token.png",
     )
-    plot_script.write_energy_figure_data_csv(result, label_maps=plot_label_maps(include_c4_alone=False))
-    return _read_figure_data(energy_csv), "rebuilt"
+    plot_script.write_energy_figure_data_csv(result, label_maps=label_maps)
+
+    components = summarize_energy_rows(rows, group_by=(E2E_STACK_BY,))
+    summary = add_relative_energy_component_values(
+        components,
+        totals,
+        relative_scope=RELATIVE_SCOPE,
+    )
+    result = plot_script.EnergyExcelResult(
+        summary=pd.DataFrame(summary),
+        figure_path=FIGURE_OUTPUT_ROOT / stacked_out_name / "energy_per_token_stacked.png",
+    )
+    plot_script.write_energy_stacked_figure_data_csv(
+        result,
+        label_maps=label_maps,
+        stack_by=E2E_STACK_BY,
+    )
+    return "rebuilt", "rebuilt"
 
 BUILD_LLAMA_COMPARE = False
 LLAMA_COMPARE_OUT_DIR = FIGURE_OUTPUT_ROOT / "llama_compare"
@@ -841,16 +888,13 @@ ALL_LLAMA_COMPARE_MODELS = (
         "model": "llama2-7b",
         "display_model": "Llama2-7B",
         "suite_prefix": "llama2_7b",
-        "raw_db_roots": (LATENCY_DIR / "outputs_main",),
+        "raw_db_roots": (RAW_DB_ROOTS["llama2_7b"],),
     },
     {
         "model": "llama3-8b",
         "display_model": "Llama3-8B",
         "suite_prefix": "llama3_8b",
-        "raw_db_roots": (
-            LATENCY_DIR / "outputs_main",
-            LATENCY_DIR / "outputs_main",
-        ),
+        "raw_db_roots": (RAW_DB_ROOTS["llama3_8b"],),
     },
 )
 LLAMA_COMPARE_MODELS = tuple(
@@ -1038,6 +1082,7 @@ def main() -> int:
     for model in TARGET_MODELS:
         suite_tag = suite_tag_for_model(model)
         main_name = main_out_name(model)
+        e2e_stacked_name = e2e_stacked_out_name(model)
         gemm_name = gemm_only_out_name(model)
 
         print(f"model: {model}")
@@ -1052,6 +1097,16 @@ def main() -> int:
         )
         print(f"{model} E2E figure data source: {main_all_result.cache_status}")
 
+        e2e_stacked_result = load_or_export_suite_figure_data(
+            model=model,
+            suite_tag=suite_tag,
+            out_name=e2e_stacked_name,
+            stacked=True,
+            stack_by=E2E_STACK_BY,
+            include_c4_alone=False,
+        )
+        print(f"{model} E2E stacked figure data source: {e2e_stacked_result.cache_status}")
+
         main_all_gemm_only_result = load_or_export_suite_figure_data(
             model=model,
             suite_tag=suite_tag,
@@ -1064,25 +1119,37 @@ def main() -> int:
         print(f"{model} GEMM-only figure data source: {main_all_gemm_only_result.cache_status}")
 
         energy_names = []
+        energy_stacked_names = []
         for power_metric in ENERGY_POWER_METRICS:
             energy_name = energy_out_name(model, power_metric)
-            _energy_frame, energy_cache_status = export_energy_figure_data(
+            energy_stacked_name = energy_stacked_out_name(model, power_metric)
+            energy_cache_status, energy_stacked_cache_status = export_energy_figure_data_pair(
                 model=model,
                 suite_tag=suite_tag,
                 main_result=main_all_result,
                 out_name=energy_name,
+                stacked_out_name=energy_stacked_name,
                 power_metric=power_metric,
             )
             print(f"{model} {power_metric} energy figure data source: {energy_cache_status}")
             energy_names.append(energy_name)
 
+            print(
+                f"{model} {power_metric} stacked energy figure data source: "
+                f"{energy_stacked_cache_status}"
+            )
+            energy_stacked_names.append(energy_stacked_name)
+
         prepared_outputs.extend(
             [
                 figure_data_path(main_name),
                 total_data_path(main_name),
+                figure_data_path(e2e_stacked_name),
+                total_data_path(e2e_stacked_name),
                 figure_data_path(gemm_name),
                 total_data_path(gemm_name),
                 *(figure_data_path(energy_name) for energy_name in energy_names),
+                *(figure_data_path(energy_name) for energy_name in energy_stacked_names),
             ]
         )
 
