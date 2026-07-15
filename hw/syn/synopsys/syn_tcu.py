@@ -11,34 +11,44 @@ FEDP impl:  TCU_BHF — Berkeley HardFloat-based FEDP. Separate per-format
             distinct sub-instances in the area report.
             See VX_tcu_fedp_bhf.sv for the structural mapping.
 
-Configuration: NUM_WARPS=4 (default), NUM_THREADS=32 (overridden)
+Configuration: NUM_WARPS=4 (default), NUM_THREADS=16 (default, configurable)
   → ISSUE_WIDTH = UP(4/16) = 1
   → BLOCK_SIZE  = NUM_TCU_BLOCKS = ISSUE_WIDTH = 1
-  → NUM_LANES   = NUM_TCU_LANES  = NUM_THREADS  = 32
+  → NUM_LANES   = NUM_TCU_LANES  = NUM_THREADS  = 16
   → TCU_TC_M=4, TCU_TC_N=2, TCU_TC_K=2 (per-block tile core dims)
   → XLEN=64 (64-bit RISC-V — operand bus width)
 
-Run: python test_tcu.py [-s syn]
+Run from the configured Vortex build directory after sourcing a config:
+
+  PYTHONPATH=/path/to/hwexplorer \
+    python3 ../hw/syn/synopsys/syn_tcu.py --threads 16 [-s syn]
 """
 
 from __future__ import annotations
 
 import argparse
 import os
+import re
+from pathlib import Path
 
 from hwexplorer.automation.syn import SynthConfig
 from hwexplorer.automation.tcl_directives import Corner
 
-FILE_DIR = os.path.dirname(os.path.abspath(__file__))
-VORTEX_ROOT = os.path.abspath(f"{FILE_DIR}/../../..")
-RTL_DIR = f"{VORTEX_ROOT}/hw/rtl"
+FILE_DIR = Path(__file__).resolve().parent
+VORTEX_ROOT = FILE_DIR.parents[2]
+RTL_DIR = str(VORTEX_ROOT / "hw/rtl")
 TCU_DIR = f"{RTL_DIR}/tcu"
 BHF_DIR = f"{TCU_DIR}/bhf"
 LIBS_DIR = f"{RTL_DIR}/libs"
 CORE_DIR = f"{RTL_DIR}/core"
 IFACE_DIR = f"{RTL_DIR}/interfaces"
 HF_DIR = f"{VORTEX_ROOT}/third_party/hardfloat/source"
-RESULT_ROOT = f"{FILE_DIR}/test_results"
+RESULT_ROOT = Path(
+    os.environ.get(
+        "SYN_RESULT_ROOT",
+        VORTEX_ROOT / "build/hw/syn/synopsys/tcu",
+    )
+).expanduser().resolve()
 
 STAGES = ["syn"]
 
@@ -132,27 +142,89 @@ SEARCH_PATH = [
 ]
 
 # `define directives passed to analyze.
+# - SYNTHESIS/SYNOPSYS: select DC-safe declarations and synthesis guards.
 # - TCU_BHF: select Berkeley HardFloat FEDP variant in VX_tcu_fp.
 # - NDEBUG: synthesis build, disable debug instrumentation / UUID overhead.
-# - XLEN_32: 32-bit RISC-V (matches default but explicit).
+# - XLEN_64: 64-bit RISC-V operand and register width.
 # We deliberately do NOT define: SIMULATION, SV_DPI, SCOPE, DBG_TRACE_TCU,
 # TCU_DPI, TCU_DSP — these would pull in sim-only or FPGA-only paths.
-DEFINES = [
+BASE_DEFINES = [
+    "SYNTHESIS",
+    "SYNOPSYS",
     "TCU_BHF",         # Berkeley HardFloat variant — separate bf16_mul/fmul/fadd
     "NDEBUG",
     "XLEN_64",
-    "NUM_THREADS=32",
     "EXT_TCU_ENABLE",  # gates the .tcu member of op_args_t and TCU pipe stage
+    "DISABLE_BF16",    # disable bf16_mul in VX_tcu_fp (for area comparison)
 ]
 
 
-def run_syn(tech: str) -> None:
+def validate_inputs() -> None:
+    missing = [path for path in [*SEARCH_PATH, *RTL_FILES] if not Path(path).exists()]
+    if missing:
+        formatted = "\n  ".join(str(path) for path in missing)
+        raise SystemExit(f"Missing TCU synthesis inputs:\n  {formatted}")
+
+
+DC_FAILURE_RE = re.compile(
+    r"^Fatal:|^\*\*\* Presto compilation terminated|"
+    r"^The tool has just encountered a fatal error:|"
+    r"^Warning: Design .* unresolved references|"
+    r"^Warning: Unable to resolve reference",
+    re.MULTILINE,
+)
+REPORT_ERROR_RE = re.compile(r"^(?:Error|Fatal):", re.MULTILINE)
+
+
+def validate_synthesis_result(run_dir: Path, design_name: str) -> Path:
+    """Reject error-placeholder reports left behind by a failed DC run."""
+    area_report = run_dir / "reports" / f"14_{design_name}.mapped.area.rpt"
+    mapped_ddc = run_dir / "results" / f"{design_name}.mapped.ddc"
+    required = [mapped_ddc, area_report]
+    missing = [
+        str(path) for path in required
+        if not path.is_file() or path.stat().st_size == 0
+    ]
+
+    logs = sorted(
+        (run_dir / "logs").glob("run.log.*"),
+        key=lambda path: path.stat().st_mtime,
+    )
+    errors = []
+    if not logs:
+        missing.append(str(run_dir / "logs" / "run.log.*"))
+    else:
+        errors.extend(
+            line for line in logs[-1].read_text(errors="replace").splitlines()
+            if DC_FAILURE_RE.match(line)
+        )
+    if area_report.is_file():
+        errors.extend(
+            line for line in area_report.read_text(errors="replace").splitlines()
+            if REPORT_ERROR_RE.match(line)
+        )
+
+    if missing or errors:
+        details = []
+        if missing:
+            details.append("missing/empty artifacts:\n  " + "\n  ".join(missing))
+        if errors:
+            details.append("DC errors:\n  " + "\n  ".join(errors[:12]))
+        raise SystemExit(
+            f"{design_name} synthesis failed; inspect {run_dir / 'logs'}\n"
+            + "\n".join(details)
+        )
+    return area_report
+
+
+def run_syn(tech: str, num_threads: int) -> None:
+    defines = [*BASE_DEFINES, f"NUM_THREADS={num_threads}"]
     cfg = SynthConfig(
-        design_dir=f"{RESULT_ROOT}/synthesis_th32/tcu_unit_bhf",
+        design_dir=str(RESULT_ROOT / f"synthesis_th{num_threads}/tcu_unit_bhf"),
         syn_dir=f"syn_topo.{tech}",
         design_name="VX_tcu_unit",
         search_path=SEARCH_PATH,
-        define_list=DEFINES,
+        define_list=defines,
         an_source_list=RTL_FILES,
         param_list=[],  # VX_tcu_unit has only INSTANCE_ID (string), defaults OK
         period=10.0,
@@ -182,10 +254,9 @@ def run_syn(tech: str) -> None:
     cfg.print()
     cfg.run()
 
-
-STAGE_FUNCS = {
-    "syn": run_syn,
-}
+    run_dir = Path(cfg.design_dir) / cfg.syn_dir
+    area_report = validate_synthesis_result(run_dir, cfg.design_name)
+    print(f"# synthesis complete: {area_report}")
 
 
 def parse_stages(val: str) -> list[str]:
@@ -204,6 +275,12 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Synthesize Vortex TCU FP datapath")
     parser.add_argument("-tech", type=str, default="lpp", choices=["lpp", "fdsoi"])
     parser.add_argument(
+        "--threads",
+        type=int,
+        default=16,
+        help="Vortex NUM_THREADS value (default: 16)",
+    )
+    parser.add_argument(
         "-s",
         "--stages",
         type=parse_stages,
@@ -211,9 +288,16 @@ if __name__ == "__main__":
         help=f"Comma-separated stages. Choices: {STAGES} or 'all'.",
     )
     args = parser.parse_args()
+    if args.threads <= 0:
+        parser.error("--threads must be positive")
 
+    validate_inputs()
     ordered = [s for s in STAGES if s in args.stages]
-    print(f"# tech={args.tech}, stages={ordered}")
+    print(
+        f"# tech={args.tech}, threads={args.threads}, stages={ordered}, "
+        f"result_root={RESULT_ROOT}"
+    )
     for stage in ordered:
         print(f"\n# ===== stage: {stage} =====")
-        STAGE_FUNCS[stage](args.tech)
+        if stage == "syn":
+            run_syn(args.tech, args.threads)

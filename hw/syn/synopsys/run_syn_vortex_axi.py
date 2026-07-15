@@ -2,24 +2,31 @@
 """Synthesize Vortex_axi (vortex_afu top minus the XRT shell) for Samsung 28LPP
 via Synopsys DC, driven through hwexplorer.SynthConfig.
 
-Run from the vortex repo root:
+Run from the vortex repo root. The script sources
+configs/improve_th16_tcol32_hwexp_dcache.sh by default and replaces only the
+FPU implementation with FPU_FPNEW:
 
     conda activate stable
     PYTHONPATH=/home/jaeyong.jang/project.local/research/hwexplorer \
         python3 hw/syn/synopsys/run_syn_vortex_axi.py
 
-Override thread count / run directory without editing this file:
+Override the config, thread count, or run directory without editing this file:
 
+    VORTEX_CONFIG=configs/improve_th16_tcol32_hwexp_dcache.sh \
     NUM_THREADS=32 SYN_RUN_NAME=Vortex_axi_nt32 \
     PYTHONPATH=/home/jaeyong.jang/project.local/research/hwexplorer \
         python3 hw/syn/synopsys/run_syn_vortex_axi.py
 
-Build artifacts land in build/syn/synopsys/Vortex_axi/syn_topo.lpp/.
+By default, artifacts land in
+build/hw/syn/synopsys/Vortex_axi_nt16/syn_topo.lpp/.
 """
 
 import os
+import re
+import shlex
 import subprocess
 import sys
+from pathlib import Path
 
 from hwexplorer.automation.syn import SynthConfig
 from hwexplorer.automation.tcl_directives import Corner
@@ -32,8 +39,12 @@ VORTEX_HOME  = os.path.abspath(os.path.join(THIS_DIR, "..", "..", ".."))
 RTL          = f"{VORTEX_HOME}/hw/rtl"
 THIRD_PARTY  = f"{VORTEX_HOME}/third_party"
 SCRIPTS      = f"{VORTEX_HOME}/hw/scripts"
-RESULT_ROOT  = os.environ.get("SYN_RESULT_ROOT", f"{VORTEX_HOME}/build/syn/synopsys")
-RUN_NAME     = os.environ.get("SYN_RUN_NAME", "Vortex_axi")
+RESULT_ROOT  = os.environ.get("SYN_RESULT_ROOT", f"{VORTEX_HOME}/build/hw/syn/synopsys")
+RUN_NAME     = os.environ.get("SYN_RUN_NAME", "Vortex_axi_nt16")
+CONFIG_FILE  = os.path.abspath(os.environ.get(
+    "VORTEX_CONFIG",
+    f"{VORTEX_HOME}/configs/improve_th16_tcol32_hwexp_dcache.sh",
+))
 
 
 def _env_int(name, default):
@@ -49,18 +60,30 @@ def _env_int(name, default):
     return parsed
 
 
-NUM_THREADS  = _env_int("NUM_THREADS", 8)
+NUM_THREADS  = _env_int("NUM_THREADS", 16)
 
 # Samsung 28LPP compiled SRAMs (see agent-tasks/synopsys-dc-port/sram_inventory.md)
 MEM_GEN_DIR  = "/home/data/memory_compiler/28LPP/genSEC"
 MAX_CORNER   = "ss_0p900v_0p900v_125c"
 SRAM_SPECS   = [
+    # All compiled macro cells referenced by VX_sp_ram_compiled and
+    # VX_dp_ram_compiled. DC links only the variants instantiated by the
+    # selected configuration, but keeping the library list complete prevents
+    # parameter-dependent unresolved references.
     "cmos28lpp_ra1w_hd_8192x64m16",
+    "cmos28lpp_ra1w_hd_4096x64m16",
     "cmos28lpp_ra1w_hd_2048x64m16",
+    "cmos28lpp_ra1w_hd_1024x64m8",
+    "cmos28lpp_ra1w_hs_4096x128m8",
     "cmos28lpp_ra1w_hs_2048x128m8",
     "cmos28lpp_ra1w_hs_1024x128m8",
+    "cmos28lpp_ra1w_hs_512x128m8",
+    "cmos28lpp_ra1w_hs_256x128m8",
+    "cmos28lpp_ra2_hd_1024x16m16",
     "cmos28lpp_rf1_hd_64x128m2",
     "cmos28lpp_ra2_hd_1024x18m16",
+    "cmos28lpp_ra2_hd_512x16m16",
+    "cmos28lpp_ra2_hd_256x16m8",
     "cmos28lpp_ra2_hd_64x23m4",
     "cmos28lpp_rf2_hd_16x146m1",
     "cmos28lpp_rf2_hd_16x44m1",
@@ -68,45 +91,85 @@ SRAM_SPECS   = [
 ]
 
 # ---------------------------------------------------------------------------
-# defines (.envrc + DC-specific flags); mirrors the xilinx/xrt Makefile path
-# but with SYNOPSYS / COMPILED_SRAM_28LPP toggled on and FPU_FPNEW selected
-# automatically via VX_config.vh.
+# defines: source the requested hardware config, remove incompatible vendor/FPU
+# selectors, then overlay DC-only flags and the FPNEW exception.
 # ---------------------------------------------------------------------------
-DEFINES = [
+DC_DEFINES = [
     # synth-flow flags
     "SYNTHESIS",
     "NDEBUG",
     "XLEN_64",
     "SYNOPSYS",
     "COMPILED_SRAM_28LPP",
-    # platform / memory (the latter two normally come from vortex_afu.vh
-    # which we don't pull in; add the defaults explicitly)
+    # Platform defaults normally supplied by vortex_afu.vh, which this top
+    # does not include. Config-file values override matching defaults below.
     "PLATFORM_MEMORY_DATA_SIZE=64",
-    "PLATFORM_MEMORY_ADDR_WIDTH=34",
-    "PLATFORM_MEMORY_NUM_BANKS=32",
     "PLATFORM_MEMORY_ID_WIDTH=32",
     "PLATFORM_MEMORY_OFFSET=0",
-    "PLATFORM_MERGED_MEMORY_INTERFACE",
-    "MEM_ADDR_WIDTH=34",
-    # core config
-    "DCACHE_DISABLE",
-    "L2_ENABLE",
-    "NUM_CLUSTERS=1",
-    "NUM_CORES=1",
-    f"NUM_THREADS={NUM_THREADS}",
-    # local + tensor mem
-    "LMEM_LOG_SIZE=19",
-    "TMEM_BANK_SIZE=32768",
-    "NUM_DMA_CHANNELS=8",
-    "GEMM_ACC_MEM_DEPTH=512",
-    "MXU_COL_TILE=32",
-    "AFU_DONE_WAIT_CACHE_DRAIN",
-    # extension
-    # "EXT_TCU_ENABLE",
-    "ENABLE_GEMM_ACCEL",
-    "VX_ENABLE_HW_EXPF",
-    # "TCU_BHF",
 ]
+
+INCOMPATIBLE_CONFIG_DEFINES = {
+    "FPU_DPI",
+    "FPU_DSP",
+    "QUARTUS",
+    "VIVADO",
+}
+
+
+def _define_name(define):
+    return define.split("=", 1)[0]
+
+
+def _merge_defines(*groups):
+    """Merge define groups by macro name while preserving stable ordering."""
+    merged = []
+    positions = {}
+    for group in groups:
+        for define in group:
+            name = _define_name(define)
+            if name in positions:
+                merged[positions[name]] = define
+            else:
+                positions[name] = len(merged)
+                merged.append(define)
+    return merged
+
+
+def _load_config_defines(config_file):
+    """Source a Vortex config and convert its CONFIGS string into DC defines."""
+    if not os.path.isfile(config_file):
+        sys.exit(f"Vortex config does not exist: {config_file}")
+
+    command = 'set -e; source "$1"; printf "%s\\n" "${CONFIGS:-}"'
+    result = subprocess.run(
+        ["bash", "-c", command, "bash", config_file],
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    defines = []
+    invalid = []
+    for token in shlex.split(result.stdout):
+        if not token.startswith("-D") or len(token) == 2:
+            invalid.append(token)
+            continue
+        define = token[2:]
+        if _define_name(define) not in INCOMPATIBLE_CONFIG_DEFINES:
+            defines.append(define)
+    if invalid:
+        sys.exit(
+            f"Unsupported tokens in CONFIGS from {config_file}: "
+            + " ".join(invalid)
+        )
+    return defines
+
+
+DEFINES = _merge_defines(
+    DC_DEFINES,
+    _load_config_defines(CONFIG_FILE),
+    [f"NUM_THREADS={NUM_THREADS}", "FPU_FPNEW"],
+)
 
 # Vortex include search paths. Order matters for package emission order in
 # gen_sources.sh: dependencies (fpu pkgs) come before VX_gpu_pkg consumers.
@@ -297,10 +360,70 @@ def _mem_db_setup():
     return paths, files
 
 
+DC_FAILURE_RE = re.compile(
+    r"^Fatal:|^\*\*\* Presto compilation terminated|"
+    r"^The tool has just encountered a fatal error:|"
+    r"^Warning: Design .* unresolved references|"
+    r"^Warning: Unable to resolve reference",
+    re.MULTILINE,
+)
+REPORT_ERROR_RE = re.compile(r"^(?:Error|Fatal):", re.MULTILINE)
+
+
+def _validate_synthesis_result(run_dir, design_name):
+    """Reject hwexplorer runs that returned despite a failed DC invocation."""
+    run_dir = Path(run_dir)
+    required = [
+        run_dir / "results" / f"{design_name}.mapped.ddc",
+        run_dir / "reports" / f"14_{design_name}.mapped.area.rpt",
+    ]
+    missing = [
+        str(path) for path in required
+        if not path.is_file() or path.stat().st_size == 0
+    ]
+
+    logs = sorted(
+        (run_dir / "logs").glob("run.log.*"),
+        key=lambda path: path.stat().st_mtime,
+    )
+    log_errors = []
+    if not logs:
+        missing.append(str(run_dir / "logs" / "run.log.*"))
+    else:
+        log_text = logs[-1].read_text(errors="replace")
+        log_errors = [
+            line for line in log_text.splitlines()
+            if DC_FAILURE_RE.match(line)
+        ]
+
+    report_errors = []
+    for report in required[1:]:
+        if report.is_file():
+            text = report.read_text(errors="replace")
+            report_errors.extend(
+                line for line in text.splitlines()
+                if REPORT_ERROR_RE.match(line)
+            )
+
+    if missing or log_errors or report_errors:
+        details = []
+        if missing:
+            details.append("missing/empty artifacts:\n  " + "\n  ".join(missing))
+        errors = [*log_errors, *report_errors]
+        if errors:
+            details.append("DC errors:\n  " + "\n  ".join(errors[:12]))
+        raise SystemExit(
+            f"{design_name} synthesis failed; inspect {run_dir / 'logs'}\n"
+            + "\n".join(details)
+        )
+
+
 def main():
     incdirs, sources = _enumerate_sources()
     mem_db_paths, mem_db_files = _mem_db_setup()
 
+    print(f"# config: {CONFIG_FILE}")
+    print(f"# defines: {' '.join(f'-D{define}' for define in DEFINES)}")
     print(f"# {len(sources)} source files")
     print(f"# {len(incdirs)} include dirs")
     print(f"# {len(mem_db_files)} compiled SRAM macros @ {MAX_CORNER}")
@@ -337,6 +460,8 @@ def main():
     )
     cfg.print()
     cfg.run()
+    _validate_synthesis_result(f"{cfg.design_dir}/{cfg.syn_dir}", cfg.design_name)
+    print(f"# synthesis complete: {cfg.design_dir}/{cfg.syn_dir}")
 
 
 if __name__ == "__main__":

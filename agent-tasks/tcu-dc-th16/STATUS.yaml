@@ -1,0 +1,42 @@
+task: tcu-dc-th16
+state: DONE
+updated: "2026-07-14 16:12"
+summary: >-
+  Audit and adapt hw/syn/synopsys/syn_tcu.py for a portable NUM_THREADS=16
+  Synopsys DC run with outputs under the configured build tree.
+log:
+  - timestamp: "2026-07-14 16:07"
+    entry: >-
+      Found fixed NUM_THREADS=32 and synthesis_th32 output naming, an output
+      root under the source tree, and a stale test_tcu.py run example. Repository
+      and RTL paths are already derived from the script location and contain no
+      imported user home path.
+  - timestamp: "2026-07-14 16:09"
+    entry: >-
+      Parameterized NUM_THREADS with a default of 16, moved the default result
+      root to build/hw/syn/synopsys/tcu, added SYN_RESULT_ROOT override and input
+      validation, and corrected stale documentation. Stable conda Python parses
+      the script and exposes the expected CLI. DC, the configured build tree,
+      and the Samsung 28LPP library are present.
+  - timestamp: "2026-07-14 16:10"
+    entry: >-
+      Launched the th16 BHF flow after sourcing configs/naive_simd_th16.sh.
+      Flow generation used the correct current-user paths and build target, but
+      dc_shell stopped before RTL analysis with DCSH-1 (Design Compiler is not
+      enabled). Added a required final-area-report check because hwexplorer does
+      not propagate the failed make/DC exit status.
+  - timestamp: "2026-07-14 16:12"
+    entry: >-
+      User will run synthesis after the license issue is resolved. Confirmed no
+      TCU synthesis process remains; stable-Python compilation and git diff
+      validation pass.
+pitfalls:
+  - >-
+    System /usr/bin/python3 cannot import hwexplorer because matplotlib is not
+    installed; use the repository's documented stable conda environment.
+  - >-
+    hwexplorer SynthConfig.run() does not propagate the make/DC exit status;
+    validate required reports after each run.
+  - >-
+    The 2026-07-14 th16 attempt failed at DC startup with DCSH-1 before RTL
+    analysis, indicating a Design Compiler license or enablement issue.

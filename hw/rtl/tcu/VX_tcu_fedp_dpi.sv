@@ -48,6 +48,7 @@ module VX_tcu_fedp_dpi #(
 
         always @(*) begin
             case (fmt_s)
+        `ifndef DISALBE_FP16
             3'd1: begin // fp16
                 xprod = 64'hffffffff00000000;
                 for (int j = 0; j < 2; j++) begin
@@ -56,6 +57,8 @@ module VX_tcu_fedp_dpi #(
                     dpi_fmadd(enable, int'(0), a_f, b_f, xprod, 3'b0, xprod, fflags);
                 end
             end
+        `endif
+        `ifndef DISALBE_BF16
             3'd2: begin // bf16
                 xprod = 64'hffffffff00000000;
                 for (int j = 0; j < 2; j++) begin
@@ -64,6 +67,7 @@ module VX_tcu_fedp_dpi #(
                     dpi_fmadd(enable, int'(0), a_f, b_f, xprod, 3'b0, xprod, fflags);
                 end
             end
+        `endif
             default: begin
                 xprod = '0;
             end

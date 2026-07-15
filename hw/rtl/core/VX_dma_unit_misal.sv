@@ -12,8 +12,10 @@
 module VX_dma_unit_misal import VX_gpu_pkg::*; #(
   parameter `STRING INSTANCE_ID = "",
   parameter int MISALIGN_PACK_BYTES = LSU_WORD_SIZE,
-  // Parent forwards interface TAG_WIDTH values explicitly. Synopsys DC
+  // Parent forwards interface ADDR_WIDTH and TAG_WIDTH values explicitly. Synopsys DC
   // rejects `interface_inst.PARAM` access inside localparam initializers.
+  parameter int DCACHE_ADDR_WIDTH = 1,
+  parameter int LMEM_ADDR_WIDTH   = 1,
   parameter int DCACHE_TAG_WIDTH = 1,
   parameter int LMEM_TAG_WIDTH   = 1
 ) (
@@ -51,7 +53,7 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
   localparam int LMEM_TAG_VALUE_W   = LMEM_TAG_WIDTH - `UP(UUID_WIDTH);
   localparam int MIN_TAG_VALUE_W    = (DCACHE_TAG_VALUE_W < LMEM_TAG_VALUE_W)
                                     ? DCACHE_TAG_VALUE_W : LMEM_TAG_VALUE_W;
-  localparam int DCACHE_REQ_DATAW   = 1 + dcache_bus_if.ADDR_WIDTH + (DCACHE_BYTES * 8)
+  localparam int DCACHE_REQ_DATAW   = 1 + DCACHE_ADDR_WIDTH + (DCACHE_BYTES * 8)
                                    + DCACHE_BYTES + MEM_FLAGS_WIDTH
                                    + `UP(UUID_WIDTH) + DCACHE_TAG_VALUE_W;
 
@@ -76,12 +78,12 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
       $fatal(1, "LMEM_BYTES(%0d) must be divisible by MISALIGN_PACK_BYTES(%0d)", LMEM_BYTES, PACK_BYTES);
   end
 
-  function automatic logic [dcache_bus_if.ADDR_WIDTH-1:0] to_dcache_addr(input logic [63:0] byte_addr);
-    to_dcache_addr = dcache_bus_if.ADDR_WIDTH'(byte_addr >> DCACHE_LG2);
+  function automatic logic [DCACHE_ADDR_WIDTH-1:0] to_dcache_addr(input logic [63:0] byte_addr);
+    to_dcache_addr = DCACHE_ADDR_WIDTH'(byte_addr >> DCACHE_LG2);
   endfunction
 
-  function automatic logic [lmem_bus_if.ADDR_WIDTH-1:0] to_lmem_addr(input logic [63:0] byte_addr);
-    to_lmem_addr = lmem_bus_if.ADDR_WIDTH'(byte_addr >> LMEM_LG2);
+  function automatic logic [LMEM_ADDR_WIDTH-1:0] to_lmem_addr(input logic [63:0] byte_addr);
+    to_lmem_addr = LMEM_ADDR_WIDTH'(byte_addr >> LMEM_LG2);
   endfunction
 
   function automatic logic [31:0] umin32(input logic [31:0] a, input logic [31:0] b);
@@ -450,7 +452,7 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
   logic                      dcache_req_valid_w;
   wire                       dcache_req_ready_w;
   logic                      dcache_req_rw_w;
-  logic [dcache_bus_if.ADDR_WIDTH-1:0] dcache_req_addr_w;
+  logic [DCACHE_ADDR_WIDTH-1:0] dcache_req_addr_w;
   logic [DCACHE_BYTES*8-1:0] dcache_req_data_w;
   logic [DCACHE_BYTES-1:0]   dcache_req_byteen_w;
   logic [MEM_FLAGS_WIDTH-1:0] dcache_req_flags_w;

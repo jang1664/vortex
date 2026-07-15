@@ -30,10 +30,11 @@
 
 module VX_dma_unit_align import VX_gpu_pkg::*; #(
   parameter `STRING INSTANCE_ID = "",
-  // Parent forwards interface TAG_WIDTH values explicitly. Synopsys DC
+  // Parent forwards interface ADDR_WIDTH and TAG_WIDTH values explicitly. Synopsys DC
   // rejects `interface_inst.PARAM` access inside localparam initializers,
-  // so we cannot read dcache_bus_if.TAG_WIDTH / lmem_bus_if.TAG_WIDTH
-  // directly here.
+  // so we cannot read those parameters directly here.
+  parameter int DCACHE_ADDR_WIDTH = 1,
+  parameter int LMEM_ADDR_WIDTH   = 1,
   parameter int DCACHE_TAG_WIDTH = 1,
   parameter int LMEM_TAG_WIDTH   = 1
 ) (
@@ -88,12 +89,12 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
       $fatal(1, "aligned DMA requires divisible dcache/lmem bus widths");
   end
 
-  function automatic logic [dcache_bus_if.ADDR_WIDTH-1:0] to_dcache_addr(input logic [63:0] byte_addr);
-    to_dcache_addr = dcache_bus_if.ADDR_WIDTH'(byte_addr >> DCACHE_LG2);
+  function automatic logic [DCACHE_ADDR_WIDTH-1:0] to_dcache_addr(input logic [63:0] byte_addr);
+    to_dcache_addr = DCACHE_ADDR_WIDTH'(byte_addr >> DCACHE_LG2);
   endfunction
 
-  function automatic logic [lmem_bus_if.ADDR_WIDTH-1:0] to_lmem_addr(input logic [63:0] byte_addr);
-    to_lmem_addr = lmem_bus_if.ADDR_WIDTH'(byte_addr >> LMEM_LG2);
+  function automatic logic [LMEM_ADDR_WIDTH-1:0] to_lmem_addr(input logic [63:0] byte_addr);
+    to_lmem_addr = LMEM_ADDR_WIDTH'(byte_addr >> LMEM_LG2);
   endfunction
 
   function automatic logic [31:0] umin32(input logic [31:0] a, input logic [31:0] b);
@@ -550,10 +551,10 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
   logic [SLOT_OCC_W-1:0]      slot_occupancy_r;
 
   localparam int WR_SLOT_DATAW = MAX_BYTES*8 + WIN_VALID_W;
-  localparam int DCACHE_REQ_DATAW = 1 + dcache_bus_if.ADDR_WIDTH + (DCACHE_BYTES*8)
+  localparam int DCACHE_REQ_DATAW = 1 + DCACHE_ADDR_WIDTH + (DCACHE_BYTES*8)
                                   + DCACHE_BYTES + MEM_FLAGS_WIDTH
                                   + `UP(UUID_WIDTH) + DCACHE_TAG_VALUE_W;
-  localparam int LMEM_REQ_DATAW = 1 + lmem_bus_if.ADDR_WIDTH + (LMEM_BYTES*8)
+  localparam int LMEM_REQ_DATAW = 1 + LMEM_ADDR_WIDTH + (LMEM_BYTES*8)
                                 + LMEM_BYTES + MEM_FLAGS_WIDTH
                                 + `UP(UUID_WIDTH) + LMEM_TAG_VALUE_W;
 
@@ -571,7 +572,7 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
   logic                      dcache_req_valid_w;
   wire                       dcache_req_ready_w;
   logic                      dcache_req_rw_w;
-  logic [dcache_bus_if.ADDR_WIDTH-1:0] dcache_req_addr_w;
+  logic [DCACHE_ADDR_WIDTH-1:0] dcache_req_addr_w;
   logic [DCACHE_BYTES*8-1:0] dcache_req_data_w;
   logic [DCACHE_BYTES-1:0]   dcache_req_byteen_w;
   logic [MEM_FLAGS_WIDTH-1:0] dcache_req_flags_w;
@@ -584,7 +585,7 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
   logic                      lmem_req_valid_w;
   wire                       lmem_req_ready_w;
   logic                      lmem_req_rw_w;
-  logic [lmem_bus_if.ADDR_WIDTH-1:0] lmem_req_addr_w;
+  logic [LMEM_ADDR_WIDTH-1:0] lmem_req_addr_w;
   logic [LMEM_BYTES*8-1:0]   lmem_req_data_w;
   logic [LMEM_BYTES-1:0]     lmem_req_byteen_w;
   logic [MEM_FLAGS_WIDTH-1:0] lmem_req_flags_w;

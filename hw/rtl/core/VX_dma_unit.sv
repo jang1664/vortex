@@ -12,8 +12,10 @@
 module VX_dma_unit import VX_gpu_pkg::*; #(
   parameter `STRING INSTANCE_ID = "",
   parameter bit ENABLE_MISALIGN = 1'b0,
-  // Parent forwards interface TAG_WIDTH values explicitly. Synopsys DC
+  // Parent forwards interface ADDR_WIDTH and TAG_WIDTH values explicitly. Synopsys DC
   // rejects `interface_inst.PARAM` access inside localparam initializers.
+  parameter int DCACHE_ADDR_WIDTH = 1,
+  parameter int LMEM_ADDR_WIDTH   = 1,
   parameter int DCACHE_TAG_WIDTH = 1,
   parameter int LMEM_TAG_WIDTH   = 1,
   parameter int MISALIGN_PACK_BYTES = LSU_WORD_SIZE
@@ -35,6 +37,8 @@ module VX_dma_unit import VX_gpu_pkg::*; #(
   if (ENABLE_MISALIGN) begin : g_misaligned
     VX_dma_unit_misal #(
       .INSTANCE_ID      (INSTANCE_ID),
+      .DCACHE_ADDR_WIDTH(DCACHE_ADDR_WIDTH),
+      .LMEM_ADDR_WIDTH  (LMEM_ADDR_WIDTH),
       .DCACHE_TAG_WIDTH (DCACHE_TAG_WIDTH),
       .LMEM_TAG_WIDTH   (LMEM_TAG_WIDTH),
       .MISALIGN_PACK_BYTES (MISALIGN_PACK_BYTES)
@@ -52,6 +56,8 @@ module VX_dma_unit import VX_gpu_pkg::*; #(
   end else begin : g_aligned
     VX_dma_unit_align #(
       .INSTANCE_ID      (INSTANCE_ID),
+      .DCACHE_ADDR_WIDTH(DCACHE_ADDR_WIDTH),
+      .LMEM_ADDR_WIDTH  (LMEM_ADDR_WIDTH),
       .DCACHE_TAG_WIDTH (DCACHE_TAG_WIDTH),
       .LMEM_TAG_WIDTH   (LMEM_TAG_WIDTH)
     ) u_impl (

@@ -1,0 +1,74 @@
+task: dma-addr-width-param
+state: DONE
+created: "2026-07-14 22:16"
+updated: "2026-07-14 22:35"
+summary: >
+  Replace DMA backend interface-instance address-width references with
+  explicitly forwarded module parameters to remove Synopsys DC ELAB-425.
+log:
+  - time: "2026-07-14 22:16"
+    entry: >
+      Confirmed a parameter-based fix. A macro-only solution is unsafe because
+      the two word-address widths depend on their independent DATA_SIZE values.
+      Scope is limited to explicit address-width forwarding and existing DMA
+      verification bindings; transaction behavior is unchanged.
+  - time: "2026-07-14 22:25"
+    entry: >
+      Implemented DCACHE_ADDR_WIDTH and LMEM_ADDR_WIDTH forwarding through
+      VX_dma_unit into both backends. VX_dma_node derives the endpoint widths
+      from MEM_ADDR_WIDTH, DCACHE_WORD_SIZE, and its aggregate LMEM beat;
+      VX_dma_engine derives both channel widths from DATA_WIDTH. Removed every
+      dcache_bus_if.ADDR_WIDTH and lmem_bus_if.ADDR_WIDTH use from the two
+      backend modules. Added explicit bindings to the two direct DMA unit
+      testbenches for their non-default beat widths. Static diff validation
+      passed.
+  - time: "2026-07-14 22:28"
+    entry: >
+      Iteration 1: dma_node VCS verification passed for ENABLE_MISALIGN=1.
+      dma_engine reached simulation but failed its existing remap-burst check:
+      case0_remap_burst_read expected four AR bursts and observed one. The log
+      also contains unsupported 28LPP RAM macro/FIFO messages. Sent the report
+      back for root-cause classification before changing RTL because both new
+      engine address parameters currently evaluate to the same pre-change
+      HBM_ADDR_WIDTH expression.
+  - time: "2026-07-14 22:26"
+    entry: >
+      Iteration 1 root cause: dma_engine's test is stale relative to the
+      passthrough descriptor semantics. It drives BND0=6 and BND1=1, for which
+      the current engine correctly emits one six-beat AR burst (len=5), while
+      the test still expects four bursts from the removed reorder behavior.
+      The new and old engine address widths are both 34-CLOG2(64)=28, and no
+      burst/remap logic changed. No RTL fix was applied. Started focused direct
+      aligned and misaligned backend verification instead.
+  - time: "2026-07-14 22:27"
+    entry: >
+      Iteration 2: direct aligned and misaligned VCS simulations completed all
+      checks successfully; misaligned reported 2125/2125 passed cases and
+      neither log contained a fatal. verify_rtl reported sim_fail only because
+      the existing tests printed PASS/ALL TESTS COMPLETED rather than one of
+      its recognized pass markers. Added TEST PASSED after all functional and
+      coverage checks in both testbenches and started Iteration 3.
+  - time: "2026-07-14 22:29"
+    entry: >
+      Iteration 3: verify_rtl reported PASS for both dma_mem_unit (aligned)
+      and dma_mem_unit_misal (misaligned, 2125 cases) under the requested
+      configuration using VCS. Proceeding to the requested Vortex_axi
+      Synopsys elaboration check.
+  - time: "2026-07-14 22:35"
+    entry: >
+      Vortex_axi Synopsys validation used the requested th16 config with
+      FPU_FPNEW in the separate Vortex_axi_nt16_addrparam run. DC successfully
+      elaborated VX_dma_unit_misal with address widths 28/27 and
+      VX_dma_unit_align with widths 28/28; both reported Presto compilation
+      completed successfully. No ELAB-425, Presto termination, unresolved
+      reference, or fatal message occurred before the run was intentionally
+      stopped to avoid completing the long QoR synthesis. No owned DC process
+      remains.
+pitfalls:
+  - >-
+    MEM_ADDR_WIDTH is a byte-address width; VX_mem_bus_if.ADDR_WIDTH is a
+    word-address width and varies with each endpoint's DATA_SIZE.
+  - >-
+    dma_engine's case0 remap burst expectation predates the current passthrough
+    BND0/BND1 semantics and is not a valid functional regression without
+    updating its descriptor and expected AR sequence.

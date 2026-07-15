@@ -29,6 +29,8 @@ module VX_dma_node import VX_gpu_pkg::*; #(
   localparam int NUM_REGS32      = `DMA_CFG_REG_NUM;
   localparam int ENTRYID_W       = `JOB_MMIO_ENTRYID_W;
   localparam int LMEM_WIDE_BYTES = LMEM_NUM_LANES_P * LSU_WORD_SIZE;
+  localparam int DMA_DCACHE_ADDR_WIDTH = `MEM_ADDR_WIDTH - `CLOG2(DCACHE_WORD_SIZE);
+  localparam int DMA_LMEM_ADDR_WIDTH   = `MEM_ADDR_WIDTH - `CLOG2(LMEM_WIDE_BYTES);
 `ifdef JOB_MMIO_DMA_DESC_ONE_LANE
   localparam bit JOB_DESC_ONE_LANE = 1'b1;
 `else
@@ -76,6 +78,8 @@ module VX_dma_node import VX_gpu_pkg::*; #(
   VX_dma_unit #(
     .INSTANCE_ID      (INSTANCE_ID),
     .ENABLE_MISALIGN  (ENABLE_MISALIGN),
+    .DCACHE_ADDR_WIDTH(DMA_DCACHE_ADDR_WIDTH),
+    .LMEM_ADDR_WIDTH  (DMA_LMEM_ADDR_WIDTH),
     .DCACHE_TAG_WIDTH (DCACHE_TAG_WIDTH_P),
     .LMEM_TAG_WIDTH   (LMEM_TAG_WIDTH_P),
     .MISALIGN_PACK_BYTES (MISALIGN_PACK_BYTES)

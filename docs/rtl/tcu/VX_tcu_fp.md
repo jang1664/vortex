@@ -49,6 +49,27 @@ FP16, BF16 입력을 FP32 출력으로 변환하며 행렬 곱셈-누산을 수�
 
 ## 백엔드 옵션
 
+### Input format configuration
+
+Both FP16 and BF16 inputs are enabled when no format-disable macro is defined.
+The supported format can be restricted at compile time:
+
+| Build defines | Supported input formats | BHF multipliers |
+|---------------|-------------------------|-----------------|
+| Neither macro defined | FP16 and BF16 | FP16 and BF16 |
+| `DISALBE_BF16` | FP16 only | FP16 only |
+| `DISALBE_FP16` | BF16 only | BF16 only |
+
+The misspelled `DISALBE_*` names are intentional configuration API spellings.
+Defining both macros is rejected. A simulation assertion reports an accepted
+request that selects a disabled input format. The macros do not change the
+format IDs, interface, pipeline latency, FP32 accumulator/output, or integer
+TCU behavior. In a single-format BHF build, the enabled multiplier output is
+connected directly to the existing result pipeline stage; the runtime format
+multiplexer and its format-delay pipeline are not elaborated. A single-format
+DSP build similarly connects the enabled converter output directly to its
+existing conversion pipeline stage instead of elaborating a format mux.
+
 ### 1. TCU_DPI (시뮬레이션용)
 
 DPI 함수를 사용한 소프트웨어 에뮬레이션:

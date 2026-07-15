@@ -1,0 +1,107 @@
+task: tcu-format-disable
+state: DONE
+summary: Add compile-time FP16/BF16 TCU format-disable controls and verify with xrt-vcs-sim sgemm_tcu.
+spec: agent-tasks/tcu-format-disable/tcu-format-disable-spec.md
+iterations:
+  - iteration: 1
+    timestamp: "2026-07-15 12:11"
+    status: compile_error
+    error_summary: "VCS completed RTL compile/elaboration, but host linking failed because softfloat.a was missing."
+    root_cause: "The third_party SoftFloat static library prerequisite had not been built."
+    fix_applied: "Built the repository SoftFloat target and reran the unchanged FP16-only case."
+    lesson: "xrt_vcs links SoftFloat into simv even when the target RTL compiled successfully; verify this prerequisite before blackbox runs."
+  - iteration: 2
+    timestamp: "2026-07-15 12:13"
+    status: compile_error
+    error_summary: "VCS simv was ready, but applib compilation could not find spdlog/spdlog.h from Ramulator."
+    root_cause: "A Ramulator third-party header dependency required by the xrt_vcs application library is unavailable in the current checkout/build environment."
+    fix_applied: "Built Ramulator and its dependencies with gcc-toolset-14, which provides the required C++20 support."
+    lesson: "xrt_vcs requires both the RTL simv dependencies and the Ramulator-backed application library dependencies."
+  - iteration: 3
+    timestamp: "2026-07-15 12:19"
+    status: sim_fail
+    error_summary: "The wrapper could not launch simv because it was a non-executable zero-byte file."
+    root_cause: "The failed iteration 1 VCS link left a stale zero-byte simv whose timestamp caused make to skip relinking it."
+    fix_applied: "Removed only the stale generated simv and relinked it with the supported system GCC toolchain."
+    lesson: "After a failed VCS link, validate the simv file size and executable bit before relying on make's up-to-date decision."
+  - iteration: 4
+    timestamp: "2026-07-15 12:22"
+    status: compile_error
+    error_summary: "VCS elaborated the RTL but GCC 14 failed compiling generated rmapats.c."
+    root_cause: "One compiler environment cannot serve both stages: VCS-generated C expects the supported system GCC, while Ramulator requires a C++20 compiler."
+    fix_applied: "Separated the compiler environments: system GCC for VCS simv and gcc-toolset-14 for Ramulator/application builds."
+    lesson: "Keep the VCS simv compiler toolchain separate from the Ramulator/XRT C++20 toolchain."
+  - iteration: 5
+    timestamp: "2026-07-15 12:25"
+    status: compile_error
+    error_summary: "The valid simv launched and the host app compiled, but the configured device clang++ path did not exist."
+    root_cause: "The configured --tooldir=/opt/vortex expects /opt/vortex/llvm-vortex/bin/clang++, which is unavailable in the current environment."
+    fix_applied: "Installed the official Vortex v2.3 CentOS 7 prebuilt toolchain under $HOME/tools/vortex and overrode TOOLDIR for verification."
+    lesson: "Blackbox application builds require the Vortex device compiler in addition to the host and simulator toolchains."
+  - iteration: 6
+    timestamp: "2026-07-15 12:30"
+    status: compile_error
+    error_summary: "The device compiler ran, but kernel linking failed because build/kernel/libvortex.a was absent."
+    root_cause: "The configured build directory's common Vortex device runtime prerequisite had not been built."
+    fix_applied: "Installed the matching RISC-V GNU sysroot and built build/kernel/libvortex.a under the test configuration."
+    lesson: "A blackbox device kernel needs both the Vortex compiler/toolchain and the configured build's libvortex.a runtime artifact."
+  - iteration: 7
+    timestamp: "2026-07-15 12:32"
+    status: pass
+    error_summary: "None. FP16-only sgemm_tcu completed and reported PASSED."
+    root_cause: "N/A"
+    fix_applied: "N/A"
+    lesson: "DISALBE_BF16 structurally removes the BF16 BHF multiplier while preserving functional FP16 TCU execution."
+  - iteration: 8
+    timestamp: "2026-07-15 12:35"
+    status: pass
+    error_summary: "None. BF16-only sgemm_tcu completed and reported PASSED."
+    root_cause: "N/A"
+    fix_applied: "N/A"
+    lesson: "DISALBE_FP16 structurally removes the FP16 BHF multiplier while preserving functional BF16 TCU execution."
+  - iteration: 9
+    timestamp: "2026-07-15 12:42"
+    status: pass
+    error_summary: "None. Muxless FP16-only sgemm_tcu completed and reported PASSED."
+    root_cause: "N/A"
+    fix_applied: "Replaced the single-format BHF result mux with a direct FP16 multiplier connection and removed the unused format-delay pipeline."
+    lesson: "The existing one-cycle result register preserves latency without retaining the runtime format selection logic."
+  - iteration: 10
+    timestamp: "2026-07-15 12:45"
+    status: pass
+    error_summary: "None. Muxless BF16-only sgemm_tcu completed and reported PASSED."
+    root_cause: "N/A"
+    fix_applied: "Replaced the single-format BHF result mux with a direct BF16 multiplier connection and removed the unused format-delay pipeline."
+    lesson: "Compile-time selection can remove both the disabled multiplier family and the runtime format mux while preserving functional behavior."
+pitfalls:
+  - "2026-07-15 12:02: hw/syn/synopsys/syn_tcu.py has pre-existing user changes; do not modify it in this task."
+  - "2026-07-15 12:15: Ramulator requires C++20; /usr/bin/g++ 8.5 cannot compile <ranges>. Build and consume it with gcc-toolset-14 in PATH."
+log:
+  - timestamp: "2026-07-15 12:02"
+    entry: "Confirmed the implementation scope from the previously approved plan and created the task specification."
+  - timestamp: "2026-07-15 12:09"
+    entry: "Implemented format guards in BHF, DSP, and DPI backends; added configuration validation, request assertions, and documentation. Targeted VCS parsing passed for all legal configurations, and the dual-disable configuration was rejected as expected."
+  - timestamp: "2026-07-15 12:11"
+    entry: "Iteration 1 FP16-only xrt-vcs-sim stopped at host link because third_party/softfloat/build/Linux-x86_64-GCC/softfloat.a was absent; RTL compilation and elaboration completed."
+  - timestamp: "2026-07-15 12:13"
+    entry: "Iteration 2 FP16-only xrt-vcs-sim reused the compiled simv but stopped building libxrtsim_vcs.so because Ramulator could not include spdlog/spdlog.h."
+  - timestamp: "2026-07-15 12:15"
+    entry: "Fetched Ramulator CMake dependencies and built libramulator.so successfully with gcc-toolset-14 after the system GCC 8.5 failed on the required C++20 <ranges> header."
+  - timestamp: "2026-07-15 12:19"
+    entry: "Iteration 3 built the VCS application/runtime libraries but failed to launch a stale zero-byte, non-executable simv left by iteration 1."
+  - timestamp: "2026-07-15 12:22"
+    entry: "Iteration 4 showed GCC 14 is unsuitable for VCS-generated rmapats.c even though it is required by Ramulator; verification must split the compiler environments by build stage."
+  - timestamp: "2026-07-15 12:25"
+    entry: "Iteration 5 successfully reused and launched simv and compiled the host app, but device kernel compilation failed because /opt/vortex/llvm-vortex/bin/clang++ was missing."
+  - timestamp: "2026-07-15 12:30"
+    entry: "Iteration 6 found the final missing build prerequisite, build/kernel/libvortex.a, after the user-local Vortex device compiler was invoked successfully."
+  - timestamp: "2026-07-15 12:32"
+    entry: "Iteration 7 passed FP16-only sgemm_tcu with DISALBE_BF16: 16x16x16 matrices, 19774 instructions, 14566 cycles, and PASSED."
+  - timestamp: "2026-07-15 12:35"
+    entry: "Iteration 8 passed BF16-only sgemm_tcu with DISALBE_FP16: 16x16x16 matrices, 19774 instructions, 14563 cycles, and PASSED. Task complete."
+  - timestamp: "2026-07-15 12:42"
+    entry: "After explicitly removing the single-format BHF mux and format-delay pipeline, FP16-only sgemm_tcu passed with 19774 instructions and 14570 cycles."
+  - timestamp: "2026-07-15 12:45"
+    entry: "The corresponding BF16-only sgemm_tcu passed with 19774 instructions and 14580 cycles; the default dual-format VCS compile/elaboration also completed successfully."
+  - timestamp: "2026-07-15 12:48"
+    entry: "Removed the DSP runtime format mux in both single-format configurations by directly connecting the enabled converter output; FP16-only and BF16-only DSP VCS compile/elaboration both passed."

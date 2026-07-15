@@ -90,6 +90,8 @@ module tb_VX_dma_mem_unit import VX_gpu_pkg::*; ();
   // to exercise the simplified datapath.
   VX_dma_unit_align #(
     .INSTANCE_ID      ("dma0"),
+    .DCACHE_ADDR_WIDTH(`MEM_ADDR_WIDTH - `CLOG2(DCACHE_BYTES)),
+    .LMEM_ADDR_WIDTH  (`MEM_ADDR_WIDTH - `CLOG2(LMEM_BYTES)),
     .DCACHE_TAG_WIDTH (TAG_WIDTH),
     .LMEM_TAG_WIDTH   (TAG_WIDTH)
   ) dut (
@@ -535,6 +537,9 @@ module tb_VX_dma_mem_unit import VX_gpu_pkg::*; ();
         sim_func();
       end else begin
         $display("please set proper objective of the simulation");
+      end
+      if (OBJ_ == "func") begin
+        $display("TEST PASSED");
       end
 
 `ifdef VCS

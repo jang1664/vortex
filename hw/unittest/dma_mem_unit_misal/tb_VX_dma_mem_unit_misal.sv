@@ -98,6 +98,8 @@ module tb_VX_dma_mem_unit_misal import VX_gpu_pkg::*; ();
   VX_dma_unit #(
     .INSTANCE_ID     ("dma0"),
     .ENABLE_MISALIGN (ENABLE_MISALIGN_P),
+    .DCACHE_ADDR_WIDTH(`MEM_ADDR_WIDTH - `CLOG2(DCACHE_BYTES)),
+    .LMEM_ADDR_WIDTH  (`MEM_ADDR_WIDTH - `CLOG2(LMEM_BYTES)),
     .DCACHE_TAG_WIDTH(TAG_WIDTH),
     .LMEM_TAG_WIDTH  (TAG_WIDTH)
   ) dut (
@@ -668,6 +670,9 @@ module tb_VX_dma_mem_unit_misal import VX_gpu_pkg::*; ();
       end
 
       print_summary();
+      if (OBJ_ == "func") begin
+        $display("TEST PASSED");
+      end
 
 `ifdef VCS
       $fsdbDumpoff();

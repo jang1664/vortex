@@ -1,0 +1,90 @@
+task: synthesis-failure-analysis
+state: DONE
+created: "2026-07-14 17:07"
+updated: "2026-07-14 21:26"
+summary: >
+  Analyze the failed Synopsys synthesis runs in Vortex_axi_nt16 and
+  tcu/synthesis_th16, including the requested Vortex configuration match to
+  improve_th16_tcol32_hwexp_dcache.sh with FP_NEW as the sole exception.
+log:
+  - time: "2026-07-14 17:07"
+    entry: >
+      Started read-only failure analysis. No source/configuration changes or
+      synthesis reruns are authorized in this phase.
+  - time: "2026-07-14 17:24"
+    entry: >
+      Vortex_axi_nt16 first fails DC elaboration at VX_dma_unit_misal.sv:56
+      and VX_dma_unit_align.sv:555 (ELAB-425): DC cannot determine the width of
+      the newly added elastic-buffer DATAW constant expression, which mixes an
+      interface-scoped address width with `UP(UUID_WIDTH) and other constants.
+      The log identifies the full declaration, but isolating the individual
+      operand requires a follow-up edit/rerun. The two modules remain
+      unresolved. Two compiled SRAM references also remain
+      unresolved because the run script omits the available 4096x64 and
+      512x128 macro DBs from SRAM_SPECS. Continuing into check_timing with four
+      unresolved references triggers the final dc_shell fatal crash; the crash
+      is secondary, not the first failure.
+  - time: "2026-07-14 17:24"
+    entry: >
+      The Vortex run does not match improve_th16_tcol32_hwexp_dcache.sh because
+      run_syn_vortex_axi.py hard-codes defines and ignores CONFIGS. It adds
+      DCACHE_DISABLE and omits BANK_INTERLEAVE, PLATFORM_MEMORY_REMAP,
+      JOB_MMIO_DMA_DESC_ONE_LANE, MISALIGN_PACK_BYTES=16, and
+      VX_FPU_EXP_LUT. FPNEW was nevertheless selected implicitly by SYNOPSYS.
+      The requested target should explicitly replace FPU_DSP with FPU_FPNEW
+      while retaining the other config options, including VX_FPU_EXP_LUT.
+  - time: "2026-07-14 17:24"
+    entry: >
+      tcu/synthesis_th16 first fails analyze at VX_scan.sv:22 (VER-700).
+      syn_tcu.py omits the SYNOPSYS define, so `STRING expands to the
+      unsupported SystemVerilog string type instead of empty as intended for
+      DC. All later missing-top, missing-clock, missing-DDC, and 48-byte report
+      errors are cascading symptoms. The report-existence-only success check
+      is insufficient because hwexplorer creates error-placeholder reports.
+  - time: "2026-07-14 17:31"
+    entry: >
+      Implementation requested. Started preserving the existing uncommitted
+      syn_tcu.py edits while updating both Python synthesis entry points for
+      the diagnosed configuration, library, define, and result-validation
+      failures. RTL changes remain out of scope unless validation proves the
+      Python configuration cannot remove a blocker.
+  - time: "2026-07-14 21:26"
+    entry: >
+      Updated run_syn_vortex_axi.py to source
+      configs/improve_th16_tcol32_hwexp_dcache.sh, remove incompatible
+      FPGA/FPU selectors, explicitly select FPU_FPNEW, default to 16 threads,
+      include all 18 compiled SRAM databases, and reject failed DC runs using
+      mapped-DDC/area-report and fatal-log validation. The effective define
+      set retains the requested config's dcache, bank interleave, memory
+      remap, DMA, HW exp, and MISALIGN_PACK_BYTES settings.
+  - time: "2026-07-14 21:26"
+    entry: >
+      Updated syn_tcu.py while preserving its existing worktree changes. Added
+      SYNTHESIS and SYNOPSYS, configurable thread count, input validation, a
+      build-tree result location, and robust result validation. A live DC
+      check passed the former VX_scan analyze failure, elaborated/linked the
+      top, passed check_timing, and entered compile_ultra. The long QoR run was
+      intentionally interrupted after confirming the fix.
+  - time: "2026-07-14 21:26"
+    entry: >
+      Validation passed under the stable Python 3.9 environment: py_compile,
+      git diff --check, effective-define assertions, all SRAM DB existence,
+      345-source enumeration with FPNEW sources, and rejection of both old
+      failed run directories. No synthesis processes owned by the current
+      user remain.
+  - time: "2026-07-14 21:26"
+    entry: >
+      The Vortex full synthesis still requires a separate RTL compatibility
+      change: DC reports ELAB-425 for DATAW expressions in
+      VX_dma_unit_misal.sv and VX_dma_unit_align.sv that access
+      dcache_bus_if.ADDR_WIDTH through an interface instance. This cannot be
+      corrected by the Python runner alone and was not changed because the
+      requested implementation scope was the Python scripts.
+pitfalls:
+  - >-
+    Do not diagnose the Vortex dc_shell stack trace as the primary cause; read
+    the earlier elaboration and link diagnostics first.
+  - >-
+    hwexplorer/DC scripts continue after failed analyze/elaborate steps and can
+    create report files containing only an error, so file existence is not a
+    valid synthesis success criterion.

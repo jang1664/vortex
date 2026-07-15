@@ -123,6 +123,11 @@ module VX_tcu_fedp_dsp #(
     localparam C_DELAY = FCVT_LATENCY + FMUL_LATENCY + FRED_LATENCY;
 
     `UNUSED_VAR ({fmt_d, c_val});
+`ifdef DISALBE_FP16
+    `UNUSED_VAR (fmt_s);
+`elsif DISALBE_BF16
+    `UNUSED_VAR (fmt_s);
+`endif
 
     wire [TCK-1:0][15:0] a_row16, b_col16;
 
@@ -138,9 +143,14 @@ module VX_tcu_fedp_dsp #(
     // convert to fp32
 
     for (genvar i = 0; i < TCK; i++) begin : g_cvt
+    `ifndef DISALBE_FP16
         wire [31:0] a_row_fp16, b_col_fp16;
+    `endif
+    `ifndef DISALBE_BF16
         wire [31:0] a_row_bf16, b_col_bf16;
+    `endif
 
+    `ifndef DISALBE_FP16
         fp16_to_fp32 cvt_row_fp16 (
             .fp16_in  (a_row16[i]),
             .fp32_out (a_row_fp16)
@@ -150,7 +160,9 @@ module VX_tcu_fedp_dsp #(
             .fp16_in  (b_col16[i]),
             .fp32_out (b_col_fp16)
         );
+    `endif
 
+    `ifndef DISALBE_BF16
         bf16_to_fp32 cvt_row_bf16 (
             .bf16_in  (a_row16[i]),
             .fp32_out (a_row_bf16)
@@ -160,25 +172,34 @@ module VX_tcu_fedp_dsp #(
             .bf16_in  (b_col16[i]),
             .fp32_out (b_col_bf16)
         );
+    `endif
 
-        reg [31:0] a_row_sel, a_col_sel;
+    `ifdef DISALBE_FP16
+        wire [31:0] a_row_sel = a_row_bf16;
+        wire [31:0] a_col_sel = b_col_bf16;
+    `elsif DISALBE_BF16
+        wire [31:0] a_row_sel = a_row_fp16;
+        wire [31:0] a_col_sel = b_col_fp16;
+    `else
+        logic [31:0] a_row_sel, a_col_sel;
 
-        always @(*) begin
+        always_comb begin
             case (fmt_s)
-            3'd1: begin // fp16
-                a_row_sel = a_row_fp16;
-                a_col_sel = b_col_fp16;
-            end
-            3'd2: begin // bf16
-                a_row_sel = a_row_bf16;
-                a_col_sel = b_col_bf16;
-            end
-            default: begin
-                a_row_sel = '0;
-                a_col_sel = '0;
-            end
+                3'd1: begin // fp16
+                    a_row_sel = a_row_fp16;
+                    a_col_sel = b_col_fp16;
+                end
+                3'd2: begin // bf16
+                    a_row_sel = a_row_bf16;
+                    a_col_sel = b_col_bf16;
+                end
+                default: begin
+                    a_row_sel = '0;
+                    a_col_sel = '0;
+                end
             endcase
         end
+    `endif
 
         VX_pipe_register #(
             .DATAW (32+32),

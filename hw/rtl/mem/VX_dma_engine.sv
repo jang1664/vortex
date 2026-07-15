@@ -65,6 +65,7 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
     localparam LOG2_DATA_SIZE = `CLOG2(DATA_SIZE);
     // VX_mem_bus_if uses word-addressable addresses
     localparam HBM_ADDR_WIDTH = MEM_ADDR_WIDTH - LOG2_DATA_SIZE;
+    localparam TMEM_ADDR_WIDTH = MEM_ADDR_WIDTH - LOG2_DATA_SIZE;
 
     // Banks-per-channel grouping. Upstream ctrl's 3D descriptor form emits
     // BND2 == NUM_BURST_GROUPS for burst_mode and BND2 == 1 for the single-
@@ -150,6 +151,8 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
         VX_dma_unit #(
             .INSTANCE_ID      (INSTANCE_ID),
             .ENABLE_MISALIGN  (ENABLE_MISALIGN),
+            .DCACHE_ADDR_WIDTH(HBM_ADDR_WIDTH),
+            .LMEM_ADDR_WIDTH  (TMEM_ADDR_WIDTH),
             .DCACHE_TAG_WIDTH (TAG_WIDTH),
             .LMEM_TAG_WIDTH   (TAG_WIDTH)
         ) u_dma_unit (

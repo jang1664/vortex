@@ -38,7 +38,6 @@ module VX_tcu_fedp_bhf #(
     localparam TOTAL_LATENCY= (FMUL_LATENCY + FRND_LATENCY) + 1 + FRED_LATENCY + (FADD_LATENCY + FRND_LATENCY);
     `VX_STATIC_ASSERT (LATENCY == 0 || LATENCY == TOTAL_LATENCY, ("invalid latency! expected=%0d, actual=%0d", TOTAL_LATENCY, LATENCY));
 
-    localparam FMT_DELAY = FMUL_LATENCY + FRND_LATENCY;
     localparam C_DELAY = (FMUL_LATENCY + FRND_LATENCY) + 1 + FRED_LATENCY;
 
     `UNUSED_VAR ({fmt_d, c_val});
@@ -57,6 +56,13 @@ module VX_tcu_fedp_bhf #(
 
     // Transprecision Multiply
 
+`ifdef DISALBE_FP16
+    `UNUSED_VAR (fmt_s);
+`elsif DISALBE_BF16
+    `UNUSED_VAR (fmt_s);
+`else
+    localparam FMT_DELAY = FMUL_LATENCY + FRND_LATENCY;
+
     wire [2:0] fmt_s_delayed;
 
     VX_pipe_register #(
@@ -69,13 +75,19 @@ module VX_tcu_fedp_bhf #(
         .data_in (fmt_s),
         .data_out(fmt_s_delayed)
     );
+`endif
 
     wire [32:0] mult_result [TCK];
 
     for (genvar i = 0; i < TCK; i++) begin : g_prod
+    `ifndef DISALBE_FP16
         wire [32:0] mult_result_fp16;
+    `endif
+    `ifndef DISALBE_BF16
         wire [32:0] mult_result_bf16;
+    `endif
 
+    `ifndef DISALBE_FP16
         // FP16 multiplication
         VX_tcu_bhf_fmul #(
             .IN_EXPW (5),
@@ -96,7 +108,9 @@ module VX_tcu_fedp_bhf #(
             .y      (mult_result_fp16),
             `UNUSED_PIN(fflags)
         );
+    `endif
 
+    `ifndef DISALBE_BF16
         // BF16 multiplication
         VX_tcu_bhf_fmul #(
             .IN_EXPW (8),
@@ -117,15 +131,22 @@ module VX_tcu_fedp_bhf #(
             .y      (mult_result_bf16),
             `UNUSED_PIN(fflags)
         );
+    `endif
 
-        logic [32:0] mult_result_mux;
+    `ifdef DISALBE_FP16
+        wire [32:0] mult_result_sel = mult_result_bf16;
+    `elsif DISALBE_BF16
+        wire [32:0] mult_result_sel = mult_result_fp16;
+    `else
+        logic [32:0] mult_result_sel;
         always_comb begin
-            case(fmt_s_delayed)
-                3'd1: mult_result_mux = mult_result_fp16;
-                3'd2: mult_result_mux = mult_result_bf16;
-                default: mult_result_mux = '0;
+            case (fmt_s_delayed)
+                3'd1: mult_result_sel = mult_result_fp16;
+                3'd2: mult_result_sel = mult_result_bf16;
+                default: mult_result_sel = '0;
             endcase
         end
+    `endif
 
         VX_pipe_register #(
             .DATAW (33),
@@ -134,7 +155,7 @@ module VX_tcu_fedp_bhf #(
             .clk      (clk),
             .reset    (reset),
             .enable   (enable),
-            .data_in  (mult_result_mux),
+            .data_in  (mult_result_sel),
             .data_out (mult_result[i])
         );
     end

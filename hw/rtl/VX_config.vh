@@ -836,6 +836,16 @@
 
 // TCU Configurable Knobs /////////////////////////////////////////////////////
 
+// Floating-point input format controls. The DISALBE spelling is intentional.
+// By default, both FP16 and BF16 input formats are enabled.
+// Define DISALBE_FP16 for a BF16-only TCU.
+// Define DISALBE_BF16 for an FP16-only TCU.
+`ifdef DISALBE_FP16
+`ifdef DISALBE_BF16
+`error "DISALBE_FP16 and DISALBE_BF16 cannot be defined together"
+`endif
+`endif
+
 `ifndef TCU_DRL
 `ifndef TCU_BHF
 `ifndef TCU_DSP
