@@ -56,6 +56,10 @@ plt.rcParams.update({
     "svg.fonttype": "none",
 })
 
+ONE_COL_WIDTH = 3.5
+TWO_COL_WIDTH = 7.16
+FULL_HEIGHT = 9.3
+
 
 def display_name(name: str) -> str:
     """Paper-facing label: drop RTL instance prefix and underscores."""
@@ -542,7 +546,7 @@ def fig8_wkv_vs_woq_breakdown():
 
 
 def fig9_wkv_vs_woq_breakdown():
-    """Combined module-level power/area breakdown as horizontal stacked bars."""
+    """Combined power/area breakdown with paper-facing datapath groups."""
     bd_path = HERE / "wkvwoq_breakdown.csv"
     if not bd_path.exists():
         return
@@ -556,70 +560,133 @@ def fig9_wkv_vs_woq_breakdown():
             wkv_a.append(float(row["WKV_area_um2"]) / 1e6)
             woq_a.append(float(row["WoQ_area_um2"]) / 1e6)
 
-    colors = {
-        "u_mxu":                    "#08306b",
-        "u_pre_proc_pipe_buffer":   "#08519c",
-        "u_out_scaler_vec":         "#2171b5",
-        "u_int2fp_vec":             "#4292c6",
-        "u_accumulator_vec":        "#6baed6",
-        "u_act_reduce":             "#9ecae1",
-        "u_in_scaler_vec":          "#2f3b46",
-        "u_zp_mul_out_reg":         "#4b5563",
-        "u_act_reduce_shl_vec":     "#6b7280",
-        "u_merger_vec":             "#9ca3af",
-        "u_f32_to_f16_vec":         "#c7cdd4",
-    }
+    groups = [
+        ("MXU", {
+            "u_mxu",
+        }, "#17365d"),
+        ("Preprocess", {
+            "u_pre_proc_pipe_buffer",
+            "u_prealigner",
+            "u_prealign_blk_idx_pipe",
+            "u_prealign_max_exp_pipe",
+            "u_in_pipe",
+            "u_act_reduce",
+            "u_zp_mul_out_reg",
+            "u_act_reduce_shl_vec",
+        }, "#4c78a8"),
+        ("Postprocess", {
+            "u_out_scaler_vec",
+            "u_int2fp_vec",
+            "u_accumulator_vec",
+            "u_acc_rd_fifo",
+            "u_merger_vec",
+            "u_merge_out_reg",
+            "u_scaler_bypass_pipe",
+            "u_f32_to_f16_vec",
+            *{
+                f"gen_mxu_output_dly_{i}__u_mxu_output_dly_pipe"
+                for i in range(32)
+            },
+        }, "#b7c9e2"),
+        ("Misc", {
+            "u_misc",
+        }, "#8c8c8c"),
+        ("Input scaler", {
+            "u_in_scaler_vec",
+        }, "#2ca25f"),
+    ]
 
-    fig, axes = plt.subplots(
-        2, 1, figsize=(7.16, 3.75),
-        gridspec_kw={"hspace": 1.20},
-    )
-    cats = ["WKV", "WoQ"]
+    assigned = [inst for _, members, _ in groups for inst in members]
+    duplicate_insts = sorted({inst for inst in assigned if assigned.count(inst) > 1})
+    if duplicate_insts:
+        raise ValueError(
+            "fig9 breakdown assigns modules to multiple groups: "
+            + ", ".join(duplicate_insts)
+        )
+    unknown_insts = sorted(set(insts) - set(assigned))
+    missing_insts = sorted(set(assigned) - set(insts))
+    if unknown_insts or missing_insts:
+        details = []
+        if unknown_insts:
+            details.append("unassigned modules: " + ", ".join(unknown_insts))
+        if missing_insts:
+            details.append("missing modules: " + ", ".join(missing_insts))
+        raise ValueError("fig9 breakdown grouping mismatch; " + "; ".join(details))
 
-    def draw_stacked_h(ax, left_vals, right_vals, xlabel, title, total_fmt):
-        bottoms = [0.0, 0.0]
-        local_handles = []
-        for inst, left_v, right_v in zip(insts, left_vals, right_vals):
-            vals = [left_v, right_v]
-            c = colors.get(inst, GRAY)
-            bars = ax.barh(cats, vals, left=bottoms, height=0.42, color=c,
-                           label=display_name(inst), edgecolor="white", linewidth=0.45)
-            local_handles.append(bars[0])
-            bottoms = [b + v for b, v in zip(bottoms, vals)]
-        ax.set_xlabel(xlabel)
-        ax.set_title(title)
-        ax.xaxis.grid(True, alpha=0.3)
-        ax.set_axisbelow(True)
-        xmax = max(bottoms) * 1.14
-        ax.set_xlim(0, xmax)
-        for i, total in enumerate(bottoms):
-            ax.text(total + xmax * 0.012, i, total_fmt.format(total),
-                    ha="left", va="center", fontsize=7.0)
-        return local_handles, bottoms
+    index_by_inst = {inst: i for i, inst in enumerate(insts)}
 
-    handles, power_totals = draw_stacked_h(
-        axes[0], wkv_p, woq_p,
-        "Power (mW)", "Module-level power", "{:.2f} mW",
-    )
-    _, area_totals = draw_stacked_h(
-        axes[1], wkv_a, woq_a,
-        "Area (mm²)", "Module-level area", "{:.3f} mm²",
-    )
+    def aggregate(values):
+        return [
+            sum(values[index_by_inst[inst]] for inst in members)
+            for _, members, _ in groups
+        ]
 
-    fig.suptitle(
-        "32×32 mpGEMM @ 100 MHz, FP16 act × INT4 weight (VX gemm unit top)",
-        y=0.995,
-        fontsize=8.0,
-    )
-    fig.legend(handles, [display_name(inst) for inst in insts],
-               loc="lower center", bbox_to_anchor=(0.5, -0.02),
-               ncol=4, fontsize=6.2, framealpha=0.95)
-    fig.subplots_adjust(left=0.08, right=0.93, top=0.84, bottom=0.26,
-                        hspace=1.25)
-    out = HERE / "fig9_wkv_vs_woq_breakdown.svg"
-    fig.savefig(out, dpi=300, bbox_inches="tight")
-    plt.close(fig)
-    print(f"[fig9] wrote {out}; "
+    labels = [label for label, _, _ in groups]
+    colors = [color for _, _, color in groups]
+    grouped_wkv_p = aggregate(wkv_p)
+    grouped_woq_p = aggregate(woq_p)
+    grouped_wkv_a = aggregate(wkv_a)
+    grouped_woq_a = aggregate(woq_a)
+
+    with plt.rc_context({
+        "font.size": 4.5,
+        "axes.titlesize": 4.5,
+        "axes.labelsize": 4.5,
+        "xtick.labelsize": 4.5,
+        "ytick.labelsize": 4.5,
+        "legend.fontsize": 4.5,
+    }):
+        fig, axes = plt.subplots(
+            2, 1, figsize=(ONE_COL_WIDTH, 1.8),
+            gridspec_kw={"hspace": 1.20},
+        )
+        cats = ["WKV", "WoQ"]
+        show_value_labels = False
+
+        def draw_stacked_h(ax, left_vals, right_vals, title, total_fmt):
+            bottoms = [0.0, 0.0]
+            local_handles = []
+            for label, color, left_v, right_v in zip(
+                    labels, colors, left_vals, right_vals):
+                vals = [left_v, right_v]
+                bars = ax.barh(cats, vals, left=bottoms, height=0.42,
+                               color=color, label=label, edgecolor="white",
+                               linewidth=0.45)
+                local_handles.append(bars[0])
+                bottoms = [b + v for b, v in zip(bottoms, vals)]
+            ax.set_title(title, fontsize=4.5)
+            ax.xaxis.grid(True, alpha=0.3)
+            ax.set_axisbelow(True)
+            xmax = max(bottoms) * (1.14 if show_value_labels else 1.02)
+            ax.set_xlim(0, xmax)
+            if show_value_labels:
+                for i, total in enumerate(bottoms):
+                    ax.text(total + xmax * 0.012, i, total_fmt.format(total),
+                            ha="left", va="center")
+            return local_handles, bottoms
+
+        handles, power_totals = draw_stacked_h(
+            axes[0], grouped_wkv_p, grouped_woq_p,
+            "power(mW)", "{:.2f} mW",
+        )
+        _, area_totals = draw_stacked_h(
+            axes[1], grouped_wkv_a, grouped_woq_a,
+            "area(mm2)", "{:.3f} mm²",
+        )
+
+        fig.legend(handles, labels,
+                   loc="lower center", bbox_to_anchor=(0.5, -0.02),
+                   ncol=5, columnspacing=0.8, handlelength=1.2,
+                   handletextpad=0.4, framealpha=0.95)
+        fig.subplots_adjust(left=0.08, right=0.93, top=0.94, bottom=0.23,
+                            hspace=1.25)
+        outputs = []
+        for ext in ("svg", "png"):
+            out = HERE / f"fig9_wkv_vs_woq_breakdown.{ext}"
+            fig.savefig(out, dpi=300, bbox_inches="tight")
+            outputs.append(out)
+        plt.close(fig)
+    print(f"[fig9] wrote {', '.join(str(out) for out in outputs)}; "
           f"power totals WKV={power_totals[0]:.2f} mW WoQ={power_totals[1]:.2f} mW, "
           f"area totals WKV={area_totals[0]:.3f} mm^2 WoQ={area_totals[1]:.3f} mm^2")
 

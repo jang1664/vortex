@@ -16,3 +16,6 @@
 [submodule "third_party/llm-analysis"]
 	path = third_party/llm-analysis
 	url = git@github.com:jang1664/llm-analysis.git
+[submodule "third_party/component_database"]
+	path = third_party/component_database
+	url = git@github.com:jang1664/component_database.git

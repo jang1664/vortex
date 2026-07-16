@@ -70,7 +70,7 @@ fi
 
 for run in "${runs[@]}"; do
     case "$run" in
-        nt8|nt32)
+        nt8|nt16|nt32)
             ;;
         *)
             echo "error: unknown run: $run" >&2

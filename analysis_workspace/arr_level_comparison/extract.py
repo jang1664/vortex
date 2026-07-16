@@ -11,13 +11,14 @@ are normalized to **microwatts (uW)** and area to **um^2**.
 
 from __future__ import annotations
 
+import argparse
 import csv
 import re
 from dataclasses import dataclass, asdict
 from pathlib import Path
 
-ROOT = Path("/home/jaeyong.jang/project.local/research/component_database")
 HERE = Path(__file__).resolve().parent
+ROOT = HERE.parents[1] / "third_party" / "component_database"
 # VX_gemm_unit_top syn/sim/pwr artifacts now live under vortex/build/...
 # (the source-side scripts at vortex/hw/syn/synopsys/gemm_unit_breakdown/scripts
 # write here; mirrored from the original location in component_database.)
@@ -47,6 +48,10 @@ AREA_BUF_RE = re.compile(r"^\s*Buf/Inv area:\s+([\d.]+)", re.MULTILINE)
 QOR_WNS_RE = re.compile(r"Setup WNS:\s+(-?[\d.]+)")
 QOR_CRIT_RE = re.compile(r"Critical Path Length:\s+([\d.]+)")
 QOR_PERIOD_RE = re.compile(r"Critical Path Clk Period:\s+([\d.]+)")
+TIMING_SLACK_RE = re.compile(
+    r"^\s*slack\s+\([^)]+\)\s+(-?(?:\d+(?:\.\d*)?|\.\d+))\s*$",
+    re.MULTILINE,
+)
 
 
 @dataclass
@@ -117,18 +122,27 @@ def parse_area_report(path: Path):
     }
 
 
-def parse_qor(path: Path):
-    if not path.exists():
-        return None, None, None
-    text = path.read_text(errors="ignore")
-    wns = QOR_WNS_RE.search(text)
-    crit = QOR_CRIT_RE.search(text)
-    per = QOR_PERIOD_RE.search(text)
-    return (
-        float(wns.group(1)) if wns else None,
-        float(crit.group(1)) if crit else None,
-        float(per.group(1)) if per else None,
-    )
+def parse_qor(path: Path, timing_path: Path | None = None):
+    if path.exists():
+        text = path.read_text(errors="ignore")
+        wns = QOR_WNS_RE.search(text)
+        crit = QOR_CRIT_RE.search(text)
+        per = QOR_PERIOD_RE.search(text)
+        if wns:
+            return (
+                float(wns.group(1)),
+                float(crit.group(1)) if crit else None,
+                float(per.group(1)) if per else None,
+            )
+
+    if timing_path is not None and timing_path.exists():
+        text = timing_path.read_text(errors="ignore")
+        # report_timing lists max-delay paths from worst to best.
+        slack = TIMING_SLACK_RE.search(text)
+        if slack:
+            return float(slack.group(1)), None, None
+
+    return None, None, None
 
 
 def collect_fp_module(design: str, family: str = "fp"):
@@ -147,12 +161,13 @@ def collect_fp_module(design: str, family: str = "fp"):
         rpt = cfg / "pwr.run1" / "reports" / f"{design}_report_power.report"
         area = cfg / "syn_topo.run1" / "reports" / f"14_{design}.mapped.area.rpt"
         qor = cfg / "syn_topo.run1" / "reports" / f"{design}.qor_snapshot.rpt"
+        timing = cfg / "syn_topo.run1" / "reports" / f"12_{design}.mapped.timing.rpt"
         pw = parse_power_report(rpt, design)
         if pw is None:
             continue
         sw_uW, int_uW, leak_uW, tot_uW = pw
         ar = parse_area_report(area) or {"total": 0, "comb": 0, "seq": 0, "buf": 0}
-        wns, crit, per = parse_qor(qor)
+        wns, crit, per = parse_qor(qor, timing)
         yield Row(
             design=design,
             family=family,
@@ -185,12 +200,13 @@ def collect_fp_examples(design: str):
         rpt = cfg / "pwr.run1" / "reports" / f"{design}_report_power.report"
         area = cfg / "syn_topo.run1" / "reports" / f"14_{design}.mapped.area.rpt"
         qor = cfg / "syn_topo.run1" / "reports" / f"{design}.qor_snapshot.rpt"
+        timing = cfg / "syn_topo.run1" / "reports" / f"12_{design}.mapped.timing.rpt"
         pw = parse_power_report(rpt, design)
         if pw is None:
             continue
         sw_uW, int_uW, leak_uW, tot_uW = pw
         ar = parse_area_report(area) or {"total": 0, "comb": 0, "seq": 0, "buf": 0}
-        wns, crit, per = parse_qor(qor)
+        wns, crit, per = parse_qor(qor, timing)
         yield Row(
             design=design,
             family="fp",
@@ -220,12 +236,13 @@ def collect_int_mac_pe():
         rpt = cfg / "pwr.run1" / "reports" / "int_mac_pe_report_power.report"
         area = cfg / "syn_topo.run1" / "reports" / "14_int_mac_pe.mapped.area.rpt"
         qor = cfg / "syn_topo.run1" / "reports" / "int_mac_pe.qor_snapshot.rpt"
+        timing = cfg / "syn_topo.run1" / "reports" / "12_int_mac_pe.mapped.timing.rpt"
         pw = parse_power_report(rpt, "int_mac_pe")
         if pw is None:
             continue
         sw_uW, int_uW, leak_uW, tot_uW = pw
         ar = parse_area_report(area) or {"total": 0, "comb": 0, "seq": 0, "buf": 0}
-        wns, crit, per = parse_qor(qor)
+        wns, crit, per = parse_qor(qor, timing)
         yield Row(
             design="int_mac_pe",
             family="int",
@@ -250,12 +267,13 @@ def collect_ws_mxu():
     rpt = base / "reports" / "18_mxu.mapped.power.rpt"
     area = base / "reports" / "14_mxu.mapped.area.rpt"
     qor = base / "reports" / "mxu.qor_snapshot.rpt"
+    timing = base / "reports" / "12_mxu.mapped.timing.rpt"
     pw = parse_power_report(rpt, "mxu")
     if pw is None:
         return
     sw_uW, int_uW, leak_uW, tot_uW = pw
     ar = parse_area_report(area) or {"total": 0, "comb": 0, "seq": 0, "buf": 0}
-    wns, crit, per = parse_qor(qor)
+    wns, crit, per = parse_qor(qor, timing)
     yield Row(
         design="ws_mxu_4x4_INT4xINT4",
         family="int",
@@ -288,12 +306,13 @@ def collect_vx_gemm():
         rpt = syn / "reports" / "18_VX_gemm_unit_top.mapped.power.rpt"
     area = syn / "reports" / "14_VX_gemm_unit_top.mapped.area.rpt"
     qor = syn / "reports" / "VX_gemm_unit_top.qor_snapshot.rpt"
+    timing = syn / "reports" / "12_VX_gemm_unit_top.mapped.timing.rpt"
     pw = parse_power_report(rpt, "VX_gemm_unit_top")
     if pw is None:
         return
     sw_uW, int_uW, leak_uW, tot_uW = pw
     ar = parse_area_report(area) or {"total": 0, "comb": 0, "seq": 0, "buf": 0}
-    wns, crit, per = parse_qor(qor)
+    wns, crit, per = parse_qor(qor, timing)
     yield Row(
         design="VX_gemm_unit_32x32_mpGEMM",
         family="gemm",
@@ -368,16 +387,28 @@ def collect_fpint_m32_scaled():
 WKVWOQ_INSTANCES = [
     "u_mxu",
     "u_pre_proc_pipe_buffer",
+    "u_prealigner",
+    "u_prealign_blk_idx_pipe",
+    "u_prealign_max_exp_pipe",
+    "u_in_pipe",
     "u_out_scaler_vec",
     "u_int2fp_vec",
     "u_accumulator_vec",
+    "u_acc_rd_fifo",
     "u_act_reduce",
     "u_in_scaler_vec",
     "u_zp_mul_out_reg",
     "u_act_reduce_shl_vec",
     "u_merger_vec",
+    "u_merge_out_reg",
+    "u_scaler_bypass_pipe",
     "u_f32_to_f16_vec",
+    *[
+        f"gen_mxu_output_dly_{i}__u_mxu_output_dly_pipe"
+        for i in range(32)
+    ],
 ]
+WKVWOQ_OUTPUT_INSTANCES = WKVWOQ_INSTANCES + ["u_misc"]
 
 
 def parse_module_breakdown(rpt_path: Path):
@@ -402,8 +433,8 @@ def parse_module_breakdown(rpt_path: Path):
     text = rpt_path.read_text(errors="ignore")
     lines = text.splitlines()
     for i, raw in enumerate(lines):
-        # Look for "u_<name> (Module)" instance lines.
-        m_inst = re.match(r"^\s*(u_\w+)\s*\(", raw)
+        # Look for direct module instance lines selected above.
+        m_inst = re.match(r"^\s*(\w+)\s*\(", raw)
         if not m_inst:
             continue
         name = m_inst.group(1)
@@ -424,7 +455,7 @@ def parse_module_area_breakdown(rpt_path: Path):
         return {}
     out = {}
     wanted = set(WKVWOQ_INSTANCES)
-    line_re = re.compile(r"^\s*gemm_unit/(u_\w+)\s+([\d.]+)\s+")
+    line_re = re.compile(r"^\s*gemm_unit/([^/\s]+)\s+([\d.]+)\s+")
     for raw in rpt_path.read_text(errors="ignore").splitlines():
         m = line_re.match(raw)
         if not m:
@@ -441,12 +472,32 @@ def collect_wkv_woq_breakdown():
     woq_rpt = base / "pwr_woq.run1" / "reports" / "VX_woq_gemm_unit_top_report_power.report"
     wkv_area_rpt = base / "syn_topo.run1" / "reports" / "14_VX_gemm_unit_top.mapped.area.rpt"
     woq_area_rpt = base / "syn_topo_woq.run1" / "reports" / "14_VX_woq_gemm_unit_top.mapped.area.rpt"
-    return {
+    wkv_power_total = parse_power_report(wkv_rpt, "VX_gemm_unit_top")
+    woq_power_total = parse_power_report(woq_rpt, "VX_woq_gemm_unit_top")
+    wkv_area_total = parse_area_report(wkv_area_rpt)
+    woq_area_total = parse_area_report(woq_area_rpt)
+    breakdown = {
         "WKV_power": parse_module_breakdown(wkv_rpt),
         "WoQ_power": parse_module_breakdown(woq_rpt),
         "WKV_area": parse_module_area_breakdown(wkv_area_rpt),
         "WoQ_area": parse_module_area_breakdown(woq_area_rpt),
     }
+    totals = {
+        "WKV_power": wkv_power_total[3] if wkv_power_total else None,
+        "WoQ_power": woq_power_total[3] if woq_power_total else None,
+        "WKV_area": wkv_area_total["total"] if wkv_area_total else None,
+        "WoQ_area": woq_area_total["total"] if woq_area_total else None,
+    }
+    for metric, total in totals.items():
+        if total is None:
+            continue
+        residual = total - sum(breakdown[metric].values())
+        if residual < -1e-3:
+            raise ValueError(
+                f"{metric} submodule sum exceeds top-level total by {-residual:.3f}"
+            )
+        breakdown[metric]["u_misc"] = max(residual, 0.0)
+    return breakdown
 
 
 def collect_all():
@@ -465,29 +516,54 @@ def collect_all():
 
 
 def main():
-    rows = collect_all()
-    out = HERE / "data.csv"
-    fields = list(asdict(rows[0]).keys()) if rows else []
-    with out.open("w", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=fields)
-        w.writeheader()
-        for r in rows:
-            w.writerow(asdict(r))
-    print(f"wrote {len(rows)} rows -> {out}")
-    # also dump a quick table to stdout
-    print(f"\n{'design':<30} {'prec':<25} {'P_total (uW)':>14} {'area (um^2)':>14} {'WNS':>6}")
-    print("-" * 90)
-    for r in rows:
-        print(f"{r.design:<30} {r.precision:<25} {r.total_uw:>14.3f} {r.area_um2:>14.1f} {r.wns_ns:>6.2f}")
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--breakdown-only",
+        action="store_true",
+        help="rebuild only wkvwoq_breakdown.csv from GEMM synthesis reports",
+    )
+    args = parser.parse_args()
+
+    if not args.breakdown_only:
+        rows = collect_all()
+        available = {(row.design, row.precision) for row in rows}
+        required = {
+            ("fp_mult", "FP16"),
+            ("fp_addsub", "FP32"),
+            ("fp_flt2i", "FP16"),
+            ("int_mac_pe", "INT8/INT32"),
+            ("VX_gemm_unit_32x32_mpGEMM", "FP16act/INT4w->FP32acc"),
+        }
+        missing = sorted(required - available)
+        if missing:
+            missing_text = ", ".join(f"{design}/{precision}" for design, precision in missing)
+            raise RuntimeError(
+                "component reports are incomplete; refusing to overwrite data.csv. "
+                f"Missing: {missing_text}. Use --breakdown-only to extract the GEMM breakdown."
+            )
+
+        out = HERE / "data.csv"
+        fields = list(asdict(rows[0]).keys())
+        with out.open("w", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=fields, lineterminator="\n")
+            w.writeheader()
+            for row in rows:
+                w.writerow(asdict(row))
+        print(f"wrote {len(rows)} rows -> {out}")
+        # also dump a quick table to stdout
+        print(f"\n{'design':<30} {'prec':<25} {'P_total (uW)':>14} {'area (um^2)':>14} {'WNS':>6}")
+        print("-" * 90)
+        for row in rows:
+            print(f"{row.design:<30} {row.precision:<25} {row.total_uw:>14.3f} {row.area_um2:>14.1f} {row.wns_ns:>6.2f}")
 
     # WKV vs WoQ module-level breakdown
     bd = collect_wkv_woq_breakdown()
     bd_path = HERE / "wkvwoq_breakdown.csv"
     with bd_path.open("w", newline="") as f:
-        w = csv.writer(f)
+        w = csv.writer(f, lineterminator="\n")
         w.writerow(["instance", "WKV_uW", "WoQ_uW", "delta_uW",
                     "WKV_area_um2", "WoQ_area_um2", "delta_area_um2"])
-        for inst in WKVWOQ_INSTANCES:
+        for inst in WKVWOQ_OUTPUT_INSTANCES:
             wkv = bd["WKV_power"].get(inst, 0.0)
             woq = bd["WoQ_power"].get(inst, 0.0)
             wkv_area = bd["WKV_area"].get(inst, 0.0)
@@ -499,7 +575,7 @@ def main():
           f"{'WKV area':>12} {'WoQ area':>12} {'Δ area':>10}")
     print("-" * 110)
     sum_wkv = sum_woq = sum_wkv_area = sum_woq_area = 0.0
-    for inst in WKVWOQ_INSTANCES:
+    for inst in WKVWOQ_OUTPUT_INSTANCES:
         wkv = bd["WKV_power"].get(inst, 0.0)
         woq = bd["WoQ_power"].get(inst, 0.0)
         wkv_area = bd["WKV_area"].get(inst, 0.0)

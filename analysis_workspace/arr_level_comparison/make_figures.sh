@@ -4,19 +4,20 @@ set -euo pipefail
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 cd "$script_dir"
 
-run_extract=0
+extract_mode="full"
 
 usage() {
     cat <<'EOF'
-Usage: ./make_figures.sh [--extract]
+Usage: ./make_figures.sh [--extract | --extract-breakdown]
 
-Regenerate arr_level_comparison figures and tables.
+Extract synthesis results and regenerate arr_level_comparison figures and tables.
 
 Environment:
-  PYTHON=/path/to/python   Python interpreter to use (default: python3)
+  PYTHON=/path/to/python   Python interpreter to use (default: auto-detected)
 
 Options:
-  --extract                Rebuild data.csv and wkvwoq_breakdown.csv from reports
+  --extract                Rebuild both CSVs from reports before plotting (default)
+  --extract-breakdown      Rebuild only wkvwoq_breakdown.csv from GEMM reports
   -h, --help               Show this help text
 EOF
 }
@@ -27,11 +28,19 @@ find_python() {
         return 0
     fi
 
-    local candidate resolved
+    local candidate resolved conda_bin conda_base conda_python
+    conda_python=""
+    if conda_bin="$(command -v conda 2>/dev/null)"; then
+        if conda_base="$("$conda_bin" info --base 2>/dev/null)"; then
+            conda_python="$conda_base/bin/python"
+        fi
+    fi
+
     for candidate in \
+        "$conda_python" \
         "$HOME/anaconda3/bin/python" \
         "$HOME/miniconda3/bin/python" \
-        python3.11 python3.10 python3.9 python3
+        python python3.11 python3.10 python3.9 python3
     do
         resolved=""
         if resolved="$(command -v "$candidate" 2>/dev/null)"; then
@@ -61,7 +70,10 @@ PY
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --extract)
-            run_extract=1
+            extract_mode="full"
+            ;;
+        --extract-breakdown)
+            extract_mode="breakdown"
             ;;
         -h|--help)
             usage
@@ -78,9 +90,14 @@ done
 
 python_bin="$(find_python)"
 
-if [ "$run_extract" -eq 1 ]; then
-    "$python_bin" extract.py
-fi
+case "$extract_mode" in
+    full)
+        "$python_bin" extract.py
+        ;;
+    breakdown)
+        "$python_bin" extract.py --breakdown-only
+        ;;
+esac
 
 for input in data.csv wkvwoq_breakdown.csv; do
     if [ ! -s "$input" ]; then
