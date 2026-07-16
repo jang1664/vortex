@@ -159,6 +159,41 @@ static void wait_job_done(uint32_t eid, uint32_t generation) {
   }
 }
 
+static void preprocess_worker() {
+  auto* arg = reinterpret_cast<kernel_arg_t*>(csr_read(VX_CSR_MSCRATCH));
+  const uint64_t worker_id = uint64_t(vx_hart_id());
+  const uint64_t worker_count =
+      uint64_t(vx_num_cores()) * vx_num_warps() * vx_num_threads();
+  auto* input_lhs = reinterpret_cast<fp16_t*>(arg->dram_in_base);
+  auto* input_rhs = reinterpret_cast<const fp16_t*>(arg->pre_input_rhs_base);
+
+  for (uint64_t index = worker_id; index < arg->preprocess_elements;
+       index += worker_count) {
+    input_lhs[index] = float_to_fp16(
+        fp16_to_float(input_lhs[index]) + fp16_to_float(input_rhs[index]));
+  }
+}
+
+static void preprocess_worker_stub() {
+  vx_tmc(-1);
+  preprocess_worker();
+  vx_tmc_zero();
+}
+
+static void run_preprocess() {
+  vx_wspawn(vx_num_warps(), preprocess_worker_stub);
+  vx_tmc(-1);
+  preprocess_worker();
+  vx_tmc_one();
+  vx_wspawn(1, nullptr);
+
+  // Every core flushes its share of the vector stores to HBM before any core
+  // is allowed to submit a GEMM descriptor that consumes the input.
+  vx_fence();
+  if (vx_num_cores() > 1)
+    vx_barrier(0x80000000, vx_num_cores());
+}
+
 static uint64_t tiled_output_index(const kernel_arg_t* arg,
                                    uint32_t gm, uint32_t gn) {
   const uint32_t m_pad = (arg->M + 7u) & ~7u;
@@ -243,6 +278,8 @@ int main() {
   const partition_t part = compute_partition(core_id, vx_num_cores(), arg->M, arg->N);
   arg->core_status[core_id] = STATUS_INIT;
   arg->overlap_observed[core_id] = 0;
+
+  run_preprocess();
 
   if (!part.has_work) {
     arg->core_status[core_id] = STATUS_OK;

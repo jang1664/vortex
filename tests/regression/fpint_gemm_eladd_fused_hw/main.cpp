@@ -40,7 +40,7 @@ static vx_buffer_h W_int4_buffer = nullptr;
 static vx_buffer_h scales_buffer = nullptr;
 static vx_buffer_h zeros_buffer = nullptr;
 static vx_buffer_h C_buffer = nullptr;
-static vx_buffer_h residual_buffer = nullptr;
+static vx_buffer_h vector_aux_buffer = nullptr;
 static vx_buffer_h fused_output_buffer = nullptr;
 
 static constexpr float FP16_TOL = 0.01f;
@@ -69,7 +69,7 @@ static void cleanup() {
   if (scales_buffer) vx_mem_free(scales_buffer);
   if (zeros_buffer) vx_mem_free(zeros_buffer);
   if (C_buffer) vx_mem_free(C_buffer);
-  if (residual_buffer) vx_mem_free(residual_buffer);
+  if (vector_aux_buffer) vx_mem_free(vector_aux_buffer);
   if (fused_output_buffer) vx_mem_free(fused_output_buffer);
   if (krnl_buffer) vx_mem_free(krnl_buffer);
   if (args_buffer) vx_mem_free(args_buffer);
@@ -80,7 +80,7 @@ static void cleanup() {
   scales_buffer = nullptr;
   zeros_buffer = nullptr;
   C_buffer = nullptr;
-  residual_buffer = nullptr;
+  vector_aux_buffer = nullptr;
   fused_output_buffer = nullptr;
   krnl_buffer = nullptr;
   args_buffer = nullptr;
@@ -210,7 +210,9 @@ static uint8_t pack_int4_pair(int8_t lo, int8_t hi) {
 // Test vector generation (row-major, same data patterns as before)
 // ============================================================================
 
-static void build_test_vectors(std::vector<uint16_t>& h_A,
+static void build_test_vectors(std::vector<uint16_t>& h_pre_input_lhs,
+                               std::vector<uint16_t>& h_pre_input_rhs,
+                               std::vector<uint16_t>& h_A,
                                std::vector<int8_t>& h_W_raw,
                                std::vector<uint16_t>& h_scales,
                                std::vector<int16_t>& h_zeros,
@@ -220,6 +222,8 @@ static void build_test_vectors(std::vector<uint16_t>& h_A,
   uint32_t ng_total = (N + QBLK - 1) / QBLK;
   uint32_t sc_zp_size = (QDIR == 0) ? (groups_total * N) : (K * ng_total);
 
+  h_pre_input_lhs.resize(M * K);
+  h_pre_input_rhs.resize(M * K);
   h_A.resize(M * K);
   h_W_raw.resize(K * N);
   h_scales.resize(sc_zp_size);
@@ -229,8 +233,13 @@ static void build_test_vectors(std::vector<uint16_t>& h_A,
   // Input matrix A [M x K] fp16
   for (uint32_t m = 0; m < M; ++m) {
     for (uint32_t k = 0; k < K; ++k) {
-      h_A[m * K + k] = float_to_fp16(1.0f + float((m + k) % 3)/100.0);
-      // h_A[m * K + k] = float_to_fp16(1.0f);
+      const uint32_t index = m * K + k;
+      h_pre_input_lhs[index] = float_to_fp16(
+          0.75f + float((m + k) % 3) / 100.0f);
+      h_pre_input_rhs[index] = float_to_fp16(0.25f);
+      h_A[index] = float_to_fp16(
+          fp16_to_float(h_pre_input_lhs[index])
+        + fp16_to_float(h_pre_input_rhs[index]));
     }
   }
 
@@ -528,6 +537,23 @@ static int verify_results_row_major(vx_buffer_h out_buffer,
   return errors;
 }
 
+static int verify_preprocessed_input(vx_buffer_h input_buffer,
+                                     const std::vector<uint8_t>& expected) {
+  std::vector<uint8_t> actual(expected.size());
+  RT_CHECK(vx_copy_from_dev(actual.data(), input_buffer, 0, actual.size()));
+  int errors = 0;
+  for (size_t i = 0; i < expected.size(); ++i) {
+    if (actual[i] != expected[i]) {
+      if (errors < 10) {
+        printf("Preprocess mismatch[byte=%zu]: got=0x%02x, exp=0x%02x\n",
+               i, unsigned(actual[i]), unsigned(expected[i]));
+      }
+      ++errors;
+    }
+  }
+  return errors;
+}
+
 // ============================================================================
 // TMEM layout computation (tensor memory offsets starting from 0)
 // ============================================================================
@@ -588,11 +614,6 @@ int main(int argc, char *argv[]) {
     std::cerr << "M, N, and K must be > 0" << std::endl;
     return -1;
   }
-  if ((M % GEMM_MT) != 0 || (N % GEMM_NT) != 0 || (K % GEMM_KT) != 0) {
-    std::cerr << "Initial fused tests require M, N, and K to be multiples of 128"
-              << std::endl;
-    return -1;
-  }
   if (REPS != 1) {
     std::cerr << "Fused progress v1 requires REPS=1 and fresh output buffers"
               << std::endl;
@@ -615,7 +636,7 @@ int main(int argc, char *argv[]) {
     return -1;
   }
 
-  std::cout << "GEMM + ELADD descriptor progress test" << std::endl;
+  std::cout << "ELADD + GEMM + ELADD fusion test" << std::endl;
   std::cout << "M=" << M << " (padded to " << M_pad << ")"
             << ", N=" << N << ", K=" << K
             << ", QBLK=" << QBLK << ", WTRANS=" << WTRANS
@@ -639,13 +660,16 @@ int main(int argc, char *argv[]) {
   tensor_mem_size = TMEM_BANK_SIZE * NUM_DMA_CHANNELS;
 
   // ---- Generate test vectors (row-major) ----
+  std::vector<uint16_t> h_pre_input_lhs;
+  std::vector<uint16_t> h_pre_input_rhs;
   std::vector<uint16_t> h_A;
   std::vector<int8_t> h_W_raw;
   std::vector<uint16_t> h_scales;
   std::vector<int16_t> h_zeros;
   std::vector<uint16_t> h_ref_out_fp16;
 
-  build_test_vectors(h_A, h_W_raw, h_scales, h_zeros, h_ref_out_fp16,
+  build_test_vectors(h_pre_input_lhs, h_pre_input_rhs, h_A,
+                     h_W_raw, h_scales, h_zeros, h_ref_out_fp16,
                      /*compute_reference=*/true);
 
   std::vector<uint16_t> h_residual(M * N);
@@ -658,7 +682,10 @@ int main(int argc, char *argv[]) {
   }
 
   // ---- Convert to tiled DRAM layout ----
+  std::vector<uint8_t> tiled_pre_input_lhs, tiled_pre_input_rhs;
   std::vector<uint8_t> tiled_input, tiled_weight, tiled_scale, tiled_zp;
+  convert_input_tiled(h_pre_input_lhs, tiled_pre_input_lhs);
+  convert_input_tiled(h_pre_input_rhs, tiled_pre_input_rhs);
   convert_input_tiled(h_A, tiled_input);
   convert_weight_tiled(h_W_raw, tiled_weight);
   convert_scale_tiled(h_scales, tiled_scale);
@@ -715,22 +742,28 @@ int main(int argc, char *argv[]) {
   }
 
   // ---- Allocate device buffers ----
-  RT_CHECK(vx_mem_alloc_aligned(device, tiled_input.size(),  DRAM_ALIGN_BYTES, VX_MEM_READ, &A_buffer));
+  RT_CHECK(vx_mem_alloc_aligned(device, tiled_input.size(),
+                                DRAM_ALIGN_BYTES, VX_MEM_READ_WRITE, &A_buffer));
   RT_CHECK(vx_mem_alloc_aligned(device, tiled_weight.size(), DRAM_ALIGN_BYTES, VX_MEM_READ, &W_int4_buffer));
   RT_CHECK(vx_mem_alloc_aligned(device, tiled_scale.size(),  DRAM_ALIGN_BYTES, VX_MEM_READ, &scales_buffer));
   RT_CHECK(vx_mem_alloc_aligned(device, tiled_zp.size(),     DRAM_ALIGN_BYTES, VX_MEM_READ, &zeros_buffer));
   RT_CHECK(vx_mem_alloc_aligned(device, out_total_bytes,     DRAM_ALIGN_BYTES, VX_MEM_READ_WRITE, &C_buffer));
-  RT_CHECK(vx_mem_alloc_aligned(device, h_residual.size() * sizeof(uint16_t),
-                                DRAM_ALIGN_BYTES, VX_MEM_READ, &residual_buffer));
+  const size_t residual_aux_offset = align_up_u64(
+      tiled_pre_input_rhs.size(), DRAM_ALIGN_BYTES);
+  const size_t vector_aux_bytes = residual_aux_offset
+                                + h_residual.size() * sizeof(uint16_t);
+  RT_CHECK(vx_mem_alloc_aligned(device, vector_aux_bytes,
+                                DRAM_ALIGN_BYTES, VX_MEM_READ, &vector_aux_buffer));
   RT_CHECK(vx_mem_alloc_aligned(device, h_fused_ref.size() * sizeof(uint16_t),
                                 DRAM_ALIGN_BYTES, VX_MEM_WRITE, &fused_output_buffer));
 
   // ---- Upload tiled data ----
-  RT_CHECK(vx_copy_to_dev(A_buffer,       tiled_input.data(),  0, tiled_input.size()));
   RT_CHECK(vx_copy_to_dev(W_int4_buffer,  tiled_weight.data(), 0, tiled_weight.size()));
   RT_CHECK(vx_copy_to_dev(scales_buffer,  tiled_scale.data(),  0, tiled_scale.size()));
   RT_CHECK(vx_copy_to_dev(zeros_buffer,   tiled_zp.data(),     0, tiled_zp.size()));
-  RT_CHECK(vx_copy_to_dev(residual_buffer, h_residual.data(), 0,
+  RT_CHECK(vx_copy_to_dev(vector_aux_buffer, tiled_pre_input_rhs.data(), 0,
+                          tiled_pre_input_rhs.size()));
+  RT_CHECK(vx_copy_to_dev(vector_aux_buffer, h_residual.data(), residual_aux_offset,
                           h_residual.size() * sizeof(uint16_t)));
 
   // Zero output buffer
@@ -746,12 +779,15 @@ int main(int argc, char *argv[]) {
   // ---- Set up kernel arguments ----
   kernel_arg_t kargs = {};
 
+  uint64_t vector_aux_base = 0;
+  RT_CHECK(vx_mem_address(vector_aux_buffer, &vector_aux_base));
+  kargs.pre_input_rhs_base = vector_aux_base;
   RT_CHECK(vx_mem_address(A_buffer,       &kargs.dram_in_base));
   RT_CHECK(vx_mem_address(W_int4_buffer,  &kargs.dram_w_base));
   RT_CHECK(vx_mem_address(scales_buffer,  &kargs.dram_sc_base));
   RT_CHECK(vx_mem_address(zeros_buffer,   &kargs.dram_zp_base));
   RT_CHECK(vx_mem_address(C_buffer,       &kargs.dram_out_base));
-  RT_CHECK(vx_mem_address(residual_buffer, &kargs.residual_base));
+  kargs.residual_base = vector_aux_base + residual_aux_offset;
   RT_CHECK(vx_mem_address(fused_output_buffer, &kargs.fused_out_base));
 
   if (!compute_tmem_layout(kargs, tensor_mem_size)) {
@@ -768,6 +804,10 @@ int main(int argc, char *argv[]) {
   kargs.WTRANS = WTRANS;
   kargs.QDIR   = QDIR;
   kargs.schedule = SCHEDULE;
+  // Include the zero-filled row padding in the in-place ELADD. This preserves
+  // the tiled buffer contract and lets the byte-exact check cover every byte
+  // that the GEMM DMA may address, not only the logical M x K elements.
+  kargs.preprocess_elements = uint32_t(tiled_input.size() / sizeof(uint16_t));
   for (uint32_t core = 0; core < NUM_CORES; ++core)
     kargs.core_status[core] = STATUS_INIT;
 
@@ -786,6 +826,9 @@ int main(int argc, char *argv[]) {
   // ---- Run kernel ----
   std::cout << "Starting kernel execution" << std::endl;
   for (uint32_t rep = 0; rep < REPS; ++rep) {
+    // The preprocess is in-place, so restore its lhs input for every repeat.
+    RT_CHECK(vx_copy_to_dev(A_buffer, tiled_pre_input_lhs.data(),
+                            0, tiled_pre_input_lhs.size()));
     for (uint32_t core = 0; core < NUM_CORES; ++core) {
       kargs.core_status[core] = STATUS_INIT;
       kargs.overlap_observed[core] = 0;
@@ -818,10 +861,12 @@ int main(int argc, char *argv[]) {
   }
 
   // ---- Verify output ----
-  int errors = verify_results_row_major(fused_output_buffer, h_fused_ref);
+  int errors = verify_preprocessed_input(A_buffer, tiled_input);
+  errors += verify_results_row_major(fused_output_buffer, h_fused_ref);
   if (SCHEDULE == SCHEDULE_FUSED) {
     const uint32_t active_cores = std::min<uint32_t>(
-        uint32_t(num_cores), (M / GEMM_MT) * (N / GEMM_NT));
+        uint32_t(num_cores),
+        ((M + GEMM_MT - 1) / GEMM_MT) * ((N + GEMM_NT - 1) / GEMM_NT));
     for (uint32_t core = 0; core < active_cores; ++core) {
       std::cout << "Overlap core " << core << ": "
                 << (kargs.overlap_observed[core] ? "observed" : "not observed")

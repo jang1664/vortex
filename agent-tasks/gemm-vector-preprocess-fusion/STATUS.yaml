@@ -1,0 +1,42 @@
+task: gemm-vector-preprocess-fusion
+state: COMPLETED
+branch: feat/gemm-multicore-support-v2
+updated: "2026-07-16 14:12"
+summary: "Fused an all-hart ELADD producer before multicore GEMM, with per-core fence/flush and a global barrier before descriptor submission; focused 2-core xrt-vcs checks pass."
+progress:
+  - timestamp: "2026-07-16 13:08"
+    status: started
+    attempted: "Fast-forwarded the target branch to the existing post-process fusion baseline and traced Vortex fence and global-barrier behavior."
+    result: "The producer can run across every core and warp, fence each core's completed stores, then use the existing global barrier before any core submits a GEMM job."
+    learned: "vx_fence provides the required cache flush, while multi-core producer completion additionally requires GBAR_ENABLE and vx_barrier with the global bit set."
+iterations:
+  - timestamp: "2026-07-16 13:27"
+    attempted: "Ran the 2-core xrt-vcs baseline after extending the host ABI but before adding the device producer."
+    result: "Failed as expected before functional verification; core 0 reported STATUS_ALLOC_FAIL (2)."
+    learned: "The red baseline confirms the host-side contract is not satisfied by the post-process-only kernel."
+  - timestamp: "2026-07-16 13:35"
+    attempted: "Added an all-hart in-place FP16 ELADD producer, per-core fence, global barrier, and repeat input restoration."
+    result: "Host and Vortex kernel compilation completed successfully in the configured 2-core build."
+    learned: "vx_fence also needs a compiler memory clobber so source-level stores cannot move across the hardware flush point."
+  - timestamp: "2026-07-16 13:42"
+    attempted: "Ran initial xrt-vcs diagnostics with a manually assembled configuration and bounded producer workloads."
+    result: "The producer and worker join progressed, but every run ended at STATUS_ALLOC_FAIL because ENABLE_GEMM_ACCEL was missing."
+    learned: "Use the complete improve config and fail compilation when GEMM_ACCEL_ENABLED is false; GEMM_ACC_MEM_DEPTH alone does not instantiate the accelerator."
+  - timestamp: "2026-07-16 13:53"
+    attempted: "Ran a two-active-core partial-shape sequential check with improve GEMM, GBAR_ENABLE, M=8, N=256, K=32, and QBLK=32."
+    result: "PASSED with exact preprocessed-input and final-output checks; 95,792 last-core cycles."
+    learned: "The partial shape exercises both GEMM descriptors while keeping the software FP16 vector stages practical in xrt-vcs."
+  - timestamp: "2026-07-16 13:56"
+    attempted: "Ran the same two-active-core shape with the fused post-process schedule."
+    result: "PASSED with exact input/output checks; 94,682 last-core cycles. The small shape did not observe GEMM/post-process overlap."
+    learned: "Overlap observation remains shape-dependent; it should only be required on a sufficiently long GEMM workload."
+  - timestamp: "2026-07-16 14:12"
+    attempted: "Ran a 2-core fused check with M=8, N=32, K=32 so one core owns no GEMM partition but still participates in the producer and global barrier."
+    result: "PASSED after force-rebuilding the kernel with compiler memory clobbers on both fence and barrier, with exact preprocessed-input and final-output checks; core 0 completed in 62,296 cycles and idle GEMM core 1 returned STATUS_OK."
+    learned: "The no-work core reaches the post-fence global barrier and exits only after the active core is safe to submit its descriptor. Partial M/N/K tile dimensions are covered by this focused shape, and descriptor MMIO cannot be compiler-reordered ahead of the barrier."
+pitfalls:
+  - "Do not let inactive GEMM cores return before the producer fence and global barrier; every configured core must participate to avoid deadlock."
+  - "Do not publish a GEMM descriptor before all producer cores have crossed the post-fence global barrier."
+  - "Do not run this app without ENABLE_GEMM_ACCEL; otherwise descriptor allocation reads the unmapped/default MMIO response and reports STATUS_ALLOC_FAIL."
+  - "A full 128x128 FP16 vector stage is very slow in xrt-vcs; use a supported partial M/K shape for focused ordering checks."
+next_steps: []

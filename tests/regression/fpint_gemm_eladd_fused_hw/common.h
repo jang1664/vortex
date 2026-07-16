@@ -8,6 +8,14 @@
 #error "fpint_gemm_eladd_fused_hw requires the improve GEMM implementation"
 #endif
 
+#if !GEMM_ACCEL_ENABLED
+#error "fpint_gemm_eladd_fused_hw requires ENABLE_GEMM_ACCEL"
+#endif
+
+#if NUM_CORES > 1 && !GBAR_ENABLED
+#error "fpint_gemm_eladd_fused_hw requires GBAR_ENABLE for multicore preprocess synchronization"
+#endif
+
 // Runtime-programmed DMA tile dimensions. These remain pow2-only; the kernel
 // writes their log2 values into descriptor registers 40..42.
 #define GEMM_MT 128
@@ -76,6 +84,7 @@
 #define SCHEDULE_FUSED      1
 
 typedef struct {
+  uint64_t pre_input_rhs_base;
   uint64_t dram_in_base;
   uint64_t dram_w_base;
   uint64_t dram_sc_base;
@@ -97,6 +106,7 @@ typedef struct {
   uint32_t WTRANS;
   uint32_t QDIR;
   uint32_t schedule;
+  uint32_t preprocess_elements;
 
   uint32_t core_status[NUM_CORES];
   uint32_t job_eid[NUM_CORES];
