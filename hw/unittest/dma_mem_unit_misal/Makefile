@@ -36,6 +36,9 @@ RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
 				$(RTL_DIR)/libs/VX_popcount.sv \
 				$(RTL_DIR)/libs/VX_demux.sv \
 				$(RTL_DIR)/libs/VX_elastic_buffer.sv \
+				$(RTL_DIR)/libs/VX_fifo_queue.sv \
+				$(RTL_DIR)/libs/VX_pending_size.sv \
+				$(RTL_DIR)/libs/VX_dp_ram.sv \
 				$(RTL_DIR)/libs/VX_stream_buffer.sv \
 				$(RTL_DIR)/libs/VX_generic_arbiter.sv \
 				$(RTL_DIR)/libs/VX_shift_register.sv \
@@ -46,7 +49,7 @@ RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
 				$(RTL_DIR)/core/VX_node_done_if.sv
 #PARAMS_  := PIPE_MULT=$(PIPE_MULT) PIPE_ALIGN=$(PIPE_ALIGN) PIPE_INTERVAL=$(PIPE_INTERVAL)
 INCDIRS_ := $(RTL_DIR)
-DEFINES_ := SIMULATION DEBUG_LEVEL=3 DBG_TRACE_GEMM
+DEFINES_ := SIMULATION DEBUG_LEVEL=3 DBG_TRACE_GEMM DMA_RD_OUTSTANDING_SLOT=8
 
 COMPILE_LOG := logs/compile.log
 SIM_LOG     := logs/sim.log
@@ -64,6 +67,8 @@ setup:
 	mkdir -p logs reports
 
 include $(SIM_EXEC).mk
+
+run: sim
 
 fst2vcd:
 	for file in reports/*.fst; do \

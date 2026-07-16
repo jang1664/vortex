@@ -18,8 +18,9 @@ module tb_VX_dma_mem_unit_misal import VX_gpu_pkg::*; ();
   parameter real   PERIOD       = 10.0;
   parameter string OBJ          = "func";  // "func" or "power"
   parameter string FILE_POSTFIX = "func";
-  parameter int    DCACHE_BYTES_P = 32;
-  parameter int    LMEM_BYTES_P   = 16;
+  parameter int    DCACHE_BYTES_P = 64;
+  parameter int    LMEM_BYTES_P   = 128;
+  parameter int    PACK_BYTES_P   = 16;
   parameter bit    ENABLE_MISALIGN_P = 1'b1;
 
   // -----------------------------
@@ -29,7 +30,7 @@ module tb_VX_dma_mem_unit_misal import VX_gpu_pkg::*; ();
   localparam int CFG_DW     = 32;
 
   localparam int MEM_BYTES  = 64*1024;
-  localparam int TAG_WIDTH  = 45;  // >= `UP(UUID_WIDTH) is enough
+  localparam int TAG_WIDTH  = `UP(UUID_WIDTH) + 3; // 8 tagged read slots
 
   localparam int DCACHE_BYTES = DCACHE_BYTES_P;
   localparam int LMEM_BYTES   = LMEM_BYTES_P;
@@ -101,7 +102,8 @@ module tb_VX_dma_mem_unit_misal import VX_gpu_pkg::*; ();
     .DCACHE_ADDR_WIDTH(`MEM_ADDR_WIDTH - `CLOG2(DCACHE_BYTES)),
     .LMEM_ADDR_WIDTH  (`MEM_ADDR_WIDTH - `CLOG2(LMEM_BYTES)),
     .DCACHE_TAG_WIDTH(TAG_WIDTH),
-    .LMEM_TAG_WIDTH  (TAG_WIDTH)
+    .LMEM_TAG_WIDTH  (TAG_WIDTH),
+    .MISALIGN_PACK_BYTES(PACK_BYTES_P)
   ) dut (
     .clk          (clk),
     .reset        (reset),
