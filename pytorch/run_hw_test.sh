@@ -40,11 +40,11 @@ TEST_DIR="$SCRIPT_DIR/test"
 DEVICE=""
 DEVICE_SET=""
 if [[ -n "${XRT_DEVICE_INDEX:-}" ]]; then DEVICE="$XRT_DEVICE_INDEX"; DEVICE_SET=1; fi
-# Default bitstream: ecde637ae3 -- the "Succeed gemm" build (commit e440499),
+# Default bitstream: 8d9b4939d1 (alias improve_th16_tcol32_hwexp_dcache, "pack16" w/ per-group scale fix),
 # alias `improve_th16_tcol32_hwexp_dcache`: NUM_THREADS=16, MXU 32x32, and it is
 # the first fpint bitstream that actually instantiates the GEMM engine
 # (-DENABLE_GEMM_ACCEL) without hanging. Required for mm_w4a16_opt.
-FPGA_BIN_DIR="${FPGA_BIN_DIR:-/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_L2cache_ecde637ae3/bin}"
+FPGA_BIN_DIR="${FPGA_BIN_DIR:-/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_L2cache_8d9b4939d1/bin}"
 # Compile-time CONFIGS must match how the bitstream was synthesized, else the
 # host driver / kernel address maps disagree with the hardware. Sourced below.
 CONFIG_FILE="${CONFIG_FILE:-$VORTEX_HOME/configs/improve_th16_tcol32_hwexp_dcache.sh}"

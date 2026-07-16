@@ -43,9 +43,10 @@ TRACE_OPS="${TRACE_OPS:-0}"
 TRACE_FLAG=""
 [[ "$TRACE_OPS" == "1" ]] && TRACE_FLAG="--trace-ops"
 
-VORTEX_HOME="/home/bosungan/vortex_improve"
-SPINQUANT_DIR="$VORTEX_HOME/pytorch/spinquant"
-FPGA_BIN_DIR_DEFAULT="/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_L2cache_ecde637ae3/bin"
+# Resolve paths relative to this script so the repo can be relocated/renamed.
+SPINQUANT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+VORTEX_HOME="$(cd "$SPINQUANT_DIR/../.." && pwd)"   # spinquant lives at $VORTEX_HOME/pytorch/spinquant
+FPGA_BIN_DIR_DEFAULT="/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_L2cache_8d9b4939d1/bin"
 CONFIG_FILE="$VORTEX_HOME/configs/improve_th16_tcol32_hwexp_dcache.sh"
 
 srun -p fpga --gres=fpga:u55c:1 --cpus-per-task=4 --mem=32G --time=1:20:00 bash -c '
