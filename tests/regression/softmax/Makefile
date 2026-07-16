@@ -7,8 +7,8 @@ SRC_DIR := $(VORTEX_HOME)/tests/regression/$(PROJECT)
 
 SRCS := $(SRC_DIR)/main.cpp $(SW_COMMON_DIR)/rvfloats.cpp $(SW_COMMON_DIR)/softfloat_ext.cpp
 
-SOFTMAX_VARIANT ?= rev1
-SOFTMAX_VARIANTS := rev1 opt opt_align
+SOFTMAX_VARIANT ?= dma_serial
+SOFTMAX_VARIANTS := rev1 opt opt_align dma_row dma_serial
 ifneq ($(filter $(SOFTMAX_VARIANT),$(SOFTMAX_VARIANTS)),$(SOFTMAX_VARIANT))
   $(error Unsupported SOFTMAX_VARIANT=$(SOFTMAX_VARIANT); expected one of: $(SOFTMAX_VARIANTS))
 endif
@@ -17,7 +17,11 @@ VX_KERNEL ?= kernel.$(SOFTMAX_VARIANT).cpp
 VX_SRCS := $(SRC_DIR)/$(VX_KERNEL)
 
 CXXFLAGS += -I$(THIRD_PARTY_DIR)/softfloat/source/include
-ifeq ($(SOFTMAX_VARIANT),opt_align)
+ifeq ($(SOFTMAX_VARIANT),dma_serial)
+  CXXFLAGS += -DSOFTMAX_VARIANT=SOFTMAX_VARIANT_DMA_SERIAL
+else ifeq ($(SOFTMAX_VARIANT),dma_row)
+  CXXFLAGS += -DSOFTMAX_VARIANT=SOFTMAX_VARIANT_DMA_ROW
+else ifeq ($(SOFTMAX_VARIANT),opt_align)
   CXXFLAGS += -DSOFTMAX_VARIANT=SOFTMAX_VARIANT_OPT_ALIGN
 else ifeq ($(SOFTMAX_VARIANT),opt)
   CXXFLAGS += -DSOFTMAX_VARIANT=SOFTMAX_VARIANT_OPT

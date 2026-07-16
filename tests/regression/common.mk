@@ -106,7 +106,7 @@ kernel.vxbin: kernel.elf
 	OBJCOPY=$(VX_CP) $(VORTEX_HOME)/kernel/scripts/vxbin.py $< $@
 
 $(KERNEL_CONFIG_FILE): force
-	@printf '%s\n' "$(VX_CFLAGS) $(VX_LDFLAGS)" > $@.tmp
+	@printf '%s\n' "$(VX_SRCS) $(VX_CFLAGS) $(VX_LDFLAGS)" > $@.tmp
 	@if ! cmp -s $@.tmp $@; then \
 	  mv $@.tmp $@; \
 	else \

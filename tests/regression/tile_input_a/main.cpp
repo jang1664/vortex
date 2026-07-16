@@ -109,7 +109,13 @@ int main(int argc, char** argv) {
   parse_args(argc, argv);
   uint32_t M_pad = (M + 7u) & ~7u;
   uint32_t K_pad = align_up(K, TILE_DMA_MXU_KT);
-  printf("tile_input_a  M=%u (pad=%u) K=%u (pad=%u)\n", M, M_pad, K, K_pad);
+#if TILE_INPUT_A_VARIANT_TAG == 1
+  const char* variant = "packed4";
+#else
+  const char* variant = "packed2";
+#endif
+  printf("tile_input_a  variant=%s M=%u (pad=%u) K=%u (pad=%u)\n",
+         variant, M, M_pad, K, K_pad);
 
   if (!validate_tile_params()) return 1;
 
@@ -133,8 +139,11 @@ int main(int argc, char** argv) {
 
   uint32_t k_tiles = (K_pad + TILE_DMA_KT - 1) / TILE_DMA_KT;
   uint32_t k_mic   = TILE_DMA_KT / TILE_DMA_MXU_KT;
-  // 4B chunk per thread (2 fp16) — mirrors silu_layout_fused store pattern.
-  uint32_t CHUNKS_PER_ROW = TILE_DMA_MXU_KT / 2;   // 16
+#if TILE_INPUT_A_VARIANT_TAG == 1
+  uint32_t CHUNKS_PER_ROW = TILE_DMA_MXU_KT / 4;
+#else
+  uint32_t CHUNKS_PER_ROW = TILE_DMA_MXU_KT / 2;
+#endif
   uint32_t chunks_per_kb = M_pad * CHUNKS_PER_ROW;
   uint32_t blocks_x = (chunks_per_kb + tpb - 1) / tpb;
 

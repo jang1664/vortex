@@ -95,7 +95,13 @@ int main(int argc, char** argv) {
   parse_args(argc, argv);
   uint32_t M_pad = (M + 7u) & ~7u;
   uint32_t N_pad = align_up(N, TILE_DMA_MXU_NT);
-  printf("detile_output  M=%u (pad=%u) N=%u (pad=%u)\n", M, M_pad, N, N_pad);
+#if DETILE_OUTPUT_VARIANT_TAG == 1
+  const char* variant = "packed_pair";
+#else
+  const char* variant = "baseline";
+#endif
+  printf("detile_output  variant=%s M=%u (pad=%u) N=%u (pad=%u)\n",
+         variant, M, M_pad, N, N_pad);
 
   if (!is_pow2(TILE_DMA_MT) || !is_pow2(TILE_DMA_MXU_NT)) {
     printf("ERROR: tile constants must be powers of two\n");
@@ -123,7 +129,11 @@ int main(int argc, char** argv) {
   uint32_t tpb = uint32_t(num_threads);
 
   uint32_t n_tiles = N_pad / TILE_DMA_MXU_NT;
+#if DETILE_OUTPUT_VARIANT_TAG == 1
+  uint32_t blocks_x = (TILE_DMA_MXU_NT / 2 + tpb - 1) / tpb;
+#else
   uint32_t blocks_x = (TILE_DMA_MXU_NT + tpb - 1) / tpb;
+#endif
 
   kernel_arg_t karg = {};
   karg.grid_dim[0]  = blocks_x;

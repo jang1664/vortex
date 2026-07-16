@@ -529,6 +529,11 @@ int main(int argc, char *argv[]) {
     printf("\n");
   }
 
+  vx_bench::LatencyPowerMeasurement latency_power(bench);
+  if (!latency_power.prestart()) {
+    return -1;
+  }
+
   RT_CHECK(vx_dev_open(&device));
 
   uint64_t num_cores = 0, num_warps = 0, num_threads = 0;
@@ -612,6 +617,10 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_copy_to_dev(args_buffer, &kargs, 0, sizeof(kargs)));
   double first_latency_us = 0.0;
   vx_bench::IterationPerf first_iter_perf;
+  if (!latency_power.begin_latency_window()) {
+    cleanup();
+    return -1;
+  }
 
   auto check_kernel_status = [&](const char* phase, int iter) -> bool {
     int ret = vx_copy_from_dev(&kargs, args_buffer, 0, sizeof(kargs));
@@ -680,6 +689,11 @@ int main(int argc, char *argv[]) {
     if (i == 0)
       first_iter_perf = iter_perf;
     printf("iteration %0d/%0d, elapsed:%f\n", i+1, bench.iterations, stats.last()); fflush(stdout);
+  }
+
+  if (!latency_power.finish(stats.summary(), first_iter_perf)) {
+    cleanup();
+    return -1;
   }
 
   stats.report("fpint_gemm_ffn_hw", bench);

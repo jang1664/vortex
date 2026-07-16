@@ -95,7 +95,13 @@ int main(int argc, char *argv[]) {
   }
 
   const uint32_t M_pad = (M + TILE_M_PAD_ALIGN - 1u) & ~(TILE_M_PAD_ALIGN - 1u);
-  printf("elmul_layout_fused M=%u M_pad=%u K=%u\n", M, M_pad, K);
+#if ELMUL_LAYOUT_FUSED_VARIANT_TAG == 1
+  const char* variant = "linear_same_layout";
+#else
+  const char* variant = "baseline";
+#endif
+  printf("elmul_layout_fused variant=%s M=%u M_pad=%u K=%u\n",
+         variant, M, M_pad, K);
 
   const size_t row_elems = (size_t)M * K;
   const size_t tiled_elems = (size_t)M_pad * K;

@@ -1,4 +1,5 @@
 #include "common.h"
+#include "host_variant.h"
 #include "../kv_cache_common/kv_cache_w4a16.h"
 #include "bench_util.h"
 #include <vortex.h>
@@ -73,6 +74,11 @@ int main(int argc, char *argv[]) {
   std::vector<fp16_t> h_src(src_elems);
   init_src(h_src);
 
+  vx_bench::LatencyPowerMeasurement latency_power(bench);
+  if (!latency_power.prestart()) {
+    return -1;
+  }
+
   RT_CHECK(vx_dev_open(&device));
   RT_CHECK(vx_upload_kernel_file(device, "kernel.vxbin", &krnl_buffer));
   RT_CHECK(vx_mem_alloc(device, src_elems * sizeof(fp16_t), VX_MEM_READ, &src_buffer));
@@ -87,10 +93,10 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_CORES, &num_cores));
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_WARPS, &num_warps));
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_THREADS, &num_threads));
-  uint32_t tpb = std::min(256u, (uint32_t)(num_warps * num_threads));
-  uint32_t blocks = std::min(
-      (uint32_t)((packed_bytes + tpb - 1) / tpb),
-      std::max(1u, (uint32_t)num_cores * 4u));
+  uint32_t tpb = kv_cache_quant_threads_per_block(num_warps, num_threads);
+  uint32_t work_items = kv_cache_quant_work_items(K, N, QBLK, QDIR);
+  uint32_t blocks = kv_cache_quant_blocks(
+      work_items, tpb, num_cores, num_warps);
 
   kernel_arg_t arg = {};
   arg.kernel_id = KERNEL_KV_CACHE_QUANT_W4A16;
@@ -122,6 +128,10 @@ int main(int argc, char *argv[]) {
   vx_bench::Stats stats;
   double first_latency_us = 0.0;
   vx_bench::IterationPerf first_iter_perf;
+  if (!latency_power.begin_latency_window()) {
+    cleanup();
+    return -1;
+  }
   printf("Start latency measurement.\n"); fflush(stdout);
   for (int i = 0; i < bench.iterations; ++i) {
     vx_bench::Stopwatch sw;
@@ -138,6 +148,11 @@ int main(int argc, char *argv[]) {
       first_iter_perf = iter_perf;
     printf("iteration %0d/%0d, elapsed:%f\n", i+1, bench.iterations, stats.last()); fflush(stdout);
   }
+  if (!latency_power.finish(stats.summary(), first_iter_perf)) {
+    cleanup();
+    return -1;
+  }
+
   stats.report("kv_cache_quant_w4a16", bench);
 
   if (!vx_bench::prepare_power_kernel_iterations(

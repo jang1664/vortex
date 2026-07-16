@@ -109,6 +109,11 @@ int main(int argc, char *argv[]) {
   initialize_input(h_in);
   initialize_gamma(h_gamma);
 
+  vx_bench::LatencyPowerMeasurement latency_power(bench);
+  if (!latency_power.prestart()) {
+    return -1;
+  }
+
   RT_CHECK(vx_dev_open(&device));
   RT_CHECK(vx_upload_kernel_file(device, "kernel.vxbin", &krnl_buffer));
   RT_CHECK(vx_mem_alloc(device, input_bytes, VX_MEM_READ, &input_buffer));
@@ -123,6 +128,9 @@ int main(int argc, char *argv[]) {
   uint32_t threads_per_block = std::min(256u, (uint32_t)(num_warps * num_threads));
   uint32_t tpb = 1;
   while ((tpb << 1) <= threads_per_block) tpb <<= 1;
+#if RMS_NORM_LAYOUT_FUSED_VARIANT_TAG == 1
+  tpb = (uint32_t)num_threads;
+#endif
 
   kernel_arg_t kernel_arg = {};
   kernel_arg.kernel_id = KERNEL_RMSNORM_LAYOUT_FUSED;
@@ -155,6 +163,10 @@ int main(int argc, char *argv[]) {
   vx_bench::Stats stats;
   double first_latency_us = 0.0;
   vx_bench::IterationPerf first_iter_perf;
+  if (!latency_power.begin_latency_window()) {
+    cleanup();
+    return -1;
+  }
   printf("Start latency measurement.\n"); fflush(stdout);
   for (int i = 0; i < bench.iterations; ++i) {
     vx_bench::Stopwatch sw; sw.start();
@@ -169,6 +181,11 @@ int main(int argc, char *argv[]) {
     if (i == 0)
       first_iter_perf = iter_perf;
     printf("iteration %0d/%0d, elapsed:%f\n", i+1, bench.iterations, stats.last()); fflush(stdout);
+  }
+
+  if (!latency_power.finish(stats.summary(), first_iter_perf)) {
+    cleanup();
+    return -1;
   }
 
   stats.report("rms_norm_layout_fused", bench);
