@@ -13,6 +13,7 @@ from energy_per_token import (
 )
 from plot import (
     E2E_KIND_STACK_GROUPS,
+    ENERGY_KIND_STACK_GROUPS,
     EnergyExcelResult,
     _apply_stack_groups,
     _stack_value_columns,
@@ -81,7 +82,7 @@ class EnergyBreakdownSummaryTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "energy_stacked data missing columns"):
                 _validate_energy_csv_schema(csv_path, "energy_stacked")
 
-    def test_stacked_csv_and_kind_groups_preserve_candidate_totals(self) -> None:
+    def test_stacked_csv_and_kind_groups_fold_layout_into_vector(self) -> None:
         rows = [
             {
                 "power_metric": "power_avg_W",
@@ -118,18 +119,35 @@ class EnergyBreakdownSummaryTests(unittest.TestCase):
         grouped, labels = _apply_stack_groups(
             exported,
             stack_columns,
-            E2E_KIND_STACK_GROUPS,
+            ENERGY_KIND_STACK_GROUPS,
         )
-        self.assertEqual(labels, ["gemm", "vector", "layout"])
+        self.assertEqual(labels, ["gemm", "vector"])
 
         grouped = grouped.set_index("candidate")
-        self.assertEqual(grouped.loc["C1", labels].tolist(), [2.0, 0.75, 0.25])
-        self.assertEqual(grouped.loc["C4", labels].tolist(), [0.5, 0.4, 0.1])
+        self.assertEqual(grouped.loc["C1", labels].tolist(), [2.0, 1.0])
+        self.assertEqual(grouped.loc["C4", labels].tolist(), [0.5, 0.5])
         for candidate in ("C1", "C4"):
             self.assertAlmostEqual(
                 float(grouped.loc[candidate, labels].sum()),
                 float(grouped.loc[candidate, "total"]),
             )
+
+    def test_e2e_kind_groups_fold_layout_into_vector(self) -> None:
+        exported = pd.DataFrame(
+            [
+                {"gemm": 2.0, "softmax": 0.75, "layout": 0.25},
+                {"gemm": 0.5, "softmax": 0.4, "layout": 0.1},
+            ]
+        )
+
+        grouped, labels = _apply_stack_groups(
+            exported,
+            ["gemm", "softmax", "layout"],
+            E2E_KIND_STACK_GROUPS,
+        )
+
+        self.assertEqual(labels, ["gemm", "vector"])
+        self.assertEqual(grouped[labels].values.tolist(), [[2.0, 1.0], [0.5, 0.5]])
 
     def test_component_group_fields_cannot_overwrite_summary_columns(self) -> None:
         with self.assertRaisesRegex(ValueError, "conflict with summary columns"):

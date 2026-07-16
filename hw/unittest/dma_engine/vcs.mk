@@ -5,6 +5,7 @@ compile: setup
 	-sverilog \
 	-full64 \
 	-debug_access+all \
+	-top $(TOP_MODULE) \
 	-l $(COMPILE_LOG) \
 	-timescale=$(TIME_SCALE) \
 	+libext+.v+ \

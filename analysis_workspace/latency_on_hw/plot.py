@@ -179,12 +179,13 @@ GEMM_ONLY_STACK_GROUPS = (
     ),
 )
 GEMM_ONLY_GROUP_PALETTE = ("#08306B", "#2171B5", "#6BAED6")
-E2E_KIND_STACK_PALETTE = ("#08306B", "#238B45", "#3690C0")
+E2E_KIND_STACK_PALETTE = ("#08306B", "#238B45")
 E2E_KIND_STACK_GROUPS = (
     StackGroupKnobs(label="gemm", columns=("gemm",)),
     StackGroupKnobs(label="vector", columns=None),
-    StackGroupKnobs(label="layout", columns=("layout",)),
 )
+ENERGY_KIND_STACK_PALETTE = E2E_KIND_STACK_PALETTE
+ENERGY_KIND_STACK_GROUPS = E2E_KIND_STACK_GROUPS
 
 
 def _llama_compact_kwargs(y_label: str) -> dict[str, Any]:
@@ -272,7 +273,7 @@ class PlotKnobs:
     llama_e2e_stacked: StackedBarKnobs = field(
         default_factory=lambda: StackedBarKnobs(
             **_llama_compact_kwargs(Y_LABEL),
-            legend_ncol=3,
+            legend_ncol=2,
             stack_palette=E2E_KIND_STACK_PALETTE,
             stack_groups=E2E_KIND_STACK_GROUPS,
         )
@@ -294,9 +295,9 @@ class PlotKnobs:
     llama_energy_stacked: StackedBarKnobs = field(
         default_factory=lambda: StackedBarKnobs(
             **_llama_compact_kwargs(ENERGY_Y_LABEL),
-            legend_ncol=3,
-            stack_palette=E2E_KIND_STACK_PALETTE,
-            stack_groups=E2E_KIND_STACK_GROUPS,
+            legend_ncol=2,
+            stack_palette=ENERGY_KIND_STACK_PALETTE,
+            stack_groups=ENERGY_KIND_STACK_GROUPS,
         )
     )
 

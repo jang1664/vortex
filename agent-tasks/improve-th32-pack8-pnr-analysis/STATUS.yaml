@@ -1,0 +1,19 @@
+task: improve-th32-pack8-pnr-analysis
+status: completed
+updated: "2026-07-16 17:31"
+summary: "Identified VX_fpu_exp as the direct localized routing bottleneck; the much larger GEMM node is the primary global placement and resource-pressure contributor."
+attempts:
+  - timestamp: "2026-07-16 11:40"
+    action: "Located placed utilization, SLR utilization, QoR assessment, synthesis utilization, and Vivado logs for the target build."
+    result: "The run reached placement but no routed timing/utilization report was generated; failure classification is in progress."
+  - timestamp: "2026-07-16 17:31"
+    action: "Correlated route overlap hotspots with hierarchical utilization, SLR occupancy, SLL demand, configuration defines, and RTL replication parameters."
+    result: "route_design failed from level-7 congestion: 225,836 signals were unrouted and 266,654 node overlaps remained. Seven of the top ten physical overlap hotspots were inside VX_fpu_exp."
+evidence:
+  - "Placement timing was near target (WNS -0.006 ns), so timing was not the immediate failure."
+  - "Placed CLB occupancy was 99.15%, 97.13%, and 96.24% across SLR0/1/2."
+  - "Localized SLL demand reached 205% between SLR1 and SLR2."
+  - "VX_fpu_exp uses 79,162 LUTs, 96,036 FFs, and 256 DSPs; NUM_THREADS=32, NUM_FPU_LANES=SIMD_WIDTH=NUM_THREADS, and FEXP_PE_RATIO=1 instantiate 32 FEXP PEs."
+  - "gemm_node uses 238,321 LUTs, 124 URAMs, and 2,212 DSPs, making it the largest global density contributor even though it did not dominate the top overlap list."
+pitfalls:
+  - "Do not infer the direct routing hotspot solely from the largest hierarchical resource user; router overlap locations are more specific evidence."

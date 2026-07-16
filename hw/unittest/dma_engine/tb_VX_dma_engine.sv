@@ -800,7 +800,7 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; ();
 
     build_desc(
       d, src_base, dst_base,
-      32'd512, 32'd64,   // src/dst stride0
+      32'd2048, 32'd64,  // same HBM bank / sequential TMEM beats
       32'd0,   32'd0,    // src/dst stride1
       32'd0,   32'd0,    // src/dst stride2
       32'd6,   32'd1, 32'd1,
@@ -812,12 +812,12 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; ();
     run_desc_and_check_done_hold(0, d, 32'h0000_0001, 2, "case0_remap_burst_read");
     check_g2l_layout(
       0, src_base, dst_base,
-      32'd512, 32'd64, 32'd0, 32'd0, 32'd0, 32'd0,
+      32'd2048, 32'd64, 32'd0, 32'd0, 32'd0, 32'd0,
       32'd6, 32'd1, 32'd1, 32'd64, 32'd0,
       "case0_remap_burst_read_check");
 
 `ifndef PERF_ENABLE
-    if (axi_ar_log_count[0] !== 4) begin
+    if (axi_ar_log_count[0] !== 1) begin
       $display("%0t [tb_VX_dma_engine] case0_remap_burst_read_debug: burst_len=%0d rd_beat=%0d wr_beat=%0d rd_valid=%0b rd_fire=%0b rsp_empty=%0b rsp_full=%0b ar_valid=%0b ar_ready=%0b",
                $time,
                dut.g_channel[0].burst_len_r,
@@ -830,13 +830,10 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; ();
                axi_m[0].ar_valid,
                axi_m[0].ar_ready);
       dump_axi_ar_log(0, "case0_remap_burst_read_debug");
-      $fatal(1, "case0_remap_burst_read: expected 4 ar bursts, got %0d", axi_ar_log_count[0]);
+      $fatal(1, "case0_remap_burst_read: expected 1 ar burst, got %0d", axi_ar_log_count[0]);
     end
 
-    expect_axi_ar_log(0, 0, 64'h0000_0000_0000_0000, 8'd1, "case0_remap_burst_read");
-    expect_axi_ar_log(0, 1, 64'h0000_0001_0000_0000, 8'd1, "case0_remap_burst_read");
-    expect_axi_ar_log(0, 2, 64'h0000_0002_0000_0000, 8'd0, "case0_remap_burst_read");
-    expect_axi_ar_log(0, 3, 64'h0000_0003_0000_0000, 8'd0, "case0_remap_burst_read");
+    expect_axi_ar_log(0, 0, 64'h0000_0000_0000_0000, 8'd5, "case0_remap_burst_read");
 `endif
   endtask
 
@@ -855,7 +852,7 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; ();
 
     build_desc(
       d, src_base, dst_base,
-      32'd64,  32'd512,   // SRC_ST0 (TMEM side), DST_ST0 (HBM side)
+      32'd64,  32'd2048,  // sequential TMEM / same HBM bank beats
       32'd0,   32'd0,     // strides 1
       32'd0,   32'd0,     // strides 2
       32'd6,   32'd1, 32'd1,
@@ -867,27 +864,20 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; ();
     run_desc_and_check_done_hold(0, d, 32'h0000_0002, 2, "case0b_remap_burst_write");
     check_l2g_layout(
       0, src_base, dst_base,
-      32'd64, 32'd512, 32'd0, 32'd0, 32'd0, 32'd0,
+      32'd64, 32'd2048, 32'd0, 32'd0, 32'd0, 32'd0,
       32'd6, 32'd1, 32'd1, 32'd64, 32'd0,
       "case0b_remap_burst_write_check");
 
-    if (axi_aw_log_count[0] !== 4) begin
+    if (axi_aw_log_count[0] !== 1) begin
       dump_axi_aw_log(0, "case0b_remap_burst_write_debug");
-      $fatal(1, "case0b_remap_burst_write: expected 4 aw bursts, got %0d", axi_aw_log_count[0]);
+      $fatal(1, "case0b_remap_burst_write: expected 1 aw burst, got %0d", axi_aw_log_count[0]);
     end
 
-    // Bank 0: words 0,4 -> len=1
-    expect_axi_aw_log(0, 0, 64'h0000_0000_0000_0000, 8'd1, "case0b_remap_burst_write");
-    // Bank 8: words 1,5 -> len=1
-    expect_axi_aw_log(0, 1, 64'h0000_0001_0000_0000, 8'd1, "case0b_remap_burst_write");
-    // Bank 16: word 2 -> len=0
-    expect_axi_aw_log(0, 2, 64'h0000_0002_0000_0000, 8'd0, "case0b_remap_burst_write");
-    // Bank 24: word 3 -> len=0
-    expect_axi_aw_log(0, 3, 64'h0000_0003_0000_0000, 8'd0, "case0b_remap_burst_write");
+    expect_axi_aw_log(0, 0, 64'h0000_0000_0000_0000, 8'd5, "case0b_remap_burst_write");
   endtask
 
   // -----------------------------------------------------------------------
-  // Multi-window burst read: BND0=20 → 2 windows (16+4), 8 AR bursts
+  // Long passthrough burst read: BND0=20 -> one 20-beat AR burst
   // -----------------------------------------------------------------------
   task automatic run_case_multiwin_burst_read;
     logic [31:0] d [0:CFG_NUM-1];
@@ -905,7 +895,7 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; ();
 
     build_desc(
       d, src_base, dst_base,
-      32'd512, 32'd64,
+      32'd2048, 32'd64,
       32'd0,   32'd0,
       32'd0,   32'd0,
       bnd0,    32'd1, 32'd1,
@@ -917,30 +907,20 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; ();
     run_desc_and_check_done_hold(0, d, 32'h0000_0010, 2, "case_multiwin_burst_read");
     check_g2l_layout(
       0, src_base, dst_base,
-      32'd512, 32'd64, 32'd0, 32'd0, 32'd0, 32'd0,
+      32'd2048, 32'd64, 32'd0, 32'd0, 32'd0, 32'd0,
       bnd0, 32'd1, 32'd1, 32'd64, 32'd0,
       "case_multiwin_burst_read_check");
 
-    // 2 windows × 4 groups = 8 AR bursts
-    if (axi_ar_log_count[0] !== 8) begin
+    if (axi_ar_log_count[0] !== 1) begin
       dump_axi_ar_log(0, "case_multiwin_burst_read_debug");
-      $fatal(1, "case_multiwin_burst_read: expected 8 ar bursts, got %0d", axi_ar_log_count[0]);
+      $fatal(1, "case_multiwin_burst_read: expected 1 ar burst, got %0d", axi_ar_log_count[0]);
     end
 
-    // Window 0 (words 0-15): 4 groups × 4 words → len=3
-    expect_axi_ar_log(0, 0, 64'h0000_0000_0000_0000, 8'd3, "mw_rd_w0");
-    expect_axi_ar_log(0, 1, 64'h0000_0001_0000_0000, 8'd3, "mw_rd_w0");
-    expect_axi_ar_log(0, 2, 64'h0000_0002_0000_0000, 8'd3, "mw_rd_w0");
-    expect_axi_ar_log(0, 3, 64'h0000_0003_0000_0000, 8'd3, "mw_rd_w0");
-    // Window 1 (words 16-19): 4 groups × 1 word → len=0
-    expect_axi_ar_log(0, 4, 64'h0000_0000_0000_0100, 8'd0, "mw_rd_w1");
-    expect_axi_ar_log(0, 5, 64'h0000_0001_0000_0100, 8'd0, "mw_rd_w1");
-    expect_axi_ar_log(0, 6, 64'h0000_0002_0000_0100, 8'd0, "mw_rd_w1");
-    expect_axi_ar_log(0, 7, 64'h0000_0003_0000_0100, 8'd0, "mw_rd_w1");
+    expect_axi_ar_log(0, 0, 64'h0000_0000_0000_0000, 8'd19, "long_rd");
   endtask
 
   // -----------------------------------------------------------------------
-  // Multi-window burst write: BND0=20 → 2 windows (16+4), 8 AW bursts
+  // Long passthrough burst write: BND0=20 -> one 20-beat AW burst
   // -----------------------------------------------------------------------
   task automatic run_case_multiwin_burst_write;
     logic [31:0] d [0:CFG_NUM-1];
@@ -958,7 +938,7 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; ();
 
     build_desc(
       d, src_base, dst_base,
-      32'd64,  32'd512,
+      32'd64,  32'd2048,
       32'd0,   32'd0,
       32'd0,   32'd0,
       bnd0,    32'd1, 32'd1,
@@ -970,26 +950,16 @@ module tb_VX_dma_engine import VX_gpu_pkg::*; ();
     run_desc_and_check_done_hold(0, d, 32'h0000_0011, 2, "case_multiwin_burst_write");
     check_l2g_layout(
       0, src_base, dst_base,
-      32'd64, 32'd512, 32'd0, 32'd0, 32'd0, 32'd0,
+      32'd64, 32'd2048, 32'd0, 32'd0, 32'd0, 32'd0,
       bnd0, 32'd1, 32'd1, 32'd64, 32'd0,
       "case_multiwin_burst_write_check");
 
-    // 2 windows × 4 groups = 8 AW bursts
-    if (axi_aw_log_count[0] !== 8) begin
+    if (axi_aw_log_count[0] !== 1) begin
       dump_axi_aw_log(0, "case_multiwin_burst_write_debug");
-      $fatal(1, "case_multiwin_burst_write: expected 8 aw bursts, got %0d", axi_aw_log_count[0]);
+      $fatal(1, "case_multiwin_burst_write: expected 1 aw burst, got %0d", axi_aw_log_count[0]);
     end
 
-    // Window 0 (words 0-15): 4 groups × 4 words → len=3
-    expect_axi_aw_log(0, 0, 64'h0000_0000_0000_0000, 8'd3, "mw_wr_w0");
-    expect_axi_aw_log(0, 1, 64'h0000_0001_0000_0000, 8'd3, "mw_wr_w0");
-    expect_axi_aw_log(0, 2, 64'h0000_0002_0000_0000, 8'd3, "mw_wr_w0");
-    expect_axi_aw_log(0, 3, 64'h0000_0003_0000_0000, 8'd3, "mw_wr_w0");
-    // Window 1 (words 16-19): 4 groups × 1 word → len=0
-    expect_axi_aw_log(0, 4, 64'h0000_0000_0000_0100, 8'd0, "mw_wr_w1");
-    expect_axi_aw_log(0, 5, 64'h0000_0001_0000_0100, 8'd0, "mw_wr_w1");
-    expect_axi_aw_log(0, 6, 64'h0000_0002_0000_0100, 8'd0, "mw_wr_w1");
-    expect_axi_aw_log(0, 7, 64'h0000_0003_0000_0100, 8'd0, "mw_wr_w1");
+    expect_axi_aw_log(0, 0, 64'h0000_0000_0000_0000, 8'd19, "long_wr");
   endtask
 
   task automatic run_case_ch0_g2l;

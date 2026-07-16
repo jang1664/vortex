@@ -1,4 +1,5 @@
 aliases:
+  # ------------------------------------ C1 -------------------------------------------------
   base_t32:
     path: /opt/vortex_fpga_bins/baseline/xrt_hw_u55c_c1_f100_tcu_noDcache_L2cache_75849ebace/bin
     configs: configs/base_t32.sh
@@ -6,19 +7,14 @@ aliases:
   base_t8:
     path: /opt/vortex_fpga_bins/baseline/xrt_hw_u55c_c1_f100_tcu_noDcache_L2cache_747805ed8e/bin
     configs: configs/base_t8.sh
-
-  naive_gemm:
-    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_noDcache_L2cache_37a280addd/bin
-    configs: configs/naive_gemm.sh
-
-  naive_gemm_tcol32:
-    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_noDcache_L2cache_569775c93b/bin
-    configs: configs/naive_gemm_tcol32.sh
   
-  naive_gemm_th16_tcol32:
-    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_noDcache_L2cache_e80caeb7aa/bin
-    configs: configs/naive_gemm_th16_tcol32.sh
+  tcu_th16_c2: &C1_
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_tcu_L2cache_3cbe56781b/bin
+    configs: configs/tcu_th16_c2.sh
   
+  C1: *C1_
+
+  # ------------------------------------ C2 -------------------------------------------------
   naive_gemm_simd_th16_tcol32: # naive tcu + mxu
     path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_noDcache_L2cache_a63cc5e4ee/bin
     configs: configs/naive_gemm_simd_th16_tcol32.sh
@@ -35,30 +31,32 @@ aliases:
     path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_L2cache_d953b60098/bin
     configs: configs/naive_gemm_simd_th16_tcol32_hwexp_dcache.sh
 
-  naive_gemm_simd_th16_tcol32_hwexp_dcache_pack16_perf: # naive tcu + mxu
+  naive_gemm_simd_th16_tcol32_hwexp_dcache_pack16_perf: &C2_ # naive tcu + mxu
     path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_L2cache_d953b60098/bin
     configs: configs/naive_gemm_simd_th16_tcol32_hwexp_dcache.sh
-
-  naive_simd:
-    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_noDcache_L2cache_90f22d2615/bin
-    configs: configs/naive_simd.sh
-
-  naive_simd_bugfix:
-    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_noDcache_L2cache_90f22d2615_1/bin
-    configs: configs/naive_simd.sh
-
-  naive_simd_bugfix_slow:
-    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f10_fpint_tcu_noDcache_L2cache_2df7fbf9c2/bin
-    configs: configs/naive_simd.sh
   
-  naive_simd_th16:
-    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_noDcache_L2cache_92934100cd/bin
-    configs: configs/naive_simd_th16.sh
+  C2: *C2_
 
-  improve_simd:
-    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_noDcache_L2cache_617ccd526f/bin
-    configs: configs/improve_simd.sh
+  # ------------------------------------ C3 -------------------------------------------------
+  naive_gemm:
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_noDcache_L2cache_37a280addd/bin
+    configs: configs/naive_gemm.sh
+
+  naive_gemm_tcol32:
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_noDcache_L2cache_569775c93b/bin
+    configs: configs/naive_gemm_tcol32.sh
   
+  naive_gemm_th16_tcol32:
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_noDcache_L2cache_e80caeb7aa/bin
+    configs: configs/naive_gemm_th16_tcol32.sh
+
+  naive_gemm_th16_tcol32_hwexp_dcache_pack16: &C3_
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_L2cache_5d4264c38f/bin
+    configs: configs/naive_gemm_th16_tcol32_hwexp_dcache.sh
+  
+  C3: *C3_
+  
+  # ------------------------------------ C3 -------------------------------------------------
   improve_t32_no_tcu_taylor4_fexp:
     path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_noDcache_L2cache_26c4abad9f/bin
     configs: configs/improve_no_tcu_taylor4_fexp.sh
@@ -83,10 +81,33 @@ aliases:
     path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_noDcache_L2cache_961806307f/bin
     configs: configs/improve_th16_tcol32.sh
 
+  improve_th16_tcol32_hwexp_dcache: &C4_ # pack16
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_L2cache_8d9b4939d1/bin
+    configs: configs/improve_th16_tcol32_hwexp_dcache.sh
+  
+  C4: *C4_
+
+  # ------------------------------------ ETC -------------------------------------------------
+  naive_simd:
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_noDcache_L2cache_90f22d2615/bin
+    configs: configs/naive_simd.sh
+
+  naive_simd_bugfix:
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_noDcache_L2cache_90f22d2615_1/bin
+    configs: configs/naive_simd.sh
+
+  naive_simd_bugfix_slow:
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f10_fpint_tcu_noDcache_L2cache_2df7fbf9c2/bin
+    configs: configs/naive_simd.sh
+  
+  naive_simd_th16:
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_noDcache_L2cache_92934100cd/bin
+    configs: configs/naive_simd_th16.sh
+
+  improve_simd:
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_tcu_noDcache_L2cache_617ccd526f/bin
+    configs: configs/improve_simd.sh
+
   improve_simd_th16_dbg:
     path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_noDcache_L2cache_a9d1611965/bin
     configs: configs/improve_simd_th16_dbg.sh
-
-  improve_th16_tcol32_hwexp_dcache: # pack16
-    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_L2cache_8d9b4939d1/bin
-    configs: configs/improve_th16_tcol32_hwexp_dcache.sh
