@@ -161,7 +161,11 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
             .TAG_SEL_IDX (GEMM_LMEM_TAG_WIDTH - UUID_WIDTH),
             .REQ_OUT_BUF (3),
             .RSP_OUT_BUF (3),
+`ifdef GEMM_NAIVE
+            .ARBITER     ("R")
+`else
             .ARBITER     ("P")
+`endif
         ) lmem_membus_dma_arbiter (
             .clk        (clk),
             .reset      (reset),

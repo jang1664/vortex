@@ -51,8 +51,13 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     localparam int W_GEMM_TAG_WIDTH  = GEMM_BASE_TAG_WIDTH;
     localparam int SZ_GEMM_TAG_WIDTH = GEMM_BASE_TAG_WIDTH;
     localparam int GEMM_INPUT_LANES  = `GEMM_INPUT_DATA_SIZE / LSU_WORD_SIZE;
+    localparam int GEMM_WEIGHT_LANES = `GEMM_WEIGHT_DATA_SIZE / LSU_WORD_SIZE;
     localparam int GEMM_SZ_LANES     = `GEMM_SCALE_ZERO_DATA_SIZE / LSU_WORD_SIZE;
     localparam int GEMM_OUTPUT_LANES = `GEMM_OUTPUT_DATA_SIZE / LSU_WORD_SIZE;
+    localparam int I_LANE_OFFSET     = 0;
+    localparam int W_LANE_OFFSET     = 8;
+    localparam int SZ_LANE_OFFSET    = 16;
+    localparam int O_LANE_OFFSET     = 24;
 
     // DMA tile sizes
     localparam int MT = `GEMM_FSM_MT;
@@ -88,13 +93,8 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
       .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
     ) o_gemm_bus_if ();
 
-    // Per-lane LMEM-ARB-facing buses (LSU width).
-    // Input/sz/output paths only drive as many LSU lanes as their fixed
-    // aggregate bus width can cover. Remaining core-wide LSU lanes are tied off
-    // in the per-lane arbiter when NUM_THREADS expands beyond the GEMM vector
-    // width (for example 32-thread cores with 64B GEMM tiles still use 8 lanes).
-    // Weight stays narrow (16B → 8B single lane via weight_data_adapter); only
-    // lane 0 carries weight traffic, the rest are tied off in the per-lane mux.
+    // Each 64-byte tensor path has eight logical 64-bit lanes. The physical
+    // mapping below applies a tensor-specific offset and wraps at NUM_LSU_LANES.
     VX_mem_bus_if # (
       .DATA_SIZE(LSU_WORD_SIZE),
       .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
@@ -102,7 +102,7 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     VX_mem_bus_if # (
       .DATA_SIZE(LSU_WORD_SIZE),
       .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
-    ) w_dma_lmem_bus_if ();
+    ) w_lane_mem_if [GEMM_WEIGHT_LANES] ();
     VX_mem_bus_if # (
       .DATA_SIZE(LSU_WORD_SIZE),
       .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
@@ -117,10 +117,6 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
       .DATA_SIZE(`GEMM_INPUT_DATA_SIZE),  //64bytes
       .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
     ) i_dma_lmem_wide_bus_if ();
-    VX_mem_bus_if # (
-      .DATA_SIZE(`GEMM_WEIGHT_DATA_SIZE),  //16bytes
-      .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
-    ) w_dma_lmem_wide_bus_if ();
     VX_mem_bus_if # (
       .DATA_SIZE(`GEMM_SCALE_ZERO_DATA_SIZE),  //64bytes
       .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
@@ -455,9 +451,22 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
       .done_if(done_if)
     );
 
-    // Per-lane 4:1 LMEM arbiter: {i_lane[i], w (lane 0 only), sz_lane[i], o_lane[i]}
-    // Weight is narrow (single lane); on lanes != 0 the weight input is tied off.
+    initial begin
+      if (`NUM_LSU_LANES < 8)
+        $fatal(1, "%s: GEMM_NAIVE requires at least eight LSU lanes", INSTANCE_ID);
+      if (GEMM_INPUT_LANES != 8 || GEMM_WEIGHT_LANES != 8
+       || GEMM_SZ_LANES != 8 || GEMM_OUTPUT_LANES != 8)
+        $fatal(1, "%s: GEMM_NAIVE tensor paths must each be 64 bytes", INSTANCE_ID);
+    end
+
+    // Tensor logical lane j maps to (tensor_offset + j) % NUM_LSU_LANES.
+    // Wrapped clients sharing a physical lane are served round-robin.
     for (genvar i = 0; i < `NUM_LSU_LANES; ++i) begin : g_lmem_lane_arb
+      localparam int I_LOGICAL = (i + `NUM_LSU_LANES - (I_LANE_OFFSET % `NUM_LSU_LANES)) % `NUM_LSU_LANES;
+      localparam int W_LOGICAL = (i + `NUM_LSU_LANES - (W_LANE_OFFSET % `NUM_LSU_LANES)) % `NUM_LSU_LANES;
+      localparam int SZ_LOGICAL = (i + `NUM_LSU_LANES - (SZ_LANE_OFFSET % `NUM_LSU_LANES)) % `NUM_LSU_LANES;
+      localparam int O_LOGICAL = (i + `NUM_LSU_LANES - (O_LANE_OFFSET % `NUM_LSU_LANES)) % `NUM_LSU_LANES;
+
       VX_mem_bus_if #(
         .DATA_SIZE(LSU_WORD_SIZE),
         .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
@@ -467,32 +476,32 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
         .TAG_WIDTH(GEMM_LMEM_TAG_WIDTH)
       ) lane_arb_out_if [1] ();
 
-      if (i < GEMM_INPUT_LANES) begin : g_i_active
-        `ASSIGN_VX_MEM_BUS_IF(lane_arb_in_if[0], i_lane_mem_if[i]);
+      if (I_LOGICAL < GEMM_INPUT_LANES) begin : g_i_active
+        `ASSIGN_VX_MEM_BUS_IF(lane_arb_in_if[0], i_lane_mem_if[I_LOGICAL]);
       end else begin : g_i_tied
         assign lane_arb_in_if[0].req_valid = 1'b0;
         assign lane_arb_in_if[0].req_data  = '0;
         assign lane_arb_in_if[0].rsp_ready = 1'b1;
       end
 
-      if (i == 0) begin : g_w_active
-        `ASSIGN_VX_MEM_BUS_IF(lane_arb_in_if[1], w_dma_lmem_bus_if);
+      if (W_LOGICAL < GEMM_WEIGHT_LANES) begin : g_w_active
+        `ASSIGN_VX_MEM_BUS_IF(lane_arb_in_if[1], w_lane_mem_if[W_LOGICAL]);
       end else begin : g_w_tied
         assign lane_arb_in_if[1].req_valid = 1'b0;
         assign lane_arb_in_if[1].req_data  = '0;
         assign lane_arb_in_if[1].rsp_ready = 1'b1;
       end
 
-      if (i < GEMM_SZ_LANES) begin : g_sz_active
-        `ASSIGN_VX_MEM_BUS_IF(lane_arb_in_if[2], sz_lane_mem_if[i]);
+      if (SZ_LOGICAL < GEMM_SZ_LANES) begin : g_sz_active
+        `ASSIGN_VX_MEM_BUS_IF(lane_arb_in_if[2], sz_lane_mem_if[SZ_LOGICAL]);
       end else begin : g_sz_tied
         assign lane_arb_in_if[2].req_valid = 1'b0;
         assign lane_arb_in_if[2].req_data  = '0;
         assign lane_arb_in_if[2].rsp_ready = 1'b1;
       end
 
-      if (i < GEMM_OUTPUT_LANES) begin : g_o_active
-        `ASSIGN_VX_MEM_BUS_IF(lane_arb_in_if[3], o_lane_mem_if[i]);
+      if (O_LOGICAL < GEMM_OUTPUT_LANES) begin : g_o_active
+        `ASSIGN_VX_MEM_BUS_IF(lane_arb_in_if[3], o_lane_mem_if[O_LOGICAL]);
       end else begin : g_o_tied
         assign lane_arb_in_if[3].req_valid = 1'b0;
         assign lane_arb_in_if[3].req_data  = '0;
@@ -507,7 +516,7 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
         .TAG_SEL_IDX(GEMM_BASE_TAG_WIDTH - UUID_WIDTH),
         .REQ_OUT_BUF(3),
         .RSP_OUT_BUF(3),
-        .ARBITER("P")
+        .ARBITER("R")
       ) lane_arb (
         .clk(clk),
         .reset(reset),
@@ -521,58 +530,6 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     // -------------------------------------------------------------------------
     // Width-adapter plumbing
     // -------------------------------------------------------------------------
-    // Address widths are beat-based and depend on each bus data size.
-    // Only the weight path needs a width-conversion adapter (16B <-> 8B).
-    // Input/sz/output paths are width-matched at aggregate level to a fixed
-    // number of LSU lanes, so they are fanned out to per-lane buses via
-    // VX_mem_bus_split before entering the core-wide LMEM arbiter.
-    localparam W_SRC_ADDR_WIDTH = `MEM_ADDR_WIDTH - `CLOG2(`GEMM_WEIGHT_DATA_SIZE);
-    localparam DST_ADDR_WIDTH   = `MEM_ADDR_WIDTH - `CLOG2(LSU_WORD_SIZE);
-
-    // -------------------------------------------------------------------------
-    // Weight adapter: 16B (gemm-side) <-> 8B (lmem-side, 1 lane)
-    // -------------------------------------------------------------------------
-    `DECLARE_MEM_BUS_WIRES(w_src, `GEMM_WEIGHT_DATA_SIZE, W_SRC_ADDR_WIDTH, GEMM_BASE_TAG_WIDTH);
-    `DECLARE_MEM_BUS_WIRES(w_dst, LSU_WORD_SIZE, DST_ADDR_WIDTH, GEMM_BASE_TAG_WIDTH);
-    `MEM_BUS_IF_TO_WIRES(w_src, w_dma_lmem_wide_bus_if);
-    VX_mem_data_adapter2 #(
-      .SRC_DATA_WIDTH (`GEMM_WEIGHT_DATA_SIZE * 8),
-      .SRC_ADDR_WIDTH (W_SRC_ADDR_WIDTH),
-      .DST_DATA_WIDTH (LSU_WORD_SIZE * 8),
-      .DST_ADDR_WIDTH (DST_ADDR_WIDTH),
-      .SRC_TAG_WIDTH  (GEMM_BASE_TAG_WIDTH),
-      .DST_TAG_WIDTH  (GEMM_BASE_TAG_WIDTH),
-      .OOO_SLOTS      (GEMM_ADAPTER_OOO_SLOTS),
-      .REQ_OUT_BUF    (1),
-      .RSP_OUT_BUF    (1)
-    ) weight_data_adapter (
-      .clk              (clk),
-      .reset            (reset),
-      .mem_req_valid_in (w_src_req_valid),
-      .mem_req_addr_in  (w_src_req_addr),
-      .mem_req_rw_in    (w_src_req_rw),
-      .mem_req_byteen_in(w_src_req_byteen),
-      .mem_req_data_in  (w_src_req_data),
-      .mem_req_tag_in   (w_src_req_tag),
-      .mem_req_ready_in (w_src_req_ready),
-      .mem_rsp_valid_in (w_src_rsp_valid),
-      .mem_rsp_data_in  (w_src_rsp_data),
-      .mem_rsp_tag_in   (w_src_rsp_tag),
-      .mem_rsp_ready_in (w_src_rsp_ready),
-      .mem_req_valid_out(w_dst_req_valid),
-      .mem_req_addr_out (w_dst_req_addr),
-      .mem_req_rw_out   (w_dst_req_rw),
-      .mem_req_byteen_out(w_dst_req_byteen),
-      .mem_req_data_out (w_dst_req_data),
-      .mem_req_tag_out  (w_dst_req_tag),
-      .mem_req_ready_out(w_dst_req_ready),
-      .mem_rsp_valid_out(w_dst_rsp_valid),
-      .mem_rsp_data_out (w_dst_rsp_data),
-      .mem_rsp_tag_out  (w_dst_rsp_tag),
-      .mem_rsp_ready_out(w_dst_rsp_ready)
-    );
-    `WIRES_TO_MEM_BUS_IF(w_dma_lmem_bus_if, w_dst);
-
     // -------------------------------------------------------------------------
     // Input/sz/output lane scatter: fixed GEMM-wide bus -> active LSU lanes.
     // VX_mem_bus_split waits for *all* active lanes to respond before emitting a
@@ -692,6 +649,7 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
       .INSTANCE_ID({INSTANCE_ID, "_input_dma"}),
       .DIR(0),
       .TAG_WIDTH(GEMM_BASE_TAG_WIDTH),
+      .RD_PREFETCH_DEPTH(`LMEM_DMA_RD_PREFETCH_DEPTH),
       .ENABLE_MISALIGN(1'b1)
     ) u_input_lmem_dma (
       .clk(clk),
@@ -702,18 +660,17 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
       .gemm_bus_if(i_dma_gemm_bus_if)
     );
 
-    // Weight DMA (LMEM -> GEMM, DIR=0)
-    VX_lmem_dma_misal #(
-      .INSTANCE_ID({INSTANCE_ID, "_weight_dma"}),
-      .DIR(0),
+    // Weight gather DMA: four strided 16-byte rows -> one 64-byte GEMM write.
+    VX_lmem_weight_gather_dma #(
+      .INSTANCE_ID({INSTANCE_ID, "_weight_gather_dma"}),
+      .NUM_LANES(GEMM_WEIGHT_LANES),
       .TAG_WIDTH(GEMM_BASE_TAG_WIDTH),
-      .ENABLE_MISALIGN(1'b1)
-    ) u_weight_lmem_dma (
+      .RD_PREFETCH_DEPTH(`LMEM_DMA_RD_PREFETCH_DEPTH)
+    ) u_weight_gather_dma (
       .clk(clk),
       .reset(reset),
       .ctrl_if(weight_dma_ctrl_if),
-      .gemm_sync_if(ldma_sync_if[1]),
-      .lmem_bus_if(w_dma_lmem_wide_bus_if),
+      .lmem_bus_if(w_lane_mem_if),
       .gemm_bus_if(w_dma_gemm_bus_if)
     );
 
@@ -722,6 +679,7 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
       .INSTANCE_ID({INSTANCE_ID, "_quant_param_dma"}),
       .DIR(0),
       .TAG_WIDTH(GEMM_BASE_TAG_WIDTH),
+      .RD_PREFETCH_DEPTH(`LMEM_DMA_RD_PREFETCH_DEPTH),
       .ENABLE_MISALIGN(1'b1)
     ) u_quant_param_lmem_dma (
       .clk(clk),
@@ -737,6 +695,7 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
       .INSTANCE_ID({INSTANCE_ID, "_output_dma"}),
       .DIR(1),
       .TAG_WIDTH(GEMM_BASE_TAG_WIDTH),
+      .RD_PREFETCH_DEPTH(`LMEM_DMA_RD_PREFETCH_DEPTH),
       .ENABLE_MISALIGN(1'b1)
     ) u_output_lmem_dma (
       .clk(clk),

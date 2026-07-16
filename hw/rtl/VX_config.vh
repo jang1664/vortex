@@ -1120,7 +1120,7 @@ for block_size in range(1, full_bitwidth+1):
 `define MXU_COL_TILE 1            // Column tile size for pipelined processing
 `endif
 `ifdef GEMM_NAIVE
-`define MXU_WLOAD_NUM 1           // Naive LMEM backend loads one weight row per request
+`define MXU_WLOAD_NUM 4           // Naive LMEM gather loads four weight rows per request
 `else
 `ifdef WLOAD_AT_ONCE
 `define MXU_WLOAD_NUM `MXU_ROW    // Load a full MXU weight tile in one beat

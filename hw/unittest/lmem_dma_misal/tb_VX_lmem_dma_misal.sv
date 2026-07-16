@@ -94,7 +94,8 @@ module tb_VX_lmem_dma_misal import VX_gpu_pkg::*; ();
     .DIR(0),
     .NDIM(NDIM),
     .TAG_WIDTH(TAG_WIDTH),
-    .RD_PREFETCH_DEPTH(RD_PREFETCH_DEPTH)
+    .RD_PREFETCH_DEPTH(RD_PREFETCH_DEPTH),
+    .ENABLE_MISALIGN(1'b1)
   ) dut_dir0 (
     .clk         (clk),
     .reset       (reset),
@@ -109,7 +110,8 @@ module tb_VX_lmem_dma_misal import VX_gpu_pkg::*; ();
     .DIR(1),
     .NDIM(NDIM),
     .TAG_WIDTH(TAG_WIDTH),
-    .RD_PREFETCH_DEPTH(RD_PREFETCH_DEPTH)
+    .RD_PREFETCH_DEPTH(RD_PREFETCH_DEPTH),
+    .ENABLE_MISALIGN(1'b1)
   ) dut_dir1 (
     .clk         (clk),
     .reset       (reset),
@@ -166,6 +168,15 @@ module tb_VX_lmem_dma_misal import VX_gpu_pkg::*; ();
     .TAG_WIDTH(TAG_WIDTH)
   ) lmem_bus_raw_ifs[LMEM_PORTS]();
 
+  logic lmem_write_stall_r;
+  always_ff @(posedge clk) begin
+    if (reset)
+      lmem_write_stall_r <= 1'b0;
+    else
+      lmem_write_stall_r <= ~lmem_write_stall_r;
+  end
+  wire lmem_req_enable = !lmem_bus_s.req_data.rw || !lmem_write_stall_r;
+
   VX_local_mem #(
     .INSTANCE_ID ("lmem0"),
     .SIZE        (MEM_BYTES),
@@ -185,9 +196,9 @@ module tb_VX_lmem_dma_misal import VX_gpu_pkg::*; ();
   );
 
   // Direct LMEM wiring
-  assign lmem_bus_raw_ifs[0].req_valid = lmem_bus_s.req_valid;
+  assign lmem_bus_raw_ifs[0].req_valid = lmem_bus_s.req_valid && lmem_req_enable;
   assign lmem_bus_raw_ifs[0].req_data  = lmem_bus_s.req_data;
-  assign lmem_bus_s.req_ready = lmem_bus_raw_ifs[0].req_ready;
+  assign lmem_bus_s.req_ready = lmem_bus_raw_ifs[0].req_ready && lmem_req_enable;
   assign lmem_bus_raw_ifs[0].rsp_ready = lmem_bus_s.rsp_ready;
   assign lmem_bus_s.rsp_data  = lmem_bus_raw_ifs[0].rsp_data;
   assign lmem_bus_s.rsp_valid = lmem_bus_raw_ifs[0].rsp_valid;
@@ -568,6 +579,10 @@ module tb_VX_lmem_dma_misal import VX_gpu_pkg::*; ();
 
     // single-beat segments repeated across segment boundaries
     run_case_roundtrip(DATA_SIZE_BYTES*1, sb0,sb1,sb2, 0,0,0);
+
+    // GEMM output shape that exercises simultaneous reader/writer segment
+    // advances with the depth-four prefetch window.
+    run_case_roundtrip(DATA_SIZE_BYTES*1, 128,4,1, 0,0,0);
 
     // misaligned base offsets (src!=dst, and LMEM base offset too)
     run_case_roundtrip(DATA_SIZE_BYTES*2, b0,b1,b2, 1,7,3);

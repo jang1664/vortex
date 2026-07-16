@@ -376,6 +376,13 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
                 = slot_occupancy_r
                 + OCC_W'(src_req_fire ? 1 : 0)
                 - OCC_W'(wr_pull_slot ? 1 : 0);
+  wire rd_segment_advance = src_req_fire
+                         && ((rd_src_rd_ptr_r + BUS_BYTES) >= rd_src_rd_end_r)
+                         && rd_prefetch_eligible
+                         && (rd_ahead_count_r < RDEPTH_W'(RD_PREFETCH_DEPTH));
+  wire wr_segment_advance = dst_req_fire
+                         && (wr_nbytes != 0)
+                         && ((wr_out_off_r + wr_nbytes) >= seg_size_r);
   wire [TAG_WIDTH-1:0] rd_issue_tag = TAG_WIDTH'(rd_issue_slot_r);
 
   always_comb begin
@@ -580,7 +587,6 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
                   rd_src_rd_ptr_r <= next_rd_ptr;
                 end else if (rd_prefetch_eligible
                              && (rd_ahead_count_r < RDEPTH_W'(RD_PREFETCH_DEPTH))) begin
-                  rd_ahead_count_r <= rd_ahead_count_r + RDEPTH_W'(1);
                   rd_i_dim[0] <= rd_adv.i0;
                   rd_i_dim[1] <= rd_adv.i1;
                   rd_i_dim[2] <= rd_adv.i2;
@@ -674,20 +680,18 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
                     wr_i_dim[2] <= wr_adv.i2;
                     wr_base_src_seg_r <= wr_adv.src_base;
                     wr_base_dst_seg_r <= wr_adv.dst_base;
-                    // Preserve buffered bytes only when RD is already one
-                    // segment ahead. Otherwise the buffered tail belongs to
-                    // the current segment's aligned over-read and must be
-                    // dropped at the segment boundary.
-                    if ((rd_ahead_count_r == 0) || !rd_prefetch_eligible) begin
+                    // Full-beat aligned segments cannot leave an over-read
+                    // tail. Any buffered bytes after consuming this segment
+                    // already belong to the next segment, independent of the
+                    // read-ahead counter (which excludes response slots and
+                    // the writer window).
+                    if (!rd_prefetch_eligible) begin
                       tmp_win   = '0;
                       tmp_valid = '0;
                     end
                     // Aligned mode: drop is always 0 (assertion-enforced).
                     tmp_drop     = ENABLE_MISALIGN ? wr_adv.src_base[BUS_LG2-1:0] : 32'd0;
                     tmp_out_off  = 32'd0;
-
-                    if (rd_ahead_count_r != 0)
-                      rd_ahead_count_r <= rd_ahead_count_r - RDEPTH_W'(1);
 
                     if ((rd_state == RD_DONE) && !rd_all_done_r) begin
                       rd_state <= RD_RUN;
@@ -701,6 +705,18 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
               wr_src_drop_r  <= tmp_drop;
               wr_out_off_r   <= tmp_out_off;
             end
+
+            // Reader and writer can cross segment boundaries in the same
+            // cycle. Update the distance once so simultaneous +1/-1 events
+            // cancel instead of allowing one nonblocking assignment to win.
+            unique case ({rd_segment_advance, wr_segment_advance})
+              2'b10: rd_ahead_count_r <= rd_ahead_count_r + RDEPTH_W'(1);
+              2'b01: begin
+                if (rd_ahead_count_r != 0)
+                  rd_ahead_count_r <= rd_ahead_count_r - RDEPTH_W'(1);
+              end
+              default:;
+            endcase
 
             unique case ({src_req_fire, wr_pull_slot})
               2'b10: slot_occupancy_r <= slot_occupancy_r + OCC_W'(1);

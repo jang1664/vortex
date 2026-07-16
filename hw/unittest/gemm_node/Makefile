@@ -50,6 +50,7 @@ RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
         $(RTL_DIR)/libs/VX_async_ram_patch.sv \
         $(RTL_DIR)/libs/VX_placeholder.sv \
         $(RTL_DIR)/libs/VX_popcount.sv \
+        $(RTL_DIR)/core/gemm/VX_lmem_weight_gather_dma.sv \
         $(RTL_DIR)/core/gemm/VX_gemm_node_naive.sv \
         $(RTL_DIR)/libs/VX_fifo_queue.sv \
 				$(RTL_DIR)/libs/VX_pending_size.sv \
