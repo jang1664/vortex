@@ -106,6 +106,13 @@ public:
   std::vector<SimPort<MemReq>> dcache_req_ports;
   std::vector<SimPort<MemRsp>> dcache_rsp_ports;
 
+  // GEMM timing traffic uses a dedicated D-cache requester for the naive
+  // backend and per-channel direct-memory ports for the TMEM backend.
+  SimPort<MemReq> gemm_cache_req_port;
+  SimPort<MemRsp> gemm_cache_rsp_port;
+  std::vector<SimPort<MemReq>> gemm_dma_req_ports;
+  std::vector<SimPort<MemRsp>> gemm_dma_rsp_ports;
+
   Core(const SimContext& ctx,
        uint32_t core_id,
        Socket* socket,

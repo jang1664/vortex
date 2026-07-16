@@ -135,7 +135,7 @@ DPI_SRCS := $(VORTEX_HOME)/hw/dpi/float_dpi.cpp \
 SOFTFLOAT_LIB := $(THIRD_PARTY_DIR)/softfloat/build/Linux-x86_64-GCC/softfloat.a
 							
 
-INCDIRS_ := $(VORTEX_HOME)/build/hw \
+INCDIRS_ := $(ROOT_DIR)/hw \
             $(VORTEX_HOME)/hw \
             $(VORTEX_HOME)/sim/common \
             $(RTL_DIR) \
@@ -195,7 +195,7 @@ CVFPU_RTLS := $(THIRD_PARTY_DIR)/cvfpu/src/fpnew_pkg.sv \
 RTLS := $(CVFPU_RTLS) $(RTLS)
 endif
 
-CFLAGS  := "-std=c++17 -Wall -Wextra -Wno-array-bounds -Wno-maybe-uninitialized -fPIC -I$(VORTEX_HOME)/build/hw -I$(VORTEX_HOME)/hw -I$(VORTEX_HOME)/sim/common -I$(VORTEX_HOME)/hw/dpi -I$(RTL_DIR) -I$(THIRD_PARTY_DIR)/softfloat/source/include -DXLEN_$(XLEN)"
+CFLAGS  := "-std=c++17 -Wall -Wextra -Wno-array-bounds -Wno-maybe-uninitialized -fPIC -I$(ROOT_DIR)/hw -I$(VORTEX_HOME)/hw -I$(VORTEX_HOME)/sim/common -I$(VORTEX_HOME)/hw/dpi -I$(RTL_DIR) -I$(THIRD_PARTY_DIR)/softfloat/source/include -DXLEN_$(XLEN)"
 LDFLAGS := 
 
 PARAMS_  := 

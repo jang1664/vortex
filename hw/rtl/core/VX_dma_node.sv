@@ -68,7 +68,10 @@ module VX_dma_node import VX_gpu_pkg::*; #(
     .reset  (reset),
     .mmio_if(mmio_if),
     .issue_if(cfg_reg_if.master),
-    .done_if(done_if.slave)
+    .done_if(done_if.slave),
+    .hw_write_valid_i(1'b0),
+    .hw_write_entry_id_i('0),
+    .hw_write_value_i('0)
   );
 
   // DMA backend worker:

@@ -159,7 +159,7 @@ inline void vx_join(int stack_ptr) {
 
 // Warp Barrier
 inline void vx_barrier(int barried_id, int num_warps) {
-    __asm__ volatile (".insn r %0, 4, 0, x0, %1, %2" :: "i"(RISCV_CUSTOM0), "r"(barried_id), "r"(num_warps));
+    __asm__ volatile (".insn r %0, 4, 0, x0, %1, %2" :: "i"(RISCV_CUSTOM0), "r"(barried_id), "r"(num_warps) : "memory");
 }
 
 // Return current thread identifier
@@ -226,7 +226,7 @@ inline __attribute__((const)) int vx_hart_id() {
 }
 
 inline void vx_fence() {
-    __asm__ volatile ("fence iorw, iorw");
+    __asm__ volatile ("fence iorw, iorw" ::: "memory");
 }
 
 // Returns 1 if every active lane’s predicate is true, 0 otherwise.

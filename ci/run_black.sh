@@ -23,8 +23,9 @@ list_fpga_bin_aliases() {
 }
 
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
-  echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"] [--fpga-bin ALIAS_OR_PATH] [--bench] [--perf CLASS] [--debug LEVEL] [--hw-debug] [--no-srun] [--no-latency] [--power[=on|off]] [--power-out-dir DIR] [--power-auto-duration] [--power-max-iterations N]"
+  echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"] [--cores N] [--fpga-bin ALIAS_OR_PATH] [--bench] [--perf CLASS] [--debug LEVEL] [--hw-debug] [--no-srun] [--no-latency] [--power[=on|off]] [--power-out-dir DIR] [--power-auto-duration] [--power-max-iterations N]"
   echo "Modes:"
+  echo "  simx     - Run only simx tests"
   echo "  rtlsim   - Run only rtlsim tests"
   echo "  xrtsim   - Run only xrtsim tests"
   echo "  xrt-vcs-sim   - Run only xrt-vcs-sim tests"
@@ -32,6 +33,8 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   echo "  hw_emu    - Run only hw_emu tests"
   echo "  hw        - Run only hw tests"
   echo "Options:"
+  echo "  --cores N"
+  echo "      Override NUM_CORES with a positive integer"
   echo "  --hw-debug, --enable-hw-debug-module"
   echo "      Append -DENABLE_HW_DEBUG_MODULE to CONFIGS"
   echo "  --no-srun"
@@ -63,8 +66,9 @@ mode="${1:-}"
 shift || true
 
 if [[ "${mode}" == "" ]]; then
-  echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"] [--fpga-bin ALIAS_OR_PATH] [--bench] [--perf CLASS] [--debug LEVEL] [--hw-debug] [--no-srun] [--no-latency] [--power[=on|off]] [--power-out-dir DIR] [--power-auto-duration] [--power-max-iterations N]"
+  echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"] [--cores N] [--fpga-bin ALIAS_OR_PATH] [--bench] [--perf CLASS] [--debug LEVEL] [--hw-debug] [--no-srun] [--no-latency] [--power[=on|off]] [--power-out-dir DIR] [--power-auto-duration] [--power-max-iterations N]"
   echo "Modes:"
+  echo "  simx     - Run only simx tests"
   echo "  rtlsim   - Run only rtlsim tests"
   echo "  xrtsim   - Run only xrtsim tests"
   echo "  xrt-vcs-sim   - Run only xrt-vcs-sim tests"
@@ -77,6 +81,8 @@ fi
 APP=fpint_gemm_ffn_hw_improve
 ARGS="-m 2 -n 32 -k 128"
 CONFIGS_EXTRA=""
+CORES=""
+CORES_FLAG=""
 FPGA_BIN=improve_tcol1
 FPGA_BIN_DIR=""
 FPGA_BIN_CONFIGS=""
@@ -135,7 +141,33 @@ append_run_configs() {
     configs+=" ${CONFIGS_EXTRA}"
   fi
 
+  if [[ -n "${CORES}" ]]; then
+    configs="$(strip_num_cores_defines "${configs}")"
+  fi
+
   printf '%s' "${configs}"
+}
+
+strip_num_cores_defines() {
+  local configs="$1"
+  local token
+  local normalized=""
+  local -a tokens=()
+
+  read -r -a tokens <<< "${configs}"
+  for token in "${tokens[@]}"; do
+    case "${token}" in
+      -DNUM_CORES=*|-DNUM_CORES_*)
+        continue
+        ;;
+    esac
+    if [[ -n "${normalized}" ]]; then
+      normalized+=" "
+    fi
+    normalized+="${token}"
+  done
+
+  printf '%s' "${normalized}"
 }
 
 append_arg() {
@@ -244,6 +276,18 @@ while [[ $# -gt 0 ]]; do
     --configs-extra)
       CONFIGS_EXTRA="$2"
       shift 2
+      ;;
+    --cores)
+      if [[ $# -lt 2 ]]; then
+        echo "Missing value for --cores; expected a positive integer" >&2
+        exit 1
+      fi
+      CORES="$2"
+      shift 2
+      ;;
+    --cores=*)
+      CORES="${1#*=}"
+      shift
       ;;
     --fpga-bin)
       FPGA_BIN="$2"
@@ -432,7 +476,8 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     -h|--help)
-      echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"] [--fpga-bin ALIAS_OR_PATH] [--bench] [--perf CLASS] [--debug LEVEL] [--hw-debug] [--no-srun] [--no-latency] [--power[=on|off]] [--power-out-dir DIR] [--power-auto-duration] [--power-max-iterations N]"
+      echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"] [--cores N] [--fpga-bin ALIAS_OR_PATH] [--bench] [--perf CLASS] [--debug LEVEL] [--hw-debug] [--no-srun] [--no-latency] [--power[=on|off]] [--power-out-dir DIR] [--power-auto-duration] [--power-max-iterations N]"
+      echo "  --cores N: override NUM_CORES with a positive integer"
       echo "  --hw-debug, --enable-hw-debug-module: append -DENABLE_HW_DEBUG_MODULE to CONFIGS"
       echo "  --no-srun: compatibility mode; run hw directly instead of launching through managed srun"
       echo "  --no-latency: append --no-latency to bench args"
@@ -444,11 +489,19 @@ while [[ $# -gt 0 ]]; do
       ;;
     *)
       echo "Unknown argument: $1"
-      echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"] [--fpga-bin ALIAS_OR_PATH] [--bench] [--perf CLASS] [--debug LEVEL] [--hw-debug] [--no-srun]"
+      echo "Usage: $0 <mode> [--app APP] [--args \"...\"] [--configs-extra \"...\"] [--cores N] [--fpga-bin ALIAS_OR_PATH] [--bench] [--perf CLASS] [--debug LEVEL] [--hw-debug] [--no-srun]"
       exit 1
       ;;
   esac
 done
+
+if [[ -n "${CORES}" ]]; then
+  if [[ ! "${CORES}" =~ ^[1-9][0-9]*$ ]]; then
+    echo "Invalid --cores value: ${CORES}; expected a positive integer" >&2
+    exit 1
+  fi
+  CORES_FLAG="--cores=${CORES}"
+fi
 
 append_latency_args
 append_power_args
@@ -458,12 +511,21 @@ append_power_args
 CONFIGS="$(append_run_configs "${CONFIGS:-}")"
 
 # ----------------------------------------------------------------------------
+# - simx
+# ----------------------------------------------------------------------------
+if [[ "${mode}" == "simx" || "${mode}" == "all" ]]; then
+  CONFIGS="${CONFIGS}" \
+  DRIVER=simx \
+  ./ci/blackbox.sh ${BENCH_FLAG} ${PERF_FLAG} ${DEBUG_FLAG} ${CORES_FLAG} --driver=simx --app=${APP} --args="${ARGS}"
+fi
+
+# ----------------------------------------------------------------------------
 # - rtlsim
 # ----------------------------------------------------------------------------
 if [[ "${mode}" == "rtlsim" || "${mode}" == "all" ]]; then
   CONFIGS="${CONFIGS}" \
   DRIVER=rtlsim \
-  ./ci/blackbox.sh ${BENCH_FLAG} ${PERF_FLAG} ${DEBUG_FLAG} --driver=rtlsim --app=${APP} --args="${ARGS}"
+  ./ci/blackbox.sh ${BENCH_FLAG} ${PERF_FLAG} ${DEBUG_FLAG} ${CORES_FLAG} --driver=rtlsim --app=${APP} --args="${ARGS}"
 fi
 
 # ----------------------------------------------------------------------------
@@ -477,7 +539,7 @@ if [[ "${mode}" == "xrtsim" || "${mode}" == "all" ]]; then
   DRAM_STALL_SEED=1234 \
   CONFIGS=${CONFIGS} \
   TARGET=xrtsim \
-  ./ci/blackbox.sh ${BENCH_FLAG} ${PERF_FLAG} ${DEBUG_FLAG} --driver=xrt --app=${APP} --args="${ARGS}"
+  ./ci/blackbox.sh ${BENCH_FLAG} ${PERF_FLAG} ${DEBUG_FLAG} ${CORES_FLAG} --driver=xrt --app=${APP} --args="${ARGS}"
 fi
 
 # ----------------------------------------------------------------------------
@@ -505,7 +567,7 @@ if [[ "${mode}" == "xrt-vcs-sim" || "${mode}" == "all" ]]; then
   if [[ -n "${DEBUG_FLAG}" ]]; then
     xrt_vcs_env+=("FSDB_DUMP=1" "DEBUG_AXI=1")
   fi
-  env "${xrt_vcs_env[@]}" ./ci/blackbox.sh ${BENCH_FLAG} ${PERF_FLAG} ${DEBUG_FLAG} --driver=xrt_vcs --app=${APP} --args="${ARGS}"
+  env "${xrt_vcs_env[@]}" ./ci/blackbox.sh ${BENCH_FLAG} ${PERF_FLAG} ${DEBUG_FLAG} ${CORES_FLAG} --driver=xrt_vcs --app=${APP} --args="${ARGS}"
 fi
 
 # ----------------------------------------------------------------------------
@@ -528,7 +590,7 @@ if [[ "${mode}" == "xrt-vcs-pgsim" || "${mode}" == "all" ]]; then
   if [[ -n "${DEBUG_FLAG}" ]]; then
     xrt_vcs_post_env+=("FSDB_DUMP=1" "DEBUG_AXI=1" "GUI=1")
   fi
-  env "${xrt_vcs_post_env[@]}" ./ci/blackbox.sh ${BENCH_FLAG} ${PERF_FLAG} ${DEBUG_FLAG} --driver=xrt_vcs_post --app=${APP} --args="${ARGS}"
+  env "${xrt_vcs_post_env[@]}" ./ci/blackbox.sh ${BENCH_FLAG} ${PERF_FLAG} ${DEBUG_FLAG} ${CORES_FLAG} --driver=xrt_vcs_post --app=${APP} --args="${ARGS}"
 fi
 
 # ----------------------------------------------------------------------------
@@ -540,7 +602,7 @@ if [[ "${mode}" == "hw_emu" || "${mode}" == "all" ]]; then
   PLATFORM=xilinx_u55c_gen3x16_xdma_3_202210_1 \
   DRIVER=xrt \
   TARGET=hw_emu \
-  ./ci/blackbox.sh ${BENCH_FLAG} ${PERF_FLAG} ${DEBUG_FLAG} --driver=xrt --app=${APP} --args="${ARGS}"
+  ./ci/blackbox.sh ${BENCH_FLAG} ${PERF_FLAG} ${DEBUG_FLAG} ${CORES_FLAG} --driver=xrt --app=${APP} --args="${ARGS}"
 fi
 
 # ----------------------------------------------------------------------------
@@ -588,7 +650,7 @@ if [[ "${mode}" == "hw" || "${mode}" == "all" ]]; then
   PLATFORM=xilinx_u55c_gen3x16_xdma_3_202210_1 \
   DRIVER=xrt \
   TARGET=hw \
-  ./ci/blackbox.sh ${BENCH_FLAG} ${PERF_FLAG} ${DEBUG_FLAG} --driver=xrt --app=${APP} --args=\"${ARGS}\"
+  ./ci/blackbox.sh ${BENCH_FLAG} ${PERF_FLAG} ${DEBUG_FLAG} ${CORES_FLAG} --driver=xrt --app=${APP} --args=\"${ARGS}\"
   "
   if [[ "${USE_SRUN}" == "1" && -z "${SLURM_JOB_ID:-}${SLURM_STEP_ID:-}" ]]; then
     srun --gres=fpga:u55c:1 --cpus-per-task=4 --mem=16G --time=12:00:00 --pty bash -c "${HW_COMMAND}"

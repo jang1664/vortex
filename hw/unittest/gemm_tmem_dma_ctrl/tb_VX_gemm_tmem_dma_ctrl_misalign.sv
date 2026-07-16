@@ -54,6 +54,7 @@ module tb_VX_gemm_tmem_dma_ctrl_misalign;
     .clk(clk),
     .reset(reset),
     .gemm_dma_ctrl_if(gemm_dma_ctrl_if),
+    .store_done(),
     .gemm_sync_if(gemm_sync_if),
     .cfg_reg_if(cfg_reg_if),
     .done_if(done_if)

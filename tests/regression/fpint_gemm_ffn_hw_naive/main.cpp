@@ -503,7 +503,9 @@ int main(int argc, char *argv[]) {
   kargs.last_ctrl = 0;
 
   std::cout << "Uploading kernel arguments and kernel" << std::endl;
-  RT_CHECK(vx_upload_bytes(device, &kargs, sizeof(kargs), &args_buffer));
+  // The kernel reports completion and allocation failures through kargs.
+  RT_CHECK(vx_mem_alloc(device, sizeof(kargs), VX_MEM_READ_WRITE, &args_buffer));
+  RT_CHECK(vx_copy_to_dev(args_buffer, &kargs, 0, sizeof(kargs)));
 
   std::cout << "Starting kernel execution (reps=" << REPS
             << (POLL_ONLY_ITERS ? " [POLL-ONLY MODE]" : "")

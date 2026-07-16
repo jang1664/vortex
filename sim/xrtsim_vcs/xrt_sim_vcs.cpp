@@ -236,15 +236,14 @@ private:
   using mem_req_list_t = std::list<mem_req_t*>;
   using mem_req_iter_t = mem_req_list_t::iterator;
 
-  // AW state for two-phase write handling (per bank). `base_addr` is the
-  // first beat's address (from AW); subsequent W beats write at
-  // base_addr + beat_idx*DATA_SIZE (INCR burst). A single B response is
-  // issued when w_last arrives, matching AXI semantics.
+  // AW state for two-phase write handling. AXI permits multiple write
+  // addresses to be accepted before their W bursts, so each port keeps these
+  // states in handshake order and consumes the front state on WLAST.
   typedef struct {
     uint64_t base_addr;
     uint32_t tag;
     uint32_t beat_idx;
-    bool     valid;
+    uint32_t beat_count;
   } aw_state_t;
 
   // Flat RAM address from (bank_id, per-bank offset). HBM layout is fixed
@@ -388,10 +387,12 @@ private:
           // Catch mis-routed write bursts at AW (burst ≤ 4KB < 512MB bank,
           // so if the base is inside the port's window, all beats are too).
           assert_port_range(pkt.port_id, pkt.addr);
-          aw_state_[pkt.port_id].base_addr = pkt.addr;
-          aw_state_[pkt.port_id].tag       = pkt.id;
-          aw_state_[pkt.port_id].beat_idx  = 0;
-          aw_state_[pkt.port_id].valid     = true;
+          aw_state_t state;
+          state.base_addr = pkt.addr;
+          state.tag       = pkt.id;
+          state.beat_idx  = 0;
+          state.beat_count = pkt.value + 1;
+          aw_queues_[pkt.port_id].push(state);
           break;
         }
         case EVT_AXI_W: {
@@ -406,14 +407,31 @@ private:
           }
 
           uint8_t port = pkt.port_id;
-          if (aw_state_[port].valid) {
+          if (aw_queues_[port].empty()) {
+            fprintf(stderr, "[vcs-sim] AXI W without AW: port=%u last=%u\n",
+                    port, pkt.value);
+            stop_ = true;
+            return;
+          }
+
+          auto& aw_state = aw_queues_[port].front();
+          {
             // Beat address for this W within the burst (INCR). AXI addr is
             // already in the HBM bank-contiguous view that ram_ uses.
-            uint64_t axi_addr = aw_state_[port].base_addr
-                              + (uint64_t)aw_state_[port].beat_idx
+            uint64_t axi_addr = aw_state.base_addr
+                              + (uint64_t)aw_state.beat_idx
                                 * PLATFORM_MEMORY_DATA_SIZE;
             uint64_t strb = pkt.addr; // strb is stored in addr field
             bool w_last = (pkt.value != 0);
+            bool expected_last = (aw_state.beat_idx + 1 == aw_state.beat_count);
+
+            if (w_last != expected_last) {
+              fprintf(stderr,
+                      "[vcs-sim] AXI WLAST mismatch: port=%u beat=%u beats=%u last=%u\n",
+                      port, aw_state.beat_idx, aw_state.beat_count, w_last);
+              stop_ = true;
+              return;
+            }
 
             // Write with byte enables
             for (int i = 0; i < PLATFORM_MEMORY_DATA_SIZE; ++i) {
@@ -425,8 +443,8 @@ private:
             // Issue exactly one B response per AW burst — on wlast.
             if (w_last) {
               auto mem_req = new mem_req_t();
-              mem_req->tag     = aw_state_[port].tag;
-              mem_req->addr    = aw_state_[port].base_addr;
+              mem_req->tag     = aw_state.tag;
+              mem_req->addr    = aw_state.base_addr;
               mem_req->port    = port;
               mem_req->write   = true;
               mem_req->ready   = false;
@@ -434,9 +452,9 @@ private:
               pending_mem_reqs_[port].emplace_back(mem_req);
               dram_queues_[port].push(mem_req);
 
-              aw_state_[port].valid = false;
+              aw_queues_[port].pop();
             } else {
-              aw_state_[port].beat_idx++;
+              aw_state.beat_idx++;
             }
           }
           break;
@@ -527,7 +545,7 @@ private:
   MemoryAllocator* mem_alloc_[PLATFORM_MEMORY_NUM_BANKS];  // per HBM bank (32)
   mem_req_list_t pending_mem_reqs_[NUM_DMA_CHANNELS];      // per AXI port (8)
   std::queue<mem_req_t*> dram_queues_[NUM_DMA_CHANNELS];   // per AXI port (8)
-  aw_state_t aw_state_[NUM_DMA_CHANNELS];                  // per AXI port (8)
+  std::queue<aw_state_t> aw_queues_[NUM_DMA_CHANNELS];     // per AXI port (8)
 };
 
 ///////////////////////////////////////////////////////////////////////////////

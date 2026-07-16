@@ -69,6 +69,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     // localparam int GEN_W      = `JOB_MMIO_GEN_W;
 
     localparam logic [3:0] OP_NOTIFY = 4'd3;
+    localparam int OUTPUT_PROGRESS_REG_IDX = 43;
 
     // -------------------------------------------------------------------------
     // Data-path interfaces
@@ -211,6 +212,10 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
     ) issue_if();
 
     VX_node_done_if done_if();
+    wire output_store_done;
+    wire progress_update_valid;
+    wire [`JOB_MMIO_ENTRYID_W-1:0] progress_update_entry_id;
+    wire [31:0] progress_update_value;
 
     // -------------------------------------------------------------------------
     // Control-plane wiring
@@ -439,6 +444,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
         .clk              (clk),
         .reset            (reset),
         .gemm_dma_ctrl_if (gemm_dma_ctrl_if),
+        .store_done       (output_store_done),
         .gemm_sync_if     (gemm_sync_if[4]),
         .cfg_reg_if       (dma_cfg_if),
         .done_if          (dma_done_if)
@@ -454,6 +460,7 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
       .NUM_MASTERS(N_MASTER),
       .NUM_ENTRIES(`JOB_MMIO_NUM_ENTRIES),
       .NUM_REGS32(`GEMM_CFG_REG_NUM),
+      .HW_WRITE_REG_IDX(OUTPUT_PROGRESS_REG_IDX),
       .CFG_BASE_ADDR(`GEMM_REG_BASE_ADDR),
       .ONE_LANE_MMIO(1'b1)
     ) u_job_frontend (
@@ -461,7 +468,10 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
       .reset(reset),
       .mmio_if(mmio_if),
       .issue_if(issue_if),
-      .done_if(done_if)
+      .done_if(done_if),
+      .hw_write_valid_i(progress_update_valid),
+      .hw_write_entry_id_i(progress_update_entry_id),
+      .hw_write_value_i(progress_update_value)
     );
 
     // -------------------------------------------------------------------------
@@ -618,7 +628,11 @@ module VX_gemm_node import VX_gpu_pkg::*; #(
       .cfg_reg_if(issue_if),
       .gemm_ctrl_if(gemm_ctrl_if),
       .done_if(done_if),
-      .gemm_sync_slv_if(gemm_sync_if)
+      .gemm_sync_slv_if(gemm_sync_if),
+      .output_store_done_i(output_store_done),
+      .progress_update_valid_o(progress_update_valid),
+      .progress_update_entry_id_o(progress_update_entry_id),
+      .progress_update_value_o(progress_update_value)
 `ifdef PERF_ENABLE
       ,.gemm_unit_computing(gemm_unit_perf.computing)
       ,.perf(gemm_ctrl_perf)

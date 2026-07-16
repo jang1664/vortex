@@ -15,16 +15,19 @@
 
 #include <array>
 #include <cstdint>
+#include <deque>
 #include <memory>
 #include <vector>
+
+#include "VX_config.h"
 
 namespace vortex {
 
 class Core;
 
-// Functional model of the GEMM accelerator. It supports the current
-// descriptor-MMIO ABI used by fpint_gemm_ffn_hw, and keeps the older raw stream
-// opcode path for compatibility with earlier experiments.
+// Functional model of the GEMM accelerator. It supports the descriptor-MMIO
+// ABI used by the tiled and naive FPINT GEMM paths, and keeps the older raw
+// stream opcode path for compatibility with earlier experiments.
 class GemmNode {
 public:
   // MMIO layout (XLEN=64 ; see hw/rtl/VX_config.vh GEMM_REG_BASE_ADDR)
@@ -71,7 +74,7 @@ public:
 
   void mmio_write(uint64_t addr, const void* data, uint32_t size);
 
-  // Called each core tick to clear occupied_ when completion_cycle_ is reached.
+  // Called each core tick to advance descriptor traffic and raw-stream state.
   void tick();
 
 private:
@@ -93,7 +96,11 @@ private:
 
   // Descriptor-MMIO functional path.
   static constexpr uint32_t DESC_NUM_ENTRIES     = 1;
-  static constexpr uint32_t DESC_NUM_REGS32      = 43;
+#ifdef GEMM_NAIVE
+  static constexpr uint32_t DESC_NUM_REGS32      = 40;
+#else
+  static constexpr uint32_t DESC_NUM_REGS32      = 44;
+#endif
   static constexpr uint32_t DESC_BEAT_BYTES      = 8;
   static constexpr uint32_t DESC_WORDS_PER_BEAT  = DESC_BEAT_BYTES / 4;
   static constexpr uint32_t DESC_NUM_BEATS       = (DESC_NUM_REGS32 + DESC_WORDS_PER_BEAT - 1) / DESC_WORDS_PER_BEAT;
@@ -126,7 +133,8 @@ private:
     REG_QDIR           = 39,
     REG_LOG2_DMA_MT    = 40,
     REG_LOG2_DMA_KT    = 41,
-    REG_LOG2_DMA_NT    = 42
+    REG_LOG2_DMA_NT    = 42,
+    REG_OUTPUT_PROGRESS = 43
   };
 
   struct JobEntry {
@@ -141,7 +149,14 @@ private:
   bool decode_descriptor_offset(uint64_t off, uint32_t* eid, uint32_t* reg_idx, uint32_t* byte_lane) const;
   bool descriptor_read(uint64_t off, uint32_t size, uint64_t* value) const;
   bool descriptor_write(uint64_t off, const void* data, uint32_t size);
-  void execute_descriptor_job(uint32_t eid);
+  bool execute_descriptor_job(uint32_t eid);
+  void start_descriptor_timing(uint32_t eid);
+  void build_descriptor_traffic(uint32_t eid);
+  void enqueue_traffic_block(uint64_t addr, bool write, uint32_t output_tile = ~0u);
+  void enqueue_traffic_range(uint64_t addr, uint64_t size, bool write, uint32_t output_tile = ~0u);
+  bool traffic_queues_empty() const;
+  void complete_output_tile(uint32_t output_tile);
+  void finish_descriptor_job();
 
   uint64_t reg_u64(const JobEntry& entry, uint32_t lo_reg) const;
   uint16_t read_u16(uint64_t addr) const;
@@ -154,6 +169,10 @@ private:
   uint64_t weight_offset(uint32_t N, uint32_t K, uint32_t dma_kt, uint32_t gn, uint32_t gk, bool wtrans, uint32_t* nibble_hi) const;
   uint64_t scale_offset(uint32_t N, uint32_t K, uint32_t dma_kt, uint32_t dma_nt, uint32_t qblk, uint32_t qdir, uint32_t gn, uint32_t gk) const;
   uint64_t output_offset(uint32_t M, uint32_t N, uint32_t dma_mt, uint32_t gm, uint32_t gn) const;
+  uint64_t naive_input_offset(uint32_t K, uint32_t gm, uint32_t gk) const;
+  uint64_t naive_weight_offset(uint32_t N, uint32_t K, uint32_t gn, uint32_t gk, bool wtrans, uint32_t* nibble_hi) const;
+  uint64_t naive_qparam_offset(uint32_t N, uint32_t qblk, uint32_t qdir, uint32_t gn, uint32_t gk) const;
+  uint64_t naive_output_offset(uint32_t N, uint32_t gm, uint32_t gn) const;
 
   Core* core_;
 
@@ -169,6 +188,42 @@ private:
 
   MmioMode mmio_mode_;
   std::array<JobEntry, DESC_NUM_ENTRIES> desc_entries_;
+
+  struct TrafficReq {
+    uint64_t addr;
+    bool write;
+    uint32_t output_tile;
+  };
+
+  struct PendingOutputValue {
+    uint64_t addr;
+    uint16_t value;
+  };
+
+  struct TrafficStats {
+    uint64_t cache_reads = 0;
+    uint64_t cache_writes = 0;
+    uint64_t bypass_reads = 0;
+    uint64_t bypass_writes = 0;
+    uint64_t max_outstanding_reads = 0;
+    uint64_t max_outstanding_writes = 0;
+    uint64_t compute_cycles = 0;
+  };
+
+  bool descriptor_job_active_;
+  uint32_t active_eid_;
+  uint64_t outstanding_traffic_reads_;
+  uint64_t outstanding_traffic_writes_;
+  uint64_t descriptor_start_cycle_;
+  uint64_t descriptor_compute_done_cycle_;
+  uint64_t descriptor_last_issue_cycle_;
+  std::vector<std::deque<TrafficReq>> traffic_queues_;
+  std::vector<std::vector<PendingOutputValue>> pending_output_tiles_;
+  std::vector<uint64_t> output_tile_pending_responses_;
+  std::vector<bool> output_tile_completed_;
+  std::vector<uint64_t> output_tile_ready_cycles_;
+  uint32_t next_output_tile_to_issue_;
+  TrafficStats traffic_stats_;
 
   // TMEM flat byte array
   std::vector<uint8_t> tmem_;
