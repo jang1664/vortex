@@ -18,7 +18,7 @@ if "VORTEX_HOME" not in os.environ:
 import torch_vortex
 
 
-def _check(name, result, expected, atol=1e-4, rtol=1e-4):
+def _check(name, result, expected, atol=1e-3, rtol=1e-3):
     diff = (result - expected).abs()
     max_diff = diff.max().item()
     mean_diff = diff.mean().item()

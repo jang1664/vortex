@@ -2,33 +2,6 @@
 #include "../kv_cache_common/kv_cache_w4a16.h"
 #include <vx_intrinsics.h>
 #include <vx_spawn.h>
-#include <VX_config.h>
-
-#ifndef KV_FUSED_QPARAM_WARP
-#define KV_FUSED_QPARAM_WARP 0
-#endif
-
-static inline uint32_t float_to_bits(float value) {
-  union { float f; uint32_t u; } v;
-  v.f = value;
-  return v.u;
-}
-
-static inline float bits_to_float(uint32_t value) {
-  union { uint32_t u; float f; } v;
-  v.u = value;
-  return v.f;
-}
-
-static inline float shfl_down_float(float value, uint32_t offset) {
-  return bits_to_float((uint32_t)vx_shfl_down(
-      float_to_bits(value), offset, NUM_THREADS - 1, 0));
-}
-
-static inline float shfl_idx_float(float value, uint32_t index) {
-  return bits_to_float((uint32_t)vx_shfl_idx(
-      float_to_bits(value), index, NUM_THREADS - 1, 0));
-}
 
 static uint32_t min_u32(uint32_t a, uint32_t b) {
   return a < b ? a : b;
@@ -115,70 +88,6 @@ static void compute_params(const fp16_t* src,
     }
   }
 
-  const float range = max_v - min_v;
-  float scale = 1.0f;
-  float inv_for_zp = 1.0f;
-  if (range != 0.0f) {
-    scale = range / 15.0f;
-    inv_for_zp = 15.0f / range;
-  }
-  int32_t zp = kv_round_half_away_from_zero(-min_v * inv_for_zp);
-  if (zp < 0) zp = 0;
-  if (zp > 15) zp = 15;
-  *scale_out = scale;
-  *zp_out = (int16_t)zp;
-}
-
-static void compute_params_warp(const fp16_t* src,
-                                uint32_t K,
-                                uint32_t N,
-                                uint32_t QBLK,
-                                uint32_t QDIR,
-                                uint32_t k,
-                                uint32_t n,
-                                uint32_t src_layout,
-                                uint32_t log2_qblk,
-                                uint32_t log2_mt,
-                                uint32_t log2_mxu_nt,
-                                uint32_t lane,
-                                float* scale_out,
-                                int16_t* zp_out) {
-  if (k >= K || n >= N) {
-    *scale_out = 0.0f;
-    *zp_out = 0;
-    return;
-  }
-  float min_v = 3.402823466e+38F;
-  float max_v = -3.402823466e+38F;
-  if (QDIR == 0) {
-    const uint32_t k0 = (k >> log2_qblk) << log2_qblk;
-    const uint32_t k1 = min_u32(k0 + QBLK, K);
-    for (uint32_t kk = k0 + lane; kk < k1; kk += NUM_THREADS) {
-      const float v = fp16_to_float(load_src_value(
-          src, K, N, kk, n, src_layout, log2_mt, log2_mxu_nt));
-      if (v < min_v) min_v = v;
-      if (v > max_v) max_v = v;
-    }
-  } else {
-    const uint32_t n0 = (n >> log2_qblk) << log2_qblk;
-    const uint32_t n1 = min_u32(n0 + QBLK, N);
-    for (uint32_t nn = n0 + lane; nn < n1; nn += NUM_THREADS) {
-      const float v = fp16_to_float(load_src_value(
-          src, K, N, k, nn, src_layout, log2_mt, log2_mxu_nt));
-      if (v < min_v) min_v = v;
-      if (v > max_v) max_v = v;
-    }
-  }
-  for (uint32_t offset = NUM_THREADS >> 1; offset > 0; offset >>= 1) {
-    const float other_min = shfl_down_float(min_v, offset);
-    const float other_max = shfl_down_float(max_v, offset);
-    if (lane + offset < NUM_THREADS) {
-      if (other_min < min_v) min_v = other_min;
-      if (other_max > max_v) max_v = other_max;
-    }
-  }
-  min_v = shfl_idx_float(min_v, 0);
-  max_v = shfl_idx_float(max_v, 0);
   const float range = max_v - min_v;
   float scale = 1.0f;
   float inv_for_zp = 1.0f;
@@ -498,16 +407,7 @@ void kernel_kv_cache_quant_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
   const uint32_t out_N = padded_qparam_N(K, N, QBLK, GEMM_QDIR, SOURCE_TRANSPOSED);
   const uint32_t max_slot_elems = arg->max_slot_bytes / TILE_ELEM_BYTES;
   const uint32_t qparam_work = arg->k_tiles * arg->n_dma_tiles * max_slot_elems;
-#if KV_FUSED_QPARAM_WARP
-  const uint32_t warp_slot = threadIdx.x / NUM_THREADS;
-  const uint32_t lane = threadIdx.x - warp_slot * NUM_THREADS;
-  const uint32_t warps_per_block = blockDim.x / NUM_THREADS;
-  const uint32_t warp_id = blockIdx.x * warps_per_block + warp_slot;
-  const uint32_t total_warps = gridDim.x * warps_per_block;
-  for (uint32_t work = warp_id; work < qparam_work; work += total_warps) {
-#else
   for (uint32_t work = thread_id; work < qparam_work; work += total_threads) {
-#endif
     const uint32_t slot = work / max_slot_elems;
     const uint32_t elem_in_slot = work - slot * max_slot_elems;
     const uint32_t kt = slot / arg->n_dma_tiles;
@@ -529,14 +429,8 @@ void kernel_kv_cache_quant_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
 
     const uint64_t dst_off = scale_slot_base(arg, kt, nt_dma) + byte_in_slot;
     if (elem_in_slot >= body_elems) {
-#if KV_FUSED_QPARAM_WARP
-      if (lane == 0) {
-#endif
       store_u16(scales, dst_off, 0);
       store_u16(zeros, dst_off, 0);
-#if KV_FUSED_QPARAM_WARP
-      }
-#endif
       continue;
     }
 
@@ -582,22 +476,10 @@ void kernel_kv_cache_quant_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
     const uint32_t source_col = SOURCE_TRANSPOSED ? param_k : param_n;
     float scale = 1.0f;
     int16_t zp = 0;
-#if KV_FUSED_QPARAM_WARP
-    compute_params_warp(src, K, N, QBLK, SOURCE_QDIR,
-                        source_row, source_col, src_layout,
-                        log2_qblk, log2_mt, log2_mxu_nt, lane,
-                        &scale, &zp);
-    if (lane == 0) {
-#else
-    compute_params(src, K, N, QBLK, SOURCE_QDIR,
-                   source_row, source_col, src_layout,
+    compute_params(src, K, N, QBLK, SOURCE_QDIR, source_row, source_col, src_layout,
                    log2_qblk, log2_mt, log2_mxu_nt, &scale, &zp);
-#endif
     store_u16(scales, dst_off, float_to_fp16(scale));
     store_u16(zeros, dst_off, (uint16_t)zp);
-#if KV_FUSED_QPARAM_WARP
-    }
-#endif
   }
 }
 

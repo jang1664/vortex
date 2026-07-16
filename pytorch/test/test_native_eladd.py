@@ -55,7 +55,8 @@ def test_native_add_basic():
     print(f"  Expected[:5]:  {expected[:5].tolist()}")
     print(f"  Got[:5]:       {result[:5].tolist()}")
 
-    assert max_diff < 1e-5, f"FAILED: max_diff={max_diff}"
+    # fp16 kernel: compare with fp16-appropriate tolerance (rtol/atol), not fp32-tight
+    assert torch.allclose(result, expected, rtol=1e-2, atol=5e-3), f"FAILED: max_diff={max_diff}"
     print("  ✓ PASSED\n")
 
 
@@ -82,7 +83,8 @@ def test_native_add_multidim():
     print(f"  Expected[0,:5]:  {expected[0,:5].tolist()}")
     print(f"  Got[0,:5]:       {result[0,:5].tolist()}")
 
-    assert max_diff < 1e-5, f"FAILED: max_diff={max_diff}"
+    # fp16 kernel: compare with fp16-appropriate tolerance (rtol/atol), not fp32-tight
+    assert torch.allclose(result, expected, rtol=1e-2, atol=5e-3), f"FAILED: max_diff={max_diff}"
     print("  ✓ PASSED\n")
 
 
@@ -114,7 +116,8 @@ def test_native_add_chain():
     print(f"  Expected[:5]:  {expected[:5].tolist()}")
     print(f"  Got[:5]:       {result[:5].tolist()}")
 
-    assert max_diff < 1e-5, f"FAILED: max_diff={max_diff}"
+    # fp16 kernel: compare with fp16-appropriate tolerance (rtol/atol), not fp32-tight
+    assert torch.allclose(result, expected, rtol=1e-2, atol=5e-3), f"FAILED: max_diff={max_diff}"
     print("  ✓ PASSED\n")
 
 
@@ -138,7 +141,8 @@ def test_native_add_3d():
     print(f"  Shape: {result.shape}")
     print(f"  Max absolute diff: {max_diff:.8f}")
 
-    assert max_diff < 1e-5, f"FAILED: max_diff={max_diff}"
+    # fp16 kernel: compare with fp16-appropriate tolerance (rtol/atol), not fp32-tight
+    assert torch.allclose(result, expected, rtol=1e-2, atol=5e-3), f"FAILED: max_diff={max_diff}"
     print("  ✓ PASSED\n")
 
 
@@ -170,7 +174,8 @@ def test_native_mul_basic():
     print(f"  Expected[:5]:  {expected[:5].tolist()}")
     print(f"  Got[:5]:       {result[:5].tolist()}")
 
-    assert max_diff < 1e-5, f"FAILED: max_diff={max_diff}"
+    # fp16 kernel: compare with fp16-appropriate tolerance (rtol/atol), not fp32-tight
+    assert torch.allclose(result, expected, rtol=1e-2, atol=5e-3), f"FAILED: max_diff={max_diff}"
     print("  ✓ PASSED\n")
 
 
@@ -195,7 +200,8 @@ def test_native_mul_multidim():
     print(f"  Shape: {result.shape}")
     print(f"  Max absolute diff: {max_diff:.8f}")
 
-    assert max_diff < 1e-5, f"FAILED: max_diff={max_diff}"
+    # fp16 kernel: compare with fp16-appropriate tolerance (rtol/atol), not fp32-tight
+    assert torch.allclose(result, expected, rtol=1e-2, atol=5e-3), f"FAILED: max_diff={max_diff}"
     print("  ✓ PASSED\n")
 
 
@@ -226,7 +232,8 @@ def test_native_add_mul_chain():
     print(f"  Expected[:5]:  {expected[:5].tolist()}")
     print(f"  Got[:5]:       {result[:5].tolist()}")
 
-    assert max_diff < 1e-5, f"FAILED: max_diff={max_diff}"
+    # fp16 kernel: compare with fp16-appropriate tolerance (rtol/atol), not fp32-tight
+    assert torch.allclose(result, expected, rtol=1e-2, atol=5e-3), f"FAILED: max_diff={max_diff}"
     print("  ✓ PASSED\n")
 
 

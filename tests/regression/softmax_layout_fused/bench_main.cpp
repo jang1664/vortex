@@ -118,11 +118,6 @@ int main(int argc, char *argv[]) {
   init_scores(h_input_row);
   pack_scores(h_input_row, h_input_tiled, batch, heads, seq_q, seq_k, seq_k_pad, M_pad);
 
-  vx_bench::LatencyPowerMeasurement latency_power(bench);
-  if (!latency_power.prestart()) {
-    return -1;
-  }
-
   RT_CHECK(vx_dev_open(&device));
   RT_CHECK(vx_upload_kernel_file(device, "kernel.vxbin", &krnl_buffer));
   RT_CHECK(vx_mem_alloc(device, tiled_bytes, VX_MEM_READ, &input_buffer));
@@ -133,10 +128,10 @@ int main(int argc, char *argv[]) {
   uint64_t num_threads = 0;
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_WARPS, &num_warps));
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_THREADS, &num_threads));
-#if SOFTMAX_LAYOUT_FUSED_VARIANT == SOFTMAX_LAYOUT_FUSED_VARIANT_OPT_WARP
-  const uint32_t tpb = std::min(256u, (uint32_t)num_threads);
-#else
+#if SOFTMAX_LAYOUT_FUSED_VARIANTS == SOFTMAX_LAYOUT_FUSED_VARIANT_REV1
   const uint32_t tpb = std::min(256u, (uint32_t)(num_warps * num_threads));
+#else
+  const uint32_t tpb = std::min(256u, (uint32_t)num_threads);
 #endif
 
   kernel_arg_t arg = {};
@@ -174,10 +169,6 @@ int main(int argc, char *argv[]) {
   vx_bench::Stats stats;
   double first_latency_us = 0.0;
   vx_bench::IterationPerf first_iter_perf;
-  if (!latency_power.begin_latency_window()) {
-    cleanup();
-    return -1;
-  }
   printf("Start latency measurement.\n"); fflush(stdout);
   for (int i = 0; i < bench.iterations; ++i) {
     vx_bench::Stopwatch sw;
@@ -193,11 +184,6 @@ int main(int argc, char *argv[]) {
     if (i == 0)
       first_iter_perf = iter_perf;
     printf("iteration %0d/%0d, elapsed:%f\n", i+1, bench.iterations, stats.last()); fflush(stdout);
-  }
-
-  if (!latency_power.finish(stats.summary(), first_iter_perf)) {
-    cleanup();
-    return -1;
   }
 
   stats.report("softmax_layout_fused", bench);

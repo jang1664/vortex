@@ -4,6 +4,23 @@
 #include <ATen/native/DispatchStub.h>
 #include <torch/library.h>
 
+// Metadata-only view/shape ops.  Each of these computes new sizes/strides
+// and calls self.as_strided(...) (already registered natively on
+// PrivateUse1 above), so registering them here keeps the whole op on
+// device instead of falling through to the global CPU fallback.
+#include <ATen/ops/_unsafe_view_native.h>
+#include <ATen/ops/contiguous_native.h>
+#include <ATen/ops/expand_native.h>
+#include <ATen/ops/flatten_native.h>
+#include <ATen/ops/permute_native.h>
+#include <ATen/ops/reshape_native.h>
+#include <ATen/ops/select_native.h>
+#include <ATen/ops/slice_native.h>
+#include <ATen/ops/squeeze_native.h>
+#include <ATen/ops/t_native.h>
+#include <ATen/ops/transpose_native.h>
+#include <ATen/ops/unsqueeze_native.h>
+
 namespace at::vortex {
 
 namespace {
@@ -93,6 +110,99 @@ at::Tensor wrapper_view(const at::Tensor& self, c10::SymIntArrayRef size) {
   return at::native::vortex::view(self, size);
 }
 
+// ---- Pure-metadata view/shape ops ----
+// Each wrapper below forwards to the backend-agnostic at::native::<op> free
+// function, which computes new sizes/strides and calls self.as_strided(...).
+// as_strided is already registered natively on PrivateUse1, so these ops
+// stay entirely on device (no CPU round trip).
+
+at::Tensor wrapper_transpose_int(
+    const at::Tensor& self,
+    int64_t dim0,
+    int64_t dim1) {
+  return at::native::transpose(self, dim0, dim1);
+}
+
+at::Tensor wrapper_permute(const at::Tensor& self, c10::IntArrayRef dims) {
+  return at::native::permute(self, dims);
+}
+
+at::Tensor wrapper_reshape(const at::Tensor& self, c10::SymIntArrayRef shape) {
+  return at::native::reshape_symint(self, shape);
+}
+
+at::Tensor wrapper_unsqueeze(const at::Tensor& self, int64_t dim) {
+  return at::native::unsqueeze(self, dim);
+}
+
+at::Tensor wrapper_squeeze(const at::Tensor& self) {
+  return at::native::squeeze(self);
+}
+
+at::Tensor wrapper_squeeze_dim(const at::Tensor& self, int64_t dim) {
+  return at::native::squeeze(self, dim);
+}
+
+at::Tensor wrapper_squeeze_dims(const at::Tensor& self, c10::IntArrayRef dim) {
+  return at::native::squeeze(self, dim);
+}
+
+at::Tensor wrapper_select_int(
+    const at::Tensor& self,
+    int64_t dim,
+    c10::SymInt index) {
+  return at::native::select_symint(self, dim, std::move(index));
+}
+
+at::Tensor wrapper_slice_Tensor(
+    const at::Tensor& self,
+    int64_t dim,
+    std::optional<c10::SymInt> start,
+    std::optional<c10::SymInt> end,
+    c10::SymInt step) {
+  // native::slice only takes plain int64_t bounds; guard_int() is the
+  // standard way to materialize a SymInt when no symbolic shapes are in
+  // play (always true for this eager-mode backend).
+  std::optional<int64_t> start_i = start.has_value()
+      ? std::make_optional(start->guard_int(__FILE__, __LINE__))
+      : std::nullopt;
+  std::optional<int64_t> end_i = end.has_value()
+      ? std::make_optional(end->guard_int(__FILE__, __LINE__))
+      : std::nullopt;
+  int64_t step_i = step.guard_int(__FILE__, __LINE__);
+  return at::native::slice(self, dim, start_i, end_i, step_i);
+}
+
+at::Tensor wrapper_contiguous(
+    const at::Tensor& self,
+    at::MemoryFormat memory_format) {
+  return at::native::contiguous(self, memory_format);
+}
+
+at::Tensor wrapper_t(const at::Tensor& self) {
+  return at::native::t(self);
+}
+
+at::Tensor wrapper_expand(
+    const at::Tensor& self,
+    c10::SymIntArrayRef size,
+    bool implicit) {
+  return at::native::expand(self, C10_AS_INTARRAYREF_SLOW(size), implicit);
+}
+
+at::Tensor wrapper__unsafe_view(
+    const at::Tensor& self,
+    c10::SymIntArrayRef size) {
+  return at::native::_unsafe_view(self, C10_AS_INTARRAYREF_SLOW(size));
+}
+
+at::Tensor wrapper_flatten_using_ints(
+    const at::Tensor& self,
+    int64_t start_dim,
+    int64_t end_dim) {
+  return at::native::flatten(self, start_dim, end_dim);
+}
+
 bool wrapper_has_compatible_shallow_copy_type(
     const at::Tensor& /*self*/,
     const at::Tensor& /*other*/) {
@@ -122,6 +232,22 @@ TORCH_LIBRARY_IMPL(aten, PrivateUse1, m) {
   m.impl("set_.source_Storage", wrapper_set_source_Storage_);
   m.impl("set_.source_Storage_storage_offset", wrapper_set_source_Storage_storage_offset_);
   m.impl("view", wrapper_view);
+
+  // ---- Pure-metadata view/shape ops (see wrappers above) ----
+  m.impl("transpose.int", wrapper_transpose_int);
+  m.impl("permute", wrapper_permute);
+  m.impl("reshape", wrapper_reshape);
+  m.impl("unsqueeze", wrapper_unsqueeze);
+  m.impl("squeeze", wrapper_squeeze);
+  m.impl("squeeze.dim", wrapper_squeeze_dim);
+  m.impl("squeeze.dims", wrapper_squeeze_dims);
+  m.impl("select.int", wrapper_select_int);
+  m.impl("slice.Tensor", wrapper_slice_Tensor);
+  m.impl("contiguous", wrapper_contiguous);
+  m.impl("t", wrapper_t);
+  m.impl("expand", wrapper_expand);
+  m.impl("_unsafe_view", wrapper__unsafe_view);
+  m.impl("flatten.using_ints", wrapper_flatten_using_ints);
 }
 
 // ---- Global CPU fallback for all unregistered ops ----

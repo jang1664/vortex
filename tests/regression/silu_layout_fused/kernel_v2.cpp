@@ -71,17 +71,6 @@ void kernel_silu_store_matched(kernel_arg_t *__UNIFORM__ arg) {
   const uint32_t total_threads = gridDim.x * blockDim.x;
   const uint32_t thread_id = blockIdx.x * blockDim.x + threadIdx.x;
 
-#ifdef SILU_USE_LINEAR_TILED
-  if (arg->kernel_id == KERNEL_SILU_LAYOUT_FUSED) {
-    // Input and output use the same GEMM-C slot order. Pad rows contain zero
-    // and may be processed safely, avoiding all row/tile address decoding.
-    const uint32_t total = M_pad * K;
-    for (uint32_t i = thread_id; i < total; i += total_threads)
-      pOutput[i] = float_to_fp16(silu(fp16_to_float(pInput[i])));
-    return;
-  }
-#endif
-
   for (uint32_t m = 0; m < M_real; ++m) {
     const uint64_t in_row_base = (uint64_t)m * K;
     const uint32_t mt_idx = m >> log2_mt;

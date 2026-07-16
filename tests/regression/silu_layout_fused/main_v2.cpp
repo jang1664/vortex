@@ -101,13 +101,7 @@ int main(int argc, char** argv) {
   parse_args(argc, argv);
 
   uint32_t M_pad = (M + 7u) & ~7u;
-#if SILU_LAYOUT_FUSED_VARIANT_TAG == 1
-  const char* variant = "linear_tiled";
-#else
-  const char* variant = "baseline";
-#endif
-  printf("silu_layout_fused  variant=%s M=%u (pad=%u) K=%u iters=%u\n",
-         variant, M, M_pad, K, ITERS);
+  printf("silu_layout_fused  M=%u (pad=%u) K=%u iters=%u\n", M, M_pad, K, ITERS);
 
   if (K % TILE_DMA_MXU_NT != 0) {
     printf("ERROR: K must be multiple of %u\n", TILE_DMA_MXU_NT);
