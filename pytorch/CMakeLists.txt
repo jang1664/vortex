@@ -75,6 +75,42 @@ file(GLOB _vortex_thirdparty_libs "${VORTEX_HOME}/third_party/ramulator/lib*.so"
 install(FILES ${_vortex_thirdparty_libs}
         DESTINATION ${CMAKE_INSTALL_PREFIX}/lib)
 
+# ---- Build PyTorch-compatible Vortex kernel variants ----
+# The PyTorch host launch contracts currently require contiguous softmax rows
+# and row-major SGEMM weights. Build those exact variants before installation
+# instead of copying whichever kernel.vxbin was last produced by regression.
+find_program(VORTEX_MAKE_EXECUTABLE NAMES gmake make)
+if(NOT VORTEX_MAKE_EXECUTABLE)
+  message(FATAL_ERROR "GNU Make is required to build Vortex kernels")
+endif()
+
+set(VORTEX_PYTORCH_SOFTMAX_VARIANT "rev1")
+set(VORTEX_PYTORCH_SGEMM_TCU_VARIANT "baseline")
+set(_SOFTMAX_BUILD_DIR "${VORTEX_BUILD_DIR}/tests/regression/softmax")
+set(_SGEMM_TCU_BUILD_DIR "${VORTEX_BUILD_DIR}/tests/regression/sgemm_tcu")
+set(_SOFTMAX_VXBIN "${_SOFTMAX_BUILD_DIR}/kernel.vxbin")
+set(_SGEMM_TCU_VXBIN "${_SGEMM_TCU_BUILD_DIR}/kernel.vxbin")
+
+foreach(_kernel_build_dir IN ITEMS "${_SOFTMAX_BUILD_DIR}" "${_SGEMM_TCU_BUILD_DIR}")
+  if(NOT EXISTS "${_kernel_build_dir}/Makefile")
+    message(FATAL_ERROR
+      "Missing configured Vortex regression build directory: ${_kernel_build_dir}")
+  endif()
+endforeach()
+
+add_custom_target(vortex_pytorch_kernels ALL
+  COMMAND "${CMAKE_COMMAND}" -E env "MAKEFLAGS="
+          "${VORTEX_MAKE_EXECUTABLE}" -C "${_SOFTMAX_BUILD_DIR}"
+          "SOFTMAX_VARIANT=${VORTEX_PYTORCH_SOFTMAX_VARIANT}" kernel.vxbin
+  COMMAND "${CMAKE_COMMAND}" -E env "MAKEFLAGS="
+          "${VORTEX_MAKE_EXECUTABLE}" -C "${_SGEMM_TCU_BUILD_DIR}"
+          "SGEMM_TCU_VARIANT=${VORTEX_PYTORCH_SGEMM_TCU_VARIANT}" kernel.vxbin
+  BYPRODUCTS "${_SOFTMAX_VXBIN}" "${_SGEMM_TCU_VXBIN}"
+  COMMENT "Building PyTorch-compatible Vortex kernels"
+  VERBATIM
+  USES_TERMINAL
+)
+
 # ---- Install pre-built Vortex kernel binaries into torch_vortex/kernels/ ----
 # These are the RISC-V binaries that native ATen ops launch on the device.
 set(_ELADD_VXBIN "${VORTEX_BUILD_DIR}/tests/regression/eladd/kernel.vxbin")
@@ -154,27 +190,19 @@ else()
                   "native aten::mean will not work.  Build the elreduce test first.")
 endif()
 
-set(_SOFTMAX_VXBIN "${VORTEX_BUILD_DIR}/tests/regression/softmax/kernel.vxbin")
-if(EXISTS ${_SOFTMAX_VXBIN})
-  install(FILES ${_SOFTMAX_VXBIN}
-          DESTINATION ${CMAKE_INSTALL_PREFIX}/kernels
-          RENAME softmax.vxbin)
-  message(STATUS "Will install softmax kernel: ${_SOFTMAX_VXBIN}")
-else()
-  message(WARNING "softmax kernel binary not found at ${_SOFTMAX_VXBIN} — "
-                  "native aten::_softmax will not work.  Build the softmax test first.")
-endif()
+install(FILES ${_SOFTMAX_VXBIN}
+        DESTINATION ${CMAKE_INSTALL_PREFIX}/kernels
+        RENAME softmax.vxbin)
+message(STATUS
+  "Will build and install softmax kernel variant ${VORTEX_PYTORCH_SOFTMAX_VARIANT}: "
+  "${_SOFTMAX_VXBIN}")
 
-set(_SGEMM_TCU_VXBIN "${VORTEX_BUILD_DIR}/tests/regression/sgemm_tcu/kernel.vxbin")
-if(EXISTS ${_SGEMM_TCU_VXBIN})
-  install(FILES ${_SGEMM_TCU_VXBIN}
-          DESTINATION ${CMAKE_INSTALL_PREFIX}/kernels
-          RENAME sgemm_tcu.vxbin)
-  message(STATUS "Will install sgemm_tcu kernel: ${_SGEMM_TCU_VXBIN}")
-else()
-  message(WARNING "sgemm_tcu kernel binary not found at ${_SGEMM_TCU_VXBIN} — "
-                  "native aten::mm will not work.  Build the sgemm_tcu test first.")
-endif()
+install(FILES ${_SGEMM_TCU_VXBIN}
+        DESTINATION ${CMAKE_INSTALL_PREFIX}/kernels
+        RENAME sgemm_tcu.vxbin)
+message(STATUS
+  "Will build and install sgemm_tcu kernel variant ${VORTEX_PYTORCH_SGEMM_TCU_VARIANT}: "
+  "${_SGEMM_TCU_VXBIN}")
 
 set(_FPINT_GEMM_FFN_HW_VXBIN "${VORTEX_BUILD_DIR}/tests/regression/fpint_gemm_ffn_hw/kernel.vxbin")
 if(EXISTS ${_FPINT_GEMM_FFN_HW_VXBIN})
