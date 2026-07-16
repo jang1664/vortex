@@ -1,0 +1,120 @@
+task: dma-misal-pipeline
+status: complete
+updated: "2026-07-16 20:19"
+goal: >-
+  Pipeline the misaligned DMA address generation, read issue, response/packing,
+  and write issue stages to hide request-generation and memory-response latency.
+entries:
+  - timestamp: "2026-07-16 17:32"
+    action: Started architecture comparison before modifying RTL.
+    result: >-
+      The current VX_dma_unit_misal serializes command precalculation,
+      per-segment preparation, one read response, packing, and write issue.
+    learned: >-
+      The redesign needs explicit buffering and transaction metadata between
+      independent stages; splitting only the state enum would not add overlap.
+  - timestamp: "2026-07-16 17:44"
+    action: Compared all active DMA datapaths and confirmed implementation scope.
+    result: >-
+      VX_dma_unit_align and VX_lmem_dma_misal already use tagged response slots;
+      VX_dma_engine streams AXI bursts with a response-tag FIFO; the weight
+      gather DMA is multi-slot. Only VX_dma_unit_misal remains serialized on the
+      active naive global DMA path. Legacy VX_lmem_dma has no product instantiation.
+    learned: >-
+      VX_dma_unit_align provides the closest reusable control pattern, but the
+      misaligned path must retain byte-window packing and segment metadata.
+  - timestamp: "2026-07-16 17:48"
+    action: Ran the first dma_mem_unit_misal VCS verification.
+    result: >-
+      RTL compilation and elaboration passed. verify_rtl reported sim_fail
+      because the unittest Makefile had a sim target but no run target, so the
+      simulation never started. Added a run-to-sim compatibility target.
+    learned: >-
+      A compile log can be successful even when verify_rtl reports sim_fail;
+      check whether logs/sim.log was created before treating it as an RTL failure.
+  - timestamp: "2026-07-16 17:52"
+    action: Reconfigured build and reran verification against the current repository.
+    result: >-
+      The prior source-tree run was invalid because its stale config.mk pointed
+      at a different checkout. The configured build correctly selected
+      vortex_fpint and found an XMR compatibility error for the renamed DCache
+      pending counter. Added aliases for established debug signal names.
+    learned: >-
+      Always verify the VORTEX_HOME path printed in compile.log; a passing test
+      from a neighboring checkout is not evidence for the current worktree.
+  - timestamp: "2026-07-16 17:55"
+    action: Recompiled after restoring XMR-compatible pending-counter names.
+    result: >-
+      Elaboration reached the new depth-4 elastic request queues, then found the
+      unittest's reduced RTL list omitted VX_fifo_queue and its RAM/counting
+      dependencies. Added those standard library sources to the test Makefile.
+    learned: >-
+      SIZE=2 elastic buffers elaborate without the generic FIFO path, while
+      SIZE=4 requires VX_fifo_queue, VX_pending_size, and VX_dp_ram.
+  - timestamp: "2026-07-16 18:02"
+    action: Completed 8-slot unit regression and advanced to integration tests.
+    result: >-
+      dma_mem_unit_misal passed 2125/2125 cases with eight tagged slots and
+      dma_node passed. dma_engine then found a timeout-debug XMR referring to
+      the former out_off name; added a compatibility alias to wr_out_off_r.
+    learned: >-
+      Preserve established XMR/debug names when refactoring stateful RTL so
+      higher-level timeout diagnostics continue to compile.
+  - timestamp: "2026-07-16 18:19"
+    action: Verified the pipelined design with the generation workload and FSDB.
+    result: >-
+      The first integration run exposed that taking the minimum DCache/LMEM tag
+      width limited both directions to two slots. Direction-specific limits now
+      provide eight G2L slots and two L2G slots. Generation passed in 14791
+      cycles versus 39991 cycles before this DMA change, and FSDB showed slot
+      occupancy eight for 2938 cycles.
+    learned: >-
+      Response capacity is a property of the source interface for each
+      direction; a narrow destination tag must not throttle unrelated reads.
+  - timestamp: "2026-07-16 18:23"
+    action: Repeated unit verification after direction-specific tag handling.
+    result: >-
+      dma_mem_unit_misal passed all 2125 VCS cases and dma_node passed. Full
+      xrt-vcs compilation also completed without warnings in the modified DMA.
+    learned: >-
+      xrt-vcs simv does not list RTL library files as Make dependencies. Touch
+      the top-level testbench or otherwise force a rebuild after RTL edits, and
+      confirm the compile transcript names the current source path.
+  - timestamp: "2026-07-16 19:01"
+    action: Completed the final prefill run and focused FSDB analysis.
+    result: >-
+      M=1024 K=256 N=256 passed in 206863 cycles, down 75.97 percent from the
+      prior WLOAD4 result of 860716 cycles. DMA S_RUN totaled 144058 cycles,
+      occupancy reached eight for 78194 cycles, and read generation overlapped
+      packing for 20540 cycles. The finalized FSDB bundle and log are stored in
+      analysis_workspace/fsdb_naive_bottleneck/th16_dma_pipeline/prefill.
+    learned: >-
+      The serial response wait was on the prefill critical path. After tagged
+      read-ahead, 16-byte pack movement occupies 118784 cycles, or 82.46 percent
+      of DMA S_RUN, and is the next optimization target.
+  - timestamp: "2026-07-16 19:06"
+    action: Started response-slot depth sensitivity experiments.
+    result: >-
+      The target config now accepts DMA_RD_OUTSTANDING_SLOT from the environment
+      while preserving eight as the default. Slot depths two and four will be
+      measured with the same generation and prefill workloads as depth eight.
+    learned: >-
+      xrt-vcs simv must be explicitly rebuilt between slot-depth configurations
+      because its Make target does not track CONFIGS changes.
+  - timestamp: "2026-07-16 20:19"
+    action: Completed the two/four/eight outstanding-slot sensitivity sweep.
+    result: >-
+      All xrt-vcs runs passed. Generation cycles were 24841, 17866, and 14791
+      for slot depths two, four, and eight. Prefill cycles were 430061, 248556,
+      and 206863. Relative to eight slots, two slots increased generation by
+      67.95 percent and prefill by 107.90 percent; four slots increased them by
+      20.79 percent and 20.15 percent.
+    learned: >-
+      Four slots remove much of the two-slot response serialization, but eight
+      slots still provide about a 17 percent cycle reduction from four slots in
+      both workloads. An existing FSDB lock prevented new slot-two/four waveform
+      creation, so only PERF cycles and pass/fail results are used in this sweep.
+pitfalls:
+  - Preserve byte-misaligned segment packing, padding, and both transfer directions.
+  - Completion must cover all buffered requests, responses, and writes, not only address generation.
+  - DCache responses require tags or guaranteed ordering when multiple reads are outstanding.

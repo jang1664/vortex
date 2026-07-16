@@ -1,0 +1,51 @@
+task: dma-misal-aligned-fastpath
+status: complete
+updated: "2026-07-16"
+goal: >-
+  Add a common-width aligned fast move to VX_dma_unit_misal while preserving the
+  existing PACK fallback and characterize outstanding-slot storage overhead.
+entries:
+  - timestamp: "2026-07-16"
+    iteration: 1
+    status: pass
+    action: Added a 64-byte aligned slot-to-writer fast move with PACK fallback.
+    result: >-
+      VCS dma_mem_unit_misal passed 2125/2125 cases. Trace output observed 1960
+      fast destination writes and 58640 fallback destination writes across the
+      aligned, mismatched-offset, odd-tail, and padding sweep.
+    learned: >-
+      The existing slot, flush, and byte-enable machinery can support a native
+      common-width move by generalizing only the movement quantum; no response
+      bus bypass or arbitrary wide barrel shifter is required.
+  - timestamp: "2026-07-16"
+    iteration: 2
+    status: pass
+    action: Ran the representative generation xrt-vcs integration workload.
+    result: >-
+      M=1 K=256 N=256 passed in 14194 cycles with the depth-eight target
+      configuration, down 4.04 percent from the 14791-cycle pipeline baseline.
+    learned: >-
+      The aligned fast move removes measurable pack serialization even for the
+      short generation workload.
+  - timestamp: "2026-07-16"
+    action: Reframed outstanding-slot storage analysis for the Alveo U55C.
+    result: >-
+      The depth-eight payload is 8192 of 8336 slot-array bits. Existing mapped
+      reports show slot_data register clock gates rather than a RAM hierarchy.
+      A shallow 1024-bit-wide BRAM/URAM implementation would waste block depth
+      and require many blocks in parallel for the fast datapath width.
+    learned: >-
+      Resetless distributed RAM is the first FPGA experiment; direction-aware
+      64-byte banking is the second. Both must preserve asynchronous head access
+      or add prefetch so the new fast path does not regain bubbles.
+  - timestamp: "2026-07-16"
+    iteration: 3
+    status: pass
+    action: Ran the representative full prefill xrt-vcs workload.
+    result: >-
+      M=1024 K=256 N=256 passed in 199796 cycles with correct output, down
+      7067 cycles or 3.42 percent from the 206863-cycle pipeline baseline.
+    learned: >-
+      Naturally aligned 64-byte movement is useful but does not eliminate the
+      remaining prefill bottleneck; much of this workload still uses the PACK
+      fallback or waits outside the pack movement stage.

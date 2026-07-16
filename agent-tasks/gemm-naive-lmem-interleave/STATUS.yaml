@@ -1,0 +1,127 @@
+task: gemm-naive-lmem-interleave
+state: complete
+created: "2026-07-16"
+updated: "2026-07-16"
+summary: >
+  Implement WLOAD4, strided weight gather, modulo tensor-to-LSU-lane mapping,
+  round-robin shared LMEM arbitration, and depth-four local DMA prefetch for
+  GEMM_NAIVE. Exact 16-thread generation and prefill xrt-vcs workloads pass,
+  including WTRANS and QDIR variants.
+log:
+  - date: "2026-07-16"
+    iteration: 1
+    result: pass
+    summary: >
+      Added the WLOAD4 strided weight gather and verified eight ordered 64-byte
+      outputs with lane-skewed responses, GEMM backpressure, and all four
+      prefetch slots occupied.
+    verification: >
+      tools/verify_rtl.py unittest --path
+      hw/unittest/lmem_weight_gather_dma --sim vcs
+  - date: "2026-07-16"
+    iteration: 2
+    result: pass
+    summary: >
+      Forced VCS elaboration of the complete naive GEMM node at 8, 16, and 32
+      LSU lanes. The modulo tensor mapping and round-robin lane arbiters compile
+      for all supported representative widths.
+    verification: >
+      VORTEX_HOME=$PWD CONFIGS='-DNUM_THREADS={8,16,32}
+      -DENABLE_GEMM_ACCEL -DGEMM_NAIVE -DMXU_COL_TILE=32 -DDISABLE_BF16'
+      make -B compile SIM_EXEC=vcs
+  - date: "2026-07-16"
+    iteration: 3
+    result: pass
+    summary: >
+      The modified 16-thread WLOAD4 design completed the representative
+      generation workload with correct output in 39,991 cycles. FSDB dumping
+      was enabled for follow-up lane and DMA analysis.
+    verification: >
+      configs/naive_gemm_simd_th16_tcol32_hwexp_dcache.sh;
+      ci/run_black.sh xrt-vcs-sim --app fpint_gemm_ffn_hw_naive
+      --args '-m 1 -k 256 -n 256 -q 32 -t 0 -d 0'
+  - date: "2026-07-16"
+    iteration: 4
+    result: sim_fail
+    summary: >
+      The first modified prefill run stopped in S_PRE_NEXT_LD_W after the
+      output DMA reader completed 128 x 4 segments but its writer advanced
+      only 123 segments.
+    root_cause: >
+      Reader and writer segment-boundary events could occur in the same cycle.
+      Two nonblocking assignments to rd_ahead_count_r then overwrote one
+      another, understated the prefetch distance, and discarded five buffered
+      output segments.
+    fix: >
+      Compute both segment-advance events and update rd_ahead_count_r once so
+      simultaneous increment and decrement events cancel.
+  - date: "2026-07-16"
+    iteration: 5
+    result: pass
+    summary: >
+      The depth-four local DMA regression completed all aligned and misaligned
+      round trips, including the failure-shaped 16-byte x 128 x 4 transfer.
+      The testbench now explicitly enables the misaligned datapath used by the
+      naive GEMM node.
+    verification: >
+      From configured build_naive_lmem_interleave:
+      make sim SIM_EXEC=vcs RD_PREFETCH_DEPTH=4
+  - date: "2026-07-16"
+    iteration: 6
+    result: sim_fail
+    summary: >
+      Focused FSDB analysis of M=128 found the output DMA completed all 512
+      source reads and responses but issued only 511 LMEM writes. It stopped
+      at the final writer index with empty slots and an empty writer window.
+    root_cause: >
+      rd_ahead_count_r excludes response slots and the writer window, so it
+      understated the actual reader/writer distance. The writer used this
+      count to discard buffered data at segment boundaries and dropped the
+      final prefetched slot.
+    fix: >
+      Count final reader segment completion as a boundary event, and preserve
+      all residual writer-window bytes for aligned full-beat prefetch. Only
+      non-prefetchable misaligned transfers clear an over-read tail.
+  - date: "2026-07-16"
+    iteration: 7
+    result: pass
+    summary: >
+      The write-throttled depth-four DMA regression passed every aligned and
+      misaligned case. The integrated M=128,K=256,N=256 xrt-vcs smoke then
+      completed with correct output in 128,716 cycles.
+    verification: >
+      make sim SIM_EXEC=vcs RD_PREFETCH_DEPTH=4; exact 16-thread config;
+      ci/run_black.sh xrt-vcs-sim --app fpint_gemm_ffn_hw_naive
+      --args '-m 128 -k 256 -n 256 -q 32 -t 0 -d 0'
+  - date: "2026-07-16"
+    iteration: 8
+    result: pass
+    summary: >
+      The final modified generation run completed in 39,991 cycles versus the
+      exact WLOAD1 baseline's 41,866 cycles, a 4.48 percent reduction. Focused
+      FSDB analysis confirmed 512 gathered weight groups retired with no lost
+      requests or responses.
+    verification: >
+      exact 16-thread config; xrt-vcs M=1,K=256,N=256; analyzer on
+      analysis_workspace/fsdb_naive_bottleneck/th16_wload4/generation
+  - date: "2026-07-16"
+    iteration: 9
+    result: pass
+    summary: >
+      The representative full prefill completed with correct output in
+      860,716 cycles versus the WLOAD1 baseline's 868,441 cycles. All 512 GEMM
+      operations completed, all 4,096 gather groups retired, and all 16 output
+      DMA commands drained without a final-slot loss.
+    verification: >
+      exact 16-thread config; ci/run_black.sh xrt-vcs-sim --app
+      fpint_gemm_ffn_hw_naive --args
+      '-m 1024 -k 256 -n 256 -q 32 -t 0 -d 0'; complete focused FSDB analysis
+  - date: "2026-07-16"
+    iteration: 10
+    result: pass
+    summary: >
+      Independent generation runs verified the transposed-weight and reverse
+      quantization-parameter directions after the lane and DMA changes.
+    verification: >
+      exact 16-thread xrt-vcs: M=1,K=256,N=256 with WTRANS=1,QDIR=0 passed in
+      39,991 cycles; WTRANS=0,QDIR=1 passed in 75,241 cycles

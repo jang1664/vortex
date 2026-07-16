@@ -282,8 +282,56 @@ module tb_vcs_xrtsim #(
     string fsdb_file;
     if (!$value$plusargs("fsdb_file=%s", fsdb_file)) fsdb_file = "vcs_cosim.fsdb";
     $fsdbDumpfile(fsdb_file);
+`ifdef FSDB_GEMM_ONLY
+    $fsdbDumpvars(2,
+      tb_vcs_xrtsim.dut.vortex_axi.vortex.g_clusters[0].cluster
+        .g_sockets[0].socket.g_cores[0].core.gemm_node_naive,
+      "+all");
+    $fsdbDumpvars(0,
+      tb_vcs_xrtsim.dut.vortex_axi.vortex.g_clusters[0].cluster
+        .g_sockets[0].socket.g_cores[0].core.gemm_node_naive
+        .u_VX_gemm_ctrl_naive,
+      "+all");
+    $fsdbDumpvars(0,
+      tb_vcs_xrtsim.dut.vortex_axi.vortex.g_clusters[0].cluster
+        .g_sockets[0].socket.g_cores[0].core.gemm_node_naive
+        .u_input_lmem_dma,
+      "+all");
+    $fsdbDumpvars(0,
+      tb_vcs_xrtsim.dut.vortex_axi.vortex.g_clusters[0].cluster
+        .g_sockets[0].socket.g_cores[0].core.gemm_node_naive
+        .u_quant_param_lmem_dma,
+      "+all");
+    $fsdbDumpvars(0,
+      tb_vcs_xrtsim.dut.vortex_axi.vortex.g_clusters[0].cluster
+        .g_sockets[0].socket.g_cores[0].core.gemm_node_naive
+        .u_output_lmem_dma,
+      "+all");
+    $fsdbDumpvars(0,
+      tb_vcs_xrtsim.dut.vortex_axi.vortex.g_clusters[0].cluster
+        .g_sockets[0].socket.g_cores[0].core.gemm_node_naive
+        .u_weight_gather_dma,
+      "+all");
+`elsif FSDB_DMA_ONLY
+    $fsdbDumpvars(0,
+      tb_vcs_xrtsim.dut.vortex_axi.vortex.g_clusters[0].cluster
+        .g_sockets[0].socket.g_cores[0].core.u_VX_dma_node,
+      "+all");
+`else
     $fsdbDumpvars(0, tb_vcs_xrtsim, "+all");
+`endif
     $display("[TB] FSDB dump enabled: %0s", fsdb_file);
+`ifdef FSDB_GEMM_ONLY
+    forever begin
+      #100us;
+      $fsdbDumpflush;
+    end
+`elsif FSDB_DMA_ONLY
+    forever begin
+      #100us;
+      $fsdbDumpflush;
+    end
+`endif
   end
 `endif
 
