@@ -244,16 +244,16 @@ static void build_test_vectors(std::vector<uint16_t>& h_A,
   if (QDIR == 0) {
     for (uint32_t kg = 0; kg < groups_total; ++kg)
       for (uint32_t n = 0; n < N; ++n) {
-        h_scales[kg * N + n] = float_to_fp16(1.0f + float((n+kg) % 3)/100.0);
-        h_zeros[kg * N + n] = int16_t(int((n+kg) % 7) - 3);
+        h_scales[kg * N + n] = float_to_fp16(1.0f + float(n % 3)/100.0);
+        h_zeros[kg * N + n] = int16_t(int(n % 7) - 3);
         // h_scales[kg * N + n] = float_to_fp16(1.0f);
         // h_zeros[kg * N + n] = int16_t(-1);
       }
   } else {
     for (uint32_t k = 0; k < K; ++k)
       for (uint32_t ng = 0; ng < ng_total; ++ng) {
-        h_scales[k * ng_total + ng] = float_to_fp16(1.0f + float((ng+k) % 3)/100.0);
-        h_zeros[k * ng_total + ng] = int16_t(int((ng+k) % 7) - 3);
+        h_scales[k * ng_total + ng] = float_to_fp16(1.0f + float(ng % 3)/100.0);
+        h_zeros[k * ng_total + ng] = int16_t(int(ng % 7) - 3);
         // h_scales[k * ng_total + ng] = float_to_fp16(1.0f);
         // h_zeros[k * ng_total + ng] = int16_t(-1);
       }

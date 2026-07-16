@@ -335,6 +335,8 @@ struct softmax_kernel_arg_t {
   uint32_t num_heads;
   uint32_t seq_len_q;
   uint32_t seq_len_k;
+  uint32_t row_pitch_bytes;  // must match device kernel_arg_t (softmax/common.h);
+                             // omitting it misaligns use_mask/scale -> garbage mask path
   uint32_t use_mask;
   float    scale;
 };
@@ -357,6 +359,8 @@ struct silu_kernel_arg_t {
   uint64_t input_addr;
   uint64_t output_addr;
   uint32_t size;
+  uint32_t M;     // must match device kernel_arg_t (silu/common.h): M x K traversal
+  uint32_t K;     // if left unset the kernel reads them out-of-bounds -> hang on real HW
 };
 
 // --- rmsnorm ---
@@ -396,6 +400,65 @@ struct dropout_kernel_arg_t {
   float    multiplier;
   uint64_t src0_addr;
   uint64_t dst_addr;
+};
+
+// --- embedding (row gather) --- must match tests/regression/embedding/common.h
+struct embedding_kernel_arg_t {
+  uint32_t kernel_id;
+  uint32_t grid_dim[3];
+  uint32_t block_dim[3];
+  uint64_t indices_addr;   // int32 token ids [num_indices]
+  uint64_t table_addr;     // fp16 embedding table [vocab_size, hidden_dim]
+  uint64_t output_addr;    // fp16 gathered rows [num_indices, hidden_dim]
+  uint32_t num_indices;
+  uint32_t hidden_dim;
+  uint32_t vocab_size;
+  uint32_t power_kernel_iterations;
+};
+
+// --- hadamard butterfly (early-stop FWHT) --- must match tests/regression/hadamard_k/common.h
+struct hadamard_kernel_arg_t {
+  uint32_t kernel_id;
+  uint32_t grid_dim[3];
+  uint32_t block_dim[3];
+  uint64_t input_addr;
+  uint64_t output_addr;
+  uint32_t rows;
+  uint32_t dim;
+  uint32_t padded_dim;
+  uint32_t stop_stride;    // full transform if == padded_dim; else padded_dim/K
+  float    inv_sqrt_dim;
+  uint32_t power_kernel_iterations;
+};
+
+// --- per-token int4 quantize --- must match tests/regression/quantize_pt_int4/common.h
+struct quantize_pt_kernel_arg_t {
+  uint32_t kernel_id;
+  uint32_t grid_dim[3];
+  uint32_t block_dim[3];
+  uint64_t input_addr;     // fp16 [n_rows, D]
+  uint64_t q_addr;         // int8 [n_rows, D] signed int4 [-8,7]
+  uint64_t scale_addr;     // fp16 [n_rows]
+  uint64_t zero_addr;      // fp16 [n_rows]
+  uint32_t n_rows;
+  uint32_t D;
+  uint32_t mode;           // 0=sym, 1=asym
+  uint32_t power_kernel_iterations;
+};
+
+// --- per-token int4 dequantize --- must match tests/regression/dequantize_pt_int4/common.h
+struct dequantize_pt_kernel_arg_t {
+  uint32_t kernel_id;
+  uint32_t grid_dim[3];
+  uint32_t block_dim[3];
+  uint64_t q_addr;         // int8 [n_rows, D]
+  uint64_t scale_addr;     // fp16 [n_rows]
+  uint64_t zero_addr;      // fp16 [n_rows]
+  uint64_t output_addr;    // fp16 [n_rows, D]
+  uint32_t n_rows;
+  uint32_t D;
+  uint32_t mode;
+  uint32_t power_kernel_iterations;
 };
 
 // --- fpint_gemm_ffn naive (W4A16 mixed-precision GEMM via MMIO) ---
@@ -585,7 +648,12 @@ at::Tensor vortex_add_Tensor(
 
   auto& rt = c10::vortex::VortexRuntime::instance();
   vx_device_h device = rt.deviceHandle();
-  auto output = at::empty(self.sizes(), self.options());
+  // The eladd device kernel operates on fp16 (data_t = fp16_t).  Stage the
+  // fp32 inputs/output through fp16 device tensors so the byte layout the
+  // kernel reads/writes matches (mirrors vortex_silu's fp16 staging).
+  auto in_a16 = self.to(at::kHalf).contiguous();
+  auto in_b16 = other.to(at::kHalf).contiguous();
+  auto out16  = at::empty(self.sizes(), self.options().dtype(at::kHalf));
   uint32_t numel = static_cast<uint32_t>(self.numel());
   auto caps = query_caps(device);
 
@@ -597,14 +665,14 @@ at::Tensor vortex_add_Tensor(
   karg.block_dim[0] = caps.threads_per_block;
   karg.block_dim[1] = 1;
   karg.block_dim[2] = 1;
-  karg.input_a_addr = rt.deviceAddress(self.data_ptr());
-  karg.input_b_addr = rt.deviceAddress(other.data_ptr());
-  karg.output_addr  = rt.deviceAddress(output.data_ptr());
+  karg.input_a_addr = rt.deviceAddress(in_a16.data_ptr());
+  karg.input_b_addr = rt.deviceAddress(in_b16.data_ptr());
+  karg.output_addr  = rt.deviceAddress(out16.data_ptr());
   karg.size          = numel;
 
   static std::string path = find_kernel("eladd", "eladd");
   launch_kernel(device, &karg, sizeof(karg), path);
-  return output;
+  return out16.to(at::kFloat);
 }
 
 // ===========================================================================
@@ -636,7 +704,11 @@ at::Tensor vortex_mul_Tensor(
 
   auto& rt = c10::vortex::VortexRuntime::instance();
   vx_device_h device = rt.deviceHandle();
-  auto output = at::empty(self.sizes(), self.options());
+  // The elmul device kernel operates on fp16 (data_t = fp16_t).  Stage the
+  // fp32 inputs/output through fp16 device tensors (mirrors vortex_add_Tensor).
+  auto in_a16 = self.to(at::kHalf).contiguous();
+  auto in_b16 = other.to(at::kHalf).contiguous();
+  auto out16  = at::empty(self.sizes(), self.options().dtype(at::kHalf));
   uint32_t numel = static_cast<uint32_t>(self.numel());
   auto caps = query_caps(device);
 
@@ -648,14 +720,14 @@ at::Tensor vortex_mul_Tensor(
   karg.block_dim[0] = caps.threads_per_block;
   karg.block_dim[1] = 1;
   karg.block_dim[2] = 1;
-  karg.input_a_addr = rt.deviceAddress(self.data_ptr());
-  karg.input_b_addr = rt.deviceAddress(other.data_ptr());
-  karg.output_addr  = rt.deviceAddress(output.data_ptr());
+  karg.input_a_addr = rt.deviceAddress(in_a16.data_ptr());
+  karg.input_b_addr = rt.deviceAddress(in_b16.data_ptr());
+  karg.output_addr  = rt.deviceAddress(out16.data_ptr());
   karg.size          = numel;
 
   static std::string path = find_kernel("elmul", "elmul");
   launch_kernel(device, &karg, sizeof(karg), path);
-  return output;
+  return out16.to(at::kFloat);
 }
 
 // ===========================================================================
@@ -684,7 +756,10 @@ at::Tensor vortex_sub_Tensor(
 
   auto& rt = c10::vortex::VortexRuntime::instance();
   vx_device_h device = rt.deviceHandle();
-  auto output = at::empty(self.sizes(), self.options());
+  // fp16 device kernel: stage fp32 inputs/output through fp16 (mirrors vortex_add_Tensor).
+  auto in_a16 = self.to(at::kHalf).contiguous();
+  auto in_b16 = other.to(at::kHalf).contiguous();
+  auto out16  = at::empty(self.sizes(), self.options().dtype(at::kHalf));
   uint32_t numel = static_cast<uint32_t>(self.numel());
   auto caps = query_caps(device);
 
@@ -696,14 +771,14 @@ at::Tensor vortex_sub_Tensor(
   karg.block_dim[0] = caps.threads_per_block;
   karg.block_dim[1] = 1;
   karg.block_dim[2] = 1;
-  karg.input_a_addr = rt.deviceAddress(self.data_ptr());
-  karg.input_b_addr = rt.deviceAddress(other.data_ptr());
-  karg.output_addr  = rt.deviceAddress(output.data_ptr());
+  karg.input_a_addr = rt.deviceAddress(in_a16.data_ptr());
+  karg.input_b_addr = rt.deviceAddress(in_b16.data_ptr());
+  karg.output_addr  = rt.deviceAddress(out16.data_ptr());
   karg.size          = numel;
 
   static std::string path = find_kernel("elsub", "elsub");
   launch_kernel(device, &karg, sizeof(karg), path);
-  return output;
+  return out16.to(at::kFloat);
 }
 
 // ===========================================================================
@@ -730,7 +805,10 @@ at::Tensor vortex_div_Tensor(
 
   auto& rt = c10::vortex::VortexRuntime::instance();
   vx_device_h device = rt.deviceHandle();
-  auto output = at::empty(self.sizes(), self.options());
+  // fp16 device kernel: stage fp32 inputs/output through fp16 (mirrors vortex_add_Tensor).
+  auto in_a16 = self.to(at::kHalf).contiguous();
+  auto in_b16 = other.to(at::kHalf).contiguous();
+  auto out16  = at::empty(self.sizes(), self.options().dtype(at::kHalf));
   uint32_t numel = static_cast<uint32_t>(self.numel());
   auto caps = query_caps(device);
 
@@ -742,14 +820,14 @@ at::Tensor vortex_div_Tensor(
   karg.block_dim[0] = caps.threads_per_block;
   karg.block_dim[1] = 1;
   karg.block_dim[2] = 1;
-  karg.input_a_addr = rt.deviceAddress(self.data_ptr());
-  karg.input_b_addr = rt.deviceAddress(other.data_ptr());
-  karg.output_addr  = rt.deviceAddress(output.data_ptr());
+  karg.input_a_addr = rt.deviceAddress(in_a16.data_ptr());
+  karg.input_b_addr = rt.deviceAddress(in_b16.data_ptr());
+  karg.output_addr  = rt.deviceAddress(out16.data_ptr());
   karg.size          = numel;
 
   static std::string path = find_kernel("eldiv", "eldiv");
   launch_kernel(device, &karg, sizeof(karg), path);
-  return output;
+  return out16.to(at::kFloat);
 }
 
 // ===========================================================================
@@ -929,10 +1007,10 @@ at::Tensor vortex_softmax(
     int64_t dim,
     bool half_to_float) {
   TORCH_CHECK(self.is_privateuseone(), "self must be a vortex tensor");
-  TORCH_CHECK(self.dtype() == at::kFloat,
-    "vortex native softmax supports float32 only, got ", self.dtype());
+  TORCH_CHECK(self.dtype() == at::kFloat || self.dtype() == at::kHalf,
+    "vortex native softmax supports float32/float16, got ", self.dtype());
   TORCH_CHECK(!half_to_float,
-    "half_to_float not supported on vortex (float32-only)");
+    "half_to_float not supported on vortex");
   TORCH_CHECK(self.is_contiguous(), "self must be contiguous");
 
   int64_t ndim = self.dim();
@@ -947,7 +1025,12 @@ at::Tensor vortex_softmax(
 
   auto& rt = c10::vortex::VortexRuntime::instance();
   vx_device_h device = rt.deviceHandle();
-  auto output = at::empty(self.sizes(), self.options());
+  // The softmax device kernel operates on fp16 (data_t = fp16_t). A fp16 input
+  // is used directly (no host round-trip); a fp32 input is staged through fp16.
+  // Output dtype mirrors the input dtype.
+  const bool in_is_half = (self.dtype() == at::kHalf);
+  auto in16  = in_is_half ? self.contiguous() : self.to(at::kHalf).contiguous();
+  auto out16 = at::empty(self.sizes(), self.options().dtype(at::kHalf));
   uint32_t cols = static_cast<uint32_t>(self.size(ndim - 1));
   uint32_t rows = static_cast<uint32_t>(self.numel() / cols);
   auto caps = query_caps(device);
@@ -960,19 +1043,20 @@ at::Tensor vortex_softmax(
   karg.block_dim[0] = caps.threads_per_block;
   karg.block_dim[1] = 1;
   karg.block_dim[2] = 1;
-  karg.input_addr   = rt.deviceAddress(self.data_ptr());
-  karg.output_addr  = rt.deviceAddress(output.data_ptr());
+  karg.input_addr   = rt.deviceAddress(in16.data_ptr());
+  karg.output_addr  = rt.deviceAddress(out16.data_ptr());
   karg.mask_addr    = 0;
   karg.batch_size   = 1;
   karg.num_heads    = 1;
   karg.seq_len_q    = rows;
   karg.seq_len_k    = cols;
+  karg.row_pitch_bytes = 0;  // kernel ignores value; field needed for struct alignment
   karg.use_mask     = 0;
   karg.scale        = 1.0f;
 
   static std::string path = find_kernel("softmax", "softmax");
   launch_kernel(device, &karg, sizeof(karg), path);
-  return output;
+  return in_is_half ? out16 : out16.to(at::kFloat);
 }
 
 // ===========================================================================
@@ -1285,13 +1369,19 @@ at::Tensor vortex_addmm(
 // ===========================================================================
 at::Tensor vortex_silu(const at::Tensor& self) {
   TORCH_CHECK(self.is_privateuseone(), "self must be a vortex tensor");
-  TORCH_CHECK(self.dtype() == at::kFloat,
-    "vortex native silu supports float32 only, got ", self.dtype());
+  TORCH_CHECK(self.dtype() == at::kFloat || self.dtype() == at::kHalf,
+    "vortex native silu supports float32/float16, got ", self.dtype());
   TORCH_CHECK(self.is_contiguous(), "self must be contiguous");
 
   auto& rt = c10::vortex::VortexRuntime::instance();
   vx_device_h device = rt.deviceHandle();
-  auto output = at::empty(self.sizes(), self.options());
+  // The silu device kernel operates on fp16 (data_t = fp16_t).  A fp16 input
+  // (the common activation dtype, e.g. Llama MLP gate_proj output) is used
+  // directly; a fp32 input is staged through fp16 so the byte layout the
+  // kernel reads/writes matches. Output dtype mirrors the input dtype.
+  const bool in_is_half = (self.dtype() == at::kHalf);
+  auto in16  = in_is_half ? self : self.to(at::kHalf).contiguous();
+  auto out16 = at::empty(self.sizes(), self.options().dtype(at::kHalf));
   uint32_t numel = static_cast<uint32_t>(self.numel());
   auto caps = query_caps(device);
 
@@ -1303,13 +1393,15 @@ at::Tensor vortex_silu(const at::Tensor& self) {
   karg.block_dim[0] = caps.threads_per_block;
   karg.block_dim[1] = 1;
   karg.block_dim[2] = 1;
-  karg.input_addr   = rt.deviceAddress(self.data_ptr());
-  karg.output_addr  = rt.deviceAddress(output.data_ptr());
+  karg.input_addr   = rt.deviceAddress(in16.data_ptr());
+  karg.output_addr  = rt.deviceAddress(out16.data_ptr());
   karg.size          = numel;
+  karg.M             = 1;        // elementwise: treat as one row of `numel` elems
+  karg.K             = numel;    // kernel_v2 reads M/K; unset -> OOB read -> HW hang
 
   static std::string path = find_kernel("silu", "silu");
   launch_kernel(device, &karg, sizeof(karg), path);
-  return output;
+  return in_is_half ? out16 : out16.to(at::kFloat);
 }
 
 // ===========================================================================
@@ -1380,10 +1472,10 @@ at::Tensor vortex_rms_norm(
     double eps) {
   TORCH_CHECK(input.is_privateuseone(), "input must be a vortex tensor");
   TORCH_CHECK(weight.is_privateuseone(), "weight must be a vortex tensor");
-  TORCH_CHECK(input.dtype() == at::kFloat,
-    "vortex rmsnorm supports float32 only, got ", input.dtype());
-  TORCH_CHECK(weight.dtype() == at::kFloat,
-    "vortex rmsnorm weight must be float32, got ", weight.dtype());
+  TORCH_CHECK(input.dtype() == at::kFloat || input.dtype() == at::kHalf,
+    "vortex rmsnorm supports float32/float16, got ", input.dtype());
+  TORCH_CHECK(weight.dtype() == at::kFloat || weight.dtype() == at::kHalf,
+    "vortex rmsnorm weight must be float32/float16, got ", weight.dtype());
   TORCH_CHECK(input.is_contiguous(), "input must be contiguous");
   TORCH_CHECK(weight.is_contiguous(), "weight must be contiguous");
 
@@ -1395,7 +1487,14 @@ at::Tensor vortex_rms_norm(
 
   auto& rt = c10::vortex::VortexRuntime::instance();
   vx_device_h device = rt.deviceHandle();
-  auto output = at::empty(input.sizes(), input.options());
+  // rmsnorm device kernel operates on fp16 (data_t = fp16_t). A fp16 input/gamma
+  // (the model dtype) is used directly — no host round-trip; a fp32 input is
+  // staged through fp16. Output dtype mirrors the input dtype.
+  const bool in_is_half = (input.dtype() == at::kHalf);
+  auto in16    = in_is_half ? input.contiguous() : input.to(at::kHalf).contiguous();
+  auto gamma16 = (weight.dtype() == at::kHalf) ? weight.contiguous()
+                                               : weight.to(at::kHalf).contiguous();
+  auto out16   = at::empty(input.sizes(), input.options().dtype(at::kHalf));
   auto caps = query_caps(device);
 
   rmsnorm_kernel_arg_t karg{};
@@ -1406,9 +1505,9 @@ at::Tensor vortex_rms_norm(
   karg.block_dim[0] = caps.threads_per_block;
   karg.block_dim[1] = 1;
   karg.block_dim[2] = 1;
-  karg.input_addr   = rt.deviceAddress(input.data_ptr());
-  karg.output_addr  = rt.deviceAddress(output.data_ptr());
-  karg.gamma_addr   = rt.deviceAddress(weight.data_ptr());
+  karg.input_addr   = rt.deviceAddress(in16.data_ptr());
+  karg.output_addr  = rt.deviceAddress(out16.data_ptr());
+  karg.gamma_addr   = rt.deviceAddress(gamma16.data_ptr());
   karg.batch_size   = 1;
   karg.seq_len      = static_cast<uint32_t>(total_tokens);
   karg.hidden_dim   = static_cast<uint32_t>(hidden_dim);
@@ -1416,7 +1515,7 @@ at::Tensor vortex_rms_norm(
 
   static std::string path = find_kernel("rmsnorm", "rmsnorm");
   launch_kernel(device, &karg, sizeof(karg), path);
-  return output;
+  return in_is_half ? out16 : out16.to(at::kFloat);
 }
 
 // ===========================================================================
@@ -1432,8 +1531,8 @@ at::Tensor vortex_apply_rotary_pos_emb(
   TORCH_CHECK(input.is_privateuseone(), "input must be a vortex tensor");
   TORCH_CHECK(cos_cached.is_privateuseone(), "cos must be a vortex tensor");
   TORCH_CHECK(sin_cached.is_privateuseone(), "sin must be a vortex tensor");
-  TORCH_CHECK(input.dtype() == at::kFloat,
-    "vortex rope supports float32 only, got ", input.dtype());
+  TORCH_CHECK(input.dtype() == at::kFloat || input.dtype() == at::kHalf,
+    "vortex rope supports float32/float16, got ", input.dtype());
   TORCH_CHECK(input.dim() == 4,
     "input must be 4D [batch, seq, heads, head_dim], got ", input.dim(), "D");
   TORCH_CHECK(input.is_contiguous(), "input must be contiguous");
@@ -1449,7 +1548,16 @@ at::Tensor vortex_apply_rotary_pos_emb(
 
   auto& rt = c10::vortex::VortexRuntime::instance();
   vx_device_h device = rt.deviceHandle();
-  auto output = at::empty(input.sizes(), input.options());
+  // rope device kernel operates on fp16 (data_t = fp16_t). fp16 operands (the
+  // model dtype) are used directly — no host round-trip; fp32 operands are
+  // staged through fp16. Output dtype mirrors the input dtype.
+  const bool in_is_half = (input.dtype() == at::kHalf);
+  auto in16  = in_is_half ? input.contiguous() : input.to(at::kHalf).contiguous();
+  auto cos16 = (cos_cached.dtype() == at::kHalf) ? cos_cached.contiguous()
+                                                 : cos_cached.to(at::kHalf).contiguous();
+  auto sin16 = (sin_cached.dtype() == at::kHalf) ? sin_cached.contiguous()
+                                                 : sin_cached.to(at::kHalf).contiguous();
+  auto out16 = at::empty(input.sizes(), input.options().dtype(at::kHalf));
   auto caps = query_caps(device);
 
   uint32_t total_pairs = batch * seq_len * num_heads * (head_dim / 2);
@@ -1464,10 +1572,10 @@ at::Tensor vortex_apply_rotary_pos_emb(
   karg.block_dim[0] = caps.threads_per_block;
   karg.block_dim[1] = 1;
   karg.block_dim[2] = 1;
-  karg.input_addr   = rt.deviceAddress(input.data_ptr());
-  karg.output_addr  = rt.deviceAddress(output.data_ptr());
-  karg.cos_addr     = rt.deviceAddress(cos_cached.data_ptr());
-  karg.sin_addr     = rt.deviceAddress(sin_cached.data_ptr());
+  karg.input_addr   = rt.deviceAddress(in16.data_ptr());
+  karg.output_addr  = rt.deviceAddress(out16.data_ptr());
+  karg.cos_addr     = rt.deviceAddress(cos16.data_ptr());
+  karg.sin_addr     = rt.deviceAddress(sin16.data_ptr());
   karg.batch_size   = batch;
   karg.seq_len      = seq_len;
   karg.num_heads    = num_heads;
@@ -1476,7 +1584,203 @@ at::Tensor vortex_apply_rotary_pos_emb(
 
   static std::string path = find_kernel("rope", "rope");
   launch_kernel(device, &karg, sizeof(karg), path);
-  return output;
+  return in_is_half ? out16 : out16.to(at::kFloat);
+}
+
+// ===========================================================================
+//  aten::embedding  ->  embedding gather kernel
+//  output[i, :] = weight[indices[i], :]   (pure indexed row copy, no arithmetic)
+// ===========================================================================
+at::Tensor vortex_embedding(
+    const at::Tensor& weight,
+    const at::Tensor& indices,
+    int64_t /*padding_idx*/,
+    bool /*scale_grad_by_freq*/,
+    bool /*sparse*/) {
+  TORCH_CHECK(weight.is_privateuseone(), "weight must be a vortex tensor");
+  TORCH_CHECK(weight.dim() == 2, "embedding weight must be 2D [vocab, hidden], got ", weight.dim(), "D");
+
+  const bool w_is_half = (weight.dtype() == at::kHalf);
+  auto table16 = w_is_half ? weight.contiguous() : weight.to(at::kHalf).contiguous();
+  int64_t vocab  = table16.size(0);
+  int64_t hidden = table16.size(1);
+
+  // Indices: flatten and use int32 on device (torch usually gives int64 LongTensor).
+  auto idx_flat = indices.reshape({-1}).contiguous();
+  auto idx32    = idx_flat.to(at::kInt).contiguous();
+  int64_t N     = idx32.numel();
+
+  auto out16 = at::empty({N, hidden}, table16.options());   // fp16 [N, hidden]
+
+  auto& rt = c10::vortex::VortexRuntime::instance();
+  vx_device_h device = rt.deviceHandle();
+  auto caps = query_caps(device);
+  uint32_t total = static_cast<uint32_t>(N * hidden);
+
+  embedding_kernel_arg_t karg{};
+  karg.kernel_id    = 0;   // KERNEL_EMBEDDING
+  karg.grid_dim[0]  = (total + caps.threads_per_block - 1) / caps.threads_per_block;
+  karg.grid_dim[1]  = 1;
+  karg.grid_dim[2]  = 1;
+  karg.block_dim[0] = caps.threads_per_block;
+  karg.block_dim[1] = 1;
+  karg.block_dim[2] = 1;
+  karg.indices_addr = rt.deviceAddress(idx32.data_ptr());
+  karg.table_addr   = rt.deviceAddress(table16.data_ptr());
+  karg.output_addr  = rt.deviceAddress(out16.data_ptr());
+  karg.num_indices  = static_cast<uint32_t>(N);
+  karg.hidden_dim   = static_cast<uint32_t>(hidden);
+  karg.vocab_size   = static_cast<uint32_t>(vocab);
+
+  TORCH_CHECK(karg.indices_addr != 0, "Failed to get device address for indices");
+  TORCH_CHECK(karg.table_addr   != 0, "Failed to get device address for table");
+  TORCH_CHECK(karg.output_addr  != 0, "Failed to get device address for output");
+
+  static std::string path = find_kernel("embedding", "embedding");
+  launch_kernel(device, &karg, sizeof(karg), path);
+
+  // Reshape [N, hidden] -> indices.shape + [hidden]; restore caller weight dtype.
+  std::vector<int64_t> out_shape(indices.sizes().begin(), indices.sizes().end());
+  out_shape.push_back(hidden);
+  auto result = out16.reshape(out_shape);
+  return w_is_half ? result : result.to(weight.dtype());
+}
+
+// ===========================================================================
+//  vortex::hadamard_butterfly  ->  hadamard_k kernel (early-stop FWHT)
+//  Performs the FWHT butterfly stages over the last dim. For K==1 (dim is a
+//  power of 2) this is the complete normalized transform. For K>1 it runs the
+//  first log2(dim/K) stages, leaving K transformed blocks; the caller finishes
+//  with a KxK base matmul (native bmm). Output already scaled by 1/sqrt(dim).
+// ===========================================================================
+at::Tensor vortex_hadamard_butterfly(const at::Tensor& input, int64_t K) {
+  TORCH_CHECK(input.is_privateuseone(), "input must be a vortex tensor");
+  TORCH_CHECK(K >= 1, "hadamard K must be >= 1, got ", K);
+  int64_t n    = input.size(-1);
+  int64_t rows = input.numel() / n;
+  TORCH_CHECK(n % K == 0, "hadamard: dim ", n, " not divisible by K ", K);
+
+  const bool in_is_half = (input.dtype() == at::kHalf);
+  auto in16  = in_is_half ? input.contiguous() : input.to(at::kHalf).contiguous();
+  auto out16 = at::empty(input.sizes(), input.options().dtype(at::kHalf));
+
+  uint32_t dim = static_cast<uint32_t>(n);
+  uint32_t padded_dim = dim;
+  if (K == 1) { padded_dim = 1; while (padded_dim < dim) padded_dim <<= 1; }
+  TORCH_CHECK(K == 1 || padded_dim == dim,
+    "hadamard K>1 requires dim to be K * power-of-2 (no padding)");
+  uint32_t stop_stride = padded_dim / static_cast<uint32_t>(K);
+
+  auto& rt = c10::vortex::VortexRuntime::instance();
+  vx_device_h device = rt.deviceHandle();
+  auto caps = query_caps(device);
+
+  hadamard_kernel_arg_t karg{};
+  karg.kernel_id    = 0;   // KERNEL_HADAMARD
+  karg.grid_dim[0]  = static_cast<uint32_t>(rows);
+  karg.grid_dim[1]  = 1;
+  karg.grid_dim[2]  = 1;
+  karg.block_dim[0] = caps.threads_per_block;
+  karg.block_dim[1] = 1;
+  karg.block_dim[2] = 1;
+  karg.input_addr   = rt.deviceAddress(in16.data_ptr());
+  karg.output_addr  = rt.deviceAddress(out16.data_ptr());
+  karg.rows         = static_cast<uint32_t>(rows);
+  karg.dim          = dim;
+  karg.padded_dim   = padded_dim;
+  karg.stop_stride  = stop_stride;
+  karg.inv_sqrt_dim = 1.0f / std::sqrt(static_cast<float>(n));
+
+  TORCH_CHECK(karg.input_addr != 0 && karg.output_addr != 0,
+    "Failed to get device address for hadamard buffers");
+
+  static std::string path = find_kernel("hadamard_k", "hadamard_k");
+  launch_kernel(device, &karg, sizeof(karg), path);
+  return in_is_half ? out16 : out16.to(input.dtype());
+}
+
+// ===========================================================================
+//  vortex::quantize_per_token  ->  quantize_pt_int4 kernel (fused, per-row)
+//  x fp16 [.., D] -> (q int8 [.., D] signed int4, scale fp16 [.., 1], zero fp16 [.., 1])
+//  mode: 0=sym (S=absmax/7.5, zero=0), 1=asym (S=(max-min)/15, z=-8-min/S)
+// ===========================================================================
+std::tuple<at::Tensor, at::Tensor, at::Tensor> vortex_quantize_per_token(
+    const at::Tensor& x, int64_t mode) {
+  TORCH_CHECK(x.is_privateuseone(), "x must be a vortex tensor");
+  int64_t D      = x.size(-1);
+  int64_t n_rows = x.numel() / D;
+
+  auto x16 = (x.dtype() == at::kHalf) ? x.contiguous() : x.to(at::kHalf).contiguous();
+  auto q   = at::empty(x.sizes(), x.options().dtype(at::kChar));   // int8 [.., D]
+  std::vector<int64_t> sshape(x.sizes().begin(), x.sizes().end() - 1);
+  sshape.push_back(1);
+  auto scale = at::empty(sshape, x.options().dtype(at::kHalf));    // fp16 [.., 1]
+  auto zero  = at::empty(sshape, x.options().dtype(at::kHalf));
+
+  auto& rt = c10::vortex::VortexRuntime::instance();
+  vx_device_h device = rt.deviceHandle();
+  auto caps = query_caps(device);
+
+  quantize_pt_kernel_arg_t karg{};
+  karg.kernel_id    = 0;   // KERNEL_QUANTIZE_PT_INT4
+  karg.grid_dim[0]  = static_cast<uint32_t>(n_rows);
+  karg.grid_dim[1]  = 1;
+  karg.grid_dim[2]  = 1;
+  karg.block_dim[0] = caps.threads_per_block;
+  karg.block_dim[1] = 1;
+  karg.block_dim[2] = 1;
+  karg.input_addr   = rt.deviceAddress(x16.data_ptr());
+  karg.q_addr       = rt.deviceAddress(q.data_ptr());
+  karg.scale_addr   = rt.deviceAddress(scale.data_ptr());
+  karg.zero_addr    = rt.deviceAddress(zero.data_ptr());
+  karg.n_rows       = static_cast<uint32_t>(n_rows);
+  karg.D            = static_cast<uint32_t>(D);
+  karg.mode         = static_cast<uint32_t>(mode);
+
+  static std::string path = find_kernel("quantize_pt_int4", "quantize_pt_int4");
+  launch_kernel(device, &karg, sizeof(karg), path);
+  return std::make_tuple(q, scale, zero);
+}
+
+// ===========================================================================
+//  vortex::dequantize_per_token  ->  dequantize_pt_int4 kernel (fused, per-row)
+//  q int8 [.., D], scale/zero fp16 [.., 1] -> x fp16 [.., D]
+// ===========================================================================
+at::Tensor vortex_dequantize_per_token(
+    const at::Tensor& q, const at::Tensor& scale, const at::Tensor& zero,
+    int64_t mode) {
+  TORCH_CHECK(q.is_privateuseone(), "q must be a vortex tensor");
+  int64_t D      = q.size(-1);
+  int64_t n_rows = q.numel() / D;
+
+  auto q8  = q.contiguous();
+  auto s16 = (scale.dtype() == at::kHalf) ? scale.contiguous() : scale.to(at::kHalf).contiguous();
+  auto z16 = (zero.dtype()  == at::kHalf) ? zero.contiguous()  : zero.to(at::kHalf).contiguous();
+  auto out = at::empty(q.sizes(), q.options().dtype(at::kHalf));   // fp16 [.., D]
+
+  auto& rt = c10::vortex::VortexRuntime::instance();
+  vx_device_h device = rt.deviceHandle();
+  auto caps = query_caps(device);
+
+  dequantize_pt_kernel_arg_t karg{};
+  karg.kernel_id    = 0;   // KERNEL_DEQUANTIZE_PT_INT4
+  karg.grid_dim[0]  = static_cast<uint32_t>(n_rows);
+  karg.grid_dim[1]  = 1;
+  karg.grid_dim[2]  = 1;
+  karg.block_dim[0] = caps.threads_per_block;
+  karg.block_dim[1] = 1;
+  karg.block_dim[2] = 1;
+  karg.q_addr       = rt.deviceAddress(q8.data_ptr());
+  karg.scale_addr   = rt.deviceAddress(s16.data_ptr());
+  karg.zero_addr    = rt.deviceAddress(z16.data_ptr());
+  karg.output_addr  = rt.deviceAddress(out.data_ptr());
+  karg.n_rows       = static_cast<uint32_t>(n_rows);
+  karg.D            = static_cast<uint32_t>(D);
+  karg.mode         = static_cast<uint32_t>(mode);
+
+  static std::string path = find_kernel("dequantize_pt_int4", "dequantize_pt_int4");
+  launch_kernel(device, &karg, sizeof(karg), path);
+  return out;
 }
 
 // ===========================================================================
@@ -1756,6 +2060,12 @@ static at::Tensor detile_output(const at::Tensor& Y_tiled,
 //  binary is unavailable.
 // ===========================================================================
 
+// Small host helpers used to populate the precomputed shift/pad fields that the
+// device kernel_arg_t structs expect (must stay in sync with the log2_u32 /
+// align helpers in each tests/regression/<name>/main.cpp).
+static inline uint32_t vx_log2_u32(uint32_t v) { uint32_t r = 0; while (v >>= 1) ++r; return r; }
+static inline uint32_t vx_align_up_u32(uint32_t a, uint32_t b) { return (a + b - 1) / b * b; }
+
 // Kernel-arg struct must match tests/regression/tile_weight_w4a16/common.h
 struct tile_weight_w4a16_kernel_arg_t {
   uint32_t grid_dim[3];
@@ -1764,6 +2074,11 @@ struct tile_weight_w4a16_kernel_arg_t {
   uint64_t dst_addr;
   uint32_t K;
   uint32_t N;
+  uint32_t WTRANS;             // 0: pack n-pairs, 1: pack k-pairs
+  uint32_t SOURCE_TRANSPOSED;  // 1: src is physical W^T [N, K] row-major
+  uint32_t log2_kt;
+  uint32_t log2_mxu_kt;
+  uint32_t log2_mxu_nt;
 };
 
 // Kernel-arg struct must match tests/regression/detile_output/common.h
@@ -1774,7 +2089,10 @@ struct detile_output_kernel_arg_t {
   uint64_t dst_addr;
   uint32_t M;
   uint32_t M_pad;
-  uint32_t N;
+  uint32_t N_real;
+  uint32_t N_pad;
+  uint32_t log2_mt;
+  uint32_t log2_mxu_nt;
 };
 
 // Device-resident detile_output: undo the kernel's nt-major output layout AND
@@ -1785,9 +2103,14 @@ static at::Tensor vortex_detile_output(const at::Tensor& Y_tiled,
   TORCH_CHECK(Y_tiled.is_privateuseone(), "Y_tiled must be a vortex tensor");
   TORCH_CHECK(Y_tiled.dtype() == at::kHalf, "Y_tiled must be float16");
   TORCH_CHECK(Y_tiled.is_contiguous(),      "Y_tiled must be contiguous");
-  TORCH_CHECK(Y_tiled.numel() == M_pad * N, "Y_tiled numel must equal M_pad*N");
   TORCH_CHECK(N % FPINT_DMA_MXU_NT == 0,    "N must be multiple of MXU_NT");
   TORCH_CHECK(M <= M_pad,                   "M must be <= M_pad");
+
+  // The kernel output is a [M_pad, N_pad] nt-major tiled buffer.
+  const int64_t N_pad = ((N + FPINT_DMA_MXU_NT - 1) / FPINT_DMA_MXU_NT) *
+                        FPINT_DMA_MXU_NT;
+  TORCH_CHECK(Y_tiled.numel() == M_pad * N_pad,
+              "Y_tiled numel must equal M_pad*N_pad");
 
   auto& rt = c10::vortex::VortexRuntime::instance();
   vx_device_h device = rt.deviceHandle();
@@ -1811,7 +2134,10 @@ static at::Tensor vortex_detile_output(const at::Tensor& Y_tiled,
   karg.dst_addr     = rt.deviceAddress(output.data_ptr());
   karg.M            = static_cast<uint32_t>(M);
   karg.M_pad        = static_cast<uint32_t>(M_pad);
-  karg.N            = static_cast<uint32_t>(N);
+  karg.N_real       = static_cast<uint32_t>(N);
+  karg.N_pad        = static_cast<uint32_t>(N_pad);
+  karg.log2_mt      = vx_log2_u32(static_cast<uint32_t>(FPINT_DMA_MT));
+  karg.log2_mxu_nt  = vx_log2_u32(static_cast<uint32_t>(FPINT_DMA_MXU_NT));
 
   static std::string path = find_kernel("detile_output", "detile_output");
   launch_kernel(device, &karg, sizeof(karg), path);
@@ -1827,7 +2153,11 @@ struct tile_input_a_kernel_arg_t {
   uint64_t dst_addr;
   uint32_t M_real;
   uint32_t M_pad;
-  uint32_t K;
+  uint32_t K_real;
+  uint32_t K_pad;
+  uint32_t log2_mt;
+  uint32_t log2_kt;
+  uint32_t log2_mxu_kt;
 };
 
 // Device-resident tile_input_a — pads M to multiple of 8 (zero-fill) AND
@@ -1851,7 +2181,10 @@ static at::Tensor vortex_tile_input_a(const at::Tensor& input,
   vx_device_h device = rt.deviceHandle();
   auto caps = query_caps(device);
 
-  auto output = at::empty({M_pad, K}, input.options());
+  // The kernel writes a [M_pad, K_pad] tiled buffer (K padded to MXU_KT).
+  int64_t K_pad_i64 = ((K + FPINT_DMA_MXU_KT - 1) / FPINT_DMA_MXU_KT) *
+                      FPINT_DMA_MXU_KT;
+  auto output = at::empty({M_pad, K_pad_i64}, input.options());
 
   // 3D grid: x = (m, chunk_in_row) blocks, y = kb, z = kt.
   // Each thread handles 2 fp16 (= 1 uint32) — chunk size & store width that
@@ -1874,7 +2207,11 @@ static at::Tensor vortex_tile_input_a(const at::Tensor& input,
   karg.dst_addr     = rt.deviceAddress(output.data_ptr());
   karg.M_real       = static_cast<uint32_t>(input.size(0));
   karg.M_pad        = static_cast<uint32_t>(M_pad);
-  karg.K            = static_cast<uint32_t>(K);
+  karg.K_real       = static_cast<uint32_t>(K);
+  karg.K_pad        = static_cast<uint32_t>(K_pad_i64);
+  karg.log2_mt      = vx_log2_u32(static_cast<uint32_t>(FPINT_DMA_MT));
+  karg.log2_kt      = vx_log2_u32(static_cast<uint32_t>(FPINT_DMA_KT));
+  karg.log2_mxu_kt  = vx_log2_u32(static_cast<uint32_t>(FPINT_DMA_MXU_KT));
 
   static std::string path = find_kernel("tile_input_a", "tile_input_a");
   launch_kernel(device, &karg, sizeof(karg), path);
@@ -1891,13 +2228,21 @@ struct tile_scale_zp_w4a16_kernel_arg_t {
   uint32_t K;
   uint32_t N;
   uint32_t QBLK;
-  uint32_t QDIR;
-  uint32_t slot_bytes;
-  uint32_t body_bytes;
-  uint32_t log2_cur_groups;
-  uint32_t log2_cur_k;
-  uint32_t log2_ng_per_mxu_nt;
-  uint32_t log2_qblk;
+  uint32_t QDIR;              // source qparam direction
+  uint32_t GEMM_QDIR;         // output GEMM-facing qparam layout direction
+  uint32_t SOURCE_TRANSPOSED;
+  uint32_t k_tiles;
+  uint32_t n_dma_tiles;
+  uint32_t slot_fk_fn;        // full-K, full-N slot bytes
+  uint32_t slot_fk_pn;        // full-K, partial/last-N slot bytes
+  uint32_t slot_pk_fn;        // partial/last-K, full-N slot bytes
+  uint32_t per_kt_full_K;     // bytes in a full-K kt row of N slots
+  uint32_t max_slot_bytes;    // launch bound for the largest slot
+  uint32_t log2_kt;
+  uint32_t log2_nt;
+  uint32_t log2_mxu_nt;
+  uint32_t log2_qblk;         // log2(QBLK)
+  uint32_t log2_ng_per_mxu_nt; // qdir=1: log2(ceil(MXU_NT/QBLK))
 };
 
 // Device-resident tile_weight_w4a16. Mirrors the host helper above but does
@@ -1942,6 +2287,11 @@ static at::Tensor vortex_tile_weight_w4a16(const at::Tensor& W_packed,
   karg.dst_addr     = rt.deviceAddress(output.data_ptr());
   karg.K            = static_cast<uint32_t>(K);
   karg.N            = static_cast<uint32_t>(N);
+  karg.WTRANS       = 0;   // host asserts wtrans==0
+  karg.SOURCE_TRANSPOSED = 0;
+  karg.log2_kt      = vx_log2_u32(static_cast<uint32_t>(FPINT_DMA_KT));
+  karg.log2_mxu_kt  = vx_log2_u32(static_cast<uint32_t>(FPINT_DMA_MXU_KT));
+  karg.log2_mxu_nt  = vx_log2_u32(static_cast<uint32_t>(FPINT_DMA_MXU_NT));
 
   static std::string path = find_kernel("tile_weight_w4a16", "tile_weight_w4a16");
   launch_kernel(device, &karg, sizeof(karg), path);
@@ -1977,64 +2327,106 @@ static at::Tensor vortex_tile_scale_zp_w4a16(const at::Tensor& s_raw,
                 "qdir=1: shape must be [K, ng_total]");
   }
 
-  // Compute slot layout (matches the kernel's view).
-  const int64_t k_tiles      = (K + (int64_t)FPINT_DMA_KT - 1) / (int64_t)FPINT_DMA_KT;
-  const int64_t cur_k        = (k_tiles == 1) ? K : (int64_t)FPINT_DMA_KT;
-  const int64_t cur_groups   = cur_k / qblk;
-  const int64_t ng_per_mxu_nt = ((int64_t)FPINT_DMA_MXU_NT + qblk - 1) / qblk;
-  const int64_t nt_dma_count = (N + (int64_t)FPINT_DMA_NT - 1) / (int64_t)FPINT_DMA_NT;
-  const int64_t cur_n_dma    = (nt_dma_count == 1) ? N : (int64_t)FPINT_DMA_NT;
-  const int64_t cur_nb       = cur_n_dma / (int64_t)FPINT_DMA_MXU_NT;
+  // Compute the GEMM-facing variable-slot layout. Mirrors
+  // tests/regression/tile_scale_zp_w4a16/main.cpp (output_K/output_N,
+  // slot_body_bytes, slot_bytes_for, compute_slot_layout). The host op only
+  // handles SOURCE_TRANSPOSED=0 and GEMM_QDIR == source qdir.
+  const uint32_t Ku        = static_cast<uint32_t>(K);
+  const uint32_t Nu        = static_cast<uint32_t>(N);
+  const uint32_t QBLKu     = static_cast<uint32_t>(qblk);
+  const uint32_t QDIRu     = static_cast<uint32_t>(qdir);
+  const uint32_t GEMM_QDIR = QDIRu;
+  const uint32_t SOURCE_TRANSPOSED = 0;
+  const uint32_t DMA_KTu   = static_cast<uint32_t>(FPINT_DMA_KT);
+  const uint32_t DMA_NTu   = static_cast<uint32_t>(FPINT_DMA_NT);
+  const uint32_t MXU_KTu   = static_cast<uint32_t>(FPINT_DMA_MXU_KT);
+  const uint32_t MXU_NTu   = static_cast<uint32_t>(FPINT_DMA_MXU_NT);
+  const uint32_t SLOT_ALIGN = static_cast<uint32_t>(FPINT_SCALE_SLOT_ALIGN);
+  const uint32_t ng_per_mxu_nt = (MXU_NTu + QBLKu - 1u) / QBLKu;
 
-  int64_t body_bytes;
-  if (qdir == 0) {
-    body_bytes = cur_nb * cur_groups * (int64_t)FPINT_DMA_MXU_NT * 2;
-  } else {
-    body_bytes = cur_nb * cur_k * ng_per_mxu_nt * 2;
+  auto slot_body_bytes = [&](uint32_t ck, uint32_t cn) -> uint32_t {
+    if (GEMM_QDIR == 0) {
+      return (ck / QBLKu) * cn * 2u;
+    }
+    return (cn / MXU_NTu) * ck * ng_per_mxu_nt * 2u;
+  };
+  auto slot_bytes_for = [&](uint32_t ck, uint32_t cn) -> uint32_t {
+    return vx_align_up_u32(slot_body_bytes(ck, cn), SLOT_ALIGN);
+  };
+
+  // Padded (GEMM-facing) K/N used by the tiled slot layout.
+  uint32_t out_k_align = MXU_KTu;
+  if (GEMM_QDIR == 0 && QBLKu > out_k_align) out_k_align = QBLKu;
+  const uint32_t out_k = vx_align_up_u32(SOURCE_TRANSPOSED ? Nu : Ku, out_k_align);
+  uint32_t out_n_align = MXU_NTu;
+  if (GEMM_QDIR == 1 && QBLKu > out_n_align) out_n_align = QBLKu;
+  const uint32_t out_n = vx_align_up_u32(SOURCE_TRANSPOSED ? Ku : Nu, out_n_align);
+
+  const uint32_t k_tiles      = (out_k + DMA_KTu - 1u) / DMA_KTu;
+  const uint32_t nt_dma_count = (out_n + DMA_NTu - 1u) / DMA_NTu;
+  const uint32_t ck_last = (out_k - (k_tiles - 1u) * DMA_KTu < DMA_KTu)
+                             ? (out_k - (k_tiles - 1u) * DMA_KTu) : DMA_KTu;
+  const uint32_t cn_last = (out_n - (nt_dma_count - 1u) * DMA_NTu < DMA_NTu)
+                             ? (out_n - (nt_dma_count - 1u) * DMA_NTu) : DMA_NTu;
+
+  const uint32_t slot_fk_fn = slot_bytes_for(DMA_KTu, DMA_NTu);
+  const uint32_t slot_fk_pn = slot_bytes_for(DMA_KTu, cn_last);
+  const uint32_t slot_pk_fn = slot_bytes_for(ck_last, DMA_NTu);
+  const uint32_t per_kt_full_K = (nt_dma_count - 1u) * slot_fk_fn + slot_fk_pn;
+
+  uint32_t total_bytes    = 0;
+  uint32_t max_slot_bytes = 0;
+  for (uint32_t kt = 0; kt < k_tiles; kt++) {
+    uint32_t ck = (out_k - kt * DMA_KTu < DMA_KTu) ? (out_k - kt * DMA_KTu)
+                                                   : DMA_KTu;
+    for (uint32_t nt_dma = 0; nt_dma < nt_dma_count; nt_dma++) {
+      uint32_t cn = (out_n - nt_dma * DMA_NTu < DMA_NTu)
+                      ? (out_n - nt_dma * DMA_NTu) : DMA_NTu;
+      uint32_t slot = slot_bytes_for(ck, cn);
+      total_bytes += slot;
+      if (slot > max_slot_bytes) max_slot_bytes = slot;
+    }
   }
-  const int64_t slot_bytes =
-      ((body_bytes + FPINT_SCALE_SLOT_ALIGN - 1) / FPINT_SCALE_SLOT_ALIGN)
-      * FPINT_SCALE_SLOT_ALIGN;
-  const int64_t total_bytes = k_tiles * nt_dma_count * slot_bytes;
 
   auto& rt = c10::vortex::VortexRuntime::instance();
   vx_device_h device = rt.deviceHandle();
   auto caps = query_caps(device);
 
-  auto output = at::empty({total_bytes / 2}, s_raw.options());
+  // Output buffer holds the summed per-slot body bytes (variable slot sizes).
+  auto output = at::empty({static_cast<int64_t>(total_bytes) / 2}, s_raw.options());
 
-  // log2 helper (asserts power-of-two)
-  auto log2_pow2 = [](int64_t v) -> uint32_t {
-    TORCH_CHECK(v > 0 && (v & (v - 1)) == 0,
-                "tile_scale_zp_w4a16: expected power-of-two, got ", v);
-    uint32_t r = 0;
-    while ((int64_t(1) << r) < v) r++;
-    return r;
-  };
-
-  const uint32_t slot_elems_per_block = caps.threads_per_block;
-  const int64_t slot_elems   = slot_bytes / 2;
-  const int64_t blocks_x     = (slot_elems + slot_elems_per_block - 1) / slot_elems_per_block;
+  // Launch covers the largest slot (mirrors main.cpp: slot_elems from max).
+  const uint32_t slot_elems = max_slot_bytes / 2u;
+  const uint32_t blocks_x =
+      (slot_elems + caps.threads_per_block - 1) / caps.threads_per_block;
 
   tile_scale_zp_w4a16_kernel_arg_t karg{};
-  karg.grid_dim[0]    = static_cast<uint32_t>(blocks_x);
-  karg.grid_dim[1]    = static_cast<uint32_t>(nt_dma_count);
-  karg.grid_dim[2]    = static_cast<uint32_t>(k_tiles);
+  karg.grid_dim[0]    = blocks_x;
+  karg.grid_dim[1]    = nt_dma_count;
+  karg.grid_dim[2]    = k_tiles;
   karg.block_dim[0]   = caps.threads_per_block;
   karg.block_dim[1]   = 1;
   karg.block_dim[2]   = 1;
   karg.src_addr       = rt.deviceAddress(s_raw.data_ptr());
   karg.dst_addr       = rt.deviceAddress(output.data_ptr());
-  karg.K              = static_cast<uint32_t>(K);
-  karg.N              = static_cast<uint32_t>(N);
-  karg.QBLK           = static_cast<uint32_t>(qblk);
-  karg.QDIR           = static_cast<uint32_t>(qdir);
-  karg.slot_bytes     = static_cast<uint32_t>(slot_bytes);
-  karg.body_bytes     = static_cast<uint32_t>(body_bytes);
-  karg.log2_cur_groups    = (qdir == 0) ? log2_pow2(std::max<int64_t>(cur_groups, 1)) : 0;
-  karg.log2_cur_k         = (qdir == 1) ? log2_pow2(cur_k) : 0;
-  karg.log2_ng_per_mxu_nt = (qdir == 1) ? log2_pow2(std::max<int64_t>(ng_per_mxu_nt, 1)) : 0;
-  karg.log2_qblk          = log2_pow2(qblk);
+  karg.K              = Ku;
+  karg.N              = Nu;
+  karg.QBLK           = QBLKu;
+  karg.QDIR           = QDIRu;
+  karg.GEMM_QDIR      = GEMM_QDIR;
+  karg.SOURCE_TRANSPOSED = SOURCE_TRANSPOSED;
+  karg.k_tiles        = k_tiles;
+  karg.n_dma_tiles    = nt_dma_count;
+  karg.slot_fk_fn     = slot_fk_fn;
+  karg.slot_fk_pn     = slot_fk_pn;
+  karg.slot_pk_fn     = slot_pk_fn;
+  karg.per_kt_full_K  = per_kt_full_K;
+  karg.max_slot_bytes = max_slot_bytes;
+  karg.log2_kt        = vx_log2_u32(DMA_KTu);
+  karg.log2_nt        = vx_log2_u32(DMA_NTu);
+  karg.log2_mxu_nt    = vx_log2_u32(MXU_NTu);
+  karg.log2_qblk      = vx_log2_u32(QBLKu);
+  karg.log2_ng_per_mxu_nt = (GEMM_QDIR == 1) ? vx_log2_u32(ng_per_mxu_nt) : 0;
 
   static std::string path = find_kernel("tile_scale_zp_w4a16", "tile_scale_zp_w4a16");
   launch_kernel(device, &karg, sizeof(karg), path);
@@ -2266,6 +2658,22 @@ at::Tensor vortex_mm_w4a16_opt(
   auto& rt = c10::vortex::VortexRuntime::instance();
   vx_device_h device = rt.deviceHandle();
 
+  // The GEMM tensor-mem DMA requires every DRAM buffer base to be 512-byte
+  // aligned (HW invariant: DRAM_base % 512 == TMEM_base % 512, where
+  // 512 = MEM_BLOCK_SIZE * NUM_DMA_CHANNELS).  A misaligned base routes a
+  // channel's transaction to the wrong HBM port -> zero/garbage/NaN reads.
+  // The reference (fpint_gemm_ffn_hw/main.cpp) allocates all 5 GEMM buffers
+  // with vx_mem_alloc_aligned(...,512,...); mirror that for the tiled buffers
+  // created below (A_tiled/W_tiled/sc_tiled/zp_tiled/Y_tiled).
+  struct AlignGuard {
+    c10::vortex::VortexRuntime& r;
+    uint64_t prev;
+    explicit AlignGuard(uint64_t a)
+        : r(c10::vortex::VortexRuntime::instance()),
+          prev(r.exchangeMemoryAlignment(a)) {}
+    ~AlignGuard() { (void)r.setMemoryAlignment(prev); }
+  } align_guard(512);
+
   // ---- 1+2. Pad M and tile input A in one device kernel ----
   auto A_tiled  = vortex_tile_input_a(input, (int64_t)M_pad, (int64_t)K_val);
 
@@ -2350,6 +2758,7 @@ TORCH_LIBRARY_IMPL(aten, PrivateUse1, m) {
   m.impl("addmm",          &vortex_addmm);
   m.impl("silu",           &vortex_silu);
   m.impl("native_dropout", &vortex_native_dropout);
+  m.impl("embedding",      &vortex_embedding);
 }
 
 // ===========================================================================
@@ -2365,6 +2774,9 @@ TORCH_LIBRARY(vortex, m) {
   m.def("tile_input_a(Tensor input, int M_pad, int K) -> Tensor");
   m.def("detile_output(Tensor Y_tiled, int M, int M_pad, int N) -> Tensor");
   m.def("mm_w4a16_gemm_core(Tensor input_tiled, Tensor weight_tiled, Tensor scales_tiled, Tensor zeros_tiled, int K, int N, int group_size, int wtrans, int qdir) -> Tensor");
+  m.def("hadamard_butterfly(Tensor input, int K) -> Tensor");
+  m.def("quantize_per_token(Tensor x, int mode) -> (Tensor, Tensor, Tensor)");
+  m.def("dequantize_per_token(Tensor q, Tensor scale, Tensor zero, int mode) -> Tensor");
 }
 
 TORCH_LIBRARY_IMPL(vortex, PrivateUse1, m) {
@@ -2377,6 +2789,9 @@ TORCH_LIBRARY_IMPL(vortex, PrivateUse1, m) {
   m.impl("tile_input_a",          &vortex_tile_input_a);
   m.impl("detile_output",         &vortex_detile_output);
   m.impl("mm_w4a16_gemm_core",    &vortex_mm_w4a16_gemm_core);
+  m.impl("hadamard_butterfly",    &vortex_hadamard_butterfly);
+  m.impl("quantize_per_token",    &vortex_quantize_per_token);
+  m.impl("dequantize_per_token",  &vortex_dequantize_per_token);
 }
 
 } // namespace at::vortex

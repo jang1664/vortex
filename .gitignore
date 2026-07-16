@@ -73,3 +73,9 @@ verdiLog/
 .fsdb_dump.tcl
 .codegraph/
 .context/
+
+**.omc
+**/trace/
+**.log
+**summary
+**.csv

@@ -2,51 +2,9 @@
 #include "../vector_common/fp16.h"
 #include <vx_spawn.h>
 #include <vx_intrinsics.h>
-#include <VX_config.h>
 #include <math.h>
 
 using data_t = fp16_t;
-
-#ifdef RMS_NORM_USE_SHUFFLE_WARP
-static inline uint32_t float_to_bits(float value) {
-  union { float f; uint32_t u; } v;
-  v.f = value;
-  return v.u;
-}
-
-static inline float bits_to_float(uint32_t value) {
-  union { uint32_t u; float f; } v;
-  v.u = value;
-  return v.f;
-}
-
-static inline float shfl_down_float(float value, uint32_t offset) {
-  return bits_to_float((uint32_t)vx_shfl_down(
-      float_to_bits(value), offset, NUM_THREADS - 1, 0));
-}
-
-static inline float shfl_idx_float(float value, uint32_t index) {
-  return bits_to_float((uint32_t)vx_shfl_idx(
-      float_to_bits(value), index, NUM_THREADS - 1, 0));
-}
-
-static inline float warp_sum(float value, uint32_t lane) {
-  for (uint32_t offset = NUM_THREADS >> 1; offset > 0; offset >>= 1) {
-    const float other = shfl_down_float(value, offset);
-    if (lane + offset < NUM_THREADS) value += other;
-  }
-  return shfl_idx_float(value, 0);
-}
-
-static inline float warp_rms(float sum_sq, uint32_t lane,
-                             uint32_t K, float eps) {
-  sum_sq = warp_sum(sum_sq, lane);
-  float rms = 0.0f;
-  if (lane == 0)
-    rms = 1.0f / sqrtf(sum_sq / (float)K + eps);
-  return shfl_idx_float(rms, 0);
-}
-#endif
 
 ///////////////////////////////////////////////////////////////////////////////
 // Two kernels, same binary:
@@ -83,26 +41,29 @@ void kernel_rmsnorm(kernel_arg_t *__UNIFORM__ arg) {
   auto pInputRow  = pInput  + (uint64_t)m * K;
   auto pOutputRow = pOutput + (uint64_t)m * K;
 
+  auto cache = reinterpret_cast<float *>(__local_mem(bdim * sizeof(float)));
+
   // Phase 1: partial sum of squares (per thread).
   float sum_sq = 0.0f;
   for (uint32_t i = tid; i < K; i += bdim) {
     float v = fp16_to_float(pInputRow[i]);
     sum_sq += v * v;
   }
-#ifdef RMS_NORM_USE_SHUFFLE_WARP
-  const float rms = warp_rms(sum_sq, tid, K, eps);
-#else
-  auto cache = reinterpret_cast<float *>(__local_mem(bdim * sizeof(float)));
   cache[tid] = sum_sq;
   __syncthreads();
+
+  // Tree reduction in shared memory.
   int r = bdim / 2;
   while (r != 0) {
-    if ((int)tid < r) cache[tid] += cache[tid + r];
+    if ((int)tid < r) {
+      cache[tid] += cache[tid + r];
+    }
     __syncthreads();
     r /= 2;
   }
-  const float rms = 1.0f / sqrtf(cache[0] / (float)K + eps);
-#endif
+  sum_sq = cache[0];
+
+  const float rms = 1.0f / sqrtf(sum_sq / (float)K + eps);
 
   // Phase 2: normalize + gamma, row-major write.
   for (uint32_t i = tid; i < K; i += bdim) {
@@ -152,26 +113,28 @@ void kernel_rms_norm_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
 
   auto pInputRow = pInput + (uint64_t)m * K;
 
+  auto cache = reinterpret_cast<float *>(__local_mem(bdim * sizeof(float)));
+
   // Phase 1: partial sum of squares (identical to plain kernel).
   float sum_sq = 0.0f;
   for (uint32_t i = tid; i < K; i += bdim) {
     float v = fp16_to_float(pInputRow[i]);
     sum_sq += v * v;
   }
-#ifdef RMS_NORM_USE_SHUFFLE_WARP
-  const float rms = warp_rms(sum_sq, tid, K, eps);
-#else
-  auto cache = reinterpret_cast<float *>(__local_mem(bdim * sizeof(float)));
   cache[tid] = sum_sq;
   __syncthreads();
+
   int r = bdim / 2;
   while (r != 0) {
-    if ((int)tid < r) cache[tid] += cache[tid + r];
+    if ((int)tid < r) {
+      cache[tid] += cache[tid + r];
+    }
     __syncthreads();
     r /= 2;
   }
-  const float rms = 1.0f / sqrtf(cache[0] / (float)K + eps);
-#endif
+  sum_sq = cache[0];
+
+  const float rms = 1.0f / sqrtf(sum_sq / (float)K + eps);
 
   const uint32_t mt_idx = m >> log2_mt;
   const uint32_t m0 = m & mt_mask;

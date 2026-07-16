@@ -1,5 +1,4 @@
 #include "common.h"
-#include "host_variant.h"
 #include "../kv_cache_common/kv_cache_w4a16.h"
 #include "bench_util.h"
 #include <vortex.h>
@@ -68,11 +67,6 @@ int main(int argc, char *argv[]) {
   std::vector<fp16_t> h_scales(qparam_elems, float_to_fp16(0.125f));
   std::vector<int16_t> h_zeros(qparam_elems, 3);
 
-  vx_bench::LatencyPowerMeasurement latency_power(bench);
-  if (!latency_power.prestart()) {
-    return -1;
-  }
-
   RT_CHECK(vx_dev_open(&device));
   RT_CHECK(vx_upload_kernel_file(device, "kernel.vxbin", &krnl_buffer));
   RT_CHECK(vx_mem_alloc(device, packed_bytes, VX_MEM_READ, &src_buffer));
@@ -90,9 +84,8 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_WARPS, &num_warps));
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_THREADS, &num_threads));
   uint32_t tpb = std::min(256u, (uint32_t)(num_warps * num_threads));
-  uint32_t work_items = kv_cache_dequant_work_items(K, N);
   uint32_t blocks = std::min(
-      (work_items + tpb - 1u) / tpb,
+      (uint32_t)((dst_elems + tpb - 1) / tpb),
       std::max(1u, (uint32_t)num_cores * 4u));
 
   kernel_arg_t arg = {};
@@ -125,10 +118,6 @@ int main(int argc, char *argv[]) {
   vx_bench::Stats stats;
   double first_latency_us = 0.0;
   vx_bench::IterationPerf first_iter_perf;
-  if (!latency_power.begin_latency_window()) {
-    cleanup();
-    return -1;
-  }
   printf("Start latency measurement.\n"); fflush(stdout);
   for (int i = 0; i < bench.iterations; ++i) {
     vx_bench::Stopwatch sw;
@@ -145,11 +134,6 @@ int main(int argc, char *argv[]) {
       first_iter_perf = iter_perf;
     printf("iteration %0d/%0d, elapsed:%f\n", i+1, bench.iterations, stats.last()); fflush(stdout);
   }
-  if (!latency_power.finish(stats.summary(), first_iter_perf)) {
-    cleanup();
-    return -1;
-  }
-
   stats.report("kv_cache_dequant_w4a16", bench);
 
   if (!vx_bench::prepare_power_kernel_iterations(

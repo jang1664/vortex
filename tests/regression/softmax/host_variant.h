@@ -9,8 +9,6 @@
 #define SOFTMAX_VARIANT_REV1 1
 #define SOFTMAX_VARIANT_OPT 2
 #define SOFTMAX_VARIANT_OPT_ALIGN 3
-#define SOFTMAX_VARIANT_DMA_ROW 4
-#define SOFTMAX_VARIANT_DMA_SERIAL 5
 
 #ifndef SOFTMAX_VARIANT
 #define SOFTMAX_VARIANT SOFTMAX_VARIANT_REV1
@@ -18,18 +16,12 @@
 
 #if SOFTMAX_VARIANT != SOFTMAX_VARIANT_REV1 && \
     SOFTMAX_VARIANT != SOFTMAX_VARIANT_OPT && \
-    SOFTMAX_VARIANT != SOFTMAX_VARIANT_OPT_ALIGN && \
-    SOFTMAX_VARIANT != SOFTMAX_VARIANT_DMA_ROW && \
-    SOFTMAX_VARIANT != SOFTMAX_VARIANT_DMA_SERIAL
-#error "Unsupported SOFTMAX_VARIANT value"
+    SOFTMAX_VARIANT != SOFTMAX_VARIANT_OPT_ALIGN
+#error "SOFTMAX_VARIANT must be SOFTMAX_VARIANT_REV1, SOFTMAX_VARIANT_OPT, or SOFTMAX_VARIANT_OPT_ALIGN"
 #endif
 
 static inline const char* softmax_variant_name() {
-#if SOFTMAX_VARIANT == SOFTMAX_VARIANT_DMA_SERIAL
-  return "dma_serial";
-#elif SOFTMAX_VARIANT == SOFTMAX_VARIANT_DMA_ROW
-  return "dma_row";
-#elif SOFTMAX_VARIANT == SOFTMAX_VARIANT_OPT_ALIGN
+#if SOFTMAX_VARIANT == SOFTMAX_VARIANT_OPT_ALIGN
   return "opt_align";
 #elif SOFTMAX_VARIANT == SOFTMAX_VARIANT_OPT
   return "opt";
@@ -39,10 +31,7 @@ static inline const char* softmax_variant_name() {
 }
 
 static inline uint32_t softmax_output_mem_flags() {
-#if SOFTMAX_VARIANT == SOFTMAX_VARIANT_OPT || \
-    SOFTMAX_VARIANT == SOFTMAX_VARIANT_OPT_ALIGN || \
-    SOFTMAX_VARIANT == SOFTMAX_VARIANT_DMA_ROW || \
-    SOFTMAX_VARIANT == SOFTMAX_VARIANT_DMA_SERIAL
+#if SOFTMAX_VARIANT == SOFTMAX_VARIANT_OPT || SOFTMAX_VARIANT == SOFTMAX_VARIANT_OPT_ALIGN
   return VX_MEM_WRITE;
 #else
   return VX_MEM_READ | VX_MEM_WRITE;
@@ -54,9 +43,7 @@ static inline uint32_t softmax_align_up_u32(uint32_t value, uint32_t align) {
 }
 
 static inline bool softmax_uses_pitched_hbm() {
-#if SOFTMAX_VARIANT == SOFTMAX_VARIANT_OPT_ALIGN || \
-    SOFTMAX_VARIANT == SOFTMAX_VARIANT_DMA_ROW || \
-    SOFTMAX_VARIANT == SOFTMAX_VARIANT_DMA_SERIAL
+#if SOFTMAX_VARIANT == SOFTMAX_VARIANT_OPT_ALIGN
   return true;
 #else
   return false;
@@ -72,17 +59,6 @@ static inline uint32_t softmax_hbm_alloc_alignment() {
   return softmax_uses_pitched_hbm() ? 512u : 64u;
 }
 
-static inline uint32_t softmax_threads_per_block(
-    uint64_t num_warps,
-    uint64_t num_threads) {
-#if SOFTMAX_VARIANT == SOFTMAX_VARIANT_DMA_ROW
-  (void)num_warps;
-  return static_cast<uint32_t>(num_threads);
-#else
-  return std::min(256u, static_cast<uint32_t>(num_warps * num_threads));
-#endif
-}
-
 static inline uint32_t softmax_grid_x(
     uint32_t total_rows,
     uint32_t threads_per_block,
@@ -90,10 +66,7 @@ static inline uint32_t softmax_grid_x(
     uint64_t num_cores,
     uint32_t* rows_per_block,
     uint32_t* row_tiles) {
-#if SOFTMAX_VARIANT == SOFTMAX_VARIANT_OPT || \
-    SOFTMAX_VARIANT == SOFTMAX_VARIANT_OPT_ALIGN || \
-    SOFTMAX_VARIANT == SOFTMAX_VARIANT_DMA_ROW || \
-    SOFTMAX_VARIANT == SOFTMAX_VARIANT_DMA_SERIAL
+#if SOFTMAX_VARIANT == SOFTMAX_VARIANT_OPT || SOFTMAX_VARIANT == SOFTMAX_VARIANT_OPT_ALIGN
   *rows_per_block = std::max(1u, threads_per_block / static_cast<uint32_t>(num_threads));
   *row_tiles = (total_rows + *rows_per_block - 1) / *rows_per_block;
   uint32_t worker_blocks = std::min(*row_tiles, static_cast<uint32_t>(num_cores));
@@ -114,10 +87,7 @@ static inline void softmax_print_variant_launch(
     uint32_t row_tiles,
     uint32_t grid_x) {
   printf("Variant: %s\n", softmax_variant_name());
-#if SOFTMAX_VARIANT == SOFTMAX_VARIANT_OPT || \
-    SOFTMAX_VARIANT == SOFTMAX_VARIANT_OPT_ALIGN || \
-    SOFTMAX_VARIANT == SOFTMAX_VARIANT_DMA_ROW || \
-    SOFTMAX_VARIANT == SOFTMAX_VARIANT_DMA_SERIAL
+#if SOFTMAX_VARIANT == SOFTMAX_VARIANT_OPT || SOFTMAX_VARIANT == SOFTMAX_VARIANT_OPT_ALIGN
   printf("Rows: %u total, %u rows/block, ~%u row tiles/block\n",
          total_rows, rows_per_block, (row_tiles + grid_x - 1) / grid_x);
 #else

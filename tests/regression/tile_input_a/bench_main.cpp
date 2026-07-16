@@ -103,11 +103,6 @@ int main(int argc, char** argv) {
   const size_t src_bytes = h_src.size() * TILE_ELEM_BYTES;
   const size_t dst_bytes = size_t(M_pad) * K_pad * TILE_ELEM_BYTES;
 
-  vx_bench::LatencyPowerMeasurement latency_power(bench);
-  if (!latency_power.prestart()) {
-    return -1;
-  }
-
   RT_CHECK(vx_dev_open(&device));
   RT_CHECK(vx_upload_kernel_file(device, "kernel.vxbin", &kernel_bin));
   RT_CHECK(vx_mem_alloc(device, src_bytes, VX_MEM_READ, &src_buf));
@@ -124,11 +119,7 @@ int main(int argc, char** argv) {
   const uint32_t tpb = uint32_t(num_threads);
   const uint32_t k_tiles = (K_pad + TILE_DMA_KT - 1) / TILE_DMA_KT;
   const uint32_t k_mic = TILE_DMA_KT / TILE_DMA_MXU_KT;
-#if TILE_INPUT_A_VARIANT_TAG == 1
-  const uint32_t chunks_per_row = TILE_DMA_MXU_KT / 4;
-#else
   const uint32_t chunks_per_row = TILE_DMA_MXU_KT / 2;
-#endif
   const uint32_t chunks_per_kb = M_pad * chunks_per_row;
   const uint32_t blocks_x = (chunks_per_kb + tpb - 1) / tpb;
 
@@ -161,10 +152,6 @@ int main(int argc, char** argv) {
   vx_bench::Stats stats;
   double first_latency_us = 0.0;
   vx_bench::IterationPerf first_iter_perf;
-  if (!latency_power.begin_latency_window()) {
-    cleanup();
-    return -1;
-  }
   printf("Start latency measurement.\n"); fflush(stdout);
   for (int i = 0; i < bench.iterations; ++i) {
     vx_bench::Stopwatch sw;
@@ -180,11 +167,6 @@ int main(int argc, char** argv) {
     if (i == 0)
       first_iter_perf = iter_perf;
     printf("iteration %0d/%0d, elapsed:%f\n", i+1, bench.iterations, stats.last()); fflush(stdout);
-  }
-
-  if (!latency_power.finish(stats.summary(), first_iter_perf)) {
-    cleanup();
-    return -1;
   }
 
   stats.report("tile_input_a", bench);

@@ -165,11 +165,6 @@ int main(int argc, char *argv[]) {
 
   printf("head_concat_layout_fused batch=%u seq=%u heads=%u headdim=%u\n",
          batch, seq, heads, headdim);
-#if HEAD_CONCAT_LAYOUT_FUSED_VARIANT_TAG == 1
-  printf("variant=chunk16_packed\n");
-#else
-  printf("variant=baseline\n");
-#endif
 
   RT_CHECK(vx_dev_open(&device));
   RT_CHECK(vx_upload_kernel_file(device, "kernel.vxbin", &krnl_buffer));

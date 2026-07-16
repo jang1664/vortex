@@ -189,17 +189,10 @@ int main(int argc, char *argv[]) {
   // lane 0 busy-waits on its DMA descriptor, the other resident rows keep
   // computing, hiding the DMA issue/poll latency that otherwise stalls the
   // whole core when a block spans all warps.
-#if SOFTMAX_LAYOUT_FUSED_VARIANT == SOFTMAX_LAYOUT_FUSED_VARIANT_OPT_WARP
-  printf("variant=opt_warp launch=one_warp_per_row\n");
-  const uint32_t tpb = std::min(256u, (uint32_t)num_threads);
-#else
-  printf("variant=%s launch=all_warps_per_row\n",
-#if SOFTMAX_LAYOUT_FUSED_VARIANT == SOFTMAX_LAYOUT_FUSED_VARIANT_OPT
-         "opt");
-#else
-         "rev1");
-#endif
+#if SOFTMAX_LAYOUT_FUSED_VARIANTS == SOFTMAX_LAYOUT_FUSED_VARIANT_REV1
   const uint32_t tpb = std::min(256u, (uint32_t)(num_warps * num_threads));
+#else
+  const uint32_t tpb = std::min(256u, (uint32_t)num_threads);
 #endif
 
   kernel_arg_t arg = {};

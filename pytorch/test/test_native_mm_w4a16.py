@@ -144,16 +144,19 @@ def build_test_data(M, N, K, qblk, wtrans=0, qdir=0):
         zeros = torch.zeros(groups, N, dtype=torch.int16)
         for kg in range(groups):
             for n in range(N):
-                scales[kg, n] = 1.0 + float(n % 7)
-                zeros[kg, n] = int(n % 7) - 3
+                # group-VARYING: value depends on the K-group index (kg), not just n,
+                # so per-group scale/zero handling is actually exercised.
+                scales[kg, n] = 1.0 + float(n % 7) + float(kg)
+                zeros[kg, n] = int((n + kg) % 7) - 3
     else:
         ng = (N + qblk - 1) // qblk
         scales = torch.zeros(K, ng, dtype=torch.float16)
         zeros = torch.zeros(K, ng, dtype=torch.int16)
         for k in range(K):
             for g in range(ng):
-                scales[k, g] = 1.0 + float(g % 7)
-                zeros[k, g] = int(g % 7) - 3
+                # group-VARYING: also depend on k so the layout is fully exercised.
+                scales[k, g] = 1.0 + float(g % 7) + float(k % 3)
+                zeros[k, g] = int((g + k) % 7) - 3
 
     return A, W_packed, scales, zeros, W_unpacked
 

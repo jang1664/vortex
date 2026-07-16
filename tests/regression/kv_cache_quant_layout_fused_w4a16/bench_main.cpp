@@ -109,11 +109,6 @@ int main(int argc, char *argv[]) {
   std::vector<fp16_t> h_src_device(src_elems);
   pack_src_for_layout(h_src, h_src_device, K, N, src_layout, DMA_MT);
 
-  vx_bench::LatencyPowerMeasurement latency_power(bench);
-  if (!latency_power.prestart()) {
-    return -1;
-  }
-
   RT_CHECK(vx_dev_open(&device));
   RT_CHECK(vx_upload_kernel_file(device, "kernel.vxbin", &krnl_buffer));
   RT_CHECK(vx_mem_alloc(device, src_elems * sizeof(fp16_t), VX_MEM_READ, &src_buffer));
@@ -167,10 +162,6 @@ int main(int argc, char *argv[]) {
   vx_bench::Stats stats;
   double first_latency_us = 0.0;
   vx_bench::IterationPerf first_iter_perf;
-  if (!latency_power.begin_latency_window()) {
-    cleanup();
-    return -1;
-  }
   printf("Start latency measurement.\n"); fflush(stdout);
   for (int i = 0; i < bench.iterations; ++i) {
     vx_bench::Stopwatch sw;
@@ -187,11 +178,6 @@ int main(int argc, char *argv[]) {
       first_iter_perf = iter_perf;
     printf("iteration %0d/%0d, elapsed:%f\n", i+1, bench.iterations, stats.last()); fflush(stdout);
   }
-  if (!latency_power.finish(stats.summary(), first_iter_perf)) {
-    cleanup();
-    return -1;
-  }
-
   stats.report("kv_cache_quant_layout_fused_w4a16", bench);
 
   if (!vx_bench::prepare_power_kernel_iterations(
