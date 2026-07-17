@@ -8,6 +8,7 @@ module VX_dma_engine_ooc import VX_gpu_pkg::*; #(
     parameter int TAG_WIDTH      = GEMM_BASE_TAG_WIDTH,
     parameter int MEM_ADDR_WIDTH = `MEM_ADDR_WIDTH,
     parameter int CFG_REGS       = `DMA_CFG_REG_NUM,
+    parameter int MISALIGN_PACK_BYTES = `MISALIGN_PACK_BYTES,
     parameter int AXI_DATA_WIDTH = DATA_SIZE * 8,
     parameter int MEM_ADDR_WORD_WIDTH = MEM_ADDR_WIDTH - `CLOG2(DATA_SIZE)
 ) (
@@ -173,6 +174,12 @@ module VX_dma_engine_ooc import VX_gpu_pkg::*; #(
         assign tmem_if[ch].rsp_data.tag = tmem_rsp_tag[ch];
     end
 
+`ifdef DMA_OOC_ENABLE_MISALIGN
+    localparam bit ENABLE_MISALIGN = 1'b1;
+`else
+    localparam bit ENABLE_MISALIGN = 1'b0;
+`endif
+
     VX_dma_engine #(
         .INSTANCE_ID    ("dma-ooc"),
         .NUM_CHANNELS   (NUM_CHANNELS),
@@ -182,7 +189,8 @@ module VX_dma_engine_ooc import VX_gpu_pkg::*; #(
         .AXI_ID_WIDTH   (AXI_ID_WIDTH),
         .MEM_ADDR_WIDTH (MEM_ADDR_WIDTH),
         .TAG_WIDTH      (TAG_WIDTH),
-        .ENABLE_MISALIGN(1'b0)
+        .MISALIGN_PACK_BYTES (MISALIGN_PACK_BYTES),
+        .ENABLE_MISALIGN     (ENABLE_MISALIGN)
     ) u_dma_engine (
         .clk         (clk),
         .reset       (reset),

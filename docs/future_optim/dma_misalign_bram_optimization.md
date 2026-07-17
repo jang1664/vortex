@@ -2,10 +2,37 @@
 
 Created: 2026-07-17
 
-- 상태: 설계 제안
+- 상태: Phase 1 response SRAM 및 request payload 분리 구현/검증 완료
 - 대상: `hw/rtl/core/VX_dma_unit_misal.sv`
 - 기준 빌드: `xrt_hw_u55c_c1_f100_fpint_L2cache_8d9b4939d1`
 - 기본 설정: `MISALIGN_PACK_BYTES=16`
+
+## 구현 결과 (2026-07-18)
+
+C4 동일 OOC 조건에서 최종적으로 다음 구조를 유지한다.
+
+- source response payload는 `VX_dp_ram`에 저장한다.
+- source read request queue는 address/flags/tag만 저장한다.
+- destination write는 완성된 payload를 1-entry holding buffer에 저장한다.
+- 기존 destination assembly register와 PACK datapath는 유지한다.
+
+| Metric | Baseline | Final | Delta |
+|---|---:|---:|---:|
+| LUT | 158,803 | 155,937 | -1.80% |
+| FF | 40,264 | 32,419 | -19.48% |
+| RAMB36 | 128 | 56 | -56.25% |
+| RAMB18 | 24 | 32 | +33.33% |
+| WNS | +0.350 ns | +0.915 ns | +0.565 ns |
+
+64/128, 64/64, 128/64 byte width의 misaligned DMA VCS test는 각각
+2,125/2,125를 통과했다. `softmax opt`, `seqk=17` xrt-vcs-sim도 39,077
+cycle로 통과했다. 자세한 비교는
+`docs/future_optim/dma_experiments/20260718-013-misaligned-response-wrbuf1/comparison.md`에 있다.
+
+Fully direct write는 RAMB36 수는 동일했지만 LUT가 증가했고, 강한 주기적
+backpressure test에서 baseline보다 14.6% 느려져 폐기했다. 1-entry holding
+buffer를 사용한 최종안은 동일 test에서 4.2% 느리며 xrt-vcs workload에서는
+response-SRAM-only 대비 8 cycle(0.02%) 차이였다.
 
 ## 범위
 

@@ -81,12 +81,16 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
 
   localparam int REQ_BUF_DEPTH      = 4;
   localparam int REQ_PENDING_W      = `CLOG2(REQ_BUF_DEPTH + 1);
-  localparam int DCACHE_REQ_DATAW   = 1 + DCACHE_ADDR_WIDTH + (DCACHE_BYTES * 8)
-                                   + DCACHE_BYTES + MEM_FLAGS_WIDTH
-                                   + `UP(UUID_WIDTH) + DCACHE_TAG_VALUE_W;
-  localparam int LMEM_REQ_DATAW     = 1 + LMEM_ADDR_WIDTH + (LMEM_BYTES * 8)
-                                   + LMEM_BYTES + MEM_FLAGS_WIDTH
-                                   + `UP(UUID_WIDTH) + LMEM_TAG_VALUE_W;
+  localparam int DCACHE_RD_CTRL_DATAW = DCACHE_ADDR_WIDTH + MEM_FLAGS_WIDTH
+                                      + `UP(UUID_WIDTH) + DCACHE_TAG_VALUE_W;
+  localparam int LMEM_RD_CTRL_DATAW = LMEM_ADDR_WIDTH + MEM_FLAGS_WIDTH
+                                    + `UP(UUID_WIDTH) + LMEM_TAG_VALUE_W;
+  localparam int DCACHE_WR_DATAW = DCACHE_ADDR_WIDTH + (DCACHE_BYTES * 8)
+                                + DCACHE_BYTES + MEM_FLAGS_WIDTH
+                                + `UP(UUID_WIDTH) + DCACHE_TAG_VALUE_W;
+  localparam int LMEM_WR_DATAW = LMEM_ADDR_WIDTH + (LMEM_BYTES * 8)
+                              + LMEM_BYTES + MEM_FLAGS_WIDTH
+                              + `UP(UUID_WIDTH) + LMEM_TAG_VALUE_W;
 
   function automatic bit is_power_of_two(input int value);
     return (value > 0) && ((value & (value - 1)) == 0);
@@ -334,7 +338,8 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
   typedef enum logic [1:0] {
     SLOT_FREE,
     SLOT_WAIT_RSP,
-    SLOT_READY
+    SLOT_READY,
+    SLOT_DRAINING
   } slot_state_e;
 
   state_e state, state_n;
@@ -461,7 +466,6 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
   logic [LMEM_BYTES-1:0]     wr_lmem_be_r;
 
   slot_state_e slot_state_r[RD_OUTSTANDING];
-  logic [RD_OUTSTANDING-1:0][MAX_BYTES*8-1:0] slot_data_r;
   logic [RD_OUTSTANDING-1:0][SLOT_BYTE_W-1:0] slot_lane_r;
   logic [RD_OUTSTANDING-1:0][SLOT_BYTE_W-1:0] slot_remaining_r;
   logic [RD_SLOT_BITS-1:0] wr_expect_slot_r;
@@ -534,45 +538,144 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
   logic [`UP(UUID_WIDTH)-1:0] lmem_req_tag_uuid_w;
   logic [LMEM_TAG_VALUE_W-1:0] lmem_req_tag_value_w;
 
+  wire dcache_rd_valid;
+  wire dcache_rd_ready;
+  wire [DCACHE_ADDR_WIDTH-1:0] dcache_rd_addr;
+  wire [MEM_FLAGS_WIDTH-1:0] dcache_rd_flags;
+  wire [`UP(UUID_WIDTH)-1:0] dcache_rd_tag_uuid;
+  wire [DCACHE_TAG_VALUE_W-1:0] dcache_rd_tag_value;
+  wire dcache_wr_valid;
+  wire dcache_wr_ready;
+  wire [DCACHE_ADDR_WIDTH-1:0] dcache_wr_addr;
+  wire [DCACHE_BYTES*8-1:0] dcache_wr_data;
+  wire [DCACHE_BYTES-1:0] dcache_wr_byteen;
+  wire [MEM_FLAGS_WIDTH-1:0] dcache_wr_flags;
+  wire [`UP(UUID_WIDTH)-1:0] dcache_wr_tag_uuid;
+  wire [DCACHE_TAG_VALUE_W-1:0] dcache_wr_tag_value;
+
+  wire lmem_rd_valid;
+  wire lmem_rd_ready;
+  wire [LMEM_ADDR_WIDTH-1:0] lmem_rd_addr;
+  wire [MEM_FLAGS_WIDTH-1:0] lmem_rd_flags;
+  wire [`UP(UUID_WIDTH)-1:0] lmem_rd_tag_uuid;
+  wire [LMEM_TAG_VALUE_W-1:0] lmem_rd_tag_value;
+  wire lmem_wr_valid;
+  wire lmem_wr_ready;
+  wire [LMEM_ADDR_WIDTH-1:0] lmem_wr_addr;
+  wire [LMEM_BYTES*8-1:0] lmem_wr_data;
+  wire [LMEM_BYTES-1:0] lmem_wr_byteen;
+  wire [MEM_FLAGS_WIDTH-1:0] lmem_wr_flags;
+  wire [`UP(UUID_WIDTH)-1:0] lmem_wr_tag_uuid;
+  wire [LMEM_TAG_VALUE_W-1:0] lmem_wr_tag_value;
+
   VX_elastic_buffer #(
-    .DATAW   (DCACHE_REQ_DATAW),
+    .DATAW   (DCACHE_RD_CTRL_DATAW),
     .SIZE    (REQ_BUF_DEPTH),
     .OUT_REG (1)
   ) dcache_req_buf (
     .clk       (clk),
     .reset     (reset),
-    .valid_in  (dcache_req_valid_w),
-    .ready_in  (dcache_req_ready_w),
-    .data_in   ({dcache_req_rw_w, dcache_req_addr_w, dcache_req_data_w,
-                 dcache_req_byteen_w, dcache_req_flags_w,
+    .valid_in  (dcache_req_valid_w && !dcache_req_rw_w),
+    .ready_in  (dcache_rd_ready),
+    .data_in   ({dcache_req_addr_w, dcache_req_flags_w,
                  dcache_req_tag_uuid_w, dcache_req_tag_value_w}),
-    .data_out  ({dcache_bus_if.req_data.rw, dcache_bus_if.req_data.addr,
-                 dcache_bus_if.req_data.data, dcache_bus_if.req_data.byteen,
-                 dcache_bus_if.req_data.flags, dcache_bus_if.req_data.tag.uuid,
-                 dcache_bus_if.req_data.tag.value}),
-    .valid_out (dcache_bus_if.req_valid),
+    .data_out  ({dcache_rd_addr, dcache_rd_flags,
+                 dcache_rd_tag_uuid, dcache_rd_tag_value}),
+    .valid_out (dcache_rd_valid),
     .ready_out (dcache_bus_if.req_ready)
   );
 
   VX_elastic_buffer #(
-    .DATAW   (LMEM_REQ_DATAW),
+    .DATAW   (DCACHE_WR_DATAW),
+    .SIZE    (1),
+    .OUT_REG (1)
+  ) dcache_wr_buf (
+    .clk       (clk),
+    .reset     (reset),
+    .valid_in  (dcache_req_valid_w && dcache_req_rw_w),
+    .ready_in  (dcache_wr_ready),
+    .data_in   ({dcache_req_addr_w, dcache_req_data_w,
+                 dcache_req_byteen_w, dcache_req_flags_w,
+                 dcache_req_tag_uuid_w, dcache_req_tag_value_w}),
+    .data_out  ({dcache_wr_addr, dcache_wr_data,
+                 dcache_wr_byteen, dcache_wr_flags,
+                 dcache_wr_tag_uuid, dcache_wr_tag_value}),
+    .valid_out (dcache_wr_valid),
+    .ready_out (dcache_bus_if.req_ready)
+  );
+
+  VX_elastic_buffer #(
+    .DATAW   (LMEM_RD_CTRL_DATAW),
     .SIZE    (REQ_BUF_DEPTH),
     .OUT_REG (1)
   ) lmem_req_buf (
     .clk       (clk),
     .reset     (reset),
-    .valid_in  (lmem_req_valid_w),
-    .ready_in  (lmem_req_ready_w),
-    .data_in   ({lmem_req_rw_w, lmem_req_addr_w, lmem_req_data_w,
-                 lmem_req_byteen_w, lmem_req_flags_w,
+    .valid_in  (lmem_req_valid_w && !lmem_req_rw_w),
+    .ready_in  (lmem_rd_ready),
+    .data_in   ({lmem_req_addr_w, lmem_req_flags_w,
                  lmem_req_tag_uuid_w, lmem_req_tag_value_w}),
-    .data_out  ({lmem_bus_if.req_data.rw, lmem_bus_if.req_data.addr,
-                 lmem_bus_if.req_data.data, lmem_bus_if.req_data.byteen,
-                 lmem_bus_if.req_data.flags, lmem_bus_if.req_data.tag.uuid,
-                 lmem_bus_if.req_data.tag.value}),
-    .valid_out (lmem_bus_if.req_valid),
+    .data_out  ({lmem_rd_addr, lmem_rd_flags,
+                 lmem_rd_tag_uuid, lmem_rd_tag_value}),
+    .valid_out (lmem_rd_valid),
     .ready_out (lmem_bus_if.req_ready)
   );
+
+  VX_elastic_buffer #(
+    .DATAW   (LMEM_WR_DATAW),
+    .SIZE    (1),
+    .OUT_REG (1)
+  ) lmem_wr_buf (
+    .clk       (clk),
+    .reset     (reset),
+    .valid_in  (lmem_req_valid_w && lmem_req_rw_w),
+    .ready_in  (lmem_wr_ready),
+    .data_in   ({lmem_req_addr_w, lmem_req_data_w,
+                 lmem_req_byteen_w, lmem_req_flags_w,
+                 lmem_req_tag_uuid_w, lmem_req_tag_value_w}),
+    .data_out  ({lmem_wr_addr, lmem_wr_data,
+                 lmem_wr_byteen, lmem_wr_flags,
+                 lmem_wr_tag_uuid, lmem_wr_tag_value}),
+    .valid_out (lmem_wr_valid),
+    .ready_out (lmem_bus_if.req_ready)
+  );
+
+  assign dcache_req_ready_w = dcache_req_rw_w
+                            ? dcache_wr_ready : dcache_rd_ready;
+  assign lmem_req_ready_w = lmem_req_rw_w
+                          ? lmem_wr_ready : lmem_rd_ready;
+
+  assign dcache_bus_if.req_valid = direction_bit_r
+                                 ? dcache_wr_valid : dcache_rd_valid;
+  assign dcache_bus_if.req_data.rw = direction_bit_r;
+  assign dcache_bus_if.req_data.addr = direction_bit_r
+                                    ? dcache_wr_addr : dcache_rd_addr;
+  assign dcache_bus_if.req_data.data = direction_bit_r
+                                    ? dcache_wr_data : '0;
+  assign dcache_bus_if.req_data.byteen = direction_bit_r
+                                      ? dcache_wr_byteen : '0;
+  assign dcache_bus_if.req_data.flags = direction_bit_r
+                                     ? dcache_wr_flags : dcache_rd_flags;
+  assign dcache_bus_if.req_data.tag.uuid = direction_bit_r
+                                        ? dcache_wr_tag_uuid : dcache_rd_tag_uuid;
+  assign dcache_bus_if.req_data.tag.value = direction_bit_r
+                                         ? dcache_wr_tag_value : dcache_rd_tag_value;
+
+  assign lmem_bus_if.req_valid = direction_bit_r
+                               ? lmem_rd_valid : lmem_wr_valid;
+  assign lmem_bus_if.req_data.rw = !direction_bit_r;
+  assign lmem_bus_if.req_data.addr = direction_bit_r
+                                  ? lmem_rd_addr : lmem_wr_addr;
+  assign lmem_bus_if.req_data.data = direction_bit_r
+                                  ? '0 : lmem_wr_data;
+  assign lmem_bus_if.req_data.byteen = direction_bit_r
+                                    ? '0 : lmem_wr_byteen;
+  assign lmem_bus_if.req_data.flags = direction_bit_r
+                                   ? lmem_rd_flags : lmem_wr_flags;
+  assign lmem_bus_if.req_data.tag.uuid = direction_bit_r
+                                      ? lmem_rd_tag_uuid : lmem_wr_tag_uuid;
+  assign lmem_bus_if.req_data.tag.value = direction_bit_r
+                                       ? lmem_rd_tag_value : lmem_wr_tag_value;
 
   wire dcache_req_issue_fire = dcache_req_valid_w && dcache_req_ready_w;
   wire lmem_req_issue_fire   = lmem_req_valid_w && lmem_req_ready_w;
@@ -610,6 +713,48 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
   wire [RD_SLOT_BITS-1:0] rsp_slot_idx = direction_bit_r
       ? lmem_rsp_slot_idx : dcache_rsp_slot_idx;
 
+  logic pack_slot_retire;
+  logic [MAX_BYTES*8-1:0] response_payload_wdata;
+  wire [MAX_BYTES*8-1:0] response_payload_rdata;
+  wire [RD_SLOT_BITS-1:0] wr_next_slot_idx
+      = next_slot(wr_expect_slot_r, rd_outstanding_limit);
+  wire wr_slot_ready = (slot_state_r[wr_expect_slot_r] == SLOT_READY);
+  wire wr_slot_draining = (slot_state_r[wr_expect_slot_r] == SLOT_DRAINING);
+  wire wr_next_slot_ready = (slot_state_r[wr_next_slot_idx] == SLOT_READY);
+  wire response_payload_read;
+  wire [RD_SLOT_BITS-1:0] response_payload_raddr
+      = (pack_slot_retire && wr_next_slot_ready)
+      ? wr_next_slot_idx : wr_expect_slot_r;
+
+  always_comb begin
+    response_payload_wdata = '0;
+    if (direction_bit_r)
+      response_payload_wdata[0 +: LMEM_BYTES*8] = lmem_bus_if.rsp_data.data;
+    else
+      response_payload_wdata[0 +: DCACHE_BYTES*8] = dcache_bus_if.rsp_data.data;
+  end
+
+  VX_dp_ram #(
+    .DATAW     (MAX_BYTES * 8),
+    .SIZE      (RD_OUTSTANDING),
+    .WRENW     (1),
+    .OUT_REG   (1),
+    .LUTRAM    (0),
+    .RDW_MODE  ("R"),
+    .RADDR_REG (1),
+    .RESET_RAM (0)
+  ) response_payload_ram (
+    .clk   (clk),
+    .reset (reset),
+    .read  (response_payload_read),
+    .write (src_rsp_fire),
+    .wren  (1'b1),
+    .waddr (rsp_slot_idx),
+    .wdata (response_payload_wdata),
+    .raddr (response_payload_raddr),
+    .rdata (response_payload_rdata)
+  );
+
   wire rd_can_issue = (state == S_RUN)
                    && (rd_state == RD_RUN)
                    && (rd_src_ptr_r < rd_src_end_r)
@@ -619,7 +764,6 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
   logic pack_can_move;
   logic pack_flush;
   logic pack_move_fire;
-  logic pack_slot_retire;
   logic pack_fast_move;
   logic [31:0] pack_move_bytes;
   logic [31:0] pack_src_bytes;
@@ -637,7 +781,6 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
                                          ? (valid_total - wr_out_off_r) : 32'd0;
   wire [31:0] wr_dst_room = (wr_dst_lane_r < wr_dst_bytes)
                                 ? (wr_dst_bytes - wr_dst_lane_r) : 32'd0;
-  wire wr_slot_ready = (slot_state_r[wr_expect_slot_r] == SLOT_READY);
   wire [31:0] wr_slot_remaining = 32'(slot_remaining_r[wr_expect_slot_r]);
   wire [31:0] wr_slot_lane = 32'(slot_lane_r[wr_expect_slot_r]);
 
@@ -667,7 +810,7 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
     if ((state == S_RUN) && (wr_state == WR_RUN)
         && (wr_seg_remaining != 0) && (wr_dst_room != 0)) begin
       if (wr_payload_remaining != 0) begin
-        pack_can_move = wr_slot_ready && (wr_slot_remaining != 0);
+        pack_can_move = wr_slot_draining && (wr_slot_remaining != 0);
         if (pack_can_move) begin
           pack_fast_move = (wr_seg_remaining >= 32'(FAST_BYTES))
                         && (wr_dst_room >= 32'(FAST_BYTES))
@@ -677,14 +820,13 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
                         && ((wr_dst_lane_r & 32'(FAST_BYTES - 1)) == 0);
           if (pack_fast_move) begin
             pack_move_bytes = 32'(FAST_BYTES);
-            fast_data = select_src_fast(slot_data_r[wr_expect_slot_r],
-                                        wr_slot_lane);
+            fast_data = select_src_fast(response_payload_rdata, wr_slot_lane);
           end else begin
             tmp_min = umin32(32'(PACK_BYTES), wr_seg_remaining);
             tmp_min = umin32(tmp_min, wr_dst_room);
             tmp_min = umin32(tmp_min, wr_payload_remaining);
             pack_move_bytes = umin32(tmp_min, wr_slot_remaining);
-            pack_data = make_src_pack(slot_data_r[wr_expect_slot_r], wr_slot_lane,
+            pack_data = make_src_pack(response_payload_rdata, wr_slot_lane,
                                       int'(src_bus_bytes));
           end
           pack_src_bytes = pack_move_bytes;
@@ -735,6 +877,12 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
       end
     end
   end
+
+  // A completed drain can launch the next in-order SRAM read on the same
+  // edge. The registered RAM output then contains the next slot without an
+  // additional inter-slot bubble.
+  assign response_payload_read = (state == S_RUN) && (wr_state == WR_RUN)
+      && (wr_slot_ready || (pack_slot_retire && wr_next_slot_ready));
 
   always_comb begin
     dcache_req_valid_w = 1'b0;
@@ -857,7 +1005,6 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
       end
       for (int s = 0; s < RD_OUTSTANDING; ++s) begin
         slot_state_r[s] <= SLOT_FREE;
-        slot_data_r[s] <= '0;
         slot_lane_r[s] <= '0;
         slot_remaining_r[s] <= '0;
       end
@@ -889,7 +1036,6 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
         end
         for (int s = 0; s < RD_OUTSTANDING; ++s) begin
           slot_state_r[s] <= SLOT_FREE;
-          slot_data_r[s] <= '0;
           slot_lane_r[s] <= '0;
           slot_remaining_r[s] <= '0;
         end
@@ -948,12 +1094,10 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
 
         if (src_rsp_fire) begin
           slot_state_r[rsp_slot_idx] <= SLOT_READY;
-          slot_data_r[rsp_slot_idx] <= '0;
-          if (direction_bit_r)
-            slot_data_r[rsp_slot_idx][0 +: LMEM_BYTES*8] <= lmem_bus_if.rsp_data.data;
-          else
-            slot_data_r[rsp_slot_idx][0 +: DCACHE_BYTES*8] <= dcache_bus_if.rsp_data.data;
         end
+
+        if (response_payload_read)
+          slot_state_r[response_payload_raddr] <= SLOT_DRAINING;
 
         if (pack_move_fire) begin
           logic [31:0] out_off_next;
@@ -964,7 +1108,7 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
               slot_state_r[wr_expect_slot_r] <= SLOT_FREE;
               slot_lane_r[wr_expect_slot_r] <= '0;
               slot_remaining_r[wr_expect_slot_r] <= '0;
-              wr_expect_slot_r <= next_slot(wr_expect_slot_r, rd_outstanding_limit);
+              wr_expect_slot_r <= wr_next_slot_idx;
             end else begin
               slot_lane_r[wr_expect_slot_r] <= SLOT_BYTE_W'(wr_slot_lane + pack_move_bytes);
               slot_remaining_r[wr_expect_slot_r] <= SLOT_BYTE_W'(wr_slot_remaining - pack_move_bytes);
@@ -1023,6 +1167,21 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
     if (!reset && src_rsp_fire) begin
       assert (slot_state_r[rsp_slot_idx] == SLOT_WAIT_RSP)
         else $fatal(1, "%m: response for non-waiting DMA slot %0d", rsp_slot_idx);
+    end
+    if (!reset && response_payload_read) begin
+      assert (slot_state_r[response_payload_raddr] == SLOT_READY)
+        else $fatal(1, "%m: response SRAM read for non-ready DMA slot %0d",
+                    response_payload_raddr);
+    end
+    if (!reset && src_rsp_fire && response_payload_read) begin
+      assert (rsp_slot_idx != response_payload_raddr)
+        else $fatal(1, "%m: simultaneous response SRAM read/write for DMA slot %0d",
+                    rsp_slot_idx);
+    end
+    if (!reset && pack_move_fire && (pack_src_bytes != 0)) begin
+      assert (slot_state_r[wr_expect_slot_r] == SLOT_DRAINING)
+        else $fatal(1, "%m: source payload consumed from non-draining DMA slot %0d",
+                    wr_expect_slot_r);
     end
     if (!reset && pack_move_fire && pack_fast_move) begin
       assert ((pack_move_bytes == 32'(FAST_BYTES))

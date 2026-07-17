@@ -37,6 +37,7 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
     parameter AXI_USER_WIDTH        = 1,
     parameter MEM_ADDR_WIDTH        = `MEM_ADDR_WIDTH,
     parameter TAG_WIDTH             = 8,
+    parameter int MISALIGN_PACK_BYTES = LSU_WORD_SIZE,
     // Forwarded to each VX_dma_unit channel — see that module for
     // semantics. Default 0 (aligned-only) to match the chip-level SW
     // convention; parents that still need byte-misalign must override.
@@ -151,6 +152,7 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
         VX_dma_unit #(
             .INSTANCE_ID      (INSTANCE_ID),
             .ENABLE_MISALIGN  (ENABLE_MISALIGN),
+            .MISALIGN_PACK_BYTES (MISALIGN_PACK_BYTES),
             .DCACHE_ADDR_WIDTH(HBM_ADDR_WIDTH),
             .LMEM_ADDR_WIDTH  (TMEM_ADDR_WIDTH),
             .DCACHE_TAG_WIDTH (TAG_WIDTH),

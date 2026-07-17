@@ -13,6 +13,7 @@ JOBS="8"
 OUTPUT_DIR=""
 REFERENCE_REPORT=""
 WRITE_CHECKPOINT="0"
+ENABLE_MISALIGN="0"
 PYTHON_BIN="${PYTHON:-python3}"
 VIVADO_BIN=""
 
@@ -31,12 +32,14 @@ Options:
   --vivado-bin PATH        Vivado executable (default: PATH or Vivado 2025.1)
   --reference-report PATH  Historical report to record beside the OOC result
   --write-checkpoint       Also retain the large post-synthesis DCP
+  --enable-misalign        Elaborate VX_dma_unit_misal instead of aligned DMA
   -h, --help               Show this help
 
 Example:
   ci/run_dma_ooc.sh \
     --alias C4 \
-    --output-dir docs/future_optim/dma_experiments/20260717-001-c4-aligned-baseline
+    --enable-misalign \
+    --output-dir docs/future_optim/dma_experiments/20260717-010-c4-misaligned-baseline
 EOF
 }
 
@@ -77,6 +80,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --write-checkpoint)
       WRITE_CHECKPOINT="1"
+      shift
+      ;;
+    --enable-misalign)
+      ENABLE_MISALIGN="1"
       shift
       ;;
     -h|--help)
@@ -133,6 +140,9 @@ CONFIGS=""
 source "${CONFIG_FILE}"
 CONFIGS+=" -DPLATFORM_MEMORY_DATA_SIZE=64 -DPLATFORM_MEMORY_ID_WIDTH=32"
 CONFIGS+=" -DXLEN_64 -DNDEBUG -DVIVADO -DSYNTHESIS"
+if [[ "${ENABLE_MISALIGN}" == "1" ]]; then
+  CONFIGS+=" -DDMA_OOC_ENABLE_MISALIGN"
+fi
 
 mkdir -p "${OUTPUT_DIR}"
 
@@ -187,6 +197,7 @@ read -r -a CONFIG_ARGS <<< "${CONFIGS}"
   echo "top=${TOP}"
   echo "device=${DEVICE}"
   echo "jobs=${JOBS}"
+  echo "enable_misalign=${ENABLE_MISALIGN}"
   echo "reference_report=${REFERENCE_REPORT}"
   echo "git_commit=$(git -C "${ROOT_DIR}" rev-parse HEAD)"
   echo "git_branch=$(git -C "${ROOT_DIR}" branch --show-current)"
@@ -231,7 +242,7 @@ REFERENCE_ENGINE_CSV="${OUTPUT_DIR}/reference_dma_engine.csv"
 
 "${PYTHON_BIN}" "${ROOT_DIR}/tools/vivado_util.py" \
   "${OUTPUT_DIR}/post_synth_util.rpt" show utilization_by_hierarchy \
-  --filter '[/.](dcache_req_buf|lmem_req_buf|wr_slot_buf|response_payload_ram)$' \
+  --filter '[/.](dcache_req_buf|lmem_req_buf|dcache_wr_buf|lmem_wr_buf|wr_slot_buf|response_payload_ram)$' \
   --format csv \
   -o "${OOC_BUFFERS_CSV}"
 
@@ -295,17 +306,16 @@ cat > "${OUTPUT_DIR}/comparison.md" <<EOF
 - OOC report: \`post_synth_util.rpt\`
 - OOC DMA engine row: \`ooc_dma_engine.csv\`
 - OOC drain buffer rows: \`ooc_dma_buffers.csv\`
-- Historical reference: \`${REFERENCE_REPORT}\`
+- Reference report: \`${REFERENCE_REPORT}\`
 
-| Metric | OOC post-synthesis | Historical C4 post-route | Delta | Delta (%) |
+| Metric | OOC post-synthesis | Reference report | Delta | Delta (%) |
 | --- | ---: | ---: | ---: | ---: |
 ${COMPARISON_ROWS}
 
-The OOC report is a post-synthesis result for \`${TOP}\`. The historical C4
-report is a post-route full-design report. Their absolute utilization values
-are recorded for context but are not directly comparable. Compare DMA variants
-against a fixed OOC baseline produced with the same top, config, part,
-constraints, Vivado version, and synthesis options.
+The current report is a post-synthesis result for \`${TOP}\`. Deltas are valid
+only when the reference was produced with the same top, config, part,
+constraints, Vivado version, and synthesis options. A full-design post-route
+reference is recorded only for context and is not directly comparable.
 EOF
 
 cat > "${OUTPUT_DIR}/manifest.md" <<EOF

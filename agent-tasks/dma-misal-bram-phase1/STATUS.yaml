@@ -1,0 +1,76 @@
+task: dma-misal-bram-phase1
+status: complete
+updated: "2026-07-18 00:25"
+goal: >-
+  Move misaligned DMA response-slot payloads from FF storage into VX_dp_ram and
+  compare functionality, utilization, and timing under the C4 configuration.
+progress:
+  - timestamp: "2026-07-17 23:35"
+    action: confirmed the Phase 1 response-SRAM scope
+    result: >-
+      The first experiment changes only response payload storage and its slot
+      lifecycle. Destination assembly storage and request-buffer splitting are
+      deferred so their effects can be measured independently.
+  - timestamp: "2026-07-17 23:35"
+    action: added a reproducible misaligned OOC selection
+    result: >-
+      The OOC wrapper can now select VX_dma_unit_misal while retaining aligned
+      behavior by default, and the C4 MISALIGN_PACK_BYTES value is forwarded
+      through VX_dma_engine.
+  - timestamp: "2026-07-17 23:40"
+    action: completed the configured-build functional baseline
+    result: >-
+      The VCS regression from build_dma_bram_phase1 passed 2125 of 2125 cases
+      at 2739165 ns and covered misaligned offsets, padding, partial beats, and
+      periodic read/write backpressure. A source-tree run was discarded because
+      its stale config.mk pointed VORTEX_HOME at a different checkout.
+  - timestamp: "2026-07-17 23:47"
+    action: implemented response payload VX_dp_ram storage
+    result: >-
+      slot_data_r was replaced by a synchronous read-first response RAM. Slot
+      state now includes DRAINING, and current-slot retirement overlaps the next
+      READY-slot read when possible so continuous responses do not add a bubble.
+  - timestamp: "2026-07-17 23:49"
+    action: completed verification iteration 1
+    result: >-
+      VCS passed 2125 of 2125 cases for both 64-byte DCache / 128-byte LMEM and
+      same-width 64/64 configurations. Both runs covered periodic read/write
+      backpressure and stalled request stability. The default run completed at
+      2782525 ns, 1.58 percent slower than the FF-storage baseline.
+  - timestamp: "2026-07-17 23:52"
+    action: completed verification iteration 2
+    result: >-
+      The swapped-width 128-byte DCache / 64-byte LMEM configuration also
+      passed 2125 of 2125 VCS cases at 2751765 ns with read/write backpressure
+      coverage and stalled request stability checks enabled.
+  - timestamp: "2026-07-18 00:10"
+    action: measured response SRAM and direct-write alternatives under C4
+    result: >-
+      Response SRAM alone reduced FF but increased LUT and BRAM. Splitting
+      source reads into control-only queues and driving destination writes
+      directly reduced BRAM36 from 128 to 56, but increased LUT and made the
+      64/128 backpressure unittest 14.6 percent slower than baseline.
+  - timestamp: "2026-07-18 00:23"
+    action: retained a one-entry destination write holding stage
+    result: >-
+      The final C4 OOC result is 155937 LUT, 32419 FF, 56 RAMB36, 32 RAMB18,
+      128 DSP, and +0.915 ns WNS. Relative to the identical 010 baseline this
+      is -1.80 percent LUT, -19.48 percent FF, -56.25 percent RAMB36, and
+      +0.565 ns WNS.
+  - timestamp: "2026-07-18 00:25"
+    action: completed final functional verification
+    result: >-
+      VCS passed 2125 of 2125 cases for 64/128, 64/64, and 128/64 byte bus
+      configurations. xrt-vcs-sim softmax opt with seqk=17 passed at 39077
+      cycles with maximum absolute difference 0.000061 and FSDB disabled.
+pitfalls:
+  - >-
+    A synchronous response RAM adds a read cycle. The writer must hold a
+    DRAINING slot until every byte from the RAM output is consumed.
+  - >-
+    Run RTL unittests from a configured build tree. The source-tree config.mk
+    can silently select another checkout and produce a false pass.
+  - >-
+    Fully direct destination writes expose the packer to external write
+    backpressure. A one-entry write holding buffer is needed to avoid the large
+    slowdown while still removing the depth-4 wide request BRAMs.

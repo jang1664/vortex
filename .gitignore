@@ -82,3 +82,4 @@ verdiLog/
 **.csv
 .Xil/
 vivado_pid*.str
+vivado*.jou
