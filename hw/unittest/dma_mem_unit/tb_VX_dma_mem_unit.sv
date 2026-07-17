@@ -18,6 +18,8 @@ module tb_VX_dma_mem_unit import VX_gpu_pkg::*; ();
   parameter real   PERIOD       = 10.0;
   parameter string OBJ          = "func";  // "func" or "power"
   parameter string FILE_POSTFIX = "func";
+  parameter int    DCACHE_BYTES_P = 32;
+  parameter int    LMEM_BYTES_P   = 16;
 
   // -----------------------------
   // Params
@@ -28,9 +30,10 @@ module tb_VX_dma_mem_unit import VX_gpu_pkg::*; ();
 
   localparam int MEM_BYTES  = 64*1024;
   localparam int TAG_WIDTH  = 45;  // 일단 `UP(UUID_WIDTH) 보다 크기만 하면 됨
-  // Make DCACHE wider than LMEM to test width mismatch
-  localparam int DCACHE_BYTES = 32;
-  localparam int LMEM_BYTES   = 16; // IMPORTANT: match VX_local_mem word size (usually 8)
+  localparam int DCACHE_BYTES = DCACHE_BYTES_P;
+  localparam int LMEM_BYTES   = LMEM_BYTES_P;
+  localparam int MAX_BUS_BYTES = (DCACHE_BYTES > LMEM_BYTES)
+                               ? DCACHE_BYTES : LMEM_BYTES;
 
   // LMEM instance: 1 port
   localparam int LMEM_PORTS = 1;
@@ -472,9 +475,11 @@ module tb_VX_dma_mem_unit import VX_gpu_pkg::*; ();
 
     repeat (5) @(posedge clk);
 
-    run_case(SEG_SIZE_1, b0, b1, b2, PADDING_1);
-    run_case(SEG_SIZE_1, b0, b1, b2, PADDING_2);
-    run_case(SEG_SIZE_1, b0, b1, b2, PADDING_3);
+    if (SEG_SIZE_1 >= MAX_BUS_BYTES) begin
+      run_case(SEG_SIZE_1, b0, b1, b2, PADDING_1);
+      run_case(SEG_SIZE_1, b0, b1, b2, PADDING_2);
+      run_case(SEG_SIZE_1, b0, b1, b2, PADDING_3);
+    end
 
     run_case(SEG_SIZE_2, b0, b1, b2, PADDING_1);
     run_case(SEG_SIZE_2, b0, b1, b2, PADDING_2);

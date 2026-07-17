@@ -28,6 +28,7 @@ RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
 				$(RTL_DIR)/core/VX_node_done_if.sv \
 				$(RTL_DIR)/libs/VX_stream_xbar.sv \
 				$(RTL_DIR)/libs/VX_sp_ram.sv \
+				$(RTL_DIR)/libs/VX_dp_ram.sv \
 				$(RTL_DIR)/libs/VX_mul_u32_pipe.sv \
 				$(RTL_DIR)/libs/VX_pipe_buffer.sv \
 				$(RTL_DIR)/libs/VX_pipe_register.sv \
@@ -56,7 +57,9 @@ empty :=
 space := $(empty) $(empty)
 DEFINES  := +define+$(subst $(space),+,$(DEFINES_))
 
-PARAMS := 
+PARAMS ?=
+
+run: sim
 
 setup:
 	mkdir -p logs reports
