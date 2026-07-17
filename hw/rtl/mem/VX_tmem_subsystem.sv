@@ -34,7 +34,12 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
     parameter AXI_ADDR_WIDTH    = `PLATFORM_MEMORY_ADDR_WIDTH,
     parameter AXI_DATA_WIDTH    = `PLATFORM_MEMORY_DATA_SIZE * 8,
     parameter AXI_ID_WIDTH      = 8,
-    parameter AXI_USER_WIDTH    = 1
+    parameter AXI_USER_WIDTH    = 1,
+    parameter int I_RD_PREFETCH_DEPTH = `I_LMEM_DMA_RD_PREFETCH_DEPTH,
+    parameter int W_RD_PREFETCH_DEPTH = `W_LMEM_DMA_RD_PREFETCH_DEPTH,
+    parameter int SZ_RD_PREFETCH_DEPTH = `SZ_LMEM_DMA_RD_PREFETCH_DEPTH,
+    parameter int O_RD_PREFETCH_DEPTH = `O_LMEM_DMA_RD_PREFETCH_DEPTH,
+    parameter int DMA_RD_OUTSTANDING = `TMEM_DMA_RD_OUTSTANDING_SLOT
 ) (
     input wire clk,
     input wire reset,
@@ -91,7 +96,8 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         .AXI_ADDR_WIDTH (AXI_ADDR_WIDTH),
         .AXI_DATA_WIDTH (AXI_DATA_WIDTH),
         .AXI_ID_WIDTH   (AXI_ID_WIDTH),
-        .TAG_WIDTH      (TAG_WIDTH)
+        .TAG_WIDTH      (TAG_WIDTH),
+        .RD_OUTSTANDING (DMA_RD_OUTSTANDING)
     ) u_dma_engine (
         .clk            (clk),
         .reset          (reset),
@@ -355,7 +361,7 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         .INSTANCE_ID ({INSTANCE_ID, ":ldma_in"}),
         .DIR         (0),
         .TAG_WIDTH   (TAG_WIDTH),
-        .RD_PREFETCH_DEPTH(`LMEM_DMA_RD_PREFETCH_DEPTH)
+        .RD_PREFETCH_DEPTH(I_RD_PREFETCH_DEPTH)
     ) u_ldma_input (
         .clk         (clk),
         .reset       (reset),
@@ -374,7 +380,7 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         .INSTANCE_ID ({INSTANCE_ID, ":ldma_wt"}),
         .DIR         (0),
         .TAG_WIDTH   (TAG_WIDTH),
-        .RD_PREFETCH_DEPTH(`LMEM_DMA_RD_PREFETCH_DEPTH)
+        .RD_PREFETCH_DEPTH(W_RD_PREFETCH_DEPTH)
     ) u_ldma_weight (
         .clk         (clk),
         .reset       (reset),
@@ -393,7 +399,7 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         .INSTANCE_ID ({INSTANCE_ID, ":ldma_wt"}),
         .DIR         (0),
         .TAG_WIDTH   (TAG_WIDTH),
-        .RD_PREFETCH_DEPTH(`LMEM_DMA_RD_PREFETCH_DEPTH)
+        .RD_PREFETCH_DEPTH(W_RD_PREFETCH_DEPTH)
     ) u_ldma_weight (
         .clk         (clk),
         .reset       (reset),
@@ -412,7 +418,7 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         .INSTANCE_ID ({INSTANCE_ID, ":ldma_sz"}),
         .DIR         (0),
         .TAG_WIDTH   (TAG_WIDTH),
-        .RD_PREFETCH_DEPTH(`LMEM_DMA_RD_PREFETCH_DEPTH)
+        .RD_PREFETCH_DEPTH(SZ_RD_PREFETCH_DEPTH)
     ) u_ldma_sz (
         .clk         (clk),
         .reset       (reset),
@@ -430,7 +436,7 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         .INSTANCE_ID ({INSTANCE_ID, ":ldma_out"}),
         .DIR         (1),
         .TAG_WIDTH   (TAG_WIDTH),
-        .RD_PREFETCH_DEPTH(`LMEM_DMA_RD_PREFETCH_DEPTH)
+        .RD_PREFETCH_DEPTH(O_RD_PREFETCH_DEPTH)
     ) u_ldma_output (
         .clk         (clk),
         .reset       (reset),

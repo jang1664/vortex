@@ -1,7 +1,11 @@
 `include "VX_define.vh"
 
 module VX_gemm_ctrl_with_ldma import VX_gpu_pkg::*; #(
-  parameter `STRING INSTANCE_ID = ""
+  parameter `STRING INSTANCE_ID = "",
+  parameter int I_RD_PREFETCH_DEPTH = `I_LMEM_DMA_RD_PREFETCH_DEPTH,
+  parameter int W_RD_PREFETCH_DEPTH = `W_LMEM_DMA_RD_PREFETCH_DEPTH,
+  parameter int SZ_RD_PREFETCH_DEPTH = `SZ_LMEM_DMA_RD_PREFETCH_DEPTH,
+  parameter int O_RD_PREFETCH_DEPTH = `O_LMEM_DMA_RD_PREFETCH_DEPTH
 ) (
   input wire clk,
   input wire reset,
@@ -179,7 +183,7 @@ module VX_gemm_ctrl_with_ldma import VX_gpu_pkg::*; #(
     .INSTANCE_ID({INSTANCE_ID, "_input_dma"}),
     .DIR(0),
     .TAG_WIDTH(GEMM_MEM_TAG_WIDTH),
-    .RD_PREFETCH_DEPTH(`LMEM_DMA_RD_PREFETCH_DEPTH)
+    .RD_PREFETCH_DEPTH(I_RD_PREFETCH_DEPTH)
   ) u_input_lmem_dma (
     .clk(clk),
     .reset(reset),
@@ -194,7 +198,7 @@ module VX_gemm_ctrl_with_ldma import VX_gpu_pkg::*; #(
     .INSTANCE_ID({INSTANCE_ID, "_weight_dma"}),
     .DIR(0),
     .TAG_WIDTH(GEMM_MEM_TAG_WIDTH),
-    .RD_PREFETCH_DEPTH(`LMEM_DMA_RD_PREFETCH_DEPTH)
+    .RD_PREFETCH_DEPTH(W_RD_PREFETCH_DEPTH)
   ) u_weight_lmem_dma (
     .clk(clk),
     .reset(reset),
@@ -209,7 +213,7 @@ module VX_gemm_ctrl_with_ldma import VX_gpu_pkg::*; #(
     .INSTANCE_ID({INSTANCE_ID, "_quant_param_dma"}),
     .DIR(0),
     .TAG_WIDTH(GEMM_MEM_TAG_WIDTH),
-    .RD_PREFETCH_DEPTH(`LMEM_DMA_RD_PREFETCH_DEPTH)
+    .RD_PREFETCH_DEPTH(SZ_RD_PREFETCH_DEPTH)
   ) u_quant_param_lmem_dma (
     .clk(clk),
     .reset(reset),
@@ -224,7 +228,7 @@ module VX_gemm_ctrl_with_ldma import VX_gpu_pkg::*; #(
     .INSTANCE_ID({INSTANCE_ID, "_output_dma"}),
     .DIR(1),
     .TAG_WIDTH(GEMM_MEM_TAG_WIDTH),
-    .RD_PREFETCH_DEPTH(`LMEM_DMA_RD_PREFETCH_DEPTH)
+    .RD_PREFETCH_DEPTH(O_RD_PREFETCH_DEPTH)
   ) u_output_lmem_dma (
     .clk(clk),
     .reset(reset),

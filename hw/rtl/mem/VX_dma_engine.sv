@@ -41,7 +41,8 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
     // Forwarded to each VX_dma_unit channel — see that module for
     // semantics. Default 0 (aligned-only) to match the chip-level SW
     // convention; parents that still need byte-misalign must override.
-    parameter bit ENABLE_MISALIGN   = 1'b0
+    parameter bit ENABLE_MISALIGN   = 1'b0,
+    parameter int RD_OUTSTANDING    = `TMEM_DMA_RD_OUTSTANDING_SLOT
 ) (
     input wire clk,
     input wire reset,
@@ -156,7 +157,8 @@ module VX_dma_engine import VX_gpu_pkg::*; #(
             .DCACHE_ADDR_WIDTH(HBM_ADDR_WIDTH),
             .LMEM_ADDR_WIDTH  (TMEM_ADDR_WIDTH),
             .DCACHE_TAG_WIDTH (TAG_WIDTH),
-            .LMEM_TAG_WIDTH   (TAG_WIDTH)
+            .LMEM_TAG_WIDTH   (TAG_WIDTH),
+            .RD_OUTSTANDING   (RD_OUTSTANDING)
         ) u_dma_unit (
             .clk            (clk),
             .reset          (reset),

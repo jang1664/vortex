@@ -22,7 +22,11 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     parameter `STRING INSTANCE_ID = "",
     parameter N_MASTER    = 1,
     parameter N_CHILDREN  = 5,
-    parameter NUM_ENTRIES = 4
+    parameter NUM_ENTRIES = 4,
+    parameter int I_RD_PREFETCH_DEPTH = `I_LMEM_DMA_RD_PREFETCH_DEPTH,
+    parameter int W_RD_PREFETCH_DEPTH = `W_LMEM_DMA_RD_PREFETCH_DEPTH,
+    parameter int SZ_RD_PREFETCH_DEPTH = `SZ_LMEM_DMA_RD_PREFETCH_DEPTH,
+    parameter int O_RD_PREFETCH_DEPTH = `O_LMEM_DMA_RD_PREFETCH_DEPTH
 ) (
     // Clock
     input wire              clk,
@@ -663,7 +667,7 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
       .INSTANCE_ID({INSTANCE_ID, "_input_dma"}),
       .DIR(0),
       .TAG_WIDTH(GEMM_BASE_TAG_WIDTH),
-      .RD_PREFETCH_DEPTH(`LMEM_DMA_RD_PREFETCH_DEPTH),
+      .RD_PREFETCH_DEPTH(I_RD_PREFETCH_DEPTH),
       .ENABLE_MISALIGN(1'b1)
     ) u_input_lmem_dma (
       .clk(clk),
@@ -679,7 +683,7 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
       .INSTANCE_ID({INSTANCE_ID, "_weight_gather_dma"}),
       .NUM_LANES(GEMM_WEIGHT_LANES),
       .TAG_WIDTH(GEMM_BASE_TAG_WIDTH),
-      .RD_PREFETCH_DEPTH(`LMEM_DMA_RD_PREFETCH_DEPTH)
+      .RD_PREFETCH_DEPTH(W_RD_PREFETCH_DEPTH)
     ) u_weight_gather_dma (
       .clk(clk),
       .reset(reset),
@@ -693,7 +697,7 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
       .INSTANCE_ID({INSTANCE_ID, "_quant_param_dma"}),
       .DIR(0),
       .TAG_WIDTH(GEMM_BASE_TAG_WIDTH),
-      .RD_PREFETCH_DEPTH(`LMEM_DMA_RD_PREFETCH_DEPTH),
+      .RD_PREFETCH_DEPTH(SZ_RD_PREFETCH_DEPTH),
       .ENABLE_MISALIGN(1'b1)
     ) u_quant_param_lmem_dma (
       .clk(clk),
@@ -709,7 +713,7 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
       .INSTANCE_ID({INSTANCE_ID, "_output_dma"}),
       .DIR(1),
       .TAG_WIDTH(GEMM_BASE_TAG_WIDTH),
-      .RD_PREFETCH_DEPTH(`LMEM_DMA_RD_PREFETCH_DEPTH),
+      .RD_PREFETCH_DEPTH(O_RD_PREFETCH_DEPTH),
       .ENABLE_MISALIGN(1'b1)
     ) u_output_lmem_dma (
       .clk(clk),

@@ -103,7 +103,8 @@ module tb_VX_dma_mem_unit_misal import VX_gpu_pkg::*; ();
     .LMEM_ADDR_WIDTH  (`MEM_ADDR_WIDTH - `CLOG2(LMEM_BYTES)),
     .DCACHE_TAG_WIDTH(TAG_WIDTH),
     .LMEM_TAG_WIDTH  (TAG_WIDTH),
-    .MISALIGN_PACK_BYTES(PACK_BYTES_P)
+    .MISALIGN_PACK_BYTES(PACK_BYTES_P),
+    .RD_OUTSTANDING(`DMA_NODE_RD_OUTSTANDING_SLOT)
   ) dut (
     .clk          (clk),
     .reset        (reset),

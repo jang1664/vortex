@@ -20,7 +20,8 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
   parameter int DCACHE_ADDR_WIDTH = 1,
   parameter int LMEM_ADDR_WIDTH   = 1,
   parameter int DCACHE_TAG_WIDTH = 1,
-  parameter int LMEM_TAG_WIDTH   = 1
+  parameter int LMEM_TAG_WIDTH   = 1,
+  parameter int RD_OUTSTANDING = 2
 ) (
   input wire clk,
   input wire reset,
@@ -61,9 +62,8 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
   localparam int LMEM_TAG_VALUE_W   = LMEM_TAG_WIDTH - `UP(UUID_WIDTH);
   localparam int MIN_TAG_VALUE_W    = (DCACHE_TAG_VALUE_W < LMEM_TAG_VALUE_W)
                                     ? DCACHE_TAG_VALUE_W : LMEM_TAG_VALUE_W;
-  localparam int RD_OUTSTANDING_CAP = `DMA_RD_OUTSTANDING_SLOT;
-  localparam int RD_SLOT_BITS_CAP   = (RD_OUTSTANDING_CAP > 1)
-                                    ? $clog2(RD_OUTSTANDING_CAP) : 0;
+  localparam int RD_SLOT_BITS_CAP   = (RD_OUTSTANDING > 1)
+                                    ? $clog2(RD_OUTSTANDING) : 0;
   localparam int RD_SLOT_BITS       = (RD_SLOT_BITS_CAP < 1) ? 1 : RD_SLOT_BITS_CAP;
   // The source response owns the slot tag. Preserve the wider DCache window
   // for G2L even when the LMEM response tag limits L2G to fewer slots.
@@ -71,7 +71,6 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
                                     ? DCACHE_TAG_VALUE_W : RD_SLOT_BITS_CAP;
   localparam int LMEM_SLOT_BITS     = (LMEM_TAG_VALUE_W < RD_SLOT_BITS_CAP)
                                     ? LMEM_TAG_VALUE_W : RD_SLOT_BITS_CAP;
-  localparam int RD_OUTSTANDING     = RD_OUTSTANDING_CAP;
   localparam int DCACHE_RD_OUTSTANDING = (DCACHE_SLOT_BITS == 0)
                                        ? 1 : (1 << DCACHE_SLOT_BITS);
   localparam int LMEM_RD_OUTSTANDING = (LMEM_SLOT_BITS == 0)
@@ -103,8 +102,8 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
       $fatal(1, "cfg_reg_if.NUM(%0d) < NUM_REGS(%0d)", cfg_reg_if.NUM, NUM_REGS);
     if (MIN_TAG_VALUE_W < 1)
       $fatal(1, "tag.value width must be >= 1 (dcache=%0d, lmem=%0d)", DCACHE_TAG_VALUE_W, LMEM_TAG_VALUE_W);
-    if (!is_power_of_two(RD_OUTSTANDING_CAP))
-      $fatal(1, "DMA_RD_OUTSTANDING_SLOT(%0d) must be a power of two", RD_OUTSTANDING_CAP);
+    if (!is_power_of_two(RD_OUTSTANDING))
+      $fatal(1, "RD_OUTSTANDING(%0d) must be a power of two", RD_OUTSTANDING);
     if (!is_power_of_two(PACK_BYTES))
       $fatal(1, "MISALIGN_PACK_BYTES(%0d) must be a power of two", PACK_BYTES);
     if (PACK_BYTES > MIN_BYTES)

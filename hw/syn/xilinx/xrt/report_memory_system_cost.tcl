@@ -6,6 +6,12 @@
 # bandwidth-normalized interconnect comparison does not silently include
 # architecture-specific compute or memory capacity.
 #
+# Routing cost is measured on routed, non-clock signal nets incident on the
+# selected fabric roots. This captures fabric interfaces and links between
+# selected roots without enumerating every internal net in very large blocks.
+# PIP, node, and wire-segment counts are implementation-cost proxies; they are
+# not a physical total-wire-length measurement.
+#
 # Usage:
 #   vivado -mode batch -source report_memory_system_cost.tcl -tclargs \
 #     <project.xpr> ?-run impl_1? ?-out output_dir? \
@@ -211,6 +217,8 @@ proc detect_profile {} {
 }
 
 proc profile_peak_bytes_per_cycle {profile} {
+    # Theoretical peaks for the current C3/C4 aliases in
+    # ci/fpga_bin_alias_map.yaml and their referenced config scripts.
     switch -- $profile {
         c3 { return 64.0 }
         c4 { return 256.0 }
@@ -218,8 +226,27 @@ proc profile_peak_bytes_per_cycle {profile} {
     }
 }
 
+proc analysis_scope_names {} {
+    return {fabric dma_local dma_hbm control storage \
+        fabric_dma_local fabric_dma_full}
+}
+
 proc unique_objects {objects} {
     return [lsort -unique $objects]
+}
+
+proc object_difference {left right} {
+    set excluded [dict create]
+    foreach object $right {
+        dict set excluded $object 1
+    }
+    set result {}
+    foreach object $left {
+        if {![dict exists $excluded $object]} {
+            lappend result $object
+        }
+    }
+    return $result
 }
 
 proc regexp_quote {value} {
@@ -380,122 +407,6 @@ proc collection_count {objects} {
     return [llength $objects]
 }
 
-proc sorted_difference {left right} {
-    set left [unique_objects $left]
-    set right [unique_objects $right]
-    set result {}
-    set left_index 0
-    set right_index 0
-    set left_count [llength $left]
-    set right_count [llength $right]
-    while {$left_index < $left_count} {
-        if {$right_index >= $right_count} {
-            set result [concat $result [lrange $left $left_index end]]
-            break
-        }
-        set left_value [lindex $left $left_index]
-        set right_value [lindex $right $right_index]
-        set comparison [string compare $left_value $right_value]
-        if {$comparison < 0} {
-            lappend result $left_value
-            incr left_index
-        } elseif {$comparison > 0} {
-            incr right_index
-        } else {
-            incr left_index
-            incr right_index
-        }
-    }
-    return $result
-}
-
-proc sorted_intersection {left right} {
-    set left [unique_objects $left]
-    set right [unique_objects $right]
-    set result {}
-    set left_index 0
-    set right_index 0
-    set left_count [llength $left]
-    set right_count [llength $right]
-    while {$left_index < $left_count && $right_index < $right_count} {
-        set left_value [lindex $left $left_index]
-        set right_value [lindex $right $right_index]
-        set comparison [string compare $left_value $right_value]
-        if {$comparison < 0} {
-            incr left_index
-        } elseif {$comparison > 0} {
-            incr right_index
-        } else {
-            lappend result $left_value
-            incr left_index
-            incr right_index
-        }
-    }
-    return $result
-}
-
-proc classify_routed_signal_nets {roots} {
-    set internal_all {}
-    set internal_signal {}
-    set internal_routed_signal {}
-    set saved_instance [current_instance .]
-    try {
-        foreach root $roots {
-            current_instance
-            current_instance $root
-            set root_nets [get_nets -quiet -hierarchical *]
-            set internal_all [concat $internal_all $root_nets]
-            set root_signal [filter $root_nets {TYPE == SIGNAL}]
-            set internal_signal [concat $internal_signal $root_signal]
-            set internal_routed_signal [concat $internal_routed_signal \
-                [filter $root_signal {ROUTE_STATUS == ROUTED}]]
-        }
-    } finally {
-        current_instance
-        if {$saved_instance ne ""} {
-            current_instance $saved_instance
-        }
-    }
-
-    # Hierarchical pins precisely identify nets that cross one of the selected
-    # roots. This includes external connections and connections between two
-    # selected roots; both consume routing resources and are conservatively
-    # reported as boundary/inter-root cost.
-    set boundary_pins [get_pins -quiet -of_objects $roots]
-    set boundary_all [get_nets -quiet -of_objects $boundary_pins]
-    set boundary_signal [filter $boundary_all {TYPE == SIGNAL}]
-    set boundary_routed_signal \
-        [filter $boundary_signal {ROUTE_STATUS == ROUTED}]
-    set clock_pins [get_pins -quiet -filter {IS_CLOCK == 1} \
-        -of_objects $roots]
-    set clock_nets [get_nets -quiet -of_objects $clock_pins]
-
-    set incident [unique_objects [concat $internal_all $boundary_all]]
-    set signal_nets [unique_objects \
-        [concat $internal_signal $boundary_signal]]
-    set routed_signal_nets [unique_objects \
-        [concat $internal_routed_signal $boundary_routed_signal]]
-    set excluded_clock_nets \
-        [sorted_intersection $routed_signal_nets $clock_nets]
-    set candidate_nets \
-        [sorted_difference $routed_signal_nets $excluded_clock_nets]
-    set boundary [sorted_intersection $candidate_nets \
-        $boundary_routed_signal]
-    set internal [sorted_difference $candidate_nets $boundary]
-
-    return [dict create \
-        incident_count [llength $incident] \
-        internal $internal \
-        boundary $boundary \
-        excluded_non_signal [expr {
-            [llength $incident] - [llength $signal_nets]
-        }] \
-        excluded_unrouted [expr {
-            [llength $signal_nets] - [llength $routed_signal_nets]
-        }] \
-        excluded_clock [llength $excluded_clock_nets]]
-}
-
 proc route_object_counts {label nets} {
     if {[llength $nets] == 0} {
         return [dict create nets 0 pips 0 nodes 0 wires 0]
@@ -518,18 +429,34 @@ proc route_object_counts {label nets} {
 }
 
 proc analyze_routing {scope roots} {
-    puts "  classifying $scope nets..."
-    set classified [classify_routed_signal_nets $roots]
-    set internal_nets [dict get $classified internal]
-    set boundary_nets [dict get $classified boundary]
-    set total_nets [unique_objects [concat $internal_nets $boundary_nets]]
-    dict set classified internal_route \
-        [route_object_counts "$scope internal" $internal_nets]
-    dict set classified boundary_route \
-        [route_object_counts "$scope boundary/inter-root" $boundary_nets]
-    dict set classified total_route \
-        [route_object_counts "$scope total" $total_nets]
-    return $classified
+    puts "  collecting $scope interface/inter-root nets..."
+    set boundary_pins [get_pins -quiet -of_objects $roots]
+    set incident [unique_objects \
+        [get_nets -quiet -of_objects $boundary_pins]]
+    set signal_nets [filter $incident {TYPE == SIGNAL}]
+    set routed_signal_nets \
+        [filter $signal_nets {ROUTE_STATUS == ROUTED}]
+    set clock_pins [get_pins -quiet \
+        -filter {IS_CLOCK == 1} -of_objects $roots]
+    set clock_nets [unique_objects [get_nets -quiet \
+        -filter {TYPE == SIGNAL && ROUTE_STATUS == ROUTED} \
+        -of_objects $clock_pins]]
+    set non_clock_nets [object_difference \
+        $routed_signal_nets $clock_nets]
+    set counts [route_object_counts \
+        "$scope interface/inter-root" $non_clock_nets]
+    return [dict create \
+        incident_count [llength $incident] \
+        excluded_non_signal [expr {
+            [llength $incident] - [llength $signal_nets]
+        }] \
+        excluded_unrouted [expr {
+            [llength $signal_nets] - [llength $routed_signal_nets]
+        }] \
+        excluded_clock [expr {
+            [llength $routed_signal_nets] - [llength $non_clock_nets]
+        }] \
+        interface_route $counts]
 }
 
 proc object_property_or_na {object property} {
@@ -557,15 +484,20 @@ proc analyze_timing {scope cells output_dir} {
         warn "no timing path traverses scope '$scope'"
         return $result
     }
-    report_timing -of_objects $paths -file $report_path
+    set report_text [report_timing -of_objects $paths -return_string]
+    write_text_file $report_path $report_text
     set worst_path [lindex $paths 0]
     dict set result slack [object_property_or_na $worst_path SLACK]
     dict set result datapath_delay \
         [object_property_or_na $worst_path DATAPATH_DELAY]
-    dict set result logic_delay \
-        [object_property_or_na $worst_path LOGIC_DELAY]
-    dict set result route_delay \
-        [object_property_or_na $worst_path ROUTE_DELAY]
+    if {[regexp {Data Path Delay:\s*([-0-9.]+)ns\s+\(logic\s+([-0-9.]+)ns[^\r\n]*route\s+([-0-9.]+)ns} \
+            $report_text -> datapath_delay logic_delay route_delay]} {
+        dict set result datapath_delay $datapath_delay
+        dict set result logic_delay $logic_delay
+        dict set result route_delay $route_delay
+    } else {
+        warn "could not parse logic/route delay for '$scope'"
+    }
     return $result
 }
 
@@ -647,15 +579,13 @@ proc write_routing_csv {path profile routing_by_scope} {
             {profile scope net_class nets pips nodes wire_segments}
         foreach scope [dict keys $routing_by_scope] {
             set routing [dict get $routing_by_scope $scope]
-            foreach class {internal boundary total} {
-                set counts [dict get $routing "${class}_route"]
-                write_csv_row $channel [list \
-                    $profile $scope $class \
-                    [dict get $counts nets] \
-                    [dict get $counts pips] \
-                    [dict get $counts nodes] \
-                    [dict get $counts wires]]
-            }
+            set counts [dict get $routing interface_route]
+            write_csv_row $channel [list \
+                $profile $scope interface_or_inter_root \
+                [dict get $counts nets] \
+                [dict get $counts pips] \
+                [dict get $counts nodes] \
+                [dict get $counts wires]]
         }
     } finally {
         close $channel
@@ -672,40 +602,32 @@ proc write_summary_csv {path profile peak_bytes clock_info scopes \
             profile scope primitive_cells peak_bytes_per_cycle clock_mhz \
             peak_gb_s lut ff bram_tiles uram dsp \
             incident_nets excluded_non_signal excluded_unrouted excluded_clock \
-            internal_nets boundary_nets total_pips internal_pips boundary_pips \
-            total_nodes total_wire_segments \
-            k_lut_per_gb_s k_ff_per_gb_s pips_per_gb_s \
-            wire_segments_per_gb_s worst_slack_ns datapath_delay_ns \
+            interface_nets interface_pips interface_nodes \
+            interface_wire_segments k_lut_per_gb_s k_ff_per_gb_s \
+            interface_pips_per_gb_s interface_wire_segments_per_gb_s \
+            worst_slack_ns datapath_delay_ns \
             logic_delay_ns route_delay_ns]
-        foreach scope [dict keys $scopes] {
+        foreach scope [analysis_scope_names] {
             set util [dict get $utilization_by_scope $scope]
             set incident N/A
             set excluded_non_signal N/A
             set excluded_unrouted N/A
             set excluded_clock N/A
-            set internal_nets N/A
-            set boundary_nets N/A
-            set total_pips N/A
-            set internal_pips N/A
-            set boundary_pips N/A
-            set total_nodes N/A
-            set total_wires N/A
+            set interface_nets N/A
+            set interface_pips N/A
+            set interface_nodes N/A
+            set interface_wires N/A
             if {[dict exists $routing_by_scope $scope]} {
                 set routing [dict get $routing_by_scope $scope]
                 set incident [dict get $routing incident_count]
                 set excluded_non_signal [dict get $routing excluded_non_signal]
                 set excluded_unrouted [dict get $routing excluded_unrouted]
                 set excluded_clock [dict get $routing excluded_clock]
-                set internal [dict get $routing internal_route]
-                set boundary [dict get $routing boundary_route]
-                set total [dict get $routing total_route]
-                set internal_nets [dict get $internal nets]
-                set boundary_nets [dict get $boundary nets]
-                set total_pips [dict get $total pips]
-                set internal_pips [dict get $internal pips]
-                set boundary_pips [dict get $boundary pips]
-                set total_nodes [dict get $total nodes]
-                set total_wires [dict get $total wires]
+                set interface [dict get $routing interface_route]
+                set interface_nets [dict get $interface nets]
+                set interface_pips [dict get $interface pips]
+                set interface_nodes [dict get $interface nodes]
+                set interface_wires [dict get $interface wires]
             }
 
             set timing [dict create \
@@ -716,12 +638,14 @@ proc write_summary_csv {path profile peak_bytes clock_info scopes \
 
             set norm_lut [normalized_metric [dict get $util lut] $peak_gbps 0.001]
             set norm_ff [normalized_metric [dict get $util ff] $peak_gbps 0.001]
-            if {$total_pips eq "N/A"} {
+            if {$interface_pips eq "N/A"} {
                 set norm_pips N/A
                 set norm_wires N/A
             } else {
-                set norm_pips [normalized_metric $total_pips $peak_gbps 1.0]
-                set norm_wires [normalized_metric $total_wires $peak_gbps 1.0]
+                set norm_pips [normalized_metric \
+                    $interface_pips $peak_gbps 1.0]
+                set norm_wires [normalized_metric \
+                    $interface_wires $peak_gbps 1.0]
             }
 
             write_csv_row $channel [list \
@@ -734,8 +658,8 @@ proc write_summary_csv {path profile peak_bytes clock_info scopes \
                 [format_metric [dict get $util uram] 0] \
                 [format_metric [dict get $util dsp] 0] \
                 $incident $excluded_non_signal $excluded_unrouted $excluded_clock \
-                $internal_nets $boundary_nets $total_pips $internal_pips \
-                $boundary_pips $total_nodes $total_wires \
+                $interface_nets $interface_pips $interface_nodes \
+                $interface_wires \
                 [format_metric $norm_lut 6] [format_metric $norm_ff 6] \
                 [format_metric $norm_pips] [format_metric $norm_wires] \
                 [dict get $timing slack] \
@@ -765,6 +689,7 @@ proc write_metadata {path options profile output_dir clock_info peak_bytes} {
         "clock_frequency_mhz=[dict get $clock_info frequency_mhz]" \
         "peak_bytes_per_cycle=$peak_bytes" \
         "peak_gb_s=[expr {$peak_bytes * [dict get $clock_info frequency_mhz] / 1000.0}]" \
+        "routing_scope=selected_root_interface_and_inter_root_nets_only" \
         "routing_length_note=wire_segments_and_PIPs_are_routing_cost_proxies_not_physical_wire_length"]
     write_text_file $path "[join $lines \n]\n"
 }
@@ -838,7 +763,7 @@ puts [format "Bandwidth normalizer: %.3f B/cycle at %.3f MHz = %.3f GB/s" \
 
 puts "Collecting scoped utilization:"
 set utilization_by_scope [dict create]
-foreach scope [dict keys $scopes] {
+foreach scope [analysis_scope_names] {
     puts "  $scope"
     set report_text [report_utilization_for_scope $scope \
         [dict get $root_scopes $scope] $output_dir]
@@ -859,10 +784,8 @@ if {[dict get $fabric_util bram] != 0.0} {
 
 puts "Collecting scoped routing cost:"
 set routing_by_scope [dict create]
-foreach scope {fabric fabric_dma_local fabric_dma_full} {
-    dict set routing_by_scope $scope \
-        [analyze_routing $scope [dict get $root_scopes $scope]]
-}
+dict set routing_by_scope fabric \
+    [analyze_routing fabric [dict get $root_scopes fabric]]
 write_routing_csv [file join $output_dir routing.csv] \
     $profile $routing_by_scope
 

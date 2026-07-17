@@ -36,7 +36,8 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
   parameter int DCACHE_ADDR_WIDTH = 1,
   parameter int LMEM_ADDR_WIDTH   = 1,
   parameter int DCACHE_TAG_WIDTH = 1,
-  parameter int LMEM_TAG_WIDTH   = 1
+  parameter int LMEM_TAG_WIDTH   = 1,
+  parameter int RD_OUTSTANDING = 2
 ) (
   input wire clk,
   input wire reset,
@@ -508,8 +509,7 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
     SLOT_DRAINING
   } slot_state_e;
 
-  localparam int RD_OUTSTANDING_CAP = `DMA_RD_OUTSTANDING_SLOT;
-  localparam int RD_SLOT_BITS_CAP   = `CLOG2(RD_OUTSTANDING_CAP);
+  localparam int RD_SLOT_BITS_CAP   = `CLOG2(RD_OUTSTANDING);
   localparam int DCACHE_TAG_VALUE_W = DCACHE_TAG_WIDTH - `UP(UUID_WIDTH);
   localparam int LMEM_TAG_VALUE_W   = LMEM_TAG_WIDTH - `UP(UUID_WIDTH);
   localparam int MIN_TAG_VALUE_W    = (DCACHE_TAG_VALUE_W < LMEM_TAG_VALUE_W)
@@ -520,8 +520,8 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
   localparam int RD_SLOT_BITS_RAW   = (EFF_TAG_VALUE_W < RD_SLOT_BITS_CAP)
                                     ? EFF_TAG_VALUE_W : RD_SLOT_BITS_CAP;
   localparam int RD_SLOT_BITS       = (RD_SLOT_BITS_RAW < 1) ? 1 : RD_SLOT_BITS_RAW;
-  localparam int RD_OUTSTANDING     = (RD_SLOT_BITS_RAW == 0) ? 1 : (1 << RD_SLOT_BITS_RAW);
-  localparam int SLOT_OCC_W         = `CLOG2(RD_OUTSTANDING + 1);
+  localparam int RD_OUTSTANDING_EFF = (RD_SLOT_BITS_RAW == 0) ? 1 : (1 << RD_SLOT_BITS_RAW);
+  localparam int SLOT_OCC_W         = `CLOG2(RD_OUTSTANDING_EFF + 1);
 
   initial begin
     if (MIN_TAG_VALUE_W < 1)
@@ -544,9 +544,9 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
   logic rd_finished;
   assign rd_finished = (rd_state == RD_DONE);
 
-  slot_state_e                slot_state_r [RD_OUTSTANDING];
-  logic [RD_OUTSTANDING-1:0][MAX_BYTES*8-1:0] slot_data_r;
-  logic [RD_OUTSTANDING-1:0][WIN_VALID_W-1:0] slot_valid_bytes_r;
+  slot_state_e                slot_state_r [RD_OUTSTANDING_EFF];
+  logic [RD_OUTSTANDING_EFF-1:0][MAX_BYTES*8-1:0] slot_data_r;
+  logic [RD_OUTSTANDING_EFF-1:0][WIN_VALID_W-1:0] slot_valid_bytes_r;
   logic [RD_SLOT_BITS-1:0]    rd_issue_slot_r;
   logic [RD_SLOT_BITS-1:0]    wr_expect_slot_r;
   logic [SLOT_OCC_W-1:0]      slot_occupancy_r;
@@ -773,7 +773,7 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
     input logic [RD_SLOT_BITS-1:0] idx
   );
     begin
-      if (RD_OUTSTANDING == 1)
+      if (RD_OUTSTANDING_EFF == 1)
         next_rd_slot_idx = '0;
       else
         next_rd_slot_idx = idx + RD_SLOT_BITS'(1);
@@ -849,7 +849,7 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
   if (SAME_WIDTH_FAST) begin : g_response_dpram
     VX_dp_ram #(
       .DATAW    (MAX_BYTES * 8),
-      .SIZE     (RD_OUTSTANDING),
+      .SIZE     (RD_OUTSTANDING_EFF),
       .WRENW    (1),
       .OUT_REG  (1),
       .LUTRAM   (0),
@@ -1292,7 +1292,7 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
 
         rd_can_issue = (rd_state == RD_RUN)
                     && (lmem_rd_ptr < lmem_rd_end)
-                    && (slot_occupancy_r < SLOT_OCC_W'(RD_OUTSTANDING))
+                    && (slot_occupancy_r < SLOT_OCC_W'(RD_OUTSTANDING_EFF))
                     && (slot_state_r[rd_issue_slot_r] == SLOT_FREE);
 
         if (rd_can_issue) begin
@@ -1394,7 +1394,7 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
 
         rd_can_issue = (rd_state == RD_RUN)
                     && (dcache_rd_ptr < dcache_rd_end)
-                    && (slot_occupancy_r < SLOT_OCC_W'(RD_OUTSTANDING))
+                    && (slot_occupancy_r < SLOT_OCC_W'(RD_OUTSTANDING_EFF))
                     && (slot_state_r[rd_issue_slot_r] == SLOT_FREE);
 
         if (rd_can_issue) begin

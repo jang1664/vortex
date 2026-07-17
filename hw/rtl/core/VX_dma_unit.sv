@@ -18,7 +18,8 @@ module VX_dma_unit import VX_gpu_pkg::*; #(
   parameter int LMEM_ADDR_WIDTH   = 1,
   parameter int DCACHE_TAG_WIDTH = 1,
   parameter int LMEM_TAG_WIDTH   = 1,
-  parameter int MISALIGN_PACK_BYTES = LSU_WORD_SIZE
+  parameter int MISALIGN_PACK_BYTES = LSU_WORD_SIZE,
+  parameter int RD_OUTSTANDING = 2
 ) (
   input wire clk,
   input wire reset,
@@ -41,7 +42,8 @@ module VX_dma_unit import VX_gpu_pkg::*; #(
       .LMEM_ADDR_WIDTH  (LMEM_ADDR_WIDTH),
       .DCACHE_TAG_WIDTH (DCACHE_TAG_WIDTH),
       .LMEM_TAG_WIDTH   (LMEM_TAG_WIDTH),
-      .MISALIGN_PACK_BYTES (MISALIGN_PACK_BYTES)
+      .MISALIGN_PACK_BYTES (MISALIGN_PACK_BYTES),
+      .RD_OUTSTANDING   (RD_OUTSTANDING)
     ) u_impl (
       .clk            (clk),
       .reset          (reset),
@@ -59,7 +61,8 @@ module VX_dma_unit import VX_gpu_pkg::*; #(
       .DCACHE_ADDR_WIDTH(DCACHE_ADDR_WIDTH),
       .LMEM_ADDR_WIDTH  (LMEM_ADDR_WIDTH),
       .DCACHE_TAG_WIDTH (DCACHE_TAG_WIDTH),
-      .LMEM_TAG_WIDTH   (LMEM_TAG_WIDTH)
+      .LMEM_TAG_WIDTH   (LMEM_TAG_WIDTH),
+      .RD_OUTSTANDING   (RD_OUTSTANDING)
     ) u_impl (
       .clk            (clk),
       .reset          (reset),

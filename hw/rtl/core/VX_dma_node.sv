@@ -13,7 +13,8 @@ module VX_dma_node import VX_gpu_pkg::*; #(
   // Defaults track the VX_core-side interface widths (see VX_core.sv:87-95).
   parameter int DCACHE_TAG_WIDTH_P = DCACHE_TAG_WIDTH,
   parameter int LMEM_TAG_WIDTH_P   = LMEM_TAG_WIDTH,
-  parameter int MISALIGN_PACK_BYTES = LSU_WORD_SIZE
+  parameter int MISALIGN_PACK_BYTES = LSU_WORD_SIZE,
+  parameter int RD_OUTSTANDING = `DMA_NODE_RD_OUTSTANDING_SLOT
 ) (
   input wire clk,
   input wire reset,
@@ -85,7 +86,8 @@ module VX_dma_node import VX_gpu_pkg::*; #(
     .LMEM_ADDR_WIDTH  (DMA_LMEM_ADDR_WIDTH),
     .DCACHE_TAG_WIDTH (DCACHE_TAG_WIDTH_P),
     .LMEM_TAG_WIDTH   (LMEM_TAG_WIDTH_P),
-    .MISALIGN_PACK_BYTES (MISALIGN_PACK_BYTES)
+    .MISALIGN_PACK_BYTES (MISALIGN_PACK_BYTES),
+    .RD_OUTSTANDING   (RD_OUTSTANDING)
   ) u_dma_unit (
     .clk          (clk),
     .reset        (reset),
