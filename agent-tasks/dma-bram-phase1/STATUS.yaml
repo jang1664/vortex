@@ -1,0 +1,93 @@
+task: dma-bram-phase1
+status: completed
+updated: "2026-07-17 19:40"
+goal: >-
+  Implement the C4 same-width aligned DMA response storage with VX_dp_ram and
+  compare verified OOC resource and timing results against baseline 006.
+progress:
+  - timestamp: "2026-07-17 19:08"
+    action: confirmed Phase 1 implementation scope
+    result: >-
+      C4 uses equal 512-bit AXI and TMEM beats. The implementation will optimize
+      only SAME_WIDTH_FAST and retain the current width-conversion path.
+  - timestamp: "2026-07-17 19:08"
+    action: backed up all existing files planned for modification
+    result: >-
+      VX_dma_unit_align.sv, the dma_mem_unit Makefile, and its testbench were
+      copied under experiment 007 with matching SHA-256 checksums.
+  - timestamp: "2026-07-17 19:09"
+    action: prepared an isolated configured build
+    result: >-
+      build_dma_bram_phase1 was configured for XLEN=64. The first command,
+      make third_party, failed because the generated top-level Makefile has no
+      such target. The correct make -C ../third_party command passed, followed
+      by make -C hw config.
+  - timestamp: "2026-07-17 19:14"
+    action: implemented same-width response DPRAM and direct drain
+    result: >-
+      SAME_WIDTH_FAST now stores response payloads in synchronous VX_dp_ram,
+      holds SLOT_DRAINING until destination fire, bypasses wide destination
+      request buffers, and uses control-only source-read buffers. Unequal-width
+      elaborations retain the legacy data path.
+  - timestamp: "2026-07-17 19:15"
+    action: ran first 64-byte same-width VCS test
+    result: >-
+      Rejected before DMA execution because the existing 32-byte segment stride
+      violates the aligned module's 64-byte stride guard. The failure log was
+      preserved and the testbench was changed to skip segments smaller than the
+      configured maximum bus beat.
+  - timestamp: "2026-07-17 19:18"
+    action: completed aligned DMA VCS unit tests
+    result: >-
+      The final 64:64 same-width test passed with SRAM assertions enabled. The
+      32:32 same-width test and the original 32:16 width-conversion test also
+      passed in both directions with padding and periodic request stalls.
+  - timestamp: "2026-07-17 19:19"
+    action: started C4 xrt-vcs-sim blackbox gate
+    result: >-
+      The first attempts identified three build-flow prerequisites: build the
+      current kernel library, provide XRT_XCLBIN_PATH, and do not expect
+      --fpga-bin aliases to resolve in xrt-vcs-sim mode.
+  - timestamp: "2026-07-17 19:25"
+    action: completed C4 xrt-vcs-sim blackbox gate
+    result: >-
+      fpint_gemm_ffn_hw passed with M=N=K=128, qblk=32, one core, sixteen
+      threads, eight DMA channels, and DISABLE_FSDB. The run reported 7041
+      instructions, 17265 cycles, and IPC 0.407819.
+  - timestamp: "2026-07-17 19:31"
+    action: synthesized the modified C4 DMA engine out of context
+    result: >-
+      Vivado 2025.1 passed the 100 MHz constraint. Relative to baseline 006,
+      u_dma_engine LUTs fell from 54588 to 34635 and FFs from 47586 to 12544.
+      WNS improved from +3.853 ns to +4.342 ns. The tradeoff is 56 RAMB36 and
+      eight additional RAMB18 blocks, or 60 additional RAMB36 equivalents.
+  - timestamp: "2026-07-17 19:33"
+    action: recorded the experiment decision
+    result: >-
+      Keep the Phase 1 implementation as a candidate. Unit, blackbox, and OOC
+      gates pass; full-design synthesis and P&R are still required to evaluate
+      the added BRAM placement pressure.
+  - timestamp: "2026-07-17 19:40"
+    action: reconciled the optimization plan with the implemented primitive
+    result: >-
+      Updated dma_bram_optimization.md to record that Phase 1 uses the existing
+      VX_dp_ram and is complete, while Phase 2 and Phase 3 remain unimplemented.
+pitfalls:
+  - >-
+    VX_dp_ram with OUT_REG=1 has one-cycle synchronous read latency and holds
+    its output when read is low; valid metadata must be delayed with read issue.
+  - >-
+    A slot cannot be freed at SRAM read issue because destination backpressure
+    may retain the payload. It must remain SLOT_DRAINING until request fire.
+  - >-
+    C4 is an alias for one core and eight improve DMA channels, not four cores.
+  - >-
+    The configured build top-level Makefile builds third-party dependencies as
+    part of all; there is no target named third_party. Use make -C ../third_party.
+  - >-
+    ci/run_black.sh resolves --fpga-bin aliases only for hardware mode. For
+    xrt-vcs-sim, set XRT_XCLBIN_PATH explicitly after sourcing the C4 config.
+  - >-
+    Historical cycle logs are not a controlled baseline when their instruction
+    count differs. Rebuild both revisions from identical software and flags
+    before attributing a latency delta to this RTL change.

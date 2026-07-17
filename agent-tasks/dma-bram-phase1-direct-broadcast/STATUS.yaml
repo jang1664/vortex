@@ -1,0 +1,100 @@
+task: dma-bram-phase1-direct-broadcast
+status: completed
+updated: "2026-07-17 20:27"
+goal: >-
+  Remove redundant same-width write-data masking and broadcast the VX_dp_ram
+  output to both destination buses, then measure C4 LUT and timing changes.
+progress:
+  - timestamp: "2026-07-17 19:59"
+    action: confirmed the direct-data and broadcast experiment scope
+    result: >-
+      Both changes are restricted to SAME_WIDTH_FAST. The unequal-width path
+      and the source-response direction mux remain unchanged.
+  - timestamp: "2026-07-17 19:59"
+    action: backed up the experiment 007 production RTL
+    result: >-
+      VX_dma_unit_align.sv was copied before modification with SHA-256
+      819d48d8db1db173e17533fb312e2014fea3ad0b4c4b3b9d183b8e2aa9ea8550.
+  - timestamp: "2026-07-17 20:03"
+    action: ran the first 32:32 direct-broadcast VCS test
+    result: >-
+      The testbench rejected the initial broadcast implementation because the
+      RAM output changed while a source read request was stalled. The failure
+      was preserved as samewidth32-broadcast-stability-fail.log.
+  - timestamp: "2026-07-17 20:05"
+    action: preserved ready/valid payload stability
+    result: >-
+      The broadcast path now blocks response RAM read issue while either
+      control-only source read request is stalled. Valid read requests retain a
+      stable data field without restoring a 512-bit data mux.
+  - timestamp: "2026-07-17 20:07"
+    action: identified the padding semantics of the original output mask
+    result: >-
+      The direct-data test reached completion but rejected nonzero destination
+      padding. Destination byte enable covers the full segment, including
+      padding, so invalid payload bytes must be explicitly written as zero.
+  - timestamp: "2026-07-17 20:09"
+    action: moved padding zero-fill to response RAM capture
+    result: >-
+      Same-width responses now zero invalid trailing bytes once before the RAM
+      write. Both destination directions consume the pre-masked RAM output
+      directly, avoiding duplicated output-side byte muxes.
+  - timestamp: "2026-07-17 20:11"
+    action: identified padding-only destination beats
+    result: >-
+      A descriptor with 32 padding bytes on a 32-byte bus has a destination
+      beat with no response slot. Direct RAM output reused the previous payload
+      instead of writing zero; the failure was preserved for comparison.
+  - timestamp: "2026-07-17 20:13"
+    action: added one shared padding-only data selector
+    result: >-
+      Partial response beats are pre-masked before RAM storage. Padding-only
+      beats select zero through one same-width data signal shared by DCACHE and
+      LMEM, rather than duplicating byte masks in both destination paths.
+  - timestamp: "2026-07-17 20:16"
+    action: coupled destination progress to stalled source-read payloads
+    result: >-
+      When a control-only source request is externally stalled, the opposite
+      destination request and response RAM read are held. This preserves the
+      full shared request payload while retaining a single broadcast data net.
+  - timestamp: "2026-07-17 20:19"
+    action: completed aligned DMA VCS unit gates
+    result: >-
+      Same-width 32:32 and 64:64 tests passed all directions, padding cases,
+      and periodic request stalls. The legacy 32:16 width-conversion test also
+      passed unchanged.
+  - timestamp: "2026-07-17 20:24"
+    action: completed the forced-rebuild C4 xrt-vcs-sim gate
+    result: >-
+      fpint_gemm_ffn_hw passed at M=N=K=128 after make -B rebuilt simv from the
+      modified RTL. It reported 7035 instructions, 17355 cycles, and IPC
+      0.405359. Experiment 007 reported 7041 instructions and 17265 cycles, so
+      the observed cycle increase is 90 cycles or 0.52 percent with a six
+      instruction polling difference.
+  - timestamp: "2026-07-17 20:26"
+    action: completed C4 DMA OOC synthesis
+    result: >-
+      u_dma_engine uses 27259 LUTs, 12560 FFs, 56 RAMB36, 16 RAMB18, and 128
+      DSPs. Relative to experiment 007, LUTs fell by 7376 or 21.30 percent,
+      FFs increased by 16, and WNS improved from +4.342 ns to +4.721 ns.
+  - timestamp: "2026-07-17 20:27"
+    action: compared periodic-backpressure completion time
+    result: >-
+      The 32:32 suite increased from 13585 ns to 14935 ns and the 64:64 suite
+      from 6575 ns to 7075 ns. The unchanged 32:16 path remained at 14365 ns.
+      The combined variant is not accepted until item 1 is isolated from the
+      throughput cost of item 2.
+pitfalls:
+  - >-
+    Request data is don't-care only when request valid is low or the request is
+    a read. Direction, rw, address, byte enable, tag, and valid must retain their
+    existing selection behavior.
+  - >-
+    Partial final beats must retain the existing byte-enable calculation even
+    though inactive write-data bytes are no longer forced to zero.
+  - >-
+    Broadcasting the RAM output also drives the ignored data field of source
+    reads. The RAM output must not change while such a request is stalled.
+  - >-
+    Padding bytes are part of the destination write footprint and must become
+    zero. Byte enable alone cannot replace zero-fill without changing behavior.

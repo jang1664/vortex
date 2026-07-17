@@ -1,0 +1,7 @@
+top=VX_dma_engine_ooc
+device=xcu55c-fsvh2892-2L-e
+part=xcu55c-fsvh2892-2L-e
+vivado=2025.1
+design_mode=
+synthesis_status=synth_design Complete!
+write_checkpoint=0

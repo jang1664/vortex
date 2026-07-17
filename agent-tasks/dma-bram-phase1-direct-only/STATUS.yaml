@@ -1,0 +1,69 @@
+task: dma-bram-phase1-direct-only
+status: completed
+updated: "2026-07-17 23:10"
+goal: >-
+  Retain same-width direct RAM write data while removing broadcast and its
+  source/destination stall coupling, then compare C4 utilization, timing, and
+  cycle behavior with experiments 007 and 008.
+progress:
+  - timestamp: "2026-07-17 22:53"
+    action: confirmed the direct-data-only experiment scope
+    result: >-
+      Experiment 009 changes only the SAME_WIDTH_FAST request data and control.
+      Capture-time padding zero-fill and the unequal-width path are retained.
+  - timestamp: "2026-07-17 22:53"
+    action: backed up the experiment 008 production RTL
+    result: >-
+      VX_dma_unit_align.sv was copied before modification with SHA-256
+      84e3fcfd496f766de561fe9ac16f14fa954b3d3f2b1d1545790a3d1d06889ccc.
+  - timestamp: "2026-07-17 22:57"
+    action: implemented the item-1-only RTL variant
+    result: >-
+      DCACHE and LMEM source-read data are again direction-specific zeros.
+      Cross-direction request gating and response-RAM read stalls were removed.
+      Capture-time padding zero-fill and direct same-width destination data are
+      retained, and the experiment 007 comparison contains only item 1 changes.
+  - timestamp: "2026-07-17 23:01"
+    action: completed aligned DMA VCS unit gates
+    result: >-
+      Same-width 32:32 completed 9 cases at 13585 ns, 64:64 completed 6 cases
+      at 6575 ns, and legacy 32:16 completed 9 cases at 14365 ns. All passed
+      padding, periodic backpressure, and stalled-payload stability checks.
+      The times exactly match experiment 007, confirming that removing item 2
+      eliminates experiment 008's 7.6-9.9 percent throughput penalty.
+  - timestamp: "2026-07-17 23:04"
+    action: completed the fresh C4 xrt-vcs-sim gate
+    result: >-
+      fpint_gemm_ffn_hw passed at M=N=K=128 through the VCS socket-backed
+      vortex_xrtsim runtime. It reported 6993 instructions, 12252 cycles, and
+      IPC 0.570764. The isolated build runtime had to be passed explicitly via
+      VORTEX_RT_PATH; otherwise the source-tree physical-XRT runtime was loaded
+      and failed before connecting to VCS. The failed log is preserved.
+  - timestamp: "2026-07-17 23:04"
+    action: invalidated the old cross-backend xrt-vcs cycle comparison
+    result: >-
+      Experiments 007 and 008 recorded physical-device runtime identity rather
+      than vortex_xrtsim. Their 17265 and 17355 cycle values are not controlled
+      VCS-backend baselines and are excluded from the direct-only performance
+      decision. Periodic-backpressure unit times remain controlled comparisons.
+  - timestamp: "2026-07-17 23:10"
+    action: completed C4 DMA OOC synthesis
+    result: >-
+      u_dma_engine uses 28922 LUTs, 12522 FFs, 56 RAMB36, 16 RAMB18, and 128
+      DSPs with WNS +4.495 ns and TNS 0. Relative to experiment 007, LUTs fell
+      by 5713 or 16.49 percent and WNS improved by 0.153 ns. Relative to
+      broadcast experiment 008, LUTs increased by 1663 while controlled unit
+      throughput returned to the 007 level.
+  - timestamp: "2026-07-17 23:10"
+    action: selected the direct-only variant
+    result: >-
+      Experiment 009 is the preferred Phase 1 RTL because it retains most of
+      the direct-data LUT reduction without broadcast-induced backpressure
+      coupling or a timing regression relative to experiment 007.
+pitfalls:
+  - >-
+    Direction-specific request data is required so an externally stalled
+    source read does not depend on destination RAM output stability.
+  - >-
+    Partial payload and padding-only destination beats must continue to write
+    explicit zeros.

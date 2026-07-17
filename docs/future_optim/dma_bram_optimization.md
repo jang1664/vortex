@@ -1,6 +1,6 @@
 # Aligned DMA response SRAM 기반 LUT/FF 최적화 계획
 
-- 상태: 설계 제안
+- 상태: Phase 1 구현 및 C4 OOC 검증 완료, Phase 2/3 미구현
 - 대상: `hw/rtl/core/VX_dma_unit_align.sv`, `hw/rtl/mem/VX_dma_engine.sv`
 - 기준 빌드: `xrt_hw_u55c_c1_f100_fpint_L2cache_8d9b4939d1`
 
@@ -61,18 +61,15 @@ LUT/FF와 routing congestion을 줄일 여유가 있다.
 
 ## 설계 결정
 
-### 명시적인 `dp_sram` 사용
+### 기존 `VX_dp_ram` 사용
 
-SRAM은 pragma 기반 inference로 만들지 않는다.
+별도의 SRAM wrapper를 추가하지 않고 저장소의 `VX_dp_ram`을 사용한다.
 
 - `(* ram_style = "block" *)`을 사용하지 않는다.
-- 현재 `VX_dp_ram`의 inferred array 구현을 사용하지 않는다.
-- aligned DMA는 명시적인 `dp_sram` 모듈을 인스턴스한다.
-- Xilinx primitive 또는 명시적인 memory macro 선택은 `dp_sram` 내부에
-  격리한다.
-
-현재 저장소에는 이름이 `dp_sram`인 모듈이 없으므로 구현 단계에서 모듈을
-추가하거나 외부에서 제공되는 동일 계약의 모듈을 연결해야 한다.
+- aligned DMA가 `VX_dp_ram`을 직접 인스턴스한다.
+- `OUT_REG=1`, `LUTRAM=0`, `RDW_MODE="R"`로 synchronous read-first BRAM을
+  요청한다.
+- payload RAM은 reset하지 않고 slot state로 유효성을 관리한다.
 
 필요한 SRAM 계약:
 
@@ -243,7 +240,8 @@ port width에 맞게 유지된다.
 - destination wide word 조립을 위해 별도 wide accumulator FF가 필요해진다.
 - 이는 wide output register를 제거하려는 목표와 충돌한다.
 
-따라서 preferred 구조는 `MIN_BYTES` 단위로 banked된 logical `dp_sram`이다.
+따라서 preferred 구조는 `MIN_BYTES` 단위로 banked된 logical
+`VX_dp_ram` 배열이다.
 
 ```text
 logical response SRAM entry, width = MAX_BYTES
@@ -254,7 +252,7 @@ logical response SRAM entry, width = MAX_BYTES
 +---------+---------+---------+---------+
 ```
 
-각 bank는 동일 depth의 명시적 1R1W `dp_sram` 인스턴스다.
+각 bank는 동일 depth의 1R1W `VX_dp_ram` 인스턴스다.
 
 - narrow response는 해당 bank 하나에 write한다.
 - wide response는 모든 bank에 같은 cycle에 write한다.
@@ -302,17 +300,23 @@ Tag width가 부족하면 group slot 수를 줄이거나 response ordering을 �
 localparam int NUM_BANKS = MAX_BYTES / MIN_BYTES;
 
 for (genvar b = 0; b < NUM_BANKS; ++b) begin : g_payload_bank
-    dp_sram #(
-        .DATAW (MIN_BYTES * 8),
-        .DEPTH (RD_OUTSTANDING)
+    VX_dp_ram #(
+        .DATAW    (MIN_BYTES * 8),
+        .SIZE     (RD_OUTSTANDING),
+        .WRENW    (1),
+        .OUT_REG  (1),
+        .LUTRAM   (0),
+        .RDW_MODE ("R")
     ) payload_sram (
-        .clk     (clk),
-        .wr_en   (bank_wr_en[b]),
-        .wr_addr (rsp_group_slot),
-        .wr_data (rsp_bank_data[b]),
-        .rd_en   (sram_rd_issue),
-        .rd_addr (wr_expect_slot_r),
-        .rd_data (sram_bank_data[b])
+        .clk   (clk),
+        .reset (reset),
+        .read  (sram_rd_issue),
+        .write (bank_wr_en[b]),
+        .wren  (1'b1),
+        .waddr (rsp_group_slot),
+        .wdata (rsp_bank_data[b]),
+        .raddr (wr_expect_slot_r),
+        .rdata (sram_bank_data[b])
     );
 end
 
@@ -367,15 +371,27 @@ Destination write data는 항상 SRAM output에서 가져온다. 따라서 현�
 
 ### Phase 1: Same-width aligned DMA
 
-- 명시적인 1R1W `dp_sram` 추가
-- response payload를 SRAM으로 이동
-- SRAM output direct-write holding protocol 구현
-- `wr_slot_buf` 제거
-- source request buffer를 control-only로 축소
-- destination wide request buffer 제거
+- 상태: 구현 및 검증 완료
+- 기존 1R1W `VX_dp_ram` 사용
+- response payload를 SRAM으로 이동 완료
+- SRAM output direct-write holding protocol 구현 완료
+- same-width 경로의 `wr_slot_buf` 제거 완료
+- source request buffer를 control-only로 축소 완료
+- destination wide request buffer 제거 완료
+- response capture 시 partial padding을 한 번만 zero-fill하고 SRAM output을
+  destination write data로 직접 사용
+- DCACHE/LMEM request data는 direction별로 선택하는 direct-only 009를 최종안으로
+  선택; broadcast와 cross-direction stall coupling은 제외
 
 이 단계에서 width-conversion window는 기존 경로에 남겨도 된다. Same-width
 config로 SRAM protocol과 resource 효과를 먼저 검증한다.
+
+C4 OOC 결과는 baseline 006 대비 LUT 47.02%, FF 73.69% 감소, WNS 0.642 ns
+개선이다. 중간 DPRAM 007 대비로도 LUT 16.49%와 WNS 0.153 ns가 개선됐고,
+periodic-backpressure 완료 시간은 007과 동일하다. Broadcast 008은 LUT를 더
+줄였지만 same-width unittest 시간이 7.6-9.9% 증가해 제외했다. RAMB36 환산
+사용량은 baseline 대비 60개 증가했다. 상세 결과는
+`dma_experiments/20260717-009-samewidth-direct-only/comparison.md`에 있다.
 
 ### Phase 2: Wide-to-narrow
 
@@ -450,7 +466,7 @@ directory를 사용한다.
 
 | 위험 | 대응 |
 |---|---|
-| SRAM read latency가 1 cycle이 아님 | `dp_sram` interface contract로 고정하고 assertion/test 추가 |
+| SRAM read latency가 1 cycle이 아님 | `VX_dp_ram`의 `OUT_REG=1` 설정과 assertion/test로 검증 |
 | `rd_en=0`에서 output이 유지되지 않음 | 명시적 SRAM 구현의 clock-enable 동작 보장 |
 | narrow-to-wide tag width 부족 | group slot 수 축소 또는 tag width 확장 |
 | bank response가 누락 또는 중복됨 | bank-valid mask와 duplicate-response assertion 추가 |

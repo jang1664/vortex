@@ -1,0 +1,120 @@
+task: dma-bram-ooc-baseline
+status: completed
+updated: "2026-07-17 16:59"
+goal: >-
+  Create and run a reproducible Vivado out-of-context synthesis flow for the
+  C4 alias DMA engine baseline, then compare it with the existing C4 reference.
+progress:
+  - timestamp: "2026-07-17 16:21"
+    action: inspected C4 alias and existing synthesis flow
+    result: >-
+      C4 resolves to configs/improve_th16_tcol32_hwexp_dcache.sh and the
+      historical xrt_hw_u55c_c1_f100_fpint_L2cache_8d9b4939d1 build. The
+      existing DUT Tcl continues through implementation, so a synthesis-only
+      entry point is required.
+  - timestamp: "2026-07-17 16:27"
+    action: ran initial C4 OOC attempt
+    result: >-
+      Rejected as a baseline. Vivado automatic hierarchy management replaced
+      VX_dma_engine with VX_tmem_subsystem before synthesis. The run was
+      interrupted and its artifacts were retained under
+      20260717-001-c4-aligned-baseline.
+  - timestamp: "2026-07-17 16:27"
+    action: fixed OOC top selection
+    result: >-
+      The Tcl flow now resolves compile order first, selects VX_dma_engine,
+      and switches the project to manual source management so Vivado cannot
+      replace the requested top.
+  - timestamp: "2026-07-17 16:30"
+    action: ran second C4 OOC attempt
+    result: >-
+      VX_dma_engine was selected correctly, but elaboration failed because the
+      broad third_party/axi/src source directory pulled unrelated AXI modules
+      while omitting the axi/include and common_cells include roots. Artifacts
+      were retained under 20260717-002-c4-aligned-baseline.
+  - timestamp: "2026-07-17 16:30"
+    action: narrowed AXI source closure
+    result: >-
+      The wrapper now includes only axi_pkg.sv and axi_intf.sv and records the
+      required axi/include and common_cells include roots.
+  - timestamp: "2026-07-17 16:34"
+    action: ran third C4 OOC attempt
+    result: >-
+      AXI parsing succeeded, but directory-wide Vortex source collection still
+      parsed unused VX_core files and failed on their unrelated FPU includes.
+      Artifacts were retained under 20260717-003-c4-aligned-baseline.
+  - timestamp: "2026-07-17 16:34"
+    action: created an explicit DMA source manifest
+    result: >-
+      The wrapper now records only the packages, interfaces, libraries, aligned
+      and misaligned DMA units, and engine required by VX_dma_engine.
+  - timestamp: "2026-07-17 16:38"
+    action: ran fourth C4 OOC attempt
+    result: >-
+      The minimal source closure reached VX_dma_engine but exposed that the
+      standalone module defaults depend on PLATFORM_MEMORY_ID_WIDTH, which is
+      supplied by the XRT platform makefile rather than the alias config.
+      Artifacts were retained under 20260717-004-c4-aligned-baseline.
+  - timestamp: "2026-07-17 16:38"
+    action: added the C4 DMA OOC wrapper
+    result: >-
+      VX_dma_engine_ooc now fixes the production improve parameters, including
+      eight channels, 512-bit data, 34-bit addresses, 8-bit DMA AXI IDs, GEMM
+      tag width, 18x32-bit descriptor interfaces, and aligned-only mode. All
+      interfaces are flattened so synthesis cannot optimize the engine away.
+  - timestamp: "2026-07-17 16:42"
+    action: ran fifth C4 OOC attempt
+    result: >-
+      The production DMA parameters elaborated correctly. Synthesis then
+      stopped because VIVADO enables ASYNC_BRAM_PATCH and its implementation
+      files were absent from the minimal manifest. Artifacts were retained
+      under 20260717-005-c4-aligned-baseline.
+  - timestamp: "2026-07-17 16:42"
+    action: completed asynchronous RAM dependencies
+    result: >-
+      Added VX_async_ram_patch.sv and its VX_placeholder dependency to the
+      explicit manifest.
+  - timestamp: "2026-07-17 16:49"
+    action: completed the sixth C4 OOC attempt
+    result: >-
+      Vivado 2025.1 synthesized VX_dma_engine_ooc successfully for the U55C.
+      The u_dma_engine child uses 54,588 LUT, 47,586 FF, 8 RAMB18, and 128 DSP.
+      The 100 MHz synthesis timing estimate passed with WNS +3.853 ns and zero
+      TNS. Artifacts are under 20260717-006-c4-aligned-baseline.
+  - timestamp: "2026-07-17 16:53"
+    action: compared the OOC result with historical C4
+    result: >-
+      Historical post-route u_dma_engine utilization is 54,869 LUT, 48,320 FF,
+      8 RAMB18, and 128 DSP. The OOC result is lower by 281 LUT and 734 FF, with
+      identical memory and DSP counts. The comparison records this as context,
+      not an optimization result, because synthesis stages differ.
+  - timestamp: "2026-07-17 16:59"
+    action: finalized reproducibility and validation
+    result: >-
+      run_dma_ooc.sh now resolves the alias and Vivado executable, records an
+      explicit source/config manifest, confines Vivado logs to the experiment,
+      extracts engine and drain-buffer CSVs, and generates a comparison. Large
+      checkpoints are opt-in. Bash syntax, git diff checks, STATUS YAML parsing,
+      vivado_util unit tests, and report metric assertions all passed.
+pitfalls:
+  - >-
+    C4 is an experiment alias, not a four-core configuration. Its config sets
+    NUM_CORES=1 and instantiates the eight-channel improve DMA engine.
+  - >-
+    The historical C4 report is post-route full-design utilization. It is not
+    directly comparable to a DMA-engine OOC post-synthesis report.
+  - >-
+    Vivado automatic source management may silently replace an OOC top that is
+    assigned before the source hierarchy is resolved. Resolve compile order,
+    assign the top, then set source_mgmt_mode to None.
+  - >-
+    Treat third_party/axi/src as an explicit source set, not a directory-wide
+    dependency. Directory-wide collection pulls modules with additional Bender
+    dependencies that VX_dma_engine does not use.
+  - >-
+    hw/scripts/gen_sources.sh collects every source in each include directory;
+    it does not compute a top-specific dependency closure.
+  - >-
+    Alias config files do not contain every XRT platform define. In particular,
+    PLATFORM_MEMORY_DATA_SIZE=64 and PLATFORM_MEMORY_ID_WIDTH=32 come from
+    hw/syn/xilinx/xrt/platforms.mk and must be recorded by standalone OOC flows.
