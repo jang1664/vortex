@@ -83,3 +83,24 @@ verdiLog/
 .Xil/
 vivado_pid*.str
 vivado*.jou
+
+# ---- documentation DMA experiment artifacts ----
+docs/future_optim/dma_experiments/**/before/
+docs/future_optim/dma_experiments/**/project/
+docs/future_optim/dma_experiments/**/*.txt
+docs/future_optim/dma_experiments/**/*.rpt
+docs/future_optim/dma_experiments/**/*.log
+docs/future_optim/dma_experiments/**/*.tcl
+docs/future_optim/dma_experiments/**/*.xml
+docs/future_optim/dma_experiments/**/*.pb
+docs/future_optim/dma_experiments/**/*.dcp
+docs/future_optim/dma_experiments/**/*.xpr
+docs/future_optim/dma_experiments/**/*.vds
+docs/future_optim/dma_experiments/**/*.wdf
+docs/future_optim/dma_experiments/**/*.lpr
+docs/future_optim/dma_experiments/**/*.htr
+docs/future_optim/dma_experiments/**/*.sh
+docs/future_optim/dma_experiments/**/*.bat
+docs/future_optim/dma_experiments/**/*.js
+docs/future_optim/dma_experiments/**/*.csv
+!docs/future_optim/dma_experiments/**/*.md
