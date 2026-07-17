@@ -755,8 +755,11 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
     lmem_req_tag_uuid_w = '0;
     lmem_req_tag_value_w = '0;
 
-    dcache_bus_if.rsp_ready = (state == S_RUN) && !direction_bit_r;
-    lmem_bus_if.rsp_ready = (state == S_RUN) && direction_bit_r;
+    // A destination may return a write acknowledgement even though only source
+    // read responses feed the packer. Drain both response channels so an
+    // acknowledgement cannot backpressure the next descriptor.
+    dcache_bus_if.rsp_ready = 1'b1;
+    lmem_bus_if.rsp_ready = 1'b1;
 
     if (rd_can_issue) begin
       if (direction_bit_r) begin
