@@ -96,11 +96,7 @@ private:
 
   // Descriptor-MMIO functional path.
   static constexpr uint32_t DESC_NUM_ENTRIES     = 1;
-#ifdef GEMM_NAIVE
-  static constexpr uint32_t DESC_NUM_REGS32      = 40;
-#else
   static constexpr uint32_t DESC_NUM_REGS32      = 44;
-#endif
   static constexpr uint32_t DESC_BEAT_BYTES      = 8;
   static constexpr uint32_t DESC_WORDS_PER_BEAT  = DESC_BEAT_BYTES / 4;
   static constexpr uint32_t DESC_NUM_BEATS       = (DESC_NUM_REGS32 + DESC_WORDS_PER_BEAT - 1) / DESC_WORDS_PER_BEAT;

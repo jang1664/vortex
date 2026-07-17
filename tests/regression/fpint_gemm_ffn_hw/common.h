@@ -58,8 +58,9 @@
 #define REG_LOG2_DMA_MT         40
 #define REG_LOG2_DMA_KT         41
 #define REG_LOG2_DMA_NT         42
+#define REG_OUTPUT_PROGRESS     43
 
-#define GEMM_JOB_NUM_REGS32     43
+#define GEMM_JOB_NUM_REGS32     44
 #define GEMM_JOB_NUM_ENTRIES    4
 
 #define STATUS_INIT        0

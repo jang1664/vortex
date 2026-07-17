@@ -29,7 +29,8 @@ module VX_gemm_dma_ctrl_naive import VX_gpu_pkg::*; #(
 
     VX_gemm_dma_ctrl_naive_if.slave       gemm_dma_ctrl_if,
     VX_gemm_sync_if.master          gemm_sync_if,
-    VX_lsu_mem_if.master            dma_if
+    VX_lsu_mem_if.master            dma_if,
+    output wire                     store_done
 );
 
   // ============================================================
@@ -462,6 +463,11 @@ module VX_gemm_dma_ctrl_naive import VX_gpu_pkg::*; #(
 
   assign gemm_dma_ctrl_if.idle = (state_q == S_IDLE);
   assign gemm_dma_ctrl_if.done = (state_q == S_DONE);
+  // The cache-path DMA descriptor has retired. This does not guarantee that
+  // write-through traffic has reached HBM.
+  assign store_done = (state_q == S_POLL_R_WAIT)
+                   && (state_d == S_DONE)
+                   && (cmd_op == OP_DMA_ST);
 
   // ============================================================
   // Comb

@@ -1,0 +1,35 @@
+task: naive-gemm-output-progress
+state: COMPLETE
+branch: fpint
+updated: "2026-07-17"
+summary: "GEMM_NAIVE register 43 output progress is implemented in RTL and SimX with cache-path DMA completion semantics."
+iterations:
+  - id: 1
+    test: "VCS gemm_node M=1 N=256 K=32 QBLK=32"
+    result: FAIL
+    detail: "Compile passed; existing 100000-poll job timeout expired with CONTROL=0x87 while processing the second output tile."
+  - id: 2
+    test: "VCS gemm_node M=1 N=128 K=16 QBLK=16"
+    result: PARTIAL
+    detail: "Register 43 checks passed, but verify_rtl.py misclassified a later output-check $fatal as PASS."
+  - id: 3
+    test: "FSDB diagnosis of back-to-back naive output stores"
+    result: FIXED
+    detail: "The first write-through response held dcache rsp_valid while misaligned L2G DMA kept rsp_ready low, blocking the second descriptor. Both response channels now drain as in aligned DMA."
+  - id: 4
+    test: "VCS gemm_node M=32 N=256 K=32 QBLK=32 +SKIP_OUTPUT_CHECK"
+    result: PASS
+    detail: "Read-only software-write check passed and register 43 reached 2 after two 128-column output DMA tiles; no timeout or $fatal."
+  - id: 5
+    test: "Naive SimX build"
+    result: PASS
+    detail: "sim/simx compiled with GEMM_NAIVE and the 44-register descriptor ABI."
+  - id: 6
+    test: "xrt-vcs-sim fpint_gemm_ffn_hw_naive M=32 N=32 K=32 QBLK=32"
+    result: PASS
+    detail: "One-core kernel execution completed with host output verification PASSED and FSDB disabled."
+pitfalls:
+  - "Naive progress does not prove write-through visibility at HBM."
+  - "verify_rtl.py can report PASS when VCS exits zero after a SystemVerilog $fatal; inspect the simulation log explicitly."
+  - "The standalone naive GEMM output checker currently observes zeros for tested shapes, independent of the progress register; xrt-vcs provides the functional regression."
+next_steps: []

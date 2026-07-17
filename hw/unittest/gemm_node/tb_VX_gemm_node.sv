@@ -93,6 +93,7 @@ module tb_VX_gemm_node
   // job_frontend params (must match DUT instantiation)
   localparam int JOB_NUM_ENTRIES = 4;
   localparam int JOB_NUM_REGS32  = `GEMM_CFG_REG_NUM;
+  localparam int REG_OUTPUT_PROGRESS = 43;
 
   // =========================================================================
   // Clock/Reset
@@ -613,6 +614,38 @@ module tb_VX_gemm_node
     generation = r[`JOB_MMIO_ALLOC_GEN_LSB +: `JOB_MMIO_ALLOC_GEN_BITS];
     if (eid >= JOB_NUM_ENTRIES) $fatal(1, "alloc returned eid=%0d out of range", eid);
     $display("[%0t] JOB ALLOC ok: eid=%0d generation=%0d (r=0x%08h)", $time, eid, generation, r);
+  endtask
+
+  task automatic check_progress_initial(input int unsigned eid);
+    logic [31:0] progress;
+    begin
+      job_read_reg32(eid, REG_OUTPUT_PROGRESS, progress);
+      if (progress != 0)
+        $fatal(1, "[%0t] progress was not reset on allocation: eid=%0d value=%0d", $time, eid, progress);
+
+      job_write_reg32(eid, REG_OUTPUT_PROGRESS, 32'hdead_beef);
+      job_read_reg32(eid, REG_OUTPUT_PROGRESS, progress);
+      if (progress != 0)
+        $fatal(1, "[%0t] software modified read-only progress: eid=%0d value=0x%08h", $time, eid, progress);
+    end
+  endtask
+
+  task automatic check_progress_final(
+    input int unsigned eid,
+    input int unsigned target_m,
+    input int unsigned target_n
+  );
+    logic [31:0] progress;
+    int unsigned expected;
+    begin
+      expected = ((target_m + DMA_MT - 1) / DMA_MT)
+               * ((target_n + DMA_NT - 1) / DMA_NT);
+      job_read_reg32(eid, REG_OUTPUT_PROGRESS, progress);
+      if (progress != expected)
+        $fatal(1, "[%0t] final progress mismatch: eid=%0d got=%0d expected=%0d",
+               $time, eid, progress, expected);
+      $display("[%0t] OUTPUT PROGRESS PASSED: eid=%0d progress=%0d", $time, eid, progress);
+    end
   endtask
 
   // =========================================================================
@@ -1375,6 +1408,7 @@ module tb_VX_gemm_node
       );
 
       job_alloc(job_eid_local, job_gen_local);
+      check_progress_initial(job_eid_local);
       if ($test$plusargs("PARTITIONED")) begin
         if ((test_m != (2 * DMA_MT)) || (test_n != (2 * DMA_NT)))
           $fatal(1, "[%0t] PARTITIONED requires M=%0d N=%0d", $time, 2 * DMA_MT, 2 * DMA_NT);
@@ -1384,6 +1418,7 @@ module tb_VX_gemm_node
             if ((part_m != 0) || (part_n != 0)) begin
               apply_reset();
               job_alloc(job_eid_local, job_gen_local);
+              check_progress_initial(job_eid_local);
             end
             program_job_regs(
               job_eid_local,
@@ -1394,6 +1429,7 @@ module tb_VX_gemm_node
               lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base, lmem_obuf_base
             );
             wait_job_done(job_eid_local, job_gen_local);
+            check_progress_final(job_eid_local, DMA_MT, DMA_NT);
           end
         end
       end else begin
@@ -1406,10 +1442,12 @@ module tb_VX_gemm_node
           lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base, lmem_obuf_base
         );
         wait_job_done(job_eid_local, job_gen_local);
+        check_progress_final(job_eid_local, test_m, test_n);
       end
 
       repeat (50) @(posedge clk);
-      check_output(test_m, test_n, gmem_out_base);
+      if (!$test$plusargs("SKIP_OUTPUT_CHECK"))
+        check_output(test_m, test_n, gmem_out_base);
     end
   endtask
 

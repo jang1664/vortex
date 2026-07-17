@@ -38,6 +38,8 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
 `endif
 );
 
+    localparam int OUTPUT_PROGRESS_REG_IDX = 43;
+
     // -------------------------------------------------------------------------
     // Local parameters
     // -------------------------------------------------------------------------
@@ -201,6 +203,10 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
       .DW(32)
     ) issue_if();
     VX_node_done_if done_if();
+    wire output_store_done;
+    wire progress_update_valid;
+    wire [`JOB_MMIO_ENTRYID_W-1:0] progress_update_entry_id;
+    wire [31:0] progress_update_value;
 
     // -------------------------------------------------------------------------
     // Control-plane wiring
@@ -441,6 +447,7 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
       .NUM_MASTERS(N_MASTER),
       .NUM_ENTRIES(NUM_ENTRIES),
       .NUM_REGS32(`GEMM_CFG_REG_NUM),
+      .HW_WRITE_REG_IDX(OUTPUT_PROGRESS_REG_IDX),
       .CFG_BASE_ADDR(`GEMM_REG_BASE_ADDR),
       .ONE_LANE_MMIO(1'b1)
     ) VX_job_frontend_instance (
@@ -449,9 +456,9 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
       .mmio_if(mmio_if),
       .issue_if(issue_if),
       .done_if(done_if),
-      .hw_write_valid_i(1'b0),
-      .hw_write_entry_id_i('0),
-      .hw_write_value_i('0)
+      .hw_write_valid_i(progress_update_valid),
+      .hw_write_entry_id_i(progress_update_entry_id),
+      .hw_write_value_i(progress_update_value)
     );
 
     initial begin
@@ -630,7 +637,11 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
       .cfg_reg_if(issue_if),
       .done_if(done_if),
       .gemm_ctrl_if(gemm_ctrl_if),
-      .gemm_sync_slv_if(gemm_sync_if)
+      .gemm_sync_slv_if(gemm_sync_if),
+      .output_store_done_i(output_store_done),
+      .progress_update_valid_o(progress_update_valid),
+      .progress_update_entry_id_o(progress_update_entry_id),
+      .progress_update_value_o(progress_update_value)
     `ifdef PERF_ENABLE
       ,.perf(gemm_ctrl_perf)
     `endif
@@ -722,7 +733,8 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
       .reset(reset),
       .gemm_dma_ctrl_if(gemm_dma_ctrl_if),
       .gemm_sync_if(gemm_sync_if[4]),
-      .dma_if(dma_if)
+      .dma_if(dma_if),
+      .store_done(output_store_done)
     );
 
 `ifdef PERF_ENABLE

@@ -21,7 +21,8 @@
 #define OTYPE fp32
 #endif
 
-// TB_VX_gemm_node register indices (0..39)
+// GEMM descriptor register indices (0..43). Registers 40..42 are reserved by
+// the naive backend so output progress has the same index as improve GEMM.
 #define REG_CONTROL             0
 #define REG_INPUT_BASE_LO       1
 #define REG_INPUT_BASE_HI       2
@@ -64,8 +65,9 @@
 #define REG_N_START             37
 #define REG_WTRANS              38
 #define REG_QDIR                39
+#define REG_OUTPUT_PROGRESS     43
 
-#define GEMM_JOB_NUM_REGS32     40
+#define GEMM_JOB_NUM_REGS32     44
 #define GEMM_JOB_NUM_ENTRIES     4
 
 // kernel status codes

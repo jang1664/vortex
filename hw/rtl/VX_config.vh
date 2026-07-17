@@ -1201,7 +1201,7 @@ for block_size in range(1, full_bitwidth+1):
 `define HBM_BUS_STRIDE (`MEM_BLOCK_SIZE * `NUM_DMA_CHANNELS)
 
 `ifdef GEMM_NAIVE
-`define GEMM_CFG_REG_NUM 40       // Naive LMEM backend register map
+`define GEMM_CFG_REG_NUM 44       // Naive LMEM backend register map + reserved tile regs + output progress
 `else
 `define GEMM_CFG_REG_NUM 44       // Improve TMEM backend register map + output progress
 `endif
