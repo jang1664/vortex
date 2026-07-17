@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from types import SimpleNamespace
 import math
@@ -157,8 +157,16 @@ def main_out_name(model: str) -> str:
     return f"{model}_{_stage_shape_name_for_selection(E2E_SHAPE_SELECTION)}"
 
 
+def e2e_no_area_norm_out_name(model: str) -> str:
+    return f"{model}_e2e_no_area_norm_{_stage_shape_name_for_selection(E2E_SHAPE_SELECTION)}"
+
+
 def e2e_stacked_out_name(model: str) -> str:
     return f"{model}_e2e_stacked_by_{E2E_STACK_BY}_{_stage_shape_name_for_selection(E2E_SHAPE_SELECTION)}"
+
+
+def e2e_no_area_norm_stacked_out_name(model: str) -> str:
+    return f"{model}_e2e_no_area_norm_stacked_by_{E2E_STACK_BY}_{_stage_shape_name_for_selection(E2E_SHAPE_SELECTION)}"
 
 
 def gemm_only_out_name(model: str) -> str:
@@ -641,6 +649,7 @@ def _make_suite_options(
     include_c4_alone: bool,
     row_filters: tuple | None,
     shape_selection: ShapeSelection | None,
+    case_latency_scale_rules: tuple[LatencyScaleRule, ...] | None = None,
 ) -> tuple[list, SuiteBarPlotOptions]:
     plot_row_filters = tuple(PLOT_ROW_FILTERS if row_filters is None else row_filters)
     if not include_c4_alone and exclude_c4_alone not in plot_row_filters:
@@ -664,7 +673,11 @@ def _make_suite_options(
         label_maps=plot_label_maps(include_c4_alone=include_c4_alone),
         value_orders=VALUE_ORDERS,
         latency_scale_rules=tuple(LATENCY_SCALE_RULES),
-        case_latency_scale_rules=tuple(CASE_LATENCY_SCALE_RULES),
+        case_latency_scale_rules=tuple(
+            CASE_LATENCY_SCALE_RULES
+            if case_latency_scale_rules is None
+            else case_latency_scale_rules
+        ),
         latency_estimate=LATENCY_ESTIMATE,
         row_filters=plot_row_filters,
     )
@@ -681,6 +694,7 @@ def export_suite_figure_data(
     include_c4_alone: bool = False,
     row_filters: tuple | None = None,
     shape_selection: ShapeSelection | None = E2E_SHAPE_SELECTION,
+    case_latency_scale_rules: tuple[LatencyScaleRule, ...] | None = None,
 ) -> PlotRunResult:
     out_dir = FIGURE_OUTPUT_ROOT / out_name
     suites_in = suite_paths(suite_tag, model)
@@ -698,6 +712,7 @@ def export_suite_figure_data(
         include_c4_alone=include_c4_alone,
         row_filters=row_filters,
         shape_selection=shape_selection,
+        case_latency_scale_rules=case_latency_scale_rules,
     )
     versions = prepare_suite_bar_data_versions(suites, options)
     plot_input = versions.final
@@ -730,6 +745,7 @@ def load_or_export_suite_figure_data(
     include_c4_alone: bool = False,
     row_filters: tuple | None = None,
     shape_selection: ShapeSelection | None = E2E_SHAPE_SELECTION,
+    case_latency_scale_rules: tuple[LatencyScaleRule, ...] | None = None,
     force_rebuild: bool | None = None,
 ) -> PlotRunResult:
     csv_path = figure_data_path(out_name)
@@ -760,7 +776,67 @@ def load_or_export_suite_figure_data(
         include_c4_alone=include_c4_alone,
         row_filters=row_filters,
         shape_selection=shape_selection,
+        case_latency_scale_rules=case_latency_scale_rules,
     )
+
+
+def export_no_area_norm_figure_data(
+    source: PlotRunResult,
+    *,
+    out_name: str,
+) -> PlotRunResult:
+    """Write the unscaled version already produced by the normalized run."""
+    if source.versions is None or source.options is None:
+        raise ValueError("source result has no in-memory data versions")
+
+    plot_input = source.versions.estimated or source.versions.base
+    out_dir = FIGURE_OUTPUT_ROOT / out_name
+    options = replace(
+        source.options,
+        out_dir=out_dir,
+        latency_scale_rules=(),
+        case_latency_scale_rules=(),
+    )
+    warn_interpolation_estimates(plot_input.composed, context=out_name)
+    result = PlotRunResult(
+        tag=source.tag,
+        out_dir=out_dir,
+        suites=source.suites,
+        options=options,
+        versions=None,
+        composed=plot_input.composed,
+        plot_data=plot_input.plot_data,
+        stack_data=plot_input.stack_data,
+        figure_data=pd.DataFrame(),
+        cache_status="derived",
+    )
+    csv_path = _write_latency_figure_data(result)
+    result.figure_data = _read_figure_data(csv_path)
+    _write_total_csv(result)
+    return result
+
+
+def load_or_export_no_area_norm_figure_data(
+    source: PlotRunResult,
+    *,
+    model: str,
+    suite_tag: str,
+    out_name: str,
+    stacked: bool,
+    stack_by: str = STACK_BY,
+) -> PlotRunResult:
+    if source.versions is not None and not LATENCY_SCALE_RULES:
+        return export_no_area_norm_figure_data(source, out_name=out_name)
+    return load_or_export_suite_figure_data(
+        model=model,
+        suite_tag=suite_tag,
+        out_name=out_name,
+        stacked=stacked,
+        stack_by=stack_by,
+        include_c4_alone=False,
+        case_latency_scale_rules=(),
+    )
+
 
 GEMM_ONLY_FILTERS = (GEMM_ONLY_SHAPE_FILTER, lambda df: df["kind"].eq("gemm"), exclude_c4_alone)
 main_all_result: PlotRunResult | None = None
@@ -1082,7 +1158,9 @@ def main() -> int:
     for model in TARGET_MODELS:
         suite_tag = suite_tag_for_model(model)
         main_name = main_out_name(model)
+        no_area_norm_name = e2e_no_area_norm_out_name(model)
         e2e_stacked_name = e2e_stacked_out_name(model)
+        no_area_norm_stacked_name = e2e_no_area_norm_stacked_out_name(model)
         gemm_name = gemm_only_out_name(model)
 
         print(f"model: {model}")
@@ -1097,6 +1175,18 @@ def main() -> int:
         )
         print(f"{model} E2E figure data source: {main_all_result.cache_status}")
 
+        no_area_norm_result = load_or_export_no_area_norm_figure_data(
+            main_all_result,
+            model=model,
+            suite_tag=suite_tag,
+            out_name=no_area_norm_name,
+            stacked=False,
+        )
+        print(
+            f"{model} E2E figure data without area normalization source: "
+            f"{no_area_norm_result.cache_status}"
+        )
+
         e2e_stacked_result = load_or_export_suite_figure_data(
             model=model,
             suite_tag=suite_tag,
@@ -1106,6 +1196,19 @@ def main() -> int:
             include_c4_alone=False,
         )
         print(f"{model} E2E stacked figure data source: {e2e_stacked_result.cache_status}")
+
+        no_area_norm_stacked_result = load_or_export_no_area_norm_figure_data(
+            e2e_stacked_result,
+            model=model,
+            suite_tag=suite_tag,
+            out_name=no_area_norm_stacked_name,
+            stacked=True,
+            stack_by=E2E_STACK_BY,
+        )
+        print(
+            f"{model} E2E stacked figure data without area normalization source: "
+            f"{no_area_norm_stacked_result.cache_status}"
+        )
 
         main_all_gemm_only_result = load_or_export_suite_figure_data(
             model=model,
@@ -1144,8 +1247,12 @@ def main() -> int:
             [
                 figure_data_path(main_name),
                 total_data_path(main_name),
+                figure_data_path(no_area_norm_name),
+                total_data_path(no_area_norm_name),
                 figure_data_path(e2e_stacked_name),
                 total_data_path(e2e_stacked_name),
+                figure_data_path(no_area_norm_stacked_name),
+                total_data_path(no_area_norm_stacked_name),
                 figure_data_path(gemm_name),
                 total_data_path(gemm_name),
                 *(figure_data_path(energy_name) for energy_name in energy_names),

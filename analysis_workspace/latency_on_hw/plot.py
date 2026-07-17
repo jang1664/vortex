@@ -18,6 +18,8 @@ PLOT_CHOICES = (
     "gemm_only",
     "energy",
     "llama_e2e",
+    "llama_e2e_no_area_norm",
+    "llama_e2e_no_area_norm_stacked",
     "llama_e2e_stacked",
     "llama_gemm_only",
     "llama_energy",
@@ -30,7 +32,6 @@ EXCEL_FIGURE_DATA_CSV = "excel_figure_data.csv"
 ONE_COLUMN_FIGSIZE = (3.5, 9.3)
 TWO_COLUMN_FIGSIZE = (7.16, 9.3)
 GEMM_FIGSIZE = (3.5, 4.0)
-LLAMA_E2E_FIGSIZE = (3.5, 4.0)
 LLAMA_GEMM_FIGSIZE = (3.5, 4.0)
 LLAMA_E2E_STACKED_FIGSIZE = (3.5, 4.0)
 SAVE_DPI = 600
@@ -42,7 +43,6 @@ FIGURE_TITLE = None
 MAIN_ALL_TITLE = "E2E latency"
 GEMM_ONLY_TITLE = "GEMM latency breakdown"
 ENERGY_TITLE = "E2E energy per token"
-LLAMA_E2E_TITLE = "Llama 2 and Llama 3 E2E latency"
 LLAMA_E2E_STACKED_TITLE = "Llama 2 and Llama 3 E2E latency breakdown"
 LLAMA_GEMM_ONLY_TITLE = "Llama 2 and Llama 3 GEMM latency breakdown"
 LLAMA_ENERGY_TITLE = "Llama 2 and Llama 3 energy per token"
@@ -212,6 +212,13 @@ def _llama_compact_kwargs(y_label: str) -> dict[str, Any]:
     }
 
 
+def _llama_e2e_wide_knobs() -> WideBarKnobs:
+    return WideBarKnobs(
+        **_llama_compact_kwargs(Y_LABEL),
+        legend_ncol=4,
+    )
+
+
 @dataclass
 class StackedBarKnobs(WideBarKnobs):
     figsize: tuple[float, float] = GEMM_FIGSIZE
@@ -225,6 +232,15 @@ class StackedBarKnobs(WideBarKnobs):
     tight_layout_rect: tuple[float, float, float, float] = (0.0, 0.08, 1.0, 0.96)
     stack_palette: tuple[str, ...] | None = None
     stack_groups: tuple[StackGroupKnobs, ...] = ()
+
+
+def _llama_e2e_stacked_knobs() -> StackedBarKnobs:
+    return StackedBarKnobs(
+        **_llama_compact_kwargs(Y_LABEL),
+        legend_ncol=2,
+        stack_palette=E2E_KIND_STACK_PALETTE,
+        stack_groups=E2E_KIND_STACK_GROUPS,
+    )
 
 
 @dataclass
@@ -258,25 +274,16 @@ class PlotKnobs:
         )
     )
     llama_e2e: WideBarKnobs = field(
-        default_factory=lambda: WideBarKnobs(
-            figsize=LLAMA_E2E_FIGSIZE,
-            row_height=LLAMA_E2E_FIGSIZE[1] / len(LLAMA_E2E_ROW_ORDER),
-            title=LLAMA_E2E_TITLE,
-            subplot_title_template=LLAMA_E2E_SUBPLOT_TITLE_TEMPLATE,
-            y_label=Y_LABEL,
-            legend_y=0.965,
-            tight_layout_rect=(0.0, 0.04, 1.0, 0.92),
-            value_labels=VALUE_LABELS,
-            x_tick_label_rotation=90.0,
-        )
+        default_factory=_llama_e2e_wide_knobs
+    )
+    llama_e2e_no_area_norm: WideBarKnobs = field(
+        default_factory=_llama_e2e_wide_knobs
+    )
+    llama_e2e_no_area_norm_stacked: StackedBarKnobs = field(
+        default_factory=_llama_e2e_stacked_knobs
     )
     llama_e2e_stacked: StackedBarKnobs = field(
-        default_factory=lambda: StackedBarKnobs(
-            **_llama_compact_kwargs(Y_LABEL),
-            legend_ncol=2,
-            stack_palette=E2E_KIND_STACK_PALETTE,
-            stack_groups=E2E_KIND_STACK_GROUPS,
-        )
+        default_factory=_llama_e2e_stacked_knobs
     )
     llama_gemm_only: StackedBarKnobs = field(
         default_factory=lambda: StackedBarKnobs(
@@ -331,8 +338,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default="all",
         help=(
             "plot to generate: main_all, gemm_only, energy, llama_e2e, "
-            "llama_e2e_stacked, llama_gemm_only, llama_energy, "
-            "llama_energy_stacked, latency, or all"
+            "llama_e2e_no_area_norm, llama_e2e_no_area_norm_stacked, "
+            "llama_e2e_stacked, llama_gemm_only, llama_energy, llama_energy_stacked, "
+            "latency, or all"
         ),
     )
     parser.add_argument(
@@ -374,6 +382,26 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--llama3-data",
         default=None,
         help="Llama 3 E2E prepared directory or excel_figure_data.csv for --plot llama_e2e.",
+    )
+    parser.add_argument(
+        "--llama2-no-area-norm-data",
+        default=None,
+        help="Llama 2 E2E data without area normalization for --plot llama_e2e_no_area_norm.",
+    )
+    parser.add_argument(
+        "--llama3-no-area-norm-data",
+        default=None,
+        help="Llama 3 E2E data without area normalization for --plot llama_e2e_no_area_norm.",
+    )
+    parser.add_argument(
+        "--llama2-no-area-norm-stacked-data",
+        default=None,
+        help="Llama 2 stacked E2E data without area normalization for --plot llama_e2e_no_area_norm_stacked.",
+    )
+    parser.add_argument(
+        "--llama3-no-area-norm-stacked-data",
+        default=None,
+        help="Llama 3 stacked E2E data without area normalization for --plot llama_e2e_no_area_norm_stacked.",
     )
     parser.add_argument(
         "--llama2-e2e-stacked-data",
@@ -519,7 +547,20 @@ def _prepared_csv_from_path(path: Path) -> Path:
 def _candidate_matches_kind(path: Path, kind: str) -> bool:
     name = path.parent.name if path.name == EXCEL_FIGURE_DATA_CSV else path.name
     if kind == "main_all":
-        return all(token not in name for token in ("e2e_stacked", "gemm_only", "energy_per_token", "llama_compare"))
+        return all(
+            token not in name
+            for token in (
+                "e2e_no_area_norm",
+                "e2e_stacked",
+                "gemm_only",
+                "energy_per_token",
+                "llama_compare",
+            )
+        )
+    if kind == "e2e_no_area_norm":
+        return "e2e_no_area_norm" in name and "stacked_by_kind" not in name
+    if kind == "e2e_no_area_norm_stacked":
+        return "e2e_no_area_norm_stacked_by_kind" in name
     if kind == "e2e_stacked":
         return "e2e_stacked_by_kind" in name
     if kind == "gemm_only":
@@ -791,6 +832,8 @@ def _plot_knobs_from_args(args: argparse.Namespace) -> PlotKnobs:
         knobs.gemm_only,
         knobs.energy,
         knobs.llama_e2e,
+        knobs.llama_e2e_no_area_norm,
+        knobs.llama_e2e_no_area_norm_stacked,
         knobs.llama_e2e_stacked,
         knobs.llama_gemm_only,
         knobs.llama_energy,
@@ -1632,6 +1675,20 @@ def plot_llama_e2e_bars(
     )
 
 
+def plot_llama_e2e_no_area_norm_bars(
+    model_csvs: Sequence[tuple[str, str, Path]],
+    out_dir: Path,
+    *,
+    knobs: WideBarKnobs,
+) -> None:
+    plot_model_wide_candidate_bars(
+        model_csvs,
+        out_dir,
+        filename="llama_e2e_latency_no_area_norm.png",
+        knobs=knobs,
+    )
+
+
 def plot_model_stacked_bars(
     model_csvs: Sequence[tuple[str, str, Path]],
     out_dir: Path,
@@ -1785,6 +1842,21 @@ def plot_llama_e2e_stacked_bars(
     )
 
 
+def plot_llama_e2e_no_area_norm_stacked_bars(
+    model_csvs: Sequence[tuple[str, str, Path]],
+    out_dir: Path,
+    *,
+    knobs: StackedBarKnobs,
+) -> None:
+    plot_model_stacked_bars(
+        model_csvs,
+        out_dir,
+        filename="llama_e2e_latency_no_area_norm_stacked.png",
+        data_label="Llama E2E stacked without area normalization",
+        knobs=knobs,
+    )
+
+
 def plot_model_gemm_stacked_bars(
     model_csvs: Sequence[tuple[str, str, Path]],
     out_dir: Path,
@@ -1854,6 +1926,19 @@ def run_llama_e2e_plot(
     )
 
 
+def run_llama_e2e_no_area_norm_plot(
+    model_csvs: Sequence[tuple[str, str, Path]],
+    output_root: Path,
+    *,
+    knobs: WideBarKnobs,
+) -> None:
+    plot_llama_e2e_no_area_norm_bars(
+        model_csvs,
+        output_root / "llama_e2e_no_area_norm",
+        knobs=knobs,
+    )
+
+
 def run_llama_e2e_stacked_plot(
     model_csvs: Sequence[tuple[str, str, Path]],
     output_root: Path,
@@ -1863,6 +1948,19 @@ def run_llama_e2e_stacked_plot(
     plot_llama_e2e_stacked_bars(
         model_csvs,
         output_root / "llama_e2e_stacked",
+        knobs=knobs,
+    )
+
+
+def run_llama_e2e_no_area_norm_stacked_plot(
+    model_csvs: Sequence[tuple[str, str, Path]],
+    output_root: Path,
+    *,
+    knobs: StackedBarKnobs,
+) -> None:
+    plot_llama_e2e_no_area_norm_stacked_bars(
+        model_csvs,
+        output_root / "llama_e2e_no_area_norm_stacked",
         knobs=knobs,
     )
 
@@ -1934,6 +2032,36 @@ def collect_model_csvs(
         )
         model_csvs.append((model_key, model_label, csv_path))
     return model_csvs
+
+
+def run_optional_llama_model_plot(
+    *,
+    selected_plot: str,
+    plot_name: str,
+    explicit_by_model: dict[str, str | None],
+    prepared_root: Path,
+    latency_dir: Path,
+    output_root: Path,
+    kind: str,
+    label: str,
+    knobs: WideBarKnobs,
+    runner: Any,
+) -> None:
+    required = selected_plot == plot_name or any(explicit_by_model.values())
+    try:
+        model_csvs = collect_model_csvs(
+            explicit_by_model=explicit_by_model,
+            prepared_root=prepared_root,
+            latency_dir=latency_dir,
+            kind=kind,
+            label=label,
+        )
+    except FileNotFoundError as exc:
+        if required:
+            raise
+        print(f"skip {plot_name}: {exc}")
+    else:
+        runner(model_csvs, output_root, knobs=knobs)
 
 
 def collect_model_energy_csv_groups(
@@ -2050,66 +2178,72 @@ def run_selected_plots(args: argparse.Namespace) -> None:
         )
 
     if plot in {"llama_e2e", "all"}:
-        required = plot == "llama_e2e" or bool(args.llama2_data) or bool(args.llama3_data)
-        explicit_by_model = {
-            "llama2_7b": args.llama2_data,
-            "llama3_8b": args.llama3_data,
-        }
-        missing_error: Exception | None = None
-        try:
-            model_csvs = collect_model_csvs(
-                explicit_by_model=explicit_by_model,
-                prepared_root=prepared_root,
-                latency_dir=latency_dir,
-                kind="main_all",
-                label="E2E",
-            )
-        except FileNotFoundError as exc:
-            missing_error = exc
+        run_optional_llama_model_plot(
+            selected_plot=plot,
+            plot_name="llama_e2e",
+            explicit_by_model={
+                "llama2_7b": args.llama2_data,
+                "llama3_8b": args.llama3_data,
+            },
+            prepared_root=prepared_root,
+            latency_dir=latency_dir,
+            output_root=output_root,
+            kind="main_all",
+            label="E2E",
+            knobs=knobs.llama_e2e,
+            runner=run_llama_e2e_plot,
+        )
 
-        if missing_error is not None:
-            if required:
-                raise missing_error
-            print(f"skip llama_e2e: {missing_error}")
-        else:
-            run_llama_e2e_plot(
-                model_csvs,
-                output_root,
-                knobs=knobs.llama_e2e,
-            )
+    if plot in {"llama_e2e_no_area_norm", "all"}:
+        run_optional_llama_model_plot(
+            selected_plot=plot,
+            plot_name="llama_e2e_no_area_norm",
+            explicit_by_model={
+                "llama2_7b": args.llama2_no_area_norm_data,
+                "llama3_8b": args.llama3_no_area_norm_data,
+            },
+            prepared_root=prepared_root,
+            latency_dir=latency_dir,
+            output_root=output_root,
+            kind="e2e_no_area_norm",
+            label="E2E without area normalization",
+            knobs=knobs.llama_e2e_no_area_norm,
+            runner=run_llama_e2e_no_area_norm_plot,
+        )
+
+    if plot in {"llama_e2e_no_area_norm_stacked", "all"}:
+        run_optional_llama_model_plot(
+            selected_plot=plot,
+            plot_name="llama_e2e_no_area_norm_stacked",
+            explicit_by_model={
+                "llama2_7b": args.llama2_no_area_norm_stacked_data,
+                "llama3_8b": args.llama3_no_area_norm_stacked_data,
+            },
+            prepared_root=prepared_root,
+            latency_dir=latency_dir,
+            output_root=output_root,
+            kind="e2e_no_area_norm_stacked",
+            label="E2E stacked without area normalization",
+            knobs=knobs.llama_e2e_no_area_norm_stacked,
+            runner=run_llama_e2e_no_area_norm_stacked_plot,
+        )
 
     if plot in {"llama_e2e_stacked", "all"}:
-        required = (
-            plot == "llama_e2e_stacked"
-            or bool(args.llama2_e2e_stacked_data)
-            or bool(args.llama3_e2e_stacked_data)
+        run_optional_llama_model_plot(
+            selected_plot=plot,
+            plot_name="llama_e2e_stacked",
+            explicit_by_model={
+                "llama2_7b": args.llama2_e2e_stacked_data,
+                "llama3_8b": args.llama3_e2e_stacked_data,
+            },
+            prepared_root=prepared_root,
+            latency_dir=latency_dir,
+            output_root=output_root,
+            kind="e2e_stacked",
+            label="E2E stacked",
+            knobs=knobs.llama_e2e_stacked,
+            runner=run_llama_e2e_stacked_plot,
         )
-        explicit_by_model = {
-            "llama2_7b": args.llama2_e2e_stacked_data,
-            "llama3_8b": args.llama3_e2e_stacked_data,
-        }
-        missing_error: Exception | None = None
-        try:
-            model_csvs = collect_model_csvs(
-                explicit_by_model=explicit_by_model,
-                prepared_root=prepared_root,
-                latency_dir=latency_dir,
-                kind="e2e_stacked",
-                label="E2E stacked",
-            )
-        except FileNotFoundError as exc:
-            missing_error = exc
-
-        if missing_error is not None:
-            if required:
-                raise missing_error
-            print(f"skip llama_e2e_stacked: {missing_error}")
-        else:
-            run_llama_e2e_stacked_plot(
-                model_csvs,
-                output_root,
-                knobs=knobs.llama_e2e_stacked,
-            )
 
     if plot in {"llama_gemm_only", "all"}:
         required = plot == "llama_gemm_only" or bool(args.llama2_gemm_data) or bool(args.llama3_gemm_data)

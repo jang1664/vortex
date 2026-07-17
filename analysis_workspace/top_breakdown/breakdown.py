@@ -50,7 +50,7 @@ REPORT_REL = Path("syn_topo.lpp/reports/14_Vortex_axi.mapped.area.rpt")
 
 SIMT_LABEL = "SIMT (excl. memory)"
 MEMORY_LABEL = "Cache / LMEM / TMEM"
-MXU_LABEL = "MXU"
+MXU_LABEL = "GEMM Engine"
 DMA_LABEL = "DMA"
 MISC_LABEL = "Misc. (incl. interconnect, mux/demux)"
 
@@ -170,6 +170,7 @@ SIMT_BUCKETS = {
     "issue",
     "schedule",
     "fetch / commit / decode / DCR",
+    "DMA node",
 }
 CACHE_BUCKETS = {
     "L1 data cache",
@@ -182,7 +183,6 @@ DMA_BUCKETS = {
     "TMEM DMA engine",
     "TMEM local DMAs",
     "TMEM DMA control",
-    "DMA node",
 }
 
 LOCAL_MEM_PATTERN = PREFIX_CORE + r"/mem_unit/local_mem$"

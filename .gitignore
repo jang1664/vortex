@@ -13,6 +13,7 @@
 !/build/hw/syn/synopsys/**/*report_power.report
 
 /build_*/
+/build-*/
 
 /.vscode
 *.cache
@@ -79,3 +80,5 @@ verdiLog/
 **.log
 **summary
 **.csv
+.Xil/
+vivado_pid*.str
