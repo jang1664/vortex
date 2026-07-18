@@ -13,16 +13,17 @@ from .artifacts import (
     create_random_decode_case,
     create_random_case,
     load_case,
+    load_decode_case,
     save_decode_case,
     save_case,
 )
 from .backends import TorchBackend, VortexBackend
 from .compare import compare_runs
-from .graph import LayerExecutor
+from .graph import DecodeExecutor, LayerExecutor
 from .generator_conformance import check_generator_conformance
-from .run_artifacts import load_run, save_run
+from .run_artifacts import load_run, save_decode_run, save_run
 from .specs import DecodeConfig, LayerConfig
-from .stages import STAGE_NAMES
+from .stages import DECODE_STAGE_NAMES, STAGE_NAMES, DecodeStopPoint
 
 
 def _positive_int(value: str) -> int:
@@ -66,7 +67,16 @@ def _parser() -> argparse.ArgumentParser:
     run = commands.add_parser("run", help="execute one backend and save stage captures")
     run.add_argument("--case", type=Path, required=True)
     run.add_argument("--backend", choices=("cuda", "vortex", "cpu"), required=True)
-    run.add_argument("--stop-after", choices=STAGE_NAMES, default="final_residual")
+    run.add_argument(
+        "--stop-after",
+        choices=tuple(dict.fromkeys((*STAGE_NAMES, *DECODE_STAGE_NAMES))),
+        default="final_residual",
+    )
+    run.add_argument(
+        "--decode-step",
+        type=int,
+        help="zero-based decode step for a decode case (defaults to the final step)",
+    )
     run.add_argument("--capture", choices=("semantic", "physical", "both"), default="semantic")
     run.add_argument("--physical-plan", choices=("standalone", "fused"), default="standalone")
     run.add_argument("--strict-native", action="store_true")
@@ -145,7 +155,9 @@ def _make_decode_case(args: argparse.Namespace) -> int:
 def _run(args: argparse.Namespace) -> int:
     if args.backend != "vortex" and args.physical_plan != "standalone":
         raise SystemExit("--physical-plan fused is valid only with --backend vortex")
-    case = load_case(args.case)
+    manifest = json.loads((args.case / "manifest.json").read_text(encoding="utf-8"))
+    is_decode = manifest.get("case_kind") == "decode"
+    case = load_decode_case(args.case) if is_decode else load_case(args.case)
     if args.backend == "cuda":
         backend = TorchBackend("cuda")
     elif args.backend == "cpu":
@@ -154,15 +166,40 @@ def _run(args: argparse.Namespace) -> int:
         if not args.strict_native:
             raise SystemExit("the Vortex accuracy backend requires --strict-native")
         backend = VortexBackend(strict_native=True, physical_plan=args.physical_plan)
-    result = LayerExecutor(backend).run(
-        case,
-        stop_after=args.stop_after,
-        capture_physical=args.capture in ("physical", "both"),
-    )
-    save_run(result, args.output, capture_mode=args.capture)
+    capture_physical = args.capture in ("physical", "both")
+    if is_decode:
+        step = (
+            case.config.decode_steps - 1
+            if args.decode_step is None
+            else args.decode_step
+        )
+        stop = DecodeStopPoint(step=step, stage=args.stop_after)
+        result = DecodeExecutor(backend).run(
+            case,
+            stop_after=stop,
+            capture_physical=capture_physical,
+        )
+        save_decode_run(result, args.output, capture_mode=args.capture)
+        capture_count = len(result.prefill.stage_order) + sum(
+            len(value.stage_order) for value in result.steps
+        )
+        stop_label = f"step{stop.step}:{stop.stage}"
+    else:
+        if args.decode_step is not None:
+            raise SystemExit("--decode-step is valid only for a decode case")
+        if args.stop_after not in STAGE_NAMES:
+            raise SystemExit(f"{args.stop_after!r} is valid only for a decode case")
+        result = LayerExecutor(backend).run(
+            case,
+            stop_after=args.stop_after,
+            capture_physical=capture_physical,
+        )
+        save_run(result, args.output, capture_mode=args.capture)
+        capture_count = len(result.stage_order)
+        stop_label = result.stop_after
     print(
-        f"saved {result.backend} run through {result.stop_after} to {args.output} "
-        f"({len(result.stage_order)} semantic captures)"
+        f"saved {result.backend} run through {stop_label} to {args.output} "
+        f"({capture_count} semantic captures)"
     )
     return 0
 

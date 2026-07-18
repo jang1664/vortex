@@ -110,12 +110,14 @@ def save_decode_run(
             "prefill": {
                 "logical_length": result.prefill.logical_length,
                 "stage_order": result.prefill.stage_order,
+                "cache_descriptor": result.prefill.cache_descriptor,
             },
             "steps": [
                 {
                     "step": step.step,
                     "logical_length": step.logical_length,
                     "stage_order": step.stage_order,
+                    "cache_descriptor": step.cache_descriptor,
                 }
                 for step in result.steps
             ],

@@ -44,6 +44,7 @@ class DecodeStepResult:
     auxiliary_captures: Dict[str, torch.Tensor]
     physical_captures: Dict[str, torch.Tensor]
     physical_descriptors: Dict[str, dict]
+    cache_descriptor: dict
 
 
 @dataclass
@@ -155,6 +156,11 @@ class LayerExecutor:
         stop_index = validate_stop_stage(stop_after)
         self.backend.preflight(case, stop_after)
         self.backend.bind(case)
+        self.backend.activate(
+            self.backend.tensor("input"),
+            self.backend.tensor("position_ids"),
+            self.backend.tensor("causal_mask"),
+        )
         captures: Dict[str, torch.Tensor] = {}
         auxiliary: Dict[str, torch.Tensor] = {}
         physical: Dict[str, torch.Tensor] = {}
@@ -235,6 +241,7 @@ class DecodeExecutor:
             step=case.config.decode_steps - 1, stage="final_residual"
         )
         stop_after.validate(decode_steps=case.config.decode_steps)
+        self.backend.preflight(case, f"decode:{stop_after.step}:{stop_after.stage}")
         self.backend.bind(case)
         cache = self.backend.create_persistent_cache(case.config)
 
@@ -385,6 +392,9 @@ class DecodeExecutor:
                 zero=k_zero,
                 mode="asym",
                 logical_shape=tuple(semantic_key.shape),
+                weight_tiled=getattr(qkey, "attachments", {}).get("weight_tiled"),
+                scale_tiled=getattr(k_scale, "attachments", {}).get("scale_tiled"),
+                zero_tiled=getattr(k_zero, "attachments", {}).get("zero_tiled"),
                 dequantized=semantic_key,
             )
             cached_value = QuantizedActivation(
@@ -393,6 +403,9 @@ class DecodeExecutor:
                 zero=None,
                 mode="sym",
                 logical_shape=tuple(semantic_value.shape),
+                weight_tiled=getattr(qvalue, "attachments", {}).get("weight_tiled"),
+                scale_tiled=getattr(v_scale, "attachments", {}).get("scale_tiled"),
+                zero_tiled=getattr(v_scale, "attachments", {}).get("zero_tiled"),
                 dequantized=semantic_value,
             )
             return (
@@ -427,4 +440,5 @@ class DecodeExecutor:
             auxiliary_captures=auxiliary,
             physical_captures=physical,
             physical_descriptors=descriptors,
+            cache_descriptor=cache.descriptor(),
         )

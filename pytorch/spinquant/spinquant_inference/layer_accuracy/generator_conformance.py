@@ -158,6 +158,66 @@ def check_generator_conformance(generator_path: str | Path | None = None) -> dic
         mismatches.extend({"plan": plan, **item} for item in local_mismatches)
         checked[plan] = list(plan_checks)
 
+        generation = generator.build_llm_kernels(
+            model_name="llama2-7b",
+            stages=["generation"],
+            batch=1,
+            prefill_seq_len=31,
+            gen_kv_len=33,
+            max_seq_len=64,
+            qblk=32,
+            variant=variant,
+        )
+        generation_by_name = {
+            kernel["name"]: kernel for kernel in generation["kernels"]
+        }
+        generation_checks = {
+            "kv_cache_quant_rope_k_to_attn_qkT": {
+                "K": 1,
+                "cache_update": "append",
+                "cache_position": 32,
+                "logical_cache_length": 33,
+                "cache_capacity": 64,
+                "persistent_layout": "gemm_w_tiled_transposed",
+            },
+            "kv_cache_quant_v_cache_to_attn_pv": {
+                "K": 1,
+                "cache_update": "append",
+                "cache_position": 32,
+                "logical_cache_length": 33,
+                "cache_capacity": 64,
+                "persistent_layout": "gemm_w_tiled",
+            },
+            "attn_qkT": {
+                "M": 1,
+                "N": 33,
+                "K": 128,
+                "cache_capacity": 64,
+            },
+            "attn_softmax": {
+                "seqq": 1,
+                "seqk": 33,
+                "mask": 0,
+                "capacity_stride": 64,
+            },
+            "attn_pv": {
+                "M": 1,
+                "N": 128,
+                "K": 33,
+                "cache_capacity": 64,
+            },
+            "rope_q": {"seq": 1, "offset": 32},
+            "rope_k": {"seq": 1, "offset": 32},
+        }
+        local_mismatches = []
+        for name, expected in generation_checks.items():
+            _check_shape(local_mismatches, generation_by_name, name, expected)
+        mismatches.extend(
+            {"plan": plan, "stage": "generation", **item}
+            for item in local_mismatches
+        )
+        checked[f"{plan}_generation"] = list(generation_checks)
+
     return {
         "passed": not mismatches,
         "advisory_only": True,

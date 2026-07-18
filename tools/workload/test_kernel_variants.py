@@ -27,6 +27,39 @@ def _repo_root() -> Path:
 
 
 class KernelVariantTest(unittest.TestCase):
+    def test_generation_records_fixed_capacity_tile_major_append_contract(self) -> None:
+        payload = build_llm_kernels(
+            model_name="llama2-7b",
+            stages=["generation"],
+            batch=1,
+            prefill_seq_len=31,
+            gen_kv_len=33,
+            max_seq_len=64,
+            qblk=32,
+            variant="all_fpint_gemm_improve_fused_layout_spinquant",
+        )
+        key = _kernel_by_name(payload, "kv_cache_quant_rope_k_to_attn_qkT")
+        value = _kernel_by_name(payload, "kv_cache_quant_v_cache_to_attn_pv")
+        qk = _kernel_by_name(payload, "attn_qkT")
+        softmax = _kernel_by_name(payload, "attn_softmax")
+        pv = _kernel_by_name(payload, "attn_pv")
+
+        self.assertEqual(payload["config"]["max_seq_len"], 64)
+        for kernel in (key, value, qk, softmax, pv):
+            self.assertEqual(kernel["shape"]["query_length"], 1)
+            self.assertEqual(kernel["shape"]["logical_cache_length"], 33)
+            self.assertEqual(kernel["shape"]["cache_capacity"], 64)
+        self.assertEqual(key["shape"]["cache_update"], "append")
+        self.assertEqual(key["shape"]["cache_position"], 32)
+        self.assertEqual(key["shape"]["persistent_layout"], "gemm_w_tiled_transposed")
+        self.assertEqual(value["shape"]["persistent_layout"], "gemm_w_tiled")
+        self.assertEqual(qk["shape"]["N"], 33)
+        self.assertEqual(qk["shape"]["persistent_weight_layout"], "gemm_w_tiled_transposed")
+        self.assertEqual(softmax["shape"]["mask"], 0)
+        self.assertEqual(softmax["shape"]["capacity_stride"], 64)
+        self.assertEqual(pv["shape"]["K"], 33)
+        self.assertEqual(pv["shape"]["persistent_weight_layout"], "gemm_w_tiled")
+
     def test_default_variant_emits_improve_fpint_gemm_metadata(self) -> None:
         payload = build_llm_kernels(
             model_name="llama2-7b",

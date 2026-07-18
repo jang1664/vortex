@@ -280,6 +280,17 @@ class DecodeExecutorTests(unittest.TestCase):
         self.assertEqual(metadata["run_kind"], "decode")
         self.assertEqual(metadata["steps"][0]["logical_length"], 4)
         self.assertEqual(metadata["steps"][1]["logical_length"], 5)
+        descriptors = [
+            metadata["prefill"]["cache_descriptor"],
+            *(step["cache_descriptor"] for step in metadata["steps"]),
+        ]
+        self.assertEqual(
+            len({descriptor["allocation_id"] for descriptor in descriptors}), 1
+        )
+        self.assertEqual(
+            [descriptor["logical_length"] for descriptor in descriptors],
+            [3, 4, 5],
+        )
         self.assertIn("step0.qk", captures)
         self.assertIn("step1.cache_update.k_packed", auxiliary)
 

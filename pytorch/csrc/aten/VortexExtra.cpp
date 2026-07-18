@@ -3826,13 +3826,43 @@ vortex_kv_cache_quant_layout_fused_w4a16_update(
     at::Tensor scale,
     at::Tensor zero,
     at::Tensor logical_scale,
-    at::Tensor logical_zero) {
+    at::Tensor logical_zero,
+    int64_t head_dim,
+    int64_t src_layout,
+    int64_t src_total_n,
+    int64_t src_col_offset,
+    int64_t src_total_k,
+    int64_t src_row_offset) {
   TORCH_CHECK(source.is_privateuseone() && source.dtype() == at::kHalf
               && source.is_contiguous(),
               "persistent KV source must be contiguous Vortex float16");
-  TORCH_CHECK(source.dim() == 2 && source.size(0) == 1
-              && source.size(1) > 0 && source.size(1) % 2 == 0,
-              "persistent KV source must have shape [1, even head_dim]");
+  TORCH_CHECK(source.dim() == 2, "persistent KV source must be two-dimensional");
+  head_dim = head_dim == 0 ? source.size(1) : head_dim;
+  src_total_n = src_total_n == 0 ? source.size(1) : src_total_n;
+  src_total_k = src_total_k == 0 ? source.size(0) : src_total_k;
+  TORCH_CHECK(head_dim > 0 && head_dim % 2 == 0,
+              "persistent KV head_dim must be positive and even");
+  TORCH_CHECK(src_layout >= 0 && src_layout <= 2,
+              "persistent KV source layout must be row-major, GEMM-C, or GEMM-A");
+  TORCH_CHECK(src_total_n >= head_dim && src_col_offset >= 0
+              && src_col_offset + head_dim <= src_total_n,
+              "persistent KV source column range is out of bounds");
+  TORCH_CHECK(src_total_k > 0 && src_row_offset >= 0
+              && src_row_offset < src_total_k,
+              "persistent KV source row is out of bounds");
+  TORCH_CHECK(source.numel() >= src_total_k * src_total_n,
+              "persistent KV source storage is smaller than its physical geometry");
+  if (src_layout != 0) {
+    TORCH_CHECK(src_total_n % 32 == 0,
+                "persistent tiled source width must be a multiple of 32");
+    check_device_alignment(source, 512, "persistent tiled KV source");
+  }
+  if (src_layout == 2) {
+    TORCH_CHECK(src_total_n == head_dim && src_col_offset == 0,
+                "persistent GEMM-A source must contain one complete head row");
+    TORCH_CHECK(source.numel() == src_total_k * src_total_n,
+                "persistent GEMM-A source geometry must describe all storage");
+  }
   TORCH_CHECK(cache_capacity > 0 && cache_position >= 0
               && cache_position < cache_capacity,
               "persistent KV position must be inside cache capacity");
@@ -3849,7 +3879,7 @@ vortex_kv_cache_quant_layout_fused_w4a16_update(
               "persistent KV destination dtypes do not match the fused layout ABI");
 
   const uint32_t K = 1;
-  const uint32_t N = static_cast<uint32_t>(source.size(1));
+  const uint32_t N = static_cast<uint32_t>(head_dim);
   TORCH_CHECK(N == 128,
               "persistent KV v1 requires the Llama-2-7B head_dim of 128");
   const uint32_t Q = N;
@@ -3916,11 +3946,13 @@ vortex_kv_cache_quant_layout_fused_w4a16_update(
   karg.QDIR = 1;
   karg.GEMM_QDIR = GQ;
   karg.WTRANS = ST;
-  karg.src_layout = 0;
+  karg.src_layout = static_cast<uint32_t>(src_layout);
   karg.SOURCE_TRANSPOSED = ST;
   karg.quant_mode = static_cast<uint32_t>(quant_mode);
-  karg.src_total_N = N;
-  karg.src_total_K = K;
+  karg.src_total_N = static_cast<uint32_t>(src_total_n);
+  karg.src_col_offset = static_cast<uint32_t>(src_col_offset);
+  karg.src_total_K = static_cast<uint32_t>(src_total_k);
+  karg.src_row_offset = static_cast<uint32_t>(src_row_offset);
   karg.k_tiles = k_tiles;
   karg.n_dma_tiles = n_dma_tiles;
   karg.slot_fk_fn = fused_kv_slot_bytes(128, 128, Q, GQ);
@@ -3956,7 +3988,9 @@ at::Tensor vortex_softmax_layout_fused(
     int64_t seq_k,
     int64_t m_pad,
     int64_t use_mask,
-    double scale) {
+    double scale,
+    int64_t input_k_pad,
+    int64_t output_k_pad) {
   TORCH_CHECK(input.is_privateuseone() && input.dtype() == at::kHalf
               && input.is_contiguous(),
               "softmax_layout_fused input must be contiguous Vortex float16");
@@ -3965,9 +3999,16 @@ at::Tensor vortex_softmax_layout_fused(
   TORCH_CHECK(m_pad >= seq_q && m_pad % 8 == 0,
               "m_pad must cover seq_q and be a multiple of 8");
   TORCH_CHECK(use_mask == 0 || use_mask == 1, "use_mask must be 0 or 1");
-  const int64_t seq_k_pad = vx_align_up_u32(static_cast<uint32_t>(seq_k), 32);
-  const int64_t output_k_pad = fpint_pad_gemm_k(
-      static_cast<uint32_t>(seq_k));
+  const int64_t seq_k_pad = input_k_pad == 0
+      ? vx_align_up_u32(static_cast<uint32_t>(seq_k), 32)
+      : input_k_pad;
+  output_k_pad = output_k_pad == 0
+      ? fpint_pad_gemm_k(static_cast<uint32_t>(seq_k))
+      : output_k_pad;
+  TORCH_CHECK(seq_k_pad >= seq_k && seq_k_pad % 32 == 0,
+              "softmax input_k_pad must cover seq_k and be a multiple of 32");
+  TORCH_CHECK(output_k_pad >= seq_k && output_k_pad % 32 == 0,
+              "softmax output_k_pad must cover seq_k and be a multiple of 32");
   TORCH_CHECK(input.numel() == batch * heads * m_pad * seq_k_pad,
               "softmax physical input size mismatch");
   check_device_alignment(input, 512, "softmax GEMM-C input");
@@ -4295,8 +4336,8 @@ TORCH_LIBRARY(vortex, m) {
   m.def("rms_norm_layout_fused(Tensor input, Tensor weight, float eps, int m_pad) -> Tensor");
   m.def("rope_layout_fused(Tensor input, Tensor cos, Tensor sin, int batch, int seq, int heads, int head_dim, int input_m_pad, int layout_to, int pos_offset=0) -> Tensor");
   m.def("kv_cache_quant_layout_fused_w4a16(Tensor source, int K, int N, int qblk, int qdir, int gemm_qdir, int wtrans, int src_layout, int source_transposed, int quant_mode, int src_total_n, int src_col_offset, int src_total_k=0, int src_row_offset=0) -> (Tensor, Tensor, Tensor, Tensor, Tensor)");
-  m.def("kv_cache_quant_layout_fused_w4a16_update(Tensor source, int cache_capacity, int cache_position, int quant_mode, Tensor(a!) weight, Tensor(b!) scale, Tensor(c!) zero, Tensor(d!) logical_scale, Tensor(e!) logical_zero) -> (Tensor(a!), Tensor(b!), Tensor(c!), Tensor(d!), Tensor(e!))");
-  m.def("softmax_layout_fused(Tensor input, int batch, int heads, int seq_q, int seq_k, int m_pad, int use_mask, float scale) -> Tensor");
+  m.def("kv_cache_quant_layout_fused_w4a16_update(Tensor source, int cache_capacity, int cache_position, int quant_mode, Tensor(a!) weight, Tensor(b!) scale, Tensor(c!) zero, Tensor(d!) logical_scale, Tensor(e!) logical_zero, int head_dim=0, int src_layout=0, int src_total_n=0, int src_col_offset=0, int src_total_k=0, int src_row_offset=0) -> (Tensor(a!), Tensor(b!), Tensor(c!), Tensor(d!), Tensor(e!))");
+  m.def("softmax_layout_fused(Tensor input, int batch, int heads, int seq_q, int seq_k, int m_pad, int use_mask, float scale, int input_k_pad=0, int output_k_pad=0) -> Tensor");
   m.def("head_concat_layout_fused(Tensor input, int batch, int seq, int heads, int head_dim, int input_m_pad, int output_m_pad) -> Tensor");
   m.def("eladd_layout_fused(Tensor input_a, Tensor input_b, int M, int M_pad, int K) -> Tensor");
   m.def("hadamard_butterfly(Tensor input, int K) -> Tensor");

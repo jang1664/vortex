@@ -181,6 +181,34 @@ class TensorContractTests(unittest.TestCase):
         expected = pack_signed_int4(weight.transpose(0, 1).contiguous()).reshape(1, 1, 32, 64)
         torch.testing.assert_close(decode_physical_tensor(handle), expected, rtol=0, atol=0)
 
+    def test_packed_wtrans1_decodes_single_token_along_head_dim(self):
+        weight = ((torch.arange(128).reshape(128, 1) % 16) - 8).to(torch.int8)
+        padded = torch.zeros((128, 32), dtype=torch.int8)
+        padded[:, :1] = weight
+        tiled = self._encode_tiled_weight(padded, wtrans=1)
+        spec = TensorSpec(
+            "k.packed",
+            ("B", "H", "S", "Dp"),
+            (1, 1, 1, 64),
+            "uint8",
+            physical=PhysicalSpec.contiguous(
+                "gemm_w_packed_grouped",
+                tuple(tiled.shape),
+                grouping="head",
+                parameters={
+                    "weight_k": 128,
+                    "weight_n": 1,
+                    "wtrans": 1,
+                    "source_transposed": 1,
+                },
+            ),
+        )
+        handle = TensorHandle(spec, (tiled,), "test")
+        expected = pack_signed_int4(weight.transpose(0, 1).contiguous()).reshape(
+            1, 1, 1, 64
+        )
+        torch.testing.assert_close(decode_physical_tensor(handle), expected, rtol=0, atol=0)
+
     def test_packed_wtrans0_decodes_to_semantic_capture(self):
         weight = ((torch.arange(32 * 128).reshape(32, 128) % 16) - 8).to(torch.int8)
         tiled = self._encode_tiled_weight(weight, wtrans=0)
@@ -321,6 +349,35 @@ class GraphExecutionTests(unittest.TestCase):
         self.assertEqual(result.captures["qk"].shape, (2, 2, 3, 3))
         self.assertEqual(result.captures["final_residual"].shape, (2, 3, 16))
 
+    def test_layer_executor_activates_the_bound_prefill_geometry(self):
+        class TrackingBackend(TorchBackend):
+            def __init__(self):
+                super().__init__("cpu")
+                self.activations = []
+
+            def activate(self, input_tensor, position_ids, causal_mask):
+                self.activations.append(
+                    (
+                        tuple(input_tensor.shape),
+                        tuple(position_ids.shape),
+                        tuple(causal_mask.shape),
+                    )
+                )
+                super().activate(input_tensor, position_ids, causal_mask)
+
+        backend = TrackingBackend()
+        LayerExecutor(backend).run(self.case, stop_after="input_norm")
+        self.assertEqual(
+            backend.activations,
+            [
+                (
+                    tuple(self.case.tensors["input"].shape),
+                    tuple(self.case.tensors["position_ids"].shape),
+                    tuple(self.case.tensors["causal_mask"].shape),
+                )
+            ],
+        )
+
     def test_r3_preserves_attention_dot_products(self):
         q = torch.randn(2, 4, 8, dtype=torch.float32)
         k = torch.randn(2, 4, 8, dtype=torch.float32)
@@ -407,6 +464,32 @@ class GraphExecutionTests(unittest.TestCase):
 
 
 class ComparatorTests(unittest.TestCase):
+    def test_decode_qualified_stage_uses_semantic_stage_profile(self):
+        from spinquant_inference.layer_accuracy.compare import _semantic_stage
+
+        self.assertEqual(_semantic_stage("prefill.qk"), "qk")
+        self.assertEqual(_semantic_stage("step1.final_residual"), "final_residual")
+        self.assertEqual(_semantic_stage("step0.k_quant.packed"), "k_quant")
+
+    def test_small_decode_stage_allows_one_isolated_matmul_outlier(self):
+        reference = torch.full((32,), 100.0, dtype=torch.float16)
+        candidate = reference.clone()
+        candidate[7] = 105.625
+        report = compare_runs(
+            {"step0.qk": reference}, {"step0.qk": candidate}
+        )
+        self.assertTrue(report["passed"])
+
+    def test_decode_cache_update_uses_quantized_error_budget(self):
+        reference = torch.ones(128, dtype=torch.float16)
+        candidate = reference.clone()
+        candidate[0] = 1.03
+        report = compare_runs(
+            {"step0.cache_update": reference},
+            {"step0.cache_update": candidate},
+        )
+        self.assertTrue(report["passed"])
+
     def test_comparator_reports_worst_index_and_fails_non_finite(self):
         reference = {"input_norm": torch.tensor([1.0, 2.0])}
         candidate = {"input_norm": torch.tensor([1.0, 2.5])}

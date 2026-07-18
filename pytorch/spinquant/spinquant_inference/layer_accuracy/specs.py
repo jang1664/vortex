@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from functools import reduce
 from operator import mul
 from typing import Mapping, Optional, Protocol, Tuple
@@ -313,3 +313,4 @@ class TensorHandle:
     spec: TensorSpec
     value: object
     producer: str
+    attachments: dict[str, object] = field(default_factory=dict, repr=False)

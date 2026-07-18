@@ -114,6 +114,171 @@ class SpinQuantVortexOpTests(unittest.TestCase):
                 token, capacity, capacity, 1, *cache
             )
 
+    def test_persistent_update_reads_gemm_a_source_geometry(self):
+        capacity, head_dim, m_pad, position = 64, 128, 8, 33
+        token_cpu = torch.randn((1, head_dim), dtype=torch.float16)
+        tiled_cpu = self._encode_gemm_tile(token_cpu, m_pad)
+        full_cpu = torch.zeros((capacity, head_dim), dtype=torch.float16)
+        full_cpu[position].copy_(token_cpu[0])
+        with torch.vortex.memory_alignment(512):
+            zero_source = torch.zeros_like(full_cpu).to("vortex")
+            expected_source = full_cpu.to("vortex")
+            tiled = tiled_cpu.to("vortex")
+        cache = self._allocate_fused_cache(zero_source, quant_mode=1)
+        torch.ops.vortex.kv_cache_quant_layout_fused_w4a16_update(
+            tiled,
+            capacity,
+            position,
+            1,
+            *cache,
+            head_dim,
+            2,
+            head_dim,
+            0,
+            m_pad,
+            0,
+        )
+        expected = self._allocate_fused_cache(expected_source, quant_mode=1)
+        for actual_tensor, expected_tensor in zip(cache, expected):
+            torch.testing.assert_close(
+                actual_tensor.cpu(), expected_tensor.cpu(), rtol=0, atol=0
+            )
+
+    def test_softmax_uses_logical_prefix_with_capacity_strides(self):
+        seq_q, seq_k, capacity, m_pad = 1, 33, 64, 8
+        scores = torch.randn((seq_q, capacity), dtype=torch.float16)
+        scores[:, seq_k:] = 1000
+        tiled_cpu = self._encode_gemm_tile(scores, m_pad)
+        with torch.vortex.memory_alignment(512):
+            tiled = tiled_cpu.to("vortex")
+        output = torch.ops.vortex.softmax_layout_fused(
+            tiled, 1, 1, seq_q, seq_k, m_pad, 0, 1.0, capacity, capacity
+        )
+        decoded = _decode_gemm_matrix(
+            output.cpu(), m=seq_q, m_pad=m_pad, n=capacity
+        )
+        expected = torch.softmax(scores[:, :seq_k].float(), dim=-1).to(torch.float16)
+        torch.testing.assert_close(
+            decoded[:, :seq_k], expected, rtol=2e-3, atol=2e-3
+        )
+        self.assertTrue(torch.equal(decoded[:, seq_k:], torch.zeros_like(decoded[:, seq_k:])))
+
+    def test_persistent_attention_reads_logical_prefix_across_k_tiles(self):
+        capacity, value_k_pad, head_dim, m_pad = 160, 256, 128, 8
+        generator = torch.Generator().manual_seed(313)
+        query_cpu = torch.randn((1, head_dim), generator=generator, dtype=torch.float16) * 0.2
+        key_cpu = torch.randn(
+            (capacity, head_dim), generator=generator, dtype=torch.float16
+        ) * 0.2
+        value_cpu = torch.randn(
+            (capacity, head_dim), generator=generator, dtype=torch.float16
+        ) * 0.2
+        query_padded_cpu = torch.zeros(
+            (m_pad, head_dim), dtype=torch.float16
+        )
+        query_padded_cpu[:1].copy_(query_cpu)
+        with torch.vortex.memory_alignment(512):
+            query = query_padded_cpu.to("vortex")
+            key = key_cpu.to("vortex")
+            value = value_cpu.to("vortex")
+        key_cache = self._allocate_fused_cache(key, quant_mode=1)
+        value_cache = self._allocate_fused_cache(value, quant_mode=2)
+        key_addresses = tuple(tensor.data_ptr() for tensor in key_cache)
+        value_addresses = tuple(tensor.data_ptr() for tensor in value_cache)
+        query_tiled = torch.ops.vortex.tile_input_a(query, m_pad, head_dim)
+
+        key_quant = unpack_signed_int4(
+            _decode_packed_gemm_weight(
+                key_cache[0].cpu(), k=head_dim, n=capacity, wtrans=1
+            )
+        ).transpose(0, 1).float()
+        key_dequant = (
+            key_quant - key_cache[4].cpu().float()
+        ) * key_cache[3].cpu().float()
+        value_quant = unpack_signed_int4(
+            _decode_packed_gemm_weight(
+                value_cache[0].cpu(), k=value_k_pad, n=head_dim, wtrans=0
+            )
+        )[:capacity].float()
+        value_dequant = value_quant * value_cache[3].cpu().float()
+
+        for logical_length in (1, 31, 32, 33, 127, 128, 129):
+            with self.subTest(logical_length=logical_length):
+                with torch.vortex.memory_alignment(512):
+                    scores_tiled = torch.empty(
+                        (m_pad, capacity), dtype=torch.float16, device="vortex"
+                    )
+                torch.ops.vortex.mm_w4a16_gemm_core_out(
+                    query_tiled,
+                    key_cache[0],
+                    key_cache[1],
+                    key_cache[2],
+                    head_dim,
+                    capacity,
+                    head_dim,
+                    1,
+                    0,
+                    scores_tiled,
+                )
+                torch.ops.vortex.qk_asym_correction_out(
+                    scores_tiled,
+                    query_tiled,
+                    key_cache[3].reshape(-1),
+                    key_cache[4].reshape(-1),
+                    1,
+                    m_pad,
+                    capacity,
+                    1,
+                    1,
+                    scores_tiled,
+                )
+                probabilities = torch.ops.vortex.softmax_layout_fused(
+                    scores_tiled,
+                    1,
+                    1,
+                    1,
+                    logical_length,
+                    m_pad,
+                    0,
+                    head_dim ** -0.5,
+                    capacity,
+                    value_k_pad,
+                )
+                with torch.vortex.memory_alignment(512):
+                    pv_tiled = torch.empty(
+                        (m_pad, head_dim), dtype=torch.float16, device="vortex"
+                    )
+                torch.ops.vortex.mm_w4a16_gemm_core_out(
+                    probabilities[0],
+                    value_cache[0],
+                    value_cache[1],
+                    value_cache[2],
+                    value_k_pad,
+                    head_dim,
+                    head_dim,
+                    0,
+                    1,
+                    pv_tiled,
+                )
+                actual = _decode_gemm_matrix(
+                    pv_tiled.cpu(), m=1, m_pad=m_pad, n=head_dim
+                )
+                expected_scores = (
+                    query_cpu.float() @ key_dequant[:logical_length].T
+                ) * (head_dim ** -0.5)
+                expected = torch.softmax(expected_scores, dim=-1) @ value_dequant[
+                    :logical_length
+                ]
+                torch.testing.assert_close(
+                    actual, expected.half(), rtol=1e-2, atol=1e-2
+                )
+                self.assertEqual(
+                    tuple(tensor.data_ptr() for tensor in key_cache), key_addresses
+                )
+                self.assertEqual(
+                    tuple(tensor.data_ptr() for tensor in value_cache), value_addresses
+                )
+
     def test_rms_norm_layout_fused_matches_standalone_composition(self):
         for rows in (8, 160):
             with self.subTest(rows=rows):

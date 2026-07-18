@@ -1815,7 +1815,8 @@ def build_llm_kernels(model_name: str,
                       prefill_seq_len: int,
                       gen_kv_len: int,
                       qblk: int,
-                      variant: str = DEFAULT_WORKLOAD_VARIANT) -> dict:
+                      variant: str = DEFAULT_WORKLOAD_VARIANT,
+                      max_seq_len: int | None = None) -> dict:
     """Build the JSON payload covering one or more stages."""
     if model_name not in MODELS:
         raise ValueError(
@@ -1826,6 +1827,14 @@ def build_llm_kernels(model_name: str,
     if variant not in WORKLOAD_VARIANTS:
         raise ValueError(
             f"unknown variant: {variant!r}. Expected one of {WORKLOAD_VARIANTS}"
+        )
+    cache_capacity = (
+        max(prefill_seq_len, gen_kv_len)
+        if max_seq_len is None else max_seq_len
+    )
+    if cache_capacity < max(prefill_seq_len, gen_kv_len):
+        raise ValueError(
+            "max-seq-len must cover prefill-seq-len and gen-kv-len"
         )
 
     kernels: list[dict] = []
@@ -1857,6 +1866,35 @@ def build_llm_kernels(model_name: str,
                 f"unknown stage: {stage!r}. Expected one of {LLM_STAGES}"
             )
 
+    for kernel in kernels:
+        if kernel.get("stage") != "generation":
+            continue
+        shape = kernel["shape"]
+        shape["query_length"] = 1
+        shape["logical_cache_length"] = gen_kv_len
+        shape["cache_capacity"] = cache_capacity
+        name = kernel["name"]
+        if name == "kv_cache_quant_rope_k_to_attn_qkT":
+            shape.update({
+                "cache_position": gen_kv_len - 1,
+                "cache_allocation": "fixed",
+                "persistent_layout": "gemm_w_tiled_transposed",
+                "source_token_count": 1,
+            })
+        elif name == "kv_cache_quant_v_cache_to_attn_pv":
+            shape.update({
+                "cache_position": gen_kv_len - 1,
+                "cache_allocation": "fixed",
+                "persistent_layout": "gemm_w_tiled",
+                "source_token_count": 1,
+            })
+        elif name == "attn_qkT":
+            shape["persistent_weight_layout"] = "gemm_w_tiled_transposed"
+        elif name == "attn_pv":
+            shape["persistent_weight_layout"] = "gemm_w_tiled"
+        elif name == "attn_softmax":
+            shape["capacity_stride"] = cache_capacity
+
     payload = {
         "model": model_name,
         "model_config": dict(config),
@@ -1865,6 +1903,7 @@ def build_llm_kernels(model_name: str,
             "batch": batch,
             "prefill_seq_len": prefill_seq_len,
             "gen_kv_len": gen_kv_len,
+            "max_seq_len": cache_capacity,
             "qblk": qblk,
             "variant": variant,
         },
@@ -2944,6 +2983,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
              f"S_kv = K). Default: {DEFAULT_LLM_GEN_KV}.",
     )
     parser.add_argument(
+        "--max-seq-len", type=int, default=None, metavar="C",
+        help="Fixed KV-cache allocation capacity. Defaults to max(prompt, K).",
+    )
+    parser.add_argument(
         "--qblk", type=int, default=DEFAULT_LLM_QBLK,
         help=f"QBLK for fpint GEMMs (default: {DEFAULT_LLM_QBLK}).",
     )
@@ -2999,6 +3042,7 @@ def main(argv: list[str] | None = None) -> int:
             gen_kv_len=args.gen_kv_len,
             qblk=args.qblk,
             variant=args.variant,
+            max_seq_len=args.max_seq_len,
         )
     except ValueError as e:
         print(f"ERROR: {e}", file=sys.stderr)
