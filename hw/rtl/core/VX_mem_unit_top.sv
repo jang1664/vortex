@@ -40,20 +40,20 @@ module VX_mem_unit_top import VX_gpu_pkg::*; #(
     input  wire [`NUM_LSU_BLOCKS-1:0]                   lsu_rsp_ready,
 
     // Memory request
-    output wire [DCACHE_NUM_REQS-1:0]                   mem_req_valid,
-    output wire [DCACHE_NUM_REQS-1:0]                   mem_req_rw,
-    output wire [DCACHE_NUM_REQS-1:0][DCACHE_WORD_SIZE-1:0] mem_req_byteen,
-    output wire [DCACHE_NUM_REQS-1:0][DCACHE_ADDR_WIDTH-1:0] mem_req_addr,
-    output wire [DCACHE_NUM_REQS-1:0][MEM_FLAGS_WIDTH-1:0] mem_req_flags,
-    output wire [DCACHE_NUM_REQS-1:0][DCACHE_WORD_SIZE*8-1:0] mem_req_data,
-    output wire [DCACHE_NUM_REQS-1:0][DCACHE_CORE_TAG_WIDTH-1:0] mem_req_tag,
-    input  wire [DCACHE_NUM_REQS-1:0]                   mem_req_ready,
+    output wire [DCACHE_CORE_NUM_REQS-1:0]                   mem_req_valid,
+    output wire [DCACHE_CORE_NUM_REQS-1:0]                   mem_req_rw,
+    output wire [DCACHE_CORE_NUM_REQS-1:0][DCACHE_WORD_SIZE-1:0] mem_req_byteen,
+    output wire [DCACHE_CORE_NUM_REQS-1:0][DCACHE_ADDR_WIDTH-1:0] mem_req_addr,
+    output wire [DCACHE_CORE_NUM_REQS-1:0][MEM_FLAGS_WIDTH-1:0] mem_req_flags,
+    output wire [DCACHE_CORE_NUM_REQS-1:0][DCACHE_WORD_SIZE*8-1:0] mem_req_data,
+    output wire [DCACHE_CORE_NUM_REQS-1:0][DCACHE_CORE_TAG_WIDTH-1:0] mem_req_tag,
+    input  wire [DCACHE_CORE_NUM_REQS-1:0]                   mem_req_ready,
 
     // Memory response
-    input wire [DCACHE_NUM_REQS-1:0]                    mem_rsp_valid,
-    input wire [DCACHE_NUM_REQS-1:0][DCACHE_WORD_SIZE*8-1:0] mem_rsp_data,
-    input wire [DCACHE_NUM_REQS-1:0][DCACHE_CORE_TAG_WIDTH-1:0] mem_rsp_tag,
-    output wire [DCACHE_NUM_REQS-1:0]                   mem_rsp_ready
+    input wire [DCACHE_CORE_NUM_REQS-1:0]                    mem_rsp_valid,
+    input wire [DCACHE_CORE_NUM_REQS-1:0][DCACHE_WORD_SIZE*8-1:0] mem_rsp_data,
+    input wire [DCACHE_CORE_NUM_REQS-1:0][DCACHE_CORE_TAG_WIDTH-1:0] mem_rsp_tag,
+    output wire [DCACHE_CORE_NUM_REQS-1:0]                   mem_rsp_ready
 );
     VX_lsu_mem_if #(
         .NUM_LANES (`NUM_LSU_LANES),
@@ -86,7 +86,7 @@ module VX_mem_unit_top import VX_gpu_pkg::*; #(
     VX_mem_bus_if #(
         .DATA_SIZE (DCACHE_WORD_SIZE),
         .TAG_WIDTH (DCACHE_CORE_TAG_WIDTH)
-    ) mem_bus_if[DCACHE_NUM_REQS]();
+    ) mem_bus_if[DCACHE_CORE_NUM_REQS]();
 
     VX_lsu_mem_if #(
         .NUM_LANES (`NUM_LSU_LANES),
@@ -103,15 +103,15 @@ module VX_mem_unit_top import VX_gpu_pkg::*; #(
     VX_mem_bus_if #(
         .DATA_SIZE (LSU_WORD_SIZE),
         .TAG_WIDTH (LMEM_TAG_WIDTH)
-    ) dma_local_data_if[`NUM_LSU_LANES]();
+    ) dma_local_data_if[`LMEM_NUM_PORTS]();
 
     VX_mem_bus_if #(
-        .DATA_SIZE (DCACHE_WORD_SIZE),
+        .DATA_SIZE (`DMA_DCACHE_PORTS * DCACHE_WORD_SIZE),
         .TAG_WIDTH (DCACHE_TAG_WIDTH)
     ) dma_global_data_if();
 
     // memory request
-    for (genvar i = 0; i < DCACHE_NUM_REQS; ++i) begin : g_mem_req
+    for (genvar i = 0; i < DCACHE_CORE_NUM_REQS; ++i) begin : g_mem_req
         assign mem_req_valid[i] = mem_bus_if[i].req_valid;
         assign mem_req_rw[i] = mem_bus_if[i].req_data.rw;
         assign mem_req_byteen[i] = mem_bus_if[i].req_data.byteen;
@@ -123,7 +123,7 @@ module VX_mem_unit_top import VX_gpu_pkg::*; #(
     end
 
     // memory response
-    for (genvar i = 0; i < DCACHE_NUM_REQS; ++i) begin : g_mem_bus_rsp
+    for (genvar i = 0; i < DCACHE_CORE_NUM_REQS; ++i) begin : g_mem_bus_rsp
         assign mem_bus_if[i].rsp_valid = mem_rsp_valid[i];
         assign mem_bus_if[i].rsp_data.tag = mem_rsp_tag[i];
         assign mem_bus_if[i].rsp_data.data = mem_rsp_data[i];
@@ -156,7 +156,7 @@ module VX_mem_unit_top import VX_gpu_pkg::*; #(
         );
     end
 
-    for (genvar i = 0; i < `NUM_LSU_LANES; ++i) begin : g_unused_dma_lmem
+    for (genvar i = 0; i < `LMEM_NUM_PORTS; ++i) begin : g_unused_dma_lmem
         `INIT_VX_MEM_BUS_IF(dma_local_data_if[i])
     end
 

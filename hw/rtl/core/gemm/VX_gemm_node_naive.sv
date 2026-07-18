@@ -35,7 +35,7 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     VX_lsu_mem_if.slave     mmio_if[N_MASTER],
 
     VX_lsu_mem_if.master    dma_if,     // to DMA engine
-    VX_mem_bus_if.master    lmem_bus_if [`NUM_LSU_LANES] // per-lane to mem_unit (i/w/sz/o)
+    VX_mem_bus_if.master    lmem_bus_if [`LMEM_NUM_PORTS] // physical LMEM ports (i/w/sz/o)
 `ifdef PERF_ENABLE
     ,output gemm_unit_perf_t gemm_unit_perf
     ,output gemm_node_perf_t gemm_node_perf
@@ -100,7 +100,7 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     ) o_gemm_bus_if ();
 
     // Each 64-byte tensor path has eight logical 64-bit lanes. The physical
-    // mapping below applies a tensor-specific offset and wraps at NUM_LSU_LANES.
+    // mapping below applies a tensor-specific offset and wraps at LMEM_NUM_PORTS.
     VX_mem_bus_if # (
       .DATA_SIZE(LSU_WORD_SIZE),
       .TAG_WIDTH(GEMM_BASE_TAG_WIDTH)
@@ -466,20 +466,20 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     );
 
     initial begin
-      if (`NUM_LSU_LANES < 8)
-        $fatal(1, "%s: GEMM_NAIVE requires at least eight LSU lanes", INSTANCE_ID);
+      if (`LMEM_NUM_PORTS < 8)
+        $fatal(1, "%s: GEMM_NAIVE requires at least eight LMEM ports", INSTANCE_ID);
       if (GEMM_INPUT_LANES != 8 || GEMM_WEIGHT_LANES != 8
        || GEMM_SZ_LANES != 8 || GEMM_OUTPUT_LANES != 8)
         $fatal(1, "%s: GEMM_NAIVE tensor paths must each be 64 bytes", INSTANCE_ID);
     end
 
-    // Tensor logical lane j maps to (tensor_offset + j) % NUM_LSU_LANES.
+    // Tensor logical lane j maps to (tensor_offset + j) % LMEM_NUM_PORTS.
     // Wrapped clients sharing a physical lane are served round-robin.
-    for (genvar i = 0; i < `NUM_LSU_LANES; ++i) begin : g_lmem_lane_arb
-      localparam int I_LOGICAL = (i + `NUM_LSU_LANES - (I_LANE_OFFSET % `NUM_LSU_LANES)) % `NUM_LSU_LANES;
-      localparam int W_LOGICAL = (i + `NUM_LSU_LANES - (W_LANE_OFFSET % `NUM_LSU_LANES)) % `NUM_LSU_LANES;
-      localparam int SZ_LOGICAL = (i + `NUM_LSU_LANES - (SZ_LANE_OFFSET % `NUM_LSU_LANES)) % `NUM_LSU_LANES;
-      localparam int O_LOGICAL = (i + `NUM_LSU_LANES - (O_LANE_OFFSET % `NUM_LSU_LANES)) % `NUM_LSU_LANES;
+    for (genvar i = 0; i < `LMEM_NUM_PORTS; ++i) begin : g_lmem_lane_arb
+      localparam int I_LOGICAL = (i + `LMEM_NUM_PORTS - (I_LANE_OFFSET % `LMEM_NUM_PORTS)) % `LMEM_NUM_PORTS;
+      localparam int W_LOGICAL = (i + `LMEM_NUM_PORTS - (W_LANE_OFFSET % `LMEM_NUM_PORTS)) % `LMEM_NUM_PORTS;
+      localparam int SZ_LOGICAL = (i + `LMEM_NUM_PORTS - (SZ_LANE_OFFSET % `LMEM_NUM_PORTS)) % `LMEM_NUM_PORTS;
+      localparam int O_LOGICAL = (i + `LMEM_NUM_PORTS - (O_LANE_OFFSET % `LMEM_NUM_PORTS)) % `LMEM_NUM_PORTS;
 
       VX_mem_bus_if #(
         .DATA_SIZE(LSU_WORD_SIZE),
@@ -754,23 +754,23 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
     );
 
 `ifdef PERF_ENABLE
-    // LMEM byte counters: tally per-lane fires across NUM_LSU_LANES.
-    wire [`NUM_LSU_LANES-1:0] lmem_lane_wr_fire;
-    wire [`NUM_LSU_LANES-1:0] lmem_lane_rd_fire;
-    for (genvar i = 0; i < `NUM_LSU_LANES; ++i) begin : g_lmem_perf_fire
+    // LMEM byte counters: tally per-lane fires across physical LMEM ports.
+    wire [`LMEM_NUM_PORTS-1:0] lmem_lane_wr_fire;
+    wire [`LMEM_NUM_PORTS-1:0] lmem_lane_rd_fire;
+    for (genvar i = 0; i < `LMEM_NUM_PORTS; ++i) begin : g_lmem_perf_fire
         wire fire = lmem_bus_if[i].req_valid && lmem_bus_if[i].req_ready;
         assign lmem_lane_wr_fire[i] = fire &&  lmem_bus_if[i].req_data.rw;
         assign lmem_lane_rd_fire[i] = fire && !lmem_bus_if[i].req_data.rw;
     end
 
-    localparam LANE_CNT_W = `CLOG2(`NUM_LSU_LANES + 1);
+    localparam LANE_CNT_W = `CLOG2(`LMEM_NUM_PORTS + 1);
     wire [LANE_CNT_W-1:0] lmem_wr_fire_count;
     wire [LANE_CNT_W-1:0] lmem_rd_fire_count;
-    VX_popcount #(.N(`NUM_LSU_LANES)) u_lmem_wr_pc (
+    VX_popcount #(.N(`LMEM_NUM_PORTS)) u_lmem_wr_pc (
         .data_in (lmem_lane_wr_fire),
         .data_out(lmem_wr_fire_count)
     );
-    VX_popcount #(.N(`NUM_LSU_LANES)) u_lmem_rd_pc (
+    VX_popcount #(.N(`LMEM_NUM_PORTS)) u_lmem_rd_pc (
         .data_in (lmem_lane_rd_fire),
         .data_out(lmem_rd_fire_count)
     );

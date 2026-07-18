@@ -647,6 +647,12 @@
 
 // Dcache Configurable Knobs //////////////////////////////////////////////////
 
+// Number of cache-line ports available to the core-local DMA path. Keep the
+// legacy single-port topology unless a configuration explicitly widens it.
+`ifndef DMA_DCACHE_PORTS
+`define DMA_DCACHE_PORTS 1
+`endif
+
 // Cache Enable
 `ifndef DCACHE_DISABLE
 `define DCACHE_ENABLE
@@ -729,6 +735,13 @@
 
 `ifndef LMEM_ENABLE
     `define LMEM_NUM_BANKS 1
+`endif
+
+// Number of physical local-memory request ports. CPU LSU request width remains
+// controlled by NUM_LSU_LANES; accelerator/DMA configurations can widen the
+// memory fabric independently through this additive knob.
+`ifndef LMEM_NUM_PORTS
+`define LMEM_NUM_PORTS `NUM_LSU_LANES
 `endif
 
 // Number of Banks
