@@ -1,0 +1,25 @@
+include:
+  modules:
+    - pattern: VX_stream_xbar
+      required: true
+    # Select switch/arbiter internals in a separate run when their containing
+    # xbar is not selected; otherwise hierarchy area would be double counted.
+
+exclude:
+  modules: []
+  designs: []
+  instances: []
+
+minimum_total_area_um2: 1000.0
+allow_nested: false
+
+pnr:
+  max_attempts: 4
+  initial_area_margin: 1.10
+  area_margin_multiplier: 1.15
+  target_utilization: from_report
+  aspect_ratio: from_report
+  boundary_margin: 1.0
+  width_grid: 0.1
+  height_grid: 0.1
+  max_routing_drc_errors: 0

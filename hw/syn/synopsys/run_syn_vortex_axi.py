@@ -342,9 +342,9 @@ AXI_SOURCES = [
 ]
 
 
-def _enumerate_sources(defines, run_name):
+def _enumerate_sources(defines, run_name, result_root=RESULT_ROOT):
     """Run gen_sources.sh, parse +incdir+ / file lines, return (incdirs, sources)."""
-    out_dir = f"{RESULT_ROOT}/{run_name}"
+    out_dir = f"{result_root}/{run_name}"
     os.makedirs(out_dir, exist_ok=True)
     out_file = f"{out_dir}/gen_sources.txt"
     tcu_enabled = _define_enabled("EXT_TCU_ENABLE", defines)
@@ -480,59 +480,86 @@ def _validate_synthesis_result(run_dir, design_name):
         )
 
 
+def build_vortex_axi_synth_config(
+    config_file,
+    run_tag,
+    *,
+    result_root=RESULT_ROOT,
+    syn_dir=None,
+    generate_design_catalog=False,
+    skip_write_icc2_files=True,
+    rerun=True,
+):
+    """Build the canonical Vortex_axi SynthConfig without running DC.
+
+    Selective top analysis and the legacy command-line runner share this
+    function so RTL ordering, config defines, SRAM libraries, and timing setup
+    cannot silently diverge.
+    """
+
+    config_file = Path(config_file).expanduser().resolve()
+    config_defines = _load_config_defines(config_file)
+    defines = _make_dc_defines(config_defines)
+
+    from hwexplorer.automation.syn import SynthConfig
+    from hwexplorer.automation.tcl_directives import Corner
+
+    run_name = f"Vortex_axi_{run_tag}"
+    incdirs, sources = _enumerate_sources(defines, run_name, result_root)
+    mem_db_paths, mem_db_files = _mem_db_setup()
+    resolved_syn_dir = syn_dir or f"{run_name}/syn_topo.lpp"
+
+    cfg = SynthConfig(
+        design_dir=str(result_root),
+        syn_dir=resolved_syn_dir,
+        design_name="Vortex_axi",
+        search_path=incdirs,
+        define_list=defines,
+        an_source_list=sources,
+        param_list=[],
+        period=10.0,
+        period_scale=0.99,
+        clk_nonideal_scale=0,
+        input_delay_max=0,
+        input_delay_min=0,
+        output_delay_max=0,
+        output_delay_min=0,
+        clk_name="clk",
+        reset_name="reset",
+        reset_type="active_high",
+        switching_activity={
+            "clk": [0.5, 2.1],
+            "reset": [0.0, 0.0],
+        },
+        tech="lpp",
+        corners=[Corner.MAX],
+        mem_db_path=mem_db_paths,
+        mem_db_files=mem_db_files,
+        driving_cells=[],
+        driven_loads=[],
+        generate_design_catalog=generate_design_catalog,
+        skip_write_icc2_files=skip_write_icc2_files,
+        rerun=rerun,
+        backup=False,
+        new=True,
+    )
+    return cfg, defines, sources, incdirs
+
+
 def main(argv=None):
     args = _build_parser().parse_args(argv)
     config_file, run_tag = _resolve_config_input(args)
     run_name = f"Vortex_axi_{run_tag}"
-    config_defines = _load_config_defines(config_file)
-    defines = _make_dc_defines(config_defines)
-
-    # Keep hwexplorer optional for argument/config validation and unit tests.
-    # It is required only once a real synthesis run begins.
-    from hwexplorer.automation.syn import SynthConfig
-    from hwexplorer.automation.tcl_directives import Corner
-
-    incdirs, sources = _enumerate_sources(defines, run_name)
-    mem_db_paths, mem_db_files = _mem_db_setup()
+    cfg, defines, sources, incdirs = build_vortex_axi_synth_config(
+        config_file, run_tag
+    )
 
     print(f"# config: {config_file}")
     print(f"# result: {RESULT_ROOT}/{run_name}/syn_topo.lpp")
     print(f"# defines: {' '.join(f'-D{define}' for define in defines)}")
     print(f"# {len(sources)} source files")
     print(f"# {len(incdirs)} include dirs")
-    print(f"# {len(mem_db_files)} compiled SRAM macros @ {MAX_CORNER}")
-
-    cfg = SynthConfig(
-        design_dir   = RESULT_ROOT,
-        syn_dir      = f"{run_name}/syn_topo.lpp",
-        design_name  = "Vortex_axi",
-        search_path  = incdirs,
-        define_list  = defines,
-        an_source_list = sources,
-        param_list   = [],     # CONFIGS supplied via define_list
-        period       = 10.0,   # 100 MHz first attempt
-        period_scale = 0.99,
-        clk_nonideal_scale = 0,
-        input_delay_max = 0, input_delay_min = 0,
-        output_delay_max = 0, output_delay_min = 0,
-        clk_name     = "clk",
-        reset_name   = "reset",
-        reset_type   = "active_high",
-        switching_activity = {
-            "clk":   [0.5, 2.1],
-            "reset": [0.0, 0.0],
-        },
-        tech         = "lpp",
-        corners      = [Corner.MAX],
-        mem_db_path  = mem_db_paths,
-        mem_db_files = mem_db_files,
-        driving_cells = [],
-        driven_loads  = [],
-        skip_write_icc2_files=True,
-        rerun        = True,
-        backup       = False,
-        new          = True,
-    )
+    print(f"# {len(cfg.mem_db_files)} compiled SRAM macros @ {MAX_CORNER}")
     cfg.print()
     cfg.run()
     _validate_synthesis_result(f"{cfg.design_dir}/{cfg.syn_dir}", cfg.design_name)
