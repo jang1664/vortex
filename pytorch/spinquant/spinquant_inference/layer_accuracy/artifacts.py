@@ -11,12 +11,13 @@ from typing import Dict, Mapping
 
 import torch
 
-from .specs import LayerConfig
+from .specs import DecodeConfig, LayerConfig
 from .tensor_io import pack_signed_int4, tensor_sha256
 
 
 CASE_SCHEMA_VERSION = 1
 GRAPH_VERSION = "llama2_decoder_layer_r3r4_v1"
+DECODE_GRAPH_VERSION = "llama2_decoder_layer_r3r4_decode_v1"
 PROJECTION_DIMS = {
     "q_proj": ("hidden_size", "hidden_size"),
     "k_proj": ("hidden_size", "hidden_size"),
@@ -31,6 +32,13 @@ PROJECTION_DIMS = {
 @dataclass
 class LayerCase:
     config: LayerConfig
+    tensors: Dict[str, torch.Tensor]
+    manifest: dict
+
+
+@dataclass
+class DecodeCase:
+    config: DecodeConfig
     tensors: Dict[str, torch.Tensor]
     manifest: dict
 
@@ -197,6 +205,51 @@ def create_random_case(config: LayerConfig | None = None, *, seed: int = 0) -> L
     return LayerCase(config, tensors, manifest)
 
 
+def create_random_decode_case(config: DecodeConfig, *, seed: int = 0) -> DecodeCase:
+    """Create one prompt plus ordered one-token decode inputs with shared weights."""
+
+    base = create_random_case(config.layer, seed=seed)
+    return _decode_case_from_layer_case(base, config)
+
+
+def _decode_case_from_layer_case(base: LayerCase, config: DecodeConfig) -> DecodeCase:
+    if base.config != config.layer:
+        raise ValueError("decode config layer geometry does not match the source layer case")
+    tensors = dict(base.tensors)
+    full_input = tensors.pop("input")
+    full_positions = tensors.pop("position_ids")
+    tensors["prompt_input"] = full_input[:, : config.prompt_length].contiguous()
+    decode = full_input[:, config.prompt_length :].contiguous()
+    tensors["decode_inputs"] = decode.transpose(0, 1).unsqueeze(2).contiguous()
+    tensors["prompt_position_ids"] = full_positions[:, : config.prompt_length].contiguous()
+    decode_positions = full_positions[:, config.prompt_length :].contiguous()
+    tensors["decode_position_ids"] = (
+        decode_positions.transpose(0, 1).unsqueeze(2).contiguous()
+    )
+
+    manifest = dict(base.manifest)
+    manifest.update(
+        {
+            "case_kind": "decode",
+            "graph_version": DECODE_GRAPH_VERSION,
+            "config": config.to_dict(),
+            "decode_contract": {
+                "prompt_length": config.prompt_length,
+                "decode_steps": config.decode_steps,
+                "max_sequence_length": config.max_sequence_length,
+                "decode_token_length": 1,
+            },
+            "tensor_hashes": {
+                name: tensor_sha256(tensor) for name, tensor in sorted(tensors.items())
+            },
+        }
+    )
+    manifest["case_hash"] = _case_hash(manifest)
+    case = DecodeCase(config, tensors, manifest)
+    _validate_decode_case(case)
+    return case
+
+
 def _required_checkpoint_tensors(config: LayerConfig, layer_index: int) -> dict[str, tuple[tuple[int, ...], torch.dtype]]:
     prefix = f"model.layers.{layer_index}."
     required: dict[str, tuple[tuple[int, ...], torch.dtype]] = {
@@ -316,10 +369,38 @@ def create_checkpoint_case(
     return LayerCase(config, tensors, manifest)
 
 
+def create_checkpoint_decode_case(
+    checkpoint: str | Path,
+    *,
+    layer_index: int,
+    checkpoint_profile: str,
+    config: DecodeConfig,
+    seed: int = 0,
+) -> DecodeCase:
+    base = create_checkpoint_case(
+        checkpoint,
+        layer_index=layer_index,
+        checkpoint_profile=checkpoint_profile,
+        config=config.layer,
+        seed=seed,
+    )
+    return _decode_case_from_layer_case(base, config)
+
+
 def save_case(case: LayerCase, path: str | Path) -> None:
     destination = Path(path)
     destination.mkdir(parents=True, exist_ok=False)
     _validate_case(case)
+    torch.save(case.tensors, destination / "tensors.pt")
+    (destination / "manifest.json").write_text(
+        json.dumps(case.manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+
+def save_decode_case(case: DecodeCase, path: str | Path) -> None:
+    destination = Path(path)
+    destination.mkdir(parents=True, exist_ok=False)
+    _validate_decode_case(case)
     torch.save(case.tensors, destination / "tensors.pt")
     (destination / "manifest.json").write_text(
         json.dumps(case.manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
@@ -333,6 +414,97 @@ def load_case(path: str | Path) -> LayerCase:
     case = LayerCase(LayerConfig.from_dict(manifest["config"]), tensors, manifest)
     _validate_case(case)
     return case
+
+
+def load_decode_case(path: str | Path) -> DecodeCase:
+    source = Path(path)
+    manifest = json.loads((source / "manifest.json").read_text(encoding="utf-8"))
+    if manifest.get("case_kind") != "decode":
+        raise ValueError("artifact is not a decode case")
+    tensors = torch.load(source / "tensors.pt", map_location="cpu", weights_only=True)
+    case = DecodeCase(DecodeConfig.from_dict(manifest["config"]), tensors, manifest)
+    _validate_decode_case(case)
+    return case
+
+
+def _validate_decode_case(case: DecodeCase) -> None:
+    if case.manifest.get("schema_version") != CASE_SCHEMA_VERSION:
+        raise ValueError(
+            f"unsupported case schema version {case.manifest.get('schema_version')!r}"
+        )
+    if case.manifest.get("case_kind") != "decode":
+        raise ValueError("decode case manifest must declare case_kind=decode")
+    if case.manifest.get("graph_version") != DECODE_GRAPH_VERSION:
+        raise ValueError("decode case graph version mismatch")
+
+    config = case.config
+    layer = config.layer
+    total = config.total_sequence_length
+    expected: dict[str, tuple[tuple[int, ...], torch.dtype]] = {
+        "prompt_input": (
+            (layer.batch_size, config.prompt_length, layer.hidden_size),
+            torch.float16,
+        ),
+        "decode_inputs": (
+            (config.decode_steps, layer.batch_size, 1, layer.hidden_size),
+            torch.float16,
+        ),
+        "input_norm.weight": ((layer.hidden_size,), torch.float16),
+        "post_attention_norm.weight": ((layer.hidden_size,), torch.float16),
+        "prompt_position_ids": (
+            (layer.batch_size, config.prompt_length),
+            torch.int64,
+        ),
+        "decode_position_ids": (
+            (config.decode_steps, layer.batch_size, 1),
+            torch.int64,
+        ),
+        "rope_cos": ((layer.batch_size, total, layer.head_dim), torch.float16),
+        "rope_sin": ((layer.batch_size, total, layer.head_dim), torch.float16),
+        "causal_mask": ((1, 1, total, total), torch.float16),
+        "score_scale": (
+            (layer.batch_size, layer.num_attention_heads, total, total),
+            torch.float16,
+        ),
+    }
+    for projection in PROJECTION_DIMS:
+        in_features, out_features = _projection_shape(layer, projection)
+        expected[f"{projection}.qweight"] = (
+            (in_features, out_features // 2),
+            torch.int8,
+        )
+        expected[f"{projection}.scales"] = (
+            (in_features // layer.weight_group_size, out_features),
+            torch.float16,
+        )
+    if set(expected) != set(case.tensors):
+        raise ValueError("case tensors do not match the decode-layer contract")
+
+    expected_hashes = case.manifest.get("tensor_hashes", {})
+    if set(expected_hashes) != set(case.tensors):
+        raise ValueError("case tensor set does not match manifest")
+    for name, tensor in case.tensors.items():
+        expected_shape, expected_dtype = expected[name]
+        if tuple(tensor.shape) != expected_shape or tensor.dtype != expected_dtype:
+            raise ValueError(
+                f"case tensor {name} expected shape={expected_shape}, dtype={expected_dtype}; "
+                f"got shape={tuple(tensor.shape)}, dtype={tensor.dtype}"
+            )
+        actual = tensor_sha256(tensor)
+        if actual != expected_hashes[name]:
+            raise ValueError(
+                f"tensor checksum mismatch for {name}: {actual} != {expected_hashes[name]}"
+            )
+
+    prompt_positions = case.tensors["prompt_position_ids"]
+    decode_positions = case.tensors["decode_position_ids"].squeeze(-1).transpose(0, 1)
+    positions = torch.cat((prompt_positions, decode_positions), dim=1)
+    if positions.shape[1] > 1 and not bool(torch.all(positions[:, 1:] > positions[:, :-1])):
+        raise ValueError("decode position IDs must be strictly increasing")
+    if not bool(torch.all(positions == positions[0:1])):
+        raise ValueError("decode position IDs must agree across the batch")
+    if _case_hash(case.manifest) != case.manifest.get("case_hash"):
+        raise ValueError("case manifest checksum mismatch")
 
 
 def _validate_case(case: LayerCase) -> None:

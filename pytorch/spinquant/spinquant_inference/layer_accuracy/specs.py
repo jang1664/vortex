@@ -45,6 +45,126 @@ class LayerConfig:
 
 
 @dataclass(frozen=True)
+class DecodeConfig:
+    """Logical prompt/decode geometry for one persistent-cache test case."""
+
+    layer: LayerConfig
+    prompt_length: int
+    decode_steps: int
+    max_sequence_length: int
+
+    def __post_init__(self) -> None:
+        if self.prompt_length <= 0:
+            raise ValueError("prompt_length must be positive")
+        if self.decode_steps <= 0:
+            raise ValueError("decode_steps must be positive")
+        total_length = self.prompt_length + self.decode_steps
+        if self.layer.sequence_length != total_length:
+            raise ValueError(
+                "layer sequence_length must equal prompt_length + decode_steps"
+            )
+        if total_length > self.max_sequence_length:
+            raise ValueError(
+                f"prompt and decode length {total_length} exceeds max_sequence_length "
+                f"{self.max_sequence_length}"
+            )
+
+    @property
+    def total_sequence_length(self) -> int:
+        return self.prompt_length + self.decode_steps
+
+    def to_dict(self) -> dict:
+        return {
+            "layer": self.layer.to_dict(),
+            "prompt_length": self.prompt_length,
+            "decode_steps": self.decode_steps,
+            "max_sequence_length": self.max_sequence_length,
+        }
+
+    @classmethod
+    def from_dict(cls, value: dict) -> "DecodeConfig":
+        return cls(
+            layer=LayerConfig.from_dict(value["layer"]),
+            prompt_length=value["prompt_length"],
+            decode_steps=value["decode_steps"],
+            max_sequence_length=value["max_sequence_length"],
+        )
+
+
+@dataclass(frozen=True)
+class CacheGeometry:
+    """Immutable address geometry shared by semantic and physical caches."""
+
+    batch_size: int
+    num_kv_heads: int
+    head_dim: int
+    max_sequence_length: int
+    padded_sequence_length: int
+
+    def __post_init__(self) -> None:
+        if min(self.batch_size, self.num_kv_heads, self.head_dim) <= 0:
+            raise ValueError("cache batch, head count, and head dimension must be positive")
+        if self.max_sequence_length <= 0:
+            raise ValueError("max_sequence_length must be positive")
+        if self.padded_sequence_length < self.max_sequence_length:
+            raise ValueError("padded_sequence_length must cover max_sequence_length")
+
+
+@dataclass
+class CacheState:
+    """Mutable commit metadata for an already allocated cache."""
+
+    geometry: CacheGeometry
+    allocation_id: str
+    logical_length: int = 0
+    cache_generation: int = 0
+    lifecycle: str = "empty"
+
+    def __post_init__(self) -> None:
+        if not self.allocation_id:
+            raise ValueError("allocation_id must be non-empty")
+        if self.logical_length != 0 or self.lifecycle != "empty":
+            raise ValueError("new cache state must start empty")
+
+    def require_generation(self, generation: int) -> None:
+        if generation != self.cache_generation:
+            raise ValueError(
+                f"stale cache generation {generation}; current generation is "
+                f"{self.cache_generation}"
+            )
+
+    def commit_prefill(self, prompt_length: int) -> None:
+        if self.lifecycle != "empty":
+            raise ValueError("prefill requires an empty cache")
+        if prompt_length <= 0:
+            raise ValueError("prefill length must be positive")
+        if prompt_length > self.geometry.max_sequence_length:
+            raise ValueError("prefill length exceeds cache capacity")
+        self.logical_length = prompt_length
+        self.lifecycle = (
+            "full" if prompt_length == self.geometry.max_sequence_length else "valid_prefix"
+        )
+
+    def commit_append(self, *, position: int) -> None:
+        if self.lifecycle == "empty":
+            raise ValueError("append requires prefill")
+        if self.lifecycle == "full" or self.logical_length >= self.geometry.max_sequence_length:
+            raise ValueError("cache is full")
+        if position != self.logical_length:
+            raise ValueError(
+                f"append position {position} must equal logical length {self.logical_length}"
+            )
+        self.logical_length += 1
+        if self.logical_length == self.geometry.max_sequence_length:
+            self.lifecycle = "full"
+
+    def reset(self) -> None:
+        self.logical_length = 0
+        self.cache_generation += 1
+        self.lifecycle = "empty"
+
+
+@dataclass(frozen=True)
 class QuantSpec:
     bits: int
     signed: bool

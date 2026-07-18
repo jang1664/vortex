@@ -1,5 +1,7 @@
 """Stable semantic checkpoint identifiers for the single-layer graph."""
 
+from dataclasses import dataclass
+
 STAGE_NAMES = (
     "input_norm",
     "q_proj",
@@ -38,3 +40,18 @@ def validate_stop_stage(stage: str) -> int:
         raise ValueError(
             f"unknown stop stage {stage!r}; expected one of {', '.join(STAGE_NAMES)}"
         ) from error
+
+
+@dataclass(frozen=True)
+class DecodeStopPoint:
+    """A semantic stop point within an ordered one-token decode step."""
+
+    step: int
+    stage: str
+
+    def validate(self, *, decode_steps: int) -> int:
+        if self.step < 0 or self.step >= decode_steps:
+            raise ValueError(
+                f"decode step {self.step} is outside [0, {decode_steps})"
+            )
+        return validate_stop_stage(self.stage)

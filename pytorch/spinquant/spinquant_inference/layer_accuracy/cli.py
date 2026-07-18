@@ -8,9 +8,12 @@ from pathlib import Path
 from typing import Sequence
 
 from .artifacts import (
+    create_checkpoint_decode_case,
     create_checkpoint_case,
+    create_random_decode_case,
     create_random_case,
     load_case,
+    save_decode_case,
     save_case,
 )
 from .backends import TorchBackend, VortexBackend
@@ -18,7 +21,7 @@ from .compare import compare_runs
 from .graph import LayerExecutor
 from .generator_conformance import check_generator_conformance
 from .run_artifacts import load_run, save_run
-from .specs import LayerConfig
+from .specs import DecodeConfig, LayerConfig
 from .stages import STAGE_NAMES
 
 
@@ -45,6 +48,20 @@ def _parser() -> argparse.ArgumentParser:
     make_case.add_argument("--layer-index", type=int, default=0)
     make_case.add_argument("--batch-size", type=_positive_int, default=1)
     make_case.add_argument("--seq-len", type=_positive_int, default=32)
+
+    make_decode_case = commands.add_parser(
+        "make-decode-case", help="create a prompt plus one-token decode inputs"
+    )
+    make_decode_case.add_argument("--source", choices=("random", "checkpoint"), required=True)
+    make_decode_case.add_argument("--output", type=Path, required=True)
+    make_decode_case.add_argument("--seed", type=int, default=0)
+    make_decode_case.add_argument("--checkpoint", type=Path)
+    make_decode_case.add_argument("--checkpoint-profile", choices=("spinquant-w4a16-r3r4",))
+    make_decode_case.add_argument("--layer-index", type=int, default=0)
+    make_decode_case.add_argument("--batch-size", type=_positive_int, default=1)
+    make_decode_case.add_argument("--prompt-len", type=_positive_int, required=True)
+    make_decode_case.add_argument("--decode-steps", type=_positive_int, required=True)
+    make_decode_case.add_argument("--max-seq-len", type=_positive_int, required=True)
 
     run = commands.add_parser("run", help="execute one backend and save stage captures")
     run.add_argument("--case", type=Path, required=True)
@@ -91,6 +108,37 @@ def _make_case(args: argparse.Namespace) -> int:
         )
     save_case(case, args.output)
     print(f"created case {args.output} ({case.manifest['case_hash']})")
+    return 0
+
+
+def _make_decode_case(args: argparse.Namespace) -> int:
+    total_length = args.prompt_len + args.decode_steps
+    config = DecodeConfig(
+        layer=LayerConfig(batch_size=args.batch_size, sequence_length=total_length),
+        prompt_length=args.prompt_len,
+        decode_steps=args.decode_steps,
+        max_sequence_length=args.max_seq_len,
+    )
+    if args.source == "random":
+        if args.checkpoint is not None or args.checkpoint_profile is not None:
+            raise SystemExit(
+                "--checkpoint and --checkpoint-profile are valid only with --source checkpoint"
+            )
+        case = create_random_decode_case(config, seed=args.seed)
+    else:
+        if args.checkpoint is None or args.checkpoint_profile is None:
+            raise SystemExit(
+                "--source checkpoint requires --checkpoint and --checkpoint-profile"
+            )
+        case = create_checkpoint_decode_case(
+            args.checkpoint,
+            layer_index=args.layer_index,
+            checkpoint_profile=args.checkpoint_profile,
+            config=config,
+            seed=args.seed,
+        )
+    save_decode_case(case, args.output)
+    print(f"created decode case {args.output} ({case.manifest['case_hash']})")
     return 0
 
 
@@ -150,6 +198,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if args.command == "make-case":
         return _make_case(args)
+    if args.command == "make-decode-case":
+        return _make_decode_case(args)
     if args.command == "run":
         return _run(args)
     if args.command == "compare":
