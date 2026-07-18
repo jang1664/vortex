@@ -102,6 +102,21 @@ class ConfigInputTest(unittest.TestCase):
             with self.assertRaisesRegex(SystemExit, "Unsupported tokens"):
                 SYN._load_config_defines(config_file)
 
+    def test_dma_sram_specs_cover_supported_slot_depths(self):
+        expected = {
+            f"cmos28lpp_rf2_hd_{depth}x{width}m1"
+            for depth in (4, 8, 16)
+            for width in (160, 64)
+        }
+        dma_specs = {
+            spec
+            for spec in SYN.SRAM_SPECS
+            if spec in expected
+        }
+
+        self.assertEqual(expected, dma_specs)
+        self.assertEqual(len(SYN.SRAM_SPECS), len(set(SYN.SRAM_SPECS)))
+
 
 if __name__ == "__main__":
     unittest.main()
