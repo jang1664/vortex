@@ -9,11 +9,13 @@ ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 ALIAS="C4"
 DEVICE="xcu55c-fsvh2892-2L-e"
 TOP="VX_dma_engine_ooc"
+TARGET="engine"
 JOBS="8"
 OUTPUT_DIR=""
 REFERENCE_REPORT=""
 WRITE_CHECKPOINT="0"
 ENABLE_MISALIGN="0"
+MISALIGN_PACK_BYTES_OVERRIDE=""
 PYTHON_BIN="${PYTHON:-python3}"
 VIVADO_BIN=""
 
@@ -21,18 +23,20 @@ usage() {
   cat <<'EOF'
 Usage: ci/run_dma_ooc.sh [options]
 
-Run synthesis-only Vivado out-of-context compilation for the DMA engine.
+Run synthesis-only Vivado out-of-context compilation for a DMA target.
 
 Options:
   --alias NAME             FPGA config alias (default: C4)
   --output-dir PATH        New result directory (required)
   --device PART            Vivado device part
+  --target NAME            OOC target: engine or node-backend (default: engine)
   --top MODULE             OOC top module (default: VX_dma_engine_ooc)
   --jobs N                 Vivado parallel jobs (default: 8)
   --vivado-bin PATH        Vivado executable (default: PATH or Vivado 2025.1)
   --reference-report PATH  Historical report to record beside the OOC result
   --write-checkpoint       Also retain the large post-synthesis DCP
   --enable-misalign        Elaborate VX_dma_unit_misal instead of aligned DMA
+  --misalign-pack-bytes N  Override MISALIGN_PACK_BYTES for this run
   -h, --help               Show this help
 
 Example:
@@ -40,6 +44,12 @@ Example:
     --alias C4 \
     --enable-misalign \
     --output-dir docs/future_optim/dma_experiments/20260717-010-c4-misaligned-baseline
+
+  ci/run_dma_ooc.sh \
+    --target node-backend \
+    --alias C4 \
+    --misalign-pack-bytes 16 \
+    --output-dir docs/future_optim/dma_experiments/pack16
 EOF
 }
 
@@ -60,6 +70,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --device)
       DEVICE="${2:?missing value for --device}"
+      shift 2
+      ;;
+    --target)
+      TARGET="${2:?missing value for --target}"
       shift 2
       ;;
     --top)
@@ -86,6 +100,10 @@ while [[ $# -gt 0 ]]; do
       ENABLE_MISALIGN="1"
       shift
       ;;
+    --misalign-pack-bytes)
+      MISALIGN_PACK_BYTES_OVERRIDE="${2:?missing value for --misalign-pack-bytes}"
+      shift 2
+      ;;
     -h|--help)
       usage
       exit 0
@@ -98,6 +116,24 @@ done
 
 [[ -n "${OUTPUT_DIR}" ]] || fail "--output-dir is required"
 [[ "${JOBS}" =~ ^[1-9][0-9]*$ ]] || fail "--jobs must be a positive integer"
+[[ "${TARGET}" == "engine" || "${TARGET}" == "node-backend" ]] \
+  || fail "--target must be engine or node-backend"
+if [[ -n "${MISALIGN_PACK_BYTES_OVERRIDE}" ]]; then
+  [[ "${MISALIGN_PACK_BYTES_OVERRIDE}" =~ ^[1-9][0-9]*$ ]] \
+    || fail "--misalign-pack-bytes must be a positive integer"
+  (( (MISALIGN_PACK_BYTES_OVERRIDE & (MISALIGN_PACK_BYTES_OVERRIDE - 1)) == 0 )) \
+    || fail "--misalign-pack-bytes must be a power of two"
+fi
+
+if [[ "${TARGET}" == "node-backend" ]]; then
+  TOP="VX_dma_unit_ooc"
+  ENABLE_MISALIGN="1"
+  TARGET_HIER_FILTER='u_dma_unit$'
+  TARGET_LABEL="DMA node backend"
+else
+  TARGET_HIER_FILTER='u_dma_engine$'
+  TARGET_LABEL="DMA engine"
+fi
 
 if [[ "${OUTPUT_DIR}" != /* ]]; then
   OUTPUT_DIR="${ROOT_DIR}/${OUTPUT_DIR}"
@@ -119,9 +155,9 @@ FPGA_BIN_DIR="${ALIAS_VALUES[0]}"
 CONFIG_FILE="${ALIAS_VALUES[1]}"
 [[ -f "${CONFIG_FILE}" ]] || fail "alias config not found: ${CONFIG_FILE}"
 
-if [[ -z "${REFERENCE_REPORT}" ]]; then
+if [[ -z "${REFERENCE_REPORT}" && "${TARGET}" == "engine" ]]; then
   REFERENCE_REPORT="${FPGA_BIN_DIR}/hier_utilization.rpt"
-elif [[ "${REFERENCE_REPORT}" != /* ]]; then
+elif [[ -n "${REFERENCE_REPORT}" && "${REFERENCE_REPORT}" != /* ]]; then
   REFERENCE_REPORT="${ROOT_DIR}/${REFERENCE_REPORT}"
 fi
 
@@ -138,6 +174,16 @@ fi
 CONFIGS=""
 # shellcheck source=/dev/null
 source "${CONFIG_FILE}"
+if [[ -n "${MISALIGN_PACK_BYTES_OVERRIDE}" ]]; then
+  read -r -a CONFIG_ARGS_ORIGINAL <<< "${CONFIGS}"
+  CONFIGS=""
+  for config_arg in "${CONFIG_ARGS_ORIGINAL[@]}"; do
+    if [[ "${config_arg}" != -DMISALIGN_PACK_BYTES=* ]]; then
+      CONFIGS+=" ${config_arg}"
+    fi
+  done
+  CONFIGS+=" -DMISALIGN_PACK_BYTES=${MISALIGN_PACK_BYTES_OVERRIDE}"
+fi
 CONFIGS+=" -DPLATFORM_MEMORY_DATA_SIZE=64 -DPLATFORM_MEMORY_ID_WIDTH=32"
 CONFIGS+=" -DXLEN_64 -DNDEBUG -DVIVADO -DSYNTHESIS"
 if [[ "${ENABLE_MISALIGN}" == "1" ]]; then
@@ -186,6 +232,7 @@ read -r -a CONFIG_ARGS <<< "${CONFIGS}"
   echo "${ROOT_DIR}/hw/rtl/core/VX_dma_unit_misal.sv"
   echo "${ROOT_DIR}/hw/rtl/core/VX_dma_unit.sv"
   echo "${ROOT_DIR}/hw/rtl/mem/VX_dma_engine.sv"
+  echo "${ROOT_DIR}/hw/syn/xilinx/dut/VX_dma_unit_ooc.sv"
   echo "${ROOT_DIR}/hw/syn/xilinx/dut/VX_dma_engine_ooc.sv"
 } > "${SOURCE_LIST}"
 
@@ -195,9 +242,11 @@ read -r -a CONFIG_ARGS <<< "${CONFIGS}"
   echo "fpga_bin_dir=${FPGA_BIN_DIR}"
   echo "config_file=${CONFIG_FILE}"
   echo "top=${TOP}"
+  echo "target=${TARGET}"
   echo "device=${DEVICE}"
   echo "jobs=${JOBS}"
   echo "enable_misalign=${ENABLE_MISALIGN}"
+  echo "misalign_pack_bytes_override=${MISALIGN_PACK_BYTES_OVERRIDE:-config-default}"
   echo "reference_report=${REFERENCE_REPORT}"
   echo "git_commit=$(git -C "${ROOT_DIR}" rev-parse HEAD)"
   echo "git_branch=$(git -C "${ROOT_DIR}" branch --show-current)"
@@ -232,13 +281,17 @@ TOOL_DIR="${ROOT_DIR}/hw/scripts" \
     "${WRITE_CHECKPOINT}" \
   2>&1 | tee "${OUTPUT_DIR}/console.log"
 
-OOC_ENGINE_CSV="${OUTPUT_DIR}/ooc_dma_engine.csv"
+if [[ "${TARGET}" == "engine" ]]; then
+  OOC_TARGET_CSV="${OUTPUT_DIR}/ooc_dma_engine.csv"
+else
+  OOC_TARGET_CSV="${OUTPUT_DIR}/ooc_dma_unit.csv"
+fi
 OOC_BUFFERS_CSV="${OUTPUT_DIR}/ooc_dma_buffers.csv"
-REFERENCE_ENGINE_CSV="${OUTPUT_DIR}/reference_dma_engine.csv"
+REFERENCE_TARGET_CSV="${OUTPUT_DIR}/reference_dma_target.csv"
 
 "${PYTHON_BIN}" "${ROOT_DIR}/tools/vivado_util.py" \
   "${OUTPUT_DIR}/post_synth_util.rpt" show utilization_by_hierarchy \
-  --filter 'u_dma_engine$' --format csv -o "${OOC_ENGINE_CSV}"
+  --filter "${TARGET_HIER_FILTER}" --format csv -o "${OOC_TARGET_CSV}"
 
 "${PYTHON_BIN}" "${ROOT_DIR}/tools/vivado_util.py" \
   "${OUTPUT_DIR}/post_synth_util.rpt" show utilization_by_hierarchy \
@@ -250,15 +303,15 @@ REFERENCE_AVAILABLE=0
 if [[ -f "${REFERENCE_REPORT}" ]]; then
   "${PYTHON_BIN}" "${ROOT_DIR}/tools/vivado_util.py" \
     "${REFERENCE_REPORT}" show utilization_by_hierarchy \
-    --filter 'u_dma_engine$' --format csv -o "${REFERENCE_ENGINE_CSV}"
-  if [[ $(wc -l < "${REFERENCE_ENGINE_CSV}") -gt 1 ]]; then
+    --filter "${TARGET_HIER_FILTER}" --format csv -o "${REFERENCE_TARGET_CSV}"
+  if [[ $(wc -l < "${REFERENCE_TARGET_CSV}") -eq 2 ]]; then
     REFERENCE_AVAILABLE=1
   fi
 fi
 
 COMPARISON_ROWS="$(
   "${PYTHON_BIN}" - \
-    "${OOC_ENGINE_CSV}" "${REFERENCE_ENGINE_CSV}" "${REFERENCE_AVAILABLE}" <<'PY'
+    "${OOC_TARGET_CSV}" "${REFERENCE_TARGET_CSV}" "${REFERENCE_AVAILABLE}" <<'PY'
 import csv
 import pathlib
 import sys
@@ -268,7 +321,7 @@ def read_one(path):
     with pathlib.Path(path).open(newline="") as csv_file:
         rows = list(csv.DictReader(csv_file))
     if len(rows) != 1:
-        raise SystemExit(f"expected one DMA engine row in {path}, found {len(rows)}")
+        raise SystemExit(f"expected one DMA target row in {path}, found {len(rows)}")
     return rows[0]
 
 
@@ -296,15 +349,17 @@ PY
 )"
 
 cat > "${OUTPUT_DIR}/comparison.md" <<EOF
-# C4 DMA OOC Result
+# C4 ${TARGET_LABEL} OOC Result
 
 - Alias: \`${ALIAS}\`
 - OOC top: \`${TOP}\`
+- OOC target: \`${TARGET}\`
+- MISALIGN_PACK_BYTES: \`${MISALIGN_PACK_BYTES_OVERRIDE:-config-default}\`
 - Device: \`${DEVICE}\`
 - Config: \`${CONFIG_FILE}\`
 - Git commit: \`$(git -C "${ROOT_DIR}" rev-parse HEAD)\`
 - OOC report: \`post_synth_util.rpt\`
-- OOC DMA engine row: \`ooc_dma_engine.csv\`
+- OOC target row: \`$(basename "${OOC_TARGET_CSV}")\`
 - OOC drain buffer rows: \`ooc_dma_buffers.csv\`
 - Reference report: \`${REFERENCE_REPORT}\`
 
@@ -324,7 +379,7 @@ cat > "${OUTPUT_DIR}/manifest.md" <<EOF
 | Field | Value |
 | --- | --- |
 | Experiment ID | \`$(basename "${OUTPUT_DIR}")\` |
-| Purpose | Produce a reproducible C4 improve DMA OOC synthesis result |
+| Purpose | Produce a reproducible C4 improve ${TARGET_LABEL} OOC synthesis result |
 | Comparison rule | Compare only with an OOC run using identical synthesis inputs |
 | Changed production RTL | See \`git_status.txt\` and the parent experiment manifest |
 | Config | \`${CONFIG_FILE}\` |
@@ -333,6 +388,8 @@ cat > "${OUTPUT_DIR}/manifest.md" <<EOF
 | Vivado | \`$("${VIVADO_BIN}" -version | sed -n '1s/^vivado //p')\` |
 | Device | \`${DEVICE}\` |
 | OOC top | \`${TOP}\` |
+| OOC target | \`${TARGET}\` |
+| MISALIGN_PACK_BYTES | \`${MISALIGN_PACK_BYTES_OVERRIDE:-config-default}\` |
 | Constraint | \`hw/syn/xilinx/dut/project.xdc\` |
 | Unittest | Not run by this synthesis-only script |
 | xrt-vcs-sim | Not run by this synthesis-only script |

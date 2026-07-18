@@ -1,6 +1,7 @@
 #include "VortexRuntime.h"
 
 #include <c10/util/Exception.h>
+#include <cstdint>
 #include <cstring>
 #include <limits>
 
@@ -143,11 +144,31 @@ int VortexRuntime::free(void* ptr) {
   return kVortexSuccess;
 }
 
+VortexRuntime::BufferInfo* VortexRuntime::findBufferContaining(
+    const void* ptr, size_t nbytes, size_t* offset) {
+  return const_cast<BufferInfo*>(
+      static_cast<const VortexRuntime*>(this)->findBufferContaining(ptr, nbytes, offset));
+}
+
+const VortexRuntime::BufferInfo* VortexRuntime::findBufferContaining(
+    const void* ptr, size_t nbytes, size_t* offset) const {
+  if (!ptr) return nullptr;
+  const uintptr_t address = reinterpret_cast<uintptr_t>(ptr);
+  for (const auto& [base_ptr, info] : buffer_map_) {
+    const uintptr_t base = reinterpret_cast<uintptr_t>(base_ptr);
+    if (address < base) continue;
+    const uintptr_t delta = address - base;
+    if (delta > info.size || nbytes > info.size - delta) continue;
+    if (offset) *offset = static_cast<size_t>(delta);
+    return &info;
+  }
+  return nullptr;
+}
+
 vx_buffer_h VortexRuntime::bufferForPtr(void* ptr) const {
   std::lock_guard<std::recursive_mutex> lock(mutex_);
-  auto it = buffer_map_.find(ptr);
-  if (it == buffer_map_.end()) return nullptr;
-  return it->second.handle;
+  const auto* info = findBufferContaining(ptr, 0, nullptr);
+  return info ? info->handle : nullptr;
 }
 
 int VortexRuntime::memcpy(void* dst, const void* src, size_t nbytes, VortexMemcpyKind kind) {
@@ -158,32 +179,37 @@ int VortexRuntime::memcpy(void* dst, const void* src, size_t nbytes, VortexMemcp
   switch (kind) {
     case kHostToDevice: {
       // src is host, dst is our staging pointer → copy into staging, then upload
-      auto it = buffer_map_.find(dst);
-      if (it == buffer_map_.end()) return kVortexError;
+      size_t dst_offset = 0;
+      auto* info = findBufferContaining(dst, nbytes, &dst_offset);
+      if (!info) return kVortexError;
       std::memcpy(dst, src, nbytes);  // update staging
-      return vx_copy_to_dev(it->second.handle, src, 0, nbytes);
+      return vx_copy_to_dev(info->handle, src, dst_offset, nbytes);
     }
     case kDeviceToHost: {
       // src is staging pointer, dst is host
-      auto it = buffer_map_.find(const_cast<void*>(src));
-      if (it == buffer_map_.end()) return kVortexError;
-      int ret = vx_copy_from_dev(dst, it->second.handle, 0, nbytes);
+      size_t src_offset = 0;
+      auto* info = findBufferContaining(src, nbytes, &src_offset);
+      if (!info) return kVortexError;
+      int ret = vx_copy_from_dev(dst, info->handle, src_offset, nbytes);
       return ret;
     }
     case kDeviceToDevice: {
       // Both src and dst are staging pointers — go through host
-      auto src_it = buffer_map_.find(const_cast<void*>(src));
-      auto dst_it = buffer_map_.find(dst);
-      if (src_it == buffer_map_.end() || dst_it == buffer_map_.end()) {
+      size_t src_offset = 0;
+      size_t dst_offset = 0;
+      auto* src_info = findBufferContaining(src, nbytes, &src_offset);
+      auto* dst_info = findBufferContaining(dst, nbytes, &dst_offset);
+      if (!src_info || !dst_info) {
         // Fallback: plain memcpy on staging buffers
         std::memcpy(dst, src, nbytes);
         return kVortexSuccess;
       }
       // Download from src device buffer to temporary, upload to dst device buffer
       void* tmp = std::malloc(nbytes);
-      int ret = vx_copy_from_dev(tmp, src_it->second.handle, 0, nbytes);
+      if (!tmp) return kVortexError;
+      int ret = vx_copy_from_dev(tmp, src_info->handle, src_offset, nbytes);
       if (ret == 0) {
-        ret = vx_copy_to_dev(dst_it->second.handle, tmp, 0, nbytes);
+        ret = vx_copy_to_dev(dst_info->handle, tmp, dst_offset, nbytes);
         std::memcpy(dst, tmp, nbytes);  // keep staging in sync
       }
       std::free(tmp);
@@ -201,34 +227,37 @@ int VortexRuntime::syncToDevice(void* staging_ptr, size_t nbytes) {
   if (!staging_ptr || nbytes == 0) return kVortexSuccess;
 
   std::lock_guard<std::recursive_mutex> lock(mutex_);
-  auto it = buffer_map_.find(staging_ptr);
-  if (it == buffer_map_.end()) return kVortexError;
+  size_t offset = 0;
+  auto* info = findBufferContaining(staging_ptr, 0, &offset);
+  if (!info) return kVortexError;
 
-  size_t copy_size = std::min(nbytes, it->second.size);
-  return vx_copy_to_dev(it->second.handle, staging_ptr, 0, copy_size);
+  size_t copy_size = std::min(nbytes, info->size - offset);
+  return vx_copy_to_dev(info->handle, staging_ptr, offset, copy_size);
 }
 
 int VortexRuntime::syncFromDevice(void* staging_ptr, size_t nbytes) {
   if (!staging_ptr || nbytes == 0) return kVortexSuccess;
 
   std::lock_guard<std::recursive_mutex> lock(mutex_);
-  auto it = buffer_map_.find(staging_ptr);
-  if (it == buffer_map_.end()) return kVortexError;
+  size_t offset = 0;
+  auto* info = findBufferContaining(staging_ptr, 0, &offset);
+  if (!info) return kVortexError;
 
-  size_t copy_size = std::min(nbytes, it->second.size);
-  return vx_copy_from_dev(staging_ptr, it->second.handle, 0, copy_size);
+  size_t copy_size = std::min(nbytes, info->size - offset);
+  return vx_copy_from_dev(staging_ptr, info->handle, offset, copy_size);
 }
 
 uint64_t VortexRuntime::deviceAddress(void* staging_ptr) const {
   if (!staging_ptr) return 0;
 
   std::lock_guard<std::recursive_mutex> lock(mutex_);
-  auto it = buffer_map_.find(staging_ptr);
-  if (it == buffer_map_.end()) return 0;
+  size_t offset = 0;
+  const auto* info = findBufferContaining(staging_ptr, 0, &offset);
+  if (!info) return 0;
 
   uint64_t addr = 0;
-  vx_mem_address(it->second.handle, &addr);
-  return addr;
+  vx_mem_address(info->handle, &addr);
+  return addr + offset;
 }
 
 uint64_t VortexRuntime::globalMemSize() {

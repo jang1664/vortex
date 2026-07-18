@@ -4,7 +4,7 @@ include $(ROOT_DIR)/config.mk
 
 PROJECT := mmio_burst_proto
 
-VORTEX_RT_PATH ?= $(VORTEX_HOME)/build/runtime
+VORTEX_RT_PATH ?= $(ROOT_DIR)/runtime
 STARTUP_ADDR ?= 0x80000000
 
 SRC_DIR := $(VORTEX_HOME)/tests/regression/$(PROJECT)

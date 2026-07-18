@@ -108,6 +108,11 @@ class VORTEX_EXPORT VortexRuntime {
     size_t size;
     void* staging;  // Host-side staging buffer for CPU fallback access
   };
+
+  BufferInfo* findBufferContaining(const void* ptr, size_t nbytes, size_t* offset);
+  const BufferInfo* findBufferContaining(
+      const void* ptr, size_t nbytes, size_t* offset) const;
+
   mutable std::recursive_mutex mutex_;
   std::unordered_map<void*, BufferInfo> buffer_map_;
 };

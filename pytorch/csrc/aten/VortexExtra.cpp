@@ -57,6 +57,7 @@ struct KernelBufferCache {
 
   std::unordered_map<std::string, KernelImage> images;
   std::unordered_map<uint64_t, ReservedRegion> regions;
+  std::vector<vx_buffer_h> retained_simx_args;
   std::mutex mutex;
   bool atexit_registered = false;
 };
@@ -77,6 +78,14 @@ static bool kernel_debug_enabled() {
 static uint64_t next_kernel_launch_id() {
   static std::atomic<uint64_t> counter{0};
   return ++counter;
+}
+
+static bool retain_simx_launch_args() {
+  static bool enabled = []() {
+    const char* driver = std::getenv("VORTEX_DRIVER");
+    return driver && std::strcmp(driver, "simx") == 0;
+  }();
+  return enabled;
 }
 
 static void log_kernel_launch(const std::string& kernel_path, size_t args_size, uint64_t launch_id) {
@@ -126,6 +135,12 @@ static uint64_t kernel_reserve_floor_bytes() {
 static void clear_kernel_cache_atexit() {
   auto& cache = kernel_cache();
   std::lock_guard<std::mutex> lock(cache.mutex);
+  for (auto buffer : cache.retained_simx_args) {
+    if (buffer) {
+      (void)vx_mem_free(buffer);
+    }
+  }
+  cache.retained_simx_args.clear();
   for (auto& [_, region] : cache.regions) {
     if (region.buffer) {
       (void)vx_mem_free(region.buffer);
@@ -216,8 +231,12 @@ static vx_buffer_h get_or_upload_kernel_buffer(vx_device_h device, const std::st
 
   // Upload only when kernel image changes for this VMA region.
   if (region.loaded_kernel_path != kernel_path) {
-    int ret = vx_mem_access(region.buffer, 0, image.bin_size, VX_MEM_READ);
-    TORCH_CHECK(ret == 0, "Failed to set kernel code region access (err=", ret, ")");
+    // A VMA region is shared by all kernels linked at the same startup
+    // address.  A previous launch leaves its code pages read-only, so make
+    // the incoming image writable before replacing it.  Mark it executable
+    // read-only again only after the upload has completed.
+    int ret = vx_mem_access(region.buffer, 0, image.bin_size, VX_MEM_READ_WRITE);
+    TORCH_CHECK(ret == 0, "Failed to make kernel code region writable (err=", ret, ")");
 
     if (region.reserved_size > image.bin_size) {
       ret = vx_mem_access(
@@ -230,6 +249,9 @@ static vx_buffer_h get_or_upload_kernel_buffer(vx_device_h device, const std::st
 
     ret = vx_copy_to_dev(region.buffer, image.payload.data(), 0, image.bin_size);
     TORCH_CHECK(ret == 0, "Failed to upload kernel binary: ", kernel_path, " (err=", ret, ")");
+
+    ret = vx_mem_access(region.buffer, 0, image.bin_size, VX_MEM_READ);
+    TORCH_CHECK(ret == 0, "Failed to protect kernel code region (err=", ret, ")");
     region.loaded_kernel_path = kernel_path;
   }
 
@@ -251,11 +273,32 @@ static void launch_kernel(vx_device_h device,
   // RAII guard: free args buffer on ANY exit (normal or exception).
   // Kernel buffers are cached process-wide by kernel_path.
   auto cleanup = [&]() {
-    if (args_buf) vx_mem_free(args_buf);
+    if (!args_buf) {
+      return;
+    }
+    // simx can report ready before all memory-system drains have retired.
+    // Reusing a just-freed argument address in the next launch can therefore
+    // race an outstanding read/write and hang a longer operator sequence.
+    // Preserve these tiny buffers until process shutdown in simulation only;
+    // real hardware keeps the normal immediate-free behavior.
+    if (retain_simx_launch_args()) {
+      auto& cache = kernel_cache();
+      std::lock_guard<std::mutex> lock(cache.mutex);
+      cache.retained_simx_args.push_back(args_buf);
+    } else {
+      (void)vx_mem_free(args_buf);
+    }
+    args_buf = nullptr;
   };
 
   try {
-    int ret = vx_upload_bytes(device, args, args_size, &args_buf);
+    // Some kernels report completion/error status through their trailing
+    // argument fields.  vx_upload_bytes creates a read-only allocation, which
+    // makes those device writes fault on strict simulators.  Keep all launch
+    // arguments read-write; kernels that only read them are unaffected.
+    int ret = vx_mem_alloc(device, args_size, VX_MEM_READ_WRITE, &args_buf);
+    TORCH_CHECK(ret == 0, "Failed to allocate kernel arguments (err=", ret, ")");
+    ret = vx_copy_to_dev(args_buf, args, 0, args_size);
     TORCH_CHECK(ret == 0, "Failed to upload kernel arguments (err=", ret, ")");
 
     krnl_buf = get_or_upload_kernel_buffer(device, kernel_path);
@@ -289,6 +332,7 @@ struct eladd_kernel_arg_t {
   uint64_t input_b_addr;
   uint64_t output_addr;
   uint32_t size;
+  uint32_t power_kernel_iterations;
 };
 
 // --- elunary (unary element-wise: rsqrt, sin, cos, exp, log, neg, abs, sqrt) ---
@@ -299,6 +343,7 @@ struct elunary_kernel_arg_t {
   uint64_t input_addr;
   uint64_t output_addr;
   uint32_t size;
+  uint32_t power_kernel_iterations;
 };
 
 // --- elscalar (tensor-scalar ops: pow, mul, add with scalar) ---
@@ -310,6 +355,7 @@ struct elscalar_kernel_arg_t {
   uint64_t output_addr;
   float    scalar;
   uint32_t size;
+  uint32_t power_kernel_iterations;
 };
 
 // --- elreduce (reduction ops: mean, sum, max, min along last dim) ---
@@ -321,6 +367,7 @@ struct elreduce_kernel_arg_t {
   uint64_t output_addr;
   uint32_t batch_size;
   uint32_t reduce_dim;
+  uint32_t power_kernel_iterations;
 };
 
 // --- softmax ---
@@ -339,6 +386,7 @@ struct softmax_kernel_arg_t {
                              // omitting it misaligns use_mask/scale -> garbage mask path
   uint32_t use_mask;
   float    scale;
+  uint32_t power_kernel_iterations;
 };
 
 // --- sgemm_tcu ---
@@ -361,6 +409,7 @@ struct silu_kernel_arg_t {
   uint32_t size;
   uint32_t M;     // must match device kernel_arg_t (silu/common.h): M x K traversal
   uint32_t K;     // if left unset the kernel reads them out-of-bounds -> hang on real HW
+  uint32_t power_kernel_iterations;
 };
 
 // --- rmsnorm ---
@@ -375,6 +424,7 @@ struct rmsnorm_kernel_arg_t {
   uint32_t seq_len;
   uint32_t hidden_dim;
   float    eps;
+  uint32_t power_kernel_iterations;
 };
 
 // --- rope ---
@@ -391,6 +441,7 @@ struct rope_kernel_arg_t {
   uint32_t num_heads;
   uint32_t head_dim;
   uint32_t pos_offset;
+  uint32_t power_kernel_iterations;
 };
 
 // --- dropout ---
@@ -431,6 +482,21 @@ struct hadamard_kernel_arg_t {
   uint32_t power_kernel_iterations;
 };
 
+// --- dense base transform after mixed-radix FWHT ---
+// Must match tests/regression/hadamard_base/common.h.
+struct hadamard_base_kernel_arg_t {
+  uint32_t kernel_id;
+  uint32_t grid_dim[3];
+  uint32_t block_dim[3];
+  uint64_t input_addr;
+  uint64_t matrix_addr;
+  uint64_t output_addr;
+  uint32_t rows;
+  uint32_t base_k;
+  uint32_t width;
+  uint32_t power_kernel_iterations;
+};
+
 // --- per-token int4 quantize --- must match tests/regression/quantize_pt_int4/common.h
 struct quantize_pt_kernel_arg_t {
   uint32_t kernel_id;
@@ -443,6 +509,37 @@ struct quantize_pt_kernel_arg_t {
   uint32_t n_rows;
   uint32_t D;
   uint32_t mode;           // 0=sym, 1=asym
+  uint32_t packed;         // 0=int8 [D], 1=packed signed-int4 [D/2]
+  uint32_t power_kernel_iterations;
+};
+
+// --- head concat --- must match tests/regression/head_concat/common.h
+struct head_concat_kernel_arg_t {
+  uint32_t kernel_id;
+  uint32_t grid_dim[3];
+  uint32_t block_dim[3];
+  uint64_t input_addr;
+  uint64_t output_addr;
+  uint32_t batch;
+  uint32_t seq;
+  uint32_t heads;
+  uint32_t headdim;
+  uint32_t power_kernel_iterations;
+};
+
+// --- asymmetric QK correction --- must match tests/regression/qk_asym_correction/common.h
+struct qk_asym_correction_kernel_arg_t {
+  uint32_t kernel_id;
+  uint32_t grid_dim[3];
+  uint32_t block_dim[3];
+  uint64_t scores_addr;
+  uint64_t query_addr;
+  uint64_t scale_addr;
+  uint64_t zero_addr;
+  uint64_t output_addr;
+  uint32_t M;
+  uint32_t N;
+  uint32_t D;
   uint32_t power_kernel_iterations;
 };
 
@@ -625,14 +722,14 @@ at::Tensor vortex_add_Tensor(
     const at::Scalar& alpha) {
   // Graceful CPU fallback for cases the eladd kernel can't handle:
   //   - mixed device (one operand is CPU, e.g. scalar broadcast)
-  //   - non-float32 dtypes
+  //   - non-float32/fp16 dtypes
   //   - non-contiguous tensors
   //   - different shapes (broadcasting)
   //   - alpha != 1.0
   bool can_native = self.is_privateuseone()
       && other.is_privateuseone()
-      && self.dtype() == at::kFloat
-      && other.dtype() == at::kFloat
+      && self.dtype() == other.dtype()
+      && (self.dtype() == at::kFloat || self.dtype() == at::kHalf)
       && self.is_contiguous()
       && other.is_contiguous()
       && self.sizes() == other.sizes()
@@ -651,8 +748,9 @@ at::Tensor vortex_add_Tensor(
   // The eladd device kernel operates on fp16 (data_t = fp16_t).  Stage the
   // fp32 inputs/output through fp16 device tensors so the byte layout the
   // kernel reads/writes matches (mirrors vortex_silu's fp16 staging).
-  auto in_a16 = self.to(at::kHalf).contiguous();
-  auto in_b16 = other.to(at::kHalf).contiguous();
+  const bool in_is_half = self.dtype() == at::kHalf;
+  auto in_a16 = in_is_half ? self : self.to(at::kHalf).contiguous();
+  auto in_b16 = in_is_half ? other : other.to(at::kHalf).contiguous();
   auto out16  = at::empty(self.sizes(), self.options().dtype(at::kHalf));
   uint32_t numel = static_cast<uint32_t>(self.numel());
   auto caps = query_caps(device);
@@ -672,7 +770,7 @@ at::Tensor vortex_add_Tensor(
 
   static std::string path = find_kernel("eladd", "eladd");
   launch_kernel(device, &karg, sizeof(karg), path);
-  return out16.to(at::kFloat);
+  return in_is_half ? out16 : out16.to(at::kFloat);
 }
 
 // ===========================================================================
@@ -683,13 +781,13 @@ at::Tensor vortex_mul_Tensor(
     const at::Tensor& other) {
   // Graceful CPU fallback for cases the elmul kernel can't handle:
   //   - mixed device (one operand is CPU, e.g. broadcast from scalar/weight)
-  //   - non-float32 dtypes
+  //   - non-float32/fp16 dtypes
   //   - non-contiguous tensors
   //   - different shapes (broadcasting)
   bool can_native = self.is_privateuseone()
       && other.is_privateuseone()
-      && self.dtype() == at::kFloat
-      && other.dtype() == at::kFloat
+      && self.dtype() == other.dtype()
+      && (self.dtype() == at::kFloat || self.dtype() == at::kHalf)
       && self.is_contiguous()
       && other.is_contiguous()
       && self.sizes() == other.sizes();
@@ -706,8 +804,9 @@ at::Tensor vortex_mul_Tensor(
   vx_device_h device = rt.deviceHandle();
   // The elmul device kernel operates on fp16 (data_t = fp16_t).  Stage the
   // fp32 inputs/output through fp16 device tensors (mirrors vortex_add_Tensor).
-  auto in_a16 = self.to(at::kHalf).contiguous();
-  auto in_b16 = other.to(at::kHalf).contiguous();
+  const bool in_is_half = self.dtype() == at::kHalf;
+  auto in_a16 = in_is_half ? self : self.to(at::kHalf).contiguous();
+  auto in_b16 = in_is_half ? other : other.to(at::kHalf).contiguous();
   auto out16  = at::empty(self.sizes(), self.options().dtype(at::kHalf));
   uint32_t numel = static_cast<uint32_t>(self.numel());
   auto caps = query_caps(device);
@@ -727,7 +826,7 @@ at::Tensor vortex_mul_Tensor(
 
   static std::string path = find_kernel("elmul", "elmul");
   launch_kernel(device, &karg, sizeof(karg), path);
-  return out16.to(at::kFloat);
+  return in_is_half ? out16 : out16.to(at::kFloat);
 }
 
 // ===========================================================================
@@ -1037,6 +1136,8 @@ at::Tensor vortex_softmax(
 
   softmax_kernel_arg_t karg{};
   karg.kernel_id    = KERNEL_SOFTMAX;
+  // pytorch/CMakeLists.txt packages the contiguous-row REV1 kernel, whose
+  // launch contract is one block per logical row.
   karg.grid_dim[0]  = rows;
   karg.grid_dim[1]  = 1;
   karg.grid_dim[2]  = 1;
@@ -1700,6 +1801,54 @@ at::Tensor vortex_hadamard_butterfly(const at::Tensor& input, int64_t K) {
 }
 
 // ===========================================================================
+//  vortex::hadamard_base
+//  [rows,K,width] fp16 x [K,K] fp16 -> [rows,K,width] fp16.
+//  This completes SpinQuant R4 on device without ATen bmm padding/fallback.
+// ===========================================================================
+at::Tensor vortex_hadamard_base(
+    const at::Tensor& input,
+    const at::Tensor& matrix,
+    int64_t K) {
+  TORCH_CHECK(input.is_privateuseone() && matrix.is_privateuseone(),
+              "hadamard_base tensors must be on Vortex");
+  TORCH_CHECK(input.dtype() == at::kHalf && matrix.dtype() == at::kHalf,
+              "hadamard_base tensors must be float16");
+  TORCH_CHECK(input.is_contiguous() && matrix.is_contiguous(),
+              "hadamard_base tensors must be contiguous");
+  TORCH_CHECK(K > 1 && input.size(-1) % K == 0,
+              "hadamard_base requires last dimension divisible by K");
+  TORCH_CHECK(matrix.dim() == 2 && matrix.size(0) == K && matrix.size(1) == K,
+              "hadamard_base matrix must be [K,K]");
+  const uint32_t dim = static_cast<uint32_t>(input.size(-1));
+  const uint32_t width = dim / static_cast<uint32_t>(K);
+  const uint32_t rows = static_cast<uint32_t>(input.numel() / dim);
+  const uint32_t total = rows * static_cast<uint32_t>(K) * width;
+  auto output = at::empty(input.sizes(), input.options());
+  auto& rt = c10::vortex::VortexRuntime::instance();
+  vx_device_h device = rt.deviceHandle();
+  auto caps = query_caps(device);
+
+  hadamard_base_kernel_arg_t karg{};
+  karg.kernel_id = 0;
+  karg.grid_dim[0] = (total + caps.threads_per_block - 1) / caps.threads_per_block;
+  karg.grid_dim[1] = 1;
+  karg.grid_dim[2] = 1;
+  karg.block_dim[0] = caps.threads_per_block;
+  karg.block_dim[1] = 1;
+  karg.block_dim[2] = 1;
+  karg.input_addr = rt.deviceAddress(input.data_ptr());
+  karg.matrix_addr = rt.deviceAddress(matrix.data_ptr());
+  karg.output_addr = rt.deviceAddress(output.data_ptr());
+  karg.rows = rows;
+  karg.base_k = static_cast<uint32_t>(K);
+  karg.width = width;
+
+  static std::string path = find_kernel("hadamard_base", "hadamard_base");
+  launch_kernel(device, &karg, sizeof(karg), path);
+  return output;
+}
+
+// ===========================================================================
 //  vortex::quantize_per_token  ->  quantize_pt_int4 kernel (fused, per-row)
 //  x fp16 [.., D] -> (q int8 [.., D] signed int4, scale fp16 [.., 1], zero fp16 [.., 1])
 //  mode: 0=sym (S=absmax/7.5, zero=0), 1=asym (S=(max-min)/15, z=-8-min/S)
@@ -1736,6 +1885,54 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> vortex_quantize_per_token(
   karg.n_rows       = static_cast<uint32_t>(n_rows);
   karg.D            = static_cast<uint32_t>(D);
   karg.mode         = static_cast<uint32_t>(mode);
+  karg.packed       = 0;
+
+  static std::string path = find_kernel("quantize_pt_int4", "quantize_pt_int4");
+  launch_kernel(device, &karg, sizeof(karg), path);
+  return std::make_tuple(q, scale, zero);
+}
+
+// ===========================================================================
+//  vortex::quantize_pack_per_token
+//  x fp16 [.., D] -> packed signed-int4 int8 [.., D/2], scale/zero fp16 [.., 1]
+// ===========================================================================
+std::tuple<at::Tensor, at::Tensor, at::Tensor> vortex_quantize_pack_per_token(
+    const at::Tensor& x, int64_t mode) {
+  TORCH_CHECK(x.is_privateuseone(), "x must be a vortex tensor");
+  TORCH_CHECK(mode == 0 || mode == 1, "mode must be 0 (sym) or 1 (asym)");
+  const int64_t D = x.size(-1);
+  TORCH_CHECK(D > 0 && D % 2 == 0, "last dimension must be positive and even");
+  const int64_t n_rows = x.numel() / D;
+
+  auto x16 = (x.dtype() == at::kHalf) ? x.contiguous() : x.to(at::kHalf).contiguous();
+  std::vector<int64_t> qshape(x.sizes().begin(), x.sizes().end());
+  qshape.back() = D / 2;
+  auto q = at::empty(qshape, x.options().dtype(at::kChar));
+  std::vector<int64_t> sshape(x.sizes().begin(), x.sizes().end() - 1);
+  sshape.push_back(1);
+  auto scale = at::empty(sshape, x.options().dtype(at::kHalf));
+  auto zero = at::empty(sshape, x.options().dtype(at::kHalf));
+
+  auto& rt = c10::vortex::VortexRuntime::instance();
+  vx_device_h device = rt.deviceHandle();
+  auto caps = query_caps(device);
+
+  quantize_pt_kernel_arg_t karg{};
+  karg.kernel_id = 0;
+  karg.grid_dim[0] = static_cast<uint32_t>(n_rows);
+  karg.grid_dim[1] = 1;
+  karg.grid_dim[2] = 1;
+  karg.block_dim[0] = caps.threads_per_block;
+  karg.block_dim[1] = 1;
+  karg.block_dim[2] = 1;
+  karg.input_addr = rt.deviceAddress(x16.data_ptr());
+  karg.q_addr = rt.deviceAddress(q.data_ptr());
+  karg.scale_addr = rt.deviceAddress(scale.data_ptr());
+  karg.zero_addr = rt.deviceAddress(zero.data_ptr());
+  karg.n_rows = static_cast<uint32_t>(n_rows);
+  karg.D = static_cast<uint32_t>(D);
+  karg.mode = static_cast<uint32_t>(mode);
+  karg.packed = 1;
 
   static std::string path = find_kernel("quantize_pt_int4", "quantize_pt_int4");
   launch_kernel(device, &karg, sizeof(karg), path);
@@ -1781,6 +1978,101 @@ at::Tensor vortex_dequantize_per_token(
   static std::string path = find_kernel("dequantize_pt_int4", "dequantize_pt_int4");
   launch_kernel(device, &karg, sizeof(karg), path);
   return out;
+}
+
+// ===========================================================================
+//  vortex::head_concat
+//  [B,H,S,D] fp16 -> [B,S,H*D] fp16 without host-side permute/copy fallback.
+// ===========================================================================
+at::Tensor vortex_head_concat(const at::Tensor& input) {
+  TORCH_CHECK(input.is_privateuseone(), "head_concat input must be a vortex tensor");
+  TORCH_CHECK(input.dtype() == at::kHalf, "head_concat input must be float16");
+  TORCH_CHECK(input.dim() == 4, "head_concat input must be [B,H,S,D]");
+  TORCH_CHECK(input.is_contiguous(), "head_concat input must be contiguous");
+  const uint32_t B = static_cast<uint32_t>(input.size(0));
+  const uint32_t H = static_cast<uint32_t>(input.size(1));
+  const uint32_t S = static_cast<uint32_t>(input.size(2));
+  const uint32_t D = static_cast<uint32_t>(input.size(3));
+  auto output = at::empty({B, S, H * D}, input.options());
+
+  auto& rt = c10::vortex::VortexRuntime::instance();
+  vx_device_h device = rt.deviceHandle();
+  auto caps = query_caps(device);
+  const uint32_t total = B * S * H * D;
+
+  head_concat_kernel_arg_t karg{};
+  karg.kernel_id = 0;
+  karg.grid_dim[0] = (total + caps.threads_per_block - 1) / caps.threads_per_block;
+  karg.grid_dim[1] = 1;
+  karg.grid_dim[2] = 1;
+  karg.block_dim[0] = caps.threads_per_block;
+  karg.block_dim[1] = 1;
+  karg.block_dim[2] = 1;
+  karg.input_addr = rt.deviceAddress(input.data_ptr());
+  karg.output_addr = rt.deviceAddress(output.data_ptr());
+  karg.batch = B;
+  karg.seq = S;
+  karg.heads = H;
+  karg.headdim = D;
+
+  static std::string path = find_kernel("head_concat", "head_concat");
+  launch_kernel(device, &karg, sizeof(karg), path);
+  return output;
+}
+
+// ===========================================================================
+//  vortex::qk_asym_correction
+//  GEMM computes scale[j] * sum_d(Q[i,d] * qK[j,d]). SpinQuant asymmetric K
+//  additionally needs -scale[j] * zero[j] * sum_d(Q[i,d]).
+// ===========================================================================
+at::Tensor vortex_qk_asym_correction(
+    const at::Tensor& scores,
+    const at::Tensor& query,
+    const at::Tensor& scale,
+    const at::Tensor& zero) {
+  TORCH_CHECK(scores.is_privateuseone() && query.is_privateuseone()
+              && scale.is_privateuseone() && zero.is_privateuseone(),
+              "qk_asym_correction tensors must be on Vortex");
+  TORCH_CHECK(scores.dtype() == at::kHalf && query.dtype() == at::kHalf
+              && scale.dtype() == at::kHalf && zero.dtype() == at::kHalf,
+              "qk_asym_correction tensors must be float16");
+  TORCH_CHECK(scores.dim() == 2 && query.dim() == 2,
+              "scores and query must be two-dimensional");
+  TORCH_CHECK(scores.size(0) == query.size(0), "scores/query M mismatch");
+  TORCH_CHECK(scale.numel() == scores.size(1) && zero.numel() == scores.size(1),
+              "scale/zero must contain one value per score column");
+  TORCH_CHECK(scores.is_contiguous() && query.is_contiguous()
+              && scale.is_contiguous() && zero.is_contiguous(),
+              "qk_asym_correction tensors must be contiguous");
+
+  const uint32_t M = static_cast<uint32_t>(scores.size(0));
+  const uint32_t N = static_cast<uint32_t>(scores.size(1));
+  const uint32_t D = static_cast<uint32_t>(query.size(1));
+  auto output = at::empty(scores.sizes(), scores.options());
+  auto& rt = c10::vortex::VortexRuntime::instance();
+  vx_device_h device = rt.deviceHandle();
+  auto caps = query_caps(device);
+
+  qk_asym_correction_kernel_arg_t karg{};
+  karg.kernel_id = 0;
+  karg.grid_dim[0] = M;
+  karg.grid_dim[1] = 1;
+  karg.grid_dim[2] = 1;
+  karg.block_dim[0] = caps.threads_per_block;
+  karg.block_dim[1] = 1;
+  karg.block_dim[2] = 1;
+  karg.scores_addr = rt.deviceAddress(scores.data_ptr());
+  karg.query_addr = rt.deviceAddress(query.data_ptr());
+  karg.scale_addr = rt.deviceAddress(scale.data_ptr());
+  karg.zero_addr = rt.deviceAddress(zero.data_ptr());
+  karg.output_addr = rt.deviceAddress(output.data_ptr());
+  karg.M = M;
+  karg.N = N;
+  karg.D = D;
+
+  static std::string path = find_kernel("qk_asym_correction", "qk_asym_correction");
+  launch_kernel(device, &karg, sizeof(karg), path);
+  return output;
 }
 
 // ===========================================================================
@@ -2079,6 +2371,7 @@ struct tile_weight_w4a16_kernel_arg_t {
   uint32_t log2_kt;
   uint32_t log2_mxu_kt;
   uint32_t log2_mxu_nt;
+  uint32_t power_kernel_iterations;
 };
 
 // Kernel-arg struct must match tests/regression/detile_output/common.h
@@ -2093,6 +2386,7 @@ struct detile_output_kernel_arg_t {
   uint32_t N_pad;
   uint32_t log2_mt;
   uint32_t log2_mxu_nt;
+  uint32_t power_kernel_iterations;
 };
 
 // Device-resident detile_output: undo the kernel's nt-major output layout AND
@@ -2158,6 +2452,7 @@ struct tile_input_a_kernel_arg_t {
   uint32_t log2_mt;
   uint32_t log2_kt;
   uint32_t log2_mxu_kt;
+  uint32_t power_kernel_iterations;
 };
 
 // Device-resident tile_input_a — pads M to multiple of 8 (zero-fill) AND
@@ -2243,37 +2538,51 @@ struct tile_scale_zp_w4a16_kernel_arg_t {
   uint32_t log2_mxu_nt;
   uint32_t log2_qblk;         // log2(QBLK)
   uint32_t log2_ng_per_mxu_nt; // qdir=1: log2(ceil(MXU_NT/QBLK))
+  uint32_t power_kernel_iterations;
 };
 
 // Device-resident tile_weight_w4a16. Mirrors the host helper above but does
 // the reorder on-device instead of via a chain of ATen ops.
-static at::Tensor vortex_tile_weight_w4a16(const at::Tensor& W_packed,
-                                            int64_t K, int64_t N, int64_t wtrans) {
+static at::Tensor vortex_tile_weight_w4a16_impl(const at::Tensor& W_packed,
+                                                 int64_t K, int64_t N,
+                                                 int64_t wtrans,
+                                                 int64_t source_transposed) {
   TORCH_CHECK(W_packed.is_privateuseone(), "weight must be a vortex tensor");
   TORCH_CHECK(W_packed.dtype() == at::kByte, "weight must be uint8");
   TORCH_CHECK(W_packed.is_contiguous(),  "weight must be contiguous");
   TORCH_CHECK(W_packed.dim() == 2 &&
               W_packed.size(0) == K && W_packed.size(1) == N / 2,
-              "weight shape must be [K, N/2]");
-  TORCH_CHECK(wtrans == 0, "tile_weight_w4a16: wtrans=1 not implemented");
-  TORCH_CHECK(K % FPINT_DMA_MXU_KT == 0,  "K must be multiple of MXU_KT");
-  TORCH_CHECK(N % FPINT_DMA_MXU_NT == 0,  "N must be multiple of MXU_NT");
-  TORCH_CHECK(K <= (int64_t)FPINT_DMA_KT || K % (int64_t)FPINT_DMA_KT == 0,
-              "K must be <= DMA_KT or a multiple of DMA_KT");
+              "weight shape must match source [K, N/2]");
+  TORCH_CHECK(wtrans == 0 || wtrans == 1, "wtrans must be 0 or 1");
+  TORCH_CHECK(source_transposed == 0 || source_transposed == 1,
+              "source_transposed must be 0 or 1");
+  TORCH_CHECK(!source_transposed || wtrans == 1,
+              "source-transposed weight requires wtrans=1");
+  const int64_t out_K = source_transposed ? N : K;
+  const int64_t out_N = source_transposed ? K : N;
+  TORCH_CHECK(out_K % FPINT_DMA_MXU_KT == 0,
+              "output K must be multiple of MXU_KT");
+  TORCH_CHECK(out_N % FPINT_DMA_MXU_NT == 0,
+              "output N must be multiple of MXU_NT");
+  TORCH_CHECK(out_K <= (int64_t)FPINT_DMA_KT
+              || out_K % (int64_t)FPINT_DMA_KT == 0,
+              "output K must be <= DMA_KT or a multiple of DMA_KT");
 
   auto& rt = c10::vortex::VortexRuntime::instance();
   vx_device_h device = rt.deviceHandle();
   auto caps = query_caps(device);
 
-  auto output = at::empty({K, N / 2}, W_packed.options());
+  auto output = at::empty({out_K, out_N / 2}, W_packed.options());
 
   // 3D grid:  (chunks-in-(kt,nt) blocks, n_tiles, k_tiles).
   // Each thread copies one 16-byte chunk; no runtime divisions inside kernel.
-  const int64_t k_tiles_h = (K + (int64_t)FPINT_DMA_KT - 1) / (int64_t)FPINT_DMA_KT;
-  const int64_t cur_k_h   = (k_tiles_h == 1) ? K : (int64_t)FPINT_DMA_KT;
+  const int64_t k_tiles_h = (out_K + (int64_t)FPINT_DMA_KT - 1) / (int64_t)FPINT_DMA_KT;
+  const int64_t cur_k_h   = (k_tiles_h == 1) ? out_K : (int64_t)FPINT_DMA_KT;
   const int64_t cur_kb_h  = cur_k_h / FPINT_DMA_MXU_KT;
-  const int64_t n_tiles_h = N / FPINT_DMA_MXU_NT;
-  const int64_t chunks_per_nt_kt = cur_kb_h * FPINT_DMA_MXU_KT;
+  const int64_t n_tiles_h = out_N / FPINT_DMA_MXU_NT;
+  const int64_t chunks_per_nt_kt = (wtrans == 0)
+      ? cur_kb_h * FPINT_DMA_MXU_KT
+      : cur_kb_h * FPINT_DMA_MXU_NT * (FPINT_DMA_MXU_KT / 2);
 
   tile_weight_w4a16_kernel_arg_t karg{};
   karg.grid_dim[0]  = static_cast<uint32_t>(
@@ -2287,8 +2596,8 @@ static at::Tensor vortex_tile_weight_w4a16(const at::Tensor& W_packed,
   karg.dst_addr     = rt.deviceAddress(output.data_ptr());
   karg.K            = static_cast<uint32_t>(K);
   karg.N            = static_cast<uint32_t>(N);
-  karg.WTRANS       = 0;   // host asserts wtrans==0
-  karg.SOURCE_TRANSPOSED = 0;
+  karg.WTRANS       = static_cast<uint32_t>(wtrans);
+  karg.SOURCE_TRANSPOSED = static_cast<uint32_t>(source_transposed);
   karg.log2_kt      = vx_log2_u32(static_cast<uint32_t>(FPINT_DMA_KT));
   karg.log2_mxu_kt  = vx_log2_u32(static_cast<uint32_t>(FPINT_DMA_MXU_KT));
   karg.log2_mxu_nt  = vx_log2_u32(static_cast<uint32_t>(FPINT_DMA_MXU_NT));
@@ -2298,19 +2607,37 @@ static at::Tensor vortex_tile_weight_w4a16(const at::Tensor& W_packed,
   return output;
 }
 
+static at::Tensor vortex_tile_weight_w4a16(const at::Tensor& W_packed,
+                                            int64_t K, int64_t N, int64_t wtrans) {
+  return vortex_tile_weight_w4a16_impl(W_packed, K, N, wtrans, 0);
+}
+
+static at::Tensor vortex_tile_weight_w4a16_ex(const at::Tensor& W_packed,
+                                               int64_t K, int64_t N,
+                                               int64_t wtrans,
+                                               int64_t source_transposed) {
+  return vortex_tile_weight_w4a16_impl(
+      W_packed, K, N, wtrans, source_transposed);
+}
+
 
 // Device-resident tile_scale_zp_w4a16. Mirrors the host helper but does the
 // per-(kt, nt_dma) slot reorder + 512-B slot padding on-device via one kernel
 // launch.
-static at::Tensor vortex_tile_scale_zp_w4a16(const at::Tensor& s_raw,
-                                              int64_t K, int64_t N,
-                                              int64_t qblk, int64_t qdir) {
+static at::Tensor vortex_tile_scale_zp_w4a16_impl(
+    const at::Tensor& s_raw,
+    int64_t K, int64_t N,
+    int64_t qblk, int64_t qdir,
+    int64_t gemm_qdir, int64_t source_transposed) {
   TORCH_CHECK(s_raw.is_privateuseone(), "s_raw must be a vortex tensor");
   TORCH_CHECK(s_raw.is_contiguous(),    "s_raw must be contiguous");
   TORCH_CHECK(s_raw.dim() == 2,         "s_raw must be 2-D");
   TORCH_CHECK(s_raw.element_size() == 2,
               "s_raw must be 2-byte dtype (fp16 or int16)");
   TORCH_CHECK(qdir == 0 || qdir == 1,   "qdir must be 0 or 1");
+  TORCH_CHECK(gemm_qdir == 0 || gemm_qdir == 1, "gemm_qdir must be 0 or 1");
+  TORCH_CHECK(source_transposed == 0 || source_transposed == 1,
+              "source_transposed must be 0 or 1");
   TORCH_CHECK(N % FPINT_DMA_MXU_NT == 0, "N must be multiple of MXU_NT");
   TORCH_CHECK(qblk > 0 && (qblk & (qblk - 1)) == 0, "qblk must be power of 2");
   TORCH_CHECK(K <= (int64_t)FPINT_DMA_KT || K % (int64_t)FPINT_DMA_KT == 0,
@@ -2330,13 +2657,13 @@ static at::Tensor vortex_tile_scale_zp_w4a16(const at::Tensor& s_raw,
   // Compute the GEMM-facing variable-slot layout. Mirrors
   // tests/regression/tile_scale_zp_w4a16/main.cpp (output_K/output_N,
   // slot_body_bytes, slot_bytes_for, compute_slot_layout). The host op only
-  // handles SOURCE_TRANSPOSED=0 and GEMM_QDIR == source qdir.
+  // handles both row-major and source-transposed qparameter sources.
   const uint32_t Ku        = static_cast<uint32_t>(K);
   const uint32_t Nu        = static_cast<uint32_t>(N);
   const uint32_t QBLKu     = static_cast<uint32_t>(qblk);
   const uint32_t QDIRu     = static_cast<uint32_t>(qdir);
-  const uint32_t GEMM_QDIR = QDIRu;
-  const uint32_t SOURCE_TRANSPOSED = 0;
+  const uint32_t GEMM_QDIR = static_cast<uint32_t>(gemm_qdir);
+  const uint32_t SOURCE_TRANSPOSED = static_cast<uint32_t>(source_transposed);
   const uint32_t DMA_KTu   = static_cast<uint32_t>(FPINT_DMA_KT);
   const uint32_t DMA_NTu   = static_cast<uint32_t>(FPINT_DMA_NT);
   const uint32_t MXU_KTu   = static_cast<uint32_t>(FPINT_DMA_MXU_KT);
@@ -2431,6 +2758,21 @@ static at::Tensor vortex_tile_scale_zp_w4a16(const at::Tensor& s_raw,
   static std::string path = find_kernel("tile_scale_zp_w4a16", "tile_scale_zp_w4a16");
   launch_kernel(device, &karg, sizeof(karg), path);
   return output;
+}
+
+static at::Tensor vortex_tile_scale_zp_w4a16(const at::Tensor& s_raw,
+                                              int64_t K, int64_t N,
+                                              int64_t qblk, int64_t qdir) {
+  return vortex_tile_scale_zp_w4a16_impl(s_raw, K, N, qblk, qdir, qdir, 0);
+}
+
+static at::Tensor vortex_tile_scale_zp_w4a16_ex(
+    const at::Tensor& s_raw,
+    int64_t K, int64_t N,
+    int64_t qblk, int64_t qdir,
+    int64_t gemm_qdir, int64_t source_transposed) {
+  return vortex_tile_scale_zp_w4a16_impl(
+      s_raw, K, N, qblk, qdir, gemm_qdir, source_transposed);
 }
 
 
@@ -2770,13 +3112,19 @@ TORCH_LIBRARY(vortex, m) {
   m.def("mm_w4a16(Tensor input, Tensor weight_int4, Tensor scales, Tensor zeros, int group_size, int N, int wtrans=0, int qdir=0) -> Tensor");
   m.def("mm_w4a16_opt(Tensor input, Tensor weight_int4, Tensor scales, Tensor zeros, int group_size, int N, int wtrans=0, int qdir=0) -> Tensor");
   m.def("tile_weight_w4a16(Tensor weight, int K, int N, int wtrans=0) -> Tensor");
+  m.def("tile_weight_w4a16_ex(Tensor weight, int K, int N, int wtrans, int source_transposed) -> Tensor");
   m.def("tile_scale_zp_w4a16(Tensor s_raw, int K, int N, int qblk, int qdir) -> Tensor");
+  m.def("tile_scale_zp_w4a16_ex(Tensor s_raw, int K, int N, int qblk, int qdir, int gemm_qdir, int source_transposed) -> Tensor");
   m.def("tile_input_a(Tensor input, int M_pad, int K) -> Tensor");
   m.def("detile_output(Tensor Y_tiled, int M, int M_pad, int N) -> Tensor");
   m.def("mm_w4a16_gemm_core(Tensor input_tiled, Tensor weight_tiled, Tensor scales_tiled, Tensor zeros_tiled, int K, int N, int group_size, int wtrans, int qdir) -> Tensor");
   m.def("hadamard_butterfly(Tensor input, int K) -> Tensor");
+  m.def("hadamard_base(Tensor input, Tensor matrix, int K) -> Tensor");
   m.def("quantize_per_token(Tensor x, int mode) -> (Tensor, Tensor, Tensor)");
+  m.def("quantize_pack_per_token(Tensor x, int mode) -> (Tensor, Tensor, Tensor)");
   m.def("dequantize_per_token(Tensor q, Tensor scale, Tensor zero, int mode) -> Tensor");
+  m.def("head_concat(Tensor input) -> Tensor");
+  m.def("qk_asym_correction(Tensor scores, Tensor query, Tensor scale, Tensor zero) -> Tensor");
 }
 
 TORCH_LIBRARY_IMPL(vortex, PrivateUse1, m) {
@@ -2785,13 +3133,19 @@ TORCH_LIBRARY_IMPL(vortex, PrivateUse1, m) {
   m.impl("mm_w4a16",          &vortex_mm_w4a16);
   m.impl("mm_w4a16_opt",      &vortex_mm_w4a16_opt);
   m.impl("tile_weight_w4a16",     &vortex_tile_weight_w4a16);
+  m.impl("tile_weight_w4a16_ex",  &vortex_tile_weight_w4a16_ex);
   m.impl("tile_scale_zp_w4a16",   &vortex_tile_scale_zp_w4a16);
+  m.impl("tile_scale_zp_w4a16_ex", &vortex_tile_scale_zp_w4a16_ex);
   m.impl("tile_input_a",          &vortex_tile_input_a);
   m.impl("detile_output",         &vortex_detile_output);
   m.impl("mm_w4a16_gemm_core",    &vortex_mm_w4a16_gemm_core);
   m.impl("hadamard_butterfly",    &vortex_hadamard_butterfly);
+  m.impl("hadamard_base",         &vortex_hadamard_base);
   m.impl("quantize_per_token",    &vortex_quantize_per_token);
+  m.impl("quantize_pack_per_token", &vortex_quantize_pack_per_token);
   m.impl("dequantize_per_token",  &vortex_dequantize_per_token);
+  m.impl("head_concat",           &vortex_head_concat);
+  m.impl("qk_asym_correction",    &vortex_qk_asym_correction);
 }
 
 } // namespace at::vortex

@@ -104,3 +104,5 @@ docs/future_optim/dma_experiments/**/*.bat
 docs/future_optim/dma_experiments/**/*.js
 docs/future_optim/dma_experiments/**/*.csv
 !docs/future_optim/dma_experiments/**/*.md
+
+docs/future_optim/dma_experiments/20260718-014-misalign-pack-sweep/ooc/
