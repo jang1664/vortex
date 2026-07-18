@@ -528,6 +528,7 @@ def main(argv=None):
         mem_db_files = mem_db_files,
         driving_cells = [],
         driven_loads  = [],
+        skip_write_icc2_files=True,
         rerun        = True,
         backup       = False,
         new          = True,
