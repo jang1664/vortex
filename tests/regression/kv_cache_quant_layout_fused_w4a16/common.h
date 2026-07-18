@@ -43,6 +43,8 @@ typedef struct {
   uint32_t quant_mode;
   uint32_t src_total_N;
   uint32_t src_col_offset;
+  uint32_t src_total_K;
+  uint32_t src_row_offset;
 
   uint32_t k_tiles;
   uint32_t n_dma_tiles;

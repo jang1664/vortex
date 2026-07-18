@@ -129,8 +129,9 @@ The +0.023 gap (~0.4%) comes from floating-point ordering differences in the PyT
 
 `spinquant_inference.layer_accuracy` is a separate, explicit decoder-layer
 harness. It does not use the generation model's monkey patches. Its v1 contract
-is Llama-2-7B prefill with `B=1`, `S=32`, W4 group size 32, asymmetric K4,
+is one Llama-2-7B prefill decoder layer with W4 group size 32, asymmetric K4,
 symmetric V4, online R3 after RoPE, and exact online R4 before `down_proj`.
+It does not yet model incremental decode or a persistent KV cache.
 
 Create one deterministic case and run the CUDA reference:
 
@@ -138,7 +139,8 @@ Create one deterministic case and run the CUDA reference:
 conda activate vortex
 cd pytorch/spinquant
 python -m spinquant_inference.layer_accuracy make-case \
-  --source random --seed 1 --output /shared/path/spinquant-layer-case
+  --source random --seed 1 --batch-size 2 --seq-len 32 \
+  --output /shared/path/spinquant-layer-case
 python -m spinquant_inference.layer_accuracy run \
   --case /shared/path/spinquant-layer-case --backend cuda \
   --stop-after qk --capture both --output /shared/path/spinquant-layer-cuda
@@ -218,10 +220,21 @@ python -m spinquant_inference.layer_accuracy check-generator
 ```
 
 The fused full-layer integration tests are opt-in hardware tests and run on the
-real C4/U55C path; they do not use simx. The fused plan currently validates the
-fixed Llama2-7B `B=1`, `S=32`, `H=4096`, `I=11008`, 32-head contract during
-preflight. Use standalone for other shapes until matching fused kernel
-contracts are added.
+real C4/U55C path; they do not use simx. Case generation and the CUDA reference
+accept any positive batch size and sequence length. Both C4 physical plans
+currently enforce these kernel-layout limits during preflight:
+
+- `align8(B * S) <= 128` and `align8(S) <= 128`, because the fused kernels
+  currently support one 128-row M tile.
+- `S` must be a multiple of the 32-column GEMM micro-tile.
+- Each grouped QK output stride must remain 512-byte aligned.
+
+The fused plan additionally requires the Llama2-7B `H=4096`, `I=11008`,
+32-head shape and canonical score scale and causal mask.
+
+`B=2`, `S=32` is covered by the real-C4 full-layer test for both standalone and
+fused plans. Removing the single-M-tile restriction requires multi-tile layout
+addressing and output assembly in the fused kernels and is planned separately.
 
 ## References
 - [SpinQuant: LLM Quantization with Learned Rotations](https://arxiv.org/abs/2405.16406)

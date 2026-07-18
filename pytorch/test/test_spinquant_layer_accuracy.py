@@ -27,7 +27,7 @@ from spinquant_inference.layer_accuracy.backends import (  # noqa: E402
     VortexBackend,
     decode_physical_tensor,
 )
-from spinquant_inference.layer_accuracy.cli import _parser, _run  # noqa: E402
+from spinquant_inference.layer_accuracy.cli import _make_case, _parser, _run  # noqa: E402
 from spinquant_inference.layer_accuracy.compare import compare_runs  # noqa: E402
 from spinquant_inference.layer_accuracy.graph import LayerExecutor  # noqa: E402
 from spinquant_inference.layer_accuracy.generator_conformance import (  # noqa: E402
@@ -61,6 +61,20 @@ def tiny_config() -> LayerConfig:
         head_dim=8,
         batch_size=1,
         sequence_length=4,
+        weight_group_size=4,
+        kv_group_size=8,
+    )
+
+
+def batched_tiny_config() -> LayerConfig:
+    return LayerConfig(
+        model="test-llama",
+        hidden_size=16,
+        intermediate_size=32,
+        num_attention_heads=2,
+        head_dim=8,
+        batch_size=2,
+        sequence_length=3,
         weight_group_size=4,
         kv_group_size=8,
     )
@@ -193,6 +207,16 @@ class TensorContractTests(unittest.TestCase):
 
 
 class ArtifactTests(unittest.TestCase):
+    def test_random_case_expands_position_tables_for_each_batch(self):
+        case = create_random_case(batched_tiny_config(), seed=0)
+        self.assertEqual(case.tensors["input"].shape, (2, 3, 16))
+        self.assertEqual(case.tensors["position_ids"].shape, (2, 3))
+        self.assertEqual(case.tensors["rope_cos"].shape, (2, 3, 8))
+        self.assertEqual(case.tensors["rope_sin"].shape, (2, 3, 8))
+        torch.testing.assert_close(
+            case.tensors["position_ids"][0], case.tensors["position_ids"][1]
+        )
+
     def test_random_case_is_reproducible_and_checksum_protected(self):
         first = create_random_case(tiny_config(), seed=7)
         second = create_random_case(tiny_config(), seed=7)
@@ -288,6 +312,14 @@ class GraphExecutionTests(unittest.TestCase):
             result = LayerExecutor(self.backend).run(self.case, stop_after=stage)
             self.assertEqual(result.stage_order, list(STAGE_NAMES[: index + 1]))
             self.assertIn(stage, result.captures)
+
+    def test_cpu_reference_runs_batched_variable_length_prefill(self):
+        case = create_random_case(batched_tiny_config(), seed=12)
+        result = LayerExecutor(TorchBackend("cpu")).run(
+            case, stop_after="final_residual"
+        )
+        self.assertEqual(result.captures["qk"].shape, (2, 2, 3, 3))
+        self.assertEqual(result.captures["final_residual"].shape, (2, 3, 16))
 
     def test_r3_preserves_attention_dot_products(self):
         q = torch.randn(2, 4, 8, dtype=torch.float32)
@@ -435,6 +467,57 @@ class GeneratorConformanceTests(unittest.TestCase):
 
 
 class PhysicalPlanInterfaceTests(unittest.TestCase):
+    @staticmethod
+    def _fused_case(batch_size: int, sequence_length: int):
+        config = LayerConfig(
+            batch_size=batch_size,
+            sequence_length=sequence_length,
+        )
+        return SimpleNamespace(
+            config=config,
+            tensors={
+                "score_scale": torch.full(
+                    (
+                        batch_size,
+                        config.num_attention_heads,
+                        sequence_length,
+                        sequence_length,
+                    ),
+                    1.0 / math.sqrt(config.head_dim),
+                    dtype=torch.float16,
+                ),
+                "causal_mask": torch.triu(
+                    torch.full(
+                        (1, 1, sequence_length, sequence_length),
+                        torch.finfo(torch.float16).min,
+                    ),
+                    diagonal=1,
+                ),
+            },
+        )
+
+    def test_make_case_cli_accepts_batch_and_sequence_length(self):
+        parser = _parser()
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "case"
+            args = parser.parse_args(
+                [
+                    "make-case",
+                    "--source",
+                    "random",
+                    "--batch-size",
+                    "2",
+                    "--seq-len",
+                    "3",
+                    "--output",
+                    str(output),
+                ]
+            )
+            self.assertEqual(_make_case(args), 0)
+            case = load_case(output)
+            self.assertEqual(case.config.batch_size, 2)
+            self.assertEqual(case.config.sequence_length, 3)
+
     def test_cli_accepts_both_physical_plans_and_defaults_to_standalone(self):
         parser = _parser()
         common = [
@@ -491,6 +574,23 @@ class PhysicalPlanInterfaceTests(unittest.TestCase):
         case.tensors["causal_mask"] = mask.clone()
         case.tensors["causal_mask"][0, 0, 0, 0] = -1
         with self.assertRaisesRegex(ValueError, "causal mask"):
+            VortexBackend._validate_fused_case(case)
+
+    def test_fused_case_accepts_batched_prefill_within_one_m_tile(self):
+        for batch_size in (2, 4):
+            with self.subTest(batch_size=batch_size):
+                VortexBackend._validate_fused_case(
+                    self._fused_case(batch_size, 32)
+                )
+
+    def test_fused_case_rejects_multiple_m_tiles_with_explicit_shape(self):
+        case = self._fused_case(5, 32)
+        with self.assertRaisesRegex(ValueError, r"B\*S=160"):
+            VortexBackend._validate_fused_case(case)
+
+    def test_fused_case_rejects_partial_sequence_micro_tile(self):
+        case = self._fused_case(2, 16)
+        with self.assertRaisesRegex(ValueError, "32-column"):
             VortexBackend._validate_fused_case(case)
 
 

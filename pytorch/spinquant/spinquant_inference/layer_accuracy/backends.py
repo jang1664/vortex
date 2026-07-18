@@ -655,14 +655,37 @@ class VortexBackend(Backend):
         missing = [name for name in required if not hasattr(torch.ops.vortex, name)]
         if missing:
             raise RuntimeError(f"Vortex layer-accuracy extension is missing required ops: {missing}")
-        if case.config.batch_size != 1 or case.config.sequence_length != 32:
-            raise ValueError("Vortex v1 requires B=1 and S=32")
         if self.layout_plan.name == "fused":
             self._validate_fused_case(case)
+        else:
+            self._validate_c4_shape(case)
         self._prewarm_kernel_regions(case)
 
     @staticmethod
+    def _validate_c4_shape(case: LayerCase) -> None:
+        flattened_m = case.config.batch_size * case.config.sequence_length
+        flattened_m_pad = (flattened_m + 7) & ~7
+        sequence_m_pad = (case.config.sequence_length + 7) & ~7
+        if flattened_m_pad > TILE_M:
+            raise ValueError(
+                "the C4 physical plans currently support one 128-row M tile: "
+                f"B*S={flattened_m} (M_pad={flattened_m_pad})"
+            )
+        if case.config.sequence_length % TILE_KN != 0:
+            raise ValueError(
+                "the C4 physical plans currently require sequence_length "
+                "to be a multiple of the 32-column GEMM micro-tile"
+            )
+        qk_head_stride_bytes = sequence_m_pad * case.config.sequence_length * 2
+        if qk_head_stride_bytes % 512 != 0:
+            raise ValueError(
+                "the fused physical plan requires a 512-byte-aligned QK head stride: "
+                f"align8(S)*S*2={qk_head_stride_bytes}"
+            )
+
+    @staticmethod
     def _validate_fused_case(case: LayerCase) -> None:
+        VortexBackend._validate_c4_shape(case)
         expected = ("llama2-7b", 4096, 11008, 32, 128)
         actual = (
             case.config.model,
@@ -674,7 +697,7 @@ class VortexBackend(Backend):
         if actual != expected:
             raise ValueError(
                 "the fused physical plan currently requires Llama2-7B "
-                "B1/S32/H4096/I11008/heads32/head_dim128"
+                "H4096/I11008/heads32/head_dim128"
             )
         score_scale = case.tensors["score_scale"]
         expected_scale = torch.full_like(
@@ -939,64 +962,73 @@ class VortexBackend(Backend):
         batch, heads, m_dim, k_dim = lhs.shape
         outputs = []
         n_dim = rhs.logical_shape[-2] if transpose_source else rhs.logical_shape[-1]
-        for head in range(heads):
-            x = lhs[0, head].contiguous()
-            m_pad = (m_dim + 7) & ~7
-            input_tiled = torch.ops.vortex.tile_input_a(x, m_pad, k_dim)
-            packed = rhs.packed[0, head].view(torch.uint8).contiguous()
-            scale = rhs.scale[0, head].contiguous()
-            if transpose_source:
-                source_k, source_n = rhs.logical_shape[-2], rhs.logical_shape[-1]
-                weight = torch.ops.vortex.tile_weight_w4a16_ex(
-                    packed, source_k, source_n, 1, 1
+        for batch_index in range(batch):
+            for head in range(heads):
+                x = lhs[batch_index, head].contiguous()
+                m_pad = (m_dim + 7) & ~7
+                input_tiled = torch.ops.vortex.tile_input_a(x, m_pad, k_dim)
+                packed = rhs.packed[batch_index, head].view(torch.uint8).contiguous()
+                scale = rhs.scale[batch_index, head].contiguous()
+                if transpose_source:
+                    source_k, source_n = rhs.logical_shape[-2], rhs.logical_shape[-1]
+                    weight = torch.ops.vortex.tile_weight_w4a16_ex(
+                        packed, source_k, source_n, 1, 1
+                    )
+                    zeros = torch.zeros(scale.shape, dtype=torch.int16).to(self.device)
+                    scale_tiled = torch.ops.vortex.tile_scale_zp_w4a16_ex(
+                        scale, source_k, source_n, self.case.config.kv_group_size, 1, 0, 1
+                    )
+                    zero_tiled = torch.ops.vortex.tile_scale_zp_w4a16_ex(
+                        zeros, source_k, source_n, self.case.config.kv_group_size, 1, 0, 1
+                    )
+                    wtrans, qdir = 1, 0
+                else:
+                    weight = torch.ops.vortex.tile_weight_w4a16(packed, k_dim, n_dim, 0)
+                    zeros = torch.zeros(scale.shape, dtype=torch.int16).to(self.device)
+                    scale_tiled = torch.ops.vortex.tile_scale_zp_w4a16(
+                        scale, k_dim, n_dim, self.case.config.kv_group_size, 1
+                    )
+                    zero_tiled = torch.ops.vortex.tile_scale_zp_w4a16(
+                        zeros, k_dim, n_dim, self.case.config.kv_group_size, 1
+                    )
+                    wtrans, qdir = 0, 1
+                output_tiled = torch.ops.vortex.mm_w4a16_gemm_core(
+                    input_tiled,
+                    weight,
+                    scale_tiled,
+                    zero_tiled,
+                    k_dim,
+                    n_dim,
+                    self.case.config.kv_group_size,
+                    wtrans,
+                    qdir,
                 )
-                zeros = torch.zeros(scale.shape, dtype=torch.int16).to(self.device)
-                scale_tiled = torch.ops.vortex.tile_scale_zp_w4a16_ex(
-                    scale, source_k, source_n, self.case.config.kv_group_size, 1, 0, 1
-                )
-                zero_tiled = torch.ops.vortex.tile_scale_zp_w4a16_ex(
-                    zeros, source_k, source_n, self.case.config.kv_group_size, 1, 0, 1
-                )
-                wtrans, qdir = 1, 0
-            else:
-                weight = torch.ops.vortex.tile_weight_w4a16(packed, k_dim, n_dim, 0)
-                zeros = torch.zeros(scale.shape, dtype=torch.int16).to(self.device)
-                scale_tiled = torch.ops.vortex.tile_scale_zp_w4a16(
-                    scale, k_dim, n_dim, self.case.config.kv_group_size, 1
-                )
-                zero_tiled = torch.ops.vortex.tile_scale_zp_w4a16(
-                    zeros, k_dim, n_dim, self.case.config.kv_group_size, 1
-                )
-                wtrans, qdir = 0, 1
-            output_tiled = torch.ops.vortex.mm_w4a16_gemm_core(
-                input_tiled,
-                weight,
-                scale_tiled,
-                zero_tiled,
-                k_dim,
-                n_dim,
-                self.case.config.kv_group_size,
-                wtrans,
-                qdir,
-            )
-            output = torch.ops.vortex.detile_output(output_tiled, m_dim, m_pad, n_dim)
-            if transpose_source:
-                assert rhs.zero is not None
-                output = torch.ops.vortex.qk_asym_correction(
-                    output, x, scale.reshape(-1), rhs.zero[0, head].reshape(-1)
-                )
-            outputs.append(output)
+                output = torch.ops.vortex.detile_output(output_tiled, m_dim, m_pad, n_dim)
+                if transpose_source:
+                    assert rhs.zero is not None
+                    output = torch.ops.vortex.qk_asym_correction(
+                        output,
+                        x,
+                        scale.reshape(-1),
+                        rhs.zero[batch_index, head].reshape(-1),
+                    )
+                outputs.append(output)
         self._record(
             "attention_w4a16",
             transpose_source=transpose_source,
+            batch=batch,
             heads=heads,
+            launches=batch * heads,
             M=m_dim,
             K=k_dim,
             N=n_dim,
         )
-        stacked = torch.empty((1, heads, m_dim, n_dim), dtype=torch.float16, device=self.device)
-        for head, output in enumerate(outputs):
-            stacked[0, head].copy_(output)
+        stacked = torch.empty(
+            (batch, heads, m_dim, n_dim), dtype=torch.float16, device=self.device
+        )
+        for group_index, output in enumerate(outputs):
+            batch_index, head = divmod(group_index, heads)
+            stacked[batch_index, head].copy_(output)
         self._record("head_stack_layout_copy", implementation="host_staged_device_copy")
         return stacked
 
@@ -1184,14 +1216,24 @@ class VortexBackend(Backend):
         wtrans = source_transposed
         gemm_qdir = 0 if mode == "asym" else 1
         quant_mode = 1 if mode == "asym" else 2
-        for head in range(config.num_attention_heads):
+        group_count = config.batch_size * config.num_attention_heads
+        for group_index in range(group_count):
+            batch_index, head = divmod(group_index, config.num_attention_heads)
             head_source = (
-                source[head]
+                source[group_index]
                 if source_is_grouped
                 else source if source_is_tiled
-                else source[0, head].contiguous()
+                else source[batch_index, head].contiguous()
             )
             src_layout = 2 if source_is_grouped else 1 if source_is_tiled else 0
+            source_total_k = (
+                source_params["m_pad"] if source_is_tiled else config.sequence_length
+            )
+            source_row_offset = (
+                batch_index * config.sequence_length
+                if source_is_tiled and not source_is_grouped
+                else 0
+            )
             outputs = torch.ops.vortex.kv_cache_quant_layout_fused_w4a16(
                 head_source,
                 config.sequence_length,
@@ -1205,6 +1247,8 @@ class VortexBackend(Backend):
                 quant_mode,
                 config.head_dim if source_is_grouped else source_total_n,
                 head * config.head_dim if source_is_tiled and not source_is_grouped else 0,
+                source_total_k,
+                source_row_offset,
             )
             weight, scale_tile, zero_tile, scale_row, zero_row = outputs
             packed_tiled.append(weight)
@@ -1218,7 +1262,12 @@ class VortexBackend(Backend):
             packed_tiled,
             name=f"{mode}_kv.packed",
             axes=("B", "H", "S", "Dp"),
-            shape=(1, config.num_attention_heads, config.sequence_length, config.head_dim // 2),
+            shape=(
+                config.batch_size,
+                config.num_attention_heads,
+                config.sequence_length,
+                config.head_dim // 2,
+            ),
             layout="gemm_w_packed_grouped",
             padded_shape=tuple(packed_tiled[0].shape),
             producer="kv_cache_quant_layout_fused_w4a16",
@@ -1232,7 +1281,12 @@ class VortexBackend(Backend):
             row_scale,
             name=f"{mode}_kv.scale",
             axes=("B", "H", "S", "G"),
-            shape=(1, config.num_attention_heads, config.sequence_length, 1),
+            shape=(
+                config.batch_size,
+                config.num_attention_heads,
+                config.sequence_length,
+                1,
+            ),
             layout="grouped_row",
             padded_shape=tuple(row_scale[0].shape),
             producer="kv_cache_quant_layout_fused_w4a16",
@@ -1246,7 +1300,12 @@ class VortexBackend(Backend):
                 row_zero,
                 name="asym_kv.zero",
                 axes=("B", "H", "S", "G"),
-                shape=(1, config.num_attention_heads, config.sequence_length, 1),
+                shape=(
+                    config.batch_size,
+                    config.num_attention_heads,
+                    config.sequence_length,
+                    1,
+                ),
                 layout="grouped_row",
                 padded_shape=tuple(row_zero[0].shape),
                 producer="kv_cache_quant_layout_fused_w4a16",
@@ -1256,8 +1315,9 @@ class VortexBackend(Backend):
             )
         self._record(
             "kv_cache_quant_layout_fused_w4a16",
-            launches=config.num_attention_heads,
+            launches=group_count,
             mode=mode,
+            batch=config.batch_size,
             heads=config.num_attention_heads,
             source_layout=source_layout,
         )
@@ -1286,6 +1346,7 @@ class VortexBackend(Backend):
     ) -> TensorHandle:
         config = self.case.config
         heads = config.num_attention_heads
+        group_count = config.batch_size * heads
         m = config.sequence_length
         m_pad = (m + 7) & ~7
         k = config.head_dim if transpose_source else config.sequence_length
@@ -1296,42 +1357,45 @@ class VortexBackend(Backend):
                 "grouped fused attention requires each head output stride to be 512-byte aligned"
             )
         with torch.vortex.memory_alignment(512):
-            output = torch.empty((heads, m_pad, n), dtype=torch.float16, device=self.device)
-        for head in range(heads):
+            output = torch.empty(
+                (group_count, m_pad, n), dtype=torch.float16, device=self.device
+            )
+        for group_index in range(group_count):
             if isinstance(lhs, TensorHandle):
-                lhs_storage = lhs.value[head]
+                lhs_storage = lhs.value[group_index]
                 query_storage = lhs_storage
             else:
                 raise TypeError("fused attention requires grouped GEMM-A input")
             torch.ops.vortex.mm_w4a16_gemm_core_out(
                 lhs_storage,
-                rhs.weight_tiled[head],
-                rhs.scale_tiled[head],
-                rhs.zero_tiled[head],
+                rhs.weight_tiled[group_index],
+                rhs.scale_tiled[group_index],
+                rhs.zero_tiled[group_index],
                 k,
                 n,
                 config.kv_group_size,
                 1 if transpose_source else 0,
                 0 if transpose_source else 1,
-                output[head],
+                output[group_index],
             )
             if transpose_source:
                 torch.ops.vortex.qk_asym_correction_out(
-                    output[head],
+                    output[group_index],
                     query_storage,
-                    rhs.scale.value[head].reshape(-1),
-                    rhs.zero.value[head].reshape(-1),
+                    rhs.scale.value[group_index].reshape(-1),
+                    rhs.zero.value[group_index].reshape(-1),
                     m,
                     m_pad,
                     n,
                     1,
                     1 if isinstance(lhs, TensorHandle) else 0,
-                    output[head],
+                    output[group_index],
                 )
         self._record(
             "mm_w4a16_gemm_core_out",
-            launches=heads,
+            launches=group_count,
             operation="qk" if transpose_source else "pv",
+            batch=config.batch_size,
             heads=heads,
             M=m,
             M_pad=m_pad,
@@ -1341,20 +1405,21 @@ class VortexBackend(Backend):
         if transpose_source:
             self._record(
                 "qk_asym_correction_out",
-                launches=heads,
+                launches=group_count,
                 layout="gemm_c_tiled",
+                batch=config.batch_size,
                 heads=heads,
             )
         return _make_handle(
             output,
             name="qk" if transpose_source else "pv",
             axes=("B", "H", "S", "N"),
-            shape=(1, heads, m, n),
+            shape=(config.batch_size, heads, m, n),
             layout="gemm_c_tiled",
             padded_shape=tuple(output.shape),
             producer="attention_w4a16_fused",
             grouping="head",
-            matrix_count=heads,
+            matrix_count=group_count,
             m=m,
             m_pad=m_pad,
             n=n,
@@ -1382,12 +1447,17 @@ class VortexBackend(Backend):
             output,
             name="softmax",
             axes=("B", "H", "Sq", "Sk"),
-            shape=(1, config.num_attention_heads, config.sequence_length, config.sequence_length),
+            shape=(
+                config.batch_size,
+                config.num_attention_heads,
+                config.sequence_length,
+                config.sequence_length,
+            ),
             layout="gemm_a_tiled",
             padded_shape=tuple(output.shape),
             producer="softmax_layout_fused",
             grouping="head",
-            matrix_count=config.num_attention_heads,
+            matrix_count=config.batch_size * config.num_attention_heads,
             m=config.sequence_length,
             m_pad=params["m_pad"],
             n=config.sequence_length,

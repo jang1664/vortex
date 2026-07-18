@@ -18,7 +18,7 @@ class SpinQuantVortexIntegrationTests(unittest.TestCase):
             intermediate_size=64,
             num_attention_heads=2,
             head_dim=32,
-            batch_size=1,
+            batch_size=2,
             sequence_length=32,
             weight_group_size=32,
             kv_group_size=32,
@@ -26,7 +26,7 @@ class SpinQuantVortexIntegrationTests(unittest.TestCase):
         case = create_random_case(config, seed=1)
         result = LayerExecutor(VortexBackend(strict_native=True)).run(case, stop_after="qk")
         self.assertEqual(result.stage_order[-1], "qk")
-        self.assertEqual(result.captures["qk"].shape, (1, 2, 32, 32))
+        self.assertEqual(result.captures["qk"].shape, (2, 2, 32, 32))
         self.assertEqual(result.placement["fallback_count"], 0)
         self.assertGreater(result.placement["kernel_launches"]["attention_w4a16"], 0)
 
@@ -38,18 +38,21 @@ class SpinQuantVortexIntegrationTests(unittest.TestCase):
         from spinquant_inference.layer_accuracy.artifacts import create_random_case
         from spinquant_inference.layer_accuracy.backends import VortexBackend
         from spinquant_inference.layer_accuracy.graph import LayerExecutor
+        from spinquant_inference.layer_accuracy.specs import LayerConfig
 
-        case = create_random_case(seed=3)
+        case = create_random_case(
+            LayerConfig(batch_size=2, sequence_length=32), seed=3
+        )
         result = LayerExecutor(
             VortexBackend(strict_native=True, physical_plan="fused")
         ).run(case, stop_after="final_residual")
         self.assertEqual(len(result.stage_order), 25)
         self.assertEqual(result.stage_order[-1], "final_residual")
-        self.assertEqual(result.captures["final_residual"].shape, (1, 32, 4096))
+        self.assertEqual(result.captures["final_residual"].shape, (2, 32, 4096))
         self.assertEqual(result.placement["physical_plan"], "fused")
         self.assertEqual(result.placement["fallback_count"], 0)
         launches = result.placement["kernel_launches"]
-        self.assertEqual(launches["qk_asym_correction_out"], 32)
+        self.assertEqual(launches["qk_asym_correction_out"], 64)
         self.assertEqual(launches["softmax_layout_fused"], 1)
         self.assertEqual(launches["head_concat_layout_fused"], 1)
         self.assertEqual(launches["eladd_layout_fused"], 2)

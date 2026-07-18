@@ -672,6 +672,8 @@ struct kv_cache_quant_layout_fused_w4a16_kernel_arg_t {
   uint32_t quant_mode;
   uint32_t src_total_N;
   uint32_t src_col_offset;
+  uint32_t src_total_K;
+  uint32_t src_row_offset;
   uint32_t k_tiles;
   uint32_t n_dma_tiles;
   uint32_t slot_fk_fn;
@@ -753,7 +755,7 @@ static_assert(sizeof(rms_norm_layout_fused_kernel_arg_t) == 88,
               "rms_norm_layout_fused kernel ABI size mismatch");
 static_assert(sizeof(rope_layout_fused_kernel_arg_t) == 120,
               "rope_layout_fused kernel ABI size mismatch");
-static_assert(sizeof(kv_cache_quant_layout_fused_w4a16_kernel_arg_t) == 184,
+static_assert(sizeof(kv_cache_quant_layout_fused_w4a16_kernel_arg_t) == 192,
               "kv_cache_quant_layout_fused_w4a16 kernel ABI size mismatch");
 static_assert(sizeof(softmax_layout_fused_kernel_arg_t) == 104,
               "softmax_layout_fused kernel ABI size mismatch");
@@ -780,7 +782,7 @@ static_assert(offsetof(kv_cache_quant_layout_fused_w4a16_kernel_arg_t,
               && offsetof(kv_cache_quant_layout_fused_w4a16_kernel_arg_t,
                           src_total_N) == 116
               && offsetof(kv_cache_quant_layout_fused_w4a16_kernel_arg_t,
-                          power_kernel_iterations) == 180,
+                          power_kernel_iterations) == 188,
               "kv_cache_quant_layout_fused_w4a16 kernel ABI offsets mismatch");
 static_assert(offsetof(qk_asym_correction_kernel_arg_t, scores_layout) == 84
               && offsetof(qk_asym_correction_kernel_arg_t,
@@ -3642,7 +3644,9 @@ vortex_kv_cache_quant_layout_fused_w4a16(
     int64_t source_transposed,
     int64_t quant_mode,
     int64_t src_total_n,
-    int64_t src_col_offset) {
+    int64_t src_col_offset,
+    int64_t src_total_k,
+    int64_t src_row_offset) {
   TORCH_CHECK(source.is_privateuseone(), "source must be a Vortex tensor");
   TORCH_CHECK(source.dtype() == at::kHalf && source.is_contiguous(),
               "source must be contiguous float16");
@@ -3663,8 +3667,12 @@ vortex_kv_cache_quant_layout_fused_w4a16(
   TORCH_CHECK(src_total_n >= N && src_col_offset >= 0
               && src_col_offset + N <= src_total_n,
               "source head column range is out of bounds");
-  TORCH_CHECK(source.numel() >= K * src_total_n,
-              "source physical storage is smaller than K*src_total_n");
+  const int64_t source_total_k = src_total_k == 0 ? K : src_total_k;
+  TORCH_CHECK(source_total_k >= K && src_row_offset >= 0
+              && src_row_offset + K <= source_total_k,
+              "source batch row range is out of bounds");
+  TORCH_CHECK(source.numel() >= source_total_k * src_total_n,
+              "source physical storage is smaller than src_total_k*src_total_n");
   TORCH_CHECK(qdir != 0 || K % qblk == 0,
               "qdir=0 requires K divisible by qblk");
   if (src_layout == 1) {
@@ -3675,7 +3683,8 @@ vortex_kv_cache_quant_layout_fused_w4a16(
   if (src_layout == 2) {
     TORCH_CHECK(src_total_n == N && src_col_offset == 0,
                 "grouped GEMM-A source must be one compact logical matrix");
-    TORCH_CHECK(K % 8 == 0 && N % 32 == 0 && source.numel() == K * N,
+    TORCH_CHECK(src_row_offset == 0 && source_total_k % 8 == 0 && N % 32 == 0
+                && source.numel() == source_total_k * N,
                 "GEMM-A source storage must match its padded K*N extent");
     check_device_alignment(source, 512, "KV GEMM-A source");
   }
@@ -3753,6 +3762,8 @@ vortex_kv_cache_quant_layout_fused_w4a16(
   karg.quant_mode = static_cast<uint32_t>(quant_mode);
   karg.src_total_N = static_cast<uint32_t>(src_total_n);
   karg.src_col_offset = static_cast<uint32_t>(src_col_offset);
+  karg.src_total_K = static_cast<uint32_t>(source_total_k);
+  karg.src_row_offset = static_cast<uint32_t>(src_row_offset);
   karg.k_tiles = k_tiles;
   karg.n_dma_tiles = n_dma_tiles;
   karg.slot_fk_fn = fused_kv_slot_bytes(128, 128, Q, GQ);
@@ -4120,7 +4131,7 @@ TORCH_LIBRARY(vortex, m) {
   m.def("mm_w4a16_gemm_core_out(Tensor input_tiled, Tensor weight_tiled, Tensor scales_tiled, Tensor zeros_tiled, int K, int N, int group_size, int wtrans, int qdir, Tensor(a!) output) -> Tensor(a!)");
   m.def("rms_norm_layout_fused(Tensor input, Tensor weight, float eps, int m_pad) -> Tensor");
   m.def("rope_layout_fused(Tensor input, Tensor cos, Tensor sin, int batch, int seq, int heads, int head_dim, int input_m_pad, int layout_to, int pos_offset=0) -> Tensor");
-  m.def("kv_cache_quant_layout_fused_w4a16(Tensor source, int K, int N, int qblk, int qdir, int gemm_qdir, int wtrans, int src_layout, int source_transposed, int quant_mode, int src_total_n, int src_col_offset) -> (Tensor, Tensor, Tensor, Tensor, Tensor)");
+  m.def("kv_cache_quant_layout_fused_w4a16(Tensor source, int K, int N, int qblk, int qdir, int gemm_qdir, int wtrans, int src_layout, int source_transposed, int quant_mode, int src_total_n, int src_col_offset, int src_total_k=0, int src_row_offset=0) -> (Tensor, Tensor, Tensor, Tensor, Tensor)");
   m.def("softmax_layout_fused(Tensor input, int batch, int heads, int seq_q, int seq_k, int m_pad, int use_mask, float scale) -> Tensor");
   m.def("head_concat_layout_fused(Tensor input, int batch, int seq, int heads, int head_dim, int input_m_pad, int output_m_pad) -> Tensor");
   m.def("eladd_layout_fused(Tensor input_a, Tensor input_b, int M, int M_pad, int K) -> Tensor");

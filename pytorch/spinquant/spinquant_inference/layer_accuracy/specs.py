@@ -25,8 +25,10 @@ class LayerConfig:
     def __post_init__(self) -> None:
         if self.hidden_size != self.num_attention_heads * self.head_dim:
             raise ValueError("hidden_size must equal num_attention_heads * head_dim")
-        if self.batch_size != 1:
-            raise ValueError("v1 supports batch_size=1 only")
+        if self.batch_size <= 0:
+            raise ValueError("batch_size must be positive")
+        if self.sequence_length <= 0:
+            raise ValueError("sequence_length must be positive")
         if self.hidden_size % self.weight_group_size != 0:
             raise ValueError("hidden_size must be divisible by weight_group_size")
         if self.intermediate_size % self.weight_group_size != 0:

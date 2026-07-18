@@ -18,7 +18,15 @@ from .compare import compare_runs
 from .graph import LayerExecutor
 from .generator_conformance import check_generator_conformance
 from .run_artifacts import load_run, save_run
+from .specs import LayerConfig
 from .stages import STAGE_NAMES
+
+
+def _positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("value must be positive")
+    return parsed
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -35,6 +43,8 @@ def _parser() -> argparse.ArgumentParser:
     make_case.add_argument("--checkpoint", type=Path)
     make_case.add_argument("--checkpoint-profile", choices=("spinquant-w4a16-r3r4",))
     make_case.add_argument("--layer-index", type=int, default=0)
+    make_case.add_argument("--batch-size", type=_positive_int, default=1)
+    make_case.add_argument("--seq-len", type=_positive_int, default=32)
 
     run = commands.add_parser("run", help="execute one backend and save stage captures")
     run.add_argument("--case", type=Path, required=True)
@@ -61,10 +71,14 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def _make_case(args: argparse.Namespace) -> int:
+    config = LayerConfig(
+        batch_size=args.batch_size,
+        sequence_length=args.seq_len,
+    )
     if args.source == "random":
         if args.checkpoint is not None or args.checkpoint_profile is not None:
             raise SystemExit("--checkpoint and --checkpoint-profile are valid only with --source checkpoint")
-        case = create_random_case(seed=args.seed)
+        case = create_random_case(config=config, seed=args.seed)
     else:
         if args.checkpoint is None or args.checkpoint_profile is None:
             raise SystemExit("--source checkpoint requires --checkpoint and --checkpoint-profile")
@@ -72,6 +86,7 @@ def _make_case(args: argparse.Namespace) -> int:
             args.checkpoint,
             layer_index=args.layer_index,
             checkpoint_profile=args.checkpoint_profile,
+            config=config,
             seed=args.seed,
         )
     save_case(case, args.output)

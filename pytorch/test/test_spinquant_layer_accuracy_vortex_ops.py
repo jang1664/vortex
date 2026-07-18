@@ -133,7 +133,7 @@ class SpinQuantVortexOpTests(unittest.TestCase):
         tiled_source = torch.ops.vortex.tile_input_a(source, 32, 128)
         tiled_weight, _, _, tiled_scale, tiled_zero = (
             torch.ops.vortex.kv_cache_quant_layout_fused_w4a16(
-                tiled_source, 32, 128, 128, 1, 0, 1, 2, 1, 1, 128, 0
+                tiled_source, 32, 128, 128, 1, 0, 1, 2, 1, 1, 128, 0, 32, 0
             )
         )
         decoded_tiled_source = torch.ops.vortex.detile_output(
@@ -167,10 +167,37 @@ class SpinQuantVortexOpTests(unittest.TestCase):
         with torch.vortex.memory_alignment(512):
             source = source_cpu.to("vortex")
         weight, _, _, scale, zero = torch.ops.vortex.kv_cache_quant_layout_fused_w4a16(
-            source, 32, 128, 128, 1, 1, 0, 0, 0, 2, 128, 0
+            source, 32, 128, 128, 1, 1, 0, 0, 0, 2, 128, 0, 32, 0
         )
         expected_scale = source_cpu.float().abs().amax(-1, keepdim=True) / 7.5
         expected_q = torch.round(source_cpu.float() / expected_scale).clamp(-8, 7).to(torch.int8)
+        decoded_packed = _decode_packed_gemm_weight(
+            weight.cpu(), k=32, n=128, wtrans=0
+        )
+        torch.testing.assert_close(
+            unpack_signed_int4(decoded_packed), expected_q, rtol=0, atol=0
+        )
+        torch.testing.assert_close(scale.cpu(), expected_scale.half(), rtol=0, atol=0)
+        torch.testing.assert_close(zero.cpu(), torch.zeros_like(zero.cpu()), rtol=0, atol=0)
+
+    def test_fused_kv_quantization_selects_batch_rows_from_gemm_c(self):
+        source_cpu = torch.cat(
+            (
+                torch.full((32, 128), -1.0, dtype=torch.float16),
+                torch.linspace(-2, 3, 32 * 128, dtype=torch.float16).reshape(32, 128),
+            )
+        )
+        tiled_cpu = self._encode_gemm_tile(source_cpu, 64)
+        with torch.vortex.memory_alignment(512):
+            tiled = tiled_cpu.to("vortex")
+        weight, _, _, scale, zero = (
+            torch.ops.vortex.kv_cache_quant_layout_fused_w4a16(
+                tiled, 32, 128, 128, 1, 1, 0, 1, 0, 2, 128, 0, 64, 32
+            )
+        )
+        selected = source_cpu[32:].float()
+        expected_scale = selected.abs().amax(-1, keepdim=True) / 7.5
+        expected_q = torch.round(selected / expected_scale).clamp(-8, 7).to(torch.int8)
         decoded_packed = _decode_packed_gemm_weight(
             weight.cpu(), k=32, n=128, wtrans=0
         )
