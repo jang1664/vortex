@@ -21,6 +21,8 @@ class RunResult:
     stage_order: List[str]
     captures: Dict[str, torch.Tensor]
     auxiliary_captures: Dict[str, torch.Tensor]
+    physical_captures: Dict[str, torch.Tensor]
+    physical_descriptors: Dict[str, dict]
     placement: dict
 
 
@@ -32,15 +34,34 @@ class LayerExecutor:
     def __init__(self, backend: Backend) -> None:
         self.backend = backend
 
-    def run(self, case: LayerCase, *, stop_after: str = "final_residual") -> RunResult:
+    def run(
+        self,
+        case: LayerCase,
+        *,
+        stop_after: str = "final_residual",
+        capture_physical: bool = False,
+    ) -> RunResult:
         stop_index = validate_stop_stage(stop_after)
         self.backend.preflight(case, stop_after)
         self.backend.bind(case)
         captures: Dict[str, torch.Tensor] = {}
         auxiliary: Dict[str, torch.Tensor] = {}
+        physical: Dict[str, torch.Tensor] = {}
+        physical_descriptors: Dict[str, dict] = {}
         stage_order: List[str] = []
 
-        def record(stage: str, value: torch.Tensor, **extra: torch.Tensor) -> None:
+        def record_physical(name: str, value: object) -> None:
+            if not capture_physical:
+                return
+            buffers, descriptor = self.backend.capture_physical(value)
+            buffer_names = []
+            for index, buffer in enumerate(buffers):
+                buffer_name = name if len(buffers) == 1 else f"{name}.buffer{index}"
+                physical[buffer_name] = buffer
+                buffer_names.append(buffer_name)
+            physical_descriptors[name] = {**descriptor, "buffers": buffer_names}
+
+        def record(stage: str, value: object, **extra: object) -> None:
             expected_index = len(stage_order)
             actual_index = STAGE_INDEX[stage]
             if actual_index != expected_index:
@@ -48,8 +69,11 @@ class LayerExecutor:
                     f"semantic schedule drift: expected {STAGE_NAMES[expected_index]!r}, got {stage!r}"
                 )
             captures[stage] = self.backend.canonicalize(value)
+            record_physical(stage, value)
             for name, tensor in extra.items():
-                auxiliary[f"{stage}.{name}"] = self.backend.canonicalize(tensor)
+                capture_name = f"{stage}.{name}"
+                auxiliary[capture_name] = self.backend.canonicalize(tensor)
+                record_physical(capture_name, tensor)
             stage_order.append(stage)
             if actual_index == stop_index:
                 raise _StopExecution
@@ -76,17 +100,9 @@ class LayerExecutor:
             v_linear = self.backend.linear("v_proj", normalized)
             record("v_proj", v_linear)
 
-            def split_heads(value: torch.Tensor) -> torch.Tensor:
-                return value.reshape(
-                    config.batch_size,
-                    config.sequence_length,
-                    config.num_attention_heads,
-                    config.head_dim,
-                ).transpose(1, 2).contiguous()
-
-            q = self.backend.rope(split_heads(q_linear))
+            q = self.backend.rope(self.backend.split_heads(q_linear))
             record("q_rope", q)
-            k = self.backend.rope(split_heads(k_linear))
+            k = self.backend.rope(self.backend.split_heads(k_linear))
             record("k_rope", k)
 
             q = self.backend.hadamard(q)
@@ -96,7 +112,7 @@ class LayerExecutor:
 
             k_quantized = self.backend.quantize(k, "asym")
             record_quantized("k_quant", k_quantized)
-            v_quantized = self.backend.quantize(split_heads(v_linear), "sym")
+            v_quantized = self.backend.quantize(self.backend.split_heads(v_linear), "sym")
             record_quantized("v_quant", v_quantized)
 
             scores = self.backend.qk(q, k_quantized)
@@ -144,5 +160,7 @@ class LayerExecutor:
             stage_order=stage_order,
             captures=captures,
             auxiliary_captures=auxiliary,
+            physical_captures=physical,
+            physical_descriptors=physical_descriptors,
             placement=self.backend.placement_report(),
         )

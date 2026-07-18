@@ -354,12 +354,15 @@ class KernelVariantTest(unittest.TestCase):
             variant="all_fpint_gemm_improve_fused_layout_spinquant",
         )
 
-        q_tile = _kernel_by_name(payload, "layout_rope_q_to_attn_qkT")
+        q_hadamard = _kernel_by_name(payload, "spinquant_r3_q_hadamard")
         attn_qk = _kernel_by_name(payload, "attn_qkT")
 
-        self.assertEqual("-m 4 -k 128", q_tile["args"])
-        self.assertEqual(32 * 1 * 8, q_tile["calls_per_forward"])
-        self.assertEqual(4, q_tile["shape"]["M"])
+        self.assertEqual("hadamard_layout_fused", q_hadamard["backend"])
+        self.assertEqual("-m 1 -n 32 -k 128", q_hadamard["args"])
+        self.assertEqual(32, q_hadamard["shape"]["matrix_count"])
+        self.assertEqual(1, q_hadamard["shape"]["rows_per_matrix"])
+        self.assertEqual(8, q_hadamard["shape"]["m_pad"])
+        self.assertEqual("gemm_a_tiled", q_hadamard["shape"]["layout_to"])
         self.assertEqual(4, attn_qk["shape"]["M"])
 
     def test_layout_variants_are_registered(self) -> None:
@@ -428,7 +431,7 @@ class KernelVariantTest(unittest.TestCase):
         self.assertEqual("-rows 32 -dim 128", k_had["args"])
         self.assertEqual("-rows 1 -dim 11008", r4_had["args"])
 
-    def test_spinquant_fused_layout_bridges_row_major_hadamard(self) -> None:
+    def test_spinquant_fused_layout_fuses_hadamard_gemm_a_write(self) -> None:
         payload = build_llm_kernels(
             model_name="llama2-7b",
             stages=["prefill"],
@@ -440,29 +443,78 @@ class KernelVariantTest(unittest.TestCase):
         )
 
         rope_q = _kernel_by_name(payload, "rope_q")
-        q_tile = _kernel_by_name(payload, "layout_rope_q_to_attn_qkT")
+        rope_k = _kernel_by_name(payload, "rope_k")
+        k_quant = _kernel_by_name(payload, "kv_cache_quant_rope_k_to_attn_qkT")
+        v_quant = _kernel_by_name(payload, "kv_cache_quant_v_cache_to_attn_pv")
+        attn_qk = _kernel_by_name(payload, "attn_qkT")
+        qk_correction = _kernel_by_name(payload, "qk_asym_correction_out")
+        attn_softmax = _kernel_by_name(payload, "attn_softmax")
+        q_hadamard = _kernel_by_name(payload, "spinquant_r3_q_hadamard")
+        k_hadamard = _kernel_by_name(payload, "spinquant_r3_k_hadamard")
         gate_detile = _kernel_by_name(payload, "layout_gate_proj_to_mlp_silu_detile")
         up_detile = _kernel_by_name(payload, "layout_up_proj_to_mlp_elmul_detile")
         mlp_silu = _kernel_by_name(payload, "mlp_silu")
         mlp_elmul = _kernel_by_name(payload, "mlp_elmul")
-        r4_tile = _kernel_by_name(payload, "layout_mlp_elmul_to_down_proj")
+        r4_hadamard = _kernel_by_name(payload, "spinquant_r4_mlp_hadamard")
         down_proj = _kernel_by_name(payload, "down_proj")
         text = format_layout_view(payload)
 
         self.assertEqual("rope_layout_fused", rope_q["backend"])
-        self.assertIn("--layout-to row_major", rope_q["args"])
-        self.assertEqual("row_major_fp16", rope_q["shape"]["layout_to"])
-        self.assertEqual("tile_input_a", q_tile["backend"])
-        self.assertEqual("spinquant_r3_q_hadamard", q_tile["shape"]["producer"])
-        self.assertEqual("row_major_fp16", q_tile["shape"]["layout_from"])
+        self.assertIn("--layout-to head_major_row", rope_q["args"])
+        self.assertEqual("head_major_row_fp16", rope_q["shape"]["layout_to"])
+        self.assertEqual("head_major_row_fp16", rope_k["shape"]["layout_to"])
+        self.assertEqual("spinquant_signed_asymmetric", k_quant["shape"]["quant_mode"])
+        self.assertEqual("logical_row_major_fp16", k_quant["shape"]["correction_qparams_layout_to"])
+        self.assertEqual(128, k_quant["shape"]["source_total_n"])
+        self.assertEqual(0, k_quant["shape"]["head_col_offset"])
+        self.assertEqual("spinquant_signed_symmetric", v_quant["shape"]["quant_mode"])
+        self.assertEqual(4096, v_quant["shape"]["source_total_n"])
+        self.assertEqual("call_head_index*128", v_quant["shape"]["head_col_offset"])
+        self.assertIn("--head-col-offset 0", v_quant["args"])
+        self.assertEqual(0, v_quant["shape"]["representative_args_head_col_offset"])
+        self.assertEqual("qk_asym_correction_out", attn_qk["shape"]["consumer"])
+        self.assertEqual("qk_asym_correction", qk_correction["backend"])
+        self.assertEqual("gemm_c_tiled", qk_correction["shape"]["layout_from"])
+        self.assertEqual("gemm_c_tiled", qk_correction["shape"]["layout_to"])
+        self.assertEqual("gemm_a_tiled", qk_correction["shape"]["query_layout"])
+        self.assertEqual(32 * 32, qk_correction["calls_per_forward"])
+        self.assertEqual(
+            "--layout gemm_c_tiled --query-layout gemm_a_tiled",
+            qk_correction["args"],
+        )
+        self.assertIn(
+            {"role": "scores", "source": "attn_qkT", "layout": "gemm_c_tiled"},
+            qk_correction["inputs"],
+        )
+        self.assertIn(
+            {
+                "role": "query",
+                "source": "spinquant_r3_q_hadamard",
+                "layout": "gemm_a_tiled",
+            },
+            qk_correction["inputs"],
+        )
+        self.assertEqual("qk_asym_correction_out", attn_softmax["inputs"][0]["source"])
+        self.assertEqual("hadamard_layout_fused", q_hadamard["backend"])
+        self.assertEqual("-m 8 -n 32 -k 128", q_hadamard["args"])
+        self.assertEqual("head_major_row_fp16", q_hadamard["shape"]["layout_from"])
+        self.assertEqual("gemm_a_tiled", q_hadamard["shape"]["layout_to"])
+        self.assertEqual("hadamard_layout_fused", k_hadamard["backend"])
+        self.assertEqual("-m 8 -n 32 -k 128", k_hadamard["args"])
+        self.assertEqual("gemm_a_tiled", k_hadamard["shape"]["layout_to"])
+        self.assertEqual("gemm_a_tiled", k_quant["shape"]["layout_from"])
         self.assertEqual("detile_output", gate_detile["backend"])
         self.assertEqual("detile_output", up_detile["backend"])
         self.assertEqual("silu", mlp_silu["backend"])
         self.assertEqual("elmul", mlp_elmul["backend"])
-        self.assertEqual("tile_input_a", r4_tile["backend"])
-        self.assertEqual("spinquant_r4_mlp_hadamard", r4_tile["shape"]["producer"])
+        self.assertEqual("hadamard_layout_fused", r4_hadamard["backend"])
+        self.assertEqual("-m 8 -n 1 -k 11008", r4_hadamard["args"])
+        self.assertEqual("gemm_a_tiled", r4_hadamard["shape"]["layout_to"])
+        kernel_names = {kernel["name"] for kernel in payload["kernels"]}
+        self.assertNotIn("layout_rope_q_to_attn_qkT", kernel_names)
+        self.assertNotIn("layout_mlp_elmul_to_down_proj", kernel_names)
         self.assertIn(
-            {"role": "A", "source": "layout_mlp_elmul_to_down_proj", "layout": "gemm_a_tiled"},
+            {"role": "A", "source": "spinquant_r4_mlp_hadamard", "layout": "gemm_a_tiled"},
             down_proj["inputs"],
         )
         self.assertIn("spinquant_r3_q_hadamard", text)

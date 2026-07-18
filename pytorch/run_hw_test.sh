@@ -63,6 +63,7 @@ done < <(cd "$TEST_DIR" 2>/dev/null && \
   ls test_native_*.py test_mm_w4a16_opt.py test_mm_w4a16_gemm_core_hw.py \
      test_spinquant_layer_accuracy_vortex_ops.py \
      test_spinquant_layer_accuracy_vortex_integration.py 2>/dev/null | sort -u)
+OP_FILE["spinquant_layer_accuracy_vortex_integration_full"]="test_spinquant_layer_accuracy_vortex_integration.py"
 mapfile -t AVAIL < <(printf '%s\n' "${!OP_FILE[@]}" | sort)
 
 list_ops() { printf '  %s\n' "${AVAIL[@]}"; }
@@ -209,7 +210,14 @@ for op in "${OPS[@]}"; do
   echo
   echo ">>> [$op] python ${OP_FILE[$op]}  (device $XRT_DEVICE_INDEX)"
   echo "------------------------------------------------------------------"
-  if python "${OP_FILE[$op]}"; then
+  if [[ "$op" == "spinquant_layer_accuracy_vortex_integration_full" ]]; then
+    RUN_SPINQUANT_FUSED_FULL=1 python "${OP_FILE[$op]}"
+    rc=$?
+  else
+    python "${OP_FILE[$op]}"
+    rc=$?
+  fi
+  if [[ $rc -eq 0 ]]; then
     PASSED+=("$op")
   else
     FAILED+=("$op")

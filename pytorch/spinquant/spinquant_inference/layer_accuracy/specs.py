@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from functools import reduce
 from operator import mul
-from typing import Optional, Tuple
+from typing import Mapping, Optional, Tuple
 
 
 @dataclass(frozen=True)
@@ -72,6 +72,7 @@ class PhysicalSpec:
     base_offset: int
     buffer_extent: int
     grouping: Optional[str] = None
+    parameters: Tuple[Tuple[str, int], ...] = ()
 
     def __post_init__(self) -> None:
         if len(self.padded_shape) != len(self.strides):
@@ -86,15 +87,39 @@ class PhysicalSpec:
             raise ValueError(
                 f"buffer extent {self.buffer_extent} is smaller than addressed extent {addressed}"
             )
+        if len({name for name, _ in self.parameters}) != len(self.parameters):
+            raise ValueError("physical parameter names must be unique")
 
     @classmethod
-    def contiguous(cls, layout: str, shape: Tuple[int, ...], grouping: Optional[str] = None):
+    def contiguous(
+        cls,
+        layout: str,
+        shape: Tuple[int, ...],
+        grouping: Optional[str] = None,
+        parameters: Optional[Mapping[str, int]] = None,
+    ):
         stride = 1
         strides = []
         for dim in reversed(shape):
             strides.append(stride)
             stride *= dim
-        return cls(layout, shape, tuple(reversed(strides)), 0, stride, grouping)
+        return cls(
+            layout,
+            shape,
+            tuple(reversed(strides)),
+            0,
+            stride,
+            grouping,
+            tuple(sorted((parameters or {}).items())),
+        )
+
+    def parameter(self, name: str, default: Optional[int] = None) -> int:
+        for key, value in self.parameters:
+            if key == name:
+                return value
+        if default is None:
+            raise KeyError(f"physical parameter {name!r} is not present")
+        return default
 
 
 @dataclass(frozen=True)

@@ -159,6 +159,35 @@ python -m spinquant_inference.layer_accuracy compare \
   --output /shared/path/spinquant-layer-report.json
 ```
 
+The optional fourth wrapper argument selects the physical plan. `standalone`
+keeps each layout transform as its own kernel and remains the default;
+`fused` keeps compatible GEMM layouts across adjacent operations and uses the
+fused layout kernels:
+
+```bash
+./run_layer_accuracy_hw.sh \
+  /shared/path/spinquant-layer-case /shared/path/spinquant-layer-fused \
+  final_residual fused
+```
+
+In the fused plan, each R3/R4 rotation is executed by
+`hadamard_layout_fused`, which writes the transformed values directly in
+GEMM-A layout. The K-cache quantizer, QK asymmetric correction, and downstream
+GEMM consume that layout directly, so the fused path does not launch
+`hadamard_butterfly`, `hadamard_base`, or the corresponding `tile_input_a`.
+The standalone plan retains those separate kernels for comparison.
+
+For a direct invocation, pass `--physical-plan standalone|fused` to the `run`
+subcommand. Both plans emit the same 25 semantic stages, so their saved runs
+can be compared directly. Physical captures and placement metadata expose the
+different layout transitions and kernel launch counts.
+
+`--capture semantic` writes decoded tensors for numerical comparison.
+`--capture physical` writes raw backend buffers plus
+`physical_descriptors.json`; `--capture both` writes both sets and is the
+hardware wrapper default. Physical-only runs are diagnostic artifacts and are
+not accepted by the semantic `compare` command.
+
 The hardware wrapper uses the C4 alias configuration and bitstream by default
 (`improve_th16_tcol32_hwexp_dcache`). `--include-auxiliary` is an optional
 diagnostic for packed INT4/scale/zero artifacts; normal end-to-end acceptance
@@ -182,17 +211,17 @@ spinquant-w4a16-r3r4 --layer-index N` to replace random weights with a strict
 layer checkpoint.
 
 The workload generator remains advisory rather than a runtime dependency. Check
-that the harness still agrees with its standalone SpinQuant layout intent using:
+that the harness still agrees with both SpinQuant physical plans using:
 
 ```bash
 python -m spinquant_inference.layer_accuracy check-generator
 ```
 
-With the current `improve_th16_tcol32_hwexp_dcache` simulation configuration,
-the standalone softmax regression itself aborts in simx. The strict-native
-integration test therefore covers through `qk` in simx; use the hardware
-runner for `softmax` and later stop points until that simulator regression is
-fixed.
+The fused full-layer integration tests are opt-in hardware tests and run on the
+real C4/U55C path; they do not use simx. The fused plan currently validates the
+fixed Llama2-7B `B=1`, `S=32`, `H=4096`, `I=11008`, 32-head contract during
+preflight. Use standalone for other shapes until matching fused kernel
+contracts are added.
 
 ## References
 - [SpinQuant: LLM Quantization with Learned Rotations](https://arxiv.org/abs/2405.16406)

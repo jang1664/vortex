@@ -2,7 +2,9 @@ import json
 import math
 import tempfile
 import unittest
+from argparse import Namespace
 from pathlib import Path
+from types import SimpleNamespace
 
 import torch
 
@@ -19,18 +21,29 @@ from spinquant_inference.layer_accuracy.artifacts import (  # noqa: E402
     load_case,
     save_case,
 )
-from spinquant_inference.layer_accuracy.backends import TorchBackend  # noqa: E402
+from spinquant_inference.layer_accuracy.backends import (  # noqa: E402
+    DeferredScaledMaskedScores,
+    TorchBackend,
+    VortexBackend,
+    decode_physical_tensor,
+)
+from spinquant_inference.layer_accuracy.cli import _parser, _run  # noqa: E402
 from spinquant_inference.layer_accuracy.compare import compare_runs  # noqa: E402
 from spinquant_inference.layer_accuracy.graph import LayerExecutor  # noqa: E402
 from spinquant_inference.layer_accuracy.generator_conformance import (  # noqa: E402
     check_generator_conformance,
 )
-from spinquant_inference.layer_accuracy.run_artifacts import load_run, save_run  # noqa: E402
+from spinquant_inference.layer_accuracy.run_artifacts import (  # noqa: E402
+    load_physical_run,
+    load_run,
+    save_run,
+)
 from spinquant_inference.layer_accuracy.specs import (  # noqa: E402
     LayerConfig,
     PhysicalSpec,
     QuantSpec,
     TensorSpec,
+    TensorHandle,
 )
 from spinquant_inference.layer_accuracy.stages import STAGE_NAMES  # noqa: E402
 from spinquant_inference.layer_accuracy.tensor_io import (  # noqa: E402
@@ -54,6 +67,22 @@ def tiny_config() -> LayerConfig:
 
 
 class TensorContractTests(unittest.TestCase):
+    @staticmethod
+    def _encode_tiled_weight(values: torch.Tensor, wtrans: int) -> torch.Tensor:
+        k_dim, n_dim = values.shape
+        encoded = []
+        for kt in range(0, k_dim, 128):
+            current = values[kt:kt + 128]
+            for nt in range(0, n_dim, 32):
+                for kb in range(0, current.shape[0], 32):
+                    block = current[kb:kb + 32, nt:nt + 32]
+                    if wtrans == 0:
+                        encoded.append(pack_signed_int4(block).view(torch.uint8).reshape(-1))
+                    else:
+                        transposed = block.transpose(0, 1).contiguous()
+                        encoded.append(pack_signed_int4(transposed).view(torch.uint8).reshape(-1))
+        return torch.cat(encoded).reshape(k_dim, n_dim // 2)
+
     def test_signed_int4_low_nibble_first_round_trip(self):
         values = torch.tensor([[-8, -1, 0, 7]], dtype=torch.int8)
         packed = pack_signed_int4(values)
@@ -85,6 +114,82 @@ class TensorContractTests(unittest.TestCase):
                 base_offset=0,
                 buffer_extent=16,
             )
+
+    def test_gemm_c_physical_tensor_decodes_without_device_detile(self):
+        # M=2, N=64 in the GEMM-C tile order used by C4.  Within one
+        # 32-column tile, rows are interleaved before the next column tile.
+        semantic = torch.arange(2 * 64, dtype=torch.float16).reshape(2, 64)
+        physical = torch.empty_like(semantic)
+        physical[:, :32] = semantic[:, :32]
+        physical[:, 32:] = semantic[:, 32:]
+        physical = physical.reshape(2, 2, 32).permute(1, 0, 2).contiguous().reshape(2, 64)
+        spec = TensorSpec(
+            "projection",
+            ("M", "N"),
+            (2, 64),
+            "float16",
+            physical=PhysicalSpec.contiguous(
+                "gemm_c_tiled",
+                (2, 64),
+                grouping="matrix",
+                parameters={"m": 2, "m_pad": 2, "n": 64},
+            ),
+        )
+        handle = TensorHandle(spec, physical, "test")
+        torch.testing.assert_close(decode_physical_tensor(handle), semantic, rtol=0, atol=0)
+        buffers, descriptor = TorchBackend("cpu").capture_physical(handle)
+        torch.testing.assert_close(buffers[0], physical, rtol=0, atol=0)
+        self.assertEqual(
+            descriptor["tensor_spec"]["physical"]["layout"], "gemm_c_tiled"
+        )
+
+    def test_packed_wtrans1_decodes_to_semantic_head_major_capture(self):
+        weight = ((torch.arange(128 * 32).reshape(128, 32) % 16) - 8).to(torch.int8)
+        tiled = self._encode_tiled_weight(weight, wtrans=1)
+        spec = TensorSpec(
+            "k.packed",
+            ("B", "H", "S", "Dp"),
+            (1, 1, 32, 64),
+            "uint8",
+            physical=PhysicalSpec.contiguous(
+                "gemm_w_packed_grouped",
+                tuple(tiled.shape),
+                grouping="head",
+                parameters={
+                    "weight_k": 128,
+                    "weight_n": 32,
+                    "wtrans": 1,
+                    "source_transposed": 1,
+                },
+            ),
+        )
+        handle = TensorHandle(spec, (tiled,), "test")
+        expected = pack_signed_int4(weight.transpose(0, 1).contiguous()).reshape(1, 1, 32, 64)
+        torch.testing.assert_close(decode_physical_tensor(handle), expected, rtol=0, atol=0)
+
+    def test_packed_wtrans0_decodes_to_semantic_capture(self):
+        weight = ((torch.arange(32 * 128).reshape(32, 128) % 16) - 8).to(torch.int8)
+        tiled = self._encode_tiled_weight(weight, wtrans=0)
+        spec = TensorSpec(
+            "v.packed",
+            ("B", "H", "S", "Dp"),
+            (1, 1, 32, 64),
+            "uint8",
+            physical=PhysicalSpec.contiguous(
+                "gemm_w_packed_grouped",
+                tuple(tiled.shape),
+                grouping="head",
+                parameters={
+                    "weight_k": 32,
+                    "weight_n": 128,
+                    "wtrans": 0,
+                    "source_transposed": 0,
+                },
+            ),
+        )
+        handle = TensorHandle(spec, (tiled,), "test")
+        expected = pack_signed_int4(weight).reshape(1, 1, 32, 64)
+        torch.testing.assert_close(decode_physical_tensor(handle), expected, rtol=0, atol=0)
 
 
 class ArtifactTests(unittest.TestCase):
@@ -197,6 +302,40 @@ class GraphExecutionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unknown stop stage"):
             LayerExecutor(self.backend).run(self.case, stop_after="not_a_stage")
 
+    def test_split_heads_is_owned_by_backend(self):
+        self.backend.bind(self.case)
+        linear = torch.arange(1 * 4 * 16, dtype=torch.float16).reshape(1, 4, 16)
+        split = self.backend.split_heads(linear)
+        self.assertEqual(split.shape, (1, 2, 4, 8))
+        torch.testing.assert_close(split[:, 0], linear[:, :, :8], rtol=0, atol=0)
+
+    def test_stopping_at_deferred_scores_does_not_launch_softmax(self):
+        class DeferredBackend(TorchBackend):
+            def __init__(self):
+                super().__init__("cpu")
+                self.softmax_calls = 0
+
+            def scaled_masked_scores(self, qk, head_dim):
+                return DeferredScaledMaskedScores(qk, head_dim)
+
+            def canonicalize(self, value):
+                if isinstance(value, DeferredScaledMaskedScores):
+                    qk = super().canonicalize(value.qk)
+                    return (
+                        qk.float() / math.sqrt(value.head_dim)
+                        + self.tensor("causal_mask").float()
+                    ).half()
+                return super().canonicalize(value)
+
+            def softmax(self, scores):
+                self.softmax_calls += 1
+                return super().softmax(scores)
+
+        backend = DeferredBackend()
+        result = LayerExecutor(backend).run(self.case, stop_after="scaled_masked_scores")
+        self.assertEqual(result.stage_order[-1], "scaled_masked_scores")
+        self.assertEqual(backend.softmax_calls, 0)
+
     def test_run_artifact_round_trip_preserves_metadata_and_captures(self):
         result = LayerExecutor(self.backend).run(self.case, stop_after="qk")
         with tempfile.TemporaryDirectory() as tmp:
@@ -207,6 +346,32 @@ class GraphExecutionTests(unittest.TestCase):
             self.assertEqual(metadata["stop_after"], "qk")
             torch.testing.assert_close(captures["qk"], result.captures["qk"])
             self.assertIn("k_quant.packed", auxiliary)
+
+    def test_capture_modes_serialize_distinct_artifacts(self):
+        result = LayerExecutor(self.backend).run(
+            self.case, stop_after="input_norm", capture_physical=True
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            semantic_path = root / "semantic"
+            save_run(result, semantic_path, capture_mode="semantic")
+            self.assertTrue((semantic_path / "captures.pt").is_file())
+            self.assertFalse((semantic_path / "physical_captures.pt").exists())
+
+            both_path = root / "both"
+            save_run(result, both_path, capture_mode="both")
+            _, physical, descriptors = load_physical_run(both_path)
+            torch.testing.assert_close(physical["input_norm"], result.captures["input_norm"])
+            self.assertEqual(
+                descriptors["input_norm"]["tensor_spec"]["physical"]["layout"],
+                "row_major",
+            )
+
+            physical_path = root / "physical"
+            save_run(result, physical_path, capture_mode="physical")
+            self.assertFalse((physical_path / "captures.pt").exists())
+            with self.assertRaisesRegex(ValueError, "physical captures only"):
+                load_run(physical_path)
 
 
 class ComparatorTests(unittest.TestCase):
@@ -260,6 +425,73 @@ class GeneratorConformanceTests(unittest.TestCase):
         report = check_generator_conformance()
         self.assertTrue(report["passed"], report["mismatches"])
         self.assertTrue(report["advisory_only"])
+        self.assertEqual(report["variant"], report["variants"]["standalone"])
+        self.assertIsInstance(report["checked_kernels"], list)
+        self.assertEqual(
+            report["checked_kernels"],
+            report["checked_kernels_by_plan"]["standalone"],
+        )
+        self.assertIn("attn_softmax", report["checked_kernels_by_plan"]["fused"])
+
+
+class PhysicalPlanInterfaceTests(unittest.TestCase):
+    def test_cli_accepts_both_physical_plans_and_defaults_to_standalone(self):
+        parser = _parser()
+        common = [
+            "run", "--case", "case", "--backend", "vortex", "--strict-native",
+            "--output", "run",
+        ]
+        self.assertEqual(parser.parse_args(common).physical_plan, "standalone")
+        self.assertEqual(
+            parser.parse_args(common + ["--physical-plan", "fused"]).physical_plan,
+            "fused",
+        )
+
+    def test_vortex_backend_selects_explicit_strategy(self):
+        standalone = VortexBackend(physical_plan="standalone")
+        fused = VortexBackend(physical_plan="fused")
+        self.assertEqual(standalone.physical_plan, "standalone")
+        self.assertEqual(fused.physical_plan, "fused")
+        self.assertNotEqual(type(standalone.layout_plan), type(fused.layout_plan))
+        self.assertIn("hadamard_layout_fused", fused.layout_plan.required_ops)
+        self.assertNotIn("hadamard_butterfly", fused.layout_plan.required_ops)
+        self.assertNotIn("hadamard_base", fused.layout_plan.required_ops)
+        self.assertNotIn("tile_input_a", fused.COMMON_REQUIRED_OPS)
+        self.assertIn("tile_input_a", standalone.layout_plan.required_ops)
+        with self.assertRaisesRegex(ValueError, "physical plan"):
+            VortexBackend(physical_plan="unknown")
+
+    def test_fused_plan_is_rejected_for_cpu_before_case_loading(self):
+        args = Namespace(
+            backend="cpu",
+            physical_plan="fused",
+            case=Path("does-not-exist"),
+        )
+        with self.assertRaisesRegex(SystemExit, "valid only with --backend vortex"):
+            _run(args)
+
+    def test_fused_case_rejects_noncanonical_score_inputs(self):
+        config = LayerConfig()
+        scale = torch.full(
+            (1, 32, 32, 32), 1.0 / math.sqrt(config.head_dim), dtype=torch.float16
+        )
+        mask = torch.triu(
+            torch.full((1, 1, 32, 32), torch.finfo(torch.float16).min),
+            diagonal=1,
+        )
+        case = SimpleNamespace(
+            config=config, tensors={"score_scale": scale, "causal_mask": mask}
+        )
+        VortexBackend._validate_fused_case(case)
+        case.tensors["score_scale"] = scale.clone()
+        case.tensors["score_scale"][0, 0, 0, 0] = 1
+        with self.assertRaisesRegex(ValueError, "score_scale"):
+            VortexBackend._validate_fused_case(case)
+        case.tensors["score_scale"] = scale
+        case.tensors["causal_mask"] = mask.clone()
+        case.tensors["causal_mask"][0, 0, 0, 0] = -1
+        with self.assertRaisesRegex(ValueError, "causal mask"):
+            VortexBackend._validate_fused_case(case)
 
 
 if __name__ == "__main__":
