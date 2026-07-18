@@ -11,7 +11,7 @@ from .artifacts import (
     save_decode_case,
 )
 from .backends import TorchBackend, VortexBackend
-from .graph import LayerExecutor, RunResult
+from .graph import DecodeExecutor, DecodeRunResult, LayerExecutor, RunResult
 from .specs import CacheGeometry, CacheState, DecodeConfig, LayerConfig
 
 __all__ = [
@@ -19,6 +19,8 @@ __all__ = [
     "CacheState",
     "DecodeCase",
     "DecodeConfig",
+    "DecodeExecutor",
+    "DecodeRunResult",
     "LayerCase",
     "LayerConfig",
     "LayerExecutor",

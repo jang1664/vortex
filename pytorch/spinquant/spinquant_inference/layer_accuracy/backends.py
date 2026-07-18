@@ -11,8 +11,16 @@ import torch
 import torch.nn.functional as F
 
 from ..utils.hadamard_utils import get_hadK
-from .artifacts import LayerCase
-from .specs import PhysicalSpec, TensorHandle, TensorSpec
+from ..modeling.quantized_kv_cache import FixedCapacityKVQuantizedCache
+from .artifacts import DecodeCase, LayerCase
+from .specs import (
+    DecodeConfig,
+    LayerConfig,
+    PersistentCache,
+    PhysicalSpec,
+    TensorHandle,
+    TensorSpec,
+)
 from .tensor_io import dequantize_weight, pack_signed_int4, unpack_signed_int4
 
 
@@ -217,6 +225,7 @@ class QuantizedActivation:
     weight_tiled: Optional[object] = None
     scale_tiled: Optional[object] = None
     zero_tiled: Optional[object] = None
+    dequantized: Optional[torch.Tensor] = None
 
 
 class Backend:
@@ -224,13 +233,29 @@ class Backend:
 
     name = "abstract"
 
-    def bind(self, case: LayerCase) -> None:
+    def bind(self, case: LayerCase | DecodeCase) -> None:
         self.case = case
+
+    @property
+    def layer_config(self) -> LayerConfig:
+        config = self.case.config
+        return config.layer if isinstance(config, DecodeConfig) else config
 
     def preflight(self, case: LayerCase, stop_after: str) -> None:
         del case, stop_after
 
     def tensor(self, name: str) -> torch.Tensor:
+        raise NotImplementedError
+
+    def activate(
+        self,
+        input_tensor: torch.Tensor,
+        position_ids: torch.Tensor,
+        causal_mask: torch.Tensor,
+    ) -> None:
+        raise NotImplementedError
+
+    def create_persistent_cache(self, config: DecodeConfig) -> PersistentCache:
         raise NotImplementedError
 
     def rms_norm(self, x: object, weight_name: str, eps: float) -> object:
@@ -317,7 +342,7 @@ class TorchBackend(Backend):
         self._tensors: Dict[str, torch.Tensor] = {}
         self._weights: Dict[str, torch.Tensor] = {}
 
-    def bind(self, case: LayerCase) -> None:
+    def bind(self, case: LayerCase | DecodeCase) -> None:
         super().bind(case)
         if self.device.type == "cuda":
             if not torch.cuda.is_available():
@@ -327,6 +352,28 @@ class TorchBackend(Backend):
             torch.use_deterministic_algorithms(True)
         self._tensors = {name: tensor.to(self.device) for name, tensor in case.tensors.items()}
         self._weights.clear()
+
+    def activate(
+        self,
+        input_tensor: torch.Tensor,
+        position_ids: torch.Tensor,
+        causal_mask: torch.Tensor,
+    ) -> None:
+        self._tensors["input"] = input_tensor.to(self.device)
+        self._tensors["position_ids"] = position_ids.to(self.device)
+        self._tensors["causal_mask"] = causal_mask.to(self.device)
+
+    def create_persistent_cache(
+        self, config: DecodeConfig
+    ) -> FixedCapacityKVQuantizedCache:
+        layer = config.layer
+        return FixedCapacityKVQuantizedCache(
+            batch_size=layer.batch_size,
+            num_kv_heads=layer.num_attention_heads,
+            head_dim=layer.head_dim,
+            max_sequence_length=config.max_sequence_length,
+            device=self.device,
+        )
 
     def tensor(self, name: str) -> torch.Tensor:
         return self._tensors[name]
@@ -342,7 +389,7 @@ class TorchBackend(Backend):
             cached = dequantize_weight(
                 self.tensor(f"{name}.qweight"),
                 self.tensor(f"{name}.scales"),
-                self.case.config.weight_group_size,
+                self.layer_config.weight_group_size,
                 dtype=torch.float16,
             )
             self._weights[name] = cached
@@ -354,17 +401,20 @@ class TorchBackend(Backend):
         return result.reshape(*shape, result.shape[-1]).to(torch.float16)
 
     def split_heads(self, x: torch.Tensor) -> torch.Tensor:
-        config = self.case.config
+        config = self.layer_config
         return x.reshape(
             config.batch_size,
-            config.sequence_length,
+            x.shape[1],
             config.num_attention_heads,
             config.head_dim,
         ).transpose(1, 2).contiguous()
 
     def rope(self, x: torch.Tensor) -> torch.Tensor:
-        cos = self.tensor("rope_cos").unsqueeze(1).float()
-        sin = self.tensor("rope_sin").unsqueeze(1).float()
+        positions = self.tensor("position_ids")
+        table_shape = (*positions.shape, self.layer_config.head_dim)
+        indices = positions.unsqueeze(-1).expand(table_shape)
+        cos = self.tensor("rope_cos").gather(1, indices).unsqueeze(1).float()
+        sin = self.tensor("rope_sin").gather(1, indices).unsqueeze(1).float()
         half = x.shape[-1] // 2
         rotated = torch.cat((-x[..., half:], x[..., :half]), dim=-1)
         return (x.float() * cos + rotated.float() * sin).to(torch.float16)
@@ -408,6 +458,8 @@ class TorchBackend(Backend):
         )
 
     def _dequantize(self, value: QuantizedActivation) -> torch.Tensor:
+        if value.dequantized is not None:
+            return value.dequantized
         q = value.unpacked
         if q is None:
             q = unpack_signed_int4(value.packed)

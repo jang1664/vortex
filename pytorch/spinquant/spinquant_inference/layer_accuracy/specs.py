@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from functools import reduce
 from operator import mul
-from typing import Mapping, Optional, Tuple
+from typing import Mapping, Optional, Protocol, Tuple
 
 
 @dataclass(frozen=True)
@@ -134,18 +134,28 @@ class CacheState:
             )
 
     def commit_prefill(self, prompt_length: int) -> None:
+        self.validate_prefill(prompt_length)
+        self.publish_prefill(prompt_length)
+
+    def validate_prefill(self, prompt_length: int) -> None:
         if self.lifecycle != "empty":
             raise ValueError("prefill requires an empty cache")
         if prompt_length <= 0:
             raise ValueError("prefill length must be positive")
         if prompt_length > self.geometry.max_sequence_length:
             raise ValueError("prefill length exceeds cache capacity")
+
+    def publish_prefill(self, prompt_length: int) -> None:
         self.logical_length = prompt_length
         self.lifecycle = (
             "full" if prompt_length == self.geometry.max_sequence_length else "valid_prefix"
         )
 
     def commit_append(self, *, position: int) -> None:
+        self.validate_append(position=position)
+        self.publish_append()
+
+    def validate_append(self, *, position: int) -> None:
         if self.lifecycle == "empty":
             raise ValueError("append requires prefill")
         if self.lifecycle == "full" or self.logical_length >= self.geometry.max_sequence_length:
@@ -154,6 +164,8 @@ class CacheState:
             raise ValueError(
                 f"append position {position} must equal logical length {self.logical_length}"
             )
+
+    def publish_append(self) -> None:
         self.logical_length += 1
         if self.logical_length == self.geometry.max_sequence_length:
             self.lifecycle = "full"
@@ -162,6 +174,34 @@ class CacheState:
         self.logical_length = 0
         self.cache_generation += 1
         self.lifecycle = "empty"
+
+
+class PersistentCache(Protocol):
+    """Storage-neutral cache contract consumed by the decode graph."""
+
+    @property
+    def logical_length(self) -> int: ...
+
+    def descriptor(self) -> dict: ...
+
+    def prefill_quantized(
+        self, qkey: object, k_scale: object, k_zero: object, qvalue: object, v_scale: object
+    ) -> None: ...
+
+    def append_quantized(
+        self,
+        qkey: object,
+        k_scale: object,
+        k_zero: object,
+        qvalue: object,
+        v_scale: object,
+        *,
+        position: int,
+    ) -> None: ...
+
+    def get_kv(self) -> tuple[tuple[object, ...], tuple[object, ...]]: ...
+
+    def dequantized_kv(self) -> tuple[object, object]: ...
 
 
 @dataclass(frozen=True)

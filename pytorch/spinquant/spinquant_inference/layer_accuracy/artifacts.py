@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Dict, Mapping
 
@@ -385,6 +385,47 @@ def create_checkpoint_decode_case(
         seed=seed,
     )
     return _decode_case_from_layer_case(base, config)
+
+
+def materialize_decode_prefix(
+    case: DecodeCase, *, logical_length: int
+) -> LayerCase:
+    """Build a valid full-prefix case for incremental-reference comparison."""
+
+    if logical_length < case.config.prompt_length:
+        raise ValueError("logical_length cannot be shorter than the prompt")
+    if logical_length > case.config.total_sequence_length:
+        raise ValueError("logical_length exceeds available decode inputs")
+    layer = replace(case.config.layer, sequence_length=logical_length)
+    decode_count = logical_length - case.config.prompt_length
+    decode = case.tensors["decode_inputs"][:decode_count, :, 0].transpose(0, 1)
+    positions = case.tensors["decode_position_ids"][:decode_count, :, 0].transpose(0, 1)
+    tensors: Dict[str, torch.Tensor] = {
+        "input": torch.cat((case.tensors["prompt_input"], decode), dim=1).contiguous(),
+        "position_ids": torch.cat(
+            (case.tensors["prompt_position_ids"], positions), dim=1
+        ).contiguous(),
+        "rope_cos": case.tensors["rope_cos"][:, :logical_length].contiguous(),
+        "rope_sin": case.tensors["rope_sin"][:, :logical_length].contiguous(),
+        "causal_mask": case.tensors["causal_mask"][
+            :, :, :logical_length, :logical_length
+        ].contiguous(),
+        "score_scale": case.tensors["score_scale"][
+            :, :, :logical_length, :logical_length
+        ].contiguous(),
+    }
+    for name, tensor in case.tensors.items():
+        if name.endswith(".weight") or name.endswith(".qweight") or name.endswith(".scales"):
+            tensors[name] = tensor
+    manifest = _build_manifest(
+        layer,
+        tensors,
+        source=f"{case.manifest['source']}-decode-prefix",
+        seed=case.manifest.get("seed"),
+        layer_index=case.manifest.get("layer_index", 0),
+        checkpoint_profile=case.manifest["checkpoint_profile"],
+    )
+    return LayerCase(layer, tensors, manifest)
 
 
 def save_case(case: LayerCase, path: str | Path) -> None:

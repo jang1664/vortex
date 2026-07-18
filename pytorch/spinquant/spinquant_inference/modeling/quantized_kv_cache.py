@@ -16,12 +16,260 @@ Storage per layer (T = accumulated sequence length, D = head_dim):
 """
 
 from __future__ import annotations
+from dataclasses import asdict
 from typing import List, Optional, Tuple
 
 import torch
 
-from ..utils.quant_utils import quantize_per_token
-from ..utils.pack_utils import pack_int4_to_int8
+from ..utils.quant_utils import dequantize_per_token, quantize_per_token
+from ..utils.pack_utils import pack_int4_to_int8, unpack_int8_to_int4
+from ..layer_accuracy.specs import CacheGeometry, CacheState
+
+
+class FixedCapacityKVQuantizedCache:
+    """Preallocated row-major semantic oracle for persistent decode tests."""
+
+    def __init__(
+        self,
+        *,
+        batch_size: int,
+        num_kv_heads: int,
+        head_dim: int,
+        max_sequence_length: int,
+        device: str | torch.device,
+        k_mode: str = "asym",
+        v_mode: str = "sym",
+    ) -> None:
+        if head_dim % 2 != 0:
+            raise ValueError("head_dim must be even for INT4 packing")
+        if k_mode != "asym" or v_mode != "sym":
+            raise ValueError("persistent decode v1 requires asymmetric K and symmetric V")
+        self.device = torch.device(device)
+        if self.device.type == "cuda" and self.device.index is None:
+            self.device = torch.device("cuda", torch.cuda.current_device())
+        self.k_mode = k_mode
+        self.v_mode = v_mode
+        self.geometry = CacheGeometry(
+            batch_size=batch_size,
+            num_kv_heads=num_kv_heads,
+            head_dim=head_dim,
+            max_sequence_length=max_sequence_length,
+            padded_sequence_length=max_sequence_length,
+        )
+        self.state = CacheState(self.geometry, allocation_id=f"semantic:{id(self)}")
+        packed_shape = (
+            batch_size,
+            num_kv_heads,
+            max_sequence_length,
+            head_dim // 2,
+        )
+        qparam_shape = (batch_size, num_kv_heads, max_sequence_length, 1)
+        self.qkey = torch.zeros(packed_shape, dtype=torch.int8, device=self.device)
+        self.k_scale = torch.zeros(qparam_shape, dtype=torch.float16, device=self.device)
+        self.k_zero = torch.zeros(qparam_shape, dtype=torch.float16, device=self.device)
+        self.qvalue = torch.zeros(packed_shape, dtype=torch.int8, device=self.device)
+        self.v_scale = torch.zeros(qparam_shape, dtype=torch.float16, device=self.device)
+
+    @property
+    def logical_length(self) -> int:
+        return self.state.logical_length
+
+    @property
+    def cache_generation(self) -> int:
+        return self.state.cache_generation
+
+    def buffer_addresses(self) -> tuple[int, ...]:
+        return tuple(tensor.data_ptr() for tensor in self.storage_tensors())
+
+    def descriptor(self) -> dict:
+        return {
+            "geometry": asdict(self.geometry),
+            "allocation_id": self.state.allocation_id,
+            "buffer_addresses": list(self.buffer_addresses()),
+            "logical_length": self.state.logical_length,
+            "cache_generation": self.state.cache_generation,
+            "lifecycle": self.state.lifecycle,
+        }
+
+    def storage_tensors(self) -> tuple[torch.Tensor, ...]:
+        return self.qkey, self.k_scale, self.k_zero, self.qvalue, self.v_scale
+
+    def _validate_sources(
+        self,
+        key_states: torch.Tensor,
+        value_states: torch.Tensor,
+        *,
+        expected_length: int,
+    ) -> None:
+        expected = (
+            self.geometry.batch_size,
+            self.geometry.num_kv_heads,
+            expected_length,
+            self.geometry.head_dim,
+        )
+        for name, tensor in (("key", key_states), ("value", value_states)):
+            if tuple(tensor.shape) != expected:
+                raise ValueError(
+                    f"{name} source expected shape {expected}, got {tuple(tensor.shape)}"
+                )
+            if tensor.device != self.device:
+                raise ValueError(
+                    f"{name} source device {tensor.device} does not match cache {self.device}"
+                )
+            if not tensor.dtype.is_floating_point:
+                raise ValueError(f"{name} source must be floating point")
+
+    @staticmethod
+    def _quantize(
+        values: torch.Tensor, mode: str
+    ) -> tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
+        quantized, scale, zero = quantize_per_token(values, mode=mode)
+        return pack_int4_to_int8(quantized), scale, zero
+
+    def prefill(self, key_states: torch.Tensor, value_states: torch.Tensor) -> None:
+        prompt_length = key_states.shape[2] if key_states.ndim == 4 else -1
+        self._validate_sources(key_states, value_states, expected_length=prompt_length)
+        qkey, k_scale, k_zero = self._quantize(key_states, self.k_mode)
+        qvalue, v_scale, _ = self._quantize(value_states, self.v_mode)
+        assert k_zero is not None
+        self.prefill_quantized(qkey, k_scale, k_zero, qvalue, v_scale)
+
+    def prefill_quantized(
+        self,
+        qkey: torch.Tensor,
+        k_scale: torch.Tensor,
+        k_zero: torch.Tensor,
+        qvalue: torch.Tensor,
+        v_scale: torch.Tensor,
+    ) -> None:
+        prompt_length = qkey.shape[2] if qkey.ndim == 4 else -1
+        self.state.validate_prefill(prompt_length)
+        self._validate_quantized(
+            qkey, k_scale, k_zero, qvalue, v_scale, expected_length=prompt_length
+        )
+        self.qkey[:, :, :prompt_length].copy_(qkey)
+        self.k_scale[:, :, :prompt_length].copy_(k_scale)
+        self.k_zero[:, :, :prompt_length].copy_(k_zero)
+        self.qvalue[:, :, :prompt_length].copy_(qvalue)
+        self.v_scale[:, :, :prompt_length].copy_(v_scale)
+        self.state.publish_prefill(prompt_length)
+
+    def append(
+        self,
+        key_states: torch.Tensor,
+        value_states: torch.Tensor,
+        *,
+        position: int,
+        generation: Optional[int] = None,
+    ) -> None:
+        self._validate_sources(key_states, value_states, expected_length=1)
+        qkey, k_scale, k_zero = self._quantize(key_states, self.k_mode)
+        qvalue, v_scale, _ = self._quantize(value_states, self.v_mode)
+        assert k_zero is not None
+        self.append_quantized(
+            qkey,
+            k_scale,
+            k_zero,
+            qvalue,
+            v_scale,
+            position=position,
+            generation=generation,
+        )
+
+    def append_quantized(
+        self,
+        qkey: torch.Tensor,
+        k_scale: torch.Tensor,
+        k_zero: torch.Tensor,
+        qvalue: torch.Tensor,
+        v_scale: torch.Tensor,
+        *,
+        position: int,
+        generation: Optional[int] = None,
+    ) -> None:
+        if generation is not None:
+            self.state.require_generation(generation)
+        self.state.validate_append(position=position)
+        self._validate_quantized(
+            qkey, k_scale, k_zero, qvalue, v_scale, expected_length=1
+        )
+        target = slice(position, position + 1)
+        self.qkey[:, :, target].copy_(qkey)
+        self.k_scale[:, :, target].copy_(k_scale)
+        self.k_zero[:, :, target].copy_(k_zero)
+        self.qvalue[:, :, target].copy_(qvalue)
+        self.v_scale[:, :, target].copy_(v_scale)
+        self.state.publish_append()
+
+    def _validate_quantized(
+        self,
+        qkey: torch.Tensor,
+        k_scale: torch.Tensor,
+        k_zero: torch.Tensor,
+        qvalue: torch.Tensor,
+        v_scale: torch.Tensor,
+        *,
+        expected_length: int,
+    ) -> None:
+        packed_shape = (
+            self.geometry.batch_size,
+            self.geometry.num_kv_heads,
+            expected_length,
+            self.geometry.head_dim // 2,
+        )
+        qparam_shape = (*packed_shape[:-1], 1)
+        expected = (
+            ("qkey", qkey, packed_shape, torch.int8),
+            ("k_scale", k_scale, qparam_shape, torch.float16),
+            ("k_zero", k_zero, qparam_shape, torch.float16),
+            ("qvalue", qvalue, packed_shape, torch.int8),
+            ("v_scale", v_scale, qparam_shape, torch.float16),
+        )
+        for name, tensor, shape, dtype in expected:
+            if tuple(tensor.shape) != shape or tensor.dtype != dtype:
+                raise ValueError(
+                    f"{name} expected shape={shape}, dtype={dtype}; "
+                    f"got shape={tuple(tensor.shape)}, dtype={tensor.dtype}"
+                )
+            if tensor.device != self.device:
+                raise ValueError(
+                    f"{name} device {tensor.device} does not match cache {self.device}"
+                )
+
+    def get_kv(
+        self, *, generation: Optional[int] = None
+    ) -> Tuple[
+        Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]],
+        Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]],
+    ]:
+        if generation is not None:
+            self.state.require_generation(generation)
+        active = slice(0, self.logical_length)
+        return (
+            self.qkey[:, :, active],
+            self.k_scale[:, :, active],
+            self.k_zero[:, :, active],
+        ), (
+            self.qvalue[:, :, active],
+            self.v_scale[:, :, active],
+            None,
+        )
+
+    def dequantized_kv(self) -> tuple[torch.Tensor, torch.Tensor]:
+        key, value = self.get_kv()
+        qkey, k_scale, k_zero = key
+        qvalue, v_scale, _ = value
+        return (
+            dequantize_per_token(
+                unpack_int8_to_int4(qkey), k_scale, k_zero, mode=self.k_mode
+            ),
+            dequantize_per_token(
+                unpack_int8_to_int4(qvalue), v_scale, None, mode=self.v_mode
+            ),
+        )
+
+    def reset(self) -> None:
+        self.state.reset()
 
 
 class KVQuantizedCache:
