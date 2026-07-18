@@ -426,7 +426,8 @@ static uint8_t quant_source_at(const fp16_t* src,
 
 static uint32_t padded_weight_K(uint32_t K, uint32_t N, uint32_t source_transposed) {
   const uint32_t logical = source_transposed ? N : K;
-  return align_up_u32(logical, TILE_DMA_MXU_KT);
+  return align_up_u32(logical,
+                      logical <= DEFAULT_DMA_KT ? TILE_DMA_MXU_KT : DEFAULT_DMA_KT);
 }
 
 static uint32_t padded_weight_N(uint32_t K, uint32_t N, uint32_t source_transposed) {
@@ -440,7 +441,7 @@ static uint32_t padded_qparam_K(uint32_t K,
                                 uint32_t GEMM_QDIR,
                                 uint32_t source_transposed) {
   const uint32_t logical = source_transposed ? N : K;
-  uint32_t align = TILE_DMA_MXU_KT;
+  uint32_t align = logical <= DEFAULT_DMA_KT ? TILE_DMA_MXU_KT : DEFAULT_DMA_KT;
   if (GEMM_QDIR == 0 && QBLK > align) align = QBLK;
   return align_up_u32(logical, align);
 }

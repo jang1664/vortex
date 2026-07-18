@@ -221,20 +221,22 @@ python -m spinquant_inference.layer_accuracy check-generator
 
 The fused full-layer integration tests are opt-in hardware tests and run on the
 real C4/U55C path; they do not use simx. Case generation and the CUDA reference
-accept any positive batch size and sequence length. Both C4 physical plans
-currently enforce these kernel-layout limits during preflight:
+accept any positive batch size and sequence length. Both C4 physical plans now
+support multiple 128-row M tiles and enforce these remaining kernel-layout
+limits during preflight:
 
-- `align8(B * S) <= 128` and `align8(S) <= 128`, because the fused kernels
-  currently support one 128-row M tile.
 - `S` must be a multiple of the 32-column GEMM micro-tile.
 - Each grouped QK output stride must remain 512-byte aligned.
+- An attention GEMM K dimension above 128 is physically padded to a complete
+  128-column DMA tile. For example, logical `S=160` uses `K_pad=256`; the input,
+  weight, scale, and zero padding is zero-filled and excluded from semantic
+  captures.
 
 The fused plan additionally requires the Llama2-7B `H=4096`, `I=11008`,
 32-head shape and canonical score scale and causal mask.
 
-`B=2`, `S=32` is covered by the real-C4 full-layer test for both standalone and
-fused plans. Removing the single-M-tile restriction requires multi-tile layout
-addressing and output assembly in the fused kernels and is planned separately.
+`B=2`, `S=32` and the multi-M-tile case `B=1`, `S=160` have been validated in
+real-C4 full-layer runs for both standalone and fused plans.
 
 ## References
 - [SpinQuant: LLM Quantization with Learned Rotations](https://arxiv.org/abs/2405.16406)

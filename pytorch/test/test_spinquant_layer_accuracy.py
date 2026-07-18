@@ -576,17 +576,15 @@ class PhysicalPlanInterfaceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "causal mask"):
             VortexBackend._validate_fused_case(case)
 
-    def test_fused_case_accepts_batched_prefill_within_one_m_tile(self):
-        for batch_size in (2, 4):
-            with self.subTest(batch_size=batch_size):
+    def test_fused_case_accepts_multiple_m_tiles(self):
+        for batch_size, sequence_length in ((2, 32), (4, 32), (1, 160), (1, 256)):
+            with self.subTest(
+                batch_size=batch_size,
+                sequence_length=sequence_length,
+            ):
                 VortexBackend._validate_fused_case(
-                    self._fused_case(batch_size, 32)
+                    self._fused_case(batch_size, sequence_length)
                 )
-
-    def test_fused_case_rejects_multiple_m_tiles_with_explicit_shape(self):
-        case = self._fused_case(5, 32)
-        with self.assertRaisesRegex(ValueError, r"B\*S=160"):
-            VortexBackend._validate_fused_case(case)
 
     def test_fused_case_rejects_partial_sequence_micro_tile(self):
         case = self._fused_case(2, 16)

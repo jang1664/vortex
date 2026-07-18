@@ -217,6 +217,7 @@ int main(int argc, char *argv[]) {
   arg.seq_len_q = seq_q;
   arg.seq_len_k = seq_k;
   arg.seq_len_k_pad = seq_k_pad;
+  arg.output_k_pad = seq_k_pad;
   arg.M_pad = M_pad;
   arg.use_mask = use_mask;
   arg.scale = scale;

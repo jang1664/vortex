@@ -46,14 +46,20 @@ void kernel_tile_weight_w4a16(kernel_arg_t *__UNIFORM__ arg) {
   const uint32_t pair_per_k_sub = mxu_kt >> 1;              // WTRANS=1
 
   const uint32_t src_row_bytes = N / 2;
-  const uint32_t out_K = (K + mxu_kt - 1u) & ~(mxu_kt - 1u);
+  const uint32_t out_K_unpadded = (K + mxu_kt - 1u) & ~(mxu_kt - 1u);
+  const uint32_t out_K = out_K_unpadded <= kt_size
+      ? out_K_unpadded
+      : (out_K_unpadded + kt_size - 1u) & ~(kt_size - 1u);
   const uint32_t out_N = (N + mxu_nt - 1u) & ~(mxu_nt - 1u);
   const uint32_t out_row_bytes = out_N >> 1;
 
   if (SOURCE_TRANSPOSED != 0) {
     if (WTRANS == 0) return;
 
-    const uint32_t logical_K = (N + mxu_kt - 1u) & ~(mxu_kt - 1u);
+    const uint32_t logical_K_unpadded = (N + mxu_kt - 1u) & ~(mxu_kt - 1u);
+    const uint32_t logical_K = logical_K_unpadded <= kt_size
+        ? logical_K_unpadded
+        : (logical_K_unpadded + kt_size - 1u) & ~(kt_size - 1u);
     const uint32_t logical_N = (K + mxu_nt - 1u) & ~(mxu_nt - 1u);
     const uint32_t logical_row_bytes = logical_N >> 1;
     const uint32_t kt  = blockIdx.z;

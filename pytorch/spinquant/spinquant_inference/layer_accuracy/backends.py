@@ -17,6 +17,7 @@ from .tensor_io import dequantize_weight, pack_signed_int4, unpack_signed_int4
 
 
 TILE_M = 128
+TILE_K = 128
 TILE_KN = 32
 
 
@@ -132,6 +133,9 @@ def decode_physical_tensor(handle: TensorHandle) -> torch.Tensor:
             )
             if params.get("source_transposed", 0):
                 matrix = matrix.transpose(0, 1).contiguous()
+            matrix = matrix[
+                :handle.spec.shape[-2], :handle.spec.shape[-1] * 2
+            ].contiguous()
             packed.append(pack_signed_int4(matrix))
         return torch.stack(packed).reshape(handle.spec.shape).contiguous()
     if physical.layout in ("row_major", "bhsd_row", "packed_row"):
@@ -141,15 +145,16 @@ def decode_physical_tensor(handle: TensorHandle) -> torch.Tensor:
         m = params["m"]
         m_pad = params["m_pad"]
         n = params["n"]
-        matrix_extent = m_pad * n
+        n_pad = params.get("n_pad", n)
+        matrix_extent = m_pad * n_pad
         flat = storage.reshape(-1)
         decoded = [
             _decode_gemm_matrix(
                 flat[index * matrix_extent:(index + 1) * matrix_extent],
                 m=m,
                 m_pad=m_pad,
-                n=n,
-            )
+                n=n_pad,
+            )[:, :n]
             for index in range(matrix_count)
         ]
         if matrix_count == 1:
@@ -663,14 +668,7 @@ class VortexBackend(Backend):
 
     @staticmethod
     def _validate_c4_shape(case: LayerCase) -> None:
-        flattened_m = case.config.batch_size * case.config.sequence_length
-        flattened_m_pad = (flattened_m + 7) & ~7
         sequence_m_pad = (case.config.sequence_length + 7) & ~7
-        if flattened_m_pad > TILE_M:
-            raise ValueError(
-                "the C4 physical plans currently support one 128-row M tile: "
-                f"B*S={flattened_m} (M_pad={flattened_m_pad})"
-            )
         if case.config.sequence_length % TILE_KN != 0:
             raise ValueError(
                 "the C4 physical plans currently require sequence_length "
@@ -967,6 +965,7 @@ class VortexBackend(Backend):
                 x = lhs[batch_index, head].contiguous()
                 m_pad = (m_dim + 7) & ~7
                 input_tiled = torch.ops.vortex.tile_input_a(x, m_pad, k_dim)
+                gemm_k = input_tiled.shape[1]
                 packed = rhs.packed[batch_index, head].view(torch.uint8).contiguous()
                 scale = rhs.scale[batch_index, head].contiguous()
                 if transpose_source:
@@ -997,7 +996,7 @@ class VortexBackend(Backend):
                     weight,
                     scale_tiled,
                     zero_tiled,
-                    k_dim,
+                    gemm_k,
                     n_dim,
                     self.case.config.kv_group_size,
                     wtrans,
@@ -1021,6 +1020,7 @@ class VortexBackend(Backend):
             launches=batch * heads,
             M=m_dim,
             K=k_dim,
+            K_pad=gemm_k,
             N=n_dim,
         )
         stacked = torch.empty(
@@ -1256,7 +1256,14 @@ class VortexBackend(Backend):
             zero_tiled.append(zero_tile)
             row_scale.append(scale_row)
             row_zero.append(zero_row)
-        weight_k = config.head_dim if source_transposed else config.sequence_length
+        logical_weight_k = (
+            config.head_dim if source_transposed else config.sequence_length
+        )
+        weight_k = (
+            logical_weight_k
+            if logical_weight_k <= TILE_K
+            else (logical_weight_k + TILE_K - 1) // TILE_K * TILE_K
+        )
         weight_n = config.sequence_length if source_transposed else config.head_dim
         packed = _make_grouped_handle(
             packed_tiled,
@@ -1350,6 +1357,9 @@ class VortexBackend(Backend):
         m = config.sequence_length
         m_pad = (m + 7) & ~7
         k = config.head_dim if transpose_source else config.sequence_length
+        k_pad = k
+        if isinstance(lhs, TensorHandle):
+            k_pad = _physical_parameters(lhs).get("n_pad", k)
         n = config.sequence_length if transpose_source else config.head_dim
         head_stride_bytes = m_pad * n * torch.empty((), dtype=torch.float16).element_size()
         if head_stride_bytes % 512 != 0:
@@ -1371,7 +1381,7 @@ class VortexBackend(Backend):
                 rhs.weight_tiled[group_index],
                 rhs.scale_tiled[group_index],
                 rhs.zero_tiled[group_index],
-                k,
+                k_pad,
                 n,
                 config.kv_group_size,
                 1 if transpose_source else 0,
@@ -1400,6 +1410,7 @@ class VortexBackend(Backend):
             M=m,
             M_pad=m_pad,
             K=k,
+            K_pad=k_pad,
             N=n,
         )
         if transpose_source:
@@ -1441,6 +1452,7 @@ class VortexBackend(Backend):
             1,
             1.0 / math.sqrt(scores.head_dim),
         )
+        output_k_pad = output.shape[-1]
         self._record("softmax_layout_fused", heads=config.num_attention_heads)
         self._transition("gemm_c_tiled", "gemm_a_tiled", reason="scaled_masked_softmax")
         return _make_handle(
@@ -1461,6 +1473,7 @@ class VortexBackend(Backend):
             m=config.sequence_length,
             m_pad=params["m_pad"],
             n=config.sequence_length,
+            n_pad=output_k_pad,
         )
 
     def _fused_head_concat(self, value: TensorHandle) -> TensorHandle:

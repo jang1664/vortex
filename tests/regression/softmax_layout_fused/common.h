@@ -27,6 +27,7 @@ typedef struct {
   uint32_t seq_len_q;
   uint32_t seq_len_k;
   uint32_t seq_len_k_pad;
+  uint32_t output_k_pad;
   uint32_t M_pad;
 
   uint32_t use_mask;

@@ -52,7 +52,7 @@ void kernel_tile_scale_zp_w4a16(kernel_arg_t *__UNIFORM__ arg) {
 
   const uint32_t out_K_logical = SOURCE_TRANSPOSED ? N : K;
   const uint32_t out_N_logical = SOURCE_TRANSPOSED ? K : N;
-  uint32_t out_K_align = mxu_kt;
+  uint32_t out_K_align = out_K_logical <= kt_size ? mxu_kt : kt_size;
   uint32_t out_N_align = mxu_nt;
   if (GEMM_QDIR == 0 && QBLK > out_K_align) out_K_align = QBLK;
   if (GEMM_QDIR == 1 && QBLK > out_N_align) out_N_align = QBLK;

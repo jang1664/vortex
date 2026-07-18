@@ -41,18 +41,18 @@ class SpinQuantVortexIntegrationTests(unittest.TestCase):
         from spinquant_inference.layer_accuracy.specs import LayerConfig
 
         case = create_random_case(
-            LayerConfig(batch_size=2, sequence_length=32), seed=3
+            LayerConfig(batch_size=1, sequence_length=160), seed=3
         )
         result = LayerExecutor(
             VortexBackend(strict_native=True, physical_plan="fused")
         ).run(case, stop_after="final_residual")
         self.assertEqual(len(result.stage_order), 25)
         self.assertEqual(result.stage_order[-1], "final_residual")
-        self.assertEqual(result.captures["final_residual"].shape, (2, 32, 4096))
+        self.assertEqual(result.captures["final_residual"].shape, (1, 160, 4096))
         self.assertEqual(result.placement["physical_plan"], "fused")
         self.assertEqual(result.placement["fallback_count"], 0)
         launches = result.placement["kernel_launches"]
-        self.assertEqual(launches["qk_asym_correction_out"], 64)
+        self.assertEqual(launches["qk_asym_correction_out"], 32)
         self.assertEqual(launches["softmax_layout_fused"], 1)
         self.assertEqual(launches["head_concat_layout_fused"], 1)
         self.assertEqual(launches["eladd_layout_fused"], 2)
