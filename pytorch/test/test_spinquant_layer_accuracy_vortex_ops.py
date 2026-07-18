@@ -47,6 +47,73 @@ class SpinQuantVortexOpTests(unittest.TestCase):
             )
         return torch.cat(chunks).reshape(m_pad, n)
 
+    @staticmethod
+    def _allocate_fused_cache(source, *, quant_mode):
+        capacity, head_dim = source.shape
+        asymmetric = quant_mode == 1
+        return torch.ops.vortex.kv_cache_quant_layout_fused_w4a16(
+            source,
+            capacity,
+            head_dim,
+            head_dim,
+            1,
+            0 if asymmetric else 1,
+            1 if asymmetric else 0,
+            0,
+            1 if asymmetric else 0,
+            quant_mode,
+            head_dim,
+            0,
+            capacity,
+            0,
+        )
+
+    def _check_persistent_cache_updates(self, *, quant_mode):
+        capacity, head_dim = 160, 128
+        full_cpu = torch.zeros((capacity, head_dim), dtype=torch.float16)
+        with torch.vortex.memory_alignment(512):
+            full = full_cpu.to("vortex")
+        cache = self._allocate_fused_cache(full, quant_mode=quant_mode)
+        addresses = tuple(tensor.data_ptr() for tensor in cache)
+
+        generator = torch.Generator().manual_seed(101 + quant_mode)
+        for position in (31, 32, 33, 127, 128, 129, 159):
+            token_cpu = torch.randn(
+                (1, head_dim), generator=generator, dtype=torch.float16
+            )
+            full_cpu[position].copy_(token_cpu[0])
+            with torch.vortex.memory_alignment(512):
+                token = token_cpu.to("vortex")
+                expected_source = full_cpu.to("vortex")
+            returned = torch.ops.vortex.kv_cache_quant_layout_fused_w4a16_update(
+                token, capacity, position, quant_mode, *cache
+            )
+            self.assertEqual(tuple(tensor.data_ptr() for tensor in returned), addresses)
+            expected = self._allocate_fused_cache(
+                expected_source, quant_mode=quant_mode
+            )
+            for actual_tensor, expected_tensor in zip(cache, expected):
+                torch.testing.assert_close(
+                    actual_tensor.cpu(), expected_tensor.cpu(), rtol=0, atol=0
+                )
+
+    def test_persistent_asymmetric_key_updates_match_full_layout(self):
+        self._check_persistent_cache_updates(quant_mode=1)
+
+    def test_persistent_symmetric_value_updates_match_full_layout(self):
+        self._check_persistent_cache_updates(quant_mode=2)
+
+    def test_persistent_update_rejects_invalid_position_before_launch(self):
+        capacity, head_dim = 32, 128
+        with torch.vortex.memory_alignment(512):
+            source = torch.zeros((capacity, head_dim), dtype=torch.float16).to("vortex")
+            token = torch.zeros((1, head_dim), dtype=torch.float16).to("vortex")
+        cache = self._allocate_fused_cache(source, quant_mode=1)
+        with self.assertRaisesRegex(RuntimeError, "inside cache capacity"):
+            torch.ops.vortex.kv_cache_quant_layout_fused_w4a16_update(
+                token, capacity, capacity, 1, *cache
+            )
+
     def test_rms_norm_layout_fused_matches_standalone_composition(self):
         for rows in (8, 160):
             with self.subTest(rows=rows):

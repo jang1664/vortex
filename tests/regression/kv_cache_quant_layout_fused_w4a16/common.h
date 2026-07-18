@@ -61,6 +61,9 @@ typedef struct {
   uint32_t log2_mxu_nt;
   uint32_t log2_qblk;
   uint32_t log2_ng_per_mxu_nt;
+  uint32_t persistent_mode;
+  uint32_t cache_capacity;
+  uint32_t cache_position;
   uint32_t power_kernel_iterations;
 } kernel_arg_t;
 #endif // _KV_CACHE_QUANT_LAYOUT_FUSED_W4A16_COMMON_H_
