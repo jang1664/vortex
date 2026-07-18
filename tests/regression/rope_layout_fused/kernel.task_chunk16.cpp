@@ -83,7 +83,9 @@ void kernel_rope_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
         output[y1_off] = float_to_fp16(x0 * sn + x1 * c);
       }
     } else {
-      const uint64_t out_base = (((uint64_t)b * seq_len + s) * heads + h) * head_dim;
+      const uint64_t out_base = (arg->layout_to == ROPE_LAYOUT_TO_HEAD_MAJOR_ROW)
+          ? (((uint64_t)b * heads + h) * seq_len + s) * head_dim
+          : (((uint64_t)b * seq_len + s) * heads + h) * head_dim;
       for (uint32_t p = p_begin; p < p_end; ++p) {
         const uint64_t x0_off = gemm_c_tiled_elem_offset(
             input_m, head_base + p, arg->input_m_pad, input_n,

@@ -1,4 +1,5 @@
 #include "../vector_common/fp16.h"
+#include "../layout_fused_common/layout_fused_layouts.h"
 #include "common.h"
 #include <vx_intrinsics.h>
 #include <vx_spawn.h>
@@ -20,7 +21,12 @@ void kernel_qk_asym_correction(kernel_arg_t *__UNIFORM__ arg) {
   auto reduction = reinterpret_cast<float *>(__local_mem(blockDim.x * sizeof(float)));
   float partial = 0.0f;
   for (uint32_t d = tid; d < arg->D; d += blockDim.x) {
-    partial += fp16_to_float(query[(uint64_t)row * arg->D + d]);
+    const uint64_t query_index =
+        (arg->query_layout == QK_QUERY_LAYOUT_GEMM_A_TILED)
+        ? gemm_a_tiled_elem_offset(row, d, arg->scores_m_pad, arg->D,
+                                   arg->log2_mt, arg->log2_mxu_nt)
+        : (uint64_t)row * arg->D + d;
+    partial += fp16_to_float(query[query_index]);
   }
   reduction[tid] = partial;
   __syncthreads();
@@ -32,7 +38,10 @@ void kernel_qk_asym_correction(kernel_arg_t *__UNIFORM__ arg) {
 
   const float query_sum = reduction[0];
   for (uint32_t column = tid; column < arg->N; column += blockDim.x) {
-    const uint64_t index = (uint64_t)row * arg->N + column;
+    const uint64_t index = (arg->scores_layout == QK_SCORES_LAYOUT_GEMM_C_TILED)
+        ? gemm_c_tiled_elem_offset(row, column, arg->scores_m_pad, arg->N,
+                                   arg->log2_mt, arg->log2_mxu_nt)
+        : (uint64_t)row * arg->N + column;
     const float correction = query_sum * fp16_to_float(scale[column]) * fp16_to_float(zero[column]);
     output[index] = float_to_fp16(fp16_to_float(scores[index]) - correction);
   }

@@ -6,6 +6,11 @@
 #define KERNEL_KV_CACHE_QUANT_LAYOUT_FUSED_W4A16 0
 #define SRC_LAYOUT_ROW_MAJOR 0
 #define SRC_LAYOUT_GEMM_C_TILED 1
+#define SRC_LAYOUT_GEMM_A_TILED 2
+
+#define KV_QUANT_LEGACY_UINT4_ASYMMETRIC 0
+#define KV_QUANT_SPINQUANT_SIGNED_ASYMMETRIC 1
+#define KV_QUANT_SPINQUANT_SIGNED_SYMMETRIC 2
 
 #define DEFAULT_DMA_MT       128
 #define DEFAULT_DMA_KT       128
@@ -20,10 +25,12 @@ typedef struct {
   uint32_t grid_dim[3];
   uint32_t block_dim[3];
 
-  uint64_t src_addr;     // fp16 [K, N], row-major or GEMM-C tiled
+  uint64_t src_addr;     // fp16 [K, N], row-major or GEMM-A/C tiled
   uint64_t weight_addr;  // uint4 GEMM-W tiled payload
   uint64_t scale_addr;   // fp16 GEMM scale tiled
   uint64_t zero_addr;    // int16 GEMM zp tiled
+  uint64_t logical_scale_addr; // optional fp16 logical-group scales
+  uint64_t logical_zero_addr;  // optional fp16 fractional zero points
 
   uint32_t K;
   uint32_t N;
@@ -33,6 +40,9 @@ typedef struct {
   uint32_t WTRANS;
   uint32_t src_layout;
   uint32_t SOURCE_TRANSPOSED;
+  uint32_t quant_mode;
+  uint32_t src_total_N;
+  uint32_t src_col_offset;
 
   uint32_t k_tiles;
   uint32_t n_dma_tiles;

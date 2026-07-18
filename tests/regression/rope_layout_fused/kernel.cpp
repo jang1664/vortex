@@ -68,7 +68,9 @@ void kernel_rope_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
       output[y0_off] = float_to_fp16(y0);
       output[y1_off] = float_to_fp16(y1);
     } else {
-      const uint64_t row_base = (((uint64_t)b * seq_len + s) * heads + h) * head_dim;
+      const uint64_t row_base = (arg->layout_to == ROPE_LAYOUT_TO_HEAD_MAJOR_ROW)
+          ? (((uint64_t)b * heads + h) * seq_len + s) * head_dim
+          : (((uint64_t)b * seq_len + s) * heads + h) * head_dim;
       output[row_base + p] = float_to_fp16(y0);
       output[row_base + p + half_dim] = float_to_fp16(y1);
     }

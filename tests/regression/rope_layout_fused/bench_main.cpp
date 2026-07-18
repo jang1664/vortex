@@ -56,8 +56,18 @@ static uint32_t parse_layout_to(const char* value) {
   if (strcmp(value, "row_major") == 0 || strcmp(value, "row") == 0) {
     return ROPE_LAYOUT_TO_ROW_MAJOR;
   }
-  printf("ERROR: --layout-to must be gemm_a_tiled, gemm_w_tiled, or row_major\n");
+  if (strcmp(value, "head_major_row") == 0 || strcmp(value, "bhsd") == 0) {
+    return ROPE_LAYOUT_TO_HEAD_MAJOR_ROW;
+  }
+  printf("ERROR: --layout-to must be gemm_a_tiled, gemm_w_tiled, row_major, or head_major_row\n");
   exit(1);
+}
+
+static const char* benchmark_name(uint32_t layout_to) {
+  if (layout_to == ROPE_LAYOUT_TO_GEMM_A) return "rope_layout_fused_a";
+  if (layout_to == ROPE_LAYOUT_TO_GEMM_W) return "rope_layout_fused_w";
+  if (layout_to == ROPE_LAYOUT_TO_HEAD_MAJOR_ROW) return "rope_layout_fused_head_major_row";
+  return "rope_layout_fused_row";
 }
 
 static size_t row_index(uint32_t b, uint32_t s, uint32_t h, uint32_t d,
@@ -139,7 +149,7 @@ int main(int argc, char *argv[]) {
     else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
       printf("Usage: %s [--warmup=N] [--iterations=N] [--csv] [--output=PATH] "
              "[--output-append] [--power-measure-latency[=on|off]] [-batch B] [-seq S] [-heads H] [-headdim D] "
-             "[-maxseq N] [-offset O] [--layout-to gemm_a_tiled|gemm_w_tiled|row_major]\n", argv[0]);
+             "[-maxseq N] [-offset O] [--layout-to gemm_a_tiled|gemm_w_tiled|row_major|head_major_row]\n", argv[0]);
       return 0;
     }
   }
@@ -257,23 +267,18 @@ int main(int argc, char *argv[]) {
     return -1;
   }
 
-  stats.report(layout_to == ROPE_LAYOUT_TO_GEMM_A ? "rope_layout_fused_a" :
-               layout_to == ROPE_LAYOUT_TO_GEMM_W ? "rope_layout_fused_w" :
-               "rope_layout_fused_row", bench);
+  stats.report(benchmark_name(layout_to), bench);
 
   if (!vx_bench::prepare_power_kernel_iterations(
           bench, arg, args_buffer, first_latency_us, first_iter_perf,
-          layout_to == ROPE_LAYOUT_TO_GEMM_A ? "rope_layout_fused_a" :
-               layout_to == ROPE_LAYOUT_TO_GEMM_W ? "rope_layout_fused_w" :
-               "rope_layout_fused_row")) {
+          benchmark_name(layout_to))) {
     cleanup();
     return -1;
   }
 
   if (!vx_bench::run_power_measurement(
-          layout_to == ROPE_LAYOUT_TO_GEMM_A ? "rope_layout_fused_a" :
-               layout_to == ROPE_LAYOUT_TO_GEMM_W ? "rope_layout_fused_w" :
-               "rope_layout_fused_row", bench, device, krnl_buffer, args_buffer, bench.power_measure_latency)) {
+          benchmark_name(layout_to), bench, device, krnl_buffer, args_buffer,
+          bench.power_measure_latency)) {
     cleanup();
     return -1;
   }

@@ -19,9 +19,13 @@ static inline bool valid_fused_quant_shape(uint32_t K,
                                            uint32_t QDIR,
                                            uint32_t WTRANS,
                                            uint32_t GEMM_QDIR,
-                                           uint32_t SOURCE_TRANSPOSED) {
+                                           uint32_t SOURCE_TRANSPOSED,
+                                           uint32_t quant_mode = KV_QUANT_LEGACY_UINT4_ASYMMETRIC,
+                                           uint32_t source_total_n = 0,
+                                           uint32_t head_col_offset = 0) {
   if (K == 0 || N == 0 || QBLK == 0 || QDIR > 1 || WTRANS > 1 ||
-      GEMM_QDIR > 1 || SOURCE_TRANSPOSED > 1) {
+      GEMM_QDIR > 1 || SOURCE_TRANSPOSED > 1 ||
+      quant_mode > KV_QUANT_SPINQUANT_SIGNED_SYMMETRIC) {
     return false;
   }
   if (SOURCE_TRANSPOSED != 0 && WTRANS == 0) {
@@ -30,18 +34,53 @@ static inline bool valid_fused_quant_shape(uint32_t K,
   if (!is_pow2_u32(QBLK) || (N & 1u) != 0) {
     return false;
   }
+  const uint32_t source_stride = source_total_n == 0 ? N : source_total_n;
+  if (head_col_offset > source_stride || N > source_stride - head_col_offset) {
+    return false;
+  }
   return true;
+}
+
+static inline uint32_t parse_quant_mode(const char* value) {
+  if (0 == strcmp(value, "legacy_uint4_asymmetric")) {
+    return KV_QUANT_LEGACY_UINT4_ASYMMETRIC;
+  }
+  if (0 == strcmp(value, "spinquant_signed_asymmetric")) {
+    return KV_QUANT_SPINQUANT_SIGNED_ASYMMETRIC;
+  }
+  if (0 == strcmp(value, "spinquant_signed_symmetric")) {
+    return KV_QUANT_SPINQUANT_SIGNED_SYMMETRIC;
+  }
+  return UINT32_MAX;
+}
+
+static inline const char* quant_mode_name(uint32_t mode) {
+  switch (mode) {
+  case KV_QUANT_LEGACY_UINT4_ASYMMETRIC:
+    return "legacy_uint4_asymmetric";
+  case KV_QUANT_SPINQUANT_SIGNED_ASYMMETRIC:
+    return "spinquant_signed_asymmetric";
+  case KV_QUANT_SPINQUANT_SIGNED_SYMMETRIC:
+    return "spinquant_signed_symmetric";
+  default:
+    return "invalid";
+  }
 }
 
 static inline uint32_t parse_src_layout(const char* value) {
   if (0 == strcmp(value, "gemm_c_tiled") || 0 == strcmp(value, "gemm-c-tiled")) {
     return SRC_LAYOUT_GEMM_C_TILED;
   }
+  if (0 == strcmp(value, "gemm_a_tiled") || 0 == strcmp(value, "gemm-a-tiled")) {
+    return SRC_LAYOUT_GEMM_A_TILED;
+  }
   return SRC_LAYOUT_ROW_MAJOR;
 }
 
 static inline const char* src_layout_name(uint32_t layout) {
-  return (layout == SRC_LAYOUT_GEMM_C_TILED) ? "gemm_c_tiled" : "row_major_fp16";
+  if (layout == SRC_LAYOUT_GEMM_C_TILED) return "gemm_c_tiled";
+  if (layout == SRC_LAYOUT_GEMM_A_TILED) return "gemm_a_tiled";
+  return "row_major_fp16";
 }
 
 static inline uint32_t log2_u32(uint32_t v) {
@@ -202,7 +241,10 @@ static inline bool init_kernel_arg(kernel_arg_t& arg,
                                    uint32_t dma_kt,
                                    uint32_t dma_nt,
                                    uint32_t blocks,
-                                   uint32_t threads_per_block) {
+                                   uint32_t threads_per_block,
+                                   uint32_t quant_mode = KV_QUANT_LEGACY_UINT4_ASYMMETRIC,
+                                   uint32_t source_total_n = 0,
+                                   uint32_t head_col_offset = 0) {
   if (!is_pow2_u32(dma_mt) || !is_pow2_u32(dma_kt) || !is_pow2_u32(dma_nt) ||
       !is_pow2_u32(TILE_DMA_MXU_KT) || !is_pow2_u32(TILE_DMA_MXU_NT) ||
       !is_pow2_u32(QBLK)) {
@@ -210,6 +252,12 @@ static inline bool init_kernel_arg(kernel_arg_t& arg,
   }
   if ((dma_kt & (TILE_DMA_MXU_KT - 1u)) != 0 ||
       (dma_nt & (TILE_DMA_MXU_NT - 1u)) != 0) {
+    return false;
+  }
+  const uint32_t source_stride = source_total_n == 0 ? N : source_total_n;
+  if (src_layout > SRC_LAYOUT_GEMM_A_TILED ||
+      (src_layout != SRC_LAYOUT_ROW_MAJOR
+       && (source_stride & (TILE_DMA_MXU_NT - 1u)) != 0)) {
     return false;
   }
   if (GEMM_QDIR == 0 && dma_kt < QBLK) {
@@ -231,6 +279,9 @@ static inline bool init_kernel_arg(kernel_arg_t& arg,
   arg.WTRANS = WTRANS;
   arg.src_layout = src_layout;
   arg.SOURCE_TRANSPOSED = SOURCE_TRANSPOSED;
+  arg.quant_mode = quant_mode;
+  arg.src_total_N = source_total_n == 0 ? N : source_total_n;
+  arg.src_col_offset = head_col_offset;
   const uint32_t out_K = padded_qparam_K_host(K, N, QBLK, GEMM_QDIR, SOURCE_TRANSPOSED);
   const uint32_t out_N = padded_qparam_N_host(K, N, QBLK, GEMM_QDIR, SOURCE_TRANSPOSED);
   arg.k_tiles = ceil_div_pow2_u32(out_K, dma_kt);

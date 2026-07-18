@@ -11,6 +11,7 @@
 #include <cstring>
 #include <string>
 #include <cmath>
+#include <cstddef>
 #include <cstdlib>
 #include <fstream>
 #include <mutex>
@@ -86,6 +87,22 @@ static bool retain_simx_launch_args() {
     return driver && std::strcmp(driver, "simx") == 0;
   }();
   return enabled;
+}
+
+static uint64_t kernel_timeout_ms() {
+  static uint64_t timeout = []() {
+    constexpr uint64_t kDefaultTimeoutMs = 10 * 60 * 1000;
+    const char* value = std::getenv("TORCH_VORTEX_KERNEL_TIMEOUT_MS");
+    if (!value || *value == '\0') {
+      return kDefaultTimeoutMs;
+    }
+    char* end = nullptr;
+    const unsigned long long parsed = std::strtoull(value, &end, 10);
+    TORCH_CHECK(end != value && *end == '\0' && parsed > 0,
+                "TORCH_VORTEX_KERNEL_TIMEOUT_MS must be a positive integer");
+    return static_cast<uint64_t>(parsed);
+  }();
+  return timeout;
 }
 
 static void log_kernel_launch(const std::string& kernel_path, size_t args_size, uint64_t launch_id) {
@@ -264,7 +281,9 @@ static vx_buffer_h get_or_upload_kernel_buffer(vx_device_h device, const std::st
 
 static void launch_kernel(vx_device_h device,
                           const void* args, size_t args_size,
-                          const std::string& kernel_path) {
+                          const std::string& kernel_path,
+                          size_t status_offset = SIZE_MAX,
+                          uint32_t expected_status = 0) {
   vx_buffer_h args_buf = nullptr;
   vx_buffer_h krnl_buf = nullptr;
   const uint64_t launch_id = next_kernel_launch_id();
@@ -310,8 +329,24 @@ static void launch_kernel(vx_device_h device,
     ret = vx_start(device, krnl_buf, args_buf);
     TORCH_CHECK(ret == 0, "vx_start failed (err=", ret, ", launch#", launch_id, ")");
 
-    ret = vx_ready_wait(device, VX_MAX_TIMEOUT);
-    TORCH_CHECK(ret == 0, "vx_ready_wait failed (err=", ret, ", launch#", launch_id, ")");
+    ret = vx_ready_wait(device, kernel_timeout_ms());
+    TORCH_CHECK(ret == 0, "vx_ready_wait failed for ", kernel_path,
+                " (err=", ret, ", launch#", launch_id,
+                ", timeout_ms=", kernel_timeout_ms(), ")");
+    if (status_offset != SIZE_MAX) {
+      TORCH_CHECK(status_offset + sizeof(uint32_t) <= args_size,
+                  "kernel status offset exceeds argument buffer");
+      std::vector<uint8_t> args_copy(args_size);
+      ret = vx_copy_from_dev(args_copy.data(), args_buf, 0, args_size);
+      TORCH_CHECK(ret == 0, "failed to read kernel status for ", kernel_path,
+                  " (err=", ret, ", launch#", launch_id, ")");
+      uint32_t actual_status = 0;
+      std::memcpy(&actual_status, args_copy.data() + status_offset,
+                  sizeof(actual_status));
+      TORCH_CHECK(actual_status == expected_status, kernel_path,
+                  " reported status=", actual_status,
+                  " expected=", expected_status, " launch#", launch_id);
+    }
   } catch (...) {
     cleanup();
     throw;  // re-throw after freeing device memory
@@ -497,6 +532,27 @@ struct hadamard_base_kernel_arg_t {
   uint32_t power_kernel_iterations;
 };
 
+// --- Hadamard + GEMM-A layout transform ---
+// Must match tests/regression/hadamard_layout_fused/common.h.
+struct hadamard_layout_fused_kernel_arg_t {
+  uint32_t kernel_id;
+  uint32_t grid_dim[3];
+  uint32_t block_dim[3];
+  uint64_t input_addr;
+  uint64_t matrix_addr;
+  uint64_t output_addr;
+  uint32_t matrix_count;
+  uint32_t rows;
+  uint32_t m_pad;
+  uint32_t dim;
+  uint32_t base_k;
+  uint32_t width;
+  float inv_sqrt_dim;
+  uint32_t log2_mt;
+  uint32_t log2_mxu_kt;
+  uint32_t power_kernel_iterations;
+};
+
 // --- per-token int4 quantize --- must match tests/regression/quantize_pt_int4/common.h
 struct quantize_pt_kernel_arg_t {
   uint32_t kernel_id;
@@ -540,8 +596,198 @@ struct qk_asym_correction_kernel_arg_t {
   uint32_t M;
   uint32_t N;
   uint32_t D;
+  uint32_t scores_layout;
+  uint32_t query_layout;
+  uint32_t scores_m_pad;
+  uint32_t log2_mt;
+  uint32_t log2_mxu_nt;
   uint32_t power_kernel_iterations;
 };
+
+// --- RMSNorm + GEMM-A layout ---
+// Must match tests/regression/rms_norm_layout_fused/common.h.
+struct rms_norm_layout_fused_kernel_arg_t {
+  uint32_t kernel_id;
+  uint32_t grid_dim[3];
+  uint32_t block_dim[3];
+  uint64_t input_addr;
+  uint64_t output_addr;
+  uint64_t gamma_addr;
+  uint32_t M_real;
+  uint32_t M_pad;
+  uint32_t K;
+  float eps;
+  uint32_t log2_mt;
+  uint32_t log2_kt;
+  uint32_t log2_mxu_kt;
+  uint32_t power_kernel_iterations;
+};
+
+// --- RoPE + layout transform ---
+// Must match tests/regression/rope_layout_fused/common.h.
+struct rope_layout_fused_kernel_arg_t {
+  uint32_t kernel_id;
+  uint32_t grid_dim[3];
+  uint32_t block_dim[3];
+  uint64_t input_addr;
+  uint64_t output_addr;
+  uint64_t cos_addr;
+  uint64_t sin_addr;
+  uint32_t batch_size;
+  uint32_t seq_len;
+  uint32_t num_heads;
+  uint32_t head_dim;
+  uint32_t max_seq_len;
+  uint32_t pos_offset;
+  uint32_t layout_to;
+  uint32_t input_m_pad;
+  uint32_t output_m_pad;
+  uint32_t log2_mt;
+  uint32_t log2_kt;
+  uint32_t log2_mxu_kt;
+  uint32_t log2_mxu_nt;
+  uint32_t power_kernel_iterations;
+};
+
+// --- fused KV quantization + GEMM-W/qparam layout ---
+// Must match tests/regression/kv_cache_quant_layout_fused_w4a16/common.h.
+struct kv_cache_quant_layout_fused_w4a16_kernel_arg_t {
+  uint32_t kernel_id;
+  uint32_t grid_dim[3];
+  uint32_t block_dim[3];
+  uint64_t src_addr;
+  uint64_t weight_addr;
+  uint64_t scale_addr;
+  uint64_t zero_addr;
+  uint64_t logical_scale_addr;
+  uint64_t logical_zero_addr;
+  uint32_t K;
+  uint32_t N;
+  uint32_t QBLK;
+  uint32_t QDIR;
+  uint32_t GEMM_QDIR;
+  uint32_t WTRANS;
+  uint32_t src_layout;
+  uint32_t SOURCE_TRANSPOSED;
+  uint32_t quant_mode;
+  uint32_t src_total_N;
+  uint32_t src_col_offset;
+  uint32_t k_tiles;
+  uint32_t n_dma_tiles;
+  uint32_t slot_fk_fn;
+  uint32_t slot_fk_pn;
+  uint32_t slot_pk_fn;
+  uint32_t per_kt_full_K;
+  uint32_t max_slot_bytes;
+  uint32_t log2_mt;
+  uint32_t log2_kt;
+  uint32_t log2_nt;
+  uint32_t log2_mxu_kt;
+  uint32_t log2_mxu_nt;
+  uint32_t log2_qblk;
+  uint32_t log2_ng_per_mxu_nt;
+  uint32_t power_kernel_iterations;
+};
+
+// --- scaled/masked softmax + GEMM-A layout ---
+// Must match tests/regression/softmax_layout_fused/common.h.
+struct softmax_layout_fused_kernel_arg_t {
+  uint32_t kernel_id;
+  uint32_t grid_dim[3];
+  uint32_t block_dim[3];
+  uint64_t input_addr;
+  uint64_t output_addr;
+  uint32_t batch_size;
+  uint32_t num_heads;
+  uint32_t seq_len_q;
+  uint32_t seq_len_k;
+  uint32_t seq_len_k_pad;
+  uint32_t M_pad;
+  uint32_t use_mask;
+  float scale;
+  uint32_t log2_mt;
+  uint32_t log2_kt;
+  uint32_t log2_mxu_kt;
+  uint32_t log2_mxu_nt;
+  uint32_t power_kernel_iterations;
+};
+
+// --- grouped PV GEMM-C + head concat to GEMM-A ---
+// Must match tests/regression/head_concat_layout_fused/common.h.
+struct head_concat_layout_fused_kernel_arg_t {
+  uint32_t kernel_id;
+  uint32_t grid_dim[3];
+  uint32_t block_dim[3];
+  uint64_t input_addr;
+  uint64_t output_addr;
+  uint32_t batch;
+  uint32_t seq;
+  uint32_t heads;
+  uint32_t headdim;
+  uint32_t input_m_pad;
+  uint32_t output_m_pad;
+  uint32_t log2_mt;
+  uint32_t log2_mxu_kt;
+  uint32_t log2_mxu_nt;
+  uint32_t power_kernel_iterations;
+};
+
+// --- GEMM-C residual add to row-major ---
+// Must match tests/regression/eladd_layout_fused/common.h.
+struct eladd_layout_fused_kernel_arg_t {
+  uint32_t kernel_id;
+  uint32_t grid_dim[3];
+  uint32_t block_dim[3];
+  uint64_t input_a_addr;
+  uint64_t input_b_addr;
+  uint64_t output_addr;
+  uint32_t M_real;
+  uint32_t M_pad;
+  uint32_t K;
+  uint32_t log2_mt;
+  uint32_t log2_mxu_nt;
+  uint32_t power_kernel_iterations;
+};
+
+static_assert(sizeof(rms_norm_layout_fused_kernel_arg_t) == 88,
+              "rms_norm_layout_fused kernel ABI size mismatch");
+static_assert(sizeof(rope_layout_fused_kernel_arg_t) == 120,
+              "rope_layout_fused kernel ABI size mismatch");
+static_assert(sizeof(kv_cache_quant_layout_fused_w4a16_kernel_arg_t) == 184,
+              "kv_cache_quant_layout_fused_w4a16 kernel ABI size mismatch");
+static_assert(sizeof(softmax_layout_fused_kernel_arg_t) == 104,
+              "softmax_layout_fused kernel ABI size mismatch");
+static_assert(sizeof(head_concat_layout_fused_kernel_arg_t) == 88,
+              "head_concat_layout_fused kernel ABI size mismatch");
+static_assert(sizeof(eladd_layout_fused_kernel_arg_t) == 80,
+              "eladd_layout_fused kernel ABI size mismatch");
+static_assert(sizeof(qk_asym_correction_kernel_arg_t) == 112,
+              "qk_asym_correction kernel ABI size mismatch");
+static_assert(sizeof(hadamard_layout_fused_kernel_arg_t) == 96,
+              "hadamard_layout_fused kernel ABI size mismatch");
+static_assert(offsetof(hadamard_layout_fused_kernel_arg_t, matrix_count) == 56
+              && offsetof(hadamard_layout_fused_kernel_arg_t,
+                          power_kernel_iterations) == 92,
+              "hadamard_layout_fused kernel ABI offsets mismatch");
+static_assert(offsetof(rope_layout_fused_kernel_arg_t, layout_to) == 88
+              && offsetof(rope_layout_fused_kernel_arg_t,
+                          power_kernel_iterations) == 116,
+              "rope_layout_fused kernel ABI offsets mismatch");
+static_assert(offsetof(kv_cache_quant_layout_fused_w4a16_kernel_arg_t,
+                       logical_scale_addr) == 64
+              && offsetof(kv_cache_quant_layout_fused_w4a16_kernel_arg_t,
+                          quant_mode) == 112
+              && offsetof(kv_cache_quant_layout_fused_w4a16_kernel_arg_t,
+                          src_total_N) == 116
+              && offsetof(kv_cache_quant_layout_fused_w4a16_kernel_arg_t,
+                          power_kernel_iterations) == 180,
+              "kv_cache_quant_layout_fused_w4a16 kernel ABI offsets mismatch");
+static_assert(offsetof(qk_asym_correction_kernel_arg_t, scores_layout) == 84
+              && offsetof(qk_asym_correction_kernel_arg_t,
+                          query_layout) == 88
+              && offsetof(qk_asym_correction_kernel_arg_t,
+                          power_kernel_iterations) == 104,
+              "qk_asym_correction kernel ABI offsets mismatch");
 
 // --- per-token int4 dequantize --- must match tests/regression/dequantize_pt_int4/common.h
 struct dequantize_pt_kernel_arg_t {
@@ -711,6 +957,29 @@ static DeviceCaps query_caps(vx_device_h device) {
   c.threads_per_block = static_cast<uint32_t>(
       std::min<uint64_t>(256, c.num_warps * c.num_threads));
   return c;
+}
+
+// GEMM-facing physical buffers must start on the same 512-byte channel phase
+// as tensor memory. Keep this guard local to allocation sites so the runtime's
+// previous allocation policy is restored before returning to Python.
+struct VortexMemoryAlignmentGuard {
+  c10::vortex::VortexRuntime& runtime;
+  uint64_t previous;
+
+  explicit VortexMemoryAlignmentGuard(uint64_t alignment)
+      : runtime(c10::vortex::VortexRuntime::instance()),
+        previous(runtime.exchangeMemoryAlignment(alignment)) {}
+  ~VortexMemoryAlignmentGuard() { (void)runtime.setMemoryAlignment(previous); }
+};
+
+static void check_device_alignment(const at::Tensor& tensor,
+                                   uint64_t alignment,
+                                   const char* name) {
+  auto& rt = c10::vortex::VortexRuntime::instance();
+  const uint64_t address = rt.deviceAddress(tensor.data_ptr());
+  TORCH_CHECK(address % alignment == 0,
+              name, " device address must be ", alignment,
+              "-byte aligned, got address ", address);
 }
 
 // ===========================================================================
@@ -1849,6 +2118,90 @@ at::Tensor vortex_hadamard_base(
 }
 
 // ===========================================================================
+//  vortex::hadamard_layout_fused
+//  Exact SpinQuant mixed-radix Hadamard followed by a direct GEMM-A tiled
+//  write. The input is a compact group of row-major matrices; the output
+//  keeps each matrix in an independent aligned GEMM-A physical region.
+// ===========================================================================
+at::Tensor vortex_hadamard_layout_fused(
+    const at::Tensor& input,
+    const at::Tensor& matrix,
+    int64_t base_k,
+    int64_t matrix_count,
+    int64_t rows,
+    int64_t m_pad) {
+  TORCH_CHECK(input.is_privateuseone() && matrix.is_privateuseone(),
+              "hadamard_layout_fused tensors must be on Vortex");
+  TORCH_CHECK(input.dtype() == at::kHalf && matrix.dtype() == at::kHalf,
+              "hadamard_layout_fused tensors must be float16");
+  TORCH_CHECK(input.is_contiguous() && matrix.is_contiguous(),
+              "hadamard_layout_fused tensors must be contiguous");
+  TORCH_CHECK(base_k > 0 && matrix_count > 0 && rows > 0,
+              "Hadamard dimensions must be positive");
+  TORCH_CHECK(m_pad >= rows && m_pad % 8 == 0,
+              "m_pad must be a multiple of 8 and cover logical rows");
+  TORCH_CHECK(m_pad <= 128,
+              "hadamard_layout_fused currently supports one GEMM M tile");
+  TORCH_CHECK(input.numel() % (matrix_count * rows) == 0,
+              "input storage does not match matrix_count*rows");
+  const int64_t dim = input.numel() / (matrix_count * rows);
+  TORCH_CHECK(dim > 0 && dim % 32 == 0 && dim % base_k == 0,
+              "Hadamard dim must be divisible by base_k and GEMM micro-K (32)");
+  const int64_t width = dim / base_k;
+  TORCH_CHECK((width & (width - 1)) == 0,
+              "Hadamard dim/base_k must be a power of two");
+  TORCH_CHECK(matrix.dim() == 2 && matrix.size(0) == base_k
+              && matrix.size(1) == base_k,
+              "Hadamard base matrix must be [base_k, base_k]");
+
+  VortexMemoryAlignmentGuard alignment_guard(512);
+  auto output = at::empty({matrix_count, m_pad, dim}, input.options());
+  auto& rt = c10::vortex::VortexRuntime::instance();
+  vx_device_h device = rt.deviceHandle();
+  auto caps = query_caps(device);
+  uint32_t max_localmem = 0;
+  TORCH_CHECK(
+      vx_check_occupancy(
+          device, static_cast<uint32_t>(caps.num_threads), &max_localmem) == 0,
+      "Failed to query fused Hadamard local-memory occupancy");
+  TORCH_CHECK(
+      static_cast<uint64_t>(dim) * sizeof(float) <= max_localmem,
+      "fused Hadamard scratch exceeds per-group local memory: required=",
+      static_cast<uint64_t>(dim) * sizeof(float), " available=", max_localmem);
+
+  hadamard_layout_fused_kernel_arg_t karg{};
+  karg.kernel_id = 0;
+  karg.grid_dim[0] = static_cast<uint32_t>(matrix_count * m_pad);
+  karg.grid_dim[1] = 1;
+  karg.grid_dim[2] = 1;
+  // The FWHT scratch and its barriers are shared by exactly one hardware
+  // warp. Spanning multiple warps corrupts one warp-sized slice on C4.
+  karg.block_dim[0] = static_cast<uint32_t>(caps.num_threads);
+  karg.block_dim[1] = 1;
+  karg.block_dim[2] = 1;
+  karg.input_addr = rt.deviceAddress(input.data_ptr());
+  karg.matrix_addr = rt.deviceAddress(matrix.data_ptr());
+  karg.output_addr = rt.deviceAddress(output.data_ptr());
+  karg.matrix_count = static_cast<uint32_t>(matrix_count);
+  karg.rows = static_cast<uint32_t>(rows);
+  karg.m_pad = static_cast<uint32_t>(m_pad);
+  karg.dim = static_cast<uint32_t>(dim);
+  karg.base_k = static_cast<uint32_t>(base_k);
+  karg.width = static_cast<uint32_t>(width);
+  karg.inv_sqrt_dim = 1.0f / std::sqrt(static_cast<float>(dim));
+  karg.log2_mt = 7;
+  karg.log2_mxu_kt = 5;
+  TORCH_CHECK(karg.input_addr != 0 && karg.matrix_addr != 0
+              && karg.output_addr != 0,
+              "Failed to get device address for fused Hadamard buffers");
+
+  static std::string path = find_kernel(
+      "hadamard_layout_fused", "hadamard_layout_fused");
+  launch_kernel(device, &karg, sizeof(karg), path);
+  return output;
+}
+
+// ===========================================================================
 //  vortex::quantize_per_token  ->  quantize_pt_int4 kernel (fused, per-row)
 //  x fp16 [.., D] -> (q int8 [.., D] signed int4, scale fp16 [.., 1], zero fp16 [.., 1])
 //  mode: 0=sym (S=absmax/7.5, zero=0), 1=asym (S=(max-min)/15, z=-8-min/S)
@@ -2025,11 +2378,17 @@ at::Tensor vortex_head_concat(const at::Tensor& input) {
 //  GEMM computes scale[j] * sum_d(Q[i,d] * qK[j,d]). SpinQuant asymmetric K
 //  additionally needs -scale[j] * zero[j] * sum_d(Q[i,d]).
 // ===========================================================================
-at::Tensor vortex_qk_asym_correction(
+static at::Tensor vortex_qk_asym_correction_impl(
     const at::Tensor& scores,
     const at::Tensor& query,
     const at::Tensor& scale,
-    const at::Tensor& zero) {
+    const at::Tensor& zero,
+    int64_t logical_m,
+    int64_t scores_m_pad,
+    int64_t logical_n,
+    int64_t scores_layout,
+    int64_t query_layout,
+    at::Tensor output) {
   TORCH_CHECK(scores.is_privateuseone() && query.is_privateuseone()
               && scale.is_privateuseone() && zero.is_privateuseone(),
               "qk_asym_correction tensors must be on Vortex");
@@ -2038,24 +2397,52 @@ at::Tensor vortex_qk_asym_correction(
               "qk_asym_correction tensors must be float16");
   TORCH_CHECK(scores.dim() == 2 && query.dim() == 2,
               "scores and query must be two-dimensional");
-  TORCH_CHECK(scores.size(0) == query.size(0), "scores/query M mismatch");
-  TORCH_CHECK(scale.numel() == scores.size(1) && zero.numel() == scores.size(1),
+  TORCH_CHECK(scores_layout == 0 || scores_layout == 1,
+              "scores_layout must be 0 (row-major) or 1 (GEMM-C tiled)");
+  TORCH_CHECK(query_layout == 0 || query_layout == 1,
+              "query_layout must be 0 (row-major) or 1 (GEMM-A tiled)");
+
+  const int64_t M = logical_m < 0 ? query.size(0) : logical_m;
+  const int64_t N = logical_n < 0 ? scores.size(1) : logical_n;
+  const int64_t M_pad = scores_m_pad < 0 ? scores.size(0) : scores_m_pad;
+  TORCH_CHECK(M > 0 && N > 0, "logical M and N must be positive");
+  TORCH_CHECK(M_pad >= M, "scores_m_pad must be >= logical M");
+  TORCH_CHECK(scores_layout == 0 || M_pad % 8 == 0,
+              "tiled scores_m_pad must be a multiple of 8");
+  TORCH_CHECK(scores_layout == 0 || N % 32 == 0,
+              "tiled score columns must be a multiple of 32");
+  TORCH_CHECK(query_layout == 0 || query.size(1) % 32 == 0,
+              "tiled query columns must be a multiple of 32");
+  TORCH_CHECK(query.size(0) == (query_layout == 0 ? M : M_pad),
+              "query rows do not match its logical/physical layout");
+  TORCH_CHECK(scores.size(0) == (scores_layout == 0 ? M : M_pad)
+              && scores.size(1) == N,
+              "scores shape does not match logical/padded dimensions");
+  TORCH_CHECK(scale.numel() == N && zero.numel() == N,
               "scale/zero must contain one value per score column");
   TORCH_CHECK(scores.is_contiguous() && query.is_contiguous()
               && scale.is_contiguous() && zero.is_contiguous(),
               "qk_asym_correction tensors must be contiguous");
+  TORCH_CHECK(output.is_privateuseone() && output.dtype() == at::kHalf
+              && output.is_contiguous(),
+              "qk_asym_correction output must be contiguous Vortex float16");
+  TORCH_CHECK(output.sizes() == scores.sizes(),
+              "qk_asym_correction output shape must match scores");
+  if (scores_layout == 1) {
+    check_device_alignment(scores, 512, "tiled QK scores");
+    check_device_alignment(output, 512, "tiled QK output");
+  }
+  if (query_layout == 1)
+    check_device_alignment(query, 512, "tiled Hadamard query");
 
-  const uint32_t M = static_cast<uint32_t>(scores.size(0));
-  const uint32_t N = static_cast<uint32_t>(scores.size(1));
   const uint32_t D = static_cast<uint32_t>(query.size(1));
-  auto output = at::empty(scores.sizes(), scores.options());
   auto& rt = c10::vortex::VortexRuntime::instance();
   vx_device_h device = rt.deviceHandle();
   auto caps = query_caps(device);
 
   qk_asym_correction_kernel_arg_t karg{};
   karg.kernel_id = 0;
-  karg.grid_dim[0] = M;
+  karg.grid_dim[0] = static_cast<uint32_t>(M);
   karg.grid_dim[1] = 1;
   karg.grid_dim[2] = 1;
   karg.block_dim[0] = caps.threads_per_block;
@@ -2066,13 +2453,50 @@ at::Tensor vortex_qk_asym_correction(
   karg.scale_addr = rt.deviceAddress(scale.data_ptr());
   karg.zero_addr = rt.deviceAddress(zero.data_ptr());
   karg.output_addr = rt.deviceAddress(output.data_ptr());
-  karg.M = M;
-  karg.N = N;
+  karg.M = static_cast<uint32_t>(M);
+  karg.N = static_cast<uint32_t>(N);
   karg.D = D;
+  karg.scores_layout = static_cast<uint32_t>(scores_layout);
+  karg.query_layout = static_cast<uint32_t>(query_layout);
+  karg.scores_m_pad = static_cast<uint32_t>(M_pad);
+  karg.log2_mt = 7;      // DMA_MT = 128
+  karg.log2_mxu_nt = 5;  // DMA_MXU_NT = 32
 
   static std::string path = find_kernel("qk_asym_correction", "qk_asym_correction");
   launch_kernel(device, &karg, sizeof(karg), path);
   return output;
+}
+
+at::Tensor vortex_qk_asym_correction(
+    const at::Tensor& scores,
+    const at::Tensor& query,
+    const at::Tensor& scale,
+    const at::Tensor& zero,
+    int64_t logical_m,
+    int64_t scores_m_pad,
+    int64_t logical_n,
+    int64_t scores_layout) {
+  VortexMemoryAlignmentGuard alignment_guard(512);
+  auto output = at::empty(scores.sizes(), scores.options());
+  return vortex_qk_asym_correction_impl(
+      scores, query, scale, zero, logical_m, scores_m_pad, logical_n,
+      scores_layout, 0, output);
+}
+
+at::Tensor vortex_qk_asym_correction_out(
+    const at::Tensor& scores,
+    const at::Tensor& query,
+    const at::Tensor& scale,
+    const at::Tensor& zero,
+    int64_t logical_m,
+    int64_t scores_m_pad,
+    int64_t logical_n,
+    int64_t scores_layout,
+    int64_t query_layout,
+    at::Tensor output) {
+  return vortex_qk_asym_correction_impl(
+      scores, query, scale, zero, logical_m, scores_m_pad, logical_n,
+      scores_layout, query_layout, output);
 }
 
 // ===========================================================================
@@ -2479,6 +2903,7 @@ static at::Tensor vortex_tile_input_a(const at::Tensor& input,
   // The kernel writes a [M_pad, K_pad] tiled buffer (K padded to MXU_KT).
   int64_t K_pad_i64 = ((K + FPINT_DMA_MXU_KT - 1) / FPINT_DMA_MXU_KT) *
                       FPINT_DMA_MXU_KT;
+  VortexMemoryAlignmentGuard alignment_guard(512);
   auto output = at::empty({M_pad, K_pad_i64}, input.options());
 
   // 3D grid: x = (m, chunk_in_row) blocks, y = kb, z = kt.
@@ -2572,6 +2997,7 @@ static at::Tensor vortex_tile_weight_w4a16_impl(const at::Tensor& W_packed,
   vx_device_h device = rt.deviceHandle();
   auto caps = query_caps(device);
 
+  VortexMemoryAlignmentGuard alignment_guard(512);
   auto output = at::empty({out_K, out_N / 2}, W_packed.options());
 
   // 3D grid:  (chunks-in-(kt,nt) blocks, n_tiles, k_tiles).
@@ -2720,6 +3146,7 @@ static at::Tensor vortex_tile_scale_zp_w4a16_impl(
   auto caps = query_caps(device);
 
   // Output buffer holds the summed per-slot body bytes (variable slot sizes).
+  VortexMemoryAlignmentGuard alignment_guard(512);
   auto output = at::empty({static_cast<int64_t>(total_bytes) / 2}, s_raw.options());
 
   // Launch covers the largest slot (mirrors main.cpp: slot_elems from max).
@@ -2864,7 +3291,9 @@ at::Tensor vortex_mm_w4a16(
   // --- launch ---
   static std::string path =
       find_kernel("fpint_gemm_ffn_hw_naive", "fpint_gemm_ffn_hw_naive");
-  launch_kernel(device, &karg, sizeof(karg), path);
+  launch_kernel(device, &karg, sizeof(karg), path,
+                offsetof(fpint_gemm_kernel_arg_t, status),
+                FPINT_MMIO_STATUS_OK);
 
   return output;
 }
@@ -2882,7 +3311,7 @@ at::Tensor vortex_mm_w4a16(
 //  tile_input_a / tile_weight_w4a16 / tile_scale_zp_w4a16 / this op /
 //  detile_output in its own torch.profiler record_function block).
 // ===========================================================================
-at::Tensor vortex_mm_w4a16_gemm_core(
+static int64_t validate_mm_w4a16_gemm_core_inputs(
     const at::Tensor& input_tiled,    // fp16  [M_pad, K]   tile-major
     const at::Tensor& weight_tiled,   // uint8 [K, N/2]      tile-major
     const at::Tensor& scales_tiled,   // fp16  1-D           tile-major slots
@@ -2911,6 +3340,36 @@ at::Tensor vortex_mm_w4a16_gemm_core(
   const int64_t M_pad = input_tiled.size(0);
   TORCH_CHECK(M_pad % 8 == 0, "M_pad must be multiple of 8, got ", M_pad);
   TORCH_CHECK(input_tiled.size(1) == K, "input_tiled K mismatch");
+  TORCH_CHECK(K > 0 && N > 0, "K and N must be positive");
+  TORCH_CHECK(group_size > 0 && (group_size & (group_size - 1)) == 0,
+              "group_size must be a power of two");
+  TORCH_CHECK(wtrans == 0 || wtrans == 1, "wtrans must be 0 or 1");
+  TORCH_CHECK(qdir == 0 || qdir == 1, "qdir must be 0 or 1");
+  check_device_alignment(input_tiled, 512, "input_tiled");
+  check_device_alignment(weight_tiled, 512, "weight_tiled");
+  check_device_alignment(scales_tiled, 512, "scales_tiled");
+  check_device_alignment(zeros_tiled, 512, "zeros_tiled");
+  return M_pad;
+}
+
+static at::Tensor launch_mm_w4a16_gemm_core(
+    const at::Tensor& input_tiled,
+    const at::Tensor& weight_tiled,
+    const at::Tensor& scales_tiled,
+    const at::Tensor& zeros_tiled,
+    int64_t M_pad,
+    int64_t K,
+    int64_t N,
+    int64_t group_size,
+    int64_t wtrans,
+    int64_t qdir,
+    at::Tensor output) {
+  TORCH_CHECK(output.is_privateuseone(), "output must be vortex");
+  TORCH_CHECK(output.dtype() == at::kHalf, "output must be fp16");
+  TORCH_CHECK(output.is_contiguous(), "output must be contiguous");
+  TORCH_CHECK(output.dim() == 2 && output.size(0) == M_pad && output.size(1) == N,
+              "output shape must be [M_pad, N]");
+  check_device_alignment(output, 512, "output");
 
   const uint32_t QBLK = static_cast<uint32_t>(group_size);
 
@@ -2920,15 +3379,12 @@ at::Tensor vortex_mm_w4a16_gemm_core(
   uint64_t local_mem_size = 0;
   vx_dev_caps(device, VX_CAPS_LOCAL_MEM_SIZE, &local_mem_size);
 
-  // Allocate tile-major output.
-  auto Y_tiled = at::empty({M_pad, N}, input_tiled.options());
-
   fpint_gemm_kernel_arg_v2_t karg{};
   karg.dram_in_base  = rt.deviceAddress(input_tiled.data_ptr());
   karg.dram_w_base   = rt.deviceAddress(weight_tiled.data_ptr());
   karg.dram_sc_base  = rt.deviceAddress(scales_tiled.data_ptr());
   karg.dram_zp_base  = rt.deviceAddress(zeros_tiled.data_ptr());
-  karg.dram_out_base = rt.deviceAddress(Y_tiled.data_ptr());
+  karg.dram_out_base = rt.deviceAddress(output.data_ptr());
 
   TORCH_CHECK(compute_fpint_lmem_layout_v2(karg, local_mem_size, QBLK,
                                             static_cast<uint32_t>(qdir)),
@@ -2943,8 +3399,556 @@ at::Tensor vortex_mm_w4a16_gemm_core(
   karg.status = FPINT_MMIO_STATUS_INIT;
 
   static std::string path = find_kernel("fpint_gemm_ffn_hw", "fpint_gemm_ffn_hw");
+  launch_kernel(device, &karg, sizeof(karg), path,
+                offsetof(fpint_gemm_kernel_arg_v2_t, status),
+                FPINT_MMIO_STATUS_OK);
+  return output;
+}
+
+at::Tensor vortex_mm_w4a16_gemm_core(
+    const at::Tensor& input_tiled,
+    const at::Tensor& weight_tiled,
+    const at::Tensor& scales_tiled,
+    const at::Tensor& zeros_tiled,
+    int64_t K,
+    int64_t N,
+    int64_t group_size,
+    int64_t wtrans,
+    int64_t qdir) {
+  const int64_t M_pad = validate_mm_w4a16_gemm_core_inputs(
+      input_tiled, weight_tiled, scales_tiled, zeros_tiled,
+      K, N, group_size, wtrans, qdir);
+  VortexMemoryAlignmentGuard alignment_guard(512);
+  auto output = at::empty({M_pad, N}, input_tiled.options());
+  return launch_mm_w4a16_gemm_core(
+      input_tiled, weight_tiled, scales_tiled, zeros_tiled,
+      M_pad, K, N, group_size, wtrans, qdir, output);
+}
+
+// Out variant used to place per-head GEMM-C matrices directly into one
+// grouped allocation. The output may be a contiguous storage-offset view;
+// deviceAddress(data_ptr()) intentionally preserves that offset.
+at::Tensor vortex_mm_w4a16_gemm_core_out(
+    const at::Tensor& input_tiled,
+    const at::Tensor& weight_tiled,
+    const at::Tensor& scales_tiled,
+    const at::Tensor& zeros_tiled,
+    int64_t K,
+    int64_t N,
+    int64_t group_size,
+    int64_t wtrans,
+    int64_t qdir,
+    at::Tensor output) {
+  const int64_t M_pad = validate_mm_w4a16_gemm_core_inputs(
+      input_tiled, weight_tiled, scales_tiled, zeros_tiled,
+      K, N, group_size, wtrans, qdir);
+  return launch_mm_w4a16_gemm_core(
+      input_tiled, weight_tiled, scales_tiled, zeros_tiled,
+      M_pad, K, N, group_size, wtrans, qdir, output);
+}
+
+at::Tensor vortex_rms_norm_layout_fused(
+    const at::Tensor& input,
+    const at::Tensor& weight,
+    double eps,
+    int64_t m_pad) {
+  TORCH_CHECK(input.is_privateuseone() && weight.is_privateuseone(),
+              "rms_norm_layout_fused tensors must be on Vortex");
+  TORCH_CHECK(input.dtype() == at::kHalf && weight.dtype() == at::kHalf,
+              "rms_norm_layout_fused requires float16 tensors");
+  TORCH_CHECK(input.is_contiguous() && weight.is_contiguous(),
+              "rms_norm_layout_fused tensors must be contiguous");
+  TORCH_CHECK(input.dim() >= 2, "input must have at least two dimensions");
+  const int64_t K = input.size(-1);
+  const int64_t M = input.numel() / K;
+  TORCH_CHECK(weight.numel() == K, "weight must have K elements");
+  TORCH_CHECK(m_pad >= M && m_pad % 8 == 0,
+              "m_pad must be a multiple of 8 and >= the logical row count");
+  TORCH_CHECK(m_pad <= static_cast<int64_t>(FPINT_DMA_MT),
+              "multi-M-tile fused RMSNorm is not supported");
+  TORCH_CHECK(K % static_cast<int64_t>(FPINT_DMA_KT) == 0,
+              "K must be a multiple of DMA_KT");
+
+  VortexMemoryAlignmentGuard alignment_guard(512);
+  auto output = at::empty({m_pad, K}, input.options());
+  auto& rt = c10::vortex::VortexRuntime::instance();
+  vx_device_h device = rt.deviceHandle();
+  auto caps = query_caps(device);
+
+  rms_norm_layout_fused_kernel_arg_t karg{};
+  karg.kernel_id = 1;
+  karg.grid_dim[0] = static_cast<uint32_t>(M);
+  karg.grid_dim[1] = 1;
+  karg.grid_dim[2] = 1;
+  // The packaged shuffle-warp variant assigns exactly one hardware warp to
+  // each row.  Using a larger block makes multiple warps reduce disjoint K
+  // subsets and race while writing the same tiled row.
+  karg.block_dim[0] = static_cast<uint32_t>(caps.num_threads);
+  karg.block_dim[1] = 1;
+  karg.block_dim[2] = 1;
+  karg.input_addr = rt.deviceAddress(input.data_ptr());
+  karg.output_addr = rt.deviceAddress(output.data_ptr());
+  karg.gamma_addr = rt.deviceAddress(weight.data_ptr());
+  karg.M_real = static_cast<uint32_t>(M);
+  karg.M_pad = static_cast<uint32_t>(m_pad);
+  karg.K = static_cast<uint32_t>(K);
+  karg.eps = static_cast<float>(eps);
+  karg.log2_mt = 7;
+  karg.log2_kt = 7;
+  karg.log2_mxu_kt = 5;
+
+  static std::string path =
+      find_kernel("rms_norm_layout_fused", "rms_norm_layout_fused");
   launch_kernel(device, &karg, sizeof(karg), path);
-  return Y_tiled;
+  return output;
+}
+
+at::Tensor vortex_rope_layout_fused(
+    const at::Tensor& input,
+    const at::Tensor& cos,
+    const at::Tensor& sin,
+    int64_t batch,
+    int64_t seq,
+    int64_t heads,
+    int64_t head_dim,
+    int64_t input_m_pad,
+    int64_t layout_to,
+    int64_t pos_offset) {
+  TORCH_CHECK(input.is_privateuseone() && cos.is_privateuseone()
+              && sin.is_privateuseone(),
+              "rope_layout_fused tensors must be on Vortex");
+  TORCH_CHECK(input.dtype() == at::kHalf && cos.dtype() == at::kHalf
+              && sin.dtype() == at::kHalf,
+              "rope_layout_fused requires float16 tensors");
+  TORCH_CHECK(input.is_contiguous() && cos.is_contiguous() && sin.is_contiguous(),
+              "rope_layout_fused tensors must be contiguous");
+  TORCH_CHECK(batch > 0 && seq > 0 && heads > 0 && head_dim > 0,
+              "RoPE dimensions must be positive");
+  TORCH_CHECK(head_dim % 2 == 0, "head_dim must be even");
+  TORCH_CHECK(input_m_pad >= batch * seq && input_m_pad % 8 == 0,
+              "input_m_pad must cover batch*seq and be a multiple of 8");
+  TORCH_CHECK(input.numel() == input_m_pad * heads * head_dim,
+              "input physical storage size mismatch");
+  TORCH_CHECK(cos.dim() == 2 && sin.sizes() == cos.sizes()
+              && cos.size(1) == head_dim / 2,
+              "cos/sin must have shape [max_seq_len, head_dim/2]");
+  const int64_t max_seq_len = cos.size(0);
+  TORCH_CHECK(pos_offset >= 0 && pos_offset + seq <= max_seq_len,
+              "RoPE position range exceeds the frequency cache");
+  TORCH_CHECK(layout_to >= 0 && layout_to <= 3,
+              "layout_to must be GEMM-A(0), GEMM-W(1), BSHD(2), or BHSD(3)");
+  TORCH_CHECK(layout_to != 1 || max_seq_len % 32 == 0,
+              "GEMM-W output requires max_seq_len to be a multiple of 32");
+  check_device_alignment(input, 512, "RoPE GEMM-C input");
+
+  const int64_t output_m_pad = vx_align_up_u32(static_cast<uint32_t>(seq), 8);
+  VortexMemoryAlignmentGuard alignment_guard(512);
+  at::Tensor output;
+  if (layout_to == 0) {
+    output = at::empty({batch * heads, output_m_pad, head_dim}, input.options());
+  } else if (layout_to == 1) {
+    output = at::empty({batch * heads, head_dim, max_seq_len}, input.options());
+  } else if (layout_to == 2) {
+    output = at::empty({batch, seq, heads, head_dim}, input.options());
+  } else {
+    output = at::empty({batch, heads, seq, head_dim}, input.options());
+  }
+
+  auto& rt = c10::vortex::VortexRuntime::instance();
+  vx_device_h device = rt.deviceHandle();
+  auto caps = query_caps(device);
+  const uint64_t pairs = static_cast<uint64_t>(batch) * seq * heads * (head_dim / 2);
+  const uint32_t blocks_needed = static_cast<uint32_t>(
+      (pairs + caps.threads_per_block - 1) / caps.threads_per_block);
+  const uint32_t blocks = std::min(
+      blocks_needed, std::max<uint32_t>(1, static_cast<uint32_t>(caps.num_cores) * 4));
+
+  rope_layout_fused_kernel_arg_t karg{};
+  karg.kernel_id = 0;
+  karg.grid_dim[0] = blocks;
+  karg.grid_dim[1] = 1;
+  karg.grid_dim[2] = 1;
+  karg.block_dim[0] = caps.threads_per_block;
+  karg.block_dim[1] = 1;
+  karg.block_dim[2] = 1;
+  karg.input_addr = rt.deviceAddress(input.data_ptr());
+  karg.output_addr = rt.deviceAddress(output.data_ptr());
+  karg.cos_addr = rt.deviceAddress(cos.data_ptr());
+  karg.sin_addr = rt.deviceAddress(sin.data_ptr());
+  karg.batch_size = static_cast<uint32_t>(batch);
+  karg.seq_len = static_cast<uint32_t>(seq);
+  karg.num_heads = static_cast<uint32_t>(heads);
+  karg.head_dim = static_cast<uint32_t>(head_dim);
+  karg.max_seq_len = static_cast<uint32_t>(max_seq_len);
+  karg.pos_offset = static_cast<uint32_t>(pos_offset);
+  karg.layout_to = static_cast<uint32_t>(layout_to);
+  karg.input_m_pad = static_cast<uint32_t>(input_m_pad);
+  karg.output_m_pad = static_cast<uint32_t>(output_m_pad);
+  karg.log2_mt = 7;
+  karg.log2_kt = 7;
+  karg.log2_mxu_kt = 5;
+  karg.log2_mxu_nt = 5;
+
+  static std::string path = find_kernel("rope_layout_fused", "rope_layout_fused");
+  launch_kernel(device, &karg, sizeof(karg), path);
+  return output;
+}
+
+static uint32_t fused_kv_padded_k(uint32_t K, uint32_t N,
+                                  uint32_t source_transposed) {
+  return vx_align_up_u32(source_transposed ? N : K, 32);
+}
+
+static uint32_t fused_kv_padded_n(uint32_t K, uint32_t N,
+                                  uint32_t source_transposed) {
+  return vx_align_up_u32(source_transposed ? K : N, 32);
+}
+
+static uint32_t fused_kv_qparam_k(uint32_t K, uint32_t N, uint32_t qblk,
+                                  uint32_t gemm_qdir,
+                                  uint32_t source_transposed) {
+  uint32_t alignment = 32;
+  if (gemm_qdir == 0 && qblk > alignment) alignment = qblk;
+  return vx_align_up_u32(source_transposed ? N : K, alignment);
+}
+
+static uint32_t fused_kv_qparam_n(uint32_t K, uint32_t N, uint32_t qblk,
+                                  uint32_t gemm_qdir,
+                                  uint32_t source_transposed) {
+  uint32_t alignment = 32;
+  if (gemm_qdir == 1 && qblk > alignment) alignment = qblk;
+  return vx_align_up_u32(source_transposed ? K : N, alignment);
+}
+
+static uint32_t fused_kv_slot_bytes(uint32_t cur_k, uint32_t cur_n,
+                                    uint32_t qblk, uint32_t gemm_qdir) {
+  const uint32_t ng_per_mxu_nt = (32 + qblk - 1) / qblk;
+  const uint32_t body = gemm_qdir == 0
+      ? (cur_k / qblk) * cur_n * 2
+      : (cur_n / 32) * cur_k * ng_per_mxu_nt * 2;
+  return vx_align_up_u32(body, 512);
+}
+
+std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor>
+vortex_kv_cache_quant_layout_fused_w4a16(
+    const at::Tensor& source,
+    int64_t K,
+    int64_t N,
+    int64_t qblk,
+    int64_t qdir,
+    int64_t gemm_qdir,
+    int64_t wtrans,
+    int64_t src_layout,
+    int64_t source_transposed,
+    int64_t quant_mode,
+    int64_t src_total_n,
+    int64_t src_col_offset) {
+  TORCH_CHECK(source.is_privateuseone(), "source must be a Vortex tensor");
+  TORCH_CHECK(source.dtype() == at::kHalf && source.is_contiguous(),
+              "source must be contiguous float16");
+  TORCH_CHECK(K > 0 && N > 0 && N % 2 == 0, "K/N must be positive and N even");
+  TORCH_CHECK(qblk > 0 && (qblk & (qblk - 1)) == 0,
+              "qblk must be a power of two");
+  TORCH_CHECK(qdir == 0 || qdir == 1, "qdir must be 0 or 1");
+  TORCH_CHECK(gemm_qdir == 0 || gemm_qdir == 1, "gemm_qdir must be 0 or 1");
+  TORCH_CHECK(wtrans == 0 || wtrans == 1, "wtrans must be 0 or 1");
+  TORCH_CHECK(src_layout >= 0 && src_layout <= 2,
+              "src_layout must be row-major(0), GEMM-C(1), or GEMM-A(2)");
+  TORCH_CHECK(source_transposed == 0 || source_transposed == 1,
+              "source_transposed must be 0 or 1");
+  TORCH_CHECK(!source_transposed || wtrans == 1,
+              "source-transposed output requires wtrans=1");
+  TORCH_CHECK(quant_mode >= 0 && quant_mode <= 2,
+              "quant_mode must be legacy asym(0), signed asym(1), or signed sym(2)");
+  TORCH_CHECK(src_total_n >= N && src_col_offset >= 0
+              && src_col_offset + N <= src_total_n,
+              "source head column range is out of bounds");
+  TORCH_CHECK(source.numel() >= K * src_total_n,
+              "source physical storage is smaller than K*src_total_n");
+  TORCH_CHECK(qdir != 0 || K % qblk == 0,
+              "qdir=0 requires K divisible by qblk");
+  if (src_layout == 1) {
+    TORCH_CHECK(src_total_n % 32 == 0,
+                "GEMM-C source_total_n must be a multiple of MXU_NT (32)");
+    check_device_alignment(source, 512, "KV GEMM-C source");
+  }
+  if (src_layout == 2) {
+    TORCH_CHECK(src_total_n == N && src_col_offset == 0,
+                "grouped GEMM-A source must be one compact logical matrix");
+    TORCH_CHECK(K % 8 == 0 && N % 32 == 0 && source.numel() == K * N,
+                "GEMM-A source storage must match its padded K*N extent");
+    check_device_alignment(source, 512, "KV GEMM-A source");
+  }
+
+  const uint32_t Ku = static_cast<uint32_t>(K);
+  const uint32_t Nu = static_cast<uint32_t>(N);
+  const uint32_t Q = static_cast<uint32_t>(qblk);
+  const uint32_t GQ = static_cast<uint32_t>(gemm_qdir);
+  const uint32_t ST = static_cast<uint32_t>(source_transposed);
+  const uint32_t out_k = fused_kv_padded_k(Ku, Nu, ST);
+  const uint32_t out_n = fused_kv_padded_n(Ku, Nu, ST);
+  const uint32_t qp_k = fused_kv_qparam_k(Ku, Nu, Q, GQ, ST);
+  const uint32_t qp_n = fused_kv_qparam_n(Ku, Nu, Q, GQ, ST);
+  const uint32_t k_tiles = (qp_k + 127) / 128;
+  const uint32_t n_dma_tiles = (qp_n + 127) / 128;
+  uint64_t scale_bytes = 0;
+  uint32_t max_slot_bytes = 0;
+  for (uint32_t kt = 0; kt < k_tiles; ++kt) {
+    const uint32_t cur_k = std::min<uint32_t>(128, qp_k - kt * 128);
+    for (uint32_t nt = 0; nt < n_dma_tiles; ++nt) {
+      const uint32_t cur_n = std::min<uint32_t>(128, qp_n - nt * 128);
+      const uint32_t slot = fused_kv_slot_bytes(cur_k, cur_n, Q, GQ);
+      scale_bytes += slot;
+      max_slot_bytes = std::max(max_slot_bytes, slot);
+    }
+  }
+  TORCH_CHECK(scale_bytes % 2 == 0, "internal qparam allocation must be 2-byte aligned");
+  const int64_t logical_rows = qdir == 0 ? K / qblk : K;
+  const int64_t logical_cols = qdir == 0 ? N : (N + qblk - 1) / qblk;
+
+  VortexMemoryAlignmentGuard alignment_guard(512);
+  auto weight = at::empty({out_k, out_n / 2}, source.options().dtype(at::kByte));
+  auto scale = at::empty({static_cast<int64_t>(scale_bytes / 2)}, source.options());
+  auto zero = at::empty({static_cast<int64_t>(scale_bytes / 2)},
+                        source.options().dtype(at::kShort));
+  auto logical_scale = at::empty({logical_rows, logical_cols}, source.options());
+  auto logical_zero = at::empty({logical_rows, logical_cols}, source.options());
+
+  auto& rt = c10::vortex::VortexRuntime::instance();
+  vx_device_h device = rt.deviceHandle();
+  auto caps = query_caps(device);
+  const uint32_t weight_bytes = out_k * (out_n / 2);
+  const uint32_t qparam_work = k_tiles * n_dma_tiles * (max_slot_bytes / 2);
+  const uint32_t logical_work = static_cast<uint32_t>(logical_rows * logical_cols);
+  const uint32_t work_items = std::max({weight_bytes, qparam_work, logical_work});
+  const uint32_t blocks_needed =
+      (work_items + caps.threads_per_block - 1) / caps.threads_per_block;
+  const uint32_t blocks = std::min(
+      blocks_needed, std::max<uint32_t>(1, static_cast<uint32_t>(caps.num_cores) * 4));
+
+  const uint32_t ck_last = qp_k - (k_tiles - 1) * 128;
+  const uint32_t cn_last = qp_n - (n_dma_tiles - 1) * 128;
+  kv_cache_quant_layout_fused_w4a16_kernel_arg_t karg{};
+  karg.kernel_id = 0;
+  karg.grid_dim[0] = blocks;
+  karg.grid_dim[1] = 1;
+  karg.grid_dim[2] = 1;
+  karg.block_dim[0] = caps.threads_per_block;
+  karg.block_dim[1] = 1;
+  karg.block_dim[2] = 1;
+  karg.src_addr = rt.deviceAddress(source.data_ptr());
+  karg.weight_addr = rt.deviceAddress(weight.data_ptr());
+  karg.scale_addr = rt.deviceAddress(scale.data_ptr());
+  karg.zero_addr = rt.deviceAddress(zero.data_ptr());
+  karg.logical_scale_addr = rt.deviceAddress(logical_scale.data_ptr());
+  karg.logical_zero_addr = rt.deviceAddress(logical_zero.data_ptr());
+  karg.K = Ku;
+  karg.N = Nu;
+  karg.QBLK = Q;
+  karg.QDIR = static_cast<uint32_t>(qdir);
+  karg.GEMM_QDIR = GQ;
+  karg.WTRANS = static_cast<uint32_t>(wtrans);
+  karg.src_layout = static_cast<uint32_t>(src_layout);
+  karg.SOURCE_TRANSPOSED = ST;
+  karg.quant_mode = static_cast<uint32_t>(quant_mode);
+  karg.src_total_N = static_cast<uint32_t>(src_total_n);
+  karg.src_col_offset = static_cast<uint32_t>(src_col_offset);
+  karg.k_tiles = k_tiles;
+  karg.n_dma_tiles = n_dma_tiles;
+  karg.slot_fk_fn = fused_kv_slot_bytes(128, 128, Q, GQ);
+  karg.slot_fk_pn = fused_kv_slot_bytes(128, cn_last, Q, GQ);
+  karg.slot_pk_fn = fused_kv_slot_bytes(ck_last, 128, Q, GQ);
+  karg.per_kt_full_K = n_dma_tiles == 1
+      ? karg.slot_fk_pn
+      : (n_dma_tiles - 1) * karg.slot_fk_fn + karg.slot_fk_pn;
+  karg.max_slot_bytes = max_slot_bytes;
+  karg.log2_mt = 7;
+  karg.log2_kt = 7;
+  karg.log2_nt = 7;
+  karg.log2_mxu_kt = 5;
+  karg.log2_mxu_nt = 5;
+  karg.log2_qblk = vx_log2_u32(Q);
+  karg.log2_ng_per_mxu_nt = vx_log2_u32((32 + Q - 1) / Q);
+
+  static std::string path = find_kernel(
+      "kv_cache_quant_layout_fused_w4a16",
+      "kv_cache_quant_layout_fused_w4a16");
+  launch_kernel(device, &karg, sizeof(karg), path);
+  return std::make_tuple(weight, scale, zero, logical_scale, logical_zero);
+}
+
+at::Tensor vortex_softmax_layout_fused(
+    const at::Tensor& input,
+    int64_t batch,
+    int64_t heads,
+    int64_t seq_q,
+    int64_t seq_k,
+    int64_t m_pad,
+    int64_t use_mask,
+    double scale) {
+  TORCH_CHECK(input.is_privateuseone() && input.dtype() == at::kHalf
+              && input.is_contiguous(),
+              "softmax_layout_fused input must be contiguous Vortex float16");
+  TORCH_CHECK(batch > 0 && heads > 0 && seq_q > 0 && seq_k > 0,
+              "softmax dimensions must be positive");
+  TORCH_CHECK(m_pad >= seq_q && m_pad % 8 == 0,
+              "m_pad must cover seq_q and be a multiple of 8");
+  TORCH_CHECK(use_mask == 0 || use_mask == 1, "use_mask must be 0 or 1");
+  const int64_t seq_k_pad = vx_align_up_u32(static_cast<uint32_t>(seq_k), 32);
+  TORCH_CHECK(input.numel() == batch * heads * m_pad * seq_k_pad,
+              "softmax physical input size mismatch");
+  check_device_alignment(input, 512, "softmax GEMM-C input");
+
+  VortexMemoryAlignmentGuard alignment_guard(512);
+  auto output = at::empty({batch * heads, m_pad, seq_k_pad}, input.options());
+  auto& rt = c10::vortex::VortexRuntime::instance();
+  vx_device_h device = rt.deviceHandle();
+  auto caps = query_caps(device);
+
+  softmax_layout_fused_kernel_arg_t karg{};
+  karg.kernel_id = 0;
+  karg.grid_dim[0] = static_cast<uint32_t>(batch * heads * seq_q);
+  karg.grid_dim[1] = 1;
+  karg.grid_dim[2] = 1;
+  // The packaged opt_warp kernel assigns one complete row to one hardware
+  // warp; additional warps would race on the same output row.
+  karg.block_dim[0] = static_cast<uint32_t>(caps.num_threads);
+  karg.block_dim[1] = 1;
+  karg.block_dim[2] = 1;
+  karg.input_addr = rt.deviceAddress(input.data_ptr());
+  karg.output_addr = rt.deviceAddress(output.data_ptr());
+  karg.batch_size = static_cast<uint32_t>(batch);
+  karg.num_heads = static_cast<uint32_t>(heads);
+  karg.seq_len_q = static_cast<uint32_t>(seq_q);
+  karg.seq_len_k = static_cast<uint32_t>(seq_k);
+  karg.seq_len_k_pad = static_cast<uint32_t>(seq_k_pad);
+  karg.M_pad = static_cast<uint32_t>(m_pad);
+  karg.use_mask = static_cast<uint32_t>(use_mask);
+  karg.scale = static_cast<float>(scale);
+  karg.log2_mt = 7;
+  karg.log2_kt = 7;
+  karg.log2_mxu_kt = 5;
+  karg.log2_mxu_nt = 5;
+
+  static std::string path =
+      find_kernel("softmax_layout_fused", "softmax_layout_fused");
+  launch_kernel(device, &karg, sizeof(karg), path);
+  return output;
+}
+
+at::Tensor vortex_head_concat_layout_fused(
+    const at::Tensor& input,
+    int64_t batch,
+    int64_t seq,
+    int64_t heads,
+    int64_t head_dim,
+    int64_t input_m_pad,
+    int64_t output_m_pad) {
+  TORCH_CHECK(input.is_privateuseone() && input.dtype() == at::kHalf
+              && input.is_contiguous(),
+              "head_concat_layout_fused input must be contiguous Vortex float16");
+  TORCH_CHECK(batch > 0 && seq > 0 && heads > 0 && head_dim > 0,
+              "head concat dimensions must be positive");
+  TORCH_CHECK(input_m_pad >= seq && input_m_pad % 8 == 0,
+              "input_m_pad must cover seq and be a multiple of 8");
+  TORCH_CHECK(output_m_pad >= batch * seq && output_m_pad % 8 == 0,
+              "output_m_pad must cover batch*seq and be a multiple of 8");
+  TORCH_CHECK(head_dim % 32 == 0 && (heads * head_dim) % 32 == 0,
+              "head_dim and hidden size must be multiples of 32");
+  TORCH_CHECK(input.numel() == batch * heads * input_m_pad * head_dim,
+              "head concat physical input size mismatch");
+  check_device_alignment(input, 512, "grouped PV GEMM-C input");
+
+  const int64_t hidden = heads * head_dim;
+  VortexMemoryAlignmentGuard alignment_guard(512);
+  auto output = at::empty({output_m_pad, hidden}, input.options());
+  auto& rt = c10::vortex::VortexRuntime::instance();
+  vx_device_h device = rt.deviceHandle();
+  auto caps = query_caps(device);
+  const uint64_t row_elems = static_cast<uint64_t>(batch) * heads * seq * head_dim;
+  const uint32_t blocks_needed = static_cast<uint32_t>(
+      (row_elems + caps.threads_per_block - 1) / caps.threads_per_block);
+  const uint32_t blocks = std::min(
+      blocks_needed, std::max<uint32_t>(1, static_cast<uint32_t>(caps.num_cores) * 4));
+
+  head_concat_layout_fused_kernel_arg_t karg{};
+  karg.kernel_id = 0;
+  karg.grid_dim[0] = blocks;
+  karg.grid_dim[1] = 1;
+  karg.grid_dim[2] = 1;
+  karg.block_dim[0] = caps.threads_per_block;
+  karg.block_dim[1] = 1;
+  karg.block_dim[2] = 1;
+  karg.input_addr = rt.deviceAddress(input.data_ptr());
+  karg.output_addr = rt.deviceAddress(output.data_ptr());
+  karg.batch = static_cast<uint32_t>(batch);
+  karg.seq = static_cast<uint32_t>(seq);
+  karg.heads = static_cast<uint32_t>(heads);
+  karg.headdim = static_cast<uint32_t>(head_dim);
+  karg.input_m_pad = static_cast<uint32_t>(input_m_pad);
+  karg.output_m_pad = static_cast<uint32_t>(output_m_pad);
+  karg.log2_mt = 7;
+  karg.log2_mxu_kt = 5;
+  karg.log2_mxu_nt = 5;
+
+  static std::string path =
+      find_kernel("head_concat_layout_fused", "head_concat_layout_fused");
+  launch_kernel(device, &karg, sizeof(karg), path);
+  return output;
+}
+
+at::Tensor vortex_eladd_layout_fused(
+    const at::Tensor& input_a,
+    const at::Tensor& input_b,
+    int64_t M,
+    int64_t M_pad,
+    int64_t K) {
+  TORCH_CHECK(input_a.is_privateuseone() && input_b.is_privateuseone(),
+              "eladd_layout_fused tensors must be on Vortex");
+  TORCH_CHECK(input_a.dtype() == at::kHalf && input_b.dtype() == at::kHalf,
+              "eladd_layout_fused requires float16 tensors");
+  TORCH_CHECK(input_a.is_contiguous() && input_b.is_contiguous(),
+              "eladd_layout_fused tensors must be contiguous");
+  TORCH_CHECK(M > 0 && K > 0 && M_pad >= M && M_pad % 8 == 0,
+              "invalid logical/padded eladd dimensions");
+  TORCH_CHECK(K % 32 == 0, "K must be a multiple of 32");
+  TORCH_CHECK(input_a.numel() == M_pad * K,
+              "input_a physical GEMM-C storage size mismatch");
+  TORCH_CHECK(input_b.numel() == M * K,
+              "input_b row-major storage size mismatch");
+  check_device_alignment(input_a, 512, "eladd GEMM-C input");
+
+  auto output = at::empty({M, K}, input_b.options());
+  auto& rt = c10::vortex::VortexRuntime::instance();
+  vx_device_h device = rt.deviceHandle();
+  auto caps = query_caps(device);
+  const uint64_t elems = static_cast<uint64_t>(M) * K;
+  const uint32_t blocks_needed = static_cast<uint32_t>(
+      (elems + caps.threads_per_block - 1) / caps.threads_per_block);
+  const uint32_t blocks = std::min(
+      blocks_needed, std::max<uint32_t>(1, static_cast<uint32_t>(caps.num_cores) * 4));
+
+  eladd_layout_fused_kernel_arg_t karg{};
+  karg.kernel_id = 0;
+  karg.grid_dim[0] = blocks;
+  karg.grid_dim[1] = 1;
+  karg.grid_dim[2] = 1;
+  karg.block_dim[0] = caps.threads_per_block;
+  karg.block_dim[1] = 1;
+  karg.block_dim[2] = 1;
+  karg.input_a_addr = rt.deviceAddress(input_a.data_ptr());
+  karg.input_b_addr = rt.deviceAddress(input_b.data_ptr());
+  karg.output_addr = rt.deviceAddress(output.data_ptr());
+  karg.M_real = static_cast<uint32_t>(M);
+  karg.M_pad = static_cast<uint32_t>(M_pad);
+  karg.K = static_cast<uint32_t>(K);
+  karg.log2_mt = 7;
+  karg.log2_mxu_nt = 5;
+
+  static std::string path =
+      find_kernel("eladd_layout_fused", "eladd_layout_fused");
+  launch_kernel(device, &karg, sizeof(karg), path);
+  return output;
 }
 
 
@@ -3007,14 +4011,7 @@ at::Tensor vortex_mm_w4a16_opt(
   // The reference (fpint_gemm_ffn_hw/main.cpp) allocates all 5 GEMM buffers
   // with vx_mem_alloc_aligned(...,512,...); mirror that for the tiled buffers
   // created below (A_tiled/W_tiled/sc_tiled/zp_tiled/Y_tiled).
-  struct AlignGuard {
-    c10::vortex::VortexRuntime& r;
-    uint64_t prev;
-    explicit AlignGuard(uint64_t a)
-        : r(c10::vortex::VortexRuntime::instance()),
-          prev(r.exchangeMemoryAlignment(a)) {}
-    ~AlignGuard() { (void)r.setMemoryAlignment(prev); }
-  } align_guard(512);
+  VortexMemoryAlignmentGuard alignment_guard(512);
 
   // ---- 1+2. Pad M and tile input A in one device kernel ----
   auto A_tiled  = vortex_tile_input_a(input, (int64_t)M_pad, (int64_t)K_val);
@@ -3058,7 +4055,9 @@ at::Tensor vortex_mm_w4a16_opt(
 
   static std::string path =
       find_kernel("fpint_gemm_ffn_hw", "fpint_gemm_ffn_hw");
-  launch_kernel(device, &karg, sizeof(karg), path);
+  launch_kernel(device, &karg, sizeof(karg), path,
+                offsetof(fpint_gemm_kernel_arg_v2_t, status),
+                FPINT_MMIO_STATUS_OK);
 
   // ---- 6. Detile output AND narrow to [M, N] (single device kernel) ----
   return vortex_detile_output(Y_tiled,
@@ -3118,13 +4117,22 @@ TORCH_LIBRARY(vortex, m) {
   m.def("tile_input_a(Tensor input, int M_pad, int K) -> Tensor");
   m.def("detile_output(Tensor Y_tiled, int M, int M_pad, int N) -> Tensor");
   m.def("mm_w4a16_gemm_core(Tensor input_tiled, Tensor weight_tiled, Tensor scales_tiled, Tensor zeros_tiled, int K, int N, int group_size, int wtrans, int qdir) -> Tensor");
+  m.def("mm_w4a16_gemm_core_out(Tensor input_tiled, Tensor weight_tiled, Tensor scales_tiled, Tensor zeros_tiled, int K, int N, int group_size, int wtrans, int qdir, Tensor(a!) output) -> Tensor(a!)");
+  m.def("rms_norm_layout_fused(Tensor input, Tensor weight, float eps, int m_pad) -> Tensor");
+  m.def("rope_layout_fused(Tensor input, Tensor cos, Tensor sin, int batch, int seq, int heads, int head_dim, int input_m_pad, int layout_to, int pos_offset=0) -> Tensor");
+  m.def("kv_cache_quant_layout_fused_w4a16(Tensor source, int K, int N, int qblk, int qdir, int gemm_qdir, int wtrans, int src_layout, int source_transposed, int quant_mode, int src_total_n, int src_col_offset) -> (Tensor, Tensor, Tensor, Tensor, Tensor)");
+  m.def("softmax_layout_fused(Tensor input, int batch, int heads, int seq_q, int seq_k, int m_pad, int use_mask, float scale) -> Tensor");
+  m.def("head_concat_layout_fused(Tensor input, int batch, int seq, int heads, int head_dim, int input_m_pad, int output_m_pad) -> Tensor");
+  m.def("eladd_layout_fused(Tensor input_a, Tensor input_b, int M, int M_pad, int K) -> Tensor");
   m.def("hadamard_butterfly(Tensor input, int K) -> Tensor");
   m.def("hadamard_base(Tensor input, Tensor matrix, int K) -> Tensor");
+  m.def("hadamard_layout_fused(Tensor input, Tensor matrix, int base_k, int matrix_count, int rows, int m_pad) -> Tensor");
   m.def("quantize_per_token(Tensor x, int mode) -> (Tensor, Tensor, Tensor)");
   m.def("quantize_pack_per_token(Tensor x, int mode) -> (Tensor, Tensor, Tensor)");
   m.def("dequantize_per_token(Tensor q, Tensor scale, Tensor zero, int mode) -> Tensor");
   m.def("head_concat(Tensor input) -> Tensor");
-  m.def("qk_asym_correction(Tensor scores, Tensor query, Tensor scale, Tensor zero) -> Tensor");
+  m.def("qk_asym_correction(Tensor scores, Tensor query, Tensor scale, Tensor zero, int logical_m=-1, int scores_m_pad=-1, int logical_n=-1, int scores_layout=0) -> Tensor");
+  m.def("qk_asym_correction_out(Tensor scores, Tensor query, Tensor scale, Tensor zero, int logical_m, int scores_m_pad, int logical_n, int scores_layout, int query_layout, Tensor(a!) output) -> Tensor(a!)");
 }
 
 TORCH_LIBRARY_IMPL(vortex, PrivateUse1, m) {
@@ -3139,13 +4147,22 @@ TORCH_LIBRARY_IMPL(vortex, PrivateUse1, m) {
   m.impl("tile_input_a",          &vortex_tile_input_a);
   m.impl("detile_output",         &vortex_detile_output);
   m.impl("mm_w4a16_gemm_core",    &vortex_mm_w4a16_gemm_core);
+  m.impl("mm_w4a16_gemm_core_out", &vortex_mm_w4a16_gemm_core_out);
+  m.impl("rms_norm_layout_fused", &vortex_rms_norm_layout_fused);
+  m.impl("rope_layout_fused", &vortex_rope_layout_fused);
+  m.impl("kv_cache_quant_layout_fused_w4a16", &vortex_kv_cache_quant_layout_fused_w4a16);
+  m.impl("softmax_layout_fused", &vortex_softmax_layout_fused);
+  m.impl("head_concat_layout_fused", &vortex_head_concat_layout_fused);
+  m.impl("eladd_layout_fused", &vortex_eladd_layout_fused);
   m.impl("hadamard_butterfly",    &vortex_hadamard_butterfly);
   m.impl("hadamard_base",         &vortex_hadamard_base);
+  m.impl("hadamard_layout_fused", &vortex_hadamard_layout_fused);
   m.impl("quantize_per_token",    &vortex_quantize_per_token);
   m.impl("quantize_pack_per_token", &vortex_quantize_pack_per_token);
   m.impl("dequantize_per_token",  &vortex_dequantize_per_token);
   m.impl("head_concat",           &vortex_head_concat);
   m.impl("qk_asym_correction",    &vortex_qk_asym_correction);
+  m.impl("qk_asym_correction_out", &vortex_qk_asym_correction_out);
 }
 
 } // namespace at::vortex

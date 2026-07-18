@@ -27,6 +27,7 @@ TEST_DIRS := \
 	hadamard \
 	hadamard_base \
 	hadamard_k \
+	hadamard_layout_fused \
 	head_concat \
 	head_concat_layout_fused \
 	io_addr \

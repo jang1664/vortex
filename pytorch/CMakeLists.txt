@@ -119,12 +119,19 @@ set(_SPINQUANT_LAYER_KERNELS
     elmul
     silu
     rmsnorm
+    rms_norm_layout_fused
     rope
+    rope_layout_fused
     hadamard_base
     hadamard_k
+    hadamard_layout_fused
     quantize_pt_int4
     head_concat
+    head_concat_layout_fused
     qk_asym_correction
+    kv_cache_quant_layout_fused_w4a16
+    softmax_layout_fused
+    eladd_layout_fused
     tile_input_a
     tile_weight_w4a16
     tile_scale_zp_w4a16
