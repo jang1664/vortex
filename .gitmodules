@@ -19,3 +19,6 @@
 [submodule "third_party/component_database"]
 	path = third_party/component_database
 	url = git@github.com:jang1664/component_database.git
+[submodule "third_party/hwexplorer"]
+	path = third_party/hwexplorer
+	url = git@github.com:SNU-VLSI/hwexplorer.git

@@ -15,7 +15,8 @@
 /build_*/
 /build-*/
 
-/.vscode
+.vscode/*
+!.vscode/settings.json
 *.cache
 *.code-workspace
 miscs/apptainer/vortex.sif

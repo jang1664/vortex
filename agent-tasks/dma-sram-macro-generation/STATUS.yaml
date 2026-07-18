@@ -1,0 +1,99 @@
+task: dma-sram-macro-generation
+state: DONE
+summary: Generated and integrated depth-4 and depth-16 DMA SRAM variants using the common 6x160 plus 1x64 width tiling.
+updated: 2026-07-18 12:52
+log:
+  - time: 2026-07-18 02:39
+    status: IN_PROGRESS
+    note: Selected six 8x160m1 slices and one 8x64m1 slice based on the local compiler PDF limits.
+  - time: 2026-07-18 03:10
+    status: IN_PROGRESS
+    note: Both FE macros completed; correcting backend PDK discovery before a BE-only retry.
+  - time: 2026-07-18 11:44
+    status: DONE
+    note: FE and BE views for both macros passed file checks, default-mode timing inspection, and Synopsys read_db validation.
+  - time: 2026-07-18 11:48
+    status: IN_PROGRESS
+    note: Confirmed the 6x160 plus 1x64 parallel width-tiling RTL specification.
+  - time: 2026-07-18 11:58
+    status: DONE
+    note: The exact 8x1024 mapping passed VCS compile, elaboration, and functional read/write verification in the stable environment.
+  - time: 2026-07-18 12:05
+    status: IN_PROGRESS
+    note: Confirmed depth-4 and depth-16 macro generation, RTL mapping, and Synopsys library registration scope.
+  - time: 2026-07-18 12:52
+    status: DONE
+    note: All four macro FE/BE views, Synopsys DB loading, synthesis registration, and actual-model VCS tests passed.
+attempts:
+  - command: stable full FE/BE generation for both RF2_HD macros
+    result: FE succeeded, but BE selected the DFM PM/ICC directory and produced no GDS or NDM.
+  - command: stable BE-only generation after selecting the PnR ICC2 directory
+    result: NDM generation succeeded, but the BE compiler path stopped above the version directory and produced no GDS.
+  - command: stable BE-only generation after resolving compiler version directories
+    result: Both macros produced GDS, CDL, bitmap, and NDM outputs successfully.
+  - command: stable generation with an exact ss_0p9v_0p9v_125c corner argument
+    result: The Samsung batch wrapper rejected the exact corner name because it accepts only documented corner groups.
+  - command: stable generation with the ss_0p900v corner group
+    result: All four depth-4/depth-16 macros produced the required maximum-corner FE views and complete BE views.
+learnings:
+  - A single RF2_HD macro is limited to 160 data bits at mux1, so 1024 bits must be tiled.
+  - The generic backend directory pattern matched DFM PM/ICC instead of the 7U1x_2T8x_LB ICC2 technology directory.
+  - LPP28 BE paths must resolve to the rXpY-version directory containing lib/site.spec.
+  - The 999 timing values are intentional for unsupported EMA settings; Vortex uses EMAA/EMAB 3'b100, whose timing tables contain real values.
+  - The FE batch wrapper's smallest usable selection is a corner group; ss_0p900v includes the required ss_0p900v_0p900v_125c synthesis corner.
+validation:
+  - Parsed config/patterns.yaml in the stable environment.
+  - Verified the resolver selects the sc9 7U1x_2T8x_LB ICC2 tech file and RF2_HD r5p1-02eac0.SEC2 compiler.
+  - Loaded both ss_0p900v_0p900v_125c DB files with Synopsys Library Compiler read_db.
+  - Verified non-empty Verilog, LEF, Liberty, DB, GDS2, CDL, USERLIB NDM, and frame NDM views for both macros.
+  - Verified the generated 8x160 and 8x64 Verilog model port widths and 3-bit address ports match the RTL instances.
+  - Ran tools/verify_rtl.py with VCS on an exact VX_dp_ram_compiled DATAW=1024 SIZE=8 WRENW=1 instance.
+  - Verified non-empty Verilog, LEF, maximum-corner Liberty/DB, GDS2, CDL, and NDM views for all four depth-variant macros.
+  - Loaded all four maximum-corner DB files with Synopsys Library Compiler read_db.
+  - Verified the synthesis driver resolves all 24 registered compiled-SRAM DB files.
+  - Passed all 7 run_syn_vortex_axi Python unit tests in the stable environment.
+  - Passed actual generated-model VCS simulation for every address of the 4x1024 and 16x1024 mappings.
+rtl_iterations:
+  - iteration: 1
+    status: compile_error
+    error_summary: "Verification runner did not start because `python` was not present in PATH."
+    root_cause: "The environment provides `python3`, while the verification command used `python`."
+    fix_applied: "No RTL change; update the verification invocation to use `python3`."
+    lesson: Use the available Python executable explicitly before attributing verifier startup failures to RTL.
+  - iteration: 2
+    status: compile_error
+    error_summary: Verification runner did not start because system Python 3.6 does not support the verifier's argparse API.
+    root_cause: "`/usr/bin/python3` is Python 3.6.8, and `argparse.add_subparsers(required=True)` requires a newer Python."
+    fix_applied: No RTL change; select a newer Python interpreter from the stable environment.
+    lesson: Check the interpreter version as well as its executable name when starting the RTL verifier.
+  - iteration: 3
+    status: pass
+    error_summary: None; VCS compiled, elaborated, and simulated the exact 8x1024 configuration successfully.
+    root_cause: Not applicable.
+    fix_applied: "Used `conda run -n stable python` to run the verifier with Python 3.9.13."
+    lesson: The 6x160 plus 1x64 mapping preserves all 1024 bits across independent write/read checks at multiple addresses.
+depth_variant_rtl_iterations:
+  - iteration: 1
+    status: pass
+    error_summary: None; VCS compiled, elaborated, and simulated exact 4x1024 and 16x1024 configurations successfully.
+    root_cause: Not applicable.
+    fix_applied: No fix required; both new RTL mappings passed on the first iteration.
+    lesson: Native 2-bit and 4-bit RF2 addresses preserve the common 6x160 plus 1x64 width tiling across all requested depths.
+  - iteration: 2
+    status: sim_fail
+    error_summary: Actual Samsung timing models reported a CLKB/DB hold violation followed by a 4x1024 mismatch at address 0.
+    root_cause: The testbench started its first write in the same simulation slot as a positive clock edge, violating the macro model setup/hold window.
+    fix_applied: No RTL change; updated the temporary testbench to drive all macro inputs on the negative clock edge.
+    lesson: Timing-model stimulus must be driven on the inactive clock edge and sampled after the modeled clock-to-Q delay.
+  - iteration: 3
+    status: sim_fail
+    error_summary: Actual Samsung timing models no longer reported timing violations, but the first 4x1024 read still mismatched.
+    root_cause: The test sampled at exactly the generated model's 1 ns CLKA-to-Q delay, racing the scheduled output update.
+    fix_applied: No RTL change; moved temporary testbench read comparisons from 1 ns to 2 ns after the positive edge.
+    lesson: Sample strictly after the timing model's specify-path delay rather than at the same simulation time.
+  - iteration: 4
+    status: pass
+    error_summary: None; actual Samsung models passed full-address 4x1024 and 16x1024 write/read verification.
+    root_cause: Not applicable.
+    fix_applied: No RTL change was required after correcting the temporary timing-model testbench.
+    lesson: The native-depth macro mappings and 6x160 plus 1x64 slicing are valid against the generated functional timing models.
