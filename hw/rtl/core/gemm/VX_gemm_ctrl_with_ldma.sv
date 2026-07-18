@@ -183,6 +183,10 @@ module VX_gemm_ctrl_with_ldma import VX_gpu_pkg::*; #(
     .INSTANCE_ID({INSTANCE_ID, "_input_dma"}),
     .DIR(0),
     .TAG_WIDTH(GEMM_MEM_TAG_WIDTH),
+    .LMEM_ADDR_WIDTH_P(`MEM_ADDR_WIDTH - `CLOG2(LSU_WORD_SIZE)),
+    .GEMM_ADDR_WIDTH_P(`MEM_ADDR_WIDTH - `CLOG2(LSU_WORD_SIZE)),
+    .LMEM_TAG_WIDTH_P(GEMM_MEM_TAG_WIDTH),
+    .GEMM_TAG_WIDTH_P(GEMM_MEM_TAG_WIDTH),
     .RD_PREFETCH_DEPTH(I_RD_PREFETCH_DEPTH)
   ) u_input_lmem_dma (
     .clk(clk),
@@ -198,6 +202,10 @@ module VX_gemm_ctrl_with_ldma import VX_gpu_pkg::*; #(
     .INSTANCE_ID({INSTANCE_ID, "_weight_dma"}),
     .DIR(0),
     .TAG_WIDTH(GEMM_MEM_TAG_WIDTH),
+    .LMEM_ADDR_WIDTH_P(`MEM_ADDR_WIDTH - `CLOG2(LSU_WORD_SIZE)),
+    .GEMM_ADDR_WIDTH_P(`MEM_ADDR_WIDTH - `CLOG2(LSU_WORD_SIZE)),
+    .LMEM_TAG_WIDTH_P(GEMM_MEM_TAG_WIDTH),
+    .GEMM_TAG_WIDTH_P(GEMM_MEM_TAG_WIDTH),
     .RD_PREFETCH_DEPTH(W_RD_PREFETCH_DEPTH)
   ) u_weight_lmem_dma (
     .clk(clk),
@@ -213,6 +221,10 @@ module VX_gemm_ctrl_with_ldma import VX_gpu_pkg::*; #(
     .INSTANCE_ID({INSTANCE_ID, "_quant_param_dma"}),
     .DIR(0),
     .TAG_WIDTH(GEMM_MEM_TAG_WIDTH),
+    .LMEM_ADDR_WIDTH_P(`MEM_ADDR_WIDTH - `CLOG2(LSU_WORD_SIZE)),
+    .GEMM_ADDR_WIDTH_P(`MEM_ADDR_WIDTH - `CLOG2(LSU_WORD_SIZE)),
+    .LMEM_TAG_WIDTH_P(GEMM_MEM_TAG_WIDTH),
+    .GEMM_TAG_WIDTH_P(GEMM_MEM_TAG_WIDTH),
     .RD_PREFETCH_DEPTH(SZ_RD_PREFETCH_DEPTH)
   ) u_quant_param_lmem_dma (
     .clk(clk),
@@ -228,6 +240,10 @@ module VX_gemm_ctrl_with_ldma import VX_gpu_pkg::*; #(
     .INSTANCE_ID({INSTANCE_ID, "_output_dma"}),
     .DIR(1),
     .TAG_WIDTH(GEMM_MEM_TAG_WIDTH),
+    .LMEM_ADDR_WIDTH_P(`MEM_ADDR_WIDTH - `CLOG2(LSU_WORD_SIZE)),
+    .GEMM_ADDR_WIDTH_P(`MEM_ADDR_WIDTH - `CLOG2(LSU_WORD_SIZE)),
+    .LMEM_TAG_WIDTH_P(GEMM_MEM_TAG_WIDTH),
+    .GEMM_TAG_WIDTH_P(GEMM_MEM_TAG_WIDTH),
     .RD_PREFETCH_DEPTH(O_RD_PREFETCH_DEPTH)
   ) u_output_lmem_dma (
     .clk(clk),

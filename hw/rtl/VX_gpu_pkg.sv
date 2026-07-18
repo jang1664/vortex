@@ -956,7 +956,12 @@ package VX_gpu_pkg;
     localparam LSU_TAG_ID_BITS      = (`CLOG2(`LSUQ_IN_SIZE) + `CLOG2(LSU_MEM_BATCHES));
     localparam LSU_TAG_WIDTH        = (UUID_WIDTH + LSU_TAG_ID_BITS);
     localparam LSU_NUM_REQS	        = `NUM_LSU_BLOCKS * `NUM_LSU_LANES;
-    localparam LMEM_TAG_WIDTH       = LSU_TAG_WIDTH + `CLOG2(`NUM_LSU_BLOCKS);
+    // Local DMA reserves tag.value for eight common-core response slots.
+    localparam LMEM_DMA_RD_OUTSTANDING_SLOTS = 8;
+    localparam LMEM_DMA_SLOT_BITS = `CLOG2(LMEM_DMA_RD_OUTSTANDING_SLOTS);
+    localparam LMEM_TAG_WIDTH = `MAX(
+        (LSU_TAG_WIDTH + `CLOG2(`NUM_LSU_BLOCKS)),
+        (UUID_WIDTH + LMEM_DMA_SLOT_BITS));
     // Track explicit +1 tag growth introduced by 2->1 VX_mem_arb routing.
     localparam MEM_ARB_ROUTE_TAG_BITS = 1;
 
@@ -972,7 +977,9 @@ package VX_gpu_pkg;
     localparam GEMM_ADAPTER_O_SPLIT_BITS   = (`GEMM_OUTPUT_DATA_SIZE     > LSU_WORD_SIZE) ? (`CLOG2(`GEMM_OUTPUT_DATA_SIZE)     - `CLOG2(LSU_WORD_SIZE)) : 0;
     localparam GEMM_ADAPTER_MAX_SPLIT_BITS = `MAX(`MAX(GEMM_ADAPTER_I_SPLIT_BITS, GEMM_ADAPTER_W_SPLIT_BITS),
                                                    `MAX(GEMM_ADAPTER_SZ_SPLIT_BITS, GEMM_ADAPTER_O_SPLIT_BITS));
-    localparam GEMM_BASE_TAG_WIDTH         = `MAX(LMEM_TAG_WIDTH, (GEMM_ADAPTER_MAX_SPLIT_BITS + GEMM_ADAPTER_OOO_SLOT_BITS));
+    localparam GEMM_BASE_TAG_WIDTH = `MAX(
+        LMEM_TAG_WIDTH,
+        (UUID_WIDTH + GEMM_ADAPTER_MAX_SPLIT_BITS + GEMM_ADAPTER_OOO_SLOT_BITS));
 
     // The naive backend merges four GEMM clients before shared LMEM. Improve
     // keeps this width for interface consistency even though it uses TMEM.
@@ -988,7 +995,8 @@ package VX_gpu_pkg;
     localparam LMEM_LOCAL_TAG_WIDTH = (GEMM_LMEM_TAG_WIDTH + LMEM_ARB_ROUTE_TAG_BITS);
 
     ///////////////////////// GEMM Unit Parameters ///////////////////////////
-    localparam GEMM_MEM_TAG_WIDTH = LSU_TAG_WIDTH + `CLOG2(`NUM_LSU_BLOCKS);
+    // Legacy GEMM local-DMA buses connect directly to LMEM-tagged arbiters.
+    localparam GEMM_MEM_TAG_WIDTH = LMEM_TAG_WIDTH;
 
     ////////////////////////// Icache Parameters //////////////////////////////
 

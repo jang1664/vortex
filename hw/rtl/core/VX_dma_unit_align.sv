@@ -37,7 +37,9 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
   parameter int LMEM_ADDR_WIDTH   = 1,
   parameter int DCACHE_TAG_WIDTH = 1,
   parameter int LMEM_TAG_WIDTH   = 1,
-  parameter int RD_OUTSTANDING = 2
+  parameter int RD_OUTSTANDING = 2,
+  // -1: use descriptor direction, 0/1: compile-time fixed direction.
+  parameter int FIXED_DIR = -1
 ) (
   input wire clk,
   input wire reset,
@@ -64,6 +66,11 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
     if (cfg_reg_if.DW != 32) $fatal(1, "cfg_reg_if.DW must be 32");
     if (cfg_reg_if.NUM < NUM_REGS)
       $fatal(1, "cfg_reg_if.NUM(%0d) < NUM_REGS(%0d)", cfg_reg_if.NUM, NUM_REGS);
+    if ((FIXED_DIR < -1) || (FIXED_DIR > 1))
+      $fatal(1, "FIXED_DIR(%0d) must be -1, 0, or 1", FIXED_DIR);
+    if ((RD_OUTSTANDING <= 0)
+        || ((RD_OUTSTANDING & (RD_OUTSTANDING - 1)) != 0))
+      $fatal(1, "RD_OUTSTANDING(%0d) must be a positive power of two", RD_OUTSTANDING);
   end
 
   // ------------------------------------------------------------
@@ -251,6 +258,8 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
   assign dma_uuid = `UP(UUID_WIDTH)'(entry_id_latched);
 
   wire cmd_start = cfg_fire && cfg_reg_if.regs[0][0];
+  wire cmd_dir = (FIXED_DIR < 0)
+               ? cfg_reg_if.regs[DESC_DIR_IDX][0] : FIXED_DIR[0];
 
   // ------------------------------------------------------------
   // Runtime alignment guard for the aligned-only module.
@@ -261,6 +270,10 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
 `ifndef SYNTHESIS
   always_ff @(posedge clk) begin
     if (!reset && cmd_start) begin
+      if ((FIXED_DIR >= 0)
+          && (cfg_reg_if.regs[DESC_DIR_IDX][0] != FIXED_DIR[0]))
+        $fatal(1, "%s: descriptor direction (%0d) does not match FIXED_DIR(%0d)",
+               INSTANCE_ID, cfg_reg_if.regs[DESC_DIR_IDX][0], FIXED_DIR);
       // src and dst ride different buses depending on direction, so each must be
       // checked against the beat of the bus it actually touches:
       //   dir=0 (G2L): src=DCACHE, dst=LMEM ;  dir=1 (L2G): src=LMEM, dst=DCACHE.
@@ -268,38 +281,38 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
       // a fixed src->LMEM / dst->DCACHE orientation would falsely trip on the
       // global side of a G2L transfer (e.g. a 64B-aligned global base on a 256B
       // LMEM bus) while under-checking the LMEM side.
-      if (|(cfg_reg_if.regs[3] & ((cfg_reg_if.regs[DESC_DIR_IDX][0] ? 32'(LMEM_BYTES) : 32'(DCACHE_BYTES)) - 32'd1)))
+      if (|(cfg_reg_if.regs[3] & ((cmd_dir ? 32'(LMEM_BYTES) : 32'(DCACHE_BYTES)) - 32'd1)))
         $fatal(1, "%s: aligned DMA src_base_lo=0x%08h is not %0d-byte aligned",
                INSTANCE_ID, cfg_reg_if.regs[3],
-               cfg_reg_if.regs[DESC_DIR_IDX][0] ? LMEM_BYTES : DCACHE_BYTES);
-      if (|(cfg_reg_if.regs[1] & ((cfg_reg_if.regs[DESC_DIR_IDX][0] ? 32'(DCACHE_BYTES) : 32'(LMEM_BYTES)) - 32'd1)))
+               cmd_dir ? LMEM_BYTES : DCACHE_BYTES);
+      if (|(cfg_reg_if.regs[1] & ((cmd_dir ? 32'(DCACHE_BYTES) : 32'(LMEM_BYTES)) - 32'd1)))
         $fatal(1, "%s: aligned DMA dst_base_lo=0x%08h is not %0d-byte aligned",
                INSTANCE_ID, cfg_reg_if.regs[1],
-               cfg_reg_if.regs[DESC_DIR_IDX][0] ? DCACHE_BYTES : LMEM_BYTES);
-      if (|(cfg_reg_if.regs[5] & ((cfg_reg_if.regs[DESC_DIR_IDX][0] ? 32'(LMEM_BYTES) : 32'(DCACHE_BYTES)) - 32'd1)))
+               cmd_dir ? DCACHE_BYTES : LMEM_BYTES);
+      if (|(cfg_reg_if.regs[5] & ((cmd_dir ? 32'(LMEM_BYTES) : 32'(DCACHE_BYTES)) - 32'd1)))
         $fatal(1, "%s: aligned DMA src_stride[%0d]=0x%08h is not %0d-byte aligned",
                INSTANCE_ID, 0, cfg_reg_if.regs[5],
-               cfg_reg_if.regs[DESC_DIR_IDX][0] ? LMEM_BYTES : DCACHE_BYTES);
-      if (|(cfg_reg_if.regs[6] & ((cfg_reg_if.regs[DESC_DIR_IDX][0] ? 32'(DCACHE_BYTES) : 32'(LMEM_BYTES)) - 32'd1)))
+               cmd_dir ? LMEM_BYTES : DCACHE_BYTES);
+      if (|(cfg_reg_if.regs[6] & ((cmd_dir ? 32'(DCACHE_BYTES) : 32'(LMEM_BYTES)) - 32'd1)))
         $fatal(1, "%s: aligned DMA dst_stride[%0d]=0x%08h is not %0d-byte aligned",
                INSTANCE_ID, 0, cfg_reg_if.regs[6],
-               cfg_reg_if.regs[DESC_DIR_IDX][0] ? DCACHE_BYTES : LMEM_BYTES);
-      if (|(cfg_reg_if.regs[7] & ((cfg_reg_if.regs[DESC_DIR_IDX][0] ? 32'(LMEM_BYTES) : 32'(DCACHE_BYTES)) - 32'd1)))
+               cmd_dir ? DCACHE_BYTES : LMEM_BYTES);
+      if (|(cfg_reg_if.regs[7] & ((cmd_dir ? 32'(LMEM_BYTES) : 32'(DCACHE_BYTES)) - 32'd1)))
         $fatal(1, "%s: aligned DMA src_stride[%0d]=0x%08h is not %0d-byte aligned",
                INSTANCE_ID, 1, cfg_reg_if.regs[7],
-               cfg_reg_if.regs[DESC_DIR_IDX][0] ? LMEM_BYTES : DCACHE_BYTES);
-      if (|(cfg_reg_if.regs[8] & ((cfg_reg_if.regs[DESC_DIR_IDX][0] ? 32'(DCACHE_BYTES) : 32'(LMEM_BYTES)) - 32'd1)))
+               cmd_dir ? LMEM_BYTES : DCACHE_BYTES);
+      if (|(cfg_reg_if.regs[8] & ((cmd_dir ? 32'(DCACHE_BYTES) : 32'(LMEM_BYTES)) - 32'd1)))
         $fatal(1, "%s: aligned DMA dst_stride[%0d]=0x%08h is not %0d-byte aligned",
                INSTANCE_ID, 1, cfg_reg_if.regs[8],
-               cfg_reg_if.regs[DESC_DIR_IDX][0] ? DCACHE_BYTES : LMEM_BYTES);
-      if (|(cfg_reg_if.regs[9] & ((cfg_reg_if.regs[DESC_DIR_IDX][0] ? 32'(LMEM_BYTES) : 32'(DCACHE_BYTES)) - 32'd1)))
+               cmd_dir ? DCACHE_BYTES : LMEM_BYTES);
+      if (|(cfg_reg_if.regs[9] & ((cmd_dir ? 32'(LMEM_BYTES) : 32'(DCACHE_BYTES)) - 32'd1)))
         $fatal(1, "%s: aligned DMA src_stride[%0d]=0x%08h is not %0d-byte aligned",
                INSTANCE_ID, 2, cfg_reg_if.regs[9],
-               cfg_reg_if.regs[DESC_DIR_IDX][0] ? LMEM_BYTES : DCACHE_BYTES);
-      if (|(cfg_reg_if.regs[10] & ((cfg_reg_if.regs[DESC_DIR_IDX][0] ? 32'(DCACHE_BYTES) : 32'(LMEM_BYTES)) - 32'd1)))
+               cmd_dir ? LMEM_BYTES : DCACHE_BYTES);
+      if (|(cfg_reg_if.regs[10] & ((cmd_dir ? 32'(DCACHE_BYTES) : 32'(LMEM_BYTES)) - 32'd1)))
         $fatal(1, "%s: aligned DMA dst_stride[%0d]=0x%08h is not %0d-byte aligned",
                INSTANCE_ID, 2, cfg_reg_if.regs[10],
-               cfg_reg_if.regs[DESC_DIR_IDX][0] ? DCACHE_BYTES : LMEM_BYTES);
+               cmd_dir ? DCACHE_BYTES : LMEM_BYTES);
     end
   end
 `endif
@@ -313,6 +326,7 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
   logic [31:0] seg_size_r;
   logic [31:0] padding_r;
   logic        direction_bit_r;    // 0: GLOBAL->LMEM (load), 1: LMEM->GLOBAL (store)
+  wire         active_dir = (FIXED_DIR < 0) ? direction_bit_r : FIXED_DIR[0];
   logic [63:0] rd_base_src_seg_r, wr_base_dst_seg_r;
   logic        precalc_pending_r;
 
@@ -400,12 +414,6 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
         bound_r[d] <= '0;
       end
     end else if (cmd_start) begin
-      if (cfg_reg_if.regs[11][31:0] == 0 ||
-          cfg_reg_if.regs[12][31:0] == 0 ||
-          cfg_reg_if.regs[13][31:0] == 0) begin
-        $display(1, "%s: VX_dma_unit_align: ERROR - bounds cannot be zero!", INSTANCE_ID);
-      end
-
       base_addr_r[0] <= {cfg_reg_if.regs[4][31:0], cfg_reg_if.regs[3][31:0]}; // src
       base_addr_r[1] <= {cfg_reg_if.regs[2][31:0], cfg_reg_if.regs[1][31:0]}; // dst
 
@@ -509,27 +517,27 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
     SLOT_DRAINING
   } slot_state_e;
 
-  localparam int RD_SLOT_BITS_CAP   = `CLOG2(RD_OUTSTANDING);
+  localparam int RD_SLOT_BITS_CAP   = (RD_OUTSTANDING > 1)
+                                    ? $clog2(RD_OUTSTANDING) : 0;
   localparam int DCACHE_TAG_VALUE_W = DCACHE_TAG_WIDTH - `UP(UUID_WIDTH);
   localparam int LMEM_TAG_VALUE_W   = LMEM_TAG_WIDTH - `UP(UUID_WIDTH);
   localparam int MIN_TAG_VALUE_W    = (DCACHE_TAG_VALUE_W < LMEM_TAG_VALUE_W)
                                     ? DCACHE_TAG_VALUE_W : LMEM_TAG_VALUE_W;
   // Keep at least 1 bit in localparams so vector declarations remain legal,
   // then enforce the real minimum at runtime with a fatal check below.
-  localparam int EFF_TAG_VALUE_W    = (MIN_TAG_VALUE_W < 1) ? 1 : MIN_TAG_VALUE_W;
-  localparam int RD_SLOT_BITS_RAW   = (EFF_TAG_VALUE_W < RD_SLOT_BITS_CAP)
-                                    ? EFF_TAG_VALUE_W : RD_SLOT_BITS_CAP;
-  localparam int RD_SLOT_BITS       = (RD_SLOT_BITS_RAW < 1) ? 1 : RD_SLOT_BITS_RAW;
-  localparam int RD_OUTSTANDING_EFF = (RD_SLOT_BITS_RAW == 0) ? 1 : (1 << RD_SLOT_BITS_RAW);
+  localparam int RD_SLOT_BITS       = (RD_SLOT_BITS_CAP < 1) ? 1 : RD_SLOT_BITS_CAP;
+  localparam int RD_OUTSTANDING_EFF = RD_OUTSTANDING;
   localparam int SLOT_OCC_W         = `CLOG2(RD_OUTSTANDING_EFF + 1);
 
   initial begin
     if (MIN_TAG_VALUE_W < 1)
       $fatal(1, "tag.value width must be >= 1 (dcache=%0d, lmem=%0d)", DCACHE_TAG_VALUE_W, LMEM_TAG_VALUE_W);
-    if (DCACHE_TAG_VALUE_W < RD_SLOT_BITS)
-      $fatal(1, "dcache tag.value width (%0d) < RD_SLOT_BITS (%0d)", DCACHE_TAG_VALUE_W, RD_SLOT_BITS);
-    if (LMEM_TAG_VALUE_W < RD_SLOT_BITS)
-      $fatal(1, "lmem tag.value width (%0d) < RD_SLOT_BITS (%0d)", LMEM_TAG_VALUE_W, RD_SLOT_BITS);
+    if (DCACHE_TAG_VALUE_W < RD_SLOT_BITS_CAP)
+      $fatal(1, "dcache tag.value width (%0d) < requested slot bits (%0d)",
+             DCACHE_TAG_VALUE_W, RD_SLOT_BITS_CAP);
+    if (LMEM_TAG_VALUE_W < RD_SLOT_BITS_CAP)
+      $fatal(1, "lmem tag.value width (%0d) < requested slot bits (%0d)",
+             LMEM_TAG_VALUE_W, RD_SLOT_BITS_CAP);
   end
 
   rd_state_e rd_state;
@@ -663,38 +671,38 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
     assign lmem_req_ready_w = lmem_req_rw_w
                             ? lmem_bus_if.req_ready : lmem_rd_ready;
 
-    assign dcache_bus_if.req_valid = direction_bit_r
+    assign dcache_bus_if.req_valid = active_dir
                                    ? (dcache_req_valid_w && dcache_req_rw_w)
                                    : dcache_rd_valid;
-    assign dcache_bus_if.req_data.rw = direction_bit_r;
-    assign dcache_bus_if.req_data.addr = direction_bit_r
+    assign dcache_bus_if.req_data.rw = active_dir;
+    assign dcache_bus_if.req_data.addr = active_dir
                                       ? dcache_req_addr_w : dcache_rd_addr;
-    assign dcache_bus_if.req_data.data = direction_bit_r
+    assign dcache_bus_if.req_data.data = active_dir
                                       ? same_wr_req_data : '0;
-    assign dcache_bus_if.req_data.byteen = direction_bit_r
+    assign dcache_bus_if.req_data.byteen = active_dir
                                         ? dcache_req_byteen_w : '0;
-    assign dcache_bus_if.req_data.flags = direction_bit_r
+    assign dcache_bus_if.req_data.flags = active_dir
                                        ? dcache_req_flags_w : dcache_rd_flags;
-    assign dcache_bus_if.req_data.tag.uuid = direction_bit_r
+    assign dcache_bus_if.req_data.tag.uuid = active_dir
                                           ? dcache_req_tag_uuid_w : dcache_rd_tag_uuid;
-    assign dcache_bus_if.req_data.tag.value = direction_bit_r
+    assign dcache_bus_if.req_data.tag.value = active_dir
                                            ? dcache_req_tag_value_w : dcache_rd_tag_value;
 
-    assign lmem_bus_if.req_valid = direction_bit_r
+    assign lmem_bus_if.req_valid = active_dir
                                  ? lmem_rd_valid
                                  : (lmem_req_valid_w && lmem_req_rw_w);
-    assign lmem_bus_if.req_data.rw = !direction_bit_r;
-    assign lmem_bus_if.req_data.addr = direction_bit_r
+    assign lmem_bus_if.req_data.rw = !active_dir;
+    assign lmem_bus_if.req_data.addr = active_dir
                                     ? lmem_rd_addr : lmem_req_addr_w;
-    assign lmem_bus_if.req_data.data = direction_bit_r
+    assign lmem_bus_if.req_data.data = active_dir
                                     ? '0 : same_wr_req_data;
-    assign lmem_bus_if.req_data.byteen = direction_bit_r
+    assign lmem_bus_if.req_data.byteen = active_dir
                                       ? '0 : lmem_req_byteen_w;
-    assign lmem_bus_if.req_data.flags = direction_bit_r
+    assign lmem_bus_if.req_data.flags = active_dir
                                      ? lmem_rd_flags : lmem_req_flags_w;
-    assign lmem_bus_if.req_data.tag.uuid = direction_bit_r
+    assign lmem_bus_if.req_data.tag.uuid = active_dir
                                         ? lmem_rd_tag_uuid : lmem_req_tag_uuid_w;
-    assign lmem_bus_if.req_data.tag.value = direction_bit_r
+    assign lmem_bus_if.req_data.tag.value = active_dir
                                          ? lmem_rd_tag_value : lmem_req_tag_value_w;
 
     assign legacy_wr_slot_valid = 1'b0;
@@ -791,18 +799,18 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
   wire dcache_rsp_fire = dcache_bus_if.rsp_valid && dcache_bus_if.rsp_ready;
   wire lmem_rsp_fire   = lmem_bus_if.rsp_valid   && lmem_bus_if.rsp_ready;
 
-  wire src_req_fire = direction_bit_r
+  wire src_req_fire = active_dir
                     ? ((state == S_L2G_DECIDE) && lmem_req_issue_fire && (lmem_req_rw_w == 1'b0))
                     : ((state == S_G2L_DECIDE) && dcache_req_issue_fire && (dcache_req_rw_w == 1'b0));
 
-  wire dst_req_fire = direction_bit_r
+  wire dst_req_fire = active_dir
                     ? ((state == S_L2G_DECIDE) && dcache_req_issue_fire && (dcache_req_rw_w == 1'b1))
                     : ((state == S_G2L_DECIDE) && lmem_req_issue_fire && (lmem_req_rw_w == 1'b1));
 
-  wire src_rsp_fire = direction_bit_r ? lmem_rsp_fire : dcache_rsp_fire;
+  wire src_rsp_fire = active_dir ? lmem_rsp_fire : dcache_rsp_fire;
 
-  wire [63:0] rd_src_ptr_cur      = direction_bit_r ? lmem_rd_ptr : dcache_rd_ptr;
-  wire [31:0] rd_src_beat_bytes   = direction_bit_r ? 32'(LMEM_BYTES) : 32'(DCACHE_BYTES);
+  wire [63:0] rd_src_ptr_cur      = active_dir ? lmem_rd_ptr : dcache_rd_ptr;
+  wire [31:0] rd_src_beat_bytes   = active_dir ? 32'(LMEM_BYTES) : 32'(DCACHE_BYTES);
   wire [63:0] rd_seg_valid_end    = rd_base_src_seg_r + 64'(valid_total);
   wire [31:0] rd_beat_valid_bytes = calc_read_valid_bytes(
     rd_src_ptr_cur,
@@ -811,7 +819,7 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
     valid_total
   );
   wire [63:0] rd_next_ptr = rd_src_ptr_cur + 64'(rd_src_beat_bytes);
-  wire        rd_crosses_seg = direction_bit_r ? (rd_next_ptr >= lmem_rd_end)
+  wire        rd_crosses_seg = active_dir ? (rd_next_ptr >= lmem_rd_end)
                                                 : (rd_next_ptr >= dcache_rd_end);
   wire        rd_is_last_seg = (rd_i_dim[0] + 32'd1 >= bound_r[0])
                             && (rd_i_dim[1] + 32'd1 >= bound_r[1])
@@ -825,7 +833,7 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
               ? (rd_base_src_seg_r + 64'(stride_r[0][2]) - stride_bound_r[0][1] - stride_bound_r[0][0])
               : 64'd0));
 
-  wire [RD_SLOT_BITS-1:0] rsp_slot_idx = direction_bit_r
+  wire [RD_SLOT_BITS-1:0] rsp_slot_idx = active_dir
                                        ? lmem_bus_if.rsp_data.tag.value[RD_SLOT_BITS-1:0]
                                        : dcache_bus_if.rsp_data.tag.value[RD_SLOT_BITS-1:0];
 
@@ -833,7 +841,7 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
   logic [MAX_BYTES*8-1:0] slot_rsp_data;
   always_comb begin
     slot_rsp_data_raw = '0;
-    if (direction_bit_r)
+    if (active_dir)
       slot_rsp_data_raw[0 +: LMEM_BYTES*8] = lmem_bus_if.rsp_data.data;
     else
       slot_rsp_data_raw[0 +: DCACHE_BYTES*8] = dcache_bus_if.rsp_data.data;
@@ -870,7 +878,7 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
     assign same_wr_slot_data = '0;
   end
 
-  wire [31:0] wr_dst_beat_bytes = direction_bit_r ? 32'(DCACHE_BYTES) : 32'(LMEM_BYTES);
+  wire [31:0] wr_dst_beat_bytes = active_dir ? 32'(DCACHE_BYTES) : 32'(LMEM_BYTES);
   wire [31:0] wr_remaining      = (out_off < seg_size_r) ? (seg_size_r - out_off) : 32'd0;
   wire [31:0] wr_nbytes_cur     = umin32(wr_remaining, wr_dst_beat_bytes);
   wire [31:0] wr_src_bytes_cur  = calc_src_bytes(out_off, valid_total, wr_nbytes_cur);
@@ -909,7 +917,7 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
   wire wr_window_can_pull = !SAME_WIDTH_FAST
                          && ((state == S_L2G_DECIDE) || (state == S_G2L_DECIDE))
                          && (wr_state == WR_RUN)
-                         && (direction_bit_r
+                         && (active_dir
                              ? (win_lmem_valid   <= WIN_VALID_W'(WIN_BYTES - LMEM_BYTES))
                              : (win_dcache_valid <= WIN_VALID_W'(WIN_BYTES - DCACHE_BYTES)));
   wire wr_window_pull = wr_slot_valid_r && wr_window_can_pull;
@@ -1026,7 +1034,7 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
         win_dcache_valid_next = '0;
         win_dcache_head_next  = '0;
       end else if (state == S_L2G_DECIDE) begin
-        if (dst_req_fire && direction_bit_r && (wr_src_bytes_cur != 0)) begin
+        if (dst_req_fire && active_dir && (wr_src_bytes_cur != 0)) begin
           if (wr_src_bytes_cur[WIN_VALID_W-1:0] >= win_lmem_valid_next) begin
             win_lmem_valid_next = '0;
             win_lmem_head_next  = '0;
@@ -1036,7 +1044,7 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
           end
         end
 
-        if (wr_window_pull && direction_bit_r && (win_lmem_valid_next + LMEM_BYTES <= WIN_BYTES)) begin
+        if (wr_window_pull && active_dir && (win_lmem_valid_next + LMEM_BYTES <= WIN_BYTES)) begin
           for (int b = 0; b < LMEM_BYTES; b++) begin
             if (b < int'(wr_slot_valid_bytes_r)) begin
               for (int off = 0; off < WIN_BYTES; off += CHUNK_BYTES) begin
@@ -1050,7 +1058,7 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
             win_lmem_head_next = '0;
         end
       end else begin
-        if (dst_req_fire && !direction_bit_r && (wr_src_bytes_cur != 0)) begin
+        if (dst_req_fire && !active_dir && (wr_src_bytes_cur != 0)) begin
           if (wr_src_bytes_cur[WIN_VALID_W-1:0] >= win_dcache_valid_next) begin
             win_dcache_valid_next = '0;
             win_dcache_head_next  = '0;
@@ -1060,7 +1068,7 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
           end
         end
 
-        if (wr_window_pull && !direction_bit_r && (win_dcache_valid_next + DCACHE_BYTES <= WIN_BYTES)) begin
+        if (wr_window_pull && !active_dir && (win_dcache_valid_next + DCACHE_BYTES <= WIN_BYTES)) begin
           for (int b = 0; b < DCACHE_BYTES; b++) begin
             if (b < int'(wr_slot_valid_bytes_r)) begin
               for (int off = 0; off < WIN_BYTES; off += CHUNK_BYTES) begin
@@ -1119,7 +1127,7 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
 
       if (cmd_start) begin
         `TRACE(2, ("%m : [%0t] | DMA_START | {inst=%s, entry_id=%0d, dir=%0d, src_base=0x%0h, dst_base=0x%0h, seg_size=%0d, padding=%0d, bound=[%0d,%0d,%0d]}\n",
-                  $time, INSTANCE_ID, cfg_reg_if.entry_id, cfg_reg_if.regs[DESC_DIR_IDX][0],
+                  $time, INSTANCE_ID, cfg_reg_if.entry_id, cmd_dir,
                   {cfg_reg_if.regs[4][31:0], cfg_reg_if.regs[3][31:0]},
                   {cfg_reg_if.regs[2][31:0], cfg_reg_if.regs[1][31:0]},
                   cfg_reg_if.regs[14][31:0], cfg_reg_if.regs[15][31:0],
@@ -1155,11 +1163,11 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
 
       if (state == S_PREP_SEG) begin
         `TRACE(2, ("%m : [%0t] | DMA_SEG_PREP | {inst=%s, mode=%s, i0=%0d, i1=%0d, i2=%0d, src_base=0x%0h, dst_base=0x%0h, seg_size=%0d, valid_total=%0d, padding=%0d, src_rd_ptr=0x%0h, src_rd_end=0x%0h}\n",
-                  $time, INSTANCE_ID, direction_bit_r ? "L2G" : "G2L",
+                  $time, INSTANCE_ID, active_dir ? "L2G" : "G2L",
                   wr_i_dim[0], wr_i_dim[1], wr_i_dim[2], rd_base_src_seg, wr_base_dst_seg,
                   seg_size_r, valid_total, padding_r,
-                  direction_bit_r ? align_down(rd_base_src_seg, LMEM_BYTES) : align_down(rd_base_src_seg, DCACHE_BYTES),
-                  direction_bit_r ? align_up(rd_base_src_seg + 64'(valid_total), LMEM_BYTES)
+                  active_dir ? align_down(rd_base_src_seg, LMEM_BYTES) : align_down(rd_base_src_seg, DCACHE_BYTES),
+                  active_dir ? align_up(rd_base_src_seg + 64'(valid_total), LMEM_BYTES)
                                   : align_up(rd_base_src_seg + 64'(valid_total), DCACHE_BYTES)))
       end
 
@@ -1268,7 +1276,7 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
         // Entered exactly once per descriptor (from S_PRECALC) to perform
         // the initial segment init. Descriptor completion is detected by
         // the DECIDE states' exit condition, not here.
-        state_n = direction_bit_r ? S_L2G_DECIDE : S_G2L_DECIDE;
+        state_n = active_dir ? S_L2G_DECIDE : S_G2L_DECIDE;
       end
 
       // ==========================================================
@@ -1605,7 +1613,7 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
         end else begin
           wr_state <= WR_RUN;
 
-          if (direction_bit_r) begin
+          if (active_dir) begin
             // L2G: source=LMEM
             lmem_rd_ptr <= align_down(rd_base_src_seg, LMEM_BYTES);
             if (valid_total == 0) begin
@@ -1650,7 +1658,7 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
             if (rd_is_last_seg) begin
               // All rd segments issued
               rd_state <= RD_DONE;
-              if (direction_bit_r) lmem_rd_ptr <= rd_next_ptr;
+              if (active_dir) lmem_rd_ptr <= rd_next_ptr;
               else                 dcache_rd_ptr <= rd_next_ptr;
             end else begin
               // Advance rd_i_dim, rd_base_src_seg_r, recompute rd_ptr/rd_end
@@ -1666,7 +1674,7 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
                 end
               end
               rd_base_src_seg_r <= rd_next_base;
-              if (direction_bit_r) begin
+              if (active_dir) begin
                 lmem_rd_ptr <= align_down(rd_next_base, LMEM_BYTES);
                 lmem_rd_end <= align_up(rd_next_base + 64'(valid_total), LMEM_BYTES);
               end else begin
@@ -1676,7 +1684,7 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
             end
           end else begin
             // Stay in current rd segment
-            if (direction_bit_r) lmem_rd_ptr <= rd_next_ptr;
+            if (active_dir) lmem_rd_ptr <= rd_next_ptr;
             else                 dcache_rd_ptr <= rd_next_ptr;
           end
         end
@@ -1688,7 +1696,7 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
           slot_state_r[rsp_slot_idx] <= SLOT_READY;
           if (!SAME_WIDTH_FAST) begin
             slot_data_r[rsp_slot_idx] <= '0;
-            if (direction_bit_r)
+            if (active_dir)
               slot_data_r[rsp_slot_idx][0 +: LMEM_BYTES*8] <= lmem_bus_if.rsp_data.data;
             else
               slot_data_r[rsp_slot_idx][0 +: DCACHE_BYTES*8] <= dcache_bus_if.rsp_data.data;
@@ -1938,7 +1946,7 @@ module VX_dma_unit_align import VX_gpu_pkg::*; #(
       cmd_start,
       precalc_issue,
       precalc_done,
-      direction_bit_r,
+      active_dir,
       finished,
       (state == S_DONE),
       done_if.ready,

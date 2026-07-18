@@ -667,6 +667,10 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
       .INSTANCE_ID({INSTANCE_ID, "_input_dma"}),
       .DIR(0),
       .TAG_WIDTH(GEMM_BASE_TAG_WIDTH),
+      .LMEM_ADDR_WIDTH_P(`MEM_ADDR_WIDTH - `CLOG2(`GEMM_INPUT_DATA_SIZE)),
+      .GEMM_ADDR_WIDTH_P(`MEM_ADDR_WIDTH - `CLOG2(`GEMM_INPUT_DATA_SIZE)),
+      .LMEM_TAG_WIDTH_P(GEMM_BASE_TAG_WIDTH),
+      .GEMM_TAG_WIDTH_P(GEMM_BASE_TAG_WIDTH),
       .RD_PREFETCH_DEPTH(I_RD_PREFETCH_DEPTH),
       .ENABLE_MISALIGN(1'b1)
     ) u_input_lmem_dma (
@@ -697,6 +701,10 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
       .INSTANCE_ID({INSTANCE_ID, "_quant_param_dma"}),
       .DIR(0),
       .TAG_WIDTH(GEMM_BASE_TAG_WIDTH),
+      .LMEM_ADDR_WIDTH_P(`MEM_ADDR_WIDTH - `CLOG2(`GEMM_SCALE_ZERO_DATA_SIZE)),
+      .GEMM_ADDR_WIDTH_P(`MEM_ADDR_WIDTH - `CLOG2(`GEMM_SCALE_ZERO_DATA_SIZE)),
+      .LMEM_TAG_WIDTH_P(GEMM_BASE_TAG_WIDTH),
+      .GEMM_TAG_WIDTH_P(GEMM_BASE_TAG_WIDTH),
       .RD_PREFETCH_DEPTH(SZ_RD_PREFETCH_DEPTH),
       .ENABLE_MISALIGN(1'b1)
     ) u_quant_param_lmem_dma (
@@ -713,6 +721,10 @@ module VX_gemm_node_naive import VX_gpu_pkg::*; #(
       .INSTANCE_ID({INSTANCE_ID, "_output_dma"}),
       .DIR(1),
       .TAG_WIDTH(GEMM_BASE_TAG_WIDTH),
+      .LMEM_ADDR_WIDTH_P(`MEM_ADDR_WIDTH - `CLOG2(`GEMM_OUTPUT_DATA_SIZE)),
+      .GEMM_ADDR_WIDTH_P(`MEM_ADDR_WIDTH - `CLOG2(`GEMM_OUTPUT_DATA_SIZE)),
+      .LMEM_TAG_WIDTH_P(GEMM_BASE_TAG_WIDTH),
+      .GEMM_TAG_WIDTH_P(GEMM_BASE_TAG_WIDTH),
       .RD_PREFETCH_DEPTH(O_RD_PREFETCH_DEPTH),
       .ENABLE_MISALIGN(1'b1)
     ) u_output_lmem_dma (

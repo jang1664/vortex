@@ -361,6 +361,10 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         .INSTANCE_ID ({INSTANCE_ID, ":ldma_in"}),
         .DIR         (0),
         .TAG_WIDTH   (TAG_WIDTH),
+        .LMEM_ADDR_WIDTH_P(`MEM_ADDR_WIDTH - `CLOG2(DATA_SIZE)),
+        .GEMM_ADDR_WIDTH_P(`MEM_ADDR_WIDTH - `CLOG2(GEMM_DATA_SIZE)),
+        .LMEM_TAG_WIDTH_P(TAG_WIDTH),
+        .GEMM_TAG_WIDTH_P(TAG_WIDTH),
         .RD_PREFETCH_DEPTH(I_RD_PREFETCH_DEPTH)
     ) u_ldma_input (
         .clk         (clk),
@@ -380,6 +384,10 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         .INSTANCE_ID ({INSTANCE_ID, ":ldma_wt"}),
         .DIR         (0),
         .TAG_WIDTH   (TAG_WIDTH),
+        .LMEM_ADDR_WIDTH_P(`MEM_ADDR_WIDTH - `CLOG2(GEMM_WEIGHT_DATA_SIZE)),
+        .GEMM_ADDR_WIDTH_P(`MEM_ADDR_WIDTH - `CLOG2(GEMM_WEIGHT_DATA_SIZE)),
+        .LMEM_TAG_WIDTH_P(TAG_WIDTH),
+        .GEMM_TAG_WIDTH_P(TAG_WIDTH),
         .RD_PREFETCH_DEPTH(W_RD_PREFETCH_DEPTH)
     ) u_ldma_weight (
         .clk         (clk),
@@ -399,6 +407,10 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         .INSTANCE_ID ({INSTANCE_ID, ":ldma_wt"}),
         .DIR         (0),
         .TAG_WIDTH   (TAG_WIDTH),
+        .LMEM_ADDR_WIDTH_P(`MEM_ADDR_WIDTH - `CLOG2(DATA_SIZE)),
+        .GEMM_ADDR_WIDTH_P(`MEM_ADDR_WIDTH - `CLOG2(GEMM_DATA_SIZE)),
+        .LMEM_TAG_WIDTH_P(TAG_WIDTH),
+        .GEMM_TAG_WIDTH_P(TAG_WIDTH),
         .RD_PREFETCH_DEPTH(W_RD_PREFETCH_DEPTH)
     ) u_ldma_weight (
         .clk         (clk),
@@ -418,6 +430,10 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         .INSTANCE_ID ({INSTANCE_ID, ":ldma_sz"}),
         .DIR         (0),
         .TAG_WIDTH   (TAG_WIDTH),
+        .LMEM_ADDR_WIDTH_P(`MEM_ADDR_WIDTH - `CLOG2(DATA_SIZE)),
+        .GEMM_ADDR_WIDTH_P(`MEM_ADDR_WIDTH - `CLOG2(GEMM_DATA_SIZE)),
+        .LMEM_TAG_WIDTH_P(TAG_WIDTH),
+        .GEMM_TAG_WIDTH_P(TAG_WIDTH),
         .RD_PREFETCH_DEPTH(SZ_RD_PREFETCH_DEPTH)
     ) u_ldma_sz (
         .clk         (clk),
@@ -436,6 +452,10 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         .INSTANCE_ID ({INSTANCE_ID, ":ldma_out"}),
         .DIR         (1),
         .TAG_WIDTH   (TAG_WIDTH),
+        .LMEM_ADDR_WIDTH_P(`MEM_ADDR_WIDTH - `CLOG2(DATA_SIZE)),
+        .GEMM_ADDR_WIDTH_P(`MEM_ADDR_WIDTH - `CLOG2(GEMM_DATA_SIZE)),
+        .LMEM_TAG_WIDTH_P(TAG_WIDTH),
+        .GEMM_TAG_WIDTH_P(TAG_WIDTH),
         .RD_PREFETCH_DEPTH(O_RD_PREFETCH_DEPTH)
     ) u_ldma_output (
         .clk         (clk),

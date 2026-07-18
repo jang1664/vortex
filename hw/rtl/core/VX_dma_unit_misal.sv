@@ -21,7 +21,9 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
   parameter int LMEM_ADDR_WIDTH   = 1,
   parameter int DCACHE_TAG_WIDTH = 1,
   parameter int LMEM_TAG_WIDTH   = 1,
-  parameter int RD_OUTSTANDING = 2
+  parameter int RD_OUTSTANDING = 2,
+  // -1: use descriptor direction, 0/1: compile-time fixed direction.
+  parameter int FIXED_DIR = -1
 ) (
   input wire clk,
   input wire reset,
@@ -65,16 +67,6 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
   localparam int RD_SLOT_BITS_CAP   = (RD_OUTSTANDING > 1)
                                     ? $clog2(RD_OUTSTANDING) : 0;
   localparam int RD_SLOT_BITS       = (RD_SLOT_BITS_CAP < 1) ? 1 : RD_SLOT_BITS_CAP;
-  // The source response owns the slot tag. Preserve the wider DCache window
-  // for G2L even when the LMEM response tag limits L2G to fewer slots.
-  localparam int DCACHE_SLOT_BITS   = (DCACHE_TAG_VALUE_W < RD_SLOT_BITS_CAP)
-                                    ? DCACHE_TAG_VALUE_W : RD_SLOT_BITS_CAP;
-  localparam int LMEM_SLOT_BITS     = (LMEM_TAG_VALUE_W < RD_SLOT_BITS_CAP)
-                                    ? LMEM_TAG_VALUE_W : RD_SLOT_BITS_CAP;
-  localparam int DCACHE_RD_OUTSTANDING = (DCACHE_SLOT_BITS == 0)
-                                       ? 1 : (1 << DCACHE_SLOT_BITS);
-  localparam int LMEM_RD_OUTSTANDING = (LMEM_SLOT_BITS == 0)
-                                     ? 1 : (1 << LMEM_SLOT_BITS);
   localparam int SLOT_OCC_W         = `CLOG2(RD_OUTSTANDING + 1);
   localparam int SLOT_BYTE_W        = `CLOG2(MAX_BYTES + 1);
 
@@ -103,7 +95,15 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
     if (MIN_TAG_VALUE_W < 1)
       $fatal(1, "tag.value width must be >= 1 (dcache=%0d, lmem=%0d)", DCACHE_TAG_VALUE_W, LMEM_TAG_VALUE_W);
     if (!is_power_of_two(RD_OUTSTANDING))
-      $fatal(1, "RD_OUTSTANDING(%0d) must be a power of two", RD_OUTSTANDING);
+      $fatal(1, "RD_OUTSTANDING(%0d) must be a positive power of two", RD_OUTSTANDING);
+    if (DCACHE_TAG_VALUE_W < RD_SLOT_BITS_CAP)
+      $fatal(1, "dcache tag.value width (%0d) < requested slot bits (%0d)",
+             DCACHE_TAG_VALUE_W, RD_SLOT_BITS_CAP);
+    if (LMEM_TAG_VALUE_W < RD_SLOT_BITS_CAP)
+      $fatal(1, "lmem tag.value width (%0d) < requested slot bits (%0d)",
+             LMEM_TAG_VALUE_W, RD_SLOT_BITS_CAP);
+    if ((FIXED_DIR < -1) || (FIXED_DIR > 1))
+      $fatal(1, "FIXED_DIR(%0d) must be -1, 0, or 1", FIXED_DIR);
     if (!is_power_of_two(PACK_BYTES))
       $fatal(1, "MISALIGN_PACK_BYTES(%0d) must be a power of two", PACK_BYTES);
     if (PACK_BYTES > MIN_BYTES)
@@ -349,6 +349,8 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
   assign cfg_reg_if.ready = (state == S_IDLE);
   assign cfg_fire = cfg_reg_if.valid && cfg_reg_if.ready;
   wire cmd_start = cfg_fire && cfg_reg_if.regs[0][0];
+  wire cmd_dir = (FIXED_DIR < 0)
+               ? cfg_reg_if.regs[DESC_DIR_IDX][0] : FIXED_DIR[0];
 
   logic [31:0] entry_id_latched;
   logic [`UP(UUID_WIDTH)-1:0] dma_uuid;
@@ -361,7 +363,17 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
   logic [31:0] seg_size_r;
   logic [31:0] padding_r;
   logic        direction_bit_r;
+  wire         active_dir = (FIXED_DIR < 0) ? direction_bit_r : FIXED_DIR[0];
   logic        precalc_pending_r;
+
+`ifndef SYNTHESIS
+  always_ff @(posedge clk) begin
+    if (!reset && cmd_start && (FIXED_DIR >= 0)
+        && (cfg_reg_if.regs[DESC_DIR_IDX][0] != FIXED_DIR[0]))
+      $fatal(1, "%s: descriptor direction (%0d) does not match FIXED_DIR(%0d)",
+             INSTANCE_ID, cfg_reg_if.regs[DESC_DIR_IDX][0], FIXED_DIR);
+  end
+`endif
 
   wire precalc_issue = (state == S_PRECALC) && precalc_pending_r;
   logic [5:0]       precalc_valid;
@@ -505,7 +517,7 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
           : (wr_dst_seg_base_r + 64'(stride_r[1][2])
              - stride_bound_r[1][1] - stride_bound_r[1][0]));
 
-  wire [31:0] rd_src_bytes = direction_bit_r ? 32'(LMEM_BYTES) : 32'(DCACHE_BYTES);
+  wire [31:0] rd_src_bytes = active_dir ? 32'(LMEM_BYTES) : 32'(DCACHE_BYTES);
   wire [63:0] rd_next_ptr = rd_src_ptr_r + 64'(rd_src_bytes);
   wire rd_crosses_seg = (rd_next_ptr >= rd_src_end_r);
   wire [63:0] rd_valid_start = (rd_src_ptr_r < rd_src_seg_base_r)
@@ -644,36 +656,36 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
   assign lmem_req_ready_w = lmem_req_rw_w
                           ? lmem_wr_ready : lmem_rd_ready;
 
-  assign dcache_bus_if.req_valid = direction_bit_r
+  assign dcache_bus_if.req_valid = active_dir
                                  ? dcache_wr_valid : dcache_rd_valid;
-  assign dcache_bus_if.req_data.rw = direction_bit_r;
-  assign dcache_bus_if.req_data.addr = direction_bit_r
+  assign dcache_bus_if.req_data.rw = active_dir;
+  assign dcache_bus_if.req_data.addr = active_dir
                                     ? dcache_wr_addr : dcache_rd_addr;
-  assign dcache_bus_if.req_data.data = direction_bit_r
+  assign dcache_bus_if.req_data.data = active_dir
                                     ? dcache_wr_data : '0;
-  assign dcache_bus_if.req_data.byteen = direction_bit_r
+  assign dcache_bus_if.req_data.byteen = active_dir
                                       ? dcache_wr_byteen : '0;
-  assign dcache_bus_if.req_data.flags = direction_bit_r
+  assign dcache_bus_if.req_data.flags = active_dir
                                      ? dcache_wr_flags : dcache_rd_flags;
-  assign dcache_bus_if.req_data.tag.uuid = direction_bit_r
+  assign dcache_bus_if.req_data.tag.uuid = active_dir
                                         ? dcache_wr_tag_uuid : dcache_rd_tag_uuid;
-  assign dcache_bus_if.req_data.tag.value = direction_bit_r
+  assign dcache_bus_if.req_data.tag.value = active_dir
                                          ? dcache_wr_tag_value : dcache_rd_tag_value;
 
-  assign lmem_bus_if.req_valid = direction_bit_r
+  assign lmem_bus_if.req_valid = active_dir
                                ? lmem_rd_valid : lmem_wr_valid;
-  assign lmem_bus_if.req_data.rw = !direction_bit_r;
-  assign lmem_bus_if.req_data.addr = direction_bit_r
+  assign lmem_bus_if.req_data.rw = !active_dir;
+  assign lmem_bus_if.req_data.addr = active_dir
                                   ? lmem_rd_addr : lmem_wr_addr;
-  assign lmem_bus_if.req_data.data = direction_bit_r
+  assign lmem_bus_if.req_data.data = active_dir
                                   ? '0 : lmem_wr_data;
-  assign lmem_bus_if.req_data.byteen = direction_bit_r
+  assign lmem_bus_if.req_data.byteen = active_dir
                                     ? '0 : lmem_wr_byteen;
-  assign lmem_bus_if.req_data.flags = direction_bit_r
+  assign lmem_bus_if.req_data.flags = active_dir
                                    ? lmem_rd_flags : lmem_wr_flags;
-  assign lmem_bus_if.req_data.tag.uuid = direction_bit_r
+  assign lmem_bus_if.req_data.tag.uuid = active_dir
                                       ? lmem_rd_tag_uuid : lmem_wr_tag_uuid;
-  assign lmem_bus_if.req_data.tag.value = direction_bit_r
+  assign lmem_bus_if.req_data.tag.value = active_dir
                                        ? lmem_rd_tag_value : lmem_wr_tag_value;
 
   wire dcache_req_issue_fire = dcache_req_valid_w && dcache_req_ready_w;
@@ -683,12 +695,12 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
   wire dcache_rsp_fire = dcache_bus_if.rsp_valid && dcache_bus_if.rsp_ready;
   wire lmem_rsp_fire   = lmem_bus_if.rsp_valid && lmem_bus_if.rsp_ready;
 
-  wire src_req_issue_fire = direction_bit_r ? lmem_req_issue_fire : dcache_req_issue_fire;
-  wire src_req_fire = direction_bit_r
+  wire src_req_issue_fire = active_dir ? lmem_req_issue_fire : dcache_req_issue_fire;
+  wire src_req_fire = active_dir
                     ? (lmem_req_fire && !lmem_bus_if.req_data.rw)
                     : (dcache_req_fire && !dcache_bus_if.req_data.rw);
-  wire src_rsp_fire = direction_bit_r ? lmem_rsp_fire : dcache_rsp_fire;
-  wire dst_req_fire = direction_bit_r
+  wire src_rsp_fire = active_dir ? lmem_rsp_fire : dcache_rsp_fire;
+  wire dst_req_fire = active_dir
                     ? (dcache_req_fire && dcache_bus_if.req_data.rw)
                     : (lmem_req_fire && lmem_bus_if.req_data.rw);
 
@@ -703,13 +715,12 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
   wire [REQ_PENDING_W-1:0] lmem_req_pending_next = lmem_req_pending_r
       + REQ_PENDING_W'(lmem_req_issue_fire) - REQ_PENDING_W'(lmem_req_fire);
 
-  wire [SLOT_OCC_W-1:0] rd_outstanding_limit = direction_bit_r
-      ? SLOT_OCC_W'(LMEM_RD_OUTSTANDING) : SLOT_OCC_W'(DCACHE_RD_OUTSTANDING);
+  wire [SLOT_OCC_W-1:0] rd_outstanding_limit = SLOT_OCC_W'(RD_OUTSTANDING);
   wire [RD_SLOT_BITS-1:0] lmem_rsp_slot_idx
       = RD_SLOT_BITS'(lmem_bus_if.rsp_data.tag.value);
   wire [RD_SLOT_BITS-1:0] dcache_rsp_slot_idx
       = RD_SLOT_BITS'(dcache_bus_if.rsp_data.tag.value);
-  wire [RD_SLOT_BITS-1:0] rsp_slot_idx = direction_bit_r
+  wire [RD_SLOT_BITS-1:0] rsp_slot_idx = active_dir
       ? lmem_rsp_slot_idx : dcache_rsp_slot_idx;
 
   logic pack_slot_retire;
@@ -727,7 +738,7 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
 
   always_comb begin
     response_payload_wdata = '0;
-    if (direction_bit_r)
+    if (active_dir)
       response_payload_wdata[0 +: LMEM_BYTES*8] = lmem_bus_if.rsp_data.data;
     else
       response_payload_wdata[0 +: DCACHE_BYTES*8] = dcache_bus_if.rsp_data.data;
@@ -773,7 +784,7 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
   logic [LMEM_BYTES*8-1:0]   wr_lmem_data_next;
   logic [LMEM_BYTES-1:0]     wr_lmem_be_next;
 
-  wire [31:0] wr_dst_bytes = direction_bit_r ? 32'(DCACHE_BYTES) : 32'(LMEM_BYTES);
+  wire [31:0] wr_dst_bytes = active_dir ? 32'(DCACHE_BYTES) : 32'(LMEM_BYTES);
   wire [31:0] wr_seg_remaining = (wr_out_off_r < seg_size_r)
                                      ? (seg_size_r - wr_out_off_r) : 32'd0;
   wire [31:0] wr_payload_remaining = (wr_out_off_r < valid_total)
@@ -783,7 +794,7 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
   wire [31:0] wr_slot_remaining = 32'(slot_remaining_r[wr_expect_slot_r]);
   wire [31:0] wr_slot_lane = 32'(slot_lane_r[wr_expect_slot_r]);
 
-  wire dst_req_ready_w = direction_bit_r ? dcache_req_ready_w : lmem_req_ready_w;
+  wire dst_req_ready_w = active_dir ? dcache_req_ready_w : lmem_req_ready_w;
   wire dst_req_issue_fire = pack_can_move && pack_flush && dst_req_ready_w;
 
   always_comb begin
@@ -804,7 +815,7 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
     wr_lmem_data_next = wr_lmem_data_r;
     wr_lmem_be_next = wr_lmem_be_r;
     tmp_min = 32'd0;
-    src_bus_bytes = direction_bit_r ? 32'(LMEM_BYTES) : 32'(DCACHE_BYTES);
+    src_bus_bytes = active_dir ? 32'(LMEM_BYTES) : 32'(DCACHE_BYTES);
 
     if ((state == S_RUN) && (wr_state == WR_RUN)
         && (wr_seg_remaining != 0) && (wr_dst_room != 0)) begin
@@ -854,7 +865,7 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
                       && (pack_move_bytes >= wr_slot_remaining);
 
       if (pack_can_move && (pack_move_bytes != 0)) begin
-        if (direction_bit_r) begin
+        if (active_dir) begin
           if (pack_fast_move)
             wr_dcache_data_next = insert_dcache_fast(wr_dcache_data_r, fast_data,
                                                      wr_dst_lane_r);
@@ -909,7 +920,7 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
     lmem_bus_if.rsp_ready = 1'b1;
 
     if (rd_can_issue) begin
-      if (direction_bit_r) begin
+      if (active_dir) begin
         lmem_req_valid_w = 1'b1;
         lmem_req_rw_w = 1'b0;
         lmem_req_addr_w = to_lmem_addr(rd_src_ptr_r);
@@ -925,7 +936,7 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
     end
 
     if ((state == S_RUN) && (wr_state == WR_RUN) && pack_can_move && pack_flush) begin
-      if (direction_bit_r) begin
+      if (active_dir) begin
         dcache_req_valid_w = 1'b1;
         dcache_req_rw_w = 1'b1;
         dcache_req_addr_w = to_dcache_addr(wr_dst_write_base_r);
@@ -1197,7 +1208,7 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
     if (!reset) begin
       if (cmd_start) begin
         `TRACE(2, ("%m : [%0t] | DMA_START | {inst=%s, entry_id=%0d, dir=%0d, src_base=0x%0h, dst_base=0x%0h, seg_size=%0d, padding=%0d, bound=[%0d,%0d,%0d], pack=%0d, slots=%0d}\n",
-                  $time, INSTANCE_ID, cfg_reg_if.entry_id, cfg_reg_if.regs[DESC_DIR_IDX][0],
+                  $time, INSTANCE_ID, cfg_reg_if.entry_id, cmd_dir,
                   {cfg_reg_if.regs[4][31:0], cfg_reg_if.regs[3][31:0]},
                   {cfg_reg_if.regs[2][31:0], cfg_reg_if.regs[1][31:0]},
                   cfg_reg_if.regs[14][31:0], cfg_reg_if.regs[15][31:0],
@@ -1238,20 +1249,20 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
   reg [PERF_CTR_BITS-1:0] perf_src_rd_data_fire_r, perf_src_rd_data_stall_r;
   reg [PERF_CTR_BITS-1:0] perf_dst_wr_fire_r,      perf_dst_wr_stall_r;
 
-  wire g2l_rd_beat = (state == S_RUN) && !direction_bit_r && dcache_rsp_fire;
-  wire l2g_wr_beat = (state == S_RUN) && direction_bit_r
+  wire g2l_rd_beat = (state == S_RUN) && !active_dir && dcache_rsp_fire;
+  wire l2g_wr_beat = (state == S_RUN) && active_dir
                    && dcache_req_fire && dcache_bus_if.req_data.rw;
   wire dma_is_active = (state != S_IDLE) && (state != S_DONE);
   wire dma_xfer_done = (state != S_DONE) && (state_n == S_DONE);
   wire dma_stall_dcache = dcache_bus_if.req_valid && !dcache_bus_if.req_ready;
   wire dma_stall_lmem = lmem_bus_if.req_valid && !lmem_bus_if.req_ready;
-  wire perf_src_rd_req_stall = direction_bit_r
+  wire perf_src_rd_req_stall = active_dir
       ? (lmem_bus_if.req_valid && !lmem_bus_if.req_ready && !lmem_bus_if.req_data.rw)
       : (dcache_bus_if.req_valid && !dcache_bus_if.req_ready && !dcache_bus_if.req_data.rw);
-  wire perf_src_rd_data_stall = direction_bit_r
+  wire perf_src_rd_data_stall = active_dir
       ? (lmem_bus_if.rsp_valid && !lmem_bus_if.rsp_ready)
       : (dcache_bus_if.rsp_valid && !dcache_bus_if.rsp_ready);
-  wire perf_dst_wr_stall = direction_bit_r
+  wire perf_dst_wr_stall = active_dir
       ? (dcache_bus_if.req_valid && !dcache_bus_if.req_ready && dcache_bus_if.req_data.rw)
       : (lmem_bus_if.req_valid && !lmem_bus_if.req_ready && lmem_bus_if.req_data.rw);
 
