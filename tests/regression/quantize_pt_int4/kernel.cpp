@@ -68,6 +68,7 @@ void kernel_quantize_pt_int4(kernel_arg_t *__UNIFORM__ arg) {
   uint32_t n_rows = arg->n_rows;
   uint32_t D = arg->D;
   uint32_t mode = arg->mode;
+  uint32_t packed = arg->packed;
 
   int cache_idx = threadIdx.x;
 
@@ -76,7 +77,7 @@ void kernel_quantize_pt_int4(kernel_arg_t *__UNIFORM__ arg) {
   if (row >= n_rows) return;
 
   auto pRow = pInput + (uint64_t)row * D;
-  auto pQRow = pQ + (uint64_t)row * D;
+  auto pQRow = pQ + (uint64_t)row * (packed ? (D / 2) : D);
 
   // Shared memory for the reduction. Note: __syncthreads() must not be
   // nested inside a branch on `mode` (even though `mode` is uniform across
@@ -133,10 +134,26 @@ void kernel_quantize_pt_int4(kernel_arg_t *__UNIFORM__ arg) {
   }
 
   // Phase 3: quantize using the fp32 scale (not the fp16-rounded one).
-  for (uint32_t i = cache_idx; i < D; i += blockDim.x) {
-    float v = fp16_to_float(pRow[i]);
-    float qf = (mode == QMODE_SYM) ? round_half_even(v / S) : round_half_even(v / S + z);
-    pQRow[i] = clamp_int4(qf);
+  if (packed == 0) {
+    for (uint32_t i = cache_idx; i < D; i += blockDim.x) {
+      float v = fp16_to_float(pRow[i]);
+      float qf = (mode == QMODE_SYM) ? round_half_even(v / S) : round_half_even(v / S + z);
+      pQRow[i] = clamp_int4(qf);
+    }
+  } else {
+    for (uint32_t pair = cache_idx; pair < D / 2; pair += blockDim.x) {
+      const uint32_t i0 = pair * 2;
+      const uint32_t i1 = i0 + 1;
+      const float v0 = fp16_to_float(pRow[i0]);
+      const float v1 = fp16_to_float(pRow[i1]);
+      const float qf0 = (mode == QMODE_SYM)
+          ? round_half_even(v0 / S) : round_half_even(v0 / S + z);
+      const float qf1 = (mode == QMODE_SYM)
+          ? round_half_even(v1 / S) : round_half_even(v1 / S + z);
+      const uint8_t q0 = static_cast<uint8_t>(clamp_int4(qf0)) & 0x0f;
+      const uint8_t q1 = static_cast<uint8_t>(clamp_int4(qf1)) & 0x0f;
+      reinterpret_cast<uint8_t*>(pQRow)[pair] = q0 | (q1 << 4);
+    }
   }
 }
 

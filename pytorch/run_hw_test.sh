@@ -59,7 +59,10 @@ declare -A OP_FILE
 while IFS= read -r f; do
   op="${f#test_}"; op="${op#native_}"; op="${op%.py}"   # strip test_ / native_ / .py
   OP_FILE["$op"]="$f"
-done < <(cd "$TEST_DIR" 2>/dev/null && ls test_native_*.py test_mm_w4a16_opt.py 2>/dev/null | sort -u)
+done < <(cd "$TEST_DIR" 2>/dev/null && \
+  ls test_native_*.py test_mm_w4a16_opt.py test_mm_w4a16_gemm_core_hw.py \
+     test_spinquant_layer_accuracy_vortex_ops.py \
+     test_spinquant_layer_accuracy_vortex_integration.py 2>/dev/null | sort -u)
 mapfile -t AVAIL < <(printf '%s\n' "${!OP_FILE[@]}" | sort)
 
 list_ops() { printf '  %s\n' "${AVAIL[@]}"; }
@@ -161,8 +164,10 @@ fi
 # --- runtime env (mirrors report §4-B + team test_loop.sh conventions) ---
 export VORTEX_HOME
 export CUDA_HOME
+export PYTHONPATH="$VORTEX_HOME/pytorch/spinquant:$VORTEX_HOME/pytorch${PYTHONPATH:+:$PYTHONPATH}"
 export LD_LIBRARY_PATH="$CUDA_HOME/lib64:$VORTEX_HOME/build/runtime:${LD_LIBRARY_PATH:-}"
 export VORTEX_DRIVER=xrt
+export RUN_VORTEX_TESTS=1
 if [[ -z "$DEVICE" ]]; then
   echo "[fatal] no usable XRT device index resolved; aborting before the runtime segfaults on a board you don't own." >&2
   exit 3

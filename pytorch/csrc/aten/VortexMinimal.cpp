@@ -4,6 +4,9 @@
 #include <ATen/native/DispatchStub.h>
 #include <torch/library.h>
 
+#include <cstdlib>
+#include <cstring>
+
 // Metadata-only view/shape ops.  Each of these computes new sizes/strides
 // and calls self.as_strided(...) (already registered natively on
 // PrivateUse1 above), so registering them here keeps the whole op on
@@ -212,6 +215,11 @@ bool wrapper_has_compatible_shallow_copy_type(
 void wrapper_cpu_fallback(
     const c10::OperatorHandle& op,
     torch::jit::Stack* stack) {
+  const char* strict = std::getenv("TORCH_VORTEX_STRICT_NATIVE");
+  TORCH_CHECK(
+      !(strict && std::strcmp(strict, "0") != 0),
+      "strict-native Vortex execution rejected CPU fallback for ",
+      op.schema().name());
   at::native::vortex::cpu_fallback(op, stack);
 }
 

@@ -125,5 +125,74 @@ The inverse rotation is pre-absorbed into `down_proj` weights at quantization ti
 
 The +0.023 gap (~0.4%) comes from floating-point ordering differences in the PyTorch fallback (dequantize → fp32 matmul) vs. SpinQuant's fused CUDA kernels. The result confirms correct W4A16+KV4 quantization.
 
+## Single-layer GPU versus FPGA accuracy
+
+`spinquant_inference.layer_accuracy` is a separate, explicit decoder-layer
+harness. It does not use the generation model's monkey patches. Its v1 contract
+is Llama-2-7B prefill with `B=1`, `S=32`, W4 group size 32, asymmetric K4,
+symmetric V4, online R3 after RoPE, and exact online R4 before `down_proj`.
+
+Create one deterministic case and run the CUDA reference:
+
+```bash
+conda activate vortex
+cd pytorch/spinquant
+python -m spinquant_inference.layer_accuracy make-case \
+  --source random --seed 1 --output /shared/path/spinquant-layer-case
+python -m spinquant_inference.layer_accuracy run \
+  --case /shared/path/spinquant-layer-case --backend cuda \
+  --stop-after qk --capture both --output /shared/path/spinquant-layer-cuda
+```
+
+Use a path visible from both the login and Slurm FPGA nodes; node-local `/tmp`
+is not suitable for the hardware handoff.
+
+Run exactly the same case on the allocated FPGA, then compare every captured
+stage through the requested stop point:
+
+```bash
+./run_layer_accuracy_hw.sh \
+  /shared/path/spinquant-layer-case /shared/path/spinquant-layer-fpga qk
+python -m spinquant_inference.layer_accuracy compare \
+  --reference /shared/path/spinquant-layer-cuda \
+  --candidate /shared/path/spinquant-layer-fpga \
+  --output /shared/path/spinquant-layer-report.json
+```
+
+The hardware wrapper uses the C4 alias configuration and bitstream by default
+(`improve_th16_tcol32_hwexp_dcache`). `--include-auxiliary` is an optional
+diagnostic for packed INT4/scale/zero artifacts; normal end-to-end acceptance
+uses semantic captures because sparse code changes are expected when tiny
+pre-quantization FP16 differences cross an INT4 bin boundary.
+
+To isolate the PyTorch↔Vortex connection from device layout kernels, run one
+pre-tiled GEMM core directly on C4:
+
+```bash
+srun -p fpga --gres=fpga:u55c:1 --cpus-per-task=4 --mem=32G --time=0:20:00 \
+  bash pytorch/run_hw_test.sh mm_w4a16_gemm_core_hw
+```
+
+Useful stop points include `input_norm`, `q_proj`, `q_r3`, `k_quant`, `qk`,
+`softmax`, `pv`, `attn_residual`, `r4`, and `final_residual`. The Vortex
+command requires `--strict-native`; any unregistered ATen fallback is an error.
+Each run writes semantic captures, hashes, placement information, and a physical
+layout plan. Use `--source checkpoint --checkpoint ... --checkpoint-profile
+spinquant-w4a16-r3r4 --layer-index N` to replace random weights with a strict
+layer checkpoint.
+
+The workload generator remains advisory rather than a runtime dependency. Check
+that the harness still agrees with its standalone SpinQuant layout intent using:
+
+```bash
+python -m spinquant_inference.layer_accuracy check-generator
+```
+
+With the current `improve_th16_tcol32_hwexp_dcache` simulation configuration,
+the standalone softmax regression itself aborts in simx. The strict-native
+integration test therefore covers through `qk` in simx; use the hardware
+runner for `softmax` and later stop points until that simulator regression is
+fixed.
+
 ## References
 - [SpinQuant: LLM Quantization with Learned Rotations](https://arxiv.org/abs/2405.16406)

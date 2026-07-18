@@ -111,6 +111,47 @@ add_custom_target(vortex_pytorch_kernels ALL
   USES_TERMINAL
 )
 
+# SpinQuant single-layer accuracy uses decomposed kernels so every physical
+# layout boundary can be captured independently. Build and package the exact
+# set here instead of depending on stale regression artifacts in a build tree.
+set(_SPINQUANT_LAYER_KERNELS
+    eladd
+    elmul
+    silu
+    rmsnorm
+    rope
+    hadamard_base
+    hadamard_k
+    quantize_pt_int4
+    head_concat
+    qk_asym_correction
+    tile_input_a
+    tile_weight_w4a16
+    tile_scale_zp_w4a16
+    detile_output
+    fpint_gemm_ffn_hw)
+
+add_custom_target(vortex_spinquant_layer_kernels ALL
+  COMMAND "${CMAKE_COMMAND}" -E echo "Building SpinQuant layer-accuracy kernels"
+  COMMENT "Building SpinQuant layer-accuracy Vortex kernels"
+  VERBATIM
+  USES_TERMINAL)
+
+foreach(_kernel_name IN LISTS _SPINQUANT_LAYER_KERNELS)
+  set(_kernel_build_dir "${VORTEX_BUILD_DIR}/tests/regression/${_kernel_name}")
+  if(NOT EXISTS "${_kernel_build_dir}/Makefile")
+    message(FATAL_ERROR
+      "Missing configured SpinQuant regression build directory: ${_kernel_build_dir}")
+  endif()
+  add_custom_command(TARGET vortex_spinquant_layer_kernels POST_BUILD
+    COMMAND "${CMAKE_COMMAND}" -E env "MAKEFLAGS="
+            "${VORTEX_MAKE_EXECUTABLE}" -C "${_kernel_build_dir}" kernel.vxbin
+    VERBATIM)
+  install(FILES "${_kernel_build_dir}/kernel.vxbin"
+          DESTINATION ${CMAKE_INSTALL_PREFIX}/kernels
+          RENAME "${_kernel_name}.vxbin")
+endforeach()
+
 # ---- Install pre-built Vortex kernel binaries into torch_vortex/kernels/ ----
 # These are the RISC-V binaries that native ATen ops launch on the device.
 set(_ELADD_VXBIN "${VORTEX_BUILD_DIR}/tests/regression/eladd/kernel.vxbin")

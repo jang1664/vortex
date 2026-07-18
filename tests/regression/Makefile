@@ -25,6 +25,8 @@ TEST_DIRS := \
 	fpint_gemm_ffn_hw_naive \
 	gemm_fpint \
 	hadamard \
+	hadamard_base \
+	hadamard_k \
 	head_concat \
 	head_concat_layout_fused \
 	io_addr \
@@ -35,6 +37,8 @@ TEST_DIRS := \
 	mmio_burst_proto \
 	mstress \
 	printf \
+	qk_asym_correction \
+	quantize_pt_int4 \
 	relu \
 	rms_norm_layout_fused \
 	rmsnorm \

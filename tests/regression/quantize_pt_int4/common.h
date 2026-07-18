@@ -29,6 +29,7 @@ typedef struct {
 
   // Quantization parameters
   uint32_t mode;             // QMODE_SYM (0) or QMODE_ASYM (1)
+  uint32_t packed;           // 0: int8 [D], 1: two signed int4 values per byte [D/2]
 
   uint32_t power_kernel_iterations;
 } kernel_arg_t;
