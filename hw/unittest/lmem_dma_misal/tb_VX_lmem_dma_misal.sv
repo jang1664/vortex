@@ -4,6 +4,15 @@
 `ifndef TB_RD_PREFETCH_DEPTH
 `define TB_RD_PREFETCH_DEPTH 1
 `endif
+`ifndef TB_ENABLE_MISALIGN
+`define TB_ENABLE_MISALIGN 1
+`endif
+`ifndef TB_REORDER_RESPONSES
+`define TB_REORDER_RESPONSES 0
+`endif
+`ifndef TB_GEMM_REQ_BACKPRESSURE
+`define TB_GEMM_REQ_BACKPRESSURE 1
+`endif
 
 // -----------------------------------------------------------------------------
 // Testbench for VX_lmem_dma_misal with REAL VX_local_mem + byte-addressed GEMM node
@@ -20,6 +29,9 @@ module tb_VX_lmem_dma_misal import VX_gpu_pkg::*; ();
   parameter string OBJ          = "func";  // "func" or "power"
   parameter string FILE_POSTFIX = "func";
   parameter int    RD_PREFETCH_DEPTH = `TB_RD_PREFETCH_DEPTH;
+  parameter bit    ENABLE_MISALIGN = `TB_ENABLE_MISALIGN;
+  parameter bit    REORDER_RESPONSES = `TB_REORDER_RESPONSES;
+  parameter bit    GEMM_REQ_BACKPRESSURE = `TB_GEMM_REQ_BACKPRESSURE;
 
   // -----------------------------
   // Params
@@ -29,6 +41,7 @@ module tb_VX_lmem_dma_misal import VX_gpu_pkg::*; ();
   localparam int MEM_BYTES       = 64*1024;
 
   localparam int TAG_WIDTH  = GEMM_MEM_TAG_WIDTH;
+  localparam int BUS_ADDR_WIDTH = `MEM_ADDR_WIDTH - `CLOG2(DATA_SIZE_BYTES);
 
   localparam int LMEM_PORTS = 1;
   localparam int NUM_REQS   = LMEM_PORTS;
@@ -58,9 +71,11 @@ module tb_VX_lmem_dma_misal import VX_gpu_pkg::*; ();
   VX_lmem_dma_ctrl_if #(.NDIM(NDIM)) ctrl1_if();
   VX_gemm_sync_if                  sync1_if();
 
-  // sync ready always
-  assign sync0_if.ready = 1'b1;
-  assign sync1_if.ready = 1'b1;
+  logic sync0_ready_r;
+  logic sync1_ready_r;
+
+  assign sync0_if.ready = sync0_ready_r;
+  assign sync1_if.ready = sync1_ready_r;
 
   // -----------------------------
   // Shared slave buses
@@ -95,7 +110,11 @@ module tb_VX_lmem_dma_misal import VX_gpu_pkg::*; ();
     .NDIM(NDIM),
     .TAG_WIDTH(TAG_WIDTH),
     .RD_PREFETCH_DEPTH(RD_PREFETCH_DEPTH),
-    .ENABLE_MISALIGN(1'b1)
+    .ENABLE_MISALIGN(ENABLE_MISALIGN),
+    .LMEM_ADDR_WIDTH_P(BUS_ADDR_WIDTH),
+    .GEMM_ADDR_WIDTH_P(BUS_ADDR_WIDTH),
+    .LMEM_TAG_WIDTH_P(TAG_WIDTH),
+    .GEMM_TAG_WIDTH_P(TAG_WIDTH)
   ) dut_dir0 (
     .clk         (clk),
     .reset       (reset),
@@ -111,7 +130,11 @@ module tb_VX_lmem_dma_misal import VX_gpu_pkg::*; ();
     .NDIM(NDIM),
     .TAG_WIDTH(TAG_WIDTH),
     .RD_PREFETCH_DEPTH(RD_PREFETCH_DEPTH),
-    .ENABLE_MISALIGN(1'b1)
+    .ENABLE_MISALIGN(ENABLE_MISALIGN),
+    .LMEM_ADDR_WIDTH_P(BUS_ADDR_WIDTH),
+    .GEMM_ADDR_WIDTH_P(BUS_ADDR_WIDTH),
+    .LMEM_TAG_WIDTH_P(TAG_WIDTH),
+    .GEMM_TAG_WIDTH_P(TAG_WIDTH)
   ) dut_dir1 (
     .clk         (clk),
     .reset       (reset),
@@ -221,11 +244,20 @@ module tb_VX_lmem_dma_misal import VX_gpu_pkg::*; ();
   logic [GEMM_RD_Q_BITS-1:0]         g_rd_head_r;
   logic [GEMM_RD_Q_BITS-1:0]         g_rd_tail_r;
   logic [GEMM_RD_Q_BITS:0]           g_rd_count_r;
+  logic                               gemm_req_stall_r;
   logic [gemm_bus_s.ADDR_WIDTH-1:0]  g_rd_addr_q [0:GEMM_RD_Q_DEPTH-1];
   tag_t                              g_rd_tag_q  [0:GEMM_RD_Q_DEPTH-1];
   wire                               gemm_req_fire = gemm_bus_s.req_valid && gemm_bus_s.req_ready;
   wire                               gemm_req_read_fire = gemm_req_fire && !gemm_bus_s.req_data.rw;
-  wire                               gemm_rsp_issue = (!gemm_bus_s.rsp_valid || gemm_bus_s.rsp_ready) && (g_rd_count_r != 0);
+  wire [GEMM_RD_Q_BITS-1:0]          g_rsp_idx = REORDER_RESPONSES
+                                                ? (g_rd_tail_r - 1'b1)
+                                                : g_rd_head_r;
+  wire                               gemm_rsp_release = !REORDER_RESPONSES
+                                                       || (g_rd_count_r >= 4)
+                                                       || !gemm_bus_s.req_valid;
+  wire                               gemm_rsp_issue = (!gemm_bus_s.rsp_valid || gemm_bus_s.rsp_ready)
+                                                    && (g_rd_count_r != 0)
+                                                    && gemm_rsp_release;
 
   always @(posedge clk) begin
     if (reset) begin
@@ -235,8 +267,11 @@ module tb_VX_lmem_dma_misal import VX_gpu_pkg::*; ();
       g_rd_head_r          <= '0;
       g_rd_tail_r          <= '0;
       g_rd_count_r         <= '0;
+      gemm_req_stall_r     <= 1'b0;
     end else begin
-      gemm_bus_s.req_ready <= (g_rd_count_r != GEMM_RD_Q_DEPTH);
+      gemm_req_stall_r <= GEMM_REQ_BACKPRESSURE ? ~gemm_req_stall_r : 1'b0;
+      gemm_bus_s.req_ready <= (g_rd_count_r != GEMM_RD_Q_DEPTH)
+                           && !gemm_req_stall_r;
 
       if (gemm_bus_s.rsp_valid && gemm_bus_s.rsp_ready)
         gemm_bus_s.rsp_valid <= 1'b0;
@@ -255,16 +290,17 @@ module tb_VX_lmem_dma_misal import VX_gpu_pkg::*; ();
             $fatal(1, "GEMM read queue overflow");
           g_rd_addr_q[g_rd_tail_r] <= gemm_bus_s.req_data.addr;
           g_rd_tag_q[g_rd_tail_r]  <= gemm_bus_s.req_data.tag;
-          g_rd_tail_r <= g_rd_tail_r + 1'b1;
+          if (!REORDER_RESPONSES)
+            g_rd_tail_r <= g_rd_tail_r + 1'b1;
         end
       end
 
       if (gemm_rsp_issue) begin
         int unsigned base_b;
-        base_b = int'(g_rd_addr_q[g_rd_head_r]) << $clog2(DATA_SIZE_BYTES);
+        base_b = int'(g_rd_addr_q[g_rsp_idx]) << $clog2(DATA_SIZE_BYTES);
 
         gemm_bus_s.rsp_valid    <= 1'b1;
-        gemm_bus_s.rsp_data.tag <= g_rd_tag_q[g_rd_head_r];
+        gemm_bus_s.rsp_data.tag <= g_rd_tag_q[g_rsp_idx];
         for (int i = 0; i < DATA_SIZE_BYTES; i++) begin
           if (base_b + i < MEM_BYTES)
             gemm_bus_s.rsp_data.data[i*8 +: 8] <= gemm_mem[base_b + i];
@@ -272,7 +308,8 @@ module tb_VX_lmem_dma_misal import VX_gpu_pkg::*; ();
             gemm_bus_s.rsp_data.data[i*8 +: 8] <= 8'h00;
         end
 
-        g_rd_head_r <= g_rd_head_r + 1'b1;
+        if (!REORDER_RESPONSES)
+          g_rd_head_r <= g_rd_head_r + 1'b1;
       end
 
       unique case ({gemm_req_read_fire, gemm_rsp_issue})
@@ -280,8 +317,75 @@ module tb_VX_lmem_dma_misal import VX_gpu_pkg::*; ();
         2'b01: g_rd_count_r <= g_rd_count_r - 1'b1;
         default:;
       endcase
+
+      if (REORDER_RESPONSES) begin
+        unique case ({gemm_req_read_fire, gemm_rsp_issue})
+          2'b10: g_rd_tail_r <= g_rd_tail_r + 1'b1;
+          2'b01: g_rd_tail_r <= g_rd_tail_r - 1'b1;
+          default:;
+        endcase
+      end
     end
   end
+
+  longint unsigned cycle_count_r;
+  integer sync0_accept_count;
+  integer sync1_accept_count;
+  integer done0_count;
+  integer done1_count;
+  integer request_accept_count;
+
+  always_ff @(posedge clk) begin
+    if (reset) begin
+      cycle_count_r <= 0;
+      sync0_accept_count <= 0;
+      sync1_accept_count <= 0;
+      done0_count <= 0;
+      done1_count <= 0;
+      request_accept_count <= 0;
+    end else begin
+      cycle_count_r <= cycle_count_r + 1;
+      if (sync0_if.valid && sync0_if.ready)
+        sync0_accept_count <= sync0_accept_count + 1;
+      if (sync1_if.valid && sync1_if.ready)
+        sync1_accept_count <= sync1_accept_count + 1;
+      if (ctrl0_if.done)
+        done0_count <= done0_count + 1;
+      if (ctrl1_if.done)
+        done1_count <= done1_count + 1;
+      request_accept_count <= request_accept_count
+                            + (lmem_bus_s.req_valid && lmem_bus_s.req_ready)
+                            + (gemm_bus_s.req_valid && gemm_bus_s.req_ready);
+    end
+  end
+
+`ifdef TB_PERF_TRACE
+  always_ff @(posedge clk) begin
+    if (!reset) begin
+      if (lmem_bus_s.req_valid && lmem_bus_s.req_ready)
+        $display("[BUS_FIRE] t=%0t dir=%0d endpoint=lmem rw=%0d", $time, sel,
+                 lmem_bus_s.req_data.rw);
+      if (gemm_bus_s.req_valid && gemm_bus_s.req_ready)
+        $display("[BUS_FIRE] t=%0t dir=%0d endpoint=gemm rw=%0d", $time, sel,
+                 gemm_bus_s.req_data.rw);
+      if (lmem_bus_s.rsp_valid && lmem_bus_s.rsp_ready)
+        $display("[RSP_FIRE] t=%0t dir=%0d endpoint=lmem", $time, sel);
+      if (gemm_bus_s.rsp_valid && gemm_bus_s.rsp_ready)
+        $display("[RSP_FIRE] t=%0t dir=%0d endpoint=gemm", $time, sel);
+      if (dut_dir0.dma_done_if.valid && (dut_dir0.state == 1))
+        $display("[CORE_DONE] t=%0t dir=0", $time);
+      if (dut_dir1.dma_done_if.valid && (dut_dir1.state == 1))
+        $display("[CORE_DONE] t=%0t dir=1", $time);
+    end
+  end
+`endif
+
+`ifdef GEMM_NAIVE
+  always_ff @(posedge clk) begin
+    if (!reset && (sync0_if.valid || sync1_if.valid))
+      $fatal(1, "GEMM_NAIVE local DMA unexpectedly emitted wrapper sync");
+  end
+`endif
 
   // -----------------------------
   // Files / dump (dma_node TB style)
@@ -498,6 +602,9 @@ module tb_VX_lmem_dma_misal import VX_gpu_pkg::*; ();
 
     logic [31:0] reg0_idx, reg0_val;
     logic [31:0] reg1_idx, reg1_val;
+    integer sync_before, done_before;
+    longint unsigned dir0_start_cycle, dir1_start_cycle;
+    longint unsigned dir0_cycles, dir1_cycles;
 
     total_bytes = b0*b1*b2*seg_bytes;
 
@@ -524,6 +631,9 @@ module tb_VX_lmem_dma_misal import VX_gpu_pkg::*; ();
               seg_bytes, b0, b1, b2, src_off, dst_off, lmem_off);
 
     // 1) GEMM -> LMEM  (DIR=1)
+    sync_before = sync1_accept_count;
+    done_before = done1_count;
+    dir1_start_cycle = cycle_count_r;
     ctrl1_pulse_start(
       gemm_src_base, lmem_base,
       stride0, stride1, stride2,
@@ -531,10 +641,28 @@ module tb_VX_lmem_dma_misal import VX_gpu_pkg::*; ();
       seg_bytes,
       reg1_idx, reg1_val
     );
+`ifndef GEMM_NAIVE
     wait_sync1_and_check(reg1_idx, reg1_val, "DIR1");
+`endif
     wait_dma_done1();
+    #1;
+    dir1_cycles = cycle_count_r - dir1_start_cycle;
+`ifdef GEMM_NAIVE
+    if (sync1_accept_count != sync_before)
+      $fatal(1, "DIR1 GEMM_NAIVE emitted sync");
+`else
+    if (sync1_accept_count != (sync_before + 1))
+      $fatal(1, "DIR1 sync count mismatch: before=%0d after=%0d",
+             sync_before, sync1_accept_count);
+`endif
+    if (done1_count != (done_before + 1))
+      $fatal(1, "DIR1 done pulse count mismatch: before=%0d after=%0d",
+             done_before, done1_count);
 
     // 2) LMEM -> GEMM  (DIR=0)
+    sync_before = sync0_accept_count;
+    done_before = done0_count;
+    dir0_start_cycle = cycle_count_r;
     ctrl0_pulse_start(
       lmem_base, gemm_dst_base,
       stride0, stride1, stride2,
@@ -542,16 +670,137 @@ module tb_VX_lmem_dma_misal import VX_gpu_pkg::*; ();
       seg_bytes,
       reg0_idx, reg0_val
     );
+`ifndef GEMM_NAIVE
     wait_sync0_and_check(reg0_idx, reg0_val, "DIR0");
+`endif
     wait_dma_done0();
+    #1;
+    dir0_cycles = cycle_count_r - dir0_start_cycle;
+`ifdef GEMM_NAIVE
+    if (sync0_accept_count != sync_before)
+      $fatal(1, "DIR0 GEMM_NAIVE emitted sync");
+`else
+    if (sync0_accept_count != (sync_before + 1))
+      $fatal(1, "DIR0 sync count mismatch: before=%0d after=%0d",
+             sync_before, sync0_accept_count);
+`endif
+    if (done0_count != (done_before + 1))
+      $fatal(1, "DIR0 done pulse count mismatch: before=%0d after=%0d",
+             done_before, done0_count);
 
     // 3) Verify GEMM only
     gemm_check_equal(gemm_src_base, gemm_dst_base, total_bytes, "ROUNDTRIP");
 
+    $display("[CYCLES] dir1=%0d dir0=%0d total=%0d",
+             dir1_cycles, dir0_cycles, dir1_cycles + dir0_cycles);
     $display("[CASE] PASS ✅");
     $fdisplay(rpt_fd, "[CASE] seg=%0d bnd=(%0d,%0d,%0d) off(s=%0d d=%0d l=%0d) PASS",
               seg_bytes, b0, b1, b2, src_off, dst_off, lmem_off);
   endtask
+
+  task automatic run_zero_case(
+    input bit dir,
+    input bit zero_seg_size,
+    input bit zero_bound
+  );
+    integer req_before, sync_before, done_before;
+    logic [31:0] reg_idx, reg_val;
+
+    req_before = request_accept_count;
+    reg_idx = dir ? 32'd41 : 32'd40;
+    reg_val = dir ? 32'h0102_0304 : 32'hA0B0_C0D0;
+
+    if (dir) begin
+      sync_before = sync1_accept_count;
+      done_before = done1_count;
+      ctrl1_pulse_start(
+        32'h3000, 32'h1000,
+        DATA_SIZE_BYTES, DATA_SIZE_BYTES, DATA_SIZE_BYTES,
+        zero_bound ? 0 : 1, 1, 1,
+        zero_seg_size ? 0 : DATA_SIZE_BYTES,
+        reg_idx, reg_val
+      );
+`ifndef GEMM_NAIVE
+      wait_sync1_and_check(reg_idx, reg_val, "DIR1_ZERO");
+`endif
+      wait_dma_done1();
+      #1;
+      if (done1_count != (done_before + 1))
+        $fatal(1, "DIR1 zero-size done count mismatch");
+`ifdef GEMM_NAIVE
+      if (sync1_accept_count != sync_before)
+        $fatal(1, "DIR1 zero-size GEMM_NAIVE emitted sync");
+`else
+      if (sync1_accept_count != (sync_before + 1))
+        $fatal(1, "DIR1 zero-size sync count mismatch");
+`endif
+    end else begin
+      sync_before = sync0_accept_count;
+      done_before = done0_count;
+      ctrl0_pulse_start(
+        32'h1000, 32'h5000,
+        DATA_SIZE_BYTES, DATA_SIZE_BYTES, DATA_SIZE_BYTES,
+        zero_bound ? 0 : 1, 1, 1,
+        zero_seg_size ? 0 : DATA_SIZE_BYTES,
+        reg_idx, reg_val
+      );
+`ifndef GEMM_NAIVE
+      wait_sync0_and_check(reg_idx, reg_val, "DIR0_ZERO");
+`endif
+      wait_dma_done0();
+      #1;
+      if (done0_count != (done_before + 1))
+        $fatal(1, "DIR0 zero-size done count mismatch");
+`ifdef GEMM_NAIVE
+      if (sync0_accept_count != sync_before)
+        $fatal(1, "DIR0 zero-size GEMM_NAIVE emitted sync");
+`else
+      if (sync0_accept_count != (sync_before + 1))
+        $fatal(1, "DIR0 zero-size sync count mismatch");
+`endif
+    end
+
+    if (request_accept_count != req_before)
+      $fatal(1, "zero-size command issued memory requests: before=%0d after=%0d",
+             req_before, request_accept_count);
+    $display("[ZERO] PASS dir=%0d zero_seg=%0d zero_bound=%0d",
+             dir, zero_seg_size, zero_bound);
+  endtask
+
+`ifndef GEMM_NAIVE
+  task automatic run_sync_backpressure_case();
+    integer sync_before, done_before;
+    logic [31:0] reg_idx = 32'd52;
+    logic [31:0] reg_val = 32'h55AA_33CC;
+
+    sync_before = sync0_accept_count;
+    done_before = done0_count;
+    sync0_ready_r = 1'b0;
+    ctrl0_pulse_start(
+      32'h1000, 32'h5000,
+      DATA_SIZE_BYTES, DATA_SIZE_BYTES, DATA_SIZE_BYTES,
+      1, 1, 1, 0,
+      reg_idx, reg_val
+    );
+    wait_sync0_and_check(reg_idx, reg_val, "DIR0_SYNC_BP");
+    repeat (3) begin
+      @(posedge clk);
+      if (!sync0_if.valid || ctrl0_if.done || ctrl0_if.idle)
+        $fatal(1, "sync was not held while ready=0");
+    end
+    @(negedge clk);
+    sync0_ready_r = 1'b1;
+    wait_dma_done0();
+    #1;
+    if (sync0_accept_count != (sync_before + 1))
+      $fatal(1, "sync backpressure acceptance count mismatch: before=%0d after=%0d",
+             sync_before, sync0_accept_count);
+    if (done0_count != (done_before + 1))
+      $fatal(1, "sync backpressure done count mismatch: before=%0d after=%0d",
+             done_before, done0_count);
+    $display("[SYNC_BP] PASS");
+  endtask
+`endif
 
   // -----------------------------
   // sim_func / sim_power
@@ -568,11 +817,15 @@ module tb_VX_lmem_dma_misal import VX_gpu_pkg::*; ();
     // ctrl defaults
     ctrl0_if.start = 1'b0;
     ctrl1_if.start = 1'b0;
+    sync0_ready_r = 1'b1;
+    sync1_ready_r = 1'b1;
 
     // Wait stable
     repeat (5) @(posedge clk);
 
     // aligned baseline
+    run_case_roundtrip(DATA_SIZE_BYTES*1, 1,1,1, 0,0,0);
+    run_case_roundtrip(DATA_SIZE_BYTES*8, 1,1,1, 0,0,0);
     run_case_roundtrip(DATA_SIZE_BYTES*1, b0,b1,b2, 0,0,0);
     run_case_roundtrip(DATA_SIZE_BYTES*2, b0,b1,b2, 0,0,0);
     run_case_roundtrip(DATA_SIZE_BYTES*4, b0,b1,b2, 0,0,0);
@@ -584,22 +837,36 @@ module tb_VX_lmem_dma_misal import VX_gpu_pkg::*; ();
     // advances with the depth-four prefetch window.
     run_case_roundtrip(DATA_SIZE_BYTES*1, 128,4,1, 0,0,0);
 
-    // misaligned base offsets (src!=dst, and LMEM base offset too)
-    run_case_roundtrip(DATA_SIZE_BYTES*2, b0,b1,b2, 1,7,3);
-    run_case_roundtrip(DATA_SIZE_BYTES*2, b0,b1,b2, 15,2,11);
+    if (ENABLE_MISALIGN) begin
+      // Independently misaligned source, destination, and LMEM addresses.
+      run_case_roundtrip(DATA_SIZE_BYTES*2, b0,b1,b2, 1,0,0);
+      run_case_roundtrip(DATA_SIZE_BYTES*2, b0,b1,b2, 0,7,0);
+      run_case_roundtrip(DATA_SIZE_BYTES*2, b0,b1,b2, 0,0,3);
+      run_case_roundtrip(DATA_SIZE_BYTES*2, b0,b1,b2, 1,7,3);
+      run_case_roundtrip(DATA_SIZE_BYTES*2, b0,b1,b2, 15,2,11);
 
-    // misaligned seg_bytes too (important)
-    run_case_roundtrip(DATA_SIZE_BYTES + 5,   b0,b1,b2, 3,11,1);
-    run_case_roundtrip(DATA_SIZE_BYTES*2 + 3, b0,b1,b2, 5,1,9);
-    run_case_roundtrip(DATA_SIZE_BYTES*4 - 1, b0,b1,b2, 9,13,7);
+      // Partial final beats and sub-beat segments.
+      run_case_roundtrip(DATA_SIZE_BYTES + 5,   b0,b1,b2, 3,11,1);
+      run_case_roundtrip(DATA_SIZE_BYTES*2 + 3, b0,b1,b2, 5,1,9);
+      run_case_roundtrip(DATA_SIZE_BYTES*4 - 1, b0,b1,b2, 9,13,7);
+      run_case_roundtrip(DATA_SIZE_BYTES - 5, b0,b1,b2, 3,11,1);
+      run_case_roundtrip(DATA_SIZE_BYTES - 1, b0,b1,b2, 5,1,9);
+      run_case_roundtrip(DATA_SIZE_BYTES,     b0,b1,b2, 9,13,7);
+    end
 
-    run_case_roundtrip(DATA_SIZE_BYTES - 5, b0,b1,b2, 3,11,1);
-    run_case_roundtrip(DATA_SIZE_BYTES - 1, b0,b1,b2, 5,1,9);
-    run_case_roundtrip(DATA_SIZE_BYTES,     b0,b1,b2, 9,13,7);
+    run_zero_case(1'b0, 1'b1, 1'b0);
+    run_zero_case(1'b0, 1'b0, 1'b1);
+    run_zero_case(1'b1, 1'b1, 1'b0);
+    run_zero_case(1'b1, 1'b0, 1'b1);
+
+`ifndef GEMM_NAIVE
+    run_sync_backpressure_case();
+`endif
 
     $display("=====================================================================");
     $display("=====================  ALL TESTS COMPLETED  =========================");
     $display("=====================================================================");
+    $display("TEST PASSED");
   endtask
 
   task automatic sim_power();
@@ -665,9 +932,9 @@ module tb_VX_lmem_dma_misal import VX_gpu_pkg::*; ();
   initial begin
     repeat (20000) @(posedge clk);
     $fatal(1,
-      "TB timeout: dir0 idle=%0b top=%0d rd=%0d wr=%0d occ=%0d win_valid=%0d | dir1 idle=%0b top=%0d rd=%0d wr=%0d occ=%0d win_valid=%0d",
-      ctrl0_if.idle, dut_dir0.top_state, dut_dir0.rd_state, dut_dir0.wr_state, dut_dir0.slot_occupancy_r, dut_dir0.wr_win_valid_r,
-      ctrl1_if.idle, dut_dir1.top_state, dut_dir1.rd_state, dut_dir1.wr_state, dut_dir1.slot_occupancy_r, dut_dir1.wr_win_valid_r
+      "TB timeout: dir0 idle=%0b wrapper=%0d core_done=%0b | dir1 idle=%0b wrapper=%0d core_done=%0b",
+      ctrl0_if.idle, dut_dir0.state, dut_dir0.dma_done_if.valid,
+      ctrl1_if.idle, dut_dir1.state, dut_dir1.dma_done_if.valid
     );
   end
 
