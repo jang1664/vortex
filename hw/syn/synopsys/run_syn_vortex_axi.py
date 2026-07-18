@@ -2,34 +2,30 @@
 """Synthesize Vortex_axi (vortex_afu top minus the XRT shell) for Samsung 28LPP
 via Synopsys DC, driven through hwexplorer.SynthConfig.
 
-Run from the vortex repo root. The script sources
-configs/improve_th16_tcol32_hwexp_dcache.sh by default and replaces only the
-FPU implementation with FPU_FPNEW:
+Run from the vortex repo root. Select exactly one FPGA config alias or config
+file. FPGA/vendor FPU selectors are replaced with FPU_FPNEW for Synopsys:
 
     conda activate stable
     PYTHONPATH=/home/jaeyong.jang/project.local/research/hwexplorer \
-        python3 hw/syn/synopsys/run_syn_vortex_axi.py
+        python3 hw/syn/synopsys/run_syn_vortex_axi.py --alias C4
 
-Override the config, thread count, or run directory without editing this file:
+Use a config file directly for configurations not registered in the alias map:
 
-    VORTEX_CONFIG=configs/improve_th16_tcol32_hwexp_dcache.sh \
-    NUM_THREADS=32 SYN_RUN_NAME=Vortex_axi_nt32 \
     PYTHONPATH=/home/jaeyong.jang/project.local/research/hwexplorer \
-        python3 hw/syn/synopsys/run_syn_vortex_axi.py
+        python3 hw/syn/synopsys/run_syn_vortex_axi.py \
+        --config configs/improve_th16_tcol32_hwexp_dcache.sh
 
-By default, artifacts land in
-build/hw/syn/synopsys/Vortex_axi_nt16/syn_topo.lpp/.
+Alias C4 artifacts land in
+build/hw/syn/synopsys/Vortex_axi_C4/syn_topo.lpp/ by default.
 """
 
+import argparse
 import os
 import re
 import shlex
 import subprocess
 import sys
 from pathlib import Path
-
-from hwexplorer.automation.syn import SynthConfig
-from hwexplorer.automation.tcl_directives import Corner
 
 # ---------------------------------------------------------------------------
 # paths
@@ -40,27 +36,13 @@ RTL          = f"{VORTEX_HOME}/hw/rtl"
 THIRD_PARTY  = f"{VORTEX_HOME}/third_party"
 SCRIPTS      = f"{VORTEX_HOME}/hw/scripts"
 RESULT_ROOT  = os.environ.get("SYN_RESULT_ROOT", f"{VORTEX_HOME}/build/hw/syn/synopsys")
-RUN_NAME     = os.environ.get("SYN_RUN_NAME", "Vortex_axi_nt16")
-CONFIG_FILE  = os.path.abspath(os.environ.get(
-    "VORTEX_CONFIG",
-    f"{VORTEX_HOME}/configs/improve_th16_tcol32_hwexp_dcache.sh",
-))
 
+# Make the repository's shared FPGA alias resolver importable when this script
+# is launched by path from outside the repository root.
+if VORTEX_HOME not in sys.path:
+    sys.path.insert(0, VORTEX_HOME)
 
-def _env_int(name, default):
-    value = os.environ.get(name)
-    if value is None:
-        return default
-    try:
-        parsed = int(value, 0)
-    except ValueError:
-        sys.exit(f"{name} must be an integer, got {value!r}")
-    if parsed <= 0:
-        sys.exit(f"{name} must be positive, got {parsed}")
-    return parsed
-
-
-NUM_THREADS  = _env_int("NUM_THREADS", 16)
+from tools.latency_bench.fpga_bins import load_fpga_bin_aliases  # noqa: E402
 
 # Samsung 28LPP compiled SRAMs (see agent-tasks/synopsys-dc-port/sram_inventory.md)
 MEM_GEN_DIR  = "/home/data/memory_compiler/28LPP/genSEC"
@@ -111,9 +93,69 @@ DC_DEFINES = [
 INCOMPATIBLE_CONFIG_DEFINES = {
     "FPU_DPI",
     "FPU_DSP",
+    "FPU_FPNEW",
     "QUARTUS",
+    "TCU_BHF",
+    "TCU_DPI",
+    "TCU_DSP",
     "VIVADO",
 }
+
+
+def _build_parser():
+    parser = argparse.ArgumentParser(
+        description="Synthesize Vortex_axi with a selected Vortex hardware config."
+    )
+    config_group = parser.add_mutually_exclusive_group(required=True)
+    config_group.add_argument(
+        "--alias",
+        help="FPGA config alias from ci/fpga_bin_alias_map.yaml (for example, C1).",
+    )
+    config_group.add_argument(
+        "--config",
+        help="Path to a Vortex shell config that exports CONFIGS.",
+    )
+    parser.add_argument(
+        "--alias-map",
+        default=None,
+        help=(
+            "FPGA alias map path. Defaults to VORTEX_FPGA_BIN_ALIAS_MAP or "
+            "ci/fpga_bin_alias_map.yaml."
+        ),
+    )
+    return parser
+
+
+def _resolve_config_input(args):
+    """Return (config path, result tag) for a parsed CLI selection."""
+    if args.alias:
+        try:
+            aliases = load_fpga_bin_aliases(args.alias_map)
+        except (OSError, ValueError) as exc:
+            raise SystemExit(f"Unable to load FPGA alias map: {exc}") from exc
+
+        alias = aliases.get(args.alias)
+        if alias is None:
+            available = ", ".join(sorted(aliases))
+            raise SystemExit(
+                f"Unknown FPGA config alias {args.alias!r}. Available aliases: "
+                f"{available or '<none>'}"
+            )
+        if not alias.configs:
+            raise SystemExit(f"FPGA alias {args.alias!r} does not define a config file")
+        config_file = Path(alias.configs)
+        run_tag = args.alias
+    else:
+        config_file = Path(args.config).expanduser().resolve()
+        run_tag = config_file.stem
+
+    if not config_file.is_file():
+        raise SystemExit(f"Vortex config does not exist: {config_file}")
+
+    safe_tag = re.sub(r"[^A-Za-z0-9_.-]+", "_", run_tag).strip("._-")
+    if not safe_tag:
+        raise SystemExit(f"Unable to derive a result name from {run_tag!r}")
+    return config_file.resolve(), safe_tag
 
 
 def _define_name(define):
@@ -136,27 +178,33 @@ def _merge_defines(*groups):
 
 
 def _load_config_defines(config_file):
-    """Source a Vortex config and convert its CONFIGS string into DC defines."""
+    """Source a Vortex config and convert its CONFIGS string into defines."""
     if not os.path.isfile(config_file):
         sys.exit(f"Vortex config does not exist: {config_file}")
 
     command = 'set -e; source "$1"; printf "%s\\n" "${CONFIGS:-}"'
-    result = subprocess.run(
-        ["bash", "-c", command, "bash", config_file],
-        check=True,
-        text=True,
-        capture_output=True,
-    )
+    try:
+        result = subprocess.run(
+            ["bash", "-c", command, "bash", str(config_file)],
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        detail = exc.stderr.strip() or f"bash exited with status {exc.returncode}"
+        raise SystemExit(f"Unable to source Vortex config {config_file}: {detail}") from exc
 
     defines = []
     invalid = []
-    for token in shlex.split(result.stdout):
+    try:
+        tokens = shlex.split(result.stdout)
+    except ValueError as exc:
+        raise SystemExit(f"Unable to parse CONFIGS from {config_file}: {exc}") from exc
+    for token in tokens:
         if not token.startswith("-D") or len(token) == 2:
             invalid.append(token)
             continue
-        define = token[2:]
-        if _define_name(define) not in INCOMPATIBLE_CONFIG_DEFINES:
-            defines.append(define)
+        defines.append(token[2:])
     if invalid:
         sys.exit(
             f"Unsupported tokens in CONFIGS from {config_file}: "
@@ -165,11 +213,19 @@ def _load_config_defines(config_file):
     return defines
 
 
-DEFINES = _merge_defines(
-    DC_DEFINES,
-    _load_config_defines(CONFIG_FILE),
-    [f"NUM_THREADS={NUM_THREADS}", "FPU_FPNEW"],
-)
+def _make_dc_defines(config_defines):
+    """Preserve config parameters while replacing vendor-only selectors."""
+    compatible_config = [
+        define
+        for define in config_defines
+        if _define_name(define) not in INCOMPATIBLE_CONFIG_DEFINES
+    ]
+    synopsys_selectors = ["FPU_FPNEW"]
+    if _define_enabled("EXT_TCU_ENABLE", compatible_config):
+        # VX_config.vh otherwise defaults synthesis to the Xilinx-only
+        # TCU_DSP implementation, whose source is intentionally blacklisted.
+        synopsys_selectors.append("TCU_BHF")
+    return _merge_defines(DC_DEFINES, compatible_config, synopsys_selectors)
 
 # Vortex include search paths. Order matters for package emission order in
 # gen_sources.sh: dependencies (fpu pkgs) come before VX_gpu_pkg consumers.
@@ -245,8 +301,8 @@ SOURCE_BLACKLIST = {
 }
 
 
-def _define_enabled(name):
-    return any(d == name or d.startswith(f"{name}=") for d in DEFINES)
+def _define_enabled(name, defines):
+    return any(d == name or d.startswith(f"{name}=") for d in defines)
 
 
 def _is_tcu_source(path):
@@ -280,15 +336,15 @@ AXI_SOURCES = [
 ]
 
 
-def _enumerate_sources():
+def _enumerate_sources(defines, run_name):
     """Run gen_sources.sh, parse +incdir+ / file lines, return (incdirs, sources)."""
-    out_dir = f"{RESULT_ROOT}/{RUN_NAME}"
+    out_dir = f"{RESULT_ROOT}/{run_name}"
     os.makedirs(out_dir, exist_ok=True)
     out_file = f"{out_dir}/gen_sources.txt"
-    tcu_enabled = _define_enabled("EXT_TCU_ENABLE")
+    tcu_enabled = _define_enabled("EXT_TCU_ENABLE", defines)
 
     cmd = [f"{SCRIPTS}/gen_sources.sh", "-T", "Vortex_axi", "-O", out_file]
-    for d in DEFINES:
+    for d in defines:
         cmd += [f"-D{d}"]
     for d in INCLUDE_DIRS:
         cmd += [f"-I{d}"]
@@ -418,22 +474,34 @@ def _validate_synthesis_result(run_dir, design_name):
         )
 
 
-def main():
-    incdirs, sources = _enumerate_sources()
+def main(argv=None):
+    args = _build_parser().parse_args(argv)
+    config_file, run_tag = _resolve_config_input(args)
+    run_name = f"Vortex_axi_{run_tag}"
+    config_defines = _load_config_defines(config_file)
+    defines = _make_dc_defines(config_defines)
+
+    # Keep hwexplorer optional for argument/config validation and unit tests.
+    # It is required only once a real synthesis run begins.
+    from hwexplorer.automation.syn import SynthConfig
+    from hwexplorer.automation.tcl_directives import Corner
+
+    incdirs, sources = _enumerate_sources(defines, run_name)
     mem_db_paths, mem_db_files = _mem_db_setup()
 
-    print(f"# config: {CONFIG_FILE}")
-    print(f"# defines: {' '.join(f'-D{define}' for define in DEFINES)}")
+    print(f"# config: {config_file}")
+    print(f"# result: {RESULT_ROOT}/{run_name}/syn_topo.lpp")
+    print(f"# defines: {' '.join(f'-D{define}' for define in defines)}")
     print(f"# {len(sources)} source files")
     print(f"# {len(incdirs)} include dirs")
     print(f"# {len(mem_db_files)} compiled SRAM macros @ {MAX_CORNER}")
 
     cfg = SynthConfig(
         design_dir   = RESULT_ROOT,
-        syn_dir      = f"{RUN_NAME}/syn_topo.lpp",
+        syn_dir      = f"{run_name}/syn_topo.lpp",
         design_name  = "Vortex_axi",
         search_path  = incdirs,
-        define_list  = DEFINES,
+        define_list  = defines,
         an_source_list = sources,
         param_list   = [],     # CONFIGS supplied via define_list
         period       = 10.0,   # 100 MHz first attempt

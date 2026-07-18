@@ -1,0 +1,58 @@
+task: dma-sram-macro-generation
+state: DONE
+summary: Generated both DMA SRAM macros and integrated the 8x1024 compiled dual-port RAM as six 160-bit slices plus one 64-bit slice.
+updated: 2026-07-18 11:58
+log:
+  - time: 2026-07-18 02:39
+    status: IN_PROGRESS
+    note: Selected six 8x160m1 slices and one 8x64m1 slice based on the local compiler PDF limits.
+  - time: 2026-07-18 03:10
+    status: IN_PROGRESS
+    note: Both FE macros completed; correcting backend PDK discovery before a BE-only retry.
+  - time: 2026-07-18 11:44
+    status: DONE
+    note: FE and BE views for both macros passed file checks, default-mode timing inspection, and Synopsys read_db validation.
+  - time: 2026-07-18 11:48
+    status: IN_PROGRESS
+    note: Confirmed the 6x160 plus 1x64 parallel width-tiling RTL specification.
+  - time: 2026-07-18 11:58
+    status: DONE
+    note: The exact 8x1024 mapping passed VCS compile, elaboration, and functional read/write verification in the stable environment.
+attempts:
+  - command: stable full FE/BE generation for both RF2_HD macros
+    result: FE succeeded, but BE selected the DFM PM/ICC directory and produced no GDS or NDM.
+  - command: stable BE-only generation after selecting the PnR ICC2 directory
+    result: NDM generation succeeded, but the BE compiler path stopped above the version directory and produced no GDS.
+  - command: stable BE-only generation after resolving compiler version directories
+    result: Both macros produced GDS, CDL, bitmap, and NDM outputs successfully.
+learnings:
+  - A single RF2_HD macro is limited to 160 data bits at mux1, so 1024 bits must be tiled.
+  - The generic backend directory pattern matched DFM PM/ICC instead of the 7U1x_2T8x_LB ICC2 technology directory.
+  - LPP28 BE paths must resolve to the rXpY-version directory containing lib/site.spec.
+  - The 999 timing values are intentional for unsupported EMA settings; Vortex uses EMAA/EMAB 3'b100, whose timing tables contain real values.
+validation:
+  - Parsed config/patterns.yaml in the stable environment.
+  - Verified the resolver selects the sc9 7U1x_2T8x_LB ICC2 tech file and RF2_HD r5p1-02eac0.SEC2 compiler.
+  - Loaded both ss_0p900v_0p900v_125c DB files with Synopsys Library Compiler read_db.
+  - Verified non-empty Verilog, LEF, Liberty, DB, GDS2, CDL, USERLIB NDM, and frame NDM views for both macros.
+  - Verified the generated 8x160 and 8x64 Verilog model port widths and 3-bit address ports match the RTL instances.
+  - Ran tools/verify_rtl.py with VCS on an exact VX_dp_ram_compiled DATAW=1024 SIZE=8 WRENW=1 instance.
+rtl_iterations:
+  - iteration: 1
+    status: compile_error
+    error_summary: "Verification runner did not start because `python` was not present in PATH."
+    root_cause: "The environment provides `python3`, while the verification command used `python`."
+    fix_applied: "No RTL change; update the verification invocation to use `python3`."
+    lesson: Use the available Python executable explicitly before attributing verifier startup failures to RTL.
+  - iteration: 2
+    status: compile_error
+    error_summary: Verification runner did not start because system Python 3.6 does not support the verifier's argparse API.
+    root_cause: "`/usr/bin/python3` is Python 3.6.8, and `argparse.add_subparsers(required=True)` requires a newer Python."
+    fix_applied: No RTL change; select a newer Python interpreter from the stable environment.
+    lesson: Check the interpreter version as well as its executable name when starting the RTL verifier.
+  - iteration: 3
+    status: pass
+    error_summary: None; VCS compiled, elaborated, and simulated the exact 8x1024 configuration successfully.
+    root_cause: Not applicable.
+    fix_applied: "Used `conda run -n stable python` to run the verifier with Python 3.9.13."
+    lesson: The 6x160 plus 1x64 mapping preserves all 1024 bits across independent write/read checks at multiple addresses.

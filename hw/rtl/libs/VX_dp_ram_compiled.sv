@@ -214,6 +214,33 @@ module VX_dp_ram_compiled #(
             .DFTRAMBYP(1'b0), .COLLDISN(1'b1),
             .CENYA(), .WENYA(), .AYA(), .CENYB(), .WENYB(), .AYB(), .SOA(), .SOB()
         );
+    end else if (SIZE == 8 && DATAW == 1024 && WRENW == 1) begin : g_8x1024
+        // DMA response RAM — 6 × 8x160 + 1 × 8x64 RF2 macros, width-tiled.
+        `UNUSED_VAR (wren)
+        for (genvar t = 0; t < 6; t++) begin : g_tile
+            cmos28lpp_rf2_hd_8x160m1 u_macro (
+                .CLKA(clk), .CENA(~read), .AA(raddr),
+                .CLKB(clk), .CENB(~write), .AB(waddr), .DB(wdata[t*160 +: 160]),
+                .QA(rdata[t*160 +: 160]),
+                .EMAA(3'b100), .EMAB(3'b100),
+                .TENA(1'b1), .TCENA(1'b1), .TAA(3'h0),
+                .TENB(1'b1), .TCENB(1'b1), .TAB(3'h0), .TDB(160'h0),
+                .RET1N(1'b1), .SIA(2'h0), .SEA(1'b0), .SIB(2'h0), .SEB(1'b0),
+                .DFTRAMBYP(1'b0), .COLLDISN(1'b1),
+                .CENYA(), .AYA(), .CENYB(), .AYB(), .SOA(), .SOB()
+            );
+        end
+        cmos28lpp_rf2_hd_8x64m1 u_tail (
+            .CLKA(clk), .CENA(~read), .AA(raddr),
+            .CLKB(clk), .CENB(~write), .AB(waddr), .DB(wdata[960 +: 64]),
+            .QA(rdata[960 +: 64]),
+            .EMAA(3'b100), .EMAB(3'b100),
+            .TENA(1'b1), .TCENA(1'b1), .TAA(3'h0),
+            .TENB(1'b1), .TCENB(1'b1), .TAB(3'h0), .TDB(64'h0),
+            .RET1N(1'b1), .SIA(2'h0), .SEA(1'b0), .SIB(2'h0), .SEB(1'b0),
+            .DFTRAMBYP(1'b0), .COLLDISN(1'b1),
+            .CENYA(), .AYA(), .CENYB(), .AYB(), .SOA(), .SOB()
+        );
     end else if (SIZE == 16 && DATAW == 584 && WRENW == 1) begin : g_16x584
         // L2 MSHR — 4 × cmos28lpp_rf2_hd_16x146m1 (1R1W, no WEN)
         `UNUSED_VAR (wren)

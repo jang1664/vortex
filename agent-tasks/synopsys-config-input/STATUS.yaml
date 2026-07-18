@@ -1,0 +1,21 @@
+task: synopsys-config-input
+state: DONE
+updated: "2026-07-18 02:06"
+summary: Make Vortex_axi Synopsys synthesis consume an explicit FPGA alias or config file.
+log:
+  - timestamp: "2026-07-18 01:55"
+    entry: "Inspected the existing synthesis script, C1-C4 alias definitions, shared alias resolver, and wrapper. Confirmed the current script sources a C4 config by default and overrides NUM_THREADS with 16."
+  - timestamp: "2026-07-18 01:55"
+    entry: "Implemented the first CLI/config normalization pass. Validation with the system python3 failed because it is Python 3.6 and the shared alias resolver requires a newer future annotations feature; validation must use the documented stable conda environment."
+  - timestamp: "2026-07-18 02:02"
+    entry: "Retried validation in the documented stable conda environment (Python 3.9). Five tests passed; the C1-C4 test exposed an incorrect test expectation: C2 maps to the SIMD config while C3 maps to the non-SIMD config. Corrected the expected C2 path and representative EXT_TCU_ENABLE define."
+  - timestamp: "2026-07-18 02:02"
+    entry: "Static TCU review found that C1/C2 would default to Xilinx-only TCU_DSP under SYNTHESIS while the Synopsys source list blacklists that implementation. Added conditional TCU_BHF selection for EXT_TCU_ENABLE configurations, matching the source-list intent."
+  - timestamp: "2026-07-18 02:06"
+    entry: "Validation passed in the stable conda environment: Python compilation, six config-input unit tests, Bash syntax, git diff whitespace checks, hwexplorer imports, all 18 SRAM DB checks, and C1/C4 source enumeration (357 TCU sources and 346 non-TCU sources respectively). dc_shell is installed, but full long-running DC synthesis was not launched."
+pitfalls:
+  - "C2 and C3 intentionally resolve to the same config file, so result naming must use the alias rather than the config stem."
+  - "Synopsys cannot elaborate the Xilinx FPU_DSP path; all incoming FPU selectors must normalize to exactly FPU_FPNEW."
+  - "The host default python3 is 3.6, while the shared alias helper requires a newer interpreter. Activate the documented stable conda environment before running synthesis or its Python tests."
+  - "Removing the main FPU_DSP selector is not enough for TCU-enabled configs: VX_config.vh independently defaults the TCU FEDP path to TCU_DSP under SYNTHESIS. Synopsys must select TCU_BHF."
+  - "shellcheck is not installed on this host; the wrapper was validated with bash -n instead."
