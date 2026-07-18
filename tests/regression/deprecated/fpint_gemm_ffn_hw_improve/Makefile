@@ -4,7 +4,7 @@ include $(ROOT_DIR)/config.mk
 
 PROJECT := fpint_gemm_ffn_hw_improve
 
-VORTEX_RT_PATH ?= $(VORTEX_HOME)/build/runtime
+VORTEX_RT_PATH ?= $(ROOT_DIR)/runtime
 LD_LIBRARY_PATH := $(VORTEX_HOME)/third_party/ramulator:$(LD_LIBRARY_PATH)
 STARTUP_ADDR ?= 0x80000000
 
