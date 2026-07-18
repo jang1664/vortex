@@ -129,9 +129,10 @@ The +0.023 gap (~0.4%) comes from floating-point ordering differences in the PyT
 
 `spinquant_inference.layer_accuracy` is a separate, explicit decoder-layer
 harness. It does not use the generation model's monkey patches. Its v1 contract
-is one Llama-2-7B prefill decoder layer with W4 group size 32, asymmetric K4,
+is one Llama-2-7B decoder layer with W4 group size 32, asymmetric K4,
 symmetric V4, online R3 after RoPE, and exact online R4 before `down_proj`.
-It does not yet model incremental decode or a persistent KV cache.
+It supports both prefill-only execution and prompt prefill followed by ordered
+one-token decode steps with a fixed-capacity persistent KV cache.
 
 Create one deterministic case and run the CUDA reference:
 
@@ -171,6 +172,60 @@ fused layout kernels:
   /shared/path/spinquant-layer-case /shared/path/spinquant-layer-fused \
   final_residual fused
 ```
+
+### Persistent tile-major decode
+
+Create one portable decode case, run the CUDA semantic reference, and then run
+the exact same bytes on C4. The wrapper's fifth argument is the zero-based
+decode step containing the stop point:
+
+```bash
+cd pytorch/spinquant
+python -m spinquant_inference.layer_accuracy make-decode-case \
+  --source random --seed 17 --batch-size 1 \
+  --prompt-len 31 --decode-steps 2 --max-seq-len 64 \
+  --output /shared/path/spinquant-decode-case
+
+python -m spinquant_inference.layer_accuracy run \
+  --case /shared/path/spinquant-decode-case --backend cuda \
+  --decode-step 1 --stop-after final_residual --capture semantic \
+  --output /shared/path/spinquant-decode-cuda
+
+./run_layer_accuracy_hw.sh \
+  /shared/path/spinquant-decode-case /shared/path/spinquant-decode-c4 \
+  final_residual fused 1
+
+python -m spinquant_inference.layer_accuracy compare \
+  --reference /shared/path/spinquant-decode-cuda \
+  --candidate /shared/path/spinquant-decode-c4 \
+  --include-auxiliary \
+  --output /shared/path/spinquant-decode-report.json
+```
+
+The fused C4 decode backend allocates K and V payload/qparam buffers once for
+`max-seq-len`. K remains in the transposed packed GEMM-W layout consumed by QK;
+V remains in the packed GEMM-W layout consumed by PV. Prefill and append update
+the final buffers in place, then publish the new logical length only after both
+K and V writes finish. Saved decode artifacts include a cache descriptor after
+prefill and every decode step, so allocation identity, device addresses,
+generation, capacity, and logical length can be audited.
+
+The initial correctness implementation has these intentional limits:
+
+- persistent decode requires the `fused` physical plan, Llama2-7B head dim 128,
+  and a fixed capacity divisible by 32;
+- storage is preallocated for the test's maximum sequence length; dynamic
+  growth, paging, eviction, and multi-request scheduling are not implemented;
+- prompt initialization currently launches one update per token and head;
+  batching those updates is a later performance optimization;
+- the current GEMM register ABI cannot express an independent persistent-weight
+  stride, so QK/PV compute the capacity-padded storage extent. Softmax receives
+  the true logical key length and emits a zero tail, keeping unused capacity out
+  of PV and all semantic captures.
+
+The tile-crossing `31 -> 32 -> 33` case above has been compared through both
+decode steps and `final_residual` on a real C4. Focused C4 coverage also consumes
+logical prefixes 1, 31, 32, 33, 127, 128, and 129 from one capacity allocation.
 
 In the fused plan, each R3/R4 rotation is executed by
 `hadamard_layout_fused`, which writes the transformed values directly in
@@ -219,9 +274,9 @@ that the harness still agrees with both SpinQuant physical plans using:
 python -m spinquant_inference.layer_accuracy check-generator
 ```
 
-The fused full-layer integration tests are opt-in hardware tests and run on the
+The fused full-layer and decode integration tests are opt-in hardware tests and run on the
 real C4/U55C path; they do not use simx. Case generation and the CUDA reference
-accept any positive batch size and sequence length. Both C4 physical plans now
+accept any positive batch size and sequence length. Prefill on both C4 physical plans now
 support multiple 128-row M tiles and enforce these remaining kernel-layout
 limits during preflight:
 

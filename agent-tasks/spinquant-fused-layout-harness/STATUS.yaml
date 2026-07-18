@@ -1,7 +1,7 @@
 task: spinquant-fused-layout-harness
 status: completed
 created: "2026-07-18 12:19"
-updated: "2026-07-18 15:39"
+updated: "2026-07-19 03:07"
 summary: >
   Add a generator-aligned fused-layout execution plan to the SpinQuant
   single-decoder-layer C4 accuracy harness while preserving standalone mode.
@@ -87,6 +87,28 @@ logs:
       device-kernel rebuild synchronized the new src_layout ABI. Final C4
       validation passes 14/14 custom-op tests, GEMM-A QK correction, all three
       Hadamard regression cases, and 2/2 full decoder-layer tests.
+  - time: "2026-07-19 03:07"
+    entry: >
+      Added fixed-capacity persistent tile-major decode for one Llama2-7B
+      decoder layer. K/V append writes final consumer layouts in place; QK,
+      logical-prefix softmax, and PV consume the same allocation without a
+      row-major cache transform. CUDA-to-C4 artifacts pass through both final
+      residuals for prompt 31 plus two decode tokens at capacity 64, with zero
+      fallback and stable K/V addresses at logical lengths 31, 32, and 33.
+      Actual C4 validation passes 23/23 focused ops, including active-prefix
+      attention at 1, 31, 32, 33, 127, 128, and 129.
+  - time: "2026-07-19 03:21"
+    entry: >
+      Final acceptance rebuilt and installed the PyTorch extension, then ran
+      actual C4/U55C hardware. The 23 focused Vortex op tests, prompt
+      31 -> 32 -> 33 full decode (two tests, 229 seconds), standalone prefill
+      integration, fixed-address reset/reuse integration, and native persistent
+      K/V blackbox cases at positions 32 and 129 all pass. CUDA versus C4
+      comparison passes all 108 semantic and
+      auxiliary captures with zero fallback; final-residual relative L2 is
+      0.755% at length 32 and 0.767% at length 33. A prefill regression found
+      during the gate was fixed by making LayerExecutor activate bound input
+      geometry before scheduling. Final Python/generator coverage is 73/73.
 pitfalls:
   - >
     gen_kernel_cfgs.py is schedule guidance, not a complete numerical ABI.
@@ -114,3 +136,8 @@ pitfalls:
     Device-kernel wrapper sources such as kernel.baseline.cpp include
     kernel.cpp, but Make dependency tracking may not rebuild the vxbin after
     an included ABI change. Force kernel.vxbin and reinstall before C4 checks.
+  - >
+    The current GEMM MMIO ABI cannot encode logical K/N independently from a
+    persistent weight stride. Decode therefore computes capacity-padded QK/PV
+    extents and relies on logical-length softmax plus a zero probability tail;
+    removing this extra work requires an additive GEMM stride ABI.

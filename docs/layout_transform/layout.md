@@ -640,6 +640,76 @@ GEMM-W cases, but the packed source stays in row-major n-pair order. For
 packing order: `WTRANS=0` writes `gemm_w_tiled`, and `WTRANS=1` writes
 `gemm_w_tiled_transposed`.
 
+### Fixed-capacity persistent decode cache
+
+The C4 layer-accuracy decode path keeps the fused K/V outputs in their consumer
+layouts across prompt prefill and one-token decode steps. Allocation geometry is
+immutable for the cache lifetime:
+
+```text
+logical cache: [batch, head, logical_length, head_dim]
+capacity:       max_sequence_length, divisible by 32 in v1
+
+K payload: logical W[head_dim, capacity], WTRANS=1
+           physical gemm_w_tiled_transposed
+V payload: logical W[capacity, head_dim], WTRANS=0
+           physical gemm_w_tiled
+```
+
+K uses `weight_K=pad_gemm_k(head_dim)` and
+`weight_N=align_up(capacity, 32)`. V uses
+`weight_K=pad_gemm_k(capacity)` and `weight_N=align_up(head_dim, 32)`, where
+`pad_gemm_k(x)` aligns to 32 for `x <= 128` and to 128 otherwise. Payload,
+tiled scale/zero, and logical scale/zero side buffers are zero-initialized once.
+An append does not allocate a replacement buffer or transform an existing
+prefix.
+
+`kv_cache_quant_layout_fused_w4a16_update` mutates the five destination buffers
+in place. Its address contract is:
+
+```text
+source, cache_capacity, cache_position, quant_mode,
+weight, scale, zero, logical_scale, logical_zero,
+head_dim, src_layout, src_total_n, src_col_offset,
+src_total_k, src_row_offset
+```
+
+`src_layout` may be row-major, GEMM-C, or grouped GEMM-A. The source geometry
+describes the active projection/rotation buffer; destination offsets are always
+derived from capacity. K signed-asymmetric quantization uses
+`scale=(max-min)/15`, fractional `zero=-8-min/scale`, and signed codes `[-8,7]`.
+V signed-symmetric quantization uses `scale=max(abs(x))/7.5`, zero 0, and signed
+codes `[-8,7]`. Each token/head update writes its target packed payload and
+qparam slots while leaving the visible prefix and every other head unchanged.
+
+Logical length is the commit marker owned by the Python cache lifecycle. Both K
+and V device updates complete before the length advances. Reset changes only
+logical length/generation metadata and preserves the allocation and device
+addresses. An overflow or invalid position is rejected before publishing a new
+length.
+
+The attention consumer carries logical and physical extents separately:
+
+```text
+QK output storage N = capacity-aligned K-cache stride
+softmax input stride = QK storage N
+softmax logical N = committed logical_length
+softmax output stride = pad_gemm_k(capacity) for PV
+PV input/weight K = that same padded stride
+```
+
+Unused QK columns are ignored by softmax, and the softmax kernel explicitly
+zeros its output tail. Therefore PV may consume the capacity-padded GEMM-A
+buffer without observing an uncommitted cache position. The current C4 GEMM
+MMIO ABI exposes only M/N/K, not an independent weight row stride, so this v1
+path computes the capacity-padded QK/PV extent for correctness. A future ABI can
+reduce work to active tiles while preserving the same persistent layout.
+
+The standalone dynamic path above remains available for prefill comparisons;
+persistent decode currently requires the fused cache layout. Generator append
+and capacity fields are advisory schedule metadata. The executable PyTorch op,
+physical descriptors, and device tests are the functional ABI.
+
 ## Layout Kernel Assumptions
 
 The standalone layout kernels assume `MT`, `KT`, `NT`, `MXU_KT`, `MXU_NT`, and
