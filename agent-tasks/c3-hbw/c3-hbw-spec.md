@@ -1,6 +1,6 @@
 # C3_HBW: Decouple DMA/LMEM Bandwidth from CPU Threads
 
-Status: confirmed
+Status: verified
 Date: 2026-07-18
 
 ## Goal
@@ -125,3 +125,50 @@ C3_HBW widens the general DMA and shared LMEM fabric, while C4 still has its
 own eight-channel GEMM DMA/engine topology. The naive GEMM clients remain four
 independent 64-byte paths (256 B/cycle aggregate), and `VX_mem_bus_split`
 retires an aggregate beat only after every participating lane completes.
+
+## Follow-up: Efficient Partial Wide Beats
+
+Status: verified
+
+The first C3_HBW performance run showed that widening each general-DMA beat to
+512 bytes increased the physical traffic for row-oriented descriptors. The
+follow-up implementation applies two complementary optimizations:
+
+1. Coalesce dimension-0 segments into one descriptor segment when source and
+   destination strides both equal `seg_size`, padding is zero, dimensions 1/2
+   are singleton, and the combined size fits 32 bits. This preserves the DMA
+   descriptor semantics while avoiding a separate 512-byte alignment window
+   for every contiguous row.
+2. Add an opt-in active-lane mode to `VX_mem_bus_split`. The common DMA marks
+   the valid byte range of read requests in the existing `byteen` field; writes
+   already carry byte enables. The masked splitter sends requests only to lanes
+   containing at least one enabled byte and keeps an eight-entry response-mask
+   context queue so a read response waits only for participating lanes.
+
+The new splitter mode is enabled only on the general DMA cache and LMEM split
+paths. Existing GEMM splitters retain the legacy all-lane behavior by default.
+
+### Follow-up verification results
+
+Both configurations were force-recompiled before their `xrt-vcs-sim` runs.
+The workload is `fpint_gemm_ffn_hw_naive -m 128 -k 128 -n 128`.
+
+| Configuration | Result | Cycles | DMA active cycles | Read / write bytes | Destination-write stall |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Legacy C3, optimized RTL | PASS | 20,728 | 6,223 | 43,008 / 32,768 | 2,113 |
+| C3_HBW, before follow-up | PASS | 23,266 | 8,787 | 135,168 / 65,536 | 4,910 |
+| C3_HBW, optimized RTL | PASS | 18,055 | 3,264 | 43,008 / 32,768 | 2,296 |
+
+Relative to the PERF-enabled pre-follow-up C3_HBW profile, the optimized result
+is 5,211 cycles (22.4%) faster. It is also 2,673 cycles (12.9%) faster than the
+optimized legacy C3 result. The descriptor coalescing removes the repeated wide-beat
+alignment windows, reducing counted read traffic by 68.2% and write traffic by
+50.0%. The masked splitter prevents any remaining disabled lanes from becoming
+physical cache or LMEM transactions.
+
+The memory-performance counters support the same explanation. Compared with
+the pre-follow-up C3_HBW profile, physical LMEM reads/writes fell from
+25,856/20,992 to 21,760/9,472, while dcache reads/writes fell from 2,563/1,460
+to 1,123/948. The 32 x 32 x 32 C3_HBW workload also passes bit-exact checking,
+and the common DMA unit regressions pass all 2,125 misaligned cases plus the
+aligned-DMA suite.

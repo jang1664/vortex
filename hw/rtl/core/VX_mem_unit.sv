@@ -358,7 +358,8 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
         VX_mem_bus_split #(
             .NUM_LANES      (`DMA_DCACHE_PORTS),
             .LANE_DATA_SIZE (DCACHE_WORD_SIZE),
-            .TAG_WIDTH      (DCACHE_TAG_WIDTH)
+            .TAG_WIDTH      (DCACHE_TAG_WIDTH),
+            .ENABLE_LANE_MASK(1)
         ) dma_dcache_split (
             .clk         (clk),
             .reset       (reset),

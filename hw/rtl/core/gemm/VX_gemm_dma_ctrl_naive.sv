@@ -395,6 +395,24 @@ module VX_gemm_dma_ctrl_naive import VX_gpu_pkg::*; #(
     end
   end
 
+  // Collapse physically contiguous dimension-0 rows into one segment. The
+  // common DMA aligns every segment independently to its bus width, so leaving
+  // contiguous short rows split would repeatedly fetch or write the same wide
+  // beat. Restrict the transform to descriptors whose source and destination
+  // layouts are both provably contiguous and contain no per-row padding.
+  wire [63:0] coalesced_seg_size = 64'(seg_size) * 64'(bnd0);
+  wire can_coalesce_dim0 = (seg_size != 0)
+                         && (padding == 0)
+                         && (bnd0 > 1)
+                         && (bnd1 == 1)
+                         && (bnd2 == 1)
+                         && (src_s0 == seg_size)
+                         && (dst_s0 == seg_size)
+                         && (coalesced_seg_size <= 64'h0000_0000_ffff_ffff);
+  wire [31:0] desc_bnd0 = can_coalesce_dim0 ? 32'd1 : bnd0;
+  wire [31:0] desc_seg_size = can_coalesce_dim0
+                            ? coalesced_seg_size[31:0] : seg_size;
+
   // ============================================================
   // NOTIFY
   // ============================================================
@@ -421,10 +439,10 @@ module VX_gemm_dma_ctrl_naive import VX_gpu_pkg::*; #(
         DMA_R_SRC_ST2:     v32 = src_s2;
         DMA_R_DST_ST2:     v32 = dst_s2;
 
-        DMA_R_BND0:        v32 = bnd0;
+        DMA_R_BND0:        v32 = desc_bnd0;
         DMA_R_BND1:        v32 = bnd1;
         DMA_R_BND2:        v32 = bnd2;
-        DMA_R_SEG_SIZE:    v32 = seg_size;
+        DMA_R_SEG_SIZE:    v32 = desc_seg_size;
         DMA_R_PAD:         v32 = padding;
         DMA_R_DIR:         v32 = {31'd0, dir_is_st};
         DMA_R_RSVD:        v32 = 32'd0;

@@ -72,9 +72,9 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
 
   localparam int REQ_BUF_DEPTH      = 4;
   localparam int REQ_PENDING_W      = `CLOG2(REQ_BUF_DEPTH + 1);
-  localparam int DCACHE_RD_CTRL_DATAW = DCACHE_ADDR_WIDTH + MEM_FLAGS_WIDTH
+  localparam int DCACHE_RD_CTRL_DATAW = DCACHE_ADDR_WIDTH + DCACHE_BYTES + MEM_FLAGS_WIDTH
                                       + `UP(UUID_WIDTH) + DCACHE_TAG_VALUE_W;
-  localparam int LMEM_RD_CTRL_DATAW = LMEM_ADDR_WIDTH + MEM_FLAGS_WIDTH
+  localparam int LMEM_RD_CTRL_DATAW = LMEM_ADDR_WIDTH + LMEM_BYTES + MEM_FLAGS_WIDTH
                                     + `UP(UUID_WIDTH) + LMEM_TAG_VALUE_W;
   localparam int DCACHE_WR_DATAW = DCACHE_ADDR_WIDTH + (DCACHE_BYTES * 8)
                                 + DCACHE_BYTES + MEM_FLAGS_WIDTH
@@ -552,6 +552,7 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
   wire dcache_rd_valid;
   wire dcache_rd_ready;
   wire [DCACHE_ADDR_WIDTH-1:0] dcache_rd_addr;
+  wire [DCACHE_BYTES-1:0] dcache_rd_byteen;
   wire [MEM_FLAGS_WIDTH-1:0] dcache_rd_flags;
   wire [`UP(UUID_WIDTH)-1:0] dcache_rd_tag_uuid;
   wire [DCACHE_TAG_VALUE_W-1:0] dcache_rd_tag_value;
@@ -567,6 +568,7 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
   wire lmem_rd_valid;
   wire lmem_rd_ready;
   wire [LMEM_ADDR_WIDTH-1:0] lmem_rd_addr;
+  wire [LMEM_BYTES-1:0] lmem_rd_byteen;
   wire [MEM_FLAGS_WIDTH-1:0] lmem_rd_flags;
   wire [`UP(UUID_WIDTH)-1:0] lmem_rd_tag_uuid;
   wire [LMEM_TAG_VALUE_W-1:0] lmem_rd_tag_value;
@@ -588,9 +590,9 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
     .reset     (reset),
     .valid_in  (dcache_req_valid_w && !dcache_req_rw_w),
     .ready_in  (dcache_rd_ready),
-    .data_in   ({dcache_req_addr_w, dcache_req_flags_w,
+    .data_in   ({dcache_req_addr_w, dcache_req_byteen_w, dcache_req_flags_w,
                  dcache_req_tag_uuid_w, dcache_req_tag_value_w}),
-    .data_out  ({dcache_rd_addr, dcache_rd_flags,
+    .data_out  ({dcache_rd_addr, dcache_rd_byteen, dcache_rd_flags,
                  dcache_rd_tag_uuid, dcache_rd_tag_value}),
     .valid_out (dcache_rd_valid),
     .ready_out (dcache_bus_if.req_ready)
@@ -624,9 +626,9 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
     .reset     (reset),
     .valid_in  (lmem_req_valid_w && !lmem_req_rw_w),
     .ready_in  (lmem_rd_ready),
-    .data_in   ({lmem_req_addr_w, lmem_req_flags_w,
+    .data_in   ({lmem_req_addr_w, lmem_req_byteen_w, lmem_req_flags_w,
                  lmem_req_tag_uuid_w, lmem_req_tag_value_w}),
-    .data_out  ({lmem_rd_addr, lmem_rd_flags,
+    .data_out  ({lmem_rd_addr, lmem_rd_byteen, lmem_rd_flags,
                  lmem_rd_tag_uuid, lmem_rd_tag_value}),
     .valid_out (lmem_rd_valid),
     .ready_out (lmem_bus_if.req_ready)
@@ -664,7 +666,7 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
   assign dcache_bus_if.req_data.data = active_dir
                                     ? dcache_wr_data : '0;
   assign dcache_bus_if.req_data.byteen = active_dir
-                                      ? dcache_wr_byteen : '0;
+                                      ? dcache_wr_byteen : dcache_rd_byteen;
   assign dcache_bus_if.req_data.flags = active_dir
                                      ? dcache_wr_flags : dcache_rd_flags;
   assign dcache_bus_if.req_data.tag.uuid = active_dir
@@ -680,7 +682,7 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
   assign lmem_bus_if.req_data.data = active_dir
                                   ? '0 : lmem_wr_data;
   assign lmem_bus_if.req_data.byteen = active_dir
-                                    ? '0 : lmem_wr_byteen;
+                                    ? lmem_rd_byteen : lmem_wr_byteen;
   assign lmem_bus_if.req_data.flags = active_dir
                                    ? lmem_rd_flags : lmem_wr_flags;
   assign lmem_bus_if.req_data.tag.uuid = active_dir
@@ -924,12 +926,18 @@ module VX_dma_unit_misal import VX_gpu_pkg::*; #(
         lmem_req_valid_w = 1'b1;
         lmem_req_rw_w = 1'b0;
         lmem_req_addr_w = to_lmem_addr(rd_src_ptr_r);
+        // Read byte enables are metadata for masked wide-bus splitters. Local
+        // memory ignores them for the read itself.
+        lmem_req_byteen_w = insert_lmem_be('0, rd_issue_lane, rd_issue_bytes);
         lmem_req_tag_uuid_w = dma_uuid;
         lmem_req_tag_value_w = LMEM_TAG_VALUE_W'(rd_issue_slot_r);
       end else begin
         dcache_req_valid_w = 1'b1;
         dcache_req_rw_w = 1'b0;
         dcache_req_addr_w = to_dcache_addr(rd_src_ptr_r);
+        // Cache reads likewise use byteen only as an active-lane sideband
+        // before the request reaches the narrow cache-line interfaces.
+        dcache_req_byteen_w = insert_dcache_be('0, rd_issue_lane, rd_issue_bytes);
         dcache_req_tag_uuid_w = dma_uuid;
         dcache_req_tag_value_w = DCACHE_TAG_VALUE_W'(rd_issue_slot_r);
       end
