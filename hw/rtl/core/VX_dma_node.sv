@@ -4,7 +4,8 @@ module VX_dma_node import VX_gpu_pkg::*; #(
   parameter `STRING INSTANCE_ID = "",
   parameter int N_MASTER     = 1,
   parameter int NUM_ENTRIES  = 16,
-  parameter int LMEM_NUM_LANES_P = `NUM_LSU_LANES,
+  parameter int LMEM_NUM_LANES_P = `LMEM_NUM_PORTS,
+  parameter int DCACHE_NUM_LANES_P = `DMA_DCACHE_PORTS,
   // See VX_dma_unit. Default 0 (aligned-only) to track the engine-level
   // convention; override to 1 on paths where SW still emits misaligned bases.
   parameter bit ENABLE_MISALIGN = 1'b0,
@@ -30,7 +31,8 @@ module VX_dma_node import VX_gpu_pkg::*; #(
   localparam int NUM_REGS32      = `DMA_CFG_REG_NUM;
   localparam int ENTRYID_W       = `JOB_MMIO_ENTRYID_W;
   localparam int LMEM_WIDE_BYTES = LMEM_NUM_LANES_P * LSU_WORD_SIZE;
-  localparam int DMA_DCACHE_ADDR_WIDTH = `MEM_ADDR_WIDTH - `CLOG2(DCACHE_WORD_SIZE);
+  localparam int DCACHE_WIDE_BYTES = DCACHE_NUM_LANES_P * DCACHE_WORD_SIZE;
+  localparam int DMA_DCACHE_ADDR_WIDTH = `MEM_ADDR_WIDTH - `CLOG2(DCACHE_WIDE_BYTES);
   localparam int DMA_LMEM_ADDR_WIDTH   = `MEM_ADDR_WIDTH - `CLOG2(LMEM_WIDE_BYTES);
 `ifdef JOB_MMIO_DMA_DESC_ONE_LANE
   localparam bit JOB_DESC_ONE_LANE = 1'b1;
@@ -46,7 +48,8 @@ module VX_dma_node import VX_gpu_pkg::*; #(
   VX_node_done_if done_if ();
 
   // VX_dma_unit operates on one aggregate local-memory beat. Split the
-  // aggregate beat across LMEM lanes so DMA bandwidth scales with NUM_LSU_LANES.
+  // aggregate beat across physical LMEM ports so DMA bandwidth can scale
+  // independently from the CPU LSU lane count.
   VX_mem_bus_if #(
     .DATA_SIZE(LMEM_WIDE_BYTES),
     .TAG_WIDTH(LMEM_TAG_WIDTH_P)
@@ -106,7 +109,8 @@ module VX_dma_node import VX_gpu_pkg::*; #(
     VX_mem_bus_split #(
       .NUM_LANES      (LMEM_NUM_LANES_P),
       .LANE_DATA_SIZE (LSU_WORD_SIZE),
-      .TAG_WIDTH      (LMEM_TAG_WIDTH_P)
+      .TAG_WIDTH      (LMEM_TAG_WIDTH_P),
+      .ENABLE_LANE_MASK(1)
     ) lmem_lane_split (
       .clk         (clk),
       .reset       (reset),

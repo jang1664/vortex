@@ -3,8 +3,8 @@
 
 set -euo pipefail
 
-if [[ $# -lt 2 || $# -gt 3 ]]; then
-  echo "Usage: $0 CASE_DIR OUTPUT_DIR [STOP_AFTER]" >&2
+if [[ $# -lt 2 || $# -gt 4 ]]; then
+  echo "Usage: $0 CASE_DIR OUTPUT_DIR [STOP_AFTER] [PHYSICAL_PLAN]" >&2
   exit 2
 fi
 
@@ -13,6 +13,11 @@ VORTEX_HOME="$(cd "$SPINQUANT_DIR/../.." && pwd)"
 CASE_DIR="$(realpath "$1")"
 OUTPUT_DIR="$(realpath -m "$2")"
 STOP_AFTER="${3:-final_residual}"
+PHYSICAL_PLAN="${4:-standalone}"
+if [[ "$PHYSICAL_PLAN" != "standalone" && "$PHYSICAL_PLAN" != "fused" ]]; then
+  echo "[fatal] PHYSICAL_PLAN must be standalone or fused" >&2
+  exit 2
+fi
 CONFIG_FILE="$VORTEX_HOME/configs/improve_th16_tcol32_hwexp_dcache.sh"
 FPGA_BIN_DIR_DEFAULT="/opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c1_f100_fpint_L2cache_8d9b4939d1/bin"
 
@@ -26,6 +31,7 @@ export LAYER_VORTEX_HOME="$VORTEX_HOME"
 export LAYER_CASE_DIR="$CASE_DIR"
 export LAYER_OUTPUT_DIR="$OUTPUT_DIR"
 export LAYER_STOP_AFTER="$STOP_AFTER"
+export LAYER_PHYSICAL_PLAN="$PHYSICAL_PLAN"
 export LAYER_CONFIG_FILE="$CONFIG_FILE"
 export LAYER_FPGA_BIN_DEFAULT="$FPGA_BIN_DIR_DEFAULT"
 
@@ -57,13 +63,13 @@ srun -p fpga --gres=fpga:u55c:1 --cpus-per-task=4 --mem=32G --time=1:20:00 \
     # needs to be attributed to an exact layout/compute kernel.
     export TORCH_VORTEX_KERNEL_DEBUG="${TORCH_VORTEX_KERNEL_DEBUG:-0}"
 
-    echo "[info] device=$XRT_DEVICE_INDEX stop_after=$LAYER_STOP_AFTER output=$LAYER_OUTPUT_DIR"
+    echo "[info] device=$XRT_DEVICE_INDEX stop_after=$LAYER_STOP_AFTER physical_plan=$LAYER_PHYSICAL_PLAN output=$LAYER_OUTPUT_DIR"
     python -u -m spinquant_inference.layer_accuracy run \
       --case "$LAYER_CASE_DIR" \
       --backend vortex \
       --stop-after "$LAYER_STOP_AFTER" \
       --capture both \
-      --physical-plan standalone \
+      --physical-plan "$LAYER_PHYSICAL_PLAN" \
       --strict-native \
       --output "$LAYER_OUTPUT_DIR"
   '

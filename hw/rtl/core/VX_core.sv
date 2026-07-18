@@ -34,7 +34,7 @@ module VX_core import VX_gpu_pkg::*; #(
 
     VX_dcr_bus_if.slave     dcr_bus_if,
 
-    VX_mem_bus_if.master    dcache_bus_if [DCACHE_NUM_REQS],
+    VX_mem_bus_if.master    dcache_bus_if [DCACHE_CORE_NUM_REQS],
 
     VX_mem_bus_if.master    icache_bus_if,
 
@@ -104,18 +104,18 @@ module VX_core import VX_gpu_pkg::*; #(
     VX_mem_bus_if #(
         .DATA_SIZE (LSU_WORD_SIZE),
         .TAG_WIDTH (LMEM_TAG_WIDTH)
-    ) dma_local_data_if[`NUM_LSU_LANES]();
+    ) dma_local_data_if[`LMEM_NUM_PORTS]();
 
 `ifdef GEMM_NAIVE
     // Shared-LMEM GEMM data path used by the naive backend.
     VX_mem_bus_if #(
         .DATA_SIZE (LSU_WORD_SIZE),
         .TAG_WIDTH (GEMM_LMEM_TAG_WIDTH)
-    ) gemm_data_if[`NUM_LSU_LANES]();
+    ) gemm_data_if[`LMEM_NUM_PORTS]();
 `endif
 
 	    VX_mem_bus_if #(
-	        .DATA_SIZE (DCACHE_WORD_SIZE),
+	        .DATA_SIZE (`DMA_DCACHE_PORTS * DCACHE_WORD_SIZE),
 	        .TAG_WIDTH (DCACHE_TAG_WIDTH)
 	    ) dma_global_data_if();
 
@@ -305,6 +305,8 @@ module VX_core import VX_gpu_pkg::*; #(
       .N_MASTER(`NUM_LSU_BLOCKS),
 `endif
       .NUM_ENTRIES(`JOB_MMIO_NUM_ENTRIES),
+      .LMEM_NUM_LANES_P(`LMEM_NUM_PORTS),
+      .DCACHE_NUM_LANES_P(`DMA_DCACHE_PORTS),
       .ENABLE_MISALIGN(1'b1),
       .MISALIGN_PACK_BYTES(`MISALIGN_PACK_BYTES)
     ) u_VX_dma_node (
@@ -445,7 +447,7 @@ module VX_core import VX_gpu_pkg::*; #(
 
 `ifdef GEMM_NAIVE
     `INIT_VX_LSU_MEM_IF (dma_ctrl_if[`NUM_LSU_BLOCKS])
-    for (genvar i = 0; i < `NUM_LSU_LANES; ++i) begin : g_disabled_gemm_data
+    for (genvar i = 0; i < `LMEM_NUM_PORTS; ++i) begin : g_disabled_gemm_data
         `INIT_VX_MEM_BUS_IF (gemm_data_if[i])
     end
 `endif
@@ -642,7 +644,7 @@ module VX_core import VX_gpu_pkg::*; #(
 	        );
 	    end
 
-	    for (genvar dbg_dcache = 0; dbg_dcache < DCACHE_NUM_REQS; ++dbg_dcache) begin : g_hw_debug_dcache
+	    for (genvar dbg_dcache = 0; dbg_dcache < DCACHE_CORE_NUM_REQS; ++dbg_dcache) begin : g_hw_debug_dcache
 	        VX_hw_debug_vr_probe core_dcache_req_debug (
 	            .clk          (clk),
 	            .reset        (reset),

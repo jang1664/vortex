@@ -26,8 +26,9 @@ using data_t = fp16_t;
 // seg_size = mxu_nt*2 bytes, bound0 = #segments, src/dst strides as below. On
 // the LMEM side each tile lands in its own beat-aligned slot (pitch =
 // align_up(seg, NUM_THREADS*LSU_WORD_SIZE)); the writeback reverses direction
-// into the GEMM-A tiled layout. mxu_kt == mxu_nt in the deployed configs, so
-// input and output share the per-row base/stride geometry.
+// into the GEMM-A tiled layout. mxu_kt == mxu_nt in the deployed configs, but
+// input and output may have different padded row widths (for example, logical
+// K=160 is read at 160 and written at the GEMM-safe K=256).
 //
 // Global-side bases/strides/segments are multiples of mxu_nt*2 = 64 bytes; the
 // LMEM-side base/stride are multiples of the DMA's local beat (NUM_THREADS*8 B),
@@ -193,7 +194,8 @@ void kernel_softmax_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
   const uint32_t num_heads = arg->num_heads;
   const uint32_t seq_len_q = arg->seq_len_q;
   const uint32_t seq_len_k = arg->seq_len_k;
-  const uint32_t seq_len_k_pad = arg->seq_len_k_pad;
+  const uint32_t input_k_pad = arg->seq_len_k_pad;
+  const uint32_t output_k_pad = arg->output_k_pad;
   const uint32_t M_pad = arg->M_pad;
   const uint32_t use_mask = arg->use_mask;
   const float scale = arg->scale;
@@ -207,8 +209,10 @@ void kernel_softmax_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
   const uint32_t h = rem / seq_len_q;
   const uint32_t q = rem - h * seq_len_q;
   const uint32_t matrix_idx = b * num_heads + h;
-  const uint64_t matrix_elems = (uint64_t)M_pad * seq_len_k_pad;
-  const uint64_t base = batched_matrix_base(matrix_idx, matrix_elems);
+  const uint64_t input_base = batched_matrix_base(
+      matrix_idx, (uint64_t)M_pad * input_k_pad);
+  const uint64_t output_base = batched_matrix_base(
+      matrix_idx, (uint64_t)M_pad * output_k_pad);
 
   const uint32_t tid = threadIdx.x;
   const uint32_t block_size = blockDim.x;
@@ -227,8 +231,8 @@ void kernel_softmax_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
 
   // Output must cover the full padded row (masked/padding columns -> 0); the
   // input DMA only needs the causal range.
-  const uint32_t out_groups = (seq_len_k + mxu_kt - 1u) >> arg->log2_mxu_kt;
-  const uint32_t row_elems   = out_groups << arg->log2_mxu_kt;   // == seq_len_k_pad
+  const uint32_t out_groups = output_k_pad >> arg->log2_mxu_kt;
+  const uint32_t row_elems = output_k_pad;
   const uint32_t in_groups   = (k_end + mxu_nt - 1u) >> arg->log2_mxu_nt;
 
   const bool cached = (row_elems <= SOFTMAX_LMEM_CACHE_MAX);
@@ -252,8 +256,8 @@ void kernel_softmax_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
 
     float local_max = VX_NEG_INF;
     for (uint32_t k = tid; k < k_end; k += block_size) {
-      const uint64_t in_off = base + gemm_c_tiled_elem_offset(
-          q, k, M_pad, seq_len_k_pad, arg->log2_mt, arg->log2_mxu_nt);
+      const uint64_t in_off = input_base + gemm_c_tiled_elem_offset(
+          q, k, M_pad, input_k_pad, arg->log2_mt, arg->log2_mxu_nt);
       float v = fp16_to_float(input[in_off]) * scale;
       if (v > local_max) local_max = v;
     }
@@ -268,8 +272,8 @@ void kernel_softmax_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
 
     float local_sum = 0.0f;
     for (uint32_t k = tid; k < k_end; k += block_size) {
-      const uint64_t in_off = base + gemm_c_tiled_elem_offset(
-          q, k, M_pad, seq_len_k_pad, arg->log2_mt, arg->log2_mxu_nt);
+      const uint64_t in_off = input_base + gemm_c_tiled_elem_offset(
+          q, k, M_pad, input_k_pad, arg->log2_mt, arg->log2_mxu_nt);
       float v = fp16_to_float(input[in_off]) * scale;
       local_sum += vx_expf(v - global_max);
     }
@@ -283,17 +287,17 @@ void kernel_softmax_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
     __syncthreads();
 
     for (uint32_t k = tid; k < k_end; k += block_size) {
-      const uint64_t in_off = base + gemm_c_tiled_elem_offset(
-          q, k, M_pad, seq_len_k_pad, arg->log2_mt, arg->log2_mxu_nt);
-      const uint64_t out_off = base + gemm_a_tiled_elem_offset(
-          q, k, M_pad, seq_len_k_pad, arg->log2_mt, arg->log2_mxu_kt);
+      const uint64_t in_off = input_base + gemm_c_tiled_elem_offset(
+          q, k, M_pad, input_k_pad, arg->log2_mt, arg->log2_mxu_nt);
+      const uint64_t out_off = output_base + gemm_a_tiled_elem_offset(
+          q, k, M_pad, output_k_pad, arg->log2_mt, arg->log2_mxu_kt);
       float v = fp16_to_float(input[in_off]) * scale;
       output[out_off] = float_to_fp16(vx_expf(v - global_max) * inv_sum);
     }
     // Masked columns (k > q) are probability 0; the reference fills them.
-    for (uint32_t k = k_end + tid; k < seq_len_k; k += block_size) {
-      const uint64_t out_off = base + gemm_a_tiled_elem_offset(
-          q, k, M_pad, seq_len_k_pad, arg->log2_mt, arg->log2_mxu_kt);
+    for (uint32_t k = k_end + tid; k < output_k_pad; k += block_size) {
+      const uint64_t out_off = output_base + gemm_a_tiled_elem_offset(
+          q, k, M_pad, output_k_pad, arg->log2_mt, arg->log2_mxu_kt);
       output[out_off] = float_to_fp16(0.0f);
     }
     return;
@@ -309,11 +313,10 @@ void kernel_softmax_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
   float  *scores   = reinterpret_cast<float *>(smem + io_bytes);
   float  *reduce   = reinterpret_cast<float *>(smem + io_bytes + score_bytes);
 
-  // Element offset of (q, k=0). GEMM-C and GEMM-A share base_q here since
-  // mxu_kt == mxu_nt and k_dim == n_dim == seq_len_k_pad.
-  const uint64_t base_q_in  = base + (uint64_t)mt_idx * mt * seq_len_k_pad
+  // Element offsets of (q, k=0) in the independently padded input/output.
+  const uint64_t base_q_in  = input_base + (uint64_t)mt_idx * mt * input_k_pad
                                    + (uint64_t)m0 * mxu_nt;
-  const uint64_t base_q_out = base + (uint64_t)mt_idx * mt * seq_len_k_pad
+  const uint64_t base_q_out = output_base + (uint64_t)mt_idx * mt * output_k_pad
                                    + (uint64_t)m0 * mxu_kt;
   // Stage only the causal range of the tiled row into the beat-aligned slots.
   if (tid == 0) {

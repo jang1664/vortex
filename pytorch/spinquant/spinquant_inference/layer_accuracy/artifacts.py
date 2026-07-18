@@ -70,7 +70,14 @@ def _rope_tables(config: LayerConfig) -> tuple[torch.Tensor, torch.Tensor, torch
     inv_freq = 1.0 / (config.rope_theta**exponent)
     frequencies = torch.outer(positions[0].float(), inv_freq)
     embedding = torch.cat((frequencies, frequencies), dim=-1)
-    return positions, embedding.cos().to(torch.float16).unsqueeze(0), embedding.sin().to(torch.float16).unsqueeze(0)
+    positions = positions.expand(config.batch_size, -1).contiguous()
+    cos = embedding.cos().to(torch.float16).unsqueeze(0)
+    sin = embedding.sin().to(torch.float16).unsqueeze(0)
+    return (
+        positions,
+        cos.expand(config.batch_size, -1, -1).contiguous(),
+        sin.expand(config.batch_size, -1, -1).contiguous(),
+    )
 
 
 def _causal_mask(config: LayerConfig) -> torch.Tensor:

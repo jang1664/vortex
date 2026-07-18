@@ -153,7 +153,7 @@ module tb_VX_gemm_node
   VX_mem_bus_if #(
     .DATA_SIZE(LSU_WORD_SIZE),
     .TAG_WIDTH(GEMM_LMEM_TAG_WIDTH)
-  ) lmem_bus_if[`NUM_LSU_LANES] ();
+  ) lmem_bus_if[`LMEM_NUM_PORTS] ();
 
   // dma_node dcache/lmem ports
   VX_mem_bus_if #(
@@ -164,7 +164,7 @@ module tb_VX_gemm_node
   VX_mem_bus_if #(
     .DATA_SIZE(LSU_WORD_SIZE),
     .TAG_WIDTH(DMA_TAG_WIDTH)
-  ) lmem_bus_if_dma[`NUM_LSU_LANES] ();
+  ) lmem_bus_if_dma[`LMEM_NUM_PORTS] ();
 
   // Optional background ports to drive contention/initialization
   VX_mem_bus_if #(
@@ -175,7 +175,7 @@ module tb_VX_gemm_node
   VX_mem_bus_if #(
     .DATA_SIZE(LSU_WORD_SIZE),
     .TAG_WIDTH(DMA_TAG_WIDTH)
-  ) bg_local_if[`NUM_LSU_LANES] ();
+  ) bg_local_if[`LMEM_NUM_PORTS] ();
 
   // Global path: arbiter -> cache wrap -> backing memory
   VX_mem_bus_if #(
@@ -197,7 +197,7 @@ module tb_VX_gemm_node
   VX_mem_bus_if #(
     .DATA_SIZE(LSU_WORD_SIZE),
     .TAG_WIDTH(L_ARB_TAG_WIDTH)
-  ) lmem_input_if[`NUM_LSU_LANES] ();
+  ) lmem_input_if[`LMEM_NUM_PORTS] ();
 
   // =========================================================================
   // DUT
@@ -221,6 +221,7 @@ module tb_VX_gemm_node
     .INSTANCE_ID("dma_node_tb"),
     .N_MASTER(1),
     .NUM_ENTRIES(4),
+    .DCACHE_NUM_LANES_P(1),
     .ENABLE_MISALIGN(1'b1),
     .DCACHE_TAG_WIDTH_P(DMA_TAG_WIDTH),
     .LMEM_TAG_WIDTH_P(DMA_TAG_WIDTH)
@@ -334,7 +335,7 @@ module tb_VX_gemm_node
 
   // Match VX_mem_unit: independently arbitrate GEMM, CPU DMA, and background
   // traffic on every physical local-memory lane.
-  for (genvar i = 0; i < `NUM_LSU_LANES; ++i) begin : g_lmem_lane_arb
+  for (genvar i = 0; i < `LMEM_NUM_PORTS; ++i) begin : g_lmem_lane_arb
     VX_mem_bus_if #(
       .DATA_SIZE(LSU_WORD_SIZE),
       .TAG_WIDTH(DMA_TAG_WIDTH)
@@ -371,7 +372,7 @@ module tb_VX_gemm_node
   VX_local_mem #(
     .INSTANCE_ID ("gemm_node_lmem"),
     .SIZE        (LMEM_SIZE),
-    .NUM_REQS    (`NUM_LSU_LANES),
+    .NUM_REQS    (`LMEM_NUM_PORTS),
     .NUM_BANKS   (TB_LMEM_NUM_BANKS),
     .ADDR_WIDTH  (LMEM_WORD_ADDR_WIDTH),
     .WORD_SIZE   (LSU_WORD_SIZE),
@@ -470,7 +471,7 @@ module tb_VX_gemm_node
   // Lane 0 remains task-driven. VCS requires constant indices when an
   // interface array is accessed from procedural code, so all other lanes are
   // elaboration-time idle tie-offs.
-  for (genvar i = 1; i < `NUM_LSU_LANES; ++i) begin : g_bg_local_idle
+  for (genvar i = 1; i < `LMEM_NUM_PORTS; ++i) begin : g_bg_local_idle
     assign bg_local_if[i].req_valid = 1'b0;
     assign bg_local_if[i].req_data  = '0;
     assign bg_local_if[i].rsp_ready = 1'b1;

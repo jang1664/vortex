@@ -25,13 +25,13 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
 `endif
 
     VX_lsu_mem_if.slave     lsu_mem_if [`NUM_LSU_BLOCKS],
-    VX_mem_bus_if.master    dcache_bus_if [DCACHE_NUM_REQS],
+    VX_mem_bus_if.master    dcache_bus_if [DCACHE_CORE_NUM_REQS],
     VX_lsu_mem_if.master    dma_ctrl_if [`NUM_LSU_BLOCKS],
     VX_lsu_mem_if.master    gemm_ctrl_if [`NUM_LSU_BLOCKS],
-    VX_mem_bus_if.slave     dma_local_data_if [`NUM_LSU_LANES],
+    VX_mem_bus_if.slave     dma_local_data_if [`LMEM_NUM_PORTS],
     VX_mem_bus_if.slave     dma_global_data_if
 `ifdef GEMM_NAIVE
-   ,VX_mem_bus_if.slave     gemm_data_if [`NUM_LSU_LANES]
+   ,VX_mem_bus_if.slave     gemm_data_if [`LMEM_NUM_PORTS]
 `endif
 );
     VX_lsu_mem_if #(
@@ -124,11 +124,11 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
     VX_mem_bus_if #(
         .DATA_SIZE (LSU_WORD_SIZE),
         .TAG_WIDTH (LMEM_LOCAL_TAG_WIDTH)
-    ) lmem_membus_arb_out_if[`NUM_LSU_LANES]();
+    ) lmem_membus_arb_out_if[`LMEM_NUM_PORTS]();
 
     // Per-lane local-memory arbitration. The naive backend adds the GEMM
     // shared-LMEM client; the improve backend retains the current 2:1 path.
-    for (genvar i = 0; i < `NUM_LSU_LANES; ++i) begin : g_lmem_lane_dma_arb
+    for (genvar i = 0; i < `LMEM_NUM_PORTS; ++i) begin : g_lmem_lane_dma_arb
         VX_mem_bus_if #(
             .DATA_SIZE (LSU_WORD_SIZE),
             .TAG_WIDTH (GEMM_LMEM_TAG_WIDTH)
@@ -143,7 +143,13 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
             .TAG_WIDTH (LMEM_LOCAL_TAG_WIDTH)
         ) lane_arb_out_if[1]();
 
-        `ASSIGN_VX_MEM_BUS_IF_EX(lane_arb_in_if[0], lmem_adapt_if[i],     GEMM_LMEM_TAG_WIDTH, LMEM_TAG_WIDTH, UUID_WIDTH);
+        if (i < `NUM_LSU_LANES) begin : g_cpu_lmem_port
+            `ASSIGN_VX_MEM_BUS_IF_EX(lane_arb_in_if[0], lmem_adapt_if[i], GEMM_LMEM_TAG_WIDTH, LMEM_TAG_WIDTH, UUID_WIDTH);
+        end else begin : g_no_cpu_lmem_port
+            assign lane_arb_in_if[0].req_valid = 1'b0;
+            assign lane_arb_in_if[0].req_data  = '0;
+            assign lane_arb_in_if[0].rsp_ready = 1'b1;
+        end
         `ASSIGN_VX_MEM_BUS_IF_EX(lane_arb_in_if[1], dma_local_data_if[i], GEMM_LMEM_TAG_WIDTH, LMEM_TAG_WIDTH, UUID_WIDTH);
 `ifdef GEMM_NAIVE
         `ASSIGN_VX_MEM_BUS_IF(lane_arb_in_if[2], gemm_data_if[i]);
@@ -179,7 +185,7 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
     VX_local_mem #(
         .INSTANCE_ID(`SFORMATF(("%s-lmem", INSTANCE_ID))),
         .SIZE       (1 << `LMEM_LOG_SIZE),
-        .NUM_REQS   (`NUM_LSU_LANES),
+        .NUM_REQS   (`LMEM_NUM_PORTS),
         .NUM_BANKS  (`LMEM_NUM_BANKS),
         .WORD_SIZE  (LSU_WORD_SIZE),
         .ADDR_WIDTH (LMEM_ADDR_WIDTH),
@@ -205,7 +211,7 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
     end
 
 `ifdef GEMM_NAIVE
-    for (genvar i = 0; i < `NUM_LSU_LANES; ++i) begin : g_unused_gemm_data_if
+    for (genvar i = 0; i < `LMEM_NUM_PORTS; ++i) begin : g_unused_gemm_data_if
         `UNUSED_VX_MEM_BUS_IF (gemm_data_if[i])
     end
 `endif
@@ -307,6 +313,11 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
 
     end
 
+    VX_mem_bus_if #(
+        .DATA_SIZE (DCACHE_WORD_SIZE),
+        .TAG_WIDTH (DCACHE_TAG_WIDTH)
+    ) dcache_cpu_bus_if[DCACHE_NUM_REQS]();
+
     for (genvar i = 0; i < `NUM_LSU_BLOCKS; ++i) begin : g_dcache_adapters
 
         VX_mem_bus_if #(
@@ -329,49 +340,70 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
             .mem_bus_if (dcache_bus_tmp_if)
         );
 
-        // DMA arbiter for dcache channel 0
-        VX_mem_bus_if #(
-            .DATA_SIZE (DCACHE_WORD_SIZE),
-            .TAG_WIDTH (DCACHE_TAG_WIDTH)
-        ) dcache_dma_arb_in_if[2]();
-
-        VX_mem_bus_if #(
-            .DATA_SIZE (DCACHE_WORD_SIZE),
-            .TAG_WIDTH (DCACHE_ARB_TAG_WIDTH)
-        ) dcache_dma_arb_out_if[1]();
-
-        VX_mem_bus_if #(
-            .DATA_SIZE (DCACHE_WORD_SIZE),
-            .TAG_WIDTH (DCACHE_ARB_TAG_WIDTH)
-        ) dcache_bus_out_if[DCACHE_CHANNELS]();
-
-        `ASSIGN_VX_MEM_BUS_IF(dcache_dma_arb_in_if[0], dcache_bus_tmp_if[0]);
-        `ASSIGN_VX_MEM_BUS_IF(dcache_dma_arb_in_if[1], dma_global_data_if);
-
-        VX_mem_arb #(
-            .NUM_INPUTS  (2),
-            .NUM_OUTPUTS (1),
-            .DATA_SIZE   (DCACHE_WORD_SIZE),
-            .TAG_WIDTH   (DCACHE_TAG_WIDTH),
-            .TAG_SEL_IDX (DCACHE_TAG_WIDTH - UUID_WIDTH),
-            .REQ_OUT_BUF (3),
-            .RSP_OUT_BUF (3),
-            .ARBITER     ("P")
-        ) dcache_dma_arbiter (
-            .clk        (clk),
-            .reset      (reset),
-            .bus_in_if  (dcache_dma_arb_in_if),
-            .bus_out_if (dcache_dma_arb_out_if)
-        );
-
-        // Keep channel tag widths uniform after arbitration.
-        `ASSIGN_VX_MEM_BUS_IF (dcache_bus_out_if[0], dcache_dma_arb_out_if[0]);
-        for (genvar j = 1; j < DCACHE_CHANNELS; ++j) begin : g_dcache_bus_expand
-            `ASSIGN_VX_MEM_BUS_IF_EX (dcache_bus_out_if[j], dcache_bus_tmp_if[j], DCACHE_ARB_TAG_WIDTH, DCACHE_TAG_WIDTH, UUID_WIDTH);
+        for (genvar j = 0; j < DCACHE_CHANNELS; ++j) begin : g_dcache_cpu_bus
+            `ASSIGN_VX_MEM_BUS_IF (dcache_cpu_bus_if[i * DCACHE_CHANNELS + j], dcache_bus_tmp_if[j]);
         end
+    end
 
-        for (genvar j = 0; j < DCACHE_CHANNELS; ++j) begin : g_dcache_bus_if
-            `ASSIGN_VX_MEM_BUS_IF (dcache_bus_if[i * DCACHE_CHANNELS + j], dcache_bus_out_if[j]);
+    // The common DMA operates on one aggregate cache beat. Scatter it into
+    // independent cache-line requests without changing the CPU LSU width.
+    VX_mem_bus_if #(
+        .DATA_SIZE (DCACHE_WORD_SIZE),
+        .TAG_WIDTH (DCACHE_TAG_WIDTH)
+    ) dcache_dma_lane_if[`DMA_DCACHE_PORTS]();
+
+    if (`DMA_DCACHE_PORTS == 1) begin : g_single_dma_dcache_port
+        `ASSIGN_VX_MEM_BUS_IF(dcache_dma_lane_if[0], dma_global_data_if);
+    end else begin : g_split_dma_dcache_ports
+        VX_mem_bus_split #(
+            .NUM_LANES      (`DMA_DCACHE_PORTS),
+            .LANE_DATA_SIZE (DCACHE_WORD_SIZE),
+            .TAG_WIDTH      (DCACHE_TAG_WIDTH),
+            .ENABLE_LANE_MASK(1)
+        ) dma_dcache_split (
+            .clk         (clk),
+            .reset       (reset),
+            .wide_bus_if (dma_global_data_if),
+            .lane_bus_if (dcache_dma_lane_if)
+        );
+    end
+
+    for (genvar i = 0; i < DCACHE_CORE_NUM_REQS; ++i) begin : g_dcache_core_ports
+        if ((i < DCACHE_NUM_REQS) && (i < `DMA_DCACHE_PORTS)) begin : g_cpu_dma_arb
+            VX_mem_bus_if #(
+                .DATA_SIZE (DCACHE_WORD_SIZE),
+                .TAG_WIDTH (DCACHE_TAG_WIDTH)
+            ) dcache_arb_in_if[2]();
+
+            VX_mem_bus_if #(
+                .DATA_SIZE (DCACHE_WORD_SIZE),
+                .TAG_WIDTH (DCACHE_ARB_TAG_WIDTH)
+            ) dcache_arb_out_if[1]();
+
+            `ASSIGN_VX_MEM_BUS_IF(dcache_arb_in_if[0], dcache_cpu_bus_if[i]);
+            `ASSIGN_VX_MEM_BUS_IF(dcache_arb_in_if[1], dcache_dma_lane_if[i]);
+
+            VX_mem_arb #(
+                .NUM_INPUTS  (2),
+                .NUM_OUTPUTS (1),
+                .DATA_SIZE   (DCACHE_WORD_SIZE),
+                .TAG_WIDTH   (DCACHE_TAG_WIDTH),
+                .TAG_SEL_IDX (DCACHE_TAG_WIDTH - UUID_WIDTH),
+                .REQ_OUT_BUF (3),
+                .RSP_OUT_BUF (3),
+                .ARBITER     ("P")
+            ) dcache_dma_arbiter (
+                .clk        (clk),
+                .reset      (reset),
+                .bus_in_if  (dcache_arb_in_if),
+                .bus_out_if (dcache_arb_out_if)
+            );
+
+            `ASSIGN_VX_MEM_BUS_IF(dcache_bus_if[i], dcache_arb_out_if[0]);
+        end else if (i < DCACHE_NUM_REQS) begin : g_cpu_only
+            `ASSIGN_VX_MEM_BUS_IF_EX(dcache_bus_if[i], dcache_cpu_bus_if[i], DCACHE_ARB_TAG_WIDTH, DCACHE_TAG_WIDTH, UUID_WIDTH);
+        end else begin : g_dma_only
+            `ASSIGN_VX_MEM_BUS_IF_EX(dcache_bus_if[i], dcache_dma_lane_if[i], DCACHE_ARB_TAG_WIDTH, DCACHE_TAG_WIDTH, UUID_WIDTH);
         end
 
     end

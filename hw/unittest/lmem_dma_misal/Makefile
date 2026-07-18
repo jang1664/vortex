@@ -12,6 +12,11 @@ export CXX := /usr/bin/g++
 
 SIM_EXEC ?= vlt
 RD_PREFETCH_DEPTH ?= 1
+ENABLE_MISALIGN ?= 1
+GEMM_NAIVE ?= 0
+REORDER_RESPONSES ?= 0
+GEMM_REQ_BACKPRESSURE ?= 1
+PERF_TRACE ?= 0
 
 TIME_SCALE=1ns/1ps
 TOP_MODULE := tb_VX_lmem_dma_misal
@@ -22,19 +27,27 @@ TOP_MODULE := tb_VX_lmem_dma_misal
 
 TB   := $(SRC_DIR)/tb_VX_lmem_dma_misal.sv
 RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
+				$(RTL_DIR)/core/VX_dma_unit_align.sv \
+				$(RTL_DIR)/core/VX_dma_unit_misal.sv \
+				$(RTL_DIR)/core/VX_dma_unit.sv \
 				$(RTL_DIR)/core/gemm/VX_lmem_dma_misal.sv \
 				$(RTL_DIR)/mem/VX_local_mem.sv \
 				$(RTL_DIR)/mem/VX_mem_bus_if.sv \
+				$(RTL_DIR)/core/VX_config_reg_if.sv \
+				$(RTL_DIR)/core/VX_node_done_if.sv \
 				$(RTL_DIR)/core/gemm/VX_lmem_dma_ctrl_if.sv \
 				$(RTL_DIR)/core/gemm/VX_gemm_sync_if.sv \
 				$(RTL_DIR)/libs/VX_stream_xbar.sv \
 				$(RTL_DIR)/libs/VX_sp_ram.sv \
+				$(RTL_DIR)/libs/VX_dp_ram.sv \
 				$(RTL_DIR)/libs/VX_pipe_buffer.sv \
 				$(RTL_DIR)/libs/VX_pipe_register.sv \
 				$(RTL_DIR)/libs/VX_stream_arb.sv \
 				$(RTL_DIR)/libs/VX_popcount.sv \
 				$(RTL_DIR)/libs/VX_demux.sv \
 				$(RTL_DIR)/libs/VX_elastic_buffer.sv \
+				$(RTL_DIR)/libs/VX_fifo_queue.sv \
+				$(RTL_DIR)/libs/VX_pending_size.sv \
 				$(RTL_DIR)/libs/VX_stream_buffer.sv \
 				$(RTL_DIR)/libs/VX_generic_arbiter.sv \
 					$(RTL_DIR)/libs/VX_shift_register.sv \
@@ -45,7 +58,19 @@ RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
 				$(RTL_DIR)/libs/VX_find_first.sv
 #PARAMS_  := PIPE_MULT=$(PIPE_MULT) PIPE_ALIGN=$(PIPE_ALIGN) PIPE_INTERVAL=$(PIPE_INTERVAL)
 INCDIRS_ := $(RTL_DIR)
-DEFINES_ := SIMULATION DEBUG_LEVEL=3 DBG_TRACE_GEMM TB_RD_PREFETCH_DEPTH=$(RD_PREFETCH_DEPTH)
+DEFINES_ := SIMULATION DEBUG_LEVEL=3 DBG_TRACE_GEMM \
+				TB_RD_PREFETCH_DEPTH=$(RD_PREFETCH_DEPTH) \
+				TB_ENABLE_MISALIGN=$(ENABLE_MISALIGN) \
+				TB_REORDER_RESPONSES=$(REORDER_RESPONSES) \
+				TB_GEMM_REQ_BACKPRESSURE=$(GEMM_REQ_BACKPRESSURE)
+
+ifeq ($(PERF_TRACE),1)
+DEFINES_ += TB_PERF_TRACE
+endif
+
+ifeq ($(GEMM_NAIVE),1)
+DEFINES_ += GEMM_NAIVE
+endif
 
 COMPILE_LOG := logs/compile.log
 SIM_LOG     := logs/sim.log
@@ -57,7 +82,9 @@ empty :=
 space := $(empty) $(empty)
 DEFINES  := +define+$(subst $(space),+,$(DEFINES_))
 
-PARAMS := 
+PARAMS :=
+
+run: sim
 
 setup:
 	mkdir -p logs reports

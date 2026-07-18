@@ -27,4 +27,8 @@ else
   VX_CFLAGS += -DSOFTMAX_LAYOUT_FUSED_VARIANT_KERNEL=SOFTMAX_LAYOUT_FUSED_VARIANT_REV1
 endif
 
+# opt_warp includes kernel.opt.cpp; keep the packaged device binary fresh when
+# the shared implementation changes.
+kernel.elf: $(SRC_DIR)/kernel.opt.cpp
+
 include ../common.mk

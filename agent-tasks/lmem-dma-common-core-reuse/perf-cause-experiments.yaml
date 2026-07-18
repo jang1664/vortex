@@ -1,0 +1,274 @@
+schema_version: 1
+task: lmem-dma-common-core-performance-cause
+spec: perf-cause-analysis-spec.md
+baseline:
+  implementation: dedicated VX_lmem_dma_misal
+  source: repository HEAD
+candidate:
+  implementation: VX_dma_unit wrapper
+  source: current worktree
+experiments:
+  - id: prior-full-system-baseline
+    timestamp: "2026-07-18"
+    status: accepted
+    kind: xrt-vcs-sim
+    change: dedicated local DMA to common-core wrapper
+    results:
+      generation_baseline_cycles: 14194
+      generation_candidate_cycles: 14434
+      generation_delta_cycles: 240
+      generation_delta_percent: 1.69
+      prefill_baseline_cycles: 199796
+      prefill_candidate_cycles: 211923
+      prefill_delta_cycles: 12127
+      prefill_delta_percent: 6.07
+      correctness: pass
+    interpretation: >-
+      The end-to-end regression is established, but this experiment alone does
+      not distinguish fixed command latency, segment cadence, pack bubbles, or
+      contention/overlap effects.
+  - id: prior-legacy-fsdb-observations
+    timestamp: "2026-07-18"
+    status: supporting_evidence
+    kind: historical-fsdb
+    results:
+      command_to_first_read_cycles: 6
+      read_to_response_cycles: 1
+      response_to_first_write_cycles: 1
+      command_to_first_write_cycles: 8
+      aligned_steady_state_destination_beats_per_cycle: 1
+    evidence:
+      - docs/future_optim/gemv/ldma_low_latency.md
+      - docs/rtl/fsdb_gemm_input_profile_after_ldma_refactor.md
+    interpretation: >-
+      These measurements define concrete legacy behaviors to reproduce in a
+      controlled A/B, but they are not yet a same-run comparison against the
+      current wrapper.
+  - id: directed-aligned-depth4
+    timestamp: "2026-07-18"
+    status: accepted
+    kind: vcs-directed-ab
+    controls:
+      rd_prefetch_depth_legacy: 4
+      rd_outstanding_candidate: 8
+      gemm_request_backpressure: false
+      response_order: in_order
+      clock_ns: 10
+      correctness: pass
+    results:
+      normal_sync:
+        one_beat_legacy_dir1_dir0: [15, 14]
+        one_beat_candidate_dir1_dir0: [19, 18]
+        one_128b_segment_legacy_dir1_dir0: [28, 21]
+        one_128b_segment_candidate_dir1_dir0: [32, 25]
+        eight_16b_segments_legacy_dir1_dir0: [29, 21]
+        eight_16b_segments_candidate_dir1_dir0: [33, 25]
+        five_hundred_twelve_16b_segments_legacy_dir1_dir0: [1037, 525]
+        five_hundred_twelve_16b_segments_candidate_dir1_dir0: [1041, 529]
+      gemm_naive:
+        one_beat_legacy_dir1_dir0: [14, 13]
+        one_beat_candidate_dir1_dir0: [18, 17]
+        one_128b_segment_legacy_dir1_dir0: [27, 20]
+        one_128b_segment_candidate_dir1_dir0: [31, 24]
+        five_hundred_twelve_16b_segments_legacy_dir1_dir0: [1036, 524]
+        five_hundred_twelve_16b_segments_candidate_dir1_dir0: [1040, 528]
+    interpretation: >-
+      The common-core candidate adds exactly four externally observed cycles
+      per command and direction across a 512x range in beat count and a 512x
+      range in segment count. There is no measured per-beat or per-segment
+      penalty in the controlled aligned case, and GEMM_NAIVE has the same
+      four-cycle delta as normal completion.
+  - id: directed-one-beat-phase-breakdown
+    timestamp: "2026-07-18"
+    status: accepted
+    kind: vcs-event-trace
+    controls:
+      rd_prefetch_depth_legacy: 4
+      gemm_naive: true
+      gemm_request_backpressure: false
+      transfer_bytes: 16
+    results:
+      legacy_cycles_from_start:
+        external_source_request: 6
+        external_source_response: 8
+        external_destination_write: 9
+        external_done: 11
+        next_command_start_after_done: 2
+      candidate_cycles_from_start:
+        internal_source_enqueue: 6
+        external_source_request: 7
+        external_source_response: 9
+        internal_write_enqueue: 11
+        external_destination_write: 12
+        internal_done: 13
+        external_done: 14
+        next_command_start_after_done: 3
+      candidate_minus_legacy:
+        request_path: 1
+        response_to_destination_path: 2
+        destination_to_done_path: 0
+        rearm_for_next_command: 1
+        total_command_spacing: 4
+    interpretation: >-
+      The four-cycle penalty is fully explained: one cycle in the common
+      request queue, two cycles between response acceptance and the external
+      destination write (registered response SRAM/pack plus write buffering),
+      and one extra wrapper rearm cycle before another command can start. The
+      six-cycle descriptor/precalc prologue is identical on both designs and
+      is not a reuse regression.
+  - id: directed-prefetch-depth-sensitivity
+    timestamp: "2026-07-18"
+    status: accepted
+    kind: vcs-directed-ab
+    results:
+      five_hundred_twelve_16b_segments:
+        legacy_prefetch1_dir1_dir0: [1036, 654]
+        legacy_prefetch4_dir1_dir0: [1037, 525]
+        candidate_outstanding8_dir1_dir0: [1041, 529]
+    interpretation: >-
+      Explicit segment prefetch depth materially helps legacy DIR=0 when set
+      to four, but outstanding-only candidate behavior matches that optimized
+      result within the same fixed four-cycle command cost. Removing the
+      explicit PREFETCH policy is therefore not a measured regression cause in
+      this aligned stress case.
+  - id: fresh-full-system-same-revision
+    timestamp: "2026-07-18"
+    status: accepted
+    kind: xrt-vcs-sim
+    controls:
+      config: configs/naive_gemm_simd_th16_tcol32_hwexp_dcache.sh
+      app: fpint_gemm_ffn_hw_naive
+      wtrans: 0
+      qdir: 0
+      correctness: pass
+    results:
+      generation:
+        args: "-m 1 -k 256 -n 256 -q 32 -t 0 -d 0"
+        legacy_cycles: 14201
+        candidate_cycles: 14434
+        delta_cycles: 233
+        delta_percent: 1.64
+      prefill:
+        args: "-m 1024 -k 256 -n 256 -q 32 -t 0 -d 0"
+        legacy_cycles: 194214
+        candidate_cycles: 211671
+        delta_cycles: 17457
+        delta_percent: 8.99
+        legacy_instructions: 21573
+        candidate_instructions: 22965
+    interpretation: >-
+      This same-source-tree comparison supersedes the cross-revision historical
+      baseline for causal attribution. The wrapper remains inside the declared
+      five- and ten-percent budgets, but the true prefill regression is closer
+      to nine percent than the earlier six-percent estimate.
+  - id: full-workload-local-command-counts
+    timestamp: "2026-07-18"
+    status: accepted
+    kind: fsdb-event-count
+    results:
+      generation:
+        input_commands: 64
+        quant_param_commands: 128
+        output_commands: 2
+        total_local_commands: 194
+      prefill:
+        input_commands: 512
+        quant_param_commands: 1024
+        output_commands: 16
+        total_local_commands: 1552
+    interpretation: >-
+      The isolated four-cycle command-spacing penalty cannot be added directly
+      to predict end-to-end time because local DMAs overlap with each other,
+      weight loading, and compute. Generation exposes only 233 of 776 summed
+      command cycles, while prefill exposes 17457 versus 6208 summed command
+      cycles, proving that prefill has a system-level scheduling/contention
+      amplification rather than a simple command-count accumulation.
+  - id: directed-alternating-gemm-backpressure
+    timestamp: "2026-07-18"
+    status: accepted
+    kind: vcs-directed-ab
+    controls:
+      rd_prefetch_depth_legacy: 4
+      rd_outstanding_candidate: 8
+      gemm_naive: true
+      gemm_request_ready: alternating
+      response_order: in_order
+      correctness: pass
+    results:
+      one_beat_legacy_dir1_dir0: [14, 13]
+      one_beat_candidate_dir1_dir0: [18, 17]
+      one_128b_segment_legacy_dir1_dir0: [27, 27]
+      one_128b_segment_candidate_dir1_dir0: [31, 31]
+      eight_16b_segments_legacy_dir1_dir0: [27, 27]
+      eight_16b_segments_candidate_dir1_dir0: [31, 31]
+      five_hundred_twelve_16b_segments_legacy_dir1_dir0: [1035, 1035]
+      five_hundred_twelve_16b_segments_candidate_dir1_dir0: [1039, 1039]
+    interpretation: >-
+      Deterministic 50-percent destination request backpressure still leaves an
+      exact four-cycle A/B delta independent of transfer length. The large
+      prefill amplification is therefore not a single-DMA ready/valid or
+      PREFETCH throughput failure; it requires multi-client shared-LMEM timing.
+  - id: focused-prefill-causal-profile
+    timestamp: "2026-07-18"
+    status: accepted
+    kind: xrt-vcs-fsdb-gemm-only-ab
+    results:
+      gemm_fsm_window_cycles:
+        legacy: 182349
+        candidate: 199492
+        delta: 17143
+        percent_of_full_delta: 98.20
+      dominant_state_deltas:
+        S_MXU_PRE_NEXT_W_NTF: 10891
+        S_MXU_PRE_CUR_W_NTF: 4610
+        combined_weight_notification_wait: 15501
+        combined_percent_of_fsm_delta: 90.42
+        combined_percent_of_full_delta: 88.80
+      gemm_busy_cycles:
+        legacy: 127585
+        candidate: 139881
+        delta: 12296
+      command_latency_cycles:
+        input:
+          commands: 512
+          legacy_sum: 121505
+          candidate_sum: 133801
+          delta_sum: 12296
+          legacy_average: 237.31
+          candidate_average: 261.33
+          delta_average: 24.02
+        quant_param:
+          commands: 1024
+          legacy_sum: 20762
+          candidate_sum: 23699
+          delta_sum: 2937
+          legacy_average: 20.28
+          candidate_average: 23.14
+          delta_average: 2.87
+        output:
+          commands: 16
+          legacy_sum: 8336
+          candidate_sum: 8384
+          delta_sum: 48
+          legacy_average: 521.00
+          candidate_average: 524.00
+          delta_average: 3.00
+      input_logical_request_stall_cycles:
+        legacy: 976
+        candidate: 964
+      physical_lmem_lane_0_to_7_stall_cycles_per_lane:
+        legacy: 6045
+        candidate: 7309
+        delta: 1264
+    interpretation: >-
+      Quant and output expose the expected approximately three active cycles
+      added by the common-core request/response pipeline; the fourth isolated
+      cycle is wrapper rearm between commands. Input is the dominant amplified
+      path: it grows by 24.02 cycles per command, and its 12296-cycle latency
+      increase exactly matches the GEMM-busy increase. The two weight
+      notification wait states account for 90.42 percent of the FSM regression.
+      Accepted beat counts are identical and the input logical request stall
+      count does not increase, while shared physical LMEM stalls do. The causal
+      chain is fixed pipeline latency -> changed input/weight phase on shared
+      LMEM -> delayed input responses and GEMM/weight notification -> prefill
+      amplification. This is not evidence for adding explicit PREFETCH first.

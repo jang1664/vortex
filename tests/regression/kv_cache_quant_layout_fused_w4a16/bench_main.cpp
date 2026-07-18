@@ -14,6 +14,8 @@ vx_buffer_h src_buffer = nullptr;
 vx_buffer_h weight_buffer = nullptr;
 vx_buffer_h scale_buffer = nullptr;
 vx_buffer_h zero_buffer = nullptr;
+vx_buffer_h logical_scale_buffer = nullptr;
+vx_buffer_h logical_zero_buffer = nullptr;
 
 #define RT_CHECK(_expr)                                                     \
   do {                                                                      \
@@ -30,6 +32,8 @@ static void cleanup() {
   if (weight_buffer) vx_mem_free(weight_buffer);
   if (scale_buffer) vx_mem_free(scale_buffer);
   if (zero_buffer) vx_mem_free(zero_buffer);
+  if (logical_scale_buffer) vx_mem_free(logical_scale_buffer);
+  if (logical_zero_buffer) vx_mem_free(logical_zero_buffer);
   if (krnl_buffer) vx_mem_free(krnl_buffer);
   if (args_buffer) vx_mem_free(args_buffer);
   if (device) vx_dev_close(device);
@@ -50,6 +54,10 @@ int main(int argc, char *argv[]) {
   uint32_t WTRANS = 1;
   uint32_t GEMM_QDIR = 0;
   uint32_t SOURCE_TRANSPOSED = 0;
+  uint32_t quant_mode = KV_QUANT_LEGACY_UINT4_ASYMMETRIC;
+  uint32_t source_total_n = 0;
+  uint32_t head_col_offset = 0;
+  bool emit_correction_qparams = false;
   bool gemm_qdir_set = false;
   uint32_t src_layout = SRC_LAYOUT_ROW_MAJOR;
   for (int i = 1; i < argc; ++i) {
@@ -73,6 +81,13 @@ int main(int argc, char *argv[]) {
       gemm_qdir_set = true;
     }
     else if (strcmp(argv[i], "--source-transposed") == 0) SOURCE_TRANSPOSED = 1;
+    else if (strcmp(argv[i], "--quant-mode") == 0) quant_mode = parse_quant_mode(argv[++i]);
+    else if (strncmp(argv[i], "--quant-mode=", 13) == 0) quant_mode = parse_quant_mode(argv[i] + 13);
+    else if (strcmp(argv[i], "--source-total-n") == 0) source_total_n = atoi(argv[++i]);
+    else if (strncmp(argv[i], "--source-total-n=", 17) == 0) source_total_n = atoi(argv[i] + 17);
+    else if (strcmp(argv[i], "--head-col-offset") == 0) head_col_offset = atoi(argv[++i]);
+    else if (strncmp(argv[i], "--head-col-offset=", 18) == 0) head_col_offset = atoi(argv[i] + 18);
+    else if (strcmp(argv[i], "--emit-correction-qparams") == 0) emit_correction_qparams = true;
     else if (strcmp(argv[i], "--layout-from") == 0) src_layout = parse_src_layout(argv[++i]);
     else if (strncmp(argv[i], "--layout-from=", 14) == 0) src_layout = parse_src_layout(argv[i] + 14);
     else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
@@ -81,12 +96,17 @@ int main(int argc, char *argv[]) {
              "[-k K] [-n N] [-q QBLK] [-d QDIR] [-t WTRANS] "
              "[--mt MT] [--kt KT] [--nt NT] "
              "[--gemm-qdir QDIR] [--source-transposed] "
-             "[--layout-from row_major_fp16|gemm_c_tiled]\n", argv[0]);
+             "[--layout-from row_major_fp16|gemm_c_tiled] "
+             "[--quant-mode legacy_uint4_asymmetric|spinquant_signed_asymmetric|spinquant_signed_symmetric] "
+             "[--source-total-n N] [--head-col-offset N] [--emit-correction-qparams]\n", argv[0]);
       return 0;
     }
   }
   if (!gemm_qdir_set) GEMM_QDIR = QDIR;
-  if (!valid_fused_quant_shape(K, N, QBLK, QDIR, WTRANS, GEMM_QDIR, SOURCE_TRANSPOSED)) {
+  if (source_total_n == 0) source_total_n = N;
+  if (!valid_fused_quant_shape(K, N, QBLK, QDIR, WTRANS, GEMM_QDIR,
+                               SOURCE_TRANSPOSED, quant_mode,
+                               source_total_n, head_col_offset)) {
     printf("ERROR: require non-zero K/N, even N, pow2 QBLK, "
            "source_QDIR/GEMM_QDIR/WTRANS in {0,1}, and source-transposed requires WTRANS=1\n");
     return 1;
@@ -100,14 +120,20 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
-  const size_t src_elems = (size_t)K * N;
+  const size_t src_elems = (size_t)K * source_total_n;
   const size_t weight_bytes = weight_total_bytes_host(K, N, SOURCE_TRANSPOSED);
   const size_t scale_bytes = scale_total_bytes_host(K, N, QBLK, GEMM_QDIR,
                                                     SOURCE_TRANSPOSED, DMA_KT, DMA_NT);
-  std::vector<fp16_t> h_src(src_elems);
+  std::vector<fp16_t> h_src((size_t)K * N);
   init_src(h_src);
+  std::vector<fp16_t> h_src_combined(src_elems, 0);
+  for (uint32_t k = 0; k < K; ++k) {
+    std::copy_n(h_src.begin() + (uint64_t)k * N, N,
+                h_src_combined.begin() + (uint64_t)k * source_total_n + head_col_offset);
+  }
   std::vector<fp16_t> h_src_device(src_elems);
-  pack_src_for_layout(h_src, h_src_device, K, N, src_layout, DMA_MT);
+  pack_src_for_layout(h_src_combined, h_src_device, K, source_total_n,
+                      src_layout, DMA_MT);
 
   vx_bench::LatencyPowerMeasurement latency_power(bench);
   if (!latency_power.prestart()) {
@@ -120,6 +146,11 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_mem_alloc(device, weight_bytes, VX_MEM_WRITE, &weight_buffer));
   RT_CHECK(vx_mem_alloc(device, scale_bytes, VX_MEM_WRITE, &scale_buffer));
   RT_CHECK(vx_mem_alloc(device, scale_bytes, VX_MEM_WRITE, &zero_buffer));
+  if (emit_correction_qparams) {
+    const size_t logical_bytes = kv_qparam_count(K, N, QBLK, QDIR) * sizeof(fp16_t);
+    RT_CHECK(vx_mem_alloc(device, logical_bytes, VX_MEM_WRITE, &logical_scale_buffer));
+    RT_CHECK(vx_mem_alloc(device, logical_bytes, VX_MEM_WRITE, &logical_zero_buffer));
+  }
   RT_CHECK(vx_copy_to_dev(src_buffer, h_src_device.data(), 0, src_elems * sizeof(fp16_t)));
 
   uint64_t num_cores = 0;
@@ -145,7 +176,7 @@ int main(int argc, char *argv[]) {
       std::max(1u, (uint32_t)num_cores * 4u));
   if (!init_kernel_arg(arg, K, N, QBLK, QDIR, WTRANS, GEMM_QDIR,
                        SOURCE_TRANSPOSED, src_layout, DMA_MT, DMA_KT, DMA_NT,
-                       blocks, tpb)) {
+                       blocks, tpb, quant_mode, source_total_n, head_col_offset)) {
     printf("ERROR: failed to initialize kernel args\n");
     cleanup();
     return 1;
@@ -154,6 +185,10 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_mem_address(weight_buffer, &arg.weight_addr));
   RT_CHECK(vx_mem_address(scale_buffer, &arg.scale_addr));
   RT_CHECK(vx_mem_address(zero_buffer, &arg.zero_addr));
+  if (emit_correction_qparams) {
+    RT_CHECK(vx_mem_address(logical_scale_buffer, &arg.logical_scale_addr));
+    RT_CHECK(vx_mem_address(logical_zero_buffer, &arg.logical_zero_addr));
+  }
   arg.power_kernel_iterations = 1;
   RT_CHECK(vx_upload_bytes(device, &arg, sizeof(arg), &args_buffer));
 

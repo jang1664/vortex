@@ -4,6 +4,12 @@
 #include <stdint.h>
 
 #define KERNEL_QK_ASYM_CORRECTION 0
+#define QK_SCORES_LAYOUT_ROW_MAJOR 0
+#define QK_SCORES_LAYOUT_GEMM_C_TILED 1
+#define QK_QUERY_LAYOUT_ROW_MAJOR 0
+#define QK_QUERY_LAYOUT_GEMM_A_TILED 1
+#define QK_TILE_DMA_MT 128
+#define QK_TILE_MXU_NT 32
 
 typedef struct {
   uint32_t kernel_id;
@@ -19,6 +25,11 @@ typedef struct {
   uint32_t M;
   uint32_t N;
   uint32_t D;
+  uint32_t scores_layout;
+  uint32_t query_layout;
+  uint32_t scores_m_pad;
+  uint32_t log2_mt;
+  uint32_t log2_mxu_nt;
   uint32_t power_kernel_iterations;
 } kernel_arg_t;
 

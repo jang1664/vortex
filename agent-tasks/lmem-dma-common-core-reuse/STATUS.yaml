@@ -1,0 +1,207 @@
+task: lmem-dma-common-core-reuse
+status: complete
+updated: "2026-07-18 19:10"
+goal: >-
+  Reimplement VX_lmem_dma_misal as a policy wrapper around the common DMA core,
+  verify both directions and GEMM integration, and measure cycle performance.
+spec: lmem-dma-common-core-reuse-spec.md
+entries:
+  - timestamp: "2026-07-18 13:40"
+    iteration: 0
+    status: started
+    action: >-
+      Recorded the confirmed wrapper architecture, no-generate FIXED_DIR policy,
+      outstanding-only read-ahead decision, verification scope, and provisional
+      numeric regression budgets before RTL implementation.
+    result: >-
+      The implementation contract is now self-contained and points to the
+      updated future-optimization plan as its normative detailed design.
+    learned: >-
+      RD_OUTSTANDING already exists in the common core; the core changes are
+      compile-time direction selection and strict depth/tag validation, while
+      completion, synchronization, and local performance semantics remain
+      wrapper responsibilities.
+  - timestamp: "2026-07-18 13:45"
+    iteration: 0
+    status: scope_update
+    action: Removed resource-utilization evaluation from this task at the user's request.
+    result: >-
+      Acceptance now focuses on functional correctness and cycle-count
+      similarity. LUT, FF, BRAM, and direction-pruning synthesis comparisons are
+      not required; incidental timing output is informational only.
+    learned: >-
+      The common VX_dma_unit resource impact was already evaluated separately,
+      so repeating that work would not affect this wrapper-reuse decision.
+  - timestamp: "2026-07-18 13:51"
+    iteration: 1
+    status: implementation_ready_for_verification
+    action: >-
+      Added descriptor-or-fixed direction selection to both common DMA
+      backends, made the requested outstanding depth strict, replaced the
+      dedicated local-DMA datapath with a VX_dma_unit policy wrapper, and
+      forwarded explicit bus address/tag widths from every production local-DMA
+      instantiation.
+    result: >-
+      VX_lmem_dma_misal now maps local control registers into the common DMA,
+      uses eight outstanding reads with padding disabled, preserves normal and
+      GEMM_NAIVE completion policies, and owns the public local performance
+      counters. The implementation diff passes git diff --check; simulation and
+      tools/verify_rtl.py remain for the Verification agent.
+    learned: >-
+      Normal completion can safely hold the common done handshake until GEMM
+      sync is accepted, while GEMM_NAIVE acknowledges it directly in COPY. The
+      fixed direction must also drive aligned-mode guards and debug reporting,
+      not only the bus muxes.
+  - timestamp: "2026-07-18 14:02"
+    iteration: 2
+    status: verification_failed
+    action: >-
+      Verification compiled the local-DMA unittest and reached time zero after
+      the common aligned and misaligned DMA unittests passed independently.
+    result: >-
+      Elaboration stopped because GEMM_MEM_TAG_WIDTH exposed only one
+      tag.value bit, while the strict eight-slot local DMA requires three.
+    learned: >-
+      This is a production contract issue, not only a testbench mismatch: the
+      legacy GEMM local-DMA path also used GEMM_MEM_TAG_WIDTH and then connected
+      directly into an LMEM_TAG_WIDTH arbiter.
+  - timestamp: "2026-07-18 14:02"
+    iteration: 2
+    status: fix_ready_for_verification
+    action: >-
+      Defined the eight-slot local-DMA tag contract in VX_gpu_pkg, guaranteed
+      LMEM_TAG_WIDTH includes UUID plus three slot bits, made
+      GEMM_BASE_TAG_WIDTH UUID-aware, and kept GEMM_MEM_TAG_WIDTH identical to
+      LMEM_TAG_WIDTH across the legacy DMA-to-LMEM arbiter path.
+    result: >-
+      All production local-DMA tag paths now preserve at least three tag.value
+      bits without reducing RD_OUTSTANDING or placing slot bits in UUID. The
+      wrapper consumes the shared eight-slot package constant.
+    learned: >-
+      Tag-width minima must include UUID_WIDTH before adding payload fields;
+      comparing a total tag width only to payload-bit counts under-sizes tags
+      when UUID is present.
+  - timestamp: "2026-07-18 14:19"
+    iteration: 2
+    status: verification_passed_with_baseline_limitations
+    action: >-
+      Updated the dedicated local-DMA unittest manifest and diagnostics, added
+      both-direction data, completion, synchronization, zero-size,
+      backpressure, and tagged response-reordering checks, and ran configured
+      VCS unit and node-level integration tests through tools/verify_rtl.py or
+      the corresponding configured-build Makefile targets.
+    result: >-
+      Final-tree dma_mem_unit and dma_mem_unit_misal passed, with the latter
+      completing 2125/2125 cases. Local DMA passed for DIR=0 and DIR=1 with
+      ENABLE_MISALIGN=0 and 1, normal sync, GEMM_NAIVE sync bypass, zero bounds
+      and zero segment size without memory requests, alternating source and
+      destination request backpressure, held sync backpressure, and tagged
+      out-of-order GEMM responses. The normal misaligned run reported 33 cycles
+      per direction for eight aligned 16-byte segments and 1041 cycles per
+      direction for the 512-segment stress case. Naive gemm_node passed the
+      M2/N32/K32 integration case. Improve gemm_node compiled and elaborated
+      VX_tmem_subsystem and all local-DMA channels, then reproduced the known
+      pre-existing all-zero accumulator baseline failure at M32/N32/K32.
+    learned: >-
+      The reused common core accepts genuinely reordered response slots while
+      retiring writes in command order, and the wrapper emits exactly one
+      post-copy sync only in normal mode. A same-configuration legacy local-DMA
+      cycle baseline was not available in the retained logs, so the provisional
+      5% and 10% regression percentages remain to be evaluated by the later
+      integration/blackbox comparison rather than inferred from current cycles.
+  - timestamp: "2026-07-18 14:21"
+    iteration: 3
+    status: fix_ready_for_verification
+    action: >-
+      Removed the stale aligned-DMA diagnostic that labeled zero bounds as an
+      error.
+    result: >-
+      Zero-bound no-op behavior is unchanged and no longer emits a misleading
+      ERROR line during descriptor capture.
+    learned: >-
+      Diagnostics must follow the adopted no-op descriptor contract as well as
+      the datapath state transitions.
+  - timestamp: "2026-07-18 14:23"
+    iteration: 3
+    status: verification_passed
+    action: >-
+      Reconfigured the normal improve build and reran the complete aligned-only
+      local-DMA matrix with ENABLE_MISALIGN=0 on the final RTL tree.
+    result: >-
+      VCS compilation explicitly used TB_ENABLE_MISALIGN=0. Both directions,
+      aligned transfer sizes, 512 one-beat segments, all four zero-size cases,
+      exact synchronization, and synchronization backpressure passed through
+      25676 ns with TEST PASSED. The simulation log contains no stale
+      zero-bound ERROR, Fatal, or mismatch.
+    learned: >-
+      Removing the diagnostic did not alter zero-bound no-op behavior or the
+      aligned common-core cycle measurements.
+  - timestamp: "2026-07-18 14:36"
+    iteration: 4
+    status: complete
+    action: >-
+      Forced a fresh xrt-vcs simv build with the exact naive depth-eight config,
+      then ran the representative generation and full-prefill blackbox workloads
+      through ci/run_black.sh xrt-vcs-sim.
+    result: >-
+      Both workloads passed bit-exact output checking. Generation completed in
+      14434 cycles versus the retained 14194-cycle dedicated-local-DMA baseline,
+      a 1.69 percent regression within the 5 percent budget. Prefill completed
+      in 211923 cycles versus 199796, a 6.07 percent regression within the 10
+      percent contention-sensitive budget. Resource utilization remained out
+      of scope as requested.
+    learned: >-
+      Eight outstanding beat credits are sufficient to keep full-system
+      performance close without reproducing the old segment-distance prefetch
+      policy. Prefill is more sensitive than generation, but remained inside the
+      declared contention budget.
+  - timestamp: "2026-07-18 14:39"
+    iteration: 5
+    status: verification_passed
+    action: >-
+      Forced a fresh VCS compile of the dedicated local-DMA test with
+      PERF_ENABLE and the normal misaligned test defines enabled.
+    result: >-
+      Compilation and elaboration passed with PERF_ENABLE present in the VCS
+      command line. The only related diagnostics were expected testbench
+      warnings that the two optional perf output ports are unconnected; there
+      was no RTL compile or elaboration error.
+    learned: >-
+      The wrapper-owned performance-counter conditional path is syntactically
+      and structurally valid under PERF_ENABLE.
+  - timestamp: "2026-07-18 19:10"
+    iteration: 6
+    status: performance_cause_confirmed
+    action: >-
+      Ran controlled legacy/common-core VCS A/B tests across one beat through
+      512 segments, repeated them with alternating GEMM backpressure, collected
+      fresh generation and prefill xrt-vcs measurements, counted real local-DMA
+      commands, and compared focused full-prefill FSDB state and latency metrics.
+    result: >-
+      The wrapper adds a fixed four cycles of command spacing: one request
+      enqueue cycle, two response/pack/write-buffer cycles, and one wrapper
+      rearm cycle. Fresh same-tree cycles are 14201 versus 14434 for generation
+      (+1.64%) and 194214 versus 211671 for prefill (+8.99%), both passing. In
+      prefill, input DMA latency grows by 12296 cycles, exactly matching GEMM
+      busy growth; two weight-notification states grow by 15501 cycles and
+      explain 90.42% of the GEMM FSM increase. Physical LMEM stalls grow while
+      logical input request stalls do not.
+    learned: >-
+      The common core retains isolated throughput and outstanding eight matches
+      legacy prefetch depth four within the fixed four-cycle command cost. The
+      prefill regression is fixed pipeline latency amplified by input/weight
+      phase changes on shared LMEM, not a missing PREFETCH bandwidth window.
+      Optimize response-to-write latency first, then request enqueue and wrapper
+      rearm; retain explicit PREFETCH as a later fallback only if those changes
+      do not restore the shared-LMEM phase.
+pitfalls:
+  - Preserve unrelated dirty worktree changes, especially PyTorch and regression workload files.
+  - The verification-agent references to harness/rules/testbench.md and the run-test/add-test-case skills are stale in this checkout; use existing unittest Makefiles and AGENTS.md.
+  - Do not silently clamp RD_OUTSTANDING to the available tag width.
+  - Do not add direction-specific generate branches in the initial implementation.
+  - RD_PREFETCH_DEPTH remains a compatibility parameter but must not control the reused core.
+  - GEMM and LMEM tags used by the local DMA must reserve UUID_WIDTH plus three slot-value bits.
+  - >-
+    The configured build does not copy unittest test.sh scripts, so verify_rtl
+    test-sh mode cannot be used from build; use its make mode or the generated
+    Makefile directly.

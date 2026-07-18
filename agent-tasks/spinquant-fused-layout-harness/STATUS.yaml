@@ -1,0 +1,116 @@
+task: spinquant-fused-layout-harness
+status: completed
+created: "2026-07-18 12:19"
+updated: "2026-07-18 15:39"
+summary: >
+  Add a generator-aligned fused-layout execution plan to the SpinQuant
+  single-decoder-layer C4 accuracy harness while preserving standalone mode.
+logs:
+  - time: "2026-07-18 12:19"
+    entry: >
+      Started from commit 7d94be50 and the approved implementation plan.
+      The fpint worktree is clean. Scope is Llama2-7B B1/S32 prefill,
+      correctness and launch-topology validation on real C4, with standalone
+      retained as the default physical plan.
+  - time: "2026-07-18 12:28"
+    entry: >
+      Locked the additive kernel ABI: RoPE layout mode 3 emits contiguous
+      BHSD; KV quant modes 1/2 implement signed asymmetric K and signed
+      symmetric V with logical qparam side buffers and source head offsets;
+      QK correction layout mode 1 preserves GEMM-C. Added an out-variant of
+      the GEMM core contract so per-head results can populate one aligned
+      grouped buffer for fused head concat without detiling.
+  - time: "2026-07-18 12:46"
+    entry: >
+      Implemented and compiled the final fused kernel ABIs, PyTorch custom
+      ops, aligned grouped GEMM/QK out variants, and package installation.
+      Regression device targets and the C++ extension build successfully.
+      Python physical handles, plan strategies, CPU canonicalizers, CLI knob,
+      deferred score stage, and generator conformance are implemented; the
+      active CPU suite passes. Actual C4 validation is still pending.
+  - time: "2026-07-18 13:34"
+    entry: >
+      Initial real-C4 custom-op validation exposed three integration defects:
+      fused RMSNorm launched more than one hardware warp although its shuffle
+      reduction is warp-local; signed KV quant multiplied by a reciprocal and
+      disagreed with the Torch division reference at rounding boundaries; and
+      the grouped GEMM test passed an int8-packed tensor to the uint8 weight
+      tiler. Fixed each cause and rebuilt/reinstalled the affected kernels.
+  - time: "2026-07-18 14:04"
+    entry: >
+      Real C4 validation now passes: 12 fused custom-op tests, two full fused
+      integration tests, and a complete 25-stage Llama2-7B decoder case.
+      CUDA versus fused, CUDA versus standalone, standalone versus fused, and
+      CUDA versus fused including auxiliary packed/qparam captures all pass.
+      The fused full-layer run completed in 3,384,639 cycles versus 28,936,451
+      cycles for standalone for this correctness case, with zero fallbacks.
+  - time: "2026-07-18 14:15"
+    entry: >
+      Completed the review hardening pass. Physical capture now records the
+      actual raw C4 buffers and descriptors, fused softmax validates canonical
+      scale/mask inputs, GEMM launches check the device status word with a
+      bounded timeout, and the full fused integration has an explicit runner
+      alias. Final real-C4 results pass 13 custom-op tests and two full-layer
+      integration tests; CPU contracts pass 26 active tests with 15 hardware
+      skips, and all 22 generator tests pass. No actionable review findings
+      remain.
+  - time: "2026-07-18 14:27"
+    entry: >
+      Extended the task to fuse the SpinQuant R3/R4 Hadamard transform with
+      its GEMM-A layout write. The current fused backend still launches
+      hadamard_butterfly/hadamard_base followed by tile_input_a. The new path
+      will emit grouped GEMM-A directly and update K quantization and QK zero
+      correction to consume that physical layout without detiling.
+  - time: "2026-07-18 14:51"
+    entry: >
+      Added hadamard_layout_fused, extended signed K quantization and QK
+      correction to consume GEMM-A input, and removed the separate Q/R4 tile
+      nodes from the fused generator/backend. The first PyTorch C4 run exposed
+      a stale packaged XRT runtime; reinstalling the extension synchronized it
+      with build/runtime and restored hardware initialization.
+  - time: "2026-07-18 15:12"
+    entry: >
+      C4 isolated testing found a 16-column R4 corruption when the fused
+      Hadamard block spanned multiple hardware warps. Launching one warp per
+      row fixed the shared-scratch/barrier contract. The matching opt-warp
+      softmax wrapper was corrected as well. Actual C4 results now pass 14/14
+      custom-op tests, both R3/R4 regression cases with zero errors, and 2/2
+      full fused decoder-layer integration tests. The full test also confirms
+      three hadamard_layout_fused launches and no standalone Hadamard or
+      tile_input_a launches.
+  - time: "2026-07-18 15:39"
+    entry: >
+      Closed review gaps by making Hadamard regression dimensions effective,
+      adding a zero-error Llama2 R4 11008/base-172 case, emitting the explicit
+      qk_asym_correction_out generator node, and testing GEMM-A K-quant input
+      numerically. That test exposed a stale packaged KV vxbin; forcing the
+      device-kernel rebuild synchronized the new src_layout ABI. Final C4
+      validation passes 14/14 custom-op tests, GEMM-A QK correction, all three
+      Hadamard regression cases, and 2/2 full decoder-layer tests.
+pitfalls:
+  - >
+    gen_kernel_cfgs.py is schedule guidance, not a complete numerical ABI.
+    SpinQuant requires signed INT4 K/V semantics and fractional K zero points.
+  - >
+    The standalone plan intentionally retains separate R3/R4 Hadamard and
+    tile kernels; the fused plan writes R3/R4 results directly to GEMM-A.
+  - >
+    Fused tensors must never be interpreted by raw torch reshape/transpose;
+    logical shape and physical layout metadata must travel together.
+  - >
+    Shuffle-based RMSNorm reduction is local to one Vortex hardware warp, so
+    its wrapper must launch caps.num_threads rather than threads_per_block.
+  - >
+    Fused Hadamard scratch/barrier synchronization and the opt-warp softmax
+    contract also require exactly one hardware warp per logical row on C4.
+  - >
+    Quantization arithmetic order is observable at half-even boundaries;
+    signed KV kernels divide by scale directly to match the Torch reference.
+  - >
+    XRT cannot reliably read only the four-byte GEMM status field from the
+    argument buffer on this platform. Copy the complete argument buffer back
+    and then extract the status field, matching the regression host flow.
+  - >
+    Device-kernel wrapper sources such as kernel.baseline.cpp include
+    kernel.cpp, but Make dependency tracking may not rebuild the vxbin after
+    an included ABI change. Force kernel.vxbin and reinstall before C4 checks.

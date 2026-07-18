@@ -956,7 +956,12 @@ package VX_gpu_pkg;
     localparam LSU_TAG_ID_BITS      = (`CLOG2(`LSUQ_IN_SIZE) + `CLOG2(LSU_MEM_BATCHES));
     localparam LSU_TAG_WIDTH        = (UUID_WIDTH + LSU_TAG_ID_BITS);
     localparam LSU_NUM_REQS	        = `NUM_LSU_BLOCKS * `NUM_LSU_LANES;
-    localparam LMEM_TAG_WIDTH       = LSU_TAG_WIDTH + `CLOG2(`NUM_LSU_BLOCKS);
+    // Local DMA reserves tag.value for eight common-core response slots.
+    localparam LMEM_DMA_RD_OUTSTANDING_SLOTS = 8;
+    localparam LMEM_DMA_SLOT_BITS = `CLOG2(LMEM_DMA_RD_OUTSTANDING_SLOTS);
+    localparam LMEM_TAG_WIDTH = `MAX(
+        (LSU_TAG_WIDTH + `CLOG2(`NUM_LSU_BLOCKS)),
+        (UUID_WIDTH + LMEM_DMA_SLOT_BITS));
     // Track explicit +1 tag growth introduced by 2->1 VX_mem_arb routing.
     localparam MEM_ARB_ROUTE_TAG_BITS = 1;
 
@@ -972,7 +977,9 @@ package VX_gpu_pkg;
     localparam GEMM_ADAPTER_O_SPLIT_BITS   = (`GEMM_OUTPUT_DATA_SIZE     > LSU_WORD_SIZE) ? (`CLOG2(`GEMM_OUTPUT_DATA_SIZE)     - `CLOG2(LSU_WORD_SIZE)) : 0;
     localparam GEMM_ADAPTER_MAX_SPLIT_BITS = `MAX(`MAX(GEMM_ADAPTER_I_SPLIT_BITS, GEMM_ADAPTER_W_SPLIT_BITS),
                                                    `MAX(GEMM_ADAPTER_SZ_SPLIT_BITS, GEMM_ADAPTER_O_SPLIT_BITS));
-    localparam GEMM_BASE_TAG_WIDTH         = `MAX(LMEM_TAG_WIDTH, (GEMM_ADAPTER_MAX_SPLIT_BITS + GEMM_ADAPTER_OOO_SLOT_BITS));
+    localparam GEMM_BASE_TAG_WIDTH = `MAX(
+        LMEM_TAG_WIDTH,
+        (UUID_WIDTH + GEMM_ADAPTER_MAX_SPLIT_BITS + GEMM_ADAPTER_OOO_SLOT_BITS));
 
     // The naive backend merges four GEMM clients before shared LMEM. Improve
     // keeps this width for interface consistency even though it uses TMEM.
@@ -988,7 +995,8 @@ package VX_gpu_pkg;
     localparam LMEM_LOCAL_TAG_WIDTH = (GEMM_LMEM_TAG_WIDTH + LMEM_ARB_ROUTE_TAG_BITS);
 
     ///////////////////////// GEMM Unit Parameters ///////////////////////////
-    localparam GEMM_MEM_TAG_WIDTH = LSU_TAG_WIDTH + `CLOG2(`NUM_LSU_BLOCKS);
+    // Legacy GEMM local-DMA buses connect directly to LMEM-tagged arbiters.
+    localparam GEMM_MEM_TAG_WIDTH = LMEM_TAG_WIDTH;
 
     ////////////////////////// Icache Parameters //////////////////////////////
 
@@ -1027,6 +1035,9 @@ package VX_gpu_pkg;
     // Input request size (using coalesced memory blocks)
     localparam DCACHE_CHANNELS	    = `UP((`NUM_LSU_LANES * LSU_WORD_SIZE) / DCACHE_WORD_SIZE);
     localparam DCACHE_NUM_REQS	    = `NUM_LSU_BLOCKS * DCACHE_CHANNELS;
+    // Keep DCACHE_NUM_REQS CPU-facing. The physical cache interface may be
+    // widened independently for the aggregate core-local DMA path.
+    localparam DCACHE_CORE_NUM_REQS = `MAX(DCACHE_NUM_REQS, `DMA_DCACHE_PORTS);
 
     // Core request tag Id bits
     localparam DCACHE_MERGED_REQS   = (`NUM_LSU_LANES * LSU_WORD_SIZE) / DCACHE_WORD_SIZE;
@@ -1043,9 +1054,9 @@ package VX_gpu_pkg;
 
 	    // Memory request tag bits
 `ifdef DCACHE_ENABLE
-	    localparam DCACHE_MEM_TAG_WIDTH = `CACHE_CLUSTER_NC_MEM_TAG_WIDTH(`DCACHE_MSHR_SIZE, `DCACHE_NUM_BANKS, DCACHE_NUM_REQS, `L1_MEM_PORTS, DCACHE_LINE_SIZE, DCACHE_WORD_SIZE, DCACHE_CORE_TAG_WIDTH, `SOCKET_SIZE, `NUM_DCACHES, UUID_WIDTH);
+	    localparam DCACHE_MEM_TAG_WIDTH = `CACHE_CLUSTER_NC_MEM_TAG_WIDTH(`DCACHE_MSHR_SIZE, `DCACHE_NUM_BANKS, DCACHE_CORE_NUM_REQS, `L1_MEM_PORTS, DCACHE_LINE_SIZE, DCACHE_WORD_SIZE, DCACHE_CORE_TAG_WIDTH, `SOCKET_SIZE, `NUM_DCACHES, UUID_WIDTH);
 `else
-	    localparam DCACHE_MEM_TAG_WIDTH = `CACHE_CLUSTER_BYPASS_MEM_TAG_WIDTH(DCACHE_NUM_REQS, `L1_MEM_PORTS, DCACHE_LINE_SIZE, DCACHE_WORD_SIZE, DCACHE_CORE_TAG_WIDTH, `SOCKET_SIZE, `NUM_DCACHES);
+	    localparam DCACHE_MEM_TAG_WIDTH = `CACHE_CLUSTER_BYPASS_MEM_TAG_WIDTH(DCACHE_CORE_NUM_REQS, `L1_MEM_PORTS, DCACHE_LINE_SIZE, DCACHE_WORD_SIZE, DCACHE_CORE_TAG_WIDTH, `SOCKET_SIZE, `NUM_DCACHES);
 `endif
 
 	    ////////////////////////// Hardware Debug Types ////////////////////////////
@@ -1079,8 +1090,8 @@ package VX_gpu_pkg;
 	    localparam HW_DBG_CH_LSU_REQ_BASE    = HW_DBG_CH_COMMIT_BASE + (NUM_EX_UNITS * `ISSUE_WIDTH);
 	    localparam HW_DBG_CH_LSU_RSP_BASE    = HW_DBG_CH_LSU_REQ_BASE + `NUM_LSU_BLOCKS;
 	    localparam HW_DBG_CH_DCACHE_REQ_BASE = HW_DBG_CH_LSU_RSP_BASE + `NUM_LSU_BLOCKS;
-	    localparam HW_DBG_CH_DCACHE_RSP_BASE = HW_DBG_CH_DCACHE_REQ_BASE + DCACHE_NUM_REQS;
-	    localparam HW_DEBUG_CORE_PIPE_CHANNELS = HW_DBG_CH_DCACHE_RSP_BASE + DCACHE_NUM_REQS;
+	    localparam HW_DBG_CH_DCACHE_RSP_BASE = HW_DBG_CH_DCACHE_REQ_BASE + DCACHE_CORE_NUM_REQS;
+	    localparam HW_DEBUG_CORE_PIPE_CHANNELS = HW_DBG_CH_DCACHE_RSP_BASE + DCACHE_CORE_NUM_REQS;
 
 	    typedef struct packed {
 	        logic              valid;
@@ -1172,7 +1183,7 @@ package VX_gpu_pkg;
 	                                             + HW_DEBUG_L1D_CACHE_SOURCES_PER_SOCKET;
 	    localparam HW_DEBUG_CLUSTER_CACHE_SOURCES = (NUM_SOCKETS * HW_DEBUG_SOCKET_CACHE_SOURCES) + 1;
 	    localparam HW_DEBUG_CACHE_NUM_SOURCES = (`NUM_CLUSTERS * HW_DEBUG_CLUSTER_CACHE_SOURCES) + 1;
-	    localparam HW_DEBUG_CACHE_MAX_CORE_PORTS = `MAX(`MAX(1, DCACHE_NUM_REQS), `MAX(L2_NUM_REQS, L3_NUM_REQS));
+	    localparam HW_DEBUG_CACHE_MAX_CORE_PORTS = `MAX(`MAX(1, DCACHE_CORE_NUM_REQS), `MAX(L2_NUM_REQS, L3_NUM_REQS));
 	    localparam HW_DEBUG_CACHE_MAX_MEM_PORTS = `MAX(`MAX(1, `L1_MEM_PORTS), `MAX(`L2_MEM_PORTS, `L3_MEM_PORTS));
 	    localparam HW_DEBUG_CACHE_MAX_PORTS = `MAX(HW_DEBUG_CACHE_MAX_CORE_PORTS, HW_DEBUG_CACHE_MAX_MEM_PORTS);
 

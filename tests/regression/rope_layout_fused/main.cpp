@@ -59,19 +59,28 @@ static uint32_t parse_layout_to(const char* value) {
   if (strcmp(value, "row_major") == 0 || strcmp(value, "row") == 0) {
     return ROPE_LAYOUT_TO_ROW_MAJOR;
   }
-  printf("ERROR: --layout-to must be gemm_a_tiled, gemm_w_tiled, or row_major\n");
+  if (strcmp(value, "head_major_row") == 0 || strcmp(value, "bhsd") == 0) {
+    return ROPE_LAYOUT_TO_HEAD_MAJOR_ROW;
+  }
+  printf("ERROR: --layout-to must be gemm_a_tiled, gemm_w_tiled, row_major, or head_major_row\n");
   exit(1);
 }
 
 static const char* layout_to_name(uint32_t layout_to) {
   if (layout_to == ROPE_LAYOUT_TO_GEMM_A) return "gemm_a_tiled";
   if (layout_to == ROPE_LAYOUT_TO_GEMM_W) return "gemm_w_tiled";
+  if (layout_to == ROPE_LAYOUT_TO_HEAD_MAJOR_ROW) return "head_major_row";
   return "row_major";
 }
 
 static size_t row_index(uint32_t b, uint32_t s, uint32_t h, uint32_t d,
                         uint32_t seq, uint32_t heads, uint32_t head_dim) {
   return (((size_t)b * seq + s) * heads + h) * head_dim + d;
+}
+
+static size_t head_major_row_index(uint32_t b, uint32_t s, uint32_t h, uint32_t d,
+                                   uint32_t seq, uint32_t heads, uint32_t head_dim) {
+  return (((size_t)b * heads + h) * seq + s) * head_dim + d;
 }
 
 static void init_input(std::vector<data_t>& values) {
@@ -164,8 +173,14 @@ static void build_reference(const std::vector<data_t>& input,
             ref[base + gemm_w_tiled_wtrans1_elem_offset(p, pos, head_dim, max_seq, log2_kt, log2_mxu_kt, log2_mxu_nt)] = float_to_fp16(y0);
             ref[base + gemm_w_tiled_wtrans1_elem_offset(p + half_dim, pos, head_dim, max_seq, log2_kt, log2_mxu_kt, log2_mxu_nt)] = float_to_fp16(y1);
           } else {
-            ref[row_index(b, s, h, p, seq, heads, head_dim)] = float_to_fp16(y0);
-            ref[row_index(b, s, h, p + half_dim, seq, heads, head_dim)] = float_to_fp16(y1);
+            const size_t y0_off = (layout_to == ROPE_LAYOUT_TO_HEAD_MAJOR_ROW)
+                ? head_major_row_index(b, s, h, p, seq, heads, head_dim)
+                : row_index(b, s, h, p, seq, heads, head_dim);
+            const size_t y1_off = (layout_to == ROPE_LAYOUT_TO_HEAD_MAJOR_ROW)
+                ? head_major_row_index(b, s, h, p + half_dim, seq, heads, head_dim)
+                : row_index(b, s, h, p + half_dim, seq, heads, head_dim);
+            ref[y0_off] = float_to_fp16(y0);
+            ref[y1_off] = float_to_fp16(y1);
           }
         }
       }
@@ -193,7 +208,7 @@ int main(int argc, char *argv[]) {
     else if (strncmp(argv[i], "--layout-to=", 12) == 0) layout_to = parse_layout_to(argv[i] + 12);
     else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
       printf("Usage: %s [-batch B] [-seq S] [-heads H] [-headdim D] "
-             "[-maxseq N] [-offset O] [--layout-to gemm_a_tiled|gemm_w_tiled|row_major]\n", argv[0]);
+             "[-maxseq N] [-offset O] [--layout-to gemm_a_tiled|gemm_w_tiled|row_major|head_major_row]\n", argv[0]);
       return 0;
     }
   }

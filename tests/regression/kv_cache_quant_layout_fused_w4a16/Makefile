@@ -15,4 +15,8 @@ endif
 
 VX_SRCS := $(SRC_DIR)/kernel.$(KV_CACHE_QUANT_LAYOUT_FUSED_VARIANT).cpp
 
+# Variant wrappers include the shared implementation; make does not otherwise
+# discover device-side include dependencies.
+kernel.elf: $(SRC_DIR)/kernel.cpp
+
 include ../common.mk

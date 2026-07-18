@@ -1,0 +1,133 @@
+task: c3-hbw
+status: complete
+updated: "2026-07-18"
+goal: >-
+  Add a 16-thread C3_HBW configuration with independent 512-byte/cycle general
+  DMA and shared-LMEM fabric widths, while preserving existing configurations.
+spec: c3-hbw-spec.md
+entries:
+  - timestamp: "2026-07-18"
+    iteration: 0
+    status: confirmed
+    action: >-
+      Fixed the architecture around additive LMEM_NUM_PORTS and
+      DMA_DCACHE_PORTS macros with legacy-compatible defaults.
+    result: >-
+      The implementation scope preserves NUM_LSU_LANES and DCACHE_NUM_REQS as
+      CPU-facing quantities while adding independent physical memory widths.
+    learned: >-
+      Matching C4 raw HBM width requires eight 64-byte cache requests and 64
+      8-byte LMEM ports; the four existing naive GEMM clients remain a separate
+      256-byte/cycle aggregate.
+  - timestamp: "2026-07-18"
+    iteration: 1
+    status: compile_error
+    action: >-
+      Compiled the naive GEMM/DMA node with the C3_HBW overrides after the
+      default C3 configuration compiled successfully.
+    result: >-
+      VCS rejected the gemm_node testbench because its local-memory interface
+      arrays were fixed to NUM_LSU_LANES while the DUT now exposes
+      LMEM_NUM_PORTS.
+    learned: >-
+      Production interface decoupling also requires physical-memory testbench
+      arrays to follow LMEM_NUM_PORTS; MMIO LSU arrays must remain unchanged.
+  - timestamp: "2026-07-18"
+    iteration: 2
+    status: verification_passed
+    action: >-
+      Updated only the testbench's physical LMEM arrays, local arbiter loop, and
+      local-memory request count to LMEM_NUM_PORTS, then recompiled.
+    result: >-
+      Both the legacy C3 and C3_HBW naive GEMM/DMA node configurations compile
+      and elaborate successfully with VCS. The core_top Verilator smoke reached
+      the pre-existing missing AXI_BUS test-manifest limitation when GEMM is
+      enabled, so full-core verification proceeds through xrt-vcs-sim.
+    learned: >-
+      The testbench keeps its standalone DMA cache side at one lane while the
+      production core integration owns the eight-way aggregate cache split.
+  - timestamp: "2026-07-18"
+    iteration: 3
+    status: verification_passed
+    action: >-
+      Fresh-compiled and ran fpint_gemm_ffn_hw_naive with
+      -m 128 -k 128 -n 128 under the legacy C3, C3_HBW, and C4 configurations.
+    result: >-
+      All three xrt-vcs-sim runs passed bit-exact checking. Legacy C3 reported
+      20777 cycles, C3_HBW reported 23383 cycles, and C4 reported 12137 cycles.
+      C3_HBW elaborated with 16 threads, 64 LMEM ports/banks, and eight
+      64-byte DMA dcache ports.
+    learned: >-
+      The new configuration matches C4's structural 512-byte/cycle raw DMA and
+      LMEM width, not C4's end-to-end GEMM execution time. The naive GEMM side
+      still has four 64-byte clients, and an aggregate split beat completes at
+      the pace of its slowest lane.
+  - timestamp: "2026-07-18"
+    iteration: 4
+    status: review_passed
+    action: >-
+      Reviewed physical-versus-CPU port dimensions, tag widening, default
+      macro paths, and all modified wrapper dimensions; ran git diff --check.
+    result: >-
+      No blocking RTL correctness finding remained. Existing macro names and
+      existing C3/C4 config files are unchanged, and both new macro defaults
+      reproduce the legacy topology.
+    learned: >-
+      ci/run_black.sh does not rebuild simv solely because CONFIGS changed.
+      Cross-configuration comparisons must force a fresh simv build before the
+      wrapper run; all reported results used that procedure.
+  - timestamp: "2026-07-18"
+    iteration: 5
+    status: confirmed
+    action: >-
+      Defined a follow-up optimization that coalesces safe contiguous
+      dimension-0 segments and suppresses inactive lanes on wide DMA splits.
+    result: >-
+      Coalescing is restricted to zero-padding descriptors with singleton outer
+      dimensions and identical source/destination row strides. Lane masking is
+      opt-in so existing non-DMA splitter users retain their topology.
+    learned: >-
+      Read masking requires response-context masks as well as request gating;
+      otherwise a skipped lane would make the aggregate response wait forever.
+  - timestamp: "2026-07-18"
+    iteration: 6
+    status: compile_error
+    action: >-
+      First integrated read-byte-enable metadata into the common DMA and ran a
+      fresh legacy-C3 blackbox simulation.
+    result: >-
+      The output was all zero because the misaligned DMA read request buffers
+      did not yet carry the new byte-enable sideband to the masked LMEM split.
+    learned: >-
+      Generating a read mask is insufficient when request buffering separates
+      generation from the bus; the mask must be part of every buffered read
+      control record.
+  - timestamp: "2026-07-18"
+    iteration: 7
+    status: verification_passed
+    action: >-
+      Propagated read byte enables through both aligned and misaligned common
+      DMA buffers, then force-recompiled and ran legacy C3 and C3_HBW.
+    result: >-
+      The 128-cubed naive GEMM passes bit-exact checking in both configurations.
+      Legacy C3 reports 20728 cycles and optimized C3_HBW reports 18055 cycles,
+      versus the original C3_HBW result of 23383 cycles. A 32-cubed C3_HBW case
+      also passes.
+    learned: >-
+      Safe row coalescing removes most of the traffic amplification: C3_HBW DMA
+      traffic fell from 135168/65536 read/write bytes to the useful
+      43008/32768 bytes.
+  - timestamp: "2026-07-18"
+    iteration: 8
+    status: review_passed
+    action: >-
+      Ran the aligned and misaligned common-DMA VCS regressions, collected MPM
+      memory counters, reviewed the opt-in compatibility boundary, and ran
+      git diff --check.
+    result: >-
+      The misaligned suite passes 2125/2125 cases, the aligned suite passes,
+      and physical LMEM and dcache traffic both decrease. Existing splitter
+      users retain legacy all-lane behavior unless explicitly enabled.
+    learned: >-
+      The performance loss was traffic amplification and inactive-lane work,
+      not a lack of read-outstanding support in VX_mem_bus_split.

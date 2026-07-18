@@ -8,6 +8,7 @@
 #define ROPE_LAYOUT_TO_GEMM_A 0
 #define ROPE_LAYOUT_TO_GEMM_W 1
 #define ROPE_LAYOUT_TO_ROW_MAJOR 2
+#define ROPE_LAYOUT_TO_HEAD_MAJOR_ROW 3
 
 #define TILE_DMA_MT       128
 #define TILE_DMA_KT       128

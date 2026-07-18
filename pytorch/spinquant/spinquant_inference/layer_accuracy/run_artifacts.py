@@ -19,15 +19,33 @@ def save_run(result: RunResult, path: str | Path, *, capture_mode: str) -> None:
         raise ValueError(f"invalid capture mode {capture_mode!r}")
     destination = Path(path)
     destination.mkdir(parents=True, exist_ok=False)
-    torch.save(result.captures, destination / "captures.pt")
-    torch.save(result.auxiliary_captures, destination / "auxiliary_captures.pt")
-    capture_hashes = {
-        name: tensor_sha256(tensor) for name, tensor in sorted(result.captures.items())
-    }
-    auxiliary_hashes = {
-        name: tensor_sha256(tensor)
-        for name, tensor in sorted(result.auxiliary_captures.items())
-    }
+    save_semantic = capture_mode in ("semantic", "both")
+    save_physical = capture_mode in ("physical", "both")
+    capture_hashes = {}
+    auxiliary_hashes = {}
+    physical_hashes = {}
+    if save_semantic:
+        torch.save(result.captures, destination / "captures.pt")
+        torch.save(result.auxiliary_captures, destination / "auxiliary_captures.pt")
+        capture_hashes = {
+            name: tensor_sha256(tensor) for name, tensor in sorted(result.captures.items())
+        }
+        auxiliary_hashes = {
+            name: tensor_sha256(tensor)
+            for name, tensor in sorted(result.auxiliary_captures.items())
+        }
+    if save_physical:
+        if not result.physical_captures:
+            raise ValueError("physical capture mode requires LayerExecutor(capture_physical=True)")
+        torch.save(result.physical_captures, destination / "physical_captures.pt")
+        physical_hashes = {
+            name: tensor_sha256(tensor)
+            for name, tensor in sorted(result.physical_captures.items())
+        }
+        (destination / "physical_descriptors.json").write_text(
+            json.dumps(result.physical_descriptors, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
     metadata = {
         "schema_version": RUN_SCHEMA_VERSION,
         "backend": result.backend,
@@ -38,6 +56,7 @@ def save_run(result: RunResult, path: str | Path, *, capture_mode: str) -> None:
         "capture_mode": capture_mode,
         "capture_hashes": capture_hashes,
         "auxiliary_capture_hashes": auxiliary_hashes,
+        "physical_capture_hashes": physical_hashes,
         "placement": result.placement,
     }
     (destination / "run.json").write_text(
@@ -53,6 +72,8 @@ def load_run(path: str | Path) -> tuple[dict, dict[str, torch.Tensor], dict[str,
     metadata = json.loads((source / "run.json").read_text(encoding="utf-8"))
     if metadata.get("schema_version") != RUN_SCHEMA_VERSION:
         raise ValueError(f"unsupported run schema version {metadata.get('schema_version')!r}")
+    if metadata.get("capture_mode") == "physical":
+        raise ValueError("run contains physical captures only; use load_physical_run")
     captures = torch.load(source / "captures.pt", map_location="cpu", weights_only=True)
     auxiliary = torch.load(
         source / "auxiliary_captures.pt", map_location="cpu", weights_only=True
@@ -60,6 +81,25 @@ def load_run(path: str | Path) -> tuple[dict, dict[str, torch.Tensor], dict[str,
     _validate_hashes("capture", captures, metadata.get("capture_hashes", {}))
     _validate_hashes("auxiliary capture", auxiliary, metadata.get("auxiliary_capture_hashes", {}))
     return metadata, captures, auxiliary
+
+
+def load_physical_run(path: str | Path) -> tuple[dict, dict[str, torch.Tensor], dict[str, dict]]:
+    source = Path(path)
+    metadata = json.loads((source / "run.json").read_text(encoding="utf-8"))
+    if metadata.get("schema_version") != RUN_SCHEMA_VERSION:
+        raise ValueError(f"unsupported run schema version {metadata.get('schema_version')!r}")
+    if metadata.get("capture_mode") not in ("physical", "both"):
+        raise ValueError("run does not contain physical captures")
+    captures = torch.load(
+        source / "physical_captures.pt", map_location="cpu", weights_only=True
+    )
+    descriptors = json.loads(
+        (source / "physical_descriptors.json").read_text(encoding="utf-8")
+    )
+    _validate_hashes(
+        "physical capture", captures, metadata.get("physical_capture_hashes", {})
+    )
+    return metadata, captures, descriptors
 
 
 def _validate_hashes(kind: str, tensors: dict[str, torch.Tensor], expected: dict[str, str]) -> None:

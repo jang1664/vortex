@@ -30,6 +30,16 @@ static inline float shfl_idx_float(float value, uint32_t index) {
       float_to_bits(value), index, NUM_THREADS - 1, 0));
 }
 
+static inline int32_t round_half_even(float value) {
+  const int32_t truncated = (int32_t)value;
+  const float truncated_f = (float)truncated;
+  const int32_t floor_value = truncated - (int32_t)(truncated_f > value);
+  const float fraction = value - (float)floor_value;
+  const int32_t round_up = (int32_t)(fraction > 0.5f)
+      | ((int32_t)(fraction == 0.5f) & (floor_value & 1));
+  return floor_value + round_up;
+}
+
 static uint32_t min_u32(uint32_t a, uint32_t b) {
   return a < b ? a : b;
 }
@@ -56,6 +66,31 @@ static uint64_t gemm_c_tiled_offset(uint32_t K,
        + n0;
 }
 
+static uint64_t gemm_a_tiled_offset(uint32_t K,
+                                    uint32_t N,
+                                    uint32_t k,
+                                    uint32_t n,
+                                    uint32_t log2_mt,
+                                    uint32_t log2_mxu_kt) {
+  const uint32_t mt_size = 1u << log2_mt;
+  const uint32_t mt = k >> log2_mt;
+  const uint32_t m0 = k & (mt_size - 1u);
+  const uint32_t cm = min_u32(K - (mt << log2_mt), mt_size);
+  const uint32_t km = n >> log2_mxu_kt;
+  const uint32_t k0 = n & ((1u << log2_mxu_kt) - 1u);
+  return (uint64_t)mt * mt_size * N
+       + (uint64_t)km * cm * (1u << log2_mxu_kt)
+       + (uint64_t)m0 * (1u << log2_mxu_kt)
+       + k0;
+}
+
+struct source_view_t {
+  uint32_t total_k;
+  uint32_t total_n;
+  uint32_t row_offset;
+  uint32_t col_offset;
+};
+
 static fp16_t load_src_value(const fp16_t* src,
                              uint32_t K,
                              uint32_t N,
@@ -63,14 +98,24 @@ static fp16_t load_src_value(const fp16_t* src,
                              uint32_t n,
                              uint32_t src_layout,
                              uint32_t log2_mt,
-                             uint32_t log2_mxu_nt) {
+                             uint32_t log2_mxu_nt,
+                             const source_view_t& source_view) {
   if (k >= K || n >= N) {
     return 0;
   }
+  const uint32_t physical_k = k + source_view.row_offset;
+  const uint32_t physical_n = n + source_view.col_offset;
   if (src_layout == SRC_LAYOUT_GEMM_C_TILED) {
-    return src[gemm_c_tiled_offset(K, N, k, n, log2_mt, log2_mxu_nt)];
+    return src[gemm_c_tiled_offset(source_view.total_k, source_view.total_n,
+                                   physical_k, physical_n,
+                                   log2_mt, log2_mxu_nt)];
   }
-  return src[(uint64_t)k * N + n];
+  if (src_layout == SRC_LAYOUT_GEMM_A_TILED) {
+    return src[gemm_a_tiled_offset(source_view.total_k, source_view.total_n,
+                                   physical_k, physical_n,
+                                   log2_mt, log2_mxu_nt)];
+  }
+  return src[(uint64_t)physical_k * source_view.total_n + physical_n];
 }
 
 static void compute_params(const fp16_t* src,
@@ -84,49 +129,73 @@ static void compute_params(const fp16_t* src,
                            uint32_t log2_qblk,
                            uint32_t log2_mt,
                            uint32_t log2_mxu_nt,
+                           uint32_t quant_mode,
+                           const source_view_t& source_view,
                            float* scale_out,
-                           int16_t* zp_out) {
+                           float* zero_out) {
   if (k >= K || n >= N) {
     *scale_out = 0.0f;
-    *zp_out = 0;
+    *zero_out = 0.0f;
     return;
   }
   float min_v = fp16_to_float(load_src_value(src, K, N, k, n, src_layout,
-                                             log2_mt, log2_mxu_nt));
+                                             log2_mt, log2_mxu_nt,
+                                             source_view));
   float max_v = min_v;
+  float absmax = min_v < 0.0f ? -min_v : min_v;
 
   if (QDIR == 0) {
     const uint32_t k0 = (k >> log2_qblk) << log2_qblk;
     const uint32_t k1 = min_u32(k0 + QBLK, K);
     for (uint32_t kk = k0; kk < k1; ++kk) {
       const float v = fp16_to_float(load_src_value(src, K, N, kk, n, src_layout,
-                                                   log2_mt, log2_mxu_nt));
+                                                   log2_mt, log2_mxu_nt,
+                                                   source_view));
       if (v < min_v) min_v = v;
       if (v > max_v) max_v = v;
+      const float abs_v = v < 0.0f ? -v : v;
+      if (abs_v > absmax) absmax = abs_v;
     }
   } else {
     const uint32_t n0 = (n >> log2_qblk) << log2_qblk;
     const uint32_t n1 = min_u32(n0 + QBLK, N);
     for (uint32_t nn = n0; nn < n1; ++nn) {
       const float v = fp16_to_float(load_src_value(src, K, N, k, nn, src_layout,
-                                                   log2_mt, log2_mxu_nt));
+                                                   log2_mt, log2_mxu_nt,
+                                                   source_view));
       if (v < min_v) min_v = v;
       if (v > max_v) max_v = v;
+      const float abs_v = v < 0.0f ? -v : v;
+      if (abs_v > absmax) absmax = abs_v;
     }
   }
 
+  if (quant_mode == KV_QUANT_SPINQUANT_SIGNED_SYMMETRIC) {
+    if (absmax < 1e-8f) absmax = 1e-8f;
+    *scale_out = absmax / 7.5f;
+    *zero_out = 0.0f;
+    return;
+  }
+
   const float range = max_v - min_v;
-  float scale = 1.0f;
+  float scale = quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC ? 1.0f : 1e-8f;
   float inv_for_zp = 1.0f;
-  if (range != 0.0f) {
+  if ((quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC && range != 0.0f)
+      || (quant_mode != KV_QUANT_LEGACY_UINT4_ASYMMETRIC
+          && range / 15.0f > 1e-8f)) {
     scale = range / 15.0f;
     inv_for_zp = 15.0f / range;
   }
-  int32_t zp = kv_round_half_away_from_zero(-min_v * inv_for_zp);
-  if (zp < 0) zp = 0;
-  if (zp > 15) zp = 15;
-  *scale_out = scale;
-  *zp_out = (int16_t)zp;
+  if (quant_mode == KV_QUANT_SPINQUANT_SIGNED_ASYMMETRIC) {
+    *scale_out = scale;
+    *zero_out = -8.0f - min_v / scale;
+  } else {
+    int32_t zp = kv_round_half_away_from_zero(-min_v * inv_for_zp);
+    if (zp < 0) zp = 0;
+    if (zp > 15) zp = 15;
+    *scale_out = scale;
+    *zero_out = (float)zp;
+  }
 }
 
 static void compute_params_warp(const fp16_t* src,
@@ -140,12 +209,14 @@ static void compute_params_warp(const fp16_t* src,
                                 uint32_t log2_qblk,
                                 uint32_t log2_mt,
                                 uint32_t log2_mxu_nt,
+                                uint32_t quant_mode,
+                                const source_view_t& source_view,
                                 uint32_t lane,
                                 float* scale_out,
-                                int16_t* zp_out) {
+                                float* zero_out) {
   if (k >= K || n >= N) {
     *scale_out = 0.0f;
-    *zp_out = 0;
+    *zero_out = 0.0f;
     return;
   }
   float min_v = 3.402823466e+38F;
@@ -155,7 +226,8 @@ static void compute_params_warp(const fp16_t* src,
     const uint32_t k1 = min_u32(k0 + QBLK, K);
     for (uint32_t kk = k0 + lane; kk < k1; kk += NUM_THREADS) {
       const float v = fp16_to_float(load_src_value(
-          src, K, N, kk, n, src_layout, log2_mt, log2_mxu_nt));
+          src, K, N, kk, n, src_layout, log2_mt, log2_mxu_nt,
+          source_view));
       if (v < min_v) min_v = v;
       if (v > max_v) max_v = v;
     }
@@ -164,7 +236,8 @@ static void compute_params_warp(const fp16_t* src,
     const uint32_t n1 = min_u32(n0 + QBLK, N);
     for (uint32_t nn = n0 + lane; nn < n1; nn += NUM_THREADS) {
       const float v = fp16_to_float(load_src_value(
-          src, K, N, k, nn, src_layout, log2_mt, log2_mxu_nt));
+          src, K, N, k, nn, src_layout, log2_mt, log2_mxu_nt,
+          source_view));
       if (v < min_v) min_v = v;
       if (v > max_v) max_v = v;
     }
@@ -179,18 +252,34 @@ static void compute_params_warp(const fp16_t* src,
   }
   min_v = shfl_idx_float(min_v, 0);
   max_v = shfl_idx_float(max_v, 0);
+  if (quant_mode == KV_QUANT_SPINQUANT_SIGNED_SYMMETRIC) {
+    const float abs_min = min_v < 0.0f ? -min_v : min_v;
+    const float abs_max = max_v < 0.0f ? -max_v : max_v;
+    const float absmax = abs_min > abs_max ? abs_min : abs_max;
+    const float clamped_absmax = absmax < 1e-8f ? 1e-8f : absmax;
+    *scale_out = clamped_absmax / 7.5f;
+    *zero_out = 0.0f;
+    return;
+  }
   const float range = max_v - min_v;
-  float scale = 1.0f;
+  float scale = quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC ? 1.0f : 1e-8f;
   float inv_for_zp = 1.0f;
-  if (range != 0.0f) {
+  if ((quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC && range != 0.0f)
+      || (quant_mode != KV_QUANT_LEGACY_UINT4_ASYMMETRIC
+          && range / 15.0f > 1e-8f)) {
     scale = range / 15.0f;
     inv_for_zp = 15.0f / range;
   }
-  int32_t zp = kv_round_half_away_from_zero(-min_v * inv_for_zp);
-  if (zp < 0) zp = 0;
-  if (zp > 15) zp = 15;
-  *scale_out = scale;
-  *zp_out = (int16_t)zp;
+  if (quant_mode == KV_QUANT_SPINQUANT_SIGNED_ASYMMETRIC) {
+    *scale_out = scale;
+    *zero_out = -8.0f - min_v / scale;
+  } else {
+    int32_t zp = kv_round_half_away_from_zero(-min_v * inv_for_zp);
+    if (zp < 0) zp = 0;
+    if (zp > 15) zp = 15;
+    *scale_out = scale;
+    *zero_out = (float)zp;
+  }
 }
 
 static uint8_t quant_at(const fp16_t* src,
@@ -203,21 +292,31 @@ static uint8_t quant_at(const fp16_t* src,
                         uint32_t src_layout,
                         uint32_t log2_qblk,
                         uint32_t log2_mt,
-                        uint32_t log2_mxu_nt) {
+                        uint32_t log2_mxu_nt,
+                        uint32_t quant_mode,
+                        const source_view_t& source_view) {
   if (k >= K || n >= N) {
     return 0;
   }
   float scale = 1.0f;
-  int16_t zp = 0;
+  float zero = 0.0f;
   compute_params(src, K, N, QBLK, QDIR, k, n, src_layout,
-                 log2_qblk, log2_mt, log2_mxu_nt, &scale, &zp);
+                 log2_qblk, log2_mt, log2_mxu_nt, quant_mode,
+                 source_view, &scale, &zero);
   const float stored_scale = fp16_to_float(float_to_fp16(scale));
-  const float inv_scale = (stored_scale == 0.0f) ? 0.0f : (1.0f / stored_scale);
-  return kv_quantize_value_inv_scale(
-      fp16_to_float(load_src_value(src, K, N, k, n, src_layout,
-                                   log2_mt, log2_mxu_nt)),
-      inv_scale,
-      zp);
+  const float quant_scale = quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC
+      ? stored_scale : scale;
+  const float value = fp16_to_float(load_src_value(src, K, N, k, n, src_layout,
+                                                   log2_mt, log2_mxu_nt,
+                                                   source_view));
+  if (quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC) {
+    const float inv_scale = (quant_scale == 0.0f) ? 0.0f : (1.0f / quant_scale);
+    return kv_quantize_value_inv_scale(value, inv_scale, (int16_t)zero);
+  }
+  int32_t q = round_half_even(value / quant_scale + zero);
+  if (q < -8) q = -8;
+  if (q > 7) q = 7;
+  return (uint8_t)(q & 0x0f);
 }
 
 static uint8_t quant_with_params(const fp16_t* src,
@@ -228,16 +327,24 @@ static uint8_t quant_with_params(const fp16_t* src,
                                  uint32_t src_layout,
                                  uint32_t log2_mt,
                                  uint32_t log2_mxu_nt,
-                                 float inv_scale,
-                                 int16_t zp) {
+                                 float scale,
+                                 float zero,
+                                 uint32_t quant_mode,
+                                 const source_view_t& source_view) {
   if (k >= K || n >= N) {
     return 0;
   }
-  return kv_quantize_value_inv_scale(
-      fp16_to_float(load_src_value(src, K, N, k, n, src_layout,
-                                   log2_mt, log2_mxu_nt)),
-      inv_scale,
-      zp);
+  const float value = fp16_to_float(load_src_value(src, K, N, k, n, src_layout,
+                                                   log2_mt, log2_mxu_nt,
+                                                   source_view));
+  if (quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC) {
+    const float inv_scale = (scale == 0.0f) ? 0.0f : (1.0f / scale);
+    return kv_quantize_value_inv_scale(value, inv_scale, (int16_t)zero);
+  }
+  int32_t q = round_half_even(value / scale + zero);
+  if (q < -8) q = -8;
+  if (q > 7) q = 7;
+  return (uint8_t)(q & 0x0f);
 }
 
 static uint64_t weight_offset_wtrans0(uint32_t K,
@@ -304,19 +411,23 @@ static uint8_t quant_source_at(const fp16_t* src,
                                uint32_t log2_qblk,
                                uint32_t log2_mt,
                                uint32_t log2_mxu_nt,
-                               uint32_t source_transposed) {
+                               uint32_t source_transposed,
+                               uint32_t quant_mode,
+                               const source_view_t& source_view) {
   const uint32_t source_row = source_transposed ? out_n : out_k;
   const uint32_t source_col = source_transposed ? out_k : out_n;
   if (source_row >= K || source_col >= N) {
     return 0;
   }
   return quant_at(src, K, N, QBLK, QDIR, source_row, source_col, src_layout,
-                  log2_qblk, log2_mt, log2_mxu_nt);
+                  log2_qblk, log2_mt, log2_mxu_nt, quant_mode,
+                  source_view);
 }
 
 static uint32_t padded_weight_K(uint32_t K, uint32_t N, uint32_t source_transposed) {
   const uint32_t logical = source_transposed ? N : K;
-  return align_up_u32(logical, TILE_DMA_MXU_KT);
+  return align_up_u32(logical,
+                      logical <= DEFAULT_DMA_KT ? TILE_DMA_MXU_KT : DEFAULT_DMA_KT);
 }
 
 static uint32_t padded_weight_N(uint32_t K, uint32_t N, uint32_t source_transposed) {
@@ -330,7 +441,7 @@ static uint32_t padded_qparam_K(uint32_t K,
                                 uint32_t GEMM_QDIR,
                                 uint32_t source_transposed) {
   const uint32_t logical = source_transposed ? N : K;
-  uint32_t align = TILE_DMA_MXU_KT;
+  uint32_t align = logical <= DEFAULT_DMA_KT ? TILE_DMA_MXU_KT : DEFAULT_DMA_KT;
   if (GEMM_QDIR == 0 && QBLK > align) align = QBLK;
   return align_up_u32(logical, align);
 }
@@ -374,6 +485,8 @@ void kernel_kv_cache_quant_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
   auto weight = reinterpret_cast<uint8_t *>(arg->weight_addr);
   auto scales = reinterpret_cast<uint8_t *>(arg->scale_addr);
   auto zeros = reinterpret_cast<uint8_t *>(arg->zero_addr);
+  auto logical_scales = reinterpret_cast<fp16_t *>(arg->logical_scale_addr);
+  auto logical_zeros = reinterpret_cast<fp16_t *>(arg->logical_zero_addr);
 
   const uint32_t K = arg->K;
   const uint32_t N = arg->N;
@@ -383,6 +496,13 @@ void kernel_kv_cache_quant_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
   const uint32_t WTRANS = arg->WTRANS;
   const uint32_t src_layout = arg->src_layout;
   const uint32_t SOURCE_TRANSPOSED = arg->SOURCE_TRANSPOSED;
+  const uint32_t quant_mode = arg->quant_mode;
+  const source_view_t source_view = {
+      arg->src_total_K == 0 ? K : arg->src_total_K,
+      arg->src_total_N == 0 ? N : arg->src_total_N,
+      arg->src_row_offset,
+      arg->src_col_offset,
+  };
   const uint32_t log2_mt = arg->log2_mt;
   const uint32_t log2_kt = arg->log2_kt;
   const uint32_t log2_nt = arg->log2_nt;
@@ -409,19 +529,23 @@ void kernel_kv_cache_quant_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
       const uint32_t source_col_start = group << log2_qblk;
       const uint32_t source_col_end = min_u32(source_col_start + QBLK, logical_K);
       float scale = 1.0f;
-      int16_t zp = 0;
+      float zero = 0.0f;
       compute_params(src, K, N, QBLK, SOURCE_QDIR,
                      source_row, source_col_start, src_layout,
-                     log2_qblk, log2_mt, log2_mxu_nt, &scale, &zp);
+                     log2_qblk, log2_mt, log2_mxu_nt, quant_mode,
+                     source_view, &scale, &zero);
       const float stored_scale = fp16_to_float(float_to_fp16(scale));
-      const float inv_scale = (stored_scale == 0.0f) ? 0.0f : (1.0f / stored_scale);
+      const float quant_scale = quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC
+          ? stored_scale : scale;
       for (uint32_t source_col = source_col_start; source_col < source_col_end; source_col += 2) {
         const uint8_t q0 = quant_with_params(src, K, N, source_row, source_col,
                                              src_layout, log2_mt, log2_mxu_nt,
-                                             inv_scale, zp);
+                                             quant_scale, zero, quant_mode,
+                                             source_view);
         const uint8_t q1 = quant_with_params(src, K, N, source_row, source_col + 1,
                                              src_layout, log2_mt, log2_mxu_nt,
-                                             inv_scale, zp);
+                                             quant_scale, zero, quant_mode,
+                                             source_view);
         weight[weight_offset_wtrans1(logical_K, logical_N, source_col, source_row,
                                      log2_kt, log2_mxu_kt, log2_mxu_nt)] =
             (uint8_t)((q0 & 0x0f) | ((q1 & 0x0f) << 4));
@@ -436,19 +560,23 @@ void kernel_kv_cache_quant_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
       const uint32_t source_col_start = group << log2_qblk;
       const uint32_t source_col_end = min_u32(source_col_start + QBLK, weight_N);
       float scale = 1.0f;
-      int16_t zp = 0;
+      float zero = 0.0f;
       compute_params(src, K, N, QBLK, SOURCE_QDIR,
                      source_row, source_col_start, src_layout,
-                     log2_qblk, log2_mt, log2_mxu_nt, &scale, &zp);
+                     log2_qblk, log2_mt, log2_mxu_nt, quant_mode,
+                     source_view, &scale, &zero);
       const float stored_scale = fp16_to_float(float_to_fp16(scale));
-      const float inv_scale = (stored_scale == 0.0f) ? 0.0f : (1.0f / stored_scale);
+      const float quant_scale = quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC
+          ? stored_scale : scale;
       for (uint32_t source_col = source_col_start; source_col < source_col_end; source_col += 2) {
         const uint8_t q0 = quant_with_params(src, K, N, source_row, source_col,
                                              src_layout, log2_mt, log2_mxu_nt,
-                                             inv_scale, zp);
+                                             quant_scale, zero, quant_mode,
+                                             source_view);
         const uint8_t q1 = quant_with_params(src, K, N, source_row, source_col + 1,
                                              src_layout, log2_mt, log2_mxu_nt,
-                                             inv_scale, zp);
+                                             quant_scale, zero, quant_mode,
+                                             source_view);
         weight[weight_offset_wtrans0(weight_K, weight_N, source_row, source_col >> 1,
                                      log2_kt, log2_mxu_kt, log2_mxu_nt)] =
             (uint8_t)((q0 & 0x0f) | ((q1 & 0x0f) << 4));
@@ -463,9 +591,11 @@ void kernel_kv_cache_quant_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
         const uint32_t k0 = (i / logical_N) << 1;
         const uint32_t n = i - (k0 >> 1) * logical_N;
         const uint8_t q0 = quant_source_at(src, K, N, QBLK, SOURCE_QDIR, k0, n, src_layout,
-                                           log2_qblk, log2_mt, log2_mxu_nt, 1);
+                                           log2_qblk, log2_mt, log2_mxu_nt, 1,
+                                           quant_mode, source_view);
         const uint8_t q1 = quant_source_at(src, K, N, QBLK, SOURCE_QDIR, k0 + 1, n, src_layout,
-                                           log2_qblk, log2_mt, log2_mxu_nt, 1);
+                                           log2_qblk, log2_mt, log2_mxu_nt, 1,
+                                           quant_mode, source_view);
         weight[weight_offset_wtrans1(logical_K, logical_N, k0, n,
                                      log2_kt, log2_mxu_kt, log2_mxu_nt)] =
             (uint8_t)((q0 & 0x0f) | ((q1 & 0x0f) << 4));
@@ -474,9 +604,11 @@ void kernel_kv_cache_quant_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
         const uint32_t n_pair = i - k * (weight_N >> 1);
         const uint32_t n0 = n_pair << 1;
         const uint8_t q0 = quant_at(src, K, N, QBLK, SOURCE_QDIR, k, n0, src_layout,
-                                    log2_qblk, log2_mt, log2_mxu_nt);
+                                    log2_qblk, log2_mt, log2_mxu_nt, quant_mode,
+                                    source_view);
         const uint8_t q1 = quant_at(src, K, N, QBLK, SOURCE_QDIR, k, n0 + 1, src_layout,
-                                    log2_qblk, log2_mt, log2_mxu_nt);
+                                    log2_qblk, log2_mt, log2_mxu_nt, quant_mode,
+                                    source_view);
         weight[weight_offset_wtrans0(weight_K, weight_N, k, n_pair,
                                      log2_kt, log2_mxu_kt, log2_mxu_nt)] =
             (uint8_t)((q0 & 0x0f) | ((q1 & 0x0f) << 4));
@@ -484,9 +616,11 @@ void kernel_kv_cache_quant_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
         const uint32_t k0 = (i / weight_N) << 1;
         const uint32_t n = i - (k0 >> 1) * weight_N;
         const uint8_t q0 = quant_at(src, K, N, QBLK, SOURCE_QDIR, k0, n, src_layout,
-                                    log2_qblk, log2_mt, log2_mxu_nt);
+                                    log2_qblk, log2_mt, log2_mxu_nt, quant_mode,
+                                    source_view);
         const uint8_t q1 = quant_at(src, K, N, QBLK, SOURCE_QDIR, k0 + 1, n, src_layout,
-                                    log2_qblk, log2_mt, log2_mxu_nt);
+                                    log2_qblk, log2_mt, log2_mxu_nt, quant_mode,
+                                    source_view);
         weight[weight_offset_wtrans1(weight_K, weight_N, k0, n,
                                      log2_kt, log2_mxu_kt, log2_mxu_nt)] =
             (uint8_t)((q0 & 0x0f) | ((q1 & 0x0f) << 4));
@@ -581,23 +715,53 @@ void kernel_kv_cache_quant_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
     const uint32_t source_row = SOURCE_TRANSPOSED ? param_n : param_k;
     const uint32_t source_col = SOURCE_TRANSPOSED ? param_k : param_n;
     float scale = 1.0f;
-    int16_t zp = 0;
+    float zero = 0.0f;
 #if KV_FUSED_QPARAM_WARP
     compute_params_warp(src, K, N, QBLK, SOURCE_QDIR,
                         source_row, source_col, src_layout,
-                        log2_qblk, log2_mt, log2_mxu_nt, lane,
-                        &scale, &zp);
+                        log2_qblk, log2_mt, log2_mxu_nt, quant_mode,
+                        source_view, lane,
+                        &scale, &zero);
     if (lane == 0) {
 #else
     compute_params(src, K, N, QBLK, SOURCE_QDIR,
                    source_row, source_col, src_layout,
-                   log2_qblk, log2_mt, log2_mxu_nt, &scale, &zp);
+                   log2_qblk, log2_mt, log2_mxu_nt, quant_mode,
+                   source_view, &scale, &zero);
 #endif
     store_u16(scales, dst_off, float_to_fp16(scale));
-    store_u16(zeros, dst_off, (uint16_t)zp);
+    store_u16(zeros, dst_off,
+              quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC
+                  ? (uint16_t)zero : 0u);
 #if KV_FUSED_QPARAM_WARP
     }
 #endif
+  }
+
+  if (arg->logical_scale_addr != 0 && arg->logical_zero_addr != 0) {
+    const uint32_t logical_groups = SOURCE_QDIR == 0
+        ? ((K + QBLK - 1u) >> log2_qblk) * N
+        : K * ((N + QBLK - 1u) >> log2_qblk);
+    for (uint32_t group_index = thread_id; group_index < logical_groups;
+         group_index += total_threads) {
+      uint32_t source_row;
+      uint32_t source_col;
+      if (SOURCE_QDIR == 0) {
+        source_row = (group_index / N) << log2_qblk;
+        source_col = group_index % N;
+      } else {
+        const uint32_t groups_per_row = (N + QBLK - 1u) >> log2_qblk;
+        source_row = group_index / groups_per_row;
+        source_col = (group_index % groups_per_row) << log2_qblk;
+      }
+      float scale = 1.0f;
+      float zero = 0.0f;
+      compute_params(src, K, N, QBLK, SOURCE_QDIR, source_row, source_col,
+                     src_layout, log2_qblk, log2_mt, log2_mxu_nt, quant_mode,
+                     source_view, &scale, &zero);
+      logical_scales[group_index] = float_to_fp16(scale);
+      logical_zeros[group_index] = float_to_fp16(zero);
+    }
   }
 }
 

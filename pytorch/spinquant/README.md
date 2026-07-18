@@ -129,8 +129,9 @@ The +0.023 gap (~0.4%) comes from floating-point ordering differences in the PyT
 
 `spinquant_inference.layer_accuracy` is a separate, explicit decoder-layer
 harness. It does not use the generation model's monkey patches. Its v1 contract
-is Llama-2-7B prefill with `B=1`, `S=32`, W4 group size 32, asymmetric K4,
+is one Llama-2-7B prefill decoder layer with W4 group size 32, asymmetric K4,
 symmetric V4, online R3 after RoPE, and exact online R4 before `down_proj`.
+It does not yet model incremental decode or a persistent KV cache.
 
 Create one deterministic case and run the CUDA reference:
 
@@ -138,7 +139,8 @@ Create one deterministic case and run the CUDA reference:
 conda activate vortex
 cd pytorch/spinquant
 python -m spinquant_inference.layer_accuracy make-case \
-  --source random --seed 1 --output /shared/path/spinquant-layer-case
+  --source random --seed 1 --batch-size 2 --seq-len 32 \
+  --output /shared/path/spinquant-layer-case
 python -m spinquant_inference.layer_accuracy run \
   --case /shared/path/spinquant-layer-case --backend cuda \
   --stop-after qk --capture both --output /shared/path/spinquant-layer-cuda
@@ -158,6 +160,35 @@ python -m spinquant_inference.layer_accuracy compare \
   --candidate /shared/path/spinquant-layer-fpga \
   --output /shared/path/spinquant-layer-report.json
 ```
+
+The optional fourth wrapper argument selects the physical plan. `standalone`
+keeps each layout transform as its own kernel and remains the default;
+`fused` keeps compatible GEMM layouts across adjacent operations and uses the
+fused layout kernels:
+
+```bash
+./run_layer_accuracy_hw.sh \
+  /shared/path/spinquant-layer-case /shared/path/spinquant-layer-fused \
+  final_residual fused
+```
+
+In the fused plan, each R3/R4 rotation is executed by
+`hadamard_layout_fused`, which writes the transformed values directly in
+GEMM-A layout. The K-cache quantizer, QK asymmetric correction, and downstream
+GEMM consume that layout directly, so the fused path does not launch
+`hadamard_butterfly`, `hadamard_base`, or the corresponding `tile_input_a`.
+The standalone plan retains those separate kernels for comparison.
+
+For a direct invocation, pass `--physical-plan standalone|fused` to the `run`
+subcommand. Both plans emit the same 25 semantic stages, so their saved runs
+can be compared directly. Physical captures and placement metadata expose the
+different layout transitions and kernel launch counts.
+
+`--capture semantic` writes decoded tensors for numerical comparison.
+`--capture physical` writes raw backend buffers plus
+`physical_descriptors.json`; `--capture both` writes both sets and is the
+hardware wrapper default. Physical-only runs are diagnostic artifacts and are
+not accepted by the semantic `compare` command.
 
 The hardware wrapper uses the C4 alias configuration and bitstream by default
 (`improve_th16_tcol32_hwexp_dcache`). `--include-auxiliary` is an optional
@@ -182,17 +213,30 @@ spinquant-w4a16-r3r4 --layer-index N` to replace random weights with a strict
 layer checkpoint.
 
 The workload generator remains advisory rather than a runtime dependency. Check
-that the harness still agrees with its standalone SpinQuant layout intent using:
+that the harness still agrees with both SpinQuant physical plans using:
 
 ```bash
 python -m spinquant_inference.layer_accuracy check-generator
 ```
 
-With the current `improve_th16_tcol32_hwexp_dcache` simulation configuration,
-the standalone softmax regression itself aborts in simx. The strict-native
-integration test therefore covers through `qk` in simx; use the hardware
-runner for `softmax` and later stop points until that simulator regression is
-fixed.
+The fused full-layer integration tests are opt-in hardware tests and run on the
+real C4/U55C path; they do not use simx. Case generation and the CUDA reference
+accept any positive batch size and sequence length. Both C4 physical plans now
+support multiple 128-row M tiles and enforce these remaining kernel-layout
+limits during preflight:
+
+- `S` must be a multiple of the 32-column GEMM micro-tile.
+- Each grouped QK output stride must remain 512-byte aligned.
+- An attention GEMM K dimension above 128 is physically padded to a complete
+  128-column DMA tile. For example, logical `S=160` uses `K_pad=256`; the input,
+  weight, scale, and zero padding is zero-filled and excluded from semantic
+  captures.
+
+The fused plan additionally requires the Llama2-7B `H=4096`, `I=11008`,
+32-head shape and canonical score scale and causal mask.
+
+`B=2`, `S=32` and the multi-M-tile case `B=1`, `S=160` have been validated in
+real-C4 full-layer runs for both standalone and fused plans.
 
 ## References
 - [SpinQuant: LLM Quantization with Learned Rotations](https://arxiv.org/abs/2405.16406)

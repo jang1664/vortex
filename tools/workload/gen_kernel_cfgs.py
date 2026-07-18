@@ -130,6 +130,8 @@ KERNEL_APP_REGISTRY: dict[str, str | None] = {
     "eladd":      "eladd",
     "elmul":      "elmul",
     "hadamard":   "hadamard",
+    "hadamard_layout_fused": "hadamard_layout_fused",
+    "qk_asym_correction": "qk_asym_correction",
     "kv_cache_quant_w4a16": "kv_cache_quant_w4a16",
     "kv_cache_quant_layout_fused_w4a16": "kv_cache_quant_layout_fused_w4a16",
     "kv_cache_dequant_w4a16": "kv_cache_dequant_w4a16",
@@ -570,7 +572,11 @@ def _kv_cache_quant_layout_fused_kernel(name: str,
                                         cache_len: int | None = None,
                                         cache_update: str = "full",
                                         gemm_QDIR: int | None = None,
-                                        source_transposed: bool = False) -> dict:
+                                        source_transposed: bool = False,
+                                        quant_mode: str = "legacy_uint4_asymmetric",
+                                        source_total_n: int | None = None,
+                                        head_col_offset: int | str | None = None,
+                                        emit_correction_qparams: bool = False) -> dict:
     gemm_qdir = QDIR if gemm_QDIR is None else gemm_QDIR
     weight_layout_to = "gemm_w_tiled_transposed" if WTRANS else "gemm_w_tiled"
     scale_zp_layout_to = "sz_gemm_tiled_transposed" if source_transposed else "sz_gemm_tiled"
@@ -592,12 +598,20 @@ def _kv_cache_quant_layout_fused_kernel(name: str,
     }
     if source_transposed:
         shape["source_transposed"] = True
+    if quant_mode != "legacy_uint4_asymmetric":
+        shape["quant_mode"] = quant_mode
     if effective_K is not None:
         shape["effective_K"] = effective_K
     if effective_N is not None:
         shape["effective_N"] = effective_N
     if cache_len is not None:
         shape["cache_len"] = cache_len
+    if source_total_n is not None:
+        shape["source_total_n"] = source_total_n
+    if head_col_offset is not None:
+        shape["head_col_offset"] = head_col_offset
+    if emit_correction_qparams:
+        shape["correction_qparams_layout_to"] = "logical_row_major_fp16"
     return _llm_kernel(
         name=name,
         kind="quantization",
@@ -608,6 +622,10 @@ def _kv_cache_quant_layout_fused_kernel(name: str,
             f" --gemm-qdir {gemm_qdir}"
             + (f" --layout-from {layout_from}" if layout_from != "row_major_fp16" else "")
             + (" --source-transposed" if source_transposed else "")
+            + (f" --quant-mode {quant_mode}" if quant_mode != "legacy_uint4_asymmetric" else "")
+            + (f" --source-total-n {source_total_n}" if source_total_n is not None else "")
+            + (f" --head-col-offset {head_col_offset}" if isinstance(head_col_offset, int) else "")
+            + (" --emit-correction-qparams" if emit_correction_qparams else "")
         ),
         calls_per_forward=calls_per_forward,
         shape=shape,
@@ -734,6 +752,18 @@ def _replace_layout_to_arg(args: str, layout_to: str) -> str:
             parts[i] = f"--layout-to={layout_to}"
             return " ".join(parts)
     return " ".join(parts + ["--layout-to", layout_to])
+
+
+def _replace_layout_from_arg(args: str, layout_from: str) -> str:
+    parts = args.split()
+    for i, part in enumerate(parts):
+        if part == "--layout-from" and i + 1 < len(parts):
+            parts[i + 1] = layout_from
+            return " ".join(parts)
+        if part.startswith("--layout-from="):
+            parts[i] = f"--layout-from={layout_from}"
+            return " ".join(parts)
+    return " ".join(parts + ["--layout-from", layout_from])
 
 
 def _kv_cache_row_major_source_shape(stage: str, seq_kv: int, head_dim: int) -> tuple[int, int, str]:
@@ -1173,17 +1203,13 @@ def _apply_spinquant_hadamard_variant(kernels: list[dict],
                                       variant: str) -> list[dict]:
     by_name = {kernel["name"]: kernel for kernel in kernels}
     names = set(by_name)
-    attention_M, attention_call_heads, _query_heads_per_kv = _attention_gemm_geometry(
-        stage, seq_q=seq_q, heads_q=heads_q, heads_kv=heads_kv
-    )
-    attention_calls = layers * batch * attention_call_heads
     q_rows = batch * seq_q * heads_q
     k_rows = batch * seq_q * heads_kv
     r4_rows = M_proj
     mlp_elems = M_proj * intermediate
 
     q_consumer = "attn_qkT"
-    if base_variant in (LAYOUT_ALONE_VARIANT, LAYOUT_FUSED_VARIANT):
+    if base_variant == LAYOUT_ALONE_VARIANT:
         q_consumer = "layout_rope_q_to_attn_qkT"
 
     k_consumers = []
@@ -1202,7 +1228,7 @@ def _apply_spinquant_hadamard_variant(kernels: list[dict],
 
     r4_consumer = (
         "layout_mlp_elmul_to_down_proj"
-        if base_variant in (LAYOUT_ALONE_VARIANT, LAYOUT_FUSED_VARIANT)
+        if base_variant == LAYOUT_ALONE_VARIANT
         else "down_proj"
     )
 
@@ -1227,14 +1253,64 @@ def _apply_spinquant_hadamard_variant(kernels: list[dict],
         layout_group="mlp_elmul_to_spinquant_r4_to_down_proj",
         rotation="R4", variant=variant,
     )
-
-    q_tile = _tile_input_kernel(
-        "layout_rope_q_to_attn_qkT", stage,
-        M=attention_M, K=head_dim, calls_per_forward=attention_calls,
-        producer="spinquant_r3_q_hadamard", consumer="attn_qkT",
-        layout_group="spinquant_r3_q_hadamard_to_attn_qkT",
-        layout_from="row_major_fp16", variant=variant,
+    qk_shape = dict(by_name["attn_qkT"].get("shape") or {})
+    qk_correction = _llm_kernel(
+        name="qk_asym_correction_out",
+        kind="correction",
+        backend="qk_asym_correction",
+        stage=stage,
+        args="--layout gemm_c_tiled --query-layout gemm_a_tiled",
+        calls_per_forward=int(by_name["attn_qkT"]["calls_per_forward"]),
+        shape={
+            "M": qk_shape["M"],
+            "N": qk_shape["N"],
+            "D": qk_shape["K"],
+            "layout_from": "gemm_c_tiled",
+            "layout_to": "gemm_c_tiled",
+            "query_layout": "gemm_a_tiled",
+            "qparams_layout": "logical_row_major_fp16",
+            "producer": "attn_qkT",
+            "consumer": "attn_softmax",
+            "layout_group": "attn_qkT_to_asym_correction_to_softmax",
+        },
+        variant=variant,
     )
+    if base_variant == LAYOUT_FUSED_VARIANT:
+        q_hadamard = _with_fused_backend(
+            q_hadamard, "hadamard_layout_fused",
+            args=f"-m {seq_q} -n {batch * heads_q} -k {head_dim}",
+            shape_update={
+                "layout_from": "head_major_row_fp16",
+                "layout_to": "gemm_a_tiled",
+                "matrix_count": batch * heads_q,
+                "rows_per_matrix": seq_q,
+                "m_pad": (seq_q + 7) & ~7,
+                "consumer": "attn_qkT",
+            },
+        )
+        k_hadamard = _with_fused_backend(
+            k_hadamard, "hadamard_layout_fused",
+            args=f"-m {seq_q} -n {batch * heads_kv} -k {head_dim}",
+            shape_update={
+                "layout_from": "head_major_row_fp16",
+                "layout_to": "gemm_a_tiled",
+                "matrix_count": batch * heads_kv,
+                "rows_per_matrix": seq_q,
+                "m_pad": (seq_q + 7) & ~7,
+            },
+        )
+        r4_hadamard = _with_fused_backend(
+            r4_hadamard, "hadamard_layout_fused",
+            args=f"-m {M_proj} -n 1 -k {intermediate}",
+            shape_update={
+                "layout_to": "gemm_a_tiled",
+                "matrix_count": 1,
+                "rows_per_matrix": M_proj,
+                "m_pad": (M_proj + 7) & ~7,
+                "consumer": "down_proj",
+            },
+        )
+
     gate_detile = _detile_output_kernel(
         "layout_gate_proj_to_mlp_silu_detile", stage,
         M=M_proj, N=intermediate, calls_per_forward=layers,
@@ -1275,14 +1351,6 @@ def _apply_spinquant_hadamard_variant(kernels: list[dict],
         },
         variant=variant,
     )
-    r4_tile = _tile_input_kernel(
-        "layout_mlp_elmul_to_down_proj", stage,
-        M=M_proj, K=intermediate, calls_per_forward=layers,
-        producer="spinquant_r4_mlp_hadamard", consumer="down_proj",
-        layout_group="spinquant_r4_hadamard_to_down_proj",
-        layout_from="row_major_fp16", variant=variant,
-    )
-
     out: list[dict] = []
     for kernel in kernels:
         name = str(kernel["name"])
@@ -1291,24 +1359,24 @@ def _apply_spinquant_hadamard_variant(kernels: list[dict],
             if base_variant == LAYOUT_FUSED_VARIANT:
                 kernel = _with_kernel_updates(
                     kernel,
-                    args=_replace_layout_to_arg(str(kernel["args"]), "row_major"),
+                    args=_replace_layout_to_arg(str(kernel["args"]), "head_major_row"),
                     shape_update={
-                        "layout_to": "row_major_fp16",
+                        "layout_to": "head_major_row_fp16",
                         "consumer": "spinquant_r3_q_hadamard",
                         "layout_group": "q_proj_to_rope_q_to_spinquant_r3_q",
                     },
                 )
             out.append(kernel)
             out.append(q_hadamard)
-            if base_variant == LAYOUT_FUSED_VARIANT:
-                out.append(q_tile)
             continue
 
         if name == "rope_k":
             if base_variant == LAYOUT_FUSED_VARIANT:
                 kernel = _with_kernel_updates(
                     kernel,
+                    args=_replace_layout_to_arg(str(kernel["args"]), "head_major_row"),
                     shape_update={
+                        "layout_to": "head_major_row_fp16",
                         "consumer": "spinquant_r3_k_hadamard",
                         "layout_group": "k_proj_to_rope_k_to_spinquant_r3_k",
                     },
@@ -1318,10 +1386,12 @@ def _apply_spinquant_hadamard_variant(kernels: list[dict],
             continue
 
         if name == "layout_rope_q_to_attn_qkT":
+            if base_variant == LAYOUT_FUSED_VARIANT:
+                continue
             out.append(_with_kernel_updates(
                 kernel,
                 shape_update={
-                    "layout_from": "row_major_fp16",
+                    "layout_from": "head_major_row_fp16",
                     "producer": "spinquant_r3_q_hadamard",
                     "layout_group": "spinquant_r3_q_hadamard_to_attn_qkT",
                 },
@@ -1329,13 +1399,49 @@ def _apply_spinquant_hadamard_variant(kernels: list[dict],
             continue
 
         if name == "kv_cache_quant_rope_k_to_attn_qkT":
+            args = str(kernel["args"])
+            shape_update = {
+                "producer": "spinquant_r3_k_hadamard",
+                "layout_group": "spinquant_r3_k_hadamard_to_kv_cache",
+            }
+            if base_variant == LAYOUT_FUSED_VARIANT:
+                args = _replace_layout_from_arg(args, "gemm_a_tiled")
+                args += (
+                    " --quant-mode spinquant_signed_asymmetric"
+                    f" --source-total-n {head_dim} --head-col-offset 0"
+                    " --emit-correction-qparams"
+                )
+                shape_update.update({
+                    "layout_from": "gemm_a_tiled",
+                    "quant_mode": "spinquant_signed_asymmetric",
+                    "source_total_n": head_dim,
+                    "head_col_offset": 0,
+                    "correction_qparams_layout_to": "logical_row_major_fp16",
+                })
+            out.append(_with_kernel_updates(kernel, args=args, shape_update=shape_update))
+            continue
+
+        if base_variant == LAYOUT_FUSED_VARIANT and name == "kv_cache_quant_v_cache_to_attn_pv":
             out.append(_with_kernel_updates(
                 kernel,
+                args=(str(kernel["args"])
+                      + " --quant-mode spinquant_signed_symmetric"
+                      + f" --source-total-n {heads_kv * head_dim}"
+                      + " --head-col-offset 0"),
                 shape_update={
-                    "producer": "spinquant_r3_k_hadamard",
-                    "layout_group": "spinquant_r3_k_hadamard_to_kv_cache",
+                    "quant_mode": "spinquant_signed_symmetric",
+                    "source_total_n": heads_kv * head_dim,
+                    "head_col_offset": f"call_head_index*{head_dim}",
+                    "representative_args_head_col_offset": 0,
                 },
             ))
+            continue
+
+        if base_variant == LAYOUT_FUSED_VARIANT and name == "attn_qkT":
+            out.append(_with_kernel_updates(kernel, shape_update={
+                "consumer": "qk_asym_correction_out",
+            }))
+            out.append(qk_correction)
             continue
 
         if base_variant == LAYOUT_FUSED_VARIANT and name == "mlp_silu":
@@ -1347,7 +1453,6 @@ def _apply_spinquant_hadamard_variant(kernels: list[dict],
             out.append(up_detile)
             out.append(row_major_elmul)
             out.append(r4_hadamard)
-            out.append(r4_tile)
             continue
 
         if name == "mlp_elmul":
@@ -1356,6 +1461,8 @@ def _apply_spinquant_hadamard_variant(kernels: list[dict],
             continue
 
         if name == "layout_mlp_elmul_to_down_proj":
+            if base_variant == LAYOUT_FUSED_VARIANT:
+                continue
             out.append(_with_kernel_updates(
                 kernel,
                 shape_update={
@@ -2277,6 +2384,15 @@ def annotate_kernel_flow(kernels: list[dict]) -> None:
                 _output_flow("W", "attn_qkT", str(shape.get("weight_layout_to", "gemm_w_tiled"))),
                 _output_flow("scale/zp", "attn_qkT", str(shape.get("scale_zp_layout_to", "gemm_scale_zp_tiled"))),
             ]
+            if "qk_asym_correction_out" in names:
+                outputs.append(_output_flow(
+                    "logical scale/zero",
+                    "qk_asym_correction_out",
+                    str(shape.get(
+                        "correction_qparams_layout_to",
+                        "logical_row_major_fp16",
+                    )),
+                ))
         else:
             outputs = []
             if "layout_rope_k_to_attn_qkT" in names:
@@ -2360,17 +2476,49 @@ def annotate_kernel_flow(kernels: list[dict]) -> None:
         ]
         if default_qparam_layout:
             inputs.append(_input_flow("scale/zp", scale_source, scale_layout))
-        target = _first_existing(["layout_attn_qkT_to_softmax_detile", "attn_softmax"], names)
+        target = _first_existing([
+            "qk_asym_correction_out",
+            "layout_attn_qkT_to_softmax_detile",
+            "attn_softmax",
+        ], names)
         _set_flow(
             attn_qk,
             inputs=inputs,
             outputs=([_output_flow("C", target, _gemm_c_layout(backend))] if target else []),
         )
 
+    qk_correction = kernels_by_name.get("qk_asym_correction_out")
+    if qk_correction:
+        shape = dict(qk_correction.get("shape") or {})
+        q_source = _first_existing([
+            "spinquant_r3_q_hadamard",
+            "layout_rope_q_to_attn_qkT",
+            "rope_q",
+        ], names) or "rope_q"
+        _set_flow(
+            qk_correction,
+            inputs=[
+                _input_flow("scores", "attn_qkT", str(shape["layout_from"])),
+                _input_flow("query", q_source, str(shape["query_layout"])),
+                _input_flow(
+                    "scale/zero",
+                    "kv_cache_quant_rope_k_to_attn_qkT",
+                    str(shape["qparams_layout"]),
+                ),
+            ],
+            outputs=[
+                _output_flow("scores", "attn_softmax", str(shape["layout_to"]))
+            ],
+        )
+
     softmax = kernels_by_name.get("attn_softmax")
     if softmax:
         shape = dict(softmax.get("shape") or {})
-        source = _first_existing(["layout_attn_qkT_to_softmax_detile", "attn_qkT"], names) or "attn_qkT"
+        source = _first_existing([
+            "qk_asym_correction_out",
+            "layout_attn_qkT_to_softmax_detile",
+            "attn_qkT",
+        ], names) or "attn_qkT"
         target = _first_existing(["layout_attn_softmax_to_attn_pv", "attn_pv"], names)
         _set_flow(
             softmax,
