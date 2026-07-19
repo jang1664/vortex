@@ -1,7 +1,7 @@
 """Horizontal stacked-bar area breakdown of synthesized Vortex_axi.
 
-Parses the DC topographical area report with hwexplorer and emits a single
-stacked bar that decomposes Vortex_axi cell area into the meaningful
+Parses the DC topographical area report with hwexplorer and emits multiple
+stacked-bar views that decompose Vortex_axi cell area into meaningful
 sub-blocks (gemm_node / mem_unit / caches / AXI infra / ...). The breakdown
 deliberately reaches inside `vortex/cluster/socket/core` since the top-level
 hierarchy is 99.6% `vortex` and not informative on its own.
@@ -16,9 +16,11 @@ run. If the exact run directory is incomplete, the newest valid dated backup
 directory is used.
 
 Outputs (under analysis_workspace/top_breakdown/<run>/):
-    vortex_axi_breakdown.csv         - five paper-facing area categories
-    vortex_axi_breakdown_detail.csv  - auditable per-module area table
-    vortex_axi_breakdown.png         - horizontal stacked bar figure
+    vortex_axi_breakdown.csv          - original five paper-facing categories
+    vortex_axi_breakdown.png          - original horizontal stacked bar figure
+    vortex_axi_breakdown_xbar.csv     - XBAR-separated five-category version
+    vortex_axi_breakdown_xbar.png     - XBAR-separated stacked bar figure
+    vortex_axi_breakdown_detail.csv   - auditable per-module area table
 """
 
 from __future__ import annotations
@@ -27,6 +29,7 @@ import argparse
 import math
 import os
 import re
+from dataclasses import dataclass
 from pathlib import Path
 
 import matplotlib
@@ -49,17 +52,67 @@ DESIGN_NAME = "Vortex_axi"
 REPORT_REL = Path("syn_topo.lpp/reports/14_Vortex_axi.mapped.area.rpt")
 
 SIMT_LABEL = "SIMT (excl. memory)"
+SIMT_NO_XBAR_LABEL = "SIMT (excl. SRAM / XBAR)"
 MEMORY_LABEL = "Cache / LMEM / TMEM"
 MXU_LABEL = "GEMM Engine"
+XBAR_LABEL = "XBAR"
 DMA_LABEL = "DMA"
 MISC_LABEL = "Misc. (incl. interconnect, mux/demux)"
+XBAR_MISC_LABEL = "Misc."
 
+
+@dataclass(frozen=True)
+class LegendCategory:
+    label: str
+    components: tuple[str, ...]
+    color: str
+    show_percent_in_legend: bool = False
+
+
+@dataclass(frozen=True)
+class LegendGroup:
+    name: str
+    output_suffix: str
+    categories: tuple[LegendCategory, ...]
+    legend_order: tuple[int, ...]
+
+
+# Multiple paper-facing views of the same auditable module breakdown. An empty
+# component list marks the residual category, which receives all area not
+# assigned to the explicitly listed semantic components.
+LEGEND_GROUPS: list[LegendGroup] = [
+    LegendGroup(
+        name="original",
+        output_suffix="",
+        categories=(
+            LegendCategory(SIMT_LABEL, ("simt",), "#285980"),
+            LegendCategory(MEMORY_LABEL, ("memory",), "#377bb1"),
+            LegendCategory(MXU_LABEL, ("mxu",), "#444444"),
+            LegendCategory(DMA_LABEL, ("dma",), "#7a7a7a", True),
+            LegendCategory(MISC_LABEL, (), "#b5b5b5", True),
+        ),
+        legend_order=(0, 2, 4, 1, 3),
+    ),
+    LegendGroup(
+        name="xbar",
+        output_suffix="_xbar",
+        categories=(
+            LegendCategory(
+                SIMT_NO_XBAR_LABEL, ("simt", "mxu"), "#285980"
+            ),
+            LegendCategory(MEMORY_LABEL, ("memory",), "#377bb1"),
+            LegendCategory(XBAR_LABEL, ("xbar",), "#444444", True),
+            LegendCategory(DMA_LABEL, ("dma",), "#7a7a7a", True),
+            LegendCategory(XBAR_MISC_LABEL, (), "#b5b5b5", True),
+        ),
+        legend_order=(0, 2, 4, 1, 3),
+    ),
+]
+
+# Compatibility alias for users importing the original color mapping.
 SUMMARY_COLORS = {
-    SIMT_LABEL: "#285980",
-    MEMORY_LABEL: "#377bb1",
-    MXU_LABEL: "#444444",
-    DMA_LABEL: "#7a7a7a",
-    MISC_LABEL: "#b5b5b5",
+    category.label: category.color
+    for category in LEGEND_GROUPS[0].categories
 }
 
 FIGURE_WIDTH_IN = 3.5
@@ -184,6 +237,14 @@ DMA_BUCKETS = {
     "TMEM local DMAs",
     "TMEM DMA control",
 }
+XBAR_BUCKETS = {
+    "TMEM switches",
+    "socket memory arbiter",
+    "HBM AXI mux x8",
+    "HBM LSU mux cuts x8",
+    "LSU demux",
+    "AXI adapter / memory adapter / remaps",
+}
 
 LOCAL_MEM_PATTERN = PREFIX_CORE + r"/mem_unit/local_mem$"
 
@@ -246,13 +307,18 @@ def summarize_for_paper(
     detail_counts: dict[str, int],
     hdf: pd.DataFrame,
     total_area: float,
+    legend_group: LegendGroup | None = None,
 ) -> dict[str, float]:
-    """Collapse the auditable breakdown into five paper-facing categories.
+    """Collapse the auditable breakdown into one paper-facing legend group.
 
     Only the `local_mem` child of `mem_unit` is classified as LMEM. The rest
     of `mem_unit` contains coalescers, adapters, arbiters, and switches and is
-    therefore deliberately counted as interconnect overhead in Misc.
+    therefore treated as XBAR/interconnect overhead. The original legend
+    leaves that component in Misc.; the XBAR legend exposes it explicitly.
     """
+    if legend_group is None:
+        legend_group = LEGEND_GROUPS[0]
+
     local_mem_area, local_mem_count = exact_area(hdf, LOCAL_MEM_PATTERN)
     missing_anchors = []
     if local_mem_count == 0:
@@ -279,30 +345,49 @@ def summarize_for_paper(
             f"{local_mem_area} > {mem_unit_area}"
         )
 
-    summary = {label: 0.0 for label in SUMMARY_COLORS}
-    summary[SIMT_LABEL] = sum(
-        detail_sums[label] for label in SIMT_BUCKETS
-    )
-    summary[MEMORY_LABEL] = local_mem_area + sum(
-        detail_sums[label] for label in MEMORY_BUCKETS
-    )
-    summary[MXU_LABEL] = detail_sums["GEMM unit (MXU compute)"]
-    summary[DMA_LABEL] = sum(detail_sums[label] for label in DMA_BUCKETS)
+    mem_overhead = max(0.0, mem_unit_area - local_mem_area)
+    components = {
+        "simt": sum(detail_sums[label] for label in SIMT_BUCKETS),
+        "memory": local_mem_area
+        + sum(detail_sums[label] for label in MEMORY_BUCKETS),
+        "mxu": detail_sums["GEMM unit (MXU compute)"],
+        "dma": sum(detail_sums[label] for label in DMA_BUCKETS),
+        "xbar": mem_overhead
+        + sum(detail_sums[label] for label in XBAR_BUCKETS),
+    }
 
+    residual_categories = [
+        category for category in legend_group.categories if not category.components
+    ]
+    if len(residual_categories) != 1:
+        raise SystemExit(
+            f"legend group {legend_group.name!r} must have one residual category"
+        )
+
+    summary = {
+        category.label: sum(components[name] for name in category.components)
+        for category in legend_group.categories
+        if category.components
+    }
     assigned = sum(summary.values())
-    summary[MISC_LABEL] = total_area - assigned
-    if summary[MISC_LABEL] < -1e-6:
+    residual_label = residual_categories[0].label
+    summary[residual_label] = total_area - assigned
+    if summary[residual_label] < -1e-6:
         raise SystemExit("paper categories exceed total cell area")
-    summary[MISC_LABEL] = max(0.0, summary[MISC_LABEL])
+    summary[residual_label] = max(0.0, summary[residual_label])
+    summary = {
+        category.label: summary[category.label]
+        for category in legend_group.categories
+    }
 
     if not math.isclose(sum(summary.values()), total_area, rel_tol=1e-9, abs_tol=1e-3):
         raise SystemExit("paper categories do not sum to total cell area")
 
-    mem_overhead = max(0.0, mem_unit_area - local_mem_area)
     print(
         "memory-unit split: "
         f"LMEM={local_mem_area / 1e6:.4f} mm², "
-        f"interconnect/control={mem_overhead / 1e6:.4f} mm² -> Misc."
+        f"interconnect/control={mem_overhead / 1e6:.4f} mm² -> "
+        f"{'XBAR' if any(category.label == XBAR_LABEL for category in legend_group.categories) else 'Misc.'}"
     )
     return summary
 
@@ -422,6 +507,111 @@ def load_area_report(rpt: Path) -> tuple[pd.DataFrame, float]:
     return pd.DataFrame(rows), total_area
 
 
+def write_legend_group_outputs(
+    legend_group: LegendGroup,
+    summary_sums: dict[str, float],
+    total_area: float,
+    out_dir: Path,
+    *,
+    total_label: str = "Total cell area",
+) -> None:
+    """Write the CSV and stacked bar for one configured legend group."""
+    labels = [category.label for category in legend_group.categories]
+    areas_um2 = [summary_sums[label] for label in labels]
+    areas_mm2 = [area / 1e6 for area in areas_um2]
+    pcts = [area / total_area * 100 for area in areas_um2]
+
+    df_out = pd.DataFrame({
+        "module": labels,
+        "area_um2": areas_um2,
+        "area_mm2": areas_mm2,
+        "percent": pcts,
+    })
+    stem = f"vortex_axi_breakdown{legend_group.output_suffix}"
+    csv_path = out_dir / f"{stem}.csv"
+    df_out.to_csv(csv_path, index=False)
+    print(f"\nlegend group: {legend_group.name}")
+    print(df_out.to_string(index=False, float_format=lambda v: f"{v:10.4f}"))
+    print(
+        f"{total_label}: {total_area / 1e6:.3f} mm² "
+        f"(sum of categories = {sum(areas_mm2):.3f} mm²)"
+    )
+    print(f"wrote {csv_path}")
+
+    fig, ax = plt.subplots(figsize=(FIGURE_WIDTH_IN, FIGURE_HEIGHT_IN))
+    left = 0.0
+    total_mm2 = sum(areas_mm2)
+    handles = []
+    for category, val_mm2, pct in zip(
+        legend_group.categories, areas_mm2, pcts
+    ):
+        ax.barh(
+            0,
+            val_mm2,
+            left=left,
+            color=category.color,
+            edgecolor="white",
+            linewidth=0.3,
+            height=0.62,
+        )
+        if pct >= 5.0:
+            ax.text(
+                left + val_mm2 / 2,
+                0,
+                f"{pct:.1f}%",
+                ha="center",
+                va="center",
+                fontsize=PLOT_FONT_SIZE,
+                fontweight="bold",
+                color="white",
+            )
+        legend_label = (
+            f"{category.label} ({pct:.1f}%)"
+            if category.show_percent_in_legend
+            else category.label
+        )
+        handles.append(
+            plt.Rectangle(
+                (0, 0),
+                1,
+                1,
+                fc=category.color,
+                label=legend_label,
+                edgecolor="none",
+            )
+        )
+        left += val_mm2
+
+    ax.set_xlim(0.0, total_mm2)
+    ax.set_ylim(-0.55, 0.55)
+    ax.set_yticks([])
+    ax.set_xlabel("Cumulative area (mm²)", fontweight="bold")
+    ax.tick_params(axis="x", top=False, direction="inout", length=2.5)
+    ax.spines[["left", "right", "top"]].set_visible(False)
+    legend_handles = [handles[index] for index in legend_group.legend_order]
+    ax.legend(
+        handles=legend_handles,
+        loc="upper left",
+        bbox_to_anchor=(0.0, -0.78, 1.0, 0.2),
+        ncol=2,
+        mode="expand",
+        frameon=False,
+        fontsize=PLOT_FONT_SIZE,
+        handlelength=0.9,
+        columnspacing=1.0,
+        labelspacing=0.5,
+        borderaxespad=0.0,
+    )
+
+    # Keep the plotting axis nearly as wide as the fixed 3.5-inch canvas. A
+    # tight layout shrinks the bar to the longest legend entry instead.
+    fig.subplots_adjust(left=0.06, right=0.985, top=0.94, bottom=0.58)
+    png_path = out_dir / f"{stem}.png"
+    fig.savefig(png_path, dpi=OUTPUT_DPI, facecolor="white")
+    print(f"wrote {png_path}")
+    plt.close(fig)
+
+
 def main():
     args = parse_args()
     rpt = resolve_report(args)
@@ -431,9 +621,6 @@ def main():
     hdf, total_area = load_area_report(rpt)
 
     detail_sums, detail_counts, _ = aggregate(hdf)
-    summary_sums = summarize_for_paper(
-        detail_sums, detail_counts, hdf, total_area
-    )
     out_dir.mkdir(parents=True, exist_ok=True)
 
     captured = sum(detail_sums.values())
@@ -458,100 +645,20 @@ def main():
     detail_csv_path = out_dir / "vortex_axi_breakdown_detail.csv"
     detail_df.to_csv(detail_csv_path, index=False)
 
-    labels = list(SUMMARY_COLORS)
-    areas_um2 = [summary_sums[label] for label in labels]
-    areas_mm2 = [area / 1e6 for area in areas_um2]
-    pcts = [area / total_area * 100 for area in areas_um2]
-
-    df_out = pd.DataFrame({
-        "module": labels,
-        "area_um2": areas_um2,
-        "area_mm2": areas_mm2,
-        "percent": pcts,
-    })
-    csv_path = out_dir / "vortex_axi_breakdown.csv"
-    df_out.to_csv(csv_path, index=False)
-    print(df_out.to_string(index=False, float_format=lambda v: f"{v:10.4f}"))
-    print(
-        f"\nTotal cell area: {total_area / 1e6:.3f} mm² "
-        f"(sum of categories = {sum(areas_mm2):.3f} mm²)"
-    )
     print(f"source report: {rpt}")
-    print(f"wrote {csv_path}")
     print(f"wrote {detail_csv_path}")
 
-    # ---- horizontal stacked bar ----
-    fig, ax = plt.subplots(figsize=(FIGURE_WIDTH_IN, FIGURE_HEIGHT_IN))
-    left = 0.0
-    total_mm2 = sum(areas_mm2)
-    handles = []
-    for label, val_mm2, pct in zip(labels, areas_mm2, pcts):
-        color = SUMMARY_COLORS[label]
-        ax.barh(
-            0,
-            val_mm2,
-            left=left,
-            color=color,
-            edgecolor="white",
-            linewidth=0.3,
-            height=0.62,
+    for legend_group in LEGEND_GROUPS:
+        summary_sums = summarize_for_paper(
+            detail_sums,
+            detail_counts,
+            hdf,
+            total_area,
+            legend_group=legend_group,
         )
-        if pct >= 5.0:
-            ax.text(
-                left + val_mm2 / 2,
-                0,
-                f"{pct:.1f}%",
-                ha="center",
-                va="center",
-                fontsize=PLOT_FONT_SIZE,
-                fontweight="bold",
-                color="white",
-            )
-        legend_label = (
-            f"{label} ({pct:.1f}%)"
-            if label in (DMA_LABEL, MISC_LABEL)
-            else label
+        write_legend_group_outputs(
+            legend_group, summary_sums, total_area, out_dir
         )
-        handles.append(
-            plt.Rectangle(
-                (0, 0),
-                1,
-                1,
-                fc=color,
-                label=legend_label,
-                edgecolor="none",
-            )
-        )
-        left += val_mm2
-
-    ax.set_xlim(0.0, total_mm2)
-    ax.set_ylim(-0.55, 0.55)
-    ax.set_yticks([])
-    ax.set_xlabel("Cumulative area (mm²)", fontweight="bold")
-    ax.tick_params(axis="x", top=False, direction="inout", length=2.5)
-    ax.spines[["left", "right", "top"]].set_visible(False)
-    legend_handles = [handles[index] for index in (0, 2, 4, 1, 3)]
-    ax.legend(
-        handles=legend_handles,
-        loc="upper left",
-        bbox_to_anchor=(0.0, -0.78, 1.0, 0.2),
-        ncol=2,
-        mode="expand",
-        frameon=False,
-        fontsize=PLOT_FONT_SIZE,
-        handlelength=0.9,
-        columnspacing=1.0,
-        labelspacing=0.5,
-        borderaxespad=0.0,
-    )
-
-    # Keep the plotting axis nearly as wide as the fixed 3.5-inch canvas.  A
-    # tight layout shrinks the bar to the longest legend entry instead.
-    fig.subplots_adjust(left=0.06, right=0.985, top=0.94, bottom=0.58)
-    png_path = out_dir / "vortex_axi_breakdown.png"
-    fig.savefig(png_path, dpi=OUTPUT_DPI, facecolor="white")
-    print(f"wrote {png_path}")
-    plt.close(fig)
 
 
 if __name__ == "__main__":

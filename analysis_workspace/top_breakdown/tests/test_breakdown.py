@@ -45,12 +45,18 @@ def baseline_rows() -> list[dict[str, float | str]]:
 
 
 def summarize(
-    rows: list[dict[str, float | str]], total_area: float = 117.0
+    rows: list[dict[str, float | str]],
+    total_area: float = 117.0,
+    legend_group: breakdown.LegendGroup | None = None,
 ) -> dict[str, float]:
     hdf = pd.DataFrame(rows)
     detail_sums, detail_counts, _ = breakdown.aggregate(hdf)
     return breakdown.summarize_for_paper(
-        detail_sums, detail_counts, hdf, total_area
+        detail_sums,
+        detail_counts,
+        hdf,
+        total_area,
+        legend_group=legend_group,
     )
 
 
@@ -82,6 +88,51 @@ class SummarizeForPaperTest(unittest.TestCase):
         # remaining 15 of the mem_unit parent is interconnect/control in Misc.
         self.assertAlmostEqual(summary[breakdown.MEMORY_LABEL], 25.0 + 20.0 + 7.0)
         self.assertAlmostEqual(summary[breakdown.MISC_LABEL], 15.0 + 3.0)
+
+    def test_xbar_legend_group_separates_interconnect(self) -> None:
+        rows = baseline_rows() + [
+            {
+                "full_path": (
+                    f"{CORE}/gemm_node/u_tmem_subsystem/u_switch_input"
+                ),
+                "area": 4.0,
+            },
+            {
+                "full_path": f"{SOCKET}/g_mem_bus_if_0__g_i0_mem_arb",
+                "area": 6.0,
+            },
+            {"full_path": "Vortex_axi/u_lsu_demux", "area": 8.0},
+        ]
+
+        summary = summarize(
+            rows,
+            total_area=135.0,
+        )
+        xbar_summary = summarize(
+            rows,
+            total_area=135.0,
+            legend_group=breakdown.LEGEND_GROUPS[1],
+        )
+
+        self.assertAlmostEqual(summary[breakdown.MISC_LABEL], 36.0)
+        self.assertEqual(
+            list(xbar_summary),
+            [
+                breakdown.SIMT_NO_XBAR_LABEL,
+                breakdown.MEMORY_LABEL,
+                breakdown.XBAR_LABEL,
+                breakdown.DMA_LABEL,
+                breakdown.XBAR_MISC_LABEL,
+            ],
+        )
+        self.assertAlmostEqual(
+            xbar_summary[breakdown.SIMT_NO_XBAR_LABEL], 40.0
+        )
+        self.assertAlmostEqual(xbar_summary[breakdown.MEMORY_LABEL], 52.0)
+        self.assertAlmostEqual(xbar_summary[breakdown.XBAR_LABEL], 36.0)
+        self.assertAlmostEqual(xbar_summary[breakdown.DMA_LABEL], 7.0)
+        self.assertAlmostEqual(xbar_summary[breakdown.XBAR_MISC_LABEL], 0.0)
+        self.assertAlmostEqual(sum(xbar_summary.values()), 135.0)
 
     def test_missing_semantic_anchors_fail_loudly(self) -> None:
         removal_cases = {
