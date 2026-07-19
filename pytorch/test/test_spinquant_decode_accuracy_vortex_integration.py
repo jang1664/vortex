@@ -25,7 +25,7 @@ class SpinQuantDecodeVortexIntegrationTests(unittest.TestCase):
     @staticmethod
     def _run(
         *, prompt_length, decode_steps, capacity, stop_step, stop_stage,
-        model="llama2-7b"
+        model="llama2-7b", batch_size=1
     ):
         from spinquant_inference.layer_accuracy.artifacts import (
             create_random_decode_case,
@@ -38,7 +38,7 @@ class SpinQuantDecodeVortexIntegrationTests(unittest.TestCase):
         config = DecodeConfig(
             layer=LayerConfig.for_model(
                 model,
-                batch_size=1,
+                batch_size=batch_size,
                 sequence_length=prompt_length + decode_steps,
             ),
             prompt_length=prompt_length,
@@ -94,6 +94,56 @@ class SpinQuantDecodeVortexIntegrationTests(unittest.TestCase):
             result.steps[0].captures["final_residual"].shape, (1, 1, 4096)
         )
         self.assertEqual(result.placement["fallback_count"], 0)
+
+    @unittest.skipUnless(
+        os.environ.get("RUN_SPINQUANT_LLAMA3_IRREGULAR_FULL") == "1",
+        "irregular-batch Llama3 decode test not requested",
+    )
+    def test_llama3_batch3_generates33_tokens_through_final_residual(self):
+        result = self._run(
+            prompt_length=3,
+            decode_steps=33,
+            capacity=64,
+            stop_step=32,
+            stop_stage="final_residual",
+            model="llama3-8b",
+            batch_size=3,
+        )
+
+        self.assertEqual(len(result.steps), 33)
+        self.assertEqual(
+            [step.logical_length for step in result.steps], list(range(4, 37))
+        )
+        for decode_step in result.steps:
+            self.assertEqual(decode_step.stage_order[-1], "final_residual")
+            self.assertEqual(
+                decode_step.captures["final_residual"].shape, (3, 1, 4096)
+            )
+        step = result.steps[-1]
+        self.assertEqual(step.captures["qk"].shape, (3, 32, 1, 36))
+        self.assertEqual(step.captures["final_residual"].shape, (3, 1, 4096))
+        self.assertEqual(result.cache_descriptor["geometry"]["batch_size"], 3)
+        self.assertEqual(result.cache_descriptor["geometry"]["num_kv_heads"], 8)
+        self.assertEqual(result.cache_descriptor["logical_length"], 36)
+        self.assertEqual(result.placement["fallback_count"], 0)
+
+        attention_steps = [
+            physical_step
+            for physical_step in result.placement["physical_steps"]
+            if physical_step.get("op") == "mm_w4a16_gemm_core_out"
+            and physical_step.get("operation") in {"qk", "pv"}
+        ]
+        generation_qk, generation_pv = attention_steps[-2:]
+        self.assertEqual(generation_qk["operation"], "qk")
+        self.assertEqual(generation_qk["launches"], 24)
+        self.assertEqual(generation_qk["M"], 4)
+        self.assertEqual(generation_qk["N"], 36)
+        self.assertEqual(generation_qk["query_heads_per_matrix"], 4)
+        self.assertEqual(generation_pv["operation"], "pv")
+        self.assertEqual(generation_pv["launches"], 24)
+        self.assertEqual(generation_pv["M"], 4)
+        self.assertEqual(generation_pv["K"], 36)
+        self.assertEqual(generation_pv["K_pad"], 64)
 
     def test_persistent_decode_reaches_qk_without_fallback(self):
         result = self._run(

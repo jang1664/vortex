@@ -267,6 +267,24 @@ and `final_residual` on a real C4 with no ATen fallback. The decode QK and PV
 placement records each show 8 launches with M=4; the C4/CUDA final residual
 comparison passed with relative L2 `0.01114` and cosine `0.99994` for seed 53.
 
+An irregular `batch=3`, `prompt=32`, one-token case has also been validated on
+a real C4, making the generation KV length 33. QK and PV each launch 24 grouped
+`M=4` GEMMs, PV reports logical `K=33` with `K_pad=64`, and the persistent cache
+keeps 8 KV heads per batch. All 72 semantic and auxiliary comparisons passed
+with no fallback; the final residual relative L2 was `0.00751` with cosine
+`0.99997`. Set `RUN_VORTEX_TESTS=1` and
+`RUN_SPINQUANT_LLAMA3_IRREGULAR_FULL=1` to enable the longer irregular-shape
+execution regression below.
+
+A separate `batch=3`, `prompt=3`, `decode_steps=33` run reached logical KV
+length 36 on a real C4 with no fallback. Every step completed through
+`final_residual`; the last QK, softmax, PV, and final residual comparisons all
+passed, with final residual relative L2 `0.00761` and cosine `0.99997`. Across
+the strict full-run profile, 1193 of 1224 semantic and auxiliary comparisons
+passed. The 31 misses were 24 scaled-score exceed-fraction checks, 3 QK
+exceed-fraction checks, 2 packed-V quantization checks, and 2 prefill-stage
+checks; every PV, softmax, and final residual comparison passed.
+
 The initial correctness implementation has these intentional limits:
 
 - persistent decode requires the `fused` physical plan, a supported

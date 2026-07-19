@@ -1,0 +1,46 @@
+task: llama3-irregular-decode
+state: complete
+updated_at: "2026-07-19 13:19"
+summary: >-
+  Validate Llama3-8B generation on CUDA and the actual C4 with irregular
+  geometry: batch size 3 and first decode KV length 33.
+log:
+  - timestamp: "2026-07-19 12:45"
+    entry: >-
+      Interpreted the requested representative values as batch=3, prompt=32,
+      decode_steps=1, so the tested generation attention consumes a logical KV
+      prefix of 33. Capacity remains the simple fixed allocation size 64.
+  - timestamp: "2026-07-19 12:46"
+    entry: >-
+      Created the seed-61 portable case and completed the CUDA reference. The
+      run saved 52 semantic captures across prefill and decode step zero.
+  - timestamp: "2026-07-19 12:51"
+    entry: >-
+      The actual C4 batch-3 prompt-32 one-step run completed through final
+      residual with fallback_count=0. All 72 semantic and auxiliary CUDA/C4
+      comparisons passed; the generation attention consumed logical length 33.
+  - timestamp: "2026-07-19 13:01"
+    entry: >-
+      Added the stronger interpretation of generation=33: batch=3, prompt=3,
+      decode_steps=33, capacity=64. The actual C4 completed all steps through
+      logical length 36 with fallback_count=0 and 884 semantic captures.
+  - timestamp: "2026-07-19 13:19"
+    entry: >-
+      The 33-step strict comparison passed 1193 of 1224 semantic and auxiliary
+      checks. Every PV, softmax, and final residual passed, including the last
+      final residual at rel-L2 0.00761 and cosine 0.99997. Added an opt-in C4
+      regression that asserts every step reaches final residual, plus grouped
+      GQA placement at the last step. Relevant tests: 82 passed, 33 skipped,
+      and 4 subtests passed.
+pitfalls:
+  - >-
+    "Generation length 33" can mean either the attention KV prefix length or
+    33 generated tokens. Validate and name both concepts explicitly.
+  - >-
+    The 33-step overall strict profile is not fully green: 31 checks miss the
+    current tolerance, mostly scaled-score exceed-fraction checks, even though
+    every PV, softmax, and final residual comparison passes.
+  - >-
+    Prompt cache initialization launches one update per batch, KV head, token,
+    and K/V kind, so large prompts spend time on many small update kernels even
+    when each GEMM is fast.
