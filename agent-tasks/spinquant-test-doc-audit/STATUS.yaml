@@ -1,0 +1,43 @@
+task: spinquant-test-doc-audit
+state: complete
+updated_at: "2026-07-19 13:48"
+summary: >-
+  Document the explicit SpinQuant decoder-layer graph and its CUDA/C4 test
+  strategy, then audit gen_kernel_cfgs.py changes for latency-bench regressions.
+log:
+  - timestamp: "2026-07-19 13:38"
+    entry: >-
+      The existing pytorch/spinquant/README.md contains commands and validation
+      results, but does not present the logical graph, backend physical plans,
+      test layers, and workload-generator relationship as one cohesive guide.
+  - timestamp: "2026-07-19 13:42"
+    entry: >-
+      Generator and latency tests passed, generator conformance reported no
+      mismatches, and a 56-payload model/stage/variant matrix audit found no
+      duplicate kernels, missing executable args, invalid call counts, or GEMM
+      drift between each base variant and its SpinQuant suffix variant.
+  - timestamp: "2026-07-19 13:43"
+    entry: >-
+      Reproduced a latency adapter bug: suite.py does not forward max_seq_len
+      into build_llm_kernels. A batch-3 Llama3 generation workload requesting
+      logical length 33 and capacity 64 emitted cache_capacity 33.
+  - timestamp: "2026-07-19 13:45"
+    entry: >-
+      Added pytorch/spinquant/TESTING.md with the semantic graph, backend plans,
+      prefill/decode cache behavior, test taxonomy, real-C4 workflow, current
+      coverage, generator history, and the audited latency limitation.
+  - timestamp: "2026-07-19 13:48"
+    entry: >-
+      Final verification passed: 86 pytest cases and 4 subtests passed,
+      check-generator reported no mismatches, Markdown fences and links were
+      checked, and the max_seq_len adapter mismatch was reproduced side by side
+      as direct capacity 64 versus latency-suite capacity 33.
+pitfalls:
+  - >-
+    gen_kernel_cfgs.py accepts max_seq_len. A follow-up fix now forwards it from
+    the latency-bench workload adapter; keep the adapter regression test when
+    changing workload argument plumbing.
+  - >-
+    Opt-in Vortex integration tests validate execution and placement but do not
+    create a CUDA oracle; numerical acceptance requires the portable artifact
+    run-and-compare workflow.

@@ -127,6 +127,10 @@ The +0.023 gap (~0.4%) comes from floating-point ordering differences in the PyT
 
 ## Single-layer GPU versus FPGA accuracy
 
+For a complete description of the logical decoder graph, CUDA and Vortex
+backend split, capture/compare contract, test layers, current C4 coverage, and
+the latency-workload generator relationship, see [TESTING.md](TESTING.md).
+
 `spinquant_inference.layer_accuracy` is a separate, explicit decoder-layer
 harness. It does not use the generation model's monkey patches. Its v1 contract
 is one Llama-2-7B decoder layer with W4 group size 32, asymmetric K4,
