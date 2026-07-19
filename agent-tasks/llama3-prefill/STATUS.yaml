@@ -1,0 +1,39 @@
+task: llama3-prefill
+state: complete
+updated_at: "2026-07-19 12:39"
+summary: >-
+  Implement and numerically validate the SpinQuant Llama3-8B prefill path on
+  CUDA and the actual C4 FPGA, including GQA attention and fused layouts.
+log:
+  - timestamp: "2026-07-19 12:23"
+    entry: >-
+      Started from the existing Llama3 generation implementation. Initial
+      inspection shows prefill keeps one Q-head matrix per attention GEMM and
+      maps four Q heads to each KV head; focused prefill contracts and actual
+      C4 numerical validation are still required.
+  - timestamp: "2026-07-19 12:26"
+    entry: >-
+      Added prefill generator contracts. A proof-first regression exposed that
+      the standalone layout workload detiled Llama3 K/V projections as 4096
+      columns instead of their 1024-column GQA width; changed each transform to
+      derive its width from the corresponding projection shape.
+  - timestamp: "2026-07-19 12:31"
+    entry: >-
+      First full C4 prefill run passed through QK and softmax but failed at PV.
+      The non-persistent softmax output inherited head_dim padding (128) as the
+      PV K extent instead of the sequence/value-weight extent (32).
+  - timestamp: "2026-07-19 12:34"
+    entry: >-
+      Derived the non-persistent PV K extent from value-weight tiling, added a
+      runtime consistency check, and reran the full seed-59 case. All 25 CUDA/C4
+      semantic comparisons passed with fallback_count=0; final residual rel-L2
+      was 0.01042 and cosine was 0.99994.
+  - timestamp: "2026-07-19 12:39"
+    entry: >-
+      Reused the PV padding helper for persistent allocation, removed duplicate
+      descriptor decoding, and completed the relevant regression suite: 82
+      tests passed, 32 hardware-gated tests skipped, and 4 subtests passed.
+pitfalls:
+  - >-
+    Non-persistent prefill must not reuse QK head-dimension padding as the PV K
+    extent. Persistent decode masks this mistake by providing cache capacity.

@@ -182,7 +182,7 @@ decode step containing the stop point:
 ```bash
 cd pytorch/spinquant
 python -m spinquant_inference.layer_accuracy make-decode-case \
-  --source random --seed 17 --batch-size 1 \
+  --source random --model llama2-7b --seed 17 --batch-size 1 \
   --prompt-len 31 --decode-steps 2 --max-seq-len 64 \
   --output /shared/path/spinquant-decode-case
 
@@ -210,10 +210,70 @@ K and V writes finish. Saved decode artifacts include a cache descriptor after
 prefill and every decode step, so allocation identity, device addresses,
 generation, capacity, and logical length can be audited.
 
+### Llama3-8B GQA prefill and decode
+
+For prefill, create a normal layer case with the Llama3 model preset. Each
+query head remains an independent `M=S` attention matrix, while four query
+heads select the same KV-head payload. K/V projection and cache-side tensors
+therefore use 8 heads and 1024 features, while QK, softmax, PV, and head concat
+preserve the semantic 32 query heads:
+
+```bash
+python -m spinquant_inference.layer_accuracy make-case \
+  --source random --model llama3-8b --seed 59 --batch-size 1 --seq-len 32 \
+  --output /shared/path/spinquant-llama3-prefill-case
+python -m spinquant_inference.layer_accuracy run \
+  --case /shared/path/spinquant-llama3-prefill-case --backend cuda \
+  --stop-after final_residual --capture semantic \
+  --output /shared/path/spinquant-llama3-prefill-cuda
+./run_layer_accuracy_hw.sh \
+  /shared/path/spinquant-llama3-prefill-case \
+  /shared/path/spinquant-llama3-prefill-c4 final_residual fused
+python -m spinquant_inference.layer_accuracy compare \
+  --reference /shared/path/spinquant-llama3-prefill-cuda \
+  --candidate /shared/path/spinquant-llama3-prefill-c4 \
+  --profile llama_fp16_w4kv4_v1 \
+  --output /shared/path/spinquant-llama3-prefill-report.json
+```
+
+The `batch=1`, `seq=32`, seed-59 prefill case has been validated through all
+25 semantic stages on a real C4 with no ATen fallback. QK and PV each launch
+32 `M=32` GEMMs; the K/V quantizers launch only 8 head cases. The C4/CUDA
+final residual comparison passed with relative L2 `0.01042` and cosine
+`0.99994`.
+
+Select the Llama3 geometry when creating the portable case:
+
+```bash
+python -m spinquant_inference.layer_accuracy make-decode-case \
+  --source random --model llama3-8b --seed 53 --batch-size 1 \
+  --prompt-len 1 --decode-steps 1 --max-seq-len 32 \
+  --output /shared/path/spinquant-llama3-decode-case
+```
+
+The semantic graph keeps 32 query heads and 8 KV heads. K/V projections emit
+1024 features, and the persistent cache allocates only 8 head groups per batch.
+During one-token decode, `hadamard_layout_fused` groups the four query heads
+sharing each KV head as four M rows. QK and PV therefore launch 8 M=4 GEMMs
+instead of 32 GEMVs. `head_concat_layout_fused` consumes this grouped physical
+layout directly and restores the semantic 32-head order.
+
+Llama3-8B also selects its canonical `I=14336`, RMSNorm epsilon `1e-5`, RoPE
+theta `500000`, and SpinQuant's exact 28x28 R4 basis (`14336 = 28 * 512`). The
+same CUDA/run/compare commands shown above apply to this case.
+
+The `prompt=1`, one-token decode case has been validated through every stage
+and `final_residual` on a real C4 with no ATen fallback. The decode QK and PV
+placement records each show 8 launches with M=4; the C4/CUDA final residual
+comparison passed with relative L2 `0.01114` and cosine `0.99994` for seed 53.
+
 The initial correctness implementation has these intentional limits:
 
-- persistent decode requires the `fused` physical plan, Llama2-7B head dim 128,
-  and a fixed capacity divisible by 32;
+- persistent decode requires the `fused` physical plan, a supported
+  Llama2-7B/Llama3-8B head dim of 128, and a fixed capacity divisible by 32;
+- the grouped head-concat kernel argument ABI is shared by the PyTorch
+  extension and its `head_concat_layout_fused` vxbin, so both must be rebuilt
+  from the same source revision when changing GQA support;
 - storage is preallocated for the test's maximum sequence length; dynamic
   growth, paging, eviction, and multi-request scheduling are not implemented;
 - prompt initialization currently launches one update per token and head;
@@ -287,8 +347,9 @@ limits during preflight:
   weight, scale, and zero padding is zero-filled and excluded from semantic
   captures.
 
-The fused plan additionally requires the Llama2-7B `H=4096`, `I=11008`,
-32-head shape and canonical score scale and causal mask.
+The fused plan accepts the canonical Llama2-7B (`H=4096`, `I=11008`, 32 Q/KV
+heads) and Llama3-8B (`H=4096`, `I=14336`, 32 query heads, 8 KV heads) shapes,
+with canonical score scale and causal mask.
 
 `B=2`, `S=32` and the multi-M-tile case `B=1`, `S=160` have been validated in
 real-C4 full-layer runs for both standalone and fused plans.
