@@ -3,11 +3,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Callable, Dict, List, Literal, Optional
+from typing import Callable, Dict, Iterable, List, Literal, Optional
 
 import torch
 
-from .artifacts import DecodeCase, LayerCase, graph_version
+from .artifacts import (
+    DecodeCase,
+    LayerCase,
+    StackCase,
+    StackLayerSource,
+    graph_version,
+    stack_graph_version,
+)
 from .backends import Backend, QuantizedActivation
 from .stages import (
     DECODE_STAGE_INDEX,
@@ -33,6 +40,30 @@ class RunResult:
     physical_descriptors: Dict[str, dict]
     placement: dict
     artifact_metadata: dict = field(default_factory=dict)
+    terminal_value: object | None = field(default=None, repr=False, compare=False)
+
+
+@dataclass
+class StackLayerResult:
+    layer_index: int
+    stop_after: str
+    stage_order: List[str]
+    placement: dict
+
+
+@dataclass
+class StackRunResult:
+    backend: str
+    case_hash: str
+    graph_version: str
+    stop_after_layer: int
+    stop_after: str
+    captures: Dict[str, torch.Tensor]
+    auxiliary_captures: Dict[str, torch.Tensor]
+    physical_captures: Dict[str, torch.Tensor]
+    physical_descriptors: Dict[str, dict]
+    layers: List[StackLayerResult]
+    placement: dict
 
 
 @dataclass
@@ -152,12 +183,22 @@ class LayerExecutor:
         *,
         stop_after: str = "final_residual",
         capture_physical: bool = False,
+        input_override: object | None = None,
+        capture_stages: Iterable[str] | None = None,
+        preflight: bool = True,
     ) -> RunResult:
         stop_index = validate_stop_stage(stop_after)
-        self.backend.preflight(case, stop_after)
+        selected_stages = None if capture_stages is None else set(capture_stages)
+        if selected_stages is not None:
+            unknown = selected_stages - set(STAGE_NAMES)
+            if unknown:
+                raise ValueError(f"unknown capture stages: {sorted(unknown)}")
+            selected_stages.add(stop_after)
+        if preflight:
+            self.backend.preflight(case, stop_after)
         self.backend.bind(case)
         self.backend.activate(
-            self.backend.tensor("input"),
+            self.backend.tensor("input") if input_override is None else input_override,
             self.backend.tensor("position_ids"),
             self.backend.tensor("causal_mask"),
         )
@@ -166,6 +207,10 @@ class LayerExecutor:
         physical: Dict[str, torch.Tensor] = {}
         physical_descriptors: Dict[str, dict] = {}
         stage_order: List[str] = []
+        terminal_value: object | None = None
+
+        def should_capture(stage: str) -> bool:
+            return selected_stages is None or stage in selected_stages
 
         def record_physical(name: str, value: object) -> None:
             if not capture_physical:
@@ -179,23 +224,29 @@ class LayerExecutor:
             physical_descriptors[name] = {**descriptor, "buffers": buffer_names}
 
         def record(stage: str, value: object, **extra: object) -> None:
+            nonlocal terminal_value
             expected_index = len(stage_order)
             actual_index = STAGE_INDEX[stage]
             if actual_index != expected_index:
                 raise RuntimeError(
                     f"semantic schedule drift: expected {STAGE_NAMES[expected_index]!r}, got {stage!r}"
                 )
-            captures[stage] = self.backend.canonicalize(value)
-            record_physical(stage, value)
-            for name, tensor in extra.items():
-                capture_name = f"{stage}.{name}"
-                auxiliary[capture_name] = self.backend.canonicalize(tensor)
-                record_physical(capture_name, tensor)
+            terminal_value = value
+            if should_capture(stage):
+                captures[stage] = self.backend.canonicalize(value)
+                record_physical(stage, value)
+                for name, tensor in extra.items():
+                    capture_name = f"{stage}.{name}"
+                    auxiliary[capture_name] = self.backend.canonicalize(tensor)
+                    record_physical(capture_name, tensor)
             stage_order.append(stage)
             if actual_index == stop_index:
                 raise _StopExecution
 
         def record_quantized(stage: str, value: QuantizedActivation) -> None:
+            if not should_capture(stage):
+                record(stage, value)
+                return
             primary = self.backend.quantized_capture(value)
             extra = {"packed": value.packed, "scale": value.scale}
             if value.zero is not None:
@@ -221,6 +272,111 @@ class LayerExecutor:
             physical_captures=physical,
             physical_descriptors=physical_descriptors,
             placement=self.backend.placement_report(),
+            terminal_value=terminal_value,
+        )
+
+
+class StackExecutor:
+    """Repeat the explicit layer graph over a contiguous model-global range."""
+
+    def __init__(self, backend: Backend) -> None:
+        self.backend = backend
+
+    def run(
+        self,
+        case: StackCase,
+        *,
+        stop_after_layer: int | None = None,
+        stop_after: str = "final_residual",
+        capture_physical: bool = False,
+        capture_stages: Iterable[str] = ("final_residual",),
+    ) -> StackRunResult:
+        target_layer = (
+            case.config.layer_indices[-1]
+            if stop_after_layer is None
+            else stop_after_layer
+        )
+        if not case.config.contains(target_layer):
+            raise ValueError(
+                f"stop layer {target_layer} is outside stack layer range "
+                f"{case.config.layer_indices}"
+            )
+        validate_stop_stage(stop_after)
+        capture_stages = tuple(capture_stages)
+        source = StackLayerSource(case)
+        current: object = case.tensors["input"]
+        captures: Dict[str, torch.Tensor] = {}
+        auxiliary: Dict[str, torch.Tensor] = {}
+        physical: Dict[str, torch.Tensor] = {}
+        descriptors: Dict[str, dict] = {}
+        layers: List[StackLayerResult] = []
+
+        for offset, layer_index in enumerate(case.config.layer_indices):
+            if layer_index > target_layer:
+                break
+            layer_stop = stop_after if layer_index == target_layer else "final_residual"
+            result = LayerExecutor(self.backend).run(
+                source.layer_case(layer_index),
+                stop_after=layer_stop,
+                capture_physical=capture_physical,
+                input_override=current,
+                capture_stages=capture_stages,
+                preflight=offset == 0,
+            )
+            if result.terminal_value is None:
+                raise RuntimeError(f"layer {layer_index} produced no terminal value")
+            current = result.terminal_value
+            prefix = f"layer{layer_index}."
+            captures.update({prefix + name: value for name, value in result.captures.items()})
+            auxiliary.update(
+                {prefix + name: value for name, value in result.auxiliary_captures.items()}
+            )
+            physical.update(
+                {prefix + name: value for name, value in result.physical_captures.items()}
+            )
+            for name, descriptor in result.physical_descriptors.items():
+                descriptors[prefix + name] = {
+                    **descriptor,
+                    "buffers": [prefix + buffer for buffer in descriptor["buffers"]],
+                }
+            layers.append(
+                StackLayerResult(
+                    layer_index=layer_index,
+                    stop_after=layer_stop,
+                    stage_order=result.stage_order,
+                    placement=result.placement,
+                )
+            )
+
+        strict_native = bool(layers) and all(
+            layer.placement.get("strict_native", False) for layer in layers
+        )
+        fallback_count = sum(
+            int(layer.placement.get("fallback_count", 0)) for layer in layers
+        )
+        placement = {
+            "backend": self.backend.name,
+            "strict_native": strict_native,
+            "fallback_count": fallback_count,
+            "layers": [
+                {"layer_index": layer.layer_index, **layer.placement}
+                for layer in layers
+            ],
+        }
+        return StackRunResult(
+            backend=self.backend.name,
+            case_hash=case.manifest["case_hash"],
+            graph_version=case.manifest.get(
+                "graph_version", stack_graph_version(case.config)
+            ),
+            stop_after_layer=target_layer,
+            stop_after=stop_after,
+            captures=captures,
+            auxiliary_captures=auxiliary,
+            physical_captures=physical,
+            physical_descriptors=descriptors,
+            layers=layers,
+            placement=placement,
         )
 
 

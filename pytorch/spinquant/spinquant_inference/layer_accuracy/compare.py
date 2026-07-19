@@ -83,11 +83,18 @@ def _threshold(stage: str) -> dict:
 def _semantic_stage(capture_name: str) -> str:
     """Strip a decode step qualifier while preserving auxiliary stage names."""
     parts = capture_name.split(".")
-    if parts[0] == "prefill" or (
+    if _qualified_layer(capture_name) is not None or parts[0] == "prefill" or (
         parts[0].startswith("step") and parts[0][4:].isdigit()
     ):
         parts = parts[1:]
     return parts[0]
+
+
+def _qualified_layer(capture_name: str) -> int | None:
+    qualifier = capture_name.split(".", 1)[0]
+    if qualifier.startswith("layer") and qualifier[5:].isdigit():
+        return int(qualifier[5:])
+    return None
 
 
 def _unravel(flat_index: int, shape: tuple[int, ...]) -> list[int]:
@@ -186,8 +193,18 @@ def compare_runs(
         stages[stage] = _metric(
             _semantic_stage(stage), reference[stage], candidate[stage]
         )
-    return {
+    failing_layers = [
+        layer
+        for stage, metric in stages.items()
+        if not metric["passed"]
+        for layer in [_qualified_layer(stage)]
+        if layer is not None
+    ]
+    report = {
         "profile": profile,
         "passed": bool(stages) and all(metric["passed"] for metric in stages.values()),
         "stages": stages,
     }
+    if failing_layers:
+        report["first_failing_layer"] = min(failing_layers)
+    return report

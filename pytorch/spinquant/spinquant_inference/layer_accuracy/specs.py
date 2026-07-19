@@ -11,6 +11,10 @@ from typing import Mapping, Optional, Protocol, Tuple
 LLAMA2_MODEL = "llama2-7b"
 LLAMA3_MODEL = "llama3-8b"
 SUPPORTED_MODELS = (LLAMA2_MODEL, LLAMA3_MODEL)
+MODEL_LAYER_COUNTS = {
+    LLAMA2_MODEL: 32,
+    LLAMA3_MODEL: 32,
+}
 
 
 @dataclass(frozen=True)
@@ -82,6 +86,75 @@ class LayerConfig:
     @classmethod
     def from_dict(cls, value: dict) -> "LayerConfig":
         return cls(**value)
+
+
+@dataclass(frozen=True)
+class StackConfig:
+    """A contiguous, model-global decoder-layer range."""
+
+    layer: LayerConfig
+    num_hidden_layers: int
+    layer_start: int
+    layer_count: int
+
+    def __post_init__(self) -> None:
+        if self.num_hidden_layers <= 0:
+            raise ValueError("num_hidden_layers must be positive")
+        if self.layer_start < 0 or self.layer_count <= 0:
+            raise ValueError("layer_start must be non-negative and layer_count positive")
+        if self.layer_start + self.layer_count > self.num_hidden_layers:
+            raise ValueError(
+                f"layer range [{self.layer_start}, "
+                f"{self.layer_start + self.layer_count}) exceeds "
+                f"num_hidden_layers={self.num_hidden_layers}"
+            )
+
+    @property
+    def layer_indices(self) -> tuple[int, ...]:
+        return tuple(range(self.layer_start, self.layer_start + self.layer_count))
+
+    def contains(self, layer_index: int) -> bool:
+        return self.layer_start <= layer_index < self.layer_start + self.layer_count
+
+    def to_dict(self) -> dict:
+        return {
+            "layer": self.layer.to_dict(),
+            "num_hidden_layers": self.num_hidden_layers,
+            "layer_start": self.layer_start,
+            "layer_count": self.layer_count,
+        }
+
+    @classmethod
+    def for_model(
+        cls,
+        model: str,
+        *,
+        layer_start: int = 0,
+        layer_count: int | None = None,
+        **layer_overrides,
+    ) -> "StackConfig":
+        if model not in MODEL_LAYER_COUNTS:
+            raise ValueError(f"unsupported stack model preset {model!r}")
+        num_hidden_layers = MODEL_LAYER_COUNTS[model]
+        return cls(
+            layer=LayerConfig.for_model(model, **layer_overrides),
+            num_hidden_layers=num_hidden_layers,
+            layer_start=layer_start,
+            layer_count=(
+                num_hidden_layers - layer_start
+                if layer_count is None
+                else layer_count
+            ),
+        )
+
+    @classmethod
+    def from_dict(cls, value: dict) -> "StackConfig":
+        return cls(
+            layer=LayerConfig.from_dict(value["layer"]),
+            num_hidden_layers=value["num_hidden_layers"],
+            layer_start=value["layer_start"],
+            layer_count=value["layer_count"],
+        )
 
 
 @dataclass(frozen=True)
