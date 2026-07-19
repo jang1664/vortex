@@ -138,6 +138,13 @@ symmetric V4, online R3 after RoPE, and exact online R4 before `down_proj`.
 It supports both prefill-only execution and prompt prefill followed by ordered
 one-token decode steps with a fixed-capacity persistent KV cache.
 
+It also supports a contiguous decoder stack. Stack execution repeats the same
+explicit semantic graph, streams one checkpoint layer at a time, keeps each
+final residual on the active backend for the next layer, and saves canonical
+`layerN.final_residual` boundaries for CUDA/C4 comparison. See
+[TESTING.md](TESTING.md#full-decoder-stack-workflow) for the checkpoint-backed
+32-layer workflow and its current scope.
+
 Create one deterministic case and run the CUDA reference:
 
 ```bash

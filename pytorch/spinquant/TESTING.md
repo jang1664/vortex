@@ -1,15 +1,15 @@
 # SpinQuant decoder-layer accuracy testing
 
-This document describes the explicit single-layer test harness under
+This document describes the explicit decoder accuracy harness under
 `spinquant_inference.layer_accuracy`. It is the authoritative guide for the
 logical graph, CUDA reference, Vortex physical plans, persistent KV-cache
 tests, and the relationship to `tools/workload/gen_kernel_cfgs.py`.
 
 The older generation/evaluation code in this directory is a separate path. The
-accuracy harness does not import its model monkey patches and does not test
-embedding lookup, all decoder layers, final model normalization, sampling, or
-the LM head. It executes exactly one Llama decoder layer with portable input
-and weight artifacts.
+accuracy harness does not import its model monkey patches. It supports one
+layer, one persistent-cache layer across token steps, or a contiguous decoder
+stack. Embedding lookup, final model normalization, sampling, and the LM head
+remain outside this harness.
 
 ## Model and quantization contract
 
@@ -142,6 +142,7 @@ and `final_residual`, rather than accepting only an early QK/softmax match.
 | Test layer | Files | What it proves |
 | --- | --- | --- |
 | Portable unit tests | `test_spinquant_layer_accuracy.py` | Model geometry, tensor/quantization contracts, case hashes, graph order and stop points, GQA semantics, capture serialization, comparator behavior, and generator conformance |
+| Decoder-stack unit tests | `test_spinquant_stack_accuracy.py` | Model-global layer ranges, streamed checkpoint layers, random weight modes, backend-native chaining, layer stops, artifacts, and first-failure reporting |
 | Decode unit tests | `test_spinquant_decode_accuracy.py` | Fixed-capacity cache lifecycle, append/reset rules, incremental versus full-prefix semantics, GQA cache sharing, and CUDA incremental consistency when a GPU is present |
 | Generator tests | `tools/workload/test_kernel_variants.py` | Latency-workload shapes, calls per forward, layout edges, SpinQuant variants, fused/standalone transforms, persistent-cache metadata, and Llama3 GQA grouping |
 | Latency adapter tests | `tools/latency_bench/test_workload_variants.py` | Conversion of generator records into executable latency-bench cases |
@@ -160,6 +161,7 @@ Run the fast CPU/CUDA-independent contract tests in the `vortex` environment:
 ```bash
 conda run -n vortex python -m pytest -q \
   pytorch/test/test_spinquant_layer_accuracy.py \
+  pytorch/test/test_spinquant_stack_accuracy.py \
   pytorch/test/test_spinquant_decode_accuracy.py \
   tools/workload/test_kernel_variants.py \
   tools/latency_bench/test_workload_variants.py
@@ -210,6 +212,59 @@ The hardware wrapper requests a U55C through Slurm, activates `vortex`, selects
 the C4/XRT device, loads the matching FPGA configuration, and enforces strict
 native execution. It does not use simx.
 
+## Full decoder-stack workflow
+
+A stack case stores the initial hidden tensor and shared positional inputs. A
+checkpoint-backed case records the external checkpoint path and file signature,
+then memory-maps it once and uploads one layer's weights at a time. Random cases
+support independent per-layer weights or one shared layer for a low-cost
+32-layer orchestration smoke test.
+
+The external checkpoint signature currently consists of file size and
+nanosecond modification time. Keep the checkpoint immutable between CUDA and
+C4 runs. A content digest is a known hardening item; the current signature is
+not cryptographic authentication if an operator deliberately changes bytes
+while restoring both metadata fields.
+
+Create a full Llama2 checkpoint case and CUDA reference:
+
+```bash
+conda run -n vortex bash -lc '
+  cd pytorch/spinquant
+  python -m spinquant_inference.layer_accuracy make-stack-case \
+    --source checkpoint --model llama2-7b --batch-size 1 --seq-len 32 \
+    --checkpoint /shared/path/consolidated.00.pth \
+    --checkpoint-profile spinquant-w4a16-r3r4 \
+    --output /shared/path/llama2-stack-case
+  python -m spinquant_inference.layer_accuracy run \
+    --case /shared/path/llama2-stack-case --backend cuda \
+    --stop-after final_residual --capture semantic \
+    --output /shared/path/llama2-stack-cuda
+'
+```
+
+Run the same 32 layers on C4 and compare all layer boundaries:
+
+```bash
+pytorch/spinquant/run_layer_accuracy_hw.sh \
+  /shared/path/llama2-stack-case \
+  /shared/path/llama2-stack-c4 final_residual fused
+
+conda run -n vortex bash -lc '
+  cd pytorch/spinquant
+  python -m spinquant_inference.layer_accuracy compare \
+    --reference /shared/path/llama2-stack-cuda \
+    --candidate /shared/path/llama2-stack-c4 \
+    --profile llama_fp16_w4kv4_v1 \
+    --output /shared/path/llama2-stack-report.json
+'
+```
+
+Stack captures use zero-based model-global names such as
+`layer0.final_residual` and `layer31.final_residual`. The wrapper's fifth
+argument becomes a model-global stop layer for stack cases, allowing a staged
+rerun through a selected operation without changing decode-case behavior.
+
 ## Current real-C4 coverage
 
 The following cases have been run on a real C4:
@@ -221,6 +276,21 @@ The following cases have been run on a real C4:
 - Llama3 generation with `B=1`, eight grouped `M=4` GQA matrices.
 - Llama3 `B=3, prompt=32`, one-token decode at KV length 33.
 - Llama3 `B=3, prompt=3`, 33 generated tokens through logical length 36.
+- Llama2 two-layer prefill stack with `B=1, S=32`, shared random weights, and
+  the fused physical plan. Both layer boundaries passed the current profile;
+  relative L2 was 0.0114 at layer 0 and 0.0285 at layer 1.
+- Llama2 32-layer prefill stack with the same `B=1, S=32` case family. All 32
+  layers executed in order with strict-native placement and zero fallback.
+  The existing single-layer residual profile first failed at layer 4: relative
+  L2 grew from 0.0114 at layer 0 to 0.0482 at layer 4 and 0.0648 at layer 31.
+  This is a successful orchestration gate, not a numerical acceptance result.
+- Llama2 checkpoint-backed 32-layer prefill with `B=1, S=32`, loading
+  `consolidated.01.pth`. All 32 layers executed strict-native with zero
+  fallback. Layers 0 through 14 passed the unchanged profile. Layer 15 was the
+  first failure (`relative_l2=0.0547`, `cosine=0.9985`); relative L2 peaked at
+  0.2081 on layer 29 and was 0.0694 at layer 31. This accepts checkpoint
+  loading and complete stack orchestration while identifying cumulative
+  numerical divergence for follow-up localization.
 
 The last 33-token run completed every step with no fallback. All PV, softmax,
 and final-residual comparisons passed. The strict semantic-plus-auxiliary report
@@ -232,7 +302,8 @@ the main README and are not hidden as a fully green auxiliary run.
 `tools/workload/gen_kernel_cfgs.py` is the latency-bench workload generator. It
 models every kernel in a model forward pass, supplies representative app
 arguments, and records `calls_per_forward` for all decoder layers. The accuracy
-harness executes one layer and does not import the generator during inference.
+accuracy harness executes an explicit layer or decoder stack and does not
+import the generator during inference.
 `check-generator` is therefore an advisory conformance test, not a runtime
 dependency.
 

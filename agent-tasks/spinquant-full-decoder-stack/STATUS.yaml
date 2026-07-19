@@ -1,0 +1,67 @@
+task: spinquant-full-decoder-stack
+state: COMPLETE
+updated: "2026-07-19 22:08"
+summary: >-
+  Implemented full Llama2/Llama3 decoder-stack accuracy comparison between
+  the CUDA semantic backend and strict-native C4 execution, then completed a
+  checkpoint-backed 32-layer Llama2 comparison. The first numerical profile
+  failure occurs at layer 15.
+log:
+  - timestamp: "2026-07-19 19:14"
+    action: repository research
+    result: >-
+      Confirmed that the current harness executes exactly one decoder layer,
+      already supports Llama2/Llama3 prefill and decode, and exposes reusable
+      LayerExecutor, backend, artifact, comparison, and C4 wrapper seams.
+    learned: >-
+      A stack executor must retain the backend-native final residual between
+      layers; canonicalizing every intermediate tensor would add avoidable
+      device-to-host transfers and make a 32-layer hardware run impractical.
+  - timestamp: "2026-07-19 20:42"
+    action: implementation and portable verification
+    result: >-
+      Added stack cases, shared/independent/checkpoint layer sources,
+      backend-native chaining, layer-qualified captures, model-global stops,
+      run artifacts, CLI dispatch, comparison reporting, and real-C4 wrapper
+      integration. Fourteen stack tests and all 57 existing layer/decode tests
+      pass in the vortex environment.
+    learned: >-
+      Physical descriptor buffer names must be layer-qualified together with
+      capture keys, and one-shot capture iterables must be materialized once
+      before entering the layer loop.
+  - timestamp: "2026-07-19 20:42"
+    action: real C4 acceptance
+    result: >-
+      A two-layer Llama2 B=1 S=32 fused run passed CUDA comparison at both
+      boundaries. A 32-layer shared-random run completed every layer on the
+      U55C with strict-native placement and zero fallback. The unchanged
+      residual profile first failed at layer 4 and reached relative L2 0.0648
+      at layer 31, so this is orchestration acceptance rather than numerical
+      acceptance.
+    learned: >-
+      Rebinding every layer currently reuploads common tensors and shared
+      weights and rebuilds layout caches. It is correct but makes the 32-layer
+      C4 smoke much slower than necessary; incremental stack binding should be
+      a follow-up optimization.
+  - timestamp: "2026-07-19 22:08"
+    action: checkpoint-backed 32-layer CUDA/C4 comparison
+    result: >-
+      Loaded all 32 layers from consolidated.01.pth, ran the same B=1 S=32
+      case on CUDA and the actual U55C C4, and compared every final-residual
+      boundary. All layers executed strict-native with zero fallback. Layers
+      0 through 14 passed the existing profile; layer 15 was the first failure
+      at relative L2 0.0547 and cosine 0.9985. Relative L2 peaked at 0.2081 on
+      layer 29 and was 0.0694 on layer 31.
+    learned: >-
+      The full-stack graph, checkpoint streaming, artifact qualification, and
+      device placement are accepted. The remaining issue is cumulative
+      numerical divergence, now localized to the layer-15 boundary under the
+      unchanged profile rather than hidden by a final-output-only comparison.
+pitfalls:
+  - >-
+    Checkpoint identity is currently protected by path, size, and mtime_ns,
+    not a content digest. The file must remain immutable across CUDA and C4
+    jobs until digest hardening is implemented.
+  - >-
+    The current fused C4 prefill path requires canonical model geometry and a
+    sequence length compatible with its 32-column attention micro-tile.
