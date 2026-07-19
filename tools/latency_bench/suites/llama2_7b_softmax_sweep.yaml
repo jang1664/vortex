@@ -13,7 +13,7 @@ case_matrices:
     kind: softmax
     stage: prefill
     name: softmax_prefill_b{batch}_s{seq}
-    args: "-batch {batch} -heads 32 -seqq {seq} -seqk {seq} -mask 1"
+    args: "-batch {batch} -heads 32 -seqq {seq} -seqk {seq} -seqk-stride {seq} -mask 1"
     matrix:
       batch: {values: [1, 8]}
       seq: {values: [128, 512, 1024]}
@@ -28,7 +28,7 @@ case_matrices:
     kind: softmax
     stage: generation
     name: softmax_generation_b{batch}_kv{kv_len}
-    args: "-batch {batch} -heads 32 -seqq 1 -seqk {kv_len} -mask 0"
+    args: "-batch {batch} -heads 32 -seqq 1 -seqk {kv_len} -seqk-stride {kv_len} -mask 0"
     matrix:
       batch: {values: [1, 8]}
       kv_len: {values: [128, 512, 1024, 2048, 4096]}

@@ -140,6 +140,7 @@ int main(int argc, char *argv[]) {
   uint32_t num_heads = 16;
   uint32_t seq_len_q = 8;
   uint32_t seq_len_k = 8;
+  uint32_t seq_len_k_stride = 0;
   uint32_t use_mask = 1;  // Causal masking by default
   float scale = 1.0f / std::sqrt(64.0f);  // 1/sqrt(d_k), assuming head_dim=64
   
@@ -153,14 +154,27 @@ int main(int argc, char *argv[]) {
       seq_len_q = atoi(argv[++i]);
     } else if (strcmp(argv[i], "-seqk") == 0) {
       seq_len_k = atoi(argv[++i]);
+    } else if (strcmp(argv[i], "-seqk-stride") == 0) {
+      seq_len_k_stride = atoi(argv[++i]);
     } else if (strcmp(argv[i], "-mask") == 0) {
       use_mask = atoi(argv[++i]);
     } else if (strcmp(argv[i], "-scale") == 0) {
       scale = atof(argv[++i]);
     } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
-      printf("Usage: %s [-batch N] [-heads H] [-seqq Q] [-seqk K] [-mask 0|1] [-scale S]\n", argv[0]);
+      printf("Usage: %s [-batch N] [-heads H] [-seqq Q] [-seqk K] "
+             "[-seqk-stride KS] [-mask 0|1] [-scale S]\n", argv[0]);
       return 0;
     }
+  }
+
+  const bool explicit_k_stride = seq_len_k_stride != 0;
+  if (!explicit_k_stride) {
+    seq_len_k_stride = seq_len_k;
+  }
+  if (seq_len_k_stride < seq_len_k) {
+    printf("ERROR: seqk-stride (%u) must be >= seqk (%u)\n",
+           seq_len_k_stride, seq_len_k);
+    return 1;
   }
   
   printf("Softmax Test Configuration:\n");
@@ -168,6 +182,7 @@ int main(int argc, char *argv[]) {
   printf("  Num Heads:    %d\n", num_heads);
   printf("  Seq Len Q:    %d\n", seq_len_q);
   printf("  Seq Len K:    %d\n", seq_len_k);
+  printf("  Seq K Stride: %d\n", seq_len_k_stride);
   printf("  Use Mask:     %d\n", use_mask);
   printf("  Scale:        %.6f\n", scale);
   printf("  Variant:      %s\n", softmax_variant_name());
@@ -202,12 +217,15 @@ int main(int argc, char *argv[]) {
   printf("Device Caps: cores=%ld, warps=%ld, threads=%ld\n", 
          num_cores, num_warps, num_threads);
   
-  uint32_t row_pitch_bytes = softmax_row_pitch_bytes(seq_len_k, sizeof(data_t));
+  uint32_t row_pitch_bytes = explicit_k_stride
+      ? seq_len_k_stride * sizeof(data_t)
+      : softmax_row_pitch_bytes(seq_len_k, sizeof(data_t));
   uint32_t buffer_bytes = total_rows * row_pitch_bytes;
+  const bool uses_pitched_storage = row_pitch_bytes != seq_len_k * sizeof(data_t);
   std::vector<uint8_t> h_input_pitched;
   std::vector<uint8_t> h_output_pitched;
 
-  if (softmax_uses_pitched_hbm()) {
+  if (uses_pitched_storage) {
     h_input_pitched.assign(buffer_bytes, 0);
     h_output_pitched.assign(buffer_bytes, 0);
     pack_rows_to_pitch(h_input_pitched, h_input, total_rows, seq_len_k, row_pitch_bytes);
@@ -271,7 +289,7 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_ready_wait(device, VX_MAX_TIMEOUT));
   
   // Copy results back
-  if (softmax_uses_pitched_hbm()) {
+  if (uses_pitched_storage) {
     RT_CHECK(vx_copy_from_dev(h_output_pitched.data(), output_buffer, 0, buffer_bytes));
     unpack_rows_from_pitch(h_output_gpu, h_output_pitched, total_rows, seq_len_k, row_pitch_bytes);
   } else {

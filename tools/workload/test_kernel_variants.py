@@ -57,6 +57,7 @@ class KernelVariantTest(unittest.TestCase):
         self.assertEqual(qk["shape"]["persistent_weight_layout"], "gemm_w_tiled_transposed")
         self.assertEqual(softmax["shape"]["mask"], 0)
         self.assertEqual(softmax["shape"]["capacity_stride"], 64)
+        self.assertIn("-seqk 33 -seqk-stride 64", softmax["args"])
         self.assertEqual(pv["shape"]["K"], 33)
         self.assertEqual(pv["shape"]["persistent_weight_layout"], "gemm_w_tiled")
 

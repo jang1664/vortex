@@ -4,8 +4,8 @@
 // stats at the end. It intentionally does not validate output:
 // functional checks belong to main.cpp, while this binary is for timing only.
 //
-// CLI: same shape args as main.cpp (-batch / -heads / -seqq / -seqk / -mask /
-// -scale) plus --warmup=N / --iterations=N / --csv / --output=PATH /
+// CLI: same shape args as main.cpp (-batch / -heads / -seqq / -seqk /
+// -seqk-stride / -mask / -scale) plus --warmup=N / --iterations=N / --csv / --output=PATH /
 // --output-append parsed by bench_util.
 
 #include <iostream>
@@ -81,6 +81,7 @@ int main(int argc, char *argv[]) {
   uint32_t num_heads = 16;
   uint32_t seq_len_q = 8;
   uint32_t seq_len_k = 8;
+  uint32_t seq_len_k_stride = 0;
   uint32_t use_mask = 1;
   float scale = 1.0f / std::sqrt(64.0f);
 
@@ -89,21 +90,34 @@ int main(int argc, char *argv[]) {
     else if (strcmp(argv[i], "-heads") == 0)  num_heads  = atoi(argv[++i]);
     else if (strcmp(argv[i], "-seqq") == 0)   seq_len_q  = atoi(argv[++i]);
     else if (strcmp(argv[i], "-seqk") == 0)   seq_len_k  = atoi(argv[++i]);
+    else if (strcmp(argv[i], "-seqk-stride") == 0) seq_len_k_stride = atoi(argv[++i]);
     else if (strcmp(argv[i], "-mask") == 0)   use_mask   = atoi(argv[++i]);
     else if (strcmp(argv[i], "-scale") == 0)  scale      = atof(argv[++i]);
     else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
       printf("Usage: %s [--warmup=N] [--iterations=N] [--csv] "
              "[--output=PATH] [--output-append] [--power-measure-latency[=on|off]] "
-             "[-batch N] [-heads H] [-seqq Q] [-seqk K] [-mask 0|1] [-scale S]\n",
+             "[-batch N] [-heads H] [-seqq Q] [-seqk K] [-seqk-stride KS] "
+             "[-mask 0|1] [-scale S]\n",
              argv[0]);
       return 0;
     }
   }
 
+  const bool explicit_k_stride = seq_len_k_stride != 0;
+  if (!explicit_k_stride) {
+    seq_len_k_stride = seq_len_k;
+  }
+  if (seq_len_k_stride < seq_len_k) {
+    printf("ERROR: seqk-stride (%u) must be >= seqk (%u)\n",
+           seq_len_k_stride, seq_len_k);
+    return 1;
+  }
+
   if (!bench.csv) {
-    printf("Softmax Bench: variant=%s batch=%u heads=%u seqq=%u seqk=%u mask=%u scale=%.6f  "
+    printf("Softmax Bench: variant=%s batch=%u heads=%u seqq=%u seqk=%u seqk_stride=%u mask=%u scale=%.6f  "
            "warmup=%d iterations=%d\n",
-           softmax_variant_name(), batch_size, num_heads, seq_len_q, seq_len_k, use_mask, scale,
+           softmax_variant_name(), batch_size, num_heads, seq_len_q, seq_len_k,
+           seq_len_k_stride, use_mask, scale,
            bench.warmup, bench.iterations);
   }
 
@@ -127,11 +141,14 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_WARPS, &num_warps));
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_THREADS, &num_threads));
 
-  uint32_t row_pitch_bytes = softmax_row_pitch_bytes(seq_len_k, sizeof(data_t));
+  uint32_t row_pitch_bytes = explicit_k_stride
+      ? seq_len_k_stride * sizeof(data_t)
+      : softmax_row_pitch_bytes(seq_len_k, sizeof(data_t));
   uint32_t buffer_bytes = total_rows * row_pitch_bytes;
+  const bool uses_pitched_storage = row_pitch_bytes != seq_len_k * sizeof(data_t);
   std::vector<uint8_t> h_input_pitched;
 
-  if (softmax_uses_pitched_hbm()) {
+  if (uses_pitched_storage) {
     h_input_pitched.assign(buffer_bytes, 0);
     pack_rows_to_pitch(h_input_pitched, h_input, total_rows, seq_len_k, row_pitch_bytes);
     RT_CHECK(vx_mem_alloc_aligned(device, buffer_bytes, softmax_hbm_alloc_alignment(), VX_MEM_READ, &input_buffer));

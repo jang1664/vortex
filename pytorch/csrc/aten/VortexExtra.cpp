@@ -1438,7 +1438,7 @@ at::Tensor vortex_softmax(
   karg.num_heads    = 1;
   karg.seq_len_q    = rows;
   karg.seq_len_k    = cols;
-  karg.row_pitch_bytes = 0;  // kernel ignores value; field needed for struct alignment
+  karg.row_pitch_bytes = static_cast<uint32_t>(cols * in16.element_size());
   karg.use_mask     = 0;
   karg.scale        = 1.0f;
 

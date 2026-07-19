@@ -23,7 +23,8 @@ typedef struct {
   uint32_t num_heads;
   uint32_t seq_len_q;  // Query sequence length
   uint32_t seq_len_k;  // Key sequence length
-  uint32_t row_pitch_bytes; // Physical HBM distance between logical rows
+  uint32_t row_pitch_bytes; // Physical HBM distance between logical rows;
+                            // may exceed seq_len_k * sizeof(fp16)
 
   // Options
   uint32_t use_mask;   // 0: no mask, 1: apply causal mask

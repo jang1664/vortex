@@ -25,9 +25,9 @@ typedef struct {
   uint32_t batch_size;
   uint32_t num_heads;
   uint32_t seq_len_q;
-  uint32_t seq_len_k;
-  uint32_t seq_len_k_pad;
-  uint32_t output_k_pad;
+  uint32_t seq_len_k;      // Logical reduction/masking length
+  uint32_t seq_len_k_pad;  // Physical GEMM-C input width
+  uint32_t output_k_pad;   // Physical GEMM-A output width
   uint32_t M_pad;
 
   uint32_t use_mask;

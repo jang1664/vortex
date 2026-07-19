@@ -1503,7 +1503,8 @@ def build_decoder_pass_kernels(config: dict,
                                seq_q: int,
                                seq_kv: int,
                                qblk: int,
-                               variant: str = DEFAULT_WORKLOAD_VARIANT) -> list[dict]:
+                               variant: str = DEFAULT_WORKLOAD_VARIANT,
+                               softmax_k_stride: int | None = None) -> list[dict]:
     """Emit every kernel that fires during one forward pass of the model
     in the given stage.
 
@@ -1518,6 +1519,8 @@ def build_decoder_pass_kernels(config: dict,
         - prefill:    S
         - generation: past_len + 1 (KV cache size including the new token)
       qblk: QBLK for fpint GEMMs (FFN + QKVO projections).
+      softmax_k_stride: Physical key-column stride used by the score and
+        probability buffers. Defaults to the logical seq_kv length.
 
     Counts (calls_per_forward):
       Per-decoder-layer kernels are multiplied by num_layers (L).
@@ -1568,6 +1571,9 @@ def build_decoder_pass_kernels(config: dict,
         heads_kv=H_kv,
         query_heads_per_kv=query_heads_per_kv,
     )
+    softmax_k_stride = seq_kv if softmax_k_stride is None else softmax_k_stride
+    if softmax_k_stride < seq_kv:
+        raise ValueError("softmax_k_stride must cover seq_kv")
 
     out: list[dict] = []
 
@@ -1651,10 +1657,11 @@ def build_decoder_pass_kernels(config: dict,
     out.append(_llm_kernel(
         name="attn_softmax", kind="softmax", stage=stage,
         args=(f"-batch {batch} -heads {softmax_heads} -seqq {seq_q} -seqk {seq_kv} "
-              f"-mask {use_mask}"),
+              f"-seqk-stride {softmax_k_stride} -mask {use_mask}"),
         calls_per_forward=softmax_calls,
         shape={"batch": batch, "heads": softmax_heads,
-               "seqq": seq_q, "seqk": seq_kv, "mask": use_mask},
+               "seqq": seq_q, "seqk": seq_kv,
+               "capacity_stride": softmax_k_stride, "mask": use_mask},
         variant=variant,
     ))
 
@@ -1865,6 +1872,7 @@ def build_llm_kernels(model_name: str,
                 seq_q=prefill_seq_len,
                 seq_kv=prefill_seq_len,
                 qblk=qblk,
+                softmax_k_stride=prefill_seq_len,
                 variant=variant,
             ))
         elif stage == "generation":
@@ -1878,6 +1886,7 @@ def build_llm_kernels(model_name: str,
                 seq_q=1,
                 seq_kv=gen_kv_len,
                 qblk=qblk,
+                softmax_k_stride=cache_capacity,
                 variant=variant,
             ))
         else:

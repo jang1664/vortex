@@ -23,14 +23,15 @@ using data_t = fp16_t;
 ///////////////////////////////////////////////////////////////////////////////
 
 void kernel_softmax(kernel_arg_t *__UNIFORM__ arg) {
-  auto pInput = reinterpret_cast<data_t *>(arg->input_addr);
-  auto pOutput = reinterpret_cast<data_t *>(arg->output_addr);
+  auto pInput = reinterpret_cast<uint8_t *>(arg->input_addr);
+  auto pOutput = reinterpret_cast<uint8_t *>(arg->output_addr);
   auto pMask = reinterpret_cast<data_t *>(arg->mask_addr);
   
   uint32_t batch_size = arg->batch_size;
   uint32_t num_heads = arg->num_heads;
   uint32_t seq_len_q = arg->seq_len_q;
   uint32_t seq_len_k = arg->seq_len_k;
+  uint32_t row_pitch_bytes = arg->row_pitch_bytes;
   uint32_t use_mask = arg->use_mask;
   float scale = arg->scale;
   
@@ -48,9 +49,9 @@ void kernel_softmax(kernel_arg_t *__UNIFORM__ arg) {
   uint32_t q = active ? remainder % seq_len_q : 0;
   
   // Base pointer for this row
-  uint32_t row_offset = ((b * num_heads + h) * seq_len_q + q) * seq_len_k;
-  data_t *input_row = pInput + row_offset;
-  data_t *output_row = pOutput + row_offset;
+  uint32_t row_idx_linear = (b * num_heads + h) * seq_len_q + q;
+  data_t *input_row = reinterpret_cast<data_t *>(pInput + row_idx_linear * row_pitch_bytes);
+  data_t *output_row = reinterpret_cast<data_t *>(pOutput + row_idx_linear * row_pitch_bytes);
   
   uint32_t tid = threadIdx.x;
   uint32_t block_size = blockDim.x;
