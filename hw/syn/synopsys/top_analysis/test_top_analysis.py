@@ -19,6 +19,7 @@ from hwexplorer.automation.hierarchical import (  # noqa: E402
     SynthesisJob,
 )
 from hwexplorer.automation.pnr_result import PnRResult  # noqa: E402
+from hwexplorer.automation.pnr_search import PnRAreaSearchResult  # noqa: E402
 from top_analysis.aggregate import build_estimate  # noqa: E402
 from top_analysis.config import load_analysis_config  # noqa: E402
 from top_analysis.path_utils import dc_hierarchy_path_candidates  # noqa: E402
@@ -63,18 +64,20 @@ Total 0 0 0
     )
 
 
-def test_retry_margin_sequence_and_validation(tmp_path: Path) -> None:
+def test_pnr_search_policy_aliases_and_validation(tmp_path: Path) -> None:
     path = tmp_path / "candidates.yaml"
     path.write_text(
         """include:\n  modules:\n    - pattern: xbar\npnr:\n  max_attempts: 4\n  initial_area_margin: 1.1\n  area_margin_multiplier: 1.15\n"""
     )
     config = load_analysis_config(path)
-    assert config.pnr.margins() == pytest.approx([1.1, 1.265, 1.45475, 1.6729625])
+    assert config.pnr.initial_area_scale == 1.1
+    assert config.pnr.bracket_factor == 1.15
+    assert config.pnr.search_policy().initial_area_scale == 1.1
 
     path.write_text(
-        """include:\n  modules:\n    - pattern: xbar\npnr:\n  max_attempts: 0\n"""
+        """include:\n  modules:\n    - pattern: xbar\npnr:\n  relative_area_tolerance: 0\n"""
     )
-    with pytest.raises(ValueError, match="at least 1"):
+    with pytest.raises(ValueError, match="relative_area_tolerance"):
         load_analysis_config(path)
 
 
@@ -152,6 +155,31 @@ def test_hybrid_estimate_uses_only_clean_pnr_result(tmp_path: Path) -> None:
     assert estimate.adjusted_physical_cell_area == pytest.approx(820)
     assert estimate.hybrid_core_area == pytest.approx(1660)
 
+    smaller_clean = clean.model_copy(
+        update={"attempt": 2, "area_scale": 0.75, "cell_area": 120, "core_area": 180}
+    )
+    large_clean = clean.model_copy(update={"attempt": 1, "area_scale": 1.0})
+    search = PnRAreaSearchResult(
+        job_id="xbar_job",
+        termination="converged",
+        converged=True,
+        attempts=[large_clean, smaller_clean],
+        best_clean_attempt=2,
+        clean_area_scale=0.75,
+        failed_area_scale=0.74,
+        relative_area_gap=(0.75 - 0.74) / 0.75,
+    )
+    searched = build_estimate(
+        top_report,
+        manifest_path,
+        {"xbar_job": [large_clean, smaller_clean]},
+        search_results={"xbar_job": search},
+    )
+    assert searched.blocks[0].selected_attempt == 2
+    assert searched.blocks[0].search_converged
+    assert searched.blocks[0].clean_area_scale == 0.75
+    assert searched.adjusted_logical_cell_area == pytest.approx(1050)
+
     failed = clean.model_copy(update={"status": "drc_failed", "return_code": 3})
     dc_only = build_estimate(top_report, manifest_path, {"xbar_job": [failed]})
     assert dc_only.adjusted_logical_cell_area == 1000
@@ -210,18 +238,18 @@ def test_report_only_does_not_build_or_run_synthesis(
 
 
 @pytest.mark.parametrize(
-    "statuses,expected_calls,expected_return",
+    "termination,statuses,expected_return",
     [
-        (["drc_failed", "drc_failed"], 2, 0),
-        (["drc_failed", "clean"], 2, 0),
-        (["infrastructure_failed"], 1, 2),
+        ("max_attempts", ["drc_failed", "drc_failed"], 0),
+        ("converged", ["drc_failed", "clean"], 0),
+        ("infrastructure_failed", ["infrastructure_failed"], 2),
     ],
 )
-def test_bounded_retry_policy(
+def test_top_orchestrator_persists_generic_search_results(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    termination: str,
     statuses: list[str],
-    expected_calls: int,
     expected_return: int,
 ) -> None:
     worker_dir = tmp_path / "worker"
@@ -262,35 +290,47 @@ def test_bounded_retry_policy(
     config = load_analysis_config(config_path)
     calls = []
 
-    def fake_run(pnr_config):
-        calls.append(pnr_config)
-        (Path(pnr_config.design_dir) / pnr_config.pnr_dir).mkdir(
-            parents=True, exist_ok=True
+    def fake_search(*args, checkpoint, **kwargs):
+        calls.append(args[1].job_id)
+        attempts = [
+            PnRResult(
+                status=status,
+                return_code={
+                    "clean": 0,
+                    "drc_failed": 3,
+                    "infrastructure_failed": 2,
+                }[status],
+                run_dir=str(tmp_path / f"attempt_{attempt}"),
+                job_id="xbar_job",
+                attempt=attempt,
+                area_scale=1.0 / attempt,
+                cell_area=100 if status == "clean" else None,
+                core_area=200 if status == "clean" else None,
+            )
+            for attempt, status in enumerate(statuses, start=1)
+        ]
+        checkpoint(attempts)
+        return PnRAreaSearchResult(
+            job_id="xbar_job",
+            termination=termination,
+            converged=termination == "converged",
+            attempts=attempts,
+            best_clean_attempt=next(
+                (item.attempt for item in reversed(attempts) if item.status == "clean"),
+                None,
+            ),
         )
-        status = statuses[len(calls) - 1]
-        return {"clean": 0, "drc_failed": 3, "infrastructure_failed": 2}[status]
 
-    def fake_parse(run_dir, *, return_code, attempt, **kwargs):
-        status = statuses[attempt - 1]
-        return PnRResult(
-            status=status,
-            return_code=return_code,
-            run_dir=str(run_dir),
-            attempt=attempt,
-            cell_area=100 if status == "clean" else None,
-            core_area=200 if status == "clean" else None,
-            signal_routing_drc_errors=0 if status == "clean" else 7,
-        )
-
-    monkeypatch.setattr(run_module.PnRConfig, "run", fake_run)
-    monkeypatch.setattr(run_module, "parse_pnr_result", fake_parse)
+    monkeypatch.setattr(run_module, "run_synthesis_job_pnr_search", fake_search)
 
     ret = _run_pnr_attempts(
         manifest_path, config, tmp_path, resume=False, only_job_id=None
     )
 
     assert ret == expected_return
-    assert len(calls) == expected_calls
+    assert calls == ["xbar_job"]
+    persisted = json.loads((tmp_path / "pnr_search_results.json").read_text())
+    assert persisted["xbar_job"]["termination"] == termination
 
 
 def test_resume_reparses_preserved_attempt_before_deciding_status(
@@ -327,6 +367,7 @@ def test_resume_reparses_preserved_attempt_before_deciding_status(
         job_id=job.job_id,
         design_name=job.output_name,
         attempt=1,
+        area_scale=1.0,
     )
     (tmp_path / "pnr_results.json").write_text(
         json.dumps({job.job_id: [previous.model_dump(mode="json")]})
@@ -346,17 +387,26 @@ def test_resume_reparses_preserved_attempt_before_deciding_status(
             job_id=job.job_id,
             design_name=job.output_name,
             attempt=1,
+            area_scale=kwargs["area_scale"],
             signal_routing_drc_errors=0,
             cell_area=100,
             core_area=200,
         )
 
+    def fake_search(*args, existing_attempts, **kwargs):
+        assert len(existing_attempts) == 1
+        assert existing_attempts[0].status == "clean"
+        assert existing_attempts[0].area_scale == 1.0
+        return PnRAreaSearchResult(
+            job_id=job.job_id,
+            termination="max_attempts",
+            attempts=existing_attempts,
+            best_clean_attempt=1,
+            clean_area_scale=1.0,
+        )
+
     monkeypatch.setattr(run_module, "parse_pnr_result", fake_parse)
-    monkeypatch.setattr(
-        run_module.PnRConfig,
-        "run",
-        lambda *_: pytest.fail("clean preserved attempt must not rerun ICC2"),
-    )
+    monkeypatch.setattr(run_module, "run_synthesis_job_pnr_search", fake_search)
 
     assert (
         _run_pnr_attempts(

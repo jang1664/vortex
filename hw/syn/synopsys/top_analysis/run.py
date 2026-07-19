@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import fnmatch
 import json
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -22,13 +23,15 @@ from hwexplorer.automation.hierarchical import (  # noqa: E402
     AreaUtilizationPolicy,
     HierarchicalManifest,
     HierarchySelector,
-    PhysicalVariant,
-    plan_pnr_jobs,
     plan_synthesis_jobs,
     read_design_catalog,
 )
-from hwexplorer.automation.pnr import PnRConfig, pnr_configs_from_manifest  # noqa: E402
+from hwexplorer.automation.pnr import (  # noqa: E402
+    PnRConfig,
+    run_synthesis_job_pnr_search,
+)
 from hwexplorer.automation.pnr_result import PnRResult, parse_pnr_result  # noqa: E402
+from hwexplorer.automation.pnr_search import PnRAreaSearchResult  # noqa: E402
 from hwexplorer.report_db import SynopsysDCAreaDB  # noqa: E402
 from tools.latency_bench.fpga_bins import load_fpga_bin_aliases  # noqa: E402
 from vortex_axi_common import (  # noqa: E402
@@ -62,8 +65,15 @@ def _parser() -> argparse.ArgumentParser:
         "--candidate-config", default=str(THIS_DIR / "candidates.yaml")
     )
     parser.add_argument("--max-pnr-attempts", type=int)
-    parser.add_argument("--initial-area-margin", type=float)
-    parser.add_argument("--area-margin-multiplier", type=float)
+    parser.add_argument(
+        "--initial-area-scale", "--initial-area-margin", type=float
+    )
+    parser.add_argument(
+        "--bracket-factor", "--area-margin-multiplier", type=float
+    )
+    parser.add_argument("--relative-area-tolerance", type=float)
+    parser.add_argument("--min-area-scale", type=float)
+    parser.add_argument("--max-area-scale", type=float)
     parser.add_argument("--pnr-job-id")
     parser.add_argument("--report-only", action="store_true")
     return parser
@@ -90,7 +100,7 @@ def main(argv: list[str] | None = None) -> int:
         "run_dir": str(run_dir),
         "top_dir": str(top_dir),
         "stages": stages,
-        "area_margins": analysis_cfg.pnr.margins(),
+        "pnr_search": analysis_cfg.pnr.search_policy().model_dump(mode="json"),
         "candidate_config": analysis_cfg.model_dump(mode="json"),
     }
     (run_dir / "resolved_config.json").write_text(json.dumps(resolved, indent=2))
@@ -160,6 +170,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if "report" in stages:
         retry_results = _load_retry_results(run_dir / "pnr_results.json")
+        search_results = _load_search_results(run_dir / "pnr_search_results.json")
         candidate_plan_path = run_dir / "candidate_plan.json"
         candidate_plan = (
             json.loads(candidate_plan_path.read_text())
@@ -171,6 +182,7 @@ def main(argv: list[str] | None = None) -> int:
             manifest_path,
             retry_results,
             diagnostic_job_ids=set(candidate_plan.get("diagnostic_job_ids", [])),
+            search_results=search_results,
         )
         write_reports(estimate, run_dir / "reports")
         shutil.copy2(
@@ -202,8 +214,11 @@ def _apply_retry_overrides(
     updates = {}
     for cli_name, field in (
         ("max_pnr_attempts", "max_attempts"),
-        ("initial_area_margin", "initial_area_margin"),
-        ("area_margin_multiplier", "area_margin_multiplier"),
+        ("initial_area_scale", "initial_area_scale"),
+        ("bracket_factor", "bracket_factor"),
+        ("relative_area_tolerance", "relative_area_tolerance"),
+        ("min_area_scale", "min_area_scale"),
+        ("max_area_scale", "max_area_scale"),
     ):
         value = getattr(args, cli_name)
         if value is not None:
@@ -372,22 +387,27 @@ def _run_pnr_attempts(
 ) -> int:
     manifest = HierarchicalManifest.model_validate_json(manifest_path.read_text())
     results = _load_retry_results(run_dir / "pnr_results.json")
+    search_results = _load_search_results(run_dir / "pnr_search_results.json")
     for job in manifest.synthesis_jobs:
         if only_job_id and job.job_id != only_job_id:
             continue
-        existing = results.get(job.job_id, [])
+        existing = results.get(job.job_id, []) if resume else []
         if resume and existing:
             # Re-evaluate preserved attempts from their stable reports.  This
             # lets parser fixes or relaxed DRC policy take effect without
             # rerunning ICC2.
             refreshed = []
             for previous in existing:
+                area_scale = _result_area_scale(previous)
+                if area_scale is None:
+                    continue
                 result = parse_pnr_result(
                     previous.run_dir,
                     return_code=previous.return_code,
                     job_id=previous.job_id or job.job_id,
                     design_name=previous.design_name,
                     attempt=previous.attempt,
+                    area_scale=area_scale,
                     die_width=previous.die_width,
                     die_height=previous.die_height,
                     max_routing_drc_errors=config.pnr.max_routing_drc_errors,
@@ -397,64 +417,58 @@ def _run_pnr_attempts(
             existing = refreshed
             results[job.job_id] = existing
             _write_retry_results(run_dir / "pnr_results.json", results)
-        if resume and any(result.status == "clean" for result in existing):
-            continue
         results[job.job_id] = existing
-        for attempt, margin in enumerate(config.pnr.margins(), start=1):
-            if resume and any(result.attempt == attempt for result in existing):
-                previous = next(result for result in existing if result.attempt == attempt)
-                if previous.status == "clean":
-                    break
-                if previous.status == "infrastructure_failed":
-                    return previous.return_code or 2
-                continue
-            variant = PhysicalVariant(
-                name=f"attempt_{attempt:02d}_margin_{margin:.6f}",
-                utilization_policy=AreaUtilizationPolicy(
-                    target_utilization=config.pnr.target_utilization,
-                    aspect_ratio=config.pnr.aspect_ratio,
-                    area_margin=margin,
-                    boundary_margin=config.pnr.boundary_margin,
-                    width_grid=config.pnr.width_grid,
-                    height_grid=config.pnr.height_grid,
-                ),
-            )
-            pnr_jobs = plan_pnr_jobs([job], [variant], Path(job.run_dir).parent)
-            attempt_manifest = manifest.model_copy(
-                deep=True, update={"synthesis_jobs": [job], "pnr_jobs": pnr_jobs}
-            )
-            pnr_cfg = pnr_configs_from_manifest(
-                attempt_manifest,
-                PnRConfig(
-                    tech="lpp",
-                    validate_routing_drc=True,
-                    max_routing_drc_errors=config.pnr.max_routing_drc_errors,
-                    rerun=not resume,
-                    backup=False,
-                    new=True,
-                ),
-            )[0]
-            return_code = pnr_cfg.run()
-            attempt_dir = Path(pnr_cfg.design_dir) / pnr_cfg.pnr_dir
-            result = parse_pnr_result(
-                attempt_dir,
-                return_code=return_code,
-                job_id=job.job_id,
-                design_name=pnr_cfg.design_name,
-                attempt=attempt,
-                die_width=pnr_cfg.width,
-                die_height=pnr_cfg.height,
-                max_routing_drc_errors=config.pnr.max_routing_drc_errors,
-            )
-            result.write(attempt_dir / "pnr_result.json")
-            results[job.job_id].append(result)
+
+        def checkpoint(attempts: list[PnRResult]) -> None:
+            results[job.job_id] = attempts
             _write_retry_results(run_dir / "pnr_results.json", results)
-            if result.status == "clean":
-                break
-            if result.status == "infrastructure_failed":
-                return return_code or 2
-        # Exhausted DRC attempts is a modeled block failure, not a framework failure.
+
+        search = run_synthesis_job_pnr_search(
+            manifest,
+            job,
+            config.pnr.search_policy(),
+            AreaUtilizationPolicy(
+                target_utilization=config.pnr.target_utilization,
+                aspect_ratio=config.pnr.aspect_ratio,
+                boundary_margin=config.pnr.boundary_margin,
+                width_grid=config.pnr.width_grid,
+                height_grid=config.pnr.height_grid,
+            ),
+            PnRConfig(
+                tech="lpp",
+                validate_routing_drc=True,
+                max_routing_drc_errors=config.pnr.max_routing_drc_errors,
+                rerun=not resume,
+                backup=False,
+                new=True,
+            ),
+            existing_attempts=existing,
+            checkpoint=checkpoint,
+        )
+        results[job.job_id] = search.attempts
+        search_results[job.job_id] = search
+        _write_retry_results(run_dir / "pnr_results.json", results)
+        _write_search_results(run_dir / "pnr_search_results.json", search_results)
+        search_path = Path(job.run_dir) / "pnr_search_result.json"
+        search_path.parent.mkdir(parents=True, exist_ok=True)
+        search.write(search_path)
+        if search.termination == "infrastructure_failed":
+            failed = next(
+                result
+                for result in reversed(search.attempts)
+                if result.status == "infrastructure_failed"
+            )
+            return failed.return_code or 2
+        # A bounded search without a clean result is a modeled block failure,
+        # not an orchestration/infrastructure failure.
     return 0
+
+
+def _result_area_scale(result: PnRResult) -> float | None:
+    if result.area_scale is not None:
+        return result.area_scale
+    match = re.search(r"(?:margin|scale)_([0-9]+(?:\.[0-9]+)?)", result.run_dir)
+    return float(match.group(1)) if match else None
 
 
 def _load_retry_results(path: Path) -> dict[str, list[PnRResult]]:
@@ -471,6 +485,25 @@ def _write_retry_results(path: Path, results: dict[str, list[PnRResult]]) -> Non
     payload = {
         job_id: [result.model_dump(mode="json") for result in attempts]
         for job_id, attempts in results.items()
+    }
+    path.write_text(json.dumps(payload, indent=2))
+
+
+def _load_search_results(path: Path) -> dict[str, PnRAreaSearchResult]:
+    if not path.is_file():
+        return {}
+    data = json.loads(path.read_text())
+    return {
+        job_id: PnRAreaSearchResult.model_validate(result)
+        for job_id, result in data.items()
+    }
+
+
+def _write_search_results(
+    path: Path, results: dict[str, PnRAreaSearchResult]
+) -> None:
+    payload = {
+        job_id: result.model_dump(mode="json") for job_id, result in results.items()
     }
     path.write_text(json.dumps(payload, indent=2))
 

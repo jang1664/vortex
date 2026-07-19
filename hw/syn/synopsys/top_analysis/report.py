@@ -77,15 +77,19 @@ def _markdown(estimate: SelectivePnREstimate) -> str:
         f"{estimate.failed_block_count}; diagnostic-only blocks: "
         f"{estimate.diagnostic_block_count}.",
         "",
-        "| Block | Instances | Mode | Status | DC logical | PnR cell | Growth |",
-        "|---|---:|---|---|---:|---:|---:|",
+        "| Block | Instances | Mode | Status | Search | Scale | Gap | DC logical | PnR cell | Growth |",
+        "|---|---:|---|---|---|---:|---:|---:|---:|---:|",
     ]
     for block in estimate.blocks:
         pnr = "-" if block.pnr_cell_area is None else f"{block.pnr_cell_area:.3f}"
         growth = "-" if block.growth_factor is None else f"{block.growth_factor:.4f}"
+        search = block.search_termination or "-"
+        scale = "-" if block.clean_area_scale is None else f"{block.clean_area_scale:.4f}"
+        gap = "-" if block.relative_area_gap is None else f"{block.relative_area_gap:.2%}"
         lines.append(
             f"| {block.job_id} | {block.instance_count} | "
-            f"{block.aggregation_mode} | {block.status} | "
+            f"{block.aggregation_mode} | {block.status} | {search} | "
+            f"{scale} | {gap} | "
             f"{block.dc_logical_area:.3f} | {pnr} | {growth} |"
         )
     lines.append("")

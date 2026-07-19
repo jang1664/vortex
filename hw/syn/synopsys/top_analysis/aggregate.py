@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from hwexplorer.automation.hierarchical import HierarchicalManifest
 from hwexplorer.automation.pnr_result import PnRResult
+from hwexplorer.automation.pnr_search import PnRAreaSearchResult
 from hwexplorer.report_db import SynopsysDCAreaDB
 
 from .path_utils import dc_hierarchy_path_candidates
@@ -33,6 +34,11 @@ class BlockEstimate(BaseModel):
     physical_correction: float = 0.0
     core_correction: float = 0.0
     selected_attempt: Optional[int] = None
+    search_termination: Optional[str] = None
+    search_converged: bool = False
+    clean_area_scale: Optional[float] = None
+    failed_area_scale: Optional[float] = None
+    relative_area_gap: Optional[float] = None
     occurrence_paths: list[str] = Field(default_factory=list)
 
 
@@ -63,8 +69,10 @@ def build_estimate(
     retry_results: dict[str, list[PnRResult]],
     *,
     diagnostic_job_ids: set[str] | None = None,
+    search_results: dict[str, PnRAreaSearchResult] | None = None,
 ) -> SelectivePnREstimate:
     diagnostic_job_ids = diagnostic_job_ids or set()
+    search_results = search_results or {}
     top_db = SynopsysDCAreaDB.from_file(str(top_area_report))
     top = top_db.metadata
     top_logical = _required(top, "total_cell_area", top_area_report)
@@ -96,7 +104,11 @@ def build_estimate(
         estimated_physical = occurrence_area * dc_physical / dc_logical
 
         attempts = retry_results.get(job.job_id, [])
-        clean = next((result for result in attempts if result.status == "clean"), None)
+        search = search_results.get(job.job_id)
+        clean = search.best_clean_result if search is not None else None
+        if clean is None:
+            clean_attempts = [result for result in attempts if result.status == "clean"]
+            clean = min(clean_attempts, key=_physical_result_area) if clean_attempts else None
         terminal_status = clean.status if clean else (
             attempts[-1].status if attempts else "not_run"
         )
@@ -113,6 +125,11 @@ def build_estimate(
             dc_physical_area=dc_physical,
             estimated_hierarchy_physical_area=estimated_physical,
             selected_attempt=clean.attempt if clean else None,
+            search_termination=search.termination if search is not None else None,
+            search_converged=search.converged if search is not None else False,
+            clean_area_scale=search.clean_area_scale if search is not None else None,
+            failed_area_scale=search.failed_area_scale if search is not None else None,
+            relative_area_gap=search.relative_area_gap if search is not None else None,
             occurrence_paths=paths,
         )
         if clean is not None:
@@ -177,3 +194,11 @@ def _lookup_occurrence_area(
         if candidate in by_path:
             return by_path[candidate]
     raise ValueError(f"selected occurrence is missing from top area report: {instance_path}")
+
+
+def _physical_result_area(result: PnRResult) -> float:
+    if result.area_scale is not None:
+        return result.area_scale
+    if result.die_area is not None:
+        return result.die_area
+    return float("inf")

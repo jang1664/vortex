@@ -74,33 +74,42 @@ simulation is required for this configuration.
 Before every synthesis run, the driver must source the selected file under
 `configs/` and use its `CONFIGS` value as the source of truth.
 
-### 3.2 Bound PnR retry attempts
+### 3.2 Bound PnR area search attempts
 
-Increasing area does not guarantee DRC-clean routing. Each physical
-specialization therefore has a configurable maximum number of PnR attempts:
-
-```text
-max_pnr_attempts: 4
-initial_area_margin: 1.10
-area_margin_multiplier: 1.15
-```
-
-For the example above, the attempted margins are approximately:
+Each physical specialization starts from the DC report-derived area and uses
+bounded bracketing plus bisection to find the minimum clean area:
 
 ```text
-1.10, 1.265, 1.455, 1.673
+strategy: bracket_bisection
+max_attempts: 10
+initial_area_scale: 1.0
+bracket_factor: 2.0
+relative_area_tolerance: 0.02
+min_area_scale: 0.25
+max_area_scale: 4.0
 ```
 
-The exact margin sequence must be recorded in the resolved run configuration.
-The driver must reject `max_pnr_attempts < 1`.
+For a clean initial result followed by a failing half-area result, attempts
+begin as follows:
+
+```text
+1.0 (clean), 0.5 (failed), 0.75, 0.625, ...
+```
+
+The search keeps the largest failed and smallest clean scales and stops when
+`(clean - failed) / clean` reaches `relative_area_tolerance`. The exact attempt
+sequence and termination reason are recorded. The driver rejects invalid
+bounds, tolerance, bracket factor, and `max_attempts < 1`.
 
 Retry behavior is per synthesis specialization:
 
 1. Generate a new `PhysicalVariant` and unique run directory for the attempt.
-2. Use DC report-derived utilization and aspect ratio.
+2. Use DC report-derived utilization and aspect ratio, changing core area
+   while preserving aspect ratio.
 3. Run PnR and parse the final result.
-4. Stop at the first result that satisfies the configured success policy.
-5. Stop after `max_pnr_attempts`, even if routing DRCs remain.
+4. Halve or double area until clean and failed results bracket the boundary.
+5. Bisect the bracket until the relative area tolerance is met.
+6. Stop after `max_attempts`, even if the boundary has not converged.
 
 Default success policy:
 
@@ -168,8 +177,11 @@ Expected operational options:
 --reuse-top PATH
 --candidate-config PATH
 --max-pnr-attempts N
---initial-area-margin FLOAT
---area-margin-multiplier FLOAT
+--initial-area-scale FLOAT
+--bracket-factor FLOAT
+--relative-area-tolerance FLOAT
+--min-area-scale FLOAT
+--max-area-scale FLOAT
 --pnr-job-id ID
 --report-only
 ```
@@ -202,9 +214,13 @@ minimum_total_area_um2: 1000.0
 allow_nested: false
 
 pnr:
-  max_attempts: 4
-  initial_area_margin: 1.10
-  area_margin_multiplier: 1.15
+  strategy: bracket_bisection
+  max_attempts: 10
+  initial_area_scale: 1.0
+  bracket_factor: 2.0
+  relative_area_tolerance: 0.02
+  min_area_scale: 0.25
+  max_area_scale: 4.0
   target_utilization: from_report
   aspect_ratio: from_report
   boundary_margin: 1.0
@@ -477,8 +493,10 @@ its current CLI and top-only behavior.
 
 - Parse DC reports containing logical and physical area sections.
 - Parse ICC2 final utilization, design, timing, congestion, and DRC fixtures.
-- Validate retry margin generation and `max_pnr_attempts` limits.
-- Verify that DRC failures retry and infrastructure failures stop.
+- Validate halving/doubling bracketing, midpoint generation, relative
+  tolerance, and `max_pnr_attempts` limits.
+- Verify that DRC failures define the infeasible bracket and infrastructure
+  failures stop the search.
 - Verify first-success selection and all-attempts-failed status.
 - Verify that failed PnR results do not enter the trusted central estimate.
 - Verify hierarchy ancestor/descendant collision detection.
@@ -513,7 +531,7 @@ After synthesis-only validation:
 
 1. Select one small xbar specialization from the generated catalog.
 2. Run at most the configured `max_pnr_attempts`.
-3. Verify report generation, retry accounting, resume behavior, and final
+3. Verify report generation, search accounting, resume behavior, and final
    status.
 
 A DRC-clean result is desirable but is not required to validate the framework.
@@ -534,7 +552,7 @@ specialization before enabling the complete candidate list.
 
 - Define configuration, attempt, PnR result, and aggregate result models.
 - Add representative DC and ICC2 report fixtures.
-- Implement formula and retry-policy unit tests first.
+- Implement formula and area-search policy unit tests first.
 
 ### Phase 2: hwexplorer report support
 
@@ -554,7 +572,7 @@ specialization before enabling the complete candidate list.
 
 - Implement stage selection, artifact validation, resume, and provenance.
 - Implement candidate resolution and nested-selection rejection.
-- Implement block synthesis and bounded adaptive PnR.
+- Implement block synthesis and bounded bracket-bisection PnR.
 
 ### Phase 5: Aggregation and reporting
 
@@ -566,7 +584,7 @@ specialization before enabling the complete candidate list.
 
 - Source `configs/small_for_test.sh`.
 - Run synthesis-only validation.
-- Run one bounded xbar PnR smoke test.
+- Run one bounded xbar area-search PnR smoke test.
 - Record all observed tool/report compatibility issues.
 
 ### Phase 7: Follow-up optimization

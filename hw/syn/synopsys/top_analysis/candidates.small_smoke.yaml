@@ -7,9 +7,13 @@ minimum_total_area_um2: 0.0
 allow_nested: false
 
 pnr:
+  strategy: bracket_bisection
   max_attempts: 2
-  initial_area_margin: 1.10
-  area_margin_multiplier: 1.15
+  initial_area_scale: 1.0
+  bracket_factor: 2.0
+  relative_area_tolerance: 0.02
+  min_area_scale: 0.25
+  max_area_scale: 4.0
   target_utilization: from_report
   aspect_ratio: from_report
   boundary_margin: 1.0
