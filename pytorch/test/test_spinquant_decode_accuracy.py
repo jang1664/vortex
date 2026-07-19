@@ -52,6 +52,21 @@ def tiny_layer_config(*, sequence_length: int = 5) -> LayerConfig:
     )
 
 
+def tiny_gqa_layer_config(*, sequence_length: int = 5) -> LayerConfig:
+    return LayerConfig(
+        model="test-llama-gqa",
+        hidden_size=32,
+        intermediate_size=64,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        head_dim=8,
+        batch_size=1,
+        sequence_length=sequence_length,
+        weight_group_size=4,
+        kv_group_size=8,
+    )
+
+
 class DecodeArtifactContractTests(unittest.TestCase):
     def test_random_decode_case_round_trip_preserves_hash_and_boundaries(self):
         config = DecodeConfig(
@@ -269,6 +284,23 @@ class DecodeExecutorTests(unittest.TestCase):
                 atol=2e-3,
             )
             self.assertEqual(step.logical_length, logical_length)
+
+    def test_gqa_decode_cache_stores_only_kv_heads_and_matches_full_prefix(self):
+        case = create_random_decode_case(
+            DecodeConfig(tiny_gqa_layer_config(), 3, 2, 8), seed=47
+        )
+        result = DecodeExecutor(TorchBackend("cpu")).run(case)
+        self.assertEqual(result.cache_descriptor["geometry"]["num_kv_heads"], 2)
+        for step_index, step in enumerate(result.steps):
+            logical_length = case.config.prompt_length + step_index + 1
+            prefix = materialize_decode_prefix(case, logical_length=logical_length)
+            reference = LayerExecutor(TorchBackend("cpu")).run(prefix)
+            torch.testing.assert_close(
+                step.captures["final_residual"],
+                reference.captures["final_residual"][:, -1:],
+                rtol=2e-3,
+                atol=2e-3,
+            )
 
     def test_decode_run_artifact_preserves_per_step_metadata(self):
         result = DecodeExecutor(TorchBackend("cpu")).run(self.case)

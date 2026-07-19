@@ -732,6 +732,7 @@ struct head_concat_layout_fused_kernel_arg_t {
   uint32_t headdim;
   uint32_t input_m_pad;
   uint32_t output_m_pad;
+  uint32_t query_heads_per_kv;
   uint32_t log2_mt;
   uint32_t log2_mxu_kt;
   uint32_t log2_mxu_nt;
@@ -763,8 +764,13 @@ static_assert(sizeof(kv_cache_quant_layout_fused_w4a16_kernel_arg_t) == 208,
               "kv_cache_quant_layout_fused_w4a16 kernel ABI size mismatch");
 static_assert(sizeof(softmax_layout_fused_kernel_arg_t) == 104,
               "softmax_layout_fused kernel ABI size mismatch");
-static_assert(sizeof(head_concat_layout_fused_kernel_arg_t) == 88,
+static_assert(sizeof(head_concat_layout_fused_kernel_arg_t) == 96,
               "head_concat_layout_fused kernel ABI size mismatch");
+static_assert(offsetof(head_concat_layout_fused_kernel_arg_t,
+                       query_heads_per_kv) == 72
+              && offsetof(head_concat_layout_fused_kernel_arg_t,
+                          power_kernel_iterations) == 88,
+              "head_concat_layout_fused kernel ABI offsets mismatch");
 static_assert(sizeof(eladd_layout_fused_kernel_arg_t) == 80,
               "eladd_layout_fused kernel ABI size mismatch");
 static_assert(sizeof(qk_asym_correction_kernel_arg_t) == 112,
@@ -4058,19 +4064,23 @@ at::Tensor vortex_head_concat_layout_fused(
     int64_t heads,
     int64_t head_dim,
     int64_t input_m_pad,
-    int64_t output_m_pad) {
+    int64_t output_m_pad,
+    int64_t query_heads_per_kv) {
   TORCH_CHECK(input.is_privateuseone() && input.dtype() == at::kHalf
               && input.is_contiguous(),
               "head_concat_layout_fused input must be contiguous Vortex float16");
   TORCH_CHECK(batch > 0 && seq > 0 && heads > 0 && head_dim > 0,
               "head concat dimensions must be positive");
-  TORCH_CHECK(input_m_pad >= seq && input_m_pad % 8 == 0,
-              "input_m_pad must cover seq and be a multiple of 8");
+  TORCH_CHECK(query_heads_per_kv > 0 && heads % query_heads_per_kv == 0,
+              "query_heads_per_kv must be positive and divide heads");
+  TORCH_CHECK(input_m_pad >= seq * query_heads_per_kv && input_m_pad % 8 == 0,
+              "input_m_pad must cover grouped query rows and be a multiple of 8");
   TORCH_CHECK(output_m_pad >= batch * seq && output_m_pad % 8 == 0,
               "output_m_pad must cover batch*seq and be a multiple of 8");
   TORCH_CHECK(head_dim % 32 == 0 && (heads * head_dim) % 32 == 0,
               "head_dim and hidden size must be multiples of 32");
-  TORCH_CHECK(input.numel() == batch * heads * input_m_pad * head_dim,
+  TORCH_CHECK(input.numel() == batch * (heads / query_heads_per_kv)
+                                  * input_m_pad * head_dim,
               "head concat physical input size mismatch");
   check_device_alignment(input, 512, "grouped PV GEMM-C input");
 
@@ -4102,6 +4112,7 @@ at::Tensor vortex_head_concat_layout_fused(
   karg.headdim = static_cast<uint32_t>(head_dim);
   karg.input_m_pad = static_cast<uint32_t>(input_m_pad);
   karg.output_m_pad = static_cast<uint32_t>(output_m_pad);
+  karg.query_heads_per_kv = static_cast<uint32_t>(query_heads_per_kv);
   karg.log2_mt = 7;
   karg.log2_mxu_kt = 5;
   karg.log2_mxu_nt = 5;
@@ -4338,7 +4349,7 @@ TORCH_LIBRARY(vortex, m) {
   m.def("kv_cache_quant_layout_fused_w4a16(Tensor source, int K, int N, int qblk, int qdir, int gemm_qdir, int wtrans, int src_layout, int source_transposed, int quant_mode, int src_total_n, int src_col_offset, int src_total_k=0, int src_row_offset=0) -> (Tensor, Tensor, Tensor, Tensor, Tensor)");
   m.def("kv_cache_quant_layout_fused_w4a16_update(Tensor source, int cache_capacity, int cache_position, int quant_mode, Tensor(a!) weight, Tensor(b!) scale, Tensor(c!) zero, Tensor(d!) logical_scale, Tensor(e!) logical_zero, int head_dim=0, int src_layout=0, int src_total_n=0, int src_col_offset=0, int src_total_k=0, int src_row_offset=0) -> (Tensor(a!), Tensor(b!), Tensor(c!), Tensor(d!), Tensor(e!))");
   m.def("softmax_layout_fused(Tensor input, int batch, int heads, int seq_q, int seq_k, int m_pad, int use_mask, float scale, int input_k_pad=0, int output_k_pad=0) -> Tensor");
-  m.def("head_concat_layout_fused(Tensor input, int batch, int seq, int heads, int head_dim, int input_m_pad, int output_m_pad) -> Tensor");
+  m.def("head_concat_layout_fused(Tensor input, int batch, int seq, int heads, int head_dim, int input_m_pad, int output_m_pad, int query_heads_per_kv=1) -> Tensor");
   m.def("eladd_layout_fused(Tensor input_a, Tensor input_b, int M, int M_pad, int K) -> Tensor");
   m.def("hadamard_butterfly(Tensor input, int K) -> Tensor");
   m.def("hadamard_base(Tensor input, Tensor matrix, int K) -> Tensor");

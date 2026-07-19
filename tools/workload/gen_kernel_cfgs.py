@@ -882,7 +882,7 @@ def _apply_standalone_layout_variant(kernels: list[dict],
         by_name["rope_q"],
         _detile_output_kernel(
             "layout_k_proj_to_rope_k_detile", stage,
-            M=M_proj, N=q_dim, calls_per_forward=layers,
+            M=M_proj, N=by_name["k_proj"]["shape"]["N"], calls_per_forward=layers,
             producer="k_proj", consumer="rope_k",
             layout_group="k_proj_to_rope_k", variant=variant,
         ),
@@ -938,7 +938,7 @@ def _apply_standalone_layout_variant(kernels: list[dict],
         ),
         _detile_output_kernel(
             "layout_v_proj_to_v_cache_detile", stage,
-            M=M_proj, N=q_dim, calls_per_forward=layers,
+            M=M_proj, N=by_name["v_proj"]["shape"]["N"], calls_per_forward=layers,
             producer="v_proj", consumer="v_cache",
             layout_group="v_proj_to_attn_pv", variant=variant,
         ),
@@ -1207,6 +1207,9 @@ def _apply_spinquant_hadamard_variant(kernels: list[dict],
     k_rows = batch * seq_q * heads_kv
     r4_rows = M_proj
     mlp_elems = M_proj * intermediate
+    q_rows_per_matrix, q_call_heads, q_heads_per_matrix = _attention_gemm_geometry(
+        stage, seq_q=seq_q, heads_q=heads_q, heads_kv=heads_kv
+    )
 
     q_consumer = "attn_qkT"
     if base_variant == LAYOUT_ALONE_VARIANT:
@@ -1276,15 +1279,17 @@ def _apply_spinquant_hadamard_variant(kernels: list[dict],
         variant=variant,
     )
     if base_variant == LAYOUT_FUSED_VARIANT:
+        q_matrix_count = batch * q_call_heads
         q_hadamard = _with_fused_backend(
             q_hadamard, "hadamard_layout_fused",
-            args=f"-m {seq_q} -n {batch * heads_q} -k {head_dim}",
+            args=f"-m {q_rows_per_matrix} -n {q_matrix_count} -k {head_dim}",
             shape_update={
                 "layout_from": "head_major_row_fp16",
                 "layout_to": "gemm_a_tiled",
-                "matrix_count": batch * heads_q,
-                "rows_per_matrix": seq_q,
-                "m_pad": (seq_q + 7) & ~7,
+                "matrix_count": q_matrix_count,
+                "rows_per_matrix": q_rows_per_matrix,
+                "m_pad": _align_up(q_rows_per_matrix, 8),
+                "query_heads_per_kv": q_heads_per_matrix,
                 "consumer": "attn_qkT",
             },
         )
@@ -1394,6 +1399,20 @@ def _apply_spinquant_hadamard_variant(kernels: list[dict],
                     "layout_from": "head_major_row_fp16",
                     "producer": "spinquant_r3_q_hadamard",
                     "layout_group": "spinquant_r3_q_hadamard_to_attn_qkT",
+                },
+            ))
+            continue
+
+        if base_variant == LAYOUT_FUSED_VARIANT and name == "attn_head_concat":
+            out.append(_with_kernel_updates(
+                kernel,
+                shape_update={
+                    "query_heads_per_kv": (
+                        heads_q // heads_kv if stage == "generation" else 1
+                    ),
+                    "input_matrix_count": batch * (
+                        heads_kv if stage == "generation" else heads_q
+                    ),
                 },
             ))
             continue

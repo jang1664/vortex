@@ -73,6 +73,8 @@ STAGE_FAMILY = {
     "final_residual": "residual",
 }
 
+COMPARISON_PROFILES = ("llama2_fp16_w4kv4_v1", "llama_fp16_w4kv4_v1")
+
 
 def _threshold(stage: str) -> dict:
     return PROFILE_V1[STAGE_FAMILY.get(stage, "pointwise")]
@@ -169,7 +171,7 @@ def compare_runs(
     *,
     profile: str = "llama2_fp16_w4kv4_v1",
 ) -> dict:
-    if profile != "llama2_fp16_w4kv4_v1":
+    if profile not in COMPARISON_PROFILES:
         raise ValueError(f"unknown comparison profile {profile!r}")
     all_stages = list(dict.fromkeys((*reference.keys(), *candidate.keys())))
     stages = {}

@@ -18,11 +18,11 @@ from .artifacts import (
     save_case,
 )
 from .backends import TorchBackend, VortexBackend
-from .compare import compare_runs
+from .compare import COMPARISON_PROFILES, compare_runs
 from .graph import DecodeExecutor, LayerExecutor
 from .generator_conformance import check_generator_conformance
 from .run_artifacts import load_run, save_decode_run, save_run
-from .specs import DecodeConfig, LayerConfig
+from .specs import DecodeConfig, LayerConfig, SUPPORTED_MODELS
 from .stages import DECODE_STAGE_NAMES, STAGE_NAMES, DecodeStopPoint
 
 
@@ -36,7 +36,7 @@ def _positive_int(value: str) -> int:
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m spinquant_inference.layer_accuracy",
-        description="Compare one SpinQuant Llama2-7B decoder layer on CUDA and Vortex.",
+        description="Compare one SpinQuant Llama decoder layer on CUDA and Vortex.",
     )
     commands = parser.add_subparsers(dest="command", required=True)
 
@@ -49,6 +49,7 @@ def _parser() -> argparse.ArgumentParser:
     make_case.add_argument("--layer-index", type=int, default=0)
     make_case.add_argument("--batch-size", type=_positive_int, default=1)
     make_case.add_argument("--seq-len", type=_positive_int, default=32)
+    make_case.add_argument("--model", choices=SUPPORTED_MODELS, default=SUPPORTED_MODELS[0])
 
     make_decode_case = commands.add_parser(
         "make-decode-case", help="create a prompt plus one-token decode inputs"
@@ -60,6 +61,9 @@ def _parser() -> argparse.ArgumentParser:
     make_decode_case.add_argument("--checkpoint-profile", choices=("spinquant-w4a16-r3r4",))
     make_decode_case.add_argument("--layer-index", type=int, default=0)
     make_decode_case.add_argument("--batch-size", type=_positive_int, default=1)
+    make_decode_case.add_argument(
+        "--model", choices=SUPPORTED_MODELS, default=SUPPORTED_MODELS[0]
+    )
     make_decode_case.add_argument("--prompt-len", type=_positive_int, required=True)
     make_decode_case.add_argument("--decode-steps", type=_positive_int, required=True)
     make_decode_case.add_argument("--max-seq-len", type=_positive_int, required=True)
@@ -85,7 +89,11 @@ def _parser() -> argparse.ArgumentParser:
     compare = commands.add_parser("compare", help="compare two saved backend runs")
     compare.add_argument("--reference", type=Path, required=True)
     compare.add_argument("--candidate", type=Path, required=True)
-    compare.add_argument("--profile", choices=("llama2_fp16_w4kv4_v1",), default="llama2_fp16_w4kv4_v1")
+    compare.add_argument(
+        "--profile",
+        choices=COMPARISON_PROFILES,
+        default=COMPARISON_PROFILES[0],
+    )
     compare.add_argument("--include-auxiliary", action="store_true")
     compare.add_argument("--output", type=Path)
 
@@ -98,7 +106,8 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def _make_case(args: argparse.Namespace) -> int:
-    config = LayerConfig(
+    config = LayerConfig.for_model(
+        args.model,
         batch_size=args.batch_size,
         sequence_length=args.seq_len,
     )
@@ -124,7 +133,9 @@ def _make_case(args: argparse.Namespace) -> int:
 def _make_decode_case(args: argparse.Namespace) -> int:
     total_length = args.prompt_len + args.decode_steps
     config = DecodeConfig(
-        layer=LayerConfig(batch_size=args.batch_size, sequence_length=total_length),
+        layer=LayerConfig.for_model(
+            args.model, batch_size=args.batch_size, sequence_length=total_length
+        ),
         prompt_length=args.prompt_len,
         decode_steps=args.decode_steps,
         max_sequence_length=args.max_seq_len,

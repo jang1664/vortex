@@ -7,7 +7,7 @@ from typing import Callable, Dict, List, Literal, Optional
 
 import torch
 
-from .artifacts import DECODE_GRAPH_VERSION, GRAPH_VERSION, DecodeCase, LayerCase
+from .artifacts import DecodeCase, LayerCase, graph_version
 from .backends import Backend, QuantizedActivation
 from .stages import (
     DECODE_STAGE_INDEX,
@@ -213,7 +213,7 @@ class LayerExecutor:
         return RunResult(
             backend=self.backend.name,
             case_hash=case.manifest["case_hash"],
-            graph_version=GRAPH_VERSION,
+            graph_version=case.manifest.get("graph_version", graph_version(case.config)),
             stop_after=stop_after,
             stage_order=stage_order,
             captures=captures,
@@ -294,7 +294,9 @@ class DecodeExecutor:
         return DecodeRunResult(
             backend=self.backend.name,
             case_hash=case.manifest["case_hash"],
-            graph_version=DECODE_GRAPH_VERSION,
+            graph_version=case.manifest.get(
+                "graph_version", graph_version(case.config.layer, decode=True)
+            ),
             stop_after=stop_after,
             prefill=prefill,
             steps=steps,

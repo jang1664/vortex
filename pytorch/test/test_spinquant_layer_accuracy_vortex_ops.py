@@ -370,6 +370,51 @@ class SpinQuantVortexOpTests(unittest.TestCase):
         ).cpu()
         torch.testing.assert_close(added, projection + residual, rtol=0, atol=0)
 
+    def test_head_concat_accepts_gqa_decode_m_rows_per_kv_head(self):
+        batch, query_heads, kv_heads, seq, dim = 1, 4, 2, 1, 32
+        query_heads_per_kv = query_heads // kv_heads
+        grouped = torch.arange(
+            kv_heads * query_heads_per_kv * dim, dtype=torch.float16
+        ).reshape(kv_heads, query_heads_per_kv, dim)
+        input_m_pad = 8
+        tiled_cpu = torch.stack(
+            [self._encode_gemm_tile(matrix, input_m_pad) for matrix in grouped]
+        )
+        with torch.vortex.memory_alignment(512):
+            tiled = tiled_cpu.to("vortex")
+        output = torch.ops.vortex.head_concat_layout_fused(
+            tiled,
+            batch,
+            seq,
+            query_heads,
+            dim,
+            input_m_pad,
+            8,
+            query_heads_per_kv,
+        )
+        row = torch.ops.vortex.detile_output(output, 1, 8, query_heads * dim).cpu()
+        expected = grouped.reshape(1, query_heads * dim)
+        torch.testing.assert_close(row, expected, rtol=0, atol=0)
+
+        with self.assertRaisesRegex(
+            RuntimeError, "query_heads_per_kv must be positive and divide heads"
+        ):
+            torch.ops.vortex.head_concat_layout_fused(
+                tiled, batch, seq, query_heads, dim, input_m_pad, 8, 0
+            )
+        with self.assertRaisesRegex(
+            RuntimeError, "query_heads_per_kv must be positive and divide heads"
+        ):
+            torch.ops.vortex.head_concat_layout_fused(
+                tiled, batch, seq, query_heads, dim, input_m_pad, 8, 3
+            )
+        with self.assertRaisesRegex(
+            RuntimeError, "input_m_pad must cover grouped query rows"
+        ):
+            torch.ops.vortex.head_concat_layout_fused(
+                tiled, batch, seq, query_heads, dim, 0, 8, query_heads_per_kv
+            )
+
     def test_signed_asymmetric_fused_kv_quantization_contract(self):
         source_cpu = torch.linspace(-3, 2, 32 * 128, dtype=torch.float16).reshape(32, 128)
         with torch.vortex.memory_alignment(512):

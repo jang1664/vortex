@@ -24,6 +24,7 @@ typedef struct {
   uint32_t headdim;
   uint32_t input_m_pad;
   uint32_t output_m_pad;
+  uint32_t query_heads_per_kv;
 
   uint32_t log2_mt;
   uint32_t log2_mxu_kt;

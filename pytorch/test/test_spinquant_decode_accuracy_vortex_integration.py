@@ -23,7 +23,10 @@ class SpinQuantDecodeVortexIntegrationTests(unittest.TestCase):
         }
 
     @staticmethod
-    def _run(*, prompt_length, decode_steps, capacity, stop_step, stop_stage):
+    def _run(
+        *, prompt_length, decode_steps, capacity, stop_step, stop_stage,
+        model="llama2-7b"
+    ):
         from spinquant_inference.layer_accuracy.artifacts import (
             create_random_decode_case,
         )
@@ -33,7 +36,8 @@ class SpinQuantDecodeVortexIntegrationTests(unittest.TestCase):
         from spinquant_inference.layer_accuracy.stages import DecodeStopPoint
 
         config = DecodeConfig(
-            layer=LayerConfig(
+            layer=LayerConfig.for_model(
+                model,
                 batch_size=1,
                 sequence_length=prompt_length + decode_steps,
             ),
@@ -49,6 +53,47 @@ class SpinQuantDecodeVortexIntegrationTests(unittest.TestCase):
             stop_after=DecodeStopPoint(step=stop_step, stage=stop_stage),
             capture_physical=True,
         )
+
+    def test_llama3_gqa_decode_groups_queries_into_eight_m4_gemms(self):
+        result = self._run(
+            prompt_length=1,
+            decode_steps=1,
+            capacity=32,
+            stop_step=0,
+            stop_stage="qk",
+            model="llama3-8b",
+        )
+        self.assertEqual(result.steps[0].captures["qk"].shape, (1, 32, 1, 2))
+        self.assertEqual(result.cache_descriptor["geometry"]["num_kv_heads"], 8)
+        self.assertEqual(len(result.cache_descriptor["buffers"]["key"]), 8)
+        qk_steps = [
+            step for step in result.placement["physical_steps"]
+            if step.get("op") == "mm_w4a16_gemm_core_out"
+            and step.get("operation") == "qk"
+        ]
+        self.assertTrue(qk_steps)
+        self.assertEqual(qk_steps[-1]["launches"], 8)
+        self.assertEqual(qk_steps[-1]["M"], 4)
+        self.assertEqual(qk_steps[-1]["query_heads_per_matrix"], 4)
+        self.assertEqual(result.placement["fallback_count"], 0)
+
+    @unittest.skipUnless(
+        os.environ.get("RUN_SPINQUANT_LLAMA3_FULL") == "1",
+        "full Llama3 decode test not requested",
+    )
+    def test_llama3_decode_reaches_final_residual(self):
+        result = self._run(
+            prompt_length=1,
+            decode_steps=1,
+            capacity=32,
+            stop_step=0,
+            stop_stage="final_residual",
+            model="llama3-8b",
+        )
+        self.assertEqual(
+            result.steps[0].captures["final_residual"].shape, (1, 1, 4096)
+        )
+        self.assertEqual(result.placement["fallback_count"], 0)
 
     def test_persistent_decode_reaches_qk_without_fallback(self):
         result = self._run(

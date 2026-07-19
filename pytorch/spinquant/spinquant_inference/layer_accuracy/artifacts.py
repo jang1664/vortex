@@ -11,17 +11,19 @@ from typing import Dict, Mapping
 
 import torch
 
-from .specs import DecodeConfig, LayerConfig
+from .specs import DecodeConfig, LayerConfig, LLAMA3_MODEL
 from .tensor_io import pack_signed_int4, tensor_sha256
 
 
 CASE_SCHEMA_VERSION = 1
 GRAPH_VERSION = "llama2_decoder_layer_r3r4_v1"
 DECODE_GRAPH_VERSION = "llama2_decoder_layer_r3r4_decode_v1"
+LLAMA3_GRAPH_VERSION = "llama3_decoder_layer_gqa_r3r4_v1"
+LLAMA3_DECODE_GRAPH_VERSION = "llama3_decoder_layer_gqa_r3r4_decode_v1"
 PROJECTION_DIMS = {
     "q_proj": ("hidden_size", "hidden_size"),
-    "k_proj": ("hidden_size", "hidden_size"),
-    "v_proj": ("hidden_size", "hidden_size"),
+    "k_proj": ("hidden_size", "kv_hidden_size"),
+    "v_proj": ("hidden_size", "kv_hidden_size"),
     "o_proj": ("hidden_size", "hidden_size"),
     "gate_proj": ("hidden_size", "intermediate_size"),
     "up_proj": ("hidden_size", "intermediate_size"),
@@ -55,6 +57,12 @@ def _case_hash(manifest: Mapping) -> str:
 def _projection_shape(config: LayerConfig, projection: str) -> tuple[int, int]:
     in_name, out_name = PROJECTION_DIMS[projection]
     return getattr(config, in_name), getattr(config, out_name)
+
+
+def graph_version(config: LayerConfig, *, decode: bool = False) -> str:
+    if config.model == LLAMA3_MODEL:
+        return LLAMA3_DECODE_GRAPH_VERSION if decode else LLAMA3_GRAPH_VERSION
+    return DECODE_GRAPH_VERSION if decode else GRAPH_VERSION
 
 
 def _quantize_random_weight(
@@ -109,7 +117,7 @@ def _build_manifest(
     tensor_hashes = {name: tensor_sha256(tensor) for name, tensor in sorted(tensors.items())}
     manifest = {
         "schema_version": CASE_SCHEMA_VERSION,
-        "graph_version": GRAPH_VERSION,
+        "graph_version": graph_version(config),
         "source": source,
         "seed": seed,
         "layer_index": layer_index,
@@ -139,7 +147,17 @@ def _build_manifest(
             "offline_folded_r1_r2": True,
             "residual_basis": "spinquant_rotated",
             "online_r3": "post_rope_q_and_k",
-            "online_r4": "pre_down_projection_exact_172x64",
+            "online_r4": (
+                "pre_down_projection_exact_28x512"
+                if config.model == LLAMA3_MODEL
+                else "pre_down_projection_exact_172x64"
+            ),
+        },
+        "attention_contract": {
+            "gqa": config.num_key_value_heads != config.num_attention_heads,
+            "num_query_heads": config.num_attention_heads,
+            "num_kv_heads": config.num_key_value_heads,
+            "query_heads_per_kv": config.num_key_value_groups,
         },
         "tensor_hashes": tensor_hashes,
     }
@@ -231,7 +249,7 @@ def _decode_case_from_layer_case(base: LayerCase, config: DecodeConfig) -> Decod
     manifest.update(
         {
             "case_kind": "decode",
-            "graph_version": DECODE_GRAPH_VERSION,
+            "graph_version": graph_version(config.layer, decode=True),
             "config": config.to_dict(),
             "decode_contract": {
                 "prompt_length": config.prompt_length,
@@ -475,11 +493,10 @@ def _validate_decode_case(case: DecodeCase) -> None:
         )
     if case.manifest.get("case_kind") != "decode":
         raise ValueError("decode case manifest must declare case_kind=decode")
-    if case.manifest.get("graph_version") != DECODE_GRAPH_VERSION:
-        raise ValueError("decode case graph version mismatch")
-
     config = case.config
     layer = config.layer
+    if case.manifest.get("graph_version") != graph_version(layer, decode=True):
+        raise ValueError("decode case graph version mismatch")
     total = config.total_sequence_length
     expected: dict[str, tuple[tuple[int, ...], torch.dtype]] = {
         "prompt_input": (

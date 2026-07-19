@@ -8,9 +8,14 @@ from operator import mul
 from typing import Mapping, Optional, Protocol, Tuple
 
 
+LLAMA2_MODEL = "llama2-7b"
+LLAMA3_MODEL = "llama3-8b"
+SUPPORTED_MODELS = (LLAMA2_MODEL, LLAMA3_MODEL)
+
+
 @dataclass(frozen=True)
 class LayerConfig:
-    model: str = "llama2-7b"
+    model: str = LLAMA2_MODEL
     hidden_size: int = 4096
     intermediate_size: int = 11008
     num_attention_heads: int = 32
@@ -21,10 +26,18 @@ class LayerConfig:
     kv_group_size: int = 128
     rms_norm_eps: float = 1e-6
     rope_theta: float = 10000.0
+    # Appended to preserve the positional constructor used before GQA support.
+    num_key_value_heads: int | None = None
 
     def __post_init__(self) -> None:
+        if self.num_key_value_heads is None:
+            object.__setattr__(self, "num_key_value_heads", self.num_attention_heads)
         if self.hidden_size != self.num_attention_heads * self.head_dim:
             raise ValueError("hidden_size must equal num_attention_heads * head_dim")
+        if self.num_key_value_heads <= 0:
+            raise ValueError("num_key_value_heads must be positive")
+        if self.num_attention_heads % self.num_key_value_heads != 0:
+            raise ValueError("num_attention_heads must be divisible by num_key_value_heads")
         if self.batch_size <= 0:
             raise ValueError("batch_size must be positive")
         if self.sequence_length <= 0:
@@ -38,6 +51,33 @@ class LayerConfig:
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+    @property
+    def num_key_value_groups(self) -> int:
+        return self.num_attention_heads // self.num_key_value_heads
+
+    @property
+    def kv_hidden_size(self) -> int:
+        return self.num_key_value_heads * self.head_dim
+
+    @classmethod
+    def for_model(cls, model: str, **overrides) -> "LayerConfig":
+        presets = {
+            LLAMA2_MODEL: {},
+            LLAMA3_MODEL: {
+                "hidden_size": 4096,
+                "intermediate_size": 14336,
+                "num_attention_heads": 32,
+                "num_key_value_heads": 8,
+                "head_dim": 128,
+                "rms_norm_eps": 1e-5,
+                "rope_theta": 500000.0,
+            },
+        }
+        if model not in presets:
+            raise ValueError(f"unsupported model preset {model!r}")
+        values = {"model": model, **presets[model], **overrides}
+        return cls(**values)
 
     @classmethod
     def from_dict(cls, value: dict) -> "LayerConfig":

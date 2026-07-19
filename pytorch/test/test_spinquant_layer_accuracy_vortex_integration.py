@@ -6,6 +6,57 @@ import unittest
 
 @unittest.skipUnless(os.environ.get("RUN_VORTEX_TESTS") == "1", "Vortex runtime test not requested")
 class SpinQuantVortexIntegrationTests(unittest.TestCase):
+    @unittest.skipUnless(
+        os.environ.get("RUN_SPINQUANT_LLAMA3_PREFILL_FULL") == "1",
+        "full Llama3-8B prefill test not requested",
+    )
+    def test_llama3_prefill_runs_full_fused_decoder_layer(self):
+        from spinquant_inference.layer_accuracy.artifacts import create_random_case
+        from spinquant_inference.layer_accuracy.backends import VortexBackend
+        from spinquant_inference.layer_accuracy.graph import LayerExecutor
+        from spinquant_inference.layer_accuracy.specs import LayerConfig
+
+        case = create_random_case(
+            LayerConfig.for_model("llama3-8b", batch_size=1, sequence_length=32),
+            seed=59,
+        )
+        result = LayerExecutor(
+            VortexBackend(strict_native=True, physical_plan="fused")
+        ).run(case, stop_after="final_residual")
+
+        self.assertEqual(result.captures["k_proj"].shape, (1, 32, 1024))
+        self.assertEqual(result.captures["v_proj"].shape, (1, 32, 1024))
+        self.assertEqual(result.captures["qk"].shape, (1, 32, 32, 32))
+        self.assertEqual(result.captures["final_residual"].shape, (1, 32, 4096))
+        self.assertEqual(result.placement["fallback_count"], 0)
+
+        qk_steps = [
+            step for step in result.placement["physical_steps"]
+            if step.get("op") == "mm_w4a16_gemm_core_out"
+            and step.get("operation") == "qk"
+        ]
+        self.assertTrue(qk_steps)
+        self.assertEqual(qk_steps[-1]["launches"], 32)
+        self.assertEqual(qk_steps[-1]["physical_heads"], 32)
+        self.assertEqual(qk_steps[-1]["query_heads_per_matrix"], 1)
+        self.assertEqual(qk_steps[-1]["M"], 32)
+
+        pv_steps = [
+            step for step in result.placement["physical_steps"]
+            if step.get("op") == "mm_w4a16_gemm_core_out"
+            and step.get("operation") == "pv"
+        ]
+        self.assertTrue(pv_steps)
+        self.assertEqual(pv_steps[-1]["launches"], 32)
+        self.assertEqual(pv_steps[-1]["K"], 32)
+        self.assertEqual(pv_steps[-1]["K_pad"], 32)
+
+        kv_quant_steps = [
+            step for step in result.placement["physical_steps"]
+            if step.get("op") == "kv_cache_quant_layout_fused_w4a16"
+        ]
+        self.assertEqual({step["heads"] for step in kv_quant_steps}, {8})
+
     def test_layer_executor_runs_native_layout_path_through_qk(self):
         from spinquant_inference.layer_accuracy.artifacts import create_random_case
         from spinquant_inference.layer_accuracy.backends import VortexBackend

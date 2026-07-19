@@ -124,6 +124,7 @@ int main(int argc, char *argv[]) {
   arg.headdim = headdim;
   arg.input_m_pad = input_m_pad;
   arg.output_m_pad = output_m_pad;
+  arg.query_heads_per_kv = 1;
   arg.log2_mt = log2_u32(TILE_DMA_MT);
   arg.log2_mxu_kt = log2_u32(TILE_DMA_MXU_KT);
   arg.log2_mxu_nt = log2_u32(TILE_DMA_MXU_NT);
