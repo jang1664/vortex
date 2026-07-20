@@ -7,6 +7,7 @@ SCRIPT_DIR="$(cd "$(dirname "${SCRIPT_PATH}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 ALIAS="C4"
+CONFIG_FILE_OVERRIDE=""
 DEVICE="xcu55c-fsvh2892-2L-e"
 TOP="VX_dma_engine_ooc"
 TARGET="engine"
@@ -16,8 +17,14 @@ REFERENCE_REPORT=""
 WRITE_CHECKPOINT="0"
 ENABLE_MISALIGN="0"
 MISALIGN_PACK_BYTES_OVERRIDE=""
+DCACHE_BYTES_OVERRIDE=""
+LMEM_BYTES_OVERRIDE=""
+FIXED_DIR="-1"
+EXTRA_SOURCES=()
+EXTRA_DEFINES=()
 PYTHON_BIN="${PYTHON:-python3}"
 VIVADO_BIN=""
+ORIGINAL_ARGS=("$@")
 
 usage() {
   cat <<'EOF'
@@ -27,6 +34,7 @@ Run synthesis-only Vivado out-of-context compilation for a DMA target.
 
 Options:
   --alias NAME             FPGA config alias (default: C4)
+  --config-file PATH       Source this config directly instead of resolving an alias
   --output-dir PATH        New result directory (required)
   --device PART            Vivado device part
   --target NAME            OOC target: engine or node-backend (default: engine)
@@ -37,6 +45,11 @@ Options:
   --write-checkpoint       Also retain the large post-synthesis DCP
   --enable-misalign        Elaborate VX_dma_unit_misal instead of aligned DMA
   --misalign-pack-bytes N  Override MISALIGN_PACK_BYTES for this run
+  --dcache-bytes N         Aggregate node-backend Dcache width in bytes (64..512)
+  --lmem-bytes N           Aggregate node-backend LMEM width in bytes (64..512)
+  --fixed-dir N            Direction mode: -1 (runtime), 0, or 1 (default: -1)
+  --extra-source PATH      Append one explicit SystemVerilog source (repeatable)
+  --extra-define NAME      Append one explicit synthesis define (repeatable)
   -h, --help               Show this help
 
 Example:
@@ -47,7 +60,10 @@ Example:
 
   ci/run_dma_ooc.sh \
     --target node-backend \
-    --alias C4 \
+    --config-file configs/improve_th32_tcol32_hwexp_dcache.sh \
+    --dcache-bytes 64 \
+    --lmem-bytes 256 \
+    --fixed-dir -1 \
     --misalign-pack-bytes 16 \
     --output-dir docs/future_optim/dma_experiments/pack16
 EOF
@@ -62,6 +78,10 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --alias)
       ALIAS="${2:?missing value for --alias}"
+      shift 2
+      ;;
+    --config-file)
+      CONFIG_FILE_OVERRIDE="${2:?missing value for --config-file}"
       shift 2
       ;;
     --output-dir)
@@ -104,6 +124,26 @@ while [[ $# -gt 0 ]]; do
       MISALIGN_PACK_BYTES_OVERRIDE="${2:?missing value for --misalign-pack-bytes}"
       shift 2
       ;;
+    --dcache-bytes)
+      DCACHE_BYTES_OVERRIDE="${2:?missing value for --dcache-bytes}"
+      shift 2
+      ;;
+    --lmem-bytes)
+      LMEM_BYTES_OVERRIDE="${2:?missing value for --lmem-bytes}"
+      shift 2
+      ;;
+    --fixed-dir)
+      FIXED_DIR="${2:?missing value for --fixed-dir}"
+      shift 2
+      ;;
+    --extra-source)
+      EXTRA_SOURCES+=("${2:?missing value for --extra-source}")
+      shift 2
+      ;;
+    --extra-define)
+      EXTRA_DEFINES+=("${2:?missing value for --extra-define}")
+      shift 2
+      ;;
     -h|--help)
       usage
       exit 0
@@ -118,11 +158,45 @@ done
 [[ "${JOBS}" =~ ^[1-9][0-9]*$ ]] || fail "--jobs must be a positive integer"
 [[ "${TARGET}" == "engine" || "${TARGET}" == "node-backend" ]] \
   || fail "--target must be engine or node-backend"
+[[ "${FIXED_DIR}" == "-1" || "${FIXED_DIR}" == "0" || "${FIXED_DIR}" == "1" ]] \
+  || fail "--fixed-dir must be -1, 0, or 1"
 if [[ -n "${MISALIGN_PACK_BYTES_OVERRIDE}" ]]; then
   [[ "${MISALIGN_PACK_BYTES_OVERRIDE}" =~ ^[1-9][0-9]*$ ]] \
     || fail "--misalign-pack-bytes must be a positive integer"
   (( (MISALIGN_PACK_BYTES_OVERRIDE & (MISALIGN_PACK_BYTES_OVERRIDE - 1)) == 0 )) \
     || fail "--misalign-pack-bytes must be a power of two"
+fi
+
+validate_node_width() {
+  local option="$1"
+  local value="$2"
+  [[ "${value}" =~ ^[1-9][0-9]*$ ]] \
+    || fail "${option} must be an integer from 64 through 512"
+  (( value >= 64 && value <= 512 )) \
+    || fail "${option} must be from 64 through 512 bytes"
+  (( (value & (value - 1)) == 0 )) \
+    || fail "${option} must be a power of two"
+}
+
+if [[ -n "${DCACHE_BYTES_OVERRIDE}" || -n "${LMEM_BYTES_OVERRIDE}" ]]; then
+  [[ "${TARGET}" == "node-backend" ]] \
+    || fail "--dcache-bytes and --lmem-bytes require --target node-backend"
+  [[ -n "${DCACHE_BYTES_OVERRIDE}" && -n "${LMEM_BYTES_OVERRIDE}" ]] \
+    || fail "--dcache-bytes and --lmem-bytes must be specified together"
+  validate_node_width "--dcache-bytes" "${DCACHE_BYTES_OVERRIDE}"
+  validate_node_width "--lmem-bytes" "${LMEM_BYTES_OVERRIDE}"
+  if (( DCACHE_BYTES_OVERRIDE > LMEM_BYTES_OVERRIDE )); then
+    WIDTH_RATIO=$(( DCACHE_BYTES_OVERRIDE / LMEM_BYTES_OVERRIDE ))
+  else
+    WIDTH_RATIO=$(( LMEM_BYTES_OVERRIDE / DCACHE_BYTES_OVERRIDE ))
+  fi
+  (( WIDTH_RATIO <= 8 )) || fail "aggregate width ratio must not exceed 8:1"
+elif [[ "${TARGET}" == "node-backend" ]]; then
+  fail "--target node-backend requires explicit --dcache-bytes and --lmem-bytes"
+fi
+
+if [[ "${TARGET}" != "node-backend" && "${FIXED_DIR}" != "-1" ]]; then
+  fail "--fixed-dir is only valid with --target node-backend"
 fi
 
 if [[ "${TARGET}" == "node-backend" ]]; then
@@ -135,6 +209,31 @@ else
   TARGET_LABEL="DMA engine"
 fi
 
+NORMALIZED_EXTRA_SOURCES=()
+for extra_source in "${EXTRA_SOURCES[@]}"; do
+  if [[ "${extra_source}" != /* ]]; then
+    extra_source="${ROOT_DIR}/${extra_source}"
+  fi
+  [[ -f "${extra_source}" ]] || fail "extra source not found: ${extra_source}"
+  extra_source="$(readlink -f "${extra_source}")"
+  for existing_source in "${NORMALIZED_EXTRA_SOURCES[@]}"; do
+    [[ "${extra_source}" != "${existing_source}" ]] \
+      || fail "duplicate --extra-source: ${extra_source}"
+  done
+  NORMALIZED_EXTRA_SOURCES+=("${extra_source}")
+done
+
+NORMALIZED_EXTRA_DEFINES=()
+for extra_define in "${EXTRA_DEFINES[@]}"; do
+  [[ "${extra_define}" =~ ^[A-Za-z_][A-Za-z0-9_]*(=[^[:space:]]+)?$ ]] \
+    || fail "invalid --extra-define: ${extra_define}"
+  for existing_define in "${NORMALIZED_EXTRA_DEFINES[@]}"; do
+    [[ "${extra_define}" != "${existing_define}" ]] \
+      || fail "duplicate --extra-define: ${extra_define}"
+  done
+  NORMALIZED_EXTRA_DEFINES+=("${extra_define}")
+done
+
 if [[ "${OUTPUT_DIR}" != /* ]]; then
   OUTPUT_DIR="${ROOT_DIR}/${OUTPUT_DIR}"
 fi
@@ -144,18 +243,30 @@ fi
 
 RESOLVER="${SCRIPT_DIR}/resolve_fpga_bin_alias.py"
 ALIAS_MAP="${VORTEX_FPGA_BIN_ALIAS_MAP:-${SCRIPT_DIR}/fpga_bin_alias_map.yaml}"
-[[ -f "${RESOLVER}" ]] || fail "alias resolver not found: ${RESOLVER}"
-[[ -f "${ALIAS_MAP}" ]] || fail "alias map not found: ${ALIAS_MAP}"
+if [[ -n "${CONFIG_FILE_OVERRIDE}" ]]; then
+  if [[ "${CONFIG_FILE_OVERRIDE}" != /* ]]; then
+    CONFIG_FILE_OVERRIDE="${ROOT_DIR}/${CONFIG_FILE_OVERRIDE}"
+  fi
+  [[ -f "${CONFIG_FILE_OVERRIDE}" ]] \
+    || fail "config file not found: ${CONFIG_FILE_OVERRIDE}"
+  CONFIG_FILE="$(readlink -f "${CONFIG_FILE_OVERRIDE}")"
+  CONFIG_SOURCE="direct"
+  FPGA_BIN_DIR=""
+else
+  [[ -f "${RESOLVER}" ]] || fail "alias resolver not found: ${RESOLVER}"
+  [[ -f "${ALIAS_MAP}" ]] || fail "alias map not found: ${ALIAS_MAP}"
+  mapfile -t ALIAS_VALUES < <(
+    "${PYTHON_BIN}" "${RESOLVER}" --alias-map "${ALIAS_MAP}" "${ALIAS}"
+  )
+  [[ ${#ALIAS_VALUES[@]} -ge 2 ]] || fail "could not resolve alias: ${ALIAS}"
+  FPGA_BIN_DIR="${ALIAS_VALUES[0]}"
+  CONFIG_FILE="${ALIAS_VALUES[1]}"
+  [[ -f "${CONFIG_FILE}" ]] || fail "alias config not found: ${CONFIG_FILE}"
+  CONFIG_FILE="$(readlink -f "${CONFIG_FILE}")"
+  CONFIG_SOURCE="alias"
+fi
 
-mapfile -t ALIAS_VALUES < <(
-  "${PYTHON_BIN}" "${RESOLVER}" --alias-map "${ALIAS_MAP}" "${ALIAS}"
-)
-[[ ${#ALIAS_VALUES[@]} -ge 2 ]] || fail "could not resolve alias: ${ALIAS}"
-FPGA_BIN_DIR="${ALIAS_VALUES[0]}"
-CONFIG_FILE="${ALIAS_VALUES[1]}"
-[[ -f "${CONFIG_FILE}" ]] || fail "alias config not found: ${CONFIG_FILE}"
-
-if [[ -z "${REFERENCE_REPORT}" && "${TARGET}" == "engine" ]]; then
+if [[ -z "${REFERENCE_REPORT}" && "${TARGET}" == "engine" && -n "${FPGA_BIN_DIR}" ]]; then
   REFERENCE_REPORT="${FPGA_BIN_DIR}/hier_utilization.rpt"
 elif [[ -n "${REFERENCE_REPORT}" && "${REFERENCE_REPORT}" != /* ]]; then
   REFERENCE_REPORT="${ROOT_DIR}/${REFERENCE_REPORT}"
@@ -189,15 +300,39 @@ CONFIGS+=" -DXLEN_64 -DNDEBUG -DVIVADO -DSYNTHESIS"
 if [[ "${ENABLE_MISALIGN}" == "1" ]]; then
   CONFIGS+=" -DDMA_OOC_ENABLE_MISALIGN"
 fi
+for extra_define in "${NORMALIZED_EXTRA_DEFINES[@]}"; do
+  CONFIGS+=" -D${extra_define}"
+done
+
+TOP_GENERICS=""
+if [[ "${TARGET}" == "node-backend" ]]; then
+  TOP_GENERICS="DCACHE_DATA_SIZE=${DCACHE_BYTES_OVERRIDE}"
+  TOP_GENERICS+=" LMEM_DATA_SIZE=${LMEM_BYTES_OVERRIDE}"
+  TOP_GENERICS+=" FIXED_DIR=${FIXED_DIR}"
+fi
 
 mkdir -p "${OUTPUT_DIR}"
+
+RUN_STAGE="manifest"
+record_run_status() {
+  local status=$?
+  {
+    echo "status=$([[ ${status} -eq 0 ]] && echo PASS || echo FAIL)"
+    echo "exit_code=${status}"
+    echo "stage=${RUN_STAGE}"
+    echo "timestamp=$(date -Iseconds)"
+  } > "${OUTPUT_DIR}/run_status.txt"
+}
+trap record_run_status EXIT
 
 SOURCE_LIST="${OUTPUT_DIR}/sources.txt"
 read -r -a CONFIG_ARGS <<< "${CONFIGS}"
 
 # Keep this manifest intentionally explicit. Directory-wide source collection
 # parses unrelated core/FPU/AXI modules and makes this focused OOC result depend
-# on files that VX_dma_engine never elaborates.
+# on files that VX_dma_engine never elaborates. Production DMA dependencies
+# are listed here; experiment-only modules can be appended through explicit,
+# validated --extra-source arguments.
 {
   for config_arg in "${CONFIG_ARGS[@]}"; do
     echo "+define+${config_arg#-D}"
@@ -229,17 +364,46 @@ read -r -a CONFIG_ARGS <<< "${CONFIGS}"
   echo "${ROOT_DIR}/hw/rtl/libs/VX_reduce_tree.sv"
   echo "${ROOT_DIR}/hw/rtl/core/VX_mem_remap.sv"
   echo "${ROOT_DIR}/hw/rtl/core/VX_dma_unit_align.sv"
+  echo "${ROOT_DIR}/hw/rtl/core/VX_dma_gearbox.sv"
+  echo "${ROOT_DIR}/hw/rtl/core/VX_dma_lane_aligner.sv"
+  echo "${ROOT_DIR}/hw/rtl/core/VX_dma_lane_assembler.sv"
+  echo "${ROOT_DIR}/hw/rtl/core/VX_dma_equal_realigner.sv"
+  echo "${ROOT_DIR}/hw/rtl/core/VX_dma_misal_gen_path.sv"
   echo "${ROOT_DIR}/hw/rtl/core/VX_dma_unit_misal.sv"
   echo "${ROOT_DIR}/hw/rtl/core/VX_dma_unit.sv"
   echo "${ROOT_DIR}/hw/rtl/mem/VX_dma_engine.sv"
   echo "${ROOT_DIR}/hw/syn/xilinx/dut/VX_dma_unit_ooc.sv"
   echo "${ROOT_DIR}/hw/syn/xilinx/dut/VX_dma_engine_ooc.sv"
+  for extra_source in "${NORMALIZED_EXTRA_SOURCES[@]}"; do
+    echo "${extra_source}"
+  done
 } > "${SOURCE_LIST}"
+
+SOURCE_SHA256="${OUTPUT_DIR}/source_sha256.txt"
+while IFS= read -r source_entry; do
+  [[ "${source_entry}" == +* ]] && continue
+  [[ -f "${source_entry}" ]] || fail "source manifest entry not found: ${source_entry}"
+  sha256sum "${source_entry}"
+done < "${SOURCE_LIST}" > "${SOURCE_SHA256}"
+
+INPUT_SHA256="${OUTPUT_DIR}/input_sha256.txt"
+sha256sum \
+  "${CONFIG_FILE}" \
+  "${ROOT_DIR}/hw/syn/xilinx/dut/project.xdc" \
+  "${ROOT_DIR}/hw/syn/xilinx/dut/ooc_synth.tcl" \
+  "${ROOT_DIR}/ci/run_dma_ooc.sh" \
+  "${ROOT_DIR}/tools/vivado_util.py" \
+  > "${INPUT_SHA256}"
+
+printf 'ci/run_dma_ooc.sh' > "${OUTPUT_DIR}/command.txt"
+printf ' %q' "${ORIGINAL_ARGS[@]}" >> "${OUTPUT_DIR}/command.txt"
+printf '\n' >> "${OUTPUT_DIR}/command.txt"
 
 {
   echo "alias=${ALIAS}"
   echo "alias_map=${ALIAS_MAP}"
   echo "fpga_bin_dir=${FPGA_BIN_DIR}"
+  echo "config_source=${CONFIG_SOURCE}"
   echo "config_file=${CONFIG_FILE}"
   echo "top=${TOP}"
   echo "target=${TARGET}"
@@ -247,6 +411,20 @@ read -r -a CONFIG_ARGS <<< "${CONFIGS}"
   echo "jobs=${JOBS}"
   echo "enable_misalign=${ENABLE_MISALIGN}"
   echo "misalign_pack_bytes_override=${MISALIGN_PACK_BYTES_OVERRIDE:-config-default}"
+  echo "dcache_bytes=${DCACHE_BYTES_OVERRIDE:-wrapper-default}"
+  echo "lmem_bytes=${LMEM_BYTES_OVERRIDE:-wrapper-default}"
+  echo "fixed_dir=${FIXED_DIR}"
+  echo "top_generics=${TOP_GENERICS:-none}"
+  echo "extra_source_count=${#NORMALIZED_EXTRA_SOURCES[@]}"
+  echo "extra_defines=${NORMALIZED_EXTRA_DEFINES[*]:-none}"
+  echo "source_list_sha256=$(sha256sum "${SOURCE_LIST}" | cut -d' ' -f1)"
+  echo "source_hash_manifest=${SOURCE_SHA256}"
+  echo "input_hash_manifest=${INPUT_SHA256}"
+  echo "constraint=${ROOT_DIR}/hw/syn/xilinx/dut/project.xdc"
+  echo "synthesis_mode=out_of_context"
+  echo "source_mgmt_mode=None"
+  echo "synth_more_options=-mode out_of_context"
+  echo "write_checkpoint=${WRITE_CHECKPOINT}"
   echo "reference_report=${REFERENCE_REPORT}"
   echo "git_commit=$(git -C "${ROOT_DIR}" rev-parse HEAD)"
   echo "git_branch=$(git -C "${ROOT_DIR}" branch --show-current)"
@@ -258,13 +436,14 @@ printf '%s\n' "${CONFIGS}" > "${OUTPUT_DIR}/configs.txt"
 git -C "${ROOT_DIR}" status --short > "${OUTPUT_DIR}/git_status.txt"
 
 if [[ -f "${REFERENCE_REPORT}" ]]; then
-  rg -n -F 'u_dma_engine' "${REFERENCE_REPORT}" \
+  rg -n "${TARGET_HIER_FILTER}" "${REFERENCE_REPORT}" \
     > "${OUTPUT_DIR}/reference_dma_rows.txt" || true
 else
   printf 'Reference report not found: %s\n' "${REFERENCE_REPORT}" \
     > "${OUTPUT_DIR}/reference_dma_rows.txt"
 fi
 
+RUN_STAGE="vivado-synthesis"
 TOOL_DIR="${ROOT_DIR}/hw/scripts" \
   "${VIVADO_BIN}" \
   -mode batch \
@@ -279,8 +458,10 @@ TOOL_DIR="${ROOT_DIR}/hw/scripts" \
     "${OUTPUT_DIR}" \
     "${JOBS}" \
     "${WRITE_CHECKPOINT}" \
+    "${TOP_GENERICS}" \
   2>&1 | tee "${OUTPUT_DIR}/console.log"
 
+RUN_STAGE="report-parsing"
 if [[ "${TARGET}" == "engine" ]]; then
   OOC_TARGET_CSV="${OUTPUT_DIR}/ooc_dma_engine.csv"
 else
@@ -327,7 +508,7 @@ def read_one(path):
 
 ooc = read_one(sys.argv[1])
 if sys.argv[3] != "1":
-    print("Reference report or DMA engine hierarchy row was not available.")
+    print("Reference report or target hierarchy row was not available.")
     raise SystemExit(0)
 
 reference = read_one(sys.argv[2])
@@ -349,12 +530,18 @@ PY
 )"
 
 cat > "${OUTPUT_DIR}/comparison.md" <<EOF
-# C4 ${TARGET_LABEL} OOC Result
+# ${TARGET_LABEL} OOC Result
 
 - Alias: \`${ALIAS}\`
+- Config source: \`${CONFIG_SOURCE}\`
 - OOC top: \`${TOP}\`
 - OOC target: \`${TARGET}\`
+- Aggregate Dcache width: \`${DCACHE_BYTES_OVERRIDE:-wrapper-default}\` bytes
+- Aggregate LMEM width: \`${LMEM_BYTES_OVERRIDE:-wrapper-default}\` bytes
+- Direction mode: \`${FIXED_DIR}\`
+- Top generics: \`${TOP_GENERICS:-none}\`
 - MISALIGN_PACK_BYTES: \`${MISALIGN_PACK_BYTES_OVERRIDE:-config-default}\`
+- Extra defines: \`${NORMALIZED_EXTRA_DEFINES[*]:-none}\`
 - Device: \`${DEVICE}\`
 - Config: \`${CONFIG_FILE}\`
 - Git commit: \`$(git -C "${ROOT_DIR}" rev-parse HEAD)\`
@@ -379,18 +566,27 @@ cat > "${OUTPUT_DIR}/manifest.md" <<EOF
 | Field | Value |
 | --- | --- |
 | Experiment ID | \`$(basename "${OUTPUT_DIR}")\` |
-| Purpose | Produce a reproducible C4 improve ${TARGET_LABEL} OOC synthesis result |
+| Purpose | Produce a reproducible ${TARGET_LABEL} OOC synthesis result |
 | Comparison rule | Compare only with an OOC run using identical synthesis inputs |
 | Changed production RTL | See \`git_status.txt\` and the parent experiment manifest |
 | Config | \`${CONFIG_FILE}\` |
+| Config selection | \`${CONFIG_SOURCE}\` |
 | Git commit | \`$(git -C "${ROOT_DIR}" rev-parse HEAD)\` |
 | Git state | \`git_status.txt\` |
 | Vivado | \`$("${VIVADO_BIN}" -version | sed -n '1s/^vivado //p')\` |
 | Device | \`${DEVICE}\` |
 | OOC top | \`${TOP}\` |
 | OOC target | \`${TARGET}\` |
+| Aggregate Dcache width | \`${DCACHE_BYTES_OVERRIDE:-wrapper-default}\` bytes |
+| Aggregate LMEM width | \`${LMEM_BYTES_OVERRIDE:-wrapper-default}\` bytes |
+| Direction mode | \`${FIXED_DIR}\` |
+| Top generics | \`${TOP_GENERICS:-none}\` |
 | MISALIGN_PACK_BYTES | \`${MISALIGN_PACK_BYTES_OVERRIDE:-config-default}\` |
+| Extra defines | \`${NORMALIZED_EXTRA_DEFINES[*]:-none}\` |
 | Constraint | \`hw/syn/xilinx/dut/project.xdc\` |
+| Source closure | \`sources.txt\` with hashes in \`source_sha256.txt\` |
+| Input hashes | \`input_sha256.txt\` |
+| Invocation | \`command.txt\` |
 | Unittest | Not run by this synthesis-only script |
 | xrt-vcs-sim | Not run by this synthesis-only script |
 | OOC synthesis | PASS; see \`post_synth_util.rpt\` and \`post_synth_timing_summary.rpt\` |
@@ -402,4 +598,5 @@ unittest and xrt-vcs-sim gates required by
 \`docs/future_optim/dma_optimization_experiment_rules.md\` before invoking it.
 EOF
 
+RUN_STAGE="complete"
 echo "DMA OOC synthesis complete: ${OUTPUT_DIR}"

@@ -96,6 +96,25 @@ module tb_VX_cache_top import VX_gpu_pkg::*; ();
         .TAG_WIDTH (MEM_TAG_WIDTH)
     ) mem_bus_if[MEM_PORTS]();
 
+`ifdef PERF_ENABLE
+    localparam PERF_MEM_PORTS = NUM_REQS;
+    localparam PERF_MEM_TAG_WIDTH = `CACHE_BYPASS_TAG_WIDTH(
+        NUM_REQS, PERF_MEM_PORTS, LINE_SIZE, WORD_SIZE, TAG_WIDTH);
+
+    cache_perf_t perf_bypass_cache_perf;
+    logic perf_bypass_cache_drain;
+
+    VX_mem_bus_if #(
+        .DATA_SIZE (WORD_SIZE),
+        .TAG_WIDTH (TAG_WIDTH)
+    ) perf_bypass_core_bus_if[NUM_REQS]();
+
+    VX_mem_bus_if #(
+        .DATA_SIZE (LINE_SIZE),
+        .TAG_WIDTH (PERF_MEM_TAG_WIDTH)
+    ) perf_bypass_mem_bus_if[PERF_MEM_PORTS]();
+`endif
+
     // =========================================================================
     // DUT Instantiation
     // =========================================================================
@@ -128,6 +147,39 @@ module tb_VX_cache_top import VX_gpu_pkg::*; ();
         .mem_bus_if     (mem_bus_if),
         .cache_drain    (cache_drain)
     );
+
+`ifdef PERF_ENABLE
+    VX_cache_wrap #(
+        .INSTANCE_ID  ("cache_perf_bypass_tb"),
+        .NUM_REQS     (NUM_REQS),
+        .MEM_PORTS    (PERF_MEM_PORTS),
+        .CACHE_SIZE   (CACHE_SIZE),
+        .LINE_SIZE    (LINE_SIZE),
+        .NUM_BANKS    (NUM_BANKS),
+        .NUM_WAYS     (NUM_WAYS),
+        .WORD_SIZE    (WORD_SIZE),
+        .CRSQ_SIZE    (CRSQ_SIZE),
+        .MSHR_SIZE    (MSHR_SIZE),
+        .MRSQ_SIZE    (MRSQ_SIZE),
+        .MREQ_SIZE    (MREQ_SIZE),
+        .TAG_WIDTH    (TAG_WIDTH),
+        .WRITE_ENABLE (WRITE_ENABLE),
+        .PASSTHRU     (1)
+    ) u_perf_bypass_dut (
+        .clk         (clk),
+        .reset       (reset),
+        .cache_perf  (perf_bypass_cache_perf),
+        .core_bus_if (perf_bypass_core_bus_if),
+        .mem_bus_if  (perf_bypass_mem_bus_if),
+        .cache_drain (perf_bypass_cache_drain)
+    );
+
+    for (genvar i = 0; i < PERF_MEM_PORTS; ++i) begin : g_perf_bypass_mem
+        assign perf_bypass_mem_bus_if[i].req_ready = 1'b1;
+        assign perf_bypass_mem_bus_if[i].rsp_valid = 1'b0;
+        assign perf_bypass_mem_bus_if[i].rsp_data = '0;
+    end
+`endif
 
     wire [NUM_BANKS-1:0] dbg_per_bank_flush_begin    = u_dut.g_cache.cache.per_bank_flush_begin;
     wire [NUM_BANKS-1:0] dbg_per_bank_core_req_valid = u_dut.g_cache.cache.per_bank_core_req_valid;
@@ -301,6 +353,10 @@ module tb_VX_cache_top import VX_gpu_pkg::*; ();
         apply_reset();
         repeat(5) @(posedge clk);
 
+`ifdef PERF_ENABLE
+        test_perf_bypass_read_stage();
+`endif
+
         // ---- Test Cases ----
         test_single_read_miss();
         test_single_write();
@@ -324,6 +380,8 @@ module tb_VX_cache_top import VX_gpu_pkg::*; ();
         $display("=====================================================================");
         $fdisplay(rpt_fd, "TOTAL=%0d PASS=%0d FAIL=%0d", total_tests, passed_tests, failed_tests);
         $fdisplay(log_fd, "[%0t] Simulation complete", $time);
+        if (failed_tests == 0)
+            $display("TEST PASSED");
 
 `ifdef VCS
         $fsdbDumpoff();
@@ -354,6 +412,20 @@ module tb_VX_cache_top import VX_gpu_pkg::*; ();
         core_rsp_queue.delete();
         mem_req_ready_r           = 1'b1;
         mem_rsp_delay_cycles      = MEM_LATENCY;
+`ifdef PERF_ENABLE
+        perf_bypass_core_bus_if[0].req_valid = 1'b0;
+        perf_bypass_core_bus_if[0].req_data = '0;
+        perf_bypass_core_bus_if[0].rsp_ready = 1'b1;
+        perf_bypass_core_bus_if[1].req_valid = 1'b0;
+        perf_bypass_core_bus_if[1].req_data = '0;
+        perf_bypass_core_bus_if[1].rsp_ready = 1'b1;
+        perf_bypass_core_bus_if[2].req_valid = 1'b0;
+        perf_bypass_core_bus_if[2].req_data = '0;
+        perf_bypass_core_bus_if[2].rsp_ready = 1'b1;
+        perf_bypass_core_bus_if[3].req_valid = 1'b0;
+        perf_bypass_core_bus_if[3].req_data = '0;
+        perf_bypass_core_bus_if[3].rsp_ready = 1'b1;
+`endif
         $display("[%0t] Signals initialized", $time);
     endtask
 
@@ -379,6 +451,103 @@ module tb_VX_cache_top import VX_gpu_pkg::*; ();
         repeat(5) @(posedge clk);
         $display("[%0t] Reset complete", $time);
     endtask
+
+`ifdef PERF_ENABLE
+`define PERF_BYPASS_REQ_DRIVE(P) \
+    perf_bypass_core_bus_if[P].req_valid = read_mask[P] || write_mask[P]; \
+    perf_bypass_core_bus_if[P].req_data.rw = write_mask[P]; \
+    perf_bypass_core_bus_if[P].req_data.addr = WORD_ADDR_WIDTH'((P + 1) * WORDS_PER_LINE); \
+    perf_bypass_core_bus_if[P].req_data.byteen = '1; \
+    perf_bypass_core_bus_if[P].req_data.data = WORD_WIDTH'(32'h12340000 + P); \
+    perf_bypass_core_bus_if[P].req_data.tag = TAG_WIDTH'(16'h9000 + P); \
+    perf_bypass_core_bus_if[P].req_data.flags = '0
+
+`define PERF_BYPASS_REQ_CLEAR(P) \
+    perf_bypass_core_bus_if[P].req_valid = 1'b0
+
+    task automatic drive_perf_bypass_cycle(
+        input logic [NUM_REQS-1:0] read_mask,
+        input logic [NUM_REQS-1:0] write_mask
+    );
+        logic [NUM_REQS-1:0] active_mask;
+        begin
+            active_mask = read_mask | write_mask;
+            if (|(read_mask & write_mask))
+                $fatal(1, "PERF bypass read/write masks overlap");
+
+            @(negedge clk);
+            `PERF_BYPASS_REQ_DRIVE(0);
+            `PERF_BYPASS_REQ_DRIVE(1);
+            `PERF_BYPASS_REQ_DRIVE(2);
+            `PERF_BYPASS_REQ_DRIVE(3);
+
+            @(posedge clk);
+            if (active_mask[0] && !perf_bypass_core_bus_if[0].req_ready)
+                $fatal(1, "PERF bypass request 0 was not accepted");
+            if (active_mask[1] && !perf_bypass_core_bus_if[1].req_ready)
+                $fatal(1, "PERF bypass request 1 was not accepted");
+            if (active_mask[2] && !perf_bypass_core_bus_if[2].req_ready)
+                $fatal(1, "PERF bypass request 2 was not accepted");
+            if (active_mask[3] && !perf_bypass_core_bus_if[3].req_ready)
+                $fatal(1, "PERF bypass request 3 was not accepted");
+
+            @(negedge clk);
+            `PERF_BYPASS_REQ_CLEAR(0);
+            `PERF_BYPASS_REQ_CLEAR(1);
+            `PERF_BYPASS_REQ_CLEAR(2);
+            `PERF_BYPASS_REQ_CLEAR(3);
+        end
+    endtask
+
+    task automatic test_perf_bypass_read_stage();
+        begin
+            $display("\n--- PERF TEST: Bypass Read Popcount Stage ---");
+
+            drive_perf_bypass_cycle(4'b1111, 4'b0000);
+            if ((perf_bypass_cache_perf.reads !== PERF_CTR_BITS'(0))
+             || (perf_bypass_cache_perf.writes !== PERF_CTR_BITS'(0))) begin
+                $fatal(1, "PERF bypass counters changed before read-stage drain");
+            end
+
+            @(posedge clk);
+            @(negedge clk);
+            if ((perf_bypass_cache_perf.reads !== PERF_CTR_BITS'(4))
+             || (perf_bypass_cache_perf.writes !== PERF_CTR_BITS'(0))) begin
+                $fatal(1, "PERF bypass simultaneous-read total mismatch");
+            end
+
+            @(posedge clk);
+            @(negedge clk);
+            if (perf_bypass_cache_perf.reads !== PERF_CTR_BITS'(4))
+                $fatal(1, "PERF bypass read counter incremented after drain");
+
+            drive_perf_bypass_cycle(4'b0101, 4'b1010);
+            if ((perf_bypass_cache_perf.reads !== PERF_CTR_BITS'(4))
+             || (perf_bypass_cache_perf.writes !== PERF_CTR_BITS'(2))) begin
+                $fatal(1, "PERF bypass mixed-cycle staging or write timing mismatch");
+            end
+
+            @(posedge clk);
+            @(negedge clk);
+            if ((perf_bypass_cache_perf.reads !== PERF_CTR_BITS'(6))
+             || (perf_bypass_cache_perf.writes !== PERF_CTR_BITS'(2))) begin
+                $fatal(1, "PERF bypass mixed-cycle drained total mismatch");
+            end
+
+            @(posedge clk);
+            @(negedge clk);
+            if ((perf_bypass_cache_perf.reads !== PERF_CTR_BITS'(6))
+             || (perf_bypass_cache_perf.writes !== PERF_CTR_BITS'(2))) begin
+                $fatal(1, "PERF bypass counters changed after final drain");
+            end
+
+            total_tests++;
+            passed_tests++;
+            $display("[PASS] PERF bypass read popcount stage");
+            $fdisplay(rpt_fd, "[PASS] PERF bypass read popcount stage");
+        end
+    endtask
+`endif
 
     // =========================================================================
     // Core Request Driver Task (single request on a specific port)

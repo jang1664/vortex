@@ -11,6 +11,7 @@ module VX_dma_unit_ooc import VX_gpu_pkg::*; #(
     parameter int CFG_REGS = `DMA_CFG_REG_NUM,
     parameter int MISALIGN_PACK_BYTES = `MISALIGN_PACK_BYTES,
     parameter int RD_OUTSTANDING = `DMA_NODE_RD_OUTSTANDING_SLOT,
+    parameter int FIXED_DIR = -1,
     parameter int DCACHE_ADDR_WIDTH = `MEM_ADDR_WIDTH - `CLOG2(DCACHE_DATA_SIZE),
     parameter int LMEM_ADDR_WIDTH   = `MEM_ADDR_WIDTH - `CLOG2(LMEM_DATA_SIZE)
 ) (
@@ -113,7 +114,8 @@ module VX_dma_unit_ooc import VX_gpu_pkg::*; #(
         .DCACHE_TAG_WIDTH    (DCACHE_TAG_WIDTH_P),
         .LMEM_TAG_WIDTH      (LMEM_TAG_WIDTH_P),
         .MISALIGN_PACK_BYTES (MISALIGN_PACK_BYTES),
-        .RD_OUTSTANDING      (RD_OUTSTANDING)
+        .RD_OUTSTANDING      (RD_OUTSTANDING),
+        .FIXED_DIR           (FIXED_DIR)
     ) u_dma_unit (
         .clk           (clk),
         .reset         (reset),

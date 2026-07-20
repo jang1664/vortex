@@ -271,6 +271,7 @@ module VX_cache_wrap import VX_gpu_pkg::*; #(
         wire [`CLOG2(NUM_REQS+1)-1:0]  perf_core_writes_per_cycle;
         wire [`CLOG2(NUM_REQS+1)-1:0]  perf_crsp_stall_per_cycle;
         wire [`CLOG2(MEM_PORTS+1)-1:0] perf_mem_stall_per_cycle;
+        reg  [`CLOG2(NUM_REQS+1)-1:0]  perf_core_reads_per_cycle_q;
 
         `POP_COUNT(perf_core_reads_per_cycle, perf_core_reads_per_req);
         `POP_COUNT(perf_core_writes_per_cycle, perf_core_writes_per_req);
@@ -284,17 +285,38 @@ module VX_cache_wrap import VX_gpu_pkg::*; #(
 
         always @(posedge clk) begin
             if (reset) begin
+                perf_core_reads_per_cycle_q <= '0;
                 perf_core_reads   <= '0;
                 perf_core_writes  <= '0;
                 perf_mem_stalls   <= '0;
                 perf_crsp_stalls  <= '0;
             end else begin
-                perf_core_reads   <= perf_core_reads   + PERF_CTR_BITS'(perf_core_reads_per_cycle);
+                perf_core_reads_per_cycle_q <= perf_core_reads_per_cycle;
+                perf_core_reads   <= perf_core_reads   + PERF_CTR_BITS'(perf_core_reads_per_cycle_q);
                 perf_core_writes  <= perf_core_writes  + PERF_CTR_BITS'(perf_core_writes_per_cycle);
                 perf_mem_stalls   <= perf_mem_stalls   + PERF_CTR_BITS'(perf_mem_stall_per_cycle);
                 perf_crsp_stalls  <= perf_crsp_stalls  + PERF_CTR_BITS'(perf_crsp_stall_per_cycle);
             end
         end
+
+    `ifndef SYNTHESIS
+        reg [PERF_CTR_BITS-1:0] perf_core_reads_ref_r;
+        reg [PERF_CTR_BITS-1:0] perf_core_reads_ref_q;
+
+        always @(posedge clk) begin
+            if (reset) begin
+                perf_core_reads_ref_r <= '0;
+                perf_core_reads_ref_q <= '0;
+            end else begin
+                assert (perf_core_reads == perf_core_reads_ref_q)
+                    else $fatal(1, "%s: staged bypass-cache read recurrence mismatch", INSTANCE_ID);
+
+                perf_core_reads_ref_r <= perf_core_reads_ref_r
+                    + PERF_CTR_BITS'(perf_core_reads_per_cycle);
+                perf_core_reads_ref_q <= perf_core_reads_ref_r;
+            end
+        end
+    `endif
 
         assign cache_perf.reads        = perf_core_reads;
         assign cache_perf.writes       = perf_core_writes;

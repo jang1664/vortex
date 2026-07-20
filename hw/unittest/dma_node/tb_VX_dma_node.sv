@@ -5,6 +5,8 @@
 module tb_VX_dma_node import VX_gpu_pkg::*; #(
   parameter int    N_MASTER     = 1,
   parameter int    NUM_ENTRIES  = 8,
+  parameter int    TB_LMEM_NUM_LANES = `LMEM_NUM_PORTS,
+  parameter int    TB_DCACHE_NUM_LANES = 1,
   parameter string TB_NAME      = "tb_VX_dma_node",
   parameter real   PERIOD        = 10.0,
   parameter string OBJ           = "func",
@@ -18,6 +20,7 @@ module tb_VX_dma_node import VX_gpu_pkg::*; #(
 
   localparam int DCACHE_BYTES = DCACHE_WORD_SIZE;
   localparam int LMEM_BYTES   = LSU_WORD_SIZE;
+  localparam int LMEM_WIDE_BYTES = TB_LMEM_NUM_LANES * LMEM_BYTES;
 
   localparam int DMA_DCACHE_TAG_WIDTH = UUID_WIDTH + 16;
   localparam int DMA_LMEM_TAG_WIDTH   = UUID_WIDTH + 8;
@@ -76,6 +79,17 @@ module tb_VX_dma_node import VX_gpu_pkg::*; #(
   int unsigned case_total_count;
   int unsigned case_pass_count;
 
+  logic hbw_lane_probe_active;
+  int unsigned hbw_partial_read_count;
+  int unsigned hbw_inactive_req_bypass_count;
+  int unsigned hbw_inactive_rsp_bypass_count;
+  int unsigned hbw_active_req_stall_count;
+  int unsigned hbw_active_rsp_delay_count;
+  logic hbw_independent_req_stall_seen;
+
+  // Byte-addressed shared storage behind the physical LMEM lane responders.
+  byte local_mem[0:MEM_BYTES-1];
+
   string fsdb_file_path;
   string fst_file_path;
   string rpt_file_path;
@@ -107,7 +121,7 @@ module tb_VX_dma_node import VX_gpu_pkg::*; #(
   VX_mem_bus_if #(
     .DATA_SIZE (LMEM_BYTES),
     .TAG_WIDTH (DMA_LMEM_TAG_WIDTH)
-  ) dma_lmem_if_array[1]();
+  ) dma_lmem_if_array[TB_LMEM_NUM_LANES]();
 
   // Decoupling shims:
   // keep DUT req_ready independent from arb combinational paths.
@@ -166,6 +180,7 @@ module tb_VX_dma_node import VX_gpu_pkg::*; #(
 `ifdef PERF_ENABLE
   dma_perf_t perf;
   dma_perf_t perf_expected;
+  logic dma_xfer_done_expected_q;
 `endif
 
   `ASSIGN_VX_MEM_BUS_IF(l_arb_in_if[0], dma_to_arb_lmem_if);
@@ -176,7 +191,8 @@ module tb_VX_dma_node import VX_gpu_pkg::*; #(
     .INSTANCE_ID ("dma_node_tb"),
     .N_MASTER    (N_MASTER),
     .NUM_ENTRIES (NUM_ENTRIES),
-    .LMEM_NUM_LANES_P(1),
+    .LMEM_NUM_LANES_P(TB_LMEM_NUM_LANES),
+    .DCACHE_NUM_LANES_P(TB_DCACHE_NUM_LANES),
     .ENABLE_MISALIGN(1'b1),
     .DCACHE_TAG_WIDTH_P(DMA_DCACHE_TAG_WIDTH),
     .LMEM_TAG_WIDTH_P(DMA_LMEM_TAG_WIDTH)
@@ -195,13 +211,15 @@ module tb_VX_dma_node import VX_gpu_pkg::*; #(
   always_ff @(posedge clk) begin
     if (reset) begin
       perf_expected <= '0;
+      dma_xfer_done_expected_q <= 1'b0;
     end else begin
+      dma_xfer_done_expected_q <= dut.u_dma_unit.g_misaligned.u_impl.dma_xfer_done;
       perf_expected.busy <= 1'b0;
       if (dut.u_dma_unit.g_misaligned.u_impl.g2l_rd_beat)
         perf_expected.rd_bytes <= perf_expected.rd_bytes + PERF_CTR_BITS'(DCACHE_BYTES);
       if (dut.u_dma_unit.g_misaligned.u_impl.l2g_wr_beat)
         perf_expected.wr_bytes <= perf_expected.wr_bytes + PERF_CTR_BITS'(DCACHE_BYTES);
-      if (dut.u_dma_unit.g_misaligned.u_impl.dma_xfer_done)
+      if (dma_xfer_done_expected_q)
         perf_expected.xfer_count <= perf_expected.xfer_count + PERF_CTR_BITS'(1);
       if (dut.u_dma_unit.g_misaligned.u_impl.dma_is_active)
         perf_expected.active_cycles <= perf_expected.active_cycles + PERF_CTR_BITS'(1);
@@ -225,7 +243,154 @@ module tb_VX_dma_node import VX_gpu_pkg::*; #(
   end
 `endif
 
-  `ASSIGN_VX_MEM_BUS_IF(dma_lmem_if, dma_lmem_if_array[0]);
+  if (TB_LMEM_NUM_LANES == 1) begin : g_single_lmem_model
+    `ASSIGN_VX_MEM_BUS_IF(dma_lmem_if, dma_lmem_if_array[0]);
+  end else begin : g_hbw_lmem_model
+    localparam int PROBE_INACTIVE_LANE = TB_LMEM_NUM_LANES - 1;
+
+    logic [31:0] lane_cycle_count_r;
+    wire [TB_LMEM_NUM_LANES-1:0] lane_req_valid_w;
+    wire [TB_LMEM_NUM_LANES-1:0] lane_req_ready_w;
+    wire [TB_LMEM_NUM_LANES-1:0] lane_req_fire_w;
+    wire [TB_LMEM_NUM_LANES-1:0] lane_rsp_valid_w;
+    wire [TB_LMEM_NUM_LANES-1:0] lane_rsp_delayed_w;
+
+    // Keep the legacy aggregate local-memory path quiescent. The DUT connects
+    // directly to the physical-lane responders in this generate branch.
+    assign dma_lmem_if.req_valid = 1'b0;
+    assign dma_lmem_if.req_data = '0;
+    assign dma_lmem_if.rsp_ready = 1'b1;
+
+    for (genvar lane = 0; lane < TB_LMEM_NUM_LANES; ++lane) begin : g_lane
+      logic rsp_pending_r;
+      logic [LMEM_BYTES*8-1:0] rsp_data_r;
+      logic [DMA_LMEM_TAG_WIDTH-1:0] rsp_tag_r;
+      logic [2:0] rsp_delay_r;
+
+      wire probe_blocked = hbw_lane_probe_active
+                        && (lane == PROBE_INACTIVE_LANE);
+      wire request_phase_stall = lane_cycle_count_r[1:0] == 2'(lane % 4);
+
+      assign dma_lmem_if_array[lane].req_ready
+          = !rsp_pending_r
+         && !probe_blocked
+         && !request_phase_stall;
+      assign dma_lmem_if_array[lane].rsp_valid
+          = rsp_pending_r && (rsp_delay_r == 0);
+      assign dma_lmem_if_array[lane].rsp_data.data = rsp_data_r;
+      assign dma_lmem_if_array[lane].rsp_data.tag = rsp_tag_r;
+
+      assign lane_req_valid_w[lane] = dma_lmem_if_array[lane].req_valid;
+      assign lane_req_ready_w[lane] = dma_lmem_if_array[lane].req_ready;
+      assign lane_req_fire_w[lane]
+          = dma_lmem_if_array[lane].req_valid
+         && dma_lmem_if_array[lane].req_ready;
+      assign lane_rsp_valid_w[lane] = dma_lmem_if_array[lane].rsp_valid;
+      assign lane_rsp_delayed_w[lane] = rsp_pending_r && (rsp_delay_r != 0);
+
+      always @(posedge clk) begin
+        if (reset) begin
+          rsp_pending_r <= 1'b0;
+          rsp_data_r <= '0;
+          rsp_tag_r <= '0;
+          rsp_delay_r <= '0;
+        end else begin
+          if (rsp_pending_r && (rsp_delay_r != 0))
+            rsp_delay_r <= rsp_delay_r - 3'd1;
+
+          if (dma_lmem_if_array[lane].rsp_valid
+           && dma_lmem_if_array[lane].rsp_ready) begin
+            rsp_pending_r <= 1'b0;
+          end
+
+          if (dma_lmem_if_array[lane].req_valid
+           && !(|dma_lmem_if_array[lane].req_data.byteen)) begin
+            $fatal(1, "inactive LMEM lane %0d received a physical request", lane);
+          end
+
+          if (dma_lmem_if_array[lane].req_valid
+           && dma_lmem_if_array[lane].req_ready) begin
+            int unsigned base_b;
+            base_b = int'(dma_lmem_if_array[lane].req_data.addr)
+                   << $clog2(LMEM_BYTES);
+
+            if (dma_lmem_if_array[lane].req_data.rw) begin
+              for (int b = 0; b < LMEM_BYTES; ++b) begin
+                if (dma_lmem_if_array[lane].req_data.byteen[b]
+                 && ((base_b + b) < MEM_BYTES)) begin
+                  local_mem[base_b + b]
+                      = dma_lmem_if_array[lane].req_data.data[b*8 +: 8];
+                end
+              end
+            end else begin
+              rsp_data_r <= '0;
+              for (int b = 0; b < LMEM_BYTES; ++b) begin
+                if ((base_b + b) < MEM_BYTES)
+                  rsp_data_r[b*8 +: 8] <= local_mem[base_b + b];
+              end
+              rsp_tag_r <= dma_lmem_if_array[lane].req_data.tag;
+              rsp_delay_r <= 3'(1 + (lane % 4));
+              rsp_pending_r <= 1'b1;
+            end
+          end
+        end
+      end
+    end
+
+    always_ff @(posedge clk) begin
+      if (reset) begin
+        lane_cycle_count_r <= '0;
+        hbw_partial_read_count <= 0;
+        hbw_inactive_req_bypass_count <= 0;
+        hbw_inactive_rsp_bypass_count <= 0;
+        hbw_active_req_stall_count <= 0;
+        hbw_active_rsp_delay_count <= 0;
+        hbw_independent_req_stall_seen <= 1'b0;
+      end else begin
+        lane_cycle_count_r <= lane_cycle_count_r + 32'd1;
+
+        if (hbw_lane_probe_active && (|(lane_req_valid_w & ~lane_req_ready_w)))
+          hbw_active_req_stall_count <= hbw_active_req_stall_count + 1;
+        if (hbw_lane_probe_active && (|lane_rsp_delayed_w))
+          hbw_active_rsp_delay_count <= hbw_active_rsp_delay_count + 1;
+
+        if (hbw_lane_probe_active
+         && (|lane_req_fire_w)
+         && (|(lane_req_valid_w & ~lane_req_ready_w))) begin
+          hbw_independent_req_stall_seen <= 1'b1;
+        end
+
+        if (hbw_lane_probe_active && dut.lmem_wide_bus_if.req_valid) begin
+          if (|dut.lmem_wide_bus_if.req_data.byteen[
+                PROBE_INACTIVE_LANE*LMEM_BYTES +: LMEM_BYTES]) begin
+            $fatal(1, "probe lane %0d unexpectedly active in aggregate byte-enable",
+                   PROBE_INACTIVE_LANE);
+          end
+
+          if (dut.lmem_wide_bus_if.req_ready) begin
+            hbw_inactive_req_bypass_count <= hbw_inactive_req_bypass_count + 1;
+            if (!dut.lmem_wide_bus_if.req_data.rw
+             && (dut.lmem_wide_bus_if.req_data.byteen != '1)) begin
+              hbw_partial_read_count <= hbw_partial_read_count + 1;
+            end
+          end
+        end
+
+        if (hbw_lane_probe_active
+         && dut.lmem_wide_bus_if.rsp_valid
+         && dut.lmem_wide_bus_if.rsp_ready) begin
+          if (lane_rsp_valid_w[PROBE_INACTIVE_LANE])
+            $fatal(1, "inactive probe lane produced an LMEM response");
+          hbw_inactive_rsp_bypass_count <= hbw_inactive_rsp_bypass_count + 1;
+        end
+
+        if (hbw_lane_probe_active
+         && lane_req_valid_w[PROBE_INACTIVE_LANE]) begin
+          $fatal(1, "inactive probe lane waited on a physical request");
+        end
+      end
+    end
+  end
 
   localparam int DMA_REQ_FIFO_DEPTH = 128;
 
@@ -1112,6 +1277,44 @@ module tb_VX_dma_node import VX_gpu_pkg::*; #(
     end
   endtask
 
+  task automatic run_hbw_active_lane_case();
+    begin
+      if (TB_LMEM_NUM_LANES < 2)
+        $fatal(1, "HBW active-lane test requires multiple physical LMEM lanes");
+
+      $display("[HBW] physical_lanes=%0d lane_bytes=%0d aggregate_bytes=%0d",
+               TB_LMEM_NUM_LANES, LMEM_BYTES, LMEM_WIDE_BYTES);
+
+      hbw_lane_probe_active = 1'b1;
+      run_roundtrip_case_cfg(
+        "hbw_active_lane_misaligned_roundtrip",
+        4,
+        48, 2, 2, 2, 3,
+        3, 5, 7,
+        1'b0, 1'b0, 1'b0
+      );
+      hbw_lane_probe_active = 1'b0;
+
+      if (hbw_partial_read_count == 0)
+        $fatal(1, "HBW test did not observe a partial aggregate LMEM read");
+      if (hbw_inactive_req_bypass_count == 0)
+        $fatal(1, "HBW test did not complete a request with inactive lane blocked");
+      if (hbw_inactive_rsp_bypass_count == 0)
+        $fatal(1, "HBW test did not complete a response without the inactive lane");
+      if (hbw_active_req_stall_count == 0 || !hbw_independent_req_stall_seen)
+        $fatal(1, "HBW test did not independently stall active request lanes");
+      if (hbw_active_rsp_delay_count == 0)
+        $fatal(1, "HBW test did not independently delay active read responses");
+
+      $display("[HBW] ACTIVE-LANE PASS partial_reads=%0d req_bypass=%0d rsp_bypass=%0d req_stalls=%0d rsp_delays=%0d",
+               hbw_partial_read_count,
+               hbw_inactive_req_bypass_count,
+               hbw_inactive_rsp_bypass_count,
+               hbw_active_req_stall_count,
+               hbw_active_rsp_delay_count);
+    end
+  endtask
+
   task automatic run_misaligned_sweep_case();
     int unsigned g_offs[0:8];
     int unsigned l_offs[0:7];
@@ -1126,7 +1329,7 @@ module tb_VX_dma_node import VX_gpu_pkg::*; #(
     int unsigned case_seed;
     begin
       g_half = DCACHE_BYTES / 2;
-      l_half = LMEM_BYTES / 2;
+      l_half = LMEM_WIDE_BYTES / 2;
 
       g_offs[0] = 0;
       g_offs[1] = 1;
@@ -1143,9 +1346,9 @@ module tb_VX_dma_node import VX_gpu_pkg::*; #(
       l_offs[2] = 2;
       l_offs[3] = (l_half > 0) ? (l_half - 1) : 0;
       l_offs[4] = l_half;
-      l_offs[5] = (l_half + 1 < LMEM_BYTES) ? (l_half + 1) : (LMEM_BYTES - 1);
-      l_offs[6] = (LMEM_BYTES > 1) ? (LMEM_BYTES - 2) : 0;
-      l_offs[7] = (LMEM_BYTES > 0) ? (LMEM_BYTES - 1) : 0;
+      l_offs[5] = (l_half + 1 < LMEM_WIDE_BYTES) ? (l_half + 1) : (LMEM_WIDE_BYTES - 1);
+      l_offs[6] = (LMEM_WIDE_BYTES > 1) ? (LMEM_WIDE_BYTES - 2) : 0;
+      l_offs[7] = (LMEM_WIDE_BYTES > 0) ? (LMEM_WIDE_BYTES - 1) : 0;
 
       seg_choices[0] = 13;
       seg_choices[1] = 17;
@@ -1287,14 +1490,19 @@ module tb_VX_dma_node import VX_gpu_pkg::*; #(
 
       case_total_count = 0;
       case_pass_count  = 0;
+      hbw_lane_probe_active = 1'b0;
 
       init_signals();
 
-      run_roundtrip_case("smoke_basic",               0, 1'b0, 1'b0, 1'b0);
-      run_roundtrip_case("smoke_global_content",      1, 1'b1, 1'b0, 1'b0);
-      run_roundtrip_case("smoke_local_content",       2, 1'b0, 1'b1, 1'b0);
-      run_roundtrip_case("smoke_global_read_content", 3, 1'b0, 1'b0, 1'b1);
-      run_misaligned_sweep_case();
+      if (TB_LMEM_NUM_LANES > 1) begin
+        run_hbw_active_lane_case();
+      end else begin
+        run_roundtrip_case("smoke_basic",               0, 1'b0, 1'b0, 1'b0);
+        run_roundtrip_case("smoke_global_content",      1, 1'b1, 1'b0, 1'b0);
+        run_roundtrip_case("smoke_local_content",       2, 1'b0, 1'b1, 1'b0);
+        run_roundtrip_case("smoke_global_read_content", 3, 1'b0, 1'b0, 1'b1);
+        run_misaligned_sweep_case();
+      end
 
 `ifdef PERF_ENABLE
       repeat (2) @(posedge clk);

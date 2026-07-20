@@ -671,12 +671,16 @@ module VX_core import VX_gpu_pkg::*; #(
 
 	`ifdef PERF_ENABLE
 
-    wire [`CLOG2(LSU_NUM_REQS+1)-1:0] perf_dcache_rd_req_per_cycle;
-    wire [`CLOG2(LSU_NUM_REQS+1)-1:0] perf_dcache_wr_req_per_cycle;
-    wire [`CLOG2(LSU_NUM_REQS+1)-1:0] perf_dcache_rsp_per_cycle;
+    localparam PERF_DCACHE_COUNT_W = `CLOG2(LSU_NUM_REQS+1);
+    localparam PERF_DCACHE_DELTA_W = PERF_DCACHE_COUNT_W + 1;
+
+    wire [PERF_DCACHE_COUNT_W-1:0] perf_dcache_rd_req_per_cycle;
+    wire [PERF_DCACHE_COUNT_W-1:0] perf_dcache_wr_req_per_cycle;
+    wire [PERF_DCACHE_COUNT_W-1:0] perf_dcache_rsp_per_cycle;
 
     wire [1:0] perf_icache_pending_read_cycle;
-    wire [`CLOG2(LSU_NUM_REQS+1)+1-1:0] perf_dcache_pending_read_cycle;
+    wire signed [PERF_DCACHE_DELTA_W-1:0] perf_dcache_pending_read_cycle;
+    reg  signed [PERF_DCACHE_DELTA_W-1:0] perf_dcache_pending_read_cycle_q;
 
     reg [PERF_CTR_BITS-1:0] perf_icache_pending_reads;
     reg [PERF_CTR_BITS-1:0] perf_dcache_pending_reads;
@@ -708,15 +712,19 @@ module VX_core import VX_gpu_pkg::*; #(
     `POP_COUNT(perf_dcache_rsp_per_cycle, perf_dcache_rsp_fire);
 
     assign perf_icache_pending_read_cycle = perf_icache_req_fire - perf_icache_rsp_fire;
-    assign perf_dcache_pending_read_cycle = perf_dcache_rd_req_per_cycle - perf_dcache_rsp_per_cycle;
+    assign perf_dcache_pending_read_cycle
+        = $signed({1'b0, perf_dcache_rd_req_per_cycle})
+        - $signed({1'b0, perf_dcache_rsp_per_cycle});
 
     always @(posedge clk) begin
         if (reset) begin
+            perf_dcache_pending_read_cycle_q <= '0;
             perf_icache_pending_reads <= '0;
             perf_dcache_pending_reads <= '0;
         end else begin
+            perf_dcache_pending_read_cycle_q <= perf_dcache_pending_read_cycle;
             perf_icache_pending_reads <= $signed(perf_icache_pending_reads) + PERF_CTR_BITS'($signed(perf_icache_pending_read_cycle));
-            perf_dcache_pending_reads <= $signed(perf_dcache_pending_reads) + PERF_CTR_BITS'($signed(perf_dcache_pending_read_cycle));
+            perf_dcache_pending_reads <= $signed(perf_dcache_pending_reads) + PERF_CTR_BITS'($signed(perf_dcache_pending_read_cycle_q));
         end
     end
 
@@ -738,6 +746,33 @@ module VX_core import VX_gpu_pkg::*; #(
             perf_dcache_lat <= perf_dcache_lat + perf_dcache_pending_reads;
         end
     end
+
+`ifndef SYNTHESIS
+    reg [PERF_CTR_BITS-1:0] perf_dcache_pending_reads_ref_r;
+    reg [PERF_CTR_BITS-1:0] perf_dcache_pending_reads_ref_q;
+    reg [PERF_CTR_BITS-1:0] perf_dcache_lat_ref_r;
+    reg [PERF_CTR_BITS-1:0] perf_dcache_lat_ref_q;
+
+    always @(posedge clk) begin
+        if (reset) begin
+            perf_dcache_pending_reads_ref_r <= '0;
+            perf_dcache_pending_reads_ref_q <= '0;
+            perf_dcache_lat_ref_r <= '0;
+            perf_dcache_lat_ref_q <= '0;
+        end else begin
+            assert (perf_dcache_pending_reads == perf_dcache_pending_reads_ref_q)
+                else $fatal(1, "%s: staged D-cache pending-read recurrence mismatch", INSTANCE_ID);
+            assert (perf_dcache_lat == perf_dcache_lat_ref_q)
+                else $fatal(1, "%s: staged D-cache latency recurrence mismatch", INSTANCE_ID);
+
+            perf_dcache_pending_reads_ref_r <= $signed(perf_dcache_pending_reads_ref_r)
+                + PERF_CTR_BITS'($signed(perf_dcache_pending_read_cycle));
+            perf_dcache_pending_reads_ref_q <= perf_dcache_pending_reads_ref_r;
+            perf_dcache_lat_ref_r <= perf_dcache_lat_ref_r + perf_dcache_pending_reads_ref_r;
+            perf_dcache_lat_ref_q <= perf_dcache_lat_ref_r;
+        end
+    end
+`endif
 
     assign pipeline_perf.ifetches = perf_ifetches;
     assign pipeline_perf.loads = perf_loads;
