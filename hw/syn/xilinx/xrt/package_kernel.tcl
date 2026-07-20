@@ -211,10 +211,12 @@ set obj [get_filesets sources_1]
 set ip_files [list \
  [file normalize "${build_dir}/ip/xil_fdiv/xil_fdiv.xci"] \
  [file normalize "${build_dir}/ip/xil_fma/xil_fma.xci"] \
+ [file normalize "${build_dir}/ip/xil_fma_lowL/xil_fma_lowL.xci"] \
  [file normalize "${build_dir}/ip/xil_fsqrt/xil_fsqrt.xci"] \
  [file normalize "${build_dir}/ip/xil_fmul/xil_fmul.xci"] \
  [file normalize "${build_dir}/ip/xil_fadd/xil_fadd.xci"] \
  [file normalize "${build_dir}/ip/xil_f32add/xil_f32add.xci"] \
+ [file normalize "${build_dir}/ip/xil_f32add_lowL/xil_f32add_lowL.xci"] \
  [file normalize "${build_dir}/ip/xil_f32mul/xil_f32mul.xci"] \
  [file normalize "${build_dir}/ip/xil_f16add/xil_f16add.xci"] \
  [file normalize "${build_dir}/ip/xil_f16mul/xil_f16mul.xci"] \

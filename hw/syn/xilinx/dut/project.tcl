@@ -84,11 +84,13 @@ proc run_setup {} {
   if {[info exists ::env(FPU_IP)]} {
     set ip_dir $::env(FPU_IP)
     add_files -norecurse -verbose ${ip_dir}/xil_fma/xil_fma.xci
+    add_files -norecurse -verbose ${ip_dir}/xil_fma_lowL/xil_fma_lowL.xci
     add_files -norecurse -verbose ${ip_dir}/xil_fdiv/xil_fdiv.xci
     add_files -norecurse -verbose ${ip_dir}/xil_fsqrt/xil_fsqrt.xci
     add_files -norecurse -verbose ${ip_dir}/xil_fmul/xil_fmul.xci
     add_files -norecurse -verbose ${ip_dir}/xil_fadd/xil_fadd.xci
     add_files -norecurse -verbose ${ip_dir}/xil_f32add/xil_f32add.xci
+    add_files -norecurse -verbose ${ip_dir}/xil_f32add_lowL/xil_f32add_lowL.xci
     add_files -norecurse -verbose ${ip_dir}/xil_f32mul/xil_f32mul.xci
     add_files -norecurse -verbose ${ip_dir}/xil_f16add/xil_f16add.xci
     add_files -norecurse -verbose ${ip_dir}/xil_f16mul/xil_f16mul.xci

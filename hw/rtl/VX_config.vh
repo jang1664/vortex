@@ -513,7 +513,7 @@
 `define LATENCY_FMA 4
 `endif
 `ifdef VIVADO
-`define LATENCY_FMA 16
+`define LATENCY_FMA 4
 `endif
 `ifndef LATENCY_FMA
 `define LATENCY_FMA 4

@@ -7,8 +7,8 @@ XILINX_DEVICE_PART ?= xcu55c-fsvh2892-2L-e
 XILINX_IP_GEN_TCL ?= $(VORTEX_HOME)/hw/scripts/xilinx_ip_gen.tcl
 XILINX_IP_STAMP ?= $(XILINX_IP_DIR)/.generated.stamp
 XILINX_IP_VHDLAN_STAMP ?= $(XILINX_FPU_DESTDIR)/.xilinx_fpu_ip_vhdlan.stamp
-XILINX_FPU_IPS := xil_fdiv xil_fsqrt xil_fma xil_fmul xil_fadd \
-                  xil_f32add xil_f32mul xil_f16add xil_f16mul \
+XILINX_FPU_IPS := xil_fdiv xil_fsqrt xil_fma xil_fma_lowL xil_fmul xil_fadd \
+                  xil_f32add xil_f32add_lowL xil_f32mul xil_f16add xil_f16mul \
                   xil_f32add_low_latency xil_f32mul_low_latency \
                   xil_f16mul_low_latency xil_f32add_latency1 \
                   xil_f32mul_latency1 xil_f16mul_latency1

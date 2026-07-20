@@ -150,7 +150,7 @@ module VX_fpu_fma import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
     for (genvar i = 0; i < NUM_PES; ++i) begin : g_fmas
         wire [2:0] tuser;
 
-        xil_fma fma (
+        xil_fma_lowL fma (
             .aclk                (clk),
             .aclken              (pe_enable),
             .s_axis_a_tvalid     (1'b1),
