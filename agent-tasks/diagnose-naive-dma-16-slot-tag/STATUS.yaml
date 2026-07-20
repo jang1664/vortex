@@ -1,0 +1,38 @@
+task: diagnose-naive-dma-16-slot-tag
+state: DONE
+summary: Split the three-bit CPU coalescer tag from the four-bit 16-slot DMA tag and verified the change with focused VCS simulation plus a freshly compiled xrt-vcs-sim naive GEMM blackbox pass.
+updated: "2026-07-20 21:50"
+log:
+  - timestamp: "2026-07-20 21:09"
+    action: Located the fatal assertion and recorded the existing dirty-worktree state before read-only diagnosis.
+    result: The assertion exists in both aligned and misaligned DMA units; several relevant RTL files already contain user changes, so this task will not modify RTL without an explicit fix request and overlap review.
+  - timestamp: "2026-07-20 21:18"
+    action: Traced the slot ID from DMA request generation through the CPU/DMA dcache arbiter, cache, and response RAM address.
+    result: DMA writes rd_issue_slot_r into tag.value and directly uses the returned value as response_payload_ram.waddr. Slots 0 and 8 would alias if the assertion were removed. DCACHE_TAG_ID_BITS is three because LSUQ_OUT_SIZE is eight, while the arbiter adds a separate fixed route bit that cannot encode the DMA slot.
+  - timestamp: "2026-07-20 21:18"
+    action: Evaluated configuration-only and RTL-width remedies.
+    result: Defining LSUQ_OUT_SIZE=16 safely produces four dcache value bits but doubles the CPU coalescer queue. The preferred area-conscious RTL remedy is a separate DMA_DCACHE_TAG_WIDTH of UUID_WIDTH plus max(CPU tag bits, DMA slot bits), normalization to a common pre-arbiter width, and a correspondingly widened cache-facing core tag; CPU coalescer depth can remain eight.
+  - timestamp: "2026-07-20 21:35"
+    action: Audited CPU LSU tag ownership through VX_mem_scheduler, VX_mem_coalescer, the CPU/DMA dcache arbiter, and cache hit/MSHR response paths.
+    result: LSUQ_IN_SIZE indexes the LSU scheduler metadata buffer, while LSUQ_OUT_SIZE independently indexes the downstream 8-byte-to-cache-line coalescer metadata buffer. The coalescer replaces the original LSU tag with its queue address and restores it on response. The cache treats the resulting tag as opaque payload and preserves it through hit and MSHR replay paths; the mem-unit arbiter alone inserts/removes the CPU-versus-DMA route bit. Separate CPU and DMA payload widths are therefore safe if both are explicitly normalized below the UUID before arbitration and TAG_SEL_IDX is moved to the common payload width.
+  - timestamp: "2026-07-20 21:43"
+    action: Confirmed implementation scope and wrote dma-dcache-tag-width-split-spec.md.
+    result: The user approved the separate-width design and requested xrt-vcs-sim compile/test using the naive 32-thread dcache configuration.
+  - timestamp: "2026-07-20 21:39"
+    action: Implemented separate CPU-native, DMA-native, common-arbiter, and cache-facing dcache tag widths.
+    result: CPU coalescer tags remain tied to LSUQ_OUT_SIZE; DMA tags grow to four value bits for 16 slots; UUID-preserving adapters normalize both producers before arbitration; the route bit is inserted above the common value field.
+  - timestamp: "2026-07-20 21:42"
+    action: DMA tag split — Iteration 1 verification with the sourced naive th32 configuration.
+    result: sim_fail after successful compile and observed responses for DMA slots 8 through 11. The failure was the testbench's 32-lane HBW probe assuming lane 31 stays inactive, but the configured 256-byte aggregate transfer legitimately activates that lane. No RTL fix was applied because the failure is unrelated to tag handling; iteration 2 will retain 16 slots and use one LMEM lane to isolate the DMA tag test.
+  - timestamp: "2026-07-20 21:44"
+    action: DMA tag split — Iteration 2 verification with 16 slots and LMEM_NUM_PORTS=1.
+    result: sim_fail before the functional cases because the generalized DMA gearbox requires widths in the 16-to-512-byte range while a single 64-bit LMEM lane is only 8 bytes. No RTL fix was applied; the next focused test must satisfy the gearbox width constraint without activating the invalid 32-lane HBW probe.
+  - timestamp: "2026-07-20 21:46"
+    action: DMA tag split — Iteration 3 verification with the naive 16-slot configuration and LMEM_NUM_PORTS=64 test isolation.
+    result: pass. The 512-byte aggregate width satisfies the gearbox constraint and leaves the probe lane outside the test transfer; the focused VCS DMA-node simulation completed successfully with 16-slot configuration.
+  - timestamp: "2026-07-20 21:50"
+    action: Recompiled and ran fpint_gemm_ffn_hw_naive through ci/run_black.sh xrt-vcs-sim after sourcing configs/naive_gemm_th32_tcol32_hwexp_dcache.sh.
+    result: pass. VCS recompiled the modified tag-width RTL with DMA_RD_OUTSTANDING_SLOT=16, the prior time-zero tag-width fatal disappeared, and the M=2 N=32 K=32 QBLK=32 functional comparison reported PASSED (13041 instructions, 10770 cycles).
+pitfalls:
+  - Relevant DMA, config, core, and memory RTL files already have user changes; use the working-tree contents for diagnosis but do not overwrite them.
+  - Generated build copies may be stale relative to the working tree and are evidence only for the prior build configuration.

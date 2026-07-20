@@ -1,0 +1,23 @@
+task: diagnose-improve-th32-pnr
+state: DONE
+summary: Confirmed that SLR1 is saturated by the co-location of the monolithic 32x32 GEMM PE, the 32-thread local-memory request crossbar, and the data cache; VX_pe_tree_new is the primary hotspot and VX_local_mem.req_xbar is the main thread-scaling trigger.
+updated: "2026-07-20 19:33"
+log:
+  - timestamp: "2026-07-20 18:46"
+    action: Started read-only inspection of the existing Vitis/Vivado build artifacts.
+    result: Located the failed hardware build and confirmed the worktree already contains unrelated user changes.
+  - timestamp: "2026-07-20 18:49"
+    action: Inspected post_place_congestion.rpt, hierarchical utilization, and the 16-thread comparison build.
+    result: Every level-7 direction names VX_pe_tree_new; Global windows also repeatedly name local_mem/req_xbar. The 16-thread build keeps the same PE size but has no level-7 row, while its request crossbar is much smaller.
+  - timestamp: "2026-07-20 19:01"
+    action: Opened post_place_fail_fast.dcp and generated target-specific SLR utilization reports.
+    result: SLR1 is 99.56% CLB occupied. VX_pe_tree_new occupies 44.32% of SLR1 CLBs and 55.21% of its DSPs; local_mem/req_xbar occupies 25.65% of SLR1 CLBs; dcache occupies 25.91%. This confirms a co-location congestion failure rather than a shell or SLR-crossing-only failure.
+  - timestamp: "2026-07-20 19:09"
+    action: Quantified VX_dma_node and compared level-6 versus level-7 congestion windows.
+    result: VX_dma_node uses 29134 LUTs and 27375 FFs; its misaligned core uses 21419 LUTs, with lmem_destination_assembler alone at 6770 LUTs and 4620 FFs. The assembler contributes 6-7% in all level-7 Global windows but is absent from the top contributors in three of four level-7 Short windows. DMA-only optimization therefore has a moderate chance only if substantial; small outstanding-buffer reductions are unlikely to clear every level-7 direction.
+  - timestamp: "2026-07-20 19:33"
+    action: Screened additional large hierarchy candidates by SLR placement after choosing aligned DMA.
+    result: req_global_buf is the strongest additional SLR1-local candidate at 13131 LUTs and 5085 CLBs (9.42% of SLR1); L2 occupies 8666 SLR1 CLBs (16.05%). The 72k-LUT dispatch buffer and 50k-LUT FPU are almost entirely in SLR2, and the GEMM FSM is entirely in SLR0, so shrinking those would not directly clear the SLR1 level-7 hotspot. The GEMM prealigner spans SLR0/1 but contributes only 2442 SLR1 CLBs.
+pitfalls:
+  - Build artifacts are ignored and numerous; searches must be restricted to logs, reports, and checkpoints to avoid noisy IP source results.
+  - The source config changed during investigation; conclusions use the immutable build .config.stamp and generated build sources, not the live config file.
