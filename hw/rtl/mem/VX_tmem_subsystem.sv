@@ -39,6 +39,10 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
     parameter int W_RD_PREFETCH_DEPTH = `W_LMEM_DMA_RD_PREFETCH_DEPTH,
     parameter int SZ_RD_PREFETCH_DEPTH = `SZ_LMEM_DMA_RD_PREFETCH_DEPTH,
     parameter int O_RD_PREFETCH_DEPTH = `O_LMEM_DMA_RD_PREFETCH_DEPTH,
+    parameter int I_RD_OUTSTANDING = `I_LMEM_DMA_RD_OUTSTANDING_SLOTS,
+    parameter int W_RD_OUTSTANDING = `W_LMEM_DMA_RD_OUTSTANDING_SLOTS,
+    parameter int SZ_RD_OUTSTANDING = `SZ_LMEM_DMA_RD_OUTSTANDING_SLOTS,
+    parameter int O_RD_OUTSTANDING = `O_LMEM_DMA_RD_OUTSTANDING_SLOTS,
     parameter int DMA_RD_OUTSTANDING = `TMEM_DMA_RD_OUTSTANDING_SLOT
 ) (
     input wire clk,
@@ -365,7 +369,8 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         .GEMM_ADDR_WIDTH_P(`MEM_ADDR_WIDTH - `CLOG2(GEMM_DATA_SIZE)),
         .LMEM_TAG_WIDTH_P(TAG_WIDTH),
         .GEMM_TAG_WIDTH_P(TAG_WIDTH),
-        .RD_PREFETCH_DEPTH(I_RD_PREFETCH_DEPTH)
+        .RD_PREFETCH_DEPTH(I_RD_PREFETCH_DEPTH),
+        .RD_OUTSTANDING(I_RD_OUTSTANDING)
     ) u_ldma_input (
         .clk         (clk),
         .reset       (reset),
@@ -388,7 +393,8 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         .GEMM_ADDR_WIDTH_P(`MEM_ADDR_WIDTH - `CLOG2(GEMM_WEIGHT_DATA_SIZE)),
         .LMEM_TAG_WIDTH_P(TAG_WIDTH),
         .GEMM_TAG_WIDTH_P(TAG_WIDTH),
-        .RD_PREFETCH_DEPTH(W_RD_PREFETCH_DEPTH)
+        .RD_PREFETCH_DEPTH(W_RD_PREFETCH_DEPTH),
+        .RD_OUTSTANDING(W_RD_OUTSTANDING)
     ) u_ldma_weight (
         .clk         (clk),
         .reset       (reset),
@@ -411,7 +417,8 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         .GEMM_ADDR_WIDTH_P(`MEM_ADDR_WIDTH - `CLOG2(GEMM_DATA_SIZE)),
         .LMEM_TAG_WIDTH_P(TAG_WIDTH),
         .GEMM_TAG_WIDTH_P(TAG_WIDTH),
-        .RD_PREFETCH_DEPTH(W_RD_PREFETCH_DEPTH)
+        .RD_PREFETCH_DEPTH(W_RD_PREFETCH_DEPTH),
+        .RD_OUTSTANDING(W_RD_OUTSTANDING)
     ) u_ldma_weight (
         .clk         (clk),
         .reset       (reset),
@@ -434,7 +441,8 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         .GEMM_ADDR_WIDTH_P(`MEM_ADDR_WIDTH - `CLOG2(GEMM_DATA_SIZE)),
         .LMEM_TAG_WIDTH_P(TAG_WIDTH),
         .GEMM_TAG_WIDTH_P(TAG_WIDTH),
-        .RD_PREFETCH_DEPTH(SZ_RD_PREFETCH_DEPTH)
+        .RD_PREFETCH_DEPTH(SZ_RD_PREFETCH_DEPTH),
+        .RD_OUTSTANDING(SZ_RD_OUTSTANDING)
     ) u_ldma_sz (
         .clk         (clk),
         .reset       (reset),
@@ -456,7 +464,8 @@ module VX_tmem_subsystem import VX_gpu_pkg::*; #(
         .GEMM_ADDR_WIDTH_P(`MEM_ADDR_WIDTH - `CLOG2(GEMM_DATA_SIZE)),
         .LMEM_TAG_WIDTH_P(TAG_WIDTH),
         .GEMM_TAG_WIDTH_P(TAG_WIDTH),
-        .RD_PREFETCH_DEPTH(O_RD_PREFETCH_DEPTH)
+        .RD_PREFETCH_DEPTH(O_RD_PREFETCH_DEPTH),
+        .RD_OUTSTANDING(O_RD_OUTSTANDING)
     ) u_ldma_output (
         .clk         (clk),
         .reset       (reset),

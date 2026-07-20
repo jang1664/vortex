@@ -5,9 +5,10 @@ set -euo pipefail
 # GEMM node regression test runner
 #
 # Usage:
-#   ./test.sh                          # run all (qcol + qrow)
+#   ./test.sh                          # run all (qcol + qrow + back-to-back)
 #   ./test.sh stream                   # raw instruction-stream smoke
 #   ./test.sh stream_gemm              # minimal real GEMM via raw instruction stream
+#   ./test.sh back_to_back             # two descriptors without reset
 #   ./test.sh qcol                     # QDIR=COL tests only
 #   ./test.sh qrow                     # QDIR=ROW tests only
 #   ./test.sh single M,N,K,QBLK,WTRANS,QDIR
@@ -21,7 +22,8 @@ set -euo pipefail
 # ===========================================================================
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-cd "$SCRIPT_DIR"
+UNITTEST_BUILD_DIR=${UNITTEST_BUILD_DIR:-$SCRIPT_DIR}
+cd "$UNITTEST_BUILD_DIR"
 
 SIM_EXEC=${SIM_EXEC:-vcs}
 DO_CLEAN=${DO_CLEAN:-0}
@@ -136,6 +138,43 @@ run_stream_gemm() {
   echo "" >> "$SUMMARY"
 }
 
+run_back_to_back() {
+  local name="BACK_TO_BACK_M32_N64_K128"
+  local sim_log="logs/sim_${name}.log"
+  local mk_log="logs/make_${name}.log"
+  local run_ok=0
+
+  echo "[RUN] $name" | tee -a "$SUMMARY"
+  local start; start=$(date +%s)
+
+  if CCACHE_DIR="$CCACHE_DIR" make SIM_EXEC="$SIM_EXEC" run \
+      TEST="$name" M=32 N=64 K=128 QBLK=32 \
+      EXTRA_SIM_ARGS="+BACK_TO_BACK +WTRANS=0 +QDIR=0 +NO_WAVE" \
+      >"$mk_log" 2>&1; then
+    run_ok=1
+  fi
+
+  local end; end=$(date +%s)
+  local dur=$((end - start))
+
+  if (( run_ok )) && [[ -f "$sim_log" ]] \
+      && grep -q "BACK_TO_BACK GEMM PASSED" "$sim_log"; then
+    echo "[PASS] $name (${dur}s)" | tee -a "$SUMMARY"
+    pass=$((pass + 1))
+  else
+    echo "[FAIL] $name (${dur}s)" | tee -a "$SUMMARY"
+    if [[ -f "$sim_log" ]]; then
+      grep -nE "RUN CONFIG GEMM|CONFIG GEMM|BACK_TO_BACK|Fatal:|ERROR|OUTPUT CHECK" \
+        "$sim_log" | tail -n 30 | tee -a "$SUMMARY"
+    else
+      tail -n 40 "$mk_log" | tee -a "$SUMMARY"
+    fi
+    fail=$((fail + 1))
+  fi
+
+  echo "" >> "$SUMMARY"
+}
+
 run_case() {
   local m="$1" n="$2" k="$3" qblk="$4" wtrans="$5" qdir="$6"
   local qdir_tag; qdir_tag=$( (( qdir )) && echo "QROW" || echo "QCOL" )
@@ -206,9 +245,13 @@ case "$MODE" in
   stream_gemm)
     run_stream_gemm
     ;;
+  back_to_back)
+    run_back_to_back
+    ;;
   all)
     run_qcol
     run_qrow
+    run_back_to_back
     ;;
   qcol)
     run_qcol
@@ -227,7 +270,7 @@ case "$MODE" in
     ;;
   *)
     echo "Unknown mode: $MODE"
-    echo "Usage: $0 [stream|stream_gemm|all|qcol|qrow|single M,N,K,QBLK,WTRANS,QDIR]"
+    echo "Usage: $0 [stream|stream_gemm|back_to_back|all|qcol|qrow|single M,N,K,QBLK,WTRANS,QDIR]"
     exit 1
     ;;
 esac

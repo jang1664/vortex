@@ -137,12 +137,14 @@ module VX_gemm_sync import VX_gpu_pkg::*; #(
     end
   end
 
+  wire clear_fire = in_valid && is_clear && can_accept;
+
   // Parent flags (idle used as READY)
   // - When WAIT not satisfied: idle=0 => parent stops issuing new cmds
   // - When satisfied or no input: idle=1
   always_comb begin
     gemm_fsm_slv_if.flag.idle = can_accept;
-    gemm_fsm_slv_if.flag.done = in_valid && is_clear && can_accept;
+    gemm_fsm_slv_if.flag.done = clear_fire;
   end
 
   // --------------------------------------------------------------------------
@@ -265,7 +267,7 @@ module VX_gemm_sync import VX_gpu_pkg::*; #(
   end
 
   always_ff @(posedge clk) begin
-    if (reset) begin
+    if (reset || clear_fire) begin
       for (int k = 0; k < NUM_SYNC_REGS; k++) begin
         sync_regs[k] <= 32'd0;
       end

@@ -116,7 +116,7 @@ module VX_core import VX_gpu_pkg::*; #(
 
 	    VX_mem_bus_if #(
 	        .DATA_SIZE (`DMA_DCACHE_PORTS * DCACHE_WORD_SIZE),
-	        .TAG_WIDTH (DCACHE_TAG_WIDTH)
+	        .TAG_WIDTH (DMA_DCACHE_TAG_WIDTH)
 	    ) dma_global_data_if();
 
 	`ifdef ENABLE_HW_DEBUG_CORE
@@ -307,7 +307,12 @@ module VX_core import VX_gpu_pkg::*; #(
       .NUM_ENTRIES(`JOB_MMIO_NUM_ENTRIES),
       .LMEM_NUM_LANES_P(`LMEM_NUM_PORTS),
       .DCACHE_NUM_LANES_P(`DMA_DCACHE_PORTS),
+      .DCACHE_TAG_WIDTH_P(DMA_DCACHE_TAG_WIDTH),
+`ifdef GEMM_NAIVE
       .ENABLE_MISALIGN(1'b1),
+`else
+      .ENABLE_MISALIGN(1'b0),
+`endif
       .MISALIGN_PACK_BYTES(`MISALIGN_PACK_BYTES)
     ) u_VX_dma_node (
       .clk(clk),

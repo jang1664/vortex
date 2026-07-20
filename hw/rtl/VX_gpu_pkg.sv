@@ -956,9 +956,12 @@ package VX_gpu_pkg;
     localparam LSU_TAG_ID_BITS      = (`CLOG2(`LSUQ_IN_SIZE) + `CLOG2(LSU_MEM_BATCHES));
     localparam LSU_TAG_WIDTH        = (UUID_WIDTH + LSU_TAG_ID_BITS);
     localparam LSU_NUM_REQS	        = `NUM_LSU_BLOCKS * `NUM_LSU_LANES;
-    // Local DMA reserves tag.value for eight common-core response slots.
-    localparam LMEM_DMA_RD_OUTSTANDING_SLOTS = 8;
-    localparam LMEM_DMA_SLOT_BITS = `CLOG2(LMEM_DMA_RD_OUTSTANDING_SLOTS);
+    // Shared local-DMA tags must hold the largest independently configured
+    // input/weight/scale-zero/output response-slot index.
+    localparam LMEM_DMA_MAX_RD_OUTSTANDING_SLOTS = `MAX(
+        `MAX(`I_LMEM_DMA_RD_OUTSTANDING_SLOTS, `W_LMEM_DMA_RD_OUTSTANDING_SLOTS),
+        `MAX(`SZ_LMEM_DMA_RD_OUTSTANDING_SLOTS, `O_LMEM_DMA_RD_OUTSTANDING_SLOTS));
+    localparam LMEM_DMA_SLOT_BITS = `CLOG2(LMEM_DMA_MAX_RD_OUTSTANDING_SLOTS);
     localparam LMEM_TAG_WIDTH = `MAX(
         (LSU_TAG_WIDTH + `CLOG2(`NUM_LSU_BLOCKS)),
         (UUID_WIDTH + LMEM_DMA_SLOT_BITS));
@@ -1044,10 +1047,15 @@ package VX_gpu_pkg;
     localparam DCACHE_MEM_BATCHES   = `CDIV(DCACHE_MERGED_REQS, DCACHE_CHANNELS);
     localparam DCACHE_TAG_ID_BITS   = (`CLOG2(`LSUQ_OUT_SIZE) + `CLOG2(DCACHE_MEM_BATCHES));
 
-    // Core request tag bits
-    localparam DCACHE_TAG_WIDTH	    = (UUID_WIDTH + DCACHE_TAG_ID_BITS);
-    // Core-facing dcache bus includes the DMA arbiter route tag bit.
-    localparam DCACHE_CORE_TAG_WIDTH = (DCACHE_TAG_WIDTH + MEM_ARB_ROUTE_TAG_BITS);
+    // CPU coalescer and common DMA use independent response-index spaces.
+    // Keep the CPU-native tag tied to LSUQ_OUT_SIZE, while allowing the DMA
+    // native tag to grow with its configured outstanding read-slot count.
+    localparam DCACHE_TAG_WIDTH         = (UUID_WIDTH + DCACHE_TAG_ID_BITS);
+    localparam DMA_DCACHE_TAG_ID_BITS   = `MAX(DCACHE_TAG_ID_BITS, `CLOG2(`DMA_NODE_RD_OUTSTANDING_SLOT));
+    localparam DMA_DCACHE_TAG_WIDTH     = (UUID_WIDTH + DMA_DCACHE_TAG_ID_BITS);
+    localparam DCACHE_ARB_TAG_WIDTH     = `MAX(DCACHE_TAG_WIDTH, DMA_DCACHE_TAG_WIDTH);
+    // Core-facing dcache bus includes the CPU/DMA arbiter route tag bit.
+    localparam DCACHE_CORE_TAG_WIDTH    = (DCACHE_ARB_TAG_WIDTH + MEM_ARB_ROUTE_TAG_BITS);
 
     // Memory request data bits
     localparam DCACHE_MEM_DATA_WIDTH = (DCACHE_LINE_SIZE * 8);

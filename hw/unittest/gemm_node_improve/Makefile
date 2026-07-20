@@ -272,7 +272,10 @@ regress: compile
 	  t="M$${m}N$${n}K$${k}"; \
 	  echo "[REGRESS] running TEST=$$t (M=$$m,N=$$n,K=$$k)"; \
 	  $(MAKE) run SIM_EXEC=$(SIM_EXEC) TEST=$$t M=$$m N=$$n K=$$k; \
-	done
+	done; \
+	$(MAKE) run SIM_EXEC=$(SIM_EXEC) TEST=BACK_TO_BACK_M32_N64_K128 \
+	  M=32 N=64 K=128 QBLK=32 \
+	  EXTRA_SIM_ARGS="+BACK_TO_BACK +WTRANS=0 +QDIR=0 +NO_WAVE"
 
 fst2vcd:
 	for file in reports/*.fst; do \

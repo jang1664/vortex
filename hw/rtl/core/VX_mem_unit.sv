@@ -57,7 +57,7 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
 
     for (genvar i = 0; i < `NUM_LSU_BLOCKS; ++i) begin : g_lmem_switches
         VX_lmem_switch #(
-            .GLOBAL_OUT_BUF(1),
+            .GLOBAL_OUT_BUF(0),
             .LOCAL_OUT_BUF(1),
             .GEMM_OUT_BUF (1),
             .DMA_OUT_BUF  (1),
@@ -218,8 +218,6 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
 
 `endif
 
-    localparam int DCACHE_ARB_TAG_WIDTH = DCACHE_CORE_TAG_WIDTH;
-
     VX_lsu_mem_if #(
         .NUM_LANES (DCACHE_CHANNELS),
         .DATA_SIZE (DCACHE_WORD_SIZE),
@@ -349,7 +347,7 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
     // independent cache-line requests without changing the CPU LSU width.
     VX_mem_bus_if #(
         .DATA_SIZE (DCACHE_WORD_SIZE),
-        .TAG_WIDTH (DCACHE_TAG_WIDTH)
+        .TAG_WIDTH (DMA_DCACHE_TAG_WIDTH)
     ) dcache_dma_lane_if[`DMA_DCACHE_PORTS]();
 
     if (`DMA_DCACHE_PORTS == 1) begin : g_single_dma_dcache_port
@@ -358,7 +356,7 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
         VX_mem_bus_split #(
             .NUM_LANES      (`DMA_DCACHE_PORTS),
             .LANE_DATA_SIZE (DCACHE_WORD_SIZE),
-            .TAG_WIDTH      (DCACHE_TAG_WIDTH),
+            .TAG_WIDTH      (DMA_DCACHE_TAG_WIDTH),
             .ENABLE_LANE_MASK(1)
         ) dma_dcache_split (
             .clk         (clk),
@@ -372,23 +370,23 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
         if ((i < DCACHE_NUM_REQS) && (i < `DMA_DCACHE_PORTS)) begin : g_cpu_dma_arb
             VX_mem_bus_if #(
                 .DATA_SIZE (DCACHE_WORD_SIZE),
-                .TAG_WIDTH (DCACHE_TAG_WIDTH)
+                .TAG_WIDTH (DCACHE_ARB_TAG_WIDTH)
             ) dcache_arb_in_if[2]();
 
             VX_mem_bus_if #(
                 .DATA_SIZE (DCACHE_WORD_SIZE),
-                .TAG_WIDTH (DCACHE_ARB_TAG_WIDTH)
+                .TAG_WIDTH (DCACHE_CORE_TAG_WIDTH)
             ) dcache_arb_out_if[1]();
 
-            `ASSIGN_VX_MEM_BUS_IF(dcache_arb_in_if[0], dcache_cpu_bus_if[i]);
-            `ASSIGN_VX_MEM_BUS_IF(dcache_arb_in_if[1], dcache_dma_lane_if[i]);
+            `ASSIGN_VX_MEM_BUS_IF_EX(dcache_arb_in_if[0], dcache_cpu_bus_if[i], DCACHE_ARB_TAG_WIDTH, DCACHE_TAG_WIDTH, UUID_WIDTH);
+            `ASSIGN_VX_MEM_BUS_IF_EX(dcache_arb_in_if[1], dcache_dma_lane_if[i], DCACHE_ARB_TAG_WIDTH, DMA_DCACHE_TAG_WIDTH, UUID_WIDTH);
 
             VX_mem_arb #(
                 .NUM_INPUTS  (2),
                 .NUM_OUTPUTS (1),
                 .DATA_SIZE   (DCACHE_WORD_SIZE),
-                .TAG_WIDTH   (DCACHE_TAG_WIDTH),
-                .TAG_SEL_IDX (DCACHE_TAG_WIDTH - UUID_WIDTH),
+                .TAG_WIDTH   (DCACHE_ARB_TAG_WIDTH),
+                .TAG_SEL_IDX (DCACHE_ARB_TAG_WIDTH - UUID_WIDTH),
                 .REQ_OUT_BUF (3),
                 .RSP_OUT_BUF (3),
                 .ARBITER     ("P")
@@ -401,9 +399,9 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
 
             `ASSIGN_VX_MEM_BUS_IF(dcache_bus_if[i], dcache_arb_out_if[0]);
         end else if (i < DCACHE_NUM_REQS) begin : g_cpu_only
-            `ASSIGN_VX_MEM_BUS_IF_EX(dcache_bus_if[i], dcache_cpu_bus_if[i], DCACHE_ARB_TAG_WIDTH, DCACHE_TAG_WIDTH, UUID_WIDTH);
+            `ASSIGN_VX_MEM_BUS_IF_EX(dcache_bus_if[i], dcache_cpu_bus_if[i], DCACHE_CORE_TAG_WIDTH, DCACHE_TAG_WIDTH, UUID_WIDTH);
         end else begin : g_dma_only
-            `ASSIGN_VX_MEM_BUS_IF_EX(dcache_bus_if[i], dcache_dma_lane_if[i], DCACHE_ARB_TAG_WIDTH, DCACHE_TAG_WIDTH, UUID_WIDTH);
+            `ASSIGN_VX_MEM_BUS_IF_EX(dcache_bus_if[i], dcache_dma_lane_if[i], DCACHE_CORE_TAG_WIDTH, DMA_DCACHE_TAG_WIDTH, UUID_WIDTH);
         end
 
     end
