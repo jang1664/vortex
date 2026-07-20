@@ -218,7 +218,13 @@ set ip_files [list \
  [file normalize "${build_dir}/ip/xil_f32mul/xil_f32mul.xci"] \
  [file normalize "${build_dir}/ip/xil_f16add/xil_f16add.xci"] \
  [file normalize "${build_dir}/ip/xil_f16mul/xil_f16mul.xci"] \
-]
+ [file normalize "${build_dir}/ip/xil_f32add_low_latency/xil_f32add_low_latency.xci"] \
+ [file normalize "${build_dir}/ip/xil_f32mul_low_latency/xil_f32mul_low_latency.xci"] \
+ [file normalize "${build_dir}/ip/xil_f16mul_low_latency/xil_f16mul_low_latency.xci"] \
+ [file normalize "${build_dir}/ip/xil_f32add_latency1/xil_f32add_latency1.xci"] \
+ [file normalize "${build_dir}/ip/xil_f32mul_latency1/xil_f32mul_latency1.xci"] \
+ [file normalize "${build_dir}/ip/xil_f16mul_latency1/xil_f16mul_latency1.xci"] \
+ ]
 add_files -verbose -norecurse -fileset $obj $ip_files
 
 set_property include_dirs ${vincludes_list} [current_fileset]

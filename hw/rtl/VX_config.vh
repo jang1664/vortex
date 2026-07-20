@@ -257,6 +257,13 @@
 `define LMEM_BASE_ADDR  `STACK_BASE_ADDR
 `endif
 
+// Local-memory HIER crossbar fanout. Define LMEM_REQ_OMEGA_ENABLE and/or
+// LMEM_RSP_OMEGA_ENABLE to select the radix-2 Omega fabric for that direction.
+// These are presence macros: defining either macro to 0 still enables Omega.
+`ifndef LMEM_XBAR_MAX_FANOUT
+`define LMEM_XBAR_MAX_FANOUT `MAX_FANOUT
+`endif
+
 `ifndef LMEM_DMA_RD_PREFETCH_DEPTH
 `define LMEM_DMA_RD_PREFETCH_DEPTH 4
 `endif

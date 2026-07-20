@@ -57,8 +57,24 @@ module VX_local_mem import VX_gpu_pkg::*; #(
     localparam BANK_SEL_WIDTH  = `UP(BANK_SEL_BITS);
     localparam REQ_DATAW       = 1 + BANK_ADDR_WIDTH + WORD_SIZE + WORD_WIDTH + TAG_WIDTH;
     localparam RSP_DATAW       = WORD_WIDTH + TAG_WIDTH;
+    localparam LMEM_XBAR_FANOUT_VALID = (`LMEM_XBAR_MAX_FANOUT == 0)
+                                     || ((`LMEM_XBAR_MAX_FANOUT >= 2)
+                                      && `IS_POW2(`LMEM_XBAR_MAX_FANOUT));
+
+`ifdef LMEM_REQ_OMEGA_ENABLE
+`ifdef LMEM_RSP_OMEGA_ENABLE
+    `UNUSED_PARAM (LMEM_XBAR_FANOUT_VALID)
+`endif
+`endif
 
     `VX_STATIC_ASSERT(ADDR_WIDTH == (BANK_ADDR_WIDTH + `CLOG2(NUM_BANKS)), ("invalid parameter"))
+
+`ifndef LMEM_REQ_OMEGA_ENABLE
+    `VX_STATIC_ASSERT(LMEM_XBAR_FANOUT_VALID, ("invalid LMEM_XBAR_MAX_FANOUT=%0d: expected 0 or a power of two >= 2", `LMEM_XBAR_MAX_FANOUT))
+`endif
+`ifndef LMEM_RSP_OMEGA_ENABLE
+    `VX_STATIC_ASSERT(LMEM_XBAR_FANOUT_VALID, ("invalid LMEM_XBAR_MAX_FANOUT=%0d: expected 0 or a power of two >= 2", `LMEM_XBAR_MAX_FANOUT))
+`endif
 
     // bank selection
 
@@ -96,10 +112,6 @@ module VX_local_mem import VX_gpu_pkg::*; #(
     wire [NUM_REQS-1:0][REQ_DATAW-1:0]  req_data_in;
     wire [NUM_REQS-1:0]                 req_ready_in;
 
-`ifdef PERF_ENABLE
-    wire [PERF_CTR_BITS-1:0] perf_collisions;
-`endif
-
     for (genvar i = 0; i < NUM_REQS; ++i) begin : g_req_data_in
         assign req_valid_in[i] = mem_bus_if[i].req_valid;
         assign req_data_in[i] = {
@@ -112,21 +124,19 @@ module VX_local_mem import VX_gpu_pkg::*; #(
         assign mem_bus_if[i].req_ready = req_ready_in[i];
     end
 
-    VX_stream_xbar #(
-        .NUM_INPUTS  (NUM_REQS),
-        .NUM_OUTPUTS (NUM_BANKS),
-        .DATAW       (REQ_DATAW),
+`ifdef LMEM_REQ_OMEGA_ENABLE
+    VX_stream_omega #(
+        .NUM_INPUTS    (NUM_REQS),
+        .NUM_OUTPUTS   (NUM_BANKS),
+        .RADIX         (2),
+        .DATAW         (REQ_DATAW),
         .PERF_CTR_BITS (PERF_CTR_BITS),
-        .ARBITER     ("P"),
-        .OUT_BUF     (3) // output should be registered for the data_store addressing
+        .ARBITER       ("P"),
+        .OUT_BUF       (3) // output should be registered for the data_store addressing
     ) req_xbar (
         .clk       (clk),
         .reset     (reset),
-    `ifdef PERF_ENABLE
-        .collisions (perf_collisions),
-    `else
         `UNUSED_PIN (collisions),
-    `endif
         .valid_in  (req_valid_in),
         .data_in   (req_data_in),
         .sel_in    (req_bank_idx),
@@ -136,6 +146,40 @@ module VX_local_mem import VX_gpu_pkg::*; #(
         .sel_out   (per_bank_req_idx),
         .ready_out (per_bank_req_ready)
     );
+`else
+    if (LMEM_XBAR_FANOUT_VALID) begin : g_req_hier_valid
+        VX_stream_xbar #(
+            .NUM_INPUTS    (NUM_REQS),
+            .NUM_OUTPUTS   (NUM_BANKS),
+            .DATAW         (REQ_DATAW),
+            .PERF_CTR_BITS (PERF_CTR_BITS),
+            .ARBITER       ("P"),
+            .OUT_BUF       (3), // output should be registered for the data_store addressing
+            .MAX_FANOUT    (`LMEM_XBAR_MAX_FANOUT)
+        ) req_xbar (
+            .clk       (clk),
+            .reset     (reset),
+            `UNUSED_PIN (collisions),
+            .valid_in  (req_valid_in),
+            .data_in   (req_data_in),
+            .sel_in    (req_bank_idx),
+            .ready_in  (req_ready_in),
+            .valid_out (per_bank_req_valid),
+            .data_out  (per_bank_req_data_aos),
+            .sel_out   (per_bank_req_idx),
+            .ready_out (per_bank_req_ready)
+        );
+    end else begin : g_req_hier_invalid
+        assign per_bank_req_valid    = '0;
+        assign per_bank_req_data_aos = '0;
+        assign per_bank_req_idx      = '0;
+        assign req_ready_in          = '0;
+        `UNUSED_VAR (req_data_in)
+        initial begin : invalid_LMEM_XBAR_MAX_FANOUT
+            $error("invalid LMEM_XBAR_MAX_FANOUT=%0d: expected 0 or a power of two >= 2", `LMEM_XBAR_MAX_FANOUT);
+        end
+    end
+`endif
 
     for (genvar i = 0; i < NUM_BANKS; ++i) begin : g_per_bank_req_data_soa
         assign {
@@ -220,12 +264,15 @@ module VX_local_mem import VX_gpu_pkg::*; #(
     wire [NUM_REQS-1:0][RSP_DATAW-1:0]  rsp_data_out;
     wire [NUM_REQS-1:0]                 rsp_ready_out;
 
-    VX_stream_xbar #(
-        .NUM_INPUTS  (NUM_BANKS),
-        .NUM_OUTPUTS (NUM_REQS),
-        .DATAW       (RSP_DATAW),
-        .ARBITER     ("P"), // this priority arbiter has negligeable impact om performance
-        .OUT_BUF     (OUT_BUF)
+`ifdef LMEM_RSP_OMEGA_ENABLE
+    VX_stream_omega #(
+        .NUM_INPUTS    (NUM_BANKS),
+        .NUM_OUTPUTS   (NUM_REQS),
+        .RADIX         (2),
+        .DATAW         (RSP_DATAW),
+        .PERF_CTR_BITS (PERF_CTR_BITS),
+        .ARBITER       ("P"), // this priority arbiter has negligeable impact om performance
+        .OUT_BUF       (OUT_BUF)
     ) rsp_xbar (
         .clk       (clk),
         .reset     (reset),
@@ -239,6 +286,41 @@ module VX_local_mem import VX_gpu_pkg::*; #(
         .ready_out (rsp_ready_out),
         `UNUSED_PIN (sel_out)
     );
+`else
+    if (LMEM_XBAR_FANOUT_VALID) begin : g_rsp_hier_valid
+        VX_stream_xbar #(
+            .NUM_INPUTS    (NUM_BANKS),
+            .NUM_OUTPUTS   (NUM_REQS),
+            .DATAW         (RSP_DATAW),
+            .PERF_CTR_BITS (PERF_CTR_BITS),
+            .ARBITER       ("P"), // this priority arbiter has negligeable impact om performance
+            .OUT_BUF       (OUT_BUF),
+            .MAX_FANOUT    (`LMEM_XBAR_MAX_FANOUT)
+        ) rsp_xbar (
+            .clk       (clk),
+            .reset     (reset),
+            `UNUSED_PIN (collisions),
+            .sel_in    (per_bank_rsp_idx),
+            .valid_in  (per_bank_rsp_valid),
+            .data_in   (per_bank_rsp_data_aos),
+            .ready_in  (per_bank_rsp_ready),
+            .valid_out (rsp_valid_out),
+            .data_out  (rsp_data_out),
+            .ready_out (rsp_ready_out),
+            `UNUSED_PIN (sel_out)
+        );
+    end else begin : g_rsp_hier_invalid
+        assign rsp_valid_out      = '0;
+        assign rsp_data_out       = '0;
+        assign per_bank_rsp_ready = '0;
+        `UNUSED_VAR (per_bank_rsp_valid)
+        `UNUSED_VAR (per_bank_rsp_idx)
+        `UNUSED_VAR (per_bank_rsp_data_aos)
+        initial begin : invalid_LMEM_XBAR_MAX_FANOUT
+            $error("invalid LMEM_XBAR_MAX_FANOUT=%0d: expected 0 or a power of two >= 2", `LMEM_XBAR_MAX_FANOUT);
+        end
+    end
+`endif
 
     for (genvar i = 0; i < NUM_REQS; ++i) begin : g_mem_bus_if
         assign mem_bus_if[i].rsp_valid = rsp_valid_out[i];
@@ -251,6 +333,29 @@ module VX_local_mem import VX_gpu_pkg::*; #(
     wire [`CLOG2(NUM_REQS+1)-1:0] perf_reads_per_cycle;
     wire [`CLOG2(NUM_REQS+1)-1:0] perf_writes_per_cycle;
     wire [`CLOG2(NUM_REQS+1)-1:0] perf_crsp_stall_per_cycle;
+
+    // Preserve the legacy final-bank collision definition independently of
+    // the selected request fabric. Count each duplicate requester once when
+    // at least one request in the colliding pair can make forward progress.
+    reg [NUM_REQS-1:0] perf_bank_collision_per_req;
+    reg [NUM_REQS-1:0] perf_bank_collision_per_req_r;
+    wire [`CLOG2(NUM_REQS+1)-1:0] perf_bank_collisions_per_cycle;
+    reg [PERF_CTR_BITS-1:0] perf_bank_stalls;
+
+    always @(*) begin
+        perf_bank_collision_per_req = '0;
+        for (integer i = 0; i < NUM_REQS; ++i) begin
+            for (integer j = i + 1; j < NUM_REQS; ++j) begin
+                perf_bank_collision_per_req[i] |= req_valid_in[i]
+                                                && req_valid_in[j]
+                                                && (req_bank_idx[i] == req_bank_idx[j])
+                                                && (req_ready_in[i] | req_ready_in[j]);
+            end
+        end
+    end
+
+    `BUFFER(perf_bank_collision_per_req_r, perf_bank_collision_per_req);
+    `POP_COUNT(perf_bank_collisions_per_cycle, perf_bank_collision_per_req_r);
 
     wire [NUM_REQS-1:0] req_rw;
     for (genvar i = 0; i < NUM_REQS; ++i) begin : g_req_rw
@@ -276,16 +381,18 @@ module VX_local_mem import VX_gpu_pkg::*; #(
             perf_reads       <= '0;
             perf_writes      <= '0;
             perf_crsp_stalls <= '0;
+            perf_bank_stalls <= '0;
         end else begin
             perf_reads       <= perf_reads  + PERF_CTR_BITS'(perf_reads_per_cycle);
             perf_writes      <= perf_writes + PERF_CTR_BITS'(perf_writes_per_cycle);
             perf_crsp_stalls <= perf_crsp_stalls + PERF_CTR_BITS'(perf_crsp_stall_per_cycle);
+            perf_bank_stalls <= perf_bank_stalls + PERF_CTR_BITS'(perf_bank_collisions_per_cycle);
         end
     end
 
     assign lmem_perf.reads       = perf_reads;
     assign lmem_perf.writes      = perf_writes;
-    assign lmem_perf.bank_stalls = perf_collisions;
+    assign lmem_perf.bank_stalls = perf_bank_stalls;
     assign lmem_perf.crsp_stalls = perf_crsp_stalls;
 
 `endif

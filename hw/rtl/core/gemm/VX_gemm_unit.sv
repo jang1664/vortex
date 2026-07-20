@@ -64,9 +64,11 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
     // FPNEW/DPI wrapper latency parameters are set so the effective latency
     // matches the generated Xilinx IP latency, accounting for the wrapper's
     // input and output buffers.
-    localparam FP16_MUL_LATENCY = 5;  // xil_f16mul C_Latency=7
-    localparam FP32_MUL_LATENCY = 7;  // xil_f32mul C_Latency=9
-    localparam FP32_ADD_LATENCY = 10; // xil_f32add C_Latency=12
+    // Xilinx latency-1 IP uses C_Latency=1. The wrappers model this with one
+    // input buffer cycle and no output buffer cycle in FPNEW/DPI simulation.
+    localparam FP16_MUL_LATENCY = 0;
+    localparam FP32_MUL_LATENCY = 0;
+    localparam FP32_ADD_LATENCY = 0;
     localparam int ACC_RD_FIFO_DEPTH = 4;
     localparam int ACC_RD_CREDIT_MAX = ACC_RD_FIFO_DEPTH;
     localparam int ACC_RD_CREDIT_W = `CLOG2(ACC_RD_CREDIT_MAX + 1);
@@ -960,8 +962,9 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
             assign b_data    = activated ? scale_regs[gemm_unit_ctrl.sreg_use_idx][i] : '0;
 
             VX_fp16_mul #(
-                .LATENCY (FP16_MUL_LATENCY),
-                .OUT_BUF (1)
+                .LATENCY        (FP16_MUL_LATENCY),
+                .OUT_BUF        (0),
+                .USE_LATENCY1_IP(1)
             ) u_in_scaler (
                 .clk          (clk),
                 .reset        (reset),
@@ -1242,8 +1245,9 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
 
 `ifdef GEMM_UNIT_FP16_OUT_SCALE
             VX_fp16_mul #(
-                .LATENCY (FP16_MUL_LATENCY),
-                .OUT_BUF (1)
+                .LATENCY        (FP16_MUL_LATENCY),
+                .OUT_BUF        (0),
+                .USE_LATENCY1_IP(1)
             ) u_out_scaler (
                 .clk          (clk),
                 .reset        (reset),
@@ -1272,8 +1276,9 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
         end
 `else
             VX_fp32_mul #(
-                .LATENCY (FP32_MUL_LATENCY),
-                .OUT_BUF (1)
+                .LATENCY        (FP32_MUL_LATENCY),
+                .OUT_BUF        (0),
+                .USE_LATENCY1_IP(1)
             ) u_out_scaler (
                 .clk          (clk),
                 .reset        (reset),
@@ -1360,8 +1365,9 @@ module VX_gemm_unit import VX_gpu_pkg::*; #(
             assign b_data  = ~acc_rd_fifo_empty ? acc_rd_fifo_out_data[i] : '0;
 
             VX_fp32_add #(
-                .LATENCY (FP32_ADD_LATENCY),
-                .OUT_BUF (1)
+                .LATENCY        (FP32_ADD_LATENCY),
+                .OUT_BUF        (0),
+                .USE_LATENCY1_IP(1)
             ) u_accumulator (
                 .clk          (clk),
                 .reset        (reset),

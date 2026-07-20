@@ -61,6 +61,8 @@ RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
 				$(RTL_DIR)/libs/VX_bits_insert.sv \
 				$(RTL_DIR)/libs/VX_sp_ram.sv \
 				$(RTL_DIR)/libs/VX_stream_xbar.sv \
+				$(RTL_DIR)/libs/VX_stream_omega.sv \
+				$(RTL_DIR)/libs/VX_transpose.sv \
 				$(RTL_DIR)/libs/VX_stream_switch.sv \
 				$(RTL_DIR)/libs/VX_popcount.sv \
 				$(RTL_DIR)/libs/VX_mul_u32_pipe.sv \

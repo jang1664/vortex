@@ -26,7 +26,9 @@
 
 module VX_fp16_mul #(
     parameter LATENCY = 2,
-    parameter OUT_BUF = 0
+    parameter OUT_BUF = 0,
+    parameter USE_LOW_LATENCY_IP = 0,
+    parameter USE_LATENCY1_IP = 0
 ) (
     input  wire        clk,
     input  wire        reset,
@@ -350,26 +352,58 @@ module VX_fp16_mul #(
 
 `else // Vivado IP or XSIM — native FP16 Xilinx IP
 
-    xil_f16mul xil_f16mul_inst (
-        .aclk                (clk),
-        .aresetn             (~reset),
-        .aclken              (1'b1),
+    if (USE_LATENCY1_IP) begin : g_latency1
+        xil_f16mul_latency1 xil_f16mul_inst (
+            .aclk                (clk),
+            .aresetn             (~reset),
+            .aclken              (1'b1),
+            .s_axis_a_tvalid     (a_valid),
+            .s_axis_a_tready     (a_ready),
+            .s_axis_a_tdata      (a_data),
+            .s_axis_b_tvalid     (b_valid),
+            .s_axis_b_tready     (b_ready),
+            .s_axis_b_tdata      (b_data),
+            .m_axis_result_tvalid(result_valid),
+            .m_axis_result_tready(result_ready),
+            .m_axis_result_tdata (result_data)
+        );
+    end else if (USE_LOW_LATENCY_IP) begin : g_low_latency
+        xil_f16mul_low_latency xil_f16mul_inst (
+            .aclk                (clk),
+            .aresetn             (~reset),
+            .aclken              (1'b1),
+            .s_axis_a_tvalid     (a_valid),
+            .s_axis_a_tready     (a_ready),
+            .s_axis_a_tdata      (a_data),
+            .s_axis_b_tvalid     (b_valid),
+            .s_axis_b_tready     (b_ready),
+            .s_axis_b_tdata      (b_data),
+            .m_axis_result_tvalid(result_valid),
+            .m_axis_result_tready(result_ready),
+            .m_axis_result_tdata (result_data)
+        );
+    end else begin : g_default_latency
+        xil_f16mul xil_f16mul_inst (
+            .aclk                (clk),
+            .aresetn             (~reset),
+            .aclken              (1'b1),
 
-        // Input A (AXI Stream)
-        .s_axis_a_tvalid     (a_valid),
-        .s_axis_a_tready     (a_ready),
-        .s_axis_a_tdata      (a_data),
+            // Input A (AXI Stream)
+            .s_axis_a_tvalid     (a_valid),
+            .s_axis_a_tready     (a_ready),
+            .s_axis_a_tdata      (a_data),
 
-        // Input B (AXI Stream)
-        .s_axis_b_tvalid     (b_valid),
-        .s_axis_b_tready     (b_ready),
-        .s_axis_b_tdata      (b_data),
+            // Input B (AXI Stream)
+            .s_axis_b_tvalid     (b_valid),
+            .s_axis_b_tready     (b_ready),
+            .s_axis_b_tdata      (b_data),
 
-        // Output (AXI Stream)
-        .m_axis_result_tvalid(result_valid),
-        .m_axis_result_tready(result_ready),
-        .m_axis_result_tdata (result_data)
-    );
+            // Output (AXI Stream)
+            .m_axis_result_tvalid(result_valid),
+            .m_axis_result_tready(result_ready),
+            .m_axis_result_tdata (result_data)
+        );
+    end
 
 `ifdef DBG_TRACE_GEMM
     always @(posedge clk) begin

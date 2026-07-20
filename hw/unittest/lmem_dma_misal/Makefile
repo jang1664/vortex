@@ -44,6 +44,8 @@ RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
 				$(RTL_DIR)/core/gemm/VX_lmem_dma_ctrl_if.sv \
 				$(RTL_DIR)/core/gemm/VX_gemm_sync_if.sv \
 				$(RTL_DIR)/libs/VX_stream_xbar.sv \
+				$(RTL_DIR)/libs/VX_stream_omega.sv \
+				$(RTL_DIR)/libs/VX_transpose.sv \
 				$(RTL_DIR)/libs/VX_sp_ram.sv \
 				$(RTL_DIR)/libs/VX_dp_ram.sv \
 				$(RTL_DIR)/libs/VX_pipe_buffer.sv \

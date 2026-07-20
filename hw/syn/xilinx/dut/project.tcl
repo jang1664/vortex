@@ -92,6 +92,12 @@ proc run_setup {} {
     add_files -norecurse -verbose ${ip_dir}/xil_f32mul/xil_f32mul.xci
     add_files -norecurse -verbose ${ip_dir}/xil_f16add/xil_f16add.xci
     add_files -norecurse -verbose ${ip_dir}/xil_f16mul/xil_f16mul.xci
+    add_files -norecurse -verbose ${ip_dir}/xil_f32add_low_latency/xil_f32add_low_latency.xci
+    add_files -norecurse -verbose ${ip_dir}/xil_f32mul_low_latency/xil_f32mul_low_latency.xci
+    add_files -norecurse -verbose ${ip_dir}/xil_f16mul_low_latency/xil_f16mul_low_latency.xci
+    add_files -norecurse -verbose ${ip_dir}/xil_f32add_latency1/xil_f32add_latency1.xci
+    add_files -norecurse -verbose ${ip_dir}/xil_f32mul_latency1/xil_f32mul_latency1.xci
+    add_files -norecurse -verbose ${ip_dir}/xil_f16mul_latency1/xil_f16mul_latency1.xci
   }
 
   # Synthesis

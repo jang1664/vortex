@@ -38,6 +38,7 @@ import os
 import subprocess
 import sys
 import re
+import shlex
 
 # Patterns that indicate pass in simulation logs
 PASS_PATTERNS = [
@@ -236,6 +237,12 @@ def run_unittest_make(test_dir, sim, params, extra_sim_args):
         with open(log_file) as f:
             log_text = f.read()
 
+    if rc != 0:
+        report("sim_fail", param_test_name or test_name,
+               error_log=extract_errors(log_text),
+               log_file=log_file)
+        return 1
+
     if check_pass(log_text):
         report("pass", param_test_name or test_name, log_file=log_file)
         return 0
@@ -250,7 +257,25 @@ def run_unittest_test_sh(test_dir, sim, mode):
     """Run unittest via test.sh (regression)."""
     test_name = f"{os.path.basename(test_dir)}/{mode}"
 
-    cmd = f"SIM_EXEC={sim} bash test.sh {mode}"
+    script_path = os.path.join(test_dir, "test.sh")
+    build_dir_env = ""
+    if not os.path.isfile(script_path):
+        repo_root = subprocess.check_output(
+            ["git", "rev-parse", "--show-toplevel"], text=True
+        ).strip()
+        build_root = os.path.join(repo_root, "build")
+        relative_test_dir = os.path.relpath(test_dir, build_root)
+        source_script = os.path.join(repo_root, relative_test_dir, "test.sh")
+        if os.path.isfile(source_script):
+            script_path = source_script
+            build_dir_env = (
+                f"UNITTEST_BUILD_DIR={shlex.quote(test_dir)} "
+            )
+
+    cmd = (
+        f"{build_dir_env}SIM_EXEC={shlex.quote(sim)} "
+        f"bash {shlex.quote(script_path)} {shlex.quote(mode)}"
+    )
     rc, output = run_cmd(cmd, cwd=test_dir, timeout=3600)
 
     # Parse summary line: [RESULT] pass=N fail=M
@@ -261,7 +286,7 @@ def run_unittest_test_sh(test_dir, sim, mode):
         pass_count = int(match.group(1))
         fail_count = int(match.group(2))
 
-    if fail_count == 0 and pass_count > 0:
+    if rc == 0 and fail_count == 0 and pass_count > 0:
         report("pass", test_name,
                error_log=f"All {pass_count} tests passed")
         return 0
