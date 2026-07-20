@@ -410,6 +410,11 @@ set core [ipx::current_core]
 # (Broad re-add would drag in legitimately unreferenced test tops / sim helpers.)
 set force_packaged_sources {
     VX_dma_unit_align.sv
+    VX_dma_gearbox.sv
+    VX_dma_lane_aligner.sv
+    VX_dma_lane_assembler.sv
+    VX_dma_equal_realigner.sv
+    VX_dma_misal_gen_path.sv
     VX_dma_unit_misal.sv
     VX_dma_unit.sv
     VX_dma_engine.sv
