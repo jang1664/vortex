@@ -1,0 +1,526 @@
+ 
+****************************************
+Report : timing
+        -path full
+        -delay max
+        -nets
+        -max_paths 10
+        -transition_time
+Design : axi_mux__72e845b58ea3
+Scenario(s): mode_norm.OC_rvt_ss_0p900v_125c
+Version: V-2023.12-SP5-3
+Date   : Tue Jul 21 11:04:00 2026
+****************************************
+
+ * Some/all delay information is back-annotated.
+Wire Load Model Mode: Inactive.
+
+  Startpoint: gen_mux_i_aw_arbiter/gen_arbiter_gen_int_rr_gen_lock_lock_q_reg
+              (rising edge-triggered flip-flop)
+  Endpoint: slv_resps_o[539]
+            (output port)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: (none)
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                                                                                                    Fanout     Trans      Incr       Path      Attributes     Voltage
+  --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  gen_mux_i_aw_arbiter/gen_arbiter_gen_int_rr_gen_lock_lock_q_reg/CK (DFFRPQ_X0P5M_A9TR)                               0.30      0.00       0.00 r                   0.90
+  gen_mux_i_aw_arbiter/gen_arbiter_gen_int_rr_gen_lock_lock_q_reg/Q (DFFRPQ_X0P5M_A9TR)                                0.06      0.23       0.23 r                   0.90
+  gen_mux_i_aw_arbiter/gen_arbiter_gen_int_rr_gen_lock_lock_q (net)                                          3                   0.00       0.23 r                   
+  gen_mux_i_aw_arbiter/U3/Y (INV_X0P7M_A9TR)                                                                           0.03      0.03 *     0.26 f                   0.90
+  gen_mux_i_aw_arbiter/n31 (net)                                                                             2                   0.00       0.26 f                   
+  gen_mux_i_aw_arbiter/U5/Y (AOI22_X0P5M_A9TR)                                                                         0.17      0.11 *     0.37 r                   0.90
+  gen_mux_i_aw_arbiter/n36 (net)                                                                             4                   0.00       0.37 r                   
+  gen_mux_i_aw_arbiter/U6/Y (NOR2XB_X0P7M_A9TR)                                                                        0.05      0.06 *     0.43 f                   0.90
+  gen_mux_i_aw_arbiter/gen_arbiter_gen_int_rr_gen_fair_arb_lower_mask_1_ (net)                               1                   0.00       0.43 f                   
+  gen_mux_i_aw_arbiter/U7/Y (NOR2XB_X0P7M_A9TR)                                                                        0.67      0.40 *     0.83 r                   0.90
+  gen_mux_i_aw_arbiter/n33 (net)                                                                            23                   0.00       0.83 r                   
+  gen_mux_i_aw_arbiter/U11/Y (BUF_X1M_A9TR)                                                                            0.17      0.20 *     1.04 r                   0.90
+  gen_mux_i_aw_arbiter/n46 (net)                                                                            16                   0.00       1.04 r                   
+  gen_mux_i_aw_arbiter/U16/Y (INV_X0P7M_A9TR)                                                                          0.21      0.19 *     1.22 f                   0.90
+  gen_mux_i_aw_arbiter/data_o[78] (net)                                                                     18                   0.00       1.22 f                   
+  gen_mux_i_aw_arbiter/U15/Y (NOR2_X0P5B_A9TR)                                                                         0.08      0.07 *     1.29 r                   0.90
+  gen_mux_i_aw_arbiter/gnt_o[0] (net)                                                                        1                   0.00       1.29 r                   
+  gen_mux_i_aw_arbiter/gnt_o[0] (rr_arb_tree_00000002_1_1_523242)                                                                0.00       1.29 r                   
+  gen_mux_slv_aw_readies[0] (net)                                                                                                0.00       1.29 r                   
+  gen_mux_gen_id_prepend_0__i_id_prepend/mst_aw_readies_i[0] (axi_id_prepend_00000001_00000008_00000009_610242_1)                0.00       1.29 r                   
+  gen_mux_gen_id_prepend_0__i_id_prepend/mst_aw_readies_i[0] (net)                                                               0.00       1.29 r                   
+  gen_mux_gen_id_prepend_0__i_id_prepend/U5/Y (BUF_X1M_A9TR)                                                           0.03      0.06 *     1.35 r                   0.90
+  gen_mux_gen_id_prepend_0__i_id_prepend/slv_aw_readies_o[0] (net)                                           1                   0.00       1.35 r                   
+  gen_mux_gen_id_prepend_0__i_id_prepend/slv_aw_readies_o[0] (axi_id_prepend_00000001_00000008_00000009_610242_1)                0.00       1.35 r                   
+  slv_resps_o[539] (net)                                                                                                         0.00       1.35 r                   
+  slv_resps_o[539] (out)                                                                                               0.03      0.00 *     1.35 r                   
+  data arrival time                                                                                                                         1.35                     
+  --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  (Path is unconstrained)
+
+
+  Startpoint: gen_mux_i_w_fifo/read_pointer_q_reg_0_
+              (rising edge-triggered flip-flop)
+  Endpoint: mst_req_o[349]
+            (output port)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: (none)
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                                                                                     Fanout     Trans      Incr       Path      Attributes     Voltage
+  -----------------------------------------------------------------------------------------------------------------------------------------------------------------
+  gen_mux_i_w_fifo/read_pointer_q_reg_0_/CK (DFFRPQ_X0P5M_A9TR)                                         0.05      0.00       0.00 r                   0.90
+  gen_mux_i_w_fifo/read_pointer_q_reg_0_/Q (DFFRPQ_X0P5M_A9TR)                                          0.05      0.17       0.17 f                   0.90
+  gen_mux_i_w_fifo/read_pointer_q[0] (net)                                                    6                   0.00       0.17 f                   
+  gen_mux_i_w_fifo/U23/Y (INV_X0P7M_A9TR)                                                               0.06      0.06 *     0.22 r                   0.90
+  gen_mux_i_w_fifo/n77 (net)                                                                  5                   0.00       0.22 r                   
+  gen_mux_i_w_fifo/U25/Y (AOI221_X0P7M_A9TR)                                                            0.10      0.08 *     0.31 f                   0.90
+  gen_mux_i_w_fifo/n128 (net)                                                                 1                   0.00       0.31 f                   
+  gen_mux_i_w_fifo/U30/Y (OAI31_X3M_A9TR)                                                               0.71      0.45 *     0.76 r                   0.90
+  gen_mux_i_w_fifo/data_o[0] (net)                                                           52                   0.00       0.76 r                   
+  gen_mux_i_w_fifo/data_o[0] (fifo_v3_0_00000008_455242)                                                          0.00       0.76 r                   
+  n26 (net)                                                                                                       0.00       0.76 r                   
+  U1026/Y (BUF_X1M_A9TR)                                                                                0.20      0.23 *     0.99 r                   0.90
+  n173 (net)                                                                                 21                   0.00       0.99 r                   
+  U1039/Y (INV_X0P7M_A9TR)                                                                              0.17      0.17 *     1.16 f                   0.90
+  n174 (net)                                                                                 20                   0.00       1.16 f                   
+  U1115/Y (AO22_X0P7M_A9TR)                                                                             0.03      0.10 *     1.26 f                   0.90
+  gen_mux_mst_w_chan[272] (net)                                                               1                   0.00       1.26 f                   
+  gen_mux_i_w_spill_reg/data_i[272] (spill_register_2)                                                            0.00       1.26 f                   
+  gen_mux_i_w_spill_reg/data_i[272] (net)                                                                         0.00       1.26 f                   
+  gen_mux_i_w_spill_reg/spill_register_flushable_i/data_i[272] (spill_register_flushable_1_873242)                0.00       1.26 f                   
+  gen_mux_i_w_spill_reg/spill_register_flushable_i/data_i[272] (net)                                              0.00       1.26 f                   
+  gen_mux_i_w_spill_reg/spill_register_flushable_i/U275/Y (BUF_X1M_A9TR)                                0.06      0.07 *     1.33 f                   0.90
+  gen_mux_i_w_spill_reg/spill_register_flushable_i/data_o[272] (net)                          1                   0.00       1.33 f                   
+  gen_mux_i_w_spill_reg/spill_register_flushable_i/data_o[272] (spill_register_flushable_1_873242)                0.00       1.33 f                   
+  gen_mux_i_w_spill_reg/data_o[272] (net)                                                                         0.00       1.33 f                   
+  gen_mux_i_w_spill_reg/data_o[272] (spill_register_2)                                                            0.00       1.33 f                   
+  mst_req_o[349] (net)                                                                                            0.00       1.33 f                   
+  mst_req_o[349] (out)                                                                                  0.06      0.00 *     1.33 f                   
+  data arrival time                                                                                                          1.33                     
+  -----------------------------------------------------------------------------------------------------------------------------------------------------------------
+  (Path is unconstrained)
+
+
+  Startpoint: gen_mux_i_w_fifo/read_pointer_q_reg_0_
+              (rising edge-triggered flip-flop)
+  Endpoint: mst_req_o[345]
+            (output port)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: (none)
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                                                                                     Fanout     Trans      Incr       Path      Attributes     Voltage
+  -----------------------------------------------------------------------------------------------------------------------------------------------------------------
+  gen_mux_i_w_fifo/read_pointer_q_reg_0_/CK (DFFRPQ_X0P5M_A9TR)                                         0.05      0.00       0.00 r                   0.90
+  gen_mux_i_w_fifo/read_pointer_q_reg_0_/Q (DFFRPQ_X0P5M_A9TR)                                          0.05      0.17       0.17 f                   0.90
+  gen_mux_i_w_fifo/read_pointer_q[0] (net)                                                    6                   0.00       0.17 f                   
+  gen_mux_i_w_fifo/U23/Y (INV_X0P7M_A9TR)                                                               0.06      0.06 *     0.22 r                   0.90
+  gen_mux_i_w_fifo/n77 (net)                                                                  5                   0.00       0.22 r                   
+  gen_mux_i_w_fifo/U25/Y (AOI221_X0P7M_A9TR)                                                            0.10      0.08 *     0.31 f                   0.90
+  gen_mux_i_w_fifo/n128 (net)                                                                 1                   0.00       0.31 f                   
+  gen_mux_i_w_fifo/U30/Y (OAI31_X3M_A9TR)                                                               0.71      0.45 *     0.76 r                   0.90
+  gen_mux_i_w_fifo/data_o[0] (net)                                                           52                   0.00       0.76 r                   
+  gen_mux_i_w_fifo/data_o[0] (fifo_v3_0_00000008_455242)                                                          0.00       0.76 r                   
+  n26 (net)                                                                                                       0.00       0.76 r                   
+  U1026/Y (BUF_X1M_A9TR)                                                                                0.20      0.23 *     0.99 r                   0.90
+  n173 (net)                                                                                 21                   0.00       0.99 r                   
+  U1039/Y (INV_X0P7M_A9TR)                                                                              0.17      0.17 *     1.16 f                   0.90
+  n174 (net)                                                                                 20                   0.00       1.16 f                   
+  U1119/Y (AO22_X0P7M_A9TR)                                                                             0.03      0.10 *     1.26 f                   0.90
+  gen_mux_mst_w_chan[268] (net)                                                               1                   0.00       1.26 f                   
+  gen_mux_i_w_spill_reg/data_i[268] (spill_register_2)                                                            0.00       1.26 f                   
+  gen_mux_i_w_spill_reg/data_i[268] (net)                                                                         0.00       1.26 f                   
+  gen_mux_i_w_spill_reg/spill_register_flushable_i/data_i[268] (spill_register_flushable_1_873242)                0.00       1.26 f                   
+  gen_mux_i_w_spill_reg/spill_register_flushable_i/data_i[268] (net)                                              0.00       1.26 f                   
+  gen_mux_i_w_spill_reg/spill_register_flushable_i/U271/Y (BUF_X1M_A9TR)                                0.06      0.07 *     1.32 f                   0.90
+  gen_mux_i_w_spill_reg/spill_register_flushable_i/data_o[268] (net)                          1                   0.00       1.32 f                   
+  gen_mux_i_w_spill_reg/spill_register_flushable_i/data_o[268] (spill_register_flushable_1_873242)                0.00       1.32 f                   
+  gen_mux_i_w_spill_reg/data_o[268] (net)                                                                         0.00       1.32 f                   
+  gen_mux_i_w_spill_reg/data_o[268] (spill_register_2)                                                            0.00       1.32 f                   
+  mst_req_o[345] (net)                                                                                            0.00       1.32 f                   
+  mst_req_o[345] (out)                                                                                  0.06      0.00 *     1.32 f                   
+  data arrival time                                                                                                          1.32                     
+  -----------------------------------------------------------------------------------------------------------------------------------------------------------------
+  (Path is unconstrained)
+
+
+  Startpoint: gen_mux_i_w_fifo/read_pointer_q_reg_0_
+              (rising edge-triggered flip-flop)
+  Endpoint: mst_req_o[93]
+            (output port)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: (none)
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                                                                                    Fanout     Trans      Incr       Path      Attributes     Voltage
+  ----------------------------------------------------------------------------------------------------------------------------------------------------------------
+  gen_mux_i_w_fifo/read_pointer_q_reg_0_/CK (DFFRPQ_X0P5M_A9TR)                                        0.05      0.00       0.00 r                   0.90
+  gen_mux_i_w_fifo/read_pointer_q_reg_0_/Q (DFFRPQ_X0P5M_A9TR)                                         0.05      0.17       0.17 f                   0.90
+  gen_mux_i_w_fifo/read_pointer_q[0] (net)                                                   6                   0.00       0.17 f                   
+  gen_mux_i_w_fifo/U23/Y (INV_X0P7M_A9TR)                                                              0.06      0.06 *     0.22 r                   0.90
+  gen_mux_i_w_fifo/n77 (net)                                                                 5                   0.00       0.22 r                   
+  gen_mux_i_w_fifo/U25/Y (AOI221_X0P7M_A9TR)                                                           0.10      0.08 *     0.31 f                   0.90
+  gen_mux_i_w_fifo/n128 (net)                                                                1                   0.00       0.31 f                   
+  gen_mux_i_w_fifo/U30/Y (OAI31_X3M_A9TR)                                                              0.71      0.45 *     0.76 r                   0.90
+  gen_mux_i_w_fifo/data_o[0] (net)                                                          52                   0.00       0.76 r                   
+  gen_mux_i_w_fifo/data_o[0] (fifo_v3_0_00000008_455242)                                                         0.00       0.76 r                   
+  n26 (net)                                                                                                      0.00       0.76 r                   
+  U1026/Y (BUF_X1M_A9TR)                                                                               0.20      0.23 *     0.99 r                   0.90
+  n173 (net)                                                                                21                   0.00       0.99 r                   
+  U1039/Y (INV_X0P7M_A9TR)                                                                             0.17      0.17 *     1.16 f                   0.90
+  n174 (net)                                                                                20                   0.00       1.16 f                   
+  U1068/Y (AO22_X0P7M_A9TR)                                                                            0.03      0.10 *     1.26 f                   0.90
+  gen_mux_mst_w_chan[16] (net)                                                               1                   0.00       1.26 f                   
+  gen_mux_i_w_spill_reg/data_i[16] (spill_register_2)                                                            0.00       1.26 f                   
+  gen_mux_i_w_spill_reg/data_i[16] (net)                                                                         0.00       1.26 f                   
+  gen_mux_i_w_spill_reg/spill_register_flushable_i/data_i[16] (spill_register_flushable_1_873242)                0.00       1.26 f                   
+  gen_mux_i_w_spill_reg/spill_register_flushable_i/data_i[16] (net)                                              0.00       1.26 f                   
+  gen_mux_i_w_spill_reg/spill_register_flushable_i/U19/Y (BUF_X1M_A9TR)                                0.06      0.07 *     1.32 f                   0.90
+  gen_mux_i_w_spill_reg/spill_register_flushable_i/data_o[16] (net)                          1                   0.00       1.32 f                   
+  gen_mux_i_w_spill_reg/spill_register_flushable_i/data_o[16] (spill_register_flushable_1_873242)                0.00       1.32 f                   
+  gen_mux_i_w_spill_reg/data_o[16] (net)                                                                         0.00       1.32 f                   
+  gen_mux_i_w_spill_reg/data_o[16] (spill_register_2)                                                            0.00       1.32 f                   
+  mst_req_o[93] (net)                                                                                            0.00       1.32 f                   
+  mst_req_o[93] (out)                                                                                  0.06      0.00 *     1.32 f                   
+  data arrival time                                                                                                         1.32                     
+  ----------------------------------------------------------------------------------------------------------------------------------------------------------------
+  (Path is unconstrained)
+
+
+  Startpoint: gen_mux_i_w_fifo/read_pointer_q_reg_0_
+              (rising edge-triggered flip-flop)
+  Endpoint: mst_req_o[352]
+            (output port)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: (none)
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                                                                                     Fanout     Trans      Incr       Path      Attributes     Voltage
+  -----------------------------------------------------------------------------------------------------------------------------------------------------------------
+  gen_mux_i_w_fifo/read_pointer_q_reg_0_/CK (DFFRPQ_X0P5M_A9TR)                                         0.05      0.00       0.00 r                   0.90
+  gen_mux_i_w_fifo/read_pointer_q_reg_0_/Q (DFFRPQ_X0P5M_A9TR)                                          0.05      0.17       0.17 f                   0.90
+  gen_mux_i_w_fifo/read_pointer_q[0] (net)                                                    6                   0.00       0.17 f                   
+  gen_mux_i_w_fifo/U23/Y (INV_X0P7M_A9TR)                                                               0.06      0.06 *     0.22 r                   0.90
+  gen_mux_i_w_fifo/n77 (net)                                                                  5                   0.00       0.22 r                   
+  gen_mux_i_w_fifo/U25/Y (AOI221_X0P7M_A9TR)                                                            0.10      0.08 *     0.31 f                   0.90
+  gen_mux_i_w_fifo/n128 (net)                                                                 1                   0.00       0.31 f                   
+  gen_mux_i_w_fifo/U30/Y (OAI31_X3M_A9TR)                                                               0.71      0.45 *     0.76 r                   0.90
+  gen_mux_i_w_fifo/data_o[0] (net)                                                           52                   0.00       0.76 r                   
+  gen_mux_i_w_fifo/data_o[0] (fifo_v3_0_00000008_455242)                                                          0.00       0.76 r                   
+  n26 (net)                                                                                                       0.00       0.76 r                   
+  U1026/Y (BUF_X1M_A9TR)                                                                                0.20      0.23 *     0.99 r                   0.90
+  n173 (net)                                                                                 21                   0.00       0.99 r                   
+  U1039/Y (INV_X0P7M_A9TR)                                                                              0.17      0.17 *     1.16 f                   0.90
+  n174 (net)                                                                                 20                   0.00       1.16 f                   
+  U1112/Y (AO22_X0P7M_A9TR)                                                                             0.03      0.10 *     1.26 f                   0.90
+  gen_mux_mst_w_chan[275] (net)                                                               1                   0.00       1.26 f                   
+  gen_mux_i_w_spill_reg/data_i[275] (spill_register_2)                                                            0.00       1.26 f                   
+  gen_mux_i_w_spill_reg/data_i[275] (net)                                                                         0.00       1.26 f                   
+  gen_mux_i_w_spill_reg/spill_register_flushable_i/data_i[275] (spill_register_flushable_1_873242)                0.00       1.26 f                   
+  gen_mux_i_w_spill_reg/spill_register_flushable_i/data_i[275] (net)                                              0.00       1.26 f                   
+  gen_mux_i_w_spill_reg/spill_register_flushable_i/U278/Y (BUF_X1M_A9TR)                                0.06      0.07 *     1.32 f                   0.90
+  gen_mux_i_w_spill_reg/spill_register_flushable_i/data_o[275] (net)                          1                   0.00       1.32 f                   
+  gen_mux_i_w_spill_reg/spill_register_flushable_i/data_o[275] (spill_register_flushable_1_873242)                0.00       1.32 f                   
+  gen_mux_i_w_spill_reg/data_o[275] (net)                                                                         0.00       1.32 f                   
+  gen_mux_i_w_spill_reg/data_o[275] (spill_register_2)                                                            0.00       1.32 f                   
+  mst_req_o[352] (net)                                                                                            0.00       1.32 f                   
+  mst_req_o[352] (out)                                                                                  0.06      0.00 *     1.32 f                   
+  data arrival time                                                                                                          1.32                     
+  -----------------------------------------------------------------------------------------------------------------------------------------------------------------
+  (Path is unconstrained)
+
+
+  Startpoint: gen_mux_i_w_fifo/read_pointer_q_reg_0_
+              (rising edge-triggered flip-flop)
+  Endpoint: mst_req_o[355]
+            (output port)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: (none)
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                                                                                     Fanout     Trans      Incr       Path      Attributes     Voltage
+  -----------------------------------------------------------------------------------------------------------------------------------------------------------------
+  gen_mux_i_w_fifo/read_pointer_q_reg_0_/CK (DFFRPQ_X0P5M_A9TR)                                         0.05      0.00       0.00 r                   0.90
+  gen_mux_i_w_fifo/read_pointer_q_reg_0_/Q (DFFRPQ_X0P5M_A9TR)                                          0.05      0.17       0.17 f                   0.90
+  gen_mux_i_w_fifo/read_pointer_q[0] (net)                                                    6                   0.00       0.17 f                   
+  gen_mux_i_w_fifo/U23/Y (INV_X0P7M_A9TR)                                                               0.06      0.06 *     0.22 r                   0.90
+  gen_mux_i_w_fifo/n77 (net)                                                                  5                   0.00       0.22 r                   
+  gen_mux_i_w_fifo/U25/Y (AOI221_X0P7M_A9TR)                                                            0.10      0.08 *     0.31 f                   0.90
+  gen_mux_i_w_fifo/n128 (net)                                                                 1                   0.00       0.31 f                   
+  gen_mux_i_w_fifo/U30/Y (OAI31_X3M_A9TR)                                                               0.71      0.45 *     0.76 r                   0.90
+  gen_mux_i_w_fifo/data_o[0] (net)                                                           52                   0.00       0.76 r                   
+  gen_mux_i_w_fifo/data_o[0] (fifo_v3_0_00000008_455242)                                                          0.00       0.76 r                   
+  n26 (net)                                                                                                       0.00       0.76 r                   
+  U1026/Y (BUF_X1M_A9TR)                                                                                0.20      0.23 *     0.99 r                   0.90
+  n173 (net)                                                                                 21                   0.00       0.99 r                   
+  U1039/Y (INV_X0P7M_A9TR)                                                                              0.17      0.17 *     1.16 f                   0.90
+  n174 (net)                                                                                 20                   0.00       1.16 f                   
+  U1109/Y (AO22_X0P7M_A9TR)                                                                             0.03      0.10 *     1.26 f                   0.90
+  gen_mux_mst_w_chan[278] (net)                                                               1                   0.00       1.26 f                   
+  gen_mux_i_w_spill_reg/data_i[278] (spill_register_2)                                                            0.00       1.26 f                   
+  gen_mux_i_w_spill_reg/data_i[278] (net)                                                                         0.00       1.26 f                   
+  gen_mux_i_w_spill_reg/spill_register_flushable_i/data_i[278] (spill_register_flushable_1_873242)                0.00       1.26 f                   
+  gen_mux_i_w_spill_reg/spill_register_flushable_i/data_i[278] (net)                                              0.00       1.26 f                   
+  gen_mux_i_w_spill_reg/spill_register_flushable_i/U281/Y (BUF_X1M_A9TR)                                0.06      0.07 *     1.32 f                   0.90
+  gen_mux_i_w_spill_reg/spill_register_flushable_i/data_o[278] (net)                          1                   0.00       1.32 f                   
+  gen_mux_i_w_spill_reg/spill_register_flushable_i/data_o[278] (spill_register_flushable_1_873242)                0.00       1.32 f                   
+  gen_mux_i_w_spill_reg/data_o[278] (net)                                                                         0.00       1.32 f                   
+  gen_mux_i_w_spill_reg/data_o[278] (spill_register_2)                                                            0.00       1.32 f                   
+  mst_req_o[355] (net)                                                                                            0.00       1.32 f                   
+  mst_req_o[355] (out)                                                                                  0.06      0.00 *     1.32 f                   
+  data arrival time                                                                                                          1.32                     
+  -----------------------------------------------------------------------------------------------------------------------------------------------------------------
+  (Path is unconstrained)
+
+
+  Startpoint: gen_mux_i_w_fifo/read_pointer_q_reg_0_
+              (rising edge-triggered flip-flop)
+  Endpoint: mst_req_o[346]
+            (output port)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: (none)
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                                                                                     Fanout     Trans      Incr       Path      Attributes     Voltage
+  -----------------------------------------------------------------------------------------------------------------------------------------------------------------
+  gen_mux_i_w_fifo/read_pointer_q_reg_0_/CK (DFFRPQ_X0P5M_A9TR)                                         0.05      0.00       0.00 r                   0.90
+  gen_mux_i_w_fifo/read_pointer_q_reg_0_/Q (DFFRPQ_X0P5M_A9TR)                                          0.05      0.17       0.17 f                   0.90
+  gen_mux_i_w_fifo/read_pointer_q[0] (net)                                                    6                   0.00       0.17 f                   
+  gen_mux_i_w_fifo/U23/Y (INV_X0P7M_A9TR)                                                               0.06      0.06 *     0.22 r                   0.90
+  gen_mux_i_w_fifo/n77 (net)                                                                  5                   0.00       0.22 r                   
+  gen_mux_i_w_fifo/U25/Y (AOI221_X0P7M_A9TR)                                                            0.10      0.08 *     0.31 f                   0.90
+  gen_mux_i_w_fifo/n128 (net)                                                                 1                   0.00       0.31 f                   
+  gen_mux_i_w_fifo/U30/Y (OAI31_X3M_A9TR)                                                               0.71      0.45 *     0.76 r                   0.90
+  gen_mux_i_w_fifo/data_o[0] (net)                                                           52                   0.00       0.76 r                   
+  gen_mux_i_w_fifo/data_o[0] (fifo_v3_0_00000008_455242)                                                          0.00       0.76 r                   
+  n26 (net)                                                                                                       0.00       0.76 r                   
+  U1026/Y (BUF_X1M_A9TR)                                                                                0.20      0.23 *     0.99 r                   0.90
+  n173 (net)                                                                                 21                   0.00       0.99 r                   
+  U1039/Y (INV_X0P7M_A9TR)                                                                              0.17      0.17 *     1.16 f                   0.90
+  n174 (net)                                                                                 20                   0.00       1.16 f                   
+  U1118/Y (AO22_X0P7M_A9TR)                                                                             0.03      0.10 *     1.26 f                   0.90
+  gen_mux_mst_w_chan[269] (net)                                                               1                   0.00       1.26 f                   
+  gen_mux_i_w_spill_reg/data_i[269] (spill_register_2)                                                            0.00       1.26 f                   
+  gen_mux_i_w_spill_reg/data_i[269] (net)                                                                         0.00       1.26 f                   
+  gen_mux_i_w_spill_reg/spill_register_flushable_i/data_i[269] (spill_register_flushable_1_873242)                0.00       1.26 f                   
+  gen_mux_i_w_spill_reg/spill_register_flushable_i/data_i[269] (net)                                              0.00       1.26 f                   
+  gen_mux_i_w_spill_reg/spill_register_flushable_i/U272/Y (BUF_X1M_A9TR)                                0.05      0.07 *     1.32 f                   0.90
+  gen_mux_i_w_spill_reg/spill_register_flushable_i/data_o[269] (net)                          1                   0.00       1.32 f                   
+  gen_mux_i_w_spill_reg/spill_register_flushable_i/data_o[269] (spill_register_flushable_1_873242)                0.00       1.32 f                   
+  gen_mux_i_w_spill_reg/data_o[269] (net)                                                                         0.00       1.32 f                   
+  gen_mux_i_w_spill_reg/data_o[269] (spill_register_2)                                                            0.00       1.32 f                   
+  mst_req_o[346] (net)                                                                                            0.00       1.32 f                   
+  mst_req_o[346] (out)                                                                                  0.05      0.00 *     1.32 f                   
+  data arrival time                                                                                                          1.32                     
+  -----------------------------------------------------------------------------------------------------------------------------------------------------------------
+  (Path is unconstrained)
+
+
+  Startpoint: gen_mux_i_w_fifo/read_pointer_q_reg_0_
+              (rising edge-triggered flip-flop)
+  Endpoint: mst_req_o[344]
+            (output port)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: (none)
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                                                                                     Fanout     Trans      Incr       Path      Attributes     Voltage
+  -----------------------------------------------------------------------------------------------------------------------------------------------------------------
+  gen_mux_i_w_fifo/read_pointer_q_reg_0_/CK (DFFRPQ_X0P5M_A9TR)                                         0.05      0.00       0.00 r                   0.90
+  gen_mux_i_w_fifo/read_pointer_q_reg_0_/Q (DFFRPQ_X0P5M_A9TR)                                          0.05      0.17       0.17 f                   0.90
+  gen_mux_i_w_fifo/read_pointer_q[0] (net)                                                    6                   0.00       0.17 f                   
+  gen_mux_i_w_fifo/U23/Y (INV_X0P7M_A9TR)                                                               0.06      0.06 *     0.22 r                   0.90
+  gen_mux_i_w_fifo/n77 (net)                                                                  5                   0.00       0.22 r                   
+  gen_mux_i_w_fifo/U25/Y (AOI221_X0P7M_A9TR)                                                            0.10      0.08 *     0.31 f                   0.90
+  gen_mux_i_w_fifo/n128 (net)                                                                 1                   0.00       0.31 f                   
+  gen_mux_i_w_fifo/U30/Y (OAI31_X3M_A9TR)                                                               0.71      0.45 *     0.76 r                   0.90
+  gen_mux_i_w_fifo/data_o[0] (net)                                                           52                   0.00       0.76 r                   
+  gen_mux_i_w_fifo/data_o[0] (fifo_v3_0_00000008_455242)                                                          0.00       0.76 r                   
+  n26 (net)                                                                                                       0.00       0.76 r                   
+  U1026/Y (BUF_X1M_A9TR)                                                                                0.20      0.23 *     0.99 r                   0.90
+  n173 (net)                                                                                 21                   0.00       0.99 r                   
+  U1039/Y (INV_X0P7M_A9TR)                                                                              0.17      0.17 *     1.16 f                   0.90
+  n174 (net)                                                                                 20                   0.00       1.16 f                   
+  U1120/Y (AO22_X0P7M_A9TR)                                                                             0.03      0.10 *     1.26 f                   0.90
+  gen_mux_mst_w_chan[267] (net)                                                               1                   0.00       1.26 f                   
+  gen_mux_i_w_spill_reg/data_i[267] (spill_register_2)                                                            0.00       1.26 f                   
+  gen_mux_i_w_spill_reg/data_i[267] (net)                                                                         0.00       1.26 f                   
+  gen_mux_i_w_spill_reg/spill_register_flushable_i/data_i[267] (spill_register_flushable_1_873242)                0.00       1.26 f                   
+  gen_mux_i_w_spill_reg/spill_register_flushable_i/data_i[267] (net)                                              0.00       1.26 f                   
+  gen_mux_i_w_spill_reg/spill_register_flushable_i/U270/Y (BUF_X1M_A9TR)                                0.05      0.07 *     1.32 f                   0.90
+  gen_mux_i_w_spill_reg/spill_register_flushable_i/data_o[267] (net)                          1                   0.00       1.32 f                   
+  gen_mux_i_w_spill_reg/spill_register_flushable_i/data_o[267] (spill_register_flushable_1_873242)                0.00       1.32 f                   
+  gen_mux_i_w_spill_reg/data_o[267] (net)                                                                         0.00       1.32 f                   
+  gen_mux_i_w_spill_reg/data_o[267] (spill_register_2)                                                            0.00       1.32 f                   
+  mst_req_o[344] (net)                                                                                            0.00       1.32 f                   
+  mst_req_o[344] (out)                                                                                  0.05      0.00 *     1.32 f                   
+  data arrival time                                                                                                          1.32                     
+  -----------------------------------------------------------------------------------------------------------------------------------------------------------------
+  (Path is unconstrained)
+
+
+  Startpoint: gen_mux_i_w_fifo/read_pointer_q_reg_0_
+              (rising edge-triggered flip-flop)
+  Endpoint: mst_req_o[353]
+            (output port)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: (none)
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                                                                                     Fanout     Trans      Incr       Path      Attributes     Voltage
+  -----------------------------------------------------------------------------------------------------------------------------------------------------------------
+  gen_mux_i_w_fifo/read_pointer_q_reg_0_/CK (DFFRPQ_X0P5M_A9TR)                                         0.05      0.00       0.00 r                   0.90
+  gen_mux_i_w_fifo/read_pointer_q_reg_0_/Q (DFFRPQ_X0P5M_A9TR)                                          0.05      0.17       0.17 f                   0.90
+  gen_mux_i_w_fifo/read_pointer_q[0] (net)                                                    6                   0.00       0.17 f                   
+  gen_mux_i_w_fifo/U23/Y (INV_X0P7M_A9TR)                                                               0.06      0.06 *     0.22 r                   0.90
+  gen_mux_i_w_fifo/n77 (net)                                                                  5                   0.00       0.22 r                   
+  gen_mux_i_w_fifo/U25/Y (AOI221_X0P7M_A9TR)                                                            0.10      0.08 *     0.31 f                   0.90
+  gen_mux_i_w_fifo/n128 (net)                                                                 1                   0.00       0.31 f                   
+  gen_mux_i_w_fifo/U30/Y (OAI31_X3M_A9TR)                                                               0.71      0.45 *     0.76 r                   0.90
+  gen_mux_i_w_fifo/data_o[0] (net)                                                           52                   0.00       0.76 r                   
+  gen_mux_i_w_fifo/data_o[0] (fifo_v3_0_00000008_455242)                                                          0.00       0.76 r                   
+  n26 (net)                                                                                                       0.00       0.76 r                   
+  U1026/Y (BUF_X1M_A9TR)                                                                                0.20      0.23 *     0.99 r                   0.90
+  n173 (net)                                                                                 21                   0.00       0.99 r                   
+  U1039/Y (INV_X0P7M_A9TR)                                                                              0.17      0.17 *     1.16 f                   0.90
+  n174 (net)                                                                                 20                   0.00       1.16 f                   
+  U1111/Y (AO22_X0P7M_A9TR)                                                                             0.03      0.10 *     1.26 f                   0.90
+  gen_mux_mst_w_chan[276] (net)                                                               1                   0.00       1.26 f                   
+  gen_mux_i_w_spill_reg/data_i[276] (spill_register_2)                                                            0.00       1.26 f                   
+  gen_mux_i_w_spill_reg/data_i[276] (net)                                                                         0.00       1.26 f                   
+  gen_mux_i_w_spill_reg/spill_register_flushable_i/data_i[276] (spill_register_flushable_1_873242)                0.00       1.26 f                   
+  gen_mux_i_w_spill_reg/spill_register_flushable_i/data_i[276] (net)                                              0.00       1.26 f                   
+  gen_mux_i_w_spill_reg/spill_register_flushable_i/U279/Y (BUF_X1M_A9TR)                                0.05      0.07 *     1.32 f                   0.90
+  gen_mux_i_w_spill_reg/spill_register_flushable_i/data_o[276] (net)                          1                   0.00       1.32 f                   
+  gen_mux_i_w_spill_reg/spill_register_flushable_i/data_o[276] (spill_register_flushable_1_873242)                0.00       1.32 f                   
+  gen_mux_i_w_spill_reg/data_o[276] (net)                                                                         0.00       1.32 f                   
+  gen_mux_i_w_spill_reg/data_o[276] (spill_register_2)                                                            0.00       1.32 f                   
+  mst_req_o[353] (net)                                                                                            0.00       1.32 f                   
+  mst_req_o[353] (out)                                                                                  0.05      0.00 *     1.32 f                   
+  data arrival time                                                                                                          1.32                     
+  -----------------------------------------------------------------------------------------------------------------------------------------------------------------
+  (Path is unconstrained)
+
+
+  Startpoint: gen_mux_i_ar_arbiter/gen_arbiter_gen_int_rr_gen_lock_lock_q_reg
+              (rising edge-triggered flip-flop)
+  Endpoint: mst_req_o[31]
+            (output port)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: (none)
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                                                                                     Fanout     Trans      Incr       Path      Attributes     Voltage
+  -----------------------------------------------------------------------------------------------------------------------------------------------------------------
+  gen_mux_i_ar_arbiter/gen_arbiter_gen_int_rr_gen_lock_lock_q_reg/CK (DFFRPQ_X0P5M_A9TR)                0.30      0.00       0.00 r                   0.90
+  gen_mux_i_ar_arbiter/gen_arbiter_gen_int_rr_gen_lock_lock_q_reg/Q (DFFRPQ_X0P5M_A9TR)                 0.06      0.23       0.23 r                   0.90
+  gen_mux_i_ar_arbiter/gen_arbiter_gen_int_rr_gen_lock_lock_q (net)                           3                   0.00       0.23 r                   
+  gen_mux_i_ar_arbiter/U4/Y (INV_X0P7M_A9TR)                                                            0.03      0.03 *     0.27 f                   0.90
+  gen_mux_i_ar_arbiter/n31 (net)                                                              2                   0.00       0.27 f                   
+  gen_mux_i_ar_arbiter/U6/Y (AOI22_X1M_A9TR)                                                            0.10      0.07 *     0.34 r                   0.90
+  gen_mux_i_ar_arbiter/n35 (net)                                                              4                   0.00       0.34 r                   
+  gen_mux_i_ar_arbiter/U9/Y (NOR2B_X0P5M_A9TR)                                                          0.05      0.06 *     0.39 f                   0.90
+  gen_mux_i_ar_arbiter/gen_arbiter_gen_int_rr_gen_fair_arb_lower_mask_1_ (net)                1                   0.00       0.39 f                   
+  gen_mux_i_ar_arbiter/U10/Y (NOR2B_X2M_A9TR)                                                           0.75      0.45 *     0.84 r                   0.90
+  gen_mux_i_ar_arbiter/n36 (net)                                                             60                   0.00       0.84 r                   
+  gen_mux_i_ar_arbiter/U14/Y (INV_X0P7M_A9TR)                                                           0.30      0.31 *     1.15 f                   0.90
+  gen_mux_i_ar_arbiter/n47 (net)                                                             18                   0.00       1.15 f                   
+  gen_mux_i_ar_arbiter/U68/Y (AO22_X0P7M_A9TR)                                                          0.03      0.13 *     1.27 f                   0.90
+  gen_mux_i_ar_arbiter/data_o[29] (net)                                                       1                   0.00       1.27 f                   
+  gen_mux_i_ar_arbiter/data_o[29] (rr_arb_tree_00000002_1_1_029242)                                               0.00       1.27 f                   
+  gen_mux_mst_ar_chan[29] (net)                                                                                   0.00       1.27 f                   
+  gen_mux_i_ar_spill_reg/data_i[29] (spill_register_8)                                                            0.00       1.27 f                   
+  gen_mux_i_ar_spill_reg/data_i[29] (net)                                                                         0.00       1.27 f                   
+  gen_mux_i_ar_spill_reg/spill_register_flushable_i/data_i[29] (spill_register_flushable_1_029242)                0.00       1.27 f                   
+  gen_mux_i_ar_spill_reg/spill_register_flushable_i/data_i[29] (net)                                              0.00       1.27 f                   
+  gen_mux_i_ar_spill_reg/spill_register_flushable_i/U32/Y (BUF_X1M_A9TR)                                0.02      0.05 *     1.32 f                   0.90
+  gen_mux_i_ar_spill_reg/spill_register_flushable_i/data_o[29] (net)                          1                   0.00       1.32 f                   
+  gen_mux_i_ar_spill_reg/spill_register_flushable_i/data_o[29] (spill_register_flushable_1_029242)                0.00       1.32 f                   
+  gen_mux_i_ar_spill_reg/data_o[29] (net)                                                                         0.00       1.32 f                   
+  gen_mux_i_ar_spill_reg/data_o[29] (spill_register_8)                                                            0.00       1.32 f                   
+  mst_req_o[31] (net)                                                                                             0.00       1.32 f                   
+  mst_req_o[31] (out)                                                                                   0.02      0.00 *     1.32 f                   
+  data arrival time                                                                                                          1.32                     
+  -----------------------------------------------------------------------------------------------------------------------------------------------------------------
+  (Path is unconstrained)
+
+
+1

@@ -1,0 +1,772 @@
+ 
+****************************************
+Report : timing
+        -path full
+        -delay max
+        -nets
+        -max_paths 10
+        -transition_time
+Design : axi_demux__76a34b0373d8
+Scenario(s): mode_norm.OC_rvt_ss_0p900v_125c
+Version: V-2023.12-SP5-3
+Date   : Tue Jul 21 10:49:44 2026
+****************************************
+
+ * Some/all delay information is back-annotated.
+Wire Load Model Mode: Inactive.
+
+  Startpoint: i_aw_spill_reg/spill_register_flushable_i/gen_spill_reg_b_full_q_reg
+              (rising edge-triggered flip-flop)
+  Endpoint: slv_resp_o[537]
+            (output port)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: (none)
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                                                                                                                       Fanout     Trans      Incr       Path      Attributes     Voltage
+  ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  i_aw_spill_reg/spill_register_flushable_i/gen_spill_reg_b_full_q_reg/CK (DFFSQN_X0P5M_A9TR)                                             0.33      0.00       0.00 r                   0.90
+  i_aw_spill_reg/spill_register_flushable_i/gen_spill_reg_b_full_q_reg/QN (DFFSQN_X0P5M_A9TR)                                             0.57      0.52       0.52 r                   0.90
+  i_aw_spill_reg/spill_register_flushable_i/gen_spill_reg_b_full_q (net)                                                       19                   0.00       0.52 r                   
+  i_aw_spill_reg/spill_register_flushable_i/U16/Y (BUF_X1M_A9TR)                                                                          0.17      0.20 *     0.72 r                   0.90
+  i_aw_spill_reg/spill_register_flushable_i/n212 (net)                                                                         15                   0.00       0.72 r                   
+  i_aw_spill_reg/spill_register_flushable_i/U17/Y (INV_X0P7M_A9TR)                                                                        0.13      0.14 *     0.85 f                   0.90
+  i_aw_spill_reg/spill_register_flushable_i/n213 (net)                                                                         13                   0.00       0.85 f                   
+  i_aw_spill_reg/spill_register_flushable_i/U133/Y (AO22_X0P7M_A9TR)                                                                      0.02      0.09 *     0.94 f                   0.90
+  i_aw_spill_reg/spill_register_flushable_i/data_o[74] (net)                                                                    1                   0.00       0.94 f                   
+  i_aw_spill_reg/spill_register_flushable_i/data_o[74] (spill_register_flushable_0_189242)                                                          0.00       0.94 f                   
+  i_aw_spill_reg/n12 (net)                                                                                                                          0.00       0.94 f                   
+  i_aw_spill_reg/U7/Y (BUF_X1M_A9TR)                                                                                                      0.20      0.15 *     1.09 f                   0.90
+  i_aw_spill_reg/data_o[74] (net)                                                                                              10                   0.00       1.09 f                   
+  i_aw_spill_reg/data_o[74] (spill_register)                                                                                                        0.00       1.09 f                   
+  slv_req_cut[729] (net)                                                                                                                            0.00       1.09 f                   
+  i_demux_simple/slv_req_i[729] (axi_demux_simple_00000008_0_00000008_00000008_00000008_0_234242)                                                   0.00       1.09 f                   
+  i_demux_simple/slv_req_i[729] (net)                                                                                                               0.00       1.09 f                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/lookup_axi_id_i[4] (axi_demux_id_counters_00000008_00000003_465242_1)                    0.00       1.09 f                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/lookup_axi_id_i[4] (net)                                                                 0.00       1.09 f                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U1478/Y (NAND2_X0P5M_A9TR)                                                     0.28      0.24 *     1.33 r                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n2303 (net)                                                          8                   0.00       1.33 r                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U1511/Y (NOR2_X1P4B_A9TR)                                                      0.53      0.42 *     1.75 f                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n4165 (net)                                                         32                   0.00       1.75 f                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U3017/Y (AOI22_X0P5M_A9TR)                                                     0.15      0.20 *     1.94 r                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n4073 (net)                                                          1                   0.00       1.94 r                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U3019/Y (AND4_X0P7M_A9TR)                                                      0.05      0.10 *     2.04 r                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n4076 (net)                                                          1                   0.00       2.04 r                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U3020/Y (NAND4BB_X0P7M_A9TR)                                                   0.08      0.07 *     2.11 f                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n4102 (net)                                                          1                   0.00       2.11 f                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U3042/Y (AOI22_X0P5M_A9TR)                                                     0.19      0.15 *     2.26 r                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n4181 (net)                                                          1                   0.00       2.26 r                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U3086/Y (AO1B2_X0P7M_A9TR)                                                     0.11      0.10 *     2.36 r                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n4182 (net)                                                          1                   0.00       2.36 r                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U3087/Y (AO21A1AI2_X0P7M_A9TR)                                                 0.12      0.09 *     2.45 f                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/lookup_mst_select_o[1] (net)                                         2                   0.00       2.45 f                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/lookup_mst_select_o[1] (axi_demux_id_counters_00000008_00000003_465242_1)                0.00       2.45 f                   
+  i_demux_simple/genblk1_lookup_aw_select[1] (net)                                                                                                  0.00       2.45 f                   
+  i_demux_simple/U6563/Y (AOI22_X0P5M_A9TR)                                                                                               0.10      0.09 *     2.54 r                   0.90
+  i_demux_simple/n729 (net)                                                                                                     1                   0.00       2.54 r                   
+  i_demux_simple/U6564/Y (OAI221_X0P5M_A9TR)                                                                                              0.07      0.06 *     2.60 f                   0.90
+  i_demux_simple/n737 (net)                                                                                                     1                   0.00       2.60 f                   
+  i_demux_simple/U6574/Y (OA21A1OI2_X1M_A9TR)                                                                                             0.69      0.44 *     3.04 r                   0.90
+  i_demux_simple/genblk1_w_cnt_up (net)                                                                                        18                   0.00       3.04 r                   
+  i_demux_simple/U6615/Y (OAI21_X0P7M_A9TR)                                                                                               0.22      0.24 *     3.29 f                   0.90
+  i_demux_simple/n3491 (net)                                                                                                    5                   0.00       3.29 f                   
+  i_demux_simple/U6616/Y (INV_X0P7M_A9TR)                                                                                                 0.08      0.08 *     3.37 r                   0.90
+  i_demux_simple/n764 (net)                                                                                                     3                   0.00       3.37 r                   
+  i_demux_simple/U6622/Y (AOI22_X0P5M_A9TR)                                                                                               0.09      0.06 *     3.42 f                   0.90
+  i_demux_simple/n766 (net)                                                                                                     1                   0.00       3.42 f                   
+  i_demux_simple/U6624/Y (AOI22_X0P5M_A9TR)                                                                                               0.07      0.08 *     3.51 r                   0.90
+  i_demux_simple/n767 (net)                                                                                                     1                   0.00       3.51 r                   
+  i_demux_simple/U6625/Y (NAND2_X0P5M_A9TR)                                                                                               0.04      0.04 *     3.54 f                   0.90
+  i_demux_simple/n768 (net)                                                                                                     1                   0.00       3.54 f                   
+  i_demux_simple/U6626/Y (AO21A1AI2_X0P7M_A9TR)                                                                                           0.09      0.05 *     3.59 r                   0.90
+  i_demux_simple/slv_resp_o[537] (net)                                                                                          2                   0.00       3.59 r                   
+  i_demux_simple/slv_resp_o[537] (axi_demux_simple_00000008_0_00000008_00000008_00000008_0_234242)                                                  0.00       3.59 r                   
+  slv_resp_cut[537] (net)                                                                                                                           0.00       3.59 r                   
+  i_w_spill_reg/ready_i (spill_register_2)                                                                                                          0.00       3.59 r                   
+  i_w_spill_reg/ready_i (net)                                                                                                                       0.00       3.59 r                   
+  i_w_spill_reg/spill_register_flushable_i/ready_i (spill_register_flushable_1_873242)                                                              0.00       3.59 r                   
+  i_w_spill_reg/spill_register_flushable_i/ready_i (net)                                                                                            0.00       3.59 r                   
+  i_w_spill_reg/spill_register_flushable_i/U1/Y (BUF_X1M_A9TR)                                                                            0.05      0.08 *     3.67 r                   0.90
+  i_w_spill_reg/spill_register_flushable_i/ready_o (net)                                                                        1                   0.00       3.67 r                   
+  i_w_spill_reg/spill_register_flushable_i/ready_o (spill_register_flushable_1_873242)                                                              0.00       3.67 r                   
+  i_w_spill_reg/ready_o (net)                                                                                                                       0.00       3.67 r                   
+  i_w_spill_reg/ready_o (spill_register_2)                                                                                                          0.00       3.67 r                   
+  slv_resp_o[537] (net)                                                                                                                             0.00       3.67 r                   
+  slv_resp_o[537] (out)                                                                                                                   0.05      0.00 *     3.67 r                   
+  data arrival time                                                                                                                                            3.67                     
+  ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  (Path is unconstrained)
+
+
+  Startpoint: i_aw_spill_reg/spill_register_flushable_i/gen_spill_reg_b_full_q_reg
+              (rising edge-triggered flip-flop)
+  Endpoint: mst_reqs_o[2274]
+            (output port)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: (none)
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                                                                                                                       Fanout     Trans      Incr       Path      Attributes     Voltage
+  ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  i_aw_spill_reg/spill_register_flushable_i/gen_spill_reg_b_full_q_reg/CK (DFFSQN_X0P5M_A9TR)                                             0.33      0.00       0.00 r                   0.90
+  i_aw_spill_reg/spill_register_flushable_i/gen_spill_reg_b_full_q_reg/QN (DFFSQN_X0P5M_A9TR)                                             0.57      0.52       0.52 r                   0.90
+  i_aw_spill_reg/spill_register_flushable_i/gen_spill_reg_b_full_q (net)                                                       19                   0.00       0.52 r                   
+  i_aw_spill_reg/spill_register_flushable_i/U16/Y (BUF_X1M_A9TR)                                                                          0.17      0.20 *     0.72 r                   0.90
+  i_aw_spill_reg/spill_register_flushable_i/n212 (net)                                                                         15                   0.00       0.72 r                   
+  i_aw_spill_reg/spill_register_flushable_i/U17/Y (INV_X0P7M_A9TR)                                                                        0.13      0.14 *     0.85 f                   0.90
+  i_aw_spill_reg/spill_register_flushable_i/n213 (net)                                                                         13                   0.00       0.85 f                   
+  i_aw_spill_reg/spill_register_flushable_i/U133/Y (AO22_X0P7M_A9TR)                                                                      0.02      0.09 *     0.94 f                   0.90
+  i_aw_spill_reg/spill_register_flushable_i/data_o[74] (net)                                                                    1                   0.00       0.94 f                   
+  i_aw_spill_reg/spill_register_flushable_i/data_o[74] (spill_register_flushable_0_189242)                                                          0.00       0.94 f                   
+  i_aw_spill_reg/n12 (net)                                                                                                                          0.00       0.94 f                   
+  i_aw_spill_reg/U7/Y (BUF_X1M_A9TR)                                                                                                      0.20      0.15 *     1.09 f                   0.90
+  i_aw_spill_reg/data_o[74] (net)                                                                                              10                   0.00       1.09 f                   
+  i_aw_spill_reg/data_o[74] (spill_register)                                                                                                        0.00       1.09 f                   
+  slv_req_cut[729] (net)                                                                                                                            0.00       1.09 f                   
+  i_demux_simple/slv_req_i[729] (axi_demux_simple_00000008_0_00000008_00000008_00000008_0_234242)                                                   0.00       1.09 f                   
+  i_demux_simple/slv_req_i[729] (net)                                                                                                               0.00       1.09 f                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/lookup_axi_id_i[4] (axi_demux_id_counters_00000008_00000003_465242_1)                    0.00       1.09 f                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/lookup_axi_id_i[4] (net)                                                                 0.00       1.09 f                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U1478/Y (NAND2_X0P5M_A9TR)                                                     0.28      0.24 *     1.33 r                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n2303 (net)                                                          8                   0.00       1.33 r                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U1511/Y (NOR2_X1P4B_A9TR)                                                      0.53      0.42 *     1.75 f                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n4165 (net)                                                         32                   0.00       1.75 f                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U3017/Y (AOI22_X0P5M_A9TR)                                                     0.15      0.20 *     1.94 r                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n4073 (net)                                                          1                   0.00       1.94 r                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U3019/Y (AND4_X0P7M_A9TR)                                                      0.05      0.10 *     2.04 r                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n4076 (net)                                                          1                   0.00       2.04 r                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U3020/Y (NAND4BB_X0P7M_A9TR)                                                   0.08      0.07 *     2.11 f                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n4102 (net)                                                          1                   0.00       2.11 f                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U3042/Y (AOI22_X0P5M_A9TR)                                                     0.19      0.15 *     2.26 r                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n4181 (net)                                                          1                   0.00       2.26 r                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U3086/Y (AO1B2_X0P7M_A9TR)                                                     0.11      0.10 *     2.36 r                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n4182 (net)                                                          1                   0.00       2.36 r                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U3087/Y (AO21A1AI2_X0P7M_A9TR)                                                 0.12      0.09 *     2.45 f                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/lookup_mst_select_o[1] (net)                                         2                   0.00       2.45 f                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/lookup_mst_select_o[1] (axi_demux_id_counters_00000008_00000003_465242_1)                0.00       2.45 f                   
+  i_demux_simple/genblk1_lookup_aw_select[1] (net)                                                                                                  0.00       2.45 f                   
+  i_demux_simple/U6563/Y (AOI22_X0P5M_A9TR)                                                                                               0.10      0.09 *     2.54 r                   0.90
+  i_demux_simple/n729 (net)                                                                                                     1                   0.00       2.54 r                   
+  i_demux_simple/U6564/Y (OAI221_X0P5M_A9TR)                                                                                              0.07      0.06 *     2.60 f                   0.90
+  i_demux_simple/n737 (net)                                                                                                     1                   0.00       2.60 f                   
+  i_demux_simple/U6574/Y (OA21A1OI2_X1M_A9TR)                                                                                             0.69      0.44 *     3.04 r                   0.90
+  i_demux_simple/genblk1_w_cnt_up (net)                                                                                        18                   0.00       3.04 r                   
+  i_demux_simple/U6618/Y (OA1B2_X0P7M_A9TR)                                                                                               0.21      0.27 *     3.31 r                   0.90
+  i_demux_simple/n3489 (net)                                                                                                    5                   0.00       3.31 r                   
+  i_demux_simple/U6883/Y (INV_X0P7M_A9TR)                                                                                                 0.07      0.06 *     3.37 f                   0.90
+  i_demux_simple/n912 (net)                                                                                                     3                   0.00       3.37 f                   
+  i_demux_simple/U6896/Y (NOR2_X0P5B_A9TR)                                                                                                0.31      0.20 *     3.57 r                   0.90
+  i_demux_simple/mst_reqs_o[2274] (net)                                                                                         1                   0.00       3.57 r                   
+  i_demux_simple/mst_reqs_o[2274] (axi_demux_simple_00000008_0_00000008_00000008_00000008_0_234242)                                                 0.00       3.57 r                   
+  mst_reqs_o[2274] (net)                                                                                                                            0.00       3.57 r                   
+  mst_reqs_o[2274] (out)                                                                                                                  0.31      0.00 *     3.57 r                   
+  data arrival time                                                                                                                                            3.57                     
+  ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  (Path is unconstrained)
+
+
+  Startpoint: i_aw_spill_reg/spill_register_flushable_i/gen_spill_reg_b_full_q_reg
+              (rising edge-triggered flip-flop)
+  Endpoint: mst_reqs_o[3007]
+            (output port)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: (none)
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                                                                                                                       Fanout     Trans      Incr       Path      Attributes     Voltage
+  ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  i_aw_spill_reg/spill_register_flushable_i/gen_spill_reg_b_full_q_reg/CK (DFFSQN_X0P5M_A9TR)                                             0.33      0.00       0.00 r                   0.90
+  i_aw_spill_reg/spill_register_flushable_i/gen_spill_reg_b_full_q_reg/QN (DFFSQN_X0P5M_A9TR)                                             0.57      0.52       0.52 r                   0.90
+  i_aw_spill_reg/spill_register_flushable_i/gen_spill_reg_b_full_q (net)                                                       19                   0.00       0.52 r                   
+  i_aw_spill_reg/spill_register_flushable_i/U16/Y (BUF_X1M_A9TR)                                                                          0.17      0.20 *     0.72 r                   0.90
+  i_aw_spill_reg/spill_register_flushable_i/n212 (net)                                                                         15                   0.00       0.72 r                   
+  i_aw_spill_reg/spill_register_flushable_i/U17/Y (INV_X0P7M_A9TR)                                                                        0.13      0.14 *     0.85 f                   0.90
+  i_aw_spill_reg/spill_register_flushable_i/n213 (net)                                                                         13                   0.00       0.85 f                   
+  i_aw_spill_reg/spill_register_flushable_i/U133/Y (AO22_X0P7M_A9TR)                                                                      0.02      0.09 *     0.94 f                   0.90
+  i_aw_spill_reg/spill_register_flushable_i/data_o[74] (net)                                                                    1                   0.00       0.94 f                   
+  i_aw_spill_reg/spill_register_flushable_i/data_o[74] (spill_register_flushable_0_189242)                                                          0.00       0.94 f                   
+  i_aw_spill_reg/n12 (net)                                                                                                                          0.00       0.94 f                   
+  i_aw_spill_reg/U7/Y (BUF_X1M_A9TR)                                                                                                      0.20      0.15 *     1.09 f                   0.90
+  i_aw_spill_reg/data_o[74] (net)                                                                                              10                   0.00       1.09 f                   
+  i_aw_spill_reg/data_o[74] (spill_register)                                                                                                        0.00       1.09 f                   
+  slv_req_cut[729] (net)                                                                                                                            0.00       1.09 f                   
+  i_demux_simple/slv_req_i[729] (axi_demux_simple_00000008_0_00000008_00000008_00000008_0_234242)                                                   0.00       1.09 f                   
+  i_demux_simple/slv_req_i[729] (net)                                                                                                               0.00       1.09 f                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/lookup_axi_id_i[4] (axi_demux_id_counters_00000008_00000003_465242_1)                    0.00       1.09 f                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/lookup_axi_id_i[4] (net)                                                                 0.00       1.09 f                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U1478/Y (NAND2_X0P5M_A9TR)                                                     0.28      0.24 *     1.33 r                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n2303 (net)                                                          8                   0.00       1.33 r                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U1511/Y (NOR2_X1P4B_A9TR)                                                      0.53      0.42 *     1.75 f                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n4165 (net)                                                         32                   0.00       1.75 f                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U3017/Y (AOI22_X0P5M_A9TR)                                                     0.15      0.20 *     1.94 r                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n4073 (net)                                                          1                   0.00       1.94 r                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U3019/Y (AND4_X0P7M_A9TR)                                                      0.05      0.10 *     2.04 r                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n4076 (net)                                                          1                   0.00       2.04 r                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U3020/Y (NAND4BB_X0P7M_A9TR)                                                   0.08      0.07 *     2.11 f                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n4102 (net)                                                          1                   0.00       2.11 f                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U3042/Y (AOI22_X0P5M_A9TR)                                                     0.19      0.15 *     2.26 r                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n4181 (net)                                                          1                   0.00       2.26 r                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U3086/Y (AO1B2_X0P7M_A9TR)                                                     0.11      0.10 *     2.36 r                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n4182 (net)                                                          1                   0.00       2.36 r                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U3087/Y (AO21A1AI2_X0P7M_A9TR)                                                 0.12      0.09 *     2.45 f                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/lookup_mst_select_o[1] (net)                                         2                   0.00       2.45 f                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/lookup_mst_select_o[1] (axi_demux_id_counters_00000008_00000003_465242_1)                0.00       2.45 f                   
+  i_demux_simple/genblk1_lookup_aw_select[1] (net)                                                                                                  0.00       2.45 f                   
+  i_demux_simple/U6563/Y (AOI22_X0P5M_A9TR)                                                                                               0.10      0.09 *     2.54 r                   0.90
+  i_demux_simple/n729 (net)                                                                                                     1                   0.00       2.54 r                   
+  i_demux_simple/U6564/Y (OAI221_X0P5M_A9TR)                                                                                              0.07      0.06 *     2.60 f                   0.90
+  i_demux_simple/n737 (net)                                                                                                     1                   0.00       2.60 f                   
+  i_demux_simple/U6574/Y (OA21A1OI2_X1M_A9TR)                                                                                             0.69      0.44 *     3.04 r                   0.90
+  i_demux_simple/genblk1_w_cnt_up (net)                                                                                        18                   0.00       3.04 r                   
+  i_demux_simple/U6615/Y (OAI21_X0P7M_A9TR)                                                                                               0.22      0.24 *     3.29 f                   0.90
+  i_demux_simple/n3491 (net)                                                                                                    5                   0.00       3.29 f                   
+  i_demux_simple/U9894/Y (NOR4BB_X0P7M_A9TR)                                                                                              0.32      0.26 *     3.55 r                   0.90
+  i_demux_simple/mst_reqs_o[3007] (net)                                                                                         1                   0.00       3.55 r                   
+  i_demux_simple/mst_reqs_o[3007] (axi_demux_simple_00000008_0_00000008_00000008_00000008_0_234242)                                                 0.00       3.55 r                   
+  mst_reqs_o[3007] (net)                                                                                                                            0.00       3.55 r                   
+  mst_reqs_o[3007] (out)                                                                                                                  0.32      0.00 *     3.55 r                   
+  data arrival time                                                                                                                                            3.55                     
+  ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  (Path is unconstrained)
+
+
+  Startpoint: i_aw_spill_reg/spill_register_flushable_i/gen_spill_reg_b_full_q_reg
+              (rising edge-triggered flip-flop)
+  Endpoint: mst_reqs_o[2120]
+            (output port)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: (none)
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                                                                                                                       Fanout     Trans      Incr       Path      Attributes     Voltage
+  ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  i_aw_spill_reg/spill_register_flushable_i/gen_spill_reg_b_full_q_reg/CK (DFFSQN_X0P5M_A9TR)                                             0.33      0.00       0.00 r                   0.90
+  i_aw_spill_reg/spill_register_flushable_i/gen_spill_reg_b_full_q_reg/QN (DFFSQN_X0P5M_A9TR)                                             0.57      0.52       0.52 r                   0.90
+  i_aw_spill_reg/spill_register_flushable_i/gen_spill_reg_b_full_q (net)                                                       19                   0.00       0.52 r                   
+  i_aw_spill_reg/spill_register_flushable_i/U16/Y (BUF_X1M_A9TR)                                                                          0.17      0.20 *     0.72 r                   0.90
+  i_aw_spill_reg/spill_register_flushable_i/n212 (net)                                                                         15                   0.00       0.72 r                   
+  i_aw_spill_reg/spill_register_flushable_i/U17/Y (INV_X0P7M_A9TR)                                                                        0.13      0.14 *     0.85 f                   0.90
+  i_aw_spill_reg/spill_register_flushable_i/n213 (net)                                                                         13                   0.00       0.85 f                   
+  i_aw_spill_reg/spill_register_flushable_i/U133/Y (AO22_X0P7M_A9TR)                                                                      0.02      0.09 *     0.94 f                   0.90
+  i_aw_spill_reg/spill_register_flushable_i/data_o[74] (net)                                                                    1                   0.00       0.94 f                   
+  i_aw_spill_reg/spill_register_flushable_i/data_o[74] (spill_register_flushable_0_189242)                                                          0.00       0.94 f                   
+  i_aw_spill_reg/n12 (net)                                                                                                                          0.00       0.94 f                   
+  i_aw_spill_reg/U7/Y (BUF_X1M_A9TR)                                                                                                      0.20      0.15 *     1.09 f                   0.90
+  i_aw_spill_reg/data_o[74] (net)                                                                                              10                   0.00       1.09 f                   
+  i_aw_spill_reg/data_o[74] (spill_register)                                                                                                        0.00       1.09 f                   
+  slv_req_cut[729] (net)                                                                                                                            0.00       1.09 f                   
+  i_demux_simple/slv_req_i[729] (axi_demux_simple_00000008_0_00000008_00000008_00000008_0_234242)                                                   0.00       1.09 f                   
+  i_demux_simple/slv_req_i[729] (net)                                                                                                               0.00       1.09 f                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/lookup_axi_id_i[4] (axi_demux_id_counters_00000008_00000003_465242_1)                    0.00       1.09 f                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/lookup_axi_id_i[4] (net)                                                                 0.00       1.09 f                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U1478/Y (NAND2_X0P5M_A9TR)                                                     0.28      0.24 *     1.33 r                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n2303 (net)                                                          8                   0.00       1.33 r                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U1511/Y (NOR2_X1P4B_A9TR)                                                      0.53      0.42 *     1.75 f                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n4165 (net)                                                         32                   0.00       1.75 f                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U3017/Y (AOI22_X0P5M_A9TR)                                                     0.15      0.20 *     1.94 r                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n4073 (net)                                                          1                   0.00       1.94 r                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U3019/Y (AND4_X0P7M_A9TR)                                                      0.05      0.10 *     2.04 r                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n4076 (net)                                                          1                   0.00       2.04 r                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U3020/Y (NAND4BB_X0P7M_A9TR)                                                   0.08      0.07 *     2.11 f                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n4102 (net)                                                          1                   0.00       2.11 f                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U3042/Y (AOI22_X0P5M_A9TR)                                                     0.19      0.15 *     2.26 r                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n4181 (net)                                                          1                   0.00       2.26 r                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U3086/Y (AO1B2_X0P7M_A9TR)                                                     0.11      0.10 *     2.36 r                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n4182 (net)                                                          1                   0.00       2.36 r                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U3087/Y (AO21A1AI2_X0P7M_A9TR)                                                 0.12      0.09 *     2.45 f                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/lookup_mst_select_o[1] (net)                                         2                   0.00       2.45 f                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/lookup_mst_select_o[1] (axi_demux_id_counters_00000008_00000003_465242_1)                0.00       2.45 f                   
+  i_demux_simple/genblk1_lookup_aw_select[1] (net)                                                                                                  0.00       2.45 f                   
+  i_demux_simple/U6563/Y (AOI22_X0P5M_A9TR)                                                                                               0.10      0.09 *     2.54 r                   0.90
+  i_demux_simple/n729 (net)                                                                                                     1                   0.00       2.54 r                   
+  i_demux_simple/U6564/Y (OAI221_X0P5M_A9TR)                                                                                              0.07      0.06 *     2.60 f                   0.90
+  i_demux_simple/n737 (net)                                                                                                     1                   0.00       2.60 f                   
+  i_demux_simple/U6574/Y (OA21A1OI2_X1M_A9TR)                                                                                             0.69      0.44 *     3.04 r                   0.90
+  i_demux_simple/genblk1_w_cnt_up (net)                                                                                        18                   0.00       3.04 r                   
+  i_demux_simple/U6659/Y (OAI21_X0P7M_A9TR)                                                                                               0.20      0.22 *     3.26 f                   0.90
+  i_demux_simple/n906 (net)                                                                                                     4                   0.00       3.26 f                   
+  i_demux_simple/U6886/Y (NOR2_X0P5B_A9TR)                                                                                                0.34      0.26 *     3.52 r                   0.90
+  i_demux_simple/mst_reqs_o[2120] (net)                                                                                         1                   0.00       3.52 r                   
+  i_demux_simple/mst_reqs_o[2120] (axi_demux_simple_00000008_0_00000008_00000008_00000008_0_234242)                                                 0.00       3.52 r                   
+  mst_reqs_o[2120] (net)                                                                                                                            0.00       3.52 r                   
+  mst_reqs_o[2120] (out)                                                                                                                  0.34      0.00 *     3.52 r                   
+  data arrival time                                                                                                                                            3.52                     
+  ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  (Path is unconstrained)
+
+
+  Startpoint: i_aw_spill_reg/spill_register_flushable_i/gen_spill_reg_b_full_q_reg
+              (rising edge-triggered flip-flop)
+  Endpoint: mst_reqs_o[5785]
+            (output port)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: (none)
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                                                                                                                       Fanout     Trans      Incr       Path      Attributes     Voltage
+  ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  i_aw_spill_reg/spill_register_flushable_i/gen_spill_reg_b_full_q_reg/CK (DFFSQN_X0P5M_A9TR)                                             0.33      0.00       0.00 r                   0.90
+  i_aw_spill_reg/spill_register_flushable_i/gen_spill_reg_b_full_q_reg/QN (DFFSQN_X0P5M_A9TR)                                             0.57      0.52       0.52 r                   0.90
+  i_aw_spill_reg/spill_register_flushable_i/gen_spill_reg_b_full_q (net)                                                       19                   0.00       0.52 r                   
+  i_aw_spill_reg/spill_register_flushable_i/U16/Y (BUF_X1M_A9TR)                                                                          0.17      0.20 *     0.72 r                   0.90
+  i_aw_spill_reg/spill_register_flushable_i/n212 (net)                                                                         15                   0.00       0.72 r                   
+  i_aw_spill_reg/spill_register_flushable_i/U17/Y (INV_X0P7M_A9TR)                                                                        0.13      0.14 *     0.85 f                   0.90
+  i_aw_spill_reg/spill_register_flushable_i/n213 (net)                                                                         13                   0.00       0.85 f                   
+  i_aw_spill_reg/spill_register_flushable_i/U133/Y (AO22_X0P7M_A9TR)                                                                      0.02      0.09 *     0.94 f                   0.90
+  i_aw_spill_reg/spill_register_flushable_i/data_o[74] (net)                                                                    1                   0.00       0.94 f                   
+  i_aw_spill_reg/spill_register_flushable_i/data_o[74] (spill_register_flushable_0_189242)                                                          0.00       0.94 f                   
+  i_aw_spill_reg/n12 (net)                                                                                                                          0.00       0.94 f                   
+  i_aw_spill_reg/U7/Y (BUF_X1M_A9TR)                                                                                                      0.20      0.15 *     1.09 f                   0.90
+  i_aw_spill_reg/data_o[74] (net)                                                                                              10                   0.00       1.09 f                   
+  i_aw_spill_reg/data_o[74] (spill_register)                                                                                                        0.00       1.09 f                   
+  slv_req_cut[729] (net)                                                                                                                            0.00       1.09 f                   
+  i_demux_simple/slv_req_i[729] (axi_demux_simple_00000008_0_00000008_00000008_00000008_0_234242)                                                   0.00       1.09 f                   
+  i_demux_simple/slv_req_i[729] (net)                                                                                                               0.00       1.09 f                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/lookup_axi_id_i[4] (axi_demux_id_counters_00000008_00000003_465242_1)                    0.00       1.09 f                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/lookup_axi_id_i[4] (net)                                                                 0.00       1.09 f                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U1478/Y (NAND2_X0P5M_A9TR)                                                     0.28      0.24 *     1.33 r                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n2303 (net)                                                          8                   0.00       1.33 r                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U1511/Y (NOR2_X1P4B_A9TR)                                                      0.53      0.42 *     1.75 f                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n4165 (net)                                                         32                   0.00       1.75 f                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U3017/Y (AOI22_X0P5M_A9TR)                                                     0.15      0.20 *     1.94 r                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n4073 (net)                                                          1                   0.00       1.94 r                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U3019/Y (AND4_X0P7M_A9TR)                                                      0.05      0.10 *     2.04 r                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n4076 (net)                                                          1                   0.00       2.04 r                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U3020/Y (NAND4BB_X0P7M_A9TR)                                                   0.08      0.07 *     2.11 f                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n4102 (net)                                                          1                   0.00       2.11 f                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U3042/Y (AOI22_X0P5M_A9TR)                                                     0.19      0.15 *     2.26 r                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n4181 (net)                                                          1                   0.00       2.26 r                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U3086/Y (AO1B2_X0P7M_A9TR)                                                     0.11      0.10 *     2.36 r                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n4182 (net)                                                          1                   0.00       2.36 r                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U3087/Y (AO21A1AI2_X0P7M_A9TR)                                                 0.12      0.09 *     2.45 f                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/lookup_mst_select_o[1] (net)                                         2                   0.00       2.45 f                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/lookup_mst_select_o[1] (axi_demux_id_counters_00000008_00000003_465242_1)                0.00       2.45 f                   
+  i_demux_simple/genblk1_lookup_aw_select[1] (net)                                                                                                  0.00       2.45 f                   
+  i_demux_simple/U6563/Y (AOI22_X0P5M_A9TR)                                                                                               0.10      0.09 *     2.54 r                   0.90
+  i_demux_simple/n729 (net)                                                                                                     1                   0.00       2.54 r                   
+  i_demux_simple/U6564/Y (OAI221_X0P5M_A9TR)                                                                                              0.07      0.06 *     2.60 f                   0.90
+  i_demux_simple/n737 (net)                                                                                                     1                   0.00       2.60 f                   
+  i_demux_simple/U6574/Y (OA21A1OI2_X1M_A9TR)                                                                                             0.69      0.44 *     3.04 r                   0.90
+  i_demux_simple/genblk1_w_cnt_up (net)                                                                                        18                   0.00       3.04 r                   
+  i_demux_simple/U6652/Y (OAI21_X0P7M_A9TR)                                                                                               0.25      0.21 *     3.25 f                   0.90
+  i_demux_simple/n910 (net)                                                                                                     4                   0.00       3.25 f                   
+  i_demux_simple/U6653/Y (NOR2_X0P5B_A9TR)                                                                                                0.31      0.26 *     3.52 r                   0.90
+  i_demux_simple/mst_reqs_o[5785] (net)                                                                                         1                   0.00       3.52 r                   
+  i_demux_simple/mst_reqs_o[5785] (axi_demux_simple_00000008_0_00000008_00000008_00000008_0_234242)                                                 0.00       3.52 r                   
+  mst_reqs_o[5785] (net)                                                                                                                            0.00       3.52 r                   
+  mst_reqs_o[5785] (out)                                                                                                                  0.31      0.00 *     3.52 r                   
+  data arrival time                                                                                                                                            3.52                     
+  ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  (Path is unconstrained)
+
+
+  Startpoint: i_aw_spill_reg/spill_register_flushable_i/gen_spill_reg_b_full_q_reg
+              (rising edge-triggered flip-flop)
+  Endpoint: mst_reqs_o[4319]
+            (output port)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: (none)
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                                                                                                                       Fanout     Trans      Incr       Path      Attributes     Voltage
+  ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  i_aw_spill_reg/spill_register_flushable_i/gen_spill_reg_b_full_q_reg/CK (DFFSQN_X0P5M_A9TR)                                             0.33      0.00       0.00 r                   0.90
+  i_aw_spill_reg/spill_register_flushable_i/gen_spill_reg_b_full_q_reg/QN (DFFSQN_X0P5M_A9TR)                                             0.57      0.52       0.52 r                   0.90
+  i_aw_spill_reg/spill_register_flushable_i/gen_spill_reg_b_full_q (net)                                                       19                   0.00       0.52 r                   
+  i_aw_spill_reg/spill_register_flushable_i/U16/Y (BUF_X1M_A9TR)                                                                          0.17      0.20 *     0.72 r                   0.90
+  i_aw_spill_reg/spill_register_flushable_i/n212 (net)                                                                         15                   0.00       0.72 r                   
+  i_aw_spill_reg/spill_register_flushable_i/U17/Y (INV_X0P7M_A9TR)                                                                        0.13      0.14 *     0.85 f                   0.90
+  i_aw_spill_reg/spill_register_flushable_i/n213 (net)                                                                         13                   0.00       0.85 f                   
+  i_aw_spill_reg/spill_register_flushable_i/U133/Y (AO22_X0P7M_A9TR)                                                                      0.02      0.09 *     0.94 f                   0.90
+  i_aw_spill_reg/spill_register_flushable_i/data_o[74] (net)                                                                    1                   0.00       0.94 f                   
+  i_aw_spill_reg/spill_register_flushable_i/data_o[74] (spill_register_flushable_0_189242)                                                          0.00       0.94 f                   
+  i_aw_spill_reg/n12 (net)                                                                                                                          0.00       0.94 f                   
+  i_aw_spill_reg/U7/Y (BUF_X1M_A9TR)                                                                                                      0.20      0.15 *     1.09 f                   0.90
+  i_aw_spill_reg/data_o[74] (net)                                                                                              10                   0.00       1.09 f                   
+  i_aw_spill_reg/data_o[74] (spill_register)                                                                                                        0.00       1.09 f                   
+  slv_req_cut[729] (net)                                                                                                                            0.00       1.09 f                   
+  i_demux_simple/slv_req_i[729] (axi_demux_simple_00000008_0_00000008_00000008_00000008_0_234242)                                                   0.00       1.09 f                   
+  i_demux_simple/slv_req_i[729] (net)                                                                                                               0.00       1.09 f                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/lookup_axi_id_i[4] (axi_demux_id_counters_00000008_00000003_465242_1)                    0.00       1.09 f                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/lookup_axi_id_i[4] (net)                                                                 0.00       1.09 f                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U1478/Y (NAND2_X0P5M_A9TR)                                                     0.28      0.24 *     1.33 r                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n2303 (net)                                                          8                   0.00       1.33 r                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U1511/Y (NOR2_X1P4B_A9TR)                                                      0.53      0.42 *     1.75 f                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n4165 (net)                                                         32                   0.00       1.75 f                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U3017/Y (AOI22_X0P5M_A9TR)                                                     0.15      0.20 *     1.94 r                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n4073 (net)                                                          1                   0.00       1.94 r                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U3019/Y (AND4_X0P7M_A9TR)                                                      0.05      0.10 *     2.04 r                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n4076 (net)                                                          1                   0.00       2.04 r                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U3020/Y (NAND4BB_X0P7M_A9TR)                                                   0.08      0.07 *     2.11 f                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n4102 (net)                                                          1                   0.00       2.11 f                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U3042/Y (AOI22_X0P5M_A9TR)                                                     0.19      0.15 *     2.26 r                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n4181 (net)                                                          1                   0.00       2.26 r                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U3086/Y (AO1B2_X0P7M_A9TR)                                                     0.11      0.10 *     2.36 r                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n4182 (net)                                                          1                   0.00       2.36 r                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U3087/Y (AO21A1AI2_X0P7M_A9TR)                                                 0.12      0.09 *     2.45 f                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/lookup_mst_select_o[1] (net)                                         2                   0.00       2.45 f                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/lookup_mst_select_o[1] (axi_demux_id_counters_00000008_00000003_465242_1)                0.00       2.45 f                   
+  i_demux_simple/genblk1_lookup_aw_select[1] (net)                                                                                                  0.00       2.45 f                   
+  i_demux_simple/U6563/Y (AOI22_X0P5M_A9TR)                                                                                               0.10      0.09 *     2.54 r                   0.90
+  i_demux_simple/n729 (net)                                                                                                     1                   0.00       2.54 r                   
+  i_demux_simple/U6564/Y (OAI221_X0P5M_A9TR)                                                                                              0.07      0.06 *     2.60 f                   0.90
+  i_demux_simple/n737 (net)                                                                                                     1                   0.00       2.60 f                   
+  i_demux_simple/U6574/Y (OA21A1OI2_X1M_A9TR)                                                                                             0.69      0.44 *     3.04 r                   0.90
+  i_demux_simple/genblk1_w_cnt_up (net)                                                                                        18                   0.00       3.04 r                   
+  i_demux_simple/U6652/Y (OAI21_X0P7M_A9TR)                                                                                               0.25      0.21 *     3.25 f                   0.90
+  i_demux_simple/n910 (net)                                                                                                     4                   0.00       3.25 f                   
+  i_demux_simple/U6893/Y (NOR2_X0P5B_A9TR)                                                                                                0.31      0.26 *     3.51 r                   0.90
+  i_demux_simple/mst_reqs_o[4319] (net)                                                                                         1                   0.00       3.51 r                   
+  i_demux_simple/mst_reqs_o[4319] (axi_demux_simple_00000008_0_00000008_00000008_00000008_0_234242)                                                 0.00       3.51 r                   
+  mst_reqs_o[4319] (net)                                                                                                                            0.00       3.51 r                   
+  mst_reqs_o[4319] (out)                                                                                                                  0.31      0.00 *     3.52 r                   
+  data arrival time                                                                                                                                            3.52                     
+  ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  (Path is unconstrained)
+
+
+  Startpoint: i_aw_spill_reg/spill_register_flushable_i/gen_spill_reg_b_full_q_reg
+              (rising edge-triggered flip-flop)
+  Endpoint: mst_reqs_o[5052]
+            (output port)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: (none)
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                                                                                                                       Fanout     Trans      Incr       Path      Attributes     Voltage
+  ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  i_aw_spill_reg/spill_register_flushable_i/gen_spill_reg_b_full_q_reg/CK (DFFSQN_X0P5M_A9TR)                                             0.33      0.00       0.00 r                   0.90
+  i_aw_spill_reg/spill_register_flushable_i/gen_spill_reg_b_full_q_reg/QN (DFFSQN_X0P5M_A9TR)                                             0.57      0.52       0.52 r                   0.90
+  i_aw_spill_reg/spill_register_flushable_i/gen_spill_reg_b_full_q (net)                                                       19                   0.00       0.52 r                   
+  i_aw_spill_reg/spill_register_flushable_i/U16/Y (BUF_X1M_A9TR)                                                                          0.17      0.20 *     0.72 r                   0.90
+  i_aw_spill_reg/spill_register_flushable_i/n212 (net)                                                                         15                   0.00       0.72 r                   
+  i_aw_spill_reg/spill_register_flushable_i/U17/Y (INV_X0P7M_A9TR)                                                                        0.13      0.14 *     0.85 f                   0.90
+  i_aw_spill_reg/spill_register_flushable_i/n213 (net)                                                                         13                   0.00       0.85 f                   
+  i_aw_spill_reg/spill_register_flushable_i/U133/Y (AO22_X0P7M_A9TR)                                                                      0.02      0.09 *     0.94 f                   0.90
+  i_aw_spill_reg/spill_register_flushable_i/data_o[74] (net)                                                                    1                   0.00       0.94 f                   
+  i_aw_spill_reg/spill_register_flushable_i/data_o[74] (spill_register_flushable_0_189242)                                                          0.00       0.94 f                   
+  i_aw_spill_reg/n12 (net)                                                                                                                          0.00       0.94 f                   
+  i_aw_spill_reg/U7/Y (BUF_X1M_A9TR)                                                                                                      0.20      0.15 *     1.09 f                   0.90
+  i_aw_spill_reg/data_o[74] (net)                                                                                              10                   0.00       1.09 f                   
+  i_aw_spill_reg/data_o[74] (spill_register)                                                                                                        0.00       1.09 f                   
+  slv_req_cut[729] (net)                                                                                                                            0.00       1.09 f                   
+  i_demux_simple/slv_req_i[729] (axi_demux_simple_00000008_0_00000008_00000008_00000008_0_234242)                                                   0.00       1.09 f                   
+  i_demux_simple/slv_req_i[729] (net)                                                                                                               0.00       1.09 f                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/lookup_axi_id_i[4] (axi_demux_id_counters_00000008_00000003_465242_1)                    0.00       1.09 f                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/lookup_axi_id_i[4] (net)                                                                 0.00       1.09 f                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U1478/Y (NAND2_X0P5M_A9TR)                                                     0.28      0.24 *     1.33 r                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n2303 (net)                                                          8                   0.00       1.33 r                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U1511/Y (NOR2_X1P4B_A9TR)                                                      0.53      0.42 *     1.75 f                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n4165 (net)                                                         32                   0.00       1.75 f                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U3017/Y (AOI22_X0P5M_A9TR)                                                     0.15      0.20 *     1.94 r                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n4073 (net)                                                          1                   0.00       1.94 r                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U3019/Y (AND4_X0P7M_A9TR)                                                      0.05      0.10 *     2.04 r                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n4076 (net)                                                          1                   0.00       2.04 r                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U3020/Y (NAND4BB_X0P7M_A9TR)                                                   0.08      0.07 *     2.11 f                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n4102 (net)                                                          1                   0.00       2.11 f                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U3042/Y (AOI22_X0P5M_A9TR)                                                     0.19      0.15 *     2.26 r                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n4181 (net)                                                          1                   0.00       2.26 r                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U3086/Y (AO1B2_X0P7M_A9TR)                                                     0.11      0.10 *     2.36 r                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n4182 (net)                                                          1                   0.00       2.36 r                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U3087/Y (AO21A1AI2_X0P7M_A9TR)                                                 0.12      0.09 *     2.45 f                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/lookup_mst_select_o[1] (net)                                         2                   0.00       2.45 f                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/lookup_mst_select_o[1] (axi_demux_id_counters_00000008_00000003_465242_1)                0.00       2.45 f                   
+  i_demux_simple/genblk1_lookup_aw_select[1] (net)                                                                                                  0.00       2.45 f                   
+  i_demux_simple/U6563/Y (AOI22_X0P5M_A9TR)                                                                                               0.10      0.09 *     2.54 r                   0.90
+  i_demux_simple/n729 (net)                                                                                                     1                   0.00       2.54 r                   
+  i_demux_simple/U6564/Y (OAI221_X0P5M_A9TR)                                                                                              0.07      0.06 *     2.60 f                   0.90
+  i_demux_simple/n737 (net)                                                                                                     1                   0.00       2.60 f                   
+  i_demux_simple/U6574/Y (OA21A1OI2_X1M_A9TR)                                                                                             0.69      0.44 *     3.04 r                   0.90
+  i_demux_simple/genblk1_w_cnt_up (net)                                                                                        18                   0.00       3.04 r                   
+  i_demux_simple/U6659/Y (OAI21_X0P7M_A9TR)                                                                                               0.20      0.22 *     3.26 f                   0.90
+  i_demux_simple/n906 (net)                                                                                                     4                   0.00       3.26 f                   
+  i_demux_simple/U6660/Y (NOR2_X0P5B_A9TR)                                                                                                0.32      0.25 *     3.50 r                   0.90
+  i_demux_simple/mst_reqs_o[5052] (net)                                                                                         1                   0.00       3.50 r                   
+  i_demux_simple/mst_reqs_o[5052] (axi_demux_simple_00000008_0_00000008_00000008_00000008_0_234242)                                                 0.00       3.50 r                   
+  mst_reqs_o[5052] (net)                                                                                                                            0.00       3.50 r                   
+  mst_reqs_o[5052] (out)                                                                                                                  0.32      0.00 *     3.51 r                   
+  data arrival time                                                                                                                                            3.51                     
+  ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  (Path is unconstrained)
+
+
+  Startpoint: i_aw_spill_reg/spill_register_flushable_i/gen_spill_reg_b_full_q_reg
+              (rising edge-triggered flip-flop)
+  Endpoint: mst_reqs_o[808]
+            (output port)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: (none)
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                                                                                                                       Fanout     Trans      Incr       Path      Attributes     Voltage
+  ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  i_aw_spill_reg/spill_register_flushable_i/gen_spill_reg_b_full_q_reg/CK (DFFSQN_X0P5M_A9TR)                                             0.33      0.00       0.00 r                   0.90
+  i_aw_spill_reg/spill_register_flushable_i/gen_spill_reg_b_full_q_reg/QN (DFFSQN_X0P5M_A9TR)                                             0.57      0.52       0.52 r                   0.90
+  i_aw_spill_reg/spill_register_flushable_i/gen_spill_reg_b_full_q (net)                                                       19                   0.00       0.52 r                   
+  i_aw_spill_reg/spill_register_flushable_i/U16/Y (BUF_X1M_A9TR)                                                                          0.17      0.20 *     0.72 r                   0.90
+  i_aw_spill_reg/spill_register_flushable_i/n212 (net)                                                                         15                   0.00       0.72 r                   
+  i_aw_spill_reg/spill_register_flushable_i/U17/Y (INV_X0P7M_A9TR)                                                                        0.13      0.14 *     0.85 f                   0.90
+  i_aw_spill_reg/spill_register_flushable_i/n213 (net)                                                                         13                   0.00       0.85 f                   
+  i_aw_spill_reg/spill_register_flushable_i/U133/Y (AO22_X0P7M_A9TR)                                                                      0.02      0.09 *     0.94 f                   0.90
+  i_aw_spill_reg/spill_register_flushable_i/data_o[74] (net)                                                                    1                   0.00       0.94 f                   
+  i_aw_spill_reg/spill_register_flushable_i/data_o[74] (spill_register_flushable_0_189242)                                                          0.00       0.94 f                   
+  i_aw_spill_reg/n12 (net)                                                                                                                          0.00       0.94 f                   
+  i_aw_spill_reg/U7/Y (BUF_X1M_A9TR)                                                                                                      0.20      0.15 *     1.09 f                   0.90
+  i_aw_spill_reg/data_o[74] (net)                                                                                              10                   0.00       1.09 f                   
+  i_aw_spill_reg/data_o[74] (spill_register)                                                                                                        0.00       1.09 f                   
+  slv_req_cut[729] (net)                                                                                                                            0.00       1.09 f                   
+  i_demux_simple/slv_req_i[729] (axi_demux_simple_00000008_0_00000008_00000008_00000008_0_234242)                                                   0.00       1.09 f                   
+  i_demux_simple/slv_req_i[729] (net)                                                                                                               0.00       1.09 f                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/lookup_axi_id_i[4] (axi_demux_id_counters_00000008_00000003_465242_1)                    0.00       1.09 f                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/lookup_axi_id_i[4] (net)                                                                 0.00       1.09 f                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U1478/Y (NAND2_X0P5M_A9TR)                                                     0.28      0.24 *     1.33 r                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n2303 (net)                                                          8                   0.00       1.33 r                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U1511/Y (NOR2_X1P4B_A9TR)                                                      0.53      0.42 *     1.75 f                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n4165 (net)                                                         32                   0.00       1.75 f                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U3017/Y (AOI22_X0P5M_A9TR)                                                     0.15      0.20 *     1.94 r                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n4073 (net)                                                          1                   0.00       1.94 r                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U3019/Y (AND4_X0P7M_A9TR)                                                      0.05      0.10 *     2.04 r                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n4076 (net)                                                          1                   0.00       2.04 r                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U3020/Y (NAND4BB_X0P7M_A9TR)                                                   0.08      0.07 *     2.11 f                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n4102 (net)                                                          1                   0.00       2.11 f                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U3042/Y (AOI22_X0P5M_A9TR)                                                     0.19      0.15 *     2.26 r                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n4181 (net)                                                          1                   0.00       2.26 r                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U3086/Y (AO1B2_X0P7M_A9TR)                                                     0.11      0.10 *     2.36 r                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n4182 (net)                                                          1                   0.00       2.36 r                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U3087/Y (AO21A1AI2_X0P7M_A9TR)                                                 0.12      0.09 *     2.45 f                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/lookup_mst_select_o[1] (net)                                         2                   0.00       2.45 f                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/lookup_mst_select_o[1] (axi_demux_id_counters_00000008_00000003_465242_1)                0.00       2.45 f                   
+  i_demux_simple/genblk1_lookup_aw_select[1] (net)                                                                                                  0.00       2.45 f                   
+  i_demux_simple/U6563/Y (AOI22_X0P5M_A9TR)                                                                                               0.10      0.09 *     2.54 r                   0.90
+  i_demux_simple/n729 (net)                                                                                                     1                   0.00       2.54 r                   
+  i_demux_simple/U6564/Y (OAI221_X0P5M_A9TR)                                                                                              0.07      0.06 *     2.60 f                   0.90
+  i_demux_simple/n737 (net)                                                                                                     1                   0.00       2.60 f                   
+  i_demux_simple/U6574/Y (OA21A1OI2_X1M_A9TR)                                                                                             0.69      0.44 *     3.04 r                   0.90
+  i_demux_simple/genblk1_w_cnt_up (net)                                                                                        18                   0.00       3.04 r                   
+  i_demux_simple/U6618/Y (OA1B2_X0P7M_A9TR)                                                                                               0.21      0.27 *     3.31 r                   0.90
+  i_demux_simple/n3489 (net)                                                                                                    5                   0.00       3.31 r                   
+  i_demux_simple/U6883/Y (INV_X0P7M_A9TR)                                                                                                 0.07      0.06 *     3.37 f                   0.90
+  i_demux_simple/n912 (net)                                                                                                     3                   0.00       3.37 f                   
+  i_demux_simple/U6885/Y (NOR2_X0P5B_A9TR)                                                                                                0.13      0.10 *     3.47 r                   0.90
+  i_demux_simple/mst_reqs_o[808] (net)                                                                                          1                   0.00       3.47 r                   
+  i_demux_simple/mst_reqs_o[808] (axi_demux_simple_00000008_0_00000008_00000008_00000008_0_234242)                                                  0.00       3.47 r                   
+  mst_reqs_o[808] (net)                                                                                                                             0.00       3.47 r                   
+  mst_reqs_o[808] (out)                                                                                                                   0.13      0.00 *     3.47 r                   
+  data arrival time                                                                                                                                            3.47                     
+  ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  (Path is unconstrained)
+
+
+  Startpoint: i_aw_spill_reg/spill_register_flushable_i/gen_spill_reg_b_full_q_reg
+              (rising edge-triggered flip-flop)
+  Endpoint: mst_reqs_o[2853]
+            (output port)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: (none)
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                                                                                                                       Fanout     Trans      Incr       Path      Attributes     Voltage
+  ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  i_aw_spill_reg/spill_register_flushable_i/gen_spill_reg_b_full_q_reg/CK (DFFSQN_X0P5M_A9TR)                                             0.33      0.00       0.00 r                   0.90
+  i_aw_spill_reg/spill_register_flushable_i/gen_spill_reg_b_full_q_reg/QN (DFFSQN_X0P5M_A9TR)                                             0.57      0.52       0.52 r                   0.90
+  i_aw_spill_reg/spill_register_flushable_i/gen_spill_reg_b_full_q (net)                                                       19                   0.00       0.52 r                   
+  i_aw_spill_reg/spill_register_flushable_i/U16/Y (BUF_X1M_A9TR)                                                                          0.17      0.20 *     0.72 r                   0.90
+  i_aw_spill_reg/spill_register_flushable_i/n212 (net)                                                                         15                   0.00       0.72 r                   
+  i_aw_spill_reg/spill_register_flushable_i/U17/Y (INV_X0P7M_A9TR)                                                                        0.13      0.14 *     0.85 f                   0.90
+  i_aw_spill_reg/spill_register_flushable_i/n213 (net)                                                                         13                   0.00       0.85 f                   
+  i_aw_spill_reg/spill_register_flushable_i/U133/Y (AO22_X0P7M_A9TR)                                                                      0.02      0.09 *     0.94 f                   0.90
+  i_aw_spill_reg/spill_register_flushable_i/data_o[74] (net)                                                                    1                   0.00       0.94 f                   
+  i_aw_spill_reg/spill_register_flushable_i/data_o[74] (spill_register_flushable_0_189242)                                                          0.00       0.94 f                   
+  i_aw_spill_reg/n12 (net)                                                                                                                          0.00       0.94 f                   
+  i_aw_spill_reg/U7/Y (BUF_X1M_A9TR)                                                                                                      0.20      0.15 *     1.09 f                   0.90
+  i_aw_spill_reg/data_o[74] (net)                                                                                              10                   0.00       1.09 f                   
+  i_aw_spill_reg/data_o[74] (spill_register)                                                                                                        0.00       1.09 f                   
+  slv_req_cut[729] (net)                                                                                                                            0.00       1.09 f                   
+  i_demux_simple/slv_req_i[729] (axi_demux_simple_00000008_0_00000008_00000008_00000008_0_234242)                                                   0.00       1.09 f                   
+  i_demux_simple/slv_req_i[729] (net)                                                                                                               0.00       1.09 f                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/lookup_axi_id_i[4] (axi_demux_id_counters_00000008_00000003_465242_1)                    0.00       1.09 f                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/lookup_axi_id_i[4] (net)                                                                 0.00       1.09 f                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U1478/Y (NAND2_X0P5M_A9TR)                                                     0.28      0.24 *     1.33 r                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n2303 (net)                                                          8                   0.00       1.33 r                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U1511/Y (NOR2_X1P4B_A9TR)                                                      0.53      0.42 *     1.75 f                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n4165 (net)                                                         32                   0.00       1.75 f                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U3017/Y (AOI22_X0P5M_A9TR)                                                     0.15      0.20 *     1.94 r                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n4073 (net)                                                          1                   0.00       1.94 r                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U3019/Y (AND4_X0P7M_A9TR)                                                      0.05      0.10 *     2.04 r                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n4076 (net)                                                          1                   0.00       2.04 r                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U3020/Y (NAND4BB_X0P7M_A9TR)                                                   0.08      0.07 *     2.11 f                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n4102 (net)                                                          1                   0.00       2.11 f                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U3042/Y (AOI22_X0P5M_A9TR)                                                     0.19      0.15 *     2.26 r                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n4181 (net)                                                          1                   0.00       2.26 r                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U3086/Y (AO1B2_X0P7M_A9TR)                                                     0.11      0.10 *     2.36 r                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n4182 (net)                                                          1                   0.00       2.36 r                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U3087/Y (AO21A1AI2_X0P7M_A9TR)                                                 0.12      0.09 *     2.45 f                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/lookup_mst_select_o[1] (net)                                         2                   0.00       2.45 f                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/lookup_mst_select_o[1] (axi_demux_id_counters_00000008_00000003_465242_1)                0.00       2.45 f                   
+  i_demux_simple/genblk1_lookup_aw_select[1] (net)                                                                                                  0.00       2.45 f                   
+  i_demux_simple/U6563/Y (AOI22_X0P5M_A9TR)                                                                                               0.10      0.09 *     2.54 r                   0.90
+  i_demux_simple/n729 (net)                                                                                                     1                   0.00       2.54 r                   
+  i_demux_simple/U6564/Y (OAI221_X0P5M_A9TR)                                                                                              0.07      0.06 *     2.60 f                   0.90
+  i_demux_simple/n737 (net)                                                                                                     1                   0.00       2.60 f                   
+  i_demux_simple/U6574/Y (OA21A1OI2_X1M_A9TR)                                                                                             0.69      0.44 *     3.04 r                   0.90
+  i_demux_simple/genblk1_w_cnt_up (net)                                                                                        18                   0.00       3.04 r                   
+  i_demux_simple/U6652/Y (OAI21_X0P7M_A9TR)                                                                                               0.25      0.21 *     3.25 f                   0.90
+  i_demux_simple/n910 (net)                                                                                                     4                   0.00       3.25 f                   
+  i_demux_simple/U6895/Y (NOR2_X0P5B_A9TR)                                                                                                0.23      0.21 *     3.46 r                   0.90
+  i_demux_simple/mst_reqs_o[2853] (net)                                                                                         1                   0.00       3.46 r                   
+  i_demux_simple/mst_reqs_o[2853] (axi_demux_simple_00000008_0_00000008_00000008_00000008_0_234242)                                                 0.00       3.46 r                   
+  mst_reqs_o[2853] (net)                                                                                                                            0.00       3.46 r                   
+  mst_reqs_o[2853] (out)                                                                                                                  0.23      0.00 *     3.46 r                   
+  data arrival time                                                                                                                                            3.46                     
+  ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  (Path is unconstrained)
+
+
+  Startpoint: i_aw_spill_reg/spill_register_flushable_i/gen_spill_reg_b_full_q_reg
+              (rising edge-triggered flip-flop)
+  Endpoint: mst_reqs_o[1541]
+            (output port)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: (none)
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                                                                                                                       Fanout     Trans      Incr       Path      Attributes     Voltage
+  ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  i_aw_spill_reg/spill_register_flushable_i/gen_spill_reg_b_full_q_reg/CK (DFFSQN_X0P5M_A9TR)                                             0.33      0.00       0.00 r                   0.90
+  i_aw_spill_reg/spill_register_flushable_i/gen_spill_reg_b_full_q_reg/QN (DFFSQN_X0P5M_A9TR)                                             0.57      0.52       0.52 r                   0.90
+  i_aw_spill_reg/spill_register_flushable_i/gen_spill_reg_b_full_q (net)                                                       19                   0.00       0.52 r                   
+  i_aw_spill_reg/spill_register_flushable_i/U16/Y (BUF_X1M_A9TR)                                                                          0.17      0.20 *     0.72 r                   0.90
+  i_aw_spill_reg/spill_register_flushable_i/n212 (net)                                                                         15                   0.00       0.72 r                   
+  i_aw_spill_reg/spill_register_flushable_i/U17/Y (INV_X0P7M_A9TR)                                                                        0.13      0.14 *     0.85 f                   0.90
+  i_aw_spill_reg/spill_register_flushable_i/n213 (net)                                                                         13                   0.00       0.85 f                   
+  i_aw_spill_reg/spill_register_flushable_i/U133/Y (AO22_X0P7M_A9TR)                                                                      0.02      0.09 *     0.94 f                   0.90
+  i_aw_spill_reg/spill_register_flushable_i/data_o[74] (net)                                                                    1                   0.00       0.94 f                   
+  i_aw_spill_reg/spill_register_flushable_i/data_o[74] (spill_register_flushable_0_189242)                                                          0.00       0.94 f                   
+  i_aw_spill_reg/n12 (net)                                                                                                                          0.00       0.94 f                   
+  i_aw_spill_reg/U7/Y (BUF_X1M_A9TR)                                                                                                      0.20      0.15 *     1.09 f                   0.90
+  i_aw_spill_reg/data_o[74] (net)                                                                                              10                   0.00       1.09 f                   
+  i_aw_spill_reg/data_o[74] (spill_register)                                                                                                        0.00       1.09 f                   
+  slv_req_cut[729] (net)                                                                                                                            0.00       1.09 f                   
+  i_demux_simple/slv_req_i[729] (axi_demux_simple_00000008_0_00000008_00000008_00000008_0_234242)                                                   0.00       1.09 f                   
+  i_demux_simple/slv_req_i[729] (net)                                                                                                               0.00       1.09 f                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/lookup_axi_id_i[4] (axi_demux_id_counters_00000008_00000003_465242_1)                    0.00       1.09 f                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/lookup_axi_id_i[4] (net)                                                                 0.00       1.09 f                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U1478/Y (NAND2_X0P5M_A9TR)                                                     0.28      0.24 *     1.33 r                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n2303 (net)                                                          8                   0.00       1.33 r                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U1511/Y (NOR2_X1P4B_A9TR)                                                      0.53      0.42 *     1.75 f                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n4165 (net)                                                         32                   0.00       1.75 f                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U3017/Y (AOI22_X0P5M_A9TR)                                                     0.15      0.20 *     1.94 r                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n4073 (net)                                                          1                   0.00       1.94 r                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U3019/Y (AND4_X0P7M_A9TR)                                                      0.05      0.10 *     2.04 r                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n4076 (net)                                                          1                   0.00       2.04 r                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U3020/Y (NAND4BB_X0P7M_A9TR)                                                   0.08      0.07 *     2.11 f                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n4102 (net)                                                          1                   0.00       2.11 f                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U3042/Y (AOI22_X0P5M_A9TR)                                                     0.19      0.15 *     2.26 r                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n4181 (net)                                                          1                   0.00       2.26 r                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U3086/Y (AO1B2_X0P7M_A9TR)                                                     0.11      0.10 *     2.36 r                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/n4182 (net)                                                          1                   0.00       2.36 r                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/U3087/Y (AO21A1AI2_X0P7M_A9TR)                                                 0.12      0.09 *     2.45 f                   0.90
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/lookup_mst_select_o[1] (net)                                         2                   0.00       2.45 f                   
+  i_demux_simple/genblk1_gen_aw_id_counter_i_aw_id_counter/lookup_mst_select_o[1] (axi_demux_id_counters_00000008_00000003_465242_1)                0.00       2.45 f                   
+  i_demux_simple/genblk1_lookup_aw_select[1] (net)                                                                                                  0.00       2.45 f                   
+  i_demux_simple/U6563/Y (AOI22_X0P5M_A9TR)                                                                                               0.10      0.09 *     2.54 r                   0.90
+  i_demux_simple/n729 (net)                                                                                                     1                   0.00       2.54 r                   
+  i_demux_simple/U6564/Y (OAI221_X0P5M_A9TR)                                                                                              0.07      0.06 *     2.60 f                   0.90
+  i_demux_simple/n737 (net)                                                                                                     1                   0.00       2.60 f                   
+  i_demux_simple/U6574/Y (OA21A1OI2_X1M_A9TR)                                                                                             0.69      0.44 *     3.04 r                   0.90
+  i_demux_simple/genblk1_w_cnt_up (net)                                                                                        18                   0.00       3.04 r                   
+  i_demux_simple/U6618/Y (OA1B2_X0P7M_A9TR)                                                                                               0.21      0.27 *     3.31 r                   0.90
+  i_demux_simple/n3489 (net)                                                                                                    5                   0.00       3.31 r                   
+  i_demux_simple/U6883/Y (INV_X0P7M_A9TR)                                                                                                 0.07      0.06 *     3.37 f                   0.90
+  i_demux_simple/n912 (net)                                                                                                     3                   0.00       3.37 f                   
+  i_demux_simple/U6887/Y (NOR2_X0P5B_A9TR)                                                                                                0.12      0.09 *     3.46 r                   0.90
+  i_demux_simple/mst_reqs_o[1541] (net)                                                                                         1                   0.00       3.46 r                   
+  i_demux_simple/mst_reqs_o[1541] (axi_demux_simple_00000008_0_00000008_00000008_00000008_0_234242)                                                 0.00       3.46 r                   
+  mst_reqs_o[1541] (net)                                                                                                                            0.00       3.46 r                   
+  mst_reqs_o[1541] (out)                                                                                                                  0.12      0.00 *     3.46 r                   
+  data arrival time                                                                                                                                            3.46                     
+  ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  (Path is unconstrained)
+
+
+1

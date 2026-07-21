@@ -1,0 +1,1390 @@
+ 
+****************************************
+Report : timing
+        -path full
+        -delay max
+        -nets
+        -max_paths 10
+        -transition_time
+Design : VX_stream_xbar__255781c3cac4
+Scenario(s): mode_norm.OC_rvt_ss_0p900v_125c
+Version: V-2023.12-SP5-3
+Date   : Sat Jul 18 18:36:37 2026
+****************************************
+
+ * Some/all delay information is back-annotated.
+Wire Load Model Mode: Inactive.
+
+  Startpoint: g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_valid_in_r_reg
+              (rising edge-triggered flip-flop clocked by CLK)
+  Endpoint: g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_202_
+            (rising edge-triggered flip-flop clocked by CLK)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: CLK
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                                                                            Fanout     Trans      Incr       Path      Attributes     Voltage
+  --------------------------------------------------------------------------------------------------------------------------------------------------------
+  clock CLK (rise edge)                                                                                  0.00       0.00                     
+  clock network delay (ideal)                                                                            0.00       0.00                     
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_valid_in_r_reg/CK (DFFQ_X1M_A9TR)            0.00      0.00       0.00 r    i              0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_valid_in_r_reg/Q (DFFQ_X1M_A9TR)             0.76      0.50       0.50 r                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/n602 (net)                                 49                   0.00       0.50 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/U13/Y (BUF_X1M_A9TR)                                  0.24      0.25 *     0.75 r                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/n611 (net)                                 21                   0.00       0.75 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/U15/Y (INV_X0P7M_A9TR)                                0.19      0.19 *     0.94 f                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/n612 (net)                                 20                   0.00       0.94 f                   
+  g_passthru_out_buf/g_eb2_stream_buffer/U543/Y (AO22_X0P7M_A9TR)                              0.03      0.10 *     1.05 f                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/n218 (net)                                  1                   0.00       1.05 f                   
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_202_/D (DFFQ_X0P5M_A9TR)      0.03      0.00 *     1.05 f                   0.90
+  data arrival time                                                                                                 1.05                     
+
+  clock CLK (rise edge)                                                                                  9.90       9.90                     
+  clock network delay (ideal)                                                                            0.00       9.90                     
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_202_/CK (DFFQ_X0P5M_A9TR)               0.00       9.90 r                   
+  library setup time                                                                                    -0.04       9.86                     
+  data required time                                                                                                9.86                     
+  --------------------------------------------------------------------------------------------------------------------------------------------------------
+  data required time                                                                                                9.86                     
+  data arrival time                                                                                                -1.05                     
+  --------------------------------------------------------------------------------------------------------------------------------------------------------
+  slack (MET)                                                                                                       8.81                     
+
+
+  Startpoint: g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_valid_in_r_reg
+              (rising edge-triggered flip-flop clocked by CLK)
+  Endpoint: g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_199_
+            (rising edge-triggered flip-flop clocked by CLK)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: CLK
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                                                                            Fanout     Trans      Incr       Path      Attributes     Voltage
+  --------------------------------------------------------------------------------------------------------------------------------------------------------
+  clock CLK (rise edge)                                                                                  0.00       0.00                     
+  clock network delay (ideal)                                                                            0.00       0.00                     
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_valid_in_r_reg/CK (DFFQ_X1M_A9TR)            0.00      0.00       0.00 r    i              0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_valid_in_r_reg/Q (DFFQ_X1M_A9TR)             0.76      0.50       0.50 r                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/n602 (net)                                 49                   0.00       0.50 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/U13/Y (BUF_X1M_A9TR)                                  0.24      0.25 *     0.75 r                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/n611 (net)                                 21                   0.00       0.75 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/U15/Y (INV_X0P7M_A9TR)                                0.19      0.19 *     0.94 f                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/n612 (net)                                 20                   0.00       0.94 f                   
+  g_passthru_out_buf/g_eb2_stream_buffer/U547/Y (AO22_X0P7M_A9TR)                              0.03      0.10 *     1.04 f                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/n215 (net)                                  1                   0.00       1.04 f                   
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_199_/D (DFFQ_X0P5M_A9TR)      0.03      0.00 *     1.04 f                   0.90
+  data arrival time                                                                                                 1.04                     
+
+  clock CLK (rise edge)                                                                                  9.90       9.90                     
+  clock network delay (ideal)                                                                            0.00       9.90                     
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_199_/CK (DFFQ_X0P5M_A9TR)               0.00       9.90 r                   
+  library setup time                                                                                    -0.04       9.86                     
+  data required time                                                                                                9.86                     
+  --------------------------------------------------------------------------------------------------------------------------------------------------------
+  data required time                                                                                                9.86                     
+  data arrival time                                                                                                -1.04                     
+  --------------------------------------------------------------------------------------------------------------------------------------------------------
+  slack (MET)                                                                                                       8.81                     
+
+
+  Startpoint: g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_valid_in_r_reg
+              (rising edge-triggered flip-flop clocked by CLK)
+  Endpoint: g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_212_
+            (rising edge-triggered flip-flop clocked by CLK)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: CLK
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                                                                            Fanout     Trans      Incr       Path      Attributes     Voltage
+  --------------------------------------------------------------------------------------------------------------------------------------------------------
+  clock CLK (rise edge)                                                                                  0.00       0.00                     
+  clock network delay (ideal)                                                                            0.00       0.00                     
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_valid_in_r_reg/CK (DFFQ_X1M_A9TR)            0.00      0.00       0.00 r    i              0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_valid_in_r_reg/Q (DFFQ_X1M_A9TR)             0.76      0.50       0.50 r                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/n602 (net)                                 49                   0.00       0.50 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/U13/Y (BUF_X1M_A9TR)                                  0.24      0.25 *     0.75 r                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/n611 (net)                                 21                   0.00       0.75 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/U15/Y (INV_X0P7M_A9TR)                                0.19      0.19 *     0.94 f                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/n612 (net)                                 20                   0.00       0.94 f                   
+  g_passthru_out_buf/g_eb2_stream_buffer/U532/Y (AO22_X0P7M_A9TR)                              0.03      0.10 *     1.04 f                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/n228 (net)                                  1                   0.00       1.04 f                   
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_212_/D (DFFQ_X0P5M_A9TR)      0.03      0.00 *     1.04 f                   0.90
+  data arrival time                                                                                                 1.04                     
+
+  clock CLK (rise edge)                                                                                  9.90       9.90                     
+  clock network delay (ideal)                                                                            0.00       9.90                     
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_212_/CK (DFFQ_X0P5M_A9TR)               0.00       9.90 r                   
+  library setup time                                                                                    -0.04       9.86                     
+  data required time                                                                                                9.86                     
+  --------------------------------------------------------------------------------------------------------------------------------------------------------
+  data required time                                                                                                9.86                     
+  data arrival time                                                                                                -1.04                     
+  --------------------------------------------------------------------------------------------------------------------------------------------------------
+  slack (MET)                                                                                                       8.81                     
+
+
+  Startpoint: g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_valid_in_r_reg
+              (rising edge-triggered flip-flop clocked by CLK)
+  Endpoint: g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_200_
+            (rising edge-triggered flip-flop clocked by CLK)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: CLK
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                                                                            Fanout     Trans      Incr       Path      Attributes     Voltage
+  --------------------------------------------------------------------------------------------------------------------------------------------------------
+  clock CLK (rise edge)                                                                                  0.00       0.00                     
+  clock network delay (ideal)                                                                            0.00       0.00                     
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_valid_in_r_reg/CK (DFFQ_X1M_A9TR)            0.00      0.00       0.00 r    i              0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_valid_in_r_reg/Q (DFFQ_X1M_A9TR)             0.76      0.50       0.50 r                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/n602 (net)                                 49                   0.00       0.50 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/U13/Y (BUF_X1M_A9TR)                                  0.24      0.25 *     0.75 r                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/n611 (net)                                 21                   0.00       0.75 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/U15/Y (INV_X0P7M_A9TR)                                0.19      0.19 *     0.94 f                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/n612 (net)                                 20                   0.00       0.94 f                   
+  g_passthru_out_buf/g_eb2_stream_buffer/U546/Y (AO22_X0P7M_A9TR)                              0.03      0.10 *     1.04 f                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/n216 (net)                                  1                   0.00       1.04 f                   
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_200_/D (DFFQ_X0P5M_A9TR)      0.03      0.00 *     1.04 f                   0.90
+  data arrival time                                                                                                 1.04                     
+
+  clock CLK (rise edge)                                                                                  9.90       9.90                     
+  clock network delay (ideal)                                                                            0.00       9.90                     
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_200_/CK (DFFQ_X0P5M_A9TR)               0.00       9.90 r                   
+  library setup time                                                                                    -0.04       9.86                     
+  data required time                                                                                                9.86                     
+  --------------------------------------------------------------------------------------------------------------------------------------------------------
+  data required time                                                                                                9.86                     
+  data arrival time                                                                                                -1.04                     
+  --------------------------------------------------------------------------------------------------------------------------------------------------------
+  slack (MET)                                                                                                       8.81                     
+
+
+  Startpoint: g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_valid_in_r_reg
+              (rising edge-triggered flip-flop clocked by CLK)
+  Endpoint: g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_216_
+            (rising edge-triggered flip-flop clocked by CLK)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: CLK
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                                                                            Fanout     Trans      Incr       Path      Attributes     Voltage
+  --------------------------------------------------------------------------------------------------------------------------------------------------------
+  clock CLK (rise edge)                                                                                  0.00       0.00                     
+  clock network delay (ideal)                                                                            0.00       0.00                     
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_valid_in_r_reg/CK (DFFQ_X1M_A9TR)            0.00      0.00       0.00 r    i              0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_valid_in_r_reg/Q (DFFQ_X1M_A9TR)             0.76      0.50       0.50 r                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/n602 (net)                                 49                   0.00       0.50 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/U13/Y (BUF_X1M_A9TR)                                  0.24      0.25 *     0.75 r                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/n611 (net)                                 21                   0.00       0.75 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/U15/Y (INV_X0P7M_A9TR)                                0.19      0.19 *     0.94 f                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/n612 (net)                                 20                   0.00       0.94 f                   
+  g_passthru_out_buf/g_eb2_stream_buffer/U528/Y (AO22_X0P7M_A9TR)                              0.03      0.10 *     1.04 f                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/n232 (net)                                  1                   0.00       1.04 f                   
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_216_/D (DFFQ_X0P5M_A9TR)      0.03      0.00 *     1.04 f                   0.90
+  data arrival time                                                                                                 1.04                     
+
+  clock CLK (rise edge)                                                                                  9.90       9.90                     
+  clock network delay (ideal)                                                                            0.00       9.90                     
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_216_/CK (DFFQ_X0P5M_A9TR)               0.00       9.90 r                   
+  library setup time                                                                                    -0.04       9.86                     
+  data required time                                                                                                9.86                     
+  --------------------------------------------------------------------------------------------------------------------------------------------------------
+  data required time                                                                                                9.86                     
+  data arrival time                                                                                                -1.04                     
+  --------------------------------------------------------------------------------------------------------------------------------------------------------
+  slack (MET)                                                                                                       8.81                     
+
+
+  Startpoint: g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_valid_in_r_reg
+              (rising edge-triggered flip-flop clocked by CLK)
+  Endpoint: g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_206_
+            (rising edge-triggered flip-flop clocked by CLK)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: CLK
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                                                                            Fanout     Trans      Incr       Path      Attributes     Voltage
+  --------------------------------------------------------------------------------------------------------------------------------------------------------
+  clock CLK (rise edge)                                                                                  0.00       0.00                     
+  clock network delay (ideal)                                                                            0.00       0.00                     
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_valid_in_r_reg/CK (DFFQ_X1M_A9TR)            0.00      0.00       0.00 r    i              0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_valid_in_r_reg/Q (DFFQ_X1M_A9TR)             0.76      0.50       0.50 r                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/n602 (net)                                 49                   0.00       0.50 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/U13/Y (BUF_X1M_A9TR)                                  0.24      0.25 *     0.75 r                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/n611 (net)                                 21                   0.00       0.75 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/U15/Y (INV_X0P7M_A9TR)                                0.19      0.19 *     0.94 f                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/n612 (net)                                 20                   0.00       0.94 f                   
+  g_passthru_out_buf/g_eb2_stream_buffer/U539/Y (AO22_X0P7M_A9TR)                              0.03      0.10 *     1.04 f                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/n222 (net)                                  1                   0.00       1.04 f                   
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_206_/D (DFFQ_X0P5M_A9TR)      0.03      0.00 *     1.04 f                   0.90
+  data arrival time                                                                                                 1.04                     
+
+  clock CLK (rise edge)                                                                                  9.90       9.90                     
+  clock network delay (ideal)                                                                            0.00       9.90                     
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_206_/CK (DFFQ_X0P5M_A9TR)               0.00       9.90 r                   
+  library setup time                                                                                    -0.04       9.86                     
+  data required time                                                                                                9.86                     
+  --------------------------------------------------------------------------------------------------------------------------------------------------------
+  data required time                                                                                                9.86                     
+  data arrival time                                                                                                -1.04                     
+  --------------------------------------------------------------------------------------------------------------------------------------------------------
+  slack (MET)                                                                                                       8.81                     
+
+
+  Startpoint: g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_valid_in_r_reg
+              (rising edge-triggered flip-flop clocked by CLK)
+  Endpoint: g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_218_
+            (rising edge-triggered flip-flop clocked by CLK)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: CLK
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                                                                            Fanout     Trans      Incr       Path      Attributes     Voltage
+  --------------------------------------------------------------------------------------------------------------------------------------------------------
+  clock CLK (rise edge)                                                                                  0.00       0.00                     
+  clock network delay (ideal)                                                                            0.00       0.00                     
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_valid_in_r_reg/CK (DFFQ_X1M_A9TR)            0.00      0.00       0.00 r    i              0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_valid_in_r_reg/Q (DFFQ_X1M_A9TR)             0.76      0.50       0.50 r                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/n602 (net)                                 49                   0.00       0.50 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/U13/Y (BUF_X1M_A9TR)                                  0.24      0.25 *     0.75 r                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/n611 (net)                                 21                   0.00       0.75 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/U15/Y (INV_X0P7M_A9TR)                                0.19      0.19 *     0.94 f                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/n612 (net)                                 20                   0.00       0.94 f                   
+  g_passthru_out_buf/g_eb2_stream_buffer/U526/Y (AO22_X0P7M_A9TR)                              0.03      0.10 *     1.04 f                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/n234 (net)                                  1                   0.00       1.04 f                   
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_218_/D (DFFQ_X0P5M_A9TR)      0.03      0.00 *     1.04 f                   0.90
+  data arrival time                                                                                                 1.04                     
+
+  clock CLK (rise edge)                                                                                  9.90       9.90                     
+  clock network delay (ideal)                                                                            0.00       9.90                     
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_218_/CK (DFFQ_X0P5M_A9TR)               0.00       9.90 r                   
+  library setup time                                                                                    -0.04       9.86                     
+  data required time                                                                                                9.86                     
+  --------------------------------------------------------------------------------------------------------------------------------------------------------
+  data required time                                                                                                9.86                     
+  data arrival time                                                                                                -1.04                     
+  --------------------------------------------------------------------------------------------------------------------------------------------------------
+  slack (MET)                                                                                                       8.81                     
+
+
+  Startpoint: g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_valid_in_r_reg
+              (rising edge-triggered flip-flop clocked by CLK)
+  Endpoint: g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_207_
+            (rising edge-triggered flip-flop clocked by CLK)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: CLK
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                                                                            Fanout     Trans      Incr       Path      Attributes     Voltage
+  --------------------------------------------------------------------------------------------------------------------------------------------------------
+  clock CLK (rise edge)                                                                                  0.00       0.00                     
+  clock network delay (ideal)                                                                            0.00       0.00                     
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_valid_in_r_reg/CK (DFFQ_X1M_A9TR)            0.00      0.00       0.00 r    i              0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_valid_in_r_reg/Q (DFFQ_X1M_A9TR)             0.76      0.50       0.50 r                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/n602 (net)                                 49                   0.00       0.50 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/U13/Y (BUF_X1M_A9TR)                                  0.24      0.25 *     0.75 r                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/n611 (net)                                 21                   0.00       0.75 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/U15/Y (INV_X0P7M_A9TR)                                0.19      0.19 *     0.94 f                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/n612 (net)                                 20                   0.00       0.94 f                   
+  g_passthru_out_buf/g_eb2_stream_buffer/U537/Y (AO22_X0P7M_A9TR)                              0.03      0.10 *     1.04 f                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/n223 (net)                                  1                   0.00       1.04 f                   
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_207_/D (DFFQ_X0P5M_A9TR)      0.03      0.00 *     1.04 f                   0.90
+  data arrival time                                                                                                 1.04                     
+
+  clock CLK (rise edge)                                                                                  9.90       9.90                     
+  clock network delay (ideal)                                                                            0.00       9.90                     
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_207_/CK (DFFQ_X0P5M_A9TR)               0.00       9.90 r                   
+  library setup time                                                                                    -0.04       9.86                     
+  data required time                                                                                                9.86                     
+  --------------------------------------------------------------------------------------------------------------------------------------------------------
+  data required time                                                                                                9.86                     
+  data arrival time                                                                                                -1.04                     
+  --------------------------------------------------------------------------------------------------------------------------------------------------------
+  slack (MET)                                                                                                       8.81                     
+
+
+  Startpoint: g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_valid_in_r_reg
+              (rising edge-triggered flip-flop clocked by CLK)
+  Endpoint: g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_257_
+            (rising edge-triggered flip-flop clocked by CLK)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: CLK
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                                                                            Fanout     Trans      Incr       Path      Attributes     Voltage
+  --------------------------------------------------------------------------------------------------------------------------------------------------------
+  clock CLK (rise edge)                                                                                  0.00       0.00                     
+  clock network delay (ideal)                                                                            0.00       0.00                     
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_valid_in_r_reg/CK (DFFQ_X1M_A9TR)            0.00      0.00       0.00 r    i              0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_valid_in_r_reg/Q (DFFQ_X1M_A9TR)             0.76      0.50       0.50 r                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/n602 (net)                                 49                   0.00       0.50 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/U13/Y (BUF_X1M_A9TR)                                  0.24      0.25 *     0.75 r                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/n611 (net)                                 21                   0.00       0.75 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/U15/Y (INV_X0P7M_A9TR)                                0.19      0.19 *     0.94 f                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/n612 (net)                                 20                   0.00       0.94 f                   
+  g_passthru_out_buf/g_eb2_stream_buffer/U545/Y (AO22_X0P7M_A9TR)                              0.03      0.10 *     1.04 f                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/n273 (net)                                  1                   0.00       1.04 f                   
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_257_/D (DFFQ_X0P5M_A9TR)      0.03      0.00 *     1.04 f                   0.90
+  data arrival time                                                                                                 1.04                     
+
+  clock CLK (rise edge)                                                                                  9.90       9.90                     
+  clock network delay (ideal)                                                                            0.00       9.90                     
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_257_/CK (DFFQ_X0P5M_A9TR)               0.00       9.90 r                   
+  library setup time                                                                                    -0.04       9.86                     
+  data required time                                                                                                9.86                     
+  --------------------------------------------------------------------------------------------------------------------------------------------------------
+  data required time                                                                                                9.86                     
+  data arrival time                                                                                                -1.04                     
+  --------------------------------------------------------------------------------------------------------------------------------------------------------
+  slack (MET)                                                                                                       8.81                     
+
+
+  Startpoint: g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_valid_in_r_reg
+              (rising edge-triggered flip-flop clocked by CLK)
+  Endpoint: g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_214_
+            (rising edge-triggered flip-flop clocked by CLK)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: CLK
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                                                                            Fanout     Trans      Incr       Path      Attributes     Voltage
+  --------------------------------------------------------------------------------------------------------------------------------------------------------
+  clock CLK (rise edge)                                                                                  0.00       0.00                     
+  clock network delay (ideal)                                                                            0.00       0.00                     
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_valid_in_r_reg/CK (DFFQ_X1M_A9TR)            0.00      0.00       0.00 r    i              0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_valid_in_r_reg/Q (DFFQ_X1M_A9TR)             0.76      0.50       0.50 r                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/n602 (net)                                 49                   0.00       0.50 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/U13/Y (BUF_X1M_A9TR)                                  0.24      0.25 *     0.75 r                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/n611 (net)                                 21                   0.00       0.75 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/U15/Y (INV_X0P7M_A9TR)                                0.19      0.19 *     0.94 f                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/n612 (net)                                 20                   0.00       0.94 f                   
+  g_passthru_out_buf/g_eb2_stream_buffer/U530/Y (AO22_X0P7M_A9TR)                              0.02      0.10 *     1.04 f                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/n230 (net)                                  1                   0.00       1.04 f                   
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_214_/D (DFFQ_X0P5M_A9TR)      0.02      0.00 *     1.04 f                   0.90
+  data arrival time                                                                                                 1.04                     
+
+  clock CLK (rise edge)                                                                                  9.90       9.90                     
+  clock network delay (ideal)                                                                            0.00       9.90                     
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_214_/CK (DFFQ_X0P5M_A9TR)               0.00       9.90 r                   
+  library setup time                                                                                    -0.04       9.86                     
+  data required time                                                                                                9.86                     
+  --------------------------------------------------------------------------------------------------------------------------------------------------------
+  data required time                                                                                                9.86                     
+  data arrival time                                                                                                -1.04                     
+  --------------------------------------------------------------------------------------------------------------------------------------------------------
+  slack (MET)                                                                                                       8.81                     
+
+
+  Startpoint: ready_out[0]
+              (input port clocked by CLK)
+  Endpoint: g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_valid_in_r_reg
+            (rising edge-triggered flip-flop clocked by CLK)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: REGIN
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                                                                     Fanout     Trans      Incr       Path      Attributes     Voltage
+  -------------------------------------------------------------------------------------------------------------------------------------------------
+  clock CLK (rise edge)                                                                           0.00       0.00                     
+  clock network delay (ideal)                                                                     0.00       0.00                     
+  input external delay                                                                            0.00       0.00 r                   
+  ready_out[0] (in)                                                                     0.10      0.05       0.05 r                   
+  ready_out[0] (net)                                                          1                   0.00       0.05 r                   
+  g_passthru_out_buf/ready_out (VX_elastic_buffer_517_2_1_0)                                      0.00       0.05 r                   
+  g_passthru_out_buf/ready_out (net)                                                              0.00       0.05 r                   
+  g_passthru_out_buf/g_eb2_out_buf/ready_out (VX_pipe_buffer_517_00000000)                        0.00       0.05 r                   
+  g_passthru_out_buf/g_eb2_out_buf/ready_out (net)                                                0.00       0.05 r                   
+  g_passthru_out_buf/g_eb2_out_buf/U1/Y (BUF_X1M_A9TR)                                  0.02      0.06 *     0.11 r                   0.90
+  g_passthru_out_buf/g_eb2_out_buf/ready_in (net)                             1                   0.00       0.11 r                   
+  g_passthru_out_buf/g_eb2_out_buf/ready_in (VX_pipe_buffer_517_00000000)                         0.00       0.11 r                   
+  g_passthru_out_buf/g_eb2_ready_out_t (net)                                                      0.00       0.11 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/ready_out (VX_stream_buffer_517_1)                       0.00       0.11 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/ready_out (net)                                          0.00       0.11 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/U11/Y (NAND2XB_X0P7M_A9TR)                     0.06      0.06 *     0.17 r                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_flow_out (net)              3                   0.00       0.17 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/U53/Y (OR3_X0P7M_A9TR)                         0.04      0.07 *     0.24 r                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/n5 (net)                             1                   0.00       0.24 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_valid_in_r_reg/D (DFFQ_X1M_A9TR)      0.04      0.00 *     0.24 r                   0.90
+  data arrival time                                                                                          0.24                     
+
+  clock CLK (rise edge)                                                                           9.90       9.90                     
+  clock network delay (ideal)                                                                     0.00       9.90                     
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_valid_in_r_reg/CK (DFFQ_X1M_A9TR)               0.00       9.90 r                   
+  library setup time                                                                             -0.03       9.87                     
+  data required time                                                                                         9.87                     
+  -------------------------------------------------------------------------------------------------------------------------------------------------
+  data required time                                                                                         9.87                     
+  data arrival time                                                                                         -0.24                     
+  -------------------------------------------------------------------------------------------------------------------------------------------------
+  slack (MET)                                                                                                9.62                     
+
+
+  Startpoint: ready_out[0]
+              (input port clocked by CLK)
+  Endpoint: g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_valid_out_r_reg
+            (rising edge-triggered flip-flop clocked by CLK)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: REGIN
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                                                                        Fanout     Trans      Incr       Path      Attributes     Voltage
+  ----------------------------------------------------------------------------------------------------------------------------------------------------
+  clock CLK (rise edge)                                                                              0.00       0.00                     
+  clock network delay (ideal)                                                                        0.00       0.00                     
+  input external delay                                                                               0.00       0.00 r                   
+  ready_out[0] (in)                                                                        0.10      0.05       0.05 r                   
+  ready_out[0] (net)                                                             1                   0.00       0.05 r                   
+  g_passthru_out_buf/ready_out (VX_elastic_buffer_517_2_1_0)                                         0.00       0.05 r                   
+  g_passthru_out_buf/ready_out (net)                                                                 0.00       0.05 r                   
+  g_passthru_out_buf/g_eb2_out_buf/ready_out (VX_pipe_buffer_517_00000000)                           0.00       0.05 r                   
+  g_passthru_out_buf/g_eb2_out_buf/ready_out (net)                                                   0.00       0.05 r                   
+  g_passthru_out_buf/g_eb2_out_buf/U1/Y (BUF_X1M_A9TR)                                     0.02      0.06 *     0.11 r                   0.90
+  g_passthru_out_buf/g_eb2_out_buf/ready_in (net)                                1                   0.00       0.11 r                   
+  g_passthru_out_buf/g_eb2_out_buf/ready_in (VX_pipe_buffer_517_00000000)                            0.00       0.11 r                   
+  g_passthru_out_buf/g_eb2_ready_out_t (net)                                                         0.00       0.11 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/ready_out (VX_stream_buffer_517_1)                          0.00       0.11 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/ready_out (net)                                             0.00       0.11 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/U11/Y (NAND2XB_X0P7M_A9TR)                        0.06      0.06 *     0.17 r                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_flow_out (net)                 3                   0.00       0.17 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/U52/Y (AOI21_X0P7M_A9TR)                          0.03      0.04 *     0.21 f                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/n4 (net)                                1                   0.00       0.21 f                   
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_valid_out_r_reg/D (DFFQ_X0P5M_A9TR)      0.03      0.00 *     0.21 f                   0.90
+  data arrival time                                                                                             0.21                     
+
+  clock CLK (rise edge)                                                                              9.90       9.90                     
+  clock network delay (ideal)                                                                        0.00       9.90                     
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_valid_out_r_reg/CK (DFFQ_X0P5M_A9TR)               0.00       9.90 r                   
+  library setup time                                                                                -0.04       9.86                     
+  data required time                                                                                            9.86                     
+  ----------------------------------------------------------------------------------------------------------------------------------------------------
+  data required time                                                                                            9.86                     
+  data arrival time                                                                                            -0.21                     
+  ----------------------------------------------------------------------------------------------------------------------------------------------------
+  slack (MET)                                                                                                   9.64                     
+
+
+  Startpoint: ready_out[0]
+              (input port clocked by CLK)
+  Endpoint: g_passthru_out_buf/g_eb2_stream_buffer/clk_gate_g_buffer_data_out_r_reg/latch
+            (gating element for clock CLK)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: REGIN
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                                                                                                               Fanout     Trans      Incr       Path      Attributes     Voltage
+  -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  clock CLK (rise edge)                                                                                                                     0.00       0.00                     
+  clock network delay (ideal)                                                                                                               0.00       0.00                     
+  input external delay                                                                                                                      0.00       0.00 r                   
+  ready_out[0] (in)                                                                                                               0.10      0.05       0.05 r                   
+  ready_out[0] (net)                                                                                                    1                   0.00       0.05 r                   
+  g_passthru_out_buf/ready_out (VX_elastic_buffer_517_2_1_0)                                                                                0.00       0.05 r                   
+  g_passthru_out_buf/ready_out (net)                                                                                                        0.00       0.05 r                   
+  g_passthru_out_buf/g_eb2_out_buf/ready_out (VX_pipe_buffer_517_00000000)                                                                  0.00       0.05 r                   
+  g_passthru_out_buf/g_eb2_out_buf/ready_out (net)                                                                                          0.00       0.05 r                   
+  g_passthru_out_buf/g_eb2_out_buf/U1/Y (BUF_X1M_A9TR)                                                                            0.02      0.06 *     0.11 r                   0.90
+  g_passthru_out_buf/g_eb2_out_buf/ready_in (net)                                                                       1                   0.00       0.11 r                   
+  g_passthru_out_buf/g_eb2_out_buf/ready_in (VX_pipe_buffer_517_00000000)                                                                   0.00       0.11 r                   
+  g_passthru_out_buf/g_eb2_ready_out_t (net)                                                                                                0.00       0.11 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/ready_out (VX_stream_buffer_517_1)                                                                 0.00       0.11 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/ready_out (net)                                                                                    0.00       0.11 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/U11/Y (NAND2XB_X0P7M_A9TR)                                                               0.06      0.06 *     0.17 r                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_flow_out (net)                                                        3                   0.00       0.17 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/clk_gate_g_buffer_data_out_r_reg/EN (SNPS_CLOCK_GATE_HIGH_VX_stream_buffer_517_1_1)                0.00       0.17 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/clk_gate_g_buffer_data_out_r_reg/EN (net)                                                          0.00       0.17 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/clk_gate_g_buffer_data_out_r_reg/latch/E (PREICG_X0P5B_A9TR)                             0.06      0.00 *     0.17 r    u so           0.90
+  data arrival time                                                                                                                                    0.17                     
+
+  clock CLK (rise edge)                                                                                                                     9.90       9.90                     
+  clock network delay (ideal)                                                                                                               0.00       9.90                     
+  g_passthru_out_buf/g_eb2_stream_buffer/clk_gate_g_buffer_data_out_r_reg/latch/CK (PREICG_X0P5B_A9TR)                                      0.00       9.90 r                   
+  clock gating setup time                                                                                                                  -0.07       9.83                     
+  data required time                                                                                                                                   9.83                     
+  -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  data required time                                                                                                                                   9.83                     
+  data arrival time                                                                                                                                   -0.17                     
+  -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  slack (MET)                                                                                                                                          9.66                     
+
+
+  Startpoint: valid_in[0]
+              (input port clocked by CLK)
+  Endpoint: g_passthru_out_buf/g_eb2_stream_buffer/clk_gate_g_buffer_buffer_r_reg/latch
+            (gating element for clock CLK)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: REGIN
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                                                                                                             Fanout     Trans      Incr       Path      Attributes     Voltage
+  -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  clock CLK (rise edge)                                                                                                                   0.00       0.00                     
+  clock network delay (ideal)                                                                                                             0.00       0.00                     
+  input external delay                                                                                                                    0.00       0.00 r                   
+  valid_in[0] (in)                                                                                                              0.17      0.09       0.09 r                   
+  valid_in[0] (net)                                                                                                   2                   0.00       0.09 r                   
+  g_passthru_out_buf/valid_in (VX_elastic_buffer_517_2_1_0)                                                                               0.00       0.09 r                   
+  g_passthru_out_buf/valid_in (net)                                                                                                       0.00       0.09 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/valid_in (VX_stream_buffer_517_1)                                                                0.00       0.09 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/valid_in (net)                                                                                   0.00       0.09 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/U10/Y (AND2_X0P7M_A9TR)                                                                0.03      0.08 *     0.16 r                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_fire_in (net)                                                       1                   0.00       0.16 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/clk_gate_g_buffer_buffer_r_reg/EN (SNPS_CLOCK_GATE_HIGH_VX_stream_buffer_517_1_0)                0.00       0.16 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/clk_gate_g_buffer_buffer_r_reg/EN (net)                                                          0.00       0.16 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/clk_gate_g_buffer_buffer_r_reg/latch/E (PREICG_X0P5B_A9TR)                             0.03      0.00 *     0.16 r    u so           0.90
+  data arrival time                                                                                                                                  0.16                     
+
+  clock CLK (rise edge)                                                                                                                   9.90       9.90                     
+  clock network delay (ideal)                                                                                                             0.00       9.90                     
+  g_passthru_out_buf/g_eb2_stream_buffer/clk_gate_g_buffer_buffer_r_reg/latch/CK (PREICG_X0P5B_A9TR)                                      0.00       9.90 r                   
+  clock gating setup time                                                                                                                -0.06       9.84                     
+  data required time                                                                                                                                 9.84                     
+  -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  data required time                                                                                                                                 9.84                     
+  data arrival time                                                                                                                                 -0.16                     
+  -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  slack (MET)                                                                                                                                        9.68                     
+
+
+  Startpoint: data_in[470]
+              (input port clocked by CLK)
+  Endpoint: g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_470_
+            (rising edge-triggered flip-flop clocked by CLK)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: REGIN
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                                                                            Fanout     Trans      Incr       Path      Attributes     Voltage
+  --------------------------------------------------------------------------------------------------------------------------------------------------------
+  clock CLK (rise edge)                                                                                  0.00       0.00                     
+  clock network delay (ideal)                                                                            0.00       0.00                     
+  input external delay                                                                                   0.00       0.00 r                   
+  data_in[470] (in)                                                                            0.13      0.07       0.07 r                   
+  data_in[470] (net)                                                                 2                   0.00       0.07 r                   
+  g_passthru_out_buf/data_in[470] (VX_elastic_buffer_517_2_1_0)                                          0.00       0.07 r                   
+  g_passthru_out_buf/data_in[470] (net)                                                                  0.00       0.07 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/data_in[470] (VX_stream_buffer_517_1)                           0.00       0.07 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/data_in[470] (net)                                              0.00       0.07 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/U254/Y (AO22_X0P7M_A9TR)                              0.03      0.08 *     0.15 r                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/n486 (net)                                  1                   0.00       0.15 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_470_/D (DFFQ_X0P5M_A9TR)      0.03      0.00 *     0.15 r                   0.90
+  data arrival time                                                                                                 0.15                     
+
+  clock CLK (rise edge)                                                                                  9.90       9.90                     
+  clock network delay (ideal)                                                                            0.00       9.90                     
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_470_/CK (DFFQ_X0P5M_A9TR)               0.00       9.90 r                   
+  library setup time                                                                                    -0.04       9.86                     
+  data required time                                                                                                9.86                     
+  --------------------------------------------------------------------------------------------------------------------------------------------------------
+  data required time                                                                                                9.86                     
+  data arrival time                                                                                                -0.15                     
+  --------------------------------------------------------------------------------------------------------------------------------------------------------
+  slack (MET)                                                                                                       9.72                     
+
+
+  Startpoint: data_in[240]
+              (input port clocked by CLK)
+  Endpoint: g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_240_
+            (rising edge-triggered flip-flop clocked by CLK)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: REGIN
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                                                                            Fanout     Trans      Incr       Path      Attributes     Voltage
+  --------------------------------------------------------------------------------------------------------------------------------------------------------
+  clock CLK (rise edge)                                                                                  0.00       0.00                     
+  clock network delay (ideal)                                                                            0.00       0.00                     
+  input external delay                                                                                   0.00       0.00 r                   
+  data_in[240] (in)                                                                            0.12      0.06       0.06 r                   
+  data_in[240] (net)                                                                 2                   0.00       0.06 r                   
+  g_passthru_out_buf/data_in[240] (VX_elastic_buffer_517_2_1_0)                                          0.00       0.06 r                   
+  g_passthru_out_buf/data_in[240] (net)                                                                  0.00       0.06 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/data_in[240] (VX_stream_buffer_517_1)                           0.00       0.06 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/data_in[240] (net)                                              0.00       0.06 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/U500/Y (AO22_X0P7M_A9TR)                              0.05      0.08 *     0.14 r                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/n256 (net)                                  1                   0.00       0.14 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_240_/D (DFFQ_X0P5M_A9TR)      0.05      0.00 *     0.14 r                   0.90
+  data arrival time                                                                                                 0.14                     
+
+  clock CLK (rise edge)                                                                                  9.90       9.90                     
+  clock network delay (ideal)                                                                            0.00       9.90                     
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_240_/CK (DFFQ_X0P5M_A9TR)               0.00       9.90 r                   
+  library setup time                                                                                    -0.04       9.86                     
+  data required time                                                                                                9.86                     
+  --------------------------------------------------------------------------------------------------------------------------------------------------------
+  data required time                                                                                                9.86                     
+  data arrival time                                                                                                -0.14                     
+  --------------------------------------------------------------------------------------------------------------------------------------------------------
+  slack (MET)                                                                                                       9.72                     
+
+
+  Startpoint: data_in[469]
+              (input port clocked by CLK)
+  Endpoint: g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_469_
+            (rising edge-triggered flip-flop clocked by CLK)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: REGIN
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                                                                            Fanout     Trans      Incr       Path      Attributes     Voltage
+  --------------------------------------------------------------------------------------------------------------------------------------------------------
+  clock CLK (rise edge)                                                                                  0.00       0.00                     
+  clock network delay (ideal)                                                                            0.00       0.00                     
+  input external delay                                                                                   0.00       0.00 r                   
+  data_in[469] (in)                                                                            0.12      0.06       0.06 r                   
+  data_in[469] (net)                                                                 2                   0.00       0.06 r                   
+  g_passthru_out_buf/data_in[469] (VX_elastic_buffer_517_2_1_0)                                          0.00       0.06 r                   
+  g_passthru_out_buf/data_in[469] (net)                                                                  0.00       0.06 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/data_in[469] (VX_stream_buffer_517_1)                           0.00       0.06 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/data_in[469] (net)                                              0.00       0.06 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/U255/Y (AO22_X0P7M_A9TR)                              0.03      0.08 *     0.15 r                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/n485 (net)                                  1                   0.00       0.15 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_469_/D (DFFQ_X0P5M_A9TR)      0.03      0.00 *     0.15 r                   0.90
+  data arrival time                                                                                                 0.15                     
+
+  clock CLK (rise edge)                                                                                  9.90       9.90                     
+  clock network delay (ideal)                                                                            0.00       9.90                     
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_469_/CK (DFFQ_X0P5M_A9TR)               0.00       9.90 r                   
+  library setup time                                                                                    -0.04       9.86                     
+  data required time                                                                                                9.86                     
+  --------------------------------------------------------------------------------------------------------------------------------------------------------
+  data required time                                                                                                9.86                     
+  data arrival time                                                                                                -0.15                     
+  --------------------------------------------------------------------------------------------------------------------------------------------------------
+  slack (MET)                                                                                                       9.72                     
+
+
+  Startpoint: data_in[423]
+              (input port clocked by CLK)
+  Endpoint: g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_423_
+            (rising edge-triggered flip-flop clocked by CLK)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: REGIN
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                                                                            Fanout     Trans      Incr       Path      Attributes     Voltage
+  --------------------------------------------------------------------------------------------------------------------------------------------------------
+  clock CLK (rise edge)                                                                                  0.00       0.00                     
+  clock network delay (ideal)                                                                            0.00       0.00                     
+  input external delay                                                                                   0.00       0.00 r                   
+  data_in[423] (in)                                                                            0.12      0.06       0.06 r                   
+  data_in[423] (net)                                                                 2                   0.00       0.06 r                   
+  g_passthru_out_buf/data_in[423] (VX_elastic_buffer_517_2_1_0)                                          0.00       0.06 r                   
+  g_passthru_out_buf/data_in[423] (net)                                                                  0.00       0.06 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/data_in[423] (VX_stream_buffer_517_1)                           0.00       0.06 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/data_in[423] (net)                                              0.00       0.06 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/U316/Y (AO22_X0P7M_A9TR)                              0.03      0.08 *     0.15 r                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/n439 (net)                                  1                   0.00       0.15 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_423_/D (DFFQ_X0P5M_A9TR)      0.03      0.00 *     0.15 r                   0.90
+  data arrival time                                                                                                 0.15                     
+
+  clock CLK (rise edge)                                                                                  9.90       9.90                     
+  clock network delay (ideal)                                                                            0.00       9.90                     
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_423_/CK (DFFQ_X0P5M_A9TR)               0.00       9.90 r                   
+  library setup time                                                                                    -0.04       9.86                     
+  data required time                                                                                                9.86                     
+  --------------------------------------------------------------------------------------------------------------------------------------------------------
+  data required time                                                                                                9.86                     
+  data arrival time                                                                                                -0.15                     
+  --------------------------------------------------------------------------------------------------------------------------------------------------------
+  slack (MET)                                                                                                       9.72                     
+
+
+  Startpoint: data_in[233]
+              (input port clocked by CLK)
+  Endpoint: g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_233_
+            (rising edge-triggered flip-flop clocked by CLK)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: REGIN
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                                                                            Fanout     Trans      Incr       Path      Attributes     Voltage
+  --------------------------------------------------------------------------------------------------------------------------------------------------------
+  clock CLK (rise edge)                                                                                  0.00       0.00                     
+  clock network delay (ideal)                                                                            0.00       0.00                     
+  input external delay                                                                                   0.00       0.00 r                   
+  data_in[233] (in)                                                                            0.11      0.06       0.06 r                   
+  data_in[233] (net)                                                                 2                   0.00       0.06 r                   
+  g_passthru_out_buf/data_in[233] (VX_elastic_buffer_517_2_1_0)                                          0.00       0.06 r                   
+  g_passthru_out_buf/data_in[233] (net)                                                                  0.00       0.06 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/data_in[233] (VX_stream_buffer_517_1)                           0.00       0.06 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/data_in[233] (net)                                              0.00       0.06 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/U507/Y (AO22_X0P7M_A9TR)                              0.05      0.08 *     0.14 r                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/n249 (net)                                  1                   0.00       0.14 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_233_/D (DFFQ_X0P5M_A9TR)      0.05      0.00 *     0.14 r                   0.90
+  data arrival time                                                                                                 0.14                     
+
+  clock CLK (rise edge)                                                                                  9.90       9.90                     
+  clock network delay (ideal)                                                                            0.00       9.90                     
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_233_/CK (DFFQ_X0P5M_A9TR)               0.00       9.90 r                   
+  library setup time                                                                                    -0.04       9.86                     
+  data required time                                                                                                9.86                     
+  --------------------------------------------------------------------------------------------------------------------------------------------------------
+  data required time                                                                                                9.86                     
+  data arrival time                                                                                                -0.14                     
+  --------------------------------------------------------------------------------------------------------------------------------------------------------
+  slack (MET)                                                                                                       9.72                     
+
+
+  Startpoint: data_in[465]
+              (input port clocked by CLK)
+  Endpoint: g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_465_
+            (rising edge-triggered flip-flop clocked by CLK)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: REGIN
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                                                                            Fanout     Trans      Incr       Path      Attributes     Voltage
+  --------------------------------------------------------------------------------------------------------------------------------------------------------
+  clock CLK (rise edge)                                                                                  0.00       0.00                     
+  clock network delay (ideal)                                                                            0.00       0.00                     
+  input external delay                                                                                   0.00       0.00 r                   
+  data_in[465] (in)                                                                            0.12      0.06       0.06 r                   
+  data_in[465] (net)                                                                 2                   0.00       0.06 r                   
+  g_passthru_out_buf/data_in[465] (VX_elastic_buffer_517_2_1_0)                                          0.00       0.06 r                   
+  g_passthru_out_buf/data_in[465] (net)                                                                  0.00       0.06 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/data_in[465] (VX_stream_buffer_517_1)                           0.00       0.06 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/data_in[465] (net)                                              0.00       0.06 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/U259/Y (AO22_X0P7M_A9TR)                              0.03      0.08 *     0.15 r                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/n481 (net)                                  1                   0.00       0.15 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_465_/D (DFFQ_X0P5M_A9TR)      0.03      0.00 *     0.15 r                   0.90
+  data arrival time                                                                                                 0.15                     
+
+  clock CLK (rise edge)                                                                                  9.90       9.90                     
+  clock network delay (ideal)                                                                            0.00       9.90                     
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_465_/CK (DFFQ_X0P5M_A9TR)               0.00       9.90 r                   
+  library setup time                                                                                    -0.04       9.86                     
+  data required time                                                                                                9.86                     
+  --------------------------------------------------------------------------------------------------------------------------------------------------------
+  data required time                                                                                                9.86                     
+  data arrival time                                                                                                -0.15                     
+  --------------------------------------------------------------------------------------------------------------------------------------------------------
+  slack (MET)                                                                                                       9.72                     
+
+
+  Startpoint: g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_valid_in_r_reg
+              (rising edge-triggered flip-flop clocked by CLK)
+  Endpoint: ready_in[0]
+            (output port clocked by CLK)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: REGOUT
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                                                                      Fanout     Trans      Incr       Path      Attributes     Voltage
+  --------------------------------------------------------------------------------------------------------------------------------------------------
+  clock CLK (rise edge)                                                                            0.00       0.00                     
+  clock network delay (ideal)                                                                      0.00       0.00                     
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_valid_in_r_reg/CK (DFFQ_X1M_A9TR)      0.00      0.00       0.00 r    i              0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_valid_in_r_reg/Q (DFFQ_X1M_A9TR)       0.76      0.50       0.50 r                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/n602 (net)                           49                   0.00       0.50 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/U55/Y (BUF_X1M_A9TR)                            0.20      0.24 *     0.73 r                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/ready_in (net)                       19                   0.00       0.73 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/ready_in (VX_stream_buffer_517_1)                         0.00       0.73 r                   
+  g_passthru_out_buf/ready_in (net)                                                                0.00       0.73 r                   
+  g_passthru_out_buf/ready_in (VX_elastic_buffer_517_2_1_0)                                        0.00       0.73 r                   
+  ready_in[0] (net)                                                                                0.00       0.73 r                   
+  ready_in[0] (out)                                                                      0.20      0.00 *     0.73 r                   
+  data arrival time                                                                                           0.73                     
+
+  clock CLK (rise edge)                                                                            9.90       9.90                     
+  clock network delay (ideal)                                                                      0.00       9.90                     
+  output external delay                                                                            0.00       9.90                     
+  data required time                                                                                          9.90                     
+  --------------------------------------------------------------------------------------------------------------------------------------------------
+  data required time                                                                                          9.90                     
+  data arrival time                                                                                          -0.73                     
+  --------------------------------------------------------------------------------------------------------------------------------------------------
+  slack (MET)                                                                                                 9.17                     
+
+
+  Startpoint: g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_63_
+              (rising edge-triggered flip-flop clocked by CLK)
+  Endpoint: data_out[63]
+            (output port clocked by CLK)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: REGOUT
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                                                                            Fanout     Trans      Incr       Path      Attributes     Voltage
+  --------------------------------------------------------------------------------------------------------------------------------------------------------
+  clock CLK (rise edge)                                                                                  0.00       0.00                     
+  clock network delay (ideal)                                                                            0.00       0.00                     
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_63_/CK (DFFQ_X0P5M_A9TR)      0.00      0.00       0.00 r                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_63_/Q (DFFQ_X0P5M_A9TR)       0.08      0.14       0.14 r                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/data_out[63] (net)                          1                   0.00       0.14 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/data_out[63] (VX_stream_buffer_517_1)                           0.00       0.14 r                   
+  g_passthru_out_buf/g_eb2_data_out_t[63] (net)                                                          0.00       0.14 r                   
+  g_passthru_out_buf/g_eb2_out_buf/data_in[63] (VX_pipe_buffer_517_00000000)                             0.00       0.14 r                   
+  g_passthru_out_buf/g_eb2_out_buf/data_in[63] (net)                                                     0.00       0.14 r                   
+  g_passthru_out_buf/g_eb2_out_buf/U431/Y (BUF_X1M_A9TR)                                       0.03      0.06 *     0.20 r                   0.90
+  g_passthru_out_buf/g_eb2_out_buf/data_out[63] (net)                                1                   0.00       0.20 r                   
+  g_passthru_out_buf/g_eb2_out_buf/data_out[63] (VX_pipe_buffer_517_00000000)                            0.00       0.20 r                   
+  g_passthru_out_buf/data_out[63] (net)                                                                  0.00       0.20 r                   
+  g_passthru_out_buf/data_out[63] (VX_elastic_buffer_517_2_1_0)                                          0.00       0.20 r                   
+  data_out[63] (net)                                                                                     0.00       0.20 r                   
+  data_out[63] (out)                                                                           0.03      0.00 *     0.20 r                   
+  data arrival time                                                                                                 0.20                     
+
+  clock CLK (rise edge)                                                                                  9.90       9.90                     
+  clock network delay (ideal)                                                                            0.00       9.90                     
+  output external delay                                                                                  0.00       9.90                     
+  data required time                                                                                                9.90                     
+  --------------------------------------------------------------------------------------------------------------------------------------------------------
+  data required time                                                                                                9.90                     
+  data arrival time                                                                                                -0.20                     
+  --------------------------------------------------------------------------------------------------------------------------------------------------------
+  slack (MET)                                                                                                       9.70                     
+
+
+  Startpoint: g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_valid_out_r_reg
+              (rising edge-triggered flip-flop clocked by CLK)
+  Endpoint: valid_out[0]
+            (output port clocked by CLK)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: REGOUT
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                                                                         Fanout     Trans      Incr       Path      Attributes     Voltage
+  -----------------------------------------------------------------------------------------------------------------------------------------------------
+  clock CLK (rise edge)                                                                               0.00       0.00                     
+  clock network delay (ideal)                                                                         0.00       0.00                     
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_valid_out_r_reg/CK (DFFQ_X0P5M_A9TR)      0.00      0.00       0.00 r    i              0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_valid_out_r_reg/Q (DFFQ_X0P5M_A9TR)       0.07      0.13       0.13 r                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/valid_out (net)                          2                   0.00       0.13 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/valid_out (VX_stream_buffer_517_1)                           0.00       0.13 r                   
+  g_passthru_out_buf/g_eb2_valid_out_t (net)                                                          0.00       0.13 r                   
+  g_passthru_out_buf/g_eb2_out_buf/valid_in (VX_pipe_buffer_517_00000000)                             0.00       0.13 r                   
+  g_passthru_out_buf/g_eb2_out_buf/valid_in (net)                                                     0.00       0.13 r                   
+  g_passthru_out_buf/g_eb2_out_buf/U519/Y (BUF_X1M_A9TR)                                    0.05      0.07 *     0.20 r                   0.90
+  g_passthru_out_buf/g_eb2_out_buf/valid_out (net)                                1                   0.00       0.20 r                   
+  g_passthru_out_buf/g_eb2_out_buf/valid_out (VX_pipe_buffer_517_00000000)                            0.00       0.20 r                   
+  g_passthru_out_buf/valid_out (net)                                                                  0.00       0.20 r                   
+  g_passthru_out_buf/valid_out (VX_elastic_buffer_517_2_1_0)                                          0.00       0.20 r                   
+  valid_out[0] (net)                                                                                  0.00       0.20 r                   
+  valid_out[0] (out)                                                                        0.05      0.00 *     0.20 r                   
+  data arrival time                                                                                              0.20                     
+
+  clock CLK (rise edge)                                                                               9.90       9.90                     
+  clock network delay (ideal)                                                                         0.00       9.90                     
+  output external delay                                                                               0.00       9.90                     
+  data required time                                                                                             9.90                     
+  -----------------------------------------------------------------------------------------------------------------------------------------------------
+  data required time                                                                                             9.90                     
+  data arrival time                                                                                             -0.20                     
+  -----------------------------------------------------------------------------------------------------------------------------------------------------
+  slack (MET)                                                                                                    9.70                     
+
+
+  Startpoint: g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_458_
+              (rising edge-triggered flip-flop clocked by CLK)
+  Endpoint: data_out[458]
+            (output port clocked by CLK)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: REGOUT
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                                                                             Fanout     Trans      Incr       Path      Attributes     Voltage
+  ---------------------------------------------------------------------------------------------------------------------------------------------------------
+  clock CLK (rise edge)                                                                                   0.00       0.00                     
+  clock network delay (ideal)                                                                             0.00       0.00                     
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_458_/CK (DFFQ_X0P5M_A9TR)      0.00      0.00       0.00 r                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_458_/Q (DFFQ_X0P5M_A9TR)       0.07      0.14       0.14 r                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/data_out[458] (net)                          1                   0.00       0.14 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/data_out[458] (VX_stream_buffer_517_1)                           0.00       0.14 r                   
+  g_passthru_out_buf/g_eb2_data_out_t[458] (net)                                                          0.00       0.14 r                   
+  g_passthru_out_buf/g_eb2_out_buf/data_in[458] (VX_pipe_buffer_517_00000000)                             0.00       0.14 r                   
+  g_passthru_out_buf/g_eb2_out_buf/data_in[458] (net)                                                     0.00       0.14 r                   
+  g_passthru_out_buf/g_eb2_out_buf/U56/Y (BUF_X1M_A9TR)                                         0.03      0.06 *     0.20 r                   0.90
+  g_passthru_out_buf/g_eb2_out_buf/data_out[458] (net)                                1                   0.00       0.20 r                   
+  g_passthru_out_buf/g_eb2_out_buf/data_out[458] (VX_pipe_buffer_517_00000000)                            0.00       0.20 r                   
+  g_passthru_out_buf/data_out[458] (net)                                                                  0.00       0.20 r                   
+  g_passthru_out_buf/data_out[458] (VX_elastic_buffer_517_2_1_0)                                          0.00       0.20 r                   
+  data_out[458] (net)                                                                                     0.00       0.20 r                   
+  data_out[458] (out)                                                                           0.03      0.00 *     0.20 r                   
+  data arrival time                                                                                                  0.20                     
+
+  clock CLK (rise edge)                                                                                   9.90       9.90                     
+  clock network delay (ideal)                                                                             0.00       9.90                     
+  output external delay                                                                                   0.00       9.90                     
+  data required time                                                                                                 9.90                     
+  ---------------------------------------------------------------------------------------------------------------------------------------------------------
+  data required time                                                                                                 9.90                     
+  data arrival time                                                                                                 -0.20                     
+  ---------------------------------------------------------------------------------------------------------------------------------------------------------
+  slack (MET)                                                                                                        9.70                     
+
+
+  Startpoint: g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_423_
+              (rising edge-triggered flip-flop clocked by CLK)
+  Endpoint: data_out[423]
+            (output port clocked by CLK)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: REGOUT
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                                                                             Fanout     Trans      Incr       Path      Attributes     Voltage
+  ---------------------------------------------------------------------------------------------------------------------------------------------------------
+  clock CLK (rise edge)                                                                                   0.00       0.00                     
+  clock network delay (ideal)                                                                             0.00       0.00                     
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_423_/CK (DFFQ_X0P5M_A9TR)      0.00      0.00       0.00 r                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_423_/Q (DFFQ_X0P5M_A9TR)       0.06      0.13       0.13 r                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/data_out[423] (net)                          1                   0.00       0.13 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/data_out[423] (VX_stream_buffer_517_1)                           0.00       0.13 r                   
+  g_passthru_out_buf/g_eb2_data_out_t[423] (net)                                                          0.00       0.13 r                   
+  g_passthru_out_buf/g_eb2_out_buf/data_in[423] (VX_pipe_buffer_517_00000000)                             0.00       0.13 r                   
+  g_passthru_out_buf/g_eb2_out_buf/data_in[423] (net)                                                     0.00       0.13 r                   
+  g_passthru_out_buf/g_eb2_out_buf/U14/Y (BUF_X1M_A9TR)                                         0.05      0.07 *     0.19 r                   0.90
+  g_passthru_out_buf/g_eb2_out_buf/data_out[423] (net)                                1                   0.00       0.19 r                   
+  g_passthru_out_buf/g_eb2_out_buf/data_out[423] (VX_pipe_buffer_517_00000000)                            0.00       0.19 r                   
+  g_passthru_out_buf/data_out[423] (net)                                                                  0.00       0.19 r                   
+  g_passthru_out_buf/data_out[423] (VX_elastic_buffer_517_2_1_0)                                          0.00       0.19 r                   
+  data_out[423] (net)                                                                                     0.00       0.19 r                   
+  data_out[423] (out)                                                                           0.05      0.00 *     0.19 r                   
+  data arrival time                                                                                                  0.19                     
+
+  clock CLK (rise edge)                                                                                   9.90       9.90                     
+  clock network delay (ideal)                                                                             0.00       9.90                     
+  output external delay                                                                                   0.00       9.90                     
+  data required time                                                                                                 9.90                     
+  ---------------------------------------------------------------------------------------------------------------------------------------------------------
+  data required time                                                                                                 9.90                     
+  data arrival time                                                                                                 -0.19                     
+  ---------------------------------------------------------------------------------------------------------------------------------------------------------
+  slack (MET)                                                                                                        9.71                     
+
+
+  Startpoint: g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_460_
+              (rising edge-triggered flip-flop clocked by CLK)
+  Endpoint: data_out[460]
+            (output port clocked by CLK)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: REGOUT
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                                                                             Fanout     Trans      Incr       Path      Attributes     Voltage
+  ---------------------------------------------------------------------------------------------------------------------------------------------------------
+  clock CLK (rise edge)                                                                                   0.00       0.00                     
+  clock network delay (ideal)                                                                             0.00       0.00                     
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_460_/CK (DFFQ_X0P5M_A9TR)      0.00      0.00       0.00 r                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_460_/Q (DFFQ_X0P5M_A9TR)       0.07      0.13       0.13 r                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/data_out[460] (net)                          1                   0.00       0.13 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/data_out[460] (VX_stream_buffer_517_1)                           0.00       0.13 r                   
+  g_passthru_out_buf/g_eb2_data_out_t[460] (net)                                                          0.00       0.13 r                   
+  g_passthru_out_buf/g_eb2_out_buf/data_in[460] (VX_pipe_buffer_517_00000000)                             0.00       0.13 r                   
+  g_passthru_out_buf/g_eb2_out_buf/data_in[460] (net)                                                     0.00       0.13 r                   
+  g_passthru_out_buf/g_eb2_out_buf/U58/Y (BUF_X1M_A9TR)                                         0.03      0.06 *     0.19 r                   0.90
+  g_passthru_out_buf/g_eb2_out_buf/data_out[460] (net)                                1                   0.00       0.19 r                   
+  g_passthru_out_buf/g_eb2_out_buf/data_out[460] (VX_pipe_buffer_517_00000000)                            0.00       0.19 r                   
+  g_passthru_out_buf/data_out[460] (net)                                                                  0.00       0.19 r                   
+  g_passthru_out_buf/data_out[460] (VX_elastic_buffer_517_2_1_0)                                          0.00       0.19 r                   
+  data_out[460] (net)                                                                                     0.00       0.19 r                   
+  data_out[460] (out)                                                                           0.03      0.00 *     0.19 r                   
+  data arrival time                                                                                                  0.19                     
+
+  clock CLK (rise edge)                                                                                   9.90       9.90                     
+  clock network delay (ideal)                                                                             0.00       9.90                     
+  output external delay                                                                                   0.00       9.90                     
+  data required time                                                                                                 9.90                     
+  ---------------------------------------------------------------------------------------------------------------------------------------------------------
+  data required time                                                                                                 9.90                     
+  data arrival time                                                                                                 -0.19                     
+  ---------------------------------------------------------------------------------------------------------------------------------------------------------
+  slack (MET)                                                                                                        9.71                     
+
+
+  Startpoint: g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_459_
+              (rising edge-triggered flip-flop clocked by CLK)
+  Endpoint: data_out[459]
+            (output port clocked by CLK)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: REGOUT
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                                                                             Fanout     Trans      Incr       Path      Attributes     Voltage
+  ---------------------------------------------------------------------------------------------------------------------------------------------------------
+  clock CLK (rise edge)                                                                                   0.00       0.00                     
+  clock network delay (ideal)                                                                             0.00       0.00                     
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_459_/CK (DFFQ_X0P5M_A9TR)      0.00      0.00       0.00 r                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_459_/Q (DFFQ_X0P5M_A9TR)       0.07      0.13       0.13 r                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/data_out[459] (net)                          1                   0.00       0.13 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/data_out[459] (VX_stream_buffer_517_1)                           0.00       0.13 r                   
+  g_passthru_out_buf/g_eb2_data_out_t[459] (net)                                                          0.00       0.13 r                   
+  g_passthru_out_buf/g_eb2_out_buf/data_in[459] (VX_pipe_buffer_517_00000000)                             0.00       0.13 r                   
+  g_passthru_out_buf/g_eb2_out_buf/data_in[459] (net)                                                     0.00       0.13 r                   
+  g_passthru_out_buf/g_eb2_out_buf/U57/Y (BUF_X1M_A9TR)                                         0.03      0.06 *     0.19 r                   0.90
+  g_passthru_out_buf/g_eb2_out_buf/data_out[459] (net)                                1                   0.00       0.19 r                   
+  g_passthru_out_buf/g_eb2_out_buf/data_out[459] (VX_pipe_buffer_517_00000000)                            0.00       0.19 r                   
+  g_passthru_out_buf/data_out[459] (net)                                                                  0.00       0.19 r                   
+  g_passthru_out_buf/data_out[459] (VX_elastic_buffer_517_2_1_0)                                          0.00       0.19 r                   
+  data_out[459] (net)                                                                                     0.00       0.19 r                   
+  data_out[459] (out)                                                                           0.03      0.00 *     0.19 r                   
+  data arrival time                                                                                                  0.19                     
+
+  clock CLK (rise edge)                                                                                   9.90       9.90                     
+  clock network delay (ideal)                                                                             0.00       9.90                     
+  output external delay                                                                                   0.00       9.90                     
+  data required time                                                                                                 9.90                     
+  ---------------------------------------------------------------------------------------------------------------------------------------------------------
+  data required time                                                                                                 9.90                     
+  data arrival time                                                                                                 -0.19                     
+  ---------------------------------------------------------------------------------------------------------------------------------------------------------
+  slack (MET)                                                                                                        9.71                     
+
+
+  Startpoint: g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_15_
+              (rising edge-triggered flip-flop clocked by CLK)
+  Endpoint: data_out[15]
+            (output port clocked by CLK)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: REGOUT
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                                                                            Fanout     Trans      Incr       Path      Attributes     Voltage
+  --------------------------------------------------------------------------------------------------------------------------------------------------------
+  clock CLK (rise edge)                                                                                  0.00       0.00                     
+  clock network delay (ideal)                                                                            0.00       0.00                     
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_15_/CK (DFFQ_X0P5M_A9TR)      0.00      0.00       0.00 r                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_15_/Q (DFFQ_X0P5M_A9TR)       0.06      0.13       0.13 r                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/data_out[15] (net)                          1                   0.00       0.13 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/data_out[15] (VX_stream_buffer_517_1)                           0.00       0.13 r                   
+  g_passthru_out_buf/g_eb2_data_out_t[15] (net)                                                          0.00       0.13 r                   
+  g_passthru_out_buf/g_eb2_out_buf/data_in[15] (VX_pipe_buffer_517_00000000)                             0.00       0.13 r                   
+  g_passthru_out_buf/g_eb2_out_buf/data_in[15] (net)                                                     0.00       0.13 r                   
+  g_passthru_out_buf/g_eb2_out_buf/U483/Y (BUF_X1M_A9TR)                                       0.04      0.06 *     0.19 r                   0.90
+  g_passthru_out_buf/g_eb2_out_buf/data_out[15] (net)                                1                   0.00       0.19 r                   
+  g_passthru_out_buf/g_eb2_out_buf/data_out[15] (VX_pipe_buffer_517_00000000)                            0.00       0.19 r                   
+  g_passthru_out_buf/data_out[15] (net)                                                                  0.00       0.19 r                   
+  g_passthru_out_buf/data_out[15] (VX_elastic_buffer_517_2_1_0)                                          0.00       0.19 r                   
+  data_out[15] (net)                                                                                     0.00       0.19 r                   
+  data_out[15] (out)                                                                           0.04      0.00 *     0.19 r                   
+  data arrival time                                                                                                 0.19                     
+
+  clock CLK (rise edge)                                                                                  9.90       9.90                     
+  clock network delay (ideal)                                                                            0.00       9.90                     
+  output external delay                                                                                  0.00       9.90                     
+  data required time                                                                                                9.90                     
+  --------------------------------------------------------------------------------------------------------------------------------------------------------
+  data required time                                                                                                9.90                     
+  data arrival time                                                                                                -0.19                     
+  --------------------------------------------------------------------------------------------------------------------------------------------------------
+  slack (MET)                                                                                                       9.71                     
+
+
+  Startpoint: g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_158_
+              (rising edge-triggered flip-flop clocked by CLK)
+  Endpoint: data_out[158]
+            (output port clocked by CLK)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: REGOUT
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                                                                             Fanout     Trans      Incr       Path      Attributes     Voltage
+  ---------------------------------------------------------------------------------------------------------------------------------------------------------
+  clock CLK (rise edge)                                                                                   0.00       0.00                     
+  clock network delay (ideal)                                                                             0.00       0.00                     
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_158_/CK (DFFQ_X0P5M_A9TR)      0.00      0.00       0.00 r                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_158_/Q (DFFQ_X0P5M_A9TR)       0.07      0.13       0.13 r                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/data_out[158] (net)                          1                   0.00       0.13 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/data_out[158] (VX_stream_buffer_517_1)                           0.00       0.13 r                   
+  g_passthru_out_buf/g_eb2_data_out_t[158] (net)                                                          0.00       0.13 r                   
+  g_passthru_out_buf/g_eb2_out_buf/data_in[158] (VX_pipe_buffer_517_00000000)                             0.00       0.13 r                   
+  g_passthru_out_buf/g_eb2_out_buf/data_in[158] (net)                                                     0.00       0.13 r                   
+  g_passthru_out_buf/g_eb2_out_buf/U340/Y (BUF_X1M_A9TR)                                        0.03      0.06 *     0.19 r                   0.90
+  g_passthru_out_buf/g_eb2_out_buf/data_out[158] (net)                                1                   0.00       0.19 r                   
+  g_passthru_out_buf/g_eb2_out_buf/data_out[158] (VX_pipe_buffer_517_00000000)                            0.00       0.19 r                   
+  g_passthru_out_buf/data_out[158] (net)                                                                  0.00       0.19 r                   
+  g_passthru_out_buf/data_out[158] (VX_elastic_buffer_517_2_1_0)                                          0.00       0.19 r                   
+  data_out[158] (net)                                                                                     0.00       0.19 r                   
+  data_out[158] (out)                                                                           0.03      0.00 *     0.19 r                   
+  data arrival time                                                                                                  0.19                     
+
+  clock CLK (rise edge)                                                                                   9.90       9.90                     
+  clock network delay (ideal)                                                                             0.00       9.90                     
+  output external delay                                                                                   0.00       9.90                     
+  data required time                                                                                                 9.90                     
+  ---------------------------------------------------------------------------------------------------------------------------------------------------------
+  data required time                                                                                                 9.90                     
+  data arrival time                                                                                                 -0.19                     
+  ---------------------------------------------------------------------------------------------------------------------------------------------------------
+  slack (MET)                                                                                                        9.71                     
+
+
+  Startpoint: g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_453_
+              (rising edge-triggered flip-flop clocked by CLK)
+  Endpoint: data_out[453]
+            (output port clocked by CLK)
+  Scenario: mode_norm.OC_rvt_ss_0p900v_125c
+  Path Group: REGOUT
+  Path Type: max
+
+Attributes:
+    d - dont_touch
+    u - dont_use
+   mo - map_only
+   so - size_only
+    i - ideal_net or ideal_network
+  inf - infeasible path
+
+  Point                                                                             Fanout     Trans      Incr       Path      Attributes     Voltage
+  ---------------------------------------------------------------------------------------------------------------------------------------------------------
+  clock CLK (rise edge)                                                                                   0.00       0.00                     
+  clock network delay (ideal)                                                                             0.00       0.00                     
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_453_/CK (DFFQ_X0P5M_A9TR)      0.00      0.00       0.00 r                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/g_buffer_data_out_r_reg_453_/Q (DFFQ_X0P5M_A9TR)       0.06      0.13       0.13 r                   0.90
+  g_passthru_out_buf/g_eb2_stream_buffer/data_out[453] (net)                          1                   0.00       0.13 r                   
+  g_passthru_out_buf/g_eb2_stream_buffer/data_out[453] (VX_stream_buffer_517_1)                           0.00       0.13 r                   
+  g_passthru_out_buf/g_eb2_data_out_t[453] (net)                                                          0.00       0.13 r                   
+  g_passthru_out_buf/g_eb2_out_buf/data_in[453] (VX_pipe_buffer_517_00000000)                             0.00       0.13 r                   
+  g_passthru_out_buf/g_eb2_out_buf/data_in[453] (net)                                                     0.00       0.13 r                   
+  g_passthru_out_buf/g_eb2_out_buf/U61/Y (BUF_X1M_A9TR)                                         0.03      0.06 *     0.19 r                   0.90
+  g_passthru_out_buf/g_eb2_out_buf/data_out[453] (net)                                1                   0.00       0.19 r                   
+  g_passthru_out_buf/g_eb2_out_buf/data_out[453] (VX_pipe_buffer_517_00000000)                            0.00       0.19 r                   
+  g_passthru_out_buf/data_out[453] (net)                                                                  0.00       0.19 r                   
+  g_passthru_out_buf/data_out[453] (VX_elastic_buffer_517_2_1_0)                                          0.00       0.19 r                   
+  data_out[453] (net)                                                                                     0.00       0.19 r                   
+  data_out[453] (out)                                                                           0.03      0.00 *     0.19 r                   
+  data arrival time                                                                                                  0.19                     
+
+  clock CLK (rise edge)                                                                                   9.90       9.90                     
+  clock network delay (ideal)                                                                             0.00       9.90                     
+  output external delay                                                                                   0.00       9.90                     
+  data required time                                                                                                 9.90                     
+  ---------------------------------------------------------------------------------------------------------------------------------------------------------
+  data required time                                                                                                 9.90                     
+  data arrival time                                                                                                 -0.19                     
+  ---------------------------------------------------------------------------------------------------------------------------------------------------------
+  slack (MET)                                                                                                        9.71                     
+
+
+1

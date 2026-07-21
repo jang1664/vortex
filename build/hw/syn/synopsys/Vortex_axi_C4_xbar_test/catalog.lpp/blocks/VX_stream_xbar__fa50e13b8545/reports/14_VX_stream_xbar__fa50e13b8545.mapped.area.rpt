@@ -1,0 +1,73 @@
+ 
+****************************************
+Report : area
+Design : VX_stream_xbar__fa50e13b8545
+Version: V-2023.12-SP5-3
+Date   : Sat Jul 18 18:20:17 2026
+****************************************
+
+Library(s) Used:
+
+    sc9_cmos28lpp_base_rvt_ss_nominal_max_0p900v_125c_sadhm (File: /tool/PDK/Samsung/LN28LPP_202203/PRIMITIVES/RVT/ln28lpp_sc_9t_base_rvt_c130_V1.00d/FE-Common/LIBERTY/sc9_cmos28lpp_base_rvt_ss_nominal_max_0p900v_125c_sadhm.db)
+
+Number of ports:                         8793
+Number of nets:                         10332
+Number of cells:                         2852
+Number of combinational cells:           2785
+Number of sequential cells:                49
+Number of macros/black boxes:               0
+Number of buf/inv:                       1438
+Number of references:                      18
+
+Combinational area:               1885.454981
+Buf/Inv area:                      659.294994
+Noncombinational area:             103.193997
+Macro/Black Box area:                0.000000
+Net Interconnect area:      undefined  (No wire load specified)
+
+Total cell area:                  1988.648979
+Total area:                 undefined
+
+Core Area:                      9388
+Aspect Ratio:                 1.0063
+Utilization Ratio:            0.2118
+
+
+The above information was reported from the logical library. The following are from the physical library:
+
+  Total moveable cell area: 1988.6
+  Total fixed cell area: 0.0
+  Total physical cell area: 1988.6
+ Core area: 0.000, 0.000, 96.590, 97.200
+
+Hierarchical area distribution
+------------------------------
+
+                                  Global cell area          Local cell area
+                                  ------------------  ---------------------------- 
+Hierarchical cell                 Absolute   Percent  Combi-     Noncombi-  Black-
+                                  Total      Total    national   national   boxes   Design
+--------------------------------  ---------  -------  ---------  ---------  ------  -----------------------------
+VX_stream_xbar__fa50e13b8545      1988.6490    100.0    68.3280    92.6640  0.0000  VX_stream_xbar__fa50e13b8545
+g_multi_inputs_g_multiple_outputs_g_sel_in_demux_0__sel_in_demux    1.1700     0.1    1.1700    0.0000 0.0000 VX_demux_1
+g_multi_inputs_g_multiple_outputs_g_sel_in_demux_1__sel_in_demux    1.1700     0.1    1.1700    0.0000 0.0000 VX_demux_0
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_0__xbar_arb  909.2070    45.7  608.7510    0.0000 0.0000 VX_stream_arb_9_1
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_0__xbar_arb/g_input_select_g_arbiter_arbiter   11.2320     0.6    0.0000    0.0000 0.0000 VX_generic_arbiter_1
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_0__xbar_arb/g_input_select_g_arbiter_arbiter/g_round_robin_rr_arbiter   11.2320     0.6    5.9670    4.2120 0.0000 VX_rr_arbiter_1
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_0__xbar_arb/g_input_select_g_arbiter_arbiter/g_round_robin_rr_arbiter/g_model1_onehot_encoder    1.0530     0.1    1.0530    0.0000 0.0000 VX_onehot_encoder_1_1
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_0__xbar_arb/g_input_select_g_arbiter_g_out_buf_0__out_buf  289.2240    14.5  289.2240    0.0000 0.0000 VX_elastic_buffer_616_0_0_0_1
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_1__xbar_arb  909.2070    45.7  608.7510    0.0000 0.0000 VX_stream_arb_9_0
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_1__xbar_arb/g_input_select_g_arbiter_arbiter   11.2320     0.6    0.0000    0.0000 0.0000 VX_generic_arbiter_0
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_1__xbar_arb/g_input_select_g_arbiter_arbiter/g_round_robin_rr_arbiter   11.2320     0.6    5.9670    4.2120 0.0000 VX_rr_arbiter_0
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_1__xbar_arb/g_input_select_g_arbiter_arbiter/g_round_robin_rr_arbiter/g_model1_onehot_encoder    1.0530     0.1    1.0530    0.0000 0.0000 VX_onehot_encoder_1_0
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_1__xbar_arb/g_input_select_g_arbiter_g_out_buf_0__out_buf  289.2240    14.5  289.2240    0.0000 0.0000 VX_elastic_buffer_616_0_0_0_0
+g_multi_inputs_g_multiple_outputs_rdy_in_transpose    1.8720     0.1    1.8720    0.0000 0.0000 VX_transpose_1
+g_multi_inputs_g_multiple_outputs_val_in_transpose    1.8720     0.1    1.8720    0.0000 0.0000 VX_transpose_0
+genblk2_u_buffer_ex                  2.6910      0.1     0.0000     0.0000  0.0000  VX_pipe_register
+genblk2_u_buffer_ex/g_shift_register    2.6910     0.1    0.5850    2.1060  0.0000  VX_shift_register_2_2_1_0
+genblk3_u_pop_count_ex               0.4680      0.0     0.0000     0.0000  0.0000  VX_popcount
+genblk3_u_pop_count_ex/g_popcount3_pc32    0.4680     0.0    0.4680    0.0000 0.0000 VX_popcount32
+--------------------------------  ---------  -------  ---------  ---------  ------  -----------------------------
+Total                                                 1885.4550   103.1940  0.0000
+
+1

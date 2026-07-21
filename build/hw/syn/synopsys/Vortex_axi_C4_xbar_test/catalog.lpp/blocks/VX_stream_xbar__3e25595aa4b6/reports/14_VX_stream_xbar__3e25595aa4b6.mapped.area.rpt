@@ -1,0 +1,56 @@
+ 
+****************************************
+Report : area
+Design : VX_stream_xbar__3e25595aa4b6
+Version: V-2023.12-SP5-3
+Date   : Sat Jul 18 18:23:39 2026
+****************************************
+
+Library(s) Used:
+
+    sc9_cmos28lpp_base_rvt_ss_nominal_max_0p900v_125c_sadhm (File: /tool/PDK/Samsung/LN28LPP_202203/PRIMITIVES/RVT/ln28lpp_sc_9t_base_rvt_c130_V1.00d/FE-Common/LIBERTY/sc9_cmos28lpp_base_rvt_ss_nominal_max_0p900v_125c_sadhm.db)
+
+Number of ports:                          358
+Number of nets:                           398
+Number of cells:                          168
+Number of combinational cells:            122
+Number of sequential cells:                 0
+Number of macros/black boxes:               0
+Number of buf/inv:                        122
+Number of references:                       2
+
+Combinational area:                 51.831000
+Buf/Inv area:                       51.831000
+Noncombinational area:               0.000000
+Macro/Black Box area:                0.000000
+Net Interconnect area:      undefined  (No wire load specified)
+
+Total cell area:                    51.831000
+Total area:                 undefined
+
+Core Area:                       315
+Aspect Ratio:                 1.0256
+Utilization Ratio:            0.1641
+
+
+The above information was reported from the logical library. The following are from the physical library:
+
+  Total moveable cell area: 51.8
+  Total fixed cell area: 0.0
+  Total physical cell area: 51.8
+ Core area: 0.000, 0.000, 17.550, 18.000
+
+Hierarchical area distribution
+------------------------------
+
+                                  Global cell area          Local cell area
+                                  ------------------  --------------------------- 
+Hierarchical cell                 Absolute   Percent  Combi-    Noncombi-  Black-
+                                  Total      Total    national  national   boxes   Design
+--------------------------------  ---------  -------  --------  ---------  ------  --------------------------
+VX_stream_xbar__3e25595aa4b6        51.8310    100.0   15.7950     0.0000  0.0000  VX_stream_xbar__3e25595aa4b6
+g_passthru_out_buf                  36.0360     69.5   36.0360     0.0000  0.0000  VX_elastic_buffer_75_0_0_0
+--------------------------------  ---------  -------  --------  ---------  ------  --------------------------
+Total                                                  51.8310     0.0000  0.0000
+
+1
