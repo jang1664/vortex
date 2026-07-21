@@ -131,7 +131,6 @@ KERNEL_APP_REGISTRY: dict[str, str | None] = {
     "elmul":      "elmul",
     "hadamard":   "hadamard",
     "hadamard_layout_fused": "hadamard_layout_fused",
-    "qk_asym_correction": "qk_asym_correction",
     "kv_cache_quant_w4a16": "kv_cache_quant_w4a16",
     "kv_cache_quant_layout_fused_w4a16": "kv_cache_quant_layout_fused_w4a16",
     "kv_cache_dequant_w4a16": "kv_cache_dequant_w4a16",
@@ -1256,28 +1255,6 @@ def _apply_spinquant_hadamard_variant(kernels: list[dict],
         layout_group="mlp_elmul_to_spinquant_r4_to_down_proj",
         rotation="R4", variant=variant,
     )
-    qk_shape = dict(by_name["attn_qkT"].get("shape") or {})
-    qk_correction = _llm_kernel(
-        name="qk_asym_correction_out",
-        kind="correction",
-        backend="qk_asym_correction",
-        stage=stage,
-        args="--layout gemm_c_tiled --query-layout gemm_a_tiled",
-        calls_per_forward=int(by_name["attn_qkT"]["calls_per_forward"]),
-        shape={
-            "M": qk_shape["M"],
-            "N": qk_shape["N"],
-            "D": qk_shape["K"],
-            "layout_from": "gemm_c_tiled",
-            "layout_to": "gemm_c_tiled",
-            "query_layout": "gemm_a_tiled",
-            "qparams_layout": "logical_row_major_fp16",
-            "producer": "attn_qkT",
-            "consumer": "attn_softmax",
-            "layout_group": "attn_qkT_to_asym_correction_to_softmax",
-        },
-        variant=variant,
-    )
     if base_variant == LAYOUT_FUSED_VARIANT:
         q_matrix_count = batch * q_call_heads
         q_hadamard = _with_fused_backend(
@@ -1428,14 +1405,12 @@ def _apply_spinquant_hadamard_variant(kernels: list[dict],
                 args += (
                     " --quant-mode spinquant_signed_asymmetric"
                     f" --source-total-n {head_dim} --head-col-offset 0"
-                    " --emit-correction-qparams"
                 )
                 shape_update.update({
                     "layout_from": "gemm_a_tiled",
                     "quant_mode": "spinquant_signed_asymmetric",
                     "source_total_n": head_dim,
                     "head_col_offset": 0,
-                    "correction_qparams_layout_to": "logical_row_major_fp16",
                 })
             out.append(_with_kernel_updates(kernel, args=args, shape_update=shape_update))
             continue
@@ -1458,9 +1433,8 @@ def _apply_spinquant_hadamard_variant(kernels: list[dict],
 
         if base_variant == LAYOUT_FUSED_VARIANT and name == "attn_qkT":
             out.append(_with_kernel_updates(kernel, shape_update={
-                "consumer": "qk_asym_correction_out",
+                "consumer": "attn_softmax",
             }))
-            out.append(qk_correction)
             continue
 
         if base_variant == LAYOUT_FUSED_VARIANT and name == "mlp_silu":
@@ -2451,15 +2425,6 @@ def annotate_kernel_flow(kernels: list[dict]) -> None:
                 _output_flow("W", "attn_qkT", str(shape.get("weight_layout_to", "gemm_w_tiled"))),
                 _output_flow("scale/zp", "attn_qkT", str(shape.get("scale_zp_layout_to", "gemm_scale_zp_tiled"))),
             ]
-            if "qk_asym_correction_out" in names:
-                outputs.append(_output_flow(
-                    "logical scale/zero",
-                    "qk_asym_correction_out",
-                    str(shape.get(
-                        "correction_qparams_layout_to",
-                        "logical_row_major_fp16",
-                    )),
-                ))
         else:
             outputs = []
             if "layout_rope_k_to_attn_qkT" in names:
@@ -2544,7 +2509,6 @@ def annotate_kernel_flow(kernels: list[dict]) -> None:
         if default_qparam_layout:
             inputs.append(_input_flow("scale/zp", scale_source, scale_layout))
         target = _first_existing([
-            "qk_asym_correction_out",
             "layout_attn_qkT_to_softmax_detile",
             "attn_softmax",
         ], names)
@@ -2554,35 +2518,10 @@ def annotate_kernel_flow(kernels: list[dict]) -> None:
             outputs=([_output_flow("C", target, _gemm_c_layout(backend))] if target else []),
         )
 
-    qk_correction = kernels_by_name.get("qk_asym_correction_out")
-    if qk_correction:
-        shape = dict(qk_correction.get("shape") or {})
-        q_source = _first_existing([
-            "spinquant_r3_q_hadamard",
-            "layout_rope_q_to_attn_qkT",
-            "rope_q",
-        ], names) or "rope_q"
-        _set_flow(
-            qk_correction,
-            inputs=[
-                _input_flow("scores", "attn_qkT", str(shape["layout_from"])),
-                _input_flow("query", q_source, str(shape["query_layout"])),
-                _input_flow(
-                    "scale/zero",
-                    "kv_cache_quant_rope_k_to_attn_qkT",
-                    str(shape["qparams_layout"]),
-                ),
-            ],
-            outputs=[
-                _output_flow("scores", "attn_softmax", str(shape["layout_to"]))
-            ],
-        )
-
     softmax = kernels_by_name.get("attn_softmax")
     if softmax:
         shape = dict(softmax.get("shape") or {})
         source = _first_existing([
-            "qk_asym_correction_out",
             "layout_attn_qkT_to_softmax_detile",
             "attn_qkT",
         ], names) or "attn_qkT"

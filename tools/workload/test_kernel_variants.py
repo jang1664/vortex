@@ -532,7 +532,6 @@ class KernelVariantTest(unittest.TestCase):
         k_quant = _kernel_by_name(payload, "kv_cache_quant_rope_k_to_attn_qkT")
         v_quant = _kernel_by_name(payload, "kv_cache_quant_v_cache_to_attn_pv")
         attn_qk = _kernel_by_name(payload, "attn_qkT")
-        qk_correction = _kernel_by_name(payload, "qk_asym_correction_out")
         attn_softmax = _kernel_by_name(payload, "attn_softmax")
         q_hadamard = _kernel_by_name(payload, "spinquant_r3_q_hadamard")
         k_hadamard = _kernel_by_name(payload, "spinquant_r3_k_hadamard")
@@ -549,7 +548,8 @@ class KernelVariantTest(unittest.TestCase):
         self.assertEqual("head_major_row_fp16", rope_q["shape"]["layout_to"])
         self.assertEqual("head_major_row_fp16", rope_k["shape"]["layout_to"])
         self.assertEqual("spinquant_signed_asymmetric", k_quant["shape"]["quant_mode"])
-        self.assertEqual("logical_row_major_fp16", k_quant["shape"]["correction_qparams_layout_to"])
+        self.assertNotIn("--emit-correction-qparams", k_quant["args"])
+        self.assertNotIn("correction_qparams_layout_to", k_quant["shape"])
         self.assertEqual(128, k_quant["shape"]["source_total_n"])
         self.assertEqual(0, k_quant["shape"]["head_col_offset"])
         self.assertEqual("spinquant_signed_symmetric", v_quant["shape"]["quant_mode"])
@@ -557,29 +557,8 @@ class KernelVariantTest(unittest.TestCase):
         self.assertEqual("call_head_index*128", v_quant["shape"]["head_col_offset"])
         self.assertIn("--head-col-offset 0", v_quant["args"])
         self.assertEqual(0, v_quant["shape"]["representative_args_head_col_offset"])
-        self.assertEqual("qk_asym_correction_out", attn_qk["shape"]["consumer"])
-        self.assertEqual("qk_asym_correction", qk_correction["backend"])
-        self.assertEqual("gemm_c_tiled", qk_correction["shape"]["layout_from"])
-        self.assertEqual("gemm_c_tiled", qk_correction["shape"]["layout_to"])
-        self.assertEqual("gemm_a_tiled", qk_correction["shape"]["query_layout"])
-        self.assertEqual(32 * 32, qk_correction["calls_per_forward"])
-        self.assertEqual(
-            "--layout gemm_c_tiled --query-layout gemm_a_tiled",
-            qk_correction["args"],
-        )
-        self.assertIn(
-            {"role": "scores", "source": "attn_qkT", "layout": "gemm_c_tiled"},
-            qk_correction["inputs"],
-        )
-        self.assertIn(
-            {
-                "role": "query",
-                "source": "spinquant_r3_q_hadamard",
-                "layout": "gemm_a_tiled",
-            },
-            qk_correction["inputs"],
-        )
-        self.assertEqual("qk_asym_correction_out", attn_softmax["inputs"][0]["source"])
+        self.assertEqual("attn_softmax", attn_qk["shape"]["consumer"])
+        self.assertEqual("attn_qkT", attn_softmax["inputs"][0]["source"])
         self.assertEqual("hadamard_layout_fused", q_hadamard["backend"])
         self.assertEqual("-m 8 -n 32 -k 128", q_hadamard["args"])
         self.assertEqual("head_major_row_fp16", q_hadamard["shape"]["layout_from"])
@@ -596,6 +575,7 @@ class KernelVariantTest(unittest.TestCase):
         self.assertEqual("-m 8 -n 1 -k 11008", r4_hadamard["args"])
         self.assertEqual("gemm_a_tiled", r4_hadamard["shape"]["layout_to"])
         kernel_names = {kernel["name"] for kernel in payload["kernels"]}
+        self.assertNotIn("qk_asym_correction_out", kernel_names)
         self.assertNotIn("layout_rope_q_to_attn_qkT", kernel_names)
         self.assertNotIn("layout_mlp_elmul_to_down_proj", kernel_names)
         self.assertIn(
