@@ -1,8 +1,8 @@
 task: critical-path-th32-tcol32-dcache-try3
 state: DONE
-summary: The post-route critical path is a routing-dominated high-fanout path inside the dcache memory-response omega crossbar.
+summary: Congestion is driven by near-full CLB occupancy plus two main routing hotspots: GEMM tensor-memory DMA versus the HBM shell, and local-memory crossbars versus dcache/LSU traffic.
 started: "2026-07-21 11:34"
-updated: "2026-07-21 11:37"
+updated: "2026-07-21 12:03"
 log:
   - timestamp: "2026-07-21 11:34"
     action: Located the requested Xilinx U55C hardware build and its routed timing report.
@@ -13,6 +13,17 @@ log:
   - timestamp: "2026-07-21 11:37"
     action: Checked implementation congestion and the nearest independent timing paths.
     result: Vivado reports highly congested placement, congestion level 6, timing congestion level 7, and localized SLL demand above capacity. Near-tied paths exist in GEMM prealigner-to-DSP (-0.521 ns) and issue-to-ALU (-0.520 ns), also routing dominated.
+  - timestamp: "2026-07-21 11:37"
+    action: Started a follow-up congestion attribution analysis requested by the user.
+    result: Placed utilization shows 92.33 percent CLB occupancy despite 57.27 percent LUT utilization; SLR0 is at 96.32 percent CLB occupancy.
+  - timestamp: "2026-07-21 12:03"
+    action: Generated routed-checkpoint congestion, complexity, and top-200 high-fanout reports with Vivado.
+    result: Router hotspots identify GEMM u_tmem_subsystem/u_dma_engine and the HBM shell as the dominant SLR0 contributors. A separate SLR1 hotspot is dominated by local_mem req_xbar/rsp_xbar, dcache, and the LSU request queue. The MXU is the largest hard-resource/area pressure source but is not the largest direct routing-hotspot contributor.
+  - timestamp: "2026-07-21 12:03"
+    action: Aggregated the top 200 high-fanout nets by RTL hierarchy.
+    result: Issue has 38 nets with aggregate fanout 136699 and 12 negative-slack nets; execute has 51 nets with aggregate fanout 131720 and 4 negative-slack nets; gemm_node has 50 nets with aggregate fanout 105778 and 10 negative-slack nets. Representative issue nets have fanout 15360, 5129, and 4345 with up to 9.833 ns delay.
 pitfalls:
   - The timing report is about 16 MB, so inspect targeted sections rather than reading it wholesale.
   - Overall LUT utilization is about 59 percent, but placement and SLL congestion are severe; aggregate utilization alone understates the routing problem.
+  - The router's iter_100_CongestedCLBsAndNets.txt contains only one CLB tile and no net list, so a routed-checkpoint design-analysis report is needed for detailed attribution.
+  - report_design_analysis -complexity produced no table because the default complexity filter found no qualifying cells; congestion and high-fanout reports were generated successfully and provide the useful attribution.

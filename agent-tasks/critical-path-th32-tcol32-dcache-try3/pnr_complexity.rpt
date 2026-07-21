@@ -1,0 +1,26 @@
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2025 Advanced Micro Devices, Inc. All Rights Reserved.
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version : Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025
+| Date         : Tue Jul 21 11:59:02 2026
+| Host         : fpga running 64-bit Ubuntu 24.04.4 LTS
+| Command      : report_design_analysis -complexity -file /home/jaeyongjang/project.local/vortex_fpint/agent-tasks/critical-path-th32-tcol32-dcache-try3/pnr_complexity.rpt
+| Design       : level0_wrapper
+| Device       : xcu55c
+| Design State : Routed
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Report Design Analysis
+
+Table of Contents
+-----------------
+1. Complexity Characteristics (Cells)
+
+1. Complexity Characteristics (Cells)
+-------------------------------------
+
++--------+-----------+------+----------------+-----------------+-----------+------+------+------+------+------+------+------------+-----+------+------+------+-------------------+
+| Module | Partition | Rent | Average Fanout | Total Instances | Registers | LUT1 | LUT2 | LUT3 | LUT4 | LUT5 | LUT6 | Memory LUT | DSP | RAMB | MUXF | URAM | Hierarchical Name |
++--------+-----------+------+----------------+-----------------+-----------+------+------+------+------+------+------+------------+-----+------+------+------+-------------------+
+* No complexity report generated as cells satisfying given conditions are not present in the design.
+
+
