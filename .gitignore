@@ -7,6 +7,9 @@
 !/build/hw/syn/synopsys/
 /build/hw/syn/synopsys/**
 !/build/hw/syn/synopsys/**/
+# PnR workspaces contain generated setup scripts and tool databases. Keep the
+# synthesis reports below visible, but ignore all generated PnR workspaces.
+/build/hw/syn/synopsys/**/pnr/
 !/build/hw/syn/synopsys/**/12*timing*.rpt
 !/build/hw/syn/synopsys/**/14*area*.rpt
 !/build/hw/syn/synopsys/**/18*power*.rpt
