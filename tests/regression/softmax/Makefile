@@ -7,7 +7,7 @@ SRC_DIR := $(VORTEX_HOME)/tests/regression/$(PROJECT)
 
 SRCS := $(SRC_DIR)/main.cpp $(SW_COMMON_DIR)/rvfloats.cpp $(SW_COMMON_DIR)/softfloat_ext.cpp
 
-SOFTMAX_VARIANT ?= dma_serial
+SOFTMAX_VARIANT ?= rev2
 SOFTMAX_VARIANTS := rev1 rev2 opt opt_align dma_row dma_serial
 ifneq ($(filter $(SOFTMAX_VARIANT),$(SOFTMAX_VARIANTS)),$(SOFTMAX_VARIANT))
   $(error Unsupported SOFTMAX_VARIANT=$(SOFTMAX_VARIANT); expected one of: $(SOFTMAX_VARIANTS))

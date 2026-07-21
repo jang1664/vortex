@@ -11,6 +11,7 @@ import torch
 import torch.nn.functional as F
 
 from ..utils.hadamard_utils import get_hadK
+from ..utils.quant_utils import quantize_per_token
 from ..modeling.quantized_kv_cache import FixedCapacityKVQuantizedCache
 from .artifacts import DecodeCase, LayerCase
 from .specs import (
@@ -475,22 +476,11 @@ class TorchBackend(Backend):
     def quantize(self, x: torch.Tensor, mode: str) -> QuantizedActivation:
         if mode not in ("sym", "asym"):
             raise ValueError(f"unsupported KV quantization mode {mode!r}")
-        values = x.float()
-        if mode == "sym":
-            scale = values.abs().amax(dim=-1, keepdim=True).clamp_min(1e-8) / 7.5
-            zero = None
-            quantized = torch.round(values / scale)
-        else:
-            minimum = values.amin(dim=-1, keepdim=True)
-            maximum = values.amax(dim=-1, keepdim=True)
-            scale = ((maximum - minimum) / 15.0).clamp_min(1e-8)
-            zero = -8.0 - minimum / scale
-            quantized = torch.round(values / scale + zero)
-        quantized = quantized.clamp(-8, 7).to(torch.int8)
+        quantized, scale, zero = quantize_per_token(x, mode=mode)
         return QuantizedActivation(
             packed=pack_signed_int4(quantized),
-            scale=scale.to(torch.float16),
-            zero=None if zero is None else zero.to(torch.float16),
+            scale=scale,
+            zero=zero,
             mode=mode,
             logical_shape=tuple(x.shape),
             unpacked=quantized,
@@ -610,7 +600,6 @@ class StandaloneLayoutPlan(_LayoutPlan):
         "tile_weight_w4a16_ex",
         "tile_scale_zp_w4a16_ex",
         "quantize_pack_per_token",
-        "qk_asym_correction",
         "head_concat",
         "tile_input_a",
         "hadamard_butterfly",
@@ -665,7 +654,6 @@ class FusedLayoutPlan(_LayoutPlan):
         "head_concat_layout_fused",
         "eladd_layout_fused",
         "mm_w4a16_gemm_core_out",
-        "qk_asym_correction_out",
         "hadamard_layout_fused",
     )
 
@@ -1408,6 +1396,11 @@ class VortexBackend(Backend):
         outputs = []
         n_dim = rhs.logical_shape[-2] if transpose_source else rhs.logical_shape[-1]
         rhs_layouts = {}
+        rhs_zero_int16 = None
+        if transpose_source:
+            if rhs.zero is None:
+                raise ValueError("asymmetric QK GEMM requires zero-points")
+            rhs_zero_int16 = rhs.zero.to(torch.int16).contiguous()
         for batch_index in range(batch):
             for head in range(heads):
                 x = lhs[batch_index, head].contiguous()
@@ -1420,8 +1413,9 @@ class VortexBackend(Backend):
                 if layout is None:
                     packed = rhs.packed[batch_index, kv_head].view(torch.uint8).contiguous()
                     scale = rhs.scale[batch_index, kv_head].contiguous()
-                    zeros = torch.zeros(scale.shape, dtype=torch.int16, device=self.device)
                     if transpose_source:
+                        assert rhs_zero_int16 is not None
+                        zeros = rhs_zero_int16[batch_index, kv_head]
                         source_k, source_n = rhs.logical_shape[-2], rhs.logical_shape[-1]
                         weight = torch.ops.vortex.tile_weight_w4a16_ex(
                             packed, source_k, source_n, 1, 1
@@ -1435,6 +1429,9 @@ class VortexBackend(Backend):
                             self.layer_config.kv_group_size, 1, 0, 1
                         )
                     else:
+                        zeros = torch.zeros(
+                            scale.shape, dtype=torch.int16, device=self.device
+                        )
                         weight = torch.ops.vortex.tile_weight_w4a16(
                             packed, k_dim, n_dim, 0
                         )
@@ -1446,9 +1443,9 @@ class VortexBackend(Backend):
                             zeros, k_dim, n_dim,
                             self.layer_config.kv_group_size, 1
                         )
-                    layout = (weight, scale_tiled, zero_tiled, scale)
+                    layout = (weight, scale_tiled, zero_tiled)
                     rhs_layouts[layout_key] = layout
-                weight, scale_tiled, zero_tiled, scale = layout
+                weight, scale_tiled, zero_tiled = layout
                 wtrans, qdir = (1, 0) if transpose_source else (0, 1)
                 output_tiled = torch.ops.vortex.mm_w4a16_gemm_core(
                     input_tiled,
@@ -1462,14 +1459,6 @@ class VortexBackend(Backend):
                     qdir,
                 )
                 output = torch.ops.vortex.detile_output(output_tiled, m_dim, m_pad, n_dim)
-                if transpose_source:
-                    assert rhs.zero is not None
-                    output = torch.ops.vortex.qk_asym_correction(
-                        output,
-                        x,
-                        scale.reshape(-1),
-                        rhs.zero[batch_index, kv_head].reshape(-1),
-                    )
                 outputs.append(output)
         self._record(
             "attention_w4a16",
@@ -1877,7 +1866,6 @@ class VortexBackend(Backend):
             )
             kv_group_index = batch_index * config.num_key_value_heads + kv_head
             lhs_storage = lhs.value[group_index]
-            query_storage = lhs_storage
             torch.ops.vortex.mm_w4a16_gemm_core_out(
                 lhs_storage,
                 rhs.weight_tiled[kv_group_index],
@@ -1890,19 +1878,6 @@ class VortexBackend(Backend):
                 0 if transpose_source else 1,
                 output[group_index],
             )
-            if transpose_source:
-                torch.ops.vortex.qk_asym_correction_out(
-                    output[group_index],
-                    query_storage,
-                    rhs.scale.value[kv_group_index].reshape(-1),
-                    rhs.zero.value[kv_group_index].reshape(-1),
-                    m,
-                    m_pad,
-                    output_n,
-                    1,
-                    1,
-                    output[group_index],
-                )
         self._record(
             "mm_w4a16_gemm_core_out",
             launches=group_count,
@@ -1918,14 +1893,6 @@ class VortexBackend(Backend):
             N=n,
             N_storage=output_n,
         )
-        if transpose_source:
-            self._record(
-                "qk_asym_correction_out",
-                launches=group_count,
-                layout="gemm_c_tiled",
-                batch=config.batch_size,
-                heads=heads,
-            )
         return _make_handle(
             output,
             name="qk" if transpose_source else "pv",

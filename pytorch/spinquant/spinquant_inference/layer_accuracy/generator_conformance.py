@@ -104,12 +104,6 @@ def check_generator_conformance(generator_path: str | Path | None = None) -> dic
             "WTRANS": 1,
             "source_transposed": True,
         },
-        "qk_asym_correction_out": {
-            "layout_from": "gemm_c_tiled",
-            "layout_to": "gemm_c_tiled",
-            "query_layout": "gemm_a_tiled",
-            "qparams_layout": "logical_row_major_fp16",
-        },
         "attn_softmax": {"layout_from": "gemm_c_tiled", "layout_to": "gemm_a_tiled"},
         "kv_cache_quant_v_cache_to_attn_pv": {
             "quant_mode": "spinquant_signed_symmetric",

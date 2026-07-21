@@ -20,8 +20,8 @@ using data_t = fp16_t;
 //   asym (mode == QMODE_ASYM):
 //     x_min   = min(x_i), x_max = max(x_i)  over the row
 //     S       = clamp((x_max - x_min) / 15, min=1e-8)
-//     z       = -8 - x_min / S
-//     q_i     = clamp(round(x_i / S + z), -8, 7)
+//     z       = round(-x_min / S) - 8
+//     q_i     = clamp(round(x_i / S) + z, -8, 7)
 //
 // Rounding is round-half-to-even, matching torch.round().
 //
@@ -125,7 +125,7 @@ void kernel_quantize_pt_int4(kernel_arg_t *__UNIFORM__ arg) {
     z = 0.0f;  // unused in sym mode
   } else {
     S = __builtin_fmaxf((x_max - x_min) / 15.0f, 1e-8f);
-    z = -8.0f - x_min / S;
+    z = round_half_even(-x_min / S) - 8.0f;
   }
 
   if (cache_idx == 0) {
@@ -137,7 +137,7 @@ void kernel_quantize_pt_int4(kernel_arg_t *__UNIFORM__ arg) {
   if (packed == 0) {
     for (uint32_t i = cache_idx; i < D; i += blockDim.x) {
       float v = fp16_to_float(pRow[i]);
-      float qf = (mode == QMODE_SYM) ? round_half_even(v / S) : round_half_even(v / S + z);
+      float qf = round_half_even(v / S) + (mode == QMODE_SYM ? 0.0f : z);
       pQRow[i] = clamp_int4(qf);
     }
   } else {
@@ -147,9 +147,9 @@ void kernel_quantize_pt_int4(kernel_arg_t *__UNIFORM__ arg) {
       const float v0 = fp16_to_float(pRow[i0]);
       const float v1 = fp16_to_float(pRow[i1]);
       const float qf0 = (mode == QMODE_SYM)
-          ? round_half_even(v0 / S) : round_half_even(v0 / S + z);
+          ? round_half_even(v0 / S) : round_half_even(v0 / S) + z;
       const float qf1 = (mode == QMODE_SYM)
-          ? round_half_even(v1 / S) : round_half_even(v1 / S + z);
+          ? round_half_even(v1 / S) : round_half_even(v1 / S) + z;
       const uint8_t q0 = static_cast<uint8_t>(clamp_int4(qf0)) & 0x0f;
       const uint8_t q1 = static_cast<uint8_t>(clamp_int4(qf1)) & 0x0f;
       reinterpret_cast<uint8_t*>(pQRow)[pair] = q0 | (q1 << 4);

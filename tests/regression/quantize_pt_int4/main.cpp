@@ -107,13 +107,13 @@ void quantize_per_token_cpu(
       }
       float S = (x_max - x_min) / 15.0f;
       if (S < 1e-8f) S = 1e-8f;
-      float z = -8.0f - x_min / S;
+      float z = round_half_even(-x_min / S) - 8.0f;
       scale[r] = float_to_fp16(S);
       zero[r] = float_to_fp16(z);
 
       for (uint32_t i = 0; i < D; ++i) {
         float v = fp16_to_float(row[i]);
-        float qf = round_half_even(v / S + z);
+        float qf = round_half_even(v / S) + z;
         qrow[i] = clamp_int4(qf);
       }
     }
