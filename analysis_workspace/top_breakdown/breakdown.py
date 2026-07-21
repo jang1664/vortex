@@ -8,12 +8,13 @@ hierarchy is 99.6% `vortex` and not informative on its own.
 
 Run from a Python with plotting dependencies installed (e.g. `conda activate stable`):
 
-    python analysis_workspace/top_breakdown/breakdown.py
+    python analysis_workspace/top_breakdown/breakdown.py --alias C4
 
-Defaults to the current synthesis run (`SYN_RUN_NAME`, or `Vortex_axi` to match
-hw/syn/synopsys/run_syn_vortex_axi.py). Use `--run nt32` for the named NT32
-run. If the exact run directory is incomplete, the newest valid dated backup
-directory is used.
+FPGA aliases are read from `ci/fpga_bin_alias_map.yaml` and resolve to the
+matching `run_syn_vortex_axi.py` result directory, for example alias `C4`
+resolves to `build/hw/syn/synopsys/Vortex_axi_C4/syn_topo.lpp`. Alternatively,
+pass that synthesis directory directly with `--syn-dir` or bypass directory
+resolution entirely with `--report`.
 
 Outputs (under analysis_workspace/top_breakdown/<run>/):
     vortex_axi_breakdown.csv          - original five paper-facing categories
@@ -29,6 +30,7 @@ import argparse
 import math
 import os
 import re
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -48,8 +50,21 @@ else:
 
 HERE = Path(__file__).resolve().parent
 VORTEX = HERE.parents[1]
+if str(VORTEX) not in sys.path:
+    sys.path.insert(0, str(VORTEX))
+
+from tools.latency_bench.fpga_bins import (  # noqa: E402
+    alias_map_path,
+    load_fpga_bin_aliases,
+)
+
 DESIGN_NAME = "Vortex_axi"
-REPORT_REL = Path("syn_topo.lpp/reports/14_Vortex_axi.mapped.area.rpt")
+DEFAULT_ALIAS = "C4"
+REPORT_NAME = "14_Vortex_axi.mapped.area.rpt"
+REPORT_IN_SYN_DIR = Path("reports") / REPORT_NAME
+REPORT_IN_RUN_DIR = Path("syn_topo.lpp") / REPORT_IN_SYN_DIR
+# Compatibility name retained for callers that imported the old constant.
+REPORT_REL = REPORT_IN_RUN_DIR
 
 SIMT_LABEL = "SIMT (excl. memory)"
 SIMT_NO_XBAR_LABEL = "SIMT (excl. SRAM / XBAR)"
@@ -266,34 +281,66 @@ def aggregate(hdf: pd.DataFrame) -> tuple[dict[str, float], dict[str, int], list
     return sums, counts, sorted(matched_rows)
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Generate Vortex_axi top-level area breakdown."
     )
-    parser.add_argument(
+    source = parser.add_mutually_exclusive_group()
+    source.add_argument(
+        "--alias",
+        default=None,
+        help=(
+            "FPGA config alias whose Vortex_axi_<alias>/syn_topo.lpp result "
+            f"is analyzed. Default: {DEFAULT_ALIAS}."
+        ),
+    )
+    source.add_argument(
+        "--syn-dir",
+        type=Path,
+        default=None,
+        help=(
+            "Synthesis directory containing reports/"
+            f"{REPORT_NAME}. Relative paths are resolved from the repository "
+            "root."
+        ),
+    )
+    source.add_argument(
+        "--report",
+        type=Path,
+        default=None,
+        help="Exact area report path; bypasses synthesis-directory resolution.",
+    )
+    source.add_argument(
         "--run",
         choices=RUNS.keys(),
-        default="current",
-        help="Named synthesis run to analyze. Default: current.",
+        default=None,
+        help="Legacy named synthesis run to analyze.",
     )
     parser.add_argument(
         "--syn-root",
         type=Path,
         default=None,
-        help="Synthesis result root. Default: SYN_RESULT_ROOT, then build/syn/synopsys with legacy fallback.",
+        help=(
+            "Synthesis result root used with --alias or legacy --run. Default: "
+            "SYN_RESULT_ROOT, then build/hw/syn/synopsys with legacy fallback."
+        ),
     )
     parser.add_argument(
-        "--syn-dir",
-        default=None,
-        help="Run directory under the synthesis result root. Overrides --run.",
-    )
-    parser.add_argument(
-        "--report",
+        "--alias-map",
         type=Path,
         default=None,
-        help="Exact area report path. Overrides --run, --syn-root, and --syn-dir.",
+        help=(
+            "FPGA alias map path. Default: VORTEX_FPGA_BIN_ALIAS_MAP, then "
+            "ci/fpga_bin_alias_map.yaml."
+        ),
     )
-    return parser.parse_args()
+    args = parser.parse_args(argv)
+    if all(
+        selection is None
+        for selection in (args.alias, args.syn_dir, args.report, args.run)
+    ):
+        args.alias = DEFAULT_ALIAS
+    return args
 
 
 def exact_area(hdf: pd.DataFrame, pattern: str) -> tuple[float, int]:
@@ -413,8 +460,8 @@ def candidate_roots(explicit_root: Path | None) -> list[Path]:
         roots.append(Path(os.environ["SYN_RESULT_ROOT"]))
     else:
         roots.extend([
-            VORTEX / "build/syn/synopsys",
             VORTEX / "build/hw/syn/synopsys",
+            VORTEX / "build/syn/synopsys",
         ])
 
     deduped: list[Path] = []
@@ -427,24 +474,85 @@ def candidate_roots(explicit_root: Path | None) -> list[Path]:
     return deduped
 
 
+def repo_path(path: Path) -> Path:
+    """Resolve a user-supplied path relative to the repository root."""
+    path = path.expanduser()
+    return path if path.is_absolute() else VORTEX / path
+
+
+def alias_run_dir_name(alias: str, alias_map: Path | None) -> str:
+    """Validate an FPGA alias and return its synthesis result directory name."""
+    selected_map = alias_map_path(alias_map)
+    selected_map = repo_path(selected_map)
+    try:
+        aliases = load_fpga_bin_aliases(selected_map)
+    except (OSError, ValueError) as exc:
+        raise SystemExit(
+            f"unable to load FPGA alias map {selected_map}: {exc}"
+        ) from exc
+
+    if alias not in aliases:
+        available = ", ".join(sorted(aliases))
+        raise SystemExit(
+            f"unknown FPGA alias {alias!r} in {selected_map}; available aliases: "
+            f"{available or '<none>'}"
+        )
+
+    safe_tag = re.sub(r"[^A-Za-z0-9_.-]+", "_", alias).strip("._-")
+    if not safe_tag:
+        raise SystemExit(
+            f"unable to derive a synthesis result name from alias {alias!r}"
+        )
+    return f"{DESIGN_NAME}_{safe_tag}"
+
+
+def run_report_candidates(root: Path, run_dir_name: str) -> list[Path]:
+    """Return the exact and dated-backup report candidates for one run name."""
+    candidates = [root / run_dir_name / REPORT_IN_RUN_DIR]
+    dated = sorted(
+        root.glob(f"{run_dir_name}.*"),
+        key=lambda path: path.stat().st_mtime if path.exists() else 0,
+        reverse=True,
+    )
+    candidates.extend(path / REPORT_IN_RUN_DIR for path in dated)
+    return candidates
+
+
 def resolve_report(args: argparse.Namespace) -> Path:
-    if args.report is not None:
-        rpt = args.report if args.report.is_absolute() else VORTEX / args.report
+    explicit_report = getattr(args, "report", None)
+    if explicit_report is not None:
+        rpt = repo_path(explicit_report)
         if not report_is_valid(rpt):
             raise SystemExit(f"area report is missing or incomplete: {rpt}")
         return rpt
 
-    run = RUNS[args.run]
-    syn_dir = args.syn_dir or run["syn_dir"]
-    candidates: list[Path] = []
-    for root in candidate_roots(args.syn_root):
-        candidates.append(root / syn_dir / REPORT_REL)
-        dated = sorted(
-            root.glob(f"{syn_dir}.*"),
-            key=lambda p: p.stat().st_mtime if p.exists() else 0,
-            reverse=True,
+    explicit_syn_dir = getattr(args, "syn_dir", None)
+    if explicit_syn_dir is not None:
+        syn_dir = repo_path(explicit_syn_dir)
+        candidates = [
+            syn_dir / REPORT_IN_SYN_DIR,
+            syn_dir / REPORT_IN_RUN_DIR,
+        ]
+        for rpt in candidates:
+            if report_is_valid(rpt):
+                return rpt
+        searched = "\n  ".join(str(path) for path in candidates)
+        raise SystemExit(
+            f"no valid area report found under synthesis directory; searched:\n  {searched}"
         )
-        candidates.extend(d / REPORT_REL for d in dated)
+
+    selected_alias = getattr(args, "alias", None)
+    if selected_alias is not None:
+        run_dir_name = alias_run_dir_name(
+            selected_alias, getattr(args, "alias_map", None)
+        )
+    else:
+        run = RUNS[getattr(args, "run", "current")]
+        run_dir_name = run["syn_dir"]
+
+    candidates: list[Path] = []
+    for root in candidate_roots(getattr(args, "syn_root", None)):
+        candidates.extend(run_report_candidates(root, run_dir_name))
 
     for rpt in candidates:
         if report_is_valid(rpt):
@@ -615,7 +723,19 @@ def write_legend_group_outputs(
 def main():
     args = parse_args()
     rpt = resolve_report(args)
-    out_name = args.syn_dir or args.run
+    if args.alias is not None:
+        out_name = args.alias
+    elif args.syn_dir is not None:
+        syn_dir = repo_path(args.syn_dir)
+        out_name = (
+            syn_dir.parent.name
+            if syn_dir.name == "syn_topo.lpp"
+            else syn_dir.name
+        )
+    elif args.report is not None:
+        out_name = args.report.stem
+    else:
+        out_name = args.run
     out_dir = HERE / re.sub(r"[^A-Za-z0-9_.-]+", "_", out_name)
 
     hdf, total_area = load_area_report(rpt)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -58,6 +59,80 @@ def summarize(
         total_area,
         legend_group=legend_group,
     )
+
+
+def write_valid_report(path: Path) -> None:
+    """Create the minimal content needed by report_is_valid()."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "Total cell area: 1.0\n"
+        "Hierarchical area distribution\n"
+    )
+
+
+class ResolveReportTest(unittest.TestCase):
+    def test_default_source_is_c4_alias(self) -> None:
+        args = breakdown.parse_args([])
+
+        self.assertEqual(args.alias, "C4")
+        self.assertIsNone(args.syn_dir)
+        self.assertIsNone(args.report)
+        self.assertIsNone(args.run)
+
+    def test_alias_resolves_run_syn_vortex_axi_result_layout(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            alias_map = root / "aliases.yaml"
+            alias_map.write_text(
+                "aliases:\n"
+                "  C4:\n"
+                "    path: /tmp/fpga-bin\n"
+            )
+            report = (
+                root
+                / "results"
+                / "Vortex_axi_C4"
+                / "syn_topo.lpp"
+                / "reports"
+                / breakdown.REPORT_NAME
+            )
+            write_valid_report(report)
+            args = breakdown.parse_args([
+                "--alias", "C4",
+                "--alias-map", str(alias_map),
+                "--syn-root", str(root / "results"),
+            ])
+
+            self.assertEqual(breakdown.resolve_report(args), report)
+
+    def test_syn_dir_accepts_direct_synthesis_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            syn_dir = Path(temp_dir) / "Vortex_axi_C4" / "syn_topo.lpp"
+            report = syn_dir / "reports" / breakdown.REPORT_NAME
+            write_valid_report(report)
+            args = breakdown.parse_args(["--syn-dir", str(syn_dir)])
+
+            self.assertEqual(breakdown.resolve_report(args), report)
+
+    def test_unknown_alias_reports_available_aliases(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            alias_map = root / "aliases.yaml"
+            alias_map.write_text(
+                "aliases:\n"
+                "  C4:\n"
+                "    path: /tmp/fpga-bin\n"
+            )
+            args = breakdown.parse_args([
+                "--alias", "missing",
+                "--alias-map", str(alias_map),
+                "--syn-root", str(root / "results"),
+            ])
+
+            with self.assertRaisesRegex(
+                SystemExit, "unknown FPGA alias 'missing'.*C4"
+            ):
+                breakdown.resolve_report(args)
 
 
 class SummarizeForPaperTest(unittest.TestCase):
