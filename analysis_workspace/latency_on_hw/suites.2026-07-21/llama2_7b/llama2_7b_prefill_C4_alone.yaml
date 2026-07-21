@@ -1,0 +1,42 @@
+name: llama2_7b_prefill_C4_alone
+defaults:
+  warmup: 1
+  iterations: 3
+  app: fpint_gemm_ffn_hw
+  fpga_bin: improve_th16_tcol32_hwexp_dcache
+  target: hw
+  platform: xilinx_u55c_gen3x16_xdma_3_202210_1
+
+fpga_bins:
+  default: improve_th16_tcol32_hwexp_dcache
+
+  by_backend:
+    fpint_gemm_improve: improve_th16_tcol32_hwexp_dcache
+
+  by_app:
+    fpint_gemm_ffn_hw: improve_th16_tcol32_hwexp_dcache
+    fpint_gemm_ffn_hw_naive: naive_gemm_simd_th16_tcol32_hwexp_dcache
+    rmsnorm: naive_gemm_simd_th16_tcol32_hwexp_dcache
+    rope: naive_gemm_simd_th16_tcol32_hwexp_dcache
+    softmax: naive_gemm_simd_th16_tcol32_hwexp_dcache
+    hadamard: naive_gemm_simd_th16_tcol32_hwexp_dcache
+    silu: naive_gemm_simd_th16_tcol32_hwexp_dcache
+    eladd: naive_gemm_simd_th16_tcol32_hwexp_dcache
+    elmul: naive_gemm_simd_th16_tcol32_hwexp_dcache
+    tile_input_a: naive_gemm_simd_th16_tcol32_hwexp_dcache
+    detile_output: naive_gemm_simd_th16_tcol32_hwexp_dcache
+    kv_cache_quant_w4a16: naive_gemm_simd_th16_tcol32_hwexp_dcache
+    tile_weight_w4a16: naive_gemm_simd_th16_tcol32_hwexp_dcache
+    tile_scale_zp_w4a16: naive_gemm_simd_th16_tcol32_hwexp_dcache
+    head_concat: naive_gemm_simd_th16_tcol32_hwexp_dcache
+
+workloads:
+  - id: llama2_7b_prefill_C4_alone
+    model: llama2-7b
+    stage: prefill
+    variant: all_fpint_gemm_improve_alone_layout_spinquant
+    implemented_only: false
+    matrix:
+      batch: {values: [1, 2, 4, 8]}
+      prefill_seq_len: {values: [512, 1024, 2048, 4096]}
+      qblk: 32

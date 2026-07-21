@@ -1,0 +1,36 @@
+name: llama2_7b_generation_C2
+defaults:
+  warmup: 1
+  iterations: 3
+  app: sgemm_tcu
+  fpga_bin: naive_gemm_simd_th16_tcol32_hwexp_dcache
+  target: hw
+  platform: xilinx_u55c_gen3x16_xdma_3_202210_1
+
+fpga_bins:
+  default: naive_gemm_simd_th16_tcol32_hwexp_dcache
+
+  by_backend:
+    sgemm_tcu: naive_gemm_simd_th16_tcol32_hwexp_dcache
+    fpint_gemm_naive: naive_gemm_simd_th16_tcol32_hwexp_dcache
+
+  by_app:
+    fpint_gemm_ffn_hw: improve_th16_tcol32_hwexp_dcache
+    fpint_gemm_ffn_hw_naive: naive_gemm_simd_th16_tcol32_hwexp_dcache
+    rmsnorm: naive_gemm_simd_th16_tcol32_hwexp_dcache
+    rope: naive_gemm_simd_th16_tcol32_hwexp_dcache
+    softmax: naive_gemm_simd_th16_tcol32_hwexp_dcache
+    silu: naive_gemm_simd_th16_tcol32_hwexp_dcache
+    eladd: naive_gemm_simd_th16_tcol32_hwexp_dcache
+    elmul: naive_gemm_simd_th16_tcol32_hwexp_dcache
+
+workloads:
+  - id: llama2_7b_generation_C2
+    model: llama2-7b
+    stage: generation
+    variant: attn_sgemm_tcu_fpint_gemm_naive_spinquant
+    implemented_only: false
+    matrix:
+      batch: {values: [1, 2, 4, 8]}
+      gen_kv_len: {values: [512, 1024, 2048, 4096]}
+      qblk: 32

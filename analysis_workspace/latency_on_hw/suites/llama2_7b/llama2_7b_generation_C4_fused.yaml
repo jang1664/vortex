@@ -3,35 +3,35 @@ defaults:
   warmup: 1
   iterations: 3
   app: fpint_gemm_ffn_hw
-  fpga_bin: improve_th16_tcol32_hwexp_dcache
+  fpga_bin: improve_th32_tcol32_hwexp_dcache
   target: hw
   platform: xilinx_u55c_gen3x16_xdma_3_202210_1
 
 fpga_bins:
-  default: improve_th16_tcol32_hwexp_dcache
+  default: improve_th32_tcol32_hwexp_dcache
 
   by_backend:
-    fpint_gemm_improve: improve_th16_tcol32_hwexp_dcache
+    fpint_gemm_improve: improve_th32_tcol32_hwexp_dcache
 
   by_app:
-    fpint_gemm_ffn_hw: improve_th16_tcol32_hwexp_dcache
-    fpint_gemm_ffn_hw_naive: naive_gemm_simd_th16_tcol32_hwexp_dcache
-    rms_norm_layout_fused: naive_gemm_simd_th16_tcol32_hwexp_dcache
-    rope_layout_fused: naive_gemm_simd_th16_tcol32_hwexp_dcache
-    softmax_layout_fused: naive_gemm_simd_th16_tcol32_hwexp_dcache
-    hadamard: naive_gemm_simd_th16_tcol32_hwexp_dcache
-    silu: naive_gemm_simd_th16_tcol32_hwexp_dcache
-    elmul: naive_gemm_simd_th16_tcol32_hwexp_dcache
-    tile_input_a: naive_gemm_simd_th16_tcol32_hwexp_dcache
-    silu_layout_fused: naive_gemm_simd_th16_tcol32_hwexp_dcache
-    eladd_layout_fused: naive_gemm_simd_th16_tcol32_hwexp_dcache
-    elmul_layout_fused: naive_gemm_simd_th16_tcol32_hwexp_dcache
-    kv_cache_quant_w4a16: naive_gemm_simd_th16_tcol32_hwexp_dcache
-    kv_cache_quant_layout_fused_w4a16: naive_gemm_simd_th16_tcol32_hwexp_dcache
-    tile_weight_w4a16: naive_gemm_simd_th16_tcol32_hwexp_dcache
-    tile_scale_zp_w4a16: naive_gemm_simd_th16_tcol32_hwexp_dcache
-    detile_output: naive_gemm_simd_th16_tcol32_hwexp_dcache
-    head_concat_layout_fused: naive_gemm_simd_th16_tcol32_hwexp_dcache
+    fpint_gemm_ffn_hw: improve_th32_tcol32_hwexp_dcache
+    fpint_gemm_ffn_hw_naive: naive_gemm_th32_tcol32_hwexp_dcache
+    rms_norm_layout_fused: improve_th32_tcol32_hwexp_dcache
+    rope_layout_fused: improve_th32_tcol32_hwexp_dcache
+    softmax_layout_fused: improve_th32_tcol32_hwexp_dcache
+    hadamard: improve_th32_tcol32_hwexp_dcache
+    silu: improve_th32_tcol32_hwexp_dcache
+    elmul: improve_th32_tcol32_hwexp_dcache
+    tile_input_a: improve_th32_tcol32_hwexp_dcache
+    silu_layout_fused: improve_th32_tcol32_hwexp_dcache
+    eladd_layout_fused: improve_th32_tcol32_hwexp_dcache
+    elmul_layout_fused: improve_th32_tcol32_hwexp_dcache
+    kv_cache_quant_w4a16: improve_th32_tcol32_hwexp_dcache
+    kv_cache_quant_layout_fused_w4a16: improve_th32_tcol32_hwexp_dcache
+    tile_weight_w4a16: improve_th32_tcol32_hwexp_dcache
+    tile_scale_zp_w4a16: improve_th32_tcol32_hwexp_dcache
+    detile_output: improve_th32_tcol32_hwexp_dcache
+    head_concat_layout_fused: improve_th32_tcol32_hwexp_dcache
 
 workloads:
   - id: llama2_7b_generation_C4_fused
