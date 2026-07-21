@@ -71,6 +71,16 @@ run-simx:
 		$(MAKE) -C $$t run-simx || exit $$?; \
 	done
 
+run-simx-softmax-rev2-pair:
+	$(MAKE) -C softmax run-simx SOFTMAX_VARIANT=rev2 \
+		OPTS="-batch 1 -heads 1 -seqq 2 -seqk 32 -mask 0 -scale 1.0"
+	$(MAKE) -C softmax_layout_fused run-simx SOFTMAX_LAYOUT_FUSED_VARIANT=rev2 \
+		OPTS="-batch 1 -heads 1 -seqq 2 -seqk 32 -mask 0 -scale 1.0"
+	$(MAKE) -C softmax run-simx SOFTMAX_VARIANT=rev2 \
+		OPTS="-batch 1 -heads 1 -seqq 3 -seqk 33 -seqk-stride 40 -mask 1 -scale 1.0"
+	$(MAKE) -C softmax_layout_fused run-simx SOFTMAX_LAYOUT_FUSED_VARIANT=rev2 \
+		OPTS="-batch 1 -heads 1 -seqq 3 -seqk 33 -seqk-stride 40 -mask 1 -scale 1.0"
+
 run-rtlsim:
 	@for t in $(TEST_DIRS); do \
 		$(MAKE) -C $$t run-rtlsim || exit $$?; \
@@ -80,3 +90,5 @@ clean:
 	@for t in $(TEST_DIRS); do \
 		$(MAKE) -C $$t clean || exit $$?; \
 	done
+
+.PHONY: all run-simx run-simx-softmax-rev2-pair run-rtlsim clean

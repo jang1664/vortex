@@ -8,7 +8,7 @@ SRC_DIR := $(VORTEX_HOME)/tests/regression/$(PROJECT)
 SRCS := $(SRC_DIR)/main.cpp
 
 SOFTMAX_LAYOUT_FUSED_VARIANT ?= opt_warp
-SOFTMAX_LAYOUT_FUSED_VARIANTS := rev1 opt opt_warp
+SOFTMAX_LAYOUT_FUSED_VARIANTS := rev1 rev2 opt opt_warp
 ifneq ($(filter $(SOFTMAX_LAYOUT_FUSED_VARIANT),$(SOFTMAX_LAYOUT_FUSED_VARIANTS)),$(SOFTMAX_LAYOUT_FUSED_VARIANT))
   $(error Unsupported SOFTMAX_LAYOUT_FUSED_VARIANT=$(SOFTMAX_LAYOUT_FUSED_VARIANT); expected one of: $(SOFTMAX_LAYOUT_FUSED_VARIANTS))
 endif
@@ -17,6 +17,10 @@ ifeq ($(SOFTMAX_LAYOUT_FUSED_VARIANT),opt_warp)
   VX_SRCS := $(SRC_DIR)/kernel.opt_warp.cpp
   CXXFLAGS += -DSOFTMAX_LAYOUT_FUSED_VARIANT=SOFTMAX_LAYOUT_FUSED_VARIANT_OPT_WARP
   VX_CFLAGS += -DSOFTMAX_LAYOUT_FUSED_VARIANT_KERNEL=SOFTMAX_LAYOUT_FUSED_VARIANT_OPT
+else ifeq ($(SOFTMAX_LAYOUT_FUSED_VARIANT),rev2)
+  VX_SRCS := $(SRC_DIR)/kernel.rev2.cpp
+  CXXFLAGS += -DSOFTMAX_LAYOUT_FUSED_VARIANT=SOFTMAX_LAYOUT_FUSED_VARIANT_REV2
+  VX_CFLAGS += -DSOFTMAX_LAYOUT_FUSED_VARIANT_KERNEL=SOFTMAX_LAYOUT_FUSED_VARIANT_REV2
 else ifeq ($(SOFTMAX_LAYOUT_FUSED_VARIANT),opt)
   VX_SRCS := $(SRC_DIR)/kernel.opt.cpp
   CXXFLAGS += -DSOFTMAX_LAYOUT_FUSED_VARIANT=SOFTMAX_LAYOUT_FUSED_VARIANT_OPT
@@ -27,8 +31,11 @@ else
   VX_CFLAGS += -DSOFTMAX_LAYOUT_FUSED_VARIANT_KERNEL=SOFTMAX_LAYOUT_FUSED_VARIANT_REV1
 endif
 
-# opt_warp includes kernel.opt.cpp; keep the packaged device binary fresh when
-# the shared implementation changes.
+ifeq ($(SOFTMAX_LAYOUT_FUSED_VARIANT),opt_warp)
+# opt_warp includes kernel.opt.cpp.
 kernel.elf: $(SRC_DIR)/kernel.opt.cpp
+else ifeq ($(SOFTMAX_LAYOUT_FUSED_VARIANT),rev2)
+kernel.elf: $(VORTEX_HOME)/tests/regression/softmax_common/kernel.simt_cached.h
+endif
 
 include ../common.mk

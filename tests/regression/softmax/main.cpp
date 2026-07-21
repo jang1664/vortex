@@ -8,6 +8,7 @@
 #include <vortex.h>
 #include "common.h"
 #include "host_variant.h"
+#include "../softmax_common/host_data.h"
 #include "../vector_common/fp16.h"
 
 #define RT_CHECK(_expr)                                         \
@@ -88,16 +89,6 @@ void softmax_cpu(
         }
       }
     }
-  }
-}
-
-///////////////////////////////////////////////////////////////////////////////
-// Helper functions
-///////////////////////////////////////////////////////////////////////////////
-void initialize_random(std::vector<data_t>& vec) {
-  for (auto& val : vec) {
-    float x = static_cast<float>(rand()) / RAND_MAX * 4.0f - 2.0f;  // [-2, 2]
-    val = float_to_fp16(x);
   }
 }
 
@@ -196,8 +187,7 @@ int main(int argc, char *argv[]) {
   std::vector<data_t> h_output_cpu(input_size);
   
   // Initialize data
-  srand(42);
-  initialize_random(h_input);
+  initialize_softmax_scores(h_input);
   
   // Run CPU reference
   printf("Running CPU reference...\n");
@@ -217,9 +207,8 @@ int main(int argc, char *argv[]) {
   printf("Device Caps: cores=%ld, warps=%ld, threads=%ld\n", 
          num_cores, num_warps, num_threads);
   
-  uint32_t row_pitch_bytes = explicit_k_stride
-      ? seq_len_k_stride * sizeof(data_t)
-      : softmax_row_pitch_bytes(seq_len_k, sizeof(data_t));
+  uint32_t row_pitch_bytes = softmax_effective_row_pitch_bytes(
+      seq_len_k, seq_len_k_stride, sizeof(data_t), explicit_k_stride);
   uint32_t buffer_bytes = total_rows * row_pitch_bytes;
   const bool uses_pitched_storage = row_pitch_bytes != seq_len_k * sizeof(data_t);
   std::vector<uint8_t> h_input_pitched;
