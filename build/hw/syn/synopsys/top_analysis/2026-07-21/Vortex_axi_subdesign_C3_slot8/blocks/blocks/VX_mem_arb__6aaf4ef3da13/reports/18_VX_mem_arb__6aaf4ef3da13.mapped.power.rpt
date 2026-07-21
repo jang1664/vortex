@@ -1,0 +1,52 @@
+Information: Propagating switching activity (high effort zero delay simulation). (PWR-6)
+Warning: Design has unannotated primary inputs. (PWR-414)
+Warning: Design has unannotated sequential cell outputs. (PWR-415)
+ 
+****************************************
+Report : power
+        -hier
+        -analysis_effort high
+        -verbose
+Design : VX_mem_arb__6aaf4ef3da13
+Scenario(s): mode_norm.OC_rvt_ss_0p900v_125c
+Version: V-2023.12-SP5-3
+Date   : Tue Jul 21 23:05:12 2026
+****************************************
+
+
+Library(s) Used:
+
+    sc9_cmos28lpp_base_rvt_ss_nominal_max_0p900v_125c_sadhm (File: /tool/PDK/Samsung/LN28LPP_202203/PRIMITIVES/RVT/ln28lpp_sc_9t_base_rvt_c130_V1.00d/FE-Common/LIBERTY/sc9_cmos28lpp_base_rvt_ss_nominal_max_0p900v_125c_sadhm.db)
+
+
+Global Operating Voltage = 0.9  
+Power-specific unit information :
+    Voltage Units = 1V
+    Capacitance Units = 1.000000pf
+    Time Units = 1ns
+    Dynamic Power Units = 1mW    (derived from V,C,T units)
+    Leakage Power Units = 1uW
+
+
+--------------------------------------------------------------------------------
+                                       Switch   Int      Leak     Total
+Hierarchy                              Power    Power    Power    Power    %
+--------------------------------------------------------------------------------
+VX_mem_arb__6aaf4ef3da13                  0.111    0.601   81.701    0.793 100.0
+  g_rsp_select_rsp_switch (VX_stream_switch_1) 6.16e-02    0.365   47.858    0.474  59.8
+    g_out_buf_1__out_buf (VX_elastic_buffer_6_0) 3.08e-02    0.182   23.928    0.237  29.8
+      g_eb2_out_buf (VX_pipe_buffer_6_0) 4.57e-03 2.98e-03    3.486 1.10e-02   1.4
+      g_eb2_stream_buffer (VX_stream_buffer_518_1_0) 2.62e-02    0.179   20.443    0.225  28.4
+    g_out_buf_0__out_buf (VX_elastic_buffer_6_1) 3.09e-02    0.183   23.908    0.238  30.0
+      g_eb2_out_buf (VX_pipe_buffer_6_1) 4.56e-03 2.99e-03    3.485 1.10e-02   1.4
+      g_eb2_stream_buffer (VX_stream_buffer_518_1_1) 2.63e-02    0.180   20.423    0.227  28.6
+  g_rsp_select_g_rsp_data_in_0__bits_remove (VX_bits_remove) 7.53e-05 5.22e-05 4.69e-02 1.74e-04   0.0
+  g_bus_out_if_0__g_req_tag_sel_out_bits_insert (VX_bits_insert) 1.95e-04 4.33e-05 4.69e-02 2.85e-04   0.0
+  req_arb (VX_stream_arb_4)            4.86e-02    0.236   33.749    0.318  40.1
+    g_input_select_g_arbiter_g_out_buf_0__out_buf (VX_elastic_buffer_615_2_1_0) 3.99e-02    0.226   28.317    0.294  37.1
+      g_eb2_out_buf (VX_pipe_buffer_5) 6.26e-03 3.85e-03    4.134 1.42e-02   1.8
+      g_eb2_stream_buffer (VX_stream_buffer_615_1) 3.37e-02    0.222   24.183    0.280  35.3
+    g_input_select_g_arbiter_arbiter (VX_generic_arbiter_1) 5.73e-05 3.93e-05 3.35e-02 1.30e-04   0.0
+      g_priority_priority_arbiter (VX_priority_arbiter) 4.85e-05 3.18e-05 2.68e-02 1.07e-04   0.0
+        g_encoder_grant_sel (VX_priority_encoder_3) 4.30e-05 2.45e-05 2.00e-02 8.75e-05   0.0
+1

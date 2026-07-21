@@ -99,6 +99,36 @@ See `CANDIDATE_HIERARCHY.md` for observed instance paths, specialization
 counts, parameter deduplication examples, and the expected naive/improve GEMM
 hierarchy difference.
 
+## Fast subdesign synthesis and PnR
+
+`run_subdesign_pnr.py` is the fast path for experiments that do not need a new
+top-level synthesis. It reuses a completed top run's
+`results/design_catalog.tsv` and `results/Vortex_axi.elab.ddc`, resolves the
+C3/C4 hierarchy rules in `subdesign_candidates.yaml`, synthesizes every
+selected subdesign, and only then starts the PnR searches.
+
+If `--seed-run-dir` is omitted, the driver creates `RUN_DIR/top` and runs the
+catalog-only DC mode once. That mode elaborates the top and emits the catalog
+and elaborated DDC while intentionally skipping `compile_ultra`; the generated
+artifacts are then used by the subdesign workers in `RUN_DIR/blocks`.
+
+For example, after sourcing the matching configuration:
+
+```bash
+source configs/improve_th16_tcol32_hwexp_dcache.sh
+PYTHONPATH=third_party/hwexplorer \
+  python hw/syn/synopsys/top_analysis/run_subdesign_pnr.py \
+    --alias C4 \
+    --seed-run-dir build/hw/syn/synopsys/top_analysis/Vortex_axi_improve_th16_tcol32_hwexp_dcache/top
+```
+
+Use `--config PATH` instead of `--alias` when an alias is unavailable. Use
+`--dry-run` with an existing seed to inspect the resolved selectors without
+invoking EDA tools, or
+`--stages pnr` to resume PnR from an already completed subdesign synthesis.
+The target file keeps C3 and C4 rules independent so C1/C2 can be added as new
+family entries without changing the driver.
+
 Block-specific synthesis constraints are configured with `block_constraints`
 in the candidate YAML. The default configuration uses this to map
 `VX_gemm_tree_v1` to `clk_i/resetn_i` and the selected AXI blocks to

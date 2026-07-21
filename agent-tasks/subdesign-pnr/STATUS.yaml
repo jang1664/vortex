@@ -1,0 +1,24 @@
+task: subdesign-pnr
+status: complete
+updated: "2026-07-21 19:26"
+summary: >-
+  Add a fast synthesis/PnR workflow that reuses an existing top elaboration,
+  resolves C3/C4-specific subdesign match rules, synthesizes all selected
+  workers before launching any PnR jobs, and leaves room for C1/C2 rules.
+iterations:
+  - at: "2026-07-21 19:21"
+    action: >-
+      Added the C3/C4 match specification and batch driver, then verified
+      selector resolution against a real C4 catalog and unit-tested stage
+      ordering, seed resolution, family inference, and DMA filtering.
+    result: "5 focused tests and 13 existing top-analysis tests passed"
+  - at: "2026-07-21 19:26"
+    action: >-
+      Added seedless startup: catalog-only top elaboration writes RUN_DIR/top,
+      then the existing batch worker/PnR flow consumes its catalog and DDC.
+    result: "The combined focused and existing test suite passed"
+pitfalls:
+  - >-
+    Existing legacy syn_topo.lpp runs may contain an elaborated DDC but no
+    design_catalog.tsv; the fast flow reports this explicitly and requires a
+    completed top-analysis seed (or an explicit compatible catalog/DDC pair).

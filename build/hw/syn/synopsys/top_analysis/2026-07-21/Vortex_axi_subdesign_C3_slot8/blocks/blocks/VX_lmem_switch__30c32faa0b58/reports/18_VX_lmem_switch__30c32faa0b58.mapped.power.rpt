@@ -1,0 +1,59 @@
+Information: Propagating switching activity (high effort zero delay simulation). (PWR-6)
+Warning: Design has unannotated primary inputs. (PWR-414)
+Warning: Design has unannotated sequential cell outputs. (PWR-415)
+ 
+****************************************
+Report : power
+        -hier
+        -analysis_effort high
+        -verbose
+Design : VX_lmem_switch__30c32faa0b58
+Scenario(s): mode_norm.OC_rvt_ss_0p900v_125c
+Version: V-2023.12-SP5-3
+Date   : Tue Jul 21 22:36:40 2026
+****************************************
+
+
+Library(s) Used:
+
+    sc9_cmos28lpp_base_rvt_ss_nominal_max_0p900v_125c_sadhm (File: /tool/PDK/Samsung/LN28LPP_202203/PRIMITIVES/RVT/ln28lpp_sc_9t_base_rvt_c130_V1.00d/FE-Common/LIBERTY/sc9_cmos28lpp_base_rvt_ss_nominal_max_0p900v_125c_sadhm.db)
+
+
+Global Operating Voltage = 0.9  
+Power-specific unit information :
+    Voltage Units = 1V
+    Capacitance Units = 1.000000pf
+    Time Units = 1ns
+    Dynamic Power Units = 1mW    (derived from V,C,T units)
+    Leakage Power Units = 1uW
+
+
+--------------------------------------------------------------------------------
+                                       Switch   Int      Leak     Total
+Hierarchy                              Power    Power    Power    Power    %
+--------------------------------------------------------------------------------
+VX_lmem_switch__30c32faa0b58              0.371    1.692  114.809    2.177 100.0
+  rsp_arb (VX_stream_arb_20)           7.66e-02    0.207   24.712    0.308  14.2
+    g_input_select_g_arbiter_g_out_buf_0__out_buf (VX_elastic_buffer_1044_1_1_0) 3.95e-02    0.190   15.909    0.246  11.3
+      g_eb1_pipe_buffer (VX_pipe_buffer_37) 3.95e-02    0.190   15.909    0.246  11.3
+        g_register_g_pipe_regs_0__pipe_register (VX_pipe_register_33) 3.94e-02    0.190   15.903    0.246  11.3
+          g_shift_register (VX_shift_register_1045_1_1_0) 3.94e-02    0.190   15.903    0.246  11.3
+    g_input_select_g_arbiter_arbiter (VX_generic_arbiter_2) 5.71e-05 5.16e-05 3.59e-02 1.45e-04   0.0
+      g_priority_priority_arbiter (VX_priority_arbiter_1) 5.71e-05 5.16e-05 3.59e-02 1.45e-04   0.0
+        g_encoder_grant_sel (VX_priority_encoder_1) 5.71e-05 5.16e-05 3.59e-02 1.45e-04   0.0
+          g_lsb_g_model1_lzc (VX_lzc_1) 4.19e-05 2.11e-05 1.38e-02 7.68e-05   0.0
+            g_lzc_find_first (VX_find_first_4_2_0) 4.19e-05 2.11e-05 1.38e-02 7.68e-05   0.0
+  req_dma_buf (VX_elastic_buffer_16_0) 9.42e-02    0.554   25.716    0.674  31.0
+    g_eb1_pipe_buffer (VX_pipe_buffer_22_0) 9.42e-02    0.554   25.716    0.674  31.0
+      g_register_g_pipe_regs_0__pipe_register (VX_pipe_register_27_0) 9.42e-02    0.554   25.713    0.674  31.0
+        g_shift_register (VX_shift_register_1716_1_1_0_0) 9.42e-02    0.554   25.713    0.674  31.0
+  req_gemm_buf (VX_elastic_buffer_16_1) 9.54e-02    0.554   25.716    0.675  31.0
+    g_eb1_pipe_buffer (VX_pipe_buffer_22_1) 9.54e-02    0.554   25.716    0.675  31.0
+      g_register_g_pipe_regs_0__pipe_register (VX_pipe_register_27_1) 9.54e-02    0.554   25.713    0.675  31.0
+        g_shift_register (VX_shift_register_1716_1_1_0_1) 9.54e-02    0.554   25.713    0.675  31.0
+  req_local_buf (VX_elastic_buffer_16_2) 7.34e-02    0.362   26.092    0.462  21.2
+    g_eb1_pipe_buffer (VX_pipe_buffer_22_2) 7.34e-02    0.362   26.092    0.462  21.2
+      g_register_g_pipe_regs_0__pipe_register (VX_pipe_register_27_2) 7.34e-02    0.362   26.087    0.462  21.2
+        g_shift_register (VX_shift_register_1716_1_1_0_2) 7.34e-02    0.362   26.087    0.462  21.2
+  req_global_buf (VX_elastic_buffer_15) 3.02e-02 1.27e-02   11.510 5.44e-02   2.5
+1
