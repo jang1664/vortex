@@ -199,13 +199,16 @@ int main(int argc, char *argv[]) {
   uint64_t num_threads = 0;
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_WARPS, &num_warps));
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_THREADS, &num_threads));
-  // One warp (= num_threads lanes) per block, so each row occupies a single
-  // warp and up to num_warps rows are co-resident on a core. While one row's
-  // lane 0 busy-waits on its DMA descriptor, the other resident rows keep
-  // computing, hiding the DMA issue/poll latency that otherwise stalls the
-  // whole core when a block spans all warps.
-#if SOFTMAX_LAYOUT_FUSED_VARIANT == SOFTMAX_LAYOUT_FUSED_VARIANT_OPT_WARP
+  // One warp (= num_threads lanes) per block lets up to num_warps rows remain
+  // co-resident on a core.
+#if SOFTMAX_LAYOUT_FUSED_VARIANT == SOFTMAX_LAYOUT_FUSED_VARIANT_OPT_WARP || \
+    SOFTMAX_LAYOUT_FUSED_VARIANT == SOFTMAX_LAYOUT_FUSED_VARIANT_REV2
+#if SOFTMAX_LAYOUT_FUSED_VARIANT == SOFTMAX_LAYOUT_FUSED_VARIANT_REV2
+  printf("variant=rev2 launch=one_warp_per_row\n");
+#else
+  // Co-resident rows hide lane 0's DMA descriptor issue/poll latency.
   printf("variant=opt_warp launch=one_warp_per_row\n");
+#endif
   const uint32_t tpb = std::min(256u, (uint32_t)num_threads);
 #else
   printf("variant=%s launch=all_warps_per_row\n",
