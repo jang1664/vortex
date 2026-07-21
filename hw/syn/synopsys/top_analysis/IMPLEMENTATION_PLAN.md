@@ -202,10 +202,17 @@ Example:
 ```yaml
 include:
   modules:
-    - VX_stream_xbar
-    - VX_stream_switch
-    - axi_mux
-    - axi_demux
+    - pattern: VX_stream_xbar
+      required: true
+    - pattern: VX_mem_arb
+    - pattern: VX_lsu_mem_arb
+    - pattern: VX_mem_switch
+    - pattern: VX_lmem_switch
+    - pattern: VX_tmem_switch
+    - pattern: axi_mux
+    - pattern: axi_demux
+    - pattern: VX_gemm_tree_v1
+      required: true
 
 exclude:
   instances: []
@@ -230,7 +237,10 @@ pnr:
 ```
 
 Patterns that match no catalog design are recorded as unmatched candidates but
-do not fail a run unless marked `required`.
+do not fail a run unless marked `required`. The default list names
+coarse-grained parent modules instead of wildcard-matching internal stream
+arbiters, demuxes, and primitive arbiters; this avoids nested hierarchy area
+double counting and low-value PnR jobs.
 
 ## 5. Stage Architecture
 

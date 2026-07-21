@@ -81,6 +81,101 @@ def test_pnr_search_policy_aliases_and_validation(tmp_path: Path) -> None:
         load_analysis_config(path)
 
 
+@pytest.mark.parametrize(
+    "config_name",
+    [
+        "naive_gemm_th16_tcol32_hwexp_dcache_hbw.sh",
+        "improve_th16_tcol32_hwexp_dcache.sh",
+    ],
+)
+def test_driver_accepts_target_config_paths(config_name: str) -> None:
+    config_path = SYNOPSYS.parents[2] / "configs" / config_name
+    args = run_module._parser().parse_args(["--config", str(config_path)])
+
+    resolved, tag = run_module._resolve_config(args)
+
+    assert resolved == config_path.resolve()
+    assert tag == config_path.stem
+
+
+def test_default_candidates_are_coarse_interconnect_and_gemm_tree() -> None:
+    config = load_analysis_config(TOP_ANALYSIS / "candidates.yaml")
+    patterns = {rule.pattern for rule in config.include.modules}
+
+    assert patterns == {
+        "VX_stream_xbar",
+        "axi_xbar",
+        "axi_interleaved_xbar",
+        "VX_mem_arb",
+        "VX_lsu_mem_arb",
+        "VX_mem_switch",
+        "VX_lmem_switch",
+        "VX_tmem_switch",
+        "VX_tmem_wide_read_switch",
+        "axi_mux",
+        "axi_demux",
+        "VX_gemm_tree_v1",
+    }
+    required = {rule.pattern for rule in config.include.modules if rule.required}
+    assert required == {"VX_stream_xbar", "VX_gemm_tree_v1"}
+    assert patterns.isdisjoint(
+        {
+            "VX_stream_arb",
+            "VX_demux",
+            "VX_generic_arbiter",
+            "VX_priority_arbiter",
+            "VX_rr_arbiter",
+        }
+    )
+
+    profiles = {profile.name: profile for profile in config.block_constraints}
+    assert profiles["gemm_tree_clock_ports"].constraints == {
+        "clk_name": "clk_i",
+        "reset_name": "resetn_i",
+        "reset_type": "active_low",
+        "switching_activity": {},
+    }
+    assert profiles["axi_clock_ports"].match.module_patterns == [
+        "axi_xbar",
+        "axi_interleaved_xbar",
+        "axi_mux",
+        "axi_demux",
+    ]
+    assert profiles["axi_clock_ports"].constraints == {
+        "clk_name": "clk_i",
+        "reset_name": "rst_ni",
+        "reset_type": "active_low",
+        "switching_activity": {},
+    }
+
+
+def test_clockless_block_constraint_selects_virtual_clock(tmp_path: Path) -> None:
+    path = tmp_path / "candidates.yaml"
+    path.write_text(
+        """include:
+  modules:
+    - pattern: combinational_block
+block_constraints:
+  - name: combinational_virtual_clock
+    match:
+      module_patterns:
+        - combinational_block
+    constraints:
+      clk_name: ""
+      reset_name: ""
+      switching_activity: {}
+"""
+    )
+
+    config = load_analysis_config(path)
+
+    assert config.block_constraints[0].constraints == {
+        "clk_name": "",
+        "reset_name": "",
+        "switching_activity": {},
+    }
+
+
 def test_nested_occurrences_are_rejected() -> None:
     with pytest.raises(ValueError, match="double count"):
         _validate_nonoverlap(["top/xbar", "top/xbar/arb"], allow_nested=False)

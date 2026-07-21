@@ -8,6 +8,7 @@ from typing import Union
 import yaml
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
+from hwexplorer.automation.hierarchical import SynthesisConstraintProfile
 from hwexplorer.automation.pnr_search import PnRAreaSearchConfig
 
 
@@ -73,6 +74,7 @@ class AnalysisConfig(BaseModel):
 
     include: CandidateInclude
     exclude: CandidateExclude = Field(default_factory=CandidateExclude)
+    block_constraints: list[SynthesisConstraintProfile] = Field(default_factory=list)
     minimum_total_area_um2: float = 0.0
     allow_nested: bool = False
     pnr: PnRSearchConfig = Field(default_factory=PnRSearchConfig)

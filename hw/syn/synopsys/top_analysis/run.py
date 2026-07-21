@@ -52,8 +52,14 @@ from top_analysis.path_utils import dc_hierarchy_path_candidates  # noqa: E402
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     source = parser.add_mutually_exclusive_group(required=True)
-    source.add_argument("--alias")
-    source.add_argument("--config")
+    source.add_argument("--alias", help="FPGA-bin alias whose config is reused")
+    source.add_argument(
+        "--config",
+        metavar="PATH",
+        help=(
+            "Vortex config shell script; its filename stem is the default run tag"
+        ),
+    )
     parser.add_argument("--alias-map")
     parser.add_argument("--run-dir")
     parser.add_argument(
@@ -136,6 +142,7 @@ def main(argv: list[str] | None = None) -> int:
                 "syn_dir": "blocks",
                 "synthesis_mode": "submodule",
                 "hierarchy_selectors": selectors,
+                "synthesis_constraint_profiles": analysis_cfg.block_constraints,
                 "output_profile": "icc2_handoff",
                 "physical_variants": [],
                 "generate_design_catalog": False,

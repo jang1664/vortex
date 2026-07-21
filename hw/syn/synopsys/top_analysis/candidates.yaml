@@ -1,14 +1,57 @@
 include:
   modules:
+    # Coarse-grained interconnect blocks only. Do not add their internal
+    # VX_stream_arb/VX_demux/VX_*_arbiter primitives here: selecting both a
+    # parent and its implementation details would double count top hierarchy
+    # area and create many low-value PnR jobs.
     - pattern: VX_stream_xbar
       required: true
-    # Select switch/arbiter internals in a separate run when their containing
-    # xbar is not selected; otherwise hierarchy area would be double counted.
+    - pattern: axi_xbar
+    - pattern: axi_interleaved_xbar
+    - pattern: VX_mem_arb
+    - pattern: VX_lsu_mem_arb
+    - pattern: VX_mem_switch
+    - pattern: VX_lmem_switch
+    - pattern: VX_tmem_switch
+    - pattern: VX_tmem_wide_read_switch
+    - pattern: axi_mux
+    - pattern: axi_demux
+
+    # Both intended TH16/TCOL32 configurations enable the GEMM accelerator,
+    # so fail candidate planning if the elaborated tree cannot be found.
+    - pattern: VX_gemm_tree_v1
+      required: true
 
 exclude:
   modules: []
   designs: []
   instances: []
+
+# Vortex_axi uses clk/reset at the top, but selected submodules can expose
+# different port names. These profiles override only the matching block jobs.
+block_constraints:
+  - name: gemm_tree_clock_ports
+    match:
+      module_patterns:
+        - VX_gemm_tree_v1
+    constraints:
+      clk_name: clk_i
+      reset_name: resetn_i
+      reset_type: active_low
+      switching_activity: {}
+
+  - name: axi_clock_ports
+    match:
+      module_patterns:
+        - axi_xbar
+        - axi_interleaved_xbar
+        - axi_mux
+        - axi_demux
+    constraints:
+      clk_name: clk_i
+      reset_name: rst_ni
+      reset_type: active_low
+      switching_activity: {}
 
 minimum_total_area_um2: 1000.0
 allow_nested: false
