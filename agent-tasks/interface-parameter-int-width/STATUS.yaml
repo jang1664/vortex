@@ -1,0 +1,114 @@
+task: interface-parameter-int-width
+status: complete
+updated: "2026-07-19 18:39"
+summary: >-
+  Audit and fix untyped interface parameters used in constant arithmetic that
+  can trigger Synopsys Presto ELAB-425 width-inference errors.
+iterations:
+  - name: Interface Parameter Integer Width
+    iteration: 1
+    status: compile_error
+    error_summary: >-
+      The gemm_dma_ctrl unittest testbench references removed interface fields
+      M_tot, N_tot, K_tot, and entry_id.
+    root_cause: >-
+      The existing hw/unittest/gemm_dma_ctrl testbench is stale relative to
+      VX_gemm_dma_ctrl_if; the failure is unrelated to the RTL typing changes.
+    fix_applied: >-
+      No RTL fix applied. The test request must be replaced with a maintained
+      unittest because the test itself is invalid.
+    lesson: >-
+      Check that a focused unittest still matches its current interface before
+      using it as regression evidence.
+  - name: Interface Parameter Integer Width
+    iteration: 2
+    status: compile_error
+    error_summary: >-
+      gemm_node_improve passed, but the configured gemm_node build did not
+      compile VX_lmem_weight_gather_dma and left its instance unresolved.
+    root_cause: >-
+      The existing build tree was configured before the weight-gather source
+      was added to the source-tree unittest Makefile, so its generated Makefile
+      is stale. This is unrelated to the RTL typing changes.
+    fix_applied: >-
+      Prepare a fresh configured build tree before rerunning the maintained
+      regular and naive integration tests.
+    lesson: >-
+      Configure-generated unittest Makefiles must be refreshed when source-tree
+      templates gain RTL source files.
+  - name: Interface Parameter Integer Width
+    iteration: 3
+    status: compile_error
+    error_summary: >-
+      The fresh build's DPI compilation could not find generated VX_config.h.
+    root_cause: >-
+      Configure populated build templates but the separate hw/config generation
+      prerequisite had not yet run in the new build tree.
+    fix_applied: >-
+      Generate VX_config.h and VX_types.h with the build-side hw config target
+      before rerunning verification.
+    lesson: >-
+      A newly configured Vortex build needs its hw config target before RTL
+      unittests that compile DPI sources.
+  - name: Interface Parameter Integer Width
+    iteration: 4
+    status: pass
+    error_summary: none
+    root_cause: none
+    fix_applied: >-
+      Used the fresh configured build after generating VX_config.h and
+      VX_types.h.
+    lesson: >-
+      Both regular and naive controller integrations preserve behavior with
+      typed interface-parameter aliases.
+history:
+  - timestamp: "2026-07-19 18:17"
+    action: diagnosis_and_scope
+    result: >-
+      Confirmed VX_gemm_dma_ctrl_naive line 40 fails because untyped
+      dma_if.DATA_SIZE is the left operand of a shift. Identified the same
+      expression in VX_gemm_dma_ctrl and related uses in both modules.
+  - timestamp: "2026-07-19 18:24"
+    action: verification_iteration_1
+    result: >-
+      VCS compile failed in the stale gemm_dma_ctrl testbench before compiling
+      the changed behavior; gemm_node was not run due to the blocking rule.
+  - timestamp: "2026-07-19 18:30"
+    action: verification_iteration_2
+    result: >-
+      gemm_node_improve passed. gemm_node failed because the old configured
+      Makefile omitted VX_lmem_weight_gather_dma even though the current source
+      template includes it.
+  - timestamp: "2026-07-19 18:33"
+    action: verification_iteration_3
+    result: >-
+      The fresh generated Makefile was correct, but DPI compilation stopped
+      because build_int_width_verify/hw/VX_config.h had not been generated.
+  - timestamp: "2026-07-19 18:38"
+    action: verification_iteration_4
+    result: >-
+      Both gemm_node_improve and gemm_node passed under their matching configs
+      with VCS and system gcc/g++.
+  - timestamp: "2026-07-19 18:39"
+    action: final_review
+    result: >-
+      git diff --check passed. The structurally identical unknown-width shifts
+      are removed from both controllers, and no unrelated RTL was changed.
+pitfalls:
+  - >-
+    An interface parameter can have a constant value after elaboration while
+    still lacking a width acceptable to Synopsys for shift-result sizing.
+  - >-
+    The synthesis log continues after the unresolved module and later crashes;
+    that fatal error is secondary to the original ELAB-425.
+  - >-
+    hw/unittest/gemm_dma_ctrl currently references interface fields that no
+    longer exist and cannot be used as a maintained regression without a
+    separate testbench repair.
+  - >-
+    The shared build directory predates a gemm_node Makefile source-list update;
+    use a fresh configured build for verification instead of modifying the
+    generated Makefile directly.
+  - >-
+    Running configure alone does not generate build/hw/VX_config.h or
+    VX_types.h; run the build-side hw config target before DPI-based unittests.
