@@ -103,7 +103,7 @@ class SpinQuantVortexIntegrationTests(unittest.TestCase):
         self.assertEqual(result.placement["physical_plan"], "fused")
         self.assertEqual(result.placement["fallback_count"], 0)
         launches = result.placement["kernel_launches"]
-        self.assertEqual(launches["qk_asym_correction_out"], 32)
+        self.assertNotIn("qk_asym_correction_out", launches)
         self.assertEqual(launches["softmax_layout_fused"], 1)
         self.assertEqual(launches["head_concat_layout_fused"], 1)
         self.assertEqual(launches["eladd_layout_fused"], 2)

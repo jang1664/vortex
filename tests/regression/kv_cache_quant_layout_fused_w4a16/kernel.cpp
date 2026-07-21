@@ -188,7 +188,7 @@ static void compute_params(const fp16_t* src,
   }
   if (quant_mode == KV_QUANT_SPINQUANT_SIGNED_ASYMMETRIC) {
     *scale_out = scale;
-    *zero_out = -8.0f - min_v / scale;
+    *zero_out = (float)round_half_even(-min_v / scale) - 8.0f;
   } else {
     int32_t zp = kv_round_half_away_from_zero(-min_v * inv_for_zp);
     if (zp < 0) zp = 0;
@@ -272,7 +272,7 @@ static void compute_params_warp(const fp16_t* src,
   }
   if (quant_mode == KV_QUANT_SPINQUANT_SIGNED_ASYMMETRIC) {
     *scale_out = scale;
-    *zero_out = -8.0f - min_v / scale;
+    *zero_out = (float)round_half_even(-min_v / scale) - 8.0f;
   } else {
     int32_t zp = kv_round_half_away_from_zero(-min_v * inv_for_zp);
     if (zp < 0) zp = 0;
@@ -313,7 +313,7 @@ static uint8_t quant_at(const fp16_t* src,
     const float inv_scale = (quant_scale == 0.0f) ? 0.0f : (1.0f / quant_scale);
     return kv_quantize_value_inv_scale(value, inv_scale, (int16_t)zero);
   }
-  int32_t q = round_half_even(value / quant_scale + zero);
+  int32_t q = round_half_even(value / quant_scale) + (int32_t)zero;
   if (q < -8) q = -8;
   if (q > 7) q = 7;
   return (uint8_t)(q & 0x0f);
@@ -341,7 +341,7 @@ static uint8_t quant_with_params(const fp16_t* src,
     const float inv_scale = (scale == 0.0f) ? 0.0f : (1.0f / scale);
     return kv_quantize_value_inv_scale(value, inv_scale, (int16_t)zero);
   }
-  int32_t q = round_half_even(value / scale + zero);
+  int32_t q = round_half_even(value / scale) + (int32_t)zero;
   if (q < -8) q = -8;
   if (q > 7) q = 7;
   return (uint8_t)(q & 0x0f);
@@ -561,7 +561,9 @@ void kernel_kv_cache_quant_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
         const uint64_t dst_off = scale_slot_base(arg, 0, nt_dma)
                                + (uint64_t)elem * TILE_ELEM_BYTES;
         store_u16(scales, dst_off, float_to_fp16(scale));
-        store_u16(zeros, dst_off, 0);
+        store_u16(zeros, dst_off,
+                  quant_mode == KV_QUANT_SPINQUANT_SIGNED_SYMMETRIC
+                      ? 0u : (uint16_t)(int16_t)zero);
       }
     } else {
       const uint32_t kt = position >> log2_kt;
@@ -574,7 +576,9 @@ void kernel_kv_cache_quant_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
         const uint64_t dst_off = scale_slot_base(arg, kt, 0)
                                + (uint64_t)elem * TILE_ELEM_BYTES;
         store_u16(scales, dst_off, float_to_fp16(scale));
-        store_u16(zeros, dst_off, 0);
+        store_u16(zeros, dst_off,
+                  quant_mode == KV_QUANT_SPINQUANT_SIGNED_SYMMETRIC
+                      ? 0u : (uint16_t)(int16_t)zero);
       }
     }
     if (thread_id == 0) {
@@ -800,8 +804,8 @@ void kernel_kv_cache_quant_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
 #endif
     store_u16(scales, dst_off, float_to_fp16(scale));
     store_u16(zeros, dst_off,
-              quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC
-                  ? (uint16_t)zero : 0u);
+              quant_mode == KV_QUANT_SPINQUANT_SIGNED_SYMMETRIC
+                  ? 0u : (uint16_t)(int16_t)zero);
 #if KV_FUSED_QPARAM_WARP
     }
 #endif

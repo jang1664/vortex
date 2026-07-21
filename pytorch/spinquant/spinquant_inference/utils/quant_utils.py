@@ -8,9 +8,8 @@ Signed int4 range [-8, 7] for both modes.
 
 Asymmetric zero-point convention
   S   = (x_max − x_min) / 15
-  z   = −8 − x_min / S          (float, stored as fp16)
-  →  q = −8  maps back to x_min
-  →  q =  7  maps back to x_max
+  z   = round(−x_min / S) − 8    (integer-valued, stored as fp16)
+  q   = clamp(round(x / S) + z, −8, 7)
 
 Quantized values are returned as int8 (unpacked).
 Use pack_utils.pack_int4_to_int32 for compact storage.
@@ -277,8 +276,8 @@ def _quantize_groups_channel(
         x_min = x_g.amin(dim=-2, keepdim=True)
         x_max = x_g.amax(dim=-2, keepdim=True)
         S = ((x_max - x_min) / 15.0).clamp(min=1e-8)
-        z = -8.0 - x_min / S
-        q = (x_g / S + z).round().clamp(-8, 7).to(torch.int8)
+        z = torch.round(-x_min / S) - 8.0
+        q = (torch.round(x_g / S) + z).clamp(-8, 7).to(torch.int8)
         return (
             q.reshape(*leading, T, D),
             S.squeeze(-2).to(torch.float16),
@@ -306,11 +305,10 @@ def _quantize_groups(
         x_min = x_g.amin(dim=-1, keepdim=True)
         x_max = x_g.amax(dim=-1, keepdim=True)
         S = ((x_max - x_min) / 15.0).clamp(min=1e-8)
-        z = -8.0 - x_min / S          # z s.t.  q=-8 → x_min,  q=7 → x_max
-        q = (x_g / S + z).round().clamp(-8, 7).to(torch.int8)
+        z = torch.round(-x_min / S) - 8.0
+        q = (torch.round(x_g / S) + z).clamp(-8, 7).to(torch.int8)
         return (
             q.reshape(*leading, D),
             S.squeeze(-1).to(torch.float16),
             z.squeeze(-1).to(torch.float16),
         )
-

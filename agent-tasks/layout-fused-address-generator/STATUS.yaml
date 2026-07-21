@@ -1,0 +1,20 @@
+task: layout-fused-address-generator
+state: DONE
+result: NO_GO_AT_PRE_RTL_GATE
+log:
+  - time: "2026-07-21 19:00"
+    entry: "Created isolated worktree on feat/layout-fused-address-generator from committed fpint; the user's dirty primary checkout was left untouched. Persisted the confirmed architecture and execution plan. The next gate is residual address-overhead characterization before RTL changes."
+  - time: "2026-07-21 19:12"
+    entry: "Configured an XLEN=64 build with improve_th32_tcol32_hwexp_dcache.sh, built the current tile_chunk32 kernel, and verified M=1/K=32 and M=128/K=160 in simx. After including the complete kernel epilogue, the representative run retired 2,158,880 kernel lane instructions; 266,880 classified address/control instructions were 12.362%, below the required 20% pre-RTL gate."
+  - time: "2026-07-21 19:12"
+    entry: "The impossible zero-cost upper bound removes only 12.049% of total instructions. Including the minimum chunk-base configuration/pop sequence limits the reduction to 11.546% and gives an optimistic cycle projection of about 1.019x, far below the required 1.20x. Stopped before ISA, simx semantics, kernel variant, or RTL implementation as required by the plan."
+  - time: "2026-07-21 19:12"
+    entry: "The optimized head_concat_layout_fused control passed a small TH32 simx case with 111,388 instructions and 113,925 cycles. Wrote the full methodology, measurements, projection, and no-go recommendation to baseline_results.md."
+  - time: "2026-07-21 19:35"
+    entry: "Review found that the trace analyzer failed open on malformed/incomplete input and stopped the kernel range before the function epilogue. Hardened it to require a pinned kernel.dump SHA-256, complete successful trace evidence, and a bounded trace-to-PERF delta; added eight focused tests. Remeasurement including the epilogue gives 2,158,880 kernel lane instructions and a 12.362% address/control share for M=128/K=160. The no-go result is unchanged."
+pitfalls:
+  - "The current tile_chunk32 kernel already amortizes GEMM-C decoding over 32 values, so per-element pop instructions can consume more issue bandwidth than the residual address arithmetic they replace."
+  - "A final partial MT=128 segment changes the GEMM-C stride and must be configured separately."
+  - "One empty active lane must never cause partial queue consumption or block unrelated ready warps at the execution-unit input."
+  - "A fresh linked worktree needs initialized submodules. The first root build created an empty ramulator/build directory before submodule initialization; it was moved to /tmp and submodule initialization then succeeded."
+  - "The full root build still reached an unrelated rtlsim/xrtsim AXI dependency error, but the generated hardware headers, kernel library, simx runtime, target kernels, and characterization runs all completed successfully."

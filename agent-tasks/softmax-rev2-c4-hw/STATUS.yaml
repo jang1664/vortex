@@ -1,0 +1,29 @@
+task: softmax-rev2-c4-hw
+state: COMPLETE
+summary: The DMA-free softmax rev2 baseline and layout-fused kernels were compared successfully across five representative cases on the C4 TH32 FPGA image.
+updated: "2026-07-21 22:29"
+current:
+  unit: report
+  action: Use the measured C4 instruction and cycle deltas to prioritize the hardware address-generator experiment.
+log:
+  - timestamp: "2026-07-21 22:23"
+    action: Resolved C4 through ci/fpga_bin_alias_map.yaml.
+    result: C4 maps to improve_th32_tcol32_hwexp_dcache with NUM_THREADS=32 and the U55C image under /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_6de40e376b/bin.
+  - timestamp: "2026-07-21 22:23"
+    action: Inspected both rev2 kernel entry points and their shared body.
+    result: The rev2 pair contains no DMA operation or DMA node call; both use direct SIMT loads and stores.
+  - timestamp: "2026-07-21 22:25"
+    action: Tried the wrapper's --no-latency option for the first hardware run.
+    result: The option selected the bench binary with zero iterations and produced zero counters, so it was discarded; normal run-xrt execution provides the kernel counters required here.
+  - timestamp: "2026-07-21 22:29"
+    action: Ran five matched baseline/fused rev2 pairs on C4 using Slurm-allocated U55C hardware.
+    result: All ten runs passed. Fused instruction overhead was 5.38%-13.88%; cycle overhead ranged from 0.77% to 16.77% depending on shape and masking.
+  - timestamp: "2026-07-21 22:29"
+    action: Checked the padded causal and multi-row concurrency cases separately.
+    result: Q3/K33/stride64 had 10.41% more instructions but only 0.77% more cycles, while H2/Q4/K32 had 13.68% more instructions and 11.90% more cycles.
+pitfalls:
+  - Use ci/run_black.sh hw with --fpga-bin C4 so the wrapper sources the alias config and allocates the FPGA through Slurm.
+  - Set SOFTMAX_VARIANT=rev2 or SOFTMAX_LAYOUT_FUSED_VARIANT=rev2 in the wrapper environment; otherwise the application Makefiles select dma_serial or opt_warp.
+  - Reconfigure the build tree after source Makefile changes because configure-generated copies can be stale.
+  - Keep baseline and fused arguments identical, including requested K stride and masking.
+  - Do not use --no-latency for this counter comparison; in the current wrapper it selects a zero-iteration bench invocation unless bench iterations are supplied explicitly.

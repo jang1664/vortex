@@ -405,6 +405,24 @@ class GraphExecutionTests(unittest.TestCase):
         self.assertEqual(result.captures["qk"].shape, (2, 2, 3, 3))
         self.assertEqual(result.captures["final_residual"].shape, (2, 3, 16))
 
+    def test_asymmetric_kv_quantization_uses_integral_signed_zero_point(self):
+        values = torch.tensor(
+            [[[[-1.0, -0.25, 0.5, 1.625]]]], dtype=torch.float16
+        )
+        quantized = self.backend.quantize(values, "asym")
+        minimum = values.float().amin(dim=-1, keepdim=True)
+        maximum = values.float().amax(dim=-1, keepdim=True)
+        scale = ((maximum - minimum) / 15.0).clamp_min(1e-8)
+        expected_zero = torch.round(-minimum / scale) - 8
+
+        self.assertIsNotNone(quantized.zero)
+        torch.testing.assert_close(
+            quantized.zero.float(), expected_zero, rtol=0, atol=0
+        )
+        torch.testing.assert_close(
+            quantized.zero.float(), torch.round(quantized.zero.float()), rtol=0, atol=0
+        )
+
     def test_gqa_attention_matches_explicit_kv_head_expansion(self):
         config = gqa_tiny_config(sequence_length=3)
         case = create_random_case(config, seed=43)

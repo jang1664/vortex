@@ -1,5 +1,6 @@
 #include "common.h"
 #include "../layout_fused_common/layout_fused_layouts.h"
+#include "../softmax_common/host_data.h"
 #include "../vector_common/fp16.h"
 #include <vortex.h>
 #include <algorithm>
@@ -47,13 +48,6 @@ static uint32_t log2_u32(uint32_t v) {
 
 static uint32_t align_up(uint32_t a, uint32_t b) {
   return ((a + b - 1) / b) * b;
-}
-
-static void init_scores(std::vector<data_t>& values) {
-  for (size_t i = 0; i < values.size(); ++i) {
-    int x = int((i * 22695477u + 1u) & 0xffu) - 128;
-    values[i] = float_to_fp16(float(x) / 64.0f);
-  }
 }
 
 static size_t row_index(uint32_t b, uint32_t h, uint32_t q, uint32_t k,
@@ -185,7 +179,7 @@ int main(int argc, char *argv[]) {
   std::vector<data_t> h_input_tiled(tiled_elems);
   std::vector<data_t> h_ref(tiled_elems);
   std::vector<data_t> h_out(tiled_elems, 0);
-  init_scores(h_input_row);
+  initialize_softmax_scores(h_input_row);
   pack_scores(h_input_row, h_input_tiled, batch, heads, seq_q, seq_k, seq_k_pad, M_pad);
   softmax_reference(h_input_row, h_ref, batch, heads, seq_q, seq_k, seq_k_pad, M_pad, use_mask != 0, scale);
 
@@ -199,13 +193,16 @@ int main(int argc, char *argv[]) {
   uint64_t num_threads = 0;
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_WARPS, &num_warps));
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_THREADS, &num_threads));
-  // One warp (= num_threads lanes) per block, so each row occupies a single
-  // warp and up to num_warps rows are co-resident on a core. While one row's
-  // lane 0 busy-waits on its DMA descriptor, the other resident rows keep
-  // computing, hiding the DMA issue/poll latency that otherwise stalls the
-  // whole core when a block spans all warps.
-#if SOFTMAX_LAYOUT_FUSED_VARIANT == SOFTMAX_LAYOUT_FUSED_VARIANT_OPT_WARP
+  // One warp (= num_threads lanes) per block lets up to num_warps rows remain
+  // co-resident on a core.
+#if SOFTMAX_LAYOUT_FUSED_VARIANT == SOFTMAX_LAYOUT_FUSED_VARIANT_OPT_WARP || \
+    SOFTMAX_LAYOUT_FUSED_VARIANT == SOFTMAX_LAYOUT_FUSED_VARIANT_REV2
+#if SOFTMAX_LAYOUT_FUSED_VARIANT == SOFTMAX_LAYOUT_FUSED_VARIANT_REV2
+  printf("variant=rev2 launch=one_warp_per_row\n");
+#else
+  // Co-resident rows hide lane 0's DMA descriptor issue/poll latency.
   printf("variant=opt_warp launch=one_warp_per_row\n");
+#endif
   const uint32_t tpb = std::min(256u, (uint32_t)num_threads);
 #else
   printf("variant=%s launch=all_warps_per_row\n",
@@ -252,6 +249,7 @@ int main(int argc, char *argv[]) {
     for (uint32_t h = 0; h < heads; ++h) {
       const uint64_t base = batched_matrix_base(b * heads + h, (uint64_t)M_pad * seq_k_pad);
       for (uint32_t q = 0; q < seq_q; ++q) {
+        float row_sum = 0.0f;
         for (uint32_t k = 0; k < seq_k; ++k) {
           const uint64_t off = base + gemm_a_tiled_elem_offset(
               q, k, M_pad, seq_k_pad, arg.log2_mt, arg.log2_mxu_kt);
@@ -259,13 +257,22 @@ int main(int argc, char *argv[]) {
           const float expected = fp16_to_float(h_ref[off]);
           const float diff = std::abs(got - expected);
           max_diff = std::max(max_diff, diff);
-          if (diff > 1e-3f) {
+          row_sum += got;
+          const float threshold = std::max(1e-5f, std::abs(expected) * 0.01f);
+          if (diff > threshold) {
             if (errors < 10) {
               printf("Error at b=%u h=%u q=%u k=%u: got=%f expected=%f diff=%f\n",
                      b, h, q, k, got, expected, diff);
             }
             ++errors;
           }
+        }
+        if (std::abs(row_sum - 1.0f) > 2e-3f) {
+          if (errors < 10) {
+            printf("Row sum error at b=%u h=%u q=%u: got=%f expected=1.0\n",
+                   b, h, q, row_sum);
+          }
+          ++errors;
         }
         for (uint32_t k = seq_k; k < seq_k_pad; ++k) {
           const uint64_t off = base + gemm_a_tiled_elem_offset(

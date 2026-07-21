@@ -220,18 +220,6 @@ class SpinQuantVortexOpTests(unittest.TestCase):
                     0,
                     scores_tiled,
                 )
-                torch.ops.vortex.qk_asym_correction_out(
-                    scores_tiled,
-                    query_tiled,
-                    key_cache[3].reshape(-1),
-                    key_cache[4].reshape(-1),
-                    1,
-                    m_pad,
-                    capacity,
-                    1,
-                    1,
-                    scores_tiled,
-                )
                 probabilities = torch.ops.vortex.softmax_layout_fused(
                     scores_tiled,
                     1,
@@ -436,8 +424,8 @@ class SpinQuantVortexOpTests(unittest.TestCase):
         minimum = source_fp32.amin(-1, keepdim=True)
         maximum = source_fp32.amax(-1, keepdim=True)
         expected_scale = (maximum - minimum).clamp_min(1e-8) / 15
-        expected_zero = -8 - minimum / expected_scale
-        expected_q = torch.round(source_fp32 / expected_scale + expected_zero)
+        expected_zero = torch.round(-minimum / expected_scale) - 8
+        expected_q = torch.round(source_fp32 / expected_scale) + expected_zero
         expected_q = expected_q.clamp(-8, 7).to(torch.int8)
         decoded_packed = _decode_packed_gemm_weight(
             weight.cpu(), k=128, n=32, wtrans=1
@@ -503,7 +491,7 @@ class SpinQuantVortexOpTests(unittest.TestCase):
         torch.testing.assert_close(scale.cpu(), expected_scale.half(), rtol=0, atol=0)
         torch.testing.assert_close(zero.cpu(), torch.zeros_like(zero.cpu()), rtol=0, atol=0)
 
-    def test_qk_gemm_and_asymmetric_correction_support_multiple_m_tiles(self):
+    def test_qk_gemm_applies_integer_zero_point_across_multiple_m_tiles(self):
         m, k_dim, n_dim = 160, 128, 160
         torch.manual_seed(17)
         query_cpu = torch.randn((m, k_dim), dtype=torch.float16) * 0.25
@@ -542,7 +530,7 @@ class SpinQuantVortexOpTests(unittest.TestCase):
             scale_tiled.cpu(), expected_scale_tiled, rtol=0, atol=0
         )
         torch.testing.assert_close(
-            zero_tiled.cpu(), torch.zeros_like(zero_tiled.cpu()), rtol=0, atol=0
+            zero.cpu().float(), torch.round(zero.cpu().float()), rtol=0, atol=0
         )
         quantized_key = unpack_signed_int4(
             _decode_packed_gemm_weight(
@@ -561,9 +549,7 @@ class SpinQuantVortexOpTests(unittest.TestCase):
             scale, n_dim, k_dim, k_dim, 1, 0, 1
         )
         with torch.vortex.memory_alignment(512):
-            logical_zero = torch.zeros_like(zero.cpu(), dtype=torch.int16).to(
-                "vortex"
-            )
+            logical_zero = zero.cpu().to(torch.int16).to("vortex")
         expected_zero = torch.ops.vortex.tile_scale_zp_w4a16_ex(
             logical_zero, n_dim, k_dim, k_dim, 1, 0, 1
         )
@@ -592,36 +578,13 @@ class SpinQuantVortexOpTests(unittest.TestCase):
         )
 
         quantized_key = quantized_key.float()
-        expected_raw = query_cpu.float() @ (
-            quantized_key * scale.cpu().reshape(1, n_dim).float()
-        )
-        self.assertTrue(torch.isfinite(scores).all())
-        torch.testing.assert_close(
-            scores, expected_raw.half(), rtol=8e-3, atol=8e-3
-        )
-
-        torch.ops.vortex.qk_asym_correction_out(
-            scores_tiled,
-            query_tiled,
-            scale.reshape(-1),
-            zero.reshape(-1),
-            m,
-            m,
-            n_dim,
-            1,
-            1,
-            scores_tiled,
-        )
-        corrected = _decode_gemm_matrix(
-            scores_tiled.cpu(), m=m, m_pad=m, n=n_dim
-        )
         dequantized_key = (
             quantized_key - zero.cpu().reshape(1, n_dim).float()
         ) * scale.cpu().reshape(1, n_dim).float()
-        expected_corrected = query_cpu.float() @ dequantized_key
-        self.assertTrue(torch.isfinite(corrected).all())
+        expected = query_cpu.float() @ dequantized_key
+        self.assertTrue(torch.isfinite(scores).all())
         torch.testing.assert_close(
-            corrected, expected_corrected.half(), rtol=8e-3, atol=8e-3
+            scores, expected.half(), rtol=8e-3, atol=8e-3
         )
 
     def test_pv_gemm_pads_partial_second_k_tile(self):
@@ -775,12 +738,12 @@ class SpinQuantVortexOpTests(unittest.TestCase):
             [[-1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5]], dtype=torch.float16
         ).to("vortex")
         packed, scale, zero = torch.ops.vortex.quantize_pack_per_token(source, 1)
-        self.assertEqual(packed.cpu().view(torch.uint8).tolist(), [[0xA8, 0xEC, 0x31, 0x75]])
+        self.assertEqual(packed.cpu().view(torch.uint8).tolist(), [[0xA8, 0xEC, 0x20, 0x75]])
         torch.testing.assert_close(
             scale.cpu(), torch.tensor([[3.5 / 15]], dtype=torch.float16), rtol=0, atol=0
         )
         torch.testing.assert_close(
-            zero.cpu(), torch.tensor([[-8 + 1 / (3.5 / 15)]], dtype=torch.float16), rtol=0, atol=0
+            zero.cpu(), torch.tensor([[-4]], dtype=torch.float16), rtol=0, atol=0
         )
 
     def test_qk_asymmetric_zero_correction(self):

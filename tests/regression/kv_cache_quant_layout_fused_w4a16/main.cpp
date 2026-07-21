@@ -108,7 +108,7 @@ static void compute_params_cpu(const std::vector<fp16_t>& src,
   }
   scale_bits = float_to_fp16(scale);
   if (quant_mode == KV_QUANT_SPINQUANT_SIGNED_ASYMMETRIC) {
-    const float zero = -8.0f - min_v / scale;
+    const float zero = (float)round_half_even_cpu(-min_v / scale) - 8.0f;
     zero_bits = float_to_fp16(zero);
     if (scale_fp32) *scale_fp32 = scale;
     if (zero_fp32) *zero_fp32 = zero;
@@ -149,7 +149,7 @@ static uint8_t quant_cpu(const std::vector<fp16_t>& src,
   if (quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC) {
     return kv_quantize_value_inv_scale(value, inv_scale, (int16_t)zero);
   }
-  int32_t q = round_half_even_cpu(value * inv_scale + zero);
+  int32_t q = round_half_even_cpu(value * inv_scale) + (int32_t)zero;
   q = std::max(-8, std::min(7, q));
   return (uint8_t)(q & 0x0f);
 }
@@ -345,8 +345,8 @@ static void quantize_layout_fused_cpu(const std::vector<fp16_t>& src,
               }
               store_u16_ref(scales, out, scale_bits);
               store_u16_ref(zeros, out,
-                            quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC
-                                ? (uint16_t)fp16_to_float(zero_bits) : 0u);
+                            quant_mode == KV_QUANT_SPINQUANT_SIGNED_SYMMETRIC
+                                ? 0u : (uint16_t)(int16_t)fp16_to_float(zero_bits));
               out += TILE_ELEM_BYTES;
             }
           }
@@ -369,8 +369,8 @@ static void quantize_layout_fused_cpu(const std::vector<fp16_t>& src,
               }
               store_u16_ref(scales, out, scale_bits);
               store_u16_ref(zeros, out,
-                            quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC
-                                ? (uint16_t)fp16_to_float(zero_bits) : 0u);
+                            quant_mode == KV_QUANT_SPINQUANT_SIGNED_SYMMETRIC
+                                ? 0u : (uint16_t)(int16_t)fp16_to_float(zero_bits));
               out += TILE_ELEM_BYTES;
             }
           }

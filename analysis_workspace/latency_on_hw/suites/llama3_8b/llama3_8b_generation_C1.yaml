@@ -3,25 +3,25 @@ defaults:
   warmup: 1
   iterations: 3
   app: sgemm_tcu
-  fpga_bin: naive_gemm_simd_th16_tcol32_hwexp_dcache
+  fpga_bin: tcu_th32_c1
   target: hw
   platform: xilinx_u55c_gen3x16_xdma_3_202210_1
 
 fpga_bins:
-  default: naive_gemm_simd_th16_tcol32_hwexp_dcache
+  default: tcu_th32_c1
 
   by_backend:
-    sgemm_tcu: naive_gemm_simd_th16_tcol32_hwexp_dcache
+    sgemm_tcu: tcu_th32_c1
 
   by_app:
-    fpint_gemm_ffn_hw: improve_th16_tcol32_hwexp_dcache
-    fpint_gemm_ffn_hw_naive: naive_gemm_simd_th16_tcol32_hwexp_dcache
-    rmsnorm: naive_gemm_simd_th16_tcol32_hwexp_dcache
-    rope: naive_gemm_simd_th16_tcol32_hwexp_dcache
-    softmax: naive_gemm_simd_th16_tcol32_hwexp_dcache
-    silu: naive_gemm_simd_th16_tcol32_hwexp_dcache
-    eladd: naive_gemm_simd_th16_tcol32_hwexp_dcache
-    elmul: naive_gemm_simd_th16_tcol32_hwexp_dcache
+    fpint_gemm_ffn_hw: improve_th32_tcol32_hwexp_dcache
+    fpint_gemm_ffn_hw_naive: naive_gemm_th32_tcol32_hwexp_dcache
+    rmsnorm: improve_th32_tcol32_hwexp_dcache
+    rope: improve_th32_tcol32_hwexp_dcache
+    softmax: improve_th32_tcol32_hwexp_dcache
+    silu: improve_th32_tcol32_hwexp_dcache
+    eladd: improve_th32_tcol32_hwexp_dcache
+    elmul: improve_th32_tcol32_hwexp_dcache
 
 workloads:
   - id: llama3_8b_generation_C1
