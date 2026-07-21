@@ -1,0 +1,31 @@
+task: debug-softmax-th32-lmem-timeout
+state: DONE
+summary: Confirmed that the DMA-free rev1 kernel also fails with the thread-32 plus LMEM Omega configuration, now through duplicate/fragmented LMEM completions that corrupt the request allocator and scoreboard.
+updated: "2026-07-21 03:14"
+current:
+  unit: rev1-log-diagnosis
+  action: Isolate NUM_THREADS=32 from LMEM_REQ_OMEGA_ENABLE and LMEM_RSP_OMEGA_ENABLE; the rev1 result rules out kernel DMA as a necessary trigger.
+log:
+  - timestamp: "2026-07-21 03:14"
+    action: Inspected build/sim/xrtsim_vcs compile/runtime logs, verified the host/kernel flag stamps, and mapped the first failing PCs to the rev1 disassembly.
+    result: The build used kernel.rev1.cpp, SOFTMAX_VARIANT_REV1, NUM_THREADS=32, and both LMEM Omega fabrics. At 323535000 ps the LMEM response for PC 0x1800004e0 completes request-buffer slot 0 a second time, causing 'releasing invalid addr 0'; at 323575000 ps the duplicate writeback trips the scoreboard. PC 0x1800004e0 is the first local-memory flw in the max reduction and 0x1800004e4 is the second. The failure repeats for slots 0/1 and all warps, producing 510 assertions before execution runs into zero instructions. A fresh wrapper run was requested but rejected before launch by the session command policy.
+  - timestamp: "2026-07-21 03:05"
+    action: Reviewed kernel.rev1.cpp, main.cpp, host_variant.h, the Makefile variant selection, and the Vortex thread-group/barrier mapping for NUM_THREADS=32 and NUM_WARPS=4.
+    result: No thread-32 correctness blocker was found. rev1 launches 128 threads as four complete warps, uses a 512-byte local-memory reduction, and keeps every warp on the same barrier sequence. The kernel issues no LMEM DMA operation. The Makefile defaults to dma_serial, so SOFTMAX_VARIANT=rev1 must be explicit. Actual wrapper execution was rejected by the session command policy and did not start.
+  - timestamp: "2026-07-21 02:44"
+    action: Checked the VCS compile and runtime logs, disassembled the stalled kernel PC, compared thread-16 and thread-32 configs, and inspected the supplied FSDB around the original request.
+    result: Compilation succeeded. Warp 0 first times out at 1437295000 ps waiting at PC 0x180000550; the preceding instruction at 0x180000548 is an FP16 local-memory load in softmax. Two scheduler entries remain pending after 437675000 ps. A mask-0x3 read issues two LMEM lane requests and produces lane responses, but the scheduler-side response mask becomes X while valid and ready are asserted, so the request never completes. Both LMEM Omega fabrics are instantiated in this run.
+artifacts:
+  - build_2/sim/xrtsim_vcs/compile.log
+  - build_2/sim/xrtsim_vcs/simv.log
+  - build_2/sim/xrtsim_vcs/vcs_cosim.fsdb
+  - configs/improve_th16_tcol32_hwexp_dcache.sh
+  - configs/improve_th32_tcol32_hwexp_dcache.sh
+pitfalls:
+  - build/sim/xrt_vcs is not the generated directory in this tree; the active logs are under build/sim/xrtsim_vcs.
+  - The rev1 log ends at a UCLI prompt and its mtime stopped advancing, so it is not a healthy simulation still making progress.
+  - Sourcing the thread-32 config does not select kernel.rev1.cpp; set SOFTMAX_VARIANT=rev1 and confirm the program prints Variant: rev1 and Block: [128, 1, 1].
+  - The rev1 reduction assumes a power-of-two block size. The requested NUM_THREADS=32, NUM_WARPS=4 configuration produces 128 threads and satisfies that assumption.
+  - The thread-32 config differs from thread-16 in two dimensions: NUM_THREADS=32 and both LMEM Omega macros are enabled, so the current run does not isolate thread count.
+  - simv.log is 5.4 GB because assertions continue firing every cycle after the first timeout; use bounded searches and the first error only.
+  - X values on inactive response data are normal, but mem_rsp_mask contains X at 437645000 ps and 437845000-437855000 ps while mem_rsp_valid=1 and mem_rsp_ready=1, which is functional corruption.

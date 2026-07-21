@@ -46,8 +46,13 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
     `VX_STATIC_ASSERT(0 == (`LMEM_BASE_ADDR % (1 << `LMEM_LOG_SIZE)), ("invalid parameter"))
 
     localparam LMEM_ADDR_WIDTH = `LMEM_LOG_SIZE - `CLOG2(LSU_WORD_SIZE);
+    localparam CPU_LMEM_ARB_SEL_BITS = `ARB_SEL_BITS(`NUM_LSU_BLOCKS, 1);
+    localparam CPU_LMEM_TAG_WIDTH = LSU_TAG_WIDTH + CPU_LMEM_ARB_SEL_BITS;
     localparam logic [63:0] GEMM_MMIO_SIZE_B = 64'd1024;
     localparam logic [63:0] DMA_MMIO_SIZE_B  = 64'd1024;
+
+    `VX_STATIC_ASSERT(CPU_LMEM_TAG_WIDTH <= GEMM_LMEM_TAG_WIDTH,
+        ("invalid CPU LMEM tag width: CPU=%0d, shared=%0d", CPU_LMEM_TAG_WIDTH, GEMM_LMEM_TAG_WIDTH))
 
     VX_lsu_mem_if #(
         .NUM_LANES (`NUM_LSU_LANES),
@@ -81,7 +86,7 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
     VX_lsu_mem_if #(
         .NUM_LANES (`NUM_LSU_LANES),
         .DATA_SIZE (LSU_WORD_SIZE),
-        .TAG_WIDTH (LMEM_TAG_WIDTH)
+        .TAG_WIDTH (CPU_LMEM_TAG_WIDTH)
     ) lmem_arb_if[1]();
 
     VX_lsu_mem_arb #(
@@ -103,14 +108,14 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
 
     VX_mem_bus_if #(
         .DATA_SIZE (LSU_WORD_SIZE),
-        .TAG_WIDTH (LMEM_TAG_WIDTH)
+        .TAG_WIDTH (CPU_LMEM_TAG_WIDTH)
     ) lmem_adapt_if[`NUM_LSU_LANES]();
 
     VX_lsu_adapter #(
         .NUM_LANES    (`NUM_LSU_LANES),
         .DATA_SIZE    (LSU_WORD_SIZE),
-        .TAG_WIDTH    (LMEM_TAG_WIDTH),
-        .TAG_SEL_BITS (LMEM_TAG_WIDTH - UUID_WIDTH),
+        .TAG_WIDTH    (CPU_LMEM_TAG_WIDTH),
+        .TAG_SEL_BITS (CPU_LMEM_TAG_WIDTH - UUID_WIDTH),
         .ARBITER      ("P"),
         .REQ_OUT_BUF  (3),
         .RSP_OUT_BUF  (0)
@@ -144,7 +149,7 @@ module VX_mem_unit import VX_gpu_pkg::*; #(
         ) lane_arb_out_if[1]();
 
         if (i < `NUM_LSU_LANES) begin : g_cpu_lmem_port
-            `ASSIGN_VX_MEM_BUS_IF_EX(lane_arb_in_if[0], lmem_adapt_if[i], GEMM_LMEM_TAG_WIDTH, LMEM_TAG_WIDTH, UUID_WIDTH);
+            `ASSIGN_VX_MEM_BUS_IF_EX(lane_arb_in_if[0], lmem_adapt_if[i], GEMM_LMEM_TAG_WIDTH, CPU_LMEM_TAG_WIDTH, UUID_WIDTH);
         end else begin : g_no_cpu_lmem_port
             assign lane_arb_in_if[0].req_valid = 1'b0;
             assign lane_arb_in_if[0].req_data  = '0;

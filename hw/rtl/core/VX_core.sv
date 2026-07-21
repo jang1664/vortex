@@ -297,22 +297,15 @@ module VX_core import VX_gpu_pkg::*; #(
 `endif
     );
 
+`ifdef GEMM_NAIVE
     VX_dma_node #(
       .INSTANCE_ID(INSTANCE_ID),
-`ifdef GEMM_NAIVE
       .N_MASTER(`NUM_LSU_BLOCKS+1),
-`else
-      .N_MASTER(`NUM_LSU_BLOCKS),
-`endif
       .NUM_ENTRIES(`JOB_MMIO_NUM_ENTRIES),
       .LMEM_NUM_LANES_P(`LMEM_NUM_PORTS),
       .DCACHE_NUM_LANES_P(`DMA_DCACHE_PORTS),
       .DCACHE_TAG_WIDTH_P(DMA_DCACHE_TAG_WIDTH),
-`ifdef GEMM_NAIVE
       .ENABLE_MISALIGN(1'b1),
-`else
-      .ENABLE_MISALIGN(1'b0),
-`endif
       .MISALIGN_PACK_BYTES(`MISALIGN_PACK_BYTES)
     ) u_VX_dma_node (
       .clk(clk),
@@ -324,6 +317,29 @@ module VX_core import VX_gpu_pkg::*; #(
       .dcache_bus_if(dma_global_data_if),
       .lmem_bus_if(dma_local_data_if)
     );
+`else
+    for (genvar i = 0; i < `NUM_LSU_BLOCKS; ++i) begin : g_disabled_dma_ctrl
+        VX_lsu_mem_zero_rsp #(
+            .NUM_LANES (`NUM_LSU_LANES),
+            .DATA_SIZE (LSU_WORD_SIZE),
+            .TAG_WIDTH (LSU_TAG_WIDTH)
+        ) dma_ctrl_rsp (
+            .clk    (clk),
+            .reset  (reset),
+            .mem_if (dma_ctrl_if[i])
+        );
+    end
+
+    for (genvar i = 0; i < `LMEM_NUM_PORTS; ++i) begin : g_disabled_dma_lmem
+        `INIT_VX_MEM_BUS_IF (dma_local_data_if[i])
+    end
+
+    `INIT_VX_MEM_BUS_IF (dma_global_data_if)
+
+`ifdef PERF_ENABLE
+    assign accel_perf.cpu_dma = '0;
+`endif
+`endif
 
 `ifdef ENABLE_GEMM_ACCEL
 
