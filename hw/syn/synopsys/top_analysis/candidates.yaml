@@ -1,0 +1,72 @@
+include:
+  modules:
+    # Coarse-grained interconnect blocks only. Do not add their internal
+    # VX_stream_arb/VX_demux/VX_*_arbiter primitives here: selecting both a
+    # parent and its implementation details would double count top hierarchy
+    # area and create many low-value PnR jobs.
+    - pattern: VX_stream_xbar
+      required: true
+    - pattern: axi_xbar
+    - pattern: axi_interleaved_xbar
+    - pattern: VX_mem_arb
+    - pattern: VX_lsu_mem_arb
+    - pattern: VX_mem_switch
+    - pattern: VX_lmem_switch
+    - pattern: VX_tmem_switch
+    - pattern: VX_tmem_wide_read_switch
+    - pattern: axi_mux
+    - pattern: axi_demux
+
+    # Both intended TH16/TCOL32 configurations enable the GEMM accelerator,
+    # so fail candidate planning if the elaborated tree cannot be found.
+    - pattern: VX_gemm_tree_v1
+      required: true
+
+exclude:
+  modules: []
+  designs: []
+  instances: []
+
+# Vortex_axi uses clk/reset at the top, but selected submodules can expose
+# different port names. These profiles override only the matching block jobs.
+block_constraints:
+  - name: gemm_tree_clock_ports
+    match:
+      module_patterns:
+        - VX_gemm_tree_v1
+    constraints:
+      clk_name: clk_i
+      reset_name: resetn_i
+      reset_type: active_low
+      switching_activity: {}
+
+  - name: axi_clock_ports
+    match:
+      module_patterns:
+        - axi_xbar
+        - axi_interleaved_xbar
+        - axi_mux
+        - axi_demux
+    constraints:
+      clk_name: clk_i
+      reset_name: rst_ni
+      reset_type: active_low
+      switching_activity: {}
+
+minimum_total_area_um2: 1000.0
+allow_nested: false
+
+pnr:
+  strategy: bracket_bisection
+  max_attempts: 10
+  initial_area_scale: 1.0
+  bracket_factor: 2.0
+  relative_area_tolerance: 0.02
+  min_area_scale: 0.25
+  max_area_scale: 4.0
+  target_utilization: from_report
+  aspect_ratio: from_report
+  boundary_margin: 1.0
+  width_grid: 0.1
+  height_grid: 0.1
+  max_routing_drc_errors: 0

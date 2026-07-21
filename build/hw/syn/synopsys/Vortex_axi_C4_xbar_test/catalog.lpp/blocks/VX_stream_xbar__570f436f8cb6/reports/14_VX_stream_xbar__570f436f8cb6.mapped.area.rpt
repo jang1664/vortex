@@ -1,0 +1,92 @@
+ 
+****************************************
+Report : area
+Design : VX_stream_xbar__570f436f8cb6
+Version: V-2023.12-SP5-3
+Date   : Sat Jul 18 18:37:27 2026
+****************************************
+
+Library(s) Used:
+
+    sc9_cmos28lpp_base_rvt_ss_nominal_max_0p900v_125c_sadhm (File: /tool/PDK/Samsung/LN28LPP_202203/PRIMITIVES/RVT/ln28lpp_sc_9t_base_rvt_c130_V1.00d/FE-Common/LIBERTY/sc9_cmos28lpp_base_rvt_ss_nominal_max_0p900v_125c_sadhm.db)
+
+Number of ports:                          545
+Number of nets:                           647
+Number of cells:                          228
+Number of combinational cells:            187
+Number of sequential cells:                 4
+Number of macros/black boxes:               0
+Number of buf/inv:                         89
+Number of references:                      25
+
+Combinational area:                107.756999
+Buf/Inv area:                       38.259000
+Noncombinational area:               8.424000
+Macro/Black Box area:                0.000000
+Net Interconnect area:      undefined  (No wire load specified)
+
+Total cell area:                   116.180999
+Total area:                 undefined
+
+Core Area:                       380
+Aspect Ratio:                 1.0291
+Utilization Ratio:            0.3050
+
+
+The above information was reported from the logical library. The following are from the physical library:
+
+  Total moveable cell area: 116.2
+  Total fixed cell area: 0.0
+  Total physical cell area: 116.2
+ Core area: 0.000, 0.000, 19.240, 19.800
+
+Hierarchical area distribution
+------------------------------
+
+                                  Global cell area          Local cell area
+                                  ------------------  --------------------------- 
+Hierarchical cell                 Absolute   Percent  Combi-    Noncombi-  Black-
+                                  Total      Total    national  national   boxes   Design
+--------------------------------  ---------  -------  --------  ---------  ------  ---------------------------
+VX_stream_xbar__570f436f8cb6       116.1810    100.0   16.7310     4.2120  0.0000  VX_stream_xbar__570f436f8cb6
+g_multi_inputs_g_multiple_outputs_g_sel_in_demux_0__sel_in_demux    3.1590     2.7   3.1590    0.0000 0.0000 VX_demux_3_2
+g_multi_inputs_g_multiple_outputs_g_sel_in_demux_1__sel_in_demux    3.1590     2.7   3.1590    0.0000 0.0000 VX_demux_3_1
+g_multi_inputs_g_multiple_outputs_g_sel_in_demux_2__sel_in_demux    3.1590     2.7   3.1590    0.0000 0.0000 VX_demux_3_0
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_0__xbar_arb   16.9650    14.6   9.0090    0.0000 0.0000 VX_stream_arb_44_3
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_0__xbar_arb/g_input_select_g_arbiter_arbiter    4.2120     3.6   0.0000    0.0000 0.0000 VX_generic_arbiter_9_3
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_0__xbar_arb/g_input_select_g_arbiter_arbiter/g_priority_priority_arbiter    4.2120     3.6   0.0000    0.0000 0.0000 VX_priority_arbiter_4_3
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_0__xbar_arb/g_input_select_g_arbiter_arbiter/g_priority_priority_arbiter/g_encoder_grant_sel    4.2120     3.6   1.9890    0.0000 0.0000 VX_priority_encoder_5_3
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_0__xbar_arb/g_input_select_g_arbiter_arbiter/g_priority_priority_arbiter/g_encoder_grant_sel/g_lsb_g_model1_lzc    2.2230     1.9   0.0000    0.0000 0.0000 VX_lzc_3_3
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_0__xbar_arb/g_input_select_g_arbiter_arbiter/g_priority_priority_arbiter/g_encoder_grant_sel/g_lsb_g_model1_lzc/g_lzc_find_first    2.2230     1.9   2.2230    0.0000 0.0000 VX_find_first_3_2_0_3
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_0__xbar_arb/g_input_select_g_arbiter_g_out_buf_0__out_buf    3.7440     3.2   3.7440    0.0000 0.0000 VX_elastic_buffer_6_0_0_0_3
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_1__xbar_arb   16.9650    14.6   9.0090    0.0000 0.0000 VX_stream_arb_44_2
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_1__xbar_arb/g_input_select_g_arbiter_arbiter    4.2120     3.6   0.0000    0.0000 0.0000 VX_generic_arbiter_9_2
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_1__xbar_arb/g_input_select_g_arbiter_arbiter/g_priority_priority_arbiter    4.2120     3.6   0.0000    0.0000 0.0000 VX_priority_arbiter_4_2
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_1__xbar_arb/g_input_select_g_arbiter_arbiter/g_priority_priority_arbiter/g_encoder_grant_sel    4.2120     3.6   1.9890    0.0000 0.0000 VX_priority_encoder_5_2
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_1__xbar_arb/g_input_select_g_arbiter_arbiter/g_priority_priority_arbiter/g_encoder_grant_sel/g_lsb_g_model1_lzc    2.2230     1.9   0.0000    0.0000 0.0000 VX_lzc_3_2
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_1__xbar_arb/g_input_select_g_arbiter_arbiter/g_priority_priority_arbiter/g_encoder_grant_sel/g_lsb_g_model1_lzc/g_lzc_find_first    2.2230     1.9   2.2230    0.0000 0.0000 VX_find_first_3_2_0_2
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_1__xbar_arb/g_input_select_g_arbiter_g_out_buf_0__out_buf    3.7440     3.2   3.7440    0.0000 0.0000 VX_elastic_buffer_6_0_0_0_2
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_2__xbar_arb   16.9650    14.6   9.0090    0.0000 0.0000 VX_stream_arb_44_1
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_2__xbar_arb/g_input_select_g_arbiter_arbiter    4.2120     3.6   0.0000    0.0000 0.0000 VX_generic_arbiter_9_1
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_2__xbar_arb/g_input_select_g_arbiter_arbiter/g_priority_priority_arbiter    4.2120     3.6   0.0000    0.0000 0.0000 VX_priority_arbiter_4_1
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_2__xbar_arb/g_input_select_g_arbiter_arbiter/g_priority_priority_arbiter/g_encoder_grant_sel    4.2120     3.6   1.9890    0.0000 0.0000 VX_priority_encoder_5_1
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_2__xbar_arb/g_input_select_g_arbiter_arbiter/g_priority_priority_arbiter/g_encoder_grant_sel/g_lsb_g_model1_lzc    2.2230     1.9   0.0000    0.0000 0.0000 VX_lzc_3_1
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_2__xbar_arb/g_input_select_g_arbiter_arbiter/g_priority_priority_arbiter/g_encoder_grant_sel/g_lsb_g_model1_lzc/g_lzc_find_first    2.2230     1.9   2.2230    0.0000 0.0000 VX_find_first_3_2_0_1
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_2__xbar_arb/g_input_select_g_arbiter_g_out_buf_0__out_buf    3.7440     3.2   3.7440    0.0000 0.0000 VX_elastic_buffer_6_0_0_0_1
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_3__xbar_arb   16.9650    14.6   9.0090    0.0000 0.0000 VX_stream_arb_44_0
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_3__xbar_arb/g_input_select_g_arbiter_arbiter    4.2120     3.6   0.0000    0.0000 0.0000 VX_generic_arbiter_9_0
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_3__xbar_arb/g_input_select_g_arbiter_arbiter/g_priority_priority_arbiter    4.2120     3.6   0.0000    0.0000 0.0000 VX_priority_arbiter_4_0
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_3__xbar_arb/g_input_select_g_arbiter_arbiter/g_priority_priority_arbiter/g_encoder_grant_sel    4.2120     3.6   1.9890    0.0000 0.0000 VX_priority_encoder_5_0
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_3__xbar_arb/g_input_select_g_arbiter_arbiter/g_priority_priority_arbiter/g_encoder_grant_sel/g_lsb_g_model1_lzc    2.2230     1.9   0.0000    0.0000 0.0000 VX_lzc_3_0
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_3__xbar_arb/g_input_select_g_arbiter_arbiter/g_priority_priority_arbiter/g_encoder_grant_sel/g_lsb_g_model1_lzc/g_lzc_find_first    2.2230     1.9   2.2230    0.0000 0.0000 VX_find_first_3_2_0_0
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_3__xbar_arb/g_input_select_g_arbiter_g_out_buf_0__out_buf    3.7440     3.2   3.7440    0.0000 0.0000 VX_elastic_buffer_6_0_0_0_0
+g_multi_inputs_g_multiple_outputs_rdy_in_transpose    5.6160     4.8   5.6160    0.0000 0.0000 VX_transpose_2
+g_multi_inputs_g_multiple_outputs_val_in_transpose    5.6160     4.8   5.6160    0.0000 0.0000 VX_transpose_3
+genblk2_u_buffer_ex                  5.3820      4.6    0.0000     0.0000  0.0000  VX_pipe_register_28
+genblk2_u_buffer_ex/g_shift_register    5.3820     4.6   1.1700    4.2120  0.0000  VX_shift_register_3_3_1_0
+genblk3_u_pop_count_ex               1.2870      1.1    0.0000     0.0000  0.0000  VX_popcount_4
+genblk3_u_pop_count_ex/g_popcount3_pc32    1.2870     1.1   1.2870    0.0000 0.0000 VX_popcount32
+--------------------------------  ---------  -------  --------  ---------  ------  ---------------------------
+Total                                                 107.7570     8.4240  0.0000
+
+1

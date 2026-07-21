@@ -36,8 +36,10 @@ module VX_gemm_dma_ctrl_naive import VX_gpu_pkg::*; #(
   // ============================================================
   // Packing parameters
   // ============================================================
+  localparam int DMA_NUM_LANES = int'(dma_if.NUM_LANES);
+  localparam int DMA_DATA_SIZE = int'(dma_if.DATA_SIZE);
   localparam int DMA_CFG_STRIDE_SHIFT = `CLOG2(DMA_CFG_STRIDE_BYTES);
-  localparam int REGS_PER_LANE = (dma_if.DATA_SIZE >> DMA_CFG_STRIDE_SHIFT);
+  localparam int REGS_PER_LANE = DMA_DATA_SIZE >> DMA_CFG_STRIDE_SHIFT;
 
   // ============================================================
   // Opcodes
@@ -92,9 +94,9 @@ module VX_gemm_dma_ctrl_naive import VX_gpu_pkg::*; #(
   // Parameter sanity checks
   // ----------------------------------------------------
   initial begin
-    if ((dma_if.DATA_SIZE % DMA_CFG_STRIDE_BYTES) != 0) begin
+    if ((DMA_DATA_SIZE % DMA_CFG_STRIDE_BYTES) != 0) begin
       $fatal(1, "%s: dma_if.DATA_SIZE(%0d) must be multiple of %0d",
-             INSTANCE_ID, dma_if.DATA_SIZE, DMA_CFG_STRIDE_BYTES);
+             INSTANCE_ID, DMA_DATA_SIZE, DMA_CFG_STRIDE_BYTES);
     end
     if ((DMA_CFG_STRIDE_BYTES & (DMA_CFG_STRIDE_BYTES - 1)) != 0) begin
       $fatal(1, "%s: DMA_CFG_STRIDE_BYTES(%0d) must be power-of-two for shift-based division",
@@ -102,7 +104,7 @@ module VX_gemm_dma_ctrl_naive import VX_gpu_pkg::*; #(
     end
     if (REGS_PER_LANE <= 0) begin
       $fatal(1, "%s: REGS_PER_LANE must be >= 1 (DATA_SIZE=%0d)",
-             INSTANCE_ID, dma_if.DATA_SIZE);
+             INSTANCE_ID, DMA_DATA_SIZE);
     end
     if (CTRL_OWNER_W <= 0) begin
       $fatal(1, "%s: CTRL_OWNER_W must be >= 1", INSTANCE_ID);
@@ -124,7 +126,7 @@ module VX_gemm_dma_ctrl_naive import VX_gpu_pkg::*; #(
 
   // ============================================================
   // ============================================================
-  localparam int GLOBAL_ALLOC_B = dma_if.DATA_SIZE;
+  localparam int GLOBAL_ALLOC_B = DMA_DATA_SIZE;
 
   function automatic logic [63:0] entry_reg_byte_addr(
       input logic [ENTRYID_W-1:0] entry_id,
@@ -136,7 +138,7 @@ module VX_gemm_dma_ctrl_naive import VX_gpu_pkg::*; #(
          + 64'(reg_idx * DMA_CFG_STRIDE_BYTES);
   endfunction
 
-  localparam int LSU_ADDR_SHIFT = `CLOG2(dma_if.DATA_SIZE);
+  localparam int LSU_ADDR_SHIFT = `CLOG2(DMA_DATA_SIZE);
 
   function automatic logic [dma_if.ADDR_WIDTH-1:0] to_lsu_addr(input logic [63:0] byte_addr);
     logic [63:0] tmp;
@@ -632,7 +634,7 @@ module VX_gemm_dma_ctrl_naive import VX_gpu_pkg::*; #(
           else                        wr_idx_d = next_base;
         end
       `else
-        for (int l = 0; l < dma_if.NUM_LANES; l++) begin
+        for (int l = 0; l < DMA_NUM_LANES; l++) begin
           int idx0;
           idx0 = base_idx + (l * REGS_PER_LANE);
 
@@ -657,7 +659,7 @@ module VX_gemm_dma_ctrl_naive import VX_gpu_pkg::*; #(
 
         if (dma_if.req_valid && dma_if.req_ready) begin
           int next_base;
-          next_base = base_idx + (dma_if.NUM_LANES * REGS_PER_LANE);
+          next_base = base_idx + (DMA_NUM_LANES * REGS_PER_LANE);
 
           if (next_base > DMA_R_LAST) state_d = S_KICK_W;
           else                        wr_idx_d = next_base;

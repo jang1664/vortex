@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -45,13 +46,93 @@ def baseline_rows() -> list[dict[str, float | str]]:
 
 
 def summarize(
-    rows: list[dict[str, float | str]], total_area: float = 117.0
+    rows: list[dict[str, float | str]],
+    total_area: float = 117.0,
+    legend_group: breakdown.LegendGroup | None = None,
 ) -> dict[str, float]:
     hdf = pd.DataFrame(rows)
     detail_sums, detail_counts, _ = breakdown.aggregate(hdf)
     return breakdown.summarize_for_paper(
-        detail_sums, detail_counts, hdf, total_area
+        detail_sums,
+        detail_counts,
+        hdf,
+        total_area,
+        legend_group=legend_group,
     )
+
+
+def write_valid_report(path: Path) -> None:
+    """Create the minimal content needed by report_is_valid()."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "Total cell area: 1.0\n"
+        "Hierarchical area distribution\n"
+    )
+
+
+class ResolveReportTest(unittest.TestCase):
+    def test_default_source_is_c4_alias(self) -> None:
+        args = breakdown.parse_args([])
+
+        self.assertEqual(args.alias, "C4")
+        self.assertIsNone(args.syn_dir)
+        self.assertIsNone(args.report)
+        self.assertIsNone(args.run)
+
+    def test_alias_resolves_run_syn_vortex_axi_result_layout(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            alias_map = root / "aliases.yaml"
+            alias_map.write_text(
+                "aliases:\n"
+                "  C4:\n"
+                "    path: /tmp/fpga-bin\n"
+            )
+            report = (
+                root
+                / "results"
+                / "Vortex_axi_C4"
+                / "syn_topo.lpp"
+                / "reports"
+                / breakdown.REPORT_NAME
+            )
+            write_valid_report(report)
+            args = breakdown.parse_args([
+                "--alias", "C4",
+                "--alias-map", str(alias_map),
+                "--syn-root", str(root / "results"),
+            ])
+
+            self.assertEqual(breakdown.resolve_report(args), report)
+
+    def test_syn_dir_accepts_direct_synthesis_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            syn_dir = Path(temp_dir) / "Vortex_axi_C4" / "syn_topo.lpp"
+            report = syn_dir / "reports" / breakdown.REPORT_NAME
+            write_valid_report(report)
+            args = breakdown.parse_args(["--syn-dir", str(syn_dir)])
+
+            self.assertEqual(breakdown.resolve_report(args), report)
+
+    def test_unknown_alias_reports_available_aliases(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            alias_map = root / "aliases.yaml"
+            alias_map.write_text(
+                "aliases:\n"
+                "  C4:\n"
+                "    path: /tmp/fpga-bin\n"
+            )
+            args = breakdown.parse_args([
+                "--alias", "missing",
+                "--alias-map", str(alias_map),
+                "--syn-root", str(root / "results"),
+            ])
+
+            with self.assertRaisesRegex(
+                SystemExit, "unknown FPGA alias 'missing'.*C4"
+            ):
+                breakdown.resolve_report(args)
 
 
 class SummarizeForPaperTest(unittest.TestCase):
@@ -82,6 +163,51 @@ class SummarizeForPaperTest(unittest.TestCase):
         # remaining 15 of the mem_unit parent is interconnect/control in Misc.
         self.assertAlmostEqual(summary[breakdown.MEMORY_LABEL], 25.0 + 20.0 + 7.0)
         self.assertAlmostEqual(summary[breakdown.MISC_LABEL], 15.0 + 3.0)
+
+    def test_xbar_legend_group_separates_interconnect(self) -> None:
+        rows = baseline_rows() + [
+            {
+                "full_path": (
+                    f"{CORE}/gemm_node/u_tmem_subsystem/u_switch_input"
+                ),
+                "area": 4.0,
+            },
+            {
+                "full_path": f"{SOCKET}/g_mem_bus_if_0__g_i0_mem_arb",
+                "area": 6.0,
+            },
+            {"full_path": "Vortex_axi/u_lsu_demux", "area": 8.0},
+        ]
+
+        summary = summarize(
+            rows,
+            total_area=135.0,
+        )
+        xbar_summary = summarize(
+            rows,
+            total_area=135.0,
+            legend_group=breakdown.LEGEND_GROUPS[1],
+        )
+
+        self.assertAlmostEqual(summary[breakdown.MISC_LABEL], 36.0)
+        self.assertEqual(
+            list(xbar_summary),
+            [
+                breakdown.SIMT_NO_XBAR_LABEL,
+                breakdown.MEMORY_LABEL,
+                breakdown.XBAR_LABEL,
+                breakdown.DMA_LABEL,
+                breakdown.XBAR_MISC_LABEL,
+            ],
+        )
+        self.assertAlmostEqual(
+            xbar_summary[breakdown.SIMT_NO_XBAR_LABEL], 40.0
+        )
+        self.assertAlmostEqual(xbar_summary[breakdown.MEMORY_LABEL], 52.0)
+        self.assertAlmostEqual(xbar_summary[breakdown.XBAR_LABEL], 36.0)
+        self.assertAlmostEqual(xbar_summary[breakdown.DMA_LABEL], 7.0)
+        self.assertAlmostEqual(xbar_summary[breakdown.XBAR_MISC_LABEL], 0.0)
+        self.assertAlmostEqual(sum(xbar_summary.values()), 135.0)
 
     def test_missing_semantic_anchors_fail_loudly(self) -> None:
         removal_cases = {

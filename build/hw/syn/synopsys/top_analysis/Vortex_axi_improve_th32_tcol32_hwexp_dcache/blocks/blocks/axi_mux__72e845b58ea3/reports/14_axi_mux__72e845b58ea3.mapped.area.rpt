@@ -1,0 +1,80 @@
+ 
+****************************************
+Report : area
+Design : axi_mux__72e845b58ea3
+Version: V-2023.12-SP5-3
+Date   : Tue Jul 21 11:04:00 2026
+****************************************
+
+Library(s) Used:
+
+    sc9_cmos28lpp_base_rvt_ss_nominal_max_0p900v_125c_sadhm (File: /tool/PDK/Samsung/LN28LPP_202203/PRIMITIVES/RVT/ln28lpp_sc_9t_base_rvt_c130_V1.00d/FE-Common/LIBERTY/sc9_cmos28lpp_base_rvt_ss_nominal_max_0p900v_125c_sadhm.db)
+
+Number of ports:                        14592
+Number of nets:                         17853
+Number of cells:                         5156
+Number of combinational cells:           4936
+Number of sequential cells:               193
+Number of macros/black boxes:               0
+Number of buf/inv:                       4036
+Number of references:                      20
+
+Combinational area:               2676.842973
+Buf/Inv area:                     1861.118983
+Noncombinational area:             473.031000
+Macro/Black Box area:                0.000000
+Net Interconnect area:      undefined  (No wire load specified)
+
+Total cell area:                  3149.873973
+Total area:                 undefined
+
+Core Area:                      5391
+Aspect Ratio:                 1.0101
+Utilization Ratio:            0.5842
+
+
+The above information was reported from the logical library. The following are from the physical library:
+
+  Total moveable cell area: 3149.9
+  Total fixed cell area: 0.0
+  Total physical cell area: 3149.9
+ Core area: 0.000, 0.000, 73.060, 73.800
+
+Hierarchical area distribution
+------------------------------
+
+                                  Global cell area          Local cell area
+                                  ------------------  ---------------------------- 
+Hierarchical cell                 Absolute   Percent  Combi-     Noncombi-  Black-
+                                  Total      Total    national   national   boxes   Design
+--------------------------------  ---------  -------  ---------  ---------  ------  --------------------------------------------------------
+axi_mux__72e845b58ea3             3149.8740    100.0   582.7770     2.4570  0.0000  axi_mux__72e845b58ea3
+gen_mux_gen_id_prepend_0__i_id_prepend  595.7640    18.9  595.7640    0.0000 0.0000 axi_id_prepend_00000001_00000008_00000009_610242_1
+gen_mux_gen_id_prepend_1__i_id_prepend  595.7640    18.9  595.7640    0.0000 0.0000 axi_id_prepend_00000001_00000008_00000009_610242_0
+gen_mux_i_ar_arbiter                90.4410      2.9    79.4430    10.2960  0.0000  rr_arb_tree_00000002_1_1_029242
+gen_mux_i_ar_arbiter/gen_arbiter_gen_int_rr_gen_fair_arb_i_lzc_lower    0.3510     0.0    0.3510    0.0000 0.0000 lzc_00000002_0_0
+gen_mux_i_ar_arbiter/gen_arbiter_gen_int_rr_gen_fair_arb_i_lzc_upper    0.3510     0.0    0.3510    0.0000 0.0000 lzc_00000002_0_1
+gen_mux_i_ar_spill_reg              35.1000      1.1     0.0000     0.0000  0.0000  spill_register_8
+gen_mux_i_ar_spill_reg/spill_register_flushable_i   35.1000     1.1   35.1000    0.0000 0.0000 spill_register_flushable_1_029242
+gen_mux_i_aw_arbiter                96.4080      3.1    85.4100    10.2960  0.0000  rr_arb_tree_00000002_1_1_523242
+gen_mux_i_aw_arbiter/gen_arbiter_gen_int_rr_gen_fair_arb_i_lzc_lower    0.3510     0.0    0.3510    0.0000 0.0000 lzc_00000002_0_2
+gen_mux_i_aw_arbiter/gen_arbiter_gen_int_rr_gen_fair_arb_i_lzc_upper    0.3510     0.0    0.3510    0.0000 0.0000 lzc_00000002_0_3
+gen_mux_i_aw_spill_reg             537.7320     17.1     0.0000     0.0000  0.0000  spill_register_6
+gen_mux_i_aw_spill_reg/spill_register_flushable_i  537.7320    17.1  141.1020  393.1200 0.0000 spill_register_flushable_0_523242
+gen_mux_i_aw_spill_reg/spill_register_flushable_i/clk_gate_gen_spill_reg_a_data_q_reg_id_    1.7550     0.1    0.0000    1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_spill_register_flushable_0_523242_0
+gen_mux_i_aw_spill_reg/spill_register_flushable_i/clk_gate_gen_spill_reg_b_data_q_reg_id_    1.7550     0.1    0.0000    1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_spill_register_flushable_0_523242_1
+gen_mux_i_b_spill_reg                6.5520      0.2     0.0000     0.0000  0.0000  spill_register_7
+gen_mux_i_b_spill_reg/spill_register_flushable_i    6.5520     0.2    6.5520    0.0000 0.0000 spill_register_flushable_1_929242
+gen_mux_i_r_spill_reg              246.6360      7.8     0.0000     0.0000  0.0000  spill_register_9
+gen_mux_i_r_spill_reg/spill_register_flushable_i  246.6360     7.8  246.6360    0.0000 0.0000 spill_register_flushable_1_494242
+gen_mux_i_w_fifo                    88.8030      2.8    35.4510    46.3320  0.0000  fifo_v3_0_00000008_455242
+gen_mux_i_w_fifo/clk_gate_read_pointer_q_reg    1.7550     0.1    0.0000    1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_fifo_v3_0_00000008_455242_2
+gen_mux_i_w_fifo/clk_gate_status_cnt_q_reg    1.7550     0.1    0.0000    1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_fifo_v3_0_00000008_455242_0
+gen_mux_i_w_fifo/clk_gate_write_pointer_q_reg    1.7550     0.1    0.0000    1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_fifo_v3_0_00000008_455242_1
+gen_mux_i_w_fifo/clk_gate_write_pointer_q_reg_0    1.7550     0.1    0.0000    1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_fifo_v3_0_00000008_455242_0_1
+gen_mux_i_w_spill_reg              271.4400      8.6     0.0000     0.0000  0.0000  spill_register_2
+gen_mux_i_w_spill_reg/spill_register_flushable_i  271.4400     8.6  271.4400    0.0000 0.0000 spill_register_flushable_1_873242
+--------------------------------  ---------  -------  ---------  ---------  ------  --------------------------------------------------------
+Total                                                 2676.8430   473.0310  0.0000
+
+1

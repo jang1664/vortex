@@ -1,0 +1,105 @@
+ 
+****************************************
+Report : area
+Design : VX_stream_xbar__2b93d60f1e5c
+Version: V-2023.12-SP5-3
+Date   : Tue Jul 21 09:23:08 2026
+****************************************
+
+Library(s) Used:
+
+    sc9_cmos28lpp_base_rvt_ss_nominal_max_0p900v_125c_sadhm (File: /tool/PDK/Samsung/LN28LPP_202203/PRIMITIVES/RVT/ln28lpp_sc_9t_base_rvt_c130_V1.00d/FE-Common/LIBERTY/sc9_cmos28lpp_base_rvt_ss_nominal_max_0p900v_125c_sadhm.db)
+
+Number of ports:                        32396
+Number of nets:                         48150
+Number of cells:                        18331
+Number of combinational cells:          13278
+Number of sequential cells:              4995
+Number of macros/black boxes:               0
+Number of buf/inv:                       3201
+Number of references:                      32
+
+Combinational area:               8538.894055
+Buf/Inv area:                     1471.508987
+Noncombinational area:           10515.257734
+Macro/Black Box area:                0.000000
+Net Interconnect area:      undefined  (No wire load specified)
+
+Total cell area:                 19054.151789
+Total area:                 undefined
+
+Core Area:                     44270
+Aspect Ratio:                 1.0019
+Utilization Ratio:            0.4304
+
+
+The above information was reported from the logical library. The following are from the physical library:
+
+  Total moveable cell area: 19054.2
+  Total fixed cell area: 0.0
+  Total physical cell area: 19054.2
+ Core area: 0.000, 0.000, 210.210, 210.600
+
+Hierarchical area distribution
+------------------------------
+
+                                  Global cell area            Local cell area
+                                  -------------------  ----------------------------- 
+Hierarchical cell                 Absolute    Percent  Combi-     Noncombi-   Black-
+                                  Total       Total    national   national    boxes   Design
+--------------------------------  ----------  -------  ---------  ----------  ------  -----------------------------------------------
+VX_stream_xbar__2b93d60f1e5c      19054.1518    100.0    89.3880     92.6640  0.0000  VX_stream_xbar__2b93d60f1e5c
+g_multi_inputs_g_multiple_outputs_g_sel_in_demux_0__sel_in_demux     3.1590     0.0    3.1590     0.0000 0.0000 VX_demux_6
+g_multi_inputs_g_multiple_outputs_g_sel_in_demux_1__sel_in_demux     3.1590     0.0    3.1590     0.0000 0.0000 VX_demux_5
+g_multi_inputs_g_multiple_outputs_g_sel_in_demux_2__sel_in_demux     3.1590     0.0    3.1590     0.0000 0.0000 VX_demux_4
+g_multi_inputs_g_multiple_outputs_g_sel_in_demux_3__sel_in_demux     3.1590     0.0    3.1590     0.0000 0.0000 VX_demux_0
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_0__xbar_arb  4709.0159    24.7 1188.8370     0.0000 0.0000 VX_stream_arb_29_3
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_0__xbar_arb/g_input_select_g_arbiter_arbiter    25.3890     0.1    0.0000     0.0000 0.0000 VX_generic_arbiter_13
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_0__xbar_arb/g_input_select_g_arbiter_arbiter/g_round_robin_rr_arbiter    25.3890     0.1   13.3380     8.4240 0.0000 VX_rr_arbiter_6
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_0__xbar_arb/g_input_select_g_arbiter_arbiter/g_round_robin_rr_arbiter/clk_gate_g_model1_reqs_mask_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_rr_arbiter_6_1
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_0__xbar_arb/g_input_select_g_arbiter_arbiter/g_round_robin_rr_arbiter/g_model1_onehot_encoder     1.8720     0.0    1.8720     0.0000 0.0000 VX_onehot_encoder_1_3
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_0__xbar_arb/g_input_select_g_arbiter_g_out_buf_0__out_buf  3494.7899    18.3    0.0000     0.0000 0.0000 VX_elastic_buffer_614_2_0_0_3
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_0__xbar_arb/g_input_select_g_arbiter_g_out_buf_0__out_buf/g_eb2_out_buf   288.2880     1.5  288.2880     0.0000 0.0000 VX_pipe_buffer_54_3
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_0__xbar_arb/g_input_select_g_arbiter_g_out_buf_0__out_buf/g_eb2_stream_buffer  3206.5019    16.8  612.6120  2590.3799 0.0000 VX_stream_buffer_614_0_3
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_0__xbar_arb/g_input_select_g_arbiter_g_out_buf_0__out_buf/g_eb2_stream_buffer/clk_gate_g_buffer_buffer_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_stream_buffer_614_0_0_6
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_0__xbar_arb/g_input_select_g_arbiter_g_out_buf_0__out_buf/g_eb2_stream_buffer/clk_gate_g_buffer_data_out_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_stream_buffer_614_0_0_7
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_1__xbar_arb  4708.8989    24.7 1187.9010     0.0000 0.0000 VX_stream_arb_29_2
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_1__xbar_arb/g_input_select_g_arbiter_arbiter    25.3890     0.1    0.0000     0.0000 0.0000 VX_generic_arbiter_12
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_1__xbar_arb/g_input_select_g_arbiter_arbiter/g_round_robin_rr_arbiter    25.3890     0.1   13.3380     8.4240 0.0000 VX_rr_arbiter_5
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_1__xbar_arb/g_input_select_g_arbiter_arbiter/g_round_robin_rr_arbiter/clk_gate_g_model1_reqs_mask_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_rr_arbiter_5_1
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_1__xbar_arb/g_input_select_g_arbiter_arbiter/g_round_robin_rr_arbiter/g_model1_onehot_encoder     1.8720     0.0    1.8720     0.0000 0.0000 VX_onehot_encoder_1_2
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_1__xbar_arb/g_input_select_g_arbiter_g_out_buf_0__out_buf  3495.6089    18.3    0.0000     0.0000 0.0000 VX_elastic_buffer_614_2_0_0_2
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_1__xbar_arb/g_input_select_g_arbiter_g_out_buf_0__out_buf/g_eb2_out_buf   288.2880     1.5  288.2880     0.0000 0.0000 VX_pipe_buffer_54_2
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_1__xbar_arb/g_input_select_g_arbiter_g_out_buf_0__out_buf/g_eb2_stream_buffer  3207.3209    16.8  613.4310  2590.3799 0.0000 VX_stream_buffer_614_0_2
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_1__xbar_arb/g_input_select_g_arbiter_g_out_buf_0__out_buf/g_eb2_stream_buffer/clk_gate_g_buffer_buffer_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_stream_buffer_614_0_0_4
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_1__xbar_arb/g_input_select_g_arbiter_g_out_buf_0__out_buf/g_eb2_stream_buffer/clk_gate_g_buffer_data_out_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_stream_buffer_614_0_0_5
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_2__xbar_arb  4710.3029    24.7 1188.8370     0.0000 0.0000 VX_stream_arb_29_1
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_2__xbar_arb/g_input_select_g_arbiter_arbiter    25.3890     0.1    0.0000     0.0000 0.0000 VX_generic_arbiter_11
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_2__xbar_arb/g_input_select_g_arbiter_arbiter/g_round_robin_rr_arbiter    25.3890     0.1   13.3380     8.4240 0.0000 VX_rr_arbiter_4
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_2__xbar_arb/g_input_select_g_arbiter_arbiter/g_round_robin_rr_arbiter/clk_gate_g_model1_reqs_mask_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_rr_arbiter_4_1
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_2__xbar_arb/g_input_select_g_arbiter_arbiter/g_round_robin_rr_arbiter/g_model1_onehot_encoder     1.8720     0.0    1.8720     0.0000 0.0000 VX_onehot_encoder_1_1
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_2__xbar_arb/g_input_select_g_arbiter_g_out_buf_0__out_buf  3496.0769    18.3    0.0000     0.0000 0.0000 VX_elastic_buffer_614_2_0_0_1
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_2__xbar_arb/g_input_select_g_arbiter_g_out_buf_0__out_buf/g_eb2_out_buf   288.2880     1.5  288.2880     0.0000 0.0000 VX_pipe_buffer_54_1
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_2__xbar_arb/g_input_select_g_arbiter_g_out_buf_0__out_buf/g_eb2_stream_buffer  3207.7889    16.8  613.8990  2590.3799 0.0000 VX_stream_buffer_614_0_1
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_2__xbar_arb/g_input_select_g_arbiter_g_out_buf_0__out_buf/g_eb2_stream_buffer/clk_gate_g_buffer_buffer_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_stream_buffer_614_0_0_2
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_2__xbar_arb/g_input_select_g_arbiter_g_out_buf_0__out_buf/g_eb2_stream_buffer/clk_gate_g_buffer_data_out_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_stream_buffer_614_0_0_3
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_3__xbar_arb  4706.2079    24.7 1187.9010     0.0000 0.0000 VX_stream_arb_29_0
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_3__xbar_arb/g_input_select_g_arbiter_arbiter    25.3890     0.1    0.0000     0.0000 0.0000 VX_generic_arbiter_0
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_3__xbar_arb/g_input_select_g_arbiter_arbiter/g_round_robin_rr_arbiter    25.3890     0.1   13.3380     8.4240 0.0000 VX_rr_arbiter_0
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_3__xbar_arb/g_input_select_g_arbiter_arbiter/g_round_robin_rr_arbiter/clk_gate_g_model1_reqs_mask_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_rr_arbiter_0_1
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_3__xbar_arb/g_input_select_g_arbiter_arbiter/g_round_robin_rr_arbiter/g_model1_onehot_encoder     1.8720     0.0    1.8720     0.0000 0.0000 VX_onehot_encoder_1_0
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_3__xbar_arb/g_input_select_g_arbiter_g_out_buf_0__out_buf  3492.9179    18.3    0.0000     0.0000 0.0000 VX_elastic_buffer_614_2_0_0_0
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_3__xbar_arb/g_input_select_g_arbiter_g_out_buf_0__out_buf/g_eb2_out_buf   288.2880     1.5  288.2880     0.0000 0.0000 VX_pipe_buffer_54_0
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_3__xbar_arb/g_input_select_g_arbiter_g_out_buf_0__out_buf/g_eb2_stream_buffer  3204.6299    16.8  610.7400  2590.3799 0.0000 VX_stream_buffer_614_0_0
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_3__xbar_arb/g_input_select_g_arbiter_g_out_buf_0__out_buf/g_eb2_stream_buffer/clk_gate_g_buffer_buffer_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_stream_buffer_614_0_0_1
+g_multi_inputs_g_multiple_outputs_g_xbar_arbs_3__xbar_arb/g_input_select_g_arbiter_g_out_buf_0__out_buf/g_eb2_stream_buffer/clk_gate_g_buffer_data_out_r_reg     1.7550     0.0    0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_stream_buffer_614_0_0_0
+g_multi_inputs_g_multiple_outputs_rdy_in_transpose     7.4880     0.0    7.4880     0.0000 0.0000 VX_transpose_5
+g_multi_inputs_g_multiple_outputs_val_in_transpose     7.4880     0.0    7.4880     0.0000 0.0000 VX_transpose_0
+genblk2_u_buffer_ex                   8.0730      0.0     0.0000      0.0000  0.0000  VX_pipe_register
+genblk2_u_buffer_ex/g_shift_register     8.0730     0.0    1.7550     6.3180  0.0000  VX_shift_register_4_4_1_0
+genblk3_u_pop_count_ex                1.9890      0.0     0.0000      0.0000  0.0000  VX_popcount
+genblk3_u_pop_count_ex/g_popcount6_pc63     1.9890     0.0    1.9890     0.0000 0.0000 VX_popcount63
+--------------------------------  ----------  -------  ---------  ----------  ------  -----------------------------------------------
+Total                                                  8538.8941  10515.2577  0.0000
+
+1

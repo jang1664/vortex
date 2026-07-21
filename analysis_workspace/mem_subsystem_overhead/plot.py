@@ -4,9 +4,12 @@ Inputs:
   area.csv     (cell-area breakdown per top × point)
   routing.csv  (DC-Topo routing-difficulty proxies: util, congestion overflow)
 
-All figures apply two conventions per user request:
+Figures 1--8 apply two conventions from the original analysis:
   - GEMM-unit area always includes its own PnR overhead (cell / util_gemm).
   - CAP-intrinsic SRAM bit-cell area (sram_base) is excluded everywhere.
+
+Figure 9 intentionally overrides the second convention and includes the full
+SRAM macro cell area for both BASE and FPxINT.
 
 Outputs (PNG + PDF):
   fig1_stacked_vs_gemm     Stacked xbar/ctrl/sram_peri/PnR + gemm_unit reference.
@@ -25,6 +28,12 @@ Outputs (PNG + PDF):
                                64×64 FPxINT memory (L=256) is log-log extrapolated.
                                SRAM-peripheral banking overhead is charged only
                                to FPxINT, not to the FPFP baseline.
+  fig9_tops_recovery_with_sram_macro
+                               Same comparisons as fig8, but charges the full
+                               SRAM Macro/Black Box area to both configurations.
+  fig10_tops_recovery_cell_only
+                               HPCA one-column (3.5 inch) view with only GEMM
+                               cell area and GEMM+xbar+ctrl cell area.
 """
 
 from __future__ import annotations
@@ -586,6 +595,7 @@ def _mem_data(top: str, n_target: int, s_split, routing):
         return {
             "xbar": d["xbar"], "ctrl": d["ctrl"],
             "sram_base": d["sram_base"], "sram_peri": d["sram_peri"],
+            "macro_area": routing[(top, lb)]["macro_area"],
             "util": routing[(top, lb)]["util"],
             "extrap": False, "label": lb,
         }
@@ -606,11 +616,13 @@ def _mem_data(top: str, n_target: int, s_split, routing):
     sb   = _fit_loglog([s_split[lb]["sram_base"] for lb, _ in pairs])
     sp_vals = [s_split[lb]["sram_peri"] for lb, _ in pairs]
     sp   = _fit_loglog(sp_vals) if any(v > 0 for v in sp_vals) else 0.0
+    macro = _fit_loglog([routing[(top, lb)]["macro_area"] for lb, _ in pairs])
     utils = np.array([routing[(top, lb)]["util"] for lb, _ in pairs])
     ucoef = np.polyfit(xs, utils, 1)
     util = float(np.polyval(ucoef, target))
     util = max(0.10, min(0.95, util))
     return {"xbar": xbar, "ctrl": ctrl, "sram_base": sb, "sram_peri": sp,
+            "macro_area": macro,
             "util": util, "extrap": True, "label": f"~{n_target}"}
 
 
@@ -666,14 +678,15 @@ def _variant_bars_data(variant, table, routing):
     }
 
 
-def _draw_variant_on_axis(ax, d, ymax):
+def _draw_variant_on_axis(ax, d, ymax, set_names=None):
     """Draw a 2-bar group (Base vs FPxINT) for one variant on a given axis."""
     x = np.arange(4)
     width = 0.36
-    set_names = ["Set 1\ngemm only\n(w/ PnR)",
-                 "Set 2\n+ xbar + ctrl",
-                 "Set 3\n+ SRAM peri\n(FPxINT only)",
-                 "Set 4\n+ memory system PnR\n(full die)"]
+    if set_names is None:
+        set_names = ["Set 1\ngemm only\n(w/ PnR)",
+                     "Set 2\n+ xbar + ctrl",
+                     "Set 3\n+ SRAM peri\n(FPxINT only)",
+                     "Set 4\n+ memory system PnR\n(full die)"]
 
     bars_b = ax.bar(x - width/2, d["rel_b"], width, color=COLORS["baseline"],
                     edgecolor="black", linewidth=0.5,
@@ -753,6 +766,189 @@ def fig8_tops_recovery_all(table):
     print("wrote fig8_tops_recovery.{png,pdf}")
 
 
+def _variant_macro_bars_data(variant, table, routing):
+    """Fig9 data: charge full SRAM macro area to both BASE and FPxINT.
+
+    Macro area comes from the `Macro/Black Box area` field in each mapped
+    area report (via routing.csv). For the unsynthesized 256-bank LMEM point,
+    it is log-log extrapolated in the same way as the other fig8 components.
+    """
+    s = split_sram(table)
+    out = []
+    for scn in (variant["base"], variant["fpint"]):
+        g = _gemm_area_any(scn["N"], scn["kind"])
+        g_die = g / UTIL_GEMM
+        L = _mem_data("VX_local_mem_top", scn["L_n"], s, routing)
+        C = _mem_data("VX_cache_top",     scn["C_n"], s, routing)
+        A = _mem_data("VX_axi_adapter",   scn["A_n"], s, routing)
+        xc = sum(m["xbar"] + m["ctrl"] for m in (L, C, A))
+        macro = sum(m["macro_area"] for m in (L, C, A))
+        # DC-Topo utilization describes moveable-cell spreading, not SRAM
+        # macro packing. Apply it only to xbar/control logic and add each
+        # macro footprint exactly once.
+        full = (g_die
+                + (L["xbar"] + L["ctrl"]) / L["util"]
+                + (C["xbar"] + C["ctrl"]) / C["util"]
+                + (A["xbar"] + A["ctrl"]) / A["util"]
+                + macro)
+        sets = [g_die, g_die + xc, g_die + xc + macro, full]
+        tops = scn["N"]**2 * 2 * F_HZ / 1e12
+        eff = [tops / (area / 1e6) for area in sets]
+        out.append({"scn": scn, "sets": sets, "eff": eff, "mems": (L, C, A)})
+
+    base, fpint = out
+
+    def _mem_label(item):
+        scn = item["scn"]
+        L, C, A = item["mems"]
+        lmark = "~" if L["extrap"] else ""
+        cmark = "~" if C["extrap"] else ""
+        amark = "~" if A["extrap"] else ""
+        return (f"L={lmark}{scn['L_n']} / D={cmark}{scn['C_n']} / "
+                f"A={amark}{scn['A_n']}")
+
+    return {
+        "base_n": base["scn"]["N"], "fpint_n": fpint["scn"]["N"],
+        "rel_b": [1.0] * 4,
+        "rel_f": [f / b for f, b in zip(fpint["eff"], base["eff"])],
+        "sets_b": [a / 1e6 for a in base["sets"]],
+        "sets_f": [a / 1e6 for a in fpint["sets"]],
+        "base_mem": _mem_label(base),
+        "fpint_mem": _mem_label(fpint),
+    }
+
+
+def fig9_tops_recovery_with_sram_macro(table):
+    """Fig8-style recovery plot including full SRAM macro cell area."""
+    routing = load_routing()
+    datas = [_variant_macro_bars_data(v, table, routing) for v in FIG8_VARIANTS]
+    ymax = max(max(d["rel_b"] + d["rel_f"]) for d in datas) * 1.22
+    set_names = ["Set 1\ngemm only\n(w/ PnR)",
+                 "Set 2\n+ xbar + ctrl",
+                 "Set 3\n+ full SRAM macros\n(BASE + FPxINT)",
+                 "Set 4\n+ logic PnR proxy\n+ SRAM macros"]
+
+    n = len(datas)
+    fig, axes = plt.subplots(1, n, figsize=(9.8 * n, 7.2), sharey=True)
+    if n == 1:
+        axes = [axes]
+    for ax, d in zip(axes, datas):
+        _draw_variant_on_axis(ax, d, ymax, set_names=set_names)
+    axes[0].set_ylabel("TOPS/mm² (relative to Baseline; per-Set Base = 1.0)\n"
+                       "in-bar = absolute area in mm²")
+
+    fig.suptitle("Relative TOPS/mm² including full SRAM macro cell area",
+                 fontsize=17)
+    fig.tight_layout(rect=[0, 0, 1, 0.97])
+    for ext in ("png", "pdf"):
+        fig.savefig(HERE / f"fig9_tops_recovery_with_sram_macro.{ext}",
+                    dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    print("wrote fig9_tops_recovery_with_sram_macro.{png,pdf}")
+
+
+def _variant_cell_only_bars_data(variant, table, routing):
+    """Fig10 data using cell area only; no SRAM and no PnR utilization."""
+    s = split_sram(table)
+    out = []
+    for scn in (variant["base"], variant["fpint"]):
+        gemm = _gemm_area_any(scn["N"], scn["kind"])
+        L = _mem_data("VX_local_mem_top", scn["L_n"], s, routing)
+        C = _mem_data("VX_cache_top",     scn["C_n"], s, routing)
+        A = _mem_data("VX_axi_adapter",   scn["A_n"], s, routing)
+        xc = sum(m["xbar"] + m["ctrl"] for m in (L, C, A))
+        sets = [gemm, gemm + xc]
+        tops = scn["N"]**2 * 2 * F_HZ / 1e12
+        eff = [tops / (area / 1e6) for area in sets]
+        out.append({"scn": scn, "sets": sets, "eff": eff, "mems": (L, C, A)})
+
+    base, fpint = out
+    return {
+        "base_n": base["scn"]["N"], "fpint_n": fpint["scn"]["N"],
+        "rel_b": [1.0, 1.0],
+        "rel_f": [f / b for f, b in zip(fpint["eff"], base["eff"])],
+        "sets_b": [a / 1e6 for a in base["sets"]],
+        "sets_f": [a / 1e6 for a in fpint["sets"]],
+        "l_extrap": fpint["mems"][0]["extrap"],
+        "base_mem": (base["scn"]["L_n"], base["scn"]["C_n"], base["scn"]["A_n"]),
+        "fpint_mem": (fpint["scn"]["L_n"], fpint["scn"]["C_n"], fpint["scn"]["A_n"]),
+    }
+
+
+def _draw_fig10_axis(ax, d, ymax):
+    x = np.arange(2)
+    width = 0.34
+    bars_b = ax.bar(x - width/2, d["rel_b"], width,
+                    color=COLORS["baseline"], edgecolor="black", linewidth=0.35,
+                    label=f"FPxFP {d['base_n']}×{d['base_n']}")
+    bars_f = ax.bar(x + width/2, d["rel_f"], width,
+                    color=COLORS["fpint"], edgecolor="black", linewidth=0.35,
+                    label=f"FPxINT {d['fpint_n']}×{d['fpint_n']}")
+
+    ax.set_ylim(0, ymax)
+    ax.axhline(1.0, color="#555", linestyle="--", linewidth=0.6, alpha=0.7)
+    for bar, value in list(zip(bars_b, d["rel_b"])) + list(zip(bars_f, d["rel_f"])):
+        ax.text(bar.get_x() + bar.get_width()/2, value + ymax * 0.025,
+                f"{value:.2f}×", ha="center", va="bottom",
+                fontsize=7, fontweight="bold")
+
+    fp_centers = [bar.get_x() + bar.get_width()/2 for bar in bars_f]
+    ax.annotate("",
+                xy=(fp_centers[1] - width * 0.38, d["rel_f"][1] + 0.025),
+                xytext=(fp_centers[0], d["rel_f"][0] - 0.04),
+                arrowprops=dict(arrowstyle="-|>", color="#c62828",
+                                linewidth=1.3,
+                                connectionstyle="arc3,rad=0.12"),
+                zorder=5)
+    ax.text(np.mean(fp_centers), 1.68,
+            "O(N²)-scaling crossbar overhead\nerodes area efficiency",
+            ha="center", va="center", fontsize=6.2, color="#b71c1c",
+            bbox=dict(boxstyle="round,pad=0.20", facecolor="white",
+                      edgecolor="#ef9a9a", alpha=0.92),
+            zorder=6)
+
+    bL, bD, bA = d["base_mem"]
+    fL, fD, fA = d["fpint_mem"]
+    lmark = "~" if d["l_extrap"] else ""
+    ax.set_title("Diminishing Relative TOPS/mm² Gains of FP×INT\n"
+                 "over FP×FP with MXU and Crossbar Bandwidth Scaling",
+                 fontsize=6.5, pad=22)
+    ax.text(0.5, 1.015,
+            f"Local-mem banks: {bL} → {lmark}{fL}\n"
+            f"D-cache banks: {bD} → {fD}; "
+            f"HBM access ports: {bA} → {fA}",
+            transform=ax.transAxes, ha="center", va="bottom",
+            fontsize=6.3)
+    ax.set_xticks(x)
+    ax.set_xticklabels(["GEMM Unit", "GEMM Unit\n+ xbar + ctrl"],
+                       fontsize=7)
+    ax.tick_params(axis="y", labelsize=7)
+    ax.yaxis.grid(True, alpha=0.25, linewidth=0.5)
+    ax.set_axisbelow(True)
+    ax.legend(loc="upper right", fontsize=6.5, framealpha=0.95,
+              borderpad=0.3, labelspacing=0.25, handlelength=1.2)
+
+
+def fig10_tops_recovery_cell_only(table):
+    """HPCA one-column 16x16-to-32x32 comparison using cell area only."""
+    routing = load_routing()
+    data = _variant_cell_only_bars_data(FIG8_VARIANTS[0], table, routing)
+    ymax = max(data["rel_b"] + data["rel_f"]) * 1.20
+
+    # Exact HPCA one-column width. Fig10 intentionally shows only the
+    # 16x16-to-32x32 comparison discussed in the accompanying text.
+    fig, ax = plt.subplots(figsize=(3.5, 3.05))
+    _draw_fig10_axis(ax, data, ymax)
+    ax.set_ylabel("Relative TOPS/mm²", fontsize=7.5)
+
+    fig.tight_layout(pad=0.35)
+    for ext in ("png", "pdf"):
+        fig.savefig(HERE / f"fig10_tops_recovery_cell_only.{ext}",
+                    dpi=300)
+    plt.close(fig)
+    print("wrote fig10_tops_recovery_cell_only.{png,pdf}")
+
+
 def main():
     table = load()
     fig1_stacked(table)
@@ -763,6 +959,8 @@ def main():
         fig4_routing(rt)
     fig7_tops_per_mm2_3set(table)
     fig8_tops_recovery_all(table)
+    fig9_tops_recovery_with_sram_macro(table)
+    fig10_tops_recovery_cell_only(table)
 
 
 if __name__ == "__main__":

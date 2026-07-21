@@ -264,6 +264,8 @@ analysis_workspace/mem_subsystem_overhead/
   fig6_drop_no_peri.{png,pdf} / fig6_drop_with_peri.{png,pdf}   # 4× drop with mem area
   fig7_tops_baseline_vs_fpint.{png,pdf}    # FPxFP vs FPxINT system-level
   fig8_tops_recovery.{png,pdf}             # + ideal-IC recovery counterfactual
+  fig9_tops_recovery_with_sram_macro.{png,pdf} # fig8 + full SRAM macro area
+  fig10_tops_recovery_cell_only.{png,pdf}  # 3.5-inch cell-only Set 1/2 view
 
 build/hw/syn/synopsys/mem_subsys_syn_overhead/run/<top>/<label>/syn_topo.lpp/reports/
   14_*.mapped.area.rpt             # cell area + Core Area + Utilization

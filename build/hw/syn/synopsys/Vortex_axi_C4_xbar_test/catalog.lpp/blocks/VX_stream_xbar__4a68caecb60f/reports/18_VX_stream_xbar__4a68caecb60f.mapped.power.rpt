@@ -1,0 +1,54 @@
+Information: Propagating switching activity (high effort zero delay simulation). (PWR-6)
+Warning: Design has unannotated primary inputs. (PWR-414)
+Warning: Design has unannotated sequential cell outputs. (PWR-415)
+ 
+****************************************
+Report : power
+        -hier
+        -analysis_effort high
+        -verbose
+Design : VX_stream_xbar__4a68caecb60f
+Scenario(s): mode_norm.OC_rvt_ss_0p900v_125c
+Version: V-2023.12-SP5-3
+Date   : Sat Jul 18 18:21:28 2026
+****************************************
+
+
+Library(s) Used:
+
+    sc9_cmos28lpp_base_rvt_ss_nominal_max_0p900v_125c_sadhm (File: /tool/PDK/Samsung/LN28LPP_202203/PRIMITIVES/RVT/ln28lpp_sc_9t_base_rvt_c130_V1.00d/FE-Common/LIBERTY/sc9_cmos28lpp_base_rvt_ss_nominal_max_0p900v_125c_sadhm.db)
+
+
+Global Operating Voltage = 0.9  
+Power-specific unit information :
+    Voltage Units = 1V
+    Capacitance Units = 1.000000pf
+    Time Units = 1ns
+    Dynamic Power Units = 1mW    (derived from V,C,T units)
+    Leakage Power Units = 1uW
+
+
+--------------------------------------------------------------------------------
+                                       Switch   Int      Leak     Total
+Hierarchy                              Power    Power    Power    Power    %
+--------------------------------------------------------------------------------
+VX_stream_xbar__4a68caecb60f           3.13e-02 3.24e-02   17.098 8.08e-02 100.0
+  genblk3_u_pop_count_ex (VX_popcount) 3.54e-06 3.74e-06 6.20e-03 1.35e-05   0.0
+    g_popcount3_pc32 (VX_popcount32)   3.54e-06 3.74e-06 6.20e-03 1.35e-05   0.0
+  genblk2_u_buffer_ex (VX_pipe_register) 4.47e-06 3.18e-04 1.86e-02 3.42e-04   0.4
+    g_shift_register (VX_shift_register_2_2_1_0) 4.47e-06 3.18e-04 1.86e-02 3.42e-04   0.4
+  g_multi_inputs_g_multiple_outputs_g_xbar_arbs_1__xbar_arb (VX_stream_arb_10_0) 1.55e-02 1.57e-02    8.458 3.96e-02  49.0
+    g_input_select_g_arbiter_g_out_buf_0__out_buf (VX_elastic_buffer_520_0_0_0_0) 6.78e-03 6.16e-03    3.500 1.64e-02  20.3
+    g_input_select_g_arbiter_arbiter (VX_generic_arbiter_0) 5.81e-04 6.80e-04 8.85e-02 1.35e-03   1.7
+      g_round_robin_rr_arbiter (VX_rr_arbiter_0) 5.48e-05 6.64e-04 7.60e-02 7.95e-04   1.0
+        g_model1_onehot_encoder (VX_onehot_encoder_1_0) 1.73e-05 2.07e-05 1.22e-02 5.01e-05   0.1
+  g_multi_inputs_g_multiple_outputs_g_xbar_arbs_0__xbar_arb (VX_stream_arb_10_1) 1.57e-02 1.56e-02    8.469 3.98e-02  49.3
+    g_input_select_g_arbiter_g_out_buf_0__out_buf (VX_elastic_buffer_520_0_0_0_1) 7.28e-03 6.15e-03    3.500 1.69e-02  21.0
+    g_input_select_g_arbiter_arbiter (VX_generic_arbiter_1) 5.73e-04 6.79e-04 8.85e-02 1.34e-03   1.7
+      g_round_robin_rr_arbiter (VX_rr_arbiter_1) 5.25e-05 6.63e-04 7.60e-02 7.92e-04   1.0
+        g_model1_onehot_encoder (VX_onehot_encoder_1_1) 1.73e-05 2.05e-05 1.22e-02 5.00e-05   0.1
+  g_multi_inputs_g_multiple_outputs_val_in_transpose (VX_transpose_0) 2.75e-05 2.92e-05 2.57e-02 8.23e-05   0.1
+  g_multi_inputs_g_multiple_outputs_g_sel_in_demux_1__sel_in_demux (VX_demux_0) 1.06e-05 1.41e-05 8.96e-03 3.36e-05   0.0
+  g_multi_inputs_g_multiple_outputs_g_sel_in_demux_0__sel_in_demux (VX_demux_1) 8.19e-06 1.39e-05 8.96e-03 3.10e-05   0.0
+  g_multi_inputs_g_multiple_outputs_rdy_in_transpose (VX_transpose_1) 1.06e-05 2.94e-05 2.50e-02 6.50e-05   0.1
+1

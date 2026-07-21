@@ -75,6 +75,14 @@ Outputs:
   a direct, unsmoothed routing-pain proxy. Neither metric replaces a real
   PnR run, but together they let us scrub which points are routable
   vs. which would need extra effort.
+- `fig9_tops_recovery_with_sram_macro.{png,pdf}` — fig8-style BASE-vs-FPxINT
+  comparison with the full SRAM `Macro/Black Box area` charged to both
+  configurations. Set 4 applies DC-Topo utilization only to xbar/control
+  logic and adds the SRAM macro footprint exactly once.
+- `fig10_tops_recovery_cell_only.{png,pdf}` — HPCA one-column-width
+  (3.5 inch) 16×16-to-32×32 view of Set 1 (GEMM cell area) and Set 2
+  (+ xbar/control cell area). SRAM and all PnR/utilization adjustments are
+  excluded.
 - `fig5_tops_no_peri.{png,pdf}` / `fig5_tops_with_peri.{png,pdf}` —
   TOPS/mm² (FP16×INT4 @ 100 MHz, 28LPP) for three configurations:
   **Baseline** = 32×32 gemm + L1 (8b) + C2 (8b) + A2 (8p);
