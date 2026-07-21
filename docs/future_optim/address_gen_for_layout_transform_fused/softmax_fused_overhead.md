@@ -10,8 +10,8 @@ Use the new DMA-free `rev2` pair for address-generation experiments:
 Both variants use the same cached SIMT softmax body, one 32-thread block per
 row, one global input load per active logical element, one `exp` evaluation per
 active logical element, causal-range clamping, the same LMEM reductions, and
-direct SIMT stores. The per-row address setup and accessor are the only
-layout-dependent parts.
+direct SIMT stores. Both hosts also use the same deterministic score generator.
+The per-row address setup and accessor are the only layout-dependent parts.
 
 The existing `rev1` pair remains useful as a naive control, but it reads each
 input three times and evaluates `exp` twice. Those costs hide the address
@@ -20,8 +20,8 @@ are not a fair pair because their DMA, launch, reduction, and cache strategies
 differ.
 
 As a control, B1/H1/Q1/K32 causal passed in both `rev1` kernels. Baseline
-`rev1` retired 84,001 instructions and fused `rev1` retired 89,700, whereas
-baseline `rev2` retired only 36,696. This confirms that `rev1` compute and
+`rev1` retired 85,665 instructions and fused `rev1` retired 91,364, whereas
+baseline `rev2` retired only 36,600. This confirms that `rev1` compute and
 memory redundancy is large enough to obscure the target overhead.
 
 ## Configuration
@@ -43,18 +43,27 @@ for both variants.
 
 All cases passed their CPU-reference checks.
 
+Run the committed small matched regression with
+`make -C tests/regression run-simx-softmax-rev2-pair` from a configured build
+directory. It covers co-resident K32 rows and causal K33 rows with a
+non-tile-aligned requested stride.
+
 | Shape and options | Baseline instructions | Fused instructions | Instruction overhead | Baseline cycles | Fused cycles | Cycle overhead |
 |---|---:|---:|---:|---:|---:|---:|
 | B1 H1 Q1 K32, causal | 36,600 | 38,560 | 5.36% | 33,143 | 36,038 | 8.73% |
-| B1 H1 Q4 K32, no mask | 95,172 | 107,905 | 13.38% | 64,888 | 80,920 | 24.71% |
-| B1 H2 Q4 K32, causal | 119,922 | 136,106 | 13.50% | 97,523 | 112,354 | 15.21% |
-| B1 H1 Q3 K33, stride 64, causal | 63,988 | 70,596 | 10.33% | 53,716 | 59,485 | 10.74% |
-| B1 H1 Q4 K64, no mask | 114,410 | 128,982 | 12.74% | 66,653 | 82,820 | 24.26% |
+| B1 H1 Q4 K32, no mask | 95,105 | 107,905 | 13.46% | 64,865 | 80,920 | 24.75% |
+| B1 H2 Q4 K32, causal | 119,964 | 136,124 | 13.47% | 97,249 | 112,676 | 15.86% |
+| B1 H1 Q3 K33, stride 64, causal | 64,008 | 70,596 | 10.29% | 53,632 | 59,484 | 10.91% |
+| B1 H1 Q4 K64, no mask | 114,518 | 128,982 | 12.63% | 66,630 | 82,820 | 24.30% |
 
 Causal clamping reduces both useful computation and input-address generation.
 It does not eliminate output-address generation because masked and padded
 columns must still be zeroed. The K33 case with physical stride 64, for example,
 generates tiled store addresses through column 63.
+
+An additional B1/H1/Q3/K33 causal case with requested stride 40 passed in both
+variants after both hosts rounded the physical extent to 64 elements. This
+locks the matched-layout contract for a non-tile-aligned requested stride.
 
 ## Static Code Evidence
 

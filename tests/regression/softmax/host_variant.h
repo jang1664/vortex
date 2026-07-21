@@ -78,6 +78,22 @@ static inline uint32_t softmax_row_pitch_bytes(uint32_t seq_len_k, uint32_t elem
 #endif
 }
 
+static inline uint32_t softmax_effective_row_pitch_bytes(
+    uint32_t seq_len_k,
+    uint32_t requested_stride,
+    uint32_t elem_bytes,
+    bool explicit_stride) {
+#if SOFTMAX_VARIANT == SOFTMAX_VARIANT_REV2
+  (void)seq_len_k;
+  (void)explicit_stride;
+  return softmax_row_pitch_bytes(requested_stride, elem_bytes);
+#else
+  return explicit_stride
+      ? requested_stride * elem_bytes
+      : softmax_row_pitch_bytes(seq_len_k, elem_bytes);
+#endif
+}
+
 static inline uint32_t softmax_hbm_alloc_alignment() {
 #if SOFTMAX_VARIANT == SOFTMAX_VARIANT_REV2
   return 64u;
