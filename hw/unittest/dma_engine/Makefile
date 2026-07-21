@@ -28,6 +28,11 @@ RTLS := $(AXI_DIR)/src/axi_pkg.sv \
 				$(RTL_DIR)/core/VX_mem_remap.sv \
 				$(RTL_DIR)/core/VX_node_done_if.sv \
 				$(RTL_DIR)/core/VX_dma_unit_align.sv \
+				$(RTL_DIR)/core/VX_dma_gearbox.sv \
+				$(RTL_DIR)/core/VX_dma_lane_aligner.sv \
+				$(RTL_DIR)/core/VX_dma_lane_assembler.sv \
+				$(RTL_DIR)/core/VX_dma_equal_realigner.sv \
+				$(RTL_DIR)/core/VX_dma_misal_gen_path.sv \
 				$(RTL_DIR)/core/VX_dma_unit_misal.sv \
 				$(RTL_DIR)/core/VX_dma_unit.sv \
 				$(RTL_DIR)/mem/VX_dma_engine.sv \

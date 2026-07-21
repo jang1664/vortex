@@ -1,0 +1,127 @@
+task: flash-attn-c4
+state: BLOCKED_ON_C4_REBUILD
+updated: "2026-07-20 15:41"
+summary: >-
+  Implemented a single-kernel C4 W4A16/KV4 attention schedule that executes QK
+  GEMM with progress-driven online softmax, joins the softmax workers, fences
+  once, and then executes PV as a second improve-GEMM descriptor. The source
+  RTL and a reset-free back-to-back descriptor unittest pass; full FPGA
+  confirmation requires rebuilding the C4 image with the RTL fix.
+log:
+  - timestamp: "2026-07-20 14:08"
+    action: actual C4 descriptor and intermediate-tensor diagnostics
+    result: >-
+      QK scores were bit-exact and online-softmax probabilities matched the
+      host reference, but a second PV descriptor produced deterministic stale
+      values. A standalone PV-shaped GEMM passed, isolating the failure to
+      back-to-back descriptor state rather than PV arithmetic or layout.
+    learned: >-
+      Output progress and job retirement make DRAM output visible but do not
+      reset improve-GEMM internal synchronization state.
+  - timestamp: "2026-07-20 14:35"
+    action: vector-PV baseline on actual C4
+    result: >-
+      The earlier QK-GEMM plus vector-PV fallback passed M=16 non-causal and
+      causal cases, with final-output relative L2 of 6.70e-4 and 7.89e-4.
+    learned: >-
+      The QK/progress/online-softmax path is numerically sound independently of
+      the second accelerator descriptor.
+  - timestamp: "2026-07-20 14:58"
+    action: sequential same-kernel QK/softmax/fence/PV implementation
+    result: >-
+      Replaced vector PV with a PV GEMM submitted after all online-softmax
+      workers join and the control hart executes one fence. Added a PV-only
+      diagnostic that uploads reference probabilities and makes PV the first
+      descriptor.
+    learned: >-
+      PV-only is bit-exact on the deployed C4 image, while the full path fails
+      only when PV is the second descriptor.
+  - timestamp: "2026-07-20 15:04"
+    action: RTL verification iteration 1
+    result: >-
+      verify_rtl compile failed before compiling the change because the source
+      config.mk pointed VORTEX_HOME at the sibling /vortex checkout and could
+      not locate VX_dma_gearbox.sv.
+    learned: >-
+      RTL unittests must run from the configured build copy, as required by the
+      repository execution notes.
+  - timestamp: "2026-07-20 15:06"
+    action: RTL verification iteration 2
+    result: >-
+      Overriding VORTEX_HOME fixed the source path, but running the source-tree
+      Makefile still failed because generated build/hw/VX_config.h was absent
+      from its include path. The failure log is
+      hw/unittest/gemm_node_improve/logs/iteration2_compile.log.
+    learned: >-
+      VORTEX_HOME selects source RTL, while the configured build directory
+      supplies generated configuration headers.
+  - timestamp: "2026-07-20 15:10"
+    action: RTL verification iteration 3
+    result: >-
+      From build/hw/unittest/gemm_node_improve, two different descriptors ran
+      without reset: M32/N64/K128 at generation 1 and M64/N32/K256 at
+      generation 2. Both 2,048-element outputs passed their FP16 references.
+    learned: >-
+      Clearing all VX_gemm_sync registers on accepted OP_CLEAR fixes reuse of
+      the same job entry across sequential descriptors.
+  - timestamp: "2026-07-20 15:15"
+    action: final RTL verification iteration 4
+    result: >-
+      The same reset-free back-to-back VCS test passed again after cleanup,
+      completing at 44,905 ns with no mismatch or ERROR. Logs are under
+      build/hw/unittest/gemm_node_improve/logs/.
+    learned: >-
+      The combined reset/CLEAR branch and simplified test setup preserve the
+      verified behavior.
+  - timestamp: "2026-07-20 15:16"
+    action: final actual-C4 checks with deployed image 8d9b4939d1
+    result: >-
+      PV-only passed bit-exact with four progress events. The full test again
+      produced bit-exact QK scores and close probabilities (relative L2
+      0.00131), then failed at PV (relative L2 8.82), as expected because the
+      deployed image predates the sync-register RTL fix.
+    learned: >-
+      A new C4 xclbin is the only remaining prerequisite for end-to-end FPGA
+      validation of the sequential two-descriptor kernel.
+  - timestamp: "2026-07-20 15:34"
+    action: review-driven regression hardening
+    result: >-
+      verify_rtl now treats a nonzero make/simulator return code as sim_fail
+      before accepting pass text. A failure-injection check confirmed that an
+      earlier OUTPUT CHECK PASSED marker cannot hide a later nonzero exit.
+      Added a named back_to_back mode to test.sh, test.sh all, and the Makefile
+      regression target, with a terminal BACK_TO_BACK GEMM PASSED marker.
+    learned: >-
+      Multi-stage regressions need both process-status validation and a success
+      marker emitted only after the final stage.
+  - timestamp: "2026-07-20 15:37"
+    action: RTL verification iteration 5
+    result: >-
+      Direct verify_rtl plusargs passed with both descriptor outputs and the
+      terminal marker. The first standard-runner attempt failed because
+      configure copies the unittest Makefile but not source test.sh into the
+      configured build directory.
+    learned: >-
+      A configured unittest runner must separate the source script location
+      from the build working directory.
+  - timestamp: "2026-07-20 15:41"
+    action: RTL verification iteration 6
+    result: >-
+      verify_rtl selected the source test.sh and supplied UNITTEST_BUILD_DIR for
+      the configured build tree. The named back_to_back mode passed with
+      generation 1 and 2 outputs, the terminal marker, and summary pass=1
+      fail=0. Logs are under build/hw/unittest/gemm_node_improve/logs/.
+    learned: >-
+      The reset-free descriptor case is now reachable through the standard,
+      deterministic verification entry point rather than only manual plusargs.
+pitfalls:
+  - >-
+    A core fence publishes the vector-written probability tile, but cannot
+    clear accelerator synchronization registers left by an earlier descriptor.
+  - >-
+    Job allocation begins with occupy=1, working=0, valid=0. Retirement checks
+    must use generation change or both occupy and working deasserted; valid
+    alone can report false completion.
+  - >-
+    The current regression intentionally covers one 128-key KV tile. Multi-tile
+    attention remains follow-up work after rebuilt-C4 validation.

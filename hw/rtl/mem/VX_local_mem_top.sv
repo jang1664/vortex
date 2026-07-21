@@ -54,6 +54,9 @@ module VX_local_mem_top import VX_gpu_pkg::*; #(
     output wire [NUM_REQS-1:0][WORD_SIZE*8-1:0] mem_rsp_data,
     output wire [NUM_REQS-1:0][TAG_WIDTH-1:0]  mem_rsp_tag,
     input  wire [NUM_REQS-1:0]                 mem_rsp_ready
+`ifdef PERF_ENABLE
+    , output wire [PERF_CTR_BITS-1:0]          perf_bank_stalls
+`endif
 );
     VX_mem_bus_if #(
         .DATA_SIZE (WORD_SIZE),
@@ -81,6 +84,12 @@ module VX_local_mem_top import VX_gpu_pkg::*; #(
         assign mem_bus_if[i].rsp_ready = mem_rsp_ready[i];
     end
 
+`ifdef PERF_ENABLE
+    lmem_perf_t lmem_perf;
+    assign perf_bank_stalls = lmem_perf.bank_stalls;
+    `UNUSED_VAR (lmem_perf)
+`endif
+
     VX_local_mem #(
         .INSTANCE_ID(INSTANCE_ID),
         .SIZE       (SIZE),
@@ -93,6 +102,9 @@ module VX_local_mem_top import VX_gpu_pkg::*; #(
     ) local_mem (
         .clk        (clk),
         .reset      (reset),
+`ifdef PERF_ENABLE
+        .lmem_perf  (lmem_perf),
+`endif
         .mem_bus_if (mem_bus_if)
     );
 

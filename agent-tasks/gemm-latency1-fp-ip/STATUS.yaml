@@ -1,0 +1,25 @@
+task: gemm-latency1-fp-ip
+state: DONE
+updated: "2026-07-21 01:50"
+summary: >-
+  Add latency-1 Xilinx FP IP variants and compare their U55C OOC timing with
+  the existing latency-2 variants.
+activity:
+  - timestamp: "2026-07-21 01:38"
+    action: "Added latency-1 FP16 multiply, FP32 multiply, and FP32 add IP definitions."
+    result: "Pending IP generation and OOC timing comparison."
+  - timestamp: "2026-07-21 01:50"
+    action: >-
+      Generated all IP targets and synthesized the latency-1 and latency-2
+      variants out of context for xcu55c-fsvh2892-2L-e.
+    result: >-
+      All six runs passed. Critical arithmetic path delays were 3.040/2.954 ns
+      for FP16 multiply, 3.738/3.732 ns for FP32 multiply, and 4.486/4.472 ns
+      for FP32 add (latency 2/1 respectively).
+pitfalls:
+  - "Run synthesis only after sourcing the selected hardware configuration."
+  - "Use the same U55C part and OOC flow for both latency variants."
+  - >-
+    The generated OOC XDC uses a 100 ns clock and does not constrain external
+    I/O delay. For latency-1 IPs, the arithmetic result is a register-to-output
+    path, so compare its explicit data path delay rather than the headline WNS.

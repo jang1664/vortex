@@ -3,7 +3,7 @@
 
 module tb_VX_csr_unit import VX_gpu_pkg::*; ();
   localparam int PERIOD = 10;
-  localparam int NUM_REQS = 8;
+  localparam int NUM_REQS = 11;
 
   logic clk = 1'b0;
   logic reset = 1'b1;
@@ -130,6 +130,9 @@ module tb_VX_csr_unit import VX_gpu_pkg::*; ();
     accel_perf.lmem_dma_weight.rd_bytes = PERF_CTR_BITS'(606);
     accel_perf.lmem_dma_sz.rd_bytes = PERF_CTR_BITS'(707);
     accel_perf.lmem_dma_output.rd_bytes = PERF_CTR_BITS'(808);
+    pipeline_perf.load_latency = PERF_CTR_BITS'(909);
+    sysmem_perf.l3cache.reads = PERF_CTR_BITS'(1010);
+    sysmem_perf.mem.reads = PERF_CTR_BITS'(1111);
 
     for (int i = 0; i < NUM_REQS; ++i) begin
       expected_uuid[i] = UUID_WIDTH'(i + 1);
@@ -144,6 +147,9 @@ module tb_VX_csr_unit import VX_gpu_pkg::*; ();
     expected_data[5] = `XLEN'(606);
     expected_data[6] = `XLEN'(707);
     expected_data[7] = `XLEN'(808);
+    expected_data[8] = `XLEN'(909);
+    expected_data[9] = `XLEN'(1010);
+    expected_data[10] = `XLEN'(1111);
 
     repeat (5) @(posedge clk);
     reset = 1'b0;
@@ -156,6 +162,9 @@ module tb_VX_csr_unit import VX_gpu_pkg::*; ();
     drive_request(5, `VX_DCR_MPM_CLASS_ACCEL_LDMA_WT,  `VX_CSR_MPM_LDMA_RD_BYTES);
     drive_request(6, `VX_DCR_MPM_CLASS_ACCEL_LDMA_SZ,  `VX_CSR_MPM_LDMA_RD_BYTES);
     drive_request(7, `VX_DCR_MPM_CLASS_ACCEL_LDMA_OUT, `VX_CSR_MPM_LDMA_RD_BYTES);
+    drive_request(8, `VX_DCR_MPM_CLASS_CORE,           `VX_CSR_MPM_LOAD_LT);
+    drive_request(9, `VX_DCR_MPM_CLASS_MEM,            `VX_CSR_MPM_L3CACHE_READS);
+    drive_request(10, `VX_DCR_MPM_CLASS_MEM,           `VX_CSR_MPM_MEM_READS);
 
     @(negedge clk);
     execute_if.valid = 1'b0;

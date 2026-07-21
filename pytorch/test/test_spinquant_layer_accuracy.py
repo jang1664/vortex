@@ -50,6 +50,7 @@ from spinquant_inference.layer_accuracy.tensor_io import (  # noqa: E402
     pack_signed_int4,
     unpack_signed_int4,
 )
+from spinquant_inference.utils.hadamard_utils import get_hadK  # noqa: E402
 
 
 def tiny_config() -> LayerConfig:
@@ -80,7 +81,33 @@ def batched_tiny_config() -> LayerConfig:
     )
 
 
+def gqa_tiny_config(*, sequence_length: int = 4) -> LayerConfig:
+    return LayerConfig(
+        model="test-llama-gqa",
+        hidden_size=32,
+        intermediate_size=64,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        head_dim=8,
+        batch_size=1,
+        sequence_length=sequence_length,
+        weight_group_size=4,
+        kv_group_size=8,
+    )
+
+
 class TensorContractTests(unittest.TestCase):
+    def test_llama3_r4_uses_exact_orthogonal_28_base(self):
+        matrix, base = get_hadK(14336)
+        self.assertEqual(base, 28)
+        self.assertEqual(tuple(matrix.shape), (28, 28))
+        torch.testing.assert_close(
+            matrix @ matrix.transpose(0, 1),
+            torch.eye(28) * 28,
+            rtol=0,
+            atol=0,
+        )
+
     @staticmethod
     def _encode_tiled_weight(values: torch.Tensor, wtrans: int) -> torch.Tensor:
         k_dim, n_dim = values.shape
@@ -181,6 +208,34 @@ class TensorContractTests(unittest.TestCase):
         expected = pack_signed_int4(weight.transpose(0, 1).contiguous()).reshape(1, 1, 32, 64)
         torch.testing.assert_close(decode_physical_tensor(handle), expected, rtol=0, atol=0)
 
+    def test_packed_wtrans1_decodes_single_token_along_head_dim(self):
+        weight = ((torch.arange(128).reshape(128, 1) % 16) - 8).to(torch.int8)
+        padded = torch.zeros((128, 32), dtype=torch.int8)
+        padded[:, :1] = weight
+        tiled = self._encode_tiled_weight(padded, wtrans=1)
+        spec = TensorSpec(
+            "k.packed",
+            ("B", "H", "S", "Dp"),
+            (1, 1, 1, 64),
+            "uint8",
+            physical=PhysicalSpec.contiguous(
+                "gemm_w_packed_grouped",
+                tuple(tiled.shape),
+                grouping="head",
+                parameters={
+                    "weight_k": 128,
+                    "weight_n": 1,
+                    "wtrans": 1,
+                    "source_transposed": 1,
+                },
+            ),
+        )
+        handle = TensorHandle(spec, (tiled,), "test")
+        expected = pack_signed_int4(weight.transpose(0, 1).contiguous()).reshape(
+            1, 1, 1, 64
+        )
+        torch.testing.assert_close(decode_physical_tensor(handle), expected, rtol=0, atol=0)
+
     def test_packed_wtrans0_decodes_to_semantic_capture(self):
         weight = ((torch.arange(32 * 128).reshape(32, 128) % 16) - 8).to(torch.int8)
         tiled = self._encode_tiled_weight(weight, wtrans=0)
@@ -207,6 +262,35 @@ class TensorContractTests(unittest.TestCase):
 
 
 class ArtifactTests(unittest.TestCase):
+    def test_layer_config_preserves_pre_gqa_positional_constructor(self):
+        config = LayerConfig(
+            "custom", 32, 64, 4, 8, 2, 3, 8, 8, 1e-5, 10000.0
+        )
+        self.assertEqual(config.head_dim, 8)
+        self.assertEqual(config.batch_size, 2)
+        self.assertEqual(config.sequence_length, 3)
+        self.assertEqual(config.num_key_value_heads, 4)
+
+    def test_llama3_8b_preset_exposes_gqa_and_model_geometry(self):
+        config = LayerConfig.for_model("llama3-8b", batch_size=2, sequence_length=7)
+        self.assertEqual(config.hidden_size, 4096)
+        self.assertEqual(config.intermediate_size, 14336)
+        self.assertEqual(config.num_attention_heads, 32)
+        self.assertEqual(config.num_key_value_heads, 8)
+        self.assertEqual(config.num_key_value_groups, 4)
+        self.assertEqual(config.kv_hidden_size, 1024)
+        self.assertEqual(config.rms_norm_eps, 1e-5)
+        self.assertEqual(config.rope_theta, 500000.0)
+
+    def test_gqa_case_uses_narrow_kv_projection_artifacts(self):
+        case = create_random_case(gqa_tiny_config(), seed=41)
+        self.assertEqual(case.tensors["q_proj.qweight"].shape, (32, 16))
+        self.assertEqual(case.tensors["k_proj.qweight"].shape, (32, 8))
+        self.assertEqual(case.tensors["v_proj.qweight"].shape, (32, 8))
+        self.assertEqual(case.tensors["o_proj.qweight"].shape, (32, 16))
+        self.assertTrue(case.manifest["attention_contract"]["gqa"])
+        self.assertEqual(case.manifest["attention_contract"]["query_heads_per_kv"], 2)
+
     def test_random_case_expands_position_tables_for_each_batch(self):
         case = create_random_case(batched_tiny_config(), seed=0)
         self.assertEqual(case.tensors["input"].shape, (2, 3, 16))
@@ -321,6 +405,66 @@ class GraphExecutionTests(unittest.TestCase):
         self.assertEqual(result.captures["qk"].shape, (2, 2, 3, 3))
         self.assertEqual(result.captures["final_residual"].shape, (2, 3, 16))
 
+    def test_gqa_attention_matches_explicit_kv_head_expansion(self):
+        config = gqa_tiny_config(sequence_length=3)
+        case = create_random_case(config, seed=43)
+        backend = TorchBackend("cpu")
+        backend.bind(case)
+        q = torch.randn(1, 4, 3, 8, dtype=torch.float16)
+        k = torch.randn(1, 2, 3, 8, dtype=torch.float16)
+        v = torch.randn(1, 2, 3, 8, dtype=torch.float16)
+        quantized_k = backend.quantize(k, "asym")
+        qk = backend.qk(q, quantized_k)
+        expected_qk = torch.matmul(
+            q,
+            backend.quantized_capture(quantized_k).repeat_interleave(2, dim=1).transpose(-1, -2),
+        ).to(torch.float16)
+        torch.testing.assert_close(qk, expected_qk, rtol=0, atol=0)
+
+        probabilities = torch.softmax(qk.float(), dim=-1).to(torch.float16)
+        quantized_v = backend.quantize(v, "sym")
+        pv = backend.pv(probabilities, quantized_v)
+        expected_pv = torch.matmul(
+            probabilities,
+            backend.quantized_capture(quantized_v).repeat_interleave(2, dim=1),
+        ).to(torch.float16)
+        torch.testing.assert_close(pv, expected_pv, rtol=0, atol=0)
+
+        result = LayerExecutor(TorchBackend("cpu")).run(case)
+        self.assertEqual(result.captures["k_proj"].shape, (1, 3, 16))
+        self.assertEqual(result.captures["v_proj"].shape, (1, 3, 16))
+        self.assertEqual(result.captures["qk"].shape, (1, 4, 3, 3))
+        self.assertEqual(result.captures["final_residual"].shape, (1, 3, 32))
+
+    def test_layer_executor_activates_the_bound_prefill_geometry(self):
+        class TrackingBackend(TorchBackend):
+            def __init__(self):
+                super().__init__("cpu")
+                self.activations = []
+
+            def activate(self, input_tensor, position_ids, causal_mask):
+                self.activations.append(
+                    (
+                        tuple(input_tensor.shape),
+                        tuple(position_ids.shape),
+                        tuple(causal_mask.shape),
+                    )
+                )
+                super().activate(input_tensor, position_ids, causal_mask)
+
+        backend = TrackingBackend()
+        LayerExecutor(backend).run(self.case, stop_after="input_norm")
+        self.assertEqual(
+            backend.activations,
+            [
+                (
+                    tuple(self.case.tensors["input"].shape),
+                    tuple(self.case.tensors["position_ids"].shape),
+                    tuple(self.case.tensors["causal_mask"].shape),
+                )
+            ],
+        )
+
     def test_r3_preserves_attention_dot_products(self):
         q = torch.randn(2, 4, 8, dtype=torch.float32)
         k = torch.randn(2, 4, 8, dtype=torch.float32)
@@ -407,6 +551,32 @@ class GraphExecutionTests(unittest.TestCase):
 
 
 class ComparatorTests(unittest.TestCase):
+    def test_decode_qualified_stage_uses_semantic_stage_profile(self):
+        from spinquant_inference.layer_accuracy.compare import _semantic_stage
+
+        self.assertEqual(_semantic_stage("prefill.qk"), "qk")
+        self.assertEqual(_semantic_stage("step1.final_residual"), "final_residual")
+        self.assertEqual(_semantic_stage("step0.k_quant.packed"), "k_quant")
+
+    def test_small_decode_stage_allows_one_isolated_matmul_outlier(self):
+        reference = torch.full((32,), 100.0, dtype=torch.float16)
+        candidate = reference.clone()
+        candidate[7] = 105.625
+        report = compare_runs(
+            {"step0.qk": reference}, {"step0.qk": candidate}
+        )
+        self.assertTrue(report["passed"])
+
+    def test_decode_cache_update_uses_quantized_error_budget(self):
+        reference = torch.ones(128, dtype=torch.float16)
+        candidate = reference.clone()
+        candidate[0] = 1.03
+        report = compare_runs(
+            {"step0.cache_update": reference},
+            {"step0.cache_update": candidate},
+        )
+        self.assertTrue(report["passed"])
+
     def test_comparator_reports_worst_index_and_fails_non_finite(self):
         reference = {"input_norm": torch.tensor([1.0, 2.0])}
         candidate = {"input_norm": torch.tensor([1.0, 2.5])}
@@ -418,6 +588,11 @@ class ComparatorTests(unittest.TestCase):
         candidate["input_norm"][0] = math.nan
         report = compare_runs(reference, candidate, profile="llama2_fp16_w4kv4_v1")
         self.assertFalse(report["stages"]["input_norm"]["finite"])
+
+    def test_comparator_preserves_legacy_default_profile_name(self):
+        report = compare_runs({"input_norm": torch.ones(1)},
+                              {"input_norm": torch.ones(1)})
+        self.assertEqual(report["profile"], "llama2_fp16_w4kv4_v1")
 
     def test_quantized_stage_allows_sparse_bin_boundary_outliers(self):
         reference = {"k_quant": torch.ones(1000)}
@@ -464,6 +639,18 @@ class GeneratorConformanceTests(unittest.TestCase):
             report["checked_kernels_by_plan"]["standalone"],
         )
         self.assertIn("attn_softmax", report["checked_kernels_by_plan"]["fused"])
+        self.assertIn(
+            "spinquant_r3_q_hadamard",
+            report["checked_kernels_by_plan"]["fused_llama3_generation"],
+        )
+        self.assertIn(
+            "spinquant_r3_k_hadamard",
+            report["checked_kernels_by_plan"]["fused_llama3_prefill"],
+        )
+        self.assertIn(
+            "layout_k_proj_to_rope_k_detile",
+            report["checked_kernels_by_plan"]["standalone_llama3_prefill"],
+        )
 
 
 class PhysicalPlanInterfaceTests(unittest.TestCase):

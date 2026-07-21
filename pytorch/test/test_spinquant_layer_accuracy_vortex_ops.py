@@ -47,6 +47,238 @@ class SpinQuantVortexOpTests(unittest.TestCase):
             )
         return torch.cat(chunks).reshape(m_pad, n)
 
+    @staticmethod
+    def _allocate_fused_cache(source, *, quant_mode):
+        capacity, head_dim = source.shape
+        asymmetric = quant_mode == 1
+        return torch.ops.vortex.kv_cache_quant_layout_fused_w4a16(
+            source,
+            capacity,
+            head_dim,
+            head_dim,
+            1,
+            0 if asymmetric else 1,
+            1 if asymmetric else 0,
+            0,
+            1 if asymmetric else 0,
+            quant_mode,
+            head_dim,
+            0,
+            capacity,
+            0,
+        )
+
+    def _check_persistent_cache_updates(self, *, quant_mode):
+        capacity, head_dim = 160, 128
+        full_cpu = torch.zeros((capacity, head_dim), dtype=torch.float16)
+        with torch.vortex.memory_alignment(512):
+            full = full_cpu.to("vortex")
+        cache = self._allocate_fused_cache(full, quant_mode=quant_mode)
+        addresses = tuple(tensor.data_ptr() for tensor in cache)
+
+        generator = torch.Generator().manual_seed(101 + quant_mode)
+        for position in (31, 32, 33, 127, 128, 129, 159):
+            token_cpu = torch.randn(
+                (1, head_dim), generator=generator, dtype=torch.float16
+            )
+            full_cpu[position].copy_(token_cpu[0])
+            with torch.vortex.memory_alignment(512):
+                token = token_cpu.to("vortex")
+                expected_source = full_cpu.to("vortex")
+            returned = torch.ops.vortex.kv_cache_quant_layout_fused_w4a16_update(
+                token, capacity, position, quant_mode, *cache
+            )
+            self.assertEqual(tuple(tensor.data_ptr() for tensor in returned), addresses)
+            expected = self._allocate_fused_cache(
+                expected_source, quant_mode=quant_mode
+            )
+            for actual_tensor, expected_tensor in zip(cache, expected):
+                torch.testing.assert_close(
+                    actual_tensor.cpu(), expected_tensor.cpu(), rtol=0, atol=0
+                )
+
+    def test_persistent_asymmetric_key_updates_match_full_layout(self):
+        self._check_persistent_cache_updates(quant_mode=1)
+
+    def test_persistent_symmetric_value_updates_match_full_layout(self):
+        self._check_persistent_cache_updates(quant_mode=2)
+
+    def test_persistent_update_rejects_invalid_position_before_launch(self):
+        capacity, head_dim = 32, 128
+        with torch.vortex.memory_alignment(512):
+            source = torch.zeros((capacity, head_dim), dtype=torch.float16).to("vortex")
+            token = torch.zeros((1, head_dim), dtype=torch.float16).to("vortex")
+        cache = self._allocate_fused_cache(source, quant_mode=1)
+        with self.assertRaisesRegex(RuntimeError, "inside cache capacity"):
+            torch.ops.vortex.kv_cache_quant_layout_fused_w4a16_update(
+                token, capacity, capacity, 1, *cache
+            )
+
+    def test_persistent_update_reads_gemm_a_source_geometry(self):
+        capacity, head_dim, m_pad, position = 64, 128, 8, 33
+        token_cpu = torch.randn((1, head_dim), dtype=torch.float16)
+        tiled_cpu = self._encode_gemm_tile(token_cpu, m_pad)
+        full_cpu = torch.zeros((capacity, head_dim), dtype=torch.float16)
+        full_cpu[position].copy_(token_cpu[0])
+        with torch.vortex.memory_alignment(512):
+            zero_source = torch.zeros_like(full_cpu).to("vortex")
+            expected_source = full_cpu.to("vortex")
+            tiled = tiled_cpu.to("vortex")
+        cache = self._allocate_fused_cache(zero_source, quant_mode=1)
+        torch.ops.vortex.kv_cache_quant_layout_fused_w4a16_update(
+            tiled,
+            capacity,
+            position,
+            1,
+            *cache,
+            head_dim,
+            2,
+            head_dim,
+            0,
+            m_pad,
+            0,
+        )
+        expected = self._allocate_fused_cache(expected_source, quant_mode=1)
+        for actual_tensor, expected_tensor in zip(cache, expected):
+            torch.testing.assert_close(
+                actual_tensor.cpu(), expected_tensor.cpu(), rtol=0, atol=0
+            )
+
+    def test_softmax_uses_logical_prefix_with_capacity_strides(self):
+        seq_q, seq_k, capacity, m_pad = 1, 33, 64, 8
+        scores = torch.randn((seq_q, capacity), dtype=torch.float16)
+        scores[:, seq_k:] = 1000
+        tiled_cpu = self._encode_gemm_tile(scores, m_pad)
+        with torch.vortex.memory_alignment(512):
+            tiled = tiled_cpu.to("vortex")
+        output = torch.ops.vortex.softmax_layout_fused(
+            tiled, 1, 1, seq_q, seq_k, m_pad, 0, 1.0, capacity, capacity
+        )
+        decoded = _decode_gemm_matrix(
+            output.cpu(), m=seq_q, m_pad=m_pad, n=capacity
+        )
+        expected = torch.softmax(scores[:, :seq_k].float(), dim=-1).to(torch.float16)
+        torch.testing.assert_close(
+            decoded[:, :seq_k], expected, rtol=2e-3, atol=2e-3
+        )
+        self.assertTrue(torch.equal(decoded[:, seq_k:], torch.zeros_like(decoded[:, seq_k:])))
+
+    def test_persistent_attention_reads_logical_prefix_across_k_tiles(self):
+        capacity, value_k_pad, head_dim, m_pad = 160, 256, 128, 8
+        generator = torch.Generator().manual_seed(313)
+        query_cpu = torch.randn((1, head_dim), generator=generator, dtype=torch.float16) * 0.2
+        key_cpu = torch.randn(
+            (capacity, head_dim), generator=generator, dtype=torch.float16
+        ) * 0.2
+        value_cpu = torch.randn(
+            (capacity, head_dim), generator=generator, dtype=torch.float16
+        ) * 0.2
+        query_padded_cpu = torch.zeros(
+            (m_pad, head_dim), dtype=torch.float16
+        )
+        query_padded_cpu[:1].copy_(query_cpu)
+        with torch.vortex.memory_alignment(512):
+            query = query_padded_cpu.to("vortex")
+            key = key_cpu.to("vortex")
+            value = value_cpu.to("vortex")
+        key_cache = self._allocate_fused_cache(key, quant_mode=1)
+        value_cache = self._allocate_fused_cache(value, quant_mode=2)
+        key_addresses = tuple(tensor.data_ptr() for tensor in key_cache)
+        value_addresses = tuple(tensor.data_ptr() for tensor in value_cache)
+        query_tiled = torch.ops.vortex.tile_input_a(query, m_pad, head_dim)
+
+        key_quant = unpack_signed_int4(
+            _decode_packed_gemm_weight(
+                key_cache[0].cpu(), k=head_dim, n=capacity, wtrans=1
+            )
+        ).transpose(0, 1).float()
+        key_dequant = (
+            key_quant - key_cache[4].cpu().float()
+        ) * key_cache[3].cpu().float()
+        value_quant = unpack_signed_int4(
+            _decode_packed_gemm_weight(
+                value_cache[0].cpu(), k=value_k_pad, n=head_dim, wtrans=0
+            )
+        )[:capacity].float()
+        value_dequant = value_quant * value_cache[3].cpu().float()
+
+        for logical_length in (1, 31, 32, 33, 127, 128, 129):
+            with self.subTest(logical_length=logical_length):
+                with torch.vortex.memory_alignment(512):
+                    scores_tiled = torch.empty(
+                        (m_pad, capacity), dtype=torch.float16, device="vortex"
+                    )
+                torch.ops.vortex.mm_w4a16_gemm_core_out(
+                    query_tiled,
+                    key_cache[0],
+                    key_cache[1],
+                    key_cache[2],
+                    head_dim,
+                    capacity,
+                    head_dim,
+                    1,
+                    0,
+                    scores_tiled,
+                )
+                torch.ops.vortex.qk_asym_correction_out(
+                    scores_tiled,
+                    query_tiled,
+                    key_cache[3].reshape(-1),
+                    key_cache[4].reshape(-1),
+                    1,
+                    m_pad,
+                    capacity,
+                    1,
+                    1,
+                    scores_tiled,
+                )
+                probabilities = torch.ops.vortex.softmax_layout_fused(
+                    scores_tiled,
+                    1,
+                    1,
+                    1,
+                    logical_length,
+                    m_pad,
+                    0,
+                    head_dim ** -0.5,
+                    capacity,
+                    value_k_pad,
+                )
+                with torch.vortex.memory_alignment(512):
+                    pv_tiled = torch.empty(
+                        (m_pad, head_dim), dtype=torch.float16, device="vortex"
+                    )
+                torch.ops.vortex.mm_w4a16_gemm_core_out(
+                    probabilities[0],
+                    value_cache[0],
+                    value_cache[1],
+                    value_cache[2],
+                    value_k_pad,
+                    head_dim,
+                    head_dim,
+                    0,
+                    1,
+                    pv_tiled,
+                )
+                actual = _decode_gemm_matrix(
+                    pv_tiled.cpu(), m=1, m_pad=m_pad, n=head_dim
+                )
+                expected_scores = (
+                    query_cpu.float() @ key_dequant[:logical_length].T
+                ) * (head_dim ** -0.5)
+                expected = torch.softmax(expected_scores, dim=-1) @ value_dequant[
+                    :logical_length
+                ]
+                torch.testing.assert_close(
+                    actual, expected.half(), rtol=1e-2, atol=1e-2
+                )
+                self.assertEqual(
+                    tuple(tensor.data_ptr() for tensor in key_cache), key_addresses
+                )
+                self.assertEqual(
+                    tuple(tensor.data_ptr() for tensor in value_cache), value_addresses
+                )
+
     def test_rms_norm_layout_fused_matches_standalone_composition(self):
         for rows in (8, 160):
             with self.subTest(rows=rows):
@@ -137,6 +369,51 @@ class SpinQuantVortexOpTests(unittest.TestCase):
             projection_tiled, residual_device, seq, seq, heads * dim
         ).cpu()
         torch.testing.assert_close(added, projection + residual, rtol=0, atol=0)
+
+    def test_head_concat_accepts_gqa_decode_m_rows_per_kv_head(self):
+        batch, query_heads, kv_heads, seq, dim = 1, 4, 2, 1, 32
+        query_heads_per_kv = query_heads // kv_heads
+        grouped = torch.arange(
+            kv_heads * query_heads_per_kv * dim, dtype=torch.float16
+        ).reshape(kv_heads, query_heads_per_kv, dim)
+        input_m_pad = 8
+        tiled_cpu = torch.stack(
+            [self._encode_gemm_tile(matrix, input_m_pad) for matrix in grouped]
+        )
+        with torch.vortex.memory_alignment(512):
+            tiled = tiled_cpu.to("vortex")
+        output = torch.ops.vortex.head_concat_layout_fused(
+            tiled,
+            batch,
+            seq,
+            query_heads,
+            dim,
+            input_m_pad,
+            8,
+            query_heads_per_kv,
+        )
+        row = torch.ops.vortex.detile_output(output, 1, 8, query_heads * dim).cpu()
+        expected = grouped.reshape(1, query_heads * dim)
+        torch.testing.assert_close(row, expected, rtol=0, atol=0)
+
+        with self.assertRaisesRegex(
+            RuntimeError, "query_heads_per_kv must be positive and divide heads"
+        ):
+            torch.ops.vortex.head_concat_layout_fused(
+                tiled, batch, seq, query_heads, dim, input_m_pad, 8, 0
+            )
+        with self.assertRaisesRegex(
+            RuntimeError, "query_heads_per_kv must be positive and divide heads"
+        ):
+            torch.ops.vortex.head_concat_layout_fused(
+                tiled, batch, seq, query_heads, dim, input_m_pad, 8, 3
+            )
+        with self.assertRaisesRegex(
+            RuntimeError, "input_m_pad must cover grouped query rows"
+        ):
+            torch.ops.vortex.head_concat_layout_fused(
+                tiled, batch, seq, query_heads, dim, 0, 8, query_heads_per_kv
+            )
 
     def test_signed_asymmetric_fused_kv_quantization_contract(self):
         source_cpu = torch.linspace(-3, 2, 32 * 128, dtype=torch.float16).reshape(32, 128)

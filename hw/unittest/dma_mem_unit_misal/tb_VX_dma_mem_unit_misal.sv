@@ -22,6 +22,8 @@ module tb_VX_dma_mem_unit_misal import VX_gpu_pkg::*; ();
   parameter int    LMEM_BYTES_P   = 128;
   parameter int    PACK_BYTES_P   = 16;
   parameter bit    ENABLE_MISALIGN_P = 1'b1;
+  parameter bit    THROUGHPUT_P = 1'b0;
+  parameter bit    NO_BACKPRESSURE_P = 1'b0;
 
   // -----------------------------
   // Params
@@ -34,6 +36,8 @@ module tb_VX_dma_mem_unit_misal import VX_gpu_pkg::*; ();
 
   localparam int DCACHE_BYTES = DCACHE_BYTES_P;
   localparam int LMEM_BYTES   = LMEM_BYTES_P;
+  localparam int MIN_DMA_BYTES = (DCACHE_BYTES < LMEM_BYTES)
+                               ? DCACHE_BYTES : LMEM_BYTES;
 
   // LMEM instance: 1 port
   localparam int LMEM_PORTS = 1;
@@ -185,7 +189,76 @@ module tb_VX_dma_mem_unit_misal import VX_gpu_pkg::*; ();
 
   // Two ready cycles followed by three blocked cycles. The pattern fills the
   // depth-2 request buffer and verifies its registered ready boundary.
-  assign dcache_bus_if.req_ready = (dcache_ready_phase < 3'd2);
+  assign dcache_bus_if.req_ready = NO_BACKPRESSURE_P
+                                 || (dcache_ready_phase < 3'd2);
+
+`ifdef DMA_MISAL_GENERALIZED
+  longint unsigned throughput_cycle;
+  longint unsigned throughput_last_fire_cycle;
+  int unsigned throughput_fire_count;
+  int unsigned throughput_byte_count;
+  bit throughput_monitor_active;
+
+  always @(posedge clk) begin
+    if (reset) begin
+      throughput_cycle <= 0;
+    end else begin
+      throughput_cycle <= throughput_cycle + 1;
+      if (throughput_monitor_active
+       && (dut.g_misaligned.u_impl.gen_path.aligned_fast_path
+             ? dut.g_misaligned.u_impl.gen_dst_fire
+             : dut.g_misaligned.u_impl.gen_path.stream_fire)) begin
+        int unsigned accepted_bytes;
+        if (dut.g_misaligned.u_impl.gen_path.aligned_fast_path) begin
+          accepted_bytes = dut.g_misaligned.u_impl.active_dir
+            ? $countones(dut.g_misaligned.u_impl.gen_dcache_wr_byteen)
+            : $countones(dut.g_misaligned.u_impl.gen_lmem_wr_byteen);
+        end else begin
+          accepted_bytes = $countones(
+            dut.g_misaligned.u_impl.gen_path.stream_byteen);
+        end
+        if (accepted_bytes != MIN_DMA_BYTES) begin
+          $fatal(1, "throughput beat accepted %0dB, expected %0dB",
+                 accepted_bytes, MIN_DMA_BYTES);
+        end
+        if ((throughput_fire_count != 0)
+         && (throughput_cycle != (throughput_last_fire_cycle + 1))) begin
+          $fatal(1, "throughput bubble after beat %0d: cycles %0d -> %0d",
+                 throughput_fire_count, throughput_last_fire_cycle,
+                 throughput_cycle);
+        end
+        throughput_last_fire_cycle <= throughput_cycle;
+        throughput_fire_count <= throughput_fire_count + 1;
+        throughput_byte_count <= throughput_byte_count + accepted_bytes;
+      end
+    end
+  end
+
+  task automatic start_throughput_monitor();
+    throughput_last_fire_cycle = 0;
+    throughput_fire_count = 0;
+    throughput_byte_count = 0;
+    throughput_monitor_active = 1'b1;
+  endtask
+
+  task automatic stop_throughput_monitor(
+    input int unsigned expected_bytes,
+    input string direction_name
+  );
+    throughput_monitor_active = 1'b0;
+    if (throughput_byte_count != expected_bytes) begin
+      $fatal(1, "%s throughput accepted %0dB, expected %0dB",
+             direction_name, throughput_byte_count, expected_bytes);
+    end
+    if (throughput_fire_count != (expected_bytes / MIN_DMA_BYTES)) begin
+      $fatal(1, "%s throughput used %0d beats, expected %0d",
+             direction_name, throughput_fire_count,
+             expected_bytes / MIN_DMA_BYTES);
+    end
+    $display("[THROUGHPUT] %s PASS: %0dB/cycle for %0d beats",
+             direction_name, MIN_DMA_BYTES, throughput_fire_count);
+  endtask
+`endif
 
   always @(posedge clk) begin
     if (reset) begin
@@ -442,8 +515,16 @@ module tb_VX_dma_mem_unit_misal import VX_gpu_pkg::*; ();
     d1[15] = padding;
     d1[16] = 32'd0; // G2L: GLOBAL/DCACHE -> LMEM
 
+`ifdef DMA_MISAL_GENERALIZED
+    if (THROUGHPUT_P)
+      start_throughput_monitor();
+`endif
     cfg_send_desc(d1, 32'd0);
     wait_dma_done();
+`ifdef DMA_MISAL_GENERALIZED
+    if (THROUGHPUT_P)
+      stop_throughput_monitor(total_bytes, "DCACHE-to-LMEM");
+`endif
 
     // -------------------------
     // LMEM -> GLOBAL
@@ -461,8 +542,16 @@ module tb_VX_dma_mem_unit_misal import VX_gpu_pkg::*; ();
     d2[15] = padding;
     d2[16] = 32'd1; // L2G: LMEM -> GLOBAL/DCACHE
 
+`ifdef DMA_MISAL_GENERALIZED
+    if (THROUGHPUT_P)
+      start_throughput_monitor();
+`endif
     cfg_send_desc(d2, 32'd1);
     wait_dma_done();
+`ifdef DMA_MISAL_GENERALIZED
+    if (THROUGHPUT_P)
+      stop_throughput_monitor(total_bytes, "LMEM-to-DCACHE");
+`endif
 
     // -------------------------
     // FINAL CHECK
@@ -558,7 +647,11 @@ module tb_VX_dma_mem_unit_misal import VX_gpu_pkg::*; ();
 
     repeat (5) @(posedge clk);
 
-    if (ENABLE_MISALIGN_P) begin
+    if (THROUGHPUT_P) begin
+      if (!NO_BACKPRESSURE_P)
+        $fatal(1, "throughput mode requires NO_BACKPRESSURE_P=1");
+      run_case(4096, 1, 1, 1, 0, 0, 0, 0);
+    end else if (ENABLE_MISALIGN_P) begin
       // Basic seg sizes
       run_case_sweep_misalign(SEG_SIZE_1, b0,b1,b2, PADDING_1);
       run_case_sweep_misalign(SEG_SIZE_1, b0,b1,b2, PADDING_2);
@@ -598,6 +691,11 @@ module tb_VX_dma_mem_unit_misal import VX_gpu_pkg::*; ();
       run_case(SEG_SIZE_3, b0,b1,b2, BIG_PADDING_2, 0, 0, 0);
       run_case(SEG_SIZE_3, b0,b1,b2, BIG_PADDING_3, 0, 0, 0);
     end
+
+    // Two consecutive segments with valid_total=0 qualify the padding-only
+    // kickoff handoff on the same edge as the previous segment's write EOP.
+    if (!THROUGHPUT_P)
+      run_case(SEG_SIZE_1, 2, 1, 1, SEG_SIZE_1, 0, 0, 0);
     
     $display("=====================================================================");
     $display("=====================  ALL TESTS COMPLETED  =========================");
@@ -666,7 +764,7 @@ module tb_VX_dma_mem_unit_misal import VX_gpu_pkg::*; ();
         $display("please set proper objective of the simulation");
       end
 
-      if (ENABLE_MISALIGN_P
+      if (ENABLE_MISALIGN_P && !NO_BACKPRESSURE_P
        && ((dcache_rd_stall_cycles == 0) || (dcache_wr_stall_cycles == 0))) begin
         $fatal(1, "backpressure coverage missing: read=%0d write=%0d",
                dcache_rd_stall_cycles, dcache_wr_stall_cycles);

@@ -2,15 +2,24 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from functools import reduce
 from operator import mul
-from typing import Mapping, Optional, Tuple
+from typing import Mapping, Optional, Protocol, Tuple
+
+
+LLAMA2_MODEL = "llama2-7b"
+LLAMA3_MODEL = "llama3-8b"
+SUPPORTED_MODELS = (LLAMA2_MODEL, LLAMA3_MODEL)
+MODEL_LAYER_COUNTS = {
+    LLAMA2_MODEL: 32,
+    LLAMA3_MODEL: 32,
+}
 
 
 @dataclass(frozen=True)
 class LayerConfig:
-    model: str = "llama2-7b"
+    model: str = LLAMA2_MODEL
     hidden_size: int = 4096
     intermediate_size: int = 11008
     num_attention_heads: int = 32
@@ -21,10 +30,18 @@ class LayerConfig:
     kv_group_size: int = 128
     rms_norm_eps: float = 1e-6
     rope_theta: float = 10000.0
+    # Appended to preserve the positional constructor used before GQA support.
+    num_key_value_heads: int | None = None
 
     def __post_init__(self) -> None:
+        if self.num_key_value_heads is None:
+            object.__setattr__(self, "num_key_value_heads", self.num_attention_heads)
         if self.hidden_size != self.num_attention_heads * self.head_dim:
             raise ValueError("hidden_size must equal num_attention_heads * head_dim")
+        if self.num_key_value_heads <= 0:
+            raise ValueError("num_key_value_heads must be positive")
+        if self.num_attention_heads % self.num_key_value_heads != 0:
+            raise ValueError("num_attention_heads must be divisible by num_key_value_heads")
         if self.batch_size <= 0:
             raise ValueError("batch_size must be positive")
         if self.sequence_length <= 0:
@@ -39,9 +56,265 @@ class LayerConfig:
     def to_dict(self) -> dict:
         return asdict(self)
 
+    @property
+    def num_key_value_groups(self) -> int:
+        return self.num_attention_heads // self.num_key_value_heads
+
+    @property
+    def kv_hidden_size(self) -> int:
+        return self.num_key_value_heads * self.head_dim
+
+    @classmethod
+    def for_model(cls, model: str, **overrides) -> "LayerConfig":
+        presets = {
+            LLAMA2_MODEL: {},
+            LLAMA3_MODEL: {
+                "hidden_size": 4096,
+                "intermediate_size": 14336,
+                "num_attention_heads": 32,
+                "num_key_value_heads": 8,
+                "head_dim": 128,
+                "rms_norm_eps": 1e-5,
+                "rope_theta": 500000.0,
+            },
+        }
+        if model not in presets:
+            raise ValueError(f"unsupported model preset {model!r}")
+        values = {"model": model, **presets[model], **overrides}
+        return cls(**values)
+
     @classmethod
     def from_dict(cls, value: dict) -> "LayerConfig":
         return cls(**value)
+
+
+@dataclass(frozen=True)
+class StackConfig:
+    """A contiguous, model-global decoder-layer range."""
+
+    layer: LayerConfig
+    num_hidden_layers: int
+    layer_start: int
+    layer_count: int
+
+    def __post_init__(self) -> None:
+        if self.num_hidden_layers <= 0:
+            raise ValueError("num_hidden_layers must be positive")
+        if self.layer_start < 0 or self.layer_count <= 0:
+            raise ValueError("layer_start must be non-negative and layer_count positive")
+        if self.layer_start + self.layer_count > self.num_hidden_layers:
+            raise ValueError(
+                f"layer range [{self.layer_start}, "
+                f"{self.layer_start + self.layer_count}) exceeds "
+                f"num_hidden_layers={self.num_hidden_layers}"
+            )
+
+    @property
+    def layer_indices(self) -> tuple[int, ...]:
+        return tuple(range(self.layer_start, self.layer_start + self.layer_count))
+
+    def contains(self, layer_index: int) -> bool:
+        return self.layer_start <= layer_index < self.layer_start + self.layer_count
+
+    def to_dict(self) -> dict:
+        return {
+            "layer": self.layer.to_dict(),
+            "num_hidden_layers": self.num_hidden_layers,
+            "layer_start": self.layer_start,
+            "layer_count": self.layer_count,
+        }
+
+    @classmethod
+    def for_model(
+        cls,
+        model: str,
+        *,
+        layer_start: int = 0,
+        layer_count: int | None = None,
+        **layer_overrides,
+    ) -> "StackConfig":
+        if model not in MODEL_LAYER_COUNTS:
+            raise ValueError(f"unsupported stack model preset {model!r}")
+        num_hidden_layers = MODEL_LAYER_COUNTS[model]
+        return cls(
+            layer=LayerConfig.for_model(model, **layer_overrides),
+            num_hidden_layers=num_hidden_layers,
+            layer_start=layer_start,
+            layer_count=(
+                num_hidden_layers - layer_start
+                if layer_count is None
+                else layer_count
+            ),
+        )
+
+    @classmethod
+    def from_dict(cls, value: dict) -> "StackConfig":
+        return cls(
+            layer=LayerConfig.from_dict(value["layer"]),
+            num_hidden_layers=value["num_hidden_layers"],
+            layer_start=value["layer_start"],
+            layer_count=value["layer_count"],
+        )
+
+
+@dataclass(frozen=True)
+class DecodeConfig:
+    """Logical prompt/decode geometry for one persistent-cache test case."""
+
+    layer: LayerConfig
+    prompt_length: int
+    decode_steps: int
+    max_sequence_length: int
+
+    def __post_init__(self) -> None:
+        if self.prompt_length <= 0:
+            raise ValueError("prompt_length must be positive")
+        if self.decode_steps <= 0:
+            raise ValueError("decode_steps must be positive")
+        total_length = self.prompt_length + self.decode_steps
+        if self.layer.sequence_length != total_length:
+            raise ValueError(
+                "layer sequence_length must equal prompt_length + decode_steps"
+            )
+        if total_length > self.max_sequence_length:
+            raise ValueError(
+                f"prompt and decode length {total_length} exceeds max_sequence_length "
+                f"{self.max_sequence_length}"
+            )
+
+    @property
+    def total_sequence_length(self) -> int:
+        return self.prompt_length + self.decode_steps
+
+    def to_dict(self) -> dict:
+        return {
+            "layer": self.layer.to_dict(),
+            "prompt_length": self.prompt_length,
+            "decode_steps": self.decode_steps,
+            "max_sequence_length": self.max_sequence_length,
+        }
+
+    @classmethod
+    def from_dict(cls, value: dict) -> "DecodeConfig":
+        return cls(
+            layer=LayerConfig.from_dict(value["layer"]),
+            prompt_length=value["prompt_length"],
+            decode_steps=value["decode_steps"],
+            max_sequence_length=value["max_sequence_length"],
+        )
+
+
+@dataclass(frozen=True)
+class CacheGeometry:
+    """Immutable address geometry shared by semantic and physical caches."""
+
+    batch_size: int
+    num_kv_heads: int
+    head_dim: int
+    max_sequence_length: int
+    padded_sequence_length: int
+
+    def __post_init__(self) -> None:
+        if min(self.batch_size, self.num_kv_heads, self.head_dim) <= 0:
+            raise ValueError("cache batch, head count, and head dimension must be positive")
+        if self.max_sequence_length <= 0:
+            raise ValueError("max_sequence_length must be positive")
+        if self.padded_sequence_length < self.max_sequence_length:
+            raise ValueError("padded_sequence_length must cover max_sequence_length")
+
+
+@dataclass
+class CacheState:
+    """Mutable commit metadata for an already allocated cache."""
+
+    geometry: CacheGeometry
+    allocation_id: str
+    logical_length: int = 0
+    cache_generation: int = 0
+    lifecycle: str = "empty"
+
+    def __post_init__(self) -> None:
+        if not self.allocation_id:
+            raise ValueError("allocation_id must be non-empty")
+        if self.logical_length != 0 or self.lifecycle != "empty":
+            raise ValueError("new cache state must start empty")
+
+    def require_generation(self, generation: int) -> None:
+        if generation != self.cache_generation:
+            raise ValueError(
+                f"stale cache generation {generation}; current generation is "
+                f"{self.cache_generation}"
+            )
+
+    def commit_prefill(self, prompt_length: int) -> None:
+        self.validate_prefill(prompt_length)
+        self.publish_prefill(prompt_length)
+
+    def validate_prefill(self, prompt_length: int) -> None:
+        if self.lifecycle != "empty":
+            raise ValueError("prefill requires an empty cache")
+        if prompt_length <= 0:
+            raise ValueError("prefill length must be positive")
+        if prompt_length > self.geometry.max_sequence_length:
+            raise ValueError("prefill length exceeds cache capacity")
+
+    def publish_prefill(self, prompt_length: int) -> None:
+        self.logical_length = prompt_length
+        self.lifecycle = (
+            "full" if prompt_length == self.geometry.max_sequence_length else "valid_prefix"
+        )
+
+    def commit_append(self, *, position: int) -> None:
+        self.validate_append(position=position)
+        self.publish_append()
+
+    def validate_append(self, *, position: int) -> None:
+        if self.lifecycle == "empty":
+            raise ValueError("append requires prefill")
+        if self.lifecycle == "full" or self.logical_length >= self.geometry.max_sequence_length:
+            raise ValueError("cache is full")
+        if position != self.logical_length:
+            raise ValueError(
+                f"append position {position} must equal logical length {self.logical_length}"
+            )
+
+    def publish_append(self) -> None:
+        self.logical_length += 1
+        if self.logical_length == self.geometry.max_sequence_length:
+            self.lifecycle = "full"
+
+    def reset(self) -> None:
+        self.logical_length = 0
+        self.cache_generation += 1
+        self.lifecycle = "empty"
+
+
+class PersistentCache(Protocol):
+    """Storage-neutral cache contract consumed by the decode graph."""
+
+    @property
+    def logical_length(self) -> int: ...
+
+    def descriptor(self) -> dict: ...
+
+    def prefill_quantized(
+        self, qkey: object, k_scale: object, k_zero: object, qvalue: object, v_scale: object
+    ) -> None: ...
+
+    def append_quantized(
+        self,
+        qkey: object,
+        k_scale: object,
+        k_zero: object,
+        qvalue: object,
+        v_scale: object,
+        *,
+        position: int,
+    ) -> None: ...
+
+    def get_kv(self) -> tuple[tuple[object, ...], tuple[object, ...]]: ...
+
+    def dequantized_kv(self) -> tuple[object, object]: ...
 
 
 @dataclass(frozen=True)
@@ -153,3 +426,4 @@ class TensorHandle:
     spec: TensorSpec
     value: object
     producer: str
+    attachments: dict[str, object] = field(default_factory=dict, repr=False)

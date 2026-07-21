@@ -730,6 +730,7 @@ def _expand_workload_one(raw: dict[str, Any], defaults: BenchDefaults, repo_root
     model = str(raw["model"])
     stage_raw = raw.get("stage", "all")
     stages = ["prefill", "generation"] if stage_raw == "all" else [s.strip() for s in str(stage_raw).split(",") if s.strip()]
+    max_seq_len_raw = raw.get("max_seq_len", raw.get("max-seq-len"))
     payload = build_llm_kernels(
         model_name=model,
         stages=stages,
@@ -738,6 +739,7 @@ def _expand_workload_one(raw: dict[str, Any], defaults: BenchDefaults, repo_root
         gen_kv_len=int(raw.get("gen_kv_len", raw.get("gen-kv-len", 128))),
         qblk=int(raw.get("qblk", 32)),
         variant=str(raw.get("variant", "all_fpint_gemm_improve")),
+        max_seq_len=(None if max_seq_len_raw is None else int(max_seq_len_raw)),
     )
 
     implemented_only = bool(raw.get("implemented_only", True))

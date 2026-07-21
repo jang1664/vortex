@@ -136,6 +136,7 @@ int main(int argc, char *argv[]) {
   uint32_t heads = 1;
   uint32_t seq_q = 4;
   uint32_t seq_k = 32;
+  uint32_t seq_k_stride = 0;
   uint32_t use_mask = 1;
   float scale = 1.0f;
 
@@ -144,12 +145,23 @@ int main(int argc, char *argv[]) {
     else if (strcmp(argv[i], "-heads") == 0) heads = atoi(argv[++i]);
     else if (strcmp(argv[i], "-seqq") == 0) seq_q = atoi(argv[++i]);
     else if (strcmp(argv[i], "-seqk") == 0) seq_k = atoi(argv[++i]);
+    else if (strcmp(argv[i], "-seqk-stride") == 0) seq_k_stride = atoi(argv[++i]);
     else if (strcmp(argv[i], "-mask") == 0) use_mask = atoi(argv[++i]);
     else if (strcmp(argv[i], "-scale") == 0) scale = atof(argv[++i]);
     else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
-      printf("Usage: %s [-batch B] [-heads H] [-seqq Q] [-seqk K] [-mask 0|1] [-scale S]\n", argv[0]);
+      printf("Usage: %s [-batch B] [-heads H] [-seqq Q] [-seqk K] "
+             "[-seqk-stride KS] [-mask 0|1] [-scale S]\n", argv[0]);
       return 0;
     }
+  }
+
+  if (seq_k_stride == 0) {
+    seq_k_stride = seq_k;
+  }
+  if (seq_k_stride < seq_k) {
+    printf("ERROR: seqk-stride (%u) must be >= seqk (%u)\n",
+           seq_k_stride, seq_k);
+    return 1;
   }
 
   if (!is_pow2(TILE_DMA_MT) || !is_pow2(TILE_DMA_KT) ||
@@ -159,9 +171,12 @@ int main(int argc, char *argv[]) {
   }
 
   const uint32_t M_pad = (seq_q + TILE_M_PAD_ALIGN - 1u) & ~(TILE_M_PAD_ALIGN - 1u);
-  const uint32_t seq_k_pad = align_up(seq_k, std::max(TILE_DMA_MXU_KT, TILE_DMA_MXU_NT));
-  printf("softmax_layout_fused batch=%u heads=%u seqq=%u seqk=%u seqk_pad=%u M_pad=%u mask=%u scale=%f\n",
-         batch, heads, seq_q, seq_k, seq_k_pad, M_pad, use_mask, scale);
+  const uint32_t seq_k_pad = align_up(
+      seq_k_stride, std::max(TILE_DMA_MXU_KT, TILE_DMA_MXU_NT));
+  printf("softmax_layout_fused batch=%u heads=%u seqq=%u seqk=%u "
+         "seqk_stride=%u seqk_pad=%u M_pad=%u mask=%u scale=%f\n",
+         batch, heads, seq_q, seq_k, seq_k_stride, seq_k_pad, M_pad,
+         use_mask, scale);
 
   const size_t row_elems = (size_t)batch * heads * seq_q * seq_k;
   const size_t tiled_elems = (size_t)batch * heads * M_pad * seq_k_pad;
@@ -248,6 +263,18 @@ int main(int argc, char *argv[]) {
             if (errors < 10) {
               printf("Error at b=%u h=%u q=%u k=%u: got=%f expected=%f diff=%f\n",
                      b, h, q, k, got, expected, diff);
+            }
+            ++errors;
+          }
+        }
+        for (uint32_t k = seq_k; k < seq_k_pad; ++k) {
+          const uint64_t off = base + gemm_a_tiled_elem_offset(
+              q, k, M_pad, seq_k_pad, arg.log2_mt, arg.log2_mxu_kt);
+          const float got = fp16_to_float(h_out[off]);
+          if (got != 0.0f) {
+            if (errors < 10) {
+              printf("Non-zero padding at b=%u h=%u q=%u k=%u: got=%f\n",
+                     b, h, q, k, got);
             }
             ++errors;
           }

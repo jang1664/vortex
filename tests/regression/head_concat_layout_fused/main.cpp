@@ -70,18 +70,22 @@ static void pack_input(const std::vector<data_t>& row,
                        uint32_t seq,
                        uint32_t heads,
                        uint32_t headdim,
-                       uint32_t input_m_pad) {
+                       uint32_t input_m_pad,
+                       uint32_t query_heads_per_kv) {
   const uint32_t log2_mt = log2_u32(TILE_DMA_MT);
   const uint32_t log2_mxu_nt = log2_u32(TILE_DMA_MXU_NT);
   const uint64_t matrix_elems = (uint64_t)input_m_pad * headdim;
   std::fill(tiled.begin(), tiled.end(), 0);
   for (uint32_t b = 0; b < batch; ++b) {
     for (uint32_t h = 0; h < heads; ++h) {
-      const uint64_t base = batched_matrix_base(b * heads + h, matrix_elems);
+      const uint32_t input_heads = heads / query_heads_per_kv;
+      const uint64_t base = batched_matrix_base(
+          b * input_heads + h / query_heads_per_kv, matrix_elems);
       for (uint32_t s = 0; s < seq; ++s) {
+        const uint32_t input_row = (h % query_heads_per_kv) * seq + s;
         for (uint32_t d = 0; d < headdim; ++d) {
           tiled[base + gemm_c_tiled_elem_offset(
-              s, d, input_m_pad, headdim, log2_mt, log2_mxu_nt)] =
+              input_row, d, input_m_pad, headdim, log2_mt, log2_mxu_nt)] =
               row[row_index(b, h, s, d, heads, seq, headdim)];
         }
       }
@@ -120,22 +124,30 @@ int main(int argc, char *argv[]) {
   uint32_t seq = 4;
   uint32_t heads = 2;
   uint32_t headdim = 32;
+  uint32_t query_heads_per_kv = 1;
 
   for (int i = 1; i < argc; ++i) {
     if (strcmp(argv[i], "-batch") == 0) batch = atoi(argv[++i]);
     else if (strcmp(argv[i], "-seq") == 0) seq = atoi(argv[++i]);
     else if (strcmp(argv[i], "-heads") == 0) heads = atoi(argv[++i]);
     else if (strcmp(argv[i], "-headdim") == 0) headdim = atoi(argv[++i]);
+    else if (strcmp(argv[i], "-query-heads-per-kv") == 0)
+      query_heads_per_kv = atoi(argv[++i]);
     else if (strcmp(argv[i], "--layout-to") == 0) (void)parse_layout_to(argv[++i]);
     else if (strncmp(argv[i], "--layout-to=", 12) == 0) (void)parse_layout_to(argv[i] + 12);
     else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
       printf("Usage: %s [-batch B] [-seq S] [-heads H] [-headdim D] "
+             "[-query-heads-per-kv G] "
              "[--layout-to gemm_a_tiled]\n", argv[0]);
       return 0;
     }
   }
 
   const uint32_t hidden = heads * headdim;
+  if (query_heads_per_kv == 0 || heads % query_heads_per_kv != 0) {
+    printf("ERROR: query-heads-per-kv must be positive and divide heads\n");
+    return 1;
+  }
   if (headdim % TILE_DMA_MXU_NT != 0 || hidden % TILE_DMA_MXU_KT != 0) {
     printf("ERROR: headdim must be multiple of %u and hidden multiple of %u\n",
            TILE_DMA_MXU_NT, TILE_DMA_MXU_KT);
@@ -146,11 +158,14 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
-  const uint32_t input_m_pad = (seq + TILE_M_PAD_ALIGN - 1u) & ~(TILE_M_PAD_ALIGN - 1u);
+  const uint32_t input_rows = seq * query_heads_per_kv;
+  const uint32_t input_m_pad =
+      (input_rows + TILE_M_PAD_ALIGN - 1u) & ~(TILE_M_PAD_ALIGN - 1u);
   const uint32_t output_m = batch * seq;
   const uint32_t output_m_pad = (output_m + TILE_M_PAD_ALIGN - 1u) & ~(TILE_M_PAD_ALIGN - 1u);
   const size_t row_elems = (size_t)batch * heads * seq * headdim;
-  const size_t input_elems = (size_t)batch * heads * input_m_pad * headdim;
+  const size_t input_elems = (size_t)batch * (heads / query_heads_per_kv)
+                           * input_m_pad * headdim;
   const size_t output_elems = (size_t)output_m_pad * hidden;
   const size_t input_bytes = input_elems * sizeof(data_t);
   const size_t output_bytes = output_elems * sizeof(data_t);
@@ -160,11 +175,12 @@ int main(int argc, char *argv[]) {
   std::vector<data_t> h_ref(output_elems);
   std::vector<data_t> h_out(output_elems);
   init_row(h_row);
-  pack_input(h_row, h_input, batch, seq, heads, headdim, input_m_pad);
+  pack_input(h_row, h_input, batch, seq, heads, headdim, input_m_pad,
+             query_heads_per_kv);
   build_reference(h_row, h_ref, batch, seq, heads, headdim, output_m_pad);
 
-  printf("head_concat_layout_fused batch=%u seq=%u heads=%u headdim=%u\n",
-         batch, seq, heads, headdim);
+  printf("head_concat_layout_fused batch=%u seq=%u heads=%u headdim=%u q_per_kv=%u\n",
+         batch, seq, heads, headdim, query_heads_per_kv);
 #if HEAD_CONCAT_LAYOUT_FUSED_VARIANT_TAG == 1
   printf("variant=chunk16_packed\n");
 #else
@@ -204,6 +220,7 @@ int main(int argc, char *argv[]) {
   arg.headdim = headdim;
   arg.input_m_pad = input_m_pad;
   arg.output_m_pad = output_m_pad;
+  arg.query_heads_per_kv = query_heads_per_kv;
   arg.log2_mt = log2_u32(TILE_DMA_MT);
   arg.log2_mxu_kt = log2_u32(TILE_DMA_MXU_KT);
   arg.log2_mxu_nt = log2_u32(TILE_DMA_MXU_NT);
@@ -214,12 +231,25 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_copy_from_dev(h_out.data(), output_buffer, 0, output_bytes));
 
   int errors = 0;
-  for (size_t i = 0; i < output_elems; ++i) {
-    if (h_out[i] != h_ref[i]) {
-      if (errors < 10) {
-        printf("Error at %zu: got=0x%04x expected=0x%04x\n", i, h_out[i], h_ref[i]);
+  const uint32_t log2_mt = log2_u32(TILE_DMA_MT);
+  const uint32_t log2_mxu_kt = log2_u32(TILE_DMA_MXU_KT);
+  for (uint32_t b = 0; b < batch; ++b) {
+    for (uint32_t s = 0; s < seq; ++s) {
+      const uint32_t m = b * seq + s;
+      for (uint32_t h = 0; h < heads; ++h) {
+        for (uint32_t d = 0; d < headdim; ++d) {
+          const uint32_t k = h * headdim + d;
+          const size_t i = gemm_a_tiled_elem_offset(
+              m, k, output_m_pad, hidden, log2_mt, log2_mxu_kt);
+          if (h_out[i] != h_ref[i]) {
+            if (errors < 10) {
+              printf("Error at %zu: got=0x%04x expected=0x%04x\n",
+                     i, h_out[i], h_ref[i]);
+            }
+            ++errors;
+          }
+        }
       }
-      ++errors;
     }
   }
 

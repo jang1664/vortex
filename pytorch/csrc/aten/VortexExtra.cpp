@@ -688,6 +688,9 @@ struct kv_cache_quant_layout_fused_w4a16_kernel_arg_t {
   uint32_t log2_mxu_nt;
   uint32_t log2_qblk;
   uint32_t log2_ng_per_mxu_nt;
+  uint32_t persistent_mode;
+  uint32_t cache_capacity;
+  uint32_t cache_position;
   uint32_t power_kernel_iterations;
 };
 
@@ -729,6 +732,7 @@ struct head_concat_layout_fused_kernel_arg_t {
   uint32_t headdim;
   uint32_t input_m_pad;
   uint32_t output_m_pad;
+  uint32_t query_heads_per_kv;
   uint32_t log2_mt;
   uint32_t log2_mxu_kt;
   uint32_t log2_mxu_nt;
@@ -756,12 +760,17 @@ static_assert(sizeof(rms_norm_layout_fused_kernel_arg_t) == 88,
               "rms_norm_layout_fused kernel ABI size mismatch");
 static_assert(sizeof(rope_layout_fused_kernel_arg_t) == 120,
               "rope_layout_fused kernel ABI size mismatch");
-static_assert(sizeof(kv_cache_quant_layout_fused_w4a16_kernel_arg_t) == 192,
+static_assert(sizeof(kv_cache_quant_layout_fused_w4a16_kernel_arg_t) == 208,
               "kv_cache_quant_layout_fused_w4a16 kernel ABI size mismatch");
 static_assert(sizeof(softmax_layout_fused_kernel_arg_t) == 104,
               "softmax_layout_fused kernel ABI size mismatch");
-static_assert(sizeof(head_concat_layout_fused_kernel_arg_t) == 88,
+static_assert(sizeof(head_concat_layout_fused_kernel_arg_t) == 96,
               "head_concat_layout_fused kernel ABI size mismatch");
+static_assert(offsetof(head_concat_layout_fused_kernel_arg_t,
+                       query_heads_per_kv) == 72
+              && offsetof(head_concat_layout_fused_kernel_arg_t,
+                          power_kernel_iterations) == 88,
+              "head_concat_layout_fused kernel ABI offsets mismatch");
 static_assert(sizeof(eladd_layout_fused_kernel_arg_t) == 80,
               "eladd_layout_fused kernel ABI size mismatch");
 static_assert(sizeof(qk_asym_correction_kernel_arg_t) == 112,
@@ -783,7 +792,9 @@ static_assert(offsetof(kv_cache_quant_layout_fused_w4a16_kernel_arg_t,
               && offsetof(kv_cache_quant_layout_fused_w4a16_kernel_arg_t,
                           src_total_N) == 116
               && offsetof(kv_cache_quant_layout_fused_w4a16_kernel_arg_t,
-                          power_kernel_iterations) == 188,
+                          persistent_mode) == 188
+              && offsetof(kv_cache_quant_layout_fused_w4a16_kernel_arg_t,
+                          power_kernel_iterations) == 200,
               "kv_cache_quant_layout_fused_w4a16 kernel ABI offsets mismatch");
 static_assert(offsetof(qk_asym_correction_kernel_arg_t, scores_layout) == 84
               && offsetof(qk_asym_correction_kernel_arg_t,
@@ -1427,7 +1438,7 @@ at::Tensor vortex_softmax(
   karg.num_heads    = 1;
   karg.seq_len_q    = rows;
   karg.seq_len_k    = cols;
-  karg.row_pitch_bytes = 0;  // kernel ignores value; field needed for struct alignment
+  karg.row_pitch_bytes = static_cast<uint32_t>(cols * in16.element_size());
   karg.use_mask     = 0;
   karg.scale        = 1.0f;
 
@@ -3811,6 +3822,170 @@ vortex_kv_cache_quant_layout_fused_w4a16(
   return std::make_tuple(weight, scale, zero, logical_scale, logical_zero);
 }
 
+std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor>
+vortex_kv_cache_quant_layout_fused_w4a16_update(
+    const at::Tensor& source,
+    int64_t cache_capacity,
+    int64_t cache_position,
+    int64_t quant_mode,
+    at::Tensor weight,
+    at::Tensor scale,
+    at::Tensor zero,
+    at::Tensor logical_scale,
+    at::Tensor logical_zero,
+    int64_t head_dim,
+    int64_t src_layout,
+    int64_t src_total_n,
+    int64_t src_col_offset,
+    int64_t src_total_k,
+    int64_t src_row_offset) {
+  TORCH_CHECK(source.is_privateuseone() && source.dtype() == at::kHalf
+              && source.is_contiguous(),
+              "persistent KV source must be contiguous Vortex float16");
+  TORCH_CHECK(source.dim() == 2, "persistent KV source must be two-dimensional");
+  head_dim = head_dim == 0 ? source.size(1) : head_dim;
+  src_total_n = src_total_n == 0 ? source.size(1) : src_total_n;
+  src_total_k = src_total_k == 0 ? source.size(0) : src_total_k;
+  TORCH_CHECK(head_dim > 0 && head_dim % 2 == 0,
+              "persistent KV head_dim must be positive and even");
+  TORCH_CHECK(src_layout >= 0 && src_layout <= 2,
+              "persistent KV source layout must be row-major, GEMM-C, or GEMM-A");
+  TORCH_CHECK(src_total_n >= head_dim && src_col_offset >= 0
+              && src_col_offset + head_dim <= src_total_n,
+              "persistent KV source column range is out of bounds");
+  TORCH_CHECK(src_total_k > 0 && src_row_offset >= 0
+              && src_row_offset < src_total_k,
+              "persistent KV source row is out of bounds");
+  TORCH_CHECK(source.numel() >= src_total_k * src_total_n,
+              "persistent KV source storage is smaller than its physical geometry");
+  if (src_layout != 0) {
+    TORCH_CHECK(src_total_n % 32 == 0,
+                "persistent tiled source width must be a multiple of 32");
+    check_device_alignment(source, 512, "persistent tiled KV source");
+  }
+  if (src_layout == 2) {
+    TORCH_CHECK(src_total_n == head_dim && src_col_offset == 0,
+                "persistent GEMM-A source must contain one complete head row");
+    TORCH_CHECK(source.numel() == src_total_k * src_total_n,
+                "persistent GEMM-A source geometry must describe all storage");
+  }
+  TORCH_CHECK(cache_capacity > 0 && cache_position >= 0
+              && cache_position < cache_capacity,
+              "persistent KV position must be inside cache capacity");
+  TORCH_CHECK(quant_mode == 1 || quant_mode == 2,
+              "persistent KV update supports signed asymmetric K or symmetric V");
+  for (const auto& tensor : {weight, scale, zero, logical_scale, logical_zero}) {
+    TORCH_CHECK(tensor.is_privateuseone() && tensor.is_contiguous(),
+                "persistent KV destinations must be contiguous Vortex tensors");
+  }
+  TORCH_CHECK(weight.dtype() == at::kByte && scale.dtype() == at::kHalf
+              && zero.dtype() == at::kShort
+              && logical_scale.dtype() == at::kHalf
+              && logical_zero.dtype() == at::kHalf,
+              "persistent KV destination dtypes do not match the fused layout ABI");
+
+  const uint32_t K = 1;
+  const uint32_t N = static_cast<uint32_t>(head_dim);
+  TORCH_CHECK(N == 128,
+              "persistent KV v1 requires the Llama-2-7B head_dim of 128");
+  const uint32_t Q = N;
+  const uint32_t ST = quant_mode == 1 ? 1u : 0u;
+  const uint32_t GQ = quant_mode == 1 ? 0u : 1u;
+  const uint32_t capacity = static_cast<uint32_t>(cache_capacity);
+  const uint32_t out_k = fused_kv_padded_k(capacity, N, ST);
+  const uint32_t out_n = fused_kv_padded_n(capacity, N, ST);
+  const uint32_t qp_k = fused_kv_qparam_k(capacity, N, Q, GQ, ST);
+  const uint32_t qp_n = fused_kv_qparam_n(capacity, N, Q, GQ, ST);
+  const uint32_t k_tiles = (qp_k + 127) / 128;
+  const uint32_t n_dma_tiles = (qp_n + 127) / 128;
+  uint64_t scale_bytes = 0;
+  uint32_t max_slot_bytes = 0;
+  for (uint32_t kt = 0; kt < k_tiles; ++kt) {
+    const uint32_t cur_k = std::min<uint32_t>(128, qp_k - kt * 128);
+    for (uint32_t nt = 0; nt < n_dma_tiles; ++nt) {
+      const uint32_t cur_n = std::min<uint32_t>(128, qp_n - nt * 128);
+      const uint32_t slot = fused_kv_slot_bytes(cur_k, cur_n, Q, GQ);
+      scale_bytes += slot;
+      max_slot_bytes = std::max(max_slot_bytes, slot);
+    }
+  }
+  TORCH_CHECK(weight.numel() == static_cast<int64_t>(out_k) * (out_n / 2),
+              "persistent KV weight extent does not match capacity geometry");
+  TORCH_CHECK(scale.numel() == static_cast<int64_t>(scale_bytes / 2)
+              && zero.numel() == static_cast<int64_t>(scale_bytes / 2),
+              "persistent KV tiled qparam extent does not match capacity geometry");
+  TORCH_CHECK(logical_scale.numel() == cache_capacity
+              && logical_zero.numel() == cache_capacity,
+              "persistent KV logical qparam extent must equal cache capacity");
+  check_device_alignment(weight, 512, "persistent KV weight");
+  check_device_alignment(scale, 512, "persistent KV scale");
+  check_device_alignment(zero, 512, "persistent KV zero");
+
+  auto& rt = c10::vortex::VortexRuntime::instance();
+  vx_device_h device = rt.deviceHandle();
+  auto caps = query_caps(device);
+  const uint32_t work_items = std::max<uint32_t>(N / 2, GQ == 0 ? 1 : qp_n / 32);
+  const uint32_t blocks_needed =
+      (work_items + caps.threads_per_block - 1) / caps.threads_per_block;
+  const uint32_t blocks = std::min(
+      blocks_needed, std::max<uint32_t>(1, static_cast<uint32_t>(caps.num_cores) * 4));
+
+  const uint32_t ck_last = qp_k - (k_tiles - 1) * 128;
+  const uint32_t cn_last = qp_n - (n_dma_tiles - 1) * 128;
+  kv_cache_quant_layout_fused_w4a16_kernel_arg_t karg{};
+  karg.kernel_id = 0;
+  karg.grid_dim[0] = blocks;
+  karg.grid_dim[1] = 1;
+  karg.grid_dim[2] = 1;
+  karg.block_dim[0] = caps.threads_per_block;
+  karg.block_dim[1] = 1;
+  karg.block_dim[2] = 1;
+  karg.src_addr = rt.deviceAddress(source.data_ptr());
+  karg.weight_addr = rt.deviceAddress(weight.data_ptr());
+  karg.scale_addr = rt.deviceAddress(scale.data_ptr());
+  karg.zero_addr = rt.deviceAddress(zero.data_ptr());
+  karg.logical_scale_addr = rt.deviceAddress(logical_scale.data_ptr());
+  karg.logical_zero_addr = rt.deviceAddress(logical_zero.data_ptr());
+  karg.K = K;
+  karg.N = N;
+  karg.QBLK = Q;
+  karg.QDIR = 1;
+  karg.GEMM_QDIR = GQ;
+  karg.WTRANS = ST;
+  karg.src_layout = static_cast<uint32_t>(src_layout);
+  karg.SOURCE_TRANSPOSED = ST;
+  karg.quant_mode = static_cast<uint32_t>(quant_mode);
+  karg.src_total_N = static_cast<uint32_t>(src_total_n);
+  karg.src_col_offset = static_cast<uint32_t>(src_col_offset);
+  karg.src_total_K = static_cast<uint32_t>(src_total_k);
+  karg.src_row_offset = static_cast<uint32_t>(src_row_offset);
+  karg.k_tiles = k_tiles;
+  karg.n_dma_tiles = n_dma_tiles;
+  karg.slot_fk_fn = fused_kv_slot_bytes(128, 128, Q, GQ);
+  karg.slot_fk_pn = fused_kv_slot_bytes(128, cn_last, Q, GQ);
+  karg.slot_pk_fn = fused_kv_slot_bytes(ck_last, 128, Q, GQ);
+  karg.per_kt_full_K = n_dma_tiles == 1
+      ? karg.slot_fk_pn
+      : (n_dma_tiles - 1) * karg.slot_fk_fn + karg.slot_fk_pn;
+  karg.max_slot_bytes = max_slot_bytes;
+  karg.log2_mt = 7;
+  karg.log2_kt = 7;
+  karg.log2_nt = 7;
+  karg.log2_mxu_kt = 5;
+  karg.log2_mxu_nt = 5;
+  karg.log2_qblk = vx_log2_u32(Q);
+  karg.log2_ng_per_mxu_nt = vx_log2_u32((32 + Q - 1) / Q);
+  karg.persistent_mode = 1;
+  karg.cache_capacity = capacity;
+  karg.cache_position = static_cast<uint32_t>(cache_position);
+
+  static std::string path = find_kernel(
+      "kv_cache_quant_layout_fused_w4a16",
+      "kv_cache_quant_layout_fused_w4a16");
+  launch_kernel(device, &karg, sizeof(karg), path);
+  return std::make_tuple(weight, scale, zero, logical_scale, logical_zero);
+}
+
 at::Tensor vortex_softmax_layout_fused(
     const at::Tensor& input,
     int64_t batch,
@@ -3819,7 +3994,9 @@ at::Tensor vortex_softmax_layout_fused(
     int64_t seq_k,
     int64_t m_pad,
     int64_t use_mask,
-    double scale) {
+    double scale,
+    int64_t input_k_pad,
+    int64_t output_k_pad) {
   TORCH_CHECK(input.is_privateuseone() && input.dtype() == at::kHalf
               && input.is_contiguous(),
               "softmax_layout_fused input must be contiguous Vortex float16");
@@ -3828,9 +4005,16 @@ at::Tensor vortex_softmax_layout_fused(
   TORCH_CHECK(m_pad >= seq_q && m_pad % 8 == 0,
               "m_pad must cover seq_q and be a multiple of 8");
   TORCH_CHECK(use_mask == 0 || use_mask == 1, "use_mask must be 0 or 1");
-  const int64_t seq_k_pad = vx_align_up_u32(static_cast<uint32_t>(seq_k), 32);
-  const int64_t output_k_pad = fpint_pad_gemm_k(
-      static_cast<uint32_t>(seq_k));
+  const int64_t seq_k_pad = input_k_pad == 0
+      ? vx_align_up_u32(static_cast<uint32_t>(seq_k), 32)
+      : input_k_pad;
+  output_k_pad = output_k_pad == 0
+      ? fpint_pad_gemm_k(static_cast<uint32_t>(seq_k))
+      : output_k_pad;
+  TORCH_CHECK(seq_k_pad >= seq_k && seq_k_pad % 32 == 0,
+              "softmax input_k_pad must cover seq_k and be a multiple of 32");
+  TORCH_CHECK(output_k_pad >= seq_k && output_k_pad % 32 == 0,
+              "softmax output_k_pad must cover seq_k and be a multiple of 32");
   TORCH_CHECK(input.numel() == batch * heads * m_pad * seq_k_pad,
               "softmax physical input size mismatch");
   check_device_alignment(input, 512, "softmax GEMM-C input");
@@ -3880,19 +4064,23 @@ at::Tensor vortex_head_concat_layout_fused(
     int64_t heads,
     int64_t head_dim,
     int64_t input_m_pad,
-    int64_t output_m_pad) {
+    int64_t output_m_pad,
+    int64_t query_heads_per_kv) {
   TORCH_CHECK(input.is_privateuseone() && input.dtype() == at::kHalf
               && input.is_contiguous(),
               "head_concat_layout_fused input must be contiguous Vortex float16");
   TORCH_CHECK(batch > 0 && seq > 0 && heads > 0 && head_dim > 0,
               "head concat dimensions must be positive");
-  TORCH_CHECK(input_m_pad >= seq && input_m_pad % 8 == 0,
-              "input_m_pad must cover seq and be a multiple of 8");
+  TORCH_CHECK(query_heads_per_kv > 0 && heads % query_heads_per_kv == 0,
+              "query_heads_per_kv must be positive and divide heads");
+  TORCH_CHECK(input_m_pad >= seq * query_heads_per_kv && input_m_pad % 8 == 0,
+              "input_m_pad must cover grouped query rows and be a multiple of 8");
   TORCH_CHECK(output_m_pad >= batch * seq && output_m_pad % 8 == 0,
               "output_m_pad must cover batch*seq and be a multiple of 8");
   TORCH_CHECK(head_dim % 32 == 0 && (heads * head_dim) % 32 == 0,
               "head_dim and hidden size must be multiples of 32");
-  TORCH_CHECK(input.numel() == batch * heads * input_m_pad * head_dim,
+  TORCH_CHECK(input.numel() == batch * (heads / query_heads_per_kv)
+                                  * input_m_pad * head_dim,
               "head concat physical input size mismatch");
   check_device_alignment(input, 512, "grouped PV GEMM-C input");
 
@@ -3924,6 +4112,7 @@ at::Tensor vortex_head_concat_layout_fused(
   karg.headdim = static_cast<uint32_t>(head_dim);
   karg.input_m_pad = static_cast<uint32_t>(input_m_pad);
   karg.output_m_pad = static_cast<uint32_t>(output_m_pad);
+  karg.query_heads_per_kv = static_cast<uint32_t>(query_heads_per_kv);
   karg.log2_mt = 7;
   karg.log2_mxu_kt = 5;
   karg.log2_mxu_nt = 5;
@@ -4158,8 +4347,9 @@ TORCH_LIBRARY(vortex, m) {
   m.def("rms_norm_layout_fused(Tensor input, Tensor weight, float eps, int m_pad) -> Tensor");
   m.def("rope_layout_fused(Tensor input, Tensor cos, Tensor sin, int batch, int seq, int heads, int head_dim, int input_m_pad, int layout_to, int pos_offset=0) -> Tensor");
   m.def("kv_cache_quant_layout_fused_w4a16(Tensor source, int K, int N, int qblk, int qdir, int gemm_qdir, int wtrans, int src_layout, int source_transposed, int quant_mode, int src_total_n, int src_col_offset, int src_total_k=0, int src_row_offset=0) -> (Tensor, Tensor, Tensor, Tensor, Tensor)");
-  m.def("softmax_layout_fused(Tensor input, int batch, int heads, int seq_q, int seq_k, int m_pad, int use_mask, float scale) -> Tensor");
-  m.def("head_concat_layout_fused(Tensor input, int batch, int seq, int heads, int head_dim, int input_m_pad, int output_m_pad) -> Tensor");
+  m.def("kv_cache_quant_layout_fused_w4a16_update(Tensor source, int cache_capacity, int cache_position, int quant_mode, Tensor(a!) weight, Tensor(b!) scale, Tensor(c!) zero, Tensor(d!) logical_scale, Tensor(e!) logical_zero, int head_dim=0, int src_layout=0, int src_total_n=0, int src_col_offset=0, int src_total_k=0, int src_row_offset=0) -> (Tensor(a!), Tensor(b!), Tensor(c!), Tensor(d!), Tensor(e!))");
+  m.def("softmax_layout_fused(Tensor input, int batch, int heads, int seq_q, int seq_k, int m_pad, int use_mask, float scale, int input_k_pad=0, int output_k_pad=0) -> Tensor");
+  m.def("head_concat_layout_fused(Tensor input, int batch, int seq, int heads, int head_dim, int input_m_pad, int output_m_pad, int query_heads_per_kv=1) -> Tensor");
   m.def("eladd_layout_fused(Tensor input_a, Tensor input_b, int M, int M_pad, int K) -> Tensor");
   m.def("hadamard_butterfly(Tensor input, int K) -> Tensor");
   m.def("hadamard_base(Tensor input, Tensor matrix, int K) -> Tensor");
@@ -4188,6 +4378,7 @@ TORCH_LIBRARY_IMPL(vortex, PrivateUse1, m) {
   m.impl("rms_norm_layout_fused", &vortex_rms_norm_layout_fused);
   m.impl("rope_layout_fused", &vortex_rope_layout_fused);
   m.impl("kv_cache_quant_layout_fused_w4a16", &vortex_kv_cache_quant_layout_fused_w4a16);
+  m.impl("kv_cache_quant_layout_fused_w4a16_update", &vortex_kv_cache_quant_layout_fused_w4a16_update);
   m.impl("softmax_layout_fused", &vortex_softmax_layout_fused);
   m.impl("head_concat_layout_fused", &vortex_head_concat_layout_fused);
   m.impl("eladd_layout_fused", &vortex_eladd_layout_fused);

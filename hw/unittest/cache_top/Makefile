@@ -88,6 +88,10 @@ DEFINES_ := SIMULATION DEBUG_LEVEL=3 DBG_TRACE_CACHE \
             CACHE_TOP_MREQ_SIZE=$(MREQ_SIZE) \
             CACHE_TOP_MEM_LATENCY=$(MEM_LATENCY)
 
+ifdef PERF
+DEFINES_ += PERF_ENABLE
+endif
+
 CFLAGS  := "-std=c++17 -Wall -Wextra -Wno-array-bounds -Wno-maybe-uninitialized -fPIC -I$(VORTEX_HOME)/build/hw -I$(VORTEX_HOME)/hw -I$(RTL_DIR) -DXLEN_$(XLEN)"
 LDFLAGS := 
 
@@ -107,6 +111,8 @@ PARAMS := $(foreach p,$(PARAMS_),-pvalue+$(p))
 
 setup:
 	mkdir -p logs reports
+
+run: sim
 
 include $(SIM_EXEC).mk
 

@@ -1,0 +1,16 @@
+{
+  "status": "FAIL",
+  "failure_stage": "rtl_simulation",
+  "application": "fpint_gemm_ffn_hw_naive",
+  "arguments": "-m 128 -k 128 -n 128",
+  "cores": 1,
+  "driver": "xrt_vcs",
+  "config_file": "configs/improve_th16_tcol32_hwexp_dcache.sh",
+  "rtl_sha256": "17a425d1ddef7cf5e6a9d2ffafa45f75535631fe2af7286669782c321c890f1f",
+  "instructions": 0,
+  "cycles": 0,
+  "ipc": 0.0,
+  "simulation_time_ps": 78315000,
+  "command_exit_code": 2,
+  "reason": "VX_gemm_tmem_dma_ctrl assertion: DMA channel-slot misalignment between rs1_data=0x1ffc12000 and rs2_data=0x18040 on address bits [8:6]"
+}

@@ -1,0 +1,46 @@
+task: fpu-lowl-fp-ip
+state: DONE
+updated: "2026-07-21 02:25"
+summary: >-
+  Add low-latency Xilinx FMA and FP32 add IP variants and select them in the
+  Vivado FPU_DSP RTL path.
+iterations:
+  - feature: "FPU Low-Latency Xilinx IP"
+    iteration: 1
+    timestamp: "2026-07-21 02:25"
+    status: pass
+    error_summary: "None."
+    root_cause: "Not applicable."
+    fix_applied: >-
+      Added xil_fma_lowL with latency 4 and xil_f32add_lowL with latency 1,
+      registered both IPs in simulation and synthesis flows, and aligned the
+      Vivado FPU_DSP RTL latency constants and instances.
+    lesson: >-
+      The FEXP LUT datapath requires both LATENCY_FMA and LATENCY_F32ADD to
+      match the generated IP pipeline depths because it explicitly balances
+      the FMA, add, LUT, and exponent-adjust paths.
+activity:
+  - timestamp: "2026-07-21 02:09"
+    action: "Inspected Xilinx IP generation, VCS compilation, synthesis packaging, and FPU latency alignment."
+    result: >-
+      The new IPs must be added to four tool-flow lists, while the FPU RTL must
+      change LATENCY_FMA from 16 to 4 and its local FP32 add latency from 12 to 1.
+  - timestamp: "2026-07-21 02:12"
+    action: "Generated all Xilinx floating-point IPs with Vivado 2025.1 in a fresh build output directory."
+    result: >-
+      Generation passed; xil_fma_lowL reported C_Latency=4 and
+      xil_f32add_lowL reported C_Latency=1 in their generated XCI files.
+  - timestamp: "2026-07-21 02:13"
+    action: "Built the configured xrtsim_vcs simv with the generated IP directory."
+    result: >-
+      VHDLAN compiled both wrappers and VCS elaborated xil_fma_lowL and
+      xil_f32add_lowL successfully.
+  - timestamp: "2026-07-21 02:25"
+    action: "Completed simplify and structured correctness, standards, testing, and performance reviews."
+    result: >-
+      No actionable findings remained; functional workload simulation and
+      100 MHz implementation metrics remain follow-up validation.
+pitfalls:
+  - "Keep existing default, low_latency, and latency1 IP variants intact."
+  - "The FPU exponential datapath explicitly delays operands using both FMA and FP32 add latency values."
+  - "IP generation and VCS elaboration do not prove place-and-route timing or congestion improvement."

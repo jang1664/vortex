@@ -106,6 +106,40 @@ workloads:
             self.assertIn("--layout-to gemm_a_tiled", by_op["rope_q"].args)
             self.assertIn("--layout-to row_major", by_op["rope_k"].args)
 
+    def test_generation_workload_forwards_fixed_cache_capacity(self) -> None:
+        for capacity_key in ("max_seq_len", "max-seq-len"):
+            with self.subTest(capacity_key=capacity_key), tempfile.TemporaryDirectory() as tmp:
+                suite_path = Path(tmp) / "suite.yaml"
+                suite_path.write_text(
+                    f"""
+name: fixed_capacity_suite
+defaults:
+  warmup: 1
+  iterations: 2
+workloads:
+  - id: llama3_decode_b3_kv33
+    model: llama3-8b
+    stage: generation
+    batch: 3
+    prefill_seq_len: 3
+    gen_kv_len: 33
+    {capacity_key}: 64
+    qblk: 32
+    variant: all_fpint_gemm_improve_fused_layout_spinquant
+    filter_backend: softmax_layout_fused
+""".lstrip()
+                )
+
+                suite = load_suite(suite_path, repo_root=Path.cwd())
+
+                self.assertEqual(1, len(suite.cases))
+                softmax = suite.cases[0]
+                self.assertEqual("attn_softmax", softmax.op)
+                self.assertEqual(33, softmax.shape["logical_cache_length"])
+                self.assertEqual(64, softmax.shape["cache_capacity"])
+                self.assertEqual(64, softmax.shape["capacity_stride"])
+                self.assertIn("-seqk 33 -seqk-stride 64", softmax.args)
+
     def test_standard_variant_expands_kv_cache_quant_cases(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             suite_path = Path(tmp) / "suite.yaml"

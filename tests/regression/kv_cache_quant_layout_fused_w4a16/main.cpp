@@ -380,6 +380,168 @@ static void quantize_layout_fused_cpu(const std::vector<fp16_t>& src,
   }
 }
 
+static int run_persistent_update_test(uint32_t capacity,
+                                      uint32_t position,
+                                      uint32_t persistent_kind) {
+  constexpr uint32_t N = 128;
+  constexpr uint32_t QBLK = 128;
+  constexpr uint32_t QDIR = 1;
+  constexpr uint32_t DMA_MT = DEFAULT_DMA_MT;
+  constexpr uint32_t DMA_KT = DEFAULT_DMA_KT;
+  constexpr uint32_t DMA_NT = DEFAULT_DMA_NT;
+  const uint32_t source_transposed = persistent_kind == 1 ? 1u : 0u;
+  const uint32_t wtrans = source_transposed;
+  const uint32_t gemm_qdir = persistent_kind == 1 ? 0u : 1u;
+  const uint32_t quant_mode = persistent_kind == 1
+      ? KV_QUANT_SPINQUANT_SIGNED_ASYMMETRIC
+      : KV_QUANT_SPINQUANT_SIGNED_SYMMETRIC;
+  if (capacity == 0 || position >= capacity) {
+    printf("ERROR: persistent position must be smaller than non-zero capacity\n");
+    return 1;
+  }
+
+  std::vector<fp16_t> token(N);
+  init_src(token);
+  std::vector<fp16_t> initial_src((size_t)capacity * N, 0);
+  std::vector<fp16_t> reference_src = initial_src;
+  std::copy(token.begin(), token.end(),
+            reference_src.begin() + (uint64_t)position * N);
+
+  const size_t weight_bytes = weight_total_bytes_host(
+      capacity, N, source_transposed);
+  const size_t scale_bytes = scale_total_bytes_host(
+      capacity, N, QBLK, gemm_qdir, source_transposed, DMA_KT, DMA_NT);
+  const size_t logical_count = kv_qparam_count(capacity, N, QBLK, QDIR);
+  std::vector<uint8_t> weight(weight_bytes);
+  std::vector<uint8_t> scale(scale_bytes);
+  std::vector<uint8_t> zero(scale_bytes);
+  std::vector<uint8_t> initial_weight(weight_bytes);
+  std::vector<uint8_t> initial_scale(scale_bytes);
+  std::vector<uint8_t> initial_zero(scale_bytes);
+  std::vector<uint8_t> reference_weight(weight_bytes);
+  std::vector<uint8_t> reference_scale(scale_bytes);
+  std::vector<uint8_t> reference_zero(scale_bytes);
+  quantize_layout_fused_cpu(
+      initial_src, initial_weight, initial_scale, initial_zero,
+      capacity, N, QBLK, QDIR, quant_mode, wtrans, gemm_qdir,
+      source_transposed, DMA_KT, DMA_NT);
+  quantize_layout_fused_cpu(
+      reference_src, reference_weight, reference_scale, reference_zero,
+      capacity, N, QBLK, QDIR, quant_mode, wtrans, gemm_qdir,
+      source_transposed, DMA_KT, DMA_NT);
+
+  std::vector<fp16_t> logical_scale(logical_count);
+  std::vector<fp16_t> logical_zero(logical_count);
+  std::vector<fp16_t> reference_logical_scale(logical_count);
+  std::vector<fp16_t> reference_logical_zero(logical_count);
+  for (uint32_t k = 0; k < capacity; ++k) {
+    compute_params_cpu(initial_src, capacity, N, QBLK, QDIR, quant_mode,
+                       k, 0, logical_scale[k], logical_zero[k]);
+    compute_params_cpu(reference_src, capacity, N, QBLK, QDIR, quant_mode,
+                       k, 0, reference_logical_scale[k], reference_logical_zero[k]);
+  }
+
+  printf("persistent KV update kind=%s capacity=%u position=%u\n",
+         persistent_kind == 1 ? "K" : "V", capacity, position);
+  RT_CHECK(vx_dev_open(&device));
+  RT_CHECK(vx_upload_kernel_file(device, "kernel.vxbin", &krnl_buffer));
+  RT_CHECK(vx_mem_alloc(device, token.size() * sizeof(fp16_t),
+                        VX_MEM_READ, &src_buffer));
+  RT_CHECK(vx_mem_alloc(device, weight_bytes, VX_MEM_READ_WRITE, &weight_buffer));
+  RT_CHECK(vx_mem_alloc(device, scale_bytes, VX_MEM_READ_WRITE, &scale_buffer));
+  RT_CHECK(vx_mem_alloc(device, scale_bytes, VX_MEM_READ_WRITE, &zero_buffer));
+  RT_CHECK(vx_mem_alloc(device, logical_count * sizeof(fp16_t),
+                        VX_MEM_READ_WRITE, &logical_scale_buffer));
+  RT_CHECK(vx_mem_alloc(device, logical_count * sizeof(fp16_t),
+                        VX_MEM_READ_WRITE, &logical_zero_buffer));
+  RT_CHECK(vx_copy_to_dev(src_buffer, token.data(), 0,
+                          token.size() * sizeof(fp16_t)));
+  RT_CHECK(vx_copy_to_dev(weight_buffer, initial_weight.data(), 0, weight_bytes));
+  RT_CHECK(vx_copy_to_dev(scale_buffer, initial_scale.data(), 0, scale_bytes));
+  RT_CHECK(vx_copy_to_dev(zero_buffer, initial_zero.data(), 0, scale_bytes));
+  RT_CHECK(vx_copy_to_dev(logical_scale_buffer, logical_scale.data(), 0,
+                          logical_count * sizeof(fp16_t)));
+  RT_CHECK(vx_copy_to_dev(logical_zero_buffer, logical_zero.data(), 0,
+                          logical_count * sizeof(fp16_t)));
+
+  uint64_t num_cores = 0;
+  uint64_t num_warps = 0;
+  uint64_t num_threads = 0;
+  RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_CORES, &num_cores));
+  RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_WARPS, &num_warps));
+  RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_THREADS, &num_threads));
+  const uint32_t tpb = std::min(256u, (uint32_t)(num_warps * num_threads));
+  const uint32_t work_items = std::max(N >> 1, gemm_qdir == 0 ? 1u : N >> 5);
+  const uint32_t blocks = std::min(
+      (work_items + tpb - 1u) / tpb,
+      std::max(1u, (uint32_t)num_cores * 4u));
+
+  kernel_arg_t arg = {};
+  if (!init_kernel_arg(arg, capacity, N, QBLK, QDIR, wtrans, gemm_qdir,
+                       source_transposed, SRC_LAYOUT_ROW_MAJOR,
+                       DMA_MT, DMA_KT, DMA_NT, blocks, tpb, quant_mode, N, 0)) {
+    printf("ERROR: failed to initialize persistent kernel args\n");
+    cleanup();
+    return 1;
+  }
+  arg.K = 1;
+  arg.src_total_K = 1;
+  arg.persistent_mode = 1;
+  arg.cache_capacity = capacity;
+  arg.cache_position = position;
+  RT_CHECK(vx_mem_address(src_buffer, &arg.src_addr));
+  RT_CHECK(vx_mem_address(weight_buffer, &arg.weight_addr));
+  RT_CHECK(vx_mem_address(scale_buffer, &arg.scale_addr));
+  RT_CHECK(vx_mem_address(zero_buffer, &arg.zero_addr));
+  RT_CHECK(vx_mem_address(logical_scale_buffer, &arg.logical_scale_addr));
+  RT_CHECK(vx_mem_address(logical_zero_buffer, &arg.logical_zero_addr));
+  RT_CHECK(vx_upload_bytes(device, &arg, sizeof(arg), &args_buffer));
+  RT_CHECK(vx_start(device, krnl_buffer, args_buffer));
+  RT_CHECK(vx_ready_wait(device, VX_MAX_TIMEOUT));
+  RT_CHECK(vx_copy_from_dev(weight.data(), weight_buffer, 0, weight_bytes));
+  RT_CHECK(vx_copy_from_dev(scale.data(), scale_buffer, 0, scale_bytes));
+  RT_CHECK(vx_copy_from_dev(zero.data(), zero_buffer, 0, scale_bytes));
+  RT_CHECK(vx_copy_from_dev(logical_scale.data(), logical_scale_buffer, 0,
+                            logical_count * sizeof(fp16_t)));
+  RT_CHECK(vx_copy_from_dev(logical_zero.data(), logical_zero_buffer, 0,
+                            logical_count * sizeof(fp16_t)));
+
+  size_t errors = 0;
+  auto check_bytes = [&errors](const char* name,
+                               const std::vector<uint8_t>& actual,
+                               const std::vector<uint8_t>& expected) {
+    for (size_t i = 0; i < actual.size(); ++i) {
+      if (actual[i] != expected[i]) {
+        if (errors < 8) {
+          printf("%s mismatch at byte %zu: got=0x%02x ref=0x%02x\n",
+                 name, i, unsigned(actual[i]), unsigned(expected[i]));
+        }
+        ++errors;
+      }
+    }
+  };
+  check_bytes("Weight", weight, reference_weight);
+  check_bytes("Scale", scale, reference_scale);
+  check_bytes("Zero", zero, reference_zero);
+  for (size_t i = 0; i < logical_count; ++i) {
+    if (logical_scale[i] != reference_logical_scale[i]
+        || logical_zero[i] != reference_logical_zero[i]) {
+      if (errors < 8) {
+        printf("Logical qparam mismatch at %zu\n", i);
+      }
+      ++errors;
+    }
+  }
+  vx_dump_perf(device, stdout);
+  cleanup();
+  if (errors == 0) {
+    printf("PASSED!\n");
+    return 0;
+  }
+  printf("FAILED! errors=%zu\n", errors);
+  return 1;
+}
+
 int main(int argc, char *argv[]) {
   uint32_t K = 32;
   uint32_t N = 32;
@@ -396,6 +558,9 @@ int main(int argc, char *argv[]) {
   uint32_t head_col_offset = 0;
   bool emit_correction_qparams = false;
   bool gemm_qdir_set = false;
+  uint32_t persistent_kind = 0;
+  uint32_t cache_capacity = 0;
+  uint32_t cache_position = 0;
   uint32_t src_layout = SRC_LAYOUT_ROW_MAJOR;
   for (int i = 1; i < argc; ++i) {
     if (strcmp(argv[i], "-k") == 0) K = atoi(argv[++i]);
@@ -425,6 +590,12 @@ int main(int argc, char *argv[]) {
     else if (strcmp(argv[i], "--head-col-offset") == 0) head_col_offset = atoi(argv[++i]);
     else if (strncmp(argv[i], "--head-col-offset=", 18) == 0) head_col_offset = atoi(argv[i] + 18);
     else if (strcmp(argv[i], "--emit-correction-qparams") == 0) emit_correction_qparams = true;
+    else if (strcmp(argv[i], "--persistent-kind") == 0) {
+      const char* kind = argv[++i];
+      persistent_kind = strcmp(kind, "k") == 0 ? 1u : strcmp(kind, "v") == 0 ? 2u : 0u;
+    }
+    else if (strcmp(argv[i], "--cache-capacity") == 0) cache_capacity = atoi(argv[++i]);
+    else if (strcmp(argv[i], "--cache-position") == 0) cache_position = atoi(argv[++i]);
     else if (strcmp(argv[i], "--layout-from") == 0) src_layout = parse_src_layout(argv[++i]);
     else if (strncmp(argv[i], "--layout-from=", 14) == 0) src_layout = parse_src_layout(argv[i] + 14);
     else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
@@ -433,9 +604,14 @@ int main(int argc, char *argv[]) {
              "[--gemm-qdir QDIR] [--source-transposed] "
              "[--layout-from row_major_fp16|gemm_c_tiled] "
              "[--quant-mode legacy_uint4_asymmetric|spinquant_signed_asymmetric|spinquant_signed_symmetric] "
-             "[--source-total-n N] [--head-col-offset N] [--emit-correction-qparams]\n", argv[0]);
+             "[--source-total-n N] [--head-col-offset N] [--emit-correction-qparams] "
+             "[--persistent-kind k|v --cache-capacity N --cache-position N]\n", argv[0]);
       return 0;
     }
+  }
+  if (persistent_kind != 0) {
+    return run_persistent_update_test(cache_capacity, cache_position,
+                                      persistent_kind);
   }
   if (!gemm_qdir_set) GEMM_QDIR = QDIR;
   if (source_total_n == 0) source_total_n = N;

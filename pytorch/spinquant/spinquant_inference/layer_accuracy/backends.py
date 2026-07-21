@@ -11,14 +11,30 @@ import torch
 import torch.nn.functional as F
 
 from ..utils.hadamard_utils import get_hadK
-from .artifacts import LayerCase
-from .specs import PhysicalSpec, TensorHandle, TensorSpec
+from ..modeling.quantized_kv_cache import FixedCapacityKVQuantizedCache
+from .artifacts import DecodeCase, LayerCase
+from .specs import (
+    CacheGeometry,
+    CacheState,
+    DecodeConfig,
+    LayerConfig,
+    PersistentCache,
+    PhysicalSpec,
+    SUPPORTED_MODELS,
+    TensorHandle,
+    TensorSpec,
+)
 from .tensor_io import dequantize_weight, pack_signed_int4, unpack_signed_int4
 
 
 TILE_M = 128
 TILE_K = 128
 TILE_KN = 32
+
+
+def _padded_weight_k(logical_k: int) -> int:
+    alignment = TILE_KN if logical_k <= TILE_K else TILE_K
+    return (logical_k + alignment - 1) // alignment * alignment
 
 
 @dataclass(frozen=True)
@@ -67,14 +83,14 @@ def _decode_gemm_matrix(
     return torch.cat(decoded, dim=0)[:m]
 
 
-def _decode_packed_gemm_weight(
+def _decode_gemm_weight_values(
     storage: torch.Tensor,
     *,
     k: int,
     n: int,
     wtrans: int,
 ) -> torch.Tensor:
-    """Decode a packed signed-int4 GEMM-W buffer to semantic packed rows."""
+    """Decode a packed signed-int4 GEMM-W buffer to semantic INT8 values."""
     raw = storage.detach().cpu().view(torch.uint8).reshape(-1)
     unpacked = torch.empty((k, n), dtype=torch.int8)
     k_tile = 128
@@ -105,7 +121,20 @@ def _decode_packed_gemm_weight(
                 nibble = int(raw[offset]) >> (4 if k0 & 1 else 0)
             nibble &= 0xF
             unpacked[row, column] = nibble - 16 if nibble >= 8 else nibble
-    return pack_signed_int4(unpacked)
+    return unpacked
+
+
+def _decode_packed_gemm_weight(
+    storage: torch.Tensor,
+    *,
+    k: int,
+    n: int,
+    wtrans: int,
+) -> torch.Tensor:
+    """Decode a GEMM-W buffer and pack pairs along its physical N axis."""
+    return pack_signed_int4(
+        _decode_gemm_weight_values(storage, k=k, n=n, wtrans=wtrans)
+    )
 
 
 def decode_physical_tensor(handle: TensorHandle) -> torch.Tensor:
@@ -120,16 +149,20 @@ def decode_physical_tensor(handle: TensorHandle) -> torch.Tensor:
     if physical.layout == "grouped_row":
         return torch.stack([value.reshape(params["rows"], params["columns"])
                             for value in storages]).reshape(handle.spec.shape).contiguous()
+    if physical.layout == "grouped_prefix_row":
+        active = params["logical_rows"]
+        return torch.stack([
+            value.reshape(params["rows"], params["columns"])[:active]
+            for value in storages
+        ]).reshape(handle.spec.shape).contiguous()
     if physical.layout == "gemm_w_packed_grouped":
         packed = []
         for value in storages:
-            matrix = unpack_signed_int4(
-                _decode_packed_gemm_weight(
-                    value,
-                    k=params["weight_k"],
-                    n=params["weight_n"],
-                    wtrans=params["wtrans"],
-                )
+            matrix = _decode_gemm_weight_values(
+                value,
+                k=params["weight_k"],
+                n=params["weight_n"],
+                wtrans=params["wtrans"],
             )
             if params.get("source_transposed", 0):
                 matrix = matrix.transpose(0, 1).contiguous()
@@ -217,6 +250,7 @@ class QuantizedActivation:
     weight_tiled: Optional[object] = None
     scale_tiled: Optional[object] = None
     zero_tiled: Optional[object] = None
+    dequantized: Optional[torch.Tensor] = None
 
 
 class Backend:
@@ -224,13 +258,29 @@ class Backend:
 
     name = "abstract"
 
-    def bind(self, case: LayerCase) -> None:
+    def bind(self, case: LayerCase | DecodeCase) -> None:
         self.case = case
+
+    @property
+    def layer_config(self) -> LayerConfig:
+        config = self.case.config
+        return config.layer if isinstance(config, DecodeConfig) else config
 
     def preflight(self, case: LayerCase, stop_after: str) -> None:
         del case, stop_after
 
     def tensor(self, name: str) -> torch.Tensor:
+        raise NotImplementedError
+
+    def activate(
+        self,
+        input_tensor: torch.Tensor,
+        position_ids: torch.Tensor,
+        causal_mask: torch.Tensor,
+    ) -> None:
+        raise NotImplementedError
+
+    def create_persistent_cache(self, config: DecodeConfig) -> PersistentCache:
         raise NotImplementedError
 
     def rms_norm(self, x: object, weight_name: str, eps: float) -> object:
@@ -307,6 +357,13 @@ class Backend:
         return {"backend": self.name, "strict_native": False, "physical_steps": []}
 
 
+def _projection_head_count(config: LayerConfig, width: int) -> int:
+    heads = width // config.head_dim
+    if heads not in (config.num_attention_heads, config.num_key_value_heads):
+        raise ValueError("projection width does not match query or KV head geometry")
+    return heads
+
+
 class TorchBackend(Backend):
     """Naive, explicit PyTorch implementation used by CPU tests and CUDA reference."""
 
@@ -316,8 +373,9 @@ class TorchBackend(Backend):
         self.device = torch.device(device)
         self._tensors: Dict[str, torch.Tensor] = {}
         self._weights: Dict[str, torch.Tensor] = {}
+        self._hadamard_matrices: Dict[int, tuple[torch.Tensor, int]] = {}
 
-    def bind(self, case: LayerCase) -> None:
+    def bind(self, case: LayerCase | DecodeCase) -> None:
         super().bind(case)
         if self.device.type == "cuda":
             if not torch.cuda.is_available():
@@ -327,6 +385,28 @@ class TorchBackend(Backend):
             torch.use_deterministic_algorithms(True)
         self._tensors = {name: tensor.to(self.device) for name, tensor in case.tensors.items()}
         self._weights.clear()
+
+    def activate(
+        self,
+        input_tensor: torch.Tensor,
+        position_ids: torch.Tensor,
+        causal_mask: torch.Tensor,
+    ) -> None:
+        self._tensors["input"] = input_tensor.to(self.device)
+        self._tensors["position_ids"] = position_ids.to(self.device)
+        self._tensors["causal_mask"] = causal_mask.to(self.device)
+
+    def create_persistent_cache(
+        self, config: DecodeConfig
+    ) -> FixedCapacityKVQuantizedCache:
+        layer = config.layer
+        return FixedCapacityKVQuantizedCache(
+            batch_size=layer.batch_size,
+            num_kv_heads=layer.num_key_value_heads,
+            head_dim=layer.head_dim,
+            max_sequence_length=config.max_sequence_length,
+            device=self.device,
+        )
 
     def tensor(self, name: str) -> torch.Tensor:
         return self._tensors[name]
@@ -342,7 +422,7 @@ class TorchBackend(Backend):
             cached = dequantize_weight(
                 self.tensor(f"{name}.qweight"),
                 self.tensor(f"{name}.scales"),
-                self.case.config.weight_group_size,
+                self.layer_config.weight_group_size,
                 dtype=torch.float16,
             )
             self._weights[name] = cached
@@ -354,24 +434,34 @@ class TorchBackend(Backend):
         return result.reshape(*shape, result.shape[-1]).to(torch.float16)
 
     def split_heads(self, x: torch.Tensor) -> torch.Tensor:
-        config = self.case.config
+        config = self.layer_config
+        heads = _projection_head_count(config, x.shape[-1])
         return x.reshape(
             config.batch_size,
-            config.sequence_length,
-            config.num_attention_heads,
+            x.shape[1],
+            heads,
             config.head_dim,
         ).transpose(1, 2).contiguous()
 
     def rope(self, x: torch.Tensor) -> torch.Tensor:
-        cos = self.tensor("rope_cos").unsqueeze(1).float()
-        sin = self.tensor("rope_sin").unsqueeze(1).float()
+        positions = self.tensor("position_ids")
+        table_shape = (*positions.shape, self.layer_config.head_dim)
+        indices = positions.unsqueeze(-1).expand(table_shape)
+        cos = self.tensor("rope_cos").gather(1, indices).unsqueeze(1).float()
+        sin = self.tensor("rope_sin").gather(1, indices).unsqueeze(1).float()
         half = x.shape[-1] // 2
         rotated = torch.cat((-x[..., half:], x[..., :half]), dim=-1)
         return (x.float() * cos + rotated.float() * sin).to(torch.float16)
 
     def hadamard(self, x: torch.Tensor) -> torch.Tensor:
         n = x.shape[-1]
-        had_k, k_base = get_hadK(n)
+        cached = self._hadamard_matrices.get(n)
+        if cached is None:
+            had_k, k_base = get_hadK(n)
+            matrix = had_k if k_base > 1 else torch.ones((1, 1))
+            cached = (matrix.to(device=x.device, dtype=torch.float32), k_base)
+            self._hadamard_matrices[n] = cached
+        matrix, k_base = cached
         original_dtype = x.dtype
         work = x.float().reshape(-1, n, 1).clone()
         while work.shape[1] > k_base:
@@ -379,8 +469,7 @@ class TorchBackend(Backend):
             work = torch.cat((pairs[:, :, 0, :] + pairs[:, :, 1, :],
                               pairs[:, :, 0, :] - pairs[:, :, 1, :]), dim=-1)
         if k_base > 1:
-            matrix = had_k.to(device=x.device, dtype=torch.float32).reshape(1, k_base, k_base)
-            work = matrix @ work
+            work = matrix.reshape(1, k_base, k_base) @ work
         return (work.reshape(x.shape) / math.sqrt(n)).to(original_dtype)
 
     def quantize(self, x: torch.Tensor, mode: str) -> QuantizedActivation:
@@ -408,6 +497,8 @@ class TorchBackend(Backend):
         )
 
     def _dequantize(self, value: QuantizedActivation) -> torch.Tensor:
+        if value.dequantized is not None:
+            return value.dequantized
         q = value.unpacked
         if q is None:
             q = unpack_signed_int4(value.packed)
@@ -421,7 +512,12 @@ class TorchBackend(Backend):
         return self._dequantize(value)
 
     def qk(self, q: torch.Tensor, k: QuantizedActivation) -> torch.Tensor:
-        return torch.matmul(q, self._dequantize(k).transpose(-1, -2)).to(torch.float16)
+        key = self._dequantize(k)
+        groups = self.layer_config.num_key_value_groups
+        batch, kv_heads, key_length, head_dim = key.shape
+        query = q.reshape(batch, kv_heads, groups, q.shape[-2], head_dim)
+        scores = torch.matmul(query, key.unsqueeze(2).transpose(-1, -2))
+        return scores.reshape(batch, kv_heads * groups, q.shape[-2], key_length).to(torch.float16)
 
     def scaled_masked_scores(self, qk: torch.Tensor, head_dim: int) -> torch.Tensor:
         return (qk.float() / math.sqrt(head_dim) + self.tensor("causal_mask").float()).to(torch.float16)
@@ -430,7 +526,16 @@ class TorchBackend(Backend):
         return torch.softmax(scores.float(), dim=-1).to(torch.float16)
 
     def pv(self, probabilities: torch.Tensor, v: QuantizedActivation) -> torch.Tensor:
-        return torch.matmul(probabilities, self._dequantize(v)).to(torch.float16)
+        value = self._dequantize(v)
+        groups = self.layer_config.num_key_value_groups
+        batch, kv_heads, key_length, head_dim = value.shape
+        probs = probabilities.reshape(
+            batch, kv_heads, groups, probabilities.shape[-2], key_length
+        )
+        output = torch.matmul(probs, value.unsqueeze(2))
+        return output.reshape(
+            batch, kv_heads * groups, probabilities.shape[-2], head_dim
+        ).to(torch.float16)
 
     def head_concat(self, value: torch.Tensor) -> torch.Tensor:
         batch, heads, sequence, head_dim = value.shape
@@ -555,6 +660,7 @@ class FusedLayoutPlan(_LayoutPlan):
         "rms_norm_layout_fused",
         "rope_layout_fused",
         "kv_cache_quant_layout_fused_w4a16",
+        "kv_cache_quant_layout_fused_w4a16_update",
         "softmax_layout_fused",
         "head_concat_layout_fused",
         "eladd_layout_fused",
@@ -600,6 +706,286 @@ class FusedLayoutPlan(_LayoutPlan):
         return self.backend._fused_add(lhs, rhs)
 
 
+class VortexPersistentCache:
+    """Fixed-capacity K/V buffers in the two C4 GEMM-consumer layouts."""
+
+    def __init__(self, backend: "VortexBackend", config: DecodeConfig) -> None:
+        self.backend = backend
+        layer = config.layer
+        if layer.head_dim != 128:
+            raise ValueError("C4 persistent KV v1 requires head_dim=128")
+        if config.max_sequence_length % TILE_KN != 0:
+            raise ValueError("C4 persistent KV v1 requires capacity divisible by 32")
+        padded_capacity = _padded_weight_k(config.max_sequence_length)
+        self.state = CacheState(
+            CacheGeometry(
+                batch_size=layer.batch_size,
+                num_kv_heads=layer.num_key_value_heads,
+                head_dim=layer.head_dim,
+                max_sequence_length=config.max_sequence_length,
+                padded_sequence_length=padded_capacity,
+            ),
+            allocation_id=f"vortex-kv-{id(self):x}",
+        )
+        self.group_count = layer.batch_size * layer.num_key_value_heads
+        zero_source_host = torch.zeros(
+            (config.max_sequence_length, layer.head_dim),
+            dtype=torch.float16,
+        )
+        with torch.vortex.memory_alignment(512):
+            zero_source = zero_source_host.to(backend.device)
+        self.key_buffers = tuple(
+            self._allocate_group(zero_source, quant_mode=1)
+            for _ in range(self.group_count)
+        )
+        self.value_buffers = tuple(
+            self._allocate_group(zero_source, quant_mode=2)
+            for _ in range(self.group_count)
+        )
+        backend._record(
+            "persistent_kv_allocate",
+            launches=2 * self.group_count,
+            capacity=config.max_sequence_length,
+            padded_capacity=padded_capacity,
+        )
+
+    @property
+    def logical_length(self) -> int:
+        return self.state.logical_length
+
+    def _allocate_group(self, source: torch.Tensor, *, quant_mode: int):
+        asymmetric = quant_mode == 1
+        capacity, head_dim = source.shape
+        return torch.ops.vortex.kv_cache_quant_layout_fused_w4a16(
+            source,
+            capacity,
+            head_dim,
+            head_dim,
+            1,
+            0 if asymmetric else 1,
+            1 if asymmetric else 0,
+            0,
+            1 if asymmetric else 0,
+            quant_mode,
+            head_dim,
+            0,
+            capacity,
+            0,
+        )
+
+    @staticmethod
+    def _source_views(packed: object) -> tuple[dict, ...]:
+        if not isinstance(packed, TensorHandle):
+            raise TypeError("C4 persistent cache requires a fused physical KV source")
+        views = packed.attachments.get("persistent_source_views")
+        if not isinstance(views, tuple):
+            raise TypeError("fused KV source is missing persistent source geometry")
+        return views
+
+    def _update(
+        self,
+        packed: object,
+        buffers: tuple[tuple[torch.Tensor, ...], ...],
+        *,
+        quant_mode: int,
+        start_position: int,
+    ) -> None:
+        views = self._source_views(packed)
+        if len(views) != self.group_count:
+            raise ValueError("persistent source group count does not match cache allocation")
+        sequence = int(packed.spec.shape[-2])
+        for group_index, view in enumerate(views):
+            for local_position in range(sequence):
+                torch.ops.vortex.kv_cache_quant_layout_fused_w4a16_update(
+                    view["source"],
+                    self.state.geometry.max_sequence_length,
+                    start_position + local_position,
+                    quant_mode,
+                    *buffers[group_index],
+                    self.state.geometry.head_dim,
+                    view["src_layout"],
+                    view["src_total_n"],
+                    view["src_col_offset"],
+                    view["src_total_k"],
+                    view["src_row_offset"] + local_position,
+                )
+        self.backend._record(
+            "persistent_kv_append",
+            launches=self.group_count * sequence,
+            quant_mode=quant_mode,
+            start_position=start_position,
+            token_count=sequence,
+        )
+
+    def prefill_quantized(self, qkey, k_scale, k_zero, qvalue, v_scale) -> None:
+        del k_scale, k_zero, v_scale
+        prompt_length = int(qkey.spec.shape[-2])
+        self.state.validate_prefill(prompt_length)
+        if int(qvalue.spec.shape[-2]) != prompt_length:
+            raise ValueError("K/V prefill lengths do not match")
+        self._update(qkey, self.key_buffers, quant_mode=1, start_position=0)
+        self._update(qvalue, self.value_buffers, quant_mode=2, start_position=0)
+        self.state.publish_prefill(prompt_length)
+
+    def append_quantized(
+        self, qkey, k_scale, k_zero, qvalue, v_scale, *, position: int
+    ) -> None:
+        del k_scale, k_zero, v_scale
+        self.state.validate_append(position=position)
+        if int(qkey.spec.shape[-2]) != 1 or int(qvalue.spec.shape[-2]) != 1:
+            raise ValueError("persistent append requires exactly one K/V token")
+        self._update(qkey, self.key_buffers, quant_mode=1, start_position=position)
+        self._update(qvalue, self.value_buffers, quant_mode=2, start_position=position)
+        self.state.publish_append()
+
+    def _packed_handle(self, *, key: bool) -> TensorHandle:
+        geometry = self.state.geometry
+        buffers = self.key_buffers if key else self.value_buffers
+        payload = tuple(group[0] for group in buffers)
+        source_transposed = 1 if key else 0
+        weight_k = geometry.head_dim if key else geometry.padded_sequence_length
+        weight_n = (
+            (geometry.max_sequence_length + TILE_KN - 1) // TILE_KN * TILE_KN
+            if key else geometry.head_dim
+        )
+        return _make_grouped_handle(
+            payload,
+            name="persistent_k" if key else "persistent_v",
+            axes=("B", "H", "S", "Dp"),
+            shape=(
+                geometry.batch_size,
+                geometry.num_kv_heads,
+                self.logical_length,
+                geometry.head_dim // 2,
+            ),
+            layout="gemm_w_packed_grouped",
+            padded_shape=tuple(payload[0].shape),
+            producer="persistent_kv_cache",
+            grouping="head",
+            weight_k=weight_k,
+            weight_n=weight_n,
+            wtrans=source_transposed,
+            source_transposed=source_transposed,
+            capacity=geometry.max_sequence_length,
+            padded_capacity=geometry.padded_sequence_length,
+            logical_length=self.logical_length,
+        )
+
+    def _logical_handle(self, *, key: bool, zero: bool = False) -> TensorHandle:
+        geometry = self.state.geometry
+        buffers = self.key_buffers if key else self.value_buffers
+        buffer_index = 4 if zero else 3
+        values = tuple(group[buffer_index] for group in buffers)
+        if zero:
+            name = "k_zero"
+        else:
+            name = "k_scale" if key else "v_scale"
+        return _make_grouped_handle(
+            values,
+            name=name,
+            axes=("B", "H", "S", "G"),
+            shape=(
+                geometry.batch_size,
+                geometry.num_kv_heads,
+                self.logical_length,
+                1,
+            ),
+            layout="grouped_prefix_row",
+            padded_shape=(geometry.max_sequence_length, 1),
+            producer="persistent_kv_cache",
+            grouping="head",
+            rows=geometry.max_sequence_length,
+            columns=1,
+            logical_rows=self.logical_length,
+        )
+
+    def get_kv(self):
+        key = self._packed_handle(key=True)
+        k_scale = self._logical_handle(key=True)
+        k_zero = self._logical_handle(key=True, zero=True)
+        value = self._packed_handle(key=False)
+        v_scale = self._logical_handle(key=False)
+        key.attachments["weight_tiled"] = tuple(group[0] for group in self.key_buffers)
+        k_scale.attachments["scale_tiled"] = tuple(group[1] for group in self.key_buffers)
+        k_zero.attachments["zero_tiled"] = tuple(group[2] for group in self.key_buffers)
+        value.attachments["weight_tiled"] = tuple(group[0] for group in self.value_buffers)
+        v_scale.attachments["scale_tiled"] = tuple(group[1] for group in self.value_buffers)
+        v_scale.attachments["zero_tiled"] = tuple(group[2] for group in self.value_buffers)
+        return (key, k_scale, k_zero), (value, v_scale, None)
+
+    def dequantized_kv(self):
+        key_cache, value_cache = self.get_kv()
+        key = QuantizedActivation(
+            packed=key_cache[0], scale=key_cache[1], zero=key_cache[2],
+            mode="asym", logical_shape=key_cache[0].spec.shape,
+        )
+        value = QuantizedActivation(
+            packed=value_cache[0], scale=value_cache[1], zero=None,
+            mode="sym", logical_shape=value_cache[0].spec.shape,
+        )
+        return self.backend.quantized_capture(key), self.backend.quantized_capture(value)
+
+    def descriptor(self) -> dict:
+        geometry = self.state.geometry
+
+        def describe_groups(groups):
+            names = ("weight", "scale", "zero", "logical_scale", "logical_zero")
+            return [
+                {
+                    name: {
+                        "address": tensor.data_ptr(),
+                        "nbytes": tensor.numel() * tensor.element_size(),
+                        "shape": list(tensor.shape),
+                        "dtype": str(tensor.dtype).removeprefix("torch."),
+                    }
+                    for name, tensor in zip(names, group)
+                }
+                for group in groups
+            ]
+
+        key_groups = describe_groups(self.key_buffers)
+        value_groups = describe_groups(self.value_buffers)
+        return {
+            "allocation_id": self.state.allocation_id,
+            "device": str(self.backend.device),
+            "logical_length": self.logical_length,
+            "cache_generation": self.state.cache_generation,
+            "lifecycle": self.state.lifecycle,
+            "geometry": asdict(geometry),
+            "layouts": {
+                "key": "gemm_w_tiled_transposed",
+                "value": "gemm_w_tiled",
+            },
+            "quantization": {
+                "key": "signed_asymmetric_int4",
+                "value": "signed_symmetric_int4",
+            },
+            "group_storage": "separate_aligned_allocations",
+            "buffers": {"key": key_groups, "value": value_groups},
+            # Each batch/head group owns an independent allocation, so there is
+            # no valid address delta between adjacent groups.  The capacity-
+            # derived allocation extent is the stride a contiguous arena would
+            # require and is useful to consumers sizing such an arena later.
+            "per_head_strides_bytes": {
+                "key": None,
+                "value": None,
+            },
+            "per_head_buffer_bytes": {
+                "key": {
+                    name: item["nbytes"] for name, item in key_groups[0].items()
+                },
+                "value": {
+                    name: item["nbytes"] for name, item in value_groups[0].items()
+                },
+            },
+            "key_addresses": [group[0].data_ptr() for group in self.key_buffers],
+            "value_addresses": [group[0].data_ptr() for group in self.value_buffers],
+        }
+
+    def reset(self) -> None:
+        self.state.reset()
+
+
 class VortexBackend(Backend):
     """Strict Vortex backend with selectable activation-layout lowering."""
 
@@ -632,6 +1018,9 @@ class VortexBackend(Backend):
         self._steps: list[dict] = []
         self._launches: Dict[str, int] = {}
         self._canonical_cache: Dict[int, tuple[TensorHandle, torch.Tensor]] = {}
+        self._active_sequence_length = 0
+        self._active_key_length = 0
+        self._active_position_offset = 0
         plan_type = StandaloneLayoutPlan if physical_plan == "standalone" else FusedLayoutPlan
         self.layout_plan = plan_type(self)
 
@@ -639,7 +1028,7 @@ class VortexBackend(Backend):
     def physical_plan(self) -> str:
         return self.layout_plan.name
 
-    def bind(self, case: LayerCase) -> None:
+    def bind(self, case: LayerCase | DecodeCase) -> None:
         import torch_vortex  # noqa: F401
 
         super().bind(case)
@@ -650,7 +1039,26 @@ class VortexBackend(Backend):
         self._launches.clear()
         self._canonical_cache.clear()
 
-    def preflight(self, case: LayerCase, stop_after: str) -> None:
+    def activate(
+        self,
+        input_tensor: torch.Tensor,
+        position_ids: torch.Tensor,
+        causal_mask: torch.Tensor,
+    ) -> None:
+        self._tensors["input"] = input_tensor.to(self.device)
+        self._tensors["position_ids"] = position_ids.to(self.device)
+        self._tensors["causal_mask"] = causal_mask.to(self.device)
+        self._active_sequence_length = int(input_tensor.shape[1])
+        self._active_key_length = int(causal_mask.shape[-1])
+        positions = position_ids.reshape(-1)
+        self._active_position_offset = int(positions[0].item())
+
+    def create_persistent_cache(self, config: DecodeConfig) -> VortexPersistentCache:
+        if self.physical_plan != "fused":
+            raise ValueError("C4 persistent decode currently requires physical_plan='fused'")
+        return VortexPersistentCache(self, config)
+
+    def preflight(self, case: LayerCase | DecodeCase, stop_after: str) -> None:
         del stop_after
         if self.strict_native:
             os.environ["TORCH_VORTEX_STRICT_NATIVE"] = "1"
@@ -667,7 +1075,11 @@ class VortexBackend(Backend):
         self._prewarm_kernel_regions(case)
 
     @staticmethod
-    def _validate_c4_shape(case: LayerCase) -> None:
+    def _validate_c4_shape(case: LayerCase | DecodeCase) -> None:
+        if isinstance(case.config, DecodeConfig):
+            if case.config.max_sequence_length % TILE_KN != 0:
+                raise ValueError("C4 decode cache capacity must be divisible by 32")
+            return
         sequence_m_pad = (case.config.sequence_length + 7) & ~7
         if case.config.sequence_length % TILE_KN != 0:
             raise ValueError(
@@ -682,24 +1094,38 @@ class VortexBackend(Backend):
             )
 
     @staticmethod
-    def _validate_fused_case(case: LayerCase) -> None:
+    def _validate_fused_case(case: LayerCase | DecodeCase) -> None:
         VortexBackend._validate_c4_shape(case)
-        expected = ("llama2-7b", 4096, 11008, 32, 128)
+        config = case.config.layer if isinstance(case.config, DecodeConfig) else case.config
         actual = (
-            case.config.model,
-            case.config.hidden_size,
-            case.config.intermediate_size,
-            case.config.num_attention_heads,
-            case.config.head_dim,
+            config.model,
+            config.hidden_size,
+            config.intermediate_size,
+            config.num_attention_heads,
+            config.num_key_value_heads,
+            config.head_dim,
         )
-        if actual != expected:
+        supported = set()
+        for model in SUPPORTED_MODELS:
+            canonical = LayerConfig.for_model(model)
+            supported.add(
+                (
+                    canonical.model,
+                    canonical.hidden_size,
+                    canonical.intermediate_size,
+                    canonical.num_attention_heads,
+                    canonical.num_key_value_heads,
+                    canonical.head_dim,
+                )
+            )
+        if actual not in supported:
             raise ValueError(
-                "the fused physical plan currently requires Llama2-7B "
-                "H4096/I11008/heads32/head_dim128"
+                "the fused physical plan requires Llama2-7B or Llama3-8B "
+                "with their canonical attention geometry"
             )
         score_scale = case.tensors["score_scale"]
         expected_scale = torch.full_like(
-            score_scale, 1.0 / math.sqrt(case.config.head_dim)
+            score_scale, 1.0 / math.sqrt(config.head_dim)
         )
         if not torch.equal(score_scale, expected_scale):
             raise ValueError(
@@ -712,15 +1138,16 @@ class VortexBackend(Backend):
         if not torch.equal(case.tensors["causal_mask"], expected_mask):
             raise ValueError("the fused softmax requires the canonical causal mask")
 
-    def _prewarm_kernel_regions(self, case: LayerCase) -> None:
+    def _prewarm_kernel_regions(self, case: LayerCase | DecodeCase) -> None:
         """Reserve both kernel VMA regions before uploading the real case."""
         x = torch.zeros((8, 32), dtype=torch.float16).to(self.device)
         gamma = torch.ones((32,), dtype=torch.float16).to(self.device)
         # Force a host-visible completion between kernel families.  In the
         # simulator, ready_wait completes the launch but a following kernel
         # image replacement can otherwise race the final device-side drains.
+        config = case.config.layer if isinstance(case.config, DecodeConfig) else case.config
         rms_out = torch.ops.vortex.rms_norm(
-            x.reshape(1, 8, 32), gamma, case.config.rms_norm_eps
+            x.reshape(1, 8, 32), gamma, config.rms_norm_eps
         )
         rms_host = rms_out.cpu()
         packed = torch.zeros((32, 16), dtype=torch.uint8).to(self.device)
@@ -771,10 +1198,10 @@ class VortexBackend(Backend):
         zeros = torch.zeros(scales.shape, dtype=torch.int16).to(self.device)
         weight_tiled = torch.ops.vortex.tile_weight_w4a16(packed, in_features, out_features, 0)
         scale_tiled = torch.ops.vortex.tile_scale_zp_w4a16(
-            scales, in_features, out_features, self.case.config.weight_group_size, 0
+            scales, in_features, out_features, self.layer_config.weight_group_size, 0
         )
         zero_tiled = torch.ops.vortex.tile_scale_zp_w4a16(
-            zeros, in_features, out_features, self.case.config.weight_group_size, 0
+            zeros, in_features, out_features, self.layer_config.weight_group_size, 0
         )
         self._record(
             "tile_static_weight", launches=3, tensor=name, layout="gemm_w_tiled"
@@ -801,7 +1228,7 @@ class VortexBackend(Backend):
             zero,
             k_dim,
             n_dim,
-            self.case.config.weight_group_size,
+            self.layer_config.weight_group_size,
             0,
             0,
         )
@@ -813,11 +1240,12 @@ class VortexBackend(Backend):
         return self.layout_plan.split_heads(x)
 
     def _standalone_split_heads(self, x: torch.Tensor) -> torch.Tensor:
-        config = self.case.config
+        config = self.layer_config
+        heads = _projection_head_count(config, x.shape[-1])
         return x.reshape(
             config.batch_size,
-            config.sequence_length,
-            config.num_attention_heads,
+            self._active_sequence_length,
+            heads,
             config.head_dim,
         ).transpose(1, 2).contiguous()
 
@@ -829,7 +1257,9 @@ class VortexBackend(Backend):
         cos = self.tensor("rope_cos")[..., :half].reshape(-1, half).contiguous()
         sin = self.tensor("rope_sin")[..., :half].reshape(-1, half).contiguous()
         physical = x.permute(0, 2, 1, 3).contiguous()
-        output = torch.ops.vortex.apply_rotary_pos_emb(physical, cos, sin, 0)
+        output = torch.ops.vortex.apply_rotary_pos_emb(
+            physical, cos, sin, self._active_position_offset
+        )
         self._record("rope", layout_from="BHSD", layout_to="BHSD")
         return output.permute(0, 2, 1, 3).contiguous()
 
@@ -838,12 +1268,11 @@ class VortexBackend(Backend):
 
     def _standalone_hadamard(self, x: torch.Tensor) -> torch.Tensor:
         n = x.shape[-1]
-        had_k, k_base = get_hadK(n)
+        matrix, k_base = self._hadamard_matrix(n)
         output = torch.ops.vortex.hadamard_butterfly(x.contiguous(), k_base)
         self._record("hadamard_butterfly", dimension=n, base=k_base)
         if k_base > 1:
             rows = output.numel() // n
-            matrix = had_k.to(dtype=torch.float16, device=self.device).contiguous()
             output = torch.ops.vortex.hadamard_base(
                 output.reshape(rows, n).contiguous(), matrix, k_base
             ).reshape(x.shape)
@@ -863,27 +1292,41 @@ class VortexBackend(Backend):
         return cached
 
     def _fused_hadamard(self, x: torch.Tensor) -> TensorHandle:
-        config = self.case.config
+        config = self.layer_config
         n = x.shape[-1]
         matrix, k_base = self._hadamard_matrix(n)
-        if tuple(x.shape) == (
-            config.batch_size,
-            config.num_attention_heads,
-            config.sequence_length,
-            config.head_dim,
+        query_grouped = False
+        physical_heads = 1
+        if (
+            x.ndim == 4
+            and x.shape[0] == config.batch_size
+            and x.shape[1] in (config.num_attention_heads, config.num_key_value_heads)
+            and x.shape[2] == self._active_sequence_length
+            and x.shape[3] == config.head_dim
         ):
-            matrix_count = config.batch_size * config.num_attention_heads
-            rows = config.sequence_length
+            logical_heads = x.shape[1]
+            query_grouped = (
+                logical_heads == config.num_attention_heads
+                and config.num_key_value_groups > 1
+                and self._active_sequence_length == 1
+            )
+            physical_heads = (
+                config.num_key_value_heads if query_grouped else logical_heads
+            )
+            rows = self._active_sequence_length * (
+                config.num_key_value_groups if query_grouped else 1
+            )
+            matrix_count = config.batch_size * physical_heads
             axes = ("B", "H", "S", "D")
             grouping = "head"
             name = "r3"
         elif tuple(x.shape) == (
             config.batch_size,
-            config.sequence_length,
+            self._active_sequence_length,
             config.intermediate_size,
         ):
             matrix_count = 1
-            rows = config.batch_size * config.sequence_length
+            rows = config.batch_size * self._active_sequence_length
             axes = ("B", "S", "I")
             grouping = None
             name = "r4"
@@ -924,6 +1367,10 @@ class VortexBackend(Backend):
             m=rows,
             m_pad=m_pad,
             n=n,
+            physical_heads=physical_heads,
+            query_heads_per_kv=(
+                config.num_key_value_groups if query_grouped else 1
+            ),
         )
 
     def quantize(self, x, mode: str) -> QuantizedActivation:
@@ -960,37 +1407,49 @@ class VortexBackend(Backend):
         batch, heads, m_dim, k_dim = lhs.shape
         outputs = []
         n_dim = rhs.logical_shape[-2] if transpose_source else rhs.logical_shape[-1]
+        rhs_layouts = {}
         for batch_index in range(batch):
             for head in range(heads):
                 x = lhs[batch_index, head].contiguous()
+                kv_head = head // self.layer_config.num_key_value_groups
                 m_pad = (m_dim + 7) & ~7
                 input_tiled = torch.ops.vortex.tile_input_a(x, m_pad, k_dim)
                 gemm_k = input_tiled.shape[1]
-                packed = rhs.packed[batch_index, head].view(torch.uint8).contiguous()
-                scale = rhs.scale[batch_index, head].contiguous()
-                if transpose_source:
-                    source_k, source_n = rhs.logical_shape[-2], rhs.logical_shape[-1]
-                    weight = torch.ops.vortex.tile_weight_w4a16_ex(
-                        packed, source_k, source_n, 1, 1
-                    )
-                    zeros = torch.zeros(scale.shape, dtype=torch.int16).to(self.device)
-                    scale_tiled = torch.ops.vortex.tile_scale_zp_w4a16_ex(
-                        scale, source_k, source_n, self.case.config.kv_group_size, 1, 0, 1
-                    )
-                    zero_tiled = torch.ops.vortex.tile_scale_zp_w4a16_ex(
-                        zeros, source_k, source_n, self.case.config.kv_group_size, 1, 0, 1
-                    )
-                    wtrans, qdir = 1, 0
-                else:
-                    weight = torch.ops.vortex.tile_weight_w4a16(packed, k_dim, n_dim, 0)
-                    zeros = torch.zeros(scale.shape, dtype=torch.int16).to(self.device)
-                    scale_tiled = torch.ops.vortex.tile_scale_zp_w4a16(
-                        scale, k_dim, n_dim, self.case.config.kv_group_size, 1
-                    )
-                    zero_tiled = torch.ops.vortex.tile_scale_zp_w4a16(
-                        zeros, k_dim, n_dim, self.case.config.kv_group_size, 1
-                    )
-                    wtrans, qdir = 0, 1
+                layout_key = (batch_index, kv_head)
+                layout = rhs_layouts.get(layout_key)
+                if layout is None:
+                    packed = rhs.packed[batch_index, kv_head].view(torch.uint8).contiguous()
+                    scale = rhs.scale[batch_index, kv_head].contiguous()
+                    zeros = torch.zeros(scale.shape, dtype=torch.int16, device=self.device)
+                    if transpose_source:
+                        source_k, source_n = rhs.logical_shape[-2], rhs.logical_shape[-1]
+                        weight = torch.ops.vortex.tile_weight_w4a16_ex(
+                            packed, source_k, source_n, 1, 1
+                        )
+                        scale_tiled = torch.ops.vortex.tile_scale_zp_w4a16_ex(
+                            scale, source_k, source_n,
+                            self.layer_config.kv_group_size, 1, 0, 1
+                        )
+                        zero_tiled = torch.ops.vortex.tile_scale_zp_w4a16_ex(
+                            zeros, source_k, source_n,
+                            self.layer_config.kv_group_size, 1, 0, 1
+                        )
+                    else:
+                        weight = torch.ops.vortex.tile_weight_w4a16(
+                            packed, k_dim, n_dim, 0
+                        )
+                        scale_tiled = torch.ops.vortex.tile_scale_zp_w4a16(
+                            scale, k_dim, n_dim,
+                            self.layer_config.kv_group_size, 1
+                        )
+                        zero_tiled = torch.ops.vortex.tile_scale_zp_w4a16(
+                            zeros, k_dim, n_dim,
+                            self.layer_config.kv_group_size, 1
+                        )
+                    layout = (weight, scale_tiled, zero_tiled, scale)
+                    rhs_layouts[layout_key] = layout
+                weight, scale_tiled, zero_tiled, scale = layout
+                wtrans, qdir = (1, 0) if transpose_source else (0, 1)
                 output_tiled = torch.ops.vortex.mm_w4a16_gemm_core(
                     input_tiled,
                     weight,
@@ -998,7 +1457,7 @@ class VortexBackend(Backend):
                     zero_tiled,
                     gemm_k,
                     n_dim,
-                    self.case.config.kv_group_size,
+                    self.layer_config.kv_group_size,
                     wtrans,
                     qdir,
                 )
@@ -1009,7 +1468,7 @@ class VortexBackend(Backend):
                         output,
                         x,
                         scale.reshape(-1),
-                        rhs.zero[batch_index, head].reshape(-1),
+                        rhs.zero[batch_index, kv_head].reshape(-1),
                     )
                 outputs.append(output)
         self._record(
@@ -1122,7 +1581,7 @@ class VortexBackend(Backend):
             zero,
             k,
             n,
-            self.case.config.weight_group_size,
+            self.layer_config.weight_group_size,
             0,
             0,
         )
@@ -1145,15 +1604,16 @@ class VortexBackend(Backend):
         physical = x.spec.physical
         if physical is None or physical.layout != "gemm_c_tiled":
             raise TypeError("fused split_heads requires a GEMM-C physical tensor")
-        config = self.case.config
+        config = self.layer_config
+        heads = _projection_head_count(config, x.spec.shape[-1])
         return TensorHandle(
             spec=TensorSpec(
                 name=x.spec.name,
                 axes=("B", "H", "S", "D"),
                 shape=(
                     config.batch_size,
-                    config.num_attention_heads,
-                    config.sequence_length,
+                    heads,
+                    self._active_sequence_length,
                     config.head_dim,
                 ),
                 dtype=x.spec.dtype,
@@ -1164,22 +1624,23 @@ class VortexBackend(Backend):
         )
 
     def _fused_rope(self, x: TensorHandle) -> torch.Tensor:
-        config = self.case.config
+        config = self.layer_config
         params = _physical_parameters(x)
         half = config.head_dim // 2
         cos = self.tensor("rope_cos")[..., :half].reshape(-1, half).contiguous()
         sin = self.tensor("rope_sin")[..., :half].reshape(-1, half).contiguous()
+        heads = x.spec.shape[1]
         output = torch.ops.vortex.rope_layout_fused(
             x.value,
             cos,
             sin,
             config.batch_size,
-            config.sequence_length,
-            config.num_attention_heads,
+            self._active_sequence_length,
+            heads,
             config.head_dim,
             params["m_pad"],
             3,
-            0,
+            self._active_position_offset,
         )
         self._record("rope_layout_fused", layout_to="BHSD", M_pad=params["m_pad"])
         self._transition("gemm_c_tiled", "bhsd_row", reason="rope_r3_boundary")
@@ -1188,7 +1649,7 @@ class VortexBackend(Backend):
     def _fused_quantize(self, x, mode: str) -> QuantizedActivation:
         if mode not in ("asym", "sym"):
             raise ValueError(f"unsupported KV quantization mode {mode!r}")
-        config = self.case.config
+        config = self.layer_config
         source_is_tiled = isinstance(x, TensorHandle)
         source_layout = "bhsd_row"
         source_is_grouped = False
@@ -1212,13 +1673,15 @@ class VortexBackend(Backend):
         zero_tiled = []
         row_scale = []
         row_zero = []
+        persistent_source_views = []
         source_transposed = 1 if mode == "asym" else 0
         wtrans = source_transposed
         gemm_qdir = 0 if mode == "asym" else 1
         quant_mode = 1 if mode == "asym" else 2
-        group_count = config.batch_size * config.num_attention_heads
+        logical_heads = logical_shape[1]
+        group_count = config.batch_size * logical_heads
         for group_index in range(group_count):
-            batch_index, head = divmod(group_index, config.num_attention_heads)
+            batch_index, head = divmod(group_index, logical_heads)
             head_source = (
                 source[group_index]
                 if source_is_grouped
@@ -1227,16 +1690,29 @@ class VortexBackend(Backend):
             )
             src_layout = 2 if source_is_grouped else 1 if source_is_tiled else 0
             source_total_k = (
-                source_params["m_pad"] if source_is_tiled else config.sequence_length
+                source_params["m_pad"] if source_is_tiled else self._active_sequence_length
             )
             source_row_offset = (
-                batch_index * config.sequence_length
+                batch_index * self._active_sequence_length
                 if source_is_tiled and not source_is_grouped
                 else 0
             )
+            persistent_source_views.append(
+                {
+                    "source": head_source,
+                    "src_layout": src_layout,
+                    "src_total_n": config.head_dim if source_is_grouped else source_total_n,
+                    "src_col_offset": (
+                        head * config.head_dim
+                        if source_is_tiled and not source_is_grouped else 0
+                    ),
+                    "src_total_k": source_total_k,
+                    "src_row_offset": source_row_offset,
+                }
+            )
             outputs = torch.ops.vortex.kv_cache_quant_layout_fused_w4a16(
                 head_source,
-                config.sequence_length,
+                self._active_sequence_length,
                 config.head_dim,
                 config.kv_group_size,
                 1,
@@ -1257,22 +1733,18 @@ class VortexBackend(Backend):
             row_scale.append(scale_row)
             row_zero.append(zero_row)
         logical_weight_k = (
-            config.head_dim if source_transposed else config.sequence_length
+            config.head_dim if source_transposed else self._active_sequence_length
         )
-        weight_k = (
-            logical_weight_k
-            if logical_weight_k <= TILE_K
-            else (logical_weight_k + TILE_K - 1) // TILE_K * TILE_K
-        )
-        weight_n = config.sequence_length if source_transposed else config.head_dim
+        weight_k = _padded_weight_k(logical_weight_k)
+        weight_n = self._active_sequence_length if source_transposed else config.head_dim
         packed = _make_grouped_handle(
             packed_tiled,
             name=f"{mode}_kv.packed",
             axes=("B", "H", "S", "Dp"),
             shape=(
                 config.batch_size,
-                config.num_attention_heads,
-                config.sequence_length,
+                logical_heads,
+                self._active_sequence_length,
                 config.head_dim // 2,
             ),
             layout="gemm_w_packed_grouped",
@@ -1284,21 +1756,24 @@ class VortexBackend(Backend):
             wtrans=wtrans,
             source_transposed=source_transposed,
         )
+        packed.attachments["persistent_source_views"] = tuple(
+            persistent_source_views
+        )
         scale = _make_grouped_handle(
             row_scale,
             name=f"{mode}_kv.scale",
             axes=("B", "H", "S", "G"),
             shape=(
                 config.batch_size,
-                config.num_attention_heads,
-                config.sequence_length,
+                logical_heads,
+                self._active_sequence_length,
                 1,
             ),
             layout="grouped_row",
             padded_shape=tuple(row_scale[0].shape),
             producer="kv_cache_quant_layout_fused_w4a16",
             grouping="head",
-            rows=config.sequence_length,
+            rows=self._active_sequence_length,
             columns=1,
         )
         zero = None
@@ -1309,15 +1784,15 @@ class VortexBackend(Backend):
                 axes=("B", "H", "S", "G"),
                 shape=(
                     config.batch_size,
-                    config.num_attention_heads,
-                    config.sequence_length,
+                    logical_heads,
+                    self._active_sequence_length,
                     1,
                 ),
                 layout="grouped_row",
                 padded_shape=tuple(row_zero[0].shape),
                 producer="kv_cache_quant_layout_fused_w4a16",
                 grouping="head",
-                rows=config.sequence_length,
+                rows=self._active_sequence_length,
                 columns=1,
             )
         self._record(
@@ -1325,7 +1800,7 @@ class VortexBackend(Backend):
             launches=group_count,
             mode=mode,
             batch=config.batch_size,
-            heads=config.num_attention_heads,
+            heads=logical_heads,
             source_layout=source_layout,
         )
         self._transition(
@@ -1351,38 +1826,65 @@ class VortexBackend(Backend):
         *,
         transpose_source: bool,
     ) -> TensorHandle:
-        config = self.case.config
+        config = self.layer_config
         heads = config.num_attention_heads
-        group_count = config.batch_size * heads
-        m = config.sequence_length
-        m_pad = (m + 7) & ~7
-        k = config.head_dim if transpose_source else config.sequence_length
-        k_pad = k
-        if isinstance(lhs, TensorHandle):
-            k_pad = _physical_parameters(lhs).get("n_pad", k)
-        n = config.sequence_length if transpose_source else config.head_dim
-        head_stride_bytes = m_pad * n * torch.empty((), dtype=torch.float16).element_size()
+        if not isinstance(lhs, TensorHandle):
+            raise TypeError("fused attention requires grouped GEMM-A input")
+        lhs_params = _physical_parameters(lhs)
+        group_count = lhs_params["matrix_count"]
+        physical_heads = group_count // config.batch_size
+        query_heads_per_matrix = heads // physical_heads
+        m = lhs_params["m"]
+        m_pad = lhs_params["m_pad"]
+        logical_cache_length = rhs.logical_shape[-2]
+        rhs_params = None
+        if isinstance(rhs.packed, TensorHandle) and rhs.packed.spec.physical is not None:
+            rhs_params = _physical_parameters(rhs.packed)
+        persistent_params = rhs_params if rhs_params is not None and "capacity" in rhs_params else None
+        k = config.head_dim if transpose_source else logical_cache_length
+        k_pad = lhs_params.get("n_pad", k)
+        if persistent_params is not None and not transpose_source:
+            k_pad = persistent_params["weight_k"]
+        if not transpose_source and rhs_params is not None:
+            rhs_weight_k = rhs_params["weight_k"]
+            if k_pad != rhs_weight_k:
+                raise ValueError(
+                    "PV GEMM-A and value-weight K extents must match: "
+                    f"{k_pad} != {rhs_weight_k}"
+                )
+        n = logical_cache_length if transpose_source else config.head_dim
+        output_n = (
+            persistent_params["weight_n"]
+            if persistent_params is not None and transpose_source else n
+        )
+        head_stride_bytes = m_pad * output_n * torch.empty((), dtype=torch.float16).element_size()
         if head_stride_bytes % 512 != 0:
             raise ValueError(
                 "grouped fused attention requires each head output stride to be 512-byte aligned"
             )
         with torch.vortex.memory_alignment(512):
             output = torch.empty(
-                (group_count, m_pad, n), dtype=torch.float16, device=self.device
+                (group_count, m_pad, output_n),
+                dtype=torch.float16,
+                device=self.device,
             )
         for group_index in range(group_count):
-            if isinstance(lhs, TensorHandle):
-                lhs_storage = lhs.value[group_index]
-                query_storage = lhs_storage
-            else:
-                raise TypeError("fused attention requires grouped GEMM-A input")
+            batch_index, physical_head = divmod(group_index, physical_heads)
+            kv_head = (
+                physical_head
+                if physical_heads == config.num_key_value_heads
+                else physical_head // config.num_key_value_groups
+            )
+            kv_group_index = batch_index * config.num_key_value_heads + kv_head
+            lhs_storage = lhs.value[group_index]
+            query_storage = lhs_storage
             torch.ops.vortex.mm_w4a16_gemm_core_out(
                 lhs_storage,
-                rhs.weight_tiled[group_index],
-                rhs.scale_tiled[group_index],
-                rhs.zero_tiled[group_index],
+                rhs.weight_tiled[kv_group_index],
+                rhs.scale_tiled[kv_group_index],
+                rhs.zero_tiled[kv_group_index],
                 k_pad,
-                n,
+                output_n,
                 config.kv_group_size,
                 1 if transpose_source else 0,
                 0 if transpose_source else 1,
@@ -1392,13 +1894,13 @@ class VortexBackend(Backend):
                 torch.ops.vortex.qk_asym_correction_out(
                     output[group_index],
                     query_storage,
-                    rhs.scale.value[group_index].reshape(-1),
-                    rhs.zero.value[group_index].reshape(-1),
+                    rhs.scale.value[kv_group_index].reshape(-1),
+                    rhs.zero.value[kv_group_index].reshape(-1),
                     m,
                     m_pad,
-                    n,
+                    output_n,
                     1,
-                    1 if isinstance(lhs, TensorHandle) else 0,
+                    1,
                     output[group_index],
                 )
         self._record(
@@ -1407,11 +1909,14 @@ class VortexBackend(Backend):
             operation="qk" if transpose_source else "pv",
             batch=config.batch_size,
             heads=heads,
+            physical_heads=physical_heads,
+            query_heads_per_matrix=query_heads_per_matrix,
             M=m,
             M_pad=m_pad,
             K=k,
             K_pad=k_pad,
             N=n,
+            N_storage=output_n,
         )
         if transpose_source:
             self._record(
@@ -1425,7 +1930,7 @@ class VortexBackend(Backend):
             output,
             name="qk" if transpose_source else "pv",
             axes=("B", "H", "S", "N"),
-            shape=(config.batch_size, heads, m, n),
+            shape=(config.batch_size, heads, self._active_sequence_length, n),
             layout="gemm_c_tiled",
             padded_shape=tuple(output.shape),
             producer="attention_w4a16_fused",
@@ -1434,6 +1939,14 @@ class VortexBackend(Backend):
             m=m,
             m_pad=m_pad,
             n=n,
+            n_pad=output_n,
+            pv_k_pad=(
+                persistent_params["padded_capacity"]
+                if persistent_params is not None
+                else _padded_weight_k(logical_cache_length)
+            ),
+            physical_heads=physical_heads,
+            query_heads_per_kv=query_heads_per_matrix,
         )
 
     def _fused_softmax(self, scores: DeferredScaledMaskedScores) -> TensorHandle:
@@ -1441,19 +1954,28 @@ class VortexBackend(Backend):
             raise TypeError("fused softmax requires deferred GEMM-C scores")
         qk = scores.qk
         params = _physical_parameters(qk)
-        config = self.case.config
+        config = self.layer_config
+        physical_heads = params["physical_heads"]
+        physical_m = params["m"]
         output = torch.ops.vortex.softmax_layout_fused(
             qk.value,
             config.batch_size,
-            config.num_attention_heads,
-            config.sequence_length,
-            config.sequence_length,
+            physical_heads,
+            physical_m,
+            self._active_key_length,
             params["m_pad"],
-            1,
+            1 if self._active_sequence_length > 1 else 0,
             1.0 / math.sqrt(scores.head_dim),
+            params.get("n_pad", self._active_key_length),
+            params.get("pv_k_pad", 0),
         )
         output_k_pad = output.shape[-1]
-        self._record("softmax_layout_fused", heads=config.num_attention_heads)
+        self._record(
+            "softmax_layout_fused",
+            heads=config.num_attention_heads,
+            physical_heads=physical_heads,
+            M=physical_m,
+        )
         self._transition("gemm_c_tiled", "gemm_a_tiled", reason="scaled_masked_softmax")
         return _make_handle(
             output,
@@ -1462,44 +1984,51 @@ class VortexBackend(Backend):
             shape=(
                 config.batch_size,
                 config.num_attention_heads,
-                config.sequence_length,
-                config.sequence_length,
+                self._active_sequence_length,
+                self._active_key_length,
             ),
             layout="gemm_a_tiled",
             padded_shape=tuple(output.shape),
             producer="softmax_layout_fused",
             grouping="head",
-            matrix_count=config.batch_size * config.num_attention_heads,
-            m=config.sequence_length,
+            matrix_count=params["matrix_count"],
+            m=physical_m,
             m_pad=params["m_pad"],
-            n=config.sequence_length,
+            n=self._active_key_length,
             n_pad=output_k_pad,
+            physical_heads=physical_heads,
+            query_heads_per_kv=params["query_heads_per_kv"],
         )
 
     def _fused_head_concat(self, value: TensorHandle) -> TensorHandle:
         params = _physical_parameters(value)
-        config = self.case.config
-        output_m_pad = (config.batch_size * config.sequence_length + 7) & ~7
+        config = self.layer_config
+        output_m_pad = (config.batch_size * self._active_sequence_length + 7) & ~7
         output = torch.ops.vortex.head_concat_layout_fused(
             value.value,
             config.batch_size,
-            config.sequence_length,
+            self._active_sequence_length,
             config.num_attention_heads,
             config.head_dim,
             params["m_pad"],
             output_m_pad,
+            params.get("query_heads_per_kv", 1),
         )
-        self._record("head_concat_layout_fused", heads=config.num_attention_heads)
+        self._record(
+            "head_concat_layout_fused",
+            heads=config.num_attention_heads,
+            query_heads_per_kv=params.get("query_heads_per_kv", 1),
+        )
         self._transition("grouped_gemm_c_tiled", "gemm_a_tiled", reason="head_concat")
         return _make_handle(
             output,
             name="head_concat",
             axes=("B", "S", "C"),
-            shape=(config.batch_size, config.sequence_length, config.hidden_size),
+            shape=(config.batch_size, self._active_sequence_length, config.hidden_size),
             layout="gemm_a_tiled",
             padded_shape=tuple(output.shape),
             producer="head_concat_layout_fused",
-            m=config.batch_size * config.sequence_length,
+            m=config.batch_size * self._active_sequence_length,
             m_pad=output_m_pad,
             n=config.hidden_size,
         )

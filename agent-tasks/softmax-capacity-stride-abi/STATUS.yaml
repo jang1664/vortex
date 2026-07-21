@@ -1,0 +1,60 @@
+task: softmax-capacity-stride-abi
+state: complete
+updated_at: "2026-07-19 18:54"
+summary: >-
+  Separate logical softmax length from physical row stride in the standalone
+  and layout-fused benchmark paths, then forward KV-cache capacity from the
+  workload generator into the executable kernel arguments.
+log:
+  - timestamp: "2026-07-19 18:24"
+    entry: >-
+      Discovery found that standalone softmax already carries row_pitch_bytes
+      in kernel_arg_t, while layout-fused softmax already carries input and
+      output padded widths. The missing contract is a CLI/generator stride knob
+      plus consistent use of the existing standalone field in every variant.
+  - timestamp: "2026-07-19 18:31"
+    entry: >-
+      Added generator and latency regressions first. They failed because
+      generated softmax arguments contained only -seqk 33, then passed after
+      generation began emitting -seqk 33 -seqk-stride 64.
+  - timestamp: "2026-07-19 18:35"
+    entry: >-
+      Added the stride CLI to standalone and layout-fused correctness and bench
+      hosts. Standalone maps it to row_pitch_bytes and all five kernel variants
+      now use byte-pitched row addresses; fused maps it to tile-padded input and
+      output widths. All five standalone and three fused variants compiled with
+      the C4 configuration.
+  - timestamp: "2026-07-19 18:39"
+    entry: >-
+      Real C4 correctness passed for batch 3, heads 32, logical seqk 33, and
+      stride 64 in both dma_serial standalone and opt_warp layout-fused paths.
+      Maximum absolute differences were 0.000031 and 0.000061 respectively.
+  - timestamp: "2026-07-19 18:41"
+    entry: >-
+      C4 five-iteration latency comparison showed no material difference for
+      this shape: standalone p50 5870.899 us at stride 33 versus 5859.248 us at
+      stride 64; fused p50 7972.659 us versus 7986.682 us. Both fused requests
+      round to the same physical tile width of 64.
+  - timestamp: "2026-07-19 18:47"
+    entry: >-
+      Simplification and review found and fixed one pre-existing fused rev1 ABI
+      inconsistency: it now separates input/output padded widths and explicitly
+      zeroes output padding. Targeted generator/latency tests passed (38 tests,
+      2 subtests), PyTorch layer tests passed (42 tests, 24 skips, 4 subtests),
+      and final C4 opt_warp correctness including padding validation passed.
+  - timestamp: "2026-07-19 18:54"
+    entry: >-
+      Follow-up PyTorch ABI audit found that native aten::_softmax still set
+      row_pitch_bytes to zero under the old assumption that the device kernel
+      ignored it. It now passes the contiguous fp16 row width in bytes. The
+      extension rebuilt and installed successfully, and all 11 native softmax
+      tests passed on the real C4 U55C, including multi-row 2D/3D/4D cases.
+pitfalls:
+  - >-
+    Logical seq_len_k still controls reduction and masking. Physical stride
+    must affect only row/matrix addressing and allocation, never the number of
+    values included in softmax.
+  - >-
+    Layout-fused stride is constrained by GEMM tile geometry. Requests 33 and
+    64 both have a physical tiled width of 64; crossing the next tile boundary
+    can increase output-zeroing and memory-transfer work.

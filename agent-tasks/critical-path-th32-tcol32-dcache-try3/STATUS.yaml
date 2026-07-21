@@ -1,0 +1,18 @@
+task: critical-path-th32-tcol32-dcache-try3
+state: DONE
+summary: The post-route critical path is a routing-dominated high-fanout path inside the dcache memory-response omega crossbar.
+started: "2026-07-21 11:34"
+updated: "2026-07-21 11:37"
+log:
+  - timestamp: "2026-07-21 11:34"
+    action: Located the requested Xilinx U55C hardware build and its routed timing report.
+    result: The final routed DCP and impl_1_hw_bb_locked_timing_summary_routed.rpt are present.
+  - timestamp: "2026-07-21 11:36"
+    action: Inspected the final routed timing summary and the top ten violated setup paths.
+    result: WNS is -0.522 ns and TNS is -596.199 ns over 3707 endpoints. The worst path is in dcache/mem_rsp_xbar, from a stage-0 omega-switch stream-buffer valid register to a stage-1 stream-buffer data register. Its 9.797 ns data delay is 97.938 percent routing, and the dominant net has fanout 532 and 9.528 ns route delay.
+  - timestamp: "2026-07-21 11:37"
+    action: Checked implementation congestion and the nearest independent timing paths.
+    result: Vivado reports highly congested placement, congestion level 6, timing congestion level 7, and localized SLL demand above capacity. Near-tied paths exist in GEMM prealigner-to-DSP (-0.521 ns) and issue-to-ALU (-0.520 ns), also routing dominated.
+pitfalls:
+  - The timing report is about 16 MB, so inspect targeted sections rather than reading it wholesale.
+  - Overall LUT utilization is about 59 percent, but placement and SLL congestion are severe; aggregate utilization alone understates the routing problem.

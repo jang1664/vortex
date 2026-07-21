@@ -882,7 +882,7 @@ def _apply_standalone_layout_variant(kernels: list[dict],
         by_name["rope_q"],
         _detile_output_kernel(
             "layout_k_proj_to_rope_k_detile", stage,
-            M=M_proj, N=q_dim, calls_per_forward=layers,
+            M=M_proj, N=by_name["k_proj"]["shape"]["N"], calls_per_forward=layers,
             producer="k_proj", consumer="rope_k",
             layout_group="k_proj_to_rope_k", variant=variant,
         ),
@@ -938,7 +938,7 @@ def _apply_standalone_layout_variant(kernels: list[dict],
         ),
         _detile_output_kernel(
             "layout_v_proj_to_v_cache_detile", stage,
-            M=M_proj, N=q_dim, calls_per_forward=layers,
+            M=M_proj, N=by_name["v_proj"]["shape"]["N"], calls_per_forward=layers,
             producer="v_proj", consumer="v_cache",
             layout_group="v_proj_to_attn_pv", variant=variant,
         ),
@@ -1207,6 +1207,9 @@ def _apply_spinquant_hadamard_variant(kernels: list[dict],
     k_rows = batch * seq_q * heads_kv
     r4_rows = M_proj
     mlp_elems = M_proj * intermediate
+    q_rows_per_matrix, q_call_heads, q_heads_per_matrix = _attention_gemm_geometry(
+        stage, seq_q=seq_q, heads_q=heads_q, heads_kv=heads_kv
+    )
 
     q_consumer = "attn_qkT"
     if base_variant == LAYOUT_ALONE_VARIANT:
@@ -1276,15 +1279,17 @@ def _apply_spinquant_hadamard_variant(kernels: list[dict],
         variant=variant,
     )
     if base_variant == LAYOUT_FUSED_VARIANT:
+        q_matrix_count = batch * q_call_heads
         q_hadamard = _with_fused_backend(
             q_hadamard, "hadamard_layout_fused",
-            args=f"-m {seq_q} -n {batch * heads_q} -k {head_dim}",
+            args=f"-m {q_rows_per_matrix} -n {q_matrix_count} -k {head_dim}",
             shape_update={
                 "layout_from": "head_major_row_fp16",
                 "layout_to": "gemm_a_tiled",
-                "matrix_count": batch * heads_q,
-                "rows_per_matrix": seq_q,
-                "m_pad": (seq_q + 7) & ~7,
+                "matrix_count": q_matrix_count,
+                "rows_per_matrix": q_rows_per_matrix,
+                "m_pad": _align_up(q_rows_per_matrix, 8),
+                "query_heads_per_kv": q_heads_per_matrix,
                 "consumer": "attn_qkT",
             },
         )
@@ -1398,6 +1403,20 @@ def _apply_spinquant_hadamard_variant(kernels: list[dict],
             ))
             continue
 
+        if base_variant == LAYOUT_FUSED_VARIANT and name == "attn_head_concat":
+            out.append(_with_kernel_updates(
+                kernel,
+                shape_update={
+                    "query_heads_per_kv": (
+                        heads_q // heads_kv if stage == "generation" else 1
+                    ),
+                    "input_matrix_count": batch * (
+                        heads_kv if stage == "generation" else heads_q
+                    ),
+                },
+            ))
+            continue
+
         if name == "kv_cache_quant_rope_k_to_attn_qkT":
             args = str(kernel["args"])
             shape_update = {
@@ -1484,7 +1503,8 @@ def build_decoder_pass_kernels(config: dict,
                                seq_q: int,
                                seq_kv: int,
                                qblk: int,
-                               variant: str = DEFAULT_WORKLOAD_VARIANT) -> list[dict]:
+                               variant: str = DEFAULT_WORKLOAD_VARIANT,
+                               softmax_k_stride: int | None = None) -> list[dict]:
     """Emit every kernel that fires during one forward pass of the model
     in the given stage.
 
@@ -1499,6 +1519,8 @@ def build_decoder_pass_kernels(config: dict,
         - prefill:    S
         - generation: past_len + 1 (KV cache size including the new token)
       qblk: QBLK for fpint GEMMs (FFN + QKVO projections).
+      softmax_k_stride: Physical key-column stride used by the score and
+        probability buffers. Defaults to the logical seq_kv length.
 
     Counts (calls_per_forward):
       Per-decoder-layer kernels are multiplied by num_layers (L).
@@ -1549,6 +1571,9 @@ def build_decoder_pass_kernels(config: dict,
         heads_kv=H_kv,
         query_heads_per_kv=query_heads_per_kv,
     )
+    softmax_k_stride = seq_kv if softmax_k_stride is None else softmax_k_stride
+    if softmax_k_stride < seq_kv:
+        raise ValueError("softmax_k_stride must cover seq_kv")
 
     out: list[dict] = []
 
@@ -1632,10 +1657,11 @@ def build_decoder_pass_kernels(config: dict,
     out.append(_llm_kernel(
         name="attn_softmax", kind="softmax", stage=stage,
         args=(f"-batch {batch} -heads {softmax_heads} -seqq {seq_q} -seqk {seq_kv} "
-              f"-mask {use_mask}"),
+              f"-seqk-stride {softmax_k_stride} -mask {use_mask}"),
         calls_per_forward=softmax_calls,
         shape={"batch": batch, "heads": softmax_heads,
-               "seqq": seq_q, "seqk": seq_kv, "mask": use_mask},
+               "seqq": seq_q, "seqk": seq_kv,
+               "capacity_stride": softmax_k_stride, "mask": use_mask},
         variant=variant,
     ))
 
@@ -1815,7 +1841,8 @@ def build_llm_kernels(model_name: str,
                       prefill_seq_len: int,
                       gen_kv_len: int,
                       qblk: int,
-                      variant: str = DEFAULT_WORKLOAD_VARIANT) -> dict:
+                      variant: str = DEFAULT_WORKLOAD_VARIANT,
+                      max_seq_len: int | None = None) -> dict:
     """Build the JSON payload covering one or more stages."""
     if model_name not in MODELS:
         raise ValueError(
@@ -1827,6 +1854,14 @@ def build_llm_kernels(model_name: str,
         raise ValueError(
             f"unknown variant: {variant!r}. Expected one of {WORKLOAD_VARIANTS}"
         )
+    cache_capacity = (
+        max(prefill_seq_len, gen_kv_len)
+        if max_seq_len is None else max_seq_len
+    )
+    if cache_capacity < max(prefill_seq_len, gen_kv_len):
+        raise ValueError(
+            "max-seq-len must cover prefill-seq-len and gen-kv-len"
+        )
 
     kernels: list[dict] = []
     for stage in stages:
@@ -1837,6 +1872,7 @@ def build_llm_kernels(model_name: str,
                 seq_q=prefill_seq_len,
                 seq_kv=prefill_seq_len,
                 qblk=qblk,
+                softmax_k_stride=prefill_seq_len,
                 variant=variant,
             ))
         elif stage == "generation":
@@ -1850,12 +1886,42 @@ def build_llm_kernels(model_name: str,
                 seq_q=1,
                 seq_kv=gen_kv_len,
                 qblk=qblk,
+                softmax_k_stride=cache_capacity,
                 variant=variant,
             ))
         else:
             raise ValueError(
                 f"unknown stage: {stage!r}. Expected one of {LLM_STAGES}"
             )
+
+    for kernel in kernels:
+        if kernel.get("stage") != "generation":
+            continue
+        shape = kernel["shape"]
+        shape["query_length"] = 1
+        shape["logical_cache_length"] = gen_kv_len
+        shape["cache_capacity"] = cache_capacity
+        name = kernel["name"]
+        if name == "kv_cache_quant_rope_k_to_attn_qkT":
+            shape.update({
+                "cache_position": gen_kv_len - 1,
+                "cache_allocation": "fixed",
+                "persistent_layout": "gemm_w_tiled_transposed",
+                "source_token_count": 1,
+            })
+        elif name == "kv_cache_quant_v_cache_to_attn_pv":
+            shape.update({
+                "cache_position": gen_kv_len - 1,
+                "cache_allocation": "fixed",
+                "persistent_layout": "gemm_w_tiled",
+                "source_token_count": 1,
+            })
+        elif name == "attn_qkT":
+            shape["persistent_weight_layout"] = "gemm_w_tiled_transposed"
+        elif name == "attn_pv":
+            shape["persistent_weight_layout"] = "gemm_w_tiled"
+        elif name == "attn_softmax":
+            shape["capacity_stride"] = cache_capacity
 
     payload = {
         "model": model_name,
@@ -1865,6 +1931,7 @@ def build_llm_kernels(model_name: str,
             "batch": batch,
             "prefill_seq_len": prefill_seq_len,
             "gen_kv_len": gen_kv_len,
+            "max_seq_len": cache_capacity,
             "qblk": qblk,
             "variant": variant,
         },
@@ -2944,6 +3011,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
              f"S_kv = K). Default: {DEFAULT_LLM_GEN_KV}.",
     )
     parser.add_argument(
+        "--max-seq-len", type=int, default=None, metavar="C",
+        help="Fixed KV-cache allocation capacity. Defaults to max(prompt, K).",
+    )
+    parser.add_argument(
         "--qblk", type=int, default=DEFAULT_LLM_QBLK,
         help=f"QBLK for fpint GEMMs (default: {DEFAULT_LLM_QBLK}).",
     )
@@ -2999,6 +3070,7 @@ def main(argv: list[str] | None = None) -> int:
             gen_kv_len=args.gen_kv_len,
             qblk=args.qblk,
             variant=args.variant,
+            max_seq_len=args.max_seq_len,
         )
     except ValueError as e:
         print(f"ERROR: {e}", file=sys.stderr)

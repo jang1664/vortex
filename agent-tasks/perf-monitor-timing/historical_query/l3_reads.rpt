@@ -1,0 +1,117 @@
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2025 Advanced Micro Devices, Inc. All Rights Reserved.
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version      : Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025
+| Date              : Mon Jul 20 11:43:17 2026
+| Host              : fpga running 64-bit Ubuntu 24.04.4 LTS
+| Command           : report_timing -delay_type max -max_paths 1 -nworst 1 -path_type full -to [get_pins -quiet -hier -regexp {.*perf_core_reads(_per_cycle_q)?.*\/(D|CE)$} -filter {DIRECTION == IN}] -file agent-tasks/perf-monitor-timing/historical_query/l3_reads.rpt
+| Design            : level0_wrapper
+| Device            : xcu55c-fsvh2892
+| Speed File        : -2L  PRODUCTION 1.30 05-01-2022
+| Design State      : Fully Placed
+| Temperature Grade : E
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Timing Report
+
+Slack (MET) :             1.742ns  (required time - arrival time)
+  Source:                 level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/axi_adapter/req_xbar/g_multi_inputs.g_one_output.xbar_arb/g_input_select.g_arbiter.g_out_buf[0].out_buf/g_eb2.stream_buffer/g_buffer.valid_in_r_reg/C
+                            (rising edge-triggered cell FDSE clocked by clk_kernel_00_unbuffered_net  {rise@0.000ns fall@5.000ns period=10.000ns})
+  Destination:            level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/l3cache/g_passthru.perf_core_reads_reg[43]/D
+                            (rising edge-triggered cell FDRE clocked by clk_kernel_00_unbuffered_net  {rise@0.000ns fall@5.000ns period=10.000ns})
+  Path Group:             clk_kernel_00_unbuffered_net
+  Path Type:              Setup (Max at Slow Process Corner)
+  Requirement:            10.000ns  (clk_kernel_00_unbuffered_net rise@10.000ns - clk_kernel_00_unbuffered_net rise@0.000ns)
+  Data Path Delay:        7.299ns  (logic 0.795ns (10.892%)  route 6.504ns (89.108%))
+  Logic Levels:           10  (CARRY8=6 LUT2=1 LUT3=1 LUT6=2)
+  Clock Path Skew:        -0.399ns (DCD - SCD + CPR)
+    Destination Clock Delay (DCD):    7.324ns = ( 17.324 - 10.000 ) 
+    Source Clock Delay      (SCD):    7.587ns
+    Clock Pessimism Removal (CPR):    -0.136ns
+  Clock Uncertainty:      0.358ns  ((TSJ^2 + DJ^2)^1/2) / 2 + PE + UU
+    Total System Jitter     (TSJ):    0.071ns
+    Discrete Jitter          (DJ):    0.093ns
+    Phase Error              (PE):    0.000ns
+    User Uncertainty         (UU):    0.300ns
+  Inter-SLR Compensation: 0.227ns  ((DCD - CCD) * PF)
+    Destination Clock Delay (DCD):    7.324ns
+    Common Clock Delay      (CCD):    5.811ns
+    Prorating Factor         (PF):    0.150
+
+    Location             Delay type                Incr(ns)  Path(ns)    Partition      PBlock               Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------------------------------------------
+                         (clock clk_kernel_00_unbuffered_net rise edge)
+                                                      0.000     0.000 r                                      
+                         clock source latency         4.338     4.338                                        
+                         propagated clock network latency
+                                                      3.249     7.587                                        
+    SLICE_X29Y185        FDSE                         0.000     7.587 r  reconfigurable pblock_dynamic_region
+                                                                                                             level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/axi_adapter/req_xbar/g_multi_inputs.g_one_output.xbar_arb/g_input_select.g_arbiter.g_out_buf[0].out_buf/g_eb2.stream_buffer/g_buffer.valid_in_r_reg/C
+    SLICE_X29Y185        FDSE (Prop_AFF_SLICEL_C_Q)
+                                                      0.079     7.666 r  reconfigurable pblock_dynamic_region
+                                                                                                             level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/axi_adapter/req_xbar/g_multi_inputs.g_one_output.xbar_arb/g_input_select.g_arbiter.g_out_buf[0].out_buf/g_eb2.stream_buffer/g_buffer.valid_in_r_reg/Q
+                         net (fo=564, estimated)      2.191     9.857    reconfigurable                      level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/axi_adapter/req_xbar/g_multi_inputs.g_one_output.xbar_arb/g_buffer.valid_in_r_reg
+    SLICE_X127Y187       LUT6 (Prop_C6LUT_SLICEL_I0_O)
+                                                      0.088     9.945 r  reconfigurable pblock_dynamic_region
+                                                                                                             level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/axi_adapter/req_xbar/g_multi_inputs.g_one_output.xbar_arb/g0_b2_i_6/O
+                         net (fo=15, estimated)       0.191    10.136    reconfigurable                      level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/axi_adapter/req_xbar/g_multi_inputs.g_one_output.xbar_arb/g_input_select.g_arbiter.arbiter/g_round_robin.rr_arbiter/g_buffer.valid_out_r_reg_0[0]
+    SLICE_X127Y188       LUT3 (Prop_D5LUT_SLICEL_I0_O)
+                                                      0.157    10.293 r  reconfigurable pblock_dynamic_region
+                                                                                                             level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/axi_adapter/req_xbar/g_multi_inputs.g_one_output.xbar_arb/g_input_select.g_arbiter.arbiter/g_round_robin.rr_arbiter/g0_b2_i_1/O
+                         net (fo=8, estimated)        1.694    11.987    reconfigurable                      level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/mem_req_ready[0]_3150
+    SLICE_X64Y217        LUT6 (Prop_H6LUT_SLICEL_I0_O)
+                                                      0.099    12.086 r  reconfigurable pblock_dynamic_region
+                                                                                                             level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g0_b0__0/O
+                         net (fo=8, estimated)        2.259    14.345    reconfigurable                      level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/l2cache/g_bypass.cache_bypass/mem_bus_out_arb/req_arb/g_input_select.g_arbiter.g_out_buf[0].out_buf/g_eb2.stream_buffer/mem_perf_reg[reads][7]_0[0]
+    SLR Crossing[0->1]   
+    SLICE_X72Y427        LUT2 (Prop_A6LUT_SLICEM_I0_O)
+                                                      0.038    14.383 r  reconfigurable pblock_dynamic_region
+                                                                                                             level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/l2cache/g_bypass.cache_bypass/mem_bus_out_arb/req_arb/g_input_select.g_arbiter.g_out_buf[0].out_buf/g_eb2.stream_buffer/g_passthru.perf_core_reads[0]_i_4/O
+                         net (fo=1, routed)           0.013    14.396    reconfigurable                      level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/l2cache/g_bypass.cache_bypass/mem_bus_out_arb/req_arb/g_input_select.g_arbiter.g_out_buf[0].out_buf/g_eb2.stream_buffer/g_passthru.perf_core_reads[0]_i_4_n_0
+    SLICE_X72Y427        CARRY8 (Prop_CARRY8_SLICEM_S[0]_CO[7])
+                                                      0.192    14.588 r  reconfigurable pblock_dynamic_region
+                                                                                                             level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/l2cache/g_bypass.cache_bypass/mem_bus_out_arb/req_arb/g_input_select.g_arbiter.g_out_buf[0].out_buf/g_eb2.stream_buffer/g_passthru.perf_core_reads_reg[0]_i_1/CO[7]
+                         net (fo=1, estimated)        0.026    14.614    reconfigurable                      level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/l3cache/CO[0]
+    SLICE_X72Y428        CARRY8 (Prop_CARRY8_SLICEM_CI_CO[7])
+                                                      0.015    14.629 r  reconfigurable pblock_dynamic_region
+                                                                                                             level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/l3cache/g_passthru.perf_core_reads_reg[8]_i_1/CO[7]
+                         net (fo=1, estimated)        0.026    14.655    reconfigurable                      level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/l3cache/g_passthru.perf_core_reads_reg[8]_i_1_n_0
+    SLICE_X72Y429        CARRY8 (Prop_CARRY8_SLICEM_CI_CO[7])
+                                                      0.015    14.670 r  reconfigurable pblock_dynamic_region
+                                                                                                             level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/l3cache/g_passthru.perf_core_reads_reg[16]_i_1/CO[7]
+                         net (fo=1, estimated)        0.026    14.696    reconfigurable                      level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/l3cache/g_passthru.perf_core_reads_reg[16]_i_1_n_0
+    SLICE_X72Y430        CARRY8 (Prop_CARRY8_SLICEM_CI_CO[7])
+                                                      0.015    14.711 r  reconfigurable pblock_dynamic_region
+                                                                                                             level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/l3cache/g_passthru.perf_core_reads_reg[24]_i_1/CO[7]
+                         net (fo=1, estimated)        0.026    14.737    reconfigurable                      level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/l3cache/g_passthru.perf_core_reads_reg[24]_i_1_n_0
+    SLICE_X72Y431        CARRY8 (Prop_CARRY8_SLICEM_CI_CO[7])
+                                                      0.015    14.752 r  reconfigurable pblock_dynamic_region
+                                                                                                             level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/l3cache/g_passthru.perf_core_reads_reg[32]_i_1/CO[7]
+                         net (fo=1, estimated)        0.026    14.778    reconfigurable                      level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/l3cache/g_passthru.perf_core_reads_reg[32]_i_1_n_0
+    SLICE_X72Y432        CARRY8 (Prop_CARRY8_SLICEM_CI_O[3])
+                                                      0.082    14.860 r  reconfigurable pblock_dynamic_region
+                                                                                                             level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/l3cache/g_passthru.perf_core_reads_reg[40]_i_1/O[3]
+                         net (fo=1, routed)           0.026    14.886    reconfigurable                      level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/l3cache/g_passthru.perf_core_reads_reg[40]_i_1_n_12
+    SLICE_X72Y432        FDRE                                         r  reconfigurable pblock_dynamic_region
+                                                                                                             level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/l3cache/g_passthru.perf_core_reads_reg[43]/D
+  -------------------------------------------------------------------    -------------------------------------------------------
+
+                         (clock clk_kernel_00_unbuffered_net rise edge)
+                                                     10.000    10.000 r                                      
+                         clock source latency         4.603    14.603                                        
+                         propagated clock network latency
+                                                      2.721    17.324                                        
+                         clock pessimism             -0.136    17.188                                            
+                         inter-SLR compensation      -0.227    16.961                                            
+                         clock uncertainty           -0.358    16.603                                            
+    SLICE_X72Y432        FDRE (Setup_DFF_SLICEM_C_D)
+                                                      0.025    16.628    reconfigurable   pblock_dynamic_region
+                                                                                                                 level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/l3cache/g_passthru.perf_core_reads_reg[43]
+  -------------------------------------------------------------------
+                         required time                         16.628                                            
+                         arrival time                         -14.886                                            
+  -------------------------------------------------------------------
+                         slack                                  1.742                                            
+
+
+
+

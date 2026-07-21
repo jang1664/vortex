@@ -12,7 +12,7 @@ module VX_dma_node import VX_gpu_pkg::*; #(
   // Forwarded to VX_dma_unit — DC v2023 rejects `interface_inst.PARAM`
   // in parameter binding contexts, so the parent must pass these explicitly.
   // Defaults track the VX_core-side interface widths (see VX_core.sv:87-95).
-  parameter int DCACHE_TAG_WIDTH_P = DCACHE_TAG_WIDTH,
+  parameter int DCACHE_TAG_WIDTH_P = DMA_DCACHE_TAG_WIDTH,
   parameter int LMEM_TAG_WIDTH_P   = LMEM_TAG_WIDTH,
   parameter int MISALIGN_PACK_BYTES = LSU_WORD_SIZE,
   parameter int RD_OUTSTANDING = `DMA_NODE_RD_OUTSTANDING_SLOT

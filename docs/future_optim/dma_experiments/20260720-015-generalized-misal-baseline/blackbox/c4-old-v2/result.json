@@ -1,0 +1,17 @@
+{
+  "status": "PASS",
+  "application": "fpint_gemm_ffn_hw",
+  "arguments": "-m 128 -k 128 -n 128",
+  "effective_qblk": 32,
+  "effective_wtrans": 0,
+  "effective_qdir": 0,
+  "cores": 1,
+  "driver": "xrt_vcs",
+  "config_file": "configs/improve_th16_tcol32_hwexp_dcache.sh",
+  "rtl_sha256": "17a425d1ddef7cf5e6a9d2ffafa45f75535631fe2af7286669782c321c890f1f",
+  "simv_sha256": "f7ef7ee0f87c424363b966f6b4bae00e666f5ef4605b18bedfc3b4061743e17a",
+  "instructions": 6975,
+  "cycles": 11743,
+  "ipc": 0.593971,
+  "command_exit_code": 0
+}

@@ -1,0 +1,16 @@
+task: plan-local-mem-xbar-selection
+state: DONE
+summary: Created an implementation-ready plan for independently selectable local-memory HIER/Omega request and response fabrics, a local HIER fanout override, preserved collision semantics, functional verification, and a fixed full-chip QoR matrix.
+updated: "2026-07-20 23:38"
+log:
+  - timestamp: "2026-07-20 23:31"
+    action: Confirmed topology, fanout, counter, and deferred-mask scope with the user and grounded the plan in current RTL and timing artifacts.
+    result: The plan uses independent Omega presence macros, keeps HIER as the default, adds LMEM_XBAR_MAX_FANOUT with safe-value validation, preserves bank_stalls semantics, and defers Omega stage-mask tuning.
+  - timestamp: "2026-07-20 23:38"
+    action: Ran the implementation-plan confidence check and headless multi-persona document review.
+    result: Confidence passed without deepening. Document review left five proposed fixes and four decisions for user review; no fixes met the confidence threshold for silent application.
+artifacts:
+  - docs/plans/2026-07-20-004-perf-local-memory-xbar-selection-plan.md
+pitfalls:
+  - PERF_ENABLE is active in FPGA synthesis, so the preserved pairwise collision monitor can offset part of Omega's area benefit and must be measured separately.
+  - Boolean presence macros are enabled even when passed as -DMACRO=0; omission is the disabled state.

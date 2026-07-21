@@ -58,7 +58,7 @@ module VX_fpu_exp import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
 `ifdef VX_FPU_EXP_LUT
     localparam FEXP_LUT_BITS = 4;
     localparam FEXP_LUT_ENTRIES = 1 << FEXP_LUT_BITS;
-    localparam LATENCY_F32ADD = 12;
+    localparam LATENCY_F32ADD = 1;
 `endif
 
     wire [NUM_LANES-1:0][DATAW-1:0] data_in;
@@ -339,7 +339,7 @@ module VX_fpu_exp import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
         assign exp_adjust = ({ {22{n_d[9]}}, n_d } << 23);
         assign result_s = p_d + exp_adjust;
 
-        xil_fma fma_t (
+        xil_fma_lowL fma_t (
             .aclk                (clk),
             .aclken              (pe_enable),
             .s_axis_a_tvalid     (1'b1),
@@ -353,7 +353,7 @@ module VX_fpu_exp import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
             .m_axis_result_tuser (tuser[0])
         );
 
-        xil_f32add fadd_f (
+        xil_f32add_lowL fadd_f (
             .aclk                (clk),
             .aresetn             (~reset),
             .aclken              (pe_enable),
@@ -368,7 +368,7 @@ module VX_fpu_exp import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
             .m_axis_result_tdata (f)
         );
 
-        xil_f32add fadd_df (
+        xil_f32add_lowL fadd_df (
             .aclk                (clk),
             .aresetn             (~reset),
             .aclken              (pe_enable),
@@ -383,7 +383,7 @@ module VX_fpu_exp import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
             .m_axis_result_tdata (df)
         );
 
-        xil_fma fma_p (
+        xil_fma_lowL fma_p (
             .aclk                (clk),
             .aclken              (pe_enable),
             .s_axis_a_tvalid     (1'b1),
@@ -464,7 +464,7 @@ module VX_fpu_exp import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
         assign exp_adjust = ({ {22{n_d[9]}}, n_d } << 23);
         assign result_s = p3 + exp_adjust;
 
-        xil_fma fma_t (
+        xil_fma_lowL fma_t (
             .aclk                (clk),
             .aclken              (pe_enable),
             .s_axis_a_tvalid     (1'b1),
@@ -478,7 +478,7 @@ module VX_fpu_exp import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
             .m_axis_result_tuser (tuser[0])
         );
 
-        xil_fma fma_f (
+        xil_fma_lowL fma_f (
             .aclk                (clk),
             .aclken              (pe_enable),
             .s_axis_a_tvalid     (1'b1),
@@ -492,7 +492,7 @@ module VX_fpu_exp import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
             .m_axis_result_tuser (tuser[1])
         );
 
-        xil_fma fma_p0 (
+        xil_fma_lowL fma_p0 (
             .aclk                (clk),
             .aclken              (pe_enable),
             .s_axis_a_tvalid     (1'b1),
@@ -506,7 +506,7 @@ module VX_fpu_exp import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
             .m_axis_result_tuser (tuser[2])
         );
 
-        xil_fma fma_p1 (
+        xil_fma_lowL fma_p1 (
             .aclk                (clk),
             .aclken              (pe_enable),
             .s_axis_a_tvalid     (1'b1),
@@ -520,7 +520,7 @@ module VX_fpu_exp import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
             .m_axis_result_tuser (tuser[3])
         );
 
-        xil_fma fma_p2 (
+        xil_fma_lowL fma_p2 (
             .aclk                (clk),
             .aclken              (pe_enable),
             .s_axis_a_tvalid     (1'b1),
@@ -534,7 +534,7 @@ module VX_fpu_exp import VX_gpu_pkg::*, VX_fpu_pkg::*; #(
             .m_axis_result_tuser (tuser[4])
         );
 
-        xil_fma fma_p3 (
+        xil_fma_lowL fma_p3 (
             .aclk                (clk),
             .aclken              (pe_enable),
             .s_axis_a_tvalid     (1'b1),

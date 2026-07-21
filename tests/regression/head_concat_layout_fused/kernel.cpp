@@ -18,6 +18,8 @@ void kernel_head_concat_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
   const uint32_t total_threads = gridDim.x * blockDim.x;
   const uint32_t thread_id = blockIdx.x * blockDim.x + threadIdx.x;
   const uint64_t input_matrix_elems = (uint64_t)arg->input_m_pad * headdim;
+  const uint32_t query_heads_per_kv = arg->query_heads_per_kv;
+  const uint32_t input_heads = heads / query_heads_per_kv;
 
   for (uint32_t idx = thread_id; idx < total; idx += total_threads) {
     const uint32_t d = idx % headdim;
@@ -28,10 +30,13 @@ void kernel_head_concat_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
     const uint32_t m = b * seq + s;
     const uint32_t k = h * headdim + d;
 
-    const uint32_t input_matrix = b * heads + h;
+    const uint32_t input_head = h / query_heads_per_kv;
+    const uint32_t group_index = h % query_heads_per_kv;
+    const uint32_t input_matrix = b * input_heads + input_head;
+    const uint32_t input_row = group_index * seq + s;
     const uint64_t in_base = batched_matrix_base(input_matrix, input_matrix_elems);
     const uint64_t in_off = in_base + gemm_c_tiled_elem_offset(
-        s, d, arg->input_m_pad, headdim, arg->log2_mt, arg->log2_mxu_nt);
+        input_row, d, arg->input_m_pad, headdim, arg->log2_mt, arg->log2_mxu_nt);
     const uint64_t out_off = gemm_a_tiled_elem_offset(
         m, k, arg->output_m_pad, hidden, arg->log2_mt, arg->log2_mxu_kt);
     output[out_off] = input[in_off];

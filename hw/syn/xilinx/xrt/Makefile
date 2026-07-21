@@ -16,6 +16,13 @@ endif
 
 TARGET ?= hw
 PLATFORM ?=
+CONGESTION_FAIL_FAST ?= 1
+
+ifneq ($(CONGESTION_FAIL_FAST),0)
+ifneq ($(CONGESTION_FAIL_FAST),1)
+$(error CONGESTION_FAIL_FAST must be 0 or 1, got '$(CONGESTION_FAIL_FAST)')
+endif
+endif
 
 PREFIX ?= build$(XLEN)
 MAX_JOBS ?= 8
@@ -73,10 +80,12 @@ BIN_DIR := $(BUILD_DIR)/bin
 CONFIG_STAMP := $(BUILD_DIR)/.config.stamp
 XRT_BACKUP_DIR := $(BUILD_DIR)/xrt_backup
 XRT_BACKUP_STAMP := $(XRT_BACKUP_DIR)/.stamp
+LINK_CONFIG_STAMP := $(XRT_BACKUP_DIR)/.link_config.stamp
 XRT_BACKUP_FILES := $(sort $(SRC_DIR)/Makefile $(wildcard $(SRC_DIR)/*.mk $(SRC_DIR)/*.ini $(SRC_DIR)/*.tcl $(SRC_DIR)/*.in $(SRC_DIR)/*.sh $(SRC_DIR)/*.py))
 XRT_RUN_DIR := $(abspath $(XRT_BACKUP_DIR))
 
 CONFIG_FINGERPRINT = TARGET=$(TARGET) PLATFORM=$(PLATFORM) DEVICE_PART=$(DEVICE_PART) CLOCK_FREQ_HZ=$(CLOCK_FREQ_HZ) NUM_CORES=$(NUM_CORES) CONFIGS=$(CONFIGS) DEBUG=$(DEBUG) PERF=$(PERF) PROFILE=$(PROFILE) SCOPE=$(SCOPE) SIMULATOR=$(SIMULATOR) VCS_INSTALL_DIR=$(VCS_INSTALL_DIR) VCS_SIMLIB_DIR=$(VCS_SIMLIB_DIR) VCS_GCC_INSTALL_DIR=$(VCS_GCC_INSTALL_DIR) VG_GNU_PACKAGE=$(VG_GNU_PACKAGE) GUI=$(GUI)
+LINK_CONFIG_FINGERPRINT = CONGESTION_FAIL_FAST=$(CONGESTION_FAIL_FAST)
 
 XO_CONTAINER := $(BIN_DIR)/vortex_afu.xo
 XCLBIN_CONTAINER := $(BIN_DIR)/vortex_afu.xclbin
@@ -221,6 +230,9 @@ VITIS_INI_ARGS += --target $(TARGET)
 VITIS_INI_ARGS += --hook-dir $(XRT_RUN_DIR)
 VITIS_INI_ARGS += --clock-freq $(CLOCK_FREQ_HZ)
 VITIS_INI_ARGS += --simulator $(SIMULATOR)
+ifeq ($(CONGESTION_FAIL_FAST),0)
+VITIS_INI_ARGS += --disable-congestion-fail-fast
+endif
 ifeq ($(SIMULATOR), vcs)
 VITIS_INI_ARGS += --vcs-install-dir $(VCS_INSTALL_DIR)
 VITIS_INI_ARGS += --vcs-simlib-dir $(VCS_SIMLIB_DIR)
@@ -280,7 +292,7 @@ ifneq ($(TARGET),$(findstring $(TARGET), hw hw_emu))
 	$(warning WARNING:Application supports only hw hw_emu TARGET. Please use the target for running the application)
 endif
 
-.PHONY: all clean gen-sources gen-ast preprocess emconfig check-devices backup-xrt vcs-simlib
+.PHONY: all clean gen-sources gen-ast preprocess emconfig check-devices backup-xrt vcs-simlib FORCE_CONFIG_CHECK FORCE_LINK_CONFIG_CHECK
 .DEFAULT_GOAL := all
 
 all: check-devices emconfig $(XCLBIN_CONTAINER) $(BIN_DIR)/xrt.ini report
@@ -299,10 +311,16 @@ $(BUILD_DIR)/sources.txt: $(SRC_DIR)/Makefile $(SRC_DIR)/platforms.mk $(CONFIG_S
 	@for src in $(AXI_SOURCES); do echo "$$src" >> $(BUILD_DIR)/sources.txt; done
 	@for src in $(SIM_FSDB_SOURCES); do echo "$$src" >> $(BUILD_DIR)/sources.txt; done
 
-$(CONFIG_STAMP):
+$(CONFIG_STAMP): FORCE_CONFIG_CHECK
 	mkdir -p $(BUILD_DIR); \
 	tmp_file=$@.tmp; \
 	printf "%s\n" "$(CONFIG_FINGERPRINT)" > $$tmp_file; \
+	if [ ! -f $@ ] || ! cmp -s $$tmp_file $@; then mv $$tmp_file $@; else rm -f $$tmp_file; fi
+
+$(LINK_CONFIG_STAMP): FORCE_LINK_CONFIG_CHECK
+	mkdir -p $(XRT_BACKUP_DIR); \
+	tmp_file=$@.tmp; \
+	printf "%s\n" "$(LINK_CONFIG_FINGERPRINT)" > $$tmp_file; \
 	if [ ! -f $@ ] || ! cmp -s $$tmp_file $@; then mv $$tmp_file $@; else rm -f $$tmp_file; fi
 
 gen-ast: $(BUILD_DIR)/vortex.xml
@@ -333,7 +351,7 @@ gen-xo: $(XO_CONTAINER)
 $(XO_CONTAINER): $(BUILD_DIR)/sources.txt $(XRT_BACKUP_STAMP)
 	mkdir -p $(BUILD_DIR); cd $(BUILD_DIR);	TOOL_DIR=$(SCRIPT_DIR) $(VIVADO) -mode batch -source $(XRT_RUN_DIR)/gen_xo.tcl -tclargs ../$(XO_CONTAINER) vortex_afu sources.txt ../$(BUILD_DIR) $(DEVICE_PART)
 
-$(VITIS_INI): $(SRC_DIR)/gen_vitis_ini.py $(SRC_DIR)/platforms.mk $(XRT_BACKUP_STAMP)
+$(VITIS_INI): $(SRC_DIR)/gen_vitis_ini.py $(SRC_DIR)/platforms.mk $(XRT_BACKUP_STAMP) $(LINK_CONFIG_STAMP)
 	python3 $(SRC_DIR)/gen_vitis_ini.py $(VITIS_INI_ARGS)
 
 ifeq ($(SIMULATOR)-$(TARGET), vcs-hw_emu)

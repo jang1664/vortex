@@ -1,0 +1,520 @@
+task: dma-misal-generalize
+status: in_progress
+created: "2026-07-20 01:58"
+updated: "2026-07-20 07:04"
+goal: >-
+  Generalize the misaligned DMA datapath with generated aligners and gearboxes,
+  preserve full bandwidth, and qualify the result with functional tests and
+  matched Vivado OOC synthesis.
+plan: docs/plans/2026-07-20-001-refactor-generalized-misaligned-dma-plan.md
+progress:
+  - timestamp: "2026-07-20 01:58"
+    action: confirmed architecture and execution scope
+    result: >-
+      The user approved plan execution with OOC comparison. The current
+      VX_dma_unit_misal.sv backup is byte-identical to production RTL, and
+      existing user changes in configs and VX_dma_unit_align.sv are protected.
+  - timestamp: "2026-07-20 02:03"
+    action: started independent U1, U2, and U3 work
+    result: >-
+      U1 owns only OOC measurement infrastructure, while U2 and U3 own
+      disjoint new RTL and unittest directories. Production
+      VX_dma_unit_misal.sv remains unchanged until old-RTL baselines finish.
+  - timestamp: "2026-07-20 02:24"
+    action: completed the first 64B/256B old-RTL OOC attempt
+    result: >-
+      Vivado completed in 12m52s with u_dma_unit at 53,049 LUT, 7,961 FF,
+      33 RAMB36, 2 RAMB18, 16 DSP, and WNS +0.725 ns. The attempt is rejected
+      as a matched baseline because report_timing_summary found two
+      unconstrained OOC I/O path groups. Its artifacts remain preserved while
+      the Tcl flow gains explicit input/output delay constraints for a new run.
+  - timestamp: "2026-07-20 02:37"
+    action: completed the U2/U3 simplification checkpoint
+    result: >-
+      Consolidated duplicated payload and scoreboard state, bounded the
+      lane-aligner EOP validity shift to at most one 64B lane, and reused the
+      repository parameter macros. Independent VCS reruns pass all seven
+      gearbox ratios, all invalid-parameter guards, and the 1/2/4/8-lane
+      aligner matrix.
+  - timestamp: "2026-07-20 02:53"
+    action: locked fresh old-RTL integration cycle baselines
+    result: >-
+      Fresh configured xrt-vcs-sim builds pass C4 with the current-ABI
+      fpint_gemm_ffn_hw workload at 6,975 instructions and 11,743 cycles, and
+      HBW with fpint_gemm_ffn_hw_naive at 7,425 instructions and 17,641 cycles.
+      The 1% candidate ceilings are 11,860 and 17,817 cycles respectively.
+      Commands, configs, hashes, compile logs, simv logs, and raw run logs are
+      preserved under experiment 015.
+  - timestamp: "2026-07-20 02:57"
+    action: completed the constrained 64B/256B old-RTL OOC baseline
+    result: >-
+      The reproducible constrained-v2 row passes at 53,049 LUT, 7,961 FF,
+      33 RAMB36, 2 RAMB18, 16 DSP, and +0.725 ns setup WNS at 100 MHz.
+      check_timing reports zero unconstrained internal endpoints and zero data
+      inputs or outputs without delay constraints; asynchronous reset is
+      explicitly false-pathed. The matched 512B/512B attempt has started.
+  - timestamp: "2026-07-20 02:59"
+    action: locked fresh old-RTL unit-regression baselines
+    result: >-
+      Configured VCS runs pass all 2,125 dma_mem_unit_misal cases and the
+      lmem_dma_misal matrix of 18 normal, four zero-length, and one explicit
+      sync/backpressure case. Exact commands, compile logs, simulation logs,
+      pass markers, and old production hashes are preserved under experiment
+      015 before any production datapath edit.
+  - timestamp: "2026-07-20 03:04"
+    action: verified the Vivado utilization parser tests
+    result: >-
+      All four tools/test_vivado_util.py tests pass under the repository's
+      vortex Conda environment. The system Python lacks hwexplorer's
+      matplotlib dependency and is not a valid parser-test environment.
+  - timestamp: "2026-07-20 03:20"
+    action: completed the generated destination lane assembler component
+    result: >-
+      Added an unequal-width banked assembler for 1:1, 1:2, 1:4, and 1:8
+      lane ratios. Each input lane reaches only two adjacent destination lanes;
+      no output-wide variable shifter or dynamic full-beat RMW is present.
+      Independent fresh VCS and Verilator checks pass six configurations,
+      including 64B-to-256B and 512B-to-512B, every destination offset,
+      sparse masks, stalls, back-to-back segments, empty-final EOP, and
+      cycle-contiguous input acceptance.
+  - timestamp: "2026-07-20 03:27"
+    action: completed U1 and started generated-core integration
+    result: >-
+      The 512B/512B old-RTL OOC attempt reached the fixed 1,800-second timeout
+      in Vivado timing optimization, so no partial utilization is used and the
+      locked 40,000-LUT HBW candidate budget applies. Timeout stage and raw
+      artifacts are preserved. With both required old attempts complete,
+      production U4/U5 integration has started behind a legacy-default
+      compile-time comparison selector.
+  - timestamp: "2026-07-20 03:29"
+    action: independently verified the complete U1 harness and artifacts
+    result: >-
+      Shell syntax, diff hygiene, four parser tests, five negative CLI guards,
+      source/input hashes, the single 64B/256B hierarchy row, timing fields,
+      zero unconstrained internal endpoints, 512B timeout stage, and
+      production/backup hash equality all pass independent inspection without
+      rerunning Vivado or blackbox tests.
+  - timestamp: "2026-07-20 03:42"
+    action: passed the first generalized-core integration regressions
+    result: >-
+      A fresh configured VCS build with DMA_MISAL_GENERALIZED passes all
+      2,125 dma_mem_unit_misal cases. The independent 16-byte fixed-direction
+      lmem_dma_misal regression also passes 18 normal cases, four zero-length
+      cases, and the explicit synchronous-backpressure case in both DMA
+      directions. A consecutive zero-payload boundary race found during RTL
+      review is being fixed and will be covered before candidate OOC.
+  - timestamp: "2026-07-20 03:53"
+    action: fixed and verified the 64B/256B terminal-slot deadlock
+    result: >-
+      The first unequal-width full sweep exposed a final-segment source slot
+      that stopped after gearbox phase two when destination EOP set WR_DONE.
+      Keeping an already-DRAINING slot valid through WR_DONE lets its final
+      irrelevant physical slice retire. The same fresh 64B/256B configured
+      VCS sweep now completes all 2,126 cases successfully.
+  - timestamp: "2026-07-20 03:56"
+    action: passed the 512B/512B functional gate and started provisional OOC
+    result: >-
+      A fresh configured HBW VCS build passes all 2,126 generalized
+      dma_mem_unit_misal cases at 512B/512B. With the primary and HBW width
+      points green, the matched-config 64B/256B provisional candidate OOC run
+      started under experiment 016 with the generalized selector and four new
+      RTL sources recorded explicitly in its manifest.
+  - timestamp: "2026-07-20 04:03"
+    action: passed the provisional 64B/256B OOC kill-checkpoint
+    result: >-
+      Vivado 2025.1 completes the generalized candidate in about four minutes
+      at 21,020 LUT, 13,038 FF, 33 RAMB36, two RAMB18, 16 DSP, and +3.663 ns
+      setup WNS. LUT usage drops 60.38% from the matched 53,049-LUT old RTL,
+      far exceeding the 20% gate. Timing has zero failing endpoints and zero
+      unconstrained internal endpoints; all source and input hashes revalidate.
+  - timestamp: "2026-07-20 04:18"
+    action: completed the generated-core simplification checkpoint
+    result: >-
+      Removed dead gearbox outputs, reused the typed aligner payload, converted
+      offset assumptions into fatal simulation invariants, synthesis-guarded
+      debug-only assembler state, and added an explicit MAX_BYTES interface
+      bound. Fresh configured VCS reruns pass the gearbox, aligner, and
+      assembler suites without changing the qualified generated architecture.
+  - timestamp: "2026-07-20 04:23"
+    action: passed the full aggregate-width and throughput regression matrix
+    result: >-
+      All 16 Dcache/LMEM combinations over 64, 128, 256, and 512 bytes pass the
+      expanded 2,126-case VCS suite in independent configured builds. Directed
+      no-backpressure windows sustain 64 bytes/cycle in both directions at
+      64B/256B and 512 bytes/cycle in both directions at 512B/512B. Runtime
+      direction, both fixed directions, reordered responses, and request
+      backpressure also pass.
+  - timestamp: "2026-07-20 04:28"
+    action: passed the candidate C4 blackbox cycle gate
+    result: >-
+      The generalized C4 xrt-vcs-sim workload returns correct output at 6,975
+      instructions and 11,741 cycles, two cycles faster than the locked
+      11,743-cycle baseline and below the 11,860-cycle adoption ceiling. The
+      HBW workload remains in progress.
+  - timestamp: "2026-07-20 04:31"
+    action: identified an HBW blackbox latency regression
+    result: >-
+      The first generalized HBW run passed output checking but measured 7,503
+      instructions and 18,565 cycles, 5.24% above the locked 17,641-cycle
+      baseline and outside the 1% gate. A matched focused comparison showed
+      unchanged steady-state bandwidth but two extra response-to-write cycles
+      per aligned equal-width DMA segment from the aligner and assembler
+      register boundaries.
+  - timestamp: "2026-07-20 04:37"
+    action: restored equal-width aligned DMA latency without weakening generality
+    result: >-
+      Added a generated runtime bypass used only when both aggregate widths are
+      equal, source and destination offsets are zero, and padding is zero.
+      Misaligned and padded traffic remains on the qualified generated pipeline.
+      At 512B/512B the first-write and descriptor-completion timing now exactly
+      matches legacy; both 512B/cycle directions, all 2,126 functional cases,
+      and the unchanged 64B/256B throughput test pass.
+  - timestamp: "2026-07-20 04:38"
+    action: passed the HBW real-splitter active-lane gate
+    result: >-
+      The real VX_dma_node test passes with the configured 64 physical 8-byte
+      LMEM lanes forming a 512-byte aggregate. Partial reads bypass the blocked
+      inactive lane, active lanes accept independent request stalls and response
+      delays, and the misaligned global-to-local-to-global round trip completes
+      with 1/1 TEST PASSED.
+  - timestamp: "2026-07-20 04:44"
+    action: measured the zero-offset HBW fast-path cycle gate
+    result: >-
+      The first post-fix HBW blackbox run preserves 7,425 instructions and
+      passes output checking at 17,779 cycles, below the locked 17,817-cycle
+      adoption ceiling. Broadening the bypass to matching nonzero offsets did
+      not improve the noisy workload result and was rejected; the qualified
+      zero-offset condition was restored.
+  - timestamp: "2026-07-20 05:17"
+    action: qualified the equal-width generated sharing hypothesis
+    result: >-
+      Equal-width elaborations now omit both pass-through source gearboxes and
+      share one destination assembler between runtime directions. Fresh VCS
+      runs retain 512 bytes/cycle in both directions and pass all 2,126 cases at
+      both 512B/512B and 64B/256B. Unequal-width generated branches are
+      unchanged.
+  - timestamp: "2026-07-20 05:23"
+    action: repeated the current HBW cycle measurement and started matched OOC
+    result: >-
+      Two fresh runs of the exact rebuilt equal-width-sharing simv both pass
+      output checking at 7,425 instructions. They measure 17,842 and 17,778
+      cycles around the 17,817 ceiling, demonstrating run-to-run memory-model
+      noise at the one-percent boundary. A new immutable 512B/512B OOC run is
+      in progress while the equal-width fallback latency is reviewed for a
+      wider safety margin.
+  - timestamp: "2026-07-20 05:29"
+    action: fixed a fast-path-to-fallback drain race
+    result: >-
+      A fresh fixed-direction regression exposed a timeout after aligned fast
+      traffic followed by a misaligned transfer. Once the final source slot
+      retired, cleared slot metadata could assert the combinational fast-path
+      condition while the aligner still held the segment's trailing EOP; that
+      beat was consumed without entering the assembler and left
+      segment_write_pending asserted. Requiring a valid source slot, an empty
+      aligner output, and no pending destination EOP prevents the transition.
+      The complete fixed-direction suite and both 2,126-case primary width
+      suites pass after the fix.
+  - timestamp: "2026-07-20 05:48"
+    action: established a matched HBW cycle comparison
+    result: >-
+      Rebuilt legacy and candidate debug simv binaries from the same source
+      state and ran the same HBW workload back-to-back. Legacy measured 17,756
+      cycles and candidate 17,861 cycles, a 0.59% delta below the one-percent
+      gate. Every traced DMA_START boundary from the four host transfers,
+      through all fixed-direction GEMM transfers, to the final output transfer
+      has the same relative timestamp; the candidate trace is shifted by one
+      constant 80-cycle process-start offset. An attempted independent aligned
+      source/destination fallback bypass did not change the workload schedule
+      and was removed to avoid unnecessary muxing.
+  - timestamp: "2026-07-20 05:50"
+    action: preserved the first shared-equal-width 512B OOC attempt
+    result: >-
+      The immutable equal-width-sharing run reached completed timing
+      optimization after 28 minutes 44 seconds but exhausted its 30-minute
+      wall budget during final RAM mapping/report generation, so it produced
+      no admissible utilization row. This is a tool-timeout result rather than
+      a functional or timing failure.
+  - timestamp: "2026-07-20 05:54"
+    action: reduced equal-width assembler state and restarted 512B OOC
+    result: >-
+      The assembler now reuses its bank registers for the terminal spill beat
+      instead of retaining a separate full-width flush register. All six
+      focused assembler configurations, both 2,126-case primary width suites,
+      and the fixed-direction LMEM regression pass. A fresh immutable
+      512B/512B OOC run is active with the same 30-minute locked budget.
+  - timestamp: "2026-07-20 06:22"
+    action: preserved the bank-reused 512B OOC timeout
+    result: >-
+      The bank-reused candidate still exhausted the locked 30-minute budget
+      inside Vivado timing optimization (exit 124). Functional tests remained
+      green, but the missing reports block U7 adoption and therefore also
+      block legacy cleanup.
+  - timestamp: "2026-07-20 06:36"
+    action: fused the equal-width permutations and restarted 512B OOC
+    result: >-
+      Added a generated equal-width direct realigner that maps raw source lanes
+      into destination banks with one modulo displacement, merges same-beat
+      padding, and locally drops only an empty negative-displacement prefix.
+      The 512B/512B and 64B/256B suites each pass all 2,126 cases, both 512B
+      directions sustain one full beat per cycle, all six assembler component
+      configurations pass, the fixed-direction LMEM suite passes, and the real
+      HBW splitter passes. A new immutable 512B OOC run is active.
+  - timestamp: "2026-07-20 07:00"
+    action: completed the direct-realigner 512B OOC run
+    result: >-
+      Vivado completed in 23 minutes 43 seconds with WNS +2.194 ns, no failing
+      endpoints, and no unconstrained paths. u_dma_unit uses 79,293 LUTs,
+      21,225 FFs, 73 RAMB36, and 16 DSPs. The equal-width direct realigner owns
+      68,540 LUTs, of which 68,339 are the destination assembler.
+  - timestamp: "2026-07-20 07:04"
+    action: rejected U7 adoption and retained the comparison selector
+    result: >-
+      The completed HBW row exceeds the predeclared 40,000-LUT budget despite
+      passing timing, all functional tests, 512B/cycle throughput, and an exact
+      17,641-cycle HBW blackbox match. U8 legacy cleanup is intentionally not
+      performed. The next experiment must replace the simultaneous current and
+      spill permutation networks with a one-output-beat streaming window.
+iterations:
+  - feature: fixed-ratio DMA gearbox
+    iteration: 1
+    timestamp: "2026-07-20 02:17"
+    status: sim_fail
+    error_summary: >-
+      verify_rtl.py classified the focused run as sim_fail even though all
+      seven ratio cases printed PASS and the simulation exited normally.
+    root_cause: >-
+      The new testbench ends with "PASS: all DMA gearbox cases completed",
+      while verify_rtl.py recognizes "TEST PASSED"/"PASSED" but not a generic
+      "PASS:" marker.
+    fix_applied: pending
+    lesson: >-
+      New rtl-improve testbenches must emit one of verify_rtl.py's canonical
+      pass markers in addition to detailed per-case PASS lines.
+  - feature: fixed-ratio DMA gearbox
+    iteration: 2
+    timestamp: "2026-07-20 02:19"
+    status: pass
+    error_summary: none
+    root_cause: >-
+      Iteration 1 was a deterministic-runner marker mismatch, not an RTL or
+      scoreboard failure.
+    fix_applied: >-
+      Changed only the final testbench marker to "TEST PASSED" and reran the
+      VCS unittest plus all invalid-parameter rejection cases.
+    lesson: >-
+      The gearbox passes every qualified directed ratio, stall/partial-mask
+      coverage, and parameter guard through the required verification runner.
+  - feature: parallel DMA lane aligner
+    iteration: 1
+    timestamp: "2026-07-20 02:19"
+    status: pass
+    error_summary: none
+    root_cause: none
+    fix_applied: >-
+      Added the generated adjacent-lane aligner and its focused VCS testbench.
+    lesson: >-
+      The two-entry window sustains aligned full-rate traffic and correctly
+      flushes/reset carry for offset, partial, zero, stalled, and back-to-back
+      segment cases across one, two, four, and eight lanes.
+  - feature: fixed-ratio DMA gearbox
+    iteration: 3
+    timestamp: "2026-07-20 02:36"
+    status: compile_fail
+    error_summary: >-
+      The simplified testbench retained one final empty-check reference to the
+      three queues that had been consolidated into one expected-beat queue.
+    root_cause: >-
+      The mechanical scoreboard cleanup missed the end-of-case assertion at
+      lines 333-335; the RTL and invalid-parameter tests were unaffected.
+    fix_applied: >-
+      Replaced the three stale queue-size expressions with the single
+      expected_q size check.
+    lesson: >-
+      Queue consolidation must include setup, push/pop, drain, and final
+      emptiness assertions before verification.
+  - feature: fixed-ratio DMA gearbox
+    iteration: 4
+    timestamp: "2026-07-20 02:37"
+    status: pass
+    error_summary: none
+    root_cause: none
+    fix_applied: >-
+      Independently reran VCS after the testbench-only cleanup; all seven
+      ratios and all three invalid-parameter rejection cases pass.
+    lesson: >-
+      The consolidated scoreboard is behaviorally equivalent and reduces
+      parallel queue maintenance without changing RTL coverage.
+  - feature: parallel DMA lane aligner
+    iteration: 2
+    timestamp: "2026-07-20 02:37"
+    status: pass
+    error_summary: none
+    root_cause: none
+    fix_applied: >-
+      Independently reran VCS after consolidating the two-entry payload state
+      and replacing the full-vector EOP shift with generated per-lane checks.
+    lesson: >-
+      All one-, two-, four-, and eight-lane cases retain exact behavior while
+      the only variable validity shift is bounded by LANE_BYTES.
+  - feature: generated destination lane assembler
+    iteration: 1
+    timestamp: "2026-07-20 03:20"
+    status: pass
+    error_summary: none
+    root_cause: none
+    fix_applied: >-
+      Added the generated coarse/fine-phase bank accumulator, output holding,
+      valid-only spill flush, and explicit empty-final EOP boundary handling.
+    lesson: >-
+      The assembler sustains one canonical input vector per cycle and supports
+      unequal destination widths without a gearbox start phase or synthetic
+      bus-wide insertion logic.
+  - feature: generalized misaligned DMA integration
+    iteration: 1
+    timestamp: "2026-07-20 03:33"
+    status: compile_fail
+    error_summary: >-
+      The first focused compile resolved unittest sources through a different
+      VORTEX_HOME and could not find the newly added generalized RTL files.
+    root_cause: >-
+      The command was launched from a source-side unittest path instead of a
+      freshly configured vortex_fpint build directory.
+    fix_applied: >-
+      Created build_u45_integration with the required repository configure
+      command and reran both focused regressions from that generated build.
+    lesson: >-
+      New source closure must be tested only from a configured build tree so
+      generated Makefiles resolve VORTEX_HOME and template outputs correctly.
+  - feature: generalized misaligned DMA integration
+    iteration: 2
+    timestamp: "2026-07-20 03:42"
+    status: pass
+    error_summary: none
+    root_cause: none
+    fix_applied: >-
+      Compiled with DMA_MISAL_GENERALIZED in build_u45_integration and ran the
+      dma_mem_unit_misal and lmem_dma_misal suites to completion.
+    lesson: >-
+      The generated source gearbox, lane aligner, padding stage, and
+      destination assembler preserve the legacy functional contract for the
+      default 64/128-byte memory path and the 16-byte fixed-direction path.
+  - feature: generalized 64B/256B source drain
+    iteration: 1
+    timestamp: "2026-07-20 03:49"
+    status: sim_fail
+    error_summary: >-
+      The 64B/256B sweep stopped after the final destination EOP with eight
+      occupied read slots and the terminal response slot still DRAINING.
+    root_cause: >-
+      A source segment crossing the 256-byte beat completed its useful bytes
+      in gearbox phase zero, but slot retirement required physical phase
+      three. Destination EOP arrived at phase two, changed wr_state to WR_DONE,
+      and the wr_state==WR_RUN gate deasserted gen_slot_valid before phase
+      three could fire.
+    fix_applied: >-
+      Removed the WR_RUN qualification from gen_slot_valid while retaining
+      state==S_RUN and SLOT_DRAINING qualifications, allowing only the
+      already-active terminal slot to finish draining after write completion.
+    lesson: >-
+      Destination completion and source response retirement are independent
+      drain boundaries when a wide source gearbox skips irrelevant slices.
+  - feature: generalized 64B/256B source drain
+    iteration: 2
+    timestamp: "2026-07-20 03:53"
+    status: pass
+    error_summary: none
+    root_cause: none
+    fix_applied: >-
+      Reran the identical fresh configured generalized 64B/256B command after
+      the single gating correction; all 2,126 cases pass through TEST PASSED.
+    lesson: >-
+      A terminal segment whose final useful slice precedes the final physical
+      source slice now drains occupancy without changing descriptor semantics.
+  - feature: provisional generalized OOC
+    iteration: 1
+    timestamp: "2026-07-20 04:01"
+    status: tool_fail
+    error_summary: >-
+      Vivado synthesis and all raw reports completed, but the wrapper exited in
+      report parsing because system Python could not import hwexplorer.
+    root_cause: >-
+      PYTHON was not pinned to the repository's qualified Vortex Conda
+      interpreter for this invocation; the RTL, Vivado run, and reports were
+      unaffected.
+    fix_applied: >-
+      Parsed the preserved post_synth_util.rpt with the qualified Conda Python,
+      retained the original failed run_status, and recorded post-parse status
+      plus a provisional comparison without rerunning synthesis.
+    lesson: >-
+      Candidate OOC commands must export the qualified PYTHON path even when
+      the Vivado binary and RTL closure are otherwise fully reproducible.
+  - feature: provisional generalized OOC
+    iteration: 2
+    timestamp: "2026-07-20 04:03"
+    status: pass
+    error_summary: none
+    root_cause: none
+    fix_applied: >-
+      Verified the single u_dma_unit hierarchy row, timing summary, constraint
+      coverage, source hashes, and input hashes from the completed synthesis.
+    lesson: >-
+      Lane-bounded realignment removes 32,029 LUT from the primary target while
+      improving setup slack by 2.938 ns and retaining the response SRAM BRAMs.
+  - feature: HBW equal-width latency
+    iteration: 1
+    timestamp: "2026-07-20 04:31"
+    status: perf_fail
+    error_summary: >-
+      Output passed, but the generalized HBW blackbox used 18,565 cycles versus
+      the 17,641-cycle baseline and exceeded the 17,817-cycle adoption ceiling.
+    root_cause: >-
+      For aligned 512B/512B transfers the general aligner and assembler added
+      two response-to-write cycles per descriptor even though no realignment or
+      width conversion was required.
+    fix_applied: >-
+      Added an equal-width aligned non-padded bypass inside the generated path;
+      all other traffic continues through the unchanged general pipeline.
+    lesson: >-
+      Full beat throughput alone does not protect descriptor-heavy workloads;
+      equal-width generated states must also preserve startup and tail latency.
+  - feature: HBW equal-width latency
+    iteration: 2
+    timestamp: "2026-07-20 04:37"
+    status: unit_pass
+    error_summary: none
+    root_cause: none
+    fix_applied: >-
+      Compared legacy and generalized focused traces and reran throughput plus
+      the full misaligned/padded 512B/512B suite after the bypass.
+    lesson: >-
+      The fast state now matches legacy cycle-for-cycle for eligible segments,
+      while 2,126 fallback cases and both required throughput points pass.
+pitfalls:
+  - >-
+    Old-RTL OOC baselines must be captured before integrating the generated
+    datapath; otherwise the comparison is not reproducible.
+  - >-
+    Subagents share the same worktree in this environment. Units that modify
+    overlapping files or run shared build targets must be serialized.
+  - >-
+    tools/hw_draw/hw_tool.py cannot read the existing
+    agent-tasks/port-scale/hw_arch.simple.json with list_modules because the
+    simplified instances omit moduleRef. Do not edit that JSON directly; use
+    RTL and the confirmed spec as the architecture source for this task.
+  - >-
+    A clock-only XDC is insufficient for the node-backend OOC top. Explicit
+    input and output delay constraints are required or WNS can look positive
+    while I/O timing groups remain unconstrained.
+  - >-
+    Vivado Tcl does not provide Synopsys remove_from_collection. OOC port
+    collections must use Vivado-native get_ports filters; failed report-stage
+    attempts remain immutable and a new output directory is required.
+  - >-
+    Fresh configured xrt-vcs-sim builds do not populate kernel/libvortex.a;
+    build the kernel prerequisite under the same sourced CONFIGS before the
+    application run, without rebuilding or changing the pinned simv config.
+  - >-
+    The historical fpint_gemm_ffn_hw_naive C4 workload now violates the
+    eight-channel tensor-DMA slot-alignment assertion. Its failed attempt is
+    preserved, and the reproducible current-ABI C4 baseline uses
+    fpint_gemm_ffn_hw with the same 128-cubed problem shape.

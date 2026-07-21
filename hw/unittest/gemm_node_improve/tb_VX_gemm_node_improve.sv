@@ -971,6 +971,7 @@ module tb_VX_gemm_node_improve
   // =========================================================================
   // Auto layout base/alignment
   localparam longint unsigned AUTO_DRAM_BASE = 64'h0000_0000_0010_0000;
+  localparam longint unsigned BACK_TO_BACK_DRAM_OFFSET = 64'h0000_0000_0200_0000;
   localparam longint unsigned AUTO_LMEM_BASE = 64'h0000_0000_0000_0000;
   localparam longint unsigned ADDR_ALIGN_BYTES = LMEM_LAYOUT_ALIGN_BYTES;
 
@@ -2163,9 +2164,6 @@ module tb_VX_gemm_node_improve
       if ((test_k <= 0) || (test_k % DMA_MXU_KT != 0))
         $fatal(1, "[%0t] K must be positive multiple of MXU_KT=%0d (got %0d)", $time, DMA_MXU_KT, test_k);
 
-      apply_reset();
-      init_memories();
-
       build_test_vectors(
         .test_m(test_m), .test_n(test_n), .test_k(test_k),
         .test_qblk(test_qblk), .test_wtrans(test_wtrans), .test_qdir(test_qdir),
@@ -2242,10 +2240,18 @@ module tb_VX_gemm_node_improve
   // =========================================================================
   initial begin
     string case_name;
+    string first_case_name;
     int test_m, test_n, test_k, test_qblk, test_wtrans, test_qdir;
     logic [63:0] dram_in_base, dram_w_base, dram_sc_base, dram_zp_base, dram_out_base;
     logic [63:0] lmem_ibuf0_base, lmem_ibuf1_base, lmem_wbuf0_base, lmem_wbuf1_base;
     logic [63:0] lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base, lmem_obuf_base;
+    int second_m, second_n, second_k;
+    logic [63:0] second_dram_in_base, second_dram_w_base, second_dram_sc_base;
+    logic [63:0] second_dram_zp_base, second_dram_out_base;
+    logic [63:0] second_lmem_ibuf0_base, second_lmem_ibuf1_base;
+    logic [63:0] second_lmem_wbuf0_base, second_lmem_wbuf1_base;
+    logic [63:0] second_lmem_scbuf0_base, second_lmem_scbuf1_base;
+    logic [63:0] second_lmem_zpbuf0_base, second_lmem_zpbuf1_base, second_lmem_obuf_base;
 
     $timeformat(-9, 0, "ns", 0);
     reset = 1'b0;
@@ -2303,13 +2309,49 @@ module tb_VX_gemm_node_improve
              randomize_input_speed, input_gap_min, input_gap_max,
              input_stall_period, input_stall_phase, input_stall_cycles,
              require_dual_bank_prefetch, trace_rd_fifo_en);
+    apply_reset();
+    init_memories();
+    first_case_name = $test$plusargs("BACK_TO_BACK")
+                    ? $sformatf("%s_qk", case_name) : case_name;
     run_config_gemm_tiled(
-      case_name,
+      first_case_name,
       test_m, test_n, test_k, test_qblk, test_wtrans, test_qdir,
       dram_in_base, dram_w_base, dram_sc_base, dram_zp_base, dram_out_base,
       lmem_ibuf0_base, lmem_ibuf1_base, lmem_wbuf0_base, lmem_wbuf1_base,
       lmem_scbuf0_base, lmem_scbuf1_base, lmem_zpbuf0_base, lmem_zpbuf1_base, lmem_obuf_base
     );
+
+    if ($test$plusargs("BACK_TO_BACK")) begin
+      second_m = 2 * DMA_MXU_KT;
+      second_n = DMA_MXU_NT;
+      second_k = 2 * DMA_KT;
+      compute_auto_layout(
+        second_m, second_n, second_k, test_qblk, test_wtrans, test_qdir,
+        second_dram_in_base, second_dram_w_base, second_dram_sc_base,
+        second_dram_zp_base, second_dram_out_base,
+        second_lmem_ibuf0_base, second_lmem_ibuf1_base,
+        second_lmem_wbuf0_base, second_lmem_wbuf1_base,
+        second_lmem_scbuf0_base, second_lmem_scbuf1_base,
+        second_lmem_zpbuf0_base, second_lmem_zpbuf1_base, second_lmem_obuf_base
+      );
+      second_dram_in_base  += BACK_TO_BACK_DRAM_OFFSET;
+      second_dram_w_base   += BACK_TO_BACK_DRAM_OFFSET;
+      second_dram_sc_base  += BACK_TO_BACK_DRAM_OFFSET;
+      second_dram_zp_base  += BACK_TO_BACK_DRAM_OFFSET;
+      second_dram_out_base += BACK_TO_BACK_DRAM_OFFSET;
+
+      run_config_gemm_tiled(
+        $sformatf("%s_pv", case_name),
+        second_m, second_n, second_k, test_qblk, test_wtrans, test_qdir,
+        second_dram_in_base, second_dram_w_base, second_dram_sc_base,
+        second_dram_zp_base, second_dram_out_base,
+        second_lmem_ibuf0_base, second_lmem_ibuf1_base,
+        second_lmem_wbuf0_base, second_lmem_wbuf1_base,
+        second_lmem_scbuf0_base, second_lmem_scbuf1_base,
+        second_lmem_zpbuf0_base, second_lmem_zpbuf1_base, second_lmem_obuf_base
+      );
+      $display("[%0t] BACK_TO_BACK GEMM PASSED", $time);
+    end
 
     if (require_dual_bank_prefetch)
       check_dual_bank_prefetch();

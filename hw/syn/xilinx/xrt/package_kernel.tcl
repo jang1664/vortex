@@ -211,14 +211,22 @@ set obj [get_filesets sources_1]
 set ip_files [list \
  [file normalize "${build_dir}/ip/xil_fdiv/xil_fdiv.xci"] \
  [file normalize "${build_dir}/ip/xil_fma/xil_fma.xci"] \
+ [file normalize "${build_dir}/ip/xil_fma_lowL/xil_fma_lowL.xci"] \
  [file normalize "${build_dir}/ip/xil_fsqrt/xil_fsqrt.xci"] \
  [file normalize "${build_dir}/ip/xil_fmul/xil_fmul.xci"] \
  [file normalize "${build_dir}/ip/xil_fadd/xil_fadd.xci"] \
  [file normalize "${build_dir}/ip/xil_f32add/xil_f32add.xci"] \
+ [file normalize "${build_dir}/ip/xil_f32add_lowL/xil_f32add_lowL.xci"] \
  [file normalize "${build_dir}/ip/xil_f32mul/xil_f32mul.xci"] \
  [file normalize "${build_dir}/ip/xil_f16add/xil_f16add.xci"] \
  [file normalize "${build_dir}/ip/xil_f16mul/xil_f16mul.xci"] \
-]
+ [file normalize "${build_dir}/ip/xil_f32add_low_latency/xil_f32add_low_latency.xci"] \
+ [file normalize "${build_dir}/ip/xil_f32mul_low_latency/xil_f32mul_low_latency.xci"] \
+ [file normalize "${build_dir}/ip/xil_f16mul_low_latency/xil_f16mul_low_latency.xci"] \
+ [file normalize "${build_dir}/ip/xil_f32add_latency1/xil_f32add_latency1.xci"] \
+ [file normalize "${build_dir}/ip/xil_f32mul_latency1/xil_f32mul_latency1.xci"] \
+ [file normalize "${build_dir}/ip/xil_f16mul_latency1/xil_f16mul_latency1.xci"] \
+ ]
 add_files -verbose -norecurse -fileset $obj $ip_files
 
 set_property include_dirs ${vincludes_list} [current_fileset]
@@ -410,6 +418,11 @@ set core [ipx::current_core]
 # (Broad re-add would drag in legitimately unreferenced test tops / sim helpers.)
 set force_packaged_sources {
     VX_dma_unit_align.sv
+    VX_dma_gearbox.sv
+    VX_dma_lane_aligner.sv
+    VX_dma_lane_assembler.sv
+    VX_dma_equal_realigner.sv
+    VX_dma_misal_gen_path.sv
     VX_dma_unit_misal.sv
     VX_dma_unit.sv
     VX_dma_engine.sv

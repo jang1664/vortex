@@ -271,6 +271,14 @@ fpga_bins:
 
 `workloads` are expanded through `tools/workload/gen_kernel_cfgs.py`. Each
 implemented kernel with an app and argument string becomes a benchmark case.
+For generation workloads, `gen_kv_len` is the logical KV length after the
+current token is appended. Set `max_seq_len` when the fixed cache allocation
+capacity must be larger than that logical length; the latency adapter forwards
+both `max_seq_len` and `max-seq-len` to the generator. Generated softmax cases
+pass the logical length as `-seqk` and the physical capacity as
+`-seqk-stride`. Standalone softmax maps the latter to `row_pitch_bytes`; the
+layout-fused app rounds it up to the GEMM tile width and passes the resulting
+input/output padded widths through its existing kernel ABI.
 The supported workload variants are `all_fpint_gemm_naive`,
 `attn_sgemm_tcu_fpint_gemm_naive`, `all_fpint_gemm_improve`,
 `attn_sgemm_tcu_fpint_gemm_improve`, `all_sgemm_tcu`,

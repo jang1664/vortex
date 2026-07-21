@@ -1,0 +1,231 @@
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2025 Advanced Micro Devices, Inc. All Rights Reserved.
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version      : Vivado v.2025.1 (lin64) Build 6140274 Wed May 21 22:58:25 MDT 2025
+| Date              : Mon Jul 20 11:41:49 2026
+| Host              : fpga running 64-bit Ubuntu 24.04.4 LTS
+| Command           : report_timing -delay_type max -max_paths 1 -nworst 1 -path_type full -to [get_pins -quiet -hier -regexp {.*perf_xfers_r.*\/(D|CE)$} -filter {DIRECTION == IN}] -file agent-tasks/perf-monitor-timing/historical_query/cpu_dma_xfers.rpt
+| Design            : level0_wrapper
+| Device            : xcu55c-fsvh2892
+| Speed File        : -2L  PRODUCTION 1.30 05-01-2022
+| Design State      : Fully Placed
+| Temperature Grade : E
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Timing Report
+
+Slack (VIOLATED) :        -2.674ns  (required time - arrival time)
+  Source:                 level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/wr_out_off_r_reg[3]/C
+                            (rising edge-triggered cell FDRE clocked by clk_kernel_00_unbuffered_net  {rise@0.000ns fall@5.000ns period=10.000ns})
+  Destination:            level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/perf_xfers_r_reg[40]/CE
+                            (rising edge-triggered cell FDRE clocked by clk_kernel_00_unbuffered_net  {rise@0.000ns fall@5.000ns period=10.000ns})
+  Path Group:             clk_kernel_00_unbuffered_net
+  Path Type:              Setup (Max at Slow Process Corner)
+  Requirement:            10.000ns  (clk_kernel_00_unbuffered_net rise@10.000ns - clk_kernel_00_unbuffered_net rise@0.000ns)
+  Data Path Delay:        12.236ns  (logic 3.348ns (27.362%)  route 8.888ns (72.638%))
+  Logic Levels:           40  (CARRY8=14 LUT2=4 LUT3=4 LUT4=4 LUT5=5 LUT6=9)
+  Clock Path Skew:        -0.020ns (DCD - SCD + CPR)
+    Destination Clock Delay (DCD):    7.453ns = ( 17.453 - 10.000 ) 
+    Source Clock Delay      (SCD):    7.456ns
+    Clock Pessimism Removal (CPR):    -0.017ns
+  Clock Uncertainty:      0.358ns  ((TSJ^2 + DJ^2)^1/2) / 2 + PE + UU
+    Total System Jitter     (TSJ):    0.071ns
+    Discrete Jitter          (DJ):    0.093ns
+    Phase Error              (PE):    0.000ns
+    User Uncertainty         (UU):    0.300ns
+
+    Location             Delay type                Incr(ns)  Path(ns)    Partition      PBlock               Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------------------------------------------
+                         (clock clk_kernel_00_unbuffered_net rise edge)
+                                                      0.000     0.000 r                                      
+                         clock source latency         4.338     4.338                                        
+                         propagated clock network latency
+                                                      3.118     7.456                                        
+    SLICE_X35Y342        FDRE                         0.000     7.456 r  reconfigurable pblock_dynamic_region
+                                                                                                             level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/wr_out_off_r_reg[3]/C
+    SLICE_X35Y342        FDRE (Prop_BFF2_SLICEM_C_Q)
+                                                      0.080     7.536 r  reconfigurable pblock_dynamic_region
+                                                                                                             level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/wr_out_off_r_reg[3]/Q
+                         net (fo=10, estimated)       0.234     7.770    reconfigurable                      level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/response_payload_ram/g_shift.g_partial_reset.g_stages[0].g_stage_0.pipe_reg[0][2321]_i_24_3[3]
+    SLICE_X34Y340        LUT2 (Prop_D6LUT_SLICEM_I1_O)
+                                                      0.037     7.807 r  reconfigurable pblock_dynamic_region
+                                                                                                             level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/response_payload_ram/wr_lmem_data_r[2046]_i_147/O
+                         net (fo=1, routed)           0.025     7.832    reconfigurable                      level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/response_payload_ram/wr_lmem_data_r[2046]_i_147_n_0
+    SLICE_X34Y340        CARRY8 (Prop_CARRY8_SLICEM_S[3]_CO[7])
+                                                      0.163     7.995 r  reconfigurable pblock_dynamic_region
+                                                                                                             level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/response_payload_ram/wr_lmem_data_r_reg[2046]_i_40/CO[7]
+                         net (fo=1, estimated)        0.026     8.021    reconfigurable                      level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/lmem_wr_buf/g_eb1.pipe_buffer/g_register.g_pipe_regs[0].pipe_register/g_shift_register/wr_lmem_data_r[2046]_i_45_0[0]
+    SLICE_X34Y341        CARRY8 (Prop_CARRY8_SLICEM_CI_CO[7])
+                                                      0.015     8.036 r  reconfigurable pblock_dynamic_region
+                                                                                                             level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/lmem_wr_buf/g_eb1.pipe_buffer/g_register.g_pipe_regs[0].pipe_register/g_shift_register/wr_lmem_data_r_reg[2046]_i_151/CO[7]
+                         net (fo=1, estimated)        0.026     8.062    reconfigurable                      level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/lmem_wr_buf/g_eb1.pipe_buffer/g_register.g_pipe_regs[0].pipe_register/g_shift_register/wr_lmem_data_r_reg[2046]_i_151_n_0
+    SLICE_X34Y342        CARRY8 (Prop_CARRY8_SLICEM_CI_CO[7])
+                                                      0.015     8.077 r  reconfigurable pblock_dynamic_region
+                                                                                                             level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/lmem_wr_buf/g_eb1.pipe_buffer/g_register.g_pipe_regs[0].pipe_register/g_shift_register/wr_lmem_data_r_reg[2046]_i_134/CO[7]
+                         net (fo=1, estimated)        0.026     8.103    reconfigurable                      level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/lmem_wr_buf/g_eb1.pipe_buffer/g_register.g_pipe_regs[0].pipe_register/g_shift_register/wr_lmem_data_r_reg[2046]_i_134_n_0
+    SLICE_X34Y343        CARRY8 (Prop_CARRY8_SLICEM_CI_O[4])
+                                                      0.086     8.189 r  reconfigurable pblock_dynamic_region
+                                                                                                             level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/lmem_wr_buf/g_eb1.pipe_buffer/g_register.g_pipe_regs[0].pipe_register/g_shift_register/wr_lmem_data_r_reg[2046]_i_39/O[4]
+                         net (fo=3, estimated)        0.246     8.435    reconfigurable                      level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/response_payload_ram/wr_lmem_data_r[2046]_i_17_1[3]
+    SLICE_X35Y341        LUT5 (Prop_B6LUT_SLICEM_I3_O)
+                                                      0.100     8.535 r  reconfigurable pblock_dynamic_region
+                                                                                                             level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/response_payload_ram/wr_lmem_data_r[2046]_i_43/O
+                         net (fo=1, estimated)        0.087     8.622    reconfigurable                      level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/response_payload_ram/wr_lmem_data_r[2046]_i_43_n_0
+    SLICE_X35Y342        LUT6 (Prop_C6LUT_SLICEM_I2_O)
+                                                      0.051     8.673 r  reconfigurable pblock_dynamic_region
+                                                                                                             level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/response_payload_ram/wr_lmem_data_r[2046]_i_17/O
+                         net (fo=7, estimated)        0.173     8.846    reconfigurable                      level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/dcache_wr_buf/g_eb1.pipe_buffer/g_register.g_pipe_regs[0].pipe_register/g_shift_register/wr_expect_slot_r[2]_i_210
+    SLICE_X37Y339        LUT5 (Prop_F6LUT_SLICEM_I0_O)
+                                                      0.088     8.934 r  reconfigurable pblock_dynamic_region
+                                                                                                             level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/dcache_wr_buf/g_eb1.pipe_buffer/g_register.g_pipe_regs[0].pipe_register/g_shift_register/wr_dst_lane_r[31]_i_90/O
+                         net (fo=8, estimated)        0.161     9.095    reconfigurable                      level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/dcache_wr_buf/g_eb1.pipe_buffer/g_register.g_pipe_regs[0].pipe_register/g_shift_register/seg_size_r_reg[7]_0
+    SLICE_X39Y340        LUT6 (Prop_C6LUT_SLICEM_I1_O)
+                                                      0.098     9.193 r  reconfigurable pblock_dynamic_region
+                                                                                                             level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/dcache_wr_buf/g_eb1.pipe_buffer/g_register.g_pipe_regs[0].pipe_register/g_shift_register/wr_dst_lane_r[31]_i_71/O
+                         net (fo=1, estimated)        0.284     9.477    reconfigurable                      level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/dcache_wr_buf/g_eb1.pipe_buffer/g_register.g_pipe_regs[0].pipe_register/g_shift_register/wr_dst_lane_r[31]_i_71_n_0
+    SLICE_X40Y340        CARRY8 (Prop_CARRY8_SLICEL_DI[0]_CO[7])
+                                                      0.131     9.608 r  reconfigurable pblock_dynamic_region
+                                                                                                             level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/dcache_wr_buf/g_eb1.pipe_buffer/g_register.g_pipe_regs[0].pipe_register/g_shift_register/wr_dst_lane_r_reg[31]_i_33/CO[7]
+                         net (fo=1, estimated)        0.026     9.634    reconfigurable                      level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/dcache_wr_buf/g_eb1.pipe_buffer/g_register.g_pipe_regs[0].pipe_register/g_shift_register/wr_dst_lane_r_reg[31]_i_33_n_0
+    SLICE_X40Y341        CARRY8 (Prop_CARRY8_SLICEL_CI_CO[7])
+                                                      0.015     9.649 r  reconfigurable pblock_dynamic_region
+                                                                                                             level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/dcache_wr_buf/g_eb1.pipe_buffer/g_register.g_pipe_regs[0].pipe_register/g_shift_register/wr_dst_lane_r_reg[31]_i_21/CO[7]
+                         net (fo=251, estimated)      0.571    10.220    reconfigurable                      level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/response_payload_ram/wr_expect_slot_r_reg[2]_i_13_0[0]
+    SLICE_X36Y347        LUT6 (Prop_B6LUT_SLICEL_I4_O)
+                                                      0.124    10.344 f  reconfigurable pblock_dynamic_region
+                                                                                                             level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/response_payload_ram/wr_expect_slot_r[2]_i_62/O
+                         net (fo=5, estimated)        0.104    10.448    reconfigurable                      level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/response_payload_ram/seg_size_r_reg[7]
+    SLICE_X36Y348        LUT5 (Prop_C6LUT_SLICEL_I4_O)
+                                                      0.050    10.498 r  reconfigurable pblock_dynamic_region
+                                                                                                             level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/response_payload_ram/wr_expect_slot_r[2]_i_186/O
+                         net (fo=1, estimated)        0.131    10.629    reconfigurable                      level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/response_payload_ram/wr_expect_slot_r[2]_i_186_n_0
+    SLICE_X37Y348        CARRY8 (Prop_CARRY8_SLICEM_DI[0]_CO[7])
+                                                      0.133    10.762 r  reconfigurable pblock_dynamic_region
+                                                                                                             level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/response_payload_ram/wr_expect_slot_r_reg[2]_i_112/CO[7]
+                         net (fo=1, estimated)        0.026    10.788    reconfigurable                      level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/response_payload_ram/wr_expect_slot_r_reg[2]_i_112_n_0
+    SLICE_X37Y349        CARRY8 (Prop_CARRY8_SLICEM_CI_CO[7])
+                                                      0.015    10.803 r  reconfigurable pblock_dynamic_region
+                                                                                                             level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/response_payload_ram/wr_expect_slot_r_reg[2]_i_59/CO[7]
+                         net (fo=75, estimated)       0.321    11.124    reconfigurable                      level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/response_payload_ram/wr_expect_slot_r[2]_i_128_0[0]
+    SLICE_X36Y352        LUT4 (Prop_H5LUT_SLICEL_I1_O)
+                                                      0.096    11.220 r  reconfigurable pblock_dynamic_region
+                                                                                                             level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/response_payload_ram/wr_out_off_r[7]_i_29/O
+                         net (fo=3, estimated)        0.246    11.466    reconfigurable                      level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/response_payload_ram/g_shift.g_partial_reset.g_stages[0].g_stage_0.pipe_reg[0][2321]_i_25_3
+    SLICE_X33Y354        LUT4 (Prop_A6LUT_SLICEL_I0_O)
+                                                      0.098    11.564 r  reconfigurable pblock_dynamic_region
+                                                                                                             level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/response_payload_ram/wr_expect_slot_r[2]_i_207/O
+                         net (fo=1, routed)           0.009    11.573    reconfigurable                      level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/response_payload_ram/wr_expect_slot_r[2]_i_207_n_0
+    SLICE_X33Y354        CARRY8 (Prop_CARRY8_SLICEL_S[0]_CO[7])
+                                                      0.190    11.763 r  reconfigurable pblock_dynamic_region
+                                                                                                             level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/response_payload_ram/wr_expect_slot_r_reg[2]_i_129/CO[7]
+                         net (fo=1, estimated)        0.026    11.789    reconfigurable                      level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/response_payload_ram/wr_expect_slot_r_reg[2]_i_129_n_0
+    SLICE_X33Y355        CARRY8 (Prop_CARRY8_SLICEL_CI_CO[7])
+                                                      0.015    11.804 r  reconfigurable pblock_dynamic_region
+                                                                                                             level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/response_payload_ram/wr_expect_slot_r_reg[2]_i_60/CO[7]
+                         net (fo=35, estimated)       0.350    12.154    reconfigurable                      level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/dcache_wr_buf/g_eb1.pipe_buffer/g_register.g_pipe_regs[0].pipe_register/g_shift_register/wr_out_off_r[7]_i_12_2[0]
+    SLICE_X36Y350        LUT4 (Prop_B6LUT_SLICEL_I0_O)
+                                                      0.090    12.244 r  reconfigurable pblock_dynamic_region
+                                                                                                             level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/dcache_wr_buf/g_eb1.pipe_buffer/g_register.g_pipe_regs[0].pipe_register/g_shift_register/wr_expect_slot_r[2]_i_33/O
+                         net (fo=14, estimated)       0.145    12.389    reconfigurable                      level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/dcache_wr_buf/g_eb1.pipe_buffer/g_register.g_pipe_regs[0].pipe_register/g_shift_register/wr_expect_slot_r[2]_i_61
+    SLICE_X37Y350        LUT6 (Prop_D6LUT_SLICEM_I0_O)
+                                                      0.145    12.534 r  reconfigurable pblock_dynamic_region
+                                                                                                             level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/dcache_wr_buf/g_eb1.pipe_buffer/g_register.g_pipe_regs[0].pipe_register/g_shift_register/wr_dst_lane_r[15]_i_23/O
+                         net (fo=30, estimated)       0.147    12.681    reconfigurable                      level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/dcache_wr_buf/g_eb1.pipe_buffer/g_register.g_pipe_regs[0].pipe_register/g_shift_register/wr_dst_lane_r_reg[31]_i_21_3
+    SLICE_X37Y350        LUT4 (Prop_A6LUT_SLICEM_I0_O)
+                                                      0.038    12.719 r  reconfigurable pblock_dynamic_region
+                                                                                                             level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/dcache_wr_buf/g_eb1.pipe_buffer/g_register.g_pipe_regs[0].pipe_register/g_shift_register/wr_dst_lane_r[15]_i_15/O
+                         net (fo=10, estimated)       1.027    13.746    reconfigurable                      level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/lmem_req_buf/g_ebN.fifo_queue/g_depth_n.dp_ram/g_async.g_bram.async_ram_patch/nbytes[2]
+    SLICE_X62Y309        LUT2 (Prop_D6LUT_SLICEL_I1_O)
+                                                      0.050    13.796 r  reconfigurable pblock_dynamic_region
+                                                                                                             level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/lmem_req_buf/g_ebN.fifo_queue/g_depth_n.dp_ram/g_async.g_bram.async_ram_patch/g_shift.g_partial_reset.g_stages[0].g_stage_0.pipe[0][24]_i_139/O
+                         net (fo=1, routed)           0.009    13.805    reconfigurable                      level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/lmem_req_buf/g_ebN.fifo_queue/g_depth_n.dp_ram/g_async.g_bram.async_ram_patch/g_shift.g_partial_reset.g_stages[0].g_stage_0.pipe[0][24]_i_139_n_0
+    SLICE_X62Y309        CARRY8 (Prop_CARRY8_SLICEL_S[3]_CO[7])
+                                                      0.154    13.959 r  reconfigurable pblock_dynamic_region
+                                                                                                             level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/lmem_req_buf/g_ebN.fifo_queue/g_depth_n.dp_ram/g_async.g_bram.async_ram_patch/g_shift.g_partial_reset.g_stages[0].g_stage_0.pipe_reg[0][24]_i_110/CO[7]
+                         net (fo=1, estimated)        0.026    13.985    reconfigurable                      level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/lmem_req_buf/g_ebN.fifo_queue/g_depth_n.dp_ram/g_async.g_bram.async_ram_patch/g_shift.g_partial_reset.g_stages[0].g_stage_0.pipe_reg[0][24]_i_110_n_0
+    SLICE_X62Y310        CARRY8 (Prop_CARRY8_SLICEL_CI_CO[7])
+                                                      0.015    14.000 r  reconfigurable pblock_dynamic_region
+                                                                                                             level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/lmem_req_buf/g_ebN.fifo_queue/g_depth_n.dp_ram/g_async.g_bram.async_ram_patch/g_shift.g_partial_reset.g_stages[0].g_stage_0.pipe_reg[0][24]_i_109/CO[7]
+                         net (fo=1, estimated)        0.026    14.026    reconfigurable                      level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/lmem_req_buf/g_ebN.fifo_queue/g_depth_n.dp_ram/g_async.g_bram.async_ram_patch/g_shift.g_partial_reset.g_stages[0].g_stage_0.pipe_reg[0][24]_i_109_n_0
+    SLICE_X62Y311        CARRY8 (Prop_CARRY8_SLICEL_CI_O[3])
+                                                      0.082    14.108 f  reconfigurable pblock_dynamic_region
+                                                                                                             level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/lmem_req_buf/g_ebN.fifo_queue/g_depth_n.dp_ram/g_async.g_bram.async_ram_patch/g_shift.g_partial_reset.g_stages[0].g_stage_0.pipe_reg[0][24]_i_108/O[3]
+                         net (fo=514, estimated)      0.402    14.510    reconfigurable                      level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/dcache_req_buf/g_ebN.fifo_queue/g_depth_n.dp_ram/g_async.g_bram.async_ram_patch/tmp30_out[27]
+    SLICE_X65Y311        LUT2 (Prop_F6LUT_SLICEM_I1_O)
+                                                      0.088    14.598 r  reconfigurable pblock_dynamic_region
+                                                                                                             level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/dcache_req_buf/g_ebN.fifo_queue/g_depth_n.dp_ram/g_async.g_bram.async_ram_patch/wr_lmem_data_r[2046]_i_89/O
+                         net (fo=1, routed)           0.022    14.620    reconfigurable                      level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/dcache_req_buf/g_ebN.fifo_queue/g_depth_n.dp_ram/g_async.g_bram.async_ram_patch/wr_lmem_data_r[2046]_i_89_n_0
+    SLICE_X65Y311        CARRY8 (Prop_CARRY8_SLICEM_S[5]_CO[7])
+                                                      0.159    14.779 r  reconfigurable pblock_dynamic_region
+                                                                                                             level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/dcache_req_buf/g_ebN.fifo_queue/g_depth_n.dp_ram/g_async.g_bram.async_ram_patch/wr_lmem_data_r_reg[2046]_i_31/CO[7]
+                         net (fo=1, estimated)        0.508    15.287    reconfigurable                      level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/dcache_req_buf/g_ebN.fifo_queue/g_depth_n.dp_ram/g_async.g_bram.async_ram_patch/pack_flush21_in
+    SLICE_X54Y319        LUT3 (Prop_B6LUT_SLICEL_I1_O)
+                                                      0.051    15.338 r  reconfigurable pblock_dynamic_region
+                                                                                                             level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/dcache_req_buf/g_ebN.fifo_queue/g_depth_n.dp_ram/g_async.g_bram.async_ram_patch/wr_lmem_data_r[2046]_i_12/O
+                         net (fo=29, estimated)       0.141    15.479    reconfigurable                      level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/pack_flush0
+    SLICE_X53Y319        LUT2 (Prop_D6LUT_SLICEM_I0_O)
+                                                      0.051    15.530 r  reconfigurable pblock_dynamic_region
+                                                                                                             level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/wr_lmem_data_r[96]_i_2/O
+                         net (fo=131, estimated)      0.224    15.754    reconfigurable                      level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/lmem_wr_buf/g_eb1.pipe_buffer/g_register.g_pipe_regs[0].pipe_register/g_shift_register/wr_lmem_data_r[96]_i_2_n_0_alias
+    SLICE_X54Y321        LUT5 (Prop_D6LUT_SLICEL_I4_O)
+                                                      0.050    15.804 r  reconfigurable pblock_dynamic_region
+                                                                                                             level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/lmem_wr_buf/g_eb1.pipe_buffer/g_register.g_pipe_regs[0].pipe_register/g_shift_register/g_shift.g_partial_reset.g_stages[0].g_stage_0.pipe[0][2310]_i_2/O
+                         net (fo=379, estimated)      0.248    16.052    reconfigurable                      level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/dcache_wr_buf/g_eb1.pipe_buffer/g_register.g_pipe_regs[0].pipe_register/g_shift_register/wr_state_reg[1]_alias
+    SLICE_X55Y321        LUT5 (Prop_G6LUT_SLICEL_I3_O)
+                                                      0.050    16.102 r  reconfigurable pblock_dynamic_region
+                                                                                                             level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/dcache_wr_buf/g_eb1.pipe_buffer/g_register.g_pipe_regs[0].pipe_register/g_shift_register/wr_lmem_data_r[2046]_i_30/O
+                         net (fo=1, estimated)        0.232    16.334    reconfigurable                      level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/lmem_req_buf/g_ebN.fifo_queue/pending_size/wr_dcache_be_r[63]_i_3_2
+    SLICE_X58Y325        LUT6 (Prop_B6LUT_SLICEL_I5_O)
+                                                      0.124    16.458 r  reconfigurable pblock_dynamic_region
+                                                                                                             level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/lmem_req_buf/g_ebN.fifo_queue/pending_size/wr_lmem_data_r[2046]_i_11/O
+                         net (fo=25, estimated)       0.487    16.945    reconfigurable                      level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/lmem_req_buf/g_ebN.fifo_queue/pending_size/pack_slot_retire21633_out
+    SLICE_X58Y363        LUT3 (Prop_A6LUT_SLICEL_I1_O)
+                                                      0.090    17.035 r  reconfigurable pblock_dynamic_region
+                                                                                                             level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/lmem_req_buf/g_ebN.fifo_queue/pending_size/wr_expect_slot_r[2]_i_7/O
+                         net (fo=1, estimated)        0.060    17.095    reconfigurable                      level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/lmem_req_buf/g_ebN.fifo_queue/pending_size/wr_expect_slot_r[2]_i_7_n_0
+    SLICE_X58Y363        LUT6 (Prop_F6LUT_SLICEL_I0_O)
+                                                      0.148    17.243 r  reconfigurable pblock_dynamic_region
+                                                                                                             level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/lmem_req_buf/g_ebN.fifo_queue/pending_size/wr_expect_slot_r[2]_i_3/O
+                         net (fo=179, estimated)      1.092    18.335    reconfigurable                      level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/lmem_req_buf/g_ebN.fifo_queue/pending_size/p_1634_in
+    SLICE_X30Y314        LUT6 (Prop_A6LUT_SLICEM_I0_O)
+                                                      0.038    18.373 r  reconfigurable pblock_dynamic_region
+                                                                                                             level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/lmem_req_buf/g_ebN.fifo_queue/pending_size/FSM_onehot_state[3]_i_3/O
+                         net (fo=1, estimated)        0.053    18.426    reconfigurable                      level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/lmem_req_buf/g_ebN.fifo_queue/pending_size/state_n4
+    SLICE_X30Y313        LUT6 (Prop_G6LUT_SLICEM_I1_O)
+                                                      0.037    18.463 r  reconfigurable pblock_dynamic_region
+                                                                                                             level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/lmem_req_buf/g_ebN.fifo_queue/pending_size/FSM_onehot_state[3]_i_2/O
+                         net (fo=36, estimated)       0.154    18.617    reconfigurable                      level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/lmem_req_buf/g_ebN.fifo_queue/pending_size/rd_state_reg[1]
+    SLICE_X29Y313        LUT3 (Prop_H6LUT_SLICEL_I2_O)
+                                                      0.090    18.707 r  reconfigurable pblock_dynamic_region
+                                                                                                             level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/lmem_req_buf/g_ebN.fifo_queue/pending_size/perf_xfers_r[0]_i_9/O
+                         net (fo=1, estimated)        0.270    18.977    reconfigurable                      level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/lmem_req_buf/g_ebN.fifo_queue/pending_size/perf_xfers_r[0]_i_9_n_0
+    SLICE_X20Y313        LUT6 (Prop_B6LUT_SLICEL_I0_O)
+                                                      0.148    19.125 f  reconfigurable pblock_dynamic_region
+                                                                                                             level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/lmem_req_buf/g_ebN.fifo_queue/pending_size/perf_xfers_r[0]_i_4/O
+                         net (fo=1, estimated)        0.147    19.272    reconfigurable                      level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/lmem_req_buf/g_ebN.fifo_queue/pending_size/perf_xfers_r[0]_i_4_n_0
+    SLICE_X18Y315        LUT3 (Prop_A6LUT_SLICEL_I1_O)
+                                                      0.050    19.322 r  reconfigurable pblock_dynamic_region
+                                                                                                             level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/lmem_req_buf/g_ebN.fifo_queue/pending_size/perf_xfers_r[0]_i_1/O
+                         net (fo=44, estimated)       0.370    19.692    reconfigurable                      level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/dma_xfer_done
+    SLICE_X15Y320        FDRE                                         r  reconfigurable pblock_dynamic_region
+                                                                                                             level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/perf_xfers_r_reg[40]/CE
+  -------------------------------------------------------------------    -------------------------------------------------------
+
+                         (clock clk_kernel_00_unbuffered_net rise edge)
+                                                     10.000    10.000 r                                      
+                         clock source latency         4.603    14.603                                        
+                         propagated clock network latency
+                                                      2.850    17.453                                        
+                         clock pessimism             -0.017    17.436                                            
+                         clock uncertainty           -0.358    17.078                                            
+    SLICE_X15Y320        FDRE (Setup_AFF_SLICEL_C_CE)
+                                                     -0.060    17.018    reconfigurable   pblock_dynamic_region
+                                                                                                                 level0_i/ulp/vortex_afu_1/inst/afu_wrap/vortex_axi/vortex/g_clusters[0].cluster/g_sockets[0].socket/g_cores[0].core/u_VX_dma_node/u_dma_unit/g_misaligned.u_impl/perf_xfers_r_reg[40]
+  -------------------------------------------------------------------
+                         required time                         17.018                                            
+                         arrival time                         -19.692                                            
+  -------------------------------------------------------------------
+                         slack                                 -2.674                                            
+
+
+
+

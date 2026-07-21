@@ -107,7 +107,7 @@ module VX_mem_unit_top import VX_gpu_pkg::*; #(
 
     VX_mem_bus_if #(
         .DATA_SIZE (`DMA_DCACHE_PORTS * DCACHE_WORD_SIZE),
-        .TAG_WIDTH (DCACHE_TAG_WIDTH)
+        .TAG_WIDTH (DMA_DCACHE_TAG_WIDTH)
     ) dma_global_data_if();
 
     // memory request

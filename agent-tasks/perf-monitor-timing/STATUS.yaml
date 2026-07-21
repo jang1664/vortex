@@ -1,0 +1,61 @@
+task: perf-monitor-timing
+status: in_progress
+spec: agent-tasks/perf-monitor-timing/perf-monitor-timing-spec.md
+plan: docs/plans/2026-07-20-002-perf-performance-monitor-timing-recovery-plan.md
+current_phase: quality_review
+updated_at: "2026-07-20 12:02"
+iterations:
+  - iteration: 1
+    timestamp: "2026-07-20 11:42"
+    checks:
+      - "PASS: VCS csr_unit unittest"
+      - "PASS: VCS dma_node PERF=1 unittest"
+      - "FAIL: VCS dma_node PERF-disabled unittest"
+    failure: "Existing generalized-DMA HBW test stopped at tb_VX_dma_node.sv:366 because probe lane 31 became active; this is outside the four PERF boundaries and is being isolated before deciding the functional gate."
+  - iteration: 2
+    timestamp: "2026-07-20 11:47"
+    checks:
+      - "FAIL: VCS dma_node PERF=1 with attempted TB_LMEM_NUM_LANES=1 isolation still reported the pre-existing lane-31 HBW assertion"
+      - "FAIL: VCS dma_node PERF-disabled with TB_LMEM_NUM_LANES=1 reached the requested override but violated the existing gearbox minimum-width assertion (8-byte LMEM bus)"
+    failure: "One lane is not a legal generalized-DMA gearbox configuration; retry the scoped counter regression with four lanes (32-byte aggregate), without changing RTL scope."
+  - iteration: 3
+    timestamp: "2026-07-20 11:52"
+    checks:
+      - "FAIL: VCS dma_node PERF=1 with TB_LMEM_NUM_LANES=4 hit the existing generalized gearbox width assertion for an 8-byte source"
+      - "FAIL: VCS dma_node PERF-disabled with TB_LMEM_NUM_LANES=4 hit the existing active-lane HBW assertion at lane 3"
+    failure: "Parameter override was confirmed by VCS, but both failures originate in pre-existing generalized-DMA/HBW logic outside PERF staging. The PERF-disabled RTL contains none of the new state, so this is retained as an external dirty-worktree blocker rather than expanded into a DMA fix."
+  - iteration: 4
+    timestamp: "2026-07-20 11:55"
+    checks:
+      - "PASS: cache_top PERF=1 VCS compilation and elaboration"
+      - "PASS: cache_top PERF-disabled VCS compilation and elaboration"
+      - "FAIL: verify_rtl.py simulation launch because cache_top Makefile lacked the standard run target; no sim.log was created"
+    failure: "Test-infrastructure issue only; add `run: sim` and rerun both modes."
+  - iteration: 5
+    timestamp: "2026-07-20 11:57"
+    checks:
+      - "FUNCTIONAL PASS: cache_top PERF=1 completed 110/110 tests, including the new bypass read-stage test"
+      - "FUNCTIONAL PASS: cache_top PERF-disabled completed 109/109 tests"
+      - "HARNESS FAIL: verify_rtl.py classified both runs as sim_fail because the testbench lacked an uppercase supported pass marker"
+    failure: "Add the standard `TEST PASSED` marker on zero failures and rerun so repository verification classifies the already-passing simulations correctly."
+  - iteration: 6
+    timestamp: "2026-07-20 11:59"
+    checks:
+      - "PASS: VCS cache_top PERF=1 via verify_rtl.py"
+      - "PASS: VCS cache_top PERF-disabled via verify_rtl.py"
+    failure: null
+  - iteration: 7
+    timestamp: "2026-07-20 12:02"
+    checks:
+      - "FAIL: xrt-vcs-sim fpint_gemm_ffn_hw baseline without PERF, 16384/16384 output mismatches"
+      - "NOT RUN: xrt-vcs-sim PERF classes 1, 2, and 4, stopped after baseline failure"
+      - "NOT RUN: the sole synthesis-only build, because the functional gate did not pass"
+    failure: "The no-PERF integration failure is structurally independent of this task because every selected RTL boundary is guarded by PERF_ENABLE. It remains attributable to the pre-existing generalized-DMA dirty worktree and is not fixed under the top-four-only scope."
+pitfalls:
+  - "The worktree already contains user-owned generalized misaligned-DMA changes, including edits to VX_dma_unit_misal.sv and its tests; PERF edits must preserve them."
+  - "The existing placed checkpoint is source-unmatched and may only be used as candidate-selection evidence."
+  - "PnR, placement, routing, implementation, and bitstream generation are explicitly forbidden for this task."
+notes:
+  - "Scope confirmed: apply exactly four PERF pipeline boundaries as one batch."
+  - "Synthesis is permitted once only after all functional gates pass."
+  - "No synthesis was launched because the required no-PERF fpint_gemm_ffn_hw integration gate failed."

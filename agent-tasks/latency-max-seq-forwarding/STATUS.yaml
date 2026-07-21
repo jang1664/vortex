@@ -1,0 +1,41 @@
+task: latency-max-seq-forwarding
+state: complete
+updated_at: "2026-07-19 18:19"
+summary: >-
+  Forward fixed KV-cache capacity from latency workload YAML into the Llama
+  kernel generator and add regression coverage for generation metadata.
+log:
+  - timestamp: "2026-07-19 18:15"
+    entry: >-
+      Confirmed the causal chain: suite.py accepts arbitrary workload keys but
+      omits max_seq_len when calling build_llm_kernels, which falls back to
+      max(prefill_seq_len, gen_kv_len). Direct generation reports capacity 64,
+      while latency expansion of the same request reports 33.
+  - timestamp: "2026-07-19 18:15"
+    entry: >-
+      Added a regression for both max_seq_len spellings. Before the fix both
+      subtests failed with expected capacity 64 versus actual 33; forwarding
+      the optional value made the focused test pass with two subtests.
+  - timestamp: "2026-07-19 18:18"
+    entry: >-
+      Targeted suite expansion, matrix, snapshot, and generator verification
+      passed: 38 tests and 2 subtests. The side-by-side reproduction now reports
+      generator capacity 64, latency-suite capacity 64, logical length 33, and
+      capacity stride 64.
+  - timestamp: "2026-07-19 18:18"
+    entry: >-
+      A broader latency-bench run reached 201 passes and 2 subtests but retained
+      three unrelated failures: missing power iteration loops in baseline
+      kernels, a missing analysis_workspace plotting module, and an XRT mock
+      test observing eight real accessible devices.
+  - timestamp: "2026-07-19 18:19"
+    entry: >-
+      Final targeted review found the adapter change intentionally minimal:
+      both supported key spellings share one optional conversion and the
+      generator remains the single source of capacity validation. Diff
+      whitespace validation also passed.
+pitfalls:
+  - >-
+    A follow-up ABI change now emits logical seqk and physical seqk-stride as
+    separate executable arguments. Preserve both the capacity-forwarding and
+    generated-argument assertions when changing latency workload plumbing.

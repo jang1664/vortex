@@ -1,0 +1,20 @@
+task: diagnose-naive-th32-100m-timing
+state: DONE
+summary: The routed critical path is in core issue/operands/VX_opc_unit, where a high-fanout pipe-valid control drives the approximately 6-Kbit operand/output buffers; routing congestion, not combinational depth, prevents 100 MHz.
+updated: "2026-07-20 22:38"
+log:
+  - timestamp: "2026-07-20 22:01"
+    action: Located the requested PnR result and its implementation timing reports.
+    result: The 6.0 GB result exists under build/hw/syn/xilinx/xrt and contains placed, routed, and post-route-physopt timing summaries for impl_1.
+  - timestamp: "2026-07-20 22:01"
+    action: Traced the post-route WNS path and compared it with placement, congestion, RTL, and the other top setup paths.
+    result: Post-route WNS is -0.694 ns, TNS is -1397.774 ns over 6842 endpoints. The worst path is VX_opc_unit pipe_reg2 valid to its registered elastic output buffer; its data path is 10.044 ns with only one LUT and 9.815 ns (97.72 percent) routing. The source net has fanout 15360. Eight of the ten worst kernel-clock paths are in this operand collector; the other two are local-memory response-xbar valid/control paths. Placement had nonnegative setup slack, while routing reported timing congestion level 7 and produced the setup failure.
+  - timestamp: "2026-07-20 22:13"
+    action: Evaluated the next non-SIMT bottleneck and whether removing it could indirectly close the remaining 100 MHz gap.
+    result: The direct runner-up is local_mem rsp_xbar at -0.675/-0.673 ns, with 96.6-98.9 percent route delay. Local-memory req/rsp xbars dominate two level-6 global congestion windows and use 14985 LUTs plus 54283 flops together. Fixing only these paths cannot guarantee timing because the untouched OPC path remains -0.694 ns, but reducing this crossbar footprint can plausibly improve OPC routing because the critical route crosses the same congested bands. The current image also still instantiates the misaligned DMA path, which contributes 46 percent of the west level-5 hotspot; changing it to aligned is a useful secondary congestion reduction but is not itself the direct runner-up timing path.
+  - timestamp: "2026-07-20 22:38"
+    action: Compared the proposed butterfly and hierarchical alternatives against the actual local-memory interconnect implementation and repository precedent.
+    result: The incumbent is already a two-level hierarchical full-connectivity xbar because MAX_FANOUT=8 splits each 32-input output arbiter into four 8-input slices plus a join. The preferred first comparison is therefore local-only MAX_FANOUT tuning (4, 8 baseline, 16), followed by a response-only radix-2 VX_stream_omega trial. Omega is already used for cache memory responses and has an interface-compatible source-ID path, but at 32 ports it adds five blocking switch stages and new internal contention between distinct destinations. Gate any adoption on routed WNS/congestion and application cycles/LMEM stalls, not synthesis area alone.
+pitfalls:
+  - Use targeted searches and report slices because the implementation result is 6.0 GB.
+  - The placed report passes setup but fails hold; use the routed/post-route-physopt report for the actual 100 MHz setup diagnosis.

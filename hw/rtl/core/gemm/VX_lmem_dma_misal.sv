@@ -15,6 +15,7 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
   parameter int TAG_WIDTH = 1,
   // Compatibility-only. The reused core is controlled by RD_OUTSTANDING.
   parameter int RD_PREFETCH_DEPTH = 1,
+  parameter int RD_OUTSTANDING = `LMEM_DMA_RD_OUTSTANDING_SLOTS,
   parameter bit ENABLE_MISALIGN = 1'b0,
   // Numeric width parameters are explicit because Synopsys DC cannot bind
   // child parameters from interface-instance parameters reliably.
@@ -36,7 +37,6 @@ module VX_lmem_dma_misal import VX_gpu_pkg::*; #(
 `endif
 );
 
-  localparam int RD_OUTSTANDING = LMEM_DMA_RD_OUTSTANDING_SLOTS;
   localparam int SLOT_BITS = $clog2(RD_OUTSTANDING);
   localparam int LMEM_TAG_VALUE_W = LMEM_TAG_WIDTH_P - `UP(UUID_WIDTH);
   localparam int GEMM_TAG_VALUE_W = GEMM_TAG_WIDTH_P - `UP(UUID_WIDTH);

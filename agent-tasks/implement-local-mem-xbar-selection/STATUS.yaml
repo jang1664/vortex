@@ -1,0 +1,39 @@
+task: implement-local-mem-xbar-selection
+state: DONE
+summary: Implemented and functionally verified independent local-memory HIER/Omega request and response selectors with a local HIER fanout override; full-chip routed QoR comparison was stopped at the user's request because of runtime.
+updated: "2026-07-21 01:28"
+current:
+  unit: U5
+  action: Full-chip PnR comparison omitted by user direction after confirming that it was a long-running U55C top-level Vitis link/PnR.
+log:
+  - timestamp: "2026-07-20 23:45"
+    action: Confirmed the implementation specification from the reviewed plan and user-approved scope.
+    result: Work will proceed on the current fpint branch; Omega mask and unrelated memory-system changes remain deferred.
+  - timestamp: "2026-07-21 00:12"
+    action: Implemented independent request/response topology selection, local HIER fanout override, invalid-fanout guards, and a topology-neutral legacy collision counter.
+    result: Default, fanout 0/4/16, all four topology combinations, and PERF_ENABLE lint/elaboration checks passed; invalid fanouts 1 and 6 failed as intended.
+  - timestamp: "2026-07-21 00:24"
+    action: Added a 32x32 latency-insensitive local-memory scoreboard and Omega dependencies to explicit unittest source lists.
+    result: The first focused compile exposed only an unused performance-bundle lint failure in the test wrapper; the wrapper now marks non-exported fields used and verification iteration 2 is running.
+  - timestamp: "2026-07-21 00:38"
+    action: Diagnosed an initial fake response in the focused test as a C++ packed-port width mismatch.
+    result: Explicit WORD_SIZE=8 now matches the XLEN64 target; HIER fanout 0 passes the full scoreboard in 143 cycles and the complete matrix is rerunning.
+  - timestamp: "2026-07-21 00:52"
+    action: Removed scoreboard dependence on source-side ordering for aliased writes across hierarchical buffers.
+    result: Requests now use unambiguous addresses with explicit fabric drains; HIER fanout 4 passes in 497 cycles and verification iteration 4 is running.
+  - timestamp: "2026-07-21 01:14"
+    action: Completed the focused topology/fanout verification matrix and explicit-source compile coverage.
+    result: HIER fanout 0/4/8/16 and request-only, response-only, and both-Omega all pass; invalid HIER fanout 1/6 fail with the intended message under strict flags; both-Omega ignores unused invalid HIER fanout as designed; dma_mem_unit Omega compilation passes.
+  - timestamp: "2026-07-21 01:39"
+    action: Ran isolated XRT/VCS builds using the sourced naive 32-thread, 16-slot DMA configuration for six variants.
+    result: All variants pass M=2 and M=32 GEMM. M=2 cycles were H8 10768, H4 10770, H16 10768, req-Omega 10769, rsp-Omega 10770, both-Omega 10769. M=32 cycles were H8 11090, H4 11098, H16 11089, req-Omega 11103, rsp-Omega 11106, both-Omega 11121.
+  - timestamp: "2026-07-21 01:28"
+    action: Started a correctly configured U55C top-level baseline link/PnR, then interrupted it during early Vitis/Vivado project generation at the user's request.
+    result: No routed timing or congestion result was produced. The earlier failed attempt was a build-command CONFIGS override issue, not an RTL failure; the corrected run included both 16-slot and platform memory defines before it was stopped.
+artifacts:
+  - agent-tasks/implement-local-mem-xbar-selection/local-mem-xbar-selection-spec.md
+  - docs/plans/2026-07-20-004-perf-local-memory-xbar-selection-plan.md
+pitfalls:
+  - VX_STATIC_ASSERT is disabled under SYNTHESIS, so invalid fanout must be excluded from HIER generation and rejected by an elaboration-safe mechanism.
+  - PERF_ENABLE is required to observe and synthesize the preserved collision monitor.
+  - Routed QoR and the 100 MHz conclusion remain unmeasured; XRT/VCS cycle counts establish functionality and latency only, not placement congestion or timing closure.

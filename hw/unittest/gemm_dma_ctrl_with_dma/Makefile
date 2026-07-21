@@ -24,6 +24,11 @@ TB   := $(SRC_DIR)/tb_VX_gemm_dma_ctrl_with_dma.sv
 RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
 				$(RTL_DIR)/core/VX_gemm_dma_ctrl_with_dma.sv \
 				$(RTL_DIR)/core/VX_dma_unit_align.sv \
+				$(RTL_DIR)/core/VX_dma_gearbox.sv \
+				$(RTL_DIR)/core/VX_dma_lane_aligner.sv \
+				$(RTL_DIR)/core/VX_dma_lane_assembler.sv \
+				$(RTL_DIR)/core/VX_dma_equal_realigner.sv \
+				$(RTL_DIR)/core/VX_dma_misal_gen_path.sv \
 				$(RTL_DIR)/core/VX_dma_unit_misal.sv \
 				$(RTL_DIR)/core/VX_dma_unit.sv \
 				$(RTL_DIR)/core/VX_dma_node.sv \
@@ -31,6 +36,8 @@ RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
 				$(RTL_DIR)/mem/VX_mem_bus_if.sv \
 				$(RTL_DIR)/core/VX_config_reg_if.sv \
 				$(RTL_DIR)/libs/VX_stream_xbar.sv \
+				$(RTL_DIR)/libs/VX_stream_omega.sv \
+				$(RTL_DIR)/libs/VX_transpose.sv \
 				$(RTL_DIR)/libs/VX_sp_ram.sv \
 					$(RTL_DIR)/libs/VX_pipe_buffer.sv \
 					$(RTL_DIR)/libs/VX_pipe_register.sv \

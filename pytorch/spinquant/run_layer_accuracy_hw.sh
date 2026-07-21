@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Run one strict-native SpinQuant decoder-layer case on an allocated U55C.
+# Run one strict-native SpinQuant layer, decode, or decoder-stack case on U55C.
 
 set -euo pipefail
 
-if [[ $# -lt 2 || $# -gt 4 ]]; then
-  echo "Usage: $0 CASE_DIR OUTPUT_DIR [STOP_AFTER] [PHYSICAL_PLAN]" >&2
+if [[ $# -lt 2 || $# -gt 5 ]]; then
+  echo "Usage: $0 CASE_DIR OUTPUT_DIR [STOP_AFTER] [PHYSICAL_PLAN] [DECODE_STEP_OR_STACK_LAYER]" >&2
   exit 2
 fi
 
@@ -14,6 +14,7 @@ CASE_DIR="$(realpath "$1")"
 OUTPUT_DIR="$(realpath -m "$2")"
 STOP_AFTER="${3:-final_residual}"
 PHYSICAL_PLAN="${4:-standalone}"
+DECODE_STEP="${5:-}"
 if [[ "$PHYSICAL_PLAN" != "standalone" && "$PHYSICAL_PLAN" != "fused" ]]; then
   echo "[fatal] PHYSICAL_PLAN must be standalone or fused" >&2
   exit 2
@@ -32,6 +33,7 @@ export LAYER_CASE_DIR="$CASE_DIR"
 export LAYER_OUTPUT_DIR="$OUTPUT_DIR"
 export LAYER_STOP_AFTER="$STOP_AFTER"
 export LAYER_PHYSICAL_PLAN="$PHYSICAL_PLAN"
+export LAYER_DECODE_STEP="$DECODE_STEP"
 export LAYER_CONFIG_FILE="$CONFIG_FILE"
 export LAYER_FPGA_BIN_DEFAULT="$FPGA_BIN_DIR_DEFAULT"
 
@@ -63,7 +65,16 @@ srun -p fpga --gres=fpga:u55c:1 --cpus-per-task=4 --mem=32G --time=1:20:00 \
     # needs to be attributed to an exact layout/compute kernel.
     export TORCH_VORTEX_KERNEL_DEBUG="${TORCH_VORTEX_KERNEL_DEBUG:-0}"
 
-    echo "[info] device=$XRT_DEVICE_INDEX stop_after=$LAYER_STOP_AFTER physical_plan=$LAYER_PHYSICAL_PLAN output=$LAYER_OUTPUT_DIR"
+    CASE_KIND="$(python -c "import json,sys; print(json.load(open(sys.argv[1])).get(\"case_kind\", \"layer\"))" "$LAYER_CASE_DIR/manifest.json")"
+    DECODE_ARGS=()
+    if [[ -n "$LAYER_DECODE_STEP" ]]; then
+      if [[ "$CASE_KIND" == "decoder_stack" ]]; then
+        DECODE_ARGS=(--stop-after-layer "$LAYER_DECODE_STEP")
+      else
+        DECODE_ARGS=(--decode-step "$LAYER_DECODE_STEP")
+      fi
+    fi
+    echo "[info] device=$XRT_DEVICE_INDEX case_kind=$CASE_KIND stop_after=$LAYER_STOP_AFTER step_or_layer=${LAYER_DECODE_STEP:-n/a} physical_plan=$LAYER_PHYSICAL_PLAN output=$LAYER_OUTPUT_DIR"
     python -u -m spinquant_inference.layer_accuracy run \
       --case "$LAYER_CASE_DIR" \
       --backend vortex \
@@ -71,5 +82,6 @@ srun -p fpga --gres=fpga:u55c:1 --cpus-per-task=4 --mem=32G --time=1:20:00 \
       --capture both \
       --physical-plan "$LAYER_PHYSICAL_PLAN" \
       --strict-native \
+      "${DECODE_ARGS[@]}" \
       --output "$LAYER_OUTPUT_DIR"
   '

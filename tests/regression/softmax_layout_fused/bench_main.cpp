@@ -91,6 +91,7 @@ int main(int argc, char *argv[]) {
   uint32_t heads = 1;
   uint32_t seq_q = 128;
   uint32_t seq_k = 128;
+  uint32_t seq_k_stride = 0;
   uint32_t use_mask = 1;
   float scale = 1.0f;
   for (int i = 1; i < argc; ++i) {
@@ -98,18 +99,30 @@ int main(int argc, char *argv[]) {
     else if (strcmp(argv[i], "-heads") == 0) heads = atoi(argv[++i]);
     else if (strcmp(argv[i], "-seqq") == 0) seq_q = atoi(argv[++i]);
     else if (strcmp(argv[i], "-seqk") == 0) seq_k = atoi(argv[++i]);
+    else if (strcmp(argv[i], "-seqk-stride") == 0) seq_k_stride = atoi(argv[++i]);
     else if (strcmp(argv[i], "-mask") == 0) use_mask = atoi(argv[++i]);
     else if (strcmp(argv[i], "-scale") == 0) scale = atof(argv[++i]);
     else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
       printf("Usage: %s [--warmup=N] [--iterations=N] [--csv] "
              "[--output=PATH] [--output-append] [--power-measure-latency[=on|off]] [-batch B] [-heads H] "
-             "[-seqq Q] [-seqk K] [-mask 0|1] [-scale S]\n", argv[0]);
+             "[-seqq Q] [-seqk K] [-seqk-stride KS] [-mask 0|1] [-scale S]\n",
+             argv[0]);
       return 0;
     }
   }
 
+  if (seq_k_stride == 0) {
+    seq_k_stride = seq_k;
+  }
+  if (seq_k_stride < seq_k) {
+    printf("ERROR: seqk-stride (%u) must be >= seqk (%u)\n",
+           seq_k_stride, seq_k);
+    return 1;
+  }
+
   const uint32_t M_pad = (seq_q + TILE_M_PAD_ALIGN - 1u) & ~(TILE_M_PAD_ALIGN - 1u);
-  const uint32_t seq_k_pad = align_up(seq_k, std::max(TILE_DMA_MXU_KT, TILE_DMA_MXU_NT));
+  const uint32_t seq_k_pad = align_up(
+      seq_k_stride, std::max(TILE_DMA_MXU_KT, TILE_DMA_MXU_NT));
   const size_t row_elems = (size_t)batch * heads * seq_q * seq_k;
   const size_t tiled_elems = (size_t)batch * heads * M_pad * seq_k_pad;
   const size_t tiled_bytes = tiled_elems * sizeof(data_t);

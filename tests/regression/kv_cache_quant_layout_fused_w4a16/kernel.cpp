@@ -515,6 +515,75 @@ void kernel_kv_cache_quant_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
   const uint32_t total_threads = gridDim.x * blockDim.x;
   const uint32_t thread_id = blockIdx.x * blockDim.x + threadIdx.x;
 
+  if (arg->persistent_mode != 0) {
+    const uint32_t cache_K = arg->cache_capacity;
+    const uint32_t cache_N = N;
+    const uint32_t position = arg->cache_position;
+    const uint32_t weight_K = padded_weight_K(
+        cache_K, cache_N, SOURCE_TRANSPOSED);
+    const uint32_t weight_N = padded_weight_N(
+        cache_K, cache_N, SOURCE_TRANSPOSED);
+    float scale = 1.0f;
+    float zero = 0.0f;
+    compute_params(src, K, N, QBLK, SOURCE_QDIR, 0, 0, src_layout,
+                   log2_qblk, log2_mt, log2_mxu_nt, quant_mode,
+                   source_view, &scale, &zero);
+    const float stored_scale = fp16_to_float(float_to_fp16(scale));
+    const float quant_scale = quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC
+        ? stored_scale : scale;
+
+    for (uint32_t pair = thread_id; pair < (N >> 1); pair += total_threads) {
+      const uint32_t d0 = pair << 1;
+      const uint8_t q0 = quant_with_params(
+          src, K, N, 0, d0, src_layout, log2_mt, log2_mxu_nt,
+          quant_scale, zero, quant_mode, source_view);
+      const uint8_t q1 = quant_with_params(
+          src, K, N, 0, d0 + 1, src_layout, log2_mt, log2_mxu_nt,
+          quant_scale, zero, quant_mode, source_view);
+      const uint8_t packed = (uint8_t)((q0 & 0x0f) | ((q1 & 0x0f) << 4));
+      if (SOURCE_TRANSPOSED != 0) {
+        weight[weight_offset_wtrans1(weight_K, weight_N, d0, position,
+                                     log2_kt, log2_mxu_kt, log2_mxu_nt)] = packed;
+      } else {
+        weight[weight_offset_wtrans0(weight_K, weight_N, position, pair,
+                                     log2_kt, log2_mxu_kt, log2_mxu_nt)] = packed;
+      }
+    }
+
+    const uint32_t out_K = padded_qparam_K(
+        cache_K, cache_N, QBLK, GEMM_QDIR, SOURCE_TRANSPOSED);
+    const uint32_t out_N = padded_qparam_N(
+        cache_K, cache_N, QBLK, GEMM_QDIR, SOURCE_TRANSPOSED);
+    if (GEMM_QDIR == 0) {
+      if (thread_id == 0) {
+        const uint32_t nt_dma = position >> log2_nt;
+        const uint32_t elem = position & ((1u << log2_nt) - 1u);
+        const uint64_t dst_off = scale_slot_base(arg, 0, nt_dma)
+                               + (uint64_t)elem * TILE_ELEM_BYTES;
+        store_u16(scales, dst_off, float_to_fp16(scale));
+        store_u16(zeros, dst_off, 0);
+      }
+    } else {
+      const uint32_t kt = position >> log2_kt;
+      const uint32_t kt_start = kt << log2_kt;
+      const uint32_t cur_k = min_u32(out_K - kt_start, 1u << log2_kt);
+      const uint32_t k_local = position - kt_start;
+      const uint32_t n_blocks = out_N >> log2_mxu_nt;
+      for (uint32_t nb = thread_id; nb < n_blocks; nb += total_threads) {
+        const uint32_t elem = nb * cur_k + k_local;
+        const uint64_t dst_off = scale_slot_base(arg, kt, 0)
+                               + (uint64_t)elem * TILE_ELEM_BYTES;
+        store_u16(scales, dst_off, float_to_fp16(scale));
+        store_u16(zeros, dst_off, 0);
+      }
+    }
+    if (thread_id == 0) {
+      logical_scales[position] = float_to_fp16(scale);
+      logical_zeros[position] = float_to_fp16(zero);
+    }
+    return;
+  }
+
   const uint32_t weight_K = padded_weight_K(K, N, SOURCE_TRANSPOSED);
   const uint32_t weight_N = padded_weight_N(K, N, SOURCE_TRANSPOSED);
   const uint32_t weight_bytes = weight_K * (weight_N >> 1);

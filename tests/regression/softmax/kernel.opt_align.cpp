@@ -239,7 +239,7 @@ void kernel_softmax(kernel_arg_t *__UNIFORM__ arg) {
           auto dst = dma_input_cache + slot * dma_row_pitch_bytes;
           dma_copy_1d(reinterpret_cast<uint64_t>(dst),
                       reinterpret_cast<uint64_t>(src),
-                      row_pitch_bytes,
+                      row_bytes,
                       0u);
         }
       }
@@ -248,7 +248,7 @@ void kernel_softmax(kernel_arg_t *__UNIFORM__ arg) {
     if (active && lane == 0) {
       dma_copy_1d(reinterpret_cast<uint64_t>(row_dma_input),
                   reinterpret_cast<uint64_t>(input_row),
-                  row_pitch_bytes,
+                  row_bytes,
                   0u);
     }
 #endif
@@ -337,7 +337,7 @@ void kernel_softmax(kernel_arg_t *__UNIFORM__ arg) {
           auto src = dma_output_cache + slot * dma_row_pitch_bytes;
           dma_copy_1d(reinterpret_cast<uint64_t>(dst),
                       reinterpret_cast<uint64_t>(src),
-                      row_pitch_bytes,
+                      row_bytes,
                       1u);
         }
       }
@@ -346,7 +346,7 @@ void kernel_softmax(kernel_arg_t *__UNIFORM__ arg) {
     if (active && lane == 0) {
       dma_copy_1d(reinterpret_cast<uint64_t>(output_row),
                   reinterpret_cast<uint64_t>(row_dma_output),
-                  row_pitch_bytes,
+                  row_bytes,
                   1u);
     }
 #endif

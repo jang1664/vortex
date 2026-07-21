@@ -251,12 +251,21 @@ module Vortex import VX_gpu_pkg::*; (
     wire [MEM_PORTS_CTR_W-1:0] perf_mem_reads_per_cycle;
     wire [MEM_PORTS_CTR_W-1:0] perf_mem_writes_per_cycle;
     wire [MEM_PORTS_CTR_W-1:0] perf_mem_rsps_per_cycle;
+    reg  [MEM_PORTS_CTR_W-1:0] perf_mem_reads_per_cycle_q;
 
     `POP_COUNT(perf_mem_reads_per_cycle, mem_rd_req_fire);
     `POP_COUNT(perf_mem_writes_per_cycle, mem_wr_req_fire);
     `POP_COUNT(perf_mem_rsps_per_cycle, mem_rsp_fire);
 
     reg [PERF_CTR_BITS-1:0] perf_mem_pending_reads;
+
+    always @(posedge clk) begin
+        if (reset) begin
+            perf_mem_reads_per_cycle_q <= '0;
+        end else begin
+            perf_mem_reads_per_cycle_q <= perf_mem_reads_per_cycle;
+        end
+    end
 
     always @(posedge clk) begin
         if (reset) begin
@@ -271,11 +280,30 @@ module Vortex import VX_gpu_pkg::*; (
         if (reset) begin
             mem_perf <= '0;
         end else begin
-            mem_perf.reads <= mem_perf.reads + PERF_CTR_BITS'(perf_mem_reads_per_cycle);
+            mem_perf.reads <= mem_perf.reads + PERF_CTR_BITS'(perf_mem_reads_per_cycle_q);
             mem_perf.writes <= mem_perf.writes + PERF_CTR_BITS'(perf_mem_writes_per_cycle);
             mem_perf.latency <= mem_perf.latency + perf_mem_pending_reads;
         end
     end
+
+`ifndef SYNTHESIS
+    reg [PERF_CTR_BITS-1:0] perf_mem_reads_ref_r;
+    reg [PERF_CTR_BITS-1:0] perf_mem_reads_ref_q;
+
+    always @(posedge clk) begin
+        if (reset) begin
+            perf_mem_reads_ref_r <= '0;
+            perf_mem_reads_ref_q <= '0;
+        end else begin
+            assert (mem_perf.reads == perf_mem_reads_ref_q)
+                else $fatal(1, "staged global-memory read recurrence mismatch");
+
+            perf_mem_reads_ref_r <= perf_mem_reads_ref_r
+                + PERF_CTR_BITS'(perf_mem_reads_per_cycle);
+            perf_mem_reads_ref_q <= perf_mem_reads_ref_r;
+        end
+    end
+`endif
 
 `endif
 

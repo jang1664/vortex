@@ -5,7 +5,11 @@ module VX_gemm_ctrl_with_ldma import VX_gpu_pkg::*; #(
   parameter int I_RD_PREFETCH_DEPTH = `I_LMEM_DMA_RD_PREFETCH_DEPTH,
   parameter int W_RD_PREFETCH_DEPTH = `W_LMEM_DMA_RD_PREFETCH_DEPTH,
   parameter int SZ_RD_PREFETCH_DEPTH = `SZ_LMEM_DMA_RD_PREFETCH_DEPTH,
-  parameter int O_RD_PREFETCH_DEPTH = `O_LMEM_DMA_RD_PREFETCH_DEPTH
+  parameter int O_RD_PREFETCH_DEPTH = `O_LMEM_DMA_RD_PREFETCH_DEPTH,
+  parameter int I_RD_OUTSTANDING = `I_LMEM_DMA_RD_OUTSTANDING_SLOTS,
+  parameter int W_RD_OUTSTANDING = `W_LMEM_DMA_RD_OUTSTANDING_SLOTS,
+  parameter int SZ_RD_OUTSTANDING = `SZ_LMEM_DMA_RD_OUTSTANDING_SLOTS,
+  parameter int O_RD_OUTSTANDING = `O_LMEM_DMA_RD_OUTSTANDING_SLOTS
 ) (
   input wire clk,
   input wire reset,
@@ -187,7 +191,8 @@ module VX_gemm_ctrl_with_ldma import VX_gpu_pkg::*; #(
     .GEMM_ADDR_WIDTH_P(`MEM_ADDR_WIDTH - `CLOG2(LSU_WORD_SIZE)),
     .LMEM_TAG_WIDTH_P(GEMM_MEM_TAG_WIDTH),
     .GEMM_TAG_WIDTH_P(GEMM_MEM_TAG_WIDTH),
-    .RD_PREFETCH_DEPTH(I_RD_PREFETCH_DEPTH)
+    .RD_PREFETCH_DEPTH(I_RD_PREFETCH_DEPTH),
+    .RD_OUTSTANDING(I_RD_OUTSTANDING)
   ) u_input_lmem_dma (
     .clk(clk),
     .reset(reset),
@@ -206,7 +211,8 @@ module VX_gemm_ctrl_with_ldma import VX_gpu_pkg::*; #(
     .GEMM_ADDR_WIDTH_P(`MEM_ADDR_WIDTH - `CLOG2(LSU_WORD_SIZE)),
     .LMEM_TAG_WIDTH_P(GEMM_MEM_TAG_WIDTH),
     .GEMM_TAG_WIDTH_P(GEMM_MEM_TAG_WIDTH),
-    .RD_PREFETCH_DEPTH(W_RD_PREFETCH_DEPTH)
+    .RD_PREFETCH_DEPTH(W_RD_PREFETCH_DEPTH),
+    .RD_OUTSTANDING(W_RD_OUTSTANDING)
   ) u_weight_lmem_dma (
     .clk(clk),
     .reset(reset),
@@ -225,7 +231,8 @@ module VX_gemm_ctrl_with_ldma import VX_gpu_pkg::*; #(
     .GEMM_ADDR_WIDTH_P(`MEM_ADDR_WIDTH - `CLOG2(LSU_WORD_SIZE)),
     .LMEM_TAG_WIDTH_P(GEMM_MEM_TAG_WIDTH),
     .GEMM_TAG_WIDTH_P(GEMM_MEM_TAG_WIDTH),
-    .RD_PREFETCH_DEPTH(SZ_RD_PREFETCH_DEPTH)
+    .RD_PREFETCH_DEPTH(SZ_RD_PREFETCH_DEPTH),
+    .RD_OUTSTANDING(SZ_RD_OUTSTANDING)
   ) u_quant_param_lmem_dma (
     .clk(clk),
     .reset(reset),
@@ -244,7 +251,8 @@ module VX_gemm_ctrl_with_ldma import VX_gpu_pkg::*; #(
     .GEMM_ADDR_WIDTH_P(`MEM_ADDR_WIDTH - `CLOG2(LSU_WORD_SIZE)),
     .LMEM_TAG_WIDTH_P(GEMM_MEM_TAG_WIDTH),
     .GEMM_TAG_WIDTH_P(GEMM_MEM_TAG_WIDTH),
-    .RD_PREFETCH_DEPTH(O_RD_PREFETCH_DEPTH)
+    .RD_PREFETCH_DEPTH(O_RD_PREFETCH_DEPTH),
+    .RD_OUTSTANDING(O_RD_OUTSTANDING)
   ) u_output_lmem_dma (
     .clk(clk),
     .reset(reset),

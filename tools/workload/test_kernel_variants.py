@@ -27,6 +27,40 @@ def _repo_root() -> Path:
 
 
 class KernelVariantTest(unittest.TestCase):
+    def test_generation_records_fixed_capacity_tile_major_append_contract(self) -> None:
+        payload = build_llm_kernels(
+            model_name="llama2-7b",
+            stages=["generation"],
+            batch=1,
+            prefill_seq_len=31,
+            gen_kv_len=33,
+            max_seq_len=64,
+            qblk=32,
+            variant="all_fpint_gemm_improve_fused_layout_spinquant",
+        )
+        key = _kernel_by_name(payload, "kv_cache_quant_rope_k_to_attn_qkT")
+        value = _kernel_by_name(payload, "kv_cache_quant_v_cache_to_attn_pv")
+        qk = _kernel_by_name(payload, "attn_qkT")
+        softmax = _kernel_by_name(payload, "attn_softmax")
+        pv = _kernel_by_name(payload, "attn_pv")
+
+        self.assertEqual(payload["config"]["max_seq_len"], 64)
+        for kernel in (key, value, qk, softmax, pv):
+            self.assertEqual(kernel["shape"]["query_length"], 1)
+            self.assertEqual(kernel["shape"]["logical_cache_length"], 33)
+            self.assertEqual(kernel["shape"]["cache_capacity"], 64)
+        self.assertEqual(key["shape"]["cache_update"], "append")
+        self.assertEqual(key["shape"]["cache_position"], 32)
+        self.assertEqual(key["shape"]["persistent_layout"], "gemm_w_tiled_transposed")
+        self.assertEqual(value["shape"]["persistent_layout"], "gemm_w_tiled")
+        self.assertEqual(qk["shape"]["N"], 33)
+        self.assertEqual(qk["shape"]["persistent_weight_layout"], "gemm_w_tiled_transposed")
+        self.assertEqual(softmax["shape"]["mask"], 0)
+        self.assertEqual(softmax["shape"]["capacity_stride"], 64)
+        self.assertIn("-seqk 33 -seqk-stride 64", softmax["args"])
+        self.assertEqual(pv["shape"]["K"], 33)
+        self.assertEqual(pv["shape"]["persistent_weight_layout"], "gemm_w_tiled")
+
     def test_default_variant_emits_improve_fpint_gemm_metadata(self) -> None:
         payload = build_llm_kernels(
             model_name="llama2-7b",
@@ -317,6 +351,53 @@ class KernelVariantTest(unittest.TestCase):
         self.assertEqual(32 * 1 * 8, k_quant["calls_per_forward"])
         self.assertEqual(32 * 1 * 8, v_quant["calls_per_forward"])
 
+    def test_llama3_prefill_standalone_detiles_narrow_kv_projections(self) -> None:
+        payload = build_llm_kernels(
+            model_name="llama3-8b",
+            stages=["prefill"],
+            batch=1,
+            prefill_seq_len=32,
+            gen_kv_len=32,
+            qblk=32,
+            variant="all_fpint_gemm_improve_alone_layout_spinquant",
+        )
+
+        q_detile = _kernel_by_name(payload, "layout_q_proj_to_rope_q_detile")
+        k_detile = _kernel_by_name(payload, "layout_k_proj_to_rope_k_detile")
+        v_detile = _kernel_by_name(payload, "layout_v_proj_to_v_cache_detile")
+
+        self.assertEqual(4096, q_detile["shape"]["N"])
+        self.assertEqual(1024, k_detile["shape"]["N"])
+        self.assertEqual(1024, v_detile["shape"]["N"])
+
+    def test_llama3_prefill_fused_gqa_shares_kv_without_grouping_q_rows(self) -> None:
+        payload = build_llm_kernels(
+            model_name="llama3-8b",
+            stages=["prefill"],
+            batch=1,
+            prefill_seq_len=32,
+            gen_kv_len=32,
+            qblk=32,
+            variant="all_fpint_gemm_improve_fused_layout_spinquant",
+        )
+
+        q_hadamard = _kernel_by_name(payload, "spinquant_r3_q_hadamard")
+        k_hadamard = _kernel_by_name(payload, "spinquant_r3_k_hadamard")
+        attn_qk = _kernel_by_name(payload, "attn_qkT")
+        attn_pv = _kernel_by_name(payload, "attn_pv")
+        concat = _kernel_by_name(payload, "attn_head_concat")
+
+        self.assertEqual(32, q_hadamard["shape"]["matrix_count"])
+        self.assertEqual(8, k_hadamard["shape"]["matrix_count"])
+        self.assertEqual(32, q_hadamard["shape"]["rows_per_matrix"])
+        self.assertEqual(32, attn_qk["shape"]["M"])
+        self.assertEqual(32, attn_pv["shape"]["M"])
+        self.assertEqual(32 * 32, attn_qk["calls_per_forward"])
+        self.assertEqual(32 * 32, attn_pv["calls_per_forward"])
+        self.assertNotIn("grouped_query_attention", attn_qk["shape"])
+        self.assertEqual(1, concat["shape"]["query_heads_per_kv"])
+        self.assertEqual(32, concat["shape"]["input_matrix_count"])
+
     def test_llama3_generation_gqa_groups_attention_gemms(self) -> None:
         payload = build_llm_kernels(
             model_name="llama3-8b",
@@ -358,12 +439,16 @@ class KernelVariantTest(unittest.TestCase):
         attn_qk = _kernel_by_name(payload, "attn_qkT")
 
         self.assertEqual("hadamard_layout_fused", q_hadamard["backend"])
-        self.assertEqual("-m 1 -n 32 -k 128", q_hadamard["args"])
-        self.assertEqual(32, q_hadamard["shape"]["matrix_count"])
-        self.assertEqual(1, q_hadamard["shape"]["rows_per_matrix"])
+        self.assertEqual("-m 4 -n 8 -k 128", q_hadamard["args"])
+        self.assertEqual(8, q_hadamard["shape"]["matrix_count"])
+        self.assertEqual(4, q_hadamard["shape"]["rows_per_matrix"])
         self.assertEqual(8, q_hadamard["shape"]["m_pad"])
+        self.assertEqual(4, q_hadamard["shape"]["query_heads_per_kv"])
         self.assertEqual("gemm_a_tiled", q_hadamard["shape"]["layout_to"])
         self.assertEqual(4, attn_qk["shape"]["M"])
+        concat = _kernel_by_name(payload, "attn_head_concat")
+        self.assertEqual(4, concat["shape"]["query_heads_per_kv"])
+        self.assertEqual(8, concat["shape"]["input_matrix_count"])
 
     def test_layout_variants_are_registered(self) -> None:
         self.assertIn("all_fpint_gemm_improve_alone_layout", WORKLOAD_VARIANTS)

@@ -1,0 +1,53 @@
+task: gemm-low-latency-fp-ip
+state: DONE
+updated: "2026-07-21 01:26"
+summary: >-
+  Generate dedicated low-latency Xilinx FP IPs and select them only from
+  VX_gemm_unit.
+iterations:
+  - feature: "GEMM Low-Latency FP IP"
+    iteration: 1
+    timestamp: "2026-07-21 01:20"
+    status: compile_error
+    error_summary: >-
+      The source-tree gemm_unit test used a stale VORTEX_HOME and VCS failed
+      resolving testbench hierarchy; Vivado also rejected Full_Usage for the
+      low-latency FP32 adder.
+    root_cause: >-
+      config.mk points at /home/jaeyongjang/project.local/vortex instead of this
+      configured vortex_fpint build, so the deterministic runner compiled the
+      wrong source tree. Independently, C_Mult_Usage=Full_Usage is invalid for
+      an Add_Subtract IP when C_Optimization=Low_Latency.
+    fix_applied: >-
+      Removed the invalid FP32 add C_Mult_Usage property and moved subsequent
+      unittest verification to the configured build tree.
+    lesson: >-
+      Run RTL unittests from the configured build copy, and validate complete
+      Xilinx IP property dictionaries with Vivado rather than only querying
+      individual latency fields.
+  - feature: "GEMM Low-Latency FP IP"
+    iteration: 2
+    timestamp: "2026-07-21 01:26"
+    status: pass
+    error_summary: "None."
+    root_cause: "Not applicable."
+    fix_applied: >-
+      Used legal FP32 add IP properties and ran gemm_unit from
+      build/hw/unittest/gemm_unit.
+    lesson: >-
+      C_Latency=2 maps to LATENCY=0 in the simulation wrappers because the
+      wrapper model accounts for one input and one output buffer cycle.
+activity:
+  - timestamp: "2026-07-21 01:10"
+    action: "Confirmed the user-provided goal and recorded the implementation specification."
+    result: "Scope limited to Xilinx IP generation, wrapper selection, and VX_gemm_unit latency alignment."
+  - timestamp: "2026-07-21 01:20"
+    action: "Ran verification iteration 1 and a full Vivado IP generation check."
+    result: "Both exposed compile/configuration errors requiring a follow-up fix."
+  - timestamp: "2026-07-21 01:26"
+    action: "Regenerated all Xilinx FP IP targets with Vivado 2025.1 and reran the configured GEMM unit VCS test."
+    result: "Vivado IP generation and GEMM functional simulation both passed."
+pitfalls:
+  - "The worktree contains unrelated user changes; do not modify or revert them."
+  - "The source-root config.mk has a stale VORTEX_HOME; use build/hw/unittest/gemm_unit."
+  - "FP32 add Low_Latency does not accept C_Mult_Usage=Full_Usage."

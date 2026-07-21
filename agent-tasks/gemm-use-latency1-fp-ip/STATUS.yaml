@@ -1,0 +1,24 @@
+task: gemm-use-latency1-fp-ip
+state: DONE
+updated: "2026-07-21 02:00"
+summary: "VX_gemm_unit now uses latency-1 Xilinx FP multiply/add IPs with matching one-cycle simulation buffering."
+iterations:
+  - iteration: 1
+    timestamp: "2026-07-21 02:00"
+    test: "python3 tools/verify_rtl.py unittest --path build/hw/unittest/gemm_unit --sim vcs"
+    result: PASS
+    log: "build/hw/unittest/gemm_unit/logs/sim.log"
+activity:
+  - timestamp: "2026-07-21 01:52"
+    action: "Confirmed the requested latency-1 GEMM integration scope."
+    result: "Pending RTL implementation and configured-build verification."
+  - timestamp: "2026-07-21 01:57"
+    action: "Added latency-1 selection to FP wrappers and selected it from VX_gemm_unit."
+    result: "Default and latency-2 wrapper paths remain available; Xilinx build lists include latency-1 XCIs."
+  - timestamp: "2026-07-21 02:00"
+    action: "Ran configured-build VCS gemm_unit verification and git diff whitespace validation."
+    result: "PASS."
+pitfalls:
+  - "The source-root config.mk points to another checkout; use build/hw/unittest/gemm_unit."
+  - "Latency-1 IP output timing is exposed as a register-to-output combinational path."
+  - "Preserve unrelated user changes in the dirty worktree."

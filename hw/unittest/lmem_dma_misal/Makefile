@@ -11,6 +11,7 @@ export CC := /usr/bin/gcc
 export CXX := /usr/bin/g++
 
 SIM_EXEC ?= vlt
+GENERALIZED ?= 0
 RD_PREFETCH_DEPTH ?= 1
 ENABLE_MISALIGN ?= 1
 GEMM_NAIVE ?= 0
@@ -28,6 +29,11 @@ TOP_MODULE := tb_VX_lmem_dma_misal
 TB   := $(SRC_DIR)/tb_VX_lmem_dma_misal.sv
 RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
 				$(RTL_DIR)/core/VX_dma_unit_align.sv \
+				$(RTL_DIR)/core/VX_dma_gearbox.sv \
+				$(RTL_DIR)/core/VX_dma_lane_aligner.sv \
+				$(RTL_DIR)/core/VX_dma_lane_assembler.sv \
+				$(RTL_DIR)/core/VX_dma_equal_realigner.sv \
+				$(RTL_DIR)/core/VX_dma_misal_gen_path.sv \
 				$(RTL_DIR)/core/VX_dma_unit_misal.sv \
 				$(RTL_DIR)/core/VX_dma_unit.sv \
 				$(RTL_DIR)/core/gemm/VX_lmem_dma_misal.sv \
@@ -38,6 +44,8 @@ RTLS := $(RTL_DIR)/VX_gpu_pkg.sv \
 				$(RTL_DIR)/core/gemm/VX_lmem_dma_ctrl_if.sv \
 				$(RTL_DIR)/core/gemm/VX_gemm_sync_if.sv \
 				$(RTL_DIR)/libs/VX_stream_xbar.sv \
+				$(RTL_DIR)/libs/VX_stream_omega.sv \
+				$(RTL_DIR)/libs/VX_transpose.sv \
 				$(RTL_DIR)/libs/VX_sp_ram.sv \
 				$(RTL_DIR)/libs/VX_dp_ram.sv \
 				$(RTL_DIR)/libs/VX_pipe_buffer.sv \
@@ -63,6 +71,10 @@ DEFINES_ := SIMULATION DEBUG_LEVEL=3 DBG_TRACE_GEMM \
 				TB_ENABLE_MISALIGN=$(ENABLE_MISALIGN) \
 				TB_REORDER_RESPONSES=$(REORDER_RESPONSES) \
 				TB_GEMM_REQ_BACKPRESSURE=$(GEMM_REQ_BACKPRESSURE)
+
+ifeq ($(GENERALIZED),1)
+DEFINES_ += DMA_MISAL_GENERALIZED
+endif
 
 ifeq ($(PERF_TRACE),1)
 DEFINES_ += TB_PERF_TRACE
