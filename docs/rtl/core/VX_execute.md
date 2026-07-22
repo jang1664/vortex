@@ -30,6 +30,7 @@ Schedule → Fetch → Decode → Issue → [EXECUTE] → Commit → Writeback
 | SFU | 2 | `VX_sfu_unit` | CSR, Warp Control | 항상 |
 | FPU | 3 | `VX_fpu_unit` | 부동소수점 | `EXT_F_ENABLE` |
 | TCU | 4 | `VX_tcu_unit` | Tensor Core | `EXT_TCU_ENABLE` |
+| AGEN | after the last enabled standard unit | `VX_agen_unit` | Three-stream affine address generation | `EXT_ADDR_GEN_ENABLE` |
 
 ## 인터페이스
 
@@ -69,6 +70,7 @@ dispatch_if[EX_LSU * ISSUE_WIDTH +: ISSUE_WIDTH]  → LSU
 dispatch_if[EX_SFU * ISSUE_WIDTH +: ISSUE_WIDTH]  → SFU
 dispatch_if[EX_FPU * ISSUE_WIDTH +: ISSUE_WIDTH]  → FPU (조건부)
 dispatch_if[EX_TCU * ISSUE_WIDTH +: ISSUE_WIDTH]  → TCU (조건부)
+dispatch_if[EX_AGEN * ISSUE_WIDTH +: ISSUE_WIDTH] → AGEN (조건부)
 ```
 
 ## 데이터 흐름
@@ -170,6 +172,17 @@ dispatch_if[EX_TCU * ISSUE_WIDTH +: ISSUE_WIDTH]  → TCU (조건부)
 **서브 유닛:**
 - VX_wctl_unit: Warp 제어
 - VX_gather_unit: 스레드 데이터 수집
+
+### Address Generator Unit (VX_agen_unit)
+
+When `EXT_ADDR_GEN_ENABLE` is defined, CUSTOM0 funct7 `0x04`, `0x05`, and
+`0x06` dispatch `LD0`, `LD1`, and `ST` descriptor operations to a dedicated
+execution path. Each architectural thread has independent shadow/active
+three-dimensional affine descriptors, loop state, and depth-four queues for
+all three streams. Configuration, start, and reset commit with no writeback.
+A POP commits an integer address only after every selected lane in its SIMD
+slice has queued data, so an empty POP applies backpressure to the AGEN
+dispatch path.
 
 ## 주요 특징
 

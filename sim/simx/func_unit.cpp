@@ -407,6 +407,27 @@ void SfuUnit::tick() {
 
 ///////////////////////////////////////////////////////////////////////////////
 
+#ifdef EXT_ADDR_GEN_ENABLE
+AddrGenUnit::AddrGenUnit(const SimContext& ctx, Core* core)
+  : FuncUnit(ctx, core, "addrgen-unit")
+{}
+
+void AddrGenUnit::tick() {
+  for (uint32_t iw = 0; iw < ISSUE_WIDTH; ++iw) {
+    auto& input = Inputs.at(iw);
+    if (input.empty())
+      continue;
+    auto trace = input.front();
+    if (!std::get_if<AddrGenType>(&trace->op_type))
+      std::abort();
+    Outputs.at(iw).push(trace, 1);
+    input.pop();
+  }
+}
+#endif
+
+///////////////////////////////////////////////////////////////////////////////
+
 #ifdef EXT_V_ENABLE
 
 VpuUnit::VpuUnit(const SimContext& ctx, Core* core)

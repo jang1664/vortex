@@ -1466,6 +1466,79 @@ instr_trace_t* Emulator::execute(const Instr &instr, uint32_t wid) {
       }
     }
   #endif // EXT_TCU_ENABLE
+  #ifdef EXT_ADDR_GEN_ENABLE
+    ,[&](AddrGenType addrgen_type) {
+      auto addrgenArgs = std::get<IntrAddrGenArgs>(instrArgs);
+      const uint32_t stream = addrgenArgs.stream;
+      for (uint32_t t = thread_start; t < num_threads; ++t) {
+        if (!warp.tmask.test(t))
+          continue;
+        auto& state = addrgen_states_.at(wid).at(t).at(stream);
+        switch (addrgen_type) {
+        case AddrGenType::CFG_BASE:
+          state.shadow.base = rs1_data[t].u;
+          break;
+        case AddrGenType::CFG_DIM0:
+        case AddrGenType::CFG_DIM1:
+        case AddrGenType::CFG_DIM2: {
+          const uint32_t dim = static_cast<uint32_t>(addrgen_type)
+                             - static_cast<uint32_t>(AddrGenType::CFG_DIM0);
+          state.shadow.strides.at(dim) = rs1_data[t].u;
+          state.shadow.bounds.at(dim) = rs2_data[t].u32;
+        } break;
+        case AddrGenType::START:
+          state.active = state.shadow;
+          state.indices = {};
+          state.offsets = {};
+          state.exhausted = false;
+          for (uint32_t dim = 0; dim < 3; ++dim) {
+            if (state.active.bounds.at(dim) == 0) {
+              state.exhausted = true;
+              break;
+            }
+          }
+          break;
+        case AddrGenType::POP: {
+          if (state.exhausted) {
+            const char* stream_name = stream == 0 ? "LD0" :
+                                      stream == 1 ? "LD1" : "ST";
+            std::cerr << "address-generator pop on exhausted stream: wid=" << wid
+                      << ", tid=" << t << ", stream=" << stream_name
+                      << std::endl;
+            std::abort();
+          }
+          rd_data[t].u = state.active.base
+                       + state.offsets.at(0)
+                       + state.offsets.at(1)
+                       + state.offsets.at(2);
+
+          bool carry = true;
+          for (uint32_t dim = 0; dim < 3; ++dim) {
+            auto next_index = state.indices.at(dim) + 1;
+            if (next_index < state.active.bounds.at(dim)) {
+              state.indices.at(dim) = next_index;
+              state.offsets.at(dim) += state.active.strides.at(dim);
+              carry = false;
+              break;
+            }
+            state.indices.at(dim) = 0;
+            state.offsets.at(dim) = 0;
+          }
+          state.exhausted = carry;
+          rd_write = true;
+        } break;
+        case AddrGenType::RESET:
+          state.active = {};
+          state.indices = {};
+          state.offsets = {};
+          state.exhausted = true;
+          break;
+        default:
+          std::abort();
+        }
+      }
+    }
+  #endif // EXT_ADDR_GEN_ENABLE
   );
 
   if (rd_write) {

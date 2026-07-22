@@ -44,6 +44,87 @@ inline __attribute__((always_inline)) float vx_expf_hw(float x) {
     return ret;
 }
 
+#ifdef EXT_ADDR_GEN_ENABLE
+// CUSTOM0 affine address-generator instructions. Stream and dimension must be
+// compile-time constants because they occupy funct7 and funct3 respectively.
+#define VX_ADDRGEN_STREAM_LD0 0
+#define VX_ADDRGEN_STREAM_LD1 1
+#define VX_ADDRGEN_STREAM_ST  2
+
+#ifdef __cplusplus
+#define __VX_ADDRGEN_STATIC_ASSERT(condition, message) static_assert(condition, message)
+#else
+#define __VX_ADDRGEN_STATIC_ASSERT(condition, message) _Static_assert(condition, message)
+#endif
+
+#define __VX_ADDRGEN_CHECK_STREAM(stream)                                  \
+    __VX_ADDRGEN_STATIC_ASSERT(__builtin_constant_p(stream),               \
+                               "address-generator stream must be constant"); \
+    __VX_ADDRGEN_STATIC_ASSERT((stream) >= VX_ADDRGEN_STREAM_LD0           \
+                            && (stream) <= VX_ADDRGEN_STREAM_ST,            \
+                               "invalid address-generator stream")
+
+#define __VX_ADDRGEN_CHECK_DIM(dim)                                        \
+    __VX_ADDRGEN_STATIC_ASSERT(__builtin_constant_p(dim),                  \
+                               "address-generator dimension must be constant"); \
+    __VX_ADDRGEN_STATIC_ASSERT((dim) >= 0 && (dim) < 3,                    \
+                               "invalid address-generator dimension")
+
+#define vx_addrgen_set_base(stream, base) do {                              \
+    __VX_ADDRGEN_CHECK_STREAM(stream);                                      \
+    uintptr_t __vx_addrgen_base = (uintptr_t)(base);                        \
+    __asm__ volatile (".insn r %0, 0, %1, x0, %2, x0"                     \
+                      :: "i"(RISCV_CUSTOM0), "i"(4 + (stream)),            \
+                         "r"(__vx_addrgen_base) : "memory");               \
+} while (0)
+
+#define vx_addrgen_set_dim(stream, dim, stride_bytes, bound) do {           \
+    __VX_ADDRGEN_CHECK_STREAM(stream);                                      \
+    __VX_ADDRGEN_CHECK_DIM(dim);                                            \
+    uintptr_t __vx_addrgen_stride = (uintptr_t)(intptr_t)(stride_bytes);    \
+    uintptr_t __vx_addrgen_bound = (uintptr_t)(uint32_t)(bound);            \
+    __asm__ volatile (".insn r %0, %1, %2, x0, %3, %4"                    \
+                      :: "i"(RISCV_CUSTOM0), "i"(1 + (dim)),               \
+                         "i"(4 + (stream)), "r"(__vx_addrgen_stride),       \
+                         "r"(__vx_addrgen_bound) : "memory");              \
+} while (0)
+
+#define vx_addrgen_start(stream) do {                                       \
+    __VX_ADDRGEN_CHECK_STREAM(stream);                                      \
+    __asm__ volatile (".insn r %0, 4, %1, x0, x0, x0"                     \
+                      :: "i"(RISCV_CUSTOM0), "i"(4 + (stream))             \
+                      : "memory");                                         \
+} while (0)
+
+#define vx_addrgen_reset(stream) do {                                       \
+    __VX_ADDRGEN_CHECK_STREAM(stream);                                      \
+    __asm__ volatile (".insn r %0, 5, %1, x0, x0, x0"                     \
+                      :: "i"(RISCV_CUSTOM0), "i"(4 + (stream))             \
+                      : "memory");                                         \
+} while (0)
+
+inline __attribute__((always_inline)) uintptr_t vx_addrgen_pop_ld0() {
+    uintptr_t address;
+    __asm__ volatile (".insn r %1, 6, 4, %0, x0, x0"
+                      : "=r"(address) : "i"(RISCV_CUSTOM0) : "memory");
+    return address;
+}
+
+inline __attribute__((always_inline)) uintptr_t vx_addrgen_pop_ld1() {
+    uintptr_t address;
+    __asm__ volatile (".insn r %1, 6, 5, %0, x0, x0"
+                      : "=r"(address) : "i"(RISCV_CUSTOM0) : "memory");
+    return address;
+}
+
+inline __attribute__((always_inline)) uintptr_t vx_addrgen_pop_st() {
+    uintptr_t address;
+    __asm__ volatile (".insn r %1, 6, 6, %0, x0, x0"
+                      : "=r"(address) : "i"(RISCV_CUSTOM0) : "memory");
+    return address;
+}
+#endif
+
 #define csr_read(csr) ({                        \
 	size_t __r;	               		            \
 	__asm__ __volatile__ ("csrr %0, %1" : "=r" (__r) : "i" (csr)); \

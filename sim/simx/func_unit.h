@@ -108,6 +108,14 @@ public:
 	void tick() override;
 };
 
+#ifdef EXT_ADDR_GEN_ENABLE
+class AddrGenUnit : public FuncUnit {
+public:
+  AddrGenUnit(const SimContext& ctx, Core*);
+  void tick() override;
+};
+#endif
+
 ///////////////////////////////////////////////////////////////////////////////
 
 #ifdef EXT_TCU_ENABLE

@@ -473,6 +473,23 @@ static op_string_t op_string(const Instr &instr) {
       return op_string(tcu_type, tpuArgs);
     }
   #endif // EXT_TCU_ENABLE
+  #ifdef EXT_ADDR_GEN_ENABLE
+    ,[&](AddrGenType addrgen_type)-> op_string_t {
+      auto args = std::get<IntrAddrGenArgs>(instrArgs);
+      const char* stream = args.stream == 0 ? "LD0" :
+                           args.stream == 1 ? "LD1" : "ST";
+      switch (addrgen_type) {
+      case AddrGenType::CFG_BASE: return {std::string("AGEN.") + stream + ".CFG_BASE", ""};
+      case AddrGenType::CFG_DIM0: return {std::string("AGEN.") + stream + ".CFG_DIM0", ""};
+      case AddrGenType::CFG_DIM1: return {std::string("AGEN.") + stream + ".CFG_DIM1", ""};
+      case AddrGenType::CFG_DIM2: return {std::string("AGEN.") + stream + ".CFG_DIM2", ""};
+      case AddrGenType::START: return {std::string("AGEN.") + stream + ".START", ""};
+      case AddrGenType::RESET: return {std::string("AGEN.") + stream + ".RESET", ""};
+      case AddrGenType::POP: return {std::string("AGEN.") + stream + ".POP", ""};
+      default: std::abort();
+      }
+    }
+  #endif // EXT_ADDR_GEN_ENABLE
  );
  return {"", ""};
 }
@@ -1076,6 +1093,48 @@ void Emulator::decode(uint32_t code, uint32_t wid, uint64_t uuid) {
       }
       ibuffer.push_back(instr);
     } break;
+  #ifdef EXT_ADDR_GEN_ENABLE
+    case 4:
+    case 5:
+    case 6: {
+      auto instr = std::allocate_shared<Instr>(instr_pool_, uuid, FUType::AGEN);
+      instr->setArgs(IntrAddrGenArgs{funct7 - 4});
+      switch (funct3) {
+      case 0:
+        instr->setOpType(AddrGenType::CFG_BASE);
+        instr->setSrcReg(0, rs1, RegType::Integer);
+        break;
+      case 1:
+        instr->setOpType(AddrGenType::CFG_DIM0);
+        instr->setSrcReg(0, rs1, RegType::Integer);
+        instr->setSrcReg(1, rs2, RegType::Integer);
+        break;
+      case 2:
+        instr->setOpType(AddrGenType::CFG_DIM1);
+        instr->setSrcReg(0, rs1, RegType::Integer);
+        instr->setSrcReg(1, rs2, RegType::Integer);
+        break;
+      case 3:
+        instr->setOpType(AddrGenType::CFG_DIM2);
+        instr->setSrcReg(0, rs1, RegType::Integer);
+        instr->setSrcReg(1, rs2, RegType::Integer);
+        break;
+      case 4:
+        instr->setOpType(AddrGenType::START);
+        break;
+      case 5:
+        instr->setOpType(AddrGenType::RESET);
+        break;
+      case 6:
+        instr->setOpType(AddrGenType::POP);
+        instr->setDestReg(rd, RegType::Integer);
+        break;
+      default:
+        std::abort();
+      }
+      ibuffer.push_back(instr);
+    } break;
+  #endif
   #ifdef EXT_TCU_ENABLE
     case 2: {
       switch (funct3) {

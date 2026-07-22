@@ -149,6 +149,9 @@ Core::Core(const SimContext& ctx,
   dispatchers_.at((int)FUType::FPU) = SimPlatform::instance().create_object<Dispatcher>(this, 2, NUM_FPU_BLOCKS, NUM_FPU_LANES);
   dispatchers_.at((int)FUType::LSU) = SimPlatform::instance().create_object<Dispatcher>(this, 2, NUM_LSU_BLOCKS, NUM_LSU_LANES);
   dispatchers_.at((int)FUType::SFU) = SimPlatform::instance().create_object<Dispatcher>(this, 2, NUM_SFU_BLOCKS, NUM_SFU_LANES);
+#ifdef EXT_ADDR_GEN_ENABLE
+  dispatchers_.at((int)FUType::AGEN) = SimPlatform::instance().create_object<Dispatcher>(this, 2, 1, NUM_THREADS);
+#endif
 #ifdef EXT_V_ENABLE
   dispatchers_.at((int)FUType::VPU) = SimPlatform::instance().create_object<Dispatcher>(this, 2, NUM_VPU_BLOCKS, NUM_VPU_LANES);
 #endif
@@ -161,6 +164,9 @@ Core::Core(const SimContext& ctx,
   func_units_.at((int)FUType::FPU) = SimPlatform::instance().create_object<FpuUnit>(this);
   func_units_.at((int)FUType::LSU) = SimPlatform::instance().create_object<LsuUnit>(this);
   func_units_.at((int)FUType::SFU) = SimPlatform::instance().create_object<SfuUnit>(this);
+#ifdef EXT_ADDR_GEN_ENABLE
+  func_units_.at((int)FUType::AGEN) = SimPlatform::instance().create_object<AddrGenUnit>(this);
+#endif
 #ifdef EXT_V_ENABLE
   func_units_.at((int)FUType::VPU) = SimPlatform::instance().create_object<VpuUnit>(this);
 #endif
@@ -364,6 +370,9 @@ void Core::issue() {
               ++perf_stats_.scrb_csrs;
             }
           } break;
+        #ifdef EXT_ADDR_GEN_ENABLE
+          case FUType::AGEN: ++perf_stats_.scrb_alu; break;
+        #endif
         #ifdef EXT_V_ENABLE
           case FUType::VPU: ++perf_stats_.scrb_vpu; break;
         #endif
