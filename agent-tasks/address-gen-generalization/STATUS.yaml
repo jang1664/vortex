@@ -1,0 +1,55 @@
+task: address-gen-generalization
+state: COMPLETE
+summary: Phases 1-5 are complete: the generalized descriptor ISA and RTL are verified, and softmax_layout_fused/rev2_addrgen passes simx and xrt-vcs-sim.
+updated: "2026-07-22 10:30"
+current:
+  unit: complete
+  action: Phase 5 softmax migration is complete; later optimization/synthesis phases remain separate work.
+log:
+  - timestamp: "2026-07-22 01:04"
+    action: Started execution from docs/future_optim/address_gen_for_layout_transform_fused/generalization_plan.md.
+    result: Scope is Phases 1-4 as recommended by the plan; softmax migration and workload integration remain gated on focused randomized RTL verification.
+  - timestamp: "2026-07-22 01:04"
+    action: Looked for the explicitly requested ce-work skill in the exposed skill catalog and repository-local skills.
+    result: ce-work is unavailable in this session, so the plan is being executed directly while retaining CE-style progress tracking and parallel read-only surveys.
+  - timestamp: "2026-07-22 01:17"
+    action: Froze the generalized encoding, descriptor arithmetic, lifecycle, queue semantics, and software contract in docs/software/address_generator_isa.md.
+    result: The shared contract now defines LD0/LD1/ST funct7 values, all funct3 operations, modulo-2^64 reference iteration, and RESET-preserves-shadow behavior.
+  - timestamp: "2026-07-22 01:17"
+    action: Added tests/common/addrgen_reference.h and compiled it with /usr/bin/g++ using C++11 warnings-as-errors.
+    result: The reusable host reference iterator passes syntax and warning checks.
+  - timestamp: "2026-07-22 01:17"
+    action: Surveyed pipeline transport and focused test gaps before implementation.
+    result: Stream selection will travel in guarded op_args.agen while op_type carries funct3, avoiding a risky global INST_OP_BITS expansion; current tests lack generalized, multi-warp, randomized, and backpressure coverage.
+  - timestamp: "2026-07-22 01:26"
+    action: Implemented the generalized intrinsics and simx model and rebuilt the enabled simx/runtime from the configured build using the populated primary-checkout third_party directory.
+    result: LD0, LD1, and ST implement shadow/active three-dimensional descriptors, signed modulo-2^64 traversal, zero-bound exhaustion, reset, and invalid-POP diagnostics; enabled full simx builds pass.
+  - timestamp: "2026-07-22 01:27"
+    action: Added and ran tests/regression/addrgen against tests/common/addrgen_reference.h.
+    result: PASS for 39 directed/random descriptor sets and 842 interleaved LD0/LD1/ST addresses; simx reported 34598 instructions and 226020 cycles.
+  - timestamp: "2026-07-22 01:29"
+    action: Implemented three independent RTL stream engines with shadow/active descriptors, nested carry, depth-four queues, deterministic flattened slice cursors, full-plus-pop replacement, and simulation diagnostics/counters.
+    result: Verilator lint passes with the feature enabled and disabled, including W1/T4 and W4/T32 shapes; no layout-specific 32-column, two-byte, or +32 recurrence remains in RTL.
+  - timestamp: "2026-07-22 01:30"
+    action: Ran the focused VCS directed and randomized scoreboard at NUM_WARPS=2, NUM_THREADS=8, SIMD_WIDTH=4.
+    result: PASS at 10.47 us for 1D/2D/3D traversal, bounds, signed/wrap strides, reset lifecycle, masks, three streams, two warps/slices, queue behavior, blocked wakeup, commit backpressure, and 12 randomized descriptors.
+  - timestamp: "2026-07-22 01:30"
+    action: Re-ran the focused VCS suite at NUM_WARPS=2, NUM_THREADS=16, SIMD_WIDTH=8.
+    result: PASS at 7.88 us, providing a second non-32 thread shape with no implicit software step.
+  - timestamp: "2026-07-22 01:32"
+    action: Ran the W4/T32/SIMD32 target-shape VCS smoke and the deliberate over-pop diagnostic.
+    result: Target smoke PASS at 0.70 us; over-pop emitted the expected empty POP timeout and completed as an expected-diagnostic PASS.
+  - timestamp: "2026-07-22 01:35"
+    action: Compared the unchanged softmax/rev2 baseline with EXT_ADDR_GEN_ENABLE disabled and enabled.
+    result: Kernel vxbin SHA-256 was identical (437cbb2427bd3a520172d49c59ec33d1584c8e7d555e4bfd427b708dd8131978); both simx runs passed with exactly 59292 instructions and 43557 cycles.
+  - timestamp: "2026-07-22 10:30"
+    action: Ported softmax_layout_fused/rev2_addrgen to generalized lane-specific LD0/ST descriptors and ran focused plus workload integration verification.
+    result: Focused VCS, both required simx cases, and both required xrt-vcs-sim cases passed; see phase5-softmax-port/STATUS.yaml for measurements.
+pitfalls:
+  - Preserve all existing prototype changes in this dirty worktree; they are the starting point, not disposable generated output.
+  - Do not silently reinterpret the specialized funct3 encodings in only one implementation layer.
+  - Keep softmax/rev2 unchanged as the baseline control.
+  - Do not claim queue timing or blocking correctness from simx alone.
+  - A naive per-thread shadow plus active implementation is likely to exceed the Phase 7 four-BRAM36 storage gate before banking overhead; treat synthesis storage as an unresolved post-functional optimization gate.
+  - Do not reintroduce the removed specialized wrappers; compatibility aliases would silently reinterpret old funct7 0x05 store instructions as LD1.
+  - Dedicated EX_AGEN prevents an empty POP from occupying another execution unit, but an indefinitely blocked POP can fill the existing two-entry AGEN dispatch buffer and indirectly stall its issue slice; the absolute no-cross-unit-HOL invariant needs pipeline-level resolution before final integration.
