@@ -196,8 +196,11 @@ int main(int argc, char *argv[]) {
   // One warp (= num_threads lanes) per block lets up to num_warps rows remain
   // co-resident on a core.
 #if SOFTMAX_LAYOUT_FUSED_VARIANT == SOFTMAX_LAYOUT_FUSED_VARIANT_OPT_WARP || \
-    SOFTMAX_LAYOUT_FUSED_VARIANT == SOFTMAX_LAYOUT_FUSED_VARIANT_REV2
-#if SOFTMAX_LAYOUT_FUSED_VARIANT == SOFTMAX_LAYOUT_FUSED_VARIANT_REV2
+    SOFTMAX_LAYOUT_FUSED_VARIANT == SOFTMAX_LAYOUT_FUSED_VARIANT_REV2 || \
+    SOFTMAX_LAYOUT_FUSED_VARIANT == SOFTMAX_LAYOUT_FUSED_VARIANT_REV2_ADDRGEN
+#if SOFTMAX_LAYOUT_FUSED_VARIANT == SOFTMAX_LAYOUT_FUSED_VARIANT_REV2_ADDRGEN
+  printf("variant=rev2_addrgen launch=one_warp_per_row\n");
+#elif SOFTMAX_LAYOUT_FUSED_VARIANT == SOFTMAX_LAYOUT_FUSED_VARIANT_REV2
   printf("variant=rev2 launch=one_warp_per_row\n");
 #else
   // Co-resident rows hide lane 0's DMA descriptor issue/poll latency.

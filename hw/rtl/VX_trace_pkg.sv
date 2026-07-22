@@ -41,6 +41,9 @@ package VX_trace_pkg;
         `ifdef EXT_TCU_ENABLE
             EX_TCU: `TRACE(level, ("TCU"))
         `endif
+        `ifdef EXT_ADDR_GEN_ENABLE
+            EX_AGEN: `TRACE(level, ("AGEN"))
+        `endif
             default: `TRACE(level, ("?"))
         endcase
     endtask
@@ -403,6 +406,26 @@ package VX_trace_pkg;
     `ifdef EXT_TCU_ENABLE
         EX_TCU: begin
             VX_tcu_pkg::trace_ex_op(level, op_type, op_args);
+        end
+    `endif
+    `ifdef EXT_ADDR_GEN_ENABLE
+        EX_AGEN: begin
+            unique case (op_args.agen.stream)
+                INST_AGEN_STREAM_LD0: `TRACE(level, ("AGEN.LD0."))
+                INST_AGEN_STREAM_LD1: `TRACE(level, ("AGEN.LD1."))
+                INST_AGEN_STREAM_ST:  `TRACE(level, ("AGEN.ST."))
+                default:              `TRACE(level, ("AGEN.?."))
+            endcase
+            unique case (inst_agen_op(op_type))
+                INST_AGEN_CFG_BASE: `TRACE(level, ("CFG_BASE"))
+                INST_AGEN_CFG_DIM0: `TRACE(level, ("CFG_DIM0"))
+                INST_AGEN_CFG_DIM1: `TRACE(level, ("CFG_DIM1"))
+                INST_AGEN_CFG_DIM2: `TRACE(level, ("CFG_DIM2"))
+                INST_AGEN_START:    `TRACE(level, ("START"))
+                INST_AGEN_RESET:    `TRACE(level, ("RESET"))
+                INST_AGEN_POP:      `TRACE(level, ("POP"))
+                default:            `TRACE(level, ("?"))
+            endcase
         end
     `endif
         default: `TRACE(level, ("?"))

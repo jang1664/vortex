@@ -1,0 +1,17 @@
+task: address-gen-generalization/lutram-pnr
+state: COMPLETE
+summary: Retain the original shallow RTL queue arrays and let Vivado infer registers or distributed RAM; defer explicit LUTRAM mapping until a PnR report shows it is needed.
+updated: "2026-07-22 11:05"
+current:
+  iteration: 1
+  action: Explicit VX_dp_ram mapping was reviewed and reverted in favor of automatic synthesis inference.
+iterations:
+  - iteration: 1
+    result: COMPLETE
+    implementation: Evaluated a QUEUE_LUTRAM parameter and per-thread VX_dp_ram instances, then restored the existing depth-four queue_data RTL arrays at the user's direction.
+    verification: The restored implementation is the same queue structure used by the previously passing focused VCS and xrt-vcs-sim regressions; git diff checks remain required before commit.
+pitfalls:
+  - Preserve queue read timing and full-plus-pop replacement semantics.
+  - Check Vivado hierarchical utilization before adding an explicit RAM style or wrapper.
+  - Do not include or overwrite the existing untracked fpint PnR config while working in the feature worktree.
+  - xrtsim_vcs simv does not track RTL source dependencies and must be forced to rebuild after RTL edits.

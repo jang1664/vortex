@@ -1026,6 +1026,12 @@
     `define EXT_TCU_ENABLED 0
 `endif
 
+`ifdef EXT_ADDR_GEN_ENABLE
+    `define EXT_ADDR_GEN_ENABLED 1
+`else
+    `define EXT_ADDR_GEN_ENABLED 0
+`endif
+
 `ifdef ENABLE_GEMM_ACCEL
     `define GEMM_ACCEL_ENABLED 1
 `else

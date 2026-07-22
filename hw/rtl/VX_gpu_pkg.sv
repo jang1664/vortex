@@ -118,8 +118,9 @@ package VX_gpu_pkg;
 	localparam EX_SFU = 2;
 	localparam EX_FPU = (EX_SFU + `EXT_F_ENABLED);
     localparam EX_TCU = (EX_FPU + `EXT_TCU_ENABLED);
+	localparam EX_AGEN = (EX_TCU + `EXT_ADDR_GEN_ENABLED);
 
-	localparam NUM_EX_UNITS = EX_TCU + 1;
+	localparam NUM_EX_UNITS = EX_AGEN + 1;
 	localparam EX_BITS = `CLOG2(NUM_EX_UNITS);
 	localparam EX_WIDTH = `UP(EX_BITS);
 
@@ -386,6 +387,31 @@ package VX_gpu_pkg;
     localparam INST_SFU_CSRRC =  4'h8;
     localparam INST_SFU_BITS =   4;
 
+`ifdef EXT_ADDR_GEN_ENABLE
+    localparam INST_AGEN_CFG_BASE = 3'b000;
+    localparam INST_AGEN_CFG_DIM0 = 3'b001;
+    localparam INST_AGEN_CFG_DIM1 = 3'b010;
+    localparam INST_AGEN_CFG_DIM2 = 3'b011;
+    localparam INST_AGEN_START =    3'b100;
+    localparam INST_AGEN_RESET =    3'b101;
+    localparam INST_AGEN_POP =      3'b110;
+    localparam INST_AGEN_RESERVED = 3'b111;
+    localparam INST_AGEN_BITS =     3;
+
+    localparam INST_AGEN_FUNCT7_LD0 = 7'h04;
+    localparam INST_AGEN_FUNCT7_LD1 = 7'h05;
+    localparam INST_AGEN_FUNCT7_ST =  7'h06;
+
+    localparam INST_AGEN_STREAM_LD0 = 2'd0;
+    localparam INST_AGEN_STREAM_LD1 = 2'd1;
+    localparam INST_AGEN_STREAM_ST =  2'd2;
+    localparam INST_AGEN_STREAM_BITS = 2;
+
+    function automatic logic [INST_AGEN_BITS-1:0] inst_agen_op(input logic [INST_OP_BITS-1:0] op);
+        return op[INST_AGEN_BITS-1:0];
+    endfunction
+`endif
+
     function automatic logic [3:0] inst_sfu_csr(input logic [2:0] funct3);
         return (4'h6 + 4'(funct3[1:0]) - 4'h1);
     endfunction
@@ -545,6 +571,14 @@ package VX_gpu_pkg;
     `PACKAGE_ASSERT($bits(tcu_args_t) == INST_ARGS_BITS)
 `endif
 
+`ifdef EXT_ADDR_GEN_ENABLE
+    typedef struct packed {
+        logic [(INST_ARGS_BITS-INST_AGEN_STREAM_BITS)-1:0] __padding;
+        logic [INST_AGEN_STREAM_BITS-1:0] stream;
+    } agen_args_t;
+    `PACKAGE_ASSERT($bits(agen_args_t) == INST_ARGS_BITS)
+`endif
+
     typedef union packed {
         alu_args_t  alu;
         fpu_args_t  fpu;
@@ -553,6 +587,9 @@ package VX_gpu_pkg;
         wctl_args_t wctl;
     `ifdef EXT_TCU_ENABLE
         tcu_args_t  tcu;
+    `endif
+    `ifdef EXT_ADDR_GEN_ENABLE
+        agen_args_t agen;
     `endif
     } op_args_t;
     `PACKAGE_ASSERT($bits(op_args_t) == INST_ARGS_BITS)

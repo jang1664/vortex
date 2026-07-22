@@ -21,6 +21,9 @@ struct TiledAccessor {
   uint32_t mxu_nt_mask;
   uint32_t mxu_kt_mask;
 
+  void begin_load(uint32_t) const {}
+  void begin_store(uint32_t, uint32_t) const {}
+
   data_t load(uint32_t k) const {
     const uint64_t offset = input_row_prefix
         + (uint64_t)(k >> log2_mxu_nt) * input_group_stride

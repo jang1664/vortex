@@ -17,6 +17,7 @@
 #include <vector>
 #include <sstream>
 #include <stack>
+#include <array>
 #include <mem.h>
 #include "types.h"
 #include "instr.h"
@@ -154,6 +155,24 @@ private:
   uint32_t    ipdom_size_;
   Word        csr_mscratch_;
   wspawn_t    wspawn_;
+
+#ifdef EXT_ADDR_GEN_ENABLE
+  struct addrgen_desc_t {
+    Word base = 0;
+    std::array<Word, 3> strides{};
+    std::array<uint32_t, 3> bounds{};
+  };
+
+  struct addrgen_stream_t {
+    addrgen_desc_t shadow{};
+    addrgen_desc_t active{};
+    std::array<uint32_t, 3> indices{};
+    std::array<Word, 3> offsets{};
+    bool exhausted = true;
+  };
+  using addrgen_thread_t = std::array<addrgen_stream_t, 3>;
+  std::vector<std::vector<addrgen_thread_t>> addrgen_states_;
+#endif
 
 #ifdef EXT_TCU_ENABLE
   TensorUnit::Ptr tensor_unit_;

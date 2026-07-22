@@ -127,6 +127,9 @@ enum class FUType {
   LSU,
   FPU,
   SFU,
+#ifdef EXT_ADDR_GEN_ENABLE
+  AGEN,
+#endif
 #ifdef EXT_V_ENABLE
   VPU,
 #endif
@@ -142,6 +145,9 @@ inline std::ostream &operator<<(std::ostream &os, const FUType& type) {
   case FUType::LSU: os << "LSU"; break;
   case FUType::FPU: os << "FPU"; break;
   case FUType::SFU: os << "SFU"; break;
+#ifdef EXT_ADDR_GEN_ENABLE
+  case FUType::AGEN: os << "AGEN"; break;
+#endif
 #ifdef EXT_V_ENABLE
   case FUType::VPU: os << "VPU"; break;
 #endif
@@ -650,6 +656,38 @@ struct IntrTcuArgs {
   uint32_t step_n : 4;
 };
 
+///////////////////////////////////////////////////////////////////////////////
+
+#ifdef EXT_ADDR_GEN_ENABLE
+enum class AddrGenType {
+  CFG_BASE,
+  CFG_DIM0,
+  CFG_DIM1,
+  CFG_DIM2,
+  START,
+  RESET,
+  POP,
+};
+
+struct IntrAddrGenArgs {
+  uint32_t stream : 2; // 0: LD0, 1: LD1, 2: ST
+};
+
+inline std::ostream &operator<<(std::ostream &os, const AddrGenType& type) {
+  switch (type) {
+  case AddrGenType::CFG_BASE: os << "CFG_BASE"; break;
+  case AddrGenType::CFG_DIM0: os << "CFG_DIM0"; break;
+  case AddrGenType::CFG_DIM1: os << "CFG_DIM1"; break;
+  case AddrGenType::CFG_DIM2: os << "CFG_DIM2"; break;
+  case AddrGenType::START: os << "START"; break;
+  case AddrGenType::RESET: os << "RESET"; break;
+  case AddrGenType::POP: os << "POP"; break;
+  default: assert(false);
+  }
+  return os;
+}
+#endif
+
 inline std::ostream &operator<<(std::ostream &os, const TcuType& type) {
   switch (type) {
   case TcuType::WMMA: os << "WMMA"; break;
@@ -680,6 +718,9 @@ using OpType = std::variant<
 #ifdef EXT_TCU_ENABLE
 , TcuType
 #endif
+#ifdef EXT_ADDR_GEN_ENABLE
+, AddrGenType
+#endif
 >;
 
 using IntrArgs = std::variant<
@@ -698,6 +739,9 @@ using IntrArgs = std::variant<
 #endif
 #ifdef EXT_TCU_ENABLE
 , IntrTcuArgs
+#endif
+#ifdef EXT_ADDR_GEN_ENABLE
+, IntrAddrGenArgs
 #endif
 >;
 
