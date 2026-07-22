@@ -71,7 +71,17 @@ def _parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--run-dir", help="Output directory for subdesign results")
-    parser.add_argument("--match-config", default=str(DEFAULT_MATCH_CONFIG))
+    parser.add_argument(
+        "--candidate-config",
+        "--match-config",
+        dest="match_config",
+        metavar="PATH",
+        default=str(DEFAULT_MATCH_CONFIG),
+        help=(
+            "Subdesign candidate-match YAML; --match-config is kept as a "
+            "backward-compatible alias"
+        ),
+    )
     parser.add_argument("--analysis-config", default=str(DEFAULT_ANALYSIS_CONFIG))
     parser.add_argument("--stages", default="synth,pnr", help="synth,pnr or pnr")
     parser.add_argument("--resume", action="store_true")
@@ -105,6 +115,7 @@ def main(argv: list[str] | None = None) -> int:
         "family": family,
         "run_dir": str(run_dir),
         "stages": stages,
+        "candidate_config": str(Path(args.match_config).resolve()),
         "match_config": str(Path(args.match_config).resolve()),
         "analysis_config": str(Path(args.analysis_config).resolve()),
     }

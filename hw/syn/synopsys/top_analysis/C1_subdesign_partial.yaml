@@ -1,0 +1,17 @@
+# Fast subdesign synthesis/PnR target map.
+#
+# The top elaboration catalog and DDC are supplied by --seed-run-dir.  Keep
+# family-specific hierarchy rules separate so C1/C2 can be added without
+# changing the orchestration code.
+
+common_targets:
+  - name: none
+    module_patterns: [none]
+
+families:
+  C3:
+    alias_patterns: [C1, tcu_th*]
+    config_patterns: [tcu_th*.sh]
+    targets:
+      - name: tcu
+        module_patterns: [VX_tcu_unit]

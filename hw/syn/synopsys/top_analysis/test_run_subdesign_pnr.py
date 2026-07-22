@@ -17,6 +17,20 @@ from top_analysis import run_subdesign_pnr as driver
 MATCH_CONFIG = driver._load_match_config(driver.DEFAULT_MATCH_CONFIG)
 
 
+def test_candidate_config_argument_selects_match_yaml() -> None:
+    args = driver._parser().parse_args(
+        ["--config", "config.sh", "--candidate-config", "C4.yaml"]
+    )
+    assert args.match_config == "C4.yaml"
+
+
+def test_match_config_alias_remains_supported() -> None:
+    args = driver._parser().parse_args(
+        ["--config", "config.sh", "--match-config", "legacy.yaml"]
+    )
+    assert args.match_config == "legacy.yaml"
+
+
 def _catalog() -> list[ElaboratedDesign]:
     return [
         ElaboratedDesign(
