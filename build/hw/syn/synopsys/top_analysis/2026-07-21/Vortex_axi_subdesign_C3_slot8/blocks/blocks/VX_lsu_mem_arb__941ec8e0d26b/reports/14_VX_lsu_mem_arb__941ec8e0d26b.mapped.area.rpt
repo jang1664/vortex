@@ -1,0 +1,75 @@
+ 
+****************************************
+Report : area
+Design : VX_lsu_mem_arb__941ec8e0d26b
+Version: V-2023.12-SP5-3
+Date   : Tue Jul 21 22:51:22 2026
+****************************************
+
+Library(s) Used:
+
+    sc9_cmos28lpp_base_rvt_ss_nominal_max_0p900v_125c_sadhm (File: /tool/PDK/Samsung/LN28LPP_202203/PRIMITIVES/RVT/ln28lpp_sc_9t_base_rvt_c130_V1.00d/FE-Common/LIBERTY/sc9_cmos28lpp_base_rvt_ss_nominal_max_0p900v_125c_sadhm.db)
+
+Number of ports:                        32612
+Number of nets:                         41126
+Number of cells:                        12346
+Number of combinational cells:           8144
+Number of sequential cells:              4180
+Number of macros/black boxes:               0
+Number of buf/inv:                       4322
+Number of references:                       4
+
+Combinational area:               5562.764942
+Buf/Inv area:                     1992.041982
+Noncombinational area:            8800.973777
+Macro/Black Box area:                0.000000
+Net Interconnect area:      undefined  (No wire load specified)
+
+Total cell area:                 14363.738719
+Total area:                 undefined
+
+Core Area:                     40569
+Aspect Ratio:                 1.0018
+Utilization Ratio:            0.3540
+
+
+The above information was reported from the logical library. The following are from the physical library:
+
+  Total moveable cell area: 14363.7
+  Total fixed cell area: 0.0
+  Total physical cell area: 14363.7
+ Core area: 0.000, 0.000, 201.240, 201.600
+
+Hierarchical area distribution
+------------------------------
+
+                                  Global cell area           Local cell area
+                                  -------------------  ---------------------------- 
+Hierarchical cell                 Absolute    Percent  Combi-     Noncombi-  Black-
+                                  Total       Total    national   national   boxes   Design
+--------------------------------  ----------  -------  ---------  ---------  ------  ------------------------------------------------
+VX_lsu_mem_arb__941ec8e0d26b      14363.7387    100.0     0.0000     0.0000  0.0000  VX_lsu_mem_arb__941ec8e0d26b
+g_bus_out_if_0__g_req_tag_sel_out_bits_insert     1.4040     0.0    1.4040    0.0000 0.0000 VX_bits_insert_6
+g_rsp_select_g_rsp_data_in_0__bits_remove     1.4040     0.0    1.4040    0.0000 0.0000 VX_bits_remove_6
+g_rsp_select_rsp_switch           11848.5897     82.5     2.4570     0.0000  0.0000  VX_stream_switch_10
+g_rsp_select_rsp_switch/g_out_buf_0__out_buf  5922.8909    41.2    0.0000    0.0000 0.0000 VX_elastic_buffer_57_1
+g_rsp_select_rsp_switch/g_out_buf_0__out_buf/g_eb2_out_buf   488.5920     3.4  488.5920    0.0000 0.0000 VX_pipe_buffer_38_1
+g_rsp_select_rsp_switch/g_out_buf_0__out_buf/g_eb2_stream_buffer  5434.2989    37.8 1035.9180 4393.1159 0.0000 VX_stream_buffer_1042_0_1
+g_rsp_select_rsp_switch/g_out_buf_0__out_buf/g_eb2_stream_buffer/clk_gate_g_buffer_buffer_r_reg     1.7550     0.0    0.0000    1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_stream_buffer_1042_0_0_3
+g_rsp_select_rsp_switch/g_out_buf_0__out_buf/g_eb2_stream_buffer/clk_gate_g_buffer_data_out_r_reg     1.7550     0.0    0.0000    1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_stream_buffer_1042_0_0_5
+g_rsp_select_rsp_switch/g_out_buf_0__out_buf/g_eb2_stream_buffer/clk_gate_g_buffer_data_out_r_reg_0     1.7550     0.0    0.0000    1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_stream_buffer_1042_0_0_4
+g_rsp_select_rsp_switch/g_out_buf_1__out_buf  5923.2419    41.2    0.0000    0.0000 0.0000 VX_elastic_buffer_57_0
+g_rsp_select_rsp_switch/g_out_buf_1__out_buf/g_eb2_out_buf   488.5920     3.4  488.5920    0.0000 0.0000 VX_pipe_buffer_38_0
+g_rsp_select_rsp_switch/g_out_buf_1__out_buf/g_eb2_stream_buffer  5434.6499    37.8 1036.2690 4393.1159 0.0000 VX_stream_buffer_1042_0_0
+g_rsp_select_rsp_switch/g_out_buf_1__out_buf/g_eb2_stream_buffer/clk_gate_g_buffer_buffer_r_reg     1.7550     0.0    0.0000    1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_stream_buffer_1042_0_0_1
+g_rsp_select_rsp_switch/g_out_buf_1__out_buf/g_eb2_stream_buffer/clk_gate_g_buffer_data_out_r_reg     1.7550     0.0    0.0000    1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_stream_buffer_1042_0_0_0
+g_rsp_select_rsp_switch/g_out_buf_1__out_buf/g_eb2_stream_buffer/clk_gate_g_buffer_data_out_r_reg_0     1.7550     0.0    0.0000    1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_stream_buffer_1042_0_0_2
+req_arb                            2512.3410     17.5  1697.0850     0.0000  0.0000  VX_stream_arb_39
+req_arb/g_input_select_g_arbiter_arbiter    11.2320     0.1    0.0000    0.0000 0.0000 VX_generic_arbiter
+req_arb/g_input_select_g_arbiter_arbiter/g_round_robin_rr_arbiter    11.2320     0.1    5.9670    4.2120 0.0000 VX_rr_arbiter
+req_arb/g_input_select_g_arbiter_arbiter/g_round_robin_rr_arbiter/g_model1_onehot_encoder     1.0530     0.0    1.0530    0.0000 0.0000 VX_onehot_encoder_1
+req_arb/g_input_select_g_arbiter_g_out_buf_0__out_buf   804.0240     5.6  804.0240    0.0000 0.0000 VX_elastic_buffer_1716_0_0_0
+--------------------------------  ----------  -------  ---------  ---------  ------  ------------------------------------------------
+Total                                                  5562.7649  8800.9738  0.0000
+
+1

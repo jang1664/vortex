@@ -1,0 +1,59 @@
+ 
+****************************************
+Report : area
+Design : VX_mem_arb__b4481119283f
+Version: V-2023.12-SP5-3
+Date   : Tue Jul 21 23:16:55 2026
+****************************************
+
+Library(s) Used:
+
+    sc9_cmos28lpp_base_rvt_ss_nominal_max_0p900v_125c_sadhm (File: /tool/PDK/Samsung/LN28LPP_202203/PRIMITIVES/RVT/ln28lpp_sc_9t_base_rvt_c130_V1.00d/FE-Common/LIBERTY/sc9_cmos28lpp_base_rvt_ss_nominal_max_0p900v_125c_sadhm.db)
+
+Number of ports:                         6816
+Number of nets:                          6804
+Number of cells:                         1138
+Number of combinational cells:           1134
+Number of sequential cells:                 0
+Number of macros/black boxes:               0
+Number of buf/inv:                       1134
+Number of references:                       2
+
+Combinational area:                530.711994
+Buf/Inv area:                      530.711994
+Noncombinational area:               0.000000
+Macro/Black Box area:                0.000000
+Net Interconnect area:      undefined  (No wire load specified)
+
+Total cell area:                   530.711994
+Total area:                 undefined
+
+Core Area:                      5690
+Aspect Ratio:                 1.0044
+Utilization Ratio:            0.0933
+
+
+The above information was reported from the logical library. The following are from the physical library:
+
+  Total moveable cell area: 530.7
+  Total fixed cell area: 0.0
+  Total physical cell area: 530.7
+ Core area: 0.000, 0.000, 75.270, 75.600
+
+Hierarchical area distribution
+------------------------------
+
+                                  Global cell area          Local cell area
+                                  ------------------  --------------------------- 
+Hierarchical cell                 Absolute   Percent  Combi-    Noncombi-  Black-
+                                  Total      Total    national  national   boxes   Design
+--------------------------------  ---------  -------  --------  ---------  ------  ---------------------------
+VX_mem_arb__b4481119283f           530.7120    100.0    0.0000     0.0000  0.0000  VX_mem_arb__b4481119283f
+g_rsp_arb_req_arb                  242.8920     45.8    0.0000     0.0000  0.0000  VX_stream_arb_14
+g_rsp_arb_req_arb/g_passthru_g_out_buf_0__out_buf  242.8920    45.8 242.8920    0.0000 0.0000 VX_elastic_buffer_517_0_0_0
+req_arb                            287.8200     54.2    0.0000     0.0000  0.0000  VX_stream_arb_13
+req_arb/g_passthru_g_out_buf_0__out_buf  287.8200    54.2 287.8200    0.0000 0.0000 VX_elastic_buffer_613_0_0_0
+--------------------------------  ---------  -------  --------  ---------  ------  ---------------------------
+Total                                                 530.7120     0.0000  0.0000
+
+1

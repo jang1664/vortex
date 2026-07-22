@@ -1,0 +1,67 @@
+# Fast subdesign synthesis/PnR target map.
+#
+# The top elaboration catalog and DDC are supplied by --seed-run-dir.  Keep
+# family-specific hierarchy rules separate so C1/C2 can be added without
+# changing the orchestration code.
+
+common_targets:
+  - name: stream_xbar
+    module_patterns: [VX_stream_xbar]
+    required: true
+  - name: axi_xbar
+    module_patterns: [axi_xbar, axi_interleaved_xbar]
+  - name: memory_arbiter
+    module_patterns: [VX_mem_arb]
+  - name: lsu_memory_arbiter
+    module_patterns: [VX_lsu_mem_arb]
+  - name: memory_switch
+    module_patterns: [VX_mem_switch]
+  - name: local_memory_switch
+    module_patterns: [VX_lmem_switch]
+  - name: tensor_memory_switch
+    module_patterns: [VX_tmem_switch, VX_tmem_wide_read_switch]
+  - name: axi_mux_demux
+    module_patterns: [axi_mux, axi_demux]
+  - name: gemm_tree
+    module_patterns: [VX_gemm_tree_v1]
+    required: true
+
+families:
+  C3:
+    alias_patterns: [C3, naive_gemm_th*]
+    config_patterns: [naive_gemm_th*.sh]
+    targets:
+      # C3's CPU DMA node is under the core hierarchy.  The exact wrapper path
+      # avoids selecting its internal VX_dma_unit implementation as a second
+      # overlapping PnR target.
+      - name: cpu_dma_node
+        module_patterns: [VX_dma_node]
+        instance_patterns: ["vortex/**/u_VX_dma_node"]
+      - name: hbm_dma_engine
+        module_patterns: [VX_dma_engine]
+        instance_patterns: ["vortex/**/gemm_node/**/u_dma_engine"]
+      - name: gemm_local_dma
+        module_patterns: [VX_lmem_dma_misal]
+        instance_patterns: ["vortex/**/gemm_node/**/u_ldma_*"]
+      - name: gemm_tmem_dma_controller
+        module_patterns: [VX_gemm_tmem_dma_ctrl]
+        instance_patterns: ["vortex/**/gemm_node/**/u_tmem_dma_ctrl"]
+
+  C4:
+    alias_patterns: [C4, improve_th*]
+    config_patterns: [improve_th*.sh]
+    targets:
+      # C4 currently uses the same high-level wrappers as C3, but keeps an
+      # independent rule set because its GEMM/LMEM hierarchy evolves separately.
+      - name: cpu_dma_node
+        module_patterns: [VX_dma_node]
+        instance_patterns: ["vortex/**/u_VX_dma_node"]
+      - name: hbm_dma_engine
+        module_patterns: [VX_dma_engine]
+        instance_patterns: ["vortex/**/gemm_node/**/u_dma_engine"]
+      - name: gemm_local_dma
+        module_patterns: [VX_lmem_dma_misal]
+        instance_patterns: ["vortex/**/gemm_node/**/u_ldma_*"]
+      - name: gemm_tmem_dma_controller
+        module_patterns: [VX_gemm_tmem_dma_ctrl]
+        instance_patterns: ["vortex/**/gemm_node/**/u_tmem_dma_ctrl"]
