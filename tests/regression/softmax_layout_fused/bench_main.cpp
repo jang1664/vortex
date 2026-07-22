@@ -146,7 +146,9 @@ int main(int argc, char *argv[]) {
   uint64_t num_threads = 0;
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_WARPS, &num_warps));
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_THREADS, &num_threads));
-#if SOFTMAX_LAYOUT_FUSED_VARIANT == SOFTMAX_LAYOUT_FUSED_VARIANT_OPT_WARP
+#if SOFTMAX_LAYOUT_FUSED_VARIANT == SOFTMAX_LAYOUT_FUSED_VARIANT_OPT_WARP || \
+    SOFTMAX_LAYOUT_FUSED_VARIANT == SOFTMAX_LAYOUT_FUSED_VARIANT_REV2 || \
+    SOFTMAX_LAYOUT_FUSED_VARIANT == SOFTMAX_LAYOUT_FUSED_VARIANT_REV2_ADDRGEN
   const uint32_t tpb = std::min(256u, (uint32_t)num_threads);
 #else
   const uint32_t tpb = std::min(256u, (uint32_t)(num_warps * num_threads));

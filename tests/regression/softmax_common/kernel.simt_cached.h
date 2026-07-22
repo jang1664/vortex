@@ -27,6 +27,7 @@ static inline void softmax_simt_cached(const Accessor& accessor,
   auto scores = reinterpret_cast<float *>(local_base);
   auto reduce = reinterpret_cast<float *>(local_base + score_bytes);
   float local_max = VX_NEG_INF;
+  accessor.begin_load(k_end);
   for (uint32_t k = tid; k < k_end; k += block_size) {
     float value = fp16_to_float(accessor.load(k)) * scale;
     scores[k] = value;
@@ -62,9 +63,11 @@ static inline void softmax_simt_cached(const Accessor& accessor,
     __syncthreads();
   }
   const float inv_sum = 1.0f / reduce[0];
+  accessor.begin_store(0, k_end);
   for (uint32_t k = tid; k < k_end; k += block_size) {
     accessor.store(k, float_to_fp16(scores[k] * inv_sum));
   }
+  accessor.begin_store(k_end, output_k_extent);
   for (uint32_t k = k_end + tid; k < output_k_extent; k += block_size) {
     accessor.store(k, float_to_fp16(0.0f));
   }
