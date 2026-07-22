@@ -61,6 +61,44 @@ It does not eliminate output-address generation because masked and padded
 columns must still be zeroed. The K33 case with physical stride 64, for example,
 generates tiled store addresses through column 63.
 
+## Hardware Address-Generator Prototype
+
+The `rev2_addrgen` prototype replaces only the layout-fused accessor's tiled
+offset arithmetic. The row-major `softmax/rev2` baseline contains no address-
+generator instruction. A generated-instruction scan found zero CUSTOM0 funct7
+`0x04`/`0x05` instructions in the baseline and nine static instances in the
+address-generator fused kernel.
+
+Initial `simx` results are:
+
+| Shape and options | Baseline cycles | Fused rev2 cycles | Fused rev2_addrgen cycles | Original gap | New gap | Gap reduction |
+|---|---:|---:|---:|---:|---:|---:|
+| B1 H1 Q4 K32, no mask | 64,869 | 80,920 | 74,159 | 16,051 | 9,290 | 42.1% |
+| B1 H1 Q4 K64, no mask | 66,714 | 82,820 | 75,909 | 16,106 | 9,195 | 42.9% |
+| B1 H1 Q3 K33, stride 64, causal | 53,717 | 59,484 | 59,559 | 5,767 | 5,842 | -1.3% |
+
+All three variants passed their reference checks. The short causal case does
+not amortize the load/store stream configuration commands, so the prototype is
+75 cycles slower than the original fused accessor there. A later kernel policy
+may need to bypass the generator below a measured active-element threshold.
+
+The `simx` implementation models command execution and address values but not
+depth-two queue occupancy or pop blocking, so the cycle reductions above remain
+software-model estimates. The RTL uses independent per-thread load and store
+queues, with all live thread streams able to enqueue in parallel. Its focused
+VCS unit test passes at the target four-warp, 32-thread shape, and the following
+end-to-end `xrt-vcs-sim` cases pass without deadlock:
+
+| Shape and options | Max difference | Instructions | Cycles |
+|---|---:|---:|---:|
+| B1 H1 Q2 K32, no mask | 0.000015 | 63,774 | 37,305 |
+| B1 H1 Q3 K33, stride 64, causal | 0.000031 | 70,358 | 44,527 |
+
+The linked worktree does not contain populated third-party submodules. These
+runs exported `THIRD_PARTY_DIR=/home/jaeyongjang/project.local/vortex_fpint/third_party`
+so the xrt-vcs build reused the populated dependencies from the primary
+checkout.
+
 An additional B1/H1/Q3/K33 causal case with requested stride 40 passed in both
 variants after both hosts rounded the physical extent to 64 elements. This
 locks the matched-layout contract for a non-tile-aligned requested stride.

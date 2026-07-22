@@ -88,6 +88,10 @@ Emulator::Emulator(const Arch &arch, const DCRS &dcrs, Core* core)
     , vec_unit_(core->vec_unit())
   #endif
 {
+#ifdef EXT_ADDR_GEN_ENABLE
+  addrgen_states_.resize(arch.num_warps(),
+      std::vector<addrgen_thread_t>(arch.num_threads()));
+#endif
   std::srand(50);
   this->reset();
 }
@@ -114,6 +118,14 @@ void Emulator::reset() {
   for (auto& barrier : barriers_) {
     barrier.reset();
   }
+
+#ifdef EXT_ADDR_GEN_ENABLE
+  for (auto& warp_states : addrgen_states_) {
+    for (auto& thread_states : warp_states) {
+      thread_states = {};
+    }
+  }
+#endif
 
 #ifdef EXT_V_ENABLE
   vec_unit_->reset();

@@ -489,6 +489,11 @@ def build_parser() -> argparse.ArgumentParser:
     gen.add_argument("--out", required=True, help="Output directory for generated suites and index.yaml.")
     gen.add_argument("--overwrite", action="store_true", help="Replace existing generated suite files.")
     gen.add_argument(
+        "--dump-model-structures",
+        action="store_true",
+        help="Write aggregate JSON, layout, and text model-structure dumps for every expanded workload.",
+    )
+    gen.add_argument(
         "--batches",
         "--batch-list",
         default=None,
@@ -811,6 +816,7 @@ def main(argv: list[str] | None = None) -> int:
             generation_batch_values=generation_batch_values,
             prefill_seq_len_values=prefill_seq_len_values,
             generation_seq_len_values=generation_seq_len_values,
+            dump_model_structures=args.dump_model_structures,
         ))
         print(f"wrote {Path(args.out).resolve() / 'index.yaml'}")
         print(f"generated {len(index['generated'])} suites")

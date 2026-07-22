@@ -68,25 +68,15 @@ ci/run_black.sh hw --fpga-bin naive_simd --app APP --args "..."
 - Claude hooks under `harness/hooks` are not automatic in Codex. Follow the corresponding skill procedure and run referenced validation scripts manually when needed.
 - When a skill mentions a Claude slash command such as `/run-fsm`, `/run-bb-common`, or `/handoff`, treat it as invoking the matching Codex skill.
 
-## Superpowers usage policy
+## Skill invocation policy
 
-Default mode is Simple Mode.
-
-Use Superpowers only when:
-- I explicitly say "use superpowers"
-- the task touches multiple files
-- the task requires debugging an unknown failure
-- the task requires architectural design or planning
-- the task is risky enough to need review/checkpoints
-
-Do NOT use Superpowers for:
-- simple Q&A
-- one-line or small edits
-- formatting changes
-- renaming variables
-- adding comments
-- quick shell commands
-- explaining code without modifying it
-
-When I say "simple mode", do not use brainstorming, writing-plans, executing-plans, or subagent-driven-development.
-When I say "full mode", use Superpowers normally.
+- Do not start Compound Engineering or Superpowers unless the user
+  explicitly invokes or names one of them.
+- Once a Compound Engineering skill is explicitly invoked, allow that skill
+  to use its required Compound Engineering subagents, references, and tools.
+- Do not automatically switch from one top-level CE workflow skill to another.
+  Suggest the next CE skill and wait for explicit user invocation.
+- Never mix Superpowers into a Compound Engineering workflow unless the user
+  explicitly requests both.
+- Once a Superpowers skill is explicitly invoked, allow its internal workflow
+  to run, but do not activate unrelated Superpowers skills automatically.

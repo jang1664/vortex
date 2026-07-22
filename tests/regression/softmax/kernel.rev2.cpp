@@ -12,6 +12,9 @@ struct RowMajorAccessor {
   data_t *input;
   data_t *output;
 
+  void begin_load(uint32_t) const {}
+  void begin_store(uint32_t, uint32_t) const {}
+
   data_t load(uint32_t k) const {
     return input[k];
   }

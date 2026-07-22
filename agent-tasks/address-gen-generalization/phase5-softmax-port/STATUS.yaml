@@ -1,0 +1,50 @@
+task: address-gen-generalization/phase5-softmax-port
+state: COMPLETE
+summary: Port softmax_layout_fused/rev2_addrgen to the generalized descriptor ISA and pass focused plus xrt-vcs-sim verification.
+updated: "2026-07-22 10:30"
+current:
+  iteration: 1
+  action: Complete; generalized rev2_addrgen passes focused VCS, simx, and xrt-vcs-sim verification.
+log:
+  - timestamp: "2026-07-22 10:07"
+    action: Confirmed the Phase 5 porting contract from the user's request and the completed Phase 1-4 architecture.
+    result: Scope is limited to rev2_addrgen descriptor construction and required verification; baseline and non-addrgen controls remain unchanged.
+  - timestamp: "2026-07-22 10:30"
+    action: Ran both required simx and xrt-vcs-sim softmax integration cases.
+    result: Both cases passed with zero errors; Q2/K32 unmasked used 39443 xrt-vcs cycles and Q3/K33 stride64 causal used 48020 xrt-vcs cycles.
+iterations:
+  - iteration: 1
+    timestamp: "2026-07-22 10:19"
+    implementation: Ported rev2_addrgen to lane-specific generalized LD0/ST descriptors; Vortex Clang -Wall -Wextra -Werror compile passed.
+    verification: Focused VCS W2/T8/SIMD4 all test with 12 random iterations reached OUTPUT CHECK PASSED at 10470000 ps.
+    result: PASS
+    notes: verify_rtl.py returned sim_fail because it searched for sim_all.log instead of sim_all_seed1234.log; the actual VCS log completed normally with the pass marker.
+integration:
+  simx:
+    - case: B1/H1/Q2/K32 unmasked
+      result: PASS
+      max_diff: 0.000015
+      instructions: 68160
+      cycles: 49966
+    - case: B1/H1/Q3/K33 stride64 causal
+      result: PASS
+      max_diff: 0.000031
+      instructions: 77372
+      cycles: 63431
+  xrt_vcs_sim:
+    - case: B1/H1/Q2/K32 unmasked
+      result: PASS
+      max_diff: 0.000015
+      instructions: 68162
+      cycles: 39443
+    - case: B1/H1/Q3/K33 stride64 causal
+      result: PASS
+      max_diff: 0.000031
+      instructions: 77374
+      cycles: 48020
+pitfalls:
+  - Do not restore compatibility aliases for the specialized ABI; old funct7 0x05 store is generalized LD1.
+  - Descriptor base and bound are lane-specific and must exactly match each software loop range.
+  - Returned addresses remain byte addresses for ordinary LSU loads/stores.
+  - Run blackbox only through ci/run_black.sh from the configured build with the address-generator config sourced.
+  - xrtsim_vcs simv does not track RTL sources as target dependencies; force a simv rebuild after RTL changes or a stale binary can silently execute the old ISA.

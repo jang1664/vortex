@@ -1,0 +1,59 @@
+task: softmax-layout-address-gen
+state: COMPLETE
+summary: The fused-only address generator is implemented, reduces the simx unmasked rev2 cycle gap by about 42%, and passes both requested small xrt-vcs-sim integration cases.
+updated: "2026-07-22 00:55"
+current:
+  unit: complete
+  action: Preserve the verified worktree for later synthesis and FPGA evaluation.
+log:
+  - timestamp: "2026-07-21 23:19"
+    action: Created feat/softmax-layout-address-gen from current fpint in a new linked worktree.
+    result: The primary checkout and its unrelated uncommitted changes remain isolated.
+  - timestamp: "2026-07-21 23:19"
+    action: Reframed the target around the measured softmax gap rather than a generic eladd speedup gate.
+    result: Baseline softmax/rev2 is fixed and forbidden from using address-generator instructions; only a distinct layout-fused rev2_addrgen variant may use the new unit.
+  - timestamp: "2026-07-21 23:19"
+    action: Confirmed the fast/accurate verification split with the user.
+    result: simx is the primary iteration loop; xrt-vcs-sim is reserved for small cases after focused functional tests pass.
+  - timestamp: "2026-07-22 00:10"
+    action: Implemented optional CUSTOM0 address-generator instructions, a dedicated EX_AGEN RTL unit, independent per-thread depth-2 load/store queues, intrinsics, simx support, and softmax_layout_fused/rev2_addrgen.
+    result: The generator produces byte addresses only; the kernel still performs ordinary SIMT fp16 loads and stores.
+  - timestamp: "2026-07-22 00:12"
+    action: Ran the focused VCS unit test for VX_agen_unit with XLEN=64, one warp, and four threads.
+    result: PASS at 760 ns, including queue generation and blocking pop behavior.
+  - timestamp: "2026-07-22 00:20"
+    action: Compared DMA-free rev2 variants with simx on one core and 32 threads.
+    result: Q4/K32 unmasked cycles were baseline 64869, fused rev2 80920, and fused rev2_addrgen 74159; the fused gap fell from 16051 to 9290 cycles (42.1%). Q4/K64 cycles were 66714, 82820, and 75909; the gap fell from 16106 to 9195 cycles (42.9%). All results passed.
+  - timestamp: "2026-07-22 00:23"
+    action: Tested a short causal edge case with Q3/K33 and seqk_stride=64.
+    result: Baseline rev2 took 53717 cycles, fused rev2 59484, and fused rev2_addrgen 59559. Correctness passed, but the address-generator setup cost made this small masked case 75 cycles slower than fused rev2.
+  - timestamp: "2026-07-22 00:25"
+    action: Inspected generated kernel instruction words.
+    result: Baseline softmax/rev2 contains zero CUSTOM0 funct7 4/5 address-generator instructions; fused rev2_addrgen contains nine static address-generator instructions.
+  - timestamp: "2026-07-22 00:28"
+    action: Attempted the small xrt-vcs-sim blackbox run through ci/run_black.sh.
+    result: The command was rejected before launch because the current executor requires approval for that action while approval requests are disabled; this is not a compile or simulation failure.
+  - timestamp: "2026-07-22 00:35"
+    action: Removed the lane-serialized round-robin producer and made all live per-thread load/store streams advance in parallel.
+    result: This matches the exclusive per-thread generator goal and avoids a hidden 32-cycle queue-fill bottleneck that the functional simx model would not expose. The focused VCS unit test passes again after updating its latency expectation.
+  - timestamp: "2026-07-22 00:40"
+    action: Recompiled and ran the focused VCS test with the target C4 execution shape NUM_WARPS=4, NUM_THREADS=32, and SIMD_WIDTH=32.
+    result: PASS. The unittest Makefile now accepts these dimensions as overrides; the generic verify_rtl helper applies params only to its run phase, so the target-shape compile was invoked directly with make.
+  - timestamp: "2026-07-22 00:45"
+    action: Force-built simx with the address-generator extension disabled and then enabled again.
+    result: Both configurations compile successfully, and the worktree build is left in the enabled state.
+  - timestamp: "2026-07-22 00:50"
+    action: Ran the requested B1/H1/Q2/K32 unmasked rev2_addrgen case through ci/run_black.sh xrt-vcs-sim.
+    result: PASS with max_diff=0.000015, 63774 instructions, and 37305 cycles; the kernel completed without deadlock.
+  - timestamp: "2026-07-22 00:54"
+    action: Ran the requested B1/H1/Q3/K33 seqk_stride=64 causal rev2_addrgen case through ci/run_black.sh xrt-vcs-sim.
+    result: PASS with max_diff=0.000031, 70358 instructions, and 44527 cycles; the kernel completed without deadlock.
+  - timestamp: "2026-07-22 00:55"
+    action: Reused populated third-party dependencies from the primary checkout for worktree xrt-vcs builds.
+    result: Exporting THIRD_PARTY_DIR=/home/jaeyongjang/project.local/vortex_fpint/third_party resolved the initial missing common_cells source without modifying RTL or kernel behavior.
+pitfalls:
+  - Never add address-generator intrinsics to softmax/rev2 or move the baseline counter while optimizing fused.
+  - The generator returns byte addresses only; all memory traffic must remain ordinary SIMT LSU loads/stores.
+  - Masked and padded output uses a second store range beginning at k_end, which may not be tile aligned.
+  - A blocked pop must not create cross-unit head-of-line blocking; keep the unit on a dedicated optional execution path.
+  - Configure-generated build files must be refreshed after adding kernel variants or RTL sources.

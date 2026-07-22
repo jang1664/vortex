@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -91,6 +92,9 @@ cases:
             index = generate_suites(GenerateSuitesOptions(suite=suite_path, out_dir=out_dir))
 
             self.assertEqual(index, yaml.safe_load((out_dir / "index.yaml").read_text()))
+            self.assertFalse((out_dir / "model_structure.json").exists())
+            self.assertFalse((out_dir / "model_structure.layout").exists())
+            self.assertFalse((out_dir / "model_structure.text").exists())
             entries = {(entry["app"], entry["fpga_bin"]): entry for entry in index["generated"]}
             self.assertEqual(
                 {
@@ -220,6 +224,76 @@ workloads:
             self.assertEqual(4, generation[0]["shape"]["batch"])
             self.assertEqual(1, generation[0]["shape"]["seqq"])
             self.assertEqual(512, generation[0]["shape"]["seqk"])
+
+    def test_generate_suites_dumps_all_workload_model_structures(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            suite_path = tmp_path / "suite.yaml"
+            suite_path.write_text(
+                """
+name: dumped_workload_structures
+defaults:
+  warmup: 1
+  iterations: 1
+  fpga_bin: test_bin
+fpga_bins:
+  default: test_bin
+workloads:
+  - id: softmax
+    model: llama2-7b
+    stage: prefill
+    variant: all_sgemm_tcu
+    implemented_only: false
+    matrix:
+      batch: {values: [1]}
+      prefill_seq_len: {values: [32, 64]}
+      qblk: 32
+""".lstrip()
+            )
+            out_dir = tmp_path / "generated"
+
+            rc = main([
+                "generate-suites",
+                "--suite", str(suite_path),
+                "--out", str(out_dir),
+                "--dump-model-structures",
+            ])
+            self.assertEqual(0, rc)
+
+            json_path = out_dir / "model_structure.json"
+            layout_path = out_dir / "model_structure.layout"
+            text_path = out_dir / "model_structure.text"
+            self.assertTrue(json_path.is_file())
+            self.assertTrue(layout_path.is_file())
+            self.assertTrue(text_path.is_file())
+
+            dump = json.loads(json_path.read_text())
+            self.assertEqual("dumped_workload_structures", dump["suite"])
+            self.assertEqual(2, len(dump["structures"]))
+            self.assertEqual(
+                [32, 64],
+                [entry["config"]["prefill_seq_len"] for entry in dump["structures"]],
+            )
+            expected_kernel_order = [
+                "input_layernorm", "q_proj", "k_proj", "v_proj", "rope_q", "rope_k",
+                "kv_cache_quant_rope_k_to_attn_qkT", "attn_qkT", "attn_softmax",
+                "kv_cache_quant_v_cache_to_attn_pv", "attn_pv", "attn_head_concat",
+                "o_proj", "residual_attn", "post_attention_layernorm", "gate_proj",
+                "up_proj", "mlp_silu", "mlp_elmul", "down_proj", "residual_ffn",
+            ]
+            self.assertTrue(all(
+                [kernel["name"] for kernel in entry["kernels"]] == expected_kernel_order
+                for entry in dump["structures"]
+            ))
+            self.assertIn("[workload: softmax_batch1_prefill_seq_len32_qblk32]", layout_path.read_text())
+            self.assertIn("attn_softmax", layout_path.read_text())
+            self.assertEqual(layout_path.read_text(), text_path.read_text())
+            layout_kernel_order = [
+                line.split()[1]
+                for line in layout_path.read_text().splitlines()
+                if len(line) >= 4 and line[:2].isdigit() and line[2:4] == ". "
+            ]
+            self.assertEqual(expected_kernel_order * 2, layout_kernel_order)
 
 
 if __name__ == "__main__":

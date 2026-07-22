@@ -98,6 +98,17 @@ module VX_execute import VX_gpu_pkg::*; #(
     );
 `endif
 
+`ifdef EXT_ADDR_GEN_ENABLE
+    VX_agen_unit #(
+        .INSTANCE_ID (`SFORMATF(("%s-agen", INSTANCE_ID)))
+    ) agen_unit (
+        .clk            (clk),
+        .reset          (reset),
+        .dispatch_if    (dispatch_if[EX_AGEN * `ISSUE_WIDTH +: `ISSUE_WIDTH]),
+        .commit_if      (commit_if[EX_AGEN * `ISSUE_WIDTH +: `ISSUE_WIDTH])
+    );
+`endif
+
     VX_sfu_unit #(
         .INSTANCE_ID (`SFORMATF(("%s-sfu", INSTANCE_ID))),
         .CORE_ID (CORE_ID)

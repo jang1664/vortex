@@ -549,6 +549,41 @@ module VX_decode import VX_gpu_pkg::*; #(
                         endcase
                     end
                 `endif
+                `ifdef EXT_ADDR_GEN_ENABLE
+                    INST_AGEN_FUNCT7_LD0,
+                    INST_AGEN_FUNCT7_LD1,
+                    INST_AGEN_FUNCT7_ST: begin
+                        if (funct3 != INST_AGEN_RESERVED) begin
+                            ex_type = EX_AGEN;
+                            op_type = INST_OP_BITS'(funct3);
+                            unique case (funct7)
+                                INST_AGEN_FUNCT7_LD0: op_args.agen.stream = INST_AGEN_STREAM_LD0;
+                                INST_AGEN_FUNCT7_LD1: op_args.agen.stream = INST_AGEN_STREAM_LD1;
+                                INST_AGEN_FUNCT7_ST:  op_args.agen.stream = INST_AGEN_STREAM_ST;
+                                default:              op_args.agen.stream = '0;
+                            endcase
+                            unique case (funct3)
+                                INST_AGEN_CFG_BASE: begin
+                                    `USED_IREG (rs1);
+                                end
+                                INST_AGEN_CFG_DIM0,
+                                INST_AGEN_CFG_DIM1,
+                                INST_AGEN_CFG_DIM2: begin
+                                    `USED_IREG (rs1);
+                                    `USED_IREG (rs2);
+                                end
+                                INST_AGEN_START,
+                                INST_AGEN_RESET: begin
+                                end
+                                INST_AGEN_POP: begin
+                                    `USED_IREG (rd);
+                                end
+                                default: begin
+                                end
+                            endcase
+                        end
+                    end
+                `endif
                     default:;
                 endcase
             end

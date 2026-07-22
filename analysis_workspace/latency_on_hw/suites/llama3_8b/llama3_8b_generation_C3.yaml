@@ -8,20 +8,20 @@ defaults:
   platform: xilinx_u55c_gen3x16_xdma_3_202210_1
 
 fpga_bins:
-  default: naive_gemm_th32_tcol32_hwexp_dcache
+  default: C4
 
   by_backend:
-    fpint_gemm_naive: improve_th32_tcol32_hwexp_dcache
+    fpint_gemm_naive: C4
 
   by_app:
-    fpint_gemm_ffn_hw: improve_th32_tcol32_hwexp_dcache
-    fpint_gemm_ffn_hw_naive: naive_gemm_th32_tcol32_hwexp_dcache
-    rmsnorm: improve_th32_tcol32_hwexp_dcache
-    rope: improve_th32_tcol32_hwexp_dcache
-    softmax: improve_th32_tcol32_hwexp_dcache
-    silu: improve_th32_tcol32_hwexp_dcache
-    eladd: improve_th32_tcol32_hwexp_dcache
-    elmul: improve_th32_tcol32_hwexp_dcache
+    fpint_gemm_ffn_hw: C4
+    fpint_gemm_ffn_hw_naive: C3
+    rmsnorm: C4
+    rope: C4
+    softmax: C4
+    silu: C4
+    eladd: C4
+    elmul: C4
 
 workloads:
   - id: llama3_8b_generation_C3

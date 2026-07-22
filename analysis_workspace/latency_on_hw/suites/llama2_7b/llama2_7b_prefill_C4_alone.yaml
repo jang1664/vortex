@@ -8,27 +8,27 @@ defaults:
   platform: xilinx_u55c_gen3x16_xdma_3_202210_1
 
 fpga_bins:
-  default: improve_th32_tcol32_hwexp_dcache
+  default: C4
 
   by_backend:
-    fpint_gemm_improve: improve_th32_tcol32_hwexp_dcache
+    fpint_gemm_improve: C4
 
   by_app:
-    fpint_gemm_ffn_hw: improve_th32_tcol32_hwexp_dcache
-    fpint_gemm_ffn_hw_naive: naive_gemm_th32_tcol32_hwexp_dcache
-    rmsnorm: improve_th32_tcol32_hwexp_dcache
-    rope: improve_th32_tcol32_hwexp_dcache
-    softmax: improve_th32_tcol32_hwexp_dcache
-    hadamard: improve_th32_tcol32_hwexp_dcache
-    silu: improve_th32_tcol32_hwexp_dcache
-    eladd: improve_th32_tcol32_hwexp_dcache
-    elmul: improve_th32_tcol32_hwexp_dcache
-    tile_input_a: improve_th32_tcol32_hwexp_dcache
-    detile_output: improve_th32_tcol32_hwexp_dcache
-    kv_cache_quant_w4a16: improve_th32_tcol32_hwexp_dcache
-    tile_weight_w4a16: improve_th32_tcol32_hwexp_dcache
-    tile_scale_zp_w4a16: improve_th32_tcol32_hwexp_dcache
-    head_concat: improve_th32_tcol32_hwexp_dcache
+    fpint_gemm_ffn_hw: C4
+    fpint_gemm_ffn_hw_naive: C3
+    rmsnorm: C4
+    rope: C4
+    softmax: C4
+    hadamard: C4
+    silu: C4
+    eladd: C4
+    elmul: C4
+    tile_input_a: C4
+    detile_output: C4
+    kv_cache_quant_w4a16: C4
+    tile_weight_w4a16: C4
+    tile_scale_zp_w4a16: C4
+    head_concat: C4
 
 workloads:
   - id: llama2_7b_prefill_C4_alone
