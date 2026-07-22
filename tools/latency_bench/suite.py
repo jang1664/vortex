@@ -10,6 +10,7 @@ import ast
 import copy
 import fnmatch
 import operator
+from collections.abc import Iterator
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
@@ -89,6 +90,12 @@ class BenchSuite:
     cases: list[BenchCase]
     fpga_bins: dict[str, Any] = field(default_factory=dict)
     source_path: Path | None = None
+
+
+@dataclass(frozen=True)
+class LoadedSuiteArtifacts:
+    suite: BenchSuite
+    workload_structures: list[dict[str, Any]]
 
 
 @dataclass(frozen=True)
@@ -723,39 +730,63 @@ def _format_workload_matrix_item(raw: dict[str, Any], params: dict[str, Any]) ->
     return out
 
 
-def _expand_workload_one(raw: dict[str, Any], defaults: BenchDefaults, repo_root: Path) -> list[BenchCase]:
+def _build_workload_payload(raw: dict[str, Any], repo_root: Path) -> dict[str, Any]:
     _ensure_repo_on_path(repo_root)
-    from tools.workload.gen_kernel_cfgs import build_llm_kernels
+    from tools.workload.gen_kernel_cfgs import (
+        DEFAULT_LLM_BATCH,
+        DEFAULT_LLM_GEN_KV,
+        DEFAULT_LLM_PREFILL_SEQ,
+        DEFAULT_LLM_QBLK,
+        DEFAULT_WORKLOAD_VARIANT,
+        LLM_STAGES,
+        build_llm_kernels,
+    )
 
     model = str(raw["model"])
     stage_raw = raw.get("stage", "all")
-    stages = ["prefill", "generation"] if stage_raw == "all" else [s.strip() for s in str(stage_raw).split(",") if s.strip()]
+    stages = list(LLM_STAGES) if stage_raw == "all" else [s.strip() for s in str(stage_raw).split(",") if s.strip()]
     max_seq_len_raw = raw.get("max_seq_len", raw.get("max-seq-len"))
     payload = build_llm_kernels(
         model_name=model,
         stages=stages,
-        batch=int(raw.get("batch", 1)),
-        prefill_seq_len=int(raw.get("prefill_seq_len", raw.get("prefill-seq-len", 128))),
-        gen_kv_len=int(raw.get("gen_kv_len", raw.get("gen-kv-len", 128))),
-        qblk=int(raw.get("qblk", 32)),
-        variant=str(raw.get("variant", "all_fpint_gemm_improve")),
+        batch=int(raw.get("batch", DEFAULT_LLM_BATCH)),
+        prefill_seq_len=int(raw.get("prefill_seq_len", raw.get("prefill-seq-len", DEFAULT_LLM_PREFILL_SEQ))),
+        gen_kv_len=int(raw.get("gen_kv_len", raw.get("gen-kv-len", DEFAULT_LLM_GEN_KV))),
+        qblk=int(raw.get("qblk", DEFAULT_LLM_QBLK)),
+        variant=str(raw.get("variant", DEFAULT_WORKLOAD_VARIANT)),
         max_seq_len=(None if max_seq_len_raw is None else int(max_seq_len_raw)),
     )
 
     implemented_only = bool(raw.get("implemented_only", True))
     filter_kind = raw.get("filter_kind")
     filter_backend = raw.get("filter_backend")
-    prefix = sanitize_id(str(raw.get("id", f"{model}_{'_'.join(stages)}")))
+    payload["kernels"] = [
+        kernel for kernel in payload["kernels"]
+        if not implemented_only or kernel.get("implemented", False)
+    ]
+    if filter_kind:
+        payload["kernels"] = [
+            kernel for kernel in payload["kernels"]
+            if kernel.get("kind") == filter_kind
+        ]
+    if filter_backend:
+        payload["kernels"] = [
+            kernel for kernel in payload["kernels"]
+            if kernel.get("backend") == filter_backend
+        ]
+    return payload
+
+
+def _expand_workload_one(raw: dict[str, Any], defaults: BenchDefaults, payload: dict[str, Any]) -> list[BenchCase]:
+    payload_stages = list((payload.get("config") or {}).get("stages") or [])
+    prefix = sanitize_id(str(raw.get(
+        "id",
+        f"{payload.get('model', 'workload')}_{'_'.join(payload_stages)}",
+    )))
     cases: list[BenchCase] = []
     seen_ids: set[str] = set()
 
     for i, kernel in enumerate(payload["kernels"], start=1):
-        if implemented_only and not kernel.get("implemented", False):
-            continue
-        if filter_kind and kernel.get("kind") != filter_kind:
-            continue
-        if filter_backend and kernel.get("backend") != filter_backend:
-            continue
         app = kernel.get("app")
         args = str(kernel.get("args", "")).strip()
         if not app or not args:
@@ -781,32 +812,54 @@ def _expand_workload_one(raw: dict[str, Any], defaults: BenchDefaults, repo_root
             shape=dict(kernel.get("shape") or {}),
             warmup=int(raw.get("warmup", defaults.warmup)),
             iterations=int(raw.get("iterations", defaults.iterations)),
-            source=f"workload:{model}:{kernel.get('variant', '')}:{i}",
+            source=f"workload:{payload.get('model', 'workload')}:{kernel.get('variant', '')}:{i}",
         ))
 
     return cases
 
 
-def _expand_workload(raw: dict[str, Any], defaults: BenchDefaults, repo_root: Path, index: int) -> list[BenchCase]:
+def _expand_workload_items(raw: dict[str, Any], index: int) -> Iterator[dict[str, Any]]:
     matrix = raw.get("matrix")
     if matrix is None:
-        return _expand_workload_one(raw, defaults, repo_root)
+        yield raw
+        return
     if not isinstance(matrix, dict) or not matrix:
         raise ValueError(f"workload #{index} is missing non-empty matrix")
 
     keys = list(matrix.keys())
     value_lists = [_matrix_values(matrix[key]) for key in keys]
-    cases: list[BenchCase] = []
     for combo in itertools.product(*value_lists):
-        params = _apply_derived_params(dict(zip(keys, combo)), raw, index, label="workload")
-        cases.extend(_expand_workload_one(_format_workload_matrix_item(raw, params), defaults, repo_root))
-    return cases
+        yield _format_workload_matrix_item(
+            raw,
+            _apply_derived_params(dict(zip(keys, combo)), raw, index, label="workload"),
+        )
 
 
-def load_suite(path: Path, repo_root: Path | None = None,
-               warmup_override: int | None = None,
-               iterations_override: int | None = None,
-               matrix_overrides: SuiteMatrixOverrides | None = None) -> BenchSuite:
+def _expand_workload(
+    raw: dict[str, Any],
+    defaults: BenchDefaults,
+    repo_root: Path,
+    index: int,
+    collect_structures: bool,
+) -> tuple[list[BenchCase], list[dict[str, Any]]]:
+    cases: list[BenchCase] = []
+    structures: list[dict[str, Any]] = []
+    for item in _expand_workload_items(raw, index):
+        payload = _build_workload_payload(item, repo_root)
+        if collect_structures:
+            structures.append({
+                "workload_id": sanitize_id(str(item.get("id", f"workload_{index}"))),
+                **payload,
+            })
+        cases.extend(_expand_workload_one(item, defaults, payload))
+    return cases, structures
+
+
+def _load_suite_artifacts(path: Path, repo_root: Path | None = None,
+                          warmup_override: int | None = None,
+                          iterations_override: int | None = None,
+                          matrix_overrides: SuiteMatrixOverrides | None = None,
+                          collect_workload_structures: bool = False) -> LoadedSuiteArtifacts:
     repo_root = find_repo_root() if repo_root is None else repo_root
     raw = yaml.safe_load(path.read_text()) or {}
     if not isinstance(raw, dict):
@@ -823,12 +876,21 @@ def load_suite(path: Path, repo_root: Path | None = None,
         defaults = BenchDefaults(**{**defaults.__dict__, "iterations": int(iterations_override)})
 
     cases: list[BenchCase] = []
+    workload_structures: list[dict[str, Any]] = []
     for i, item in enumerate(raw.get("cases") or [], start=1):
         cases.append(_case_from_raw(item, defaults, i))
     for i, item in enumerate(raw.get("case_matrices") or [], start=1):
         cases.extend(_expand_case_matrix(item, defaults, i))
     for i, item in enumerate(raw.get("workloads") or [], start=1):
-        cases.extend(_expand_workload(item, defaults, repo_root, i))
+        workload_cases, structures = _expand_workload(
+            item,
+            defaults,
+            repo_root,
+            i,
+            collect_workload_structures,
+        )
+        cases.extend(workload_cases)
+        workload_structures.extend(structures)
 
     if warmup_override is not None or iterations_override is not None:
         cases = [
@@ -843,13 +905,43 @@ def load_suite(path: Path, repo_root: Path | None = None,
     if not cases:
         raise ValueError(f"suite has no runnable cases: {path}")
 
-    return BenchSuite(
-        name=sanitize_id(str(raw.get("name", path.stem))),
-        defaults=defaults,
-        cases=cases,
-        fpga_bins=dict(fpga_bins_raw),
-        source_path=path,
+    return LoadedSuiteArtifacts(
+        suite=BenchSuite(
+            name=sanitize_id(str(raw.get("name", path.stem))),
+            defaults=defaults,
+            cases=cases,
+            fpga_bins=dict(fpga_bins_raw),
+            source_path=path,
+        ),
+        workload_structures=workload_structures,
     )
+
+
+def load_suite_artifacts(path: Path, repo_root: Path | None = None,
+                         warmup_override: int | None = None,
+                         iterations_override: int | None = None,
+                         matrix_overrides: SuiteMatrixOverrides | None = None) -> LoadedSuiteArtifacts:
+    return _load_suite_artifacts(
+        path,
+        repo_root=repo_root,
+        warmup_override=warmup_override,
+        iterations_override=iterations_override,
+        matrix_overrides=matrix_overrides,
+        collect_workload_structures=True,
+    )
+
+
+def load_suite(path: Path, repo_root: Path | None = None,
+               warmup_override: int | None = None,
+               iterations_override: int | None = None,
+               matrix_overrides: SuiteMatrixOverrides | None = None) -> BenchSuite:
+    return _load_suite_artifacts(
+        path,
+        repo_root=repo_root,
+        warmup_override=warmup_override,
+        iterations_override=iterations_override,
+        matrix_overrides=matrix_overrides,
+    ).suite
 
 
 def suite_to_rows(suite: BenchSuite) -> list[dict[str, Any]]:

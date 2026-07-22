@@ -16,9 +16,13 @@ aliases:
     path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_tcu_L2cache_3cbe56781b/bin
     configs: configs/tcu_th16_c2.sh
 
-  tcu_th32_c1: &C1_
+  tcu_th32_c1:
     path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_tcu_L2cache_ab7bd2824e/bin
     configs: configs/tcu_th32_c1.sh
+
+  tcu_th32_c1_rev2: &C1_
+    path: /opt/vortex_fpga_bins/fpint/xrt_hw_u55c_c_f100_fpint_tcu_94c5b39919/bin
+    configs: configs/tcu_th32_c1_rev2.sh
   
   C1: *C1_
 

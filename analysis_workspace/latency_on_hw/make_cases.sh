@@ -35,6 +35,8 @@ Defaults:
   GENERATED_SUITE_DIR defaults to generated_suites when omitted.
   Override options default to the values already encoded in each input YAML.
   SUITE_DIR should contain one model family; matching multiple files for the same case is an error.
+  Each generated suite directory includes model_structure.json, model_structure.layout,
+  and model_structure.text dumps for all expanded workload configurations.
 EOF
 }
 
@@ -229,6 +231,7 @@ generate_suite() {
         --suite "${suite}" \
         --out "${out_dir}" \
         --overwrite \
+        --dump-model-structures \
         "${GENERATE_ARGS[@]}"
 }
 
