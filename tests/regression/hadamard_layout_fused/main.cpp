@@ -54,10 +54,16 @@ static uint32_t log2_u32(uint32_t value) {
   return result;
 }
 
+static bool is_power_of_two(uint32_t value) {
+  return value != 0 && (value & (value - 1)) == 0;
+}
+
 static uint32_t spinquant_base_k(uint32_t dim) {
-  if (dim == 11008)
+  if (dim % 172 == 0 && is_power_of_two(dim / 172))
     return 172;
-  return (dim != 0 && (dim & (dim - 1)) == 0) ? 1 : 0;
+  if (dim % 28 == 0 && is_power_of_two(dim / 28))
+    return 28;
+  return is_power_of_two(dim) ? 1 : 0;
 }
 
 static void reference_hadamard(
@@ -227,7 +233,7 @@ int main(int argc, char** argv) {
     }
   }
   const uint32_t base_k = spinquant_base_k(dim);
-  if (rows == 0 || rows > HADAMARD_TILE_DMA_MT || matrix_count == 0
+  if (rows == 0 || matrix_count == 0
       || dim % HADAMARD_TILE_MXU_KT != 0 || base_k == 0) {
     std::fprintf(stderr,
                  "Unsupported requested case: m=%u n=%u k=%u\n",
@@ -241,8 +247,10 @@ int main(int argc, char** argv) {
   }
   const bool passed =
       run_case("requested", matrix_count, rows, (rows + 7) & ~7u, dim, base_k)
+      && run_case("multi_m_tile", 1, 160, 160, 128, 1)
       && run_case("r4_mixed_radix", 1, 2, 8, 96, 3)
-      && run_case("r4_llama2_7b", 1, 1, 8, 11008, 172);
+      && run_case("r4_llama2_7b", 1, 1, 8, 11008, 172)
+      && run_case("r4_llama3_8b", 1, 1, 8, 14336, 28);
   cleanup();
   return passed ? 0 : 1;
 }

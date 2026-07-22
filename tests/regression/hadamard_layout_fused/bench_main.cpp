@@ -45,10 +45,16 @@ static uint32_t log2_u32(uint32_t value) {
   return result;
 }
 
+static bool is_power_of_two(uint32_t value) {
+  return value != 0 && (value & (value - 1)) == 0;
+}
+
 static uint32_t spinquant_base_k(uint32_t dim) {
-  if (dim == 11008)
+  if (dim % 172 == 0 && is_power_of_two(dim / 172))
     return 172;
-  return (dim != 0 && (dim & (dim - 1)) == 0) ? 1 : 0;
+  if (dim % 28 == 0 && is_power_of_two(dim / 28))
+    return 28;
+  return is_power_of_two(dim) ? 1 : 0;
 }
 
 static void initialize_values(std::vector<data_t>& values, float scale) {
@@ -87,8 +93,8 @@ int main(int argc, char** argv) {
   }
 
   const uint32_t base_k = spinquant_base_k(dim);
-  if (rows == 0 || rows > HADAMARD_TILE_DMA_MT || matrix_count == 0 ||
-      base_k == 0 || dim % HADAMARD_TILE_MXU_KT != 0) {
+  if (rows == 0 || matrix_count == 0 || base_k == 0 ||
+      dim % HADAMARD_TILE_MXU_KT != 0) {
     std::fprintf(stderr, "Unsupported shape: m=%u n=%u k=%u\n",
                  rows, matrix_count, dim);
     return -1;
