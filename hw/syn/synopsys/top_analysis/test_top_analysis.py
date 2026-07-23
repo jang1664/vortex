@@ -98,12 +98,13 @@ def test_driver_accepts_target_config_paths(config_name: str) -> None:
     assert tag == config_path.stem
 
 
-def test_default_candidates_are_coarse_interconnect_and_gemm_tree() -> None:
+def test_default_candidates_are_coarse_interconnect_and_gemm_unit() -> None:
     config = load_analysis_config(TOP_ANALYSIS / "candidates.yaml")
     patterns = {rule.pattern for rule in config.include.modules}
 
     assert patterns == {
         "VX_stream_xbar",
+        "VX_stream_omega",
         "axi_xbar",
         "axi_interleaved_xbar",
         "VX_mem_arb",
@@ -114,10 +115,11 @@ def test_default_candidates_are_coarse_interconnect_and_gemm_tree() -> None:
         "VX_tmem_wide_read_switch",
         "axi_mux",
         "axi_demux",
-        "VX_gemm_tree_v1",
+        "VX_gemm_unit",
     }
     required = {rule.pattern for rule in config.include.modules if rule.required}
-    assert required == {"VX_stream_xbar", "VX_gemm_tree_v1"}
+    assert required == {"VX_stream_xbar", "VX_gemm_unit"}
+    assert config.exclude.instances == ["*/g_omega.*", "*/g_fallback.*"]
     assert patterns.isdisjoint(
         {
             "VX_stream_arb",
@@ -129,10 +131,10 @@ def test_default_candidates_are_coarse_interconnect_and_gemm_tree() -> None:
     )
 
     profiles = {profile.name: profile for profile in config.block_constraints}
-    assert profiles["gemm_tree_clock_ports"].constraints == {
-        "clk_name": "clk_i",
-        "reset_name": "resetn_i",
-        "reset_type": "active_low",
+    assert profiles["gemm_unit_clock_ports"].constraints == {
+        "clk_name": "clk",
+        "reset_name": "reset",
+        "reset_type": "active_high",
         "switching_activity": {},
     }
     assert profiles["axi_clock_ports"].match.module_patterns == [

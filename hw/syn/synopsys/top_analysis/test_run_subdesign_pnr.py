@@ -17,6 +17,20 @@ from top_analysis import run_subdesign_pnr as driver
 MATCH_CONFIG = driver._load_match_config(driver.DEFAULT_MATCH_CONFIG)
 
 
+def test_candidate_config_argument_selects_match_yaml() -> None:
+    args = driver._parser().parse_args(
+        ["--config", "config.sh", "--candidate-config", "C4.yaml"]
+    )
+    assert args.match_config == "C4.yaml"
+
+
+def test_match_config_alias_remains_supported() -> None:
+    args = driver._parser().parse_args(
+        ["--config", "config.sh", "--match-config", "legacy.yaml"]
+    )
+    assert args.match_config == "legacy.yaml"
+
+
 def _catalog() -> list[ElaboratedDesign]:
     return [
         ElaboratedDesign(
@@ -25,9 +39,9 @@ def _catalog() -> list[ElaboratedDesign]:
             instance_paths=["vortex/u_stream_xbar"],
         ),
         ElaboratedDesign(
-            design_name="VX_gemm_tree_v1_W32",
-            template_name="VX_gemm_tree_v1",
-            instance_paths=["vortex/gemm_node/u_tree"],
+            design_name="VX_gemm_unit_W32",
+            template_name="VX_gemm_unit",
+            instance_paths=["vortex/gemm_node/u_gemm_unit"],
         ),
         ElaboratedDesign(
             design_name="VX_dma_node_W32",
@@ -69,13 +83,18 @@ def test_selection_includes_dma_wrappers_without_internal_dma_unit(family: str) 
     selectors, matches = driver._select_targets(_catalog(), MATCH_CONFIG, family)
     selected = {selector.value for selector in selectors}
     assert "VX_stream_xbar_W32" in selected
-    assert "VX_gemm_tree_v1_W32" in selected
+    assert "VX_gemm_unit_W32" in selected
     assert "VX_dma_node_W32" in selected
     assert "VX_dma_engine_W32" in selected
     assert "VX_lmem_dma_misal_W32" in selected
     assert "VX_gemm_tmem_dma_ctrl_W32" in selected
     assert "VX_dma_unit_W32" not in selected
     assert any(item["name"] == "hbm_dma_engine" and item["matched"] == 1 for item in matches)
+
+
+def test_gemm_unit_is_synthesized_but_skipped_by_pnr() -> None:
+    skipped = driver._select_pnr_skips(_catalog(), MATCH_CONFIG, "C4")
+    assert skipped == {"VX_gemm_unit_W32"}
 
 
 def test_seed_resolution_accepts_results_root(tmp_path: Path) -> None:
@@ -85,6 +104,17 @@ def test_seed_resolution_accepts_results_root(tmp_path: Path) -> None:
     (seed / "results/Vortex_axi.elab.ddc").write_text("ddc")
     result = driver._resolve_seed_run_dir(str(seed), Path("config.sh"), "C4", tmp_path / "out")
     assert result["root"] == seed.resolve()
+
+
+def test_seed_resolution_accepts_explicit_ddc_path(tmp_path: Path) -> None:
+    seed = tmp_path / "top"
+    (seed / "results").mkdir(parents=True)
+    (seed / "results/design_catalog.tsv").write_text("design_name\ttemplate_name\nX\tX\n")
+    ddc = seed / "results/Vortex_axi.elab.ddc"
+    ddc.write_text("ddc")
+    result = driver._resolve_seed_run_dir(str(ddc), Path("config.sh"), "C4", tmp_path / "out")
+    assert result["root"] == seed.resolve()
+    assert result["ddc"] == ddc.resolve()
 
 
 def test_stage_order_is_synthesis_then_pnr() -> None:

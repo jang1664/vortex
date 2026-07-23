@@ -5,26 +5,69 @@
 # changing the orchestration code.
 
 common_targets:
-  - name: stream_xbar
+  # Select the logical cache interconnect.  In smaller configurations the
+  # request/response path is a direct VX_stream_xbar; larger configurations
+  # may elaborate VX_stream_omega at the same wrapper path.
+  - name: cache_interconnect
+    module_patterns: [VX_stream_xbar, VX_stream_omega]
+    instance_patterns:
+      - "vortex/**/*cache*/**/core_req_xbar"
+      - "vortex/**/*cache*/**/core_rsp_xbar"
+      - "vortex/**/*cache*/**/mem_rsp_xbar"
+      - "vortex/**/*cache*/**/mem_rsp_xbar/g_fallback.xbar_switch"
+
+  - name: local_memory_interconnect
+    module_patterns: [VX_stream_xbar, VX_stream_omega]
+    instance_patterns:
+      - "vortex/*mem_unit*/*local_mem*/*req_xbar"
+      - "vortex/*mem_unit*/*local_mem*/*rsp_xbar"
+
+  - name: axi_adapter_xbar
     module_patterns: [VX_stream_xbar]
-    required: true
-  - name: axi_xbar
-    module_patterns: [axi_xbar, axi_interleaved_xbar]
-  - name: memory_arbiter
-    module_patterns: [VX_mem_arb]
-  - name: lsu_memory_arbiter
-    module_patterns: [VX_lsu_mem_arb]
+    instance_patterns:
+      - "axi_adapter/req_xbar"
+      - "axi_adapter/rsp_xbar"
+      - "vortex/**/axi_adapter/**/req_xbar"
+      - "vortex/**/axi_adapter/**/rsp_xbar"
+
   - name: memory_switch
     module_patterns: [VX_mem_switch]
+    instance_patterns:
+      - "vortex/**/*cache_bypass/core_bus_nc_switch"
+
   - name: local_memory_switch
     module_patterns: [VX_lmem_switch]
-  - name: tensor_memory_switch
-    module_patterns: [VX_tmem_switch, VX_tmem_wide_read_switch]
+    instance_patterns:
+      - "vortex/*mem_unit*/*lmem_switch"
+
+  - name: cache_arbiter
+    module_patterns: [VX_mem_arb]
+    instance_patterns:
+      - "vortex/*cache*/*core_arb"
+      - "vortex/*cache*/*mem_arb"
+      - "vortex/**/*cache*/**/core_arb"
+      - "vortex/**/*cache*/**/mem_arb"
+      - "vortex/**/*cache_bypass/**/core_bus_nc_arb"
+      - "vortex/**/*cache_bypass/**/mem_bus_out_arb"
+      - "vortex/*g_mem_bus_if*mem_arb"
+      - "vortex/*mem_unit*/*dcache_dma_arbiter"
+
+  - name: lmem_arbiter
+    module_patterns: [VX_mem_arb]
+    instance_patterns:
+      - "vortex/*mem_unit*/*lmem_membus_dma_arbiter"
+
+  - name: lsu_mem_arbiter
+    module_patterns: [VX_lsu_mem_arb]
+    instance_patterns:
+      - "vortex/*mem_unit*/lmem_arb"
+      - "vortex/*job_frontend/lmem_arb"
+
   - name: axi_mux_demux
     module_patterns: [axi_mux, axi_demux]
-  - name: gemm_tree
-    module_patterns: [VX_gemm_tree_v1]
-    required: true
+    instance_patterns:
+      - "g_hbm_mux*.u_axi_mux"
+      - "u_lsu_demux"
 
 families:
   C3:
@@ -46,6 +89,14 @@ families:
       - name: gemm_tmem_dma_controller
         module_patterns: [VX_gemm_tmem_dma_ctrl]
         instance_patterns: ["vortex/**/gemm_node/**/u_tmem_dma_ctrl"]
+      - name: gemm_lmem_arbiter
+        module_patterns: [VX_mem_arb]
+        instance_patterns:
+          - "vortex/*gemm_node*/*lane_arb"
+          - "vortex/*gemm_node*/*lmem_membus_arbiter"
+      - name: gemm_unit
+        module_patterns: [VX_gemm_unit]
+        pnr: false
 
   C4:
     alias_patterns: [C4, improve_th*]
@@ -65,3 +116,12 @@ families:
       - name: gemm_tmem_dma_controller
         module_patterns: [VX_gemm_tmem_dma_ctrl]
         instance_patterns: ["vortex/**/gemm_node/**/u_tmem_dma_ctrl"]
+      - name: tensor_memory_switch
+        module_patterns: [VX_tmem_switch, VX_tmem_wide_read_switch]
+        instance_patterns: ["vortex/*gemm_node*/*u_switch_*"]
+      - name: tmem_arbiter
+        module_patterns: [VX_mem_arb]
+        instance_patterns: ["vortex/*u_tmem_subsystem*/*mem_arb"]
+      - name: gemm_unit
+        module_patterns: [VX_gemm_unit]
+        pnr: false

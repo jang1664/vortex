@@ -1,0 +1,60 @@
+# Fast subdesign synthesis/PnR target map.
+#
+# The top elaboration catalog and DDC are supplied by --seed-run-dir.  Keep
+# family-specific hierarchy rules separate so C1/C2 can be added without
+# changing the orchestration code.
+
+common_targets:
+  # Select the logical cache interconnect.  In smaller configurations the
+  # request/response path is a direct VX_stream_xbar; larger configurations
+  # may elaborate VX_stream_omega at the same wrapper path.
+  - name: cache_interconnect
+    module_patterns: [VX_stream_xbar, VX_stream_omega]
+    instance_patterns:
+      - "vortex/**/*cache*/**/core_req_xbar"
+      - "vortex/**/*cache*/**/core_rsp_xbar"
+      - "vortex/**/*cache*/**/mem_rsp_xbar"
+      - "vortex/**/*cache*/**/mem_rsp_xbar/g_fallback.xbar_switch"
+
+  - name: local_memory_interconnect
+    module_patterns: [VX_stream_xbar, VX_stream_omega]
+    instance_patterns:
+      - "vortex/*mem_unit*/*local_mem*/*req_xbar"
+      - "vortex/*mem_unit*/*local_mem*/*rsp_xbar"
+
+  - name: axi_adapter_xbar
+    module_patterns: [VX_stream_xbar]
+    instance_patterns:
+      - "axi_adapter/req_xbar"
+      - "axi_adapter/rsp_xbar"
+      - "vortex/**/axi_adapter/**/req_xbar"
+      - "vortex/**/axi_adapter/**/rsp_xbar"
+
+families:
+  C4:
+    alias_patterns: [C4, improve_th*]
+    config_patterns: [improve_th*.sh]
+    targets:
+      # C4 currently uses the same high-level wrappers as C3, but keeps an
+      # independent rule set because its GEMM/LMEM hierarchy evolves separately.
+      - name: cpu_dma_node
+        module_patterns: [VX_dma_node]
+        instance_patterns: ["vortex/**/u_VX_dma_node"]
+      - name: hbm_dma_engine
+        module_patterns: [VX_dma_engine]
+        instance_patterns: ["vortex/**/gemm_node/**/u_dma_engine"]
+      - name: gemm_local_dma
+        module_patterns: [VX_lmem_dma_misal]
+        instance_patterns: ["vortex/**/gemm_node/**/u_ldma_*"]
+      - name: gemm_tmem_dma_controller
+        module_patterns: [VX_gemm_tmem_dma_ctrl]
+        instance_patterns: ["vortex/**/gemm_node/**/u_tmem_dma_ctrl"]
+      - name: tensor_memory_switch
+        module_patterns: [VX_tmem_switch, VX_tmem_wide_read_switch]
+        instance_patterns: ["vortex/*gemm_node*/*u_switch_*"]
+      - name: tmem_arbiter
+        module_patterns: [VX_mem_arb]
+        instance_patterns: ["vortex/*u_tmem_subsystem*/*mem_arb"]
+      - name: gemm_unit
+        module_patterns: [VX_gemm_unit]
+        pnr: false

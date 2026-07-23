@@ -1,0 +1,27 @@
+# Fast subdesign synthesis/PnR target map.
+#
+# The top elaboration catalog and DDC are supplied by --seed-run-dir.  Keep
+# family-specific hierarchy rules separate so C1/C2 can be added without
+# changing the orchestration code.
+
+common_targets:
+  - name: none
+    module_patterns: [none]
+
+families:
+  C3:
+    alias_patterns: [C3, naive_gemm_th*]
+    config_patterns: [naive_gemm_th*.sh]
+    targets:
+      - name: dma
+        module_patterns: [VX_dma_node]
+        instance_patterns: ["vortex/**/u_VX_dma_node"]
+        pnr: false
+      - name: local_dma
+        module_patterns: [VX_lmem_dma_misal, VX_lmem_weight_gather_dma]
+        instance_patterns: ["vortex/**/u*_lmem_dma", "vortex/**/u_weight_gather_dma"]
+        pnr: false
+      - name: mem_bus_split
+        module_patterns: [VX_mem_bus_split]
+        instance_patterns: ["vortex/**/gemm_node_naive/*lane_split*"]
+        pnr: false

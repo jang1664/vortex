@@ -28,6 +28,7 @@ for path in (SYNOPSYS_DIR, VORTEX_HOME, HWEXPLORER_HOME):
 
 from hwexplorer.automation.hierarchical import (  # noqa: E402
     ElaboratedDesign,
+    HierarchicalManifest,
     HierarchySelector,
     read_design_catalog,
 )
@@ -61,8 +62,26 @@ def _parser() -> argparse.ArgumentParser:
             "results/Vortex_axi.elab.ddc"
         ),
     )
+    parser.add_argument(
+        "--elab-ddc",
+        help=(
+            "Explicit elaborated DDC path; its sibling "
+            "design_catalog.tsv is used. Default: --run-dir/top/results/"
+            "Vortex_axi.elab.ddc"
+        ),
+    )
     parser.add_argument("--run-dir", help="Output directory for subdesign results")
-    parser.add_argument("--match-config", default=str(DEFAULT_MATCH_CONFIG))
+    parser.add_argument(
+        "--candidate-config",
+        "--match-config",
+        dest="match_config",
+        metavar="PATH",
+        default=str(DEFAULT_MATCH_CONFIG),
+        help=(
+            "Subdesign candidate-match YAML; --match-config is kept as a "
+            "backward-compatible alias"
+        ),
+    )
     parser.add_argument("--analysis-config", default=str(DEFAULT_ANALYSIS_CONFIG))
     parser.add_argument("--stages", default="synth,pnr", help="synth,pnr or pnr")
     parser.add_argument("--resume", action="store_true")
@@ -96,15 +115,18 @@ def main(argv: list[str] | None = None) -> int:
         "family": family,
         "run_dir": str(run_dir),
         "stages": stages,
+        "candidate_config": str(Path(args.match_config).resolve()),
         "match_config": str(Path(args.match_config).resolve()),
         "analysis_config": str(Path(args.analysis_config).resolve()),
     }
     if "synth" in stages or args.dry_run:
         if args.seed_run_dir:
             seed = _resolve_seed_run_dir(args.seed_run_dir, config_file, tag, run_dir)
+        elif args.elab_ddc:
+            seed = _resolve_seed_run_dir(args.elab_ddc, config_file, tag, run_dir)
         else:
             try:
-                seed = _resolve_seed_run_dir(None, config_file, tag, run_dir)
+                seed = _resolve_seed_run_dir(run_dir / "top", config_file, tag, run_dir)
             except SystemExit:
                 if args.dry_run:
                     raise SystemExit(
@@ -114,6 +136,7 @@ def main(argv: list[str] | None = None) -> int:
                 seed = _run_catalog_elaboration(config_file, tag, run_dir, rerun=not args.resume)
         catalog = read_design_catalog(seed["catalog"])
         selectors, matches = _select_targets(catalog, match_config, family)
+        skip_pnr_designs = _select_pnr_skips(catalog, match_config, family)
         plan.update(
             {
                 "seed_run_dir": str(seed["root"]),
@@ -121,10 +144,17 @@ def main(argv: list[str] | None = None) -> int:
                 "elaborated_ddc": str(seed["ddc"]),
                 "selectors": [item.model_dump() for item in selectors],
                 "matches": matches,
+                "skip_pnr_designs": sorted(skip_pnr_designs),
             }
         )
     else:
         selectors = []
+        previous_plan = run_dir / "subdesign_plan.json"
+        skip_pnr_designs = set()
+        if previous_plan.is_file():
+            skip_pnr_designs = set(
+                json.loads(previous_plan.read_text()).get("skip_pnr_designs", [])
+            )
 
     (run_dir / "resolved_config.json").write_text(json.dumps(plan, indent=2))
     (run_dir / "subdesign_plan.json").write_text(json.dumps(plan, indent=2))
@@ -158,9 +188,15 @@ def main(argv: list[str] | None = None) -> int:
                 f"subdesign synthesis manifest is missing: {manifest_path}; "
                 "run with --stages synth,pnr first"
             )
+        pnr_manifest = _manifest_for_pnr(manifest_path, skip_pnr_designs, run_dir)
+        if skip_pnr_designs:
+            print(
+                "# skipping PnR for selected compiled-memory designs: "
+                + ", ".join(sorted(skip_pnr_designs))
+            )
         print("# all selected synthesis workers completed; starting PnR")
         return _run_pnr_attempts(
-            manifest_path,
+            pnr_manifest,
             analysis_config,
             run_dir,
             resume=args.resume,
@@ -233,18 +269,12 @@ def _resolve_seed_run_dir(
     candidates: list[Path] = []
     if explicit:
         supplied = Path(explicit).expanduser().resolve()
-        candidates.extend((supplied, supplied / "top", supplied / "syn_topo.lpp"))
+        if supplied.name == "Vortex_axi.elab.ddc" and supplied.parent.name == "results":
+            candidates.append(supplied.parent.parent)
+        else:
+            candidates.extend((supplied, supplied / "top", supplied / "syn_topo.lpp"))
     else:
-        candidates.extend(
-            [
-                VORTEX_HOME / "build/hw/syn/synopsys/top_analysis" / f"Vortex_axi_{tag}" / "top",
-                VORTEX_HOME
-                / "build/hw/syn/synopsys/top_analysis"
-                / f"Vortex_axi_{config_file.stem}"
-                / "top",
-                VORTEX_HOME / "build/hw/syn/synopsys" / f"Vortex_axi_{tag}" / "syn_topo.lpp",
-            ]
-        )
+        candidates.append(output_dir / "top")
     for root in candidates:
         catalog = root / "results/design_catalog.tsv"
         ddc = root / "results/Vortex_axi.elab.ddc"
@@ -254,8 +284,8 @@ def _resolve_seed_run_dir(
             return {"root": root.resolve(), "catalog": catalog, "ddc": ddc}
     rendered = "\n  ".join(str(path) for path in candidates)
     raise SystemExit(
-        "reusable top catalog/DDC not found. Pass --seed-run-dir pointing to a "
-        "completed top result; checked:\n  " + rendered
+        "reusable top catalog/DDC not found. Pass --seed-run-dir or --elab-ddc "
+        "pointing to a completed top result; checked:\n  " + rendered
     )
 
 
@@ -295,6 +325,54 @@ def _select_targets(
             if item["name"] in names
         }
     return selectors, matches
+
+
+def _select_pnr_skips(
+    catalog: list[ElaboratedDesign], config: dict[str, Any], family: str
+) -> set[str]:
+    """Return design names whose synthesis is kept but PnR is disabled.
+
+    A match target may set ``pnr: false``.  The synthesis selector still
+    includes that target; only the manifest consumed by the PnR loop is
+    filtered later.  This is useful for blocks containing compiled SRAMs.
+    """
+    targets = [*config["common_targets"], *config["families"][family].get("targets", [])]
+    skipped: set[str] = set()
+    for target in targets:
+        if target.get("pnr", True) is not False:
+            continue
+        skipped.update(
+            design.design_name
+            for design in catalog
+            if _target_matches(design, target)
+        )
+    return skipped
+
+
+def _manifest_for_pnr(
+    manifest_path: Path, skip_designs: set[str], run_dir: Path
+) -> Path:
+    """Create a PnR-only manifest while preserving the full synth manifest."""
+    if not skip_designs:
+        return manifest_path
+    manifest = HierarchicalManifest.model_validate_json(manifest_path.read_text())
+    kept_synth = [
+        job
+        for job in manifest.synthesis_jobs
+        if not skip_designs.intersection(
+            {job.design_name, *job.equivalent_design_names}
+        )
+    ]
+    kept_ids = {job.job_id for job in kept_synth}
+    filtered = manifest.model_copy(
+        update={
+            "synthesis_jobs": kept_synth,
+            "pnr_jobs": [job for job in manifest.pnr_jobs if job.synthesis_job_id in kept_ids],
+        }
+    )
+    filtered_path = run_dir / "blocks/hierarchical_manifest.pnr.json"
+    filtered.write(filtered_path)
+    return filtered_path
 
 
 def _target_matches(design: ElaboratedDesign, target: dict[str, Any]) -> bool:

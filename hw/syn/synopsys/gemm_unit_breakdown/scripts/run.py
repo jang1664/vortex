@@ -249,6 +249,15 @@ SKIP_FILENAMES = {
     "VX_gemm_ctrl_with_ldma.sv",
 }
 
+# Keep the synthesis driver aligned with the current GEMM patch.  These
+# markers distinguish the banked accumulator-read implementation from the
+# obsolete single-FIFO patch that was used by the original breakdown run.
+GEMM_PATCH_MARKERS = (
+    "acc_mem_rdata_i",
+    "ACC_RD_FIFO_DEPTH",
+    "gen_acc_rd_fifo",
+)
+
 
 def _vortex_home():
     home = os.environ.get("VORTEX_HOME")
@@ -270,6 +279,15 @@ def synthesis(period_ns: float = 10.0, design_name: str = "VX_gemm_unit_top",
     """
     pre = preprocess()
     vortex = _vortex_home()
+    patched_gemm_unit = pre.preproc_dir / "VX_gemm_unit.sv"
+    patch_text = patched_gemm_unit.read_text(errors="ignore")
+    missing_markers = [m for m in GEMM_PATCH_MARKERS if m not in patch_text]
+    if missing_markers:
+        raise RuntimeError(
+            "preprocessed VX_gemm_unit.sv is not the current external-memory "
+            f"patch; missing markers: {missing_markers}"
+        )
+    print("[run] verified current banked-accumulator GEMM patch")
     patched_fpnew_pkg = vortex / "hw" / "rtl" / "fpu" / "patched_cvfpu" / "fpnew_pkg.sv"
 
     sources = []

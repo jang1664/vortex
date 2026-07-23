@@ -1,0 +1,66 @@
+ 
+****************************************
+Report : area
+Design : VX_lsu_mem_arb__e775de6e9bca
+Version: V-2023.12-SP5-3
+Date   : Thu Jul 23 20:41:23 2026
+****************************************
+
+Library(s) Used:
+
+    sc9_cmos28lpp_base_rvt_ss_nominal_max_0p900v_125c_sadhm (File: /tool/PDK/Samsung/LN28LPP_202203/PRIMITIVES/RVT/ln28lpp_sc_9t_base_rvt_c130_V1.00d/FE-Common/LIBERTY/sc9_cmos28lpp_base_rvt_ss_nominal_max_0p900v_125c_sadhm.db)
+
+Number of ports:                        41450
+Number of nets:                         47974
+Number of cells:                        12054
+Number of combinational cells:           7871
+Number of sequential cells:              4171
+Number of macros/black boxes:               0
+Number of buf/inv:                       5784
+Number of references:                       2
+
+Combinational area:               4642.442950
+Buf/Inv area:                     2690.414972
+Noncombinational area:            8782.370777
+Macro/Black Box area:                0.000000
+Net Interconnect area:      undefined  (No wire load specified)
+
+Total cell area:                 13424.813728
+Total area:                 undefined
+
+Core Area:                     46222
+Aspect Ratio:                 1.0010
+Utilization Ratio:            0.2904
+
+
+The above information was reported from the logical library. The following are from the physical library:
+
+  Total moveable cell area: 13424.8
+  Total fixed cell area: 0.0
+  Total physical cell area: 13424.8
+ Core area: 0.000, 0.000, 214.890, 215.100
+
+Hierarchical area distribution
+------------------------------
+
+                                  Global cell area           Local cell area
+                                  -------------------  ---------------------------- 
+Hierarchical cell                 Absolute    Percent  Combi-     Noncombi-  Black-
+                                  Total       Total    national   national   boxes   Design
+--------------------------------  ----------  -------  ---------  ---------  ------  ----------------------------------------------
+VX_lsu_mem_arb__e775de6e9bca      13424.8137    100.0     0.0000     0.0000  0.0000  VX_lsu_mem_arb__e775de6e9bca
+g_rsp_arb_req_arb                 11820.0417     88.0     0.0000     0.0000  0.0000  VX_stream_arb_15
+g_rsp_arb_req_arb/g_passthru_g_out_buf_0__out_buf 11820.0417    88.0    0.0000    0.0000 0.0000 VX_elastic_buffer_2082_2_0_0
+g_rsp_arb_req_arb/g_passthru_g_out_buf_0__out_buf/g_eb2_out_buf   975.3120     7.3  975.3120    0.0000 0.0000 VX_pipe_buffer_32
+g_rsp_arb_req_arb/g_passthru_g_out_buf_0__out_buf/g_eb2_stream_buffer 10844.7298    80.8 2062.3590 8773.5958 0.0000 VX_stream_buffer_2082_0
+g_rsp_arb_req_arb/g_passthru_g_out_buf_0__out_buf/g_eb2_stream_buffer/clk_gate_g_buffer_buffer_r_reg     1.7550     0.0    0.0000    1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_stream_buffer_2082_0_2
+g_rsp_arb_req_arb/g_passthru_g_out_buf_0__out_buf/g_eb2_stream_buffer/clk_gate_g_buffer_buffer_r_reg_0     1.7550     0.0    0.0000    1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_stream_buffer_2082_0_1
+g_rsp_arb_req_arb/g_passthru_g_out_buf_0__out_buf/g_eb2_stream_buffer/clk_gate_g_buffer_data_out_r_reg     1.7550     0.0    0.0000    1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_stream_buffer_2082_0_0
+g_rsp_arb_req_arb/g_passthru_g_out_buf_0__out_buf/g_eb2_stream_buffer/clk_gate_g_buffer_data_out_r_reg_0     1.7550     0.0    0.0000    1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_stream_buffer_2082_0_4
+g_rsp_arb_req_arb/g_passthru_g_out_buf_0__out_buf/g_eb2_stream_buffer/clk_gate_g_buffer_data_out_r_reg_1     1.7550     0.0    0.0000    1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_stream_buffer_2082_0_3
+req_arb                            1604.7720     12.0     0.0000     0.0000  0.0000  VX_stream_arb_14
+req_arb/g_passthru_g_out_buf_0__out_buf  1604.7720    12.0 1604.7720    0.0000 0.0000 VX_elastic_buffer_3427_0_0_0
+--------------------------------  ----------  -------  ---------  ---------  ------  ----------------------------------------------
+Total                                                  4642.4430  8782.3708  0.0000
+
+1
