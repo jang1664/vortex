@@ -1,0 +1,196 @@
+Information: Propagating switching activity (high effort zero delay simulation). (PWR-6)
+Warning: Design has unannotated primary inputs. (PWR-414)
+Warning: Design has unannotated sequential cell outputs. (PWR-415)
+ 
+****************************************
+Report : power
+        -hier
+        -analysis_effort high
+        -verbose
+Design : VX_dma_engine__e6381a630d9c
+Scenario(s): mode_norm.OC_rvt_ss_0p900v_125c
+Version: V-2023.12-SP5-3
+Date   : Wed Jul 22 21:07:57 2026
+****************************************
+
+
+Library(s) Used:
+
+    sc9_cmos28lpp_base_rvt_ss_nominal_max_0p900v_125c_sadhm (File: /tool/PDK/Samsung/LN28LPP_202203/PRIMITIVES/RVT/ln28lpp_sc_9t_base_rvt_c130_V1.00d/FE-Common/LIBERTY/sc9_cmos28lpp_base_rvt_ss_nominal_max_0p900v_125c_sadhm.db)
+
+
+Global Operating Voltage = 0.9  
+Power-specific unit information :
+    Voltage Units = 1V
+    Capacitance Units = 1.000000pf
+    Time Units = 1ns
+    Dynamic Power Units = 1mW    (derived from V,C,T units)
+    Leakage Power Units = 1uW
+
+
+--------------------------------------------------------------------------------
+                                       Switch   Int      Leak     Total
+Hierarchy                              Power    Power    Power    Power    %
+--------------------------------------------------------------------------------
+VX_dma_engine__e6381a630d9c               0.331    1.277 2.07e+03    3.679 100.0
+  g_channel_7__u_rsp_tag_fifo (VX_fifo_queue_3_0) 3.55e-04 7.09e-03    4.962 1.24e-02   0.3
+    g_depth_n_dp_ram (VX_dp_ram_14_0)  2.06e-04 6.35e-03    4.315 1.09e-02   0.3
+    pending_size (VX_pending_size_4_0) 8.42e-05 3.63e-04    0.301 7.49e-04   0.0
+  g_channel_7__u_mem_remap (VX_mem_remap_1_0) 5.86e-05 2.98e-05    0.178 2.67e-04   0.0
+  g_channel_7__u_dma_unit (VX_dma_unit_h_715_242_310_0) 3.32e-02    0.159  252.850    0.445  12.1
+    g_aligned_u_impl (VX_dma_unit_align_h_787_242_892_0) 3.32e-02    0.159  252.850    0.445  12.1
+      response_payload_ram (VX_dp_ram_17_0) 8.45e-03 7.37e-02   78.428    0.161   4.4
+        g_compiled_u_compiled (VX_dp_ram_compiled_3_0) 8.45e-03 7.37e-02   78.428    0.161   4.4
+      lmem_req_buf (VX_elastic_buffer_47_0) 4.27e-03 3.02e-02    4.304 3.87e-02   1.1
+        g_eb2_out_buf (VX_pipe_buffer_54_0) 1.42e-04 2.68e-05    0.613 7.82e-04   0.0
+        g_eb2_stream_buffer (VX_stream_buffer_102_1_0) 4.13e-03 3.01e-02    3.691 3.80e-02   1.0
+      dcache_req_buf (VX_elastic_buffer_47_1) 4.11e-03 2.97e-02    4.351 3.82e-02   1.0
+        g_eb2_out_buf (VX_pipe_buffer_54_1) 3.57e-05 4.93e-05    0.632 7.16e-04   0.0
+        g_eb2_stream_buffer (VX_stream_buffer_102_1_1) 4.07e-03 2.97e-02    3.720 3.74e-02   1.0
+      mul_dst_d2 (VX_mul_u32_pipe_0)   7.88e-08 1.21e-03 9.27e-02 1.31e-03   0.0
+      mul_src_d2 (VX_mul_u32_pipe_1)   4.42e-08 1.21e-03 9.27e-02 1.31e-03   0.0
+      mul_dst_d1 (VX_mul_u32_pipe_2)   1.07e-04 1.72e-03   17.346 1.92e-02   0.5
+      mul_src_d1 (VX_mul_u32_pipe_3)   2.05e-04 1.82e-03   31.370 3.34e-02   0.9
+      mul_dst_d0 (VX_mul_u32_pipe_4)   1.16e-04 1.73e-03   17.509 1.93e-02   0.5
+      mul_src_d0 (VX_mul_u32_pipe_5)   2.10e-04 1.82e-03   31.329 3.34e-02   0.9
+  g_channel_6__u_rsp_tag_fifo (VX_fifo_queue_3_1) 3.51e-04 7.09e-03    4.990 1.24e-02   0.3
+    g_depth_n_dp_ram (VX_dp_ram_14_1)  2.07e-04 6.35e-03    4.342 1.09e-02   0.3
+    pending_size (VX_pending_size_4_1) 8.59e-05 3.76e-04    0.301 7.63e-04   0.0
+  g_channel_6__u_mem_remap (VX_mem_remap_1_1) 4.92e-05 1.96e-05    0.175 2.44e-04   0.0
+  g_channel_6__u_dma_unit (VX_dma_unit_h_715_242_310_1) 2.67e-02    0.141  251.835    0.419  11.4
+    g_aligned_u_impl (VX_dma_unit_align_h_787_242_892_1) 2.67e-02    0.141  251.835    0.419  11.4
+      response_payload_ram (VX_dp_ram_17_1) 5.90e-03 5.66e-02   78.144    0.141   3.8
+        g_compiled_u_compiled (VX_dp_ram_compiled_3_1) 5.90e-03 5.66e-02   78.144    0.141   3.8
+      lmem_req_buf (VX_elastic_buffer_47_2) 4.16e-03 3.00e-02    4.297 3.85e-02   1.0
+        g_eb2_out_buf (VX_pipe_buffer_54_2) 3.27e-05 2.70e-05    0.610 6.70e-04   0.0
+        g_eb2_stream_buffer (VX_stream_buffer_102_1_2) 4.12e-03 3.00e-02    3.687 3.78e-02   1.0
+      dcache_req_buf (VX_elastic_buffer_47_3) 4.11e-03 2.97e-02    4.302 3.81e-02   1.0
+        g_eb2_out_buf (VX_pipe_buffer_54_3) 3.41e-05 3.64e-05    0.617 6.88e-04   0.0
+        g_eb2_stream_buffer (VX_stream_buffer_102_1_3) 4.08e-03 2.96e-02    3.684 3.74e-02   1.0
+      mul_dst_d2 (VX_mul_u32_pipe_6)   2.58e-07 1.21e-03 9.27e-02 1.31e-03   0.0
+      mul_src_d2 (VX_mul_u32_pipe_7)   2.18e-07 1.21e-03 9.27e-02 1.31e-03   0.0
+      mul_dst_d1 (VX_mul_u32_pipe_8)   9.47e-05 1.71e-03   17.248 1.91e-02   0.5
+      mul_src_d1 (VX_mul_u32_pipe_9)   1.77e-04 1.80e-03   31.350 3.33e-02   0.9
+      mul_dst_d0 (VX_mul_u32_pipe_10)  1.03e-04 1.72e-03   17.347 1.92e-02   0.5
+      mul_src_d0 (VX_mul_u32_pipe_11)  1.76e-04 1.81e-03   31.151 3.31e-02   0.9
+  g_channel_5__u_rsp_tag_fifo (VX_fifo_queue_3_2) 2.80e-04 7.00e-03    4.987 1.23e-02   0.3
+    g_depth_n_dp_ram (VX_dp_ram_14_2)  1.64e-04 6.35e-03    4.340 1.09e-02   0.3
+    pending_size (VX_pending_size_4_2) 6.69e-05 3.13e-04    0.301 6.81e-04   0.0
+  g_channel_5__u_mem_remap (VX_mem_remap_1_2) 1.60e-04 2.71e-05    0.178 3.65e-04   0.0
+  g_channel_5__u_dma_unit (VX_dma_unit_h_715_242_310_2) 2.71e-02    0.146  251.051    0.424  11.5
+    g_aligned_u_impl (VX_dma_unit_align_h_787_242_892_2) 2.71e-02    0.146  251.051    0.424  11.5
+      response_payload_ram (VX_dp_ram_17_2) 7.05e-03 6.09e-02   77.861    0.146   4.0
+        g_compiled_u_compiled (VX_dp_ram_compiled_3_2) 7.05e-03 6.09e-02   77.861    0.146   4.0
+      lmem_req_buf (VX_elastic_buffer_47_4) 4.18e-03 3.02e-02    4.328 3.87e-02   1.1
+        g_eb2_out_buf (VX_pipe_buffer_54_4) 2.64e-05 3.51e-05    0.616 6.78e-04   0.0
+        g_eb2_stream_buffer (VX_stream_buffer_102_1_4) 4.15e-03 3.02e-02    3.712 3.80e-02   1.0
+      dcache_req_buf (VX_elastic_buffer_47_5) 4.12e-03 2.98e-02    4.346 3.82e-02   1.0
+        g_eb2_out_buf (VX_pipe_buffer_54_5) 4.42e-05 5.32e-05    0.628 7.25e-04   0.0
+        g_eb2_stream_buffer (VX_stream_buffer_102_1_5) 4.08e-03 2.97e-02    3.718 3.75e-02   1.0
+      mul_dst_d2 (VX_mul_u32_pipe_12)  3.60e-08 1.21e-03 9.27e-02 1.31e-03   0.0
+      mul_src_d2 (VX_mul_u32_pipe_13)  2.97e-08 1.21e-03 9.27e-02 1.31e-03   0.0
+      mul_dst_d1 (VX_mul_u32_pipe_14)  1.03e-04 1.71e-03   17.274 1.91e-02   0.5
+      mul_src_d1 (VX_mul_u32_pipe_15)  1.94e-04 1.81e-03   31.220 3.32e-02   0.9
+      mul_dst_d0 (VX_mul_u32_pipe_16)  1.21e-04 1.72e-03   17.519 1.94e-02   0.5
+      mul_src_d0 (VX_mul_u32_pipe_17)  1.99e-04 1.81e-03   31.358 3.34e-02   0.9
+  g_channel_4__u_rsp_tag_fifo (VX_fifo_queue_3_3) 3.36e-04 7.11e-03    4.957 1.24e-02   0.3
+    g_depth_n_dp_ram (VX_dp_ram_14_3)  1.95e-04 6.36e-03    4.310 1.09e-02   0.3
+    pending_size (VX_pending_size_4_3) 7.75e-05 3.45e-04    0.301 7.23e-04   0.0
+  g_channel_4__u_mem_remap (VX_mem_remap_1_3) 4.52e-05 2.34e-05    0.176 2.44e-04   0.0
+  g_channel_4__u_dma_unit (VX_dma_unit_h_715_242_310_3) 2.74e-02    0.147  250.595    0.425  11.6
+    g_aligned_u_impl (VX_dma_unit_align_h_787_242_892_3) 2.74e-02    0.147  250.595    0.425  11.6
+      response_payload_ram (VX_dp_ram_17_3) 6.96e-03 6.27e-02   77.803    0.147   4.0
+        g_compiled_u_compiled (VX_dp_ram_compiled_3_3) 6.96e-03 6.27e-02   77.803    0.147   4.0
+      lmem_req_buf (VX_elastic_buffer_47_6) 4.18e-03 3.02e-02    4.353 3.87e-02   1.1
+        g_eb2_out_buf (VX_pipe_buffer_54_6) 3.51e-05 4.28e-05    0.619 6.97e-04   0.0
+        g_eb2_stream_buffer (VX_stream_buffer_102_1_6) 4.14e-03 3.01e-02    3.734 3.80e-02   1.0
+      dcache_req_buf (VX_elastic_buffer_47_7) 4.14e-03 2.97e-02    4.297 3.82e-02   1.0
+        g_eb2_out_buf (VX_pipe_buffer_54_7) 5.65e-05 5.41e-05    0.619 7.30e-04   0.0
+        g_eb2_stream_buffer (VX_stream_buffer_102_1_7) 4.08e-03 2.97e-02    3.678 3.74e-02   1.0
+      mul_dst_d2 (VX_mul_u32_pipe_18)  9.31e-10 1.21e-03 9.27e-02 1.31e-03   0.0
+      mul_src_d2 (VX_mul_u32_pipe_19)  3.38e-09 1.21e-03 9.27e-02 1.31e-03   0.0
+      mul_dst_d1 (VX_mul_u32_pipe_20)  1.17e-04 1.73e-03   17.353 1.92e-02   0.5
+      mul_src_d1 (VX_mul_u32_pipe_21)  2.13e-04 1.82e-03   31.244 3.33e-02   0.9
+      mul_dst_d0 (VX_mul_u32_pipe_22)  1.11e-04 1.72e-03   17.346 1.92e-02   0.5
+      mul_src_d0 (VX_mul_u32_pipe_23)  2.23e-04 1.83e-03   31.365 3.34e-02   0.9
+  g_channel_3__u_rsp_tag_fifo (VX_fifo_queue_3_4) 3.07e-04 7.05e-03    4.971 1.23e-02   0.3
+    g_depth_n_dp_ram (VX_dp_ram_14_4)  1.77e-04 6.35e-03    4.318 1.08e-02   0.3
+    pending_size (VX_pending_size_4_4) 7.38e-05 3.33e-04    0.308 7.15e-04   0.0
+  g_channel_3__u_mem_remap (VX_mem_remap_1_4) 1.14e-04 3.21e-05    0.179 3.25e-04   0.0
+  g_channel_3__u_dma_unit (VX_dma_unit_h_715_242_310_4) 2.38e-02    0.142  251.024    0.417  11.3
+    g_aligned_u_impl (VX_dma_unit_align_h_787_242_892_4) 2.38e-02    0.142  251.024    0.417  11.3
+      response_payload_ram (VX_dp_ram_17_4) 7.13e-03 5.81e-02   77.769    0.143   3.9
+        g_compiled_u_compiled (VX_dp_ram_compiled_3_4) 7.13e-03 5.81e-02   77.769    0.143   3.9
+      lmem_req_buf (VX_elastic_buffer_47_8) 4.17e-03 3.01e-02    4.317 3.86e-02   1.0
+        g_eb2_out_buf (VX_pipe_buffer_54_8) 3.33e-05 3.72e-05    0.618 6.89e-04   0.0
+        g_eb2_stream_buffer (VX_stream_buffer_102_1_8) 4.14e-03 3.01e-02    3.699 3.79e-02   1.0
+      dcache_req_buf (VX_elastic_buffer_47_9) 4.14e-03 2.98e-02    4.356 3.83e-02   1.0
+        g_eb2_out_buf (VX_pipe_buffer_54_9) 4.73e-05 5.44e-05    0.633 7.35e-04   0.0
+        g_eb2_stream_buffer (VX_stream_buffer_102_1_9) 4.09e-03 2.97e-02    3.723 3.76e-02   1.0
+      mul_dst_d2 (VX_mul_u32_pipe_24)  1.16e-07 1.21e-03 9.27e-02 1.31e-03   0.0
+      mul_src_d2 (VX_mul_u32_pipe_25)  6.89e-08 1.21e-03 9.27e-02 1.31e-03   0.0
+      mul_dst_d1 (VX_mul_u32_pipe_26)  1.08e-04 1.72e-03   17.482 1.93e-02   0.5
+      mul_src_d1 (VX_mul_u32_pipe_27)  2.05e-04 1.82e-03   31.348 3.34e-02   0.9
+      mul_dst_d0 (VX_mul_u32_pipe_28)  1.19e-04 1.73e-03   17.447 1.93e-02   0.5
+      mul_src_d0 (VX_mul_u32_pipe_29)  2.16e-04 1.83e-03   31.354 3.34e-02   0.9
+  g_channel_2__u_rsp_tag_fifo (VX_fifo_queue_3_5) 3.28e-04 7.07e-03    4.980 1.24e-02   0.3
+    g_depth_n_dp_ram (VX_dp_ram_14_5)  1.94e-04 6.36e-03    4.332 1.09e-02   0.3
+    pending_size (VX_pending_size_4_5) 7.51e-05 3.39e-04    0.301 7.15e-04   0.0
+  g_channel_2__u_mem_remap (VX_mem_remap_1_5) 2.29e-04 1.93e-05    0.176 4.24e-04   0.0
+  g_channel_2__u_dma_unit (VX_dma_unit_h_715_242_310_5) 2.78e-02    0.141  252.260    0.421  11.5
+    g_aligned_u_impl (VX_dma_unit_align_h_787_242_892_5) 2.76e-02    0.141  252.254    0.421  11.4
+      response_payload_ram (VX_dp_ram_17_5) 5.96e-03 5.66e-02   78.118    0.141   3.8
+        g_compiled_u_compiled (VX_dp_ram_compiled_3_5) 5.96e-03 5.66e-02   78.118    0.141   3.8
+      lmem_req_buf (VX_elastic_buffer_47_10) 4.17e-03 3.01e-02    4.323 3.86e-02   1.0
+        g_eb2_out_buf (VX_pipe_buffer_54_10) 3.67e-05 3.73e-05    0.621 6.95e-04   0.0
+        g_eb2_stream_buffer (VX_stream_buffer_102_1_10) 4.13e-03 3.01e-02    3.702 3.79e-02   1.0
+      dcache_req_buf (VX_elastic_buffer_47_11) 4.12e-03 2.98e-02    4.309 3.82e-02   1.0
+        g_eb2_out_buf (VX_pipe_buffer_54_11) 3.34e-05 3.66e-05    0.615 6.85e-04   0.0
+        g_eb2_stream_buffer (VX_stream_buffer_102_1_11) 4.09e-03 2.97e-02    3.694 3.75e-02   1.0
+      mul_dst_d2 (VX_mul_u32_pipe_30)  1.58e-07 1.21e-03 9.27e-02 1.31e-03   0.0
+      mul_src_d2 (VX_mul_u32_pipe_31)  1.61e-07 1.21e-03 9.27e-02 1.31e-03   0.0
+      mul_dst_d1 (VX_mul_u32_pipe_32)  1.18e-04 1.74e-03   17.472 1.93e-02   0.5
+      mul_src_d1 (VX_mul_u32_pipe_33)  2.25e-04 1.85e-03   31.590 3.37e-02   0.9
+      mul_dst_d0 (VX_mul_u32_pipe_34)  1.15e-04 1.73e-03   17.328 1.92e-02   0.5
+      mul_src_d0 (VX_mul_u32_pipe_35)  2.18e-04 1.84e-03   31.477 3.35e-02   0.9
+  g_channel_1__u_rsp_tag_fifo (VX_fifo_queue_3_6) 3.00e-04 7.04e-03    4.963 1.23e-02   0.3
+    g_depth_n_dp_ram (VX_dp_ram_14_6)  1.75e-04 6.34e-03    4.316 1.08e-02   0.3
+    pending_size (VX_pending_size_4_6) 7.09e-05 3.18e-04    0.301 6.90e-04   0.0
+  g_channel_1__u_mem_remap (VX_mem_remap_1_6) 2.65e-05 1.96e-05    0.176 2.22e-04   0.0
+  g_channel_1__u_dma_unit (VX_dma_unit_h_715_242_310_6) 3.12e-02    0.156  251.701    0.439  11.9
+    g_aligned_u_impl (VX_dma_unit_align_h_787_242_892_6) 3.12e-02    0.156  251.701    0.439  11.9
+      response_payload_ram (VX_dp_ram_17_6) 8.31e-03 7.23e-02   78.047    0.159   4.3
+        g_compiled_u_compiled (VX_dp_ram_compiled_3_6) 8.31e-03 7.23e-02   78.047    0.159   4.3
+      lmem_req_buf (VX_elastic_buffer_47_12) 4.14e-03 3.01e-02    4.281 3.85e-02   1.0
+        g_eb2_out_buf (VX_pipe_buffer_54_12) 1.84e-05 2.37e-05    0.610 6.52e-04   0.0
+        g_eb2_stream_buffer (VX_stream_buffer_102_1_12) 4.12e-03 3.00e-02    3.671 3.78e-02   1.0
+      dcache_req_buf (VX_elastic_buffer_47_13) 4.10e-03 2.97e-02    4.279 3.81e-02   1.0
+        g_eb2_out_buf (VX_pipe_buffer_54_13) 3.10e-05 3.87e-05    0.618 6.88e-04   0.0
+        g_eb2_stream_buffer (VX_stream_buffer_102_1_13) 4.07e-03 2.96e-02    3.661 3.74e-02   1.0
+      mul_dst_d2 (VX_mul_u32_pipe_36)  1.13e-07 1.21e-03 9.27e-02 1.31e-03   0.0
+      mul_src_d2 (VX_mul_u32_pipe_37)  1.15e-07 1.21e-03 9.27e-02 1.31e-03   0.0
+      mul_dst_d1 (VX_mul_u32_pipe_38)  1.01e-04 1.71e-03   17.420 1.92e-02   0.5
+      mul_src_d1 (VX_mul_u32_pipe_39)  1.78e-04 1.80e-03   31.267 3.32e-02   0.9
+      mul_dst_d0 (VX_mul_u32_pipe_40)  9.46e-05 1.71e-03   17.308 1.91e-02   0.5
+      mul_src_d0 (VX_mul_u32_pipe_41)  1.72e-04 1.79e-03   31.243 3.32e-02   0.9
+  g_channel_0__u_rsp_tag_fifo (VX_fifo_queue_3_7) 3.06e-04 7.02e-03    4.960 1.23e-02   0.3
+    g_depth_n_dp_ram (VX_dp_ram_14_7)  1.78e-04 6.35e-03    4.314 1.08e-02   0.3
+    pending_size (VX_pending_size_4_7) 7.74e-05 3.42e-04    0.301 7.20e-04   0.0
+  g_channel_0__u_mem_remap (VX_mem_remap_1_7) 2.04e-04 2.90e-05    0.178 4.11e-04   0.0
+  g_channel_0__u_dma_unit (VX_dma_unit_h_715_242_310_7) 3.26e-02    0.158  252.405    0.443  12.0
+    g_aligned_u_impl (VX_dma_unit_align_h_787_242_892_7) 3.26e-02    0.158  252.398    0.443  12.0
+      response_payload_ram (VX_dp_ram_17_7) 8.51e-03 7.35e-02   78.221    0.160   4.4
+        g_compiled_u_compiled (VX_dp_ram_compiled_3_7) 8.51e-03 7.35e-02   78.221    0.160   4.4
+      lmem_req_buf (VX_elastic_buffer_47_14) 4.27e-03 3.03e-02    4.290 3.88e-02   1.1
+        g_eb2_out_buf (VX_pipe_buffer_54_14) 1.04e-04 3.18e-05    0.605 7.42e-04   0.0
+        g_eb2_stream_buffer (VX_stream_buffer_102_1_14) 4.16e-03 3.02e-02    3.685 3.81e-02   1.0
+      dcache_req_buf (VX_elastic_buffer_47_15) 4.12e-03 2.95e-02    4.369 3.80e-02   1.0
+        g_eb2_out_buf (VX_pipe_buffer_54_15) 5.84e-05 5.72e-05    0.628 7.44e-04   0.0
+        g_eb2_stream_buffer (VX_stream_buffer_102_1_15) 4.06e-03 2.94e-02    3.741 3.72e-02   1.0
+      mul_dst_d2 (VX_mul_u32_pipe_42)  7.76e-08 1.21e-03 9.27e-02 1.31e-03   0.0
+      mul_src_d2 (VX_mul_u32_pipe_43)  1.10e-07 1.21e-03 9.27e-02 1.31e-03   0.0
+      mul_dst_d1 (VX_mul_u32_pipe_44)  1.20e-04 1.74e-03   17.386 1.92e-02   0.5
+      mul_src_d1 (VX_mul_u32_pipe_45)  2.19e-04 1.83e-03   31.485 3.35e-02   0.9
+      mul_dst_d0 (VX_mul_u32_pipe_46)  1.16e-04 1.73e-03   17.365 1.92e-02   0.5
+      mul_src_d0 (VX_mul_u32_pipe_47)  2.23e-04 1.85e-03   31.471 3.35e-02   0.9
+1

@@ -16,12 +16,6 @@ families:
       - name: dma
         module_patterns: [VX_dma_node]
         instance_patterns: ["vortex/**/u_VX_dma_node"]
-        pnr: false
       - name: local_dma
-        module_patterns: [VX_lmem_dma_misal, VX_lmem_weight_gather_dma]
-        instance_patterns: ["vortex/**/u*_lmem_dma", "vortex/**/u_weight_gather_dma"]
-        pnr: false
-      - name: mem_bus_split
-        module_patterns: [VX_mem_bus_split]
-        instance_patterns: ["vortex/**/gemm_node_naive/*lane_split*"]
-        pnr: false
+        module_patterns: [VX_lmem_dma_misal]
+        instance_patterns: ["vortex/**/gemm_node/**/u_ldma_*"]

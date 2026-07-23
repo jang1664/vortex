@@ -1,0 +1,58 @@
+Information: Propagating switching activity (high effort zero delay simulation). (PWR-6)
+Warning: Design has unannotated primary inputs. (PWR-414)
+Warning: Design has unannotated sequential cell outputs. (PWR-415)
+ 
+****************************************
+Report : power
+        -hier
+        -analysis_effort high
+        -verbose
+Design : VX_lmem_dma_misal__1c552323e1f5
+Scenario(s): mode_norm.OC_rvt_ss_0p900v_125c
+Version: V-2023.12-SP5-3
+Date   : Thu Jul 23 17:00:19 2026
+****************************************
+
+
+Library(s) Used:
+
+    sc9_cmos28lpp_base_rvt_ss_nominal_max_0p900v_125c_sadhm (File: /tool/PDK/Samsung/LN28LPP_202203/PRIMITIVES/RVT/ln28lpp_sc_9t_base_rvt_c130_V1.00d/FE-Common/LIBERTY/sc9_cmos28lpp_base_rvt_ss_nominal_max_0p900v_125c_sadhm.db)
+
+
+Global Operating Voltage = 0.9  
+Power-specific unit information :
+    Voltage Units = 1V
+    Capacitance Units = 1.000000pf
+    Time Units = 1ns
+    Dynamic Power Units = 1mW    (derived from V,C,T units)
+    Leakage Power Units = 1uW
+
+
+--------------------------------------------------------------------------------
+                                       Switch   Int      Leak     Total
+Hierarchy                              Power    Power    Power    Power    %
+--------------------------------------------------------------------------------
+VX_lmem_dma_misal__1c552323e1f5           0.109    0.498  379.818    0.987 100.0
+  dma_core (VX_dma_unit_h_574_242_132)    0.109    0.497  376.606    0.982  99.5
+    g_misaligned_u_impl (VX_dma_unit_misal_h_290_242_508)    0.109    0.497  376.606    0.982  99.5
+      gen_path (VX_dma_misal_gen_path_64_64_64_847469) 1.53e-02 9.16e-02   44.097    0.151  15.3
+        g_equal_width_direct_equal_width_realigner (VX_dma_equal_realigner) 1.50e-02 9.15e-02   38.938    0.145  14.7
+          destination_assembler (VX_dma_lane_assembler) 1.46e-02 9.12e-02   34.615    0.140  14.2
+      response_payload_ram (VX_dp_ram_18) 2.34e-02    0.188  153.960    0.366  37.1
+        g_compiled_u_compiled (VX_dp_ram_compiled_4) 2.32e-02    0.188  153.933    0.366  37.0
+      lmem_req_buf (VX_elastic_buffer_57_0) 8.42e-04 4.97e-03    9.852 1.57e-02   1.6
+        g_ebN_out_buf (VX_pipe_buffer_57_0) 4.62e-05 4.02e-05    0.683 7.69e-04   0.1
+        g_ebN_fifo_queue (VX_fifo_queue_102_4_1_0_0) 7.88e-04 4.93e-03    9.153 1.49e-02   1.5
+          g_depth_n_dp_ram (VX_dp_ram_23_0) 3.52e-04 1.64e-03    6.603 8.60e-03   0.9
+          pending_size (VX_pending_size_3_0) 3.56e-05 2.36e-04    0.159 4.30e-04   0.0
+      dcache_wr_buf (VX_elastic_buffer_58_1) 2.20e-02    0.175    8.902    0.206  20.9
+        g_eb1_pipe_buffer (VX_pipe_buffer_58_1) 2.20e-02    0.175    8.902    0.206  20.9
+          g_register_g_pipe_regs_0__pipe_register (VX_pipe_register_45_1) 2.20e-02    0.175    8.898    0.206  20.9
+            g_shift_register (VX_shift_register_615_1_1_0_1) 2.20e-02    0.175    8.898    0.206  20.9
+      mul_dst_d2 (VX_mul_u32_pipe_0)      0.000 1.21e-03 9.76e-02 1.31e-03   0.1
+      mul_src_d2 (VX_mul_u32_pipe_1)      0.000 1.21e-03 8.76e-02 1.30e-03   0.1
+      mul_dst_d1 (VX_mul_u32_pipe_2)   1.64e-04 1.77e-03   17.054 1.90e-02   1.9
+      mul_src_d1 (VX_mul_u32_pipe_3)   3.03e-04 1.90e-03   30.909 3.31e-02   3.4
+      mul_dst_d0 (VX_mul_u32_pipe_4)   1.73e-04 1.77e-03   17.299 1.92e-02   1.9
+      mul_src_d0 (VX_mul_u32_pipe_5)   2.56e-04 1.86e-03   30.826 3.29e-02   3.3
+1

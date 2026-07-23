@@ -1,0 +1,128 @@
+ 
+****************************************
+Report : area
+Design : VX_lmem_dma_misal__296d4ea18349
+Version: V-2023.12-SP5-3
+Date   : Wed Jul 22 22:08:53 2026
+****************************************
+
+Library(s) Used:
+
+    sc9_cmos28lpp_base_rvt_ss_nominal_max_0p900v_125c_sadhm (File: /tool/PDK/Samsung/LN28LPP_202203/PRIMITIVES/RVT/ln28lpp_sc_9t_base_rvt_c130_V1.00d/FE-Common/LIBERTY/sc9_cmos28lpp_base_rvt_ss_nominal_max_0p900v_125c_sadhm.db)
+
+Number of ports:                        13053
+Number of nets:                         36373
+Number of cells:                        26495
+Number of combinational cells:          18612
+Number of sequential cells:              7272
+Number of macros/black boxes:               0
+Number of buf/inv:                       3339
+Number of references:                      15
+
+Combinational area:              14871.050938
+Buf/Inv area:                     1211.535031
+Noncombinational area:           15294.824614
+Macro/Black Box area:                0.000000
+Net Interconnect area:      undefined  (No wire load specified)
+
+Total cell area:                 30165.875553
+Total area:                 undefined
+
+Core Area:                     69350
+Aspect Ratio:                 1.0027
+Utilization Ratio:            0.4350
+
+
+The above information was reported from the logical library. The following are from the physical library:
+
+  Total moveable cell area: 30165.9
+  Total fixed cell area: 0.0
+  Total physical cell area: 30165.9
+ Core area: 0.000, 0.000, 262.990, 263.700
+
+Hierarchical area distribution
+------------------------------
+
+                                  Global cell area            Local cell area
+                                  -------------------  ------------------------------ 
+Hierarchical cell                 Absolute    Percent  Combi-      Noncombi-   Black-
+                                  Total       Total    national    national    boxes   Design
+--------------------------------  ----------  -------  ----------  ----------  ------  -------------------------------------------------------
+VX_lmem_dma_misal__296d4ea18349   30165.8756    100.0    231.1920    138.9960  0.0000  VX_lmem_dma_misal__296d4ea18349
+clk_gate_reg_value_r_reg              1.7550      0.0      0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_dma_misal__296d4ea18349
+dma_core                          29793.9326     98.8      0.0000      0.0000  0.0000  VX_dma_unit_h_578_242_728
+dma_core/g_aligned_u_impl         29793.9326     98.8   4600.7909   2478.7619  0.0000  VX_dma_unit_align_h_786_242_359
+dma_core/g_aligned_u_impl/clk_gate_bound_r_reg_2_     1.7550     0.0     0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dma_unit_align_h_786_242_359_0
+dma_core/g_aligned_u_impl/clk_gate_dcache_rd_ptr_reg_0     1.7550     0.0     0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dma_unit_align_h_786_242_359_13
+dma_core/g_aligned_u_impl/clk_gate_lmem_rd_end_reg_1     1.7550     0.0     0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dma_unit_align_h_786_242_359_45
+dma_core/g_aligned_u_impl/clk_gate_lmem_rd_ptr_reg_1     1.7550     0.0     0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dma_unit_align_h_786_242_359_44
+dma_core/g_aligned_u_impl/clk_gate_ml     1.7550     0.0     0.0000     1.7550 0.0000  SNPS_CLOCK_GATE_HIGH_VX_dma_unit_align_h_786_242_359_25
+dma_core/g_aligned_u_impl/clk_gate_ml_0     1.7550     0.0     0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dma_unit_align_h_786_242_359_30
+dma_core/g_aligned_u_impl/clk_gate_ml_1     1.7550     0.0     0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dma_unit_align_h_786_242_359_31
+dma_core/g_aligned_u_impl/clk_gate_ml_2     1.7550     0.0     0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dma_unit_align_h_786_242_359_36
+dma_core/g_aligned_u_impl/clk_gate_out_off_reg_2     1.7550     0.0     0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dma_unit_align_h_786_242_359_40
+dma_core/g_aligned_u_impl/clk_gate_ram_wr_slot_valid_r_reg     1.7550     0.0     0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dma_unit_align_h_786_242_359_46
+dma_core/g_aligned_u_impl/clk_gate_rd_base_src_seg_r_reg_1     1.7550     0.0     0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dma_unit_align_h_786_242_359_41
+dma_core/g_aligned_u_impl/clk_gate_rd_i_dim_reg_1__0     1.7550     0.0     0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dma_unit_align_h_786_242_359_42
+dma_core/g_aligned_u_impl/clk_gate_rd_i_dim_reg_2__0     1.7550     0.0     0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dma_unit_align_h_786_242_359_43
+dma_core/g_aligned_u_impl/clk_gate_rd_state_reg     1.7550     0.0     0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dma_unit_align_h_786_242_359_24
+dma_core/g_aligned_u_impl/clk_gate_slot_valid_bytes_r_reg_0__0     1.7550     0.0     0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dma_unit_align_h_786_242_359_32
+dma_core/g_aligned_u_impl/clk_gate_slot_valid_bytes_r_reg_1__0     1.7550     0.0     0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dma_unit_align_h_786_242_359_33
+dma_core/g_aligned_u_impl/clk_gate_slot_valid_bytes_r_reg_2__0     1.7550     0.0     0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dma_unit_align_h_786_242_359_34
+dma_core/g_aligned_u_impl/clk_gate_slot_valid_bytes_r_reg_3__0     1.7550     0.0     0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dma_unit_align_h_786_242_359_35
+dma_core/g_aligned_u_impl/clk_gate_slot_valid_bytes_r_reg_4__0     1.7550     0.0     0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dma_unit_align_h_786_242_359_26
+dma_core/g_aligned_u_impl/clk_gate_slot_valid_bytes_r_reg_5__0     1.7550     0.0     0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dma_unit_align_h_786_242_359_27
+dma_core/g_aligned_u_impl/clk_gate_slot_valid_bytes_r_reg_6__0     1.7550     0.0     0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dma_unit_align_h_786_242_359_28
+dma_core/g_aligned_u_impl/clk_gate_slot_valid_bytes_r_reg_7__0     1.7550     0.0     0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dma_unit_align_h_786_242_359_29
+dma_core/g_aligned_u_impl/clk_gate_state_reg_1     1.7550     0.0     0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dma_unit_align_h_786_242_359_21
+dma_core/g_aligned_u_impl/clk_gate_stride_bound_r_reg_1__1_     1.7550     0.0     0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dma_unit_align_h_786_242_359_23
+dma_core/g_aligned_u_impl/clk_gate_wr_base_dst_seg_r_reg_1     1.7550     0.0     0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dma_unit_align_h_786_242_359_37
+dma_core/g_aligned_u_impl/clk_gate_wr_expect_slot_r_reg_2     1.7550     0.0     0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dma_unit_align_h_786_242_359_47
+dma_core/g_aligned_u_impl/clk_gate_wr_i_dim_reg_1__0     1.7550     0.0     0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dma_unit_align_h_786_242_359_38
+dma_core/g_aligned_u_impl/clk_gate_wr_i_dim_reg_2__0     1.7550     0.0     0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dma_unit_align_h_786_242_359_39
+dma_core/g_aligned_u_impl/clk_gate_wr_slot_pending_r_reg     1.7550     0.0     0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dma_unit_align_h_786_242_359_1
+dma_core/g_aligned_u_impl/dcache_req_buf     7.8390     0.0     0.0000     0.0000 0.0000 VX_elastic_buffer_47_1
+dma_core/g_aligned_u_impl/dcache_req_buf/g_eb2_out_buf     0.4680     0.0     0.4680     0.0000 0.0000 VX_pipe_buffer_54_1
+dma_core/g_aligned_u_impl/dcache_req_buf/g_eb2_stream_buffer     7.3710     0.0     3.1590     4.2120 0.0000 VX_stream_buffer_102_1_1
+dma_core/g_aligned_u_impl/lmem_req_buf   549.5490     1.8     0.0000     0.0000 0.0000 VX_elastic_buffer_47_0
+dma_core/g_aligned_u_impl/lmem_req_buf/g_eb2_out_buf    45.3960     0.2    45.3960     0.0000 0.0000 VX_pipe_buffer_54_0
+dma_core/g_aligned_u_impl/lmem_req_buf/g_eb2_stream_buffer   504.1530     1.7    96.2910   404.3520 0.0000 VX_stream_buffer_102_1_0
+dma_core/g_aligned_u_impl/lmem_req_buf/g_eb2_stream_buffer/clk_gate_g_buffer_buffer_r_reg     1.7550     0.0     0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_stream_buffer_102_1_0_0
+dma_core/g_aligned_u_impl/lmem_req_buf/g_eb2_stream_buffer/clk_gate_g_buffer_data_out_r_reg     1.7550     0.0     0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_stream_buffer_102_1_0_1
+dma_core/g_aligned_u_impl/mul_dst_d0  1905.6960     6.3  1426.9320   471.7440  0.0000  VX_mul_u32_pipe_4
+dma_core/g_aligned_u_impl/mul_dst_d0/clk_gate_b_s0_reg     1.7550     0.0     0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_mul_u32_pipe_0_19
+dma_core/g_aligned_u_impl/mul_dst_d0/clk_gate_mid_s2_reg     1.7550     0.0     0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_mul_u32_pipe_0_17
+dma_core/g_aligned_u_impl/mul_dst_d0/clk_gate_p11_s1_reg     1.7550     0.0     0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_mul_u32_pipe_0_18
+dma_core/g_aligned_u_impl/mul_dst_d0/clk_gate_prod_s3_reg_0     1.7550     0.0     0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_mul_u32_pipe_0_16
+dma_core/g_aligned_u_impl/mul_dst_d1  1899.1440     6.3  1420.3800   471.7440  0.0000  VX_mul_u32_pipe_2
+dma_core/g_aligned_u_impl/mul_dst_d1/clk_gate_b_s0_reg     1.7550     0.0     0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_mul_u32_pipe_0_11
+dma_core/g_aligned_u_impl/mul_dst_d1/clk_gate_mid_s2_reg     1.7550     0.0     0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_mul_u32_pipe_0_9
+dma_core/g_aligned_u_impl/mul_dst_d1/clk_gate_p11_s1_reg     1.7550     0.0     0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_mul_u32_pipe_0_10
+dma_core/g_aligned_u_impl/mul_dst_d1/clk_gate_prod_s3_reg_0     1.7550     0.0     0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_mul_u32_pipe_0_8
+dma_core/g_aligned_u_impl/mul_dst_d2    11.1150     0.0     2.6910     8.4240  0.0000  VX_mul_u32_pipe_0
+dma_core/g_aligned_u_impl/mul_src_d0  3341.2860    11.1  2582.4240   751.8420  0.0000  VX_mul_u32_pipe_5
+dma_core/g_aligned_u_impl/mul_src_d0/clk_gate_b_s0_reg     1.7550     0.0     0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_mul_u32_pipe_0_23
+dma_core/g_aligned_u_impl/mul_src_d0/clk_gate_mid_s2_reg     1.7550     0.0     0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_mul_u32_pipe_0_21
+dma_core/g_aligned_u_impl/mul_src_d0/clk_gate_p11_s1_reg     1.7550     0.0     0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_mul_u32_pipe_0_22
+dma_core/g_aligned_u_impl/mul_src_d0/clk_gate_prod_s3_reg_0     1.7550     0.0     0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_mul_u32_pipe_0_20
+dma_core/g_aligned_u_impl/mul_src_d1  3344.5620    11.1  2585.7000   751.8420  0.0000  VX_mul_u32_pipe_3
+dma_core/g_aligned_u_impl/mul_src_d1/clk_gate_b_s0_reg     1.7550     0.0     0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_mul_u32_pipe_0_15
+dma_core/g_aligned_u_impl/mul_src_d1/clk_gate_mid_s2_reg     1.7550     0.0     0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_mul_u32_pipe_0_13
+dma_core/g_aligned_u_impl/mul_src_d1/clk_gate_p11_s1_reg     1.7550     0.0     0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_mul_u32_pipe_0_14
+dma_core/g_aligned_u_impl/mul_src_d1/clk_gate_prod_s3_reg_0     1.7550     0.0     0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_mul_u32_pipe_0_12
+dma_core/g_aligned_u_impl/mul_src_d2    11.1150     0.0     2.6910     8.4240  0.0000  VX_mul_u32_pipe_1
+dma_core/g_aligned_u_impl/response_payload_ram 11593.1788    38.4     0.0000     0.0000 0.0000 VX_dp_ram_17
+dma_core/g_aligned_u_impl/response_payload_ram/g_compiled_u_compiled 11593.1788    38.4  1872.9361  9704.4478 0.0000 VX_dp_ram_compiled_3
+dma_core/g_aligned_u_impl/response_payload_ram/g_compiled_u_compiled/clk_gate_g_unsupported_ram_reg_0_     1.7550     0.0     0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_compiled_3_0
+dma_core/g_aligned_u_impl/response_payload_ram/g_compiled_u_compiled/clk_gate_g_unsupported_ram_reg_1_     1.7550     0.0     0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_compiled_3_8
+dma_core/g_aligned_u_impl/response_payload_ram/g_compiled_u_compiled/clk_gate_g_unsupported_ram_reg_2_     1.7550     0.0     0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_compiled_3_7
+dma_core/g_aligned_u_impl/response_payload_ram/g_compiled_u_compiled/clk_gate_g_unsupported_ram_reg_3_     1.7550     0.0     0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_compiled_3_6
+dma_core/g_aligned_u_impl/response_payload_ram/g_compiled_u_compiled/clk_gate_g_unsupported_ram_reg_4_     1.7550     0.0     0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_compiled_3_5
+dma_core/g_aligned_u_impl/response_payload_ram/g_compiled_u_compiled/clk_gate_g_unsupported_ram_reg_5_     1.7550     0.0     0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_compiled_3_4
+dma_core/g_aligned_u_impl/response_payload_ram/g_compiled_u_compiled/clk_gate_g_unsupported_ram_reg_6_     1.7550     0.0     0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_compiled_3_3
+dma_core/g_aligned_u_impl/response_payload_ram/g_compiled_u_compiled/clk_gate_g_unsupported_ram_reg_7_     1.7550     0.0     0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_compiled_3_2
+dma_core/g_aligned_u_impl/response_payload_ram/g_compiled_u_compiled/clk_gate_g_unsupported_rdata_r_reg     1.7550     0.0     0.0000     1.7550 0.0000 SNPS_CLOCK_GATE_HIGH_VX_dp_ram_compiled_3_1
+--------------------------------  ----------  -------  ----------  ----------  ------  -------------------------------------------------------
+Total                                                  14871.0509  15294.8246  0.0000
+
+1
