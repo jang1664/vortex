@@ -937,11 +937,13 @@ def fig10_tops_recovery_cell_only(table):
 
     # Exact HPCA one-column width. Fig10 intentionally shows only the
     # 16x16-to-32x32 comparison discussed in the accompanying text.
-    fig, ax = plt.subplots(figsize=(3.5, 3.05))
+    # Keep the one-column width while using a shorter axes region so the
+    # figure does not look vertically stretched in the paper.
+    fig, ax = plt.subplots(figsize=(3.5, 2.65))
     _draw_fig10_axis(ax, data, ymax)
     ax.set_ylabel("Relative TOPS/mm²", fontsize=7.5)
 
-    fig.tight_layout(pad=0.35)
+    fig.tight_layout(pad=0.30)
     for ext in ("png", "pdf"):
         fig.savefig(HERE / f"fig10_tops_recovery_cell_only.{ext}",
                     dpi=300)
