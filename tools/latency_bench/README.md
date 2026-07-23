@@ -271,6 +271,11 @@ fpga_bins:
 
 `workloads` are expanded through `tools/workload/gen_kernel_cfgs.py`. Each
 implemented kernel with an app and argument string becomes a benchmark case.
+SpinQuant workloads use `hadamard_variant: zero_padding` by default. Set
+`hadamard_variant: factorized` to measure the exact mixed-radix path. For
+standalone row-major workloads, the factorized path emits a butterfly case
+followed by a base-transform case; fused-layout workloads select the
+factorized mode inside `hadamard_layout_fused`.
 For generation workloads, `gen_kv_len` is the logical KV length after the
 current token is appended. Set `max_seq_len` when the fixed cache allocation
 capacity must be larger than that logical length; the latency adapter forwards

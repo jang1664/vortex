@@ -7,6 +7,10 @@
 #include <cstring>
 #include <vector>
 
+#ifndef KV_CACHE_QUANT_LAYOUT_FUSED_VARIANT_TAG
+#define KV_CACHE_QUANT_LAYOUT_FUSED_VARIANT_TAG 0
+#endif
+
 vx_device_h device = nullptr;
 vx_buffer_h krnl_buffer = nullptr;
 vx_buffer_h args_buffer = nullptr;
@@ -58,6 +62,9 @@ int main(int argc, char *argv[]) {
   uint32_t source_total_n = 0;
   uint32_t head_col_offset = 0;
   bool emit_correction_qparams = false;
+  bool append_update = false;
+  uint32_t cache_capacity = 0;
+  uint32_t cache_position = 0;
   bool gemm_qdir_set = false;
   uint32_t src_layout = SRC_LAYOUT_ROW_MAJOR;
   for (int i = 1; i < argc; ++i) {
@@ -88,6 +95,28 @@ int main(int argc, char *argv[]) {
     else if (strcmp(argv[i], "--head-col-offset") == 0) head_col_offset = atoi(argv[++i]);
     else if (strncmp(argv[i], "--head-col-offset=", 18) == 0) head_col_offset = atoi(argv[i] + 18);
     else if (strcmp(argv[i], "--emit-correction-qparams") == 0) emit_correction_qparams = true;
+    else if (strcmp(argv[i], "--cache-update") == 0) {
+      const char* mode = argv[++i];
+      if (strcmp(mode, "full") == 0) append_update = false;
+      else if (strcmp(mode, "append") == 0) append_update = true;
+      else {
+        printf("ERROR: --cache-update must be full or append\n");
+        return 1;
+      }
+    }
+    else if (strncmp(argv[i], "--cache-update=", 15) == 0) {
+      const char* mode = argv[i] + 15;
+      if (strcmp(mode, "full") == 0) append_update = false;
+      else if (strcmp(mode, "append") == 0) append_update = true;
+      else {
+        printf("ERROR: --cache-update must be full or append\n");
+        return 1;
+      }
+    }
+    else if (strcmp(argv[i], "--cache-capacity") == 0) cache_capacity = atoi(argv[++i]);
+    else if (strncmp(argv[i], "--cache-capacity=", 17) == 0) cache_capacity = atoi(argv[i] + 17);
+    else if (strcmp(argv[i], "--cache-position") == 0) cache_position = atoi(argv[++i]);
+    else if (strncmp(argv[i], "--cache-position=", 17) == 0) cache_position = atoi(argv[i] + 17);
     else if (strcmp(argv[i], "--layout-from") == 0) src_layout = parse_src_layout(argv[++i]);
     else if (strncmp(argv[i], "--layout-from=", 14) == 0) src_layout = parse_src_layout(argv[i] + 14);
     else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
@@ -98,12 +127,19 @@ int main(int argc, char *argv[]) {
              "[--gemm-qdir QDIR] [--source-transposed] "
              "[--layout-from row_major_fp16|gemm_c_tiled] "
              "[--quant-mode legacy_uint4_asymmetric|spinquant_signed_asymmetric|spinquant_signed_symmetric] "
-             "[--source-total-n N] [--head-col-offset N] [--emit-correction-qparams]\n", argv[0]);
+             "[--source-total-n N] [--head-col-offset N] [--emit-correction-qparams] "
+             "[--cache-update full|append] [--cache-capacity K] [--cache-position K]\n",
+             argv[0]);
       return 0;
     }
   }
   if (!gemm_qdir_set) GEMM_QDIR = QDIR;
   if (source_total_n == 0) source_total_n = N;
+  if (append_update
+      && (K != 1 || cache_capacity == 0 || cache_position >= cache_capacity)) {
+    printf("ERROR: append requires K=1 and cache-position < non-zero cache-capacity\n");
+    return 1;
+  }
   if (!valid_fused_quant_shape(K, N, QBLK, QDIR, WTRANS, GEMM_QDIR,
                                SOURCE_TRANSPOSED, quant_mode,
                                source_total_n, head_col_offset)) {
@@ -121,9 +157,12 @@ int main(int argc, char *argv[]) {
   }
 
   const size_t src_elems = (size_t)K * source_total_n;
-  const size_t weight_bytes = weight_total_bytes_host(K, N, SOURCE_TRANSPOSED);
-  const size_t scale_bytes = scale_total_bytes_host(K, N, QBLK, GEMM_QDIR,
-                                                    SOURCE_TRANSPOSED, DMA_KT, DMA_NT);
+  const uint32_t output_K = append_update ? cache_capacity : K;
+  const size_t weight_bytes = weight_total_bytes_host(
+      output_K, N, SOURCE_TRANSPOSED);
+  const size_t scale_bytes = scale_total_bytes_host(
+      output_K, N, QBLK, GEMM_QDIR,
+      SOURCE_TRANSPOSED, DMA_KT, DMA_NT);
   std::vector<fp16_t> h_src((size_t)K * N);
   init_src(h_src);
   std::vector<fp16_t> h_src_combined(src_elems, 0);
@@ -134,6 +173,9 @@ int main(int argc, char *argv[]) {
   std::vector<fp16_t> h_src_device(src_elems);
   pack_src_for_layout(h_src_combined, h_src_device, K, source_total_n,
                       src_layout, DMA_MT);
+  std::vector<uint8_t> initial_weight(weight_bytes, 0);
+  std::vector<uint8_t> initial_scale(scale_bytes, 0);
+  std::vector<uint8_t> initial_zero(scale_bytes, 0);
 
   vx_bench::LatencyPowerMeasurement latency_power(bench);
   if (!latency_power.prestart()) {
@@ -143,15 +185,28 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_dev_open(&device));
   RT_CHECK(vx_upload_kernel_file(device, "kernel.vxbin", &krnl_buffer));
   RT_CHECK(vx_mem_alloc(device, src_elems * sizeof(fp16_t), VX_MEM_READ, &src_buffer));
-  RT_CHECK(vx_mem_alloc(device, weight_bytes, VX_MEM_WRITE, &weight_buffer));
-  RT_CHECK(vx_mem_alloc(device, scale_bytes, VX_MEM_WRITE, &scale_buffer));
-  RT_CHECK(vx_mem_alloc(device, scale_bytes, VX_MEM_WRITE, &zero_buffer));
+  const uint32_t output_mem_flags =
+      append_update ? VX_MEM_READ_WRITE : VX_MEM_WRITE;
+  RT_CHECK(vx_mem_alloc(device, weight_bytes, output_mem_flags, &weight_buffer));
+  RT_CHECK(vx_mem_alloc(device, scale_bytes, output_mem_flags, &scale_buffer));
+  RT_CHECK(vx_mem_alloc(device, scale_bytes, output_mem_flags, &zero_buffer));
   if (emit_correction_qparams) {
-    const size_t logical_bytes = kv_qparam_count(K, N, QBLK, QDIR) * sizeof(fp16_t);
-    RT_CHECK(vx_mem_alloc(device, logical_bytes, VX_MEM_WRITE, &logical_scale_buffer));
-    RT_CHECK(vx_mem_alloc(device, logical_bytes, VX_MEM_WRITE, &logical_zero_buffer));
+    const size_t logical_bytes =
+        kv_qparam_count(output_K, N, QBLK, QDIR) * sizeof(fp16_t);
+    RT_CHECK(vx_mem_alloc(
+        device, logical_bytes, output_mem_flags, &logical_scale_buffer));
+    RT_CHECK(vx_mem_alloc(
+        device, logical_bytes, output_mem_flags, &logical_zero_buffer));
   }
   RT_CHECK(vx_copy_to_dev(src_buffer, h_src_device.data(), 0, src_elems * sizeof(fp16_t)));
+  if (append_update) {
+    RT_CHECK(vx_copy_to_dev(
+        weight_buffer, initial_weight.data(), 0, weight_bytes));
+    RT_CHECK(vx_copy_to_dev(
+        scale_buffer, initial_scale.data(), 0, scale_bytes));
+    RT_CHECK(vx_copy_to_dev(
+        zero_buffer, initial_zero.data(), 0, scale_bytes));
+  }
 
   uint64_t num_cores = 0;
   uint64_t num_warps = 0;
@@ -159,27 +214,47 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_CORES, &num_cores));
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_WARPS, &num_warps));
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_THREADS, &num_threads));
-  const uint32_t tpb = std::min(256u, (uint32_t)(num_warps * num_threads));
+  const uint32_t tpb =
+      append_update && KV_CACHE_QUANT_LAYOUT_FUSED_VARIANT_TAG >= 2
+          ? (uint32_t)num_threads
+          : std::min(256u, (uint32_t)(num_warps * num_threads));
 
   kernel_arg_t arg = {};
-  const uint32_t max_slot_elems = max_scale_slot_bytes_host(K, N, QBLK, GEMM_QDIR,
+  const uint32_t max_slot_elems = max_scale_slot_bytes_host(output_K, N, QBLK, GEMM_QDIR,
                                                             SOURCE_TRANSPOSED, DMA_KT, DMA_NT)
                                 / TILE_ELEM_BYTES;
-  const uint32_t out_K = padded_qparam_K_host(K, N, QBLK, GEMM_QDIR, SOURCE_TRANSPOSED);
-  const uint32_t out_N = padded_qparam_N_host(K, N, QBLK, GEMM_QDIR, SOURCE_TRANSPOSED);
+  const uint32_t out_K = padded_qparam_K_host(
+      output_K, N, QBLK, GEMM_QDIR, SOURCE_TRANSPOSED);
+  const uint32_t out_N = padded_qparam_N_host(
+      output_K, N, QBLK, GEMM_QDIR, SOURCE_TRANSPOSED);
   const uint32_t n_dma_tiles = ceil_div_pow2_u32(out_N, DMA_NT);
   const uint32_t k_tiles = ceil_div_pow2_u32(out_K, DMA_KT);
   const uint32_t qparam_work = k_tiles * n_dma_tiles * max_slot_elems;
-  const uint32_t work_items = std::max((uint32_t)weight_bytes, qparam_work);
-  const uint32_t blocks = std::min(
-      (work_items + tpb - 1u) / tpb,
-      std::max(1u, (uint32_t)num_cores * 4u));
-  if (!init_kernel_arg(arg, K, N, QBLK, QDIR, WTRANS, GEMM_QDIR,
+  const uint32_t full_work_items =
+      std::max((uint32_t)weight_bytes, qparam_work);
+  const uint32_t append_work_items =
+      std::max(N >> 1, GEMM_QDIR == 0 ? 1u : N >> 5);
+  const uint32_t work_items =
+      append_update ? append_work_items : full_work_items;
+  const uint32_t blocks =
+      append_update && KV_CACHE_QUANT_LAYOUT_FUSED_VARIANT_TAG >= 2
+          ? 1u
+          : std::min(
+                (work_items + tpb - 1u) / tpb,
+                std::max(1u, (uint32_t)num_cores * 4u));
+  if (!init_kernel_arg(arg, output_K, N, QBLK, QDIR, WTRANS, GEMM_QDIR,
                        SOURCE_TRANSPOSED, src_layout, DMA_MT, DMA_KT, DMA_NT,
                        blocks, tpb, quant_mode, source_total_n, head_col_offset)) {
     printf("ERROR: failed to initialize kernel args\n");
     cleanup();
     return 1;
+  }
+  if (append_update) {
+    arg.K = 1;
+    arg.src_total_K = 1;
+    arg.persistent_mode = 1;
+    arg.cache_capacity = cache_capacity;
+    arg.cache_position = cache_position;
   }
   RT_CHECK(vx_mem_address(src_buffer, &arg.src_addr));
   RT_CHECK(vx_mem_address(weight_buffer, &arg.weight_addr));
@@ -192,6 +267,8 @@ int main(int argc, char *argv[]) {
   arg.power_kernel_iterations = 1;
   RT_CHECK(vx_upload_bytes(device, &arg, sizeof(arg), &args_buffer));
 
+  printf("cache_update=%s cache_capacity=%u cache_position=%u\n",
+         append_update ? "append" : "full", output_K, cache_position);
   printf("Warmup Start\n"); fflush(stdout);
   for (int i = 0; i < bench.warmup; ++i) {
     RT_CHECK(vx_start(device, krnl_buffer, args_buffer));

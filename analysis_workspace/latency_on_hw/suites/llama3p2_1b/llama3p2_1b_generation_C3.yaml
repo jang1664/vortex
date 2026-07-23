@@ -1,0 +1,35 @@
+name: llama3p2_1b_generation_C3
+defaults:
+  warmup: 1
+  iterations: 3
+  app: fpint_gemm_ffn_hw_naive
+  fpga_bin: naive_gemm_th32_tcol32_hwexp_dcache
+  target: hw
+  platform: xilinx_u55c_gen3x16_xdma_3_202210_1
+
+fpga_bins:
+  default: C4
+
+  by_backend:
+    fpint_gemm_naive: C4
+
+  by_app:
+    fpint_gemm_ffn_hw: C4
+    fpint_gemm_ffn_hw_naive: C3
+    rmsnorm: C4
+    rope: C4
+    softmax: C4
+    silu: C4
+    eladd: C4
+    elmul: C4
+
+workloads:
+  - id: llama3p2_1b_generation_C3
+    model: llama3p2-1b
+    stage: generation
+    variant: all_fpint_gemm_naive_spinquant
+    implemented_only: false
+    matrix:
+      batch: {values: [1]}
+      gen_kv_len: {values: [512, 1024, 2048, 4096]}
+      qblk: 32

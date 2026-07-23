@@ -45,6 +45,26 @@ MODELS: dict[str, dict[str, int]] = {
         "vocab_size": 128256,
         "max_position_embeddings": 8192,
     },
+    "llama3p2-1b": {
+        "hidden_size": 2048,
+        "intermediate_size": 8192,
+        "num_attention_heads": 32,
+        "num_key_value_heads": 8,    # GQA
+        "head_dim": 64,
+        "num_layers": 16,
+        "vocab_size": 128256,
+        "max_position_embeddings": 131072,
+    },
+    "llama3p2-3b": {
+        "hidden_size": 3072,
+        "intermediate_size": 8192,
+        "num_attention_heads": 24,
+        "num_key_value_heads": 8,    # GQA
+        "head_dim": 128,
+        "num_layers": 28,
+        "vocab_size": 128256,
+        "max_position_embeddings": 131072,
+    },
     # Future models can be added here, e.g.:
     # "llama2-13b":  {"hidden_size": 5120, "intermediate_size": 13824,
     #                 "num_attention_heads": 40, "num_key_value_heads": 40,
@@ -61,6 +81,8 @@ DEFAULT_LLM_BATCH = 1
 DEFAULT_LLM_PREFILL_SEQ = 128
 DEFAULT_LLM_GEN_KV = 128
 DEFAULT_LLM_QBLK = 32
+DEFAULT_HADAMARD_VARIANT = "zero_padding"
+HADAMARD_VARIANTS = ("zero_padding", "factorized")
 
 # Defaults exposed for the HW-regression driver in ci/test_fpint_hw.py.
 DEFAULT_QBLKS = [32, 64, 128]
@@ -130,6 +152,7 @@ KERNEL_APP_REGISTRY: dict[str, str | None] = {
     "eladd":      "eladd",
     "elmul":      "elmul",
     "hadamard":   "hadamard",
+    "hadamard_base": "hadamard_base",
     "hadamard_layout_fused": "hadamard_layout_fused",
     "kv_cache_quant_w4a16": "kv_cache_quant_w4a16",
     "kv_cache_quant_layout_fused_w4a16": "kv_cache_quant_layout_fused_w4a16",
@@ -701,6 +724,83 @@ def _hadamard_kernel(name: str,
     )
 
 
+def _spinquant_base_k(dim: int) -> int:
+    for base_k in (172, 28):
+        width = dim // base_k
+        if dim % base_k == 0 and width > 0 and (width & (width - 1)) == 0:
+            return base_k
+    if dim > 0 and (dim & (dim - 1)) == 0:
+        return 1
+    raise ValueError(f"unsupported SpinQuant Hadamard dimension: {dim}")
+
+
+def _factorized_hadamard_kernels(name: str,
+                                  stage: str,
+                                  *,
+                                  rows: int,
+                                  dim: int,
+                                  calls_per_forward: int,
+                                  producer: str,
+                                  consumer: str,
+                                  layout_group: str,
+                                  rotation: str,
+                                  variant: str) -> list[dict]:
+    base_k = _spinquant_base_k(dim)
+    width = dim // base_k
+    butterfly_name = name if base_k == 1 else f"{name}_butterfly"
+    butterfly_consumer = consumer if base_k == 1 else name
+    butterfly = _llm_kernel(
+        name=butterfly_name,
+        kind="hadamard",
+        backend="hadamard",
+        stage=stage,
+        args=f"-rows {rows} -dim {dim} -K {base_k}",
+        calls_per_forward=calls_per_forward,
+        shape={
+            "rows": rows,
+            "dim": dim,
+            "base_k": base_k,
+            "width": width,
+            "hadamard_variant": "factorized",
+            "hadamard_phase": "butterfly",
+            "layout_from": "row_major_fp16",
+            "layout_to": "row_major_fp16",
+            "producer": producer,
+            "consumer": butterfly_consumer,
+            "layout_group": layout_group,
+            "spinquant_rotation": rotation,
+        },
+        variant=variant,
+    )
+    if base_k == 1:
+        return [butterfly]
+
+    base = _llm_kernel(
+        name=name,
+        kind="hadamard",
+        backend="hadamard_base",
+        stage=stage,
+        args=f"-rows {rows} -base-k {base_k} -width {width}",
+        calls_per_forward=calls_per_forward,
+        shape={
+            "rows": rows,
+            "dim": dim,
+            "base_k": base_k,
+            "width": width,
+            "hadamard_variant": "factorized",
+            "hadamard_phase": "base",
+            "layout_from": "row_major_fp16",
+            "layout_to": "row_major_fp16",
+            "producer": butterfly_name,
+            "consumer": consumer,
+            "layout_group": layout_group,
+            "spinquant_rotation": rotation,
+        },
+        variant=variant,
+    )
+    return [butterfly, base]
+
+
 def _with_fused_backend(kernel: dict,
                         backend: str,
                         *,
@@ -1199,13 +1299,13 @@ def _apply_spinquant_hadamard_variant(kernels: list[dict],
                                       head_dim: int,
                                       M_proj: int,
                                       base_variant: str,
-                                      variant: str) -> list[dict]:
+                                      variant: str,
+                                      hadamard_variant: str) -> list[dict]:
     by_name = {kernel["name"]: kernel for kernel in kernels}
     names = set(by_name)
     q_rows = batch * seq_q * heads_q
     k_rows = batch * seq_q * heads_kv
     r4_rows = M_proj
-    mlp_elems = M_proj * intermediate
     q_rows_per_matrix, q_call_heads, q_heads_per_matrix = _attention_gemm_geometry(
         stage, seq_q=seq_q, heads_q=heads_q, heads_kv=heads_kv
     )
@@ -1234,32 +1334,58 @@ def _apply_spinquant_hadamard_variant(kernels: list[dict],
         else "down_proj"
     )
 
-    q_hadamard = _hadamard_kernel(
-        "spinquant_r3_q_hadamard", stage,
-        rows=q_rows, dim=head_dim, calls_per_forward=layers,
+    if hadamard_variant not in HADAMARD_VARIANTS:
+        raise ValueError(
+            f"unknown Hadamard variant: {hadamard_variant!r}. "
+            f"Expected one of {HADAMARD_VARIANTS}"
+        )
+
+    def make_hadamard(name: str, *, rows: int, dim: int, producer: str,
+                      consumer: str, layout_group: str,
+                      rotation: str) -> list[dict]:
+        if hadamard_variant == "factorized" and base_variant != LAYOUT_FUSED_VARIANT:
+            return _factorized_hadamard_kernels(
+                name, stage, rows=rows, dim=dim,
+                calls_per_forward=layers, producer=producer,
+                consumer=consumer, layout_group=layout_group,
+                rotation=rotation, variant=variant,
+            )
+        kernel = _hadamard_kernel(
+            name, stage, rows=rows, dim=dim, calls_per_forward=layers,
+            producer=producer, consumer=consumer,
+            layout_group=layout_group, rotation=rotation, variant=variant,
+        )
+        kernel["shape"]["hadamard_variant"] = hadamard_variant
+        return [kernel]
+
+    q_hadamards = make_hadamard(
+        "spinquant_r3_q_hadamard", rows=q_rows, dim=head_dim,
         producer="rope_q", consumer=q_consumer,
         layout_group="rope_q_to_spinquant_r3_q_to_attn_qkT",
-        rotation="R3", variant=variant,
+        rotation="R3",
     )
-    k_hadamard = _hadamard_kernel(
-        "spinquant_r3_k_hadamard", stage,
-        rows=k_rows, dim=head_dim, calls_per_forward=layers,
+    k_hadamards = make_hadamard(
+        "spinquant_r3_k_hadamard", rows=k_rows, dim=head_dim,
         producer="rope_k", consumer=",".join(k_consumers),
         layout_group="rope_k_to_spinquant_r3_k_to_kv_cache",
-        rotation="R3", variant=variant,
+        rotation="R3",
     )
-    r4_hadamard = _hadamard_kernel(
-        "spinquant_r4_mlp_hadamard", stage,
-        rows=r4_rows, dim=intermediate, calls_per_forward=layers,
+    r4_hadamards = make_hadamard(
+        "spinquant_r4_mlp_hadamard", rows=r4_rows, dim=intermediate,
         producer="mlp_elmul", consumer=r4_consumer,
         layout_group="mlp_elmul_to_spinquant_r4_to_down_proj",
-        rotation="R4", variant=variant,
+        rotation="R4",
     )
     if base_variant == LAYOUT_FUSED_VARIANT:
         q_matrix_count = batch * q_call_heads
-        q_hadamard = _with_fused_backend(
-            q_hadamard, "hadamard_layout_fused",
-            args=f"-m {q_rows_per_matrix} -n {q_matrix_count} -k {head_dim}",
+        fused_variant_arg = (
+            "" if hadamard_variant == DEFAULT_HADAMARD_VARIANT
+            else f" --hadamard-variant {hadamard_variant}"
+        )
+        q_hadamards = [_with_fused_backend(
+            q_hadamards[0], "hadamard_layout_fused",
+            args=(f"-m {q_rows_per_matrix} -n {q_matrix_count} -k {head_dim}"
+                  f"{fused_variant_arg}"),
             shape_update={
                 "layout_from": "head_major_row_fp16",
                 "layout_to": "gemm_a_tiled",
@@ -1269,10 +1395,11 @@ def _apply_spinquant_hadamard_variant(kernels: list[dict],
                 "query_heads_per_kv": q_heads_per_matrix,
                 "consumer": "attn_qkT",
             },
-        )
-        k_hadamard = _with_fused_backend(
-            k_hadamard, "hadamard_layout_fused",
-            args=f"-m {seq_q} -n {batch * heads_kv} -k {head_dim}",
+        )]
+        k_hadamards = [_with_fused_backend(
+            k_hadamards[0], "hadamard_layout_fused",
+            args=(f"-m {seq_q} -n {batch * heads_kv} -k {head_dim}"
+                  f"{fused_variant_arg}"),
             shape_update={
                 "layout_from": "head_major_row_fp16",
                 "layout_to": "gemm_a_tiled",
@@ -1280,59 +1407,21 @@ def _apply_spinquant_hadamard_variant(kernels: list[dict],
                 "rows_per_matrix": seq_q,
                 "m_pad": (seq_q + 7) & ~7,
             },
-        )
-        r4_hadamard = _with_fused_backend(
-            r4_hadamard, "hadamard_layout_fused",
-            args=f"-m {M_proj} -n 1 -k {intermediate}",
+        )]
+        r4_hadamards = [_with_fused_backend(
+            r4_hadamards[0], "hadamard_layout_fused",
+            args=(f"-m {M_proj} -n 1 -k {intermediate}"
+                  f"{fused_variant_arg} --layout-from gemm_a_tiled"),
             shape_update={
+                "layout_from": "gemm_a_tiled",
                 "layout_to": "gemm_a_tiled",
                 "matrix_count": 1,
                 "rows_per_matrix": M_proj,
                 "m_pad": (M_proj + 7) & ~7,
                 "consumer": "down_proj",
             },
-        )
+        )]
 
-    gate_detile = _detile_output_kernel(
-        "layout_gate_proj_to_mlp_silu_detile", stage,
-        M=M_proj, N=intermediate, calls_per_forward=layers,
-        producer="gate_proj", consumer="mlp_silu",
-        layout_group="gate_proj_to_mlp_silu", variant=variant,
-    )
-    up_detile = _detile_output_kernel(
-        "layout_up_proj_to_mlp_elmul_detile", stage,
-        M=M_proj, N=intermediate, calls_per_forward=layers,
-        producer="up_proj", consumer="mlp_elmul",
-        layout_group="up_proj_to_mlp_elmul", variant=variant,
-    )
-    row_major_silu = _llm_kernel(
-        name="mlp_silu", kind="silu", backend="silu", stage=stage,
-        args=f"-n {mlp_elems}",
-        calls_per_forward=layers,
-        shape={
-            "size": mlp_elems,
-            "layout_from": "row_major",
-            "layout_to": "row_major",
-            "producer": "layout_gate_proj_to_mlp_silu_detile",
-            "consumer": "mlp_elmul",
-            "layout_group": "gate_proj_to_mlp_silu",
-        },
-        variant=variant,
-    )
-    row_major_elmul = _llm_kernel(
-        name="mlp_elmul", kind="elmul", backend="elmul", stage=stage,
-        args=f"-n {mlp_elems}",
-        calls_per_forward=layers,
-        shape={
-            "size": mlp_elems,
-            "layout_from": "row_major",
-            "layout_to": "row_major",
-            "producer": "mlp_silu,layout_up_proj_to_mlp_elmul_detile",
-            "consumer": "spinquant_r4_mlp_hadamard",
-            "layout_group": "mlp_elmul_to_spinquant_r4",
-        },
-        variant=variant,
-    )
     out: list[dict] = []
     for kernel in kernels:
         name = str(kernel["name"])
@@ -1349,7 +1438,7 @@ def _apply_spinquant_hadamard_variant(kernels: list[dict],
                     },
                 )
             out.append(kernel)
-            out.append(q_hadamard)
+            out.extend(q_hadamards)
             continue
 
         if name == "rope_k":
@@ -1364,7 +1453,7 @@ def _apply_spinquant_hadamard_variant(kernels: list[dict],
                     },
                 )
             out.append(kernel)
-            out.append(k_hadamard)
+            out.extend(k_hadamards)
             continue
 
         if name == "layout_rope_q_to_attn_qkT":
@@ -1438,19 +1527,23 @@ def _apply_spinquant_hadamard_variant(kernels: list[dict],
             continue
 
         if base_variant == LAYOUT_FUSED_VARIANT and name == "mlp_silu":
-            out.append(gate_detile)
-            out.append(row_major_silu)
+            out.append(kernel)
             continue
 
         if base_variant == LAYOUT_FUSED_VARIANT and name == "mlp_elmul":
-            out.append(up_detile)
-            out.append(row_major_elmul)
-            out.append(r4_hadamard)
+            out.append(_with_kernel_updates(
+                kernel,
+                shape_update={
+                    "consumer": "spinquant_r4_mlp_hadamard",
+                    "layout_group": "mlp_elmul_to_spinquant_r4",
+                },
+            ))
+            out.extend(r4_hadamards)
             continue
 
         if name == "mlp_elmul":
             out.append(kernel)
-            out.append(r4_hadamard)
+            out.extend(r4_hadamards)
             continue
 
         if name == "layout_mlp_elmul_to_down_proj":
@@ -1478,7 +1571,8 @@ def build_decoder_pass_kernels(config: dict,
                                seq_kv: int,
                                qblk: int,
                                variant: str = DEFAULT_WORKLOAD_VARIANT,
-                               softmax_k_stride: int | None = None) -> list[dict]:
+                               softmax_k_stride: int | None = None,
+                               hadamard_variant: str = DEFAULT_HADAMARD_VARIANT) -> list[dict]:
     """Emit every kernel that fires during one forward pass of the model
     in the given stage.
 
@@ -1804,6 +1898,7 @@ def build_decoder_pass_kernels(config: dict,
             M_proj=M_proj,
             base_variant=base_variant,
             variant=variant,
+            hadamard_variant=hadamard_variant,
         )
 
     return kernels
@@ -1816,7 +1911,8 @@ def build_llm_kernels(model_name: str,
                       gen_kv_len: int,
                       qblk: int,
                       variant: str = DEFAULT_WORKLOAD_VARIANT,
-                      max_seq_len: int | None = None) -> dict:
+                      max_seq_len: int | None = None,
+                      hadamard_variant: str = DEFAULT_HADAMARD_VARIANT) -> dict:
     """Build the JSON payload covering one or more stages."""
     if model_name not in MODELS:
         raise ValueError(
@@ -1827,6 +1923,11 @@ def build_llm_kernels(model_name: str,
     if variant not in WORKLOAD_VARIANTS:
         raise ValueError(
             f"unknown variant: {variant!r}. Expected one of {WORKLOAD_VARIANTS}"
+        )
+    if hadamard_variant not in HADAMARD_VARIANTS:
+        raise ValueError(
+            f"unknown Hadamard variant: {hadamard_variant!r}. "
+            f"Expected one of {HADAMARD_VARIANTS}"
         )
     cache_capacity = (
         max(prefill_seq_len, gen_kv_len)
@@ -1848,6 +1949,7 @@ def build_llm_kernels(model_name: str,
                 qblk=qblk,
                 softmax_k_stride=prefill_seq_len,
                 variant=variant,
+                hadamard_variant=hadamard_variant,
             ))
         elif stage == "generation":
             if gen_kv_len < 1:
@@ -1862,6 +1964,7 @@ def build_llm_kernels(model_name: str,
                 qblk=qblk,
                 softmax_k_stride=cache_capacity,
                 variant=variant,
+                hadamard_variant=hadamard_variant,
             ))
         else:
             raise ValueError(
@@ -1883,6 +1986,12 @@ def build_llm_kernels(model_name: str,
                 "persistent_layout": "gemm_w_tiled_transposed",
                 "source_token_count": 1,
             })
+            if kernel.get("backend") == "kv_cache_quant_layout_fused_w4a16":
+                kernel["args"] += (
+                    f" --cache-update append"
+                    f" --cache-capacity {cache_capacity}"
+                    f" --cache-position {gen_kv_len - 1}"
+                )
         elif name == "kv_cache_quant_v_cache_to_attn_pv":
             shape.update({
                 "cache_position": gen_kv_len - 1,
@@ -1890,6 +1999,12 @@ def build_llm_kernels(model_name: str,
                 "persistent_layout": "gemm_w_tiled",
                 "source_token_count": 1,
             })
+            if kernel.get("backend") == "kv_cache_quant_layout_fused_w4a16":
+                kernel["args"] += (
+                    f" --cache-update append"
+                    f" --cache-capacity {cache_capacity}"
+                    f" --cache-position {gen_kv_len - 1}"
+                )
         elif name == "attn_qkT":
             shape["persistent_weight_layout"] = "gemm_w_tiled_transposed"
         elif name == "attn_pv":
@@ -1908,6 +2023,7 @@ def build_llm_kernels(model_name: str,
             "max_seq_len": cache_capacity,
             "qblk": qblk,
             "variant": variant,
+            "hadamard_variant": hadamard_variant,
         },
         "kernels": kernels,
     }
@@ -2963,6 +3079,13 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
              f"Default: {DEFAULT_WORKLOAD_VARIANT}.",
     )
     parser.add_argument(
+        "--hadamard-variant",
+        choices=HADAMARD_VARIANTS,
+        default=DEFAULT_HADAMARD_VARIANT,
+        help="SpinQuant Hadamard implementation: zero_padding (default) or "
+             "factorized (butterfly followed by base).",
+    )
+    parser.add_argument(
         "--filter-kind", default=None, metavar="KIND",
         help="If set, drop every kernel whose 'kind' != KIND from the "
              "output (e.g. gemm).",
@@ -3010,6 +3133,7 @@ def main(argv: list[str] | None = None) -> int:
             qblk=args.qblk,
             variant=args.variant,
             max_seq_len=args.max_seq_len,
+            hadamard_variant=args.hadamard_variant,
         )
     except ValueError as e:
         print(f"ERROR: {e}", file=sys.stderr)

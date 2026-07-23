@@ -6,6 +6,10 @@
 
 using data_t = fp16_t;
 
+static inline uint32_t effective_stop_stride(const kernel_arg_t* arg) {
+  return arg->stop_stride == 0u ? arg->padded_dim : arg->stop_stride;
+}
+
 void kernel_hadamard(kernel_arg_t *__UNIFORM__ arg) {
   auto input = reinterpret_cast<data_t *>(arg->input_addr);
   auto output = reinterpret_cast<data_t *>(arg->output_addr);
@@ -15,6 +19,7 @@ void kernel_hadamard(kernel_arg_t *__UNIFORM__ arg) {
   const uint32_t block_size = blockDim.x;
   const uint32_t dim = arg->dim;
   const uint32_t padded_dim = arg->padded_dim;
+  const uint32_t stop_stride = effective_stop_stride(arg);
   const float scale = arg->inv_sqrt_dim;
 
   if (row >= arg->rows) {
@@ -29,7 +34,7 @@ void kernel_hadamard(kernel_arg_t *__UNIFORM__ arg) {
   }
   __syncthreads();
 
-  for (uint32_t stride = 1; stride < padded_dim; stride <<= 1) {
+  for (uint32_t stride = 1; stride < stop_stride; stride <<= 1) {
     const uint32_t pairs = padded_dim >> 1;
     for (uint32_t pair = tid; pair < pairs; pair += block_size) {
       const uint32_t base = (pair / stride) * (stride << 1) + (pair % stride);

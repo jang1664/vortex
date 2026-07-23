@@ -8,6 +8,14 @@
 #define KV_FUSED_QPARAM_WARP 0
 #endif
 
+#ifndef KV_FUSED_PERSISTENT_WARP
+#define KV_FUSED_PERSISTENT_WARP 0
+#endif
+
+#ifndef KV_FUSED_PREFILL_QPARAM_REUSE
+#define KV_FUSED_PREFILL_QPARAM_REUSE 0
+#endif
+
 static inline uint32_t float_to_bits(float value) {
   union { float f; uint32_t u; } v;
   v.f = value;
@@ -480,6 +488,83 @@ static void store_u16(uint8_t* dst, uint64_t off, uint16_t value) {
   dst[off + 1] = (uint8_t)(value >> 8);
 }
 
+static void store_reused_tiled_qparam(const kernel_arg_t* arg,
+                                      uint8_t* scales,
+                                      uint8_t* zeros,
+                                      uint32_t K,
+                                      uint32_t N,
+                                      uint32_t QBLK,
+                                      uint32_t GEMM_QDIR,
+                                      uint32_t SOURCE_TRANSPOSED,
+                                      uint32_t quant_mode,
+                                      uint32_t source_row,
+                                      uint32_t source_col,
+                                      float scale,
+                                      float zero) {
+  const uint32_t out_K = padded_qparam_K(
+      K, N, QBLK, GEMM_QDIR, SOURCE_TRANSPOSED);
+  const uint32_t out_N = padded_qparam_N(
+      K, N, QBLK, GEMM_QDIR, SOURCE_TRANSPOSED);
+  const uint32_t log2_kt = arg->log2_kt;
+  const uint32_t log2_nt = arg->log2_nt;
+  const uint32_t log2_mxu_nt = arg->log2_mxu_nt;
+  const uint32_t log2_qblk = arg->log2_qblk;
+  const uint32_t log2_ng_per_mxu_nt = arg->log2_ng_per_mxu_nt;
+  const uint32_t kt_size = 1u << log2_kt;
+  const uint32_t param_k =
+      SOURCE_TRANSPOSED != 0 ? source_col : source_row;
+  const uint32_t param_n =
+      SOURCE_TRANSPOSED != 0 ? source_row : source_col;
+  const uint32_t n_replicas =
+      GEMM_QDIR == 1 && QBLK > TILE_DMA_MXU_NT
+          ? QBLK >> log2_mxu_nt
+          : 1u;
+  const uint16_t scale_bits = float_to_fp16(scale);
+  const uint16_t zero_bits =
+      quant_mode == KV_QUANT_SPINQUANT_SIGNED_SYMMETRIC
+          ? 0u
+          : (uint16_t)(int16_t)zero;
+
+  for (uint32_t replica = 0; replica < n_replicas; ++replica) {
+    const uint32_t dst_param_n =
+        param_n + (replica << log2_mxu_nt);
+    if (param_k >= out_K || dst_param_n >= out_N) {
+      continue;
+    }
+
+    const uint32_t kt = param_k >> log2_kt;
+    const uint32_t nt_dma = dst_param_n >> log2_nt;
+    const uint32_t kt_start = kt << log2_kt;
+    const uint32_t nt_start = nt_dma << log2_nt;
+    const uint32_t cur_k = min_u32(out_K - kt_start, kt_size);
+    uint32_t elem_in_slot;
+    if (GEMM_QDIR == 0) {
+      const uint32_t cur_groups = cur_k >> log2_qblk;
+      const uint32_t group = (param_k - kt_start) >> log2_qblk;
+      const uint32_t local_n = dst_param_n - nt_start;
+      const uint32_t nb = local_n >> log2_mxu_nt;
+      const uint32_t col =
+          local_n & (TILE_DMA_MXU_NT - 1u);
+      elem_in_slot =
+          ((nb * cur_groups + group) << log2_mxu_nt) + col;
+    } else {
+      const uint32_t k_local = param_k - kt_start;
+      const uint32_t local_n = dst_param_n - nt_start;
+      const uint32_t nb = local_n >> log2_mxu_nt;
+      const uint32_t ng_local =
+          (local_n & (TILE_DMA_MXU_NT - 1u)) >> log2_qblk;
+      elem_in_slot =
+          ((nb * cur_k + k_local) << log2_ng_per_mxu_nt) + ng_local;
+    }
+
+    const uint64_t dst_off =
+        scale_slot_base(arg, kt, nt_dma)
+        + (uint64_t)elem_in_slot * TILE_ELEM_BYTES;
+    store_u16(scales, dst_off, scale_bits);
+    store_u16(zeros, dst_off, zero_bits);
+  }
+}
+
 void kernel_kv_cache_quant_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
   auto src = reinterpret_cast<fp16_t *>(arg->src_addr);
   auto weight = reinterpret_cast<uint8_t *>(arg->weight_addr);
@@ -525,9 +610,15 @@ void kernel_kv_cache_quant_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
         cache_K, cache_N, SOURCE_TRANSPOSED);
     float scale = 1.0f;
     float zero = 0.0f;
+#if KV_FUSED_PERSISTENT_WARP
+    compute_params_warp(src, K, N, QBLK, SOURCE_QDIR, 0, 0, src_layout,
+                        log2_qblk, log2_mt, log2_mxu_nt, quant_mode,
+                        source_view, threadIdx.x, &scale, &zero);
+#else
     compute_params(src, K, N, QBLK, SOURCE_QDIR, 0, 0, src_layout,
                    log2_qblk, log2_mt, log2_mxu_nt, quant_mode,
                    source_view, &scale, &zero);
+#endif
     const float stored_scale = fp16_to_float(float_to_fp16(scale));
     const float quant_scale = quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC
         ? stored_scale : scale;
@@ -581,7 +672,9 @@ void kernel_kv_cache_quant_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
                       ? 0u : (uint16_t)(int16_t)zero);
       }
     }
-    if (thread_id == 0) {
+    if (thread_id == 0
+        && arg->logical_scale_addr != 0
+        && arg->logical_zero_addr != 0) {
       logical_scales[position] = float_to_fp16(scale);
       logical_zeros[position] = float_to_fp16(zero);
     }
@@ -591,6 +684,14 @@ void kernel_kv_cache_quant_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
   const uint32_t weight_K = padded_weight_K(K, N, SOURCE_TRANSPOSED);
   const uint32_t weight_N = padded_weight_N(K, N, SOURCE_TRANSPOSED);
   const uint32_t weight_bytes = weight_K * (weight_N >> 1);
+  const bool reuse_prefill_qparams =
+#if KV_FUSED_PREFILL_QPARAM_REUSE
+      SOURCE_QDIR == 1
+      && ((SOURCE_TRANSPOSED != 0 && WTRANS != 0 && GEMM_QDIR == 0)
+          || (SOURCE_TRANSPOSED == 0 && WTRANS == 0 && GEMM_QDIR == 1));
+#else
+      false;
+#endif
   if (SOURCE_TRANSPOSED != 0 && WTRANS != 0 && SOURCE_QDIR == 1 && QBLK >= 2) {
     const uint32_t logical_K = weight_K;
     const uint32_t logical_N = weight_N;
@@ -607,6 +708,23 @@ void kernel_kv_cache_quant_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
                      source_row, source_col_start, src_layout,
                      log2_qblk, log2_mt, log2_mxu_nt, quant_mode,
                      source_view, &scale, &zero);
+      if (reuse_prefill_qparams) {
+        store_reused_tiled_qparam(
+            arg, scales, zeros, K, N, QBLK, GEMM_QDIR,
+            SOURCE_TRANSPOSED, quant_mode, source_row, source_col_start,
+            scale, zero);
+        if (arg->logical_scale_addr != 0
+            && arg->logical_zero_addr != 0
+            && source_row < K
+            && source_col_start < N) {
+          const uint32_t logical_groups =
+              (N + QBLK - 1u) >> log2_qblk;
+          const uint32_t logical_index =
+              source_row * logical_groups + group;
+          logical_scales[logical_index] = float_to_fp16(scale);
+          logical_zeros[logical_index] = float_to_fp16(zero);
+        }
+      }
       const float stored_scale = fp16_to_float(float_to_fp16(scale));
       const float quant_scale = quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC
           ? stored_scale : scale;
@@ -638,6 +756,23 @@ void kernel_kv_cache_quant_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
                      source_row, source_col_start, src_layout,
                      log2_qblk, log2_mt, log2_mxu_nt, quant_mode,
                      source_view, &scale, &zero);
+      if (reuse_prefill_qparams) {
+        store_reused_tiled_qparam(
+            arg, scales, zeros, K, N, QBLK, GEMM_QDIR,
+            SOURCE_TRANSPOSED, quant_mode, source_row, source_col_start,
+            scale, zero);
+        if (arg->logical_scale_addr != 0
+            && arg->logical_zero_addr != 0
+            && source_row < K
+            && source_col_start < N) {
+          const uint32_t logical_groups =
+              (N + QBLK - 1u) >> log2_qblk;
+          const uint32_t logical_index =
+              source_row * logical_groups + group;
+          logical_scales[logical_index] = float_to_fp16(scale);
+          logical_zeros[logical_index] = float_to_fp16(zero);
+        }
+      }
       const float stored_scale = fp16_to_float(float_to_fp16(scale));
       const float quant_scale = quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC
           ? stored_scale : scale;
@@ -746,6 +881,9 @@ void kernel_kv_cache_quant_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
 #endif
       continue;
     }
+    if (reuse_prefill_qparams) {
+      continue;
+    }
 
     uint32_t param_k = kt_start;
     uint32_t param_n = nt_start;
@@ -811,7 +949,9 @@ void kernel_kv_cache_quant_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
 #endif
   }
 
-  if (arg->logical_scale_addr != 0 && arg->logical_zero_addr != 0) {
+  if (!reuse_prefill_qparams
+      && arg->logical_scale_addr != 0
+      && arg->logical_zero_addr != 0) {
     const uint32_t logical_groups = SOURCE_QDIR == 0
         ? ((K + QBLK - 1u) >> log2_qblk) * N
         : K * ((N + QBLK - 1u) >> log2_qblk);

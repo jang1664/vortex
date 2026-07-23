@@ -106,6 +106,44 @@ workloads:
             self.assertIn("--layout-to gemm_a_tiled", by_op["rope_q"].args)
             self.assertIn("--layout-to row_major", by_op["rope_k"].args)
 
+    def test_workload_forwards_factorized_hadamard_variant(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            suite_path = Path(tmp) / "suite.yaml"
+            suite_path.write_text(
+                """
+name: factorized_hadamard_suite
+defaults:
+  warmup: 1
+  iterations: 2
+workloads:
+  - id: llama2_factorized_hadamard
+    model: llama2-7b
+    stage: prefill
+    batch: 1
+    prefill_seq_len: 128
+    qblk: 32
+    variant: all_fpint_gemm_improve_spinquant
+    hadamard_variant: factorized
+    filter_kind: hadamard
+""".lstrip()
+            )
+
+            suite = load_suite(suite_path, repo_root=Path.cwd())
+            by_name = {case.name: case for case in suite.cases}
+
+            self.assertEqual(4, len(suite.cases))
+            self.assertEqual("hadamard", by_name["spinquant_r3_q_hadamard"].backend)
+            self.assertIn("-K 1", by_name["spinquant_r3_q_hadamard"].args)
+            self.assertEqual("hadamard", by_name["spinquant_r3_k_hadamard"].backend)
+            self.assertIn("-K 1", by_name["spinquant_r3_k_hadamard"].args)
+            self.assertEqual("hadamard", by_name["spinquant_r4_mlp_hadamard_butterfly"].backend)
+            self.assertIn("-K 172", by_name["spinquant_r4_mlp_hadamard_butterfly"].args)
+            self.assertEqual("hadamard_base", by_name["spinquant_r4_mlp_hadamard"].backend)
+            self.assertEqual(
+                "-rows 128 -base-k 172 -width 64",
+                by_name["spinquant_r4_mlp_hadamard"].args,
+            )
+
     def test_generation_workload_forwards_fixed_cache_capacity(self) -> None:
         for capacity_key in ("max_seq_len", "max-seq-len"):
             with self.subTest(capacity_key=capacity_key), tempfile.TemporaryDirectory() as tmp:

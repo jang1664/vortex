@@ -7,6 +7,10 @@
 #include <cstring>
 #include <vector>
 
+#ifndef KV_CACHE_QUANT_LAYOUT_FUSED_VARIANT_TAG
+#define KV_CACHE_QUANT_LAYOUT_FUSED_VARIANT_TAG 0
+#endif
+
 vx_device_h device = nullptr;
 vx_buffer_h krnl_buffer = nullptr;
 vx_buffer_h args_buffer = nullptr;
@@ -470,11 +474,15 @@ static int run_persistent_update_test(uint32_t capacity,
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_CORES, &num_cores));
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_WARPS, &num_warps));
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_THREADS, &num_threads));
-  const uint32_t tpb = std::min(256u, (uint32_t)(num_warps * num_threads));
+  const uint32_t tpb = KV_CACHE_QUANT_LAYOUT_FUSED_VARIANT_TAG >= 2
+      ? (uint32_t)num_threads
+      : std::min(256u, (uint32_t)(num_warps * num_threads));
   const uint32_t work_items = std::max(N >> 1, gemm_qdir == 0 ? 1u : N >> 5);
-  const uint32_t blocks = std::min(
-      (work_items + tpb - 1u) / tpb,
-      std::max(1u, (uint32_t)num_cores * 4u));
+  const uint32_t blocks = KV_CACHE_QUANT_LAYOUT_FUSED_VARIANT_TAG >= 2
+      ? 1u
+      : std::min(
+            (work_items + tpb - 1u) / tpb,
+            std::max(1u, (uint32_t)num_cores * 4u));
 
   kernel_arg_t arg = {};
   if (!init_kernel_arg(arg, capacity, N, QBLK, QDIR, wtrans, gemm_qdir,

@@ -16,6 +16,9 @@ typedef struct {
   uint32_t rows;
   uint32_t dim;
   uint32_t padded_dim;
+  // Zero selects the full zero-padding FWHT. A non-zero value stops the
+  // butterfly before the separate mixed-radix base transform.
+  uint32_t stop_stride;
   float inv_sqrt_dim;
   uint32_t power_kernel_iterations;
 } kernel_arg_t;

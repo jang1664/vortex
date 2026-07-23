@@ -65,7 +65,7 @@ static void initialize_random(std::vector<data_t>& vec) {
 static void print_usage(const char* prog) {
   printf("Usage: %s [--warmup=N] [--iterations=N] [--csv] "
          "[--output=PATH] [--output-append] [--power-measure-latency[=on|off]] "
-         "[-rows N] [-dim D] [-seed S] [-k kernel.vxbin]\n",
+         "[-rows N] [-dim D] [-K BASE] [-seed S] [-k kernel.vxbin]\n",
          prog);
 }
 
@@ -78,12 +78,15 @@ int main(int argc, char *argv[]) {
   uint32_t rows = 4;
   uint32_t dim = 11008;
   uint32_t seed = 42;
+  uint32_t base_k = 0;
 
   for (int i = 1; i < argc; ++i) {
     if (strcmp(argv[i], "-rows") == 0 && i + 1 < argc) {
       rows = static_cast<uint32_t>(atoi(argv[++i]));
     } else if (strcmp(argv[i], "-dim") == 0 && i + 1 < argc) {
       dim = static_cast<uint32_t>(atoi(argv[++i]));
+    } else if (strcmp(argv[i], "-K") == 0 && i + 1 < argc) {
+      base_k = static_cast<uint32_t>(atoi(argv[++i]));
     } else if (strcmp(argv[i], "-seed") == 0 && i + 1 < argc) {
       seed = static_cast<uint32_t>(atoi(argv[++i]));
     } else if (strcmp(argv[i], "-k") == 0 && i + 1 < argc) {
@@ -101,8 +104,18 @@ int main(int argc, char *argv[]) {
     fprintf(stderr, "Invalid shape: rows=%u dim=%u\n", rows, dim);
     return -1;
   }
+  if (base_k != 0) {
+    const uint32_t width = dim / base_k;
+    if (dim % base_k != 0 || width == 0 || (width & (width - 1)) != 0) {
+      fprintf(stderr,
+              "Invalid factorized shape: dim=%u base_k=%u; dim/base_k must be a power of two\n",
+              dim, base_k);
+      return -1;
+    }
+  }
 
-  const uint32_t padded_dim = next_power_of_two(dim);
+  const uint32_t padded_dim = base_k == 0 ? next_power_of_two(dim) : dim;
+  const uint32_t stop_stride = base_k == 0 ? 0 : dim / base_k;
   const uint64_t numel64 = static_cast<uint64_t>(rows) * dim;
   if (numel64 > std::numeric_limits<uint32_t>::max()) {
     fprintf(stderr, "Input is too large: rows=%u dim=%u\n", rows, dim);
@@ -112,8 +125,8 @@ int main(int argc, char *argv[]) {
   const uint64_t buffer_bytes = static_cast<uint64_t>(numel) * sizeof(data_t);
 
   if (!bench.csv) {
-    printf("Hadamard Bench: rows=%u dim=%u padded_dim=%u warmup=%d iterations=%d\n",
-           rows, dim, padded_dim, bench.warmup, bench.iterations);
+    printf("Hadamard Bench: rows=%u dim=%u padded_dim=%u base_k=%u warmup=%d iterations=%d\n",
+           rows, dim, padded_dim, base_k, bench.warmup, bench.iterations);
   }
 
   std::vector<data_t> h_input(numel);
@@ -161,6 +174,7 @@ int main(int argc, char *argv[]) {
   kernel_arg.rows = rows;
   kernel_arg.dim = dim;
   kernel_arg.padded_dim = padded_dim;
+  kernel_arg.stop_stride = stop_stride;
   kernel_arg.inv_sqrt_dim = 1.0f / std::sqrt(static_cast<float>(dim));
   kernel_arg.power_kernel_iterations = 1;
   RT_CHECK(vx_upload_bytes(device, &kernel_arg, sizeof(kernel_arg_t), &args_buffer));

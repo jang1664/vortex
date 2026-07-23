@@ -14,8 +14,13 @@ void kernel_hadamard_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
 
   const uint32_t physical_row = blockIdx.x;
   const uint32_t tid = threadIdx.x;
-  const uint32_t matrix_idx = physical_row / arg->m_pad;
-  const uint32_t row = physical_row - matrix_idx * arg->m_pad;
+  const uint32_t launch_rows =
+      arg->padded_row_launch != 0 ? arg->m_pad : arg->rows;
+  const uint32_t matrix_idx = physical_row / launch_rows;
+  const uint32_t row = physical_row - matrix_idx * launch_rows;
+  const bool zero_padding = arg->base_k == 0;
+  const uint32_t scratch_dim = zero_padding ? arg->width : arg->dim;
+  const uint32_t butterfly_width = arg->width;
   if (matrix_idx >= arg->matrix_count)
     return;
 
@@ -32,15 +37,30 @@ void kernel_hadamard_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
   }
 
   auto scratch = reinterpret_cast<float *>(
-      __local_mem(arg->dim * sizeof(float)));
-  const uint64_t input_base =
-      ((uint64_t)matrix_idx * arg->rows + row) * arg->dim;
-  for (uint32_t column = tid; column < arg->dim; column += blockDim.x)
-    scratch[column] = fp16_to_float(input[input_base + column]);
+      __local_mem(scratch_dim * sizeof(float)));
+  const uint64_t input_matrix_base =
+      (uint64_t)matrix_idx
+      * (arg->input_layout == HADAMARD_INPUT_GEMM_A_TILED
+             ? arg->m_pad : arg->rows)
+      * arg->dim;
+  for (uint32_t column = tid; column < scratch_dim; column += blockDim.x) {
+    if (column >= arg->dim) {
+      scratch[column] = 0.0f;
+    } else if (arg->input_layout == HADAMARD_INPUT_GEMM_A_TILED) {
+      const uint64_t offset = input_matrix_base + gemm_a_tiled_elem_offset(
+          row, column, arg->m_pad, arg->dim,
+          arg->log2_mt, arg->log2_mxu_kt);
+      scratch[column] = fp16_to_float(input[offset]);
+    } else {
+      scratch[column] =
+          fp16_to_float(input[input_matrix_base + (uint64_t)row * arg->dim
+                              + column]);
+    }
+  }
   __syncthreads();
 
-  for (uint32_t stride = 1; stride < arg->width; stride <<= 1) {
-    const uint32_t pairs = arg->dim >> 1;
+  for (uint32_t stride = 1; stride < butterfly_width; stride <<= 1) {
+    const uint32_t pairs = scratch_dim >> 1;
     for (uint32_t pair = tid; pair < pairs; pair += blockDim.x) {
       const uint32_t base =
           (pair / stride) * (stride << 1) + (pair % stride);
@@ -54,7 +74,7 @@ void kernel_hadamard_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
 
   for (uint32_t column = tid; column < arg->dim; column += blockDim.x) {
     float transformed;
-    if (arg->base_k == 1) {
+    if (zero_padding || arg->base_k == 1) {
       transformed = scratch[column] * arg->inv_sqrt_dim;
     } else {
       const uint32_t out_k = column / arg->width;

@@ -43,7 +43,8 @@ OUTPUT_FOLDER = "output_figure"
 
 # Main workload selection. Use a string for one model or a list/tuple for
 # multiple models.
-TARGET_MODEL = ["llama2_7b", "llama3_8b"]
+# TARGET_MODEL = ["llama2_7b", "llama3_8b", "llama3p2_1b", "llama3p2_3b"]
+TARGET_MODEL = [ "llama3_8b"]
 
 
 def target_models() -> tuple[str, ...]:
@@ -181,12 +182,15 @@ def energy_stacked_out_name(model: str, power_metric: str) -> str:
     return f"{model}_energy_per_token_stacked_by_{E2E_STACK_BY}_{power_metric}_{_stage_shape_name_for_selection(ENERGY_SHAPE_SELECTION)}"
 
 RAW_DB_SUBDIRS = (
-    "naive_gemm_simd_th16_tcol32_hwexp_dcache",
-    "improve_th16_tcol32_hwexp_dcache",
+    "C1",
+    "C3",
+    "C4",
 )
 RAW_DB_ROOTS = {
     "llama2_7b": LATENCY_DIR / "outputs_llama2_main",
     "llama3_8b": LATENCY_DIR / "outputs_llama3_main",
+    "llama3p2_1b": LATENCY_DIR / "outputs_llama3p2_1b_main",
+    "llama3p2_3b": LATENCY_DIR / "outputs_llama3p2_3b_main",
 }
 
 
@@ -399,24 +403,70 @@ LATENCY_SCALE_RULES = []
 # Target-case area normalization rules. These match composed suite-case columns
 # after raw measurements are mapped back to C1/C2/C3/C4 variants.
 TH16_FP_TCU_CELL_AREA=276593.0284
+TH32_FP_TCU_CELL_AREA=547111.5339
 FPINT_MXU_CELL_AREA=693436.0606
-AREA_RATIO=FPINT_MXU_CELL_AREA / TH16_FP_TCU_CELL_AREA
+C1_CELL_AREA = {
+    "tcu":TH32_FP_TCU_CELL_AREA
+}
+C2_CELL_AREA = {
+  "dma_node":275297.9538,
+  "ldma":51471.6923*3+28456.6227,
+  "mem_split" : 18339.1647*3,
+  "tcu" : TH32_FP_TCU_CELL_AREA,
+  "mxu" : FPINT_MXU_CELL_AREA
+}
+C3_CELL_AREA = {
+    "dma_node":275297.9538,
+    "ldma":51471.6923*3+28456.6227,
+    "mem_split" : 18339.1647*3,
+    "mxu" : FPINT_MXU_CELL_AREA
+}
+C4_CELL_AREA = {
+    "dma_engine":262747.8322,
+    "ldma" : 30213.8456*4,
+    "arbiters":3196.3230+4162.9771+4162.9771+4162.9771+4162.9771,
+    "mxu" : FPINT_MXU_CELL_AREA
+}
+AREA_RATIO=FPINT_MXU_CELL_AREA / TH32_FP_TCU_CELL_AREA
+# CASE_LATENCY_SCALE_RULES = [
+#     # C1 GEMM scale is 1.0, so no rule is needed.
+#     LatencyScaleRule(
+#         "C2_gemm_area_norm",
+#         {"kind": "gemm", "variant": "attn_sgemm_tcu_fpint_gemm_naive_spinquant"},
+#         1+AREA_RATIO,
+#     ),
+#     LatencyScaleRule(
+#         "C3_gemm_area_norm",
+#         {"kind": "gemm", "variant": "all_fpint_gemm_naive_spinquant"},
+#         AREA_RATIO,
+#     ),
+#     LatencyScaleRule(
+#         "C4_gemm_area_norm",
+#         {"kind": "gemm", "variant": (C4_ALONE_VARIANT, C4_FUSED_VARIANT)},
+#         AREA_RATIO,
+#     ),
+# ]
 CASE_LATENCY_SCALE_RULES = [
     # C1 GEMM scale is 1.0, so no rule is needed.
     LatencyScaleRule(
-        "C2_gemm_area_norm",
-        {"kind": "gemm", "variant": "attn_sgemm_tcu_fpint_gemm_naive_spinquant"},
-        1+AREA_RATIO,
+        "C1_area_norm",
+        {"variant": "all_sgemm_tcu_spinquant"},
+        sum(C1_CELL_AREA.values()),
     ),
     LatencyScaleRule(
-        "C3_gemm_area_norm",
-        {"kind": "gemm", "variant": "all_fpint_gemm_naive_spinquant"},
-        AREA_RATIO,
+        "C2_area_norm",
+        {"variant": "attn_sgemm_tcu_fpint_gemm_naive_spinquant"},
+        sum(C2_CELL_AREA.values()),
     ),
     LatencyScaleRule(
-        "C4_gemm_area_norm",
-        {"kind": "gemm", "variant": (C4_ALONE_VARIANT, C4_FUSED_VARIANT)},
-        AREA_RATIO,
+        "C3_area_norm",
+        {"variant": "all_fpint_gemm_naive_spinquant"},
+        sum(C3_CELL_AREA.values()),
+    ),
+    LatencyScaleRule(
+        "C4_area_norm",
+        {"variant": (C4_ALONE_VARIANT, C4_FUSED_VARIANT)},
+        sum(C4_CELL_AREA.values()),
     ),
 ]
 
@@ -971,6 +1021,18 @@ ALL_LLAMA_COMPARE_MODELS = (
         "display_model": "Llama3-8B",
         "suite_prefix": "llama3_8b",
         "raw_db_roots": (RAW_DB_ROOTS["llama3_8b"],),
+    },
+    {
+        "model": "llama3.2-1b",
+        "display_model": "Llama3.2-1B",
+        "suite_prefix": "llama3p2_1b",
+        "raw_db_roots": (RAW_DB_ROOTS["llama3p2_1b"],),
+    },
+    {
+        "model": "llama3.2-3b",
+        "display_model": "Llama3.2-3B",
+        "suite_prefix": "llama3p2_3b",
+        "raw_db_roots": (RAW_DB_ROOTS["llama3p2_3b"],),
     },
 )
 LLAMA_COMPARE_MODELS = tuple(

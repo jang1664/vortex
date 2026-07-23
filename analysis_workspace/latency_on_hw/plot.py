@@ -43,9 +43,9 @@ FIGURE_TITLE = None
 MAIN_ALL_TITLE = "E2E latency"
 GEMM_ONLY_TITLE = "GEMM latency breakdown"
 ENERGY_TITLE = "E2E energy per token"
-LLAMA_E2E_STACKED_TITLE = "Llama 2 and Llama 3 E2E latency breakdown"
-LLAMA_GEMM_ONLY_TITLE = "Llama 2 and Llama 3 GEMM latency breakdown"
-LLAMA_ENERGY_TITLE = "Llama 2 and Llama 3 energy per token"
+LLAMA_E2E_STACKED_TITLE = "Llama E2E latency breakdown"
+LLAMA_GEMM_ONLY_TITLE = "Llama GEMM latency breakdown"
+LLAMA_ENERGY_TITLE = "Llama energy per token"
 SUBPLOT_TITLE_TEMPLATE = "{stage}"
 LLAMA_E2E_SUBPLOT_TITLE_TEMPLATE = "{model}, {stage}"
 X_LABEL = "sequence length"
@@ -66,19 +66,43 @@ VALUE_LABEL_FONTSIZE = MIN_FONT_SIZE
 
 X_GROUP_AXIS = "batch"
 X_GROUP_GAP = 0.35
-VALUE_LABELS = False
+VALUE_LABELS = True
 E2E_CANDIDATE_COLUMNS = ("C1", "C2", "C3", "C4")
 ENERGY_POWER_METRICS = ("power_avg_W", "power_vcc_avg_W", "power_dynamic_avg_W")
-STAGE_ORDER = ("Prefill", "Generation")
-LLAMA_E2E_MODELS = (
-    ("llama2_7b", "Llama 2"),
-    ("llama3_8b", "Llama 3"),
+STAGE_ORDER = ("Prefill", "Decode")
+
+# Models included in the combined Llama plots, in display order.
+# TARGET_MODELS = [
+#     "llama2_7b",
+#     "llama3_8b",
+#     "llama3p2_1b",
+#     "llama3p2_3b",
+# ]
+TARGET_MODELS = [
+    "llama3_8b",
+]
+LLAMA_MODEL_LABELS = {
+    "llama2_7b": "Llama 2",
+    "llama3_8b": "Llama 3",
+    "llama3p2_1b": "Llama 3.2 1B",
+    "llama3p2_3b": "Llama 3.2 3B",
+}
+_unknown_target_models = set(TARGET_MODELS) - set(LLAMA_MODEL_LABELS)
+if _unknown_target_models:
+    raise ValueError(f"unknown TARGET_MODELS: {sorted(_unknown_target_models)}")
+if not TARGET_MODELS:
+    raise ValueError("TARGET_MODELS must contain at least one model")
+if len(set(TARGET_MODELS)) != len(TARGET_MODELS):
+    raise ValueError("TARGET_MODELS must not contain duplicate models")
+
+LLAMA_E2E_MODELS = tuple(
+    (model_key, LLAMA_MODEL_LABELS[model_key])
+    for model_key in TARGET_MODELS
 )
-LLAMA_E2E_ROW_ORDER = (
-    ("Llama 2", "Prefill"),
-    ("Llama 2", "Generation"),
-    ("Llama 3", "Prefill"),
-    ("Llama 3", "Generation"),
+LLAMA_E2E_ROW_ORDER = tuple(
+    (model_label, stage)
+    for _model_key, model_label in LLAMA_E2E_MODELS
+    for stage in STAGE_ORDER
 )
 
 BAR_PALETTE = (
@@ -191,11 +215,13 @@ ENERGY_KIND_STACK_GROUPS = E2E_KIND_STACK_GROUPS
 def _llama_compact_kwargs(y_label: str) -> dict[str, Any]:
     return {
         "figsize": LLAMA_E2E_STACKED_FIGSIZE,
-        "row_height": LLAMA_E2E_STACKED_FIGSIZE[1] / len(LLAMA_E2E_ROW_ORDER),
+        "row_height": LLAMA_E2E_STACKED_FIGSIZE[1] / 4,
         "title": None,
         "subplot_title_template": LLAMA_E2E_SUBPLOT_TITLE_TEMPLATE,
         "subplot_title_inside": True,
         "subplot_title_replacements": (
+            ("Llama 3.2 1B, ", "L3.2-1B "),
+            ("Llama 3.2 3B, ", "L3.2-3B "),
             ("Llama 2, ", "L2 "),
             ("Llama 3, ", "L3 "),
         ),
@@ -208,7 +234,7 @@ def _llama_compact_kwargs(y_label: str) -> dict[str, Any]:
         "tight_layout_rect": (0.0, 0.02, 1.0, 0.93),
         "tight_layout_h_pad": 0.2,
         "value_labels": VALUE_LABELS,
-        "stage_x_tick_label_rotations": {"Prefill": 0.0, "Generation": 45.0},
+        "stage_x_tick_label_rotations": {"Prefill": 0.0, "Decode": 45.0},
     }
 
 
@@ -384,6 +410,16 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Llama 3 E2E prepared directory or excel_figure_data.csv for --plot llama_e2e.",
     )
     parser.add_argument(
+        "--llama3p2-1b-data",
+        default=None,
+        help="Llama 3.2 1B E2E prepared directory or excel_figure_data.csv for --plot llama_e2e.",
+    )
+    parser.add_argument(
+        "--llama3p2-3b-data",
+        default=None,
+        help="Llama 3.2 3B E2E prepared directory or excel_figure_data.csv for --plot llama_e2e.",
+    )
+    parser.add_argument(
         "--llama2-no-area-norm-data",
         default=None,
         help="Llama 2 E2E data without area normalization for --plot llama_e2e_no_area_norm.",
@@ -392,6 +428,16 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--llama3-no-area-norm-data",
         default=None,
         help="Llama 3 E2E data without area normalization for --plot llama_e2e_no_area_norm.",
+    )
+    parser.add_argument(
+        "--llama3p2-1b-no-area-norm-data",
+        default=None,
+        help="Llama 3.2 1B E2E data without area normalization for --plot llama_e2e_no_area_norm.",
+    )
+    parser.add_argument(
+        "--llama3p2-3b-no-area-norm-data",
+        default=None,
+        help="Llama 3.2 3B E2E data without area normalization for --plot llama_e2e_no_area_norm.",
     )
     parser.add_argument(
         "--llama2-no-area-norm-stacked-data",
@@ -404,6 +450,16 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Llama 3 stacked E2E data without area normalization for --plot llama_e2e_no_area_norm_stacked.",
     )
     parser.add_argument(
+        "--llama3p2-1b-no-area-norm-stacked-data",
+        default=None,
+        help="Llama 3.2 1B stacked E2E data without area normalization for --plot llama_e2e_no_area_norm_stacked.",
+    )
+    parser.add_argument(
+        "--llama3p2-3b-no-area-norm-stacked-data",
+        default=None,
+        help="Llama 3.2 3B stacked E2E data without area normalization for --plot llama_e2e_no_area_norm_stacked.",
+    )
+    parser.add_argument(
         "--llama2-e2e-stacked-data",
         default=None,
         help="Llama 2 stacked E2E prepared directory or excel_figure_data.csv for --plot llama_e2e_stacked.",
@@ -412,6 +468,16 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--llama3-e2e-stacked-data",
         default=None,
         help="Llama 3 stacked E2E prepared directory or excel_figure_data.csv for --plot llama_e2e_stacked.",
+    )
+    parser.add_argument(
+        "--llama3p2-1b-e2e-stacked-data",
+        default=None,
+        help="Llama 3.2 1B stacked E2E prepared directory or excel_figure_data.csv for --plot llama_e2e_stacked.",
+    )
+    parser.add_argument(
+        "--llama3p2-3b-e2e-stacked-data",
+        default=None,
+        help="Llama 3.2 3B stacked E2E prepared directory or excel_figure_data.csv for --plot llama_e2e_stacked.",
     )
     parser.add_argument(
         "--llama2-gemm-data",
@@ -424,6 +490,16 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Llama 3 GEMM-only prepared directory or excel_figure_data.csv for --plot llama_gemm_only.",
     )
     parser.add_argument(
+        "--llama3p2-1b-gemm-data",
+        default=None,
+        help="Llama 3.2 1B GEMM-only prepared directory or excel_figure_data.csv for --plot llama_gemm_only.",
+    )
+    parser.add_argument(
+        "--llama3p2-3b-gemm-data",
+        default=None,
+        help="Llama 3.2 3B GEMM-only prepared directory or excel_figure_data.csv for --plot llama_gemm_only.",
+    )
+    parser.add_argument(
         "--llama2-energy-data",
         default=None,
         help="Llama 2 energy prepared directory or excel_figure_data.csv for --plot llama_energy.",
@@ -434,6 +510,16 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Llama 3 energy prepared directory or excel_figure_data.csv for --plot llama_energy.",
     )
     parser.add_argument(
+        "--llama3p2-1b-energy-data",
+        default=None,
+        help="Llama 3.2 1B energy prepared directory or excel_figure_data.csv for --plot llama_energy.",
+    )
+    parser.add_argument(
+        "--llama3p2-3b-energy-data",
+        default=None,
+        help="Llama 3.2 3B energy prepared directory or excel_figure_data.csv for --plot llama_energy.",
+    )
+    parser.add_argument(
         "--llama2-energy-stacked-data",
         default=None,
         help="Llama 2 stacked energy prepared directory or excel_figure_data.csv for --plot llama_energy_stacked.",
@@ -442,6 +528,16 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--llama3-energy-stacked-data",
         default=None,
         help="Llama 3 stacked energy prepared directory or excel_figure_data.csv for --plot llama_energy_stacked.",
+    )
+    parser.add_argument(
+        "--llama3p2-1b-energy-stacked-data",
+        default=None,
+        help="Llama 3.2 1B stacked energy prepared directory or excel_figure_data.csv for --plot llama_energy_stacked.",
+    )
+    parser.add_argument(
+        "--llama3p2-3b-energy-stacked-data",
+        default=None,
+        help="Llama 3.2 3B stacked energy prepared directory or excel_figure_data.csv for --plot llama_energy_stacked.",
     )
     parser.add_argument(
         "--figure-width",
@@ -1130,6 +1226,9 @@ def _read_excel_figure_data(path: Path) -> Any:
         for column in ("stage", "batch", "seq"):
             if column in df.columns:
                 df[column] = df[column].replace("", pd.NA).ffill()
+        df["stage"] = df["stage"].map(
+            lambda value: "Decode" if str(value).lower() == "generation" else value
+        )
     return df
 
 
@@ -2184,6 +2283,8 @@ def run_selected_plots(args: argparse.Namespace) -> None:
             explicit_by_model={
                 "llama2_7b": args.llama2_data,
                 "llama3_8b": args.llama3_data,
+                "llama3p2_1b": args.llama3p2_1b_data,
+                "llama3p2_3b": args.llama3p2_3b_data,
             },
             prepared_root=prepared_root,
             latency_dir=latency_dir,
@@ -2201,6 +2302,8 @@ def run_selected_plots(args: argparse.Namespace) -> None:
             explicit_by_model={
                 "llama2_7b": args.llama2_no_area_norm_data,
                 "llama3_8b": args.llama3_no_area_norm_data,
+                "llama3p2_1b": args.llama3p2_1b_no_area_norm_data,
+                "llama3p2_3b": args.llama3p2_3b_no_area_norm_data,
             },
             prepared_root=prepared_root,
             latency_dir=latency_dir,
@@ -2218,6 +2321,8 @@ def run_selected_plots(args: argparse.Namespace) -> None:
             explicit_by_model={
                 "llama2_7b": args.llama2_no_area_norm_stacked_data,
                 "llama3_8b": args.llama3_no_area_norm_stacked_data,
+                "llama3p2_1b": args.llama3p2_1b_no_area_norm_stacked_data,
+                "llama3p2_3b": args.llama3p2_3b_no_area_norm_stacked_data,
             },
             prepared_root=prepared_root,
             latency_dir=latency_dir,
@@ -2235,6 +2340,8 @@ def run_selected_plots(args: argparse.Namespace) -> None:
             explicit_by_model={
                 "llama2_7b": args.llama2_e2e_stacked_data,
                 "llama3_8b": args.llama3_e2e_stacked_data,
+                "llama3p2_1b": args.llama3p2_1b_e2e_stacked_data,
+                "llama3p2_3b": args.llama3p2_3b_e2e_stacked_data,
             },
             prepared_root=prepared_root,
             latency_dir=latency_dir,
@@ -2246,10 +2353,18 @@ def run_selected_plots(args: argparse.Namespace) -> None:
         )
 
     if plot in {"llama_gemm_only", "all"}:
-        required = plot == "llama_gemm_only" or bool(args.llama2_gemm_data) or bool(args.llama3_gemm_data)
+        required = (
+            plot == "llama_gemm_only"
+            or bool(args.llama2_gemm_data)
+            or bool(args.llama3_gemm_data)
+            or bool(args.llama3p2_1b_gemm_data)
+            or bool(args.llama3p2_3b_gemm_data)
+        )
         explicit_by_model = {
             "llama2_7b": args.llama2_gemm_data,
             "llama3_8b": args.llama3_gemm_data,
+            "llama3p2_1b": args.llama3p2_1b_gemm_data,
+            "llama3p2_3b": args.llama3p2_3b_gemm_data,
         }
         missing_error: Exception | None = None
         try:
@@ -2275,10 +2390,18 @@ def run_selected_plots(args: argparse.Namespace) -> None:
             )
 
     if plot in {"llama_energy", "all"}:
-        required = plot == "llama_energy" or bool(args.llama2_energy_data) or bool(args.llama3_energy_data)
+        required = (
+            plot == "llama_energy"
+            or bool(args.llama2_energy_data)
+            or bool(args.llama3_energy_data)
+            or bool(args.llama3p2_1b_energy_data)
+            or bool(args.llama3p2_3b_energy_data)
+        )
         explicit_by_model = {
             "llama2_7b": args.llama2_energy_data,
             "llama3_8b": args.llama3_energy_data,
+            "llama3p2_1b": args.llama3p2_1b_energy_data,
+            "llama3p2_3b": args.llama3p2_3b_energy_data,
         }
         missing_error: Exception | None = None
         try:
@@ -2308,10 +2431,14 @@ def run_selected_plots(args: argparse.Namespace) -> None:
             plot == "llama_energy_stacked"
             or bool(args.llama2_energy_stacked_data)
             or bool(args.llama3_energy_stacked_data)
+            or bool(args.llama3p2_1b_energy_stacked_data)
+            or bool(args.llama3p2_3b_energy_stacked_data)
         )
         explicit_by_model = {
             "llama2_7b": args.llama2_energy_stacked_data,
             "llama3_8b": args.llama3_energy_stacked_data,
+            "llama3p2_1b": args.llama3p2_1b_energy_stacked_data,
+            "llama3p2_3b": args.llama3p2_3b_energy_stacked_data,
         }
         missing_error: Exception | None = None
         try:
