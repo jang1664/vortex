@@ -1,0 +1,348 @@
+Information: Propagating switching activity (high effort zero delay simulation). (PWR-6)
+Warning: Design has unannotated primary inputs. (PWR-414)
+Warning: Design has unannotated sequential cell outputs. (PWR-415)
+ 
+****************************************
+Report : power
+        -hier
+        -analysis_effort high
+        -verbose
+Design : VX_dma_node__d2033e6ac258
+Scenario(s): mode_norm.OC_rvt_ss_0p900v_125c
+Version: V-2023.12-SP5-3
+Date   : Wed Jul 22 21:07:28 2026
+****************************************
+
+
+Library(s) Used:
+
+    sc9_cmos28lpp_base_rvt_ss_nominal_max_0p900v_125c_sadhm (File: /tool/PDK/Samsung/LN28LPP_202203/PRIMITIVES/RVT/ln28lpp_sc_9t_base_rvt_c130_V1.00d/FE-Common/LIBERTY/sc9_cmos28lpp_base_rvt_ss_nominal_max_0p900v_125c_sadhm.db)
+
+
+Global Operating Voltage = 0.9  
+Power-specific unit information :
+    Voltage Units = 1V
+    Capacitance Units = 1.000000pf
+    Time Units = 1ns
+    Dynamic Power Units = 1mW    (derived from V,C,T units)
+    Leakage Power Units = 1uW
+
+
+--------------------------------------------------------------------------------
+                                       Switch   Int      Leak     Total
+Hierarchy                              Power    Power    Power    Power    %
+--------------------------------------------------------------------------------
+VX_dma_node__d2033e6ac258                 1.280    3.819 1.90e+03    7.003 100.0
+  g_split_lmem_lanes_lmem_lane_split (VX_mem_bus_split_h_384_242_149)    0.142    1.309  517.865    1.968  28.1
+    g_masked_response_rsp_context_queue (VX_fifo_queue) 6.04e-05 2.93e-03    6.144 9.14e-03   0.1
+      g_depth_n_dp_ram (VX_dp_ram_6)   3.03e-05 7.92e-04    4.954 5.78e-03   0.1
+      pending_size (VX_pending_size_2_32) 9.46e-06 1.26e-04    0.208 3.44e-04   0.0
+    g_lane_rsp_31__rsp_skid (VX_elastic_buffer_14_0) 7.30e-05 8.83e-03   11.040 1.99e-02   0.3
+      g_ebN_out_buf (VX_pipe_buffer_21_0)    0.000    0.000    0.406 4.06e-04   0.0
+      g_ebN_fifo_queue (VX_fifo_queue_69_8_1_0_0) 7.17e-05 8.83e-03   10.616 1.95e-02   0.3
+        g_depth_n_dp_ram (VX_dp_ram_16_0) 5.93e-05 6.77e-03    8.854 1.57e-02   0.2
+        pending_size (VX_pending_size_2_0) 6.81e-06 1.24e-04    0.205 3.36e-04   0.0
+    g_lane_rsp_30__rsp_skid (VX_elastic_buffer_14_1) 4.33e-05 8.54e-03   11.073 1.97e-02   0.3
+      g_ebN_out_buf (VX_pipe_buffer_21_1)    0.000    0.000    0.406 4.06e-04   0.0
+      g_ebN_fifo_queue (VX_fifo_queue_69_8_1_0_1) 4.24e-05 8.54e-03   10.649 1.92e-02   0.3
+        g_depth_n_dp_ram (VX_dp_ram_16_1) 3.24e-05 6.49e-03    8.891 1.54e-02   0.2
+        pending_size (VX_pending_size_2_1) 6.31e-06 1.21e-04    0.207 3.34e-04   0.0
+    g_lane_rsp_29__rsp_skid (VX_elastic_buffer_14_2) 6.03e-05 8.58e-03   11.073 1.97e-02   0.3
+      g_ebN_out_buf (VX_pipe_buffer_21_2)    0.000    0.000    0.406 4.06e-04   0.0
+      g_ebN_fifo_queue (VX_fifo_queue_69_8_1_0_2) 5.92e-05 8.58e-03   10.649 1.93e-02   0.3
+        g_depth_n_dp_ram (VX_dp_ram_16_2) 4.80e-05 6.53e-03    8.878 1.55e-02   0.2
+        pending_size (VX_pending_size_2_2) 6.50e-06 1.21e-04    0.207 3.34e-04   0.0
+    g_lane_rsp_28__rsp_skid (VX_elastic_buffer_14_3) 4.77e-05 9.00e-03   11.043 2.01e-02   0.3
+      g_ebN_out_buf (VX_pipe_buffer_21_3)    0.000    0.000    0.406 4.06e-04   0.0
+      g_ebN_fifo_queue (VX_fifo_queue_69_8_1_0_3) 4.61e-05 8.99e-03   10.620 1.97e-02   0.3
+        g_depth_n_dp_ram (VX_dp_ram_16_3) 3.59e-05 6.94e-03    8.861 1.58e-02   0.2
+        pending_size (VX_pending_size_2_3) 6.23e-06 1.21e-04    0.207 3.34e-04   0.0
+    g_lane_rsp_27__rsp_skid (VX_elastic_buffer_14_4) 5.61e-05 8.77e-03   11.028 1.99e-02   0.3
+      g_ebN_out_buf (VX_pipe_buffer_21_4)    0.000    0.000    0.406 4.06e-04   0.0
+      g_ebN_fifo_queue (VX_fifo_queue_69_8_1_0_4) 5.51e-05 8.77e-03   10.604 1.94e-02   0.3
+        g_depth_n_dp_ram (VX_dp_ram_16_4) 4.54e-05 6.72e-03    8.834 1.56e-02   0.2
+        pending_size (VX_pending_size_2_4) 5.85e-06 1.19e-04    0.207 3.32e-04   0.0
+    g_lane_rsp_26__rsp_skid (VX_elastic_buffer_14_5) 5.51e-05 8.90e-03   11.040 2.00e-02   0.3
+      g_ebN_out_buf (VX_pipe_buffer_21_5)    0.000    0.000    0.406 4.06e-04   0.0
+      g_ebN_fifo_queue (VX_fifo_queue_69_8_1_0_5) 5.38e-05 8.90e-03   10.617 1.96e-02   0.3
+        g_depth_n_dp_ram (VX_dp_ram_16_5) 4.35e-05 6.85e-03    8.852 1.57e-02   0.2
+        pending_size (VX_pending_size_2_5) 5.81e-06 1.18e-04    0.207 3.31e-04   0.0
+    g_lane_rsp_25__rsp_skid (VX_elastic_buffer_14_6) 3.66e-05 8.52e-03   11.035 1.96e-02   0.3
+      g_ebN_out_buf (VX_pipe_buffer_21_6)    0.000    0.000    0.406 4.06e-04   0.0
+      g_ebN_fifo_queue (VX_fifo_queue_69_8_1_0_6) 3.58e-05 8.52e-03   10.612 1.92e-02   0.3
+        g_depth_n_dp_ram (VX_dp_ram_16_6) 2.66e-05 6.47e-03    8.854 1.54e-02   0.2
+        pending_size (VX_pending_size_2_6) 6.00e-06 1.19e-04    0.207 3.32e-04   0.0
+    g_lane_rsp_24__rsp_skid (VX_elastic_buffer_14_7) 4.14e-05 8.61e-03   11.043 1.97e-02   0.3
+      g_ebN_out_buf (VX_pipe_buffer_21_7)    0.000    0.000    0.406 4.06e-04   0.0
+      g_ebN_fifo_queue (VX_fifo_queue_69_8_1_0_7) 4.00e-05 8.61e-03   10.619 1.93e-02   0.3
+        g_depth_n_dp_ram (VX_dp_ram_16_7) 3.00e-05 6.56e-03    8.846 1.54e-02   0.2
+        pending_size (VX_pending_size_2_7) 6.80e-06 1.23e-04    0.207 3.36e-04   0.0
+    g_lane_rsp_23__rsp_skid (VX_elastic_buffer_14_8) 3.66e-05 8.57e-03   11.075 1.97e-02   0.3
+      g_ebN_out_buf (VX_pipe_buffer_21_8)    0.000    0.000    0.406 4.06e-04   0.0
+      g_ebN_fifo_queue (VX_fifo_queue_69_8_1_0_8) 3.56e-05 8.57e-03   10.652 1.93e-02   0.3
+        g_depth_n_dp_ram (VX_dp_ram_16_8) 2.66e-05 6.52e-03    8.891 1.54e-02   0.2
+        pending_size (VX_pending_size_2_8) 6.30e-06 1.21e-04    0.207 3.34e-04   0.0
+    g_lane_rsp_22__rsp_skid (VX_elastic_buffer_14_9) 4.59e-05 8.89e-03   11.038 2.00e-02   0.3
+      g_ebN_out_buf (VX_pipe_buffer_21_9)    0.000    0.000    0.406 4.06e-04   0.0
+      g_ebN_fifo_queue (VX_fifo_queue_69_8_1_0_9) 4.50e-05 8.89e-03   10.615 1.95e-02   0.3
+        g_depth_n_dp_ram (VX_dp_ram_16_9) 3.50e-05 6.84e-03    8.860 1.57e-02   0.2
+        pending_size (VX_pending_size_2_9) 6.45e-06 1.21e-04    0.207 3.34e-04   0.0
+    g_lane_rsp_21__rsp_skid (VX_elastic_buffer_14_10) 5.10e-05 8.70e-03   11.139 1.99e-02   0.3
+      g_ebN_out_buf (VX_pipe_buffer_21_10)    0.000    0.000    0.406 4.06e-04   0.0
+      g_ebN_fifo_queue (VX_fifo_queue_69_8_1_0_10) 4.95e-05 8.70e-03   10.713 1.95e-02   0.3
+        g_depth_n_dp_ram (VX_dp_ram_16_10) 3.93e-05 6.65e-03    8.946 1.56e-02   0.2
+        pending_size (VX_pending_size_2_10) 6.19e-06 1.20e-04    0.206 3.32e-04   0.0
+    g_lane_rsp_20__rsp_skid (VX_elastic_buffer_14_11) 3.49e-05 8.71e-03   11.037 1.98e-02   0.3
+      g_ebN_out_buf (VX_pipe_buffer_21_11)    0.000    0.000    0.406 4.06e-04   0.0
+      g_ebN_fifo_queue (VX_fifo_queue_69_8_1_0_11) 3.35e-05 8.71e-03   10.613 1.94e-02   0.3
+        g_depth_n_dp_ram (VX_dp_ram_16_11) 2.35e-05 6.66e-03    8.864 1.56e-02   0.2
+        pending_size (VX_pending_size_2_11) 7.01e-06 1.24e-04    0.207 3.38e-04   0.0
+    g_lane_rsp_19__rsp_skid (VX_elastic_buffer_14_12) 5.02e-05 8.53e-03   11.208 1.98e-02   0.3
+      g_ebN_out_buf (VX_pipe_buffer_21_12)    0.000    0.000    0.406 4.06e-04   0.0
+      g_ebN_fifo_queue (VX_fifo_queue_69_8_1_0_12) 4.85e-05 8.53e-03   10.783 1.94e-02   0.3
+        g_depth_n_dp_ram (VX_dp_ram_16_12) 3.85e-05 6.48e-03    9.020 1.55e-02   0.2
+        pending_size (VX_pending_size_2_12) 6.15e-06 1.20e-04    0.207 3.34e-04   0.0
+    g_lane_rsp_18__rsp_skid (VX_elastic_buffer_14_13) 6.63e-05 8.69e-03   11.126 1.99e-02   0.3
+      g_ebN_out_buf (VX_pipe_buffer_21_13)    0.000    0.000    0.406 4.06e-04   0.0
+      g_ebN_fifo_queue (VX_fifo_queue_69_8_1_0_13) 6.44e-05 8.69e-03   10.701 1.95e-02   0.3
+        g_depth_n_dp_ram (VX_dp_ram_16_13) 5.30e-05 6.64e-03    8.929 1.56e-02   0.2
+        pending_size (VX_pending_size_2_13) 6.83e-06 1.24e-04    0.207 3.38e-04   0.0
+    g_lane_rsp_17__rsp_skid (VX_elastic_buffer_14_14) 5.68e-05 8.88e-03   11.040 2.00e-02   0.3
+      g_ebN_out_buf (VX_pipe_buffer_21_14)    0.000    0.000    0.406 4.06e-04   0.0
+      g_ebN_fifo_queue (VX_fifo_queue_69_8_1_0_14) 5.48e-05 8.88e-03   10.617 1.96e-02   0.3
+        g_depth_n_dp_ram (VX_dp_ram_16_14) 4.43e-05 6.83e-03    8.846 1.57e-02   0.2
+        pending_size (VX_pending_size_2_14) 6.02e-06 1.19e-04    0.207 3.32e-04   0.0
+    g_lane_rsp_16__rsp_skid (VX_elastic_buffer_14_15) 4.13e-05 8.58e-03   11.029 1.97e-02   0.3
+      g_ebN_out_buf (VX_pipe_buffer_21_15)    0.000    0.000    0.406 4.06e-04   0.0
+      g_ebN_fifo_queue (VX_fifo_queue_69_8_1_0_15) 3.96e-05 8.58e-03   10.606 1.92e-02   0.3
+        g_depth_n_dp_ram (VX_dp_ram_16_15) 3.07e-05 6.53e-03    8.836 1.54e-02   0.2
+        pending_size (VX_pending_size_2_15) 5.59e-06 1.17e-04    0.207 3.29e-04   0.0
+    g_lane_rsp_15__rsp_skid (VX_elastic_buffer_14_16) 5.76e-05 8.56e-03   11.186 1.98e-02   0.3
+      g_ebN_out_buf (VX_pipe_buffer_21_16)    0.000    0.000    0.406 4.06e-04   0.0
+      g_ebN_fifo_queue (VX_fifo_queue_69_8_1_0_16) 5.43e-05 8.56e-03   10.761 1.94e-02   0.3
+        g_depth_n_dp_ram (VX_dp_ram_16_16) 4.43e-05 6.50e-03    8.859 1.54e-02   0.2
+        pending_size (VX_pending_size_2_16) 6.17e-06 1.21e-04    0.207 3.34e-04   0.0
+    g_lane_rsp_14__rsp_skid (VX_elastic_buffer_14_17) 5.03e-05 8.75e-03   11.049 1.99e-02   0.3
+      g_ebN_out_buf (VX_pipe_buffer_21_17)    0.000    0.000    0.406 4.06e-04   0.0
+      g_ebN_fifo_queue (VX_fifo_queue_69_8_1_0_17) 4.75e-05 8.75e-03   10.626 1.94e-02   0.3
+        g_depth_n_dp_ram (VX_dp_ram_16_17) 3.75e-05 6.71e-03    8.855 1.56e-02   0.2
+        pending_size (VX_pending_size_2_17) 5.94e-06 1.18e-04    0.207 3.31e-04   0.0
+    g_lane_rsp_13__rsp_skid (VX_elastic_buffer_14_18) 4.42e-05 8.87e-03   11.031 1.99e-02   0.3
+      g_ebN_out_buf (VX_pipe_buffer_21_18)    0.000    0.000    0.406 4.06e-04   0.0
+      g_ebN_fifo_queue (VX_fifo_queue_69_8_1_0_18) 4.14e-05 8.87e-03   10.605 1.95e-02   0.3
+        g_depth_n_dp_ram (VX_dp_ram_16_18) 3.18e-05 6.82e-03    8.841 1.57e-02   0.2
+        pending_size (VX_pending_size_2_18) 6.37e-06 1.22e-04    0.207 3.35e-04   0.0
+    g_lane_rsp_12__rsp_skid (VX_elastic_buffer_14_19) 4.51e-05 8.61e-03   11.047 1.97e-02   0.3
+      g_ebN_out_buf (VX_pipe_buffer_21_19)    0.000    0.000    0.406 4.06e-04   0.0
+      g_ebN_fifo_queue (VX_fifo_queue_69_8_1_0_19) 4.28e-05 8.61e-03   10.621 1.93e-02   0.3
+        g_depth_n_dp_ram (VX_dp_ram_16_19) 3.37e-05 6.57e-03    8.857 1.55e-02   0.2
+        pending_size (VX_pending_size_2_19) 5.44e-06 1.15e-04    0.207 3.28e-04   0.0
+    g_lane_rsp_11__rsp_skid (VX_elastic_buffer_14_20) 8.16e-05 8.96e-03   11.177 2.02e-02   0.3
+      g_ebN_out_buf (VX_pipe_buffer_21_20)    0.000    0.000    0.406 4.06e-04   0.0
+      g_ebN_fifo_queue (VX_fifo_queue_69_8_1_0_20) 8.00e-05 8.96e-03   10.753 1.98e-02   0.3
+        g_depth_n_dp_ram (VX_dp_ram_16_20) 6.68e-05 6.90e-03    8.987 1.60e-02   0.2
+        pending_size (VX_pending_size_2_20) 6.83e-06 1.23e-04    0.207 3.37e-04   0.0
+    g_lane_rsp_10__rsp_skid (VX_elastic_buffer_14_21) 3.71e-05 8.91e-03   11.035 2.00e-02   0.3
+      g_ebN_out_buf (VX_pipe_buffer_21_21)    0.000    0.000    0.406 4.06e-04   0.0
+      g_ebN_fifo_queue (VX_fifo_queue_69_8_1_0_21) 3.59e-05 8.91e-03   10.609 1.96e-02   0.3
+        g_depth_n_dp_ram (VX_dp_ram_16_21) 2.66e-05 6.86e-03    8.856 1.57e-02   0.2
+        pending_size (VX_pending_size_2_21) 6.37e-06 1.20e-04    0.207 3.34e-04   0.0
+    g_lane_rsp_9__rsp_skid (VX_elastic_buffer_14_22) 4.82e-05 8.93e-03   11.071 2.01e-02   0.3
+      g_ebN_out_buf (VX_pipe_buffer_21_22)    0.000    0.000    0.406 4.06e-04   0.0
+      g_ebN_fifo_queue (VX_fifo_queue_69_8_1_0_22) 4.68e-05 8.93e-03   10.647 1.96e-02   0.3
+        g_depth_n_dp_ram (VX_dp_ram_16_22) 3.73e-05 6.88e-03    8.877 1.58e-02   0.2
+        pending_size (VX_pending_size_2_22) 6.08e-06 1.20e-04    0.207 3.33e-04   0.0
+    g_lane_rsp_8__rsp_skid (VX_elastic_buffer_14_23) 5.60e-05 8.79e-03   11.032 1.99e-02   0.3
+      g_ebN_out_buf (VX_pipe_buffer_21_23)    0.000    0.000    0.406 4.06e-04   0.0
+      g_ebN_fifo_queue (VX_fifo_queue_69_8_1_0_23) 5.44e-05 8.79e-03   10.609 1.95e-02   0.3
+        g_depth_n_dp_ram (VX_dp_ram_16_23) 4.38e-05 6.74e-03    8.840 1.56e-02   0.2
+        pending_size (VX_pending_size_2_23) 6.42e-06 1.22e-04    0.207 3.36e-04   0.0
+    g_lane_rsp_7__rsp_skid (VX_elastic_buffer_14_24) 5.44e-05 8.84e-03   11.037 1.99e-02   0.3
+      g_ebN_out_buf (VX_pipe_buffer_21_24)    0.000    0.000    0.406 4.06e-04   0.0
+      g_ebN_fifo_queue (VX_fifo_queue_69_8_1_0_24) 5.30e-05 8.84e-03   10.613 1.95e-02   0.3
+        g_depth_n_dp_ram (VX_dp_ram_16_24) 4.15e-05 6.79e-03    8.845 1.57e-02   0.2
+        pending_size (VX_pending_size_2_24) 7.34e-06 1.21e-04    0.211 3.40e-04   0.0
+    g_lane_rsp_6__rsp_skid (VX_elastic_buffer_14_25) 4.31e-05 8.79e-03   11.057 1.99e-02   0.3
+      g_ebN_out_buf (VX_pipe_buffer_21_25)    0.000    0.000    0.406 4.06e-04   0.0
+      g_ebN_fifo_queue (VX_fifo_queue_69_8_1_0_25) 4.18e-05 8.78e-03   10.633 1.95e-02   0.3
+        g_depth_n_dp_ram (VX_dp_ram_16_25) 3.24e-05 6.74e-03    8.867 1.56e-02   0.2
+        pending_size (VX_pending_size_2_25) 6.23e-06 1.21e-04    0.207 3.34e-04   0.0
+    g_lane_rsp_5__rsp_skid (VX_elastic_buffer_14_26) 4.66e-05 8.82e-03   11.042 1.99e-02   0.3
+      g_ebN_out_buf (VX_pipe_buffer_21_26)    0.000    0.000    0.406 4.06e-04   0.0
+      g_ebN_fifo_queue (VX_fifo_queue_69_8_1_0_26) 4.58e-05 8.81e-03   10.618 1.95e-02   0.3
+        g_depth_n_dp_ram (VX_dp_ram_16_26) 3.61e-05 6.77e-03    8.848 1.57e-02   0.2
+        pending_size (VX_pending_size_2_26) 5.97e-06 1.20e-04    0.207 3.33e-04   0.0
+    g_lane_rsp_4__rsp_skid (VX_elastic_buffer_14_27) 5.31e-05 8.56e-03   11.106 1.97e-02   0.3
+      g_ebN_out_buf (VX_pipe_buffer_21_27)    0.000    0.000    0.406 4.06e-04   0.0
+      g_ebN_fifo_queue (VX_fifo_queue_69_8_1_0_27) 5.04e-05 8.56e-03   10.680 1.93e-02   0.3
+        g_depth_n_dp_ram (VX_dp_ram_16_27) 3.97e-05 6.51e-03    8.925 1.55e-02   0.2
+        pending_size (VX_pending_size_2_27) 6.48e-06 1.22e-04    0.207 3.35e-04   0.0
+    g_lane_rsp_3__rsp_skid (VX_elastic_buffer_14_28) 4.36e-05 8.77e-03   11.096 1.99e-02   0.3
+      g_ebN_out_buf (VX_pipe_buffer_21_28)    0.000    0.000    0.406 4.06e-04   0.0
+      g_ebN_fifo_queue (VX_fifo_queue_69_8_1_0_28) 4.25e-05 8.77e-03   10.672 1.95e-02   0.3
+        g_depth_n_dp_ram (VX_dp_ram_16_28) 3.28e-05 6.72e-03    8.905 1.57e-02   0.2
+        pending_size (VX_pending_size_2_28) 6.50e-06 1.23e-04    0.207 3.36e-04   0.0
+    g_lane_rsp_2__rsp_skid (VX_elastic_buffer_14_29) 5.82e-05 8.57e-03   11.047 1.97e-02   0.3
+      g_ebN_out_buf (VX_pipe_buffer_21_29)    0.000    0.000    0.406 4.06e-04   0.0
+      g_ebN_fifo_queue (VX_fifo_queue_69_8_1_0_29) 5.73e-05 8.57e-03   10.621 1.93e-02   0.3
+        g_depth_n_dp_ram (VX_dp_ram_16_29) 4.62e-05 6.52e-03    8.862 1.54e-02   0.2
+        pending_size (VX_pending_size_2_29) 6.61e-06 1.22e-04    0.207 3.35e-04   0.0
+    g_lane_rsp_1__rsp_skid (VX_elastic_buffer_14_30) 4.35e-05 8.47e-03   11.084 1.96e-02   0.3
+      g_ebN_out_buf (VX_pipe_buffer_21_30)    0.000    0.000    0.406 4.06e-04   0.0
+      g_ebN_fifo_queue (VX_fifo_queue_69_8_1_0_30) 4.25e-05 8.47e-03   10.660 1.92e-02   0.3
+        g_depth_n_dp_ram (VX_dp_ram_16_30) 3.34e-05 6.42e-03    8.901 1.54e-02   0.2
+        pending_size (VX_pending_size_2_30) 5.74e-06 1.18e-04    0.207 3.30e-04   0.0
+    g_lane_rsp_0__rsp_skid (VX_elastic_buffer_14_31) 3.84e-05 8.58e-03   11.038 1.97e-02   0.3
+      g_ebN_out_buf (VX_pipe_buffer_21_31)    0.000    0.000    0.406 4.06e-04   0.0
+      g_ebN_fifo_queue (VX_fifo_queue_69_8_1_0_31) 3.64e-05 8.58e-03   10.614 1.92e-02   0.3
+        g_depth_n_dp_ram (VX_dp_ram_16_31) 2.65e-05 6.53e-03    8.855 1.54e-02   0.2
+        pending_size (VX_pending_size_2_31) 6.56e-06 1.22e-04    0.207 3.36e-04   0.0
+    g_lane_req_31__req_skid (VX_elastic_buffer_13_0) 4.38e-03 3.21e-02    4.569 4.10e-02   0.6
+      g_eb2_out_buf (VX_pipe_buffer_20_0) 1.06e-05 7.62e-06    0.645 6.63e-04   0.0
+      g_eb2_stream_buffer (VX_stream_buffer_112_1_0) 4.37e-03 3.21e-02    3.924 4.04e-02   0.6
+    g_lane_req_30__req_skid (VX_elastic_buffer_13_1) 4.38e-03 3.21e-02    4.569 4.10e-02   0.6
+      g_eb2_out_buf (VX_pipe_buffer_20_1) 9.81e-06 7.62e-06    0.645 6.63e-04   0.0
+      g_eb2_stream_buffer (VX_stream_buffer_112_1_1) 4.37e-03 3.21e-02    3.924 4.04e-02   0.6
+    g_lane_req_29__req_skid (VX_elastic_buffer_13_2) 4.38e-03 3.21e-02    4.558 4.10e-02   0.6
+      g_eb2_out_buf (VX_pipe_buffer_20_2) 9.60e-06 7.61e-06    0.645 6.62e-04   0.0
+      g_eb2_stream_buffer (VX_stream_buffer_112_1_2) 4.37e-03 3.21e-02    3.913 4.04e-02   0.6
+    g_lane_req_28__req_skid (VX_elastic_buffer_13_3) 4.37e-03 3.20e-02    4.561 4.10e-02   0.6
+      g_eb2_out_buf (VX_pipe_buffer_20_3) 9.24e-06 7.54e-06    0.645 6.62e-04   0.0
+      g_eb2_stream_buffer (VX_stream_buffer_112_1_3) 4.36e-03 3.20e-02    3.909 4.03e-02   0.6
+    g_lane_req_27__req_skid (VX_elastic_buffer_13_4) 4.38e-03 3.21e-02    4.551 4.10e-02   0.6
+      g_eb2_out_buf (VX_pipe_buffer_20_4) 9.40e-06 7.53e-06    0.645 6.62e-04   0.0
+      g_eb2_stream_buffer (VX_stream_buffer_112_1_4) 4.37e-03 3.21e-02    3.906 4.03e-02   0.6
+    g_lane_req_26__req_skid (VX_elastic_buffer_13_5) 4.39e-03 3.21e-02    4.563 4.11e-02   0.6
+      g_eb2_out_buf (VX_pipe_buffer_20_5) 6.83e-06 7.47e-06    0.645 6.59e-04   0.0
+      g_eb2_stream_buffer (VX_stream_buffer_112_1_5) 4.38e-03 3.21e-02    3.918 4.04e-02   0.6
+    g_lane_req_25__req_skid (VX_elastic_buffer_13_6) 4.38e-03 3.21e-02    4.565 4.10e-02   0.6
+      g_eb2_out_buf (VX_pipe_buffer_20_6) 6.77e-06 8.15e-06    0.645 6.60e-04   0.0
+      g_eb2_stream_buffer (VX_stream_buffer_112_1_6) 4.38e-03 3.21e-02    3.920 4.04e-02   0.6
+    g_lane_req_24__req_skid (VX_elastic_buffer_13_7) 4.38e-03 3.21e-02    4.551 4.10e-02   0.6
+      g_eb2_out_buf (VX_pipe_buffer_20_7) 7.31e-06 7.94e-06    0.645 6.60e-04   0.0
+      g_eb2_stream_buffer (VX_stream_buffer_112_1_7) 4.37e-03 3.20e-02    3.906 4.03e-02   0.6
+    g_lane_req_23__req_skid (VX_elastic_buffer_13_8) 4.37e-03 3.20e-02    4.556 4.10e-02   0.6
+      g_eb2_out_buf (VX_pipe_buffer_20_8) 7.54e-06 8.12e-06    0.645 6.61e-04   0.0
+      g_eb2_stream_buffer (VX_stream_buffer_112_1_8) 4.37e-03 3.20e-02    3.911 4.03e-02   0.6
+    g_lane_req_22__req_skid (VX_elastic_buffer_13_9) 4.37e-03 3.21e-02    4.576 4.10e-02   0.6
+      g_eb2_out_buf (VX_pipe_buffer_20_9) 5.46e-06 8.16e-06    0.645 6.59e-04   0.0
+      g_eb2_stream_buffer (VX_stream_buffer_112_1_9) 4.37e-03 3.21e-02    3.931 4.04e-02   0.6
+    g_lane_req_21__req_skid (VX_elastic_buffer_13_10) 4.38e-03 3.21e-02    4.565 4.10e-02   0.6
+      g_eb2_out_buf (VX_pipe_buffer_20_10) 6.01e-06 8.14e-06    0.645 6.59e-04   0.0
+      g_eb2_stream_buffer (VX_stream_buffer_112_1_10) 4.37e-03 3.21e-02    3.920 4.04e-02   0.6
+    g_lane_req_20__req_skid (VX_elastic_buffer_13_11) 4.38e-03 3.21e-02    4.552 4.10e-02   0.6
+      g_eb2_out_buf (VX_pipe_buffer_20_11) 8.21e-06 7.72e-06    0.645 6.61e-04   0.0
+      g_eb2_stream_buffer (VX_stream_buffer_112_1_11) 4.37e-03 3.21e-02    3.907 4.04e-02   0.6
+    g_lane_req_19__req_skid (VX_elastic_buffer_13_12) 4.38e-03 3.21e-02    4.560 4.10e-02   0.6
+      g_eb2_out_buf (VX_pipe_buffer_20_12) 5.85e-06 7.49e-06    0.645 6.58e-04   0.0
+      g_eb2_stream_buffer (VX_stream_buffer_112_1_12) 4.37e-03 3.21e-02    3.915 4.04e-02   0.6
+    g_lane_req_18__req_skid (VX_elastic_buffer_13_13) 4.37e-03 3.20e-02    4.581 4.10e-02   0.6
+      g_eb2_out_buf (VX_pipe_buffer_20_13) 7.87e-06 7.80e-06    0.645 6.61e-04   0.0
+      g_eb2_stream_buffer (VX_stream_buffer_112_1_13) 4.37e-03 3.20e-02    3.936 4.03e-02   0.6
+    g_lane_req_17__req_skid (VX_elastic_buffer_13_14) 4.38e-03 3.21e-02    4.560 4.11e-02   0.6
+      g_eb2_out_buf (VX_pipe_buffer_20_14) 7.09e-06 7.53e-06    0.645 6.60e-04   0.0
+      g_eb2_stream_buffer (VX_stream_buffer_112_1_14) 4.38e-03 3.21e-02    3.915 4.04e-02   0.6
+    g_lane_req_16__req_skid (VX_elastic_buffer_13_15) 4.39e-03 3.21e-02    4.562 4.11e-02   0.6
+      g_eb2_out_buf (VX_pipe_buffer_20_15) 8.93e-06 7.52e-06    0.645 6.62e-04   0.0
+      g_eb2_stream_buffer (VX_stream_buffer_112_1_15) 4.38e-03 3.21e-02    3.916 4.04e-02   0.6
+    g_lane_req_15__req_skid (VX_elastic_buffer_13_16) 4.38e-03 3.21e-02    4.574 4.10e-02   0.6
+      g_eb2_out_buf (VX_pipe_buffer_20_16) 6.77e-06 7.48e-06    0.645 6.59e-04   0.0
+      g_eb2_stream_buffer (VX_stream_buffer_112_1_16) 4.37e-03 3.21e-02    3.929 4.04e-02   0.6
+    g_lane_req_14__req_skid (VX_elastic_buffer_13_17) 4.38e-03 3.21e-02    4.572 4.10e-02   0.6
+      g_eb2_out_buf (VX_pipe_buffer_20_17) 6.30e-06 8.09e-06    0.645 6.59e-04   0.0
+      g_eb2_stream_buffer (VX_stream_buffer_112_1_17) 4.37e-03 3.21e-02    3.927 4.04e-02   0.6
+    g_lane_req_13__req_skid (VX_elastic_buffer_13_18) 4.38e-03 3.21e-02    4.533 4.10e-02   0.6
+      g_eb2_out_buf (VX_pipe_buffer_20_18) 6.69e-06 8.08e-06    0.645 6.60e-04   0.0
+      g_eb2_stream_buffer (VX_stream_buffer_112_1_18) 4.37e-03 3.21e-02    3.888 4.03e-02   0.6
+    g_lane_req_12__req_skid (VX_elastic_buffer_13_19) 4.38e-03 3.21e-02    4.551 4.10e-02   0.6
+      g_eb2_out_buf (VX_pipe_buffer_20_19) 6.91e-06 8.07e-06    0.645 6.60e-04   0.0
+      g_eb2_stream_buffer (VX_stream_buffer_112_1_19) 4.37e-03 3.21e-02    3.906 4.03e-02   0.6
+    g_lane_req_11__req_skid (VX_elastic_buffer_13_20) 4.39e-03 3.21e-02    4.574 4.10e-02   0.6
+      g_eb2_out_buf (VX_pipe_buffer_20_20) 1.66e-05 7.84e-06    0.645 6.70e-04   0.0
+      g_eb2_stream_buffer (VX_stream_buffer_112_1_20) 4.37e-03 3.20e-02    3.917 4.03e-02   0.6
+    g_lane_req_10__req_skid (VX_elastic_buffer_13_21) 4.38e-03 3.21e-02    4.548 4.10e-02   0.6
+      g_eb2_out_buf (VX_pipe_buffer_20_21) 8.83e-06 7.65e-06    0.645 6.62e-04   0.0
+      g_eb2_stream_buffer (VX_stream_buffer_112_1_21) 4.37e-03 3.21e-02    3.903 4.04e-02   0.6
+    g_lane_req_9__req_skid (VX_elastic_buffer_13_22) 4.39e-03 3.21e-02    4.565 4.11e-02   0.6
+      g_eb2_out_buf (VX_pipe_buffer_20_22) 6.96e-06 8.06e-06    0.645 6.60e-04   0.0
+      g_eb2_stream_buffer (VX_stream_buffer_112_1_22) 4.38e-03 3.21e-02    3.920 4.04e-02   0.6
+    g_lane_req_8__req_skid (VX_elastic_buffer_13_23) 4.38e-03 3.21e-02    4.569 4.10e-02   0.6
+      g_eb2_out_buf (VX_pipe_buffer_20_23) 7.39e-06 7.72e-06    0.645 6.60e-04   0.0
+      g_eb2_stream_buffer (VX_stream_buffer_112_1_23) 4.37e-03 3.21e-02    3.924 4.04e-02   0.6
+    g_lane_req_7__req_skid (VX_elastic_buffer_13_24) 4.37e-03 3.21e-02    4.560 4.10e-02   0.6
+      g_eb2_out_buf (VX_pipe_buffer_20_24) 5.54e-06 8.07e-06    0.645 6.59e-04   0.0
+      g_eb2_stream_buffer (VX_stream_buffer_112_1_24) 4.37e-03 3.21e-02    3.915 4.04e-02   0.6
+    g_lane_req_6__req_skid (VX_elastic_buffer_13_25) 4.38e-03 3.21e-02    4.573 4.11e-02   0.6
+      g_eb2_out_buf (VX_pipe_buffer_20_25) 7.90e-06 7.80e-06    0.645 6.61e-04   0.0
+      g_eb2_stream_buffer (VX_stream_buffer_112_1_25) 4.38e-03 3.21e-02    3.927 4.04e-02   0.6
+    g_lane_req_5__req_skid (VX_elastic_buffer_13_26) 4.38e-03 3.21e-02    4.576 4.10e-02   0.6
+      g_eb2_out_buf (VX_pipe_buffer_20_26) 7.78e-06 7.80e-06    0.645 6.61e-04   0.0
+      g_eb2_stream_buffer (VX_stream_buffer_112_1_26) 4.37e-03 3.21e-02    3.931 4.04e-02   0.6
+    g_lane_req_4__req_skid (VX_elastic_buffer_13_27) 4.39e-03 3.21e-02    4.580 4.11e-02   0.6
+      g_eb2_out_buf (VX_pipe_buffer_20_27) 1.04e-05 7.54e-06    0.645 6.63e-04   0.0
+      g_eb2_stream_buffer (VX_stream_buffer_112_1_27) 4.38e-03 3.21e-02    3.934 4.04e-02   0.6
+    g_lane_req_3__req_skid (VX_elastic_buffer_13_28) 4.39e-03 3.21e-02    4.569 4.11e-02   0.6
+      g_eb2_out_buf (VX_pipe_buffer_20_28) 9.75e-06 7.54e-06    0.645 6.62e-04   0.0
+      g_eb2_stream_buffer (VX_stream_buffer_112_1_28) 4.38e-03 3.21e-02    3.924 4.04e-02   0.6
+    g_lane_req_2__req_skid (VX_elastic_buffer_13_29) 4.38e-03 3.21e-02    4.569 4.10e-02   0.6
+      g_eb2_out_buf (VX_pipe_buffer_20_29) 8.94e-06 7.54e-06    0.645 6.62e-04   0.0
+      g_eb2_stream_buffer (VX_stream_buffer_112_1_29) 4.37e-03 3.21e-02    3.924 4.04e-02   0.6
+    g_lane_req_1__req_skid (VX_elastic_buffer_13_30) 4.38e-03 3.20e-02    4.574 4.10e-02   0.6
+      g_eb2_out_buf (VX_pipe_buffer_20_30) 1.30e-05 7.58e-06    0.645 6.66e-04   0.0
+      g_eb2_stream_buffer (VX_stream_buffer_112_1_30) 4.37e-03 3.20e-02    3.929 4.03e-02   0.6
+    g_lane_req_0__req_skid (VX_elastic_buffer_13_31) 4.38e-03 3.21e-02    4.571 4.10e-02   0.6
+      g_eb2_out_buf (VX_pipe_buffer_20_31) 9.44e-06 7.54e-06    0.645 6.62e-04   0.0
+      g_eb2_stream_buffer (VX_stream_buffer_112_1_31) 4.37e-03 3.21e-02    3.926 4.03e-02   0.6
+  u_dma_unit (VX_dma_unit_h_527_242_703)    0.206    1.335 1.07e+03    2.611  37.3
+    g_misaligned_u_impl (VX_dma_unit_misal_h_618_242_148)    0.206    1.335 1.07e+03    2.611  37.3
+      gen_path (VX_dma_misal_gen_path)    0.000 4.42e-03  204.407    0.209   3.0
+        g_unequal_width_g_unequal_width_destination_lmem_destination_assembler (VX_dma_lane_assembler_1)    0.000 1.10e-03  112.252    0.113   1.6
+        g_unequal_width_g_unequal_width_destination_dcache_destination_assembler (VX_dma_lane_assembler)    0.000 9.01e-04   33.545 3.44e-02   0.5
+        g_unequal_width_source_lane_aligner (VX_dma_lane_aligner)    0.000 8.03e-04   41.701 4.25e-02   0.6
+        g_unequal_width_g_unequal_width_source_lmem_source_gearbox (VX_dma_gearbox_1)    0.000 6.06e-04    4.134 4.74e-03   0.1
+        g_unequal_width_g_unequal_width_source_dcache_source_gearbox (VX_dma_gearbox)    0.000    0.000    3.543 3.54e-03   0.1
+      response_payload_ram (VX_dp_ram_5) 4.11e-02    0.412  601.028    1.054  15.1
+        g_compiled_u_compiled (VX_dp_ram_compiled) 4.09e-02    0.412  599.041    1.052  15.0
+      lmem_wr_buf (VX_elastic_buffer_38) 8.80e-02    0.709   34.237    0.831  11.9
+        g_eb1_pipe_buffer (VX_pipe_buffer_42) 8.80e-02    0.709   34.237    0.831  11.9
+          g_register_g_pipe_regs_0__pipe_register (VX_pipe_register_35) 8.80e-02    0.709   34.230    0.831  11.9
+            g_shift_register (VX_shift_register_2339_1_1_0) 8.80e-02    0.709   34.230    0.831  11.9
+      lmem_req_buf (VX_elastic_buffer_37)    0.000 1.80e-03   27.440 2.92e-02   0.4
+        g_ebN_out_buf (VX_pipe_buffer_41)    0.000    0.000    1.766 1.77e-03   0.0
+        g_ebN_fifo_queue (VX_fifo_queue_290_4_1_0)    0.000 1.80e-03   25.654 2.75e-02   0.4
+          g_depth_n_dp_ram (VX_dp_ram_22)    0.000 3.93e-04   19.478 1.99e-02   0.3
+          pending_size (VX_pending_size_3_0)    0.000 9.83e-05    0.157 2.55e-04   0.0
+      dcache_wr_buf (VX_elastic_buffer_36) 2.32e-02    0.185    8.947    0.217   3.1
+        g_eb1_pipe_buffer (VX_pipe_buffer_40) 2.32e-02    0.185    8.947    0.217   3.1
+          g_register_g_pipe_regs_0__pipe_register (VX_pipe_register_34) 2.32e-02    0.185    8.943    0.217   3.1
+            g_shift_register (VX_shift_register_613_1_1_0) 2.32e-02    0.185    8.943    0.217   3.1
+      dcache_req_buf (VX_elastic_buffer_35) 1.69e-04 1.96e-03    9.556 1.17e-02   0.2
+        g_ebN_out_buf (VX_pipe_buffer_32) 9.77e-05 8.41e-06    0.601 7.07e-04   0.0
+        g_ebN_fifo_queue (VX_fifo_queue_100_4_1_0) 7.07e-05 1.95e-03    8.936 1.10e-02   0.2
+          g_depth_n_dp_ram (VX_dp_ram_21) 3.65e-05 3.98e-04    6.562 7.00e-03   0.1
+          pending_size (VX_pending_size_3_1) 3.21e-06 1.09e-04    0.158 2.71e-04   0.0
+      mul_dst_d2 (VX_mul_u32_pipe_0)      0.000 1.21e-03 8.86e-02 1.30e-03   0.0
+      mul_src_d2 (VX_mul_u32_pipe_1)      0.000 1.21e-03 8.76e-02 1.30e-03   0.0
+      mul_dst_d1 (VX_mul_u32_pipe_2)      0.000 1.61e-03   16.443 1.80e-02   0.3
+      mul_src_d1 (VX_mul_u32_pipe_3)      0.000 1.61e-03   29.960 3.16e-02   0.5
+      mul_dst_d0 (VX_mul_u32_pipe_4)      0.000 1.61e-03   16.441 1.80e-02   0.3
+      mul_src_d0 (VX_mul_u32_pipe_5)      0.000 1.61e-03   30.116 3.17e-02   0.5
+  u_job_frontend (VX_job_frontend_h_745_242_526)    0.591    1.159  299.767    2.049  29.3
+    u_job_dispatcher (VX_job_dispatcher_I_issue_if_VX_config_reg_if_master_NUM_18_DW_32I_done_if_VX_node_done_if_slave_)    0.000 1.86e-09    1.846 1.85e-03   0.0
+    u_job_desc_mmio_regs (VX_job_desc_mmio_regs_h_415_242_757)    0.140    0.470   60.803    0.671   9.6
+    lmem_arb (VX_lsu_mem_arb_h_738_242_421)    0.450    0.689  237.118    1.377  19.7
+      g_rsp_select_rsp_switch (VX_stream_switch_8) 7.97e-02    0.549  181.623    0.810  11.6
+        g_out_buf_1__out_buf (VX_elastic_buffer_54_0) 3.54e-02    0.240   90.879    0.366   5.2
+          g_eb2_out_buf (VX_pipe_buffer_35_0) 4.81e-05 2.33e-05   12.772 1.28e-02   0.2
+          g_eb2_stream_buffer (VX_stream_buffer_2082_0_0) 3.54e-02    0.240   78.107    0.354   5.0
+        g_out_buf_0__out_buf (VX_elastic_buffer_54_1) 4.41e-02    0.308   90.722    0.443   6.3
+          g_eb2_out_buf (VX_pipe_buffer_35_1) 1.37e-04 2.58e-05   12.773 1.29e-02   0.2
+          g_eb2_stream_buffer (VX_stream_buffer_2082_0_1) 4.40e-02    0.308   77.949    0.430   6.1
+      g_rsp_select_g_rsp_data_in_0__bits_remove (VX_bits_remove_5) 1.36e-04 3.80e-05 1.99e-02 1.94e-04   0.0
+      g_bus_out_if_0__g_req_tag_sel_out_bits_insert (VX_bits_insert_5) 1.23e-04 5.10e-05 2.00e-02 1.94e-04   0.0
+      req_arb (VX_stream_arb_31)          0.299    0.138   52.859    0.489   7.0
+        g_input_select_g_arbiter_g_out_buf_0__out_buf (VX_elastic_buffer_3428_0_0_0) 1.82e-02 5.22e-02   22.359 9.27e-02   1.3
+        g_input_select_g_arbiter_arbiter (VX_generic_arbiter_6) 1.08e-03 7.66e-04 8.97e-02 1.93e-03   0.0
+          g_round_robin_rr_arbiter (VX_rr_arbiter_2) 2.71e-04 7.37e-04 7.91e-02 1.09e-03   0.0
+            g_model1_onehot_encoder (VX_onehot_encoder_2) 1.87e-04 2.75e-05 1.19e-02 2.26e-04   0.0
+1

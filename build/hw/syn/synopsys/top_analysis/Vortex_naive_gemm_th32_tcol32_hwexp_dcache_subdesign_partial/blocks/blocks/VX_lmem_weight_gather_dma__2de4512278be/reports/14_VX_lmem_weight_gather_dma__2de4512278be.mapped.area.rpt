@@ -1,0 +1,265 @@
+ 
+****************************************
+Report : area
+Design : VX_lmem_weight_gather_dma__2de4512278be
+Version: V-2023.12-SP5-3
+Date   : Thu Jul 23 17:41:03 2026
+****************************************
+
+Library(s) Used:
+
+    sc9_cmos28lpp_base_rvt_ss_nominal_max_0p900v_125c_sadhm (File: /tool/PDK/Samsung/LN28LPP_202203/PRIMITIVES/RVT/ln28lpp_sc_9t_base_rvt_c130_V1.00d/FE-Common/LIBERTY/sc9_cmos28lpp_base_rvt_ss_nominal_max_0p900v_125c_sadhm.db)
+
+Number of ports:                         4007
+Number of nets:                         24875
+Number of cells:                        23400
+Number of combinational cells:          13025
+Number of sequential cells:              9448
+Number of macros/black boxes:               0
+Number of buf/inv:                       1417
+Number of references:                     295
+
+Combinational area:               8632.845159
+Buf/Inv area:                      526.266012
+Noncombinational area:           19823.777506
+Macro/Black Box area:                0.000000
+Net Interconnect area:      undefined  (No wire load specified)
+
+Total cell area:                 28456.622665
+Total area:                 undefined
+
+Core Area:                     47707
+Aspect Ratio:                 1.0026
+Utilization Ratio:            0.5965
+
+
+The above information was reported from the logical library. The following are from the physical library:
+
+  Total moveable cell area: 28456.6
+  Total fixed cell area: 0.0
+  Total physical cell area: 28456.6
+ Core area: 0.000, 0.000, 218.140, 218.700
+
+Hierarchical area distribution
+------------------------------
+
+                                  Global cell area            Local cell area
+                                  -------------------  ----------------------------- 
+Hierarchical cell                 Absolute    Percent  Combi-     Noncombi-   Black-
+                                  Total       Total    national   national    boxes   Design
+--------------------------------  ----------  -------  ---------  ----------  ------  ----------------------------------------------------------------
+VX_lmem_weight_gather_dma__2de4512278be 28456.6227   100.0 8632.8452 19455.2275 0.0000 VX_lmem_weight_gather_dma__2de4512278be
+clk_gate_alloc_ptr_r_reg_2            1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_392
+clk_gate_ml                           1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_184
+clk_gate_ml_0                         1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_185
+clk_gate_ml_1                         1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_186
+clk_gate_ml_10                        1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_215
+clk_gate_ml_11                        1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_220
+clk_gate_ml_12                        1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_221
+clk_gate_ml_13                        1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_226
+clk_gate_ml_14                        1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_231
+clk_gate_ml_15                        1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_232
+clk_gate_ml_16                        1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_233
+clk_gate_ml_17                        1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_238
+clk_gate_ml_18                        1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_243
+clk_gate_ml_19                        1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_244
+clk_gate_ml_2                         1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_187
+clk_gate_ml_20                        1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_249
+clk_gate_ml_21                        1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_254
+clk_gate_ml_22                        1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_255
+clk_gate_ml_23                        1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_256
+clk_gate_ml_24                        1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_261
+clk_gate_ml_25                        1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_266
+clk_gate_ml_26                        1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_267
+clk_gate_ml_27                        1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_272
+clk_gate_ml_28                        1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_277
+clk_gate_ml_29                        1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_278
+clk_gate_ml_3                         1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_192
+clk_gate_ml_30                        1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_279
+clk_gate_ml_31                        1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_284
+clk_gate_ml_32                        1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_289
+clk_gate_ml_33                        1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_290
+clk_gate_ml_34                        1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_295
+clk_gate_ml_35                        1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_300
+clk_gate_ml_36                        1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_301
+clk_gate_ml_37                        1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_302
+clk_gate_ml_38                        1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_307
+clk_gate_ml_39                        1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_312
+clk_gate_ml_4                         1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_197
+clk_gate_ml_40                        1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_313
+clk_gate_ml_41                        1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_318
+clk_gate_ml_42                        1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_322
+clk_gate_ml_43                        1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_323
+clk_gate_ml_44                        1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_324
+clk_gate_ml_45                        1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_329
+clk_gate_ml_46                        1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_334
+clk_gate_ml_47                        1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_335
+clk_gate_ml_48                        1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_340
+clk_gate_ml_49                        1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_344
+clk_gate_ml_5                         1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_198
+clk_gate_ml_50                        1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_345
+clk_gate_ml_51                        1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_346
+clk_gate_ml_52                        1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_351
+clk_gate_ml_53                        1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_356
+clk_gate_ml_54                        1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_357
+clk_gate_ml_55                        1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_362
+clk_gate_ml_56                        1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_369
+clk_gate_ml_57                        1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_370
+clk_gate_ml_58                        1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_375
+clk_gate_ml_59                        1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_380
+clk_gate_ml_6                         1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_203
+clk_gate_ml_60                        1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_385
+clk_gate_ml_7                         1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_208
+clk_gate_ml_8                         1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_209
+clk_gate_ml_9                         1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_210
+clk_gate_next_group_base_r_reg_1      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_391
+clk_gate_retired_groups_r_reg_0       1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_154
+clk_gate_slot_base_r_reg_0__0         1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_374
+clk_gate_slot_base_r_reg_10__0        1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_382
+clk_gate_slot_base_r_reg_11__0        1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_381
+clk_gate_slot_base_r_reg_12__0        1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_389
+clk_gate_slot_base_r_reg_13__0        1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_388
+clk_gate_slot_base_r_reg_14__0        1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_387
+clk_gate_slot_base_r_reg_15__0        1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_386
+clk_gate_slot_base_r_reg_1__0         1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_373
+clk_gate_slot_base_r_reg_2__0         1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_372
+clk_gate_slot_base_r_reg_3__0         1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_371
+clk_gate_slot_base_r_reg_4__0         1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_379
+clk_gate_slot_base_r_reg_5__0         1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_378
+clk_gate_slot_base_r_reg_6__0         1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_377
+clk_gate_slot_base_r_reg_7__0         1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_376
+clk_gate_slot_base_r_reg_8__0         1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_384
+clk_gate_slot_base_r_reg_9__0         1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_383
+clk_gate_slot_data_r_reg_0__0__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_191
+clk_gate_slot_data_r_reg_0__1__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_306
+clk_gate_slot_data_r_reg_0__2__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_328
+clk_gate_slot_data_r_reg_0__3__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_214
+clk_gate_slot_data_r_reg_0__4__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_237
+clk_gate_slot_data_r_reg_0__5__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_350
+clk_gate_slot_data_r_reg_0__6__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_260
+clk_gate_slot_data_r_reg_0__7__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_283
+clk_gate_slot_data_r_reg_10__0__0     1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_200
+clk_gate_slot_data_r_reg_10__1__0     1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_320
+clk_gate_slot_data_r_reg_10__2__0     1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_341
+clk_gate_slot_data_r_reg_10__3__0     1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_223
+clk_gate_slot_data_r_reg_10__4__0     1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_246
+clk_gate_slot_data_r_reg_10__5__0     1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_359
+clk_gate_slot_data_r_reg_10__6__0     1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_269
+clk_gate_slot_data_r_reg_10__7__0     1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_292
+clk_gate_slot_data_r_reg_11__0__0     1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_199
+clk_gate_slot_data_r_reg_11__1__0     1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_319
+clk_gate_slot_data_r_reg_11__2__0     1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_367
+clk_gate_slot_data_r_reg_11__3__0     1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_222
+clk_gate_slot_data_r_reg_11__4__0     1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_245
+clk_gate_slot_data_r_reg_11__5__0     1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_358
+clk_gate_slot_data_r_reg_11__6__0     1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_268
+clk_gate_slot_data_r_reg_11__7__0     1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_291
+clk_gate_slot_data_r_reg_12__0__0     1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_207
+clk_gate_slot_data_r_reg_12__1__0     1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_317
+clk_gate_slot_data_r_reg_12__2__0     1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_339
+clk_gate_slot_data_r_reg_12__3__0     1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_230
+clk_gate_slot_data_r_reg_12__4__0     1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_253
+clk_gate_slot_data_r_reg_12__5__0     1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_365
+clk_gate_slot_data_r_reg_12__6__0     1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_276
+clk_gate_slot_data_r_reg_12__7__0     1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_299
+clk_gate_slot_data_r_reg_13__0__0     1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_206
+clk_gate_slot_data_r_reg_13__1__0     1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_316
+clk_gate_slot_data_r_reg_13__2__0     1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_338
+clk_gate_slot_data_r_reg_13__3__0     1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_229
+clk_gate_slot_data_r_reg_13__4__0     1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_252
+clk_gate_slot_data_r_reg_13__5__0     1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_366
+clk_gate_slot_data_r_reg_13__6__0     1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_275
+clk_gate_slot_data_r_reg_13__7__0     1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_298
+clk_gate_slot_data_r_reg_14__0__0     1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_205
+clk_gate_slot_data_r_reg_14__1__0     1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_315
+clk_gate_slot_data_r_reg_14__2__0     1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_337
+clk_gate_slot_data_r_reg_14__3__0     1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_228
+clk_gate_slot_data_r_reg_14__4__0     1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_251
+clk_gate_slot_data_r_reg_14__5__0     1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_364
+clk_gate_slot_data_r_reg_14__6__0     1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_274
+clk_gate_slot_data_r_reg_14__7__0     1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_297
+clk_gate_slot_data_r_reg_15__0__0     1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_204
+clk_gate_slot_data_r_reg_15__1__0     1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_314
+clk_gate_slot_data_r_reg_15__2__0     1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_336
+clk_gate_slot_data_r_reg_15__3__0     1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_227
+clk_gate_slot_data_r_reg_15__4__0     1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_250
+clk_gate_slot_data_r_reg_15__5__0     1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_363
+clk_gate_slot_data_r_reg_15__6__0     1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_273
+clk_gate_slot_data_r_reg_15__7__0     1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_296
+clk_gate_slot_data_r_reg_1__0__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_190
+clk_gate_slot_data_r_reg_1__1__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_305
+clk_gate_slot_data_r_reg_1__2__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_327
+clk_gate_slot_data_r_reg_1__3__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_213
+clk_gate_slot_data_r_reg_1__4__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_236
+clk_gate_slot_data_r_reg_1__5__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_349
+clk_gate_slot_data_r_reg_1__6__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_259
+clk_gate_slot_data_r_reg_1__7__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_282
+clk_gate_slot_data_r_reg_2__0__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_189
+clk_gate_slot_data_r_reg_2__1__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_304
+clk_gate_slot_data_r_reg_2__2__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_326
+clk_gate_slot_data_r_reg_2__3__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_212
+clk_gate_slot_data_r_reg_2__4__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_235
+clk_gate_slot_data_r_reg_2__5__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_348
+clk_gate_slot_data_r_reg_2__6__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_258
+clk_gate_slot_data_r_reg_2__7__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_281
+clk_gate_slot_data_r_reg_3__0__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_188
+clk_gate_slot_data_r_reg_3__1__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_303
+clk_gate_slot_data_r_reg_3__2__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_325
+clk_gate_slot_data_r_reg_3__3__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_211
+clk_gate_slot_data_r_reg_3__4__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_234
+clk_gate_slot_data_r_reg_3__5__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_347
+clk_gate_slot_data_r_reg_3__6__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_257
+clk_gate_slot_data_r_reg_3__7__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_280
+clk_gate_slot_data_r_reg_4__0__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_196
+clk_gate_slot_data_r_reg_4__1__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_311
+clk_gate_slot_data_r_reg_4__2__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_333
+clk_gate_slot_data_r_reg_4__3__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_219
+clk_gate_slot_data_r_reg_4__4__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_242
+clk_gate_slot_data_r_reg_4__5__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_355
+clk_gate_slot_data_r_reg_4__6__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_265
+clk_gate_slot_data_r_reg_4__7__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_288
+clk_gate_slot_data_r_reg_5__0__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_195
+clk_gate_slot_data_r_reg_5__1__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_310
+clk_gate_slot_data_r_reg_5__2__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_332
+clk_gate_slot_data_r_reg_5__3__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_218
+clk_gate_slot_data_r_reg_5__4__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_241
+clk_gate_slot_data_r_reg_5__5__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_354
+clk_gate_slot_data_r_reg_5__6__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_264
+clk_gate_slot_data_r_reg_5__7__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_287
+clk_gate_slot_data_r_reg_6__0__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_194
+clk_gate_slot_data_r_reg_6__1__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_309
+clk_gate_slot_data_r_reg_6__2__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_331
+clk_gate_slot_data_r_reg_6__3__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_217
+clk_gate_slot_data_r_reg_6__4__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_240
+clk_gate_slot_data_r_reg_6__5__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_353
+clk_gate_slot_data_r_reg_6__6__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_263
+clk_gate_slot_data_r_reg_6__7__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_286
+clk_gate_slot_data_r_reg_7__0__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_193
+clk_gate_slot_data_r_reg_7__1__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_308
+clk_gate_slot_data_r_reg_7__2__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_330
+clk_gate_slot_data_r_reg_7__3__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_216
+clk_gate_slot_data_r_reg_7__4__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_239
+clk_gate_slot_data_r_reg_7__5__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_352
+clk_gate_slot_data_r_reg_7__6__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_262
+clk_gate_slot_data_r_reg_7__7__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_285
+clk_gate_slot_data_r_reg_8__0__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_202
+clk_gate_slot_data_r_reg_8__1__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_321
+clk_gate_slot_data_r_reg_8__2__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_343
+clk_gate_slot_data_r_reg_8__3__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_225
+clk_gate_slot_data_r_reg_8__4__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_248
+clk_gate_slot_data_r_reg_8__5__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_361
+clk_gate_slot_data_r_reg_8__6__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_271
+clk_gate_slot_data_r_reg_8__7__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_294
+clk_gate_slot_data_r_reg_9__0__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_201
+clk_gate_slot_data_r_reg_9__1__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_368
+clk_gate_slot_data_r_reg_9__2__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_342
+clk_gate_slot_data_r_reg_9__3__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_224
+clk_gate_slot_data_r_reg_9__4__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_247
+clk_gate_slot_data_r_reg_9__5__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_360
+clk_gate_slot_data_r_reg_9__6__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_270
+clk_gate_slot_data_r_reg_9__7__0      1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_293
+clk_gate_slot_rsp_valid_r_reg_15_     1.7550      0.0     0.0000      1.7550  0.0000  SNPS_CLOCK_GATE_HIGH_VX_lmem_weight_gather_dma__2de4512278be_390
+--------------------------------  ----------  -------  ---------  ----------  ------  ----------------------------------------------------------------
+Total                                                  8632.8452  19823.7775  0.0000
+
+1

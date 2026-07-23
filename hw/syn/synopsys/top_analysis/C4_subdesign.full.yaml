@@ -8,8 +8,27 @@ common_targets:
   # Select the logical cache interconnect.  In smaller configurations the
   # request/response path is a direct VX_stream_xbar; larger configurations
   # may elaborate VX_stream_omega at the same wrapper path.
-  - name: no_common
-    module_patterns: [no_common]
+  - name: cache_interconnect
+    module_patterns: [VX_stream_xbar, VX_stream_omega]
+    instance_patterns:
+      - "vortex/**/*cache*/**/core_req_xbar"
+      - "vortex/**/*cache*/**/core_rsp_xbar"
+      - "vortex/**/*cache*/**/mem_rsp_xbar"
+      - "vortex/**/*cache*/**/mem_rsp_xbar/g_fallback.xbar_switch"
+
+  - name: local_memory_interconnect
+    module_patterns: [VX_stream_xbar, VX_stream_omega]
+    instance_patterns:
+      - "vortex/*mem_unit*/*local_mem*/*req_xbar"
+      - "vortex/*mem_unit*/*local_mem*/*rsp_xbar"
+
+  - name: axi_adapter_xbar
+    module_patterns: [VX_stream_xbar]
+    instance_patterns:
+      - "axi_adapter/req_xbar"
+      - "axi_adapter/rsp_xbar"
+      - "vortex/**/axi_adapter/**/req_xbar"
+      - "vortex/**/axi_adapter/**/rsp_xbar"
 
 families:
   C4:
@@ -36,3 +55,6 @@ families:
       - name: tmem_arbiter
         module_patterns: [VX_mem_arb]
         instance_patterns: ["vortex/*u_tmem_subsystem*/*mem_arb"]
+      - name: gemm_unit
+        module_patterns: [VX_gemm_unit]
+        pnr: false
