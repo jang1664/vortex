@@ -99,7 +99,7 @@ case "$extract_mode" in
         ;;
 esac
 
-for input in data_base.csv data_fpint_mxu.csv wkvwoq_breakdown.csv; do
+for input in data_base.csv data_tcu.csv data_fpint_mxu.csv wkvwoq_breakdown.csv; do
     if [ ! -s "$input" ]; then
         echo "error: missing required input: $script_dir/$input" >&2
         echo "       run with --extract on a machine with the source reports, or check out the cached CSVs" >&2

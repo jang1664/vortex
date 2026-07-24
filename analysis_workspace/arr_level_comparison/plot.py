@@ -1,4 +1,4 @@
-"""Generate figures from data_base.csv and data_fpint_mxu.csv.
+"""Generate figures from scalar, TCU, and GEMM synthesis data.
 
 Outputs (PNG + PDF):
   fig1_per_component_power.{png,pdf}
@@ -9,7 +9,7 @@ Outputs (PNG + PDF):
   fig3_area_breakdown.{png,pdf}
       Stacked area for VX_gemm_unit (combinational/sequential/buf-inv).
   table_efficiency.csv
-      TOPS/W and TOPS/mm^2 for FPxFP (analytic) vs WoQ FPxINT (synth) vs
+      TOPS/W and TOPS/mm^2 for FP TCU (synth) vs WoQ FPxINT (synth) vs
       WKV FPxINT (synth). Used as a paper table.
   fig10_wkv_vs_woq_relative_breakdown.{svg,png}
       Fig. 9 datapath groups normalized to WKV=1, with WoQ/WKV labels.
@@ -28,6 +28,7 @@ import numpy as np
 
 HERE = Path(__file__).resolve().parent
 BASE_CSV = HERE / "data_base.csv"
+TCU_CSV = HERE / "data_tcu.csv"
 GEMM_CSV = HERE / "data_fpint_mxu.csv"
 
 BLUE_DARK = "#0f4c81"
@@ -83,8 +84,8 @@ def load_csv(path: Path) -> list[dict]:
 
 
 def load() -> list[dict]:
-    """Load static scalar/INT data and extracted GEMM data."""
-    rows = load_csv(BASE_CSV) + load_csv(GEMM_CSV)
+    """Load static scalar/INT data and extracted TCU/GEMM data."""
+    rows = load_csv(BASE_CSV) + load_csv(TCU_CSV) + load_csv(GEMM_CSV)
     keys = [(row["design"], row["precision"]) for row in rows]
     duplicates = sorted({key for key in keys if keys.count(key) > 1})
     if duplicates:
@@ -99,6 +100,7 @@ def load() -> list[dict]:
         ("fp_i2flt", "FP16"),
         ("fp_flt2i", "FP16"),
         ("int_mac_pe", "INT8/INT32"),
+        ("VX_tcu_unit_th32_bhf", "FP16/FP32acc"),
         ("VX_gemm_unit_32x32_mpGEMM", "FP16act/INT4w->FP32acc"),
         (
             "VX_woq_gemm_unit_32x32_mpGEMM",
@@ -847,20 +849,16 @@ def fig10_wkv_vs_woq_relative_breakdown():
 
 
 def table_efficiency(rows):
-    """Write TOPS/W and TOPS/mm^2 table for FPxFP vs WoQ FPxINT vs WKV FPxINT.
+    """Write TOPS/W and TOPS/mm^2 for the FP TCU, WoQ, and WKV engines.
 
-    32x32 GEMM @ 100 MHz, 1024 MAC/cycle * 2 FLOP/MAC = 0.2048 TOPS.
-    - FPxFP: analytic compose using component_database
-      (1024*fp_mult[FP16] + 992*fp_addsub[FP32] + 32*fp_flt2i[FP16]).
-      Same compose as fig2's naive baseline minus the INT4->FP16 dequant.
-      Adder tree is FP32 to match the native VX_gemm_unit FP32 accumulator.
+    - FP TCU: thread-32 BHF synthesis, 8*4*4*2 MAC/cycle at 100 MHz,
+      with 2 operations per MAC = 0.0512 TOPS.
     - WoQ FPxINT: VX_woq_gemm_unit_top synthesized total (weight-only quant).
     - WKV FPxINT: VX_gemm_unit_top synthesized total (W+K+V quant).
-    Relative TOPS/W and TOPS/mm^2 are normalized to FPxFP = 1.0.
+      Both GEMM engines sustain 32*32 MAC/cycle at 100 MHz = 0.2048 TOPS.
+    Relative TOPS/W and TOPS/mm^2 are normalized to the FP TCU = 1.0.
     """
-    fp_mult = get(rows, "fp_mult", "FP16")
-    fp_addsub = get(rows, "fp_addsub", "FP32")
-    flt2i = get(rows, "fp_flt2i", "FP16")
+    tcu = get(rows, "VX_tcu_unit_th32_bhf", "FP16/FP32acc")
     wkv = get(rows, "VX_gemm_unit_32x32_mpGEMM", "FP16act/INT4w->FP32acc")
     woq = get(
         rows,
@@ -868,30 +866,27 @@ def table_efficiency(rows):
         "FP16act/INT4w(W-only)->FP32acc",
     )
 
-    fpxfp_p = (1024 * fp_mult["total_uw"]
-               + 992 * fp_addsub["total_uw"]
-               + 32 * flt2i["total_uw"])
-    fpxfp_a = (1024 * fp_mult["area_um2"]
-               + 992 * fp_addsub["area_um2"]
-               + 32 * flt2i["area_um2"])
-
-    tops = 32 * 32 * 2 * 1e8 / 1e12  # 0.2048 TOPS
+    tcu_tops = 8 * 4 * 4 * 2 * 2 * 1e8 / 1e12  # 0.0512 TOPS
+    gemm_tops = 32 * 32 * 2 * 1e8 / 1e12       # 0.2048 TOPS
 
     configs = [
-        ("FPxFP (analytic compose)", fpxfp_p, fpxfp_a),
-        ("WoQ FPxINT (synth)",       woq["total_uw"], woq["area_um2"]),
-        ("WKV FPxINT (synth)",       wkv["total_uw"], wkv["area_um2"]),
+        ("FP TCU (synth)",      tcu["total_uw"], tcu["area_um2"], tcu_tops),
+        ("WoQ FPxINT (synth)",  woq["total_uw"], woq["area_um2"], gemm_tops),
+        ("WKV FPxINT (synth)",  wkv["total_uw"], wkv["area_um2"], gemm_tops),
     ]
-    metrics = [(tops / (p / 1e6), tops / (a / 1e6)) for _, p, a in configs]
-    base_w, base_mm = metrics[0]  # FPxFP normalization base
+    metrics = [
+        (tops / (p / 1e6), tops / (a / 1e6))
+        for _, p, a, tops in configs
+    ]
+    base_w, base_mm = metrics[0]  # FP TCU normalization base
 
     out = HERE / "table_efficiency.csv"
     with out.open("w", newline="") as f:
-        w = csv.writer(f)
+        w = csv.writer(f, lineterminator="\n")
         w.writerow(["config", "power_mW", "area_mm2", "TOPS",
                     "TOPS_per_W", "TOPS_per_mm2",
                     "rel_TOPS_per_W", "rel_TOPS_per_mm2"])
-        for (name, p_uw, a_um2), (tw, tmm) in zip(configs, metrics):
+        for (name, p_uw, a_um2, tops), (tw, tmm) in zip(configs, metrics):
             w.writerow([name, f"{p_uw/1000:.3f}", f"{a_um2/1e6:.4f}",
                         f"{tops:.4f}",
                         f"{tw:.3f}", f"{tmm:.4f}",
@@ -899,7 +894,7 @@ def table_efficiency(rows):
     print(f"[table] wrote {out}")
     print(f"  {'config':<28} {'P (mW)':>8} {'A (mm^2)':>9} "
           f"{'TOPS/W':>8} {'TOPS/mm^2':>10} {'rel.W':>7} {'rel.mm2':>8}")
-    for (name, p_uw, a_um2), (tw, tmm) in zip(configs, metrics):
+    for (name, p_uw, a_um2, _), (tw, tmm) in zip(configs, metrics):
         print(f"  {name:<28} {p_uw/1000:8.2f} {a_um2/1e6:9.3f} "
               f"{tw:8.3f} {tmm:10.4f} {tw/base_w:7.2f} {tmm/base_mm:8.2f}")
 

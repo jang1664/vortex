@@ -1,9 +1,9 @@
-"""Extract GEMM-unit power and area metrics from synthesis reports.
+"""Extract TCU and GEMM-unit power and area metrics from synthesis reports.
 
 Scalar FP and INT-unit measurements are kept in ``data_base.csv`` and are not
-regenerated here.  This script reads the WKV and WoQ reports under
-``build/hw/syn/synopsys/gemm_unit_breakdown`` and writes
-``data_fpint_mxu.csv``.  All powers in the CSV are normalized to microwatts
+regenerated here. This script reads the thread-32 FP TCU report and the WKV/WoQ
+reports under ``build/hw/syn/synopsys`` and writes ``data_tcu.csv`` and
+``data_fpint_mxu.csv``. All powers in the CSV are normalized to microwatts
 (uW), and area is in um^2.
 """
 
@@ -16,11 +16,21 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+VORTEX_ROOT = HERE.parents[1]
 # VX_gemm_unit_top syn/sim/pwr artifacts now live under vortex/build/...
 # (the source-side scripts at vortex/hw/syn/synopsys/gemm_unit_breakdown/scripts
 # write here; mirrored from the original location in component_database.)
-VORTEX_BUILD_GEMM = HERE.parents[1] / "build" / "hw" / "syn" / "synopsys" \
+VORTEX_BUILD_GEMM = VORTEX_ROOT / "build" / "hw" / "syn" / "synopsys" \
     / "gemm_unit_breakdown" / "syn" / "run" / "v0"
+TCU_REPORT_DIR = VORTEX_ROOT / "build" / "hw" / "syn" / "synopsys" / "tcu" \
+    / "synthesis_th32" / "tcu_unit_bhf" / "syn_topo.lpp" / "reports"
+# The original thread-32 run's power report is currently absent from
+# TCU_REPORT_DIR. This top-analysis block is the same mapped VX_tcu_unit
+# design: its total cell area exactly matches the original 547111.533916 um^2.
+TCU_POWER_FALLBACK = VORTEX_ROOT / "build" / "hw" / "syn" / "synopsys" \
+    / "top_analysis" / "Vortex_tcu_th32_c1_rev2_subdesign_partial" / "blocks" \
+    / "blocks" / "VX_tcu_unit__d2e8e198f1ee" / "reports" \
+    / "18_VX_tcu_unit__d2e8e198f1ee.mapped.power.rpt"
 
 # PrimePower emits two distinct hierarchical-power formats:
 #   (a) "Report : Averaged Power"  — no units header, all values in Watts,
@@ -140,6 +150,67 @@ def parse_qor(path: Path, timing_path: Path | None = None):
             return float(slack.group(1)), None, None
 
     return None, None, None
+
+
+def report_design_name(path: Path) -> str | None:
+    if not path.exists():
+        return None
+    match = re.search(r"^Design\s*:\s*(\S+)", path.read_text(errors="ignore"), re.MULTILINE)
+    return match.group(1) if match else None
+
+
+def collect_tcu() -> Row | None:
+    """Collect the synthesized thread-32 BHF FP TCU baseline."""
+    area_candidates = [
+        TCU_REPORT_DIR / "14_VX_tcu_unit.mapped.area.rpt",
+        TCU_REPORT_DIR / "15_VX_tcu_unit.mapped.designware_area.rpt",
+    ]
+    power_candidates = [
+        TCU_REPORT_DIR / "18_VX_tcu_unit.mapped.power.rpt",
+        TCU_POWER_FALLBACK,
+    ]
+    area_path = next((path for path in area_candidates if path.exists()), None)
+    power_path = next((path for path in power_candidates if path.exists()), None)
+    if area_path is None or power_path is None:
+        return None
+
+    top_name = report_design_name(power_path)
+    if top_name is None:
+        return None
+    pw = parse_power_report(power_path, top_name)
+    ar = parse_area_report(area_path)
+    if pw is None or ar is None or ar["total"] is None:
+        return None
+
+    sw_uW, int_uW, leak_uW, tot_uW = pw
+    qor = TCU_REPORT_DIR / "11_VX_tcu_unit.mapped.qor.rpt"
+    wns, crit, per = parse_qor(qor)
+    return Row(
+        design="VX_tcu_unit_th32_bhf",
+        family="tcu",
+        precision="FP16/FP32acc",
+        period_ns=10.0,
+        sw_uw=sw_uW,
+        int_uw=int_uW,
+        leak_uw=leak_uW,
+        total_uw=tot_uW,
+        area_um2=ar["total"],
+        comb_area_um2=ar["comb"] or 0,
+        seq_area_um2=ar["seq"] or 0,
+        buf_area_um2=ar["buf"] or 0,
+        wns_ns=wns or 0.0,
+        crit_ns=crit or 0.0,
+        rpt_path=str(power_path),
+    )
+
+
+def write_rows(path: Path, rows: list[Row]) -> None:
+    fields = list(asdict(rows[0]).keys())
+    with path.open("w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fields, lineterminator="\n")
+        writer.writeheader()
+        for row in rows:
+            writer.writerow(asdict(row))
 
 
 def collect_gemm_unit(
@@ -343,12 +414,34 @@ def collect_wkv_woq_breakdown():
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument(
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
         "--breakdown-only",
         action="store_true",
         help="rebuild only wkvwoq_breakdown.csv from GEMM synthesis reports",
     )
+    mode.add_argument(
+        "--tcu-only",
+        action="store_true",
+        help="rebuild only data_tcu.csv from the thread-32 TCU synthesis reports",
+    )
     args = parser.parse_args()
+
+    if not args.breakdown_only:
+        tcu = collect_tcu()
+        if tcu is None:
+            raise RuntimeError(
+                "TCU reports are incomplete; refusing to overwrite data_tcu.csv"
+            )
+        tcu_out = HERE / "data_tcu.csv"
+        write_rows(tcu_out, [tcu])
+        print(f"wrote TCU baseline -> {tcu_out}")
+        print(
+            f"  power={tcu.total_uw / 1000.0:.3f} mW, "
+            f"area={tcu.area_um2 / 1e6:.6f} mm^2"
+        )
+        if args.tcu_only:
+            return
 
     if not args.breakdown_only:
         rows = collect_fpint_mxu()
@@ -370,12 +463,7 @@ def main():
             )
 
         out = HERE / "data_fpint_mxu.csv"
-        fields = list(asdict(rows[0]).keys())
-        with out.open("w", newline="") as f:
-            w = csv.DictWriter(f, fieldnames=fields, lineterminator="\n")
-            w.writeheader()
-            for row in rows:
-                w.writerow(asdict(row))
+        write_rows(out, rows)
         print(f"wrote {len(rows)} rows -> {out}")
         # also dump a quick table to stdout
         print(f"\n{'design':<30} {'prec':<25} {'P_total (uW)':>14} {'area (um^2)':>14} {'WNS':>6}")

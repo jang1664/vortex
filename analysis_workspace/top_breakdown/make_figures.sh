@@ -6,10 +6,10 @@ cd "$script_dir"
 
 usage() {
     cat <<'EOF'
-Usage: ./make_figures.sh [nt8|nt32 ...]
+Usage: ./make_figures.sh
 
-Regenerate top_breakdown figures. With no run names, regenerates both nt8
-and nt32.
+Regenerate top_breakdown figures from:
+  build/hw/syn/synopsys/top_analysis/Vortex_axi_improve_th32_tcol32_hwexp_dcache/top/reports/14_Vortex_axi.mapped.area.rpt
 
 Environment:
   PYTHON=/path/to/python   Python interpreter to use (default: python3)
@@ -62,21 +62,7 @@ PY
 }
 
 python_bin="$(find_python)"
+repo_dir="$(cd -- "$script_dir/../.." && pwd)"
+syn_dir="$repo_dir/build/hw/syn/synopsys/top_analysis/Vortex_axi_improve_th32_tcol32_hwexp_dcache/top"
 
-runs=("$@")
-if [ "${#runs[@]}" -eq 0 ]; then
-    runs=(nt32)
-fi
-
-for run in "${runs[@]}"; do
-    case "$run" in
-        nt8|nt16|nt32)
-            ;;
-        *)
-            echo "error: unknown run: $run" >&2
-            usage >&2
-            exit 2
-            ;;
-    esac
-    "$python_bin" breakdown.py --run "$run"
-done
+"$python_bin" breakdown.py --syn-dir "$syn_dir"
