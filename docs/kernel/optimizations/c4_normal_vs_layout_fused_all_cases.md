@@ -69,18 +69,18 @@ The non-fused KV quantization cases come from the corresponding
 ## Executive Summary
 
 - All 13 decode comparisons passed correctness.
-- Decode layout-fused was faster for KV Quant-K (`0.935x`) and KV Quant-V
-  (`0.966x`).
-- The unweighted geometric mean of the 13 decode ratios was `1.232x`, or
-  about 23.2% more cycles for layout-fused.
+- Decode layout-fused was faster for KV Quant-K (`0.951x`) and KV Quant-V
+  (`0.958x`) after equivalent one-token/one-group specialization was added
+  to normal KV quantization.
+- The unweighted geometric mean of the 13 decode ratios is approximately
+  `1.233x`, or about 23.3% more cycles for layout-fused.
 - Of the 12 correctness-valid prefill comparisons, layout-fused was faster
   for:
   - Head Concat: `0.924x`, 7.6% fewer cycles
   - SiLU: `0.905x`, 9.5% fewer cycles
 - Excluding the latency-only Hadamard R3-Q comparison, the unweighted
-  geometric mean of the 12 valid prefill ratios was `1.218x`, or about 21.8%
-  more
-  cycles for layout-fused.
+  geometric mean of the 12 valid prefill ratios is approximately `1.223x`,
+  or about 22.3% more cycles for layout-fused.
 - Prefill Hadamard R3-Q normal intentionally uses the faster one-warp launch
   for latency measurement. Its known correctness failure is accepted pending
   an RTL LMEM-ordering fix.
@@ -94,22 +94,58 @@ It therefore ran the generic full-cache path with `K=1`, and its verifier
 validated that different operation. The resulting `617,296` and `606,762`
 cycle values were not decode append measurements.
 
-The regression now parses `--cache-update full|append`, recognizes the
-supported decode KV-K and KV-V configurations, and routes append commands
-through the persistent-update correctness test. The device kernel also keeps
-the one-warp append implementation separate from the large prefill function,
-reducing the append path's register and instruction footprint without
-changing the prefill code layout.
+The regression now parses `--cache-update full|append`, recognizes
+one-token, one-source-group decode KV-K and KV-V configurations, and routes
+append commands through the persistent-update correctness test. Unsupported
+multi-group append shapes are rejected rather than silently using incorrect
+single-group qparams. The device kernel also keeps the one-warp append
+implementation separate from the large prefill function, reducing the append
+path's register and instruction footprint without changing the prefill code
+layout.
+
+For a fair comparison, normal KV quantization now has an equivalent compact
+one-token, one-group warp path. Both compact implementations keep `N` as a
+runtime loop, retain qparam conversion/store outside the hot function where
+appropriate, and preserve their respective output layouts. No path was
+de-optimized to force a preferred result.
 
 | Case | Original mislabeled cycles | Corrected fused cycles | Reduction | Corrected fused/normal |
 |---|---:|---:|---:|---:|
-| KV Quant-K | 617,296 | 72,914 | 88.2% | 0.935x |
-| KV Quant-V | 606,762 | 75,072 | 87.6% | 0.966x |
+| KV Quant-K | 617,296 | 72,267 | 88.3% | 0.951x |
+| KV Quant-V | 606,762 | 70,666 | 88.4% | 0.958x |
 
 Both append correctness tests passed, including separate coverage with
 optional logical correction-qparam outputs enabled. Prefill regression checks
-also passed at `2,972,690` cycles for KV Quant-K and `3,251,415` cycles for KV
-Quant-V, consistent with the pre-optimization report values.
+also passed at `2,971,241` cycles for KV Quant-K and `3,224,423` cycles for KV
+Quant-V.
+
+## Fair KV Quant Multi-Shape Matrix
+
+The following C4 runs compare the optimized defaults under the same hardware
+configuration. Normal produces standard packed row-major weights and
+layout-fused produces the final GEMM-consumer tiled weights, so the table
+compares mathematically equivalent quantization with each implementation's
+intended physical output.
+
+| Phase | Kind | Shape `(K,N,QBLK)` | Normal instrs | Normal cycles | Fused instrs | Fused cycles | Fused/Normal | Faster | Correctness |
+|---|---|---|---:|---:|---:|---:|---:|---|---|
+| Decode | K/asym | `(1,64,64)` | 45,503 | 71,822 | 46,658 | 67,234 | 0.936x | Fused 6.4% | Both pass |
+| Decode | V/sym | `(1,64,64)` | 44,767 | 72,942 | 45,442 | 69,733 | 0.956x | Fused 4.4% | Both pass |
+| Decode | K/asym | `(1,128,128)` | 51,642 | 75,953 | 54,493 | 72,267 | 0.951x | Fused 4.9% | Both pass |
+| Decode | V/sym | `(1,128,128)` | 50,914 | 73,757 | 52,769 | 70,666 | 0.958x | Fused 4.2% | Both pass |
+| Decode | K/asym | `(1,256,256)` | 63,949 | 80,847 | 70,192 | 78,196 | 0.967x | Fused 3.3% | Both pass |
+| Decode | V/sym | `(1,256,256)` | 63,181 | 78,504 | 67,396 | 76,979 | 0.981x | Fused 1.9% | Both pass |
+| Prefill | K/asym | `(128,64,64)` | 883,227 | 244,922 | 1,500,188 | 563,481 | 2.301x | Normal 2.30x | Both pass |
+| Prefill | V/sym | `(512,256,256)` | 13,095,708 | 2,570,679 | 20,341,020 | 3,025,858 | 1.177x | Normal 1.18x | Both pass |
+| Prefill | K/asym | `(1024,128,128)` | 13,191,964 | 2,393,449 | 20,397,340 | 2,971,241 | 1.241x | Normal 1.24x | Both pass |
+| Prefill | V/sym | `(1024,128,128)` | 13,164,828 | 2,390,539 | 20,530,460 | 3,224,423 | 1.349x | Normal 1.35x | Both pass |
+
+The unweighted geometric mean is `0.958x` for the six decode rows, `1.459x`
+for the four prefill rows, and `1.134x` across all ten rows. Thus layout-fused
+is slightly faster for these fixed-cost decode cases because its higher IPC
+more than offsets its higher instruction count. Normal is substantially
+faster once prefill work dominates, and is 13.4% faster by the unweighted
+geometric mean of this complete matrix.
 
 ## Decode Results
 
@@ -121,8 +157,8 @@ Quant-V, consistent with the pre-optimization report values.
 | Hadamard R3-Q | rows=32, D=128 | 507,730 | 2.036236 | 586,771 | 1.935290 | 1.156x | Both pass |
 | Hadamard R3-K | rows=8, D=128 | 188,736 | 1.503878 | 204,991 | 1.509954 | 1.086x | Both pass |
 | Hadamard R4 | rows=1, D=14336 | 1,734,810 | 6.510105 | 1,877,960 | 6.325063 | 1.083x | Both pass |
-| KV Quant-K | K=1, N=128, QBLK=128 | 77,943 | 0.697266 | 72,914 | 0.742532 | **0.935x** | Both pass |
-| KV Quant-V | K=1, N=128, QBLK=128 | 77,720 | 0.693914 | 75,072 | 0.698223 | **0.966x** | Both pass |
+| KV Quant-K | K=1, N=128, QBLK=128 | 75,953 | 0.679920 | 72,267 | 0.754051 | **0.951x** | Both pass |
+| KV Quant-V | K=1, N=128, QBLK=128 | 73,757 | 0.690294 | 70,666 | 0.746738 | **0.958x** | Both pass |
 | Softmax | B=1, H=32, Q=1, K=4096 | 1,921,810 | 8.177688 | 2,593,020 | 6.484409 | 1.349x | Both pass |
 | Head Concat | B=1, S=1, H=32, D=128 | 130,469 | 0.692854 | 212,154 | 0.652941 | 1.626x | Both pass |
 | ElAdd | N=4096 | 231,462 | 2.221095 | 289,569 | 2.517383 | 1.251x | Both pass |
@@ -146,8 +182,8 @@ largest fixed-cost sensitivity, at roughly `1.55x` to `1.63x`.
 | Hadamard R3-Q | rows=32768, D=128 | 442,057,960 | 2.317573 | 515,449,395 | 2.188586 | 1.166x* | Normal fails; fused passes |
 | Hadamard R3-K | rows=8192, D=128 | 110,616,993 | 2.315689 | 128,067,426 | 2.202368 | 1.158x | Both pass |
 | Hadamard R4 | rows=1024, D=14336 | 1,671,737,890 | 6.878468 | 1,805,710,230 | 6.699049 | 1.080x | Both pass |
-| KV Quant-K | K=1024, N=128, QBLK=128 | 2,472,060 | 5.334147 | 2,971,581 | 6.863620 | 1.202x | Both pass |
-| KV Quant-V | K=1024, N=128, QBLK=128 | 2,445,249 | 5.384468 | 3,253,657 | 6.309493 | 1.331x | Both pass |
+| KV Quant-K | K=1024, N=128, QBLK=128 | 2,393,449 | 5.511696 | 2,971,241 | 6.864923 | 1.241x | Both pass |
+| KV Quant-V | K=1024, N=128, QBLK=128 | 2,390,539 | 5.507054 | 3,224,423 | 6.367173 | 1.349x | Both pass |
 | Softmax | B=1, H=32, Q=1024, K=1024 | 569,046,589 | 4.293338 | 625,502,958 | 4.286358 | 1.099x | Both pass |
 | Head Concat | B=1, S=1024, H=32, D=128 | 12,989,049 | 2.529148 | 12,001,291 | 4.245327 | **0.924x** | Both pass |
 | ElAdd | N=4,194,304 | 41,805,591 | 10.432553 | 91,800,896 | 4.550395 | 2.196x | Both pass |

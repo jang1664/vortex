@@ -23,11 +23,13 @@ stream crossbar did not expose. A direct, otherwise-identical xbar-versus-omega
 RTL A/B test is still required before attributing the defect exclusively to
 `VX_stream_omega`.
 
-This is not fundamentally a thread synchronization problem. A single warp
-executes its active lanes in lockstep, so `vx_barrier(id, 1)` is correctly
-treated as a control no-op. Correct execution still requires an older LMEM
-store to become visible before a younger dependent LMEM load. The current path
-does not provide an explicit mechanism to prove that visibility.
+This is not fundamentally a control-rendezvous problem. A single warp executes
+its active lanes in lockstep, so the warp-arrival portion of
+`vx_barrier(id, 1)` does not need to wait for another warp. That does not imply
+that the barrier's memory-ordering portion may be removed. Correct execution
+still requires an older LMEM store to become visible before a younger
+dependent LMEM load. The current path does not provide an explicit mechanism
+to prove that visibility.
 
 ## Affected Path
 
@@ -234,6 +236,149 @@ contract. Candidate solutions include:
 
 The preferred fix is an explicit LMEM fence/completion contract rather than
 depending on barrier latency.
+
+## Industry Practice and External References
+
+GPU and interconnect specifications generally separate two properties that
+are easy to conflate:
+
+1. **Control rendezvous:** the participating threads or warps have reached a
+   common point.
+2. **Memory ordering and visibility:** memory operations before that point are
+   complete and visible to the intended participants before later operations
+   proceed.
+
+For a one-warp workgroup, the first property can be trivial while the second
+remains necessary.
+
+### NVIDIA: Barriers Also Establish Memory Ordering
+
+The NVIDIA PTX ISA specifies that a CTA barrier guarantees that memory
+accesses requested before the barrier are performed relative to all
+participating threads when the barrier completes. It also states that
+`bar.warp.sync` guarantees memory ordering among the participating lanes of a
+warp. The documented producer/consumer example is:
+
+```text
+st.shared
+barrier.cta.sync
+ld.shared
+```
+
+This means that a barrier with no meaningful control wait can still have
+required memory effects.
+
+Reference:
+[NVIDIA PTX ISA, barrier synchronization instructions](https://docs.nvidia.com/cuda/archive/11.8.0/parallel-thread-execution/index.html#parallel-synchronization-and-communication-instructions-bar)
+
+The PTX `membar`/`fence` definition further distinguishes request acceptance
+from completion. A write is considered performed only when the new value is
+visible at the requested scope and the previous value can no longer be read.
+
+Reference:
+[NVIDIA PTX ISA, memory barrier and fence instructions](https://docs.nvidia.com/cuda/archive/12.1.1/parallel-thread-execution/index.html#parallel-synchronization-and-communication-instructions-membar)
+
+### AMD: Wait for Outstanding LDS Operations
+
+AMD tracks outstanding local-data-share operations and exposes wait
+instructions such as `s_waitcnt lgkmcnt(0)`. AMD's documented memory model
+states that:
+
+- LDS request queues can reorder operations originating from different
+  wavefronts;
+- an appropriate wait is required when synchronization depends on their
+  completion; and
+- a wait is unnecessary for operations from the same wavefront because AMD
+  performs them as wavefront-wide operations and reports completion in
+  execution order.
+
+References:
+
+- [ROCm AMDGPU backend memory model](https://rocm.docs.amd.com/projects/llvm-project/en/latest/LLVM/llvm/html/AMDGPUUsage.html)
+- [ROCm `waitcnt` outstanding-operation counters](https://rocm.docs.amd.com/projects/llvm-project/en/latest/LLVM/llvm/html/AMDGPU/gfx11_waitcnt.html)
+
+The last point explains why a one-warp barrier can be optimized away on an
+implementation that already guarantees same-wavefront LDS completion order.
+Vortex cannot rely on the same argument unless its lane-split LMEM path
+provides an equivalent architectural guarantee. The omega network currently
+accepts the vector store as independent per-lane requests, and the LSU does
+not wait for a wavefront-wide bank-commit event.
+
+### Interconnects Require an Explicit Ordering Domain
+
+The Arm AXI ordering model illustrates the general interconnect rule:
+transactions with different IDs can complete in any order, while the
+interconnect must preserve defined ordering within an ordering domain. If a
+required write-to-read order is not otherwise guaranteed, the requester must
+wait for completion of the write before issuing or relying on the read.
+
+References:
+
+- [Arm AMBA AXI and ACE Protocol Specification, ordering model](https://developer.arm.com/-/media/Arm%20Developer%20Community/PDF/IHI0022H_amba_axi_protocol_spec.pdf)
+- [Arm Introduction to AMBA AXI4, transaction ordering](https://developer.arm.com/-/media/Arm%20Developer%20Community/PDF/Learn%20the%20Architecture/102202_0100_01_Introduction_to_AMBA_AXI.pdf)
+
+Vortex LMEM does not use AXI internally, but the principle applies. Once
+requests from one vector instruction are split across lane ports, routing
+them through independent buffered paths does not preserve cross-port age
+unless an ordering ID, completion rule, or destination-side reordering
+mechanism explicitly restores it. Commercial NoCs use read reorder buffers
+for this purpose when responses may return out of order.
+
+Reference:
+[AMD NoC Read Reorder Buffer](https://docs.amd.com/r/en-US/pg406-network-on-chip/Read-Reorder-Buffer)
+
+### Common Hardware Solutions
+
+| Solution | Mechanism | Cost and behavior |
+|---|---|---|
+| LMEM drain fence | Wait until older local stores reach bank commit | Simple and robust; serializes only at fence boundaries |
+| In-order warp completion | Complete same-warp LMEM instructions in program order | Matches AMD's documented same-wavefront behavior |
+| Store-load hazard check | Stall a younger load when its address matches an outstanding store | Preserves more overlap but requires address tracking |
+| Store-to-load forwarding | Return matching data directly from the pending store queue | Lowest dependency latency, with additional CAM and mux cost |
+| Sequence or epoch tags | Carry warp and ordering metadata through the network and enforce it at each bank | Retains network parallelism but increases control and buffering |
+| Reorder buffer | Permit out-of-order transport and restore architectural order at the destination or response boundary | General solution with storage and head-of-line-blocking cost |
+| Full serialization | Do not issue any later LMEM instruction until the previous one commits | Easiest correctness fix and usually the highest performance cost |
+
+RISC-V `FENCE` provides the analogous ISA-level rule by ordering predecessor
+memory operations before successor operations. It only helps this defect if
+Vortex explicitly includes LMEM in the fence's ordering domain; the diagnostic
+`vx_fence()` result shows that the current global/cache fence does not do so.
+
+Reference:
+[RISC-V unprivileged ISA, `FENCE`](https://docs.riscv.org/reference/isa/v20260120/unpriv/rv32.html#memory-model)
+
+### Recommended Vortex Implementation
+
+The lowest-risk first implementation is a per-warp LMEM outstanding-store
+counter:
+
+```text
+when an LMEM store is accepted into the local path:
+    pending_lmem_stores[wid] += 1
+
+when that store commits at its LMEM bank:
+    pending_lmem_stores[wid] -= 1
+
+when a workgroup barrier reaches its memory phase:
+    complete only when pending_lmem_stores[wid] == 0
+```
+
+The decrement must correspond to bank commit, not acceptance by
+`VX_lmem_switch` or an omega stage. Under this design,
+`vx_barrier(id, 1)` has two independently optimized components:
+
+```text
+control rendezvous: no-op because there is only one participating warp
+LMEM visibility:    wait until the warp's older local stores have committed
+```
+
+This preserves omega-network overlap within each Hadamard stage and pays the
+ordering cost only at an explicit stage boundary. If the conservative
+per-warp drain is too expensive, it can later be refined with a dirty-bank
+mask, per-bank epoch acknowledgements, or same-address hazard
+stalling/forwarding. Making the entire omega network globally ordered is not
+the preferred first fix because it would impose ordering cost on unrelated
+requests that do not communicate.
 
 ## Verification Plan
 

@@ -387,21 +387,23 @@ static void quantize_layout_fused_cpu(const std::vector<fp16_t>& src,
 static int run_persistent_update_test(uint32_t capacity,
                                       uint32_t position,
                                       uint32_t persistent_kind,
-                                      bool emit_correction_qparams) {
-  constexpr uint32_t N = 128;
-  constexpr uint32_t QBLK = 128;
+                                      bool emit_correction_qparams,
+                                      uint32_t N,
+                                      uint32_t QBLK,
+                                      uint32_t DMA_MT,
+                                      uint32_t DMA_KT,
+                                      uint32_t DMA_NT) {
   constexpr uint32_t QDIR = 1;
-  constexpr uint32_t DMA_MT = DEFAULT_DMA_MT;
-  constexpr uint32_t DMA_KT = DEFAULT_DMA_KT;
-  constexpr uint32_t DMA_NT = DEFAULT_DMA_NT;
   const uint32_t source_transposed = persistent_kind == 1 ? 1u : 0u;
   const uint32_t wtrans = source_transposed;
   const uint32_t gemm_qdir = persistent_kind == 1 ? 0u : 1u;
   const uint32_t quant_mode = persistent_kind == 1
       ? KV_QUANT_SPINQUANT_SIGNED_ASYMMETRIC
       : KV_QUANT_SPINQUANT_SIGNED_SYMMETRIC;
-  if (capacity == 0 || position >= capacity) {
-    printf("ERROR: persistent position must be smaller than non-zero capacity\n");
+  if (N == 0 || (N & 1u) != 0 || !is_pow2_u32(QBLK) || QBLK < N
+      || capacity == 0 || position >= capacity) {
+    printf("ERROR: persistent update requires even non-zero N, power-of-two "
+           "QBLK>=N, and position < non-zero capacity\n");
     return 1;
   }
 
@@ -446,8 +448,8 @@ static int run_persistent_update_test(uint32_t capacity,
                        k, 0, reference_logical_scale[k], reference_logical_zero[k]);
   }
 
-  printf("persistent KV update kind=%s capacity=%u position=%u\n",
-         persistent_kind == 1 ? "K" : "V", capacity, position);
+  printf("persistent KV update kind=%s N=%u QBLK=%u capacity=%u position=%u\n",
+         persistent_kind == 1 ? "K" : "V", N, QBLK, capacity, position);
   RT_CHECK(vx_dev_open(&device));
   RT_CHECK(vx_upload_kernel_file(device, "kernel.vxbin", &krnl_buffer));
   RT_CHECK(vx_mem_alloc(device, token.size() * sizeof(fp16_t),
@@ -653,13 +655,25 @@ int main(int argc, char *argv[]) {
   if (!gemm_qdir_set) GEMM_QDIR = QDIR;
   if (persistent_kind != 0) {
     return run_persistent_update_test(cache_capacity, cache_position,
-                                      persistent_kind, true);
+                                      persistent_kind, true, 128, 128,
+                                      DEFAULT_DMA_MT, DEFAULT_DMA_KT,
+                                      DEFAULT_DMA_NT);
   }
   if (append_update) {
-    if (K != 1 || N != 128 || QBLK != 128 || QDIR != 1
+    if (K != 1 || QDIR != 1 || QBLK < N
         || cache_capacity == 0 || cache_position >= cache_capacity) {
-      printf("ERROR: append correctness mode requires K=1, N=128, "
-             "QBLK=128, QDIR=1, and cache-position < cache-capacity\n");
+      printf("ERROR: append correctness mode requires K=1, QDIR=1, "
+             "one source quant group (QBLK>=N), and "
+             "cache-position < cache-capacity\n");
+      return 1;
+    }
+    if (!is_pow2_u32(DMA_MT) || !is_pow2_u32(DMA_KT)
+        || !is_pow2_u32(DMA_NT)
+        || (DMA_KT & (TILE_DMA_MXU_KT - 1u)) != 0
+        || (DMA_NT & (TILE_DMA_MXU_NT - 1u)) != 0
+        || (GEMM_QDIR == 0 && DMA_KT < QBLK)) {
+      printf("ERROR: append MT/KT/NT must be valid power-of-two tiles, "
+             "and GEMM_QDIR=0 requires KT>=QBLK\n");
       return 1;
     }
     if (SOURCE_TRANSPOSED != 0 && WTRANS == 1 && GEMM_QDIR == 0
@@ -675,7 +689,8 @@ int main(int argc, char *argv[]) {
     }
     return run_persistent_update_test(cache_capacity, cache_position,
                                       persistent_kind,
-                                      emit_correction_qparams);
+                                      emit_correction_qparams, N, QBLK,
+                                      DMA_MT, DMA_KT, DMA_NT);
   }
   if (source_total_n == 0) source_total_n = N;
   if (!valid_fused_quant_shape(K, N, QBLK, QDIR, WTRANS, GEMM_QDIR,

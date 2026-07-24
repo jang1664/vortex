@@ -1569,7 +1569,11 @@ void kernel_dispatcher(kernel_arg_t *__UNIFORM__ arg) {
   switch (arg->kernel_id) {
     case KERNEL_KV_CACHE_QUANT_LAYOUT_FUSED_W4A16:
 #if KV_FUSED_SPLIT_PERSISTENT
-      if (arg->persistent_mode != 0) {
+      if (arg->persistent_mode != 0
+          && arg->K == 1u
+          && arg->src_total_K == 1u
+          && arg->QDIR == 1u
+          && arg->QBLK >= arg->N) {
         kernel_kv_cache_quant_layout_fused_persistent(arg);
       } else {
         kernel_kv_cache_quant_layout_fused(arg);

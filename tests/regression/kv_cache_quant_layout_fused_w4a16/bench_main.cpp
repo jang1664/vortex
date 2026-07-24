@@ -136,8 +136,10 @@ int main(int argc, char *argv[]) {
   if (!gemm_qdir_set) GEMM_QDIR = QDIR;
   if (source_total_n == 0) source_total_n = N;
   if (append_update
-      && (K != 1 || cache_capacity == 0 || cache_position >= cache_capacity)) {
-    printf("ERROR: append requires K=1 and cache-position < non-zero cache-capacity\n");
+      && (K != 1 || QDIR != 1 || QBLK < N
+          || cache_capacity == 0 || cache_position >= cache_capacity)) {
+    printf("ERROR: append requires K=1, QDIR=1, one source quant group "
+           "(QBLK>=N), and cache-position < non-zero cache-capacity\n");
     return 1;
   }
   if (!valid_fused_quant_shape(K, N, QBLK, QDIR, WTRANS, GEMM_QDIR,

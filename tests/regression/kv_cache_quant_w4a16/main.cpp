@@ -280,10 +280,24 @@ int main(int argc, char *argv[]) {
 
   int errors = 0;
   for (size_t i = 0; i < packed_bytes; ++i) {
-    if (h_packed[i] != h_ref_packed[i]) ++errors;
+    if (h_packed[i] != h_ref_packed[i]) {
+      if (errors < 8) {
+        printf("Packed mismatch at %zu: got=0x%02x ref=0x%02x\n",
+               i, unsigned(h_packed[i]), unsigned(h_ref_packed[i]));
+      }
+      ++errors;
+    }
   }
   for (size_t i = 0; i < qparam_elems; ++i) {
-    if (h_scales[i] != h_ref_scales[i] || h_zeros[i] != h_ref_zeros[i]) ++errors;
+    if (h_scales[i] != h_ref_scales[i] || h_zeros[i] != h_ref_zeros[i]) {
+      if (errors < 8) {
+        printf("Qparam mismatch at %zu: scale=0x%04x ref=0x%04x "
+               "zero=%d ref=%d\n",
+               i, unsigned(h_scales[i]), unsigned(h_ref_scales[i]),
+               int(h_zeros[i]), int(h_ref_zeros[i]));
+      }
+      ++errors;
+    }
   }
 
   vx_dump_perf(device, stdout);
@@ -291,6 +305,11 @@ int main(int argc, char *argv[]) {
   if (errors == 0) {
     printf("PASSED!\n");
     return 0;
+  }
+  if (qparam_elems != 0) {
+    printf("First qparam: scale=0x%04x ref=0x%04x zero=%d ref=%d\n",
+           unsigned(h_scales[0]), unsigned(h_ref_scales[0]),
+           int(h_zeros[0]), int(h_ref_zeros[0]));
   }
   printf("FAILED! errors=%d\n", errors);
   return 1;
