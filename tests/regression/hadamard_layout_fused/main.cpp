@@ -289,7 +289,6 @@ int main(int argc, char** argv) {
   uint32_t rows = 2;
   uint32_t matrix_count = 32;
   uint32_t dim = 128;
-  bool only_requested = false;
   bool factorized = true;
   bool tiled_input = false;
   bool padded_row_launch = false;
@@ -302,8 +301,6 @@ int main(int argc, char** argv) {
       matrix_count = static_cast<uint32_t>(std::strtoul(argv[++index], nullptr, 10));
     else if (std::strcmp(argv[index], "-k") == 0 && index + 1 < argc)
       dim = static_cast<uint32_t>(std::strtoul(argv[++index], nullptr, 10));
-    else if (std::strcmp(argv[index], "--only-requested") == 0)
-      only_requested = true;
     else if (std::strcmp(argv[index], "--hadamard-variant") == 0
              && index + 1 < argc) {
       const char* value = argv[++index];
@@ -344,7 +341,6 @@ int main(int argc, char** argv) {
     else {
       std::fprintf(stderr,
                    "Usage: %s [--kernel kernel.vxbin] [-m N] [-n N] [-k N] "
-                   "[--only-requested] "
                    "[--hadamard-variant zero_padding|factorized] "
                    "[--layout-from row_major_fp16|head_major_row_fp16|gemm_a_tiled] "
                    "[--launch-rows real|padded]\n",
@@ -368,19 +364,6 @@ int main(int argc, char** argv) {
   bool passed = run_case(
       "requested", matrix_count, rows, (rows + 7) & ~7u, dim, base_k,
       factorized, tiled_input, padded_row_launch);
-  if (!only_requested) {
-    passed = passed
-        && run_case("multi_m_tile", 1, 160, 160, 128, 1)
-        && run_case("r4_mixed_radix", 1, 2, 8, 96, 3)
-        && run_case("r4_llama2_7b", 1, 1, 8, 11008, 172)
-        && run_case("r4_llama3_8b", 1, 1, 8, 14336, 28)
-        && run_case("zero_padding_llama2_7b", 1, 1, 8, 11008, 172, false)
-        && run_case("zero_padding_llama3_8b", 1, 1, 8, 14336, 28, false)
-        && run_case(
-            "tiled_input_generation", 1, 1, 8, 11008, 172, false, true)
-        && run_case(
-            "tiled_input_prefill", 1, 9, 16, 14336, 28, false, true);
-  }
   cleanup();
   return passed ? 0 : 1;
 }

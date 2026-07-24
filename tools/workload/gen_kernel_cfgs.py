@@ -81,7 +81,7 @@ DEFAULT_LLM_BATCH = 1
 DEFAULT_LLM_PREFILL_SEQ = 128
 DEFAULT_LLM_GEN_KV = 128
 DEFAULT_LLM_QBLK = 32
-DEFAULT_HADAMARD_VARIANT = "zero_padding"
+DEFAULT_HADAMARD_VARIANT = "factorized"
 HADAMARD_VARIANTS = ("zero_padding", "factorized")
 
 # Defaults exposed for the HW-regression driver in ci/test_fpint_hw.py.
@@ -537,7 +537,8 @@ def _kv_cache_quant_kernel(name: str,
                            cache_len: int | None = None,
                            cache_update: str = "full",
                            gemm_QDIR: int | None = None,
-                           source_transposed: bool = False) -> dict:
+                           source_transposed: bool = False,
+                           quant_mode: str = "legacy_uint4_asymmetric") -> dict:
     gemm_qdir = QDIR if gemm_QDIR is None else gemm_QDIR
     shape = {
         "K": K,
@@ -557,6 +558,8 @@ def _kv_cache_quant_kernel(name: str,
     }
     if source_transposed:
         shape["source_transposed"] = True
+    if quant_mode != "legacy_uint4_asymmetric":
+        shape["quant_mode"] = quant_mode
     if effective_K is not None:
         shape["effective_K"] = effective_K
     if effective_N is not None:
@@ -568,7 +571,11 @@ def _kv_cache_quant_kernel(name: str,
         kind="quantization",
         backend="kv_cache_quant_w4a16",
         stage=stage,
-        args=f"-k {K} -n {N} -q {QBLK} -d {QDIR} -t {WTRANS}",
+        args=(
+            f"-k {K} -n {N} -q {QBLK} -d {QDIR} -t {WTRANS}"
+            + (f" --quant-mode {quant_mode}"
+               if quant_mode != "legacy_uint4_asymmetric" else "")
+        ),
         calls_per_forward=calls_per_forward,
         shape=shape,
         variant=variant,
@@ -747,10 +754,8 @@ def _factorized_hadamard_kernels(name: str,
                                   variant: str) -> list[dict]:
     base_k = _spinquant_base_k(dim)
     width = dim // base_k
-    butterfly_name = name if base_k == 1 else f"{name}_butterfly"
-    butterfly_consumer = consumer if base_k == 1 else name
-    butterfly = _llm_kernel(
-        name=butterfly_name,
+    kernel = _llm_kernel(
+        name=name,
         kind="hadamard",
         backend="hadamard",
         stage=stage,
@@ -762,43 +767,17 @@ def _factorized_hadamard_kernels(name: str,
             "base_k": base_k,
             "width": width,
             "hadamard_variant": "factorized",
-            "hadamard_phase": "butterfly",
+            "hadamard_phase": "butterfly_base_fused",
             "layout_from": "row_major_fp16",
             "layout_to": "row_major_fp16",
             "producer": producer,
-            "consumer": butterfly_consumer,
-            "layout_group": layout_group,
-            "spinquant_rotation": rotation,
-        },
-        variant=variant,
-    )
-    if base_k == 1:
-        return [butterfly]
-
-    base = _llm_kernel(
-        name=name,
-        kind="hadamard",
-        backend="hadamard_base",
-        stage=stage,
-        args=f"-rows {rows} -base-k {base_k} -width {width}",
-        calls_per_forward=calls_per_forward,
-        shape={
-            "rows": rows,
-            "dim": dim,
-            "base_k": base_k,
-            "width": width,
-            "hadamard_variant": "factorized",
-            "hadamard_phase": "base",
-            "layout_from": "row_major_fp16",
-            "layout_to": "row_major_fp16",
-            "producer": butterfly_name,
             "consumer": consumer,
             "layout_group": layout_group,
             "spinquant_rotation": rotation,
         },
         variant=variant,
     )
-    return [butterfly, base]
+    return [kernel]
 
 
 def _with_fused_backend(kernel: dict,
@@ -1356,6 +1335,9 @@ def _apply_spinquant_hadamard_variant(kernels: list[dict],
             layout_group=layout_group, rotation=rotation, variant=variant,
         )
         kernel["shape"]["hadamard_variant"] = hadamard_variant
+        if (hadamard_variant == "zero_padding"
+                and base_variant != LAYOUT_FUSED_VARIANT):
+            kernel["args"] += " -K 0"
         return [kernel]
 
     q_hadamards = make_hadamard(
@@ -1501,23 +1483,29 @@ def _apply_spinquant_hadamard_variant(kernels: list[dict],
                     "source_total_n": head_dim,
                     "head_col_offset": 0,
                 })
+            else:
+                args += " --quant-mode spinquant_signed_asymmetric"
+                shape_update["quant_mode"] = "spinquant_signed_asymmetric"
             out.append(_with_kernel_updates(kernel, args=args, shape_update=shape_update))
             continue
 
-        if base_variant == LAYOUT_FUSED_VARIANT and name == "kv_cache_quant_v_cache_to_attn_pv":
-            out.append(_with_kernel_updates(
-                kernel,
-                args=(str(kernel["args"])
-                      + " --quant-mode spinquant_signed_symmetric"
-                      + f" --source-total-n {heads_kv * head_dim}"
-                      + " --head-col-offset 0"),
-                shape_update={
-                    "quant_mode": "spinquant_signed_symmetric",
+        if name == "kv_cache_quant_v_cache_to_attn_pv":
+            args = str(kernel["args"]) + " --quant-mode spinquant_signed_symmetric"
+            shape_update = {
+                "quant_mode": "spinquant_signed_symmetric",
+            }
+            if base_variant == LAYOUT_FUSED_VARIANT:
+                args += (
+                    f" --source-total-n {heads_kv * head_dim}"
+                    + " --head-col-offset 0"
+                )
+                shape_update.update({
                     "source_total_n": heads_kv * head_dim,
                     "head_col_offset": f"call_head_index*{head_dim}",
                     "representative_args_head_col_offset": 0,
-                },
-            ))
+                })
+            out.append(_with_kernel_updates(
+                kernel, args=args, shape_update=shape_update))
             continue
 
         if base_variant == LAYOUT_FUSED_VARIANT and name == "attn_qkT":
@@ -3082,8 +3070,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "--hadamard-variant",
         choices=HADAMARD_VARIANTS,
         default=DEFAULT_HADAMARD_VARIANT,
-        help="SpinQuant Hadamard implementation: zero_padding (default) or "
-             "factorized (butterfly followed by base).",
+        help="SpinQuant Hadamard implementation: factorized (default; "
+             "butterfly followed by base) or zero_padding.",
     )
     parser.add_argument(
         "--filter-kind", default=None, metavar="KIND",

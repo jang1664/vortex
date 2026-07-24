@@ -1,0 +1,66 @@
+task: prefill-hadamard-r3q-normal-debug
+parent: vector-kernel-optimization
+state: DONE
+summary: "Diagnosed the Prefill Hadamard R3-Q C4 LMEM-ordering failure, verified a two-warp correctness workaround, then restored the one-warp default for latency-only measurement by user direction."
+updated: "2026-07-24 14:42"
+iterations:
+  - iteration: 1
+    timestamp: "2026-07-24 14:09"
+    status: sim_fail
+    test: "C4 hardware: hadamard -rows 32768 -dim 128 -K 1"
+    error_summary: "adaptive_row failed with 1,320 mismatches (max_diff=2.497070)"
+    root_cause: "The one-warp launch makes __syncthreads call vx_barrier with size 1, which RTL marks as a no-op; local-scratch producer/consumer stages can therefore overlap while LSU requests are still draining."
+    fix_applied: "Added sync_local_scratch: one-warp groups use vx_fence at each scratch boundary, while multiwarp groups retain __syncthreads."
+    lesson: "The first mismatches occur at row 2109 columns 31/63/95/127 and then row 2113, matching the four-group scheduler stride. Identical kernel code passes with a real four-warp barrier."
+  - iteration: 2
+    timestamp: "2026-07-24 14:15"
+    status: sim_fail
+    test: "C4 hardware: stage-boundary fence candidate, hadamard -rows 32768 -dim 128 -K 1"
+    error_summary: "Failed with 255 mismatches (max_diff=1.201416); the same +32-column and +4-row structure remained."
+    root_cause: "vx_fence serializes the LSU but is routed through the global/cache branch and does not explicitly drain downstream local-memory queues."
+    fix_applied: "The fence candidate will be removed; the next candidate uses a real two-warp barrier."
+    lesson: "A global/cache fence is not an LMEM completion primitive in this hardware."
+  - iteration: 3
+    timestamp: "2026-07-24 14:22"
+    status: sim_fail
+    test: "C4 hardware: two-warp minimum candidate plus factorized regression"
+    error_summary: "R3-Q passed three times and rows=8192 passed, but K=3/dim=96 regressed with 127 errors beginning at output column 32."
+    root_cause: "The K=3 factorized path intentionally requires its original one-warp launch when width is one warp; applying the two-warp minimum globally changed that established behavior."
+    fix_applied: "Narrowed the two-warp minimum to base_k=1 only; factorized and zero-padding launch decisions now remain unchanged."
+    lesson: "The target fix must preserve the factorized width<=warp exception; a global launch-policy change is too broad."
+  - iteration: 4
+    timestamp: "2026-07-24 14:27"
+    status: pass
+    test: "C4 hardware: final base_k=1 policy and full targeted Hadamard regression"
+    error_summary: "All requested tests passed with zero errors."
+    root_cause: "The base_k=1 one-warp launch used a hardware no-op barrier while rapidly reusing local scratch across a large grid."
+    fix_applied: "Use at least two warps for adaptive base_k=1 workgroups; preserve the existing launch decisions for factorized and zero-padding modes."
+    lesson: "A real two-warp barrier fixes the R3-Q failure; scoping by algorithm mode avoids the known K=3 multiwarp regression."
+  - iteration: 5
+    timestamp: "2026-07-24 14:42"
+    status: sim_fail
+    test: "C4 hardware: restored one-warp latency policy, hadamard -rows 32768 -dim 128 -K 1"
+    error_summary: "Latency measurement completed at 442,057,960 cycles and IPC 2.317573; 1,157 correctness errors were explicitly accepted."
+    root_cause: "The open LMEM omega store-to-load visibility hazard remains unchanged."
+    fix_applied: "Disabled the two-warp workaround and restored the original 32-thread adaptive launch for latency measurement."
+    lesson: "Keep latency-only measurements explicitly labeled so a fast incorrect result is not mistaken for a correctness-valid comparison."
+log:
+  - timestamp: "2026-07-24 14:04"
+    entry: "Started from the two documented C4 failures at rows=32768, dim=128, K=1. Current source uses adaptive_row and launches one 32-thread warp per row for this C4 shape; rows=8192 was previously reported passing."
+  - timestamp: "2026-07-24 14:09"
+    entry: "Reproduced on C4 with current adaptive_row at 32 threads per row: 1,024,502,120 instructions, 442,130,941 cycles, 1,320 errors. Error rows and columns initially follow a physical-warp reuse pattern, so a multiwarp differential is in progress."
+  - timestamp: "2026-07-24 14:13"
+    entry: "The identical device kernel passed with blockDim=128 and failed with blockDim=32, excluding kernel arithmetic, allocation boundaries, and variant-specific code. RTL confirms that a one-warp barrier is a no-op. Added one-warp LSU fences at all local-scratch visibility boundaries; repeated C4 verification is in progress."
+  - timestamp: "2026-07-24 14:15"
+    entry: "The stage-fence kernel was definitely rebuilt (new SHA and fence opcodes) but still failed the exact C4 case with 255 errors. A 64-thread/two-warp candidate is next so every scratch boundary uses a real barrier without paying the full 128-thread fallback cost."
+  - timestamp: "2026-07-24 14:22"
+    entry: "The 64-thread R3-Q candidate passed rows=32768 three consecutive times at 765,719,036 / 766,499,245 / 765,135,583 cycles and rows=8192 at 191,705,502 cycles, all with zero errors. K=3/dim=96 exposed a factorized regression, so the final policy applies the two-warp minimum only to base_k=1."
+  - timestamp: "2026-07-24 14:27"
+    entry: "Final C4 verification passed the exact target twice more (five consecutive passes total), rows=8192 K=1, K=3/28/172, zero-padding K=0, and forced multiwarp. Updated the comparison report with the resolved cause and corrected 0.673x fused/normal result."
+  - timestamp: "2026-07-24 14:42"
+    entry: "By user direction, restored the original 32-thread one-warp normal Hadamard launch for latency measurement. C4 measured 442,057,960 cycles at IPC 2.317573 with 1,157 accepted correctness errors; the report now marks the 1.166x fused/normal ratio as latency-only."
+pitfalls:
+  - "A single passing run cannot close a nondeterministic correctness failure; the exact large shape must pass repeatedly."
+  - "The original failure is on real C4 hardware, so simulator-only success is not sufficient."
+  - "vx_barrier with a participant count of one is explicitly a hardware no-op and does not provide local-scratch visibility."
+  - "vx_fence follows the global/cache path after the LMEM switch; it cannot be treated as an explicit local-memory drain."

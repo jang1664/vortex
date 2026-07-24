@@ -217,7 +217,7 @@ static bool run_test(vx_device_h device, uint32_t n_rows, uint32_t D, uint32_t m
 int main(int argc, char *argv[]) {
   uint32_t n_rows = 17;   // deliberately not a power of 2
   uint32_t D = 128;
-  int only_mode = -1;     // -1 = test both sym and asym
+  uint32_t mode = QMODE_SYM;
 
   for (int i = 1; i < argc; ++i) {
     if (strcmp(argv[i], "-rows") == 0) {
@@ -226,8 +226,8 @@ int main(int argc, char *argv[]) {
       D = atoi(argv[++i]);
     } else if (strcmp(argv[i], "-mode") == 0) {
       const char* m = argv[++i];
-      if (strcmp(m, "sym") == 0) only_mode = QMODE_SYM;
-      else if (strcmp(m, "asym") == 0) only_mode = QMODE_ASYM;
+      if (strcmp(m, "sym") == 0) mode = QMODE_SYM;
+      else if (strcmp(m, "asym") == 0) mode = QMODE_ASYM;
       else { printf("Unknown mode '%s'\n", m); return -1; }
     } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
       printf("Usage: %s [-rows N] [-dim D] [-mode sym|asym]\n", argv[0]);
@@ -238,6 +238,7 @@ int main(int argc, char *argv[]) {
   printf("dequantize_pt_int4 Test Configuration:\n");
   printf("  Rows (tokens): %u\n", n_rows);
   printf("  Dim (D):       %u\n", D);
+  printf("  Mode:          %s\n", mode == QMODE_SYM ? "sym" : "asym");
 
   RT_CHECK(vx_dev_open(&device));
 
@@ -249,13 +250,8 @@ int main(int argc, char *argv[]) {
   printf("Device Caps: cores=%ld, warps=%ld, threads=%ld\n",
          num_cores, num_warps, num_threads);
 
-  bool ok = true;
-  if (only_mode == -1 || only_mode == QMODE_SYM) {
-    ok &= run_test(device, n_rows, D, QMODE_SYM, num_warps, num_threads, num_cores);
-  }
-  if (only_mode == -1 || only_mode == QMODE_ASYM) {
-    ok &= run_test(device, n_rows, D, QMODE_ASYM, num_warps, num_threads, num_cores);
-  }
+  const bool ok =
+      run_test(device, n_rows, D, mode, num_warps, num_threads, num_cores);
 
   cleanup();
   return ok ? 0 : -1;

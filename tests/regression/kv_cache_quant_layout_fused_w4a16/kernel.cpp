@@ -44,6 +44,10 @@
 #define KV_FUSED_WEIGHT_CURSOR_WTRANS1 KV_FUSED_WEIGHT_CURSOR
 #endif
 
+#ifndef KV_FUSED_SPLIT_PERSISTENT
+#define KV_FUSED_SPLIT_PERSISTENT 0
+#endif
+
 #if KV_FUSED_FORCE_INLINE
 #define KV_FUSED_SMALL_HELPER static inline __attribute__((always_inline))
 #define KV_FUSED_HELPER static inline __attribute__((always_inline))
@@ -1400,10 +1404,179 @@ void kernel_kv_cache_quant_layout_fused(kernel_arg_t *__UNIFORM__ arg) {
   }
 }
 
+#if KV_FUSED_SPLIT_PERSISTENT
+__attribute__((noinline))
+fp16_t persistent_float_to_fp16(float value) {
+  return float_to_fp16(value);
+}
+
+__attribute__((noinline))
+void persistent_store_qparams(kernel_arg_t *__UNIFORM__ arg,
+                              float scale,
+                              float zero,
+                              uint32_t lane) {
+  if (lane == 0) {
+    auto scales = reinterpret_cast<uint8_t *>(arg->scale_addr);
+    auto zeros = reinterpret_cast<uint8_t *>(arg->zero_addr);
+    auto logical_scales =
+        reinterpret_cast<fp16_t *>(arg->logical_scale_addr);
+    auto logical_zeros =
+        reinterpret_cast<fp16_t *>(arg->logical_zero_addr);
+    const uint32_t position = arg->cache_position;
+    const uint16_t scale_bits = persistent_float_to_fp16(scale);
+    const uint16_t tiled_zero_bits =
+        arg->quant_mode == KV_QUANT_SPINQUANT_SIGNED_SYMMETRIC
+            ? 0u : (uint16_t)(int16_t)zero;
+
+    if (arg->GEMM_QDIR == 0) {
+      const uint32_t nt_dma = position >> arg->log2_nt;
+      const uint32_t elem =
+          position & ((1u << arg->log2_nt) - 1u);
+      const uint64_t dst_off =
+          scale_slot_base(arg, 0, nt_dma)
+          + (uint64_t)elem * TILE_ELEM_BYTES;
+      store_u16(scales, dst_off, scale_bits);
+      store_u16(zeros, dst_off, tiled_zero_bits);
+    } else {
+      const uint32_t out_K = padded_qparam_K(
+          arg->cache_capacity, arg->N, arg->QBLK, arg->GEMM_QDIR,
+          arg->SOURCE_TRANSPOSED);
+      const uint32_t out_N = padded_qparam_N(
+          arg->cache_capacity, arg->N, arg->QBLK, arg->GEMM_QDIR,
+          arg->SOURCE_TRANSPOSED);
+      const uint32_t kt = position >> arg->log2_kt;
+      const uint32_t kt_start = kt << arg->log2_kt;
+      const uint32_t cur_k =
+          min_u32(out_K - kt_start, 1u << arg->log2_kt);
+      const uint32_t k_local = position - kt_start;
+      const uint32_t n_blocks = out_N >> arg->log2_mxu_nt;
+      const uint64_t slot_base = scale_slot_base(arg, kt, 0);
+      for (uint32_t nb = 0; nb < n_blocks; ++nb) {
+        const uint64_t dst_off =
+            slot_base
+            + (uint64_t)(nb * cur_k + k_local) * TILE_ELEM_BYTES;
+        store_u16(scales, dst_off, scale_bits);
+        store_u16(zeros, dst_off, tiled_zero_bits);
+      }
+    }
+
+    if (arg->logical_scale_addr != 0
+        && arg->logical_zero_addr != 0) {
+      logical_scales[position] = scale_bits;
+      logical_zeros[position] = persistent_float_to_fp16(zero);
+    }
+  }
+}
+
+// Append updates are a single contiguous source row launched as one warp.
+// Keep this hot path out of the much larger full-cache/prefill function so its
+// register frame and instruction footprint contain only append-update work.
+__attribute__((noinline))
+void kernel_kv_cache_quant_layout_fused_persistent(
+    kernel_arg_t *__UNIFORM__ arg) {
+  auto src = reinterpret_cast<fp16_t *>(arg->src_addr);
+  auto weight = reinterpret_cast<uint8_t *>(arg->weight_addr);
+
+  const uint32_t N = arg->N;
+  const uint32_t quant_mode = arg->quant_mode;
+  const uint32_t lane = threadIdx.x;
+  const fp16_t* token = src + arg->src_col_offset;
+
+  float min_v = 3.402823466e+38F;
+  float max_v = -3.402823466e+38F;
+  for (uint32_t n = lane; n < N; n += NUM_THREADS) {
+    const float value = fp16_to_float(token[n]);
+    if (value < min_v) min_v = value;
+    if (value > max_v) max_v = value;
+  }
+  for (uint32_t offset = NUM_THREADS >> 1; offset > 0; offset >>= 1) {
+    const float other_min = shfl_down_float(min_v, offset);
+    const float other_max = shfl_down_float(max_v, offset);
+    if (lane + offset < NUM_THREADS) {
+      if (other_min < min_v) min_v = other_min;
+      if (other_max > max_v) max_v = other_max;
+    }
+  }
+  min_v = shfl_idx_float(min_v, 0);
+  max_v = shfl_idx_float(max_v, 0);
+
+  float scale;
+  float zero;
+  if (quant_mode == KV_QUANT_SPINQUANT_SIGNED_SYMMETRIC) {
+    const float abs_min = min_v < 0.0f ? -min_v : min_v;
+    const float abs_max = max_v < 0.0f ? -max_v : max_v;
+    float absmax = abs_min > abs_max ? abs_min : abs_max;
+    if (absmax < 1e-8f) absmax = 1e-8f;
+    scale = absmax / 7.5f;
+    zero = 0.0f;
+  } else {
+    const float range = max_v - min_v;
+    scale =
+        quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC ? 1.0f : 1e-8f;
+    float inv_for_zp = 1.0f;
+    if ((quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC && range != 0.0f)
+        || (quant_mode != KV_QUANT_LEGACY_UINT4_ASYMMETRIC
+            && range / 15.0f > 1e-8f)) {
+      scale = range / 15.0f;
+      inv_for_zp = 15.0f / range;
+    }
+    if (quant_mode == KV_QUANT_SPINQUANT_SIGNED_ASYMMETRIC) {
+      zero = (float)round_half_even(-min_v / scale) - 8.0f;
+    } else {
+      int32_t zp = kv_round_half_away_from_zero(-min_v * inv_for_zp);
+      if (zp < 0) zp = 0;
+      if (zp > 15) zp = 15;
+      zero = (float)zp;
+    }
+  }
+
+  float quant_scale = scale;
+  if (quant_mode == KV_QUANT_LEGACY_UINT4_ASYMMETRIC) {
+    quant_scale = fp16_to_float(float_to_fp16(scale));
+  }
+  const uint32_t cache_K = arg->cache_capacity;
+  const uint32_t position = arg->cache_position;
+  const uint32_t source_transposed = arg->SOURCE_TRANSPOSED;
+  const uint32_t weight_K =
+      padded_weight_K(cache_K, N, source_transposed);
+  const uint32_t weight_N =
+      padded_weight_N(cache_K, N, source_transposed);
+
+  persistent_store_qparams(arg, scale, zero, lane);
+
+  for (uint32_t pair = lane; pair < (N >> 1); pair += NUM_THREADS) {
+    const uint32_t d0 = pair << 1;
+    const uint8_t q0 =
+        quantize_loaded_value(token[d0], quant_scale, zero, quant_mode);
+    const uint8_t q1 =
+        quantize_loaded_value(token[d0 + 1u], quant_scale, zero, quant_mode);
+    const uint8_t packed =
+        (uint8_t)((q0 & 0x0f) | ((q1 & 0x0f) << 4));
+    if (source_transposed != 0) {
+      weight[weight_offset_wtrans1(
+          weight_K, weight_N, d0, position,
+          arg->log2_kt, arg->log2_mxu_kt, arg->log2_mxu_nt)] = packed;
+    } else {
+      weight[weight_offset_wtrans0(
+          weight_K, weight_N, position, pair,
+          arg->log2_kt, arg->log2_mxu_kt, arg->log2_mxu_nt)] = packed;
+    }
+  }
+}
+#endif
+
 void kernel_dispatcher(kernel_arg_t *__UNIFORM__ arg) {
   switch (arg->kernel_id) {
     case KERNEL_KV_CACHE_QUANT_LAYOUT_FUSED_W4A16:
+#if KV_FUSED_SPLIT_PERSISTENT
+      if (arg->persistent_mode != 0) {
+        kernel_kv_cache_quant_layout_fused_persistent(arg);
+      } else {
+        kernel_kv_cache_quant_layout_fused(arg);
+      }
+#else
       kernel_kv_cache_quant_layout_fused(arg);
+#endif
       break;
     default:
       break;

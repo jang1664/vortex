@@ -541,14 +541,14 @@ class KernelVariantTest(unittest.TestCase):
 
         self.assertEqual("hadamard", q_had["backend"])
         self.assertEqual("hadamard", q_had["app"])
-        self.assertEqual("-rows 256 -dim 128", q_had["args"])
+        self.assertEqual("-rows 256 -dim 128 -K 1", q_had["args"])
         self.assertEqual(32, q_had["calls_per_forward"])
         self.assertEqual({"rows": 256, "dim": 128}, {
             "rows": q_had["shape"]["rows"],
             "dim": q_had["shape"]["dim"],
         })
         self.assertEqual("R3", q_had["shape"]["spinquant_rotation"])
-        self.assertEqual("-rows 256 -dim 128", k_had["args"])
+        self.assertEqual("-rows 256 -dim 128 -K 1", k_had["args"])
         self.assertEqual("spinquant_r3_k_hadamard", k_quant["shape"]["producer"])
         self.assertIn(
             {"role": "x", "source": "spinquant_r3_k_hadamard", "layout": "row_major_fp16"},
@@ -558,12 +558,16 @@ class KernelVariantTest(unittest.TestCase):
             {"role": "B", "source": "spinquant_r3_k_hadamard", "layout": "row_major_fp16"},
             attn_qk["inputs"],
         )
-        self.assertEqual("-rows 8 -dim 11008", r4_had["args"])
+        self.assertEqual("-rows 8 -dim 11008 -K 172", r4_had["args"])
+        self.assertEqual("hadamard", r4_had["backend"])
+        self.assertEqual(
+            "butterfly_base_fused", r4_had["shape"]["hadamard_phase"]
+        )
         self.assertEqual("R4", r4_had["shape"]["spinquant_rotation"])
-        self.assertEqual("zero_padding", r4_had["shape"]["hadamard_variant"])
+        self.assertEqual("factorized", r4_had["shape"]["hadamard_variant"])
         self.assertEqual(DEFAULT_HADAMARD_VARIANT, payload["config"]["hadamard_variant"])
 
-    def test_factorized_spinquant_emits_butterfly_and_base_for_r4(self) -> None:
+    def test_factorized_spinquant_emits_one_compute_fused_r4_kernel(self) -> None:
         payload = build_llm_kernels(
             model_name="llama2-7b",
             stages=["generation"],
@@ -576,26 +580,22 @@ class KernelVariantTest(unittest.TestCase):
         )
 
         q_had = _kernel_by_name(payload, "spinquant_r3_q_hadamard")
-        butterfly = _kernel_by_name(
-            payload, "spinquant_r4_mlp_hadamard_butterfly"
-        )
-        base = _kernel_by_name(payload, "spinquant_r4_mlp_hadamard")
+        r4_had = _kernel_by_name(payload, "spinquant_r4_mlp_hadamard")
 
         self.assertIn("factorized", HADAMARD_VARIANTS)
         self.assertEqual("factorized", payload["config"]["hadamard_variant"])
         self.assertEqual("hadamard", q_had["backend"])
         self.assertEqual("-rows 32 -dim 128 -K 1", q_had["args"])
-        self.assertEqual("hadamard", butterfly["backend"])
-        self.assertEqual("-rows 1 -dim 11008 -K 172", butterfly["args"])
-        self.assertEqual("butterfly", butterfly["shape"]["hadamard_phase"])
-        self.assertEqual("hadamard_base", base["backend"])
-        self.assertEqual("hadamard_base", base["app"])
-        self.assertEqual("-rows 1 -base-k 172 -width 64", base["args"])
-        self.assertEqual("base", base["shape"]["hadamard_phase"])
+        self.assertEqual("hadamard", r4_had["backend"])
+        self.assertEqual("-rows 1 -dim 11008 -K 172", r4_had["args"])
         self.assertEqual(
-            "spinquant_r4_mlp_hadamard_butterfly",
-            base["shape"]["producer"],
+            "butterfly_base_fused", r4_had["shape"]["hadamard_phase"]
         )
+        self.assertEqual("mlp_elmul", r4_had["shape"]["producer"])
+        self.assertFalse(any(
+            kernel["backend"] == "hadamard_base"
+            for kernel in payload["kernels"]
+        ))
 
     def test_factorized_fused_spinquant_selects_exact_kernel_mode(self) -> None:
         payload = build_llm_kernels(
@@ -613,8 +613,7 @@ class KernelVariantTest(unittest.TestCase):
 
         self.assertEqual("hadamard_layout_fused", r4_had["backend"])
         self.assertEqual(
-            "-m 1 -n 1 -k 14336 --hadamard-variant factorized "
-            "--layout-from gemm_a_tiled",
+            "-m 1 -n 1 -k 14336 --layout-from gemm_a_tiled",
             r4_had["args"],
         )
         self.assertEqual("factorized", r4_had["shape"]["hadamard_variant"])
@@ -634,9 +633,38 @@ class KernelVariantTest(unittest.TestCase):
         k_had = _kernel_by_name(payload, "spinquant_r3_k_hadamard")
         r4_had = _kernel_by_name(payload, "spinquant_r4_mlp_hadamard")
 
-        self.assertEqual("-rows 32 -dim 128", q_had["args"])
-        self.assertEqual("-rows 32 -dim 128", k_had["args"])
-        self.assertEqual("-rows 1 -dim 11008", r4_had["args"])
+        self.assertEqual("-rows 32 -dim 128 -K 1", q_had["args"])
+        self.assertEqual("-rows 32 -dim 128 -K 1", k_had["args"])
+        self.assertEqual("-rows 1 -dim 11008 -K 172", r4_had["args"])
+
+    def test_zero_padding_remains_explicit_when_not_default(self) -> None:
+        standalone = build_llm_kernels(
+            model_name="llama3-8b",
+            stages=["generation"],
+            batch=1,
+            prefill_seq_len=8,
+            gen_kv_len=128,
+            qblk=32,
+            variant="all_sgemm_tcu_spinquant",
+            hadamard_variant="zero_padding",
+        )
+        fused = build_llm_kernels(
+            model_name="llama3-8b",
+            stages=["generation"],
+            batch=1,
+            prefill_seq_len=8,
+            gen_kv_len=128,
+            qblk=32,
+            variant="all_fpint_gemm_improve_fused_layout_spinquant",
+            hadamard_variant="zero_padding",
+        )
+
+        standalone_r4 = _kernel_by_name(
+            standalone, "spinquant_r4_mlp_hadamard"
+        )
+        fused_r4 = _kernel_by_name(fused, "spinquant_r4_mlp_hadamard")
+        self.assertEqual("-rows 1 -dim 14336 -K 0", standalone_r4["args"])
+        self.assertIn("--hadamard-variant zero_padding", fused_r4["args"])
 
     def test_spinquant_fused_layout_fuses_hadamard_gemm_a_write(self) -> None:
         payload = build_llm_kernels(

@@ -129,6 +129,27 @@ QBLK가 32보다 작은 경우에는 한 MXU tile 안의 group index를 계산�
 QBLK가 32보다 큰 경우에는 여러 MXU tile로 복제한다. QBLK=16과
 QBLK=256 경계도 실제 C4에서 검증했다.
 
+### Helper 강제 인라인
+
+초기 `prefill_reuse` binary에서는 작은 주소 helper는 자동으로
+인라인됐지만 다음 helper들은 실제 `jal` 호출로 남았다.
+
+- `compute_params`
+- `store_reused_tiled_qparam`
+- `load_src_value`
+- `quant_with_params`
+- generic path의 `quant_at`
+
+특히 `compute_params`는 인자가 많고 내부에서 source layout과 QDIR을
+분기한다. `prefill_reuse_inline_all` variant는 kernel 내부 helper에
+`always_inline`을 적용했다. 이로써 helper call이 모두 사라졌고,
+호출 문맥에서 QDIR과 fast-path 조건을 전파해 불필요한 분기도 함께
+제거했다.
+
+대신 kernel text 크기는 35,364 byte에서 66,164 byte로 증가했다.
+C4의 실제 실행 결과에서는 이 code-size 증가보다 call, argument 전달,
+중첩 stack frame 제거 효과가 더 컸다.
+
 ### 결과
 
 Llama3-8B generation의 `capacity=1024`, `position=1023` 대표 shape:
@@ -137,25 +158,70 @@ Llama3-8B generation의 `capacity=1024`, `position=1023` 대표 shape:
 | --- | ---: | ---: |
 | Standalone `kv_cache_quant_w4a16` | 80,003 | 1.00x |
 | 기존 layout-fused append | 1,053,744 | 13.17x |
-| 최적화 layout-fused K append | 109,881 | 1.37x |
-| 최적화 layout-fused V append | 104,441 | 1.31x |
+| 최적화 layout-fused K append | 88,390 | 1.10x |
+| 최적화 layout-fused V append | 88,485 | 1.11x |
 
-기존 layout-fused K append 대비 약 89.6% 감소했다. K/V cache 모두
+기존 layout-fused K append 대비 약 91.3% 감소했다. K/V cache 모두
 position 0, tile 경계 32, 마지막 position에서 cache의 다른 위치가
 변하지 않는 sentinel correctness를 통과했다.
 
 Llama3-8B prefill의 실제 source layout과 quantization mode를 사용한
 `K=1024, N=128, QBLK=128` 결과:
 
-| Cache | 기존 `persistent_warp` | `prefill_reuse` | 감소율 |
-| --- | ---: | ---: | ---: |
-| K, `gemm_a_tiled`, signed asymmetric | 19,290,349 | 11,236,052 | 41.8% |
-| V, `gemm_c_tiled`, signed symmetric | 45,308,704 | 17,967,836 | 60.3% |
+| Cache | 기존 `persistent_warp` | `prefill_reuse` | + 강제 인라인 | 인라인 추가 감소 |
+| --- | ---: | ---: | ---: | ---: |
+| K, `gemm_a_tiled`, signed asymmetric | 19,290,349 | 11,236,052 | 8,102,073 | 27.9% |
+| V, `gemm_c_tiled`, signed symmetric | 45,308,704 | 17,967,836 | 4,827,175 | 73.1% |
 
 K/V 모두 padding이 있는 `K=130`, 실제 tiled source layout,
 correction qparam 출력을 포함해 bit-exact correctness를 통과했다.
-`prefill_reuse`는 generation의 `persistent_warp`도 포함하며, 새 default
-variant이다.
+
+### 반복 주소 계산 제거
+
+강제 인라인 다음에는 실제 Llama prefill에서 `source_groups == 1`인
+경우의 `work / source_groups`와 나머지 연산을 제거했다. C4에서 K는
+8,102,073에서 7,039,746 cycle로, V는 4,827,175에서 3,795,958
+cycle로 각각 13.1%, 21.4% 더 감소했다.
+
+이후 source tiled 주소와 weight tiled 주소를 매 element마다 다시
+계산하지 않고 cursor로 바꿨다. cursor는 첫 주소만 계산하고 같은
+32-wide tile 안에서는 `+1`, tile 경계에서만 stride 보정 또는 주소
+재계산을 수행한다.
+
+실제 Llama3 prefill shape의 simx 결과는 다음과 같다. 이 표는
+변형 선택 과정에서 동적 instruction 변화를 확인하기 위해 사용했다.
+
+| 변형 | K instr | K sim cycle | V instr | V sim cycle |
+| --- | ---: | ---: | ---: | ---: |
+| `group1` | 22,863,250 | 21,935,842 | 20,961,298 | 16,187,779 |
+| + source cursor | 21,252,882 | 18,536,058 | 20,200,274 | 15,491,883 |
+| + source/weight cursor | 20,099,026 | 15,062,099 | 20,565,778 | 15,759,674 |
+
+WTRANS1인 K path에서는 weight cursor가 유효했지만, WTRANS0인 V
+path에서는 경계 분기 비용으로 source cursor만 쓸 때보다 1.7%
+느렸다. 현재 default는 두 cache를 합친 instruction/cycle이 가장
+작았던 `prefill_reuse_inline_group1_source_weight_cursor`다. 이 후보의
+bit-exact correctness는 실제 tiled K/V prefill, QBLK 16/128/256,
+padding, head offset, correction qparam, persistent K/V sentinel
+조건에서 통과했다.
+
+`KT`, `MXU_KT`, `MXU_NT` 곱셈을 소스에서 명시적 shift로 바꾼
+변형도 시험했지만 K sim cycle이 source-cursor 대비 11.3% 증가했다.
+강제 인라인 후 compiler가 이미 많은 power-of-two 연산을 정리하며,
+tail 처리를 위한 추가 분기 비용이 더 컸다. 따라서 명시적 shift
+변형은 default에 포함하지 않았다.
+
+최종 cursor 후보의 실제 C4 결과는 다음과 같다.
+
+| Cache | `group1` C4 cycle | 최종 cursor C4 cycle | 추가 감소 |
+| --- | ---: | ---: | ---: |
+| K prefill | 7,039,746 | 2,912,334 | 58.6% |
+| V prefill | 3,795,958 | 3,181,707 | 16.2% |
+
+두 경우 모두 실제 Llama3 tiled source layout과 quantization mode로
+bit-exact correctness를 통과했다. generation append도
+`capacity=1024`, `position=1023`에서 K 88,390 cycle, V 88,485
+cycle로 correctness와 cache sentinel 검증을 통과했다.
 
 ## 2. Softmax: 한 warp에서 불필요한 barrier와 주소 분해를 반복하던 문제
 

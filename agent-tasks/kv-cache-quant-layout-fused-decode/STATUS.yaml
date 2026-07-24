@@ -1,0 +1,26 @@
+task: kv-cache-quant-layout-fused-decode
+state: COMPLETE
+summary: "Corrected the decode append regression harness and split the one-warp append kernel from the prefill implementation; C4 KV Quant-K/V now outperform normal."
+updated: "2026-07-24 14:46"
+log:
+  - timestamp: "2026-07-24 13:59"
+    entry: "Started from the all-case C4 report. Decode KV Quant-K is 617,296 cycles versus 77,943 normal (7.920x), and KV Quant-V is 606,762 versus 77,720 (7.807x). Fused IPC is also lower, but the dominant signal is about 6.6x more dynamic instructions."
+  - timestamp: "2026-07-24 13:59"
+    entry: "Confirmed the target is a device-side C++ regression kernel, not RTL. The RTL-specific improve loop is therefore not applicable; software-kernel implementation and C4 blackbox verification are required."
+  - timestamp: "2026-07-24 13:59"
+    entry: "Initial source inspection found that append updates enter an early persistent_mode branch inside a 1,429-line monolithic kernel. The current default force-inlines shared layout helpers and the full prefill implementation into the same function. The C4 append launch is already one 32-thread warp, so excess blocks are not the primary cause."
+  - timestamp: "2026-07-24 14:15"
+    entry: "Stage diagnostics isolated the real append work at roughly 54k retired instructions. Several hypotheses were rejected: overlaunch, source-layout decoding, cache-position offset, aligned half stores, coalesced line read-modify-write, buffer skew, and qparam conversion alone."
+  - timestamp: "2026-07-24 14:27"
+    entry: "Found the primary report error: main.cpp ignored --cache-update append, so the reported 617,296/606,762 cycle runs executed and verified the generic full-cache K=1 path. bench_main.cpp did parse append correctly. The regression host now parses cache-update and routes supported decode KV-K/V commands through the persistent-update verifier."
+  - timestamp: "2026-07-24 14:35"
+    entry: "Implemented a dedicated one-warp append function selected by the default variant's dispatcher. It keeps append reduction, qparam materialization, and packed-weight updates out of the large prefill function. The original prefill function remains byte-for-byte in its original source position to preserve its C4 instruction-cache behavior."
+  - timestamp: "2026-07-24 14:46"
+    entry: "Final exact-command C4 results: KV Quant-K PASS at 54,141 instructions and 72,914 cycles (0.935x normal); KV Quant-V PASS at 52,417 instructions and 75,072 cycles (0.966x normal). Optional logical correction-qparam tests also passed for K and V."
+  - timestamp: "2026-07-24 14:46"
+    entry: "Prefill non-regression passed: KV Quant-K 2,972,690 cycles versus report 2,971,581; KV Quant-V 3,251,415 versus report 3,253,657. tools.workload.test_kernel_variants passed all 29 tests."
+pitfalls:
+  - "Do not compare host latency values across binaries; use C4 PERF cycles and instructions for identical shapes."
+  - "The non-benchmark host must parse cache_update=append explicitly; silently ignoring it relabels a full-cache K=1 run as decode."
+  - "Use --persistent-kind k|v when validating optional logical correction-qparam outputs; generated decode commands omit those optional buffers."
+  - "CodeGraph is not initialized in this worktree; keep source reads targeted unless the index is explicitly initialized."

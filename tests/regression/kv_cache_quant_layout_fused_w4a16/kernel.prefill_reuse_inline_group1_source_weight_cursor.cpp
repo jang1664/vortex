@@ -4,4 +4,5 @@
 #define KV_FUSED_SOURCE_GROUP1_FAST 1
 #define KV_FUSED_SOURCE_CURSOR 1
 #define KV_FUSED_WEIGHT_CURSOR 1
+#define KV_FUSED_SPLIT_PERSISTENT 1
 #include "kernel.cpp"
