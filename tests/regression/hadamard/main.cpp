@@ -14,6 +14,10 @@
 
 using data_t = fp16_t;
 
+#ifndef HADAMARD_VARIANT_TAG
+#define HADAMARD_VARIANT_TAG 0
+#endif
+
 #define RT_CHECK(_expr)                                         \
   do {                                                          \
     int _ret = _expr;                                           \
@@ -140,6 +144,11 @@ int main(int argc, char *argv[]) {
   printf("  Dim:        %u\n", dim);
   printf("  Padded Dim: %u\n", padded_dim);
   printf("  Seed:       %u\n", seed);
+#if HADAMARD_VARIANT_TAG == 1
+  printf("  Variant:    adaptive_row\n");
+#else
+  printf("  Variant:    multiwarp_row\n");
+#endif
 
   std::vector<data_t> h_input(numel);
   std::vector<data_t> h_output_gpu(numel);
@@ -157,7 +166,20 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_THREADS, &num_threads));
   RT_CHECK(vx_dev_caps(device, VX_CAPS_LOCAL_MEM_SIZE, &local_mem_size));
 
-  const uint32_t threads_per_block = std::min(256u, static_cast<uint32_t>(num_warps * num_threads));
+  const uint32_t max_threads_per_block =
+      std::min(256u, static_cast<uint32_t>(num_warps * num_threads));
+#if HADAMARD_VARIANT_TAG == 1
+  const bool small_transform =
+      padded_dim <= static_cast<uint32_t>(num_threads * 4u);
+  const bool one_warp_has_enough_rows =
+      rows >= num_warps && (small_transform || rows == num_warps);
+  const uint32_t threads_per_block =
+      one_warp_has_enough_rows ? static_cast<uint32_t>(num_threads)
+                               : max_threads_per_block;
+#else
+  const uint32_t threads_per_block = max_threads_per_block;
+#endif
+  printf("  Launch:     %u threads/row\n", threads_per_block);
   uint32_t max_localmem = 0;
   RT_CHECK(vx_check_occupancy(device, threads_per_block, &max_localmem));
   const uint32_t scratch_bytes = padded_dim * sizeof(float);

@@ -23,6 +23,10 @@
 
 using data_t = fp16_t;
 
+#ifndef ROPE_VARIANT_TAG
+#define ROPE_VARIANT_TAG 0
+#endif
+
 vx_device_h device = nullptr;
 vx_buffer_h krnl_buffer = nullptr;
 vx_buffer_h args_buffer = nullptr;
@@ -166,6 +170,11 @@ int main(int argc, char *argv[]) {
   printf("  Head Dim:     %d\n", head_dim);
   printf("  Max Seq Len:  %d\n", max_seq_len);
   printf("  Pos Offset:   %d\n", pos_offset);
+#if ROPE_VARIANT_TAG == 1
+  printf("  Variant:      task_chunk16\n");
+#else
+  printf("  Variant:      baseline\n");
+#endif
   
   uint32_t input_size = batch_size * seq_len * num_heads * head_dim;
   uint32_t freq_size = max_seq_len * (head_dim / 2);
@@ -221,9 +230,16 @@ int main(int argc, char *argv[]) {
   
   // Grid/Block configuration
   // Use grid-stride loop pattern
-  uint32_t total_pairs = batch_size * seq_len * num_heads * (head_dim / 2);
+#if ROPE_VARIANT_TAG == 1
+  const uint32_t chunks_per_head = ((head_dim / 2) + 15u) >> 4;
+  const uint32_t work_items =
+      batch_size * seq_len * num_heads * chunks_per_head;
+#else
+  const uint32_t work_items =
+      batch_size * seq_len * num_heads * (head_dim / 2);
+#endif
   uint32_t threads_per_block = std::min(256u, (uint32_t)(num_warps * num_threads));
-  uint32_t num_blocks = std::min((total_pairs + threads_per_block - 1) / threads_per_block,
+  uint32_t num_blocks = std::min((work_items + threads_per_block - 1) / threads_per_block,
                                   (uint32_t)num_cores);
   
   kernel_arg.grid_dim[0] = num_blocks;

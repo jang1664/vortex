@@ -7,6 +7,73 @@
 // Type aliases
 using data_t = fp16_t;
 
+#ifdef RMSNORM_USE_ADAPTIVE_REDUCTION
+#define RMSNORM_HELPER static inline __attribute__((always_inline))
+
+RMSNORM_HELPER uint32_t float_to_bits(float value) {
+  union { float f; uint32_t u; } v;
+  v.f = value;
+  return v.u;
+}
+
+RMSNORM_HELPER float bits_to_float(uint32_t value) {
+  union { uint32_t u; float f; } v;
+  v.u = value;
+  return v.f;
+}
+
+RMSNORM_HELPER float shfl_down_float(float value, uint32_t offset) {
+  return bits_to_float((uint32_t)vx_shfl_down(
+      float_to_bits(value), offset, NUM_THREADS - 1, 0));
+}
+
+RMSNORM_HELPER float shfl_idx_float(float value, uint32_t index) {
+  return bits_to_float((uint32_t)vx_shfl_idx(
+      float_to_bits(value), index, NUM_THREADS - 1, 0));
+}
+
+RMSNORM_HELPER float warp_rms(float sum_sq, uint32_t lane,
+                              uint32_t hidden_dim, float eps) {
+  for (uint32_t offset = NUM_THREADS >> 1; offset > 0; offset >>= 1) {
+    const float other = shfl_down_float(sum_sq, offset);
+    if (lane + offset < NUM_THREADS) {
+      sum_sq += other;
+    }
+  }
+
+  float rms_norm = 0.0f;
+  if (lane == 0) {
+    rms_norm = 1.0f / sqrtf(sum_sq / (float)hidden_dim + eps);
+  }
+  return shfl_idx_float(rms_norm, 0);
+}
+#else
+#define RMSNORM_HELPER static inline
+#endif
+
+RMSNORM_HELPER float reduce_rms(float sum_sq, uint32_t lane,
+                                uint32_t block_size, uint32_t hidden_dim,
+                                float eps) {
+#ifdef RMSNORM_USE_ADAPTIVE_REDUCTION
+  if (block_size == NUM_THREADS) {
+    return warp_rms(sum_sq, lane, hidden_dim, eps);
+  }
+#endif
+
+  auto cache =
+      reinterpret_cast<float *>(__local_mem(block_size * sizeof(float)));
+  cache[lane] = sum_sq;
+  __syncthreads();
+
+  for (uint32_t offset = block_size >> 1; offset > 0; offset >>= 1) {
+    if (lane < offset) {
+      cache[lane] += cache[lane + offset];
+    }
+    __syncthreads();
+  }
+  return 1.0f / sqrtf(cache[0] / (float)hidden_dim + eps);
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 // RMSNorm Kernel
 // Formula: output = input * rsqrt(mean(input^2) + eps) * gamma
@@ -25,9 +92,8 @@ void kernel_rmsnorm(kernel_arg_t *__UNIFORM__ arg) {
   uint32_t hidden_dim = arg->hidden_dim;
   float eps = arg->eps;
   
-  // Thread indices
-  int tid = threadIdx.x + blockIdx.x * blockDim.x;
-  int cache_idx = threadIdx.x;
+  const uint32_t lane = threadIdx.x;
+  const uint32_t block_size = blockDim.x;
   
   // Each block processes one token (one row)
   uint32_t token_idx = blockIdx.x;
@@ -38,42 +104,20 @@ void kernel_rmsnorm(kernel_arg_t *__UNIFORM__ arg) {
   auto pInputRow = pInput + token_idx * hidden_dim;
   auto pOutputRow = pOutput + token_idx * hidden_dim;
   
-  // Allocate shared memory for reduction
-  auto cache = reinterpret_cast<float*>(__local_mem(blockDim.x * sizeof(float)));
-  
   // Phase 1: Compute sum of squares with reduction
   float sum_sq = 0.0f;
   
   // Each thread accumulates its portion
-  for (uint32_t i = cache_idx; i < hidden_dim; i += blockDim.x) {
+  for (uint32_t i = lane; i < hidden_dim; i += block_size) {
     float val = fp16_to_float(pInputRow[i]);
     sum_sq += val * val;
   }
-  
-  // Store in shared memory
-  cache[cache_idx] = sum_sq;
-  __syncthreads();
-  
-  // Reduction in shared memory (similar to dotproduct)
-  int i = blockDim.x / 2;
-  while (i != 0) {
-    if (cache_idx < i) {
-      cache[cache_idx] += cache[cache_idx + i];
-    }
-    __syncthreads();
-    i /= 2;
-  }
-  
-  // Thread 0 has the final sum, broadcast to all
-  __syncthreads();
-  sum_sq = cache[0];
-  
-  // Compute RMS normalization factor
-  float mean_sq = sum_sq / hidden_dim;
-  float rms_norm = 1.0f / sqrtf(mean_sq + eps);
+
+  const float rms_norm =
+      reduce_rms(sum_sq, lane, block_size, hidden_dim, eps);
   
   // Phase 2: Normalize and apply gamma
-  for (uint32_t i = cache_idx; i < hidden_dim; i += blockDim.x) {
+  for (uint32_t i = lane; i < hidden_dim; i += block_size) {
     float val = fp16_to_float(pInputRow[i]);
     float gamma = fp16_to_float(pGamma[i]);
     pOutputRow[i] = float_to_fp16(val * rms_norm * gamma);

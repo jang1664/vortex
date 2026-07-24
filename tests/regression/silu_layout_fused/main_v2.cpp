@@ -101,7 +101,9 @@ int main(int argc, char** argv) {
   parse_args(argc, argv);
 
   uint32_t M_pad = (M + 7u) & ~7u;
-#if SILU_LAYOUT_FUSED_VARIANT_TAG == 1
+#if SILU_LAYOUT_FUSED_VARIANT_TAG == 2
+  const char* variant = "linear_skip_pad_rows";
+#elif SILU_LAYOUT_FUSED_VARIANT_TAG == 1
   const char* variant = "linear_tiled";
 #else
   const char* variant = "baseline";

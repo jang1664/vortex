@@ -205,9 +205,23 @@ int main(int argc, char** argv) {
 
   RT_CHECK(vx_dev_open(&device));
   uint64_t num_threads = 0;
+  uint64_t num_warps = 1;
   uint32_t max_local_mem = 0;
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_THREADS, &num_threads));
-  RT_CHECK(vx_check_occupancy(device, static_cast<uint32_t>(num_threads),
+#if HADAMARD_LAYOUT_FUSED_VARIANT_TAG >= 1
+  RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_WARPS, &num_warps));
+#endif
+#if HADAMARD_LAYOUT_FUSED_VARIANT_TAG == 2
+  const uint32_t launched_rows = padded_row_launch ? m_pad : rows;
+  const bool use_multiwarp =
+      static_cast<uint64_t>(matrix_count) * launched_rows < num_warps;
+  const uint32_t launch_threads = static_cast<uint32_t>(
+      num_threads * (use_multiwarp ? num_warps : 1u));
+#else
+  const uint32_t launch_threads =
+      static_cast<uint32_t>(num_threads * num_warps);
+#endif
+  RT_CHECK(vx_check_occupancy(device, launch_threads,
                               &max_local_mem));
   if (static_cast<uint64_t>(scratch_dim) * sizeof(float) > max_local_mem) {
     std::fprintf(stderr, "Hadamard scratch does not fit in local memory\n");
@@ -226,7 +240,7 @@ int main(int argc, char** argv) {
   arg.kernel_id = KERNEL_HADAMARD_LAYOUT_FUSED;
   arg.grid_dim[0] =
       matrix_count * (padded_row_launch ? m_pad : rows);
-  arg.block_dim[0] = static_cast<uint32_t>(num_threads);
+  arg.block_dim[0] = launch_threads;
   RT_CHECK(vx_mem_address(input_buffer, &arg.input_addr));
   RT_CHECK(vx_mem_address(matrix_buffer, &arg.matrix_addr));
   RT_CHECK(vx_mem_address(output_buffer, &arg.output_addr));

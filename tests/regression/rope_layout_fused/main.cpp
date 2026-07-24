@@ -252,7 +252,9 @@ int main(int argc, char *argv[]) {
   printf("rope_layout_fused batch=%u seq=%u heads=%u headdim=%u maxseq=%u offset=%u layout_to=%s\n",
          batch, seq, heads, head_dim, max_seq, pos_offset,
          layout_to_name(layout_to));
-#if ROPE_LAYOUT_FUSED_VARIANT_TAG == 1
+#if ROPE_LAYOUT_FUSED_VARIANT_TAG == 2
+  printf("variant=subwarp_chunk16\n");
+#elif ROPE_LAYOUT_FUSED_VARIANT_TAG == 1
   printf("variant=task_chunk16\n");
 #else
   printf("variant=baseline\n");

@@ -200,9 +200,25 @@ static bool run_case(const char* name,
 
   uint64_t threads = 0;
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_THREADS, &threads));
+#if HADAMARD_LAYOUT_FUSED_VARIANT_TAG >= 1
+  uint64_t warps = 0;
+  RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_WARPS, &warps));
+#if HADAMARD_LAYOUT_FUSED_VARIANT_TAG == 2
+  const uint32_t launched_rows = padded_row_launch ? m_pad : rows;
+  const bool use_multiwarp =
+      static_cast<uint64_t>(matrix_count) * launched_rows < warps;
+  const uint32_t launch_threads = static_cast<uint32_t>(
+      threads * (use_multiwarp ? warps : 1u));
+#else
+  const uint32_t launch_threads =
+      static_cast<uint32_t>(threads * warps);
+#endif
+#else
+  const uint32_t launch_threads = static_cast<uint32_t>(threads);
+#endif
   uint32_t max_localmem = 0;
   RT_CHECK(vx_check_occupancy(
-      device, static_cast<uint32_t>(threads), &max_localmem));
+      device, launch_threads, &max_localmem));
   const uint32_t scratch_dim =
       factorized ? dim : next_power_of_two(dim);
   if ((uint64_t)scratch_dim * sizeof(float) > max_localmem) {
@@ -233,8 +249,7 @@ static bool run_case(const char* name,
   arg.grid_dim[0] =
       matrix_count * (padded_row_launch ? m_pad : rows);
   arg.grid_dim[1] = arg.grid_dim[2] = 1;
-  // The fused FWHT scratch is synchronized within one hardware warp.
-  arg.block_dim[0] = static_cast<uint32_t>(threads);
+  arg.block_dim[0] = launch_threads;
   arg.block_dim[1] = arg.block_dim[2] = 1;
   RT_CHECK(vx_mem_address(buffers.input, &arg.input_addr));
   RT_CHECK(vx_mem_address(buffers.matrix, &arg.matrix_addr));
